@@ -61,6 +61,8 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 실행(중요 프롬프트만 `--samples 2~3`). 요약 매트릭스를 보여주고, 애매한 판정
 (별칭 변형·한글 표기 등)은 answer_excerpt를 sql로 읽어 직접 재판정 후 결과를 설명한다.
 
+OPENROUTER_API_KEY 미설정이면 browse 스킬(브라우저 실측, 키 불필요)을 대안으로 안내한다.
+
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
 sql로 (a) 인용 갭: cited=0 체크의 cited_domains_json 빈도 + 미노출 프롬프트,
 (b) striking distance, (c) rank_decay, (d) aio_exposure(rank 데이터 있을 때:

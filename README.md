@@ -27,6 +27,7 @@ Create(실행)를 로컬 Brain(SQLite)으로 잇는 복리 루프.
 /setup                        # 설치 직후 환경 진단 — 뭐가 되고 뭐가 빠졌는지
 /capture add <프로젝트>        # 온보딩 (game|local_clinic|saas|directory)
 /capture run <프로젝트>        # gsc → rank → ai → 분석 → HTML 리포트
+/browse <프로젝트>             # API 키 없이 브라우저(claude-in-chrome)로 실제 앱 인용 실측
 /create profile <프로젝트>     # 리포 관례 발견·캐싱
 /create plan <프로젝트>        # Brain 기회 → 작업 배치 → 브랜치+PR
 ```

@@ -7,7 +7,7 @@
     {
       "name": "seo-miner",
       "source": "./",
-      "description": "capture(채굴·측정) + create(실행) + setup(닥터) — 무료 우선 스택(GSC·자동완성·OpenRouter) 위에 선택형 SERP(DataForSEO/Serper)를 얹은 개인용 SEO·AEO 채굴기"
+      "description": "capture(채굴·측정) + create(실행) + browse(브라우저 실측, 키 불필요) + setup(닥터) — 무료 우선 스택(GSC·자동완성·OpenRouter) 위에 선택형 SERP(DataForSEO/Serper)를 얹은 개인용 SEO·AEO 채굴기"
     }
   ]
 }
