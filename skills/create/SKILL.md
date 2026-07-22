@@ -1,0 +1,63 @@
+---
+name: create
+description: Universal content-creation counterpart to the capture skill — turns Brain opportunities (striking_distance, ai_citation_gap, pseo_pattern, rank_decay) into actual content changes in ANY repo/stack (Astro, Next, Hugo, Jekyll, plain HTML, data-file directories) by discovering the repo's own conventions first. Use whenever the user wants to act on capture opportunities, write/refresh SEO or AEO content, generate pSEO pages, edit blog posts or landing copy for visibility, or says things like "/create ...", "기회 반영해줘", "그 키워드로 글 써서 리포에 넣어줘", "pSEO 페이지 만들어줘", "이 글 리프레시해줘". Works standalone (manual brief) even without capture installed.
+---
+
+# create — 스택 불문 콘텐츠 실행 엔진 (capture의 Create 카운터파트)
+
+capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 발행 = 파일 쓰기 + git.
+스택별 지식은 이 스킬에 없다 — **리포에서 발견해 프로필로 캐싱**하고, 그 관례를 따른다.
+
+## 철칙
+
+1. **발견 우선.** 프로필 없는 프로젝트에서 콘텐츠를 쓰지 않는다. 먼저 `/create profile`.
+2. **관례 모방.** frontmatter 키, 파일명 규칙, 디렉토리, 컴포넌트 사용은 리포의 기존
+   파일에서 관찰한 것만 쓴다. 새 키를 발명하지 않는다.
+3. **발행 게이트.** main에 직접 쓰지 않는다. 반드시 브랜치 `capture/{kind}-{slug}` →
+   커밋(메시지에 opportunity id) → PR(또는 push 후 안내). 머지는 사람이 한다.
+   git 리포가 아니면: 변경 전 사본 백업 + 변경 파일 목록 보고로 대체.
+4. **데이터 진실성.** 콘텐츠 속 수치·주장에 근거가 필요하다. Brain 수치는 인용 표기,
+   제품 주장은 리포·문서에서 확인된 것만, 없는 사실은 만들지 않는다.
+5. **루프 클로즈.** 작업 완료 시 `scripts/createdb.py done`으로 Brain에 기록해
+   다음 capture 런이 이 콘텐츠의 성과를 측정하게 한다.
+
+## 명령 워크플로우
+
+### /create profile {P} — 리포 프로필 발견 (프로젝트당 1회, 결과는 캐시)
+1. 사용자에게 리포 경로를 받는다. `references/repo-profiling.md`의 휴리스틱으로
+   스택·콘텐츠 위치·frontmatter 스키마·URL 패턴·발행 모드를 탐지한다.
+2. 기존 콘텐츠 2~3개를 읽어 보이스 특징(어조, 문장 길이, 이모지/존댓말 여부,
+   제목 스타일)을 요약한다. `product-marketing-context.md`류 파일이 있으면 우선한다.
+3. 결과를 `$CAPTURE_HOME/projects/{P}.repo.yaml`로 저장하고 사용자 검수를 받는다.
+   (템플릿: `templates/repo-profile.template.yaml`)
+
+### /create plan {P} — 작업 계획
+1. `python scripts/createdb.py pick {P}` 로 Brain의 status='new' 기회를 읽는다.
+   Brain이 없거나 비었으면 수동 브리프 모드로 전환(무엇을 쓸지 인터뷰).
+2. kind별 레시피(`references/content-rules.md`)에 따라 작업 배치를 제안:
+   대상 파일(신규/수정), 예상 분량, pSEO면 1차 롤아웃 규모. 사용자 승인 후 진행.
+3. 승인된 항목은 `createdb.py claim {P} <ids>` 로 status='acked' 처리.
+
+### /create run {P} — 실행
+1. 브랜치 생성 → 항목별로 content-rules.md 레시피대로 파일 생성/수정.
+2. 수정(striking_distance, rank_decay)은 **최소 diff** — 전면 재작성 금지.
+3. 항목당 커밋: `capture(<kind>): <요약> [opp #id]`.
+4. PR 생성(가능하면 gh CLI) — 본문에 기회의 reasoning과 Brain 수치 근거를 붙인다.
+   publish_mode가 files가 아니면(외부 CMS): `$CAPTURE_HOME/drafts/{P}/`에 산출 후
+   사용자 파이프라인(n8n 등)으로 넘기라고 안내한다.
+5. `createdb.py done {P} <id> --path <파일> --branch <브랜치>` 로 기록.
+
+### /create status {P}
+`createdb.py list {P}` 로 작성 이력·머지 여부를 보여주고, 머지된 건
+`createdb.py merged <creation_id>` 로 갱신을 제안한다.
+
+## 글 품질 위임
+
+카피라이팅·CRO 같은 전문 절차 팩(예: coreyhaines31/marketingskills의 copywriting,
+programmatic-seo, ai-seo)이 설치돼 있으면 해당 스킬의 지침을 함께 적용한다.
+없으면 `references/content-rules.md`의 내장 AEO/SEO 구조 규칙을 따른다.
+
+## 스코프 밖
+
+배포 인프라 조작(머지·프로덕션 배포는 사람), 측정(capture의 영역),
+소셜·이메일 배포(Expand 영역 — 요청 시 한계를 밝히고 대안 안내).

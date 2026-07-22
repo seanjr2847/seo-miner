@@ -1,0 +1,22 @@
+# $CAPTURE_HOME/projects/{name}.repo.yaml — /create profile 이 생성·갱신
+name: myproject
+repo_path: /path/to/repo
+stack: astro                # astro|next|hugo|jekyll|gatsby|nuxt|static|custom
+publish_mode: files         # files(리포=발행물) | drafts(외부 CMS 핸드오프)
+git: true
+content:
+  dir: src/content/blog
+  ext: .md
+  filename_pattern: "{slug}.md"        # 관찰된 규칙 그대로
+  url_pattern: "/blog/{slug}/"
+  frontmatter:               # 실제 사용 중인 키만, 관찰된 그대로
+    title: {required: true}
+    description: {required: true}
+    pubDate: {required: true, format: "YYYY-MM-DD"}
+    tags: {required: false, type: list}
+  body_conventions: "H2부터 시작, 이미지 ./images/ 상대경로, 컴포넌트 미사용"
+pseo:
+  mechanism: "src/pages/[slug].astro + src/data/*.json"   # 없으면 null
+  data_dir: src/data
+voice: |
+  반말 섞인 실용체, 문단 2~4문장, 제목은 질문형 선호, 과장 표현 금지.

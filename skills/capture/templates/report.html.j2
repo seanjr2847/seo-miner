@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>{{ project.name }} · capture report · {{ today }}</title>
+<style>
+  :root { --ink:#1a1a1a; --sub:#666; --line:#e6e2da; --bg:#faf9f5; --card:#fff;
+          --up:#0a7a3d; --down:#b4232a; --accent:#5a4fcf; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,'Apple SD Gothic Neo','Pretendard',sans-serif;
+         background:var(--bg); color:var(--ink); margin:0; padding:32px;
+         max-width:960px; margin-inline:auto; line-height:1.55; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:15px; margin:28px 0 10px;
+       text-transform:uppercase; letter-spacing:.06em; color:var(--sub); }
+  .meta { color:var(--sub); font-size:13px; margin-bottom:8px; }
+  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin:16px 0; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:10px;
+         padding:12px 16px; min-width:120px; }
+  .kpi b { display:block; font-size:20px; } .kpi span { font-size:12px; color:var(--sub); }
+  table { width:100%; border-collapse:collapse; background:var(--card);
+          border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:13px; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { background:#f3f1ec; font-weight:600; font-size:12px; }
+  tr:last-child td { border-bottom:none; }
+  .up { color:var(--up); font-weight:600; } .down { color:var(--down); font-weight:600; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11px;
+          background:#eee9ff; color:var(--accent); }
+  .actions { background:var(--card); border:2px solid var(--accent); border-radius:12px;
+             padding:14px 18px; } .actions li { margin:6px 0; }
+  .empty { color:var(--sub); font-size:13px; padding:10px 2px; }
+  .excerpt { color:var(--sub); font-size:12px; }
+</style>
+</head>
+<body>
+  <h1>{{ project.name }} <span class="pill">{{ project.type }}</span></h1>
+  <div class="meta">{{ project.domain }} · report {{ today }}
+    {% if gsc_date %}· GSC snapshot {{ gsc_date }}{% if gsc_prev %} (vs {{ gsc_prev }}){% endif %}{% endif %}
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><b>{{ kw_active }}</b><span>tracked keywords</span></div>
+    <div class="kpi"><b>{{ striking|length }}</b><span>striking distance (4–20위)</span></div>
+    <div class="kpi"><b>{{ gap_domains|length }}</b><span>citation-gap domains</span></div>
+    <div class="kpi"><b>{{ opps|length }}</b><span>open opportunities</span></div>
+  </div>
+
+  <h2>What moved (GSC, {{ gsc_prev or '—' }} → {{ gsc_date or '—' }})</h2>
+  {% if ups or downs %}
+  <table><tr><th>쿼리</th><th>순위</th><th>Δ순위</th><th>클릭</th><th>Δ클릭</th><th>노출</th></tr>
+    {% for m in ups %}<tr><td>{{ m.query }}</td><td>{{ m.pos }}</td>
+      <td class="up">▲ {{ m.dpos }}</td><td>{{ m.clk }}</td>
+      <td class="up">+{{ m.dclk }}</td><td>{{ m.imp }}</td></tr>{% endfor %}
+    {% for m in downs %}<tr><td>{{ m.query }}</td><td>{{ m.pos }}</td>
+      <td class="down">▼ {{ m.dpos|abs }}</td><td>{{ m.clk }}</td>
+      <td class="down">{{ m.dclk }}</td><td>{{ m.imp }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<div class="empty">비교할 두 개의 GSC 스냅샷이 아직 없음. 다음 수집부터 등락이 표시됨.
+    (±0.5 미만 변동은 노이즈로 무시)</div>{% endif %}
+
+  <h2>Rank snapshots (SERP{% if rank_date %} · {{ rank_date }}{% if rank_prev %} vs {{ rank_prev }}{% endif %}{% endif %})</h2>
+  {% if ranks %}
+  <table><tr><th>키워드</th><th>순위</th><th>Δ</th><th>AI오버뷰</th></tr>
+    {% for r in ranks %}<tr><td>{{ r.keyword }}</td><td>{{ r.pos if r.pos is not none else '—' }}</td>
+      <td>{% if r.dpos is not none and r.dpos > 0 %}<span class="up">▲ {{ r.dpos|int }}</span>
+          {% elif r.dpos is not none and r.dpos < 0 %}<span class="down">▼ {{ (r.dpos|abs)|int }}</span>
+          {% else %}·{% endif %}</td>
+      <td>{% if r.aio == 1 %}{{ '인용✓' if r.aio_cited == 1 else '노출·미인용' }}{% elif r.aio == 0 %}없음{% else %}—{% endif %}</td>
+    </tr>{% endfor %}
+  </table>
+  {% if aio_gap %}<div class="excerpt">aio_exposure 후보: {{ aio_gap|join(', ') }}</div>{% endif %}
+  {% else %}<div class="empty">SERP 데이터 없음 — 키 설정 후 /capture rank (setup.md 7절).</div>{% endif %}
+
+  <h2>AI visibility matrix (최근 run · cited/checks)</h2>
+  {% if matrix %}
+  <table><tr><th>엔진</th><th>카테고리</th><th>인용</th><th>언급</th><th>체크</th></tr>
+    {% for r in matrix %}<tr><td>{{ r.engine }}</td><td>{{ r.category }}</td>
+      <td>{{ r.cited }}/{{ r.total }}</td><td>{{ r.mentioned }}/{{ r.total }}</td>
+      <td>{{ r.total }}</td></tr>{% endfor %}
+  </table>
+  <div class="excerpt">답변은 비결정적임 — 단발 수치가 아니라 주간 추세로 읽을 것.</div>
+  {% else %}<div class="empty">AI 체크 데이터 없음. /capture ai 실행 필요.</div>{% endif %}
+
+  <h2>Citation gap — 나 대신 인용되는 도메인</h2>
+  {% if gap_domains %}
+  <table><tr><th>도메인</th><th>인용 횟수</th></tr>
+    {% for d in gap_domains %}<tr><td>{{ d.domain }}</td><td>{{ d.n }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<div class="empty">데이터 없음.</div>{% endif %}
+
+  {% if missed %}
+  <h2>미노출 프롬프트 (인용도 언급도 없음)</h2>
+  <table><tr><th>프롬프트</th><th>카테고리</th><th>엔진</th></tr>
+    {% for m in missed %}<tr><td>{{ m.prompt }}</td><td>{{ m.category }}</td>
+      <td>{{ m.engines }}</td></tr>{% endfor %}</table>
+  {% endif %}
+
+  <h2>Striking distance (4–20위, 노출순)</h2>
+  {% if striking %}
+  <table><tr><th>쿼리</th><th>순위</th><th>노출</th><th>클릭</th></tr>
+    {% for s in striking %}<tr><td>{{ s.query }}</td><td>{{ s.pos }}</td>
+      <td>{{ s.imp }}</td><td>{{ s.clk }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<div class="empty">GSC 데이터 없음.</div>{% endif %}
+
+  <h2>Top opportunities</h2>
+  {% if opps %}
+  <table><tr><th>종류</th><th>대상</th><th>점수</th><th>근거</th><th>상태</th></tr>
+    {% for o in opps %}<tr><td>{{ o.kind }}</td><td>{{ o.target }}</td>
+      <td>{{ o.score }}</td><td>{{ o.reasoning }}</td><td>{{ o.status }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<div class="empty">아직 없음. /capture gaps → 분석 단계에서 채워짐.</div>{% endif %}
+
+  <h2>Next actions</h2>
+  <div class="actions"><ol>
+    {% if actions %}{% for x in actions %}<li>{{ x }}</li>{% endfor %}
+    {% else %}<li>분석 단계 미실행 — Claude Code에서 /capture 분석을 돌려 액션을 채울 것.</li>{% endif %}
+  </ol></div>
+
+  <h2>Runs</h2>
+  <table><tr><th>종류</th><th>시각</th><th>호출</th><th>비용($)</th><th>메모</th></tr>
+    {% for r in runs %}<tr><td>{{ r.kind }}</td><td>{{ r.started_at }}</td>
+      <td>{{ r.api_calls }}</td><td>{{ r.cost_estimate_usd }}</td>
+      <td class="excerpt">{{ r.notes }}</td></tr>{% endfor %}
+  </table>
+</body>
+</html>

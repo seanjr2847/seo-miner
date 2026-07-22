@@ -1,0 +1,13 @@
+# Copy to $CAPTURE_HOME/projects/{name}.yaml, then: python scripts/db.py sync-project <path>
+name: myproject
+type: saas                 # game | local_clinic | saas | directory  (see _presets.yaml)
+domain: example.com
+locale: ko-KR              # hl-GL: drives autocomplete language & judgment context
+gsc_property: sc-domain:example.com   # or "https://example.com/"
+brand_aliases: [MyProject, 마이프로젝트]   # for 'mentioned' detection in AI answers
+seed_keywords: []
+competitors_manual: []
+surfaces_ai: [chatgpt, perplexity, gemini]
+limits:
+  max_keywords: 100        # tracked-set cap (cost control when SERP adapter lands)
+  max_ai_prompts: 30

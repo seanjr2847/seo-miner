@@ -1,0 +1,9 @@
+{
+  "name": "seo-miner",
+  "version": "1.2.0",
+  "description": "seo-miner — personal SEO & AI-search opportunity mining suite (Boring Agent 역기획): capture skill이 GSC·자동완성·SERP·AI 인용 체크로 빈 키워드와 citation gap을 로컬 SQLite Brain에 채굴하고, create skill이 그 기회를 어떤 리포/스택에서든 브랜치+PR 게이트로 실제 콘텐츠 변경으로 바꾼다. first-run doctor(setup) 포함.",
+  "author": {
+    "name": "local"
+  },
+  "license": "MIT"
+}
