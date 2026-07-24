@@ -25,8 +25,9 @@ API가 "근사치"라면 이건 사용자가 실제로 보는 화면 그 자체�
 
 - claude-in-chrome MCP 연결 (없으면 브라우저 도구 ToolSearch 로드부터). 세션 시작은
   반드시 `tabs_context`로.
-- 로그인: perplexity.ai는 비로그인 동작. chatgpt.com·gemini.google.com은 로그인이
-  필요할 수 있다 — 로그인 벽·캡차를 만나면 **대신 로그인하려 하지 말고** 그 엔진을
+- 로그인: chatgpt.com은 비로그인 동작(2026-07 실측, 웹검색 인용 포함).
+  perplexity.ai는 첫 질문부터 로그인 요구(2026-07 실측), gemini.google.com도 구글
+  로그인 필요 — 로그인 벽·캡차를 만나면 **대신 로그인하려 하지 말고** 그 엔진을
   스킵하고 마지막에 사용자에게 보고한다.
 - Brain: capture 스킬이 초기화돼 있고(ai_prompts에 활성 프롬프트 존재) python 사용 가능.
 
