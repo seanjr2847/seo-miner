@@ -17,6 +17,14 @@ from pathlib import Path
 CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 DB = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
 
+KEY_NAMES = {
+    "openrouter": "OpenRouter 키",
+    "dataforseo": "DataForSEO 계정",
+    "serper": "Serper 키",
+    "gsc_client_secrets": "구글 인증 파일",
+    "gsc_token_cached": "구글 로그인 기록",
+}
+
 
 def has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
@@ -48,36 +56,46 @@ def diagnose() -> dict:
         "gsc_token_cached": (CAPTURE_HOME / "gsc_token.json").exists(),
     }
     core_ok = all(deps_core.values())
+    brain_ok = brain["db_exists"] and not brain.get("error")
+    # ponytail: 라벨 자체를 사람 말로 저장 — 별도 표시용 매핑 테이블 안 만듦
     caps = {
-        "keywords_free (자동완성·GSC마이닝)": core_ok,
-        "brain (SQLite)": core_ok and brain["db_exists"],
-        "ai_visibility (OpenRouter 3엔진)": core_ok and keys["openrouter"],
-        "gsc (실측 순위·클릭)": core_ok and all(deps_gsc.values())
-                                and keys["gsc_client_secrets"],
-        "rank/SERP (선택)": core_ok and (keys["dataforseo"] or keys["serper"]),
-        "create (실행 스킬)": core_ok,
+        "키워드 찾기 — 검색창 자동완성으로 후보 수집 (돈 안 듦)": core_ok,
+        "보관함 — 수집한 자료를 내 컴퓨터에 저장해 둡니다": core_ok and brain_ok,
+        "글 만들기 — 모은 키워드로 콘텐츠 초안 작성": core_ok,
+        "AI 노출 확인 — ChatGPT 같은 AI가 내 글을 인용하는지 검사":
+            core_ok and keys["openrouter"],
+        "구글 실제 성과 — 서치콘솔의 진짜 순위·클릭수 가져오기":
+            core_ok and all(deps_gsc.values()) and keys["gsc_client_secrets"],
+        "순위 추적 — 검색결과 몇 등인지 기록 (없어도 됩니다)":
+            core_ok and (keys["dataforseo"] or keys["serper"]),
     }
     steps = []
     if not core_ok:
-        steps.append("pip install requests jinja2 pyyaml")
-    if not brain["db_exists"]:
-        steps.append("python skills/capture/scripts/db.py init  (Brain 초기화)")
+        steps.append("기본 부품 설치 — 터미널에 `pip install requests jinja2 pyyaml` "
+                     "입력 (1분). 이게 있어야 나머지가 돕니다.")
+    if not brain_ok:
+        steps.append("보관함 만들기 — `python skills/capture/scripts/db.py init` "
+                     "(몇 초, 제가 대신 실행해 드릴 수 있어요)")
     if not keys["openrouter"]:
-        steps.append("OPENROUTER_API_KEY 설정 — AI 인용 체크용 "
-                      "(capture/references/setup.md 5절)")
+        steps.append("AI 노출 확인 켜기 — OpenRouter에서 키를 발급받아 "
+                     "OPENROUTER_API_KEY 환경변수에 저장 (약 5분). "
+                     "발급 방법: capture/references/setup.md 5절")
     if not all(deps_gsc.values()):
-        steps.append("pip install google-api-python-client google-auth-oauthlib  (GSC용)")
+        steps.append("구글 연동 부품 설치 — "
+                     "`pip install google-api-python-client google-auth-oauthlib`")
     if not keys["gsc_client_secrets"]:
-        steps.append(f"GSC OAuth client_secrets.json → {secrets} "
-                      "(setup.md 4절, ~10분)")
+        steps.append(f"구글 서치콘솔 연결 — 구글에서 인증 파일(client_secrets.json)을 "
+                     f"내려받아 {secrets} 위치에 두기 (약 10분). "
+                     "따라 할 순서: setup.md 4절")
     if not (keys["dataforseo"] or keys["serper"]):
-        steps.append("[선택] SERP 키 — DATAFORSEO_LOGIN/PASSWORD 또는 "
-                      "SERPER_API_KEY (setup.md 7절)")
-    if brain["db_exists"] and not brain["projects"]:
-        steps.append("첫 프로젝트 등록 — /capture add <이름>")
+        steps.append("[안 해도 됩니다] 순위 추적용 유료 키 — DataForSEO 또는 Serper. "
+                     "순위를 직접 매기고 싶을 때만: setup.md 7절")
+    if brain_ok and not brain["projects"]:
+        steps.append("첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
+                     "입력하면 됩니다")
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "capabilities": caps, "next_steps": steps,
-            "core_ok": core_ok}
+            "core_ok": core_ok, "brain_ok": brain_ok}
 
 
 def main() -> None:
@@ -85,21 +103,34 @@ def main() -> None:
     if "--json" in sys.argv:
         print(json.dumps(d, ensure_ascii=False, indent=2))
     else:
-        mark = lambda b: "✓" if b else "✗"  # noqa: E731
-        print(f"seo-miner doctor · CAPTURE_HOME={d['brain']['home']}\n")
-        print("capabilities:")
-        for k, v in d["capabilities"].items():
-            print(f"  {mark(v)} {k}")
-        print("\nkeys:", ", ".join(f"{k}={mark(v)}" for k, v in d["keys"].items()))
+        print("seo-miner 상태 점검")
+        print(f"자료가 저장되는 폴더: {d['brain']['home']}\n")
+        ready = [k for k, v in d["capabilities"].items() if v]
+        locked = [k for k, v in d["capabilities"].items() if not v]
+        print("[지금 쓸 수 있는 기능]")
+        for k in ready:
+            print(f"  ✓ {k}")
+        if not ready:
+            print("  아직 없습니다 — 아래 1번부터 하시면 바로 켜집니다.")
+        if locked:
+            print("\n[아직 못 쓰는 기능 — 아래 순서대로 하면 켜집니다]")
+            for k in locked:
+                print(f"  ✗ {k}")
+        print("\n[연결 상태]")
+        for k, v in d["keys"].items():
+            print(f"  - {KEY_NAMES.get(k, k)}: {'연결됨' if v else '아직 없음'}")
+        if d["brain"].get("error"):
+            print(f"\n[주의] 보관함 파일을 여는 데 실패했습니다: {d['brain']['error']}")
         if d["brain"]["projects"]:
-            print("projects:", ", ".join(d["brain"]["projects"]))
+            print("\n등록된 사이트:", ", ".join(d["brain"]["projects"]))
         if d["next_steps"]:
-            print("\nnext steps (순서대로):")
+            print("\n[다음에 할 일 — 위에서부터 하나씩]")
             for i, s in enumerate(d["next_steps"], 1):
                 print(f"  {i}. {s}")
         else:
-            print("\n모든 준비 완료 — /capture run <프로젝트> 부터 시작하세요.")
-    sys.exit(0 if d["core_ok"] and d["brain"]["db_exists"] else 1)
+            print("\n준비 끝났습니다 — `/capture run <사이트이름>` 으로 첫 수집을 "
+                  "돌려보세요.")
+    sys.exit(0 if d["core_ok"] and d["brain_ok"] else 1)
 
 
 if __name__ == "__main__":
