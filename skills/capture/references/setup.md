@@ -81,15 +81,21 @@ Claude에게 부탁하면 1~3번을 브라우저로 대신 눌러준다 — 사�
      **프로덕션**으로 두면 만료 없이 계속 쓴다(미확인 앱 경고 화면은 뜨지만
      본인 계정 사용에는 지장 없음, OAuth 사용자 한도 100명).
 3. **클라이언트 만들기** — Google 인증 플랫폼 → `클라이언트` → `클라이언트 만들기`
-   → 유형 **데스크톱 앱** → 이름 아무거나 → 만들기 → **JSON 다운로드**.
+   → 유형 **데스크톱 앱** → 이름 아무거나 → 만들기.
    - ⚠️ 유형을 '웹 애플리케이션'으로 만들면 나중에 redirect_uri 오류가 난다.
-     `collect_gsc.py`가 이 실수를 감지해 경고해 준다.
-4. 받은 JSON은 **다운로드 폴더에 그대로 두면 된다** — 첫 실행 때
-   `~/.capture/creds/{사이트}/client_secrets.json`으로 알아서 옮긴다.
-   (다른 경로에 두려면 `GSC_CLIENT_SECRETS` 환경변수로 지정)
-5. `pip install google-api-python-client google-auth-oauthlib`
-6. `python scripts/collect_gsc.py --project NAME` → 브라우저 승인 1회 →
-   토큰이 `~/.capture/gsc_token.json`에 캐시됨. **이후 무인 동작.**
+4. `pip install google-api-python-client google-auth-oauthlib`
+5. 클라이언트 상세 화면에서 **보안 비밀번호 줄의 복사 아이콘**을 누른 직후:
+   ```
+   python ../setup/scripts/connect_gsc.py --project NAME --client-id <클라이언트 ID>
+   ```
+   클립보드의 비밀번호를 읽어 `~/.capture/creds/NAME/`에 넣고, 클립보드를 비우고,
+   승인 URL을 출력한다. 그 URL을 열어 `계속`을 누르면 토큰까지 저장된다.
+   - 비밀번호가 `****abcd`로만 보이면 **`+ Add secret`** 으로 새로 만든다.
+     구글은 생성 직후 한 번 말고는 기존 비밀번호를 다시 보여주지 않는다.
+   - 생성 모달의 `JSON 다운로드`는 Claude가 눌러도 파일이 떨어지지 않는다
+     (브라우저 자동화가 크롬 다운로드를 트리거하지 못함). 사람이 직접 누르면 되고,
+     그 경우 다운로드 폴더에 두기만 하면 `collect_gsc.py`가 알아서 회수한다.
+6. `python scripts/collect_gsc.py --project NAME` → **이후 무인 동작.**
    토큰이 만료·취소되면 자동으로 지우고 재승인 창을 띄운다.
 
 **어느 쪽을 쓰나**: 한 번 보고 말 거면 4-A(CSV), 매주 자동으로 돌릴 거면 4-B.
