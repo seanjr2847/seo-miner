@@ -49,6 +49,27 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
 core ✓ + 프로젝트 0개면 → `/capture add <이름>` 으로 자연스럽게 넘긴다.
 프로젝트가 이미 있으면 → `/capture run <이름>` 제안.
 
+## GSC 다이렉트 연동을 내가 대신 깔아주기 (claude-in-chrome, 2026-07-26 실측)
+
+"GSC 연동해줘"라고 하면 절차를 읽어주지 말고 브라우저로 직접 눌러준다.
+계정을 바꾸는 조작이므로 **시작 전에 무엇을 만들지 알리고 확인을 받는다.**
+
+1. `console.cloud.google.com/apis/library/searchconsole.googleapis.com` →
+   상단에서 프로젝트 선택 → `사용` 버튼 (이미 켜져 있으면 `관리`로 보인다).
+2. `console.cloud.google.com/auth/audience` → `게시 상태` 확인.
+   **테스트**면 `앱 게시`로 프로덕션 전환을 권한다(안 하면 7일마다 재인증).
+   이미 프로덕션이면 넘어간다.
+3. `console.cloud.google.com/auth/clients` → `클라이언트 만들기` →
+   유형 **데스크톱 앱** → 이름 → 만들기 → JSON 다운로드.
+   유형을 웹으로 고르지 않도록 주의(연동 후 redirect_uri 오류의 원인).
+4. 다운로드한 JSON은 옮기지 않아도 된다 — `collect_gsc.py`가 다운로드 폴더에서
+   `client_secret*.json`(installed 유형)을 찾아 `~/.capture/`로 옮긴다.
+5. `pip install google-api-python-client google-auth-oauthlib` 후
+   `python ../capture/scripts/collect_gsc.py --project {P}` → 브라우저 동의 1회.
+   "확인되지 않은 앱" 경고가 뜨면 사용자에게 `고급 → 이동`을 안내한다(본인 앱이므로 정상).
+
+로그인·동의 클릭은 **사용자 몫**이다. 대신 눌러주지 않는다.
+
 ## 문제 해결 단서
 - doctor가 brain error를 보고하면: 파일 권한 또는 손상 — `~/.capture/brain.db`를
   다른 이름으로 옮기면 다음 실행 때 새로 생성된다(모은 자료는 사라짐을 고지).

@@ -56,8 +56,10 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
   `python scripts/import_gsc_csv.py --project {P}` (인자 없이 실행하면 다운로드 폴더에서
   방금 받은 내보내기를 알아서 찾는다. 경로를 알면 뒤에 붙여도 된다).
   한계: 상위 1,000행, 페이지 단위 없음 — 이 점을 먼저 고지한다.
-- **자동(OAuth)**: `python scripts/collect_gsc.py --project {P}` (첫 실행 브라우저 승인 —
-  setup.md 4절). 매주 자동 수집·전체 행이 필요할 때만 권한다.
+- **다이렉트 연동(OAuth)**: `python scripts/collect_gsc.py --project {P}` (첫 실행 브라우저
+  승인). 한 번 붙으면 이후 무인 — 1,000행 제한도 페이지 차원 없음도 풀린다.
+  아직 안 붙어 있으면 setup 스킬의 "GSC 다이렉트 연동을 내가 대신 깔아주기" 절차대로
+  콘솔 클릭을 내가 대신 해준다(3~5분). 절차를 사용자에게 읽어주지 말 것.
 
 완료 후 striking-distance 프리뷰를 요약해준다.
 

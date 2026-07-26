@@ -51,22 +51,37 @@ Claude에게 부탁하면 1번 클릭까지 브라우저로 대신 해준다 (ca
 한계: UI 내보내기는 **상위 1,000행**까지, **페이지 단위 없음**, 매번 수동.
 구글 클라우드 프로젝트·OAuth는 전혀 필요 없다.
 
-### 4-B. OAuth 자동 연동 (1회, ~10분)
+### 4-B. 다이렉트 연동 (OAuth, 1회 3~5분 — 이후 완전 자동)
 
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
+콘솔 화면 이름은 2026-07-26 실측 기준(구 "OAuth 동의 화면 / 사용자 인증 정보"는
+**Google 인증 플랫폼**의 `대상` / `클라이언트`로 바뀌었다).
 
-1. https://console.cloud.google.com → 새 프로젝트 생성
-2. "API 및 서비스" → 라이브러리 → **Search Console API** 사용 설정
-3. OAuth 동의 화면 → User Type **외부**, 게시 상태는 **테스트**로 두고
-   본인 구글 계정을 테스트 사용자로 추가
-4. 사용자 인증 정보 → OAuth 클라이언트 ID → 유형 **데스크톱 앱**
-5. JSON 다운로드 → `~/.capture/client_secrets.json` 로 저장
-   (다른 경로면 `GSC_CLIENT_SECRETS` 환경변수로 지정)
-6. 첫 실행 `python scripts/collect_gsc.py --project NAME` 시 브라우저가 열리고
-   승인하면 토큰이 `~/.capture/gsc_token.json`에 캐시됨. 이후 무인 동작.
+Claude에게 부탁하면 1~3번을 브라우저로 대신 눌러준다 — 사용자는 계정 승인만 하면 된다.
 
-주의: 테스트 상태의 OAuth 앱은 리프레시 토큰이 7일 만에 만료될 수 있음.
-만료되면 gsc_token.json 지우고 재인증하거나, 동의 화면을 "프로덕션"으로 게시.
+1. **Search Console API 켜기** —
+   https://console.cloud.google.com/apis/library/searchconsole.googleapis.com
+   에서 프로젝트를 고르고 `사용` 클릭. (프로젝트가 없으면 아무거나 하나 만든다.
+   이미 다른 용도로 쓰던 프로젝트를 재사용해도 된다.)
+2. **동의 화면** — Google 인증 플랫폼 → `대상`. 처음이면 사용자 유형 **외부**로 생성.
+   이미 만들어 둔 프로젝트라면 이 단계는 건너뛴다.
+   - 게시 상태가 **테스트**면 리프레시 토큰이 7일 만에 만료된다. `앱 게시`를 눌러
+     **프로덕션**으로 두면 만료 없이 계속 쓴다(미확인 앱 경고 화면은 뜨지만
+     본인 계정 사용에는 지장 없음, OAuth 사용자 한도 100명).
+3. **클라이언트 만들기** — Google 인증 플랫폼 → `클라이언트` → `클라이언트 만들기`
+   → 유형 **데스크톱 앱** → 이름 아무거나 → 만들기 → **JSON 다운로드**.
+   - ⚠️ 유형을 '웹 애플리케이션'으로 만들면 나중에 redirect_uri 오류가 난다.
+     `collect_gsc.py`가 이 실수를 감지해 경고해 준다.
+4. 받은 JSON은 **다운로드 폴더에 그대로 두면 된다** — 첫 실행 때
+   `~/.capture/client_secrets.json`으로 알아서 옮긴다.
+   (다른 경로에 두려면 `GSC_CLIENT_SECRETS` 환경변수로 지정)
+5. `pip install google-api-python-client google-auth-oauthlib`
+6. `python scripts/collect_gsc.py --project NAME` → 브라우저 승인 1회 →
+   토큰이 `~/.capture/gsc_token.json`에 캐시됨. **이후 무인 동작.**
+   토큰이 만료·취소되면 자동으로 지우고 재승인 창을 띄운다.
+
+**어느 쪽을 쓰나**: 한 번 보고 말 거면 4-A(CSV), 매주 자동으로 돌릴 거면 4-B.
+4-B가 1,000행 제한·페이지 차원 없음도 같이 푼다.
 
 ## 5. OpenRouter (AI 가시성 체크 — 선택)
 

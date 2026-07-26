@@ -14,7 +14,9 @@ Usage:
   python collect_gsc.py --project NAME [--days 28] [--row-limit 25000] [--dry-run]
 """
 import argparse
+import json
 import os
+import shutil
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -25,6 +27,33 @@ import db  # noqa: E402
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 
+def resolve_secrets() -> str:
+    """client_secrets.json 위치를 정한다. 사용자가 파일을 직접 옮기지 않아도 되게,
+    다운로드 폴더에 있는 구글이 준 파일을 찾아 제자리에 넣어준다."""
+    env = os.environ.get("GSC_CLIENT_SECRETS")
+    if env:
+        return env
+    dest = db.CAPTURE_HOME / "client_secrets.json"
+    if dest.exists():
+        return str(dest)
+    dl = Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads"))
+    for c in sorted(dl.glob("client_secret*.json"),
+                    key=lambda p: -p.stat().st_mtime)[:10]:
+        try:
+            kind = set(json.loads(c.read_text(encoding="utf-8")))
+        except (ValueError, OSError):
+            continue
+        if "installed" in kind:                  # 데스크톱 앱 = 우리가 원하는 유형
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(c, dest)
+            print(f"[자동] 다운로드 폴더의 {c.name} 을 {dest} 로 옮겼습니다.")
+            return str(dest)
+        if "web" in kind:
+            print(f"[주의] {c.name} 은 '웹 애플리케이션' 유형입니다 — "
+                  "Search Console 연동에는 '데스크톱 앱' 클라이언트가 필요합니다.")
+    return str(dest)
+
+
 def get_service():
     try:
         from google.auth.transport.requests import Request
@@ -32,20 +61,32 @@ def get_service():
         from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
     except ImportError:
-        sys.exit("missing deps: pip install google-api-python-client google-auth-oauthlib")
+        sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
+                 "pip install google-api-python-client google-auth-oauthlib")
 
     token_path = db.CAPTURE_HOME / "gsc_token.json"
-    secrets = os.environ.get("GSC_CLIENT_SECRETS",
-                             str(db.CAPTURE_HOME / "client_secrets.json"))
+    secrets = resolve_secrets()
     creds = None
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
     if not creds or not creds.valid:
+        refreshed = False
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                refreshed = True
+            except Exception as e:  # 만료·취소된 토큰이면 조용히 재인증으로 넘어간다
+                print(f"[안내] 저장된 구글 인증이 만료됐습니다({type(e).__name__}) — "
+                      "브라우저를 열어 다시 승인받습니다.")
+                token_path.unlink(missing_ok=True)
+        if not refreshed:
             if not Path(secrets).exists():
-                sys.exit(f"client secrets not found: {secrets} (see references/setup.md)")
+                sys.exit(
+                    f"구글 인증 파일이 없습니다: {secrets}\n"
+                    "  Google Cloud 콘솔 → Google 인증 플랫폼 → 클라이언트 → "
+                    "'클라이언트 만들기' → 유형 '데스크톱 앱' → JSON 다운로드.\n"
+                    "  다운로드 폴더에 두면 다음 실행 때 알아서 가져옵니다 "
+                    "(자세히: references/setup.md 4-B).")
             flow = InstalledAppFlow.from_client_secrets_file(secrets, SCOPES)
             creds = flow.run_local_server(port=0)
         token_path.write_text(creds.to_json())
