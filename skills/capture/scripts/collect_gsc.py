@@ -5,9 +5,12 @@ Known holes (read reports accordingly, see references/scoring.md):
   * ~2-3 day data delay; low-volume longtail queries are privacy-filtered out
   * position is an AVERAGE across impressions, not a pinpoint rank
 
-Auth: OAuth installed-app flow.
-  client secrets: $GSC_CLIENT_SECRETS or $CAPTURE_HOME/client_secrets.json
-  cached token:   $CAPTURE_HOME/gsc_token.json
+Auth: OAuth installed-app flow. 자격증명은 **사이트별로 분리**된다 — 사이트마다
+자기 구글 클라우드 프로젝트/클라이언트를 쓸 수 있고, 공용 하나를 끼지 않는다.
+  client secrets: $GSC_CLIENT_SECRETS
+                  > $CAPTURE_HOME/creds/{project}/client_secrets.json
+                  > $CAPTURE_HOME/client_secrets.json  (모든 사이트 공용, 선택)
+  cached token:   $CAPTURE_HOME/creds/{project}/gsc_token.json
 Setup walkthrough: references/setup.md
 
 Usage:
@@ -27,15 +30,48 @@ import db  # noqa: E402
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 
-def resolve_secrets() -> str:
-    """client_secrets.json 위치를 정한다. 사용자가 파일을 직접 옮기지 않아도 되게,
-    다운로드 폴더에 있는 구글이 준 파일을 찾아 제자리에 넣어준다."""
+def creds_dir(project: str) -> Path:
+    return db.CAPTURE_HOME / "creds" / project
+
+
+def client_id_of(path: Path) -> str:
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return ""
+    return (cfg.get("installed") or cfg.get("web") or {}).get("client_id", "")
+
+
+def client_owner(path: Path, exclude: str) -> str:
+    """이 클라이언트를 이미 쓰고 있는 다른 사이트 이름 (없으면 빈 문자열)."""
+    cid = client_id_of(path)
+    if not cid:
+        return ""
+    for other in sorted((db.CAPTURE_HOME / "creds").glob("*/client_secrets.json")):
+        if other.parent.name != exclude and client_id_of(other) == cid:
+            return other.parent.name
+    return ""
+
+
+def resolve_secrets(project: str) -> str:
+    """이 사이트가 쓸 client_secrets.json 을 고른다.
+
+    사이트별 자격증명이 기본이다 — creds/{project}/ 아래에 각자 두므로 한 사이트의
+    구글 클라이언트가 다른 사이트의 Search Console을 대신 열지 않는다.
+    공용 파일을 두면 그걸 쓰지만, 그건 명시적으로 선택했을 때뿐이다.
+    """
     env = os.environ.get("GSC_CLIENT_SECRETS")
     if env:
         return env
-    dest = db.CAPTURE_HOME / "client_secrets.json"
-    if dest.exists():
-        return str(dest)
+    own = creds_dir(project) / "client_secrets.json"
+    if own.exists():
+        return str(own)
+    shared = db.CAPTURE_HOME / "client_secrets.json"
+    if shared.exists():
+        print(f"[안내] 사이트 전용 자격증명이 없어 공용 {shared.name} 을 씁니다. "
+              f"분리하려면 이 사이트용 JSON을 {own} 에 두세요.")
+        return str(shared)
+    # 다운로드 폴더에서 방금 받은 걸 이 사이트 전용 자리에 넣어준다.
     dl = Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads"))
     for c in sorted(dl.glob("client_secret*.json"),
                     key=lambda p: -p.stat().st_mtime)[:10]:
@@ -44,17 +80,28 @@ def resolve_secrets() -> str:
         except (ValueError, OSError):
             continue
         if "installed" in kind:                  # 데스크톱 앱 = 우리가 원하는 유형
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(c, dest)
-            print(f"[자동] 다운로드 폴더의 {c.name} 을 {dest} 로 옮겼습니다.")
-            return str(dest)
+            used_by = client_owner(c, exclude=project)
+            if used_by:
+                # 같은 클라이언트를 몰래 복제하면 사이트 분리가 무의미해진다.
+                print(f"[주의] {c.name} 은 이미 '{used_by}' 사이트가 쓰는 "
+                      f"클라이언트입니다. {project} 용으로는 두 가지 중 하나:\n"
+                      f"  · 이 사이트 전용 데스크톱 클라이언트를 새로 만들어 받기 "
+                      "(권장 — 사이트별 분리 유지)\n"
+                      f"  · 일부러 공용으로 쓰려면 그 JSON을 "
+                      f"{db.CAPTURE_HOME / 'client_secrets.json'} 에 두기")
+                continue
+            own.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(c, own)
+            print(f"[자동] 다운로드 폴더의 {c.name} 을 {own} 로 옮겼습니다 "
+                  f"({project} 전용).")
+            return str(own)
         if "web" in kind:
             print(f"[주의] {c.name} 은 '웹 애플리케이션' 유형입니다 — "
                   "Search Console 연동에는 '데스크톱 앱' 클라이언트가 필요합니다.")
-    return str(dest)
+    return str(own)
 
 
-def get_service():
+def get_service(project: str):
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
@@ -64,8 +111,14 @@ def get_service():
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
                  "pip install google-api-python-client google-auth-oauthlib")
 
-    token_path = db.CAPTURE_HOME / "gsc_token.json"
-    secrets = resolve_secrets()
+    secrets = resolve_secrets(project)
+    token_path = creds_dir(project) / "gsc_token.json"
+    legacy = db.CAPTURE_HOME / "gsc_token.json"
+    if not token_path.exists() and legacy.exists() \
+            and secrets == str(db.CAPTURE_HOME / "client_secrets.json"):
+        # 예전 공용 토큰은 공용 자격증명을 계속 쓸 때만 재사용 (불필요한 재인증 방지)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, token_path)
     creds = None
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
@@ -87,8 +140,11 @@ def get_service():
                     "'클라이언트 만들기' → 유형 '데스크톱 앱' → JSON 다운로드.\n"
                     "  다운로드 폴더에 두면 다음 실행 때 알아서 가져옵니다 "
                     "(자세히: references/setup.md 4-B).")
+            print(f"[인증] {project} 전용 구글 승인 창을 엽니다 — "
+                  "이 사이트의 Search Console 속성만 읽습니다.")
             flow = InstalledAppFlow.from_client_secrets_file(secrets, SCOPES)
             creds = flow.run_local_server(port=0)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json())
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
@@ -128,7 +184,7 @@ def main() -> None:
     if a.dry_run:
         return
 
-    service = get_service()
+    service = get_service(a.project)
     body = {"startDate": str(start), "endDate": str(end),
             "dimensions": ["query", "page"], "rowLimit": a.row_limit,
             "dataState": "final"}

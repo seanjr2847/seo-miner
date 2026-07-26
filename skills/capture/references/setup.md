@@ -57,6 +57,18 @@ Claude에게 부탁하면 1번 클릭까지 브라우저로 대신 해준다 (ca
 콘솔 화면 이름은 2026-07-26 실측 기준(구 "OAuth 동의 화면 / 사용자 인증 정보"는
 **Google 인증 플랫폼**의 `대상` / `클라이언트`로 바뀌었다).
 
+**자격증명은 사이트마다 따로 잡힌다.** 사이트 A의 구글 클라이언트가 사이트 B의
+Search Console을 대신 열지 않는다 — 사이트별로 이 절차를 한 번씩 밟는다(사이트당 3~5분).
+
+```
+~/.capture/creds/{사이트}/client_secrets.json   # 이 사이트 전용 데스크톱 클라이언트
+~/.capture/creds/{사이트}/gsc_token.json        # 이 사이트 전용 승인 토큰
+~/.capture/client_secrets.json                  # (선택) 일부러 공용으로 쓸 때만
+```
+
+일부러 여러 사이트가 클라이언트 하나를 공유하고 싶으면 공용 경로에 두면 된다.
+그렇게 하지 않았는데 이미 다른 사이트가 쓰는 JSON을 집으면 스크립트가 막고 알려준다.
+
 Claude에게 부탁하면 1~3번을 브라우저로 대신 눌러준다 — 사용자는 계정 승인만 하면 된다.
 
 1. **Search Console API 켜기** —
@@ -73,7 +85,7 @@ Claude에게 부탁하면 1~3번을 브라우저로 대신 눌러준다 — 사�
    - ⚠️ 유형을 '웹 애플리케이션'으로 만들면 나중에 redirect_uri 오류가 난다.
      `collect_gsc.py`가 이 실수를 감지해 경고해 준다.
 4. 받은 JSON은 **다운로드 폴더에 그대로 두면 된다** — 첫 실행 때
-   `~/.capture/client_secrets.json`으로 알아서 옮긴다.
+   `~/.capture/creds/{사이트}/client_secrets.json`으로 알아서 옮긴다.
    (다른 경로에 두려면 `GSC_CLIENT_SECRETS` 환경변수로 지정)
 5. `pip install google-api-python-client google-auth-oauthlib`
 6. `python scripts/collect_gsc.py --project NAME` → 브라우저 승인 1회 →

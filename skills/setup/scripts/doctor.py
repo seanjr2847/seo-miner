@@ -27,8 +27,8 @@ KEY_NAMES = {
     "openrouter": "OpenRouter 키",
     "dataforseo": "DataForSEO 계정",
     "serper": "Serper 키",
-    "gsc_client_secrets": "구글 인증 파일",
-    "gsc_token_cached": "구글 로그인 기록",
+    "gsc_client_secrets": "구글 인증 파일(모든 사이트 공용)",
+    "gsc_token_cached": "구글 로그인 기록(구버전 공용)",
 }
 
 
@@ -53,6 +53,9 @@ def diagnose() -> dict:
             brain["error"] = str(e)
     secrets = os.environ.get("GSC_CLIENT_SECRETS",
                              str(CAPTURE_HOME / "client_secrets.json"))
+    # 구글 연결은 사이트별로 따로 잡힌다 (creds/{사이트}/).
+    gsc_sites = {name: (CAPTURE_HOME / "creds" / name / "client_secrets.json").exists()
+                 for name in brain["projects"]}
     keys = {
         "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
@@ -74,8 +77,9 @@ def diagnose() -> dict:
         "AI 노출 확인 — ChatGPT 같은 AI가 내 글을 인용하는지 검사 "
         "(브라우저로 하면 키 없이도 됩니다)": core_ok,
         "구글 실제 성과 — 서치콘솔에서 받은 CSV로 진짜 순위·클릭 읽기": core_ok,
-        "구글 자동 연동 — 매번 내보내기 안 하고 알아서 가져오기":
-            core_ok and all(deps_gsc.values()) and keys["gsc_client_secrets"],
+        "구글 자동 연동 — 매번 내보내기 안 하고 알아서 가져오기 (사이트마다 따로)":
+            core_ok and all(deps_gsc.values())
+            and (any(gsc_sites.values()) or keys["gsc_client_secrets"]),
         "순위 추적 — 검색결과 몇 등인지 기록 (없어도 됩니다)":
             core_ok and (keys["dataforseo"] or keys["serper"]),
     }
@@ -94,16 +98,21 @@ def diagnose() -> dict:
         steps.append("[선택] AI 노출 확인을 자동으로 돌리려면 OpenRouter 키 "
                      "(유료, 약 5분): capture/references/setup.md 5절. "
                      "→ 돈 안 들이려면 `/seo-miner:browse`로 브라우저에서 직접 확인하면 됩니다")
-    if not (all(deps_gsc.values()) and keys["gsc_client_secrets"]):
-        steps.append("[선택] 구글 실적을 자동으로 받아오려면 구글 로그인 연결 (약 10분): "
-                     "setup.md 4절. → 그냥 Search Console 화면에서 '내보내기 → CSV' "
-                     "받아 저에게 주시면 설정 없이 바로 읽습니다 (1분)")
+    unlinked = [n for n, ok in gsc_sites.items() if not ok]
+    if unlinked and not keys["gsc_client_secrets"]:
+        steps.append("[선택] 구글 실적 자동 수집이 아직 안 붙은 사이트: "
+                     f"{', '.join(unlinked)} — 사이트마다 자기 데스크톱 클라이언트를 "
+                     "쓰므로 하나씩 붙입니다 (사이트당 3~5분): setup.md 4-B. "
+                     "→ 급하면 '내보내기 → CSV' 경로가 설정 없이 바로 됩니다")
+    elif not all(deps_gsc.values()):
+        steps.append("[선택] 구글 자동 연동용 부품 설치 — "
+                     "`pip install google-api-python-client google-auth-oauthlib`")
     if not (keys["dataforseo"] or keys["serper"]):
         steps.append("[선택] 순위 추적용 유료 키 — DataForSEO 또는 Serper. "
                      "검색 순위를 매일 기록하고 싶을 때만: setup.md 7절")
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
-            "keys": keys, "capabilities": caps, "next_steps": steps,
-            "core_ok": core_ok, "brain_ok": brain_ok}
+            "keys": keys, "gsc_sites": gsc_sites, "capabilities": caps,
+            "next_steps": steps, "core_ok": core_ok, "brain_ok": brain_ok}
 
 
 def main() -> None:
@@ -129,8 +138,10 @@ def main() -> None:
             print(f"  - {KEY_NAMES.get(k, k)}: {'연결됨' if v else '아직 없음'}")
         if d["brain"].get("error"):
             print(f"\n[주의] 보관함 파일을 여는 데 실패했습니다: {d['brain']['error']}")
-        if d["brain"]["projects"]:
-            print("\n등록된 사이트:", ", ".join(d["brain"]["projects"]))
+        if d["gsc_sites"]:
+            print("\n[사이트별 구글 연결] — 사이트마다 자기 클라이언트를 씁니다")
+            for name, ok in d["gsc_sites"].items():
+                print(f"  - {name}: {'연결됨' if ok else '아직 (CSV로는 지금도 가능)'}")
         must = [s for s in d["next_steps"] if not s.startswith("[선택]")]
         opt = [s for s in d["next_steps"] if s.startswith("[선택]")]
         if must:

@@ -28,6 +28,8 @@ API 키는 **하나도 없어도** 키워드 발굴·구글 실적 읽기·AI �
 | 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 또는 `SERPER_API_KEY` (setup.md 7절) |
 
 brain.db(로컬 저장소)는 첫 실행 때 자동으로 만들어집니다 — 초기화 명령 필요 없음.
+GSC 자격증명은 `~/.capture/creds/{사이트}/`에 **사이트별로 분리** 저장됩니다 —
+한 사이트의 구글 클라이언트가 다른 사이트의 Search Console을 열지 않습니다.
 
 ## 시작
 ```
