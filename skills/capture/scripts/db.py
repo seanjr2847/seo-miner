@@ -159,7 +159,9 @@ def now() -> str:
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
-        sys.exit(f"project '{name}' not found. Run: python db.py sync-project <yaml>")
+        sys.exit(f"'{name}' 사이트가 아직 등록되지 않았습니다 — "
+                 f"먼저 `/capture add {name}` 으로 등록하세요 "
+                 "(수동: python db.py sync-project <yaml>)")
     return row
 
 
