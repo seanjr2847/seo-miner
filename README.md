@@ -23,7 +23,7 @@ API 키는 **하나도 없어도** 키워드 발굴·구글 실적 읽기·AI �
 
 | 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
 |---|---|---|
-| 구글 실적(순위·클릭) | Search Console → 내보내기 → CSV → `import_gsc_csv.py` (1분) | OAuth 연결 시 자동 수집 + 1,000행 제한 해제 (setup.md 4-B) |
+| 구글 실적(순위·클릭) | Search Console 내보내기 → CSV. **클릭은 Claude가 브라우저로 대신** 하고 다운로드 폴더에서 알아서 집어감 | OAuth 연결 시 자동 수집 + 1,000행 제한 해제 (setup.md 4-B) |
 | AI 인용 확인 | `/browse` — 브라우저로 실제 앱에 직접 질문 | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (setup.md 5절) |
 | 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 또는 `SERPER_API_KEY` (setup.md 7절) |
 

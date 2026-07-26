@@ -51,10 +51,11 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 두 경로가 있다. **구글 로그인 연결이 안 돼 있으면 OAuth 절차부터 시키지 말고 CSV 경로를
 먼저 제안한다** (설정 0, 1분).
 
-- **CSV(쉬움)**: Search Console → 실적 → '내보내기' → CSV(zip). 받은 파일 경로로
-  `python scripts/import_gsc_csv.py --project {P} <파일> --days <화면에 걸려있던 기간>`.
-  사용자가 원하면 claude-in-chrome으로 내가 직접 열고 내보내기까지 눌러준다.
-  한계: 상위 1,000행, 페이지 단위 없음, 수동 — 이 점을 먼저 고지한다.
+- **CSV(쉬움, 기본)**: 사용자에게 파일을 받아오라고 시키지 말고 **claude-in-chrome으로
+  내가 직접 눌러준다.** 아래 5절 참조. 파일만 있으면
+  `python scripts/import_gsc_csv.py --project {P}` (인자 없이 실행하면 다운로드 폴더에서
+  방금 받은 내보내기를 알아서 찾는다. 경로를 알면 뒤에 붙여도 된다).
+  한계: 상위 1,000행, 페이지 단위 없음 — 이 점을 먼저 고지한다.
 - **자동(OAuth)**: `python scripts/collect_gsc.py --project {P}` (첫 실행 브라우저 승인 —
   setup.md 4절). 매주 자동 수집·전체 행이 필요할 때만 권한다.
 
@@ -95,6 +96,25 @@ gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아�
 
 ### /capture ask {P} "..."
 자유 질문. sql로 근거를 조회해 수치와 함께 답한다. 없는 데이터는 없다고 답한다.
+
+## GSC CSV를 브라우저로 직접 받아오기 (claude-in-chrome, 2026-07-26 실측)
+
+사용자에게 "내보내기 눌러서 파일 주세요"라고 시키지 않는다. 내가 누른다.
+
+1. `tabs_context`로 시작 → `search.google.com/search-console/performance/search-analytics?resource_id={속성}`
+   으로 이동. 속성 ID를 모르면 `search.google.com/search-console`을 열어 좌상단
+   속성 선택기에서 확인한다 (`sc-domain:example.com` 형태).
+2. **기간을 먼저 맞춘다.** 상단 칩: `24시간 / 7일 / 28일 / 3개월 / 더보기`.
+   **기본값이 3개월**이므로 그대로 받으면 `--days 90`, 28일 칩을 눌렀으면 `--days 28`.
+   여기서 고른 기간과 `--days`가 어긋나면 Brain의 기간 표기가 틀어진다.
+3. 하단 표에서 **`검색어 수` 탭**이 선택돼 있는지 확인 (페이지/국가/기기 탭이 아니라).
+4. 우상단 **`내보내기`** 버튼 → 메뉴 3개(`Google Sheets` / `Excel 다운로드` /
+   **`CSV 다운로드`**) → CSV 다운로드. **다운로드는 사용자 확인을 받고 누른다.**
+5. `python scripts/import_gsc_csv.py --project {P} --days {2번에서 고른 기간}` —
+   인자 없이도 다운로드 폴더에서 방금 받은 zip을 찾아낸다.
+
+로그인 안 돼 있으면 **대신 로그인하지 않는다** — 사용자에게 로그인만 부탁하고 대기.
+속성이 없으면 CSV 경로 자체가 불가하므로 Search Console 소유권 확인부터 안내한다.
 
 ## 스코프 밖 (요청받아도 이 스킬로는 하지 않는 것)
 

@@ -7,7 +7,8 @@
 받는 법: Search Console → 실적 → 우측 상단 '내보내기' → CSV (zip으로 받아짐)
 
 Usage:
-  python import_gsc_csv.py --project NAME <내려받은.zip|쿼리.csv> [--days 28] [--dry-run]
+  python import_gsc_csv.py --project NAME [내려받은.zip|쿼리.csv] [--days 28] [--dry-run]
+  # 파일을 생략하면 다운로드 폴더에서 가장 최근 내보내기를 알아서 찾는다.
 """
 import argparse
 import csv
@@ -42,19 +43,20 @@ def parse_num(s: str) -> float:
 
 
 def pick_csv(path: Path) -> tuple[str, bytes]:
+    """zip/csv에서 검색어 표를 꺼낸다. 못 꺼내면 ValueError (자동 탐색이 건너뛸 수 있게)."""
     if path.suffix.lower() != ".zip":
         return path.name, path.read_bytes()
     with zipfile.ZipFile(path) as z:
         names = [n for n in z.namelist() if n.lower().endswith(".csv")]
         if not names:
-            sys.exit(f"zip 안에 CSV가 없습니다: {path}")
+            raise ValueError(f"zip 안에 CSV가 없습니다: {path}")
         hit = next((n for n in names if QUERY_FILE.search(n)), None)
         if not hit:
             # 이름을 못 알아보는 언어일 때: URL 목록(페이지 CSV)은 빼고 가장 큰 것.
             cand = [n for n in sorted(names, key=lambda n: -z.getinfo(n).file_size)
                     if not looks_like_urls(z.read(n))]
             if not cand:
-                sys.exit(f"zip 안에서 검색어 표를 찾지 못했습니다: {names}")
+                raise ValueError(f"zip 안에서 검색어 표를 찾지 못했습니다: {names}")
             hit = cand[0]
             print(f"[주의] 쿼리 파일 이름을 못 알아봐서 '{hit}'를 검색어 표로 씁니다.")
         return hit, z.read(hit)
@@ -87,19 +89,50 @@ def read_rows(blob: bytes) -> list[tuple]:
     return rows
 
 
+def newest_export(folder: Path) -> tuple[Path, str, bytes]:
+    """다운로드 폴더에서 방금 받은 Search Console 파일을 알아서 집는다.
+    최근 것부터 열어보고 검색어 표가 나오는 첫 파일을 쓴다."""
+    files = sorted((p for p in folder.glob("*")
+                    if p.suffix.lower() in (".zip", ".csv") and p.is_file()),
+                   key=lambda p: -p.stat().st_mtime)[:20]
+    for p in files:
+        try:
+            name, blob = pick_csv(p)
+            if read_rows(blob):
+                return p, name, blob
+        except (ValueError, OSError, zipfile.BadZipFile, UnicodeDecodeError):
+            continue
+    sys.exit(f"{folder} 에서 Search Console 내보내기 파일을 찾지 못했습니다. "
+             "실적 화면에서 '내보내기 → CSV'를 받은 뒤 다시 시도하거나, "
+             "파일 경로를 직접 알려주세요.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)
-    ap.add_argument("file", help="Search Console에서 내보낸 zip 또는 csv")
+    ap.add_argument("file", nargs="?",
+                    help="Search Console에서 내보낸 zip 또는 csv "
+                         "(생략하면 다운로드 폴더에서 가장 최근 것을 찾음)")
+    ap.add_argument("--downloads-dir", default=str(Path.home() / "Downloads"))
     ap.add_argument("--days", type=int, default=28,
                     help="내보낼 때 화면에 걸려 있던 기간 (기본 28일)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    path = Path(a.file).expanduser()
-    if not path.exists():
-        sys.exit(f"파일이 없습니다: {path}")
-    name, blob = pick_csv(path)
+    if a.file:
+        path = Path(a.file).expanduser()
+        if not path.exists():
+            sys.exit(f"파일이 없습니다: {path}")
+        try:
+            name, blob = pick_csv(path)
+        except zipfile.BadZipFile:
+            sys.exit(f"{path.name} 은 정상적인 zip이 아닙니다 — 다운로드가 중간에 "
+                     "끊겼을 수 있습니다. 내보내기를 다시 받아보세요.")
+        except ValueError as e:
+            sys.exit(str(e))
+    else:
+        path, name, blob = newest_export(Path(a.downloads_dir).expanduser())
+        print(f"[자동] 다운로드 폴더에서 찾음: {path.name}")
     rows = read_rows(blob)
     if not rows:
         sys.exit(f"'{name}'에서 읽을 행이 없습니다 — 실적 화면의 '쿼리' 표를 "
