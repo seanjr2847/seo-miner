@@ -111,12 +111,16 @@ def gather(conn, p) -> dict:
         """SELECT kind, target, ROUND(score,1) score, reasoning, status
              FROM opportunities WHERE project_id=?
             ORDER BY created_at DESC, score DESC LIMIT 12""", (pid,))
+    # 목록은 12개로 자르지만 KPI는 실제 건수를 세야 한다 (자른 개수를 세면 늘 12로 보인다).
+    opps_total = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
+        (pid,)).fetchone()[0]
     runs = q(conn,
         """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
              FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
     return {"gsc_date": cur, "gsc_prev": prev, "ups": ups, "downs": downs,
             "striking": striking, "matrix": matrix, "gap_domains": gap_domains,
-            "missed": missed, "opps": opps, "runs": runs,
+            "missed": missed, "opps": opps, "opps_total": opps_total, "runs": runs,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
             "ranks": ranks[:30], "aio_gap": aio_gap,

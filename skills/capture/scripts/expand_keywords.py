@@ -100,13 +100,28 @@ def main() -> None:
     seeds = [r["keyword"] for r in conn.execute(
         "SELECT keyword FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
     seeds = seeds or cfg.get("seed_keywords", [])
-    if not seeds:
-        sys.exit("no seed keywords. Add seed_keywords to the project yaml and sync-project.")
+    # gsc 모드는 시드가 필요 없다 — 자동완성을 쓸 때만 요구한다.
+    if not seeds and a.mode in ("all", "autocomplete"):
+        if a.mode == "autocomplete":
+            sys.exit("시드 키워드가 없습니다. 프로젝트 yaml의 seed_keywords에 3~10개를 넣고 "
+                     "sync-project 하거나, GSC 데이터만으로 시작하려면 --mode gsc 를 쓰세요.")
+        print("[안내] 시드 키워드가 없어 자동완성은 건너뜁니다 — GSC 실측만 캡니다.")
+        a.mode = "gsc"
+
+    if a.dry_run:
+        # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
+        if a.mode in ("all", "autocomplete"):
+            autocomplete_expand(seeds, hl, gl, a.throttle, a.per_seed_cap, True)
+        if a.mode in ("all", "gsc"):
+            print(f"[gsc] {len(gsc_mine(conn, p['id']))}개가 후보로 들어올 예정")
+        print("(--dry-run: 저장하지 않음)")
+        conn.close()
+        return
 
     run_id = db.start_run(conn, p["id"], "keywords")
     cands: list[tuple[str, str]] = []
     if a.mode in ("all", "autocomplete"):
-        cands += autocomplete_expand(seeds, hl, gl, a.throttle, a.per_seed_cap, a.dry_run)
+        cands += autocomplete_expand(seeds, hl, gl, a.throttle, a.per_seed_cap, False)
     if a.mode in ("all", "gsc"):
         cands += gsc_mine(conn, p["id"])
 

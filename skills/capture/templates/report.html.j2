@@ -41,7 +41,7 @@
     <div class="kpi"><b>{{ kw_active }}</b><span>tracked keywords</span></div>
     <div class="kpi"><b>{{ striking|length }}</b><span>striking distance (4–20위)</span></div>
     <div class="kpi"><b>{{ gap_domains|length }}</b><span>citation-gap domains</span></div>
-    <div class="kpi"><b>{{ opps|length }}</b><span>open opportunities</span></div>
+    <div class="kpi"><b>{{ opps_total }}</b><span>open opportunities</span></div>
   </div>
 
   <h2>What moved (GSC, {{ gsc_prev or '—' }} → {{ gsc_date or '—' }})</h2>
@@ -108,6 +108,10 @@
     {% for o in opps %}<tr><td>{{ o.kind }}</td><td>{{ o.target }}</td>
       <td>{{ o.score }}</td><td>{{ o.reasoning }}</td><td>{{ o.status }}</td></tr>{% endfor %}
   </table>
+  {% if opps_total > opps|length %}
+  <div class="meta">상위 {{ opps|length }}건만 표시 — 전체 {{ opps_total }}건은
+    <code>db.py sql "SELECT * FROM opportunities WHERE status='new'"</code></div>
+  {% endif %}
   {% else %}<div class="empty">아직 없음. /capture gaps → 분석 단계에서 채워짐.</div>{% endif %}
 
   <h2>Next actions</h2>
