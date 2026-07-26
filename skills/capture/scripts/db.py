@@ -24,6 +24,14 @@ from pathlib import Path
 CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 DB_PATH = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
 
+# 한국어 Windows 콘솔(cp949)에서 '—'·'✓' 출력이 UnicodeEncodeError로 죽는 것 방지.
+# db는 모든 스크립트가 import하므로 여기 한 번이면 전부 커버된다(doctor는 예외 — 자체 처리).
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # 파이프로 감싼 경우 등
+        pass
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
@@ -130,6 +138,9 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
+    # 덕분에 사용자가 'db.py init'을 먼저 칠 일이 없다.
+    conn.executescript(SCHEMA)
     return conn
 
 
@@ -168,7 +179,6 @@ def load_project_yaml(name_or_path: str) -> dict:
 def sync_project(yaml_path: str) -> None:
     cfg = load_project_yaml(yaml_path)
     conn = connect()
-    conn.executescript(SCHEMA)
     conn.execute(
         """INSERT INTO projects(name,type,domain,locale,gsc_property,config_path)
            VALUES(?,?,?,?,?,?)

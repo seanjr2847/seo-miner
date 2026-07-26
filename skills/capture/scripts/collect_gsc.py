@@ -52,6 +52,18 @@ def get_service():
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
+def preview(conn, project_id: int, snap: str) -> None:
+    """조금만 밀면 1페이지 갈 키워드(평균 4~20위) 미리보기. CSV 경로에서도 재사용."""
+    print("saved snapshot %s. striking-distance preview "
+          "(pos 4~20, impressions desc):" % snap)
+    for r in conn.execute(
+        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
+             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
+            GROUP BY query HAVING pos BETWEEN 4 AND 20
+            ORDER BY imp DESC LIMIT 10""", (project_id, snap)):
+        print(f"  {r['pos']:>5}  imp={r['imp']:<6} clk={r['clk']:<4} {r['query']}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)
@@ -99,14 +111,7 @@ def main() -> None:
              round(float(r.get("ctr", 0)), 4), round(float(r.get("position", 0)), 1)))
     conn.commit()
     db.finish_run(conn, run_id, api_calls=1, notes=f"rows={len(rows)} window={start}~{end}")
-    print(f"saved snapshot {snap}. striking-distance preview "
-          f"(pos 4~20, impressions desc):")
-    for r in conn.execute(
-        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
-             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
-            GROUP BY query HAVING pos BETWEEN 4 AND 20
-            ORDER BY imp DESC LIMIT 10""", (p["id"], snap)):
-        print(f"  {r['pos']:>5}  imp={r['imp']:<6} clk={r['clk']:<4} {r['query']}")
+    preview(conn, p["id"], snap)
     conn.close()
 
 

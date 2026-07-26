@@ -33,9 +33,21 @@ pip install google-api-python-client google-auth-oauthlib
 └── gsc_token.json           # 자동 생성·캐시
 ```
 
-초기화: `python scripts/db.py init`
+brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
+`python scripts/db.py init`.
 
-## 4. GSC OAuth (1회, ~10분)
+## 4. GSC 실측 데이터 — 두 가지 경로
+
+### 4-A. CSV 내보내기 (쉬움 — 설정 없음, 1분)
+
+1. Search Console → 실적 → 기간 선택 → 우측 상단 **내보내기 → CSV** (zip으로 받아짐)
+2. `python scripts/import_gsc_csv.py --project NAME ~/Downloads/받은파일.zip --days 28`
+   (`--days`는 내보낼 때 화면에 걸려 있던 기간을 그대로 적는다)
+
+한계: UI 내보내기는 **상위 1,000행**까지, **페이지 단위 없음**, 매번 수동.
+구글 클라우드 프로젝트·OAuth는 전혀 필요 없다.
+
+### 4-B. OAuth 자동 연동 (1회, ~10분)
 
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
 
@@ -52,7 +64,10 @@ pip install google-api-python-client google-auth-oauthlib
 주의: 테스트 상태의 OAuth 앱은 리프레시 토큰이 7일 만에 만료될 수 있음.
 만료되면 gsc_token.json 지우고 재인증하거나, 동의 화면을 "프로덕션"으로 게시.
 
-## 5. OpenRouter (AI 가시성 체크)
+## 5. OpenRouter (AI 가시성 체크 — 선택)
+
+키 없이 무료로 하려면 `browse` 스킬(`/seo-miner:browse`)이 브라우저로 실제 앱에
+직접 물어봐 같은 데이터를 남긴다. 아래는 여러 프롬프트를 자동으로 돌리고 싶을 때.
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
 2. `export OPENROUTER_API_KEY=sk-or-...` (셸 rc 파일에 추가)
@@ -65,12 +80,12 @@ pip install google-api-python-client google-auth-oauthlib
 
 ```bash
 cd ~/.claude/skills/capture
-python scripts/db.py init
 cp projects/_template.yaml ~/.capture/projects/myproject.yaml   # 편집 후
 python scripts/db.py sync-project ~/.capture/projects/myproject.yaml
 python scripts/expand_keywords.py --project myproject --dry-run
 python scripts/collect_ai.py --project myproject --dry-run
 python scripts/collect_gsc.py --project myproject --dry-run
+python scripts/import_gsc_csv.py --project myproject <내려받은.zip> --dry-run  # CSV 경로
 python scripts/report.py --project myproject     # 빈 리포트라도 렌더 확인
 ```
 

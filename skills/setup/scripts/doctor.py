@@ -17,6 +17,12 @@ from pathlib import Path
 CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 DB = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
 
+for _s in (sys.stdout, sys.stderr):  # 한국어 Windows 콘솔(cp949)에서 ✓/— 출력 보호
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 KEY_NAMES = {
     "openrouter": "OpenRouter 키",
     "dataforseo": "DataForSEO 계정",
@@ -56,15 +62,19 @@ def diagnose() -> dict:
         "gsc_token_cached": (CAPTURE_HOME / "gsc_token.json").exists(),
     }
     core_ok = all(deps_core.values())
-    brain_ok = brain["db_exists"] and not brain.get("error")
+    # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
+    # 있는데 안 열리는 것만 문제다.
+    brain_ok = not brain.get("error")
     # ponytail: 라벨 자체를 사람 말로 저장 — 별도 표시용 매핑 테이블 안 만듦
     caps = {
         "키워드 찾기 — 검색창 자동완성으로 후보 수집 (돈 안 듦)": core_ok,
-        "보관함 — 수집한 자료를 내 컴퓨터에 저장해 둡니다": core_ok and brain_ok,
+        "보관함 — 수집한 자료를 내 컴퓨터에 저장 (없으면 자동으로 만듭니다)":
+            core_ok and brain_ok,
         "글 만들기 — 모은 키워드로 콘텐츠 초안 작성": core_ok,
-        "AI 노출 확인 — ChatGPT 같은 AI가 내 글을 인용하는지 검사":
-            core_ok and keys["openrouter"],
-        "구글 실제 성과 — 서치콘솔의 진짜 순위·클릭수 가져오기":
+        "AI 노출 확인 — ChatGPT 같은 AI가 내 글을 인용하는지 검사 "
+        "(브라우저로 하면 키 없이도 됩니다)": core_ok,
+        "구글 실제 성과 — 서치콘솔에서 받은 CSV로 진짜 순위·클릭 읽기": core_ok,
+        "구글 자동 연동 — 매번 내보내기 안 하고 알아서 가져오기":
             core_ok and all(deps_gsc.values()) and keys["gsc_client_secrets"],
         "순위 추적 — 검색결과 몇 등인지 기록 (없어도 됩니다)":
             core_ok and (keys["dataforseo"] or keys["serper"]),
@@ -74,25 +84,23 @@ def diagnose() -> dict:
         steps.append("기본 부품 설치 — 터미널에 `pip install requests jinja2 pyyaml` "
                      "입력 (1분). 이게 있어야 나머지가 돕니다.")
     if not brain_ok:
-        steps.append("보관함 만들기 — `python skills/capture/scripts/db.py init` "
-                     "(몇 초, 제가 대신 실행해 드릴 수 있어요)")
-    if not keys["openrouter"]:
-        steps.append("AI 노출 확인 켜기 — OpenRouter에서 키를 발급받아 "
-                     "OPENROUTER_API_KEY 환경변수에 저장 (약 5분). "
-                     "발급 방법: capture/references/setup.md 5절")
-    if not all(deps_gsc.values()):
-        steps.append("구글 연동 부품 설치 — "
-                     "`pip install google-api-python-client google-auth-oauthlib`")
-    if not keys["gsc_client_secrets"]:
-        steps.append(f"구글 서치콘솔 연결 — 구글에서 인증 파일(client_secrets.json)을 "
-                     f"내려받아 {secrets} 위치에 두기 (약 10분). "
-                     "따라 할 순서: setup.md 4절")
-    if not (keys["dataforseo"] or keys["serper"]):
-        steps.append("[안 해도 됩니다] 순위 추적용 유료 키 — DataForSEO 또는 Serper. "
-                     "순위를 직접 매기고 싶을 때만: setup.md 7절")
+        steps.append(f"보관함 파일이 손상됐습니다 — {DB} 를 다른 이름으로 옮기면 "
+                     "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)")
     if brain_ok and not brain["projects"]:
         steps.append("첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
-                     "입력하면 됩니다")
+                     "입력하면 제가 물어보면서 만들어 드립니다. 여기까지가 필수 끝.")
+    # 아래는 전부 선택 — '해야 할 일'처럼 보이지 않게 [선택] 접두사를 붙인다.
+    if not keys["openrouter"]:
+        steps.append("[선택] AI 노출 확인을 자동으로 돌리려면 OpenRouter 키 "
+                     "(유료, 약 5분): capture/references/setup.md 5절. "
+                     "→ 돈 안 들이려면 `/seo-miner:browse`로 브라우저에서 직접 확인하면 됩니다")
+    if not (all(deps_gsc.values()) and keys["gsc_client_secrets"]):
+        steps.append("[선택] 구글 실적을 자동으로 받아오려면 구글 로그인 연결 (약 10분): "
+                     "setup.md 4절. → 그냥 Search Console 화면에서 '내보내기 → CSV' "
+                     "받아 저에게 주시면 설정 없이 바로 읽습니다 (1분)")
+    if not (keys["dataforseo"] or keys["serper"]):
+        steps.append("[선택] 순위 추적용 유료 키 — DataForSEO 또는 Serper. "
+                     "검색 순위를 매일 기록하고 싶을 때만: setup.md 7절")
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "capabilities": caps, "next_steps": steps,
             "core_ok": core_ok, "brain_ok": brain_ok}
@@ -113,7 +121,7 @@ def main() -> None:
         if not ready:
             print("  아직 없습니다 — 아래 1번부터 하시면 바로 켜집니다.")
         if locked:
-            print("\n[아직 못 쓰는 기능 — 아래 순서대로 하면 켜집니다]")
+            print("\n[아직 안 켠 기능 — 없어도 나머지는 다 돌아갑니다]")
             for k in locked:
                 print(f"  ✗ {k}")
         print("\n[연결 상태]")
@@ -123,13 +131,19 @@ def main() -> None:
             print(f"\n[주의] 보관함 파일을 여는 데 실패했습니다: {d['brain']['error']}")
         if d["brain"]["projects"]:
             print("\n등록된 사이트:", ", ".join(d["brain"]["projects"]))
-        if d["next_steps"]:
-            print("\n[다음에 할 일 — 위에서부터 하나씩]")
-            for i, s in enumerate(d["next_steps"], 1):
+        must = [s for s in d["next_steps"] if not s.startswith("[선택]")]
+        opt = [s for s in d["next_steps"] if s.startswith("[선택]")]
+        if must:
+            print("\n[해야 할 일]")
+            for i, s in enumerate(must, 1):
                 print(f"  {i}. {s}")
         else:
-            print("\n준비 끝났습니다 — `/capture run <사이트이름>` 으로 첫 수집을 "
-                  "돌려보세요.")
+            print("\n[해야 할 일] 없습니다 — `/capture run <사이트이름>` 으로 "
+                  "바로 돌리시면 됩니다.")
+        if opt:
+            print("\n[나중에 해도 되는 것 — 급하지 않습니다]")
+            for s in opt:
+                print(f"  · {s[len('[선택] '):]}")
     sys.exit(0 if d["core_ok"] and d["brain_ok"] else 1)
 
 

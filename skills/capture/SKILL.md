@@ -20,7 +20,8 @@ description: Personal SEO & AI-search visibility engine (Boring Agent 역기획 
 ## 상태 위치
 
 데이터는 `$CAPTURE_HOME`(기본 `~/.capture`)에 산다 — brain.db, projects/*.yaml, reports/.
-최초 1회: `python scripts/db.py init`. 미설정·의존성 오류가 감지되면 추측하지 말고
+brain.db는 첫 접속 때 자동 생성된다(`db.connect`) — 사용자에게 init을 시키지 말 것.
+미설정·의존성 오류가 감지되면 추측하지 말고
 setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기반으로 안내한다.
 상세 절차 문서는 `references/setup.md`.
 
@@ -47,7 +48,16 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 3. 수요 근거는 "자동완성 등장 = 수요 존재, GSC 노출 = 실측"으로만 말한다 (볼륨 창작 금지).
 
 ### /capture gsc {P}
-`python scripts/collect_gsc.py --project {P}` (첫 실행은 브라우저 OAuth — setup.md 4절).
+두 경로가 있다. **구글 로그인 연결이 안 돼 있으면 OAuth 절차부터 시키지 말고 CSV 경로를
+먼저 제안한다** (설정 0, 1분).
+
+- **CSV(쉬움)**: Search Console → 실적 → '내보내기' → CSV(zip). 받은 파일 경로로
+  `python scripts/import_gsc_csv.py --project {P} <파일> --days <화면에 걸려있던 기간>`.
+  사용자가 원하면 claude-in-chrome으로 내가 직접 열고 내보내기까지 눌러준다.
+  한계: 상위 1,000행, 페이지 단위 없음, 수동 — 이 점을 먼저 고지한다.
+- **자동(OAuth)**: `python scripts/collect_gsc.py --project {P}` (첫 실행 브라우저 승인 —
+  setup.md 4절). 매주 자동 수집·전체 행이 필요할 때만 권한다.
+
 완료 후 striking-distance 프리뷰를 요약해준다.
 
 ### /capture rank {P} — 순위 스냅샷 (SERP, 키 있을 때)

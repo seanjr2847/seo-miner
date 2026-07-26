@@ -17,10 +17,17 @@ Create(실행)를 로컬 Brain(SQLite)으로 잇는 복리 루프.
 ```
 
 ## 준비물 (references/setup.md 상세)
-- 필수: `pip install requests jinja2 pyyaml`
-- AI 인용 체크: `OPENROUTER_API_KEY`
-- GSC: `pip install google-api-python-client google-auth-oauthlib` + OAuth (setup.md 4절)
-- SERP(선택): `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD` 또는 `SERPER_API_KEY` (setup.md 7절)
+
+필수는 하나뿐입니다: `pip install requests jinja2 pyyaml`.
+API 키는 **하나도 없어도** 키워드 발굴·구글 실적 읽기·AI 인용 확인·리포트가 다 됩니다.
+
+| 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
+|---|---|---|
+| 구글 실적(순위·클릭) | Search Console → 내보내기 → CSV → `import_gsc_csv.py` (1분) | OAuth 연결 시 자동 수집 + 1,000행 제한 해제 (setup.md 4-B) |
+| AI 인용 확인 | `/browse` — 브라우저로 실제 앱에 직접 질문 | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (setup.md 5절) |
+| 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 또는 `SERPER_API_KEY` (setup.md 7절) |
+
+brain.db(로컬 저장소)는 첫 실행 때 자동으로 만들어집니다 — 초기화 명령 필요 없음.
 
 ## 시작
 ```
