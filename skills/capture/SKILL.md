@@ -99,9 +99,16 @@ gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아�
 `references/scoring.md`를 읽고 기회 스코어링 → opportunities INSERT (상위 10개 reasoning
 필수, 수치 인용) → Next Actions 3~5개를 JSON 파일로 저장.
 
+### /capture dash {P} — 로컬 대시보드
+`python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다
+(포그라운드로 돌리면 세션이 막힌다). 127.0.0.1 전용 웹 UI로 Brain을 실시간
+조회하고, 기회 상태(확인/완료/기각)를 표에서 바로 갱신한다.
+훑어보기·트리아지는 dash, 날짜별 기록으로 남길 때는 report — 역할이 다르다.
+
 ### /capture report {P}
 `python scripts/report.py --project {P} --actions <actions.json>` → 파일 경로 안내.
-지난 기회들의 status(acked/done/dismissed) 갱신 여부도 물어본다.
+지난 기회들의 status(acked/done/dismissed) 갱신은 대시보드에서 클릭으로 하는 게
+빠르다고 안내한다 (`/capture dash`).
 
 ### /capture ask {P} "..."
 자유 질문. sql로 근거를 조회해 수치와 함께 답한다. 없는 데이터는 없다고 답한다.

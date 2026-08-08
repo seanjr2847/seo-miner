@@ -119,6 +119,7 @@ python scripts/collect_ai.py --project myproject --dry-run
 python scripts/collect_gsc.py --project myproject --dry-run
 python scripts/import_gsc_csv.py --project myproject <내려받은.zip> --dry-run  # CSV 경로
 python scripts/report.py --project myproject     # 빈 리포트라도 렌더 확인
+python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C로 종료)
 ```
 
 ## 7. SERP 순위 추적 (선택 — 키 있으면 /capture rank 활성화)
