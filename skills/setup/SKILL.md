@@ -1,6 +1,6 @@
 ---
 name: setup
-description: First-run onboarding and environment doctor for the seo-miner plugin. Use IMMEDIATELY after plugin installation, whenever the user asks how to get started ("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), or whenever the capture/create skills hit missing prerequisites (deps, brain.db, OPENROUTER_API_KEY, GSC OAuth, SERP keys) — run this skill's doctor first instead of guessing what's missing.
+description: First-run onboarding and environment doctor for the seo-miner plugin. Use IMMEDIATELY after plugin installation, whenever the user asks how to get started ("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), or whenever the capture/create skills hit missing prerequisites (deps, brain.db, OPENROUTER_API_KEY, GSC 서비스 계정 키/gsc MCP, SERP keys) — run this skill's doctor first instead of guessing what's missing.
 ---
 
 # setup — seo-miner 최초 온보딩 & 환경 닥터
@@ -26,14 +26,16 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
 
 **사이트마다 반복** (여기부터는 사이트 단위)
 
-2. `/capture add {사이트}` — **반드시 먼저.** 자격증명·토큰이 사이트 이름으로
-   저장되므로(`creds/{사이트}/`) 등록 전에 GSC 연동을 시작하면 안 된다.
+2. `/capture add {사이트}` — **반드시 먼저.** `collect_gsc.py`가 프로젝트의
+   `gsc_property`를 Brain에서 읽으므로 등록 전에는 수집이 안 된다.
    인터뷰에서 `gsc_property`(`sc-domain:example.com`)를 꼭 받는다.
 3. GSC 데이터 — 둘 중 하나를 사용자에게 고르게 한다:
    - **한 번 보고 판단만 할 거면**: `/capture gsc {사이트}` → CSV 경로. 설정 0,
      내가 브라우저로 내보내기까지 눌러준다.
-   - **계속 자동으로 받을 거면**: 아래 "GSC 다이렉트 연동" 절차 (사이트당 3~5분,
-     한 번 붙이면 이후 무인 + 1,000행 제한·페이지 차원 해제).
+   - **계속 자동으로 받을 거면**: 아래 "GSC 연결(서비스 계정)" 절차. 키 1개를
+     계정당 한 번만 만들면 되고(5분), 이후 사이트 추가는 Search Console에서
+     이메일 추가 클릭 2번이 전부다. 무인 수집 + 1,000행 제한·페이지 차원 해제
+     + Claude가 gsc MCP로 즉석 조회까지 된다.
 4. `/capture keywords {사이트}` → 키워드 유니버스 채우기.
 5. AI 인용 확인 — `/seo-miner:browse {사이트}`(무료) 또는 OpenRouter 키(자동화).
 6. `/capture run {사이트}` → 리포트까지 한 번에.
@@ -64,68 +66,59 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
 
 돈·시간을 쓰면 좋아지는 것 — 전부 "자동화"를 사는 것이지 새 기능이 아니다:
 - OpenRouter 키(유료, 5분, 계정당 1회): AI 인용 확인을 프롬프트 수십 개씩 자동으로
-- 구글 연동(무료, **사이트당** 3~5분): 매번 CSV 내보내기 안 해도 됨 +
-  1,000행 제한·페이지 단위 해제. 사이트마다 자기 클라이언트로 붙는다
+- 구글 연동(무료, **계정당 1회** 5분 + 사이트당 클릭 2번): 매번 CSV 내보내기
+  안 해도 됨 + 1,000행 제한·페이지 단위 해제 + Claude가 서치콘솔을 즉석 조회(MCP)
 - SERP 키(유료, 선택, 계정당 1회): 순위 매일 기록, 경쟁사 자동 수확
 
 ### 4. 졸업
 core ✓ + 프로젝트 0개면 → `/capture add <이름>` 으로 자연스럽게 넘긴다.
 프로젝트가 이미 있으면 → `/capture run <이름>` 제안.
 
-## GSC 다이렉트 연동을 내가 대신 깔아주기 (claude-in-chrome, 2026-07-26 실측)
+## GSC 연결(서비스 계정)을 내가 대신 깔아주기
 
 "GSC 연동해줘"라고 하면 절차를 읽어주지 말고 브라우저로 직접 눌러준다.
 계정을 바꾸는 조작이므로 **시작 전에 무엇을 만들지 알리고 확인을 받는다.**
 
-**사이트 단위로 붙인다.** 자격증명은 `~/.capture/creds/{사이트}/`에 사이트별로 들어가고,
-한 사이트의 클라이언트를 다른 사이트에 재사용하지 않는다(스크립트가 중복을 감지해 막는다).
-어느 사이트를 붙일지 먼저 정한 뒤 시작하고, 여러 사이트면 한 번에 하나씩 끝낸다.
+**키 1개가 전부다.** `~/.capture/gsc_service_account.json` 하나를 번들된 gsc MCP
+서버(즉석 조회)와 `collect_gsc.py`(벌크 수집)가 같이 쓴다. 사이트가 늘어도 이
+절차는 다시 하지 않고, Search Console에서 이메일 추가만 반복한다.
+예전 OAuth 방식(동의 화면·앱 게시·비밀번호 복사·7일 만료)은 서비스 계정에는
+없다 — 그 벽들 때문에 교체했다. 구버전으로 이미 붙인 사이트는 그대로 돈다.
 
-**먼저 읽을 것 — 2026-07-26 실연결에서 확인한 벽 4개.** 모르면 여기서 30분 태운다.
-- 구글은 **클라이언트 보안 비밀번호를 생성 직후 그 창에서만** 준다. 이후 화면에서는
-  `****abcd`로 마스킹되고 다시 볼 수도 받을 수도 없다. 놓쳤으면 클라이언트 상세의
-  **`+ Add secret`** 으로 새로 만든다(클라이언트를 다시 만들 필요 없음, 최대 2개).
-- **claude-in-chrome은 크롬 다운로드를 트리거하지 못한다.** `JSON 다운로드` 버튼은
-  좌표 클릭·요소 참조 클릭·키보드 Enter 전부 실패한다. 파일은 안 떨어진다
-  (`.crdownload`조차 안 생김). 이 길로 가지 말 것.
-- 페이지에서 `http://127.0.0.1`로 값을 넘기는 우회도 크롬이 막는다
-  (Private Network Access). 로컬 수신기 띄우지 말 것.
-- 콘솔은 로딩 중 레이아웃이 20px씩 밀린다. 스크린샷 좌표 클릭이 자주 빗나가므로
-  **드롭다운은 키보드로** 고른다(열고 `End` → `Enter` = 마지막 항목 '데스크톱 앱').
+**먼저 읽을 것**: 브라우저 자동화는 크롬 다운로드를 트리거하지 못한다
+(2026-07-26 실측 — 좌표 클릭·요소 클릭·Enter 전부 실패, `.crdownload`조차 안 생김).
+그래서 3번의 키 다운로드 버튼만 사용자가 직접 누르고, 나머지 클릭은 내가 한다.
 
-절차:
+절차 (계정당 1회, 약 5분):
 
 1. `console.cloud.google.com/apis/library/searchconsole.googleapis.com` →
-   상단에서 **이 사이트에 쓸 구글 클라우드 프로젝트** 선택 → `사용` 버튼
-   (이미 켜져 있으면 `관리`로 보인다). 사이트별로 프로젝트를 따로 두려면 먼저
-   `console.cloud.google.com/projectcreate`에서 만든다. **프로젝트 할당량이 있다**
-   (기본 여유분이 적다) — 만들기 화면 상단의 남은 개수를 사용자에게 알린다.
-2. `console.cloud.google.com/auth/overview` — 새 프로젝트면 `시작하기`로 동의 화면을
-   만든다(앱 이름 → 지원 이메일 → 대상 **외부** → 연락처 이메일 → 정책 동의 체크).
-   **정책 동의 체크는 사용자 명의의 약관 동의다 — 반드시 확인을 받고 누른다.**
-3. `console.cloud.google.com/auth/audience` → `게시 상태`가 **테스트**면 `앱 게시`로
-   프로덕션 전환(안 하면 7일마다 재인증, 테스트 사용자 등록도 필요해진다).
-4. `console.cloud.google.com/auth/clients` → `클라이언트 만들기` → 유형
-   **데스크톱 앱** → 만들기. 웹으로 고르면 나중에 redirect_uri 오류가 난다.
-5. 생성 모달을 닫고 클라이언트 상세로 들어가 **보안 비밀번호 줄의 복사 아이콘**을
-   누른다(모달의 JSON 다운로드는 안 통한다 — 위 참조). 마스킹만 보이면 `+ Add secret`.
-6. 복사 직후:
-   `python scripts/connect_gsc.py --project {P} --client-id <클라이언트 ID>`
-   → 클립보드에서 비밀번호를 읽어 `~/.capture/creds/{P}/`에 자격증명을 쓰고
-   클립보드를 비운 뒤, 승인 URL을 출력한다.
-7. 출력된 URL을 **내가 여는 탭**에 띄워 계정 선택 → `계속`. 기본 브라우저로 열면
-   Claude가 볼 수 없는 창에 뜨므로 반드시 URL을 받아서 연다.
-   "확인되지 않은 앱" 경고가 뜨면 `고급 → 이동`(본인 앱이므로 정상).
-8. `python ../capture/scripts/collect_gsc.py --project {P}` 로 첫 수집.
+   프로젝트 선택(없으면 만들기, 아무거나 재사용 가능) → `사용`
+   (이미 켜져 있으면 `관리`로 보인다).
+2. `console.cloud.google.com/iam-admin/serviceaccounts` → `서비스 계정 만들기` →
+   이름 아무거나(예: seo-miner) → 만들기. **역할(권한) 부여는 건너뛴다** —
+   Search Console 접근권은 구글 클라우드가 아니라 Search Console 쪽에서 준다.
+3. 만든 계정 클릭 → `키` 탭 → `키 추가` → `새 키 만들기` → `JSON` →
+   **`만들기` 버튼은 사용자가 직접 누른다**(다운로드 트리거라 내가 못 누른다).
+4. `python scripts/connect_gsc.py` — 다운로드 폴더에서 키를 회수해
+   `~/.capture/gsc_service_account.json`으로 옮기고, 서비스 계정 이메일과
+   속성별 '사용자 및 권한' URL을 출력한다.
+5. 속성마다: 출력된 URL(Search Console → 설정 → `사용자 및 권한`) → `사용자 추가`
+   → 4의 이메일 → 권한 **`제한된 사용자`**(읽기 전용이라 충분). 다운로드가
+   아니므로 이 클릭은 내가 대신 해줄 수 있다.
+6. `python ../capture/scripts/collect_gsc.py --project {P}` 로 첫 수집 확인.
+   gsc MCP 툴(search_analytics 등)은 **다음 Claude 세션부터** 잡힌다
+   (.mcp.json은 세션 시작 때 로드).
 
-비밀번호는 클립보드→스크립트→파일로만 흐르게 한다. **값을 화면·대화에 찍지 않는다.**
-로그인 자체(비밀번호 입력)가 필요한 화면이 나오면 거기서 멈추고 사용자에게 넘긴다.
+키 파일은 다운로드 폴더→`~/.capture/`로만 흐르게 한다. **내용을 화면·대화에
+찍지 않는다.** 로그인이 필요한 화면이 나오면 멈추고 사용자에게 넘긴다.
 
 ## 문제 해결 단서
 - doctor가 brain error를 보고하면: 파일 권한 또는 손상 — `~/.capture/brain.db`를
   다른 이름으로 옮기면 다음 실행 때 새로 생성된다(모은 자료는 사라짐을 고지).
-- GSC 토큰 문제: `~/.capture/creds/{사이트}/gsc_token.json` 삭제 후 재실행하면
-  다시 승인 창이 뜬다(스크립트가 만료를 감지하면 알아서 지우고 재인증한다).
-  7일마다 반복되면 그 사이트가 쓰는 구글 클라우드 프로젝트의 동의 화면이
-  **테스트** 상태다 — `앱 게시`로 프로덕션 전환을 안내한다.
+- GSC 수집이 403(권한 거부)이면: 그 속성에 서비스 계정 이메일이 아직 추가 안 된
+  것 — `python scripts/connect_gsc.py --status`로 이메일·속성별 URL을 다시 띄워준다.
+- gsc MCP 툴이 안 보이면: (a) 키 설치 후 새 세션인지, (b) node/npx가 있는지 확인.
+  MCP가 없어도 `collect_gsc.py` 수집은 정상 동작한다.
+- 구버전 OAuth 사이트의 토큰이 만료·오류를 내면: 고치려 하지 말고 서비스 계정으로
+  갈아탄다(위 절차 + `~/.capture/creds/{사이트}/` 정리). 7일 만료 문제 자체가 사라진다.
 - 자동완성 실패 지속: 비공식 엔드포인트 특성 — 스로틀 상향(`--throttle 1.0`) 안내.

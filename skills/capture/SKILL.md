@@ -12,6 +12,8 @@ description: Personal SEO & AI-search visibility engine (Boring Agent 역기획 
 
 1. **즉흥 금지.** 순위·노출·인용·키워드에 대한 모든 주장은 Brain 조회 결과를 근거로 한다.
    조회는 `python scripts/db.py sql "SELECT ..."` (읽기 전용). 데이터가 없으면 "없다"고 말하고 수집을 제안한다.
+   (예외: GSC 실측 수치는 gsc MCP 툴로 서치콘솔에서 직접 조회한 결과도 근거로 인정 —
+   원본 데이터라 Brain 스냅샷보다 신선하다. 어느 쪽 근거인지는 밝힌다.)
 2. **비용 고지.** 외부 API를 부르는 작업(collect_ai)은 실행 전 반드시 `--dry-run`으로
    호출 수를 보여주고 사용자 확인을 받는다.
 3. **리포트는 Next Actions로 끝난다.** 분석 없이 빈 액션으로 리포트를 내보내지 않는다.
@@ -48,7 +50,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 3. 수요 근거는 "자동완성 등장 = 수요 존재, GSC 노출 = 실측"으로만 말한다 (볼륨 창작 금지).
 
 ### /capture gsc {P}
-두 경로가 있다. **구글 로그인 연결이 안 돼 있으면 OAuth 절차부터 시키지 말고 CSV 경로를
+두 경로가 있다. **연동이 안 돼 있으면 설정 절차부터 시키지 말고 CSV 경로를
 먼저 제안한다** (설정 0, 1분).
 
 - **CSV(쉬움, 기본)**: 사용자에게 파일을 받아오라고 시키지 말고 **claude-in-chrome으로
@@ -56,10 +58,15 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
   `python scripts/import_gsc_csv.py --project {P}` (인자 없이 실행하면 다운로드 폴더에서
   방금 받은 내보내기를 알아서 찾는다. 경로를 알면 뒤에 붙여도 된다).
   한계: 상위 1,000행, 페이지 단위 없음 — 이 점을 먼저 고지한다.
-- **다이렉트 연동(OAuth)**: `python scripts/collect_gsc.py --project {P}` (첫 실행 브라우저
-  승인). 한 번 붙으면 이후 무인 — 1,000행 제한도 페이지 차원 없음도 풀린다.
-  아직 안 붙어 있으면 setup 스킬의 "GSC 다이렉트 연동을 내가 대신 깔아주기" 절차대로
-  콘솔 클릭을 내가 대신 해준다(3~5분). 절차를 사용자에게 읽어주지 말 것.
+- **다이렉트 연동(서비스 계정)**: `python scripts/collect_gsc.py --project {P}`.
+  키 1개(`~/.capture/gsc_service_account.json`)로 모든 사이트 — 1,000행 제한도
+  페이지 차원 없음도 풀린다. 아직 안 붙어 있으면 setup 스킬의
+  "GSC 연결(서비스 계정)" 절차대로 콘솔 클릭을 내가 대신 해준다(계정당 1회 5분).
+  절차를 사용자에게 읽어주지 말 것. (구버전 OAuth 토큰이 있는 사이트는 그대로 돈다.)
+
+연동돼 있으면 **즉석 질문**("어제 클릭 몇이야", "이 페이지 어떤 쿼리로 들어와")은
+Brain 수집 없이 gsc MCP 툴(`search_analytics` 등)로 바로 조회해 답해도 된다.
+리포트·스코어링·추세 비교는 여전히 `collect_gsc.py`로 Brain에 적재한 스냅샷 기준.
 
 완료 후 striking-distance 프리뷰를 요약해준다.
 

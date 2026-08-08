@@ -15,8 +15,9 @@ cp -r capture ~/.claude/skills/capture
 
 ```bash
 pip install requests jinja2 pyyaml
-# GSC 쓰는 경우에만 추가:
-pip install google-api-python-client google-auth-oauthlib
+# GSC 자동 수집(collect_gsc.py) 쓰는 경우에만 추가:
+pip install google-api-python-client
+# (구버전 사이트별 OAuth를 아직 쓰는 사이트가 있으면 google-auth-oauthlib 도)
 ```
 
 ## 3. 상태 디렉토리
@@ -29,8 +30,8 @@ pip install google-api-python-client google-auth-oauthlib
 ├── brain.db
 ├── projects/{name}.yaml
 ├── reports/{name}/{date}.html
-├── client_secrets.json      # GSC OAuth (아래 4번)
-└── gsc_token.json           # 자동 생성·캐시
+├── gsc_service_account.json # GSC 서비스 계정 키 — 전 사이트 공용 1개 (아래 4-B)
+└── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (하위호환용)
 ```
 
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
@@ -51,52 +52,46 @@ Claude에게 부탁하면 1번 클릭까지 브라우저로 대신 해준다 (ca
 한계: UI 내보내기는 **상위 1,000행**까지, **페이지 단위 없음**, 매번 수동.
 구글 클라우드 프로젝트·OAuth는 전혀 필요 없다.
 
-### 4-B. 다이렉트 연동 (OAuth, 1회 3~5분 — 이후 완전 자동)
+### 4-B. 다이렉트 연동 (서비스 계정, 계정당 1회 5분 — 이후 완전 자동)
 
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
-콘솔 화면 이름은 2026-07-26 실측 기준(구 "OAuth 동의 화면 / 사용자 인증 정보"는
-**Google 인증 플랫폼**의 `대상` / `클라이언트`로 바뀌었다).
 
-**자격증명은 사이트마다 따로 잡힌다.** 사이트 A의 구글 클라이언트가 사이트 B의
-Search Console을 대신 열지 않는다 — 사이트별로 이 절차를 한 번씩 밟는다(사이트당 3~5분).
+**키 1개가 전부다.** `~/.capture/gsc_service_account.json` 하나를
+- 플러그인에 번들된 **gsc MCP 서버**(`mcp-server-gsc`) — Claude가 서치콘솔을
+  즉석 조회 (`search_analytics` 등)
+- **collect_gsc.py** — Brain으로 벌크 수집
+이 같이 쓴다. 사이트가 늘어도 키는 다시 안 만들고, Search Console에서 이메일
+추가만 하면 된다. 예전 OAuth 방식의 동의 화면·앱 게시·비밀번호 복사·7일 만료는
+서비스 계정에는 없다. (구버전 OAuth로 이미 붙인 사이트는
+`~/.capture/creds/{사이트}/` 토큰으로 계속 돈다 — 하위호환.)
 
-```
-~/.capture/creds/{사이트}/client_secrets.json   # 이 사이트 전용 데스크톱 클라이언트
-~/.capture/creds/{사이트}/gsc_token.json        # 이 사이트 전용 승인 토큰
-~/.capture/client_secrets.json                  # (선택) 일부러 공용으로 쓸 때만
-```
-
-일부러 여러 사이트가 클라이언트 하나를 공유하고 싶으면 공용 경로에 두면 된다.
-그렇게 하지 않았는데 이미 다른 사이트가 쓰는 JSON을 집으면 스크립트가 막고 알려준다.
-
-Claude에게 부탁하면 1~3번을 브라우저로 대신 눌러준다 — 사용자는 계정 승인만 하면 된다.
+Claude에게 부탁하면 키 다운로드 버튼(3번) 말고는 전부 브라우저로 대신 눌러준다.
 
 1. **Search Console API 켜기** —
    https://console.cloud.google.com/apis/library/searchconsole.googleapis.com
-   에서 프로젝트를 고르고 `사용` 클릭. (프로젝트가 없으면 아무거나 하나 만든다.
-   이미 다른 용도로 쓰던 프로젝트를 재사용해도 된다.)
-2. **동의 화면** — Google 인증 플랫폼 → `대상`. 처음이면 사용자 유형 **외부**로 생성.
-   이미 만들어 둔 프로젝트라면 이 단계는 건너뛴다.
-   - 게시 상태가 **테스트**면 리프레시 토큰이 7일 만에 만료된다. `앱 게시`를 눌러
-     **프로덕션**으로 두면 만료 없이 계속 쓴다(미확인 앱 경고 화면은 뜨지만
-     본인 계정 사용에는 지장 없음, OAuth 사용자 한도 100명).
-3. **클라이언트 만들기** — Google 인증 플랫폼 → `클라이언트` → `클라이언트 만들기`
-   → 유형 **데스크톱 앱** → 이름 아무거나 → 만들기.
-   - ⚠️ 유형을 '웹 애플리케이션'으로 만들면 나중에 redirect_uri 오류가 난다.
-4. `pip install google-api-python-client google-auth-oauthlib`
-5. 클라이언트 상세 화면에서 **보안 비밀번호 줄의 복사 아이콘**을 누른 직후:
+   에서 프로젝트를 고르고 `사용` 클릭 (프로젝트가 없으면 아무거나 하나 만든다).
+2. **서비스 계정 만들기** — https://console.cloud.google.com/iam-admin/serviceaccounts
+   → `서비스 계정 만들기` → 이름 아무거나(예: seo-miner) → 만들기.
+   역할(권한) 부여 단계는 **건너뛴다** — Search Console 접근권은 5번에서 준다.
+3. **키 받기** — 만든 계정 → `키` 탭 → `키 추가` → `새 키 만들기` → `JSON` → 만들기.
+   (이 다운로드 버튼만은 사람이 직접 눌러야 한다 — 브라우저 자동화가 크롬
+   다운로드를 트리거하지 못함, 2026-07-26 실측.)
+4. ```
+   python ../setup/scripts/connect_gsc.py
    ```
-   python ../setup/scripts/connect_gsc.py --project NAME --client-id <클라이언트 ID>
-   ```
-   클립보드의 비밀번호를 읽어 `~/.capture/creds/NAME/`에 넣고, 클립보드를 비우고,
-   승인 URL을 출력한다. 그 URL을 열어 `계속`을 누르면 토큰까지 저장된다.
-   - 비밀번호가 `****abcd`로만 보이면 **`+ Add secret`** 으로 새로 만든다.
-     구글은 생성 직후 한 번 말고는 기존 비밀번호를 다시 보여주지 않는다.
-   - 생성 모달의 `JSON 다운로드`는 Claude가 눌러도 파일이 떨어지지 않는다
-     (브라우저 자동화가 크롬 다운로드를 트리거하지 못함). 사람이 직접 누르면 되고,
-     그 경우 다운로드 폴더에 두기만 하면 `collect_gsc.py`가 알아서 회수한다.
+   다운로드 폴더에서 키를 찾아 `~/.capture/gsc_service_account.json`으로 옮기고,
+   서비스 계정 이메일과 속성별 '사용자 및 권한' URL을 출력한다.
+   (`--status`로 언제든 다시 볼 수 있다.)
+5. **권한 주기** — 속성마다: Search Console → 설정 → `사용자 및 권한` →
+   `사용자 추가` → 4의 이메일 → 권한 **`제한된 사용자`**(읽기라 충분).
 6. `python scripts/collect_gsc.py --project NAME` → **이후 무인 동작.**
-   토큰이 만료·취소되면 자동으로 지우고 재승인 창을 띄운다.
+   403이 나면 5번이 안 된 속성이다(스크립트가 이메일을 알려준다).
+   gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작 때 로드).
+
+플러그인의 `.mcp.json`은 Windows 기준이다(`cmd /c npx`, `${USERPROFILE}`).
+mac/linux에서 쓰려면 `"command": "npx", "args": ["-y", "mcp-server-gsc"]`,
+경로는 `${HOME}/.capture/...`로 바꾼다. `CAPTURE_HOME`을 옮겼다면
+`GOOGLE_APPLICATION_CREDENTIALS` 환경변수로 키 경로를 맞춘다.
 
 **어느 쪽을 쓰나**: 한 번 보고 말 거면 4-A(CSV), 매주 자동으로 돌릴 거면 4-B.
 4-B가 1,000행 제한·페이지 차원 없음도 같이 푼다.

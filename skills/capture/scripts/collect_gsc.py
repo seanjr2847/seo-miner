@@ -5,12 +5,11 @@ Known holes (read reports accordingly, see references/scoring.md):
   * ~2-3 day data delay; low-volume longtail queries are privacy-filtered out
   * position is an AVERAGE across impressions, not a pinpoint rank
 
-Auth: OAuth installed-app flow. 자격증명은 **사이트별로 분리**된다 — 사이트마다
-자기 구글 클라우드 프로젝트/클라이언트를 쓸 수 있고, 공용 하나를 끼지 않는다.
-  client secrets: $GSC_CLIENT_SECRETS
-                  > $CAPTURE_HOME/creds/{project}/client_secrets.json
-                  > $CAPTURE_HOME/client_secrets.json  (모든 사이트 공용, 선택)
-  cached token:   $CAPTURE_HOME/creds/{project}/gsc_token.json
+Auth: 서비스 계정 키가 표준이다 (전 사이트 공용 1개 — gsc MCP 서버와 같은 키):
+  $GOOGLE_APPLICATION_CREDENTIALS > $CAPTURE_HOME/gsc_service_account.json
+  설치: python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)
+키가 없으면 구버전 사이트별 OAuth(creds/{project}/client_secrets.json + gsc_token.json)
+로 동작한다 — 이미 붙여둔 사이트용 하위호환이고, 새 연결은 전부 서비스 계정으로 한다.
 Setup walkthrough: references/setup.md
 
 Usage:
@@ -32,6 +31,11 @@ SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 def creds_dir(project: str) -> Path:
     return db.CAPTURE_HOME / "creds" / project
+
+
+def sa_key() -> Path:
+    return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
+                               str(db.CAPTURE_HOME / "gsc_service_account.json")))
 
 
 def client_id_of(path: Path) -> str:
@@ -103,13 +107,28 @@ def resolve_secrets(project: str) -> str:
 
 def get_service(project: str):
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
     except ImportError:
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
-                 "pip install google-api-python-client google-auth-oauthlib")
+                 "pip install google-api-python-client")
+
+    key = sa_key()
+    if key.exists():
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_file(
+            str(key), scopes=SCOPES)
+        return build("searchconsole", "v1", credentials=creds,
+                     cache_discovery=False)
+
+    # ---- 이하 구버전 OAuth 경로 (이미 붙여둔 사이트의 토큰 재사용 전용) ----
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except ImportError:
+        sys.exit(f"서비스 계정 키가 없습니다: {key}\n"
+                 "  연결(5분, 전 사이트 공용): "
+                 "python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)")
 
     secrets = resolve_secrets(project)
     token_path = creds_dir(project) / "gsc_token.json"
@@ -135,11 +154,9 @@ def get_service(project: str):
         if not refreshed:
             if not Path(secrets).exists():
                 sys.exit(
-                    f"구글 인증 파일이 없습니다: {secrets}\n"
-                    "  Google Cloud 콘솔 → Google 인증 플랫폼 → 클라이언트 → "
-                    "'클라이언트 만들기' → 유형 '데스크톱 앱' → JSON 다운로드.\n"
-                    "  다운로드 폴더에 두면 다음 실행 때 알아서 가져옵니다 "
-                    "(자세히: references/setup.md 4-B).")
+                    "구글 연결이 없습니다. 지금 표준은 서비스 계정 방식입니다 — \n"
+                    "  키 1개로 모든 사이트: python ../../setup/scripts/connect_gsc.py "
+                    "(setup.md 4-B, 5분)")
             print(f"[인증] {project} 전용 구글 승인 창을 엽니다 — "
                   "이 사이트의 Search Console 속성만 읽습니다.")
             flow = InstalledAppFlow.from_client_secrets_file(secrets, SCOPES)
@@ -188,7 +205,18 @@ def main() -> None:
     body = {"startDate": str(start), "endDate": str(end),
             "dimensions": ["query", "page"], "rowLimit": a.row_limit,
             "dataState": "final"}
-    resp = service.searchanalytics().query(siteUrl=prop, body=body).execute()
+    from googleapiclient.errors import HttpError
+    try:
+        resp = service.searchanalytics().query(siteUrl=prop, body=body).execute()
+    except HttpError as e:
+        if getattr(e.resp, "status", None) == 403 and sa_key().exists():
+            email = json.loads(sa_key().read_text(encoding="utf-8")) \
+                .get("client_email", "?")
+            sys.exit(f"권한 거부: {prop}\n"
+                     "  Search Console → 설정 → 사용자 및 권한에 서비스 계정 "
+                     f"이메일을 추가했는지 확인하세요: {email}\n"
+                     "  (권한 '제한된 사용자'면 충분합니다)")
+        raise
     rows = resp.get("rows", [])
     print(f"[gsc] fetched {len(rows)} query x page rows")
 

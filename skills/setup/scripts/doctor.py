@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """seo-miner doctor — environment diagnosis (stdlib only, runs before any pip).
 
-Checks deps, CAPTURE_HOME/Brain, API keys, GSC files, then derives which
-capabilities are unlocked and prints ordered next steps.
+Checks deps, CAPTURE_HOME/Brain, API keys, GSC service-account key (shared by
+the bundled gsc MCP server and collect_gsc.py), then derives which capabilities
+are unlocked and prints ordered next steps.
 
 Usage: python doctor.py [--json]
 Exit code: 0 = core usable, 1 = core setup incomplete.
@@ -10,6 +11,7 @@ Exit code: 0 = core usable, 1 = core setup incomplete.
 import importlib.util
 import json
 import os
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -27,8 +29,8 @@ KEY_NAMES = {
     "openrouter": "OpenRouter 키",
     "dataforseo": "DataForSEO 계정",
     "serper": "Serper 키",
-    "gsc_client_secrets": "구글 인증 파일(모든 사이트 공용)",
-    "gsc_token_cached": "구글 로그인 기록(구버전 공용)",
+    "gsc_service_account": "구글 서치콘솔 열쇠(서비스 계정 — 전 사이트 공용 1개)",
+    "node_npx": "node/npx (Claude가 서치콘솔을 즉석 조회하는 gsc MCP용)",
 }
 
 
@@ -38,7 +40,7 @@ def has(mod: str) -> bool:
 
 def diagnose() -> dict:
     deps_core = {m: has(m) for m in ("requests", "jinja2", "yaml")}
-    deps_gsc = {m: has(m) for m in ("googleapiclient", "google_auth_oauthlib")}
+    deps_gsc = {m: has(m) for m in ("googleapiclient",)}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
              "db_exists": DB.exists(), "tables": 0, "projects": []}
     if DB.exists():
@@ -51,18 +53,21 @@ def diagnose() -> dict:
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
-    secrets = os.environ.get("GSC_CLIENT_SECRETS",
-                             str(CAPTURE_HOME / "client_secrets.json"))
-    # 구글 연결은 사이트별로 따로 잡힌다 (creds/{사이트}/).
-    gsc_sites = {name: (CAPTURE_HOME / "creds" / name / "client_secrets.json").exists()
+    # 구글 연결 표준: 서비스 계정 키 1개(전 사이트 공용, gsc MCP 서버와 공유).
+    # 구버전 사이트별 OAuth 토큰이 남은 사이트는 그걸로도 돈다(하위호환).
+    sa_key = Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
+                                 str(CAPTURE_HOME / "gsc_service_account.json")))
+    gsc_legacy = {name: (CAPTURE_HOME / "creds" / name / "gsc_token.json").exists()
+                  for name in brain["projects"]}
+    gsc_sites = {name: sa_key.exists() or gsc_legacy[name]
                  for name in brain["projects"]}
     keys = {
         "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
-        "gsc_client_secrets": Path(secrets).exists(),
-        "gsc_token_cached": (CAPTURE_HOME / "gsc_token.json").exists(),
+        "gsc_service_account": sa_key.exists(),
+        "node_npx": bool(shutil.which("npx")),
     }
     core_ok = all(deps_core.values())
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
@@ -77,9 +82,9 @@ def diagnose() -> dict:
         "AI 노출 확인 — ChatGPT 같은 AI가 내 글을 인용하는지 검사 "
         "(브라우저로 하면 키 없이도 됩니다)": core_ok,
         "구글 실제 성과 — 서치콘솔에서 받은 CSV로 진짜 순위·클릭 읽기": core_ok,
-        "구글 자동 연동 — 매번 내보내기 안 하고 알아서 가져오기 (사이트마다 따로)":
+        "구글 자동 연동 — 열쇠 1개면 모든 사이트 (Claude 즉석 조회 + 자동 수집)":
             core_ok and all(deps_gsc.values())
-            and (any(gsc_sites.values()) or keys["gsc_client_secrets"]),
+            and (keys["gsc_service_account"] or any(gsc_legacy.values())),
         "순위 추적 — 검색결과 몇 등인지 기록 (없어도 됩니다)":
             core_ok and (keys["dataforseo"] or keys["serper"]),
     }
@@ -98,21 +103,25 @@ def diagnose() -> dict:
         steps.append("[선택] AI 노출 확인을 자동으로 돌리려면 OpenRouter 키 "
                      "(유료, 약 5분): capture/references/setup.md 5절. "
                      "→ 돈 안 들이려면 `/seo-miner:browse`로 브라우저에서 직접 확인하면 됩니다")
-    unlinked = [n for n, ok in gsc_sites.items() if not ok]
-    if unlinked and not keys["gsc_client_secrets"]:
-        steps.append("[선택] 구글 실적 자동 수집이 아직 안 붙은 사이트: "
-                     f"{', '.join(unlinked)} — 사이트마다 자기 데스크톱 클라이언트를 "
-                     "쓰므로 하나씩 붙입니다 (사이트당 3~5분): setup.md 4-B. "
+    gsc_linked = keys["gsc_service_account"] or any(gsc_legacy.values())
+    if brain["projects"] and not gsc_linked:
+        steps.append("[선택] 구글 실적 자동 수집 — 서비스 계정 키 1개 만들면 모든 "
+                     "사이트에 적용 (5분, 무료): setup 스킬 'GSC 연결(서비스 계정)' "
+                     "(setup.md 4-B). "
                      "→ 급하면 '내보내기 → CSV' 경로가 설정 없이 바로 됩니다")
-    elif not all(deps_gsc.values()):
-        steps.append("[선택] 구글 자동 연동용 부품 설치 — "
-                     "`pip install google-api-python-client google-auth-oauthlib`")
+    elif gsc_linked and not all(deps_gsc.values()):
+        steps.append("[선택] 구글 자동 수집용 부품 설치 — "
+                     "`pip install google-api-python-client`")
+    if keys["gsc_service_account"] and not keys["node_npx"]:
+        steps.append("[선택] node를 설치하면 수집 없이도 Claude가 서치콘솔을 바로 "
+                     "조회합니다(gsc MCP) — nodejs.org")
     if not (keys["dataforseo"] or keys["serper"]):
         steps.append("[선택] 순위 추적용 유료 키 — DataForSEO 또는 Serper. "
                      "검색 순위를 매일 기록하고 싶을 때만: setup.md 7절")
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
-            "keys": keys, "gsc_sites": gsc_sites, "capabilities": caps,
-            "next_steps": steps, "core_ok": core_ok, "brain_ok": brain_ok}
+            "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
+            "capabilities": caps, "next_steps": steps,
+            "core_ok": core_ok, "brain_ok": brain_ok}
 
 
 def main() -> None:
@@ -139,9 +148,18 @@ def main() -> None:
         if d["brain"].get("error"):
             print(f"\n[주의] 보관함 파일을 여는 데 실패했습니다: {d['brain']['error']}")
         if d["gsc_sites"]:
-            print("\n[사이트별 구글 연결] — 사이트마다 자기 클라이언트를 씁니다")
+            print("\n[사이트별 구글 연결]")
             for name, ok in d["gsc_sites"].items():
-                print(f"  - {name}: {'연결됨' if ok else '아직 (CSV로는 지금도 가능)'}")
+                if d["keys"]["gsc_service_account"]:
+                    tag = "연결됨(공용 열쇠)"
+                elif d["gsc_legacy"].get(name):
+                    tag = "연결됨(구버전 개별 토큰)"
+                else:
+                    tag = "아직 (CSV로는 지금도 가능)"
+                print(f"  - {name}: {tag}")
+            if d["keys"]["gsc_service_account"]:
+                print("    (공용 열쇠는 Search Console '사용자 및 권한'에 이메일을 "
+                      "추가한 속성만 읽습니다 — 확인: connect_gsc.py --status)")
         must = [s for s in d["next_steps"] if not s.startswith("[선택]")]
         opt = [s for s in d["next_steps"] if s.startswith("[선택]")]
         if must:
