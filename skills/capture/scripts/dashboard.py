@@ -18,7 +18,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
 import db      # noqa: E402
+import doctor  # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import report  # noqa: E402
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
@@ -63,6 +65,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
+        if u.path == "/api/doctor":
+            return self._json(doctor.diagnose())
         if u.path == "/api/projects":
             conn = db.connect()
             names = [r[0] for r in

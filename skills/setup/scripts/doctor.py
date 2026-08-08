@@ -5,7 +5,8 @@ Checks deps, CAPTURE_HOME/Brain, API keys, GSC service-account key (shared by
 the bundled gsc MCP server and collect_gsc.py), then prints a verdict-first
 summary: 한 줄 요약 → 다음 한 걸음 → 사이트 → 기능(꺼진 것만 켜는 법 포함).
 
-Usage: python doctor.py [--json]
+Usage: python doctor.py [--json | --web]
+  --web: 텍스트 대신 로컬 대시보드를 브라우저로 띄운다 (진단 배너 + 데이터 함께)
 Exit code: 0 = core usable, 1 = core setup incomplete.
 """
 import importlib.util
@@ -182,7 +183,14 @@ def render(d: dict) -> None:
 
 def main() -> None:
     d = diagnose()
-    if "--json" in sys.argv:
+    if "--web" in sys.argv:
+        # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.
+        import subprocess
+        dash = Path(__file__).resolve().parents[2] / "capture" / "scripts" / "dashboard.py"
+        subprocess.Popen([sys.executable, str(dash), "--open"])
+        print("대시보드를 띄웠습니다 — 브라우저 상단 배너가 점검 결과입니다. "
+              "(안 열리면: python " + str(dash) + " --open)")
+    elif "--json" in sys.argv:
         print(json.dumps(d, ensure_ascii=False, indent=2))
     else:
         render(d)

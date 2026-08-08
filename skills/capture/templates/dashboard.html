@@ -66,6 +66,14 @@ svg text { fill:var(--muted); font-size:10px; }
 .dot { display:inline-block; width:8px; height:8px; border-radius:2px;
   margin-right:4px; vertical-align:middle; }
 #err { color:var(--down); padding:20px; }
+#docban { border-left:3px solid var(--accent); }
+#docban .verdict { font-weight:650; }
+#docban code { background:var(--chip); padding:1px 6px; border-radius:5px; }
+#docban ul { margin:8px 0 0; padding-left:18px; }
+#docban ul.must li { color:var(--down); }
+#docban details { margin-top:8px; }
+#docban summary { cursor:pointer; color:var(--muted); font-size:12px; }
+#docban li { margin:2px 0; }
 </style>
 </head>
 <body>
@@ -76,7 +84,9 @@ svg text { fill:var(--muted); font-size:10px; }
   <span class="sub" id="meta"></span>
 </header>
 <main>
+  <section id="docban" hidden></section>
   <div id="err" hidden></div>
+  <div id="content">
   <div class="kpis" id="kpis"></div>
   <section><h2>클릭·노출 추이 <span class="n" id="trend-n"></span></h2>
     <div id="trend"></div></section>
@@ -90,6 +100,7 @@ svg text { fill:var(--muted); font-size:10px; }
   <section><h2>AI 인용 현황</h2><div id="ai"></div></section>
   <section><h2>순위 스냅샷</h2><div id="ranks"></div></section>
   <section><h2>수집 이력</h2><div id="runs"></div></section>
+  </div>
 </main>
 <script>
 "use strict";
@@ -208,19 +219,40 @@ function render(d) {
 
 async function load() {
   const name = $("proj").value;
-  if (!name) { $("err").hidden = false; $("err").textContent =
-    "등록된 사이트가 없습니다 — 채팅에서 /capture add <이름> 으로 먼저 등록하세요."; return; }
+  if (!name) { $("content").hidden = true; return; }  // 배너가 온보딩을 안내한다
   location.hash = encodeURIComponent(name);
   const res = await fetch("/api/data?project=" + encodeURIComponent(name));
   const d = await res.json();
   if (!res.ok) { $("err").hidden = false; $("err").textContent = d.error || "로드 실패"; return; }
   $("err").hidden = true;
+  $("content").hidden = false;
   render(d);
 }
 
+async function loadDoctor() {
+  try {
+    const d = await (await fetch("/api/doctor")).json();
+    let h = `<div class="verdict">${esc(d.verdict)}</div>`;
+    if (d.next_command)
+      h += `<div style="margin-top:4px">다음 한 걸음: <code>${esc(d.next_command)}</code></div>`;
+    if (d.must.length)
+      h += `<ul class="must">${d.must.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
+    const extra = [
+      ...d.locked.map(c => `${c.name} — ${c.desc}. 켜려면: ${c.fix || "필수 설치가 끝나면 자동으로 켜집니다."}`),
+      ...d.later,
+    ];
+    if (extra.length)
+      h += `<details><summary>안 켠 기능·나중에 할 것 (${extra.length}) — 없어도 됩니다</summary>
+        <ul>${extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
+    $("docban").innerHTML = h;
+    $("docban").hidden = false;
+  } catch (e) { /* 배너 실패는 치명이 아님 — 본문은 그대로 뜬다 */ }
+}
+
 $("proj").addEventListener("change", load);
-$("refresh").addEventListener("click", load);
-loadProjects().then(n => n && load());
+$("refresh").addEventListener("click", () => { loadDoctor(); load(); });
+loadDoctor();
+loadProjects().then(n => { if (n) load(); else $("content").hidden = true; });
 </script>
 </body>
 </html>
