@@ -41,7 +41,8 @@ header { background:var(--ink); color:var(--stone); position:sticky; top:0; z-in
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; }
 .mark b { color:var(--patina); font-weight:600; }
 .tag { font:400 10px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
-  color:var(--slate); }
+  color:var(--slate); white-space:nowrap; }
+@media (max-width:1080px) { .tag { display:none; } }   /* 좁아지면 정체성보다 기능이 먼저 */
 .hbar .sp { flex:1; }
 #proj { font:600 13px/1 var(--mono); color:var(--stone); background:transparent;
   border:0; border-bottom:1px solid var(--patina); padding:3px 20px 3px 2px; cursor:pointer;
@@ -52,7 +53,8 @@ header { background:var(--ink); color:var(--stone); position:sticky; top:0; z-in
   background-repeat:no-repeat; }
 #proj option { color:var(--ink); background:var(--card); }
 .hbtn { font:500 12px/1 var(--mono); color:var(--stone); background:transparent;
-  border:1px solid var(--rule); border-radius:2px; padding:6px 11px; cursor:pointer; }
+  border:1px solid var(--rule); border-radius:2px; padding:6px 11px; cursor:pointer;
+  white-space:nowrap; flex:0 0 auto; }
 .hbtn:hover { border-color:var(--patina); color:var(--patina); }
 #meta { font:400 11px/1.4 var(--mono); color:var(--slate); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; min-width:0; }
@@ -267,7 +269,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
   <section id="setup" hidden>
     <div class="step">
       <h3>1. 기본 부품 <span class="stat" id="s-deps"></span></h3>
-      <p class="why">키워드 수집과 리포트에 쓰는 파이썬 부품 3개. 무료, 1분.</p>
+      <p class="why">키워드 수집과 리포트에 쓰는 파이썬 부품 2개. 무료, 1분.</p>
       <div class="row"><button class="go" id="btn-deps">설치하기</button>
         <span class="msg" id="m-deps"></span></div>
     </div>
@@ -330,14 +332,14 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
   </section>
 
   <section id="guide" hidden>
-    <div class="eyebrow">이 도구를 쓰는 순서</div>
-    <h2 style="margin-top:8px">여기까지 팠습니다</h2>
-    <p class="lead">검색·AI에서 <b>내가 어디쯤인지 재고</b>, 그 숫자에서 <b>손댈 것을
-      뽑아</b>, 실제로 고친 뒤 <b>다시 재는</b> 반복입니다. 한 바퀴 돌 때마다 재료가
-      쌓여서 다음 바퀴가 쉬워집니다. 아래에서 <b>지금 할 것</b>만 하시면 됩니다.</p>
+    <div class="eyebrow">이 도구를 쓰는 순서 · 6단계</div>
+    <h2 style="margin-top:8px">다음에 뭘 하면 되나</h2>
+    <p class="lead"><b>재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는</b> 반복입니다.
+      한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 끝난 단계는 실제로 모인
+      자료를 보고 표시하니, 아래 [지금 할 것] 하나만 하시면 됩니다.</p>
     <div class="shaft" id="shaft"></div>
-    <div class="loopback">한 바퀴가 끝나면 <b>2번으로 돌아옵니다</b> — 고친 게 순위와
-      인용에 반영됐는지는 다음 수집에서 보입니다.</div>
+    <div class="loopback">6번이 끝나면 <b>2번으로 돌아옵니다</b> — 고친 게 순위와 인용에
+      반영됐는지는 다음번에 실적을 읽을 때 숫자로 나옵니다.</div>
   </section>
 
   <div id="err" hidden></div>
@@ -362,20 +364,20 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
       <section>
         <div class="eyebrow" id="opp-eyebrow">기회</div>
         <h2>다음에 손댈 것</h2>
-        <p class="sub">확인·완료·기각을 누르면 바로 저장됩니다. 근거는 눌러서 펼칩니다.</p>
+        <p class="sub">누르면 바로 저장됩니다. 왜 뽑혔는지는 회색 글씨를 눌러 펼칩니다.</p>
         <div id="opps"></div>
       </section>
 
       <div>
         <section>
-          <div class="eyebrow">지난 스냅샷 대비</div>
+          <div class="eyebrow">지난번 대비</div>
           <h2>움직인 검색어</h2>
           <p class="sub" id="mv-sub"></p>
           <div id="movers"></div>
         </section>
         <section>
           <div class="eyebrow">SERP</div>
-          <h2>순위 스냅샷</h2>
+          <h2>순위 기록</h2>
           <div id="ranks"></div>
         </section>
       </div>
@@ -426,7 +428,7 @@ async function post(path, body) {
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
 function depthLog(rows) {
   if (!rows.length)
-    return `<div class="empty">GSC 스냅샷이 있어야 그려집니다 — /capture gsc</div>`;
+    return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
   const W = 1000, LANE = 30, PAD_T = 40, PAD_B = 8;
   const L = 330, R = W - 74, EDGE = 20;              // 라벨은 축 바로 왼쪽에 붙인다
   const H = PAD_T + rows.length * LANE + PAD_B;
@@ -477,12 +479,12 @@ function depthLog(rows) {
 }
 
 let READONLY = false;                    // 박제된 기록에서는 상태를 바꿀 수 없다
-const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed:"기각"};
+const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed:"제외함"};
 function oppRow(o) {
   const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
   const acts = READONLY ? ""
     : o.status === "new"
-    ? btn("acked","확인") + btn("done","완료") + btn("dismissed","기각")
+    ? btn("acked","확인") + btn("done","완료") + btn("dismissed","제외")
     : btn("new","되돌리기");
   return `<div class="opp">
     <div class="score">${o.score ?? ""}</div>
@@ -506,7 +508,7 @@ let OPPS = [];
 function renderOpps(n) {
   if (!OPPS.length)
     return $("opps").innerHTML =
-      `<div class="empty">기회가 아직 없습니다 — /capture gaps 로 찾습니다.</div>`;
+      `<div class="empty">아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.</div>`;
   const rest = OPPS.length - n;
   $("opps").innerHTML = OPPS.slice(0, n).map(oppRow).join("") + (rest > 0
     ? `<div class="acts" style="margin-top:14px">
@@ -521,45 +523,53 @@ function moverRows(list, invert) {
     <td class="num">${num(m.clk)} ${delta(m.dclk)}</td></tr>`);
 }
 
+// 배너와 안내는 따로 도착한다(각자 fetch). 어느 쪽이 늦게 그려져도 "지금 할 것"이
+// 남도록 값은 여기 두고, 양쪽이 그린 직후 applyNext()로 붙인다.
+let NEXT_HTML = "";
+function applyNext() {
+  const nx = $("nx");
+  if (nx && NEXT_HTML) nx.innerHTML = NEXT_HTML;
+}
+
 /* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
    순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
    done()은 Brain의 실적으로 판정하므로 "했다 치고" 넘어가지 않는다. */
 function guideSteps(d, p) {
   const P = d.project.name;
   return [
-    {t:"사이트 등록", gain:"측정할 도메인과 씨앗 키워드를 정합니다. 여기서 시작합니다.",
+    {t:"사이트 등록", gain:"측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.",
      done: true, state:`${d.project.domain}`, cmd:null},
     {t:"구글 실적 읽기",
      gain:"서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 이 " +
           "숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
      done: p.gsc_days > 0,
-     state: p.gsc_days ? `스냅샷 ${p.gsc_days}개 · 최근 ${p.gsc_last}` : "아직 없음",
+     state: p.gsc_days ? `${p.gsc_days}번 읽음 · 최근 ${p.gsc_last}` : "아직 안 읽음",
      cmd:`/capture gsc ${P}`},
     {t:"키워드 캐기",
      gain:"자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 늘린 " +
           "만큼 다음 단계가 볼 게 많아집니다.",
      done: p.keywords_found > 0,
-     state: p.keywords_found ? `발굴 ${p.keywords_found}개 · 활성 ${p.keywords}개`
-                             : (p.keywords ? `씨앗 ${p.keywords}개만 있음` : "아직 없음"),
+     state: p.keywords_found ? `캔 것 ${p.keywords_found}개 · 추적 ${p.keywords}개`
+                             : (p.keywords ? `직접 적은 ${p.keywords}개뿐` : "아직 없음"),
      cmd:`/capture keywords ${P}`},
     {t:"AI 노출 확인",
      gain:"ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. " +
           "브라우저로 직접 물어보면 키 없이 무료입니다.",
      done: p.ai_checks > 0,
-     state: p.ai_checks ? `체크 ${p.ai_checks}건 · 질문 ${p.ai_prompts}개`
-                        : (p.ai_prompts ? "질문은 있는데 아직 안 물어봄" : "질문부터 필요"),
+     state: p.ai_checks ? `답변 ${p.ai_checks}개 확인 · 질문 ${p.ai_prompts}개`
+                        : (p.ai_prompts ? "질문은 준비됨 · 아직 안 물어봄" : "물어볼 질문부터 필요"),
      cmd: p.ai_prompts ? `/seo-miner:browse ${P}` : `/capture add ${P}`},
     {t:"손댈 것 뽑기",
      gain:"모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 대신 " +
           "인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
      done: p.opps > 0,
-     state: p.opps ? `기회 ${p.opps}건` : "아직 없음",
+     state: p.opps ? `${p.opps}건 뽑음` : "아직 없음",
      cmd:`/capture gaps ${P}`},
     {t:"실제로 고치기",
      gain:"뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 나가고, " +
           "끝나면 그 기회가 완료로 닫힙니다.",
      done: p.creations > 0,
-     state: p.creations ? `작업 ${p.creations}건` : "아직 없음",
+     state: p.creations ? `${p.creations}건 고침` : "아직 한 건도 안 함",
      cmd:`/create plan ${P}`},
   ];
 }
@@ -582,6 +592,13 @@ function renderGuide(d) {
           >${esc(s.cmd)}</button>` : ""}</div>
       </div></div>`;
   }).join("");
+  // 배너의 "지금 할 것"도 같은 판정으로 채운다 — 화면에 다음 할 일은 하나뿐이다.
+  NEXT_HTML = here === -1
+    ? `한 바퀴 다 돌았습니다 — <b>2. 구글 실적 읽기</b>부터 다시 재면 그동안 고친 게
+       숫자로 보입니다.`
+    : `지금 할 것 — <b>${esc(steps[here].t)}</b>` +
+      (steps[here].cmd ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+  applyNext();
   // 아직 한 바퀴도 안 돈 프로젝트면 펴서 보여준다. 다 돌았으면 헤더 [안내]로 연다.
   if (here !== -1 && !d.progress.gsc_days) $("guide").hidden = false;
 }
@@ -597,13 +614,13 @@ function render(d) {
   const t = d.trend, last = t[t.length - 1] || {}, prev = t[t.length - 2] || {};
   renderGuide(d);
   $("meta").innerHTML = `${esc(d.project.gsc_property || d.project.domain || "")} · ` +
-    `스냅샷 ${esc(d.gsc_date || "없음")}`;
+    `구글 실적 ${esc(d.gsc_date || "아직 없음")}`;
   $("band").innerHTML = [
     ["클릭", num(last.clk), delta(last.clk - prev.clk)],
     ["노출", num(last.imp), delta(last.imp - prev.imp)],
-    ["잡힌 검색어", num(last.q), delta(last.q - prev.q)],
-    ["활성 키워드", num(d.kw_active), ""],
-    ["열린 기회", num(d.opps_total), ""],
+    ["노출된 검색어", num(last.q), delta(last.q - prev.q)],
+    ["추적 키워드", num(d.kw_active), ""],
+    ["남은 기회", num(d.opps_total), ""],
   ].map(([l, v, dd]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div></div>`).join("");
 
@@ -614,14 +631,14 @@ function render(d) {
     : "";
   $("log").innerHTML = depthLog(d.striking);
 
-  $("opp-eyebrow").textContent = `기회 ${d.opps_total}건 열림`;
+  $("opp-eyebrow").textContent = `아직 안 한 기회 ${d.opps_total}건`;
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   OPPS = d.opps;
   renderOpps(8);
 
   const mv = moverRows(d.ups).concat(moverRows(d.downs));
   $("mv-sub").textContent = t.length > 1
-    ? `${t[t.length - 2].d} → ${t[t.length - 1].d}` : "스냅샷이 2개 쌓이면 채워집니다.";
+    ? `${t[t.length - 2].d} → ${t[t.length - 1].d}` : "구글 실적을 두 번 이상 읽으면 채워집니다.";
   $("movers").innerHTML = table(["검색어", ">순위", ">Δ순위", ">클릭"], mv);
 
   let ai = "";
@@ -638,7 +655,7 @@ function render(d) {
       ai += `<p class="sub" style="margin:20px 0 10px">어디에도 안 잡힌 질문 ${d.missed.length}개</p>` +
         `<div class="runlog">${d.missed.map(m => `<span class="r">${esc(m.prompt)}
           <span class="muted">${esc(m.engines)}</span></span>`).join("")}</div>`;
-  } else ai = `<div class="empty">AI 인용 기록이 없습니다 — /capture ai 또는 /seo-miner:browse</div>`;
+  } else ai = `<div class="empty">아직 안 물어봤습니다 — <code>/seo-miner:browse</code>는 키 없이 무료입니다.</div>`;
   $("ai").innerHTML = ai;
 
   $("ranks").innerHTML = d.ranks.length
@@ -647,7 +664,7 @@ function render(d) {
         <td class="num">${r.pos ?? "—"}</td><td class="num">${delta(r.dpos) || ""}</td>
         <td>${r.aio ? (r.aio_cited ? '<span class="up">인용됨</span>'
                      : '<span class="down">있는데 미인용</span>') : '<span class="muted">없음</span>'}</td></tr>`))
-    : `<div class="empty">순위 데이터 없음 — SERP 키가 있으면 /capture rank 로 모읍니다.</div>`;
+    : `<div class="empty">매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.</div>`;
 
   $("runs").innerHTML = d.runs.length
     ? `<div class="runlog">${d.runs.map(r => `<span class="r"><b>${esc(r.kind)}</b>
@@ -684,11 +701,12 @@ async function loadDoctor() {
     // 등록 폼이 바로 아래 있으므로 그쪽을 가리킨다 — 같은 일을 두 번 시키지 않는다.
     const noProj = !d.brain.projects.length;
     let h = `<div class="verdict">${esc(d.verdict)}</div>`;
-    if (noProj)
-      h += `<div class="nx">다음 한 걸음 — 아래 <b>2. 첫 사이트</b> 칸을 채우고
-            [사이트 등록]을 누르시면 됩니다.</div>`;
-    else if (d.next_command)
-      h += `<div class="nx">다음 한 걸음 <code>${esc(d.next_command)}</code></div>`;
+    // 지금 할 것은 한 화면에 하나만 있어야 한다 — 사이트가 있으면 안내(실측 판정)가
+    // 채우고, 없으면 여기서 등록 폼을 가리킨다. #nx는 둘의 공용 자리.
+    h += noProj
+      ? `<div class="nx" id="nx">아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을
+         누르시면 됩니다.</div>`
+      : `<div class="nx" id="nx"></div>`;
     const must = noProj ? d.must.filter(s => !s.includes("/capture add")) : d.must;
     if (must.length)
       h += `<ul class="must">${must.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
@@ -701,6 +719,7 @@ async function loadDoctor() {
         <ul>${extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     $("docban").innerHTML = h;
     $("docban").hidden = false;
+    applyNext();                         // 안내가 먼저 도착했으면 그 값을 살린다
     renderSetup(d);
   } catch (e) { /* 배너 실패는 치명이 아님 — 본문은 그대로 뜬다 */ }
 }
