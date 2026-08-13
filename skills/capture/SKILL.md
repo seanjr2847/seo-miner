@@ -104,6 +104,8 @@ gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아�
 (포그라운드로 돌리면 세션이 막힌다). 127.0.0.1 전용 웹 UI로 Brain을 실시간
 조회하고, 기회 상태(확인/완료/기각)를 표에서 바로 갱신한다.
 훑어보기·트리아지는 dash, 날짜별 기록으로 남길 때는 report — 역할이 다르다.
+헤더 [설정] 버튼에 온보딩 패널(부품 설치·사이트 등록·GSC 열쇠·API 키)이 있다 —
+사용자가 채팅 말고 직접 하고 싶어 하면 여기로 보낸다 (setup 스킬 참조).
 
 ### /capture report {P}
 `python scripts/report.py --project {P} --actions <actions.json>` → 파일 경로 안내.

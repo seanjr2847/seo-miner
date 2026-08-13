@@ -32,6 +32,19 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):  # 파이프로 감싼 경우 등
         pass
 
+
+def load_env(path: Path = CAPTURE_HOME / "env") -> None:
+    """~/.capture/env 의 KEY=VALUE를 환경변수로 — 대시보드 설정 화면이 여기 쓴다.
+    셸에 이미 export한 값이 우선(setdefault). # ponytail: dotenv 패키지 대신 4줄.
+    doctor.py에도 같은 함수가 있다 — pip 이전에 도는 stdlib 진단이라 import를 못 걸어서."""
+    for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
+        k, sep, v = line.partition("=")
+        if sep and k.strip() and not k.lstrip().startswith("#"):
+            os.environ.setdefault(k.strip(), v.strip())
+
+
+load_env()
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,

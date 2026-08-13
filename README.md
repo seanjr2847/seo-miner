@@ -34,6 +34,7 @@ GSC 자격증명은 `~/.capture/creds/{사이트}/`에 **사이트별로 분리*
 ## 시작
 ```
 /setup                        # 설치 직후 환경 진단 — 뭐가 되고 뭐가 빠졌는지
+/setup web                    # 같은 걸 화면으로 — 부품 설치·사이트 등록·키 저장까지 폼에서
 /capture add <프로젝트>        # 온보딩 (game|local_clinic|saas|directory)
 /capture run <프로젝트>        # gsc → rank → ai → 분석 → HTML 리포트
 /browse <프로젝트>             # API 키 없이 브라우저(claude-in-chrome)로 실제 앱 인용 실측

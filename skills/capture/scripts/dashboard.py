@@ -12,19 +12,118 @@ Usage:
 """
 import argparse
 import json
+import os
+import re
+import secrets
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
+sys.path.insert(0, str(SETUP_SCRIPTS))
 import db      # noqa: E402
 import doctor  # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import report  # noqa: E402
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
+
+# 설정 화면이 실행할 수 있는 명령은 이 셋뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
+ACTIONS = {
+    "deps": [sys.executable, "-m", "pip", "install", "requests", "jinja2", "pyyaml"],
+    "deps_gsc": [sys.executable, "-m", "pip", "install", "google-api-python-client",
+                 "google-auth"],
+    "gsc": [sys.executable, str(SETUP_SCRIPTS / "connect_gsc.py")],
+}
+KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
+              "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
+PROJECT_TYPES = ("game", "local_clinic", "saas", "directory")
+ENV_FILE = db.CAPTURE_HOME / "env"
+
+# 로컬 전용이라 인증이 없다. 그런데 브라우저는 아무 웹페이지에서나 127.0.0.1로 POST를
+# 보낼 수 있어서(pip 실행·파일 쓰기 엔드포인트가 생겼으므로) 1회용 토큰으로 막는다.
+TOKEN = secrets.token_urlsafe(9)
+
+
+def run_action(name: str) -> dict:
+    try:
+        p = subprocess.run(ACTIONS[name], capture_output=True, timeout=600,
+                           encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "log": "10분이 지나도 안 끝나 중단했습니다."}
+    return {"ok": p.returncode == 0, "log": ((p.stdout or "") + (p.stderr or ""))[-4000:]}
+
+
+def save_keys(values: dict) -> dict:
+    """셸 rc 편집 대신 ~/.capture/env 에 모은다 (db.load_env/doctor.load_env가 읽는다).
+    빈 값으로 보내면 그 키를 지운다."""
+    cur = {}
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text("utf-8").splitlines():
+            k, sep, v = line.partition("=")
+            if sep:
+                cur[k.strip()] = v.strip()
+    for k in KEY_FIELDS:
+        if k not in values:
+            continue
+        v = str(values[k]).strip()
+        if v:
+            cur[k] = os.environ[k] = v   # 지금 세션의 doctor 진단에 바로 반영
+        else:
+            cur.pop(k, None)
+            os.environ.pop(k, None)
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("".join(f"{k}={v}\n" for k, v in cur.items() if v), "utf-8")
+    try:
+        ENV_FILE.chmod(0o600)
+    except OSError:                      # 윈도우 등 — 권한 모델이 달라도 저장은 성공
+        pass
+    return {"ok": True, "saved": [k for k in KEY_FIELDS if cur.get(k)],
+            "path": str(ENV_FILE)}
+
+
+def create_project(f: dict) -> dict:
+    """폼 입력 → projects/{name}.yaml → Brain 등록. AI 프롬프트 초안은 채팅(/capture add) 몫."""
+    name = str(f.get("name", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", name):
+        return {"ok": False, "error": "이름은 영문·숫자·-·_ 로 40자까지 (파일명이 됩니다)"}
+    if f.get("type") not in PROJECT_TYPES:
+        return {"ok": False, "error": f"종류는 {'/'.join(PROJECT_TYPES)} 중 하나"}
+    domain = str(f.get("domain", "")).strip()
+    if not domain:
+        return {"ok": False, "error": "도메인을 입력해 주세요 (예: example.com)"}
+    path = db.CAPTURE_HOME / "projects" / f"{name}.yaml"
+    if path.exists():
+        return {"ok": False, "error": f"{name} 은 이미 있습니다 — 다른 이름을 쓰세요."}
+
+    def items(key: str) -> str:          # 줄바꿈·쉼표 아무렇게나 적어도 받는다
+        vals = [s.strip() for s in re.split(r"[,\n]", str(f.get(key, ""))) if s.strip()]
+        return json.dumps(vals, ensure_ascii=False)   # JSON 배열 = 유효한 YAML
+
+    gsc = str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"# 대시보드 설정 화면에서 생성 — 손으로 고친 뒤에는\n"
+        f"# python db.py sync-project {path} 를 다시 돌리면 반영됩니다.\n"
+        f"name: {name}\ntype: {f['type']}\ndomain: {domain}\n"
+        f"locale: {str(f.get('locale') or 'ko-KR').strip()}\n"
+        f"gsc_property: {gsc}\n"
+        f"brand_aliases: {items('brand_aliases')}\n"
+        f"seed_keywords: {items('seed_keywords')}\n"
+        f"competitors_manual: {items('competitors_manual')}\n"
+        "surfaces_ai: [chatgpt, perplexity, gemini]\n"
+        "limits:\n  max_keywords: 100\n  max_ai_prompts: 30\n", "utf-8")
+    try:
+        db.sync_project(str(path))
+    except SystemExit as e:
+        return {"ok": False, "error": str(e)}
+    except ImportError:
+        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
+                                      "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
+    return {"ok": True, "name": name, "path": str(path)}
 
 
 def payload(project: str) -> dict:
@@ -82,13 +181,29 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
-        if urlparse(self.path).path != "/api/opp":
+        path = urlparse(self.path).path
+        if path not in ("/api/opp", "/api/setup/run", "/api/setup/keys",
+                        "/api/setup/project"):
             return self._send(404, b"not found", "text/plain")
+        if self.headers.get("X-Token") != TOKEN:
+            return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
+                              403)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self._json({"error": "bad json"}, 400)
+
+        if path == "/api/setup/run":
+            if body.get("action") not in ACTIONS:
+                return self._json({"error": "unknown action"}, 400)
+            return self._json(run_action(body["action"]))
+        if path == "/api/setup/keys":
+            return self._json(save_keys(body))
+        if path == "/api/setup/project":
+            r = create_project(body)
+            return self._json(r, 200 if r["ok"] else 400)
+
         if body.get("status") not in OPP_STATUSES:
             return self._json({"error": f"status must be one of {OPP_STATUSES}"}, 400)
         conn = db.connect()
@@ -112,7 +227,7 @@ def main() -> None:
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
-    url = f"http://127.0.0.1:{a.port}/" + (
+    url = f"http://127.0.0.1:{a.port}/?t={TOKEN}" + (
         f"#{a.project}" if a.project else "")
     print(f"dashboard: {url}  (Ctrl+C로 종료)")
     if a.open:

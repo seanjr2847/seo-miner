@@ -103,6 +103,9 @@ mac/linux에서 쓰려면 `"command": "npx", "args": ["-y", "mcp-server-gsc"]`,
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
 2. `export OPENROUTER_API_KEY=sk-or-...` (셸 rc 파일에 추가)
+   — 셸을 건드리기 싫으면 대시보드 [설정] 패널에 붙여넣으면 된다. 값은
+   `~/.capture/env`(KEY=VALUE)에 저장되고 모든 스크립트가 읽는다. 이 절의 다른
+   키(7절 포함)도 마찬가지. 셸에 export한 값이 있으면 그쪽이 우선한다.
 3. 모델 슬러그는 시간이 지나면 바뀐다 → `config.yaml`의 `ai_engines`에서 관리.
    `:online` 접미사가 웹검색을 켠다(OpenAI·Google·Perplexity 등은 네이티브 검색 사용).
 4. 비용 감각: 검색 호출료가 토큰보다 크다. 프롬프트 30개 × 3엔진 주 1회 기준

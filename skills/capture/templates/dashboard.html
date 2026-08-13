@@ -74,6 +74,25 @@ svg text { fill:var(--muted); font-size:10px; }
 #docban details { margin-top:8px; }
 #docban summary { cursor:pointer; color:var(--muted); font-size:12px; }
 #docban li { margin:2px 0; }
+#setup .step { border-top:1px solid var(--border); padding:12px 0; }
+#setup .step:first-of-type { border-top:none; padding-top:4px; }
+#setup h3 { font-size:13px; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+#setup .why { color:var(--muted); font-size:12px; margin:0 0 8px; }
+#setup .ok { color:var(--up); font-size:12px; font-weight:400; }
+#setup .todo { color:var(--warn); font-size:12px; font-weight:400; }
+#setup label { display:block; font-size:12px; color:var(--muted); margin:6px 0 2px; }
+#setup input, #setup select, #setup textarea { font:inherit; width:100%;
+  color:var(--fg); background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; padding:5px 8px; }
+#setup textarea { min-height:52px; resize:vertical; }
+#setup .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; }
+@media (max-width:640px) { #setup .grid { grid-template-columns:1fr; } }
+#setup .row { margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+#setup .msg { font-size:12px; }
+#setup .msg.bad { color:var(--down); }
+#setup .msg.good { color:var(--up); }
+#setup pre { background:var(--chip); border-radius:6px; padding:8px 10px;
+  font-size:11px; max-height:200px; overflow:auto; white-space:pre-wrap; margin:8px 0 0; }
 </style>
 </head>
 <body>
@@ -81,10 +100,81 @@ svg text { fill:var(--muted); font-size:10px; }
   <h1>seo-miner</h1>
   <select id="proj"></select>
   <button id="refresh">새로고침</button>
+  <button id="toggle-setup">설정</button>
   <span class="sub" id="meta"></span>
 </header>
 <main>
   <section id="docban" hidden></section>
+
+  <section id="setup" hidden>
+    <h2>설정 <span class="n">— 채팅 없이 여기서 끝낼 수 있습니다</span></h2>
+
+    <div class="step">
+      <h3>1. 기본 부품 <span id="s-deps"></span></h3>
+      <p class="why">키워드 수집·리포트에 쓰는 파이썬 부품 3개. 무료, 1분.</p>
+      <div class="row"><button id="btn-deps">설치하기</button>
+        <span class="msg" id="m-deps"></span></div>
+    </div>
+
+    <div class="step">
+      <h3>2. 첫 사이트 <span id="s-proj"></span></h3>
+      <p class="why">측정할 사이트를 등록합니다. 나중에 <code>~/.capture/projects/</code>에서
+        고칠 수 있습니다.</p>
+      <div class="grid">
+        <div><label>이름 (폴더·명령에 쓸 짧은 영문)</label>
+          <input id="p-name" placeholder="mysite"></div>
+        <div><label>종류</label><select id="p-type">
+          <option value="saas">saas — 서비스·앱</option>
+          <option value="game">game — 게임</option>
+          <option value="local_clinic">local_clinic — 지역 매장·병원</option>
+          <option value="directory">directory — 목록·디렉터리</option>
+        </select></div>
+        <div><label>도메인</label><input id="p-domain" placeholder="example.com"></div>
+        <div><label>언어-지역</label><input id="p-locale" value="ko-KR"></div>
+        <div><label>서치콘솔 속성 <span class="muted">(비우면 sc-domain:도메인)</span></label>
+          <input id="p-gsc" placeholder="sc-domain:example.com"></div>
+        <div><label>브랜드 표기 (쉼표로 여러 개)</label>
+          <input id="p-alias" placeholder="마이사이트, MySite"></div>
+      </div>
+      <label>씨앗 키워드 — 떠오르는 검색어 3~10개 (쉼표나 줄바꿈)</label>
+      <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
+      <label>경쟁사 도메인 (선택)</label>
+      <input id="p-comp" placeholder="competitor.com, other.com">
+      <div class="row"><button id="btn-proj">사이트 등록</button>
+        <span class="msg" id="m-proj"></span></div>
+    </div>
+
+    <div class="step">
+      <h3>3. 구글 서치콘솔 연결 <span id="s-gsc"></span> <span class="muted">(선택)</span></h3>
+      <p class="why">안 해도 CSV 내보내기로 실적을 읽을 수 있습니다. 연결하면 자동 수집 +
+        1,000행 제한이 풀립니다. 구글 클라우드 콘솔 클릭은 화면에서 대신 못 해 드립니다 —
+        채팅에 <code>GSC 연동해줘</code> 라고 하시면 제가 눌러 드리고, 열쇠 파일을 받은 뒤
+        아래 버튼을 누르시면 됩니다.</p>
+      <div class="row"><button id="btn-gsc">받은 열쇠 파일 가져오기</button>
+        <button id="btn-depsgsc">구글 수집용 부품 설치</button>
+        <span class="msg" id="m-gsc"></span></div>
+    </div>
+
+    <div class="step">
+      <h3>4. API 키 <span id="s-keys"></span> <span class="muted">(선택)</span></h3>
+      <p class="why">자동화를 살 때만 필요합니다. 저장하면 <code>~/.capture/env</code>에만
+        들어가고 화면에 다시 표시되지 않습니다. 비운 채 저장하면 지워집니다.</p>
+      <div class="grid">
+        <div><label>OpenRouter — AI 인용 확인 자동화</label>
+          <input id="k-or" type="password" placeholder="sk-or-..."></div>
+        <div><label>Serper — 순위 추적</label>
+          <input id="k-serper" type="password" placeholder="선택"></div>
+        <div><label>DataForSEO 아이디</label><input id="k-dfsl" placeholder="선택"></div>
+        <div><label>DataForSEO 비밀번호</label>
+          <input id="k-dfsp" type="password" placeholder="선택"></div>
+      </div>
+      <div class="row"><button id="btn-keys">키 저장</button>
+        <span class="msg" id="m-keys"></span></div>
+    </div>
+
+    <pre id="setup-log" hidden></pre>
+  </section>
+
   <div id="err" hidden></div>
   <div id="content">
   <div class="kpis" id="kpis"></div>
@@ -109,7 +199,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const num = n => (n ?? 0).toLocaleString("ko-KR");
 const delta = (d, invert) => {
-  if (d == null || d === 0) return "";
+  if (!Number.isFinite(d) || d === 0) return "";   // 스냅샷 0개면 NaN — 아무것도 안 그린다
   const good = invert ? d < 0 : d > 0;
   const arrow = d > 0 ? "▲" : "▼";
   return `<span class="d ${good ? "up" : "down"}">${arrow}${Math.abs(d).toLocaleString("ko-KR")}</span>`;
@@ -158,9 +248,17 @@ function oppRow(o) {
     <td class="opp-btns">${btns}</td></tr>`;
 }
 
+// 브라우저는 아무 사이트에서나 127.0.0.1로 POST를 보낼 수 있어서 서버가 1회용 토큰을
+// 요구한다 — 대시보드를 띄울 때 받은 URL(?t=…)에 들어 있다.
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+async function post(path, body) {
+  const res = await fetch(path, {method:"POST", body: JSON.stringify(body),
+    headers:{"Content-Type":"application/json", "X-Token": TOKEN}});
+  return [res.ok, await res.json()];
+}
+
 async function setOpp(id, status) {
-  await fetch("/api/opp", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({id, status})});
+  await post("/api/opp", {id, status});
   load();
 }
 
@@ -246,11 +344,90 @@ async function loadDoctor() {
         <ul>${extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     $("docban").innerHTML = h;
     $("docban").hidden = false;
+    renderSetup(d);
   } catch (e) { /* 배너 실패는 치명이 아님 — 본문은 그대로 뜬다 */ }
 }
 
+// ── 설정 화면 ───────────────────────────────────────────────────────────
+const mark = (id, done, todo) => $(id).outerHTML =
+  `<span id="${id}" class="${done ? "ok" : "todo"}">${done ? "✓ 완료" : todo}</span>`;
+
+function renderSetup(d) {
+  const hasProj = d.brain.projects.length > 0;
+  mark("s-deps", d.core_ok, "설치 필요");
+  mark("s-proj", hasProj, "아직 없음");
+  mark("s-gsc", d.keys.gsc_service_account || Object.values(d.gsc_legacy).some(Boolean),
+       "안 함 — 괜찮습니다");
+  const nkeys = [d.keys.openrouter, d.keys.serper, d.keys.dataforseo].filter(Boolean).length;
+  $("s-keys").outerHTML = nkeys
+    ? `<span id="s-keys" class="ok">✓ ${nkeys}개 저장됨</span>`
+    : `<span id="s-keys" class="todo">안 함 — 괜찮습니다</span>`;
+  $("btn-depsgsc").hidden = !d.keys.gsc_service_account || d.deps_gsc.googleapiclient;
+  // 할 게 남았으면 펼쳐 놓는다. 다 끝난 뒤엔 헤더의 [설정] 버튼으로 연다.
+  if (d.must.length || !hasProj) $("setup").hidden = false;
+}
+
+function busy(btn, msg, on) {
+  $(btn).disabled = on;
+  if (on) { $(msg).className = "msg"; $(msg).textContent = "실행 중… (최대 몇 분)"; }
+}
+function say(msg, text, ok) {
+  $(msg).className = "msg " + (ok ? "good" : "bad");
+  $(msg).textContent = text;
+}
+function showLog(log) {
+  $("setup-log").hidden = !log;
+  $("setup-log").textContent = log || "";
+}
+
+async function runAction(action, btn, msg, okText) {
+  busy(btn, msg, true);
+  const [, r] = await post("/api/setup/run", {action});
+  busy(btn, msg, false);
+  say(msg, r.ok ? okText : "실패했습니다 — 아래 로그를 봐 주세요.", r.ok);
+  showLog(r.log);
+  loadDoctor();
+}
+
+$("btn-deps").addEventListener("click", () =>
+  runAction("deps", "btn-deps", "m-deps", "설치했습니다."));
+$("btn-depsgsc").addEventListener("click", () =>
+  runAction("deps_gsc", "btn-depsgsc", "m-gsc", "설치했습니다."));
+$("btn-gsc").addEventListener("click", () =>
+  runAction("gsc", "btn-gsc", "m-gsc",
+            "열쇠를 가져왔습니다 — 아래 안내대로 서치콘솔에 이메일을 추가하세요."));
+
+$("btn-keys").addEventListener("click", async () => {
+  const vals = {}, f = [["k-or","OPENROUTER_API_KEY"], ["k-serper","SERPER_API_KEY"],
+                       ["k-dfsl","DATAFORSEO_LOGIN"], ["k-dfsp","DATAFORSEO_PASSWORD"]];
+  for (const [id, key] of f) if ($(id).value !== "") vals[key] = $(id).value;
+  if (!Object.keys(vals).length) return say("m-keys", "입력한 칸이 없습니다.", false);
+  busy("btn-keys", "m-keys", true);
+  const [, r] = await post("/api/setup/keys", vals);
+  busy("btn-keys", "m-keys", false);
+  for (const [id] of f) $(id).value = "";
+  say("m-keys", `저장했습니다 → ${r.path}`, true);
+  loadDoctor();
+});
+
+$("btn-proj").addEventListener("click", async () => {
+  busy("btn-proj", "m-proj", true);
+  const [ok, r] = await post("/api/setup/project", {
+    name: $("p-name").value, type: $("p-type").value, domain: $("p-domain").value,
+    locale: $("p-locale").value, gsc_property: $("p-gsc").value,
+    brand_aliases: $("p-alias").value, seed_keywords: $("p-seeds").value,
+    competitors_manual: $("p-comp").value});
+  busy("btn-proj", "m-proj", false);
+  if (!ok) return say("m-proj", r.error, false);
+  say("m-proj", `${r.name} 등록 완료 — 이제 채팅에서 /capture run ${r.name}`, true);
+  loadDoctor();
+  loadProjects().then(n => { if (n) load(); });
+});
+
 $("proj").addEventListener("change", load);
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
+$("toggle-setup").addEventListener("click", () =>
+  $("setup").hidden = !$("setup").hidden);
 loadDoctor();
 loadProjects().then(n => { if (n) load(); else $("content").hidden = true; });
 </script>

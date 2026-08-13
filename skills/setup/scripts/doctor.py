@@ -31,7 +31,17 @@ def has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
+def load_env(path: Path = CAPTURE_HOME / "env") -> None:
+    """~/.capture/env 의 KEY=VALUE를 환경변수로 (대시보드 설정 화면이 쓰는 파일).
+    db.py에 같은 함수가 있지만 doctor는 pip 이전에 도는 stdlib 전용이라 import를 못 건다."""
+    for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
+        k, sep, v = line.partition("=")
+        if sep and k.strip() and not k.lstrip().startswith("#"):
+            os.environ.setdefault(k.strip(), v.strip())
+
+
 def diagnose() -> dict:
+    load_env()
     deps_core = {m: has(m) for m in ("requests", "jinja2", "yaml")}
     deps_gsc = {m: has(m) for m in ("googleapiclient",)}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
@@ -187,9 +197,16 @@ def main() -> None:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.
         import subprocess
         dash = Path(__file__).resolve().parents[2] / "capture" / "scripts" / "dashboard.py"
-        subprocess.Popen([sys.executable, str(dash), "--open"])
-        print("대시보드를 띄웠습니다 — 브라우저 상단 배너가 점검 결과입니다. "
-              "(안 열리면: python " + str(dash) + " --open)")
+        # 첫 줄(주소)만 받아서 대신 찍고 나는 빠진다 — 서버 출력을 물고 있으면
+        # 이 명령이 안 끝난 것처럼 보인다(파이프로 감쌌을 때 특히).
+        proc = subprocess.Popen([sys.executable, "-u", str(dash), "--open"],
+                                stdout=subprocess.PIPE, encoding="utf-8",
+                                errors="replace")
+        line = (proc.stdout.readline() or "").strip()
+        proc.stdout.close()
+        print("대시보드를 띄웠습니다 — 상단 배너가 점검 결과이고, 그 아래 [설정]에서 "
+              "부품 설치·사이트 등록·API 키 저장을 바로 하실 수 있습니다.")
+        print(line or f"(안 열리면: python {dash} --open)")
     elif "--json" in sys.argv:
         print(json.dumps(d, ensure_ascii=False, indent=2))
     else:
