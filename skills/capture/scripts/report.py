@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Render the self-contained HTML report from the Brain.
+"""Brain에서 리포트용 데이터를 모으고(gather), 대시보드를 그 시점째 박제한다.
 
-Contract: the report always ends with Next Actions. Claude writes them to a
-JSON file (list of strings) and passes --actions; without it a placeholder
-reminds you to run the analysis step.
+리포트 = 대시보드와 같은 화면 + 그날 데이터가 페이지에 박힌 자립형 HTML.
+서버 없이 열리고 남한테 보내도 그대로다. 렌더링은 dashboard.export()가 한다
+(gather는 라이브 대시보드도 쓰므로 여기 남는다).
+
+Contract: 리포트는 Next Actions로 끝난다. Claude가 JSON 파일(문자열 배열)로
+써서 --actions로 넘긴다.
 
 Usage:
   python report.py --project NAME [--actions actions.json] [--open]
 Output:
-  $CAPTURE_HOME/reports/{project}/{YYYY-MM-DD}.html   (path printed)
+  $CAPTURE_HOME/reports/{project}/{YYYY-MM-DD}.html   (경로를 출력)
 """
 import argparse
 import json
 import sys
-from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -136,27 +138,14 @@ def main() -> None:
     ap.add_argument("--open", action="store_true")
     a = ap.parse_args()
 
-    from jinja2 import Environment, FileSystemLoader
-    conn = db.connect()
-    p = db.get_project(conn, a.project)
-    ctx = gather(conn, p)
-    actions = []
-    if a.actions and Path(a.actions).exists():
-        actions = json.loads(Path(a.actions).read_text(encoding="utf-8"))
-    ctx.update({"project": dict(p), "today": str(date.today()), "actions": actions})
-
-    env = Environment(loader=FileSystemLoader(Path(__file__).parent.parent / "templates"),
-                      autoescape=True)
-    html = env.get_template("report.html.j2").render(**ctx)
-    out_dir = db.CAPTURE_HOME / "reports" / p["name"]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{date.today()}.html"
-    out.write_text(html, encoding="utf-8")
+    # 리포트는 대시보드를 그 시점 데이터째 박제한 것이다 — 화면이 갈라지지 않게
+    # 렌더링은 dashboard.export() 하나만 쓴다(예전 jinja2 템플릿은 없앴다).
+    import dashboard
+    out = dashboard.export(a.project, a.actions)
     print(f"report: {out}")
     if a.open:
         import webbrowser
-        webbrowser.open(f"file://{out}")
-    conn.close()
+        webbrowser.open(out.as_uri())
 
 
 if __name__ == "__main__":

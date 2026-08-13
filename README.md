@@ -18,7 +18,7 @@ Create(실행)를 로컬 Brain(SQLite)으로 잇는 복리 루프.
 
 ## 준비물 (references/setup.md 상세)
 
-필수는 하나뿐입니다: `pip install requests jinja2 pyyaml`.
+필수는 하나뿐입니다: `pip install requests pyyaml`.
 API 키는 **하나도 없어도** 키워드 발굴·구글 실적 읽기·AI 인용 확인·리포트가 다 됩니다.
 
 | 원하는 것 | 키 없이 (기본) | 키를 쓰면 |

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>seo-miner 채굴 로그</title>
+<!--SNAPSHOT-->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⛏</text></svg>">
 <style>
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
@@ -145,6 +146,10 @@ tr:last-child td { border-bottom:0; }
 .chip { display:inline-block; font:400 12px/1 var(--mono); border:1px solid var(--rule);
   border-radius:2px; padding:5px 9px; margin:0 6px 6px 0; color:var(--slate); }
 .chip b { color:var(--ink); font-weight:500; }
+#acts { border-left:2px solid var(--patina); padding-left:18px; }
+#acts ol { margin:8px 0 0; padding-left:20px; }
+#acts li { margin:7px 0; font-size:14.5px; }
+#acts li::marker { font-family:var(--mono); color:var(--patina); }
 .runlog { font:400 12px/1.9 var(--mono); color:var(--slate); }
 .runlog b { color:var(--ink); font-weight:500; }
 .runlog .r { display:block; border-bottom:1px solid var(--rule-soft); padding:5px 0; }
@@ -285,6 +290,12 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
   <div id="content">
     <div class="band" id="band"></div>
 
+    <section id="acts" hidden>
+      <div class="eyebrow">이 기록을 남길 때 정한 것</div>
+      <h2>다음 행동</h2>
+      <ol id="acts-list"></ol>
+    </section>
+
     <section>
       <div class="eyebrow">4~20위 · 노출 많은 순</div>
       <h2>1페이지까지 남은 거리</h2>
@@ -410,10 +421,12 @@ function depthLog(rows) {
     <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>`;
 }
 
+let READONLY = false;                    // 박제된 기록에서는 상태를 바꿀 수 없다
 const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed:"기각"};
 function oppRow(o) {
   const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
-  const acts = o.status === "new"
+  const acts = READONLY ? ""
+    : o.status === "new"
     ? btn("acked","확인") + btn("done","완료") + btn("dismissed","기각")
     : btn("new","되돌리기");
   return `<div class="opp">
@@ -423,7 +436,7 @@ function oppRow(o) {
       <div class="target">${esc(o.target)}</div>
       ${o.reasoning ? `<div class="why clamp" onclick="this.classList.toggle('clamp')"
         title="눌러서 펼치기">${esc(o.reasoning)}</div>` : ""}
-      <div class="acts">${acts}</div>
+      ${acts ? `<div class="acts">${acts}</div>` : ""}
     </div>
     <div class="st st-${o.status}">${OPP_LABEL[o.status] || esc(o.status)}</div>
   </div>`;
@@ -639,8 +652,26 @@ $("btn-proj").addEventListener("click", async () => {
 $("proj").addEventListener("change", load);
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
 $("toggle-setup").addEventListener("click", () => $("setup").hidden = !$("setup").hidden);
-loadDoctor();
-loadProjects().then(n => { if (n) load(); else $("content").hidden = true; });
+
+// 박제된 기록(--export)이면 서버가 없다 — 페이지에 박힌 데이터를 그리고, 손댈 수
+// 없는 것들(트리아지·설정·새로고침·사이트 전환)은 아예 감춘다.
+if (window.__SNAPSHOT__) {
+  const s = window.__SNAPSHOT__;
+  READONLY = true;
+  $("proj").outerHTML = `<span class="mark" style="color:var(--patina)">` +
+    `${esc(s.data.project.name)}</span>`;
+  for (const id of ["refresh", "toggle-setup"]) $(id).hidden = true;
+  $("setup").remove();                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
+  document.querySelector(".tag").textContent = `${s.exported} 기록`;
+  if (s.actions.length) {
+    $("acts").hidden = false;
+    $("acts-list").innerHTML = s.actions.map(x => `<li>${esc(x)}</li>`).join("");
+  }
+  render(s.data);
+} else {
+  loadDoctor();
+  loadProjects().then(n => { if (n) load(); else $("content").hidden = true; });
+}
 </script>
 </body>
 </html>

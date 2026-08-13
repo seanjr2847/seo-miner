@@ -14,7 +14,7 @@ cp -r capture ~/.claude/skills/capture
 ## 2. 파이썬 의존성
 
 ```bash
-pip install requests jinja2 pyyaml
+pip install requests pyyaml
 # GSC 자동 수집(collect_gsc.py) 쓰는 경우에만 추가:
 pip install google-api-python-client
 # (구버전 사이트별 OAuth를 아직 쓰는 사이트가 있으면 google-auth-oauthlib 도)

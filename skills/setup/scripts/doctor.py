@@ -42,7 +42,7 @@ def load_env(path: Path = CAPTURE_HOME / "env") -> None:
 
 def diagnose() -> dict:
     load_env()
-    deps_core = {m: has(m) for m in ("requests", "jinja2", "yaml")}
+    deps_core = {m: has(m) for m in ("requests", "yaml")}
     deps_gsc = {m: has(m) for m in ("googleapiclient",)}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
              "db_exists": DB.exists(), "tables": 0, "projects": [],
@@ -108,7 +108,7 @@ def diagnose() -> dict:
 
     must = []
     if not core_ok:
-        must.append("기본 부품 설치 — `pip install requests jinja2 pyyaml` (1분). "
+        must.append("기본 부품 설치 — `pip install requests pyyaml` (1분). "
                     "이것만 하면 기능 대부분이 켜집니다. 채팅에 \"설치해줘\" 하시면 "
                     "제가 대신 실행합니다.")
     if not brain_ok:
@@ -137,7 +137,7 @@ def diagnose() -> dict:
     # 한 줄 요약 + 다음 한 걸음 하나 — 읽는 사람이 이 두 줄만 봐도 되게.
     if not core_ok:
         verdict = "설치가 조금 남았습니다 — 아래 [꼭 해야 할 일] 1번이면 대부분 켜집니다."
-        next_cmd = "pip install requests jinja2 pyyaml"
+        next_cmd = "pip install requests pyyaml"
     elif not brain_ok:
         verdict = "보관함 파일에 문제가 있습니다 — 아래 [꼭 해야 할 일]을 봐 주세요."
         next_cmd = None

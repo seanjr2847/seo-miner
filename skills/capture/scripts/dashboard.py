@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """로컬 대시보드 — Brain을 브라우저에서 실시간 조회·조작 (stdlib http.server).
 
-report.py(날짜별 정적 아카이브)와 역할이 다르다: 이쪽은 항상 최신 Brain을 읽고,
-기회 상태(acked/done/dismissed)를 표에서 클릭으로 갱신한다.
+화면은 하나다. 두 가지 모드로 쓴다:
+  · 라이브(기본)  — 서버가 Brain을 그때그때 읽어준다. 기회 트리아지·설정이 된다.
+  · 박제(--export) — 그 시점 데이터를 페이지 안에 박아 넣은 자립형 HTML 파일.
+    서버도 인터넷도 필요 없고 남한테 보내도 그대로 열린다(= 예전 report.py).
+같은 템플릿을 쓰므로 화면이 갈라지지 않는다.
 claude-mem 뷰어 구조를 참고하되, 상시 데몬·SSE·프런트 번들러는 들이지 않았다 —
 데이터가 수집 스크립트 실행 시에만 바뀌므로 필요할 때 띄우는 단일 프로세스면 된다.
 # ponytail: 새로고침 버튼 방식 — 수집을 상시 데몬화하면 그때 SSE 추가
 
 Usage:
   python dashboard.py [--project NAME] [--port 8765] [--open]
+  python dashboard.py --export --project NAME [--actions actions.json] [--open]
 """
 import argparse
 import json
@@ -17,6 +21,7 @@ import re
 import secrets
 import subprocess
 import sys
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -33,7 +38,7 @@ OPP_STATUSES = ("new", "acked", "done", "dismissed")
 
 # 설정 화면이 실행할 수 있는 명령은 이 셋뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
 ACTIONS = {
-    "deps": [sys.executable, "-m", "pip", "install", "requests", "jinja2", "pyyaml"],
+    "deps": [sys.executable, "-m", "pip", "install", "requests", "pyyaml"],
     "deps_gsc": [sys.executable, "-m", "pip", "install", "google-api-python-client",
                  "google-auth"],
     "gsc": [sys.executable, str(SETUP_SCRIPTS / "connect_gsc.py")],
@@ -46,6 +51,24 @@ ENV_FILE = db.CAPTURE_HOME / "env"
 # 로컬 전용이라 인증이 없다. 그런데 브라우저는 아무 웹페이지에서나 127.0.0.1로 POST를
 # 보낼 수 있어서(pip 실행·파일 쓰기 엔드포인트가 생겼으므로) 1회용 토큰으로 막는다.
 TOKEN = secrets.token_urlsafe(9)
+
+
+def export(project: str, actions_file: str | None = None) -> Path:
+    """그 시점 데이터를 페이지에 박아 넣은 자립형 HTML을 reports/에 남긴다.
+    라이브 화면과 같은 템플릿이다 — 페이지가 window.__SNAPSHOT__을 보면 fetch 대신
+    그걸 그리고, 손댈 수 없는 기록이므로 트리아지·설정 버튼을 숨긴다."""
+    data = payload(project)
+    actions = []
+    if actions_file and Path(actions_file).exists():
+        actions = json.loads(Path(actions_file).read_text(encoding="utf-8"))
+    snap = {"data": data, "actions": actions, "exported": str(date.today())}
+    blob = json.dumps(snap, ensure_ascii=False).replace("</", "<\\/")  # </script> 차단
+    html = HTML.decode("utf-8").replace(
+        "<!--SNAPSHOT-->", f"<script>window.__SNAPSHOT__={blob}</script>", 1)
+    out = db.CAPTURE_HOME / "reports" / project / f"{date.today()}.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
+    return out
 
 
 def run_action(name: str) -> dict:
@@ -223,7 +246,20 @@ def main() -> None:
     ap.add_argument("--project", help="시작 시 선택할 사이트 (생략하면 첫 번째)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--open", action="store_true")
+    ap.add_argument("--export", action="store_true",
+                    help="서버를 띄우는 대신 그 시점 화면을 HTML 파일로 남긴다")
+    ap.add_argument("--actions", help="--export 전용: Next Actions JSON 파일")
     a = ap.parse_args()
+
+    if a.export:
+        if not a.project:
+            sys.exit("--export 에는 --project 가 필요합니다.")
+        out = export(a.project, a.actions)
+        print(f"report: {out}")
+        if a.open:
+            import webbrowser
+            webbrowser.open(out.as_uri())
+        return
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)

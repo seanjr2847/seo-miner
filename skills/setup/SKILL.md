@@ -21,7 +21,7 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
 ## 표준 경로 — 사이트 하나를 붙이는 전체 순서
 
 **공통 1회** (컴퓨터당 한 번)
-1. `/setup` → doctor 실행 → 빠진 게 있으면 `pip install requests jinja2 pyyaml`을
+1. `/setup` → doctor 실행 → 빠진 게 있으면 `pip install requests pyyaml`을
    내가 대신 실행. 보관함은 자동 생성이라 따로 만들 게 없다.
    (직접 클릭해서 하고 싶다면 `/setup web` — 아래 "화면으로 할 때". 2·4·API 키까지
    그 화면에서 끝난다.)

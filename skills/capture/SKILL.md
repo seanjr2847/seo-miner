@@ -106,14 +106,18 @@ gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아�
 `python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다
 (포그라운드로 돌리면 세션이 막힌다). 127.0.0.1 전용 웹 UI로 Brain을 실시간
 조회하고, 기회 상태(확인/완료/기각)를 표에서 바로 갱신한다.
-훑어보기·트리아지는 dash, 날짜별 기록으로 남길 때는 report — 역할이 다르다.
+**dash와 report는 같은 화면이다.** dash는 서버가 Brain을 실시간으로 읽는 모드,
+report는 그 화면을 그날 데이터째 파일로 박제한 모드(`--export`). 지금 상태를 보고
+손댈 때는 dash, 남겨 두거나 남한테 보낼 때는 report.
 헤더 [설정] 버튼에 온보딩 패널(부품 설치·사이트 등록·GSC 열쇠·API 키)이 있다 —
 사용자가 채팅 말고 직접 하고 싶어 하면 여기로 보낸다 (setup 스킬 참조).
 
-### /capture report {P}
+### /capture report {P} — 오늘 화면을 파일로 박제
 `python scripts/report.py --project {P} --actions <actions.json>` → 파일 경로 안내.
-지난 기회들의 status(acked/done/dismissed) 갱신은 대시보드에서 클릭으로 하는 게
-빠르다고 안내한다 (`/capture dash`).
+(같은 일을 `dashboard.py --export --project {P} --actions ...` 로도 한다.)
+서버 없이 열리는 자립형 HTML이라 남한테 보내도 되고, 기회 상태는 못 바꾼다 —
+상태 갱신은 `/capture dash`에서 클릭으로 하는 게 빠르다고 안내한다.
+Next Actions가 리포트의 결론이므로 `--actions` 없이 내보내지 않는다(철칙 3).
 
 ### /capture ask {P} "..."
 자유 질문. sql로 근거를 조회해 수치와 함께 답한다. 없는 데이터는 없다고 답한다.
