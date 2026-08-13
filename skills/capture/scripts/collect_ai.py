@@ -15,7 +15,8 @@ Notes on measurement honesty (see references/scoring.md):
 Env: OPENROUTER_API_KEY
 Usage:
   python collect_ai.py --project NAME [--engines chatgpt,perplexity,gemini]
-                       [--samples 1] [--max-prompts 30] [--dry-run]
+                       [--samples 1] [--max-prompts 30] [--ids 16,17]
+                       [--category 사실] [--dry-run]
 """
 import argparse
 import json
@@ -109,6 +110,8 @@ def main() -> None:
     ap.add_argument("--samples", type=int, default=1)
     ap.add_argument("--max-prompts", type=int, default=None)
     ap.add_argument("--throttle", type=float, default=0.5)
+    ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
+    ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -123,11 +126,25 @@ def main() -> None:
                           or ["chatgpt", "perplexity", "gemini"]))
     engines = {e: engines_map[e] for e in engine_names if e in engines_map}
 
+    # 부분 실행. 이게 없으면 "새로 넣은 8개만 돌려보자"에도 is_active를 손으로
+    # 토글해야 하고, 되돌릴 때 통째로 UPDATE 해서 큐레이션한 활성 집합을 날린다.
     limit = a.max_prompts or (cfg.get("limits", {}) or {}).get("max_ai_prompts", 30)
-    prompts = conn.execute(
-        """SELECT id, prompt, category FROM ai_prompts
-            WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
-        (p["id"], limit)).fetchall()
+    if a.ids:
+        ids = [int(x) for x in a.ids.split(",") if x.strip()]
+        prompts = conn.execute(
+            f"""SELECT id, prompt, category FROM ai_prompts
+                 WHERE project_id=? AND id IN ({','.join('?' * len(ids))}) ORDER BY id""",
+            (p["id"], *ids)).fetchall()
+    elif a.category:
+        prompts = conn.execute(
+            """SELECT id, prompt, category FROM ai_prompts
+                WHERE project_id=? AND is_active=1 AND category=? ORDER BY id LIMIT ?""",
+            (p["id"], a.category, limit)).fetchall()
+    else:
+        prompts = conn.execute(
+            """SELECT id, prompt, category FROM ai_prompts
+                WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
+            (p["id"], limit)).fetchall()
     if not prompts:
         sys.exit("no active ai_prompts. Have Claude generate them (see SKILL.md F1/F5).")
 

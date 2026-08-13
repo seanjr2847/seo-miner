@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS keywords (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   keyword TEXT NOT NULL,
+  locale TEXT,                                -- NULL = fall back to projects.locale
   cluster TEXT,
   intent TEXT,                                -- info|commercial|transactional|navigational
   volume INTEGER,                             -- NULL = unknown (free pipeline)
@@ -133,6 +134,27 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """IF NOT EXISTS가 못 하는 것만: 기존 테이블에 빠진 컬럼 추가.
+
+    SCHEMA는 매 연결마다 재실행되지만 CREATE TABLE IF NOT EXISTS는 이미 존재하는
+    테이블을 건드리지 않으므로, 컬럼을 새로 추가하면 기존 Brain에는 반영되지 않는다.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
+    if "locale" in cols:
+        return
+    conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
+    # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
+    # aitierlist 실사용에서 프로젝트 로케일(en-US)이 한국어 키워드에도 적용돼
+    # 실제 3~6위인 6개가 전부 "순위 없음"으로 적재됐다. 한글 포함 여부는
+    # 모호하지 않은 신호라 최초 1회만 자동으로 채운다. 나머지는 NULL로 두고
+    # 호출부가 프로젝트 로케일로 폴백한다.
+    conn.execute(r"""UPDATE keywords SET locale='ko-KR'
+                      WHERE locale IS NULL
+                        AND keyword GLOB '*[가-힣]*'""")
+    conn.commit()
+
+
 def connect() -> sqlite3.Connection:
     CAPTURE_HOME.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -141,6 +163,7 @@ def connect() -> sqlite3.Connection:
     # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
     # 덕분에 사용자가 'db.py init'을 먼저 칠 일이 없다.
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
