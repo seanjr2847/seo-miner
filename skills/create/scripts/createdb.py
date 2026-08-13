@@ -26,6 +26,15 @@ from pathlib import Path
 CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 DB_PATH = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
 
+# 한국어 Windows 콘솔(cp949)에서 기회 reasoning의 '—'가 UnicodeEncodeError로 죽는다.
+# capture의 db.py는 이미 하는 처리인데, create는 그걸 import하지 않아 빠져 있었다
+# (첫 실사용 `pick`에서 바로 크래시).
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):   # 파이프로 감싼 경우 등
+        pass
+
 CREATIONS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS creations (
   id INTEGER PRIMARY KEY,
