@@ -72,4 +72,31 @@ post("/api/setup/keys", {"OPENROUTER_API_KEY": ""})       # 빈 값 = 삭제
 assert (HOME / "env").read_text("utf-8").strip() == ""
 assert "OPENROUTER_API_KEY" not in os.environ
 
-print(f"ok — 설정 API 정상 ({HOME})")
+# ── 안내 판정(progress) ─────────────────────────────────────────────
+# 씨앗만 있는 새 프로젝트를 "키워드 캐기 완료"로 치면 안내가 한 단계를 건너뛴다.
+conn = dashboard.db.connect()
+pid = conn.execute("SELECT id FROM projects WHERE name='demo'").fetchone()[0]
+pg = dashboard.progress(conn, pid)
+assert pg["keywords"] == 2, pg                     # 등록 폼에 적은 씨앗 2개
+assert pg["keywords_found"] == 0, pg               # 발굴은 아직 안 돌렸다
+assert pg["gsc_days"] == 0 and pg["opps"] == 0, pg
+assert pg["creations"] == 0, pg                    # 테이블이 없어도 0으로 답해야 한다
+
+conn.execute("INSERT INTO keywords(project_id, keyword, source, is_active) "
+             "VALUES(?,?,?,1)", (pid, "캔 키워드", "autocomplete"))
+conn.commit()
+assert dashboard.progress(conn, pid)["keywords_found"] == 1
+conn.close()
+
+# ── 박제본(export) ──────────────────────────────────────────────────
+out = dashboard.export("demo", None)
+html = out.read_text("utf-8")
+assert out.parent.name == "demo" and out.suffix == ".html", out
+assert "window.__SNAPSHOT__=" in html, "스냅샷이 안 박혔다"
+assert "<!--SNAPSHOT-->" not in html, "치환이 안 됐다"
+assert 'src="http' not in html and 'href="http' not in html, "외부 요청이 섞였다"
+snap = json.loads(html.split("window.__SNAPSHOT__=", 1)[1].split("</script>", 1)[0])
+assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap
+assert "progress" in snap["data"], "안내 자료가 박제본에 빠졌다"
+
+print(f"ok — 설정 API · 안내 판정 · 박제본 정상 ({HOME})")
