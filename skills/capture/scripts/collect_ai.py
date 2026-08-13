@@ -146,7 +146,9 @@ def main() -> None:
                 WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
             (p["id"], limit)).fetchall()
     if not prompts:
-        sys.exit("no active ai_prompts. Have Claude generate them (see SKILL.md F1/F5).")
+        sys.exit(f"AI에 물어볼 질문이 아직 없습니다 ({p['name']}). 채팅에 "
+                 f"`/capture add {p['name']}` 이라고 하시면 프로젝트에 맞는 질문 10~30개를 "
+                 "만들어 드립니다 (대시보드 폼으로 만든 사이트는 이 단계가 비어 있습니다).")
 
     total_calls = len(prompts) * len(engines) * a.samples
     print(f"[ai] prompts={len(prompts)} engines={list(engines)} samples={a.samples} "

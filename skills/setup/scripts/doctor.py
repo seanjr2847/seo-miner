@@ -45,7 +45,8 @@ def diagnose() -> dict:
     deps_core = {m: has(m) for m in ("requests", "jinja2", "yaml")}
     deps_gsc = {m: has(m) for m in ("googleapiclient",)}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
-             "db_exists": DB.exists(), "tables": 0, "projects": []}
+             "db_exists": DB.exists(), "tables": 0, "projects": [],
+             "no_prompts": []}
     if DB.exists():
         try:
             conn = sqlite3.connect(DB)
@@ -53,6 +54,12 @@ def diagnose() -> dict:
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
             brain["projects"] = [r[0] for r in conn.execute(
                 "SELECT name FROM projects")] if brain["tables"] else []
+            # AI에 물어볼 질문이 비어 있으면 collect_ai가 그 자리에서 멈춘다.
+            # 대시보드 폼으로 만든 사이트가 여기 걸린다(프롬프트 초안은 채팅 몫).
+            brain["no_prompts"] = [r[0] for r in conn.execute(
+                """SELECT p.name FROM projects p
+                     LEFT JOIN ai_prompts a ON a.project_id=p.id AND a.is_active=1
+                    GROUP BY p.id HAVING COUNT(a.id)=0""")] if brain["tables"] else []
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
@@ -112,6 +119,12 @@ def diagnose() -> dict:
                     "하시면 제가 물어보면서 만들어 드립니다. 여기까지가 필수 끝.")
 
     later = []
+    if brain["no_prompts"]:
+        who = ", ".join(brain["no_prompts"])
+        later.append(f"AI에 물어볼 질문 만들기 ({who}) — 지금 이 사이트로 AI 노출 확인을 "
+                     f"돌리면 \"질문이 없다\"며 멈춥니다. 채팅에 `/capture add {who.split(', ')[0]}` "
+                     "이라고 하시면 사이트에 맞는 질문 10~30개를 만들어 드립니다 "
+                     "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
     if not keys["openrouter"]:
         later.append("AI 노출 확인 자동화 — OpenRouter 키 (유료, 약 5분): "
                      "setup.md 5절. 무료로는 `/seo-miner:browse`가 지금도 됩니다.")

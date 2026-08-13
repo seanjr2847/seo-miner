@@ -33,6 +33,9 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 `{P}` = 프로젝트 이름.
 
 ### /capture add {P} — 프로젝트 온보딩
+**이미 등록된 이름이면**(대시보드 설정 폼으로 만든 경우) 1~3단계는 건너뛰고 4단계만
+한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다.
+
 1. 인터뷰: 타입(game|local_clinic|saas|directory), 도메인, locale, 시드 키워드 3~10개,
    브랜드 별칭, 경쟁사, gsc_property. `projects/_presets.yaml`에서 타입 프리셋을 읽고
    그 각도에 맞춰 질문을 구체화한다.

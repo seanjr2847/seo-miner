@@ -419,7 +419,8 @@ $("btn-proj").addEventListener("click", async () => {
     competitors_manual: $("p-comp").value});
   busy("btn-proj", "m-proj", false);
   if (!ok) return say("m-proj", r.error, false);
-  say("m-proj", `${r.name} 등록 완료 — 이제 채팅에서 /capture run ${r.name}`, true);
+  say("m-proj", `${r.name} 등록 완료 — 남은 건 AI에 물어볼 질문뿐입니다: ` +
+                `채팅에 /capture add ${r.name}`, true);
   loadDoctor();
   loadProjects().then(n => { if (n) load(); });
 });
