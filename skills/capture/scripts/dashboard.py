@@ -166,9 +166,42 @@ def payload(project: str) -> dict:
                       COUNT(DISTINCT query) q
                  FROM gsc_snapshots WHERE project_id=?
                 GROUP BY 1 ORDER BY 1""", (p["id"],))]
+        data["progress"] = progress(conn, p["id"])
         return data
     finally:
         conn.close()
+
+
+def progress(conn, pid: int) -> dict:
+    """안내 화면이 "지금 어디까지 팠는지"를 말하려면 단계별 실적이 필요하다.
+    각 값은 그 단계를 했다는 증거 — 0이면 아직 안 한 것."""
+    def one(sql: str, args=()) -> int:
+        try:
+            return conn.execute(sql, args).fetchone()[0] or 0
+        except Exception:      # 아직 안 만들어진 테이블(creations 등)은 0으로 본다
+            return 0
+
+    reports = db.CAPTURE_HOME / "reports"
+    names = [d.name for d in reports.iterdir()] if reports.exists() else []
+    proj = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()[0]
+    return {
+        "gsc_days": one("SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots "
+                        "WHERE project_id=?", (pid,)),
+        "gsc_last": (conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots "
+                                  "WHERE project_id=?", (pid,)).fetchone()[0] or ""),
+        "keywords": one("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+                        (pid,)),
+        # 씨앗은 등록할 때 손으로 넣은 것이다 — 발굴을 돌렸는지는 씨앗이 아닌 것으로 센다.
+        "keywords_found": one("SELECT COUNT(*) FROM keywords WHERE project_id=? "
+                              "AND is_active=1 AND source!='seed'", (pid,)),
+        "ai_checks": one("""SELECT COUNT(*) FROM ai_checks c JOIN ai_prompts p
+                              ON p.id=c.prompt_id WHERE p.project_id=?""", (pid,)),
+        "ai_prompts": one("SELECT COUNT(*) FROM ai_prompts WHERE project_id=? "
+                          "AND is_active=1", (pid,)),
+        "opps": one("SELECT COUNT(*) FROM opportunities WHERE project_id=?", (pid,)),
+        "creations": one("SELECT COUNT(*) FROM creations WHERE project_id=?", (pid,)),
+        "reports": len(list((reports / proj).glob("*.html"))) if proj in names else 0,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):

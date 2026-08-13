@@ -146,6 +146,49 @@ tr:last-child td { border-bottom:0; }
 .chip { display:inline-block; font:400 12px/1 var(--mono); border:1px solid var(--rule);
   border-radius:2px; padding:5px 9px; margin:0 6px 6px 0; color:var(--slate); }
 .chip b { color:var(--ink); font-weight:500; }
+/* ── 안내: 시추 진행도 ─────────────────────────────────────
+   6단계가 갱도다. 지금 프로젝트가 어디까지 팠는지 Brain에서 읽어 채운다. */
+#guide { background:var(--card); border:1px solid var(--rule); padding:26px 26px 30px;
+  margin-top:26px; }
+#guide .lead { font-size:14px; color:var(--slate); margin:6px 0 26px; max-width:68ch; }
+#guide .lead b { color:var(--ink); font-weight:600; }
+.shaft { display:grid; grid-template-columns:26px 1fr; gap:0 18px; }
+.stp { display:contents; }
+.stp .rail { position:relative; }
+/* 갱도 벽: 위·아래로 이어지는 선. 판 데는 녹청, 안 판 데는 회색. */
+.stp .rail::before { content:""; position:absolute; left:11px; top:0; bottom:0;
+  width:2px; background:var(--rule); }
+.stp.done .rail::before, .stp.here .rail::before { background:var(--patina); }
+.stp:last-child .rail::before { bottom:calc(100% - 26px); }
+.stp .dot { position:absolute; left:4px; top:8px; width:16px; height:16px;
+  border-radius:50%; border:2px solid var(--rule); background:var(--card); z-index:1;
+  font:600 9px/12px var(--mono); color:var(--slate); text-align:center; }
+.stp.done .dot { background:var(--patina); border-color:var(--patina); color:var(--card); }
+.stp.here .dot { border-color:var(--patina); box-shadow:0 0 0 4px var(--wash);
+  color:var(--patina); }
+.stp .body { padding:4px 0 26px; display:grid; grid-template-columns:1fr auto;
+  gap:0 28px; align-items:start; }
+.stp .body .txt { min-width:0; }
+.stp:last-child .body { padding-bottom:0; }
+@media (max-width:720px) { .stp .body { grid-template-columns:1fr; } }
+.stp h3 { font:650 15px/1.4 var(--sans); margin:0; display:flex; gap:10px;
+  align-items:baseline; flex-wrap:wrap; }
+.stp.later h3 { color:var(--slate); }
+.stp .gain { font-size:13.5px; color:var(--slate); margin:5px 0 0; max-width:62ch; }
+.stp .state { font:400 11.5px/1 var(--mono); letter-spacing:.04em; }
+.stp.done .state { color:var(--patina); }
+.stp.here .state { color:var(--copper); }
+.stp.later .state { color:var(--slate); }
+.stp .now { font:400 10px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--copper); border:1px solid var(--copper); border-radius:2px; padding:3px 7px; }
+.cmd { display:inline-block; font:500 12.5px/1 var(--mono); margin:11px 8px 0 0;
+  background:var(--stone); border:1px solid var(--rule); border-radius:2px;
+  padding:7px 11px; cursor:pointer; color:var(--ink); }
+.cmd:hover { border-color:var(--patina); color:var(--patina); }
+.cmd::after { content:" ⧉"; color:var(--slate); }
+.cmd.copied::after { content:" 복사됨"; color:var(--patina); font-size:11px; }
+.loopback { margin-top:22px; padding-left:44px; font-size:13.5px; color:var(--slate); }
+.loopback b { color:var(--patina); font-weight:600; }
 #acts { border-left:2px solid var(--patina); padding-left:18px; }
 #acts ol { margin:8px 0 0; padding-left:20px; }
 #acts li { margin:7px 0; font-size:14.5px; }
@@ -212,6 +255,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
     <select id="proj" aria-label="사이트 선택"></select>
     <span class="sp"></span>
     <span id="meta"></span>
+    <button class="hbtn" id="toggle-guide">안내</button>
     <button class="hbtn" id="refresh">새로고침</button>
     <button class="hbtn" id="toggle-setup">설정</button>
   </div>
@@ -283,6 +327,17 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
         <span class="msg" id="m-keys"></span></div>
     </div>
     <pre id="setup-log" hidden></pre>
+  </section>
+
+  <section id="guide" hidden>
+    <div class="eyebrow">이 도구를 쓰는 순서</div>
+    <h2 style="margin-top:8px">여기까지 팠습니다</h2>
+    <p class="lead">검색·AI에서 <b>내가 어디쯤인지 재고</b>, 그 숫자에서 <b>손댈 것을
+      뽑아</b>, 실제로 고친 뒤 <b>다시 재는</b> 반복입니다. 한 바퀴 돌 때마다 재료가
+      쌓여서 다음 바퀴가 쉬워집니다. 아래에서 <b>지금 할 것</b>만 하시면 됩니다.</p>
+    <div class="shaft" id="shaft"></div>
+    <div class="loopback">한 바퀴가 끝나면 <b>2번으로 돌아옵니다</b> — 고친 게 순위와
+      인용에 반영됐는지는 다음 수집에서 보입니다.</div>
   </section>
 
   <div id="err" hidden></div>
@@ -466,8 +521,81 @@ function moverRows(list, invert) {
     <td class="num">${num(m.clk)} ${delta(m.dclk)}</td></tr>`);
 }
 
+/* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
+   순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
+   done()은 Brain의 실적으로 판정하므로 "했다 치고" 넘어가지 않는다. */
+function guideSteps(d, p) {
+  const P = d.project.name;
+  return [
+    {t:"사이트 등록", gain:"측정할 도메인과 씨앗 키워드를 정합니다. 여기서 시작합니다.",
+     done: true, state:`${d.project.domain}`, cmd:null},
+    {t:"구글 실적 읽기",
+     gain:"서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 이 " +
+          "숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
+     done: p.gsc_days > 0,
+     state: p.gsc_days ? `스냅샷 ${p.gsc_days}개 · 최근 ${p.gsc_last}` : "아직 없음",
+     cmd:`/capture gsc ${P}`},
+    {t:"키워드 캐기",
+     gain:"자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 늘린 " +
+          "만큼 다음 단계가 볼 게 많아집니다.",
+     done: p.keywords_found > 0,
+     state: p.keywords_found ? `발굴 ${p.keywords_found}개 · 활성 ${p.keywords}개`
+                             : (p.keywords ? `씨앗 ${p.keywords}개만 있음` : "아직 없음"),
+     cmd:`/capture keywords ${P}`},
+    {t:"AI 노출 확인",
+     gain:"ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. " +
+          "브라우저로 직접 물어보면 키 없이 무료입니다.",
+     done: p.ai_checks > 0,
+     state: p.ai_checks ? `체크 ${p.ai_checks}건 · 질문 ${p.ai_prompts}개`
+                        : (p.ai_prompts ? "질문은 있는데 아직 안 물어봄" : "질문부터 필요"),
+     cmd: p.ai_prompts ? `/seo-miner:browse ${P}` : `/capture add ${P}`},
+    {t:"손댈 것 뽑기",
+     gain:"모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 대신 " +
+          "인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
+     done: p.opps > 0,
+     state: p.opps ? `기회 ${p.opps}건` : "아직 없음",
+     cmd:`/capture gaps ${P}`},
+    {t:"실제로 고치기",
+     gain:"뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 나가고, " +
+          "끝나면 그 기회가 완료로 닫힙니다.",
+     done: p.creations > 0,
+     state: p.creations ? `작업 ${p.creations}건` : "아직 없음",
+     cmd:`/create plan ${P}`},
+  ];
+}
+
+function renderGuide(d) {
+  if (READONLY || !d.progress) return;   // 박제본에는 "지금 할 것"이 없다
+  const steps = guideSteps(d, d.progress);
+  const here = steps.findIndex(s => !s.done);      // 처음 안 끝난 단계 = 지금 할 일
+  $("shaft").innerHTML = steps.map((s, i) => {
+    const cls = s.done ? "done" : i === here ? "here" : "later";
+    return `<div class="stp ${cls}">
+      <div class="rail"><div class="dot">${s.done ? "✓" : i + 1}</div></div>
+      <div class="body">
+        <div class="txt">
+          <h3>${esc(s.t)} <span class="state">${esc(s.state)}</span>
+            ${i === here ? '<span class="now">지금 할 것</span>' : ""}</h3>
+          <p class="gain">${esc(s.gain)}</p>
+        </div>
+        <div>${s.cmd && !s.done ? `<button class="cmd" onclick="copyCmd(this)"
+          >${esc(s.cmd)}</button>` : ""}</div>
+      </div></div>`;
+  }).join("");
+  // 아직 한 바퀴도 안 돈 프로젝트면 펴서 보여준다. 다 돌았으면 헤더 [안내]로 연다.
+  if (here !== -1 && !d.progress.gsc_days) $("guide").hidden = false;
+}
+
+function copyCmd(el) {
+  navigator.clipboard?.writeText(el.textContent.trim()).then(() => {
+    el.classList.add("copied");
+    setTimeout(() => el.classList.remove("copied"), 1400);
+  });
+}
+
 function render(d) {
   const t = d.trend, last = t[t.length - 1] || {}, prev = t[t.length - 2] || {};
+  renderGuide(d);
   $("meta").innerHTML = `${esc(d.project.gsc_property || d.project.domain || "")} · ` +
     `스냅샷 ${esc(d.gsc_date || "없음")}`;
   $("band").innerHTML = [
@@ -662,6 +790,10 @@ $("btn-proj").addEventListener("click", async () => {
 $("proj").addEventListener("change", load);
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
 $("toggle-setup").addEventListener("click", () => $("setup").hidden = !$("setup").hidden);
+$("toggle-guide").addEventListener("click", () => {
+  $("guide").hidden = !$("guide").hidden;
+  if (!$("guide").hidden) $("guide").scrollIntoView({block: "start"});
+});
 
 // 박제된 기록(--export)이면 서버가 없다 — 페이지에 박힌 데이터를 그리고, 손댈 수
 // 없는 것들(트리아지·설정·새로고침·사이트 전환)은 아예 감춘다.
@@ -670,8 +802,9 @@ if (window.__SNAPSHOT__) {
   READONLY = true;
   $("proj").outerHTML = `<span class="mark" style="color:var(--patina)">` +
     `${esc(s.data.project.name)}</span>`;
-  for (const id of ["refresh", "toggle-setup"]) $(id).hidden = true;
+  for (const id of ["refresh", "toggle-setup", "toggle-guide"]) $(id).hidden = true;
   $("setup").remove();                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
+  $("guide").remove();
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
   if (s.actions.length) {
     $("acts").hidden = false;
