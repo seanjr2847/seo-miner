@@ -2,11 +2,8 @@
   "mcpServers": {
     "gsc": {
       "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "mcp-server-gsc"],
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "${USERPROFILE}/.capture/gsc_service_account.json"
-      }
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/gsc_mcp.mjs"]
     }
   }
 }

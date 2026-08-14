@@ -15,6 +15,7 @@ Env:
 """
 import json
 import os
+import sys
 from urllib.parse import urlparse
 
 LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, serper gl/hl)
@@ -22,6 +23,21 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "en": ("United States", "en", ("us", "en")),
     "ja": ("Japan", "ja", ("jp", "ja")),
 }
+
+_WARNED: set[str] = set()
+
+
+def location(locale: str) -> tuple:
+    """매핑에 없는 로케일은 미국/영어로 떨어진다 — 조용히 그러면 안 된다.
+    독일어 프로젝트가 미국 SERP를 재고 "순위 없음"으로 적재돼도 아무도 눈치채지
+    못한다(한국어 키워드에서 이미 한 번 겪은 일). 폴백은 하되 한 번은 말한다."""
+    key = (locale or "").split("-")[0].lower()
+    if key not in LOCATION_MAP and key not in _WARNED:
+        _WARNED.add(key)
+        print(f"[주의] '{locale}' 로케일 매핑이 없어 United States/en 으로 조회합니다 — "
+              f"이 언어권의 순위가 아닙니다. serp_adapter.py의 LOCATION_MAP에 "
+              f"'{key}' 한 줄을 추가하세요.", file=sys.stderr)
+    return LOCATION_MAP.get(key, LOCATION_MAP["en"])
 
 
 def _norm(url: str) -> str:
@@ -38,7 +54,7 @@ def fetch_dataforseo(keyword: str, locale: str, own_domain: str, depth: int = 10
     login, pw = os.environ.get("DATAFORSEO_LOGIN"), os.environ.get("DATAFORSEO_PASSWORD")
     if not (login and pw):
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
-    loc, lang, _ = LOCATION_MAP.get(locale.split("-")[0], LOCATION_MAP["en"])
+    loc, lang, _ = location(locale)
     r = requests.post(
         "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
         auth=(login, pw), timeout=60,
@@ -86,7 +102,7 @@ def fetch_serper(keyword: str, locale: str, own_domain: str, depth: int = 10) ->
     key = os.environ.get("SERPER_API_KEY")
     if not key:
         raise RuntimeError("SERPER_API_KEY not set")
-    _, _, (gl, hl) = LOCATION_MAP.get(locale.split("-")[0], LOCATION_MAP["en"])
+    _, _, (gl, hl) = location(locale)
     r = requests.post("https://google.serper.dev/search", timeout=30,
                       headers={"X-API-KEY": key, "Content-Type": "application/json"},
                       json={"q": keyword, "gl": gl, "hl": hl, "num": depth})

@@ -75,6 +75,8 @@ def main() -> None:
     print(f"[serp] provider={provider} keywords={len(kws)} depth={a.depth} "
           f"est_cost≈${est:.2f} (~{len(kws) * (a.throttle + 2) / 60:.0f} min)")
     print("       locales: " + ", ".join(f"{loc}×{n}" for loc, n in locales.most_common()))
+    for loc in locales:   # 매핑 없는 로케일 경고는 여기서 떠야 한다 — 돈을 쓰기 전에
+        serp_adapter.location(loc)
     if provider == "serper":
         print("       note: serper는 AI Overview를 측정하지 않는다 (aio_* = NULL, '없음'이 아님)")
     if a.dry_run:

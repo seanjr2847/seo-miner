@@ -39,8 +39,12 @@ DEFAULT_ENGINES = {
     # "claude":   "anthropic/claude-sonnet-4.5:online",   # optional, same key
 }
 
+# 로케일을 안 실으면 한국어 질문에도 미국 소스가 붙는다 — 소비자 앱이 보는 화면과
+# 어긋나서, 인용 갭 분석이 엉뚱한 경쟁 도메인을 세게 된다.
 SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
-          "normally would for a real user, citing web sources.")
+          "normally would for a real user, citing web sources. "
+          "Answer in the language of the question, and prefer sources relevant "
+          "to a {locale} audience.")
 
 
 def load_config() -> dict:
@@ -66,7 +70,7 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
         "model": model,
         "max_tokens": 700,
         "messages": [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": SYSTEM.format(locale=locale or "ko-KR")},
             {"role": "user", "content": prompt},
         ],
     }

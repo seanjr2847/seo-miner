@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import db  # noqa: E402
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
+PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
 def creds_dir(project: str) -> Path:
@@ -182,7 +183,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)
     ap.add_argument("--days", type=int, default=28)
-    ap.add_argument("--row-limit", type=int, default=25000)
+    ap.add_argument("--row-limit", type=int, default=100000,
+                    help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -202,12 +204,24 @@ def main() -> None:
         return
 
     service = get_service(a.project)
-    body = {"startDate": str(start), "endDate": str(end),
-            "dimensions": ["query", "page"], "rowLimit": a.row_limit,
-            "dataState": "final"}
     from googleapiclient.errors import HttpError
+    rows: list = []
+    calls = 0
     try:
-        resp = service.searchanalytics().query(siteUrl=prop, body=body).execute()
+        # API는 한 번에 최대 PAGE행만 준다 — 그 이상은 startRow로 이어받아야 한다.
+        # 예전엔 한 번만 불러서, 큰 사이트가 정확히 25,000행에서 조용히 잘렸다.
+        while len(rows) < a.row_limit:
+            want = min(PAGE, a.row_limit - len(rows))
+            resp = service.searchanalytics().query(siteUrl=prop, body={
+                "startDate": str(start), "endDate": str(end),
+                "dimensions": ["query", "page"], "rowLimit": want,
+                "startRow": len(rows), "dataState": "final"}).execute()
+            batch = resp.get("rows", [])
+            rows += batch
+            calls += 1
+            if len(batch) < want:          # 마지막 장 — 더 없다
+                break
+            print(f"[gsc] … {len(rows)} rows")
     except HttpError as e:
         if getattr(e.resp, "status", None) == 403 and sa_key().exists():
             email = json.loads(sa_key().read_text(encoding="utf-8")) \
@@ -217,25 +231,27 @@ def main() -> None:
                      f"이메일을 추가했는지 확인하세요: {email}\n"
                      "  (권한 '제한된 사용자'면 충분합니다)")
         raise
-    rows = resp.get("rows", [])
     print(f"[gsc] fetched {len(rows)} query x page rows")
+    if len(rows) >= a.row_limit:
+        print(f"[주의] --row-limit({a.row_limit})에 걸려 여기서 멈췄습니다 — "
+              "더 필요하면 값을 올리세요. 지금 스냅샷은 전체가 아닙니다.")
 
     run_id = db.start_run(conn, p["id"], "gsc")
     snap = str(date.today())
     conn.execute(  # idempotent per day: re-run replaces today's snapshot
         "DELETE FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?",
         (p["id"], snap))
-    for r in rows:
-        q, page = r["keys"][0], r["keys"][1]
-        conn.execute(
-            """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
-                 query, page, clicks, impressions, ctr, position)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (p["id"], snap, a.days, q, page,
-             int(r.get("clicks", 0)), int(r.get("impressions", 0)),
-             round(float(r.get("ctr", 0)), 4), round(float(r.get("position", 0)), 1)))
+    conn.executemany(   # 10만 행을 한 줄씩 execute하면 눈에 띄게 느리다
+        """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+             query, page, clicks, impressions, ctr, position)
+           VALUES(?,?,?,?,?,?,?,?,?)""",
+        [(p["id"], snap, a.days, r["keys"][0], r["keys"][1],
+          int(r.get("clicks", 0)), int(r.get("impressions", 0)),
+          round(float(r.get("ctr", 0)), 4), round(float(r.get("position", 0)), 1))
+         for r in rows])
     conn.commit()
-    db.finish_run(conn, run_id, api_calls=1, notes=f"rows={len(rows)} window={start}~{end}")
+    db.finish_run(conn, run_id, api_calls=calls,
+                  notes=f"rows={len(rows)} pages={calls} window={start}~{end}")
     preview(conn, p["id"], snap)
     conn.close()
 
