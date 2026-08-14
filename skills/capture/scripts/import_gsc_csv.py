@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Search Console 화면에서 '내보내기'로 받은 파일을 Brain에 넣는다 (stdlib 전용).
+"""Search Console 화면에서 '내보내기'로 받은 파일을 Brain에 넣는다 (구글 API 부품 없이).
 
 구글 클라우드 프로젝트·OAuth 없이 GSC 실측을 쓰는 경로. 대신 UI 내보내기는
 상위 1,000행까지만 준다 — 자동화·전체 행이 필요하면 collect_gsc.py(OAuth)를 쓴다.
@@ -20,8 +20,9 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import collector  # noqa: E402
 import db  # noqa: E402
-from collect_gsc import preview  # noqa: E402  (import 시점엔 stdlib만 씀)
+import scoring  # noqa: E402
 
 # zip 안에는 쿼리·페이지·국가·기기 CSV가 같이 들어있다. 쿼리 파일만 고른다.
 QUERY_FILE = re.compile(r"quer|쿼리|검색어|クエリ|consult|requêt|abfrag", re.I)
@@ -109,16 +110,17 @@ def newest_export(folder: Path) -> tuple[Path, str, bytes]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
+    collector.add_common(ap)
     ap.add_argument("file", nargs="?",
                     help="Search Console에서 내보낸 zip 또는 csv "
                          "(생략하면 다운로드 폴더에서 가장 최근 것을 찾음)")
-    ap.add_argument("--downloads-dir", default=str(Path.home() / "Downloads"))
-    ap.add_argument("--days", type=int, default=28,
+    ap.add_argument("--downloads-dir", default=None)
+    ap.add_argument("--days", type=int, default=None,
                     help="내보낼 때 화면에 걸려 있던 기간 (기본 28일)")
-    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
+    # 파일을 읽고 미리보기만 할 때는 Brain을 열지 않는다 — 이 경로는 키도 등록도
+    # 없이 도는 입구라, --dry-run이 사이트 등록을 요구하면 그 약속이 깨진다.
     if a.file:
         path = Path(a.file).expanduser()
         if not path.exists():
@@ -131,35 +133,38 @@ def main() -> None:
         except ValueError as e:
             sys.exit(str(e))
     else:
-        path, name, blob = newest_export(Path(a.downloads_dir).expanduser())
+        path, name, blob = newest_export(
+            Path(a.downloads_dir).expanduser() if a.downloads_dir else db.downloads_dir())
         print(f"[자동] 다운로드 폴더에서 찾음: {path.name}")
     rows = read_rows(blob)
     if not rows:
         sys.exit(f"'{name}'에서 읽을 행이 없습니다 — 실적 화면의 '쿼리' 표를 "
                  "내보낸 파일이 맞는지 확인해 주세요.")
-    print(f"[csv] {name} — {len(rows)}개 검색어, 기간 {a.days}일로 기록")
     if a.dry_run:
-        for q, c, i, ctr, p in rows[:5]:
-            print(f"  {p:>5}위  노출={i:<6} 클릭={c:<4} {q}")
+        # Brain을 안 열었으므로 프로젝트 yaml의 gsc_days는 못 본다 — 안내용 숫자다.
+        print(f"[csv] {name} — {len(rows)}개 검색어, "
+              f"기간 {int(collector.resolve(a.days, None, 'gsc_days', 28))}일로 기록")
+        for q, c, i, ctr, pos in rows[:5]:
+            print(f"  {pos:>5}위  노출={i:<6} 클릭={c:<4} {q}")
         print("  ... (--dry-run, 저장 안 함)")
         return
 
-    conn = db.connect()
-    p = db.get_project(conn, a.project)
-    run_id = db.start_run(conn, p["id"], "gsc")
+    conn, p, cfg = collector.open_project(a.project)
+    days = int(collector.resolve(a.days, cfg, "gsc_days", 28))
+    print(f"[csv] {name} — {len(rows)}개 검색어, 기간 {days}일로 기록")
     snap = str(date.today())
-    conn.execute(  # 같은 날 다시 넣으면 덮어쓴다 (collect_gsc와 동일)
-        "DELETE FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?",
-        (p["id"], snap))
-    conn.executemany(
-        """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
-             query, page, clicks, impressions, ctr, position)
-           VALUES(?,?,?,?,NULL,?,?,?,?)""",
-        [(p["id"], snap, a.days, q, c, i, ctr, pos) for q, c, i, ctr, pos in rows])
-    conn.commit()
-    db.finish_run(conn, run_id, api_calls=0,
-                  notes=f"csv-import rows={len(rows)} file={name}")
-    preview(conn, p["id"], snap)
+    with db.run(conn, p["id"], "gsc") as r:
+        # UI 내보내기에는 페이지 열이 없다 — page 는 NULL.
+        db.write_gsc_snapshot(conn, p["id"], snap, days,
+                              ((q, None, c, i, ctr, pos) for q, c, i, ctr, pos in rows))
+        r.notes = f"csv-import rows={len(rows)} file={name}"
+
+    print(f"saved snapshot {snap}. striking-distance preview "
+          "(pos 4~20, impressions desc):")
+    for s in scoring.striking(conn, p["id"], snap, limit=10,
+                              brands=scoring.foreign_brands(conn, p["id"], cfg)):
+        print(f"  {s['pos']:>5}  imp={s['imp']:<6} clk={s['clk']:<4} "
+              f"gap={s['gap']:<5} {s['query']}")
     print("\n페이지별 데이터는 UI 내보내기에 없습니다 — 페이지 단위가 필요하면 "
           "collect_gsc.py(구글 로그인 연결)를 쓰세요.")
     conn.close()

@@ -15,6 +15,7 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
    파일에서 관찰한 것만 쓴다. 새 키를 발명하지 않는다.
 3. **발행 게이트.** main에 직접 쓰지 않는다. 반드시 브랜치 `capture/{kind}-{slug}` →
    커밋(메시지에 opportunity id) → PR(또는 push 후 안내). 머지는 사람이 한다.
+   이름이 이 형식이 아니면 `createdb.py done` 이 경고만 남기고 기록은 그대로 한다.
    git 리포가 아니면: 변경 전 사본 백업 + 변경 파일 목록 보고로 대체.
 4. **데이터 진실성.** 콘텐츠 속 수치·주장에 근거가 필요하다. Brain 수치는 인용 표기,
    제품 주장은 리포·문서에서 확인된 것만, 없는 사실은 만들지 않는다.
@@ -36,7 +37,8 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
    (템플릿: `templates/repo-profile.template.yaml`)
 
 ### /create plan {P} — 작업 계획
-1. `python scripts/createdb.py pick {P}` 로 Brain의 status='new' 기회를 읽는다.
+1. `python scripts/createdb.py pick {P}` 로 Brain의 status가 'new'·'acked' 인 기회를
+   읽는다(확인만 해 둔 기회도 아직 할 일이다 — 'acked' 를 먼저 보여준다).
    Brain이 없거나 비었으면 수동 브리프 모드로 전환(무엇을 쓸지 인터뷰).
 1-b. **쓰기 전에 리포와 대조한다.** 기회 대상 파일의 `git log`(그리고 그 파일의
    주석·최근 커밋 메시지)를 보고 **이미 반영된 것**은 `done --note "손으로 이미

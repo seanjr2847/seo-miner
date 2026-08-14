@@ -19,15 +19,15 @@ Usage:
                        [--category 사실] [--dry-run]
 """
 import argparse
-import json
 import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
+import collector  # noqa: E402
 import db  # noqa: E402
+import scoring  # noqa: E402
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -45,23 +45,6 @@ SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
           "normally would for a real user, citing web sources. "
           "Answer in the language of the question, and prefer sources relevant "
           "to a {locale} audience.")
-
-
-def load_config() -> dict:
-    import yaml
-    cfg_path = Path(__file__).parent.parent / "config.yaml"
-    if cfg_path.exists():
-        with open(cfg_path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
-
-def norm_domain(url: str) -> str:
-    try:
-        host = urlparse(url).netloc.lower()
-        return host[4:] if host.startswith("www.") else host
-    except Exception:
-        return ""
 
 
 def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
@@ -96,33 +79,21 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
             "usage": data.get("usage", {})}
 
 
-def judge(content: str, citation_urls: list[str], aliases: list[str],
-          own_domain: str) -> tuple[int, int, list[str]]:
-    text = content.lower()
-    mentioned = int(any(a.lower() in text for a in aliases if a))
-    domains = sorted({d for d in (norm_domain(u) for u in citation_urls) if d})
-    own = own_domain.lower().removeprefix("www.")
-    cited = int(any(d == own or d.endswith("." + own) for d in domains))
-    others = [d for d in domains if not (d == own or d.endswith("." + own))]
-    return mentioned, cited, others
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
+    collector.add_common(ap)
+    collector.add_throttle(ap)
     ap.add_argument("--engines", default=None, help="comma list; default from config")
-    ap.add_argument("--samples", type=int, default=1)
+    ap.add_argument("--samples", type=int, default=None)
     ap.add_argument("--max-prompts", type=int, default=None)
-    ap.add_argument("--throttle", type=float, default=0.5)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
     ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
-    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    conn = db.connect()
-    p = db.get_project(conn, a.project)
-    cfg = db.load_project_yaml(p["config_path"] or a.project)
-    gcfg = load_config()
+    conn, p, cfg = collector.open_project(a.project)
+    gcfg = collector.config()
+    samples = int(collector.resolve(a.samples, cfg, "ai_samples", 1))
+    throttle = float(collector.resolve(a.throttle, cfg, "throttle", 0.5))
 
     engines_map = {**DEFAULT_ENGINES, **(gcfg.get("ai_engines") or {})}
     engine_names = ([e.strip() for e in a.engines.split(",")] if a.engines
@@ -132,7 +103,7 @@ def main() -> None:
 
     # 부분 실행. 이게 없으면 "새로 넣은 8개만 돌려보자"에도 is_active를 손으로
     # 토글해야 하고, 되돌릴 때 통째로 UPDATE 해서 큐레이션한 활성 집합을 날린다.
-    limit = a.max_prompts or (cfg.get("limits", {}) or {}).get("max_ai_prompts", 30)
+    limit = a.max_prompts or collector.limit_of(cfg, "max_ai_prompts", 30)
     if a.ids:
         ids = [int(x) for x in a.ids.split(",") if x.strip()]
         prompts = conn.execute(
@@ -154,13 +125,14 @@ def main() -> None:
                  f"`/capture add {p['name']}` 이라고 하시면 프로젝트에 맞는 질문 10~30개를 "
                  "만들어 드립니다 (대시보드 폼으로 만든 사이트는 이 단계가 비어 있습니다).")
 
-    total_calls = len(prompts) * len(engines) * a.samples
-    print(f"[ai] prompts={len(prompts)} engines={list(engines)} samples={a.samples} "
+    total_calls = len(prompts) * len(engines) * samples
+    print(f"[ai] prompts={len(prompts)} engines={list(engines)} samples={samples} "
           f"-> {total_calls} calls")
     print("     note: provider-native search may bill a per-search fee on top of tokens.")
     if a.dry_run:
         for r in prompts[:5]:
             print(f"     e.g. [{r['category']}] {r['prompt']}")
+        conn.close()
         return
 
     import os
@@ -170,31 +142,26 @@ def main() -> None:
 
     aliases = [cfg.get("name", "")] + (cfg.get("brand_aliases") or [])
     own_domain = p["domain"]
-    run_id = db.start_run(conn, p["id"], "ai")
-    done, errors = 0, 0
-    for row in prompts:
-        for engine, model in engines.items():
-            for s in range(a.samples):
-                try:
-                    res = ask(model, row["prompt"], api_key, p["locale"])
-                    mentioned, cited, others = judge(
-                        res["content"], res["citation_urls"], aliases, own_domain)
-                    conn.execute(
-                        """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
-                             mentioned, cited, cited_domains_json, answer_excerpt)
-                           VALUES(?,?,?,?,?,?,?,?)""",
-                        (row["id"], run_id, engine, s, mentioned, cited,
-                         json.dumps(others, ensure_ascii=False),
-                         res["content"][:280]))
-                    conn.commit()
-                    done += 1
-                except Exception as e:
-                    errors += 1
-                    print(f"  ! {engine} failed on prompt#{row['id']}: {e}", file=sys.stderr)
-                time.sleep(a.throttle)
-        print(f"  prompt#{row['id']} [{row['category']}] done")
-    db.finish_run(conn, run_id, api_calls=done,
-                  notes=f"engines={list(engines)} samples={a.samples} errors={errors}")
+    # r.api_calls를 직접 센다 — 도중에 죽어도 그때까지 부른 횟수가 남는다.
+    with db.run(conn, p["id"], "ai") as r:
+        run_id = r.id
+        errors = 0
+        for row in prompts:
+            for engine, model in engines.items():
+                for s in range(samples):
+                    try:
+                        res = ask(model, row["prompt"], api_key, p["locale"])
+                        mentioned, cited, others = scoring.judge(
+                            res["content"], res["citation_urls"], aliases, own_domain)
+                        db.record_ai_check(conn, row["id"], run_id, engine, s,
+                                           mentioned, cited, others, res["content"])
+                        r.api_calls += 1
+                    except Exception as e:
+                        errors += 1
+                        print(f"  ! {engine} failed on prompt#{row['id']}: {e}", file=sys.stderr)
+                    time.sleep(throttle)
+            print(f"  prompt#{row['id']} [{row['category']}] done")
+        r.notes = f"engines={list(engines)} samples={samples} errors={errors}"
 
     # summary matrix: engine x category -> cited/total
     print("\nvisibility matrix (cited / checks):")

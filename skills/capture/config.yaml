@@ -12,13 +12,14 @@ ai_engines:
   gemini: "google/gemini-2.5-flash:online"
   claude: "anthropic/claude-sonnet-4.5:online"   # optional 4th engine, same key
 
+# collector.resolve() 가 읽는다: CLI > 프로젝트 yaml > 여기 > 코드 리터럴.
 defaults:
   gsc_days: 28
   ai_samples: 1          # raise to 2-3 for important prompts (non-determinism)
-  autocomplete_throttle: 0.5
+  throttle: 0.5          # 요청 간격(초) — 자동완성·AI·SERP 공통
+  serp_depth: 10
 
 serp:
   provider: auto           # auto(키 감지) | dataforseo | serper
-  depth: 10
   # dataforseo live advanced ~$0.002-0.003/query (실청구액은 응답에서 기록됨)
   # serper: 크레딧 과금, AI오버뷰 데이터 없음(aio 필드 null)

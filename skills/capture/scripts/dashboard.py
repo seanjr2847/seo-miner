@@ -4,7 +4,7 @@
 화면은 하나다. 두 가지 모드로 쓴다:
   · 라이브(기본)  — 서버가 Brain을 그때그때 읽어준다. 기회 트리아지·설정이 된다.
   · 박제(--export) — 그 시점 데이터를 페이지 안에 박아 넣은 자립형 HTML 파일.
-    서버도 인터넷도 필요 없고 남한테 보내도 그대로 열린다(report.py가 부르는 것).
+    서버도 인터넷도 필요 없고 남한테 보내도 그대로 열린다.
 같은 템플릿을 쓰므로 화면이 갈라지지 않는다.
 claude-mem 뷰어 구조를 참고하되, 상시 데몬·SSE·프런트 번들러는 들이지 않았다 —
 데이터가 수집 스크립트 실행 시에만 바뀌므로 필요할 때 띄우는 단일 프로세스면 된다.
@@ -29,8 +29,10 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
-import db      # noqa: E402
-import doctor  # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
+import db         # noqa: E402
+import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
@@ -80,7 +82,7 @@ def run_action(name: str) -> dict:
 
 
 def save_keys(values: dict) -> dict:
-    """셸 rc 편집 대신 ~/.capture/env 에 모은다 (db.load_env/doctor.load_env가 읽는다).
+    """셸 rc 편집 대신 ~/.capture/env 에 모은다 (모든 스크립트가 db.load_env로 읽는다).
     빈 값으로 보내면 그 키를 지운다."""
     cur = {}
     if ENV_FILE.exists():
@@ -177,21 +179,13 @@ def gather(conn, p) -> dict:
                 GROUP BY query""", (pid, snap))}
 
     now_, before = gsc_agg(cur), gsc_agg(prev)
-    movers = []
-    for kw, r in now_.items():
-        b = before.get(kw)
-        if b:
-            movers.append({"query": kw, "pos": r["pos"], "dpos": round(b["pos"] - r["pos"], 1),
-                           "clk": r["clk"], "dclk": r["clk"] - b["clk"], "imp": r["imp"]})
-    ups = sorted([m for m in movers if m["dpos"] > 0.4 or m["dclk"] > 0],
-                 key=lambda m: (-m["dclk"], -m["dpos"]))[:10]
-    downs = sorted([m for m in movers if m["dpos"] < -0.4 or m["dclk"] < 0],
-                   key=lambda m: (m["dclk"], m["dpos"]))[:10]
-    striking = q(conn,
-        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
-             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
-            GROUP BY query HAVING pos BETWEEN 4 AND 20
-            ORDER BY imp DESC LIMIT 15""", (pid, cur)) if cur else []
+    ups, downs = scoring.movers(now_, before)
+
+    # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
+    # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
+    cfg = collector.project_cfg(p["config_path"] or p["name"])
+    striking = scoring.striking(conn, pid, cur,
+                                brands=scoring.foreign_brands(conn, pid, cfg))
 
     ai_run = conn.execute(
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
@@ -243,10 +237,7 @@ def gather(conn, p) -> dict:
             aio_gap.append(kw)
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
-    opps = q(conn,
-        """SELECT kind, target, ROUND(score,1) score, reasoning, status
-             FROM opportunities WHERE project_id=?
-            ORDER BY created_at DESC, score DESC LIMIT 12""", (pid,))
+    opps = scoring.opportunities(conn, pid, limit=12)
     # 목록은 12개로 자르지만 KPI는 실제 건수를 세야 한다 (자른 개수를 세면 늘 12로 보인다).
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
@@ -273,11 +264,11 @@ def payload(project: str) -> dict:
         data = gather(conn, p)
         data["project"] = dict(p)
         # 대시보드는 트리아지용이라 리포트의 12개 컷 대신 id 포함 전체를 준다.
-        data["opps"] = [dict(r) for r in conn.execute(
-            """SELECT id, kind, target, ROUND(score,1) score, reasoning, status,
-                      substr(created_at,1,10) created
-                 FROM opportunities WHERE project_id=?
-                ORDER BY (status='new') DESC, score DESC LIMIT 200""", (p["id"],))]
+        # 정렬은 scoring 한 곳이 정한다 — 화면과 박제본이 다른 순서로 갈라지지 않는다.
+        data["opps"] = scoring.opportunities(conn, p["id"], limit=200, with_id=True)
+        # 임계값은 서버가 내려준다 — 템플릿 JS가 10·20을 다시 적어 두면 어긋난다.
+        data["rules"] = {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
+                         "striking_hi": scoring.STRIKING_HI}
         data["trend"] = [dict(r) for r in conn.execute(
             """SELECT snapshot_date d, SUM(clicks) clk, SUM(impressions) imp,
                       COUNT(DISTINCT query) q
@@ -293,10 +284,7 @@ def progress(conn, pid: int) -> dict:
     """안내 화면이 "지금 어디까지 팠는지"를 말하려면 단계별 실적이 필요하다.
     각 값은 그 단계를 했다는 증거 — 0이면 아직 안 한 것."""
     def one(sql: str, args=()) -> int:
-        try:
-            return conn.execute(sql, args).fetchone()[0] or 0
-        except Exception:      # 아직 안 만들어진 테이블(creations 등)은 0으로 본다
-            return 0
+        return conn.execute(sql, args).fetchone()[0] or 0
 
     reports = db.CAPTURE_HOME / "reports"
     names = [d.name for d in reports.iterdir()] if reports.exists() else []

@@ -2,8 +2,9 @@
 """Record browser-measured AI visibility checks into the Brain.
 
 Companion to the browse skill: Claude drives the real consumer apps
-(chatgpt.com / perplexity.ai / gemini.google.com) via claude-in-chrome and
-records each answer here. Writes the same ai_checks rows as collect_ai.py,
+(chatgpt.com / perplexity.ai / gemini.google.com / claude.ai) via claude-in-chrome
+and records each answer here. Writes ai_checks rows through db.record_ai_check —
+the same function collect_ai.py uses, judged by the same scoring.judge —
 but engine carries a '-web' suffix so API samples and consumer-surface
 samples never mix silently (see capture/references/scoring.md).
 
@@ -20,8 +21,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "capture" / "scripts"))
+import collector              # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db                     # noqa: E402
-from collect_ai import judge  # noqa: E402  (stdlib-only at import time)
+import scoring                # noqa: E402  (판정 규칙은 한 곳 — collect_ai 내부를 가로지르지 않는다)
 
 ENGINES = {"chatgpt-web", "perplexity-web", "gemini-web", "claude-web"}
 
@@ -46,6 +48,7 @@ def main() -> None:
             sys.exit("--project is required for start")
         p = db.get_project(conn, a.project)
         print(db.start_run(conn, p["id"], "ai"))
+        conn.close()
         return
 
     if a.cmd == "finish":
@@ -53,6 +56,7 @@ def main() -> None:
             sys.exit("--run-id is required for finish")
         db.finish_run(conn, a.run_id, api_calls=a.checks, notes=a.notes)
         print(f"run_id={a.run_id} finished. Next: /capture gaps or /capture report")
+        conn.close()
         return
 
     for req in ("project", "run_id", "prompt_id", "engine", "answer_file"):
@@ -62,20 +66,16 @@ def main() -> None:
         sys.exit(f"engine must be one of {sorted(ENGINES)} ('-web' = consumer surface)")
 
     p = db.get_project(conn, a.project)
-    cfg = db.load_project_yaml(p["config_path"] or a.project)
+    # yaml이 없어도 기록은 남아야 한다 — 별칭이 빠지면 경고만 하고 넘어간다.
+    cfg = collector.project_cfg(p["config_path"] or a.project)
     aliases = [cfg.get("name", "")] + (cfg.get("brand_aliases") or [])
     content = Path(a.answer_file).read_text(encoding="utf-8")
     urls = [u.strip() for u in a.urls.split(",") if u.strip()]
     if not urls:  # same fallback as collect_ai: bare URLs inlined in the answer
         urls = re.findall(r"https?://[^\s)\]>\"']+", content)
-    mentioned, cited, others = judge(content, urls, aliases, p["domain"])
-    conn.execute(
-        """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
-             mentioned, cited, cited_domains_json, answer_excerpt)
-           VALUES(?,?,?,?,?,?,?,?)""",
-        (a.prompt_id, a.run_id, a.engine, a.sample, mentioned, cited,
-         json.dumps(others, ensure_ascii=False), content[:280]))
-    conn.commit()
+    mentioned, cited, others = scoring.judge(content, urls, aliases, p["domain"])
+    db.record_ai_check(conn, a.prompt_id, a.run_id, a.engine, a.sample,
+                       mentioned, cited, others, content)
     print(json.dumps({"prompt_id": a.prompt_id, "engine": a.engine,
                       "mentioned": mentioned, "cited": cited,
                       "cited_domains": others}, ensure_ascii=False))

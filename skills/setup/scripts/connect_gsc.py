@@ -17,20 +17,16 @@ Usage:
 """
 import argparse
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
 
-CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
-DEST = Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
-                           str(CAPTURE_HOME / "gsc_service_account.json")))
+# 키가 어디 놓이고 다운로드 폴더가 어디인지는 db가 답한다 — 여기서 다시 계산하면
+# 대시보드·collect_gsc와 어긋난 자리에 키를 깐다. 콘솔 인코딩도 db가 맞춘다.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "capture" / "scripts"))
+import db  # noqa: E402
 
-for _s in (sys.stdout, sys.stderr):  # 한국어 Windows 콘솔(cp949) 출력 보호
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
+DEST = db.gsc_key()
 
 
 def sa_email(path: Path) -> str:
@@ -43,25 +39,29 @@ def sa_email(path: Path) -> str:
 
 
 def find_downloaded():
-    dl = Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads"))
-    for c in sorted(dl.glob("*.json"), key=lambda p: -p.stat().st_mtime)[:15]:
+    for c in sorted(db.downloads_dir().glob("*.json"),
+                    key=lambda p: -p.stat().st_mtime)[:15]:
         if sa_email(c):
             return c
     return None
 
 
 def gsc_properties() -> list:
-    """등록된 사이트들의 (이름, gsc_property). yaml 파서 없이 줄 스캔."""
-    out = []
-    for y in sorted((CAPTURE_HOME / "projects").glob("*.yaml")):
-        if y.name.startswith("_"):
-            continue
-        for line in y.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("gsc_property:"):
-                v = line.split(":", 1)[1].strip().strip("'\"")
-                if v:
-                    out.append((y.stem, v))
-    return out
+    """등록된 사이트들의 (이름, gsc_property) — Brain에게 묻는다.
+
+    예전엔 projects/*.yaml을 줄 단위로 훑었는데, 대시보드 폼으로 등록해 yaml이 없는
+    사이트는 그 목록에 영영 안 나왔다. "내 사이트가 뭐냐"의 답은 doctor와 같은 곳에서.
+    """
+    if not db.DB_PATH.exists():   # 조회 하나 때문에 빈 Brain을 만들지는 않는다
+        return []
+    try:
+        conn = db.connect_ro()
+        rows = conn.execute(
+            "SELECT name, gsc_property FROM projects ORDER BY name").fetchall()
+        conn.close()
+    except Exception:   # Brain이 아직 없거나 손상 — 키 설치는 이미 끝났으니 일반 안내로
+        return []
+    return [(r["name"], r["gsc_property"]) for r in rows if r["gsc_property"]]
 
 
 def finish(email: str) -> None:

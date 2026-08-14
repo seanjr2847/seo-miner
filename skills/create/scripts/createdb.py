@@ -2,8 +2,8 @@
 """create skill <-> shared Brain bridge.
 
 Opens the SAME brain.db as the capture skill ($CAPTURE_HOME, default ~/.capture)
-and adds one table of its own (creations). Read/claim opportunities, record
-what was written where, and close the loop so the next capture run measures it.
+through capture의 db 모듈. Read/claim opportunities, record what was written
+where, and close the loop so the next capture run measures it.
 
 Standalone-safe: if brain.db doesn't exist, commands explain and exit cleanly
 (create then runs in manual-brief mode without Brain).
@@ -17,47 +17,27 @@ CLI:
 """
 import argparse
 import json
-import os
-import sqlite3
+import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
-CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
-DB_PATH = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "capture" / "scripts"))
+import db  # noqa: E402
 
-# 한국어 Windows 콘솔(cp949)에서 기회 reasoning의 '—'가 UnicodeEncodeError로 죽는다.
-# capture의 db.py는 이미 하는 처리인데, create는 그걸 import하지 않아 빠져 있었다
-# (첫 실사용 `pick`에서 바로 크래시).
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):   # 파이프로 감싼 경우 등
-        pass
+# creations 테이블·경로 규칙·콘솔 인코딩은 전부 db가 갖는다. 여기서 따로 CREATE TABLE을
+# 하던 시절엔 create가 capture의 Brain 안에 제 테이블을 심는 꼴이라, dashboard가 그
+# 테이블을 셀 때마다 try/except로 없을 가능성을 감싸야 했다.
 
-CREATIONS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS creations (
-  id INTEGER PRIMARY KEY,
-  project_id INTEGER NOT NULL,
-  opportunity_id INTEGER,                -- NULL for manual-brief work
-  kind TEXT,
-  file_path TEXT NOT NULL,
-  branch TEXT,
-  note TEXT,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  merged INTEGER DEFAULT 0
-);
-"""
+# SKILL.md가 정한 브랜치 이름 규칙. 어긋나도 막지는 않는다 — 작업 중간에
+# 브랜치 이름 하나로 사용자를 세우는 건 손해가 더 크다.
+BRANCH_RE = re.compile(r"^capture/\w+-\S+$")
 
 
-def connect() -> sqlite3.Connection:
-    if not DB_PATH.exists():
-        sys.exit(f"brain.db not found at {DB_PATH} — capture 미설치 상태. "
+def connect():
+    if not db.DB_PATH.exists():
+        sys.exit(f"brain.db not found at {db.DB_PATH} — capture 미설치 상태. "
                  "create는 수동 브리프 모드로 진행 가능(SKILL.md 참조).")
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(CREATIONS_SCHEMA)
-    return conn
+    return db.connect()
 
 
 def pid_of(conn, project: str) -> int:
@@ -99,6 +79,9 @@ def done(project: str, opp_id: int | None, path: str,
          branch: str | None, note: str | None) -> None:
     conn = connect()
     pid = pid_of(conn, project)
+    if branch and not BRANCH_RE.match(branch):
+        print(f"경고: 브랜치 '{branch}' 가 규칙과 다릅니다 — 기대 형식 "
+              "capture/{kind}-{slug} (기록은 그대로 진행합니다)", file=sys.stderr)
     kind = None
     if opp_id:
         row = conn.execute("SELECT kind FROM opportunities WHERE id=? AND project_id=?",
@@ -106,13 +89,9 @@ def done(project: str, opp_id: int | None, path: str,
         kind = row["kind"] if row else None
         conn.execute("UPDATE opportunities SET status='done' WHERE id=? AND project_id=?",
                      (opp_id, pid))
-    conn.execute(
-        """INSERT INTO creations(project_id, opportunity_id, kind, file_path,
-                                 branch, note, created_at)
-           VALUES(?,?,?,?,?,?,?)""",
-        (pid, opp_id, kind, path, branch, note,
-         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
-    conn.commit()
+        conn.commit()
+    db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
+                       branch=branch, note=note)
     print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
     conn.close()
 

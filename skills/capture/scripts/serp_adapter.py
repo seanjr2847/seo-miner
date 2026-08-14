@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
 """SERP providers — unified adapter (DataForSEO Live Advanced / Serper.dev).
 
-fetch(provider, keyword, locale) -> normalized dict:
-  position      own-domain rank in organic (None if absent in top depth)
-  url           own ranking URL
+제공자를 아는 곳은 여기 하나다. 단가표·"이 제공자는 뭘 못 잰다" 주의사항·
+제공자별 None 정규화가 호출부에도 복제돼 있던 시절엔, 제공자를 하나 더 붙이려면
+collect_serp.py의 가격표와 `if provider == "serper"` 분기까지 같이 고쳐야 했고
+실제로 한쪽만 고쳐 값이 어긋났다.
+
+fetch(provider, keyword, locale, depth) -> normalized dict:
   top           [{pos, domain, url, title}] organic top-N
+                (내 도메인이 몇 위인지는 호출부가 판단한다 — 어댑터는 누가 '나'인지
+                 알 필요가 없고, 알면 같은 규칙이 양쪽에 두 벌로 생긴다)
   serp_features [feature type strings]
-  aio_present / aio_cited   AI Overview flags (DataForSEO only; Serper -> None)
-  related / paa cost        free byproducts + actual billed cost when reported
+  aio_present   1 / 0 / None(제공자가 측정하지 않음) — 그대로 DB에 넣을 수 있는 값
+  aio_domains   AI Overview 안에서 인용된 도메인들 (판정은 호출부의 scoring.owns)
+  related / paa 무료 부산물
+  cost          제공자가 보고한 실청구액, 없으면 제공자 단가
 
 Env:
   DataForSEO  DATAFORSEO_LOGIN + DATAFORSEO_PASSWORD  (~$0.002-0.003/query live adv.)
   Serper      SERPER_API_KEY                           (credits; no AIO data)
+
+self-check:  python serp_adapter.py
 """
-import json
 import os
 import sys
-from urllib.parse import urlparse
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import collector  # noqa: E402
+import scoring  # noqa: E402
 
 LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, serper gl/hl)
     "ko": ("South Korea", "ko", ("kr", "ko")),
@@ -24,32 +36,55 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "ja": ("Japan", "ja", ("jp", "ja")),
 }
 
-_WARNED: set[str] = set()
-
 
 def location(locale: str) -> tuple:
-    """매핑에 없는 로케일은 미국/영어로 떨어진다 — 조용히 그러면 안 된다.
-    독일어 프로젝트가 미국 SERP를 재고 "순위 없음"으로 적재돼도 아무도 눈치채지
-    못한다(한국어 키워드에서 이미 한 번 겪은 일). 폴백은 하되 한 번은 말한다."""
+    """locale -> (location_name, language_code, (gl, hl)). 매핑에 없으면 미국/영어.
+
+    조회용 순수 함수다. 경고는 warn_unmapped()가 한다 — 예전엔 이 함수가 경고까지
+    겸해서, 호출부가 값도 안 쓸 거면서 부작용만 보고 이걸 호출하고 있었다.
+    """
+    return LOCATION_MAP.get((locale or "").split("-")[0].lower(), LOCATION_MAP["en"])
+
+
+def warn_unmapped(locale: str) -> bool:
+    """매핑 없는 로케일이면 경고하고 True. 돈을 쓰기 전에 호출부가 부른다.
+
+    폴백 자체는 막지 않는다. 다만 조용히 하면 안 된다 — 독일어 프로젝트가 미국
+    SERP를 재고 "순위 없음"으로 적재돼도 아무도 눈치채지 못한다(한국어 키워드에서
+    이미 한 번 겪은 일).
+    """
     key = (locale or "").split("-")[0].lower()
-    if key not in LOCATION_MAP and key not in _WARNED:
-        _WARNED.add(key)
-        print(f"[주의] '{locale}' 로케일 매핑이 없어 United States/en 으로 조회합니다 — "
-              f"이 언어권의 순위가 아닙니다. serp_adapter.py의 LOCATION_MAP에 "
-              f"'{key}' 한 줄을 추가하세요.", file=sys.stderr)
-    return LOCATION_MAP.get(key, LOCATION_MAP["en"])
+    if key in LOCATION_MAP:
+        return False
+    print(f"[주의] '{locale}' 로케일 매핑이 없어 United States/en 으로 조회합니다 — "
+          f"이 언어권의 순위가 아닙니다. serp_adapter.py의 LOCATION_MAP에 "
+          f"'{key}' 한 줄을 추가하세요.", file=sys.stderr)
+    return True
 
 
-def _norm(url: str) -> str:
-    host = urlparse(url).netloc.lower()
-    return host[4:] if host.startswith("www.") else host
+def _domains_in(obj) -> list[str]:
+    """중첩 응답에서 url/domain 값만 긁어 호스트 목록으로.
+
+    예전에는 AI Overview 항목을 통째로 문자열로 만들어 내 도메인이 들어있나 봤는데,
+    'notexample.com' 같은 남의 도메인도 걸리는 판정이었다.
+    """
+    out, stack = [], [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if isinstance(v, str) and k in ("url", "domain", "link", "source_url"):
+                    host = scoring.host_of(v)
+                    if host:
+                        out.append(host)
+                else:
+                    stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return sorted(set(out))
 
 
-def _match(domain: str, own: str) -> bool:
-    return domain == own or domain.endswith("." + own)
-
-
-def fetch_dataforseo(keyword: str, locale: str, own_domain: str, depth: int = 10) -> dict:
+def fetch_dataforseo(keyword: str, locale: str, depth: int = 10) -> dict:
     import requests
     login, pw = os.environ.get("DATAFORSEO_LOGIN"), os.environ.get("DATAFORSEO_PASSWORD")
     if not (login and pw):
@@ -66,21 +101,19 @@ def fetch_dataforseo(keyword: str, locale: str, own_domain: str, depth: int = 10
     if task.get("status_code", 0) >= 40000:
         raise RuntimeError(f"dataforseo task error: {task.get('status_message')}")
     items = ((task.get("result") or [{}])[0].get("items")) or []
-    own = own_domain.lower().removeprefix("www.")
-    top, position, url = [], None, None
-    features, aio_present, aio_cited = set(), False, False
+    top, features, aio_present, aio_domains = [], set(), 0, []
     related, paa = [], []
     for it in items:
         t = it.get("type")
         if t == "organic":
-            d = _norm(it.get("url", "")) or (it.get("domain") or "").lower()
+            # url이 비면 domain 필드로. 둘 다 같은 정규화를 거쳐야 경쟁사 집계에
+            # 'www.x.com'과 'x.com'이 따로 쌓이지 않는다.
+            d = scoring.host_of(it.get("url") or it.get("domain") or "")
             top.append({"pos": it.get("rank_group"), "domain": d,
                         "url": it.get("url"), "title": it.get("title")})
-            if position is None and _match(d, own):
-                position, url = it.get("rank_group"), it.get("url")
         elif t == "ai_overview":
-            aio_present = True
-            aio_cited = aio_cited or (own in json.dumps(it).lower())
+            aio_present = 1
+            aio_domains += _domains_in(it)
             features.add(t)
         elif t == "related_searches":
             related += [x for x in (it.get("items") or []) if isinstance(x, str)]
@@ -91,13 +124,12 @@ def fetch_dataforseo(keyword: str, locale: str, own_domain: str, depth: int = 10
             features.add(t)
         else:
             features.add(t)
-    return {"position": position, "url": url, "top": top[:depth],
-            "serp_features": sorted(features), "aio_present": aio_present,
-            "aio_cited": aio_cited if aio_present else None,
+    return {"top": top[:depth], "serp_features": sorted(features),
+            "aio_present": aio_present, "aio_domains": sorted(set(aio_domains)),
             "related": related, "paa": paa, "cost": float(data.get("cost") or 0)}
 
 
-def fetch_serper(keyword: str, locale: str, own_domain: str, depth: int = 10) -> dict:
+def fetch_serper(keyword: str, locale: str, depth: int = 10) -> dict:
     import requests
     key = os.environ.get("SERPER_API_KEY")
     if not key:
@@ -108,27 +140,56 @@ def fetch_serper(keyword: str, locale: str, own_domain: str, depth: int = 10) ->
                       json={"q": keyword, "gl": gl, "hl": hl, "num": depth})
     r.raise_for_status()
     data = r.json()
-    own = own_domain.lower().removeprefix("www.")
-    top, position, url = [], None, None
-    for it in data.get("organic", []):
-        d = _norm(it.get("link", ""))
-        top.append({"pos": it.get("position"), "domain": d,
-                    "url": it.get("link"), "title": it.get("title")})
-        if position is None and _match(d, own):
-            position, url = it.get("position"), it.get("link")
+    top = [{"pos": it.get("position"), "domain": scoring.host_of(it.get("link", "")),
+            "url": it.get("link"), "title": it.get("title")}
+           for it in data.get("organic", [])]
     features = sorted(k for k in ("answerBox", "knowledgeGraph", "peopleAlsoAsk",
                                   "topStories", "images") if k in data)
-    return {"position": position, "url": url, "top": top,
-            "serp_features": features, "aio_present": None, "aio_cited": None,
+    # aio_present=None: "AI Overview가 없었다"가 아니라 "재지 않았다". 0으로 적으면
+    # 나중에 노출률 계산에서 분모에 섞여 들어간다.
+    return {"top": top, "serp_features": features,
+            "aio_present": None, "aio_domains": [],
             "related": [x.get("query") for x in data.get("relatedSearches", []) if x.get("query")],
-            "paa": [x.get("question") for x in data.get("peopleAlsoAsk", []) if x.get("question")],
-            "cost": 0.001}  # ~1 credit; actual $/credit depends on your pack
+            "paa": [x.get("question") for x in data.get("peopleAlsoAsk", []) if x.get("question")]}
 
 
-PROVIDERS = {"dataforseo": fetch_dataforseo, "serper": fetch_serper}
+# 제공자 지식은 전부 여기: 호출 함수 + 단가 + 이 제공자로 재면 무엇이 빠지는지.
+PROVIDERS = {
+    "dataforseo": {
+        "fetch": fetch_dataforseo,
+        "cost": 0.003,   # live advanced 상한. 실청구액은 응답에서 덮어쓴다.
+        "caveats": [],
+    },
+    "serper": {
+        "fetch": fetch_serper,
+        "cost": 0.001,   # ~1 credit; actual $/credit depends on your pack
+        "caveats": ["serper는 AI Overview를 측정하지 않는다 (aio_* = NULL, '없음'이 아님)"],
+    },
+}
+
+
+def cost_per_query(provider: str) -> float:
+    """제공자 단가($/쿼리) — 예산 고지용. 가격표는 이 모듈에만 있다."""
+    return PROVIDERS[provider]["cost"]
+
+
+def caveats(provider: str) -> list[str]:
+    """이 제공자로 재면 무엇이 빠지는지. 호출부가 제공자 이름으로 분기하지 않게 한다."""
+    return PROVIDERS[provider]["caveats"]
 
 
 def detect_provider() -> str | None:
+    """config.yaml serp.provider 가 이름을 지정했으면 그게 이긴다(auto = 키 감지).
+
+    설정 파일에 항목만 있고 읽는 코드가 없어서, 키를 둘 다 넣어둔 사람은
+    dataforseo로 고정돼 있었다.
+    """
+    want = ((collector.config().get("serp") or {}).get("provider") or "auto")
+    if want in PROVIDERS:
+        return want
+    if want != "auto":
+        print(f"[경고] config.yaml serp.provider='{want}' 는 모르는 제공자입니다 — "
+              f"키 감지로 진행합니다.", file=sys.stderr)
     if os.environ.get("DATAFORSEO_LOGIN"):
         return "dataforseo"
     if os.environ.get("SERPER_API_KEY"):
@@ -136,5 +197,32 @@ def detect_provider() -> str | None:
     return None
 
 
-def fetch(provider: str, keyword: str, locale: str, own_domain: str, depth: int = 10) -> dict:
-    return PROVIDERS[provider](keyword, locale, own_domain, depth)
+def fetch(provider: str, keyword: str, locale: str, depth: int = 10) -> dict:
+    """정규화된 SERP 한 건. 제공자가 안 채운 자리는 여기서 메운다 —
+    호출부가 `if provider == ...` 로 None을 해석하지 않게."""
+    spec = PROVIDERS[provider]
+    res = spec["fetch"](keyword, locale, depth)
+    res.setdefault("cost", spec["cost"])   # 실청구액을 안 주는 제공자는 단가로 계상
+    res.setdefault("aio_domains", [])
+    res.setdefault("aio_present", None)    # None = 측정 안 함. 0("없었다")과 다르다.
+    if res["aio_present"] is not None:
+        res["aio_present"] = int(res["aio_present"])
+    return res
+
+
+def _selfcheck() -> None:
+    assert location("ko-KR")[0] == "South Korea"
+    assert location("de-DE") == LOCATION_MAP["en"]      # 매핑 없으면 미국/영어 폴백
+    assert warn_unmapped("ko-KR") is False
+    assert warn_unmapped("de-DE") is True               # 폴백은 하되 한 번은 말한다
+    assert _domains_in({"items": [{"url": "https://www.Example.com/a"},
+                                  {"x": {"domain": "b.co"}}]}) == ["b.co", "example.com"]
+    assert _domains_in({"title": "example.com 은 텍스트일 뿐"}) == []
+    assert cost_per_query("serper") < cost_per_query("dataforseo")
+    assert caveats("dataforseo") == [] and caveats("serper")
+    assert set(PROVIDERS) == {"dataforseo", "serper"}
+    print("serp_adapter self-check ok")
+
+
+if __name__ == "__main__":
+    _selfcheck()

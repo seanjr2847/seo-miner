@@ -18,6 +18,7 @@ import json
 import os
 import sqlite3
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,7 +26,8 @@ CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 DB_PATH = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
 
 # 한국어 Windows 콘솔(cp949)에서 '—'·'✓' 출력이 UnicodeEncodeError로 죽는 것 방지.
-# db는 모든 스크립트가 import하므로 여기 한 번이면 전부 커버된다(doctor는 예외 — 자체 처리).
+# db는 모든 스크립트가 import하므로 여기 한 번이면 전부 커버된다 — doctor·connect_gsc·
+# createdb 도 각자 갖고 있던 사본을 지우고 이 import에 기댄다.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -35,8 +37,7 @@ for _s in (sys.stdout, sys.stderr):
 
 def load_env(path: Path = CAPTURE_HOME / "env") -> None:
     """~/.capture/env 의 KEY=VALUE를 환경변수로 — 대시보드 설정 화면이 여기 쓴다.
-    셸에 이미 export한 값이 우선(setdefault). # ponytail: dotenv 패키지 대신 4줄.
-    doctor.py에도 같은 함수가 있다 — pip 이전에 도는 stdlib 진단이라 import를 못 걸어서."""
+    셸에 이미 export한 값이 우선(setdefault). # ponytail: dotenv 패키지 대신 4줄."""
     for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
         k, sep, v = line.partition("=")
         if sep and k.strip() and not k.lstrip().startswith("#"):
@@ -44,6 +45,26 @@ def load_env(path: Path = CAPTURE_HOME / "env") -> None:
 
 
 load_env()
+
+
+# ── 자료가 어디 사는가 ─────────────────────────────────────────────
+# 경로 규칙은 여기서만 답한다. 예전에는 db·doctor·connect_gsc·createdb·collect_gsc가
+# 각자 계산해서 CAPTURE_HOME 5벌·GSC 키 4벌이 돌아다녔고 다운로드 폴더는 이미 어긋나 있었다.
+
+def gsc_key() -> Path:
+    """구글 서비스 계정 키 (전 사이트 공용)."""
+    return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
+                               CAPTURE_HOME / "gsc_service_account.json"))
+
+
+def creds_dir(project: str) -> Path:
+    """레거시 사이트별 OAuth 자격증명 폴더 — 서비스 계정 키로 대체됐다."""
+    return CAPTURE_HOME / "creds" / project
+
+
+def downloads_dir() -> Path:
+    """브라우저 다운로드 폴더 — GSC CSV를 여기서 찾는다."""
+    return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -144,6 +165,17 @@ CREATE TABLE IF NOT EXISTS runs (
   api_calls INTEGER DEFAULT 0,
   cost_estimate_usd REAL DEFAULT 0,
   notes TEXT
+);
+CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 (루프 클로즈)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  opportunity_id INTEGER,                     -- NULL = 수동 브리프 작업
+  kind TEXT,
+  file_path TEXT NOT NULL,
+  branch TEXT,
+  note TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  merged INTEGER DEFAULT 0
 );
 """
 
@@ -285,6 +317,115 @@ def finish_run(conn, run_id: int, api_calls: int = 0, cost: float = 0.0, notes: 
         "UPDATE runs SET finished_at=?, api_calls=?, cost_estimate_usd=?, notes=? WHERE id=?",
         (now(), api_calls, round(cost, 4), notes, run_id))
     conn.commit()
+
+
+class Run:
+    """실행 한 건. 수집기가 도중에 값을 채우고, 컨텍스트가 끝날 때 기록된다."""
+
+    def __init__(self, conn, run_id: int) -> None:
+        self.conn, self.id = conn, run_id
+        self.api_calls, self.cost, self.notes = 0, 0.0, ""
+
+
+@contextmanager
+def run(conn: sqlite3.Connection, project_id: int, kind: str):
+    """실행 기록을 예외에도 닫는다.
+
+    try/finally 없이 start_run + finish_run을 손으로 쓰던 시절에는 수집 도중
+    예외가 나면 runs.finished_at 이 NULL로 남아 "수집 이력" 화면이 거짓말을 했다.
+    """
+    r = Run(conn, start_run(conn, project_id, kind))
+    try:
+        yield r
+    except BaseException as e:
+        finish_run(conn, r.id, api_calls=r.api_calls, cost=r.cost,
+                   notes=(r.notes + f" | 중단: {type(e).__name__}: {e}").strip(" |")[:500])
+        raise
+    else:
+        finish_run(conn, r.id, api_calls=r.api_calls, cost=r.cost, notes=r.notes)
+
+
+# ── Brain 쓰기 경로 ────────────────────────────────────────────────
+# 스키마를 아는 곳은 여기뿐이다. 수집기·browse·create가 각자 INSERT를 쓰던 시절엔
+# 같은 수정이 한 호출부에만 들어가 locale 누락 같은 버그가 다른 경로에 남았다.
+
+def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                       period_days: int, rows) -> int:
+    """GSC 스냅샷 적재. 같은 날 다시 넣으면 덮어쓴다(하루 1스냅샷).
+
+    rows: (query, page|None, clicks, impressions, ctr, position) 순회 가능 객체.
+    자동 수집(page 있음)과 CSV 가져오기(page 없음)가 같은 함수를 쓴다.
+    """
+    rows = list(rows)
+    conn.execute("DELETE FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?",
+                 (project_id, snapshot_date))
+    conn.executemany(   # 10만 행을 한 줄씩 execute하면 눈에 띄게 느리다
+        """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+             query, page, clicks, impressions, ctr, position)
+           VALUES(?,?,?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, q, pg,
+          int(clk or 0), int(imp or 0), round(float(ctr or 0), 4),
+          round(float(pos or 0), 1))
+         for q, pg, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> int:
+    """키워드 후보 적재 (is_active=0 — 활성화는 Claude 큐레이션 몫).
+
+    items: (keyword, locale, source). locale은 필수 인자다 — 선택 컬럼이던 시절
+    자동완성 경로가 이걸 빼먹어 후보가 NULL locale로 쌓였고, 프로젝트 로케일로
+    다시 조회돼 한국어 키워드가 전부 "순위 없음"이 됐다. 모르면 명시적으로 None.
+    """
+    n = 0
+    for kw, locale, source in items:
+        kw = (kw or "").strip()
+        if not kw:
+            continue
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO keywords(project_id, keyword, locale, source, is_active)
+               VALUES(?,?,?,?,0)""", (project_id, kw, locale, source))
+        n += cur.rowcount
+    conn.commit()
+    return n
+
+
+def add_competitors(conn: sqlite3.Connection, project_id: int, domains, source: str) -> int:
+    n = 0
+    for d in domains:
+        d = (d or "").strip().lower()
+        if d:
+            n += conn.execute(
+                "INSERT OR IGNORE INTO competitors(project_id, domain, source) VALUES(?,?,?)",
+                (project_id, d, source)).rowcount
+    conn.commit()
+    return n
+
+
+def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None,
+                    engine: str, sample_idx: int, mentioned: int, cited: int,
+                    cited_domains: list, excerpt: str) -> int:
+    """AI 인용 체크 1건. 키 경로(collect_ai)와 브라우저 경로(browse)가 같이 쓴다."""
+    cur = conn.execute(
+        """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
+             mentioned, cited, cited_domains_json, answer_excerpt)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (prompt_id, run_id, engine, sample_idx, int(mentioned), int(cited),
+         json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:280]))
+    conn.commit()
+    return cur.lastrowid
+
+
+def record_creation(conn: sqlite3.Connection, project_id: int, file_path: str, *,
+                    opportunity_id: int | None = None, kind: str | None = None,
+                    branch: str | None = None, note: str | None = None) -> int:
+    cur = conn.execute(
+        """INSERT INTO creations(project_id, opportunity_id, kind, file_path, branch, note)
+           VALUES(?,?,?,?,?,?)""",
+        (project_id, opportunity_id, kind, file_path, branch, note))
+    conn.commit()
+    return cur.lastrowid
 
 
 def stats(project: str) -> None:
