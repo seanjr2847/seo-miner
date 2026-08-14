@@ -17,31 +17,21 @@ import sqlite3
 import sys
 from pathlib import Path
 
-CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
-DB = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
-
-for _s in (sys.stdout, sys.stderr):  # 한국어 Windows 콘솔(cp949)에서 ✓/— 출력 보호
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
+# 경로·env 로딩·콘솔 인코딩은 db가 유일한 주인이다. db의 모듈 레벨은 stdlib만
+# 쓰고(yaml은 함수 안에서 늦게 import) DB에 연결하지도 않으므로, pip 이전에 도는
+# doctor가 import해도 안전하다 — 진단하러 왔다가 Brain을 만들어 버리는 일도 없다.
+CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
+sys.path.insert(0, str(CAPTURE_SCRIPTS))
+import db  # noqa: E402
 
 
 def has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
-def load_env(path: Path = CAPTURE_HOME / "env") -> None:
-    """~/.capture/env 의 KEY=VALUE를 환경변수로 (대시보드 설정 화면이 쓰는 파일).
-    db.py에 같은 함수가 있지만 doctor는 pip 이전에 도는 stdlib 전용이라 import를 못 건다."""
-    for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
-        k, sep, v = line.partition("=")
-        if sep and k.strip() and not k.lstrip().startswith("#"):
-            os.environ.setdefault(k.strip(), v.strip())
-
-
 def diagnose() -> dict:
-    load_env()
+    db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
+    CAPTURE_HOME, DB = db.CAPTURE_HOME, db.DB_PATH
     deps_core = {m: has(m) for m in ("requests", "yaml")}
     deps_gsc = {m: has(m) for m in ("googleapiclient",)}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
@@ -65,9 +55,8 @@ def diagnose() -> dict:
             brain["error"] = str(e)
     # 구글 연결 표준: 서비스 계정 키 1개(전 사이트 공용, gsc MCP 서버와 공유).
     # 구버전 사이트별 OAuth 토큰이 남은 사이트는 그걸로도 돈다(하위호환).
-    sa_key = Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
-                                 str(CAPTURE_HOME / "gsc_service_account.json")))
-    gsc_legacy = {name: (CAPTURE_HOME / "creds" / name / "gsc_token.json").exists()
+    sa_key = db.gsc_key()
+    gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: sa_key.exists() or gsc_legacy[name]
                  for name in brain["projects"]}
@@ -210,7 +199,7 @@ def main() -> None:
     if "--web" in sys.argv:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.
         import subprocess
-        dash = Path(__file__).resolve().parents[2] / "capture" / "scripts" / "dashboard.py"
+        dash = CAPTURE_SCRIPTS / "dashboard.py"
         # 첫 줄(주소)만 받아서 대신 찍고 나는 빠진다 — 서버 출력을 물고 있으면
         # 이 명령이 안 끝난 것처럼 보인다(파이프로 감쌌을 때 특히).
         proc = subprocess.Popen([sys.executable, "-u", str(dash), "--open"],

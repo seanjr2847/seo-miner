@@ -102,10 +102,10 @@ node로 띄우고, 런처가 플랫폼에 맞게 npx를 부르고 `CAPTURE_HOME`
 직접 물어봐 같은 데이터를 남긴다. 아래는 여러 프롬프트를 자동으로 돌리고 싶을 때.
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
-2. `export OPENROUTER_API_KEY=sk-or-...` (셸 rc 파일에 추가)
-   — 셸을 건드리기 싫으면 대시보드 [설정] 패널에 붙여넣으면 된다. 값은
-   `~/.capture/env`(KEY=VALUE)에 저장되고 모든 스크립트가 읽는다. 이 절의 다른
-   키(7절 포함)도 마찬가지. 셸에 export한 값이 있으면 그쪽이 우선한다.
+2. 키는 **`~/.capture/env`(KEY=VALUE) 한 곳**에 둔다: `OPENROUTER_API_KEY=sk-or-...`.
+   대시보드 [설정] 패널에 붙여넣으면 거기 저장되고, 모든 스크립트가
+   `db.load_env()`로 읽는다 — 셸 rc를 편집할 필요가 없다. 이 절의 다른 키(7절
+   포함)도 같은 파일이다. 셸에 `export`한 값이 있으면 그쪽이 우선한다(setdefault).
 3. 모델 슬러그는 시간이 지나면 바뀐다 → `config.yaml`의 `ai_engines`에서 관리.
    `:online` 접미사가 웹검색을 켠다(OpenAI·Google·Perplexity 등은 네이티브 검색 사용).
 4. 비용 감각: 검색 호출료가 토큰보다 크다. 프롬프트 30개 × 3엔진 주 1회 기준
@@ -115,13 +115,16 @@ node로 띄우고, 런처가 플랫폼에 맞게 npx를 부르고 `CAPTURE_HOME`
 
 ```bash
 cd ~/.claude/skills/capture
+python scripts/scoring.py            # 판정 규칙 자체점검 (임계값·브랜드 제외·정렬)
+python scripts/collector.py          # 설정 우선순위 자체점검
+python scripts/test_capture.py       # 임시 폴더에서 도는 회귀 테스트
 cp projects/_template.yaml ~/.capture/projects/myproject.yaml   # 편집 후
 python scripts/db.py sync-project ~/.capture/projects/myproject.yaml
 python scripts/expand_keywords.py --project myproject --dry-run
 python scripts/collect_ai.py --project myproject --dry-run
 python scripts/collect_gsc.py --project myproject --dry-run
 python scripts/import_gsc_csv.py --project myproject <내려받은.zip> --dry-run  # CSV 경로
-python scripts/report.py --project myproject     # 빈 리포트라도 렌더 확인
+python scripts/dashboard.py --export --project myproject   # 빈 리포트라도 렌더 확인
 python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C로 종료)
 ```
 
@@ -132,11 +135,12 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 **DataForSEO (추천 — AI오버뷰 데이터 포함)**
 1. https://dataforseo.com 가입 → $1 무료 크레딧 (Live Advanced 기준 수백 회 분량)
 2. 대시보드 API Settings에서 API 비밀번호 확인 (계정 비번과 다름)
-3. `export DATAFORSEO_LOGIN=가입이메일` / `export DATAFORSEO_PASSWORD=API비밀번호`
+3. `~/.capture/env` 에 `DATAFORSEO_LOGIN=가입이메일` / `DATAFORSEO_PASSWORD=API비밀번호`
+   (5-2절과 같은 파일 — 대시보드 [설정] 패널이 여기 쓴다)
 4. 본격 사용 시 최소 충전 $50 (월 사용량 $1~2 수준이라 수년치)
 
 **Serper.dev (단순함 우선 — AIO 없음)**
 1. https://serper.dev 가입 → 무료 크레딧 2,500 (카드 불필요)
-2. `export SERPER_API_KEY=...`
+2. `~/.capture/env` 에 `SERPER_API_KEY=...`
 
 동작 확인: `python scripts/collect_serp.py --project NAME --dry-run`

@@ -1,6 +1,6 @@
 {
   "name": "seo-miner",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "seo-miner — personal SEO & AI-search opportunity mining suite (Boring Agent 역기획): capture skill이 GSC·자동완성·SERP·AI 인용 체크로 빈 키워드와 citation gap을 로컬 SQLite Brain에 채굴하고, create skill이 그 기회를 어떤 리포/스택에서든 브랜치+PR 게이트로 실제 콘텐츠 변경으로 바꾼다. browse skill은 API 키 없이 claude-in-chrome으로 실제 소비자 앱(chatgpt·perplexity·gemini)의 인용을 실측. GSC는 번들된 gsc MCP 서버(서비스 계정 키 1개, 전 사이트 공용)로 즉석 조회 + collect_gsc.py로 벌크 수집. 로컬 대시보드(/capture dash, stdlib http.server + 바닐라 JS)로 Brain 실시간 조회·기회 트리아지. first-run doctor(setup) 포함.",
   "author": {
     "name": "local"

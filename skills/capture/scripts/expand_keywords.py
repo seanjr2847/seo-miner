@@ -15,10 +15,10 @@ Usage:
 import argparse
 import sys
 import time
-import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import collector  # noqa: E402
 import db  # noqa: E402
 
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
@@ -28,6 +28,27 @@ MODIFIERS = {
     "ko": list("ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ") + list("abcdefghijklmnopqrstuvwxyz"),
     "en": list("abcdefghijklmnopqrstuvwxyz"),
 }
+_WARNED: set[str] = set()
+
+
+def modifiers(locale: str, hl: str) -> list[str]:
+    """매핑에 없는 언어는 영문 알파벳으로 떨어진다 — 조용히 그러면 안 된다.
+    독일어 프로젝트가 a~z만 붙여 캐면 그 언어의 롱테일은 아예 안 나오는데,
+    후보 수만 보고는 알아챌 수 없다. 폴백은 하되 한 번은 말한다
+    (serp_adapter.location 과 같은 규칙)."""
+    if hl not in MODIFIERS and hl not in _WARNED:
+        _WARNED.add(hl)
+        print(f"[주의] '{locale}' 로케일용 자동완성 수식어가 없어 영문 a~z로 캡니다 — "
+              f"이 언어의 롱테일은 빠집니다. expand_keywords.py의 MODIFIERS에 "
+              f"'{hl}' 한 줄을 추가하세요.", file=sys.stderr)
+    return MODIFIERS.get(hl, MODIFIERS["en"])
+
+
+def locale_of(text: str, default: str) -> str:
+    """한글이 든 키워드는 프로젝트 로케일이 무엇이든 ko-KR로 본다.
+    db._migrate 가 기존 행에 쓴 것과 같은 규칙 — en-US 프로젝트의 한국어 후보가
+    다음 런에서 미국 SERP로 조회돼 전부 '순위 없음'이 되던 것을 막는다."""
+    return "ko-KR" if any("가" <= c <= "힣" for c in (text or "")) else default
 
 
 def suggest(query: str, hl: str, gl: str) -> list[str]:
@@ -39,17 +60,21 @@ def suggest(query: str, hl: str, gl: str) -> list[str]:
     return [s for s in data[1] if isinstance(s, str)]
 
 
-def autocomplete_expand(seeds: list[str], hl: str, gl: str, throttle: float,
-                        per_seed_cap: int, dry_run: bool) -> list[tuple[str, str]]:
-    lang = "ko" if hl.startswith("ko") else "en"
-    mods = MODIFIERS[lang]
-    out: list[tuple[str, str]] = []
+def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: str, gl: str,
+                        throttle: float, per_seed_cap: int,
+                        dry_run: bool) -> list[tuple[str, str, str]]:
+    mods = modifiers(locale, hl)
+    out: list[tuple[str, str, str]] = []
     planned = len(seeds) * (1 + len(mods))
     print(f"[autocomplete] seeds={len(seeds)} planned_requests≈{planned} "
           f"throttle={throttle}s (~{planned * throttle / 60:.1f} min)")
     if dry_run:
         return []
-    for seed in seeds:
+    for seed, seed_locale in seeds:
+        # 후보는 시드의 로케일을 물려받는다 (collect_serp 의 부산물과 같은 규칙).
+        # 한국어 시드에서 캔 후보가 locale NULL로 들어가면 다음 런에서 프로젝트
+        # 로케일로 조회돼, 이중언어 프로젝트의 한쪽이 통째로 "순위 없음"이 된다.
+        kw_locale = seed_locale or locale_of(seed, locale)
         found: set[str] = set()
         queries = [seed] + [f"{seed} {m}" for m in mods]
         for q in queries:
@@ -65,11 +90,11 @@ def autocomplete_expand(seeds: list[str], hl: str, gl: str, throttle: float,
                 time.sleep(throttle * 4)
             time.sleep(throttle)
         print(f"  {seed!r} -> {len(found)} suggestions")
-        out += [(kw, "autocomplete") for kw in found]
+        out += [(kw, kw_locale, "autocomplete") for kw in found]
     return out
 
 
-def gsc_mine(conn, project_id: int) -> list[tuple[str, str]]:
+def gsc_mine(conn, project_id: int, locale: str) -> list[tuple[str, str, str]]:
     rows = conn.execute(
         """SELECT g.query, SUM(g.impressions) AS imp
              FROM gsc_snapshots g
@@ -79,27 +104,28 @@ def gsc_mine(conn, project_id: int) -> list[tuple[str, str]]:
             ORDER BY imp DESC LIMIT 500""",
         (project_id, project_id)).fetchall()
     print(f"[gsc] {len(rows)} new query candidates (real-user longtail)")
-    return [(r["query"], "gsc") for r in rows]
+    # 실검색어에는 시드가 없으니 글자로 판별한다 — 한글 쿼리는 ko-KR.
+    return [(r["query"], locale_of(r["query"], locale), "gsc") for r in rows]
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
+    collector.add_common(ap)
+    collector.add_throttle(ap)
     ap.add_argument("--mode", default="all", choices=["all", "autocomplete", "gsc"])
-    ap.add_argument("--throttle", type=float, default=0.5)
     ap.add_argument("--per-seed-cap", type=int, default=60)
-    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    conn = db.connect()
-    p = db.get_project(conn, a.project)
-    cfg = db.load_project_yaml(p["config_path"] or a.project)
-    hl, _, gl = (p["locale"] or "ko-KR").partition("-")
+    conn, p, cfg = collector.open_project(a.project)
+    throttle = float(collector.resolve(a.throttle, cfg, "throttle", 0.5))
+    locale = p["locale"] or "ko-KR"
+    hl, _, gl = locale.partition("-")
     gl = (gl or "KR").lower()
 
-    seeds = [r["keyword"] for r in conn.execute(
-        "SELECT keyword FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
-    seeds = seeds or cfg.get("seed_keywords", [])
+    # 시드의 locale까지 같이 읽는다 — 후보가 물려받을 값이 여기 있다.
+    seeds = [(r["keyword"], r["locale"]) for r in conn.execute(
+        "SELECT keyword, locale FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
+    seeds = seeds or [(kw, None) for kw in (cfg.get("seed_keywords") or [])]
     # gsc 모드는 시드가 필요 없다 — 자동완성을 쓸 때만 요구한다.
     if not seeds and a.mode in ("all", "autocomplete"):
         if a.mode == "autocomplete":
@@ -111,29 +137,21 @@ def main() -> None:
     if a.dry_run:
         # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
         if a.mode in ("all", "autocomplete"):
-            autocomplete_expand(seeds, hl, gl, a.throttle, a.per_seed_cap, True)
+            autocomplete_expand(seeds, locale, hl, gl, throttle, a.per_seed_cap, True)
         if a.mode in ("all", "gsc"):
-            print(f"[gsc] {len(gsc_mine(conn, p['id']))}개가 후보로 들어올 예정")
+            print(f"[gsc] {len(gsc_mine(conn, p['id'], locale))}개가 후보로 들어올 예정")
         print("(--dry-run: 저장하지 않음)")
         conn.close()
         return
 
-    run_id = db.start_run(conn, p["id"], "keywords")
-    cands: list[tuple[str, str]] = []
-    if a.mode in ("all", "autocomplete"):
-        cands += autocomplete_expand(seeds, hl, gl, a.throttle, a.per_seed_cap, False)
-    if a.mode in ("all", "gsc"):
-        cands += gsc_mine(conn, p["id"])
-
-    inserted = 0
-    for kw, src in cands:
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO keywords(project_id, keyword, source, is_active)
-               VALUES(?,?,?,0)""", (p["id"], kw, src))
-        inserted += cur.rowcount
-    conn.commit()
-    db.finish_run(conn, run_id, api_calls=0, cost=0.0,
-                  notes=f"mode={a.mode} candidates={len(cands)} inserted={inserted}")
+    with db.run(conn, p["id"], "keywords") as r:
+        cands: list[tuple[str, str, str]] = []
+        if a.mode in ("all", "autocomplete"):
+            cands += autocomplete_expand(seeds, locale, hl, gl, throttle, a.per_seed_cap, False)
+        if a.mode in ("all", "gsc"):
+            cands += gsc_mine(conn, p["id"], locale)
+        inserted = db.add_keyword_candidates(conn, p["id"], cands)
+        r.notes = f"mode={a.mode} candidates={len(cands)} inserted={inserted}"
     print(f"done: {inserted} new candidates (is_active=0). "
           f"Next: Claude curates & activates within limits.max_keywords.")
     conn.close()

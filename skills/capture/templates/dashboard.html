@@ -431,19 +431,22 @@ async function post(path, body) {
 
 /* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
+// 경계값은 서버(scoring.py)가 내려준다 — 여기 다시 적어 두면 규칙이 둘로 갈라진다.
+// rules가 없는 옛 박제본도 그대로 그려져야 하므로 예전 값을 기본으로 둔다.
+let RULES = {page1: 10, striking_lo: 4, striking_hi: 20};
 function depthLog(rows) {
   if (!rows.length)
     return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
   const W = 1000, LANE = 30, PAD_T = 40, PAD_B = 8;
-  const L = 330, R = W - 74, EDGE = 20;              // 라벨은 축 바로 왼쪽에 붙인다
+  const L = 330, R = W - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
   const H = PAD_T + rows.length * LANE + PAD_B;
   const x = p => L + Math.min(p, EDGE) / EDGE * (R - L);
-  const x10 = x(10);
-  const ticks = [1, 5, 10, 15, 20];
+  const x10 = x(RULES.page1);
+  const ticks = [1, 5, RULES.page1, 15, EDGE];
 
   const lanes = rows.map((r, i) => {
     const y = PAD_T + i * LANE + LANE / 2;
-    const px = x(r.pos), onPage1 = r.pos <= 10;
+    const px = x(r.pos), onPage1 = r.pos <= RULES.page1;
     const c = onPage1 ? "var(--patina)" : "var(--copper)";
     const x1 = Math.min(px, x10), x2 = Math.max(px, x10);
     // 2페이지 검색어는 1페이지 경계까지 되밀어야 할 거리를 막대로 — 이 화면이 파는 값.
@@ -451,7 +454,9 @@ function depthLog(rows) {
       `<rect class="grow" x="${x1}" y="${y - 4}" width="${x2 - x1}" height="8" rx="4"
              fill="var(--copper)" opacity=".38" style="transform-origin:${x2}px 0;
              animation-delay:${i * 16}ms"/>`;
-    const gap = onPage1 ? "이미 1페이지" : `1페이지까지 ${(r.pos - 10).toFixed(1)}칸`;
+    // 거리는 서버가 계산해 준다(scoring.gap_to_page1). 없는 옛 박제본만 여기서 뺀다.
+    const gap = onPage1 ? "이미 1페이지"
+      : `1페이지까지 ${(r.gap ?? r.pos - RULES.page1).toFixed(1)}칸`;
     return `<g class="lane">
       <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${W}" height="${LANE}" fill="none"/>
       <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
@@ -475,7 +480,7 @@ function depthLog(rows) {
     <text class="axis" x="${x10 - 6}" y="${PAD_T - 22}" text-anchor="end"
           fill="var(--patina)">1페이지 경계</text>
     ${ticks.map(t => `<text class="axis" x="${x(t)}" y="${PAD_T - 6}"
-        text-anchor="middle">${t}${t === 20 ? "위+" : ""}</text>`).join("")}
+        text-anchor="middle">${t}${t === EDGE ? "위+" : ""}</text>`).join("")}
     <text class="axis" x="${W}" y="${PAD_T - 6}" text-anchor="end">노출</text>
     ${lanes}
   </svg></div>
@@ -618,6 +623,7 @@ function copyCmd(el) {
 function render(d) {
   // KPI의 증감도 같은 기간끼리만 — 서버가 고른 비교 짝(gsc_date/gsc_prev)을 그대로 쓴다.
   // 그냥 마지막 두 줄을 빼면 28일치에서 90일치를 빼는 일이 생긴다.
+  if (d.rules) RULES = d.rules;          // 서버가 준 경계값이 이 화면의 유일한 기준
   const t = d.trend;
   const last = t.find(x => x.d === d.gsc_date) || t[t.length - 1] || {};
   const prev = (d.gsc_prev && t.find(x => x.d === d.gsc_prev)) || {};
@@ -633,7 +639,7 @@ function render(d) {
   ].map(([l, v, dd]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div></div>`).join("");
 
-  const near = d.striking.filter(r => r.pos > 10).length;
+  const near = d.striking.filter(r => r.pos > RULES.page1).length;
   $("log-sub").textContent = d.striking.length
     ? `${d.striking.length}개 중 ${near}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
       `순위만 밀면 클릭으로 바뀝니다.`

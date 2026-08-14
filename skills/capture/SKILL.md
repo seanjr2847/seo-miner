@@ -116,8 +116,8 @@ Brain 실적 기준으로 뜬다(GSC 스냅샷이 0이면 자동으로 펴진다
 질문에는 말로 설명하지 말고 이 화면을 띄워 "지금 할 것"을 짚어준다.
 
 ### /capture report {P} — 오늘 화면을 파일로 박제
-`python scripts/report.py --project {P} --actions <actions.json>` → 파일 경로 안내.
-(같은 일을 `dashboard.py --export --project {P} --actions ...` 로도 한다.)
+`python scripts/dashboard.py --export --project {P} --actions <actions.json>` → 파일 경로 안내.
+(대시보드와 같은 화면·같은 데이터를 파일로 굽는 모드다 — 별도 스크립트가 아니다.)
 서버 없이 열리는 자립형 HTML이라 남한테 보내도 되고, 기회 상태는 못 바꾼다 —
 상태 갱신은 `/capture dash`에서 클릭으로 하는 게 빠르다고 안내한다.
 Next Actions가 리포트의 결론이므로 `--actions` 없이 내보내지 않는다(철칙 3).

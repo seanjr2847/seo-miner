@@ -7,6 +7,9 @@
   · db.py sql 이 진짜 읽기 전용인지 — WITH ... DELETE 는 문자열 검사를 통과한다
   · 기간 다른 GSC 스냅샷을 비교하지 않는지 — 28일치와 90일치를 빼면 Δ가 거짓이다
   · 같은 기회를 두 번 적재해도 목록이 안 불어나는지
+  · 판정 규칙(scoring) — 임계값·남의 브랜드 제외·기회 정렬이 한 곳에서 나오는지
+  · 키워드 후보가 locale 없이 쌓이지 않는지 — 쓰기 경로가 하나여야 막힌다
+  · 수집이 예외로 끊겨도 실행 기록이 닫히는지
 """
 import os
 import sys
@@ -18,9 +21,11 @@ HOME = Path(tempfile.mkdtemp(prefix="seo-miner-test-"))
 os.environ["CAPTURE_HOME"] = str(HOME)          # import 전에 걸어야 db가 여기를 본다
 sys.path.insert(0, str(Path(__file__).parent))
 
+import collector          # noqa: E402
 import dashboard          # noqa: E402
 import db                 # noqa: E402
 import import_gsc_csv as csvimp  # noqa: E402
+import scoring            # noqa: E402
 
 CSV = ("검색어,클릭수,노출수,CTR,게재순위\n"
        "20도 옷차림,1234,5678,3.5%,8.2\n"
@@ -134,6 +139,89 @@ def test_opportunity_upsert_does_not_duplicate():
     assert len(rows) == 1, rows                       # 같은 기회가 두 줄이 되지 않는다
     assert rows[0]["score"] == 80 and rows[0]["reasoning"] == "두 번째 런"
     assert rows[0]["status"] == "done"                # 손댄 상태는 살아남는다
+    conn.close()
+
+
+def test_scoring_rules():
+    """판정 규칙 module 자체점검 — 임계값·남의 브랜드 제외·기회 정렬."""
+    scoring._selfcheck()
+
+
+def test_collector_settings():
+    """설정 우선순위(CLI > 프로젝트 yaml > config.yaml > 리터럴) 자체점검."""
+    collector._selfcheck()
+
+
+def test_keyword_candidates_always_carry_locale():
+    """자동완성으로 캔 후보가 locale 없이 쌓이면 프로젝트 로케일로 다시 조회돼
+    한국어 키워드가 전부 '순위 없음'이 된다 — 실제로 났던 버그다.
+    쓰기 경로가 하나라서 호출부가 빼먹을 수 없어야 한다."""
+    conn = db.connect()
+    p = _project(conn, "loc")
+    n = db.add_keyword_candidates(conn, p["id"], [
+        ("한국어 키워드", "ko-KR", "autocomplete"),
+        ("english keyword", "en-US", "autocomplete"),
+        ("  ", "ko-KR", "autocomplete"),          # 빈 문자열은 세지 않는다
+    ])
+    assert n == 2, n
+    rows = dict(conn.execute(
+        "SELECT keyword, locale FROM keywords WHERE project_id=?", (p["id"],)).fetchall())
+    assert rows["한국어 키워드"] == "ko-KR", rows
+    assert rows["english keyword"] == "en-US", rows
+    # 같은 후보를 또 넣어도 늘지 않는다
+    assert db.add_keyword_candidates(conn, p["id"], [("한국어 키워드", "ko-KR", "serp")]) == 0
+    conn.close()
+
+
+def test_run_is_closed_even_on_crash():
+    """수집 도중 예외가 나도 runs.finished_at 이 채워져야 한다.
+    try/finally 없이 손으로 finish_run 하던 시절엔 '수집 이력'이 거짓말을 했다."""
+    conn = db.connect()
+    p = _project(conn, "crash")
+    try:
+        with db.run(conn, p["id"], "ai") as r:
+            r.api_calls = 3
+            raise RuntimeError("수집 중 폭발")
+    except RuntimeError:
+        pass
+    row = conn.execute("SELECT finished_at, api_calls, notes FROM runs "
+                       "WHERE project_id=? ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()
+    assert row["finished_at"], row
+    assert row["api_calls"] == 3, row
+    assert "중단" in (row["notes"] or ""), row
+
+    with db.run(conn, p["id"], "gsc") as r:
+        r.notes = "정상"
+    row = conn.execute("SELECT finished_at, notes FROM runs "
+                       "WHERE project_id=? ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()
+    assert row["finished_at"] and row["notes"] == "정상", row
+    conn.close()
+
+
+def test_gsc_snapshot_write_is_idempotent_per_day():
+    """같은 날 다시 수집하면 덮어쓴다 — 자동 수집과 CSV 가져오기가 같은 함수를 쓴다."""
+    conn = db.connect()
+    p = _project(conn, "snap")
+    db.write_gsc_snapshot(conn, p["id"], "2026-03-01", 28,
+                          [("kw", "https://e.com/a", 1, 10, 0.1, 8.0)])
+    db.write_gsc_snapshot(conn, p["id"], "2026-03-01", 28,
+                          [("kw", None, 2, 20, 0.1, 7.0), ("kw2", None, 0, 5, 0.0, 30.0)])
+    rows = conn.execute("SELECT query, page, clicks FROM gsc_snapshots "
+                        "WHERE project_id=? ORDER BY query", (p["id"],)).fetchall()
+    assert len(rows) == 2, rows
+    assert rows[0]["page"] is None and rows[0]["clicks"] == 2, dict(rows[0])
+    conn.close()
+
+
+def test_creations_table_ships_with_schema():
+    """create 스킬이 capture의 Brain 안에 제 테이블을 만들던 탓에
+    대시보드가 방어적 try/except를 달고 있었다. 이제 스키마에 있다."""
+    conn = db.connect()
+    p = _project(conn, "creat")
+    db.record_creation(conn, p["id"], "src/page.md", kind="striking_distance",
+                       branch="capture/striking_distance-page")
+    assert conn.execute("SELECT COUNT(*) FROM creations WHERE project_id=?",
+                        (p["id"],)).fetchone()[0] == 1
     conn.close()
 
 

@@ -24,19 +24,12 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import collector  # noqa: E402
 import db  # noqa: E402
+import scoring  # noqa: E402
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
-
-
-def creds_dir(project: str) -> Path:
-    return db.CAPTURE_HOME / "creds" / project
-
-
-def sa_key() -> Path:
-    return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
-                               str(db.CAPTURE_HOME / "gsc_service_account.json")))
 
 
 def client_id_of(path: Path) -> str:
@@ -68,7 +61,7 @@ def resolve_secrets(project: str) -> str:
     env = os.environ.get("GSC_CLIENT_SECRETS")
     if env:
         return env
-    own = creds_dir(project) / "client_secrets.json"
+    own = db.creds_dir(project) / "client_secrets.json"
     if own.exists():
         return str(own)
     shared = db.CAPTURE_HOME / "client_secrets.json"
@@ -77,8 +70,7 @@ def resolve_secrets(project: str) -> str:
               f"분리하려면 이 사이트용 JSON을 {own} 에 두세요.")
         return str(shared)
     # 다운로드 폴더에서 방금 받은 걸 이 사이트 전용 자리에 넣어준다.
-    dl = Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads"))
-    for c in sorted(dl.glob("client_secret*.json"),
+    for c in sorted(db.downloads_dir().glob("client_secret*.json"),
                     key=lambda p: -p.stat().st_mtime)[:10]:
         try:
             kind = set(json.loads(c.read_text(encoding="utf-8")))
@@ -113,7 +105,7 @@ def get_service(project: str):
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
                  "pip install google-api-python-client")
 
-    key = sa_key()
+    key = db.gsc_key()
     if key.exists():
         from google.oauth2 import service_account
         creds = service_account.Credentials.from_service_account_file(
@@ -132,7 +124,7 @@ def get_service(project: str):
                  "python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)")
 
     secrets = resolve_secrets(project)
-    token_path = creds_dir(project) / "gsc_token.json"
+    token_path = db.creds_dir(project) / "gsc_token.json"
     legacy = db.CAPTURE_HOME / "gsc_token.json"
     if not token_path.exists() and legacy.exists() \
             and secrets == str(db.CAPTURE_HOME / "client_secrets.json"):
@@ -167,29 +159,16 @@ def get_service(project: str):
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
-def preview(conn, project_id: int, snap: str) -> None:
-    """조금만 밀면 1페이지 갈 키워드(평균 4~20위) 미리보기. CSV 경로에서도 재사용."""
-    print("saved snapshot %s. striking-distance preview "
-          "(pos 4~20, impressions desc):" % snap)
-    for r in conn.execute(
-        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
-             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
-            GROUP BY query HAVING pos BETWEEN 4 AND 20
-            ORDER BY imp DESC LIMIT 10""", (project_id, snap)):
-        print(f"  {r['pos']:>5}  imp={r['imp']:<6} clk={r['clk']:<4} {r['query']}")
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
-    ap.add_argument("--days", type=int, default=28)
+    collector.add_common(ap)
+    ap.add_argument("--days", type=int, default=None)
     ap.add_argument("--row-limit", type=int, default=100000,
                     help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
-    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    conn = db.connect()
-    p = db.get_project(conn, a.project)
+    conn, p, cfg = collector.open_project(a.project)
+    days = int(collector.resolve(a.days, cfg, "gsc_days", 28))
     prop = p["gsc_property"]
     if not prop:
         sys.exit("project yaml has no gsc_property "
@@ -197,10 +176,11 @@ def main() -> None:
                  "Add it, then: python db.py sync-project <yaml>")
 
     end = date.today() - timedelta(days=3)     # GSC delay buffer
-    start = end - timedelta(days=a.days)
-    print(f"[gsc] {prop}  window {start} ~ {end} (period={a.days}d) "
+    start = end - timedelta(days=days)
+    print(f"[gsc] {prop}  window {start} ~ {end} (period={days}d) "
           f"rowLimit={a.row_limit}")
     if a.dry_run:
+        conn.close()
         return
 
     service = get_service(a.project)
@@ -223,8 +203,8 @@ def main() -> None:
                 break
             print(f"[gsc] … {len(rows)} rows")
     except HttpError as e:
-        if getattr(e.resp, "status", None) == 403 and sa_key().exists():
-            email = json.loads(sa_key().read_text(encoding="utf-8")) \
+        if getattr(e.resp, "status", None) == 403 and db.gsc_key().exists():
+            email = json.loads(db.gsc_key().read_text(encoding="utf-8")) \
                 .get("client_email", "?")
             sys.exit(f"권한 거부: {prop}\n"
                      "  Search Console → 설정 → 사용자 및 권한에 서비스 계정 "
@@ -236,23 +216,21 @@ def main() -> None:
         print(f"[주의] --row-limit({a.row_limit})에 걸려 여기서 멈췄습니다 — "
               "더 필요하면 값을 올리세요. 지금 스냅샷은 전체가 아닙니다.")
 
-    run_id = db.start_run(conn, p["id"], "gsc")
     snap = str(date.today())
-    conn.execute(  # idempotent per day: re-run replaces today's snapshot
-        "DELETE FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?",
-        (p["id"], snap))
-    conn.executemany(   # 10만 행을 한 줄씩 execute하면 눈에 띄게 느리다
-        """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
-             query, page, clicks, impressions, ctr, position)
-           VALUES(?,?,?,?,?,?,?,?,?)""",
-        [(p["id"], snap, a.days, r["keys"][0], r["keys"][1],
-          int(r.get("clicks", 0)), int(r.get("impressions", 0)),
-          round(float(r.get("ctr", 0)), 4), round(float(r.get("position", 0)), 1))
-         for r in rows])
-    conn.commit()
-    db.finish_run(conn, run_id, api_calls=calls,
-                  notes=f"rows={len(rows)} pages={calls} window={start}~{end}")
-    preview(conn, p["id"], snap)
+    with db.run(conn, p["id"], "gsc") as r:
+        db.write_gsc_snapshot(conn, p["id"], snap, days,
+                              ((x["keys"][0], x["keys"][1], x.get("clicks"),
+                                x.get("impressions"), x.get("ctr"), x.get("position"))
+                               for x in rows))
+        r.api_calls = calls
+        r.notes = f"rows={len(rows)} pages={calls} window={start}~{end}"
+
+    print(f"saved snapshot {snap}. striking-distance preview "
+          "(pos 4~20, impressions desc):")
+    for s in scoring.striking(conn, p["id"], snap, limit=10,
+                              brands=scoring.foreign_brands(conn, p["id"], cfg)):
+        print(f"  {s['pos']:>5}  imp={s['imp']:<6} clk={s['clk']:<4} "
+              f"gap={s['gap']:<5} {s['query']}")
     conn.close()
 
 

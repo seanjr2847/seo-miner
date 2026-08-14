@@ -4,17 +4,28 @@
 **Brain에 없는 주장은 하지 않는다.** 모든 기회의 reasoning은 db.py sql로
 조회한 실제 수치를 인용해야 한다.
 
+**이 문서는 명세이고, 실행은 `scripts/scoring.py`다.** 산문으로만 적힌 규칙은
+아무도 실행하지 않아 실제로 안 돌았다(1a절이 그랬다). 그래서 기계가 판정할 수
+있는 것은 전부 scoring.py로 옮겼고, 여기서는 그 함수·상수 이름을 가리킨다.
+임계값을 바꾸려면 scoring.py를 고치고 이 문서를 맞춘다. 남은 산문(2절 점수
+프레임, 1b절 2~3단계)은 **코드가 아니라 Claude 판단**이며, 그렇다고 명시해 둔다.
+자체 점검: `python scripts/scoring.py`.
+
 ## 1. 기회 종류 (kind)
 
-| kind | 정의 | 데이터원 (SQL 스케치) |
+| kind | 정의 | 데이터원 / 실행하는 코드 |
 |------|------|----------------------|
-| striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | gsc_snapshots: AVG(position) BETWEEN 4 AND 20, SUM(impressions) 상위 |
-| ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도 |
-| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | gsc 두 스냅샷 조인, **period_days가 같은 것끼리만**, Δpos < -1.5 또는 Δclicks 음수 큰 순 |
+| striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 내림차순. 1페이지까지 남은 거리는 `gap_to_page1()`(`PAGE1=10`) |
+| ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도. 인용/언급 판정 자체는 `scoring.judge()` |
+| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | gsc 두 스냅샷 조인, **period_days가 같은 것끼리만**, Δpos < `scoring.DECAY_POS`(= -1.5) 또는 Δclicks 음수 큰 순 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 부분 가능: rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우. 완전판(경쟁사 역키워드)은 여전히 DataForSEO Labs 필요 |
 | coverage | (directory) 노출 페이지 수 부족 군집 | gsc_snapshots page 차원 DISTINCT 카운트 |
-| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 |
-| aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시) |
+| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`) |
+| aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
+
+기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
+(새 기회 먼저 → 점수 높은 순 → 최근 id 순). 정렬이 두 벌이던 시절엔 대시보드와
+박제 리포트가 같은 데이터를 다른 순서로 보여줬다.
 
 ### 1a. striking_distance에서 먼저 걸러낼 것 — 남의 브랜드 검색
 
@@ -23,9 +34,16 @@
 결과는 그 브랜드 자기 사이트이고, 디렉터리가 8위에서 클릭을 못 가져가는 건
 정상이다. 밀어도 안 오르고, 올려도 클릭이 안 온다.
 
-판별: 쿼리를 정규화해 `tools`(또는 프로젝트의 도구 목록) 이름과 대조.
-프로젝트 자기 브랜드 별칭(`brand_aliases`)은 반대로 **남기고** 본다 — 그건 내
-브랜드 검색이라 CTR이 낮으면 진짜 문제다.
+이 규칙은 오래 산문으로만 있었고, 그래서 **아무도 실행하지 않았다** — Claude가
+기회를 적재할 때만 손으로 걸렀고 대시보드는 그대로 다 보여줬다. 지금은
+`scoring.is_foreign_brand()` / `scoring.drop_foreign_brands()`가 판정하고,
+`scoring.striking()`이 그 필터를 이미 걸고 결과를 돌려준다.
+
+카탈로그(`scoring.foreign_brands()`)의 출처는 두 곳이다:
+`competitors` 테이블의 도메인(브랜드 이름 부분) + 프로젝트 yaml의
+`tools` / `foreign_brands` 목록. 프로젝트 자기 브랜드(`name`·`brand_aliases`)는
+카탈로그에서 **명시적으로 제외**해 반드시 남긴다 — 그건 내 브랜드 검색이라
+CTR이 낮으면 진짜 문제다.
 
 실측 근거(aitierlist 2026-08-13): `ecrett` 8.6위·48노출·**0클릭**,
 `future tools` 4.9위·19노출·1클릭, `paperpal 후기` 9.6위·13노출·1클릭 —
@@ -40,24 +58,12 @@
 "수요는 확인됐는데(노출) 공급이 비어 있고(저CTR), 변수 하나만 바뀌는 패턴이라
 템플릿+데이터로 대량 커버 가능한" 쿼리 군집을 찾는다.
 
-**1단계 — 후보 추출 (SQL, 최신 스냅샷 기준):**
+**1단계 — 후보 추출 (코드):** `scoring.pseo_candidates(conn, pid, snap)`.
+`(query, imp, clk, ctr_pct, pos)` 를 노출 내림차순으로 돌려준다.
+임계값은 `scoring.PSEO_MIN_IMP`(=50)·`scoring.PSEO_MAX_CTR`(=1.5)이고,
+사이트 규모에 맞춰 인자로 올릴 수 있다 — 노출이 큰 사이트면 올린다.
 
-```sql
-SELECT query, SUM(impressions) imp, SUM(clicks) clk,
-       ROUND(SUM(clicks)*100.0/SUM(impressions),2) ctr_pct,
-       ROUND(AVG(position),1) pos
-  FROM gsc_snapshots
- WHERE project_id = {pid}
-   AND snapshot_date = (SELECT MAX(snapshot_date) FROM gsc_snapshots
-                         WHERE project_id = {pid})
- GROUP BY query
-HAVING imp >= 50 AND ctr_pct < 1.5
- ORDER BY imp DESC LIMIT 200
-```
-
-임계값(imp 50 / CTR 1.5%)은 사이트 규모에 맞춰 조정 — 노출이 큰 사이트면 올린다.
-
-**2단계 — 패턴 클러스터링 (Claude 판단):**
+**2단계 — 패턴 클러스터링 (코드 아님, Claude 판단):**
 후보들을 "변수 슬롯 하나만 다른 템플릿"으로 묶는다.
 예: `20도 옷차림 / 15도 옷차림 / 기온별 옷차림` → 템플릿 `{기온}도 옷차림`.
 전형적 슬롯: {지역} {기온} {시술} {장르} {경쟁제품} {카테고리} {날짜·시즌}.
@@ -65,7 +71,7 @@ HAVING imp >= 50 AND ctr_pct < 1.5
 익명화하므로 보이는 군집은 빙산의 일각 — 슬롯의 전체 값 공간(기온 전 구간,
 전 지역 등)이 실제 캠페인 크기다.
 
-**3단계 — 기회 적재:**
+**3단계 — 기회 적재 (코드 아님, Claude 판단):**
 - target = 템플릿 문자열 (`{기온}도 옷차림`), kind = `pseo_pattern`
 - score ~ 군집 합산 노출(log 정규화) + 슬롯 값 공간 크기 + 달성가능성
 - reasoning 필수 요소: 군집 크기, 합산 노출, 예시 쿼리 2~3개, 평균 순위.
@@ -80,7 +86,12 @@ HAVING imp >= 50 AND ctr_pct < 1.5
 **프리셋 편향:** directory 최우선(존재 이유 그 자체), saas·local_clinic 유효
 ({경쟁제품} alternative, {지역}×{시술}), game은 {장르}·{유사작} 축으로 제한적.
 
-## 2. 점수 프레임 (0~100)
+## 2. 점수 프레임 (0~100) — 코드 아님, Claude 판단
+
+이 절만은 일부러 코드로 옮기지 않았다. 관련성(w_fit)은 프로젝트 코어 토픽에 대한
+판단이라 임계값으로 굳힐 수 없다. 대신 **코드로 도는 것과 산문으로 남은 것을
+헷갈리지 않도록** 여기 명시한다: 아래 계수는 Claude가 매번 정하고,
+`opportunities.score` 에 그 결과만 적재된다.
 
 ```
 score = w_demand · 수요        log10(1+impressions or volume) 정규화
@@ -111,7 +122,9 @@ score = w_demand · 수요        log10(1+impressions or volume) 정규화
    (예: CSV 90일치 vs 자동수집 28일치) Δ순위·Δ클릭은 전부 거짓이다. 두 스냅샷을
    비교하는 SQL에는 반드시 `period_days`가 같다는 조건을 넣고, 짝이 없으면
    "비교할 같은 기간 기록이 없다"고 말한다. 대시보드는 이미 이 규칙으로 짝을 고른다.
-4. 순위 ±2~3 변동과 GSC Δpos ±0.5 미만은 노이즈 취급.
+4. 순위 ±2~3 변동과 GSC Δpos ±0.5 미만은 노이즈 취급 — 이 바닥값이
+   `scoring.NOISE_POS`(=0.5)이고 `scoring.movers()`가 그걸로 오름/내림을 가른다.
+   대시보드는 예전에 0.4를 썼다(문서와 어긋나 있었다). 지금은 문서대로 0.5다.
 5. 순위 ≠ 트래픽 (제로클릭) → 최종 지표는 클릭.
 6. 볼륨·난이도는 전부 추정치 — 우선순위용 상대값으로만.
 
@@ -124,23 +137,29 @@ score = w_demand · 수요        log10(1+impressions or volume) 정규화
 사용자가 확인함·완료·제외로 정리해 둔 것을 새 런이 다시 'new'로 되돌리면
 트리아지가 매번 리셋된다.
 
+실행 기록은 `db.run` 컨텍스트로 연다 — 스크립트가 중간에 터져도 `runs.finished_at`이
+NULL로 남지 않는다(남으면 "수집 이력" 화면이 안 끝난 런을 계속 진행 중으로 보여준다).
+
 ```bash
 python3 - << 'PY'
-import sys; sys.path.insert(0, 'scripts'); import db, json
+import sys; sys.path.insert(0, 'scripts'); import db
 conn = db.connect(); pid = db.get_project(conn, "PROJECT")["id"]
-run = db.start_run(conn, pid, "analysis")
 rows = [  # (kind, target, score, reasoning)
   ("striking_distance", "예시 키워드", 82, "노출 1,840·8.2위 …"),
 ]
-for k,t,s,r in rows:
-    conn.execute("""INSERT INTO opportunities(project_id,run_id,kind,target,score,reasoning)
-                    VALUES(?,?,?,?,?,?)
-                    ON CONFLICT(project_id,kind,target) DO UPDATE SET
-                      run_id=excluded.run_id, score=excluded.score,
-                      reasoning=excluded.reasoning""",(pid,run,k,t,s,r))
-conn.commit(); db.finish_run(conn, run, notes=f"opps={len(rows)}"); print("ok")
+with db.run(conn, pid, "analysis") as r:
+    for k,t,s,reason in rows:
+        conn.execute("""INSERT INTO opportunities(project_id,run_id,kind,target,score,reasoning)
+                        VALUES(?,?,?,?,?,?)
+                        ON CONFLICT(project_id,kind,target) DO UPDATE SET
+                          run_id=excluded.run_id, score=excluded.score,
+                          reasoning=excluded.reasoning""",(pid,r.id,k,t,s,reason))
+    conn.commit()
+    r.notes = f"opps={len(rows)}"
+print("ok")
 PY
 ```
 
-Next actions는 3~5개 구체 행동을 JSON 배열로 저장 후 report.py --actions 로 전달.
+Next actions는 3~5개 구체 행동을 JSON 배열로 저장 후
+`python scripts/dashboard.py --export --project NAME --actions FILE` 로 전달.
 빈 Next actions로 리포트를 끝내는 것은 계약 위반이다.
