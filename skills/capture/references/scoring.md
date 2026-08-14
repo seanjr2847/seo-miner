@@ -10,7 +10,7 @@
 |------|------|----------------------|
 | striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | gsc_snapshots: AVG(position) BETWEEN 4 AND 20, SUM(impressions) 상위 |
 | ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도 |
-| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | gsc 두 스냅샷 조인, Δpos < -1.5 또는 Δclicks 음수 큰 순 |
+| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | gsc 두 스냅샷 조인, **period_days가 같은 것끼리만**, Δpos < -1.5 또는 Δclicks 음수 큰 순 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 부분 가능: rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우. 완전판(경쟁사 역키워드)은 여전히 DataForSEO Labs 필요 |
 | coverage | (directory) 노출 페이지 수 부족 군집 | gsc_snapshots page 차원 DISTINCT 카운트 |
 | pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 |
@@ -107,13 +107,22 @@ score = w_demand · 수요        log10(1+impressions or volume) 정규화
 1. AI 답변은 비결정적 → 단발 수치가 아니라 주 단위 추세. 중요 프롬프트는 --samples 2~3.
 2. API+네이티브 검색 ≈ 소비자 앱 (메모리·개인화 없음) → 방향 지표로만.
 3. GSC: 2~3일 지연, 저노출 롱테일은 익명화로 누락, position은 평균값.
+3b. **기간이 다른 스냅샷을 빼지 않는다.** `gsc_snapshots.period_days`가 다르면
+   (예: CSV 90일치 vs 자동수집 28일치) Δ순위·Δ클릭은 전부 거짓이다. 두 스냅샷을
+   비교하는 SQL에는 반드시 `period_days`가 같다는 조건을 넣고, 짝이 없으면
+   "비교할 같은 기간 기록이 없다"고 말한다. 대시보드는 이미 이 규칙으로 짝을 고른다.
 4. 순위 ±2~3 변동과 GSC Δpos ±0.5 미만은 노이즈 취급.
 5. 순위 ≠ 트래픽 (제로클릭) → 최종 지표는 클릭.
 6. 볼륨·난이도는 전부 추정치 — 우선순위용 상대값으로만.
 
 ## 5. opportunities 적재 방법
 
-분석 후 INSERT는 파이썬 원라이너로 (db.py sql은 읽기 전용):
+분석 후 INSERT는 파이썬 원라이너로 (db.py sql은 읽기 전용 커넥션이라 쓸 수 없다):
+
+**반드시 upsert로 쓴다.** `(project_id, kind, target)`에 UNIQUE 인덱스가 걸려 있어
+그냥 INSERT하면 두 번째 런에서 터진다. 그리고 `status`는 **건드리지 않는다** —
+사용자가 확인함·완료·제외로 정리해 둔 것을 새 런이 다시 'new'로 되돌리면
+트리아지가 매번 리셋된다.
 
 ```bash
 python3 - << 'PY'
@@ -125,7 +134,10 @@ rows = [  # (kind, target, score, reasoning)
 ]
 for k,t,s,r in rows:
     conn.execute("""INSERT INTO opportunities(project_id,run_id,kind,target,score,reasoning)
-                    VALUES(?,?,?,?,?,?)""",(pid,run,k,t,s,r))
+                    VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(project_id,kind,target) DO UPDATE SET
+                      run_id=excluded.run_id, score=excluded.score,
+                      reasoning=excluded.reasoning""",(pid,run,k,t,s,r))
 conn.commit(); db.finish_run(conn, run, notes=f"opps={len(rows)}"); print("ok")
 PY
 ```

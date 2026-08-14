@@ -77,7 +77,8 @@ def diagnose() -> dict:
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
         "gsc_service_account": sa_key.exists(),
-        "node_npx": bool(shutil.which("npx")),
+        # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 npx를 부른다.
+        "node_npx": bool(shutil.which("node") and shutil.which("npx")),
     }
     core_ok = all(deps_core.values())
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,

@@ -88,10 +88,10 @@ Claude에게 부탁하면 키 다운로드 버튼(3번) 말고는 전부 브라�
    403이 나면 5번이 안 된 속성이다(스크립트가 이메일을 알려준다).
    gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작 때 로드).
 
-플러그인의 `.mcp.json`은 Windows 기준이다(`cmd /c npx`, `${USERPROFILE}`).
-mac/linux에서 쓰려면 `"command": "npx", "args": ["-y", "mcp-server-gsc"]`,
-경로는 `${HOME}/.capture/...`로 바꾼다. `CAPTURE_HOME`을 옮겼다면
-`GOOGLE_APPLICATION_CREDENTIALS` 환경변수로 키 경로를 맞춘다.
+`.mcp.json`은 OS를 가리지 않는다 — 번들 런처(`skills/setup/scripts/gsc_mcp.mjs`)를
+node로 띄우고, 런처가 플랫폼에 맞게 npx를 부르고 `CAPTURE_HOME` 기준으로 열쇠
+경로도 채운다. 필요한 건 node 하나뿐이다(nodejs.org).
+`GOOGLE_APPLICATION_CREDENTIALS`를 직접 걸어두면 그쪽이 우선한다.
 
 **어느 쪽을 쓰나**: 한 번 보고 말 거면 4-A(CSV), 매주 자동으로 돌릴 거면 4-B.
 4-B가 1,000행 제한·페이지 차원 없음도 같이 푼다.

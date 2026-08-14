@@ -4,7 +4,7 @@
 화면은 하나다. 두 가지 모드로 쓴다:
   · 라이브(기본)  — 서버가 Brain을 그때그때 읽어준다. 기회 트리아지·설정이 된다.
   · 박제(--export) — 그 시점 데이터를 페이지 안에 박아 넣은 자립형 HTML 파일.
-    서버도 인터넷도 필요 없고 남한테 보내도 그대로 열린다(= 예전 report.py).
+    서버도 인터넷도 필요 없고 남한테 보내도 그대로 열린다(report.py가 부르는 것).
 같은 템플릿을 쓰므로 화면이 갈라지지 않는다.
 claude-mem 뷰어 구조를 참고하되, 상시 데몬·SSE·프런트 번들러는 들이지 않았다 —
 데이터가 수집 스크립트 실행 시에만 바뀌므로 필요할 때 띄우는 단일 프로세스면 된다.
@@ -31,7 +31,6 @@ SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import db      # noqa: E402
 import doctor  # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
-import report  # noqa: E402
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
@@ -149,11 +148,129 @@ def create_project(f: dict) -> dict:
     return {"ok": True, "name": name, "path": str(path)}
 
 
+def q(conn, sql, args=()):
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def gather(conn, p) -> dict:
+    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다."""
+    pid = p["id"]
+    # 기간이 다른 스냅샷끼리 빼면 Δ순위·Δ클릭이 전부 거짓이 된다. CSV 경로 기본은
+    # 28일인데 Search Console 화면 기본은 3개월이라 실제로 자주 어긋난다.
+    # 그래서 직전 스냅샷을 '날짜만'이 아니라 '같은 period_days 중 가장 최근'으로 고른다.
+    snaps = [(r["snapshot_date"], r["period_days"]) for r in conn.execute(
+        """SELECT snapshot_date, MAX(period_days) period_days
+             FROM gsc_snapshots WHERE project_id=?
+            GROUP BY snapshot_date ORDER BY 1 DESC LIMIT 10""", (pid,))]
+    cur, period = snaps[0] if snaps else (None, None)
+    prev = next((d for d, pd in snaps[1:] if pd == period), None)
+    # 이전 스냅샷은 있는데 기간이 안 맞아 비교를 접은 경우 — 화면이 이유를 말해야 한다.
+    period_mismatch = bool(snaps[1:]) and prev is None
+
+    def gsc_agg(snap):
+        if not snap:
+            return {}
+        return {r["query"]: r for r in q(conn,
+            """SELECT query, ROUND(AVG(position),1) pos,
+                      SUM(impressions) imp, SUM(clicks) clk
+                 FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
+                GROUP BY query""", (pid, snap))}
+
+    now_, before = gsc_agg(cur), gsc_agg(prev)
+    movers = []
+    for kw, r in now_.items():
+        b = before.get(kw)
+        if b:
+            movers.append({"query": kw, "pos": r["pos"], "dpos": round(b["pos"] - r["pos"], 1),
+                           "clk": r["clk"], "dclk": r["clk"] - b["clk"], "imp": r["imp"]})
+    ups = sorted([m for m in movers if m["dpos"] > 0.4 or m["dclk"] > 0],
+                 key=lambda m: (-m["dclk"], -m["dpos"]))[:10]
+    downs = sorted([m for m in movers if m["dpos"] < -0.4 or m["dclk"] < 0],
+                   key=lambda m: (m["dclk"], m["dpos"]))[:10]
+    striking = q(conn,
+        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
+             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
+            GROUP BY query HAVING pos BETWEEN 4 AND 20
+            ORDER BY imp DESC LIMIT 15""", (pid, cur)) if cur else []
+
+    ai_run = conn.execute(
+        "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
+        "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    matrix, gap_domains, missed = [], [], []
+    if ai_run:
+        matrix = q(conn,
+            """SELECT c.engine, p2.category, SUM(c.cited) cited,
+                      SUM(c.mentioned) mentioned, COUNT(*) total
+                 FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
+                WHERE c.run_id=? GROUP BY 1,2 ORDER BY 1,2""", (ai_run["id"],))
+        freq: dict[str, int] = {}
+        for r in q(conn, "SELECT cited_domains_json FROM ai_checks WHERE run_id=? AND cited=0",
+                   (ai_run["id"],)):
+            for d in json.loads(r["cited_domains_json"] or "[]"):
+                freq[d] = freq.get(d, 0) + 1
+        gap_domains = sorted(({"domain": k, "n": v} for k, v in freq.items()),
+                             key=lambda x: -x["n"])[:15]
+        missed = q(conn,
+            """SELECT p2.prompt, p2.category,
+                      GROUP_CONCAT(DISTINCT c.engine) engines
+                 FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
+                WHERE c.run_id=? AND c.cited=0 AND c.mentioned=0
+                GROUP BY p2.id ORDER BY p2.category LIMIT 20""", (ai_run["id"],))
+
+    rank_dates = [r[0] for r in conn.execute(
+        """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
+             JOIN keywords k ON k.id=rs.keyword_id
+            WHERE k.project_id=? ORDER BY d DESC LIMIT 2""", (pid,))]
+
+    def rank_agg(d):
+        if not d:
+            return {}
+        return {r["keyword"]: r for r in q(conn,
+            """SELECT k.keyword, rs.position, rs.aio_present, rs.aio_cited
+                 FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
+                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
+
+    r_cur = rank_agg(rank_dates[0] if rank_dates else None)
+    r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
+    ranks, aio_gap = [], []
+    for kw, r in r_cur.items():
+        prev_r = r_prev.get(kw)
+        dpos = (round(prev_r["position"] - r["position"], 0)
+                if prev_r and prev_r["position"] and r["position"] else None)
+        ranks.append({"keyword": kw, "pos": r["position"], "dpos": dpos,
+                      "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
+        if r["aio_present"] == 1 and r["aio_cited"] == 0:
+            aio_gap.append(kw)
+    ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
+
+    opps = q(conn,
+        """SELECT kind, target, ROUND(score,1) score, reasoning, status
+             FROM opportunities WHERE project_id=?
+            ORDER BY created_at DESC, score DESC LIMIT 12""", (pid,))
+    # 목록은 12개로 자르지만 KPI는 실제 건수를 세야 한다 (자른 개수를 세면 늘 12로 보인다).
+    opps_total = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
+        (pid,)).fetchone()[0]
+    runs = q(conn,
+        """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
+             FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
+    return {"gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+            "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
+            "striking": striking, "matrix": matrix, "gap_domains": gap_domains,
+            "missed": missed, "opps": opps, "opps_total": opps_total, "runs": runs,
+            "rank_date": rank_dates[0] if rank_dates else None,
+            "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
+            "ranks": ranks[:30], "aio_gap": aio_gap,
+            "kw_active": conn.execute(
+                "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+                (pid,)).fetchone()[0]}
+
+
 def payload(project: str) -> dict:
     conn = db.connect()
     try:
         p = db.get_project(conn, project)
-        data = report.gather(conn, p)
+        data = gather(conn, p)
         data["project"] = dict(p)
         # 대시보드는 트리아지용이라 리포트의 12개 컷 대신 id 포함 전체를 준다.
         data["opps"] = [dict(r) for r in conn.execute(

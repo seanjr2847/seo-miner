@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   aio_present INTEGER,
   aio_cited INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 CREATE TABLE IF NOT EXISTS gsc_snapshots (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -148,24 +149,42 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """IF NOT EXISTS가 못 하는 것만: 기존 테이블에 빠진 컬럼 추가.
+    """IF NOT EXISTS가 못 하는 것만. 각 단계는 스스로 "이미 했나"를 보고 건너뛴다 —
+    한 단계가 끝났다고 함수 전체를 return하면 그 뒤 단계가 영영 안 돈다.
 
     SCHEMA는 매 연결마다 재실행되지만 CREATE TABLE IF NOT EXISTS는 이미 존재하는
     테이블을 건드리지 않으므로, 컬럼을 새로 추가하면 기존 Brain에는 반영되지 않는다.
     """
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
-    if "locale" in cols:
-        return
-    conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
-    # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
-    # aitierlist 실사용에서 프로젝트 로케일(en-US)이 한국어 키워드에도 적용돼
-    # 실제 3~6위인 6개가 전부 "순위 없음"으로 적재됐다. 한글 포함 여부는
-    # 모호하지 않은 신호라 최초 1회만 자동으로 채운다. 나머지는 NULL로 두고
-    # 호출부가 프로젝트 로케일로 폴백한다.
-    conn.execute(r"""UPDATE keywords SET locale='ko-KR'
-                      WHERE locale IS NULL
-                        AND keyword GLOB '*[가-힣]*'""")
-    conn.commit()
+    if "locale" not in cols:
+        conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
+        # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
+        # aitierlist 실사용에서 프로젝트 로케일(en-US)이 한국어 키워드에도 적용돼
+        # 실제 3~6위인 6개가 전부 "순위 없음"으로 적재됐다. 한글 포함 여부는
+        # 모호하지 않은 신호라 최초 1회만 자동으로 채운다. 나머지는 NULL로 두고
+        # 호출부가 프로젝트 로케일로 폴백한다.
+        conn.execute(r"""UPDATE keywords SET locale='ko-KR'
+                          WHERE locale IS NULL
+                            AND keyword GLOB '*[가-힣]*'""")
+        conn.commit()
+
+    # 같은 (kind, target)을 런마다 다시 INSERT하면 목록이 같은 키워드로 채워지고,
+    # 트리아지해 둔 상태(확인함·완료)가 새 'new' 행에 묻힌다. UNIQUE 인덱스로 막고
+    # 적재는 upsert로 한다(scoring.md 5절). 인덱스를 걸려면 기존 중복부터 정리한다.
+    idx = {r["name"] for r in conn.execute("PRAGMA index_list(opportunities)")}
+    if "idx_opp_target" not in idx:
+        # 남길 행: 손댄 것(status!='new')을 우선하고, 그중 최신. 트리아지 결과를 지키려는 것.
+        conn.execute("""
+            DELETE FROM opportunities WHERE id NOT IN (
+              SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                         PARTITION BY project_id, kind, target
+                         ORDER BY (status='new'), id DESC) rn
+                  FROM opportunities)
+               WHERE rn = 1)""")
+        conn.execute("CREATE UNIQUE INDEX idx_opp_target "
+                     "ON opportunities(project_id, kind, target)")
+        conn.commit()
 
 
 def connect() -> sqlite3.Connection:
@@ -177,6 +196,19 @@ def connect() -> sqlite3.Connection:
     # 덕분에 사용자가 'db.py init'을 먼저 칠 일이 없다.
     conn.executescript(SCHEMA)
     _migrate(conn)
+    return conn
+
+
+def connect_ro() -> sqlite3.Connection:
+    """읽기 전용 커넥션 — Brain 조회 통로(run_sql)가 쓰는 것.
+
+    문자열 검사로 SELECT를 가려내는 건 못 믿는다: SQLite에서
+    `WITH x AS (SELECT 1) DELETE FROM opportunities` 는 유효한 문법이라
+    startswith(('select','with')) 가드를 그대로 통과한다. DB가 거부하게 만든다.
+    """
+    connect().close()                      # 없으면 만들고 스키마를 맞춘 뒤 (mode=ro는 생성을 못 한다)
+    conn = sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -274,11 +306,21 @@ def stats(project: str) -> None:
 
 
 def run_sql(query: str) -> None:
-    """Read-only ad-hoc queries. This is how Claude consults the Brain."""
+    """Read-only ad-hoc queries. This is how Claude consults the Brain.
+
+    실제로 쓰기를 막는 건 connect_ro()다. 아래 문자열 검사는 ATTACH 같은
+    엉뚱한 문장을 일찍 되돌려주는 용도일 뿐, 이것만으로는 안전하지 않다.
+    """
     if not query.strip().lower().startswith(("select", "with")):
         sys.exit("read-only: only SELECT/WITH queries allowed here")
-    conn = connect()
-    rows = conn.execute(query).fetchall()
+    conn = connect_ro()
+    try:
+        rows = conn.execute(query).fetchall()
+    except sqlite3.OperationalError as e:
+        if "readonly" not in str(e).lower():
+            raise
+        sys.exit("이 통로는 조회 전용입니다 — Brain을 바꾸려면 scoring.md 5절의 "
+                 "파이썬 원라이너(db.connect())를 쓰세요.")
     print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2, default=str))
     conn.close()
 
