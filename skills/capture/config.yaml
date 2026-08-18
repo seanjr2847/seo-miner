@@ -15,7 +15,7 @@ ai_engines:
 # collector.settings() 가 읽는다: CLI > 프로젝트 yaml > 여기 > 코드 리터럴.
 defaults:
   gsc_days: 28
-  ai_samples: 1          # raise to 2-3 for important prompts (non-determinism)
+  ai_samples: 2          # 비결정성 완화용 2회 샘플 — API 호출·비용 2배 트레이드오프. 급하면 1로.
   throttle: 0.5          # 요청 간격(초) — 자동완성·AI·SERP 공통
   serp_depth: 10
 

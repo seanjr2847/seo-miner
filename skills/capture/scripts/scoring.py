@@ -8,9 +8,12 @@ references/scoring.md 산문 네 군데에 흩어져 있었고 값이 서로 어
 references/scoring.md 는 이제 명세이고, 실행은 전부 여기서 한다.
 
 self-check:  python scoring.py
+기회 적재:   python scoring.py load <project>   (striking·ctr_gap·… 계산 → opportunities upsert)
 """
+import math
 import re
 import sqlite3
+import sys
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
 PAGE1 = 10
@@ -27,6 +30,36 @@ DECAY_POS = -1.5
 
 # pseo_pattern 후보 추출 임계 (scoring.md 1b-1). 노출 큰 사이트면 올린다.
 PSEO_MIN_IMP, PSEO_MAX_CTR = 50, 1.5
+
+# 순위 노이즈 폭 (scoring.md 4-4 산문 "순위 ±2~3 변동은 노이즈"의 코드화).
+# NOISE_POS는 GSC 평균순위 Δ용이고, 이건 rank_snapshots 정수 순위용 — 다른 축이다.
+RANK_NOISE = 3
+
+# striking_distance 노출 하한 (scoring.md 1절 "노출 유의미"). 산문에만 있고
+# SQL에는 없던 조건 — 노출 몇 개짜리 순위는 통계가 아니다.
+STRIKING_MIN_IMP = 10
+
+# ctr_gap: 순위별 기대 CTR(%). 업계 공개 클릭 곡선(FirstPageSage·AWR류 발표치)의
+# 근사 평균이다 — 절대 진리가 아니라 "이 순위면 이 정도는 나와야 한다"는 기준선.
+EXPECTED_CTR = {1: 28.0, 2: 15.0, 3: 10.0, 4: 7.0, 5: 5.0, 6: 4.0, 7: 3.0,
+                8: 2.5, 9: 2.2, 10: 2.0, 11: 1.6, 12: 1.4, 13: 1.2, 14: 1.1,
+                15: 1.0, 16: 0.9, 17: 0.8, 18: 0.7, 19: 0.6, 20: 0.5}
+CTR_GAP_MIN_IMP = 100    # 이보다 적은 노출은 CTR 자체가 통계로 무의미
+CTR_GAP_FACTOR = 0.5     # 실제 CTR < 기대 × 이 값일 때만 기회로 본다
+
+# cannibalization: 같은 쿼리에 내 페이지 여럿이 갈릴 때
+CANNI_MIN_IMP = 50       # 쿼리 합산 노출 하한
+CANNI_MIN_SHARE = 0.2    # 부(副)페이지 노출 비중 하한 — 미만이면 사실상 한 페이지 독점
+
+# 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
+# local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
+# 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
+WEIGHTS = {
+    "game":         {"w_demand": 0.30, "w_reach": 0.25, "w_fit": 0.25, "w_ai": 0.20},
+    "local_clinic": {"w_demand": 0.25, "w_reach": 0.20, "w_fit": 0.45, "w_ai": 0.10},
+    "saas":         {"w_demand": 0.20, "w_reach": 0.20, "w_fit": 0.15, "w_ai": 0.45},
+    "directory":    {"w_demand": 0.40, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.15},
+}
 
 # 남의 브랜드 검색 판별용 (scoring.md 1a).
 BRAND_MODIFIERS = {
@@ -192,25 +225,31 @@ def movers(now_: dict, before: dict, *, limit: int = 10) -> tuple[list[dict], li
 _STRIKING_SQL = """
 SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
   FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
- GROUP BY query HAVING pos BETWEEN ? AND ?
+ GROUP BY query HAVING pos BETWEEN ? AND ? AND imp >= ?
  ORDER BY imp DESC LIMIT ?
 """
 
 
 def striking(conn: sqlite3.Connection, project_id: int, snapshot_date: str | None,
              *, limit: int = 15, brands: set[str] | None = None) -> list[dict]:
-    """조금만 밀면 1페이지 갈 검색어. 남의 브랜드 검색은 빼고, gap 을 붙여 돌려준다."""
+    """조금만 밀면 1페이지 갈 검색어. 남의 브랜드 검색은 빼고, gap·band 를 붙여 돌려준다.
+
+    band: 'page1'(4~10위, 이미 1페이지 — 상단으로) / 'page2'(11~20위 — 1페이지로).
+    노출 하한(STRIKING_MIN_IMP)은 scoring.md 1절 "노출 유의미"의 코드화다.
+    """
     if not snapshot_date:
         return []
     # 브랜드를 걸러내면 limit 미만이 되므로 넉넉히 뽑고 자른다.
     over = limit * 3 if brands else limit
     rows = [dict(r) for r in conn.execute(
-        _STRIKING_SQL, (project_id, snapshot_date, STRIKING_LO, STRIKING_HI, over))]
+        _STRIKING_SQL, (project_id, snapshot_date, STRIKING_LO, STRIKING_HI,
+                        STRIKING_MIN_IMP, over))]
     if brands:
         rows = drop_foreign_brands(rows, brands)
     rows = rows[:limit]
     for r in rows:
         r["gap"] = gap_to_page1(r["pos"])
+        r["band"] = "page1" if r["pos"] <= PAGE1 else "page2"
     return rows
 
 
@@ -230,6 +269,215 @@ def pseo_candidates(conn: sqlite3.Connection, project_id: int, snapshot_date: st
             GROUP BY query HAVING imp >= ? AND ctr_pct < ?
             ORDER BY imp DESC LIMIT ?""",
         (project_id, snapshot_date, min_imp, max_ctr, limit))]
+
+
+def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
+    """1페이지(1~10위)인데 기대 CTR의 절반도 못 받는 쿼리 — 제목·설명 손볼 곳.
+
+    최신 스냅샷(같은 period_days)만 본다. 손실 클릭 = 노출 × (기대 - 실제) CTR.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    if not cur:
+        return []
+    out = []
+    for r in conn.execute(
+        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
+             FROM gsc_snapshots WHERE project_id=? AND snapshot_date=? AND period_days=?
+            GROUP BY query HAVING pos BETWEEN 1 AND ? AND imp >= ?""",
+            (project_id, cur, period, PAGE1, CTR_GAP_MIN_IMP)):
+        expected = EXPECTED_CTR[min(max(round(r["pos"]), 1), STRIKING_HI)]
+        actual = r["clk"] * 100.0 / r["imp"]
+        if actual < expected * CTR_GAP_FACTOR:
+            out.append({"query": r["query"], "position": r["pos"], "impressions": r["imp"],
+                        "clicks": r["clk"], "actual_ctr": round(actual, 2),
+                        "expected_ctr": expected,
+                        "lost_clicks": round(r["imp"] * (expected - actual) / 100)})
+    return sorted(out, key=lambda x: -x["lost_clicks"])[:limit]
+
+
+def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
+    """같은 쿼리에 내 페이지 2개 이상이 노출을 나눠 갖는 경우 (키워드 카니벌라이제이션).
+
+    page 차원은 자동 수집(GSC API) 경로만 채운다 — CSV 가져오기는 page가 NULL이라
+    이 함수는 자동으로 빈 결과를 돌려준다 (결함이 아니라 데이터 부재).
+    부페이지 노출 비중 >= CANNI_MIN_SHARE, 합산 노출 >= CANNI_MIN_IMP 일 때만 잡는다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    if not cur:
+        return []
+    per_q: dict[str, list[dict]] = {}
+    for r in conn.execute(
+        """SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
+                  ROUND(AVG(position),1) pos
+             FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY query, page""", (project_id, cur, period)):
+        per_q.setdefault(r["query"], []).append(
+            {"page": r["page"], "impressions": r["imp"], "clicks": r["clk"], "position": r["pos"]})
+    out = []
+    for q, pages in per_q.items():
+        total = sum(p["impressions"] for p in pages)
+        if len(pages) < 2 or total < CANNI_MIN_IMP:
+            continue
+        pages.sort(key=lambda p: -p["impressions"])
+        if pages[1]["impressions"] < total * CANNI_MIN_SHARE:
+            continue
+        out.append({"query": q, "impressions": total, "pages": pages})
+    return sorted(out, key=lambda x: -x["impressions"])[:limit]
+
+
+def _snap_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+              period: int) -> dict[str, dict]:
+    """스냅샷 하나를 movers() 입력 모양(query -> {pos, clk, imp})으로 집계."""
+    return {r["query"]: {"pos": r["pos"], "clk": r["clk"], "imp": r["imp"]}
+            for r in conn.execute(
+                """SELECT query, AVG(position) pos, SUM(clicks) clk, SUM(impressions) imp
+                     FROM gsc_snapshots
+                    WHERE project_id=? AND snapshot_date=? AND period_days=?
+                    GROUP BY query""", (project_id, snapshot_date, period))}
+
+
+def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
+    """직전 스냅샷 대비 DECAY_POS 이상 하락한 쿼리 — 방어 기회 (scoring.md 1절).
+
+    비교 짝은 snapshot_pair()가 고른다 — 같은 period_days끼리만 (scoring.md 4-3b).
+    dpos 는 movers()와 같은 부호 규약: 음수 = 하락.
+    """
+    cur, prev, period, _ = snapshot_pair(conn, project_id)
+    if not (cur and prev):
+        return []
+    now_, before = _snap_agg(conn, project_id, cur, period), \
+        _snap_agg(conn, project_id, prev, period)
+    rows = []
+    for q, r in now_.items():
+        b = before.get(q)
+        if not b:
+            continue
+        dpos = round(b["pos"] - r["pos"], 1)
+        if dpos <= DECAY_POS:
+            rows.append({"query": q, "pos": round(r["pos"], 1), "prev_pos": round(b["pos"], 1),
+                         "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
+                         "imp": r["imp"]})
+    return sorted(rows, key=lambda x: x["dpos"])[:limit]
+
+
+def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
+    """미커버 활성 키워드 — directory 프리셋의 최소 구현 (scoring.md 1절 coverage).
+
+    정의(정직하게): '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교)의 쿼리가
+    노출>0으로 존재하거나, rank_snapshots 최신 체크에 position이 있음. 부분 일치·
+    의미 유사·페이지 수 카운트는 보지 않는다 — 그건 Claude 판단 몫으로 남긴다.
+    반환: {"keywords": [{keyword, cluster}...], "by_cluster": {cluster: 미커버 수}}.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    seen = set()
+    if cur:
+        seen = {norm(r[0]) for r in conn.execute(
+            """SELECT query FROM gsc_snapshots
+                WHERE project_id=? AND snapshot_date=? AND period_days=? AND impressions>0""",
+            (project_id, cur, period))}
+    missing, by_cluster = [], {}
+    for r in conn.execute(
+            "SELECT id, keyword, cluster FROM keywords WHERE project_id=? AND is_active=1",
+            (project_id,)):
+        if norm(r["keyword"]) in seen:
+            continue
+        rank = conn.execute(
+            """SELECT position FROM rank_snapshots WHERE keyword_id=?
+                ORDER BY checked_at DESC, id DESC LIMIT 1""", (r["id"],)).fetchone()
+        if rank and rank["position"] is not None:
+            continue
+        cl = r["cluster"] or "(미분류)"
+        missing.append({"keyword": r["keyword"], "cluster": cl})
+        by_cluster[cl] = by_cluster.get(cl, 0) + 1
+    return {"keywords": missing, "by_cluster": by_cluster}
+
+
+def score(kind: str, metrics: dict, project_type: str) -> float:
+    """결정적 0~100 점수 — 같은 입력이면 언제나 같은 출력 (계수는 WEIGHTS).
+
+    scoring.md 2절의 점수 프레임을 코드화한 최소판이다. w_fit(관련성)은 Claude가
+    metrics["fit"](0~1)로 넘길 수 있고, 안 넘기면 중립값 0.5 — 그래도 결정적이다.
+    """
+    w = WEIGHTS.get(project_type) or WEIGHTS["saas"]
+    imp = float(metrics.get("impressions") or metrics.get("imp") or 0)
+    demand = min(1.0, math.log10(1 + imp) / 5.0)          # 노출 10만이면 1.0
+    pos = metrics.get("position", metrics.get("pos"))
+    # 순위 미확인이면 보수적(0.3) — 신뢰 낮은 추정치엔 보수적 (scoring.md 2절)
+    reach = 0.3 if pos is None else max(0.0, 1.0 - gap_to_page1(pos) / PAGE1)
+    fit = float(metrics.get("fit", 0.5))
+    ai = float(metrics.get("ai",
+                           1.0 if kind in ("ai_citation_gap", "aio_exposure") else 0.0))
+    raw = (w["w_demand"] * demand + w["w_reach"] * reach
+           + w["w_fit"] * fit + w["w_ai"] * ai)
+    return round(min(100.0, max(0.0, raw * 100)), 1)
+
+
+def load(project: str) -> None:
+    """서브커맨드 load — 분석 함수 전부 돌려 opportunities 에 적재.
+
+    projects.type 을 읽어 프리셋 계수(WEIGHTS)를 적용한다 — 분석 코드가 type 을
+    안 읽던 결함의 수정. 트리아지 상태(acked·done·dismissed) 보존은
+    db.upsert_opportunities 가 보장한다 (ON CONFLICT에서 status 미변경).
+    """
+    import db  # lazy — self-check 는 db 없이 돈다
+    conn = db.connect()
+    p = db.get_project(conn, project)
+    pid, ptype = p["id"], p["type"] or "saas"
+    cfg = {}
+    if p["config_path"]:
+        try:
+            cfg = db.load_project_yaml(p["config_path"])
+        except (SystemExit, ImportError):   # yaml 이 없어도 적재는 계속한다 (브랜드 필터만 얕아짐)
+            pass
+    cur, prev, _, _ = snapshot_pair(conn, pid)
+    brands = foreign_brands(conn, pid, cfg)
+    rows = []
+    for r in striking(conn, pid, cur, brands=brands):
+        rows.append({"kind": "striking_distance", "target": r["query"],
+                     "score": score("striking_distance",
+                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                     "reasoning": f"{r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
+                                  f"1페이지까지 {r['gap']} ({r['band']}) (gsc {cur})"})
+    for r in ctr_gaps(conn, pid):
+        rows.append({"kind": "ctr_gap", "target": r["query"],
+                     "score": score("ctr_gap",
+                                    {"impressions": r["impressions"],
+                                     "position": r["position"]}, ptype),
+                     "reasoning": f"{r['position']}위·노출 {r['impressions']:,}·CTR "
+                                  f"{r['actual_ctr']}%(기대 {r['expected_ctr']}%) — "
+                                  f"손실 약 {r['lost_clicks']:,}클릭/기간 (gsc {cur})"})
+    for r in cannibalization(conn, pid):
+        tops = " vs ".join(pg["page"] for pg in r["pages"][:2])
+        rows.append({"kind": "cannibalization", "target": r["query"],
+                     "score": score("cannibalization",
+                                    {"impressions": r["impressions"],
+                                     "position": r["pages"][0]["position"]}, ptype),
+                     "reasoning": f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
+                                  f"{tops} (gsc {cur})"})
+    for r in rank_decay(conn, pid):
+        rows.append({"kind": "rank_decay", "target": r["query"],
+                     "score": score("rank_decay",
+                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                     "reasoning": f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
+                                  f"클릭 {r['dclk']:+d} — 방어 필요 (gsc {prev}→{cur})"})
+    for r in pseo_candidates(conn, pid, cur, limit=10):
+        rows.append({"kind": "pseo_pattern", "target": r["query"],
+                     "score": score("pseo_pattern",
+                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                     "reasoning": f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
+                                  f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) "
+                                  f"(gsc {cur})"})
+    for cl, n in sorted(coverage(conn, pid)["by_cluster"].items(), key=lambda x: -x[1]):
+        rows.append({"kind": "coverage", "target": f"cluster:{cl}",
+                     "score": score("coverage",
+                                    {"impressions": 0, "position": None}, ptype),
+                     "reasoning": f"활성 키워드 {n}개가 GSC 노출·순위 체크 모두 부재 — "
+                                  f"클러스터 '{cl}'"})
+    with db.run(conn, pid, "analysis") as r:
+        n = db.upsert_opportunities(conn, pid, r.id, rows)
+        r.notes = f"scoring load: opps={n}"
+    print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur})")
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,
@@ -371,6 +619,10 @@ def _selfcheck() -> None:
         query TEXT, page TEXT, clicks INT, impressions INT, ctr REAL, position REAL);
       CREATE TABLE opportunities(id INTEGER PRIMARY KEY, project_id INT, kind TEXT,
         target TEXT, score REAL, reasoning TEXT, status TEXT, created_at TEXT);
+      CREATE TABLE keywords(id INTEGER PRIMARY KEY, project_id INT, keyword TEXT,
+        cluster TEXT, is_active INT);
+      CREATE TABLE rank_snapshots(id INTEGER PRIMARY KEY, keyword_id INT,
+        checked_at TEXT, position INT);
     """)
     conn.execute("INSERT INTO competitors VALUES(1,'ecrett.com')")
     conn.executemany(
@@ -404,8 +656,66 @@ def _selfcheck() -> None:
     cur, prev, period, mismatch = snapshot_pair(conn, 3)
     assert (cur, prev, period, mismatch) == ("2026-08-20", None, 28, True), (cur, prev, period, mismatch)
 
+    # ── 신규 판정 함수들 ──
+    assert RANK_NOISE == 3
+    assert sorted(EXPECTED_CTR) == list(range(1, 21))                 # 1~20위 전부
+    assert all(EXPECTED_CTR[i] >= EXPECTED_CTR[i + 1] for i in range(1, 20))  # 단조 감소
+    for w in WEIGHTS.values():
+        assert abs(sum(w.values()) - 1.0) < 1e-9
+
+    # ctr_gap: 1페이지 키워드(3.0위·300노출·9클릭=CTR 3%)만 기대 10%의 절반 미만.
+    # ecrett 는 노출 48 < CTR_GAP_MIN_IMP, 내 키워드는 12위라 1페이지 밖.
+    gaps = ctr_gaps(conn, 1)
+    assert [g["query"] for g in gaps] == ["1페이지 키워드"], gaps
+    assert gaps[0]["expected_ctr"] == EXPECTED_CTR[3]
+    assert gaps[0]["lost_clicks"] == 21, gaps[0]                      # 300×(10%-3%)
+
+    # 프로젝트 5: 스냅샷 페어 + band·노출 하한·카니벌·decay·coverage 한 번에
+    conn.executemany(
+        "INSERT INTO gsc_snapshots VALUES(5,'2026-08-07',28,?,NULL,?,?,0.0,?)",
+        [("하락", 10, 100, 5.0), ("유지", 5, 100, 5.0)])
+    conn.executemany(
+        "INSERT INTO gsc_snapshots VALUES(5,'2026-08-14',28,?,?,?,?,0.0,?)",
+        [("하락", None, 2, 100, 9.0), ("유지", None, 5, 100, 5.4),
+         ("b1", None, 1, 150, 6.0), ("b2", None, 1, 150, 15.0),
+         ("tiny", None, 1, 5, 6.0),
+         ("canni", "/a", 3, 60, 4.0), ("canni", "/b", 1, 40, 7.0),
+         ("solo", "/a", 5, 95, 3.0), ("solo", "/b", 0, 4, 3.0)])
+    srows = {r["query"]: r for r in striking(conn, 5, "2026-08-14")}
+    assert "tiny" not in srows, srows                                  # 노출 하한
+    assert srows["b1"]["band"] == "page1" and srows["b2"]["band"] == "page2"
+
+    c = cannibalization(conn, 5)
+    assert [x["query"] for x in c] == ["canni"], c    # solo 는 부페이지 비중 4% — 독점
+    assert c[0]["impressions"] == 100 and len(c[0]["pages"]) == 2
+
+    rd = rank_decay(conn, 5)
+    assert [x["query"] for x in rd] == ["하락"], rd    # 유지(-0.4)는 DECAY_POS 위
+    assert rd[0]["dpos"] == -4.0 and rd[0]["dclk"] == -8, rd[0]
+
+    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?)",
+                     [(1, 5, "B1", "c1", 1),          # gsc 노출 있음(b1, norm 일치) → 커버
+                      (2, 5, "순위만", None, 1),        # rank 체크로 커버
+                      (3, 5, "미커버", "c1", 1),
+                      (4, 5, "꺼짐", "c1", 0)])        # 비활성은 안 본다
+    conn.execute("INSERT INTO rank_snapshots VALUES(1, 2, '2026-08-14T00:00:00Z', 7)")
+    cov = coverage(conn, 5)
+    assert [k["keyword"] for k in cov["keywords"]] == ["미커버"], cov
+    assert cov["by_cluster"] == {"c1": 1}, cov
+
+    s = score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
+    assert s == score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
+    assert 0.0 <= s <= 100.0
+    assert score("ai_citation_gap", {"impressions": 100}, "saas") > \
+        score("ai_citation_gap", {"impressions": 100}, "local_clinic")  # saas 는 w_ai 최상향
+    assert score("striking_distance", {"impressions": 100, "position": 5.0}, "없는타입") == \
+        score("striking_distance", {"impressions": 100, "position": 5.0}, "saas")
+
     print("scoring self-check ok")
 
 
 if __name__ == "__main__":
-    _selfcheck()
+    if len(sys.argv) >= 3 and sys.argv[1] == "load":
+        load(sys.argv[2])
+    else:
+        _selfcheck()

@@ -65,6 +65,7 @@ def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: st
                         dry_run: bool) -> list[tuple[str, str, str]]:
     mods = modifiers(locale, hl)
     out: list[tuple[str, str, str]] = []
+    reqs = fails = 0
     planned = len(seeds) * (1 + len(mods))
     print(f"[autocomplete] seeds={len(seeds)} planned_requests≈{planned} "
           f"throttle={throttle}s (~{planned * throttle / 60:.1f} min)")
@@ -80,17 +81,28 @@ def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: st
         for q in queries:
             if len(found) >= per_seed_cap:
                 break
+            reqs += 1
             try:
                 for s in suggest(q, hl, gl):
                     s = s.strip()
                     if s and s.lower() != seed.lower():
                         found.add(s)
             except Exception as e:  # endpoint is unofficial: degrade gracefully
+                fails += 1
                 print(f"  ! suggest failed for {q!r}: {e}", file=sys.stderr)
                 time.sleep(throttle * 4)
             time.sleep(throttle)
         print(f"  {seed!r} -> {len(found)} suggestions")
         out += [(kw, kw_locale, "autocomplete") for kw in found]
+    # 실패를 조용히 삼키면 후보 수만 보고는 차단을 알아챌 수 없다 — 끝에서 말한다.
+    if fails:
+        print(f"[주의] Suggest {fails}/{reqs} 실패 — 차단 가능성, 후보 축소됨",
+              file=sys.stderr)
+        if fails > reqs * 0.5:
+            print("!" * 62, file=sys.stderr)
+            print(f"!! Suggest 실패율 {fails / reqs:.0%} — IP 차단으로 보입니다. "
+                  f"이 런의 후보는 대부분 빠졌으니 결과를 신뢰하지 마세요.", file=sys.stderr)
+            print("!" * 62, file=sys.stderr)
     return out
 
 

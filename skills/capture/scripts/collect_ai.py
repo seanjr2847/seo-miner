@@ -50,7 +50,7 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
     import requests
     body = {
         "model": model,
-        "max_tokens": 700,
+        "max_tokens": 1200,  # 700이면 긴 답변 뒤쪽 인용이 잘린다 — 토큰 비용 최대 ~1.7배
         "messages": [
             {"role": "system", "content": SYSTEM.format(locale=locale or "ko-KR")},
             {"role": "user", "content": prompt},
@@ -82,7 +82,8 @@ def main() -> None:
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
                           help="요청 간격(초). 기본은 config.yaml defaults.throttle")
     ap.add_argument("--engines", default=None, help="comma list; default from config")
-    collector.add_setting(ap, "--samples", key="ai_samples", fallback=1, type=int)
+    # 기본 2회 샘플(config.yaml ai_samples와 일치) — 비결정성 완화, 대신 호출 비용 2배.
+    collector.add_setting(ap, "--samples", key="ai_samples", fallback=2, type=int)
     collector.add_setting(ap, "--max-prompts", key="limits.max_ai_prompts", fallback=30, type=int)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
     ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
@@ -162,6 +163,12 @@ def main() -> None:
             print(f"  prompt#{row['id']} [{row['category']}] done")
         r.notes = f"engines={list(engines)} samples={samples} errors={errors}"
 
+    # 실패는 카운트만 하고 계속 갔으니, 끝에서 한 번 크게 말한다 —
+    # 아래 매트릭스의 분모가 그만큼 줄어든 것을 보이게.
+    if errors:
+        print(f"[ai] {errors}/{total_calls} 요청 실패 — 매트릭스 분모가 그만큼 축소됨",
+              file=sys.stderr)
+
     # summary matrix: engine x category -> cited/total
     print("\nvisibility matrix (cited / checks):")
     for r in conn.execute(
@@ -170,7 +177,8 @@ def main() -> None:
              FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
             WHERE c.run_id=? GROUP BY 1,2 ORDER BY 1,2""", (run_id,)):
         print(f"  {r['engine']:<11} {r['category']:<10} {r['cited']}/{r['total']}")
-    print(f"\nrun_id={run_id} saved. Next: /capture gaps or /capture report")
+    print(f"\nrun_id={run_id} saved. failures={errors}/{total_calls}. "
+          f"Next: /capture gaps or /capture report")
     conn.close()
 
 

@@ -10,6 +10,8 @@
   · 판정 규칙(scoring) — 임계값·남의 브랜드 제외·기회 정렬이 한 곳에서 나오는지
   · 키워드 후보가 locale 없이 쌓이지 않는지 — 쓰기 경로가 하나여야 막힌다
   · 수집이 예외로 끊겨도 실행 기록이 닫히는지
+  · 분석 함수(ctr_gap·cannibalization·striking 하한·rank_decay·coverage)와 결정적 점수
+  · rank 스냅샷 같은 날 재실행 멱등 / AI 답변 전문 보존
 """
 import os
 import sys
@@ -268,6 +270,153 @@ def test_rank_snapshot_keeps_aio_none():
     assert row["position"] == 3
     assert row["aio_present"] is None, f"expected None, got {row['aio_present']}"
     assert row["aio_cited"] is None, f"expected None, got {row['aio_cited']}"
+    conn.close()
+
+
+def _gsc(conn, pid, date_, days, query, page, clicks, imp, pos):
+    """분석 함수 테스트용 — _snap과 달리 page·impressions 를 직접 정한다."""
+    conn.execute("""INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,
+                      query,page,clicks,impressions,ctr,position)
+                    VALUES(?,?,?,?,?,?,?,0.0,?)""",
+                 (pid, date_, days, query, page, clicks, imp, pos))
+    conn.commit()
+
+
+def test_ctr_gaps_detects_low_ctr_and_respects_floors():
+    """1페이지인데 기대 CTR 절반 미만인 쿼리만 — 노출 하한·구간 밖은 제외."""
+    conn = db.connect()
+    p = _project(conn, "ctrgap")
+    d = "2026-04-01"
+    _gsc(conn, p["id"], d, 28, "저ctr", None, 46, 4200, 3.0)     # 1.1% < 10%×0.5
+    _gsc(conn, p["id"], d, 28, "정상ctr", None, 500, 4200, 3.0)  # 11.9% — 문제없음
+    _gsc(conn, p["id"], d, 28, "노출부족", None, 0, scoring.CTR_GAP_MIN_IMP - 1, 3.0)
+    _gsc(conn, p["id"], d, 28, "2페이지", None, 0, 4200, 15.0)   # 1~10위 밖
+    rows = scoring.ctr_gaps(conn, p["id"])
+    assert [r["query"] for r in rows] == ["저ctr"], rows
+    r = rows[0]
+    assert r["position"] == 3.0 and r["impressions"] == 4200
+    assert r["expected_ctr"] == scoring.EXPECTED_CTR[3]
+    assert r["actual_ctr"] == 1.1, r
+    # 손실 클릭 = 노출×(기대-실제) — 반환값끼리 앞뒤가 맞아야 한다
+    assert r["lost_clicks"] == round(4200 * (r["expected_ctr"] - 46 * 100.0 / 4200) / 100), r
+    conn.close()
+
+
+def test_cannibalization_detects_split_and_ignores_null_pages():
+    """같은 쿼리 2페이지 분산은 잡고, page NULL(CSV 경로)·독점 쿼리는 무시."""
+    conn = db.connect()
+    p = _project(conn, "canni")
+    d = "2026-04-01"
+    _gsc(conn, p["id"], d, 28, "분산", "/a", 3, 60, 4.0)
+    _gsc(conn, p["id"], d, 28, "분산", "/b", 1, 40, 7.0)         # 부페이지 40% ≥ 20%
+    _gsc(conn, p["id"], d, 28, "널만", None, 5, 500, 5.0)        # CSV 경로 — page 없음
+    _gsc(conn, p["id"], d, 28, "독점", "/a", 5, 95, 3.0)
+    _gsc(conn, p["id"], d, 28, "독점", "/b", 0, 4, 3.0)          # 부페이지 4% — 독점
+    out = scoring.cannibalization(conn, p["id"])
+    assert [o["query"] for o in out] == ["분산"], out
+    assert out[0]["impressions"] == 100
+    assert [pg["page"] for pg in out[0]["pages"]] == ["/a", "/b"]  # 노출 내림차순
+    assert out[0]["pages"][0]["clicks"] == 3 and out[0]["pages"][0]["position"] == 4.0
+    conn.close()
+
+
+def test_striking_band_and_min_impressions():
+    """scoring.md 1절 '노출 유의미' 하한 + band(page1/page2) 라벨."""
+    conn = db.connect()
+    p = _project(conn, "strike2")
+    d = "2026-04-01"
+    _gsc(conn, p["id"], d, 28, "페이지1", None, 1, 150, 6.0)
+    _gsc(conn, p["id"], d, 28, "페이지2", None, 1, 150, 15.0)
+    _gsc(conn, p["id"], d, 28, "노출미달", None, 1, scoring.STRIKING_MIN_IMP - 1, 6.0)
+    rows = {r["query"]: r for r in scoring.striking(conn, p["id"], d)}
+    assert "노출미달" not in rows, rows
+    assert rows["페이지1"]["band"] == "page1"
+    assert rows["페이지2"]["band"] == "page2"
+    conn.close()
+
+
+def test_rank_decay_finds_defense_targets():
+    """같은 period_days 페어에서 DECAY_POS 이상 하락한 쿼리만."""
+    conn = db.connect()
+    p = _project(conn, "decay")
+    _snap(conn, p["id"], "2026-04-01", 28, "하락", 5.0, 10)
+    _snap(conn, p["id"], "2026-04-01", 28, "유지", 5.0, 5)
+    _snap(conn, p["id"], "2026-04-08", 28, "하락", 9.0, 2)       # Δpos=-4.0 ≤ -1.5
+    _snap(conn, p["id"], "2026-04-08", 28, "유지", 5.4, 5)       # Δpos=-0.4 — 노이즈
+    out = scoring.rank_decay(conn, p["id"])
+    assert [o["query"] for o in out] == ["하락"], out
+    assert out[0]["dpos"] == -4.0 and out[0]["dclk"] == -8, out[0]
+    assert out[0]["prev_pos"] == 5.0 and out[0]["pos"] == 9.0
+    conn.close()
+
+
+def test_coverage_reports_uncovered_active_keywords():
+    """활성인데 GSC 노출도 순위 체크도 없는 키워드만 미커버로. cluster 집계 포함."""
+    conn = db.connect()
+    p = _project(conn, "cover")
+    _gsc(conn, p["id"], "2026-04-01", 28, "노출있음", None, 1, 30, 5.0)
+    for kw, cluster, active in [("노출있음", "a", 1), ("순위있음", None, 1),
+                                ("미커버", "a", 1), ("비활성", "a", 0)]:
+        conn.execute("""INSERT OR IGNORE INTO keywords(project_id,keyword,cluster,is_active)
+                        VALUES(?,?,?,?)""", (p["id"], kw, cluster, active))
+    conn.commit()
+    kw_id = conn.execute("SELECT id FROM keywords WHERE project_id=? AND keyword='순위있음'",
+                         (p["id"],)).fetchone()[0]
+    db.write_rank_snapshot(conn, kw_id, 5, "https://e.com/a")
+    cov = scoring.coverage(conn, p["id"])
+    assert [k["keyword"] for k in cov["keywords"]] == ["미커버"], cov
+    assert cov["by_cluster"] == {"a": 1}, cov
+    conn.close()
+
+
+def test_score_is_deterministic():
+    """같은 입력 → 같은 출력. 미등록 type은 saas 계수로 폴백."""
+    m = {"impressions": 1234, "position": 7.0}
+    a = scoring.score("striking_distance", m, "directory")
+    assert a == scoring.score("striking_distance", dict(m), "directory")
+    assert 0.0 <= a <= 100.0
+    assert scoring.score("striking_distance", m, "없는타입") == \
+        scoring.score("striking_distance", m, "saas")
+    # saas 는 w_ai 최상향 (scoring.md 2절 방향)
+    assert scoring.score("ai_citation_gap", {"impressions": 100}, "saas") > \
+        scoring.score("ai_citation_gap", {"impressions": 100}, "local_clinic")
+
+
+def test_rank_snapshot_same_day_rerun_is_idempotent():
+    """같은 키워드를 같은 날 다시 확인하면 덮어쓴다 — gsc 스냅샷과 같은 규약."""
+    conn = db.connect()
+    p = _project(conn, "rankday")
+    conn.execute("INSERT OR IGNORE INTO keywords(project_id, keyword) VALUES(?, 'kw_day')",
+                 (p["id"],))
+    conn.commit()
+    kw_id = conn.execute("SELECT id FROM keywords WHERE project_id=?", (p["id"],)).fetchone()[0]
+    db.write_rank_snapshot(conn, kw_id, 8, "https://e.com/a", checked_at="2026-04-01T05:00:00Z")
+    db.write_rank_snapshot(conn, kw_id, 6, "https://e.com/a", checked_at="2026-04-01T09:00:00Z")
+    db.write_rank_snapshot(conn, kw_id, 7, None, checked_at="2026-04-02T09:00:00Z")
+    rows = conn.execute("SELECT position FROM rank_snapshots WHERE keyword_id=? "
+                        "ORDER BY checked_at", (kw_id,)).fetchall()
+    assert [r["position"] for r in rows] == [6, 7], rows   # 4/1은 마지막 것만 남는다
+    conn.close()
+
+
+def test_answer_excerpt_keeps_full_text():
+    """280자 절단 제거 — 답변 전문이 남아야 검증할 수 있다 (상한 8000자)."""
+    conn = db.connect()
+    p = _project(conn, "excerpt")
+    conn.execute("INSERT OR IGNORE INTO ai_prompts(project_id, prompt) VALUES(?, 'q')",
+                 (p["id"],))
+    conn.commit()
+    prompt_id = conn.execute("SELECT id FROM ai_prompts WHERE project_id=?",
+                             (p["id"],)).fetchone()[0]
+    long_answer = "가" * 1000
+    db.record_ai_check(conn, prompt_id, None, "chatgpt", 0, 1, 0, [], long_answer)
+    row = conn.execute("SELECT answer_excerpt FROM ai_checks WHERE prompt_id=? "
+                       "ORDER BY id DESC LIMIT 1", (prompt_id,)).fetchone()
+    assert row["answer_excerpt"] == long_answer, len(row["answer_excerpt"])
+    db.record_ai_check(conn, prompt_id, None, "chatgpt", 1, 1, 0, [], "나" * 9000)
+    row = conn.execute("SELECT answer_excerpt FROM ai_checks WHERE prompt_id=? "
+                       "ORDER BY id DESC LIMIT 1", (prompt_id,)).fetchone()
+    assert len(row["answer_excerpt"]) == 8000, len(row["answer_excerpt"])   # 안전핀 상한
     conn.close()
 
 

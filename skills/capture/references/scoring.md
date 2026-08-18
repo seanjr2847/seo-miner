@@ -7,20 +7,23 @@
 **이 문서는 명세이고, 실행은 `scripts/scoring.py`다.** 산문으로만 적힌 규칙은
 아무도 실행하지 않아 실제로 안 돌았다(1a절이 그랬다). 그래서 기계가 판정할 수
 있는 것은 전부 scoring.py로 옮겼고, 여기서는 그 함수·상수 이름을 가리킨다.
-임계값을 바꾸려면 scoring.py를 고치고 이 문서를 맞춘다. 남은 산문(2절 점수
-프레임, 1b절 2~3단계)은 **코드가 아니라 Claude 판단**이며, 그렇다고 명시해 둔다.
+임계값을 바꾸려면 scoring.py를 고치고 이 문서를 맞춘다. 남은 산문(1b절 2~3단계,
+2절의 fit 판정)은 **코드가 아니라 Claude 판단**이며, 그렇다고 명시해 둔다.
 자체 점검: `python scripts/scoring.py`.
+기회 적재: `python scripts/scoring.py load <project>` (5절).
 
 ## 1. 기회 종류 (kind)
 
 | kind | 정의 | 데이터원 / 실행하는 코드 |
 |------|------|----------------------|
-| striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 내림차순. 1페이지까지 남은 거리는 `gap_to_page1()`(`PAGE1=10`) |
+| striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 하한 `STRIKING_MIN_IMP`(=10), 노출 내림차순. 각 행에 `band`(pos ≤ 10 → `page1`, 아니면 `page2`)와 `gap`(`gap_to_page1()`, `PAGE1=10`)이 붙는다 |
+| ctr_gap | 1페이지(1~10위)인데 기대 CTR의 절반도 못 받음 → 제목·설명 문제 | `scoring.ctr_gaps()` — 기대치는 `EXPECTED_CTR`(1~20위, %, 업계 클릭 곡선 근사), 노출 하한 `CTR_GAP_MIN_IMP`(=100), 판정은 실제 CTR < 기대 × `CTR_GAP_FACTOR`(=0.5). 손실 클릭(노출×(기대-실제)) 내림차순 |
+| cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원은 API 수집만 채운다** — CSV 임포트는 page가 NULL이라 빈 결과가 정상(결함 아님, 데이터 부재) |
 | ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도. 인용/언급 판정 자체는 `scoring.judge()` |
-| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | gsc 두 스냅샷 조인, **period_days가 같은 것끼리만**, Δpos < `scoring.DECAY_POS`(= -1.5) 또는 Δclicks 음수 큰 순 |
+| rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 부분 가능: rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우. 완전판(경쟁사 역키워드)은 여전히 DataForSEO Labs 필요 |
-| coverage | (directory) 노출 페이지 수 부족 군집 | gsc_snapshots page 차원 DISTINCT 카운트 |
-| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`) |
+| coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
+| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
@@ -62,6 +65,8 @@ CTR이 낮으면 진짜 문제다.
 `(query, imp, clk, ctr_pct, pos)` 를 노출 내림차순으로 돌려준다.
 임계값은 `scoring.PSEO_MIN_IMP`(=50)·`scoring.PSEO_MAX_CTR`(=1.5)이고,
 사이트 규모에 맞춰 인자로 올릴 수 있다 — 노출이 큰 사이트면 올린다.
+`scoring.py load`(5절)가 이 후보 상위 10개를 개별 `pseo_pattern` 기회로
+선적재한다 — 군집으로 묶는 것은 여전히 아래 2~3단계(Claude)다.
 
 **2단계 — 패턴 클러스터링 (코드 아님, Claude 판단):**
 후보들을 "변수 슬롯 하나만 다른 템플릿"으로 묶는다.
@@ -86,36 +91,49 @@ CTR이 낮으면 진짜 문제다.
 **프리셋 편향:** directory 최우선(존재 이유 그 자체), saas·local_clinic 유효
 ({경쟁제품} alternative, {지역}×{시술}), game은 {장르}·{유사작} 축으로 제한적.
 
-## 2. 점수 프레임 (0~100) — 코드 아님, Claude 판단
+## 2. 점수 프레임 (0~100) — 계수는 코드(WEIGHTS), fit 판정만 Claude
 
-이 절만은 일부러 코드로 옮기지 않았다. 관련성(w_fit)은 프로젝트 코어 토픽에 대한
-판단이라 임계값으로 굳힐 수 없다. 대신 **코드로 도는 것과 산문으로 남은 것을
-헷갈리지 않도록** 여기 명시한다: 아래 계수는 Claude가 매번 정하고,
-`opportunities.score` 에 그 결과만 적재된다.
+계수는 이제 Claude가 매번 정하지 않는다. `scoring.WEIGHTS`(프리셋별 고정, 각 합
+1.0)를 `scoring.score(kind, metrics, project_type)`가 적용해 **결정적으로**
+계산한다 — 같은 입력이면 언제나 같은 점수다. 예전엔 계수가 런마다 Claude 재량이라
+두 런의 점수를 비교할 수 없었다.
 
 ```
-score = w_demand · 수요        log10(1+impressions or volume) 정규화
-      + w_reach  · 달성가능성   4~20위 근접 보너스, 신뢰 낮은 추정치엔 보수적
-      + w_fit    · 관련성      프로젝트 코어 토픽 적합도 (Claude 판정 0~1)
-      + w_ai     · AI 노출     citation gap / 미노출 프롬프트 연관 시 가산
+score = w_demand · 수요        min(1, log10(1+impressions)/5)  — 노출 10만이면 1.0
+      + w_reach  · 달성가능성   1 - gap_to_page1(pos)/10. 순위 미확인이면 보수적 0.3
+      + w_fit    · 관련성      metrics["fit"] 0~1, 미지정 시 중립 0.5
+      + w_ai     · AI 노출     metrics["ai"], 미지정 시 ai_citation_gap·aio_exposure만 1.0
 ```
 
-정확한 계수는 고정하지 않는다. 대신 프리셋별 방향(불변):
-- **saas**: w_ai 최상향 — best-of 리스트 인용이 전장
-- **local_clinic**: 지역 한정 키워드 w_fit 상향 (네이버 미측정 한계를 reasoning에 명시)
-- **game**: 추천·리스트형 인용 가산
-- **directory**: coverage kind를 개별 키워드보다 우선
+| type | w_demand | w_reach | w_fit | w_ai |
+|------|---------|---------|-------|------|
+| game | .30 | .25 | .25 | .20 |
+| local_clinic | .25 | .20 | .45 | .10 |
+| saas | .20 | .20 | .15 | .45 |
+| directory | .40 | .25 | .20 | .15 |
+
+미등록 type은 saas 계수로 폴백. 프리셋별 방향(saas는 w_ai 최상향 — best-of
+리스트 인용이 전장, local_clinic은 w_fit 상향 — 네이버 미측정 한계는 reasoning에
+명시, directory는 수요·coverage 우선)은 이 표에 굳어 있다.
+
+**Claude 재량으로 남은 것:** (a) 관련성 — 코어 토픽 적합도를 판단해
+`metrics["fit"]`(0~1)로 넘기거나, 적재 후 점수·reasoning을 보정한다.
+안 넘기면 중립 0.5로 돌지만 그래도 결정적이다. (b) reasoning 보강 — load가
+적는 템플릿 문장 위에 원인 가설·맥락을 얹는다 (3절). (c) 예외 판단 —
+수치로 못 거르는 케이스(예: 시즌성)는 reasoning에 근거를 적고 조정한다.
 
 ## 3. reasoning 작성 규칙
 
-- 상위 10개 기회에만 작성. 1~2문장, 반드시 수치 포함.
+- `scoring.py load`가 적재하는 기회에는 수치 포함 템플릿 reasoning이 이미 붙는다.
+  Claude의 일은 **상위 10개를 보강**하는 것: 원인 가설·맥락·fit 판단을 1~2문장으로.
   예: "노출 1,840·평균 8.2위로 1페이지 하단 — 타이틀·본문 보강만으로 상단 진입 여지 (gsc 07-21)."
 - 금지: Brain에 없는 추정 수치, 볼륨이 NULL인데 볼륨 언급, 단발 AI 체크를 사실처럼 단정.
-- AI 관련 기회는 표본 수를 병기: "3엔진×1샘플 기준" 식으로.
+- AI 관련 기회는 표본 수를 병기: "3엔진×2샘플 기준" 식으로.
 
 ## 4. 데이터 리터러시 (리포트 해석 규칙 — 사용자에게도 상기)
 
-1. AI 답변은 비결정적 → 단발 수치가 아니라 주 단위 추세. 중요 프롬프트는 --samples 2~3.
+1. AI 답변은 비결정적 → 단발 수치가 아니라 주 단위 추세. 기본 2샘플(config
+   `ai_samples`=2, 비용 2배 트레이드오프), 중요 프롬프트는 `--samples 3`.
 2. API+네이티브 검색 ≈ 소비자 앱 (메모리·개인화 없음) → 방향 지표로만.
 3. GSC: 2~3일 지연, 저노출 롱테일은 익명화로 누락, position은 평균값.
 3b. **기간이 다른 스냅샷을 빼지 않는다.** `gsc_snapshots.period_days`가 다르면
@@ -123,15 +141,31 @@ score = w_demand · 수요        log10(1+impressions or volume) 정규화
    비교하는 SQL에는 반드시 `period_days`가 같다는 조건을 넣고, 짝이 없으면
    "비교할 같은 기간 기록이 없다"고 말한다. 비교 짝 선택은 `scoring.snapshot_pair()`가
    실행한다 (대시보드와 리포트가 같이 쓴다).
-4. 순위 ±2~3 변동과 GSC Δpos ±0.5 미만은 노이즈 취급 — 이 바닥값이
-   `scoring.NOISE_POS`(=0.5)이고 `scoring.movers()`가 그걸로 오름/내림을 가른다.
+4. 순위 ±3 변동(`scoring.RANK_NOISE`=3, rank_snapshots 정수 순위용)과
+   GSC Δpos ±0.5 미만(`scoring.NOISE_POS`=0.5, 평균 순위 Δ용 — 다른 축이다)은
+   노이즈 취급. `scoring.movers()`가 NOISE_POS로 오름/내림을 가른다.
    대시보드는 예전에 0.4를 썼다(문서와 어긋나 있었다). 지금은 문서대로 0.5다.
 5. 순위 ≠ 트래픽 (제로클릭) → 최종 지표는 클릭.
 6. 볼륨·난이도는 전부 추정치 — 우선순위용 상대값으로만.
 
 ## 5. opportunities 적재 방법
 
-분석 후 INSERT는 파이썬 원라이너로 (db.py sql은 읽기 전용 커넥션이라 쓸 수 없다):
+**기본 경로 — 기계 판정분은 CLI 한 줄:**
+
+```bash
+python scripts/scoring.py load <project>
+```
+
+projects.type을 읽어 WEIGHTS를 적용하고, striking / ctr_gaps / cannibalization /
+rank_decay / pseo_candidates(상위 10) / coverage(클러스터별 1건)를 전부 돌려
+`score()` 점수 + 수치 포함 템플릿 reasoning으로 적재한다. 적재 kind:
+`striking_distance | ctr_gap | cannibalization | rank_decay | pseo_pattern | coverage`.
+`db.run(kind="analysis")` 컨텍스트 안에서 돌고, 완료 시
+`loaded N opportunities for '<project>' (type=..., gsc <date>)` 를 출력한다.
+
+**Claude가 직접 적재하는 것은 load가 못 하는 것만** — pseo_pattern 군집(1b절
+2~3단계), fit 보정, ai_citation_gap 등 Brain 조회 + 판단이 필요한 kind.
+그때는 아래 파이썬 패턴으로 (db.py sql은 읽기 전용 커넥션이라 쓸 수 없다):
 
 **반드시 `db.upsert_opportunities`로 쓴다.** `(project_id, kind, target)`에 UNIQUE 인덱스가 걸려 있어
 그냥 INSERT하면 두 번째 런에서 터진다. 그리고 `status`를 건드리지 않는 것(트리아지 보존 — 사용자가

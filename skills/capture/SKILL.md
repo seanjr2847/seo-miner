@@ -82,8 +82,11 @@ Brain 수집 없이 gsc MCP 툴(`search_analytics` 등)로 바로 조회해 답�
 
 ### /capture ai {P}
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →
-실행(중요 프롬프트만 `--samples 2~3`). 요약 매트릭스를 보여주고, 애매한 판정
-(별칭 변형·한글 표기 등)은 answer_excerpt를 sql로 읽어 직접 재판정 후 결과를 설명한다.
+실행(기본 2샘플 — config `ai_samples`, 비용 2배 트레이드오프. 중요 프롬프트는
+`--samples 3`). 요약 매트릭스를 보여주고, 요청 실패가 있으면 매트릭스 분모가 그만큼
+줄어든 것임을 함께 말한다. 애매한 판정(별칭 변형·한글 표기 등)은 answer_excerpt를
+sql로 읽어 직접 재판정 후 결과를 설명한다 — 답변 전문이 저장되므로(상한 8000자)
+재판정 근거로 충분하다.
 
 OPENROUTER_API_KEY 미설정이면 browse 스킬(브라우저 실측, 키 불필요)을 대안으로 안내한다.
 
@@ -100,8 +103,13 @@ content_gap은 rank 수확 경쟁사 기반의 부분 분석만 가능하고,
 gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아래) → report 순서로 한 번에.
 
 ### 분석 단계 (gaps 이후 자동)
-`references/scoring.md`를 읽고 기회 스코어링 → opportunities INSERT (상위 10개 reasoning
-필수, 수치 인용) → Next Actions 3~5개를 JSON 파일로 저장.
+1. `python scripts/scoring.py load {P}` — 기계 판정분(striking_distance·ctr_gap·
+   cannibalization·rank_decay·pseo 후보·coverage)을 결정적 점수·수치 reasoning과
+   함께 opportunities에 적재한다.
+2. 적재된 기회를 sql로 검토하고 상위 10개의 reasoning을 보강한다 — 원인 가설·
+   fit 판단·맥락 (`references/scoring.md` 2~3절).
+3. pseo_pattern 군집 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로 추가
+   적재 → Next Actions 3~5개를 JSON 파일로 저장.
 
 ### /capture dash {P} — 로컬 대시보드
 `python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다

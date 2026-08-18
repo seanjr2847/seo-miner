@@ -1,5 +1,7 @@
 # Type presets: read by Claude during onboarding (F1) & prompt generation (F5).
-# They shape keyword expansion angles, AI prompt templates, and scoring weights.
+# They shape keyword expansion angles and AI prompt templates.
+# Numeric score weights live in scripts/scoring.py WEIGHTS (per-type, deterministic);
+# scoring_bias here is the prose rationale behind those numbers, not the numbers.
 game:
   keyword_angles: ["{genre} 추천", "games like {similar}", "{title} 공략", "{title} 리뷰", "{platform} {genre}"]
   ai_prompt_templates:

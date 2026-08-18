@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS ai_checks (
   mentioned INTEGER DEFAULT 0,                -- brand alias appears in answer text
   cited INTEGER DEFAULT 0,                    -- own domain appears in citations
   cited_domains_json TEXT,                    -- who got cited instead/alongside
-  answer_excerpt TEXT                         -- short excerpt only (verification aid)
+  answer_excerpt TEXT                         -- 답변 전문 (상한 8000자, record_ai_check)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_checks_run ON ai_checks(run_id);
 CREATE TABLE IF NOT EXISTS competitors (
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   run_id INTEGER REFERENCES runs(id),
-  kind TEXT NOT NULL,   -- striking_distance|ai_citation_gap|rank_decay|content_gap|coverage|pseo_pattern|aio_exposure
+  kind TEXT NOT NULL,   -- striking_distance|ai_citation_gap|rank_decay|content_gap|coverage|pseo_pattern|aio_exposure|ctr_gap|cannibalization
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
@@ -216,6 +216,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
                WHERE rn = 1)""")
         conn.execute("CREATE UNIQUE INDEX idx_opp_target "
                      "ON opportunities(project_id, kind, target)")
+        conn.commit()
+
+    # rank_snapshots에 같은 키워드·같은 날 행이 여러 개면 "최신 체크" 조회가 하루 안의
+    # 아무 행이나 잡는다. 키워드·날짜별 최신(rowid 최대)만 남기고 UNIQUE 표현식
+    # 인덱스로 재발을 막는다 — 쓰기 쪽은 write_rank_snapshot이 delete 후 insert.
+    if "idx_rank_kw_day" not in {r["name"] for r in conn.execute("PRAGMA index_list(rank_snapshots)")}:
+        conn.execute("""DELETE FROM rank_snapshots WHERE id NOT IN (
+                          SELECT MAX(id) FROM rank_snapshots
+                           GROUP BY keyword_id, date(checked_at))""")
+        conn.execute("CREATE UNIQUE INDEX idx_rank_kw_day "
+                     "ON rank_snapshots(keyword_id, date(checked_at))")
         conn.commit()
 
 
@@ -380,7 +391,7 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
                         aio_present: int | None = None,
                         aio_cited: int | None = None,
                         checked_at: str | None = None) -> int:
-    """SERP 순위 스냅샷 적재.
+    """SERP 순위 스냅샷 적재. 같은 키워드를 같은 날 다시 확인하면 덮어쓴다(하루 1행).
 
     불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
     안 된다 (serper 경로는 AIO를 측정하지 않아 NULL로 남아야 한다).
@@ -392,11 +403,16 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
     else:
         feat_json = None
 
+    ts = checked_at or now()
+    # write_gsc_snapshot 과 같은 delete-then-insert — 재실행이 중복을 안 쌓는다.
+    # UNIQUE 인덱스 (keyword_id, date(checked_at))가 이 불변식을 DB 수준에서도 지킨다.
+    conn.execute("DELETE FROM rank_snapshots WHERE keyword_id=? AND date(checked_at)=date(?)",
+                 (keyword_id, ts))
     cur = conn.execute(
         """INSERT INTO rank_snapshots(keyword_id, checked_at, position, url,
              serp_features_json, aio_present, aio_cited)
            VALUES(?,?,?,?,?,?,?)""",
-        (keyword_id, checked_at or now(),
+        (keyword_id, ts,
          int(position) if position is not None else None,
          url, feat_json,
          int(aio_present) if aio_present is not None else None,
@@ -516,7 +532,9 @@ def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None
              mentioned, cited, cited_domains_json, answer_excerpt)
            VALUES(?,?,?,?,?,?,?,?)""",
         (prompt_id, run_id, engine, sample_idx, int(mentioned), int(cited),
-         json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:280]))
+         # 전문 저장 — 280자 절단 시절엔 답변 맥락(왜 인용됐/안 됐는지)을 검증할 수
+         # 없었다. 8000자 상한은 비정상 폭주(무한 스트림 캡처 등) 방지 안전핀일 뿐.
+         json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:8000]))
     conn.commit()
     return cur.lastrowid
 

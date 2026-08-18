@@ -235,6 +235,17 @@ def gather(conn, p) -> dict:
                 WHERE c.run_id=? AND c.cited=0 AND c.mentioned=0
                 GROUP BY p2.id ORDER BY p2.category LIMIT 20""", (ai_run["id"],))
 
+    # 런별 인용률 추이 — 최신 런 1건(matrix)만 보면 개선/악화가 안 보인다.
+    ai_trend = q(conn,
+        """SELECT COALESCE(r.finished_at, r.started_at) t,
+                  SUM(c.cited) cited, SUM(c.mentioned) mentioned, COUNT(*) checks
+             FROM runs r JOIN ai_checks c ON c.run_id=r.id
+            WHERE r.project_id=? AND r.kind='ai'
+            GROUP BY r.id ORDER BY r.id""", (pid,))
+    for r in ai_trend:
+        r["cite_rate"] = round(100 * r["cited"] / r["checks"], 1)
+        r["mention_rate"] = round(100 * r["mentioned"] / r["checks"], 1)
+
     rank_dates = [r[0] for r in conn.execute(
         """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
              JOIN keywords k ON k.id=rs.keyword_id
@@ -272,7 +283,8 @@ def gather(conn, p) -> dict:
     return {"project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
             "striking": striking, "matrix": matrix, "gap_domains": gap_domains,
-            "missed": missed, "opps": opps, "opps_total": opps_total, "runs": runs,
+            "missed": missed, "ai_trend": ai_trend,
+            "opps": opps, "opps_total": opps_total, "runs": runs,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
             "ranks": ranks[:30], "aio_gap": aio_gap,
@@ -280,12 +292,15 @@ def gather(conn, p) -> dict:
                 "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
                 (pid,)).fetchone()[0],
             "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
-                      "striking_hi": scoring.STRIKING_HI},
+                      "striking_hi": scoring.STRIKING_HI,
+                      "rank_noise": scoring.RANK_NOISE},
+            # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
+            # 그래프·Δ가 전부 거짓이 된다. p는 화면이 기간 일치를 재확인하는 용도.
             "trend": [dict(r) for r in conn.execute(
-                """SELECT snapshot_date d, SUM(clicks) clk, SUM(impressions) imp,
-                          COUNT(DISTINCT query) q
-                     FROM gsc_snapshots WHERE project_id=?
-                    GROUP BY 1 ORDER BY 1""", (pid,))],
+                """SELECT snapshot_date d, period_days p, SUM(clicks) clk,
+                          SUM(impressions) imp, COUNT(DISTINCT query) q
+                     FROM gsc_snapshots WHERE project_id=? AND period_days=?
+                    GROUP BY 1 ORDER BY 1""", (pid, period))],
             "progress": prog,
             "guide": scoring.stage(prog, p["name"], p["domain"] or "")}
 

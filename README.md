@@ -90,7 +90,7 @@ pip install requests pyyaml
 | `/capture rank` | SERP 순위 스냅샷 + 연관검색어·경쟁사 자동 수확 (유료 키) |
 | `/capture ai` | AI 엔진 인용 체크 (OpenRouter) |
 | `/browse` | **키 없이** 브라우저로 실제 앱(chatgpt·perplexity·gemini)에 직접 질문 |
-| `/capture gaps` | 인용 갭·striking distance·pSEO 패턴 분석 (API 호출 없음) |
+| `/capture gaps` | 인용 갭·striking distance·CTR 갭·카니벌라이제이션·순위 하락·커버리지·pSEO 패턴 분석 (API 호출 없음) |
 | `/capture dash` | 로컬 대시보드 |
 | `/capture report` | 그 시점 화면을 자립형 HTML로 박제 |
 | `/capture ask` | 자유 질문 — Brain을 조회해 수치로 답함 |
