@@ -85,8 +85,17 @@ node로 띄우고, 런처가 파이썬을 찾아 서버를 넘긴다. 서버 부
 윈도우에서 `python`이 마이크로소프트 스토어 스텁이면 런처가 실제 설치본을 찾아낸다 —
 못 찾으면 `~/.capture/env`에 `CAPTURE_PYTHON=<python 경로>`를 넣으면 된다.
 인증은 서비스 계정이 기본이고, `GSC_CREDENTIALS_PATH`를 직접 걸면 그쪽이 우선한다.
-OAuth로 쓰고 싶으면 `~/.capture/env`에 `GSC_OAUTH_CLIENT_SECRETS_FILE`을 넣는다
-(단 동의 화면 설정이 추가로 필요하고, `collect_gsc.py`는 여전히 서비스 계정을 쓴다).
+
+**인증은 한 벌이다** — `collect_gsc.py`는 서비스 계정 키가 없으면 이 MCP 서버의
+인증 해석기(`gsc_server.get_gsc_service()`)를 그대로 빌려 쓴다. 서버가 파이썬
+패키지라 JSON-RPC를 왕복할 필요가 없다. 그래서 **OAuth로 붙였다면 서비스 계정을
+따로 만들 필요가 없다**: `~/.capture/env`에 `GSC_OAUTH_CLIENT_SECRETS_FILE`을 넣고
+한 번 브라우저 로그인을 하면, 캐시된 토큰을 MCP와 벌크 수집기가 같이 쓴다.
+
+그래도 기본을 서비스 계정으로 두는 이유: OAuth는 구글 클라우드 콘솔에서 **동의
+화면 설정 + OAuth 클라이언트 만들기**가 추가로 필요하고(서비스 계정에는 없는
+단계다), 테스트 모드로 두면 토큰이 7일마다 만료된다. 무인 수집에는 만료 없는
+서비스 계정이 편하다.
 
 ## 5. OpenRouter (AI 가시성 체크 — 권장)
 

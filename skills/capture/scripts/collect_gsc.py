@@ -5,9 +5,11 @@ Known holes (read reports accordingly, see references/scoring.md):
   * ~2-3 day data delay; low-volume longtail queries are privacy-filtered out
   * position is an AVERAGE across impressions, not a pinpoint rank
 
-Auth: 서비스 계정 키만 쓴다 (전 사이트 공용 1개 — gsc MCP 서버와 같은 키):
-  $GOOGLE_APPLICATION_CREDENTIALS > $CAPTURE_HOME/gsc_service_account.json
-  설치: python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)
+Auth: gsc MCP 서버와 인증을 공유한다 — 어느 쪽으로 붙였든 열쇠는 한 벌이다.
+  1) 서비스 계정 키(권장, 무인 수집): $CAPTURE_HOME/gsc_service_account.json
+     설치: python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)
+  2) 키가 없으면 MCP 서버(mcp-search-console)의 인증을 빌린다 — OAuth로 붙여
+     뒀다면 그 토큰을 그대로 쓰므로 서비스 계정을 따로 만들 필요가 없다.
 Setup walkthrough: references/setup.md
 
 Usage:
@@ -28,6 +30,31 @@ SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
+def _service_via_mcp():
+    """gsc MCP 서버(mcp-search-console)의 인증을 그대로 빌려 쓴다.
+
+    서버가 파이썬 패키지라 JSON-RPC를 왕복할 필요가 없다 — 인증 해석기만 부르면
+    같은 종류의 서비스 객체가 나온다. 덕분에 **OAuth로 붙여 둔 사람은 열쇠를 따로
+    안 만들어도 된다**: 브라우저 로그인 한 번으로 만든 토큰을 MCP와 이 수집기가
+    같이 쓴다 (토큰은 서버가 user_config_dir 에 캐시한다).
+
+    설정은 import 시점에 읽히므로 환경변수를 먼저 걸어야 한다 — 런처(gsc_mcp.mjs)와
+    같은 규칙이라 어느 쪽으로 들어와도 같은 열쇠를 본다.
+    """
+    import os
+    os.environ.setdefault("GSC_CREDENTIALS_PATH", str(db.gsc_key()))
+    if not os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE"):
+        os.environ.setdefault("GSC_SKIP_OAUTH", "true")
+    try:
+        import gsc_server
+    except ImportError:
+        return None
+    try:
+        return gsc_server.get_gsc_service()
+    except Exception:
+        return None       # 인증 못 하면 아래의 안내문이 이유를 말한다
+
+
 def get_service(project: str):
     try:
         from googleapiclient.discovery import build
@@ -35,16 +62,26 @@ def get_service(project: str):
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
                  "pip install google-api-python-client")
 
+    # 서비스 계정 키가 있으면 그대로 쓴다 — 읽기 전용 스코프에 무인 실행이고,
+    # 무거운 MCP 서버 모듈을 import 하지 않아도 된다.
     key = db.gsc_key()
-    if not key.exists():
-        sys.exit(f"서비스 계정 키가 없습니다: {key}\n"
-                 "  연결(5분, 전 사이트 공용): "
-                 "python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)")
-    from google.oauth2 import service_account
-    creds = service_account.Credentials.from_service_account_file(
-        str(key), scopes=SCOPES)
-    return build("searchconsole", "v1", credentials=creds,
-                 cache_discovery=False)
+    if key.exists():
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_file(
+            str(key), scopes=SCOPES)
+        return build("searchconsole", "v1", credentials=creds,
+                     cache_discovery=False)
+
+    # 키가 없으면 MCP 쪽 인증에 얹힌다 (OAuth로 붙여 둔 경우가 여기).
+    svc = _service_via_mcp()
+    if svc is not None:
+        return svc
+
+    sys.exit(f"구글 서치콘솔 인증이 없습니다.\n"
+             f"  · 서비스 계정(권장, 무인 수집): 키가 {key} 에 없습니다 —\n"
+             f"    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
+             f"  · OAuth를 쓰신다면: ~/.capture/env 에 GSC_OAUTH_CLIENT_SECRETS_FILE 을\n"
+             f"    넣고 gsc MCP 로 한 번 로그인하면 이 수집기도 그 토큰을 씁니다.")
 
 
 def main() -> None:

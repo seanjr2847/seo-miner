@@ -630,6 +630,51 @@ def test_doctor_json_subprocess():
     assert data["brain_ok"] is True, f"brain_ok 가 True 여야 함: {data.get('brain_ok')}"
 
 
+def test_collect_gsc_auth_falls_back_to_mcp():
+    """collect_gsc: 열쇠가 있으면 직접, 없으면 gsc MCP 인증에 얹히고, 둘 다 없으면 안내.
+
+    OAuth로 붙인 사람이 서비스 계정을 또 만들지 않아도 되는 길이라, 이 세 갈래가
+    실제로 갈라지는지 본다 (네트워크는 타지 않는다 — 서비스 객체는 가짜다).
+    """
+    import collect_gsc
+
+    key = db.gsc_key()
+    key.parent.mkdir(parents=True, exist_ok=True)
+    called = []
+    real_via_mcp = collect_gsc._service_via_mcp
+    collect_gsc._service_via_mcp = lambda: (called.append("mcp"), "mcp-service")[1]
+    try:
+        # ① 열쇠가 있으면 MCP를 거치지 않는다. (가짜 키라 파싱에서 터지는 건 정상 —
+        #    여기서 보는 건 "MCP 로 새지 않는다" 하나다.)
+        key.write_text(json.dumps({"client_email": "x@y.iam.gserviceaccount.com"}),
+                       encoding="utf-8")
+        try:
+            assert collect_gsc.get_service("t") != "mcp-service"
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+        assert not called, "열쇠가 있으면 MCP 인증을 부르지 않아야 한다"
+
+        # ② 열쇠가 없으면 MCP 인증에 얹힌다 — OAuth 사용자가 여기로 온다.
+        key.unlink()
+        assert collect_gsc.get_service("t") == "mcp-service", "열쇠가 없으면 MCP로 가야 한다"
+        assert called == ["mcp"]
+
+        # ③ 둘 다 없으면 두 경로를 다 알려주고 멈춘다.
+        collect_gsc._service_via_mcp = lambda: None
+        try:
+            collect_gsc.get_service("t")
+            raise AssertionError("인증이 하나도 없는데 그냥 진행했다")
+        except SystemExit as e:
+            msg = str(e)
+            assert "connect_gsc.py" in msg and "GSC_OAUTH_CLIENT_SECRETS_FILE" in msg, \
+                f"안내가 두 경로를 다 말하지 않는다: {msg}"
+    finally:
+        collect_gsc._service_via_mcp = real_via_mcp
+        key.unlink(missing_ok=True)
+
+
 def test_gsc_mcp_mjs_syntax():
     """gsc_mcp.mjs: node --check 로 구문 검증. node가 없으면 skip 안내 후 통과."""
     node_bin = shutil.which("node")
