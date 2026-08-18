@@ -25,6 +25,14 @@ Thread(target=srv.serve_forever, daemon=True).start()
 BASE = f"http://127.0.0.1:{srv.server_address[1]}"
 
 
+def get(path: str) -> tuple[int, dict]:
+    try:
+        with urllib.request.urlopen(BASE + path) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
 def post(path: str, body: dict, token: str = dashboard.TOKEN) -> tuple[int, dict]:
     req = urllib.request.Request(BASE + path, json.dumps(body).encode(),
                                  {"Content-Type": "application/json", "X-Token": token})
@@ -33,6 +41,17 @@ def post(path: str, body: dict, token: str = dashboard.TOKEN) -> tuple[int, dict
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
+
+
+# ── /api/doctor (setup_state) 검증 — no_project 상태 ────────────────
+code, doc = get("/api/doctor")
+assert code == 200, code
+expected_keys = {"verdict", "no_project", "must", "extra", "core_ok",
+                 "gsc_ok", "nkeys", "show_deps_gsc_btn", "show_setup"}
+assert expected_keys.issubset(doc.keys()), f"누락된 키: {expected_keys - doc.keys()}"
+assert doc["no_project"] is True
+assert not any("/capture add" in s for s in doc["must"]), f"must에 /capture add가 남음: {doc['must']}"
+assert doc["show_setup"] is True
 
 
 code, _ = post("/api/setup/project", {"name": "x", "type": "saas", "domain": "x.com"},
@@ -75,6 +94,8 @@ env = (HOME / "env").read_text("utf-8")
 assert env.strip() == "OPENROUTER_API_KEY=sk-test", env
 assert os.environ["OPENROUTER_API_KEY"] == "sk-test"      # 진단에 즉시 반영
 assert dashboard.doctor.diagnose()["keys"]["openrouter"] is True
+code, doc = get("/api/doctor")
+assert code == 200 and doc["nkeys"] == 1 and doc["no_project"] is False, doc
 
 post("/api/setup/keys", {"OPENROUTER_API_KEY": ""})       # 빈 값 = 삭제
 assert (HOME / "env").read_text("utf-8").strip() == ""
@@ -100,6 +121,15 @@ assert pg["keywords_found"] == 1
 st = dashboard.scoring.stage(pg, "demo", "demo.com")
 assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
 assert st["steps"][3]["cmd"] == "/capture add demo", st   # 폼 등록엔 질문이 아직 없다
+
+# ── gather / payload wire format 검증 ────────────────────────────────
+p = dashboard.db.get_project(conn, "demo")
+gdata = dashboard.gather(conn, p)
+assert gdata["project"]["name"] == "demo"
+assert isinstance(gdata["opps"], list) and len(gdata["opps"]) <= 200
+assert gdata["rules"]["page1"] == dashboard.scoring.PAGE1
+assert "trend" in gdata and "progress" in gdata and "guide" in gdata
+assert gdata["opps_total"] == 0
 conn.close()
 
 # ── 박제본(export) ──────────────────────────────────────────────────

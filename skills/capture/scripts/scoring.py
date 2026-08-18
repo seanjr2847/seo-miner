@@ -156,6 +156,21 @@ def moved_down(dpos: float, dclk: int) -> bool:
     return dpos < -NOISE_POS or dclk < 0
 
 
+def snapshot_pair(conn: sqlite3.Connection, project_id: int) -> tuple[str | None, str | None, int | None, bool]:
+    """직전 스냅샷을 같은 period_days 중 가장 최근으로 고른다 (scoring.md 4-3b).
+
+    기간이 다른 스냅샷끼리 빼면 Δ순위·Δ클릭이 전부 거짓이 된다.
+    """
+    snaps = [(r[0], r[1]) for r in conn.execute(
+        """SELECT snapshot_date, MAX(period_days) period_days
+             FROM gsc_snapshots WHERE project_id=?
+            GROUP BY snapshot_date ORDER BY 1 DESC LIMIT 10""", (project_id,)).fetchall()]
+    cur, period = snaps[0] if snaps else (None, None)
+    prev = next((d for d, pd in snaps[1:] if pd == period), None)
+    period_mismatch = bool(snaps[1:]) and prev is None
+    return cur, prev, period, period_mismatch
+
+
 def movers(now_: dict, before: dict, *, limit: int = 10) -> tuple[list[dict], list[dict]]:
     """두 스냅샷 집계(query -> row)를 받아 (오른 것, 내린 것).
 
@@ -377,6 +392,18 @@ def _selfcheck() -> None:
     got = [o["target"] for o in opportunities(conn, 1, limit=10)]
     assert got == ["new-high", "new-low", "old-done"], got
     assert "id" in opportunities(conn, 1, limit=1, with_id=True)[0]
+
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-20',28)")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-10',90)")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-01',28)")
+    cur, prev, period, mismatch = snapshot_pair(conn, 2)
+    assert (cur, prev, period, mismatch) == ("2026-08-20", "2026-08-01", 28, False), (cur, prev, period, mismatch)
+
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(3,'2026-08-20',28)")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(3,'2026-08-10',90)")
+    cur, prev, period, mismatch = snapshot_pair(conn, 3)
+    assert (cur, prev, period, mismatch) == ("2026-08-20", None, 28, True), (cur, prev, period, mismatch)
+
     print("scoring self-check ok")
 
 

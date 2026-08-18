@@ -680,26 +680,18 @@ async function load() {
 async function loadDoctor() {
   try {
     const d = await (await fetch("/api/doctor")).json();
-    // doctor 문구는 채팅용이라 "채팅에 /capture add 하세요"라고 말한다. 이 화면에는
-    // 등록 폼이 바로 아래 있으므로 그쪽을 가리킨다 — 같은 일을 두 번 시키지 않는다.
-    const noProj = !d.brain.projects.length;
     let h = `<div class="verdict">${esc(d.verdict)}</div>`;
     // 지금 할 것은 한 화면에 하나만 있어야 한다 — 사이트가 있으면 안내(실측 판정)가
     // 채우고, 없으면 여기서 등록 폼을 가리킨다. #nx는 둘의 공용 자리.
-    h += noProj
+    h += d.no_project
       ? `<div class="nx" id="nx">아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을
          누르시면 됩니다.</div>`
       : `<div class="nx" id="nx"></div>`;
-    const must = noProj ? d.must.filter(s => !s.includes("/capture add")) : d.must;
-    if (must.length)
-      h += `<ul class="must">${must.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
-    const extra = [
-      ...d.locked.map(c => `${c.name} — ${c.desc}. 켜려면: ${c.fix || "필수 설치가 끝나면 켜집니다."}`),
-      ...d.later,
-    ];
-    if (extra.length)
-      h += `<details><summary>안 켠 기능·나중에 할 것 ${extra.length}개 — 없어도 됩니다</summary>
-        <ul>${extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
+    if (d.must.length)
+      h += `<ul class="must">${d.must.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
+    if (d.extra.length)
+      h += `<details><summary>안 켠 기능·나중에 할 것 ${d.extra.length}개 — 없어도 됩니다</summary>
+        <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     $("docban").innerHTML = h;
     $("docban").hidden = false;
     applyNext();                         // 안내가 먼저 도착했으면 그 값을 살린다
@@ -712,20 +704,18 @@ const mark = (id, done, todo) => $(id).outerHTML =
   `<span id="${id}" class="stat ${done ? "ok" : "todo"}">${done ? "완료" : todo}</span>`;
 
 function renderSetup(d) {
-  const hasProj = d.brain.projects.length > 0;
   mark("s-deps", d.core_ok, "설치 필요");
-  mark("s-proj", hasProj, "아직 없음");
+  mark("s-proj", !d.no_project, "아직 없음");
   // 구버전 OAuth 토큰은 더 이상 안 돈다 — 서비스 계정 키만 "연결됨"으로 친다.
-  mark("s-gsc", d.keys.gsc_service_account, "선택 — 안 해도 됩니다");
-  const nkeys = [d.keys.openrouter, d.keys.serper, d.keys.dataforseo].filter(Boolean).length;
-  $("s-keys").outerHTML = nkeys
-    ? `<span id="s-keys" class="stat ok">${nkeys}개 저장됨</span>`
+  mark("s-gsc", d.gsc_ok, "선택 — 안 해도 됩니다");
+  $("s-keys").outerHTML = d.nkeys
+    ? `<span id="s-keys" class="stat ok">${d.nkeys}개 저장됨</span>`
     : `<span id="s-keys" class="stat todo">선택 — 안 해도 됩니다</span>`;
-  $("btn-depsgsc").hidden = !d.keys.gsc_service_account || d.deps_gsc.googleapiclient;
+  $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
   $("btn-deps").className = d.core_ok ? "go sec" : "go";
   $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치하기";
   // 할 게 남았으면 펼쳐 둔다. 다 끝난 뒤엔 헤더의 [설정]으로 연다.
-  if (d.must.length || !hasProj) $("setup").hidden = false;
+  if (d.show_setup) $("setup").hidden = false;
 }
 
 function busy(btn, msg, on) {

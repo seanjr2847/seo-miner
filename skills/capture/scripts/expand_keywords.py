@@ -111,13 +111,15 @@ def gsc_mine(conn, project_id: int, locale: str) -> list[tuple[str, str, str]]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
-    collector.add_throttle(ap)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
     ap.add_argument("--mode", default="all", choices=["all", "autocomplete", "gsc"])
     ap.add_argument("--per-seed-cap", type=int, default=60)
     a = ap.parse_args()
 
     conn, p, cfg = collector.open_project(a.project)
-    throttle = float(collector.resolve(a.throttle, cfg, "throttle", 0.5))
+    s = collector.settings(a, cfg)
+    throttle = s["throttle"]
     locale = p["locale"] or "ko-KR"
     hl, _, gl = locale.partition("-")
     gl = (gl or "KR").lower()

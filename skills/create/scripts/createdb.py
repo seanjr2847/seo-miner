@@ -14,10 +14,12 @@ CLI:
   python createdb.py done   <project> <id> --path PATH [--branch BR] [--note N]
   python createdb.py list   <project>
   python createdb.py merged <creation_id>
+  python createdb.py sync   <project> --repo PATH
 """
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -75,10 +77,8 @@ def claim(project: str, ids: list[int]) -> None:
     conn.close()
 
 
-def done(project: str, opp_id: int | None, path: str,
-         branch: str | None, note: str | None) -> None:
-    conn = connect()
-    pid = pid_of(conn, project)
+def _mark_done(conn, pid: int, opp_id: int | None, path: str,
+               branch: str | None, note: str | None) -> None:
     if branch and not BRANCH_RE.match(branch):
         print(f"경고: 브랜치 '{branch}' 가 규칙과 다릅니다 — 기대 형식 "
               "capture/{kind}-{slug} (기록은 그대로 진행합니다)", file=sys.stderr)
@@ -92,8 +92,54 @@ def done(project: str, opp_id: int | None, path: str,
         conn.commit()
     db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
                        branch=branch, note=note)
+
+
+def done(project: str, opp_id: int | None, path: str,
+         branch: str | None, note: str | None) -> None:
+    conn = connect()
+    pid = pid_of(conn, project)
+    _mark_done(conn, pid, opp_id, path, branch, note)
     print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
     conn.close()
+
+
+def sync(project: str, repo: str) -> None:
+    try:
+        p = subprocess.run(
+            ["git", "-C", str(repo), "log", r"--grep=\[opp\ #", r"--format=%H%x09%s"],
+            capture_output=True, encoding="utf-8", errors="replace",
+        )
+    except FileNotFoundError:
+        sys.exit("git 실행 파일을 찾을 수 없습니다.")
+    if p.returncode != 0:
+        err = p.stderr.strip() or p.stdout.strip() or "git 저장소가 아니거나 실행 오류"
+        sys.exit(f"git log 실행 실패 ({repo}): {err}")
+
+    conn = connect()
+    pid = pid_of(conn, project)
+    closed = 0
+    untouched = 0
+
+    for line in p.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sha, _, _ = line.partition("\t")
+        ids = [int(x) for x in re.findall(r"\[opp #(\d+)\]", line)]
+        for opp_id in ids:
+            row = conn.execute(
+                "SELECT id, status FROM opportunities WHERE id=? AND project_id=?",
+                (opp_id, pid)
+            ).fetchone()
+            if row and row["status"] in ("new", "acked"):
+                _mark_done(conn, pid, opp_id, "", branch=None,
+                           note=f"손으로 이미 실행: {sha[:8]}")
+                closed += 1
+            else:
+                untouched += 1
+
+    conn.close()
+    print(f"sync 완료: {closed}건 닫음, {untouched}건 건드리지 않음")
 
 
 def list_creations(project: str) -> None:
@@ -127,6 +173,8 @@ if __name__ == "__main__":
     p3.add_argument("--note")
     p4 = sub.add_parser("list"); p4.add_argument("project")
     p5 = sub.add_parser("merged"); p5.add_argument("creation_id", type=int)
+    p6 = sub.add_parser("sync"); p6.add_argument("project")
+    p6.add_argument("--repo", required=True)
     a = ap.parse_args()
     if a.cmd == "pick":
         pick(a.project, a.kinds, a.limit)
@@ -138,3 +186,5 @@ if __name__ == "__main__":
         list_creations(a.project)
     elif a.cmd == "merged":
         merged(a.creation_id)
+    elif a.cmd == "sync":
+        sync(a.project, a.repo)

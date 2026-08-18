@@ -50,13 +50,14 @@ def get_service(project: str):
 def main() -> None:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
-    ap.add_argument("--days", type=int, default=None)
+    collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int)
     ap.add_argument("--row-limit", type=int, default=100000,
                     help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
     a = ap.parse_args()
 
     conn, p, cfg = collector.open_project(a.project)
-    days = int(collector.resolve(a.days, cfg, "gsc_days", 28))
+    s = collector.settings(a, cfg)
+    days = s["gsc_days"]
     prop = p["gsc_property"]
     if not prop:
         sys.exit("project yaml has no gsc_property "

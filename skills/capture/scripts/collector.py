@@ -33,15 +33,85 @@ def config() -> dict:
     return _cache
 
 
-def resolve(cli, project_cfg: dict | None, key: str, fallback):
-    """설정 하나를 우선순위대로 고른다. CLI 기본값은 반드시 None 이어야 한다 —
-    argparse 리터럴이 들어 있으면 그게 항상 이겨서 설정 파일이 죽는다."""
-    if cli is not None:
-        return cli
-    if project_cfg and project_cfg.get(key) is not None:
-        return project_cfg[key]
-    d = (config().get("defaults") or {}).get(key)
-    return fallback if d is None else d
+class _Setting:
+    def __init__(self, dest: str, key: str, fallback, type_fn, help_text: str | None):
+        self.dest = dest
+        self.key = key
+        self.fallback = fallback
+        self.type_fn = type_fn
+        self.help = help_text
+
+
+_REGISTRY: dict[str, _Setting] = {}
+
+
+def add_setting(ap, flag: str, *, key: str, fallback, type=int, help: str | None = None) -> None:
+    """argparse에 default=None으로 등록하고 설정 메타데이터(dest, key, fallback, type)를 기록한다."""
+    dest = flag.lstrip("-").replace("-", "_")
+    spec = _Setting(dest=dest, key=key, fallback=fallback, type_fn=type, help_text=help)
+    if not hasattr(ap, "_collector_settings"):
+        ap._collector_settings = []
+    ap._collector_settings.append(spec)
+    _REGISTRY[key] = spec
+
+    kwargs = {"type": type, "default": None}
+    if help is not None:
+        kwargs["help"] = help
+    ap.add_argument(flag, **kwargs)
+
+
+def settings(args, cfg: dict | None) -> dict:
+    """등록된 모든 설정을 우선순위대로 해석한다:
+    CLI (None 아니면, 0도 유효값) > 프로젝트 yaml > config.yaml defaults > fallback.
+    limits.* 키는 프로젝트 yaml의 limits 아래에서 읽는다.
+    """
+    out = {}
+    gcfg_defaults = (config().get("defaults") or {})
+
+    specs = list(_REGISTRY.values())
+    for spec in specs:
+        val = None
+
+        # 1. CLI (0도 유효값)
+        if args is not None:
+            if hasattr(args, spec.dest):
+                cli_v = getattr(args, spec.dest)
+                if cli_v is not None:
+                    val = spec.type_fn(cli_v) if spec.type_fn else cli_v
+            elif isinstance(args, dict):
+                if spec.dest in args and args[spec.dest] is not None:
+                    val = spec.type_fn(args[spec.dest]) if spec.type_fn else args[spec.dest]
+                elif spec.key in args and args[spec.key] is not None:
+                    val = spec.type_fn(args[spec.key]) if spec.type_fn else args[spec.key]
+
+        # 2. 프로젝트 yaml
+        if val is None and cfg and isinstance(cfg, dict):
+            if spec.key.startswith("limits."):
+                subkey = spec.key.split(".", 1)[1]
+                limits_sec = cfg.get("limits")
+                if isinstance(limits_sec, dict) and limits_sec.get(subkey) is not None:
+                    raw = limits_sec[subkey]
+                    val = spec.type_fn(raw) if spec.type_fn else raw
+            else:
+                if cfg.get(spec.key) is not None:
+                    raw = cfg[spec.key]
+                    val = spec.type_fn(raw) if spec.type_fn else raw
+
+        # 3. config.yaml defaults
+        if val is None:
+            if spec.key in gcfg_defaults and gcfg_defaults[spec.key] is not None:
+                raw = gcfg_defaults[spec.key]
+                val = spec.type_fn(raw) if spec.type_fn else raw
+
+        # 4. Fallback
+        if val is None:
+            raw = spec.fallback
+            val = spec.type_fn(raw) if (spec.type_fn and raw is not None) else raw
+
+        out[spec.key] = val
+        out[spec.dest] = val
+
+    return out
 
 
 def add_common(ap, *, dry_run: bool = True) -> None:
@@ -50,11 +120,6 @@ def add_common(ap, *, dry_run: bool = True) -> None:
     if dry_run:
         ap.add_argument("--dry-run", action="store_true",
                         help="실제 호출·저장 없이 무엇을 할지만 보여준다")
-
-
-def add_throttle(ap) -> None:
-    ap.add_argument("--throttle", type=float, default=None,
-                    help="요청 간격(초). 기본은 config.yaml defaults.throttle")
 
 
 def project_cfg(name: str) -> dict:
@@ -85,19 +150,38 @@ def open_project(name: str):
     return conn, p, project_cfg(p["config_path"] or name)
 
 
-def limit_of(cfg: dict | None, key: str, fallback: int) -> int:
-    """프로젝트 yaml limits.* — 수집기마다 다르게 파던 idiom 하나로."""
-    return int(((cfg or {}).get("limits") or {}).get(key, fallback))
-
-
 def _selfcheck() -> None:
-    assert resolve(3, {"depth": 9}, "depth", 1) == 3           # CLI 최우선
-    assert resolve(None, {"depth": 9}, "depth", 1) == 9        # 프로젝트 yaml
-    assert resolve(None, None, "throttle", 0.7) in (0.5, 0.7)  # config.yaml 또는 리터럴
-    assert resolve(None, {}, "없는키", 42) == 42
-    assert limit_of({"limits": {"max_keywords": 5}}, "max_keywords", 99) == 5
-    assert limit_of(None, "max_keywords", 99) == 99
-    assert limit_of({}, "max_keywords", 99) == 99
+    import argparse
+    ap = argparse.ArgumentParser()
+    add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
+    add_setting(ap, "--throttle", key="throttle", fallback=0.7, type=float)
+    add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=99, type=int)
+    add_setting(ap, "--custom", key="custom_key", fallback=42, type=int)
+
+    # 1. CLI 최우선 + 0도 유효값 (fallback을 이긴다)
+    a = ap.parse_args(["--depth", "3", "--max-keywords", "0", "--throttle", "0"])
+    s = settings(a, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0})
+    assert s["serp_depth"] == 3
+    assert s["limits.max_keywords"] == 0, "CLI 0이 프로젝트 yaml/fallback을 이겨야 한다"
+    assert s["max_keywords"] == 0
+    assert s["throttle"] == 0.0, "CLI 0.0이 이겨야 한다"
+
+    # 2. 프로젝트 yaml
+    a_none = ap.parse_args([])
+    s_yaml = settings(a_none, {"serp_depth": 9, "limits": {"max_keywords": 5}})
+    assert s_yaml["serp_depth"] == 9
+    assert s_yaml["limits.max_keywords"] == 5
+
+    # 3. config.yaml defaults
+    s_cfg = settings(a_none, None)
+    assert s_cfg["throttle"] in (0.5, 0.7)
+    assert s_cfg["serp_depth"] == 10
+
+    # 4. 코드 fallback
+    s_fb = settings(a_none, {})
+    assert s_fb["custom_key"] == 42
+    assert s_fb["limits.max_keywords"] == 99
+
     print("collector self-check ok")
 
 

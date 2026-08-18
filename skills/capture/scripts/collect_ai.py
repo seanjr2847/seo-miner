@@ -79,18 +79,20 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
-    collector.add_throttle(ap)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
     ap.add_argument("--engines", default=None, help="comma list; default from config")
-    ap.add_argument("--samples", type=int, default=None)
-    ap.add_argument("--max-prompts", type=int, default=None)
+    collector.add_setting(ap, "--samples", key="ai_samples", fallback=1, type=int)
+    collector.add_setting(ap, "--max-prompts", key="limits.max_ai_prompts", fallback=30, type=int)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
     ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
     a = ap.parse_args()
 
     conn, p, cfg = collector.open_project(a.project)
     gcfg = collector.config()
-    samples = int(collector.resolve(a.samples, cfg, "ai_samples", 1))
-    throttle = float(collector.resolve(a.throttle, cfg, "throttle", 0.5))
+    s = collector.settings(a, cfg)
+    samples = s["ai_samples"]
+    throttle = s["throttle"]
 
     engines_map = {**DEFAULT_ENGINES, **(gcfg.get("ai_engines") or {})}
     engine_names = ([e.strip() for e in a.engines.split(",")] if a.engines
@@ -100,7 +102,7 @@ def main() -> None:
 
     # 부분 실행. 이게 없으면 "새로 넣은 8개만 돌려보자"에도 is_active를 손으로
     # 토글해야 하고, 되돌릴 때 통째로 UPDATE 해서 큐레이션한 활성 집합을 날린다.
-    limit = a.max_prompts or collector.limit_of(cfg, "max_ai_prompts", 30)
+    limit = s["limits.max_ai_prompts"]
     if a.ids:
         ids = [int(x) for x in a.ids.split(",") if x.strip()]
         prompts = conn.execute(
@@ -145,12 +147,12 @@ def main() -> None:
         errors = 0
         for row in prompts:
             for engine, model in engines.items():
-                for s in range(samples):
+                for sample in range(samples):   # 이름 주의: s는 위의 settings dict
                     try:
                         res = ask(model, row["prompt"], api_key, p["locale"])
                         mentioned, cited, others = scoring.judge(
                             res["content"], res["citation_urls"], aliases, own_domain)
-                        db.record_ai_check(conn, row["id"], run_id, engine, s,
+                        db.record_ai_check(conn, row["id"], run_id, engine, sample,
                                            mentioned, cited, others, res["content"])
                         r.api_calls += 1
                     except Exception as e:

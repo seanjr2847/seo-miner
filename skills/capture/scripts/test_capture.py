@@ -148,7 +148,38 @@ def test_scoring_rules():
 
 
 def test_collector_settings():
-    """설정 우선순위(CLI > 프로젝트 yaml > config.yaml > 리터럴) 자체점검."""
+    """설정 우선순위(CLI > 프로젝트 yaml > config.yaml > 리터럴) 및 0값 존중 자체점검."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.7, type=float)
+    collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=99, type=int)
+    collector.add_setting(ap, "--custom", key="custom_key", fallback=42, type=int)
+
+    # 1. CLI 최우선 + 0도 유효값 (0이 fallback 및 프로젝트 yaml을 이긴다)
+    a1 = ap.parse_args(["--depth", "3", "--max-keywords", "0", "--throttle", "0"])
+    s1 = collector.settings(a1, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0})
+    assert s1["serp_depth"] == 3
+    assert s1["limits.max_keywords"] == 0, "CLI 0이 프로젝트 yaml 및 fallback을 이겨야 한다"
+    assert s1["max_keywords"] == 0
+    assert s1["throttle"] == 0.0
+
+    # 2. 프로젝트 yaml
+    a2 = ap.parse_args([])
+    s2 = collector.settings(a2, {"serp_depth": 9, "limits": {"max_keywords": 5}})
+    assert s2["serp_depth"] == 9
+    assert s2["limits.max_keywords"] == 5
+
+    # 3. config.yaml defaults
+    s3 = collector.settings(a2, None)
+    assert s3["throttle"] in (0.5, 0.7)
+    assert s3["serp_depth"] == 10
+
+    # 4. fallback
+    s4 = collector.settings(a2, {})
+    assert s4["custom_key"] == 42
+    assert s4["limits.max_keywords"] == 99
+
     collector._selfcheck()
 
 

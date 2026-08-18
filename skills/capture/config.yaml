@@ -12,7 +12,7 @@ ai_engines:
   gemini: "google/gemini-2.5-flash:online"
   claude: "anthropic/claude-sonnet-4.5:online"   # optional 4th engine, same key
 
-# collector.resolve() 가 읽는다: CLI > 프로젝트 yaml > 여기 > 코드 리터럴.
+# collector.settings() 가 읽는다: CLI > 프로젝트 yaml > 여기 > 코드 리터럴.
 defaults:
   gsc_days: 28
   ai_samples: 1          # raise to 2-3 for important prompts (non-determinism)

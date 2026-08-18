@@ -41,9 +41,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
     ap.add_argument("--provider", choices=list(serp_adapter.PROVIDERS))
-    ap.add_argument("--max-keywords", type=int, default=None)
-    ap.add_argument("--depth", type=int, default=None)
-    collector.add_throttle(ap)
+    collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=100, type=int)
+    collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
     ap.add_argument("--no-harvest", action="store_true")
     ap.add_argument("--ids", help="쉼표로 구분한 keyword id — 지정하면 is_active를 무시하고 이것만 조회")
     a = ap.parse_args()
@@ -53,11 +54,10 @@ def main() -> None:
     if not provider:
         sys.exit("SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정 "
                  "(references/setup.md 참조)")
-    depth = int(collector.resolve(a.depth, cfg, "serp_depth", 10))
-    # 리터럴 0.3을 두면 config.yaml defaults.throttle(0.5)에 가려 죽은 값이 된다.
-    throttle = float(collector.resolve(a.throttle, cfg, "throttle", 0.5))
-
-    limit = a.max_keywords or collector.limit_of(cfg, "max_keywords", 100)
+    s = collector.settings(a, cfg)
+    depth = s["serp_depth"]
+    throttle = s["throttle"]
+    limit = s["limits.max_keywords"]
     if a.ids:
         # 부분 실행. 이게 없으면 "이 몇 개만 다시" 하려고 is_active를 직접 토글하게
         # 되는데, 되돌릴 때 통째로 UPDATE 해버려 큐레이션한 활성 집합이 날아간다.

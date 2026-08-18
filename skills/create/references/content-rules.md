@@ -55,4 +55,4 @@
 - [ ] PR 본문에 기회 reasoning + 수치 근거를 붙였는가
 - [ ] 수정 작업이면 diff가 최소인가
 - [ ] pSEO면 1차 배치 상한을 지켰는가
-- [ ] createdb.py done 으로 Brain에 기록했는가
+- [ ] createdb.py done 으로 Brain에 기록했는가 (손으로 한 것은 createdb.py sync로 반영)

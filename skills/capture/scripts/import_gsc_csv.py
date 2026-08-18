@@ -115,8 +115,8 @@ def main() -> None:
                     help="Search Console에서 내보낸 zip 또는 csv "
                          "(생략하면 다운로드 폴더에서 가장 최근 것을 찾음)")
     ap.add_argument("--downloads-dir", default=None)
-    ap.add_argument("--days", type=int, default=None,
-                    help="내보낼 때 화면에 걸려 있던 기간 (기본 28일)")
+    collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int,
+                          help="내보낼 때 화면에 걸려 있던 기간 (기본 28일)")
     a = ap.parse_args()
 
     # 파일을 읽고 미리보기만 할 때는 Brain을 열지 않는다 — 이 경로는 키도 등록도
@@ -142,15 +142,17 @@ def main() -> None:
                  "내보낸 파일이 맞는지 확인해 주세요.")
     if a.dry_run:
         # Brain을 안 열었으므로 프로젝트 yaml의 gsc_days는 못 본다 — 안내용 숫자다.
+        s_dry = collector.settings(a, None)
         print(f"[csv] {name} — {len(rows)}개 검색어, "
-              f"기간 {int(collector.resolve(a.days, None, 'gsc_days', 28))}일로 기록")
+              f"기간 {s_dry['gsc_days']}일로 기록")
         for q, c, i, ctr, pos in rows[:5]:
             print(f"  {pos:>5}위  노출={i:<6} 클릭={c:<4} {q}")
         print("  ... (--dry-run, 저장 안 함)")
         return
 
     conn, p, cfg = collector.open_project(a.project)
-    days = int(collector.resolve(a.days, cfg, "gsc_days", 28))
+    s = collector.settings(a, cfg)
+    days = s["gsc_days"]
     print(f"[csv] {name} — {len(rows)}개 검색어, 기간 {days}일로 기록")
     snap = str(date.today())
     with db.run(conn, p["id"], "gsc") as r:

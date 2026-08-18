@@ -68,4 +68,33 @@ conn = createdb.connect()
 assert conn.execute("SELECT merged FROM creations WHERE id=?", (cid,)).fetchone()[0] == 1
 conn.close()
 
-print(f"ok — pick·claim·done·list·merged 정상, 루프 닫힘 확인 ({HOME})")
+# sync 검증: 임시 git repo에 commit 만들고 sync 돌리기
+repo_dir = Path(tempfile.mkdtemp(prefix="seo-miner-git-test-"))
+conn = createdb.connect()
+conn.execute(
+    """INSERT INTO opportunities(project_id, kind, target, score, reasoning, status)
+       VALUES(?,?,?,?,?,'new')""",
+    (pid, "striking_distance", "새 기회", 90.0, "테스트 기회"))
+conn.commit()
+oid2 = conn.execute("SELECT id FROM opportunities WHERE target='새 기회'").fetchone()[0]
+conn.close()
+
+subprocess.run(["git", "init", str(repo_dir)], check=True, capture_output=True)
+subprocess.run(
+    ["git", "-C", str(repo_dir), "-c", "user.email=t@t", "-c", "user.name=t",
+     "commit", "--allow-empty", "-m", f"capture(fix): x [opp #{oid2}]"],
+    check=True, capture_output=True)
+
+out = run("sync", "t", "--repo", str(repo_dir))
+assert "1건 닫음" in out, out
+
+conn = createdb.connect()
+assert conn.execute("SELECT status FROM opportunities WHERE id=?",
+                    (oid2,)).fetchone()[0] == "done", "sync로 루프가 안 닫혔다"
+c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_id=?",
+                  (oid2,)).fetchone()
+assert c2 is not None and "손으로 이미 실행:" in (c2["note"] or ""), c2
+conn.close()
+
+print(f"ok — pick·claim·done·list·merged·sync 정상, 루프 닫힘 확인 ({HOME})")
+

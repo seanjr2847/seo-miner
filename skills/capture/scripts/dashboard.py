@@ -156,6 +156,35 @@ def create_project(f: dict) -> dict:
     return {"ok": True, "name": name, "path": str(path)}
 
 
+def setup_state() -> dict:
+    """setup 스킬의 doctor.diagnose()를 소비해 대시보드 화면이 실제로 쓰는 평평한 키만 방출."""
+    d = doctor.diagnose()
+    projects = d.get("brain", {}).get("projects", [])
+    no_project = not bool(projects)
+    must = [s for s in d.get("must", []) if not (no_project and "/capture add" in s)]
+    extra = [
+        f"{c['name']} — {c['desc']}. 켜려면: {c.get('fix') or '필수 설치가 끝나면 켜집니다.'}"
+        for c in d.get("locked", [])
+    ] + list(d.get("later", []))
+    keys = d.get("keys", {})
+    deps_gsc = d.get("deps_gsc", {})
+    gsc_ok = bool(keys.get("gsc_service_account"))
+    show_deps_gsc_btn = gsc_ok and not bool(deps_gsc.get("googleapiclient"))
+    show_setup = bool(d.get("must")) or no_project
+
+    return {
+        "verdict": d.get("verdict", ""),
+        "no_project": no_project,
+        "must": must,
+        "extra": extra,
+        "core_ok": bool(d.get("core_ok")),
+        "gsc_ok": gsc_ok,
+        "nkeys": sum(1 for k in ("openrouter", "serper", "dataforseo") if keys.get(k)),
+        "show_deps_gsc_btn": show_deps_gsc_btn,
+        "show_setup": show_setup,
+    }
+
+
 def q(conn, sql, args=()):
     return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
@@ -163,17 +192,7 @@ def q(conn, sql, args=()):
 def gather(conn, p) -> dict:
     """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다."""
     pid = p["id"]
-    # 기간이 다른 스냅샷끼리 빼면 Δ순위·Δ클릭이 전부 거짓이 된다. CSV 경로 기본은
-    # 28일인데 Search Console 화면 기본은 3개월이라 실제로 자주 어긋난다.
-    # 그래서 직전 스냅샷을 '날짜만'이 아니라 '같은 period_days 중 가장 최근'으로 고른다.
-    snaps = [(r["snapshot_date"], r["period_days"]) for r in conn.execute(
-        """SELECT snapshot_date, MAX(period_days) period_days
-             FROM gsc_snapshots WHERE project_id=?
-            GROUP BY snapshot_date ORDER BY 1 DESC LIMIT 10""", (pid,))]
-    cur, period = snaps[0] if snaps else (None, None)
-    prev = next((d for d, pd in snaps[1:] if pd == period), None)
-    # 이전 스냅샷은 있는데 기간이 안 맞아 비교를 접은 경우 — 화면이 이유를 말해야 한다.
-    period_mismatch = bool(snaps[1:]) and prev is None
+    cur, prev, period, period_mismatch = scoring.snapshot_pair(conn, pid)
 
     def gsc_agg(snap):
         if not snap:
@@ -243,15 +262,15 @@ def gather(conn, p) -> dict:
             aio_gap.append(kw)
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
-    opps = scoring.opportunities(conn, pid, limit=12)
-    # 목록은 12개로 자르지만 KPI는 실제 건수를 세야 한다 (자른 개수를 세면 늘 12로 보인다).
+    opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
         (pid,)).fetchone()[0]
     runs = q(conn,
         """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
              FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
-    return {"gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+    prog = progress(conn, pid)
+    return {"project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
             "striking": striking, "matrix": matrix, "gap_domains": gap_domains,
             "missed": missed, "opps": opps, "opps_total": opps_total, "runs": runs,
@@ -260,31 +279,23 @@ def gather(conn, p) -> dict:
             "ranks": ranks[:30], "aio_gap": aio_gap,
             "kw_active": conn.execute(
                 "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-                (pid,)).fetchone()[0]}
+                (pid,)).fetchone()[0],
+            "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
+                      "striking_hi": scoring.STRIKING_HI},
+            "trend": [dict(r) for r in conn.execute(
+                """SELECT snapshot_date d, SUM(clicks) clk, SUM(impressions) imp,
+                          COUNT(DISTINCT query) q
+                     FROM gsc_snapshots WHERE project_id=?
+                    GROUP BY 1 ORDER BY 1""", (pid,))],
+            "progress": prog,
+            "guide": scoring.stage(prog, p["name"], p["domain"] or "")}
 
 
 def payload(project: str) -> dict:
     conn = db.connect()
     try:
         p = db.get_project(conn, project)
-        data = gather(conn, p)
-        data["project"] = dict(p)
-        # 대시보드는 트리아지용이라 리포트의 12개 컷 대신 id 포함 전체를 준다.
-        # 정렬은 scoring 한 곳이 정한다 — 화면과 박제본이 다른 순서로 갈라지지 않는다.
-        data["opps"] = scoring.opportunities(conn, p["id"], limit=200, with_id=True)
-        # 임계값은 서버가 내려준다 — 템플릿 JS가 10·20을 다시 적어 두면 어긋난다.
-        data["rules"] = {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
-                         "striking_hi": scoring.STRIKING_HI}
-        data["trend"] = [dict(r) for r in conn.execute(
-            """SELECT snapshot_date d, SUM(clicks) clk, SUM(impressions) imp,
-                      COUNT(DISTINCT query) q
-                 FROM gsc_snapshots WHERE project_id=?
-                GROUP BY 1 ORDER BY 1""", (p["id"],))]
-        data["progress"] = progress(conn, p["id"])
-        # "지금 할 것"의 판정은 서버가 한다 — 템플릿 JS가 판정하던 시절엔
-        # 시험할 수 없었고, doctor와 화면이 다른 다음 할 일을 말할 수 있었다.
-        data["guide"] = scoring.stage(data["progress"], p["name"], p["domain"] or "")
-        return data
+        return gather(conn, p)
     finally:
         conn.close()
 
@@ -331,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
         if u.path == "/api/doctor":
-            return self._json(doctor.diagnose())
+            return self._json(setup_state())
         if u.path == "/api/projects":
             conn = db.connect()
             names = [r[0] for r in
