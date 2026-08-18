@@ -249,6 +249,7 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
 label { display:block; font:400 10px/1 var(--mono); letter-spacing:.12em;
   text-transform:uppercase; color:var(--slate); margin:12px 0 5px; }
+label b { color:var(--patina); font-weight:400; text-transform:none; letter-spacing:0; }
 input, select, textarea { font:400 13.5px/1.4 var(--sans); width:100%; color:var(--ink);
   background:transparent; border:0; border-bottom:1px solid var(--rule); padding:5px 2px; }
 input:focus, select:focus, textarea:focus { border-bottom-color:var(--patina); outline:0; }
@@ -341,16 +342,22 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 
     <div class="step">
       <h3>4. API 키 <span class="stat" id="s-keys"></span></h3>
-      <p class="why">자동화를 살 때만 필요합니다. 저장하면 <code>~/.capture/env</code>에만
-        들어가고 화면에 다시 표시되지 않습니다. 비운 채 저장하면 지워집니다.</p>
+      <p class="why"><b>키 없이도 전부 돌아갑니다</b> — 키는 자동화를 살 때만.
+        어떤 키가 뭘 켜는지: <b>OpenRouter</b>는 AI 노출 확인을 질문 수십 개씩
+        자동 실행(없으면 브라우저 실측 <code>/browse</code>로 무료 확인),
+        <b>Serper 또는 DataForSEO</b>는 순위 매일 기록 — <b>둘 중 하나면 됩니다</b>
+        (DataForSEO는 AI 오버뷰·경쟁사 역키워드까지, Serper는 더 싸고 단순).
+        저장하면 <code>~/.capture/env</code>에만 들어가고 화면에 다시 표시되지
+        않습니다. 비운 채 저장하면 지워집니다.</p>
       <div class="grid">
-        <div><label>OpenRouter — AI 노출 확인 자동화</label>
+        <div><label>OpenRouter — AI 노출 자동화 · 발급 <b>openrouter.ai/keys</b></label>
           <input id="k-or" type="password" placeholder="sk-or-..."></div>
-        <div><label>Serper — 순위 추적</label>
+        <div><label>Serper — 순위 추적 (간단·저렴) · 발급 <b>serper.dev</b></label>
           <input id="k-serper" type="password" placeholder="선택"></div>
-        <div><label>DataForSEO 아이디</label><input id="k-dfsl" placeholder="선택"></div>
+        <div><label>DataForSEO 아이디 — 순위+AI오버뷰 · 발급 <b>dataforseo.com</b></label>
+          <input id="k-dfsl" placeholder="선택 — 가입 이메일"></div>
         <div><label>DataForSEO 비밀번호</label>
-          <input id="k-dfsp" type="password" placeholder="선택"></div>
+          <input id="k-dfsp" type="password" placeholder="선택 — API 비밀번호"></div>
       </div>
       <div class="row"><button class="go" id="btn-keys">키 저장</button>
         <span class="msg" id="m-keys"></span></div>

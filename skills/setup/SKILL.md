@@ -1,6 +1,6 @@
 ---
 name: setup
-description: seo-miner 환경 진단·온보딩 — 설치 직후 이것부터. 사용 시점 — 플러그인 설치 직후, 사용자가 시작 방법을 물을 때("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), capture/create가 준비물 부재(deps, brain.db, OPENROUTER_API_KEY, GSC 서비스 계정 키/gsc MCP, SERP 키)에 부딪혔을 때 — 뭐가 빠졌는지 짐작하지 말고 이 스킬의 doctor부터 돌린다. 인자에 web이 있으면 doctor.py --web을 백그라운드로 띄워 설정 화면에서 직접 하게 한다.
+description: seo-miner 환경 진단·온보딩 — 설치 직후 이것부터. 기본 동작은 대시보드(설정 화면)를 띄우는 것 — doctor.py --web 백그라운드 실행, 채팅에는 한 줄 요약만. 사용 시점 — 플러그인 설치 직후, 사용자가 시작 방법을 물을 때("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), capture/create가 준비물 부재(deps, brain.db, OPENROUTER_API_KEY, GSC 서비스 계정 키/gsc MCP, SERP 키)에 부딪혔을 때 — 뭐가 빠졌는지 짐작하지 말고 이 스킬의 doctor부터 돌린다. `/setup doctor`일 때만 CLI 텍스트 전문을 전달한다.
 ---
 
 # setup — seo-miner 최초 온보딩 & 환경 닥터
@@ -46,13 +46,19 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
 
 ## 워크플로우
 
-### 1. 진단
+### 1. 진단 — 기본은 화면이다
 `python scripts/doctor.py` (이 스킬 폴더 기준) 실행. stdlib 전용이라 pip 이전에도 돈다
 (경로·env는 옆 스킬의 `capture/scripts/db.py`에서 읽지만 그 모듈도 stdlib뿐이다).
-출력이 이미 사람 말(한 줄 요약 → 다음 한 걸음 → 사이트 → 기능 상태)이므로
-그대로 전달하되, 사용자의 질문 맥락에 맞는 부분을 앞세운다.
 
-**화면으로 할 때**: `python scripts/doctor.py --web` — 로컬 대시보드를 띄운다.
+**진단 결과를 채팅에 통째로 옮겨 적지 마라.** 채팅에는 한 줄 요약(verdict)과
+다음 한 걸음 하나만 말하고, 곧바로 `python scripts/doctor.py --web`을
+**백그라운드로** 띄워 대시보드에서 보게 한다 — 진단 배너·[설정] 패널·[안내]
+6단계가 화면에 다 있고, 키 등록도 폼에서 직접 한다. 긴 텍스트 설명은
+플러그인이 아니라 챗봇처럼 느껴진다 (2026-08-18 사용자 피드백).
+CLI 텍스트 전문이 필요한 경우는 사용자가 `/setup doctor`라고 명시했거나
+브라우저를 못 여는 환경일 때뿐이다.
+
+**화면 모드 상세**: `python scripts/doctor.py --web` — 로컬 대시보드를 띄운다.
 상단 배너가 같은 진단이고, 그 아래 [설정] 패널에서 **채팅 없이 직접** 할 수 있다:
 기본 부품 설치 · 첫 사이트 등록(폼) · 받은 GSC 열쇠 회수 · API 키 저장
 (`~/.capture/env`에 저장 — 셸 rc를 편집시키지 않는다).
