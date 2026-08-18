@@ -630,23 +630,56 @@ def test_doctor_json_subprocess():
     assert data["brain_ok"] is True, f"brain_ok 가 True 여야 함: {data.get('brain_ok')}"
 
 
-def test_collect_gsc_auth_falls_back_to_mcp():
-    """collect_gsc: 열쇠가 있으면 직접, 없으면 gsc MCP 인증에 얹히고, 둘 다 없으면 안내.
+def test_gsc_auth_precedence():
+    """db.gsc_auth(): OAuth가 기본, 서비스 계정은 무인 수집용 대안.
 
-    OAuth로 붙인 사람이 서비스 계정을 또 만들지 않아도 되는 길이라, 이 세 갈래가
-    실제로 갈라지는지 본다 (네트워크는 타지 않는다 — 서비스 객체는 가짜다).
+    런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부 이 판정 하나를 따르므로,
+    순서가 뒤집히면 세 군데가 동시에 틀린다. 여기서 못 박는다.
+    """
+    oauth, key = db.gsc_oauth_client(), db.gsc_key()
+    oauth.parent.mkdir(parents=True, exist_ok=True)
+    for f in (oauth, key):
+        f.unlink(missing_ok=True)
+    try:
+        assert db.gsc_auth() == "", "아무것도 없으면 빈 문자열"
+        key.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "service_account", "키만 있으면 서비스 계정"
+        oauth.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "oauth", "둘 다 있으면 OAuth 가 이긴다 (기본)"
+        key.unlink()
+        assert db.gsc_auth() == "oauth"
+    finally:
+        for f in (oauth, key):
+            f.unlink(missing_ok=True)
+
+
+def test_collect_gsc_auth_routes_by_mode():
+    """collect_gsc: OAuth면 MCP 인증에 얹히고, 서비스 계정이면 직결, 없으면 안내.
+
+    OAuth 사용자가 서비스 계정을 또 만들지 않아도 되는 길이라, 세 갈래가 실제로
+    갈라지는지 본다 (네트워크는 타지 않는다 — 서비스 객체는 가짜다).
     """
     import collect_gsc
 
-    key = db.gsc_key()
-    key.parent.mkdir(parents=True, exist_ok=True)
+    oauth, key = db.gsc_oauth_client(), db.gsc_key()
+    oauth.parent.mkdir(parents=True, exist_ok=True)
+    for f in (oauth, key):
+        f.unlink(missing_ok=True)
     called = []
     real_via_mcp = collect_gsc._service_via_mcp
     collect_gsc._service_via_mcp = lambda: (called.append("mcp"), "mcp-service")[1]
     try:
-        # ① 열쇠가 있으면 MCP를 거치지 않는다. (가짜 키라 파싱에서 터지는 건 정상 —
-        #    여기서 보는 건 "MCP 로 새지 않는다" 하나다.)
-        key.write_text(json.dumps({"client_email": "x@y.iam.gserviceaccount.com"}),
+        # ① OAuth 파일이 있으면 MCP 인증에 얹힌다 — 토큰을 둘이 공유한다.
+        oauth.write_text(json.dumps({"installed": {"client_id": "x"}}), encoding="utf-8")
+        assert collect_gsc.get_service("t") == "mcp-service", "OAuth면 MCP로 가야 한다"
+        assert called == ["mcp"]
+
+        # ② 서비스 계정만 있으면 직결한다 (가짜 키라 파싱에서 터지는 건 정상 —
+        #    여기서 보는 건 "MCP 로 새지 않는다" 하나다).
+        oauth.unlink()
+        called.clear()
+        key.write_text(json.dumps({"type": "service_account",
+                                   "client_email": "x@y.iam.gserviceaccount.com"}),
                        encoding="utf-8")
         try:
             assert collect_gsc.get_service("t") != "mcp-service"
@@ -654,24 +687,21 @@ def test_collect_gsc_auth_falls_back_to_mcp():
             raise
         except Exception:
             pass
-        assert not called, "열쇠가 있으면 MCP 인증을 부르지 않아야 한다"
-
-        # ② 열쇠가 없으면 MCP 인증에 얹힌다 — OAuth 사용자가 여기로 온다.
-        key.unlink()
-        assert collect_gsc.get_service("t") == "mcp-service", "열쇠가 없으면 MCP로 가야 한다"
-        assert called == ["mcp"]
+        assert not called, "서비스 계정이 걸려 있으면 MCP 인증을 부르지 않아야 한다"
 
         # ③ 둘 다 없으면 두 경로를 다 알려주고 멈춘다.
-        collect_gsc._service_via_mcp = lambda: None
+        key.unlink()
         try:
             collect_gsc.get_service("t")
             raise AssertionError("인증이 하나도 없는데 그냥 진행했다")
         except SystemExit as e:
             msg = str(e)
-            assert "connect_gsc.py" in msg and "GSC_OAUTH_CLIENT_SECRETS_FILE" in msg, \
+            assert "connect_gsc.py" in msg and "OAuth" in msg, \
                 f"안내가 두 경로를 다 말하지 않는다: {msg}"
     finally:
         collect_gsc._service_via_mcp = real_via_mcp
+        for f in (oauth, key):
+            f.unlink(missing_ok=True)
         key.unlink(missing_ok=True)
 
 
@@ -744,14 +774,20 @@ def test_gsc_mcp_handshake():
     for expected in ("list_properties", "get_search_analytics", "inspect_url_enhanced"):
         assert expected in names, f"{expected} 툴이 없다 — 문서가 가리키는 이름이다: {sorted(names)}"
 
-    # 열쇠 경로 주입 확인 — 인증은 툴을 부를 때 확인되므로 여기서만 드러난다.
+    # 인증 배선 확인 — 인증은 툴을 부를 때 확인되므로 여기서만 드러난다.
+    # 여기 임시 CAPTURE_HOME 에는 인증 파일이 없다. 그럴 때 런처가 **없는 파일을
+    # 가리키면 안 된다** — 서버는 그 경로가 비면 인증을 시도하기도 전에 fail-fast
+    # 하고, 그러면 OAuth 로 붙은 사람도 "서비스 계정 키가 없다"에서 막힌다.
+    # (실측으로 잡은 회귀라 문자열로 못 박는다.)
     called = ask("tools/call", {"name": "list_properties", "arguments": {}})
     if called is None:
         print("  skip: tools/call 응답 없음")
         return
     text = json.dumps(called, ensure_ascii=False)
-    assert "gsc_service_account.json" in text and HOME.name in text, \
-        f"CAPTURE_HOME 기준 열쇠 경로를 서버에 못 물려줬다: {text[:300]}"
+    assert "but the file does not exist" not in text, \
+        f"없는 인증 파일 경로를 서버에 걸어 fail-fast 시켰다: {text[:300]}"
+    assert "Authentication failed" in text, \
+        f"인증 없음이 일반 안내로 나와야 한다: {text[:300]}"
 
 
 if __name__ == "__main__":

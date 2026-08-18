@@ -56,15 +56,16 @@ def diagnose() -> dict:
     # 구글 연결 표준: 서비스 계정 키 1개(전 사이트 공용, gsc MCP 서버와 공유).
     # 구버전 사이트별 OAuth 경로는 제거됐다 — 남은 토큰은 감지만 해서 전환을 안내한다.
     sa_key = db.gsc_key()
+    gsc_mode = db.gsc_auth()          # "oauth" | "service_account" | "" — 정본은 db
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
-    gsc_sites = {name: sa_key.exists() for name in brain["projects"]}
+    gsc_sites = {name: bool(gsc_mode) for name in brain["projects"]}
     keys = {
         "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
-        "gsc_service_account": sa_key.exists(),
+        "gsc_service_account": bool(gsc_mode),
         # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 파이썬 서버
         # (mcp-search-console)를 찾아 넘긴다. 서버 부품은 런처가 알아서 pip으로 깐다.
         "node": bool(shutil.which("node")),
@@ -85,8 +86,8 @@ def diagnose() -> dict:
          "(브라우저 방식은 키 없이 무료)", core_ok, None),
         ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
          core_ok and all(deps_gsc.values()) and gsc_linked,
-         "서비스 계정 키 1개면 모든 사이트가 붙습니다 (무료, 5분) — 채팅에 "
-         "\"GSC 연동해줘\" 하시면 제가 대신 눌러 드립니다."),
+         "구글 계정으로 로그인 한 번이면 내 사이트가 전부 붙습니다 (무료, 5분) — "
+         "채팅에 \"GSC 연동해줘\" 하시면 제가 대신 눌러 드립니다."),
         ("순위 추적", "검색결과 몇 등인지 매일 기록",
          core_ok and (keys["dataforseo"] or keys["serper"]),
          "유료 키가 필요합니다: DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정), "
@@ -108,9 +109,10 @@ def diagnose() -> dict:
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
     if core_ok and brain_ok and not gsc_linked:
         must.append("구글 서치콘솔 연결 (무료, 5분, 계정당 1회) — 자동 수집과 "
-                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 채팅에 \"GSC 연동해줘\" "
-                    "하시면 제가 대신 눌러 드리고, 대시보드 [설정] 3번에서 열쇠 회수·"
-                    "부품 설치가 자동으로 이어집니다.")
+                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 내 구글 계정으로 로그인만 "
+                    "하면 되고 속성마다 권한을 주는 단계는 없습니다. 채팅에 "
+                    "\"GSC 연동해줘\" 하시면 제가 대신 눌러 드리고, 대시보드 [설정] "
+                    "3번에서 파일 회수·부품 설치가 자동으로 이어집니다.")
 
     later = []
     if brain["no_prompts"]:
@@ -151,6 +153,7 @@ def diagnose() -> dict:
     steps = must + [f"[선택] {s}" for s in later]
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
+            "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
             "capabilities": {f"{n} — {d}": on for n, d, on, _ in caps},
             "locked": [{"name": n, "desc": d, "fix": fix}
                        for n, d, on, fix in caps if not on],
@@ -170,18 +173,26 @@ def render(d: dict) -> None:
 
     if d["gsc_sites"]:
         print(f"\n내 사이트 ({len(d['gsc_sites'])}개)")
+        mode = d.get("gsc_mode", "")
         for name in d["gsc_sites"]:
-            if d["keys"]["gsc_service_account"]:
-                tag = "연결됨 (공용 열쇠)"
+            if mode == "oauth":
+                tag = "연결됨 (내 구글 계정 로그인)"
+            elif mode == "service_account":
+                tag = "연결됨 (서비스 계정 — 무인 수집)"
             elif d["gsc_legacy"].get(name):
-                tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 공용 열쇠로 "
-                       "전환하세요 (5분, connect_gsc.py)")
+                tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 다시 연결하세요 "
+                       "(5분, connect_gsc.py)")
             else:
                 tag = "아직 — 연결해야 실적이 읽힙니다 (\"GSC 연동해줘\")"
             print(f"  · {name} — 구글 자동 수집: {tag}")
-        if d["keys"]["gsc_service_account"]:
-            print("    * 공용 열쇠는 Search Console '사용자 및 권한'에 이메일을 "
+        # 속성별 권한 부여는 서비스 계정에만 있는 절차다 — OAuth 사용자에게 이걸
+        # 안내하면 있지도 않은 할 일을 시키는 셈이 된다.
+        if mode == "service_account":
+            print("    * 서비스 계정은 Search Console '사용자 및 권한'에 이메일을 "
                   "추가한 사이트만 읽습니다 (확인: connect_gsc.py --status)")
+        elif mode == "oauth":
+            print("    * 내 계정이 소유한 속성은 따로 권한을 줄 필요가 없습니다. "
+                  "첫 조회 때 브라우저 로그인 창이 한 번 열립니다.")
 
     if caps_on:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")

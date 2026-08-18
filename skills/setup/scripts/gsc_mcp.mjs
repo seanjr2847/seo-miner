@@ -28,13 +28,19 @@ if (existsSync(envFile)) {
   }
 }
 
-// 인증: 서비스 계정이 기본이다. 열쇠 1개를 이 MCP와 collect_gsc.py가 같이 쓰고,
-// 사이트가 늘어도 서치콘솔에서 이메일 추가만 하면 된다.
-// OAuth는 동의 화면 설정이 더 필요해 기본에서 뺐다 — 굳이 쓰려면 ~/.capture/env에
-// GSC_OAUTH_CLIENT_SECRETS_FILE 을 넣으면 그때만 켜진다.
-env.GSC_CREDENTIALS_PATH ??= path.join(home, "gsc_service_account.json");
-// SKIP_OAUTH가 없으면 열쇠가 없을 때 서버가 브라우저 로그인을 띄우려 든다 —
-// 세션 시작 시점에 창이 튀어나오는 건 사고다.
+// 인증: **OAuth가 기본이다** (db.gsc_auth()가 정본 — 여기는 그 규칙의 JS 사본이라
+// 순서를 바꾸려면 양쪽을 같이 고쳐야 한다). OAuth 클라이언트 파일이 있으면 그걸 쓰고,
+// 없고 서비스 계정 키만 있으면 그쪽으로 넘어간다.
+// **있는 파일만 가리킨다.** 서버는 이 두 변수가 가리키는 파일이 없으면 인증을
+// 시도하기도 전에 fail-fast 한다 — 서비스 계정 경로를 무조건 걸어두면 OAuth 로
+// 붙은 사람도 "키 파일이 없다"에서 막힌다 (실측으로 잡은 버그).
+const oauthFile = path.join(home, "gsc_oauth_client.json");
+const keyFile = path.join(home, "gsc_service_account.json");
+if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE && existsSync(oauthFile))
+  env.GSC_OAUTH_CLIENT_SECRETS_FILE = oauthFile;
+if (!env.GSC_CREDENTIALS_PATH && existsSync(keyFile))
+  env.GSC_CREDENTIALS_PATH = keyFile;
+// OAuth 파일이 없는데 OAuth를 켜두면 서버가 브라우저 로그인을 띄우려다 실패한다.
 if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE) env.GSC_SKIP_OAUTH ??= "true";
 
 // 셸을 쓰지 않는다 — 윈도우에서 shell:true면 node가 인자를 따옴표 없이 이어붙여

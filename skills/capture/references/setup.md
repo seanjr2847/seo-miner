@@ -29,73 +29,85 @@ pip install google-api-python-client
 ├── brain.db
 ├── projects/{name}.yaml
 ├── reports/{name}/{date}.html
-├── gsc_service_account.json # GSC 서비스 계정 키 — 전 사이트 공용 1개 (아래 4-B)
+├── gsc_oauth_client.json    # 구글 계정 로그인용 클라이언트 파일 — 기본 (아래 4절)
+├── gsc_service_account.json # 서비스 계정 키 — 무인 수집을 쓸 때만 (아래 4절)
 └── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (더 이상 안 읽음 — 지워도 됨)
 ```
 
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
 `python scripts/db.py init`.
 
-## 4. GSC 실측 데이터 — 서비스 계정 연동 (필수)
+## 4. GSC 실측 데이터 — 구글 계정 연결 (필수)
 
 실적(클릭·노출)이 이 도구의 재료라 이 연결 없이는 측정이 시작되지 않는다.
 (CSV 내보내기 임시 경로는 2026-08-18 제거 — 1,000행 제한·페이지 차원 없음·매번
 수동이라 판정 재료로 부적합했다.)
 
-### 다이렉트 연동 (서비스 계정, 계정당 1회 5분 — 이후 완전 자동)
-
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
 
-**키 1개가 전부다.** `~/.capture/gsc_service_account.json` 하나를
+### 4-A. 두 가지 방식 — 기본은 내 구글 계정 로그인
+
+| | 구글 계정 로그인 (기본, OAuth) | 서비스 계정 (무인 수집) |
+|---|---|---|
+| 속성마다 권한 추가 | **없음** — 로그인 한 번에 내가 소유한 속성이 전부 붙음 | 속성마다 이메일 추가 1회 |
+| 만료 | 동의 화면이 테스트 모드면 7일마다 재로그인 | 없음 |
+| 첫 조회 | 브라우저 로그인 창이 한 번 열림 | 없음 (완전 무인) |
+| 설치 위치 | `~/.capture/gsc_oauth_client.json` | `~/.capture/gsc_service_account.json` |
+| 언제 쓰나 | 대부분의 경우 | 서버·스케줄러에서 사람 없이 돌릴 때 |
+
+어느 쪽이든 파일 1개면 되고, 그 인증을
 - 플러그인에 번들된 **gsc MCP 서버**([mcp-search-console](https://github.com/AminForou/mcp-gsc))
   — Claude가 서치콘솔을 즉석 조회 (`get_search_analytics`·`inspect_url_enhanced` 등 21개)
 - **collect_gsc.py** — Brain으로 벌크 수집
-이 같이 쓴다. 사이트가 늘어도 키는 다시 안 만들고, Search Console에서 이메일
-추가만 하면 된다. 예전 OAuth 방식의 동의 화면·앱 게시·비밀번호 복사·7일 만료는
-서비스 계정에는 없다. (구버전 사이트별 OAuth 경로는 제거됐다 —
-`~/.capture/creds/{사이트}/` 토큰은 더 이상 읽지 않으며, 이 5분 절차로 전환한다.)
 
-Claude에게 부탁하면 키 다운로드 버튼(3번) 말고는 전부 브라우저로 대신 눌러준다.
+이 같이 쓴다. **인증은 한 벌이다** — `collect_gsc.py`는 서비스 계정만 걸려 있으면
+직결하고, 그 외에는 MCP 서버의 인증 해석기(`gsc_server.get_gsc_service()`)를 빌린다.
+서버가 파이썬 패키지라 JSON-RPC를 왕복할 필요가 없어서, OAuth 로그인으로 받은
+토큰을 즉석 조회와 벌크 수집이 그대로 공유한다. 어느 방식이 걸렸는지의 정본은
+`db.gsc_auth()`이고, 둘 다 있으면 OAuth가 이긴다.
 
-1. **Search Console API 켜기** —
-   https://console.cloud.google.com/apis/library/searchconsole.googleapis.com
-   에서 프로젝트를 고르고 `사용` 클릭 (프로젝트가 없으면 아무거나 하나 만든다).
-2. **서비스 계정 만들기** — https://console.cloud.google.com/iam-admin/serviceaccounts
-   → `서비스 계정 만들기` → 이름 아무거나(예: seo-miner) → 만들기.
-   역할(권한) 부여 단계는 **건너뛴다** — Search Console 접근권은 5번에서 준다.
-3. **키 받기** — 만든 계정 → `키` 탭 → `키 추가` → `새 키 만들기` → `JSON` → 만들기.
-   (이 다운로드 버튼만은 사람이 직접 눌러야 한다 — 브라우저 자동화가 크롬
-   다운로드를 트리거하지 못함, 2026-07-26 실측.)
-4. ```
-   python ../setup/scripts/connect_gsc.py
-   ```
-   다운로드 폴더에서 키를 찾아 `~/.capture/gsc_service_account.json`으로 옮기고,
-   서비스 계정 이메일과 속성별 '사용자 및 권한' URL을 출력한다.
-   (`--status`로 언제든 다시 볼 수 있다.)
-5. **권한 주기** — 속성마다: Search Console → 설정 → `사용자 및 권한` →
-   `사용자 추가` → 4의 이메일 → 권한 **`제한된 사용자`**(읽기라 충분).
-6. `python scripts/collect_gsc.py --project NAME` → **이후 무인 동작.**
-   403이 나면 5번이 안 된 속성이다(스크립트가 이메일을 알려준다).
-   gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작 때 로드).
+(구버전 사이트별 OAuth 경로는 제거됐다 — `~/.capture/creds/{사이트}/` 토큰은
+더 이상 읽지 않는다. 지우고 아래 절차로 다시 붙이면 된다.)
+
+### 4-B. 연결하기 (무료, 계정당 1회 약 5분)
+
+**절차의 정본은 `../../setup/SKILL.md`의 "GSC 연결" 절이다** — 구글 클라우드
+콘솔 클릭 순서(API 사용 설정 → OAuth 동의 화면 → 데스크톱 앱 클라이언트 만들기),
+서비스 계정 갈래, 문제 해결까지 거기 한 벌만 있다. 여기에 다시 적지 않는다.
+
+Claude에게 "GSC 연동해줘"라고 하면 **JSON 다운로드 버튼 하나만 사람이 누르고**
+나머지 콘솔 클릭은 브라우저로 대신 눌러준다(브라우저 자동화가 크롬 다운로드를
+트리거하지 못함 — 2026-07-26 실측).
+
+받은 파일을 제자리에 까는 명령은 어느 방식이든 하나다:
+
+```bash
+python ../setup/scripts/connect_gsc.py           # 다운로드 폴더에서 회수해 설치
+python ../setup/scripts/connect_gsc.py --status  # 지금 걸린 방식·다음 할 일
+```
+
+OAuth 클라이언트인지 서비스 계정 키인지는 스크립트가 파일을 열어 판별하므로
+사용자가 고를 필요가 없다. 그 다음:
+
+```bash
+python scripts/collect_gsc.py --project NAME
+```
+
+OAuth면 이때 브라우저 로그인 창이 **한 번** 열리고, 로그인하면 끝이다. 서비스
+계정이면 403이 나는 속성은 아직 그 이메일을 추가하지 않은 속성이다(스크립트가
+이메일을 알려준다). gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션
+시작 때 로드).
+
+### 4-C. MCP 런처 (참고)
 
 `.mcp.json`은 OS를 가리지 않는다 — 번들 런처(`skills/setup/scripts/gsc_mcp.mjs`)를
 node로 띄우고, 런처가 파이썬을 찾아 서버를 넘긴다. 서버 부품(`mcp-search-console`)은
-없으면 런처가 처음 한 번 pip으로 깐다. 열쇠 경로는 `CAPTURE_HOME` 기준으로 채운다.
+없으면 런처가 처음 한 번 pip으로 깐다. 인증 파일 경로는 `CAPTURE_HOME` 기준으로
+채우되(`GSC_OAUTH_CLIENT_SECRETS_FILE`·`GSC_CREDENTIALS_PATH`), 그 환경변수를 직접
+걸어 두면 그쪽이 우선한다.
 필요한 건 node와 파이썬 3.11+ 뿐이다(파이썬은 이 플러그인이 어차피 쓴다).
 윈도우에서 `python`이 마이크로소프트 스토어 스텁이면 런처가 실제 설치본을 찾아낸다 —
 못 찾으면 `~/.capture/env`에 `CAPTURE_PYTHON=<python 경로>`를 넣으면 된다.
-인증은 서비스 계정이 기본이고, `GSC_CREDENTIALS_PATH`를 직접 걸면 그쪽이 우선한다.
-
-**인증은 한 벌이다** — `collect_gsc.py`는 서비스 계정 키가 없으면 이 MCP 서버의
-인증 해석기(`gsc_server.get_gsc_service()`)를 그대로 빌려 쓴다. 서버가 파이썬
-패키지라 JSON-RPC를 왕복할 필요가 없다. 그래서 **OAuth로 붙였다면 서비스 계정을
-따로 만들 필요가 없다**: `~/.capture/env`에 `GSC_OAUTH_CLIENT_SECRETS_FILE`을 넣고
-한 번 브라우저 로그인을 하면, 캐시된 토큰을 MCP와 벌크 수집기가 같이 쓴다.
-
-그래도 기본을 서비스 계정으로 두는 이유: OAuth는 구글 클라우드 콘솔에서 **동의
-화면 설정 + OAuth 클라이언트 만들기**가 추가로 필요하고(서비스 계정에는 없는
-단계다), 테스트 모드로 두면 토큰이 7일마다 만료된다. 무인 수집에는 만료 없는
-서비스 계정이 편하다.
 
 ## 5. OpenRouter (AI 가시성 체크 — 권장)
 

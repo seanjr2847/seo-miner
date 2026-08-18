@@ -42,9 +42,14 @@ def _service_via_mcp():
     같은 규칙이라 어느 쪽으로 들어와도 같은 열쇠를 본다.
     """
     import os
-    os.environ.setdefault("GSC_CREDENTIALS_PATH", str(db.gsc_key()))
-    if not os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE"):
+    # 있는 파일만 가리킨다 — 없는 경로를 걸면 서버가 인증을 시도하기도 전에
+    # "그 파일이 없다"로 fail-fast 한다 (gsc_mcp.mjs와 같은 규칙).
+    if db.gsc_oauth_client().exists():
+        os.environ.setdefault("GSC_OAUTH_CLIENT_SECRETS_FILE", str(db.gsc_oauth_client()))
+    else:
         os.environ.setdefault("GSC_SKIP_OAUTH", "true")
+    if db.gsc_key().exists():
+        os.environ.setdefault("GSC_CREDENTIALS_PATH", str(db.gsc_key()))
     try:
         import gsc_server
     except ImportError:
@@ -62,26 +67,28 @@ def get_service(project: str):
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
                  "pip install google-api-python-client")
 
-    # 서비스 계정 키가 있으면 그대로 쓴다 — 읽기 전용 스코프에 무인 실행이고,
+    mode = db.gsc_auth()
+
+    # 서비스 계정만 걸려 있으면 직결한다 — 읽기 전용 스코프에 무인 실행이고,
     # 무거운 MCP 서버 모듈을 import 하지 않아도 된다.
-    key = db.gsc_key()
-    if key.exists():
+    if mode == "service_account":
         from google.oauth2 import service_account
         creds = service_account.Credentials.from_service_account_file(
-            str(key), scopes=SCOPES)
+            str(db.gsc_key()), scopes=SCOPES)
         return build("searchconsole", "v1", credentials=creds,
                      cache_discovery=False)
 
-    # 키가 없으면 MCP 쪽 인증에 얹힌다 (OAuth로 붙여 둔 경우가 여기).
-    svc = _service_via_mcp()
-    if svc is not None:
-        return svc
+    # 기본(OAuth)은 MCP 서버의 인증에 얹힌다 — 토큰을 둘이 공유한다.
+    # 토큰이 아직 없으면 여기서 브라우저 로그인이 한 번 열린다.
+    if mode == "oauth":
+        svc = _service_via_mcp()
+        if svc is not None:
+            return svc
 
-    sys.exit(f"구글 서치콘솔 인증이 없습니다.\n"
-             f"  · 서비스 계정(권장, 무인 수집): 키가 {key} 에 없습니다 —\n"
-             f"    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
-             f"  · OAuth를 쓰신다면: ~/.capture/env 에 GSC_OAUTH_CLIENT_SECRETS_FILE 을\n"
-             f"    넣고 gsc MCP 로 한 번 로그인하면 이 수집기도 그 토큰을 씁니다.")
+    sys.exit("구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다.\n"
+             f"  · 기본(OAuth): {db.gsc_oauth_client()} 에 클라이언트 파일이 없습니다 —\n"
+             "    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
+             "  · 무인 수집(서비스 계정)을 쓰신다면 같은 스크립트가 그쪽 키도 받습니다.")
 
 
 def main() -> None:

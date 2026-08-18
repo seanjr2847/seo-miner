@@ -52,9 +52,33 @@ load_env()
 # 각자 계산해서 CAPTURE_HOME 5벌·GSC 키 4벌이 돌아다녔고 다운로드 폴더는 이미 어긋나 있었다.
 
 def gsc_key() -> Path:
-    """구글 서비스 계정 키 (전 사이트 공용)."""
+    """구글 서비스 계정 키 (전 사이트 공용) — 무인 수집용 선택지."""
     return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
                                CAPTURE_HOME / "gsc_service_account.json"))
+
+
+def gsc_oauth_client() -> Path:
+    """OAuth 클라이언트 시크릿(데스크톱 앱) — 기본 인증 방식.
+
+    이 파일만 있으면 구글 로그인 한 번으로 끝난다. 속성마다 사용자를 추가하는
+    단계가 없다 — 내 구글 계정이 이미 그 속성의 소유자이기 때문이다.
+    """
+    return Path(os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE",
+                               CAPTURE_HOME / "gsc_oauth_client.json"))
+
+
+def gsc_auth() -> str:
+    """지금 걸려 있는 인증 — "oauth" | "service_account" | "" (아직 없음).
+
+    **이 순서가 정본이다.** gsc MCP 런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부
+    이 판정을 따른다 — 예전에 같은 규칙이 여러 방언으로 흩어져 한쪽만 고쳐지는
+    일이 반복됐다. OAuth가 기본이고, 서비스 계정은 무인 수집이 필요할 때 쓴다.
+    """
+    if gsc_oauth_client().exists():
+        return "oauth"
+    if gsc_key().exists():
+        return "service_account"
+    return ""
 
 
 def creds_dir(project: str) -> Path:

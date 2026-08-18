@@ -250,6 +250,7 @@ def setup_state() -> dict:
     ] + list(d.get("later", []))
     keys = d.get("keys", {})
     deps_gsc = d.get("deps_gsc", {})
+    # 이름은 옛날 그대로지만 뜻은 "구글 로그인(기본)이든 서비스 계정이든 연결됨"이다.
     gsc_ok = bool(keys.get("gsc_service_account"))
     show_deps_gsc_btn = gsc_ok and not bool(deps_gsc.get("googleapiclient"))
     show_setup = bool(d.get("must")) or no_project
