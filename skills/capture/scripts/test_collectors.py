@@ -247,7 +247,7 @@ def test_collect_serp_ranking_and_none_position_aio():
 
     orig_fetch = serp_adapter.fetch
 
-    def fake_fetch(provider, keyword, locale, depth=10):
+    def fake_fetch(provider, keyword, locale, depth=10, device="desktop"):
         if keyword == "랭킹 키워드":
             return {
                 "top": [
@@ -325,6 +325,285 @@ def test_collect_serp_ranking_and_none_position_aio():
         assert h["source"] == "serp"
     assert {h["keyword"] for h in harvested} == {"연관 검색어 1", "자주 묻는 질문 1"}
     conn.close()
+
+
+def test_collect_serp_today_skip_and_force():
+    """(a) collect_serp: 오늘(date(checked_at)=오늘) 이미 확인된 키워드는 건너뛰고,
+    --force 옵션 지정 시 재수집을 수행하는지 검증."""
+    conn = db.connect()
+    p = _project(conn, "serp_skip_proj", domain="e.com", locale="ko-KR")
+    conn.execute(
+        "INSERT INTO keywords(project_id, keyword, locale, is_active) VALUES(?, '오늘_이미_확인', 'ko-KR', 1)",
+        (p["id"],),
+    )
+    conn.execute(
+        "INSERT INTO keywords(project_id, keyword, locale, is_active) VALUES(?, '오늘_미확인', 'ko-KR', 1)",
+        (p["id"],),
+    )
+    conn.commit()
+
+    rows = conn.execute(
+        "SELECT id, keyword FROM keywords WHERE project_id=? ORDER BY id", (p["id"],)
+    ).fetchall()
+    kw_done_id, kw_new_id = rows[0]["id"], rows[1]["id"]
+
+    # 오늘 날짜로 kw_done_id 에 대한 rank_snapshot 미리 삽입
+    db.write_rank_snapshot(conn, kw_done_id, 3, "https://e.com/page", checked_at=db.now())
+    conn.close()
+
+    fetch_calls = []
+    orig_fetch = serp_adapter.fetch
+
+    def mock_fetch(provider, keyword, locale, depth=10, device="desktop"):
+        fetch_calls.append((keyword, device))
+        return {
+            "top": [{"pos": 1, "domain": "e.com", "url": "https://e.com/1", "title": "T"}],
+            "serp_features": [],
+            "aio_present": None,
+            "aio_domains": [],
+            "related": [],
+            "paa": [],
+            "cost": 0.002,
+        }
+
+    serp_adapter.fetch = mock_fetch
+    orig_argv = sys.argv
+
+    try:
+        # 1. 기본 실행: kw_done_id 는 skip -> kw_new_id 만 1회 호출
+        fetch_calls.clear()
+        sys.argv = [
+            "collect_serp.py",
+            "--project", "serp_skip_proj",
+            "--provider", "dataforseo",
+            "--throttle", "0",
+        ]
+        collect_serp.main()
+        assert len(fetch_calls) == 1, f"오늘 이미 확인된 키워드는 skip되어야 함 (호출수={len(fetch_calls)})"
+        assert fetch_calls[0][0] == "오늘_미확인"
+
+        # 2. --force 실행: 2개 모두 재확인
+        fetch_calls.clear()
+        sys.argv = [
+            "collect_serp.py",
+            "--project", "serp_skip_proj",
+            "--provider", "dataforseo",
+            "--force",
+            "--throttle", "0",
+        ]
+        collect_serp.main()
+        assert len(fetch_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(fetch_calls)})"
+        assert {call[0] for call in fetch_calls} == {"오늘_이미_확인", "오늘_미확인"}
+
+        # 3. --ids 지정 + skip / force 검증
+        fetch_calls.clear()
+        sys.argv = [
+            "collect_serp.py",
+            "--project", "serp_skip_proj",
+            "--provider", "dataforseo",
+            "--ids", str(kw_done_id),
+            "--throttle", "0",
+        ]
+        collect_serp.main()
+        assert len(fetch_calls) == 0, f"--ids 로 이미 확인된 것만 지정 시 0건이어야 함: {fetch_calls}"
+
+        fetch_calls.clear()
+        sys.argv = [
+            "collect_serp.py",
+            "--project", "serp_skip_proj",
+            "--provider", "dataforseo",
+            "--ids", str(kw_done_id),
+            "--force",
+            "--throttle", "0",
+        ]
+        collect_serp.main()
+        assert len(fetch_calls) == 1, f"--ids + --force 시 1건 호출되어야 함: {fetch_calls}"
+        assert fetch_calls[0][0] == "오늘_이미_확인"
+    finally:
+        serp_adapter.fetch = orig_fetch
+        sys.argv = orig_argv
+
+
+def test_collect_ai_today_skip_and_force():
+    """(b) collect_ai: 오늘 시작된 kind='ai' 런에서 이미 기록된 (prompt_id, engine, sample_idx)는
+    건너뛰고, --force 면 재실행하는지 검증."""
+    conn = db.connect()
+    p = _project(conn, "ai_skip_proj", domain="e.com")
+    conn.execute(
+        "INSERT INTO ai_prompts(project_id, prompt, category, is_active) VALUES(?, '오늘_확인_질문', '추천', 1)",
+        (p["id"],),
+    )
+    conn.execute(
+        "INSERT INTO ai_prompts(project_id, prompt, category, is_active) VALUES(?, '오늘_미확인_질문', '비교', 1)",
+        (p["id"],),
+    )
+    conn.commit()
+
+    rows = conn.execute(
+        "SELECT id, prompt FROM ai_prompts WHERE project_id=? ORDER BY id", (p["id"],)
+    ).fetchall()
+    p_done_id, p_new_id = rows[0]["id"], rows[1]["id"]
+
+    # 오늘 날짜로 ai 런 및 prompt 1의 check 기록 생성
+    with db.run(conn, p["id"], "ai") as r:
+        db.record_ai_check(conn, p_done_id, r.id, "chatgpt", 0, 1, 0, [], "답변 내용")
+    conn.close()
+
+    post_calls = []
+    orig_post = collect_ai.requests.post
+    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "fake-key"
+
+    def mock_post(url, *args, **kwargs):
+        json_body = kwargs.get("json", {})
+        messages = json_body.get("messages", [])
+        user_msg = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+        post_calls.append(user_msg)
+        return FakeResponse({
+            "choices": [{
+                "message": {
+                    "content": "응답 내용입니다.",
+                    "annotations": []
+                }
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20}
+        })
+
+    collect_ai.requests.post = mock_post
+    orig_argv = sys.argv
+
+    try:
+        # 1. 기본 실행: p_done_id 는 skip -> p_new_id 만 1회 호출
+        post_calls.clear()
+        sys.argv = [
+            "collect_ai.py",
+            "--project", "ai_skip_proj",
+            "--engines", "chatgpt",
+            "--samples", "1",
+            "--throttle", "0",
+        ]
+        collect_ai.main()
+        assert len(post_calls) == 1, f"오늘 이미 확인된 질문은 skip되어야 함 (호출수={len(post_calls)})"
+        assert post_calls[0] == "오늘_미확인_질문"
+
+        # 2. --force 실행: 2개 질문 모두 호출
+        post_calls.clear()
+        sys.argv = [
+            "collect_ai.py",
+            "--project", "ai_skip_proj",
+            "--engines", "chatgpt",
+            "--samples", "1",
+            "--force",
+            "--throttle", "0",
+        ]
+        collect_ai.main()
+        assert len(post_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(post_calls)})"
+        assert set(post_calls) == {"오늘_확인_질문", "오늘_미확인_질문"}
+    finally:
+        collect_ai.requests.post = orig_post
+        sys.argv = orig_argv
+        if orig_env_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = orig_env_key
+        else:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+
+
+def test_serp_device_in_body_and_validation():
+    """(c) device 값이 DataForSEO 요청 body에 실림 + 허용값 외 에러 검증."""
+    # 1. DataForSEO 요청 body에 device 값이 실리는지 확인
+    orig_env_login = os.environ.get("DATAFORSEO_LOGIN")
+    orig_env_pw = os.environ.get("DATAFORSEO_PASSWORD")
+    os.environ["DATAFORSEO_LOGIN"] = "fake_login"
+    os.environ["DATAFORSEO_PASSWORD"] = "fake_pw"
+
+    captured_bodies = []
+    import requests
+    orig_req_post = requests.post
+
+    def mock_requests_post(url, *args, **kwargs):
+        captured_bodies.append(kwargs.get("json"))
+        return FakeResponse({
+            "tasks": [{
+                "status_code": 20000,
+                "result": [{
+                    "items": [{"type": "organic", "rank_group": 1, "url": "https://a.com", "title": "A"}]
+                }]
+            }],
+            "cost": 0.002
+        })
+
+    requests.post = mock_requests_post
+    try:
+        # mobile 요청
+        captured_bodies.clear()
+        serp_adapter.fetch_dataforseo("검색어1", "ko-KR", depth=5, device="mobile")
+        assert len(captured_bodies) == 1
+        assert captured_bodies[0][0]["device"] == "mobile", f"device가 mobile이어야 함: {captured_bodies[0]}"
+
+        # desktop 요청
+        captured_bodies.clear()
+        serp_adapter.fetch_dataforseo("검색어2", "ko-KR", depth=5, device="desktop")
+        assert len(captured_bodies) == 1
+        assert captured_bodies[0][0]["device"] == "desktop", f"device가 desktop이어야 함: {captured_bodies[0]}"
+    finally:
+        requests.post = orig_req_post
+        if orig_env_login is not None:
+            os.environ["DATAFORSEO_LOGIN"] = orig_env_login
+        else:
+            os.environ.pop("DATAFORSEO_LOGIN", None)
+        if orig_env_pw is not None:
+            os.environ["DATAFORSEO_PASSWORD"] = orig_env_pw
+        else:
+            os.environ.pop("DATAFORSEO_PASSWORD", None)
+
+    # 2. 허용값 외 입력 시 ValueError 즉시 발생
+    try:
+        serp_adapter.fetch("dataforseo", "키워드", "ko-KR", device="tablet")
+        raise AssertionError("허용되지 않는 device는 에러를 발생시켜야 함")
+    except ValueError as e:
+        assert "desktop" in str(e) and "mobile" in str(e)
+
+    # 3. serper 경로에서 mobile 요청 시 stderr 경고 및 caveats 확인
+    assert any("모바일" in c for c in serp_adapter.caveats("serper"))
+    orig_key = os.environ.get("SERPER_API_KEY")
+    os.environ["SERPER_API_KEY"] = "fake_serper"
+    orig_stderr = sys.stderr
+    buf = io.StringIO()
+    try:
+        sys.stderr = buf
+        requests.post = lambda *args, **kwargs: FakeResponse({"organic": []})
+        serp_adapter.fetch_serper("키워드", "ko-KR", depth=5, device="mobile")
+    finally:
+        requests.post = orig_req_post
+        sys.stderr = orig_stderr
+        if orig_key is not None:
+            os.environ["SERPER_API_KEY"] = orig_key
+        else:
+            os.environ.pop("SERPER_API_KEY", None)
+
+    assert "serper는 desktop만 — 이 런은 desktop으로 측정됩니다" in buf.getvalue()
+
+
+def test_location_mapping_expansion():
+    """(d) 확장 로케일 매핑 검증 (de->Germany, pt->Brazil, zh->Taiwan 등)."""
+    assert serp_adapter.location("de-DE")[0] == "Germany"
+    assert serp_adapter.location("pt-BR")[0] == "Brazil"
+    assert serp_adapter.location("fr-FR")[0] == "France"
+    assert serp_adapter.location("es-ES")[0] == "Spain"
+    assert serp_adapter.location("it-IT")[0] == "Italy"
+    assert serp_adapter.location("nl-NL")[0] == "Netherlands"
+    assert serp_adapter.location("pl-PL")[0] == "Poland"
+    assert serp_adapter.location("ru-RU")[0] == "Russia"
+    assert serp_adapter.location("tr-TR")[0] == "Turkey"
+    assert serp_adapter.location("vi-VN")[0] == "Vietnam"
+    assert serp_adapter.location("th-TH")[0] == "Thailand"
+    assert serp_adapter.location("id-ID")[0] == "Indonesia"
+    assert serp_adapter.location("ar-AE")[0] == "United Arab Emirates"
+    assert serp_adapter.location("hi-IN")[0] == "India"
+    assert serp_adapter.location("zh-TW")[0] == "Taiwan"
+    assert serp_adapter.warn_unmapped("de-DE") is False
+    assert serp_adapter.warn_unmapped("pt-BR") is False
+    assert serp_adapter.warn_unmapped("xx-XX") is True
 
 
 def test_doctor_json_subprocess():

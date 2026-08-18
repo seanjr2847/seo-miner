@@ -18,6 +18,7 @@ defaults:
   ai_samples: 2          # 비결정성 완화용 2회 샘플 — API 호출·비용 2배 트레이드오프. 급하면 1로.
   throttle: 0.5          # 요청 간격(초) — 자동완성·AI·SERP 공통
   serp_depth: 10
+  serp_device: desktop
 
 serp:
   provider: auto           # auto(키 감지) | dataforseo | serper

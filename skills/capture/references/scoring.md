@@ -22,7 +22,7 @@
 | cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원은 API 수집만 채운다** — CSV 임포트는 page가 NULL이라 빈 결과가 정상(결함 아님, 데이터 부재) |
 | ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도. 인용/언급 판정 자체는 `scoring.judge()` |
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
-| content_gap | 경쟁사는 잡는데 나는 부재 | 부분 가능: rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우. 완전판(경쟁사 역키워드)은 여전히 DataForSEO Labs 필요 |
+| content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
 | pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |

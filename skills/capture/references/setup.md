@@ -137,6 +137,10 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 3. `~/.capture/env` 에 `DATAFORSEO_LOGIN=가입이메일` / `DATAFORSEO_PASSWORD=API비밀번호`
    (5-2절과 같은 파일 — 대시보드 [설정] 패널이 여기 쓴다)
 4. 본격 사용 시 최소 충전 $50 (월 사용량 $1~2 수준이라 수년치)
+   **같은 키로 DataForSEO Labs (역키워드 — `scripts/collect_gap.py` 의
+   `ranked_keywords/live`) 가 함께 청구된다** — `/capture gap` 사용 시 추가로
+   도메인당 ~$0.001/콜이 나간다. 가격표:
+   https://dataforseo.com/apis/dataforseo-labs-api
 
 **Serper.dev (단순함 우선 — AIO 없음)**
 1. https://serper.dev 가입 → 무료 크레딧 2,500 (카드 불필요)

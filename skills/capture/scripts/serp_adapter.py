@@ -34,6 +34,21 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "ko": ("South Korea", "ko", ("kr", "ko")),
     "en": ("United States", "en", ("us", "en")),
     "ja": ("Japan", "ja", ("jp", "ja")),
+    "de": ("Germany", "de", ("de", "de")),
+    "fr": ("France", "fr", ("fr", "fr")),
+    "es": ("Spain", "es", ("es", "es")),
+    "it": ("Italy", "it", ("it", "it")),
+    "pt": ("Brazil", "pt", ("br", "pt")),  # Brazil — 화자 다수
+    "nl": ("Netherlands", "nl", ("nl", "nl")),
+    "pl": ("Poland", "pl", ("pl", "pl")),
+    "ru": ("Russia", "ru", ("ru", "ru")),
+    "tr": ("Turkey", "tr", ("tr", "tr")),
+    "vi": ("Vietnam", "vi", ("vn", "vi")),
+    "th": ("Thailand", "th", ("th", "th")),
+    "id": ("Indonesia", "id", ("id", "id")),
+    "ar": ("United Arab Emirates", "ar", ("ae", "ar")),
+    "hi": ("India", "hi", ("in", "hi")),
+    "zh": ("Taiwan", "zh", ("tw", "zh")),  # Taiwan — 구글 접근 가능 지역
 }
 
 
@@ -105,8 +120,10 @@ def _domains_in(obj) -> list[str]:
     return sorted(set(out))
 
 
-def fetch_dataforseo(keyword: str, locale: str, depth: int = 10) -> dict:
+def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
     import requests
+    if device not in ("desktop", "mobile"):
+        raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
     login, pw = os.environ.get("DATAFORSEO_LOGIN"), os.environ.get("DATAFORSEO_PASSWORD")
     if not (login and pw):
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
@@ -115,7 +132,7 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10) -> dict:
         "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
         auth=(login, pw), timeout=60,
         json=[{"keyword": keyword, "location_name": loc, "language_code": lang,
-               "device": "desktop", "depth": depth}])
+               "device": device, "depth": depth}])
     r.raise_for_status()
     data = r.json()
     task = (data.get("tasks") or [{}])[0]
@@ -150,8 +167,12 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10) -> dict:
             "related": related, "paa": paa, "cost": float(data.get("cost") or 0)}
 
 
-def fetch_serper(keyword: str, locale: str, depth: int = 10) -> dict:
+def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
     import requests
+    if device not in ("desktop", "mobile"):
+        raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
+    if device == "mobile":
+        print("[경고] serper는 desktop만 — 이 런은 desktop으로 측정됩니다", file=sys.stderr)
     key = os.environ.get("SERPER_API_KEY")
     if not key:
         raise RuntimeError("SERPER_API_KEY not set")
@@ -184,7 +205,10 @@ PROVIDERS = {
     "serper": {
         "fetch": fetch_serper,
         "cost": 0.001,   # ~1 credit; actual $/credit depends on your pack
-        "caveats": ["serper는 AI Overview를 측정하지 않는다 (aio_* = NULL, '없음'이 아님)"],
+        "caveats": [
+            "serper는 AI Overview를 측정하지 않는다 (aio_* = NULL, '없음'이 아님)",
+            "serper는 모바일 측정을 지원하지 않는다 (desktop 고정)",
+        ],
     },
 }
 
@@ -218,11 +242,13 @@ def detect_provider() -> str | None:
     return None
 
 
-def fetch(provider: str, keyword: str, locale: str, depth: int = 10) -> dict:
+def fetch(provider: str, keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
     """정규화된 SERP 한 건. 제공자가 안 채운 자리는 여기서 메운다 —
     호출부가 `if provider == ...` 로 None을 해석하지 않게."""
+    if device not in ("desktop", "mobile"):
+        raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
     spec = PROVIDERS[provider]
-    res = spec["fetch"](keyword, locale, depth)
+    res = spec["fetch"](keyword, locale, depth, device=device)
     res.setdefault("cost", spec["cost"])   # 실청구액을 안 주는 제공자는 단가로 계상
     res.setdefault("aio_domains", [])
     res.setdefault("aio_present", None)    # None = 측정 안 함. 0("없었다")과 다르다.
@@ -233,9 +259,13 @@ def fetch(provider: str, keyword: str, locale: str, depth: int = 10) -> dict:
 
 def _selfcheck() -> None:
     assert location("ko-KR")[0] == "South Korea"
-    assert location("de-DE") == LOCATION_MAP["en"]      # 매핑 없으면 미국/영어 폴백
+    assert location("de-DE")[0] == "Germany"
+    assert location("pt-BR")[0] == "Brazil"
+    assert location("zh-TW")[0] == "Taiwan"
+    assert location("xx-XX") == LOCATION_MAP["en"]      # 매핑 없으면 미국/영어 폴백
     assert warn_unmapped("ko-KR") is False
-    assert warn_unmapped("de-DE") is True               # 폴백은 하되 한 번은 말한다
+    assert warn_unmapped("de-DE") is False
+    assert warn_unmapped("xx-XX") is True               # 폴백은 하되 한 번은 말한다
     # 인용 밖의 url/domain은 빠진다 — 'items' 리스트 아래 직속 dict엔 citation 키 없음
     assert _domains_in({"items": [{"url": "https://www.Example.com/a"},
                                   {"x": {"domain": "b.co"}}]}) == []
@@ -259,7 +289,8 @@ def _selfcheck() -> None:
                        "images": [{"items": [{"url": "https://nested.example.com/x"}]}]}]}
     assert _domains_in(nest) == [], _domains_in(nest)
     assert cost_per_query("serper") < cost_per_query("dataforseo")
-    assert caveats("dataforseo") == [] and caveats("serper")
+    assert caveats("dataforseo") == []
+    assert any("모바일" in c for c in caveats("serper"))
     assert set(PROVIDERS) == {"dataforseo", "serper"}
     print("serp_adapter self-check ok")
 

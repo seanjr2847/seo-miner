@@ -87,6 +87,13 @@ Brain 수집 없이 gsc MCP 툴(`search_analytics` 등)로 바로 조회해 답�
 후보에, 상위 빈출 도메인이 경쟁사에 자동 수확된다. 키 미설정이면 GSC 중심 모드로
 동작함을 안내한다 (setup.md 7절).
 
+디바이스: `--device mobile` 로 설정하면 `serp_device` 가 mobile 로 고정된다(기본
+desktop). **serper 는 desktop 만 지원 — mobile 요청은 desktop 으로 폴백된다**.
+device 를 바꾸면 직전 스냅샷과 디바이스가 달라져 Δ 비교가 한 번 흐려진다(같은
+device 끼리만 비교 가능, `scoring.md` 4-3b 의 period_days 짝 규칙과 같은 맥락).
+재실행 안전망: **오늘 이미 확인한 키워드는 자동 건너뜀** (rank_snapshots 가 같은
+날 덮어쓰는 구조를 그대로 활용해 재호출 비용을 아낀다). 강제 재확인은 `--force`.
+
 여러 번 돌아도 `rank_snapshots.position`이 계속 NULL인 키워드가 있다 — 그 키워드는
 **순위 문제가 아니라 인덱싱 문제일 수 있다**. 번들된 gsc MCP의 `index_inspect`
 툴로 해당 URL의 인덱스 여부를 먼저 확인한다 — 미인덱스면 노리는 페이지 자체가
@@ -101,7 +108,33 @@ NULL엔 적용되지 않는다).
 sql로 읽어 직접 재판정 후 결과를 설명한다 — 답변 전문이 저장되므로(상한 8000자)
 재판정 근거로 충분하다.
 
+재실행 안전망: **오늘 이미 기록된 (프롬프트, 엔진, 샘플) 조합은 자동 건너뜀** —
+같은 날 두 번 돌면 두 번째는 비용·시간만 들고 ai_checks 행은 늘리지 않는다.
+강제 재기록은 `--force`. (AI 답변은 비결정적이라 1샘플은 "사실"이 아니다 — `scoring.md`
+4-1 의 주 단위 추세 원칙과 같은 이유다.)
+
 OPENROUTER_API_KEY 미설정이면 browse 스킬(브라우저 실측, 키 불필요)을 대안으로 안내한다.
+
+### /capture gap {P} — 경쟁사 역키워드 (DataForSEO Labs, 유료 키 필요)
+`python scripts/collect_gap.py --project {P} --dry-run` 으로 도메인 수·요청
+수·비용 어림을 먼저 고지하고 확인을 받은 뒤 실행. **dry-run 선행·비용 고지는
+이 작업의 철칙** — Labs 는 도메인당 ~$0.001 청구(`references/setup.md` 7절
+DataForSEO 가격표 링크)이고 적재량에 따라 비용이 빠르게 늘어난다.
+
+**Labs 유료 키가 필요하다** — 기존 DataForSEO 자격 (`DATAFORSEO_LOGIN` /
+`DATAFORSEO_PASSWORD`)을 그대로 쓴다. 같은 키로 SERP 와 Labs 가 모두 청구된다.
+키가 없으면 다른 수집기와 같은 톤으로 정중히 종료한다(에러 아님).
+
+흐름: 경쟁사 도메인(생략 시 `competitors` 테이블, 상한 5개)에 대해 DataForSEO
+Labs `ranked_keywords/live` 를 호출해 랭킹 키워드를 받아, (a) 내 키워드와
+(b) 최신 GSC 스냅샷 노출>0 쿼리에 이미 있는 것은 제외 — **남는 것이 "경쟁사는
+잡는데 나는 부재"** 후보다.
+
+결과는 `keywords` 후보(`source='competitor_gap'`, `is_active=0`)로 적재된다 —
+즉 **`/capture keywords` 의 큐레이션 단계(승인분만 활성화)** 를 그대로 탄다.
+Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 추정치라
+'볼륨 창작 금지' 규칙 위반 아님). 기회 판정·군집화는 큐레이션 후 Claude
+(`scoring.md` 1절 content_gap 행).
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
 sql로 (a) 인용 갭: cited=0 체크의 cited_domains_json 빈도 + 미노출 프롬프트,
@@ -109,8 +142,8 @@ sql로 (a) 인용 갭: cited=0 체크의 cited_domains_json 빈도 + 미노출 �
 aio_present=1 AND aio_cited=0 키워드), (e) pseo_pattern: 고노출·저CTR 쿼리를 뽑아
 변수 슬롯({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 클러스터링해 pSEO 캠페인
 후보를 찾는다 — 절차·가드레일은 `references/scoring.md` 1b절을 따른다.
-content_gap은 rank 수확 경쟁사 기반의 부분 분석만 가능하고,
-완전판(경쟁사 역키워드)은 DataForSEO Labs 연동이 필요함을 명시한다.
+content_gap 후보는 별도 명령 `/capture gap {P}` (Labs 유료 키)로 먼저 적재한다 —
+여기서는 적재된 후보를 기회로 정리·판정한다.
 
 ### /capture run {P} — 풀런
 gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아래) → report 순서로 한 번에.

@@ -88,6 +88,7 @@ def main() -> None:
     collector.add_setting(ap, "--max-prompts", key="limits.max_ai_prompts", fallback=30, type=int)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
     ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
+    ap.add_argument("--force", action="store_true", help="오늘 이미 확인한 질문도 건너뛰지 않고 재확인")
     a = ap.parse_args()
 
     conn, p, cfg = collector.open_project(a.project)
@@ -126,13 +127,48 @@ def main() -> None:
                  f"`/capture add {p['name']}` 이라고 하시면 프로젝트에 맞는 질문 10~30개를 "
                  "만들어 드립니다 (대시보드 폼으로 만든 사이트는 이 단계가 비어 있습니다).")
 
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not a.force:
+        # 오늘(started_at이 오늘인 kind='ai' 런) 이미 기록된 (prompt_id, engine, sample_idx)는 건너뛴다
+        checked_today = {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                """SELECT c.prompt_id, c.engine, c.sample_idx
+                     FROM ai_checks c
+                     JOIN runs r ON r.id = c.run_id
+                    WHERE r.project_id = ?
+                      AND r.kind = 'ai'
+                      AND (date(r.started_at) = ? OR date(r.started_at, 'localtime') = ?)""",
+                (p["id"], today, today)
+            ).fetchall()
+        }
+    else:
+        checked_today = set()
+
     total_calls = len(prompts) * len(engines) * samples
+    tasks_to_run = []
+    for row in prompts:
+        for engine in engines:
+            for sample in range(samples):
+                if (row["id"], engine, sample) not in checked_today:
+                    tasks_to_run.append((row["id"], engine, sample))
+    skipped_calls = total_calls - len(tasks_to_run)
+    calls_to_make = len(tasks_to_run)
+
+    skip_msg = f" (skipped {skipped_calls} 오늘 이미 확인)" if skipped_calls else ""
     print(f"[ai] prompts={len(prompts)} engines={list(engines)} samples={samples} "
-          f"-> {total_calls} calls")
+          f"-> {calls_to_make} calls{skip_msg}")
     print("     note: provider-native search may bill a per-search fee on top of tokens.")
     if a.dry_run:
         for r in prompts[:5]:
             print(f"     e.g. [{r['category']}] {r['prompt']}")
+        conn.close()
+        return
+
+    if calls_to_make == 0:
+        print(f"\nsaved 0 checks (skipped {skipped_calls} 오늘 이미 확인). failures=0/0. "
+              f"Next: /capture gaps or /capture report")
         conn.close()
         return
 
@@ -148,8 +184,11 @@ def main() -> None:
         run_id = r.id
         errors = 0
         for row in prompts:
+            prompt_done = False
             for engine, model in engines.items():
                 for sample in range(samples):   # 이름 주의: s는 위의 settings dict
+                    if (row["id"], engine, sample) in checked_today:
+                        continue
                     try:
                         res = ask(model, row["prompt"], api_key, p["locale"])
                         mentioned, cited, others = scoring.judge(
@@ -157,17 +196,19 @@ def main() -> None:
                         db.record_ai_check(conn, row["id"], run_id, engine, sample,
                                            mentioned, cited, others, res["content"])
                         r.api_calls += 1
+                        prompt_done = True
                     except Exception as e:
                         errors += 1
                         print(f"  ! {engine} failed on prompt#{row['id']}: {e}", file=sys.stderr)
                     time.sleep(throttle)
-            print(f"  prompt#{row['id']} [{row['category']}] done")
-        r.notes = f"engines={list(engines)} samples={samples} errors={errors}"
+            if prompt_done:
+                print(f"  prompt#{row['id']} [{row['category']}] done")
+        r.notes = f"engines={list(engines)} samples={samples} errors={errors} skipped={skipped_calls}"
 
     # 실패는 카운트만 하고 계속 갔으니, 끝에서 한 번 크게 말한다 —
     # 아래 매트릭스의 분모가 그만큼 줄어든 것을 보이게.
     if errors:
-        print(f"[ai] {errors}/{total_calls} 요청 실패 — 매트릭스 분모가 그만큼 축소됨",
+        print(f"[ai] {errors}/{calls_to_make} 요청 실패 — 매트릭스 분모가 그만큼 축소됨",
               file=sys.stderr)
 
     # summary matrix: engine x category -> cited/total
@@ -178,7 +219,8 @@ def main() -> None:
              FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
             WHERE c.run_id=? GROUP BY 1,2 ORDER BY 1,2""", (run_id,)):
         print(f"  {r['engine']:<11} {r['category']:<10} {r['cited']}/{r['total']}")
-    print(f"\nrun_id={run_id} saved. failures={errors}/{total_calls}. "
+    skip_summary = f" (skipped {skipped_calls} 오늘 이미 확인)" if skipped_calls else ""
+    print(f"\nrun_id={run_id} saved{skip_summary}. failures={errors}/{calls_to_make}. "
           f"Next: /capture gaps or /capture report")
     conn.close()
 
