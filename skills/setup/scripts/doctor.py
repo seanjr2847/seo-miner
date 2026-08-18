@@ -82,17 +82,14 @@ def diagnose() -> dict:
         ("글 만들기", "모은 키워드로 콘텐츠 초안 작성", core_ok, None),
         ("AI 노출 확인", "ChatGPT 같은 AI가 내 글을 인용하는지 검사 "
          "(브라우저 방식은 키 없이 무료)", core_ok, None),
-        ("구글 실적 읽기", "서치콘솔에서 받은 CSV로 진짜 순위·클릭 확인",
-         core_ok, None),
-        ("구글 자동 연동", "CSV 내보내기 없이 자동 수집 + Claude가 즉석 조회",
+        ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
          core_ok and all(deps_gsc.values()) and gsc_linked,
          "서비스 계정 키 1개면 모든 사이트가 붙습니다 (무료, 5분) — 채팅에 "
-         "\"GSC 연동해줘\" 하시면 제가 대신 눌러 드립니다. "
-         "급하면 CSV 내보내기가 설정 없이 지금도 됩니다."),
+         "\"GSC 연동해줘\" 하시면 제가 대신 눌러 드립니다."),
         ("순위 추적", "검색결과 몇 등인지 매일 기록",
          core_ok and (keys["dataforseo"] or keys["serper"]),
-         "유료 키가 필요합니다 (DataForSEO 또는 Serper): setup.md 7절. "
-         "순위를 매일 기록하고 싶을 때만 켜세요 — 안 켜도 GSC 실측으로 충분합니다."),
+         "유료 키가 필요합니다: DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정), "
+         "Serper는 대체재(더 싸고 단순 — 선택): setup.md 7절."),
     ]
 
     must = []
@@ -105,7 +102,14 @@ def diagnose() -> dict:
                     "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)")
     if core_ok and brain_ok and not brain["projects"]:
         must.append("첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
-                    "하시면 제가 물어보면서 만들어 드립니다. 여기까지가 필수 끝.")
+                    "하시면 제가 물어보면서 만들어 드립니다.")
+    # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
+    # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
+    if core_ok and brain_ok and not gsc_linked:
+        must.append("구글 서치콘솔 연결 (무료, 5분, 계정당 1회) — 자동 수집과 "
+                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 채팅에 \"GSC 연동해줘\" "
+                    "하시면 제가 대신 눌러 드리고, 대시보드 [설정] 3번에서 열쇠 회수·"
+                    "부품 설치가 자동으로 이어집니다.")
 
     later = []
     if brain["no_prompts"]:
@@ -116,7 +120,10 @@ def diagnose() -> dict:
                      "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
     if not keys["openrouter"]:
         later.append("AI 노출 확인 자동화 — OpenRouter 키 (유료, 약 5분): "
-                     "setup.md 5절. 무료로는 `/seo-miner:browse`가 지금도 됩니다.")
+                     "setup.md 5절. 무료로는 `/browse`가 지금도 됩니다.")
+    if not (keys["dataforseo"] or keys["serper"]):
+        later.append("순위 추적 키 — DataForSEO 권장(AI오버뷰·역키워드 포함), "
+                     "Serper는 대체재(선택): setup.md 7절.")
     if gsc_linked and not all(deps_gsc.values()):
         later.append("구글 자동 수집용 부품 — `pip install google-api-python-client`")
     if keys["gsc_service_account"] and not keys["node_npx"]:
@@ -133,6 +140,9 @@ def diagnose() -> dict:
     elif not brain["projects"]:
         verdict = "설치는 끝났습니다 — 첫 사이트만 등록하면 바로 시작입니다."
         next_cmd = "/capture add <원하는이름>"
+    elif not gsc_linked:
+        verdict = "구글 서치콘솔 연결만 남았습니다 — 그래야 실측이 자동으로 쌓입니다."
+        next_cmd = "GSC 연동해줘"
     else:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
         next_cmd = f"/capture run {brain['projects'][0]}"
@@ -166,7 +176,7 @@ def render(d: dict) -> None:
                 tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 공용 열쇠로 "
                        "전환하세요 (5분, connect_gsc.py)")
             else:
-                tag = "아직 (CSV 내보내기로는 지금도 가능)"
+                tag = "아직 — 연결해야 실적이 읽힙니다 (\"GSC 연동해줘\")"
             print(f"  · {name} — 구글 자동 수집: {tag}")
         if d["keys"]["gsc_service_account"]:
             print("    * 공용 열쇠는 Search Console '사용자 및 권한'에 이메일을 "

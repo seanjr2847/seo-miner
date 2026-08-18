@@ -19,7 +19,7 @@
 |------|------|----------------------|
 | striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 하한 `STRIKING_MIN_IMP`(=10), 노출 내림차순. 각 행에 `band`(pos ≤ 10 → `page1`, 아니면 `page2`)와 `gap`(`gap_to_page1()`, `PAGE1=10`)이 붙는다 |
 | ctr_gap | 1페이지(1~10위)인데 기대 CTR의 절반도 못 받음 → 제목·설명 문제 | `scoring.ctr_gaps()` — 기대치는 `EXPECTED_CTR`(1~20위, %, 업계 클릭 곡선 근사), 노출 하한 `CTR_GAP_MIN_IMP`(=100), 판정은 실제 CTR < 기대 × `CTR_GAP_FACTOR`(=0.5). 손실 클릭(노출×(기대-실제)) 내림차순 |
-| cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원은 API 수집만 채운다** — CSV 임포트는 page가 NULL이라 빈 결과가 정상(결함 아님, 데이터 부재) |
+| cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원이 필요하다** — page가 NULL인 구버전(CSV 시절) 스냅샷에서는 빈 결과가 정상(결함 아님, 데이터 부재) |
 | ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도. 인용/언급 판정 자체는 `scoring.judge()` |
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
@@ -193,7 +193,7 @@ load가 적는 템플릿 문장 위에 원인 가설·맥락을 얹는다 (3절)
 2. API+네이티브 검색 ≈ 소비자 앱 (메모리·개인화 없음) → 방향 지표로만.
 3. GSC: 2~3일 지연, 저노출 롱테일은 익명화로 누락, position은 평균값.
 3b. **기간이 다른 스냅샷을 빼지 않는다.** `gsc_snapshots.period_days`가 다르면
-   (예: CSV 90일치 vs 자동수집 28일치) Δ순위·Δ클릭은 전부 거짓이다. 두 스냅샷을
+   (예: 90일치 vs 28일치) Δ순위·Δ클릭은 전부 거짓이다. 두 스냅샷을
    비교하는 SQL에는 반드시 `period_days`가 같다는 조건을 넣고, 짝이 없으면
    "비교할 같은 기간 기록이 없다"고 말한다. 비교 짝 선택은 `scoring.snapshot_pair()`가
    실행한다 (대시보드와 리포트가 같이 쓴다).

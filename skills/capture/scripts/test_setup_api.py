@@ -156,6 +156,17 @@ assert gdata["opps_total"] == 0
 assert gdata["brand_catalog_empty"] is True
 conn.close()
 
+# ── 레포 프리필 — CNAME > package.json, 이름은 파일명 규칙으로 정제 ──
+repo = HOME / "fake-repo"
+repo.mkdir()
+(repo / "CNAME").write_text("https://mysite.example.com\n", "utf-8")
+(repo / "package.json").write_text('{"name": "@me/My Site!", "homepage": "https://ignored.com"}', "utf-8")
+pf = dashboard.repo_prefill(repo)
+assert pf["domain"] == "mysite.example.com", pf          # CNAME이 homepage보다 우선
+assert pf["gsc_property"] == "sc-domain:mysite.example.com", pf
+assert pf["name"] == "My-Site", pf                       # 허용 문자만 남는다
+assert dashboard.repo_prefill(HOME / "빈폴더없음") == {}  # 없어도 안 죽고, 못 찾으면 빈 dict
+
 # ── 박제본(export) ──────────────────────────────────────────────────
 out = dashboard.export("demo", None)
 html = out.read_text("utf-8")

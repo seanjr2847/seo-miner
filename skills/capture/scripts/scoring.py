@@ -314,7 +314,7 @@ def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> l
 def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
     """같은 쿼리에 내 페이지 2개 이상이 노출을 나눠 갖는 경우 (키워드 카니벌라이제이션).
 
-    page 차원은 자동 수집(GSC API) 경로만 채운다 — CSV 가져오기는 page가 NULL이라
+    page 차원이 필요하다 — page가 NULL인 구버전(CSV 시절) 스냅샷에서는
     이 함수는 자동으로 빈 결과를 돌려준다 (결함이 아니라 데이터 부재).
     부페이지 노출 비중 >= CANNI_MIN_SHARE, 합산 노출 >= CANNI_MIN_IMP 일 때만 잡는다.
     """

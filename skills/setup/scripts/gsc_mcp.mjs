@@ -36,7 +36,7 @@ const child = spawn(win ? "npx.cmd" : "npx", ["-y", "mcp-server-gsc"],
 
 child.on("error", (e) => {
   console.error(`[gsc] npx를 실행하지 못했습니다 (${e.message}) — node가 필요합니다: ` +
-                `nodejs.org. 설치 없이도 CSV 내보내기와 collect_gsc.py는 그대로 됩니다.`);
+                `nodejs.org. 설치 없이도 collect_gsc.py 수집은 그대로 됩니다.`);
   process.exit(1);
 });
 child.on("exit", (code) => process.exit(code ?? 1));

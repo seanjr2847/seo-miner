@@ -2,8 +2,6 @@
 """자체점검 — `python test_capture.py` (임시 폴더에서만 돈다, 진짜 Brain은 안 건드림).
 
 가장 조용히 틀리는 것들만 본다:
-  · CSV 숫자 표기 흡수(1,234 / 3,5 / 3.5%) — 로케일 따라 뜻이 뒤집힌다
-  · zip에서 '검색어' 표 고르기 — 이름을 못 알아보면 페이지 CSV를 넣어버린다
   · db.py sql 이 진짜 읽기 전용인지 — WITH ... DELETE 는 문자열 검사를 통과한다
   · 기간 다른 GSC 스냅샷을 비교하지 않는지 — 28일치와 90일치를 빼면 Δ가 거짓이다
   · 같은 기회를 두 번 적재해도 목록이 안 불어나는지
@@ -16,7 +14,6 @@
 import os
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 HOME = Path(tempfile.mkdtemp(prefix="seo-miner-test-"))
@@ -26,47 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector          # noqa: E402
 import dashboard          # noqa: E402
 import db                 # noqa: E402
-import import_gsc_csv as csvimp  # noqa: E402
 import scoring            # noqa: E402
 import serp_adapter       # noqa: E402
-
-CSV = ("검색어,클릭수,노출수,CTR,게재순위\n"
-       "20도 옷차림,1234,5678,3.5%,8.2\n"
-       "빈 줄 아님,0,3,0%,15\n")
-PAGES_CSV = "페이지,클릭수,노출수,CTR,게재순위\nhttps://e.com/a,1,2,1%,3\n"
-
-
-def test_parse_num():
-    assert csvimp.parse_num("1,234") == 1234        # 천단위 콤마
-    assert csvimp.parse_num("3,5") == 3.5           # 소수점 콤마 (독일·프랑스 표기)
-    assert csvimp.parse_num("3.5%") == 0.035        # 퍼센트는 비율로
-    assert csvimp.parse_num("") == 0.0
-
-
-def test_read_rows():
-    rows = csvimp.read_rows(CSV.encode("utf-8"))
-    assert len(rows) == 2, rows                     # 헤더는 빠진다
-    assert rows[0] == ("20도 옷차림", 1234, 5678, 0.035, 8.2), rows[0]
-
-
-def test_pick_csv_prefers_query_table():
-    z = HOME / "export.zip"
-    with zipfile.ZipFile(z, "w") as f:
-        f.writestr("페이지.csv", PAGES_CSV)
-        f.writestr("쿼리.csv", CSV)
-    name, blob = csvimp.pick_csv(z)
-    assert "쿼리" in name, name
-    assert csvimp.read_rows(blob)[0][0] == "20도 옷차림"
-
-
-def test_pick_csv_unknown_names_skips_urls():
-    """파일 이름을 못 알아보는 언어일 때도 URL 목록(페이지 표)은 고르면 안 된다."""
-    z = HOME / "export2.zip"
-    with zipfile.ZipFile(z, "w") as f:
-        f.writestr("aaa.csv", PAGES_CSV + "x" * 5000)   # 일부러 더 크게
-        f.writestr("bbb.csv", CSV)
-    _, blob = csvimp.pick_csv(z)
-    assert csvimp.read_rows(blob)[0][0] == "20도 옷차림"
 
 
 def _project(conn, name="t"):
@@ -323,7 +281,7 @@ def test_run_is_closed_even_on_crash():
 
 
 def test_gsc_snapshot_write_is_idempotent_per_day():
-    """같은 날 다시 수집하면 덮어쓴다 — 자동 수집과 CSV 가져오기가 같은 함수를 쓴다."""
+    """같은 날 다시 수집하면 덮어쓴다 (하루 1스냅샷)."""
     conn = db.connect()
     p = _project(conn, "snap")
     db.write_gsc_snapshot(conn, p["id"], "2026-03-01", 28,
@@ -396,13 +354,13 @@ def test_ctr_gaps_detects_low_ctr_and_respects_floors():
 
 
 def test_cannibalization_detects_split_and_ignores_null_pages():
-    """같은 쿼리 2페이지 분산은 잡고, page NULL(CSV 경로)·독점 쿼리는 무시."""
+    """같은 쿼리 2페이지 분산은 잡고, page NULL(구버전 데이터)·독점 쿼리는 무시."""
     conn = db.connect()
     p = _project(conn, "canni")
     d = "2026-04-01"
     _gsc(conn, p["id"], d, 28, "분산", "/a", 3, 60, 4.0)
     _gsc(conn, p["id"], d, 28, "분산", "/b", 1, 40, 7.0)         # 부페이지 40% ≥ 20%
-    _gsc(conn, p["id"], d, 28, "널만", None, 5, 500, 5.0)        # CSV 경로 — page 없음
+    _gsc(conn, p["id"], d, 28, "널만", None, 5, 500, 5.0)        # 구버전 데이터 — page 없음
     _gsc(conn, p["id"], d, 28, "독점", "/a", 5, 95, 3.0)
     _gsc(conn, p["id"], d, 28, "독점", "/b", 0, 4, 3.0)          # 부페이지 4% — 독점
     out = scoring.cannibalization(conn, p["id"])

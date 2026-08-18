@@ -168,6 +168,58 @@ def create_project(f: dict) -> dict:
     return {"ok": True, "name": name, "path": str(path)}
 
 
+def repo_prefill(root: Path | None = None) -> dict:
+    """대시보드를 띄운 폴더(레포)에서 첫 사이트 폼의 이름·도메인을 추론한다.
+
+    결정적으로 읽을 수 있는 것만 — CNAME > package.json(homepage) > astro.config
+    (site) > git remote(*.github.io). 씨앗 키워드·브랜드 별칭은 판단이 필요해
+    여기서 안 채운다(채팅 /capture add 몫). 못 찾으면 그 키를 비운다.
+    """
+    root = root or Path.cwd()
+    out: dict = {}
+
+    def _domain(url: str) -> str:
+        d = re.sub(r"^https?://", "", url.strip()).split("/")[0].strip().lower()
+        return d if "." in d else ""
+
+    cname = root / "CNAME"
+    if cname.is_file():
+        out["domain"] = _domain(cname.read_text("utf-8").strip())
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            p = json.loads(pkg.read_text("utf-8"))
+            if not out.get("domain") and p.get("homepage"):
+                out["domain"] = _domain(str(p["homepage"]))
+            if p.get("name"):
+                out.setdefault("name", str(p["name"]).split("/")[-1])
+        except ValueError:
+            pass
+    if not out.get("domain"):
+        for cfg in ("astro.config.mjs", "astro.config.ts", "astro.config.js"):
+            f = root / cfg
+            if f.is_file():
+                m = re.search(r"""site\s*:\s*['"](https?://[^'"]+)['"]""",
+                              f.read_text("utf-8", errors="replace"))
+                if m:
+                    out["domain"] = _domain(m.group(1))
+                break
+    if not out.get("domain"):
+        gitcfg = root / ".git" / "config"
+        if gitcfg.is_file():
+            m = re.search(r"github\.com[:/][\w.-]+/([\w.-]+?)(?:\.git)?\s*$",
+                          gitcfg.read_text("utf-8", errors="replace"), re.M)
+            if m and m.group(1).endswith(".github.io"):
+                out["domain"] = m.group(1).lower()
+    name = out.get("name") or root.name
+    name = re.sub(r"[^A-Za-z0-9_-]", "-", name).strip("-")[:40]
+    if name and re.match(r"[A-Za-z0-9]", name):
+        out["name"] = name
+    if out.get("domain"):
+        out["gsc_property"] = f"sc-domain:{out['domain']}"
+    return out
+
+
 def setup_state() -> dict:
     """setup 스킬의 doctor.diagnose()를 소비해 대시보드 화면이 실제로 쓰는 평평한 키만 방출."""
     d = doctor.diagnose()
@@ -371,6 +423,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, HTML, "text/html; charset=utf-8")
         if u.path == "/api/doctor":
             return self._json(setup_state())
+        if u.path == "/api/setup/prefill":   # 읽기 전용 — 레포 추론값
+            return self._json(repo_prefill())
         if u.path == "/api/projects":
             conn = db.connect()
             names = [r[0] for r in

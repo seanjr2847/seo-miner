@@ -36,22 +36,13 @@ pip install google-api-python-client
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
 `python scripts/db.py init`.
 
-## 4. GSC 실측 데이터 — 두 가지 경로
+## 4. GSC 실측 데이터 — 서비스 계정 연동 (필수)
 
-### 4-A. CSV 내보내기 (쉬움 — 설정 없음, 1분)
+실적(클릭·노출)이 이 도구의 재료라 이 연결 없이는 측정이 시작되지 않는다.
+(CSV 내보내기 임시 경로는 2026-08-18 제거 — 1,000행 제한·페이지 차원 없음·매번
+수동이라 판정 재료로 부적합했다.)
 
-1. Search Console → 실적 → 기간 칩 선택(기본 **3개월**) → `검색어 수` 탭 →
-   우측 상단 **내보내기 → CSV 다운로드** (zip으로 받아짐)
-2. `python scripts/import_gsc_csv.py --project NAME --days 90`
-   (파일 인자를 생략하면 다운로드 폴더에서 방금 받은 걸 찾는다.
-   `--days`는 1번에서 고른 기간과 반드시 맞춘다 — 3개월이면 90, 28일이면 28)
-
-Claude에게 부탁하면 1번 클릭까지 브라우저로 대신 해준다 (capture SKILL.md 마지막 절).
-
-한계: UI 내보내기는 **상위 1,000행**까지, **페이지 단위 없음**, 매번 수동.
-구글 클라우드 프로젝트·OAuth는 전혀 필요 없다.
-
-### 4-B. 다이렉트 연동 (서비스 계정, 계정당 1회 5분 — 이후 완전 자동)
+### 다이렉트 연동 (서비스 계정, 계정당 1회 5분 — 이후 완전 자동)
 
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
 
@@ -92,12 +83,9 @@ node로 띄우고, 런처가 플랫폼에 맞게 npx를 부르고 `CAPTURE_HOME`
 경로도 채운다. 필요한 건 node 하나뿐이다(nodejs.org).
 `GOOGLE_APPLICATION_CREDENTIALS`를 직접 걸어두면 그쪽이 우선한다.
 
-**어느 쪽을 쓰나**: 한 번 보고 말 거면 4-A(CSV), 매주 자동으로 돌릴 거면 4-B.
-4-B가 1,000행 제한·페이지 차원 없음도 같이 푼다.
+## 5. OpenRouter (AI 가시성 체크 — 권장)
 
-## 5. OpenRouter (AI 가시성 체크 — 선택)
-
-키 없이 무료로 하려면 `browse` 스킬(`/seo-miner:browse`)이 브라우저로 실제 앱에
+키 없이 무료로 하려면 `browse` 스킬(`/browse`)이 브라우저로 실제 앱에
 직접 물어봐 같은 데이터를 남긴다. 아래는 여러 프롬프트를 자동으로 돌리고 싶을 때.
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
@@ -122,7 +110,6 @@ python scripts/db.py sync-project ~/.capture/projects/myproject.yaml
 python scripts/expand_keywords.py --project myproject --dry-run
 python scripts/collect_ai.py --project myproject --dry-run
 python scripts/collect_gsc.py --project myproject --dry-run
-python scripts/import_gsc_csv.py --project myproject <내려받은.zip> --dry-run  # CSV 경로
 python scripts/dashboard.py --export --project myproject   # 빈 리포트라도 렌더 확인
 python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C로 종료)
 ```

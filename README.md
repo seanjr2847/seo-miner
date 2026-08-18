@@ -85,7 +85,7 @@ pip install requests pyyaml
 |---|---|
 | `/setup [web]` | 환경 진단, 설치·키·구글 연결. `web`이면 대시보드 설정 화면 |
 | `/capture add` | 사이트 온보딩 (타입·도메인·시드 키워드·AI 질문 초안) |
-| `/capture gsc` | Search Console 실적 수집 (자동 연동 또는 CSV 내보내기) |
+| `/capture gsc` | Search Console 실적 자동 수집 (서비스 계정 연동 — 필수) |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
 | `/capture rank` | SERP 순위 스냅샷 + 연관검색어·경쟁사 자동 수확 (유료 키) |
 | `/capture ai` | AI 엔진 인용 체크 (OpenRouter) |
@@ -103,9 +103,9 @@ pip install requests pyyaml
 
 | 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
 |---|---|---|
-| 구글 실적 | Search Console → 내보내기 → CSV. **클릭은 Claude가 브라우저로 대신** 하고 다운로드 폴더에서 알아서 집어감 | 서비스 계정 키 **1개로 모든 사이트** 자동 수집 + 1,000행 제한·페이지 차원 해제 |
-| AI 인용 확인 | `/browse` — 브라우저로 실제 앱에 직접 질문 | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 |
-| 검색 순위 추적 | — | `SERPER_API_KEY` 또는 `DATAFORSEO_LOGIN`/`PASSWORD` |
+| 구글 실적 (필수 연결) | 서비스 계정 키 **1개로 모든 사이트** 자동 수집 (무료, 계정당 1회 5분 — 콘솔 클릭은 Claude가 대신) | — |
+| AI 인용 확인 | `/browse` — 브라우저로 실제 앱에 직접 질문 | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (권장) |
+| 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 권장(AI오버뷰·역키워드 포함) · `SERPER_API_KEY`는 대체재(선택) |
 
 키는 대시보드 **[설정] → API 키** 칸에 넣으면 `~/.capture/env`에 저장되고 모든
 스크립트가 읽습니다 — 셸 rc를 편집할 필요가 없습니다. 셸에 `export`한 값이 있으면

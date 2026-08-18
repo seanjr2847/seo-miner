@@ -63,7 +63,7 @@ def creds_dir(project: str) -> Path:
 
 
 def downloads_dir() -> Path:
-    """브라우저 다운로드 폴더 — GSC CSV를 여기서 찾는다."""
+    """브라우저 다운로드 폴더 — GSC 서비스 계정 키(connect_gsc)를 여기서 찾는다."""
     return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
 
 SCHEMA = """
@@ -368,7 +368,7 @@ def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date:
     """GSC 스냅샷 적재. 같은 날 다시 넣으면 덮어쓴다(하루 1스냅샷).
 
     rows: (query, page|None, clicks, impressions, ctr, position) 순회 가능 객체.
-    자동 수집(page 있음)과 CSV 가져오기(page 없음)가 같은 함수를 쓴다.
+    page NULL 허용은 구버전(CSV 시절) 데이터 호환용이다.
     """
     rows = list(rows)
     conn.execute("DELETE FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?",
