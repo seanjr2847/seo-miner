@@ -514,14 +514,22 @@ def main() -> None:
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.
     # allow_reuse_address 기본값(True)이면 Windows에서 같은 포트에 서버가 겹쳐
-    # 떠서 구버전이 응답하는 사고가 난다 — 겹치면 조용히 공존 말고 여기서 실패.
+    # 떠서 구버전이 응답하는 사고가 난다 — 겹침 금지하고, 점유면 다음 포트로.
+    # 레포마다 대시보드를 따로 띄우는 사용(멀티 프로젝트)도 이걸로 자연히 된다.
     ThreadingHTTPServer.allow_reuse_address = False
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
-    except OSError:
-        sys.exit(f"포트 {a.port}에 이미 다른 대시보드가 떠 있습니다 — 그 창을 쓰거나 "
-                 f"기존 프로세스를 종료한 뒤 다시 실행하세요.")
-    url = f"http://127.0.0.1:{a.port}/?t={TOKEN}" + (
+    srv = None
+    for port in range(a.port, a.port + 20):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            continue
+    if srv is None:
+        sys.exit(f"포트 {a.port}~{a.port + 19}가 모두 사용 중입니다 — "
+                 f"기존 대시보드 창을 쓰거나 종료한 뒤 다시 실행하세요.")
+    if port != a.port:
+        print(f"포트 {a.port}는 이미 사용 중 — {port}로 띄웁니다.")
+    url = f"http://127.0.0.1:{port}/?t={TOKEN}" + (
         f"#{a.project}" if a.project else "")
     print(f"dashboard: {url}  (Ctrl+C로 종료)")
     if a.open:
