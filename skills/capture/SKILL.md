@@ -1,6 +1,6 @@
 ---
 name: capture
-description: Personal SEO & AI-search visibility engine (Boring Agent 역기획 클론, Capture 전용). Use this skill whenever the user asks about their sites' search visibility, rankings, GSC data, keyword discovery/롱테일 발굴, AI citation checks (ChatGPT·Perplexity·Gemini가 누굴 인용하는지), citation gaps, SEO opportunities, or wants a visibility report — including casual phrasings like "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘". Also use it to onboard a new project (game/local_clinic/saas/directory) for tracking.
+description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Capture 전용) — GSC 실적, 순위, 키워드/롱테일 발굴, AI 인용 체크(ChatGPT·Perplexity·Gemini가 누굴 인용하는지), 인용 갭, SEO 기회, 가시성 리포트. 사용 시점 — "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘" 같은 요청 전부, 그리고 새 사이트(game/local_clinic/saas/directory) 추적 온보딩.
 ---
 
 # capture — 개인용 검색·AI 가시성 Capture 엔진

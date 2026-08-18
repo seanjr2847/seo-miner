@@ -1,6 +1,6 @@
 ---
 name: browse
-description: Browser-measured AI visibility via claude-in-chrome — 실제 소비자 앱(chatgpt.com·perplexity.ai·gemini.google.com·claude.ai)에 프롬프트를 직접 입력해 브랜드 언급·인용을 실측하고 Brain(ai_checks)에 기록. Use when the user wants AI citation checks without API keys ("공짜로 인용 체크", "브라우저로 실측", "/browse ..."), when OPENROUTER_API_KEY is missing but an AI visibility check was requested, or when the user wants consumer-surface ground truth to compare against API-based collect_ai samples.
+description: AI 노출 브라우저 실측 (키 불필요) — claude-in-chrome으로 실제 소비자 앱(chatgpt.com·perplexity.ai·gemini.google.com·claude.ai)에 프롬프트를 직접 입력해 브랜드 언급·인용을 실측하고 Brain(ai_checks)에 기록. 사용 시점 — API 키 없이 인용 체크를 원할 때("공짜로 인용 체크", "브라우저로 실측", "/browse ..."), OPENROUTER_API_KEY가 없는데 AI 노출 확인이 요청됐을 때, API 표본(collect_ai)과 비교할 소비자 표면 실측이 필요할 때.
 ---
 
 # browse — 브라우저 실측 AI 가시성 (키 불필요)

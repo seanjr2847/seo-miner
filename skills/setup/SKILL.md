@@ -1,6 +1,6 @@
 ---
 name: setup
-description: First-run onboarding and environment doctor for the seo-miner plugin. Use IMMEDIATELY after plugin installation, whenever the user asks how to get started ("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), or whenever the capture/create skills hit missing prerequisites (deps, brain.db, OPENROUTER_API_KEY, GSC 서비스 계정 키/gsc MCP, SERP keys) — run this skill's doctor first instead of guessing what's missing.
+description: seo-miner 환경 진단·온보딩 — 설치 직후 이것부터. 사용 시점 — 플러그인 설치 직후, 사용자가 시작 방법을 물을 때("셋업 도와줘", "뭐부터 해야 해", "설치했는데 이제 뭐 함", "/setup", "doctor 돌려줘", "키 설정"), capture/create가 준비물 부재(deps, brain.db, OPENROUTER_API_KEY, GSC 서비스 계정 키/gsc MCP, SERP 키)에 부딪혔을 때 — 뭐가 빠졌는지 짐작하지 말고 이 스킬의 doctor부터 돌린다. 인자에 web이 있으면 doctor.py --web을 백그라운드로 띄워 설정 화면에서 직접 하게 한다.
 ---
 
 # setup — seo-miner 최초 온보딩 & 환경 닥터

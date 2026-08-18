@@ -1,6 +1,6 @@
 ---
 name: create
-description: Universal content-creation counterpart to the capture skill — turns Brain opportunities (striking_distance, ai_citation_gap, pseo_pattern, rank_decay) into actual content changes in ANY repo/stack (Astro, Next, Hugo, Jekyll, plain HTML, data-file directories) by discovering the repo's own conventions first. Use whenever the user wants to act on capture opportunities, write/refresh SEO or AEO content, generate pSEO pages, edit blog posts or landing copy for visibility, or says things like "/create ...", "기회 반영해줘", "그 키워드로 글 써서 리포에 넣어줘", "pSEO 페이지 만들어줘", "이 글 리프레시해줘". Works standalone (manual brief) even without capture installed.
+description: capture의 실행 짝 — Brain의 기회(striking_distance, ai_citation_gap, pseo_pattern, rank_decay)를 어떤 리포/스택(Astro, Next, Hugo, Jekyll, 순수 HTML, 데이터 파일 디렉터리)에서든 리포 자체 관례를 먼저 파악해 실제 콘텐츠 변경으로 바꾼다. 사용 시점 — 기회 실행, SEO/AEO 콘텐츠 작성·리프레시, pSEO 페이지 생성, "/create ...", "기회 반영해줘", "그 키워드로 글 써서 리포에 넣어줘", "pSEO 페이지 만들어줘", "이 글 리프레시해줘". capture 없이도 수동 브리프로 단독 동작.
 ---
 
 # create — 스택 불문 콘텐츠 실행 엔진 (capture의 Create 카운터파트)
