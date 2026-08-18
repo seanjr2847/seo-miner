@@ -851,18 +851,25 @@ function renderSetup(d) {
   prefillProject();
 }
 
-// 대시보드를 띄운 폴더(레포)에서 이름·도메인을 추론해 빈 칸만 채운다.
-// 씨앗 키워드·브랜드는 판단이 필요해 여기서 안 채운다 (/capture add 몫).
+// 대시보드를 띄운 폴더(레포)에서 폼 초기값을 채운다 — 이름·도메인은 코드 추론,
+// 씨앗 키워드·브랜드·도구는 setup 스킬(Claude)이 레포를 읽고 써 둔 판단 프리필.
+// 빈 칸만 채운다 — 사용자가 적던 값을 덮지 않는다.
 let PREFILLED = false;
 async function prefillProject() {
   if (PREFILLED || !$("p-name")) return;
   PREFILLED = true;
   try {
     const p = await (await fetch("/api/setup/prefill")).json();
+    const join = v => Array.isArray(v) ? v.join(", ") : v;
     let used = false;
-    for (const [id, key] of [["p-name","name"], ["p-domain","domain"], ["p-gsc","gsc_property"]])
-      if (p[key] && !$(id).value) { $(id).value = p[key]; used = true; }
-    if (used) say("m-proj", "이 폴더의 레포에서 읽어 미리 채웠습니다 — 확인만 해 주세요.", true);
+    for (const [id, key] of [["p-name","name"], ["p-domain","domain"], ["p-gsc","gsc_property"],
+                             ["p-locale","locale"], ["p-seeds","seed_keywords"],
+                             ["p-alias","brand_aliases"], ["p-tools","tools"],
+                             ["p-comp","competitors_manual"]])
+      if (p[key] && (!$(id).value || $(id).value === "ko-KR" && key === "locale"))
+        { $(id).value = join(p[key]); used = true; }
+    if (p.type && $("p-type")) $("p-type").value = p.type;
+    if (used) say("m-proj", "이 폴더의 레포에서 읽어 미리 채웠습니다 — 지우거나 고친 뒤 등록만 누르세요.", true);
   } catch (e) { /* 추론 실패는 빈 폼과 같다 */ }
 }
 

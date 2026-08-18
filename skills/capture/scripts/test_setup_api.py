@@ -167,6 +167,20 @@ assert pf["gsc_property"] == "sc-domain:mysite.example.com", pf
 assert pf["name"] == "My-Site", pf                       # 허용 문자만 남는다
 assert dashboard.repo_prefill(HOME / "빈폴더없음") == {}  # 없어도 안 죽고, 못 찾으면 빈 dict
 
+# Claude 판단 프리필(prefill.json) 병합 — 판단은 빈 칸을 채우고, 실측(CNAME)이 이긴다
+dashboard.PREFILL_FILE.write_text(json.dumps({
+    "domain": "judged.com", "seed_keywords": ["씨앗 하나", "씨앗 둘"],
+    "tools": ["ecrett"], "ignored_key": "버려짐"}, ensure_ascii=False), "utf-8")
+pf2 = dashboard.repo_prefill(repo)
+assert pf2["domain"] == "mysite.example.com", pf2         # CNAME > 판단
+assert pf2["seed_keywords"] == ["씨앗 하나", "씨앗 둘"] and pf2["tools"] == ["ecrett"], pf2
+assert "ignored_key" not in pf2                           # 허용 키만 통과
+# 등록이 성공하면 프리필은 삭제된다 — 다음 사이트 폼에 새면 오염
+code, r = post("/api/setup/project", {"name": "prefilled", "type": "saas",
+                                      "domain": "judged.com"})
+assert code == 200 and r["ok"], r
+assert not dashboard.PREFILL_FILE.exists(), "등록 후에도 prefill.json이 남아 있다"
+
 # ── 박제본(export) ──────────────────────────────────────────────────
 out = dashboard.export("demo", None)
 html = out.read_text("utf-8")

@@ -165,18 +165,34 @@ def create_project(f: dict) -> dict:
     except ImportError:
         return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
                                       "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
+    PREFILL_FILE.unlink(missing_ok=True)   # 다 썼다 — 다음 사이트 폼에 새면 오염이다
     return {"ok": True, "name": name, "path": str(path)}
 
 
-def repo_prefill(root: Path | None = None) -> dict:
-    """대시보드를 띄운 폴더(레포)에서 첫 사이트 폼의 이름·도메인을 추론한다.
+# Claude(setup 스킬)가 레포를 읽고 판단해 둔 프리필 — 씨앗 키워드·브랜드 별칭처럼
+# 코드로 못 뽑는 것들이 여기로 온다. 등록이 성공하면 지운다(다음 사이트 오염 방지).
+PREFILL_FILE = db.CAPTURE_HOME / "prefill.json"
+PREFILL_KEYS = ("name", "domain", "gsc_property", "locale", "type",
+                "seed_keywords", "brand_aliases", "tools", "competitors_manual")
 
-    결정적으로 읽을 수 있는 것만 — CNAME > package.json(homepage) > astro.config
-    (site) > git remote(*.github.io). 씨앗 키워드·브랜드 별칭은 판단이 필요해
-    여기서 안 채운다(채팅 /capture add 몫). 못 찾으면 그 키를 비운다.
+
+def repo_prefill(root: Path | None = None) -> dict:
+    """대시보드를 띄운 폴더(레포)에서 첫 사이트 폼의 초기값을 추론한다.
+
+    두 층의 합: ① 결정적 추론(코드) — CNAME > package.json(homepage) >
+    astro.config(site) > git remote(*.github.io)에서 이름·도메인.
+    ② Claude 판단(PREFILL_FILE) — setup 스킬이 레포 콘텐츠를 읽고 써 둔
+    씨앗 키워드·브랜드 별칭·tools 등. 확실한 실측(CNAME)은 판단을 이기고,
+    약한 신호(homepage·config)는 판단이 비운 칸만 채운다. 못 찾으면 그 키를 비운다.
     """
     root = root or Path.cwd()
     out: dict = {}
+    if PREFILL_FILE.exists():
+        try:
+            j = json.loads(PREFILL_FILE.read_text("utf-8"))
+            out = {k: j[k] for k in PREFILL_KEYS if j.get(k)}
+        except (ValueError, OSError):
+            pass
 
     def _domain(url: str) -> str:
         d = re.sub(r"^https?://", "", url.strip()).split("/")[0].strip().lower()
@@ -184,7 +200,9 @@ def repo_prefill(root: Path | None = None) -> dict:
 
     cname = root / "CNAME"
     if cname.is_file():
-        out["domain"] = _domain(cname.read_text("utf-8").strip())
+        d = _domain(cname.read_text("utf-8").strip())
+        if d:
+            out["domain"] = d               # 실측이 판단 프리필을 이긴다
     pkg = root / "package.json"
     if pkg.is_file():
         try:
