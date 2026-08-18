@@ -26,6 +26,8 @@
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
 | pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
+| device_gap | 같은 쿼리인데 모바일 순위가 데스크톱보다 유의미하게 아래 → 모바일 쪽 문제 | `scoring.device_gap()` — `gsc_breakdown` 의 최신 snapshot_date, dim='device'. 같은 query 에서 `dpos`(모바일 pos − 데스크톱 pos) ≥ `DEVICE_GAP_POS`(=2.0)이고 모바일 노출 ≥ `DEVICE_MIN_IMP`(=50). 모바일 노출 내림차순. **`/capture gsc` 가 device 축을 분해해 뒀어야 한다** — `gsc_breakdown: ""` 로 껐거나 아직 안 돌렸으면 빈 결과가 정상(결함 아님, 데이터 부재) |
+| index_blocked | 색인 단계에서 죽은 URL — 순위 이전 문제 | `scoring.index_issues()` — `gsc_index_status` 의 최신 checked_date, verdict 가 'PASS' 가 아니거나 coverage_state 가 색인됨이 아닌 URL. 버킷 4종은 아래 1d절. 적재는 `/capture index`(URL 당 API 1콜) |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
 (새 기회 먼저 → 점수 높은 순 → 최근 id 순). 정렬이 두 벌이던 시절엔 대시보드와
@@ -132,6 +134,35 @@ Claude(또는 사람)가 손본 intent는 그 손이 이긴다. 비활성 키워
 값은 다음 load에서도 보존된다. 볼륨 추정이나 디바이스별 차이는 여기서
 다루지 않는다.
 
+### 1d. device_gap 임계값과 index_blocked 버킷
+
+**device_gap** — 임계값은 둘뿐이다. `DEVICE_GAP_POS`(=2.0)는 "평균 순위 2계단"이고,
+`DEVICE_MIN_IMP`(=50)는 모바일 노출 하한이다. 둘 다 필요하다: 노출 3짜리 쿼리의
+평균 순위 차이는 표본이 아니라 잡음이고(4-4절의 `NOISE_POS` 와 같은 이유, 축만 다르다),
+2계단 미만은 한 쪽 디바이스의 SERP 구성 차이로도 나온다.
+반환 필드는 `{query, mobile_pos, desktop_pos, dpos, mobile_imp, mobile_ctr, desktop_ctr}` —
+`dpos` 는 **양수 = 모바일이 그만큼 아래**다. ctr 두 개는 저장값이 아니라
+clicks/impressions 로 다시 계산한 퍼센트(소수 1자리)라, 순위 차 없이 CTR 만 벌어진
+경우(모바일 스니펫·인터스티셜 문제)도 reasoning 에서 짚을 수 있다.
+
+**index_blocked 버킷** — `index_issues()` 가 아래 **순서대로 먼저 걸리는 것** 하나를
+고른다(한 URL = 한 버킷):
+
+| bucket | 언제 | 뜻 |
+|---|---|---|
+| `robots_blocked` | robots_txt_state 가 허용이 아님 | 내가 크롤러를 막아 놨다. 고치는 건 robots.txt 한 줄 |
+| `fetch_error` | page_fetch_state 가 성공이 아님 | 구글이 페이지를 못 가져왔다 — 서버·리다이렉트·인증 벽 |
+| `canonical_mismatch` | google_canonical 과 user_canonical 이 **둘 다 있고 서로 다름** | 구글이 내 선언을 무시하고 다른 URL 을 정본으로 골랐다 — 이 URL 의 실적은 그쪽으로 간다 |
+| `not_indexed` | 위 셋에 안 걸리는 나머지 미색인 | 아직 안 담겼다. 색인 요청·내부 링크·품질 쪽 |
+
+`detail` 은 사람이 읽을 한 줄 한국어 설명이다(원본 상태 문자열을 그대로 노출하지 않는다).
+순서가 곧 처방의 우선순위다 — robots 로 막힌 URL 에 "색인 요청을 하세요"라고 말하지
+않기 위한 배열이다.
+
+**두 kind 공통:** 색인이 막혔거나 모바일이 밀리는 URL·쿼리는 **제목·본문 수정으로
+안 풀린다.** 같은 대상에 striking_distance·ctr_gap 이 함께 올라와 있으면 이쪽을 먼저
+처리하라고 Next Actions 에 적는다.
+
 ## 2. 점수 프레임 (0~100) — 계수는 코드(WEIGHTS), fit은 코드 기본값 + Claude 보정
 
 계수는 이제 Claude가 매번 정하지 않는다. `scoring.WEIGHTS`(프리셋별 고정, 각 합
@@ -197,6 +228,12 @@ load가 적는 템플릿 문장 위에 원인 가설·맥락을 얹는다 (3절)
    비교하는 SQL에는 반드시 `period_days`가 같다는 조건을 넣고, 짝이 없으면
    "비교할 같은 기간 기록이 없다"고 말한다. 비교 짝 선택은 `scoring.snapshot_pair()`가
    실행한다 (대시보드와 리포트가 같이 쓴다).
+3c. **"언제부터"는 이제 답할 수 있다.** 예전엔 기간 합계 스냅샷뿐이라 하락을 봐도
+   시작점을 짚을 수 없었고, 그래서 원인 가설이 전부 추측이었다. 지금은 `gsc_daily`
+   (`scoring.daily_trend(conn, pid, days=28)`, 날짜 오름차순)가 날짜별 클릭·노출·
+   CTR·순위를 들고 있으니 변곡점을 근거로 말한다. 단 **꼬리 2~3일은 미확정**이다 —
+   GSC가 나중에 값을 채우므로(그래서 `write_gsc_daily`가 upsert다) 마지막 며칠의
+   하강만 보고 "떨어졌다"고 단정하지 않는다.
 4. 순위 ±3 변동(`scoring.RANK_NOISE`=3, rank_snapshots 정수 순위용)과
    GSC Δpos ±0.5 미만(`scoring.NOISE_POS`=0.5, 평균 순위 Δ용 — 다른 축이다)은
    노이즈 취급. `scoring.movers()`가 NOISE_POS로 오름/내림을 가른다.
@@ -213,9 +250,14 @@ python scripts/scoring.py load <project>
 ```
 
 projects.type을 읽어 WEIGHTS를 적용하고, striking / ctr_gaps / cannibalization /
-rank_decay / pseo_candidates(상위 10) / coverage(클러스터별 1건)를 전부 돌려
-`score()` 점수 + 수치 포함 템플릿 reasoning으로 적재한다. 적재 kind:
-`striking_distance | ctr_gap | cannibalization | rank_decay | pseo_pattern | coverage`.
+rank_decay / pseo_candidates(상위 10) / coverage(클러스터별 1건) / device_gap /
+index_issues를 전부 돌려 `score()` 점수 + 수치 포함 템플릿 reasoning으로 적재한다.
+적재 kind: `striking_distance | ctr_gap | cannibalization | rank_decay |
+pseo_pattern | coverage | device_gap | index_blocked`.
+`device_gap`의 target은 쿼리, `index_blocked`의 target은 URL이다. 이 둘은 근거
+테이블(`gsc_breakdown`·`gsc_index_status`)이 비어 있으면 조용히 0건이다 —
+그건 결함이 아니라 "아직 안 모았다"이므로, 사용자에게는 `--breakdown device`로
+다시 수집하거나 `/capture index`를 돌리라고 안내한다.
 `db.run(kind="analysis")` 컨텍스트 안에서 돌고, 완료 시
 `loaded N opportunities for '<project>' (type=..., gsc <date>)` 를 출력한다.
 

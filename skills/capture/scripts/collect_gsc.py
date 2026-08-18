@@ -13,7 +13,8 @@ Auth: gsc MCP 서버와 인증을 공유한다 — 어느 쪽으로 붙였든 �
 Setup walkthrough: references/setup.md
 
 Usage:
-  python collect_gsc.py --project NAME [--days 28] [--row-limit 25000] [--dry-run]
+  python collect_gsc.py --project NAME [--days 28] [--row-limit 25000]
+                        [--breakdown device,country] [--dry-run]
 """
 import argparse
 import json
@@ -91,10 +92,35 @@ def get_service(project: str):
              "  · 무인 수집(서비스 계정)을 쓰신다면 같은 스크립트가 그쪽 키도 받습니다.")
 
 
+def _query(service, prop: str, body: dict) -> dict:
+    """Search Analytics 호출 한 번 + 403 안내.
+
+    호출이 한 곳(query×page)뿐일 땐 try 블록 안에 안내문을 그냥 적어 뒀는데,
+    일별·분해 호출이 붙으면서 그 두 개만 원인 없는 HttpError 로 죽게 됐다.
+    권한 문제는 어느 호출에서 터지든 원인이 같으니 안내도 한 곳에 모은다.
+    """
+    from googleapiclient.errors import HttpError
+    try:
+        return service.searchanalytics().query(siteUrl=prop, body=body).execute()
+    except HttpError as e:
+        if getattr(e.resp, "status", None) == 403 and db.gsc_key().exists():
+            email = json.loads(db.gsc_key().read_text(encoding="utf-8")) \
+                .get("client_email", "?")
+            sys.exit(f"권한 거부: {prop}\n"
+                     "  Search Console → 설정 → 사용자 및 권한에 서비스 계정 "
+                     f"이메일을 추가했는지 확인하세요: {email}\n"
+                     "  (권한 '제한된 사용자'면 충분합니다)")
+        raise
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
     collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int)
+    # 콤마 구분 문자열이다 — add_setting 의 type_fn 이 스칼라만 다루므로 리스트를 못 받는다.
+    collector.add_setting(ap, "--breakdown", key="gsc_breakdown", fallback="device",
+                          type=str,
+                          help="분해 수집 차원 (콤마 구분: device,country / 빈 문자열이면 안 함)")
     ap.add_argument("--row-limit", type=int, default=100000,
                     help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
     a = ap.parse_args()
@@ -102,6 +128,7 @@ def main() -> None:
     conn, p, cfg = collector.open_project(a.project)
     s = collector.settings(a, cfg)
     days = s["gsc_days"]
+    dims = [d.strip().lower() for d in (s["gsc_breakdown"] or "").split(",") if d.strip()]
     prop = p["gsc_property"]
     if not prop:
         sys.exit("project yaml has no gsc_property "
@@ -112,42 +139,86 @@ def main() -> None:
     start = end - timedelta(days=days)
     print(f"[gsc] {prop}  window {start} ~ {end} (period={days}d) "
           f"rowLimit={a.row_limit}")
+    # 비용 고지 — dry-run 이 말한 호출 수와 실제 호출 수가 어긋나면 안 된다.
+    # query×page 만 "최대"다: 마지막 장이 덜 차면 거기서 멈추므로 실제로는 더 적을 수 있다.
+    qp_max = max(1, -(-a.row_limit // PAGE))
+    print(f"[gsc] API 호출 계획: query×page 최대 {qp_max}회 + 일별 1회 + "
+          f"분해 {len(dims)}회({', '.join(dims) or '없음'}) = 최대 {qp_max + 1 + len(dims)}회")
     if a.dry_run:
         conn.close()
         return
 
     service = get_service(a.project)
-    from googleapiclient.errors import HttpError
     rows: list = []
     calls = 0
-    try:
-        # API는 한 번에 최대 PAGE행만 준다 — 그 이상은 startRow로 이어받아야 한다.
-        # 예전엔 한 번만 불러서, 큰 사이트가 정확히 25,000행에서 조용히 잘렸다.
-        while len(rows) < a.row_limit:
-            want = min(PAGE, a.row_limit - len(rows))
-            resp = service.searchanalytics().query(siteUrl=prop, body={
-                "startDate": str(start), "endDate": str(end),
-                "dimensions": ["query", "page"], "rowLimit": want,
-                "startRow": len(rows), "dataState": "final"}).execute()
-            batch = resp.get("rows", [])
-            rows += batch
-            calls += 1
-            if len(batch) < want:          # 마지막 장 — 더 없다
-                break
-            print(f"[gsc] … {len(rows)} rows")
-    except HttpError as e:
-        if getattr(e.resp, "status", None) == 403 and db.gsc_key().exists():
-            email = json.loads(db.gsc_key().read_text(encoding="utf-8")) \
-                .get("client_email", "?")
-            sys.exit(f"권한 거부: {prop}\n"
-                     "  Search Console → 설정 → 사용자 및 권한에 서비스 계정 "
-                     f"이메일을 추가했는지 확인하세요: {email}\n"
-                     "  (권한 '제한된 사용자'면 충분합니다)")
-        raise
+    # API는 한 번에 최대 PAGE행만 준다 — 그 이상은 startRow로 이어받아야 한다.
+    # 예전엔 한 번만 불러서, 큰 사이트가 정확히 25,000행에서 조용히 잘렸다.
+    while len(rows) < a.row_limit:
+        want = min(PAGE, a.row_limit - len(rows))
+        resp = _query(service, prop, {
+            "startDate": str(start), "endDate": str(end),
+            "dimensions": ["query", "page"], "rowLimit": want,
+            "startRow": len(rows), "dataState": "final"})
+        batch = resp.get("rows", [])
+        rows += batch
+        calls += 1
+        if len(batch) < want:          # 마지막 장 — 더 없다
+            break
+        print(f"[gsc] … {len(rows)} rows")
     print(f"[gsc] fetched {len(rows)} query x page rows")
     if len(rows) >= a.row_limit:
         print(f"[주의] --row-limit({a.row_limit})에 걸려 여기서 멈췄습니다 — "
               "더 필요하면 값을 올리세요. 지금 스냅샷은 전체가 아닙니다.")
+
+    qp_calls = calls
+
+    # 여기서부터는 **부수 호출**이다 — 실패해도 본체 스냅샷을 죽이지 못하게 한다.
+    # 예전엔 본체 루프가 끝나면 곧바로 저장이라 이 문제가 없었는데, 뒤에 호출이
+    # 둘 붙으면서 그중 하나만 실패해도 이미 받아 둔 query×page 를 통째로 잃게 됐다.
+    # 실패한 축은 **쓰지 않고 건너뛴다** — 빈 값으로 쓰면 delete-then-insert 가
+    # 지난번 수집분까지 지운다.
+    def _optional(label: str, body: dict):
+        nonlocal calls
+        from googleapiclient.errors import HttpError
+        try:
+            resp = _query(service, prop, body)
+        except (HttpError, SystemExit) as e:
+            # SystemExit 도 받는다 — _query 의 403 안내가 sys.exit 로 끝나기 때문이다.
+            # 본체가 이미 성공한 뒤라면 권한 안내 하나로 수확을 버릴 이유가 없다.
+            print(f"[경고] {label} 수집을 건너뜁니다 ({e}) — "
+                  "본체 스냅샷은 그대로 저장됩니다.", file=sys.stderr)
+            return None
+        calls += 1
+        return resp.get("rows", [])
+
+    # 창(window) 안의 날짜별 추이. query×page 요청에 date 를 끼우면 같은 조합이
+    # 날짜 수만큼 쪼개져 행이 28배로 터지고 rowLimit 벽에 훨씬 먼저 닿는다 —
+    # 그래서 dimensions=["date"] 단독으로 따로 부른다. 응답이 창 길이(28행 남짓)라
+    # 호출 1회로 끝나고 비용이 사실상 없다. 그래서 옵션이 아니라 항상 한다.
+    drows = _optional("일별 추이", {
+        "startDate": str(start), "endDate": str(end),
+        "dimensions": ["date"], "rowLimit": days + 10, "dataState": "final"})
+    if drows is not None:
+        print(f"[gsc] fetched {len(drows)} daily rows")
+
+    # device/country 분해. 응답 행의 keys 순서는 요청한 dimensions 순서와 같다 →
+    # keys[0]=dim_value, keys[1]=query.
+    # startRow 페이지네이션은 하지 않는다 — 분해는 "모바일이 어디서 밀리나" 같은
+    # 상위 분포만 보면 되는데, 페이지를 넘기기 시작하면 호출 수가 차원 수만큼
+    # 곱해져서 정작 본체(query×page)보다 비싸진다.
+    bd: list[tuple[str, list]] = []
+    for dim in dims:
+        brows = _optional(f"{dim} 분해", {
+            "startDate": str(start), "endDate": str(end),
+            "dimensions": [dim, "query"], "rowLimit": PAGE, "dataState": "final"})
+        if brows is None:
+            continue
+        bd.append((dim, brows))
+        print(f"[gsc] fetched {len(brows)} {dim} x query rows")
+        if len(brows) >= PAGE:
+            # 페이지를 안 넘기기로 한 대가다 — 잘렸으면 잘렸다고 말한다.
+            print(f"[주의] {dim} 분해가 {PAGE:,}행에서 잘렸습니다 — "
+                  "노출 상위 분포만 담겼습니다.")
 
     snap = str(date.today())
     with db.run(conn, p["id"], "gsc") as r:
@@ -155,8 +226,25 @@ def main() -> None:
                               ((x["keys"][0], x["keys"][1], x.get("clicks"),
                                 x.get("impressions"), x.get("ctr"), x.get("position"))
                                for x in rows))
+        if drows is not None:
+            db.write_gsc_daily(conn, p["id"],
+                               ((x["keys"][0], x.get("clicks"), x.get("impressions"),
+                                 x.get("ctr"), x.get("position"))
+                                for x in drows))
+        for dim, brows in bd:
+            db.write_gsc_breakdown(conn, p["id"], snap, days, dim,
+                                   ((x["keys"][0], x["keys"][1], x.get("clicks"),
+                                     x.get("impressions"), x.get("ctr"), x.get("position"))
+                                    for x in brows))
         r.api_calls = calls
-        r.notes = f"rows={len(rows)} pages={calls} window={start}~{end}"
+        # notes 의 pages 는 query×page 페이지 수를 뜻했다 — 이제 호출이 세 종류라
+        # calls 와 다르다. 둘을 따로 적는다. 건너뛴 축은 'skip' 으로 남긴다 —
+        # 나중에 "그날 왜 추이가 비었나"를 여기서 답할 수 있어야 한다.
+        r.notes = (f"rows={len(rows)} pages={qp_calls} "
+                   f"daily={'skip' if drows is None else len(drows)} "
+                   + "".join(f"{d}={len(br)} " for d, br in bd)
+                   + "".join(f"{d}=skip " for d in dims if d not in dict(bd))
+                   + f"calls={calls} window={start}~{end}")
 
     print(f"saved snapshot {snap}. striking-distance preview "
           "(pos 4~20, impressions desc):")

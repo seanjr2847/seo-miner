@@ -19,6 +19,10 @@ defaults:
   throttle: 0.5          # 요청 간격(초) — 자동완성·AI·SERP 공통
   serp_depth: 10
   serp_device: desktop
+  # 콤마 구분 문자열이다 — 리스트가 아니다. collector.add_setting 의 type_fn 이
+  # 스칼라만 다루기 때문. ""(빈 문자열)이면 분해 수집을 아예 하지 않는다.
+  gsc_breakdown: "device"   # device|country
+  index_urls: 20            # /capture index 가 한 번에 검사할 URL 수 (0이면 끔)
 
 serp:
   provider: auto           # auto(키 감지) | dataforseo | serper

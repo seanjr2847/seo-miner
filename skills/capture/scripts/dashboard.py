@@ -291,6 +291,12 @@ def gather(conn, p) -> dict:
     brands = scoring.foreign_brands(conn, pid, cfg)
     striking = scoring.striking(conn, pid, cur, brands=brands)
 
+    # 일별 추이·기기 격차·색인 점검. 판정 함수가 빈 목록을 주는 경우가 두 가지라
+    # (아직 안 수집 / 수집했는데 문제 없음) 최신 수집일도 같이 내려보낸다 —
+    # 화면이 그 둘을 구분해서 안내 문구를 갈라 쓴다.
+    device_date = scoring._latest(conn, scoring._LATEST_BD, (pid, "device"))
+    index_date = scoring._latest(conn, scoring._LATEST_IX, (pid,))
+
     ai_run = conn.execute(
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
         "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
@@ -372,9 +378,15 @@ def gather(conn, p) -> dict:
             "kw_active": conn.execute(
                 "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
                 (pid,)).fetchone()[0],
+            "daily": scoring.daily_trend(conn, pid),
+            "device_gap": scoring.device_gap(conn, pid),
+            "index_issues": scoring.index_issues(conn, pid),
+            "device_date": device_date, "index_date": index_date,
             "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
                       "striking_hi": scoring.STRIKING_HI,
-                      "rank_noise": scoring.RANK_NOISE},
+                      "rank_noise": scoring.RANK_NOISE,
+                      "device_gap_pos": scoring.DEVICE_GAP_POS,
+                      "device_min_imp": scoring.DEVICE_MIN_IMP},
             # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
             # 그래프·Δ가 전부 거짓이 된다. p는 화면이 기간 일치를 재확인하는 용도.
             "trend": [dict(r) for r in conn.execute(

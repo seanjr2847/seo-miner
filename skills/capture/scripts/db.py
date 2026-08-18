@@ -139,6 +139,35 @@ CREATE TABLE IF NOT EXISTS gsc_snapshots (
   position REAL
 );
 CREATE INDEX IF NOT EXISTS idx_gsc_proj_date ON gsc_snapshots(project_id, snapshot_date);
+CREATE TABLE IF NOT EXISTS gsc_daily (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  date TEXT NOT NULL,                         -- YYYY-MM-DD  성과일이다. 수집일이 아니다.
+  clicks INTEGER, impressions INTEGER, ctr REAL, position REAL,
+  UNIQUE(project_id, date)
+);
+CREATE TABLE IF NOT EXISTS gsc_breakdown (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,                -- 수집일 (gsc_snapshots 와 같은 값으로 짝을 맞춘다)
+  period_days INTEGER NOT NULL,
+  dim TEXT NOT NULL,                          -- device|country
+  dim_value TEXT NOT NULL,                    -- MOBILE|DESKTOP|TABLET  /  kor|usa|...
+  query TEXT NOT NULL,
+  clicks INTEGER, impressions INTEGER, ctr REAL, position REAL
+);
+CREATE INDEX IF NOT EXISTS idx_gsc_bd ON gsc_breakdown(project_id, snapshot_date, dim);
+CREATE TABLE IF NOT EXISTS gsc_index_status (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  url TEXT NOT NULL,
+  verdict TEXT,                               -- PASS|PARTIAL|FAIL|NEUTRAL
+  coverage_state TEXT, robots_txt_state TEXT, page_fetch_state TEXT,
+  indexing_state TEXT, google_canonical TEXT, user_canonical TEXT,
+  last_crawled TEXT, rich_results_json TEXT,
+  UNIQUE(project_id, checked_date, url)
+);
 CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -173,7 +202,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   run_id INTEGER REFERENCES runs(id),
-  kind TEXT NOT NULL,   -- striking_distance|ai_citation_gap|rank_decay|content_gap|coverage|pseo_pattern|aio_exposure|ctr_gap|cannibalization
+  kind TEXT NOT NULL,   -- striking_distance|ai_citation_gap|rank_decay|content_gap|coverage|pseo_pattern|aio_exposure|ctr_gap|cannibalization|device_gap|index_blocked
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
@@ -183,7 +212,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
-  kind TEXT NOT NULL,                         -- gsc|ai|keywords|analysis|report|full
+  kind TEXT NOT NULL,                         -- gsc|ai|keywords|analysis|report|full|index
   started_at TEXT DEFAULT CURRENT_TIMESTAMP,
   finished_at TEXT,
   api_calls INTEGER DEFAULT 0,
@@ -405,6 +434,73 @@ def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date:
           int(clk or 0), int(imp or 0), round(float(ctr or 0), 4),
           round(float(pos or 0), 1))
          for q, pg, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_gsc_daily(conn: sqlite3.Connection, project_id: int, rows) -> int:
+    """날짜별 성과 적재. rows: (date, clicks, impressions, ctr, position) 순회 가능 객체.
+
+    여기만 delete 후 insert가 아니라 upsert다. GSC는 최근 2~3일치를 나중에 상향
+    보정하므로, 같은 날짜를 다시 수집하면 값이 바뀐다 — 덮어써야 맞다.
+    date 는 성과일이지 수집일이 아니다.
+    """
+    rows = list(rows)
+    conn.executemany(
+        """INSERT INTO gsc_daily(project_id, date, clicks, impressions, ctr, position)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(project_id, date) DO UPDATE SET
+             clicks=excluded.clicks, impressions=excluded.impressions,
+             ctr=excluded.ctr, position=excluded.position""",
+        [(project_id, d, int(clk or 0), int(imp or 0),
+          round(float(ctr or 0), 4), round(float(pos or 0), 1))
+         for d, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_gsc_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                        period_days: int, dim: str, rows) -> int:
+    """차원 분해 스냅샷(device/country) 적재. rows: (dim_value, query, clicks, impressions, ctr, position).
+
+    write_gsc_snapshot 과 같은 규칙 — 같은 (project, snapshot_date, dim)은 지우고 다시 넣는다.
+    dim 별로만 지우는 게 핵심이다: device를 다시 수집한다고 country까지 날아가면 안 된다.
+    """
+    rows = list(rows)
+    conn.execute(
+        "DELETE FROM gsc_breakdown WHERE project_id=? AND snapshot_date=? AND dim=?",
+        (project_id, snapshot_date, dim))
+    conn.executemany(
+        """INSERT INTO gsc_breakdown(project_id, snapshot_date, period_days, dim,
+             dim_value, query, clicks, impressions, ctr, position)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, dim, dv, q,
+          int(clk or 0), int(imp or 0), round(float(ctr or 0), 4),
+          round(float(pos or 0), 1))
+         for dv, q, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_index_status(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                       rows) -> int:
+    """URL 검사 결과 적재. rows: dict 순회 가능 객체 (키는 테이블 컬럼명 그대로).
+
+    upsert인 이유: 하루에 URL 배치를 나눠 돌리는 게 정상 사용이라, 같은 날 두 번째
+    배치가 첫 배치를 지우면 안 된다. 없는 키는 NULL로 들어간다 — 검사 API가 필드를
+    통째로 안 주는 경우가 있어 빈 문자열로 채우지 않는다("모름"과 "없음"은 다르다).
+    """
+    cols = ("verdict", "coverage_state", "robots_txt_state", "page_fetch_state",
+            "indexing_state", "google_canonical", "user_canonical",
+            "last_crawled", "rich_results_json")
+    rows = list(rows)
+    conn.executemany(
+        f"""INSERT INTO gsc_index_status(project_id, checked_date, url, {', '.join(cols)})
+            VALUES(?,?,?,{','.join('?' * len(cols))})
+            ON CONFLICT(project_id, checked_date, url) DO UPDATE SET
+              {', '.join(f'{c}=excluded.{c}' for c in cols)}""",
+        [(project_id, checked_date, r["url"]) + tuple(r.get(c) for c in cols)
+         for r in rows])
     conn.commit()
     return len(rows)
 

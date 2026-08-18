@@ -10,6 +10,8 @@
   · 수집이 예외로 끊겨도 실행 기록이 닫히는지
   · 분석 함수(ctr_gap·cannibalization·striking 하한·rank_decay·coverage)와 결정적 점수
   · rank 스냅샷 같은 날 재실행 멱등 / AI 답변 전문 보존
+  · 일별·분해·색인 3종 쓰기의 재수집 규칙(덮어쓰기/지우고 다시/upsert)
+  · device_gap 임계 경계와 index_issues 버킷 우선순위 — 경계는 버그가 사는 곳이다
 """
 import os
 import sys
@@ -292,6 +294,144 @@ def test_gsc_snapshot_write_is_idempotent_per_day():
                         "WHERE project_id=? ORDER BY query", (p["id"],)).fetchall()
     assert len(rows) == 2, rows
     assert rows[0]["page"] is None and rows[0]["clicks"] == 2, dict(rows[0])
+    conn.close()
+
+
+def test_gsc_daily_upsert_overwrites_same_date():
+    """같은 날짜를 다시 넣으면 누적이 아니라 덮어쓰기다.
+
+    GSC 는 최근 2~3일치를 나중에 상향 보정한다 — 매일 도는 수집기가 겹치는 창을
+    다시 가져오므로, 누적되면 추이 그래프의 최근 며칠만 계단처럼 뛴다
+    (여기가 다른 write_* 와 달리 delete 후 insert 가 아니라 upsert 인 이유).
+    """
+    conn = db.connect()
+    p = _project(conn, "daily")
+    db.write_gsc_daily(conn, p["id"], [("2026-05-01", 10, 100, 0.1, 9.0),
+                                       ("2026-05-02", 5, 50, 0.1, 8.0)])
+    db.write_gsc_daily(conn, p["id"], [("2026-05-02", 7, 70, 0.1, 7.5)])   # 상향 보정
+    rows = conn.execute("SELECT date, clicks, impressions, position FROM gsc_daily "
+                        "WHERE project_id=? ORDER BY date", (p["id"],)).fetchall()
+    assert len(rows) == 2, rows                        # 두 줄로 불어나면 안 된다
+    assert rows[1]["clicks"] == 7 and rows[1]["impressions"] == 70, dict(rows[1])
+    assert rows[1]["position"] == 7.5, dict(rows[1])
+    assert rows[0]["clicks"] == 10, dict(rows[0])      # 안 건드린 날은 그대로
+    # 넣은 순서가 뒤죽박죽이어도 화면은 날짜 오름차순으로 받는다 (x축이 곧 이 순서다)
+    db.write_gsc_daily(conn, p["id"], [("2026-04-30", 1, 10, 0.1, 12.0)])
+    assert [d["date"] for d in scoring.daily_trend(conn, p["id"])] == \
+        ["2026-04-30", "2026-05-01", "2026-05-02"]
+    conn.close()
+
+
+def test_gsc_breakdown_rewrite_leaves_no_duplicates():
+    """같은 (project, snapshot_date, dim) 재수집은 지우고 다시 넣는다.
+
+    누적되면 device_gap 이 SUM(impressions) 을 두 배로 읽어 없던 격차를 만든다.
+    지우는 범위가 dim 하나뿐인 것도 같이 못 박는다 — device 를 다시 받는다고
+    country 가 날아가면, 분해를 하나씩 켜고 끄는 순간 조용히 사라진다.
+    """
+    conn = db.connect()
+    p = _project(conn, "bd")
+    db.write_gsc_breakdown(conn, p["id"], "2026-05-01", 28, "device",
+                           [("MOBILE", "kw", 1, 100, 0.01, 10.0),
+                            ("DESKTOP", "kw", 2, 100, 0.02, 8.0)])
+    db.write_gsc_breakdown(conn, p["id"], "2026-05-01", 28, "country",
+                           [("kor", "kw", 3, 300, 0.01, 9.0)])
+    db.write_gsc_breakdown(conn, p["id"], "2026-05-01", 28, "device",
+                           [("MOBILE", "kw", 5, 500, 0.01, 11.0)])      # 재수집
+    rows = conn.execute("SELECT dim, dim_value, clicks, impressions FROM gsc_breakdown "
+                        "WHERE project_id=? ORDER BY dim, dim_value", (p["id"],)).fetchall()
+    assert [(r["dim"], r["dim_value"]) for r in rows] == \
+        [("country", "kor"), ("device", "MOBILE")], [dict(r) for r in rows]
+    assert rows[1]["impressions"] == 500, dict(rows[1])   # 새 값만 남는다 (600 이면 누적)
+    assert rows[0]["clicks"] == 3, dict(rows[0])          # 다른 dim 은 살아 있다
+    # 수집일이 다르면 별개다 — 어제 것을 지우면 추세 비교가 사라진다
+    db.write_gsc_breakdown(conn, p["id"], "2026-05-08", 28, "device",
+                           [("MOBILE", "kw", 1, 10, 0.1, 3.0)])
+    assert conn.execute("SELECT COUNT(*) FROM gsc_breakdown WHERE project_id=?",
+                        (p["id"],)).fetchone()[0] == 3
+    conn.close()
+
+
+def test_index_status_upsert_keeps_one_row_per_url_per_day():
+    """URL 배치를 하루에 나눠 도는 게 정상 사용이다 (쿼터가 하루 2,000회).
+
+    그래서 둘째 배치가 첫 배치를 지우면 안 되고(=delete 후 insert 금지),
+    같은 URL 을 다시 검사하면 최신 판정으로 덮어야 한다.
+    """
+    conn = db.connect()
+    p = _project(conn, "ixw")
+    db.write_index_status(conn, p["id"], "2026-05-01", [
+        {"url": "/a", "verdict": "FAIL", "coverage_state": "Not found (404)"}])
+    db.write_index_status(conn, p["id"], "2026-05-01", [       # 둘째 배치
+        {"url": "/b", "verdict": "PASS", "coverage_state": "Submitted and indexed"}])
+    db.write_index_status(conn, p["id"], "2026-05-01", [       # /a 재검사 — 고쳐졌다
+        {"url": "/a", "verdict": "PASS", "coverage_state": "Submitted and indexed",
+         "last_crawled": "2026-05-01T00:00:00Z"}])
+    rows = conn.execute("SELECT url, verdict, coverage_state, last_crawled, robots_txt_state "
+                        "FROM gsc_index_status WHERE project_id=? ORDER BY url",
+                        (p["id"],)).fetchall()
+    assert [r["url"] for r in rows] == ["/a", "/b"], [dict(r) for r in rows]
+    assert rows[0]["verdict"] == "PASS" and rows[0]["last_crawled"], dict(rows[0])
+    assert rows[0]["robots_txt_state"] is None    # 안 준 필드는 NULL — "모름"과 "없음"은 다르다
+    # 날이 바뀌면 새 줄이다 (이력이 남아야 어제와 비교한다)
+    db.write_index_status(conn, p["id"], "2026-05-02", [{"url": "/a", "verdict": "FAIL"}])
+    assert conn.execute("SELECT COUNT(*) FROM gsc_index_status WHERE project_id=?",
+                        (p["id"],)).fetchone()[0] == 3
+    conn.close()
+
+
+def test_device_gap_thresholds_are_inclusive_at_the_boundary():
+    """Δ 정확히 2.0, 모바일 노출 정확히 50 은 '걸린다'.
+
+    부등호 하나가 뒤집히면 임계 바로 위 쿼리가 통째로 사라지는데, 화면에서는
+    빈 목록이 '문제 없음'과 구별되지 않아 아무도 못 알아챈다.
+    """
+    conn = db.connect()
+    p = _project(conn, "dgap")
+    rows = []
+    for q, mpos, dpos, mimp in [("딱2.0", 10.0, 8.0, 100),      # Δ=2.0  → 걸린다
+                                ("1.9", 9.9, 8.0, 100),        # Δ=1.9  → 아니다
+                                ("노출50", 10.0, 8.0, 50),      # 노출 하한 정확히 → 걸린다
+                                ("노출49", 10.0, 8.0, 49)]:     # 하나 모자람 → 아니다
+        rows.append(("MOBILE", q, 0, mimp, 0.0, mpos))
+        rows.append(("DESKTOP", q, 0, 100, 0.0, dpos))
+    db.write_gsc_breakdown(conn, p["id"], "2026-05-01", 28, "device", rows)
+    out = {r["query"]: r for r in scoring.device_gap(conn, p["id"])}
+    assert set(out) == {"딱2.0", "노출50"}, out
+    assert out["딱2.0"]["dpos"] == scoring.DEVICE_GAP_POS, out["딱2.0"]
+    assert out["노출50"]["mobile_imp"] == scoring.DEVICE_MIN_IMP, out["노출50"]
+    conn.close()
+
+
+def test_index_bucket_priority_folds_to_the_root_cause():
+    """원인이 겹칠 때 어느 버킷으로 접히는가 — 순서가 곧 고칠 순서다.
+
+    robots 로 막혀 있으면 fetch 실패는 결과일 뿐이고, canonical 이 엇갈렸는지는
+    페이지를 가져올 수 있어야 의미가 있다. 순서가 뒤집히면 사용자가 canonical 을
+    만지며 시간을 버린다 (버킷 4종 자체는 scoring._selfcheck 가 따로 본다).
+    """
+    conn = db.connect()
+    p = _project(conn, "ixpri")
+    db.write_index_status(conn, p["id"], "2026-05-01", [
+        {"url": "/셋다", "verdict": "FAIL", "coverage_state": "Blocked by robots.txt",
+         "robots_txt_state": "DISALLOWED", "page_fetch_state": "NOT_FOUND",
+         "google_canonical": "/x", "user_canonical": "/셋다"},
+        {"url": "/fetch+canon", "verdict": "FAIL", "coverage_state": "Not found (404)",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "NOT_FOUND",
+         "google_canonical": "/x", "user_canonical": "/fetch+canon"},
+        {"url": "/canon만", "verdict": "PARTIAL", "coverage_state": "Duplicate",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL",
+         "google_canonical": "/x", "user_canonical": "/canon만"},
+        {"url": "/canon같음", "verdict": "FAIL",
+         "coverage_state": "Crawled - currently not indexed",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL",
+         "google_canonical": "/canon같음", "user_canonical": "/canon같음"},
+        {"url": "/정상", "verdict": "PASS", "coverage_state": "Submitted and indexed",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL"},
+    ])
+    got = {r["url"]: r["bucket"] for r in scoring.index_issues(conn, p["id"])}
+    assert got == {"/셋다": "robots_blocked", "/fetch+canon": "fetch_error",
+                   "/canon만": "canonical_mismatch", "/canon같음": "not_indexed"}, got
     conn.close()
 
 

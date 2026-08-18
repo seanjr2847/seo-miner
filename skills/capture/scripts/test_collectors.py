@@ -5,6 +5,7 @@ I/O 경계(네트워크 수집기, doctor, MCP 런처)를 네트워크 호출 �
   · collect_ai: OpenRouter 응답 모킹, url_citation 파싱, cited 판정, 실패 집계
   · expand_keywords: Google Suggest 모킹, is_active=0 적재, locale 보존, 50% 초과 실패율 경고
   · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot 적재, depth 밖 None, AIO 미측정 None
+  · collect_gsc/collect_index --dry-run: 인증도 네트워크도 안 타고 계획만 찍는지
   · doctor --json: subprocess 실행, exit code 0, JSON 구조(verdict, next_command) 검증
   · gsc_mcp.mjs: node --check 문법 + 실제 기동 핸드셰이크(툴 이름·열쇠 경로 주입, node 없으면 skip)
 """
@@ -604,6 +605,123 @@ def test_location_mapping_expansion():
     assert serp_adapter.warn_unmapped("de-DE") is False
     assert serp_adapter.warn_unmapped("pt-BR") is False
     assert serp_adapter.warn_unmapped("xx-XX") is True
+
+
+def test_dry_run_never_touches_auth():
+    """--dry-run 은 비용 고지다 — 인증이 하나도 없는 컴퓨터에서도 끝까지 가야 한다.
+
+    호출 수를 보려고 dry-run 을 돌렸는데 브라우저 로그인이 열리거나 "인증이
+    없습니다"로 죽으면 고지 구실을 못 한다. get_service 를 지뢰로 바꿔 놓고,
+    실행 기록(runs)·적재까지 안 남는지 같이 본다.
+    """
+    import collect_gsc
+    import collect_index
+
+    conn = db.connect()
+    conn.execute("INSERT OR IGNORE INTO projects(name, domain, locale, gsc_property) "
+                 "VALUES('dry_proj', 'd.com', 'ko-KR', 'sc-domain:d.com')")
+    conn.commit()
+    pid = conn.execute("SELECT id FROM projects WHERE name='dry_proj'").fetchone()["id"]
+    # collect_index 의 대상 URL 은 최신 스냅샷의 상위 페이지다 — 없으면 sys.exit 한다
+    conn.execute("""INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+                      query, page, clicks, impressions, ctr, position)
+                    VALUES(?, '2026-08-18', 28, 'q', 'https://d.com/a', 1, 300, 0.01, 9.0)""",
+                 (pid,))
+    conn.commit()
+    conn.close()
+
+    def boom(*a, **k):
+        raise AssertionError("dry-run 이 인증을 건드렸다")
+
+    orig = collect_gsc.get_service, collect_index.get_service
+    orig_argv = sys.argv
+    collect_gsc.get_service = boom
+    collect_index.get_service = boom
+    try:
+        for mod, name in [(collect_gsc, "collect_gsc.py"), (collect_index, "collect_index.py")]:
+            sys.argv = [name, "--project", "dry_proj", "--dry-run"]
+            mod.main()
+    finally:
+        collect_gsc.get_service, collect_index.get_service = orig
+        sys.argv = orig_argv
+
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM runs WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 0, "dry-run 은 실행 기록을 남기지 않는다"
+    assert conn.execute("SELECT COUNT(*) FROM gsc_index_status WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 0, "dry-run 이 색인 결과를 적재했다"
+    conn.close()
+
+
+def test_side_calls_cannot_kill_the_main_snapshot():
+    """일별·분해 호출이 실패해도 이미 받아 둔 query×page 는 저장돼야 한다.
+
+    수집이 query×page 한 방이던 시절엔 루프가 끝나면 곧바로 저장이라 이 구멍이
+    없었다. 뒤에 부수 호출 둘이 붙으면서, 그중 하나만 터져도 본체 수확이 통째로
+    날아가게 됐다 (리뷰에서 실측으로 잡은 회귀). 부수적인 것이 본체를 죽이면 안 된다.
+
+    빈 값으로 대신 쓰는 것도 안 된다 — write_gsc_daily/breakdown 은 덮어쓰기라
+    지난번 수집분까지 지운다. 실패한 축은 아예 건너뛰어야 한다.
+    """
+    import collect_gsc
+    from googleapiclient.errors import HttpError
+
+    conn = db.connect()
+    conn.execute("INSERT OR IGNORE INTO projects(name, domain, locale, gsc_property) "
+                 "VALUES('sidefail', 's.com', 'ko-KR', 'sc-domain:s.com')")
+    conn.commit()
+    pid = conn.execute("SELECT id FROM projects WHERE name='sidefail'").fetchone()["id"]
+    # 지난번 수집분 — 실패한 축이 이걸 지우면 안 된다.
+    conn.execute("INSERT INTO gsc_daily(project_id, date, clicks, impressions, ctr, position) "
+                 "VALUES(?, '2026-08-01', 9, 90, 0.1, 5.0)", (pid,))
+    conn.commit()
+    conn.close()
+
+    class _Resp:
+        status = 500
+        reason = "boom"
+
+    class _Exec:
+        def __init__(self, body):
+            self.body = body
+
+        def execute(self):
+            dims = self.body.get("dimensions")
+            if dims == ["query", "page"]:
+                return {"rows": [{"keys": ["신발", "https://s.com/a"], "clicks": 3,
+                                  "impressions": 100, "ctr": 0.03, "position": 8.0}]}
+            raise HttpError(_Resp(), b"side call down")   # 일별·분해는 전부 실패
+
+    class _SA:
+        def query(self, siteUrl, body):
+            return _Exec(body)
+
+    class _Service:
+        def searchanalytics(self):
+            return _SA()
+
+    orig, orig_argv = collect_gsc.get_service, sys.argv
+    collect_gsc.get_service = lambda project: _Service()
+    try:
+        sys.argv = ["collect_gsc.py", "--project", "sidefail", "--breakdown", "device"]
+        collect_gsc.main()
+    finally:
+        collect_gsc.get_service, sys.argv = orig, orig_argv
+
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM gsc_snapshots WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 1, \
+        "부수 호출이 실패했다고 본체 스냅샷까지 날아갔다"
+    kept = conn.execute("SELECT date FROM gsc_daily WHERE project_id=?", (pid,)).fetchall()
+    assert [r["date"] for r in kept] == ["2026-08-01"], \
+        f"실패한 축이 지난번 수집분을 건드렸다: {[dict(r) for r in kept]}"
+    assert conn.execute("SELECT COUNT(*) FROM gsc_breakdown WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 0, "실패한 분해가 행을 남겼다"
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                         (pid,)).fetchone()["notes"]
+    assert "daily=skip" in notes and "device=skip" in notes, \
+        f"건너뛴 축이 실행 기록에 안 남았다 — 나중에 '왜 비었나'를 답할 수 없다: {notes}"
+    conn.close()
 
 
 def test_doctor_json_subprocess():

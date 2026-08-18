@@ -396,6 +396,13 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
       <ol id="acts-list"></ol>
     </section>
 
+    <section id="daily-sec">
+      <div class="eyebrow">성과일 기준 · 하루 = 점 하나</div>
+      <h2>일별 추이</h2>
+      <p class="sub">위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.</p>
+      <div id="daily"></div>
+    </section>
+
     <section>
       <div class="eyebrow">4~20위 · 노출 많은 순</div>
       <h2>1페이지까지 남은 거리</h2>
@@ -425,6 +432,20 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
         </section>
       </div>
     </div>
+
+    <section id="dev-sec">
+      <div class="eyebrow">MOBILE vs DESKTOP</div>
+      <h2>모바일에서 밀리는 검색어</h2>
+      <p class="sub" id="dev-sub"></p>
+      <div id="devgap"></div>
+    </section>
+
+    <section id="ix-sec">
+      <div class="eyebrow">URL 검사</div>
+      <h2>색인 문제</h2>
+      <p class="sub" id="ix-sub"></p>
+      <div id="index"></div>
+    </section>
 
     <section>
       <div class="eyebrow">chatgpt · perplexity · gemini</div>
@@ -480,7 +501,8 @@ async function post(path, body) {
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
 // 경계값은 서버(scoring.py)가 내려준다 — 여기 다시 적어 두면 규칙이 둘로 갈라진다.
 // rules가 없는 옛 박제본도 그대로 그려져야 하므로 예전 값을 기본으로 둔다.
-let RULES = {page1: 10, striking_lo: 4, striking_hi: 20, rank_noise: 3};
+let RULES = {page1: 10, striking_lo: 4, striking_hi: 20, rank_noise: 3,
+  device_gap_pos: 2, device_min_imp: 50};
 function depthLog(rows, brandCatalogEmpty) {
   if (!rows.length)
     return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
@@ -539,6 +561,103 @@ function depthLog(rows, brandCatalogEmpty) {
     <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>${warn}`;
 }
 
+/* ── 일별 추이: gsc_daily 의 date 는 성과일(수집일이 아니다)이라 하루가 점 하나다.
+      클릭과 노출은 자릿수가 달라 각자 축을 쓴다 — 여기서 읽는 건 모양이고,
+      값은 점 위에 올리면 나온다. 깊이 로그와 같은 .log/.logwrap 을 그대로 쓴다
+      (좁은 화면에선 축소 대신 가로 스크롤). ── */
+function dailyChart(rows) {
+  if (rows.length < 2)
+    return `<div class="empty">일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.</div>`;
+  const W = 1000, H = 190, L = 8, R = W - 8, T = 20, B = 24, n = rows.length;
+  const x = i => L + i * (R - L) / (n - 1);
+  const mxC = Math.max(...rows.map(r => r.clicks || 0), 1);
+  const mxI = Math.max(...rows.map(r => r.impressions || 0), 1);
+  const y = (v, mx) => H - B - (v || 0) / mx * (H - T - B);
+  const pts = (k, mx) => rows.map((r, i) =>
+    `${x(i).toFixed(1)},${y(r[k], mx).toFixed(1)}`).join(" ");
+  const bw = (R - L) / n;
+  // 점마다 투명한 띠를 깔아 <title>만으로 툴팁을 낸다 — 이벤트 핸들러를 안 붙인다.
+  const hov = rows.map((r, i) => `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${T - 10}"
+      width="${bw.toFixed(1)}" height="${H - B - T + 10}" fill="transparent">
+      <title>${esc(r.date)} — 클릭 ${num(r.clicks)} · 노출 ${num(r.impressions)} · CTR ${r.ctr}%` +
+    ` · 평균 ${r.position ?? "—"}위</title></rect>`).join("");
+  const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 7}"
+    text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
+    >${esc(String(rows[i].date).slice(5))}</text>`;
+  const sum = k => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="최근 ${n}일 클릭·노출 추이">
+    <line x1="${L}" y1="${H - B}" x2="${R}" y2="${H - B}" stroke="var(--rule-soft)" stroke-width="1"/>
+    <polygon points="${x(0)},${H - B} ${pts("clicks", mxC)} ${x(n - 1)},${H - B}"
+      fill="var(--wash)"/>
+    <polyline fill="none" stroke="var(--slate)" stroke-width="1" stroke-dasharray="2 4"
+      stroke-linejoin="round" points="${pts("impressions", mxI)}"/>
+    <polyline fill="none" stroke="var(--patina)" stroke-width="1.5" stroke-linecap="round"
+      stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
+    ${hov}${tick(0)}${n > 2 ? tick(Math.floor(n / 2)) : ""}${tick(n - 1)}
+  </svg></div>
+  <div class="legend"><b style="color:var(--patina)">■</b> 클릭 ${n}일 합계 ${num(sum("clicks"))}
+    (하루 최고 ${num(mxC)}) · <b style="color:var(--slate)">■</b> 노출 ${num(sum("impressions"))}
+    (하루 최고 ${num(mxI)}) — 자릿수가 달라 세로축은 각자입니다</div>`;
+}
+
+/* ── 기기 격차·색인 문제: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
+      빈 목록으로 온다 — 서버가 준 최신 수집일로 갈라 안내한다. 키 자체가 없으면
+      이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
+function renderDevice(d) {
+  if (!d.device_gap) return $("dev-sec").hidden = true;
+  $("dev-sec").hidden = false;
+  const rows = d.device_gap;
+  if (!d.device_date) {
+    $("dev-sub").textContent = "";
+    return $("devgap").innerHTML = `<div class="empty">기기별 실적을 아직 안 읽었습니다 — 설정의 <code>gsc_breakdown: device</code> 로 <code>/capture gsc</code> 하면 채워집니다.</div>`;
+  }
+  if (!rows.length) {
+    $("dev-sub").textContent = `${d.device_date} 기준`;
+    return $("devgap").innerHTML = `<div class="empty">모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.</div>`;
+  }
+  $("dev-sub").textContent = `${d.device_date} 기준 ${rows.length}개 — 모바일 평균순위가 ` +
+    `데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 모바일 노출 ` +
+    `${num(RULES.device_min_imp)} 이상인 검색어. 고칠 곳은 글이 아니라 모바일 화면입니다.`;
+  // 순위는 소수 1자리로 고정 — 15.0이 15로 오면 등폭 열의 자릿수가 어긋난다.
+  const p1 = v => Number(v).toFixed(1);
+  // th 가 nowrap 이라 6열이면 좁은 화면에서 표가 본문 밖으로 삐져나간다 —
+  // 깊이 로그와 같은 .logwrap 에 넣어 페이지가 아니라 표 안에서 가로로 스크롤시킨다.
+  $("devgap").innerHTML = `<div class="logwrap">` + table(
+    ["검색어", ">모바일", ">데스크톱", ">Δ", ">모바일 노출", ">CTR 모바일/데스크톱"],
+    rows.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
+      <td class="num down">${p1(r.mobile_pos)}</td><td class="num">${p1(r.desktop_pos)}</td>
+      <td class="num down">${p1(r.dpos)}</td><td class="num">${num(r.mobile_imp)}</td>
+      <td class="num">${r.mobile_ctr}% / ${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+}
+
+// bucket 라벨 — 원문 bucket 은 title로 남긴다(scoring.index_issues 와 대조할 때 필요).
+const IX_LABEL = {robots_blocked:"robots.txt 차단", fetch_error:"가져오기 실패",
+  canonical_mismatch:"대표 URL 엇갈림", not_indexed:"색인 안 됨"};
+function renderIndex(d) {
+  if (!d.index_issues) return $("ix-sec").hidden = true;
+  $("ix-sec").hidden = false;
+  const rows = d.index_issues;
+  if (!d.index_date) {
+    $("ix-sub").textContent = "";
+    return $("index").innerHTML = `<div class="empty">색인 점검을 아직 안 했습니다 — <code>/capture index</code> 하면 여기가 채워집니다.</div>`;
+  }
+  if (!rows.length) {
+    $("ix-sub").textContent = `${d.index_date} 점검`;
+    return $("index").innerHTML = `<div class="empty">검사한 URL이 전부 색인돼 있습니다.</div>`;
+  }
+  $("ix-sub").textContent = `${d.index_date} 점검 · ${rows.length}건 — 위 묶음부터 손대세요 ` +
+    `(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨).`;
+  const by = {};                           // 이미 심각도 순으로 정렬돼 온다 — 순서를 살린다
+  for (const r of rows) (by[r.bucket] = by[r.bucket] || []).push(r);
+  $("index").innerHTML = Object.entries(by).map(([b, list]) =>
+    `<p class="sub" style="margin:18px 0 8px" title="${esc(b)}">${esc(IX_LABEL[b] || b)}
+       <b>${list.length}건</b></p>` +
+    table(["URL", "진단"], list.map(r => `<tr>
+      <td class="kwcell" style="word-break:break-all">${esc(r.url)}</td>
+      <td>${esc(r.detail)}</td></tr>`))).join("");
+}
+
 /* ── AI 인용률 추이: 런 1회 = 점 1개, 세로축은 0~100% 고정(런끼리 비교가 목적).
       실선=인용률(patina), 점선=언급률(slate). 데이터는 서버(runs↔ai_checks)가 준다. ── */
 function aiSpark(rows) {
@@ -594,7 +713,7 @@ const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed
 const KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 인용 공백",
   ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
   coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"AI오버뷰 노출",
-  content_gap:"콘텐츠 공백"};
+  content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘"};
 // 지키는 kind — 잃던 것을 막는 쪽이라 산화동. 나머지는 얻는 쪽이라 녹청.
 const KIND_DEF = new Set(["rank_decay", "cannibalization"]);
 function oppRow(o) {
@@ -734,6 +853,12 @@ function render(d) {
     ["남은 기회", num(d.opps_total), "", ""],
   ].map(([l, v, dd, sp]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${sp}</div>`).join("");
+
+  // 옛 박제본에는 이 셋이 없다 — 각 함수가 키 없음(감춤)과 빈 목록(안내)을 갈라 본다.
+  $("daily-sec").hidden = !d.daily;
+  if (d.daily) $("daily").innerHTML = dailyChart(d.daily);
+  renderDevice(d);
+  renderIndex(d);
 
   const near = d.striking.filter(r => r.pos > RULES.page1).length;
   $("log-sub").textContent = d.striking.length

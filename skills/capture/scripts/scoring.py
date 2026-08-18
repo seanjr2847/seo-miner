@@ -51,6 +51,12 @@ CTR_GAP_FACTOR = 0.5     # 실제 CTR < 기대 × 이 값일 때만 기회로 �
 CANNI_MIN_IMP = 50       # 쿼리 합산 노출 하한
 CANNI_MIN_SHARE = 0.2    # 부(副)페이지 노출 비중 하한 — 미만이면 사실상 한 페이지 독점
 
+# device_gap: 같은 쿼리에서 모바일 평균순위가 데스크톱보다 이만큼 아래면
+# "콘텐츠가 약한 게 아니라 모바일에서만 밀린다"로 본다. 1~2위 차이는 기기별
+# 표본이 달라서도 생긴다 — 2.0 아래는 세지 않는다.
+DEVICE_GAP_POS = 2.0
+DEVICE_MIN_IMP = 50      # 모바일 노출 하한. 노출 몇 개짜리 기기 차이는 통계가 아니다
+
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
 # local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
@@ -342,6 +348,136 @@ def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 1
     return sorted(out, key=lambda x: -x["impressions"])[:limit]
 
 
+def _ctr_pct(clicks, impressions, nd: int = 1) -> float:
+    """CTR(%)은 언제나 clicks/impressions 로 다시 센다.
+
+    저장된 ctr 컬럼은 아무도 안 읽는 죽은 컬럼이다 — GSC 가 준 값은 행 단위라
+    기간·기기로 합치면 '평균의 평균'이 되어 실제와 어긋난다. ctr_gaps·
+    pseo_candidates 가 이미 SQL 에서 같은 계산을 한다.
+    """
+    return round((clicks or 0) * 100.0 / impressions, nd) if impressions else 0.0
+
+
+def _latest(conn: sqlite3.Connection, sql: str, params: tuple) -> str | None:
+    """MAX(날짜) 한 칸 뽑기. 빈 테이블이면 NULL 이 오므로 None 으로 접는다."""
+    row = conn.execute(sql, params).fetchone()
+    return row[0] if row and row[0] else None
+
+
+_LATEST_BD = "SELECT MAX(snapshot_date) FROM gsc_breakdown WHERE project_id=? AND dim=?"
+_LATEST_IX = "SELECT MAX(checked_date) FROM gsc_index_status WHERE project_id=?"
+
+
+def daily_trend(conn: sqlite3.Connection, project_id: int, days: int = 28) -> list[dict]:
+    """gsc_daily 최근 days 일, 날짜 오름차순 — 화면의 추이 그래프 원본.
+
+    gsc_snapshots 는 '기간 합계 한 덩어리'라 곡선을 못 그린다. gsc_daily 의 date 는
+    성과일(수집일이 아니다)이므로 그대로 x축이 된다.
+    """
+    rows = conn.execute(
+        """SELECT date, clicks, impressions, position FROM gsc_daily
+            WHERE project_id=? ORDER BY date DESC LIMIT ?""",
+        (project_id, days)).fetchall()
+    return [{"date": r["date"], "clicks": r["clicks"], "impressions": r["impressions"],
+             "ctr": _ctr_pct(r["clicks"], r["impressions"], 2),
+             "position": round(r["position"], 1) if r["position"] is not None else None}
+            for r in reversed(rows)]
+
+
+def device_gap(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
+    """모바일이 데스크톱보다 확 밀리는 쿼리 — 콘텐츠가 아니라 모바일 화면을 볼 곳.
+
+    dpos 는 양수 = 모바일이 그만큼 아래. rank_decay·movers 의 dpos(음수=하락)와
+    부호 규약이 반대인데, 여기선 '격차'라 크면 나쁜 쪽이 자연스럽다.
+    """
+    cur = _latest(conn, _LATEST_BD, (project_id, "device"))
+    if not cur:
+        return []
+    per_q: dict[str, dict] = {}
+    for r in conn.execute(
+        """SELECT dim_value, query, SUM(clicks) clk, SUM(impressions) imp,
+                  AVG(position) pos
+             FROM gsc_breakdown
+            WHERE project_id=? AND snapshot_date=? AND dim='device'
+            GROUP BY dim_value, query""", (project_id, cur)):
+        per_q.setdefault(r["query"], {})[(r["dim_value"] or "").upper()] = r
+    out = []
+    for q, d in per_q.items():
+        m, k = d.get("MOBILE"), d.get("DESKTOP")
+        # 한쪽만 잡힌 쿼리는 비교 자체가 불가능하다 (모바일 전용 쿼리도 실제로 있다)
+        if not (m and k) or m["imp"] < DEVICE_MIN_IMP:
+            continue
+        dpos = round(m["pos"] - k["pos"], 1)
+        if dpos < DEVICE_GAP_POS:
+            continue
+        out.append({"query": q, "mobile_pos": round(m["pos"], 1),
+                    "desktop_pos": round(k["pos"], 1), "dpos": dpos,
+                    "mobile_imp": m["imp"],
+                    "mobile_ctr": _ctr_pct(m["clk"], m["imp"]),
+                    "desktop_ctr": _ctr_pct(k["clk"], k["imp"])})
+    return sorted(out, key=lambda x: -x["mobile_imp"])[:limit]
+
+
+def _indexed(coverage_state: str | None) -> bool:
+    """coverage_state 문자열이 '색인됨'인가.
+
+    GSC 는 로케일에 따라 영/한을 섞어 준다("Submitted and indexed" /
+    "제출되었으며 색인이 생성됨"). 부정형("Crawled - currently not indexed" /
+    "현재 색인이 생성되지 않음")이 긍정 단어를 포함하므로 부정을 먼저 본다.
+    """
+    c = (coverage_state or "").lower()
+    if not c:
+        return False
+    if "not indexed" in c or "생성되지" in c or "안 됨" in c or "안됨" in c:
+        return False
+    return "indexed" in c or "색인" in c
+
+
+def _index_bucket(r: sqlite3.Row) -> tuple[str, str]:
+    """색인 실패 원인 한 가지로 접기 → (bucket, 사람이 읽을 한 줄).
+
+    순서가 정보다: robots 로 막혀 있으면 fetch 실패는 결과일 뿐이고, canonical 이
+    엇갈렸는지는 페이지를 가져올 수 있어야 의미가 있다.
+    """
+    robots = (r["robots_txt_state"] or "").upper()
+    fetch = (r["page_fetch_state"] or "").upper()
+    gc, uc = (r["google_canonical"] or "").strip(), (r["user_canonical"] or "").strip()
+    if robots and robots != "ALLOWED":
+        return "robots_blocked", "robots.txt 가 크롤을 막고 있다 — 허용으로 풀기 전엔 절대 색인 안 된다"
+    if fetch and fetch != "SUCCESSFUL":
+        return "fetch_error", f"구글이 페이지를 못 가져왔다({fetch}) — 서버 응답·리다이렉트부터 확인"
+    if gc and uc and gc != uc:
+        return "canonical_mismatch", (f"구글이 고른 대표 URL 이 다르다: {gc} (내 선언 {uc}) — "
+                                      f"중복 페이지를 정리하거나 canonical 을 맞춰라")
+    state = r["coverage_state"] or r["indexing_state"] or r["verdict"] or "원인 미상"
+    return "not_indexed", f"색인 안 됨({state}) — 내부 링크·사이트맵으로 크롤을 유도해라"
+
+
+def index_issues(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """최신 색인 점검에서 걸러진 URL — verdict 가 PASS 가 아니거나 색인이 안 된 것.
+
+    limit 이 없는 건 게으름이 아니다 — URL Inspection API 는 하루 할당이 작아
+    (config index_urls 기본 20) 검사한 URL 자체가 이미 소수다.
+    """
+    cur = _latest(conn, _LATEST_IX, (project_id,))
+    if not cur:
+        return []
+    out = []
+    for r in conn.execute(
+        """SELECT url, verdict, coverage_state, robots_txt_state, page_fetch_state,
+                  indexing_state, google_canonical, user_canonical
+             FROM gsc_index_status WHERE project_id=? AND checked_date=?
+            ORDER BY url""", (project_id, cur)):
+        if (r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"]):
+            continue
+        bucket, detail = _index_bucket(r)
+        out.append({"url": r["url"], "bucket": bucket, "verdict": r["verdict"],
+                    "coverage_state": r["coverage_state"], "detail": detail})
+    # 손대는 순서: 막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 그냥 색인 안 됨
+    order = {"robots_blocked": 0, "fetch_error": 1, "canonical_mismatch": 2, "not_indexed": 3}
+    return sorted(out, key=lambda x: (order[x["bucket"]], x["url"]))
+
+
 def _snap_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
               period: int) -> dict[str, dict]:
     """스냅샷 하나를 movers() 입력 모양(query -> {pos, clk, imp})으로 집계."""
@@ -565,6 +701,26 @@ def load(project: str) -> None:
                      "reasoning": f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
                                   f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) "
                                   f"(gsc {cur})"})
+    # 분해·색인은 gsc_snapshots 와 수집일이 어긋날 수 있다 (분해 수집을 끄면 뒤처진다)
+    # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 각자의 최신일을 따로 읽는다.
+    bd = _latest(conn, _LATEST_BD, (pid, "device"))
+    for r in device_gap(conn, pid):
+        rows.append({"kind": "device_gap", "target": r["query"],
+                     "score": score("device_gap",
+                                    {"impressions": r["mobile_imp"], "position": r["mobile_pos"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
+                     "reasoning": f"모바일 {r['mobile_pos']}위 vs 데스크톱 {r['desktop_pos']}위 "
+                                  f"(Δ{r['dpos']})·모바일 노출 {r['mobile_imp']:,}·"
+                                  f"CTR {r['mobile_ctr']}% vs {r['desktop_ctr']}% — "
+                                  f"모바일에서만 밀린다 (gsc {bd})"})
+    ix = _latest(conn, _LATEST_IX, (pid,))
+    for r in index_issues(conn, pid):
+        # 색인 안 된 URL 은 순위가 없다 — position None 을 score() 가 보수적 0.3 으로 본다
+        rows.append({"kind": "index_blocked", "target": r["url"],
+                     "score": score("index_blocked",
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, r["url"])}, ptype),
+                     "reasoning": f"{r['detail']} (gsc 색인 {ix})"})
     for cl, n in sorted(coverage(conn, pid)["by_cluster"].items(), key=lambda x: -x[1]):
         rows.append({"kind": "coverage", "target": f"cluster:{cl}",
                      "score": score("coverage",
@@ -722,6 +878,15 @@ def _selfcheck() -> None:
         cluster TEXT, intent TEXT, is_active INT);
       CREATE TABLE rank_snapshots(id INTEGER PRIMARY KEY, keyword_id INT,
         checked_at TEXT, position INT);
+      CREATE TABLE gsc_daily(project_id INT, date TEXT, clicks INT, impressions INT,
+        ctr REAL, position REAL);
+      CREATE TABLE gsc_breakdown(project_id INT, snapshot_date TEXT, period_days INT,
+        dim TEXT, dim_value TEXT, query TEXT, clicks INT, impressions INT,
+        ctr REAL, position REAL);
+      CREATE TABLE gsc_index_status(project_id INT, checked_date TEXT, url TEXT,
+        verdict TEXT, coverage_state TEXT, robots_txt_state TEXT, page_fetch_state TEXT,
+        indexing_state TEXT, google_canonical TEXT, user_canonical TEXT,
+        last_crawled TEXT, rich_results_json TEXT);
     """)
     conn.execute("INSERT INTO competitors VALUES(1,'ecrett.com')")
     conn.executemany(
@@ -801,6 +966,63 @@ def _selfcheck() -> None:
     cov = coverage(conn, 5)
     assert [k["keyword"] for k in cov["keywords"]] == ["미커버"], cov
     assert cov["by_cluster"] == {"c1": 1}, cov
+
+    # ── daily_trend / device_gap / index_issues (프로젝트 7) ──
+    assert _ctr_pct(20, 1240) == 1.6 and _ctr_pct(3, 0) == 0.0      # 0 노출은 0%, 나눗셈 안 함
+    assert daily_trend(conn, 7) == []                                # 데이터 없으면 빈 목록
+
+    conn.executemany("INSERT INTO gsc_daily VALUES(7,?,?,?,0.0,?)",
+                     [("2026-08-01", 5, 500, 9.0), ("2026-08-02", 10, 400, 8.0),
+                      ("2026-08-03", 0, 0, None)])
+    tr = daily_trend(conn, 7)
+    assert [d["date"] for d in tr] == ["2026-08-01", "2026-08-02", "2026-08-03"], tr  # 오름차순
+    assert tr[1]["ctr"] == 2.5 and tr[1]["position"] == 8.0, tr[1]   # ctr 은 저장값 아닌 재계산
+    assert tr[2]["ctr"] == 0.0 and tr[2]["position"] is None
+    assert [d["date"] for d in daily_trend(conn, 7, 2)] == ["2026-08-02", "2026-08-03"]  # 최근 N
+
+    conn.executemany(
+        "INSERT INTO gsc_breakdown VALUES(7,?,28,'device',?,?,?,?,0.0,?)",
+        [("2026-08-10", "MOBILE", "옛날", 0, 900, 30.0),             # 옛 수집일 — 안 본다
+         ("2026-08-10", "DESKTOP", "옛날", 0, 900, 3.0),
+         ("2026-08-17", "MOBILE", "모바일밀림", 20, 1240, 12.4),
+         ("2026-08-17", "DESKTOP", "모바일밀림", 50, 500, 7.1),
+         ("2026-08-17", "MOBILE", "차이없음", 5, 300, 5.0),          # Δ0.5 — 임계 미만
+         ("2026-08-17", "DESKTOP", "차이없음", 5, 300, 4.5),
+         ("2026-08-17", "MOBILE", "노출작음", 0, 10, 20.0),          # 모바일 노출 하한 미만
+         ("2026-08-17", "DESKTOP", "노출작음", 3, 100, 5.0),
+         ("2026-08-17", "MOBILE", "모바일만", 1, 900, 25.0)])        # 짝이 없으면 비교 불가
+    dg = device_gap(conn, 7)
+    assert [d["query"] for d in dg] == ["모바일밀림"], dg
+    assert dg[0]["dpos"] == 5.3 and dg[0]["mobile_imp"] == 1240
+    assert dg[0]["mobile_ctr"] == 1.6 and dg[0]["desktop_ctr"] == 10.0, dg[0]
+    assert set(dg[0]) == {"query", "mobile_pos", "desktop_pos", "dpos", "mobile_imp",
+                          "mobile_ctr", "desktop_ctr"}, dg[0]
+
+    assert index_issues(conn, 7) == []
+    conn.executemany(
+        "INSERT INTO gsc_index_status VALUES(7,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+        [("2026-08-10", "/old", "FAIL", "Blocked", "DISALLOWED", None, None, None, None),
+         ("2026-08-18", "/ok", "PASS", "Submitted and indexed", "ALLOWED", "SUCCESSFUL",
+          "INDEXING_ALLOWED", "/ok", "/ok"),
+         ("2026-08-18", "/ok-ko", "PASS", "제출되었으며 색인이 생성됨", "ALLOWED",
+          "SUCCESSFUL", None, None, None),
+         ("2026-08-18", "/robots", "FAIL", "Blocked by robots.txt", "DISALLOWED",
+          "BLOCKED_ROBOTS_TXT", None, None, None),
+         ("2026-08-18", "/fetch", "FAIL", "Not found (404)", "ALLOWED", "NOT_FOUND",
+          None, None, None),
+         ("2026-08-18", "/canon", "PARTIAL", "Duplicate", "ALLOWED", "SUCCESSFUL",
+          "INDEXING_ALLOWED", "/canon-real", "/canon"),
+         ("2026-08-18", "/ko-notidx", "PASS", "크롤링됨 - 현재 색인이 생성되지 않음",
+          "ALLOWED", "SUCCESSFUL", None, "/ko-notidx", "/ko-notidx")])
+    ix = index_issues(conn, 7)
+    assert [i["url"] for i in ix] == ["/robots", "/fetch", "/canon", "/ko-notidx"], ix
+    assert [i["bucket"] for i in ix] == ["robots_blocked", "fetch_error",
+                                         "canonical_mismatch", "not_indexed"], ix
+    # verdict 가 PASS 여도 coverage 가 색인됨이 아니면 잡힌다 (한국어 부정형)
+    assert ix[3]["verdict"] == "PASS" and "색인 안 됨" in ix[3]["detail"], ix[3]
+    assert set(ix[0]) == {"url", "bucket", "verdict", "coverage_state", "detail"}, ix[0]
+    assert _indexed("Submitted and indexed") and not _indexed("Crawled - currently not indexed")
+    assert _indexed("색인이 생성됨") and not _indexed("색인 생성 안 됨") and not _indexed(None)
 
     # ── classify_intent: 4개 인텐트 + 우선순위 (transactional > commercial > navigational > info)
     assert classify_intent("비트코인 가격") == "transactional"          # 가격

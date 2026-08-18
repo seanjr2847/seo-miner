@@ -12,6 +12,10 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
 
 1. **즉흥 금지.** 순위·노출·인용·키워드에 대한 모든 주장은 Brain 조회 결과를 근거로 한다.
    조회는 `python scripts/db.py sql "SELECT ..."` (읽기 전용). 데이터가 없으면 "없다"고 말하고 수집을 제안한다.
+   Brain 근거는 `gsc_snapshots`(기간 합계)만이 아니다 — 날짜별 추이는 `gsc_daily`,
+   디바이스·국가 분해는 `gsc_breakdown`, 색인 상태는 `gsc_index_status` 에 있다.
+   "언제부터 떨어졌나"·"모바일만 나쁜가"·"색인은 됐나"는 합계 스냅샷으로는 답이
+   안 나온다 — 이 세 테이블을 조회해서 답한다.
    (예외: GSC 실측 수치는 gsc MCP 툴로 서치콘솔에서 직접 조회한 결과도 근거로 인정 —
    원본 데이터라 Brain 스냅샷보다 신선하다. 어느 쪽 근거인지는 밝힌다.)
 2. **비용 고지.** 외부 API를 부르는 작업(collect_ai)은 실행 전 반드시 `--dry-run`으로
@@ -61,7 +65,20 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 
 ### /capture gsc {P}
 경로는 하나다 — **구글 계정 연결(필수)**: `python scripts/collect_gsc.py --project {P}`.
-연결 한 벌로 모든 사이트를 자동 수집한다(query·page 차원, 행 제한 사실상 없음).
+연결 한 벌로 모든 사이트를 자동 수집한다(행 제한 사실상 없음). 한 번 돌면 세 벌이
+들어온다:
+
+1. **query×page 스냅샷**(`gsc_snapshots`) — 기간 합계. 기존 기회 판정의 기본 재료.
+2. **날짜별 추이**(`gsc_daily`) — 같은 창을 하루 단위로. 합계만 있던 시절엔
+   "언제부터 떨어졌나"에 답할 수가 없었다. 날짜 키로 **upsert** 한다 — GSC는 최근
+   2~3일 값을 나중에 채우므로 다시 돌리면 그 며칠이 갱신된다.
+3. **디바이스 분해**(`gsc_breakdown`) — dim=device 로 쿼리별 MOBILE/DESKTOP/TABLET.
+   `device_gap` 기회(모바일만 순위가 낮은 검색어)의 유일한 근거다.
+
+분해 축은 `--breakdown` 으로 바꾼다 — **콤마 구분 문자열**이다(`--breakdown device,country`).
+기본값은 config `gsc_breakdown: "device"`, `--breakdown ""` 이면 분해 수집을 아예 건너뛴다.
+축을 늘리면 그만큼 API 요청이 는다 — 필요할 때만 country 를 붙인다.
+
 기본은 내 구글 계정 로그인(OAuth)이고, 로그인 한 번이면 소유한 속성이 전부 붙는다 —
 **속성마다 권한을 주는 단계는 없다**(그건 무인 수집용 서비스 계정 갈래에만 있다).
 아직 안 붙어 있으면 수집을 시도하지 말고 setup 스킬의 "GSC 연결" 절차대로 콘솔
@@ -75,6 +92,29 @@ Brain 수집 없이 gsc MCP 툴(`get_search_analytics`·`compare_search_periods`
 리포트·스코어링·추세 비교는 여전히 `collect_gsc.py`로 Brain에 적재한 스냅샷 기준.
 
 완료 후 striking-distance 프리뷰를 요약해준다.
+
+### /capture index {P} — 색인 상태 적재 (구글 URL Inspection, 돈 안 듦)
+`python scripts/collect_index.py --project {P} --dry-run` → 검사할 URL 수 고지 → 확인 →
+실행. 인증은 `/capture gsc` 와 **같은 구글 연결을 그대로 쓴다** — 따로 붙일 것이 없다.
+
+**언제 도나** (매일 돌 명령이 아니다 — 색인 상태는 하루 단위로 요동치지 않는다):
+- `rank_snapshots.position` 이 여러 번 돌아도 계속 NULL 인 키워드가 있을 때
+- 페이지를 낸 지 며칠 지났는데 GSC 노출이 안 붙을 때
+- robots·canonical·사이트 구조를 건드린 직후 (내가 뭘 막았는지 확인)
+
+**비용:** 돈은 안 나가지만 **URL 당 API 1콜**이다. 한 번에 검사할 수는 config
+`index_urls`(기본 20)이고 `--limit N` 으로 덮는다. `index_urls: 0` 이면 이 명령을 끈다.
+재실행 안전망: 같은 날 두 번 돌면 `(프로젝트, 검사일, URL)` 로 덮어쓴다 — 행이 늘지
+않고 최신 판정만 남는다.
+
+**결과:** URL별 verdict·coverage_state·robots_txt_state·page_fetch_state·indexing_state·
+구글이 고른 canonical vs 내가 선언한 canonical·마지막 크롤 시각·리치결과 판정(JSON)이
+`gsc_index_status` 에 적재된다.
+그다음 `python scripts/scoring.py load {P}` 가 이걸 읽어 **index_blocked** 기회를
+만든다 — `robots_blocked | fetch_error | canonical_mismatch | not_indexed` 네 버킷
+중 하나로 갈리고(`references/scoring.md` 1절·1d절), target 은 URL 이다.
+**색인이 막힌 URL 은 제목·본문을 고쳐도 소용이 없다** — 같은 URL 에 걸린 다른 기회보다
+먼저 처리하라고 안내한다.
 
 ### /capture rank {P} — 순위 스냅샷 (SERP, 키 있을 때)
 `python scripts/collect_serp.py --project {P} --dry-run` → 호출 수·비용 고지 → 확인 → 실행.
@@ -90,10 +130,16 @@ device 끼리만 비교 가능, `scoring.md` 4-3b 의 period_days 짝 규칙과 
 날 덮어쓰는 구조를 그대로 활용해 재호출 비용을 아낀다). 강제 재확인은 `--force`.
 
 여러 번 돌아도 `rank_snapshots.position`이 계속 NULL인 키워드가 있다 — 그 키워드는
-**순위 문제가 아니라 인덱싱 문제일 수 있다**. 번들된 gsc MCP의 `inspect_url_enhanced`
-툴(여러 개면 `batch_url_inspection`)로 해당 URL의 인덱스 여부를 먼저 확인한다 — 미인덱스면 노리는 페이지 자체가
+**순위 문제가 아니라 인덱싱 문제일 수 있다**. 미인덱스면 노리는 페이지 자체가
 검색에 없으니 순위를 따져도 의미가 없다 (`scoring.md` 4절 — `RANK_NOISE`도
 NULL엔 적용되지 않는다).
+
+확인은 두 갈래로 역할이 갈린다:
+- **반복해서 볼 것은 `/capture index`** — 결과가 `gsc_index_status` 에 남아 날짜별로
+  비교되고 `index_blocked` 기회로 올라온다. 여러 URL·다음 런과의 대조는 전부 이쪽이다.
+- **gsc MCP 의 `inspect_url_enhanced`(여러 개면 `batch_url_inspection`)는 단발 즉석
+  확인용** — "이 URL 지금 색인됐어?" 한 번 물어보는 자리. 저장되지 않으므로 이걸로
+  본 결과를 근거로 삼을 땐 Brain 이 아니라 MCP 즉석 조회임을 밝힌다(철칙 1).
 
 ### /capture ai {P}
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →
