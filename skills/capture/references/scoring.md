@@ -133,10 +133,9 @@ score = w_demand · 수요        log10(1+impressions or volume) 정규화
 
 분석 후 INSERT는 파이썬 원라이너로 (db.py sql은 읽기 전용 커넥션이라 쓸 수 없다):
 
-**반드시 upsert로 쓴다.** `(project_id, kind, target)`에 UNIQUE 인덱스가 걸려 있어
-그냥 INSERT하면 두 번째 런에서 터진다. 그리고 `status`는 **건드리지 않는다** —
-사용자가 확인함·완료·제외로 정리해 둔 것을 새 런이 다시 'new'로 되돌리면
-트리아지가 매번 리셋된다.
+**반드시 `db.upsert_opportunities`로 쓴다.** `(project_id, kind, target)`에 UNIQUE 인덱스가 걸려 있어
+그냥 INSERT하면 두 번째 런에서 터진다. 그리고 `status`를 건드리지 않는 것(트리아지 보존 — 사용자가
+확인함·완료·제외로 정리해 둔 것을 새 런이 'new'로 되돌리지 않음)은 **함수가 보장한다**.
 
 실행 기록은 `db.run` 컨텍스트로 연다 — 스크립트가 중간에 터져도 `runs.finished_at`이
 NULL로 남지 않는다(남으면 "수집 이력" 화면이 안 끝난 런을 계속 진행 중으로 보여준다).
@@ -149,13 +148,7 @@ rows = [  # (kind, target, score, reasoning)
   ("striking_distance", "예시 키워드", 82, "노출 1,840·8.2위 …"),
 ]
 with db.run(conn, pid, "analysis") as r:
-    for k,t,s,reason in rows:
-        conn.execute("""INSERT INTO opportunities(project_id,run_id,kind,target,score,reasoning)
-                        VALUES(?,?,?,?,?,?)
-                        ON CONFLICT(project_id,kind,target) DO UPDATE SET
-                          run_id=excluded.run_id, score=excluded.score,
-                          reasoning=excluded.reasoning""",(pid,r.id,k,t,s,reason))
-    conn.commit()
+    db.upsert_opportunities(conn, pid, r.id, rows)
     r.notes = f"opps={len(rows)}"
 print("ok")
 PY

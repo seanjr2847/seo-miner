@@ -42,37 +42,19 @@ def connect():
     return db.connect()
 
 
-def pid_of(conn, project: str) -> int:
-    row = conn.execute("SELECT id FROM projects WHERE name=?", (project,)).fetchone()
-    if not row:
-        sys.exit(f"project '{project}' not in Brain")
-    return row["id"]
-
-
 def pick(project: str, kinds: str | None, limit: int) -> None:
     conn = connect()
-    pid = pid_of(conn, project)
-    q = ("SELECT id, kind, target, score, reasoning, status, created_at "
-         "FROM opportunities WHERE project_id=? AND status IN ('new','acked')")
-    args: list = [pid]
-    if kinds:
-        ks = [k.strip() for k in kinds.split(",")]
-        q += f" AND kind IN ({','.join('?' * len(ks))})"
-        args += ks
-    q += " ORDER BY status='acked' DESC, score DESC LIMIT ?"
-    args.append(limit)
-    rows = [dict(r) for r in conn.execute(q, args)]
+    pid = db.get_project(conn, project)["id"]
+    rows = [dict(r) for r in db.open_opportunities(conn, pid, kinds=kinds, limit=limit)]
     print(json.dumps(rows, ensure_ascii=False, indent=2))
     conn.close()
 
 
 def claim(project: str, ids: list[int]) -> None:
     conn = connect()
-    pid = pid_of(conn, project)
+    pid = db.get_project(conn, project)["id"]
     for i in ids:
-        conn.execute("UPDATE opportunities SET status='acked' "
-                     "WHERE id=? AND project_id=?", (i, pid))
-    conn.commit()
+        db.set_opportunity_status(conn, i, "acked", project_id=pid)
     print(f"claimed {len(ids)} opportunities (status=acked)")
     conn.close()
 
@@ -87,9 +69,7 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
         row = conn.execute("SELECT kind FROM opportunities WHERE id=? AND project_id=?",
                            (opp_id, pid)).fetchone()
         kind = row["kind"] if row else None
-        conn.execute("UPDATE opportunities SET status='done' WHERE id=? AND project_id=?",
-                     (opp_id, pid))
-        conn.commit()
+        db.set_opportunity_status(conn, opp_id, "done", project_id=pid)
     db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
                        branch=branch, note=note)
 
@@ -97,7 +77,7 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
 def done(project: str, opp_id: int | None, path: str,
          branch: str | None, note: str | None) -> None:
     conn = connect()
-    pid = pid_of(conn, project)
+    pid = db.get_project(conn, project)["id"]
     _mark_done(conn, pid, opp_id, path, branch, note)
     print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
     conn.close()
@@ -116,7 +96,7 @@ def sync(project: str, repo: str) -> None:
         sys.exit(f"git log 실행 실패 ({repo}): {err}")
 
     conn = connect()
-    pid = pid_of(conn, project)
+    pid = db.get_project(conn, project)["id"]
     closed = 0
     untouched = 0
 
@@ -144,7 +124,7 @@ def sync(project: str, repo: str) -> None:
 
 def list_creations(project: str) -> None:
     conn = connect()
-    pid = pid_of(conn, project)
+    pid = db.get_project(conn, project)["id"]
     rows = [dict(r) for r in conn.execute(
         """SELECT id, opportunity_id, kind, file_path, branch, merged, created_at
              FROM creations WHERE project_id=? ORDER BY id DESC LIMIT 30""", (pid,))]

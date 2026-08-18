@@ -114,13 +114,9 @@ def main() -> None:
                         domain_hits[d] += 1
                 aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
                              if res["aio_present"] else None)
-                conn.execute(
-                    """INSERT INTO rank_snapshots(keyword_id, checked_at, position, url,
-                         serp_features_json, aio_present, aio_cited)
-                       VALUES(?,?,?,?,?,?,?)""",
-                    (row["id"], db.now(), position, url,
-                     json.dumps(res["serp_features"], ensure_ascii=False),
-                     res["aio_present"], aio_cited))
+                db.write_rank_snapshot(
+                    conn, row["id"], position, url,
+                    res["serp_features"], res["aio_present"], aio_cited)
                 total_cost += res["cost"]
                 done += 1
                 if not a.no_harvest:

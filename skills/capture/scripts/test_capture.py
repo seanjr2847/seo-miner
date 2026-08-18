@@ -126,14 +126,12 @@ def test_gather_refuses_mixed_periods():
 def test_opportunity_upsert_does_not_duplicate():
     conn = db.connect()
     p = _project(conn, "opp")
-    sql = """INSERT INTO opportunities(project_id,kind,target,score,reasoning)
-             VALUES(?,?,?,?,?)
-             ON CONFLICT(project_id,kind,target) DO UPDATE SET
-               score=excluded.score, reasoning=excluded.reasoning"""
-    conn.execute(sql, (p["id"], "striking_distance", "kw", 50, "첫 런"))
-    conn.execute("UPDATE opportunities SET status='done' WHERE project_id=?", (p["id"],))
-    conn.execute(sql, (p["id"], "striking_distance", "kw", 80, "두 번째 런"))
-    conn.commit()
+    db.upsert_opportunities(conn, p["id"], None,
+                            [("striking_distance", "kw", 50, "첫 런")])
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (p["id"],)).fetchone()[0]
+    db.set_opportunity_status(conn, oid, "done")
+    db.upsert_opportunities(conn, p["id"], None,
+                            [("striking_distance", "kw", 80, "두 번째 런")])
     rows = conn.execute("SELECT score, reasoning, status FROM opportunities "
                         "WHERE project_id=?", (p["id"],)).fetchall()
     assert len(rows) == 1, rows                       # 같은 기회가 두 줄이 되지 않는다
@@ -253,6 +251,23 @@ def test_creations_table_ships_with_schema():
                        branch="capture/striking_distance-page")
     assert conn.execute("SELECT COUNT(*) FROM creations WHERE project_id=?",
                         (p["id"],)).fetchone()[0] == 1
+    conn.close()
+
+
+def test_rank_snapshot_keeps_aio_none():
+    """aio_present/aio_cited=None은 미측정(NULL)이어야 하며 0으로 바뀌면 안 된다."""
+    conn = db.connect()
+    p = _project(conn, "aio_none")
+    conn.execute("INSERT OR IGNORE INTO keywords(project_id, keyword) VALUES(?, 'kw_aio')", (p["id"],))
+    conn.commit()
+    kw_id = conn.execute("SELECT id FROM keywords WHERE project_id=?", (p["id"],)).fetchone()[0]
+    db.write_rank_snapshot(conn, kw_id, 3, "https://e.com/a",
+                           serp_features=[], aio_present=None, aio_cited=None)
+    row = conn.execute("SELECT position, aio_present, aio_cited FROM rank_snapshots "
+                       "WHERE keyword_id=?", (kw_id,)).fetchone()
+    assert row["position"] == 3
+    assert row["aio_present"] is None, f"expected None, got {row['aio_present']}"
+    assert row["aio_cited"] is None, f"expected None, got {row['aio_cited']}"
     conn.close()
 
 

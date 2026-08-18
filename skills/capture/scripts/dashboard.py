@@ -35,7 +35,6 @@ import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
-OPP_STATUSES = ("new", "acked", "done", "dismissed")
 
 # 설정 화면이 실행할 수 있는 명령은 이 셋뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
 ACTIONS = {
@@ -381,13 +380,10 @@ class Handler(BaseHTTPRequestHandler):
             r = create_project(body)
             return self._json(r, 200 if r["ok"] else 400)
 
-        if body.get("status") not in OPP_STATUSES:
-            return self._json({"error": f"status must be one of {OPP_STATUSES}"}, 400)
+        if body.get("status") not in db.OPP_STATUSES:
+            return self._json({"error": f"status must be one of {db.OPP_STATUSES}"}, 400)
         conn = db.connect()
-        cur = conn.execute("UPDATE opportunities SET status=? WHERE id=?",
-                           (body["status"], int(body.get("id") or 0)))
-        conn.commit()
-        updated = cur.rowcount
+        updated = db.set_opportunity_status(conn, int(body.get("id") or 0), body["status"])
         conn.close()
         return self._json({"updated": updated})
 

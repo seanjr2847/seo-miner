@@ -349,6 +349,9 @@ def run(conn: sqlite3.Connection, project_id: int, kind: str):
 # 스키마를 아는 곳은 여기뿐이다. 수집기·browse·create가 각자 INSERT를 쓰던 시절엔
 # 같은 수정이 한 호출부에만 들어가 locale 누락 같은 버그가 다른 경로에 남았다.
 
+OPP_STATUSES = ("new", "acked", "done", "dismissed")
+
+
 def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
                        period_days: int, rows) -> int:
     """GSC 스냅샷 적재. 같은 날 다시 넣으면 덮어쓴다(하루 1스냅샷).
@@ -369,6 +372,107 @@ def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date:
          for q, pg, clk, imp, ctr, pos in rows])
     conn.commit()
     return len(rows)
+
+
+def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
+                        position: int | None, url: str | None,
+                        serp_features=None,
+                        aio_present: int | None = None,
+                        aio_cited: int | None = None,
+                        checked_at: str | None = None) -> int:
+    """SERP 순위 스냅샷 적재.
+
+    불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
+    안 된다 (serper 경로는 AIO를 측정하지 않아 NULL로 남아야 한다).
+    """
+    if isinstance(serp_features, (list, dict)):
+        feat_json = json.dumps(serp_features, ensure_ascii=False)
+    elif serp_features is not None:
+        feat_json = str(serp_features)
+    else:
+        feat_json = None
+
+    cur = conn.execute(
+        """INSERT INTO rank_snapshots(keyword_id, checked_at, position, url,
+             serp_features_json, aio_present, aio_cited)
+           VALUES(?,?,?,?,?,?,?)""",
+        (keyword_id, checked_at or now(),
+         int(position) if position is not None else None,
+         url, feat_json,
+         int(aio_present) if aio_present is not None else None,
+         int(aio_cited) if aio_cited is not None else None))
+    conn.commit()
+    return cur.lastrowid
+
+
+def set_opportunity_status(conn: sqlite3.Connection, opp_id: int, status: str,
+                           project_id: int | None = None) -> int:
+    """기회 상태 갱신 (new|acked|done|dismissed). 갱신된 rowcount 반환."""
+    if status not in OPP_STATUSES:
+        raise ValueError(f"status must be one of {OPP_STATUSES}, got {status!r}")
+    if project_id is not None:
+        cur = conn.execute(
+            "UPDATE opportunities SET status=? WHERE id=? AND project_id=?",
+            (status, int(opp_id), int(project_id)))
+    else:
+        cur = conn.execute(
+            "UPDATE opportunities SET status=? WHERE id=?",
+            (status, int(opp_id)))
+    conn.commit()
+    return cur.rowcount
+
+
+def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
+                         run_id: int | None, rows) -> int:
+    """기회 목록 upsert (scoring.md §5).
+
+    불변식: ON CONFLICT에서 기존 status는 절대 건드리지 않는다 (트리아지 보존).
+    """
+    n = 0
+    for r in rows:
+        if isinstance(r, dict):
+            k, t = r["kind"], r["target"]
+            s = r.get("score")
+            reason = r.get("reasoning")
+        else:
+            k, t = r[0], r[1]
+            s = r[2] if len(r) > 2 else None
+            reason = r[3] if len(r) > 3 else None
+        conn.execute(
+            """INSERT INTO opportunities(project_id, run_id, kind, target, score, reasoning)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(project_id, kind, target) DO UPDATE SET
+                 run_id=excluded.run_id, score=excluded.score,
+                 reasoning=excluded.reasoning""",
+            (project_id, run_id, k, str(t).strip(),
+             float(s) if s is not None else None,
+             str(reason) if reason is not None else None))
+        n += 1
+    conn.commit()
+    return n
+
+
+def open_opportunities(conn: sqlite3.Connection, project_id: int,
+                       kinds: str | list[str] | None = None,
+                       limit: int = 10) -> list[sqlite3.Row]:
+    """미완료 기회 목록 (status IN ('new','acked')).
+
+    작업 중인(acked) 기회를 먼저 보여주기 위해 scoring.opportunities(new 우선, 화면용)와 정렬이 일부러 다르다.
+    """
+    q = ("SELECT id, kind, target, score, reasoning, status, created_at "
+         "FROM opportunities WHERE project_id=? AND status IN ('new','acked')")
+    args: list = [project_id]
+    if kinds:
+        if isinstance(kinds, str):
+            ks = [k.strip() for k in kinds.split(",") if k.strip()]
+        else:
+            ks = [str(k).strip() for k in kinds if str(k).strip()]
+        if ks:
+            q += f" AND kind IN ({','.join('?' * len(ks))})"
+            args += ks
+    q += " ORDER BY status='acked' DESC, score DESC LIMIT ?"
+    args.append(limit)
+    return conn.execute(q, args).fetchall()
 
 
 def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> int:
