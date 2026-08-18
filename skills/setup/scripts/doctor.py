@@ -65,8 +65,9 @@ def diagnose() -> dict:
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
         "gsc_service_account": sa_key.exists(),
-        # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 npx를 부른다.
-        "node_npx": bool(shutil.which("node") and shutil.which("npx")),
+        # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 파이썬 서버
+        # (mcp-search-console)를 찾아 넘긴다. 서버 부품은 런처가 알아서 pip으로 깐다.
+        "node": bool(shutil.which("node")),
     }
     core_ok = all(deps_core.values())
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
@@ -126,7 +127,7 @@ def diagnose() -> dict:
                      "Serper는 대체재(선택): setup.md 7절.")
     if gsc_linked and not all(deps_gsc.values()):
         later.append("구글 자동 수집용 부품 — `pip install google-api-python-client`")
-    if keys["gsc_service_account"] and not keys["node_npx"]:
+    if keys["gsc_service_account"] and not keys["node"]:
         later.append("node 설치 — 수집 없이도 Claude가 서치콘솔을 바로 조회합니다"
                      "(gsc MCP): nodejs.org")
 

@@ -47,8 +47,8 @@ brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다
 전제: 대상 사이트가 Search Console에 등록·소유권 확인돼 있어야 함.
 
 **키 1개가 전부다.** `~/.capture/gsc_service_account.json` 하나를
-- 플러그인에 번들된 **gsc MCP 서버**(`mcp-server-gsc`) — Claude가 서치콘솔을
-  즉석 조회 (`search_analytics` 등)
+- 플러그인에 번들된 **gsc MCP 서버**([mcp-search-console](https://github.com/AminForou/mcp-gsc))
+  — Claude가 서치콘솔을 즉석 조회 (`get_search_analytics`·`inspect_url_enhanced` 등 21개)
 - **collect_gsc.py** — Brain으로 벌크 수집
 이 같이 쓴다. 사이트가 늘어도 키는 다시 안 만들고, Search Console에서 이메일
 추가만 하면 된다. 예전 OAuth 방식의 동의 화면·앱 게시·비밀번호 복사·7일 만료는
@@ -79,9 +79,14 @@ Claude에게 부탁하면 키 다운로드 버튼(3번) 말고는 전부 브라�
    gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작 때 로드).
 
 `.mcp.json`은 OS를 가리지 않는다 — 번들 런처(`skills/setup/scripts/gsc_mcp.mjs`)를
-node로 띄우고, 런처가 플랫폼에 맞게 npx를 부르고 `CAPTURE_HOME` 기준으로 열쇠
-경로도 채운다. 필요한 건 node 하나뿐이다(nodejs.org).
-`GOOGLE_APPLICATION_CREDENTIALS`를 직접 걸어두면 그쪽이 우선한다.
+node로 띄우고, 런처가 파이썬을 찾아 서버를 넘긴다. 서버 부품(`mcp-search-console`)은
+없으면 런처가 처음 한 번 pip으로 깐다. 열쇠 경로는 `CAPTURE_HOME` 기준으로 채운다.
+필요한 건 node와 파이썬 3.11+ 뿐이다(파이썬은 이 플러그인이 어차피 쓴다).
+윈도우에서 `python`이 마이크로소프트 스토어 스텁이면 런처가 실제 설치본을 찾아낸다 —
+못 찾으면 `~/.capture/env`에 `CAPTURE_PYTHON=<python 경로>`를 넣으면 된다.
+인증은 서비스 계정이 기본이고, `GSC_CREDENTIALS_PATH`를 직접 걸면 그쪽이 우선한다.
+OAuth로 쓰고 싶으면 `~/.capture/env`에 `GSC_OAUTH_CLIENT_SECRETS_FILE`을 넣는다
+(단 동의 화면 설정이 추가로 필요하고, `collect_gsc.py`는 여전히 서비스 계정을 쓴다).
 
 ## 5. OpenRouter (AI 가시성 체크 — 권장)
 

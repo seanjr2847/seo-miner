@@ -77,7 +77,7 @@ def finish(email: str) -> None:
               "사용자 및 권한")
     print("    → '사용자 추가' → 위 이메일 → 권한 '제한된 사용자'(읽기는 이걸로 충분)")
     print("\n그 다음:")
-    print("  - 새 Claude 세션부터 gsc MCP 툴(search_analytics 등)로 즉석 조회 가능")
+    print("  - 새 Claude 세션부터 gsc MCP 툴(get_search_analytics 등)로 즉석 조회 가능")
     print("  - 벌크 수집: python ../../capture/scripts/collect_gsc.py --project <사이트>")
 
 

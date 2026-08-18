@@ -68,7 +68,8 @@ setup 스킬의 "GSC 연결(서비스 계정)" 절차대로 콘솔 클릭을 내
 (구버전 사이트별 OAuth 경로와 CSV 내보내기 임시 경로는 제거됐다 — 2026-08-18.)
 
 연동돼 있으면 **즉석 질문**("어제 클릭 몇이야", "이 페이지 어떤 쿼리로 들어와")은
-Brain 수집 없이 gsc MCP 툴(`search_analytics` 등)로 바로 조회해 답해도 된다.
+Brain 수집 없이 gsc MCP 툴(`get_search_analytics`·`compare_search_periods` 등)로
+바로 조회해 답해도 된다.
 리포트·스코어링·추세 비교는 여전히 `collect_gsc.py`로 Brain에 적재한 스냅샷 기준.
 
 완료 후 striking-distance 프리뷰를 요약해준다.
@@ -87,8 +88,8 @@ device 끼리만 비교 가능, `scoring.md` 4-3b 의 period_days 짝 규칙과 
 날 덮어쓰는 구조를 그대로 활용해 재호출 비용을 아낀다). 강제 재확인은 `--force`.
 
 여러 번 돌아도 `rank_snapshots.position`이 계속 NULL인 키워드가 있다 — 그 키워드는
-**순위 문제가 아니라 인덱싱 문제일 수 있다**. 번들된 gsc MCP의 `index_inspect`
-툴로 해당 URL의 인덱스 여부를 먼저 확인한다 — 미인덱스면 노리는 페이지 자체가
+**순위 문제가 아니라 인덱싱 문제일 수 있다**. 번들된 gsc MCP의 `inspect_url_enhanced`
+툴(여러 개면 `batch_url_inspection`)로 해당 URL의 인덱스 여부를 먼저 확인한다 — 미인덱스면 노리는 페이지 자체가
 검색에 없으니 순위를 따져도 의미가 없다 (`scoring.md` 4절 — `RANK_NOISE`도
 NULL엔 적용되지 않는다).
 

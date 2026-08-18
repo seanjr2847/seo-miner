@@ -157,7 +157,7 @@ core ✓ + 프로젝트 0개면 → `/capture add <이름>` 으로 자연스럽�
    → 4의 이메일 → 권한 **`제한된 사용자`**(읽기 전용이라 충분). 다운로드가
    아니므로 이 클릭은 내가 대신 해줄 수 있다.
 6. `python ../capture/scripts/collect_gsc.py --project {P}` 로 첫 수집 확인.
-   gsc MCP 툴(search_analytics 등)은 **다음 Claude 세션부터** 잡힌다
+   gsc MCP 툴(`get_search_analytics` 등 21개)은 **다음 Claude 세션부터** 잡힌다
    (.mcp.json은 세션 시작 때 로드).
 
 키 파일은 다운로드 폴더→`~/.capture/`로만 흐르게 한다. **내용을 화면·대화에
@@ -169,8 +169,12 @@ core ✓ + 프로젝트 0개면 → `/capture add <이름>` 으로 자연스럽�
   두 벌이 되면 한쪽만 낡는다).
 - GSC 수집이 403(권한 거부)이면: 그 속성에 서비스 계정 이메일이 아직 추가 안 된
   것 — `python scripts/connect_gsc.py --status`로 이메일·속성별 URL을 다시 띄워준다.
-- gsc MCP 툴이 안 보이면: (a) 키 설치 후 새 세션인지, (b) node/npx가 있는지 확인.
-  MCP가 없어도 `collect_gsc.py` 수집은 정상 동작한다.
+- gsc MCP 툴이 안 보이면: (a) 키 설치 후 새 세션인지, (b) node가 있는지,
+  (c) 런처가 파이썬을 찾았는지 확인(윈도우 스토어 스텁이면 `~/.capture/env`에
+  `CAPTURE_PYTHON=<python 경로>`). MCP가 없어도 `collect_gsc.py` 수집은 정상 동작한다.
+- **`Connected`는 인증됐다는 뜻이 아니다** — MCP 서버는 열쇠가 없어도 뜨고 툴 목록도
+  보여준다. 인증은 툴을 실제로 부를 때 확인되므로, 의심되면 `list_properties`를
+  한 번 불러 본다(열쇠가 없으면 그 경로를 그대로 알려준다).
 - 구버전 OAuth 사이트의 토큰이 만료·오류를 내면: 고치려 하지 말고 서비스 계정으로
   갈아탄다(위 절차 + `~/.capture/creds/{사이트}/` 정리). 7일 만료 문제 자체가 사라진다.
 - 자동완성 실패 지속: 비공식 엔드포인트 특성 — 스로틀 상향(`--throttle 1.0`) 안내.

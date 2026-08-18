@@ -6,7 +6,7 @@ I/O 경계(네트워크 수집기, doctor, MCP 런처)를 네트워크 호출 �
   · expand_keywords: Google Suggest 모킹, is_active=0 적재, locale 보존, 50% 초과 실패율 경고
   · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot 적재, depth 밖 None, AIO 미측정 None
   · doctor --json: subprocess 실행, exit code 0, JSON 구조(verdict, next_command) 검증
-  · gsc_mcp.mjs: node --check 문법 검증 (node 없으면 skip)
+  · gsc_mcp.mjs: node --check 문법 + 실제 기동 핸드셰이크(툴 이름·열쇠 경로 주입, node 없으면 skip)
 """
 import io
 import json
@@ -646,6 +646,67 @@ def test_gsc_mcp_mjs_syntax():
         encoding="utf-8",
     )
     assert res.returncode == 0, f"gsc_mcp.mjs 문법 오류 (code {res.returncode}):\n{res.stderr}"
+
+
+def test_gsc_mcp_handshake():
+    """런처가 실제로 서버를 띄우고 우리 열쇠 경로를 물려주는가.
+
+    구문 검증만으로는 못 잡는 것들을 잡는다 — 파이썬 탐색(윈도우 스토어 스텁 회피),
+    인자 전달(shell:true 면 `-c "import sys; ..."` 의 세미콜론이 명령을 쪼갠다),
+    CAPTURE_HOME 기준 열쇠 경로 주입. 서버 부품이 없으면 설치를 기다리지 않고 skip.
+    """
+    node_bin = shutil.which("node")
+    if not node_bin:
+        print("  skip: node 없음")
+        return
+    mjs_path = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "gsc_mcp.mjs"
+    env = {**os.environ, "CAPTURE_HOME": str(HOME)}   # 열쇠가 없는 임시 폴더 = 결정적 실패
+
+    def ask(method, params):
+        """요청 하나만 보내고 그 응답을 돌려준다 (None이면 skip 사유).
+
+        한 번에 두 개를 보내면 두 번째가 stdin EOF 로 인한 종료와 경합해 답이
+        안 온다 — 그래서 요청마다 서버를 새로 띄운다.
+        """
+        req = "\n".join([
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05", "capabilities": {},
+                "clientInfo": {"name": "t", "version": "1"}}}),
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": method, "params": params}),
+        ]) + "\n"
+        try:
+            res = subprocess.run([node_bin, str(mjs_path)], input=req, capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace",
+                                 env=env, timeout=180)
+        except subprocess.TimeoutExpired:
+            return None
+        if "부품을 설치합니다" in (res.stderr or ""):
+            return None
+        for line in (res.stdout or "").splitlines():
+            if not line.startswith("{"):
+                continue
+            m = json.loads(line)
+            if m.get("id") == 2:
+                return m
+        raise AssertionError(f"{method} 응답 없음:\n{res.stdout[:400]}\n{res.stderr[:400]}")
+
+    listed = ask("tools/list", {})
+    if listed is None:
+        print("  skip: 서버 부품 설치 중이거나 응답 없음 — 다음 실행에서 검증된다")
+        return
+    names = {t["name"] for t in listed["result"]["tools"]}
+    for expected in ("list_properties", "get_search_analytics", "inspect_url_enhanced"):
+        assert expected in names, f"{expected} 툴이 없다 — 문서가 가리키는 이름이다: {sorted(names)}"
+
+    # 열쇠 경로 주입 확인 — 인증은 툴을 부를 때 확인되므로 여기서만 드러난다.
+    called = ask("tools/call", {"name": "list_properties", "arguments": {}})
+    if called is None:
+        print("  skip: tools/call 응답 없음")
+        return
+    text = json.dumps(called, ensure_ascii=False)
+    assert "gsc_service_account.json" in text and HOME.name in text, \
+        f"CAPTURE_HOME 기준 열쇠 경로를 서버에 못 물려줬다: {text[:300]}"
 
 
 if __name__ == "__main__":
