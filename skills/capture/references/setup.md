@@ -17,7 +17,6 @@ cp -r capture ~/.claude/skills/capture
 pip install requests pyyaml
 # GSC 자동 수집(collect_gsc.py) 쓰는 경우에만 추가:
 pip install google-api-python-client
-# (구버전 사이트별 OAuth를 아직 쓰는 사이트가 있으면 google-auth-oauthlib 도)
 ```
 
 ## 3. 상태 디렉토리
@@ -31,7 +30,7 @@ pip install google-api-python-client
 ├── projects/{name}.yaml
 ├── reports/{name}/{date}.html
 ├── gsc_service_account.json # GSC 서비스 계정 키 — 전 사이트 공용 1개 (아래 4-B)
-└── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (하위호환용)
+└── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (더 이상 안 읽음 — 지워도 됨)
 ```
 
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
@@ -62,8 +61,8 @@ Claude에게 부탁하면 1번 클릭까지 브라우저로 대신 해준다 (ca
 - **collect_gsc.py** — Brain으로 벌크 수집
 이 같이 쓴다. 사이트가 늘어도 키는 다시 안 만들고, Search Console에서 이메일
 추가만 하면 된다. 예전 OAuth 방식의 동의 화면·앱 게시·비밀번호 복사·7일 만료는
-서비스 계정에는 없다. (구버전 OAuth로 이미 붙인 사이트는
-`~/.capture/creds/{사이트}/` 토큰으로 계속 돈다 — 하위호환.)
+서비스 계정에는 없다. (구버전 사이트별 OAuth 경로는 제거됐다 —
+`~/.capture/creds/{사이트}/` 토큰은 더 이상 읽지 않으며, 이 5분 절차로 전환한다.)
 
 Claude에게 부탁하면 키 다운로드 버튼(3번) 말고는 전부 브라우저로 대신 눌러준다.
 

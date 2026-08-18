@@ -543,51 +543,11 @@ function applyNext() {
 
 /* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
    순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
-   done()은 Brain의 실적으로 판정하므로 "했다 치고" 넘어가지 않는다. */
-function guideSteps(d, p) {
-  const P = d.project.name;
-  return [
-    {t:"사이트 등록", gain:"측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.",
-     done: true, state:`${d.project.domain}`, cmd:null},
-    {t:"구글 실적 읽기",
-     gain:"서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 이 " +
-          "숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
-     done: p.gsc_days > 0,
-     state: p.gsc_days ? `${p.gsc_days}번 읽음 · 최근 ${p.gsc_last}` : "아직 안 읽음",
-     cmd:`/capture gsc ${P}`},
-    {t:"키워드 캐기",
-     gain:"자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 늘린 " +
-          "만큼 다음 단계가 볼 게 많아집니다.",
-     done: p.keywords_found > 0,
-     state: p.keywords_found ? `캔 것 ${p.keywords_found}개 · 추적 ${p.keywords}개`
-                             : (p.keywords ? `직접 적은 ${p.keywords}개뿐` : "아직 없음"),
-     cmd:`/capture keywords ${P}`},
-    {t:"AI 노출 확인",
-     gain:"ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. " +
-          "브라우저로 직접 물어보면 키 없이 무료입니다.",
-     done: p.ai_checks > 0,
-     state: p.ai_checks ? `답변 ${p.ai_checks}개 확인 · 질문 ${p.ai_prompts}개`
-                        : (p.ai_prompts ? "질문은 준비됨 · 아직 안 물어봄" : "물어볼 질문부터 필요"),
-     cmd: p.ai_prompts ? `/seo-miner:browse ${P}` : `/capture add ${P}`},
-    {t:"손댈 것 뽑기",
-     gain:"모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 대신 " +
-          "인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
-     done: p.opps > 0,
-     state: p.opps ? `${p.opps}건 뽑음` : "아직 없음",
-     cmd:`/capture gaps ${P}`},
-    {t:"실제로 고치기",
-     gain:"뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 나가고, " +
-          "끝나면 그 기회가 완료로 닫힙니다.",
-     done: p.creations > 0,
-     state: p.creations ? `${p.creations}건 고침` : "아직 한 건도 안 함",
-     cmd:`/create plan ${P}`},
-  ];
-}
-
+   판정(done·지금 할 것·명령)은 서버가 한다(scoring.stage) — 여기서 다시 판정하면
+   화면과 doctor·CLI가 서로 다른 다음 할 일을 말하게 된다. 이 화면은 그리기만 한다. */
 function renderGuide(d) {
-  if (READONLY || !d.progress) return;   // 박제본에는 "지금 할 것"이 없다
-  const steps = guideSteps(d, d.progress);
-  const here = steps.findIndex(s => !s.done);      // 처음 안 끝난 단계 = 지금 할 일
+  if (READONLY || !d.guide) return;      // 박제본에는 "지금 할 것"이 없다
+  const steps = d.guide.steps, here = d.guide.here;
   $("shaft").innerHTML = steps.map((s, i) => {
     const cls = s.done ? "done" : i === here ? "here" : "later";
     return `<div class="stp ${cls}">
@@ -755,8 +715,8 @@ function renderSetup(d) {
   const hasProj = d.brain.projects.length > 0;
   mark("s-deps", d.core_ok, "설치 필요");
   mark("s-proj", hasProj, "아직 없음");
-  mark("s-gsc", d.keys.gsc_service_account || Object.values(d.gsc_legacy).some(Boolean),
-       "선택 — 안 해도 됩니다");
+  // 구버전 OAuth 토큰은 더 이상 안 돈다 — 서비스 계정 키만 "연결됨"으로 친다.
+  mark("s-gsc", d.keys.gsc_service_account, "선택 — 안 해도 됩니다");
   const nkeys = [d.keys.openrouter, d.keys.serper, d.keys.dataforseo].filter(Boolean).length;
   $("s-keys").outerHTML = nkeys
     ? `<span id="s-keys" class="stat ok">${nkeys}개 저장됨</span>`

@@ -123,23 +123,29 @@ def create_project(f: dict) -> dict:
     if path.exists():
         return {"ok": False, "error": f"{name} 은 이미 있습니다 — 다른 이름을 쓰세요."}
 
-    def items(key: str) -> str:          # 줄바꿈·쉼표 아무렇게나 적어도 받는다
-        vals = [s.strip() for s in re.split(r"[,\n]", str(f.get(key, ""))) if s.strip()]
-        return json.dumps(vals, ensure_ascii=False)   # JSON 배열 = 유효한 YAML
+    def items(key: str) -> list[str]:    # 줄바꿈·쉼표 아무렇게나 적어도 받는다
+        return [s.strip() for s in re.split(r"[,\n]", str(f.get(key, ""))) if s.strip()]
 
+    # 폼 입력을 f-string으로 YAML에 끼우면 개행 하나로 키가 주입된다 — dump가 막는다.
+    try:
+        import yaml
+    except ImportError:
+        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
+                                      "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
     gsc = str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}"
+    doc = {"name": name, "type": f["type"], "domain": domain,
+           "locale": str(f.get("locale") or "ko-KR").strip(),
+           "gsc_property": gsc,
+           "brand_aliases": items("brand_aliases"),
+           "seed_keywords": items("seed_keywords"),
+           "competitors_manual": items("competitors_manual"),
+           "surfaces_ai": ["chatgpt", "perplexity", "gemini"],
+           "limits": {"max_keywords": 100, "max_ai_prompts": 30}}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"# 대시보드 설정 화면에서 생성 — 손으로 고친 뒤에는\n"
         f"# python db.py sync-project {path} 를 다시 돌리면 반영됩니다.\n"
-        f"name: {name}\ntype: {f['type']}\ndomain: {domain}\n"
-        f"locale: {str(f.get('locale') or 'ko-KR').strip()}\n"
-        f"gsc_property: {gsc}\n"
-        f"brand_aliases: {items('brand_aliases')}\n"
-        f"seed_keywords: {items('seed_keywords')}\n"
-        f"competitors_manual: {items('competitors_manual')}\n"
-        "surfaces_ai: [chatgpt, perplexity, gemini]\n"
-        "limits:\n  max_keywords: 100\n  max_ai_prompts: 30\n", "utf-8")
+        + yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), "utf-8")
     try:
         db.sync_project(str(path))
     except SystemExit as e:
@@ -275,6 +281,9 @@ def payload(project: str) -> dict:
                  FROM gsc_snapshots WHERE project_id=?
                 GROUP BY 1 ORDER BY 1""", (p["id"],))]
         data["progress"] = progress(conn, p["id"])
+        # "지금 할 것"의 판정은 서버가 한다 — 템플릿 JS가 판정하던 시절엔
+        # 시험할 수 없었고, doctor와 화면이 다른 다음 할 일을 말할 수 있었다.
+        data["guide"] = scoring.stage(data["progress"], p["name"], p["domain"] or "")
         return data
     finally:
         conn.close()
@@ -286,9 +295,6 @@ def progress(conn, pid: int) -> dict:
     def one(sql: str, args=()) -> int:
         return conn.execute(sql, args).fetchone()[0] or 0
 
-    reports = db.CAPTURE_HOME / "reports"
-    names = [d.name for d in reports.iterdir()] if reports.exists() else []
-    proj = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()[0]
     return {
         "gsc_days": one("SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots "
                         "WHERE project_id=?", (pid,)),
@@ -305,7 +311,6 @@ def progress(conn, pid: int) -> dict:
                           "AND is_active=1", (pid,)),
         "opps": one("SELECT COUNT(*) FROM opportunities WHERE project_id=?", (pid,)),
         "creations": one("SELECT COUNT(*) FROM creations WHERE project_id=?", (pid,)),
-        "reports": len(list((reports / proj).glob("*.html"))) if proj in names else 0,
     }
 
 

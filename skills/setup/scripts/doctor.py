@@ -54,12 +54,11 @@ def diagnose() -> dict:
         except Exception as e:
             brain["error"] = str(e)
     # 구글 연결 표준: 서비스 계정 키 1개(전 사이트 공용, gsc MCP 서버와 공유).
-    # 구버전 사이트별 OAuth 토큰이 남은 사이트는 그걸로도 돈다(하위호환).
+    # 구버전 사이트별 OAuth 경로는 제거됐다 — 남은 토큰은 감지만 해서 전환을 안내한다.
     sa_key = db.gsc_key()
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
-    gsc_sites = {name: sa_key.exists() or gsc_legacy[name]
-                 for name in brain["projects"]}
+    gsc_sites = {name: sa_key.exists() for name in brain["projects"]}
     keys = {
         "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
@@ -73,7 +72,7 @@ def diagnose() -> dict:
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
     # 있는데 안 열리는 것만 문제다.
     brain_ok = not brain.get("error")
-    gsc_linked = keys["gsc_service_account"] or any(gsc_legacy.values())
+    gsc_linked = keys["gsc_service_account"]
 
     # (이름, 한 줄 설명, 켜짐?, 켜는 법 — None이면 핵심 설치만 끝나면 켜진다)
     caps = [
@@ -164,7 +163,8 @@ def render(d: dict) -> None:
             if d["keys"]["gsc_service_account"]:
                 tag = "연결됨 (공용 열쇠)"
             elif d["gsc_legacy"].get(name):
-                tag = "연결됨 (예전 방식 — 그대로 써도 됩니다)"
+                tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 공용 열쇠로 "
+                       "전환하세요 (5분, connect_gsc.py)")
             else:
                 tag = "아직 (CSV 내보내기로는 지금도 가능)"
             print(f"  · {name} — 구글 자동 수집: {tag}")

@@ -5,11 +5,9 @@ Known holes (read reports accordingly, see references/scoring.md):
   * ~2-3 day data delay; low-volume longtail queries are privacy-filtered out
   * position is an AVERAGE across impressions, not a pinpoint rank
 
-Auth: 서비스 계정 키가 표준이다 (전 사이트 공용 1개 — gsc MCP 서버와 같은 키):
+Auth: 서비스 계정 키만 쓴다 (전 사이트 공용 1개 — gsc MCP 서버와 같은 키):
   $GOOGLE_APPLICATION_CREDENTIALS > $CAPTURE_HOME/gsc_service_account.json
   설치: python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)
-키가 없으면 구버전 사이트별 OAuth(creds/{project}/client_secrets.json + gsc_token.json)
-로 동작한다 — 이미 붙여둔 사이트용 하위호환이고, 새 연결은 전부 서비스 계정으로 한다.
 Setup walkthrough: references/setup.md
 
 Usage:
@@ -17,8 +15,6 @@ Usage:
 """
 import argparse
 import json
-import os
-import shutil
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -32,72 +28,6 @@ SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
-def client_id_of(path: Path) -> str:
-    try:
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return ""
-    return (cfg.get("installed") or cfg.get("web") or {}).get("client_id", "")
-
-
-def client_owner(path: Path, exclude: str) -> str:
-    """이 클라이언트를 이미 쓰고 있는 다른 사이트 이름 (없으면 빈 문자열)."""
-    cid = client_id_of(path)
-    if not cid:
-        return ""
-    for other in sorted((db.CAPTURE_HOME / "creds").glob("*/client_secrets.json")):
-        if other.parent.name != exclude and client_id_of(other) == cid:
-            return other.parent.name
-    return ""
-
-
-def resolve_secrets(project: str) -> str:
-    """이 사이트가 쓸 client_secrets.json 을 고른다.
-
-    사이트별 자격증명이 기본이다 — creds/{project}/ 아래에 각자 두므로 한 사이트의
-    구글 클라이언트가 다른 사이트의 Search Console을 대신 열지 않는다.
-    공용 파일을 두면 그걸 쓰지만, 그건 명시적으로 선택했을 때뿐이다.
-    """
-    env = os.environ.get("GSC_CLIENT_SECRETS")
-    if env:
-        return env
-    own = db.creds_dir(project) / "client_secrets.json"
-    if own.exists():
-        return str(own)
-    shared = db.CAPTURE_HOME / "client_secrets.json"
-    if shared.exists():
-        print(f"[안내] 사이트 전용 자격증명이 없어 공용 {shared.name} 을 씁니다. "
-              f"분리하려면 이 사이트용 JSON을 {own} 에 두세요.")
-        return str(shared)
-    # 다운로드 폴더에서 방금 받은 걸 이 사이트 전용 자리에 넣어준다.
-    for c in sorted(db.downloads_dir().glob("client_secret*.json"),
-                    key=lambda p: -p.stat().st_mtime)[:10]:
-        try:
-            kind = set(json.loads(c.read_text(encoding="utf-8")))
-        except (ValueError, OSError):
-            continue
-        if "installed" in kind:                  # 데스크톱 앱 = 우리가 원하는 유형
-            used_by = client_owner(c, exclude=project)
-            if used_by:
-                # 같은 클라이언트를 몰래 복제하면 사이트 분리가 무의미해진다.
-                print(f"[주의] {c.name} 은 이미 '{used_by}' 사이트가 쓰는 "
-                      f"클라이언트입니다. {project} 용으로는 두 가지 중 하나:\n"
-                      f"  · 이 사이트 전용 데스크톱 클라이언트를 새로 만들어 받기 "
-                      "(권장 — 사이트별 분리 유지)\n"
-                      f"  · 일부러 공용으로 쓰려면 그 JSON을 "
-                      f"{db.CAPTURE_HOME / 'client_secrets.json'} 에 두기")
-                continue
-            own.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(c, own)
-            print(f"[자동] 다운로드 폴더의 {c.name} 을 {own} 로 옮겼습니다 "
-                  f"({project} 전용).")
-            return str(own)
-        if "web" in kind:
-            print(f"[주의] {c.name} 은 '웹 애플리케이션' 유형입니다 — "
-                  "Search Console 연동에는 '데스크톱 앱' 클라이언트가 필요합니다.")
-    return str(own)
-
-
 def get_service(project: str):
     try:
         from googleapiclient.discovery import build
@@ -106,57 +36,15 @@ def get_service(project: str):
                  "pip install google-api-python-client")
 
     key = db.gsc_key()
-    if key.exists():
-        from google.oauth2 import service_account
-        creds = service_account.Credentials.from_service_account_file(
-            str(key), scopes=SCOPES)
-        return build("searchconsole", "v1", credentials=creds,
-                     cache_discovery=False)
-
-    # ---- 이하 구버전 OAuth 경로 (이미 붙여둔 사이트의 토큰 재사용 전용) ----
-    try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-    except ImportError:
+    if not key.exists():
         sys.exit(f"서비스 계정 키가 없습니다: {key}\n"
                  "  연결(5분, 전 사이트 공용): "
                  "python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)")
-
-    secrets = resolve_secrets(project)
-    token_path = db.creds_dir(project) / "gsc_token.json"
-    legacy = db.CAPTURE_HOME / "gsc_token.json"
-    if not token_path.exists() and legacy.exists() \
-            and secrets == str(db.CAPTURE_HOME / "client_secrets.json"):
-        # 예전 공용 토큰은 공용 자격증명을 계속 쓸 때만 재사용 (불필요한 재인증 방지)
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(legacy, token_path)
-    creds = None
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-    if not creds or not creds.valid:
-        refreshed = False
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                refreshed = True
-            except Exception as e:  # 만료·취소된 토큰이면 조용히 재인증으로 넘어간다
-                print(f"[안내] 저장된 구글 인증이 만료됐습니다({type(e).__name__}) — "
-                      "브라우저를 열어 다시 승인받습니다.")
-                token_path.unlink(missing_ok=True)
-        if not refreshed:
-            if not Path(secrets).exists():
-                sys.exit(
-                    "구글 연결이 없습니다. 지금 표준은 서비스 계정 방식입니다 — \n"
-                    "  키 1개로 모든 사이트: python ../../setup/scripts/connect_gsc.py "
-                    "(setup.md 4-B, 5분)")
-            print(f"[인증] {project} 전용 구글 승인 창을 엽니다 — "
-                  "이 사이트의 Search Console 속성만 읽습니다.")
-            flow = InstalledAppFlow.from_client_secrets_file(secrets, SCOPES)
-            creds = flow.run_local_server(port=0)
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(creds.to_json())
-    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    from google.oauth2 import service_account
+    creds = service_account.Credentials.from_service_account_file(
+        str(key), scopes=SCOPES)
+    return build("searchconsole", "v1", credentials=creds,
+                 cache_discovery=False)
 
 
 def main() -> None:

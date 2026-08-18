@@ -16,7 +16,6 @@ Usage:
 """
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -68,12 +67,11 @@ def main() -> None:
     p = db.get_project(conn, a.project)
     # yaml이 없어도 기록은 남아야 한다 — 별칭이 빠지면 경고만 하고 넘어간다.
     cfg = collector.project_cfg(p["config_path"] or a.project)
-    aliases = [cfg.get("name", "")] + (cfg.get("brand_aliases") or [])
     content = Path(a.answer_file).read_text(encoding="utf-8")
     urls = [u.strip() for u in a.urls.split(",") if u.strip()]
-    if not urls:  # same fallback as collect_ai: bare URLs inlined in the answer
-        urls = re.findall(r"https?://[^\s)\]>\"']+", content)
-    mentioned, cited, others = scoring.judge(content, urls, aliases, p["domain"])
+    # 별칭 조립과 맨 URL fallback은 scoring 이 한다 — collect_ai 경로와 같은 입력 규칙.
+    mentioned, cited, others = scoring.judge(content, urls,
+                                             scoring.aliases_of(cfg), p["domain"])
     db.record_ai_check(conn, a.prompt_id, a.run_id, a.engine, a.sample,
                        mentioned, cited, others, content)
     print(json.dumps({"prompt_id": a.prompt_id, "engine": a.engine,

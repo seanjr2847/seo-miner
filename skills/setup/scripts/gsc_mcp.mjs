@@ -8,11 +8,24 @@
 // 열쇠 경로도 여기서 정한다 — .mcp.json의 ${USERPROFILE}은 윈도우 전용인 데다
 // CAPTURE_HOME 설정을 무시했다.
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 const home = process.env.CAPTURE_HOME || path.join(homedir(), ".capture");
 const env = { ...process.env };
+// ~/.capture/env의 KEY=VALUE를 반영 — db.load_env()와 같은 규칙: 프로세스 환경변수가
+// 우선(setdefault), 빈 줄·# 주석은 건너뜀. home은 이미 위에서 확정됐으니 안 바뀐다.
+const envFile = path.join(home, "env");
+if (existsSync(envFile)) {
+  for (const line of readFileSync(envFile, "utf-8").split(/\r?\n/)) {
+    const i = line.indexOf("=");
+    if (i < 0) continue;
+    const k = line.slice(0, i).trim();
+    if (!k || k.startsWith("#")) continue;
+    env[k] ??= line.slice(i + 1).trim();
+  }
+}
 env.GOOGLE_APPLICATION_CREDENTIALS ??= path.join(home, "gsc_service_account.json");
 
 const win = process.platform === "win32";

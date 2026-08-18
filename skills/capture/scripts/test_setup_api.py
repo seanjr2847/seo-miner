@@ -51,12 +51,20 @@ code, r = post("/api/setup/project", {
     "gsc_property": "", "brand_aliases": "데모, Demo",
     "seed_keywords": "키워드 하나\n키워드 둘", "competitors_manual": ""})
 assert code == 200 and r["ok"], r
-yml = (HOME / "projects" / "demo.yaml").read_text("utf-8")
-assert "gsc_property: sc-domain:demo.com" in yml, yml     # 빈 값 → 도메인에서 유추
-assert '["데모", "Demo"]' in yml, yml
-assert '["키워드 하나", "키워드 둘"]' in yml, yml
+import yaml  # noqa: E402  (sync_project가 이미 요구하는 부품 — 테스트도 그걸로 읽는다)
+doc = yaml.safe_load((HOME / "projects" / "demo.yaml").read_text("utf-8"))
+assert doc["gsc_property"] == "sc-domain:demo.com", doc   # 빈 값 → 도메인에서 유추
+assert doc["brand_aliases"] == ["데모", "Demo"], doc
+assert doc["seed_keywords"] == ["키워드 하나", "키워드 둘"], doc
 assert dashboard.db.connect().execute(
     "SELECT COUNT(*) FROM projects WHERE name='demo'").fetchone()[0] == 1
+
+# 폼 입력에 개행으로 YAML 키를 끼워 넣어도 값으로만 남아야 한다 (f-string 시절의 구멍)
+code, r = post("/api/setup/project", {"name": "evil", "type": "saas",
+                                      "domain": "evil.com\nname: hacked"})
+assert code == 200, r
+doc = yaml.safe_load((HOME / "projects" / "evil.yaml").read_text("utf-8"))
+assert doc["name"] == "evil" and "hacked" in doc["domain"], doc
 
 code, r = post("/api/setup/project", {"name": "demo", "type": "saas",
                                       "domain": "demo.com"})
@@ -85,7 +93,13 @@ assert pg["creations"] == 0, pg                    # 테이블이 없어도 0으
 conn.execute("INSERT INTO keywords(project_id, keyword, source, is_active) "
              "VALUES(?,?,?,1)", (pid, "캔 키워드", "autocomplete"))
 conn.commit()
-assert dashboard.progress(conn, pid)["keywords_found"] == 1
+pg = dashboard.progress(conn, pid)
+assert pg["keywords_found"] == 1
+
+# 안내의 "지금 할 것"은 서버 판정(scoring.stage) — 템플릿 JS가 판정하던 시절의 회귀 방지
+st = dashboard.scoring.stage(pg, "demo", "demo.com")
+assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
+assert st["steps"][3]["cmd"] == "/capture add demo", st   # 폼 등록엔 질문이 아직 없다
 conn.close()
 
 # ── 박제본(export) ──────────────────────────────────────────────────
@@ -98,5 +112,6 @@ assert 'src="http' not in html and 'href="http' not in html, "외부 요청이 �
 snap = json.loads(html.split("window.__SNAPSHOT__=", 1)[1].split("</script>", 1)[0])
 assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap
 assert "progress" in snap["data"], "안내 자료가 박제본에 빠졌다"
+assert snap["data"]["guide"]["here"] == 1, "서버 판정(guide)이 payload에 없다"
 
 print(f"ok — 설정 API · 안내 판정 · 박제본 정상 ({HOME})")

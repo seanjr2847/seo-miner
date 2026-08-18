@@ -19,7 +19,6 @@ Usage:
                        [--category 사실] [--dry-run]
 """
 import argparse
-import re
 import sys
 import time
 from pathlib import Path
@@ -72,9 +71,7 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
             u = (ann.get("url_citation") or {}).get("url", "")
             if u:
                 urls.append(u)
-    # fallback: some engines inline bare URLs in text
-    if not urls:
-        urls = re.findall(r"https?://[^\s)\]>\"']+", content)
+    # 인용 메타데이터가 없을 때의 맨 URL fallback은 scoring.judge 가 한다.
     return {"content": content, "citation_urls": urls,
             "usage": data.get("usage", {})}
 
@@ -140,7 +137,7 @@ def main() -> None:
     if not api_key:
         sys.exit("OPENROUTER_API_KEY not set. See references/setup.md")
 
-    aliases = [cfg.get("name", "")] + (cfg.get("brand_aliases") or [])
+    aliases = scoring.aliases_of(cfg)   # browse 경로와 같은 별칭 규칙 — 갈라지면 비교 불능
     own_domain = p["domain"]
     # r.api_calls를 직접 센다 — 도중에 죽어도 그때까지 부른 횟수가 남는다.
     with db.run(conn, p["id"], "ai") as r:

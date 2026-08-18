@@ -111,17 +111,31 @@ def drop_foreign_brands(rows: list[dict], brands: set[str], key: str = "query") 
     return [r for r in rows if not is_foreign_brand(r.get(key, ""), brands)]
 
 
-def judge(content: str, citation_urls: list[str], aliases: list[str],
+# 일부 엔진은 인용 메타데이터 없이 본문에 URL을 그대로 적는다 — 그때의 fallback.
+URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
+
+
+def aliases_of(cfg: dict) -> list[str]:
+    """판정에 쓸 자기 브랜드 별칭 — 이름 + brand_aliases.
+
+    두 측정 경로(collect_ai·browse)가 각자 조립하면 별칭 규칙이 갈라져
+    judge 가 같아도 수치가 어긋난다."""
+    return [a for a in [cfg.get("name", "")] + (cfg.get("brand_aliases") or []) if a]
+
+
+def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
           own_domain: str) -> tuple[int, int, list[str]]:
     """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들) 로 판정.
 
     키 경로(collect_ai)와 브라우저 경로(browse/record_check)가 같은 판정을 써야
     두 경로의 수치를 한 화면에서 비교할 수 있다. browse가 collect_ai 내부를
-    가로질러 import 하던 것을 여기로 옮겼다.
+    가로질러 import 하던 것을 여기로 옮겼다. 인용 URL이 없으면 본문의 맨 URL을
+    줍는 fallback까지 여기서 한다 — 호출부 두 곳이 각자 하던 일이다.
     """
     text = (content or "").lower()
     mentioned = int(any(a.lower() in text for a in aliases if a))
-    domains = sorted({d for d in (host_of(u) for u in citation_urls or []) if d})
+    urls = citation_urls or URL_RE.findall(content or "")
+    domains = sorted({d for d in (host_of(u) for u in urls) if d})
     cited = int(any(owns(d, own_domain) for d in domains))
     others = [d for d in domains if not owns(d, own_domain)]
     return mentioned, cited, others
@@ -218,6 +232,59 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
         (project_id, limit))]
 
 
+def stage(p: dict, name: str, domain: str) -> dict:
+    """갱도 6단계 판정 — "지금 할 것"을 정하는 곳은 여기 하나다.
+
+    p 는 dashboard.progress() 가 센 단계별 실적. done 은 그 실적으로만 판정한다 —
+    "했다 치고" 넘어가지 않는다. 순서가 정보다: 앞 단계가 없으면 뒤 단계는 재료가
+    없어 돌지 않는다. 이 판정이 템플릿 JS 에 있던 시절엔 Python 에서 시험할 수
+    없었고, doctor·화면이 서로 다른 다음 할 일을 말할 수 있었다.
+    """
+    steps = [
+        {"id": "register", "t": "사이트 등록",
+         "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.",
+         "done": True, "state": domain or "", "cmd": None},
+        {"id": "gsc", "t": "구글 실적 읽기",
+         "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
+                 "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
+         "done": p["gsc_days"] > 0,
+         "state": (f"{p['gsc_days']}번 읽음 · 최근 {p['gsc_last']}" if p["gsc_days"]
+                   else "아직 안 읽음"),
+         "cmd": f"/capture gsc {name}"},
+        {"id": "keywords", "t": "키워드 캐기",
+         "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
+                 "늘린 만큼 다음 단계가 볼 게 많아집니다.",
+         "done": p["keywords_found"] > 0,
+         "state": (f"캔 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
+                   if p["keywords_found"]
+                   else (f"직접 적은 {p['keywords']}개뿐" if p["keywords"] else "아직 없음")),
+         "cmd": f"/capture keywords {name}"},
+        {"id": "ai", "t": "AI 노출 확인",
+         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
+                 "브라우저로 직접 물어보면 키 없이 무료입니다.",
+         "done": p["ai_checks"] > 0,
+         "state": (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
+                   if p["ai_checks"]
+                   else ("질문은 준비됨 · 아직 안 물어봄" if p["ai_prompts"]
+                         else "물어볼 질문부터 필요")),
+         "cmd": (f"/seo-miner:browse {name}" if p["ai_prompts"] else f"/capture add {name}")},
+        {"id": "gaps", "t": "손댈 것 뽑기",
+         "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
+                 "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
+         "done": p["opps"] > 0,
+         "state": f"{p['opps']}건 뽑음" if p["opps"] else "아직 없음",
+         "cmd": f"/capture gaps {name}"},
+        {"id": "create", "t": "실제로 고치기",
+         "gain": "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 "
+                 "나가고, 끝나면 그 기회가 완료로 닫힙니다.",
+         "done": p["creations"] > 0,
+         "state": f"{p['creations']}건 고침" if p["creations"] else "아직 한 건도 안 함",
+         "cmd": f"/create plan {name}"},
+    ]
+    here = next((i for i, s in enumerate(steps) if not s["done"]), -1)
+    return {"steps": steps, "here": here}
+
+
 def _selfcheck() -> None:
     assert norm("Future Tools") == "futuretools"
     assert host_of("https://www.Ecrett.com/pricing?a=1") == "ecrett.com"
@@ -243,6 +310,24 @@ def _selfcheck() -> None:
                          ["MySite"], "mysite.com")
     assert (m, c, others) == (1, 1, ["ecrett.com"]), (m, c, others)
     assert judge("nothing here", [], ["MySite"], "mysite.com") == (0, 0, [])
+    # 인용 메타데이터가 없으면 본문의 맨 URL을 줍는다 — collect_ai·record_check 공통
+    assert judge("see https://blog.mysite.com/x", [], ["MySite"],
+                 "mysite.com")[1] == 1
+    assert aliases_of({"name": "MySite", "brand_aliases": ["마이사이트", ""]}) \
+        == ["MySite", "마이사이트"]
+
+    pr = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
+          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
+    st = stage(pr, "demo", "demo.com")
+    assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
+    assert st["steps"][3]["cmd"] == "/capture add demo"       # 질문이 없으면 add 부터
+    st = stage({**pr, "gsc_days": 3, "gsc_last": "2026-08-14", "keywords_found": 5,
+                "ai_prompts": 10}, "demo", "demo.com")
+    assert st["here"] == 3
+    assert st["steps"][3]["cmd"] == "/seo-miner:browse demo"  # 질문이 있으면 browse
+    st = stage({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
+                "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
+    assert st["here"] == -1                                    # 한 바퀴 다 돎
 
     assert gap_to_page1(14.2) == 4.2
     assert gap_to_page1(3.0) == 0.0
