@@ -23,6 +23,8 @@ import sys
 import time
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
@@ -47,7 +49,6 @@ SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
 
 
 def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
-    import requests
     body = {
         "model": model,
         "max_tokens": 1200,  # 700이면 긴 답변 뒤쪽 인용이 잘린다 — 토큰 비용 최대 ~1.7배

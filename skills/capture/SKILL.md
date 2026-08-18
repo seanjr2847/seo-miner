@@ -37,7 +37,9 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다.
 
 1. 인터뷰: 타입(game|local_clinic|saas|directory), 도메인, locale, 시드 키워드 3~10개,
-   브랜드 별칭, 경쟁사, gsc_property. `projects/_presets.yaml`에서 타입 프리셋을 읽고
+   브랜드 별칭, 경쟁사, gsc_property, 그리고 **도구 이름(`tools`)** — directory·saas
+   타입은 이게 비면 남의 브랜드 카탈로그가 비어서 striking_distance에 노이즈가
+   흘러든다 (`scoring.md` 1a). `projects/_presets.yaml`에서 타입 프리셋을 읽고
    그 각도에 맞춰 질문을 구체화한다.
 2. `projects/_template.yaml`을 복사해 `$CAPTURE_HOME/projects/{P}.yaml` 작성.
 3. `python scripts/db.py sync-project $CAPTURE_HOME/projects/{P}.yaml`
@@ -47,9 +49,14 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 ### /capture keywords {P} — 키워드 유니버스 (무료 파이프라인)
 1. `python scripts/expand_keywords.py --project {P} --dry-run` 로 계획 고지 → 확인 → 실행.
    (자동완성은 비공식 엔드포인트 — 실패 시 우아하게 건너뛰고 계속한다.)
-2. 후보(is_active=0)를 sql로 조회해 관련성 필터·클러스터·인텐트 라벨링을 수행하고,
+2. 후보(is_active=0)를 sql로 조회해 관련성 필터·클러스터 라벨링을 수행하고,
    프리셋 keyword_angles와 프로젝트 코어 토픽 기준으로 limits.max_keywords 내에서
-   활성화할 목록을 사용자에게 제안 → 승인분만 UPDATE로 is_active=1, cluster/intent 기록.
+   활성화할 목록을 사용자에게 제안 → 승인분만 UPDATE로 is_active=1, cluster 기록.
+   **인텐트 라벨링은 별도 단계가 아니다** — `scoring.py load`가 시작 시
+   `_backfill_intents`로 `intent`가 NULL인 활성 키워드만 `classify_intent()`로
+   채우고, 이미 적힌 값은 보존한다 (트랜잭셔널 > 커머셜 > 내비게이셔널 > info
+   우선순위는 코드가 결정). `classify_intent()`가 잘못 잡은 것만 직접 고친다
+   (`scoring.md` 1c).
 3. 수요 근거는 "자동완성 등장 = 수요 존재, GSC 노출 = 실측"으로만 말한다 (볼륨 창작 금지).
 
 ### /capture gsc {P}
@@ -79,6 +86,12 @@ Brain 수집 없이 gsc MCP 툴(`search_analytics` 등)로 바로 조회해 답�
 결과: 키워드별 순위·SERP 피처·AI오버뷰 인용 여부 + 부산물로 연관검색어/PAA가 키워드
 후보에, 상위 빈출 도메인이 경쟁사에 자동 수확된다. 키 미설정이면 GSC 중심 모드로
 동작함을 안내한다 (setup.md 7절).
+
+여러 번 돌아도 `rank_snapshots.position`이 계속 NULL인 키워드가 있다 — 그 키워드는
+**순위 문제가 아니라 인덱싱 문제일 수 있다**. 번들된 gsc MCP의 `index_inspect`
+툴로 해당 URL의 인덱스 여부를 먼저 확인한다 — 미인덱스면 노리는 페이지 자체가
+검색에 없으니 순위를 따져도 의미가 없다 (`scoring.md` 4절 — `RANK_NOISE`도
+NULL엔 적용되지 않는다).
 
 ### /capture ai {P}
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →

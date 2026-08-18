@@ -7,8 +7,9 @@
 **이 문서는 명세이고, 실행은 `scripts/scoring.py`다.** 산문으로만 적힌 규칙은
 아무도 실행하지 않아 실제로 안 돌았다(1a절이 그랬다). 그래서 기계가 판정할 수
 있는 것은 전부 scoring.py로 옮겼고, 여기서는 그 함수·상수 이름을 가리킨다.
-임계값을 바꾸려면 scoring.py를 고치고 이 문서를 맞춘다. 남은 산문(1b절 2~3단계,
-2절의 fit 판정)은 **코드가 아니라 Claude 판단**이며, 그렇다고 명시해 둔다.
+임계값을 바꾸려면 scoring.py를 고치고 이 문서를 맞춘다. 남은 산문(1b절 2~3단계)
+은 **코드가 아니라 Claude 판단**이며, 그렇다고 명시해 둔다. fit·인텐트는
+코드가 기본값을 깔고 Claude가 보정만 한다(2절, 1c절).
 자체 점검: `python scripts/scoring.py`.
 기회 적재: `python scripts/scoring.py load <project>` (5절).
 
@@ -24,7 +25,7 @@
 | content_gap | 경쟁사는 잡는데 나는 부재 | 부분 가능: rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우. 완전판(경쟁사 역키워드)은 여전히 DataForSEO Labs 필요 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
 | pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
-| aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
+| aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
 (새 기회 먼저 → 점수 높은 순 → 최근 id 순). 정렬이 두 벌이던 시절엔 대시보드와
@@ -42,11 +43,22 @@
 `scoring.is_foreign_brand()` / `scoring.drop_foreign_brands()`가 판정하고,
 `scoring.striking()`이 그 필터를 이미 걸고 결과를 돌려준다.
 
-카탈로그(`scoring.foreign_brands()`)의 출처는 두 곳이다:
-`competitors` 테이블의 도메인(브랜드 이름 부분) + 프로젝트 yaml의
-`tools` / `foreign_brands` 목록. 프로젝트 자기 브랜드(`name`·`brand_aliases`)는
-카탈로그에서 **명시적으로 제외**해 반드시 남긴다 — 그건 내 브랜드 검색이라
-CTR이 낮으면 진짜 문제다.
+카탈로그(`scoring.foreign_brands()`)의 출처는 세 경로의 합이다:
+
+- `competitors` 테이블의 도메인(브랜드 이름 부분)
+- 프로젝트 yaml의 `tools` — `projects/_template.yaml`에 키가 있고, 대시보드
+  사이트 등록 폼도 같은 칸으로 받는다 (`dashboard.create_project`이 `tools`
+  줄바꿈·쉼표 입력을 그대로 적는다)
+- 프로젝트 yaml의 `foreign_brands` — `tools`와 목적은 같은 별칭 키
+
+세 경로 중 어느 것도 비어 있으면 카탈로그는 공집합이 되고
+`is_foreign_brand()`는 아무것도 걸러내지 않는다 — striking 목록에 남의 브랜드
+검색이 그대로 흘러든다. 이때 대시보드는 `gather()`가 `brand_catalog_empty=1`
+로 화면에 경고를 띄운다 (yaml `tools`에 도구 이름을 한 줄 추가하거나 대시보드
+폼에서 같은 칸을 채우면 해소).
+
+자기 브랜드(`name`·`brand_aliases`)는 카탈로그에서 **명시적으로 제외**해
+반드시 남긴다 — 그건 내 브랜드 검색이라 CTR이 낮으면 진짜 문제다.
 
 실측 근거(aitierlist 2026-08-13): `ecrett` 8.6위·48노출·**0클릭**,
 `future tools` 4.9위·19노출·1클릭, `paperpal 후기` 9.6위·13노출·1클릭 —
@@ -91,7 +103,36 @@ CTR이 낮으면 진짜 문제다.
 **프리셋 편향:** directory 최우선(존재 이유 그 자체), saas·local_clinic 유효
 ({경쟁제품} alternative, {지역}×{시술}), game은 {장르}·{유사작} 축으로 제한적.
 
-## 2. 점수 프레임 (0~100) — 계수는 코드(WEIGHTS), fit 판정만 Claude
+### 1c. 인텐트 분류 — 코드 기본값, Claude는 보정만
+
+키워드의 인텐트(`keywords.intent`)는 `scoring.classify_intent()`가
+결정적으로 분류한다 — 한·영 토큰을 그대로 매칭하고 우선순위는
+**transactional > commercial > navigational > info**다. 토큰 사전은
+`INTENT_TRANSACTIONAL` / `INTENT_COMMERCIAL` / `INTENT_NAVIGATIONAL`
+(`scoring.py` 상단):
+
+- transactional: 구매·가격·다운로드·할인·쿠폰 + buy·price·pricing·download·
+  discount·coupon
+- commercial: 후기·리뷰·비교·추천·순위·랭킹 + vs·best·review·reviews·
+  alternative·alternatives·top·compare
+- navigational: 로그인·공식·홈페이지 + login·official·homepage
+- info: 위 어디에도 안 걸리는 나머지 (기본값)
+
+같은 토큰이 여러 사전에 있어도 우선순위가 이긴다 — `best pricing`은
+`pricing`이 transactional에 속하므로 transactional이 commercial(best)을 이긴다.
+`buy reviews`는 `buy`(transactional)가 `reviews`(commercial)를 이긴다.
+
+`scoring.py load`(5절)가 시작 시 `_backfill_intents`를 한 번 부른다 —
+**`intent`가 NULL인 활성 키워드만 채우고**, 이미 적힌 값은 절대 덮지 않는다.
+Claude(또는 사람)가 손본 intent는 그 손이 이긴다. 비활성 키워드는 의도
+추적이 아니라 후보라 안 본다.
+
+남은 Claude 몫: 코드 토큰 사전을 빠져나간 케이스(예: `견적`, `가격표`,
+`어디서 사`, 의도 모호한 브랜드 결합)는 사람이 직접 intent를 적는다 — 그
+값은 다음 load에서도 보존된다. 볼륨 추정이나 디바이스별 차이는 여기서
+다루지 않는다.
+
+## 2. 점수 프레임 (0~100) — 계수는 코드(WEIGHTS), fit은 코드 기본값 + Claude 보정
 
 계수는 이제 Claude가 매번 정하지 않는다. `scoring.WEIGHTS`(프리셋별 고정, 각 합
 1.0)를 `scoring.score(kind, metrics, project_type)`가 적용해 **결정적으로**
@@ -101,9 +142,23 @@ CTR이 낮으면 진짜 문제다.
 ```
 score = w_demand · 수요        min(1, log10(1+impressions)/5)  — 노출 10만이면 1.0
       + w_reach  · 달성가능성   1 - gap_to_page1(pos)/10. 순위 미확인이면 보수적 0.3
-      + w_fit    · 관련성      metrics["fit"] 0~1, 미지정 시 중립 0.5
+      + w_fit    · 관련성      metrics["fit"] 0~1, 기본은 _fit_of() 근사
       + w_ai     · AI 노출     metrics["ai"], 미지정 시 ai_citation_gap·aio_exposure만 1.0
 ```
+
+`w_fit`(관련성)의 기본값은 `scoring._fit_of()`의 결정적 근사다 — 0.5 중립이면
+`local_clinic`(w_fit=0.45) 같은 프리셋에서 모든 기회가 점수 면적 한가운데만
+차지해서 순위가 안 갈라지므로, 활성 키워드·클러스터 매칭 정도로 단계값을
+준다:
+
+- **0.8** — `target`을 `norm()` 비교했을 때 활성 키워드와 정확히 일치
+  (공백·대소문자·문자 부호 차이는 정규화해서 같게 본다)
+- **0.65** — 정확 일치는 없지만 활성 키워드의 `cluster` 명이 target 안에
+  들어가거나(target = `cluster:{name}`인 coverage 행도 같은 값)
+- **0.5** — 어느 매칭도 없을 때
+
+이걸 `score()`가 `metrics["fit"]`로 넘겨 받는다 — `load`가 기회마다
+`_fit_of()`로 미리 채워서 넘긴다(5절).
 
 | type | w_demand | w_reach | w_fit | w_ai |
 |------|---------|---------|-------|------|
@@ -116,11 +171,12 @@ score = w_demand · 수요        min(1, log10(1+impressions)/5)  — 노출 10�
 리스트 인용이 전장, local_clinic은 w_fit 상향 — 네이버 미측정 한계는 reasoning에
 명시, directory는 수요·coverage 우선)은 이 표에 굳어 있다.
 
-**Claude 재량으로 남은 것:** (a) 관련성 — 코어 토픽 적합도를 판단해
-`metrics["fit"]`(0~1)로 넘기거나, 적재 후 점수·reasoning을 보정한다.
-안 넘기면 중립 0.5로 돌지만 그래도 결정적이다. (b) reasoning 보강 — load가
-적는 템플릿 문장 위에 원인 가설·맥락을 얹는다 (3절). (c) 예외 판단 —
-수치로 못 거르는 케이스(예: 시즌성)는 reasoning에 근거를 적고 조정한다.
+**Claude 재량으로 남은 것:** (a) 관련성 보정 — `metrics["fit"]`를 직접
+덮어쓰거나, 적재 후 점수·reasoning을 보정한다. 기본은 `_fit_of()` 근사
+(위 셋 단계값)이고, 안 넘기면 그대로 돈다. 코어가 안 맞는 기회·시즌성·
+정책적으로 막힌 페이지는 0~1로 명시해 결정성을 유지한다. (b) reasoning 보강 —
+load가 적는 템플릿 문장 위에 원인 가설·맥락을 얹는다 (3절). (c) 예외 판단
+— 수치로 못 거르는 케이스는 reasoning에 근거를 적고 조정한다.
 
 ## 3. reasoning 작성 규칙
 

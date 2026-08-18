@@ -63,24 +63,45 @@ def warn_unmapped(locale: str) -> bool:
 
 
 def _domains_in(obj) -> list[str]:
-    """중첩 응답에서 url/domain 값만 긁어 호스트 목록으로.
+    """AI Overview 응답에서 '인용된 도메인'만 호스트 목록으로.
 
-    예전에는 AI Overview 항목을 통째로 문자열로 만들어 내 도메인이 들어있나 봤는데,
-    'notexample.com' 같은 남의 도메인도 걸리는 판정이었다.
+    예전에는 응답 트리 전체에서 url/domain/link/source_url 을 무차별 수집해
+    ai_overview 안의 images[].url (이미지 CDN) 이나 본문 내 참조 없는 URL 까지
+    섞였다 — '내 도메인이 인용됐다' 판정의 거짓 양성이 여기서 들어왔다.
+
+    DataForSEO ai_overview 의 실제 인용 필드 구조 (live advanced 응답):
+      items: [
+        {
+          "type": "ai_overview_element",
+          "markdown": "...",
+          "title":   "...",
+          "images":     [{"url": "...",   source_url": "..."}],  # 인용 아님 — CDN/원본
+          "links":      [{"url": "...",   "title": "..."}],      # 인용 — 인라인 링크
+          "references": [{"url": "...",   "title": "..."}],      # 인용 — 하단 출처
+          "citations":  [{"url": "...",   "domain": "..."}],      # 인용(일부 응답)
+          "sources":    [{"url": "...",   "source": "..."}],      # 인용(보수적 별칭)
+        }
+      ]
+    따라서 조상 경로에 references / citations / sources / links 중 하나가 있는
+    url·domain·link·source_url 만 채택 — 인용 구조 안의 링크만 본다.
     """
-    out, stack = [], [obj]
+    out, stack = [], [(obj, ())]
+    cite = {"references", "citations", "sources", "links"}
     while stack:
-        cur = stack.pop()
+        cur, ancestors = stack.pop()
         if isinstance(cur, dict):
             for k, v in cur.items():
                 if isinstance(v, str) and k in ("url", "domain", "link", "source_url"):
-                    host = scoring.host_of(v)
-                    if host:
-                        out.append(host)
+                    if any(p in cite for p in ancestors):
+                        host = scoring.host_of(v)
+                        if host:
+                            out.append(host)
                 else:
-                    stack.append(v)
+                    stack.append((v, ancestors + (k,)))
         elif isinstance(cur, list):
-            stack.extend(cur)
+            # 리스트 항목 자체엔 키가 없다 — 조상 키를 그대로 넘긴다
+            for item in cur:
+                stack.append((item, ancestors))
     return sorted(set(out))
 
 
@@ -215,9 +236,28 @@ def _selfcheck() -> None:
     assert location("de-DE") == LOCATION_MAP["en"]      # 매핑 없으면 미국/영어 폴백
     assert warn_unmapped("ko-KR") is False
     assert warn_unmapped("de-DE") is True               # 폴백은 하되 한 번은 말한다
+    # 인용 밖의 url/domain은 빠진다 — 'items' 리스트 아래 직속 dict엔 citation 키 없음
     assert _domains_in({"items": [{"url": "https://www.Example.com/a"},
-                                  {"x": {"domain": "b.co"}}]}) == ["b.co", "example.com"]
+                                  {"x": {"domain": "b.co"}}]}) == []
     assert _domains_in({"title": "example.com 은 텍스트일 뿐"}) == []
+    # DataForSEO ai_overview 형태: images[].url 은 CDN 이라 인용 아님, links/references 만 채택
+    aio = {"type": "ai_overview",
+           "items": [{"type": "ai_overview_element",
+                      "title": "AI 답변",
+                      "markdown": "본문 안의 텍스트",
+                      "images":     [{"url":      "https://img-cdn.example.com/p.png",
+                                      "source_url": "https://example.com/img"}],
+                      "links":      [{"url": "https://link-a.com/",      "title": "A"},
+                                     {"url": "https://link-b.com/page",  "title": "B"}],
+                      "references": [{"url": "https://ref-c.com/",       "title": "C"}]},
+                     {"type": "ai_overview_element",
+                      "citations": [{"url": "https://cite-d.com/",       "domain": "d.com"}]}]}
+    assert _domains_in(aio) == ["cite-d.com", "d.com", "link-a.com", "link-b.com", "ref-c.com"], \
+        _domains_in(aio)
+    # 조상 깊이 무관 — images > items 까지 깊어도 images 가 cite 키 아니라 차단
+    nest = {"items": [{"type": "ai_overview_element",
+                       "images": [{"items": [{"url": "https://nested.example.com/x"}]}]}]}
+    assert _domains_in(nest) == [], _domains_in(nest)
     assert cost_per_query("serper") < cost_per_query("dataforseo")
     assert caveats("dataforseo") == [] and caveats("serper")
     assert set(PROVIDERS) == {"dataforseo", "serper"}

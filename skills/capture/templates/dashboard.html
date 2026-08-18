@@ -322,6 +322,8 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
       <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
       <label>경쟁사 도메인 — 선택</label>
       <input id="p-comp" placeholder="competitor.com, other.com">
+      <label>등재·경쟁 도구 이름 — 남의 브랜드 검색을 걸러냅니다 (쉼표)</label>
+      <input id="p-tools" placeholder="ecrett, paperpal, future tools">
       <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
         <span class="msg" id="m-proj"></span></div>
     </div>
@@ -465,7 +467,7 @@ async function post(path, body) {
 // 경계값은 서버(scoring.py)가 내려준다 — 여기 다시 적어 두면 규칙이 둘로 갈라진다.
 // rules가 없는 옛 박제본도 그대로 그려져야 하므로 예전 값을 기본으로 둔다.
 let RULES = {page1: 10, striking_lo: 4, striking_hi: 20, rank_noise: 3};
-function depthLog(rows) {
+function depthLog(rows, brandCatalogEmpty) {
   if (!rows.length)
     return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
   const W = 1000, LANE = 30, PAD_T = 40, PAD_B = 8;
@@ -502,6 +504,10 @@ function depthLog(rows) {
     </g>`;
   }).join("");
 
+  const warn = brandCatalogEmpty
+    ? `\n  <div class="legend">남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.</div>`
+    : "";
+
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="검색어별 순위와 1페이지까지 남은 거리">
     <rect x="${L}" y="${PAD_T - 14}" width="${x10 - L}" height="${H - PAD_T + 10}"
@@ -516,7 +522,7 @@ function depthLog(rows) {
     ${lanes}
   </svg></div>
   <div class="legend"><b style="color:var(--patina)">■</b> 1페이지 안 ·
-    <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>`;
+    <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>${warn}`;
 }
 
 /* ── AI 인용률 추이: 런 1회 = 점 1개, 세로축은 0~100% 고정(런끼리 비교가 목적).
@@ -720,7 +726,7 @@ function render(d) {
     ? `${d.striking.length}개 중 ${near}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
       `순위만 밀면 클릭으로 바뀝니다.`
     : "";
-  $("log").innerHTML = depthLog(d.striking);
+  $("log").innerHTML = depthLog(d.striking, d.brand_catalog_empty);
 
   $("opp-eyebrow").textContent = `아직 안 한 기회 ${d.opps_total}건`;
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
@@ -887,7 +893,7 @@ $("btn-proj").addEventListener("click", async () => {
     name: $("p-name").value, type: $("p-type").value, domain: $("p-domain").value,
     locale: $("p-locale").value, gsc_property: $("p-gsc").value,
     brand_aliases: $("p-alias").value, seed_keywords: $("p-seeds").value,
-    competitors_manual: $("p-comp").value});
+    competitors_manual: $("p-comp").value, tools: $("p-tools").value});
   busy("btn-proj", "m-proj", false);
   if (!ok) return say("m-proj", r.error, false);
   say("m-proj", `${r.name} 등록 완료 — 남은 건 AI에 물어볼 질문뿐입니다: ` +

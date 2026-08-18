@@ -75,8 +75,31 @@ doc = yaml.safe_load((HOME / "projects" / "demo.yaml").read_text("utf-8"))
 assert doc["gsc_property"] == "sc-domain:demo.com", doc   # 빈 값 → 도메인에서 유추
 assert doc["brand_aliases"] == ["데모", "Demo"], doc
 assert doc["seed_keywords"] == ["키워드 하나", "키워드 둘"], doc
+assert doc["tools"] == [], doc                            # (a) 빈 tools는 빈 리스트
+assert "preset" in doc, doc                               # (b) preset 블록 포함
+assert doc["preset"]["scoring_bias"] == "ai_citation_gap dominates — best-of list inclusion is the battlefield"
+assert "keyword_angles" in doc["preset"] and "ai_prompt_templates" in doc["preset"]
 assert dashboard.db.connect().execute(
     "SELECT COUNT(*) FROM projects WHERE name='demo'").fetchone()[0] == 1
+
+# tools 입력 및 다른 type(game)의 preset 블록 검증
+code, r = post("/api/setup/project", {
+    "name": "gamedemo", "type": "game", "domain": "game.com",
+    "tools": "tool1, tool2\ntool3"})
+assert code == 200 and r["ok"], r
+doc_game = yaml.safe_load((HOME / "projects" / "gamedemo.yaml").read_text("utf-8"))
+assert doc_game["tools"] == ["tool1", "tool2", "tool3"], doc_game   # (a) tools 리스트 저장
+assert doc_game["preset"]["scoring_bias"] == "list-inclusion citations weigh heaviest (추천 리스트에 끼는 게 전부)"  # (b) game 프리셋
+
+# ── /api/data brand_catalog_empty 검증 ─────────────────────────────
+# (c) tools·competitors 없는 demo는 brand_catalog_empty=true, tools 있는 gamedemo는 false
+code, d_demo = get("/api/data?project=demo")
+assert code == 200, code
+assert d_demo.get("brand_catalog_empty") is True, d_demo
+
+code, d_game = get("/api/data?project=gamedemo")
+assert code == 200, code
+assert d_game.get("brand_catalog_empty") is False, d_game
 
 # 폼 입력에 개행으로 YAML 키를 끼워 넣어도 값으로만 남아야 한다 (f-string 시절의 구멍)
 code, r = post("/api/setup/project", {"name": "evil", "type": "saas",
@@ -130,6 +153,7 @@ assert isinstance(gdata["opps"], list) and len(gdata["opps"]) <= 200
 assert gdata["rules"]["page1"] == dashboard.scoring.PAGE1
 assert "trend" in gdata and "progress" in gdata and "guide" in gdata
 assert gdata["opps_total"] == 0
+assert gdata["brand_catalog_empty"] is True
 conn.close()
 
 # ── 박제본(export) ──────────────────────────────────────────────────

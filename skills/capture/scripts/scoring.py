@@ -73,6 +73,22 @@ KEEP_INTENTS = {
     "competitor", "competitors", "best", "추천",
 }
 
+# 의도 토큰 사전 (classify_intent). 우선순위는 위에서부터 — transactional 이
+# commercial 을 이기고, commercial 이 navigational 을, 마지막에 info.
+# 기본값은 코드, 보정은 Claude/사람 — NULL 인 활성 키워드만 load() 시작 시 채운다.
+INTENT_TRANSACTIONAL = {
+    "구매", "가격", "다운로드", "할인", "쿠폰",
+    "buy", "price", "pricing", "download", "discount", "coupon",
+}
+INTENT_COMMERCIAL = {
+    "후기", "리뷰", "비교", "추천", "순위", "랭킹",
+    "vs", "best", "review", "reviews", "alternative", "alternatives",
+    "top", "compare",
+}
+INTENT_NAVIGATIONAL = {
+    "로그인", "공식", "홈페이지", "login", "official", "homepage",
+}
+
 
 def norm(s: str) -> str:
     """비교용 정규화 — 소문자 + 영숫자/한글만. 'Future Tools' 와 'futuretools.io' 를 같게 본다."""
@@ -361,6 +377,80 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
     return sorted(rows, key=lambda x: x["dpos"])[:limit]
 
 
+def classify_intent(keyword: str) -> str:
+    """결정적 인텐트 분류 — transactional > commercial > navigational > info.
+
+    기본값은 코드, 보정은 Claude/사람. 사람이 Claude 와 같이 적어둔 intent 는
+    절대 덮지 않는다 (load() 의 _backfill_intents 가 NULL 행만 건드린다).
+    기존 norm()/tokens() 로 토큰화 — 한글 토큰('가격', '후기')도 그대로 매칭.
+    """
+    ts = set(tokens(keyword))
+    if ts & INTENT_TRANSACTIONAL:
+        return "transactional"
+    if ts & INTENT_COMMERCIAL:
+        return "commercial"
+    if ts & INTENT_NAVIGATIONAL:
+        return "navigational"
+    return "info"
+
+
+def _backfill_intents(conn: sqlite3.Connection, project_id: int) -> int:
+    """intent 가 NULL 인 활성 키워드만 채운다. 이미 적힌 값은 보존.
+
+    호출은 load() 가 한다 — 분류 기본값은 코드가 깔고, Claude/사람이 손본 건
+    그 손이 이김. 비활성 키워드는 애초에 의도 추적이 아니라 후보라 안 본다.
+    """
+    n = 0
+    for r in conn.execute(
+            "SELECT id, keyword FROM keywords "
+            "WHERE project_id=? AND is_active=1 AND intent IS NULL",
+            (project_id,)).fetchall():
+        conn.execute("UPDATE keywords SET intent=? WHERE id=?",
+                     (classify_intent(r["keyword"]), r["id"]))
+        n += 1
+    conn.commit()
+    return n
+
+
+def _fit_of(conn: sqlite3.Connection, project_id: int, target: str) -> float:
+    """기회 row 의 fit 근사 — 데이터로 답할 수 있는 만큼만 결정적으로.
+
+    fit 의 진짜 판정은 Claude 가 하지만, 0.5 중립으로 두면 w_fit 가 큰 프리셋
+    (local_clinic 0.45) 에서 모든 기회가 점수 면적 한가운데만 차지한다.
+    활성 키워드와 일치하면 0.8, cluster 매칭이면 0.65, 그 외 0.5.
+    """
+    t = norm(target)
+
+    # coverage 행은 target='cluster:{name}' — by_cluster 에 들어왔다는 건
+    # 그 cluster 가 활성 키워드를 가진다는 뜻 (coverage() 의 SQL 조건)
+    if target.startswith("cluster:"):
+        cname = target.split(":", 1)[1].strip()
+        n = conn.execute(
+            "SELECT COUNT(*) FROM keywords "
+            "WHERE project_id=? AND is_active=1 AND cluster=?",
+            (project_id, cname)).fetchone()[0]
+        return 0.65 if n > 0 else 0.5
+
+    rows = list(conn.execute(
+        "SELECT keyword, cluster FROM keywords "
+        "WHERE project_id=? AND is_active=1",
+        (project_id,)).fetchall())
+
+    # tier 1: target.norm == 어떤 active keyword 의 norm → 직접 추적 중인 의제
+    for r in rows:
+        if norm(r["keyword"]) == t:
+            return 0.8
+    # tier 2: 정확 일치가 없을 때 — cluster 소속 active keyword 와 norm 같거나
+    #          target 문자열이 cluster 명을 포함 (topic 만 겹친 경우)
+    for r in rows:
+        if r["cluster"] and norm(r["keyword"]) == t:
+            return 0.65
+    for r in rows:
+        if r["cluster"] and norm(r["cluster"]) in t:
+            return 0.65
+    return 0.5
+
+
 def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
     """미커버 활성 키워드 — directory 프리셋의 최소 구현 (scoring.md 1절 coverage).
 
@@ -432,18 +522,22 @@ def load(project: str) -> None:
             pass
     cur, prev, _, _ = snapshot_pair(conn, pid)
     brands = foreign_brands(conn, pid, cfg)
+    # 의도 미분류(NULL)만 채움 — Claude/사람 보정은 살아남음
+    n_intent = _backfill_intents(conn, pid)
     rows = []
     for r in striking(conn, pid, cur, brands=brands):
         rows.append({"kind": "striking_distance", "target": r["query"],
                      "score": score("striking_distance",
-                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                                    {"impressions": r["imp"], "position": r["pos"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      "reasoning": f"{r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
                                   f"1페이지까지 {r['gap']} ({r['band']}) (gsc {cur})"})
     for r in ctr_gaps(conn, pid):
         rows.append({"kind": "ctr_gap", "target": r["query"],
                      "score": score("ctr_gap",
                                     {"impressions": r["impressions"],
-                                     "position": r["position"]}, ptype),
+                                     "position": r["position"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      "reasoning": f"{r['position']}위·노출 {r['impressions']:,}·CTR "
                                   f"{r['actual_ctr']}%(기대 {r['expected_ctr']}%) — "
                                   f"손실 약 {r['lost_clicks']:,}클릭/기간 (gsc {cur})"})
@@ -452,32 +546,37 @@ def load(project: str) -> None:
         rows.append({"kind": "cannibalization", "target": r["query"],
                      "score": score("cannibalization",
                                     {"impressions": r["impressions"],
-                                     "position": r["pages"][0]["position"]}, ptype),
+                                     "position": r["pages"][0]["position"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      "reasoning": f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
                                   f"{tops} (gsc {cur})"})
     for r in rank_decay(conn, pid):
         rows.append({"kind": "rank_decay", "target": r["query"],
                      "score": score("rank_decay",
-                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                                    {"impressions": r["imp"], "position": r["pos"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      "reasoning": f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
                                   f"클릭 {r['dclk']:+d} — 방어 필요 (gsc {prev}→{cur})"})
     for r in pseo_candidates(conn, pid, cur, limit=10):
         rows.append({"kind": "pseo_pattern", "target": r["query"],
                      "score": score("pseo_pattern",
-                                    {"impressions": r["imp"], "position": r["pos"]}, ptype),
+                                    {"impressions": r["imp"], "position": r["pos"],
+                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      "reasoning": f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
                                   f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) "
                                   f"(gsc {cur})"})
     for cl, n in sorted(coverage(conn, pid)["by_cluster"].items(), key=lambda x: -x[1]):
         rows.append({"kind": "coverage", "target": f"cluster:{cl}",
                      "score": score("coverage",
-                                    {"impressions": 0, "position": None}, ptype),
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, f"cluster:{cl}")}, ptype),
                      "reasoning": f"활성 키워드 {n}개가 GSC 노출·순위 체크 모두 부재 — "
                                   f"클러스터 '{cl}'"})
     with db.run(conn, pid, "analysis") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
-        r.notes = f"scoring load: opps={n}"
-    print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur})")
+        r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
+    print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur}; "
+          f"intents_filled={n_intent})")
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,
@@ -620,7 +719,7 @@ def _selfcheck() -> None:
       CREATE TABLE opportunities(id INTEGER PRIMARY KEY, project_id INT, kind TEXT,
         target TEXT, score REAL, reasoning TEXT, status TEXT, created_at TEXT);
       CREATE TABLE keywords(id INTEGER PRIMARY KEY, project_id INT, keyword TEXT,
-        cluster TEXT, is_active INT);
+        cluster TEXT, intent TEXT, is_active INT);
       CREATE TABLE rank_snapshots(id INTEGER PRIMARY KEY, keyword_id INT,
         checked_at TEXT, position INT);
     """)
@@ -693,15 +792,69 @@ def _selfcheck() -> None:
     assert [x["query"] for x in rd] == ["하락"], rd    # 유지(-0.4)는 DECAY_POS 위
     assert rd[0]["dpos"] == -4.0 and rd[0]["dclk"] == -8, rd[0]
 
-    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?)",
-                     [(1, 5, "B1", "c1", 1),          # gsc 노출 있음(b1, norm 일치) → 커버
-                      (2, 5, "순위만", None, 1),        # rank 체크로 커버
-                      (3, 5, "미커버", "c1", 1),
-                      (4, 5, "꺼짐", "c1", 0)])        # 비활성은 안 본다
+    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
+                     [(1, 5, "B1", "c1", None, 1),          # gsc 노출 있음(b1, norm 일치) → 커버
+                      (2, 5, "순위만", None, None, 1),        # rank 체크로 커버
+                      (3, 5, "미커버", "c1", None, 1),
+                      (4, 5, "꺼짐", "c1", None, 0)])        # 비활성은 안 본다
     conn.execute("INSERT INTO rank_snapshots VALUES(1, 2, '2026-08-14T00:00:00Z', 7)")
     cov = coverage(conn, 5)
     assert [k["keyword"] for k in cov["keywords"]] == ["미커버"], cov
     assert cov["by_cluster"] == {"c1": 1}, cov
+
+    # ── classify_intent: 4개 인텐트 + 우선순위 (transactional > commercial > navigational > info)
+    assert classify_intent("비트코인 가격") == "transactional"          # 가격
+    assert classify_intent("ecrett pricing") == "transactional"        # pricing
+    assert classify_intent("ecrett 후기") == "commercial"               # 후기
+    assert classify_intent("Best AI Tools") == "commercial"             # best
+    assert classify_intent("chatgpt login") == "navigational"           # login
+    assert classify_intent("example.com 공식") == "navigational"        # 공식
+    assert classify_intent("날씨") == "info"
+    assert classify_intent("외부 링크") == "info"
+    assert classify_intent("") == "info"
+    # 우선순위: pricing 은 transactional/commercial 양쪽 사전에 있지만 transactional 이 이김
+    assert classify_intent("best pricing") == "transactional"
+    assert classify_intent("Buy reviews") == "transactional"            # buy가 review보다 먼저
+    # 사전 자체: 우선순위대로 정확히 매칭되는지 (한 토큰씩 확인)
+    assert "가격" in INTENT_TRANSACTIONAL and "후기" in INTENT_COMMERCIAL \
+        and "공식" in INTENT_NAVIGATIONAL
+
+    # ── _backfill_intents: NULL 인 활성만 채우고, 값 있는 건 보존
+    conn.execute("DELETE FROM keywords")
+    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
+                     [(10, 5, "비트코인 가격", None, None, 1),         # NULL → 채움
+                      (11, 5, "ecrett 후기", None, None, 1),           # NULL → 채움
+                      (12, 5, "공식 홈페이지", None, None, 1),         # NULL → 채움
+                      (13, 5, "외부 링크", None, None, 1),             # NULL → info
+                      (14, 5, "사람보정", None, "transactional", 1),   # 보존
+                      (15, 5, "비활성널", None, None, 0)])              # 비활성 — 안 본다
+    assert _backfill_intents(conn, 5) == 4
+    got = {r["keyword"]: r["intent"]
+           for r in conn.execute("SELECT keyword, intent FROM keywords WHERE project_id=5",
+                                  ()).fetchall()}
+    assert got["비트코인 가격"] == "transactional"
+    assert got["ecrett 후기"] == "commercial"
+    assert got["공식 홈페이지"] == "navigational"
+    assert got["외부 링크"] == "info"
+    assert got["사람보정"] == "transactional"                          # 보존 확인
+    assert got["비활성널"] is None                                      # 그대로
+    # 두 번째 호출은 채울 게 없음
+    assert _backfill_intents(conn, 5) == 0
+
+    # ── _fit_of: 0.8 활성 키워드 일치 / 0.65 cluster 매칭 / 0.5 무관 / coverage 0.65
+    conn.execute("DELETE FROM keywords")
+    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
+                     [(20, 6, "비트코인 가격", None, None, 1),
+                      (21, 6, "암호화폐 시장", "암호화폐", None, 1),
+                      (22, 6, "서울 여행", "여행", None, 1)])
+    assert _fit_of(conn, 6, "비트코인 가격") == 0.8                 # 정확 일치
+    assert _fit_of(conn, 6, "비트코인  가격") == 0.8               # 공백·norm 동일
+    assert _fit_of(conn, 6, "암호화폐 시세") == 0.65               # target 안에 cluster 명
+    assert _fit_of(conn, 6, "완전히 다른 검색어") == 0.5            # 무관
+    assert _fit_of(conn, 6, "cluster:암호화폐") == 0.65            # coverage 행
+    assert _fit_of(conn, 6, "cluster:없는클러스터") == 0.5          # active 키워드 0개
+    # 일치하는 active 키워드는 없지만 다른 cluster 키워드와 겹치지 않는 경우 — 0.5
+    assert _fit_of(conn, 6, "서울 맛집") == 0.5
 
     s = score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
     assert s == score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")

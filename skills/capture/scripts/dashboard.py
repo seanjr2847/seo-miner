@@ -138,8 +138,21 @@ def create_project(f: dict) -> dict:
            "brand_aliases": items("brand_aliases"),
            "seed_keywords": items("seed_keywords"),
            "competitors_manual": items("competitors_manual"),
+           "tools": items("tools"),
            "surfaces_ai": ["chatgpt", "perplexity", "gemini"],
            "limits": {"max_keywords": 100, "max_ai_prompts": 30}}
+
+    preset_path = Path(__file__).resolve().parent.parent / "projects" / "_presets.yaml"
+    if preset_path.exists():
+        try:
+            presets = yaml.safe_load(preset_path.read_text("utf-8")) or {}
+            if isinstance(presets, dict) and f.get("type") in presets:
+                p_data = presets[f["type"]]
+                if isinstance(p_data, dict) and p_data:
+                    doc["preset"] = p_data
+        except Exception:
+            pass
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"# 대시보드 설정 화면에서 생성 — 손으로 고친 뒤에는\n"
@@ -208,8 +221,8 @@ def gather(conn, p) -> dict:
     # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
     # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
     cfg = collector.project_cfg(p["config_path"] or p["name"])
-    striking = scoring.striking(conn, pid, cur,
-                                brands=scoring.foreign_brands(conn, pid, cfg))
+    brands = scoring.foreign_brands(conn, pid, cfg)
+    striking = scoring.striking(conn, pid, cur, brands=brands)
 
     ai_run = conn.execute(
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
@@ -282,7 +295,8 @@ def gather(conn, p) -> dict:
     prog = progress(conn, pid)
     return {"project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
-            "striking": striking, "matrix": matrix, "gap_domains": gap_domains,
+            "striking": striking, "brand_catalog_empty": len(brands) == 0,
+            "matrix": matrix, "gap_domains": gap_domains,
             "missed": missed, "ai_trend": ai_trend,
             "opps": opps, "opps_total": opps_total, "runs": runs,
             "rank_date": rank_dates[0] if rank_dates else None,

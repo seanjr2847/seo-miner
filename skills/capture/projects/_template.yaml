@@ -7,6 +7,8 @@ gsc_property: sc-domain:example.com   # or "https://example.com/"
 brand_aliases: [MyProject, 마이프로젝트]   # for 'mentioned' detection in AI answers
 seed_keywords: []
 competitors_manual: []
+tools: []                  # 등재·경쟁 도구 이름 — 남의 브랜드 검색을 기회 목록에서 걸러낸다 (scoring.md 1a)
+foreign_brands: []         # 남의 브랜드 이름 (tools와 동일 목적)
 surfaces_ai: [chatgpt, perplexity, gemini]
 limits:
   max_keywords: 100        # tracked-set cap (cost control when SERP adapter lands)

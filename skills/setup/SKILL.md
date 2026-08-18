@@ -39,7 +39,7 @@ SEO를 처음 하는 사람이 읽는다고 가정한다.
      이메일 추가 클릭 2번이 전부다. 무인 수집 + 1,000행 제한·페이지 차원 해제
      + Claude가 gsc MCP로 즉석 조회까지 된다.
 4. `/capture keywords {사이트}` → 키워드 유니버스 채우기.
-5. AI 인용 확인 — `/seo-miner:browse {사이트}`(무료) 또는 OpenRouter 키(자동화).
+5. AI 인용 확인 — `/browse {사이트}`(무료) 또는 OpenRouter 키(자동화).
 6. `/capture run {사이트}` → 리포트까지 한 번에.
 
 2번을 건너뛰고 3번을 하려 하면 `collect_gsc.py`가 프로젝트를 못 찾고 멈춘다.

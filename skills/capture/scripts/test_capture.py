@@ -28,6 +28,7 @@ import dashboard          # noqa: E402
 import db                 # noqa: E402
 import import_gsc_csv as csvimp  # noqa: E402
 import scoring            # noqa: E402
+import serp_adapter       # noqa: E402
 
 CSV = ("검색어,클릭수,노출수,CTR,게재순위\n"
        "20도 옷차림,1234,5678,3.5%,8.2\n"
@@ -201,6 +202,98 @@ def test_keyword_candidates_always_carry_locale():
     assert rows["english keyword"] == "en-US", rows
     # 같은 후보를 또 넣어도 늘지 않는다
     assert db.add_keyword_candidates(conn, p["id"], [("한국어 키워드", "ko-KR", "serp")]) == 0
+    conn.close()
+
+
+def test_serp_adapter_selfcheck():
+    """SERP 어댑터 자체점검 — _domains_in 의 인용 한정 수집, 노이즈 차단 포함.
+    자체점검 안에 들어 있는 노이즈 케이스는 (인용 밖 이미지 url 빠짐 / references 안 url 잡힘)
+    두 가지다 — ai_overview 응답 구조가 바뀌면 ai_overview 자리에 적재된 값이
+    거짓 양성이 된다. self-check 로 막아야 다음 사람이 알아챈다."""
+    serp_adapter._selfcheck()
+
+
+def test_classify_intent_4_intents_and_priority():
+    """classify_intent - 4 인텐트 + 우선순위 transactional > commercial > navigational > info.
+
+    우선순위: pricing 은 transactional/commercial 양쪽 토큰 사전에 들어가 있지만
+    transactional 이 이겨야 한다 — 두 분류가 동시에 매칭돼도 상위 인텐트가 채택됨을
+    보장하기 위함 (그렇지 않으면 'best pricing' 같은 상업+구매 의도 구분이 흔들린다).
+    """
+    # 네 인텐트 각각
+    assert scoring.classify_intent("비트코인 가격") == "transactional"     # 가격
+    assert scoring.classify_intent("ecrett pricing") == "transactional"   # pricing
+    assert scoring.classify_intent("ecrett 후기") == "commercial"         # 후기
+    assert scoring.classify_intent("Best AI Tools") == "commercial"       # best
+    assert scoring.classify_intent("chatgpt login") == "navigational"     # login
+    assert scoring.classify_intent("example.com 공식") == "navigational"  # 공식
+    assert scoring.classify_intent("외부 링크") == "info"                  # 매칭 없음
+    assert scoring.classify_intent("") == "info"
+    # 우선순위
+    assert scoring.classify_intent("best pricing") == "transactional"     # pricing 이긴다
+    assert scoring.classify_intent("Buy reviews") == "transactional"      # buy가 review보다 먼저
+    assert scoring.classify_intent("login 후기 가격") == "transactional"  # 셋 다 있어도 transactional
+
+
+def test_backfill_intents_preserves_manual_corrections():
+    """_backfill_intents - intent IS NULL 인 활성 키워드만 채움. 보존 확인 핵심.
+
+    기존 값이 있는 키워드는 Claude/사람 보정이다 — 코드가 그 위에 덮어쓰면
+    보정이 다 사라진다 (load() 가 매 분석마다 돌기 때문에 다음 스냅샷에 흔적도
+    안 남는다). 그래서 SELECT 단계에서 intent IS NULL 로만 거른다.
+    """
+    conn = db.connect()
+    p = _project(conn, "intent")
+    conn.executemany(
+        "INSERT INTO keywords(project_id,keyword,cluster,is_active,intent) VALUES(?,?,?,?,?)",
+        [(p["id"], "비트코인 가격", None, 1, None),       # 채움 대상
+         (p["id"], "ecrett 후기", None, 1, None),         # 채움 대상
+         (p["id"], "공식 홈페이지", None, 1, None),       # 채움 대상
+         (p["id"], "날씨 정보", None, 1, None),           # 채움 대상 (info)
+         (p["id"], "사람보정 transactional", None, 1, "transactional"),  # 보존
+         (p["id"], "보정후기", None, 1, "commercial"),   # 보존
+         (p["id"], "비활성널", None, 0, None),            # 비활성은 안 본다
+        ])
+    conn.commit()
+    assert scoring._backfill_intents(conn, p["id"]) == 4
+    rows = {r["keyword"]: r["intent"]
+            for r in conn.execute(
+        "SELECT keyword, intent FROM keywords WHERE project_id=?", (p["id"],)).fetchall()}
+    assert rows["비트코인 가격"] == "transactional"
+    assert rows["ecrett 후기"] == "commercial"
+    assert rows["공식 홈페이지"] == "navigational"
+    assert rows["날씨 정보"] == "info"
+    assert rows["사람보정 transactional"] == "transactional"   # 보존
+    assert rows["보정후기"] == "commercial"                     # 보존
+    assert rows["비활성널"] is None                              # 비활성은 안 건드림
+    # 두 번째 호출은 채울 게 없음
+    assert scoring._backfill_intents(conn, p["id"]) == 0
+    conn.close()
+
+
+def test_fit_of_three_tiers():
+    """_fit_of - 0.8 active keyword 정확 일치 / 0.65 cluster 매칭 / 0.5 무관.
+
+    fit 은 Claude 가 보정하지만, 데이터로 답할 수 있는 건 코드에서 결정적으로
+    박아야 한다 — 0.5 중립만 두면 w_fit 가 큰 local_clinic 같은 프리셋에서
+    모든 기회가 점수 면적 한가운데만 차지한다. coverage 행의 0.65 도 확인.
+    """
+    conn = db.connect()
+    p = _project(conn, "fit")
+    conn.executemany(
+        "INSERT INTO keywords(project_id,keyword,cluster,is_active) VALUES(?,?,?,?)",
+        [(p["id"], "비트코인 가격", None, 1),
+         (p["id"], "암호화폐 시장", "암호화폐", 1),
+         (p["id"], "서울 여행", "여행", 1),
+         (p["id"], "꺼짐 키워드", "비활성클러스터", 0)])  # 비활성 — fit 계산 제외
+    conn.commit()
+    assert scoring._fit_of(conn, p["id"], "비트코인 가격") == 0.8                # tier 1
+    assert scoring._fit_of(conn, p["id"], "비트코인  가격") == 0.8              # norm 동일
+    assert scoring._fit_of(conn, p["id"], "암호화폐 시세") == 0.65              # cluster 명 포함
+    assert scoring._fit_of(conn, p["id"], "완전히 무관한 단어") == 0.5           # tier 3
+    # coverage 행: cluster:{name} — by_cluster 에 들어온 cluster 는 active 키워드 보유
+    assert scoring._fit_of(conn, p["id"], "cluster:암호화폐") == 0.65
+    assert scoring._fit_of(conn, p["id"], "cluster:없는클러스터") == 0.5         # active 0개
     conn.close()
 
 

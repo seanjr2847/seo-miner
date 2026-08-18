@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
@@ -52,7 +54,6 @@ def locale_of(text: str, default: str) -> str:
 
 
 def suggest(query: str, hl: str, gl: str) -> list[str]:
-    import requests  # lazy
     params = {"client": "firefox", "hl": hl, "gl": gl, "q": query}
     r = requests.get(SUGGEST_URL, params=params, headers=UA, timeout=10)
     r.raise_for_status()
