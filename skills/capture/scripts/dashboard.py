@@ -277,17 +277,13 @@ def gather(conn, p) -> dict:
     pid = p["id"]
     cur, prev, period, period_mismatch = scoring.snapshot_pair(conn, pid)
 
+    # 집계는 scoring._snap_agg 하나로 — 여기 사본이 있었는데 period_days 조건이
+    # 빠져 있어서, 한 날짜에 28일치와 90일치가 같이 있으면 화면의 '움직인 검색어'만
+    # 두 기간을 섞어 집계했다 (scoring.md 4-3b 를 어긴다). 판정 함수와 같은 걸 쓴다.
     def gsc_agg(snap):
-        if not snap:
-            return {}
-        return {r["query"]: r for r in q(conn,
-            """SELECT query, ROUND(AVG(position),1) pos,
-                      SUM(impressions) imp, SUM(clicks) clk
-                 FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
-                GROUP BY query""", (pid, snap))}
+        return scoring._snap_agg(conn, pid, snap, period) if snap else {}
 
-    now_, before = gsc_agg(cur), gsc_agg(prev)
-    ups, downs = scoring.movers(now_, before)
+    ups, downs = scoring.movers(gsc_agg(cur), gsc_agg(prev))
 
     # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
     # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
