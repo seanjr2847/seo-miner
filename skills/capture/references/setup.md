@@ -29,10 +29,15 @@ pip install google-api-python-client
 ├── brain.db
 ├── projects/{name}.yaml
 ├── reports/{name}/{date}.html
-├── gsc_oauth_client.json    # 구글 계정 로그인용 클라이언트 파일 — 기본 (아래 4절)
+├── gsc_oauth_client.json    # 자기 OAuth 클라이언트를 쓸 때만 (없으면 번들 사용, 4절)
 ├── gsc_service_account.json # 서비스 계정 키 — 무인 수집을 쓸 때만 (아래 4절)
 └── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (더 이상 안 읽음 — 지워도 됨)
 ```
+
+구글 **로그인 토큰**은 여기 없다 — gsc MCP 서버가 자기 설정 폴더
+(`GSC_CONFIG_DIR` 또는 platformdirs 의 `mcp-gsc`)에 `token.json`으로 캐시한다.
+`db.gsc_token()`이 그 자리를 계산하고, `db.gsc_connected()`가 그 파일로 연결을
+판정한다.
 
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
 `python scripts/db.py init`.
@@ -49,13 +54,18 @@ brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다
 
 | | 구글 계정 로그인 (기본, OAuth) | 서비스 계정 (무인 수집) |
 |---|---|---|
+| 콘솔 준비 | **없음** — 플러그인이 OAuth 클라이언트를 동봉 | API 사용 설정 + 서비스 계정 + 키 |
 | 속성마다 권한 추가 | **없음** — 로그인 한 번에 내가 소유한 속성이 전부 붙음 | 속성마다 이메일 추가 1회 |
-| 만료 | 동의 화면이 테스트 모드면 7일마다 재로그인 | 없음 |
-| 첫 조회 | 브라우저 로그인 창이 한 번 열림 | 없음 (완전 무인) |
-| 설치 위치 | `~/.capture/gsc_oauth_client.json` | `~/.capture/gsc_service_account.json` |
+| 첫 조회 | 브라우저 로그인 창 1회 (+ 미검증 앱 경고 1회) | 없음 (완전 무인) |
+| 만료 | 만료되면 재로그인 1회 | 없음 |
+| 클라이언트 위치 | 번들 `skills/setup/oauth_client.json` (자기 것을 쓰면 `~/.capture/gsc_oauth_client.json`) | `~/.capture/gsc_service_account.json` |
 | 언제 쓰나 | 대부분의 경우 | 서버·스케줄러에서 사람 없이 돌릴 때 |
 
-어느 쪽이든 파일 1개면 되고, 그 인증을
+번들 클라이언트는 설치형 앱의 client_secret 이 기밀이 아니라는 구글 입장에 기댄
+것이고, rclone·gcloud 가 쓰는 방식이다. 대가는 미검증 앱 경고 1회와 사용자 100명
+상한이다(둘 다 4-B의 자기 클라이언트 갈래로 없앨 수 있다).
+
+어느 쪽이든 인증 한 벌이면 되고, 그것을
 - 플러그인에 번들된 **gsc MCP 서버**([mcp-search-console](https://github.com/AminForou/mcp-gsc))
   — Claude가 서치콘솔을 즉석 조회 (`get_search_analytics`·`inspect_url_enhanced` 등 21개)
 - **collect_gsc.py** — Brain으로 벌크 수집
@@ -64,39 +74,70 @@ brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다
 직결하고, 그 외에는 MCP 서버의 인증 해석기(`gsc_server.get_gsc_service()`)를 빌린다.
 서버가 파이썬 패키지라 JSON-RPC를 왕복할 필요가 없어서, OAuth 로그인으로 받은
 토큰을 즉석 조회와 벌크 수집이 그대로 공유한다. 어느 방식이 걸렸는지의 정본은
-`db.gsc_auth()`이고, 둘 다 있으면 OAuth가 이긴다.
+`db.gsc_auth()` — **사용자가 직접 놓은 것이 번들을 이긴다**(자기 OAuth 클라이언트 →
+서비스 계정 키 → 번들). 번들이 서비스 계정보다 뒤인 건 의도한 것이다: 앞이면
+무인 수집을 걸어 둔 사람이 설치만으로 브라우저 로그인에 끌려간다.
+
+**"인증이 걸렸다"와 "연결됐다"는 다르다.** 번들 클라이언트는 설치만 하면 항상
+존재하므로 파일 유무로는 아무것도 판정할 수 없다. 연결 판정의 정본은
+`db.gsc_connected()`이고, OAuth면 **로그인 토큰이 있느냐**로 본다(서비스 계정은
+로그인이 없어 키 파일 존재가 곧 연결). 셋 중 하나로 말한다:
+
+| 상태 | 조건 | 뜻 |
+|---|---|---|
+| 연결됨 | `gsc_connected()` | 수집 가능 |
+| **로그인 대기** | `gsc_auth() != ""` 인데 `not gsc_connected()` | 구글 로그인 한 번만 남음 |
+| 인증 없음 | `gsc_auth() == ""` | 번들이 빠진 배포 — 클라이언트를 놓아야 함 |
 
 (구버전 사이트별 OAuth 경로는 제거됐다 — `~/.capture/creds/{사이트}/` 토큰은
 더 이상 읽지 않는다. 지우고 아래 절차로 다시 붙이면 된다.)
 
-### 4-B. 연결하기 (무료, 계정당 1회 약 5분)
+### 4-B. 연결하기 — 기본은 로그인 한 번 (무료, 계정당 1회)
 
-**절차의 정본은 `../../setup/SKILL.md`의 "GSC 연결" 절이다** — 구글 클라우드
-콘솔 클릭 순서(API 사용 설정 → OAuth 동의 화면 → 데스크톱 앱 클라이언트 만들기),
-서비스 계정 갈래, 문제 해결까지 거기 한 벌만 있다. 여기에 다시 적지 않는다.
+**절차의 정본은 `../../setup/SKILL.md`의 "GSC 연결" 절이다** — 3-상태, 자기
+클라이언트 갈래, 서비스 계정 갈래, 문제 해결까지 거기 한 벌만 있다.
 
-Claude에게 "GSC 연동해줘"라고 하면 **JSON 다운로드 버튼 하나만 사람이 누르고**
-나머지 콘솔 클릭은 브라우저로 대신 눌러준다(브라우저 자동화가 크롬 다운로드를
-트리거하지 못함 — 2026-07-26 실측).
-
-받은 파일을 제자리에 까는 명령은 어느 방식이든 하나다:
-
-```bash
-python ../setup/scripts/connect_gsc.py           # 다운로드 폴더에서 회수해 설치
-python ../setup/scripts/connect_gsc.py --status  # 지금 걸린 방식·다음 할 일
-```
-
-OAuth 클라이언트인지 서비스 계정 키인지는 스크립트가 파일을 열어 판별하므로
-사용자가 고를 필요가 없다. 그 다음:
+콘솔 준비는 없다. 그냥 수집을 돌리면 된다:
 
 ```bash
 python scripts/collect_gsc.py --project NAME
 ```
 
-OAuth면 이때 브라우저 로그인 창이 **한 번** 열리고, 로그인하면 끝이다. 서비스
-계정이면 403이 나는 속성은 아직 그 이메일을 추가하지 않은 속성이다(스크립트가
-이메일을 알려준다). gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션
-시작 때 로드).
+브라우저 로그인 창이 **한 번** 열리고, 동의 화면에 **"Google에서 확인하지 않은 앱"**
+경고가 한 번 뜬다(`고급` → `...(으)로 이동`). 로그인하면 끝이고, 속성마다 권한을
+주는 단계는 없다. gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작
+때 로드).
+
+지금 어디까지 왔는지:
+
+```bash
+python ../setup/scripts/connect_gsc.py --status  # 걸린 방식 · 다음 할 일
+```
+
+### 4-B-2. 자기 클라이언트 / 서비스 계정을 쓸 때 (선택 — 콘솔 작업이 여기 남는다)
+
+경고 화면과 100명 상한이 싫으면 자기 OAuth 클라이언트를 쓴다. 콘솔에서
+API 사용 설정 → OAuth 동의 화면 → **데스크톱 앱** 클라이언트를 만든 뒤, 화면에 뜬
+두 문자열만 넘기면 된다(JSON 다운로드 불필요):
+
+```bash
+python ../setup/scripts/connect_gsc.py --client-id ID --client-secret SECRET
+```
+
+JSON 파일을 받았거나 서비스 계정 키를 받았다면 인자 없이 실행한다 — 다운로드
+폴더에서 회수해 종류를 판별하고 제자리에 깐다(사용자가 고를 필요 없음):
+
+```bash
+python ../setup/scripts/connect_gsc.py           # 다운로드 폴더에서 회수해 설치
+python ../setup/scripts/connect_gsc.py --from PATH
+```
+
+Claude에게 "GSC 연동해줘"라고 하면 **JSON 다운로드 버튼 하나만 사람이 누르고**
+나머지 콘솔 클릭은 브라우저로 대신 눌러준다(브라우저 자동화가 크롬 다운로드를
+트리거하지 못함 — 2026-07-26 실측).
+
+서비스 계정이면 403이 나는 속성은 아직 그 이메일을 추가하지 않은 속성이다
+(스크립트가 이메일과 속성별 URL을 알려준다).
 
 ### 4-C. MCP 런처 (참고)
 

@@ -36,12 +36,32 @@ import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 
-# 설정 화면이 실행할 수 있는 명령은 이 셋뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
+# 구글 로그인 창을 여는 건 우리가 아니라 gsc MCP 서버(mcp-search-console)의 인증
+# 해석기다. collect_gsc 가 그 환경변수 규칙(gsc_mcp.mjs 와 같은 것)을 이미 갖고 있어서
+# 그대로 빌린다 — 덕분에 사이트를 하나도 등록하지 않은 사람도 로그인만 먼저 끝낼 수 있다.
+# 판정은 여기서 하지 않는다: 성공 여부는 db.gsc_connected()(= 토큰이 생겼나)가 답한다.
+_LOGIN_PY = (
+    "import sys; sys.path.insert(0, r'" + str(Path(__file__).resolve().parent) + "')\n"
+    "import db, collect_gsc\n"
+    "collect_gsc._service_via_mcp()\n"
+    "ok = db.gsc_connected()\n"
+    "print(('로그인 완료 — 토큰을 보관했습니다: ' + str(db.gsc_token())) if ok else\n"
+    "      '로그인이 끝나지 않았습니다 — 열린 브라우저 창에서 구글 계정으로 "
+    "로그인해 주세요.')\n"
+    "sys.exit(0 if ok else 1)\n"
+)
+
+# 설정 화면이 실행할 수 있는 명령은 이 넷뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
 ACTIONS = {
     "deps": [sys.executable, "-m", "pip", "install", "requests", "pyyaml"],
+    # mcp-search-console 이 여기 있는 이유: **기본 인증(OAuth)의 실행체가 그 패키지다.**
+    # collect_gsc 는 OAuth 갈래에서 gsc_server 를 import 해 인증을 빌리고, 로그인 창도
+    # 그게 연다. 예전엔 node 런처가 깔아 주는 것에만 기댔는데, MCP 를 한 번도 안 띄운
+    # 사람(대시보드만 쓰는 사람)은 부품을 다 깔고도 로그인 자리에서 막힌다.
     "deps_gsc": [sys.executable, "-m", "pip", "install", "google-api-python-client",
-                 "google-auth"],
+                 "google-auth", "mcp-search-console"],
     "gsc": [sys.executable, str(SETUP_SCRIPTS / "connect_gsc.py")],
+    "gsc_login": [sys.executable, "-c", _LOGIN_PY],
 }
 KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
               "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
@@ -106,6 +126,33 @@ def save_keys(values: dict) -> dict:
         pass
     return {"ok": True, "saved": [k for k in KEY_FIELDS if cur.get(k)],
             "path": str(ENV_FILE)}
+
+
+def save_gsc_client(f: dict) -> dict:
+    """자기 OAuth 클라이언트 조립 — connect_gsc.py --client-id/--client-secret 과 같은 결과.
+
+    **서브프로세스로 넘기지 않는다.** 시크릿이 명령줄에 실리면 프로세스 목록에 그대로
+    뜬다(ACTIONS 가 고정 명령만 두는 것도 같은 이유다). 조립 규칙·설치 자리는
+    connect_gsc 가 정본이라 그 함수를 그대로 부른다 — 여기 사본을 만들면 번들 형태가
+    바뀌는 날 한쪽만 고쳐진다.
+    """
+    cid = str(f.get("client_id", "")).strip()
+    sec = str(f.get("client_secret", "")).strip()
+    if not (cid and sec):
+        return {"ok": False, "error": "client_id 와 client_secret 을 둘 다 넣어 주세요 "
+                                      "(하나만으로는 클라이언트가 성립하지 않습니다)."}
+    import connect_gsc          # setup 스킬 쪽 — db 말고는 아무것도 안 물고 온다
+    dest = connect_gsc.dest_for("oauth")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # --force 를 안 묻는다: 폼에 두 값을 적고 [저장]을 누른 것 자체가 교체 의사다.
+    dest.write_text(json.dumps(connect_gsc.assemble(cid, sec), indent=2), "utf-8")
+    try:
+        dest.chmod(0o600)
+    except OSError:              # 윈도우 등 — 권한 모델이 달라도 저장은 성공
+        pass
+    # 시크릿은 로그에도 응답에도 넣지 않는다. client_id 도 확인용 앞부분만
+    # (connect_gsc 의 CLI 출력과 같은 규칙).
+    return {"ok": True, "path": str(dest), "client_id": cid[:12] + "…"}
 
 
 def create_project(f: dict) -> dict:
@@ -250,9 +297,14 @@ def setup_state() -> dict:
     ] + list(d.get("later", []))
     keys = d.get("keys", {})
     deps_gsc = d.get("deps_gsc", {})
-    # 이름은 옛날 그대로지만 뜻은 "구글 로그인(기본)이든 서비스 계정이든 연결됨"이다.
-    gsc_ok = bool(keys.get("gsc_service_account"))
-    show_deps_gsc_btn = gsc_ok and not bool(deps_gsc.get("googleapiclient"))
+    # 구글 칸은 3-상태다: 연결됨 / 로그인 대기 / 인증 없음. 정본은 doctor 가 준
+    # gsc_connected(= db.gsc_connected(), 토큰이 있나)이지 파일이 놓였나가 아니다 —
+    # 번들 OAuth 클라이언트가 설치만 하면 항상 존재해서 "파일 = 연결됨" 등식이 깨졌다.
+    gsc_ok = bool(d.get("gsc_connected"))
+    gsc_mode = d.get("gsc_mode", "")
+    # 부품 버튼은 **로그인 전에** 떠야 한다. gsc_ok 기준이던 시절엔 로그인이 끝나야
+    # 나타났는데, 정작 그 로그인 창을 여는 게 이 부품(mcp-search-console)이다.
+    show_deps_gsc_btn = bool(gsc_mode) and not bool(deps_gsc.get("googleapiclient"))
     show_setup = bool(d.get("must")) or no_project
 
     return {
@@ -262,6 +314,8 @@ def setup_state() -> dict:
         "extra": extra,
         "core_ok": bool(d.get("core_ok")),
         "gsc_ok": gsc_ok,
+        "gsc_mode": gsc_mode,                       # "oauth" | "service_account" | ""
+        "gsc_bundled": bool(d.get("gsc_bundled")),  # 번들 클라이언트 → 동의 화면 경고 예고
         "nkeys": sum(1 for k in ("openrouter", "serper", "dataforseo") if keys.get(k)),
         "show_deps_gsc_btn": show_deps_gsc_btn,
         "show_setup": show_setup,
@@ -366,6 +420,19 @@ def gather(conn, p) -> dict:
         """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
              FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
     prog = progress(conn, pid)
+    guide = scoring.stage(prog, p["name"], p["domain"] or "")
+    # 구글 연결 판정은 화면 안에 한 벌만 있어야 한다. 6단계 안내는 "몇 번 읽었나"로만
+    # 판정하므로, 로그인이 안 된 사람에게 `/capture gsc` 를 다음 걸음으로 내민다 —
+    # 그 명령은 인증에서 그 자리에 막힌다. 설정 칸이 [로그인 대기]라고 말하는 동안
+    # 안내가 다른 말을 하면 안 되므로, 여기서 같은 기준(db.gsc_connected)으로 덮는다.
+    if not db.gsc_connected():
+        g = next(s for s in guide["steps"] if s["id"] == "gsc")
+        g["done"] = False
+        pending = bool(db.gsc_auth())
+        g["state"] = "구글 로그인 대기" if pending else "구글 인증 없음"
+        g["cmd"] = "GSC 로그인해줘" if pending else "GSC 연동해줘"
+        guide["here"] = next((i for i, s in enumerate(guide["steps"])
+                              if not s["done"]), -1)
     return {"project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
             "striking": striking, "brand_catalog_empty": len(brands) == 0,
@@ -395,7 +462,7 @@ def gather(conn, p) -> dict:
                      FROM gsc_snapshots WHERE project_id=? AND period_days=?
                     GROUP BY 1 ORDER BY 1""", (pid, period))],
             "progress": prog,
-            "guide": scoring.stage(prog, p["name"], p["domain"] or "")}
+            "guide": guide}
 
 
 def payload(project: str) -> dict:
@@ -469,7 +536,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path not in ("/api/opp", "/api/setup/run", "/api/setup/keys",
-                        "/api/setup/project"):
+                        "/api/setup/project", "/api/setup/gsc-client"):
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -486,6 +553,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(run_action(body["action"]))
         if path == "/api/setup/keys":
             return self._json(save_keys(body))
+        if path == "/api/setup/gsc-client":
+            r = save_gsc_client(body)
+            return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/project":
             r = create_project(body)
             return self._json(r, 200 if r["ok"] else 400)

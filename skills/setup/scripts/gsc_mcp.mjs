@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const home = process.env.CAPTURE_HOME || path.join(homedir(), ".capture");
 const env = { ...process.env };
@@ -34,12 +35,23 @@ if (existsSync(envFile)) {
 // **있는 파일만 가리킨다.** 서버는 이 두 변수가 가리키는 파일이 없으면 인증을
 // 시도하기도 전에 fail-fast 한다 — 서비스 계정 경로를 무조건 걸어두면 OAuth 로
 // 붙은 사람도 "키 파일이 없다"에서 막힌다 (실측으로 잡은 버그).
+// 번들 OAuth 클라이언트는 **서비스 계정보다 뒤다**. 설치만 하면 항상 존재하므로
+// 단순히 "OAuth 파일이 있나"로 앞세우면, 서비스 계정으로 무인 수집을 걸어 둔 사람이
+// 매번 브라우저 로그인으로 끌려간다. 사용자가 직접 놓은 것이 항상 이긴다.
+// (db.gsc_auth()가 정본 — 여기는 그 규칙의 JS 사본이다.)
 const oauthFile = path.join(home, "gsc_oauth_client.json");
 const keyFile = path.join(home, "gsc_service_account.json");
+// import.meta.dirname 은 Node 20.11+ 전용이다 — 이 런처는 버전·OS 의존을 없애려고
+//만든 것이라 fileURLToPath 로 간다.
+const here = path.dirname(fileURLToPath(import.meta.url));
+const bundledOauth = path.join(here, "..", "oauth_client.json");
 if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE && existsSync(oauthFile))
   env.GSC_OAUTH_CLIENT_SECRETS_FILE = oauthFile;
 if (!env.GSC_CREDENTIALS_PATH && existsSync(keyFile))
   env.GSC_CREDENTIALS_PATH = keyFile;
+if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE && !env.GSC_CREDENTIALS_PATH
+    && existsSync(bundledOauth))
+  env.GSC_OAUTH_CLIENT_SECRETS_FILE = bundledOauth;
 // OAuth 파일이 없는데 OAuth를 켜두면 서버가 브라우저 로그인을 띄우려다 실패한다.
 if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE) env.GSC_SKIP_OAUTH ??= "true";
 

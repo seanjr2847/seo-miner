@@ -57,14 +57,44 @@ def gsc_key() -> Path:
                                CAPTURE_HOME / "gsc_service_account.json"))
 
 
+def gsc_oauth_bundled() -> Path:
+    """플러그인이 동봉한 OAuth 클라이언트 — 콘솔 작업을 사용자에게서 걷어낸다.
+
+    구글 OAuth 는 등록된 client_id/secret 없이는 성립하지 않는다. 우회로가 없어서,
+    지금까지는 **사용자마다** 클라우드 콘솔에서 앱을 등록하게 했다(API 사용 설정 →
+    동의 화면 → 데스크톱 앱 클라이언트 → JSON 다운로드). 그 4단계를 없애는 방법은
+    "콘솔 없는 OAuth"가 아니라 **콘솔 작업을 한 번 해서 그 결과를 배포에 넣는 것**이다.
+
+    설치형 앱의 client_secret 은 기밀이 아니다 — 구글이 그렇게 명시하고,
+    rclone·gcloud 같은 CLI 가 전부 자기 클라이언트를 박아서 배포한다. 대신
+    미검증 앱이라 동의 화면에 경고가 한 번 뜨고 사용자 100명 상한이 붙는다.
+
+    이 파일이 없어도 아무것도 깨지지 않는다 — 그냥 예전처럼 각자 클라이언트를
+    쓰는 흐름으로 돌아갈 뿐이다(배포에서 뺐거나, 로컬 개발 중이거나).
+    """
+    return Path(__file__).resolve().parents[2] / "setup" / "oauth_client.json"
+
+
 def gsc_oauth_client() -> Path:
     """OAuth 클라이언트 시크릿(데스크톱 앱) — 기본 인증 방식.
 
     이 파일만 있으면 구글 로그인 한 번으로 끝난다. 속성마다 사용자를 추가하는
     단계가 없다 — 내 구글 계정이 이미 그 속성의 소유자이기 때문이다.
+
+    우선순위(이게 정본이다): 환경변수 > 사용자가 깐 것(~/.capture) > 번들.
+    **사용자 것이 번들을 이긴다** — 이미 자기 클라이언트로 붙여 둔 사람의 발밑을
+    업데이트가 바꿔치기하면 안 된다. 번들은 아무것도 안 한 사람의 기본값일 뿐이다.
     """
-    return Path(os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE",
-                               CAPTURE_HOME / "gsc_oauth_client.json"))
+    env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
+    if env:
+        return Path(env)
+    own = CAPTURE_HOME / "gsc_oauth_client.json"
+    if own.exists():
+        return own
+    bundled = gsc_oauth_bundled()
+    # 없으면 사용자 경로를 돌려준다 — "무엇이 없어서 막혔나"를 말할 때 가리킬 자리는
+    # 배포 안쪽이 아니라 사용자가 파일을 놓을 자리여야 한다.
+    return bundled if bundled.exists() else own
 
 
 def gsc_auth() -> str:
@@ -73,12 +103,71 @@ def gsc_auth() -> str:
     **이 순서가 정본이다.** gsc MCP 런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부
     이 판정을 따른다 — 예전에 같은 규칙이 여러 방언으로 흩어져 한쪽만 고쳐지는
     일이 반복됐다. OAuth가 기본이고, 서비스 계정은 무인 수집이 필요할 때 쓴다.
+
+    **번들 OAuth 는 서비스 계정보다 뒤다.** 번들 파일은 설치만 하면 항상 존재하므로,
+    단순히 "OAuth 파일이 있나"로 판정하면 서비스 계정으로 무인 수집을 걸어 둔 사람이
+    매번 브라우저 로그인으로 끌려간다. 사용자가 **직접 놓은 것**이 항상 이긴다.
     """
-    if gsc_oauth_client().exists():
+    env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
+    if (env and Path(env).exists()) or (CAPTURE_HOME / "gsc_oauth_client.json").exists():
         return "oauth"
     if gsc_key().exists():
         return "service_account"
+    if gsc_oauth_bundled().exists():
+        return "oauth"
     return ""
+
+
+def gsc_token() -> Path:
+    """MCP 서버가 구글 로그인 토큰을 캐시하는 자리 — **우리가 정하는 게 아니다.**
+
+    정본은 업스트림 gsc_server.py 77~79행:
+        _CONFIG_DIR = os.environ.get("GSC_CONFIG_DIR") or user_config_dir("mcp-gsc")
+        TOKEN_FILE  = os.path.join(_CONFIG_DIR, "token.json")
+    여기가 어긋나면 "연결됐는데 안 됐다고 하는" 반대 방향 거짓말이 된다.
+
+    platformdirs 는 lazy import 다 — db.py 는 pyyaml 조차 lazy 로 미루는 파일이고,
+    이 함수 하나 때문에 모든 스크립트가 의존성 하나를 더 요구하면 안 된다.
+    없으면 OS 기본값으로 폴백한다. 윈도우 경로가 mcp-gsc 를 두 번 지나는 건 오타가
+    아니다 — platformdirs 는 appauthor 를 안 주면 appname 으로 채우고(실측:
+    C:\\Users\\...\\AppData\\Local\\mcp-gsc\\mcp-gsc), 그 실측값이 정본이다.
+    """
+    d = os.environ.get("GSC_CONFIG_DIR")
+    if not d:
+        try:
+            from platformdirs import user_config_dir
+            d = user_config_dir("mcp-gsc")
+        except ImportError:
+            if sys.platform == "win32":
+                base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local") / "mcp-gsc"
+            elif sys.platform == "darwin":
+                base = Path.home() / "Library" / "Application Support"
+            else:
+                base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+            d = base / "mcp-gsc"
+    return Path(d) / "token.json"
+
+
+def gsc_connected() -> bool:
+    """**진짜 연결됐나** — 클라이언트 파일이 있느냐가 아니라 토큰이 있느냐다.
+
+    번들 OAuth 클라이언트(gsc_oauth_bundled)는 설치만 하면 항상 존재한다. 그래서
+    "파일이 있다"가 더 이상 "연결됐다"를 뜻하지 않는다 — 파일 유무로 판정하면
+    설치 직후 전원이 '연결됨'으로 보인다.
+
+    이건 이 저장소가 이미 남한테 당해 본 거짓말이다. MCP 서버는 인증 파일이 없어도
+    `Connected` 로 뜨고 툴 목록까지 보여준다(setup/SKILL.md 가 경고하는 그것).
+    그것 때문에 사용자가 "MCP는 설정 없이 되던데"라고 믿은 채 한 번도 인증되지 않은
+    상태로 지냈다 — 실측으로 확인됐다. **우리 doctor 가 같은 거짓말을 하면 안 된다.**
+
+    서비스 계정은 로그인 자체가 없어서 키 파일 존재가 곧 연결이다.
+    """
+    auth = gsc_auth()
+    if auth == "service_account":
+        return gsc_key().exists()
+    if auth == "oauth":
+        return gsc_token().exists()
+    return False
 
 
 def creds_dir(project: str) -> Path:

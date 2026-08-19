@@ -244,6 +244,12 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .step h3 { font:600 14px/1.3 var(--sans); margin:0 0 5px;
   display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
 .step .why { font-size:12.5px; color:var(--slate); margin:0 0 12px; max-width:64ch; }
+.step .why b { color:var(--ink); }
+/* 자기 OAuth 클라이언트를 쓰는 사람은 소수다 — 접어 두고 필요한 사람만 편다. */
+.step details { margin-top:18px; border-top:1px solid var(--rule-soft); padding-top:14px; }
+.step summary { font:400 12px/1.5 var(--mono); color:var(--slate); cursor:pointer; }
+.step summary:hover { color:var(--patina); }
+.step details .why { margin:12px 0 0; }
 .step .why code, .stat { font-family:var(--mono); font-size:11.5px; }
 .stat { letter-spacing:.08em; text-transform:uppercase; font-weight:400; }
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
@@ -331,21 +337,30 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 
     <div class="step">
       <h3>3. 구글 서치콘솔 연결 <span class="stat" id="s-gsc"></span></h3>
-      <p class="why"><b>필수입니다</b> — 실적(클릭·노출)이 이 도구의 재료라, 연결 없이는
-        측정이 시작되지 않습니다. 무료·5분·계정당 1회. 기본은 <b>내 구글 계정으로
-        로그인</b>하는 방식(OAuth)입니다 — 로그인 한 번이면 내가 가진 속성이 전부 붙고,
-        <b>속성마다 사용자를 추가하던 단계는 없어졌습니다</b>.
-        구글 클라우드 콘솔에서 인증 파일('OAuth 클라이언트 ID' · 데스크톱 앱)을
-        내려받는 것은 여전히 필요합니다. 채팅에 <code>GSC 연동해줘</code> 라고 하시면
-        제가 콘솔 클릭을 대신하고 <b>다운로드 버튼만</b> 직접 눌러 주시면 됩니다.
-        받은 뒤 아래 버튼을 누르면 <b>부품 설치까지 자동으로</b> 이어집니다
-        (즉석 조회 MCP도 같은 인증을 씁니다 — 별도 설치 없이 다음 세션부터 붙습니다).
-        처음 조회할 때 브라우저 로그인 창이 한 번 열립니다.
-        사람 없이 도는 자동 수집이 필요하면 서비스 계정 키도 그대로 쓸 수 있습니다 —
-        같은 버튼으로 가져옵니다.</p>
-      <div class="row"><button class="go" id="btn-gsc">받은 인증 파일 가져오기</button>
-        <button class="go" id="btn-depsgsc">구글 수집용 부품 설치</button>
+      <!-- 문구는 3-상태(연결됨 / 로그인 대기 / 인증 없음)마다 다르다 — renderSetup이 채운다.
+           파일이 놓였나가 아니라 **연결됐나**로 갈린다(번들 클라이언트는 늘 존재한다). -->
+      <p class="why" id="why-gsc"></p>
+      <div class="row"><button class="go" id="btn-gsclogin" hidden>구글 로그인 열기</button>
+        <button class="go" id="btn-gsc">받은 인증 파일 가져오기</button>
+        <button class="go" id="btn-depsgsc" hidden>구글 수집용 부품 설치</button>
         <span class="msg" id="m-gsc"></span></div>
+      <details id="own-client">
+        <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
+        <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
+          [OAuth 클라이언트 ID 만들기] → <b>데스크톱 앱</b>. 다 만들면 화면에 뜨는
+          <b>두 문자열만</b> 옮겨 적으시면 됩니다 — JSON 다운로드는 필요 없습니다.
+          저장하면 <code>~/.capture/gsc_oauth_client.json</code> 이 되고, 동봉 클라이언트
+          대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 하셔야
+          합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
+        <div class="grid">
+          <div><label>client_id</label>
+            <input id="oc-id" placeholder="1234-abc.apps.googleusercontent.com"></div>
+          <div><label>client_secret</label>
+            <input id="oc-secret" type="password" placeholder="GOCSPX-..."></div>
+        </div>
+        <div class="row"><button class="go sec" id="btn-ocsave">클라이언트 저장</button>
+          <span class="msg" id="m-oc"></span></div>
+      </details>
     </div>
 
     <div class="step">
@@ -967,11 +982,53 @@ async function loadDoctor() {
 const mark = (id, done, todo) => $(id).outerHTML =
   `<span id="${id}" class="stat ${done ? "ok" : "todo"}">${done ? "완료" : todo}</span>`;
 
+/* ── 구글 칸의 3-상태 ──────────────────────────────────────────
+   판정은 서버(db.gsc_connected)가 하고 여기서는 갈래만 고른다. **파일이 있다 ≠
+   연결됐다**: 플러그인이 OAuth 클라이언트를 동봉하면서 파일은 설치만 하면 항상
+   존재하게 됐다. 그래서 "로그인 대기"라는 상태가 새로 생겼고, 새 설치 직후엔
+   그게 기본값이다 — 이 화면에서 가장 자주 보일 문구다. */
+function gscState(d) { return d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none"; }
+
+function renderGsc(d) {
+  const st = gscState(d), sa = d.gsc_mode === "service_account";
+  $("s-gsc").outerHTML = `<span id="s-gsc" class="stat ${st === "connected" ? "ok" : "todo"}">` +
+    (st === "connected" ? "연결됨" : st === "pending" ? "로그인 대기" : "인증 없음") + `</span>`;
+  $("why-gsc").innerHTML = st === "connected"
+    ? (sa
+      ? `<b>연결됐습니다</b> — 서비스 계정(무인 수집) 방식입니다. 로그인 단계가 없는
+         대신, 서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한 속성만
+         읽습니다. 확인: <code>connect_gsc.py --status</code>`
+      : `<b>연결됐습니다</b> — 구글 로그인이 이미 끝났고 토큰을 보관 중입니다. 다시
+         로그인하실 일은 없습니다. 벌크 수집(<code>/capture gsc</code>)과 Claude 즉석
+         조회(gsc MCP)가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성은 따로
+         권한을 줄 필요가 없습니다.`)
+    : st === "pending"
+    ? `<b>남은 건 구글 로그인 한 번뿐입니다</b> — 무료, 30초, 준비물 없음. 인증 수단은
+       이미 깔려 있어서 <b>구글 클라우드 콘솔에 가실 일이 없습니다</b>.<br>
+       아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번 열립니다 (채팅에
+       <code>GSC 로그인해줘</code> 하셔도 같습니다). 로그인이 끝나면 이 칸이 저절로
+       <b>[연결됨]</b>으로 바뀝니다.`
+      + (d.gsc_bundled
+        ? `<br>이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다 — <b>[고급] → [이동]</b>을
+           누르시면 됩니다. 플러그인이 동봉한 클라이언트라 정상입니다 (경고 없이 쓰시려면
+           아래 [내 OAuth 클라이언트 쓰기]).`
+        : "")
+    : `<b>구글 인증 수단이 없습니다</b> — 로그인에 쓸 OAuth 클라이언트 파일이 이 배포에서
+       빠졌습니다. 아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을 넣으시거나,
+       콘솔에서 받은 JSON을 다운로드 폴더에 두고 [받은 인증 파일 가져오기]를 누르세요.
+       실적(클릭·노출)이 이 도구의 재료라 연결 없이는 측정이 시작되지 않습니다.`;
+  $("btn-gsclogin").hidden = st !== "pending";
+  // 파일 가져오기는 이제 예외 경로다(직접 받은 JSON·서비스 계정 키) — 물러나 있게.
+  $("btn-gsc").className = st === "pending" ? "go sec" : "go";
+  // 인증이 아예 없으면 여기가 유일한 출구라 펴 준다. **닫지는 않는다** —
+  // 저장 직후 loadDoctor가 다시 그리면서 방금 편 칸을 접으면 결과 문구까지 같이 숨는다.
+  if (st === "none") $("own-client").open = true;
+}
+
 function renderSetup(d) {
   mark("s-deps", d.core_ok, "설치 필요");
   mark("s-proj", !d.no_project, "아직 없음");
-  // 구글 로그인(기본)이든 서비스 계정이든, 인증이 하나라도 깔렸으면 "연결됨"이다.
-  mark("s-gsc", d.gsc_ok, "필수 — 실적 수집의 재료");
+  renderGsc(d);
   $("s-keys").outerHTML = d.nkeys
     ? `<span id="s-keys" class="stat ok">${d.nkeys}개 저장됨</span>`
     : `<span id="s-keys" class="stat todo">권장 — Serper만 선택</span>`;
@@ -1048,6 +1105,41 @@ $("btn-gsc").addEventListener("click", async () => {
                     + "(서비스 계정 키를 넣으셨다면 아래 로그의 남은 일을 봐 주세요.)"
                     : "실패했습니다 — 아래 로그를 봐 주세요.", r.ok);
   showLog(r.log);
+  loadDoctor();
+});
+
+// 로그인 창을 여는 건 gsc MCP 서버(mcp-search-console)다 — 부품이 없으면 그 자리에서
+// 막히므로 여기서도 먼저 깐다(이미 있으면 pip이 금방 끝난다). 버튼 하나로 잇는 이유는
+// [파일 가져오기]와 같다: 사용자가 "부품 먼저"를 알 필요가 없어야 한다.
+$("btn-gsclogin").addEventListener("click", async () => {
+  busy("btn-gsclogin", "m-gsc", true);
+  const [, dep] = await post("/api/setup/run", {action: "deps_gsc"});
+  if (!dep.ok) {
+    busy("btn-gsclogin", "m-gsc", false);
+    say("m-gsc", "부품 설치에 실패했습니다 — 아래 로그를 봐 주세요.", false);
+    return showLog(dep.log);
+  }
+  say("m-gsc", "브라우저 창이 열립니다 — 구글 계정으로 로그인해 주세요 " +
+               "(\"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]).", true);
+  const [, r] = await post("/api/setup/run", {action: "gsc_login"});
+  busy("btn-gsclogin", "m-gsc", false);
+  say("m-gsc", r.ok ? "연결됐습니다 — 이제 실적을 읽을 수 있습니다."
+                    : "로그인이 끝나지 않았습니다 — 아래 로그를 봐 주세요.", r.ok);
+  showLog(r.log);
+  loadDoctor();
+});
+
+// 자기 클라이언트 조립 — 시크릿은 보내고 나면 즉시 칸을 비운다(API 키 칸과 같은 규칙).
+// 서버도 되돌려주지 않으므로 화면에 다시 뿌릴 값 자체가 없다.
+$("btn-ocsave").addEventListener("click", async () => {
+  busy("btn-ocsave", "m-oc", true);
+  const [ok, r] = await post("/api/setup/gsc-client",
+    {client_id: $("oc-id").value, client_secret: $("oc-secret").value});
+  busy("btn-ocsave", "m-oc", false);
+  if (!ok) return say("m-oc", r.error, false);
+  $("oc-id").value = $("oc-secret").value = "";
+  say("m-oc", `저장했습니다 (${r.client_id}) → ${r.path} — 클라이언트가 바뀌었으니 ` +
+              `위 [구글 로그인 열기]로 한 번 더 로그인해 주세요.`, true);
   loadDoctor();
 });
 

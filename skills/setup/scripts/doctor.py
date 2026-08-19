@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """seo-miner doctor — environment diagnosis (stdlib only, runs before any pip).
 
-Checks deps, CAPTURE_HOME/Brain, API keys, GSC service-account key (shared by
-the bundled gsc MCP server and collect_gsc.py), then prints a verdict-first
+Checks deps, CAPTURE_HOME/Brain, API keys, GSC 연결(3-상태: 연결됨 / 로그인 대기 /
+인증 없음 — 판정은 db.gsc_connected), then prints a verdict-first
 summary: 한 줄 요약 → 다음 한 걸음 → 사이트 → 기능(꺼진 것만 켜는 법 포함).
 
 Usage: python doctor.py [--json | --web]
@@ -53,19 +53,28 @@ def diagnose() -> dict:
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
-    # 구글 연결 표준: 서비스 계정 키 1개(전 사이트 공용, gsc MCP 서버와 공유).
-    # 구버전 사이트별 OAuth 경로는 제거됐다 — 남은 토큰은 감지만 해서 전환을 안내한다.
-    sa_key = db.gsc_key()
+    # 구글 연결은 이제 **2단**이다: 인증 수단이 있나(gsc_auth) ≠ 실제로 붙었나(gsc_connected).
+    # 플러그인이 OAuth 클라이언트를 동봉하면서 gsc_auth()는 **아무것도 안 한 사람에게도**
+    # "oauth"를 답한다 — 파일 유무로 판정하면 doctor가 설치 직후 전원에게 "연결됨"이라고
+    # 거짓말하고, 사용자는 수집이 실패할 때까지 그걸 믿는다(setup/SKILL.md가 경고하는,
+    # MCP `Connected` 표시에 이미 한 번 당한 그 거짓말이다). 진짜 판정은 토큰이다.
     gsc_mode = db.gsc_auth()          # "oauth" | "service_account" | "" — 정본은 db
+    gsc_conn = db.gsc_connected()     # 토큰(또는 서비스 계정 키)이 실제로 있나
+    gsc_pending = bool(gsc_mode) and not gsc_conn      # ← 새로 생긴 "로그인 대기"
+    # 번들 클라이언트를 쓰는 중인가 — 동의 화면 경고("확인되지 않은 앱")와 100명 상한이
+    # 붙는 갈래라, 사용자에게 미리 말해 줘야 로그인 도중에 멈추지 않는다.
+    gsc_bundled = gsc_mode == "oauth" and db.gsc_oauth_client() == db.gsc_oauth_bundled()
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
-    gsc_sites = {name: bool(gsc_mode) for name in brain["projects"]}
+    gsc_sites = {name: gsc_conn for name in brain["projects"]}
     keys = {
         "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
-        "gsc_service_account": bool(gsc_mode),
+        # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
+        # 붙었나"다 — 인증 파일이 놓였나가 아니다.
+        "gsc_service_account": gsc_conn,
         # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 파이썬 서버
         # (mcp-search-console)를 찾아 넘긴다. 서버 부품은 런처가 알아서 pip으로 깐다.
         "node": bool(shutil.which("node")),
@@ -74,7 +83,7 @@ def diagnose() -> dict:
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
     # 있는데 안 열리는 것만 문제다.
     brain_ok = not brain.get("error")
-    gsc_linked = keys["gsc_service_account"]
+    gsc_linked = gsc_conn
 
     # (이름, 한 줄 설명, 켜짐?, 켜는 법 — None이면 핵심 설치만 끝나면 켜진다)
     caps = [
@@ -86,8 +95,13 @@ def diagnose() -> dict:
          "(브라우저 방식은 키 없이 무료)", core_ok, None),
         ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
          core_ok and all(deps_gsc.values()) and gsc_linked,
-         "구글 계정으로 로그인 한 번이면 내 사이트가 전부 붙습니다 (무료, 5분) — "
-         "채팅에 \"GSC 연동해줘\" 하시면 제가 대신 눌러 드립니다."),
+         # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
+         # 예전 문구("무료, 5분")는 사용자에게 있지도 않은 할 일을 시키는 거짓말이 됐다.
+         ("구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 없음) — "
+          "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
+          if gsc_pending else
+          "구글 인증 수단이 없습니다 (번들이 빠진 배포) — 채팅에 \"GSC 연동해줘\" "
+          "하시면 클라이언트 파일 놓는 것부터 제가 안내합니다 (무료).")),
         ("순위 추적", "검색결과 몇 등인지 매일 기록",
          core_ok and (keys["dataforseo"] or keys["serper"]),
          "유료 키가 필요합니다: DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정), "
@@ -107,12 +121,20 @@ def diagnose() -> dict:
                     "하시면 제가 물어보면서 만들어 드립니다.")
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
-    if core_ok and brain_ok and not gsc_linked:
-        must.append("구글 서치콘솔 연결 (무료, 5분, 계정당 1회) — 자동 수집과 "
-                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 내 구글 계정으로 로그인만 "
-                    "하면 되고 속성마다 권한을 주는 단계는 없습니다. 채팅에 "
-                    "\"GSC 연동해줘\" 하시면 제가 대신 눌러 드리고, 대시보드 [설정] "
-                    "3번에서 파일 회수·부품 설치가 자동으로 이어집니다.")
+    if core_ok and brain_ok and gsc_pending:
+        # 남은 게 로그인뿐인데 "연결하세요"라고만 하면, 사용자는 이미 끝난 콘솔 작업을
+        # 다시 찾으러 간다. 다음 걸음은 **로그인을 유발하는 행동** 하나여야 한다.
+        must.append("구글 로그인 한 번 (무료, 30초, 계정당 1회) — 자동 수집과 "
+                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 준비물은 없고 "
+                    "구글 계정으로 로그인만 하면 됩니다 (속성마다 권한 주는 단계 없음). "
+                    "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
+                    + (" 이때 \"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]을 "
+                       "누르시면 됩니다 — 정상입니다." if gsc_bundled else ""))
+    if core_ok and brain_ok and not gsc_mode:
+        must.append("구글 인증 수단 놓기 (무료) — 이 배포에는 로그인에 쓸 OAuth "
+                    "클라이언트 파일이 빠져 있습니다. 채팅에 \"GSC 연동해줘\" 하시면 "
+                    "파일을 놓는 것부터 제가 안내합니다 (내 클라이언트를 쓰시려면 "
+                    "connect_gsc.py --client-id ... --client-secret ...).")
 
     later = []
     if brain["no_prompts"]:
@@ -127,11 +149,14 @@ def diagnose() -> dict:
     if not (keys["dataforseo"] or keys["serper"]):
         later.append("순위 추적 키 — DataForSEO 권장(AI오버뷰·역키워드 포함), "
                      "Serper는 대체재(선택): setup.md 7절.")
-    if gsc_linked and not all(deps_gsc.values()):
+    # 조건이 gsc_linked(=연결됨)면 로그인 전에는 안 뜬다. 그런데 이 둘은 **로그인 전에**
+    # 갖춰 둬야 하는 것들이다 — 특히 node: 로그인 창을 여는 게 gsc MCP 서버라,
+    # node가 없으면 "로그인해줘"가 그 자리에서 막힌다. 그래서 gsc_mode 기준으로 본다.
+    if gsc_mode and not all(deps_gsc.values()):
         later.append("구글 자동 수집용 부품 — `pip install google-api-python-client`")
-    if keys["gsc_service_account"] and not keys["node"]:
-        later.append("node 설치 — 수집 없이도 Claude가 서치콘솔을 바로 조회합니다"
-                     "(gsc MCP): nodejs.org")
+    if gsc_mode and not keys["node"]:
+        later.append("node 설치 — Claude가 서치콘솔을 즉석 조회하고(gsc MCP) "
+                     "구글 로그인 창도 이 서버가 엽니다: nodejs.org")
 
     # 한 줄 요약 + 다음 한 걸음 하나 — 읽는 사람이 이 두 줄만 봐도 되게.
     if not core_ok:
@@ -143,8 +168,12 @@ def diagnose() -> dict:
     elif not brain["projects"]:
         verdict = "설치는 끝났습니다 — 첫 사이트만 등록하면 바로 시작입니다."
         next_cmd = "/capture add <원하는이름>"
-    elif not gsc_linked:
-        verdict = "구글 서치콘솔 연결만 남았습니다 — 그래야 실측이 자동으로 쌓입니다."
+    elif gsc_pending:
+        verdict = "구글 로그인 한 번만 남았습니다 — 그래야 실측이 자동으로 쌓입니다."
+        next_cmd = "GSC 로그인해줘"
+    elif not gsc_mode:
+        verdict = ("구글 인증 수단이 없습니다 — 로그인에 쓸 클라이언트 파일이 "
+                   "이 배포에 빠져 있습니다.")
         next_cmd = "GSC 연동해줘"
     else:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
@@ -154,6 +183,9 @@ def diagnose() -> dict:
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
+            # gsc_mode는 남긴다 — 대시보드가 이 JSON을 먹으므로 기존 키를 없애면 화면이 깨진다.
+            "gsc_connected": gsc_conn,    # 3-상태의 정본: 연결됨 / (mode만 있으면)로그인 대기 / 없음
+            "gsc_bundled": gsc_bundled,   # 번들 클라이언트로 로그인하는 중인가
             "capabilities": {f"{n} — {d}": on for n, d, on, _ in caps},
             "locked": [{"name": n, "desc": d, "fix": fix}
                        for n, d, on, fix in caps if not on],
@@ -174,16 +206,21 @@ def render(d: dict) -> None:
     if d["gsc_sites"]:
         print(f"\n내 사이트 ({len(d['gsc_sites'])}개)")
         mode = d.get("gsc_mode", "")
+        conn = d.get("gsc_connected", False)
         for name in d["gsc_sites"]:
-            if mode == "oauth":
-                tag = "연결됨 (내 구글 계정 로그인)"
-            elif mode == "service_account":
+            if conn and mode == "service_account":
                 tag = "연결됨 (서비스 계정 — 무인 수집)"
+            elif conn:
+                tag = "연결됨 (내 구글 계정 로그인)"
+            elif mode:
+                # 새로 생긴 상태다. 예전엔 인증 파일이 있으면 곧 연결됨이었는데,
+                # 번들 클라이언트가 항상 존재하면서 그 등식이 깨졌다.
+                tag = "로그인 대기 — 구글 로그인 한 번이면 끝납니다 (\"GSC 로그인해줘\")"
             elif d["gsc_legacy"].get(name):
                 tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 다시 연결하세요 "
-                       "(5분, connect_gsc.py)")
+                       "(connect_gsc.py)")
             else:
-                tag = "아직 — 연결해야 실적이 읽힙니다 (\"GSC 연동해줘\")"
+                tag = "인증 없음 — 클라이언트 파일부터 놓아야 합니다 (\"GSC 연동해줘\")"
             print(f"  · {name} — 구글 자동 수집: {tag}")
         # 속성별 권한 부여는 서비스 계정에만 있는 절차다 — OAuth 사용자에게 이걸
         # 안내하면 있지도 않은 할 일을 시키는 셈이 된다.
@@ -192,7 +229,11 @@ def render(d: dict) -> None:
                   "추가한 사이트만 읽습니다 (확인: connect_gsc.py --status)")
         elif mode == "oauth":
             print("    * 내 계정이 소유한 속성은 따로 권한을 줄 필요가 없습니다. "
-                  "첫 조회 때 브라우저 로그인 창이 한 번 열립니다.")
+                  + ("로그인은 이미 끝났습니다 (토큰 보관 중)." if conn else
+                     "첫 조회 때 브라우저 로그인 창이 한 번 열립니다."))
+            if d.get("gsc_bundled") and not conn:
+                print("    * 로그인 화면에 \"확인되지 않은 앱\" 경고가 한 번 뜹니다 — "
+                      "[고급] → [이동]을 누르시면 됩니다 (플러그인 동봉 클라이언트).")
 
     if caps_on:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")

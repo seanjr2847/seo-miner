@@ -731,7 +731,12 @@ def test_doctor_json_subprocess():
     doctor_script = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "doctor.py"
     assert doctor_script.exists(), f"doctor.py 스크립트 없음: {doctor_script}"
 
-    env = {**os.environ, "CAPTURE_HOME": str(doc_home)}
+    # 토큰 자리도 빈 임시 폴더로 돌린다 — 이 컴퓨터의 진짜 로그인 토큰을 보면
+    # "로그인 대기" 판정을 검증할 수 없다.
+    env = {**os.environ, "CAPTURE_HOME": str(doc_home),
+           "GSC_CONFIG_DIR": str(doc_home / "mcp-gsc")}
+    env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+    env.pop("GSC_OAUTH_CLIENT_SECRETS_FILE", None)
     res = subprocess.run(
         [sys.executable, str(doctor_script), "--json"],
         env=env,
@@ -747,6 +752,15 @@ def test_doctor_json_subprocess():
     assert data["core_ok"] is True, f"core_ok 가 True 여야 함: {data.get('core_ok')}"
     assert data["brain_ok"] is True, f"brain_ok 가 True 여야 함: {data.get('brain_ok')}"
 
+    # 설치 직후 = 번들 클라이언트 + 토큰 없음 = **로그인 대기**. doctor 가 여기서
+    # gsc_connected=True 라고 말하면, 한 번도 로그인 안 한 사람이 "연결됨"을 보고
+    # 수집이 왜 안 되는지 영영 못 찾는다 (MCP `Connected` 표시에 당한 그 거짓말).
+    assert data["gsc_mode"] == "oauth", f"번들이 있으면 oauth 여야 함: {data.get('gsc_mode')}"
+    assert data["gsc_connected"] is False, "토큰이 없는데 연결됐다고 했다"
+    assert data["gsc_bundled"] is True, f"번들로 로그인하는 중이어야 함: {data}"
+    assert data["keys"]["gsc_service_account"] is False, \
+        "대시보드가 gsc_ok 로 먹는 키가 로그인 전에 True 다 — 화면이 거짓말한다"
+
 
 def test_gsc_auth_precedence():
     """db.gsc_auth(): OAuth가 기본, 서비스 계정은 무인 수집용 대안.
@@ -754,9 +768,15 @@ def test_gsc_auth_precedence():
     런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부 이 판정 하나를 따르므로,
     순서가 뒤집히면 세 군데가 동시에 틀린다. 여기서 못 박는다.
     """
-    oauth, key = db.gsc_oauth_client(), db.gsc_key()
+    # **경로를 db.gsc_oauth_client() 로 받으면 안 된다.** 그건 이제 번들까지 훑는
+    # 해석기라, 번들이 배포에 들어가는 순간 이 테스트가 리포 안쪽 파일을 지운다.
+    # 여기서 다루는 건 "사용자가 직접 놓은 자리" 하나다.
+    oauth, key = db.CAPTURE_HOME / "gsc_oauth_client.json", db.gsc_key()
     oauth.parent.mkdir(parents=True, exist_ok=True)
-    for f in (oauth, key):
+    bundled = HOME / "bundled_oauth.json"       # 번들 자리는 가짜로 세운다
+    real_bundled = db.gsc_oauth_bundled
+    db.gsc_oauth_bundled = lambda: bundled
+    for f in (oauth, key, bundled):
         f.unlink(missing_ok=True)
     try:
         assert db.gsc_auth() == "", "아무것도 없으면 빈 문자열"
@@ -766,9 +786,165 @@ def test_gsc_auth_precedence():
         assert db.gsc_auth() == "oauth", "둘 다 있으면 OAuth 가 이긴다 (기본)"
         key.unlink()
         assert db.gsc_auth() == "oauth"
+
+        # 번들 OAuth 는 **맨 뒤**다. 설치만 하면 항상 존재하므로 앞세우면,
+        # 서비스 계정으로 무인 수집을 걸어 둔 사람이 매번 브라우저 로그인으로
+        # 끌려간다 — 업데이트가 남의 발밑을 바꾸는 종류의 사고다.
+        oauth.unlink()
+        bundled.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "oauth", "아무것도 없으면 번들이 기본이 된다"
+        assert db.gsc_oauth_client() == bundled, "번들을 가리켜야 한다"
+        key.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "service_account", \
+            "번들이 서비스 계정을 이기면 안 된다 — 무인 수집이 브라우저 로그인으로 끌려간다"
+        oauth.write_text("{}", encoding="utf-8")
+        assert db.gsc_oauth_client() == oauth, \
+            "사용자가 직접 놓은 것이 번들을 이겨야 한다"
     finally:
-        for f in (oauth, key):
+        db.gsc_oauth_bundled = real_bundled
+        for f in (oauth, key, bundled):
             f.unlink(missing_ok=True)
+
+
+def test_bundled_oauth_client_ships_with_the_plugin():
+    """번들 클라이언트가 배포에 실제로 들어 있는가.
+
+    이 파일이 빠진 채 배포되면 gsc_auth()가 "" 로 떨어져 **전 사용자**가
+    "인증 없음"을 본다 — 콘솔 작업 0 이라는 이번 변경의 전제가 통째로 사라진다.
+    파일 존재만으로는 부족하다: 형태가 데스크톱 앱 OAuth 클라이언트여야
+    connect_gsc.assemble()이 본을 뜰 수 있고 서버가 로그인을 열 수 있다.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+    import connect_gsc
+
+    b = db.gsc_oauth_bundled()
+    assert b.exists(), f"번들 OAuth 클라이언트가 배포에 없다: {b}"
+    assert connect_gsc.kind(b) == "oauth", f"번들이 OAuth 클라이언트 형태가 아니다: {b}"
+    inst = json.loads(b.read_text(encoding="utf-8"))["installed"]
+    for k in ("client_id", "client_secret", "auth_uri", "token_uri"):
+        assert inst.get(k), f"번들에 {k} 가 없다 — 로그인이 성립하지 않는다"
+
+
+def test_gsc_connected_is_decided_by_the_token_not_the_file():
+    """**이번 변경의 핵심 회귀.** 번들은 설치만 하면 항상 있다 — 그걸로 판정하면
+    한 번도 로그인 안 한 사람 전원이 '연결됨'으로 보인다(= doctor 가 거짓말).
+
+    3-상태가 여기서 갈린다:
+      · 인증 없음   gsc_auth()==""
+      · 로그인 대기 gsc_auth()!="" and not gsc_connected()   ← 새로 생긴 상태
+      · 연결됨      gsc_connected()
+    서비스 계정만 예외다 — 로그인 자체가 없어 키 파일이 곧 연결이다.
+    """
+    oauth, key = db.CAPTURE_HOME / "gsc_oauth_client.json", db.gsc_key()
+    oauth.parent.mkdir(parents=True, exist_ok=True)
+    bundled = HOME / "conn_bundled.json"
+    real_bundled = db.gsc_oauth_bundled
+    db.gsc_oauth_bundled = lambda: bundled
+    # 토큰 자리를 임시 폴더로 돌린다 — 이 컴퓨터에 진짜 로그인 토큰이 있으면
+    # 테스트가 그걸 보고 통과해 버린다(정확히 우리가 막으려는 거짓 양성).
+    cfg = HOME / "mcp-gsc-conf"
+    orig_cfg = os.environ.get("GSC_CONFIG_DIR")
+    os.environ["GSC_CONFIG_DIR"] = str(cfg)
+    cfg.mkdir(parents=True, exist_ok=True)
+    token = db.gsc_token()
+    for f in (oauth, key, bundled, token):
+        f.unlink(missing_ok=True)
+    try:
+        assert db.gsc_auth() == "" and db.gsc_connected() is False, "인증 없음"
+
+        # 번들만 있고 토큰이 없다 = 로그인 대기. 여기서 True 가 나오면 doctor 가
+        # "연결됨"이라 말하고 사용자는 로그인 없이 수집을 기다린다.
+        bundled.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "oauth"
+        assert db.gsc_connected() is False, \
+            "번들 파일이 있다고 연결됐다고 답했다 — 로그인 대기를 연결됨으로 오인한다"
+
+        token.write_text("{}", encoding="utf-8")
+        assert db.gsc_connected() is True, "토큰이 생기면 연결됨"
+
+        # 사용자가 직접 깐 클라이언트도 같은 규칙이다 (파일 유무가 아니다).
+        oauth.write_text("{}", encoding="utf-8")
+        token.unlink()
+        assert db.gsc_auth() == "oauth" and db.gsc_connected() is False
+
+        # 서비스 계정은 로그인이 없다 — 토큰이 없어도 연결됨이어야 한다.
+        oauth.unlink()
+        bundled.unlink()
+        key.write_text("{}", encoding="utf-8")
+        assert db.gsc_auth() == "service_account"
+        assert db.gsc_connected() is True, \
+            "서비스 계정에 로그인 토큰을 요구하면 무인 수집이 영영 '로그인 대기'가 된다"
+    finally:
+        db.gsc_oauth_bundled = real_bundled
+        if orig_cfg is None:
+            os.environ.pop("GSC_CONFIG_DIR", None)
+        else:
+            os.environ["GSC_CONFIG_DIR"] = orig_cfg
+        for f in (oauth, key, bundled, token):
+            f.unlink(missing_ok=True)
+
+
+def test_gsc_token_follows_the_server_not_us():
+    """토큰 자리는 우리가 정하지 않는다 — 서버(gsc_server.py)가 정한다.
+
+    GSC_CONFIG_DIR 이 있으면 그 아래 token.json. 어긋나면 반대 방향 거짓말이 된다
+    ("로그인했는데 연결 안 됐다고 한다"). 환경변수가 없을 때의 폴백도 최소한
+    mcp-gsc/token.json 로 끝나야 한다 — platformdirs 유무로 답이 달라지면 안 된다.
+    """
+    orig = os.environ.get("GSC_CONFIG_DIR")
+    try:
+        os.environ["GSC_CONFIG_DIR"] = str(HOME / "cfgdir")
+        assert db.gsc_token() == HOME / "cfgdir" / "token.json", db.gsc_token()
+        os.environ.pop("GSC_CONFIG_DIR")
+        t = db.gsc_token()
+        assert t.name == "token.json" and t.parent.name == "mcp-gsc", t
+        assert t.is_absolute(), t
+    finally:
+        if orig is None:
+            os.environ.pop("GSC_CONFIG_DIR", None)
+        else:
+            os.environ["GSC_CONFIG_DIR"] = orig
+
+
+def test_connect_gsc_assembles_client_and_never_prints_the_secret():
+    """--client-id/--client-secret 로 조립 — JSON 다운로드 없이 자기 클라이언트를 쓰는 길.
+
+    서브프로세스로 도는 이유는 stdout/stderr 을 통째로 볼 수 있어야 하기 때문이다.
+    시크릿이 화면에 찍히면 그대로 로그·스크린샷·이슈로 새 나간다.
+    설치 자리는 반드시 CAPTURE_HOME 이다 — 플러그인 안쪽(번들 자리)에 깔면
+    다음 업데이트에 날아가고 번들까지 덮어쓴다.
+    """
+    home = Path(tempfile.mkdtemp(prefix="seo-miner-assemble-"))
+    script = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "connect_gsc.py"
+    secret = "GOCSPX-테스트시크릿절대출력금지"
+    env = {**os.environ, "CAPTURE_HOME": str(home)}
+    env.pop("GSC_OAUTH_CLIENT_SECRETS_FILE", None)   # 환경변수가 자리를 가로채면 안 된다
+    res = subprocess.run(
+        [sys.executable, str(script), "--client-id", "123-abc.apps.googleusercontent.com",
+         "--client-secret", secret],
+        env=env, capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 0, f"조립 실패:\n{res.stdout}\n{res.stderr}"
+    assert secret not in res.stdout and secret not in res.stderr, \
+        "client_secret 이 화면에 새어 나왔다"
+
+    dest = home / "gsc_oauth_client.json"
+    assert dest.exists(), f"사용자 자리에 설치되지 않았다: {dest}"
+    assert not (script.parent.parent / "oauth_client.json").read_text(
+        encoding="utf-8").count(secret), "번들 파일을 덮어썼다"
+    d = json.loads(dest.read_text(encoding="utf-8"))
+    inst = d["installed"]                      # 데스크톱 앱 형태여야 한다
+    assert inst["client_id"] == "123-abc.apps.googleusercontent.com"
+    assert inst["client_secret"] == secret
+    for k in ("auth_uri", "token_uri", "redirect_uris"):
+        assert inst.get(k), f"{k} 가 없다 — 로그인 흐름이 성립하지 않는다: {inst}"
+
+    # 두 번째 실행은 기존 파일을 말없이 덮지 않는다 (--force 가 있어야 한다).
+    res2 = subprocess.run(
+        [sys.executable, str(script), "--client-id", "x", "--client-secret", "y"],
+        env=env, capture_output=True, text=True, encoding="utf-8")
+    assert res2.returncode != 0 and "--force" in (res2.stdout + res2.stderr), \
+        f"이미 있는 클라이언트를 말없이 덮어썼다:\n{res2.stdout}\n{res2.stderr}"
+    shutil.rmtree(home, ignore_errors=True)
 
 
 def test_collect_gsc_auth_routes_by_mode():
@@ -779,10 +955,18 @@ def test_collect_gsc_auth_routes_by_mode():
     """
     import collect_gsc
 
-    oauth, key = db.gsc_oauth_client(), db.gsc_key()
+    # 사용자 자리를 직접 가리킨다 — db.gsc_oauth_client() 는 번들까지 훑는 해석기라
+    # 여기서 쓰면 배포에 들어간 번들 파일을 테스트가 지운다.
+    oauth, key = db.CAPTURE_HOME / "gsc_oauth_client.json", db.gsc_key()
     oauth.parent.mkdir(parents=True, exist_ok=True)
     for f in (oauth, key):
         f.unlink(missing_ok=True)
+    # 번들도 가짜로 세운다. 번들이 배포에 들어간 뒤로 "파일을 지우면 인증이 없다"가
+    # 성립하지 않는다 — 실제로 ③이 여기서 깨졌다(번들 때문에 oauth 로 판정돼 MCP 로 갔다).
+    bundled = HOME / "routes_bundled.json"
+    real_bundled = db.gsc_oauth_bundled
+    db.gsc_oauth_bundled = lambda: bundled
+    bundled.unlink(missing_ok=True)
     called = []
     real_via_mcp = collect_gsc._service_via_mcp
     collect_gsc._service_via_mcp = lambda: (called.append("mcp"), "mcp-service")[1]
@@ -807,7 +991,7 @@ def test_collect_gsc_auth_routes_by_mode():
             pass
         assert not called, "서비스 계정이 걸려 있으면 MCP 인증을 부르지 않아야 한다"
 
-        # ③ 둘 다 없으면 두 경로를 다 알려주고 멈춘다.
+        # ③ 번들까지 하나도 없으면 두 경로를 다 알려주고 멈춘다.
         key.unlink()
         try:
             collect_gsc.get_service("t")
@@ -818,9 +1002,9 @@ def test_collect_gsc_auth_routes_by_mode():
                 f"안내가 두 경로를 다 말하지 않는다: {msg}"
     finally:
         collect_gsc._service_via_mcp = real_via_mcp
-        for f in (oauth, key):
+        db.gsc_oauth_bundled = real_bundled
+        for f in (oauth, key, bundled):
             f.unlink(missing_ok=True)
-        key.unlink(missing_ok=True)
 
 
 def test_gsc_mcp_mjs_syntax():
@@ -860,7 +1044,16 @@ def test_gsc_mcp_handshake():
         print("  skip: node 없음")
         return
     mjs_path = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "gsc_mcp.mjs"
-    env = {**os.environ, "CAPTURE_HOME": str(HOME)}   # 열쇠가 없는 임시 폴더 = 결정적 실패
+    # 임시 CAPTURE_HOME 만으로는 더 이상 "인증 없음"이 되지 않는다 — 번들 클라이언트를
+    # 런처가 집어 주고, 토큰은 CAPTURE_HOME 이 아니라 GSC_CONFIG_DIR 에 산다. 그대로
+    # 두면 이 테스트가 **개발자의 진짜 서치콘솔 계정을 조회한다**(실측: 속성 4개가
+    # 그대로 나왔다). 토큰 자리를 비우고 브라우저 로그인도 막아 결정적으로 실패시킨다.
+    env = {**os.environ, "CAPTURE_HOME": str(HOME),
+           "GSC_CONFIG_DIR": str(HOME / "mcp-gsc-handshake"),
+           "GSC_SKIP_OAUTH": "true"}
+    env.pop("GSC_OAUTH_CLIENT_SECRETS_FILE", None)
+    env.pop("GSC_CREDENTIALS_PATH", None)
+    env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
 
     def ask(method, params):
         """요청 하나만 보내고 그 응답을 돌려준다 (None이면 skip 사유).
