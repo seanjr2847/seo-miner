@@ -43,6 +43,15 @@ if (!env.GSC_CREDENTIALS_PATH && existsSync(keyFile))
 // OAuth 파일이 없는데 OAuth를 켜두면 서버가 브라우저 로그인을 띄우려다 실패한다.
 if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE) env.GSC_SKIP_OAUTH ??= "true";
 
+// 데이터 확정 상태는 **명시한다** — 서버 기본값(gsc_server.py의 "all")에 묻어가면
+// 업스트림이 기본을 바꾸는 날 우리 답이 조용히 달라진다.
+// "all"을 고른 것이지 물려받은 게 아니다: 이 서버는 **즉석 조회 창구**라
+// "어제 클릭 몇이야"에 답해야 하고, 그건 미확정 데이터를 봐야 나온다(GSC 대시보드와
+// 같은 값). collect_gsc.py 는 반대로 "final" + 3일 버퍼다 — 그쪽은 스냅샷끼리
+// 비교하는 게 목적이라 나중에 값이 바뀌는 날짜가 섞이면 Δ가 거짓이 된다.
+// **그래서 두 경로의 숫자는 원래 다르다** (capture/SKILL.md 철칙 1의 예외 조항).
+env.GSC_DATA_STATE ??= "all";
+
 // 셸을 쓰지 않는다 — 윈도우에서 shell:true면 node가 인자를 따옴표 없이 이어붙여
 // `-c "import sys; print(...)"` 의 세미콜론이 명령 구분자로 쪼개진다. 예전 런처가
 // shell을 켰던 건 npx.cmd(배치 파일) 때문이고, 파이썬은 어느 OS에서나 실행 파일이다.

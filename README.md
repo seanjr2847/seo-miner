@@ -173,7 +173,11 @@ pip install requests pyyaml
 ## 요구 사항
 
 Python 3.11+ · `requests`, `pyyaml` (구글 자동 수집을 쓰면
-`google-api-python-client`, `google-auth` 추가) · gsc MCP를 쓰려면 node
-(서버 부품 `mcp-search-console`는 런처가 처음 한 번 자동 설치).
+`google-api-python-client`, `google-auth` 추가) · node — gsc MCP 서버 런처용.
+
+서버 부품 `mcp-search-console`는 런처가 처음 한 번 자동으로 깝니다. **구글 계정
+로그인(기본)으로 붙었다면 이건 선택이 아닙니다** — `collect_gsc.py`가 그 패키지의
+인증을 그대로 빌려 쓰기 때문에, 없으면 수집이 멈춥니다. 서비스 계정으로 붙였다면
+수집은 직결이라 서버 없이도 됩니다(대신 MCP 즉석 조회를 못 씁니다).
 
 MIT

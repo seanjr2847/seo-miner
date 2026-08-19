@@ -840,6 +840,13 @@ def test_gsc_mcp_mjs_syntax():
     )
     assert res.returncode == 0, f"gsc_mcp.mjs 문법 오류 (code {res.returncode}):\n{res.stderr}"
 
+    # 확정 상태를 서버 기본값에 묻어가게 두면, 업스트림이 기본을 바꾸는 날 우리 답이
+    # 조용히 달라진다. "all"은 물려받은 게 아니라 **고른 것**이다 — 즉석 조회 창구라
+    # 어제 수치를 보여줘야 한다. (collect_gsc.py 는 반대로 final + 3일 버퍼다.)
+    src = mjs_path.read_text(encoding="utf-8")
+    assert "GSC_DATA_STATE" in src, \
+        "런처가 GSC_DATA_STATE 를 명시하지 않는다 — 서버 기본값에 묻어가면 안 된다"
+
 
 def test_gsc_mcp_handshake():
     """런처가 실제로 서버를 띄우고 우리 열쇠 경로를 물려주는가.
