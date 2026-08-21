@@ -36,6 +36,13 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
 3. **리포트는 Next Actions로 끝난다.** 분석 없이 빈 액션으로 리포트를 내보내지 않는다.
 4. 데이터 해석 규칙(비결정성, GSC 구멍, 노이즈 임계값)은 `references/scoring.md` 4절을 따른다.
 
+## 답변 형식 (채팅으로 나가는 모든 말)
+
+한 줄 결론 → 근거 표 → **다음 한 걸음 하나** → 접어 둔 "안 한 것".
+정본은 `../setup/references/reply-format.md` — 작업을 끝내고 보고하기 전에 그 뼈대를
+따른다. 근거는 Brain 조회 결과여야 하고(철칙 1), 다음 걸음의 판정은
+`stage.state()` 가 한다(내가 다시 판단하지 않는다).
+
 ## 상태 위치
 
 데이터는 `$CAPTURE_HOME`(기본 `~/.capture`)에 산다 — brain.db, projects/*.yaml, reports/.
