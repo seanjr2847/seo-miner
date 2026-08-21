@@ -646,7 +646,7 @@ def load(project: str) -> None:
     안 읽던 결함의 수정. 트리아지 상태(acked·done·dismissed) 보존은
     db.upsert_opportunities 가 보장한다 (ON CONFLICT에서 status 미변경).
     """
-    import db  # lazy — self-check 는 db 없이 돈다
+    import db  # lazy — 모듈을 불러도 진짜 Brain 은 안 건드린다 (self-check 는 SCHEMA 문자열만 읽는다)
     conn = db.connect()
     p = db.get_project(conn, project)
     pid, ptype = p["id"], p["type"] or "saas"
@@ -868,29 +868,14 @@ def _selfcheck() -> None:
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
-      CREATE TABLE competitors(project_id INT, domain TEXT);
-      CREATE TABLE gsc_snapshots(project_id INT, snapshot_date TEXT, period_days INT,
-        query TEXT, page TEXT, clicks INT, impressions INT, ctr REAL, position REAL);
-      CREATE TABLE opportunities(id INTEGER PRIMARY KEY, project_id INT, kind TEXT,
-        target TEXT, score REAL, reasoning TEXT, status TEXT, created_at TEXT);
-      CREATE TABLE keywords(id INTEGER PRIMARY KEY, project_id INT, keyword TEXT,
-        cluster TEXT, intent TEXT, is_active INT);
-      CREATE TABLE rank_snapshots(id INTEGER PRIMARY KEY, keyword_id INT,
-        checked_at TEXT, position INT);
-      CREATE TABLE gsc_daily(project_id INT, date TEXT, clicks INT, impressions INT,
-        ctr REAL, position REAL);
-      CREATE TABLE gsc_breakdown(project_id INT, snapshot_date TEXT, period_days INT,
-        dim TEXT, dim_value TEXT, query TEXT, clicks INT, impressions INT,
-        ctr REAL, position REAL);
-      CREATE TABLE gsc_index_status(project_id INT, checked_date TEXT, url TEXT,
-        verdict TEXT, coverage_state TEXT, robots_txt_state TEXT, page_fetch_state TEXT,
-        indexing_state TEXT, google_canonical TEXT, user_canonical TEXT,
-        last_crawled TEXT, rich_results_json TEXT);
-    """)
-    conn.execute("INSERT INTO competitors VALUES(1,'ecrett.com')")
+    import db  # lazy — self-check 는 진짜 Brain 을 안 건드리고 정본 SCHEMA 만 읽는다
+    conn.executescript(db.SCHEMA)
+    conn.execute("INSERT INTO projects(id, name, type, domain) "
+                 "VALUES(1, 'selfcheck', 'saas', 'selfcheck.com')")
+    conn.execute("INSERT INTO competitors(project_id, domain) VALUES(1, 'ecrett.com')")
     conn.executemany(
-        "INSERT INTO gsc_snapshots VALUES(1,'2026-08-14',28,?,NULL,?,?,0.0,?)",
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks, impressions, ctr, position) "
+        "VALUES(1, '2026-08-14', 28, ?, NULL, ?, ?, 0.0, ?)",
         [("ecrett", 0, 48, 8.6), ("내 키워드", 2, 400, 12.0), ("1페이지 키워드", 9, 300, 3.0)])
     brands = foreign_brands(conn, 1, {"name": "aitierlist"})
     assert brands == {"ecrett"}, brands
@@ -909,14 +894,19 @@ def _selfcheck() -> None:
     assert got == ["new-high", "new-low", "old-done"], got
     assert "id" in opportunities(conn, 1, limit=1, with_id=True)[0]
 
-    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-20',28)")
-    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-10',90)")
-    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(2,'2026-08-01',28)")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
+                 "VALUES(2,'2026-08-20',28,'_meta')")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
+                 "VALUES(2,'2026-08-10',90,'_meta')")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
+                 "VALUES(2,'2026-08-01',28,'_meta')")
     cur, prev, period, mismatch = snapshot_pair(conn, 2)
     assert (cur, prev, period, mismatch) == ("2026-08-20", "2026-08-01", 28, False), (cur, prev, period, mismatch)
 
-    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(3,'2026-08-20',28)")
-    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days) VALUES(3,'2026-08-10',90)")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
+                 "VALUES(3,'2026-08-20',28,'_meta')")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
+                 "VALUES(3,'2026-08-10',90,'_meta')")
     cur, prev, period, mismatch = snapshot_pair(conn, 3)
     assert (cur, prev, period, mismatch) == ("2026-08-20", None, 28, True), (cur, prev, period, mismatch)
 
@@ -936,10 +926,12 @@ def _selfcheck() -> None:
 
     # 프로젝트 5: 스냅샷 페어 + band·노출 하한·카니벌·decay·coverage 한 번에
     conn.executemany(
-        "INSERT INTO gsc_snapshots VALUES(5,'2026-08-07',28,?,NULL,?,?,0.0,?)",
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks, impressions, ctr, position) "
+        "VALUES(5, '2026-08-07', 28, ?, NULL, ?, ?, 0.0, ?)",
         [("하락", 10, 100, 5.0), ("유지", 5, 100, 5.0)])
     conn.executemany(
-        "INSERT INTO gsc_snapshots VALUES(5,'2026-08-14',28,?,?,?,?,0.0,?)",
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks, impressions, ctr, position) "
+        "VALUES(5, '2026-08-14', 28, ?, ?, ?, ?, 0.0, ?)",
         [("하락", None, 2, 100, 9.0), ("유지", None, 5, 100, 5.4),
          ("b1", None, 1, 150, 6.0), ("b2", None, 1, 150, 15.0),
          ("tiny", None, 1, 5, 6.0),
@@ -957,12 +949,14 @@ def _selfcheck() -> None:
     assert [x["query"] for x in rd] == ["하락"], rd    # 유지(-0.4)는 DECAY_POS 위
     assert rd[0]["dpos"] == -4.0 and rd[0]["dclk"] == -8, rd[0]
 
-    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
-                     [(1, 5, "B1", "c1", None, 1),          # gsc 노출 있음(b1, norm 일치) → 커버
-                      (2, 5, "순위만", None, None, 1),        # rank 체크로 커버
-                      (3, 5, "미커버", "c1", None, 1),
-                      (4, 5, "꺼짐", "c1", None, 0)])        # 비활성은 안 본다
-    conn.execute("INSERT INTO rank_snapshots VALUES(1, 2, '2026-08-14T00:00:00Z', 7)")
+    conn.executemany("INSERT INTO keywords(id, project_id, keyword, cluster, intent, is_active) "
+                       "VALUES(?, ?, ?, ?, ?, ?)",
+                       [(1, 5, "B1", "c1", None, 1),          # gsc 노출 있음(b1, norm 일치) → 커버
+                        (2, 5, "순위만", None, None, 1),        # rank 체크로 커버
+                        (3, 5, "미커버", "c1", None, 1),
+                        (4, 5, "꺼짐", "c1", None, 0)])        # 비활성은 안 본다
+    conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position) "
+                 "VALUES(2, '2026-08-14T00:00:00Z', 7)")
     cov = coverage(conn, 5)
     assert [k["keyword"] for k in cov["keywords"]] == ["미커버"], cov
     assert cov["by_cluster"] == {"c1": 1}, cov
@@ -971,9 +965,11 @@ def _selfcheck() -> None:
     assert _ctr_pct(20, 1240) == 1.6 and _ctr_pct(3, 0) == 0.0      # 0 노출은 0%, 나눗셈 안 함
     assert daily_trend(conn, 7) == []                                # 데이터 없으면 빈 목록
 
-    conn.executemany("INSERT INTO gsc_daily VALUES(7,?,?,?,0.0,?)",
-                     [("2026-08-01", 5, 500, 9.0), ("2026-08-02", 10, 400, 8.0),
-                      ("2026-08-03", 0, 0, None)])
+    conn.executemany(
+        "INSERT INTO gsc_daily(project_id, date, clicks, impressions, ctr, position) "
+        "VALUES(7, ?, ?, ?, 0.0, ?)",
+        [("2026-08-01", 5, 500, 9.0), ("2026-08-02", 10, 400, 8.0),
+         ("2026-08-03", 0, 0, None)])
     tr = daily_trend(conn, 7)
     assert [d["date"] for d in tr] == ["2026-08-01", "2026-08-02", "2026-08-03"], tr  # 오름차순
     assert tr[1]["ctr"] == 2.5 and tr[1]["position"] == 8.0, tr[1]   # ctr 은 저장값 아닌 재계산
@@ -981,7 +977,8 @@ def _selfcheck() -> None:
     assert [d["date"] for d in daily_trend(conn, 7, 2)] == ["2026-08-02", "2026-08-03"]  # 최근 N
 
     conn.executemany(
-        "INSERT INTO gsc_breakdown VALUES(7,?,28,'device',?,?,?,?,0.0,?)",
+        "INSERT INTO gsc_breakdown(project_id, snapshot_date, period_days, dim, dim_value, query, clicks, impressions, ctr, position) "
+        "VALUES(7, ?, 28, 'device', ?, ?, ?, ?, 0.0, ?)",
         [("2026-08-10", "MOBILE", "옛날", 0, 900, 30.0),             # 옛 수집일 — 안 본다
          ("2026-08-10", "DESKTOP", "옛날", 0, 900, 3.0),
          ("2026-08-17", "MOBILE", "모바일밀림", 20, 1240, 12.4),
@@ -1000,7 +997,8 @@ def _selfcheck() -> None:
 
     assert index_issues(conn, 7) == []
     conn.executemany(
-        "INSERT INTO gsc_index_status VALUES(7,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+        "INSERT INTO gsc_index_status(project_id, checked_date, url, verdict, coverage_state, robots_txt_state, page_fetch_state, indexing_state, google_canonical, user_canonical, last_crawled, rich_results_json) "
+        "VALUES(7, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
         [("2026-08-10", "/old", "FAIL", "Blocked", "DISALLOWED", None, None, None, None),
          ("2026-08-18", "/ok", "PASS", "Submitted and indexed", "ALLOWED", "SUCCESSFUL",
           "INDEXING_ALLOWED", "/ok", "/ok"),
@@ -1043,13 +1041,15 @@ def _selfcheck() -> None:
 
     # ── _backfill_intents: NULL 인 활성만 채우고, 값 있는 건 보존
     conn.execute("DELETE FROM keywords")
-    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
-                     [(10, 5, "비트코인 가격", None, None, 1),         # NULL → 채움
-                      (11, 5, "ecrett 후기", None, None, 1),           # NULL → 채움
-                      (12, 5, "공식 홈페이지", None, None, 1),         # NULL → 채움
-                      (13, 5, "외부 링크", None, None, 1),             # NULL → info
-                      (14, 5, "사람보정", None, "transactional", 1),   # 보존
-                      (15, 5, "비활성널", None, None, 0)])              # 비활성 — 안 본다
+    conn.executemany(
+        "INSERT INTO keywords(id, project_id, keyword, cluster, intent, is_active) "
+        "VALUES(?, ?, ?, ?, ?, ?)",
+        [(10, 5, "비트코인 가격", None, None, 1),         # NULL → 채움
+         (11, 5, "ecrett 후기", None, None, 1),           # NULL → 채움
+         (12, 5, "공식 홈페이지", None, None, 1),         # NULL → 채움
+         (13, 5, "외부 링크", None, None, 1),             # NULL → info
+         (14, 5, "사람보정", None, "transactional", 1),   # 보존
+         (15, 5, "비활성널", None, None, 0)])              # 비활성 — 안 본다
     assert _backfill_intents(conn, 5) == 4
     got = {r["keyword"]: r["intent"]
            for r in conn.execute("SELECT keyword, intent FROM keywords WHERE project_id=5",
@@ -1065,10 +1065,12 @@ def _selfcheck() -> None:
 
     # ── _fit_of: 0.8 활성 키워드 일치 / 0.65 cluster 매칭 / 0.5 무관 / coverage 0.65
     conn.execute("DELETE FROM keywords")
-    conn.executemany("INSERT INTO keywords VALUES(?,?,?,?,?,?)",
-                     [(20, 6, "비트코인 가격", None, None, 1),
-                      (21, 6, "암호화폐 시장", "암호화폐", None, 1),
-                      (22, 6, "서울 여행", "여행", None, 1)])
+    conn.executemany(
+        "INSERT INTO keywords(id, project_id, keyword, cluster, intent, is_active) "
+        "VALUES(?, ?, ?, ?, ?, ?)",
+        [(20, 6, "비트코인 가격", None, None, 1),
+         (21, 6, "암호화폐 시장", "암호화폐", None, 1),
+         (22, 6, "서울 여행", "여행", None, 1)])
     assert _fit_of(conn, 6, "비트코인 가격") == 0.8                 # 정확 일치
     assert _fit_of(conn, 6, "비트코인  가격") == 0.8               # 공백·norm 동일
     assert _fit_of(conn, 6, "암호화폐 시세") == 0.65               # target 안에 cluster 명
