@@ -47,6 +47,11 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
 
 데이터는 `$CAPTURE_HOME`(기본 `~/.capture`)에 산다 — brain.db, projects/*.yaml, reports/.
 brain.db는 첫 접속 때 자동 생성된다(`db.connect`) — 사용자에게 init을 시키지 말 것.
+**보관함은 컴퓨터 전역이다** — 사이트가 여럿일 때 이름 없이 "내 사이트 요즘 어때"라고
+하면 어느 것인지 정해지지 않는다. `stage.pick_project()` 로 판정하고(이 폴더의 리포
+매치 > 사이트가 하나뿐이면 그것 > 못 고름), 못 고르면 **되묻는다 — 아무거나 집지 않는다**.
+이 폴더에 사이트를 붙여 두려면 `/create profile {P}` 한 번(설명: setup 스킬 3-c).
+
 미설정·의존성 오류가 감지되면 추측하지 말고
 setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기반으로 안내한다.
 상세 절차 문서는 `references/setup.md`.

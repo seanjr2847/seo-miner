@@ -195,11 +195,22 @@ assert st_conn["steps"][1]["done"] is True
 assert st_conn["here"] == 3, f"키워드(1)·GSC(1) 완료 시 here는 3(ai): {st_conn['here']}"
 
 # ── /api/doctor 와 /api/data 의 「다음 할 일」 일치 검증 ──────────────
-code, doc = get("/api/doctor")
+# 화면이 보고 있는 사이트를 같이 보낸다 — 안내는 그 사이트를 따라가야 한다.
+code, doc = get("/api/doctor?project=demo")
 assert code == 200, code
 code, d_demo = get("/api/data?project=demo")
 assert code == 200, d_demo
 assert doc["guide"] is not None, "doctor에 guide가 없음"
+assert doc["project"] == "demo", doc["project"]
+
+# 사이트가 여럿인데 어느 것인지 안 알려주면 **아무거나 집지 않는다**.
+# 예전에는 projects[0](먼저 등록한 것)을 집어서, 무관한 리포에서 /setup 을 돌려도
+# 늘 같은 사이트를 띄웠다 (사용자 신고).
+code, doc_amb = get("/api/doctor")
+assert code == 200, code
+assert len(doc_amb["projects"]) > 1, doc_amb["projects"]
+assert doc_amb["project"] is None and doc_amb["guide"] is None, doc_amb["project"]
+assert any("어느 사이트인지" in m for m in doc_amb["must"]), doc_amb["must"]
 assert doc["guide"]["here"] == d_demo["guide"]["here"], (doc["guide"]["here"], d_demo["guide"]["here"])
 assert doc["guide"]["steps"][doc["guide"]["here"]]["cmd"] == d_demo["guide"]["steps"][d_demo["guide"]["here"]]["cmd"]
 

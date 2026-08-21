@@ -43,6 +43,9 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
    리포 안의 `product-marketing-context.md`류 파일이 있으면 그쪽을 우선한다.
 3. 결과를 `$CAPTURE_HOME/projects/{P}.repo.yaml`로 저장하고 사용자 검수를 받는다.
    (템플릿: `templates/repo-profile.template.yaml`)
+   **`repo_path` 는 절대경로로, 반드시 채운다** — `db.repo_project()` 가 이 값으로
+   "이 폴더가 어느 사이트냐"에 답한다. 비어 있거나 템플릿 그대로면 사이트가 여럿인
+   사용자는 `/setup` 을 돌릴 때마다 어느 사이트인지 되묻는 화면을 본다.
 
 ### /create plan {P} — 작업 계획
 1. `python scripts/createdb.py pick {P}` 로 Brain의 status가 'new'·'acked' 인 기회를

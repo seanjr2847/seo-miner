@@ -56,6 +56,25 @@ def gsc_state() -> str:
     return "none"
 
 
+def pick_project(projects, cwd=None) -> str | None:
+    """지금 이 세션이 말하는 사이트 하나. 못 고르면 None — 아무거나 집지 않는다.
+
+    Brain 이 전역이라 `projects[0]`(=먼저 등록한 것)을 집던 코드는, 사이트와 아무
+    상관 없는 다른 리포에서 `/setup` 을 돌려도 늘 같은 사이트를 띄웠다. 조용히
+    틀린 답을 주느니 못 고르겠다고 말하는 게 낫다 — 부르는 쪽이 사용자에게 묻는다.
+
+    순서: 이 폴더의 리포 매치 > 사이트가 하나뿐이면 그것 > 못 고름(None).
+    """
+    if not projects:
+        return None
+    match = db.repo_project(cwd)
+    if match and match in projects:
+        return match
+    if len(projects) == 1:
+        return projects[0]
+    return None
+
+
 def from_progress(p: dict, name: str, domain: str) -> dict:
     gst = gsc_state()
     if gst == "connected":
@@ -127,8 +146,13 @@ def state(conn, project, domain: str = "") -> dict:
     return from_progress(progress(conn, project["id"]), project["name"], dom)
 
 
-def setup_payload(d: dict = None, conn=None) -> dict:
-    """대시보드 /api/doctor 응답 생성 — 정책 판단은 여기서만 한다."""
+def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
+    """대시보드 /api/doctor 응답 생성 — 정책 판단은 여기서만 한다.
+
+    project: 화면이 지금 보고 있는 사이트. 이게 있으면 그게 답이다 — 화면은
+    사용자가 직접 고른 것이라 폴더 추론보다 확실하다. 없을 때만 pick_project 로
+    폴더에서 추론하고, 그것도 못 하면 안내(guide)를 비운다.
+    """
     if d is None:
         import doctor
         d = doctor.diagnose()
@@ -154,12 +178,13 @@ def setup_payload(d: dict = None, conn=None) -> dict:
 
     guide = None
     close_conn = False
-    if projects:
+    picked = project if project in projects else pick_project(projects)
+    if picked:
         if conn is None:
             conn = db.connect()
             close_conn = True
         try:
-            p = db.get_project(conn, projects[0])
+            p = db.get_project(conn, picked)
             guide = state(conn, p)
         finally:
             if close_conn:
@@ -168,6 +193,8 @@ def setup_payload(d: dict = None, conn=None) -> dict:
     return {
         "verdict": d.get("verdict", ""),
         "no_project": no_project,
+        "project": picked,          # 안내가 말하는 사이트 (못 고르면 None)
+        "projects": projects,       # 여러 개일 때 화면이 고르게 하려고
         "must": must,
         "extra": extra,
         "core_ok": bool(d.get("core_ok")),

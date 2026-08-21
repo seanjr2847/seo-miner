@@ -16,6 +16,7 @@ CLI:
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -204,6 +205,48 @@ def creds_dir(project: str) -> Path:
 def downloads_dir() -> Path:
     """브라우저 다운로드 폴더 — GSC 서비스 계정 키(connect_gsc)를 여기서 찾는다."""
     return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
+
+
+_REPO_PATH_RE = re.compile(r"^repo_path:[ 	]*(.+?)[ 	]*$", re.M)
+
+
+def repo_project(cwd=None) -> str | None:
+    """지금 이 폴더가 어느 사이트의 리포인가 — `projects/{P}.repo.yaml` 의 repo_path 로 판정.
+
+    Brain 은 컴퓨터 전역(`~/.capture/brain.db`)이라 사이트가 여럿이면 "지금 이 폴더가
+    어느 사이트냐"에 아무도 답하지 못했다. 그 답은 `/create profile` 이 이미
+    `repo.yaml` 에 적어 두고 있었는데 읽는 코드가 없었다.
+
+    ponytail: yaml 파서 대신 한 줄 정규식으로 읽는다 — doctor 가 pip 이전에도 돌아야 해서
+    stdlib 밖으로 못 나간다. repo_path 를 블록 스칼라(`|`)로 적으면 못 읽는다.
+    """
+    try:
+        here = Path(cwd or Path.cwd()).resolve()
+    except OSError:
+        return None
+    d = capture_home() / "projects"
+    if not d.exists():
+        return None
+    best = None
+    for f in sorted(d.glob("*.repo.yaml")):
+        try:
+            m = _REPO_PATH_RE.search(f.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if not m:
+            continue
+        raw = m.group(1).strip().strip('"').strip("'")
+        if not raw or raw.startswith("/path/to/"):   # 템플릿 그대로면 무시
+            continue
+        try:
+            root = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        if root == here or root in here.parents:
+            # 가장 깊은 매치가 이긴다 — 리포 안에 리포가 있을 때 안쪽이 답이다.
+            if best is None or len(root.parts) > len(best[1].parts):
+                best = (f.name[: -len(".repo.yaml")], root)
+    return best[0] if best else None
 
 
 def docs_dir(project: str) -> Path:

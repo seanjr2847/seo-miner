@@ -89,7 +89,7 @@ def diagnose() -> dict:
             brain["tables"] = conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
             brain["projects"] = [r[0] for r in conn.execute(
-                "SELECT name FROM projects")] if brain["tables"] else []
+                "SELECT name FROM projects ORDER BY name")] if brain["tables"] else []
             # AI에 물어볼 질문이 비어 있으면 collect_ai가 그 자리에서 멈춘다.
             # 대시보드 폼으로 만든 사이트가 여기 걸린다(프롬프트 초안은 채팅 몫).
             brain["no_prompts"] = [r[0] for r in conn.execute(
@@ -110,6 +110,11 @@ def diagnose() -> dict:
     # 번들 클라이언트를 쓰는 중인가 — 동의 화면 경고("확인되지 않은 앱")와 100명 상한이
     # 붙는 갈래라, 사용자에게 미리 말해 줘야 로그인 도중에 멈추지 않는다.
     gsc_bundled = gsc_mode == "oauth" and db.gsc_oauth_client() == db.gsc_oauth_bundled()
+    # Brain 은 컴퓨터 전역이라 "지금 이 폴더가 어느 사이트냐"를 따로 정해야 한다.
+    # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
+    # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
+    brain["repo_match"] = db.repo_project()
+    brain["picked"] = stage.pick_project(brain["projects"])
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: gsc_conn for name in brain["projects"]}
@@ -172,6 +177,16 @@ def diagnose() -> dict:
             "id": "brain_broken",
             "msg": f"보관함 파일이 손상됐습니다 — {DB} 를 다른 이름으로 옮기면 "
                    "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)"
+        })
+    if core_ok and brain_ok and brain["projects"] and not brain["picked"]:
+        must.append({
+            "id": "pick_project",
+            "msg": ("이 폴더가 어느 사이트인지 모르겠습니다 — 등록된 사이트: "
+                    + ", ".join(brain["projects"]) +
+                    ". 채팅에 이름을 말씀해 주시면 그 사이트로 진행합니다. "
+                    "이 폴더가 아직 등록 안 된 새 사이트면 `/capture add <원하는이름>`. "
+                    "매번 안 묻게 하려면 이 폴더에서 `/create profile <이름>` 을 한 번 "
+                    "돌리세요 — 리포 경로가 기록돼 다음부터 이 폴더에서 자동으로 붙습니다.")
         })
     if core_ok and brain_ok and not brain["projects"]:
         must.append({
@@ -267,9 +282,15 @@ def diagnose() -> dict:
         verdict = ("구글 인증 수단이 없습니다 — 로그인에 쓸 클라이언트 파일이 "
                    "이 배포에 빠져 있습니다.")
         next_cmd = "GSC 연동해줘"
-    else:
+    elif brain["picked"]:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
-        next_cmd = f"/capture run {brain['projects'][0]}"
+        next_cmd = f"/capture run {brain['picked']}"
+    else:
+        # 사이트가 여럿인데 이 폴더가 어느 것인지 모른다. 아무거나 집어서 보여주면
+        # 사용자는 그게 이 폴더의 사이트인 줄 안다 — 조용히 틀리느니 물어본다.
+        verdict = (f"등록된 사이트가 {len(brain['projects'])}개인데 이 폴더가 어느 "
+                   "것인지 모르겠습니다 — 이름을 하나 말씀해 주세요.")
+        next_cmd = None
 
     steps = [m["msg"] if isinstance(m, dict) else m for m in must] + [f"[선택] {s}" for s in later]
     # 마케팅 스킬은 이제 must 에 안 들어간다(위 [선택] 강등). must_other 키는 대시보드
@@ -320,7 +341,13 @@ def render(d: dict) -> None:
                        "(connect_gsc.py)")
             else:
                 tag = "인증 없음 — 클라이언트 파일부터 놓아야 합니다 (\"GSC 연동해줘\")"
-            print(f"  · {name} — 구글 자동 수집: {tag}")
+            # 어느 사이트를 보고 있는지 조용히 정하지 않는다 — 화면에 이유까지 적는다.
+            if name == d["brain"].get("picked"):
+                mark = ("  ← 이 폴더의 사이트" if d["brain"].get("repo_match") == name
+                        else "  ← 등록된 사이트가 이것뿐")
+            else:
+                mark = ""
+            print(f"  · {name} — 구글 자동 수집: {tag}{mark}")
         # 속성별 권한 부여는 서비스 계정에만 있는 절차다 — OAuth 사용자에게 이걸
         # 안내하면 있지도 않은 할 일을 시키는 셈이 된다.
         if mode == "service_account":

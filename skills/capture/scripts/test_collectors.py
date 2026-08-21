@@ -1558,6 +1558,40 @@ def test_doctor_never_says_the_same_thing_twice():
                 os.environ[k] = v
 
 
+def test_repo_binds_project_and_ambiguity_is_not_guessed():
+    """다른 리포에서 /setup 을 돌려도 늘 먼저 등록한 사이트가 뜨던 버그.
+
+    Brain 은 컴퓨터 전역이라 프로젝트가 여럿이면 "이 폴더가 어느 사이트냐"를 따로
+    정해야 한다. 답은 `/create profile` 이 남기는 repo.yaml 의 repo_path 다.
+    못 고르는 경우에 아무거나 집으면 사용자는 그게 이 폴더의 사이트인 줄 안다.
+    """
+    import stage
+
+    proj_dir = HOME / "projects"
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    repo_a = HOME / "repos" / "alpha"
+    (repo_a / "src").mkdir(parents=True, exist_ok=True)
+    (proj_dir / "alpha.repo.yaml").write_text(
+        f"repo_path: {repo_a}\nstack: astro\n", encoding="utf-8")
+    # 템플릿 그대로인 파일은 무시돼야 한다 — 안 그러면 모든 폴더가 여기 걸린다.
+    (proj_dir / "zeta.repo.yaml").write_text(
+        "repo_path: /path/to/repo\n", encoding="utf-8")
+
+    both = ["alpha", "zeta"]
+    assert db.repo_project(repo_a) == "alpha"
+    assert db.repo_project(repo_a / "src") == "alpha", "하위 폴더에서도 붙어야 함"
+    assert db.repo_project(HOME) is None, "무관한 폴더는 매치가 없어야 함"
+
+    assert stage.pick_project(both, cwd=repo_a) == "alpha"
+    assert stage.pick_project(both, cwd=HOME) is None, "모르면 아무거나 집지 않는다"
+    assert stage.pick_project(["solo"], cwd=HOME) == "solo", "하나뿐이면 그것"
+    assert stage.pick_project([], cwd=repo_a) is None
+
+    # 등록 안 된 이름이 repo.yaml 에 남아 있어도 Brain 목록 밖이면 안 고른다
+    assert stage.pick_project(["zeta"], cwd=repo_a) == "zeta"   # 하나뿐이라 그것
+    assert stage.pick_project(["zeta", "other"], cwd=repo_a) is None
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

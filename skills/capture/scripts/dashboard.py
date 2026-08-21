@@ -287,9 +287,12 @@ def repo_prefill(root: Path | None = None) -> dict:
     return out
 
 
-def setup_state() -> dict:
-    """setup 스킬의 doctor.diagnose()를 소비해 대시보드 화면이 실제로 쓰는 평평한 키만 방출."""
-    return stage.setup_payload()
+def setup_state(project: str = "") -> dict:
+    """setup 스킬의 doctor.diagnose()를 소비해 대시보드 화면이 실제로 쓰는 평평한 키만 방출.
+
+    project: 화면이 보고 있는 사이트 — 안내(guide)가 그 사이트를 따라가게 한다.
+    """
+    return stage.setup_payload(project=project)
 
 
 def q(conn, sql, args=()):
@@ -469,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
         if u.path == "/api/doctor":
-            return self._json(setup_state())
+            return self._json(setup_state(parse_qs(u.query).get("project", [""])[0]))
         if u.path == "/api/setup/prefill":   # 읽기 전용 — 레포 추론값
             return self._json(repo_prefill())
         if u.path == "/api/projects":
