@@ -6,8 +6,7 @@
 // 진짜 실행 파일이라 .mcp.json의 진입점으로 안전해서, node가 파이썬을 찾아
 // 넘겨주는 이 한 겹이 있다.
 //
-// 열쇠 경로도 여기서 정한다 — .mcp.json의 ${USERPROFILE}은 윈도우 전용인 데다
-// CAPTURE_HOME 설정을 무시했다. collect_gsc.py와 같은 열쇠 1개를 쓴다.
+// 인증 환경변수는 db.py(gsc_env)에 물어봐서 채운다 — collect_gsc.py와 같은 정본을 쓴다.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -29,45 +28,14 @@ if (existsSync(envFile)) {
   }
 }
 
-// 인증: **OAuth가 기본이다** (db.gsc_auth()가 정본 — 여기는 그 규칙의 JS 사본이라
-// 순서를 바꾸려면 양쪽을 같이 고쳐야 한다). OAuth 클라이언트 파일이 있으면 그걸 쓰고,
-// 없고 서비스 계정 키만 있으면 그쪽으로 넘어간다.
-// **있는 파일만 가리킨다.** 서버는 이 두 변수가 가리키는 파일이 없으면 인증을
-// 시도하기도 전에 fail-fast 한다 — 서비스 계정 경로를 무조건 걸어두면 OAuth 로
-// 붙은 사람도 "키 파일이 없다"에서 막힌다 (실측으로 잡은 버그).
-// 번들 OAuth 클라이언트는 **서비스 계정보다 뒤다**. 설치만 하면 항상 존재하므로
-// 단순히 "OAuth 파일이 있나"로 앞세우면, 서비스 계정으로 무인 수집을 걸어 둔 사람이
-// 매번 브라우저 로그인으로 끌려간다. 사용자가 직접 놓은 것이 항상 이긴다.
-// (db.gsc_auth()가 정본 — 여기는 그 규칙의 JS 사본이다.)
-const oauthFile = path.join(home, "gsc_oauth_client.json");
-const keyFile = path.join(home, "gsc_service_account.json");
 // import.meta.dirname 은 Node 20.11+ 전용이다 — 이 런처는 버전·OS 의존을 없애려고
-//만든 것이라 fileURLToPath 로 간다.
+// 만든 것이라 fileURLToPath 로 간다.
 const here = path.dirname(fileURLToPath(import.meta.url));
-const bundledOauth = path.join(here, "..", "oauth_client.json");
-if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE && existsSync(oauthFile))
-  env.GSC_OAUTH_CLIENT_SECRETS_FILE = oauthFile;
-if (!env.GSC_CREDENTIALS_PATH && existsSync(keyFile))
-  env.GSC_CREDENTIALS_PATH = keyFile;
-if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE && !env.GSC_CREDENTIALS_PATH
-    && existsSync(bundledOauth))
-  env.GSC_OAUTH_CLIENT_SECRETS_FILE = bundledOauth;
-// OAuth 파일이 없는데 OAuth를 켜두면 서버가 브라우저 로그인을 띄우려다 실패한다.
-if (!env.GSC_OAUTH_CLIENT_SECRETS_FILE) env.GSC_SKIP_OAUTH ??= "true";
-
-// 데이터 확정 상태는 **명시한다** — 서버 기본값(gsc_server.py의 "all")에 묻어가면
-// 업스트림이 기본을 바꾸는 날 우리 답이 조용히 달라진다.
-// "all"을 고른 것이지 물려받은 게 아니다: 이 서버는 **즉석 조회 창구**라
-// "어제 클릭 몇이야"에 답해야 하고, 그건 미확정 데이터를 봐야 나온다(GSC 대시보드와
-// 같은 값). collect_gsc.py 는 반대로 "final" + 3일 버퍼다 — 그쪽은 스냅샷끼리
-// 비교하는 게 목적이라 나중에 값이 바뀌는 날짜가 섞이면 Δ가 거짓이 된다.
-// **그래서 두 경로의 숫자는 원래 다르다** (capture/SKILL.md 철칙 1의 예외 조항).
-env.GSC_DATA_STATE ??= "all";
 
 // 셸을 쓰지 않는다 — 윈도우에서 shell:true면 node가 인자를 따옴표 없이 이어붙여
 // `-c "import sys; print(...)"` 의 세미콜론이 명령 구분자로 쪼개진다. 예전 런처가
 // shell을 켰던 건 npx.cmd(배치 파일) 때문이고, 파이썬은 어느 OS에서나 실행 파일이다.
-const run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf-8" });
+const run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf-8", env });
 
 /** 후보가 진짜 파이썬인가. 스토어 스텁은 exit 49 + 빈 stdout으로 걸러진다. */
 function works(cmd, pre = []) {
@@ -99,6 +67,33 @@ if (!py) {
                 "~/.capture/env 에 CAPTURE_PYTHON=<python 경로> 를 넣어 주세요.");
   process.exit(1);
 }
+
+// 인증 경로 판정은 db.py 가 정본이다 — 여기서 다시 구현하지 않고 물어본다.
+// (예전엔 이 규칙의 JS 사본이 여기 있었고, 한쪽만 고쳐지는 사고가 반복됐다.)
+const dbPy = path.join(here, "..", "..", "capture", "scripts", "db.py");
+const probe = run(py, [...pre, dbPy, "gsc-env"]);
+if (probe.status !== 0) {
+  console.error(`[gsc] 인증 환경변수 확인 실패 (code ${probe.status}): ${probe.stderr || probe.stdout}`);
+  process.exit(1);
+}
+try {
+  const gscEnv = JSON.parse(probe.stdout);
+  for (const [k, v] of Object.entries(gscEnv)) {
+    env[k] ??= v;
+  }
+} catch (e) {
+  console.error(`[gsc] db.py gsc-env 출력 파싱 실패: ${e.message}\n${probe.stdout}`);
+  process.exit(1);
+}
+
+// 데이터 확정 상태는 **명시한다** — 서버 기본값(gsc_server.py의 "all")에 묻어가면
+// 업스트림이 기본을 바꾸는 날 우리 답이 조용히 달라진다.
+// "all"을 고른 것이지 물려받은 게 아니다: 이 서버는 **즉석 조회 창구**라
+// "어제 클릭 몇이야"에 답해야 하고, 그건 미확정 데이터를 봐야 나온다(GSC 대시보드와
+// 같은 값). collect_gsc.py 는 반대로 "final" + 3일 버퍼다 — 그쪽은 스냅샷끼리
+// 비교하는 게 목적이라 나중에 값이 바뀌는 날짜가 섞이면 Δ가 거짓이 된다.
+// **그래서 두 경로의 숫자는 원래 다르다** (capture/SKILL.md 철칙 1의 예외 조항).
+env.GSC_DATA_STATE ??= "all";
 
 // 서버 패키지가 없으면 깔아준다 — npx -y 가 해주던 몫을 pip으로 옮긴 것뿐이다.
 const installed = run(py, [...pre, "-c", "import gsc_server"]).status === 0;

@@ -13,6 +13,7 @@ CLI:
   python db.py sync-project <path/to/project.yaml>
   python db.py stats <project>
   python db.py sql "SELECT ..."        # read-only, for Brain queries
+  python db.py gsc-env
 """
 import json
 import os
@@ -116,6 +117,35 @@ def gsc_auth() -> str:
     if gsc_oauth_bundled().exists():
         return "oauth"
     return ""
+
+
+def gsc_env() -> dict:
+    """gsc MCP 서버에 넘길 인증 환경변수 — 경로 판정의 정본은 여기 하나다."""
+    out: dict = {}
+    env_oauth = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
+    if env_oauth and Path(env_oauth).exists():
+        oauth_file = Path(env_oauth)
+    elif (CAPTURE_HOME / "gsc_oauth_client.json").exists():
+        oauth_file = CAPTURE_HOME / "gsc_oauth_client.json"
+    else:
+        oauth_file = None
+
+    key_file = gsc_key() if gsc_key().exists() else None
+
+    if not oauth_file and not key_file:
+        bundled = gsc_oauth_bundled()
+        if bundled.exists():
+            oauth_file = bundled
+
+    if oauth_file:
+        out["GSC_OAUTH_CLIENT_SECRETS_FILE"] = str(oauth_file)
+    else:
+        out["GSC_SKIP_OAUTH"] = "true"
+
+    if key_file:
+        out["GSC_CREDENTIALS_PATH"] = str(key_file)
+
+    return out
 
 
 def gsc_token() -> Path:
@@ -810,5 +840,7 @@ if __name__ == "__main__":
         stats(args[1])
     elif cmd == "sql" and len(args) > 1:
         run_sql(args[1])
+    elif cmd == "gsc-env":
+        print(json.dumps(gsc_env()))
     else:
         sys.exit(__doc__)
