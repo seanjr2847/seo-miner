@@ -384,6 +384,16 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
       <div class="row"><button class="go" id="btn-keys">키 저장</button>
         <span class="msg" id="m-keys"></span></div>
     </div>
+
+    <div class="step">
+      <h3>5. 마케팅 스킬 <span class="stat" id="s-skills"></span></h3>
+      <!-- doctor가 누락을 보고해 채팅(또는 이 버튼)이 설치를 끝낸다. 완료 후에는
+           Claude Code를 한 번 재시작해야 화면에 뜬다 — 그 동안은 현재 세션이
+           그 스킬을 모른다. 그래서 "재시작 필요"를 명시한다. -->
+      <p class="why" id="why-skills"></p>
+      <div class="row"><button class="go" id="btn-skills" hidden>마케팅 스킬 설치하기</button>
+        <span class="msg" id="m-skills"></span></div>
+    </div>
     <pre id="setup-log" hidden></pre>
   </section>
 
@@ -1032,6 +1042,18 @@ function renderSetup(d) {
   $("s-keys").outerHTML = d.nkeys
     ? `<span id="s-keys" class="stat ok">${d.nkeys}개 저장됨</span>`
     : `<span id="s-keys" class="stat todo">권장 — Serper만 선택</span>`;
+  // 마케팅 스킬 칸 — doctor가 빠진 게 있으면 보일 버튼만 켠다. show_setup 과 따로
+  // 놀기 때문에 패널이 접혀 있어도 doctor 진단 결과로 표시가 결정된다.
+  $("s-skills").outerHTML = d.show_skills_btn
+    ? `<span id="s-skills" class="stat todo">일부 누락</span>`
+    : `<span id="s-skills" class="stat ok">모두 설치됨</span>`;
+  $("btn-skills").hidden = !d.show_skills_btn;
+  $("why-skills").innerHTML = d.show_skills_btn
+    ? `<b>빠진 마케팅 스킬을 제가 깔아드립니다</b> — 글의 각도와 진단을 맡는 스킬 팩입니다
+       (무료). 끝나면 <b>Claude Code를 한 번 재시작</b>하셔야 그 스킬이 화면에 뜹니다.
+       없어도 측정·수집은 그대로지만, 글 품질과 진단 깊이만 안 좋아집니다.`
+    : `글의 각도와 진단을 맡는 스킬 팩 — 모두 설치됐습니다. (재시작 후엔 이 칸이 사라지거나
+       "모두 설치됨"으로 표시됩니다.) 새로 추가하려면 Claude Code를 재시작하세요.`;
   $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
   $("btn-deps").className = d.core_ok ? "go sec" : "go";
   $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치하기";
@@ -1086,6 +1108,11 @@ async function runAction(action, btn, msg, okText) {
 
 $("btn-deps").addEventListener("click", () =>
   runAction("deps", "btn-deps", "m-deps", "설치했습니다."));
+// 마케팅 스킬 설치 — 끝나면 Claude Code 재시작이 필요하므로 그 점을 메시지에 박는다
+// (applySkill은 다음 세션이 한다 — 현재 세션은 그 스킬을 모를 수 있다).
+$("btn-skills").addEventListener("click", () =>
+  runAction("skills", "btn-skills", "m-skills",
+    "설치했습니다 — Claude Code를 재시작하시면 화면에 그 스킬이 뜹니다."));
 $("btn-depsgsc").addEventListener("click", () =>
   runAction("deps_gsc", "btn-depsgsc", "m-gsc", "설치했습니다."));
 // 인증 파일 회수 전에 구글 수집용 부품을 자동으로 깐다 — 이미 있으면 pip이 금방 끝난다.

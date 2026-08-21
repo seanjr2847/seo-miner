@@ -60,6 +60,9 @@ ACTIONS = {
                  "google-auth", "google-auth-oauthlib"],
     "gsc": [sys.executable, str(SETUP_SCRIPTS / "connect_gsc.py")],
     "gsc_login": [sys.executable, "-c", _LOGIN_PY],
+    # 빠진 마케팅 스킬(setup 스킬이 띄우는 doctor의 [꼭 해야 할 일])을 설치해 준다.
+    # 동의는 화면(또는 채팅)이 미리 받고, 스크립트는 빈 입력을 명령줄에 섞지 않는다.
+    "skills": [sys.executable, str(SETUP_SCRIPTS / "install_skills.py")],
 }
 KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
               "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
@@ -303,7 +306,12 @@ def setup_state() -> dict:
     # 부품 버튼은 **로그인 전에** 떠야 한다. gsc_ok 기준이던 시절엔 로그인이 끝나야
     # 나타났는데, 정작 그 로그인 창을 여는 게 이 부품(google-auth-oauthlib)이다.
     show_deps_gsc_btn = bool(gsc_mode) and not bool(deps_gsc.get("googleapiclient"))
-    show_setup = bool(d.get("must")) or no_project
+    # 마케팅 스킬이 빠지면 doctor 가 메시지를 must 에 올린다. 그러면 show_setup 이
+    # 항상 True 가 되어 [설정] 패널이 영원히 펴져 있게 된다 — 다른 필요 항목이 끝난
+    # 뒤에도. 그래서 doctor가 마케팅 스킬 항목을 뺀 사본(must_other)을 별도로 두고
+    # 그걸로 패널 펼침을 판정한다. 마케팅 스킬 버튼은 자체 키로 별도 표시한다.
+    show_skills_btn = bool(d.get("marketing_skills_msg"))
+    show_setup = bool(d.get("must_other")) or no_project
 
     return {
         "verdict": d.get("verdict", ""),
@@ -316,6 +324,7 @@ def setup_state() -> dict:
         "gsc_bundled": bool(d.get("gsc_bundled")),  # 번들 클라이언트 → 동의 화면 경고 예고
         "nkeys": sum(1 for k in ("openrouter", "serper", "dataforseo") if keys.get(k)),
         "show_deps_gsc_btn": show_deps_gsc_btn,
+        "show_skills_btn": show_skills_btn,         # 빠진 마케팅 스킬이 있을 때만 True
         "show_setup": show_setup,
     }
 

@@ -63,9 +63,13 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
 
 ## 글 품질 위임 — 외부 마케팅 스킬
 
-전문 절차 팩이 설치돼 있으면 그 지침을 함께 적용한다. 없으면
-`references/content-rules.md` 의 내장 AEO/SEO 구조 규칙으로 그대로 간다 —
-**없다고 멈추지 않는다.** 계약 전문: `../capture/references/external-skills.md`.
+전문 절차 팩이 설치돼 있으면 그 지침을 함께 적용한다. 빠진 게 있으면 **빠진 걸
+알리고 대신 설치해 드릴지 물은 뒤** 사용자가 승낙하면
+`../../setup/scripts/install_skills.py` 를 실행한다 (성공 후 Claude Code
+재시작이 한 번 필요함을 같이 알린다). 거절하거나 넘어가면
+`references/content-rules.md` 의 내장 AEO/SEO 구조 규칙으로 진행한다 — 그때는
+결과물에 "내장 규칙으로 처리했습니다"를 한 줄 남긴다. 같은 세션에서 두 번
+조르지 않는다. 계약 전문: `../capture/references/external-skills.md`.
 
 | 시점 | 부를 스킬 | 넘기는 것 |
 |---|---|---|

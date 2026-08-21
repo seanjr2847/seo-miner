@@ -25,6 +25,48 @@ sys.path.insert(0, str(CAPTURE_SCRIPTS))
 import db  # noqa: E402
 
 
+MARKETING_SKILLS = {
+    "product-marketing": "사이트 포지셔닝 문서 (setup 온보딩)",
+    "seo-audit":         "기술·온페이지 진단 (색인 차단·커버리지·순위 하락)",
+    "ai-seo":            "AI 인용 갭 해석 (ChatGPT·Perplexity가 남을 인용할 때)",
+    "content-strategy":  "키워드를 토픽 클러스터로 (keywords 큐레이션 직후)",
+    "site-architecture": "카니벌라이제이션·URL 구조",
+    "programmatic-seo":  "pSEO 페이지 대량 생성 (create plan)",
+    "schema":            "구조화 데이터 (create run)",
+}
+OPTIONAL_SKILLS = {
+    "aso": "앱 스토어 리스팅 최적화 (앱이 있는 사이트만)",
+}
+
+
+def find_skill(name: str) -> bool:
+    # $CLAUDE_SKILLS_DIR 가 걸려 있으면 거기가 유일한 탐색 기준이다 (테스트 격리 및
+    # 사용자 지정 경로). 없을 때만 기본 홈/플러그인 캐시/현재 작업 디렉토리를 순서대로 본다.
+    env_dir = os.environ.get("CLAUDE_SKILLS_DIR")
+    if env_dir:
+        return (Path(env_dir) / name / "SKILL.md").exists()
+
+    # 1. ~/.claude/skills/
+    if (Path.home() / ".claude" / "skills" / name / "SKILL.md").exists():
+        return True
+
+    # 2. ~/.claude/plugins/cache/*/*/*/skills/ (플러그인이 동봉한 경우)
+    cache = Path.home() / ".claude" / "plugins" / "cache"
+    if cache.exists():
+        try:
+            for s_dir in cache.glob("*/*/*/skills"):
+                if (s_dir / name / "SKILL.md").exists():
+                    return True
+        except Exception:
+            pass
+
+    # 3. <현재 작업 디렉토리>/.claude/skills/
+    if (Path.cwd() / ".claude" / "skills" / name / "SKILL.md").exists():
+        return True
+
+    return False
+
+
 def has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
@@ -32,6 +74,8 @@ def has(mod: str) -> bool:
 def diagnose() -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     CAPTURE_HOME, DB = db.CAPTURE_HOME, db.DB_PATH
+    marketing_skills = {name: find_skill(name) for name in MARKETING_SKILLS}
+    marketing_optional = {name: find_skill(name) for name in OPTIONAL_SKILLS}
     deps_core = {m: has(m) for m in ("requests", "yaml")}
     # google_auth_oauthlib 은 조회가 아니라 **로그인 창**을 여는 부품이다 —
     # 이게 없으면 OAuth(기본) 사용자는 첫 수집에서 그 자리에 멈춘다.
@@ -155,6 +199,35 @@ def diagnose() -> dict:
         later.append("구글 연동 부품 — `pip install google-api-python-client "
                      "google-auth-oauthlib` (앞은 조회용, 뒤는 로그인 창을 여는 부품)")
 
+    # 마케팅 스킬 항목은 show_setup 판정(대시보드가 패널을 펼치는 여부)에서 빼기 위해
+    # 메시지를 변수로 보관한다 — 그래야 doctor가 결론을 찍고, 대시보드는 그걸 읽기만
+    # 한다. 다른 코드는 s != marketing_skills_msg 로 비교(문자열 매칭이 아니라 동일성).
+    marketing_skills_msg = None
+    missing_marketing = [k for k, ok in marketing_skills.items() if not ok]
+    if missing_marketing:
+        # 이름만 한 줄로 나열한다. 설명까지 괄호로 끼우면 한 문장이 화면을 넘겨서
+        # 정작 "무엇을 하면 되는지"(저장소 주소)가 눈에 안 들어온다 — 설명은
+        # render 의 마케팅 스킬 줄과 SKILL.md 위임 표가 이미 갖고 있다.
+        # **핵심은 "채팅에 마케팅 스킬 설치해줘 하시면 제가 대신 설치합니다"다** —
+        # 사용자에게 저장소 안내를 떠넘기지 않고, 같은 자리에서 설치를 끝낸다.
+        marketing_skills_msg = (
+            f"마케팅 스킬 {len(missing_marketing)}개 "
+            f"({', '.join(missing_marketing)}) 설치 — 글의 각도와 진단을 맡는 전문 팩입니다. "
+            "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
+            "끝나면 Claude Code 재시작이 한 번 필요합니다 — 그 전엔 화면에 안 뜹니다. "
+            "없어도 측정·수집은 그대로 됩니다. "
+            "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
+        )
+        must.append(marketing_skills_msg)
+    elif not marketing_optional.get("aso", True):
+        marketing_skills_msg = (
+            "aso (앱 스토어 리스팅 최적화) — 앱이 있는 사이트만 필요합니다. "
+            "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
+            "끝나면 Claude Code 재시작이 한 번 필요합니다. "
+            "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
+        )
+        later.append(marketing_skills_msg)
+
     # 한 줄 요약 + 다음 한 걸음 하나 — 읽는 사람이 이 두 줄만 봐도 되게.
     if not core_ok:
         verdict = "설치가 조금 남았습니다 — 아래 [꼭 해야 할 일] 1번이면 대부분 켜집니다."
@@ -177,6 +250,11 @@ def diagnose() -> dict:
         next_cmd = f"/capture run {brain['projects'][0]}"
 
     steps = must + [f"[선택] {s}" for s in later]
+    # 마케팅 스킬 누락은 "패널을 항상 펼칠 만큼 급한 일"이 아니다 — 다른 must 가
+    # 있어 켜졌다가 끝나면 다시 접힌다. 그래서 같은 메시지를 뺀 사본을 별도 키로
+    # 둔다 — 대시보드 show_setup 판정이 이걸 본다. 문자열 비교(s != msg)는 깨지기
+    # 쉽지만, msg 가 같은 함수 안에서 만들어졌고 변수 한 곳에만 있으므로 안전하다.
+    must_other = [s for s in must if s != marketing_skills_msg]
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
@@ -188,6 +266,10 @@ def diagnose() -> dict:
                        for n, d, on, fix in caps if not on],
             "verdict": verdict, "next_command": next_cmd, "next_steps": steps,
             "must": must, "later": later,
+            "must_other": must_other,             # 마케팅 스킬 항목이 빠진 must (show_setup 용)
+            "marketing_skills_msg": marketing_skills_msg,   # 결론으로 만든 메시지(없으면 None)
+            "marketing_skills": marketing_skills,
+            "marketing_optional": marketing_optional,
             "core_ok": core_ok, "brain_ok": brain_ok}
 
 
@@ -236,6 +318,15 @@ def render(d: dict) -> None:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")
     else:
         print("\n지금 되는 것: 아직 없습니다 — 아래 [꼭 해야 할 일]만 하면 켜집니다.")
+    m_skills = d.get("marketing_skills", {})
+    if m_skills:
+        installed = sum(1 for v in m_skills.values() if v)
+        total = len(m_skills)
+        missing = [k for k, v in m_skills.items() if not v]
+        if missing:
+            print(f"마케팅 스킬: {installed}/{total} (누락: {', '.join(missing)})")
+        else:
+            print(f"마케팅 스킬: {installed}/{total} (모두 설치됨)")
     if d["locked"]:
         print("아직 안 켠 것 (없어도 위 기능은 다 돌아갑니다)")
         for c in d["locked"]:

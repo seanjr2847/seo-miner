@@ -250,9 +250,13 @@ Next Actions가 리포트의 결론이므로 `--actions` 없이 내보내지 않
 
 ## 외부 마케팅 스킬 위임
 
-측정은 여기서, **해석과 각도는 전문 스킬에**. 설치돼 있으면 아래 시점에 넘기고,
-없으면 내장 규칙(`references/scoring.md`·`../create/references/content-rules.md`)으로
-그대로 간다 — 없다고 멈추지 않는다. 계약 전문: `references/external-skills.md`.
+측정은 여기서, **해석과 각도는 전문 스킬에**. 설치돼 있으면 아래 시점에 넘긴다.
+빠진 게 있으면 **빠진 걸 알리고 대신 설치해 드릴지 물은 뒤** 사용자가 승낙하면
+`../../setup/scripts/install_skills.py` 를 실행한다 (성공 후 Claude Code 재시작이
+한 번 필요함을 같이 알린다). 거절하거나 넘어가면 내장 규칙
+(`references/scoring.md`·`../create/references/content-rules.md`)으로 진행한다 —
+그때는 결과물에 "내장 규칙으로 처리했습니다"를 한 줄 남긴다. 같은 세션에서
+두 번 조르지 않는다. 계약 전문: `references/external-skills.md`.
 
 | 시점 | 부를 스킬 | 넘기는 근거 |
 |---|---|---|
