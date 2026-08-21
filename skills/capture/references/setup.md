@@ -31,13 +31,15 @@ pip install google-api-python-client
 ├── reports/{name}/{date}.html
 ├── gsc_oauth_client.json    # 자기 OAuth 클라이언트를 쓸 때만 (없으면 번들 사용, 4절)
 ├── gsc_service_account.json # 서비스 계정 키 — 무인 수집을 쓸 때만 (아래 4절)
+├── gsc_token.json           # 구글 로그인 토큰 (로그인 한 번이면 생긴다)
+├── docs/{name}/             # 포지셔닝·ASO·콘텐츠 계획 (setup·capture 가 만든다)
 └── creds/{name}/            # 구버전 사이트별 OAuth 잔존물 (더 이상 안 읽음 — 지워도 됨)
 ```
 
-구글 **로그인 토큰**은 여기 없다 — gsc MCP 서버가 자기 설정 폴더
-(`GSC_CONFIG_DIR` 또는 platformdirs 의 `mcp-gsc`)에 `token.json`으로 캐시한다.
-`db.gsc_token()`이 그 자리를 계산하고, `db.gsc_connected()`가 그 파일로 연결을
-판정한다.
+구글 **로그인 토큰**도 여기 산다(`db.gsc_token()`), 연결 판정은 그 파일로 한다
+(`db.gsc_connected()`). 예전 gsc MCP 서버가 자기 설정 폴더에 캐시해 두던 토큰이
+남아 있으면 그대로 승계한다(`db.gsc_token_legacy()`) — 이미 로그인한 사람은 다시
+로그인하지 않는다.
 
 brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다. 명시적으로 하려면
 `python scripts/db.py init`.
@@ -66,14 +68,14 @@ brain.db는 아무 스크립트나 처음 돌리면 자동으로 만들어진다
 상한이다(둘 다 4-B의 자기 클라이언트 갈래로 없앨 수 있다).
 
 어느 쪽이든 인증 한 벌이면 되고, 그것을
-- 플러그인에 번들된 **gsc MCP 서버**([mcp-search-console](https://github.com/AminForou/mcp-gsc))
-  — Claude가 서치콘솔을 즉석 조회 (`get_search_analytics`·`inspect_url_enhanced` 등 21개)
 - **collect_gsc.py** — Brain으로 벌크 수집
+- **gsc_query.py** — Claude가 서치콘솔을 즉석 조회 (properties·search·compare·
+  inspect·sitemaps)
+- **collect_index.py** — URL 색인 상태 적재
 
-이 같이 쓴다. **인증은 한 벌이다** — `collect_gsc.py`는 서비스 계정만 걸려 있으면
-직결하고, 그 외에는 MCP 서버의 인증 해석기(`gsc_server.get_gsc_service()`)를 빌린다.
-서버가 파이썬 패키지라 JSON-RPC를 왕복할 필요가 없어서, OAuth 로그인으로 받은
-토큰을 즉석 조회와 벌크 수집이 그대로 공유한다. 어느 방식이 걸렸는지의 정본은
+가 같이 쓴다. **인증은 한 벌이다** — 셋 다 `collect_gsc.get_service()` 하나를
+부른다. 서비스 계정만 걸려 있으면 직결하고, 그 외에는 브라우저 로그인으로 토큰을
+받아 `~/.capture/gsc_token.json` 에 둔다. 어느 방식이 걸렸는지의 정본은
 `db.gsc_auth()` — **사용자가 직접 놓은 것이 번들을 이긴다**(자기 OAuth 클라이언트 →
 서비스 계정 키 → 번들). 번들이 서비스 계정보다 뒤인 건 의도한 것이다: 앞이면
 무인 수집을 걸어 둔 사람이 설치만으로 브라우저 로그인에 끌려간다.
@@ -105,8 +107,8 @@ python scripts/collect_gsc.py --project NAME
 
 브라우저 로그인 창이 **한 번** 열리고, 동의 화면에 **"Google에서 확인하지 않은 앱"**
 경고가 한 번 뜬다(`고급` → `...(으)로 이동`). 로그인하면 끝이고, 속성마다 권한을
-주는 단계는 없다. gsc MCP 툴은 다음 Claude 세션부터 잡힌다(.mcp.json은 세션 시작
-때 로드).
+주는 단계는 없다. 로그인 창을 여는 건 `google-auth-oauthlib` 이다 — 조회용
+`google-api-python-client` 와 다른 패키지라 둘 다 있어야 한다.
 
 지금 어디까지 왔는지:
 
@@ -139,21 +141,25 @@ Claude에게 "GSC 연동해줘"라고 하면 **JSON 다운로드 버튼 하나�
 서비스 계정이면 403이 나는 속성은 아직 그 이메일을 추가하지 않은 속성이다
 (스크립트가 이메일과 속성별 URL을 알려준다).
 
-### 4-C. MCP 런처 (참고)
+### 4-C. 즉석 조회 (참고)
 
-`.mcp.json`은 OS를 가리지 않는다 — 번들 런처(`skills/setup/scripts/gsc_mcp.mjs`)를
-node로 띄우고, 런처가 파이썬을 찾아 서버를 넘긴다. 서버 부품(`mcp-search-console`)은
-없으면 런처가 처음 한 번 pip으로 깐다. 인증 파일 경로는 `CAPTURE_HOME` 기준으로
-채우되(`GSC_OAUTH_CLIENT_SECRETS_FILE`·`GSC_CREDENTIALS_PATH`), 그 환경변수를 직접
-걸어 두면 그쪽이 우선한다.
-필요한 건 node와 파이썬 3.11+ 뿐이다(파이썬은 이 플러그인이 어차피 쓴다).
-윈도우에서 `python`이 마이크로소프트 스토어 스텁이면 런처가 실제 설치본을 찾아낸다 —
-못 찾으면 `~/.capture/env`에 `CAPTURE_PYTHON=<python 경로>`를 넣으면 된다.
+Brain 에 적재하지 않고 서치콘솔 원본을 바로 읽는다 — 출력은 JSON 이다.
+
+```bash
+python scripts/gsc_query.py properties
+python scripts/gsc_query.py search  --project NAME --days 7 --dim query,page
+python scripts/gsc_query.py compare --project NAME --days 28
+python scripts/gsc_query.py inspect --project NAME https://example.com/a
+python scripts/gsc_query.py sitemaps --project NAME
+```
+
+**수집기와 숫자가 다른 게 정상이다.** 즉석 조회는 `dataState=all` + 창 끝이 오늘,
+수집기는 `final` + 3일 버퍼다. 지금 현황은 이쪽, 스냅샷 Δ 비교는 저쪽 —
+두 값을 빼서 증감을 말하면 안 된다(capture/SKILL.md 철칙 1).
 
 ## 5. OpenRouter (AI 가시성 체크 — 권장)
 
-키 없이 무료로 하려면 `browse` 스킬(`/browse`)이 브라우저로 실제 앱에
-직접 물어봐 같은 데이터를 남긴다. 아래는 여러 프롬프트를 자동으로 돌리고 싶을 때.
+AI 인용 확인(`/capture ai`)에는 이 키가 필요하다. 나머지 기능은 키 없이 그대로 된다.
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
 2. 키는 **`~/.capture/env`(KEY=VALUE) 한 곳**에 둔다: `OPENROUTER_API_KEY=sk-or-...`.

@@ -96,11 +96,10 @@ pip install requests pyyaml
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
 | `/capture rank` | SERP 순위 스냅샷 + 연관검색어·경쟁사 자동 수확 (유료 키) |
 | `/capture ai` | AI 엔진 인용 체크 (OpenRouter) |
-| `/browse` | **키 없이** 브라우저로 실제 앱(chatgpt·perplexity·gemini)에 직접 질문 |
 | `/capture gaps` | 인용 갭·striking distance·CTR 갭·카니벌라이제이션·순위 하락·커버리지·pSEO 패턴·모바일 열위·색인 차단 분석 (API 호출 없음) |
 | `/capture dash` | 로컬 대시보드 |
 | `/capture report` | 그 시점 화면을 자립형 HTML로 박제 |
-| `/capture ask` | 자유 질문 — Brain을 조회해 수치로 답함 |
+| `/capture ask` | 자유 질문 — Brain 조회 또는 서치콘솔 즉석 조회로 수치로 답함 |
 | `/create profile` | 리포의 관례(스택·콘텐츠 위치·메타 방식·보이스) 발견·캐싱 |
 | `/create plan` | 기회 → 작업 배치 (쓰기 전에 리포 git log와 대조) |
 | `/create run` | 실제 파일 변경 → 브랜치 → 커밋(`[opp #id]`) → PR |
@@ -111,7 +110,7 @@ pip install requests pyyaml
 | 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
 |---|---|---|
 | 구글 실적 (필수 연결) | 브라우저에서 **로그인 한 번**. 구글 클라우드 콘솔 작업 **0** — 플러그인이 OAuth 클라이언트를 동봉합니다 (무료, 계정당 1회) | — |
-| AI 인용 확인 | `/browse` — 브라우저로 실제 앱에 직접 질문 | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (권장) |
+| AI 인용 확인 | — | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 |
 | 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 권장(AI오버뷰·역키워드 포함) · `SERPER_API_KEY`는 대체재(선택) |
 
 키는 대시보드 **[설정] → API 키** 칸에 넣으면 `~/.capture/env`에 저장되고 모든
@@ -122,8 +121,8 @@ pip install requests pyyaml
 플러그인이 자기 OAuth 클라이언트를 동봉합니다(rclone·gcloud가 쓰는 방식). 내가
 소유한 속성이 한꺼번에 붙고, **속성마다 '사용자 및 권한'에 이메일을 추가하는 단계도
 없습니다.** 채팅에 `GSC 연동해줘`라고 하거나 `/capture gsc`를 처음 돌리면 브라우저
-로그인 창이 한 번 열립니다. 연결되면 번들된 **gsc MCP 서버**로 Claude가 서치콘솔을
-즉석 조회할 수도 있습니다.
+로그인 창이 한 번 열립니다. 연결되면 `gsc_query.py`로 Claude가 서치콘솔을 즉석
+조회할 수도 있습니다 — 별도 서버 없이 플러그인 안에서 끝납니다.
 
 대가는 두 가지입니다. 동봉된 클라이언트는 구글 심사를 받지 않은 앱이라 동의 화면에
 **"Google에서 확인하지 않은 앱"** 경고가 한 번 뜹니다(`고급` → `...(으)로 이동`으로
@@ -158,13 +157,34 @@ JSON을 내려받았다면 인자 없이 실행하면 다운로드 폴더에서 
 ├── projects/{사이트}.yaml    # 사이트 설정
 ├── gsc_oauth_client.json    # 자기 OAuth 클라이언트를 쓸 때만 (없으면 플러그인 번들)
 ├── gsc_service_account.json # 서비스 계정 키 (무인 수집을 쓸 때만)
+├── gsc_token.json           # 구글 로그인 토큰 (로그인 한 번이면 생김)
+├── docs/{사이트}/            # 포지셔닝·ASO·콘텐츠 계획 (마케팅 스킬 산출물)
 └── reports/{사이트}/{날짜}.html
 ```
 
 플러그인을 업데이트해도 이 폴더는 그대로입니다. `CAPTURE_HOME`으로 위치를 바꿀 수
-있습니다. 구글 **로그인 토큰**만 여기 밖에 삽니다 — gsc MCP 서버가 자기 설정
-폴더(`mcp-gsc`, `GSC_CONFIG_DIR`로 변경 가능)에 캐시하고, 연결 판정도 그 파일을
-봅니다.
+있습니다.
+
+## 마케팅 스킬 연계
+
+측정과 기회 발굴은 seo-miner가 하고, **해석과 각도는 전문 스킬에 넘깁니다.** 설치돼
+있으면 아래 시점에 자동으로 부르고, 없으면 내장 규칙으로 그대로 갑니다 —
+없다고 멈추지 않습니다.
+
+| 스킬 | 언제 |
+|---|---|
+| `product-marketing` | `/setup` 온보딩 — 사이트 포지셔닝 문서 1회 생성 (`docs/{사이트}/positioning.md`) |
+| `aso` | 앱 스토어 리스팅이 있는 사이트 — 리스팅 문서·문구 |
+| `content-strategy` | `/capture keywords` 큐레이션 직후 — 키워드를 토픽 클러스터로 |
+| `seo-audit` | 색인 차단·커버리지·순위 하락 기회가 몰릴 때 |
+| `ai-seo` | `ai_citation_gap` — AI가 우리 대신 남을 인용할 때 |
+| `site-architecture` | 카니벌라이제이션 — 같은 쿼리에 여러 URL이 물릴 때 |
+| `programmatic-seo` | `pseo_pattern` 기회를 `/create plan`에서 집을 때 |
+| `schema` | `/create run`이 페이지를 낼 때 — 구조화 데이터 |
+
+넘기는 건 언제나 Brain 조회 결과(수치·기회 행)입니다. 산문 결과물은
+`~/.capture/docs/{사이트}/`에 남아 다음 런이 다시 읽습니다. 계약 전문:
+`skills/capture/references/external-skills.md`.
 
 ## 설계 원칙
 
@@ -186,17 +206,17 @@ JSON을 내려받았다면 인자 없이 실행하면 다운로드 폴더에서 
   면만 처리하고 나머지는 한계를 밝힙니다.
 - 네이버·다음 등 국내 검색 표면은 미탑재입니다.
 - 자동완성은 비공식 엔드포인트라 실패할 수 있습니다(실패 시 건너뛰고 계속).
-- `/browse`는 실제 앱을 사람처럼 조작합니다. 조작 횟수를 미리 알리고, 로그인 벽·캡차는
-  우회하지 않고 건너뜁니다. 월 1~2회 저빈도 사용을 전제로 합니다.
+- AI 인용 확인은 `OPENROUTER_API_KEY`가 있어야 합니다. 브라우저로 실제 앱을 조작해
+  실측하던 `/browse`는 제거됐습니다.
 
 ## 요구 사항
 
-Python 3.11+ · `requests`, `pyyaml` (구글 자동 수집을 쓰면
-`google-api-python-client`, `google-auth` 추가) · node — gsc MCP 서버 런처용.
+Python 3.11+ · `requests`, `pyyaml`.
 
-서버 부품 `mcp-search-console`는 런처가 처음 한 번 자동으로 깝니다. **구글 계정
-로그인(기본)으로 붙었다면 이건 선택이 아닙니다** — `collect_gsc.py`가 그 패키지의
-인증을 그대로 빌려 쓰기 때문에, 없으면 수집이 멈춥니다. 서비스 계정으로 붙였다면
-수집은 직결이라 서버 없이도 됩니다(대신 MCP 즉석 조회를 못 씁니다).
+구글 연동을 쓰면 `google-api-python-client`, `google-auth`(조회용)와
+`google-auth-oauthlib`(브라우저 로그인 창을 여는 부품)이 추가로 필요합니다.
+**구글 계정 로그인(기본)이면 마지막 것도 선택이 아닙니다** — 없으면 로그인 자리에서
+멈춥니다. 서비스 계정으로 붙였다면 로그인이 없어 그것 없이도 됩니다.
+외부 MCP 서버도 node도 필요 없습니다.
 
 MIT

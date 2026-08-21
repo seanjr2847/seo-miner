@@ -4,7 +4,7 @@
 지금까지 이 스킬은 URL 이 실제로 색인됐는지 몰랐다. scoring.coverage() 가
 "GSC 노출이 있나/없나"로 색인 여부를 근사했고(노출 0 = 색인 안 됨은 거짓일 때가
 많다 — 색인은 됐는데 순위가 낮아 노출이 안 잡히는 경우), SKILL.md 는 Claude 에게
-gsc MCP 의 inspect_url_enhanced 를 손으로 부르라고 시켰지만 그 결과가 아무 데도
+URL 색인을 즉석으로만 확인하라고 시켰지만 그 결과가 아무 데도
 저장되지 않아 다음 리포트에서 또 없어졌다. 이 수집기가 그 구멍을 메운다.
 
 대상 URL: 최신 GSC 스냅샷에서 노출 합계 상위 N개 페이지. 사이트맵 전체가 아니라
@@ -126,7 +126,7 @@ def main() -> None:
         conn.close()
         return
 
-    service = get_service(a.project)
+    service = get_service()
     from googleapiclient.errors import HttpError
 
     rows: list[dict] = []
@@ -236,7 +236,7 @@ def _selfcheck() -> None:
         def inspect(self, body):
             return _Req(body)
 
-    globals()["get_service"] = lambda _project: _Svc()
+    globals()["get_service"] = lambda: _Svc()
     orig_argv = sys.argv
     try:
         sys.argv = ["collect_index.py", "--project", "it", "--limit", "3", "--throttle", "0"]
@@ -259,7 +259,7 @@ def _selfcheck() -> None:
     # dry-run 은 호출도 저장도 없어야 한다.
     conn.execute("DELETE FROM runs")
     conn.commit()
-    globals()["get_service"] = lambda _p: (_ for _ in ()).throw(
+    globals()["get_service"] = lambda: (_ for _ in ()).throw(
         AssertionError("dry-run 이 인증을 건드렸다"))
     try:
         sys.argv = ["collect_index.py", "--project", "it", "--dry-run"]

@@ -12,7 +12,7 @@ Exit code: 0 = core usable, 1 = core setup incomplete.
 import importlib.util
 import json
 import os
-import shutil
+
 import sqlite3
 import sys
 from pathlib import Path
@@ -33,7 +33,9 @@ def diagnose() -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     CAPTURE_HOME, DB = db.CAPTURE_HOME, db.DB_PATH
     deps_core = {m: has(m) for m in ("requests", "yaml")}
-    deps_gsc = {m: has(m) for m in ("googleapiclient",)}
+    # google_auth_oauthlib 은 조회가 아니라 **로그인 창**을 여는 부품이다 —
+    # 이게 없으면 OAuth(기본) 사용자는 첫 수집에서 그 자리에 멈춘다.
+    deps_gsc = {m: has(m) for m in ("googleapiclient", "google_auth_oauthlib")}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
              "db_exists": DB.exists(), "tables": 0, "projects": [],
              "no_prompts": []}
@@ -56,8 +58,7 @@ def diagnose() -> dict:
     # 구글 연결은 이제 **2단**이다: 인증 수단이 있나(gsc_auth) ≠ 실제로 붙었나(gsc_connected).
     # 플러그인이 OAuth 클라이언트를 동봉하면서 gsc_auth()는 **아무것도 안 한 사람에게도**
     # "oauth"를 답한다 — 파일 유무로 판정하면 doctor가 설치 직후 전원에게 "연결됨"이라고
-    # 거짓말하고, 사용자는 수집이 실패할 때까지 그걸 믿는다(setup/SKILL.md가 경고하는,
-    # MCP `Connected` 표시에 이미 한 번 당한 그 거짓말이다). 진짜 판정은 토큰이다.
+    # 거짓말하고, 사용자는 수집이 실패할 때까지 그걸 믿는다. 진짜 판정은 토큰이다.
     gsc_mode = db.gsc_auth()          # "oauth" | "service_account" | "" — 정본은 db
     gsc_conn = db.gsc_connected()     # 토큰(또는 서비스 계정 키)이 실제로 있나
     gsc_pending = bool(gsc_mode) and not gsc_conn      # ← 새로 생긴 "로그인 대기"
@@ -75,9 +76,6 @@ def diagnose() -> dict:
         # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
         # 붙었나"다 — 인증 파일이 놓였나가 아니다.
         "gsc_service_account": gsc_conn,
-        # gsc MCP는 번들 런처(gsc_mcp.mjs)를 node로 띄우고, 런처가 파이썬 서버
-        # (mcp-search-console)를 찾아 넘긴다. 서버 부품은 런처가 알아서 pip으로 깐다.
-        "node": bool(shutil.which("node")),
     }
     core_ok = all(deps_core.values())
     # 보관함은 첫 실행 때 자동 생성된다(db.connect) — 파일이 없는 건 문제가 아니고,
@@ -91,8 +89,9 @@ def diagnose() -> dict:
         ("보관함", "수집한 자료를 내 컴퓨터에 저장 (없으면 자동 생성)",
          core_ok and brain_ok, None),
         ("글 만들기", "모은 키워드로 콘텐츠 초안 작성", core_ok, None),
-        ("AI 노출 확인", "ChatGPT 같은 AI가 내 글을 인용하는지 검사 "
-         "(브라우저 방식은 키 없이 무료)", core_ok, None),
+        ("AI 노출 확인", "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
+         core_ok and bool(os.environ.get("OPENROUTER_API_KEY")),
+         "OpenRouter 키가 필요합니다 (유료, 약 5분): setup.md 5절."),
         ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
          core_ok and all(deps_gsc.values()) and gsc_linked,
          # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
@@ -125,7 +124,7 @@ def diagnose() -> dict:
         # 남은 게 로그인뿐인데 "연결하세요"라고만 하면, 사용자는 이미 끝난 콘솔 작업을
         # 다시 찾으러 간다. 다음 걸음은 **로그인을 유발하는 행동** 하나여야 한다.
         must.append("구글 로그인 한 번 (무료, 30초, 계정당 1회) — 자동 수집과 "
-                    "Claude 즉석 조회(gsc MCP)의 재료입니다. 준비물은 없고 "
+                    "Claude 즉석 조회(/capture ask)의 재료입니다. 준비물은 없고 "
                     "구글 계정으로 로그인만 하면 됩니다 (속성마다 권한 주는 단계 없음). "
                     "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
                     + (" 이때 \"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]을 "
@@ -144,19 +143,17 @@ def diagnose() -> dict:
                      "이라고 하시면 사이트에 맞는 질문 10~30개를 만들어 드립니다 "
                      "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
     if not keys["openrouter"]:
-        later.append("AI 노출 확인 자동화 — OpenRouter 키 (유료, 약 5분): "
-                     "setup.md 5절. 무료로는 `/browse`가 지금도 됩니다.")
+        later.append("AI 노출 확인 — OpenRouter 키 (유료, 약 5분): setup.md 5절. "
+                     "이 키가 없어도 나머지 기능은 다 돌아갑니다.")
     if not (keys["dataforseo"] or keys["serper"]):
         later.append("순위 추적 키 — DataForSEO 권장(AI오버뷰·역키워드 포함), "
                      "Serper는 대체재(선택): setup.md 7절.")
-    # 조건이 gsc_linked(=연결됨)면 로그인 전에는 안 뜬다. 그런데 이 둘은 **로그인 전에**
-    # 갖춰 둬야 하는 것들이다 — 특히 node: 로그인 창을 여는 게 gsc MCP 서버라,
-    # node가 없으면 "로그인해줘"가 그 자리에서 막힌다. 그래서 gsc_mode 기준으로 본다.
+    # 조건이 gsc_linked(=연결됨)면 로그인 전에는 안 뜬다. 그런데 이건 **로그인 전에**
+    # 갖춰 둬야 하는 것이다 — 로그인 창을 여는 게 google-auth-oauthlib 이라,
+    # 없으면 "로그인해줘"가 그 자리에서 막힌다. 그래서 gsc_mode 기준으로 본다.
     if gsc_mode and not all(deps_gsc.values()):
-        later.append("구글 자동 수집용 부품 — `pip install google-api-python-client`")
-    if gsc_mode and not keys["node"]:
-        later.append("node 설치 — Claude가 서치콘솔을 즉석 조회하고(gsc MCP) "
-                     "구글 로그인 창도 이 서버가 엽니다: nodejs.org")
+        later.append("구글 연동 부품 — `pip install google-api-python-client "
+                     "google-auth-oauthlib` (앞은 조회용, 뒤는 로그인 창을 여는 부품)")
 
     # 한 줄 요약 + 다음 한 걸음 하나 — 읽는 사람이 이 두 줄만 봐도 되게.
     if not core_ok:

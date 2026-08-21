@@ -36,14 +36,13 @@ import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 
-# 구글 로그인 창을 여는 건 우리가 아니라 gsc MCP 서버(mcp-search-console)의 인증
-# 해석기다. collect_gsc 가 그 환경변수 규칙(gsc_mcp.mjs 와 같은 것)을 이미 갖고 있어서
-# 그대로 빌린다 — 덕분에 사이트를 하나도 등록하지 않은 사람도 로그인만 먼저 끝낼 수 있다.
-# 판정은 여기서 하지 않는다: 성공 여부는 db.gsc_connected()(= 토큰이 생겼나)가 답한다.
+# 구글 로그인 창을 여는 건 collect_gsc.get_service() 다 — 수집기·즉석 조회와 같은
+# 경로를 그대로 빌린다. 덕분에 사이트를 하나도 등록하지 않은 사람도 로그인만 먼저
+# 끝낼 수 있다. 판정은 여기서 하지 않는다: 성공 여부는 db.gsc_connected()가 답한다.
 _LOGIN_PY = (
     "import sys; sys.path.insert(0, r'" + str(Path(__file__).resolve().parent) + "')\n"
     "import db, collect_gsc\n"
-    "collect_gsc._service_via_mcp()\n"
+    "collect_gsc.get_service()\n"
     "ok = db.gsc_connected()\n"
     "print(('로그인 완료 — 토큰을 보관했습니다: ' + str(db.gsc_token())) if ok else\n"
     "      '로그인이 끝나지 않았습니다 — 열린 브라우저 창에서 구글 계정으로 "
@@ -54,12 +53,11 @@ _LOGIN_PY = (
 # 설정 화면이 실행할 수 있는 명령은 이 넷뿐 — 사용자 입력이 명령줄에 섞이지 않는다.
 ACTIONS = {
     "deps": [sys.executable, "-m", "pip", "install", "requests", "pyyaml"],
-    # mcp-search-console 이 여기 있는 이유: **기본 인증(OAuth)의 실행체가 그 패키지다.**
-    # collect_gsc 는 OAuth 갈래에서 gsc_server 를 import 해 인증을 빌리고, 로그인 창도
-    # 그게 연다. 예전엔 node 런처가 깔아 주는 것에만 기댔는데, MCP 를 한 번도 안 띄운
-    # 사람(대시보드만 쓰는 사람)은 부품을 다 깔고도 로그인 자리에서 막힌다.
+    # google-auth-oauthlib 이 여기 있는 이유: **브라우저 로그인 창을 여는 게 그것이다.**
+    # 조회만 하는 google-api-python-client 와 달리 없으면 로그인 자리에서 막힌다
+    # (서비스 계정 갈래만 쓰는 사람에게는 필요 없지만, 기본은 OAuth 다).
     "deps_gsc": [sys.executable, "-m", "pip", "install", "google-api-python-client",
-                 "google-auth", "mcp-search-console"],
+                 "google-auth", "google-auth-oauthlib"],
     "gsc": [sys.executable, str(SETUP_SCRIPTS / "connect_gsc.py")],
     "gsc_login": [sys.executable, "-c", _LOGIN_PY],
 }
@@ -303,7 +301,7 @@ def setup_state() -> dict:
     gsc_ok = bool(d.get("gsc_connected"))
     gsc_mode = d.get("gsc_mode", "")
     # 부품 버튼은 **로그인 전에** 떠야 한다. gsc_ok 기준이던 시절엔 로그인이 끝나야
-    # 나타났는데, 정작 그 로그인 창을 여는 게 이 부품(mcp-search-console)이다.
+    # 나타났는데, 정작 그 로그인 창을 여는 게 이 부품(google-auth-oauthlib)이다.
     show_deps_gsc_btn = bool(gsc_mode) and not bool(deps_gsc.get("googleapiclient"))
     show_setup = bool(d.get("must")) or no_project
 

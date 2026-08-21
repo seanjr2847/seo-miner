@@ -32,7 +32,8 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
 1. 사용자에게 리포 경로를 받는다. `references/repo-profiling.md`의 휴리스틱으로
    스택·콘텐츠 위치·frontmatter 스키마·URL 패턴·발행 모드를 탐지한다.
 2. 기존 콘텐츠 2~3개를 읽어 보이스 특징(어조, 문장 길이, 이모지/존댓말 여부,
-   제목 스타일)을 요약한다. `product-marketing-context.md`류 파일이 있으면 우선한다.
+   제목 스타일)을 요약한다. `$CAPTURE_HOME/docs/{P}/positioning.md`(setup 이 만든 것)와
+   리포 안의 `product-marketing-context.md`류 파일이 있으면 그쪽을 우선한다.
 3. 결과를 `$CAPTURE_HOME/projects/{P}.repo.yaml`로 저장하고 사용자 검수를 받는다.
    (템플릿: `templates/repo-profile.template.yaml`)
 
@@ -60,11 +61,28 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
 `createdb.py list {P}` 로 작성 이력·머지 여부를 보여주고, 머지된 건
 `createdb.py merged <creation_id>` 로 갱신을 제안한다.
 
-## 글 품질 위임
+## 글 품질 위임 — 외부 마케팅 스킬
 
-카피라이팅·CRO 같은 전문 절차 팩(예: coreyhaines31/marketingskills의 copywriting,
-programmatic-seo, ai-seo)이 설치돼 있으면 해당 스킬의 지침을 함께 적용한다.
-없으면 `references/content-rules.md`의 내장 AEO/SEO 구조 규칙을 따른다.
+전문 절차 팩이 설치돼 있으면 그 지침을 함께 적용한다. 없으면
+`references/content-rules.md` 의 내장 AEO/SEO 구조 규칙으로 그대로 간다 —
+**없다고 멈추지 않는다.** 계약 전문: `../capture/references/external-skills.md`.
+
+| 시점 | 부를 스킬 | 넘기는 것 |
+|---|---|---|
+| `pseo_pattern` 기회를 plan 에서 집을 때 | `programmatic-seo` | 패턴(템플릿 축)·1차 롤아웃 규모·데이터 소스 |
+| `ai_citation_gap` 기회를 쓸 때 | `ai-seo` | 갭 프롬프트, 지금 인용되는 도메인 |
+| 페이지를 새로 내거나 리프레시할 때 (항상 후보) | `schema` | 페이지 종류 + **리포의 기존 구조화 데이터 방식** |
+| 무엇을 먼저 쓸지 순서를 못 정할 때 | `content-strategy` | Brain 기회 목록 + 노출·순위 |
+| 페이지를 어디에 붙일지(허브·경로) 애매할 때 | `site-architecture` | 기존 URL 구조, 겹치는 페이지 |
+| 스토어 리스팅 문구를 쓸 때 | `aso` | `docs/{P}/aso.md`, 경쟁 앱 |
+| 카피·CTA·CRO | `copywriting`·`cro` | 페이지 목적, 대상, 지금 문구 |
+
+**리포 관례가 외부 스킬 권고를 이긴다** (철칙 2). `schema` 가 JSON-LD 를 권해도
+리포가 마이크로데이터를 쓰고 있으면 리포를 따른다 — 새 방식을 이 페이지 하나에
+들이지 않는다.
+
+`$CAPTURE_HOME/docs/{P}/positioning.md` 가 있으면 **먼저 읽는다** — 주장·대상·
+쓰는 말이 거기 있고, 그게 리포 보이스와 함께 글의 기준이 된다 (setup 이 만든다).
 
 ## 스코프 밖
 

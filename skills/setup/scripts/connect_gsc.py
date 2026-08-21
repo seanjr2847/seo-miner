@@ -15,8 +15,9 @@
   * `--status` — 지금 연결됐는지 확인.
 
 설치된 파일은
-  * gsc MCP 서버(플러그인 .mcp.json)  — Claude가 서치콘솔을 실시간 조회
   * capture/scripts/collect_gsc.py    — Brain으로 벌크 수집
+  * capture/scripts/gsc_query.py      — 서치콘솔 즉석 조회
+  * capture/scripts/collect_index.py  — URL 색인 상태 적재
 가 같이 쓴다. 인증은 한 벌이다 (판정 규칙은 db.gsc_auth()/db.gsc_connected()가 정본).
 
 브라우저 자동화가 크롬 다운로드를 트리거하지 못하므로(2026-07-26 실측) 다운로드
@@ -158,7 +159,8 @@ def finish(k: str) -> None:
                   "사용자 및 권한")
         print("    → '사용자 추가' → 위 이메일 → 권한 '제한된 사용자'(읽기는 이걸로 충분)")
     print("\n그 다음:")
-    print("  - 새 Claude 세션부터 gsc MCP 툴(get_search_analytics 등)로 즉석 조회 가능")
+    print("  - 즉석 조회: python ../../capture/scripts/gsc_query.py search "
+          "--project <사이트>")
     print("  - 벌크 수집: python ../../capture/scripts/collect_gsc.py --project <사이트>")
 
 
@@ -167,7 +169,7 @@ def status() -> None:
 
     **"파일이 있다"로 말하던 예전 판정은 틀렸다.** 번들 클라이언트는 설치만 하면
     항상 존재하므로, 그걸로 판정하면 아직 한 번도 로그인하지 않은 사람에게까지
-    "연결됨"이라고 말하게 된다 — 이 저장소가 MCP `Connected` 표시에 이미 당한
+    "연결됨"이라고 말하게 된다 — 예전 gsc MCP 서버의 `Connected` 표시에 이미 당한
     거짓말과 같은 것이다. 진짜 판정은 db.gsc_connected() (= 토큰이 있느냐).
     """
     mode = db.gsc_auth()
@@ -195,8 +197,10 @@ def status() -> None:
     if db.gsc_connected():
         print("[연결됨] 구글 로그인이 끝났습니다 — 수집 가능합니다.")
         print(f"  클라이언트: {client}  ({origin})")
-        print(f"  로그인 토큰: {db.gsc_token()}")
-        print("\n  - 즉석 조회: gsc MCP 툴(get_search_analytics 등)")
+        # 실제로 읽히는 파일을 찍는다 — 예전 MCP 자리를 승계 중이면 그쪽이다.
+        print(f"  로그인 토큰: {db.gsc_token_file() or db.gsc_token()}")
+        print("\n  - 즉석 조회: python ../../capture/scripts/gsc_query.py search "
+              "--project <사이트>")
         print("  - 벌크 수집: python ../../capture/scripts/collect_gsc.py "
               "--project <사이트>")
         return

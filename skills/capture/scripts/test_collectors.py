@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """자체점검 — `python test_collectors.py` (임시 폴더에서만 돈다, 진짜 Brain은 안 건드림).
 
-I/O 경계(네트워크 수집기, doctor, MCP 런처)를 네트워크 호출 없이 검증한다:
+I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 없이 검증한다:
   · collect_ai: OpenRouter 응답 모킹, url_citation 파싱, cited 판정, 실패 집계
   · expand_keywords: Google Suggest 모킹, is_active=0 적재, locale 보존, 50% 초과 실패율 경고
   · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot 적재, depth 밖 None, AIO 미측정 None
   · collect_gsc/collect_index --dry-run: 인증도 네트워크도 안 타고 계획만 찍는지
   · doctor --json: subprocess 실행, exit code 0, JSON 구조(verdict, next_command) 검증
-  · gsc_mcp.mjs: node --check 문법 + 실제 기동 핸드셰이크(툴 이름·열쇠 경로 주입, node 없으면 skip)
+  · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
 """
 import io
 import json
@@ -701,7 +701,7 @@ def test_side_calls_cannot_kill_the_main_snapshot():
             return _SA()
 
     orig, orig_argv = collect_gsc.get_service, sys.argv
-    collect_gsc.get_service = lambda project: _Service()
+    collect_gsc.get_service = lambda: _Service()
     try:
         sys.argv = ["collect_gsc.py", "--project", "sidefail", "--breakdown", "device"]
         collect_gsc.main()
@@ -734,7 +734,8 @@ def test_doctor_json_subprocess():
     # 토큰 자리도 빈 임시 폴더로 돌린다 — 이 컴퓨터의 진짜 로그인 토큰을 보면
     # "로그인 대기" 판정을 검증할 수 없다.
     env = {**os.environ, "CAPTURE_HOME": str(doc_home),
-           "GSC_CONFIG_DIR": str(doc_home / "mcp-gsc")}
+           "GSC_TOKEN_FILE": str(doc_home / "gsc_token.json"),
+           "GSC_CONFIG_DIR": str(doc_home / "legacy-none")}
     env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
     env.pop("GSC_OAUTH_CLIENT_SECRETS_FILE", None)
     res = subprocess.run(
@@ -754,7 +755,7 @@ def test_doctor_json_subprocess():
 
     # 설치 직후 = 번들 클라이언트 + 토큰 없음 = **로그인 대기**. doctor 가 여기서
     # gsc_connected=True 라고 말하면, 한 번도 로그인 안 한 사람이 "연결됨"을 보고
-    # 수집이 왜 안 되는지 영영 못 찾는다 (MCP `Connected` 표시에 당한 그 거짓말).
+    # 수집이 왜 안 되는지 영영 못 찾는다.
     assert data["gsc_mode"] == "oauth", f"번들이 있으면 oauth 여야 함: {data.get('gsc_mode')}"
     assert data["gsc_connected"] is False, "토큰이 없는데 연결됐다고 했다"
     assert data["gsc_bundled"] is True, f"번들로 로그인하는 중이어야 함: {data}"
@@ -765,7 +766,7 @@ def test_doctor_json_subprocess():
 def test_gsc_auth_precedence():
     """db.gsc_auth(): OAuth가 기본, 서비스 계정은 무인 수집용 대안.
 
-    런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부 이 판정 하나를 따르므로,
+    collect_gsc·gsc_query·doctor가 전부 이 판정 하나를 따르므로,
     순서가 뒤집히면 세 군데가 동시에 틀린다. 여기서 못 박는다.
     """
     # **경로를 db.gsc_oauth_client() 로 받으면 안 된다.** 그건 이제 번들까지 훑는
@@ -842,10 +843,13 @@ def test_gsc_connected_is_decided_by_the_token_not_the_file():
     db.gsc_oauth_bundled = lambda: bundled
     # 토큰 자리를 임시 폴더로 돌린다 — 이 컴퓨터에 진짜 로그인 토큰이 있으면
     # 테스트가 그걸 보고 통과해 버린다(정확히 우리가 막으려는 거짓 양성).
-    cfg = HOME / "mcp-gsc-conf"
-    orig_cfg = os.environ.get("GSC_CONFIG_DIR")
-    os.environ["GSC_CONFIG_DIR"] = str(cfg)
+    cfg = HOME / "token-conf"
+    orig_cfg = (os.environ.get("GSC_TOKEN_FILE"), os.environ.get("GSC_CONFIG_DIR"))
     cfg.mkdir(parents=True, exist_ok=True)
+    os.environ["GSC_TOKEN_FILE"] = str(cfg / "gsc_token.json")
+    # 레거시(예전 MCP 서버) 자리도 빈 폴더로 돌린다 — 이 컴퓨터에 그 시절 토큰이
+    # 남아 있으면 gsc_connected 가 그걸 보고 통과해 버린다.
+    os.environ["GSC_CONFIG_DIR"] = str(cfg / "legacy")
     token = db.gsc_token()
     for f in (oauth, key, bundled, token):
         f.unlink(missing_ok=True)
@@ -876,34 +880,52 @@ def test_gsc_connected_is_decided_by_the_token_not_the_file():
             "서비스 계정에 로그인 토큰을 요구하면 무인 수집이 영영 '로그인 대기'가 된다"
     finally:
         db.gsc_oauth_bundled = real_bundled
-        if orig_cfg is None:
-            os.environ.pop("GSC_CONFIG_DIR", None)
-        else:
-            os.environ["GSC_CONFIG_DIR"] = orig_cfg
+        for var, val in zip(("GSC_TOKEN_FILE", "GSC_CONFIG_DIR"), orig_cfg):
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
         for f in (oauth, key, bundled, token):
             f.unlink(missing_ok=True)
 
 
-def test_gsc_token_follows_the_server_not_us():
-    """토큰 자리는 우리가 정하지 않는다 — 서버(gsc_server.py)가 정한다.
+def test_gsc_token_lives_with_the_rest_of_the_state():
+    """토큰은 CAPTURE_HOME 에 산다 — 그리고 예전 MCP 자리를 승계한다.
 
-    GSC_CONFIG_DIR 이 있으면 그 아래 token.json. 어긋나면 반대 방향 거짓말이 된다
-    ("로그인했는데 연결 안 됐다고 한다"). 환경변수가 없을 때의 폴백도 최소한
-    mcp-gsc/token.json 로 끝나야 한다 — platformdirs 유무로 답이 달라지면 안 된다.
+    승계가 끊기면 이미 로그인한 사람이 아무 이유 없이 다시 로그인하게 되고,
+    doctor 는 그동안 "로그인 대기"라고 말한다. 그래서 여기서 못 박는다.
     """
-    orig = os.environ.get("GSC_CONFIG_DIR")
+    orig = (os.environ.get("GSC_TOKEN_FILE"), os.environ.get("GSC_CONFIG_DIR"))
+    new, legacy_dir = HOME / "tok" / "gsc_token.json", HOME / "legacydir"
     try:
-        os.environ["GSC_CONFIG_DIR"] = str(HOME / "cfgdir")
-        assert db.gsc_token() == HOME / "cfgdir" / "token.json", db.gsc_token()
-        os.environ.pop("GSC_CONFIG_DIR")
+        os.environ["GSC_TOKEN_FILE"] = str(new)
+        os.environ["GSC_CONFIG_DIR"] = str(legacy_dir)
+        assert db.gsc_token() == new, db.gsc_token()
+        assert db.gsc_token_legacy() == legacy_dir / "token.json", db.gsc_token_legacy()
+        assert db.gsc_token_file() is None, "아무 토큰도 없는데 있다고 했다"
+
+        # 레거시만 있으면 그걸 쓴다 — 다시 로그인시키지 않는다.
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_dir / "token.json").write_text("{}", encoding="utf-8")
+        assert db.gsc_token_file() == legacy_dir / "token.json"
+
+        # 새 자리가 생기면 그쪽이 이긴다 (승계 후 다시 쓴 결과가 정본).
+        new.parent.mkdir(parents=True, exist_ok=True)
+        new.write_text("{}", encoding="utf-8")
+        assert db.gsc_token_file() == new
+
+        # 환경변수가 없을 때의 기본 자리도 CAPTURE_HOME 안이어야 한다.
+        os.environ.pop("GSC_TOKEN_FILE")
         t = db.gsc_token()
-        assert t.name == "token.json" and t.parent.name == "mcp-gsc", t
-        assert t.is_absolute(), t
+        assert t == db.CAPTURE_HOME / "gsc_token.json" and t.is_absolute(), t
     finally:
-        if orig is None:
-            os.environ.pop("GSC_CONFIG_DIR", None)
-        else:
-            os.environ["GSC_CONFIG_DIR"] = orig
+        for var, val in zip(("GSC_TOKEN_FILE", "GSC_CONFIG_DIR"), orig):
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
+        shutil.rmtree(legacy_dir, ignore_errors=True)
+        shutil.rmtree(new.parent, ignore_errors=True)
 
 
 def test_connect_gsc_assembles_client_and_never_prints_the_secret():
@@ -948,9 +970,9 @@ def test_connect_gsc_assembles_client_and_never_prints_the_secret():
 
 
 def test_collect_gsc_auth_routes_by_mode():
-    """collect_gsc: OAuth면 MCP 인증에 얹히고, 서비스 계정이면 직결, 없으면 안내.
+    """collect_gsc: OAuth면 브라우저 로그인 경로, 서비스 계정이면 직결, 없으면 안내.
 
-    OAuth 사용자가 서비스 계정을 또 만들지 않아도 되는 길이라, 세 갈래가 실제로
+    로그인은 이제 우리 것이다(예전엔 MCP 서버가 대신했다). 세 갈래가 실제로
     갈라지는지 본다 (네트워크는 타지 않는다 — 서비스 객체는 가짜다).
     """
     import collect_gsc
@@ -962,150 +984,66 @@ def test_collect_gsc_auth_routes_by_mode():
     for f in (oauth, key):
         f.unlink(missing_ok=True)
     # 번들도 가짜로 세운다. 번들이 배포에 들어간 뒤로 "파일을 지우면 인증이 없다"가
-    # 성립하지 않는다 — 실제로 ③이 여기서 깨졌다(번들 때문에 oauth 로 판정돼 MCP 로 갔다).
+    # 성립하지 않는다 — 실제로 ③이 여기서 깨졌다(번들 때문에 oauth 로 판정됐다).
     bundled = HOME / "routes_bundled.json"
     real_bundled = db.gsc_oauth_bundled
     db.gsc_oauth_bundled = lambda: bundled
     bundled.unlink(missing_ok=True)
     called = []
-    real_via_mcp = collect_gsc._service_via_mcp
-    collect_gsc._service_via_mcp = lambda: (called.append("mcp"), "mcp-service")[1]
+    real_oauth = collect_gsc._oauth_service
+    collect_gsc._oauth_service = lambda: (called.append("oauth"), "oauth-service")[1]
     try:
-        # ① OAuth 파일이 있으면 MCP 인증에 얹힌다 — 토큰을 둘이 공유한다.
+        # ① OAuth 클라이언트가 있으면 로그인 경로로 간다.
         oauth.write_text(json.dumps({"installed": {"client_id": "x"}}), encoding="utf-8")
-        assert collect_gsc.get_service("t") == "mcp-service", "OAuth면 MCP로 가야 한다"
-        assert called == ["mcp"]
+        assert collect_gsc.get_service() == "oauth-service", "OAuth면 로그인 경로여야 한다"
+        assert called == ["oauth"]
 
         # ② 서비스 계정만 있으면 직결한다 (가짜 키라 파싱에서 터지는 건 정상 —
-        #    여기서 보는 건 "MCP 로 새지 않는다" 하나다).
+        #    여기서 보는 건 "로그인 경로로 새지 않는다" 하나다).
         oauth.unlink()
         called.clear()
         key.write_text(json.dumps({"type": "service_account",
                                    "client_email": "x@y.iam.gserviceaccount.com"}),
                        encoding="utf-8")
         try:
-            assert collect_gsc.get_service("t") != "mcp-service"
+            assert collect_gsc.get_service() != "oauth-service"
         except SystemExit:
             raise
         except Exception:
             pass
-        assert not called, "서비스 계정이 걸려 있으면 MCP 인증을 부르지 않아야 한다"
+        assert not called, "서비스 계정이 걸려 있으면 브라우저 로그인을 부르지 않아야 한다"
 
         # ③ 번들까지 하나도 없으면 두 경로를 다 알려주고 멈춘다.
         key.unlink()
         try:
-            collect_gsc.get_service("t")
+            collect_gsc.get_service()
             raise AssertionError("인증이 하나도 없는데 그냥 진행했다")
         except SystemExit as e:
             msg = str(e)
             assert "connect_gsc.py" in msg and "OAuth" in msg, \
                 f"안내가 두 경로를 다 말하지 않는다: {msg}"
     finally:
-        collect_gsc._service_via_mcp = real_via_mcp
+        collect_gsc._oauth_service = real_oauth
         db.gsc_oauth_bundled = real_bundled
         for f in (oauth, key, bundled):
             f.unlink(missing_ok=True)
 
 
-def test_gsc_mcp_mjs_syntax():
-    """gsc_mcp.mjs: node --check 로 구문 검증. node가 없으면 skip 안내 후 통과."""
-    node_bin = shutil.which("node")
-    if not node_bin:
-        print("  skip: node 없음")
-        return
-    mjs_path = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "gsc_mcp.mjs"
-    assert mjs_path.exists(), f"gsc_mcp.mjs 없음: {mjs_path}"
+def test_gsc_query_selfcheck():
+    """gsc_query: 창 계산·필터 파싱·노출 가중평균 — 즉석 조회가 MCP 서버를 대신한다.
 
-    res = subprocess.run(
-        [node_bin, "--check", str(mjs_path)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    assert res.returncode == 0, f"gsc_mcp.mjs 문법 오류 (code {res.returncode}):\n{res.stderr}"
-
-    # 확정 상태를 서버 기본값에 묻어가게 두면, 업스트림이 기본을 바꾸는 날 우리 답이
-    # 조용히 달라진다. "all"은 물려받은 게 아니라 **고른 것**이다 — 즉석 조회 창구라
-    # 어제 수치를 보여줘야 한다. (collect_gsc.py 는 반대로 final + 3일 버퍼다.)
-    src = mjs_path.read_text(encoding="utf-8")
-    assert "GSC_DATA_STATE" in src, \
-        "런처가 GSC_DATA_STATE 를 명시하지 않는다 — 서버 기본값에 묻어가면 안 된다"
-
-
-def test_gsc_mcp_handshake():
-    """런처가 실제로 서버를 띄우고 우리 열쇠 경로를 물려주는가.
-
-    구문 검증만으로는 못 잡는 것들을 잡는다 — 파이썬 탐색(윈도우 스토어 스텁 회피),
-    인자 전달(shell:true 면 `-c "import sys; ..."` 의 세미콜론이 명령을 쪼갠다),
-    CAPTURE_HOME 기준 열쇠 경로 주입. 서버 부품이 없으면 설치를 기다리지 않고 skip.
+    네트워크는 타지 않는다. 여기서 지키는 건 두 가지다: 콜론이 든 필터 값(URL)이
+    잘리지 않는 것, 그리고 합계의 position 이 단순평균이 아니라 노출 가중평균인 것.
     """
-    node_bin = shutil.which("node")
-    if not node_bin:
-        print("  skip: node 없음")
-        return
-    mjs_path = Path(__file__).resolve().parents[2] / "setup" / "scripts" / "gsc_mcp.mjs"
-    # 임시 CAPTURE_HOME 만으로는 더 이상 "인증 없음"이 되지 않는다 — 번들 클라이언트를
-    # 런처가 집어 주고, 토큰은 CAPTURE_HOME 이 아니라 GSC_CONFIG_DIR 에 산다. 그대로
-    # 두면 이 테스트가 **개발자의 진짜 서치콘솔 계정을 조회한다**(실측: 속성 4개가
-    # 그대로 나왔다). 토큰 자리를 비우고 브라우저 로그인도 막아 결정적으로 실패시킨다.
-    env = {**os.environ, "CAPTURE_HOME": str(HOME),
-           "GSC_CONFIG_DIR": str(HOME / "mcp-gsc-handshake"),
-           "GSC_SKIP_OAUTH": "true"}
-    env.pop("GSC_OAUTH_CLIENT_SECRETS_FILE", None)
-    env.pop("GSC_CREDENTIALS_PATH", None)
-    env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+    import gsc_query
+    gsc_query._selfcheck()
 
-    def ask(method, params):
-        """요청 하나만 보내고 그 응답을 돌려준다 (None이면 skip 사유).
-
-        한 번에 두 개를 보내면 두 번째가 stdin EOF 로 인한 종료와 경합해 답이
-        안 온다 — 그래서 요청마다 서버를 새로 띄운다.
-        """
-        req = "\n".join([
-            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2024-11-05", "capabilities": {},
-                "clientInfo": {"name": "t", "version": "1"}}}),
-            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-            json.dumps({"jsonrpc": "2.0", "id": 2, "method": method, "params": params}),
-        ]) + "\n"
-        try:
-            res = subprocess.run([node_bin, str(mjs_path)], input=req, capture_output=True,
-                                 text=True, encoding="utf-8", errors="replace",
-                                 env=env, timeout=180)
-        except subprocess.TimeoutExpired:
-            return None
-        if "부품을 설치합니다" in (res.stderr or ""):
-            return None
-        for line in (res.stdout or "").splitlines():
-            if not line.startswith("{"):
-                continue
-            m = json.loads(line)
-            if m.get("id") == 2:
-                return m
-        raise AssertionError(f"{method} 응답 없음:\n{res.stdout[:400]}\n{res.stderr[:400]}")
-
-    listed = ask("tools/list", {})
-    if listed is None:
-        print("  skip: 서버 부품 설치 중이거나 응답 없음 — 다음 실행에서 검증된다")
-        return
-    names = {t["name"] for t in listed["result"]["tools"]}
-    for expected in ("list_properties", "get_search_analytics", "inspect_url_enhanced"):
-        assert expected in names, f"{expected} 툴이 없다 — 문서가 가리키는 이름이다: {sorted(names)}"
-
-    # 인증 배선 확인 — 인증은 툴을 부를 때 확인되므로 여기서만 드러난다.
-    # 여기 임시 CAPTURE_HOME 에는 인증 파일이 없다. 그럴 때 런처가 **없는 파일을
-    # 가리키면 안 된다** — 서버는 그 경로가 비면 인증을 시도하기도 전에 fail-fast
-    # 하고, 그러면 OAuth 로 붙은 사람도 "서비스 계정 키가 없다"에서 막힌다.
-    # (실측으로 잡은 회귀라 문자열로 못 박는다.)
-    called = ask("tools/call", {"name": "list_properties", "arguments": {}})
-    if called is None:
-        print("  skip: tools/call 응답 없음")
-        return
-    text = json.dumps(called, ensure_ascii=False)
-    assert "but the file does not exist" not in text, \
-        f"없는 인증 파일 경로를 서버에 걸어 fail-fast 시켰다: {text[:300]}"
-    assert "Authentication failed" in text, \
-        f"인증 없음이 일반 안내로 나와야 한다: {text[:300]}"
+    # 즉석 조회의 기본 상태는 all 이어야 한다 — final 이면 수집기와 같은 숫자가 되고
+    # "지금 이 순간"을 묻는 자리가 사라진다.
+    ap_help = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "gsc_query.py"), "search", "--help"],
+        capture_output=True, text=True, encoding="utf-8")
+    assert "기본 all" in ap_help.stdout, ap_help.stdout
 
 
 if __name__ == "__main__":

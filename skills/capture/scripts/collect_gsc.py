@@ -5,11 +5,12 @@ Known holes (read reports accordingly, see references/scoring.md):
   * ~2-3 day data delay; low-volume longtail queries are privacy-filtered out
   * position is an AVERAGE across impressions, not a pinpoint rank
 
-Auth: gsc MCP 서버와 인증을 공유한다 — 어느 쪽으로 붙였든 열쇠는 한 벌이다.
-  1) 서비스 계정 키(권장, 무인 수집): $CAPTURE_HOME/gsc_service_account.json
+Auth: 열쇠는 한 벌이다 — 벌크 수집(이 파일)·즉석 조회(gsc_query.py)·색인
+  검사(collect_index.py)가 같은 토큰을 쓴다.
+  1) 기본(OAuth): 브라우저 로그인 한 번. 토큰은 $CAPTURE_HOME/gsc_token.json.
+     클라이언트는 플러그인 동봉본이라 구글 클라우드 콘솔 작업이 없다.
+  2) 무인 수집(서비스 계정): $CAPTURE_HOME/gsc_service_account.json
      설치: python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)
-  2) 키가 없으면 MCP 서버(mcp-search-console)의 인증을 빌린다 — OAuth로 붙여
-     뒀다면 그 토큰을 그대로 쓰므로 서비스 계정을 따로 만들 필요가 없다.
 Setup walkthrough: references/setup.md
 
 Usage:
@@ -31,37 +32,58 @@ SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
-def _service_via_mcp():
-    """gsc MCP 서버(mcp-search-console)의 인증을 그대로 빌려 쓴다.
+def _oauth_service():
+    """내 구글 계정으로 로그인해서 서비스 객체를 만든다 — 토큰은 우리가 보관한다.
 
-    서버가 파이썬 패키지라 JSON-RPC를 왕복할 필요가 없다 — 인증 해석기만 부르면
-    같은 종류의 서비스 객체가 나온다. 덕분에 **OAuth로 붙여 둔 사람은 열쇠를 따로
-    안 만들어도 된다**: 브라우저 로그인 한 번으로 만든 토큰을 MCP와 이 수집기가
-    같이 쓴다 (토큰은 서버가 user_config_dir 에 캐시한다).
+    예전에는 이 자리를 gsc MCP 서버(mcp-search-console)의 인증 해석기가 대신 했다.
+    그 패키지를 걷어내면서 로그인도 우리 것이 됐다 — 하는 일은 같다:
+    토큰이 있으면 쓰고, 만료면 갱신하고, 없으면 브라우저를 한 번 연다.
 
-    설정은 import 시점에 읽히므로 환경변수를 먼저 걸어야 한다 — 런처(gsc_mcp.mjs)와
-    같은 규칙이라 어느 쪽으로 들어와도 같은 열쇠를 본다.
+    이미 예전 자리(db.gsc_token_legacy)에 로그인해 둔 사람은 다시 로그인시키지
+    않는다 — 형식이 google-auth 표준이라 그대로 읽어 쓰고, 새 자리에 다시 쓴다.
     """
-    import os
-    # 있는 파일만 가리킨다 — 없는 경로를 걸면 서버가 인증을 시도하기도 전에
-    # "그 파일이 없다"로 fail-fast 한다 (gsc_mcp.mjs와 같은 규칙).
-    if db.gsc_oauth_client().exists():
-        os.environ.setdefault("GSC_OAUTH_CLIENT_SECRETS_FILE", str(db.gsc_oauth_client()))
-    else:
-        os.environ.setdefault("GSC_SKIP_OAUTH", "true")
-    if db.gsc_key().exists():
-        os.environ.setdefault("GSC_CREDENTIALS_PATH", str(db.gsc_key()))
-    try:
-        import gsc_server
-    except ImportError:
-        return None
-    try:
-        return gsc_server.get_gsc_service()
-    except Exception:
-        return None       # 인증 못 하면 아래의 안내문이 이유를 말한다
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = None
+    src = db.gsc_token_file()
+    if src is not None:
+        try:
+            creds = Credentials.from_authorized_user_file(str(src), SCOPES)
+        except (ValueError, OSError):
+            creds = None            # 손상된 토큰은 없는 것으로 치고 다시 로그인한다
+    if creds and not creds.valid and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception:
+            creds = None            # 취소·스코프 변경 등 — 로그인을 다시 받는다
+    if not creds or not creds.valid:
+        client = db.gsc_oauth_client()
+        if not client.exists():
+            return None
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+        except ImportError:
+            sys.exit("구글 로그인 부품이 없습니다 — 먼저 실행: "
+                     "pip install google-auth-oauthlib")
+        print("[gsc] 브라우저에서 구글 로그인 창이 한 번 열립니다 "
+              "(계정당 1회, 이후에는 토큰을 재사용합니다).")
+        creds = InstalledAppFlow.from_client_secrets_file(
+            str(client), SCOPES).run_local_server(port=0)
+    # 갱신된 access token 도 남긴다 — 매번 refresh 왕복을 하지 않기 위해서다.
+    tok = db.gsc_token()
+    tok.parent.mkdir(parents=True, exist_ok=True)
+    tok.write_text(creds.to_json(), encoding="utf-8")
+    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
-def get_service(project: str):
+def get_service():
+    """지금 걸린 인증으로 서치콘솔 서비스 객체 하나. 판정 정본은 db.gsc_auth().
+
+    벌크 수집(이 파일)·색인 검사(collect_index)·즉석 조회(gsc_query)가 전부
+    이 함수 하나를 부른다 — 열쇠는 한 벌이라는 원칙의 실행체다.
+    """
     try:
         from googleapiclient.discovery import build
     except ImportError:
@@ -70,8 +92,8 @@ def get_service(project: str):
 
     mode = db.gsc_auth()
 
-    # 서비스 계정만 걸려 있으면 직결한다 — 읽기 전용 스코프에 무인 실행이고,
-    # 무거운 MCP 서버 모듈을 import 하지 않아도 된다.
+    # 서비스 계정만 걸려 있으면 직결한다 — 읽기 전용 스코프에 무인 실행이라
+    # 브라우저 로그인 경로를 아예 타지 않는다.
     if mode == "service_account":
         from google.oauth2 import service_account
         creds = service_account.Credentials.from_service_account_file(
@@ -79,10 +101,9 @@ def get_service(project: str):
         return build("searchconsole", "v1", credentials=creds,
                      cache_discovery=False)
 
-    # 기본(OAuth)은 MCP 서버의 인증에 얹힌다 — 토큰을 둘이 공유한다.
-    # 토큰이 아직 없으면 여기서 브라우저 로그인이 한 번 열린다.
+    # 기본은 OAuth — 토큰이 아직 없으면 여기서 브라우저 로그인이 한 번 열린다.
     if mode == "oauth":
-        svc = _service_via_mcp()
+        svc = _oauth_service()
         if svc is not None:
             return svc
 
@@ -148,7 +169,7 @@ def main() -> None:
         conn.close()
         return
 
-    service = get_service(a.project)
+    service = get_service()
     rows: list = []
     calls = 0
     # API는 한 번에 최대 PAGE행만 준다 — 그 이상은 startRow로 이어받아야 한다.

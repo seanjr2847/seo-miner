@@ -917,7 +917,7 @@ function render(d) {
       ai += `<p class="sub" style="margin:20px 0 10px">어디에도 안 잡힌 질문 ${d.missed.length}개</p>` +
         `<div class="runlog">${d.missed.map(m => `<span class="r">${esc(m.prompt)}
           <span class="muted">${esc(m.engines)}</span></span>`).join("")}</div>`;
-  } else ai = `<div class="empty">아직 안 물어봤습니다 — <code>/seo-miner:browse</code>는 키 없이 무료입니다.</div>`;
+  } else ai = `<div class="empty">아직 안 물어봤습니다 — <code>/capture ai</code>로 확인하세요.</div>`;
   $("ai").innerHTML = ai;
 
   $("ranks").innerHTML = d.ranks.length
@@ -1000,7 +1000,7 @@ function renderGsc(d) {
          읽습니다. 확인: <code>connect_gsc.py --status</code>`
       : `<b>연결됐습니다</b> — 구글 로그인이 이미 끝났고 토큰을 보관 중입니다. 다시
          로그인하실 일은 없습니다. 벌크 수집(<code>/capture gsc</code>)과 Claude 즉석
-         조회(gsc MCP)가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성은 따로
+         조회가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성은 따로
          권한을 줄 필요가 없습니다.`)
     : st === "pending"
     ? `<b>남은 건 구글 로그인 한 번뿐입니다</b> — 무료, 30초, 준비물 없음. 인증 수단은
@@ -1108,7 +1108,7 @@ $("btn-gsc").addEventListener("click", async () => {
   loadDoctor();
 });
 
-// 로그인 창을 여는 건 gsc MCP 서버(mcp-search-console)다 — 부품이 없으면 그 자리에서
+// 로그인 창을 여는 건 google-auth-oauthlib 이다 — 부품이 없으면 그 자리에서
 // 막히므로 여기서도 먼저 깐다(이미 있으면 pip이 금방 끝난다). 버튼 하나로 잇는 이유는
 // [파일 가져오기]와 같다: 사용자가 "부품 먼저"를 알 필요가 없어야 한다.
 $("btn-gsclogin").addEventListener("click", async () => {

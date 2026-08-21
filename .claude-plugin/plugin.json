@@ -1,7 +1,7 @@
 {
   "name": "seo-miner",
-  "version": "1.26.1",
-  "description": "seo-miner — personal SEO & AI-search opportunity mining suite (Boring Agent 역기획): capture skill이 GSC(합계·일별 추이·디바이스 분해·URL 색인 상태)·자동완성·SERP·AI 인용 체크로 빈 키워드와 citation gap, 모바일 열위(device_gap), 색인 차단(index_blocked)을 로컬 SQLite Brain에 채굴하고, create skill이 그 기회를 어떤 리포/스택에서든 브랜치+PR 게이트로 실제 콘텐츠 변경으로 바꾼다. browse skill은 API 키 없이 claude-in-chrome으로 실제 소비자 앱(chatgpt·perplexity·gemini)의 인용을 실측. GSC 연결은 구글 클라우드 콘솔 작업 0 — 플러그인이 OAuth 클라이언트를 동봉해 브라우저 로그인 한 번이면 소유한 속성이 전부 붙고(미검증 앱 경고 1회·사용자 100명 상한), 그 토큰 한 벌을 번들된 gsc MCP 서버(즉석 조회)와 collect_gsc.py(벌크 수집)가 공유한다. 자기 클라이언트(--client-id/--client-secret)와 무인용 서비스 계정 갈래도 남아 있다. 로컬 대시보드(/capture dash, stdlib http.server + 바닐라 JS)로 Brain 실시간 조회·기회 트리아지. first-run doctor(setup) 포함.",
+  "version": "1.27.0",
+  "description": "seo-miner — personal SEO & AI-search opportunity mining suite (Boring Agent 역기획): capture skill이 GSC(합계·일별 추이·디바이스 분해·URL 색인 상태)·자동완성·SERP·AI 인용 체크로 빈 키워드와 citation gap, 모바일 열위(device_gap), 색인 차단(index_blocked)을 로컬 SQLite Brain에 채굴하고, create skill이 그 기회를 어떤 리포/스택에서든 브랜치+PR 게이트로 실제 콘텐츠 변경으로 바꾼다. GSC는 외부 MCP 서버 없이 플러그인 안에서 끝난다 — 구글 클라우드 콘솔 작업 0(OAuth 클라이언트 동봉), 브라우저 로그인 한 번이면 소유한 속성이 전부 붙고(미검증 앱 경고 1회·사용자 100명 상한), 그 토큰 한 벌을 벌크 수집(collect_gsc.py)·즉석 조회(gsc_query.py: properties/search/compare/inspect/sitemaps)·색인 검사(collect_index.py)가 공유한다. 자기 클라이언트(--client-id/--client-secret)와 무인용 서비스 계정 갈래도 남아 있다. 외부 마케팅 스킬(product-marketing·seo-audit·ai-seo·content-strategy·site-architecture·programmatic-seo·schema·aso)이 설치돼 있으면 해석·각도를 그쪽에 위임하고, 없으면 내장 규칙으로 계속한다. 로컬 대시보드(/capture dash, stdlib http.server + 바닐라 JS)로 Brain 실시간 조회·기회 트리아지. first-run doctor(setup) 포함.",
   "author": {
     "name": "local"
   },

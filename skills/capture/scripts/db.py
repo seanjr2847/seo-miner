@@ -6,14 +6,13 @@ State lives OUTSIDE the skill folder so skill updates never touch data.
     ├── brain.db
     ├── projects/*.yaml
     ├── reports/{project}/{date}.html
-    └── gsc_token.json / client_secrets.json
+    └── gsc_token.json / gsc_oauth_client.json
 
 CLI:
   python db.py init
   python db.py sync-project <path/to/project.yaml>
   python db.py stats <project>
   python db.py sql "SELECT ..."        # read-only, for Brain queries
-  python db.py gsc-env
 """
 import json
 import os
@@ -101,7 +100,7 @@ def gsc_oauth_client() -> Path:
 def gsc_auth() -> str:
     """지금 걸려 있는 인증 — "oauth" | "service_account" | "" (아직 없음).
 
-    **이 순서가 정본이다.** gsc MCP 런처(gsc_mcp.mjs)·collect_gsc·doctor가 전부
+    **이 순서가 정본이다.** collect_gsc·gsc_query·doctor가 전부
     이 판정을 따른다 — 예전에 같은 규칙이 여러 방언으로 흩어져 한쪽만 고쳐지는
     일이 반복됐다. OAuth가 기본이고, 서비스 계정은 무인 수집이 필요할 때 쓴다.
 
@@ -119,63 +118,42 @@ def gsc_auth() -> str:
     return ""
 
 
-def gsc_env() -> dict:
-    """gsc MCP 서버에 넘길 인증 환경변수 — 경로 판정의 정본은 여기 하나다."""
-    out: dict = {}
-    env_oauth = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
-    if env_oauth and Path(env_oauth).exists():
-        oauth_file = Path(env_oauth)
-    elif (CAPTURE_HOME / "gsc_oauth_client.json").exists():
-        oauth_file = CAPTURE_HOME / "gsc_oauth_client.json"
-    else:
-        oauth_file = None
-
-    key_file = gsc_key() if gsc_key().exists() else None
-
-    if not oauth_file and not key_file:
-        bundled = gsc_oauth_bundled()
-        if bundled.exists():
-            oauth_file = bundled
-
-    if oauth_file:
-        out["GSC_OAUTH_CLIENT_SECRETS_FILE"] = str(oauth_file)
-    else:
-        out["GSC_SKIP_OAUTH"] = "true"
-
-    if key_file:
-        out["GSC_CREDENTIALS_PATH"] = str(key_file)
-
-    return out
-
-
 def gsc_token() -> Path:
-    """MCP 서버가 구글 로그인 토큰을 캐시하는 자리 — **우리가 정하는 게 아니다.**
+    """구글 로그인 토큰을 보관하는 자리 — **이제 우리가 정한다.**
 
-    정본은 업스트림 gsc_server.py 77~79행:
-        _CONFIG_DIR = os.environ.get("GSC_CONFIG_DIR") or user_config_dir("mcp-gsc")
-        TOKEN_FILE  = os.path.join(_CONFIG_DIR, "token.json")
-    여기가 어긋나면 "연결됐는데 안 됐다고 하는" 반대 방향 거짓말이 된다.
+    예전에는 gsc MCP 서버(mcp-search-console)가 로그인을 대신 해 줬고, 토큰도 그
+    패키지의 설정 폴더에 있었다. 그 서버를 걷어내면서 로그인도 우리 것이 됐으니
+    (collect_gsc._oauth_service) 토큰도 나머지 상태와 같은 곳 — CAPTURE_HOME — 에 둔다.
+    """
+    return Path(os.environ.get("GSC_TOKEN_FILE", CAPTURE_HOME / "gsc_token.json"))
 
-    platformdirs 는 lazy import 다 — db.py 는 pyyaml 조차 lazy 로 미루는 파일이고,
-    이 함수 하나 때문에 모든 스크립트가 의존성 하나를 더 요구하면 안 된다.
-    없으면 OS 기본값으로 폴백한다. 윈도우 경로가 mcp-gsc 를 두 번 지나는 건 오타가
-    아니다 — platformdirs 는 appauthor 를 안 주면 appname 으로 채우고(실측:
-    C:\\Users\\...\\AppData\\Local\\mcp-gsc\\mcp-gsc), 그 실측값이 정본이다.
+
+def gsc_token_legacy() -> Path:
+    """예전 MCP 서버가 쓰던 토큰 자리 — 이미 로그인한 사람을 다시 로그인시키지 않는다.
+
+    업스트림 gsc_server.py 규칙이었다: GSC_CONFIG_DIR 또는 platformdirs 의 mcp-gsc
+    아래 token.json. 파일 형식은 google-auth 표준(Credentials.to_json)이라 그대로
+    읽힌다 — collect_gsc 가 이걸 읽어 쓰고 새 자리에 다시 쓴다.
+    윈도우 경로가 mcp-gsc 를 두 번 지나는 건 오타가 아니라 platformdirs 실측값이다.
     """
     d = os.environ.get("GSC_CONFIG_DIR")
     if not d:
-        try:
-            from platformdirs import user_config_dir
-            d = user_config_dir("mcp-gsc")
-        except ImportError:
-            if sys.platform == "win32":
-                base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local") / "mcp-gsc"
-            elif sys.platform == "darwin":
-                base = Path.home() / "Library" / "Application Support"
-            else:
-                base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-            d = base / "mcp-gsc"
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        d = base / "mcp-gsc" / "mcp-gsc" if sys.platform == "win32" else base / "mcp-gsc"
     return Path(d) / "token.json"
+
+
+def gsc_token_file():
+    """실제로 존재하는 토큰 파일 — 새 자리 우선, 없으면 레거시. 없으면 None."""
+    for t in (gsc_token(), gsc_token_legacy()):
+        if t.exists():
+            return t
+    return None
 
 
 def gsc_connected() -> bool:
@@ -185,10 +163,9 @@ def gsc_connected() -> bool:
     "파일이 있다"가 더 이상 "연결됐다"를 뜻하지 않는다 — 파일 유무로 판정하면
     설치 직후 전원이 '연결됨'으로 보인다.
 
-    이건 이 저장소가 이미 남한테 당해 본 거짓말이다. MCP 서버는 인증 파일이 없어도
-    `Connected` 로 뜨고 툴 목록까지 보여준다(setup/SKILL.md 가 경고하는 그것).
-    그것 때문에 사용자가 "MCP는 설정 없이 되던데"라고 믿은 채 한 번도 인증되지 않은
-    상태로 지냈다 — 실측으로 확인됐다. **우리 doctor 가 같은 거짓말을 하면 안 된다.**
+    이건 실제로 한 번 당해 본 거짓말이다(예전 gsc MCP 서버는 인증 파일이 없어도
+    `Connected` 로 떠서 사용자가 한 번도 인증되지 않은 상태로 지냈다).
+    **우리 doctor 가 같은 거짓말을 하면 안 된다.**
 
     서비스 계정은 로그인 자체가 없어서 키 파일 존재가 곧 연결이다.
     """
@@ -196,7 +173,7 @@ def gsc_connected() -> bool:
     if auth == "service_account":
         return gsc_key().exists()
     if auth == "oauth":
-        return gsc_token().exists()
+        return gsc_token_file() is not None
     return False
 
 
@@ -208,6 +185,16 @@ def creds_dir(project: str) -> Path:
 def downloads_dir() -> Path:
     """브라우저 다운로드 폴더 — GSC 서비스 계정 키(connect_gsc)를 여기서 찾는다."""
     return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
+
+
+def docs_dir(project: str) -> Path:
+    """사이트별 마케팅 문서 자리 — positioning.md, aso.md 등.
+
+    setup 이 외부 스킬(product-marketing·aso)로 만들어 여기 두면, capture 는 AI
+    프롬프트를 쓸 때, create 는 콘텐츠 보이스를 잡을 때 같은 문서를 읽는다.
+    Brain(brain.db) 밖에 산문으로 두는 이유는 사람이 직접 고쳐야 하는 것이기 때문이다.
+    """
+    return CAPTURE_HOME / "docs" / project
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -529,7 +516,7 @@ def run(conn: sqlite3.Connection, project_id: int, kind: str):
 
 
 # ── Brain 쓰기 경로 ────────────────────────────────────────────────
-# 스키마를 아는 곳은 여기뿐이다. 수집기·browse·create가 각자 INSERT를 쓰던 시절엔
+# 스키마를 아는 곳은 여기뿐이다. 수집기·create가 각자 INSERT를 쓰던 시절엔
 # 같은 수정이 한 호출부에만 들어가 locale 누락 같은 버그가 다른 경로에 남았다.
 
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
@@ -765,7 +752,7 @@ def add_competitors(conn: sqlite3.Connection, project_id: int, domains, source: 
 def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None,
                     engine: str, sample_idx: int, mentioned: int, cited: int,
                     cited_domains: list, excerpt: str) -> int:
-    """AI 인용 체크 1건. 키 경로(collect_ai)와 브라우저 경로(browse)가 같이 쓴다."""
+    """AI 인용 체크 1건 (collect_ai)."""
     cur = conn.execute(
         """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
              mentioned, cited, cited_domains_json, answer_excerpt)
@@ -840,7 +827,5 @@ if __name__ == "__main__":
         stats(args[1])
     elif cmd == "sql" and len(args) > 1:
         run_sql(args[1])
-    elif cmd == "gsc-env":
-        print(json.dumps(gsc_env()))
     else:
         sys.exit(__doc__)

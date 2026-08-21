@@ -177,7 +177,7 @@ def main() -> None:
     if not api_key:
         sys.exit("OPENROUTER_API_KEY not set. See references/setup.md")
 
-    aliases = scoring.aliases_of(cfg)   # browse 경로와 같은 별칭 규칙 — 갈라지면 비교 불능
+    aliases = scoring.aliases_of(cfg)   # 별칭 규칙 정본은 scoring — 갈라지면 비교 불능
     own_domain = p["domain"]
     # r.api_calls를 직접 센다 — 도중에 죽어도 그때까지 부른 횟수가 남는다.
     with db.run(conn, p["id"], "ai") as r:

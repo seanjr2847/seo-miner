@@ -16,12 +16,12 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
    디바이스·국가 분해는 `gsc_breakdown`, 색인 상태는 `gsc_index_status` 에 있다.
    "언제부터 떨어졌나"·"모바일만 나쁜가"·"색인은 됐나"는 합계 스냅샷으로는 답이
    안 나온다 — 이 세 테이블을 조회해서 답한다.
-   (예외: GSC 실측 수치는 gsc MCP 툴로 서치콘솔에서 직접 조회한 결과도 근거로 인정 —
+   (예외: `scripts/gsc_query.py` 로 서치콘솔을 직접 조회한 결과도 근거로 인정 —
    원본 데이터라 Brain 스냅샷보다 신선하다. 어느 쪽 근거인지는 밝힌다.)
 
    **두 경로의 숫자는 원래 다르다 — 섞어서 비교하지 마라.**
 
-   | | gsc MCP 툴 | Brain (`collect_gsc.py`) |
+   | | 즉석 조회 (`gsc_query.py`) | Brain (`collect_gsc.py`) |
    |---|---|---|
    | 데이터 상태 | `all` — 미확정 포함 (GSC 대시보드와 같은 값) | `final` — 확정만 |
    | 창 끝 | 오늘 | 오늘 − 3일 |
@@ -29,8 +29,8 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
 
    같은 "지난 28일"이 두 경로에서 다른 값으로 나오는 건 **버그가 아니라 설계다**.
    구글은 최근 2~3일 수치를 나중에 채워 넣는다 — 즉석 답은 그걸 보여줘야 쓸모가 있고,
-   Δ 비교는 그걸 빼야 거짓이 안 된다. 그래서 **MCP 수치와 Brain 수치를 빼서 증감을
-   말하면 안 된다**. 증감은 Brain 안에서만, 즉석 현황은 MCP로.
+   Δ 비교는 그걸 빼야 거짓이 안 된다. 그래서 **즉석 조회 수치와 Brain 수치를 빼서
+   증감을 말하면 안 된다**. 증감은 Brain 안에서만, 즉석 현황은 gsc_query 로.
 2. **비용 고지.** 외부 API를 부르는 작업(collect_ai)은 실행 전 반드시 `--dry-run`으로
    호출 수를 보여주고 사용자 확인을 받는다.
 3. **리포트는 Next Actions로 끝난다.** 분석 없이 빈 액션으로 리포트를 내보내지 않는다.
@@ -100,9 +100,20 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 (구버전 사이트별 OAuth 경로와 CSV 내보내기 임시 경로는 제거됐다 — 2026-08-18.)
 
 연동돼 있으면 **즉석 질문**("어제 클릭 몇이야", "이 페이지 어떤 쿼리로 들어와")은
-Brain 수집 없이 gsc MCP 툴(`get_search_analytics`·`compare_search_periods` 등)로
-바로 조회해 답해도 된다.
+Brain 수집 없이 `scripts/gsc_query.py` 로 바로 조회해 답해도 된다 (JSON 출력):
+
+```
+python scripts/gsc_query.py properties
+python scripts/gsc_query.py search  --project {P} --days 7 --dim query,page --limit 25
+python scripts/gsc_query.py search  --project {P} --days 3 --dim date
+python scripts/gsc_query.py search  --project {P} --filter page:contains:/blog/
+python scripts/gsc_query.py compare --project {P} --days 28
+python scripts/gsc_query.py inspect --project {P} https://example.com/a
+python scripts/gsc_query.py sitemaps --project {P}
+```
+
 리포트·스코어링·추세 비교는 여전히 `collect_gsc.py`로 Brain에 적재한 스냅샷 기준.
+즉석 조회는 **아무것도 저장하지 않는다** — 근거로 쓸 땐 그 사실을 밝힌다(철칙 1).
 
 완료 후 striking-distance 프리뷰를 요약해준다.
 
@@ -150,9 +161,9 @@ NULL엔 적용되지 않는다).
 확인은 두 갈래로 역할이 갈린다:
 - **반복해서 볼 것은 `/capture index`** — 결과가 `gsc_index_status` 에 남아 날짜별로
   비교되고 `index_blocked` 기회로 올라온다. 여러 URL·다음 런과의 대조는 전부 이쪽이다.
-- **gsc MCP 의 `inspect_url_enhanced`(여러 개면 `batch_url_inspection`)는 단발 즉석
-  확인용** — "이 URL 지금 색인됐어?" 한 번 물어보는 자리. 저장되지 않으므로 이걸로
-  본 결과를 근거로 삼을 땐 Brain 이 아니라 MCP 즉석 조회임을 밝힌다(철칙 1).
+- **`gsc_query.py inspect` 는 단발 즉석 확인용** — "이 URL 지금 색인됐어?" 한 번
+  물어보는 자리(여러 URL 을 한 줄에 이어 줄 수 있다). 저장되지 않으므로 이걸로
+  본 결과를 근거로 삼을 땐 Brain 이 아니라 즉석 조회임을 밝힌다(철칙 1).
 
 ### /capture ai {P}
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →
@@ -167,7 +178,8 @@ sql로 읽어 직접 재판정 후 결과를 설명한다 — 답변 전문이 �
 강제 재기록은 `--force`. (AI 답변은 비결정적이라 1샘플은 "사실"이 아니다 — `scoring.md`
 4-1 의 주 단위 추세 원칙과 같은 이유다.)
 
-OPENROUTER_API_KEY 미설정이면 browse 스킬(브라우저 실측, 키 불필요)을 대안으로 안내한다.
+OPENROUTER_API_KEY 미설정이면 이 명령은 돌지 않는다 — 키가 필요하다고 말하고
+(`setup.md` 5절) 나머지 기능은 그대로 됨을 알린다.
 
 ### /capture gap {P} — 경쟁사 역키워드 (DataForSEO Labs, 유료 키 필요)
 `python scripts/collect_gap.py --project {P} --dry-run` 으로 도메인 수·요청
@@ -233,6 +245,25 @@ Next Actions가 리포트의 결론이므로 `--actions` 없이 내보내지 않
 
 ### /capture ask {P} "..."
 자유 질문. sql로 근거를 조회해 수치와 함께 답한다. 없는 데이터는 없다고 답한다.
+"지금·어제·이번 주"처럼 최신을 묻는 질문은 Brain 대신 `gsc_query.py` 즉석 조회로
+답한다 (Brain 스냅샷은 3일 전까지다 — 철칙 1의 표).
+
+## 외부 마케팅 스킬 위임
+
+측정은 여기서, **해석과 각도는 전문 스킬에**. 설치돼 있으면 아래 시점에 넘기고,
+없으면 내장 규칙(`references/scoring.md`·`../create/references/content-rules.md`)으로
+그대로 간다 — 없다고 멈추지 않는다. 계약 전문: `references/external-skills.md`.
+
+| 시점 | 부를 스킬 | 넘기는 근거 |
+|---|---|---|
+| `/capture keywords` 큐레이션 직후 | `content-strategy` | 활성 키워드 + 노출·순위 |
+| `/capture gaps` 가 `index_blocked`·`coverage`·`rank_decay` 로 몰릴 때 | `seo-audit` | `gsc_index_status` 행, 하락 키워드 |
+| `ai_citation_gap` 이 있을 때 | `ai-seo` | `ai_checks` 답변 전문·인용 도메인 |
+| `cannibalization` — 같은 쿼리에 여러 URL | `site-architecture` | 겹치는 URL 쌍의 노출·순위 |
+| 앱 스토어 리스팅을 가진 프로젝트 | `aso` | 스토어 URL, 경쟁 앱 |
+
+산문 결과물은 `$CAPTURE_HOME/docs/{P}/` 에 남긴다(`content-plan.md` 등) — 안 남기면
+다음 런에서 또 없다. 외부 스킬이 준 수치는 Brain 근거가 아니다: 출처를 밝힌다.
 
 ## 스코프 밖 (요청받아도 이 스킬로는 하지 않는 것)
 

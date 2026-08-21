@@ -173,7 +173,7 @@ URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 def aliases_of(cfg: dict) -> list[str]:
     """판정에 쓸 자기 브랜드 별칭 — 이름 + brand_aliases.
 
-    두 측정 경로(collect_ai·browse)가 각자 조립하면 별칭 규칙이 갈라져
+    측정 경로가 각자 조립하면 별칭 규칙이 갈라져
     judge 가 같아도 수치가 어긋난다."""
     return [a for a in [cfg.get("name", "")] + (cfg.get("brand_aliases") or []) if a]
 
@@ -182,8 +182,7 @@ def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
           own_domain: str) -> tuple[int, int, list[str]]:
     """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들) 로 판정.
 
-    키 경로(collect_ai)와 브라우저 경로(browse/record_check)가 같은 판정을 써야
-    두 경로의 수치를 한 화면에서 비교할 수 있다. browse가 collect_ai 내부를
+    인용 판정은 여기 하나뿐이어야 한다 — 부르는 쪽이 collect_ai 내부를
     가로질러 import 하던 것을 여기로 옮겼다. 인용 URL이 없으면 본문의 맨 URL을
     줍는 fallback까지 여기서 한다 — 호출부 두 곳이 각자 하던 일이다.
     """
@@ -779,13 +778,13 @@ def stage(p: dict, name: str, domain: str) -> dict:
          "cmd": f"/capture keywords {name}"},
         {"id": "ai", "t": "AI 노출 확인",
          "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
-                 "브라우저로 직접 물어보면 키 없이 무료입니다.",
+                 "OpenRouter 키가 필요합니다.",
          "done": p["ai_checks"] > 0,
          "state": (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
                    if p["ai_checks"]
                    else ("질문은 준비됨 · 아직 안 물어봄" if p["ai_prompts"]
                          else "물어볼 질문부터 필요")),
-         "cmd": (f"/seo-miner:browse {name}" if p["ai_prompts"] else f"/capture add {name}")},
+         "cmd": (f"/capture ai {name}" if p["ai_prompts"] else f"/capture add {name}")},
         {"id": "gaps", "t": "손댈 것 뽑기",
          "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
                  "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
@@ -842,7 +841,7 @@ def _selfcheck() -> None:
     st = stage({**pr, "gsc_days": 3, "gsc_last": "2026-08-14", "keywords_found": 5,
                 "ai_prompts": 10}, "demo", "demo.com")
     assert st["here"] == 3
-    assert st["steps"][3]["cmd"] == "/seo-miner:browse demo"  # 질문이 있으면 browse
+    assert st["steps"][3]["cmd"] == "/capture ai demo"        # 질문이 있으면 물어본다
     st = stage({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
                 "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
     assert st["here"] == -1                                    # 한 바퀴 다 돎
