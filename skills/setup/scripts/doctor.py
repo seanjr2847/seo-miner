@@ -237,10 +237,11 @@ def diagnose() -> dict:
             "없어도 측정·수집은 그대로 됩니다. "
             "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
         )
-        must.append({
-            "id": "marketing_skills",
-            "msg": marketing_skills_msg
-        })
+        # [꼭 해야 할 일]이 아니다 — 이 메시지 자신이 "없어도 측정·수집은 그대로"라고
+        # 말한다. must 로 두면 첫 세션이 **Claude Code 재시작**으로 끊긴다 (온보딩에서
+        # 제일 비싼 이탈 지점인데, 정작 측정에는 필요 없는 항목이다). 권하는 자리는
+        # 첫 리포트가 나온 뒤다 — 그때는 "각도를 더 깊게"가 실제 이득이라 재시작 값을 한다.
+        later.append(marketing_skills_msg)
     elif not marketing_optional.get("aso", True):
         marketing_skills_msg = (
             "aso (앱 스토어 리스팅 최적화) — 앱이 있는 사이트만 필요합니다. "
@@ -272,10 +273,9 @@ def diagnose() -> dict:
         next_cmd = f"/capture run {brain['projects'][0]}"
 
     steps = [m["msg"] if isinstance(m, dict) else m for m in must] + [f"[선택] {s}" for s in later]
-    # 마케팅 스킬 누락은 "패널을 항상 펼칠 만큼 급한 일"이 아니다 — 다른 must 가
-    # 있어 켜졌다가 끝나면 다시 접힌다. 그래서 마케팅 스킬을 뺀 사본을 별도 키로
-    # 둔다 — 대시보드 show_setup 판정이 이걸 본다.
-    must_other = [m for m in must if (m.get("id") if isinstance(m, dict) else m) != "marketing_skills"]
+    # 마케팅 스킬은 이제 must 에 안 들어간다(위 [선택] 강등). must_other 키는 대시보드
+    # show_setup 판정이 읽으므로 이름만 남겨 둔다 — 지금은 must 와 같은 값이다.
+    must_other = list(must)
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)

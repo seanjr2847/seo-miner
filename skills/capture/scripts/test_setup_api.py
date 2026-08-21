@@ -5,6 +5,7 @@
 네트워크를 타므로 제외 — 액션 이름 검증까지만 본다.
 """
 import json
+import re
 import os
 import sys
 import tempfile
@@ -274,7 +275,13 @@ html = out.read_text("utf-8")
 assert out.parent.name == "demo" and out.suffix == ".html", out
 assert "window.__SNAPSHOT__=" in html, "스냅샷이 안 박혔다"
 assert "<!--SNAPSHOT-->" not in html, "치환이 안 됐다"
-assert 'src="http' not in html and 'href="http' not in html, "외부 요청이 섞였다"
+# 금지 대상은 **외부 요청**이지 외부 링크가 아니다 — <a href> 는 사용자가 눌러야
+# 열리므로 페이지를 열 때 아무것도 안 부른다. [설정] 패널의 키 발급 링크가 여기 걸렸다.
+assert 'src="http' not in html, "외부 요청이 섞였다 (src)"
+assert "@import" not in html, "외부 요청이 섞였다 (@import)"
+# <link> 자체는 금지가 아니다 — 파비콘이 data: URI 로 인라인돼 있다. 막을 것은
+# 바깥에서 끌어오는 스타일시트뿐이다.
+assert not re.search(r'<link[^>]*?href="https?:', html), "외부 요청이 섞였다 (스타일시트)"
 snap = json.loads(html.split("window.__SNAPSHOT__=", 1)[1].split("</script>", 1)[0])
 assert snap["data"]["schema"] == 1, f"박제본 schema 필드 1 기대, 실제: {snap['data'].get('schema')}"
 assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap

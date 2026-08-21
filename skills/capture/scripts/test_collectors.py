@@ -12,6 +12,7 @@ I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 �
   · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
   · run_all: 체인 순서(gsc→index→keywords→rank→ai→gaps→report), 유료 키 없을 시 건너뜀, gsc 실패 시 즉시 중단
 """
+import contextlib
 import io
 import json
 import os
@@ -723,9 +724,13 @@ def test_doctor_detects_marketing_skills():
                 assert res["marketing_skills"][k] is False, f"{k} 는 False 여야 함"
         assert res["marketing_optional"]["aso"] is False, "aso 는 False 여야 함"
 
-        # must 에 빠진 스킬 요구 문장 및 저장소 링크가 있는지 assert
-        assert any("marketingskills" in m["msg"] and "product-marketing" in m["msg"] for m in res["must"]), \
-            f"must 에 누락 스킬 설치 요구 문장이 있어야 함: {res['must']}"
+        # 누락 스킬 안내는 later([나중에])에 있어야 한다 — must 가 아니다.
+        # must 로 두면 첫 세션이 Claude Code 재시작으로 끊기는데, 이 팩은 측정·수집에
+        # 필요가 없다(메시지 자신이 그렇게 말한다). 권하는 자리는 첫 리포트 뒤다.
+        assert any("marketingskills" in s and "product-marketing" in s for s in res["later"]), \
+            f"later 에 누락 스킬 설치 안내가 있어야 함: {res['later']}"
+        assert not any("marketingskills" in m["msg"] for m in res["must"]), \
+            f"마케팅 스킬은 must 에 오면 안 됨: {res['must']}"
 
         # 2. 필수 7개 전부 설치된 상태
         for k in doctor.MARKETING_SKILLS:
@@ -1206,8 +1211,12 @@ def test_run_all_chain_order_and_paid_skips():
         install_fakes()
 
         calls.clear()
-        code = run_all.run_chain("test_proj")
+        buf0 = io.StringIO()
+        with contextlib.redirect_stdout(buf0):
+            code = run_all.run_chain("test_proj")
         assert code == 0, f"유료 키 없어도 정상 완료되어야 함 (exit code: {code})"
+        # 첫 바퀴가 리포트 경로에서 끊기지 않게 — 고치러 가는 길과 다음 바퀴 시점.
+        assert "다음 바퀴" in buf0.getvalue(), f"재수집 안내가 없다: {buf0.getvalue()}"
 
         # 실행된 단계 순서 — gsc→index→keywords→gaps→report (rank/ai 는 유료 키 미보유로 건너뜀)
         assert calls == ["gsc", "index", "keywords", "gaps", "report"], \
@@ -1245,10 +1254,17 @@ def test_run_all_chain_order_and_paid_skips():
         })
 
         calls.clear()
-        code_fail = run_all.run_chain("test_proj")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code_fail = run_all.run_chain("test_proj")
         assert code_fail == 1, f"gsc 실패 시 exit code 1 이어야 함: {code_fail}"
         assert calls == ["gsc"], \
             f"gsc 실패 시 후속 단계가 호출되지 않아야 함 (실제: {calls})"
+        # 여기서 끝나면 사용자는 빈손이다 — 인증 없이 도는 keywords 로 안내해야 한다.
+        # 리포트 경로를 찍으면 있지도 않은 파일을 가리키게 된다.
+        out = buf.getvalue()
+        assert "/capture keywords test_proj" in out, f"빈손 복구 안내가 없다: {out}"
+        assert "리포트 파일" not in out, f"중단됐는데 리포트 경로를 찍었다: {out}"
 
         # 4. gsc 외 다른 단계(예: index) 실패 시에는 후속 단계가 계속 실행되는지 확인
         install_fakes(results={

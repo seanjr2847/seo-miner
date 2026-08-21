@@ -177,6 +177,11 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 #guide .lead { font-size:14px; color:var(--slate); margin:6px 0 26px; max-width:68ch; }
 #guide .lead b { color:var(--ink); font-weight:600; }
 .shaft { display:grid; grid-template-columns:26px 1fr; gap:0 18px; }
+/* 완주 표시. 배너(#nx)는 이미 같은 말을 하지만, [안내]를 열면 모든 단계가 done 이고
+   "지금 할 것"이 없어 화면이 애매해진다 — 여기서 한 번 더 못박는다. */
+.donebar { border:1px solid var(--patina); background:var(--wash); border-radius:6px;
+  padding:12px 14px; margin:0 0 20px; font-size:13px; color:var(--ink); }
+.donebar b { font-weight:600; }
 .stp { display:contents; }
 .stp .rail { position:relative; }
 /* 갱도 벽: 위·아래로 이어지는 선. 판 데는 녹청, 안 판 데는 회색. */
@@ -405,6 +410,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
     <p class="lead"><b>재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는</b> 반복입니다.
       한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 끝난 단계는 실제로 모인
       자료를 보고 표시하니, 아래 [지금 할 것] 하나만 하시면 됩니다.</p>
+    <div class="donebar" id="donebar" hidden></div>
     <div class="shaft" id="shaft"></div>
     <div class="loopback">2~5번은 <code>/capture run</code> 하나로 한 번에 돌릴 수도
       있습니다(중간에 비용이 드는 단계에서 물어봅니다).<br>
@@ -840,6 +846,14 @@ function renderGuide(d) {
          숫자로 보입니다.`
       : `지금 할 것 — <b>${esc(steps[here].t)}</b>` +
         (steps[here].cmd ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+  }
+  const db_ = $("donebar");
+  if (db_) {
+    db_.hidden = here !== -1;
+    if (here === -1) db_.innerHTML =
+      `✓ <b>한 바퀴 완주</b> — 여섯 단계를 모두 돌았습니다. 다음은
+       <b>2. 구글 실적 읽기</b>부터입니다. 고친 게 순위·인용에 반영됐는지는
+       다시 잴 때 숫자로 나옵니다.`;
   }
   // 아직 한 바퀴도 안 돈 프로젝트면 펴서 보여준다. 다 돌았으면 헤더 [안내]로 연다.
   if (here !== -1 && !d.progress.gsc_days) $("guide").hidden = false;

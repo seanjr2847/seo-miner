@@ -50,21 +50,45 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 `{P}` = 프로젝트 이름.
 
 ### /capture add {P} — 프로젝트 온보딩
-**이미 등록된 이름이면**(대시보드 설정 폼으로 만든 경우) 1~3단계는 건너뛰고 4단계만
-한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다.
+**이미 등록된 이름이면**(대시보드 설정 폼으로 만든 경우) 1~4단계는 건너뛰고 5단계만
+한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
+`gsc_property` 를 도메인에서 추정하므로 **2번의 대조는 한 번 해 준다**.
 
-1. 인터뷰: 타입(game|local_clinic|saas|directory), 도메인, locale, 시드 키워드 3~10개,
-   브랜드 별칭, 경쟁사, gsc_property, 그리고 **도구 이름(`tools`)** — directory·saas
-   타입은 이게 비면 남의 브랜드 카탈로그가 비어서 striking_distance에 노이즈가
-   흘러든다 (`scoring.md` 1a). `projects/_presets.yaml`에서 타입 프리셋을 읽고
-   그 각도에 맞춰 질문을 구체화한다.
-2. `projects/_template.yaml`을 복사해 `$CAPTURE_HOME/projects/{P}.yaml` 작성.
-3. `python scripts/db.py sync-project $CAPTURE_HOME/projects/{P}.yaml`
-4. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
+1. **인터뷰는 3문항이다** — 타입(game|local_clinic|saas|directory), 도메인,
+   시드 키워드 3~10개. `projects/_presets.yaml`에서 타입 프리셋을 읽고 그 각도에
+   맞춰 질문을 구체화한다. 나머지는 **묻지 않는다**:
+   - `locale` — 도메인·사용자가 쓰는 언어에서 추론하고 한 줄로 확인만 받는다.
+   - `tools` — directory·saas 타입에서만 묻는다. 이 두 타입은 비면 남의 브랜드
+     카탈로그가 비어서 striking_distance에 노이즈가 흘러든다 (`scoring.md` 1a).
+     game·local_clinic은 해당 없음.
+   - `brand_aliases`·`competitors_manual` — 여기서 묻지 않는다. `/capture keywords`
+     단계에서 실제 후보 목록을 보면서 채운다. 빈 화면에 대고 답하는 것보다
+     그때 답이 정확하고, 값을 보기 전에 물으면 그냥 마찰이다.
+   - `gsc_property` — **아래 2번이 정한다. 사용자에게 표기를 묻지 마라.**
+     (`sc-domain:` vs `https://` 를 처음 하는 사람이 구분할 이유가 없고, 틀리면
+     첫 수집이 빈손·403으로 끝난다.)
+2. `gsc_property` 정하기 — **실제 목록에서 고른다**:
+   - 구글이 이미 연결돼 있으면 `python scripts/gsc_query.py properties` 로 속성
+     목록을 뽑아 도메인이 맞는 것을 **그대로** 쓴다. 여러 개면 사용자에게 번호로
+     고르게 한다.
+   - 아직 연결 전이면 `sc-domain:{도메인}` 으로 채워 두고(대시보드 폼과 같은 규칙),
+     **로그인 직후 위 명령으로 대조해** 다르면 yaml을 고치고 3번을 다시 돌린다.
+     추정이 틀리는 건 흔하다 — URL-prefix 속성(`https://example.com/`)만 가진
+     계정에는 `sc-domain:` 이 아예 없다.
+3. `projects/_template.yaml`을 복사해 `$CAPTURE_HOME/projects/{P}.yaml` 작성.
+4. `python scripts/db.py sync-project $CAPTURE_HOME/projects/{P}.yaml`
+5. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
    사용자 검수 후 ai_prompts에 INSERT (scoring.md 5절의 파이썬 패턴 사용, is_active=1).
 
-등록이 끝나면 곧바로 `/capture run {P}` 풀런을 제안한다 — 다음에 뭘 쳐야 할지
-다시 묻지 않게. (등록 인터뷰 자체는 사람이 답해야 하므로 자동화 대상이 아니다.)
+등록이 끝나면 **구글 연결 여부로 갈린다** — 첫 수확을 로그인 뒤로 미루지 않는다:
+
+- **연결됨** → 곧바로 `/capture run {P}` 풀런을 제안한다.
+- **미연결(로그인 대기·인증 없음)** → 먼저 `/capture keywords {P}` 를 돌린다.
+  자동완성은 인증도 키도 안 쓰는 유일한 수집이라 **지금 당장** 후보 수십 개가
+  나온다. 그 목록을 보여준 다음에 로그인을 요청한다. 로그인 전에 풀런을 돌리면
+  `run_all.py` 가 1단계에서 중단되어 사용자는 빈손으로 첫 런을 끝낸다.
+
+(등록 인터뷰 자체는 사람이 답해야 하므로 자동화 대상이 아니다.)
 
 ### /capture keywords {P} — 키워드 유니버스 (무료 파이프라인)
 **풀런(`/capture run`)에 포함된다** — 3단계(`keywords`).

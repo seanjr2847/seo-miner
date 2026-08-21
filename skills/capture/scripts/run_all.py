@@ -276,10 +276,44 @@ def run_chain(
     print(separator)
 
     print("\n다음 작업:")
-    print(f"  리포트 파일: {report_file}")
-    print(f"  대시보드 실행: /capture dash {project}\n")
+    if gsc_aborted:
+        # 여기서 끝나면 사용자는 빈손이다. 인증 없이 도는 유일한 수집으로 안내해
+        # 첫 수확이라도 남긴다 — 로그인 실패가 곧 "아무것도 못 봄"이 되지 않게.
+        print('  구글 로그인 먼저: 채팅에 "GSC 로그인해줘"')
+        print(f"  로그인 없이 지금 되는 것: /capture keywords {project} "
+              "(자동완성 — 인증·키 안 씀)\n")
+        return 1
 
-    return 1 if (has_failure or gsc_aborted) else 0
+    print(f"  리포트 파일: {report_file}")
+    print(f"  대시보드 실행: /capture dash {project}")
+    top = _top_opportunity(project)
+    if top:
+        # 리포트 경로만 주고 끝내면 "그래서 뭘 고치나"로 안 이어진다 — 이 도구의
+        # 유일한 실제 성과는 고치기(create)이고, 그 문턱을 여기서 한 줄로 낮춘다.
+        print(f"  손댈 것 1순위: [{top['kind']}] {top['target']}")
+        print(f"  고치러 가기: /create plan {project}")
+    # 2회차 수집부터 Δ가 나온다. 그 2회차를 부르는 것이 아무데도 없었다.
+    print(f"  다음 바퀴: 1~2주 뒤 같은 명령 한 줄 — /capture run {project} "
+          "(구글이 최근 3일 수치를 나중에 채우고, 순위도 주 단위로 움직인다)\n")
+
+    return 1 if has_failure else 0
+
+
+def _top_opportunity(project: str):
+    """요약에 붙일 기회 1건. 실패해도 요약을 깨뜨리지 않는다 — 장식이지 결과가 아니다."""
+    try:
+        conn = db.connect()
+        try:
+            p = db.get_project(conn, project)
+            row = conn.execute(
+                "SELECT kind, target FROM opportunities "
+                " WHERE project_id=? AND status='new' "
+                " ORDER BY score DESC, id DESC LIMIT 1", (p["id"],)).fetchone()
+            return {"kind": row["kind"], "target": row["target"]} if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
 
 
 
