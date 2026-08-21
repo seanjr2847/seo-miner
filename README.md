@@ -51,7 +51,7 @@ pip install requests pyyaml
 /setup                     # 환경 진단 — 뭐가 되고 뭐가 빠졌는지, 다음 한 걸음 하나
 /setup web                 # 같은 걸 화면으로: 부품 설치·사이트 등록·키 저장을 폼에서
 /capture add <사이트>       # 온보딩 인터뷰 (game | local_clinic | saas | directory)
-/capture run <사이트>       # gsc → rank → ai → 분석 → 리포트 한 번에
+/capture run <사이트>       # 7단계를 한 번에 — gsc → index → keywords → rank → ai → gaps → report
 /capture dash <사이트>      # 대시보드 (아래)
 ```
 
@@ -91,6 +91,7 @@ pip install requests pyyaml
 |---|---|
 | `/setup [web]` | 환경 진단, 설치·키·구글 연결. `web`이면 대시보드 설정 화면 |
 | `/capture add` | 사이트 온보딩 (타입·도메인·시드 키워드·AI 질문 초안) |
+| `/capture run` | **한 번에 끝까지** — `gsc → index → keywords → rank → ai → gaps → report` 순서로 스크립트가 묶어서 돌고, 끝나면 리포트 파일을 알려 줍니다. `rank`·`ai` 같은 유료 축은 키가 없으면 알아서 빠집니다 |
 | `/capture gsc` | Search Console 실적 자동 수집 — 합계·날짜별 추이·디바이스 분해 (구글 계정 연결 — 필수) |
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
@@ -104,6 +105,13 @@ pip install requests pyyaml
 | `/create plan` | 기회 → 작업 배치 (쓰기 전에 리포 git log와 대조) |
 | `/create run` | 실제 파일 변경 → 브랜치 → 커밋(`[opp #id]`) → PR |
 | `/create status` | 작성 이력·머지 여부 |
+
+한 번 등록해 두면 이후에는 `/capture run {사이트}` 한 줄이 전부입니다. 스크립트가
+순서대로 7단계를 묶어서 돌립니다 — `gsc → index → keywords → rank → ai → gaps → report`.
+`gsc` 가 실패하면 거기서 멈춥니다(나머지 전부가 그 데이터를 재료로 쓰기 때문).
+다른 단계는 하나가 실패해도 나머지가 계속 갑니다. `rank`·`ai` 같은 유료 축은
+키가 없으면 알아서 빠지고, 끝날 때 단계별 `완료 / 건너뜀 / 실패` 표와 리포트
+파일 경로를 알려 줍니다. (정기 자동 실행은 아직 없습니다.)
 
 ## 준비물
 

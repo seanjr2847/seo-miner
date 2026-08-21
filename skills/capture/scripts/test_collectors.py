@@ -10,6 +10,7 @@ I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 �
   · doctor marketing_skills: CLAUDE_SKILLS_DIR 기반 탐지, must 요구 문구 및 7개 완비 시 해제 검증
   · install_skills: 스킬 완비 시 실행 방지, 누락 시 marketplace/install 호출 검증
   · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
+  · run_all: 체인 순서(gsc→index→keywords→rank→ai→gaps→report), 유료 키 없을 시 건너뜀, gsc 실패 시 즉시 중단
 """
 import io
 import json
@@ -1174,6 +1175,163 @@ def test_gsc_query_selfcheck():
         [sys.executable, str(Path(__file__).parent / "gsc_query.py"), "search", "--help"],
         capture_output=True, text=True, encoding="utf-8")
     assert "기본 all" in ap_help.stdout, ap_help.stdout
+
+
+def test_run_all_chain_order_and_paid_skips():
+    """run_all: 체인 실행 순서(gsc→index→keywords→rank→ai→gaps→report),
+    유료 키 미설정 시 rank/ai 건너뜀, gsc 실패 시 즉시 중단 검증.
+    """
+    import run_all
+
+    orig_env = {
+        "SERPER_API_KEY": os.environ.get("SERPER_API_KEY"),
+        "DATAFORSEO_LOGIN": os.environ.get("DATAFORSEO_LOGIN"),
+        "DATAFORSEO_PASSWORD": os.environ.get("DATAFORSEO_PASSWORD"),
+        "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY"),
+    }
+    orig_run = subprocess.run
+    called_cmds = []
+
+    class _FakeCompletedProcess:
+        def __init__(self, args, returncode=0):
+            self.args = args
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(args, *a, **k):
+        called_cmds.append(args)
+        return _FakeCompletedProcess(args, returncode=0)
+
+    try:
+        subprocess.run = fake_run
+        run_all.subprocess.run = fake_run
+
+        # 1. 유료 키 환경변수를 전부 지운 상태
+        for k in orig_env:
+            os.environ.pop(k, None)
+
+        called_cmds.clear()
+        code = run_all.run_chain("test_proj")
+        assert code == 0, f"유료 키 없어도 정상 완료되어야 함 (exit code: {code})"
+
+        # 실행된 스크립트 파일명 목록 추출 (gsc -> index -> keywords -> gaps -> report 순서)
+        executed_scripts = [Path(cmd[1]).name for cmd in called_cmds]
+        assert executed_scripts == [
+            "collect_gsc.py",
+            "collect_index.py",
+            "expand_keywords.py",
+            "scoring.py",
+            "dashboard.py",
+        ], f"유료 키 없을 때 실행 순서가 올바르지 않음: {executed_scripts}"
+        assert "collect_serp.py" not in executed_scripts, "rank 단계가 실행되지 않아야 함"
+        assert "collect_ai.py" not in executed_scripts, "ai 단계가 실행되지 않아야 함"
+
+        # 2. 유료 키를 넣은 상태 (rank, ai 포함)
+        os.environ["SERPER_API_KEY"] = "mock_serper_key"
+        os.environ["OPENROUTER_API_KEY"] = "mock_openrouter_key"
+
+        called_cmds.clear()
+        code_paid = run_all.run_chain("test_proj")
+        assert code_paid == 0, f"유료 키 포함 시 정상 완료되어야 함 (exit code: {code_paid})"
+
+        executed_scripts_paid = [Path(cmd[1]).name for cmd in called_cmds]
+        assert executed_scripts_paid == [
+            "collect_gsc.py",
+            "collect_index.py",
+            "expand_keywords.py",
+            "collect_serp.py",
+            "collect_ai.py",
+            "scoring.py",
+            "dashboard.py",
+        ], f"유료 키 있을 때 실행 순서가 올바르지 않음: {executed_scripts_paid}"
+
+        # DataForSEO 키 조합도 rank 실행을 활성화하는지 확인
+        os.environ.pop("SERPER_API_KEY", None)
+        os.environ["DATAFORSEO_LOGIN"] = "mock_login"
+        os.environ["DATAFORSEO_PASSWORD"] = "mock_pw"
+        called_cmds.clear()
+        code_dfs = run_all.run_chain("test_proj")
+        assert code_dfs == 0
+        executed_dfs = [Path(cmd[1]).name for cmd in called_cmds]
+        assert "collect_serp.py" in executed_dfs
+
+        # 3. gsc 단계가 실패(returncode 1)할 때 — 그 뒤 단계가 하나도 실행되지 않는지 assert
+        def fake_run_fail_gsc(args, *a, **k):
+            called_cmds.append(args)
+            if "collect_gsc.py" in str(args):
+                return _FakeCompletedProcess(args, returncode=1)
+            return _FakeCompletedProcess(args, returncode=0)
+
+        subprocess.run = fake_run_fail_gsc
+        run_all.subprocess.run = fake_run_fail_gsc
+
+        called_cmds.clear()
+        code_fail = run_all.run_chain("test_proj")
+        assert code_fail == 1, f"gsc 실패 시 exit code 1 이어야 함: {code_fail}"
+        assert len(called_cmds) == 1, f"gsc 실패 시 후속 단계가 호출되지 않아야 함 (호출수: {len(called_cmds)})"
+        assert "collect_gsc.py" in str(called_cmds[0]), f"첫 번째 호출이 gsc 여야 함: {called_cmds[0]}"
+
+        # 4. gsc 외 다른 단계(예: index) 실패 시에는 후속 단계가 계속 실행되는지 확인
+        def fake_run_fail_index(args, *a, **k):
+            called_cmds.append(args)
+            if "collect_index.py" in str(args):
+                return _FakeCompletedProcess(args, returncode=1)
+            return _FakeCompletedProcess(args, returncode=0)
+
+        subprocess.run = fake_run_fail_index
+        run_all.subprocess.run = fake_run_fail_index
+
+        called_cmds.clear()
+        code_index_fail = run_all.run_chain("test_proj")
+        assert code_index_fail == 1, "한 단계라도 실패 시 exit code 1"
+        executed_index_fail = [Path(cmd[1]).name for cmd in called_cmds]
+        assert len(executed_index_fail) == 7, f"index 실패 시에도 나머지 단계는 완주해야 함: {executed_index_fail}"
+
+        # 5. --dry-run 모드 검증 (gaps/report 는 subprocess 미호출, 나머지는 --dry-run 인자 포함)
+        subprocess.run = fake_run
+        run_all.subprocess.run = fake_run
+        called_cmds.clear()
+        code_dry = run_all.run_chain("test_proj", dry_run=True)
+        assert code_dry == 0
+        executed_dry = [Path(cmd[1]).name for cmd in called_cmds]
+        assert executed_dry == [
+            "collect_gsc.py",
+            "collect_index.py",
+            "expand_keywords.py",
+            "collect_serp.py",
+            "collect_ai.py",
+        ], f"dry-run 시 gaps/report는 subprocess가 호출되지 않아야 함: {executed_dry}"
+        for cmd in called_cmds:
+            assert "--dry-run" in cmd, f"dry-run 인자가 누락됨: {cmd}"
+
+        # 6. --skip / --only 검증
+        called_cmds.clear()
+        code_skip = run_all.run_chain("test_proj", skip="index,ai")
+        assert code_skip == 0
+        executed_skip = [Path(cmd[1]).name for cmd in called_cmds]
+        assert "collect_index.py" not in executed_skip and "collect_ai.py" not in executed_skip
+        assert executed_skip == ["collect_gsc.py", "expand_keywords.py", "collect_serp.py", "scoring.py", "dashboard.py"]
+
+        called_cmds.clear()
+        code_only = run_all.run_chain("test_proj", only="gsc,gaps")
+        assert code_only == 0
+        executed_only = [Path(cmd[1]).name for cmd in called_cmds]
+        assert executed_only == ["collect_gsc.py", "scoring.py"]
+
+        # skip + only 동시 지정 및 잘못된 이름은 에러(code 1)
+        assert run_all.run_chain("test_proj", skip="index", only="gsc") == 1
+        assert run_all.run_chain("test_proj", skip="invalid_stage") == 1
+        assert run_all.run_chain("test_proj", only="invalid_stage") == 1
+
+    finally:
+        subprocess.run = orig_run
+        run_all.subprocess.run = orig_run
+        for k, v in orig_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
 
 
 if __name__ == "__main__":

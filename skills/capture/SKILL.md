@@ -63,7 +63,12 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 4. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
    사용자 검수 후 ai_prompts에 INSERT (scoring.md 5절의 파이썬 패턴 사용, is_active=1).
 
+등록이 끝나면 곧바로 `/capture run {P}` 풀런을 제안한다 — 다음에 뭘 쳐야 할지
+다시 묻지 않게. (등록 인터뷰 자체는 사람이 답해야 하므로 자동화 대상이 아니다.)
+
 ### /capture keywords {P} — 키워드 유니버스 (무료 파이프라인)
+**풀런(`/capture run`)에 포함된다** — 3단계(`keywords`).
+
 1. `python scripts/expand_keywords.py --project {P} --dry-run` 로 계획 고지 → 확인 → 실행.
    (자동완성은 비공식 엔드포인트 — 실패 시 우아하게 건너뛰고 계속한다.)
 2. 후보(is_active=0)를 sql로 조회해 관련성 필터·클러스터 라벨링을 수행하고,
@@ -77,6 +82,9 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 3. 수요 근거는 "자동완성 등장 = 수요 존재, GSC 노출 = 실측"으로만 말한다 (볼륨 창작 금지).
 
 ### /capture gsc {P}
+**풀런(`/capture run`)에 포함된다** — 1단계(`gsc`). `gsc` 가 실패하면 풀런은
+거기서 멈춘다(나머지가 그 데이터를 재료로 쓰기 때문).
+
 경로는 하나다 — **구글 계정 연결(필수)**: `python scripts/collect_gsc.py --project {P}`.
 연결 한 벌로 모든 사이트를 자동 수집한다(행 제한 사실상 없음). 한 번 돌면 세 벌이
 들어온다:
@@ -118,6 +126,8 @@ python scripts/gsc_query.py sitemaps --project {P}
 완료 후 striking-distance 프리뷰를 요약해준다.
 
 ### /capture index {P} — 색인 상태 적재 (구글 URL Inspection, 돈 안 듦)
+**풀런(`/capture run`)에 포함된다** — 2단계(`index`).
+
 `python scripts/collect_index.py --project {P} --dry-run` → 검사할 URL 수 고지 → 확인 →
 실행. 인증은 `/capture gsc` 와 **같은 구글 연결을 그대로 쓴다** — 따로 붙일 것이 없다.
 
@@ -141,6 +151,9 @@ python scripts/gsc_query.py sitemaps --project {P}
 먼저 처리하라고 안내한다.
 
 ### /capture rank {P} — 순위 스냅샷 (SERP, 키 있을 때)
+**풀런(`/capture run`)에 포함된다** — 4단계(`rank`). 키가 없으면 풀런은 이 단계를
+조용히 건너뛴다(에러 아님).
+
 `python scripts/collect_serp.py --project {P} --dry-run` → 호출 수·비용 고지 → 확인 → 실행.
 결과: 키워드별 순위·SERP 피처·AI오버뷰 인용 여부 + 부산물로 연관검색어/PAA가 키워드
 후보에, 상위 빈출 도메인이 경쟁사에 자동 수확된다. 키 미설정이면 GSC 중심 모드로
@@ -166,6 +179,9 @@ NULL엔 적용되지 않는다).
   본 결과를 근거로 삼을 땐 Brain 이 아니라 즉석 조회임을 밝힌다(철칙 1).
 
 ### /capture ai {P}
+**풀런(`/capture run`)에 포함된다** — 5단계(`ai`). 키가 없으면 풀런은 이 단계를
+조용히 건너뛴다(에러 아님).
+
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →
 실행(기본 2샘플 — config `ai_samples`, 비용 2배 트레이드오프. 중요 프롬프트는
 `--samples 3`). 요약 매트릭스를 보여주고, 요청 실패가 있으면 매트릭스 분모가 그만큼
@@ -203,6 +219,9 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 (`scoring.md` 1절 content_gap 행).
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
+**풀런(`/capture run`)에 포함된다** — 6단계(`gaps`) + 분석 단계 1번(`scoring.py load`)까지
+대신 부른다. 따로 부를 때만 `scoring.py load` 를 직접 실행한다.
+
 sql로 (a) 인용 갭: cited=0 체크의 cited_domains_json 빈도 + 미노출 프롬프트,
 (b) striking distance, (c) rank_decay, (d) aio_exposure(rank 데이터 있을 때:
 aio_present=1 AND aio_cited=0 키워드), (e) pseo_pattern: 고노출·저CTR 쿼리를 뽑아
@@ -212,12 +231,36 @@ content_gap 후보는 별도 명령 `/capture gap {P}` (Labs 유료 키)로 먼�
 여기서는 적재된 후보를 기회로 정리·판정한다.
 
 ### /capture run {P} — 풀런
-gsc → rank(SERP 키 있으면, 확인 후) → ai(확인 후) → 분석(아래) → report 순서로 한 번에.
+수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계 순서는 고정이다 —
+**gsc → index → keywords → rank → ai → gaps → report**, 그 7단계를
+`scripts/run_all.py`가 순서대로 부른다.
+
+1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
+   호출 수·비용 계획을 모아 보여주고 사용자 확인을 받는다 (철칙 2 — 비용 고지).
+   `rank`·`ai` 는 유료 축이지만 키가 없으면 **조용히 건너뛴다** — 에러가 아니다.
+   키가 없다고 사용자에게 되묻지 않는다.
+2. 확인되면 `python scripts/run_all.py --project {P}` 를 **백그라운드로** 돌린다.
+   수집이 길어질 수 있어 포그라운드로 잡으면 세션이 막힌다 — `/capture dash` 가
+   같은 이유로 백그라운드인 것과 같은 톤이다.
+3. **`gsc` 가 실패하면 거기서 멈춘다** — 나머지 전부(gaps, report, 의사결정)가
+   그 데이터를 재료로 쓰기 때문이다. 다른 단계는 하나 실패해도 나머지가 계속
+   간다.
+4. 끝나면 단계별 `완료 / 건너뜀(이유) / 실패(이유)` 표와 리포트 파일 경로를
+   찍는다. exit 0 = 전부 성공(건너뜀 포함), 1 = 하나라도 실패.
+5. 체인이 끝난 뒤 Claude가 하는 일은 그대로다 — 아래 "분석 단계"의 2·3번
+   (기회 reasoning 보강, pseo 군집 판단, Next Actions). 그건 사람 판단이라
+   스크립트가 못 한다.
+
+`--only gsc,gaps` · `--skip index,ai` 처럼 한 축만 빼거나 골라 돌릴 수도 있다.
+축 이름은 아래 개별 명령과 같다.
 
 ### 분석 단계 (gaps 이후 자동)
 1. `python scripts/scoring.py load {P}` — 기계 판정분(striking_distance·ctr_gap·
    cannibalization·rank_decay·pseo 후보·coverage)을 결정적 점수·수치 reasoning과
    함께 opportunities에 적재한다.
+   `/capture run` 으로 들어온 경우 `run_all.py` 의 `gaps` 단계가 이걸 대신
+   부른다 — **다시 부르지 않는다** (중복 실행). `/capture gaps` 를 따로 부른
+   경우에만 직접 실행한다.
 2. 적재된 기회를 sql로 검토하고 상위 10개의 reasoning을 보강한다 — 원인 가설·
    fit 판단·맥락 (`references/scoring.md` 2~3절).
 3. pseo_pattern 군집 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로 추가

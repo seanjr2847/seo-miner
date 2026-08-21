@@ -48,7 +48,14 @@ capture가 찾은 기회를 리포 안의 실제 파일 변경으로 바꾼다. 
    대상 파일(신규/수정), 예상 분량, pSEO면 1차 롤아웃 규모. 사용자 승인 후 진행.
 3. 승인된 항목은 `createdb.py claim {P} <ids>` 로 status='acked' 처리.
 
+승인이 떨어지면 곧바로 `/create run {P}` 으로 이어간다 — 사용자가 두 번
+치지 않게. **발행 게이트(철칙 3)는 그대로다** — 자동 이어지기는 "승인 이후
+run 까지"이지 "승인 없이 PR"이 아니다. main 직접 쓰기 금지, 브랜치 → 커밋 → PR,
+머지는 사람.
+
 ### /create run {P} — 실행
+(`/create plan` 의 승인을 받아 이어지는 자리다 — 단독으로 부를 수도 있다.)
+
 1. 브랜치 생성 → 항목별로 content-rules.md 레시피대로 파일 생성/수정.
 2. 수정(striking_distance, rank_decay)은 **최소 diff** — 전면 재작성 금지.
 3. 항목당 커밋: `capture(<kind>): <요약> [opp #id]`.
