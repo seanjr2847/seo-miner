@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
 import scoring  # noqa: E402
+import serp_adapter  # noqa: E402
 
 LABS_URL = "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live"
 # 단가 상한 (가격표 출처는 모듈 docstring). 응답의 cost 가 더 정확하지만
@@ -75,7 +76,7 @@ def fetch_ranked(target: str, locale: str, limit: int) -> tuple[list[dict], floa
     같은 모양.
     """
     login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
-    loc, lang, _ = collector_module_location(locale)
+    loc, lang, _ = serp_adapter.location(locale)
     body = [{
         "target": target,
         "location_name": loc,
@@ -110,21 +111,6 @@ def fetch_ranked(target: str, locale: str, limit: int) -> tuple[list[dict], floa
             if kw:
                 items.append({"keyword": kw, "search_volume": sv})
     return items, cost
-
-
-def collector_module_location(locale: str):
-    """serp_adapter.location 를 그대로 쓰면 모듈 의존이 늘지만, Labs 의
-    location_name·language_code 매핑은 SERP 와 동일 — DRY 한 곳에서.
-    self-check 에선 serp_adapter 가 없을 수도 있으니 inline fallback 도 둔다.
-    """
-    try:
-        from serp_adapter import location as _loc  # type: ignore
-        return _loc(locale)
-    except Exception:
-        key = (locale or "").split("-")[0].lower()
-        return {"ko": ("South Korea", "ko"),
-                "en": ("United States", "en"),
-                "ja": ("Japan", "ja")}.get(key, ("United States", "en"))
 
 
 def _resolve_domains(conn, project_id: int, args_domains: list[str]) -> list[str]:
@@ -224,6 +210,7 @@ def main() -> None:
     est_cost = len(domains) * LABS_COST_PER_CALL
     print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
           f"est_cost≈${est_cost:.3f} (~{len(domains) * (throttle + 2) / 60:.1f} min)")
+    serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
 
     if a.dry_run:
         for d in domains:
