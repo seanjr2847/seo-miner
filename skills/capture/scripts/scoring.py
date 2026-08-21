@@ -95,6 +95,11 @@ INTENT_NAVIGATIONAL = {
     "로그인", "공식", "홈페이지", "login", "official", "homepage",
 }
 
+# 지키는 기회(방어) kind 집합. 판정은 is_defensive() 하나이고 화면은 그 결과를 읽는다.
+# 순위 하락·내부 경쟁은 잃던 것을 막는 방어 기회다.
+DEFENSIVE_KINDS = {"rank_decay", "cannibalization"}
+
+
 
 def norm(s: str) -> str:
     """비교용 정규화 — 소문자 + 영숫자/한글만. 'Future Tools' 와 'futuretools.io' 를 같게 본다."""
@@ -208,6 +213,23 @@ def moved_up(dpos: float, dclk: int) -> bool:
 
 def moved_down(dpos: float, dclk: int) -> bool:
     return dpos < -NOISE_POS or dclk < 0
+
+
+def rank_delta(prev: int | float | None, cur: int | float | None) -> dict:
+    """SERP 정수 순위의 변화를 판정한다.
+
+    |Δ| < RANK_NOISE 면 보합(flat). 마크업은 반환하지 않고 순수 값 dict만 돌려준다.
+    """
+    if prev is None or cur is None:
+        return {"delta": None, "flat": False}
+    d = int(round(float(prev) - float(cur)))
+    return {"delta": d, "flat": abs(d) < RANK_NOISE}
+
+
+def is_defensive(kind: str | None) -> bool:
+    """기회 종류가 방어형(지키는 기회: rank_decay, cannibalization)인가."""
+    return bool(kind and kind in DEFENSIVE_KINDS)
+
 
 
 def snapshot_pair(conn: sqlite3.Connection, project_id: int) -> tuple[str | None, str | None, int | None, bool]:
@@ -535,16 +557,13 @@ def _backfill_intents(conn: sqlite3.Connection, project_id: int) -> int:
     호출은 load() 가 한다 — 분류 기본값은 코드가 깔고, Claude/사람이 손본 건
     그 손이 이김. 비활성 키워드는 애초에 의도 추적이 아니라 후보라 안 본다.
     """
-    n = 0
-    for r in conn.execute(
-            "SELECT id, keyword FROM keywords "
-            "WHERE project_id=? AND is_active=1 AND intent IS NULL",
-            (project_id,)).fetchall():
-        conn.execute("UPDATE keywords SET intent=? WHERE id=?",
-                     (classify_intent(r["keyword"]), r["id"]))
-        n += 1
-    conn.commit()
-    return n
+    import db
+    pairs = [(r["id"], classify_intent(r["keyword"])) for r in conn.execute(
+        "SELECT id, keyword FROM keywords "
+        "WHERE project_id=? AND is_active=1 AND intent IS NULL",
+        (project_id,)).fetchall()]
+    db.set_keyword_intents(conn, pairs)
+    return len(pairs)
 
 
 def _fit_of(conn: sqlite3.Connection, project_id: int, target: str) -> float:
@@ -653,7 +672,7 @@ def load(project: str) -> None:
     if p["config_path"]:
         try:
             cfg = db.load_project_yaml(p["config_path"])
-        except (SystemExit, ImportError):   # yaml 이 없어도 적재는 계속한다 (브랜드 필터만 얕아짐)
+        except (db.ProjectConfigNotFound, ImportError):   # yaml 이 없어도 적재는 계속한다 (브랜드 필터만 얕아짐)
             pass
     cur, prev, _, _ = snapshot_pair(conn, pid)
     brands = foreign_brands(conn, pid, cfg)
@@ -740,66 +759,10 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
 
     정렬이 두 벌이던 시절엔 대시보드와 리포트가 같은 데이터로 다른 순서를 보여줬다.
     """
-    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, "
-            "substr(created_at,1,10) created") if with_id else \
-           "kind, target, ROUND(score,1) score, reasoning, status"
-    return [dict(r) for r in conn.execute(
-        f"""SELECT {cols} FROM opportunities WHERE project_id=?
-             ORDER BY (status='new') DESC, score DESC, id DESC LIMIT ?""",
-        (project_id, limit))]
+    import db
+    return [dict(r) for r in db.list_opportunities(
+        conn, project_id, limit=limit, order="screen", with_id=with_id)]
 
-
-def stage(p: dict, name: str, domain: str) -> dict:
-    """갱도 6단계 판정 — "지금 할 것"을 정하는 곳은 여기 하나다.
-
-    p 는 dashboard.progress() 가 센 단계별 실적. done 은 그 실적으로만 판정한다 —
-    "했다 치고" 넘어가지 않는다. 순서가 정보다: 앞 단계가 없으면 뒤 단계는 재료가
-    없어 돌지 않는다. 이 판정이 템플릿 JS 에 있던 시절엔 Python 에서 시험할 수
-    없었고, doctor·화면이 서로 다른 다음 할 일을 말할 수 있었다.
-    """
-    steps = [
-        {"id": "register", "t": "사이트 등록",
-         "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.",
-         "done": True, "state": domain or "", "cmd": None},
-        {"id": "gsc", "t": "구글 실적 읽기",
-         "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
-                 "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
-         "done": p["gsc_days"] > 0,
-         "state": (f"{p['gsc_days']}번 읽음 · 최근 {p['gsc_last']}" if p["gsc_days"]
-                   else "아직 안 읽음"),
-         "cmd": f"/capture gsc {name}"},
-        {"id": "keywords", "t": "키워드 캐기",
-         "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
-                 "늘린 만큼 다음 단계가 볼 게 많아집니다.",
-         "done": p["keywords_found"] > 0,
-         "state": (f"캔 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
-                   if p["keywords_found"]
-                   else (f"직접 적은 {p['keywords']}개뿐" if p["keywords"] else "아직 없음")),
-         "cmd": f"/capture keywords {name}"},
-        {"id": "ai", "t": "AI 노출 확인",
-         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
-                 "OpenRouter 키가 필요합니다.",
-         "done": p["ai_checks"] > 0,
-         "state": (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
-                   if p["ai_checks"]
-                   else ("질문은 준비됨 · 아직 안 물어봄" if p["ai_prompts"]
-                         else "물어볼 질문부터 필요")),
-         "cmd": (f"/capture ai {name}" if p["ai_prompts"] else f"/capture add {name}")},
-        {"id": "gaps", "t": "손댈 것 뽑기",
-         "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
-                 "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
-         "done": p["opps"] > 0,
-         "state": f"{p['opps']}건 뽑음" if p["opps"] else "아직 없음",
-         "cmd": f"/capture gaps {name}"},
-        {"id": "create", "t": "실제로 고치기",
-         "gain": "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 "
-                 "나가고, 끝나면 그 기회가 완료로 닫힙니다.",
-         "done": p["creations"] > 0,
-         "state": f"{p['creations']}건 고침" if p["creations"] else "아직 한 건도 안 함",
-         "cmd": f"/create plan {name}"},
-    ]
-    here = next((i for i, s in enumerate(steps) if not s["done"]), -1)
-    return {"steps": steps, "here": here}
 
 
 def _selfcheck() -> None:
@@ -832,19 +795,6 @@ def _selfcheck() -> None:
                  "mysite.com")[1] == 1
     assert aliases_of({"name": "MySite", "brand_aliases": ["마이사이트", ""]}) \
         == ["MySite", "마이사이트"]
-
-    pr = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
-          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
-    st = stage(pr, "demo", "demo.com")
-    assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
-    assert st["steps"][3]["cmd"] == "/capture add demo"       # 질문이 없으면 add 부터
-    st = stage({**pr, "gsc_days": 3, "gsc_last": "2026-08-14", "keywords_found": 5,
-                "ai_prompts": 10}, "demo", "demo.com")
-    assert st["here"] == 3
-    assert st["steps"][3]["cmd"] == "/capture ai demo"        # 질문이 있으면 물어본다
-    st = stage({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
-                "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
-    assert st["here"] == -1                                    # 한 바퀴 다 돎
 
     assert gap_to_page1(14.2) == 4.2
     assert gap_to_page1(3.0) == 0.0
@@ -911,10 +861,26 @@ def _selfcheck() -> None:
 
     # ── 신규 판정 함수들 ──
     assert RANK_NOISE == 3
+    assert rank_delta(None, 5) == {"delta": None, "flat": False}
+    assert rank_delta(5, None) == {"delta": None, "flat": False}
+    assert rank_delta(10, 10) == {"delta": 0, "flat": True}
+    assert rank_delta(10, 8) == {"delta": 2, "flat": True}           # +2 < RANK_NOISE (보합)
+    assert rank_delta(8, 10) == {"delta": -2, "flat": True}          # -2 (보합)
+    assert rank_delta(10, 7) == {"delta": 3, "flat": False}          # +3 == RANK_NOISE (움직임)
+    assert rank_delta(7, 10) == {"delta": -3, "flat": False}         # -3 == -RANK_NOISE (움직임)
+    assert is_defensive("rank_decay") is True
+    assert is_defensive("cannibalization") is True
+    assert is_defensive("striking_distance") is False
+    assert is_defensive("") is False
+    assert is_defensive(None) is False
+    assert gap_to_page1(10.0) == 0.0                                 # 1페이지 안이면 0 클램프
+    assert gap_to_page1(9.9) == 0.0
+    assert gap_to_page1(1.0) == 0.0
     assert sorted(EXPECTED_CTR) == list(range(1, 21))                 # 1~20위 전부
     assert all(EXPECTED_CTR[i] >= EXPECTED_CTR[i + 1] for i in range(1, 20))  # 단조 감소
     for w in WEIGHTS.values():
         assert abs(sum(w.values()) - 1.0) < 1e-9
+
 
     # ctr_gap: 1페이지 키워드(3.0위·300노출·9클릭=CTR 3%)만 기대 10%의 절반 미만.
     # ecrett 는 노출 48 < CTR_GAP_MIN_IMP, 내 키워드는 12위라 1페이지 밖.
@@ -1092,6 +1058,10 @@ def _selfcheck() -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "load":
-        load(sys.argv[2])
+        try:
+            import db
+            load(sys.argv[2])
+        except (db.ProjectNotFound, db.ProjectConfigNotFound) as e:
+            sys.exit(str(e))
     else:
         _selfcheck()

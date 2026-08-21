@@ -33,6 +33,7 @@ import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
+import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
 HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
 
@@ -208,7 +209,7 @@ def create_project(f: dict) -> dict:
         + yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), "utf-8")
     try:
         db.sync_project(str(path))
-    except SystemExit as e:
+    except db.ProjectConfigNotFound as e:
         return {"ok": False, "error": str(e)}
     except ImportError:
         return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
@@ -288,45 +289,7 @@ def repo_prefill(root: Path | None = None) -> dict:
 
 def setup_state() -> dict:
     """setup 스킬의 doctor.diagnose()를 소비해 대시보드 화면이 실제로 쓰는 평평한 키만 방출."""
-    d = doctor.diagnose()
-    projects = d.get("brain", {}).get("projects", [])
-    no_project = not bool(projects)
-    must = [s for s in d.get("must", []) if not (no_project and "/capture add" in s)]
-    extra = [
-        f"{c['name']} — {c['desc']}. 켜려면: {c.get('fix') or '필수 설치가 끝나면 켜집니다.'}"
-        for c in d.get("locked", [])
-    ] + list(d.get("later", []))
-    keys = d.get("keys", {})
-    deps_gsc = d.get("deps_gsc", {})
-    # 구글 칸은 3-상태다: 연결됨 / 로그인 대기 / 인증 없음. 정본은 doctor 가 준
-    # gsc_connected(= db.gsc_connected(), 토큰이 있나)이지 파일이 놓였나가 아니다 —
-    # 번들 OAuth 클라이언트가 설치만 하면 항상 존재해서 "파일 = 연결됨" 등식이 깨졌다.
-    gsc_ok = bool(d.get("gsc_connected"))
-    gsc_mode = d.get("gsc_mode", "")
-    # 부품 버튼은 **로그인 전에** 떠야 한다. gsc_ok 기준이던 시절엔 로그인이 끝나야
-    # 나타났는데, 정작 그 로그인 창을 여는 게 이 부품(google-auth-oauthlib)이다.
-    show_deps_gsc_btn = bool(gsc_mode) and not bool(deps_gsc.get("googleapiclient"))
-    # 마케팅 스킬이 빠지면 doctor 가 메시지를 must 에 올린다. 그러면 show_setup 이
-    # 항상 True 가 되어 [설정] 패널이 영원히 펴져 있게 된다 — 다른 필요 항목이 끝난
-    # 뒤에도. 그래서 doctor가 마케팅 스킬 항목을 뺀 사본(must_other)을 별도로 두고
-    # 그걸로 패널 펼침을 판정한다. 마케팅 스킬 버튼은 자체 키로 별도 표시한다.
-    show_skills_btn = bool(d.get("marketing_skills_msg"))
-    show_setup = bool(d.get("must_other")) or no_project
-
-    return {
-        "verdict": d.get("verdict", ""),
-        "no_project": no_project,
-        "must": must,
-        "extra": extra,
-        "core_ok": bool(d.get("core_ok")),
-        "gsc_ok": gsc_ok,
-        "gsc_mode": gsc_mode,                       # "oauth" | "service_account" | ""
-        "gsc_bundled": bool(d.get("gsc_bundled")),  # 번들 클라이언트 → 동의 화면 경고 예고
-        "nkeys": sum(1 for k in ("openrouter", "serper", "dataforseo") if keys.get(k)),
-        "show_deps_gsc_btn": show_deps_gsc_btn,
-        "show_skills_btn": show_skills_btn,         # 빠진 마케팅 스킬이 있을 때만 True
-        "show_setup": show_setup,
-    }
+    return stage.setup_payload()
 
 
 def q(conn, sql, args=()):
@@ -411,48 +374,56 @@ def gather(conn, p) -> dict:
     ranks, aio_gap = [], []
     for kw, r in r_cur.items():
         prev_r = r_prev.get(kw)
-        dpos = (round(prev_r["position"] - r["position"], 0)
-                if prev_r and prev_r["position"] and r["position"] else None)
-        ranks.append({"keyword": kw, "pos": r["position"], "dpos": dpos,
+        prev_pos = prev_r["position"] if prev_r else None
+        cur_pos = r["position"]
+        rd = scoring.rank_delta(prev_pos, cur_pos)
+        ranks.append({"keyword": kw, "pos": cur_pos, "dpos": rd["delta"],
+                      "delta": rd,
                       "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
         if r["aio_present"] == 1 and r["aio_cited"] == 0:
             aio_gap.append(kw)
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
+    for o in opps:
+        o["is_defensive"] = scoring.is_defensive(o["kind"])
+    opp_counts = {}
+    for o in opps:
+        opp_counts[o["kind"]] = opp_counts.get(o["kind"], 0) + 1
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
         (pid,)).fetchone()[0]
     runs = q(conn,
         """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
              FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
-    prog = progress(conn, pid)
-    guide = scoring.stage(prog, p["name"], p["domain"] or "")
-    # 구글 연결 판정은 화면 안에 한 벌만 있어야 한다. 6단계 안내는 "몇 번 읽었나"로만
-    # 판정하므로, 로그인이 안 된 사람에게 `/capture gsc` 를 다음 걸음으로 내민다 —
-    # 그 명령은 인증에서 그 자리에 막힌다. 설정 칸이 [로그인 대기]라고 말하는 동안
-    # 안내가 다른 말을 하면 안 되므로, 여기서 같은 기준(db.gsc_connected)으로 덮는다.
-    if not db.gsc_connected():
-        g = next(s for s in guide["steps"] if s["id"] == "gsc")
-        g["done"] = False
-        pending = bool(db.gsc_auth())
-        g["state"] = "구글 로그인 대기" if pending else "구글 인증 없음"
-        g["cmd"] = "GSC 로그인해줘" if pending else "GSC 연동해줘"
-        guide["here"] = next((i for i, s in enumerate(guide["steps"])
-                              if not s["done"]), -1)
-    return {"project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+    prog = stage.progress(conn, pid)
+    guide = stage.state(conn, p, p["domain"] or "")
+    daily = scoring.daily_trend(conn, pid)
+    daily_stats = {
+        "clicks_sum": sum(r["clicks"] or 0 for r in daily),
+        "impressions_sum": sum(r["impressions"] or 0 for r in daily),
+        "clicks_max": max([r["clicks"] or 0 for r in daily] + [1]),
+        "impressions_max": max([r["impressions"] or 0 for r in daily] + [1]),
+    }
+    striking_page2 = sum(1 for r in striking if r.get("band") == "page2")
+
+    # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
+    return {"schema": 1,
+            "project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
-            "striking": striking, "brand_catalog_empty": len(brands) == 0,
+            "striking": striking, "striking_page2": striking_page2,
+            "brand_catalog_empty": len(brands) == 0,
             "matrix": matrix, "gap_domains": gap_domains,
             "missed": missed, "ai_trend": ai_trend,
-            "opps": opps, "opps_total": opps_total, "runs": runs,
+            "opps": opps, "opps_total": opps_total, "opp_counts": opp_counts,
+            "runs": runs,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
             "ranks": ranks[:30], "aio_gap": aio_gap,
             "kw_active": conn.execute(
                 "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
                 (pid,)).fetchone()[0],
-            "daily": scoring.daily_trend(conn, pid),
+            "daily": daily, "daily_stats": daily_stats,
             "device_gap": scoring.device_gap(conn, pid),
             "index_issues": scoring.index_issues(conn, pid),
             "device_date": device_date, "index_date": index_date,
@@ -462,9 +433,9 @@ def gather(conn, p) -> dict:
                       "device_gap_pos": scoring.DEVICE_GAP_POS,
                       "device_min_imp": scoring.DEVICE_MIN_IMP},
             # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
-            # 그래프·Δ가 전부 거짓이 된다. p는 화면이 기간 일치를 재확인하는 용도.
+            # 그래프·Δ가 전부 거짓이 된다. SQL이 이미 period_days로 걸렀으므로 p 필드는 뺀다.
             "trend": [dict(r) for r in conn.execute(
-                """SELECT snapshot_date d, period_days p, SUM(clicks) clk,
+                """SELECT snapshot_date d, SUM(clicks) clk,
                           SUM(impressions) imp, COUNT(DISTINCT query) q
                      FROM gsc_snapshots WHERE project_id=? AND period_days=?
                     GROUP BY 1 ORDER BY 1""", (pid, period))],
@@ -479,31 +450,6 @@ def payload(project: str) -> dict:
         return gather(conn, p)
     finally:
         conn.close()
-
-
-def progress(conn, pid: int) -> dict:
-    """안내 화면이 "지금 어디까지 팠는지"를 말하려면 단계별 실적이 필요하다.
-    각 값은 그 단계를 했다는 증거 — 0이면 아직 안 한 것."""
-    def one(sql: str, args=()) -> int:
-        return conn.execute(sql, args).fetchone()[0] or 0
-
-    return {
-        "gsc_days": one("SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots "
-                        "WHERE project_id=?", (pid,)),
-        "gsc_last": (conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots "
-                                  "WHERE project_id=?", (pid,)).fetchone()[0] or ""),
-        "keywords": one("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-                        (pid,)),
-        # 씨앗은 등록할 때 손으로 넣은 것이다 — 발굴을 돌렸는지는 씨앗이 아닌 것으로 센다.
-        "keywords_found": one("SELECT COUNT(*) FROM keywords WHERE project_id=? "
-                              "AND is_active=1 AND source!='seed'", (pid,)),
-        "ai_checks": one("""SELECT COUNT(*) FROM ai_checks c JOIN ai_prompts p
-                              ON p.id=c.prompt_id WHERE p.project_id=?""", (pid,)),
-        "ai_prompts": one("SELECT COUNT(*) FROM ai_prompts WHERE project_id=? "
-                          "AND is_active=1", (pid,)),
-        "opps": one("SELECT COUNT(*) FROM opportunities WHERE project_id=?", (pid,)),
-        "creations": one("SELECT COUNT(*) FROM creations WHERE project_id=?", (pid,)),
-    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -536,7 +482,7 @@ class Handler(BaseHTTPRequestHandler):
             name = parse_qs(u.query).get("project", [""])[0]
             try:
                 return self._json(payload(name))
-            except SystemExit as e:  # db.get_project는 미등록이면 exit한다
+            except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
                 return self._json({"error": str(e)}, 404)
         return self._send(404, b"not found", "text/plain")
 

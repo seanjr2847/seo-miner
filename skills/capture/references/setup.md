@@ -16,7 +16,8 @@ cp -r capture ~/.claude/skills/capture
 ```bash
 pip install requests pyyaml
 # GSC 자동 수집(collect_gsc.py) 쓰는 경우에만 추가:
-pip install google-api-python-client
+pip install google-api-python-client google-auth google-auth-oauthlib
+# (서비스 계정으로 붙이면 google-auth-oauthlib 없이도 된다)
 ```
 
 ## 3. 상태 디렉토리

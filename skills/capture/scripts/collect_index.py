@@ -81,52 +81,66 @@ def to_row(url: str, result: dict) -> dict:
     return row
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    collector.add_common(ap)
-    collector.add_setting(ap, "--limit", key="index_urls", fallback=20, type=int,
-                          help="한 번에 검사할 URL 수. 0이면 끔")
-    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="호출 간격(초). 분당 600회 제한을 넘지 않기 위한 것")
-    # 인자 없이 실행되면 자체 점검 — collect_gap 과 같은 약속. add_common 이
-    # --project 를 required 로 걸어버리므로 parse 직전에 길이를 본다.
-    if len(sys.argv) == 1:
-        _selfcheck()
-        return
-    a = ap.parse_args()
+def collect(project: str, *,
+            dry_run: bool = False,
+            index_urls: int | None = None,
+            throttle: float | None = None) -> collector.StageResult:
+    """URL Inspection 으로 색인 상태를 Brain 에 적재한다. sys.exit 호출 없음.
 
-    conn, p, cfg = collector.open_project(a.project)
-    s = collector.settings(a, cfg)
-    limit, throttle = s["index_urls"], s["throttle"]
+    Args:
+        project: 사이트 이름
+        dry_run: True 면 검사 계획만 찍고 종료
+        index_urls: 한 번에 검사할 URL 수. 0이면 끔
+        throttle: 호출 간격(초). 분당 600회 제한을 넘지 않기 위한 것
+
+    Returns:
+        StageResult(ok=...). 정상 종료면 ok=True. 사유가 있는 비종료는
+        ok=False, skipped=True, reason 에 한국어 안내.
+    """
+    _parser()
+    conn, p, cfg = collector.open_project(project)
+    ns = argparse.Namespace(
+        limit=index_urls,
+        throttle=throttle,
+    )
+    s = collector.settings(ns, cfg)
+    limit = s["index_urls"]
+    throttle = s["throttle"]
     prop = p["gsc_property"]
     if not prop:
         conn.close()
-        sys.exit("project yaml has no gsc_property "
-                 "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
-                 "Add it, then: python db.py sync-project <yaml>")
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="project yaml has no gsc_property "
+                                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
+                                            "Add it, then: python db.py sync-project <yaml>")
     if limit <= 0:
         conn.close()
         print("[index] index_urls=0 — 색인 검사를 끄셨습니다. "
               "켜려면 config.yaml defaults.index_urls 를 올리거나 --limit N 을 주세요.")
-        return
+        return collector.StageResult(ok=True, skipped=True, rows=0)
 
     urls = top_pages(conn, p["id"], limit)
     if not urls:
         conn.close()
-        sys.exit("최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
-                 f"--project {a.project}` 로 수집하세요. (page NULL 인 구버전 "
-                 "스냅샷만 있어도 여기서 멈춥니다)")
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
+                                            f"--project {project}` 로 수집하세요. (page NULL 인 구버전 "
+                                            "스냅샷만 있어도 여기서 멈춥니다)")
 
     print(f"[index] {prop}  URL {len(urls)}개 = {len(urls)}콜 (URL 당 정확히 1콜)")
-    if a.dry_run:
+    if dry_run:
         for i, u in enumerate(urls, 1):
             print(f"  {i:>3}. {u}")
         print(f"쿼터: 속성당 하루 2,000회 / 분당 600회. 이번 실행은 {len(urls)}회 "
               f"(간격 {throttle}초 ≈ {len(urls) * (throttle + 0.5) / 60:.1f} min).")
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, rows=0)
 
-    service = get_service()
+    try:
+        service = get_service()
+    except db.ProjectNotFound as e:
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True, reason=str(e))
     from googleapiclient.errors import HttpError
 
     rows: list[dict] = []
@@ -173,22 +187,43 @@ def main() -> None:
     if not bad:
         print("  (없음 — 검사한 URL 전부 PASS)")
     conn.close()
+    return collector.StageResult(ok=True, skipped=False, rows=len(rows))
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    collector.add_common(ap)
+    collector.add_setting(ap, "--limit", key="index_urls", fallback=20, type=int,
+                          help="한 번에 검사할 URL 수. 0이면 끔")
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="호출 간격(초). 분당 600회 제한을 넘지 않기 위한 것")
+    return ap
+
+
+def main() -> None:
+    # 인자 없이 실행되면 자체 점검 — collect_gap 과 같은 약속. add_common 이
+    # --project 를 required 로 걸어버리므로 parse 직전에 길이를 본다.
+    if len(sys.argv) == 1:
+        _selfcheck()
+        return
+    try:
+        a = _parser().parse_args()
+
+        r = collect(a.project, dry_run=a.dry_run,
+                    index_urls=a.limit, throttle=a.throttle)
+    except db.ProjectNotFound as e:
+        sys.exit(str(e))
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 def _selfcheck() -> None:
-    """가짜 service 로 매핑·중단저장 경로를 검증한다 — 진짜 Brain·API 안 건드림.
-
-    db.CAPTURE_HOME/DB_PATH 는 import 시점에 계산되므로 환경변수만 바꿔선
-    진짜 brain.db 를 건드린다 (collect_gap._selfcheck 와 같은 함정). 모듈 속성을
-    직접 패치한다.
-    """
+    """가짜 service 로 매핑·중단저장 경로를 검증한다 — 진짜 Brain·API 안 건드림."""
     import os
     import tempfile
     from googleapiclient.errors import HttpError
 
     home = Path(tempfile.mkdtemp(prefix="seo-miner-index-selftest-"))
-    db.CAPTURE_HOME = home
-    db.DB_PATH = home / "brain.db"
     os.environ["CAPTURE_HOME"] = str(home)
 
     conn = db.connect()

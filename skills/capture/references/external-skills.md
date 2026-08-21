@@ -40,9 +40,10 @@ python ../../setup/scripts/install_skills.py
 | `schema` | 구조화 데이터 | `/create run` 의 페이지 발행 |
 | `aso` | 앱 스토어 리스팅 | 앱이 있는 사이트만 (**선택**) |
 
-출처: https://github.com/coreyhaines31/marketingskills — 그 저장소 안내대로
-설치한다. seo-miner 는 이 스킬들을 **자동 설치하지 않는다** — 확인되지 않은
-설치 명령을 적지 않으므로, 절차는 위 저장소를 가리킨다.
+출처: https://github.com/coreyhaines31/marketingskills. `/setup` 의 doctor 가
+설치 여부를 보고, 빠진 게 있으면 사용자 승낙을 받아 `install_skills.py` 가
+`claude plugin install` 로 대신 설치한다. 거절해도 작업은 계속되고 내장 규칙으로
+채운다.
 
 ## 스킬이 없을 때
 

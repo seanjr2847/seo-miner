@@ -45,7 +45,8 @@ def connect():
 def pick(project: str, kinds: str | None, limit: int) -> None:
     conn = connect()
     pid = db.get_project(conn, project)["id"]
-    rows = [dict(r) for r in db.open_opportunities(conn, pid, kinds=kinds, limit=limit)]
+    kinds_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
+    rows = [dict(r) for r in db.open_opportunities(conn, pid, kinds=kinds_list, limit=limit)]
     print(json.dumps(rows, ensure_ascii=False, indent=2))
     conn.close()
 
@@ -66,8 +67,7 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
               "capture/{kind}-{slug} (기록은 그대로 진행합니다)", file=sys.stderr)
     kind = None
     if opp_id:
-        row = conn.execute("SELECT kind FROM opportunities WHERE id=? AND project_id=?",
-                           (opp_id, pid)).fetchone()
+        row = db.get_opportunity(conn, opp_id, project_id=pid)
         kind = row["kind"] if row else None
         db.set_opportunity_status(conn, opp_id, "done", project_id=pid)
     db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
@@ -107,10 +107,7 @@ def sync(project: str, repo: str) -> None:
         sha, _, _ = line.partition("\t")
         ids = [int(x) for x in re.findall(r"\[opp #(\d+)\]", line)]
         for opp_id in ids:
-            row = conn.execute(
-                "SELECT id, status FROM opportunities WHERE id=? AND project_id=?",
-                (opp_id, pid)
-            ).fetchone()
+            row = db.get_opportunity(conn, opp_id, project_id=pid)
             if row and row["status"] in ("new", "acked"):
                 _mark_done(conn, pid, opp_id, "", branch=None,
                            note=f"손으로 이미 실행: {sha[:8]}")
@@ -125,17 +122,14 @@ def sync(project: str, repo: str) -> None:
 def list_creations(project: str) -> None:
     conn = connect()
     pid = db.get_project(conn, project)["id"]
-    rows = [dict(r) for r in conn.execute(
-        """SELECT id, opportunity_id, kind, file_path, branch, merged, created_at
-             FROM creations WHERE project_id=? ORDER BY id DESC LIMIT 30""", (pid,))]
+    rows = [dict(r) for r in db.list_creations(conn, pid, limit=30)]
     print(json.dumps(rows, ensure_ascii=False, indent=2))
     conn.close()
 
 
 def merged(creation_id: int) -> None:
     conn = connect()
-    conn.execute("UPDATE creations SET merged=1 WHERE id=?", (creation_id,))
-    conn.commit()
+    db.mark_creation_merged(conn, creation_id)
     print(f"creation#{creation_id} marked merged")
     conn.close()
 
@@ -156,15 +150,18 @@ if __name__ == "__main__":
     p6 = sub.add_parser("sync"); p6.add_argument("project")
     p6.add_argument("--repo", required=True)
     a = ap.parse_args()
-    if a.cmd == "pick":
-        pick(a.project, a.kinds, a.limit)
-    elif a.cmd == "claim":
-        claim(a.project, a.ids)
-    elif a.cmd == "done":
-        done(a.project, a.id, a.path, a.branch, a.note)
-    elif a.cmd == "list":
-        list_creations(a.project)
-    elif a.cmd == "merged":
-        merged(a.creation_id)
-    elif a.cmd == "sync":
-        sync(a.project, a.repo)
+    try:
+        if a.cmd == "pick":
+            pick(a.project, a.kinds, a.limit)
+        elif a.cmd == "claim":
+            claim(a.project, a.ids)
+        elif a.cmd == "done":
+            done(a.project, a.id, a.path, a.branch, a.note)
+        elif a.cmd == "list":
+            list_creations(a.project)
+        elif a.cmd == "merged":
+            merged(a.creation_id)
+        elif a.cmd == "sync":
+            sync(a.project, a.repo)
+    except db.ProjectNotFound as e:
+        sys.exit(str(e))

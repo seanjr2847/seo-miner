@@ -10,6 +10,7 @@ defaults·serp 섹션은 읽는 코드가 아예 없었다(장식).
 self-check:  python collector.py
 """
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -17,6 +18,30 @@ import db  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 _cache: dict | None = None
+
+
+@dataclass
+class StageResult:
+    """수집기 한 단계의 결과를 run_chain 으로 들고 오기 위한 단일 형태.
+
+    in-process 호출로 바꾸면서 각 단계의 결과를 정수 exit code 하나로
+    줄이던 자리에 들어갔다. sys.exit 로는 "건너뜀"과 "진짜 실패"가 구분이
+    안 됐기 때문에 skipped / reason 으로 그 자리를 채운다.
+
+    필드:
+      ok       True 면 정상 완료 (rows·cost·artifact 가 의미를 가짐)
+      skipped  True 면 의도적으로 아무것도 안 한 것 (유료 키 없음, --dry-run 등)
+      reason   사용자에게 보일 한국어 문구 — 건너뜀이나 실패의 이유
+      rows     이 단계가 Brain 에 넣은 행 수 (모르면 0)
+      cost     이 단계가 쓴 돈 (모르면 0.0)
+      artifact 만든 파일 경로 (없으면 빈 문자열)
+    """
+    ok: bool
+    skipped: bool = False
+    reason: str = ""
+    rows: int = 0
+    cost: float = 0.0
+    artifact: str = ""
 
 
 def config() -> dict:
@@ -131,7 +156,7 @@ def project_cfg(name: str) -> dict:
     """
     try:
         return db.load_project_yaml(name)
-    except (SystemExit, Exception) as e:   # load_project_yaml은 없으면 sys.exit 한다
+    except (db.ProjectConfigNotFound, Exception) as e:   # load_project_yaml은 없으면 ProjectConfigNotFound
         print(f"[경고] '{name}' 프로젝트 설정(yaml)을 읽지 못했습니다 ({e or '없음'}) — "
               "기본값으로 진행합니다. 브랜드 별칭·한도 설정은 적용되지 않습니다.",
               file=sys.stderr)

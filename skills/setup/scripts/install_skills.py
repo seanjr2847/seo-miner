@@ -44,8 +44,11 @@ TIMEOUT_SECONDS = 300
 
 
 def get_missing_skills() -> list[str]:
-    """빠진 필수 마케팅 스킬 이름 목록을 반환합니다 (doctor.py 의 판정 기준)."""
-    return [k for k in doctor.MARKETING_SKILLS if not doctor.find_skill(k)]
+    """빠진 마케팅 스킬 이름 목록을 반환합니다 (doctor.py 의 판정 기준, 필수 + 선택)."""
+    return (
+        [k for k in doctor.MARKETING_SKILLS if not doctor.find_skill(k)]
+        + [k for k in doctor.OPTIONAL_SKILLS if not doctor.find_skill(k)]
+    )
 
 
 def check_skills() -> int:

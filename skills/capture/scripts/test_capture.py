@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 HOME = Path(tempfile.mkdtemp(prefix="seo-miner-test-"))
-os.environ["CAPTURE_HOME"] = str(HOME)          # import 전에 걸어야 db가 여기를 본다
+os.environ["CAPTURE_HOME"] = str(HOME)
 sys.path.insert(0, str(Path(__file__).parent))
 
 import collector          # noqa: E402
@@ -65,6 +65,40 @@ def test_sql_is_really_read_only():
     assert conn.execute("SELECT COUNT(*) FROM opportunities WHERE project_id=?",
                         (p["id"],)).fetchone()[0] == 1      # 삭제되지 않았다
     conn.close()
+
+
+def test_get_project_raises_domain_exception_for_unregistered_site():
+    """db.get_project — 미등록 사이트면 sys.exit 대신 도메인 예외로 알린다.
+
+    HTTP 요청 경로가 그걸 다시 404 로 번역하는 흐름을 끊는 게 목적이라,
+    str(e) 가 기존 안내 문구를 그대로 담고 있어야 한다.
+    """
+    conn = db.connect()
+    name = "없는사이트"
+    try:
+        db.get_project(conn, name)
+    except db.ProjectNotFound as e:
+        msg = str(e)
+        assert f"'{name}' 사이트가 아직 등록되지 않았습니다" in msg, msg
+        assert "`/capture add" in msg or "/capture add" in msg, msg
+        assert "sync-project" in msg, msg
+    else:
+        raise AssertionError("ProjectNotFound 를 던지지 않았다")
+    conn.close()
+
+
+def test_load_project_yaml_raises_domain_exception_when_missing():
+    """db.load_project_yaml — yaml 이 없으면 sys.exit 대신 도메인 예외로 알린다.
+
+    collector.project_cfg 가 그걸 잡아 경고만 찍고 빈 dict 로 진행하는 자리 —
+    기존 sys.exit 메시지를 그대로 보존해야 동작이 안 흔들린다.
+    """
+    try:
+        db.load_project_yaml("없는거")
+    except db.ProjectConfigNotFound as e:
+        assert str(e) == "project yaml not found: 없는거", str(e)
+    else:
+        raise AssertionError("ProjectConfigNotFound 를 던지지 않았다")
 
 
 def test_gather_refuses_mixed_periods():
@@ -611,9 +645,185 @@ def test_answer_excerpt_keeps_full_text():
     conn.close()
 
 
+def test_list_opportunities_orders_are_distinct():
+    """list_opportunities - triage 정렬(acked 우선)과 screen 정렬(new 우선)의 차이 및 단일화 검증."""
+    conn = db.connect()
+    p = _project(conn, "opp_orders")
+    conn.executemany(
+        """INSERT INTO opportunities(project_id, kind, target, score, reasoning, status)
+           VALUES(?, ?, ?, ?, 'r', ?)""",
+        [(p["id"], "striking_distance", "opp_new_high", 80.0, "new"),
+         (p["id"], "ctr_gap", "opp_acked_mid", 50.0, "acked"),
+         (p["id"], "cannibalization", "opp_new_low", 20.0, "new"),
+         (p["id"], "rank_decay", "opp_done_top", 95.0, "done"),
+        ])
+    conn.commit()
+
+    # screen 정렬: (status='new') DESC, score DESC, id DESC
+    screen_rows = db.list_opportunities(conn, p["id"], order="screen", limit=10)
+    screen_targets = [r["target"] for r in screen_rows]
+    assert screen_targets == ["opp_new_high", "opp_new_low", "opp_done_top", "opp_acked_mid"], screen_targets
+
+    # triage 정렬: status='acked' DESC, score DESC
+    triage_rows = db.list_opportunities(conn, p["id"], order="triage", limit=10)
+    triage_targets = [r["target"] for r in triage_rows]
+    assert triage_targets == ["opp_acked_mid", "opp_done_top", "opp_new_high", "opp_new_low"], triage_targets
+
+    # 두 정렬이 실제로 다르다
+    assert screen_targets != triage_targets
+
+    # open_opportunities (status IN ('new', 'acked') + triage 정렬)
+    open_rows = db.open_opportunities(conn, p["id"])
+    assert [r["target"] for r in open_rows] == ["opp_acked_mid", "opp_new_high", "opp_new_low"]
+
+    # scoring.opportunities 도 db.list_opportunities(order='screen') 정렬과 일치
+    scoring_rows = scoring.opportunities(conn, p["id"], limit=10)
+    assert [r["target"] for r in scoring_rows] == screen_targets
+
+    # kinds 필터
+    filtered_rows = db.list_opportunities(conn, p["id"], kinds=["striking_distance"], order="triage")
+    assert [r["target"] for r in filtered_rows] == ["opp_new_high"]
+
+    # with_id=False 칼럼 검증
+    no_id_rows = db.list_opportunities(conn, p["id"], order="screen", with_id=False)
+    assert "id" not in dict(no_id_rows[0]) and "created" not in dict(no_id_rows[0])
+    assert "target" in dict(no_id_rows[0])
+
+    # 유효하지 않은 order 인자는 ValueError
+    try:
+        db.list_opportunities(conn, p["id"], order="invalid_order")
+    except ValueError as e:
+        assert "unknown order" in str(e)
+    else:
+        raise AssertionError("invalid order should raise ValueError")
+
+    conn.close()
+
+
+def test_get_opportunity():
+    """get_opportunity - ID 및 project_id 단건 조회."""
+    conn = db.connect()
+    p = _project(conn, "get_opp")
+    conn.execute(
+        """INSERT INTO opportunities(project_id, kind, target, score, reasoning, status)
+           VALUES(?, 'striking_distance', 'opp_target', 75.0, 'reason', 'new')""",
+        (p["id"],))
+    conn.commit()
+    opp_id = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (p["id"],)).fetchone()[0]
+
+    opp = db.get_opportunity(conn, opp_id, project_id=p["id"])
+    assert opp is not None
+    assert opp["id"] == opp_id and opp["target"] == "opp_target" and opp["kind"] == "striking_distance"
+
+    opp_no_pid = db.get_opportunity(conn, opp_id)
+    assert opp_no_pid is not None and opp_no_pid["id"] == opp_id
+
+    assert db.get_opportunity(conn, 999999, project_id=p["id"]) is None
+    assert db.get_opportunity(conn, opp_id, project_id=p["id"] + 999) is None
+    conn.close()
+
+
+def test_creations_reader_and_merged_writer():
+    """list_creations / mark_creation_merged 동작 검증."""
+    conn = db.connect()
+    p = _project(conn, "creations_test")
+    c1 = db.record_creation(conn, p["id"], "path/1.md", branch="capture/k-1")
+    c2 = db.record_creation(conn, p["id"], "path/2.md", branch="capture/k-2")
+
+    rows = db.list_creations(conn, p["id"], limit=10)
+    assert len(rows) == 2
+    assert rows[0]["id"] == c2 and rows[1]["id"] == c1   # ORDER BY id DESC
+    assert rows[0]["merged"] == 0 and rows[1]["merged"] == 0
+
+    assert db.mark_creation_merged(conn, c2) == 1
+    rows_after = db.list_creations(conn, p["id"], limit=10)
+    assert rows_after[0]["merged"] == 1 and rows_after[1]["merged"] == 0
+    conn.close()
+
+
+def test_set_keyword_intent_writer():
+    """set_keyword_intent 동작 검증."""
+    conn = db.connect()
+    p = _project(conn, "intent_writer")
+    conn.execute("INSERT INTO keywords(project_id, keyword, is_active) VALUES(?, '단어', 1)", (p["id"],))
+    conn.commit()
+    kid = conn.execute("SELECT id FROM keywords WHERE project_id=?", (p["id"],)).fetchone()[0]
+
+    assert db.set_keyword_intent(conn, kid, "commercial") == 1
+    row = conn.execute("SELECT intent FROM keywords WHERE id=?", (kid,)).fetchone()
+    assert row["intent"] == "commercial"
+
+def test_rank_delta_noise_boundary_and_is_defensive():
+    """scoring.rank_delta - 노이즈 경계 양쪽(RANK_NOISE-1 보합 vs RANK_NOISE 움직임) 및 is_defensive 검증."""
+    # 1. rank_delta
+    assert scoring.rank_delta(None, 5) == {"delta": None, "flat": False}
+    assert scoring.rank_delta(5, None) == {"delta": None, "flat": False}
+    assert scoring.rank_delta(None, None) == {"delta": None, "flat": False}
+
+    assert scoring.rank_delta(10, 10) == {"delta": 0, "flat": True}
+
+    # 노이즈 미만 (|Δ| < RANK_NOISE=3) -> flat=True (보합)
+    assert scoring.rank_delta(10, 8) == {"delta": 2, "flat": True}     # +2: RANK_NOISE 바로 아래 (보합)
+    assert scoring.rank_delta(8, 10) == {"delta": -2, "flat": True}    # -2: RANK_NOISE 바로 아래 (보합)
+    assert scoring.rank_delta(10, 9) == {"delta": 1, "flat": True}     # +1 (보합)
+    assert scoring.rank_delta(9, 10) == {"delta": -1, "flat": True}    # -1 (보합)
+
+    # 노이즈 이상 (|Δ| >= RANK_NOISE=3) -> flat=False (움직임)
+    assert scoring.rank_delta(10, 7) == {"delta": 3, "flat": False}    # +3: RANK_NOISE 정확히 (움직임)
+    assert scoring.rank_delta(7, 10) == {"delta": -3, "flat": False}   # -3: -RANK_NOISE 정확히 (움직임)
+    assert scoring.rank_delta(10, 6) == {"delta": 4, "flat": False}    # +4 (움직임)
+    assert scoring.rank_delta(6, 10) == {"delta": -4, "flat": False}   # -4 (움직임)
+
+    # 2. is_defensive
+    assert scoring.is_defensive("rank_decay") is True
+    assert scoring.is_defensive("cannibalization") is True
+    assert scoring.is_defensive("striking_distance") is False
+    assert scoring.is_defensive("ctr_gap") is False
+    assert scoring.is_defensive("coverage") is False
+    assert scoring.is_defensive("pseo_pattern") is False
+    assert scoring.is_defensive("device_gap") is False
+    assert scoring.is_defensive("index_blocked") is False
+    assert scoring.is_defensive("") is False
+    assert scoring.is_defensive(None) is False
+
+
+def test_gap_to_page1_clamps_inside_page1():
+    """scoring.gap_to_page1 - 1페이지(1~10위) 안이면 0.0 클램프, 밖이면 소수점 1자리 거리."""
+    assert scoring.gap_to_page1(1.0) == 0.0
+    assert scoring.gap_to_page1(5.0) == 0.0
+    assert scoring.gap_to_page1(10.0) == 0.0
+    assert scoring.gap_to_page1(9.9) == 0.0
+    assert scoring.gap_to_page1(10.1) == 0.1
+    assert scoring.gap_to_page1(14.2) == 4.2
+    assert scoring.gap_to_page1(20.0) == 10.0
+    assert scoring.gap_to_page1(None) == 0.0
+
+
+def test_dynamic_capture_home_resolution():
+    """CAPTURE_HOME 환경변수 변경 시 db.CAPTURE_HOME 및 db.capture_home()이 즉시 새 경로를 반환한다."""
+    orig = os.environ.get("CAPTURE_HOME")
+    temp_dir = tempfile.mkdtemp(prefix="seo-miner-dynamic-test-")
+    try:
+        os.environ["CAPTURE_HOME"] = temp_dir
+        assert str(db.capture_home()) == temp_dir
+        assert str(db.CAPTURE_HOME) == temp_dir
+        assert Path(temp_dir) == db.CAPTURE_HOME
+        assert Path(temp_dir) == db.capture_home()
+        assert Path(temp_dir) / "brain.db" == db.db_path()
+        assert Path(temp_dir) / "brain.db" == db.DB_PATH
+    finally:
+        if orig is not None:
+            os.environ["CAPTURE_HOME"] = orig
+        else:
+            os.environ.pop("CAPTURE_HOME", None)
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
         t()
         print(f"  ok  {t.__name__}")
     print(f"\n{len(tests)} passed  ({HOME})")
+

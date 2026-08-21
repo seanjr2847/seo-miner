@@ -22,6 +22,7 @@ from pathlib import Path
 CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
 import db  # noqa: E402
+import stage  # noqa: E402
 
 
 MARKETING_SKILLS = {
@@ -103,8 +104,9 @@ def diagnose() -> dict:
     # "oauth"를 답한다 — 파일 유무로 판정하면 doctor가 설치 직후 전원에게 "연결됨"이라고
     # 거짓말하고, 사용자는 수집이 실패할 때까지 그걸 믿는다. 진짜 판정은 토큰이다.
     gsc_mode = db.gsc_auth()          # "oauth" | "service_account" | "" — 정본은 db
-    gsc_conn = db.gsc_connected()     # 토큰(또는 서비스 계정 키)이 실제로 있나
-    gsc_pending = bool(gsc_mode) and not gsc_conn      # ← 새로 생긴 "로그인 대기"
+    gst = stage.gsc_state()
+    gsc_conn = (gst == "connected")   # 토큰(또는 서비스 계정 키)이 실제로 있나
+    gsc_pending = (gst == "pending")  # ← 새로 생긴 "로그인 대기"
     # 번들 클라이언트를 쓰는 중인가 — 동의 화면 경고("확인되지 않은 앱")와 100명 상한이
     # 붙는 갈래라, 사용자에게 미리 말해 줘야 로그인 도중에 멈추지 않는다.
     gsc_bundled = gsc_mode == "oauth" and db.gsc_oauth_client() == db.gsc_oauth_bundled()
@@ -152,31 +154,46 @@ def diagnose() -> dict:
 
     must = []
     if not core_ok:
-        must.append("기본 부품 설치 — `pip install requests pyyaml` (1분). "
-                    "이것만 하면 기능 대부분이 켜집니다. 채팅에 \"설치해줘\" 하시면 "
-                    "제가 대신 실행합니다.")
+        must.append({
+            "id": "core_deps",
+            "msg": "기본 부품 설치 — `pip install requests pyyaml` (1분). "
+                   "이것만 하면 기능 대부분이 켜집니다. 채팅에 \"설치해줘\" 하시면 "
+                   "제가 대신 실행합니다."
+        })
     if not brain_ok:
-        must.append(f"보관함 파일이 손상됐습니다 — {DB} 를 다른 이름으로 옮기면 "
-                    "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)")
+        must.append({
+            "id": "brain_broken",
+            "msg": f"보관함 파일이 손상됐습니다 — {DB} 를 다른 이름으로 옮기면 "
+                   "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)"
+        })
     if core_ok and brain_ok and not brain["projects"]:
-        must.append("첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
-                    "하시면 제가 물어보면서 만들어 드립니다.")
+        must.append({
+            "id": "first_project",
+            "msg": "첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
+                   "하시면 제가 물어보면서 만들어 드립니다."
+        })
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
     if core_ok and brain_ok and gsc_pending:
         # 남은 게 로그인뿐인데 "연결하세요"라고만 하면, 사용자는 이미 끝난 콘솔 작업을
         # 다시 찾으러 간다. 다음 걸음은 **로그인을 유발하는 행동** 하나여야 한다.
-        must.append("구글 로그인 한 번 (무료, 30초, 계정당 1회) — 자동 수집과 "
-                    "Claude 즉석 조회(/capture ask)의 재료입니다. 준비물은 없고 "
-                    "구글 계정으로 로그인만 하면 됩니다 (속성마다 권한 주는 단계 없음). "
-                    "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
-                    + (" 이때 \"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]을 "
-                       "누르시면 됩니다 — 정상입니다." if gsc_bundled else ""))
+        must.append({
+            "id": "gsc_login",
+            "msg": "구글 로그인 한 번 (무료, 30초, 계정당 1회) — 자동 수집과 "
+                   "Claude 즉석 조회(/capture ask)의 재료입니다. 준비물은 없고 "
+                   "구글 계정으로 로그인만 하면 됩니다 (속성마다 권한 주는 단계 없음). "
+                   "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
+                   + (" 이때 \"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]을 "
+                      "누르시면 됩니다 — 정상입니다." if gsc_bundled else "")
+        })
     if core_ok and brain_ok and not gsc_mode:
-        must.append("구글 인증 수단 놓기 (무료) — 이 배포에는 로그인에 쓸 OAuth "
-                    "클라이언트 파일이 빠져 있습니다. 채팅에 \"GSC 연동해줘\" 하시면 "
-                    "파일을 놓는 것부터 제가 안내합니다 (내 클라이언트를 쓰시려면 "
-                    "connect_gsc.py --client-id ... --client-secret ...).")
+        must.append({
+            "id": "gsc_client",
+            "msg": "구글 인증 수단 놓기 (무료) — 이 배포에는 로그인에 쓸 OAuth "
+                   "클라이언트 파일이 빠져 있습니다. 채팅에 \"GSC 연동해줘\" 하시면 "
+                   "파일을 놓는 것부터 제가 안내합니다 (내 클라이언트를 쓰시려면 "
+                   "connect_gsc.py --client-id ... --client-secret ...)."
+        })
 
     later = []
     if brain["no_prompts"]:
@@ -200,7 +217,7 @@ def diagnose() -> dict:
 
     # 마케팅 스킬 항목은 show_setup 판정(대시보드가 패널을 펼치는 여부)에서 빼기 위해
     # 메시지를 변수로 보관한다 — 그래야 doctor가 결론을 찍고, 대시보드는 그걸 읽기만
-    # 한다. 다른 코드는 s != marketing_skills_msg 로 비교(문자열 매칭이 아니라 동일성).
+    # 한다.
     marketing_skills_msg = None
     missing_marketing = [k for k, ok in marketing_skills.items() if not ok]
     if missing_marketing:
@@ -217,7 +234,10 @@ def diagnose() -> dict:
             "없어도 측정·수집은 그대로 됩니다. "
             "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
         )
-        must.append(marketing_skills_msg)
+        must.append({
+            "id": "marketing_skills",
+            "msg": marketing_skills_msg
+        })
     elif not marketing_optional.get("aso", True):
         marketing_skills_msg = (
             "aso (앱 스토어 리스팅 최적화) — 앱이 있는 사이트만 필요합니다. "
@@ -248,12 +268,11 @@ def diagnose() -> dict:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
         next_cmd = f"/capture run {brain['projects'][0]}"
 
-    steps = must + [f"[선택] {s}" for s in later]
+    steps = [m["msg"] if isinstance(m, dict) else m for m in must] + [f"[선택] {s}" for s in later]
     # 마케팅 스킬 누락은 "패널을 항상 펼칠 만큼 급한 일"이 아니다 — 다른 must 가
-    # 있어 켜졌다가 끝나면 다시 접힌다. 그래서 같은 메시지를 뺀 사본을 별도 키로
-    # 둔다 — 대시보드 show_setup 판정이 이걸 본다. 문자열 비교(s != msg)는 깨지기
-    # 쉽지만, msg 가 같은 함수 안에서 만들어졌고 변수 한 곳에만 있으므로 안전하다.
-    must_other = [s for s in must if s != marketing_skills_msg]
+    # 있어 켜졌다가 끝나면 다시 접힌다. 그래서 마케팅 스킬을 뺀 사본을 별도 키로
+    # 둔다 — 대시보드 show_setup 판정이 이걸 본다.
+    must_other = [m for m in must if (m.get("id") if isinstance(m, dict) else m) != "marketing_skills"]
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
@@ -335,7 +354,8 @@ def render(d: dict) -> None:
     if d["must"]:
         print("\n[꼭 해야 할 일]")
         for i, s in enumerate(d["must"], 1):
-            print(f"  {i}. {s}")
+            msg = s["msg"] if isinstance(s, dict) else s
+            print(f"  {i}. {msg}")
     if d["later"]:
         print("\n나중에 하면 좋은 것 (급하지 않습니다)")
         for s in d["later"]:

@@ -45,6 +45,12 @@ conn.close()
 rows = json.loads(run("pick", "t"))
 assert len(rows) == 1 and rows[0]["target"] == "ai 티어표", rows
 
+rows_filtered = json.loads(run("pick", "t", "--kinds", "striking_distance"))
+assert len(rows_filtered) == 1 and rows_filtered[0]["target"] == "ai 티어표", rows_filtered
+
+rows_empty = json.loads(run("pick", "t", "--kinds", "ctr_gap,cannibalization"))
+assert len(rows_empty) == 0, rows_empty
+
 run("claim", "t", str(oid))
 conn = createdb.connect()
 assert conn.execute("SELECT status FROM opportunities WHERE id=?",

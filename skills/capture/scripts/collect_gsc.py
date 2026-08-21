@@ -134,48 +134,66 @@ def _query(service, prop: str, body: dict) -> dict:
         raise
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    collector.add_common(ap)
-    collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int)
-    # 콤마 구분 문자열이다 — add_setting 의 type_fn 이 스칼라만 다루므로 리스트를 못 받는다.
-    collector.add_setting(ap, "--breakdown", key="gsc_breakdown", fallback="device",
-                          type=str,
-                          help="분해 수집 차원 (콤마 구분: device,country / 빈 문자열이면 안 함)")
-    ap.add_argument("--row-limit", type=int, default=100000,
-                    help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
-    a = ap.parse_args()
+def collect(project: str, *,
+            dry_run: bool = False,
+            row_limit: int = 100000,
+            gsc_days: int | None = None,
+            gsc_breakdown: str | None = None) -> collector.StageResult:
+    """GSC 실측을 Brain 에 적재한다. sys.exit 호출 없음 — 결과를 StageResult 로 반환.
 
-    conn, p, cfg = collector.open_project(a.project)
-    s = collector.settings(a, cfg)
+    Args:
+        project: 사이트 이름 (project yaml 의 name)
+        dry_run: True 면 호출 계획만 찍고 종료
+        row_limit: 가져올 최대 행 수 (25,000행씩 나눠 받는다)
+        gsc_days: 수집 창 (오늘-3일 기준 N일)
+        gsc_breakdown: 분해 수집 차원 (콤마 구분 문자열)
+
+    Returns:
+        StageResult(ok=...) — 정상 종료면 ok=True. 인증 누락·구성 누락은
+        ok=False, skipped=True, reason 에 한국어 안내.
+    """
+    _parser()
+    conn, p, cfg = collector.open_project(project)
+    ns = argparse.Namespace(
+        days=gsc_days,
+        breakdown=gsc_breakdown,
+    )
+    s = collector.settings(ns, cfg)
     days = s["gsc_days"]
-    dims = [d.strip().lower() for d in (s["gsc_breakdown"] or "").split(",") if d.strip()]
+    breakdown = s["gsc_breakdown"]
+    dims = [d.strip().lower() for d in (breakdown or "").split(",") if d.strip()]
     prop = p["gsc_property"]
     if not prop:
-        sys.exit("project yaml has no gsc_property "
-                 "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
-                 "Add it, then: python db.py sync-project <yaml>")
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="project yaml has no gsc_property "
+                                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
+                                            "Add it, then: python db.py sync-project <yaml>")
 
     end = date.today() - timedelta(days=3)     # GSC delay buffer
     start = end - timedelta(days=days)
     print(f"[gsc] {prop}  window {start} ~ {end} (period={days}d) "
-          f"rowLimit={a.row_limit}")
+          f"rowLimit={row_limit}")
     # 비용 고지 — dry-run 이 말한 호출 수와 실제 호출 수가 어긋나면 안 된다.
     # query×page 만 "최대"다: 마지막 장이 덜 차면 거기서 멈추므로 실제로는 더 적을 수 있다.
-    qp_max = max(1, -(-a.row_limit // PAGE))
+    qp_max = max(1, -(-row_limit // PAGE))
     print(f"[gsc] API 호출 계획: query×page 최대 {qp_max}회 + 일별 1회 + "
           f"분해 {len(dims)}회({', '.join(dims) or '없음'}) = 최대 {qp_max + 1 + len(dims)}회")
-    if a.dry_run:
+    if dry_run:
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, rows=0)
 
-    service = get_service()
+    try:
+        service = get_service()
+    except db.ProjectNotFound as e:
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True, reason=str(e))
     rows: list = []
     calls = 0
     # API는 한 번에 최대 PAGE행만 준다 — 그 이상은 startRow로 이어받아야 한다.
     # 예전엔 한 번만 불러서, 큰 사이트가 정확히 25,000행에서 조용히 잘렸다.
-    while len(rows) < a.row_limit:
-        want = min(PAGE, a.row_limit - len(rows))
+    while len(rows) < row_limit:
+        want = min(PAGE, row_limit - len(rows))
         resp = _query(service, prop, {
             "startDate": str(start), "endDate": str(end),
             "dimensions": ["query", "page"], "rowLimit": want,
@@ -187,8 +205,8 @@ def main() -> None:
             break
         print(f"[gsc] … {len(rows)} rows")
     print(f"[gsc] fetched {len(rows)} query x page rows")
-    if len(rows) >= a.row_limit:
-        print(f"[주의] --row-limit({a.row_limit})에 걸려 여기서 멈췄습니다 — "
+    if len(rows) >= row_limit:
+        print(f"[주의] --row-limit({row_limit})에 걸려 여기서 멈췄습니다 — "
               "더 필요하면 값을 올리세요. 지금 스냅샷은 전체가 아닙니다.")
 
     qp_calls = calls
@@ -203,9 +221,9 @@ def main() -> None:
         from googleapiclient.errors import HttpError
         try:
             resp = _query(service, prop, body)
-        except (HttpError, SystemExit) as e:
-            # SystemExit 도 받는다 — _query 의 403 안내가 sys.exit 로 끝나기 때문이다.
-            # 본체가 이미 성공한 뒤라면 권한 안내 하나로 수확을 버릴 이유가 없다.
+        except (HttpError, db.ProjectConfigNotFound) as e:
+            # 부수 호출의 실패도 본체를 죽이면 안 된다 — 이미 받아 둔 query×page 를
+            # 통째로 잃지 않게 여기서 잡아 건너뛴다.
             print(f"[경고] {label} 수집을 건너뜁니다 ({e}) — "
                   "본체 스냅샷은 그대로 저장됩니다.", file=sys.stderr)
             return None
@@ -274,6 +292,31 @@ def main() -> None:
         print(f"  {s['pos']:>5}  imp={s['imp']:<6} clk={s['clk']:<4} "
               f"gap={s['gap']:<5} {s['query']}")
     conn.close()
+    return collector.StageResult(ok=True, skipped=False, rows=len(rows))
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    collector.add_common(ap)
+    collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int)
+    # 콤마 구분 문자열이다 — add_setting 의 type_fn 이 스칼라만 다루므로 리스트를 못 받는다.
+    collector.add_setting(ap, "--breakdown", key="gsc_breakdown", fallback="device",
+                          type=str,
+                          help="분해 수집 차원 (콤마 구분: device,country / 빈 문자열이면 안 함)")
+    ap.add_argument("--row-limit", type=int, default=100000,
+                    help="가져올 최대 행 수 (25,000행씩 나눠 받는다)")
+    return ap
+
+
+def main() -> None:
+    try:
+        a = _parser().parse_args()
+        r = collect(a.project, dry_run=a.dry_run, row_limit=a.row_limit,
+                    gsc_days=a.days, gsc_breakdown=a.breakdown)
+    except db.ProjectNotFound as e:
+        sys.exit(str(e))
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 if __name__ == "__main__":

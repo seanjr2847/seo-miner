@@ -498,13 +498,16 @@ const delta = (d, invert) => {
   return `<span class="d ${good ? "up" : "down"}">${d > 0 ? "+" : "−"}` +
          `${Math.abs(d).toLocaleString("ko-KR")}</span>`;
 };
-// SERP 정수 순위의 Δ — |Δ|가 노이즈 폭(RULES.rank_noise) 미만이면 "보합"으로 눌러
-// 그리고, 실제 값은 title로 남긴다. 순위 ±2~3은 데이터센터 편차지 변화가 아니다.
-const rankDelta = d => {
+// SERP 정수 순위의 Δ — 판정(flat 여부)은 서버(scoring.rank_delta)가 하고,
+// 여기서는 마크업만 만든다. 보합일 때 실제 값은 title로 남긴다.
+const rankDelta = rd => {
+  if (!rd) return "";
+  const d = typeof rd === "object" ? rd.delta : rd;
+  const flat = typeof rd === "object" ? rd.flat : (Number.isFinite(d) && Math.abs(d) < (RULES.rank_noise || 3));
   if (!Number.isFinite(d)) return "";
-  if (Math.abs(d) < RULES.rank_noise)
+  if (flat)
     return `<span class="d muted" title="실제 Δ ${d > 0 ? "+" : d < 0 ? "−" : ""}` +
-           `${Math.abs(d)} — ±${RULES.rank_noise - 1}칸은 노이즈로 봅니다">보합</span>`;
+           `${Math.abs(d)} — ±${(RULES.rank_noise || 3) - 1}칸은 노이즈로 봅니다">보합</span>`;
   return delta(d);
 };
 const table = (heads, rows) => rows.length
@@ -524,10 +527,8 @@ async function post(path, body) {
 
 /* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
-// 경계값은 서버(scoring.py)가 내려준다 — 여기 다시 적어 두면 규칙이 둘로 갈라진다.
-// rules가 없는 옛 박제본도 그대로 그려져야 하므로 예전 값을 기본으로 둔다.
-let RULES = {page1: 10, striking_lo: 4, striking_hi: 20, rank_noise: 3,
-  device_gap_pos: 2, device_min_imp: 50};
+// 임계값은 서버 payload(d.rules)에서만 온다 — JS 리터럴 기본값은 두지 않는다.
+let RULES = {};
 function depthLog(rows, brandCatalogEmpty) {
   if (!rows.length)
     return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
@@ -540,7 +541,7 @@ function depthLog(rows, brandCatalogEmpty) {
 
   const lanes = rows.map((r, i) => {
     const y = PAD_T + i * LANE + LANE / 2;
-    const px = x(r.pos), onPage1 = r.pos <= RULES.page1;
+    const px = x(r.pos), onPage1 = r.band ? r.band === "page1" : r.pos <= (RULES.page1 || 10);
     const c = onPage1 ? "var(--patina)" : "var(--copper)";
     const x1 = Math.min(px, x10), x2 = Math.max(px, x10);
     // 2페이지 검색어는 1페이지 경계까지 되밀어야 할 거리를 막대로 — 이 화면이 파는 값.
@@ -548,9 +549,9 @@ function depthLog(rows, brandCatalogEmpty) {
       `<rect class="grow" x="${x1}" y="${y - 4}" width="${x2 - x1}" height="8" rx="4"
              fill="var(--copper)" opacity=".38" style="transform-origin:${x2}px 0;
              animation-delay:${i * 16}ms"/>`;
-    // 거리는 서버가 계산해 준다(scoring.gap_to_page1). 없는 옛 박제본만 여기서 뺀다.
+    // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
     const gap = onPage1 ? "이미 1페이지"
-      : `1페이지까지 ${(r.gap ?? r.pos - RULES.page1).toFixed(1)}칸`;
+      : `1페이지까지 ${r.gap.toFixed(1)}칸`;
     return `<g class="lane">
       <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${W}" height="${LANE}" fill="none"/>
       <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
@@ -590,13 +591,13 @@ function depthLog(rows, brandCatalogEmpty) {
       클릭과 노출은 자릿수가 달라 각자 축을 쓴다 — 여기서 읽는 건 모양이고,
       값은 점 위에 올리면 나온다. 깊이 로그와 같은 .log/.logwrap 을 그대로 쓴다
       (좁은 화면에선 축소 대신 가로 스크롤). ── */
-function dailyChart(rows) {
+function dailyChart(rows, stats) {
   if (rows.length < 2)
     return `<div class="empty">일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.</div>`;
   const W = 1000, H = 190, L = 8, R = W - 8, T = 20, B = 24, n = rows.length;
   const x = i => L + i * (R - L) / (n - 1);
-  const mxC = Math.max(...rows.map(r => r.clicks || 0), 1);
-  const mxI = Math.max(...rows.map(r => r.impressions || 0), 1);
+  const mxC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0), 1);
+  const mxI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0), 1);
   const y = (v, mx) => H - B - (v || 0) / mx * (H - T - B);
   const pts = (k, mx) => rows.map((r, i) =>
     `${x(i).toFixed(1)},${y(r[k], mx).toFixed(1)}`).join(" ");
@@ -609,7 +610,8 @@ function dailyChart(rows) {
   const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 7}"
     text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
     >${esc(String(rows[i].date).slice(5))}</text>`;
-  const sum = k => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  const sumC = stats?.clicks_sum ?? rows.reduce((a, r) => a + (r.clicks || 0), 0);
+  const sumI = stats?.impressions_sum ?? rows.reduce((a, r) => a + (r.impressions || 0), 0);
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="최근 ${n}일 클릭·노출 추이">
     <line x1="${L}" y1="${H - B}" x2="${R}" y2="${H - B}" stroke="var(--rule-soft)" stroke-width="1"/>
@@ -621,8 +623,8 @@ function dailyChart(rows) {
       stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
     ${hov}${tick(0)}${n > 2 ? tick(Math.floor(n / 2)) : ""}${tick(n - 1)}
   </svg></div>
-  <div class="legend"><b style="color:var(--patina)">■</b> 클릭 ${n}일 합계 ${num(sum("clicks"))}
-    (하루 최고 ${num(mxC)}) · <b style="color:var(--slate)">■</b> 노출 ${num(sum("impressions"))}
+  <div class="legend"><b style="color:var(--patina)">■</b> 클릭 ${n}일 합계 ${num(sumC)}
+    (하루 최고 ${num(mxC)}) · <b style="color:var(--slate)">■</b> 노출 ${num(sumI)}
     (하루 최고 ${num(mxI)}) — 자릿수가 달라 세로축은 각자입니다</div>`;
 }
 
@@ -739,18 +741,17 @@ const KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI �
   ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
   coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"AI오버뷰 노출",
   content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘"};
-// 지키는 kind — 잃던 것을 막는 쪽이라 산화동. 나머지는 얻는 쪽이라 녹청.
-const KIND_DEF = new Set(["rank_decay", "cannibalization"]);
 function oppRow(o) {
   const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
   const acts = READONLY ? ""
     : o.status === "new"
     ? btn("acked","확인") + btn("done","완료") + btn("dismissed","제외")
     : btn("new","되돌리기");
-  const tone = KIND_DEF.has(o.kind) ? " k-def" : "";
+  const isDef = o.is_defensive ?? (o.kind === "rank_decay" || o.kind === "cannibalization");
+  const tone = isDef ? " k-def" : "";
   // 점수는 결정적(scoring.score 0~100)이라 막대끼리 비교가 성립한다.
   const meter = Number.isFinite(o.score)
-    ? `<div class="meter${KIND_DEF.has(o.kind) ? " def" : ""}" title="점수 ${o.score}/100">
+    ? `<div class="meter${isDef ? " def" : ""}" title="점수 ${o.score}/100">
          <i style="width:${Math.min(100, Math.max(0, o.score))}%"></i></div>` : "";
   return `<div class="opp">
     <div class="score" title="${o.score ?? ""}">${Number.isFinite(o.score)
@@ -773,7 +774,7 @@ async function setOpp(id, status) {
   load();
 }
 
-let OPPS = [], KIND_FILTER = null;
+let OPPS = [], OPP_COUNTS = {}, KIND_FILTER = null;
 function filterKind(el) {
   const k = el.dataset.k;
   KIND_FILTER = KIND_FILTER === k ? null : k;
@@ -784,8 +785,7 @@ function renderOpps(n) {
     return $("opps").innerHTML =
       `<div class="empty">아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.</div>`;
   // kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
-  const counts = {};
-  for (const o of OPPS) counts[o.kind] = (counts[o.kind] || 0) + 1;
+  const counts = OPP_COUNTS;
   const kinds = Object.keys(counts);
   if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 사이트 전환 시 잔존 필터
   const chips = kinds.length > 1
@@ -809,17 +809,9 @@ function moverRows(list, invert) {
     <td class="num">${num(m.clk)} ${delta(m.dclk)}</td></tr>`);
 }
 
-// 배너와 안내는 따로 도착한다(각자 fetch). 어느 쪽이 늦게 그려져도 "지금 할 것"이
-// 남도록 값은 여기 두고, 양쪽이 그린 직후 applyNext()로 붙인다.
-let NEXT_HTML = "";
-function applyNext() {
-  const nx = $("nx");
-  if (nx && NEXT_HTML) nx.innerHTML = NEXT_HTML;
-}
-
 /* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
    순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
-   판정(done·지금 할 것·명령)은 서버가 한다(scoring.stage) — 여기서 다시 판정하면
+   판정(done·지금 할 것·명령)은 서버가 한다(stage.state) — 여기서 다시 판정하면
    화면과 doctor·CLI가 서로 다른 다음 할 일을 말하게 된다. 이 화면은 그리기만 한다. */
 function renderGuide(d) {
   if (READONLY || !d.guide) return;      // 박제본에는 "지금 할 것"이 없다
@@ -838,13 +830,15 @@ function renderGuide(d) {
           >${esc(s.cmd)}</button>` : ""}</div>
       </div></div>`;
   }).join("");
-  // 배너의 "지금 할 것"도 같은 판정으로 채운다 — 화면에 다음 할 일은 하나뿐이다.
-  NEXT_HTML = here === -1
-    ? `한 바퀴 다 돌았습니다 — <b>2. 구글 실적 읽기</b>부터 다시 재면 그동안 고친 게
-       숫자로 보입니다.`
-    : `지금 할 것 — <b>${esc(steps[here].t)}</b>` +
-      (steps[here].cmd ? ` <code>${esc(steps[here].cmd)}</code>` : "");
-  applyNext();
+  // 배너의 "지금 할 것" 채우기
+  const nx = $("nx");
+  if (nx) {
+    nx.innerHTML = here === -1
+      ? `한 바퀴 다 돌았습니다 — <b>2. 구글 실적 읽기</b>부터 다시 재면 그동안 고친 게
+         숫자로 보입니다.`
+      : `지금 할 것 — <b>${esc(steps[here].t)}</b>` +
+        (steps[here].cmd ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+  }
   // 아직 한 바퀴도 안 돈 프로젝트면 펴서 보여준다. 다 돌았으면 헤더 [안내]로 연다.
   if (here !== -1 && !d.progress.gsc_days) $("guide").hidden = false;
 }
@@ -857,11 +851,51 @@ function copyCmd(el) {
 }
 
 function render(d) {
+  if (d.schema == null) {
+    // schema 필드가 없는 옛 박제본 호환 분기: 박제본 호환 분기는 schema 번호 하나로 한다.
+    // 옛 박제본에 없는 규칙·필드를 여기서 한 번만 채워 하위 렌더러의 임시 분기들을 대체한다.
+    if (!d.rules) {
+      RULES = {page1: 10, striking_lo: 4, striking_hi: 20, rank_noise: 3,
+               device_gap_pos: 2, device_min_imp: 50};
+    }
+    if (d.trend && d.gsc_period) {
+      d.trend = d.trend.filter(x => x.p == null || x.p === d.gsc_period);
+    }
+    if (d.striking) {
+      for (const r of d.striking) {
+        if (r.gap == null && r.pos != null) r.gap = Math.max(0, r.pos - (RULES.page1 || 10));
+        if (r.band == null && r.pos != null) r.band = r.pos <= (RULES.page1 || 10) ? "page1" : "page2";
+      }
+      if (d.striking_page2 == null) {
+        d.striking_page2 = d.striking.filter(r => r.band === "page2").length;
+      }
+    }
+    if (d.opps) {
+      for (const o of d.opps) {
+        if (o.is_defensive == null) {
+          o.is_defensive = o.kind === "rank_decay" || o.kind === "cannibalization";
+        }
+      }
+      if (!d.opp_counts) {
+        d.opp_counts = {};
+        for (const o of d.opps) d.opp_counts[o.kind] = (d.opp_counts[o.kind] || 0) + 1;
+      }
+    }
+    if (d.daily && !d.daily_stats) {
+      d.daily_stats = {
+        clicks_max: Math.max(...d.daily.map(r => r.clicks || 0), 1),
+        impressions_max: Math.max(...d.daily.map(r => r.impressions || 0), 1),
+        clicks_sum: d.daily.reduce((a, r) => a + (r.clicks || 0), 0),
+        impressions_sum: d.daily.reduce((a, r) => a + (r.impressions || 0), 0),
+      };
+    }
+    if (!d.ai_trend) d.ai_trend = [];
+  }
+
   // KPI의 증감도 같은 기간끼리만 — 서버가 고른 비교 짝(gsc_date/gsc_prev)을 그대로 쓴다.
   // 그냥 마지막 두 줄을 빼면 28일치에서 90일치를 빼는 일이 생긴다.
-  if (d.rules) RULES = {...RULES, ...d.rules};  // 서버가 준 경계값이 이 화면의 유일한 기준
-  // 기간이 다른 행은 KPI에서 뺀다 — p 없는 옛 박제본은 그대로 둔다(서버 필터 이전 데이터).
-  const t = d.trend.filter(x => x.p == null || x.p === d.gsc_period);
+  if (d.rules) RULES = {...d.rules};  // 서버가 준 경계값이 이 화면의 유일한 기준
+  const t = d.trend || [];
   const last = t.find(x => x.d === d.gsc_date) || t[t.length - 1] || {};
   const prev = (d.gsc_prev && t.find(x => x.d === d.gsc_prev)) || {};
   renderGuide(d);
@@ -879,13 +913,12 @@ function render(d) {
   ].map(([l, v, dd, sp]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${sp}</div>`).join("");
 
-  // 옛 박제본에는 이 셋이 없다 — 각 함수가 키 없음(감춤)과 빈 목록(안내)을 갈라 본다.
   $("daily-sec").hidden = !d.daily;
-  if (d.daily) $("daily").innerHTML = dailyChart(d.daily);
+  if (d.daily) $("daily").innerHTML = dailyChart(d.daily, d.daily_stats);
   renderDevice(d);
   renderIndex(d);
 
-  const near = d.striking.filter(r => r.pos > RULES.page1).length;
+  const near = d.striking_page2;
   $("log-sub").textContent = d.striking.length
     ? `${d.striking.length}개 중 ${near}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
       `순위만 밀면 클릭으로 바뀝니다.`
@@ -894,7 +927,8 @@ function render(d) {
 
   $("opp-eyebrow").textContent = `아직 안 한 기회 ${d.opps_total}건`;
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
-  OPPS = d.opps;
+  OPPS = d.opps || [];
+  OPP_COUNTS = d.opp_counts || {};
   renderOpps(8);
 
   const mv = moverRows(d.ups).concat(moverRows(d.downs));
@@ -912,7 +946,7 @@ function render(d) {
 
   let ai = "";
   if (d.matrix.length) {
-    const at = d.ai_trend || [];         // 옛 박제본에는 없다 — 그때는 표만 그린다
+    const at = d.ai_trend || [];
     if (at.length >= 2)
       ai += `<p class="sub" style="margin:0 0 8px">런별 추이</p>` + aiSpark(at);
     ai += table(["엔진", "카테고리", ">인용", ">언급", ">체크"],
@@ -933,7 +967,7 @@ function render(d) {
   $("ranks").innerHTML = d.ranks.length
     ? table(["키워드", ">순위", ">Δ", "AI오버뷰"], d.ranks.map(r =>
         `<tr><td class="kwcell">${esc(r.keyword)}</td>
-        <td class="num">${r.pos ?? "—"}</td><td class="num">${rankDelta(r.dpos)}</td>
+        <td class="num">${r.pos ?? "—"}</td><td class="num">${rankDelta(r.delta ?? r.dpos)}</td>
         <td>${r.aio ? (r.aio_cited ? '<span class="up">인용됨</span>'
                      : '<span class="down">있는데 미인용</span>') : '<span class="muted">없음</span>'}</td></tr>`))
     : `<div class="empty">매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.</div>`;
@@ -970,20 +1004,25 @@ async function loadDoctor() {
   try {
     const d = await (await fetch("/api/doctor")).json();
     let h = `<div class="verdict">${esc(d.verdict)}</div>`;
-    // 지금 할 것은 한 화면에 하나만 있어야 한다 — 사이트가 있으면 안내(실측 판정)가
-    // 채우고, 없으면 여기서 등록 폼을 가리킨다. #nx는 둘의 공용 자리.
-    h += d.no_project
-      ? `<div class="nx" id="nx">아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을
-         누르시면 됩니다.</div>`
-      : `<div class="nx" id="nx"></div>`;
-    if (d.must.length)
-      h += `<ul class="must">${d.must.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
-    if (d.extra.length)
+    let nxHtml = "";
+    if (d.no_project) {
+      nxHtml = `아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을 누르시면 됩니다.`;
+    } else if (d.guide) {
+      const g = d.guide, gh = g.here, gs = g.steps;
+      nxHtml = gh === -1
+        ? `한 바퀴 다 돌았습니다 — <b>2. 구글 실적 읽기</b>부터 다시 재면 그동안 고친 게
+           숫자로 보입니다.`
+        : `지금 할 것 — <b>${esc(gs[gh].t)}</b>` +
+          (gs[gh].cmd ? ` <code>${esc(gs[gh].cmd)}</code>` : "");
+    }
+    h += `<div class="nx" id="nx">${nxHtml}</div>`;
+    if (d.must && d.must.length)
+      h += `<ul class="must">${d.must.map(s => `<li>${esc(s.msg || s)}</li>`).join("")}</ul>`;
+    if (d.extra && d.extra.length)
       h += `<details><summary>안 켠 기능·나중에 할 것 ${d.extra.length}개 — 없어도 됩니다</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     $("docban").innerHTML = h;
     $("docban").hidden = false;
-    applyNext();                         // 안내가 먼저 도착했으면 그 값을 살린다
     renderSetup(d);
   } catch (e) { /* 배너 실패는 치명이 아님 — 본문은 그대로 뜬다 */ }
 }
@@ -992,15 +1031,8 @@ async function loadDoctor() {
 const mark = (id, done, todo) => $(id).outerHTML =
   `<span id="${id}" class="stat ${done ? "ok" : "todo"}">${done ? "완료" : todo}</span>`;
 
-/* ── 구글 칸의 3-상태 ──────────────────────────────────────────
-   판정은 서버(db.gsc_connected)가 하고 여기서는 갈래만 고른다. **파일이 있다 ≠
-   연결됐다**: 플러그인이 OAuth 클라이언트를 동봉하면서 파일은 설치만 하면 항상
-   존재하게 됐다. 그래서 "로그인 대기"라는 상태가 새로 생겼고, 새 설치 직후엔
-   그게 기본값이다 — 이 화면에서 가장 자주 보일 문구다. */
-function gscState(d) { return d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none"; }
-
 function renderGsc(d) {
-  const st = gscState(d), sa = d.gsc_mode === "service_account";
+  const st = d.gsc_state || (d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none"), sa = d.gsc_mode === "service_account";
   $("s-gsc").outerHTML = `<span id="s-gsc" class="stat ${st === "connected" ? "ok" : "todo"}">` +
     (st === "connected" ? "연결됨" : st === "pending" ? "로그인 대기" : "인증 없음") + `</span>`;
   $("why-gsc").innerHTML = st === "connected"

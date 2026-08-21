@@ -7,7 +7,7 @@
     {
       "name": "seo-miner",
       "source": "./",
-      "description": "capture(채굴·측정) + create(실행) + setup(닥터) — GSC 즉석 조회까지 플러그인 안에서 끝내고(외부 MCP 서버 불필요), 마케팅 스킬(product-marketing·seo-audit·ai-seo·schema 등)에 해석을 위임하는 개인용 SEO·AEO 채굴기"
+      "description": "capture(채굴·측정) + create(실행) + setup(닥터) — /capture run이 gsc→index→keywords→rank→ai→gaps→report 7단계를 한 번에 돌고, /setup이 마케팅 스킬을 대신 설치하는 개인용 SEO·AEO 채굴기"
     }
   ]
 }

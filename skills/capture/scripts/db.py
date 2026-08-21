@@ -22,8 +22,26 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-CAPTURE_HOME = Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
-DB_PATH = Path(os.environ.get("CAPTURE_DB", CAPTURE_HOME / "brain.db"))
+def capture_home() -> Path:
+    """상태 디렉토리. 매번 환경변수를 다시 읽는다 — import 시점에 얼리지 않는다."""
+    return Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
+
+
+def db_path() -> Path:
+    """Brain 파일 자리."""
+    env = os.environ.get("CAPTURE_DB")
+    return Path(env) if env else capture_home() / "brain.db"
+
+
+def __getattr__(name):
+    """CAPTURE_HOME/DB_PATH 는 읽을 때마다 계산한다 — 예전엔 import 시점에 얼어서
+    테스트와 자체점검이 db 의 module 속성을 직접 갈아끼워야 했다."""
+    if name == "CAPTURE_HOME":
+        return capture_home()
+    if name == "DB_PATH":
+        return db_path()
+    raise AttributeError(name)
+
 
 # 한국어 Windows 콘솔(cp949)에서 '—'·'✓' 출력이 UnicodeEncodeError로 죽는 것 방지.
 # db는 모든 스크립트가 import하므로 여기 한 번이면 전부 커버된다 — doctor·connect_gsc·
@@ -35,9 +53,10 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 
-def load_env(path: Path = CAPTURE_HOME / "env") -> None:
+def load_env(path: Path | None = None) -> None:
     """~/.capture/env 의 KEY=VALUE를 환경변수로 — 대시보드 설정 화면이 여기 쓴다.
     셸에 이미 export한 값이 우선(setdefault). # ponytail: dotenv 패키지 대신 4줄."""
+    path = path or capture_home() / "env"
     for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
         k, sep, v = line.partition("=")
         if sep and k.strip() and not k.lstrip().startswith("#"):
@@ -54,7 +73,7 @@ load_env()
 def gsc_key() -> Path:
     """구글 서비스 계정 키 (전 사이트 공용) — 무인 수집용 선택지."""
     return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
-                               CAPTURE_HOME / "gsc_service_account.json"))
+                               capture_home() / "gsc_service_account.json"))
 
 
 def gsc_oauth_bundled() -> Path:
@@ -88,7 +107,7 @@ def gsc_oauth_client() -> Path:
     env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
     if env:
         return Path(env)
-    own = CAPTURE_HOME / "gsc_oauth_client.json"
+    own = capture_home() / "gsc_oauth_client.json"
     if own.exists():
         return own
     bundled = gsc_oauth_bundled()
@@ -109,7 +128,7 @@ def gsc_auth() -> str:
     매번 브라우저 로그인으로 끌려간다. 사용자가 **직접 놓은 것**이 항상 이긴다.
     """
     env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
-    if (env and Path(env).exists()) or (CAPTURE_HOME / "gsc_oauth_client.json").exists():
+    if (env and Path(env).exists()) or (capture_home() / "gsc_oauth_client.json").exists():
         return "oauth"
     if gsc_key().exists():
         return "service_account"
@@ -125,7 +144,7 @@ def gsc_token() -> Path:
     패키지의 설정 폴더에 있었다. 그 서버를 걷어내면서 로그인도 우리 것이 됐으니
     (collect_gsc._oauth_service) 토큰도 나머지 상태와 같은 곳 — CAPTURE_HOME — 에 둔다.
     """
-    return Path(os.environ.get("GSC_TOKEN_FILE", CAPTURE_HOME / "gsc_token.json"))
+    return Path(os.environ.get("GSC_TOKEN_FILE", capture_home() / "gsc_token.json"))
 
 
 def gsc_token_legacy() -> Path:
@@ -179,7 +198,7 @@ def gsc_connected() -> bool:
 
 def creds_dir(project: str) -> Path:
     """레거시 사이트별 OAuth 자격증명 폴더 — 서비스 계정 키로 대체됐다."""
-    return CAPTURE_HOME / "creds" / project
+    return capture_home() / "creds" / project
 
 
 def downloads_dir() -> Path:
@@ -194,7 +213,16 @@ def docs_dir(project: str) -> Path:
     프롬프트를 쓸 때, create 는 콘텐츠 보이스를 잡을 때 같은 문서를 읽는다.
     Brain(brain.db) 밖에 산문으로 두는 이유는 사람이 직접 고쳐야 하는 것이기 때문이다.
     """
-    return CAPTURE_HOME / "docs" / project
+    return capture_home() / "docs" / project
+
+
+class ProjectNotFound(Exception):
+    """등록되지 않은 사이트를 찾았을 때. 사용자 문구는 str(e) 에 담는다."""
+
+
+class ProjectConfigNotFound(Exception):
+    """프로젝트 yaml 파일을 못 찾았을 때."""
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -390,8 +418,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def connect() -> sqlite3.Connection:
-    CAPTURE_HOME.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    capture_home().mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
@@ -409,7 +437,7 @@ def connect_ro() -> sqlite3.Connection:
     startswith(('select','with')) 가드를 그대로 통과한다. DB가 거부하게 만든다.
     """
     connect().close()                      # 없으면 만들고 스키마를 맞춘 뒤 (mode=ro는 생성을 못 한다)
-    conn = sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True)
+    conn = sqlite3.connect(db_path().resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -419,7 +447,7 @@ def init_db() -> None:
     conn.executescript(SCHEMA)
     conn.commit()
     conn.close()
-    print(f"Brain ready: {DB_PATH}")
+    print(f"Brain ready: {db_path()}")
 
 
 def now() -> str:
@@ -429,9 +457,9 @@ def now() -> str:
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
-        sys.exit(f"'{name}' 사이트가 아직 등록되지 않았습니다 — "
-                 f"먼저 `/capture add {name}` 으로 등록하세요 "
-                 "(수동: python db.py sync-project <yaml>)")
+        raise ProjectNotFound(f"'{name}' 사이트가 아직 등록되지 않았습니다 — "
+                              f"먼저 `/capture add {name}` 으로 등록하세요 "
+                              "(수동: python db.py sync-project <yaml>)")
     return row
 
 
@@ -439,9 +467,9 @@ def load_project_yaml(name_or_path: str) -> dict:
     import yaml  # lazy
     p = Path(name_or_path)
     if not p.exists():
-        p = CAPTURE_HOME / "projects" / f"{name_or_path}.yaml"
+        p = capture_home() / "projects" / f"{name_or_path}.yaml"
     if not p.exists():
-        sys.exit(f"project yaml not found: {name_or_path}")
+        raise ProjectConfigNotFound(f"project yaml not found: {name_or_path}")
     with open(p, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     cfg["_path"] = str(p)
@@ -694,29 +722,6 @@ def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
     return n
 
 
-def open_opportunities(conn: sqlite3.Connection, project_id: int,
-                       kinds: str | list[str] | None = None,
-                       limit: int = 10) -> list[sqlite3.Row]:
-    """미완료 기회 목록 (status IN ('new','acked')).
-
-    작업 중인(acked) 기회를 먼저 보여주기 위해 scoring.opportunities(new 우선, 화면용)와 정렬이 일부러 다르다.
-    """
-    q = ("SELECT id, kind, target, score, reasoning, status, created_at "
-         "FROM opportunities WHERE project_id=? AND status IN ('new','acked')")
-    args: list = [project_id]
-    if kinds:
-        if isinstance(kinds, str):
-            ks = [k.strip() for k in kinds.split(",") if k.strip()]
-        else:
-            ks = [str(k).strip() for k in kinds if str(k).strip()]
-        if ks:
-            q += f" AND kind IN ({','.join('?' * len(ks))})"
-            args += ks
-    q += " ORDER BY status='acked' DESC, score DESC LIMIT ?"
-    args.append(limit)
-    return conn.execute(q, args).fetchall()
-
-
 def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> int:
     """키워드 후보 적재 (is_active=0 — 활성화는 Claude 큐레이션 몫).
 
@@ -774,6 +779,112 @@ def record_creation(conn: sqlite3.Connection, project_id: int, file_path: str, *
         (project_id, opportunity_id, kind, file_path, branch, note))
     conn.commit()
     return cur.lastrowid
+
+
+def mark_creation_merged(conn: sqlite3.Connection, creation_id: int) -> int:
+    """작업물 병합 완료(merged=1) 표시. 갱신된 rowcount 반환."""
+    cur = conn.execute("UPDATE creations SET merged=1 WHERE id=?", (int(creation_id),))
+    conn.commit()
+    return cur.rowcount
+
+
+def set_keyword_intent(conn: sqlite3.Connection, keyword_id: int, intent: str | None) -> int:
+    """키워드 검색 의도(intent) 갱신. 갱신된 rowcount 반환."""
+    return set_keyword_intents(conn, [(keyword_id, intent)])
+
+
+def set_keyword_intents(conn: sqlite3.Connection, pairs) -> int:
+    """(keyword_id, intent) 쌍을 한 트랜잭션으로 갱신. 갱신된 rowcount 반환.
+
+    한 건씩 커밋하면 백필 한 번에 fsync 가 행 수만큼 난다 — 묶어서 한 번만 커밋한다.
+    """
+    rows = [(intent, int(kid)) for kid, intent in pairs]
+    if not rows:
+        return 0
+    cur = conn.executemany("UPDATE keywords SET intent=? WHERE id=?", rows)
+    conn.commit()
+    return cur.rowcount
+
+
+# ── Brain 읽기 — 테이블·컬럼·정렬을 아는 곳은 여기뿐이다 ───────────────
+
+
+def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
+                       kinds: list[str] | None = None,
+                       statuses: list[str] | tuple[str, ...] | None = None,
+                       order: str,
+                       limit: int = 10,
+                       with_id: bool = True) -> list[sqlite3.Row]:
+    """기회 목록 조회.
+
+    order:
+      'triage': 작업 중(acked) 우선, 점수 내림차순 (status='acked' DESC, score DESC)
+      'screen': 신규(new) 우선, 점수 내림차순 (status='new' DESC, score DESC, id DESC)
+    """
+    if order == "triage":
+        order_clause = "ORDER BY status='acked' DESC, score DESC"
+    elif order == "screen":
+        order_clause = "ORDER BY (status='new') DESC, score DESC, id DESC"
+    else:
+        raise ValueError(f"unknown order: {order!r} (expected 'triage' or 'screen')")
+
+    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, "
+            "substr(created_at,1,10) created") if with_id else \
+           "kind, target, ROUND(score,1) score, reasoning, status"
+
+    q = f"SELECT {cols} FROM opportunities WHERE project_id=?"
+    args: list = [int(project_id)]
+
+    if statuses:
+        st_list = [str(s).strip() for s in statuses if str(s).strip()]
+        if st_list:
+            q += f" AND status IN ({','.join('?' * len(st_list))})"
+            args += st_list
+
+    if kinds:
+        k_list = [str(k).strip() for k in kinds if str(k).strip()]
+        if k_list:
+            q += f" AND kind IN ({','.join('?' * len(k_list))})"
+            args += k_list
+
+    q += f" {order_clause} LIMIT ?"
+    args.append(int(limit))
+    return conn.execute(q, args).fetchall()
+
+
+def open_opportunities(conn: sqlite3.Connection, project_id: int,
+                       kinds: list[str] | None = None,
+                       limit: int = 10) -> list[sqlite3.Row]:
+    """미완료 기회 목록 (status IN ('new','acked')).
+
+    작업 중인(acked) 기회를 먼저 보여주기 위해 scoring.opportunities(new 우선, 화면용)와 정렬이 일부러 다르다.
+    """
+    return list_opportunities(conn, project_id, kinds=kinds,
+                              statuses=["new", "acked"], order="triage",
+                              limit=limit, with_id=True)
+
+
+def get_opportunity(conn: sqlite3.Connection, opp_id: int,
+                    project_id: int | None = None) -> sqlite3.Row | None:
+    """기회 단건 조회."""
+    if project_id is not None:
+        return conn.execute(
+            "SELECT id, project_id, run_id, kind, target, score, reasoning, status, created_at "
+            "FROM opportunities WHERE id=? AND project_id=?",
+            (int(opp_id), int(project_id))).fetchone()
+    return conn.execute(
+        "SELECT id, project_id, run_id, kind, target, score, reasoning, status, created_at "
+        "FROM opportunities WHERE id=?",
+        (int(opp_id),)).fetchone()
+
+
+def list_creations(conn: sqlite3.Connection, project_id: int,
+                   limit: int = 30) -> list[sqlite3.Row]:
+    """작업 완료(creations) 목록 조회."""
+    return conn.execute(
+        """SELECT id, opportunity_id, kind, file_path, branch, merged, created_at
+             FROM creations WHERE project_id=? ORDER BY id DESC LIMIT ?""",
+        (int(project_id), int(limit))).fetchall()
 
 
 def stats(project: str) -> None:

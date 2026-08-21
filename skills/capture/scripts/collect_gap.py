@@ -49,68 +49,13 @@ import sys
 import time
 from pathlib import Path
 
-import requests
-
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
-LABS_URL = "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live"
-# 단가 상한 (가격표 출처는 모듈 docstring). 응답의 cost 가 더 정확하지만
-# dry-run 고지용으로는 이 값으로 충분.
-LABS_COST_PER_CALL = 0.001
 DOMAIN_CAP = 5
-
-
-def _have_creds() -> bool:
-    return bool(os.environ.get("DATAFORSEO_LOGIN")) and bool(os.environ.get("DATAFORSEO_PASSWORD"))
-
-
-def fetch_ranked(target: str, locale: str, limit: int) -> tuple[list[dict], float]:
-    """Labs ranked_keywords 한 도메인 조회.
-
-    반환: (items, cost). items 는 [{keyword, search_volume|None}, ...].
-    Labs 응답의 키워드는 lowercase 정규화해서 돌려준다 — 후속 필터(norm 비교)와
-    같은 모양.
-    """
-    login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
-    loc, lang, _ = serp_adapter.location(locale)
-    body = [{
-        "target": target,
-        "location_name": loc,
-        "language_code": lang,
-        "limit": limit,
-        "load_rank_absolute": False,
-    }]
-    r = requests.post(LABS_URL, auth=(login, pw), timeout=60, json=body)
-    r.raise_for_status()
-    data = r.json()
-    task = (data.get("tasks") or [{}])[0]
-    if task.get("status_code", 0) >= 40000:
-        raise RuntimeError(f"dataforseo task error: {task.get('status_message')}")
-    cost = float(task.get("cost") or data.get("cost") or 0.0)
-    result = (task.get("result") or [])
-    items: list[dict] = []
-    for r0 in result:
-        for it in (r0.get("items") or []):
-            kw = it.get("keyword_data") or it.get("keyword") or ""
-            if isinstance(it.get("keyword_data"), dict):
-                # Live 응답은 keyword_data 가 dict 모양으로 옴 (서로 다른 필드명 모두 허용)
-                kd = it["keyword_data"]
-                kw = kd.get("keyword") or kw
-                sv = kd.get("keyword_info", {}).get("search_volume") if isinstance(
-                    kd.get("keyword_info"), dict) else None
-                if sv is None:
-                    sv = kd.get("search_volume")
-            sv = it.get("search_volume", sv)
-            if isinstance(sv, str):
-                sv = int(sv) if sv.isdigit() else None
-            kw = (kw or "").strip()
-            if kw:
-                items.append({"keyword": kw, "search_volume": sv})
-    return items, cost
 
 
 def _resolve_domains(conn, project_id: int, args_domains: list[str]) -> list[str]:
@@ -171,35 +116,45 @@ def _backfill_volumes(conn, project_id: int, items: list[tuple[str, int | None]]
     return n
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    collector.add_common(ap)
-    ap.add_argument("--domain", action="append", default=[],
-                    help="분석할 경쟁사 도메인 (반복 가능). 생략 시 competitors 테이블 도메인 전부")
-    collector.add_setting(ap, "--limit", key="limits.gap_limit", fallback=100, type=int,
-                          help="도메인당 키워드 수 상한. 기본 100")
-    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
-    # 인자 없이 실행되면 자체 점검 — 다른 수집기와 같은 약속. add_common 이
-    # --project 를 required 로 걸어버리므로 parse 직전에 길이를 본다.
-    if len(sys.argv) == 1:
-        _selfcheck()
-        return
-    a = ap.parse_args()
+def collect(project: str, *,
+            dry_run: bool = False,
+            domain: list[str] | None = None,
+            gap_limit: int | None = None,
+            throttle: float | None = None) -> collector.StageResult:
+    """경쟁사 역키워드를 Labs 로 캔 — 후보로 적재한다.
 
-    conn, p, cfg = collector.open_project(a.project)
-    if not _have_creds():
+    Args:
+        project: 사이트 이름
+        dry_run: True 면 호출 계획만 찍고 종료
+        domain: 분석할 경쟁사 도메인 (반복 지정 가능). None/빈 리스트면
+                competitors 테이블의 도메인 전부.
+        gap_limit: 도메인당 키워드 수 상한. 기본 100.
+        throttle: 요청 간격(초)
+
+    Returns:
+        StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
+    """
+    _parser()
+    conn, p, cfg = collector.open_project(project)
+    if not serp_adapter.has_dataforseo():
         conn.close()
-        sys.exit("Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정 (references/setup.md 7절).")
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정 (references/setup.md 7절).")
 
-    s = collector.settings(a, cfg)
-    limit, throttle = s["limits.gap_limit"], s["throttle"]
+    ns = argparse.Namespace(
+        limit=gap_limit,
+        throttle=throttle,
+    )
+    s = collector.settings(ns, cfg)
+    limit = s["limits.gap_limit"]
+    throttle = s["throttle"]
 
-    domains = _resolve_domains(conn, p["id"], a.domain)
+    domains = _resolve_domains(conn, p["id"], domain)
     if not domains:
         conn.close()
-        sys.exit(f"'{p['name']}' 에 등록된 경쟁사가 없습니다 — "
-                 "`/capture add` 또는 `--domain` 으로 명시하세요.")
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason=f"'{p['name']}' 에 등록된 경쟁사가 없습니다 — "
+                                            "`/capture add` 또는 `--domain` 으로 명시하세요.")
     if len(domains) > DOMAIN_CAP:
         print(f"[안내] 경쟁사 {len(domains)}개는 상한 {DOMAIN_CAP}개를 초과 — "
               f"앞 {DOMAIN_CAP}개만 사용합니다. 더 정밀하게는 `--domain` 으로 명시하세요.",
@@ -207,18 +162,18 @@ def main() -> None:
         domains = domains[:DOMAIN_CAP]
 
     locale = p["locale"] or "ko-KR"
-    est_cost = len(domains) * LABS_COST_PER_CALL
+    est_cost = len(domains) * serp_adapter.LABS_COST_PER_CALL
     print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
           f"est_cost≈${est_cost:.3f} (~{len(domains) * (throttle + 2) / 60:.1f} min)")
     serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
 
-    if a.dry_run:
+    if dry_run:
         for d in domains:
             print(f"  - {d}")
-        print(f"단가 출처: DataForSEO Labs ranked_keywords/live ≈ ${LABS_COST_PER_CALL}/call "
+        print(f"단가 출처: DataForSEO Labs ranked_keywords/live ≈ ${serp_adapter.LABS_COST_PER_CALL}/call "
               "(모듈 docstring). 실제 청구액은 응답 cost 로 기록.")
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, cost=est_cost)
 
     own_norm = _existing_norms(conn, p["id"])
     gsc_norm = _gsc_seen_norms(conn, p["id"])
@@ -232,7 +187,7 @@ def main() -> None:
     with db.run(conn, p["id"], "gap") as r:
         for d in domains:
             try:
-                items, cost = fetch_ranked(d, locale, limit)
+                items, cost = serp_adapter.fetch_labs_ranked_keywords(d, locale, limit)
                 total_cost += cost
                 # 필터 — norm 비교로 케이스·공백 차이 흡수.
                 kept: list[tuple[str, int | None]] = []
@@ -264,6 +219,35 @@ def main() -> None:
           f"Next: 후보는 source='competitor_gap', is_active=0 — "
           f"/capture keywords 의 큐레이션 단계로 활성화하세요.")
     conn.close()
+    return collector.StageResult(ok=True, skipped=False, rows=inserted_total, cost=total_cost)
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    collector.add_common(ap)
+    ap.add_argument("--domain", action="append", default=[],
+                    help="분석할 경쟁사 도메인 (반복 가능). 생략 시 competitors 테이블 도메인 전부")
+    collector.add_setting(ap, "--limit", key="limits.gap_limit", fallback=100, type=int,
+                          help="도메인당 키워드 수 상한. 기본 100")
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+    return ap
+
+
+def main() -> None:
+    # 인자 없이 실행되면 자체 점검 — 다른 수집기와 같은 약속. add_common 이
+    # --project 를 required 로 걸어버리므로 parse 직전에 길이를 본다.
+    if len(sys.argv) == 1:
+        _selfcheck()
+        return
+    a = _parser().parse_args()
+
+    r = collect(a.project, dry_run=a.dry_run,
+                domain=a.domain,
+                gap_limit=a.limit,
+                throttle=a.throttle)
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 def _selfcheck() -> None:
@@ -272,16 +256,11 @@ def _selfcheck() -> None:
     패턴: test_collectors.py 가 collect_ai/serp 에 쓰는 방식과 같은 family.
     다른 작업자가 동시에 test_collectors.py 를 만지는 중이라 거기는 안 건드리고,
     본 파일 하단의 _selfcheck 만 두는 게 책임 경계가 명확하다.
-
-    db.CAPTURE_HOME/DB_PATH 는 모듈 import 시점에 한 번 계산된다. 본 파일이
-    이미 db 를 import 한 뒤라 os.environ["CAPTURE_HOME"] 만 바꿔선 진짜
-    Brain(~/.capture/brain.db) 을 건드린다 — 모듈 속성을 직접 패치한다.
     """
     import tempfile
+    import requests
 
     home = Path(tempfile.mkdtemp(prefix="seo-miner-gap-selftest-"))
-    db.CAPTURE_HOME = home
-    db.DB_PATH = home / "brain.db"
     os.environ["CAPTURE_HOME"] = str(home)
     # 키는 모킹 단계에서만 필요 — 실제 호출 안 함.
     os.environ["DATAFORSEO_LOGIN"] = "login"

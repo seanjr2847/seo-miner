@@ -15,9 +15,12 @@ from threading import Thread
 
 HOME = Path(tempfile.mkdtemp(prefix="seo-miner-test-"))
 os.environ["CAPTURE_HOME"] = str(HOME)          # import 전에 걸어야 db가 여기를 본다
+os.environ["GSC_CONFIG_DIR"] = str(HOME / "mcp-gsc")
+os.environ["GSC_TOKEN_FILE"] = str(HOME / "gsc_token.json")
 os.environ.pop("OPENROUTER_API_KEY", None)
 sys.path.insert(0, str(Path(__file__).parent))
 import dashboard  # noqa: E402
+import stage      # noqa: E402
 from http.server import ThreadingHTTPServer  # noqa: E402
 
 srv = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
@@ -129,7 +132,7 @@ assert "OPENROUTER_API_KEY" not in os.environ
 # 씨앗만 있는 새 프로젝트를 "키워드 캐기 완료"로 치면 안내가 한 단계를 건너뛴다.
 conn = dashboard.db.connect()
 pid = conn.execute("SELECT id FROM projects WHERE name='demo'").fetchone()[0]
-pg = dashboard.progress(conn, pid)
+pg = stage.progress(conn, pid)
 assert pg["keywords"] == 2, pg                     # 등록 폼에 적은 씨앗 2개
 assert pg["keywords_found"] == 0, pg               # 발굴은 아직 안 돌렸다
 assert pg["gsc_days"] == 0 and pg["opps"] == 0, pg
@@ -138,23 +141,106 @@ assert pg["creations"] == 0, pg                    # 테이블이 없어도 0으
 conn.execute("INSERT INTO keywords(project_id, keyword, source, is_active) "
              "VALUES(?,?,?,1)", (pid, "캔 키워드", "autocomplete"))
 conn.commit()
-pg = dashboard.progress(conn, pid)
+pg = stage.progress(conn, pid)
 assert pg["keywords_found"] == 1
 
-# 안내의 "지금 할 것"은 서버 판정(scoring.stage) — 템플릿 JS가 판정하던 시절의 회귀 방지
-st = dashboard.scoring.stage(pg, "demo", "demo.com")
+# 안내의 "지금 할 것"은 서버 판정(stage.state) — 템플릿 JS가 판정하던 시절의 회귀 방지
+st = stage.from_progress(pg, "demo", "demo.com")
 assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
 assert st["steps"][3]["cmd"] == "/capture add demo", st   # 폼 등록엔 질문이 아직 없다
 
+# ── stage.gsc_state() 3-상태 검증 (connected / pending / none) ───────
+token_file = HOME / "gsc_token.json"
+client_file = HOME / "gsc_oauth_client.json"
+
+# (1) pending 상태: 클라이언트 존재 + 토큰 없음
+token_file.unlink(missing_ok=True)
+client_file.write_text('{"installed": {}}', "utf-8")
+assert stage.gsc_state() == "pending"
+
+# (2) connected 상태: 토큰 파일 존재
+token_file.write_text('{"token": "xyz"}', "utf-8")
+assert stage.gsc_state() == "connected"
+
+# (3) none 상태: 인증 수단 없음 (클라이언트 없음 + 번들 비활성)
+token_file.unlink(missing_ok=True)
+client_file.unlink(missing_ok=True)
+_orig_bundled = dashboard.db.gsc_oauth_bundled
+try:
+    dashboard.db.gsc_oauth_bundled = lambda: HOME / "nonexistent.json"
+    assert stage.gsc_state() == "none"
+finally:
+    dashboard.db.gsc_oauth_bundled = _orig_bundled
+
+# ── GSC 연결 여부에 따른 stage.state() here 차이 검증 ──────────────────
+p = dashboard.db.get_project(conn, "demo")
+
+# GSC 미연결 상태: gsc_days가 있어도 here는 1 (gsc 단계)
+token_file.unlink(missing_ok=True)
+conn.execute("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks, impressions, position) "
+             "VALUES(?, '2026-08-20', 28, 'q', 'p', 1, 10, 5)", (pid,))
+conn.commit()
+pg_with_gsc = stage.progress(conn, pid)
+assert pg_with_gsc["gsc_days"] > 0
+st_disc = stage.state(conn, p)
+assert st_disc["here"] == 1, f"미연결 상태에서는 here가 1이어야 함: {st_disc['here']}"
+assert st_disc["steps"][1]["done"] is False
+
+# GSC 연결 상태: gsc_days가 있으면 gsc 단계 완료되어 here가 다음 단계(3)로 넘어감
+token_file.write_text('{"token": "xyz"}', "utf-8")
+st_conn = stage.state(conn, p)
+assert st_conn["here"] != 1, f"연결 상태에서는 here가 1이 아니어야 함: {st_conn['here']}"
+assert st_conn["steps"][1]["done"] is True
+assert st_conn["here"] == 3, f"키워드(1)·GSC(1) 완료 시 here는 3(ai): {st_conn['here']}"
+
+# ── /api/doctor 와 /api/data 의 「다음 할 일」 일치 검증 ──────────────
+code, doc = get("/api/doctor")
+assert code == 200, code
+code, d_demo = get("/api/data?project=demo")
+assert code == 200, d_demo
+assert doc["guide"] is not None, "doctor에 guide가 없음"
+assert doc["guide"]["here"] == d_demo["guide"]["here"], (doc["guide"]["here"], d_demo["guide"]["here"])
+assert doc["guide"]["steps"][doc["guide"]["here"]]["cmd"] == d_demo["guide"]["steps"][d_demo["guide"]["here"]]["cmd"]
+
+# 테스트 환경 정리: 이후 export 등 기존 테스트를 위해 토큰 및 추가 스냅샷 정리
+token_file.unlink(missing_ok=True)
+conn.execute("DELETE FROM gsc_snapshots WHERE project_id=?", (pid,))
+conn.commit()
+
 # ── gather / payload wire format 검증 ────────────────────────────────
+# striking·trend 행 검증을 위해 스냅샷 1건 추가
+conn.execute("""INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+                  query, page, clicks, impressions, ctr, position)
+                VALUES(?, '2026-08-20', 28, '스트라이킹', NULL, 5, 200, 0.025, 8.0)""",
+             (pid,))
+conn.commit()
+
 p = dashboard.db.get_project(conn, "demo")
 gdata = dashboard.gather(conn, p)
+assert gdata["schema"] == 1, f"schema 필드 1 기대, 실제: {gdata.get('schema')}"
 assert gdata["project"]["name"] == "demo"
 assert isinstance(gdata["opps"], list) and len(gdata["opps"]) <= 200
 assert gdata["rules"]["page1"] == dashboard.scoring.PAGE1
 assert "trend" in gdata and "progress" in gdata and "guide" in gdata
 assert gdata["opps_total"] == 0
 assert gdata["brand_catalog_empty"] is True
+
+# striking 행 검증: gap, band가 실려 있음
+assert len(gdata["striking"]) > 0, "striking 행이 있어야 함"
+for srow in gdata["striking"]:
+    assert "gap" in srow, f"striking 행에 gap 필드 누락: {srow}"
+    assert "band" in srow, f"striking 행에 band 필드 누락: {srow}"
+    assert srow["band"] in ("page1", "page2")
+
+# trend 행 검증: period_days를 나타내던 'p' 필드가 없음
+assert len(gdata["trend"]) > 0, "trend 행이 있어야 함"
+for trow in gdata["trend"]:
+    assert "d" in trow and "clk" in trow and "imp" in trow and "q" in trow
+    assert "p" not in trow, f"trend 행에 p 필드가 제거되어야 함: {trow}"
+
+# 검증 후 스냅샷 정리
+conn.execute("DELETE FROM gsc_snapshots WHERE project_id=?", (pid,))
+conn.commit()
 conn.close()
 
 # ── 레포 프리필 — CNAME > package.json, 이름은 파일명 규칙으로 정제 ──
@@ -190,6 +276,7 @@ assert "window.__SNAPSHOT__=" in html, "스냅샷이 안 박혔다"
 assert "<!--SNAPSHOT-->" not in html, "치환이 안 됐다"
 assert 'src="http' not in html and 'href="http' not in html, "외부 요청이 섞였다"
 snap = json.loads(html.split("window.__SNAPSHOT__=", 1)[1].split("</script>", 1)[0])
+assert snap["data"]["schema"] == 1, f"박제본 schema 필드 1 기대, 실제: {snap['data'].get('schema')}"
 assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap
 assert "progress" in snap["data"], "안내 자료가 박제본에 빠졌다"
 assert snap["data"]["guide"]["here"] == 1, "서버 판정(guide)이 payload에 없다"

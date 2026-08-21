@@ -22,6 +22,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import serp_adapter  # noqa: E402
 
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
@@ -55,7 +56,7 @@ def locale_of(text: str, default: str) -> str:
 
 def suggest(query: str, hl: str, gl: str) -> list[str]:
     params = {"client": "firefox", "hl": hl, "gl": gl, "q": query}
-    r = requests.get(SUGGEST_URL, params=params, headers=UA, timeout=10)
+    r = requests.get(SUGGEST_URL, params=params, headers=UA, timeout=serp_adapter.TIMEOUTS["suggest"])
     r.raise_for_status()
     data = r.json()
     return [s for s in data[1] if isinstance(s, str)]
@@ -121,17 +122,27 @@ def gsc_mine(conn, project_id: int, locale: str) -> list[tuple[str, str, str]]:
     return [(r["query"], locale_of(r["query"], locale), "gsc") for r in rows]
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    collector.add_common(ap)
-    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
-    ap.add_argument("--mode", default="all", choices=["all", "autocomplete", "gsc"])
-    ap.add_argument("--per-seed-cap", type=int, default=60)
-    a = ap.parse_args()
+def collect(project: str, *,
+            dry_run: bool = False,
+            mode: str = "all",
+            per_seed_cap: int = 60,
+            throttle: float | None = None) -> collector.StageResult:
+    """자동완성 + GSC 실측으로 키워드 후보를 적재한다.
 
-    conn, p, cfg = collector.open_project(a.project)
-    s = collector.settings(a, cfg)
+    Args:
+        project: 사이트 이름
+        dry_run: True 면 호출 계획만 찍고 종료
+        mode: "all" | "autocomplete" | "gsc"
+        per_seed_cap: 시드별 자동완성 후보 상한
+        throttle: 요청 간격(초)
+
+    Returns:
+        StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
+    """
+    _parser()
+    conn, p, cfg = collector.open_project(project)
+    ns = argparse.Namespace(throttle=throttle)
+    s = collector.settings(ns, cfg)
     throttle = s["throttle"]
     locale = p["locale"] or "ko-KR"
     hl, _, gl = locale.partition("-")
@@ -142,34 +153,58 @@ def main() -> None:
         "SELECT keyword, locale FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
     seeds = seeds or [(kw, None) for kw in (cfg.get("seed_keywords") or [])]
     # gsc 모드는 시드가 필요 없다 — 자동완성을 쓸 때만 요구한다.
-    if not seeds and a.mode in ("all", "autocomplete"):
-        if a.mode == "autocomplete":
-            sys.exit("시드 키워드가 없습니다. 프로젝트 yaml의 seed_keywords에 3~10개를 넣고 "
-                     "sync-project 하거나, GSC 데이터만으로 시작하려면 --mode gsc 를 쓰세요.")
+    if not seeds and mode in ("all", "autocomplete"):
+        if mode == "autocomplete":
+            conn.close()
+            return collector.StageResult(
+                ok=False, skipped=True,
+                reason="시드 키워드가 없습니다. 프로젝트 yaml의 seed_keywords에 3~10개를 넣고 "
+                       "sync-project 하거나, GSC 데이터만으로 시작하려면 --mode gsc 를 쓰세요.")
         print("[안내] 시드 키워드가 없어 자동완성은 건너뜁니다 — GSC 실측만 캡니다.")
-        a.mode = "gsc"
+        mode = "gsc"
 
-    if a.dry_run:
+    if dry_run:
         # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
-        if a.mode in ("all", "autocomplete"):
-            autocomplete_expand(seeds, locale, hl, gl, throttle, a.per_seed_cap, True)
-        if a.mode in ("all", "gsc"):
+        if mode in ("all", "autocomplete"):
+            autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, True)
+        if mode in ("all", "gsc"):
             print(f"[gsc] {len(gsc_mine(conn, p['id'], locale))}개가 후보로 들어올 예정")
         print("(--dry-run: 저장하지 않음)")
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, rows=0)
 
     with db.run(conn, p["id"], "keywords") as r:
         cands: list[tuple[str, str, str]] = []
-        if a.mode in ("all", "autocomplete"):
-            cands += autocomplete_expand(seeds, locale, hl, gl, throttle, a.per_seed_cap, False)
-        if a.mode in ("all", "gsc"):
+        if mode in ("all", "autocomplete"):
+            cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, False)
+        if mode in ("all", "gsc"):
             cands += gsc_mine(conn, p["id"], locale)
         inserted = db.add_keyword_candidates(conn, p["id"], cands)
-        r.notes = f"mode={a.mode} candidates={len(cands)} inserted={inserted}"
+        r.notes = f"mode={mode} candidates={len(cands)} inserted={inserted}"
     print(f"done: {inserted} new candidates (is_active=0). "
           f"Next: Claude curates & activates within limits.max_keywords.")
     conn.close()
+    return collector.StageResult(ok=True, skipped=False, rows=inserted)
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    collector.add_common(ap)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+    ap.add_argument("--mode", default="all", choices=["all", "autocomplete", "gsc"])
+    ap.add_argument("--per-seed-cap", type=int, default=60)
+    return ap
+
+
+def main() -> None:
+    a = _parser().parse_args()
+    r = collect(a.project, dry_run=a.dry_run,
+                mode=a.mode,
+                per_seed_cap=a.per_seed_cap,
+                throttle=a.throttle)
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 HOME = Path(tempfile.mkdtemp(prefix="seo-miner-collector-test-"))
-os.environ["CAPTURE_HOME"] = str(HOME)          # import 전에 걸어야 db가 여기를 본다
+os.environ["CAPTURE_HOME"] = str(HOME)
 sys.path.insert(0, str(Path(__file__).parent))
 
 import collect_ai         # noqa: E402
@@ -109,19 +109,11 @@ def test_collect_ai_cycle_and_failure_summary():
         raise RuntimeError(f"Unexpected prompt in fake_post: {user_msg}")
 
     collect_ai.requests.post = fake_post
-    orig_argv = sys.argv
     try:
-        sys.argv = [
-            "collect_ai.py",
-            "--project", "ai_test_proj",
-            "--engines", "chatgpt",
-            "--samples", "1",
-            "--throttle", "0",
-        ]
-        collect_ai.main()
+        collect_ai.collect("ai_test_proj", engines="chatgpt",
+                           ai_samples=1, throttle=0)
     finally:
         collect_ai.requests.post = orig_post
-        sys.argv = orig_argv
         if orig_env_key is not None:
             os.environ["OPENROUTER_API_KEY"] = orig_env_key
         else:
@@ -184,23 +176,16 @@ def test_expand_keywords_success_and_failure_rate_warning():
             return FakeResponse({"error": "rate limit"}, status_code=429)
 
     expand_keywords.requests.get = fake_get
-    orig_argv = sys.argv
     orig_stderr = sys.stderr
     stderr_buf = io.StringIO()
 
     try:
         sys.stderr = stderr_buf
-        sys.argv = [
-            "expand_keywords.py",
-            "--project", "expand_test_proj",
-            "--mode", "autocomplete",
-            "--throttle", "0",
-        ]
-        expand_keywords.main()
+        expand_keywords.collect("expand_test_proj", mode="autocomplete",
+                                throttle=0)
     finally:
         expand_keywords.requests.get = orig_get
         expand_keywords.modifiers = orig_modifiers
-        sys.argv = orig_argv
         sys.stderr = orig_stderr
 
     stderr_output = stderr_buf.getvalue()
@@ -281,18 +266,11 @@ def test_collect_serp_ranking_and_none_position_aio():
         raise ValueError(f"Unexpected keyword: {keyword}")
 
     serp_adapter.fetch = fake_fetch
-    orig_argv = sys.argv
     try:
-        sys.argv = [
-            "collect_serp.py",
-            "--project", "serp_test_proj",
-            "--provider", "dataforseo",
-            "--throttle", "0",
-        ]
-        collect_serp.main()
+        collect_serp.collect("serp_test_proj", provider="dataforseo",
+                             throttle=0)
     finally:
         serp_adapter.fetch = orig_fetch
-        sys.argv = orig_argv
 
     conn = db.connect()
     # 1. 랭킹 키워드 검증 (position=2, aio_present=1, aio_cited=1)
@@ -371,61 +349,35 @@ def test_collect_serp_today_skip_and_force():
         }
 
     serp_adapter.fetch = mock_fetch
-    orig_argv = sys.argv
 
     try:
         # 1. 기본 실행: kw_done_id 는 skip -> kw_new_id 만 1회 호출
         fetch_calls.clear()
-        sys.argv = [
-            "collect_serp.py",
-            "--project", "serp_skip_proj",
-            "--provider", "dataforseo",
-            "--throttle", "0",
-        ]
-        collect_serp.main()
+        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+                             throttle=0)
         assert len(fetch_calls) == 1, f"오늘 이미 확인된 키워드는 skip되어야 함 (호출수={len(fetch_calls)})"
         assert fetch_calls[0][0] == "오늘_미확인"
 
         # 2. --force 실행: 2개 모두 재확인
         fetch_calls.clear()
-        sys.argv = [
-            "collect_serp.py",
-            "--project", "serp_skip_proj",
-            "--provider", "dataforseo",
-            "--force",
-            "--throttle", "0",
-        ]
-        collect_serp.main()
+        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+                             throttle=0, force=True)
         assert len(fetch_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(fetch_calls)})"
         assert {call[0] for call in fetch_calls} == {"오늘_이미_확인", "오늘_미확인"}
 
         # 3. --ids 지정 + skip / force 검증
         fetch_calls.clear()
-        sys.argv = [
-            "collect_serp.py",
-            "--project", "serp_skip_proj",
-            "--provider", "dataforseo",
-            "--ids", str(kw_done_id),
-            "--throttle", "0",
-        ]
-        collect_serp.main()
+        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+                             throttle=0, ids=str(kw_done_id))
         assert len(fetch_calls) == 0, f"--ids 로 이미 확인된 것만 지정 시 0건이어야 함: {fetch_calls}"
 
         fetch_calls.clear()
-        sys.argv = [
-            "collect_serp.py",
-            "--project", "serp_skip_proj",
-            "--provider", "dataforseo",
-            "--ids", str(kw_done_id),
-            "--force",
-            "--throttle", "0",
-        ]
-        collect_serp.main()
+        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+                             throttle=0, ids=str(kw_done_id), force=True)
         assert len(fetch_calls) == 1, f"--ids + --force 시 1건 호출되어야 함: {fetch_calls}"
         assert fetch_calls[0][0] == "오늘_이미_확인"
     finally:
         serp_adapter.fetch = orig_fetch
-        sys.argv = orig_argv
 
 
 def test_collect_ai_today_skip_and_force():
@@ -474,38 +426,23 @@ def test_collect_ai_today_skip_and_force():
         })
 
     collect_ai.requests.post = mock_post
-    orig_argv = sys.argv
 
     try:
         # 1. 기본 실행: p_done_id 는 skip -> p_new_id 만 1회 호출
         post_calls.clear()
-        sys.argv = [
-            "collect_ai.py",
-            "--project", "ai_skip_proj",
-            "--engines", "chatgpt",
-            "--samples", "1",
-            "--throttle", "0",
-        ]
-        collect_ai.main()
+        collect_ai.collect("ai_skip_proj", engines="chatgpt",
+                           ai_samples=1, throttle=0)
         assert len(post_calls) == 1, f"오늘 이미 확인된 질문은 skip되어야 함 (호출수={len(post_calls)})"
         assert post_calls[0] == "오늘_미확인_질문"
 
         # 2. --force 실행: 2개 질문 모두 호출
         post_calls.clear()
-        sys.argv = [
-            "collect_ai.py",
-            "--project", "ai_skip_proj",
-            "--engines", "chatgpt",
-            "--samples", "1",
-            "--force",
-            "--throttle", "0",
-        ]
-        collect_ai.main()
+        collect_ai.collect("ai_skip_proj", engines="chatgpt",
+                           ai_samples=1, throttle=0, force=True)
         assert len(post_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(post_calls)})"
         assert set(post_calls) == {"오늘_확인_질문", "오늘_미확인_질문"}
     finally:
         collect_ai.requests.post = orig_post
-        sys.argv = orig_argv
         if orig_env_key is not None:
             os.environ["OPENROUTER_API_KEY"] = orig_env_key
         else:
@@ -637,16 +574,13 @@ def test_dry_run_never_touches_auth():
         raise AssertionError("dry-run 이 인증을 건드렸다")
 
     orig = collect_gsc.get_service, collect_index.get_service
-    orig_argv = sys.argv
     collect_gsc.get_service = boom
     collect_index.get_service = boom
     try:
-        for mod, name in [(collect_gsc, "collect_gsc.py"), (collect_index, "collect_index.py")]:
-            sys.argv = [name, "--project", "dry_proj", "--dry-run"]
-            mod.main()
+        for mod in (collect_gsc, collect_index):
+            mod.collect("dry_proj", dry_run=True)
     finally:
         collect_gsc.get_service, collect_index.get_service = orig
-        sys.argv = orig_argv
 
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM runs WHERE project_id=?",
@@ -703,13 +637,12 @@ def test_side_calls_cannot_kill_the_main_snapshot():
         def searchanalytics(self):
             return _SA()
 
-    orig, orig_argv = collect_gsc.get_service, sys.argv
+    orig = collect_gsc.get_service
     collect_gsc.get_service = lambda: _Service()
     try:
-        sys.argv = ["collect_gsc.py", "--project", "sidefail", "--breakdown", "device"]
-        collect_gsc.main()
+        collect_gsc.collect("sidefail", gsc_breakdown="device")
     finally:
-        collect_gsc.get_service, sys.argv = orig, orig_argv
+        collect_gsc.get_service = orig
 
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM gsc_snapshots WHERE project_id=?",
@@ -791,7 +724,7 @@ def test_doctor_detects_marketing_skills():
         assert res["marketing_optional"]["aso"] is False, "aso 는 False 여야 함"
 
         # must 에 빠진 스킬 요구 문장 및 저장소 링크가 있는지 assert
-        assert any("marketingskills" in m and "product-marketing" in m for m in res["must"]), \
+        assert any("marketingskills" in m["msg"] and "product-marketing" in m["msg"] for m in res["must"]), \
             f"must 에 누락 스킬 설치 요구 문장이 있어야 함: {res['must']}"
 
         # 2. 필수 7개 전부 설치된 상태
@@ -804,7 +737,7 @@ def test_doctor_detects_marketing_skills():
             assert res_all["marketing_skills"][k] is True, f"{k} 가 True 여야 함"
 
         # 7개 전부 설치되면 must 에 해당 요구 문장이 없어야 함
-        assert not any("marketingskills" in m for m in res_all["must"]), \
+        assert not any("marketingskills" in m["msg"] for m in res_all["must"]), \
             f"7개 완비 시 must 에 마케팅 스킬 요구가 없어야 함: {res_all['must']}"
         # aso 만 빠졌으므로 later 에 aso 안내가 한 줄 있어야 함
         assert any("aso" in s and "marketingskills" in s for s in res_all["later"]), \
@@ -845,8 +778,8 @@ def test_install_skills_never_runs_when_nothing_is_missing():
         return _FakeCompletedProcess(args, returncode=0)
 
     try:
-        # 1. 필수 스킬 전부 생성 (빠진 스킬 없음)
-        for k in doctor.MARKETING_SKILLS:
+        # 1. 필수·선택 스킬 전부 생성 (빠진 스킬 없음)
+        for k in [*doctor.MARKETING_SKILLS, *doctor.OPTIONAL_SKILLS]:
             (skills_dir / k).mkdir(parents=True, exist_ok=True)
             (skills_dir / k / "SKILL.md").write_text(f"# {k}\n", encoding="utf-8")
 
@@ -1180,8 +1113,14 @@ def test_gsc_query_selfcheck():
 def test_run_all_chain_order_and_paid_skips():
     """run_all: 체인 실행 순서(gsc→index→keywords→rank→ai→gaps→report),
     유료 키 미설정 시 rank/ai 건너뜀, gsc 실패 시 즉시 중단 검증.
+
+    in-process 호출로 바뀌었으므로 각 수집기 모듈의 collect 를 가짜 함수로
+    갈아끼워 어떤 단계가 어떤 순서로 불렸는지 직접 본다. subprocess 단계
+    (gaps=scoring.py, report=dashboard.py) 는 run_all.subprocess.run 만 mock.
     """
+    import collector as _collector
     import run_all
+    import collect_ai, collect_gap, collect_gsc, collect_index, collect_serp, expand_keywords
 
     orig_env = {
         "SERPER_API_KEY": os.environ.get("SERPER_API_KEY"),
@@ -1190,7 +1129,22 @@ def test_run_all_chain_order_and_paid_skips():
         "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY"),
     }
     orig_run = subprocess.run
-    called_cmds = []
+    orig_collects = {
+        "collect_gsc": collect_gsc.collect,
+        "collect_index": collect_index.collect,
+        "expand_keywords": expand_keywords.collect,
+        "collect_serp": collect_serp.collect,
+        "collect_ai": collect_ai.collect,
+        "collect_gap": collect_gap.collect,
+    }
+    calls: list[str] = []
+    ok_result = _collector.StageResult(ok=True)
+
+    def make_fake(name, results):
+        def fake(*args, **kwargs):
+            calls.append(name)
+            return results.get(name, ok_result)
+        return fake
 
     class _FakeCompletedProcess:
         def __init__(self, args, returncode=0):
@@ -1200,124 +1154,175 @@ def test_run_all_chain_order_and_paid_skips():
             self.stderr = ""
 
     def fake_run(args, *a, **k):
-        called_cmds.append(args)
+        # gaps 단계는 scoring.py, report 단계는 dashboard.py 로 매핑
+        joined = " ".join(str(x) for x in args)
+        if "scoring.py" in joined:
+            calls.append("gaps")
+        elif "dashboard.py" in joined:
+            calls.append("report")
+        else:
+            calls.append(Path(str(args[1])).name if len(args) > 1 else "?")
         return _FakeCompletedProcess(args, returncode=0)
 
-    try:
+    def install_fakes(results=None):
+        results = results or {}
+        # run_all.STAGES 는 import 시점에 collect_gsc.collect 같은 함수 객체를
+        # fn 으로 캡처했다 (namedtuple). 테스트에서 collect_gsc.collect 자체를
+        # 갈아끼우면 STAGES 가 가리키는 객체는 바뀌지 않는다. STAGES 를 직접
+        # mutate 해서 mock 이 들어가게 한다.
+        new_stages = []
+        for stage in run_all.STAGES:
+            name = stage.name
+            if name == "gsc":
+                fn = make_fake("gsc", results)
+            elif name == "index":
+                fn = make_fake("index", results)
+            elif name == "keywords":
+                fn = make_fake("keywords", results)
+            elif name == "rank":
+                fn = make_fake("rank", results)
+            elif name == "ai":
+                fn = make_fake("ai", results)
+            else:
+                fn = stage.fn
+            new_stages.append(stage._replace(fn=fn))
+        run_all.STAGES = tuple(new_stages)
+
+        # collect_* 모듈 속성도 직접 갈아끼우자 — 다른 경로에서 import 한 곳이
+        # 같은 mock 을 보도록.
+        collect_gsc.collect = make_fake("gsc", results)
+        collect_index.collect = make_fake("index", results)
+        expand_keywords.collect = make_fake("keywords", results)
+        collect_serp.collect = make_fake("rank", results)
+        collect_ai.collect = make_fake("ai", results)
+        # collect_gap 는 STAGES 의 fn 에 안 쓰이므로 굳이 안 갈아끼워도 됨
         subprocess.run = fake_run
         run_all.subprocess.run = fake_run
 
+    try:
         # 1. 유료 키 환경변수를 전부 지운 상태
         for k in orig_env:
             os.environ.pop(k, None)
+        install_fakes()
 
-        called_cmds.clear()
+        calls.clear()
         code = run_all.run_chain("test_proj")
         assert code == 0, f"유료 키 없어도 정상 완료되어야 함 (exit code: {code})"
 
-        # 실행된 스크립트 파일명 목록 추출 (gsc -> index -> keywords -> gaps -> report 순서)
-        executed_scripts = [Path(cmd[1]).name for cmd in called_cmds]
-        assert executed_scripts == [
-            "collect_gsc.py",
-            "collect_index.py",
-            "expand_keywords.py",
-            "scoring.py",
-            "dashboard.py",
-        ], f"유료 키 없을 때 실행 순서가 올바르지 않음: {executed_scripts}"
-        assert "collect_serp.py" not in executed_scripts, "rank 단계가 실행되지 않아야 함"
-        assert "collect_ai.py" not in executed_scripts, "ai 단계가 실행되지 않아야 함"
+        # 실행된 단계 순서 — gsc→index→keywords→gaps→report (rank/ai 는 유료 키 미보유로 건너뜀)
+        assert calls == ["gsc", "index", "keywords", "gaps", "report"], \
+            f"유료 키 없을 때 실행 순서가 올바르지 않음: {calls}"
+        assert "rank" not in calls, "rank 단계가 실행되지 않아야 함"
+        assert "ai" not in calls, "ai 단계가 실행되지 않아야 함"
 
         # 2. 유료 키를 넣은 상태 (rank, ai 포함)
         os.environ["SERPER_API_KEY"] = "mock_serper_key"
         os.environ["OPENROUTER_API_KEY"] = "mock_openrouter_key"
+        install_fakes()
 
-        called_cmds.clear()
+        calls.clear()
         code_paid = run_all.run_chain("test_proj")
         assert code_paid == 0, f"유료 키 포함 시 정상 완료되어야 함 (exit code: {code_paid})"
 
-        executed_scripts_paid = [Path(cmd[1]).name for cmd in called_cmds]
-        assert executed_scripts_paid == [
-            "collect_gsc.py",
-            "collect_index.py",
-            "expand_keywords.py",
-            "collect_serp.py",
-            "collect_ai.py",
-            "scoring.py",
-            "dashboard.py",
-        ], f"유료 키 있을 때 실행 순서가 올바르지 않음: {executed_scripts_paid}"
+        assert calls == ["gsc", "index", "keywords", "rank", "ai", "gaps", "report"], \
+            f"유료 키 있을 때 실행 순서가 올바르지 않음: {calls}"
 
         # DataForSEO 키 조합도 rank 실행을 활성화하는지 확인
         os.environ.pop("SERPER_API_KEY", None)
         os.environ["DATAFORSEO_LOGIN"] = "mock_login"
         os.environ["DATAFORSEO_PASSWORD"] = "mock_pw"
-        called_cmds.clear()
+        install_fakes()
+
+        calls.clear()
         code_dfs = run_all.run_chain("test_proj")
         assert code_dfs == 0
-        executed_dfs = [Path(cmd[1]).name for cmd in called_cmds]
-        assert "collect_serp.py" in executed_dfs
+        assert "rank" in calls and "gsc" in calls, \
+            f"DataForSEO 키 조합에서 rank/gsc 가 실행돼야 함: {calls}"
 
-        # 3. gsc 단계가 실패(returncode 1)할 때 — 그 뒤 단계가 하나도 실행되지 않는지 assert
-        def fake_run_fail_gsc(args, *a, **k):
-            called_cmds.append(args)
-            if "collect_gsc.py" in str(args):
-                return _FakeCompletedProcess(args, returncode=1)
-            return _FakeCompletedProcess(args, returncode=0)
+        # 3. gsc 단계가 실패(ok=False)할 때 — 그 뒤 단계가 하나도 실행되지 않는지 assert
+        install_fakes(results={
+            "gsc": _collector.StageResult(ok=False, skipped=True, reason="gsc 실패 테스트 사유"),
+        })
 
-        subprocess.run = fake_run_fail_gsc
-        run_all.subprocess.run = fake_run_fail_gsc
-
-        called_cmds.clear()
+        calls.clear()
         code_fail = run_all.run_chain("test_proj")
         assert code_fail == 1, f"gsc 실패 시 exit code 1 이어야 함: {code_fail}"
-        assert len(called_cmds) == 1, f"gsc 실패 시 후속 단계가 호출되지 않아야 함 (호출수: {len(called_cmds)})"
-        assert "collect_gsc.py" in str(called_cmds[0]), f"첫 번째 호출이 gsc 여야 함: {called_cmds[0]}"
+        assert calls == ["gsc"], \
+            f"gsc 실패 시 후속 단계가 호출되지 않아야 함 (실제: {calls})"
 
         # 4. gsc 외 다른 단계(예: index) 실패 시에는 후속 단계가 계속 실행되는지 확인
-        def fake_run_fail_index(args, *a, **k):
-            called_cmds.append(args)
-            if "collect_index.py" in str(args):
-                return _FakeCompletedProcess(args, returncode=1)
-            return _FakeCompletedProcess(args, returncode=0)
+        install_fakes(results={
+            "index": _collector.StageResult(ok=False, skipped=True, reason="index 실패"),
+        })
 
-        subprocess.run = fake_run_fail_index
-        run_all.subprocess.run = fake_run_fail_index
-
-        called_cmds.clear()
-        code_index_fail = run_all.run_chain("test_proj")
+        calls.clear()
+        code_index_fail = run_all.run_chain("test_proj", only="gsc,index,keywords,report")
         assert code_index_fail == 1, "한 단계라도 실패 시 exit code 1"
-        executed_index_fail = [Path(cmd[1]).name for cmd in called_cmds]
-        assert len(executed_index_fail) == 7, f"index 실패 시에도 나머지 단계는 완주해야 함: {executed_index_fail}"
+        # gsc는 성공 → index 실패 → keywords/gaps/report는 계속
+        assert "index" in calls, "index 가 실행돼야 함"
+        assert "keywords" in calls, "index 실패 후에도 keywords 진행"
+        assert "report" in calls, "index 실패 후에도 report 진행"
 
-        # 5. --dry-run 모드 검증 (gaps/report 는 subprocess 미호출, 나머지는 --dry-run 인자 포함)
-        subprocess.run = fake_run
-        run_all.subprocess.run = fake_run
-        called_cmds.clear()
+        # 5. --dry-run 모드 검증 (gaps/report 는 subprocess 미호출, 나머지는 dry_run=True 로 호출)
+        os.environ.pop("DATAFORSEO_LOGIN", None)
+        os.environ.pop("DATAFORSEO_PASSWORD", None)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        # 유료 키 있는 상태로 dry-run
+        os.environ["SERPER_API_KEY"] = "mock_serper_key"
+        os.environ["OPENROUTER_API_KEY"] = "mock_openrouter_key"
+
+        install_fakes()
+
+        dry_kwargs = {}
+        def capture_dry(name, results):
+            def fake(*args, **kwargs):
+                dry_kwargs.update({name: dict(kwargs)})
+                calls.append(name)
+                return results.get(name, ok_result)
+            return fake
+
+        calls.clear()
+        dry_kwargs.clear()
+        # STAGES 의 fn 도 capture_dry 로 갈아끼운다 — install_fakes 가 그 자리는
+        # make_fake 로 채웠으니 다시 덮어쓴다.
+        new_stages = []
+        for stage in run_all.STAGES:
+            name = stage.name
+            if name in ("gsc", "index", "keywords", "rank", "ai"):
+                fn = capture_dry(name, {})
+            else:
+                fn = stage.fn
+            new_stages.append(stage._replace(fn=fn))
+        run_all.STAGES = tuple(new_stages)
+        collect_gsc.collect = capture_dry("gsc", {})
+        collect_index.collect = capture_dry("index", {})
+        expand_keywords.collect = capture_dry("keywords", {})
+        collect_serp.collect = capture_dry("rank", {})
+        collect_ai.collect = capture_dry("ai", {})
         code_dry = run_all.run_chain("test_proj", dry_run=True)
         assert code_dry == 0
-        executed_dry = [Path(cmd[1]).name for cmd in called_cmds]
-        assert executed_dry == [
-            "collect_gsc.py",
-            "collect_index.py",
-            "expand_keywords.py",
-            "collect_serp.py",
-            "collect_ai.py",
-        ], f"dry-run 시 gaps/report는 subprocess가 호출되지 않아야 함: {executed_dry}"
-        for cmd in called_cmds:
-            assert "--dry-run" in cmd, f"dry-run 인자가 누락됨: {cmd}"
+        # gaps/report 는 DRY_RUN_UNSUPPORTED — 호출되지 않는다
+        assert "gaps" not in calls and "report" not in calls, \
+            f"dry-run 시 gaps/report 는 호출되지 않아야 함: {calls}"
+        assert calls == ["gsc", "index", "keywords", "rank", "ai"], calls
+        # in-process 호출에 dry_run=True 가 전달됐는지
+        for name in ("gsc", "index", "keywords", "rank", "ai"):
+            assert dry_kwargs[name].get("dry_run") is True, \
+                f"{name} 에 dry_run=True 가 전달되지 않음: {dry_kwargs[name]}"
 
         # 6. --skip / --only 검증
-        called_cmds.clear()
+        install_fakes()
+
+        calls.clear()
         code_skip = run_all.run_chain("test_proj", skip="index,ai")
         assert code_skip == 0
-        executed_skip = [Path(cmd[1]).name for cmd in called_cmds]
-        assert "collect_index.py" not in executed_skip and "collect_ai.py" not in executed_skip
-        assert executed_skip == ["collect_gsc.py", "expand_keywords.py", "collect_serp.py", "scoring.py", "dashboard.py"]
+        assert "index" not in calls and "ai" not in calls, calls
+        assert calls == ["gsc", "keywords", "rank", "gaps", "report"], calls
 
-        called_cmds.clear()
+        calls.clear()
         code_only = run_all.run_chain("test_proj", only="gsc,gaps")
         assert code_only == 0
-        executed_only = [Path(cmd[1]).name for cmd in called_cmds]
-        assert executed_only == ["collect_gsc.py", "scoring.py"]
+        assert calls == ["gsc", "gaps"], calls
 
         # skip + only 동시 지정 및 잘못된 이름은 에러(code 1)
         assert run_all.run_chain("test_proj", skip="index", only="gsc") == 1
@@ -1327,6 +1332,183 @@ def test_run_all_chain_order_and_paid_skips():
     finally:
         subprocess.run = orig_run
         run_all.subprocess.run = orig_run
+        for name, fn in orig_collects.items():
+            mod = {"collect_gsc": collect_gsc, "collect_index": collect_index,
+                   "expand_keywords": expand_keywords, "collect_serp": collect_serp,
+                   "collect_ai": collect_ai, "collect_gap": collect_gap}[name]
+            mod.collect = fn
+
+
+def test_run_all_gsc_failure_aborts_and_propagates_reason():
+    """gsc 단계가 실패하면 (1) 뒤 단계가 호출되지 않고 (2) 그 사유가 요약표에까지
+    그대로 올라온다. exit code 정수만으로는 잃어버리던 정보 — StageResult.reason
+    이 그 자리를 채운다.
+    """
+    import collector as _collector
+    import run_all
+
+    orig_run = subprocess.run
+    orig_collects = {}
+    orig_stages = run_all.STAGES
+    import collect_ai, collect_gap, collect_gsc, collect_index, collect_serp, expand_keywords
+    for name, mod in [("gsc", collect_gsc), ("index", collect_index),
+                      ("keywords", expand_keywords), ("rank", collect_serp),
+                      ("ai", collect_ai), ("gap", collect_gap)]:
+        orig_collects[name] = mod.collect
+
+    gsc_reason = "구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다."
+    calls: list[str] = []
+    captured = io.StringIO()
+
+    def fake_gsc(*args, **kwargs):
+        calls.append("gsc")
+        return _collector.StageResult(ok=False, skipped=True, reason=gsc_reason)
+
+    # gsc 만 실패, 나머지 collect 는 호출조차 안 되게 mock — 다른 collect 가
+    # 호출되면 그 자체로 테스트 실패다.
+    # run_all.STAGES 의 fn 도 같이 갈아끼운다 (namedtuple 가 import 시점에 fn 을
+    # 캡처해서 collect_* 모듈 속성 갈아끼우기로는 안 먹는다).
+    new_stages = []
+    for stage in orig_stages:
+        if stage.name == "gsc":
+            new_stages.append(stage._replace(fn=fake_gsc))
+        else:
+            new_stages.append(stage)
+    run_all.STAGES = tuple(new_stages)
+
+    collect_gsc.collect = fake_gsc
+    collect_index.collect = lambda *a, **k: calls.append("INDEX_LEAK") or _collector.StageResult(ok=True)
+    expand_keywords.collect = lambda *a, **k: calls.append("KW_LEAK") or _collector.StageResult(ok=True)
+    collect_serp.collect = lambda *a, **k: calls.append("RANK_LEAK") or _collector.StageResult(ok=True)
+    collect_ai.collect = lambda *a, **k: calls.append("AI_LEAK") or _collector.StageResult(ok=True)
+    collect_gap.collect = lambda *a, **k: calls.append("GAP_LEAK") or _collector.StageResult(ok=True)
+
+    # subprocess 단계(report) 는 mock — 호출되면 안 된다
+    def fake_run(cmd, *a, **k):
+        calls.append("REPORT_LEAK")
+        class R:
+            returncode = 0
+        return R()
+
+    orig_stdout = sys.stdout
+    try:
+        sys.stdout = captured
+        subprocess.run = fake_run
+        run_all.subprocess.run = fake_run
+
+        # 유료 키는 없는 상태로 — 그래야 rank/ai 는 paid_skip 으로 자연스럽게 빠지고
+        # 우리가 검증하는 건 "gsc 실패로 뒤 단계가 안 불렸다"는 것 자체에 집중.
+        for k in ("SERPER_API_KEY", "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "OPENROUTER_API_KEY"):
+            os.environ.pop(k, None)
+
+        code = run_all.run_chain("test_proj", dry_run=False)
+        assert code == 1, f"gsc 실패 시 exit code 1: {code}"
+
+        # 1. gsc 만 호출됨. index/keywords/rank/ai/gap/report 는 단 한 번도 호출되지 않음.
+        assert calls == ["gsc"], \
+            f"gsc 실패 시 뒤 단계가 호출되지 않아야 함. 실제 호출 목록: {calls}"
+        assert all("LEAK" not in c for c in calls), \
+            f"gsc 뒤 단계가 호출됨: {calls}"
+
+        # 2. 실패 사유 문자열이 요약표까지 그대로 올라온다.
+        output = captured.getvalue()
+        assert "실패" in output, f"요약표에 '실패' 표시가 있어야 함: {output}"
+        assert gsc_reason in output, \
+            f"gsc 의 실패 사유 ({gsc_reason}) 가 요약표에 그대로 보이어야 함: {output}"
+        # 3. 이후 단계는 '미실행' 으로 표시
+        assert "GSC 수집 실패로 체인 중단됨" in output, \
+            f"뒷 단계가 '미실행' 으로 표시돼야 함: {output}"
+    finally:
+        sys.stdout = orig_stdout
+        subprocess.run = orig_run
+        run_all.subprocess.run = orig_run
+        run_all.STAGES = orig_stages
+        for name, fn in orig_collects.items():
+            mod = {"gsc": collect_gsc, "index": collect_index,
+                   "keywords": expand_keywords, "rank": collect_serp,
+                   "ai": collect_ai, "gap": collect_gap}[name]
+            mod.collect = fn
+def test_serp_adapter_credentials_timeouts_and_labs():
+    """serp_adapter: 타임아웃 상수 정본, 키 판정 정본, Labs ranked_keywords 단일화 검증."""
+    # 1. 타임아웃 정본
+    assert serp_adapter.TIMEOUTS == {
+        "dataforseo": 60,
+        "serper": 30,
+        "openrouter": 120,
+        "suggest": 10,
+    }
+    assert serp_adapter.LABS_COST_PER_CALL == 0.001
+
+    # 2. 자격증명 판정 함수
+    orig_env = {
+        "DATAFORSEO_LOGIN": os.environ.get("DATAFORSEO_LOGIN"),
+        "DATAFORSEO_PASSWORD": os.environ.get("DATAFORSEO_PASSWORD"),
+        "SERPER_API_KEY": os.environ.get("SERPER_API_KEY"),
+        "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY"),
+    }
+    try:
+        os.environ.pop("DATAFORSEO_LOGIN", None)
+        os.environ.pop("DATAFORSEO_PASSWORD", None)
+        os.environ.pop("SERPER_API_KEY", None)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+
+        assert serp_adapter.has_dataforseo() is False
+        assert serp_adapter.has_serper() is False
+        assert serp_adapter.has_openrouter() is False
+
+        os.environ["DATAFORSEO_LOGIN"] = "login_test"
+        assert serp_adapter.has_dataforseo() is False  # password 누락
+        os.environ["DATAFORSEO_PASSWORD"] = "pw_test"
+        assert serp_adapter.has_dataforseo() is True
+
+        os.environ["SERPER_API_KEY"] = "serper_test"
+        assert serp_adapter.has_serper() is True
+
+        os.environ["OPENROUTER_API_KEY"] = "openrouter_test"
+        assert serp_adapter.has_openrouter() is True
+
+        # 3. fetch_labs_ranked_keywords 모킹 검증
+        orig_post = serp_adapter.requests.post
+        captured = []
+
+        def mock_post(url, *args, **kwargs):
+            captured.append((url, kwargs))
+            return FakeResponse({
+                "tasks": [{
+                    "status_code": 20000,
+                    "cost": 0.001,
+                    "result": [{
+                        "items": [
+                            {"keyword_data": {"keyword": "test kw", "keyword_info": {"search_volume": 500}}}
+                        ]
+                    }]
+                }]
+            })
+
+        serp_adapter.requests.post = mock_post
+        try:
+            items, cost = serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
+            assert len(items) == 1
+            assert items[0] == {"keyword": "test kw", "search_volume": 500}
+            assert cost == 0.001
+            assert len(captured) == 1
+            url, kw = captured[0]
+            assert "ranked_keywords" in url
+            assert kw["timeout"] == serp_adapter.TIMEOUTS["dataforseo"]
+            assert kw["auth"] == ("login_test", "pw_test")
+
+            # task error 검증
+            serp_adapter.requests.post = lambda *a, **k: FakeResponse({
+                "tasks": [{"status_code": 40100, "status_message": "Invalid auth"}]
+            })
+            try:
+                serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
+                raise AssertionError("status_code >= 40000 은 에러를 내야 함")
+            except RuntimeError as e:
+                assert "dataforseo task error" in str(e)
+        finally:
+            serp_adapter.requests.post = orig_post
+    finally:
         for k, v in orig_env.items():
             if v is not None:
                 os.environ[k] = v

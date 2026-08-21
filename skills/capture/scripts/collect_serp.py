@@ -37,58 +37,83 @@ import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    collector.add_common(ap)
-    ap.add_argument("--provider", choices=list(serp_adapter.PROVIDERS))
-    collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=100, type=int)
-    collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
-    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
-    collector.add_setting(ap, "--device", key="serp_device", fallback="desktop", type=str,
-                          help="측정 디바이스 (desktop|mobile). 기본은 desktop")
-    ap.add_argument("--no-harvest", action="store_true")
-    ap.add_argument("--ids", help="쉼표로 구분한 keyword id — 지정하면 is_active를 무시하고 이것만 조회")
-    ap.add_argument("--force", action="store_true", help="오늘 이미 확인한 키워드도 건너뛰지 않고 재확인")
-    a = ap.parse_args()
+def collect(project: str, *,
+            dry_run: bool = False,
+            provider: str | None = None,
+            max_keywords: int | None = None,
+            serp_depth: int | None = None,
+            throttle: float | None = None,
+            device: str | None = None,
+            no_harvest: bool = False,
+            ids: str | None = None,
+            force: bool = False) -> collector.StageResult:
+    """SERP 순위 스냅샷 + 부산물(키워드 후보·경쟁사)을 Brain 에 적재한다.
 
-    conn, p, cfg = collector.open_project(a.project)
-    provider = a.provider or serp_adapter.detect_provider()
+    Args:
+        project: 사이트 이름
+        dry_run: True 면 호출 계획만 찍고 종료
+        provider: dataforseo|serper — 미지정시 환경에서 자동 판정
+        max_keywords: is_active 키워드 상한 (limits.max_keywords)
+        serp_depth: top-N 깊이
+        throttle: 요청 간격(초)
+        device: desktop|mobile
+        no_harvest: True 면 부산물(키워드 후보·경쟁사) 적재 안 함
+        ids: 쉼표 구분 keyword id — 지정하면 is_active 무시하고 이것만
+        force: 오늘 이미 확인한 키워드도 재확인
+
+    Returns:
+        StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
+    """
+    _parser()
+    conn, p, cfg = collector.open_project(project)
+    ns = argparse.Namespace(
+        max_keywords=max_keywords,
+        depth=serp_depth,
+        throttle=throttle,
+        device=device,
+    )
+    s = collector.settings(ns, cfg)
+    provider = provider or serp_adapter.detect_provider()
     if not provider:
-        sys.exit("SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정 "
-                 "(references/setup.md 참조)")
-    s = collector.settings(a, cfg)
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정 "
+                                            "(references/setup.md 참조)")
     depth = s["serp_depth"]
     throttle = s["throttle"]
-    limit = s["limits.max_keywords"]
-    device = (s.get("serp_device") or s.get("device") or "desktop").strip().lower()
+    limit = s["max_keywords"]
+    device = (s["device"] or "desktop").strip().lower()
 
     if device not in ("desktop", "mobile"):
-        sys.exit(f"유효하지 않은 device '{device}' — desktop 또는 mobile만 허용됩니다")
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason=f"유효하지 않은 device '{device}' — desktop 또는 mobile만 허용됩니다")
 
     if device != "desktop":
         print("[경고] 모바일 측정 시 직전 스냅샷(desktop)과의 순위 비교(Δ)가 한 번 왜곡될 수 있습니다.",
               file=sys.stderr)
 
-    if a.ids:
+    if ids:
         # 부분 실행. 이게 없으면 "이 몇 개만 다시" 하려고 is_active를 직접 토글하게
         # 되는데, 되돌릴 때 통째로 UPDATE 해버려 큐레이션한 활성 집합이 날아간다.
-        ids = [int(x) for x in a.ids.split(",") if x.strip()]
+        ids_list = [int(x) for x in ids.split(",") if x.strip()]
         target_kws = conn.execute(
             f"""SELECT id, keyword, locale FROM keywords
-                 WHERE project_id=? AND id IN ({','.join('?' * len(ids))}) ORDER BY id""",
-            (p["id"], *ids)).fetchall()
+                 WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
+            (p["id"], *ids_list)).fetchall()
     else:
         target_kws = conn.execute(
             """SELECT id, keyword, locale FROM keywords
                 WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
             (p["id"], limit)).fetchall()
     if not target_kws:
-        sys.exit("활성 키워드 없음 — /capture keywords 로 유니버스부터 구축")
+        conn.close()
+        return collector.StageResult(ok=False, skipped=True,
+                                     reason="활성 키워드 없음 — /capture keywords 로 유니버스부터 구축")
 
     from datetime import datetime
     today = datetime.now().strftime("%Y-%m-%d")
-    if not a.force:
+    if not force:
         # 오늘 이미 확인한 키워드는 재실행 비용 절감을 위해 건너뛴다 (--force로 무시 가능)
         checked_today = {
             r[0] for r in conn.execute(
@@ -117,15 +142,15 @@ def main() -> None:
             serp_adapter.warn_unmapped(loc)
     for note in serp_adapter.caveats(provider):
         print(f"       note: {note}")
-    if a.dry_run:
+    if dry_run:
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, cost=est)
 
     if not kws:
         print(f"\nsaved 0 snapshots (skipped {skipped} 오늘 이미 확인) "
               f"actual_cost=$0.000 | 부산물: 키워드 후보 +0, 경쟁사 +0")
         conn.close()
-        return
+        return collector.StageResult(ok=True, skipped=True, rows=0, cost=0.0)
 
     own = p["domain"]
     total_cost, done, errors = 0.0, 0, 0
@@ -156,7 +181,7 @@ def main() -> None:
                     res["serp_features"], res["aio_present"], aio_cited)
                 total_cost += res["cost"]
                 done += 1
-                if not a.no_harvest:
+                if not no_harvest:
                     # 후보는 조회에 쓴 로케일을 물려받는다. 안 그러면 한국어 SERP에서
                     # 캔 후보가 locale NULL로 들어가 다음 런에서 프로젝트 로케일로
                     # 조회되고, 방금 고친 버그가 후보 전체에 그대로 재현된다.
@@ -171,7 +196,7 @@ def main() -> None:
             conn.commit()
             time.sleep(throttle)
 
-        if not a.no_harvest:
+        if not no_harvest:
             new_kw = db.add_keyword_candidates(
                 conn, p["id"], [(kw, loc, "serp") for kw, loc in harvested_kw])
             new_comp = db.add_competitors(
@@ -186,6 +211,38 @@ def main() -> None:
           f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
           f"경쟁사 +{new_comp}\nrun_id={r.id}")
     conn.close()
+    return collector.StageResult(ok=True, skipped=False, rows=done, cost=total_cost)
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    collector.add_common(ap)
+    ap.add_argument("--provider", choices=list(serp_adapter.PROVIDERS))
+    collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=100, type=int)
+    collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
+    collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
+                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+    collector.add_setting(ap, "--device", key="serp_device", fallback="desktop", type=str,
+                          help="측정 디바이스 (desktop|mobile). 기본은 desktop")
+    ap.add_argument("--no-harvest", action="store_true")
+    ap.add_argument("--ids", help="쉼표로 구분한 keyword id — 지정하면 is_active를 무시하고 이것만 조회")
+    ap.add_argument("--force", action="store_true", help="오늘 이미 확인한 키워드도 건너뛰지 않고 재확인")
+    return ap
+
+
+def main() -> None:
+    a = _parser().parse_args()
+    r = collect(a.project, dry_run=a.dry_run,
+                provider=a.provider,
+                max_keywords=a.max_keywords,
+                serp_depth=a.depth,
+                throttle=a.throttle,
+                device=a.device,
+                no_harvest=a.no_harvest,
+                ids=a.ids,
+                force=a.force)
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 if __name__ == "__main__":

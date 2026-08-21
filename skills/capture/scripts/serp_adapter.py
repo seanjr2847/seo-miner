@@ -26,9 +26,38 @@ import os
 import sys
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import scoring  # noqa: E402
+
+# HTTP 타임아웃 정본 — 각 스크립트에 리터럴로 적지 않는다
+TIMEOUTS = {
+    "dataforseo": 60,
+    "serper": 30,
+    "openrouter": 120,
+    "suggest": 10,
+}
+
+
+def has_dataforseo() -> bool:
+    return bool(os.environ.get("DATAFORSEO_LOGIN")) and bool(os.environ.get("DATAFORSEO_PASSWORD"))
+
+
+def has_serper() -> bool:
+    return bool(os.environ.get("SERPER_API_KEY"))
+
+
+def has_openrouter() -> bool:
+    return bool(os.environ.get("OPENROUTER_API_KEY"))
+
+
+def _check_dataforseo_task(data: dict) -> dict:
+    task = (data.get("tasks") or [{}])[0]
+    if task.get("status_code", 0) >= 40000:
+        raise RuntimeError(f"dataforseo task error: {task.get('status_message')}")
+    return task
 
 LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, serper gl/hl)
     "ko": ("South Korea", "ko", ("kr", "ko")),
@@ -121,23 +150,20 @@ def _domains_in(obj) -> list[str]:
 
 
 def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
-    import requests
     if device not in ("desktop", "mobile"):
         raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
-    login, pw = os.environ.get("DATAFORSEO_LOGIN"), os.environ.get("DATAFORSEO_PASSWORD")
-    if not (login and pw):
+    if not has_dataforseo():
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
     loc, lang, _ = location(locale)
     r = requests.post(
         "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
-        auth=(login, pw), timeout=60,
+        auth=(login, pw), timeout=TIMEOUTS["dataforseo"],
         json=[{"keyword": keyword, "location_name": loc, "language_code": lang,
                "device": device, "depth": depth}])
     r.raise_for_status()
     data = r.json()
-    task = (data.get("tasks") or [{}])[0]
-    if task.get("status_code", 0) >= 40000:
-        raise RuntimeError(f"dataforseo task error: {task.get('status_message')}")
+    task = _check_dataforseo_task(data)
     items = ((task.get("result") or [{}])[0].get("items")) or []
     top, features, aio_present, aio_domains = [], set(), 0, []
     related, paa = [], []
@@ -168,16 +194,15 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
 
 
 def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
-    import requests
     if device not in ("desktop", "mobile"):
         raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
     if device == "mobile":
         print("[경고] serper는 desktop만 — 이 런은 desktop으로 측정됩니다", file=sys.stderr)
-    key = os.environ.get("SERPER_API_KEY")
-    if not key:
+    if not has_serper():
         raise RuntimeError("SERPER_API_KEY not set")
+    key = os.environ["SERPER_API_KEY"]
     _, _, (gl, hl) = location(locale)
-    r = requests.post("https://google.serper.dev/search", timeout=30,
+    r = requests.post("https://google.serper.dev/search", timeout=TIMEOUTS["serper"],
                       headers={"X-API-KEY": key, "Content-Type": "application/json"},
                       json={"q": keyword, "gl": gl, "hl": hl, "num": depth})
     r.raise_for_status()
@@ -212,6 +237,57 @@ PROVIDERS = {
     },
 }
 
+# Labs 단가 상한 (출처: https://dataforseo.com/apis/dataforseo-labs-api).
+# 응답의 cost 가 더 정확하지만 dry-run 고지용으로는 이 값으로 충분.
+LABS_COST_PER_CALL = 0.001
+
+
+def fetch_labs_ranked_keywords(target: str, locale: str, limit: int = 100) -> tuple[list[dict], float]:
+    """Labs ranked_keywords 한 도메인 조회.
+
+    반환: (items, cost). items 는 [{keyword, search_volume|None}, ...].
+    Labs 응답의 키워드는 lowercase 정규화해서 돌려준다 — 후속 필터(norm 비교)와
+    같은 모양.
+    """
+    if not has_dataforseo():
+        raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
+    loc, lang, _ = location(locale)
+    body = [{
+        "target": target,
+        "location_name": loc,
+        "language_code": lang,
+        "limit": limit,
+        "load_rank_absolute": False,
+    }]
+    r = requests.post(
+        "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live",
+        auth=(login, pw), timeout=TIMEOUTS["dataforseo"], json=body)
+    r.raise_for_status()
+    data = r.json()
+    task = _check_dataforseo_task(data)
+    cost = float(task.get("cost") or data.get("cost") or 0.0)
+    result = (task.get("result") or [])
+    items: list[dict] = []
+    for r0 in result:
+        for it in (r0.get("items") or []):
+            kw = it.get("keyword_data") or it.get("keyword") or ""
+            if isinstance(it.get("keyword_data"), dict):
+                # Live 응답은 keyword_data 가 dict 모양으로 옴 (서로 다른 필드명 모두 허용)
+                kd = it["keyword_data"]
+                kw = kd.get("keyword") or kw
+                sv = kd.get("keyword_info", {}).get("search_volume") if isinstance(
+                    kd.get("keyword_info"), dict) else None
+                if sv is None:
+                    sv = kd.get("search_volume")
+            sv = it.get("search_volume", sv)
+            if isinstance(sv, str):
+                sv = int(sv) if sv.isdigit() else None
+            kw = (kw or "").strip()
+            if kw:
+                items.append({"keyword": kw, "search_volume": sv})
+    return items, cost
+
 
 def cost_per_query(provider: str) -> float:
     """제공자 단가($/쿼리) — 예산 고지용. 가격표는 이 모듈에만 있다."""
@@ -235,9 +311,9 @@ def detect_provider() -> str | None:
     if want != "auto":
         print(f"[경고] config.yaml serp.provider='{want}' 는 모르는 제공자입니다 — "
               f"키 감지로 진행합니다.", file=sys.stderr)
-    if os.environ.get("DATAFORSEO_LOGIN"):
+    if has_dataforseo():
         return "dataforseo"
-    if os.environ.get("SERPER_API_KEY"):
+    if has_serper():
         return "serper"
     return None
 
@@ -292,6 +368,8 @@ def _selfcheck() -> None:
     assert caveats("dataforseo") == []
     assert any("모바일" in c for c in caveats("serper"))
     assert set(PROVIDERS) == {"dataforseo", "serper"}
+    assert TIMEOUTS == {"dataforseo": 60, "serper": 30, "openrouter": 120, "suggest": 10}
+    assert LABS_COST_PER_CALL == 0.001
     print("serp_adapter self-check ok")
 
 
