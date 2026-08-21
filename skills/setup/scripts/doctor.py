@@ -12,7 +12,6 @@ Exit code: 0 = core usable, 1 = core setup incomplete.
 import importlib.util
 import json
 import os
-
 import sqlite3
 import sys
 from pathlib import Path

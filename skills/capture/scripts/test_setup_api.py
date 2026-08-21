@@ -47,8 +47,8 @@ def post(path: str, body: dict, token: str = dashboard.TOKEN) -> tuple[int, dict
 code, doc = get("/api/doctor")
 assert code == 200, code
 expected_keys = {"verdict", "no_project", "must", "extra", "core_ok",
-                  "gsc_ok", "nkeys", "show_deps_gsc_btn", "show_skills_btn",
-                  "show_setup"}
+                 "gsc_ok", "nkeys", "show_deps_gsc_btn", "show_skills_btn",
+                 "show_setup"}
 assert expected_keys.issubset(doc.keys()), f"누락된 키: {expected_keys - doc.keys()}"
 assert doc["no_project"] is True
 assert not any("/capture add" in s for s in doc["must"]), f"must에 /capture add가 남음: {doc['must']}"

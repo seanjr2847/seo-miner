@@ -7,6 +7,8 @@ I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 �
   · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot 적재, depth 밖 None, AIO 미측정 None
   · collect_gsc/collect_index --dry-run: 인증도 네트워크도 안 타고 계획만 찍는지
   · doctor --json: subprocess 실행, exit code 0, JSON 구조(verdict, next_command) 검증
+  · doctor marketing_skills: CLAUDE_SKILLS_DIR 기반 탐지, must 요구 문구 및 7개 완비 시 해제 검증
+  · install_skills: 스킬 완비 시 실행 방지, 누락 시 marketplace/install 호출 검증
   · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
 """
 import io
@@ -761,6 +763,134 @@ def test_doctor_json_subprocess():
     assert data["gsc_bundled"] is True, f"번들로 로그인하는 중이어야 함: {data}"
     assert data["keys"]["gsc_service_account"] is False, \
         "대시보드가 gsc_ok 로 먹는 키가 로그인 전에 True 다 — 화면이 거짓말한다"
+
+
+def test_doctor_detects_marketing_skills():
+    """doctor.py: CLAUDE_SKILLS_DIR 환경변수 기반 마케팅 스킬 탐지 검증.
+
+    ai-seo 만 설치된 상태에서 ai-seo=True, 나머지=False, must 에 누락 스킬 및
+    저장소 링크가 포함되는지 검증하고, 7개 모두 설치 시 must 에서 빠지는지 확인한다.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+    import doctor
+
+    skills_dir = Path(tempfile.mkdtemp(prefix="seo-miner-skills-test-"))
+    orig_skills_dir = os.environ.get("CLAUDE_SKILLS_DIR")
+    os.environ["CLAUDE_SKILLS_DIR"] = str(skills_dir)
+    try:
+        # 1. ai-seo 만 설치된 상태
+        (skills_dir / "ai-seo").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "ai-seo" / "SKILL.md").write_text("# ai-seo\n", encoding="utf-8")
+
+        res = doctor.diagnose()
+        assert res["marketing_skills"]["ai-seo"] is True, "ai-seo 는 True 여야 함"
+        for k in doctor.MARKETING_SKILLS:
+            if k != "ai-seo":
+                assert res["marketing_skills"][k] is False, f"{k} 는 False 여야 함"
+        assert res["marketing_optional"]["aso"] is False, "aso 는 False 여야 함"
+
+        # must 에 빠진 스킬 요구 문장 및 저장소 링크가 있는지 assert
+        assert any("marketingskills" in m and "product-marketing" in m for m in res["must"]), \
+            f"must 에 누락 스킬 설치 요구 문장이 있어야 함: {res['must']}"
+
+        # 2. 필수 7개 전부 설치된 상태
+        for k in doctor.MARKETING_SKILLS:
+            (skills_dir / k).mkdir(parents=True, exist_ok=True)
+            (skills_dir / k / "SKILL.md").write_text(f"# {k}\n", encoding="utf-8")
+
+        res_all = doctor.diagnose()
+        for k in doctor.MARKETING_SKILLS:
+            assert res_all["marketing_skills"][k] is True, f"{k} 가 True 여야 함"
+
+        # 7개 전부 설치되면 must 에 해당 요구 문장이 없어야 함
+        assert not any("marketingskills" in m for m in res_all["must"]), \
+            f"7개 완비 시 must 에 마케팅 스킬 요구가 없어야 함: {res_all['must']}"
+        # aso 만 빠졌으므로 later 에 aso 안내가 한 줄 있어야 함
+        assert any("aso" in s and "marketingskills" in s for s in res_all["later"]), \
+            f"aso 누락 시 later 에 안내가 있어야 함: {res_all['later']}"
+    finally:
+        if orig_skills_dir is not None:
+            os.environ["CLAUDE_SKILLS_DIR"] = orig_skills_dir
+        else:
+            os.environ.pop("CLAUDE_SKILLS_DIR", None)
+        shutil.rmtree(skills_dir, ignore_errors=True)
+
+
+def test_install_skills_never_runs_when_nothing_is_missing():
+    """install_skills.py: 스킬이 완비된 경우 claude CLI를 절대 실행하지 않고,
+    누락 스킬이 발생했을 때만 marketplace add / plugin install을 순차 실행하는지 검증.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+    import doctor
+    import install_skills
+
+    skills_dir = Path(tempfile.mkdtemp(prefix="seo-miner-install-skills-test-"))
+    orig_skills_dir = os.environ.get("CLAUDE_SKILLS_DIR")
+    os.environ["CLAUDE_SKILLS_DIR"] = str(skills_dir)
+
+    run_calls = []
+    orig_run = subprocess.run
+    orig_which = shutil.which
+
+    class _FakeCompletedProcess:
+        def __init__(self, args, returncode=0):
+            self.args = args
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(args, *a, **k):
+        run_calls.append((args, k))
+        return _FakeCompletedProcess(args, returncode=0)
+
+    try:
+        # 1. 필수 스킬 전부 생성 (빠진 스킬 없음)
+        for k in doctor.MARKETING_SKILLS:
+            (skills_dir / k).mkdir(parents=True, exist_ok=True)
+            (skills_dir / k / "SKILL.md").write_text(f"# {k}\n", encoding="utf-8")
+
+        subprocess.run = fake_run
+        install_skills.subprocess.run = fake_run
+        shutil.which = lambda cmd: "/mock/bin/claude" if cmd == "claude" else orig_which(cmd)
+        install_skills.shutil.which = shutil.which
+
+        # 빠진 게 없으면 subprocess.run이 절대 불리지 않아야 함
+        run_calls.clear()
+        code = install_skills.install_skills()
+        assert code == 0, f"빠진 것 없을 때 0 반환: {code}"
+        assert len(run_calls) == 0, f"빠진 스킬이 없는데 claude를 호출함: {run_calls}"
+
+        # 2. 필수 스킬 중 하나(예: ai-seo)를 삭제하여 빠진 스킬 생성
+        ai_seo = skills_dir / "ai-seo" / "SKILL.md"
+        if ai_seo.exists():
+            ai_seo.unlink()
+
+        run_calls.clear()
+        code_missing = install_skills.install_skills()
+        assert code_missing == 0, f"모킹 성공 시 0 반환: {code_missing}"
+        assert len(run_calls) == 2, f"빠진 스킬 존재 시 add, install 2회 호출되어야 함: {run_calls}"
+
+        # 호출 인자 검증
+        cmd1 = run_calls[0][0]
+        assert any("marketplace" in str(arg) for arg in cmd1) and any("add" in str(arg) for arg in cmd1), \
+            f"첫 번째 명령은 marketplace add 여야 함: {cmd1}"
+        assert run_calls[0][1].get("timeout") == 300, "첫 번째 명령에 timeout 300초 지정 필요"
+
+        cmd2 = run_calls[1][0]
+        assert any("plugin" in str(arg) for arg in cmd2) and any("install" in str(arg) for arg in cmd2), \
+            f"두 번째 명령은 plugin install 이어야 함: {cmd2}"
+        assert run_calls[1][1].get("timeout") == 300, "두 번째 명령에 timeout 300초 지정 필요"
+
+    finally:
+        subprocess.run = orig_run
+        install_skills.subprocess.run = orig_run
+        shutil.which = orig_which
+        install_skills.shutil.which = orig_which
+        if orig_skills_dir is not None:
+            os.environ["CLAUDE_SKILLS_DIR"] = orig_skills_dir
+        else:
+            os.environ.pop("CLAUDE_SKILLS_DIR", None)
+        shutil.rmtree(skills_dir, ignore_errors=True)
 
 
 def test_gsc_auth_precedence():
