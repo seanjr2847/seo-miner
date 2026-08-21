@@ -142,7 +142,11 @@ def diagnose() -> dict:
          core_ok and all(deps_gsc.values()) and gsc_linked,
          # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
          # 예전 문구("무료, 5분")는 사용자에게 있지도 않은 할 일을 시키는 거짓말이 됐다.
-         ("구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 없음) — "
+         ("구글 연동 부품이 없습니다 — `pip install google-api-python-client "
+          "google-auth-oauthlib` (앞은 조회용, 뒤는 로그인 창을 여는 부품). 채팅에 "
+          "\"설치해줘\" 하시면 제가 대신 실행합니다."
+          if gsc_mode and not all(deps_gsc.values()) else
+          "구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 없음) — "
           "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
           if gsc_pending else
           "구글 인증 수단이 없습니다 (번들이 빠진 배포) — 채팅에 \"GSC 연동해줘\" "
@@ -205,18 +209,13 @@ def diagnose() -> dict:
                      f"돌리면 \"질문이 없다\"며 멈춥니다. 채팅에 `/capture add {who.split(', ')[0]}` "
                      "이라고 하시면 사이트에 맞는 질문 10~30개를 만들어 드립니다 "
                      "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
-    if not keys["openrouter"]:
-        later.append("AI 노출 확인 — OpenRouter 키 (유료, 약 5분): setup.md 5절. "
-                     "이 키가 없어도 나머지 기능은 다 돌아갑니다.")
-    if not (keys["dataforseo"] or keys["serper"]):
-        later.append("순위 추적 키 — DataForSEO 권장(AI오버뷰·역키워드 포함), "
-                     "Serper는 대체재(선택): setup.md 7절.")
-    # 조건이 gsc_linked(=연결됨)면 로그인 전에는 안 뜬다. 그런데 이건 **로그인 전에**
-    # 갖춰 둬야 하는 것이다 — 로그인 창을 여는 게 google-auth-oauthlib 이라,
-    # 없으면 "로그인해줘"가 그 자리에서 막힌다. 그래서 gsc_mode 기준으로 본다.
-    if gsc_mode and not all(deps_gsc.values()):
-        later.append("구글 연동 부품 — `pip install google-api-python-client "
-                     "google-auth-oauthlib` (앞은 조회용, 뒤는 로그인 창을 여는 부품)")
+    # 유료 키 안내를 여기 다시 적지 않는다 — caps/locked 가 이미 같은 두 항목을
+    # (발급 주소까지 붙여서) 말한다. 두 벌이 되면 화면이 "못 하는 것" 목록으로
+    # 채워지고, 실제로 한쪽만 낡았다(여기 있던 사본은 링크로 바꾸기 전의 "setup.md
+    # 5절"을 계속 가리키고 있었다).
+    # 구글 연동 부품(google-auth-oauthlib 등)도 여기 적지 않는다 — 위 caps 의
+    # "구글 실적 읽기" 잠금 사유가 부품 누락을 먼저 보고 그 pip 명령을 말한다.
+    # 로그인 창을 여는 게 그 부품이라, 없으면 "로그인해줘"가 그 자리에서 막힌다.
 
     # 마케팅 스킬 항목은 show_setup 판정(대시보드가 패널을 펼치는 여부)에서 빼기 위해
     # 메시지를 변수로 보관한다 — 그래야 doctor가 결론을 찍고, 대시보드는 그걸 읽기만
@@ -348,21 +347,23 @@ def render(d: dict) -> None:
             print(f"마케팅 스킬: {installed}/{total} (누락: {', '.join(missing)})")
         else:
             print(f"마케팅 스킬: {installed}/{total} (모두 설치됨)")
-    if d["locked"]:
-        print("아직 안 켠 것 (없어도 위 기능은 다 돌아갑니다)")
-        for c in d["locked"]:
-            print(f"  · {c['name']} — {c['desc']}")
-            print(f"    켜려면: {c['fix'] or '아래 [꼭 해야 할 일]만 끝내면 자동으로 켜집니다.'}")
 
     if d["must"]:
         print("\n[꼭 해야 할 일]")
         for i, s in enumerate(d["must"], 1):
             msg = s["msg"] if isinstance(s, dict) else s
             print(f"  {i}. {msg}")
-    if d["later"]:
-        print("\n나중에 하면 좋은 것 (급하지 않습니다)")
-        for s in d["later"]:
-            print(f"  · {s}")
+
+    # 선택 항목은 한 통에 담고 부정 문구는 머리에서 한 번만 말한다. 전에는
+    # "아직 안 켠 것"과 "나중에 하면 좋은 것" 두 통이었고 같은 항목이 양쪽에 들어가,
+    # 부담을 줄이려던 문구가 오히려 화면 절반을 "못 하는 것" 목록으로 만들었다.
+    if d["locked"] or d["later"]:
+        print("\n더 켜고 싶으면 (전부 선택 — 안 하셔도 위 기능은 그대로입니다)")
+        for c in d["locked"]:
+            print(f"  · {c['name']} — {c['desc']}")
+            print(f"    {c['fix'] or '위 [꼭 해야 할 일]만 끝내면 자동으로 켜집니다.'}")
+        for s2 in d["later"]:
+            print(f"  · {s2}")
 
     print(f"\n자료 폴더: {d['brain']['home']}")
 

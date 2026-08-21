@@ -1532,6 +1532,32 @@ def test_serp_adapter_credentials_timeouts_and_labs():
                 os.environ.pop(k, None)
 
 
+def test_doctor_never_says_the_same_thing_twice():
+    """같은 안내가 locked(잠긴 기능)와 later(나중에)에 두 벌 들어가면 안 된다.
+
+    실제로 유료 키 두 항목이 양쪽에 있었고 later 쪽 사본이 낡아 있었다
+    (없어진 "setup.md 5절"을 계속 가리켰다). 화면 절반이 "못 하는 것" 목록이 되는
+    원인이기도 했다 — 발급처·설치 명령의 정본은 caps/locked 한 곳이다.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+    import doctor
+
+    orig = {k: os.environ.get(k) for k in
+            ("OPENROUTER_API_KEY", "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "SERPER_API_KEY")}
+    try:
+        for k in orig:
+            os.environ.pop(k, None)          # 키 0개 — 두 항목이 다 잠긴 상태
+        d = doctor.diagnose()
+        assert {"AI 노출 확인", "순위 추적"} <= {c["name"] for c in d["locked"]}, d["locked"]
+        for marker in ("openrouter.ai", "dataforseo.com", "serper.dev", "pip install google-"):
+            assert not any(marker in s for s in d["later"]), \
+                f"{marker} 안내가 later 에도 있다(locked 와 두 벌): {d['later']}"
+    finally:
+        for k, v in orig.items():
+            if v is not None:
+                os.environ[k] = v
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

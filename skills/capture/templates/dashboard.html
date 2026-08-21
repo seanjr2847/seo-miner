@@ -1035,7 +1035,7 @@ async function loadDoctor() {
     if (d.must && d.must.length)
       h += `<ul class="must">${d.must.map(s => `<li>${esc(s.msg || s)}</li>`).join("")}</ul>`;
     if (d.extra && d.extra.length)
-      h += `<details><summary>안 켠 기능·나중에 할 것 ${d.extra.length}개 — 없어도 됩니다</summary>
+      h += `<details><summary>더 켜고 싶으면 ${d.extra.length}개 — 전부 선택입니다</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     $("docban").innerHTML = h;
     $("docban").hidden = false;
