@@ -255,7 +255,9 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
 label { display:block; font:400 10px/1 var(--mono); letter-spacing:.12em;
   text-transform:uppercase; color:var(--slate); margin:12px 0 5px; }
-label b { color:var(--patina); font-weight:400; text-transform:none; letter-spacing:0; }
+label b, label a { color:var(--patina); font-weight:400; text-transform:none;
+  letter-spacing:0; }
+label a { text-decoration:underline; text-underline-offset:2px; }
 input, select, textarea { font:400 13.5px/1.4 var(--sans); width:100%; color:var(--ink);
   background:transparent; border:0; border-bottom:1px solid var(--rule); padding:5px 2px; }
 input:focus, select:focus, textarea:focus { border-bottom-color:var(--patina); outline:0; }
@@ -372,13 +374,13 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
         저장하면 <code>~/.capture/env</code>에만 들어가고 화면에 다시 표시되지
         않습니다. 비운 채 저장하면 지워집니다.</p>
       <div class="grid">
-        <div><label>OpenRouter — AI 노출 자동화 · 발급 <b>openrouter.ai/keys</b></label>
+        <div><label>OpenRouter — AI 노출 자동화 · 발급 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a></label>
           <input id="k-or" type="password" placeholder="sk-or-..."></div>
-        <div><label>DataForSEO 아이디 — 순위·AI오버뷰·역키워드 · 발급 <b>dataforseo.com</b></label>
+        <div><label>DataForSEO 아이디 — 순위·AI오버뷰·역키워드 · 발급 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a></label>
           <input id="k-dfsl" placeholder="가입 이메일"></div>
-        <div><label>DataForSEO 비밀번호</label>
+        <div><label>DataForSEO 비밀번호 — 계정 비번 아님 · API Settings 에서 확인</label>
           <input id="k-dfsp" type="password" placeholder="API 비밀번호"></div>
-        <div><label>Serper — 선택 (DataForSEO 대체재) · 발급 <b>serper.dev</b></label>
+        <div><label>Serper — 선택 (DataForSEO 대체재) · 발급 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a></label>
           <input id="k-serper" type="password" placeholder="선택 — 보통 필요 없음"></div>
       </div>
       <div class="row"><button class="go" id="btn-keys">키 저장</button>

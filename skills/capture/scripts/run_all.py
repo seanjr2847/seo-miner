@@ -76,10 +76,13 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
     """
     if stage_name == "rank":
         if not (serp_adapter.has_serper() or serp_adapter.has_dataforseo()):
-            return False, "SERPER_API_KEY 또는 DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — 있으면 순위 스냅샷을 캘 수 있습니다"
+            return False, ("SERPER_API_KEY 또는 DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — "
+                          "있으면 순위 스냅샷을 캘 수 있습니다. 발급: https://dataforseo.com "
+                          "(권장) 또는 https://serper.dev")
     elif stage_name == "ai":
         if not serp_adapter.has_openrouter():
-            return False, "OPENROUTER_API_KEY 가 없어 건너뜀 — 있으면 AI 인용 갭을 캘 수 있습니다"
+            return False, ("OPENROUTER_API_KEY 가 없어 건너뜀 — 있으면 AI 인용 갭을 캘 수 있습니다. "
+                          "발급: https://openrouter.ai/keys")
     return True, ""
 
 

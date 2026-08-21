@@ -118,8 +118,8 @@ pip install requests pyyaml
 | 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
 |---|---|---|
 | 구글 실적 (필수 연결) | 브라우저에서 **로그인 한 번**. 구글 클라우드 콘솔 작업 **0** — 플러그인이 OAuth 클라이언트를 동봉합니다 (무료, 계정당 1회) | — |
-| AI 인용 확인 | — | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 |
-| 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 권장(AI오버뷰·역키워드 포함) · `SERPER_API_KEY`는 대체재(선택) |
+| AI 인용 확인 | — | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (발급: https://openrouter.ai/keys) |
+| 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 권장(AI오버뷰·역키워드 포함, 발급: https://dataforseo.com) · `SERPER_API_KEY`는 대체재(선택, 발급: https://serper.dev) |
 
 키는 대시보드 **[설정] → API 키** 칸에 넣으면 `~/.capture/env`에 저장되고 모든
 스크립트가 읽습니다 — 셸 rc를 편집할 필요가 없습니다. 셸에 `export`한 값이 있으면

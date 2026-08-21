@@ -136,7 +136,8 @@ def diagnose() -> dict:
         ("글 만들기", "모은 키워드로 콘텐츠 초안 작성", core_ok, None),
         ("AI 노출 확인", "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
          core_ok and bool(os.environ.get("OPENROUTER_API_KEY")),
-         "OpenRouter 키가 필요합니다 (유료, 약 5분): setup.md 5절."),
+         "OpenRouter 키가 필요합니다 (유료, 약 5분) — 발급: "
+         "https://openrouter.ai/keys · 크레딧 소액 충전 후 키 생성."),
         ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
          core_ok and all(deps_gsc.values()) and gsc_linked,
          # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
@@ -148,8 +149,10 @@ def diagnose() -> dict:
           "하시면 클라이언트 파일 놓는 것부터 제가 안내합니다 (무료).")),
         ("순위 추적", "검색결과 몇 등인지 매일 기록",
          core_ok and (keys["dataforseo"] or keys["serper"]),
-         "유료 키가 필요합니다: DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정), "
-         "Serper는 대체재(더 싸고 단순 — 선택): setup.md 7절."),
+         "유료 키가 필요합니다 — DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정): "
+         "https://dataforseo.com (가입 시 $1 무료 크레딧, API 비밀번호는 계정 비번과 "
+         "다름 — API Settings 에서 확인). 대체재 Serper: https://serper.dev "
+         "(무료 2,500콜, 카드 불필요, AI오버뷰 없음)."),
     ]
 
     must = []

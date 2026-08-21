@@ -139,7 +139,8 @@ def collect(project: str, *,
     if not serp_adapter.has_dataforseo():
         conn.close()
         return collector.StageResult(ok=False, skipped=True,
-                                     reason="Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정 (references/setup.md 7절).")
+                                     reason="Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
+                                            "발급: https://dataforseo.com")
 
     ns = argparse.Namespace(
         limit=gap_limit,

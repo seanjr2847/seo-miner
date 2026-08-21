@@ -77,8 +77,9 @@ def collect(project: str, *,
     if not provider:
         conn.close()
         return collector.StageResult(ok=False, skipped=True,
-                                     reason="SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정 "
-                                            "(references/setup.md 참조)")
+                                     reason="SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
+                                            "발급: https://dataforseo.com (권장) 또는 "
+                                            "https://serper.dev")
     depth = s["serp_depth"]
     throttle = s["throttle"]
     limit = s["max_keywords"]
