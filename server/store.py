@@ -42,9 +42,22 @@ CREATE TABLE IF NOT EXISTS sites (
   domain TEXT NOT NULL,
   active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  last_run_at TEXT,                   -- NULL = 아직 한 번도 안 잼 (등록 직후)
+  running_since TEXT,                 -- NULL 이 아니면 지금 수집 중
   UNIQUE(user_id, project)
 );
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """CREATE TABLE IF NOT EXISTS 가 못 하는 것만 — 이미 있는 테이블의 새 컬럼."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sites)")}
+    if not cols:
+        return
+    for col in ("last_run_at", "running_since"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
+    conn.commit()
 
 
 def _fernet() -> Fernet:
@@ -63,6 +76,7 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(d / "server.db")
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -111,15 +125,49 @@ def sites(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
                         (user_id,)).fetchall()
 
 
-def due_sites(conn: sqlite3.Connection, idle_days: int = 30) -> list[sqlite3.Row]:
-    """스케줄 대상 — 휴면 계정(last_seen_at 이 idle_days 초과)은 뺀다.
+def due_sites(conn: sqlite3.Connection, idle_days: int = 30,
+              every_hours: float = 168.0) -> list[sqlite3.Row]:
+    """지금 잴 사이트 — 휴면 계정과 '아직 주기가 안 된 사이트'를 뺀다.
 
-    B안은 유저가 안 봐도 매주 API 비용이 나간다. 이 한 줄이 휴면 원가를 없앤다.
+    주기는 반드시 사이트별로 본다. 전역 스탬프 하나로 판정하면 먼저 등록한 사이트가
+    도장을 찍어 버려서, 방금 가입한 사람의 첫 측정이 다음 주기까지 통째로 밀린다 —
+    그 사람은 빈 대시보드만 보고 떠난다.
+
+    last_run_at 이 NULL 이면(= 등록 직후) 즉시 대상이다.
     """
+    # 0 = '자동 재측정 끔'. 아직 한 번도 안 잰 사이트와 수동 요청(request_run 이
+    # last_run_at 을 NULL 로 만든다)까지 막으면 등록도 '지금 재기'도 죽는다.
+    if every_hours <= 0:
+        every_hours = 1e9
     return conn.execute(
         "SELECT s.*, u.email FROM sites s JOIN users u ON u.id = s.user_id "
-        "WHERE s.active=1 AND u.last_seen_at > datetime('now', ?) ORDER BY s.id",
-        (f"-{idle_days} days",)).fetchall()
+        "WHERE s.active=1 AND u.last_seen_at > datetime('now', ?) "
+        "  AND (s.last_run_at IS NULL OR s.last_run_at <= datetime('now', ?)) "
+        "  AND (s.running_since IS NULL OR s.running_since <= datetime('now','-3 hours')) "
+        "ORDER BY s.last_run_at IS NOT NULL, s.id",   # 첫 측정 대기자를 먼저
+        (f"-{idle_days} days", f"-{every_hours} hours")).fetchall()
+
+
+def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
+    """수집 시작 표시. 성공·실패 무관하게 찍는다 — 실패한 사이트가 매 틱마다
+    재시도하면 비용이 샌다."""
+    conn.execute("UPDATE sites SET last_run_at=CURRENT_TIMESTAMP, "
+                 "running_since=CURRENT_TIMESTAMP WHERE id=?", (site_id,))
+    conn.commit()
+
+
+def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
+    conn.execute("UPDATE sites SET running_since=NULL WHERE id=?", (site_id,))
+    conn.commit()
+
+
+def request_run(conn: sqlite3.Connection, user_id: int, project: str) -> bool:
+    """'지금 다시 재기' — 주기를 무시하고 다음 대상으로 만든다. 이미 도는 중이면 무시."""
+    cur = conn.execute(
+        "UPDATE sites SET last_run_at=NULL WHERE user_id=? AND project=? "
+        "AND active=1 AND running_since IS NULL", (user_id, project))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # --- 테넌트 -----------------------------------------------------------------
@@ -183,9 +231,47 @@ def demo() -> None:
         assert load_token(conn, uid) == '{"refresh_token":"new"}', "갱신 토큰을 회수하지 못했다"
         assert not (home(uid) / "gsc_token.json").exists(), "평문 토큰 파일이 남았다"
 
-        add_site(conn, uid, "myproj", "sc-domain:example.com", "example.com")
+        sid = add_site(conn, uid, "myproj", "sc-domain:example.com", "example.com")
         assert len(sites(conn, uid)) == 1
-        assert len(due_sites(conn)) == 1
+        assert len(due_sites(conn)) == 1, "등록 직후에는 즉시 대상이어야 한다"
+
+        mark_run(conn, sid)
+        assert due_sites(conn) == [], "방금 쟀는데 또 잰다"
+        assert conn.execute("SELECT running_since FROM sites WHERE id=?",
+                            (sid,)).fetchone()[0], "수집 중 표시가 안 켜졌다"
+        mark_done(conn, sid)
+        assert not conn.execute("SELECT running_since FROM sites WHERE id=?",
+                                (sid,)).fetchone()[0], "수집 중 표시가 안 꺼졌다"
+        assert request_run(conn, uid, "myproj"), "지금 재기 요청이 안 먹는다"
+        assert len(due_sites(conn)) == 1, "요청했는데 대상이 아니다"
+        mark_run(conn, sid)
+        assert not request_run(conn, uid, "myproj"), "도는 중인데 또 요청이 먹는다"
+        mark_done(conn, sid)
+        # 시간을 직접 민다 — every_hours 를 아주 작게 주는 방식은 CURRENT_TIMESTAMP 가
+        # 초 단위라 같은 초 안에서만 우연히 통과한다.
+        conn.execute("UPDATE sites SET last_run_at=datetime('now','-200 hours') WHERE id=?",
+                     (sid,))
+        conn.commit()
+        assert len(due_sites(conn)) == 1, "주기가 지났는데 안 잰다"
+        conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+        conn.commit()
+        assert due_sites(conn) == [], "수집 중인데 또 잡는다"
+        conn.execute("UPDATE sites SET running_since=datetime('now','-5 hours') WHERE id=?",
+                     (sid,))
+        conn.commit()
+        assert len(due_sites(conn)) == 1, "죽은 실행(3시간 초과)이 영영 안 풀린다"
+        mark_done(conn, sid)
+        assert due_sites(conn, every_hours=0) == [], "0 인데 자동 재측정이 안 꺼진다"
+        assert request_run(conn, uid, "myproj") and             len(due_sites(conn, every_hours=0)) == 1, "0 이면 수동 재측정까지 막힌다"
+        mark_run(conn, sid); mark_done(conn, sid)
+
+        # 사이트별 판정이어야 한다 — 남이 방금 쟀다고 내 첫 측정이 밀리면 안 된다.
+        mark_run(conn, sid); mark_done(conn, sid)      # myproj 를 '방금 잰' 상태로
+        uid2 = upsert_user(conn, "b@example.com")
+        add_site(conn, uid2, "fresh", "sc-domain:b.com", "b.com")
+        due = due_sites(conn)
+        assert [r["project"] for r in due] == ["fresh"], f"신규 사이트가 안 잡힌다: {due}"
+
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         assert due_sites(conn) == [], "휴면 계정이 스케줄에서 안 빠졌다"
         conn.close()                          # 윈도우는 열린 파일을 지우지 못한다

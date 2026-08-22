@@ -1,0 +1,138 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F7F9F8; --surface:#E9EEEC; --line:#C4CDCA; --hair:#DDE3E1;
+  --ink:#12232E; --muted:#5C6E74; --mark:#2D4EA8; --far:#B3C0DE; --gain:#2E7D5B;
+  --sans:"IBM Plex Sans KR",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  line-height:1.6;word-break:keep-all;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:0 24px}
+
+header{border-bottom:1px solid var(--hair)}
+.brandbar{display:flex;align-items:baseline;gap:12px;padding:20px 0}
+.logo{font-weight:700;letter-spacing:-.02em;font-size:17px}
+.tagline{font-size:13px;color:var(--muted);font-weight:300}
+
+/* 섹션 라벨 — 한글에 mono+letter-spacing 을 걸면 자간이 벌어져 읽기 나빠진다. */
+.label{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 20px}
+
+.hero{padding:72px 0 0}
+h1{font-size:clamp(30px,5.2vw,46px);line-height:1.24;font-weight:600;
+  letter-spacing:-.03em;margin:0 0 20px;max-width:19ch}
+h1 em{font-style:normal;color:var(--mark)}
+.lede{font-size:17px;color:var(--muted);max-width:50ch;margin:0 0 34px;font-weight:300}
+.cta{display:inline-flex;align-items:center;gap:10px;background:var(--ink);color:var(--paper);
+  text-decoration:none;padding:13px 22px;border-radius:2px;font-weight:500;font-size:15px;
+  transition:background .15s}
+.cta:hover{background:var(--mark)}
+.cta:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
+.cta svg{width:17px;height:17px}
+.note{font-size:13px;color:var(--muted);margin-top:14px;font-weight:300}
+
+/* ── 시그니처: 1페이지까지 남은 거리 ── */
+.chart{margin-top:56px;border-top:1px solid var(--hair);padding:30px 0 0}
+.rows{display:grid;gap:4px}
+.row,.axis{display:grid;grid-template-columns:minmax(88px,20%) 1fr 88px;
+  align-items:center;gap:16px}
+.q{font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track{position:relative;height:22px}
+.track::before{content:"";position:absolute;inset:0 66.6% 0 0;background:var(--surface)}
+.track::after{content:"";position:absolute;top:-2px;bottom:-2px;left:33.4%;width:1px;
+  background:var(--line)}
+.fill{position:absolute;top:6px;height:11px;background:var(--far);transform-origin:left center}
+.fill[data-hot="1"]{background:var(--mark)}
+.fill[data-in="1"]{background:var(--gain)}
+.dot{position:absolute;top:7px;width:9px;height:9px;border-radius:50%;
+  background:var(--gain);transform:translateX(-50%)}
+.legend .hot{color:var(--mark)}
+.rk{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+.rk b{color:var(--gain);font-weight:500}
+.ticks{position:relative;height:15px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.ticks span{position:absolute;top:0;transform:translateX(-50%)}
+.axis{margin-top:8px}
+.legend{font-size:14px;color:var(--muted);margin:22px 0 0;font-weight:300;max-width:56ch}
+.legend b{font-weight:500;color:var(--ink)}
+
+.answers{border-top:1px solid var(--hair);margin-top:56px;padding:32px 0 72px}
+.answers ul{list-style:none;padding:0;margin:0;display:grid;gap:1px;background:var(--hair);
+  border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+.answers li{background:var(--paper);padding:14px 2px;font-size:15px;display:flex;gap:16px}
+.answers li::before{content:attr(data-k);font-size:12px;color:var(--mark);flex:none;
+  width:48px;padding-top:3px;font-weight:500}
+footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
+  color:var(--muted);font-weight:300}
+
+@media(max-width:640px){
+  .hero{padding:44px 0 0}
+  .row,.axis{grid-template-columns:1fr 64px;gap:10px}
+  .q{grid-column:1/-1;font-size:12px;color:var(--muted)}
+  .ticks{grid-column:1}
+  .answers li{flex-direction:column;gap:3px}
+  .answers li::before{padding-top:0}
+}
+@media(prefers-reduced-motion:no-preference){
+  .fill{animation:grow .7s cubic-bezier(.2,.7,.3,1) backwards}
+  @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+}
+</style>
+
+<header><div class="wrap brandbar">
+  <span class="logo">seo-miner</span>
+  <span class="tagline">검색 · AI 답변 가시성 측정</span>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>1페이지까지 <em>몇 칸</em> 남았는지 잽니다.</h1>
+    <p class="lede">서치콘솔 실적, 색인 상태, 그리고 ChatGPT·Perplexity·Gemini가
+      누구를 인용하는지까지 한 번에 재고 — 그 숫자에서 다음에 손댈 것 하나를 뽑아 줍니다.</p>
+
+    <a class="cta" href="/auth/login">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
+      Google 계정으로 시작
+    </a>
+    <p class="note">서치콘솔 <b>읽기 권한만</b> 받습니다. 쓰기 권한은 요청하지 않습니다.</p>
+
+    <div class="chart">
+      <p class="label">1페이지까지 남은 거리</p>
+      <div class="rows">
+        <div class="row"><span class="q">llm 순위</span>
+          <div class="track"><i class="fill" data-hot="1" style="left:33.4%;width:6.9%;animation-delay:.05s"></i></div>
+          <span class="rk">12위</span></div>
+        <div class="row"><span class="q">ai tier list</span>
+          <div class="track"><i class="fill" style="left:33.4%;width:13.8%;animation-delay:.12s"></i></div>
+          <span class="rk">14위</span></div>
+        <div class="row"><span class="q">best ai tools</span>
+          <div class="track"><i class="fill" style="left:33.4%;width:44.8%;animation-delay:.19s"></i></div>
+          <span class="rk">23위</span></div>
+        <div class="row"><span class="q">ai 도구 비교</span>
+          <div class="track"><i class="dot" style="left:20.7%"></i></div>
+          <span class="rk"><b>7위</b></span></div>
+      </div>
+      <div class="axis"><span></span>
+        <div class="ticks"><span style="left:0">1</span><span style="left:33.4%">10</span>
+          <span style="left:66.7%">20</span><span style="left:100%">30</span></div>
+        <span></span></div>
+      <p class="legend">회색 구간이 <b>1페이지</b>입니다. 막대는 거기까지 되밀어야 할 거리 —
+        <b class="hot">가장 짧은 것이 다음에 손댈 것</b>입니다.</p>
+    </div>
+  </section>
+
+  <section class="answers">
+    <p class="label">이런 걸 답합니다</p>
+    <ul>
+      <li data-k="순위">조금만 밀면 1페이지인 검색어가 뭐고, 몇 칸 남았나</li>
+      <li data-k="CTR">노출은 나오는데 클릭이 0인 검색어는 어디고, 제목 문제인가 경쟁 문제인가</li>
+      <li data-k="색인">애초에 색인이 안 된 페이지는 어디고, robots·크롤 실패·canonical 중 뭐 때문인가</li>
+      <li data-k="모바일">같은 검색어인데 모바일에서만 순위가 낮은 건 어디인가</li>
+      <li data-k="AI">ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하고 나는 왜 빠졌나</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="wrap">측정은 스크립트가, 판단은 사람이. 한 바퀴 돌 때마다 자료가 쌓입니다.</footer>

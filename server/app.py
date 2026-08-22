@@ -18,9 +18,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
+import asyncio
 import html
+import json
+import re
 import secrets
+import subprocess
+import time
+from contextlib import asynccontextmanager
 from typing import Optional
+from urllib.parse import urlparse
 
 import google.auth.transport.requests
 import google.oauth2.id_token
@@ -40,7 +47,64 @@ OAUTH_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000
 # 재시작 때 세션이 끊길 뿐이고, 끊기는 게 위조당하는 것보다 낫다.
 SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_urlsafe(32)
 
-app = FastAPI()
+# --- 주기 실행 ---------------------------------------------------------------
+# Railway 볼륨은 서비스 하나에만 붙는다 — 크론을 별도 서비스로 빼면 이 서비스의 /data 를
+# 못 본다. 그렇다고 웹 프로세스 안에서 직접 수집하면 store.tenant() 가 갈아끼우는 전역
+# os.environ 을 동시에 들어온 웹 요청이 같이 보게 된다(남의 테넌트). 그래서 subprocess 다.
+
+def _run_every_hours() -> float:
+    """0 이면 자동 수집을 끈다. 호출 시점에 읽는다 — 얼려두면 env 를 바꿔도 안 먹는다."""
+    try:
+        return float(os.environ.get("SEOMINER_RUN_EVERY_HOURS", "168"))
+    except ValueError:
+        return 168.0
+
+
+def _pending() -> int:
+    """지금 잴 사이트 수. 주기 판정은 사이트별로 DB 가 한다 — 전역 스탬프 파일을 쓰면
+    먼저 등록한 사이트가 도장을 찍어서 방금 가입한 사람의 첫 측정이 통째로 밀렸다."""
+    conn = store.connect()
+    try:
+        return len(store.due_sites(conn, every_hours=_run_every_hours()))
+    finally:
+        conn.close()
+
+
+def _run_worker() -> None:
+    subprocess.run([sys.executable, str(ROOT / "server" / "worker.py"), "--all"],
+                   cwd=str(ROOT), timeout=3 * 3600)
+
+
+def _kick() -> None:
+    """등록 직후 곧바로 수집을 띄운다 — 틱을 기다리면 그동안 화면이 비어 있다.
+    워커가 사이트마다 시작 전에 도장을 찍으므로 스케줄러 틱과 겹쳐도 중복되지 않는다."""
+    try:
+        subprocess.Popen([sys.executable, str(ROOT / "server" / "worker.py"), "--all"],
+                         cwd=str(ROOT))
+    except Exception as e:
+        print(f"[kick] 실패: {e}", flush=True)      # 실패해도 다음 틱이 잡는다
+
+
+async def _scheduler() -> None:
+    # 60초 틱 — 등록 직후 첫 측정이 곧바로 잡혀야 온보딩이 성립한다. 잴 게 없으면
+    # DB 조회 한 번으로 끝나므로 틱이 잦아도 싸다.
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if await asyncio.to_thread(_pending):
+                await asyncio.to_thread(_run_worker)
+        except Exception as e:                # 스케줄러가 죽으면 자동 수집이 조용히 멈춘다
+            print(f"[scheduler] 실패: {e}", flush=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_scheduler())
+    yield
+    task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -88,8 +152,15 @@ def _require_uid(request: Request) -> int:
     return uid
 
 
-def _html(body: str) -> HTMLResponse:
-    return HTMLResponse(f"<!doctype html><meta charset=utf-8><body>{body}</body>")
+def _page(name: str) -> str:
+    return (ROOT / "server" / name).read_text("utf-8")
+
+
+def _html(body: str, title: str = "seo-miner") -> HTMLResponse:
+    return HTMLResponse(
+        '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>{html.escape(title)}</title></head><body>{body}</body></html>")
 
 
 @app.get("/healthz")
@@ -101,7 +172,7 @@ def healthz():
 def home(request: Request):
     uid = _uid(request)
     if uid is None:
-        return _html('<p><a href="/auth/login">Google 로그인</a></p>')
+        return _html(_page("landing.html"), "seo-miner — 검색·AI 답변 가시성 측정")
     conn = store.connect()
     try:
         rows = store.sites(conn, uid)
@@ -110,34 +181,28 @@ def home(request: Request):
     # create_project 는 name 만 정규식으로 검증한다 — domain·gsc_property 는 그대로
     # 저장되므로 <script> 가 들어올 수 있다.
     e = html.escape
-    items = "".join(f"<li>{e(r['project'])} — {e(r['gsc_property'])} ({e(r['domain'])})</li>"
-                    for r in rows)
-    form = """
-<h2>사이트 등록</h2>
-<form id=f>
-<input name=name placeholder="name (영문·숫자·-_)" required>
-<select name=type required><option value=game>game</option><option value=local_clinic>local_clinic</option>
-<option value=saas>saas</option><option value=directory>directory</option></select>
-<input name=domain placeholder="example.com" required>
-<input name=gsc_property placeholder="sc-domain:example.com (비우면 자동)">
-<input name=locale value="ko-KR">
-<textarea name=seed_keywords placeholder="줄바꿈/쉼표로 구분"></textarea>
-<button>등록</button>
-</form>
-<pre id=out></pre>
-<script>
-const f=document.getElementById('f'), out=document.getElementById('out');
-f.onsubmit=async e=>{e.preventDefault();
-  const fd=new FormData(f); const body=Object.fromEntries(fd.entries());
-  body.seed_keywords=(body.seed_keywords||'').split(/[,\n]/).map(s=>s.trim()).filter(Boolean);
-  const r=await fetch('/api/sites',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
-  out.textContent=JSON.stringify(await r.json(),null,2);
-  if(r.ok) location.reload();};
-</script>
-"""
-    link = '<p><a href="/d">→ 대시보드 열기</a></p>' if rows else ""
-    return _html(f"<h1>내 사이트</h1><ul>{items or '<li>없음</li>'}</ul>{link}{form}")
+    if rows:
+        # 등록 직후에는 볼 데이터가 없다. 무슨 일이 일어나는 중인지 말해 주지 않으면
+        # 빈 대시보드만 보고 떠난다.
+        items = "".join(
+            f'<li><a href="/d"><span class="nm">{e(r["project"])}</span>'
+            f'<span class="pr">{e(r["gsc_property"])}</span>'
+            + ('<span class="st wait">첫 측정 진행 중</span>' if not r["last_run_at"]
+               else f'<span class="st">{e(str(r["last_run_at"])[:16])} 측정</span>')
+            + '</a></li>' for r in rows)
+        block = f'<section><p class="label">측정 중인 사이트</p><ul class="sites">{items}</ul>'
+        if any(not r["last_run_at"] for r in rows):
+            block += ('<p class="wait-note">서치콘솔 실적 · 색인 상태 · 키워드 순으로 몇 분에 '
+                      '걸쳐 채워집니다. 창을 닫아도 계속됩니다.</p>')
+        block += "</section>"
+    else:
+        block = ""
+    taken = json.dumps([r["gsc_property"] for r in rows], ensure_ascii=False)
+    page = (_page("app.html")
+            .replace("<!--SITES-->", block)
+            .replace("</head>", "")   # 템플릿에는 head 가 없다 — 방어용
+            .replace("<script>", f"<script>window.__TAKEN__={taken};", 1))
+    return _html(page, "내 사이트 — seo-miner")
 
 
 @app.get("/auth/login")
@@ -192,20 +257,99 @@ def api_properties(request: Request):
                            for s in res.get("siteEntry", [])]}
 
 
+def _slug(host: str, taken: set) -> str:
+    """도메인에서 프로젝트 이름을 짓는다 — 마케터에게 물어볼 일이 아니다(내부 파일명이다)."""
+    base = re.sub(r"[^A-Za-z0-9_-]", "", host.split(".")[0])[:36] or "site"
+    if not re.match(r"[A-Za-z0-9]", base):
+        base = "s" + base
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def _host_of(prop: str) -> str:
+    if prop.startswith("sc-domain:"):
+        return prop[10:]
+    try:
+        return urlparse(prop).hostname.removeprefix("www.")
+    except Exception:
+        return ""
+
+
 @app.post("/api/sites")
 async def api_sites(request: Request):
+    """속성 여러 개를 한 번에 등록한다. 이름·도메인은 속성에서 짓고, 종류만 받는다."""
     uid = _require_uid(request)
     body = await request.json()
+    props = body.get("properties") or []
+    if isinstance(props, str):
+        props = [props]
+    if not props:
+        raise HTTPException(status_code=400, detail="고를 속성이 없습니다")
+    types = body.get("types") or {}
+
     conn = store.connect()
+    added, failed = [], []
     try:
+        taken = {r["project"] for r in store.sites(conn, uid)}
         with store.tenant(conn, uid):
-            result = dashboard.create_project(body)
-        if result.get("ok"):
-            gsc = (body.get("gsc_property") or "").strip() or f"sc-domain:{body['domain']}"
-            store.add_site(conn, uid, body["name"], gsc, body["domain"])
+            for prop in props[:20]:
+                host = _host_of(str(prop))
+                if not host:
+                    failed.append({"property": prop, "error": "도메인을 알 수 없습니다"})
+                    continue
+                name = _slug(host, taken)
+                r = dashboard.create_project({
+                    "name": name, "type": types.get(prop, "saas"), "domain": host,
+                    "gsc_property": prop, "locale": body.get("locale", "ko-KR"),
+                    "brand_aliases": host.split(".")[0], "seed_keywords": "",
+                    "competitors_manual": "",
+                })
+                if r.get("ok"):
+                    taken.add(name)
+                    added.append({"project": name, "property": prop})
+                else:
+                    failed.append({"property": prop, "error": r.get("error", "등록 실패")})
+        for a in added:
+            store.add_site(conn, uid, a["project"], a["property"], _host_of(a["property"]))
     finally:
         conn.close()
-    return result
+
+    if added:
+        _kick()
+    return {"ok": bool(added), "added": added, "failed": failed}
+
+
+@app.post("/api/run")
+async def api_run(request: Request):
+    """'지금 다시 재기' — 로컬 플러그인의 /capture run 에 해당한다.
+    웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리를 대신한다."""
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        started = store.request_run(conn, uid, project)
+    finally:
+        conn.close()
+    if started:
+        _kick()
+    return {"ok": True, "started": started}
+
+
+@app.get("/api/run/status")
+def api_run_status(request: Request):
+    """사이트별 수집 상태 — 화면이 폴링한다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        return {r["project"]: {"running": bool(r["running_since"]),
+                               "last_run_at": r["last_run_at"]}
+                for r in store.sites(conn, uid)}
+    finally:
+        conn.close()
 
 
 def _own(conn, uid: int, project: str) -> None:
@@ -217,13 +361,62 @@ def _own(conn, uid: int, project: str) -> None:
 # 화면은 로컬 플러그인의 것을 그대로 쓴다(skills/capture/templates/dashboard.html).
 # 아래 경로 이름은 그 HTML 이 부르는 것이라 바꿀 수 없다.
 
+# 로컬 대시보드는 조회 전용이고, 실행은 Claude Code 에서 /capture run 으로 했다.
+# 웹에는 명령을 칠 곳이 없다 — 원본 HTML 을 고치는 대신 뒤에 얹어서 버튼을 만든다.
+_DASH_ADDON = """
+<style>
+  #toggle-setup,#setup{display:none!important}
+  #sm-run{font:inherit;font-size:13px;cursor:pointer;border:1px solid currentColor;
+    background:transparent;color:inherit;border-radius:3px;padding:4px 12px;opacity:.85}
+  #sm-run:hover:not(:disabled){opacity:1}
+  #sm-run:disabled{opacity:.45;cursor:default}
+  .cmd{display:none!important}   /* '이 명령을 치세요' — 웹에는 칠 곳이 없다 */
+</style>
+<script>
+(function () {
+  var host = document.getElementById("refresh");
+  if (!host) return;
+  var b = document.createElement("button");
+  b.id = "sm-run"; b.className = "hbtn"; b.textContent = "지금 다시 재기";
+  host.parentNode.insertBefore(b, host);
+
+  function proj() {
+    var p = document.getElementById("proj");
+    return p ? p.value : "";
+  }
+  function paint(st) {
+    var r = st && st[proj()];
+    if (!r) return;
+    b.disabled = !!r.running;
+    b.textContent = r.running ? "측정 중…" : "지금 다시 재기";
+  }
+  async function poll() {
+    try { paint(await (await fetch("/api/run/status")).json()); } catch (e) {}
+  }
+  b.addEventListener("click", async function () {
+    if (!proj()) return;
+    b.disabled = true; b.textContent = "시작하는 중…";
+    try {
+      await fetch("/api/run", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj()})});
+    } catch (e) {}
+    poll();
+  });
+  var sel = document.getElementById("proj");
+  if (sel) sel.addEventListener("change", poll);
+  poll();
+  setInterval(poll, 15000);   // 측정이 끝나면 버튼이 스스로 풀린다
+})();
+</script>
+""".encode("utf-8")
+
+
 @app.get("/d")
 def dash(request: Request):
     _require_uid(request)
     # 호스팅에서는 API 키·의존성 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 키를 댄다).
-    # 원본을 치환하지 않고 뒤에 규칙 하나만 얹어 설정 패널을 가린다.
-    return HTMLResponse(dashboard.HTML +
-                        b"<style>#toggle-setup,#setup{display:none!important}</style>")
+    return HTMLResponse(dashboard.HTML + _DASH_ADDON)
 
 
 @app.get("/api/projects")
@@ -303,6 +496,18 @@ def demo() -> None:
 
         r = c.get("/api/properties")
         assert r.status_code == 401, r.text
+
+        # 스케줄러 판정 — 사이트가 없으면 0, 새로 등록하면 즉시 대상, 0 시간이면 꺼진다.
+        os.environ["SEOMINER_RUN_EVERY_HOURS"] = "168"
+        assert _pending() == 0, "사이트가 없는데 잴 게 있다고 한다"
+        c2 = store.connect()
+        u2 = store.upsert_user(c2, "sched@example.com")
+        store.add_site(c2, u2, "p1", "sc-domain:p1.com", "p1.com")
+        c2.close()
+        assert _pending() == 1, "등록 직후인데 첫 측정이 안 잡힌다"
+        os.environ["SEOMINER_RUN_EVERY_HOURS"] = "0"
+        assert _pending() == 1, "0 은 자동 재측정만 꺼야 한다 — 첫 측정까지 막혔다"
+        os.environ.pop("SEOMINER_RUN_EVERY_HOURS")
 
         # dash() 가 여기에 bytes 를 이어붙인다. str 로 바뀌면 그 자리에서 500 이 난다.
         assert isinstance(dashboard.HTML, bytes), "dashboard.HTML 이 bytes 가 아니다"

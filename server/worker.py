@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
+import db                                     # noqa: E402
 import run_all                                # noqa: E402
 import store                                  # noqa: E402
 
@@ -57,24 +58,74 @@ def _paid_keys():
                 os.environ[k] = v
 
 
+def activate_from_gsc(project: str, limit: int | None = None) -> int:
+    """서치콘솔에 노출된 키워드를 노출 순으로 활성화한다. 반환: 새로 켠 개수.
+
+    로컬에서는 Claude 가 관련성을 보고 골라 준다(capture SKILL.md 의 큐레이션 단계).
+    웹에는 그 자리에 사람이 없으므로 실측만 믿는다 — '구글이 이미 내 페이지를 이
+    검색어에 노출시켰다'는 사실. 자동완성 후보(노출 0)는 관련성이 확인되지 않아
+    그대로 후보로 둔다. 활성 키워드가 0 이면 rank 단계가 잴 대상 없이 돈다.
+    """
+    limit = limit or int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, project)["id"]
+        # 이미 켜 둔 것까지 세어 남은 자리만 채운다. 매번 limit 개씩 더 켜면
+        # 추적 세트가 런마다 불어나고, SERP 는 키워드당 과금이라 비용이 샌다.
+        active = conn.execute(
+            "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+            (pid,)).fetchone()[0]
+        room = max(0, limit - active)
+        if room == 0:
+            return 0
+        cur = conn.execute(
+            "UPDATE keywords SET is_active=1 WHERE id IN ("
+            "  SELECT k.id FROM keywords k"
+            "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
+            "  WHERE k.project_id=? AND k.is_active=0"
+            "  GROUP BY k.id ORDER BY SUM(g.impressions) DESC LIMIT ?)",
+            (pid, room))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출."""
     user_id = site["user_id"]
     project = site["project"]
+    # 시작 전에 찍는다. 끝나고 찍으면 (1) 등록 직후 트리거와 60초 스케줄러 틱이 겹쳐
+    # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
+    if not dry_run:
+        store.mark_run(conn, site["id"])
     try:
         with store.tenant(conn, user_id), _paid_keys():
             rc = run_all.run_chain(project, dry_run=dry_run, skip=skip)
-        return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0}
+            # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
+            # 부수 작업이다 — 여기서 터져도 이미 끝난 수집을 실패로 만들지 않는다.
+            n = 0
+            try:
+                n = 0 if dry_run else activate_from_gsc(project)
+                if n:
+                    print(f"[{project}] 키워드 {n}개 활성화 (서치콘솔 노출 기준)")
+            except Exception as e:
+                print(f"[{project}] 키워드 활성화 건너뜀: {e}")
+        return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
+                "activated": n}
     except Exception as e:
         return {"user_id": user_id, "project": project, "ok": False, "error": str(e)}
+    finally:
+        if not dry_run:
+            store.mark_done(conn, site["id"])
 
 
-def run_all_due(conn, *, idle_days: int = 30, dry_run: bool = False,
-                skip: str | None = None) -> list[dict]:
+def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
+                dry_run: bool = False, skip: str | None = None) -> list[dict]:
     """store.due_sites() 를 직렬로 돌린다 — tenant() 가 process-global env 를
     갈아끼우므로 병렬은 안전하지 않다(스레드/프로세스 모두)."""
     results: list[dict] = []
-    for site in store.due_sites(conn, idle_days=idle_days):
+    for site in store.due_sites(conn, idle_days=idle_days, every_hours=every_hours):
         print(f"[{site['user_id']}/{site['project']}] 시작")
         r = run_site(conn, site, dry_run=dry_run, skip=skip)
         results.append(r)
@@ -89,6 +140,9 @@ def main() -> int:
     g.add_argument("--user", type=int, help="특정 유저 ID (--project 필수)")
     ap.add_argument("--project", help="--user 와 함께 — 사이트 프로젝트 이름")
     ap.add_argument("--idle-days", type=int, default=30)
+    ap.add_argument("--every-hours", type=float,
+                    default=float(os.environ.get("SEOMINER_RUN_EVERY_HOURS", "168")),
+                    help="사이트별 재측정 주기. 0 이면 자동 수집을 끈다")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
     args = ap.parse_args()
@@ -100,6 +154,7 @@ def main() -> int:
     try:
         if args.all:
             results = run_all_due(conn, idle_days=args.idle_days,
+                                  every_hours=args.every_hours,
                                   dry_run=args.dry_run, skip=args.skip)
         else:
             sites = store.sites(conn, args.user)
@@ -157,6 +212,33 @@ def demo() -> None:
 
         assert "CAPTURE_HOME" not in os.environ, "CAPTURE_HOME 복원 실패"
         assert "OPENROUTER_API_KEY" not in os.environ, "OPENROUTER_API_KEY 복원 실패"
+
+        # 활성 키워드 상한 — 런마다 limit 개씩 더 켜면 추적 세트가 불어나 SERP 비용이 샌다.
+        with store.tenant(conn, uid):
+            c = db.connect()
+            c.execute("INSERT INTO projects(name, type, domain) VALUES (?,?,?)",
+                      ("demo-proj", "saas", "demo.com"))
+            c.commit()
+            pid = db.get_project(c, "demo-proj")["id"]
+            c.executemany(
+                "INSERT INTO keywords(project_id, keyword, source, is_active) VALUES (?,?,?,0)",
+                [(pid, f"kw{i}", "gsc") for i in range(8)])
+            c.executemany(
+                "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, "
+                "impressions) VALUES (?,'2026-01-01',28,?,?)",
+                [(pid, f"kw{i}", 100 - i) for i in range(8)])
+            c.commit(); c.close()
+            assert activate_from_gsc("demo-proj", limit=5) == 5, "상한만큼 안 켜진다"
+            assert activate_from_gsc("demo-proj", limit=5) == 0, "상한을 넘겨 또 켠다"
+            c = db.connect()
+            n = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+                          (pid,)).fetchone()[0]
+            c.close()
+            assert n == 5, f"활성 키워드가 {n}개 — 상한 5를 넘었다"
+
+        # 돌고 나면 사이트에 도장이 찍혀서 다음 틱에 또 돌지 않아야 한다.
+        assert run_all_due(conn) == [], "방금 쟀는데 또 잰다"
+        assert len(called) == 1, "중복 실행됐다"
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         conn.commit()
