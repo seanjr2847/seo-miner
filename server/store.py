@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS google_tokens (
   token_enc BLOB NOT NULL,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS github_tokens (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  token_enc BLOB NOT NULL,
+  login TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -44,6 +50,9 @@ CREATE TABLE IF NOT EXISTS sites (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   last_run_at TEXT,                   -- NULL = 아직 한 번도 안 잼 (등록 직후)
   running_since TEXT,                 -- NULL 이 아니면 지금 수집 중
+  repo TEXT,                          -- owner/name — /create 가 PR 을 낼 곳
+  repo_branch TEXT,                   -- 기본 브랜치
+  repo_profile TEXT,                  -- 리포 관례(JSON) — 발견 결과 캐시
   UNIQUE(user_id, project)
 );
 """
@@ -54,7 +63,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(sites)")}
     if not cols:
         return
-    for col in ("last_run_at", "running_since"):
+    for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     conn.commit()
@@ -159,6 +168,40 @@ def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
 def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
     conn.execute("UPDATE sites SET running_since=NULL WHERE id=?", (site_id,))
     conn.commit()
+
+
+def save_github(conn: sqlite3.Connection, user_id: int, token: str, login: str) -> None:
+    conn.execute(
+        "INSERT INTO github_tokens(user_id, token_enc, login) VALUES (?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET token_enc=excluded.token_enc, "
+        "login=excluded.login, updated_at=CURRENT_TIMESTAMP",
+        (user_id, _fernet().encrypt(token.encode("utf-8")), login))
+    conn.commit()
+
+
+def github(conn: sqlite3.Connection, user_id: int) -> tuple[str, str] | None:
+    """(token, login) 또는 None."""
+    row = conn.execute("SELECT token_enc, login FROM github_tokens WHERE user_id=?",
+                       (user_id,)).fetchone()
+    return (_fernet().decrypt(row["token_enc"]).decode("utf-8"), row["login"]) if row else None
+
+
+def set_repo(conn: sqlite3.Connection, user_id: int, project: str,
+             repo: str, branch: str) -> None:
+    conn.execute("UPDATE sites SET repo=?, repo_branch=?, repo_profile=NULL "
+                 "WHERE user_id=? AND project=?", (repo, branch, user_id, project))
+    conn.commit()
+
+
+def set_profile(conn: sqlite3.Connection, user_id: int, project: str, profile: str) -> None:
+    conn.execute("UPDATE sites SET repo_profile=? WHERE user_id=? AND project=?",
+                 (profile, user_id, project))
+    conn.commit()
+
+
+def site(conn: sqlite3.Connection, user_id: int, project: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM sites WHERE user_id=? AND project=? AND active=1",
+                        (user_id, project)).fetchone()
 
 
 def request_run(conn: sqlite3.Connection, user_id: int, project: str) -> bool:
@@ -274,6 +317,13 @@ def demo() -> None:
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         assert due_sites(conn) == [], "휴면 계정이 스케줄에서 안 빠졌다"
+        save_github(conn, uid, "ghp_secret", "octocat")
+        assert github(conn, uid) == ("ghp_secret", "octocat")
+        raw = conn.execute("SELECT token_enc FROM github_tokens").fetchone()["token_enc"]
+        assert b"ghp_secret" not in raw, "GitHub 토큰이 평문으로 저장됐다"
+        set_repo(conn, uid, "myproj", "octocat/site", "main")
+        assert site(conn, uid, "myproj")["repo"] == "octocat/site"
+
         conn.close()                          # 윈도우는 열린 파일을 지우지 못한다
         print("store: ok")
 

@@ -27,7 +27,7 @@ import subprocess
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import google.auth.transport.requests
 import google.oauth2.id_token
@@ -39,7 +39,9 @@ from starlette.middleware.sessions import SessionMiddleware
 import collect_gsc
 import dashboard
 import db
+import gh
 import store
+import writer
 
 OAUTH_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
@@ -198,10 +200,12 @@ def home(request: Request):
     else:
         block = ""
     taken = json.dumps([r["gsc_property"] for r in rows], ensure_ascii=False)
+    site_list = json.dumps([{"project": r["project"], "repo": r["repo"]} for r in rows],
+                           ensure_ascii=False)
     page = (_page("app.html")
             .replace("<!--SITES-->", block)
-            .replace("</head>", "")   # 템플릿에는 head 가 없다 — 방어용
-            .replace("<script>", f"<script>window.__TAKEN__={taken};", 1))
+            .replace("<script>",
+                     f"<script>window.__TAKEN__={taken};window.__SITES__={site_list};", 1))
     return _html(page, "내 사이트 — seo-miner")
 
 
@@ -321,6 +325,145 @@ async def api_sites(request: Request):
     return {"ok": bool(added), "added": added, "failed": failed}
 
 
+# --- GitHub (/create) ---------------------------------------------------------
+
+@app.get("/auth/github")
+def gh_login(request: Request):
+    _require_uid(request)
+    cid = os.environ.get("GITHUB_CLIENT_ID")
+    if not cid:
+        raise HTTPException(status_code=500, detail="GITHUB_CLIENT_ID 가 설정되지 않았습니다")
+    state = secrets.token_urlsafe(16)
+    request.session["gh_state"] = state
+    # repo 스코프: PR 브랜치를 만들려면 쓰기가 필요하다. 머지는 사람이 한다(발행 게이트).
+    return RedirectResponse(
+        "https://github.com/login/oauth/authorize"
+        f"?client_id={cid}&scope=repo&state={state}"
+        f"&redirect_uri={quote(_gh_redirect(), safe='')}", status_code=302)
+
+
+def _gh_redirect() -> str:
+    return os.environ.get("GITHUB_REDIRECT_URI",
+                          OAUTH_REDIRECT_URI.replace("/auth/callback", "/auth/github/callback"))
+
+
+@app.get("/auth/github/callback")
+def gh_callback(request: Request, code: str, state: str):
+    uid = _require_uid(request)
+    if state != request.session.pop("gh_state", None):
+        raise HTTPException(status_code=400, detail="state mismatch")
+    cid = os.environ.get("GITHUB_CLIENT_ID")
+    sec = os.environ.get("GITHUB_CLIENT_SECRET")
+    if not (cid and sec):
+        raise HTTPException(status_code=500, detail="GitHub 클라이언트가 설정되지 않았습니다")
+    token = gh.exchange_code(cid, sec, code)
+    conn = store.connect()
+    try:
+        store.save_github(conn, uid, token, gh.login(token))
+    finally:
+        conn.close()
+    return RedirectResponse("/", status_code=302)
+
+
+def _gh_token(conn, uid: int) -> str:
+    got = store.github(conn, uid)
+    if not got:
+        raise HTTPException(status_code=428, detail="GitHub 연결이 필요합니다")
+    return got[0]
+
+
+@app.get("/api/repos")
+def api_repos(request: Request):
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        return {"repos": gh.repos(_gh_token(conn, uid))}
+    except gh.GitHubError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/repo")
+async def api_repo(request: Request):
+    """사이트에 리포를 붙인다. 관례 발견은 첫 글쓰기 때 한 번 한다."""
+    uid = _require_uid(request)
+    b = await request.json()
+    project, repo, branch = str(b.get("project") or ""), str(b.get("repo") or ""),         str(b.get("branch") or "main")
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        store.set_repo(conn, uid, project, repo, branch)
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/create")
+async def api_create(request: Request):
+    """기회 하나 → 리포에 PR. /create run 의 웹 판이다."""
+    uid = _require_uid(request)
+    b = await request.json()
+    project = str(b.get("project") or "")
+    opp_id = int(b.get("opportunity_id") or 0)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        row = store.site(conn, uid, project)
+        if not row or not row["repo"]:
+            raise HTTPException(status_code=428, detail="이 사이트에 연결된 저장소가 없습니다")
+        token = _gh_token(conn, uid)
+        repo, branch = row["repo"], row["repo_branch"] or "main"
+
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                p = db.get_project(c, project)
+                opp = c.execute("SELECT * FROM opportunities WHERE id=? AND project_id=?",
+                                (opp_id, p["id"])).fetchone()
+                if not opp:
+                    raise HTTPException(status_code=404, detail="그런 기회가 없습니다")
+                opp = dict(opp)
+                ev = c.execute(
+                    "SELECT SUM(clicks) c, SUM(impressions) i, AVG(position) pos "
+                    "FROM gsc_snapshots WHERE project_id=? AND query=?",
+                    (p["id"], opp["target"])).fetchone()
+            finally:
+                c.close()
+            evidence = ({"클릭": ev["c"], "노출": ev["i"],
+                         "평균 순위": round(ev["pos"], 1)} if ev and ev["i"] else {})
+
+            profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
+            if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
+                profile = writer.discover_profile(token, repo, branch)
+                store.set_profile(conn, uid, project, json.dumps(profile, ensure_ascii=False))
+
+            doc = writer.write_for(opp, profile, dict(p), evidence)
+            br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
+            body = (f"{doc.get('summary', '')}\n\n"
+                    f"기회 #{opp_id} · {opp['kind']} · 대상: {opp['target']}\n\n"
+                    f"— seo-miner")
+            pr = gh.open_pr(
+                token, repo, branch, br, doc["title"], body,
+                [{"path": doc["path"], "content": doc["content"]}],
+                # 커밋 메시지의 [opp #id] 는 create 스킬의 규약이다 — 나중에
+                # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
+                f"content: {doc['title']} [opp #{opp_id}]")
+
+            c = db.connect()
+            try:
+                db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
+                                   kind=opp["kind"], branch=br, note=pr["url"])
+                db.set_opportunity_status(c, opp_id, "done")
+            finally:
+                c.close()
+        return {"ok": True, "pr": pr["url"], "path": doc["path"]}
+    except (gh.GitHubError, writer.WriterError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.post("/api/run")
 async def api_run(request: Request):
     """'지금 다시 재기' — 로컬 플러그인의 /capture run 에 해당한다.
@@ -407,6 +550,41 @@ _DASH_ADDON = """
   if (sel) sel.addEventListener("change", poll);
   poll();
   setInterval(poll, 15000);   // 측정이 끝나면 버튼이 스스로 풀린다
+
+  // 기회 카드마다 '글 쓰기' — /create run 의 자리다. 리포가 안 붙어 있으면 서버가
+  // 428 로 알려 주고, 그때 연결 링크를 보여 준다.
+  document.addEventListener("click", async function (ev) {
+    var b = ev.target.closest ? ev.target.closest("[data-write]") : null;
+    if (!b) return;
+    var id = b.getAttribute("data-write");
+    b.disabled = true; b.textContent = "쓰는 중…";
+    try {
+      var r = await fetch("/api/create", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), opportunity_id: Number(id)})});
+      var d = await r.json();
+      if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 열림 →</a>'; return; }
+      if (r.status === 428) { b.outerHTML = '<a href="/">저장소 연결 필요 →</a>'; return; }
+      b.textContent = "실패: " + (d.detail || "").slice(0, 60); b.disabled = false;
+    } catch (e) { b.textContent = "실패"; b.disabled = false; }
+  });
+
+  // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
+  // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
+  var wire = function () {
+    document.querySelectorAll('button[onclick^="setOpp("]').forEach(function (b) {
+      var box = b.parentNode;
+      if (!box || box.querySelector("[data-write]")) return;
+      var m = (b.getAttribute("onclick") || "").match(/setOpp\((\d+)/);
+      if (!m) return;
+      var w = document.createElement("button");
+      w.setAttribute("data-write", m[1]);
+      w.textContent = "글 쓰기";
+      box.appendChild(w);
+    });
+  };
+  new MutationObserver(wire).observe(document.body, {childList: true, subtree: true});
+  wire();
 })();
 </script>
 """.encode("utf-8")
@@ -512,9 +690,12 @@ def demo() -> None:
         # dash() 가 여기에 bytes 를 이어붙인다. str 로 바뀌면 그 자리에서 500 이 난다.
         assert isinstance(dashboard.HTML, bytes), "dashboard.HTML 이 bytes 가 아니다"
 
-        # 대시보드 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain 이 열리면 안 된다.
-        for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x"):
+        # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
+        for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
+                     "/api/repos", "/auth/github"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
+        for path in ("/api/repo", "/api/create"):
+            assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401, \
             "/api/opp 가 로그인 없이 열렸다"
 

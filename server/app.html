@@ -64,6 +64,11 @@ button:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
 .msg{font-size:14px}
 .msg.err{color:var(--bad)}
 .msg.ok{color:var(--gain)}
+.ghbtn{display:inline-block;background:var(--ink);color:var(--paper);text-decoration:none;
+  padding:11px 20px;border-radius:2px;font-weight:500;font-size:15px}
+.ghbtn:hover{background:var(--mark)}
+#repo-body .prop{cursor:default}
+#repo-body select{font-size:14px;max-width:60%}
 .skel{height:47px;background:linear-gradient(90deg,var(--surface),var(--paper),var(--surface));
   background-size:200% 100%}
 @media(prefers-reduced-motion:no-preference){
@@ -104,6 +109,13 @@ footer a{color:var(--muted)}
       <span class="msg" id="msg"></span>
     </div>
   </section>
+
+  <section id="repo-sec" hidden>
+  <h1>저장소 연결</h1>
+  <p class="sub" id="repo-sub">기회를 글로 바꿔 PR 로 올리려면 사이트마다 저장소가 필요합니다.
+    main 에 직접 쓰지 않습니다 — 브랜치와 PR 까지만 만들고 머지는 사람이 합니다.</p>
+  <div id="repo-body"></div>
+</section>
 </main>
 
 <footer class="wrap">
@@ -152,6 +164,49 @@ function sync() {
   } catch (e) {
     box.innerHTML = '<div class="taken">속성을 불러오지 못했습니다 — 새로고침해 주세요</div>';
   }
+})();
+
+// ── 저장소 연결 (/create) ──────────────────────────────────────────────
+(async function () {
+  var sites = window.__SITES__ || [];
+  if (!sites.length) return;
+  var sec = $("repo-sec"), body = $("repo-body");
+  sec.hidden = false;
+
+  var repos = null;
+  try {
+    var r = await fetch("/api/repos");
+    if (r.status === 428) {
+      body.innerHTML = '<a class="ghbtn" href="/auth/github">GitHub 연결하기</a>';
+      return;
+    }
+    repos = (await r.json()).repos || [];
+  } catch (e) {
+    body.innerHTML = '<p class="hint">저장소 목록을 불러오지 못했습니다.</p>';
+    return;
+  }
+  if (!repos.length) {
+    body.innerHTML = '<p class="hint">쓰기 권한이 있는 저장소가 없습니다.</p>';
+    return;
+  }
+  body.innerHTML = sites.map(function (s) {
+    var opts = ['<option value="">연결 안 함</option>'].concat(repos.map(function (r) {
+      return '<option value="' + esc(r.full_name) + '" data-b="' + esc(r.default_branch) +
+             '"' + (s.repo === r.full_name ? " selected" : "") + '>' +
+             esc(r.full_name) + (r.private ? " (비공개)" : "") + "</option>";
+    })).join("");
+    return '<div class="prop"><span class="pname">' + esc(s.project) + '</span>' +
+           '<select data-site="' + esc(s.project) + '">' + opts + '</select></div>';
+  }).join("");
+  body.addEventListener("change", async function (ev) {
+    var sel = ev.target;
+    if (!sel.dataset.site) return;
+    var opt = sel.selectedOptions[0];
+    await fetch("/api/repo", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({project: sel.dataset.site, repo: sel.value,
+                            branch: opt ? (opt.dataset.b || "main") : "main"})});
+  });
 })();
 
 $("btn").addEventListener("click", async () => {
