@@ -88,18 +88,18 @@ footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
 
 <main class="wrap">
   <section class="hero">
-    <h1>1페이지까지 <em>몇 칸</em> 남았는지 잽니다.</h1>
-    <p class="lede">서치콘솔 실적, 색인 상태, 그리고 ChatGPT·Perplexity·Gemini가
-      누구를 인용하는지까지 한 번에 재고 — 그 숫자에서 다음에 손댈 것 하나를 뽑아 줍니다.</p>
+    <h1><em>순위 상승 기회</em>(11~20위)를 찾아냅니다.</h1>
+    <p class="lede">서치콘솔 실적, 색인 상태, ChatGPT·Perplexity·Gemini의 인용 출처까지
+      한 번에 분석 — 가장 효과적인 개선 기회 한 가지를 추립니다.</p>
 
     <a class="cta" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google 계정으로 시작
     </a>
-    <p class="note">서치콘솔 <b>읽기 권한만</b> 받습니다. 쓰기 권한은 요청하지 않습니다.</p>
+    <p class="note">서치콘솔 <b>읽기 전용</b> 권한만 요청합니다. 데이터는 수정·삭제하지 않습니다.</p>
 
     <div class="chart">
-      <p class="label">1페이지까지 남은 거리</p>
+      <p class="label">순위 상승 기회 (11~20위)</p>
       <div class="rows">
         <div class="row"><span class="q">llm 순위</span>
           <div class="track"><i class="fill" data-hot="1" style="left:33.4%;width:6.9%;animation-delay:.05s"></i></div>
@@ -118,21 +118,21 @@ footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
         <div class="ticks"><span style="left:0">1</span><span style="left:33.4%">10</span>
           <span style="left:66.7%">20</span><span style="left:100%">30</span></div>
         <span></span></div>
-      <p class="legend">회색 구간이 <b>1페이지</b>입니다. 막대는 거기까지 되밀어야 할 거리 —
-        <b class="hot">가장 짧은 것이 다음에 손댈 것</b>입니다.</p>
+      <p class="legend">회색 구간이 <b>1페이지(10위 이내)</b>입니다. 막대는 거기까지 끌어올려야 할 거리 —
+        <b class="hot">가장 짧은 막대가 우선 개선 대상</b>입니다.</p>
     </div>
   </section>
 
   <section class="answers">
-    <p class="label">이런 걸 답합니다</p>
+    <p class="label">분석 영역</p>
     <ul>
-      <li data-k="순위">조금만 밀면 1페이지인 검색어가 뭐고, 몇 칸 남았나</li>
-      <li data-k="CTR">노출은 나오는데 클릭이 0인 검색어는 어디고, 제목 문제인가 경쟁 문제인가</li>
-      <li data-k="색인">애초에 색인이 안 된 페이지는 어디고, robots·크롤 실패·canonical 중 뭐 때문인가</li>
-      <li data-k="모바일">같은 검색어인데 모바일에서만 순위가 낮은 건 어디인가</li>
-      <li data-k="AI">ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하고 나는 왜 빠졌나</li>
+      <li data-k="순위">11~20위 키워드 중 1페이지(10위 이내)까지 남은 순위와 격차</li>
+      <li data-k="CTR">노출은 있지만 클릭이 0인 키워드와 원인(제목·메타 태그)</li>
+      <li data-k="색인">색인이 안 된 페이지와 원인(robots·크롤 예산·canonical)</li>
+      <li data-k="모바일">데스크톱 대비 모바일에서만 순위가 낮은 키워드</li>
+      <li data-k="AI">ChatGPT·Perplexity·Gemini의 인용 출처와 내 사이트의 누락 여부</li>
     </ul>
   </section>
 </main>
 
-<footer class="wrap">측정은 스크립트가, 판단은 사람이. 한 바퀴 돌 때마다 자료가 쌓입니다.</footer>
+<footer class="wrap">매주 자동 측정으로 데이터가 쌓이고, 분석은 사람이 직접 합니다.</footer>
