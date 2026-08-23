@@ -40,6 +40,7 @@ import backlinks
 import collect_gsc
 import dashboard
 import db
+import exports
 import gh
 import store
 import writer
@@ -548,6 +549,127 @@ def api_report(project: str, request: Request):
         "Content-Disposition": f'attachment; filename="{project}-report.html"'})
 
 
+@app.get("/api/export")
+def api_export(project: str, table: str, request: Request):
+    """CSV 내려받기 — 마케터는 결국 엑셀로 옮긴다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            data, name = exports.csv_bytes(project, table)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+    return Response(data, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/overview")
+def api_overview(request: Request):
+    """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        out = []
+        for r in store.sites(conn, uid):
+            with store.tenant(conn, uid):
+                try:
+                    d = exports.summary(r["project"])
+                except db.ProjectNotFound:
+                    d = {"project": r["project"], "domain": r["domain"]}
+            d["running"] = bool(r["running_since"])
+            d["last_run_at"] = r["last_run_at"]
+            out.append(d)
+        return {"sites": out}
+    finally:
+        conn.close()
+
+
+@app.get("/api/keywords")
+def api_keywords(project: str, request: Request, status: str = "candidate"):
+    """추적 중(active)이거나 후보(candidate)인 키워드.
+
+    후보는 자동완성에서 캔 것이라 관련성이 확인되지 않았다 — 자동 활성화는 서치콘솔에
+    노출된 것만 켠다. 나머지는 사람이 보고 골라야 해서 이 목록이 필요하다.
+    """
+    uid = _require_uid(request)
+    active = 1 if status == "active" else 0
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                pid = db.get_project(c, project)["id"]
+                rows = c.execute(
+                    "SELECT k.id, k.keyword, k.source, k.cluster,"
+                    "       COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk"
+                    "  FROM keywords k"
+                    "  LEFT JOIN gsc_snapshots g"
+                    "    ON g.project_id=k.project_id AND g.query=k.keyword"
+                    " WHERE k.project_id=? AND k.is_active=?"
+                    " GROUP BY k.id ORDER BY imp DESC, k.keyword LIMIT 500",
+                    (pid, active)).fetchall()
+                n_active = c.execute(
+                    "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+                    (pid,)).fetchone()[0]
+            finally:
+                c.close()
+        return {"keywords": [dict(r) for r in rows], "active_total": n_active,
+                "limit": int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))}
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/keywords")
+async def api_keywords_set(request: Request):
+    """고른 키워드를 추적 세트에 넣거나 뺀다. 상한(limit)을 넘겨 켜지 않는다 —
+    SERP 는 키워드당 과금이라 여기서 새면 비용이 샌다."""
+    uid = _require_uid(request)
+    b = await request.json()
+    project = str(b.get("project") or "")
+    ids = [int(x) for x in (b.get("ids") or [])][:500]
+    on = bool(b.get("active"))
+    if not ids:
+        raise HTTPException(status_code=400, detail="고른 키워드가 없습니다")
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                pid = db.get_project(c, project)["id"]
+                if on:
+                    limit = int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))
+                    cur = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=?"
+                                    " AND is_active=1", (pid,)).fetchone()[0]
+                    room = max(0, limit - cur)
+                    if room == 0:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"추적 상한 {limit}개가 찼습니다 — 먼저 뺄 것을 고르세요")
+                    ids = ids[:room]
+                q = ",".join("?" * len(ids))
+                c.execute(f"UPDATE keywords SET is_active=? WHERE project_id=? AND id IN ({q})",
+                          [1 if on else 0, pid, *ids])
+                c.commit()
+                n = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+                              (pid,)).fetchone()[0]
+            finally:
+                c.close()
+        return {"ok": True, "changed": len(ids), "active_total": n}
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.get("/api/backlinks")
 def api_backlinks(project: str, request: Request):
     """백링크 프로필 — 없으면 빈 값. 지어내지 않는다."""
@@ -691,6 +813,34 @@ _DASH_ADDON = """
   #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
   #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
 
+  /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
+  #sm-kw{padding:26px 0 10px}
+  #sm-kw .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
+  #sm-kw .tabs{display:flex;gap:6px;margin-bottom:10px}
+  #sm-kw .tabs button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+    border:1px solid var(--rule);border-radius:3px;padding:6px 12px;cursor:pointer}
+  #sm-kw .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
+  #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule-soft)}
+  /* flex 로 두면 자식이 넘칠 때 .kw 의 flex-basis:0 이 0px 으로 굳어 글자가 사라진다.
+     grid 의 1fr 은 넘쳐도 자기 몫을 지킨다. */
+  #sm-kw label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+    align-items:center;gap:10px;padding:7px 12px;cursor:pointer;
+    border-bottom:1px solid var(--rule-soft);font-size:13.5px}
+  #sm-kw label:hover{background:var(--bar)}
+  #sm-kw label input{accent-color:var(--patina);flex:none;margin:0}
+  /* 원본 어딘가의 text-transform 이 상속돼 검색어가 전부 대문자로 보였다.
+     검색어는 사용자가 실제로 친 문자열이라 그대로 보여야 한다. */
+  #sm-kw .kw{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--ink);text-transform:none}
+  #sm-kw .n{font:400 11.5px/1 var(--mono);color:var(--slate);white-space:nowrap}
+  #sm-kw .list{overflow-x:hidden}
+  #sm-kw .bar2{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+  #sm-kw .go2{font:500 13px/1 var(--sans);color:var(--card);background:var(--patina);
+    border:0;border-radius:3px;padding:9px 16px;cursor:pointer}
+  #sm-kw .go2:disabled{opacity:.4;cursor:default}
+  #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
+  #sm-kw .warn{color:var(--copper)}
+
   /* 플러그인으로 넘기는 일 — 조용한 목록. 대시보드 본문의 결론이 아니라 각주다. */
   #sm-cc{padding:26px 0 10px}
   #sm-cc .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
@@ -704,6 +854,19 @@ _DASH_ADDON = """
     border:1px solid var(--rule);border-radius:3px;padding:6px 10px;cursor:pointer;flex:none}
   #sm-cc button:hover{color:var(--patina);border-color:var(--patina)}
   @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
+
+  /* 모바일: 차트 SVG 는 720px 고정이고 부모(.logwrap)가 overflow-x:auto 로 받는다.
+     스크롤이 된다는 걸 알려주지 않으면 잘린 그림으로만 보인다. */
+  @media(max-width:900px){
+    .logwrap{position:relative;-webkit-overflow-scrolling:touch;
+      /* 오른쪽 끝에 페이드 — 끝나지 않았다는 신호 */
+      -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);
+      mask-image:linear-gradient(90deg,#000 88%,transparent)}
+    .logwrap.at-end{-webkit-mask-image:none;mask-image:none}
+    .sm-swipe{font:400 11px/1 var(--mono);color:var(--slate);margin:6px 0 0;
+      display:flex;align-items:center;gap:6px}
+  }
+  @media(min-width:901px){.sm-swipe{display:none}}
 
   .eyebrow{letter-spacing:.08em}
   .band .l{letter-spacing:.03em}
@@ -893,6 +1056,113 @@ _DASH_ADDON = """
   }
   if (sel) sel.addEventListener("change", function () { blDone = ""; backlinks(); });
   backlinks();
+
+  // 좁은 화면에서 차트는 가로로 스크롤한다(원본 .logwrap 설계). 그 사실을 알린다 —
+  // 모르면 잘린 그림으로만 보인다.
+  function swipeHint() {
+    document.querySelectorAll(".logwrap").forEach(function (w) {
+      if (w.scrollWidth <= w.clientWidth + 2) return;      // 넘칠 때만
+      if (!w.dataset.smHint) {
+        w.dataset.smHint = "1";
+        var p = document.createElement("p");
+        p.className = "sm-swipe";
+        p.textContent = "← 옆으로 밀면 나머지가 보입니다";
+        w.parentNode.insertBefore(p, w.nextSibling);
+        w.addEventListener("scroll", function () {
+          var end = w.scrollLeft + w.clientWidth >= w.scrollWidth - 4;
+          w.classList.toggle("at-end", end);
+          p.style.visibility = end ? "hidden" : "";
+        });
+      }
+    });
+  }
+  swipeHint();
+  window.addEventListener("resize", swipeHint);
+
+  // ── 키워드 선별 ────────────────────────────────────────────
+  // 자동 활성화는 '구글이 이미 노출시킨' 검색어만 켠다. 자동완성에서 캔 후보는
+  // 관련성이 확인되지 않아 그대로 잠들어 있다 — 여기서 사람이 고른다.
+  var kwMode = "candidate", kwWired = false;
+
+  async function kwLoad() {
+    var box = document.getElementById("sm-kw");
+    if (!box) return;
+    var list = box.querySelector(".list");
+    list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">불러오는 중…</p>';
+    var d;
+    try {
+      d = await (await fetch("/api/keywords?status=" + kwMode +
+                             "&project=" + encodeURIComponent(proj()))).json();
+    } catch (e) { list.innerHTML = '<p style="padding:14px">불러오지 못했습니다</p>'; return; }
+    var ks = d.keywords || [];
+    box.querySelector(".cnt").innerHTML = "추적 " + d.active_total + " / " + d.limit +
+      (d.active_total >= d.limit ? ' <b class="warn">· 상한이 찼습니다</b>' : "");
+    if (!ks.length) {
+      list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
+        (kwMode === "candidate" ? "후보가 없습니다 — 키워드 캐기를 먼저 돌리세요."
+                                : "추적 중인 키워드가 없습니다.") + "</p>";
+      return;
+    }
+    list.innerHTML = ks.map(function (k) {
+      return '<label><input type="checkbox" value="' + k.id + '">' +
+             '<span class="kw">' + esc(k.keyword) + "</span>" +
+             '<span class="n">' + (k.imp ? "노출 " + k.imp : esc(k.source || "")) + "</span></label>";
+    }).join("");
+  }
+
+  async function kwApply(on) {
+    var box = document.getElementById("sm-kw");
+    var ids = [...box.querySelectorAll(".list input:checked")].map(function (i) {
+      return Number(i.value);
+    });
+    if (!ids.length) return;
+    var btn = box.querySelector(".go2");
+    btn.disabled = true;
+    try {
+      var r = await fetch("/api/keywords", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), ids: ids, active: on})});
+      var d = await r.json();
+      if (!r.ok) { box.querySelector(".cnt").innerHTML =
+        '<b class="warn">' + esc(d.detail || "실패") + "</b>"; }
+    } catch (e) {}
+    btn.disabled = false;
+    kwLoad();
+  }
+
+  function keywords() {
+    var host = document.querySelector("main");
+    if (!host || document.getElementById("sm-kw")) return;
+    var sec = document.createElement("section");
+    sec.id = "sm-kw";
+    sec.innerHTML = '<p class="eyebrow">KEYWORDS</p><h2>추적할 검색어 고르기</h2>' +
+      '<p class="sub">서치콘솔에 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 ' +
+      "관련 있는 것만 직접 고르세요 — 추적하는 만큼 순위 측정 비용이 듭니다.</p>" +
+      '<div class="tabs"><button data-m="candidate" class="on">후보</button>' +
+      '<button data-m="active">추적 중</button></div>' +
+      '<div class="list"></div>' +
+      '<div class="bar2"><button class="go2">고른 것 추적하기</button>' +
+      '<span class="cnt"></span></div>';
+    host.appendChild(sec);
+
+    sec.querySelector(".tabs").addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-m]") : null;
+      if (!b) return;
+      kwMode = b.getAttribute("data-m");
+      sec.querySelectorAll(".tabs button").forEach(function (x) {
+        x.classList.toggle("on", x === b);
+      });
+      sec.querySelector(".go2").textContent =
+        kwMode === "candidate" ? "고른 것 추적하기" : "고른 것 빼기";
+      kwLoad();
+    });
+    sec.querySelector(".go2").addEventListener("click", function () {
+      kwApply(kwMode === "candidate");
+    });
+    kwLoad();
+  }
+  keywords();
+  if (sel) sel.addEventListener("change", function () { kwLoad(); });
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
   // 웹에서 못 하는 게 분명히 있다(관련성 판단·스킬 해석·자유 질문). 없는 척하지 말고

@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import backlinks                              # noqa: E402
 import db                                     # noqa: E402
+import mailer                                 # noqa: E402
 import run_all                                # noqa: E402
 import store                                  # noqa: E402
 
@@ -92,6 +93,39 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         conn.close()
 
 
+def _mail_stats(project: str) -> dict:
+    """알림에 넣을 숫자. 없는 값은 넣지 않는다 — 0 으로 지어내면 거짓말이 된다."""
+    out: dict = {}
+    try:
+        conn = db.connect()
+        try:
+            pid = db.get_project(conn, project)["id"]
+            g = conn.execute(
+                "SELECT SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots WHERE"
+                " project_id=? AND snapshot_date=(SELECT MAX(snapshot_date) FROM"
+                " gsc_snapshots WHERE project_id=?)", (pid, pid)).fetchone()
+            if g and g["i"]:
+                out["clicks"], out["impressions"] = g["c"] or 0, g["i"]
+            n = conn.execute("SELECT COUNT(*) FROM opportunities WHERE project_id=?"
+                             " AND status='new'", (pid,)).fetchone()[0]
+            if n:
+                out["opportunities"] = n
+                top = conn.execute(
+                    "SELECT target FROM opportunities WHERE project_id=? AND status='new'"
+                    " ORDER BY score DESC LIMIT 1", (pid,)).fetchone()
+                if top:
+                    out["top"] = top["target"]
+            k = conn.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND"
+                             " is_active=1", (pid,)).fetchone()[0]
+            if k:
+                out["keywords"] = k
+        finally:
+            conn.close()
+    except Exception:
+        pass                      # 통계를 못 모아도 메일은 보낸다
+    return out
+
+
 def _backlinks_due(project: str, every_days: float) -> bool:
     """마지막 수집이 every_days 를 넘겼나. 기록이 없으면 잰다."""
     if every_days <= 0:
@@ -145,6 +179,13 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                     print(f"[{project}] 키워드 {n}개 활성화 (서치콘솔 노출 기준)")
             except Exception as e:
                 print(f"[{project}] 키워드 활성화 건너뜀: {e}")
+        # 수집이 끝났다고 알린다 — 몇 분 걸리는 일이라 창을 닫고 잊는다.
+        # 메일이 안 갔다고 수집을 실패로 만들지 않는다.
+        if not dry_run and rc == 0 and mailer.available() and site["email"]:
+            try:
+                mailer.run_done(site["email"], project, _mail_stats(project))
+            except Exception as e:
+                print(f"[{project}] 알림 메일 건너뜀: {e}")
         return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
                 "activated": n}
     except Exception as e:
