@@ -32,7 +32,7 @@ from urllib.parse import quote, urlparse
 import google.auth.transport.requests
 import google.oauth2.id_token
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from google_auth_oauthlib.flow import Flow
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -77,14 +77,18 @@ def _run_worker() -> None:
                    cwd=str(ROOT), timeout=3 * 3600)
 
 
+def _spawn_worker(args: list[str]) -> None:
+    try:
+        subprocess.Popen([sys.executable, str(ROOT / "server" / "worker.py"), *args],
+                         cwd=str(ROOT))
+    except Exception as e:
+        print(f"[worker] 실행 실패: {e}", flush=True)
+
+
 def _kick() -> None:
     """등록 직후 곧바로 수집을 띄운다 — 틱을 기다리면 그동안 화면이 비어 있다.
     워커가 사이트마다 시작 전에 도장을 찍으므로 스케줄러 틱과 겹쳐도 중복되지 않는다."""
-    try:
-        subprocess.Popen([sys.executable, str(ROOT / "server" / "worker.py"), "--all"],
-                         cwd=str(ROOT))
-    except Exception as e:
-        print(f"[kick] 실패: {e}", flush=True)      # 실패해도 다음 틱이 잡는다
+    _spawn_worker(["--all"])                       # 실패해도 다음 틱이 잡는다
 
 
 async def _scheduler() -> None:
@@ -485,22 +489,86 @@ async def api_create(request: Request):
         conn.close()
 
 
+STAGES = ("gsc", "index", "keywords", "rank", "ai", "gaps", "report")
+
+
 @app.post("/api/run")
 async def api_run(request: Request):
-    """'지금 다시 재기' — 로컬 플러그인의 /capture run 에 해당한다.
-    웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리를 대신한다."""
+    """'지금 다시 재기' — /capture run 에 해당한다. stages 를 주면 그 단계만
+    돈다(/capture gsc, /capture ai …). 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다."""
     uid = _require_uid(request)
     body = await request.json()
     project = str(body.get("project") or "")
+    stages = [x for x in str(body.get("stages") or "").split(",") if x]
+    bad = [x for x in stages if x not in STAGES]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"모르는 단계: {', '.join(bad)}")
+
     conn = store.connect()
     try:
         _own(conn, uid, project)
-        started = store.request_run(conn, uid, project)
+        row = store.site(conn, uid, project)
+        if row and row["running_since"]:
+            return {"ok": True, "started": False}      # 이미 도는 중
+        if not stages:
+            started = store.request_run(conn, uid, project)
+        else:
+            # 부분 실행은 주기 판정을 건드리지 않는다 — gsc 만 다시 읽었다고
+            # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다.
+            store.mark_run(conn, row["id"])
+            started = True
     finally:
         conn.close()
+
     if started:
-        _kick()
+        if stages:
+            _spawn_worker(["--user", str(uid), "--project", project,
+                           "--only", ",".join(stages)])
+        else:
+            _kick()
     return {"ok": True, "started": started}
+
+
+@app.get("/api/report")
+def api_report(project: str, request: Request):
+    """/capture report — 그 시점 화면을 자립형 HTML 로 박제해 내려준다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            path = dashboard.export(project)
+            data = Path(path).read_bytes()
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+    return Response(data, media_type="text/html; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{project}-report.html"'})
+
+
+@app.get("/api/creations")
+def api_creations(project: str, request: Request):
+    """/create status — 이 사이트에서 실제로 고친 것들."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                pid = db.get_project(c, project)["id"]
+                rows = c.execute(
+                    "SELECT id, kind, file_path, branch, note, merged, created_at "
+                    "FROM creations WHERE project_id=? ORDER BY id DESC LIMIT 50",
+                    (pid,)).fetchall()
+            finally:
+                c.close()
+        return {"creations": [dict(r) for r in rows]}
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
 
 
 @app.get("/api/run/status")
@@ -534,7 +602,13 @@ _DASH_ADDON = """
     background:transparent;color:inherit;border-radius:3px;padding:4px 12px;opacity:.85}
   #sm-run:hover:not(:disabled){opacity:1}
   #sm-run:disabled{opacity:.45;cursor:default}
-  .cmd{display:none!important}   /* '이 명령을 치세요' — 웹에는 칠 곳이 없다 */
+  /* 명령어 버튼은 지우지 않고 실행 버튼으로 바꿔 끼운다(아래 wireSteps). */
+  .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid currentColor;
+    background:transparent;color:inherit;border-radius:3px;padding:5px 12px;opacity:.9}
+  .cmd:hover:not(:disabled){opacity:1}
+  .cmd:disabled{opacity:.45;cursor:default}
+  #nx code{display:none}          /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
+  #sm-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
 </style>
 <script>
 (function () {
@@ -590,6 +664,73 @@ _DASH_ADDON = """
     } catch (e) { b.textContent = "실패"; b.disabled = false; }
   });
 
+  // 안내의 '이 명령을 치세요' 버튼을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
+  // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
+  var STAGE_LABEL = {gsc: "구글 실적 읽기", index: "색인 상태 검사",
+    keywords: "키워드 캐기", rank: "순위 재기", ai: "AI 노출 확인",
+    gaps: "손댈 것 뽑기", report: "리포트 만들기"};
+
+  async function runStage(stage, btn) {
+    var was = btn.textContent;
+    btn.disabled = true; btn.textContent = "실행 중…";
+    try {
+      var r = await fetch("/api/run", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), stages: stage})});
+      if (!r.ok) { var d = await r.json(); btn.textContent = (d.detail || "실패").slice(0, 40); }
+      else { btn.textContent = "시작했습니다"; }
+    } catch (e) { btn.textContent = "실패"; }
+    poll();
+    setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
+  }
+
+  function wireSteps() {
+    document.querySelectorAll("button.cmd").forEach(function (b) {
+      if (b.dataset.smWired) return;
+      b.dataset.smWired = "1";
+      var t = (b.textContent || "").trim();
+      var m = t.match(/^\/capture\s+(\w+)/);
+      if (m && STAGE_LABEL[m[1]]) {
+        var st = m[1];
+        b.textContent = STAGE_LABEL[st] + " 실행";
+        b.onclick = function () { runStage(st, b); };
+        return;
+      }
+      if (/^\/create/.test(t)) {          // 기회는 아래 목록에 이미 있다
+        b.textContent = "손댈 것 보기";
+        b.onclick = function () {
+          var o = document.getElementById("opps") || document.querySelector(".opp");
+          if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
+        };
+        return;
+      }
+      b.remove();      // 사이트 등록·구글 연동은 웹에서 이미 끝난 단계다
+    });
+  }
+
+  // 헤더 아래에 상시 도구 — 안내가 접혀 있어도 쓸 수 있어야 한다.
+  (function tools() {
+    var bar = document.getElementById("sm-run");
+    if (!bar || document.getElementById("sm-tools")) return;
+    var box = document.createElement("div");
+    box.id = "sm-tools";
+    ["gsc", "index", "keywords", "ai", "gaps"].forEach(function (st) {
+      var t = document.createElement("button");
+      t.className = "cmd"; t.dataset.smWired = "1";
+      t.textContent = STAGE_LABEL[st];
+      t.onclick = function () { runStage(st, t); };
+      box.appendChild(t);
+    });
+    var rep = document.createElement("a");
+    rep.className = "cmd"; rep.textContent = "리포트 내려받기";
+    rep.style.textDecoration = "none";
+    rep.addEventListener("click", function () {
+      rep.href = "/api/report?project=" + encodeURIComponent(proj());
+    });
+    box.appendChild(rep);
+    bar.parentNode.parentNode.appendChild(box);
+  })();
+
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
   // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
   var wire = function () {
@@ -604,8 +745,9 @@ _DASH_ADDON = """
       box.appendChild(w);
     });
   };
-  new MutationObserver(wire).observe(document.body, {childList: true, subtree: true});
-  wire();
+  var all = function () { wire(); wireSteps(); };
+  new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
+  all();
 })();
 </script>
 """.encode("utf-8")

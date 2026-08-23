@@ -91,8 +91,12 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         conn.close()
 
 
-def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None) -> dict:
-    """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출."""
+def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
+             only: str | None = None) -> dict:
+    """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
+
+    only 를 주면 그 단계만 돈다 — 웹에서 '구글 실적만 다시 읽기' 같은 부분 실행에 쓴다.
+    """
     user_id = site["user_id"]
     project = site["project"]
     # 시작 전에 찍는다. 끝나고 찍으면 (1) 등록 직후 트리거와 60초 스케줄러 틱이 겹쳐
@@ -101,7 +105,7 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None) -> d
         store.mark_run(conn, site["id"])
     try:
         with store.tenant(conn, user_id), _paid_keys():
-            rc = run_all.run_chain(project, dry_run=dry_run, skip=skip)
+            rc = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only)
             # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
             # 부수 작업이다 — 여기서 터져도 이미 끝난 수집을 실패로 만들지 않는다.
             n = 0
@@ -145,6 +149,7 @@ def main() -> int:
                     help="사이트별 재측정 주기. 0 이면 자동 수집을 끈다")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
+    ap.add_argument("--only", help="이 단계만 (쉼표 구분, 예: gsc)")
     args = ap.parse_args()
 
     if args.user is not None and not args.project:
@@ -162,7 +167,8 @@ def main() -> int:
             if site is None:
                 print(f"프로젝트 '{args.project}' 없음 (user={args.user})", file=sys.stderr)
                 return 1
-            results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip)]
+            results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip,
+                                only=args.only)]
     finally:
         conn.close()
 
