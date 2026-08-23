@@ -691,6 +691,20 @@ _DASH_ADDON = """
   #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
   #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
 
+  /* 플러그인으로 넘기는 일 — 조용한 목록. 대시보드 본문의 결론이 아니라 각주다. */
+  #sm-cc{padding:26px 0 10px}
+  #sm-cc .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
+  #sm-cc ul{list-style:none;padding:0;margin:0;border-top:1px solid var(--rule-soft)}
+  #sm-cc li{display:flex;align-items:center;gap:18px;padding:12px 0;
+    border-bottom:1px solid var(--rule-soft)}
+  #sm-cc li div{flex:1;min-width:0}
+  #sm-cc li b{display:block;font-weight:600;font-size:14px}
+  #sm-cc li span{color:var(--slate);font-size:12.5px}
+  #sm-cc button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+    border:1px solid var(--rule);border-radius:3px;padding:6px 10px;cursor:pointer;flex:none}
+  #sm-cc button:hover{color:var(--patina);border-color:var(--patina)}
+  @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
+
   .eyebrow{letter-spacing:.08em}
   .band .l{letter-spacing:.03em}
   .tag{letter-spacing:.12em}
@@ -815,7 +829,7 @@ _DASH_ADDON = """
     var lbl = document.createElement("span");
     lbl.className = "lbl"; lbl.textContent = "부분만";
     box.appendChild(lbl);
-    [["gsc", "실적"], ["index", "색인"], ["keywords", "키워드"],
+    [["gsc", "실적"], ["index", "색인"], ["keywords", "키워드"], ["rank", "순위"],
      ["ai", "AI 노출"], ["gaps", "손댈 것"]].forEach(function (p) {
       var t = document.createElement("button");
       t.className = "cmd"; t.dataset.smWired = "1"; t.textContent = p[1];
@@ -879,6 +893,50 @@ _DASH_ADDON = """
   }
   if (sel) sel.addEventListener("change", function () { blDone = ""; backlinks(); });
   backlinks();
+
+  // ── Claude Code 로 넘길 일 ─────────────────────────────────
+  // 웹에서 못 하는 게 분명히 있다(관련성 판단·스킬 해석·자유 질문). 없는 척하지 말고
+  // 명령어를 그대로 준다 — 여기서만은 '복사'가 맞는 동작이다.
+  var HANDOFF = [
+    ["후보 키워드를 관련성 보고 직접 고르기",
+     "웹은 서치콘솔에 노출된 것만 자동으로 켭니다. 자동완성 후보는 사람이 봐야 합니다.",
+     "/capture keywords "],
+    ["기회를 SEO 관점에서 해석하기",
+     "seo-audit·ai-seo 같은 전문 지침을 읽고 '왜 문제인지'까지 답합니다.",
+     "/capture gaps "],
+    ["숫자에 대해 그냥 물어보기",
+     "“클릭이 0인 검색어는 왜 그런가” 같은 질문에 Brain 을 조회해 답합니다.",
+     "/capture ask "],
+    ["글 쓰기 전에 계획부터 세우기",
+     "리포의 git log 와 대조해 무엇부터 쓸지 배치합니다.",
+     "/create plan "]
+  ];
+
+  function handoff() {
+    var host = document.querySelector("main");
+    if (!host || document.getElementById("sm-cc")) return;
+    var sec = document.createElement("section");
+    sec.id = "sm-cc";
+    sec.innerHTML = '<p class="eyebrow">CLAUDE CODE</p>' +
+      "<h2>여기서 못 하는 것</h2>" +
+      '<p class="sub">판단이 필요한 일은 플러그인에서 합니다. 명령을 복사해 Claude Code 에 붙여 넣으세요.</p>' +
+      "<ul>" + HANDOFF.map(function (h) {
+        return "<li><div><b>" + esc(h[0]) + "</b><span>" + esc(h[1]) + "</span></div>" +
+               '<button data-cc="' + esc(h[2]) + '">' + esc(h[2].trim()) + "</button></li>";
+      }).join("") + "</ul>";
+    host.appendChild(sec);
+    sec.addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-cc]") : null;
+      if (!b) return;
+      var cmd = b.getAttribute("data-cc") + proj();
+      navigator.clipboard.writeText(cmd).then(function () {
+        var was = b.textContent;
+        b.textContent = "복사됨 ✓";
+        setTimeout(function () { b.textContent = was; }, 1400);
+      });
+    });
+  }
+  handoff();
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
   // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
