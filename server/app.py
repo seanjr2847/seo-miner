@@ -195,13 +195,13 @@ def home(request: Request):
         items = "".join(
             f'<li><a href="/d"><span class="nm">{e(r["project"])}</span>'
             f'<span class="pr">{e(r["gsc_property"])}</span>'
-            + ('<span class="st wait">첫 측정 진행 중</span>' if not r["last_run_at"]
-               else f'<span class="st">{e(str(r["last_run_at"])[:16])} 측정</span>')
+            + ('<span class="st wait">첫 분석 진행 중</span>' if not r["last_run_at"]
+               else f'<span class="st">{e(str(r["last_run_at"])[:16])} 분석</span>')
             + '</a></li>' for r in rows)
-        block = f'<section><p class="label">측정 중인 사이트</p><ul class="sites">{items}</ul>'
+        block = f'<section><p class="label">분석 중인 사이트</p><ul class="sites">{items}</ul>'
         if any(not r["last_run_at"] for r in rows):
-            block += ('<p class="wait-note">서치콘솔 실적 · 색인 상태 · 키워드 순으로 몇 분에 '
-                      '걸쳐 채워집니다. 창을 닫아도 계속됩니다.</p>')
+            block += ('<p class="wait-note">검색 실적 · 색인 생성 · 키워드 순으로 몇 분에 '
+                      '걸쳐 수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
         block += "</section>"
     else:
         block = ""
@@ -888,7 +888,7 @@ _DASH_ADDON = """
 <script>
 (function () {
   var b = document.createElement("button");
-  b.id = "sm-run"; b.textContent = "지금 다시 재기";
+  b.id = "sm-run"; b.textContent = "전체 분석 실행";
 
   function proj() {
     var p = document.getElementById("proj");
@@ -898,7 +898,7 @@ _DASH_ADDON = """
     var r = st && st[proj()];
     if (!r) return;
     b.disabled = !!r.running;
-    b.textContent = r.running ? "측정 중…" : "지금 다시 재기";
+    b.textContent = r.running ? "분석 중…" : "전체 분석 실행";
   }
   async function poll() {
     try { paint(await (await fetch("/api/run/status")).json()); } catch (e) {}
@@ -936,11 +936,52 @@ _DASH_ADDON = """
     } catch (e) { b.textContent = "실패"; b.disabled = false; }
   });
 
+  // ── 용어 통일 ──────────────────────────────────────────────
+  // 원본은 쉬운 우리말을 골랐지만("손댈 것", "채굴 로그"), 마케터는 서치콘솔 한국어
+  // UI 와 업계 표준어로 생각한다. 원본 HTML 은 그대로 두고 표시 문구만 바꿔 끼운다.
+  var TERMS = {
+    "채굴 로그": "SEO 대시보드",
+    "다음에 뭘 하면 되나": "분석 절차",
+    "1페이지까지 남은 거리": "순위 상승 기회",
+    "4~20위 · 노출 많은 순": "11~20위 · 노출수 많은 순",
+    "다음에 손댈 것": "개선 기회",
+    "다음 행동": "권장 조치",
+    "움직인 검색어": "순위 변동",
+    "모바일에서 밀리는 검색어": "모바일 순위 격차",
+    "MOBILE vs DESKTOP": "MOBILE vs DESKTOP",
+    "색인 문제": "색인 생성 오류",
+    "URL 검사": "URL 검사",
+    "AI가 누구를 인용하나": "AI 인용 현황",
+    "수집 이력": "실행 기록",
+    "순위 기록": "순위 추적 기록",
+    "성과일 기준 · 하루 = 점 하나": "성과일 기준 · 일별",
+    "이 도구를 쓰는 순서 · 6단계": "분석 절차 · 6단계",
+    // KPI 라벨 — 서치콘솔 한국어 표기를 따른다
+    "클릭": "총 클릭수",
+    "노출": "총 노출수",
+    "노출된 검색어": "검색어 수",
+    "남은 기회": "개선 기회"
+  };
+
+  function retitle(root) {
+    // 제목·라벨만 건드린다. 본문까지 훑으면 데이터(검색어·URL)를 바꿔 버린다.
+    (root || document).querySelectorAll(
+      "h2,.eyebrow,.band .l,.tag,#nx b,.stp h3,.opp .kind"
+    ).forEach(function (el) {
+      var t = (el.firstChild && el.firstChild.nodeValue || "").trim();
+      if (t && TERMS[t] && el.firstChild.nodeValue.indexOf(TERMS[t]) === -1) {
+        el.firstChild.nodeValue = el.firstChild.nodeValue.replace(t, TERMS[t]);
+      }
+    });
+  }
+  retitle();
+  document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
+
   // 안내의 '이 명령을 치세요' 버튼을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
   // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
-  var STAGE_LABEL = {gsc: "구글 실적 읽기", index: "색인 상태 검사",
-    keywords: "키워드 캐기", rank: "순위 재기", ai: "AI 노출 확인",
-    gaps: "손댈 것 뽑기", report: "리포트 만들기"};
+  var STAGE_LABEL = {gsc: "검색 실적 수집", index: "색인 생성 검사",
+    keywords: "키워드 발굴", rank: "순위 추적", ai: "AI 인용 확인",
+    gaps: "개선 기회 분석", report: "보고서 생성"};
 
   async function runStage(stage, btn) {
     var was = btn.textContent;
@@ -950,7 +991,7 @@ _DASH_ADDON = """
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), stages: stage})});
       if (!r.ok) { var d = await r.json(); btn.textContent = (d.detail || "실패").slice(0, 40); }
-      else { btn.textContent = "시작했습니다"; }
+      else { btn.textContent = "실행 시작"; }
     } catch (e) { btn.textContent = "실패"; }
     poll();
     setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
@@ -969,7 +1010,7 @@ _DASH_ADDON = """
         return;
       }
       if (/^\/create/.test(t)) {          // 기회는 아래 목록에 이미 있다
-        b.textContent = "손댈 것 보기";
+        b.textContent = "개선 기회 보기";
         b.onclick = function () {
           var o = document.getElementById("opps") || document.querySelector(".opp");
           if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
@@ -990,10 +1031,10 @@ _DASH_ADDON = """
     box.id = "sm-bar";
     box.appendChild(b);                       // 위에서 만든 '지금 다시 재기'
     var lbl = document.createElement("span");
-    lbl.className = "lbl"; lbl.textContent = "부분만";
+    lbl.className = "lbl"; lbl.textContent = "개별 실행";
     box.appendChild(lbl);
-    [["gsc", "실적"], ["index", "색인"], ["keywords", "키워드"], ["rank", "순위"],
-     ["ai", "AI 노출"], ["gaps", "손댈 것"]].forEach(function (p) {
+    [["gsc", "검색 실적"], ["index", "색인 생성"], ["keywords", "키워드 발굴"],
+     ["rank", "순위 추적"], ["ai", "AI 인용"], ["gaps", "개선 기회"]].forEach(function (p) {
       var t = document.createElement("button");
       t.className = "cmd"; t.dataset.smWired = "1"; t.textContent = p[1];
       t.title = STAGE_LABEL[p[0]];
@@ -1002,7 +1043,7 @@ _DASH_ADDON = """
     });
     var sp = document.createElement("span"); sp.className = "sp"; box.appendChild(sp);
     var rep = document.createElement("a");
-    rep.className = "cmd"; rep.textContent = "리포트 내려받기 ↓";
+    rep.className = "cmd"; rep.textContent = "보고서 다운로드 ↓";
     rep.addEventListener("click", function () {
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
     });
@@ -1028,8 +1069,8 @@ _DASH_ADDON = """
     if (!s) {
       sec.innerHTML = '<p class="eyebrow">BACKLINKS</p><h2>백링크</h2>' +
         '<p class="sub">' + (d.available
-          ? "아직 안 쟀습니다 — 다음 측정에서 함께 잽니다(30일마다)."
-          : "DataForSEO 키가 없어 재지 않습니다. 백링크는 구글이 안 주는 자료라 외부 자료를 삽니다.") +
+          ? "아직 수집 전입니다 — 다음 분석에서 함께 수집합니다(30일 주기)."
+          : "DataForSEO 연동이 없어 수집하지 않습니다. 백링크는 서치콘솔이 제공하지 않아 외부 데이터가 필요합니다.") +
         "</p>";
     } else {
       var rows = (d.domains || []).map(function (x) {
@@ -1039,14 +1080,14 @@ _DASH_ADDON = """
                "</td></tr>";
       }).join("");
       sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + '</p>' +
-        "<h2>어디서 링크가 오나</h2>" +
-        '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 사이트에서 100개보다 100개 사이트에서 1개씩이 낫습니다.</p>' +
+        "<h2>백링크 프로필</h2>" +
+        '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
         '<div class="band" style="margin-bottom:18px">' +
         '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
-        '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">백링크</div></div>' +
+        '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크</div></div>' +
         '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
-        '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">끊긴 링크</div></div>' +
-        '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 랭크</div></div>' +
+        '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">손실 백링크</div></div>' +
+        '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 지수</div></div>' +
         "</div>" +
         (rows ? '<table><thead><tr><th>도메인</th><th class="num">랭크</th>' +
           '<th class="num">링크</th><th class="num">dofollow</th><th>처음 발견</th></tr></thead>' +
@@ -1066,7 +1107,7 @@ _DASH_ADDON = """
         w.dataset.smHint = "1";
         var p = document.createElement("p");
         p.className = "sm-swipe";
-        p.textContent = "← 옆으로 밀면 나머지가 보입니다";
+        p.textContent = "← 좌우로 스크롤하세요";
         w.parentNode.insertBefore(p, w.nextSibling);
         w.addEventListener("scroll", function () {
           var end = w.scrollLeft + w.clientWidth >= w.scrollWidth - 4;
@@ -1095,11 +1136,11 @@ _DASH_ADDON = """
                              "&project=" + encodeURIComponent(proj()))).json();
     } catch (e) { list.innerHTML = '<p style="padding:14px">불러오지 못했습니다</p>'; return; }
     var ks = d.keywords || [];
-    box.querySelector(".cnt").innerHTML = "추적 " + d.active_total + " / " + d.limit +
-      (d.active_total >= d.limit ? ' <b class="warn">· 상한이 찼습니다</b>' : "");
+    box.querySelector(".cnt").innerHTML = "추적 키워드 " + d.active_total + " / " + d.limit +
+      (d.active_total >= d.limit ? ' <b class="warn">· 한도 도달</b>' : "");
     if (!ks.length) {
       list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
-        (kwMode === "candidate" ? "후보가 없습니다 — 키워드 캐기를 먼저 돌리세요."
+        (kwMode === "candidate" ? "발굴된 후보가 없습니다 — 키워드 발굴을 먼저 실행하세요."
                                 : "추적 중인 키워드가 없습니다.") + "</p>";
       return;
     }
@@ -1135,9 +1176,9 @@ _DASH_ADDON = """
     if (!host || document.getElementById("sm-kw")) return;
     var sec = document.createElement("section");
     sec.id = "sm-kw";
-    sec.innerHTML = '<p class="eyebrow">KEYWORDS</p><h2>추적할 검색어 고르기</h2>' +
-      '<p class="sub">서치콘솔에 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 ' +
-      "관련 있는 것만 직접 고르세요 — 추적하는 만큼 순위 측정 비용이 듭니다.</p>" +
+    sec.innerHTML = '<p class="eyebrow">KEYWORDS</p><h2>추적 키워드 관리</h2>' +
+      '<p class="sub">서치콘솔에 노출된 검색어는 자동으로 추적합니다. 자동완성으로 발굴한 후보는 ' +
+      "관련 있는 것만 직접 선택하세요 — 추적 키워드 수만큼 순위 추적 비용이 발생합니다.</p>" +
       '<div class="tabs"><button data-m="candidate" class="on">후보</button>' +
       '<button data-m="active">추적 중</button></div>' +
       '<div class="list"></div>' +
@@ -1153,7 +1194,7 @@ _DASH_ADDON = """
         x.classList.toggle("on", x === b);
       });
       sec.querySelector(".go2").textContent =
-        kwMode === "candidate" ? "고른 것 추적하기" : "고른 것 빼기";
+        kwMode === "candidate" ? "선택 항목 추적" : "추적 해제";
       kwLoad();
     });
     sec.querySelector(".go2").addEventListener("click", function () {
@@ -1168,17 +1209,17 @@ _DASH_ADDON = """
   // 웹에서 못 하는 게 분명히 있다(관련성 판단·스킬 해석·자유 질문). 없는 척하지 말고
   // 명령어를 그대로 준다 — 여기서만은 '복사'가 맞는 동작이다.
   var HANDOFF = [
-    ["후보 키워드를 관련성 보고 직접 고르기",
-     "웹은 서치콘솔에 노출된 것만 자동으로 켭니다. 자동완성 후보는 사람이 봐야 합니다.",
+    ["발굴 후보 키워드 선별",
+     "관련성 판단이 필요합니다. 대시보드는 서치콘솔 노출 기준으로만 자동 선택합니다.",
      "/capture keywords "],
-    ["기회를 SEO 관점에서 해석하기",
-     "seo-audit·ai-seo 같은 전문 지침을 읽고 '왜 문제인지'까지 답합니다.",
+    ["개선 기회 심층 분석",
+     "seo-audit·ai-seo 전문 지침으로 원인과 조치 방안까지 도출합니다.",
      "/capture gaps "],
-    ["숫자에 대해 그냥 물어보기",
-     "“클릭이 0인 검색어는 왜 그런가” 같은 질문에 Brain 을 조회해 답합니다.",
+    ["데이터 질의응답",
+     "“클릭수 0인 검색어의 원인은?” 같은 질문에 수집 데이터를 조회해 답변합니다.",
      "/capture ask "],
-    ["글 쓰기 전에 계획부터 세우기",
-     "리포의 git log 와 대조해 무엇부터 쓸지 배치합니다.",
+    ["콘텐츠 작업 계획 수립",
+     "저장소 커밋 이력과 대조해 작업 우선순위를 배치합니다.",
      "/create plan "]
   ];
 
@@ -1188,8 +1229,8 @@ _DASH_ADDON = """
     var sec = document.createElement("section");
     sec.id = "sm-cc";
     sec.innerHTML = '<p class="eyebrow">CLAUDE CODE</p>' +
-      "<h2>여기서 못 하는 것</h2>" +
-      '<p class="sub">판단이 필요한 일은 플러그인에서 합니다. 명령을 복사해 Claude Code 에 붙여 넣으세요.</p>' +
+      "<h2>고급 분석</h2>" +
+      '<p class="sub">해석과 판단이 필요한 작업은 Claude Code 플러그인에서 실행합니다. 명령어를 복사해 붙여 넣으세요.</p>' +
       "<ul>" + HANDOFF.map(function (h) {
         return "<li><div><b>" + esc(h[0]) + "</b><span>" + esc(h[1]) + "</span></div>" +
                '<button data-cc="' + esc(h[2]) + '">' + esc(h[2].trim()) + "</button></li>";
@@ -1222,7 +1263,7 @@ _DASH_ADDON = """
       box.appendChild(w);
     });
   };
-  var all = function () { wire(); wireSteps(); };
+  var all = function () { wire(); wireSteps(); retitle(); };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();
 })();

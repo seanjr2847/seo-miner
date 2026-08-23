@@ -95,7 +95,7 @@ footer a{color:var(--muted)}
 
 <header><div class="wrap brandbar">
   <span class="logo">seo-miner</span>
-  <span class="tagline">내 사이트</span>
+  <span class="tagline">사이트 관리</span>
   <!--USER-->
 </div></header>
 
@@ -103,29 +103,29 @@ footer a{color:var(--muted)}
   <!--SITES-->
 
   <section>
-    <h1 id="h">재고 싶은 사이트를 고르세요</h1>
-    <p class="sub" id="sub">구글 계정에 연결된 서치콘솔 속성입니다. 고르면 바로 측정을 시작합니다.</p>
+    <h1 id="h">분석할 사이트 선택</h1>
+    <p class="sub" id="sub">구글 계정에 연결된 서치콘솔 속성입니다. 선택하면 바로 분석을 시작합니다.</p>
 
     <div class="props" id="props">
       <div class="skel"></div><div class="skel"></div><div class="skel"></div>
     </div>
 
     <div class="go">
-      <button id="btn" disabled>측정 시작</button>
+      <button id="btn" disabled>분석 시작</button>
       <span class="msg" id="msg"></span>
     </div>
   </section>
 
   <section id="repo-sec" hidden>
-  <h1>저장소 연결</h1>
-  <p class="sub" id="repo-sub">기회를 글로 바꿔 PR 로 올리려면 사이트마다 저장소가 필요합니다.
-    main 에 직접 쓰지 않습니다 — 브랜치와 PR 까지만 만들고 머지는 사람이 합니다.</p>
+  <h1>GitHub 저장소 연결</h1>
+  <p class="sub" id="repo-sub">개선 기회를 콘텐츠로 작성해 PR 로 제출하려면 사이트별 저장소가 필요합니다.
+    main 브랜치에 직접 커밋하지 않습니다 — 별도 브랜치와 PR 까지만 생성하고 머지는 직접 하십니다.</p>
   <div id="repo-body"></div>
 </section>
 </main>
 
 <footer class="wrap">
-  <span>주 1회 자동으로 다시 잽니다</span>
+  <span>주 1회 자동 분석</span>
   <a href="/d">대시보드</a>
 </footer>
 
@@ -140,7 +140,7 @@ const TAKEN = new Set(window.__TAKEN__ || []);
 function sync() {
   const n = document.querySelectorAll("#props input:checked").length;
   $("btn").disabled = !n;
-  $("btn").textContent = n > 1 ? n + "개 측정 시작" : "측정 시작";
+  $("btn").textContent = n > 1 ? n + "개 분석 시작" : "분석 시작";
 }
 
 (async () => {
@@ -156,7 +156,7 @@ function sync() {
     }
     box.innerHTML = properties.map(p => {
       const v = esc(p.property);
-      if (TAKEN.has(p.property)) return '<div class="taken">' + v + ' — 이미 측정 중</div>';
+      if (TAKEN.has(p.property)) return '<div class="taken">' + v + ' — 분석 중</div>';
       const opts = TYPES.map(t => '<option value="' + t[0] + '">' + t[1] + '</option>').join("");
       return '<label class="prop"><input type="checkbox" value="' + v + '">' +
              '<span class="pname">' + v + '</span>' +
@@ -233,7 +233,7 @@ $("btn").addEventListener("click", async () => {
     });
     const d = await r.json();
     if (r.ok && d.ok) {
-      msg.className = "msg ok"; msg.textContent = "시작했습니다.";
+      msg.className = "msg ok"; msg.textContent = "분석을 시작했습니다.";
       setTimeout(function () { location.reload(); }, 600);
       return;
     }
