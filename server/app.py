@@ -596,27 +596,94 @@ def _own(conn, uid: int, project: str) -> None:
 # 로컬 대시보드는 조회 전용이고, 실행은 Claude Code 에서 /capture run 으로 했다.
 # 웹에는 명령을 칠 곳이 없다 — 원본 HTML 을 고치는 대신 뒤에 얹어서 버튼을 만든다.
 _DASH_ADDON = """
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* 원본은 시스템 폰트(Segoe UI/Cascadia)라 한글이 맑은고딕으로 떨어져 수치와 섞이면
+     지저분하다. 변수만 갈아끼우면 화면 전체가 따라온다 — 원본 규칙은 손대지 않는다. */
+  :root{
+    --sans:"IBM Plex Sans KR","Segoe UI",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
+  }
+  body{word-break:keep-all}          /* 한글은 어절 단위로 끊는다 */
+
   #toggle-setup,#setup{display:none!important}
-  #sm-run{font:inherit;font-size:13px;cursor:pointer;border:1px solid currentColor;
-    background:transparent;color:inherit;border-radius:3px;padding:4px 12px;opacity:.85}
-  #sm-run:hover:not(:disabled){opacity:1}
-  #sm-run:disabled{opacity:.45;cursor:default}
-  /* 명령어 버튼은 지우지 않고 실행 버튼으로 바꿔 끼운다(아래 wireSteps). */
-  .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid currentColor;
-    background:transparent;color:inherit;border-radius:3px;padding:5px 12px;opacity:.9}
-  .cmd:hover:not(:disabled){opacity:1}
-  .cmd:disabled{opacity:.45;cursor:default}
-  #nx code{display:none}          /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
-  #sm-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
+  #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
+
+  /* 실행 줄 — 헤더에 붙여 한 덩어리로 보이게 한다. 주 액션 하나만 진하게 두고
+     부분 실행은 가볍게 늘어놓는다(전에는 같은 무게의 버튼 일곱 개가 떠 있었다). */
+  #sm-bar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;
+    padding:9px 22px 11px;border-top:1px solid var(--rule-soft);
+    background:var(--card);font-size:13px}
+  #sm-bar .lbl{color:var(--slate);font-size:11.5px;font-family:var(--mono);
+    letter-spacing:.04em}
+  #sm-run{font:inherit;font-weight:500;cursor:pointer;border:1px solid var(--patina);
+    background:var(--patina);color:var(--card);border-radius:3px;padding:6px 14px}
+  #sm-run:hover:not(:disabled){filter:brightness(1.12)}
+  #sm-run:disabled{opacity:.5;cursor:default}
+  #sm-bar .cmd{font:inherit;font-size:13px;cursor:pointer;border:0;background:none;
+    color:var(--patina);padding:4px 2px;border-bottom:1px solid transparent}
+  #sm-bar .cmd:hover:not(:disabled){border-bottom-color:var(--patina)}
+  #sm-bar .cmd:disabled{color:var(--slate);cursor:default}
+  #sm-bar .sp{flex:1}
+  #sm-bar a.cmd{text-decoration:none}
+  :is(#sm-bar,.opp) button:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
+  /* 원본 .cmd 는 '복사' 칩이라 ⧉ 를 달고 있다. 이제 실행 버튼이므로 뗀다. */
+  :is(#sm-bar,.stp) .cmd::after{content:none}
+
+  /* ── 좌측 메뉴 ──────────────────────────────────────────────
+     원본은 상단 바다. 넓은 화면에서만 세로로 세운다 — 실행 메뉴가 여섯 줄이라
+     가로로 늘어놓으면 본문 폭을 먹고, 세로로 세우면 위계가 그대로 읽힌다.
+     좁은 화면에서는 원본 그대로 위에 눕는다. */
+  @media (min-width:1000px){
+    body{display:grid;grid-template-columns:232px minmax(0,1fr);align-items:start}
+    header{grid-column:1;position:sticky;top:0;height:100vh;overflow-y:auto;
+      display:flex;flex-direction:column;      /* #sm-bar 의 margin-top:auto 가 먹으려면 */
+      border-bottom:0;border-right:1px solid var(--ink)}
+    .hbar{flex-direction:column;align-items:stretch;gap:14px;padding:22px 20px 10px;
+      max-width:none;margin:0}
+    .hbar .sp{display:none}
+    .tag{display:block!important;letter-spacing:.06em;font-size:10.5px;
+      color:var(--stone);opacity:.5;margin-top:-8px}
+    #proj{max-width:none;width:100%}
+    /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. */
+    #meta{font-size:11.5px;line-height:1.65;opacity:.7;white-space:normal;
+      word-break:break-all;display:block}
+    .hbar .hbtn{width:100%;text-align:left;padding-left:0;padding-right:0}
+    #sm-bar{flex-direction:column;align-items:stretch;gap:2px;border-top:0;
+      background:transparent;padding:4px 20px 26px;margin-top:auto}
+    #sm-bar .sp{display:none}
+    #sm-bar .lbl{margin:12px 0 2px}
+    #sm-run{width:100%;text-align:center;padding:9px 14px;margin-bottom:4px}
+    #sm-bar .cmd{text-align:left;padding:5px 2px;color:var(--stone);opacity:.72}
+    #sm-bar .cmd:hover:not(:disabled){opacity:1;border-bottom-color:transparent}
+    #sm-bar a.cmd{margin-top:10px}
+    main{grid-column:2;max-width:1080px;margin:0;padding-left:34px;padding-right:34px}
+  }
+
+  /* 원본 자간은 영문 대문자 라벨 기준(.24em)이라 한글에서는 글자가 흩어진다.
+     "성 과 일  기 준" 처럼 읽히던 것 — 값만 낮추고 서체는 그대로 둔다. */
+  .eyebrow{letter-spacing:.08em}
+  .band .l{letter-spacing:.03em}
+  .tag{letter-spacing:.12em}
+  th{letter-spacing:.05em}
+  .opp .kind{letter-spacing:.05em}
+
+  /* 안내 단계의 실행 버튼 — 원본 .cmd 는 명령어를 복사하는 칩이었다. */
+  .stp .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--patina);
+    background:transparent;color:var(--patina);border-radius:3px;padding:5px 12px}
+  .stp .cmd:hover:not(:disabled){background:var(--wash)}
+  .stp .cmd:disabled{opacity:.5;cursor:default}
+
+  /* 기회 카드: 버튼 넷이 카드마다 반복돼 소음이 된다. 평소엔 물러나 있게. */
+  .opp .acts button{opacity:.72;transition:opacity .12s}
+  .opp:hover .acts button,.opp .acts button:focus-visible{opacity:1}
+  .opp [data-write]{color:var(--copper);border-color:var(--copper)}
 </style>
 <script>
 (function () {
-  var host = document.getElementById("refresh");
-  if (!host) return;
   var b = document.createElement("button");
-  b.id = "sm-run"; b.className = "hbtn"; b.textContent = "지금 다시 재기";
-  host.parentNode.insertBefore(b, host);
+  b.id = "sm-run"; b.textContent = "지금 다시 재기";
 
   function proj() {
     var p = document.getElementById("proj");
@@ -708,27 +775,34 @@ _DASH_ADDON = """
     });
   }
 
-  // 헤더 아래에 상시 도구 — 안내가 접혀 있어도 쓸 수 있어야 한다.
-  (function tools() {
-    var bar = document.getElementById("sm-run");
-    if (!bar || document.getElementById("sm-tools")) return;
+  // 실행 줄 — 안내가 접혀 있어도 쓸 수 있어야 한다. 주 액션(다시 재기) 하나만
+  // 진하게, 부분 실행은 텍스트로 늘어놓는다.
+  (function bar() {
+    if (document.getElementById("sm-bar")) return;
+    var head = document.querySelector("header");
+    if (!head) return;
     var box = document.createElement("div");
-    box.id = "sm-tools";
-    ["gsc", "index", "keywords", "ai", "gaps"].forEach(function (st) {
+    box.id = "sm-bar";
+    box.appendChild(b);                       // 위에서 만든 '지금 다시 재기'
+    var lbl = document.createElement("span");
+    lbl.className = "lbl"; lbl.textContent = "부분만";
+    box.appendChild(lbl);
+    [["gsc", "실적"], ["index", "색인"], ["keywords", "키워드"],
+     ["ai", "AI 노출"], ["gaps", "손댈 것"]].forEach(function (p) {
       var t = document.createElement("button");
-      t.className = "cmd"; t.dataset.smWired = "1";
-      t.textContent = STAGE_LABEL[st];
-      t.onclick = function () { runStage(st, t); };
+      t.className = "cmd"; t.dataset.smWired = "1"; t.textContent = p[1];
+      t.title = STAGE_LABEL[p[0]];
+      t.onclick = function () { runStage(p[0], t); };
       box.appendChild(t);
     });
+    var sp = document.createElement("span"); sp.className = "sp"; box.appendChild(sp);
     var rep = document.createElement("a");
-    rep.className = "cmd"; rep.textContent = "리포트 내려받기";
-    rep.style.textDecoration = "none";
+    rep.className = "cmd"; rep.textContent = "리포트 내려받기 ↓";
     rep.addEventListener("click", function () {
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
     });
     box.appendChild(rep);
-    bar.parentNode.parentNode.appendChild(box);
+    head.appendChild(box);
   })();
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
