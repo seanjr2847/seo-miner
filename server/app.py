@@ -199,10 +199,15 @@ def home(request: Request):
         block += "</section>"
     else:
         block = ""
+    who = html.escape(str(request.session.get("email") or ""))
+    user_bar = (f'<span class="who">{who}</span>'
+                '<form method="post" action="/auth/logout" class="lo">'
+                '<button type="submit">로그아웃</button></form>') if who else ""
     taken = json.dumps([r["gsc_property"] for r in rows], ensure_ascii=False)
     site_list = json.dumps([{"project": r["project"], "repo": r["repo"]} for r in rows],
                            ensure_ascii=False)
     page = (_page("app.html")
+            .replace("<!--USER-->", user_bar)
             .replace("<!--SITES-->", block)
             .replace("<script>",
                      f"<script>window.__TAKEN__={taken};window.__SITES__={site_list};", 1))
@@ -216,7 +221,10 @@ def auth_login(request: Request):
     request.session["oauth_state"] = state
     # include_granted_scopes 는 쓰지 않는다 — 과거에 승인해 둔 스코프(webmasters 쓰기 등)까지
     # 토큰에 합쳐진다. 여기는 읽기만 필요하다.
-    url, _ = flow.authorization_url(access_type="offline", prompt="consent", state=state)
+    # select_account 가 없으면 로그아웃해도 구글이 직전 계정으로 그냥 들여보내서
+    # 계정 전환이 성립하지 않는다. consent 는 refresh token 을 받기 위해 유지한다.
+    url, _ = flow.authorization_url(access_type="offline",
+                                    prompt="select_account consent", state=state)
     # PKCE: authorization_url() 이 만든 verifier 를 콜백까지 넘겨야 한다. 콜백은 Flow 를
     # 새로 만들기 때문에, 안 넘기면 토큰 교환이 'Missing code verifier' 로 죽는다.
     request.session["code_verifier"] = flow.code_verifier
@@ -245,6 +253,19 @@ def auth_callback(request: Request, code: str, state: str):
     finally:
         conn.close()
     request.session["uid"] = uid
+    request.session["email"] = email
+    return RedirectResponse("/", status_code=302)
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    """세션만 끊는다. 저장된 구글·GitHub 토큰은 남겨 둔다 — 다시 로그인하면
+    그대로 이어 쓴다(계정을 바꿔 가며 쓰라는 게 이 버튼의 목적이다).
+
+    GET 이 아니라 POST 다 — 링크였다면 브라우저 prefetch 나 남이 심은 이미지 태그로
+    의도치 않게 로그아웃된다.
+    """
+    request.session.clear()
     return RedirectResponse("/", status_code=302)
 
 
