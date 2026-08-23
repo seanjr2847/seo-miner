@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
+import backlinks                              # noqa: E402
 import db                                     # noqa: E402
 import run_all                                # noqa: E402
 import store                                  # noqa: E402
@@ -91,6 +92,23 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         conn.close()
 
 
+def _backlinks_due(project: str, every_days: float) -> bool:
+    """마지막 수집이 every_days 를 넘겼나. 기록이 없으면 잰다."""
+    if every_days <= 0:
+        return False
+    conn = db.connect()
+    try:
+        conn.executescript(backlinks.SCHEMA)
+        pid = db.get_project(conn, project)["id"]
+        row = conn.execute(
+            "SELECT 1 FROM backlink_summary WHERE project_id=? AND"
+            " checked_date > date('now', ?) LIMIT 1",
+            (pid, f"-{every_days} days")).fetchone()
+        return row is None
+    finally:
+        conn.close()
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
              only: str | None = None) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
@@ -106,6 +124,18 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     try:
         with store.tenant(conn, user_id), _paid_keys():
             rc = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only)
+            # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
+            # 키가 없으면 조용히 건너뛴다(엔진의 유료 축과 같은 규칙).
+            try:
+                if not dry_run and backlinks.available():
+                    every = float(os.environ.get("SEOMINER_BACKLINKS_EVERY_DAYS", "30"))
+                    if _backlinks_due(project, every):
+                        r = backlinks.collect(project)
+                        print(f"[{project}] 백링크 {r['summary'].get('backlinks')}개 · "
+                              f"참조 도메인 {r['domains']}개 (${r['cost']})")
+            except Exception as e:
+                print(f"[{project}] 백링크 건너뜀: {e}")
+
             # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
             # 부수 작업이다 — 여기서 터져도 이미 끝난 수집을 실패로 만들지 않는다.
             n = 0

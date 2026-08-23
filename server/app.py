@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from google_auth_oauthlib.flow import Flow
 from starlette.middleware.sessions import SessionMiddleware
 
+import backlinks
 import collect_gsc
 import dashboard
 import db
@@ -547,6 +548,23 @@ def api_report(project: str, request: Request):
         "Content-Disposition": f'attachment; filename="{project}-report.html"'})
 
 
+@app.get("/api/backlinks")
+def api_backlinks(project: str, request: Request):
+    """백링크 프로필 — 없으면 빈 값. 지어내지 않는다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            data = backlinks.latest(project)
+            data["available"] = backlinks.available()
+        return data
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.get("/api/creations")
 def api_creations(project: str, request: Request):
     """/create status — 이 사이트에서 실제로 고친 것들."""
@@ -663,6 +681,16 @@ _DASH_ADDON = """
 
   /* 원본 자간은 영문 대문자 라벨 기준(.24em)이라 한글에서는 글자가 흩어진다.
      "성 과 일  기 준" 처럼 읽히던 것 — 값만 낮추고 서체는 그대로 둔다. */
+  /* KPI 라벨은 한글이다 — mono 로 두면 한글이 폴백 서체로 떨어져 자간이 벌어진다. */
+  .band .l{font-family:var(--sans);font-weight:500}
+
+  /* 백링크 표: 마지막 두 칸이 붙어 숫자와 날짜가 겹쳐 보였다. */
+  #sm-bl{padding-top:26px}
+  #sm-bl table{width:100%;table-layout:fixed}
+  #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
+  #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
+  #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
+
   .eyebrow{letter-spacing:.08em}
   .band .l{letter-spacing:.03em}
   .tag{letter-spacing:.12em}
@@ -804,6 +832,53 @@ _DASH_ADDON = """
     box.appendChild(rep);
     head.appendChild(box);
   })();
+
+  // ── 백링크 ───────────────────────────────────────────────────
+  // 원본 화면에 없는 축이다. 섹션을 만들어 끼운다(원본 HTML 은 그대로).
+  var blDone = "";
+  async function backlinks() {
+    var pj = proj();
+    if (!pj || blDone === pj) return;
+    var host = document.querySelector("main");
+    if (!host) return;
+    var d;
+    try { d = await (await fetch("/api/backlinks?project=" + encodeURIComponent(pj))).json(); }
+    catch (e) { return; }
+    blDone = pj;
+    var sec = document.getElementById("sm-bl") || document.createElement("section");
+    sec.id = "sm-bl";
+    var s = d.summary;
+    if (!s) {
+      sec.innerHTML = '<p class="eyebrow">BACKLINKS</p><h2>백링크</h2>' +
+        '<p class="sub">' + (d.available
+          ? "아직 안 쟀습니다 — 다음 측정에서 함께 잽니다(30일마다)."
+          : "DataForSEO 키가 없어 재지 않습니다. 백링크는 구글이 안 주는 자료라 외부 자료를 삽니다.") +
+        "</p>";
+    } else {
+      var rows = (d.domains || []).map(function (x) {
+        return "<tr><td>" + esc(x.domain) + '</td><td class="num">' + (x.rank == null ? "" : x.rank) +
+               '</td><td class="num">' + (x.backlinks || 0) + '</td><td class="num">' +
+               (x.dofollow || 0) + "</td><td>" + esc(x.first_seen ? String(x.first_seen).slice(0, 10) : "") +
+               "</td></tr>";
+      }).join("");
+      sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + '</p>' +
+        "<h2>어디서 링크가 오나</h2>" +
+        '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 사이트에서 100개보다 100개 사이트에서 1개씩이 낫습니다.</p>' +
+        '<div class="band" style="margin-bottom:18px">' +
+        '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
+        '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">백링크</div></div>' +
+        '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
+        '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">끊긴 링크</div></div>' +
+        '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 랭크</div></div>' +
+        "</div>" +
+        (rows ? '<table><thead><tr><th>도메인</th><th class="num">랭크</th>' +
+          '<th class="num">링크</th><th class="num">dofollow</th><th>처음 발견</th></tr></thead>' +
+          "<tbody>" + rows + "</tbody></table>" : "");
+    }
+    if (!sec.parentNode) host.appendChild(sec);
+  }
+  if (sel) sel.addEventListener("change", function () { blDone = ""; backlinks(); });
+  backlinks();
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
   // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
