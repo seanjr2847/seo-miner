@@ -38,7 +38,7 @@ def _ask(prompt: str, max_tokens: int = 4000) -> str:
     import requests
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
-        raise WriterError("OPENROUTER_API_KEY 가 없습니다 — 글 작성에는 모델 키가 필요합니다")
+        raise WriterError("콘텐츠 작성 기능이 아직 연결되지 않았습니다 (OPENROUTER_API_KEY 미설정)")
     r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         timeout=serp_adapter.TIMEOUTS.get("openrouter", 120),
@@ -46,7 +46,7 @@ def _ask(prompt: str, max_tokens: int = 4000) -> str:
         json={"model": MODEL, "max_tokens": max_tokens,
               "messages": [{"role": "user", "content": prompt}]})
     if r.status_code >= 400:
-        raise WriterError(f"모델 호출 실패 {r.status_code}: {r.text[:200]}")
+        raise WriterError(f"글 작성에 실패했습니다. 잠시 후 다시 시도해 주세요 ({r.status_code})")
     return r.json()["choices"][0]["message"]["content"]
 
 
@@ -54,11 +54,11 @@ def _json_block(text: str) -> dict:
     """모델이 앞뒤에 말을 붙여도 JSON 만 꺼낸다."""
     m = re.search(r"\{.*\}", text, re.S)
     if not m:
-        raise WriterError("모델이 JSON 을 주지 않았습니다")
+        raise WriterError("글 작성에 실패했습니다. 다시 시도해 주세요")
     try:
         return json.loads(m.group(0))
     except json.JSONDecodeError as e:
-        raise WriterError(f"모델 JSON 파싱 실패: {e}")
+        raise WriterError(f"글 작성에 실패했습니다. 다시 시도해 주세요 (응답 형식 오류)")
 
 
 def discover_profile(token: str, repo: str, branch: str) -> dict:
@@ -69,7 +69,7 @@ def discover_profile(token: str, repo: str, branch: str) -> dict:
     paths = [p for p in gh.tree(token, repo, branch) if not SKIP.search(p)]
     content = [p for p in paths if CONTENT_HINT.search(p)][:400]
     if not content:
-        raise WriterError("리포에서 콘텐츠 파일(.md/.mdx/.html 등)을 찾지 못했습니다")
+        raise WriterError("저장소에서 글이 있는 위치를 찾지 못했습니다. 다른 저장소를 연결해 주세요")
 
     # 가장 깊고 흔한 디렉토리의 파일을 본보기로 읽는다 — 거기가 보통 글이 사는 곳이다.
     from collections import Counter
@@ -83,7 +83,7 @@ def discover_profile(token: str, repo: str, branch: str) -> dict:
         except gh.GitHubError:
             pass
     if not bodies:
-        raise WriterError("본보기 파일을 읽지 못했습니다")
+        raise WriterError("저장소의 글 내용을 읽지 못했습니다. 다른 저장소를 연결해 주세요")
 
     out = _ask(
         "너는 이 저장소의 콘텐츠 관례를 파악한다. 추측하지 말고 아래에서 관찰된 것만 적어라.\n\n"
@@ -97,7 +97,7 @@ def discover_profile(token: str, repo: str, branch: str) -> dict:
         '"notes":"글 쓸 때 지켜야 할 관례 2~3줄"}', 2000)
     prof = _json_block(out)
     if not prof.get("content_dir"):
-        raise WriterError("콘텐츠 디렉토리를 찾지 못했습니다")
+        raise WriterError("저장소 구조를 파악하지 못했습니다. 다른 저장소를 연결해 주세요")
     prof["samples"] = samples
     return prof
 
@@ -125,9 +125,9 @@ def write_for(opportunity: dict, profile: dict, project: dict,
     d = _json_block(out)
     for k in ("path", "content", "title"):
         if not d.get(k):
-            raise WriterError(f"모델 응답에 {k} 가 없습니다")
+            raise WriterError(f"글 작성에 실패했습니다. 다시 시도해 주세요 ({k} 누락)")
     if d["path"].startswith("/") or ".." in d["path"]:
-        raise WriterError(f"경로가 저장소 밖을 가리킵니다: {d['path']}")
+        raise WriterError(f"저장소 밖의 경로라 작성을 중단했습니다 ({d['path']})")
     return d
 
 

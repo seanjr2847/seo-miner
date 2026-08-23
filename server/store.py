@@ -73,9 +73,9 @@ def _fernet() -> Fernet:
     key = os.environ.get("SEOMINER_SECRET_KEY")
     if not key:
         raise RuntimeError(
-            "SEOMINER_SECRET_KEY 가 없습니다 — "
+            "SEOMINER_SECRET_KEY 가 설정되지 않았습니다. "
             "python -c \"from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())\" "
-            "로 만들어 env 에 넣으세요")
+            "로 키를 생성해 환경 변수에 넣어 주세요")
     return Fernet(key)
 
 

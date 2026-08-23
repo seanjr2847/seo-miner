@@ -22,12 +22,22 @@ header{border-bottom:1px solid var(--hair)}
   padding:4px 10px;font-size:12px;font-weight:400}
 .lo button:hover{background:transparent;color:var(--ink);border-color:var(--ink)}
 .label{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 16px}
+.steps{margin:32px 0 0;padding:0}
+.steps ol{list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;
+  align-items:center;font-size:12px;color:var(--muted);font-weight:400}
+.steps li{display:flex;align-items:center;gap:6px}
+.steps li + li::before{content:"→";color:var(--line);margin-right:2px}
+.steps li span{display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;border-radius:50%;background:var(--surface);
+  font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:500}
+.steps li.current span{background:var(--ink);color:var(--paper)}
+.steps li.current{color:var(--ink);font-weight:500}
 section{padding:40px 0}
 section+section{border-top:1px solid var(--hair)}
 h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px}
 .sub{color:var(--muted);font-weight:300;margin:0 0 24px;font-size:15px}
 
-/* ── 측정 중인 사이트 ── */
+/* ── 분석 중인 사이트 ── */
 .sites{list-style:none;padding:0;margin:0;display:grid;gap:1px;background:var(--hair);
   border:1px solid var(--hair)}
 .sites li{background:var(--paper)}
@@ -102,9 +112,17 @@ footer a{color:var(--muted)}
 <main class="wrap">
   <!--SITES-->
 
+  <nav class="steps" aria-label="진행 단계">
+    <ol>
+      <li class="current"><span>1</span> 사이트 선택</li>
+      <li><span>2</span> 분석</li>
+      <li><span>3</span> 결과 확인</li>
+    </ol>
+  </nav>
+
   <section>
     <h1 id="h">분석할 사이트 선택</h1>
-    <p class="sub" id="sub">구글 서치콘솔에 등록된 사이트입니다. 선택하면 분석이 시작됩니다.</p>
+    <p class="sub" id="sub">본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다. 사이트 종류를 고르면 키워드 발굴 각도와 개선 기회 가중치가 달라집니다.</p>
 
     <div class="props" id="props">
       <div class="skel"></div><div class="skel"></div><div class="skel"></div>
@@ -150,8 +168,8 @@ function sync() {
     if (!r.ok) throw new Error(r.status);
     const { properties } = await r.json();
     if (!properties.length) {
-      box.innerHTML = '<div class="taken">서치콘솔에 등록된 사이트가 없습니다</div>';
-      $("sub").textContent = "구글 서치콘솔에서 사이트를 먼저 등록한 뒤 새로고침해 주세요.";
+      box.innerHTML = '<div class="taken">서치콘솔에 등록된 사이트가 없습니다 — 서치콘솔에서 사이트를 추가한 뒤 새로고침해 주세요</div>';
+      $("sub").textContent = "서치콘솔에 등록된 사이트가 분석 대상입니다. 사이트를 추가한 뒤 다시 시도해 주세요.";
       return;
     }
     box.innerHTML = properties.map(p => {
@@ -168,7 +186,7 @@ function sync() {
     if (boxes.length === 1) boxes[0].checked = true;   // 하나뿐이면 클릭 한 번을 아낀다
     sync();
   } catch (e) {
-    box.innerHTML = '<div class="taken">서치콘솔 속성 목록을 가져오지 못했습니다 — 잠시 후 새로고침해 주세요</div>';
+    box.innerHTML = '<div class="taken">서치콘솔에 연결하지 못했습니다 — Google 계정의 서치콘솔 권한을 확인하고 잠시 후 다시 시도해 주세요</div>';
   }
 })();
 
@@ -241,7 +259,7 @@ $("btn").addEventListener("click", async () => {
     msg.textContent = (d.failed && d.failed[0] && d.failed[0].error) || d.detail ||
                       "분석을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.";
   } catch (e) {
-    msg.className = "msg err"; msg.textContent = "서버에 연결하지 못했습니다. 네트워크 상태를 확인하고 다시 시도해 주세요.";
+    msg.className = "msg err"; msg.textContent = "서버에 연결하지 못했습니다. 잠시 후 다시 시도하거나 새로고침해 주세요.";
   }
   btn.disabled = false; sync();
 });

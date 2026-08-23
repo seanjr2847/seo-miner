@@ -30,7 +30,13 @@ def _req(method: str, path: str, token: str, **kw) -> dict | list:
             msg = r.json().get("message", "")
         except Exception:
             msg = r.text[:200]
-        raise GitHubError(f"GitHub {r.status_code}: {msg}")
+        if r.status_code in (401, 403):
+            raise GitHubError(f"GitHub 연결이 만료되었거나 권한이 부족합니다. 다시 연결해 주세요 ({msg})")
+        if r.status_code == 404:
+            raise GitHubError(f"저장소를 찾을 수 없습니다. 저장소 연결을 확인해 주세요 ({msg})")
+        if r.status_code == 422:
+            raise GitHubError(f"GitHub 요청이 거부되었습니다 ({msg})")
+        raise GitHubError(f"GitHub 일시적 오류입니다. 잠시 후 다시 시도해 주세요 ({msg})")
     return r.json() if r.text else {}
 
 
@@ -42,7 +48,10 @@ def exchange_code(client_id: str, client_secret: str, code: str) -> str:
                             "code": code})
     d = r.json()
     if not d.get("access_token"):
-        raise GitHubError(d.get("error_description") or "토큰 교환에 실패했습니다")
+        desc = d.get("error_description")
+        raise GitHubError(
+            "GitHub 연결에 실패했습니다. 다시 시도해 주세요"
+            + (f" ({desc})" if desc else ""))
     return d["access_token"]
 
 
@@ -75,7 +84,7 @@ def tree(token: str, repo: str, branch: str) -> list[str]:
 def read_file(token: str, repo: str, path: str, ref: str) -> str:
     d = _req("GET", f"/repos/{repo}/contents/{path}?ref={ref}", token)
     if isinstance(d, list) or d.get("encoding") != "base64":
-        raise GitHubError(f"{path} 는 파일이 아닙니다")
+        raise GitHubError(f"이 경로는 파일이 아닙니다 ({path})")
     return base64.b64decode(d["content"]).decode("utf-8", "replace")
 
 

@@ -60,16 +60,16 @@ def available() -> bool:
 def _post(path: str, body: list) -> tuple[list, float]:
     """반환: (items, 실청구액). 응답의 cost 를 그대로 읽는다 — 추정하지 않는다."""
     if not available():
-        raise BacklinksError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD 가 없습니다")
+        raise BacklinksError("백링크 데이터 수집이 아직 연결되지 않았습니다 (DATAFORSEO_LOGIN/PASSWORD 미설정)")
     r = requests.post(f"{API}{path}", timeout=TIMEOUT, json=body,
                       auth=(os.environ["DATAFORSEO_LOGIN"],
                             os.environ["DATAFORSEO_PASSWORD"]))
     if r.status_code >= 400:
-        raise BacklinksError(f"DataForSEO {r.status_code}: {r.text[:200]}")
+        raise BacklinksError(f"백링크 수집에 실패했습니다. 잠시 후 다시 시도해 주세요 ({r.status_code}: {r.text[:200]})")
     d = r.json()
     task = (d.get("tasks") or [{}])[0]
     if task.get("status_code") != 20000:
-        raise BacklinksError(f"DataForSEO: {task.get('status_message')}")
+        raise BacklinksError(f"백링크 수집에 실패했습니다. 잠시 후 다시 시도해 주세요 ({task.get('status_message')})")
     result = task.get("result") or []
     return result, float(d.get("cost") or 0)
 

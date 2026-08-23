@@ -33,6 +33,13 @@ h1 em{font-style:normal;color:var(--mark)}
 .cta:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
 .cta svg{width:17px;height:17px}
 .note{font-size:13px;color:var(--muted);margin-top:14px;font-weight:300}
+.note b{font-weight:500;color:var(--ink)}
+.note-details{margin-top:10px;font-size:13px;color:var(--muted);font-weight:300}
+.note-details summary{cursor:pointer;color:var(--ink);font-weight:500;list-style:none}
+.note-details summary::-webkit-details-marker{display:none}
+.note-details summary::before{content:"+  ";color:var(--muted);font-weight:400}
+.note-details[open] summary::before{content:"−  "}
+.note-details > :not(summary){margin-top:8px;line-height:1.6}
 
 /* ── 시그니처: 1페이지까지 남은 거리 ── */
 .chart{margin-top:56px;border-top:1px solid var(--hair);padding:30px 0 0}
@@ -83,7 +90,7 @@ footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
 
 <header><div class="wrap brandbar">
   <span class="logo">seo-miner</span>
-  <span class="tagline">검색 · AI 답변 가시성 측정</span>
+  <span class="tagline">검색 · AI 답변 가시성 추적</span>
 </div></header>
 
 <main class="wrap">
@@ -96,7 +103,11 @@ footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google 계정으로 시작
     </a>
-    <p class="note">서치콘솔 <b>읽기 전용</b> 권한만 요청합니다. 데이터는 수정·삭제하지 않습니다.</p>
+    <p class="note">구글 확인 절차 전까지 <b>"이 앱은 Google에서 확인하지 않았습니다"</b> 경고가 한 번 뜹니다. <b>[고급] → [seo-miner(으)로 이동]</b>을 눌러 진행해 주세요.</p>
+    <details class="note-details">
+      <summary>권한 범위 안내</summary>
+      <p>서치콘솔 <b>읽기 전용</b> 권한만 요청합니다. 데이터는 수정·삭제하지 않으며, 본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다.</p>
+    </details>
 
     <div class="chart">
       <p class="label">순위 상승 기회 (11~20위)</p>
@@ -135,4 +146,4 @@ footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
   </section>
 </main>
 
-<footer class="wrap">매주 자동 측정으로 데이터가 쌓이고, 분석은 사람이 직접 합니다.</footer>
+<footer class="wrap">주 1회 자동 분석으로 데이터가 쌓이고, 판단은 사람이 직접 합니다.</footer>

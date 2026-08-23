@@ -128,14 +128,14 @@ def _client_id() -> str:
     빈 client_id 로 조용히 굴러가고, 유저가 로그인을 눌러야 실패를 안다."""
     cid = os.environ.get("GOOGLE_CLIENT_ID")
     if not cid:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID 가 설정되지 않았습니다")
+        raise HTTPException(status_code=500, detail="구글 로그인이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GOOGLE_CLIENT_ID)")
     return cid
 
 
 def _flow() -> Flow:
     secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     if not secret:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_SECRET 이 설정되지 않았습니다")
+        raise HTTPException(status_code=500, detail="구글 로그인이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GOOGLE_CLIENT_SECRET)")
     config = {
         "web": {
             "client_id": _client_id(),
@@ -156,7 +156,7 @@ def _uid(request: Request) -> Optional[int]:
 def _require_uid(request: Request) -> int:
     uid = _uid(request)
     if uid is None:
-        raise HTTPException(status_code=401, detail="login required")
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 처음 화면에서 구글 계정으로 로그인해 주세요.")
     return uid
 
 
@@ -180,7 +180,7 @@ def healthz():
 def home(request: Request):
     uid = _uid(request)
     if uid is None:
-        return _html(_page("landing.html"), "seo-miner — 검색·AI 답변 가시성 측정")
+        return _html(_page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
     conn = store.connect()
     try:
         rows = store.sites(conn, uid)
@@ -217,7 +217,7 @@ def home(request: Request):
             .replace("<!--SITES-->", block)
             .replace("<script>",
                      f"<script>window.__TAKEN__={taken};window.__SITES__={site_list};", 1))
-    return _html(page, "내 사이트 — seo-miner")
+    return _html(page, "사이트 관리 — seo-miner")
 
 
 @app.get("/auth/login")
@@ -241,10 +241,10 @@ def auth_login(request: Request):
 def auth_callback(request: Request, code: str, state: str):
     expected = request.session.pop("oauth_state", None)
     if expected is None or state != expected:
-        raise HTTPException(status_code=400, detail="state mismatch")
+        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
     verifier = request.session.pop("code_verifier", None)
     if verifier is None:
-        raise HTTPException(status_code=400, detail="code_verifier 없음 — /auth/login 부터 다시")
+        raise HTTPException(status_code=400, detail="로그인 절차가 중단됐습니다. 처음 화면에서 다시 시작해 주세요.")
     flow = _flow()
     flow.code_verifier = verifier
     flow.fetch_token(code=code)
@@ -317,7 +317,7 @@ async def api_sites(request: Request):
     if isinstance(props, str):
         props = [props]
     if not props:
-        raise HTTPException(status_code=400, detail="고를 속성이 없습니다")
+        raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 선택해 주세요.")
     types = body.get("types") or {}
 
     conn = store.connect()
@@ -359,7 +359,7 @@ def gh_login(request: Request):
     _require_uid(request)
     cid = os.environ.get("GITHUB_CLIENT_ID")
     if not cid:
-        raise HTTPException(status_code=500, detail="GITHUB_CLIENT_ID 가 설정되지 않았습니다")
+        raise HTTPException(status_code=500, detail="GitHub 연동이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GITHUB_CLIENT_ID)")
     state = secrets.token_urlsafe(16)
     request.session["gh_state"] = state
     # repo 스코프: PR 브랜치를 만들려면 쓰기가 필요하다. 머지는 사람이 한다(발행 게이트).
@@ -378,11 +378,11 @@ def _gh_redirect() -> str:
 def gh_callback(request: Request, code: str, state: str):
     uid = _require_uid(request)
     if state != request.session.pop("gh_state", None):
-        raise HTTPException(status_code=400, detail="state mismatch")
+        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
     cid = os.environ.get("GITHUB_CLIENT_ID")
     sec = os.environ.get("GITHUB_CLIENT_SECRET")
     if not (cid and sec):
-        raise HTTPException(status_code=500, detail="GitHub 클라이언트가 설정되지 않았습니다")
+        raise HTTPException(status_code=500, detail="GitHub 연동이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요.")
     token = gh.exchange_code(cid, sec, code)
     conn = store.connect()
     try:
@@ -395,7 +395,7 @@ def gh_callback(request: Request, code: str, state: str):
 def _gh_token(conn, uid: int) -> str:
     got = store.github(conn, uid)
     if not got:
-        raise HTTPException(status_code=428, detail="GitHub 연결이 필요합니다")
+        raise HTTPException(status_code=428, detail="GitHub 계정을 먼저 연결해 주세요. 사이트 화면에서 연결할 수 있습니다.")
     return got[0]
 
 
@@ -438,7 +438,7 @@ async def api_create(request: Request):
         _own(conn, uid, project)
         row = store.site(conn, uid, project)
         if not row or not row["repo"]:
-            raise HTTPException(status_code=428, detail="이 사이트에 연결된 저장소가 없습니다")
+            raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결되지 않았습니다. 사이트 화면에서 저장소를 먼저 선택해 주세요.")
         token = _gh_token(conn, uid)
         repo, branch = row["repo"], row["repo_branch"] or "main"
 
@@ -449,7 +449,7 @@ async def api_create(request: Request):
                 opp = c.execute("SELECT * FROM opportunities WHERE id=? AND project_id=?",
                                 (opp_id, p["id"])).fetchone()
                 if not opp:
-                    raise HTTPException(status_code=404, detail="그런 기회가 없습니다")
+                    raise HTTPException(status_code=404, detail="선택한 개선 기회를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.")
                 opp = dict(opp)
                 ev = c.execute(
                     "SELECT SUM(clicks) c, SUM(impressions) i, AVG(position) pos "
@@ -504,7 +504,7 @@ async def api_run(request: Request):
     stages = [x for x in str(body.get("stages") or "").split(",") if x]
     bad = [x for x in stages if x not in STAGES]
     if bad:
-        raise HTTPException(status_code=400, detail=f"모르는 단계: {', '.join(bad)}")
+        raise HTTPException(status_code=400, detail=f"실행할 수 없는 단계입니다: {', '.join(bad)}")
 
     conn = store.connect()
     try:
@@ -558,8 +558,10 @@ def api_export(project: str, table: str, request: Request):
         _own(conn, uid, project)
         with store.tenant(conn, uid):
             data, name = exports.csv_bytes(project, table)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        # exports 의 ValueError 는 개발자용 문구다 — 그대로 내보내지 않는다.
+        raise HTTPException(status_code=400,
+                            detail="내려받을 수 없는 항목입니다. 화면에서 다시 선택해 주세요.")
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:
@@ -637,7 +639,7 @@ async def api_keywords_set(request: Request):
     ids = [int(x) for x in (b.get("ids") or [])][:500]
     on = bool(b.get("active"))
     if not ids:
-        raise HTTPException(status_code=400, detail="고른 키워드가 없습니다")
+        raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 선택해 주세요.")
     conn = store.connect()
     try:
         _own(conn, uid, project)
@@ -653,7 +655,7 @@ async def api_keywords_set(request: Request):
                     if room == 0:
                         raise HTTPException(
                             status_code=409,
-                            detail=f"추적 상한 {limit}개가 찼습니다 — 먼저 뺄 것을 고르세요")
+                            detail=f"추적 키워드가 한도({limit}개)에 도달했습니다. [추적 중] 탭에서 일부를 해제한 뒤 추가해 주세요.")
                     ids = ids[:room]
                 q = ",".join("?" * len(ids))
                 c.execute(f"UPDATE keywords SET is_active=? WHERE project_id=? AND id IN ({q})",
@@ -726,7 +728,7 @@ def api_run_status(request: Request):
 
 def _own(conn, uid: int, project: str) -> None:
     if not any(r["project"] == project for r in store.sites(conn, uid)):
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
 
 
 # --- 대시보드 -----------------------------------------------------------------
@@ -924,16 +926,16 @@ _DASH_ADDON = """
     var b = ev.target.closest ? ev.target.closest("[data-write]") : null;
     if (!b) return;
     var id = b.getAttribute("data-write");
-    b.disabled = true; b.textContent = "쓰는 중…";
+    b.disabled = true; b.textContent = "작성 중…";
     try {
       var r = await fetch("/api/create", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), opportunity_id: Number(id)})});
       var d = await r.json();
-      if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 열림 →</a>'; return; }
-      if (r.status === 428) { b.outerHTML = '<a href="/">저장소 연결 필요 →</a>'; return; }
-      b.textContent = "실패: " + (d.detail || "").slice(0, 60); b.disabled = false;
-    } catch (e) { b.textContent = "실패"; b.disabled = false; }
+      if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 확인하기 →</a>'; return; }
+      if (r.status === 428) { b.outerHTML = '<a href="/">저장소를 먼저 연결하세요 →</a>'; return; }
+      b.textContent = (d.detail || "작성하지 못했습니다").slice(0, 60); b.disabled = false;
+    } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
   });
 
   // ── 용어 통일 ──────────────────────────────────────────────
@@ -1055,9 +1057,9 @@ _DASH_ADDON = """
       var r = await fetch("/api/run", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), stages: stage})});
-      if (!r.ok) { var d = await r.json(); btn.textContent = (d.detail || "실패").slice(0, 40); }
+      if (!r.ok) { var d = await r.json(); btn.textContent = (d.detail || "실행하지 못했습니다").slice(0, 44); }
       else { btn.textContent = "실행 시작"; }
-    } catch (e) { btn.textContent = "실패"; }
+    } catch (e) { btn.textContent = "서버에 연결하지 못했습니다"; }
     poll();
     setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
   }
@@ -1199,7 +1201,7 @@ _DASH_ADDON = """
     try {
       d = await (await fetch("/api/keywords?status=" + kwMode +
                              "&project=" + encodeURIComponent(proj()))).json();
-    } catch (e) { list.innerHTML = '<p style="padding:14px">불러오지 못했습니다</p>'; return; }
+    } catch (e) { list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">키워드를 불러오지 못했습니다. 새로고침해 주세요.</p>'; return; }
     var ks = d.keywords || [];
     box.querySelector(".cnt").innerHTML = "추적 키워드 " + d.active_total + " / " + d.limit +
       (d.active_total >= d.limit ? ' <b class="warn">· 한도 도달</b>' : "");
@@ -1230,7 +1232,7 @@ _DASH_ADDON = """
         body: JSON.stringify({project: proj(), ids: ids, active: on})});
       var d = await r.json();
       if (!r.ok) { box.querySelector(".cnt").innerHTML =
-        '<b class="warn">' + esc(d.detail || "실패") + "</b>"; }
+        '<b class="warn">' + esc(d.detail || "변경하지 못했습니다") + "</b>"; }
     } catch (e) {}
     btn.disabled = false;
     kwLoad();
@@ -1324,7 +1326,7 @@ _DASH_ADDON = """
       if (!m) return;
       var w = document.createElement("button");
       w.setAttribute("data-write", m[1]);
-      w.textContent = "글 쓰기";
+      w.textContent = "콘텐츠 작성";
       box.appendChild(w);
     });
   };
@@ -1386,7 +1388,7 @@ async def api_opp(request: Request):
     uid = _require_uid(request)
     body = await request.json()
     if body.get("status") not in db.OPP_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status must be one of {db.OPP_STATUSES}")
+        raise HTTPException(status_code=400, detail="처리할 수 없는 상태값입니다. 새로고침 후 다시 시도해 주세요.")
     conn = store.connect()
     try:
         with store.tenant(conn, uid):
