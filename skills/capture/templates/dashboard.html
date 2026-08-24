@@ -129,6 +129,35 @@ tr:last-child td { border-bottom:0; }
 .empty { font-size:13px; color:var(--slate); padding:14px 0;
   border-top:1px solid var(--rule-soft); }
 
+/* ── 표 살림: 긴 표를 실제로 읽을 수 있게 ─────────────────────
+   시추공은 깊다 — 표가 40줄을 넘으면 머리글이 화면 밖으로 나간다. 머리글을 붙박고,
+   줄에 손을 얹으면 그 줄만 밝히고, 숫자 열은 눌러서 정렬한다. */
+.tw { overflow:auto; max-height:min(62vh,560px); }
+.tw table { min-width:100%; }
+.tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
+  padding-top:9px; }
+tbody tr:hover { background:var(--bar); }
+th[data-s] { cursor:pointer; user-select:none; }
+th[data-s]:hover { color:var(--patina); }
+th[data-s]::after { content:"↕"; margin-left:5px; opacity:.32; font-size:9px; }
+th[data-s].asc::after { content:"↑"; opacity:1; color:var(--patina); }
+th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
+/* 표 위 도구줄: 찾기·개수·내보내기. 표가 길 때만 붙는다. */
+.tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 11px; }
+.tools input { width:auto; flex:1 1 190px; max-width:280px; font-family:var(--mono);
+  font-size:12.5px; }
+.tools .n { font:400 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--slate); white-space:nowrap; }
+.tools .sp { flex:1; }
+.tools .go { flex:0 0 auto; }
+/* 빈 화면은 막다른 길이 아니라 다음 한 걸음 — 뭘 하면 채워지는지 같이 준다. */
+.empty .cmd { margin-top:9px; }
+/* 열 이름 옆 근거: 이 숫자가 어디서 온 건지 그 자리에서 답한다. */
+.hint { display:inline-block; width:13px; height:13px; margin-left:5px; border-radius:50%;
+  border:1px solid var(--rule); font:400 9px/11px var(--mono); text-align:center;
+  color:var(--slate); cursor:help; vertical-align:1px; }
+.hint:hover { border-color:var(--patina); color:var(--patina); }
+
 /* ── 기회 트리아지 ──────────────────────────────────────── */
 .opp { display:grid; grid-template-columns:auto 1fr auto; gap:0 14px;
   padding:13px 0; border-bottom:1px solid var(--rule-soft); align-items:baseline; }
@@ -518,11 +547,47 @@ const rankDelta = rd => {
            `${Math.abs(d)} — ±${(RULES.rank_noise || 3) - 1}칸은 노이즈로 봅니다">보합</span>`;
   return delta(d);
 };
-const table = (heads, rows) => rows.length
-  ? `<table><thead><tr>${heads.map(h => `<th${h.startsWith(">") ? ' class="num"' : ""}>` +
-      `${esc(h.replace(/^>/,""))}</th>`).join("")}</tr></thead><tbody>` +
-    `${rows.join("")}</tbody></table>`
-  : `<div class="empty">아직 데이터가 없습니다.</div>`;
+// 머리글 표기: ">"로 시작하면 숫자 열(우측 정렬), "?"뒤는 그 열의 근거 설명.
+//   ">순위?구글이 보고한 평균 게재순위"
+// 줄이 SORT_MIN 을 넘으면 머리글이 정렬 손잡이가 되고 머리글 자체가 붙박인다.
+const SORT_MIN = 8;
+const table = (heads, rows, empty) => {
+  if (!rows.length)
+    return `<div class="empty">${empty || "아직 데이터가 없습니다."}</div>`;
+  const long = rows.length >= SORT_MIN;
+  const th = heads.map((h, i) => {
+    const num = h.startsWith(">");
+    const [name, why] = h.replace(/^>/, "").split("?");
+    return `<th class="${num ? "num" : ""}"${long ? ` data-s="${i}"` : ""}>` +
+      `${esc(name)}${why ? `<i class="hint" title="${esc(why)}">i</i>` : ""}</th>`;
+  }).join("");
+  const t = `<table><thead><tr>${th}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+  return long ? `<div class="tw">${t}</div>` : t;
+};
+
+// 정렬은 위임 한 곳에서. 표를 그리는 쪽은 아무것도 안 해도 된다.
+document.addEventListener("click", e => {
+  const th = e.target.closest("th[data-s]");
+  if (!th) return;
+  const i = +th.dataset.s, tbl = th.closest("table");
+  const desc = !th.classList.contains("desc");
+  tbl.querySelectorAll("th[data-s]").forEach(o => o.classList.remove("asc", "desc"));
+  th.classList.add(desc ? "desc" : "asc");
+  const body = tbl.tBodies[0];
+  // 숫자 열이면 숫자로, 아니면 글자로. "12위"·"1,204"·"+8" 같은 표기에서 수를 꺼낸다.
+  const key = tr => {
+    const c = tr.cells[i]; if (!c) return desc ? -Infinity : Infinity;
+    const t = c.textContent.trim();
+    if (!th.classList.contains("num")) return t;
+    const n = parseFloat(t.replace(/[^\d.+-]/g, ""));
+    return Number.isFinite(n) ? n : (desc ? -Infinity : Infinity);
+  };
+  [...body.rows]
+    .sort((a, b) => { const x = key(a), y = key(b);
+      const r = typeof x === "string" ? x.localeCompare(y, "ko") : x - y;
+      return desc ? -r : r; })
+    .forEach(tr => body.appendChild(tr));
+});
 
 // 브라우저는 아무 사이트에서나 127.0.0.1로 POST를 보낼 수 있어서 서버가 1회용 토큰을
 // 요구한다 — 대시보드를 띄울 때 받은 주소(?t=…)에 들어 있다.
