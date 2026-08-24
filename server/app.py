@@ -823,6 +823,32 @@ _TERMS_JS = """
      "분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석"]
   ];
 
+  // 빈 상태 문구는 "이 명령을 치세요"로 끝난다 — 웹에는 칠 곳이 없다.
+  // <code> 가 끼어 있어 문장 전체 일치로는 안 걸리므로 .empty 는 통째로 갈아 끼운다.
+  var EMPTY = [
+    [/구글 실적을 아직 안 읽었습니다/,
+     "검색 실적을 아직 수집하지 않았습니다 — 왼쪽 [검색 실적]을 실행하면 채워집니다."],
+    [/일별 실적이 아직 없습니다/,
+     "일별 데이터가 아직 없습니다 — 왼쪽 [검색 실적]을 실행하면 최근 28일이 채워집니다."],
+    [/기기별 실적을 아직 안 읽었습니다|모바일.*아직 안 읽었습니다/,
+     "기기별 데이터를 아직 수집하지 않았습니다 — 왼쪽 [검색 실적]을 실행하면 채워집니다."],
+    [/색인 점검을 아직 안 했습니다/,
+     "색인 생성을 아직 확인하지 않았습니다 — 왼쪽 [색인 생성]을 실행하면 채워집니다."],
+    [/아직 뽑은 게 없습니다/,
+     "아직 도출된 개선 기회가 없습니다 — 왼쪽 [개선 기회]를 실행하면 채워집니다."],
+    [/아직 안 물어봤습니다/,
+     "AI 인용을 아직 확인하지 않았습니다 — 왼쪽 [AI 인용]을 실행하면 채워집니다."]
+  ];
+
+  function reempty(root) {
+    (root || document).querySelectorAll(".empty").forEach(function (el) {
+      var t = el.textContent || "";
+      for (var i = 0; i < EMPTY.length; i++) {
+        if (EMPTY[i][0].test(t)) { el.textContent = EMPTY[i][1]; return; }
+      }
+    });
+  }
+
   function resentence(root) {
     (root || document).querySelectorAll(
       ".sub,.legend,.empty,.note,.gain,#nx,.stp p,#docban,#guide .lead,.band + p"
@@ -876,6 +902,7 @@ _REPORT_ADDON = ("""
 @@TERMS@@
   retitle();
   resentence();
+  reempty();
   document.title = "SEO 보고서 — seo-miner";
 
   // 백링크는 원본 화면에 없는 축이다. 보고서에는 값이 박혀 오므로 그대로 그린다.
@@ -1120,6 +1147,7 @@ _DASH_ADDON = ("""
 
   retitle();
   resentence();
+  reempty();
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
   // 안내의 '이 명령을 치세요' 버튼을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
@@ -1408,7 +1436,7 @@ _DASH_ADDON = ("""
       box.appendChild(w);
     });
   };
-  var all = function () { wire(); wireSteps(); retitle(); resentence(); };
+  var all = function () { wire(); wireSteps(); retitle(); resentence(); reempty(); };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();
 })();
