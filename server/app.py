@@ -1082,6 +1082,16 @@ _DASH_ADDON = ("""
   th{letter-spacing:.05em}
   .opp .kind{letter-spacing:.05em}
 
+  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
+  #sm-wait{margin:0 0 22px;padding:13px 16px;border-left:2px solid var(--patina);
+    background:var(--wash);color:var(--ink);font-size:13.5px;line-height:1.6}
+  #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--patina);margin-right:9px;vertical-align:middle}
+  @media (prefers-reduced-motion:no-preference){
+    #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
+    @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  }
+
   /* 안내 단계의 실행 버튼 — 원본 .cmd 는 명령어를 복사하는 칩이었다. */
   .stp .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--patina);
     background:transparent;color:var(--patina);border-radius:3px;padding:5px 12px}
@@ -1103,11 +1113,31 @@ _DASH_ADDON = ("""
     var p = document.getElementById("proj");
     return p ? p.value : "";
   }
+  // 분석은 워커가 백그라운드로 돈다. 끝난 걸 화면이 모르면 유저는 빈 대시보드를
+  // 보고 있다가 직접 새로고침해야 한다 — 첫 분석이면 그게 이탈 지점이다.
+  var ran = null;
   function paint(st) {
     var r = st && st[proj()];
     if (!r) return;
     b.disabled = !!r.running;
     b.textContent = r.running ? "분석 중…" : "전체 분석 실행";
+    waiting(r);
+    if (ran && !r.running) { load(); loadDoctor(); }   // 끝나면 스스로 채워진다
+    ran = r.running;
+  }
+
+  // 도는 동안 화면은 빈 상태 문구로 뒤덮인다 — "실행하세요"라고 잘못 안내한다.
+  function waiting(r) {
+    var el = document.getElementById("sm-wait"), main = document.querySelector("main");
+    if (!r.running) { if (el) el.remove(); return; }
+    if (el || !main) return;
+    el = document.createElement("p");
+    el.id = "sm-wait";
+    el.textContent = r.last_run_at
+      ? "다시 분석하는 중입니다 — 끝나면 이 화면이 자동으로 갱신됩니다."
+      : "첫 분석이 진행 중입니다 — 검색 실적부터 개선 기회까지 순서대로 수집합니다. " +
+        "몇 분 걸리고, 끝나면 이 화면이 자동으로 갱신됩니다.";
+    main.insertBefore(el, main.firstChild);
   }
   async function poll() {
     try { paint(await (await fetch("/api/run/status")).json()); } catch (e) {}
@@ -1125,7 +1155,7 @@ _DASH_ADDON = ("""
   var sel = document.getElementById("proj");
   if (sel) sel.addEventListener("change", poll);
   poll();
-  setInterval(poll, 15000);   // 측정이 끝나면 버튼이 스스로 풀린다
+  setInterval(poll, 8000);    // 끝나면 버튼이 풀리고 화면이 스스로 채워진다
 
   // 기회 카드마다 '글 쓰기' — /create run 의 자리다. 리포가 안 붙어 있으면 서버가
   // 428 로 알려 주고, 그때 연결 링크를 보여 준다.
