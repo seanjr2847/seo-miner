@@ -541,6 +541,15 @@ def api_report(project: str, request: Request):
         with store.tenant(conn, uid):
             path = dashboard.export(project)
             data = Path(path).read_bytes()
+            # 화면과 보고서가 다른 말을 쓰면 안 된다 — export 는 원본 템플릿만 쓰므로
+            # 여기서 용어·자간을 얹는다. 백링크는 원본 payload 에 없어서 값을 박아 넣는다.
+            try:
+                bl = backlinks.latest(project)
+            except Exception:
+                bl = None
+        blob = json.dumps(bl or {}, ensure_ascii=False).replace("</", "<\/")
+        data += (f"<script>window.__BACKLINKS__={blob}</script>").encode("utf-8")
+        data += _REPORT_ADDON
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:
@@ -737,7 +746,177 @@ def _own(conn, uid: int, project: str) -> None:
 
 # 로컬 대시보드는 조회 전용이고, 실행은 Claude Code 에서 /capture run 으로 했다.
 # 웹에는 명령을 칠 곳이 없다 — 원본 HTML 을 고치는 대신 뒤에 얹어서 버튼을 만든다.
-_DASH_ADDON = """
+# 용어 치환 스크립트 — 대시보드와 보고서가 같은 말을 쓰게 한다.
+# 보고서는 서버·인터넷 없이 열려야 하므로 여기에 외부 링크를 넣지 않는다.
+_TERMS_JS = """
+  // ── 용어 통일 ──────────────────────────────────────────────
+  // 원본은 쉬운 우리말을 골랐지만("손댈 것", "채굴 로그"), 마케터는 서치콘솔 한국어
+  // UI 와 업계 표준어로 생각한다. 원본 HTML 은 그대로 두고 표시 문구만 바꿔 끼운다.
+  var TERMS = {
+    "채굴 로그": "SEO 대시보드",
+    "다음에 뭘 하면 되나": "분석 절차",
+    "1페이지까지 남은 거리": "순위 상승 기회",
+    "4~20위 · 노출 많은 순": "11~20위 · 노출수 많은 순",
+    "다음에 손댈 것": "개선 기회",
+    "다음 행동": "권장 조치",
+    "움직인 검색어": "순위 변동",
+    "모바일에서 밀리는 검색어": "모바일 순위 격차",
+    "MOBILE vs DESKTOP": "MOBILE vs DESKTOP",
+    "색인 문제": "색인 생성 오류",
+    "URL 검사": "URL 검사",
+    "AI가 누구를 인용하나": "AI 인용 현황",
+    "수집 이력": "실행 기록",
+    "순위 기록": "순위 추적 기록",
+    "성과일 기준 · 하루 = 점 하나": "성과일 기준 · 일별",
+    "이 도구를 쓰는 순서 · 6단계": "분석 절차 · 6단계",
+    // KPI 라벨 — 서치콘솔 한국어 표기를 따른다
+    "클릭": "총 클릭수",
+    "노출": "총 노출수",
+    "노출된 검색어": "검색어 수",
+    "남은 기회": "개선 기회"
+  };
+
+  // 본문 설명글 — 원본 어투가 제목만 바꾼 표준어와 어긋난다. 문장 단위로만 갈아끼운다.
+  // 부분 일치를 쓰지 않는다: 검색어·URL 에 같은 조각이 들어 있으면 데이터가 바뀐다.
+  var SENTENCES = {
+    "위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.":
+      "위 지표의 증감은 직전 분석 대비 값입니다. 아래 그래프는 일별 추이입니다.",
+    "누르면 바로 저장됩니다. 왜 뽑혔는지는 회색 글씨를 눌러 펼칩니다.":
+      "선택하면 바로 저장됩니다. 회색 글씨를 누르면 선정 근거가 펼쳐집니다.",
+    "검사한 URL이 전부 색인돼 있습니다.": "검사한 URL 이 모두 색인 생성됐습니다.",
+    "기간이 다른 기록끼리는 비교하지 않습니다.": "기간이 다른 분석 결과는 비교하지 않습니다.",
+    "아직 데이터가 없습니다.": "아직 수집된 데이터가 없습니다.",
+    "아직 수집한 적이 없습니다.": "아직 실행한 적이 없습니다.",
+    "모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.":
+      "모바일 게재순위가 크게 낮은 검색어가 없습니다.",
+    "남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.":
+      "경쟁사 브랜드 필터가 비어 있어 타사 브랜드 검색어가 섞일 수 있습니다.",
+    "매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.":
+      "순위 추적에는 SERP 데이터 연동이 필요합니다. 없어도 나머지 분석은 모두 동작합니다.",
+
+    // 분석 절차 6단계 설명 — 원본은 구어체다.
+    "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.":
+      "분석할 도메인과 시드 키워드를 지정합니다.",
+    "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.":
+      "서치콘솔에서 노출수·클릭수·평균 게재순위를 수집합니다. 이후 모든 분석이 이 실측값을 기준으로 합니다.",
+    "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 늘린 만큼 다음 단계가 볼 게 많아집니다.":
+      "검색 자동완성으로 키워드 후보를 발굴해 추적 목록을 구성합니다. 추가 비용이 없습니다.",
+    "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. OpenRouter 키가 필요합니다.":
+      "ChatGPT·Perplexity·Gemini 답변에서 인용되는 도메인을 확인합니다. OpenRouter 연동이 필요합니다.",
+    "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.":
+      "수집한 데이터에서 개선 기회를 산출합니다 — 순위 상승 기회, AI 인용 격차, 프로그래매틱 SEO 패턴.",
+    "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 나가고, 끝나면 그 기회가 완료로 닫힙니다.":
+      "도출된 개선 기회를 저장소의 콘텐츠 변경으로 반영합니다. 별도 브랜치와 PR 로 제출됩니다."
+  };
+
+  // 값이 끼어 있어 문장이 매번 달라지는 것들 — 조각만 바꾼다.
+  var PARTS = [
+    [/노출은 이미 나오는 검색어라, 순위만 밀면 클릭으로 바뀝니다\./g,
+     "이미 노출되는 검색어이므로 게재순위만 올리면 클릭으로 이어집니다."],
+    [/개가 2페이지에 있습니다/g, "개가 2페이지(11위 이하)에 있습니다"],
+    [/막대만큼 밀면 1페이지/g, "막대만큼 올리면 1페이지"],
+    [/자릿수가 달라 세로축은 각자입니다/g, "자릿수가 달라 세로축은 각각 적용됩니다"],
+    [/일치끼리\)/g, "일 기준\)"],
+    [/지금 할 것/g, "권장 조치"],
+    [/AI 노출 확인/g, "AI 인용 확인"],
+    [/재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는/g,
+     "분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석"]
+  ];
+
+  function resentence(root) {
+    (root || document).querySelectorAll(
+      ".sub,.legend,.empty,.note,.gain,#nx,.stp p,#docban,#guide .lead,.band + p"
+    ).forEach(function (el) {
+      var t = el.textContent.trim();
+      if (SENTENCES[t]) { el.textContent = SENTENCES[t]; return; }
+      // 텍스트 노드만 훑는다 — innerHTML 을 갈면 안에 든 <b>·<code> 가 날아간다.
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      var n;
+      while ((n = w.nextNode())) {
+        PARTS.forEach(function (r) {
+          if (r[0].test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(r[0], r[1]);
+        });
+      }
+    });
+  }
+
+  function retitle(root) {
+    // 제목·라벨만 건드린다. 본문까지 훑으면 데이터(검색어·URL)를 바꿔 버린다.
+    (root || document).querySelectorAll(
+      "h2,.eyebrow,.band .l,.tag,#nx b,.stp h3,.opp .kind"
+    ).forEach(function (el) {
+      var t = (el.firstChild && el.firstChild.nodeValue || "").trim();
+      if (t && TERMS[t] && el.firstChild.nodeValue.indexOf(TERMS[t]) === -1) {
+        el.firstChild.nodeValue = el.firstChild.nodeValue.replace(t, TERMS[t]);
+      }
+    });
+  }
+"""
+
+
+# 보고서용 애드온 — 대시보드와 같은 용어·자간을 쓰되 실행 버튼과 외부 폰트는 뺀다.
+# 보고서는 손댈 수 없는 기록이고, 서버도 인터넷도 없이 열려야 한다(원본 export 의 약속).
+_REPORT_ADDON = ("""
+<style>
+  body{word-break:keep-all}
+  /* 원본 자간은 영문 대문자 기준이라 한글이 흩어진다 */
+  .eyebrow{letter-spacing:.08em}
+  .band .l{letter-spacing:.03em;font-family:var(--sans);font-weight:500}
+  .tag{letter-spacing:.12em}
+  th{letter-spacing:.05em}
+  .opp .kind{letter-spacing:.05em}
+  #sm-bl{padding:26px 0 10px}
+  #sm-bl table{width:100%;table-layout:fixed}
+  #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
+  #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
+  #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
+</style>
+<script>
+(function () {
+@@TERMS@@
+  retitle();
+  resentence();
+  document.title = "SEO 보고서 — seo-miner";
+
+  // 백링크는 원본 화면에 없는 축이다. 보고서에는 값이 박혀 오므로 그대로 그린다.
+  var bl = window.__BACKLINKS__;
+  if (bl && bl.summary) {
+    var esc = function (x) {
+      return String(x).replace(/[&<>"]/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c];
+      });
+    };
+    var s = bl.summary;
+    var rows = (bl.domains || []).map(function (x) {
+      return "<tr><td>" + esc(x.domain) + '</td><td class="num">' +
+        (x.rank == null ? "" : x.rank) + '</td><td class="num">' + (x.backlinks || 0) +
+        '</td><td class="num">' + (x.dofollow || 0) + "</td><td>" +
+        esc(x.first_seen ? String(x.first_seen).slice(0, 10) : "") + "</td></tr>";
+    }).join("");
+    var sec = document.createElement("section");
+    sec.id = "sm-bl";
+    sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + "</p>" +
+      "<h2>백링크 프로필</h2>" +
+      '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
+      '<div class="band" style="margin-bottom:18px">' +
+      '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
+      '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크</div></div>' +
+      '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
+      '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">손실 백링크</div></div>' +
+      '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 지수</div></div>' +
+      "</div>" +
+      (rows ? '<table><thead><tr><th>참조 도메인</th><th class="num">지수</th>' +
+        '<th class="num">백링크</th><th class="num">dofollow</th><th>최초 발견</th></tr></thead>' +
+        "<tbody>" + rows + "</tbody></table>" : "");
+    var main = document.querySelector("main");
+    if (main) main.appendChild(sec);
+  }
+})();
+</script>
+""".replace("@@TERMS@@", _TERMS_JS)).encode("utf-8")
+
+
+_DASH_ADDON = ("""
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -889,6 +1068,7 @@ _DASH_ADDON = """
 </style>
 <script>
 (function () {
+@@TERMS@@
   var b = document.createElement("button");
   b.id = "sm-run"; b.textContent = "전체 분석 실행";
 
@@ -938,108 +1118,6 @@ _DASH_ADDON = """
     } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
   });
 
-  // ── 용어 통일 ──────────────────────────────────────────────
-  // 원본은 쉬운 우리말을 골랐지만("손댈 것", "채굴 로그"), 마케터는 서치콘솔 한국어
-  // UI 와 업계 표준어로 생각한다. 원본 HTML 은 그대로 두고 표시 문구만 바꿔 끼운다.
-  var TERMS = {
-    "채굴 로그": "SEO 대시보드",
-    "다음에 뭘 하면 되나": "분석 절차",
-    "1페이지까지 남은 거리": "순위 상승 기회",
-    "4~20위 · 노출 많은 순": "11~20위 · 노출수 많은 순",
-    "다음에 손댈 것": "개선 기회",
-    "다음 행동": "권장 조치",
-    "움직인 검색어": "순위 변동",
-    "모바일에서 밀리는 검색어": "모바일 순위 격차",
-    "MOBILE vs DESKTOP": "MOBILE vs DESKTOP",
-    "색인 문제": "색인 생성 오류",
-    "URL 검사": "URL 검사",
-    "AI가 누구를 인용하나": "AI 인용 현황",
-    "수집 이력": "실행 기록",
-    "순위 기록": "순위 추적 기록",
-    "성과일 기준 · 하루 = 점 하나": "성과일 기준 · 일별",
-    "이 도구를 쓰는 순서 · 6단계": "분석 절차 · 6단계",
-    // KPI 라벨 — 서치콘솔 한국어 표기를 따른다
-    "클릭": "총 클릭수",
-    "노출": "총 노출수",
-    "노출된 검색어": "검색어 수",
-    "남은 기회": "개선 기회"
-  };
-
-  // 본문 설명글 — 원본 어투가 제목만 바꾼 표준어와 어긋난다. 문장 단위로만 갈아끼운다.
-  // 부분 일치를 쓰지 않는다: 검색어·URL 에 같은 조각이 들어 있으면 데이터가 바뀐다.
-  var SENTENCES = {
-    "위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.":
-      "위 지표의 증감은 직전 분석 대비 값입니다. 아래 그래프는 일별 추이입니다.",
-    "누르면 바로 저장됩니다. 왜 뽑혔는지는 회색 글씨를 눌러 펼칩니다.":
-      "선택하면 바로 저장됩니다. 회색 글씨를 누르면 선정 근거가 펼쳐집니다.",
-    "검사한 URL이 전부 색인돼 있습니다.": "검사한 URL 이 모두 색인 생성됐습니다.",
-    "기간이 다른 기록끼리는 비교하지 않습니다.": "기간이 다른 분석 결과는 비교하지 않습니다.",
-    "아직 데이터가 없습니다.": "아직 수집된 데이터가 없습니다.",
-    "아직 수집한 적이 없습니다.": "아직 실행한 적이 없습니다.",
-    "모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.":
-      "모바일 게재순위가 크게 낮은 검색어가 없습니다.",
-    "남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.":
-      "경쟁사 브랜드 필터가 비어 있어 타사 브랜드 검색어가 섞일 수 있습니다.",
-    "매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.":
-      "순위 추적에는 SERP 데이터 연동이 필요합니다. 없어도 나머지 분석은 모두 동작합니다.",
-
-    // 분석 절차 6단계 설명 — 원본은 구어체다.
-    "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.":
-      "분석할 도메인과 시드 키워드를 지정합니다.",
-    "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.":
-      "서치콘솔에서 노출수·클릭수·평균 게재순위를 수집합니다. 이후 모든 분석이 이 실측값을 기준으로 합니다.",
-    "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 늘린 만큼 다음 단계가 볼 게 많아집니다.":
-      "검색 자동완성으로 키워드 후보를 발굴해 추적 목록을 구성합니다. 추가 비용이 없습니다.",
-    "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. OpenRouter 키가 필요합니다.":
-      "ChatGPT·Perplexity·Gemini 답변에서 인용되는 도메인을 확인합니다. OpenRouter 연동이 필요합니다.",
-    "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.":
-      "수집한 데이터에서 개선 기회를 산출합니다 — 순위 상승 기회, AI 인용 격차, 프로그래매틱 SEO 패턴.",
-    "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 나가고, 끝나면 그 기회가 완료로 닫힙니다.":
-      "도출된 개선 기회를 저장소의 콘텐츠 변경으로 반영합니다. 별도 브랜치와 PR 로 제출됩니다."
-  };
-
-  // 값이 끼어 있어 문장이 매번 달라지는 것들 — 조각만 바꾼다.
-  var PARTS = [
-    [/노출은 이미 나오는 검색어라, 순위만 밀면 클릭으로 바뀝니다\./g,
-     "이미 노출되는 검색어이므로 게재순위만 올리면 클릭으로 이어집니다."],
-    [/개가 2페이지에 있습니다/g, "개가 2페이지(11위 이하)에 있습니다"],
-    [/막대만큼 밀면 1페이지/g, "막대만큼 올리면 1페이지"],
-    [/자릿수가 달라 세로축은 각자입니다/g, "자릿수가 달라 세로축은 각각 적용됩니다"],
-    [/일치끼리\)/g, "일 기준\)"],
-    [/지금 할 것/g, "권장 조치"],
-    [/AI 노출 확인/g, "AI 인용 확인"],
-    [/재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는/g,
-     "분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석"]
-  ];
-
-  function resentence(root) {
-    (root || document).querySelectorAll(
-      ".sub,.legend,.empty,.note,.gain,#nx,.stp p,#docban,#guide .lead,.band + p"
-    ).forEach(function (el) {
-      var t = el.textContent.trim();
-      if (SENTENCES[t]) { el.textContent = SENTENCES[t]; return; }
-      // 텍스트 노드만 훑는다 — innerHTML 을 갈면 안에 든 <b>·<code> 가 날아간다.
-      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      var n;
-      while ((n = w.nextNode())) {
-        PARTS.forEach(function (r) {
-          if (r[0].test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(r[0], r[1]);
-        });
-      }
-    });
-  }
-
-  function retitle(root) {
-    // 제목·라벨만 건드린다. 본문까지 훑으면 데이터(검색어·URL)를 바꿔 버린다.
-    (root || document).querySelectorAll(
-      "h2,.eyebrow,.band .l,.tag,#nx b,.stp h3,.opp .kind"
-    ).forEach(function (el) {
-      var t = (el.firstChild && el.firstChild.nodeValue || "").trim();
-      if (t && TERMS[t] && el.firstChild.nodeValue.indexOf(TERMS[t]) === -1) {
-        el.firstChild.nodeValue = el.firstChild.nodeValue.replace(t, TERMS[t]);
-      }
-    });
-  }
   retitle();
   resentence();
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
@@ -1335,7 +1413,7 @@ _DASH_ADDON = """
   all();
 })();
 </script>
-""".encode("utf-8")
+""".replace("@@TERMS@@", _TERMS_JS)).encode("utf-8")
 
 
 @app.get("/d")

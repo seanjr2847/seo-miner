@@ -126,6 +126,26 @@ def _mail_stats(project: str) -> dict:
     return out
 
 
+def _email_of(conn, site) -> str | None:
+    """due_sites() 는 email 을 JOIN 해 주지만 sites() 는 아니다 — 웹에서 실행한
+    단일 사이트 경로(--user --project)가 여기서 터졌다."""
+    try:
+        return site["email"]
+    except (IndexError, KeyError):
+        r = conn.execute("SELECT email FROM users WHERE id=?",
+                         (site["user_id"],)).fetchone()
+        return r["email"] if r else None
+
+
+def _latest_report(project: str) -> bytes | None:
+    """report 단계가 방금 만든 보고서. tenant 안에서만 부른다."""
+    try:
+        files = sorted((db.CAPTURE_HOME / "reports" / project).glob("*.html"))
+        return files[-1].read_bytes() if files else None
+    except Exception:
+        return None
+
+
 def _backlinks_due(project: str, every_days: float) -> bool:
     """마지막 수집이 every_days 를 넘겼나. 기록이 없으면 잰다."""
     if every_days <= 0:
@@ -179,11 +199,19 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                     print(f"[{project}] 키워드 {n}개 활성화 (서치콘솔 노출 기준)")
             except Exception as e:
                 print(f"[{project}] 키워드 활성화 건너뜀: {e}")
-        # 수집이 끝났다고 알린다 — 몇 분 걸리는 일이라 창을 닫고 잊는다.
+
+            # 메일 재료는 반드시 tenant 안에서 모은다 — 밖에서는 db.CAPTURE_HOME 이
+            # 서버 기본 경로를 가리켜 남의(혹은 빈) Brain 을 읽는다.
+            stats, rep, to = None, None, _email_of(conn, site)
+            if not dry_run and rc == 0 and mailer.available() and to:
+                stats = _mail_stats(project)
+                rep = _latest_report(project)
+
+        # 발송은 네트워크 작업이라 tenant 밖에서 한다.
         # 메일이 안 갔다고 수집을 실패로 만들지 않는다.
-        if not dry_run and rc == 0 and mailer.available() and site["email"]:
+        if stats is not None:
             try:
-                mailer.run_done(site["email"], project, _mail_stats(project))
+                mailer.run_done(to, project, stats, report=rep)
             except Exception as e:
                 print(f"[{project}] 알림 메일 건너뜀: {e}")
         return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
@@ -312,6 +340,24 @@ def demo() -> None:
                           (pid,)).fetchone()[0]
             c.close()
             assert n == 5, f"활성 키워드가 {n}개 — 상한 5를 넘었다"
+
+        # 메일 재료는 tenant 안에서 모아야 한다 — 밖에서 모으면 db.CAPTURE_HOME 이
+        # 서버 기본 경로를 가리켜 빈 Brain 을 읽고 보고서 파일도 못 찾는다.
+        with store.tenant(conn, uid):
+            c = db.connect()
+            pid2 = db.get_project(c, "demo-proj")["id"]
+            c.execute("INSERT INTO opportunities(project_id, kind, target, score, status)"
+                      " VALUES (?,?,?,?,'new')", (pid2, "striking_distance", "kw0", 90))
+            c.commit(); c.close()
+            rp = db.CAPTURE_HOME / "reports" / "demo-proj"
+            rp.mkdir(parents=True, exist_ok=True)
+            (rp / "2026-01-01.html").write_bytes(b"<html>report</html>")
+            assert _latest_report("demo-proj") == b"<html>report</html>", "보고서를 못 읽는다"
+            assert _mail_stats("demo-proj").get("opportunities") == 1, "통계를 못 읽는다"
+        assert _latest_report("demo-proj") is None,             "tenant 밖인데 보고서를 찾았다 — 남의 경로를 보고 있다"
+
+        # sites() 에는 email 컬럼이 없다 — 웹의 단일 사이트 실행이 여기서 터졌다.
+        assert _email_of(conn, store.sites(conn, uid)[0]) == "demo@example.com",             "sites() 행에서 이메일을 못 얻는다"
 
         # 돌고 나면 사이트에 도장이 찍혀서 다음 틱에 또 돌지 않아야 한다.
         assert run_all_due(conn) == [], "방금 쟀는데 또 잰다"
