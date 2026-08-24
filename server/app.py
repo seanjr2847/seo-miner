@@ -827,17 +827,17 @@ _TERMS_JS = """
   // <code> 가 끼어 있어 문장 전체 일치로는 안 걸리므로 .empty 는 통째로 갈아 끼운다.
   var EMPTY = [
     [/구글 실적을 아직 안 읽었습니다/,
-     "검색 실적을 아직 수집하지 않았습니다 — 왼쪽 [검색 실적]을 실행하면 채워집니다."],
+     "검색 실적을 아직 수집하지 않았습니다 — [전체 분석 실행]을 누르면 채워집니다."],
     [/일별 실적이 아직 없습니다/,
-     "일별 데이터가 아직 없습니다 — 왼쪽 [검색 실적]을 실행하면 최근 28일이 채워집니다."],
+     "일별 데이터가 아직 없습니다 — [전체 분석 실행]을 누르면 최근 28일이 채워집니다."],
     [/기기별 실적을 아직 안 읽었습니다|모바일.*아직 안 읽었습니다/,
-     "기기별 데이터를 아직 수집하지 않았습니다 — 왼쪽 [검색 실적]을 실행하면 채워집니다."],
+     "기기별 데이터를 아직 수집하지 않았습니다 — [전체 분석 실행]을 누르면 채워집니다."],
     [/색인 점검을 아직 안 했습니다/,
-     "색인 생성을 아직 확인하지 않았습니다 — 왼쪽 [색인 생성]을 실행하면 채워집니다."],
+     "색인 생성을 아직 확인하지 않았습니다 — 이 화면의 [색인 다시 검사]를 누르면 채워집니다."],
     [/아직 뽑은 게 없습니다/,
-     "아직 도출된 개선 기회가 없습니다 — 왼쪽 [개선 기회]를 실행하면 채워집니다."],
+     "아직 도출된 개선 기회가 없습니다 — 이 화면의 [기회 다시 분석]을 누르면 채워집니다."],
     [/아직 안 물어봤습니다/,
-     "AI 인용을 아직 확인하지 않았습니다 — 왼쪽 [AI 인용]을 실행하면 채워집니다."]
+     "AI 인용을 아직 확인하지 않았습니다 — 이 화면의 [AI 인용 다시 확인]을 누르면 채워집니다."]
   ];
 
   function reempty(root) {
@@ -958,77 +958,107 @@ _DASH_ADDON = ("""
   #toggle-setup,#setup{display:none!important}
   #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
 
-  /* 실행 줄 — 헤더에 붙여 한 덩어리로 보이게 한다. 주 액션 하나만 진하게 두고
-     부분 실행은 가볍게 늘어놓는다(전에는 같은 무게의 버튼 일곱 개가 떠 있었다). */
-  #sm-bar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;
-    padding:9px 22px 11px;border-top:1px solid var(--rule-soft);
-    background:var(--card);font-size:13px}
-  #sm-bar .lbl{color:var(--slate);font-size:11.5px;font-family:var(--mono);
-    letter-spacing:.04em}
-  #sm-run{font:inherit;font-weight:500;cursor:pointer;border:1px solid var(--patina);
-    background:var(--patina);color:var(--card);border-radius:3px;padding:6px 14px}
+  /* ── 좌측 네비게이션 ────────────────────────────────────────
+     원본은 한 페이지에 섹션 열넷을 세로로 쌓는다. 어디에 뭐가 있는지도, 지금 뭘
+     하면 되는지도 안 보인다. 주제별 화면으로 쪼개고 메뉴로 전환한다.
+     실행은 각 화면 안으로 내려보낸다 — 메뉴는 이동만 하고, 누르면 화면이 바뀐다.
+     (전에는 메뉴처럼 생긴 것이 누르면 수집을 돌리는 버튼이었다.) */
+  #sm-bar{display:flex;align-items:center;gap:10px 14px;padding:0 22px 10px;flex-wrap:wrap}
+  /* 좁은 화면에서는 메뉴가 한 줄을 다 쓴다 — 실행 줄과 나눠 쓰면 두 칸만 남는다 */
+  #sm-nav{display:flex;gap:3px;overflow-x:auto;flex:1 0 100%;min-width:0;scrollbar-width:none}
+  #sm-nav::-webkit-scrollbar{display:none}
+  #sm-nav button{font:500 13px/1 var(--sans);color:var(--stone);background:transparent;
+    border:0;border-radius:6px;padding:9px 12px;cursor:pointer;white-space:nowrap;opacity:.6}
+  #sm-nav button:hover{opacity:1}
+  #sm-nav button.on{opacity:1;background:var(--patina);color:var(--stone)}
+  .sm-act{display:flex;align-items:center;gap:12px;flex:none}
+  #sm-run{font:500 13px/1 var(--sans);cursor:pointer;border:1px solid var(--patina);
+    background:var(--patina);color:var(--stone);border-radius:6px;padding:9px 15px}
   #sm-run:hover:not(:disabled){filter:brightness(1.12)}
   #sm-run:disabled{opacity:.5;cursor:default}
-  #sm-bar .cmd{font:inherit;font-size:13px;cursor:pointer;border:0;background:none;
-    color:var(--patina);padding:4px 2px;border-bottom:1px solid transparent}
-  #sm-bar .cmd:hover:not(:disabled){border-bottom-color:var(--patina)}
-  #sm-bar .cmd:disabled{color:var(--slate);cursor:default}
-  #sm-bar .sp{flex:1}
-  #sm-bar a.cmd{text-decoration:none}
+  .sm-act .cmd{font:400 12.5px/1 var(--sans);color:var(--stone);opacity:.62;cursor:pointer;
+    text-decoration:none;border:0;background:none;padding:4px 2px}
+  .sm-act .cmd:hover{opacity:1}
+  .sm-act .cmd::after{content:none}   /* 원본 .cmd 는 복사 칩이라 아이콘을 달고 있다 */
   :is(#sm-bar,.opp) button:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
-  /* 원본 .cmd 는 '복사' 칩이라 ⧉ 를 달고 있다. 이제 실행 버튼이므로 뗀다. */
-  :is(#sm-bar,.stp) .cmd::after{content:none}
 
-  /* ── 좌측 메뉴 ──────────────────────────────────────────────
-     원본은 상단 바다. 넓은 화면에서만 세로로 세운다 — 실행 메뉴가 여섯 줄이라
-     가로로 늘어놓으면 본문 폭을 먹고, 세로로 세우면 위계가 그대로 읽힌다.
-     좁은 화면에서는 원본 그대로 위에 눕는다. */
   @media (min-width:1000px){
-    body{display:grid;grid-template-columns:232px minmax(0,1fr);align-items:start}
+    body{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start}
     header{grid-column:1;position:sticky;top:0;height:100vh;overflow-y:auto;
-      display:flex;flex-direction:column;      /* #sm-bar 의 margin-top:auto 가 먹으려면 */
+      display:flex;flex-direction:column;      /* .sm-act 의 margin-top:auto 가 먹으려면 */
       border-bottom:0;border-right:1px solid var(--ink)}
-    .hbar{flex-direction:column;align-items:stretch;gap:14px;padding:22px 20px 10px;
+    .hbar{flex-direction:column;align-items:stretch;gap:12px;padding:20px 16px 8px;
       max-width:none;margin:0}
     .hbar .sp{display:none}
     .tag{display:block!important;letter-spacing:.06em;font-size:10.5px;
-      color:var(--stone);opacity:.5;margin-top:-8px}
+      color:var(--slate);opacity:.5;margin-top:-8px}
     #proj{max-width:none;width:100%}
     /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. */
-    #meta{font-size:11.5px;line-height:1.65;opacity:.7;white-space:normal;
-      word-break:break-all;display:block}
-    .hbar .hbtn{width:100%;text-align:left;padding-left:0;padding-right:0}
-    #sm-bar{flex-direction:column;align-items:stretch;gap:2px;border-top:0;
-      background:transparent;padding:4px 20px 26px;margin-top:auto}
-    #sm-bar .sp{display:none}
-    #sm-bar .lbl{margin:12px 0 2px}
-    #sm-run{width:100%;text-align:center;padding:9px 14px;margin-bottom:4px}
-    #sm-bar .cmd{text-align:left;padding:5px 2px;color:var(--stone);opacity:.72}
-    #sm-bar .cmd:hover:not(:disabled){opacity:1;border-bottom-color:transparent}
-    #sm-bar a.cmd{margin-top:10px}
-    main{grid-column:2;max-width:1080px;margin:0;padding-left:34px;padding-right:34px}
+    #meta{font-size:11px;line-height:1.6;opacity:.65;white-space:normal;
+      word-break:break-all;display:block;margin-top:2px}
+    .hbar .hbtn{width:100%;text-align:left;padding-left:11px;opacity:.5;font-size:11.5px}
+    .hbar .hbtn:hover{opacity:1}
+    #sm-bar{flex-direction:column;align-items:stretch;gap:0;flex:1;padding:10px 12px 22px}
+    #sm-nav{flex-direction:column;gap:1px;overflow:visible;flex:none}
+    .sm-act{flex-direction:column;align-items:stretch;gap:9px;margin-top:auto;padding:0 2px}
+    .sm-act .cmd{text-align:left}
+    main{grid-column:2;max-width:1180px;margin:0;padding:26px 34px 80px}
   }
 
-  /* 원본 자간은 영문 대문자 라벨 기준(.24em)이라 한글에서는 글자가 흩어진다.
-     "성 과 일  기 준" 처럼 읽히던 것 — 값만 낮추고 서체는 그대로 둔다. */
-  /* KPI 라벨은 한글이다 — mono 로 두면 한글이 폴백 서체로 떨어져 자간이 벌어진다. */
-  .band .l{font-family:var(--sans);font-weight:500}
+  /* ── 화면 ───────────────────────────────────────────────────
+     한 화면에는 한 주제만. 괘선으로 이어 붙이던 섹션을 카드로 떼어 놓는다 —
+     화면이 나뉘었으면 경계도 나뉘어야 어디까지가 한 덩어리인지 읽힌다. */
+  main{padding-top:22px}
+  .sm-view{display:flex;flex-direction:column;gap:16px}
+  .sm-view[hidden]{display:none}   /* display:flex 가 hidden 의 display:none 을 이긴다 */
+  .sm-vh{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .sm-vh h1{font:650 22px/1.25 var(--sans);letter-spacing:-.02em;margin:0;flex:1;min-width:0}
+  .sm-refresh{font:500 12.5px/1 var(--sans);color:var(--patina);background:var(--card);
+    border:1px solid var(--rule);border-radius:6px;padding:9px 14px;cursor:pointer;flex:none}
+  .sm-refresh:hover:not(:disabled){border-color:var(--patina);background:var(--wash)}
+  .sm-refresh:disabled{opacity:.5;cursor:default}
+  .sm-refresh:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
+  .sm-view section,.sm-view > .band{background:var(--card);border:1px solid var(--rule);
+    border-radius:10px;padding:20px 22px 22px;margin:0}
+  .sm-view section:first-of-type{border-top:1px solid var(--rule)}
+  .sm-view > .band{padding:4px 22px 6px}
+  .sm-view .band .m{padding:18px 18px 16px 0}
+  #docban{background:var(--card);border:1px solid var(--rule);
+    border-left:3px solid var(--patina);border-radius:10px;padding:16px 20px;margin:0 0 16px}
+
+  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
+  #sm-wait{margin:0 0 16px;padding:13px 18px;border:1px solid var(--rule);
+    border-left:3px solid var(--patina);border-radius:10px;background:var(--wash);
+    color:var(--ink);font-size:13.5px;line-height:1.6}
+  #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--patina);margin-right:9px;vertical-align:middle}
+  @media (prefers-reduced-motion:no-preference){
+    #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
+    @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  }
+
+  /* 원본 자간은 영문 대문자 라벨 기준(.24em)이라 한글에서는 글자가 흩어진다. */
+  .eyebrow{letter-spacing:.08em}
+  .tag{letter-spacing:.12em}
+  th{letter-spacing:.05em}
+  .opp .kind{letter-spacing:.05em}
+  /* KPI 라벨은 한글이다 — mono 로 두면 폴백 서체로 떨어져 자간이 벌어진다. */
+  .band .l{font-family:var(--sans);font-weight:500;letter-spacing:.03em}
 
   /* 백링크 표: 마지막 두 칸이 붙어 숫자와 날짜가 겹쳐 보였다. */
-  #sm-bl{padding-top:26px}
   #sm-bl table{width:100%;table-layout:fixed}
   #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
   #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
   #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
 
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
-  #sm-kw{padding:26px 0 10px}
   #sm-kw .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
   #sm-kw .tabs{display:flex;gap:6px;margin-bottom:10px}
   #sm-kw .tabs button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:3px;padding:6px 12px;cursor:pointer}
+    border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
   #sm-kw .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
-  #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule-soft)}
+  #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule-soft);
+    border-radius:6px;overflow-x:hidden}
   /* flex 로 두면 자식이 넘칠 때 .kw 의 flex-basis:0 이 0px 으로 굳어 글자가 사라진다.
      grid 의 1fr 은 넘쳐도 자기 몫을 지킨다. */
   #sm-kw label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
@@ -1041,16 +1071,14 @@ _DASH_ADDON = ("""
   #sm-kw .kw{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     color:var(--ink);text-transform:none}
   #sm-kw .n{font:400 11.5px/1 var(--mono);color:var(--slate);white-space:nowrap}
-  #sm-kw .list{overflow-x:hidden}
   #sm-kw .bar2{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
-  #sm-kw .go2{font:500 13px/1 var(--sans);color:var(--card);background:var(--patina);
-    border:0;border-radius:3px;padding:9px 16px;cursor:pointer}
+  #sm-kw .go2{font:500 13px/1 var(--sans);color:var(--stone);background:var(--patina);
+    border:0;border-radius:6px;padding:9px 16px;cursor:pointer}
   #sm-kw .go2:disabled{opacity:.4;cursor:default}
   #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
   #sm-kw .warn{color:var(--copper)}
 
-  /* 플러그인으로 넘기는 일 — 조용한 목록. 대시보드 본문의 결론이 아니라 각주다. */
-  #sm-cc{padding:26px 0 10px}
+  /* 플러그인으로 넘기는 일 — 조용한 목록. 화면의 결론이 아니라 각주다. */
   #sm-cc .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
   #sm-cc ul{list-style:none;padding:0;margin:0;border-top:1px solid var(--rule-soft)}
   #sm-cc li{display:flex;align-items:center;gap:18px;padding:12px 0;
@@ -1059,7 +1087,7 @@ _DASH_ADDON = ("""
   #sm-cc li b{display:block;font-weight:600;font-size:14px}
   #sm-cc li span{color:var(--slate);font-size:12.5px}
   #sm-cc button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:3px;padding:6px 10px;cursor:pointer;flex:none}
+    border:1px solid var(--rule);border-radius:6px;padding:6px 10px;cursor:pointer;flex:none}
   #sm-cc button:hover{color:var(--patina);border-color:var(--patina)}
   @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
 
@@ -1076,27 +1104,12 @@ _DASH_ADDON = ("""
   }
   @media(min-width:901px){.sm-swipe{display:none}}
 
-  .eyebrow{letter-spacing:.08em}
-  .band .l{letter-spacing:.03em}
-  .tag{letter-spacing:.12em}
-  th{letter-spacing:.05em}
-  .opp .kind{letter-spacing:.05em}
-
-  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
-  #sm-wait{margin:0 0 22px;padding:13px 16px;border-left:2px solid var(--patina);
-    background:var(--wash);color:var(--ink);font-size:13.5px;line-height:1.6}
-  #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
-    background:var(--patina);margin-right:9px;vertical-align:middle}
-  @media (prefers-reduced-motion:no-preference){
-    #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
-    @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
-  }
-
   /* 안내 단계의 실행 버튼 — 원본 .cmd 는 명령어를 복사하는 칩이었다. */
   .stp .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--patina);
-    background:transparent;color:var(--patina);border-radius:3px;padding:5px 12px}
+    background:transparent;color:var(--patina);border-radius:6px;padding:5px 12px}
   .stp .cmd:hover:not(:disabled){background:var(--wash)}
   .stp .cmd:disabled{opacity:.5;cursor:default}
+  .stp .cmd::after{content:none}
 
   /* 기회 카드: 버튼 넷이 카드마다 반복돼 소음이 된다. 평소엔 물러나 있게. */
   .opp .acts button{opacity:.72;transition:opacity .12s}
@@ -1224,33 +1237,102 @@ _DASH_ADDON = ("""
     });
   }
 
-  // 실행 줄 — 안내가 접혀 있어도 쓸 수 있어야 한다. 주 액션(다시 재기) 하나만
-  // 진하게, 부분 실행은 텍스트로 늘어놓는다.
-  (function bar() {
+  // ── 화면 ─────────────────────────────────────────────────────
+  // 섹션 열넷이 한 페이지에 세로로 쌓여 있었다 — 어디에 뭐가 있는지도, 지금 뭘
+  // 하면 되는지도 안 보인다. 주제별로 나누고 좌측 메뉴로 전환한다.
+  // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
+  var VIEWS = [
+    ["overview",  "개요",        ["docban", "band", "opps", "daily"], ["gsc", "gaps"]],
+    ["keywords",  "키워드",      ["log", "sm-kw", "movers"],          ["keywords"]],
+    ["rank",      "순위 추적",   ["ranks"],                           ["rank"]],
+    ["ai",        "AI 인용",     ["ai"],                              ["ai"]],
+    ["site",      "사이트 점검", ["index", "devgap"],                 ["index"]],
+    ["backlinks", "백링크",      ["sm-bl"],                           []],
+    ["history",   "기록",        ["acts", "runs", "sm-cc"],           []]
+  ];
+  // 화면 제목과 겹치지 않게 — "순위 추적" 화면의 버튼이 [순위 추적]이면 뭘 하는지 모른다
+  var RUN_LABEL = {gsc: "실적 다시 수집", index: "색인 다시 검사", keywords: "키워드 다시 발굴",
+    rank: "순위 다시 확인", ai: "AI 인용 다시 확인", gaps: "기회 다시 분석"};
+  var view = "overview";
+
+  // 원본 섹션을 화면별 상자로 옮긴다. 이미 제자리면 아무것도 하지 않는다 —
+  // 애드온 섹션(백링크·키워드)은 늦게 생겨서 이 함수가 여러 번 불린다.
+  function place() {
+    var c = document.getElementById("content");
+    if (!c) return;
+    VIEWS.forEach(function (v) {
+      var box = document.getElementById("smv-" + v[0]);
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "smv-" + v[0];
+        box.className = "sm-view";
+        box.hidden = v[0] !== view;
+        var h = document.createElement("div");
+        h.className = "sm-vh";
+        h.innerHTML = "<h1>" + v[1] + "</h1>";
+        v[3].forEach(function (st) {      // 그 화면을 채우는 단계를 여기서 돌린다
+          var rb = document.createElement("button");
+          rb.className = "sm-refresh";
+          rb.textContent = RUN_LABEL[st];
+          rb.title = STAGE_LABEL[st];
+          rb.onclick = function () { runStage(st, rb); };
+          h.appendChild(rb);
+        });
+        box.appendChild(h);
+        c.appendChild(box);
+      }
+      v[2].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var sec = el.closest("section") || el;      // band 는 section 이 아니다
+        if (sec.parentNode !== box) box.appendChild(sec);
+      });
+    });
+    var cols = document.querySelector(".cols");     // 두 칸 틀은 빈 껍데기가 됐다
+    if (cols && !cols.querySelector("section")) cols.remove();
+  }
+
+  function show(name) {
+    view = name;
+    VIEWS.forEach(function (v) {
+      var box = document.getElementById("smv-" + v[0]);
+      if (box) box.hidden = v[0] !== name;
+    });
+    document.querySelectorAll("#sm-nav button").forEach(function (x) {
+      var on = x.dataset.v === name;
+      x.classList.toggle("on", on);
+      x.setAttribute("aria-current", on ? "page" : "false");
+    });
+    window.scrollTo(0, 0);
+  }
+
+  (function nav() {
     if (document.getElementById("sm-bar")) return;
     var head = document.querySelector("header");
     if (!head) return;
     var box = document.createElement("div");
     box.id = "sm-bar";
-    box.appendChild(b);                       // 위에서 만든 '지금 다시 재기'
-    var lbl = document.createElement("span");
-    lbl.className = "lbl"; lbl.textContent = "개별 실행";
-    box.appendChild(lbl);
-    [["gsc", "검색 실적"], ["index", "색인 생성"], ["keywords", "키워드 발굴"],
-     ["rank", "순위 추적"], ["ai", "AI 인용"], ["gaps", "개선 기회"]].forEach(function (p) {
+    var nv = document.createElement("nav");
+    nv.id = "sm-nav";
+    nv.setAttribute("aria-label", "화면");
+    VIEWS.forEach(function (v) {
       var t = document.createElement("button");
-      t.className = "cmd"; t.dataset.smWired = "1"; t.textContent = p[1];
-      t.title = STAGE_LABEL[p[0]];
-      t.onclick = function () { runStage(p[0], t); };
-      box.appendChild(t);
+      t.dataset.v = v[0]; t.dataset.smWired = "1";
+      t.textContent = v[1];
+      t.onclick = function () { show(v[0]); };
+      nv.appendChild(t);
     });
-    var sp = document.createElement("span"); sp.className = "sp"; box.appendChild(sp);
+    box.appendChild(nv);
+    var act = document.createElement("div");
+    act.className = "sm-act";
+    act.appendChild(b);                       // 위에서 만든 '전체 분석 실행'
     var rep = document.createElement("a");
     rep.className = "cmd"; rep.textContent = "보고서 다운로드 ↓";
     rep.addEventListener("click", function () {
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
     });
-    box.appendChild(rep);
+    act.appendChild(rep);
+    box.appendChild(act);
     head.appendChild(box);
   })();
 
@@ -1297,6 +1379,7 @@ _DASH_ADDON = ("""
           "<tbody>" + rows + "</tbody></table>" : "");
     }
     if (!sec.parentNode) host.appendChild(sec);
+    place();
   }
   if (sel) sel.addEventListener("change", function () { blDone = ""; backlinks(); });
   backlinks();
@@ -1451,6 +1534,8 @@ _DASH_ADDON = ("""
     });
   }
   handoff();
+  place();
+  show(view);
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
   // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
