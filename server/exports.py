@@ -173,6 +173,84 @@ def summary(project: str) -> dict:
         conn.close()
 
 
+def _rate(clicks: int, imps: int) -> float | None:
+    return round(clicks / imps, 4) if imps else None
+
+
+def _pos(weighted: float | None, imps: int) -> float | None:
+    """노출 가중 평균 게재순위. 단순 평균을 쓰면 노출 1회짜리 꼬리가 값을 끌어내려
+    화면의 숫자와 서치콘솔의 숫자가 어긋난다 — 서치콘솔도 노출 기준으로 낸다."""
+    return round(weighted / imps, 1) if (weighted is not None and imps) else None
+
+
+_DIM_SQL = """SELECT {col}, COALESCE(SUM(clicks),0), COALESCE(SUM(impressions),0),
+                     SUM(position*impressions)
+                FROM gsc_snapshots WHERE project_id=? AND snapshot_date=? AND {col} IS NOT NULL
+               GROUP BY {col} ORDER BY 2 DESC, 3 DESC LIMIT ?"""
+
+
+def perf(project: str, top: int = 25, days: int = 90) -> dict:
+    """서치콘솔 성과 — 4대 지표(클릭·노출·CTR·게재순위)와 검색어·페이지·기기 분해.
+
+    화면이 쓰던 것은 클릭·노출 둘뿐이었다. CTR 과 게재순위는 gsc_snapshots 에 이미
+    들어 있는데 아무도 읽지 않았다 — 서치콘솔을 보던 사람에게는 지표 절반이 빈 화면이다.
+    """
+    conn = db.connect()
+    try:
+        p = db.get_project(conn, project)
+        pid = p["id"]
+        snaps = [r[0] for r in conn.execute(
+            "SELECT DISTINCT snapshot_date FROM gsc_snapshots WHERE project_id=?"
+            " ORDER BY snapshot_date DESC LIMIT 2", (pid,))]
+        if not snaps:
+            return {"snapshot": None, "totals": None, "prev": None,
+                    "daily": [], "queries": [], "pages": [], "devices": []}
+
+        def totals(snap: str) -> dict:
+            c, i, pw, q = conn.execute(
+                """SELECT COALESCE(SUM(clicks),0), COALESCE(SUM(impressions),0),
+                          SUM(position*impressions), COUNT(DISTINCT query)
+                     FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?""",
+                (pid, snap)).fetchone()
+            c, i = int(c), int(i)
+            return {"date": snap, "clicks": c, "impressions": i,
+                    "ctr": _rate(c, i), "position": _pos(pw, i), "queries": int(q)}
+
+        def dim(col: str) -> list[dict]:
+            return [{"key": k, "clicks": int(c), "impressions": int(i),
+                     "ctr": _rate(int(c), int(i)), "position": _pos(pw, int(i))}
+                    for k, c, i, pw in conn.execute(
+                        _DIM_SQL.format(col=col), (pid, snaps[0], top))]
+
+        # 기기 분해는 별도 테이블이고 수집 주기가 본체와 어긋날 수 있다 — 자기 최신을 쓴다.
+        bsnap = conn.execute(
+            "SELECT MAX(snapshot_date) FROM gsc_breakdown WHERE project_id=? AND dim='device'",
+            (pid,)).fetchone()[0]
+        devices = [{"key": k, "clicks": int(c), "impressions": int(i),
+                    "ctr": _rate(int(c), int(i)), "position": _pos(pw, int(i))}
+                   for k, c, i, pw in conn.execute(
+                       """SELECT dim_value, COALESCE(SUM(clicks),0), COALESCE(SUM(impressions),0),
+                                 SUM(position*impressions)
+                            FROM gsc_breakdown
+                           WHERE project_id=? AND dim='device' AND snapshot_date=?
+                           GROUP BY dim_value ORDER BY 3 DESC""",
+                       (pid, bsnap))] if bsnap else []
+
+        daily = [{"d": d, "clicks": int(c or 0), "impressions": int(i or 0),
+                  "ctr": round(ct, 4) if ct is not None else None,
+                  "position": round(po, 1) if po is not None else None}
+                 for d, c, i, ct, po in conn.execute(
+                     "SELECT date, clicks, impressions, ctr, position FROM gsc_daily"
+                     " WHERE project_id=? ORDER BY date DESC LIMIT ?", (pid, days))][::-1]
+
+        return {"snapshot": snaps[0], "totals": totals(snaps[0]),
+                "prev": totals(snaps[1]) if len(snaps) > 1 else None,
+                "daily": daily, "queries": dim("query"), "pages": dim("page"),
+                "devices": devices}
+    finally:
+        conn.close()
+
+
 def demo() -> None:
     import os
     import tempfile
@@ -265,6 +343,25 @@ def demo() -> None:
             raise AssertionError("ProjectNotFound 기대")
         except db.ProjectNotFound:
             pass
+
+        # 성과 집계 — 게재순위는 노출 가중이라 단순 평균과 다른 값이 나와야 한다.
+        conn3 = db.connect()
+        pid3 = db.get_project(conn3, "empty")["id"]
+        conn3.execute(
+            """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+                 query, page, clicks, impressions, ctr, position)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (pid3, "2026-02-01", 28, "q2", "/p2", 0, 90, 0.0, 30.0))
+        conn3.commit(); conn3.close()
+        pf = perf("empty")
+        t = pf["totals"]
+        assert t["clicks"] == 2 and t["impressions"] == 100, t
+        assert t["ctr"] == 0.02, t                    # 2/100
+        # 단순 평균이면 17.5 — 노출 가중이면 (5*10 + 30*90)/100 = 27.5
+        assert t["position"] == 27.5, t["position"]
+        assert [q["key"] for q in pf["queries"]] == ["q", "q2"], pf["queries"]
+        assert pf["pages"][0]["key"] == "/p", pf["pages"]
+        assert pf["devices"] == [] and pf["daily"] == [], "없는 축이 빈 목록이 아니다"
 
         conn.close()
     print("exports: ok")

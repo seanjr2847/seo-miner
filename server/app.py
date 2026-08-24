@@ -579,6 +579,21 @@ def api_export(project: str, table: str, request: Request):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.get("/api/perf")
+def api_perf(project: str, request: Request):
+    """서치콘솔 4대 지표와 검색어·페이지·기기 분해 — 개요 화면이 쓴다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            return exports.perf(project)
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
 @app.get("/api/overview")
 def api_overview(request: Request):
     """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
@@ -1023,6 +1038,40 @@ _DASH_ADDON = ("""
   .sm-view section:first-of-type{border-top:1px solid var(--rule)}
   .sm-view > .band{padding:4px 22px 6px}
   .sm-view .band .m{padding:18px 18px 16px 0}
+  /* KPI 가 다섯에서 일곱으로 늘었다 — 고정 5칸이면 두 줄로 어긋난다 */
+  .sm-view > .band{grid-template-columns:repeat(auto-fit,minmax(146px,1fr))}
+  .sm-view .band .v{white-space:nowrap}
+  .sm-view .band .d{font-size:11px;margin-left:6px}
+
+  /* 검색 성과 — 서치콘솔 4대 지표를 같은 크기로 나란히 둔다.
+     축이 서로 달라 한 그림에 겹치지 않는다(게재순위는 방향까지 반대다). */
+  .sm-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:44px;margin-top:4px}
+  @media(max-width:760px){.sm-charts{grid-template-columns:1fr}}
+  .sm-ct{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    font:500 12.5px/1 var(--sans);color:var(--ink);margin-bottom:10px}
+  .sm-ct .rg{font:400 11px/1 var(--mono);color:var(--slate);letter-spacing:.02em}
+  .sm-line{display:block;width:100%;height:76px;overflow:visible}
+  .sm-line path{fill:none;stroke:var(--patina);stroke-width:1.2;
+    vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+  .sm-line circle{fill:var(--patina);vector-effect:non-scaling-stroke}
+  .sm-ax{display:flex;justify-content:space-between;font:400 10.5px/1 var(--mono);
+    color:var(--slate);margin-top:6px;opacity:.75}
+  .sm-none{font-size:13px;color:var(--slate);margin:10px 0 2px}
+
+  /* 분해 표 — 긴 URL 이 표 폭을 밀지 않게 첫 칸만 줄인다 */
+  #sm-dim .tabs{display:flex;gap:6px;margin:2px 0 12px}
+  #sm-dim .tabs button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+    border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
+  #sm-dim .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
+  #sm-dim table{table-layout:fixed;width:100%}
+  #sm-dim th:first-child,#sm-dim td:first-child{width:46%}
+  #sm-dim .sm-k{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #sm-dim th button{font:inherit;color:inherit;background:none;border:0;padding:0;
+    cursor:pointer;letter-spacing:inherit;text-transform:inherit}
+  #sm-dim th button:hover{color:var(--ink)}
+  #sm-dim th button.on{color:var(--patina)}
+  #sm-dim th button.on::after{content:" ↓"}
+
   #docban{background:var(--card);border:1px solid var(--rule);
     border-left:3px solid var(--patina);border-radius:10px;padding:16px 20px;margin:0 0 16px}
 
@@ -1135,7 +1184,7 @@ _DASH_ADDON = ("""
     b.disabled = !!r.running;
     b.textContent = r.running ? "분석 중…" : "전체 분석 실행";
     waiting(r);
-    if (ran && !r.running) { load(); loadDoctor(); }   // 끝나면 스스로 채워진다
+    if (ran && !r.running) { load(); loadDoctor(); perfLoad(); }   // 끝나면 스스로 채워진다
     ran = r.running;
   }
 
@@ -1242,7 +1291,8 @@ _DASH_ADDON = ("""
   // 하면 되는지도 안 보인다. 주제별로 나누고 좌측 메뉴로 전환한다.
   // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
   var VIEWS = [
-    ["overview",  "개요",        ["docban", "band", "opps", "daily"], ["gsc", "gaps"]],
+    ["overview",  "개요",        ["docban", "band", "opps", "daily", "sm-perf", "sm-dim"],
+                                                                         ["gsc", "gaps"]],
     ["keywords",  "키워드",      ["log", "sm-kw", "movers"],          ["keywords"]],
     ["rank",      "순위 추적",   ["ranks"],                           ["rank"]],
     ["ai",        "AI 인용",     ["ai"],                              ["ai"]],
@@ -1534,6 +1584,173 @@ _DASH_ADDON = ("""
     });
   }
   handoff();
+
+  // ── 서치콘솔 성과 ───────────────────────────────────────────
+  // 화면이 쓰던 것은 클릭·노출 둘뿐이었다. CTR 과 게재순위는 gsc_snapshots 에 이미
+  // 들어 있는데 아무도 읽지 않아서, 서치콘솔을 보던 사람에게는 지표 절반이 빈 화면이었다.
+  var PERF = null, dimMode = "queries";
+  var nf = function (n) { return Number(n || 0).toLocaleString("ko-KR"); };
+  var pct = function (v) { return v == null ? "—" : (v * 100).toFixed(2) + "%"; };
+  var pos = function (v) { return v == null ? "—" : v.toFixed(1); };
+
+  // 증감. 게재순위만 방향이 반대다 — 작아지는 게 오르는 것이다.
+  function delta(now, was, fmt, lowerIsBetter) {
+    if (now == null || was == null) return "";
+    var d = now - was;
+    if (Math.abs(d) < 1e-9) return ' <span class="d muted">—</span>';
+    var good = lowerIsBetter ? d < 0 : d > 0;
+    var body = (d > 0 ? "+" : "−") + fmt(Math.abs(d));
+    return ' <span class="d ' + (good ? "up" : "down") + '">' + body + "</span>";
+  }
+
+  // KPI 두 칸을 원본 밴드에 끼운다. render() 가 band 를 다시 그리면 사라지므로
+  // MutationObserver 쪽에서 다시 부른다 — 이미 있으면 아무것도 하지 않는다.
+  function kpi() {
+    var band = document.getElementById("band");
+    if (!band || !PERF || !PERF.totals || band.querySelector("[data-sm-kpi]")) return;
+    var t = PERF.totals, pv = PERF.prev || {};
+    var box = document.createElement("div");
+    box.style.display = "contents";
+    box.setAttribute("data-sm-kpi", "1");
+    box.innerHTML =
+      '<div class="m"><div class="v">' + pct(t.ctr) +
+        delta(t.ctr, pv.ctr, function (x) { return (x * 100).toFixed(2) + "%p"; }, false) +
+        '</div><div class="l">CTR</div></div>' +
+      '<div class="m"><div class="v">' + pos(t.position) +
+        delta(t.position, pv.position, function (x) { return x.toFixed(1); }, true) +
+        '</div><div class="l">평균 게재순위</div></div>';
+    band.appendChild(box);
+  }
+
+  // 꺾은선 하나. 원본 로그 차트와 같은 언어(등폭 숫자·괘선·patina)로 그린다.
+  // 범위는 차트 위 제목 줄에 붙인다 — 아래 좌우로 벌려 놓으면 시간축의 첫 값·끝 값으로 읽힌다.
+  function line(rows, key, opt) {
+    var pts = [];
+    rows.forEach(function (r, i) { if (r[key] != null) pts.push([i, r[key]]); });
+    var head = function (rg) {
+      return '<div class="sm-ct"><span>' + opt.label + "</span>" +
+             (rg ? '<span class="rg">' + rg + "</span>" : "") + "</div>";
+    };
+    if (pts.length < 2)
+      return head("") +
+        '<p class="sm-none">추이를 그리려면 이틀 이상의 일별 데이터가 필요합니다.</p>';
+    var W = 100, H = 42, P = 3, n = rows.length;
+    var vs = pts.map(function (q) { return q[1]; });
+    var lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+    if (hi === lo) { hi = lo + (lo || 1) * 0.1; lo = lo - (lo || 1) * 0.1; }
+    var X = function (i) { return P + i * (W - P * 2) / Math.max(1, n - 1); };
+    var Y = function (v) {
+      var t = (v - lo) / (hi - lo);
+      return P + (opt.invert ? t : 1 - t) * (H - P * 2);   // 게재순위는 작을수록 위
+    };
+    var d = pts.map(function (q, k) {
+      return (k ? "L" : "M") + X(q[0]).toFixed(2) + " " + Y(q[1]).toFixed(2);
+    }).join(" ");
+    var last = pts[pts.length - 1];
+    return head("최고 " + opt.fmt(opt.invert ? lo : hi) +
+                " · 최저 " + opt.fmt(opt.invert ? hi : lo)) +
+      '<svg class="sm-line" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none"' +
+      ' role="img" aria-label="' + opt.label + ' 추이"><path d="' + d + '"/>' +
+      '<circle cx="' + X(last[0]).toFixed(2) + '" cy="' + Y(last[1]).toFixed(2) + '" r="1.1"/></svg>' +
+      '<div class="sm-ax"><span>' + esc(rows[0].d) + "</span><span>" +
+      esc(rows[rows.length - 1].d) + "</span></div>";
+  }
+
+  function perfRender() {
+    var sec = document.getElementById("sm-perf");
+    if (!sec || !PERF) return;
+    var t = PERF.totals;
+    if (!t) {
+      sec.innerHTML = '<p class="eyebrow">PERFORMANCE</p><h2>검색 성과</h2>' +
+        '<p class="sm-none">검색 실적을 아직 수집하지 않았습니다 — 위 [실적 다시 수집]을 누르면 채워집니다.</p>';
+      return;
+    }
+    var dl = PERF.daily || [];
+    var span = dl.length ? dl[0].d + " → " + dl[dl.length - 1].d : PERF.snapshot;
+    sec.innerHTML = '<p class="eyebrow">PERFORMANCE · ' + esc(span) + "</p>" +
+      "<h2>검색 성과</h2>" +
+      '<p class="sub">위 일별 추이가 클릭·노출을 그립니다. 나머지 두 지표가 여기 있습니다 — ' +
+      "게재순위는 노출 가중 평균이라 서치콘솔 화면의 값과 같고, 선이 위로 갈수록 순위가 높습니다.</p>" +
+      '<div class="sm-charts">' +
+      ['<div>' + line(dl, "ctr", {label: "CTR", fmt: pct}) + "</div>",
+       '<div>' + line(dl, "position", {label: "평균 게재순위", fmt: pos, invert: true}) + "</div>"
+      ].join("") + "</div>";
+  }
+
+  var DIMS = [["queries", "검색어"], ["pages", "페이지"], ["devices", "기기"]];
+  var DEVICE = {MOBILE: "모바일", DESKTOP: "데스크톱", TABLET: "태블릿"};
+  // [키, 라벨, 작은 값이 좋은가] — 게재순위만 오름차순이 '좋은 순'이다
+  var COLS = [["clicks", "클릭", false], ["impressions", "노출", false],
+              ["ctr", "CTR", false], ["position", "게재순위", true]];
+  var dimSort = "clicks";
+
+  function dimRender() {
+    var sec = document.getElementById("sm-dim");
+    if (!sec || !PERF) return;
+    var rows = (PERF[dimMode] || []).slice();
+    var asc = (COLS.filter(function (c) { return c[0] === dimSort; })[0] || [])[2];
+    rows.sort(function (a, b) {
+      var x = a[dimSort], y = b[dimSort];
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return asc ? x - y : y - x;
+    });
+    var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
+    var body = rows.length ? '<table><thead><tr><th>' + head + "</th>" +
+        COLS.map(function (c) {
+          return '<th class="num"><button data-s="' + c[0] + '"' +
+            (c[0] === dimSort ? ' class="on"' : "") + ">" + c[1] + "</button></th>";
+        }).join("") + "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        var k = r.key;
+        if (dimMode === "pages") k = k.replace(/^https?:\/\/[^/]+/, "") || "/";
+        if (dimMode === "devices") k = DEVICE[k] || k;
+        return '<tr><td title="' + esc(r.key) + '"><span class="sm-k">' + esc(k) +
+          '</span></td><td class="num">' + nf(r.clicks) + '</td><td class="num">' +
+          nf(r.impressions) + '</td><td class="num">' + pct(r.ctr) +
+          '</td><td class="num">' + pos(r.position) + "</td></tr>";
+      }).join("") + "</tbody></table>"
+      : '<p class="sm-none">' + (dimMode === "devices"
+          ? "기기별 데이터를 아직 수집하지 않았습니다 — 다음 분석에서 함께 수집합니다."
+          : "아직 수집된 데이터가 없습니다.") + "</p>";
+    sec.innerHTML = '<p class="eyebrow">BREAKDOWN</p><h2>무엇으로 들어오나</h2>' +
+      '<p class="sub">열 이름을 누르면 그 기준으로 정렬됩니다. 노출은 많은데 CTR 이 낮은 줄이 ' +
+      "제목·설명을 고칠 자리입니다.</p>" +
+      '<div class="tabs">' + DIMS.map(function (d) {
+        return '<button data-d="' + d[0] + '"' + (d[0] === dimMode ? ' class="on"' : "") +
+          ">" + d[1] + "</button>";
+      }).join("") + "</div>" + body;
+    sec.addEventListener("click", function (ev) {
+      var t = ev.target.closest ? ev.target.closest("[data-d],[data-s]") : null;
+      if (!t) return;
+      if (t.dataset.d) dimMode = t.dataset.d; else dimSort = t.dataset.s;
+      dimRender();
+    });
+  }
+
+  // 껍데기는 동기로 만들어 둔다 — place() 가 화면에 배치할 때 이미 있어야 한다.
+  (function perfShell() {
+    var host = document.querySelector("main");
+    if (!host) return;
+    ["sm-perf", "sm-dim"].forEach(function (id) {
+      if (document.getElementById(id)) return;
+      var sec = document.createElement("section");
+      sec.id = id;
+      host.appendChild(sec);
+    });
+  })();
+
+  async function perfLoad() {
+    var pj = proj();
+    if (!pj) return;
+    try {
+      PERF = await (await fetch("/api/perf?project=" + encodeURIComponent(pj))).json();
+    } catch (e) { return; }
+    kpi(); perfRender(); dimRender();
+  }
+  if (sel) sel.addEventListener("change", function () { PERF = null; perfLoad(); });
+  perfLoad();
+
   place();
   show(view);
 
@@ -1551,7 +1768,9 @@ _DASH_ADDON = ("""
       box.appendChild(w);
     });
   };
-  var all = function () { wire(); wireSteps(); retitle(); resentence(); reempty(); };
+  var all = function () {
+    wire(); wireSteps(); retitle(); resentence(); reempty(); kpi();
+  };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();
 })();
@@ -1661,7 +1880,7 @@ def demo() -> None:
 
         # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
-                     "/api/repos", "/auth/github"):
+                     "/api/perf?project=x", "/api/repos", "/auth/github"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
