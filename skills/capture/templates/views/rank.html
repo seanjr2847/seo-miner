@@ -1,18 +1,322 @@
+<style>
+/* ── 순위 추적: 시추 코어의 단면 ──────────────────────────────
+   순위는 깊이다. 1위가 지표면, 10위가 1페이지 바닥, 20위 아래는 암반,
+   못 찾은 건 그보다 더 아래다. 지층 막대가 그 단면이고, 표가 시추 기록이다. */
+.rk-strata text { font-family:var(--mono); }
+.rk-strata .n { font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
+.rk-strata .lb { font-size:10.5px; fill:var(--slate); letter-spacing:.1em; }
+.rk-strata .edge { font-size:10px; fill:var(--patina); letter-spacing:.1em; }
+@keyframes rk-fade { from { opacity:0; } to { opacity:1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .rk-strata .bar { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+  .rk-strata .lbl { animation:rk-fade .55s .2s both; }
+}
+/* 칩 앞 색 조각 — 막대의 어느 지층인지 눈으로 잇는다. */
+.rk-sw { display:inline-block; width:9px; height:9px; border-radius:1px; margin-right:7px; }
+.rk-sw.hatch { background:var(--bar); border:1px solid var(--rule); }
+/* 한 화면 안의 칸막이 — 화면이 카드 하나라 안에서 층을 나눈다. */
+.rk-part { border-top:1px solid var(--rule-soft); margin-top:26px; padding-top:20px; }
+.rk-part > .eyebrow { margin-bottom:9px; }
+.rk-note { font-size:12.5px; color:var(--slate); margin:10px 0 0; }
+.rk-note b { color:var(--ink); font-weight:500; }
+</style>
+
 <section>
   <div class="eyebrow">SERP</div>
   <h2>순위 기록</h2>
+  <p class="sub" id="rk-sub"></p>
   <div id="ranks"></div>
 </section>
 
 <script>
 "use strict";
+/* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev / d.aio_gap 뿐이다.
+   직전 순위는 지어낸 값이 아니라 역산이다 — 서버(scoring.rank_delta)가 보낸
+   Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
+   추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
+let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_AIO = "", RK_HAS_PREV = false;
+
+const RK_d = r => {
+  const v = r.delta && typeof r.delta === "object" ? r.delta.delta : r.dpos;
+  return Number.isFinite(v) ? v : null;
+};
+const RK_prevPos = r => (r.pos != null && RK_d(r) != null) ? r.pos + RK_d(r) : null;
+
+// 지층 정의. 경계값은 서버가 준 것만 쓴다(RULES) — 여기서 다시 정하지 않는다.
+function RK_bands() {
+  const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20;
+  return [
+    {k:"top3",  t:"1~3위",              c:"var(--patina)", o:1,
+     hit:r => r.pos != null && r.pos <= 3},
+    {k:"page1", t:`4~${p1}위`,          c:"var(--patina)", o:.42,
+     hit:r => r.pos != null && r.pos > 3 && r.pos <= p1},
+    {k:"page2", t:`${p1 + 1}~${edge}위`, c:"var(--slate)",  o:.5,
+     hit:r => r.pos != null && r.pos > p1 && r.pos <= edge},
+    {k:"deep",  t:`${edge}위 밖`,        c:"var(--copper)", o:.55,
+     hit:r => r.pos != null && r.pos > edge},
+    {k:"none",  t:"미검출",              c:"url(#rk-hatch)", o:1,
+     hit:r => r.pos == null},
+  ];
+}
+
+/* ── 지층 단면: 확인한 키워드를 깊이별로 가른 한 줄. 왼쪽이 지표면(1위),
+      오른쪽이 암반(미검출). 칸 너비가 그대로 비율이라 개수 축이 필요 없다. ── */
+function RK_strata(bs, total) {
+  const W = 1000, BH = 44, T = 30, H = T + BH + 24;
+  let x = 0;
+  const segs = [];
+  for (const b of bs) {
+    if (!b.n) continue;
+    const w = b.n / total * W;
+    segs.push({...b, x, w});
+    x += w;
+  }
+  const p1w = segs.filter(s => s.k === "top3" || s.k === "page1")
+                  .reduce((a, s) => a + s.w, 0);
+  // 막대는 자라고 글자는 스며든다 — 글자를 같이 늘리면 애니메이션 동안 찌그러진다.
+  const bars = segs.map(s =>
+    `<g><rect x="${s.x.toFixed(1)}" y="${T}" width="${(s.w - 1.5).toFixed(1)}"
+        height="${BH}" fill="${s.c}" opacity="${s.o}"/>
+      <title>${esc(s.t)} — ${s.n}개 (${(s.n / total * 100).toFixed(0)}%)</title></g>`).join("");
+  const marks = segs.map(s => {
+    const cx = (s.x + s.w / 2).toFixed(1);
+    return (s.w >= 52
+      ? `<text class="n" x="${cx}" y="${T + BH / 2 + 5}" text-anchor="middle"
+           fill="${s.k === "none" ? "var(--slate)" : "var(--card)"}">${s.n}</text>` : "")
+      + (s.w >= 88
+      ? `<text class="lb" x="${cx}" y="${T + BH + 16}" text-anchor="middle"
+           >${esc(s.t)}</text>` : "");
+  }).join("");
+  // 1페이지 경계선 — 깊이 로그(키워드 화면)와 같은 문법이다.
+  const edge = p1w > 0 && p1w < W - 1
+    ? `<line x1="${p1w.toFixed(1)}" y1="${T - 10}" x2="${p1w.toFixed(1)}" y2="${T + BH + 4}"
+         stroke="var(--patina)" stroke-width="1"/>
+       <text class="edge" x="${(p1w - 7).toFixed(1)}" y="${T - 15}" text-anchor="end"
+         >1페이지 경계</text>` : "";
+  const label = bs.filter(b => b.n).map(b => `${b.t} ${b.n}개`).join(", ");
+  return `<div class="logwrap"><svg class="rk-strata log" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="확인한 ${total}개를 깊이별로 가른 단면 — ${esc(label)}">
+    <defs><pattern id="rk-hatch" width="6" height="6" patternUnits="userSpaceOnUse"
+        patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="var(--bar)"/>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--rule)" stroke-width="1.4"/>
+    </pattern></defs>
+    <text class="lb" x="0" y="${T - 15}">지표면 · 1위</text>
+    <text class="lb" x="${W}" y="${T - 15}" text-anchor="end">깊어짐 →</text>
+    <g class="bar">${bars}</g><g class="lbl">${marks}</g>${edge}
+  </svg></div>`;
+}
+
+// 지층 칩 = 목록 필터. 기회 화면의 kind 칩과 같은 부품·같은 동작이다.
+function RK_chips(bs) {
+  return `<div class="oppchips">${bs.filter(b => b.n).map(b =>
+    `<button class="chip${RK_BAND === b.k ? " on" : ""}" onclick="RK_setBand('${b.k}')"
+       aria-pressed="${RK_BAND === b.k}" title="${esc(b.t)}만 보기">
+       <i class="rk-sw${b.k === "none" ? " hatch" : ""}"${b.k === "none" ? "" :
+         ` style="background:${b.c};opacity:${b.o}"`}></i>${esc(b.t)}
+       <b>${b.n}</b></button>`).join("")}</div>`;
+}
+
+const RK_AIO_OPT = [["", "전체"], ["on", "AI오버뷰 뜸"], ["gap", "떴는데 미인용"],
+                    ["off", "안 뜸"]];
+const RK_aioHit = (r, v) => v === "on" ? r.aio === 1
+  : v === "gap" ? (r.aio === 1 && !r.aio_cited)
+  : v === "off" ? r.aio === 0 : true;
+
+function RK_filtered() {
+  const q = RK_Q.trim().toLowerCase();
+  const b = RK_bands().find(x => x.k === RK_BAND);
+  return RK_ROWS.filter(r =>
+    (!b || b.hit(r)) && RK_aioHit(r, RK_AIO) &&
+    (!q || String(r.keyword).toLowerCase().includes(q)));
+}
+function RK_find(v) { RK_Q = v; RK_list(); }
+function RK_setAio(v) { RK_AIO = v; RK_list(); }
+function RK_setBand(k) { RK_BAND = RK_BAND === k ? null : k; RK_paint(); }
+function RK_reset() { RK_Q = ""; RK_AIO = ""; RK_BAND = null; RK_paint(); }
+
+function RK_aioCell(r) {
+  if (r.aio == null)
+    return `<span class="muted" title="이번 조회는 AI오버뷰를 보고하지 않았습니다">—</span>`;
+  if (!r.aio) return `<span class="muted">안 뜸</span>`;
+  return r.aio_cited ? `<span class="up">인용됨</span>`
+                     : `<span class="down">떴는데 미인용</span>`;
+}
+
+function RK_row(r) {
+  const p = RK_prevPos(r);
+  const cells = [`<td class="kwcell">${esc(r.keyword)}</td>`,
+    `<td class="num">${r.pos != null ? r.pos
+      : `<span class="muted" title="조회한 깊이 안에서 못 찾았습니다">밖</span>`}</td>`];
+  if (RK_HAS_PREV)
+    cells.push(`<td class="num muted">${p != null ? p : "—"}</td>`,
+      `<td class="num">${rankDelta(r.delta ?? r.dpos) || `<span class="muted">—</span>`}</td>`);
+  cells.push(`<td>${RK_aioCell(r)}</td>`);
+  return `<tr>${cells.join("")}</tr>`;
+}
+
+function RK_list() {
+  const list = RK_filtered();
+  $("rk-n").textContent = list.length === RK_ROWS.length
+    ? `${RK_ROWS.length}개` : `${list.length}개 / 전체 ${RK_ROWS.length}개`;
+  if (!list.length)
+    return $("rk-list").innerHTML = `<div class="empty">거른 조건에 맞는 검색어가 없습니다.
+      <div class="acts"><button onclick="RK_reset()">필터 지우기</button></div></div>`;
+  const heads = ["키워드", ">순위?조회 시점의 구글 결과에서 우리 페이지가 실제로 있던 자리입니다"];
+  if (RK_HAS_PREV)
+    heads.push(">이전?직전 확인일의 순위 — 지금 순위에 Δ를 되돌린 값입니다",
+      `>Δ?올라간 칸수입니다. ±${(RULES.rank_noise || 3) - 1}칸까지는 노이즈로 보고 보합으로 적습니다`);
+  heads.push("AI오버뷰?구글 AI 요약이 떴는지, 떴다면 우리 페이지를 인용했는지");
+  $("rk-list").innerHTML = table(heads, list.map(RK_row));
+}
+
+// 목록·칩·도구줄을 한 번에 다시 그린다. 찾기 칸을 갈아치우면 포커스를 잃으므로
+// 글자를 칠 때는(RK_find) 아래 목록만 다시 그린다.
+function RK_paint() {
+  const bs = RK_bands().map(b => ({...b, n: RK_ROWS.filter(b.hit).length}));
+  $("rk-strata").innerHTML = RK_strata(bs, RK_ROWS.length) + RK_chips(bs);
+  $("rk-tools").innerHTML = `
+    <input type="search" value="${esc(RK_Q)}" oninput="RK_find(this.value)"
+      placeholder="검색어로 찾기" aria-label="검색어 찾기">
+    <select onchange="RK_setAio(this.value)" aria-label="AI오버뷰로 거르기">${
+      RK_AIO_OPT.map(([v, l]) => `<option value="${v}"${v === RK_AIO ? " selected" : ""}>${l}
+        (${RK_ROWS.filter(r => RK_aioHit(r, v)).length})</option>`).join("")}</select>
+    <span class="n" id="rk-n"></span>
+    <span class="sp"></span>
+    <button class="go sec" onclick="RK_csv()"
+      title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>`;
+  RK_list();
+}
+
+// 순위 회의는 화면 밖에서도 이어진다 — 지금 거른 목록 그대로 표로 내보낸다.
+// 맨 앞 BOM 은 엑셀이 한글을 안 깨게 한다(기회 목록과 같은 규칙).
+function RK_csv() {
+  const bs = RK_bands();
+  const head = ["검색어", "순위", "이전", "Δ", "구간", "AI오버뷰"];
+  const rows = [head].concat(RK_filtered().map(r => {
+    const b = bs.find(x => x.hit(r));
+    return [r.keyword, r.pos ?? "밖", RK_prevPos(r) ?? "", RK_d(r) ?? "",
+      b ? b.t : "", r.aio == null ? "" : !r.aio ? "안 뜸"
+        : r.aio_cited ? "인용됨" : "떴는데 미인용"];
+  }));
+  const csv = "﻿" + rows.map(r => r.map(
+    c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-순위-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 VIEW_RENDER.push(function (d) {
-  $("ranks").innerHTML = d.ranks.length
-    ? table(["키워드", ">순위", ">Δ", "AI오버뷰"], d.ranks.map(r =>
-        `<tr><td class="kwcell">${esc(r.keyword)}</td>
-        <td class="num">${r.pos ?? "—"}</td><td class="num">${rankDelta(r.delta ?? r.dpos)}</td>
-        <td>${r.aio ? (r.aio_cited ? '<span class="up">인용됨</span>'
-                     : '<span class="down">있는데 미인용</span>') : '<span class="muted">없음</span>'}</td></tr>`))
-    : `<div class="empty">매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.</div>`;
+  RK_ROWS = d.ranks || [];
+  RK_HAS_PREV = !!d.rank_prev && RK_ROWS.some(r => RK_d(r) != null);
+  RK_Q = ""; RK_AIO = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
+
+  // 조회 조건은 숫자만큼 중요하다 — 어느 기기로, 어느 제공자로 잰 값인지 말한다.
+  // 실행 기록(runs.notes)에 적혀 있는 것만 읽는다.
+  const run = (d.runs || []).find(r => r.kind === "rank");
+  const nt = (run && run.notes) || "";
+  const grab = k => (nt.match(new RegExp(k + "=([\\w.-]+)")) || [])[1] || "";
+  const DEV = {desktop: "데스크톱", mobile: "모바일"};
+  const cond = [d.rank_date && `${d.rank_date} 조회`,
+    grab("provider"), DEV[grab("device")] || grab("device"),
+    grab("errors") && grab("errors") !== "0" && `실패 ${grab("errors")}건`,
+    d.rank_prev && `직전 ${d.rank_prev} 대비`].filter(Boolean).join(" · ");
+
+  if (!RK_ROWS.length) {
+    $("rk-sub").textContent = "";
+    $("ranks").innerHTML = `<div class="empty">순위를 아직 한 번도 확인하지 않았습니다.
+      구글 결과를 직접 조회하는 단계라 SERP 제공자 연동(DataForSEO 권장 · Serper는
+      AI오버뷰가 없는 대체재)이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다${
+        d.kw_active ? ` — 지금 활성 키워드는 ${num(d.kw_active)}개입니다` : ""}.
+      연동이 없어도 나머지 분석은 그대로 돕니다: 서치콘솔의 <b>평균 게재순위</b>는
+      [키워드] 화면에 이미 들어와 있고, 그건 무료입니다.
+      <button class="cmd" onclick="copyCmd(this)">/capture rank</button></div>`;
+    return;
+  }
+
+  // eyebrow("SERP")와 제목("순위 기록")은 글자 그대로 둔다 — 호스팅판 terms.js 가
+  // 완전 일치로 표시 문구를 갈아끼운다. 조회 조건은 부제에 싣는다.
+  $("rk-sub").textContent = [`검색어 ${RK_ROWS.length}개`, cond].filter(Boolean).join(" · ");
+  $("ranks").innerHTML = `
+    <div class="band" id="rk-band"></div>
+    <div class="rk-part">
+      <div class="eyebrow">깊이 분포</div>
+      <div id="rk-strata"></div>
+      <p class="rk-note" id="rk-trend"></p>
+    </div>
+    <div class="rk-part">
+      <div class="eyebrow">검색어별 기록</div>
+      <div class="tools" id="rk-tools"></div>
+      <div id="rk-list"></div>
+      <p class="rk-note" id="rk-cap"></p>
+    </div>
+    <div class="rk-part" id="rk-aio-part">
+      <div class="eyebrow">AI오버뷰</div>
+      <div id="rk-aio"></div>
+    </div>`;
+
+  const ranked = RK_ROWS.filter(r => r.pos != null);
+  const p1 = RULES.page1 || 10;
+  const onP1 = ranked.filter(r => r.pos <= p1).length;
+  const avg = ranked.length
+    ? (ranked.reduce((a, r) => a + r.pos, 0) / ranked.length).toFixed(1) : "—";
+  const moved = f => RK_ROWS.filter(r => {
+    const v = RK_d(r);
+    const flat = r.delta && typeof r.delta === "object" ? r.delta.flat
+      : (v != null && Math.abs(v) < (RULES.rank_noise || 3));
+    return v != null && !flat && f(v);
+  }).length;
+  const up = moved(v => v > 0), down = moved(v => v < 0);
+  const noPrev = "비교할 직전 확인 없음";
+  $("rk-band").innerHTML = [
+    ["순위에 잡힘", num(ranked.length), `확인한 ${RK_ROWS.length}개 중`],
+    ["1페이지", num(onP1), `${p1}위 안 · 잡힌 것의 ${
+      ranked.length ? Math.round(onP1 / ranked.length * 100) : 0}%`],
+    ["평균 순위", avg + (ranked.length ? "위" : ""), "순위에 잡힌 것만 평균"],
+    ["올라감", RK_HAS_PREV ? `<span class="up">${up}</span>` : "—",
+      RK_HAS_PREV ? `±${(RULES.rank_noise || 3) - 1}칸은 보합으로 셉니다` : noPrev],
+    ["내려감", RK_HAS_PREV ? `<span class="down">${down}</span>` : "—",
+      RK_HAS_PREV ? `${esc(d.rank_prev)} 대비` : noPrev],
+  ].map(([l, v, b]) => `<div class="m"><div class="v">${v}</div>
+    <div class="l">${l}</div><div class="b">${b}</div></div>`).join("");
+
+  RK_paint();
+
+  // 추이 선은 확인일이 3회는 쌓여야 그린다 — 2점을 잇는 선은 추세가 아니다.
+  $("rk-trend").textContent = RK_HAS_PREV
+    ? `확인일 2회(${d.rank_prev} → ${d.rank_date})분이 쌓였습니다. 시간축 추이 그래프는 ` +
+      `3회부터 그립니다 — 그 전까지는 위 칸의 올라감·내려감이 변화의 전부입니다.`
+    : `확인일이 1회뿐이라 변화가 아직 없습니다. 한 번 더 확인하면 검색어마다 ` +
+      `이전 순위와 Δ가 붙습니다.`;
+
+  const capped = RK_ROWS.length >= 30 && (d.kw_active || 0) > RK_ROWS.length;
+  $("rk-cap").textContent = capped
+    ? `추적 키워드 ${num(d.kw_active)}개 중 ${RK_ROWS.length}개까지만 이 화면에 옵니다. ` +
+      `CSV도 같은 ${RK_ROWS.length}개입니다.`
+    : `순위·이전·Δ는 열 이름을 누르면 정렬됩니다.`;
+
+  // AI오버뷰: 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
+  // 어느 검색어에서 떴는데 우리만 빠졌는지가 [개선 기회]의 AI 인용 공백이 된다.
+  const known = RK_ROWS.filter(r => r.aio != null);
+  const on = known.filter(r => r.aio === 1);
+  const cited = on.filter(r => r.aio_cited).length;
+  const gap = d.aio_gap || [];
+  if (!known.length) {
+    $("rk-aio").innerHTML = `<div class="empty">이번 조회는 AI오버뷰를 보고하지 않았습니다${
+      grab("provider") === "serper" ? " — Serper는 AI오버뷰를 주지 않습니다. " +
+      "DataForSEO로 조회하면 이 칸이 채워집니다" : ""}.</div>`;
+  } else if (!on.length) {
+    $("rk-aio").innerHTML = `<p class="rk-note">확인한 ${known.length}개 어디에도
+      AI오버뷰가 뜨지 않았습니다. 이 주제는 아직 구글이 요약을 안 붙입니다.</p>`;
+  } else {
+    $("rk-aio").innerHTML = `<p class="rk-note">
+      AI오버뷰가 뜬 검색어 <b>${on.length}개</b> 중 <b>${cited}개</b>에서 우리 페이지가
+      인용됐습니다. 나머지 ${on.length - cited}개는 요약이 자리를 차지하는데 우리는 빠져
+      있습니다 — [개선 기회]의 <b>AI 인용 공백</b>이 여기서 나옵니다.</p>` +
+      (gap.length ? `<div class="oppchips" style="margin-top:12px">${gap.map(k =>
+        `<span class="chip">${esc(k)}</span>`).join("")}</div>` : "");
+  }
 });
 </script>

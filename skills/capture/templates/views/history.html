@@ -1,8 +1,70 @@
 <style>
+/* 기록 = 시추 로그 그 자체. 이 화면의 규칙은 하나다: 있었던 일만 적는다.
+   모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다. */
 #acts { border-left:2px solid var(--patina); padding-left:18px; }
 #acts ol { margin:8px 0 0; padding-left:20px; }
 #acts li { margin:7px 0; font-size:14.5px; }
 #acts li::marker { font-family:var(--mono); color:var(--patina); }
+
+/* ── 결과 배지: 완료(녹청)·문제(산화동)·건너뜀(회색). 두 목록이 같은 말을 쓴다. ── */
+.hs-r { display:inline-block; font:400 10px/1 var(--mono); letter-spacing:.1em;
+  text-transform:uppercase; padding:3px 7px; border:1px solid var(--rule);
+  border-radius:2px; white-space:nowrap; color:var(--slate); }
+.hs-r.ok { color:var(--patina); border-color:var(--patina); }
+.hs-r.bad { color:var(--copper); border-color:var(--copper); }
+.hs-r.skip { border-style:dashed; }
+
+/* ── 한 실행이 남긴 key=value: 원문 대신 사람 말 + 등폭 값 ── */
+.hs-nt { display:block; font:400 11.5px/1.7 var(--mono); color:var(--slate);
+  font-variant-numeric:tabular-nums; }
+.hs-nt .p { display:inline-block; margin-right:11px; white-space:nowrap; }
+.hs-nt .p b { color:var(--ink); font-weight:500; }
+.hs-nt .p.bad b { color:var(--copper); }
+.hs-nt .p.free { white-space:normal; color:var(--slate); }
+
+/* ── 요약: 아래 목록이 통째로 답하는 다섯 가지 ── */
+#runsum { margin:0 0 4px; }
+/* 종류별 마지막 — "무엇을 다시 돌릴 때가 됐나"에 답하는 자리다. */
+#lastby { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  border-top:1px solid var(--rule-soft); margin:12px 0 20px; }
+#lastby div { padding:10px 14px 10px 0; border-right:1px solid var(--rule-soft); }
+#lastby div:last-child { border-right:0; }
+#lastby .k { font:400 10px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+  color:var(--slate); }
+#lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
+  margin-top:6px; }
+#lastby .ago { color:var(--slate); }
+#lastby .ago.stale { color:var(--copper); }
+#lastby:empty { display:none; }
+@media (max-width:560px) { #lastby div { border-right:0;
+  border-bottom:1px solid var(--rule-soft); } }
+
+#runs .when { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
+
+/* ── 고친 것: 표가 아니라 줄이다. 경로·근거가 산문이라 칸에 안 들어간다. ── */
+#made .mk { display:grid; grid-template-columns:1fr auto; gap:0 14px;
+  padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft);
+  align-items:baseline; }
+#made .mk:hover { background:var(--bar); }
+#made .mk:last-of-type { border-bottom:0; }
+#made .mh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+#made .kind { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
+#made .dt, #made .br { font:400 11px/1 var(--mono); color:var(--slate); }
+#made .br::before { content:"⑂ "; }
+#made .path { font-family:var(--mono); font-size:13px; margin:8px 0 0;
+  word-break:break-all; }
+/* 이 줄이 루프다: 어느 기회가 이 수정을 낳았나. */
+#made .from { font:400 12px/1.6 var(--mono); color:var(--patina); margin-top:5px; }
+#made .why { font-size:12.5px; color:var(--slate); margin-top:5px; }
+#made .loop { margin-top:20px; padding-top:16px; border-top:1px solid var(--rule-soft);
+  font-size:13px; color:var(--slate); }
+#made .loop b { color:var(--patina); font-weight:600; }
+@media (max-width:560px) {
+  #made .mk { grid-template-columns:1fr; }
+  #made .hs-r { margin-top:9px; justify-self:start; }
+}
 </style>
 
 <section id="acts" hidden>
@@ -14,16 +76,317 @@
 <section>
   <div class="eyebrow">RUNS</div>
   <h2>수집 이력</h2>
+  <p class="sub">무엇을 언제 팠고, 얼마나 걸렸고, 무엇이 걸렸는지. 아래 요약은 이 목록 기준입니다.</p>
+  <div id="runsum"></div>
+  <div id="lastby"></div>
   <div id="runs"></div>
+</section>
+
+<section id="made-sec">
+  <div class="eyebrow">CREATIONS</div>
+  <h2>고친 것</h2>
+  <p class="sub">기회가 실제 코드 수정이 된 기록입니다. 여기 줄이 생겼다면 한 바퀴가 닫힌 겁니다.</p>
+  <div id="made"></div>
 </section>
 
 <script>
 "use strict";
+/* 조립하면 형제 화면들과 한 문서가 된다 — 이 파일의 전역은 전부 HS_ 로 시작한다. */
+
+const HS_RUN_LABEL = {gsc:"서치콘솔", rank:"순위", ai:"AI 인용", keywords:"키워드",
+  analysis:"기회 분석", gap:"경쟁 공백", index:"색인", report:"보고서", full:"전체"};
+// 수집기가 notes 에 남기는 key=value 를 사람 말로. 모르는 키는 원문 그대로 둔다 —
+// 새 수집기가 새 키를 남겨도 화면이 그걸 삼키면 안 된다.
+const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:"공급자",
+  device:"기기", errors:"오류", skipped:"건너뜀", harvest_kw:"수확 키워드",
+  harvest_comp:"수확 경쟁사", engines:"엔진", samples:"샘플", opps:"기회",
+  domains:"도메인", inserted:"신규", candidates:"후보", mode:"방식", urls:"주소",
+  checked:"검사", striking:"1페이지 목전", pseo:"pSEO"};
+// 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
+const HS_STALE_DAYS = 14;
+
+function HS_ago(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const s = (Date.now() - t) / 1000;
+  if (s < 0) return "";
+  if (s < 90) return "방금";
+  if (s < 3600) return `${Math.round(s / 60)}분 전`;
+  if (s < 86400) return `${Math.round(s / 3600)}시간 전`;
+  return `${Math.round(s / 86400)}일 전`;
+}
+const HS_days = iso => (Date.now() - Date.parse(iso)) / 86400000;
+// 소요는 초로 적는다 — 로그의 단위이고, 표 정렬(숫자 열)이 그대로 성립한다.
+function HS_secs(r) {
+  const s = (Date.parse(r.finished_at) - Date.parse(r.started_at)) / 1000;
+  return Number.isFinite(s) && s >= 0 ? Math.round(s) : null;
+}
+const HS_mmss = s => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`;
+
+/* ── 결과 판정: Brain 이 남긴 흔적만 읽는다. 여기서 새 사실을 만들지 않는다.
+      중단은 db.run 컨텍스트가 예외를 만나면 notes 끝에 "중단: …" 로 붙여 둔 것이고,
+      finished_at 이 없다는 건 그 컨텍스트조차 못 닫혔다는 뜻이다. ── */
+function HS_verdict(r) {
+  const n = String(r.notes || "");
+  if (n.includes("중단:"))
+    return {cls:"bad", label:"중단", why:"도중에 예외로 멈췄습니다 — 기록 칸에 이유가 있습니다."};
+  if (r.finished_at === null)
+    return {cls:"bad", label:"미완", why:"끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
+  const e = +((n.match(/\berrors=(\d+)/) || [])[1] || 0);
+  const k = +((n.match(/\bskipped=(\d+)/) || [])[1] || 0);
+  if (e) return {cls:"bad", label:`오류 ${e}`, why:`${e}건이 실패했습니다.`};
+  if (k) return {cls:"skip", label:`건너뜀 ${k}`, why:`${k}건을 건너뛰었습니다 — 보통 한도·키 없음입니다.`};
+  return {cls:"ok", label:"완료", why:"끝까지 돌았고 오류가 없습니다."};
+}
+const HS_badge = v => `<span class="hs-r ${v.cls}" title="${esc(v.why)}">${esc(v.label)}</span>`;
+
+function HS_notes(n) {
+  if (!n) return "";
+  const s = String(n), i = s.indexOf("중단:");
+  const head = (i < 0 ? s : s.slice(0, i)).replace(/[|\s]+$/, "");
+  const stop = i < 0 ? "" : s.slice(i + 3).trim();
+  const parts = [];
+  // 값에 공백이 든 것이 있다(engines=['a', 'b']) — 다음 key= 직전까지가 한 값이다.
+  const rest = head.replace(/([A-Za-z_]+)=(.*?)(?=\s+[A-Za-z_]+=|$)/g, (_, k, v) => {
+    const bad = (k === "errors" || k === "skipped") && +v > 0;
+    parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k] || k)} ` +
+               `<b>${esc(v.trim())}</b></span>`);
+    return "";
+  }).trim();
+  if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
+  if (stop) parts.push(`<span class="p bad">중단 <b>${esc(stop)}</b></span>`);
+  return `<span class="hs-nt">${parts.join("")}</span>`;
+}
+
+// 기록은 화면 밖에서도 쓰인다(회계·리포트) — 지금 걸러 놓은 목록 그대로 내보낸다.
+// 맨 앞 BOM 이 있어야 엑셀이 한글을 안 깬다.
+function HS_csv(name, rows) {
+  const csv = "﻿" + rows.map(r => r.map(
+    c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ── 수집 이력 ─────────────────────────────────────────────── */
+let HS_RUNS = [], HS_RQ = "", HS_RRES = "", HS_RKIND = null, HS_RN = 12;
+const HS_RES_OPT = [["", "전체"], ["ok", "완료"], ["bad", "문제"], ["skip", "건너뜀"]];
+
+function HS_runFiltered() {
+  const q = HS_RQ.trim().toLowerCase();
+  return HS_RUNS.filter(r =>
+    (!HS_RKIND || r.kind === HS_RKIND) &&
+    (!HS_RRES || HS_verdict(r).cls === HS_RRES) &&
+    (!q || `${r.kind} ${HS_RUN_LABEL[r.kind] || ""} ${r.notes || ""} ${r.started_at || ""}`
+             .toLowerCase().includes(q)));
+}
+function HS_runFind(v) { HS_RQ = v; HS_RN = 12; HS_runList(); }
+function HS_runRes(v) { HS_RRES = v; HS_RN = 12; HS_runList(); }
+function HS_runMore(n) { HS_RN = n; HS_runList(); }
+function HS_runReset() { HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_runTools(); }
+function HS_runKind(el) {
+  HS_RKIND = HS_RKIND === el.dataset.k ? null : el.dataset.k;
+  HS_runTools();
+}
+
+// 요약·마지막 수집은 거르기와 무관하게 전체를 말한다 — 걸러 놓고 "총액"을 읽으면 거짓말이 된다.
+function HS_runSummary() {
+  // 한 번도 안 돈 로그가 "0회 · $0.000" 이라고 말하면 안 된다 — 빈 상태에 자리를 내준다.
+  if (!HS_RUNS.length) return void ($("runsum").innerHTML = $("lastby").innerHTML = "");
+  const bad = HS_RUNS.filter(r => HS_verdict(r).cls === "bad").length;
+  const skip = HS_RUNS.filter(r => HS_verdict(r).cls === "skip").length;
+  const calls = HS_RUNS.reduce((a, r) => a + (r.api_calls || 0), 0);
+  const cost = HS_RUNS.reduce((a, r) => a + (r.cost_estimate_usd || 0), 0);
+  const chip = (l, v, t) => `<span class="chip" title="${esc(t)}">${l} <b>${v}</b></span>`;
+  $("runsum").innerHTML =
+    chip("실행", `${HS_RUNS.length}회`, "이 목록에 담긴 실행 수입니다 (최근 40회까지).") +
+    chip("문제", `${bad}회`, "중단·미완·오류가 있던 실행입니다.") +
+    (skip ? chip("건너뜀", `${skip}회`, "일부를 건너뛴 실행입니다 — 보통 한도·키 없음입니다.") : "") +
+    chip("호출", num(calls), "이 실행들이 부른 외부 API 횟수 합계입니다.") +
+    chip("비용", `$${cost.toFixed(3)}`, "수집기가 적어 둔 추정치의 합계입니다 — 청구서가 아닙니다.") +
+    (HS_RUNS.length ? chip("마지막", HS_ago(HS_RUNS[0].started_at),
+      HS_RUNS[0].started_at) : "");
+
+  // runs 는 최신순으로 온다 — 처음 만난 kind 가 그 종류의 마지막 수집이다.
+  const last = {};
+  HS_RUNS.forEach(r => { if (!last[r.kind]) last[r.kind] = r; });
+  $("lastby").innerHTML = Object.keys(last).map(k => {
+    const r = last[k], stale = HS_days(r.started_at) >= HS_STALE_DAYS;
+    return `<div><div class="k" title="${esc(k)}">${esc(HS_RUN_LABEL[k] || k)}</div>
+      <div class="v">${esc((r.started_at || "").slice(0, 10))}
+        <span class="ago${stale ? " stale" : ""}" title="${stale
+          ? `${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다.`
+          : "마지막으로 이 종류를 돌린 때입니다."}">${HS_ago(r.started_at)}</span></div></div>`;
+  }).join("");
+}
+
+// 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
+// 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
+function HS_runTools() {
+  if (!HS_RUNS.length)
+    return $("runs").innerHTML = `<div class="empty">아직 수집한 적이 없습니다.
+      한 번 돌리면 무엇을 얼마에 팠는지가 여기 줄로 남습니다.
+      <button class="cmd" onclick="copyCmd(this)">/capture run</button></div>`;
+  const counts = {};
+  HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
+  if (HS_RKIND && !counts[HS_RKIND]) HS_RKIND = null;   // 사이트 전환 시 잔존 필터
+  const kinds = Object.keys(counts);
+  const resn = c => HS_RUNS.filter(r => !c || HS_verdict(r).cls === c).length;
+  const chips = kinds.length > 1
+    ? `<div class="oppchips">${kinds.map(k =>
+        `<button class="chip${HS_RKIND === k ? " on" : ""}" data-k="${esc(k)}"
+           onclick="HS_runKind(this)" title="${esc(k)}"
+           aria-pressed="${HS_RKIND === k}">${esc(HS_RUN_LABEL[k] || k)}
+           <b>${counts[k]}</b></button>`).join("")}</div>`
+    : "";
+  $("runs").innerHTML = `<div class="tools">
+      <input type="search" value="${esc(HS_RQ)}" oninput="HS_runFind(this.value)"
+        placeholder="종류·기록으로 찾기" aria-label="수집 이력 찾기">
+      <select onchange="HS_runRes(this.value)" aria-label="결과로 거르기">${HS_RES_OPT.map(
+        ([v, l]) => `<option value="${v}"${v === HS_RRES ? " selected" : ""}>${l} ` +
+          `(${resn(v)})</option>`).join("")}</select>
+      <span class="n" id="runn"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="HS_runCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+    </div>${chips}<div id="runlist"></div>`;
+  HS_runList();
+}
+
+function HS_runList() {
+  const list = HS_runFiltered();
+  $("runn").textContent = list.length === HS_RUNS.length
+    ? `${HS_RUNS.length}회` : `${list.length}회 / 전체 ${HS_RUNS.length}회`;
+  if (!list.length)
+    return $("runlist").innerHTML = `<div class="empty">거른 조건에 맞는 실행이 없습니다.
+      <div class="acts"><button onclick="HS_runReset()">필터 지우기</button></div></div>`;
+  const rows = list.slice(0, HS_RN).map(r => {
+    const s = HS_secs(r);
+    return `<tr>
+      <td class="when" title="${esc(r.started_at || "")}">${
+        esc((r.started_at || "").replace("T", " ").slice(0, 16))}
+        <span class="muted">${HS_ago(r.started_at)}</span></td>
+      <td class="kwcell" title="${esc(r.kind)}">${esc(HS_RUN_LABEL[r.kind] || r.kind)}</td>
+      <td>${HS_badge(HS_verdict(r))}</td>
+      <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
+        s === null ? "—" : s}</td>
+      <td class="num">${num(r.api_calls || 0)}</td>
+      <td class="num">${(r.cost_estimate_usd || 0) ? "$" + r.cost_estimate_usd : "—"}</td>
+      <td>${HS_notes(r.notes)}</td>
+    </tr>`;
+  });
+  const rest = list.length - HS_RN;
+  $("runlist").innerHTML = table(
+    ["시각", "종류", "결과?완료·건너뜀·문제는 수집기가 남긴 기록으로만 가릅니다",
+     ">소요(초)?시작과 끝의 차이입니다. 1분이 넘으면 칸에 손을 얹어 분·초로 봅니다",
+     ">호출?그 실행이 부른 외부 API 횟수",
+     ">비용?수집기가 적어 둔 추정치입니다 — 청구서가 아닙니다",
+     "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows) + (rest > 0
+    ? `<div class="acts" style="margin-top:14px">
+         <button onclick="HS_runMore(${HS_RN + 20})">${rest}회 더 보기</button></div>`
+    : "");
+}
+
+function HS_runCsv() {
+  HS_csv("수집이력", [["시각", "종류", "결과", "소요(초)", "호출", "비용(USD)", "기록"]]
+    .concat(HS_runFiltered().map(r => [r.started_at, HS_RUN_LABEL[r.kind] || r.kind,
+      HS_verdict(r).label, HS_secs(r) ?? "", r.api_calls || 0,
+      r.cost_estimate_usd || 0, r.notes || ""])));
+}
+
+/* ── 고친 것 ──────────────────────────────────────────────── */
+let HS_MADE = [], HS_MQ = "", HS_MM = "";
+
+function HS_madeFiltered() {
+  const q = HS_MQ.trim().toLowerCase();
+  return HS_MADE.filter(c =>
+    (!HS_MM || (HS_MM === "y") === !!c.merged) &&
+    (!q || `${c.file_path} ${c.branch || ""} ${c.note || ""} ${c.opp_target || ""}`
+             .toLowerCase().includes(q)));
+}
+function HS_madeFind(v) { HS_MQ = v; HS_madeList(); }
+function HS_madeMerged(v) { HS_MM = v; HS_madeList(); }
+function HS_madeReset() { HS_MQ = ""; HS_MM = ""; HS_madeTools(); }
+
+function HS_madeRow(c) {
+  // kind 한국어 라벨은 개요 화면이 정본이다 — 여기 사본을 두면 언젠가 한쪽만 고쳐진다.
+  const label = (window.KIND_LABEL || {})[c.kind] || c.kind || "수동 작업";
+  return `<div class="mk">
+    <div>
+      <div class="mh">
+        <span class="kind" title="${esc(c.kind || "수동 브리프")}">${esc(label)}</span>
+        <span class="dt">${esc((c.created_at || "").slice(0, 10))}</span>
+        ${c.branch ? `<span class="br">${esc(c.branch)}</span>` : ""}
+      </div>
+      <div class="path">${esc(c.file_path)}</div>
+      ${c.opp_target
+        ? `<div class="from" title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)})"
+             >← ${esc(c.opp_target)}</div>` : ""}
+      ${c.note ? `<div class="why">${esc(c.note)}</div>` : ""}
+    </div>
+    <span class="hs-r ${c.merged ? "ok" : "skip"}" title="${c.merged
+      ? "병합됐습니다 — 다음 수집부터 이 수정이 숫자에 섞입니다."
+      : "아직 병합 전입니다 — 병합해야 검색엔진이 봅니다."}"
+      >${c.merged ? "병합됨" : "병합 전"}</span>
+  </div>`;
+}
+
+function HS_madeTools() {
+  if (!HS_MADE.length)
+    return $("made").innerHTML = `<div class="empty">아직 고친 기록이 없습니다.
+      [개요]에서 고른 기회를 실제 파일 수정으로 옮기면 여기 쌓입니다.
+      <button class="cmd" onclick="copyCmd(this)">/create plan</button></div>`;
+  const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
+  $("made").innerHTML = `<div class="tools">
+      <input type="search" value="${esc(HS_MQ)}" oninput="HS_madeFind(this.value)"
+        placeholder="파일·기회·근거로 찾기" aria-label="고친 것 찾기">
+      <select onchange="HS_madeMerged(this.value)" aria-label="병합 상태로 거르기">${
+        [["", "전체"], ["n", "병합 전"], ["y", "병합됨"]].map(([v, l]) =>
+          `<option value="${v}"${v === HS_MM ? " selected" : ""}>${l} (${mn(v)})</option>`
+        ).join("")}</select>
+      <span class="n" id="maden"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="HS_madeCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+    </div><div id="madelist"></div>`;
+  HS_madeList();
+}
+
+function HS_madeList() {
+  const list = HS_madeFiltered();
+  $("maden").textContent = list.length === HS_MADE.length
+    ? `${HS_MADE.length}건` : `${list.length}건 / 전체 ${HS_MADE.length}건`;
+  if (!list.length)
+    return $("madelist").innerHTML = `<div class="empty">거른 조건에 맞는 기록이 없습니다.
+      <div class="acts"><button onclick="HS_madeReset()">필터 지우기</button></div></div>`;
+  const linked = HS_MADE.filter(c => c.opportunity_id).length;
+  $("madelist").innerHTML = list.map(HS_madeRow).join("") +
+    `<div class="loop"><b>한 바퀴</b> — 서치콘솔에서 재고, 기회로 뽑고, 이 ${
+      HS_MADE.length}건을 고쳤습니다${linked
+      ? ` (그중 ${linked}건은 뽑아 둔 기회에서 곧장 왔습니다)`
+      : ""}. 고친 게 숫자로 돌아왔는지는 [개요]의 일별 추이가 답합니다.</div>`;
+}
+
+function HS_madeCsv() {
+  HS_csv("고친것", [["작성일", "종류", "파일", "브랜치", "병합", "기회", "근거"]]
+    .concat(HS_madeFiltered().map(c => [c.created_at,
+      (window.KIND_LABEL || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
+      c.merged ? "병합됨" : "병합 전", c.opp_target || "",
+      (c.note || "").replace(/\s+/g, " ")])));
+}
+
 VIEW_RENDER.push(function (d) {
-  $("runs").innerHTML = d.runs.length
-    ? `<div class="runlog">${d.runs.map(r => `<span class="r"><b>${esc(r.kind)}</b>
-        ${esc(r.started_at)} · 호출 ${r.api_calls ?? 0} · $${r.cost_estimate_usd ?? 0}
-        ${r.notes ? "· " + esc(r.notes) : ""}</span>`).join("")}</div>`
-    : `<div class="empty">아직 수집한 적이 없습니다.</div>`;
+  HS_RUNS = d.runs || [];
+  HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_RN = 12;
+  HS_runSummary();
+  HS_runTools();
+
+  // 없는 것(옛 박제본)과 빈 것(아직 아무것도 안 고침)을 화면에서 갈라 말하지 않는다 —
+  // 둘 다 "여기 쌓입니다"가 맞는 다음 걸음이다.
+  HS_MADE = d.creations || [];
+  HS_MQ = ""; HS_MM = "";
+  HS_madeTools();
 });
 </script>

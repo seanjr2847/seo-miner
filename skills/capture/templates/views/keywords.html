@@ -5,15 +5,26 @@
 .log .num { font-size:11.5px; fill:var(--slate); }
 .log .track { stroke:var(--rule-soft); }
 .log .dist { stroke-linecap:round; }
+/* 눈금선 — 축 숫자만 있으면 15줄 아래에서 그 점이 몇 위인지 못 읽는다.
+   일별 추이(overview)의 .grid 와 같은 점선 언어를 세로로 쓴다. */
+.log .vgrid { stroke:var(--rule-soft); stroke-dasharray:2 4; }
 @media (prefers-reduced-motion: no-preference) {
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
+/* 그림은 마우스에만 답한다 — 같은 값을 키보드·화면낭독기로도 읽게 표를 접어 둔다. */
+.kwtable { margin-top:14px; }
+.kwtable summary { font:400 12px/1 var(--mono); color:var(--slate); cursor:pointer; }
+.kwtable summary:hover { color:var(--patina); }
+.kwtable table { margin-top:12px; }
 </style>
 
 <section>
+  <!-- 이 문구는 호스팅판(server/assets/terms.js)이 완전 일치로 갈아끼운다 — 글자 그대로 둔다.
+       지금 무엇으로 정렬 중인지는 아래 도구줄의 정렬 칸이 말한다. -->
   <div class="eyebrow">4~20위 · 노출 많은 순</div>
   <h2>1페이지까지 남은 거리</h2>
   <p class="sub" id="log-sub"></p>
+  <div id="log-tools"></div>
   <div id="log"></div>
 </section>
 
@@ -26,17 +37,25 @@
 
 <script>
 "use strict";
+/* 이 파일의 전역은 전부 KW_ — 조립하면 형제 화면들과 한 문서가 된다. */
+let KW_ROWS = [], KW_SORT = "imp", KW_BAND = "", KW_PERIOD = "", KW_BRAND_EMPTY = false;
+let KW_MV = [], KW_MQ = "", KW_MDIR = "";
+const KW_SORTS = [["imp", "노출 많은 순"], ["pos", "1페이지에 가까운 순"],
+                  ["clk", "클릭 많은 순"]];
+
 /* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
-function depthLog(rows, brandCatalogEmpty) {
-  if (!rows.length)
-    return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
-  const W = 1000, LANE = 30, PAD_T = 40, PAD_B = 8;
+function depthLog(rows, brandCatalogEmpty, period) {
+  const W = 1000, LANE = 30, PAD_T = 44;
+  // 줄이 길어지면 위쪽 눈금이 화면 밖으로 나간다 — 아래에도 같은 눈금을 깐다.
+  const botAxis = rows.length >= 8, PAD_B = botAxis ? 26 : 10;
   const L = 330, R = W - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
   const H = PAD_T + rows.length * LANE + PAD_B;
   const x = p => L + Math.min(p, EDGE) / EDGE * (R - L);
   const x10 = x(RULES.page1);
   const ticks = [1, 5, RULES.page1, 15, EDGE];
+  const top = PAD_T - 8, bot = PAD_T + rows.length * LANE + 4;
+  const gap1 = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
 
   const lanes = rows.map((r, i) => {
     const y = PAD_T + i * LANE + LANE / 2;
@@ -50,7 +69,7 @@ function depthLog(rows, brandCatalogEmpty) {
              animation-delay:${i * 16}ms"/>`;
     // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
     const gap = onPage1 ? "이미 1페이지"
-      : `1페이지까지 ${r.gap.toFixed(1)}칸`;
+      : `1페이지까지 ${gap1(r).toFixed(1)}칸`;
     return `<g class="lane">
       <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${W}" height="${LANE}" fill="none"/>
       <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
@@ -65,43 +84,191 @@ function depthLog(rows, brandCatalogEmpty) {
     </g>`;
   }).join("");
 
+  // 경계선은 따로 그리므로 눈금선에서는 뺀다 — 같은 자리에 선이 둘 겹친다.
+  const grid = ticks.filter(t => t !== RULES.page1).map(t =>
+    `<line class="vgrid" x1="${x(t)}" y1="${top}" x2="${x(t)}" y2="${bot}"
+           stroke-width="1"/>`).join("");
+  const tick = y => ticks.map(t => `<text class="axis" x="${x(t)}" y="${y}"
+      text-anchor="middle">${t}${t === EDGE ? "위+" : ""}</text>`).join("");
+
+  const p1 = rows.filter(r => (r.band || (r.pos <= RULES.page1 ? "page1" : "page2")) === "page1")
+    .length;
+  const impLabel = period ? `${period} 노출` : "노출";
   const warn = brandCatalogEmpty
     ? `\n  <div class="legend">남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.</div>`
     : "";
+  // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 접어 둔다.
+  const tbl = table([
+    "검색어",
+    `>순위?구글이 보고한 ${period || "기간"} 평균 게재순위`,
+    `>1페이지까지?${RULES.page1}위 경계까지 되밀어야 할 칸 수 — 이미 1페이지면 —`,
+    `>${impLabel}?기간 합계 노출 — 순위를 밀면 클릭으로 바뀔 몫`,
+    ">클릭?기간 합계 클릭"],
+    rows.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
+      <td class="num">${r.pos}</td>
+      <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
+      <td class="num">${num(r.imp)}</td>
+      <td class="num">${num(r.clk)}</td></tr>`));
 
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
-      aria-label="검색어별 순위와 1페이지까지 남은 거리">
-    <rect x="${L}" y="${PAD_T - 14}" width="${x10 - L}" height="${H - PAD_T + 10}"
-          fill="var(--wash)"/>
-    <line x1="${x10}" y1="${PAD_T - 2}" x2="${x10}" y2="${H - 4}"
+      aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리 — 1페이지 안 ${p1}개, 2페이지 ${rows.length - p1}개">
+    <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--wash)"/>
+    ${grid}
+    <line x1="${x10}" y1="${top - 6}" x2="${x10}" y2="${bot}"
           stroke="var(--patina)" stroke-width="1"/>
-    <text class="axis" x="${x10 - 6}" y="${PAD_T - 22}" text-anchor="end"
+    <text class="axis" x="${L}" y="${PAD_T - 26}">평균 게재순위 →</text>
+    <text class="axis" x="${x10 - 6}" y="${PAD_T - 26}" text-anchor="end"
           fill="var(--patina)">1페이지 경계</text>
-    ${ticks.map(t => `<text class="axis" x="${x(t)}" y="${PAD_T - 6}"
-        text-anchor="middle">${t}${t === EDGE ? "위+" : ""}</text>`).join("")}
-    <text class="axis" x="${W}" y="${PAD_T - 6}" text-anchor="end">노출</text>
+    ${tick(PAD_T - 14)}
+    <text class="axis" x="${W}" y="${PAD_T - 14}" text-anchor="end">${esc(impLabel)}</text>
     ${lanes}
+    ${botAxis ? tick(H - 7) : ""}
   </svg></div>
-  <div class="legend"><b style="color:var(--patina)">■</b> 1페이지 안 ·
-    <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>${warn}`;
+  <div class="legend">
+    <b style="color:var(--patina)">●</b> 점 = 지금 평균 순위 ·
+    <b style="color:var(--copper)">▬</b> 막대 = 1페이지까지 밀 거리 ·
+    오른쪽 숫자 = ${esc(impLabel)}<br>
+    <b style="color:var(--patina)">1페이지 안 ${p1}개</b> ·
+    <b style="color:var(--copper)">2페이지 ${rows.length - p1}개</b> — 막대만큼 밀면 1페이지입니다
+  </div>${warn}
+  <details class="kwtable"><summary>표로 보기 · 값 그대로 (${rows.length}개)</summary>${tbl}</details>`;
 }
 
-function moverRows(list, invert) {
-  return list.map(m => `<tr><td class="kwcell">${esc(m.query)}</td>
-    <td class="num">${m.pos}</td>
-    <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
-    <td class="num">${num(m.clk)} ${delta(m.dclk)}</td></tr>`);
+// 거르기·정렬은 화면에서 한다 — 서버가 준 15개가 이 화면이 가진 전부다.
+function KW_filtered() {
+  const rows = KW_BAND ? KW_ROWS.filter(r => r.band === KW_BAND) : KW_ROWS.slice();
+  const key = {imp: r => -(r.imp || 0), pos: r => r.pos, clk: r => -(r.clk || 0)}[KW_SORT];
+  return rows.sort((a, b) => key(a) - key(b));
+}
+function KW_setSort(v) { KW_SORT = v; KW_drawLog(); }
+function KW_setBand(v) { KW_BAND = v; KW_drawLog(); }
+function KW_reset() { KW_BAND = ""; KW_tools(); KW_drawLog(); }
+
+// 도구줄은 데이터가 바뀔 때만 그린다 — 거르기는 아래 그림만 다시 그린다(KW_drawLog).
+function KW_tools() {
+  const cnt = b => b ? KW_ROWS.filter(r => r.band === b).length : KW_ROWS.length;
+  const bands = [["", "전체"],
+    ["page2", `2페이지 ${RULES.page1 + 1}~${RULES.striking_hi}위`],
+    ["page1", `1페이지 안 ${RULES.striking_lo}~${RULES.page1}위`]];
+  $("log-tools").innerHTML = `<div class="tools">
+    <select onchange="KW_setSort(this.value)" aria-label="정렬 기준">${KW_SORTS.map(
+      ([v, l]) => `<option value="${v}"${v === KW_SORT ? " selected" : ""}>${l}</option>`
+      ).join("")}</select>
+    <select onchange="KW_setBand(this.value)" aria-label="구간으로 거르기">${bands.map(
+      ([v, l]) => `<option value="${v}"${v === KW_BAND ? " selected" : ""}>${l} ` +
+        `(${cnt(v)})</option>`).join("")}</select>
+    <span class="n" id="logn"></span>
+    <span class="sp"></span>
+    <button class="go sec" onclick="KW_csvLog()"
+      title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+  </div>`;
+}
+
+function KW_drawLog() {
+  const rows = KW_filtered();
+  $("logn").textContent = rows.length === KW_ROWS.length
+    ? `${rows.length}개` : `${rows.length}개 / 전체 ${KW_ROWS.length}개`;
+  $("log").innerHTML = rows.length
+    ? depthLog(rows, KW_BRAND_EMPTY, KW_PERIOD)
+    : `<div class="empty">거른 구간에 걸린 검색어가 없습니다.
+        <div class="acts"><button onclick="KW_reset()">필터 지우기</button></div></div>`;
+}
+
+// ── 움직인 검색어 ────────────────────────────────────────────
+function KW_mvFiltered() {
+  const q = KW_MQ.trim().toLowerCase();
+  return KW_MV.filter(m => (!KW_MDIR || m.dir === KW_MDIR) &&
+    (!q || m.query.toLowerCase().includes(q)));
+}
+function KW_mvFind(v) { KW_MQ = v; KW_mvList(); }
+function KW_mvDir(v) { KW_MDIR = v; KW_mvList(); }
+function KW_mvReset() { KW_MQ = ""; KW_MDIR = ""; KW_mvRender(); }
+
+function KW_mvRender() {
+  const cnt = d => d ? KW_MV.filter(m => m.dir === d).length : KW_MV.length;
+  const dirs = [["", "전체"], ["up", "오른 것"], ["down", "내린 것"]];
+  $("movers").innerHTML = `<div class="tools">
+      <input type="search" value="${esc(KW_MQ)}" oninput="KW_mvFind(this.value)"
+        placeholder="검색어로 찾기" aria-label="검색어 찾기">
+      <select onchange="KW_mvDir(this.value)" aria-label="방향으로 거르기">${dirs.map(
+        ([v, l]) => `<option value="${v}"${v === KW_MDIR ? " selected" : ""}>${l} ` +
+          `(${cnt(v)})</option>`).join("")}</select>
+      <span class="n" id="mvn"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="KW_csvMv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+    </div><div id="mv-list"></div>`;
+  KW_mvList();
+}
+
+function KW_mvList() {
+  const list = KW_mvFiltered();
+  $("mvn").textContent = list.length === KW_MV.length
+    ? `${KW_MV.length}개` : `${list.length}개 / 전체 ${KW_MV.length}개`;
+  if (!list.length)
+    return $("mv-list").innerHTML = `<div class="empty">거른 조건에 맞는 검색어가 없습니다.
+      <div class="acts"><button onclick="KW_mvReset()">필터 지우기</button></div></div>`;
+  const per = KW_PERIOD || "기간";
+  $("mv-list").innerHTML = table([
+    "검색어",
+    `>순위?구글이 보고한 ${per} 평균 게재순위`,
+    ">Δ순위?직전 기록 대비 — 양수면 위로 올라온 것입니다",
+    `>클릭?${per} 합계 클릭 · 옆 숫자는 직전 기록 대비 증감`,
+    `>노출?${per} 합계 노출 — 노출이 적으면 순위도 크게 흔들립니다`],
+    list.map(m => `<tr><td class="kwcell">${esc(m.query)}</td>
+      <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
+      <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
+      <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
+      <td class="num">${num(m.imp)}</td></tr>`));
+}
+
+// ── 내보내기: 지금 걸러 놓은 목록 그대로. BOM 을 붙여야 엑셀이 한글을 안 깬다.
+function KW_csv(name, rows) {
+  const csv = "﻿" + rows.map(r => r.map(
+    c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function KW_csvLog() {
+  KW_csv("1페이지까지", [["검색어", "평균순위", "1페이지까지", "노출", "클릭", "구간"]].concat(
+    KW_filtered().map(r => [r.query, r.pos,
+      Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1),
+      r.imp, r.clk, r.band === "page1" ? "1페이지" : "2페이지"])));
+}
+function KW_csvMv() {
+  KW_csv("순위변동", [["검색어", "순위", "Δ순위", "클릭", "Δ클릭", "노출"]].concat(
+    KW_mvFiltered().map(m => [m.query, Number.isFinite(m.pos) ? m.pos.toFixed(1) : "",
+      m.dpos, m.clk, m.dclk, m.imp])));
 }
 
 VIEW_RENDER.push(function (d) {
-  const near = d.striking_page2;
-  $("log-sub").textContent = d.striking.length
-    ? `${d.striking.length}개 중 ${near}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
+  KW_ROWS = d.striking || [];
+  KW_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
+  KW_BRAND_EMPTY = !!d.brand_catalog_empty;
+  KW_SORT = "imp";
+  KW_BAND = "";                                   // 사이트를 바꾸면 필터도 처음으로
+  const p2 = d.striking_page2 ?? KW_ROWS.filter(r => r.band === "page2").length;
+  $("log-sub").textContent = KW_ROWS.length
+    ? `${KW_ROWS.length}개 중 ${p2}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
       `순위만 밀면 클릭으로 바뀝니다.`
     : "";
-  $("log").innerHTML = depthLog(d.striking, d.brand_catalog_empty);
+  if (!KW_ROWS.length) {
+    // 빈 이유가 둘이다 — 아직 안 읽었다 / 읽었는데 이 구간에 걸린 게 없다.
+    $("log-tools").innerHTML = "";
+    $("log").innerHTML = `<div class="empty">${d.gsc_date
+      ? `${esc(d.gsc_date)} 실적까지 읽었지만 ${RULES.striking_lo}~${RULES.striking_hi}위 ` +
+        `구간에 노출이 잡힌 검색어가 없습니다. 노출이 쌓이면 여기부터 채워집니다.`
+      : "구글 실적을 아직 안 읽었습니다 — 읽으면 여기가 채워집니다."}
+      <div><button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>
+      </div>`;
+  } else {
+    KW_tools();
+    KW_drawLog();
+  }
 
-  const mv = moverRows(d.ups).concat(moverRows(d.downs));
   // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면
   // Δ가 전부 거짓이라, 짝을 못 찾으면 비교를 접고 그 이유를 여기에 적는다.
   $("mv-sub").textContent = d.gsc_prev
@@ -110,8 +277,18 @@ VIEW_RENDER.push(function (d) {
     ? `직전 기록과 기간이 달라 비교하지 않았습니다 — 지금은 ${d.gsc_period}일치입니다. ` +
       `같은 기간으로 한 번 더 읽으면 채워집니다.`
     : "구글 실적을 두 번 이상 읽으면 채워집니다.";
-  $("movers").innerHTML = mv.length || !d.period_mismatch
-    ? table(["검색어", ">순위", ">Δ순위", ">클릭"], mv)
-    : `<div class="empty">기간이 다른 기록끼리는 비교하지 않습니다.</div>`;
+  KW_MV = (d.ups || []).map(m => ({...m, dir: "up"}))
+    .concat((d.downs || []).map(m => ({...m, dir: "down"})));
+  KW_MQ = ""; KW_MDIR = "";
+  if (KW_MV.length) return KW_mvRender();
+  // 기간 불일치 문구는 호스팅판이 문장 전체 일치로 갈아끼운다 — 다른 글자를 섞지 않는다.
+  // (같은 기간으로 다시 읽으라는 안내는 바로 위 #mv-sub 가 이미 하고 있다.)
+  $("movers").innerHTML = d.period_mismatch
+    ? `<div class="empty">기간이 다른 기록끼리는 비교하지 않습니다.</div>`
+    : `<div class="empty">${d.gsc_prev
+      ? "직전 기록과 견줘 움직인 검색어가 없습니다 — 전부 노이즈 범위 안입니다."
+      : "비교할 직전 기록이 없습니다 — 한 번 더 읽으면 그때부터 변동이 잡힙니다."}
+      <div><button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>
+      </div>`;
 });
 </script>

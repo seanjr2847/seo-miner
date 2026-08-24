@@ -339,6 +339,7 @@ def gather(conn, p) -> dict:
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
         "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
     matrix, gap_domains, missed = [], [], []
+    cite_share, ai_by_prompt = [], []
     if ai_run:
         matrix = q(conn,
             """SELECT c.engine, p2.category, SUM(c.cited) cited,
@@ -352,6 +353,30 @@ def gather(conn, p) -> dict:
                 freq[d] = freq.get(d, 0) + 1
         gap_domains = sorted(({"domain": k, "n": v} for k, v in freq.items()),
                              key=lambda x: -x["n"])[:15]
+
+        # 점유는 우리가 빠진 답변만 세면 과소집계다 — 같이 인용된 경우도 세야
+        # 우리 도메인과 나란히 놓을 수 있다. gap_domains 는 그대로 둔다(하위호환).
+        share: dict[str, int] = {}
+        for r in q(conn, "SELECT cited_domains_json FROM ai_checks WHERE run_id=?",
+                   (ai_run["id"],)):
+            for d in json.loads(r["cited_domains_json"] or "[]"):
+                share[d] = share.get(d, 0) + 1
+        cite_share = sorted(({"domain": k, "n": v} for k, v in share.items()),
+                            key=lambda x: -x["n"])[:15]
+
+        # 질문 하나 = 줄 하나. "왜 빠졌나"의 증거는 답변 원문뿐인데 여태 버려졌다.
+        # 발췌는 길다 — 박제본에도 들어가므로 화면이 접어 보여줄 만큼만 자른다.
+        ai_by_prompt = q(conn,
+            """SELECT p2.id, p2.prompt, p2.category,
+                      SUM(c.cited) cited, SUM(c.mentioned) mentioned, COUNT(*) checks,
+                      GROUP_CONCAT(DISTINCT c.engine) engines,
+                      MAX(CASE WHEN c.cited=0 THEN c.answer_excerpt END) miss_answer,
+                      MAX(CASE WHEN c.cited=0 THEN c.cited_domains_json END) miss_domains
+                 FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
+                WHERE c.run_id=? GROUP BY p2.id
+                ORDER BY cited DESC, mentioned DESC""", (ai_run["id"],))
+        for r in ai_by_prompt:
+            r["miss_answer"] = (r["miss_answer"] or "")[:600]
         missed = q(conn,
             """SELECT p2.prompt, p2.category,
                       GROUP_CONCAT(DISTINCT c.engine) engines
@@ -408,8 +433,14 @@ def gather(conn, p) -> dict:
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
         (pid,)).fetchone()[0]
     runs = q(conn,
-        """SELECT kind, started_at, api_calls, cost_estimate_usd, notes
-             FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 8""", (pid,))
+        """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
+             FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 40""", (pid,))
+    # /create 가 실제로 고친 것 — 측정→기회→수정→재측정 루프가 닫혔음을 보여주는 자리.
+    creations = q(conn,
+        """SELECT c.id, c.kind, c.file_path, c.branch, c.note, c.merged,
+                  c.created_at, c.opportunity_id, o.target opp_target
+             FROM creations c LEFT JOIN opportunities o ON o.id=c.opportunity_id
+            WHERE c.project_id=? ORDER BY c.id DESC LIMIT 50""", (pid,))
     prog = stage.progress(conn, pid)
     guide = stage.state(conn, p, p["domain"] or "")
     daily = scoring.daily_trend(conn, pid)
@@ -428,9 +459,10 @@ def gather(conn, p) -> dict:
             "striking": striking, "striking_page2": striking_page2,
             "brand_catalog_empty": len(brands) == 0,
             "matrix": matrix, "gap_domains": gap_domains,
+            "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
             "missed": missed, "ai_trend": ai_trend,
             "opps": opps, "opps_total": opps_total, "opp_counts": opp_counts,
-            "runs": runs,
+            "runs": runs, "creations": creations,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
             "ranks": ranks[:30], "aio_gap": aio_gap,

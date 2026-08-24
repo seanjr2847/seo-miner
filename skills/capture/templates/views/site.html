@@ -1,8 +1,52 @@
+<style>
+/* ── 사이트 점검 ────────────────────────────────────────────
+   크롤러가 없는 대신 구글이 URL 하나하나에 직접 답한 것만 쓴다. 그래서 이 화면의
+   색은 둘뿐이다 — 구글이 색인했다(녹청) / 안 했다(산화동). 갈래별 심각도는 색을
+   더 늘리는 대신 진하기로 말한다. ── */
+.note { font-size:12px; line-height:1.7; color:var(--slate); margin:16px 0 0; max-width:74ch; }
+.note b { color:var(--ink); font-weight:500; }
+
+/* 색인 막대: 검사한 URL 전부를 한 줄에. 정상이 얼마나 되는지가 먼저 보여야 한다. */
+.ixbar { display:flex; gap:2px; height:6px; margin:0 0 13px; }
+.ixbar i { display:block; border-radius:1px; min-width:3px; }
+.ixbar .b-ok { background:var(--patina); opacity:.55; }
+.ixbar .b-s1 { background:var(--copper); }
+.ixbar .b-s2 { background:var(--copper); opacity:.55; }
+.ixbar .b-s3 { background:var(--slate); opacity:.55; }
+@media (prefers-reduced-motion: no-preference) {
+  .ixbar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+}
+/* 갈래 칩이 곧 막대의 범례다 — 같은 색 조각을 앞에 달고, 누르면 표를 거른다. */
+.ixchip .sw { display:inline-block; width:7px; height:7px; border-radius:1px;
+  margin-right:7px; background:var(--slate); }
+.ixchip.s1 .sw { background:var(--copper); }
+.ixchip.s2 .sw { background:var(--copper); opacity:.55; }
+.ixchip.s3 .sw { background:var(--slate); opacity:.55; }
+.ixchip.all .sw { display:none; }
+.ixchips { margin:0 0 10px; }
+
+.ixb { font:400 10px/1.5 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  white-space:nowrap; color:var(--slate); }
+.ixb.s1 { color:var(--copper); }
+.ixb.s2 { color:var(--copper); opacity:.8; }
+.ixurl { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:22ch; }
+.ixstate { font-family:var(--mono); font-size:11.5px; color:var(--slate); }
+.ixfix { font-size:12.5px; color:var(--slate); }
+
+/* 순위차 막대: 숫자 밑에 같은 길이의 언어를 하나 더 깔아 줄 세우기를 눈으로 만든다. */
+.dgap { display:block; height:3px; margin:5px 0 0 auto; border-radius:2px;
+  background:var(--copper); opacity:.5; }
+</style>
+
 <section id="ix-sec">
   <div class="eyebrow">URL 검사</div>
   <h2>색인 문제</h2>
   <p class="sub" id="ix-sub"></p>
   <div id="index"></div>
+  <p class="note">이 화면이 답하는 건 <b>구글이 이 URL 을 색인했는가</b> 하나입니다 —
+    구글 URL 검사 API 의 응답 그대로이고, 우리가 크롤해서 추정한 값이 아닙니다.
+    대신 페이지 속도·깨진 링크·중복 메타는 seo-miner 가 재지 않습니다.
+    검사 대상은 노출 상위 페이지부터입니다(하루 할당 2,000회).</p>
 </section>
 
 <section id="dev-sec">
@@ -14,61 +58,248 @@
 
 <script>
 "use strict";
-/* ── 기기 격차·색인 문제: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
+/* ── 기기 격차·색인 상태: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
       빈 목록으로 온다 — 서버가 준 최신 수집일로 갈라 안내한다. 키 자체가 없으면
       이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
-function renderDevice(d) {
-  if (!d.device_gap) return $("dev-sec").hidden = true;
-  $("dev-sec").hidden = false;
-  const rows = d.device_gap;
-  if (!d.device_date) {
-    $("dev-sub").textContent = "";
-    return $("devgap").innerHTML = `<div class="empty">기기별 실적을 아직 안 읽었습니다 — 설정의 <code>gsc_breakdown: device</code> 로 <code>/capture gsc</code> 하면 채워집니다.</div>`;
-  }
-  if (!rows.length) {
-    $("dev-sub").textContent = `${d.device_date} 기준`;
-    return $("devgap").innerHTML = `<div class="empty">모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.</div>`;
-  }
-  $("dev-sub").textContent = `${d.device_date} 기준 ${rows.length}개 — 모바일 평균순위가 ` +
-    `데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 모바일 노출 ` +
-    `${num(RULES.device_min_imp)} 이상인 검색어. 고칠 곳은 글이 아니라 모바일 화면입니다.`;
-  // 순위는 소수 1자리로 고정 — 15.0이 15로 오면 등폭 열의 자릿수가 어긋난다.
-  const p1 = v => Number(v).toFixed(1);
-  // th 가 nowrap 이라 6열이면 좁은 화면에서 표가 본문 밖으로 삐져나간다 —
-  // 깊이 로그와 같은 .logwrap 에 넣어 페이지가 아니라 표 안에서 가로로 스크롤시킨다.
-  $("devgap").innerHTML = `<div class="logwrap">` + table(
-    ["검색어", ">모바일", ">데스크톱", ">Δ", ">모바일 노출", ">CTR 모바일/데스크톱"],
-    rows.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
-      <td class="num down">${p1(r.mobile_pos)}</td><td class="num">${p1(r.desktop_pos)}</td>
-      <td class="num down">${p1(r.dpos)}</td><td class="num">${num(r.mobile_imp)}</td>
-      <td class="num">${r.mobile_ctr}% / ${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+
+// 지금 걸러 놓은 것 그대로 표로 — 트리아지는 화면 밖에서도 이어진다(기회 목록과 같은 문법).
+// 맨 앞 BOM 이 없으면 엑셀이 한글을 깬다.
+function stCsv(name, rows) {
+  const csv = "\uFEFF" + rows.map(r => r.map(
+    c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
-// bucket 라벨 — 원문 bucket 은 title로 남긴다(scoring.index_issues 와 대조할 때 필요).
-const IX_LABEL = {robots_blocked:"robots.txt 차단", fetch_error:"가져오기 실패",
-  canonical_mismatch:"대표 URL 엇갈림", not_indexed:"색인 안 됨"};
+/* ── 색인 상태 ──────────────────────────────────────────── */
+// bucket 라벨·심각도·고칠 곳. 원문 bucket 은 title 로 남긴다(scoring.index_issues 와 대조용).
+// sev 1 = 막혀서 절대 색인 안 됨, 2 = 색인은 되는데 엉뚱한 URL 로, 3 = 아직 안 됨.
+// 순서는 scoring 이 정렬해 준 순서 그대로다 — 손대는 차례가 곧 심각도다.
+const ST_IX = {
+  robots_blocked: {label:"robots.txt 차단", sev:1},
+  fetch_error: {label:"가져오기 실패", sev:1},
+  canonical_mismatch: {label:"대표 URL 엇갈림", sev:2},
+  not_indexed: {label:"색인 안 됨", sev:3},
+};
+const ST_IX_ORDER = ["robots_blocked", "fetch_error", "canonical_mismatch", "not_indexed"];
+
+let ST_IX_ROWS = [], ST_IX_B = "", ST_IX_Q = "", ST_IX_TOTAL = null;
+
+// 검사한 URL 총수 — 판정 payload 에는 '문제 있는 URL' 만 온다. 분모가 없으면
+// "7건"이 나쁜 건지 알 수가 없다. 색인 수집기가 runs.notes 에 남긴
+// "urls=17/20 checked=2026-08-20" 에서 같은 날짜인 것만 읽는다. 못 찾으면 null.
+function stIxChecked(d) {
+  for (const r of (d.runs || [])) {
+    if (r.kind !== "index") continue;
+    const m = /urls=(\d+)\/\d+\s+checked=(\d{4}-\d{2}-\d{2})/.exec(r.notes || "");
+    if (!m || m[2] !== d.index_date) continue;
+    // 같은 날 배치를 나눠 돌리면 마지막 배치 수만 남는다 — 문제 수보다 작으면 안 쓴다.
+    return +m[1] >= ST_IX_ROWS.length ? +m[1] : null;
+  }
+  return null;
+}
+
+function stIxBar(counts, ok) {
+  const seg = [];
+  if (ok > 0) seg.push(`<i class="b-ok" style="flex:${ok}" title="정상 ${ok}건"></i>`);
+  for (const b of ST_IX_ORDER) {
+    if (!counts[b]) continue;
+    seg.push(`<i class="b-s${ST_IX[b].sev}" style="flex:${counts[b]}"
+      title="${esc(ST_IX[b].label)} ${counts[b]}건"></i>`);
+  }
+  const n = ST_IX_ROWS.length;
+  return `<div class="ixbar" role="img" aria-label="검사한 URL ${ok + n}개 중 정상 ${ok}개, 문제 ${n}개"
+    >${seg.join("")}</div>`;
+}
+
+function stIxFiltered() {
+  const q = ST_IX_Q.trim().toLowerCase();
+  return ST_IX_ROWS.filter(r =>
+    (!ST_IX_B || r.bucket === ST_IX_B) &&
+    (!q || `${r.url} ${r.coverage_state || ""} ${r.detail || ""}`.toLowerCase().includes(q)));
+}
+
+// 칩은 다시 그리지 않고 상태만 뒤집는다 — 갈아치우면 방금 누른 칩이 포커스를 잃는다.
+function stIxChip(el) {
+  ST_IX_B = el.dataset.b || "";
+  el.parentNode.querySelectorAll(".ixchip").forEach(c => {
+    const on = (c.dataset.b || "") === ST_IX_B;
+    c.classList.toggle("on", on);
+    c.setAttribute("aria-pressed", on);
+  });
+  stIxList();
+}
+function stIxFind(v) { ST_IX_Q = v; stIxList(); }
+function stIxReset() {
+  ST_IX_B = ""; ST_IX_Q = "";
+  stIxHead();
+}
+
+function stIxCsv() {
+  stCsv("색인문제", [["갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
+    stIxFiltered().map(r => [(ST_IX[r.bucket] || {}).label || r.bucket, r.url,
+      r.coverage_state || "", r.verdict || "", r.detail || ""])));
+}
+
+// 도구줄·칩은 데이터가 바뀔 때만 그린다. 거르기는 아래 목록만 다시 그린다(stIxList).
+function stIxHead() {
+  const counts = {};
+  for (const r of ST_IX_ROWS) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+  const ok = ST_IX_TOTAL == null ? 0 : ST_IX_TOTAL - ST_IX_ROWS.length;
+  const chips = ST_IX_ORDER.filter(b => counts[b]).map(b =>
+    `<button class="chip ixchip s${ST_IX[b].sev}${ST_IX_B === b ? " on" : ""}"
+       data-b="${esc(b)}" onclick="stIxChip(this)" title="${esc(b)}"
+       aria-pressed="${ST_IX_B === b}"><em class="sw"></em>${esc(ST_IX[b].label)}
+       <b>${counts[b]}</b></button>`).join("");
+  $("index").innerHTML = stIxBar(counts, ok) +
+    `<div class="ixchips">
+       <button class="chip ixchip all${ST_IX_B ? "" : " on"}" data-b=""
+         onclick="stIxChip(this)" aria-pressed="${!ST_IX_B}"><em class="sw"></em>전체
+         <b>${ST_IX_ROWS.length}</b></button>${chips}</div>
+     <div class="tools">
+       ${ST_IX_ROWS.length >= SORT_MIN ? `<input type="search" value="${esc(ST_IX_Q)}"
+         oninput="stIxFind(this.value)" placeholder="주소·판정으로 찾기"
+         aria-label="색인 문제 찾기">` : ""}
+       <span class="n" id="ixn"></span>
+       <span class="sp"></span>
+       <button class="go sec" onclick="stIxCsv()"
+         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+     </div><div id="ixlist"></div>`;
+  stIxList();
+}
+
+function stIxList() {
+  const list = stIxFiltered(), n = ST_IX_ROWS.length;
+  $("ixn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
+  if (!list.length)
+    return $("ixlist").innerHTML = `<div class="empty">거른 조건에 맞는 URL이 없습니다.
+      <div class="acts"><button onclick="stIxReset()">필터 지우기</button></div></div>`;
+  $("ixlist").innerHTML = table(
+    ["갈래?robots·가져오기·대표 URL 순으로 원인 하나에 접은 것 — 위 갈래부터 손대야 아래가 풀린다",
+     "URL",
+     "구글 판정?URL 검사 API 가 보고한 coverageState 원문 — 구글이 이 주소를 어떻게 다루는지",
+     "진단 · 처방?원인별로 무엇을 고치면 되는지"],
+    list.map(r => {
+      const b = ST_IX[r.bucket] || {label:r.bucket, sev:3};
+      return `<tr>
+        <td class="ixb s${b.sev}" title="${esc(r.bucket)}">${esc(b.label)}</td>
+        <td class="ixurl">${esc(r.url)}</td>
+        <td class="ixstate">${esc(r.coverage_state || r.verdict || "—")}</td>
+        <td class="ixfix">${esc(r.detail)}</td></tr>`;
+    }));
+}
+
 function renderIndex(d) {
   if (!d.index_issues) return $("ix-sec").hidden = true;
   $("ix-sec").hidden = false;
-  const rows = d.index_issues;
+  ST_IX_ROWS = d.index_issues;
+  ST_IX_B = ""; ST_IX_Q = "";
+  ST_IX_TOTAL = d.index_date ? stIxChecked(d) : null;
   if (!d.index_date) {
     $("ix-sub").textContent = "";
-    return $("index").innerHTML = `<div class="empty">색인 점검을 아직 안 했습니다 — <code>/capture index</code> 하면 여기가 채워집니다.</div>`;
+    return $("index").innerHTML = `<div class="empty">색인 점검을 아직 안 했습니다 —
+      구글에 URL 하나씩 물어 색인 여부를 받아 옵니다(노출 상위 페이지부터).
+      <button class="cmd" onclick="copyCmd(this)">/capture index</button></div>`;
   }
-  if (!rows.length) {
-    $("ix-sub").textContent = `${d.index_date} 점검`;
-    return $("index").innerHTML = `<div class="empty">검사한 URL이 전부 색인돼 있습니다.</div>`;
+  const total = ST_IX_TOTAL, n = ST_IX_ROWS.length;
+  const scope = total == null ? "" : `URL ${num(total)}개 중 `;
+  if (!n) {
+    // 이 한 줄은 호스팅판(terms.js)이 통째로 갈아끼우는 문장이다 — 글자를 바꾸면
+    // 치환이 조용히 끊긴다. 개수·축하는 위 sub 가 맡는다.
+    $("ix-sub").innerHTML = `${esc(d.index_date)} 점검` +
+      (total == null ? "" : ` · URL ${num(total)}개`) +
+      ` — 구글이 하나하나 색인했다고 답했습니다.`;
+    return $("index").innerHTML = stIxBar({}, total || 1) +
+      `<div class="empty">검사한 URL이 전부 색인돼 있습니다.</div>`;
   }
-  $("ix-sub").textContent = `${d.index_date} 점검 · ${rows.length}건 — 위 묶음부터 손대세요 ` +
-    `(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨).`;
-  const by = {};                           // 이미 심각도 순으로 정렬돼 온다 — 순서를 살린다
-  for (const r of rows) (by[r.bucket] = by[r.bucket] || []).push(r);
-  $("index").innerHTML = Object.entries(by).map(([b, list]) =>
-    `<p class="sub" style="margin:18px 0 8px" title="${esc(b)}">${esc(IX_LABEL[b] || b)}
-       <b>${list.length}건</b></p>` +
-    table(["URL", "진단"], list.map(r => `<tr>
-      <td class="kwcell" style="word-break:break-all">${esc(r.url)}</td>
-      <td>${esc(r.detail)}</td></tr>`))).join("");
+  $("ix-sub").innerHTML = `${esc(d.index_date)} 점검 · ${scope}<b>${n}건</b>이 색인에 못 들어갔습니다` +
+    (total == null ? "" : ` · 정상 ${num(total - n)}개`) +
+    ` — 위 갈래부터 손대세요(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨).`;
+  stIxHead();
+}
+
+/* ── 모바일 격차 ───────────────────────────────────────── */
+let ST_DEV_ROWS = [], ST_DEV_Q = "";
+// 순위는 소수 1자리로 고정 — 15.0이 15로 오면 등폭 열의 자릿수가 어긋난다.
+const stP1 = v => Number(v).toFixed(1);
+
+function stDevFiltered() {
+  const q = ST_DEV_Q.trim().toLowerCase();
+  return ST_DEV_ROWS.filter(r => !q || r.query.toLowerCase().includes(q));
+}
+function stDevFind(v) { ST_DEV_Q = v; stDevList(); }
+function stDevReset() { ST_DEV_Q = ""; stDevHead(); }
+function stDevCsv() {
+  stCsv("모바일격차", [["검색어", "모바일 순위", "데스크톱 순위", "순위차",
+    "모바일 노출", "모바일 CTR(%)", "데스크톱 CTR(%)"]].concat(
+    stDevFiltered().map(r => [r.query, stP1(r.mobile_pos), stP1(r.desktop_pos),
+      stP1(r.dpos), r.mobile_imp, r.mobile_ctr, r.desktop_ctr])));
+}
+
+function stDevHead() {
+  $("devgap").innerHTML = `<div class="tools">
+      ${ST_DEV_ROWS.length >= SORT_MIN ? `<input type="search" value="${esc(ST_DEV_Q)}"
+        oninput="stDevFind(this.value)" placeholder="검색어로 찾기"
+        aria-label="검색어 찾기">` : ""}
+      <span class="n" id="devn"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="stDevCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+    </div><div id="devlist"></div>`;
+  stDevList();
+}
+
+function stDevList() {
+  const list = stDevFiltered(), n = ST_DEV_ROWS.length;
+  $("devn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
+  if (!list.length)
+    return $("devlist").innerHTML = `<div class="empty">거른 조건에 맞는 검색어가 없습니다.
+      <div class="acts"><button onclick="stDevReset()">필터 지우기</button></div></div>`;
+  const mx = Math.max(...list.map(r => r.dpos), 1);
+  // th 가 nowrap 이라 7열이면 좁은 화면에서 표가 본문 밖으로 삐져나간다 —
+  // 깊이 로그와 같은 .logwrap 에 넣어 페이지가 아니라 표 안에서 가로로 스크롤시킨다.
+  $("devlist").innerHTML = `<div class="logwrap">` + table(
+    ["검색어", ">모바일?모바일 평균 게재순위", ">데스크톱?데스크톱 평균 게재순위",
+     ">순위차?모바일 평균 게재순위 − 데스크톱 평균 게재순위. 클수록 모바일에서만 밀린다",
+     ">모바일 노출?이 검색어의 모바일 노출 수 — 큰 것부터 고쳐야 이득이 크다",
+     ">모바일 CTR", ">데스크톱 CTR?같은 검색어인데 기기에 따라 클릭률이 얼마나 갈리는지"],
+    list.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
+      <td class="num down">${stP1(r.mobile_pos)}</td>
+      <td class="num">${stP1(r.desktop_pos)}</td>
+      <td class="num down">${stP1(r.dpos)}
+        <i class="dgap" style="width:${(r.dpos / mx * 100).toFixed(0)}%"></i></td>
+      <td class="num">${num(r.mobile_imp)}</td>
+      <td class="num">${r.mobile_ctr}%</td>
+      <td class="num">${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+}
+
+function renderDevice(d) {
+  if (!d.device_gap) return $("dev-sec").hidden = true;
+  $("dev-sec").hidden = false;
+  ST_DEV_ROWS = d.device_gap;
+  ST_DEV_Q = "";
+  if (!d.device_date) {
+    $("dev-sub").textContent = "";
+    return $("devgap").innerHTML = `<div class="empty">기기별 실적을 아직 안 읽었습니다 —
+      설정에 <code>gsc_breakdown: device</code> 를 넣고 실적을 다시 읽으면 채워집니다.
+      <button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>`;
+  }
+  if (!ST_DEV_ROWS.length) {
+    $("dev-sub").textContent = `${d.device_date} 기준`;
+    // terms.js 가 문장 통째로 치환한다 — 글자 그대로 유지한다.
+    return $("devgap").innerHTML = `<div class="empty">모바일이 크게 밀리는 검색어가 ` +
+      `없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.</div>`;
+  }
+  const imp = ST_DEV_ROWS.reduce((a, r) => a + (r.mobile_imp || 0), 0);
+  const worst = Math.max(...ST_DEV_ROWS.map(r => r.dpos));
+  $("dev-sub").innerHTML = `${esc(d.device_date)} 기준 <b>${ST_DEV_ROWS.length}개</b> ` +
+    `— 모바일 평균순위가 데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 모바일 노출 ` +
+    `${num(RULES.device_min_imp)} 이상인 검색어. 걸린 모바일 노출 ${num(imp)}, 최대 격차 ` +
+    `${stP1(worst)}칸. 고칠 곳은 글이 아니라 모바일 화면입니다.`;
+  stDevHead();
 }
 
 VIEW_RENDER.push(function (d) {

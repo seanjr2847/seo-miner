@@ -1,66 +1,471 @@
 <style>
-/* ── AI 인용률 스파크라인: 깊이 로그와 같은 언어(등폭·괘선·patina) ── */
-.aitrend { margin:2px 0 20px; }
-.aitrend svg { display:block; width:min(360px,100%); height:auto; }
-.aitrend .legend { margin-top:6px; }
+/* ── AI 인용: 깊이 로그와 같은 언어(등폭·괘선·patina/copper).
+      얻는 것(우리 인용)은 녹청, 남이 가져간 자리는 산화동. ── */
+
+/* 런별 추이 — 일별 추이(.log)와 같은 문법. 세로축만 0~100% 로 고정한다. */
+#ai-trend .grid { stroke:var(--rule-soft); stroke-dasharray:2 4; }
+#ai-trend .hov line { stroke:var(--slate); stroke-width:1; opacity:0; }
+#ai-trend .hov:hover line, #ai-trend .hov:focus line { opacity:.5; }
+
+/* ── 엔진별 막대: 언급(회색 바탕) 위에 인용(녹청)을 겹친다 —
+      "이름은 나오는데 링크는 안 걸린다"가 한눈에 보이는 게 이 화면의 요점. ── */
+.aiengs { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:22px 30px; }
+.aieng .hd { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.aieng .e { font:500 13px/1 var(--mono); }
+.aieng .v { font:600 20px/1 var(--mono); font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em; }
+.aieng .tr { position:relative; height:6px; background:var(--bar); border-radius:2px;
+  margin:9px 0 7px; overflow:hidden; }
+.aieng .tr i { position:absolute; top:0; bottom:0; left:0; border-radius:2px;
+  transform-origin:left; }
+.aieng .tr i.m { background:var(--slate); opacity:.34; }
+.aieng .tr i.c { background:var(--patina); }
+.aieng .n { font:400 11.5px/1.5 var(--mono); color:var(--slate);
+  font-variant-numeric:tabular-nums; }
+@media (prefers-reduced-motion: no-preference) {
+  .aieng .tr i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
+}
+
+/* ── 인용 점유: 우리 도메인을 남의 도메인과 같은 자에 올린다 ── */
+.aishare .r { display:grid; grid-template-columns:24px minmax(130px,1.1fr) 2fr 46px;
+  gap:0 12px; align-items:center; padding:7px 0;
+  border-bottom:1px solid var(--rule-soft); }
+.aishare .r:last-child { border-bottom:0; }
+.aishare .rk { font:400 11px/1 var(--mono); color:var(--slate); text-align:right;
+  font-variant-numeric:tabular-nums; }
+.aishare .dm { font:400 12.5px/1.3 var(--mono); color:var(--ink); text-decoration:none;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.aishare .dm:hover { color:var(--patina); text-decoration:underline;
+  text-underline-offset:2px; }
+.aishare .bar { height:8px; background:var(--bar); border-radius:2px; overflow:hidden; }
+.aishare .bar i { display:block; height:100%; background:var(--copper); opacity:.62;
+  border-radius:2px; transform-origin:left; }
+.aishare .n { font:500 12.5px/1 var(--mono); font-variant-numeric:tabular-nums;
+  text-align:right; color:var(--slate); }
+.aishare .us .dm { color:var(--patina); font-weight:500; }
+.aishare .us .bar i { background:var(--patina); opacity:1; }
+.aishare .us .n { color:var(--ink); }
+@media (prefers-reduced-motion: no-preference) {
+  .aishare .bar i { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; }
+}
+@media (max-width:560px) {
+  .aishare .r { grid-template-columns:24px 1fr 46px; }
+  .aishare .bar { grid-column:2 / -1; }
+}
+
+/* ── 질문별 결과: 줄을 펴면 그 질문에서 실제로 온 답변이 나온다.
+      "왜 빠졌나"에 답할 수 있는 유일한 실물이 이것뿐이다. ── */
+.aiq-t { display:block; text-align:left; font:400 12.5px/1.5 var(--mono); color:var(--ink);
+  background:transparent; border:0; padding:0; cursor:pointer; max-width:54ch; }
+.aiq-t::before { content:"▸ "; color:var(--slate); }
+.aiq-t[aria-expanded="true"]::before { content:"▾ "; color:var(--patina); }
+.aiq-t:hover { color:var(--patina); }
+.aiq-p { font:400 12.5px/1.5 var(--mono); max-width:54ch; }
+.aiev { margin:9px 0 3px; padding:11px 13px; border-left:2px solid var(--copper);
+  background:var(--wash-copper); max-width:74ch; }
+.aiev .lb { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--slate); display:block; margin-bottom:8px; }
+.aiev .q { font-size:12.5px; line-height:1.7; color:var(--ink); white-space:pre-wrap;
+  margin:0; }
+.aiev .ft { font:400 11px/1.5 var(--mono); color:var(--slate); margin-top:9px; }
+.aidoms .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
 </style>
 
-<section>
+<!-- 이 화면 전체의 자리표 — 뼈대(nav·앵커)가 화면 하나를 이 id 로 잡는다. -->
+<div id="ai">
+<section id="ai-sec">
+  <!-- 이 두 줄(eyebrow·h2)은 호스팅판 terms.js 가 완전 일치로 갈아끼운다 —
+       글자를 바꾸면 치환이 조용히 끊긴다. 실제로 확인한 엔진·날짜는 아래 sub 가 말한다. -->
   <div class="eyebrow">chatgpt · perplexity · gemini</div>
   <h2>AI가 누구를 인용하나</h2>
-  <div id="ai"></div>
+  <p class="sub" id="ai-sub"></p>
+  <div id="ai-empty"></div>
+  <div class="band" id="ai-band" hidden></div>
+  <div id="ai-trend"></div>
 </section>
+
+<section id="ai-share-sec" hidden>
+  <div class="eyebrow">인용 점유 · 최근 확인</div>
+  <h2>우리 대신 인용되는 곳</h2>
+  <p class="sub" id="ai-share-sub"></p>
+  <div class="aishare" id="ai-share"></div>
+</section>
+
+<section id="ai-eng-sec" hidden>
+  <div class="eyebrow">엔진별</div>
+  <h2>어느 AI에서 보이나</h2>
+  <p class="sub">굵은 녹청은 <b>인용</b>(답변에 우리 링크가 붙음), 흐린 회색은
+    <b>언급</b>(이름만 나옴)입니다. 둘의 차이가 클수록 링크로 이어질 자리를 놓치고
+    있다는 뜻입니다.</p>
+  <div class="aiengs" id="ai-engines"></div>
+  <p class="sub" style="margin:26px 0 10px">엔진 × 카테고리</p>
+  <div id="ai-matrix"></div>
+</section>
+
+<section id="ai-prompt-sec" hidden>
+  <div class="eyebrow" id="ai-prompt-eyebrow">질문별</div>
+  <h2>어느 질문에서 빠졌나</h2>
+  <p class="sub">질문을 누르면 <b>그 질문에서 실제로 온 답변</b>이 펼쳐집니다 — 우리가
+    왜 빠졌는지는 거기서만 읽힙니다.</p>
+  <div id="ai-prompts"></div>
+</section>
+
+<section id="ai-miss-sec" hidden>
+  <div class="eyebrow">공백</div>
+  <h2>어디에도 안 잡힌 질문</h2>
+  <p class="sub" id="ai-miss-sub"></p>
+  <div id="ai-missed"></div>
+</section>
+</div>
 
 <script>
 "use strict";
-/* ── AI 인용률 추이: 런 1회 = 점 1개, 세로축은 0~100% 고정(런끼리 비교가 목적).
-      실선=인용률(patina), 점선=언급률(slate). 데이터는 서버(runs↔ai_checks)가 준다. ── */
-function aiSpark(rows) {
-  const W = 360, H = 56, P = 6;
-  const x = i => P + i * (W - 2 * P) / (rows.length - 1);
-  const y = v => H - P - v / 100 * (H - 2 * P);
-  const line = (key, stroke, w, dash) => `<polyline fill="none" stroke="${stroke}"
-    stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round"
-    stroke-linejoin="round" points="${rows.map((r, i) =>
-      `${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(" ")}"/>`;
+/* ── 이 화면이 답하는 것: "AI가 누구를 인용하나, 우리는 왜 빠졌나".
+      재료는 ai_checks 한 장 — 인용/언급은 scoring.judge 가 이미 판정해서 넣는다.
+      화면은 다시 판정하지 않고, 비율만 만들어 보인다. ── */
+const AI_PCT = v => (Math.round(v * 10) / 10) + "%";
+const AI_RATE = (n, t) => t ? Math.round(n / t * 1000) / 10 : 0;
+
+// 비율의 증감은 %가 아니라 %p 다 — delta()의 "몇 % 늘었다"와 섞이면 거짓말이 된다.
+function AI_pp(cur, prev) {
+  if (!Number.isFinite(prev)) return "";
+  const dd = Math.round((cur - prev) * 10) / 10;
+  if (dd === 0) return `<span class="d muted" title="직전 확인과 같습니다">보합</span>`;
+  return `<span class="d ${dd > 0 ? "up" : "down"}" title="직전 확인 ${AI_PCT(prev)} 대비"
+    >${dd > 0 ? "+" : "−"}${Math.abs(dd)}<em>%p</em></span>`;
+}
+
+/* ── 런별 추이: 확인 1회 = 점 1개. 세로축은 0~100% 고정 — 런끼리 바로 견주는 게
+      목적이라 자동 스케일을 쓰지 않는다. 실선=인용률, 점선=언급률. ── */
+function AI_trendChart(rows) {
+  const W = 1000, H = 170, L = 46, R = W - 16, T = 22, B = 26, n = rows.length;
+  const x = i => L + i * (R - L) / (n - 1);
+  const y = v => H - B - (v || 0) / 100 * (H - T - B);
+  const pts = k => rows.map((r, i) => `${x(i).toFixed(1)},${y(r[k]).toFixed(1)}`).join(" ");
+  const grid = [0, 50, 100].map(v =>
+    `<line class="grid" x1="${L}" y1="${y(v)}" x2="${R}" y2="${y(v)}" stroke-width="1"/>
+     <text class="axis" x="${L - 9}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end"
+       >${v}%</text>`).join("");
+  const bw = (R - L) / n;
+  const hov = rows.map((r, i) => {
+    const cx = x(i).toFixed(1);
+    return `<g class="hov"><line x1="${cx}" y1="${T - 8}" x2="${cx}" y2="${H - B}"/>
+      <rect x="${(x(i) - bw / 2).toFixed(1)}" y="${T - 12}" width="${bw.toFixed(1)}"
+        height="${H - B - T + 12}" fill="transparent"/>
+      <title>${esc(String(r.t || "").slice(0, 10))} — 인용 ${r.cited}/${r.checks} ` +
+      `(${AI_PCT(r.cite_rate)}) · 언급 ${r.mentioned}/${r.checks} ` +
+      `(${AI_PCT(r.mention_rate)})</title></g>`;
+  }).join("");
   const dots = rows.map((r, i) =>
     `<circle cx="${x(i).toFixed(1)}" cy="${y(r.cite_rate).toFixed(1)}" r="3"
-       fill="var(--patina)"><title>${esc((r.t || "").slice(0, 10))} — 인용 ${r.cited}/` +
-    `${r.checks} (${r.cite_rate}%) · 언급 ${r.mentioned}/${r.checks} (${r.mention_rate}%)` +
-    `</title></circle>`).join("");
-  const last = rows[rows.length - 1];
-  return `<div class="aitrend">
-    <svg viewBox="0 0 ${W} ${H}" role="img"
-         aria-label="런별 AI 인용률 추이 — 최근 인용률 ${last.cite_rate}%">
-      <line x1="${P}" y1="${y(0)}" x2="${W - P}" y2="${y(0)}"
-            stroke="var(--rule-soft)" stroke-width="1"/>
-      ${line("mention_rate", "var(--slate)", 1, "2 4")}
-      ${line("cite_rate", "var(--patina)", 1.5)}${dots}
-    </svg>
-    <div class="legend"><b style="color:var(--patina)">■</b> 인용률 ${last.cite_rate}% ·
-      <b style="color:var(--slate)">■</b> 언급률 ${last.mention_rate}% — 런 ${rows.length}회</div>
-  </div>`;
+       fill="var(--patina)"/>`).join("");
+  // 날짜 눈금은 다섯 개까지 — 확인이 3회든 40회든 같은 간격으로 읽힌다.
+  const step = Math.max(1, Math.ceil((n - 1) / 4)), idx = [];
+  for (let i = 0; i < n; i += step) idx.push(i);
+  if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+  const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}"
+    text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
+    >${esc(String(rows[i].t || "").slice(5, 10))}</text>`;
+  const last = rows[n - 1], best = Math.max(...rows.map(r => r.cite_rate));
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="확인 ${n}회의 인용률 추이 — 최근 ${AI_PCT(last.cite_rate)}, 최고 ${AI_PCT(best)}">
+    ${grid}
+    <polygon points="${x(0)},${H - B} ${pts("cite_rate")} ${x(n - 1)},${H - B}"
+      fill="var(--wash)"/>
+    <polyline fill="none" stroke="var(--slate)" stroke-width="1" stroke-dasharray="2 4"
+      stroke-linejoin="round" points="${pts("mention_rate")}"/>
+    <polyline fill="none" stroke="var(--patina)" stroke-width="1.5" stroke-linecap="round"
+      stroke-linejoin="round" points="${pts("cite_rate")}"/>
+    ${dots}${hov}${idx.map(tick).join("")}
+  </svg></div>
+  <div class="legend"><b style="color:var(--patina)">■</b> 인용률 최근
+    ${AI_PCT(last.cite_rate)} (최고 ${AI_PCT(best)}) ·
+    <b style="color:var(--slate)">■</b> 언급률 ${AI_PCT(last.mention_rate)} — 확인 ${n}회.
+    세로축은 0~100% 고정이라 확인끼리 그대로 견줄 수 있습니다.</div>`;
+}
+
+/* ── 엔진별: matrix(엔진×카테고리)를 엔진으로 접는다. ── */
+function AI_engineCards(m) {
+  const by = {};
+  for (const r of m) {
+    const e = by[r.engine] || (by[r.engine] = {cited: 0, mentioned: 0, total: 0});
+    e.cited += r.cited; e.mentioned += r.mentioned; e.total += r.total;
+  }
+  return Object.keys(by).sort().map(k => {
+    const e = by[k], cr = AI_RATE(e.cited, e.total), mr = AI_RATE(e.mentioned, e.total);
+    return `<div class="aieng">
+      <div class="hd"><span class="e">${esc(k)}</span>
+        <span class="v ${e.cited ? "up" : "muted"}">${AI_PCT(cr)}</span></div>
+      <div class="tr" title="인용 ${AI_PCT(cr)} · 언급 ${AI_PCT(mr)}">
+        <i class="m" style="width:${mr}%"></i><i class="c" style="width:${cr}%"></i></div>
+      <div class="n">인용 ${e.cited}/${e.total} · 언급 ${e.mentioned}/${e.total}</div>
+    </div>`;
+  }).join("");
+}
+
+/* ── 인용 점유: 남의 도메인과 우리 도메인을 같은 자에 올린다.
+      cite_share 는 "그 도메인이 인용된 응답 수" 라 우리 인용 수(SUM cited)와 단위가
+      같다 — 그래서 나란히 놓아도 거짓이 아니다. ── */
+function AI_shareBars(share, ours, ourN) {
+  const rows = share.map(s => ({domain: s.domain, n: s.n}));
+  if (ours) rows.push({domain: ours, n: ourN, us: true});
+  rows.sort((a, b) => b.n - a.n);
+  const mx = rows[0] ? rows[0].n : 1;
+  return rows.map((r, i) => `<div class="r${r.us ? " us" : ""}">
+    <span class="rk">${i + 1}</span>
+    ${r.us ? `<span class="dm" title="우리 도메인">${esc(r.domain)} ← 우리</span>`
+           : `<a class="dm" href="https://${esc(r.domain)}" target="_blank"
+                rel="noopener noreferrer" title="${esc(r.domain)} 열기">${esc(r.domain)}</a>`}
+    <span class="bar"><i style="width:${Math.max(2, r.n / mx * 100).toFixed(1)}%"></i></span>
+    <span class="n" title="${esc(r.domain)} 이(가) 인용된 응답 ${r.n}건">${r.n}</span>
+  </div>`).join("");
+}
+
+/* ── 질문별 결과: 이 화면의 주인공.
+      줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
+      "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
+let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "";
+
+const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
+  ["none", "안 잡힘"]];
+const AI_stOf = r => r.cited > 0 ? "cited" : r.mentioned > 0 ? "mention" : "none";
+
+function AI_filtered() {
+  const q = AI_Q.trim().toLowerCase();
+  return AI_ROWS.filter(r =>
+    (!AI_CAT || r.category === AI_CAT) &&
+    (!AI_ST || AI_stOf(r) === AI_ST) &&
+    (!q || `${r.prompt} ${r.miss_answer || ""}`.toLowerCase().includes(q)));
+}
+function AI_find(v) { AI_Q = v; AI_list(); }
+function AI_cat(v) { AI_CAT = v; AI_list(); }
+function AI_status(el) {
+  AI_ST = AI_ST === el.dataset.s ? "" : el.dataset.s;
+  AI_render();
+}
+function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_render(); }
+function AI_ev(btn) {
+  const on = btn.getAttribute("aria-expanded") === "true";
+  btn.setAttribute("aria-expanded", String(!on));
+  btn.nextElementSibling.hidden = on;
+}
+function AI_doms(json) {
+  try { return JSON.parse(json || "[]"); } catch (e) { return []; }
+}
+
+function AI_row(r) {
+  const doms = AI_doms(r.miss_domains);
+  const chips = doms.slice(0, 3).map(x => `<span class="chip">${esc(x)}</span>`).join("") +
+    (doms.length > 3 ? `<span class="chip" title="${esc(doms.slice(3).join(", "))}"
+      >+${doms.length - 3}</span>` : "");
+  // 펼칠 게 있을 때만 손잡이를 만든다 — 눌러도 아무 일 없는 버튼은 거짓말이다.
+  const ev = r.miss_answer || doms.length;
+  const body = ev ? `<div class="aiev" hidden>
+      ${doms.length ? `<span class="lb">이 답변이 인용한 곳</span>
+        <div class="aidoms">${doms.map(x =>
+          `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}
+      ${r.miss_answer ? `<span class="lb" style="margin-top:11px">받은 답변 발췌</span>
+        <p class="q">${esc(r.miss_answer)}</p>` : ""}
+      <div class="ft">우리가 인용되지 않은 응답 1건에서 가져온 발췌입니다. 답변은 매번
+        달라지므로 한 건은 사실이 아니라 표본입니다.</div>
+    </div>` : "";
+  const q = ev
+    ? `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
+         >${esc(r.prompt)}</button>${body}`
+    : `<div class="aiq-p">${esc(r.prompt)}</div>`;
+  return `<tr><td>${q}</td>
+    <td class="kwcell">${esc(r.category || "")}</td>
+    <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
+    <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
+    <td class="num muted">${r.checks}</td>
+    <td class="aidoms">${chips || '<span class="muted">—</span>'}</td></tr>`;
+}
+
+function AI_render() {
+  const cats = [...new Set(AI_ROWS.map(r => r.category).filter(Boolean))].sort();
+  const stn = s => AI_ROWS.filter(r => !s || AI_stOf(r) === s).length;
+  const chips = AI_ST_OPT.slice(1).map(([v, l]) => `<button class="chip${
+    AI_ST === v ? " on" : ""}" data-s="${v}" onclick="AI_status(this)"
+    aria-pressed="${AI_ST === v}">${l} <b>${stn(v)}</b></button>`).join("");
+  $("ai-prompts").innerHTML = `<div class="tools">
+      <input type="search" value="${esc(AI_Q)}" oninput="AI_find(this.value)"
+        placeholder="질문·답변으로 찾기" aria-label="질문 찾기">
+      ${cats.length > 1 ? `<select onchange="AI_cat(this.value)" aria-label="카테고리로 거르기">
+        <option value="">카테고리 전체</option>${cats.map(c =>
+          `<option value="${esc(c)}"${c === AI_CAT ? " selected" : ""}>${esc(c)}</option>`
+        ).join("")}</select>` : ""}
+      <span class="n" id="ai-n"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="AI_csv()"
+        title="지금 걸러 놓은 질문 그대로 내려받습니다">CSV 내보내기</button>
+    </div><div class="oppchips">${chips}</div><div id="ai-plist"></div>`;
+  AI_list();
+}
+
+function AI_list() {
+  const list = AI_filtered();
+  $("ai-n").textContent = list.length === AI_ROWS.length
+    ? `${AI_ROWS.length}개` : `${list.length}개 / 전체 ${AI_ROWS.length}개`;
+  if (!list.length)
+    return $("ai-plist").innerHTML = `<div class="empty">거른 조건에 맞는 질문이 없습니다.
+      <div class="acts"><button onclick="AI_reset()">필터 지우기</button></div></div>`;
+  $("ai-plist").innerHTML = table(
+    ["질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
+     ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
+     ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
+     ">응답?질문 × 엔진 × 샘플 — 이 질문에 실제로 받은 답변 수",
+     "대신 인용된 곳?우리가 인용되지 않은 응답에서 대신 인용된 도메인"],
+    list.map(AI_row));
+}
+
+// 질문 목록은 화면 밖에서 콘텐츠 기획서가 된다 — 지금 거른 그대로 표로 내보낸다.
+// 맨 앞의 BOM 이 있어야 엑셀이 한글을 안 깬다(기회 목록과 같은 규칙).
+function AI_csv() {
+  const rows = [["질문", "카테고리", "인용", "언급", "응답", "대신 인용된 곳", "답변 발췌"]]
+    .concat(AI_filtered().map(r => [r.prompt, r.category || "", r.cited, r.mentioned,
+      r.checks, AI_doms(r.miss_domains).join(" "),
+      (r.miss_answer || "").replace(/\s+/g, " ")]));
+  const csv = "﻿" + rows.map(r => r.map(
+    c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-ai인용-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ── 비어 있는 화면: 이 화면은 OpenRouter 키가 없으면 영원히 빈다.
+      막다른 길로 두지 않고 발급처와 다음 한 걸음을 같이 준다. ── */
+function AI_emptyState(d) {
+  const nm = esc(d.project.name || "mysite");
+  const pr = d.progress || {};
+  const key = `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
+    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
+      >openrouter.ai/keys</a>에서 발급해 헤더의 <b>[설정] → 4. API 키</b> 칸에
+    붙여넣으면 됩니다.`;
+  return pr.ai_prompts === 0
+    ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
+        이 화면은 chatgpt·perplexity·gemini에 같은 질문을 던져 <b>누가 인용되는지</b>를
+        셉니다 — 질문 목록이 그 재료입니다.<br>
+        아래를 채팅에 붙여넣으시면 이 사이트에 맞는 질문 10~30개를 만들어 드립니다.
+        <div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+          onkeydown="if(event.key==='Enter'||event.key===' ')
+            {event.preventDefault();copyCmd(this)}">/capture add ${nm}</div>
+        <div style="margin-top:11px">${key}</div></div>`
+    : `<div class="empty"><b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는
+        준비됐는데 아직 안 물어봤습니다.</b>
+        한 번 확인하면 이 화면이 채워집니다 — 질문 × 엔진 3곳 × 샘플만큼 요청이 나갑니다.
+        <div style="margin-top:9px">${key}</div>
+        <div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+          onkeydown="if(event.key==='Enter'||event.key===' ')
+            {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div></div>`;
 }
 
 VIEW_RENDER.push(function (d) {
-  let ai = "";
-  if (d.matrix.length) {
-    const at = d.ai_trend || [];
-    if (at.length >= 2)
-      ai += `<p class="sub" style="margin:0 0 8px">런별 추이</p>` + aiSpark(at);
-    ai += table(["엔진", "카테고리", ">인용", ">언급", ">체크"],
-      d.matrix.map(r => `<tr><td class="kwcell">${esc(r.engine)}</td>
-        <td>${esc(r.category)}</td>
-        <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
-        <td class="num">${r.mentioned}</td><td class="num">${r.total}</td></tr>`));
-    if (d.gap_domains.length)
-      ai += `<p class="sub" style="margin:20px 0 10px">우리 대신 인용되는 곳</p>` +
-        d.gap_domains.map(g => `<span class="chip">${esc(g.domain)} <b>${g.n}</b></span>`).join("");
-    if (d.missed.length)
-      ai += `<p class="sub" style="margin:20px 0 10px">어디에도 안 잡힌 질문 ${d.missed.length}개</p>` +
-        `<div class="runlog">${d.missed.map(m => `<span class="r">${esc(m.prompt)}
-          <span class="muted">${esc(m.engines)}</span></span>`).join("")}</div>`;
-  } else ai = `<div class="empty">아직 안 물어봤습니다 — <code>/capture ai</code>로 확인하세요.</div>`;
-  $("ai").innerHTML = ai;
+  const m = d.matrix || [], at = d.ai_trend || [];
+  const has = m.length > 0;
+  for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec"])
+    $(id).hidden = true;
+  $("ai-band").hidden = !has;
+  $("ai-empty").innerHTML = has ? "" : AI_emptyState(d);
+  $("ai-trend").innerHTML = "";
+  if (!has) {
+    $("ai-sub").textContent = "";
+    return;
+  }
+
+  // ── 요약: 최근 확인 1회분(matrix)이 분모다. 추이는 그 아래 그래프가 맡는다.
+  const tot = m.reduce((a, r) => ({cited: a.cited + r.cited,
+    mentioned: a.mentioned + r.mentioned, total: a.total + r.total}),
+    {cited: 0, mentioned: 0, total: 0});
+  const engines = [...new Set(m.map(r => r.engine))].sort();
+  const cr = AI_RATE(tot.cited, tot.total), mr = AI_RATE(tot.mentioned, tot.total);
+  const prev = at.length >= 2 ? at[at.length - 2] : null;
+  const when = String((at[at.length - 1] || {}).t || "").slice(0, 10);
+
+  // cite_share 는 모든 답변을 세므로 우리 인용 수와 단위가 같다 — 그래서 나란히
+  // 놓는다. 옛 박제본에는 그게 없고 gap_domains(우리가 빠진 답변만)뿐이라, 그때는
+  // 우리 막대를 섞지 않는다 — 단위가 다른 둘을 한 자에 올리면 그림이 거짓말을 한다.
+  const share = d.cite_share || d.gap_domains || [];
+  const sameScale = !!d.cite_share;
+  const ours = sameScale ? (d.project.domain || "").replace(/^www\./, "") : "";
+  // 점유 순위 — cite_share 는 상위 15곳까지만 온다. 밖이면 밖이라고 말한다.
+  const above = share.filter(s => s.n > tot.cited).length;
+  const capped = share.length >= 15 && tot.cited < share[share.length - 1].n;
+  const rankTxt = !sameScale || tot.cited === 0 ? "—"
+    : capped ? "15위 밖" : `${above + 1}위`;
+  const byPrompt = d.ai_by_prompt || [];
+  const missN = byPrompt.length
+    ? byPrompt.filter(r => !r.cited && !r.mentioned).length
+    : (d.missed || []).length;
+
+  $("ai-sub").innerHTML = `<b>${esc(engines.join(" · "))}</b>${
+    when ? ` · ${esc(when)} 확인` : ""} — 받은 답변 <b>${num(tot.total)}건</b> 기준입니다.
+    답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 <b>표본</b>입니다 —
+    같은 질문을 여러 번 물어 평균으로 읽으세요.`;
+
+  $("ai-band").innerHTML = [
+    ["인용률", AI_PCT(cr), prev ? AI_pp(cr, prev.cite_rate) : "",
+      `답변 ${num(tot.total)}건 중 ${num(tot.cited)}건에 우리 링크`],
+    ["언급률", AI_PCT(mr), prev ? AI_pp(mr, prev.mention_rate) : "",
+      `이름은 나왔지만 링크는 없는 경우 포함 (${num(tot.mentioned)}건)`],
+    ["받은 답변", num(tot.total), "",
+      `질문 ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 × 엔진 ${engines.length}곳`],
+    ["인용 점유 순위", rankTxt, "", !sameScale ? "옛 기록이라 견줄 수 없습니다"
+      : ours ? "인용된 도메인들과 견준 자리" : "우리 도메인이 등록돼 있지 않습니다"],
+    ["안 잡힌 질문", num(missN), "", "인용도 언급도 없던 질문"],
+  ].map(([l, v, dd, b], i) => `<div class="m"><div class="v${
+    i === 4 && missN ? " down" : ""}">${v}${dd}</div>
+    <div class="l">${esc(l)}</div><div class="b">${b}</div></div>`).join("");
+
+  if (at.length >= 2) $("ai-trend").innerHTML = AI_trendChart(at);
+  else $("ai-trend").innerHTML = `<div class="empty">확인이 아직 1회뿐이라 추이가 없습니다 —
+    한 번 더 확인하면 인용률이 오르는지 내리는지 여기에 선으로 남습니다.</div>`;
+
+  // ── 인용 점유
+  if (share.length || (sameScale && ours && tot.cited)) {
+    $("ai-share-sec").hidden = false;
+    $("ai-share-sub").innerHTML = !sameScale
+      ? `<b>우리가 인용되지 않은 답변</b>에서 대신 인용된 도메인입니다. 이 기록에는
+         우리 인용 수를 같은 자로 잴 값이 없어 나란히 놓지 않았습니다.`
+      : tot.cited
+      ? `한 도메인이 <b>인용된 답변 수</b>입니다 — 우리 도메인도 같은 자로 쟀습니다.
+         우리 위에 있는 곳이 그 질문에서 우리가 차지했어야 할 자리입니다.`
+      : `한 도메인이 <b>인용된 답변 수</b>입니다. 우리 도메인은 아직 한 번도 인용되지
+         않아 이 목록에 없습니다 — 아래 질문별 결과에서 어떤 답변이 오갔는지 보세요.`;
+    $("ai-share").innerHTML = AI_shareBars(share, ours, tot.cited);
+  }
+
+  // ── 엔진별
+  $("ai-eng-sec").hidden = false;
+  $("ai-engines").innerHTML = AI_engineCards(m);
+  $("ai-matrix").innerHTML = table(
+    ["엔진", "카테고리", ">인용?그 조합에서 우리 도메인이 인용된 답변 수",
+     ">언급?답변 본문에 우리 브랜드 이름이 나온 답변 수",
+     ">답변?질문 × 샘플 — 그 조합에서 실제로 받은 답변 수", ">인용률"],
+    m.map(r => `<tr><td class="kwcell">${esc(r.engine)}</td>
+      <td>${esc(r.category)}</td>
+      <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
+      <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
+      <td class="num muted">${r.total}</td>
+      <td class="num">${AI_PCT(AI_RATE(r.cited, r.total))}</td></tr>`));
+
+  // ── 질문별. 옛 박제본에는 ai_by_prompt 가 없다 — 그때만 예전 "안 잡힌 질문" 목록으로.
+  if (byPrompt.length) {
+    $("ai-prompt-sec").hidden = false;
+    $("ai-prompt-eyebrow").textContent = `질문 ${byPrompt.length}개 · 안 잡힘 ${missN}개`;
+    AI_ROWS = byPrompt;
+    AI_Q = ""; AI_CAT = ""; AI_ST = "";      // 사이트를 바꾸면 필터도 새로 시작한다
+    AI_render();
+  } else if ((d.missed || []).length) {
+    $("ai-miss-sec").hidden = false;
+    $("ai-miss-sub").textContent =
+      "인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다.";
+    $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
+      d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
+        <td class="kwcell">${esc(r.category || "")}</td>
+        <td class="kwcell muted">${esc(r.engines || "")}</td></tr>`));
+  }
 });
 </script>

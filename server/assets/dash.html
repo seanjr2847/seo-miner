@@ -158,11 +158,30 @@
   /* 기준 줄·단위도 한글이 섞인다 — 같은 이유로 sans 로 되돌린다(숫자만 등폭 자리수). */
   .band .b,.score .u,.tools .n{font-family:var(--sans);font-variant-numeric:tabular-nums}
 
-  /* 백링크 표: 마지막 두 칸이 붙어 숫자와 날짜가 겹쳐 보였다. */
-  #sm-bl table{width:100%;table-layout:fixed}
-  #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
-  #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
-  #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
+  /* ── 백링크 ────────────────────────────────────────────────
+     요약·추이·목록을 한 상자에 몰아넣으면 카드 하나가 화면 높이를 다 먹는다.
+     display:contents 로 껍데기를 지워 자식 <section> 이 화면(.sm-view)의 칸이 되게
+     한다 — 그러면 다른 화면과 같은 카드·같은 간격을 공짜로 받는다. */
+  #sm-bl{display:contents}
+  #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
+  /* 밴드가 카드 안에 들어간다 — 카드가 이미 테를 가졌으니 밑줄은 뺀다. */
+  #sm-bl .band{border-bottom:0;margin:0;
+    grid-template-columns:repeat(auto-fit,minmax(148px,1fr))}
+  #sm-bl .band .m{padding:14px 18px 12px 0}
+  #sm-bl .band .v{white-space:nowrap}
+  #sm-bl .band .d{font-size:11px;margin-left:6px}
+  /* 도메인 이름은 길이가 제각각이라 첫 칸을 고정하고 넘치면 자른다(전체는 title 로). */
+  #sm-bl table{table-layout:fixed}
+  #sm-bl th:first-child,#sm-bl td:first-child{width:38%}
+  #sm-bl .dm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:var(--mono);font-size:12.5px}
+  /* 최초 발견은 날짜다 — 숫자 열은 아니지만(정렬은 글자순이 맞다) 자리는 맞춘다. */
+  #sm-bl th:last-child{text-align:right}
+  #sm-bl td:last-child{text-align:right;font-family:var(--mono);font-size:12.5px;
+    font-variant-numeric:tabular-nums}
+  /* dofollow 가 0 인 도메인은 순위에 힘을 안 준다 — 산화동으로 그 사실을 말한다. */
+  #sm-bl td.nf{color:var(--copper)}
+  #sm-bl .sm-charts{gap:40px}
 
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
   #sm-kw .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
@@ -362,7 +381,7 @@
     ["ai",        "AI 인용",     ["ai"],                              ["ai"]],
     ["site",      "사이트 점검", ["index", "devgap"],                 ["index"]],
     ["backlinks", "백링크",      ["sm-bl"],                           []],
-    ["history",   "기록",        ["acts", "runs", "sm-cc"],           []]
+    ["history",   "기록",        ["acts", "runs", "made-sec", "sm-cc"], []]
   ];
   // 화면 제목과 겹치지 않게 — "순위 추적" 화면의 버튼이 [순위 추적]이면 뭘 하는지 모른다
   var RUN_LABEL = {gsc: "실적 다시 수집", index: "색인 다시 검사", keywords: "키워드 다시 발굴",
@@ -452,50 +471,223 @@
 
   // ── 백링크 ───────────────────────────────────────────────────
   // 원본 화면에 없는 축이다. 섹션을 만들어 끼운다(원본 HTML 은 그대로).
-  var blDone = "";
-  async function backlinks() {
-    var pj = proj();
-    if (!pj || blDone === pj) return;
+  // 서치콘솔이 끝내 답해 주지 않는 유일한 질문이라 외부(DataForSEO)에서 사 온다 —
+  // 그래서 이 화면이 제일 먼저 답해야 하는 건 "왜 비어 있나"와 "채우면 얼마인가"다.
+  var BL_DONE = "", BL_DATA = null, BL_Q = "", BL_F = "";
+
+  function blNum(n) { return Number(n || 0).toLocaleString("ko-KR"); }
+  function blDay(v) { return v ? String(v).slice(0, 10) : ""; }
+  function blPct(v) { return v == null ? "—" : (v * 100).toFixed(0) + "%"; }
+
+  // 이 화면이 비는 이유는 둘뿐이다 — 아직 안 쟀거나, 잴 수단이 없거나.
+  // 둘을 같은 문장으로 말하면 유저는 자기가 뭘 해야 하는지 모른다.
+  function blEmpty(ok) {
+    var head = '<section><p class="eyebrow">백링크</p><h2>백링크 프로필</h2>' +
+      '<p class="sub">외부 사이트가 우리 도메인으로 건 링크는 서치콘솔이 제공하지 않습니다. ' +
+      "웹 전체의 링크 그래프를 크롤링해야 나오는 값이라 외부 데이터 연동이 필요합니다.</p>";
+    if (ok)
+      return head + '<div class="empty">백링크를 아직 수집하지 않았습니다 — ' +
+        "[전체 분석 실행]을 누르면 이번 회차에 함께 수집합니다. 이후로는 30일 주기로 " +
+        "다시 수집합니다. 백링크는 일 단위로 변하지 않아 매일 측정해도 같은 값이 나옵니다." +
+        "</div></section>";
+    return head + '<div class="empty">DataForSEO 연동이 없어 백링크만 건너뜁니다 — ' +
+      "나머지 분석은 그대로 동작합니다.<br><br>" +
+      '1. <a href="https://dataforseo.com" target="_blank" rel="noopener">dataforseo.com</a> ' +
+      "에서 계정을 만듭니다.<br>" +
+      "2. 발급받은 로그인·비밀번호를 서버 환경변수 <code>DATAFORSEO_LOGIN</code>·" +
+      "<code>DATAFORSEO_PASSWORD</code> 에 설정합니다.<br>" +
+      "3. 다음 [전체 분석 실행]부터 이 화면이 채워집니다.<br><br>" +
+      "비용은 1회 수집당 약 $0.06 입니다 — 요청당 $0.024 × 2회(요약·참조 도메인)에 " +
+      "행당 $0.000036 을 더한 값입니다. 30일 주기라 사이트 1개당 월 $0.06 수준입니다." +
+      "</div></section>";
+  }
+
+  var BL_HEADS = [
+    "도메인?우리 도메인으로 링크를 건 외부 사이트. 한 곳에서 100개보다 100곳에서 1개씩이 강합니다",
+    ">지수?DataForSEO 가 산출한 해당 도메인의 신뢰도. 높을수록 링크 1개의 가중치가 큽니다",
+    ">백링크?해당 도메인이 우리 도메인으로 건 링크 수",
+    ">dofollow?검색엔진에 신뢰를 전달하는 링크 수. 0이면 게재순위에 직접 기여하지 않습니다",
+    "최초 발견?DataForSEO 크롤러가 해당 도메인의 링크를 처음 확인한 날"
+  ];
+
+  function blFiltered() {
+    var q = BL_Q.trim().toLowerCase();
+    return ((BL_DATA && BL_DATA.domains) || []).filter(function (x) {
+      var df = x.dofollow || 0;
+      if (BL_F === "do" && !df) return false;
+      if (BL_F === "no" && df) return false;
+      return !q || String(x.domain || "").toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  // 목록만 다시 그린다 — 도구줄까지 갈아치우면 타이핑 중에 찾기 칸이 포커스를 잃는다.
+  function blList() {
+    var box = document.getElementById("sm-bl-list");
+    if (!box) return;
+    var all = ((BL_DATA && BL_DATA.domains) || []).length, list = blFiltered();
+    var n = document.getElementById("sm-bl-n");
+    if (n) n.textContent = list.length === all
+      ? all + "개" : list.length + "개 / 전체 " + all + "개";
+    box.innerHTML = table(BL_HEADS, list.map(function (x) {
+      var df = x.dofollow || 0;
+      return '<tr><td><span class="dm" title="' + esc(x.domain) + '">' + esc(x.domain) +
+        '</span></td><td class="num">' + (x.rank == null ? "—" : x.rank) +
+        '</td><td class="num">' + blNum(x.backlinks) +
+        '</td><td class="num' + (df ? "" : " nf") + '">' + blNum(df) +
+        "</td><td>" + (esc(blDay(x.first_seen)) || "—") + "</td></tr>";
+    }), list.length === all
+      ? "참조 도메인이 하나도 없습니다 — 외부 사이트가 우리 도메인으로 건 링크가 확인되지 않았습니다."
+      : '거른 조건에 맞는 도메인이 없습니다.<div class="acts">' +
+        '<button id="sm-bl-reset">필터 지우기</button></div>');
+    // 표를 다시 그릴 때마다 사라지므로 매번 다시 잇는다.
+    var rs = document.getElementById("sm-bl-reset");
+    if (rs) rs.addEventListener("click", function () {
+      BL_Q = ""; BL_F = "";
+      var q = document.getElementById("sm-bl-q"), f = document.getElementById("sm-bl-f");
+      if (q) q.value = ""; if (f) f.value = "";
+      blList();
+    });
+  }
+
+  // 목록은 화면 밖에서도 이어진다 — 지금 걸러 놓은 것 그대로 표로 내보낸다.
+  // 맨 앞 BOM 이 있어야 엑셀이 한글을 안 깬다(기회 목록 내보내기와 같은 규칙).
+  function blCsv() {
+    var rows = [["도메인", "지수", "백링크", "dofollow", "최초 발견"]].concat(
+      blFiltered().map(function (x) {
+        return [x.domain, x.rank == null ? "" : x.rank, x.backlinks || 0,
+                x.dofollow || 0, blDay(x.first_seen)];
+      }));
+    var csv = "﻿" + rows.map(function (r) {
+      return r.map(function (c) {
+        return '"' + String(c).replace(/"/g, '""') + '"';
+      }).join(",");
+    }).join("\r\n");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+    a.download = "seo-miner-참조도메인-" + new Date().toISOString().slice(0, 10) + ".csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function blRender() {
     var host = document.querySelector("main");
-    if (!host) return;
-    var d;
-    try { d = await (await fetch("/api/backlinks?project=" + encodeURIComponent(pj))).json(); }
-    catch (e) { return; }
-    blDone = pj;
-    var sec = document.getElementById("sm-bl") || document.createElement("section");
-    sec.id = "sm-bl";
-    var s = d.summary;
-    if (!s) {
-      sec.innerHTML = '<p class="eyebrow">BACKLINKS</p><h2>백링크</h2>' +
-        '<p class="sub">' + (d.available
-          ? "아직 수집 전입니다 — 다음 분석에서 함께 수집합니다(30일 주기)."
-          : "DataForSEO 연동이 없어 수집하지 않습니다. 백링크는 서치콘솔이 제공하지 않아 외부 데이터가 필요합니다.") +
-        "</p>";
-    } else {
-      var rows = (d.domains || []).map(function (x) {
-        return "<tr><td>" + esc(x.domain) + '</td><td class="num">' + (x.rank == null ? "" : x.rank) +
-               '</td><td class="num">' + (x.backlinks || 0) + '</td><td class="num">' +
-               (x.dofollow || 0) + "</td><td>" + esc(x.first_seen ? String(x.first_seen).slice(0, 10) : "") +
-               "</td></tr>";
-      }).join("");
-      sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + '</p>' +
-        "<h2>백링크 프로필</h2>" +
-        '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
-        '<div class="band" style="margin-bottom:18px">' +
-        '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
-        '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크</div></div>' +
-        '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
-        '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">손실 백링크</div></div>' +
-        '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 지수</div></div>' +
-        "</div>" +
-        (rows ? '<table><thead><tr><th>도메인</th><th class="num">랭크</th>' +
-          '<th class="num">링크</th><th class="num">dofollow</th><th>처음 발견</th></tr></thead>' +
-          "<tbody>" + rows + "</tbody></table>" : "");
-    }
+    if (!host || !BL_DATA) return;
+    var sec = document.getElementById("sm-bl");
+    // 채우기 전에 문서에 붙인다 — 안 붙이면 아래 blList() 의 getElementById 가
+    // 못 찾고 조용히 빠져나가, 첫 화면에서는 표가 비어 있다(사이트를 바꾸면 그제야
+    // 이미 붙어 있는 상자를 다시 그리므로 나타난다).
+    if (!sec) { sec = document.createElement("div"); sec.id = "sm-bl"; }
     if (!sec.parentNode) host.appendChild(sec);
+    var d = BL_DATA, s = d.summary;
+    if (!s) {
+      sec.innerHTML = blEmpty(d.available);
+    } else {
+      // 측정 회차. 마지막 줄이 지금 값이고, 그 앞줄이 비교 대상이다.
+      var h = (d.history || []).map(function (r) {
+        return {d: blDay(r.checked_date), backlinks: r.backlinks,
+                referring_domains: r.referring_domains};
+      });
+      var pv = h.length > 1 ? h[h.length - 2] : {};
+      var dof = s.dofollow, nof = s.nofollow;
+      var ratio = (dof == null || nof == null || dof + nof === 0) ? null : dof / (dof + nof);
+      var was = function (v, f) {
+        return v == null ? "비교할 직전 측정 없음" : "이전 " + f(v);
+      };
+      var m = function (v, label, basis) {
+        return '<div class="m"><div class="v">' + v + '</div><div class="l">' + label +
+          '</div><div class="b">' + basis + "</div></div>";
+      };
+      var band =
+        m(blNum(s.referring_domains) +
+            delta(s.referring_domains, pv.referring_domains, blNum, false),
+          "참조 도메인 수",
+          "링크를 건 외부 사이트 수 · " + was(pv.referring_domains, blNum)) +
+        m(blNum(s.backlinks) + delta(s.backlinks, pv.backlinks, blNum, false),
+          "총 백링크 수",
+          "링크 개수 합계 · " + was(pv.backlinks, blNum)) +
+        m(blPct(ratio), "dofollow 비율",
+          dof == null ? "링크 유형을 수집하지 못했습니다"
+            : "dofollow " + blNum(dof) + " · nofollow " + blNum(nof)) +
+        m(blNum(s.broken_backlinks), "깨진 백링크",
+          "링크는 살아 있으나 도착 페이지가 404") +
+        m(s.rank == null ? "—" : s.rank, "도메인 지수",
+          "DataForSEO 가 산출한 우리 도메인의 신뢰도");
+      var out = '<section><p class="eyebrow">백링크 · ' + esc(blDay(s.checked_date)) +
+        " 측정</p><h2>백링크 프로필</h2>" +
+        '<p class="sub">총 백링크 수보다 참조 도메인 수가 중요합니다. 한 사이트에서 100개를 ' +
+        "받는 것보다 100개 사이트에서 1개씩 받는 쪽이 게재순위에 훨씬 유리합니다. " +
+        "수집 주기가 30일이라 증감은 직전 측정 대비 값입니다.</p>" +
+        '<div class="band">' + band + "</div></section>";
+
+      // 백링크는 절대값보다 기울기다 — 늘고 있는지 빠지고 있는지가 이 화면의 결론이다.
+      if (h.length > 1)
+        out += '<section><p class="eyebrow">측정 ' + h.length + '회 · 30일 주기</p>' +
+          "<h2>백링크 추이</h2>" +
+          '<p class="sub">점 하나가 측정 1회입니다(일별이 아닙니다). 선이 평평하면 새 링크가 ' +
+          "유입되지 않는다는 뜻이고, 참조 도메인 수만 늘면 링크 출처가 넓어지고 있다는 뜻입니다.</p>" +
+          '<div class="sm-charts">' +
+          "<div>" + line(h, "referring_domains", {
+            label: "참조 도메인 수", fmt: blNum, now: s.referring_domains,
+            was: pv.referring_domains, dfmt: blNum}) + "</div>" +
+          "<div>" + line(h, "backlinks", {
+            label: "총 백링크 수", fmt: blNum, now: s.backlinks,
+            was: pv.backlinks, dfmt: blNum}) + "</div>" +
+          "</div></section>";
+
+      var doms = d.domains || [];
+      var kept = s.referring_domains && doms.length && s.referring_domains > doms.length
+        ? "전체 " + blNum(s.referring_domains) + "개 중 지수가 높은 " + doms.length +
+          "개만 저장합니다. "
+        : "";
+      out += '<section><p class="eyebrow">지수 높은 순 · ' + doms.length +
+        "개</p><h2>참조 도메인</h2>" +
+        '<p class="sub">' + kept + "지수가 높은 도메인의 링크 1개가 낮은 도메인의 링크 " +
+        "10개보다 무겁습니다. dofollow 가 0인 행은 게재순위에 기여하지 않습니다 — " +
+        "유입 트래픽은 그대로 발생합니다.</p>" +
+        (doms.length ? '<div class="tools">' +
+          '<input type="search" id="sm-bl-q" placeholder="도메인으로 찾기" ' +
+          'aria-label="참조 도메인 찾기">' +
+          '<select id="sm-bl-f" aria-label="링크 유형으로 거르기">' +
+          '<option value="">전체</option><option value="do">dofollow 있음</option>' +
+          '<option value="no">dofollow 없음</option></select>' +
+          '<span class="n" id="sm-bl-n"></span><span class="sp"></span>' +
+          '<button class="go sec" id="sm-bl-csv" ' +
+          'title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button></div>' : "") +
+        '<div id="sm-bl-list"></div></section>';
+      sec.innerHTML = out;
+
+      var q = document.getElementById("sm-bl-q");
+      if (q) {
+        q.value = BL_Q;
+        q.addEventListener("input", function () { BL_Q = q.value; blList(); });
+      }
+      var f = document.getElementById("sm-bl-f");
+      if (f) {
+        f.value = BL_F;
+        f.addEventListener("change", function () { BL_F = f.value; blList(); });
+      }
+      var cs = document.getElementById("sm-bl-csv");
+      if (cs) cs.addEventListener("click", blCsv);
+      blList();
+    }
     place();
   }
-  if (sel) sel.addEventListener("change", function () { blDone = ""; backlinks(); });
+
+  async function backlinks() {
+    var pj = proj();
+    // 표시를 fetch 앞에서 건다 — 뒤에 걸면 응답을 기다리는 사이에 다시 불려
+    // 요청이 겹치고, 늦게 끝난 쪽이 먼저 그린 화면을 덮어써 표가 사라진다.
+    if (!pj || BL_DONE === pj) return;
+    BL_DONE = pj;
+    try {
+      BL_DATA = await (await fetch("/api/backlinks?project=" +
+        encodeURIComponent(pj))).json();
+    } catch (e) { BL_DONE = ""; return; }   // 실패는 되돌려 다음 기회에 다시 받는다
+    blRender();
+  }
+  if (sel) sel.addEventListener("change", function () {
+    BL_DONE = ""; BL_Q = ""; BL_F = ""; backlinks();
+  });
   backlinks();
 
   // 좁은 화면에서 차트는 가로로 스크롤한다(원본 .logwrap 설계). 그 사실을 알린다 —
@@ -948,6 +1140,10 @@
   };
   var all = function () {
     wire(); wireSteps(); retitle(); resentence(); reempty(); kpi();
+    // 백링크는 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이 아직
+    // 안 채워져 그냥 빠져나가므로(BL_DONE 이 막아 준다) 여기서 다시 시도한다 —
+    // 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
+    backlinks();
   };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();
