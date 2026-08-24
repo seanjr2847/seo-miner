@@ -1,149 +1,417 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
+   색은 광물에서: 녹청(patina)·산화동(copper)·석회(stone). 숫자는 전부 등폭.
+   토큰은 대시보드(skills/capture/templates/dashboard.html)의 :root 가 정본이다. */
 :root{
-  --paper:#F7F9F8; --surface:#E9EEEC; --line:#C4CDCA; --hair:#DDE3E1;
-  --ink:#12232E; --muted:#5C6E74; --mark:#2D4EA8; --far:#B3C0DE; --gain:#2E7D5B;
-  --sans:"IBM Plex Sans KR",system-ui,sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#66726D;
+  --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
+  --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
+  --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
+  --sans:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
+    --patina:#57B49C; --copper:#DE8351; --rule:rgba(228,235,231,.16);
+    --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
+    --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
+  }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
-  line-height:1.6;word-break:keep-all;-webkit-font-smoothing:antialiased}
-.wrap{max-width:900px;margin:0 auto;padding:0 24px}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--stone);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.62;word-break:keep-all;-webkit-font-smoothing:antialiased}
+:focus-visible{outline:2px solid var(--patina);outline-offset:3px;border-radius:2px}
+a{color:inherit}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+.narrow{max-width:760px}
 
-header{border-bottom:1px solid var(--hair)}
-.brandbar{display:flex;align-items:baseline;gap:12px;padding:20px 0}
-.logo{font-weight:700;letter-spacing:-.02em;font-size:17px}
-.tagline{font-size:13px;color:var(--muted);font-weight:300}
+/* ── 케이싱 헤더 ─────────────────────────────────────────── */
+header{background:var(--ink);position:sticky;top:0;z-index:9}
+@media (prefers-color-scheme:dark){header{border-bottom:1px solid var(--rule)}}
+.hbar{display:flex;align-items:center;gap:26px;padding:12px 24px;
+  max-width:1080px;margin:0 auto}
+.mark{font:600 15px/1 var(--mono);letter-spacing:.06em;color:#E6E9E4;
+  text-decoration:none}
+.mark b{color:#57B49C;font-weight:600}
+.hbar nav{display:flex;gap:22px;font-size:13px}
+.hbar nav a{color:#A7B2AC;text-decoration:none}
+.hbar nav a:hover{color:#E6E9E4}
+.hbar .sp{flex:1}
+.hcta{font:500 13px/1 var(--sans);color:#E6E9E4;text-decoration:none;
+  border:1px solid rgba(230,233,228,.28);border-radius:2px;padding:8px 14px;
+  white-space:nowrap}
+.hcta:hover{border-color:#57B49C;color:#57B49C}
+@media (max-width:720px){.hbar nav{display:none}.hbar{gap:14px}}
 
-/* 섹션 라벨 — 한글에 mono+letter-spacing 을 걸면 자간이 벌어져 읽기 나빠진다. */
-.label{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 20px}
+/* ── 공통 조판 ───────────────────────────────────────────── */
+section{scroll-margin-top:64px}
+.eyebrow{font:500 10px/1 var(--mono);letter-spacing:.22em;text-transform:uppercase;
+  color:var(--slate);margin:0 0 14px}
+h2{font-size:clamp(22px,3.2vw,30px);line-height:1.32;font-weight:600;
+  letter-spacing:-.02em;margin:0 0 12px;max-width:24ch}
+.sub{color:var(--slate);margin:0 0 34px;max-width:56ch;font-weight:300}
+.band{border-top:1px solid var(--rule-soft);padding:76px 0}
+@media (max-width:640px){.band{padding:52px 0}}
 
-.hero{padding:72px 0 0}
-h1{font-size:clamp(30px,5.2vw,46px);line-height:1.24;font-weight:600;
-  letter-spacing:-.03em;margin:0 0 20px;max-width:19ch}
-h1 em{font-style:normal;color:var(--mark)}
-.lede{font-size:17px;color:var(--muted);max-width:50ch;margin:0 0 34px;font-weight:300}
-.cta{display:inline-flex;align-items:center;gap:10px;background:var(--ink);color:var(--paper);
-  text-decoration:none;padding:13px 22px;border-radius:2px;font-weight:500;font-size:15px;
-  transition:background .15s}
-.cta:hover{background:var(--mark)}
-.cta:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
+/* ── 히어로 ──────────────────────────────────────────────── */
+.hero{padding:78px 0 8px}
+h1{font-size:clamp(30px,5.4vw,50px);line-height:1.2;font-weight:600;
+  letter-spacing:-.035em;margin:0 0 22px;max-width:17ch}
+h1 em{font-style:normal;color:var(--patina)}
+.lede{font-size:17px;color:var(--slate);max-width:52ch;margin:0 0 32px;font-weight:300}
+.actions{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.cta{display:inline-flex;align-items:center;gap:10px;background:var(--patina);
+  color:var(--card);text-decoration:none;padding:14px 24px;border-radius:2px;
+  font-weight:500;font-size:15px;transition:filter .15s}
+.cta:hover{filter:brightness(1.12)}
 .cta svg{width:17px;height:17px}
-.note{font-size:13px;color:var(--muted);margin-top:14px;font-weight:300}
+.ghost{font-size:14px;color:var(--slate);text-decoration:none;border-bottom:1px solid var(--rule)}
+.ghost:hover{color:var(--ink);border-color:var(--patina)}
+.assure{display:flex;flex-wrap:wrap;gap:8px 26px;margin:22px 0 0;padding:0;list-style:none;
+  font-size:13px;color:var(--slate);font-weight:300}
+.assure li{display:flex;align-items:center;gap:7px}
+.assure li::before{content:"";width:5px;height:5px;border-radius:50%;
+  background:var(--patina);flex:none}
+.note{font-size:13px;color:var(--slate);margin:18px 0 0;font-weight:300;max-width:58ch}
 .note b{font-weight:500;color:var(--ink)}
-.note-details{margin-top:10px;font-size:13px;color:var(--muted);font-weight:300}
-.note-details summary{cursor:pointer;color:var(--ink);font-weight:500;list-style:none}
-.note-details summary::-webkit-details-marker{display:none}
-.note-details summary::before{content:"+  ";color:var(--muted);font-weight:400}
-.note-details[open] summary::before{content:"−  "}
-.note-details > :not(summary){margin-top:8px;line-height:1.6}
 
-/* ── 시그니처: 1페이지까지 남은 거리 ── */
-.chart{margin-top:56px;border-top:1px solid var(--hair);padding:30px 0 0}
-.rows{display:grid;gap:4px}
-.row,.axis{display:grid;grid-template-columns:minmax(88px,20%) 1fr 88px;
-  align-items:center;gap:16px}
-.q{font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.track{position:relative;height:22px}
-.track::before{content:"";position:absolute;inset:0 66.6% 0 0;background:var(--surface)}
-.track::after{content:"";position:absolute;top:-2px;bottom:-2px;left:33.4%;width:1px;
-  background:var(--line)}
-.fill{position:absolute;top:6px;height:11px;background:var(--far);transform-origin:left center}
-.fill[data-hot="1"]{background:var(--mark)}
-.fill[data-in="1"]{background:var(--gain)}
-.dot{position:absolute;top:7px;width:9px;height:9px;border-radius:50%;
-  background:var(--gain);transform:translateX(-50%)}
-.legend .hot{color:var(--mark)}
-.rk{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
-.rk b{color:var(--gain);font-weight:500}
-.ticks{position:relative;height:15px;font-family:var(--mono);font-size:11px;color:var(--muted)}
-.ticks span{position:absolute;top:0;transform:translateX(-50%)}
-.axis{margin-top:8px}
-.legend{font-size:14px;color:var(--muted);margin:22px 0 0;font-weight:300;max-width:56ch}
-.legend b{font-weight:500;color:var(--ink)}
+/* ── 히어로 시각물: 대시보드 패널 ─────────────────────────── */
+.panel{margin:52px 0 0;background:var(--card);border:1px solid var(--rule);
+  border-radius:3px;overflow:hidden}
+.phead{display:flex;align-items:center;gap:12px;padding:12px 18px;
+  border-bottom:1px solid var(--rule-soft)}
+.phead .t{font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  color:var(--slate)}
+.phead .sp{flex:1}
+.chip{font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--slate);border:1px solid var(--rule);border-radius:2px;padding:4px 7px}
 
-.answers{border-top:1px solid var(--hair);margin-top:56px;padding:32px 0 72px}
-.answers ul{list-style:none;padding:0;margin:0;display:grid;gap:1px;background:var(--hair);
-  border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
-.answers li{background:var(--paper);padding:14px 2px;font-size:15px;display:flex;gap:16px}
-.answers li::before{content:attr(data-k);font-size:12px;color:var(--mark);flex:none;
-  width:48px;padding-top:3px;font-weight:500}
-footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
-  color:var(--muted);font-weight:300}
-
-@media(max-width:640px){
-  .hero{padding:44px 0 0}
-  .row,.axis{grid-template-columns:1fr 64px;gap:10px}
-  .q{grid-column:1/-1;font-size:12px;color:var(--muted)}
-  .ticks{grid-column:1}
-  .answers li{flex-direction:column;gap:3px}
-  .answers li::before{padding-top:0}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr)}
+.tile{padding:18px;border-right:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)}
+.tile:last-child{border-right:0}
+.tile .k{font-size:11px;color:var(--slate);margin:0 0 6px;font-weight:400}
+.tile .v{font:600 25px/1.1 var(--mono);letter-spacing:-.02em;margin:0}
+.tile .d{font:400 11px/1 var(--mono);margin:7px 0 0;color:var(--slate)}
+.tile .d.up{color:var(--patina)}
+.tile .d.down{color:var(--copper)}
+@media (max-width:640px){
+  .tiles{grid-template-columns:1fr 1fr}
+  .tile:nth-child(2n){border-right:0}
+  .tile .v{font-size:21px}
 }
-@media(prefers-reduced-motion:no-preference){
+
+.chart{padding:22px 18px 20px}
+.clabel{font-size:12px;color:var(--slate);margin:0 0 16px}
+.rows{display:grid;gap:5px}
+.row,.axis{display:grid;grid-template-columns:minmax(92px,21%) 1fr 46px 50px;
+  align-items:center;gap:14px}
+.q{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track{position:relative;height:22px}
+.track::before{content:"";position:absolute;inset:0 66.6% 0 0;background:var(--bar)}
+.track::after{content:"";position:absolute;top:-3px;bottom:-3px;left:33.4%;width:1px;
+  background:var(--rule)}
+.fill{position:absolute;top:6px;height:10px;background:var(--wash-copper);
+  border-left:2px solid var(--copper);transform-origin:left center}
+.fill[data-near="1"]{background:var(--wash);border-left-color:var(--patina)}
+.dot{position:absolute;top:7px;width:8px;height:8px;border-radius:50%;
+  background:var(--patina);transform:translateX(-50%)}
+.rk{font:500 12px/1 var(--mono);color:var(--ink);text-align:right}
+.gp{font:400 12px/1 var(--mono);color:var(--slate);text-align:right}
+.gp.in{color:var(--patina)}
+.ticks{position:relative;height:14px;font:400 10px/1 var(--mono);color:var(--slate)}
+.ticks span{position:absolute;top:0;transform:translateX(-50%)}
+.axis{margin-top:9px}
+.legend{font-size:13px;color:var(--slate);margin:18px 0 0;font-weight:300;max-width:62ch}
+.legend b{font-weight:500;color:var(--ink)}
+@media (max-width:640px){
+  .row,.axis{grid-template-columns:1fr 44px 48px;gap:8px}
+  .q{grid-column:1/-1;font-size:12px;color:var(--slate)}
+  .ticks{grid-column:1}
+}
+
+/* ── 3단계 ───────────────────────────────────────────────── */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);
+  border:1px solid var(--rule-soft)}
+.step{background:var(--card);padding:26px 22px}
+.step .n{font:600 11px/1 var(--mono);letter-spacing:.2em;color:var(--patina);margin:0 0 14px}
+.step h3{font-size:16px;font-weight:600;margin:0 0 8px;letter-spacing:-.01em}
+.step p{margin:0;font-size:14px;color:var(--slate);font-weight:300}
+@media (max-width:720px){.steps{grid-template-columns:1fr}}
+
+/* ── 분석 영역 카드 ──────────────────────────────────────── */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);
+  border:1px solid var(--rule-soft)}
+.cell{background:var(--card);padding:24px 22px}
+.cell .k{font:500 10px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+  color:var(--slate);margin:0 0 12px}
+.cell h3{font-size:15px;font-weight:600;margin:0 0 7px;letter-spacing:-.01em}
+.cell p{margin:0;font-size:14px;color:var(--slate);font-weight:300}
+@media (max-width:900px){.grid{grid-template-columns:1fr 1fr}}
+@media (max-width:620px){.grid{grid-template-columns:1fr}}
+
+/* ── 비교표 ──────────────────────────────────────────────── */
+.cmp{width:100%;border-collapse:collapse;font-size:14px}
+.cmp th,.cmp td{text-align:left;padding:14px 16px;border-bottom:1px solid var(--rule-soft);
+  vertical-align:top}
+.cmp thead th{font:500 10px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
+  color:var(--slate);border-bottom:1px solid var(--rule);padding-bottom:11px}
+.cmp tbody th{font-size:13px;font-weight:500;color:var(--slate);width:22%}
+.cmp .them{color:var(--slate);font-weight:300;width:39%}
+.cmp .us{background:var(--wash);font-weight:400}
+.cmpbox{overflow-x:auto;border:1px solid var(--rule-soft);background:var(--card)}
+@media (max-width:640px){.cmp{min-width:560px}}
+
+/* ── 약속 ────────────────────────────────────────────────── */
+.pledge{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;
+  gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft)}
+.pledge li{background:var(--card);padding:22px}
+.pledge b{display:block;font-size:15px;font-weight:600;margin:0 0 6px}
+.pledge span{font-size:14px;color:var(--slate);font-weight:300}
+@media (max-width:620px){.pledge{grid-template-columns:1fr}}
+
+/* ── FAQ ─────────────────────────────────────────────────── */
+.faq{border-top:1px solid var(--rule-soft)}
+.faq details{border-bottom:1px solid var(--rule-soft)}
+.faq summary{cursor:pointer;list-style:none;padding:18px 34px 18px 0;position:relative;
+  font-size:15px;font-weight:500}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";position:absolute;right:6px;top:16px;
+  font:400 18px/1 var(--mono);color:var(--slate)}
+.faq details[open] summary::after{content:"−"}
+.faq p{margin:0 0 18px;font-size:14px;color:var(--slate);font-weight:300;max-width:64ch}
+.faq p b{font-weight:500;color:var(--ink)}
+
+/* ── 마감 CTA ────────────────────────────────────────────── */
+.close{background:var(--ink);color:#E6E9E4;padding:70px 0}
+.close h2{color:#E6E9E4;max-width:20ch}
+.close .sub{color:#A7B2AC;margin-bottom:30px}
+.close .cta{background:#57B49C;color:#101513}
+.close .eyebrow{color:#8B9791}
+
+footer{border-top:1px solid var(--rule-soft);padding:26px 0 44px;font-size:13px;
+  color:var(--slate);font-weight:300}
+.fbar{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center}
+.fbar .sp{flex:1}
+footer a{text-decoration:none;border-bottom:1px solid var(--rule)}
+footer a:hover{color:var(--ink);border-color:var(--patina)}
+
+@media (prefers-reduced-motion:no-preference){
   .fill{animation:grow .7s cubic-bezier(.2,.7,.3,1) backwards}
   @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 }
 </style>
 
-<header><div class="wrap brandbar">
-  <span class="logo">seo-miner</span>
-  <span class="tagline">검색 · AI 답변 가시성 추적</span>
+<header><div class="hbar">
+  <a class="mark" href="/">seo<b>·</b>miner</a>
+  <nav>
+    <a href="#how">작동 방식</a>
+    <a href="#what">분석 영역</a>
+    <a href="#diff">실측과 추정</a>
+    <a href="#faq">자주 묻는 질문</a>
+  </nav>
+  <span class="sp"></span>
+  <a class="hcta" href="/auth/login">시작하기</a>
 </div></header>
 
-<main class="wrap">
-  <section class="hero">
-    <h1><em>순위 상승 기회</em>(11~20위)를 찾아냅니다.</h1>
-    <p class="lede">서치콘솔 실적, 색인 상태, ChatGPT·Perplexity·Gemini의 인용 출처까지
-      한 번에 분석 — 가장 효과적인 개선 기회 한 가지를 추립니다.</p>
+<main>
+<section class="hero wrap">
+  <p class="eyebrow">Search Console · Measured, not estimated</p>
+  <h1>추정치 말고 <em>내 사이트 실측값</em>으로 순위를 올립니다.</h1>
+  <p class="lede">서치콘솔에 실제로 기록된 노출·클릭·순위를 읽어, 1페이지에 가장 가까운
+    검색어부터 짚습니다. 고칠 것이 정해지면 저장소에 PR까지 보냅니다.</p>
 
+  <div class="actions">
     <a class="cta" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google 계정으로 시작
     </a>
-    <p class="note">구글 확인 절차 전까지 <b>"이 앱은 Google에서 확인하지 않았습니다"</b> 경고가 한 번 뜹니다. <b>[고급] → [seo-miner(으)로 이동]</b>을 눌러 진행해 주세요.</p>
-    <details class="note-details">
-      <summary>권한 범위 안내</summary>
-      <p>서치콘솔 <b>읽기 전용</b> 권한만 요청합니다. 데이터는 수정·삭제하지 않으며, 본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다.</p>
-    </details>
+    <a class="ghost" href="#how">무엇을 보여주는지 먼저 보기</a>
+  </div>
+
+  <ul class="assure">
+    <li>서치콘솔 읽기 전용 권한</li>
+    <li>카드 등록 없음</li>
+    <li>등록 즉시 첫 측정, 이후 주 1회 자동</li>
+  </ul>
+
+  <p class="note">구글 확인 절차 전까지 <b>"이 앱은 Google에서 확인하지 않았습니다"</b>
+    경고가 한 번 뜹니다. <b>[고급] → [seo-miner(으)로 이동]</b>을 눌러 진행해 주세요.</p>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="t">1페이지까지 남은 거리</span>
+      <span class="sp"></span>
+      <span class="chip">예시 화면</span>
+    </div>
+
+    <div class="tiles">
+      <div class="tile"><p class="k">클릭</p><p class="v">1,284</p><p class="d up">+18.2%</p></div>
+      <div class="tile"><p class="k">노출</p><p class="v">42,910</p><p class="d up">+6.4%</p></div>
+      <div class="tile"><p class="k">CTR</p><p class="v">3.0%</p><p class="d down">−0.3%p</p></div>
+      <div class="tile"><p class="k">평균 순위</p><p class="v">14.2</p><p class="d up">1.6칸 상승</p></div>
+    </div>
 
     <div class="chart">
-      <p class="label">순위 상승 기회 (11~20위)</p>
+      <p class="clabel">회색 구간이 1페이지(10위 이내), 세로선이 그 경계입니다.</p>
       <div class="rows">
-        <div class="row"><span class="q">llm 순위</span>
-          <div class="track"><i class="fill" data-hot="1" style="left:33.4%;width:6.9%;animation-delay:.05s"></i></div>
-          <span class="rk">12위</span></div>
-        <div class="row"><span class="q">ai tier list</span>
-          <div class="track"><i class="fill" style="left:33.4%;width:13.8%;animation-delay:.12s"></i></div>
-          <span class="rk">14위</span></div>
-        <div class="row"><span class="q">best ai tools</span>
-          <div class="track"><i class="fill" style="left:33.4%;width:44.8%;animation-delay:.19s"></i></div>
-          <span class="rk">23위</span></div>
-        <div class="row"><span class="q">ai 도구 비교</span>
-          <div class="track"><i class="dot" style="left:20.7%"></i></div>
-          <span class="rk"><b>7위</b></span></div>
+        <div class="row"><span class="q">seo 자동화 도구</span>
+          <div class="track"><i class="fill" data-near="1" style="left:33.4%;width:6.6%;animation-delay:.05s"></i></div>
+          <span class="rk">12위</span><span class="gp">2칸</span></div>
+        <div class="row"><span class="q">서치콘솔 분석</span>
+          <div class="track"><i class="fill" data-near="1" style="left:33.4%;width:13.3%;animation-delay:.12s"></i></div>
+          <span class="rk">14위</span><span class="gp">4칸</span></div>
+        <div class="row"><span class="q">ai 검색 노출</span>
+          <div class="track"><i class="fill" style="left:33.4%;width:23.3%;animation-delay:.19s"></i></div>
+          <span class="rk">17위</span><span class="gp">7칸</span></div>
+        <div class="row"><span class="q">키워드 순위 추적</span>
+          <div class="track"><i class="fill" style="left:33.4%;width:43.3%;animation-delay:.26s"></i></div>
+          <span class="rk">23위</span><span class="gp">13칸</span></div>
+        <div class="row"><span class="q">색인 오류 확인</span>
+          <div class="track"><i class="dot" style="left:23.3%"></i></div>
+          <span class="rk">7위</span><span class="gp in">1페이지</span></div>
       </div>
       <div class="axis"><span></span>
         <div class="ticks"><span style="left:0">1</span><span style="left:33.4%">10</span>
           <span style="left:66.7%">20</span><span style="left:100%">30</span></div>
-        <span></span></div>
-      <p class="legend">회색 구간이 <b>1페이지(10위 이내)</b>입니다. 막대는 거기까지 끌어올려야 할 거리 —
-        <b class="hot">가장 짧은 막대가 우선 개선 대상</b>입니다.</p>
+        <span></span><span></span></div>
+      <p class="legend">막대는 1페이지까지 끌어올려야 할 거리입니다 —
+        <b>가장 짧은 막대가 가장 싸게 이기는 자리</b>이고, 여기부터 손댑니다.</p>
     </div>
-  </section>
+  </div>
+</section>
 
-  <section class="answers">
-    <p class="label">분석 영역</p>
-    <ul>
-      <li data-k="순위">11~20위 키워드 중 1페이지(10위 이내)까지 남은 순위와 격차</li>
-      <li data-k="CTR">노출은 있지만 클릭이 0인 키워드와 원인(제목·메타 태그)</li>
-      <li data-k="색인">색인이 안 된 페이지와 원인(robots·크롤 예산·canonical)</li>
-      <li data-k="모바일">데스크톱 대비 모바일에서만 순위가 낮은 키워드</li>
-      <li data-k="AI">ChatGPT·Perplexity·Gemini의 인용 출처와 내 사이트의 누락 여부</li>
-    </ul>
-  </section>
+<section id="how" class="band wrap">
+  <p class="eyebrow">How it works</p>
+  <h2>연결 한 번, 그다음은 알아서 돕니다.</h2>
+  <p class="sub">측정은 스크립트가, 판단은 사람이 합니다. 한 바퀴 돌 때마다 자료가 쌓여
+    다음 바퀴가 쉬워집니다.</p>
+  <div class="steps">
+    <div class="step">
+      <p class="n">01</p>
+      <h3>구글 계정을 연결합니다</h3>
+      <p>로그인하면 소유한 서치콘솔 속성이 목록으로 뜹니다. 분석할 사이트를 고르면
+        첫 측정이 그 자리에서 시작합니다. 클라우드 콘솔에서 할 일은 없습니다.</p>
+    </div>
+    <div class="step">
+      <p class="n">02</p>
+      <h3>실측값에서 기회를 뽑습니다</h3>
+      <p>순위·CTR·색인·모바일·AI 인용을 훑어 고칠 자리를 목록으로 만듭니다.
+        각 항목에는 근거가 되는 숫자가 붙습니다 — 추측한 값은 없습니다.</p>
+    </div>
+    <div class="step">
+      <p class="n">03</p>
+      <h3>고른 것을 PR로 보냅니다</h3>
+      <p>깃허브 저장소를 연결해 두면, 기회 하나를 골라 실제 파일 변경까지 만듭니다.
+        main에 직접 쓰지 않습니다 — 브랜치와 PR로 오고, 머지는 사람이 합니다.</p>
+    </div>
+  </div>
+</section>
+
+<section id="what" class="band wrap">
+  <p class="eyebrow">What we look at</p>
+  <h2>여섯 갈래로 훑고, 손댈 것 하나를 남깁니다.</h2>
+  <p class="sub">전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다. 데이터가 없으면
+    "없다"고 말하고 수집을 제안합니다.</p>
+  <div class="grid">
+    <div class="cell"><p class="k">Rank</p><h3>1페이지까지 남은 거리</h3>
+      <p>11~20위 검색어가 10위 경계까지 몇 칸 남았는지. 짧은 것부터 손댑니다.</p></div>
+    <div class="cell"><p class="k">CTR</p><h3>노출은 되는데 클릭이 0</h3>
+      <p>순위는 나오는데 아무도 안 누르는 검색어. 제목·메타 문제인지 경쟁 문제인지 가릅니다.</p></div>
+    <div class="cell"><p class="k">Index</p><h3>색인이 막힌 페이지</h3>
+      <p>robots·크롤 실패·canonical 불일치·미색인 네 갈래로 분류합니다.</p></div>
+    <div class="cell"><p class="k">Mobile</p><h3>모바일에서만 밀리는 검색어</h3>
+      <p>같은 검색어의 모바일과 데스크톱 평균 순위를 비교해 2칸 이상 벌어진 곳을 찾습니다.</p></div>
+    <div class="cell"><p class="k">AI</p><h3>AI 답변의 인용 출처</h3>
+      <p>ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지, 내 사이트는 왜 빠졌는지.</p></div>
+    <div class="cell"><p class="k">Trend</p><h3>날짜별 추이와 순위 변동</h3>
+      <p>클릭·노출을 하루 단위로. 지난주 대비 움직인 검색어를 따로 모읍니다.</p></div>
+  </div>
+</section>
+
+<section id="diff" class="band wrap">
+  <p class="eyebrow">Measured vs estimated</p>
+  <h2>같은 화면처럼 보여도, 숫자의 출처가 다릅니다.</h2>
+  <p class="sub">대부분의 키워드 도구는 남의 사이트도 볼 수 있는 대신 값을 추정합니다.
+    seo-miner는 내가 소유한 사이트만 보는 대신 실제로 기록된 값을 씁니다.</p>
+  <div class="cmpbox"><table class="cmp">
+    <thead><tr><th scope="col"></th><th scope="col">일반 키워드 도구</th><th scope="col">seo-miner</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">순위</th><td class="them">제3자 크롤링으로 추정한 값</td>
+        <td class="us">서치콘솔에 기록된 내 사이트의 평균 게재순위</td></tr>
+      <tr><th scope="row">트래픽</th><td class="them">검색량 모델로 추정한 방문 수</td>
+        <td class="us">실제 노출 수와 클릭 수</td></tr>
+      <tr><th scope="row">대상</th><td class="them">아무 도메인이나 조회</td>
+        <td class="us">내가 소유권을 가진 속성만</td></tr>
+      <tr><th scope="row">결과물</th><td class="them">보고서까지</td>
+        <td class="us">보고서 + 저장소에 올라온 PR</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="band wrap">
+  <p class="eyebrow">Ground rules</p>
+  <h2>먼저 안 하는 것부터 말씀드립니다.</h2>
+  <ul class="pledge">
+    <li><b>읽기 전용으로만 봅니다</b>
+      <span>서치콘솔은 읽기 권한만 요청합니다. 데이터를 고치거나 지우지 않습니다.</span></li>
+    <li><b>main에 직접 쓰지 않습니다</b>
+      <span>코드 변경은 새 브랜치와 PR로만 옵니다. 머지 여부는 사람이 정합니다.</span></li>
+    <li><b>추측한 숫자를 쓰지 않습니다</b>
+      <span>모든 주장에 근거 행이 붙습니다. 자료가 없으면 없다고 말합니다.</span></li>
+    <li><b>보고서는 그대로 가져갈 수 있습니다</b>
+      <span>측정이 끝나면 그 시점 화면을 박아 넣은 HTML을 메일로 보내 드립니다.</span></li>
+  </ul>
+</section>
+
+<section id="faq" class="band wrap narrow">
+  <p class="eyebrow">FAQ</p>
+  <h2>자주 묻는 질문</h2>
+  <div class="faq">
+    <details><summary>비용이 드나요?</summary>
+      <p>구글 계정 로그인 외에 준비할 것이 없습니다. 카드 등록도 받지 않습니다.</p></details>
+    <details><summary>어떤 권한을 요구하나요?</summary>
+      <p>서치콘솔 <b>읽기 전용</b> 권한 하나입니다. 데이터를 수정·삭제하지 않으며,
+        본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다.</p></details>
+    <details><summary>"Google에서 확인하지 않은 앱" 경고가 뜹니다.</summary>
+      <p>구글 확인 절차를 아직 밟지 않은 앱이라 동의 화면에 경고가 한 번 뜹니다.
+        <b>[고급] → [seo-miner(으)로 이동]</b>으로 지나가면 됩니다. 요청하는 권한은
+        그 화면에 그대로 표시됩니다.</p></details>
+    <details><summary>제 저장소에 마음대로 커밋하나요?</summary>
+      <p>아닙니다. 깃허브는 연결하지 않아도 나머지 기능이 전부 돌아갑니다. 연결하더라도
+        변경은 새 브랜치와 PR로만 만들고, main에는 쓰지 않습니다.</p></details>
+    <details><summary>얼마나 자주 측정하나요?</summary>
+      <p>사이트를 등록하면 바로 한 번 재고, 이후 주 1회 자동으로 다시 잽니다. 끝나면
+        보고서를 첨부한 메일이 갑니다. 화면에서 <b>[지금 다시 재기]</b>로 언제든
+        앞당길 수 있습니다.</p></details>
+    <details><summary>네이버나 다음도 보나요?</summary>
+      <p>지금은 구글 검색과 AI 답변만 봅니다. 국내 검색 표면은 아직 넣지 않았습니다.</p></details>
+    <details><summary>서치콘솔 데이터가 며칠씩 비어 보입니다.</summary>
+      <p>구글이 값을 확정할 때까지 기다리기 때문에 <b>최근 3일은 비어 있습니다</b>.
+        빠진 게 아니라 아직 확정되지 않은 구간입니다.</p></details>
+  </div>
+</section>
+
+<section class="close">
+  <div class="wrap">
+    <p class="eyebrow">Start measuring</p>
+    <h2>내 사이트가 지금 몇 위인지, 1분이면 봅니다.</h2>
+    <p class="sub">로그인하고 속성 하나만 고르면 첫 측정이 바로 시작합니다.</p>
+    <a class="cta" href="/auth/login">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
+      Google 계정으로 시작
+    </a>
+  </div>
+</section>
 </main>
 
-<footer class="wrap">주 1회 자동 분석으로 데이터가 쌓이고, 판단은 사람이 직접 합니다.</footer>
+<footer><div class="wrap fbar">
+  <span>주 1회 자동 분석으로 데이터가 쌓이고, 판단은 사람이 직접 합니다.</span>
+  <span class="sp"></span>
+  <a href="https://github.com/seanjr2847/seo-miner">GitHub</a>
+</div></footer>

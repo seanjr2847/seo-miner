@@ -1,131 +1,227 @@
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{
-  --paper:#F7F9F8; --surface:#E9EEEC; --line:#C4CDCA; --hair:#DDE3E1;
-  --ink:#12232E; --muted:#5C6E74; --mark:#2D4EA8; --gain:#2E7D5B; --bad:#B3402E;
-  --sans:"IBM Plex Sans KR",system-ui,sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,monospace;
+/* 시추 로그(core log)와 같은 광물 팔레트 — 이 화면이 대시보드의 입구다.
+   여기서 고른 사이트가 곧 갱도가 되므로, 색·서체·괘선을 dashboard.html 과 맞춘다. */
+:root {
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#66726D;
+  --patina:#22705F; --patina-hi:#1A5A4C; --copper:#A9491F; --btn-ink:#F7F8F5;
+  --rule:rgba(18,23,20,.13); --rule-soft:rgba(18,23,20,.07);
+  --wash:rgba(34,112,95,.10); --bar:rgba(18,23,20,.05);
+  --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
+         "Malgun Gothic",monospace;
+  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,
+         "Malgun Gothic","Apple SD Gothic Neo",sans-serif;
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
-  line-height:1.6;word-break:keep-all;-webkit-font-smoothing:antialiased}
-.wrap{max-width:640px;margin:0 auto;padding:0 24px}
-header{border-bottom:1px solid var(--hair)}
-.brandbar{display:flex;align-items:baseline;gap:12px;padding:20px 0}
-.logo{font-weight:700;letter-spacing:-.02em;font-size:17px}
-.tagline{font-size:13px;color:var(--muted);font-weight:300}
-.who{margin-left:auto;font-size:13px;color:var(--muted)}
-.lo{margin:0}
-.lo button{background:transparent;color:var(--muted);border:1px solid var(--line);
-  padding:4px 10px;font-size:12px;font-weight:400}
-.lo button:hover{background:transparent;color:var(--ink);border-color:var(--ink)}
-.label{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 16px}
-.steps{margin:32px 0 0;padding:0}
-.steps ol{list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;
-  align-items:center;font-size:12px;color:var(--muted);font-weight:400}
-.steps li{display:flex;align-items:center;gap:6px}
-.steps li + li::before{content:"→";color:var(--line);margin-right:2px}
-.steps li span{display:inline-flex;align-items:center;justify-content:center;
-  width:18px;height:18px;border-radius:50%;background:var(--surface);
-  font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:500}
-.steps li.current span{background:var(--ink);color:var(--paper)}
-.steps li.current{color:var(--ink);font-weight:500}
-section{padding:40px 0}
-section+section{border-top:1px solid var(--hair)}
-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px}
-.sub{color:var(--muted);font-weight:300;margin:0 0 24px;font-size:15px}
-
-/* ── 분석 중인 사이트 ── */
-.sites{list-style:none;padding:0;margin:0;display:grid;gap:1px;background:var(--hair);
-  border:1px solid var(--hair)}
-.sites li{background:var(--paper)}
-.sites a{display:flex;align-items:baseline;gap:12px;padding:15px 16px;text-decoration:none;
-  color:inherit;transition:background .12s}
-.sites a:hover{background:var(--surface)}
-.sites a:focus-visible{outline:2px solid var(--mark);outline-offset:-2px}
-.nm{font-weight:600;font-size:15px}
-.pr{font-family:var(--mono);font-size:12px;color:var(--muted)}
-.st{font-size:12px;color:var(--muted);margin-left:auto;flex:none;text-align:right}
-.st.wait{color:var(--mark)}
-.st.wait::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
-  background:var(--mark);margin-right:6px;vertical-align:middle}
-.wait-note{font-size:13px;color:var(--muted);font-weight:300;margin:14px 0 0}
-
-/* ── 속성 고르기 ── */
-.props{display:grid;gap:1px;background:var(--hair);border:1px solid var(--hair)}
-.prop{background:var(--paper);display:flex;align-items:center;gap:12px;padding:13px 16px;
-  cursor:pointer;transition:background .12s}
-.prop:hover{background:var(--surface)}
-.prop input{width:17px;height:17px;accent-color:var(--mark);flex:none;margin:0;cursor:pointer}
-.prop input:focus-visible{outline:2px solid var(--mark);outline-offset:2px}
-.pname{font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
-.prop select{font-family:inherit;font-size:12px;color:var(--muted);background:transparent;
-  border:1px solid var(--line);border-radius:2px;padding:3px 6px;flex:none}
-.prop select:focus{outline:2px solid var(--mark);outline-offset:1px}
-.taken{background:var(--paper);display:flex;align-items:center;gap:12px;padding:13px 16px;
-  color:var(--muted);font-size:15px}
-.taken::before{content:"✓";color:var(--gain);width:17px;text-align:center;flex:none}
-
-.go{margin-top:22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-button{font-family:inherit;font-size:15px;font-weight:500;color:var(--paper);
-  background:var(--ink);border:0;border-radius:2px;padding:12px 22px;cursor:pointer;
-  transition:background .15s}
-button:hover:not(:disabled){background:var(--mark)}
-button:disabled{opacity:.4;cursor:default}
-button:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
-.msg{font-size:14px}
-.msg.err{color:var(--bad)}
-.msg.ok{color:var(--gain)}
-.ghbtn{display:inline-block;background:var(--ink);color:var(--paper);text-decoration:none;
-  padding:11px 20px;border-radius:2px;font-weight:500;font-size:15px}
-.ghbtn:hover{background:var(--mark)}
-#repo-body .prop{cursor:default}
-#repo-body select{font-size:14px;max-width:60%}
-.skel{height:47px;background:linear-gradient(90deg,var(--surface),var(--paper),var(--surface));
-  background-size:200% 100%}
-@media(prefers-reduced-motion:no-preference){
-  .skel{animation:sh 1.3s linear infinite}
-  @keyframes sh{to{background-position:-200% 0}}
-  .st.wait::before{animation:pulse 1.6s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
+    --patina:#57B49C; --patina-hi:#6CC4AD; --copper:#DE8351; --btn-ink:#0E1412;
+    --rule:rgba(228,235,231,.16); --rule-soft:rgba(228,235,231,.08);
+    --wash:rgba(87,180,156,.14); --bar:rgba(228,235,231,.06);
+  }
 }
-footer{border-top:1px solid var(--hair);padding:20px 0 40px;font-size:13px;
-  color:var(--muted);font-weight:300;display:flex;gap:18px}
-footer a{color:var(--muted)}
-@media(max-width:520px){
-  .prop{flex-wrap:wrap}
-  .pname{flex:1 1 100%;order:2;white-space:normal}
-  .sites a{flex-wrap:wrap}
-  .st{margin-left:0;flex-basis:100%;text-align:left}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--stone); color:var(--ink);
+  font:15px/1.55 var(--sans); word-break:keep-all; -webkit-font-smoothing:antialiased; }
+:focus-visible { outline:2px solid var(--patina); outline-offset:2px; border-radius:2px; }
+.wrap { max-width:760px; margin:0 auto; padding:0 22px; }
+
+/* ── 헤더: 시추공 상단 케이싱 ─────────────────────────────── */
+header { background:var(--ink); color:var(--stone); }
+.hbar { display:flex; align-items:baseline; gap:16px; padding:12px 22px; }
+.mark { font:600 15px/1 var(--mono); letter-spacing:.06em; }
+.mark b { color:var(--patina); font-weight:600; }
+.tag { font:400 10px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
+  color:var(--slate); white-space:nowrap; }
+.hbar .sp { flex:1; }
+.who { font:400 11.5px/1 var(--mono); color:var(--slate); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.lo { margin:0; flex:0 0 auto; }
+.lo button { font:400 11px/1 var(--mono); color:var(--stone); background:transparent;
+  border:1px solid var(--rule); border-radius:2px; padding:6px 10px; }
+.lo button:hover:not(:disabled) { background:transparent; border-color:var(--patina);
+  color:var(--patina); }
+@media (max-width:640px) { .tag { display:none; } }
+
+main { padding-bottom:12px; }
+section { padding:34px 0 0; }
+section + section { margin-top:34px; border-top:1px solid var(--rule-soft); }
+
+/* ── 제목 묶음: 대시보드와 같은 문법(eyebrow → h → sub) ──── */
+.eyebrow, .label { font:400 10px/1 var(--mono); letter-spacing:.24em;
+  text-transform:uppercase; color:var(--slate); margin:0; }
+h1 { font:650 22px/1.3 var(--sans); letter-spacing:-.01em; margin:10px 0 5px; }
+.sub { font-size:13.5px; color:var(--slate); margin:0 0 18px; max-width:64ch; }
+
+/* ── 분석 중인 사이트(서버가 채운다) ──────────────────────── */
+.label { margin-bottom:12px; }
+.sites { list-style:none; margin:0; padding:0; background:var(--card);
+  border:1px solid var(--rule); border-radius:4px; }
+.sites li + li { border-top:1px solid var(--rule-soft); }
+.sites a { display:flex; align-items:baseline; gap:12px; padding:13px 15px;
+  text-decoration:none; color:inherit; }
+.sites a:hover { background:var(--bar); }
+.sites li:first-child a { border-radius:4px 4px 0 0; }
+.sites li:last-child a { border-radius:0 0 4px 4px; }
+.nm { font:600 14.5px/1.3 var(--sans); }
+.pr { font:400 11.5px/1.3 var(--mono); color:var(--slate); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.st { margin-left:auto; flex:0 0 auto; font:400 11px/1 var(--mono);
+  letter-spacing:.06em; color:var(--slate); white-space:nowrap; }
+.st.wait { color:var(--copper); border:1px solid var(--copper); border-radius:2px;
+  padding:4px 8px; letter-spacing:.12em; font-size:10px; text-transform:uppercase; }
+.st.wait::before { content:""; display:inline-block; width:5px; height:5px;
+  border-radius:50%; background:var(--copper); margin-right:6px; vertical-align:middle; }
+.wait-note { font-size:12.5px; color:var(--slate); margin:12px 0 0; }
+
+/* ── 진행 레일: 세 칸짜리 갱도 ────────────────────────────── */
+.rail { margin-top:30px; }
+.rail ol { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap;
+  align-items:center; gap:10px; font:400 12px/1 var(--mono); color:var(--slate); }
+.rail li { display:flex; align-items:center; gap:8px; }
+.rail li + li::before { content:""; width:22px; height:1px; background:var(--rule);
+  margin-right:2px; }
+.rail .n { display:inline-flex; align-items:center; justify-content:center;
+  width:19px; height:19px; border-radius:50%; border:1px solid var(--rule);
+  font:600 10px/1 var(--mono); color:var(--slate); }
+.rail .here { color:var(--ink); }
+.rail .here .n { border-color:var(--patina); color:var(--patina);
+  box-shadow:0 0 0 3px var(--wash); }
+.rail .done { color:var(--slate); }
+.rail .done .n { background:var(--patina); border-color:var(--patina); color:var(--btn-ink); }
+.rail .done .n::before { content:"✓"; }
+.rail .done .n b { display:none; }
+
+/* ── 선택 패널 ───────────────────────────────────────────── */
+.panel { background:var(--card); border:1px solid var(--rule); border-radius:4px;
+  overflow:hidden; }
+.ptool { display:flex; align-items:center; gap:14px; padding:9px 15px;
+  border-bottom:1px solid var(--rule); background:var(--bar); }
+.all { display:flex; align-items:center; gap:9px; cursor:pointer;
+  font:400 10px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+  color:var(--slate); }
+.cnt { margin-left:auto; font:500 11px/1 var(--mono); letter-spacing:.08em;
+  color:var(--slate); font-variant-numeric:tabular-nums; }
+.cnt b { color:var(--patina); font-weight:600; }
+
+.prop { display:flex; align-items:center; gap:12px; padding:11px 15px;
+  cursor:pointer; box-shadow:inset 2px 0 0 transparent; }
+.prop + .prop { border-top:1px solid var(--rule-soft); }
+.prop:hover { background:var(--bar); }
+.prop.on { background:var(--wash); box-shadow:inset 2px 0 0 var(--patina); }
+.prop.off { cursor:default; opacity:.62; }
+input[type=checkbox] { width:16px; height:16px; flex:none; margin:0;
+  accent-color:var(--patina); cursor:pointer; }
+input[type=checkbox]:disabled { cursor:default; }
+.pname { flex:1; min-width:0; font:500 13.5px/1.4 var(--mono);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pname .pfx { color:var(--slate); font-weight:400; }
+.lv { flex:0 0 auto; font:400 10px/1 var(--mono); letter-spacing:.12em;
+  text-transform:uppercase; color:var(--slate); }
+.lv.bad { color:var(--copper); }
+.tick { flex:none; width:16px; text-align:center; color:var(--patina); }
+
+select { font:400 12px/1 var(--mono); color:var(--ink); background:var(--stone);
+  border:1px solid var(--rule); border-radius:2px; padding:6px 8px; flex:none;
+  max-width:46%; cursor:pointer; }
+select:hover { border-color:var(--patina); }
+.prop:not(.on) select { opacity:.6; }
+
+/* ── 안내·오류: 무엇이 잘못됐고 어떻게 고치는지 ───────────── */
+.note { padding:18px 16px; display:grid; gap:7px; }
+.note b { font:600 14px/1.4 var(--sans); }
+.note span { font-size:13px; color:var(--slate); }
+.note a { color:var(--patina); }
+.note.warn { border-left:2px solid var(--copper); background:var(--bar); }
+.note.info { border-left:2px solid var(--patina); background:var(--wash); }
+.note .retry { justify-self:start; margin-top:4px; font:400 11.5px/1 var(--mono);
+  color:var(--slate); background:transparent; border:1px solid var(--rule);
+  border-radius:2px; padding:7px 11px; cursor:pointer; }
+.note .retry:hover { color:var(--patina); border-color:var(--patina); }
+
+/* ── 다음 한 걸음 ────────────────────────────────────────── */
+.go { margin-top:18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+button, .ghbtn { font:500 14px/1 var(--sans); color:var(--btn-ink);
+  background:var(--patina); border:1px solid var(--patina); border-radius:3px;
+  padding:12px 20px; cursor:pointer; text-decoration:none; display:inline-block; }
+button:hover:not(:disabled), .ghbtn:hover {
+  background:var(--patina-hi); border-color:var(--patina-hi); }
+button:disabled { opacity:.34; cursor:default; }
+.msg { font-size:13px; color:var(--slate); }
+.msg.err { color:var(--copper); }
+.msg.ok { color:var(--patina); }
+
+/* ── 저장소 연결 ─────────────────────────────────────────── */
+#repo-body .prop { cursor:default; }
+#repo-body .prop:hover { background:transparent; }
+#repo-body .pname { font-family:var(--sans); font-weight:600; }
+#repo-body select { max-width:none; flex:0 1 340px; font-size:12px; }
+.save { flex:0 0 auto; min-width:6.5em; text-align:right;
+  font:400 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--slate); }
+.save.ok { color:var(--patina); }
+.save.err { color:var(--copper); text-transform:none; letter-spacing:.02em; }
+
+.skel { height:47px; border-top:1px solid var(--rule-soft);
+  background:linear-gradient(90deg,var(--rule-soft),var(--bar),var(--rule-soft));
+  background-size:200% 100%; }
+.skel:first-child { border-top:0; }
+@media (prefers-reduced-motion: no-preference) {
+  .skel { animation:sh 1.3s linear infinite; }
+  @keyframes sh { to { background-position:-200% 0; } }
+  .st.wait::before { animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+  .prop, button, .ghbtn { transition:background .13s, box-shadow .13s; }
+}
+
+footer { margin-top:40px; border-top:1px solid var(--rule-soft); padding:16px 0 40px;
+  font:400 11.5px/1 var(--mono); letter-spacing:.06em; color:var(--slate);
+  display:flex; gap:18px; align-items:center; }
+footer a { color:var(--slate); }
+footer a:hover { color:var(--patina); }
+
+@media (max-width:560px) {
+  .prop { flex-wrap:wrap; }
+  .pname { flex:1 1 calc(100% - 28px); white-space:normal; word-break:break-all; }
+  .lv { order:3; margin-left:28px; }
+  select { max-width:none; flex:1 1 100%; margin-left:28px; }
+  #repo-body select { flex:1 1 100%; margin-left:0; }
+  .save { text-align:left; }
+  .sites a { flex-wrap:wrap; }
+  .st { margin-left:0; flex-basis:100%; }
 }
 </style>
 
-<header><div class="wrap brandbar">
-  <span class="logo">seo-miner</span>
-  <span class="tagline">사이트 관리</span>
+<header><div class="wrap hbar">
+  <span class="mark">seo<b>·</b>miner</span>
+  <span class="tag">사이트 관리</span>
+  <span class="sp"></span>
   <!--USER-->
 </div></header>
 
 <main class="wrap">
   <!--SITES-->
 
-  <nav class="steps" aria-label="진행 단계">
+  <nav class="rail" aria-label="진행 단계">
     <ol>
-      <li class="current"><span>1</span> 사이트 선택</li>
-      <li><span>2</span> 분석</li>
-      <li><span>3</span> 결과 확인</li>
+      <li id="s1" class="here"><span class="n"><b>1</b></span>사이트 선택</li>
+      <li id="s2"><span class="n"><b>2</b></span>첫 분석</li>
+      <li id="s3"><span class="n"><b>3</b></span>결과 확인</li>
     </ol>
   </nav>
 
   <section>
+    <p class="eyebrow">단계 1 — 갱도 지정</p>
     <h1 id="h">분석할 사이트 선택</h1>
     <p class="sub" id="sub">본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다. 사이트 종류를 고르면 키워드 발굴 각도와 개선 기회 가중치가 달라집니다.</p>
 
-    <div class="props" id="props">
-      <div class="skel"></div><div class="skel"></div><div class="skel"></div>
+    <div class="panel">
+      <div class="ptool" id="ptool" hidden>
+        <label class="all"><input type="checkbox" id="all">전체 선택</label>
+        <span class="cnt" id="cnt"></span>
+      </div>
+      <div class="props" id="props">
+        <div class="skel"></div><div class="skel"></div><div class="skel"></div>
+      </div>
     </div>
 
     <div class="go">
@@ -135,59 +231,123 @@ footer a{color:var(--muted)}
   </section>
 
   <section id="repo-sec" hidden>
-  <h1>GitHub 저장소 연결</h1>
-  <p class="sub" id="repo-sub">개선 기회를 콘텐츠로 만들어 PR로 보내려면 사이트별 저장소가 필요합니다.
-    main 브랜치에는 직접 커밋하지 않고, 별도 브랜치와 PR까지만 만듭니다. 머지는 직접 해 주세요.</p>
-  <div id="repo-body"></div>
-</section>
+    <p class="eyebrow">선택 — 고친 것을 코드로</p>
+    <h1>GitHub 저장소 연결</h1>
+    <p class="sub" id="repo-sub">개선 기회를 콘텐츠로 만들어 PR로 보내려면 사이트별 저장소가 필요합니다.
+      main 브랜치에는 직접 커밋하지 않고, 별도 브랜치와 PR까지만 만듭니다. 머지는 직접 해 주세요.</p>
+    <div class="panel" id="repo-body"></div>
+  </section>
 </main>
 
 <footer class="wrap">
   <span>주 1회 자동 분석</span>
-  <a href="/d">대시보드</a>
+  <a href="/d">대시보드 →</a>
 </footer>
 
 <script>
 const $ = id => document.getElementById(id);
 const TYPES = [["saas","SaaS / 웹 서비스"],["directory","디렉터리 / 목록형"],["game","게임"],
                ["local_clinic","지역 비즈니스"]];
+// 서치콘솔 권한 등급. 미확인 계정은 실적 API 가 막혀 있어 분석이 반드시 실패한다.
+const LEVELS = {siteOwner:"소유자", siteFullUser:"전체 권한", siteRestrictedUser:"제한 권한"};
 const esc = s => String(s).replace(/[&<>"]/g, c =>
   ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const TAKEN = new Set(window.__TAKEN__ || []);
 
 function sync() {
-  const n = document.querySelectorAll("#props input:checked").length;
-  $("btn").disabled = !n;
-  $("btn").textContent = n > 1 ? n + "개 분석 시작" : "분석 시작";
+  const all = [...document.querySelectorAll("#props input:not(:disabled)")];
+  const on = all.filter(i => i.checked);
+  all.forEach(i => i.closest(".prop").classList.toggle("on", i.checked));
+  $("btn").disabled = !on.length;
+  $("btn").textContent = on.length > 1 ? on.length + "개 분석 시작" : "분석 시작";
+  $("cnt").innerHTML = "선택 <b>" + on.length + "</b> / " + all.length;
+  $("all").checked = all.length > 0 && on.length === all.length;
+  $("all").indeterminate = on.length > 0 && on.length < all.length;
 }
 
-(async () => {
+function note(box, kind, what, how, retry) {
+  box.innerHTML = '<div class="note ' + kind + '"><b>' + what + '</b><span>' + how + '</span>' +
+    (retry ? '<button class="retry" type="button">다시 시도</button>' : '') + '</div>';
+  $("ptool").hidden = true;
+  if (retry) box.querySelector(".retry").addEventListener("click", load);
+}
+
+// sc-domain: / https:// 접두사는 흐리게 — 사람이 훑는 건 도메인이다.
+function pname(v) {
+  const pre = (/^(sc-domain:|https?:\/\/)/.exec(v) || [""])[0];
+  return (pre ? '<span class="pfx">' + esc(pre) + "</span>" : "") + esc(v.slice(pre.length));
+}
+
+async function load() {
   const box = $("props");
+  box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+  $("ptool").hidden = true;
   try {
     const r = await fetch("/api/properties");
     if (!r.ok) throw new Error(r.status);
     const { properties } = await r.json();
     if (!properties.length) {
-      box.innerHTML = '<div class="taken">서치콘솔에 등록된 사이트가 없습니다 — 서치콘솔에서 사이트를 추가한 뒤 새로고침해 주세요</div>';
-      $("sub").textContent = "서치콘솔에 등록된 사이트가 분석 대상입니다. 사이트를 추가한 뒤 다시 시도해 주세요.";
+      note(box, "warn", "서치콘솔에 등록된 사이트가 없습니다",
+        '<a href="https://search.google.com/search-console" target="_blank" rel="noopener">서치콘솔</a>에서 ' +
+        "사이트를 추가하고 소유를 확인한 뒤, 이 화면을 새로고침하세요.");
+      $("sub").textContent = "서치콘솔에 등록된 사이트가 분석 대상입니다.";
       return;
     }
-    box.innerHTML = properties.map(p => {
+    // 이미 분석 중인 것은 아래로 — 고를 수 있는 줄이 위에 모인다.
+    const rows = properties.slice().sort((a, b) =>
+      (TAKEN.has(a.property) ? 1 : 0) - (TAKEN.has(b.property) ? 1 : 0));
+    const pickable = rows.filter(p => !TAKEN.has(p.property) && LEVELS[p.level]);
+    if (!pickable.length && rows.every(p => TAKEN.has(p.property))) {
+      note(box, "info", "서치콘솔 사이트를 모두 분석 중입니다",
+        '결과는 <a href="/d">대시보드</a>에서 확인하세요. 새 사이트를 추가하면 여기에 나타납니다.');
+      return;
+    }
+    box.innerHTML = rows.map(p => {
       const v = esc(p.property);
-      if (TAKEN.has(p.property)) return '<div class="taken">' + v + ' — 분석 중</div>';
+      if (TAKEN.has(p.property))
+        return '<div class="prop off"><span class="tick">✓</span>' +
+               '<span class="pname">' + pname(p.property) + '</span>' +
+               '<span class="lv">분석 중</span></div>';
+      if (!LEVELS[p.level])
+        return '<div class="prop off"><input type="checkbox" disabled>' +
+               '<span class="pname">' + pname(p.property) + '</span>' +
+               '<span class="lv bad">소유 확인 필요</span></div>';
       const opts = TYPES.map(t => '<option value="' + t[0] + '">' + t[1] + '</option>').join("");
       return '<label class="prop"><input type="checkbox" value="' + v + '">' +
-             '<span class="pname">' + v + '</span>' +
+             '<span class="pname">' + pname(p.property) + '</span>' +
+             '<span class="lv">' + LEVELS[p.level] + '</span>' +
              '<select data-for="' + v + '" aria-label="' + v + ' 사이트 종류">' + opts + '</select>' +
              '</label>';
     }).join("");
-    box.addEventListener("change", sync);
-    const boxes = box.querySelectorAll("input");
+    $("ptool").hidden = false;
+    const boxes = box.querySelectorAll("input:not(:disabled)");
     if (boxes.length === 1) boxes[0].checked = true;   // 하나뿐이면 클릭 한 번을 아낀다
     sync();
   } catch (e) {
-    box.innerHTML = '<div class="taken">서치콘솔에 연결하지 못했습니다 — Google 계정의 서치콘솔 권한을 확인하고 잠시 후 다시 시도해 주세요</div>';
+    note(box, "warn", "서치콘솔에 연결하지 못했습니다",
+      "로그인한 구글 계정에 이 사이트의 서치콘솔 권한이 있는지 확인해 주세요. " +
+      "계정을 잘못 골랐다면 로그아웃 후 다시 로그인하면 됩니다.", true);
   }
+}
+
+$("props").addEventListener("change", sync);
+$("all").addEventListener("change", () => {
+  document.querySelectorAll("#props input:not(:disabled)")
+    .forEach(i => { i.checked = $("all").checked; });
+  sync();
+});
+
+load();
+
+// ── 사이트가 이미 있으면 이 화면은 "추가"이고, 갱도는 이미 파고 있다 ──────
+(function () {
+  if (!(window.__SITES__ || []).length) return;
+  const waiting = document.querySelector(".sites .st.wait");
+  $("s1").className = "done";
+  $("s2").className = waiting ? "here" : "done";
+  if (!waiting) $("s3").className = "here";
+  $("h").textContent = "사이트 더 추가";
+  $("sub").textContent = "서치콘솔에 등록된 사이트를 더 넣을 수 있습니다. 이미 분석 중인 사이트는 아래에 회색으로 표시됩니다.";
 })();
 
 // ── 저장소 연결 (/create) ──────────────────────────────────────────────
@@ -201,16 +361,21 @@ function sync() {
   try {
     var r = await fetch("/api/repos");
     if (r.status === 428) {
-      body.innerHTML = '<a class="ghbtn" href="/auth/github">GitHub 연결하기</a>';
+      body.innerHTML = '<div class="note info"><b>GitHub 계정이 아직 연결되지 않았습니다</b>' +
+        '<span>연결하면 개선 기회를 브랜치와 PR로 바로 보낼 수 있습니다.</span>' +
+        '<a class="ghbtn" style="justify-self:start;margin-top:6px" href="/auth/github">GitHub 연결하기</a></div>';
       return;
     }
     repos = (await r.json()).repos || [];
   } catch (e) {
-    body.innerHTML = '<p class="hint">GitHub 저장소 목록을 가져오지 못했습니다. GitHub 연결 상태를 확인하고 새로고침해 주세요.</p>';
+    body.innerHTML = '<div class="note warn"><b>GitHub 저장소 목록을 가져오지 못했습니다</b>' +
+      '<span>GitHub 연결이 만료됐을 수 있습니다. ' +
+      '<a href="/auth/github">다시 연결</a>한 뒤 새로고침해 주세요.</span></div>';
     return;
   }
   if (!repos.length) {
-    body.innerHTML = '<p class="hint">쓰기 권한이 있는 GitHub 저장소가 없습니다. GitHub 설정에서 저장소 접근 권한을 허용해 주세요.</p>';
+    body.innerHTML = '<div class="note warn"><b>쓰기 권한이 있는 저장소가 없습니다</b>' +
+      '<span>GitHub 앱 설정에서 이 사이트의 저장소에 접근을 허용한 뒤 새로고침해 주세요.</span></div>';
     return;
   }
   body.innerHTML = sites.map(function (s) {
@@ -220,16 +385,25 @@ function sync() {
              esc(r.full_name) + (r.private ? " (비공개)" : "") + "</option>";
     })).join("");
     return '<div class="prop"><span class="pname">' + esc(s.project) + '</span>' +
-           '<select data-site="' + esc(s.project) + '">' + opts + '</select></div>';
+           '<select data-site="' + esc(s.project) + '">' + opts + '</select>' +
+           '<span class="save"></span></div>';
   }).join("");
   body.addEventListener("change", async function (ev) {
     var sel = ev.target;
     if (!sel.dataset.site) return;
     var opt = sel.selectedOptions[0];
-    await fetch("/api/repo", {method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({project: sel.dataset.site, repo: sel.value,
-                            branch: opt ? (opt.dataset.b || "main") : "main"})});
+    var st = sel.closest(".prop").querySelector(".save");
+    st.className = "save"; st.textContent = "저장 중…";
+    try {
+      var res = await fetch("/api/repo", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: sel.dataset.site, repo: sel.value,
+                              branch: opt ? (opt.dataset.b || "main") : "main"})});
+      if (!res.ok) throw new Error(res.status);
+      st.className = "save ok"; st.textContent = "저장됨";
+    } catch (e) {
+      st.className = "save err"; st.textContent = "저장 못 함 — 다시 선택해 주세요";
+    }
   });
 })();
 
