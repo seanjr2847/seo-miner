@@ -1,0 +1,78 @@
+<section id="ix-sec">
+  <div class="eyebrow">URL 검사</div>
+  <h2>색인 문제</h2>
+  <p class="sub" id="ix-sub"></p>
+  <div id="index"></div>
+</section>
+
+<section id="dev-sec">
+  <div class="eyebrow">MOBILE vs DESKTOP</div>
+  <h2>모바일에서 밀리는 검색어</h2>
+  <p class="sub" id="dev-sub"></p>
+  <div id="devgap"></div>
+</section>
+
+<script>
+"use strict";
+/* ── 기기 격차·색인 문제: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
+      빈 목록으로 온다 — 서버가 준 최신 수집일로 갈라 안내한다. 키 자체가 없으면
+      이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
+function renderDevice(d) {
+  if (!d.device_gap) return $("dev-sec").hidden = true;
+  $("dev-sec").hidden = false;
+  const rows = d.device_gap;
+  if (!d.device_date) {
+    $("dev-sub").textContent = "";
+    return $("devgap").innerHTML = `<div class="empty">기기별 실적을 아직 안 읽었습니다 — 설정의 <code>gsc_breakdown: device</code> 로 <code>/capture gsc</code> 하면 채워집니다.</div>`;
+  }
+  if (!rows.length) {
+    $("dev-sub").textContent = `${d.device_date} 기준`;
+    return $("devgap").innerHTML = `<div class="empty">모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.</div>`;
+  }
+  $("dev-sub").textContent = `${d.device_date} 기준 ${rows.length}개 — 모바일 평균순위가 ` +
+    `데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 모바일 노출 ` +
+    `${num(RULES.device_min_imp)} 이상인 검색어. 고칠 곳은 글이 아니라 모바일 화면입니다.`;
+  // 순위는 소수 1자리로 고정 — 15.0이 15로 오면 등폭 열의 자릿수가 어긋난다.
+  const p1 = v => Number(v).toFixed(1);
+  // th 가 nowrap 이라 6열이면 좁은 화면에서 표가 본문 밖으로 삐져나간다 —
+  // 깊이 로그와 같은 .logwrap 에 넣어 페이지가 아니라 표 안에서 가로로 스크롤시킨다.
+  $("devgap").innerHTML = `<div class="logwrap">` + table(
+    ["검색어", ">모바일", ">데스크톱", ">Δ", ">모바일 노출", ">CTR 모바일/데스크톱"],
+    rows.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
+      <td class="num down">${p1(r.mobile_pos)}</td><td class="num">${p1(r.desktop_pos)}</td>
+      <td class="num down">${p1(r.dpos)}</td><td class="num">${num(r.mobile_imp)}</td>
+      <td class="num">${r.mobile_ctr}% / ${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+}
+
+// bucket 라벨 — 원문 bucket 은 title로 남긴다(scoring.index_issues 와 대조할 때 필요).
+const IX_LABEL = {robots_blocked:"robots.txt 차단", fetch_error:"가져오기 실패",
+  canonical_mismatch:"대표 URL 엇갈림", not_indexed:"색인 안 됨"};
+function renderIndex(d) {
+  if (!d.index_issues) return $("ix-sec").hidden = true;
+  $("ix-sec").hidden = false;
+  const rows = d.index_issues;
+  if (!d.index_date) {
+    $("ix-sub").textContent = "";
+    return $("index").innerHTML = `<div class="empty">색인 점검을 아직 안 했습니다 — <code>/capture index</code> 하면 여기가 채워집니다.</div>`;
+  }
+  if (!rows.length) {
+    $("ix-sub").textContent = `${d.index_date} 점검`;
+    return $("index").innerHTML = `<div class="empty">검사한 URL이 전부 색인돼 있습니다.</div>`;
+  }
+  $("ix-sub").textContent = `${d.index_date} 점검 · ${rows.length}건 — 위 묶음부터 손대세요 ` +
+    `(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨).`;
+  const by = {};                           // 이미 심각도 순으로 정렬돼 온다 — 순서를 살린다
+  for (const r of rows) (by[r.bucket] = by[r.bucket] || []).push(r);
+  $("index").innerHTML = Object.entries(by).map(([b, list]) =>
+    `<p class="sub" style="margin:18px 0 8px" title="${esc(b)}">${esc(IX_LABEL[b] || b)}
+       <b>${list.length}건</b></p>` +
+    table(["URL", "진단"], list.map(r => `<tr>
+      <td class="kwcell" style="word-break:break-all">${esc(r.url)}</td>
+      <td>${esc(r.detail)}</td></tr>`))).join("");
+}
+
+VIEW_RENDER.push(function (d) {
+  renderDevice(d);
+  renderIndex(d);
+});
+</script>

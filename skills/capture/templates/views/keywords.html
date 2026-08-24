@@ -1,0 +1,117 @@
+<style>
+/* ── 깊이 로그(시그니처) ─────────────────────────────────── */
+.log .lane:hover .lane-bg { fill:var(--bar); }
+.log .kw { font-size:12.5px; fill:var(--ink); }
+.log .num { font-size:11.5px; fill:var(--slate); }
+.log .track { stroke:var(--rule-soft); }
+.log .dist { stroke-linecap:round; }
+@media (prefers-reduced-motion: no-preference) {
+  .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
+}
+</style>
+
+<section>
+  <div class="eyebrow">4~20위 · 노출 많은 순</div>
+  <h2>1페이지까지 남은 거리</h2>
+  <p class="sub" id="log-sub"></p>
+  <div id="log"></div>
+</section>
+
+<section>
+  <div class="eyebrow">지난번 대비</div>
+  <h2>움직인 검색어</h2>
+  <p class="sub" id="mv-sub"></p>
+  <div id="movers"></div>
+</section>
+
+<script>
+"use strict";
+/* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
+      막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
+function depthLog(rows, brandCatalogEmpty) {
+  if (!rows.length)
+    return `<div class="empty">구글 실적을 아직 안 읽었습니다 — <code>/capture gsc</code> 하면 여기가 채워집니다.</div>`;
+  const W = 1000, LANE = 30, PAD_T = 40, PAD_B = 8;
+  const L = 330, R = W - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
+  const H = PAD_T + rows.length * LANE + PAD_B;
+  const x = p => L + Math.min(p, EDGE) / EDGE * (R - L);
+  const x10 = x(RULES.page1);
+  const ticks = [1, 5, RULES.page1, 15, EDGE];
+
+  const lanes = rows.map((r, i) => {
+    const y = PAD_T + i * LANE + LANE / 2;
+    const px = x(r.pos), onPage1 = r.band ? r.band === "page1" : r.pos <= (RULES.page1 || 10);
+    const c = onPage1 ? "var(--patina)" : "var(--copper)";
+    const x1 = Math.min(px, x10), x2 = Math.max(px, x10);
+    // 2페이지 검색어는 1페이지 경계까지 되밀어야 할 거리를 막대로 — 이 화면이 파는 값.
+    const dist = onPage1 ? "" :
+      `<rect class="grow" x="${x1}" y="${y - 4}" width="${x2 - x1}" height="8" rx="4"
+             fill="var(--copper)" opacity=".38" style="transform-origin:${x2}px 0;
+             animation-delay:${i * 16}ms"/>`;
+    // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
+    const gap = onPage1 ? "이미 1페이지"
+      : `1페이지까지 ${r.gap.toFixed(1)}칸`;
+    return `<g class="lane">
+      <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${W}" height="${LANE}" fill="none"/>
+      <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
+        ? r.query.slice(0, 35) + "…" : r.query)}</text>
+      <line class="track" x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke-width="1"/>
+      ${dist}
+      <circle cx="${px}" cy="${y}" r="4.5" fill="${c}"/>
+      <text class="num" x="${px + (onPage1 ? 0 : 10)}" y="${y - 9}"
+            text-anchor="${onPage1 ? "middle" : "start"}">${r.pos}</text>
+      <text class="num" x="${W}" y="${y + 4}" text-anchor="end">${num(r.imp)}</text>
+      <title>${esc(r.query)} — ${r.pos}위, 노출 ${num(r.imp)}, 클릭 ${num(r.clk)} (${gap})</title>
+    </g>`;
+  }).join("");
+
+  const warn = brandCatalogEmpty
+    ? `\n  <div class="legend">남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.</div>`
+    : "";
+
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="검색어별 순위와 1페이지까지 남은 거리">
+    <rect x="${L}" y="${PAD_T - 14}" width="${x10 - L}" height="${H - PAD_T + 10}"
+          fill="var(--wash)"/>
+    <line x1="${x10}" y1="${PAD_T - 2}" x2="${x10}" y2="${H - 4}"
+          stroke="var(--patina)" stroke-width="1"/>
+    <text class="axis" x="${x10 - 6}" y="${PAD_T - 22}" text-anchor="end"
+          fill="var(--patina)">1페이지 경계</text>
+    ${ticks.map(t => `<text class="axis" x="${x(t)}" y="${PAD_T - 6}"
+        text-anchor="middle">${t}${t === EDGE ? "위+" : ""}</text>`).join("")}
+    <text class="axis" x="${W}" y="${PAD_T - 6}" text-anchor="end">노출</text>
+    ${lanes}
+  </svg></div>
+  <div class="legend"><b style="color:var(--patina)">■</b> 1페이지 안 ·
+    <b style="color:var(--copper)">■</b> 2페이지 — 막대만큼 밀면 1페이지</div>${warn}`;
+}
+
+function moverRows(list, invert) {
+  return list.map(m => `<tr><td class="kwcell">${esc(m.query)}</td>
+    <td class="num">${m.pos}</td>
+    <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
+    <td class="num">${num(m.clk)} ${delta(m.dclk)}</td></tr>`);
+}
+
+VIEW_RENDER.push(function (d) {
+  const near = d.striking_page2;
+  $("log-sub").textContent = d.striking.length
+    ? `${d.striking.length}개 중 ${near}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
+      `순위만 밀면 클릭으로 바뀝니다.`
+    : "";
+  $("log").innerHTML = depthLog(d.striking, d.brand_catalog_empty);
+
+  const mv = moverRows(d.ups).concat(moverRows(d.downs));
+  // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면
+  // Δ가 전부 거짓이라, 짝을 못 찾으면 비교를 접고 그 이유를 여기에 적는다.
+  $("mv-sub").textContent = d.gsc_prev
+    ? `${d.gsc_prev} → ${d.gsc_date} (${d.gsc_period}일치끼리)`
+    : d.period_mismatch
+    ? `직전 기록과 기간이 달라 비교하지 않았습니다 — 지금은 ${d.gsc_period}일치입니다. ` +
+      `같은 기간으로 한 번 더 읽으면 채워집니다.`
+    : "구글 실적을 두 번 이상 읽으면 채워집니다.";
+  $("movers").innerHTML = mv.length || !d.period_mismatch
+    ? table(["검색어", ">순위", ">Δ순위", ">클릭"], mv)
+    : `<div class="empty">기간이 다른 기록끼리는 비교하지 않습니다.</div>`;
+});
+</script>

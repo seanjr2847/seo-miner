@@ -1,0 +1,18 @@
+<section>
+  <div class="eyebrow">SERP</div>
+  <h2>순위 기록</h2>
+  <div id="ranks"></div>
+</section>
+
+<script>
+"use strict";
+VIEW_RENDER.push(function (d) {
+  $("ranks").innerHTML = d.ranks.length
+    ? table(["키워드", ">순위", ">Δ", "AI오버뷰"], d.ranks.map(r =>
+        `<tr><td class="kwcell">${esc(r.keyword)}</td>
+        <td class="num">${r.pos ?? "—"}</td><td class="num">${rankDelta(r.delta ?? r.dpos)}</td>
+        <td>${r.aio ? (r.aio_cited ? '<span class="up">인용됨</span>'
+                     : '<span class="down">있는데 미인용</span>') : '<span class="muted">없음</span>'}</td></tr>`))
+    : `<div class="empty">매일 순위를 기록하려면 유료 키가 필요합니다. 안 켜도 위 화면은 다 돌아갑니다.</div>`;
+});
+</script>

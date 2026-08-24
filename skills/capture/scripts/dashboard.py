@@ -35,7 +35,18 @@ import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
-HTML = (Path(__file__).parent.parent / "templates" / "dashboard.html").read_bytes()
+TPL = Path(__file__).parent.parent / "templates"
+VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site", "history"]
+
+
+def _assemble() -> bytes:
+    """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다."""
+    base = (TPL / "dashboard.html").read_text("utf-8")
+    parts = "".join((TPL / "views" / f"{n}.html").read_text("utf-8") for n in VIEW_ORDER)
+    return base.replace("<!--VIEWS-->", parts).encode("utf-8")
+
+
+HTML = _assemble()
 
 # 구글 로그인 창을 여는 건 collect_gsc.get_service() 다 — 수집기·즉석 조회와 같은
 # 경로를 그대로 빌린다. 덕분에 사이트를 하나도 등록하지 않은 사람도 로그인만 먼저

@@ -1,0 +1,29 @@
+<style>
+#acts { border-left:2px solid var(--patina); padding-left:18px; }
+#acts ol { margin:8px 0 0; padding-left:20px; }
+#acts li { margin:7px 0; font-size:14.5px; }
+#acts li::marker { font-family:var(--mono); color:var(--patina); }
+</style>
+
+<section id="acts" hidden>
+  <div class="eyebrow">이 기록을 남길 때 정한 것</div>
+  <h2>다음 행동</h2>
+  <ol id="acts-list"></ol>
+</section>
+
+<section>
+  <div class="eyebrow">RUNS</div>
+  <h2>수집 이력</h2>
+  <div id="runs"></div>
+</section>
+
+<script>
+"use strict";
+VIEW_RENDER.push(function (d) {
+  $("runs").innerHTML = d.runs.length
+    ? `<div class="runlog">${d.runs.map(r => `<span class="r"><b>${esc(r.kind)}</b>
+        ${esc(r.started_at)} · 호출 ${r.api_calls ?? 0} · $${r.cost_estimate_usd ?? 0}
+        ${r.notes ? "· " + esc(r.notes) : ""}</span>`).join("")}</div>`
+    : `<div class="empty">아직 수집한 적이 없습니다.</div>`;
+});
+</script>

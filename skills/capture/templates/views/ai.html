@@ -1,0 +1,66 @@
+<style>
+/* ── AI 인용률 스파크라인: 깊이 로그와 같은 언어(등폭·괘선·patina) ── */
+.aitrend { margin:2px 0 20px; }
+.aitrend svg { display:block; width:min(360px,100%); height:auto; }
+.aitrend .legend { margin-top:6px; }
+</style>
+
+<section>
+  <div class="eyebrow">chatgpt · perplexity · gemini</div>
+  <h2>AI가 누구를 인용하나</h2>
+  <div id="ai"></div>
+</section>
+
+<script>
+"use strict";
+/* ── AI 인용률 추이: 런 1회 = 점 1개, 세로축은 0~100% 고정(런끼리 비교가 목적).
+      실선=인용률(patina), 점선=언급률(slate). 데이터는 서버(runs↔ai_checks)가 준다. ── */
+function aiSpark(rows) {
+  const W = 360, H = 56, P = 6;
+  const x = i => P + i * (W - 2 * P) / (rows.length - 1);
+  const y = v => H - P - v / 100 * (H - 2 * P);
+  const line = (key, stroke, w, dash) => `<polyline fill="none" stroke="${stroke}"
+    stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round"
+    stroke-linejoin="round" points="${rows.map((r, i) =>
+      `${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(" ")}"/>`;
+  const dots = rows.map((r, i) =>
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(r.cite_rate).toFixed(1)}" r="3"
+       fill="var(--patina)"><title>${esc((r.t || "").slice(0, 10))} — 인용 ${r.cited}/` +
+    `${r.checks} (${r.cite_rate}%) · 언급 ${r.mentioned}/${r.checks} (${r.mention_rate}%)` +
+    `</title></circle>`).join("");
+  const last = rows[rows.length - 1];
+  return `<div class="aitrend">
+    <svg viewBox="0 0 ${W} ${H}" role="img"
+         aria-label="런별 AI 인용률 추이 — 최근 인용률 ${last.cite_rate}%">
+      <line x1="${P}" y1="${y(0)}" x2="${W - P}" y2="${y(0)}"
+            stroke="var(--rule-soft)" stroke-width="1"/>
+      ${line("mention_rate", "var(--slate)", 1, "2 4")}
+      ${line("cite_rate", "var(--patina)", 1.5)}${dots}
+    </svg>
+    <div class="legend"><b style="color:var(--patina)">■</b> 인용률 ${last.cite_rate}% ·
+      <b style="color:var(--slate)">■</b> 언급률 ${last.mention_rate}% — 런 ${rows.length}회</div>
+  </div>`;
+}
+
+VIEW_RENDER.push(function (d) {
+  let ai = "";
+  if (d.matrix.length) {
+    const at = d.ai_trend || [];
+    if (at.length >= 2)
+      ai += `<p class="sub" style="margin:0 0 8px">런별 추이</p>` + aiSpark(at);
+    ai += table(["엔진", "카테고리", ">인용", ">언급", ">체크"],
+      d.matrix.map(r => `<tr><td class="kwcell">${esc(r.engine)}</td>
+        <td>${esc(r.category)}</td>
+        <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
+        <td class="num">${r.mentioned}</td><td class="num">${r.total}</td></tr>`));
+    if (d.gap_domains.length)
+      ai += `<p class="sub" style="margin:20px 0 10px">우리 대신 인용되는 곳</p>` +
+        d.gap_domains.map(g => `<span class="chip">${esc(g.domain)} <b>${g.n}</b></span>`).join("");
+    if (d.missed.length)
+      ai += `<p class="sub" style="margin:20px 0 10px">어디에도 안 잡힌 질문 ${d.missed.length}개</p>` +
+        `<div class="runlog">${d.missed.map(m => `<span class="r">${esc(m.prompt)}
+          <span class="muted">${esc(m.engines)}</span></span>`).join("")}</div>`;
+  } else ai = `<div class="empty">아직 안 물어봤습니다 — <code>/capture ai</code>로 확인하세요.</div>`;
+  $("ai").innerHTML = ai;
+});
+</script>
