@@ -76,6 +76,10 @@ main { max-width:1180px; margin:0 auto; padding:0 22px 80px; }
 .band .l { font:400 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
   color:var(--slate); margin-top:9px; }
 .band .d { font:500 12px/1 var(--mono); margin-left:7px; letter-spacing:0; }
+/* 값만 있는 숫자는 못 읽는다 — 무엇에 대한 얼마인지(기간·직전값)를 한 줄로 붙인다. */
+.band .b { font:400 11px/1.4 var(--mono); color:var(--slate); margin-top:5px;
+  font-variant-numeric:tabular-nums; letter-spacing:0; }
+.band .d em { font-style:normal; font-size:.86em; opacity:.72; margin-left:3px; }
 .up { color:var(--patina); } .down { color:var(--copper); } .muted { color:var(--slate); }
 /* 스냅샷이 3개 이상 쌓이면 숫자 밑에 흐름이 생긴다 — 2점을 잇는 선은 안 그린다. */
 .band .spark { margin-top:10px; }
@@ -100,6 +104,13 @@ h2 { font:650 19px/1.3 var(--sans); letter-spacing:-.01em; margin:9px 0 3px; }
 .log .axis { font-size:10px; fill:var(--slate); letter-spacing:.1em; }
 .log .track { stroke:var(--rule-soft); }
 .log .dist { stroke-linecap:round; }
+/* 눈금선과 세로 조준선 — 값을 읽으려면 축이 있어야 한다. 조준선은 CSS 로만 켠다
+   (칸마다 이벤트 핸들러를 붙이면 90일치에 핸들러가 90개 붙는다). */
+.log .grid { stroke:var(--rule-soft); stroke-dasharray:2 4; }
+.log .hov line { stroke:var(--slate); stroke-width:1; opacity:0; }
+.log .hov circle { opacity:0; }
+.log .hov:hover line, .log .hov:focus line { opacity:.5; }
+.log .hov:hover circle, .log .hov:focus circle { opacity:1; }
 @media (prefers-reduced-motion: no-preference) {
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
@@ -146,8 +157,10 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 11px; }
 .tools input { width:auto; flex:1 1 190px; max-width:280px; font-family:var(--mono);
   font-size:12.5px; }
+.tools select { width:auto; flex:0 0 auto; font-family:var(--mono); font-size:12.5px;
+  padding-right:2px; }
 .tools .n { font:400 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-  color:var(--slate); white-space:nowrap; }
+  color:var(--slate); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .tools .sp { flex:1; }
 .tools .go { flex:0 0 auto; }
 /* 빈 화면은 막다른 길이 아니라 다음 한 걸음 — 뭘 하면 채워지는지 같이 준다. */
@@ -159,14 +172,24 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .hint:hover { border-color:var(--patina); color:var(--patina); }
 
 /* ── 기회 트리아지 ──────────────────────────────────────── */
+/* 이 화면의 주인공. 줄에 손을 얹으면 그 줄만 밝힌다 — 표와 같은 문법이다. */
 .opp { display:grid; grid-template-columns:auto 1fr auto; gap:0 14px;
-  padding:13px 0; border-bottom:1px solid var(--rule-soft); align-items:baseline; }
+  padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft);
+  align-items:baseline; }
+.opp:hover { background:var(--bar); }
 .opp:last-child { border-bottom:0; }
-.score { font:600 15px/1 var(--mono); font-variant-numeric:tabular-nums; width:38px;
+.score { font:600 19px/1 var(--mono); font-variant-numeric:tabular-nums; width:44px;
   text-align:right; }
+/* 숫자만 있으면 88이 뭔지 모른다 — 단위를 붙여 100점 만점임을 그 자리에서 말한다. */
+.score .u { display:block; font:400 9px/1 var(--mono); letter-spacing:.1em;
+  text-transform:uppercase; color:var(--slate); margin-top:5px; }
+.opp .oh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+/* 종류는 채워서(분류), 상태는 테를 둘러서(상태) — 두 배지가 서로 다른 말을 한다. */
 .opp .kind { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
-  color:var(--slate); }
-.opp .target { font-family:var(--mono); font-size:13px; margin:5px 0 3px; word-break:break-word; }
+  color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
+.opp .dt { font:400 11px/1 var(--mono); color:var(--slate); }
+.opp .target { font-family:var(--mono); font-size:13.5px; margin:7px 0 3px;
+  word-break:break-word; }
 /* 광맥 게이지: 결정적 점수(scoring.WEIGHTS)를 깊이 로그와 같은 막대 언어로.
    얻는 kind는 녹청, 지키는 kind(순위 하락·내부 경쟁)는 산화동 — 상승/하락과 같은 문법. */
 .meter { height:3px; background:var(--bar); border-radius:2px; margin:7px 0 5px; max-width:340px; }
@@ -175,17 +198,23 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 @media (prefers-reduced-motion: no-preference) {
   .meter i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
-.opp .kind.k-def { color:var(--copper); }
+.opp .kind.k-def { color:var(--copper); background:var(--wash-copper); }
 .opp .why { font-size:12.5px; color:var(--slate); }
 .opp .why.clamp { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
   overflow:hidden; cursor:pointer; }
+.opp .why[role="button"] { cursor:pointer; }
 .st { font:400 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
   padding:3px 7px; border:1px solid var(--rule); border-radius:2px; white-space:nowrap; }
 .st-new { color:var(--patina); border-color:var(--patina); }
 .st-acked { color:var(--copper); border-color:var(--copper); }
 .st-done { color:var(--slate); }
 .st-dismissed { color:var(--slate); text-decoration:line-through; }
-.acts { display:flex; gap:6px; margin-top:8px; }
+/* 좁은 화면에선 세 칸이 안 들어간다 — 상태 배지를 본문 밑으로 내린다. */
+@media (max-width:560px) {
+  .opp { grid-template-columns:auto 1fr; }
+  .opp .st { grid-column:2; justify-self:start; margin-top:9px; }
+}
+.acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
 .acts button { font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
 .acts button:hover { color:var(--patina); border-color:var(--patina); }
@@ -529,11 +558,16 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const num = n => (n ?? 0).toLocaleString("ko-KR");
-const delta = (d, invert) => {
+// base(직전 값)를 주면 증감률까지 같이 말한다 — +471 만으로는 큰 건지 알 수 없다.
+const delta = (d, invert, base, tip) => {
   if (!Number.isFinite(d) || d === 0) return "";   // 스냅샷 0개면 NaN — 안 그린다
   const good = invert ? d < 0 : d > 0;
-  return `<span class="d ${good ? "up" : "down"}">${d > 0 ? "+" : "−"}` +
-         `${Math.abs(d).toLocaleString("ko-KR")}</span>`;
+  const sign = d > 0 ? "+" : "−";
+  const pc = Number.isFinite(base) && base > 0
+    ? `<em>${sign}${(Math.abs(d) / base * 100).toFixed(Math.abs(d) / base < .1 ? 1 : 0)}%</em>`
+    : "";
+  return `<span class="d ${good ? "up" : "down"}"${tip ? ` title="${esc(tip)}"` : ""}>` +
+         `${sign}${Math.abs(d).toLocaleString("ko-KR")}${pc}</span>`;
 };
 // SERP 정수 순위의 Δ — 판정(flat 여부)은 서버(scoring.rank_delta)가 하고,
 // 여기서는 마크업만 만든다. 보합일 때 실제 값은 title로 남긴다.
@@ -667,34 +701,57 @@ function depthLog(rows, brandCatalogEmpty) {
 function dailyChart(rows, stats) {
   if (rows.length < 2)
     return `<div class="empty">일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.</div>`;
-  const W = 1000, H = 190, L = 8, R = W - 8, T = 20, B = 24, n = rows.length;
+  const W = 1000, H = 214, L = 52, R = W - 62, T = 26, B = 28, n = rows.length;
   const x = i => L + i * (R - L) / (n - 1);
   const mxC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0), 1);
   const mxI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0), 1);
   const y = (v, mx) => H - B - (v || 0) / mx * (H - T - B);
   const pts = (k, mx) => rows.map((r, i) =>
     `${x(i).toFixed(1)},${y(r[k], mx).toFixed(1)}`).join(" ");
+  // 눈금 셋(0·절반·최고). 왼쪽 축은 클릭, 오른쪽 축은 노출 — 자릿수가 달라 축이 둘이다.
+  const grid = [0, .5, 1].map(f => {
+    const yy = y(f * mxC, mxC).toFixed(1), ty = (+yy + 3.5).toFixed(1);
+    return `<line class="grid" x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke-width="1"/>
+      <text class="axis" x="${L - 9}" y="${ty}" text-anchor="end"
+        fill="var(--patina)">${num(Math.round(f * mxC))}</text>
+      <text class="axis" x="${R + 9}" y="${ty}">${num(Math.round(f * mxI))}</text>`;
+  }).join("");
   const bw = (R - L) / n;
-  // 점마다 투명한 띠를 깔아 <title>만으로 툴팁을 낸다 — 이벤트 핸들러를 안 붙인다.
-  const hov = rows.map((r, i) => `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${T - 10}"
-      width="${bw.toFixed(1)}" height="${H - B - T + 10}" fill="transparent">
+  // 칸마다 투명한 띠 + 조준선. 켜고 끄는 건 CSS(:hover)라 핸들러가 하나도 없다.
+  const hov = rows.map((r, i) => {
+    const cx = x(i).toFixed(1);
+    return `<g class="hov">
+      <line x1="${cx}" y1="${T - 8}" x2="${cx}" y2="${H - B}"/>
+      <circle cx="${cx}" cy="${y(r.clicks, mxC).toFixed(1)}" r="3.2" fill="var(--patina)"/>
+      <circle cx="${cx}" cy="${y(r.impressions, mxI).toFixed(1)}" r="3.2" fill="var(--slate)"/>
+      <rect x="${(x(i) - bw / 2).toFixed(1)}" y="${T - 12}" width="${bw.toFixed(1)}"
+        height="${H - B - T + 12}" fill="transparent"/>
       <title>${esc(r.date)} — 클릭 ${num(r.clicks)} · 노출 ${num(r.impressions)} · CTR ${r.ctr}%` +
-    ` · 평균 ${r.position ?? "—"}위</title></rect>`).join("");
-  const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 7}"
+    ` · 평균 ${r.position ?? "—"}위</title></g>`;
+  }).join("");
+  // 날짜 눈금은 다섯 개까지 — 28일이든 90일이든 같은 간격으로 읽힌다.
+  const step = Math.max(1, Math.ceil((n - 1) / 4));
+  const idx = [];
+  for (let i = 0; i < n; i += step) idx.push(i);
+  if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+  const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}"
     text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
     >${esc(String(rows[i].date).slice(5))}</text>`;
   const sumC = stats?.clicks_sum ?? rows.reduce((a, r) => a + (r.clicks || 0), 0);
   const sumI = stats?.impressions_sum ?? rows.reduce((a, r) => a + (r.impressions || 0), 0);
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
-      aria-label="최근 ${n}일 클릭·노출 추이">
-    <line x1="${L}" y1="${H - B}" x2="${R}" y2="${H - B}" stroke="var(--rule-soft)" stroke-width="1"/>
+      aria-label="최근 ${n}일 클릭·노출 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}">
+    <text class="axis" x="${L - 9}" y="${T - 12}" text-anchor="end"
+      fill="var(--patina)">클릭</text>
+    <text class="axis" x="${R + 9}" y="${T - 12}">노출</text>
+    ${grid}
     <polygon points="${x(0)},${H - B} ${pts("clicks", mxC)} ${x(n - 1)},${H - B}"
       fill="var(--wash)"/>
     <polyline fill="none" stroke="var(--slate)" stroke-width="1" stroke-dasharray="2 4"
       stroke-linejoin="round" points="${pts("impressions", mxI)}"/>
     <polyline fill="none" stroke="var(--patina)" stroke-width="1.5" stroke-linecap="round"
       stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
-    ${hov}${tick(0)}${n > 2 ? tick(Math.floor(n / 2)) : ""}${tick(n - 1)}
+    ${hov}${idx.map(tick).join("")}
   </svg></div>
   <div class="legend"><b style="color:var(--patina)">■</b> 클릭 ${n}일 합계 ${num(sumC)}
     (하루 최고 ${num(mxC)}) · <b style="color:var(--slate)">■</b> 노출 ${num(sumI)}
@@ -827,14 +884,19 @@ function oppRow(o) {
     ? `<div class="meter${isDef ? " def" : ""}" title="점수 ${o.score}/100">
          <i style="width:${Math.min(100, Math.max(0, o.score))}%"></i></div>` : "";
   return `<div class="opp">
-    <div class="score" title="${o.score ?? ""}">${Number.isFinite(o.score)
-      ? Math.round(o.score) : ""}</div>
+    <div class="score" title="점수 ${o.score ?? "—"} / 100 — 높을수록 먼저">${
+      Number.isFinite(o.score) ? Math.round(o.score) : "—"}<span class="u">점</span></div>
     <div>
-      <div class="kind${tone}" title="${esc(o.kind)}">${esc(KIND_LABEL[o.kind] || o.kind)}
-        · ${esc(o.created || "")}</div>
+      <div class="oh">
+        <span class="kind${tone}" title="${esc(o.kind)}">${esc(KIND_LABEL[o.kind] || o.kind)}</span>
+        <span class="dt">${esc(o.created || "")}</span>
+      </div>
       <div class="target">${esc(o.target)}</div>
       ${meter}
-      ${o.reasoning ? `<div class="why clamp" onclick="this.classList.toggle('clamp')"
+      ${o.reasoning ? `<div class="why clamp" role="button" tabindex="0"
+        onclick="this.classList.toggle('clamp')"
+        onkeydown="if(event.key==='Enter'||event.key===' ')` +
+        `{event.preventDefault();this.classList.toggle('clamp')}"
         title="눌러서 펼치기">${esc(o.reasoning)}</div>` : ""}
       ${acts ? `<div class="acts">${acts}</div>` : ""}
     </div>
@@ -847,32 +909,91 @@ async function setOpp(id, status) {
   load();
 }
 
-let OPPS = [], OPP_COUNTS = {}, KIND_FILTER = null;
+let OPPS = [], OPP_COUNTS = {}, KIND_FILTER = null, OPP_Q = "", OPP_ST = "", OPP_N = 8;
+// 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
+const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
+  closed:["done", "dismissed"]};
+const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "새 기회"],
+  ["acked", "확인함"], ["closed", "완료·제외"]];
+
+function oppFiltered() {
+  const q = OPP_Q.trim().toLowerCase(), st = ST_GROUP[OPP_ST];
+  return OPPS.filter(o =>
+    (!KIND_FILTER || o.kind === KIND_FILTER) &&
+    (!st || st.indexOf(o.status) >= 0) &&
+    (!q || `${o.target} ${o.reasoning || ""}`.toLowerCase().includes(q)));
+}
+function oppFind(v) { OPP_Q = v; OPP_N = 8; oppList(); }
+function oppStatus(v) { OPP_ST = v; OPP_N = 8; oppList(); }
+function oppMore(n) { OPP_N = n; oppList(); }
+function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(8); }
 function filterKind(el) {
   const k = el.dataset.k;
   KIND_FILTER = KIND_FILTER === k ? null : k;
   renderOpps(8);
 }
+
+// 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
+// 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(oppList).
 function renderOpps(n) {
+  OPP_N = n;
   if (!OPPS.length)
     return $("opps").innerHTML =
       `<div class="empty">아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.</div>`;
-  // kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
   const counts = OPP_COUNTS;
   const kinds = Object.keys(counts);
   if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 사이트 전환 시 잔존 필터
+  const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
+  // kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
   const chips = kinds.length > 1
     ? `<div class="oppchips">${kinds.map(k =>
         `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
-           onclick="filterKind(this)" title="${esc(k)}">${esc(KIND_LABEL[k] || k)}
+           onclick="filterKind(this)" title="${esc(k)}"
+           aria-pressed="${KIND_FILTER === k}">${esc(KIND_LABEL[k] || k)}
            <b>${counts[k]}</b></button>`).join("")}</div>`
     : "";
-  const list = KIND_FILTER ? OPPS.filter(o => o.kind === KIND_FILTER) : OPPS;
-  const rest = list.length - n;
-  $("opps").innerHTML = chips + list.slice(0, n).map(oppRow).join("") + (rest > 0
+  $("opps").innerHTML = `<div class="tools">
+      <input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
+        placeholder="검색어·주소로 찾기" aria-label="기회 찾기">
+      <select onchange="oppStatus(this.value)" aria-label="상태로 거르기">${ST_OPT.map(
+        ([v, l]) => `<option value="${v}"${v === OPP_ST ? " selected" : ""}>${l} ` +
+          `(${stn(v)})</option>`).join("")}</select>
+      <span class="n" id="oppn"></span>
+      <span class="sp"></span>
+      <button class="go sec" onclick="oppCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+    </div>${chips}<div id="opplist"></div>`;
+  oppList();
+}
+
+function oppList() {
+  const list = oppFiltered();
+  $("oppn").textContent = list.length === OPPS.length
+    ? `${OPPS.length}건` : `${list.length}건 / 전체 ${OPPS.length}건`;
+  if (!list.length)
+    return $("opplist").innerHTML = `<div class="empty">거른 조건에 맞는 기회가 없습니다.
+      <div class="acts"><button onclick="oppReset()">필터 지우기</button></div></div>`;
+  const rest = list.length - OPP_N;
+  $("opplist").innerHTML = list.slice(0, OPP_N).map(oppRow).join("") + (rest > 0
     ? `<div class="acts" style="margin-top:14px">
-         <button onclick="renderOpps(${n + 12})">${rest}건 더 보기</button></div>`
+         <button onclick="oppMore(${OPP_N + 12})">${rest}건 더 보기</button></div>`
     : "");
+}
+
+// 트리아지는 화면 밖에서도 이어진다 — 지금 거른 목록 그대로 표로 내보낸다.
+// 맨 앞에 BOM 을 붙여야 엑셀이 한글을 안 깬다.
+function oppCsv() {
+  const rows = [["점수", "종류", "상태", "대상", "근거", "생성일"]].concat(
+    oppFiltered().map(o => [o.score ?? "", KIND_LABEL[o.kind] || o.kind,
+      OPP_LABEL[o.status] || o.status, o.target,
+      (o.reasoning || "").replace(/\s+/g, " "), o.created || ""]));
+  const csv = "\uFEFF" + rows.map(r => r.map(
+    c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  a.download = `seo-miner-기회-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function moverRows(list, invert) {
@@ -983,16 +1104,23 @@ function render(d) {
   $("meta").innerHTML = `${esc(d.project.gsc_property || d.project.domain || "")} · ` +
     `구글 실적 ${esc(d.gsc_date || "아직 없음")}`;
   const dates = t.map(x => x.d);
+  // 숫자 옆에 기준을 붙인다 — 며칠치인지, 무엇과 비교한 Δ인지 말하지 않으면 못 읽는다.
+  const per = d.gsc_period ? `${d.gsc_period}일` : "";
+  const cmp = d.gsc_prev && d.gsc_date
+    ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
+  const was = k => Number.isFinite(prev[k])
+    ? [per && `${per} 합계`, `이전 ${num(prev[k])}`].filter(Boolean).join(" · ")
+    : [per && `${per} 합계`, "비교할 직전 기록 없음"].filter(Boolean).join(" · ");
   $("band").innerHTML = [
-    ["클릭", num(last.clk), delta(last.clk - prev.clk),
-      kpiSpark(t.map(x => x.clk), dates, "var(--patina)")],
-    ["노출", num(last.imp), delta(last.imp - prev.imp),
-      kpiSpark(t.map(x => x.imp), dates, "var(--slate)")],
-    ["노출된 검색어", num(last.q), delta(last.q - prev.q), ""],
-    ["추적 키워드", num(d.kw_active), "", ""],
-    ["남은 기회", num(d.opps_total), "", ""],
-  ].map(([l, v, dd, sp]) => `<div class="m"><div class="v">${v}${dd}</div>
-    <div class="l">${l}</div>${sp}</div>`).join("");
+    ["클릭", num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),
+      kpiSpark(t.map(x => x.clk), dates, "var(--patina)"), was("clk")],
+    ["노출", num(last.imp), delta(last.imp - prev.imp, false, prev.imp, cmp),
+      kpiSpark(t.map(x => x.imp), dates, "var(--slate)"), was("imp")],
+    ["노출된 검색어", num(last.q), delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
+    ["추적 키워드", num(d.kw_active), "", "", "순위·AI 인용을 확인하는 대상"],
+    ["남은 기회", num(d.opps_total), "", "", "아직 손대지 않은 것만"],
+  ].map(([l, v, dd, sp, b]) => `<div class="m"><div class="v">${v}${dd}</div>
+    <div class="l">${l}</div>${b ? `<div class="b">${b}</div>` : ""}${sp}</div>`).join("");
 
   $("daily-sec").hidden = !d.daily;
   if (d.daily) $("daily").innerHTML = dailyChart(d.daily, d.daily_stats);

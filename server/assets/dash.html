@@ -89,11 +89,24 @@
   @media(max-width:760px){.sm-charts{grid-template-columns:1fr}}
   .sm-ct{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
     font:500 12.5px/1 var(--sans);color:var(--ink);margin-bottom:10px}
-  .sm-ct .rg{font:400 11px/1 var(--mono);color:var(--slate);letter-spacing:.02em}
+  /* 제목 옆 현재 값 — 선은 모양만 말한다. 지금 얼마인지는 숫자로 붙인다. */
+  .sm-ct .nowv{font:500 14px/1 var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--ink);white-space:nowrap}
+  .sm-ct .nowv .d{font-size:11px;margin-left:5px}
+  /* 세로축 값은 그림 오른쪽 위·아래에 얹는다 — preserveAspectRatio:none 이라
+     SVG 안에 글자를 두면 늘어난다. */
+  .sm-plot{position:relative}
+  .sm-gl{position:absolute;right:0;font:400 10.5px/1 var(--mono);color:var(--slate);
+    background:var(--card);padding:1px 0 1px 7px;pointer-events:none}
+  .sm-gl.t{top:-4px} .sm-gl.b{bottom:-4px}
   .sm-line{display:block;width:100%;height:76px;overflow:visible}
   .sm-line path{fill:none;stroke:var(--patina);stroke-width:1.2;
     vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
   .sm-line circle{fill:var(--patina);vector-effect:non-scaling-stroke}
+  .sm-line line.g{stroke:var(--rule-soft);stroke-width:1;stroke-dasharray:2 4;
+    vector-effect:non-scaling-stroke}
+  .sm-line rect{fill:transparent}
+  .sm-line rect:hover{fill:var(--wash)}
   .sm-ax{display:flex;justify-content:space-between;font:400 10.5px/1 var(--mono);
     color:var(--slate);margin-top:6px;opacity:.75}
   .sm-none{font-size:13px;color:var(--slate);margin:10px 0 2px}
@@ -111,6 +124,15 @@
   #sm-dim th button:hover{color:var(--ink)}
   #sm-dim th button.on{color:var(--patina)}
   #sm-dim th button.on::after{content:" ↓"}
+  #sm-dim th button.on.asc::after{content:" ↑"}
+  /* 노출 비중 막대 — 상위 몇 줄이 전부인지가 숫자보다 빨리 보인다. */
+  #sm-dim .sm-share{display:block;height:2px;background:var(--bar);border-radius:2px;
+    margin-top:6px;max-width:260px}
+  #sm-dim .sm-share i{display:block;height:100%;border-radius:2px;background:var(--patina);
+    opacity:.55}
+  #sm-dim .tools{margin-bottom:10px}
+  /* 붙박이 머리글은 원본에서 var(--stone) 을 깐다 — 카드 위에서는 카드색이어야 한다. */
+  .sm-view .tw thead th{background:var(--card)}
 
   #docban{background:var(--card);border:1px solid var(--rule);
     border-left:3px solid var(--patina);border-radius:10px;padding:16px 20px;margin:0 0 16px}
@@ -133,6 +155,8 @@
   .opp .kind{letter-spacing:.05em}
   /* KPI 라벨은 한글이다 — mono 로 두면 폴백 서체로 떨어져 자간이 벌어진다. */
   .band .l{font-family:var(--sans);font-weight:500;letter-spacing:.03em}
+  /* 기준 줄·단위도 한글이 섞인다 — 같은 이유로 sans 로 되돌린다(숫자만 등폭 자리수). */
+  .band .b,.score .u,.tools .n{font-family:var(--sans);font-variant-numeric:tabular-nums}
 
   /* 백링크 표: 마지막 두 칸이 붙어 숫자와 날짜가 겹쳐 보였다. */
   #sm-bl table{width:100%;table-layout:fixed}
@@ -652,27 +676,35 @@
     var box = document.createElement("div");
     box.style.display = "contents";
     box.setAttribute("data-sm-kpi", "1");
+    // 옆 칸들과 같은 기준 줄을 단다 — 무엇을 어떻게 잰 값이고 직전이 얼마였는지.
+    var basis = function (how, was, fmt) {
+      return '<div class="b">' + how + " · " +
+        (was == null ? "비교할 직전 기록 없음" : "이전 " + fmt(was)) + "</div>";
+    };
     box.innerHTML =
       '<div class="m"><div class="v">' + pct(t.ctr) +
         delta(t.ctr, pv.ctr, function (x) { return (x * 100).toFixed(2) + "%p"; }, false) +
-        '</div><div class="l">CTR</div></div>' +
+        '</div><div class="l">CTR</div>' + basis("노출 대비 클릭", pv.ctr, pct) + "</div>" +
       '<div class="m"><div class="v">' + pos(t.position) +
         delta(t.position, pv.position, function (x) { return x.toFixed(1); }, true) +
-        '</div><div class="l">평균 게재순위</div></div>';
+        '</div><div class="l">평균 게재순위</div>' +
+        basis("노출 가중 평균", pv.position, pos) + "</div>";
     band.appendChild(box);
   }
 
   // 꺾은선 하나. 원본 로그 차트와 같은 언어(등폭 숫자·괘선·patina)로 그린다.
-  // 범위는 차트 위 제목 줄에 붙인다 — 아래 좌우로 벌려 놓으면 시간축의 첫 값·끝 값으로 읽힌다.
+  // 제목 줄에는 '지금 값 + 직전 대비', 차트에는 눈금선과 그 값 — 선만 있으면 모양만 보이고
+  // "그래서 지금 얼마"를 못 읽는다. 세로축 값은 차트 오른쪽 위·아래에 붙인다.
   function line(rows, key, opt) {
     var pts = [];
     rows.forEach(function (r, i) { if (r[key] != null) pts.push([i, r[key]]); });
-    var head = function (rg) {
-      return '<div class="sm-ct"><span>' + opt.label + "</span>" +
-             (rg ? '<span class="rg">' + rg + "</span>" : "") + "</div>";
+    var now = opt.now == null ? "" : '<span class="nowv">' + opt.fmt(opt.now) +
+      delta(opt.now, opt.was, opt.dfmt, !!opt.invert) + "</span>";
+    var head = function () {
+      return '<div class="sm-ct"><span>' + opt.label + "</span>" + now + "</div>";
     };
     if (pts.length < 2)
-      return head("") +
+      return head() +
         '<p class="sm-none">추이를 그리려면 이틀 이상의 일별 데이터가 필요합니다.</p>';
     var W = 100, H = 42, P = 3, n = rows.length;
     var vs = pts.map(function (q) { return q[1]; });
@@ -687,33 +719,58 @@
       return (k ? "L" : "M") + X(q[0]).toFixed(2) + " " + Y(q[1]).toFixed(2);
     }).join(" ");
     var last = pts[pts.length - 1];
-    return head("최고 " + opt.fmt(opt.invert ? lo : hi) +
-                " · 최저 " + opt.fmt(opt.invert ? hi : lo)) +
+    // 눈금선 셋 — 위·가운데·아래. 위아래 값은 옆의 라벨이 말한다.
+    var grid = [P, H / 2, H - P].map(function (y) {
+      return '<line class="g" x1="' + P + '" y1="' + y + '" x2="' + (W - P) +
+        '" y2="' + y + '"/>';
+    }).join("");
+    // 칸마다 투명한 띠 — <title> 만으로 그날 값을 읽는다(핸들러를 안 붙인다).
+    var bw = (W - P * 2) / Math.max(1, n - 1);
+    var hov = rows.map(function (r, i) {
+      var x0 = Math.max(0, X(i) - bw / 2), x1 = Math.min(W, X(i) + bw / 2);
+      return '<rect x="' + x0.toFixed(2) + '" y="0" width="' + (x1 - x0).toFixed(2) +
+        '" height="' + H + '"><title>' + esc(r.d) + " — " + opt.label + " " +
+        (r[key] == null ? "값 없음" : opt.fmt(r[key])) + "</title></rect>";
+    }).join("");
+    var mid = n > 2 ? "<span>" + esc(rows[Math.floor((n - 1) / 2)].d) + "</span>" : "";
+    return head() +
+      '<div class="sm-plot"><span class="sm-gl t">' +
+      opt.fmt(opt.invert ? lo : hi) + '</span><span class="sm-gl b">' +
+      opt.fmt(opt.invert ? hi : lo) + "</span>" +
       '<svg class="sm-line" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none"' +
-      ' role="img" aria-label="' + opt.label + ' 추이"><path d="' + d + '"/>' +
-      '<circle cx="' + X(last[0]).toFixed(2) + '" cy="' + Y(last[1]).toFixed(2) + '" r="1.1"/></svg>' +
-      '<div class="sm-ax"><span>' + esc(rows[0].d) + "</span><span>" +
-      esc(rows[rows.length - 1].d) + "</span></div>";
+      ' role="img" aria-label="' + opt.label + ' 추이 — 최고 ' +
+      opt.fmt(opt.invert ? lo : hi) + ', 최저 ' + opt.fmt(opt.invert ? hi : lo) + '">' +
+      grid + '<path d="' + d + '"/>' +
+      '<circle cx="' + X(last[0]).toFixed(2) + '" cy="' + Y(last[1]).toFixed(2) +
+      '" r="1.1"/>' + hov + "</svg></div>" +
+      '<div class="sm-ax"><span>' + esc(rows[0].d) + "</span>" + mid +
+      "<span>" + esc(rows[rows.length - 1].d) + "</span></div>";
   }
 
   function perfRender() {
     var sec = document.getElementById("sm-perf");
     if (!sec || !PERF) return;
+    sec.hidden = false;
     var t = PERF.totals;
     if (!t) {
       sec.innerHTML = '<p class="eyebrow">PERFORMANCE</p><h2>검색 성과</h2>' +
         '<p class="sm-none">검색 실적을 아직 수집하지 않았습니다 — 위 [실적 다시 수집]을 누르면 채워집니다.</p>';
       return;
     }
-    var dl = PERF.daily || [];
+    var dl = PERF.daily || [], pv = PERF.prev || {};
     var span = dl.length ? dl[0].d + " → " + dl[dl.length - 1].d : PERF.snapshot;
-    sec.innerHTML = '<p class="eyebrow">PERFORMANCE · ' + esc(span) + "</p>" +
+    sec.innerHTML = '<p class="eyebrow">PERFORMANCE · ' + esc(span) +
+      (dl.length ? " · " + dl.length + "일" : "") + "</p>" +
       "<h2>검색 성과</h2>" +
       '<p class="sub">위 일별 추이가 클릭·노출을 그립니다. 나머지 두 지표가 여기 있습니다 — ' +
-      "게재순위는 노출 가중 평균이라 서치콘솔 화면의 값과 같고, 선이 위로 갈수록 순위가 높습니다.</p>" +
+      "게재순위는 노출 가중 평균이라 서치콘솔 화면의 값과 같고, 선이 위로 갈수록 순위가 높습니다. " +
+      "제목 옆 숫자는 현재 값이고 증감은 직전 분석 대비입니다.</p>" +
       '<div class="sm-charts">' +
-      ['<div>' + line(dl, "ctr", {label: "CTR", fmt: pct}) + "</div>",
-       '<div>' + line(dl, "position", {label: "평균 게재순위", fmt: pos, invert: true}) + "</div>"
+      ['<div>' + line(dl, "ctr", {label: "CTR", fmt: pct, now: t.ctr, was: pv.ctr,
+          dfmt: function (x) { return (x * 100).toFixed(2) + "%p"; }}) + "</div>",
+       '<div>' + line(dl, "position", {label: "평균 게재순위", fmt: pos, invert: true,
+          now: t.position, was: pv.position,
+          dfmt: function (x) { return x.toFixed(1); }}) + "</div>"
       ].join("") + "</div>";
   }
 
@@ -722,53 +779,133 @@
   // [키, 라벨, 작은 값이 좋은가] — 게재순위만 오름차순이 '좋은 순'이다
   var COLS = [["clicks", "클릭", false], ["impressions", "노출", false],
               ["ctr", "CTR", false], ["position", "게재순위", true]];
-  var dimSort = "clicks";
+  var dimSort = "clicks", dimAsc = false, dimQ = "";
 
-  function dimRender() {
-    var sec = document.getElementById("sm-dim");
-    if (!sec || !PERF) return;
-    var rows = (PERF[dimMode] || []).slice();
-    var asc = (COLS.filter(function (c) { return c[0] === dimSort; })[0] || [])[2];
-    rows.sort(function (a, b) {
+  // 지금 보고 있는 줄들. 찾기 칸과 정렬을 함께 반영한다.
+  function dimRows() {
+    var q = dimQ.trim().toLowerCase();
+    var rows = (PERF[dimMode] || []).filter(function (r) {
+      return !q || String(r.key).toLowerCase().indexOf(q) >= 0;
+    });
+    return rows.sort(function (a, b) {
       var x = a[dimSort], y = b[dimSort];
       if (x == null) return 1;
       if (y == null) return -1;
-      return asc ? x - y : y - x;
+      return dimAsc ? x - y : y - x;
     });
+  }
+
+  // 표만 다시 그린다 — 껍데기까지 갈아치우면 찾기 칸이 사라져 입력 도중 포커스를 잃는다.
+  function dimTable() {
+    var sec = document.getElementById("sm-dim");
+    var box = sec && sec.querySelector(".sm-dimt");
+    if (!box || !PERF) return;
+    sec.querySelectorAll("[data-d]").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.d === dimMode);
+      b.setAttribute("aria-pressed", b.dataset.d === dimMode);
+    });
+    var all = (PERF[dimMode] || []).length, rows = dimRows();
+    var cnt = sec.querySelector(".sm-dimn");
+    if (cnt) cnt.textContent = rows.length === all
+      ? all + "행" : rows.length + "행 / 전체 " + all + "행";
     var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
-    var body = rows.length ? '<table><thead><tr><th>' + head + "</th>" +
-        COLS.map(function (c) {
-          return '<th class="num"><button data-s="' + c[0] + '"' +
-            (c[0] === dimSort ? ' class="on"' : "") + ">" + c[1] + "</button></th>";
-        }).join("") + "</tr></thead><tbody>" +
+    if (!all) {
+      box.innerHTML = '<p class="sm-none">' + (dimMode === "devices"
+        ? "기기별 데이터를 아직 수집하지 않았습니다 — 다음 분석에서 함께 수집합니다."
+        : "아직 수집된 데이터가 없습니다.") + "</p>";
+      return;
+    }
+    if (!rows.length) {
+      box.innerHTML = '<p class="sm-none">찾는 말과 맞는 줄이 없습니다.</p>';
+      return;
+    }
+    // 노출 비중 막대 — 상위 몇 줄이 전부인지, 고르게 퍼졌는지가 숫자보다 빨리 보인다.
+    var mxI = Math.max.apply(null, rows.map(function (r) { return r.impressions || 0; }).concat([1]));
+    var t = '<table><thead><tr><th>' + head + "</th>" +
+      COLS.map(function (c) {
+        var on = c[0] === dimSort;
+        return '<th class="num"><button data-s="' + c[0] + '"' +
+          (on ? ' class="on' + (dimAsc ? " asc" : "") + '"' : "") +
+          ' title="' + c[1] + ' 기준으로 정렬' + (on ? " — 다시 누르면 반대 순서" : "") +
+          '">' + c[1] + "</button></th>";
+      }).join("") + "</tr></thead><tbody>" +
       rows.map(function (r) {
         var k = r.key;
         if (dimMode === "pages") k = k.replace(/^https?:\/\/[^/]+/, "") || "/";
         if (dimMode === "devices") k = DEVICE[k] || k;
         return '<tr><td title="' + esc(r.key) + '"><span class="sm-k">' + esc(k) +
-          '</span></td><td class="num">' + nf(r.clicks) + '</td><td class="num">' +
+          '</span><span class="sm-share"><i style="width:' +
+          ((r.impressions || 0) / mxI * 100).toFixed(1) + '%"></i></span>' +
+          '</td><td class="num">' + nf(r.clicks) + '</td><td class="num">' +
           nf(r.impressions) + '</td><td class="num">' + pct(r.ctr) +
           '</td><td class="num">' + pos(r.position) + "</td></tr>";
-      }).join("") + "</tbody></table>"
-      : '<p class="sm-none">' + (dimMode === "devices"
-          ? "기기별 데이터를 아직 수집하지 않았습니다 — 다음 분석에서 함께 수집합니다."
-          : "아직 수집된 데이터가 없습니다.") + "</p>";
-    sec.innerHTML = '<p class="eyebrow">BREAKDOWN</p><h2>무엇으로 들어오나</h2>' +
-      '<p class="sub">열 이름을 누르면 그 기준으로 정렬됩니다. 노출은 많은데 CTR 이 낮은 줄이 ' +
-      "제목·설명을 고칠 자리입니다.</p>" +
-      '<div class="tabs">' + DIMS.map(function (d) {
-        return '<button data-d="' + d[0] + '"' + (d[0] === dimMode ? ' class="on"' : "") +
-          ">" + d[1] + "</button>";
-      }).join("") + "</div>" + body;
-    sec.addEventListener("click", function (ev) {
-      var t = ev.target.closest ? ev.target.closest("[data-d],[data-s]") : null;
-      if (!t) return;
-      if (t.dataset.d) dimMode = t.dataset.d; else dimSort = t.dataset.s;
-      dimRender();
-    });
+      }).join("") + "</tbody></table>";
+    box.innerHTML = rows.length >= 8 ? '<div class="tw">' + t + "</div>" : t;
+  }
+
+  // 지금 보이는 줄 그대로 표로 내보낸다. BOM 을 붙여야 엑셀이 한글을 안 깬다.
+  function dimCsv() {
+    var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
+    var rows = [[head, "클릭", "노출", "CTR", "게재순위"]].concat(
+      dimRows().map(function (r) {
+        return [r.key, r.clicks || 0, r.impressions || 0, pct(r.ctr), pos(r.position)];
+      }));
+    var csv = "\uFEFF" + rows.map(function (r) {
+      return r.map(function (c) {
+        return '"' + String(c).replace(/"/g, '""') + '"';
+      }).join(",");
+    }).join("\r\n");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+    a.download = "seo-miner-" + dimMode + "-" + (PERF.snapshot || "") + ".csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function dimRender() {
+    var sec = document.getElementById("sm-dim");
+    if (!sec || !PERF) return;
+    // 실적 자체가 없으면 위 [검색 성과]가 이미 이유를 말한다 — 빈 표를 또 보이지 않는다.
+    if (!PERF.totals) { sec.hidden = true; return; }
+    sec.hidden = false;
+    if (!sec.querySelector(".sm-dimt")) {
+      sec.innerHTML = '<p class="eyebrow">BREAKDOWN</p><h2>무엇으로 들어오나</h2>' +
+        '<p class="sub">열 이름을 누르면 그 기준으로 정렬되고, 같은 열을 다시 누르면 반대 ' +
+        "순서가 됩니다. 노출은 많은데 CTR 이 낮은 줄이 제목·설명을 고칠 자리입니다. " +
+        "노출 상위 25개까지 가져옵니다.</p>" +
+        '<div class="tabs">' + DIMS.map(function (d) {
+          return '<button data-d="' + d[0] + '">' + d[1] + "</button>";
+        }).join("") + "</div>" +
+        '<div class="tools"><input type="search" class="sm-dimq" ' +
+        'placeholder="검색어·주소로 찾기" aria-label="분해 표에서 찾기">' +
+        '<span class="n sm-dimn"></span><span class="sp"></span>' +
+        '<button class="go sec sm-dimx" title="지금 보이는 줄 그대로 내려받습니다"' +
+        ">CSV 내보내기</button></div>" +
+        '<div class="sm-dimt"></div>';
+      // 위임 한 번만 — 그릴 때마다 붙이면 핸들러가 쌓여 한 번 누른 게 여러 번 돈다.
+      sec.addEventListener("click", function (ev) {
+        if (ev.target.classList.contains("sm-dimx")) return dimCsv();
+        var t = ev.target.closest ? ev.target.closest("[data-d],[data-s]") : null;
+        if (!t) return;
+        if (t.dataset.d) { dimMode = t.dataset.d; dimSort = "clicks"; dimAsc = false; }
+        else if (t.dataset.s === dimSort) dimAsc = !dimAsc;
+        else {
+          dimSort = t.dataset.s;
+          dimAsc = !!(COLS.filter(function (c) { return c[0] === dimSort; })[0] || [])[2];
+        }
+        dimTable();
+      });
+      sec.addEventListener("input", function (ev) {
+        if (!ev.target.classList.contains("sm-dimq")) return;
+        dimQ = ev.target.value;
+        dimTable();
+      });
+    }
+    dimTable();
   }
 
   // 껍데기는 동기로 만들어 둔다 — place() 가 화면에 배치할 때 이미 있어야 한다.
+  // 채워지기 전까지는 감춰 둔다: 빈 상자 둘이 개요 밑에 떠 있으면 고장으로 보인다.
   (function perfShell() {
     var host = document.querySelector("main");
     if (!host) return;
@@ -776,6 +913,7 @@
       if (document.getElementById(id)) return;
       var sec = document.createElement("section");
       sec.id = id;
+      sec.hidden = true;
       host.appendChild(sec);
     });
   })();
