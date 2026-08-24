@@ -1,0 +1,58 @@
+
+<style>
+  body{word-break:keep-all}
+  /* 원본 자간은 영문 대문자 기준이라 한글이 흩어진다 */
+  .eyebrow{letter-spacing:.08em}
+  .band .l{letter-spacing:.03em;font-family:var(--sans);font-weight:500}
+  .tag{letter-spacing:.12em}
+  th{letter-spacing:.05em}
+  .opp .kind{letter-spacing:.05em}
+  #sm-bl{padding:26px 0 10px}
+  #sm-bl table{width:100%;table-layout:fixed}
+  #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
+  #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
+  #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 18px}
+</style>
+<script>
+(function () {
+@@TERMS@@
+  retitle();
+  resentence();
+  reempty();
+  document.title = "SEO 보고서 — seo-miner";
+
+  // 백링크는 원본 화면에 없는 축이다. 보고서에는 값이 박혀 오므로 그대로 그린다.
+  var bl = window.__BACKLINKS__;
+  if (bl && bl.summary) {
+    var esc = function (x) {
+      return String(x).replace(/[&<>"]/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c];
+      });
+    };
+    var s = bl.summary;
+    var rows = (bl.domains || []).map(function (x) {
+      return "<tr><td>" + esc(x.domain) + '</td><td class="num">' +
+        (x.rank == null ? "" : x.rank) + '</td><td class="num">' + (x.backlinks || 0) +
+        '</td><td class="num">' + (x.dofollow || 0) + "</td><td>" +
+        esc(x.first_seen ? String(x.first_seen).slice(0, 10) : "") + "</td></tr>";
+    }).join("");
+    var sec = document.createElement("section");
+    sec.id = "sm-bl";
+    sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + "</p>" +
+      "<h2>백링크 프로필</h2>" +
+      '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
+      '<div class="band" style="margin-bottom:18px">' +
+      '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
+      '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크</div></div>' +
+      '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
+      '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">손실 백링크</div></div>' +
+      '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 지수</div></div>' +
+      "</div>" +
+      (rows ? '<table><thead><tr><th>참조 도메인</th><th class="num">지수</th>' +
+        '<th class="num">백링크</th><th class="num">dofollow</th><th>최초 발견</th></tr></thead>' +
+        "<tbody>" + rows + "</tbody></table>" : "");
+    var main = document.querySelector("main");
+    if (main) main.appendChild(sec);
+  }
+})();
+</script>
