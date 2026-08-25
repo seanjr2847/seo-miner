@@ -367,7 +367,8 @@ async def api_create(request: Request):
         conn.close()
 
 
-STAGES = ("gsc", "index", "keywords", "rank", "ai", "competitors", "gaps", "report")
+STAGES = ("gsc", "index", "keywords", "rank", "ai", "competitors", "gaps",
+          "pages", "report")
 
 
 @app.post("/api/run")

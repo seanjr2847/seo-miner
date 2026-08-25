@@ -430,8 +430,11 @@ def gather(conn, p) -> dict:
     def rank_agg(d):
         if not d:
             return {}
+        # url·피처까지 읽는다 — 예전엔 순위 숫자만 실어서, 화면이 "몇 위"는 알아도
+        # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
         return {r["keyword"]: r for r in q(conn,
-            """SELECT k.keyword, rs.position, rs.aio_present, rs.aio_cited
+            """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
+                      rs.aio_present, rs.aio_cited
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
                 WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
 
@@ -443,8 +446,13 @@ def gather(conn, p) -> dict:
         prev_pos = prev_r["position"] if prev_r else None
         cur_pos = r["position"]
         rd = scoring.rank_delta(prev_pos, cur_pos)
+        try:
+            feats = json.loads(r["serp_features_json"] or "[]")
+        except (TypeError, ValueError):
+            feats = []
         ranks.append({"keyword": kw, "pos": cur_pos, "dpos": rd["delta"],
-                      "delta": rd,
+                      "delta": rd, "url": r["url"], "features": feats,
+                      "prev_pos": prev_pos,
                       "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
         if r["aio_present"] == 1 and r["aio_cited"] == 0:
             aio_gap.append(kw)
@@ -479,6 +487,33 @@ def gather(conn, p) -> dict:
     }
     striking_page2 = sum(1 for r in striking if r.get("band") == "page2")
 
+    # 행을 펼쳤을 때 보여줄 근거 — 그 검색어에 실제로 걸린 내 페이지들. 기회·키워드·
+    # 순위·움직인 검색어가 같은 한 벌을 본다(화면마다 다른 표를 만들면 같은 검색어가
+    # 화면마다 다른 페이지를 말한다).
+    query_pages = scoring.pages_by_query(conn, pid, [
+        *(o["target"] for o in opps),
+        *(r["query"] for r in striking),
+        *(r["keyword"] for r in ranks),
+        *(r["query"] for r in ups), *(r["query"] for r in downs)])
+
+    # 내 페이지 감사(collect_page) — 최신 검사일 한 벌. 진단 문장은 여기서 만들지
+    # 않는다: scoring.page_advice 가 정본이고 화면은 그 결과를 그리기만 한다.
+    # 검색어를 같이 넘기는 이유는 "title 에 무엇을 넣어라"의 '무엇'이 그것이라서다.
+    audit_date = conn.execute(
+        "SELECT MAX(checked_date) FROM page_audits WHERE project_id=?", (pid,)).fetchone()[0]
+    q_of_url: dict[str, list] = {}
+    for qq, prows in query_pages.items():
+        for pr in prows:
+            q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
+    page_audits = {}
+    if audit_date:
+        for a in q(conn, "SELECT * FROM page_audits WHERE project_id=? AND checked_date=?",
+                   (pid, audit_date)):
+            qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
+            a["queries"] = qs
+            a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
+            page_audits[a["url"]] = a
+
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     return {"schema": 1,
             "project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
@@ -489,6 +524,8 @@ def gather(conn, p) -> dict:
             "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
             "missed": missed, "ai_trend": ai_trend,
             "opps": opps, "opps_total": opps_total, "opp_counts": opp_counts,
+            "query_pages": query_pages, "page_audits": page_audits,
+            "page_audit_date": audit_date,
             "runs": runs, "creations": creations,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,

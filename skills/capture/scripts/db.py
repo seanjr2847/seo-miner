@@ -179,6 +179,22 @@ CREATE TABLE IF NOT EXISTS gsc_index_status (
   last_crawled TEXT, rich_results_json TEXT,
   UNIQUE(project_id, checked_date, url)
 );
+CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (collect_page.py)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  url TEXT NOT NULL,
+  status INTEGER,                             -- HTTP 상태. NULL = 요청 자체가 실패
+  error TEXT,                                 -- 못 가져온 사유 (타임아웃·DNS 등)
+  title TEXT, meta_description TEXT,
+  h1_json TEXT, h2_json TEXT,                 -- 제목 텍스트 배열
+  words INTEGER,                              -- 태그 제거 후 본문 단어 수
+  schema_json TEXT,                           -- ld+json 의 @type 목록
+  canonical TEXT, robots TEXT,                -- <link rel=canonical>, <meta name=robots>
+  internal_links INTEGER, external_links INTEGER,
+  images INTEGER, images_no_alt INTEGER,
+  UNIQUE(project_id, checked_date, url)
+);
 CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -525,6 +541,28 @@ def write_index_status(conn: sqlite3.Connection, project_id: int, checked_date: 
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO gsc_index_status(project_id, checked_date, url, {', '.join(cols)})
+            VALUES(?,?,?,{','.join('?' * len(cols))})
+            ON CONFLICT(project_id, checked_date, url) DO UPDATE SET
+              {', '.join(f'{c}=excluded.{c}' for c in cols)}""",
+        [(project_id, checked_date, r["url"]) + tuple(r.get(c) for c in cols)
+         for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                      rows) -> int:
+    """내 페이지 감사 결과 적재. rows: dict (키는 테이블 컬럼명 그대로, url 필수).
+
+    write_index_status 와 같은 규칙 — 같은 날 나눠 돌려도 앞 배치를 지우지 않는
+    upsert 이고, 없는 키는 NULL 이다("못 읽음"과 "없음"은 다르다).
+    """
+    cols = ("status", "error", "title", "meta_description", "h1_json", "h2_json",
+            "words", "schema_json", "canonical", "robots",
+            "internal_links", "external_links", "images", "images_no_alt")
+    rows = list(rows)
+    conn.executemany(
+        f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})
             VALUES(?,?,?,{','.join('?' * len(cols))})
             ON CONFLICT(project_id, checked_date, url) DO UPDATE SET
               {', '.join(f'{c}=excluded.{c}' for c in cols)}""",

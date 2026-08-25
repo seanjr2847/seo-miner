@@ -12,7 +12,8 @@ StageResult 를 그대로 호출자에게 넘긴다.
   5. ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
   6. competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
   7. gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
-  8. report      : dashboard.py --export --project <project> (리포트 HTML 박제).
+  8. pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
+  9. report      : dashboard.py --export --project <project> (리포트 HTML 박제).
 
 설계 원칙:
   - 표(STAGES)에는 디스패치가 한 종류뿐이다. 모든 단계가
@@ -39,6 +40,7 @@ import collect_ai          # noqa: E402
 import collect_gap         # noqa: E402
 import collect_gsc         # noqa: E402
 import collect_index       # noqa: E402
+import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
 import collector           # noqa: E402
 import db                  # noqa: E402
@@ -126,6 +128,7 @@ STAGES = (
     Stage("ai",          "AI 인용 체크",                            collect_ai.collect,      True),
     Stage("competitors", "경쟁사 역키워드 수집 (DataForSEO Labs)",  collect_gap.collect,     True),
     Stage("gaps",        "기회 적재 (외부 호출 0)",                 load_opportunities,      False),
+    Stage("pages",       "내 페이지 감사 (제목·설명·본문·스키마)",  collect_page.collect,    False),
     Stage("report",      "리포트 HTML 박제",                        export_report,           False),
 )
 
@@ -395,7 +398,7 @@ def _top_opportunity(project: str):
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="전체 수집 체인 실행 — "
-                    "gsc → index → keywords → rank → ai → competitors → gaps → report"
+                    "gsc → index → keywords → rank → ai → competitors → gaps → pages → report"
     )
     ap.add_argument("--project", required=True, help="프로젝트 이름")
     ap.add_argument("--dry-run", action="store_true", help="실제 실행 없이 호출 계획 및 비용만 확인")

@@ -282,7 +282,7 @@ coverage.
 
 ### /capture run {P} — 풀런
 수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계 순서는 고정이다 —
-**gsc → index → keywords → rank → ai → competitors → gaps → report**, 그 8단계를
+**gsc → index → keywords → rank → ai → competitors → gaps → pages → report**, 그 9단계를
 `scripts/run_all.py`가 순서대로 부른다.
 
 1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
@@ -323,6 +323,26 @@ coverage.
    fit 판단·맥락 (`references/scoring.md` 2~3절).
 3. pseo_pattern 군집 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로 추가
    적재 → Next Actions 3~5개를 JSON 파일로 저장.
+
+### /capture pages {P} — 내 페이지 감사 (내 사이트 직접 조회, 돈 안 듦)
+**풀런(`/capture run`)에 포함된다** — 8단계(`pages`, gaps 다음).
+
+`python scripts/collect_page.py --project {P} --dry-run` → 가져올 URL 목록 확인 →
+실행. 남의 API 가 아니라 **내 페이지를 열어 보는 것**이라 키가 필요 없다.
+
+**무엇을 읽나:** title · meta description · H1/H2 · 본문 단어 수(script·style 제외) ·
+ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt 없는 이미지 수.
+`page_audits` 에 `(프로젝트, 검사일, URL)` 로 적재된다 — 같은 날 두 번 돌아도 행이
+늘지 않는다.
+
+**대상 URL:** 기회에 걸린 검색어의 페이지(노출 상위 2개) → 노출 상위 페이지 순으로
+`page_urls`(기본 20)개. `--limit N` 으로 덮고, `page_urls: 0` 이면 끈다. 요청 간격은
+`throttle`(기본 0.5초) — 내 서버를 두드리는 속도다.
+
+**왜 필요한가:** 이것 없이는 처방이 일반론에서 멈춘다("제목을 고치세요"). 이 단계가
+돌고 나면 화면이 **"지금 title 이 X 인데 검색어 Y 가 없다 → 앞부분에 넣어라"** 라고
+말한다. 판정 규칙의 정본은 `scoring.page_advice` 이고, 대시보드는 그 결과를 그리기만
+한다 — 화면이 같은 규칙을 다시 구현하지 않는다.
 
 ### /capture dash {P} — 로컬 대시보드
 `python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다

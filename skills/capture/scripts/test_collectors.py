@@ -1162,7 +1162,7 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 1. 유료 키 없음 — rank/ai/competitors 는 건너뜀, 나머지는 순서대로
         results, out = run()
-        assert calls == ["gsc", "index", "keywords", "gaps", "report"], calls
+        assert calls == ["gsc", "index", "keywords", "gaps", "pages", "report"], calls
         assert run_all.chain_rc(results) == 0, results
         assert [n for n, _ in results] == list(run_all.VALID_STAGE_NAMES), results
         for name in ("rank", "ai", "competitors"):
@@ -1219,7 +1219,7 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 7. skip / only
         run(skip="index,ai")
-        assert calls == ["gsc", "keywords", "gaps", "report"], calls
+        assert calls == ["gsc", "keywords", "gaps", "pages", "report"], calls
         run(only="gsc,gaps")
         assert calls == ["gsc", "gaps"], calls
 
@@ -1317,6 +1317,7 @@ def test_serp_adapter_credentials_timeouts_and_labs():
         "serper": 30,
         "openrouter": 120,
         "suggest": 10,
+        "page": 20,
     }
     assert serp_adapter.LABS_COST_PER_CALL == 0.001
 

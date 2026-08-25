@@ -157,9 +157,13 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 
 /* ── 기회 트리아지 ──────────────────────────────────────── */
 /* 이 화면의 주인공. 줄에 손을 얹으면 그 줄만 밝힌다 — 표와 같은 문법이다. */
-.opp { display:grid; grid-template-columns:auto 1fr auto; gap:0 14px;
-  padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft);
-  align-items:baseline; }
+/* 카드는 <details> 다 — 격자는 summary 가 갖는다(자식 셋이 그 안에 있다).
+   삼각 마커는 지운다: 카드 전체가 이미 누르는 자리라 마커가 뜻을 더하지 않는다. */
+.opp { padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft); }
+.opp > summary { display:grid; grid-template-columns:auto 1fr auto; gap:0 14px;
+  align-items:baseline; cursor:pointer; list-style:none; }
+.opp > summary::-webkit-details-marker { display:none; }
+.opp > summary:focus-visible { outline:2px solid var(--patina); outline-offset:3px; }
 .opp:hover { background:var(--bar); }
 .opp:last-child { border-bottom:0; }
 .score { font:600 19px/1 var(--mono); font-variant-numeric:tabular-nums; width:44px;
@@ -184,9 +188,32 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 }
 .opp .kind.k-def { color:var(--copper); background:var(--wash-copper); }
 .opp .why { font-size:12.5px; color:var(--slate); }
-.opp .why.clamp { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
-  overflow:hidden; cursor:pointer; }
-.opp .why[role="button"] { cursor:pointer; }
+/* 접힌 카드에서는 근거를 두 줄까지만 — 전문은 펼친 패널이 다시 말한다. */
+.opp:not([open]) .why { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; }
+/* 펼침 패널 — 점수 칸만큼 들여 본문 열과 왼쪽을 맞춘다. */
+.det { padding:2px 0 6px 58px; }
+@media (max-width:560px) { .det { padding-left:0; } }
+.detw { font-size:12.5px; color:var(--ink); margin:10px 0 8px; }
+.deta { margin:0 0 12px; padding-left:18px; font-size:12.5px; color:var(--slate); }
+.deta li { margin:4px 0; }
+.dett { width:100%; border-collapse:collapse; font-size:12px; }
+.dett th { text-align:left; font:400 10px/1 var(--mono); letter-spacing:.1em;
+  text-transform:uppercase; color:var(--slate); padding:6px 8px;
+  border-bottom:1px solid var(--rule); }
+.dett td { padding:6px 8px; border-bottom:1px solid var(--rule-soft); vertical-align:top; }
+.dett td a { font-family:var(--mono); word-break:break-all; }
+.dett .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.detn { font-size:12px; color:var(--slate); margin:8px 0 4px; }
+/* 진단 표: 심각한 것은 산화동, 권고는 회색. 색만으로 말하지 않게 첫 칸에 이름을 둔다. */
+.dett.fix td:first-child { font:400 11px/1.5 var(--mono); white-space:nowrap; }
+.dett.fix tr.lv-bad td:first-child { color:var(--copper); }
+.dett.fix tr.lv-warn td:first-child { color:var(--slate); }
+.dett.fix td:nth-child(2) { color:var(--slate); }
+/* 행 펼침 — 표 안에서 쓰는 자리(순위·색인·모바일). 카드형은 .det 를 그대로 쓴다. */
+tr.exp > td { background:var(--bar); padding:12px 8px 16px; }
+tr.exp .det { padding-left:0; }
+td.expcell { padding:0 !important; }
 .st { font:400 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
   padding:3px 7px; border:1px solid var(--rule); border-radius:2px; white-space:nowrap; }
 .st-new { color:var(--patina); border-color:var(--patina); }
@@ -195,7 +222,7 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .st-dismissed { color:var(--slate); text-decoration:line-through; }
 /* 좁은 화면에선 세 칸이 안 들어간다 — 상태 배지를 본문 밑으로 내린다. */
 @media (max-width:560px) {
-  .opp { grid-template-columns:auto 1fr; }
+  .opp > summary { grid-template-columns:auto 1fr; }
   .opp .st { grid-column:2; justify-self:start; margin-top:9px; }
 }
 .acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
@@ -488,6 +515,44 @@ const delta = (d, invert, base, tip) => {
   return `<span class="d ${good ? "up" : "down"}"${tip ? ` title="${esc(tip)}"` : ""}>` +
          `${sign}${Math.abs(d).toLocaleString("ko-KR")}${pc}</span>`;
 };
+/* ── 펼침 패널 한 벌 ────────────────────────────────────────────────
+   기회·키워드·순위·사이트 화면이 같은 것을 보여준다: 어느 페이지 얘기인지(표),
+   그 페이지의 무엇이 잘못됐는지(진단), 그래서 뭘 하는지(할 일). 화면마다 따로
+   만들면 같은 사실이 네 벌이 되고, 그중 셋은 언젠가 낡는다.
+   진단 문장은 여기서 만들지 않는다 — scoring.page_advice 가 만든 것을 그린다. */
+const pageTable = rows => !rows || !rows.length ? "" :
+  `<table class="dett"><thead><tr><th>페이지</th><th class="n">노출</th>
+     <th class="n">클릭</th><th class="n">CTR</th><th class="n">평균순위</th></tr></thead>
+   <tbody>${rows.map(r => `<tr><td><a href="${esc(r.page)}" target="_blank"
+       rel="noopener">${esc(r.page)}</a></td>
+     <td class="n">${num(r.impressions)}</td><td class="n">${num(r.clicks)}</td>
+     <td class="n">${r.ctr}%</td><td class="n">${r.position ?? "—"}</td></tr>`).join("")}
+   </tbody></table>`;
+
+// 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
+const pageFix = (audit, url) => {
+  if (!audit)
+    return `<p class="detn">${esc(url || "이 페이지")}는 아직 점검하지 않았습니다 —
+      [전체 분석 실행]의 <b>내 페이지 점검</b> 단계가 돌면 제목·설명·본문을 직접 읽고
+      무엇을 바꿔야 하는지 여기에 적습니다.</p>`;
+  const head = `<p class="detn">점검 ${esc(audit.checked_date || "")} ·
+    title ${audit.title ? `<b>${esc(audit.title)}</b>` : "없음"} ·
+    본문 ${num(audit.words)}단어</p>`;
+  const a = audit.advice || [];
+  if (!a.length)
+    return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다 — 제목·설명·H1·본문 길이·
+      구조화 데이터는 정상입니다.</p>`;
+  return head + `<table class="dett fix"><thead><tr><th>손댈 자리</th><th>지금</th>
+      <th>이렇게</th></tr></thead><tbody>${a.map(x =>
+      `<tr class="lv-${esc(x.level)}"><td>${esc(x.tag)}</td><td>${esc(x.now)}</td>
+        <td>${esc(x.fix)}</td></tr>`).join("")}</tbody></table>`;
+};
+
+// 할 일 목록 — kind 마다 손대는 자리가 다르다. 표는 각 화면이 갖는다.
+const playList = (what, acts) => (!what && !(acts || []).length) ? "" :
+  `${what ? `<p class="detw">${esc(what)}</p>` : ""}
+   <ol class="deta">${(acts || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol>`;
+
 // SERP 정수 순위의 Δ — 판정(flat 여부)은 서버(scoring.rank_delta)가 하고,
 // 여기서는 마크업만 만든다. 보합일 때 실제 값은 title로 남긴다.
 const rankDelta = rd => {

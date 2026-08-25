@@ -26,6 +26,12 @@
 .rk-part > .eyebrow { margin-bottom:9px; }
 .rk-note { font-size:12.5px; color:var(--slate); margin:10px 0 0; }
 .rk-note b { color:var(--ink); font-weight:500; }
+/* 행 자체가 펼침 손잡이 — 표 안이라 <details> 를 못 쓴다(tr 사이에 넣을 자리가 없다). */
+#rk-list tbody tr[role="button"] { cursor:pointer; }
+#rk-list tbody tr[role="button"]:hover { background:var(--bar); }
+#rk-list tbody tr[role="button"]:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
+#rk-list tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
+#rk-list tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section>
@@ -150,7 +156,125 @@ function RK_aioCell(r) {
                      : `<span class="down">떴는데 미인용</span>`;
 }
 
-function RK_row(r) {
+/* ── 행 펼침: "몇 위"에서 "그래서 뭘 고치나"까지 한 자리에서 ─────────────
+   표 안이라 <details> 를 못 쓴다 — tr 을 버튼으로 만들고 바로 밑에 tr.exp 를 끼운다.
+   보여줄 것은 기회 화면과 같은 한 벌이다(pageTable·playList·pageFix). */
+let RK_VIEW = [];                  // 지금 그려진 순서 — 행의 data-i 가 이 배열을 가리킨다
+let RK_PAGES = {}, RK_AUDITS = {};
+
+// SERP 피처는 제공자가 영문 키로 준다. 아는 것만 옮기고 모르는 값은 원문 그대로 —
+// 여기서 못 알아본 피처를 감추면 화면이 거짓말을 한다.
+const RK_FEAT = {
+  ai_overview: "AI 오버뷰", people_also_ask: "관련 질문", featured_snippet: "강조 스니펫",
+  video: "동영상", images: "이미지", image: "이미지", local_pack: "지역 팩",
+  shopping: "쇼핑", knowledge_graph: "지식 패널", top_stories: "뉴스",
+  sitelinks: "사이트링크", reviews: "리뷰", faq: "FAQ", twitter: "소셜",
+  related_searches: "연관 검색어", discussions_and_forums: "커뮤니티 글",
+};
+
+const RK_aioText = r => r.aio == null ? "AI 오버뷰 정보 없음"
+  : !r.aio ? "AI 오버뷰 안 뜸"
+  : r.aio_cited ? "AI 오버뷰에 인용됨" : "AI 오버뷰 떴는데 미인용";
+
+// 순위 구간마다 손댈 자리가 다르다 — 3위와 30위에 같은 할 일을 적으면 둘 다 안 한다.
+// 경계값은 RULES(서버)만 쓴다. 문구는 [개선 기회]의 PLAY 와 같은 어투다.
+function RK_play(r) {
+  const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20, pos = r.pos;
+  let what, acts;
+  if (pos == null) {
+    what = "이번 조회 깊이 안에서 찾지 못했습니다 — 순위 경쟁 이전의 문제입니다.";
+    acts = ["이 검색어를 정면으로 다루는 페이지가 실제로 있는지 확인합니다.",
+            "있다면 색인됐는지 봅니다 — noindex·canonical·robots.txt 순으로 확인합니다.",
+            "없다면 대표 글 한 장부터 씁니다. 여러 장을 한 번에 찍지 않습니다.",
+            "경쟁이 너무 세면 롱테일 변형(질문형·지역·비교)부터 잡습니다."];
+  } else if (pos <= 3) {
+    what = "이미 상단입니다 — 더 올리는 것보다 지키는 쪽이 남는 자리입니다.";
+    acts = ["title·설명을 클릭이 나오게 다듬습니다 — 순위가 같아도 클릭은 늡니다.",
+            "본문의 숫자·날짜를 갱신합니다. 낡은 글부터 자리를 내줍니다.",
+            "이 페이지로 들어오는 내부 링크를 끊지 않습니다.",
+            "다음 확인 때 순위가 떨어지면 그날 바로 봅니다."];
+  } else if (pos <= p1) {
+    what = `1페이지 안 ${pos}위입니다 — 여기서 더 얻을 것은 순위보다 클릭입니다.`;
+    acts = ["title 앞쪽에 검색어를 두고 숫자나 연도를 붙입니다.",
+            "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
+            "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
+            "표·목록처럼 결과에 그대로 실리는 블록을 하나 만듭니다."];
+  } else if (pos <= edge) {
+    what = `1페이지까지 ${pos - p1}칸 남았습니다 — 가장 적은 손으로 가장 크게 움직이는 구간입니다.`;
+    acts = ["title 과 H1 에 검색어를 그대로 넣습니다.",
+            "상위 페이지가 답하는 하위 질문 중 빠진 것을 H2 로 채웁니다.",
+            "관련 글 서너 곳에서 이 페이지로 내부 링크를 겁니다.",
+            "본문을 갱신하고 갱신 날짜를 드러냅니다."];
+  } else {
+    what = `${pos}위입니다 — 검색은 되지만 아무도 여기까지 내려오지 않습니다.`;
+    acts = ["검색 의도(알아보기·비교·구매)와 페이지 종류가 맞는지 먼저 봅니다.",
+            "맞다면 그 검색어 하나만 정면으로 다루도록 페이지를 다시 씁니다.",
+            "안 맞으면 새 페이지를 만들고 기존 글은 그쪽으로 링크합니다.",
+            "같은 주제 글이 여러 장이면 하나로 합칩니다 — 서로 순위를 갉아먹습니다."];
+  }
+  // AI 오버뷰가 자리를 차지했는데 우리만 빠진 경우 — 순위 구간과 무관하게 더 붙는다.
+  if (r.aio === 1 && !r.aio_cited)
+    acts = acts.concat([
+      "검색어(질문) 그대로를 H2 로 두고 바로 아래에 2~3문장으로 직답합니다.",
+      "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다."]);
+  return playList(what, acts);
+}
+
+function RK_detail(r) {
+  const prev = r.prev_pos ?? RK_prevPos(r);
+  const d = rankDelta(r.delta ?? r.dpos);
+  const feats = (r.features || []).map(f => esc(RK_FEAT[f] || f));
+  const line = [
+    r.pos != null ? `지금 <b>${r.pos}위</b>` : "이번 조회 깊이 안에서 <b>못 찾았습니다</b>",
+    prev != null ? `직전 ${prev}위${d ? " " + d : ""}` : "직전 확인 없음",
+    RK_aioText(r),
+    feats.length ? `SERP 피처 ${feats.join(" · ")}` : "SERP 피처 없음",
+  ].join(" · ");
+  const pages = RK_PAGES[r.keyword] || [];
+  const urlp = r.url
+    ? `<p class="detw">순위에 걸린 페이지: <a href="${esc(r.url)}" target="_blank"
+         rel="noopener">${esc(r.url)}</a></p>`
+    : `<p class="detn">이 조회는 순위에 걸린 페이지 URL 을 주지 않았습니다.</p>`;
+  // 점검 대상은 순위에 걸린 페이지가 우선, 없으면 이 검색어로 노출이 가장 큰 페이지.
+  const fix = r.url || (pages[0] && pages[0].page) || "";
+  return `<div class="det"><p class="detn">${line}</p>${urlp}${pageTable(pages)}
+    ${RK_play(r)}${fix ? pageFix(RK_AUDITS[fix], fix) : ""}</div>`;
+}
+
+function RK_toggle(tr) {
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("exp")) {
+    nx.remove();
+    return tr.setAttribute("aria-expanded", "false");
+  }
+  const r = RK_VIEW[+tr.dataset.i];
+  if (!r) return;
+  const row = document.createElement("tr");
+  row.className = "exp";
+  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${RK_detail(r)}</td>`;
+  tr.after(row);
+  tr.setAttribute("aria-expanded", "true");
+}
+// 버튼 노릇을 하니 버튼처럼 굴어야 한다 — Enter·Space 로도 열린다.
+function RK_key(e, tr) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();                 // Space 가 화면을 스크롤하지 않게
+  RK_toggle(tr);
+}
+// 뼈대의 정렬은 tbody 행을 통째로 재배열한다 — 펼친 줄을 그냥 두면 엉뚱한 행 밑에
+// 붙는다. 위임보다 먼저 받아서(capture) 접는다.
+function RK_collapse() {
+  const l = $("rk-list");
+  if (!l) return;
+  l.querySelectorAll("tr.exp").forEach(t => t.remove());
+  l.querySelectorAll("tr[aria-expanded]").forEach(t =>
+    t.setAttribute("aria-expanded", "false"));
+}
+document.addEventListener("click", e => {
+  if (e.target.closest && e.target.closest("#rk-list th[data-s]")) RK_collapse();
+}, true);
+
+function RK_row(r, i) {
   const p = RK_prevPos(r);
   const cells = [`<td class="kwcell">${esc(r.keyword)}</td>`,
     `<td class="num">${r.pos != null ? r.pos
@@ -159,11 +283,13 @@ function RK_row(r) {
     cells.push(`<td class="num muted">${p != null ? p : "—"}</td>`,
       `<td class="num">${rankDelta(r.delta ?? r.dpos) || `<span class="muted">—</span>`}</td>`);
   cells.push(`<td>${RK_aioCell(r)}</td>`);
-  return `<tr>${cells.join("")}</tr>`;
+  return `<tr tabindex="0" role="button" aria-expanded="false" data-i="${i}"
+    onclick="RK_toggle(this)" onkeydown="RK_key(event,this)"
+    title="누르면 이 검색어의 페이지와 할 일이 펼쳐집니다">${cells.join("")}</tr>`;
 }
 
 function RK_list() {
-  const list = RK_filtered();
+  const list = RK_VIEW = RK_filtered();     // 행의 data-i 는 이 배열을 가리킨다
   $("rk-n").textContent = list.length === RK_ROWS.length
     ? `${RK_ROWS.length}개` : `${list.length}개 / 전체 ${RK_ROWS.length}개`;
   if (!list.length)
@@ -211,6 +337,10 @@ function RK_csv() {
 
 VIEW("rank", function (d) {
   RK_ROWS = d.ranks || [];
+  // 펼침 패널의 재료 — 다른 화면이 window 에 걸어 두길 기다리지 않는다(그리는 순서에
+  // 기대면 조립 순서가 바뀔 때 조용히 빈다).
+  RK_PAGES = d.query_pages || {};
+  RK_AUDITS = d.page_audits || {};
   RK_HAS_PREV = !!d.rank_prev && RK_ROWS.some(r => RK_d(r) != null);
   RK_Q = ""; RK_AIO = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
 
@@ -293,10 +423,12 @@ VIEW("rank", function (d) {
       `이전 순위와 Δ가 붙습니다.`;
 
   const capped = RK_ROWS.length >= 30 && (d.kw_active || 0) > RK_ROWS.length;
-  $("rk-cap").textContent = capped
+  const how = ` 행을 누르면 그 검색어에서 걸린 페이지와 지금 할 일이 펼쳐집니다`
+    + (d.page_audit_date ? ` — 페이지 점검은 ${d.page_audit_date} 기준입니다.` : `.`);
+  $("rk-cap").textContent = (capped
     ? `추적 키워드 ${num(d.kw_active)}개 중 ${RK_ROWS.length}개까지만 이 화면에 옵니다. ` +
       `CSV도 같은 ${RK_ROWS.length}개입니다.`
-    : `순위·이전·Δ는 열 이름을 누르면 정렬됩니다.`;
+    : `순위·이전·Δ는 열 이름을 누르면 정렬됩니다.`) + how;
 
   // AI오버뷰: 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
   // 어느 검색어에서 떴는데 우리만 빠졌는지가 [개선 기회]의 AI 인용 공백이 된다.

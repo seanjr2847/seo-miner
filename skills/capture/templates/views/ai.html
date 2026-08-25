@@ -77,6 +77,20 @@
   margin:0; }
 .aiev .ft { font:400 11px/1.5 var(--mono); color:var(--slate); margin-top:9px; }
 .aidoms .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
+
+/* 펼침 안에는 발췌 아래로 "그래서 뭘 바꾸나"가 이어 붙는다.
+   표 칸 안이라 공용 .det 의 58px 들여쓰기는 여기서 죽인다. */
+.aiq-d .det { padding-left:0; }
+.aiq-d .detw:first-child { margin-top:14px; }
+/* 그 질문의 자리를 계속 가져가는 도메인 — 한 줄이면 충분하다. */
+.aiq-note { font:400 11.5px/1.6 var(--mono); color:var(--copper); margin:9px 0 0; }
+
+/* 질문마다 반복되는 조건은 질문 밖에 한 번만 접어 둔다. */
+.aichk { margin:6px 0 18px; padding:2px 0 2px 13px; border-left:2px solid var(--rule-soft); }
+.aichk summary { font:400 12px/1.5 var(--mono); color:var(--slate); cursor:pointer; }
+.aichk summary:hover { color:var(--patina); }
+.aichk ol { margin:9px 0 2px; padding-left:18px; font-size:12.5px; color:var(--slate); }
+.aichk li { margin:5px 0; }
 </style>
 
 <!-- 이 화면 전체의 자리표 — 뼈대(nav·앵커)가 화면 하나를 이 id 로 잡는다. -->
@@ -115,6 +129,16 @@
   <h2>어느 질문에서 빠졌나</h2>
   <p class="sub">질문을 누르면 <b>그 질문에서 실제로 온 답변</b>이 펼쳐집니다 — 우리가
     왜 빠졌는지는 거기서만 읽힙니다.</p>
+  <details class="aichk">
+    <summary>질문마다 다시 말하지 않는 것 — AI가 인용해 가는 페이지의 공통 조건 다섯</summary>
+    <ol>
+      <li>질문 문장 그대로가 <b>H2</b>로 있고, 바로 밑 2~3문장이 그 질문의 답입니다.</li>
+      <li>그 답에 숫자·단위·출처·갱신일이 박혀 있습니다 — 검증되는 문장만 인용됩니다.</li>
+      <li>정의 한 문단과 비교표 하나가 있습니다 — 그대로 떠가기 쉬운 모양입니다.</li>
+      <li>저자와 마지막 갱신일이 페이지에 드러납니다 — 출처로 고를 근거가 됩니다.</li>
+      <li>Article·FAQPage 구조화 데이터가 붙어 있고, robots가 AI 크롤러를 막지 않습니다.</li>
+    </ol>
+  </details>
   <div id="ai-prompts"></div>
 </section>
 
@@ -233,6 +257,8 @@ function AI_shareBars(share, ours, ourN) {
       줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
       "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
 let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "";
+// 펼침 안의 "할 일"이 쓰는 재료 — 질문 행이 VIEW 밖에서 그려져서 여기 받아 둔다.
+let AI_QP = {}, AI_PA = {}, AI_SHARE_N = {};
 
 const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
   ["none", "안 잡힘"]];
@@ -261,14 +287,56 @@ function AI_doms(json) {
   try { return JSON.parse(json || "[]"); } catch (e) { return []; }
 }
 
+/* ── 그래서 뭘 바꿔야 인용되나: 손댈 자리는 상태마다 다르다.
+      판정(cited·mentioned)은 서버 것을 그대로 쓰고, 문구만 여기서 고른다. ── */
+function AI_play(r) {
+  const st = AI_stOf(r);
+  if (st === "none") return {
+    what: "이 질문에 답하는 페이지가 아예 없거나, 있어도 AI가 못 찾습니다 — 인용 이전에 답이 없는 상태입니다.",
+    acts: ["질문 문장 그대로를 H2로 두고, 바로 밑 2~3문장으로 직답합니다.",
+      "그 답에 숫자·출처·갱신일을 박습니다 — 검증되는 문장만 인용됩니다.",
+      "정의 블록과 비교표를 하나씩 넣습니다 — 그대로 떠가기 쉬운 모양입니다.",
+      "이 질문을 정면으로 다루는 페이지가 없다면 한 장부터 만듭니다."]};
+  if (st === "mention") return {
+    what: "이름은 나오는데 링크가 안 걸립니다 — 링크로 걸릴 근거가 우리 쪽에 없다는 뜻입니다.",
+    acts: ["가격표·비교표·자체 조사처럼 원문 출처가 될 데이터를 한 덩이 만듭니다.",
+      "저자와 갱신일을 페이지에 드러냅니다 — 출처로 고를 근거가 됩니다.",
+      "Article·FAQPage 구조화 데이터를 붙입니다."]};
+  return {
+    what: "이미 인용되고 있습니다 — 여기서는 넓히기보다 지키는 게 먼저입니다.",
+    acts: ["같은 답변에 함께 인용된 곳이 무엇을 갖고 있는지 보고, 우리에게 없는 구간만 채웁니다.",
+      "숫자와 갱신일을 주기적으로 손봅니다 — 낡은 페이지가 먼저 밀립니다.",
+      "이 질문의 파생 질문으로 같은 페이지의 H2를 늘립니다."]};
+}
+
+// 이 답변이 인용한 곳 중 전체 인용이 가장 잦은 도메인 — 그 자리를 계속 가져가는 쪽이다.
+function AI_rival(doms) {
+  let top = "", n = 0;
+  for (const dm of doms) if ((AI_SHARE_N[dm] || 0) > n) { n = AI_SHARE_N[dm]; top = dm; }
+  return n >= 2 ? `<p class="aiq-note">${esc(top)} 이(가) 이 질문에서 계속 인용됩니다 —
+    확인한 답변 중 ${n}건에서 인용됐습니다.</p>` : "";
+}
+
+function AI_detail(r, doms) {
+  const p = AI_play(r);
+  // 질문 문장이 그대로 검색어인 경우에만 페이지를 붙인다 — 비슷해 보인다고 갖다 대지 않는다.
+  const pages = AI_QP[r.prompt] || [];
+  const url = pages.length ? pages[0].page : "";
+  return `<div class="det">${playList(p.what, p.acts)}${AI_rival(doms)}
+    ${pageTable(pages)}
+    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix(AI_PA[url], url)}` : ""}</div>`;
+}
+
 function AI_row(r) {
   const doms = AI_doms(r.miss_domains);
   const chips = doms.slice(0, 3).map(x => `<span class="chip">${esc(x)}</span>`).join("") +
     (doms.length > 3 ? `<span class="chip" title="${esc(doms.slice(3).join(", "))}"
       >+${doms.length - 3}</span>` : "");
-  // 펼칠 게 있을 때만 손잡이를 만든다 — 눌러도 아무 일 없는 버튼은 거짓말이다.
+  // 발췌가 없어도 펼칠 게 있다 — 상태마다 다른 할 일이 늘 붙는다. 손잡이는 항상 만든다.
   const ev = r.miss_answer || doms.length;
-  const body = ev ? `<div class="aiev" hidden>
+  const body = `<div class="aiq-d" hidden>
+    ${ev ? `<div class="aiev">
       ${doms.length ? `<span class="lb">이 답변이 인용한 곳</span>
         <div class="aidoms">${doms.map(x =>
           `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}
@@ -276,11 +344,9 @@ function AI_row(r) {
         <p class="q">${esc(r.miss_answer)}</p>` : ""}
       <div class="ft">우리가 인용되지 않은 응답 1건에서 가져온 발췌입니다. 답변은 매번
         달라지므로 한 건은 사실이 아니라 표본입니다.</div>
-    </div>` : "";
-  const q = ev
-    ? `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-         >${esc(r.prompt)}</button>${body}`
-    : `<div class="aiq-p">${esc(r.prompt)}</div>`;
+    </div>` : ""}${AI_detail(r, doms)}</div>`;
+  const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
+       >${esc(r.prompt)}</button>${body}`;
   return `<tr><td>${q}</td>
     <td class="kwcell">${esc(r.category || "")}</td>
     <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
@@ -408,6 +474,12 @@ VIEW("ai", function (d) {
   const capped = share.length >= 15 && tot.cited < share[share.length - 1].n;
   const rankTxt = !sameScale || tot.cited === 0 ? "—"
     : capped ? "15위 밖" : `${above + 1}위`;
+  // 펼침이 쓸 재료 — 질문 행은 VIEW 밖에서 다시 그려지므로 여기서 받아 둔다.
+  AI_QP = d.query_pages || {};
+  AI_PA = d.page_audits || {};
+  AI_SHARE_N = {};
+  for (const s of (d.cite_share || [])) AI_SHARE_N[s.domain] = s.n;
+
   const byPrompt = d.ai_by_prompt || [];
   const missN = byPrompt.length
     ? byPrompt.filter(r => !r.cited && !r.mentioned).length

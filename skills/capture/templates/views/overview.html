@@ -27,7 +27,7 @@
 <section>
   <div class="eyebrow" id="opp-eyebrow">기회</div>
   <h2>다음에 손댈 것</h2>
-  <p class="sub">누르면 바로 저장됩니다. 왜 뽑혔는지는 회색 글씨를 눌러 펼칩니다.</p>
+  <p class="sub">카드를 누르면 어느 페이지가 걸렸는지와 할 일이 펼쳐집니다. 확인·완료·제외는 누르면 바로 저장됩니다.</p>
   <div id="opps"></div>
 </section>
 
@@ -126,6 +126,77 @@ window.KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 
   ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
   coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"AI오버뷰 노출",
   content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘"};
+/* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
+      근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
+      표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
+      할 일은 아래 PLAY 한 벌이 댄다. kind 마다 손대는 자리가 다르다. ── */
+const PLAY = {
+  striking_distance: {what: "11~20위 — 1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다.",
+    acts: ["아래 페이지의 title 과 H1 을 이 검색어로 시작하게 고칩니다.",
+           "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
+           "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
+           "표·목록·정의 블록을 만들어 스니펫 후보로 올립니다."]},
+  ctr_gap: {what: "순위는 1페이지인데 클릭률이 기대치의 절반 이하 — 순위가 아니라 제목·설명 문제입니다.",
+    acts: ["title 앞 60자 안에 검색어를 넣고, 브랜드명은 뒤로 밉니다.",
+           "meta description 에 숫자·연도·구체적 이득을 적습니다.",
+           "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
+           "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."]},
+  cannibalization: {what: "같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다 — 구글이 어느 쪽을 올릴지 못 정합니다.",
+    acts: ["아래 표에서 노출·클릭이 가장 큰 페이지를 정본으로 정합니다.",
+           "나머지는 정본으로 301 리다이렉트하거나 canonical 을 정본으로 겁니다.",
+           "합칠 수 없으면 검색 의도를 갈라 제목·H1 을 서로 다르게 씁니다.",
+           "나머지 페이지에서 정본으로 내부 링크를 겁니다."]},
+  rank_decay: {what: "잡고 있던 순위가 밀렸습니다 — 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
+    acts: ["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
+           "지금 그 자리를 가져간 페이지와 목차를 비교해 빠진 구간을 채웁니다.",
+           "본문을 실제로 갱신합니다 — 날짜만 바꾸는 것은 효과가 없습니다.",
+           "그 페이지로 오던 내부 링크가 끊겼는지 확인합니다."]},
+  device_gap: {what: "모바일에서만 순위가 낮습니다 — 콘텐츠가 아니라 모바일 화면·속도 문제인 경우가 많습니다.",
+    acts: ["모바일로 그 페이지를 직접 열어 첫 화면에 답이 있는지 봅니다.",
+           "LCP·CLS 를 확인합니다(이미지 크기 지정, 광고·배너 지연 로드).",
+           "표·코드 블록이 가로로 넘치는지 봅니다.",
+           "전면 팝업(인터스티셜)을 걷어냅니다."]},
+  index_blocked: {what: "색인되지 않은 URL 입니다 — 색인 전에는 순위 자체가 없습니다.",
+    acts: ["robots.txt·noindex·canonical 이 이 URL 을 막고 있는지 확인합니다.",
+           "사이트맵에 넣고 Search Console 에서 색인을 요청합니다.",
+           "들어오는 내부 링크가 하나도 없으면(고아 페이지) 최소 한 개를 겁니다.",
+           "중복이면 정본 하나만 남깁니다."]},
+  pseo_pattern: {what: "같은 꼴의 검색어가 무리로 있습니다 — 한 장씩 쓰는 대신 템플릿으로 찍을 자리입니다.",
+    acts: ["같은 패턴의 검색어를 모읍니다(도구별·지역별·비교 축).",
+           "템플릿 한 벌 + 실제 데이터로 페이지를 찍습니다 — 빈 껍데기는 색인에서 걸러집니다.",
+           "허브 페이지를 만들어 전부 링크합니다."]},
+  ai_citation_gap: {what: "AI 답변이 이 주제에서 남을 인용하고 나를 빼놓습니다.",
+    acts: ["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
+           "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다.",
+           "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."]},
+  aio_exposure: {what: "AI 오버뷰가 뜨는 검색어입니다 — 거기 인용되지 않으면 클릭이 줄어듭니다.",
+    acts: ["오버뷰가 답하는 질문에 직답 블록을 만듭니다.",
+           "Article·FAQ 구조화 데이터를 붙입니다."]},
+  coverage: {what: "추적은 하는데 노출도 순위도 없습니다 — 이 주제를 다루는 페이지가 없다는 뜻입니다.",
+    acts: ["이 클러스터를 다루는 페이지가 실제로 있는지 확인합니다.",
+           "없으면 대표 글 하나부터 만듭니다 — 클러스터 전체를 한 번에 찍지 않습니다.",
+           "있는데 안 걸린다면 제목·본문에 그 검색어가 실제로 등장하는지 봅니다."]},
+  content_gap: {what: "경쟁 도메인은 잡고 있는데 나는 페이지 자체가 없는 검색어입니다.",
+    acts: ["상위 3개 페이지의 목차를 훑어 다뤄야 할 구간을 정합니다.",
+           "내 제품·데이터로만 말할 수 있는 구간을 하나 넣습니다.",
+           "발행 후 관련 글에서 내부 링크를 겁니다."]}
+};
+
+function oppDetail(o) {
+  const pages = (window.QUERY_PAGES || {})[o.target] || [];
+  const p = PLAY[o.kind] || {};
+  // 이 기회에서 실제로 손댈 페이지 — 노출이 가장 큰 것. 감사 결과가 있으면
+  // "지금 title 이 무엇이고 무엇을 바꿔라"까지 나온다(없으면 왜 없는지 말한다).
+  const url = o.target.startsWith("http") ? o.target : (pages[0] && pages[0].page);
+  const audit = url ? (window.PAGE_AUDITS || {})[url] : null;
+  const note = pages.length || o.target.startsWith("http") ? "" :
+    `<p class="detn">이 검색어로 걸린 페이지가 스냅샷에 없습니다 — 대상이 URL 이거나,
+      페이지 분해를 아직 수집하지 않았습니다.</p>`;
+  return `<div class="det">${playList(p.what, p.acts)}${pageTable(pages)}${note}
+    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}</div>`;
+}
+
 function oppRow(o) {
   const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
   const acts = READONLY ? ""
@@ -140,25 +211,27 @@ function oppRow(o) {
          <i style="width:${Math.min(100, Math.max(0, o.score))}%"></i></div>` : "";
   // id 는 페이로드에 이미 있다 — data- 로 내보낸다. 호스팅 애드온이 onclick 문자열에서
   // 정규식으로 되짚던 자리다(/setOpp\((\d+)/).
-  return `<div class="opp" data-opp="${o.id}">
-    <div class="score" title="점수 ${o.score ?? "—"} / 100 — 높을수록 먼저">${
-      Number.isFinite(o.score) ? Math.round(o.score) : "—"}<span class="u">점</span></div>
-    <div>
-      <div class="oh">
-        <span class="kind${tone}" title="${esc(o.kind)}">${esc(KIND_LABEL[o.kind] || o.kind)}</span>
-        <span class="dt">${esc(o.created || "")}</span>
+  // 카드 자체가 <details> 다 — 어디를 눌러도 펼쳐지고, 키보드·스크린리더가
+  // 공짜로 따라온다. 트리아지 버튼은 펼침을 건드리면 안 되므로 .acts 에서
+  // 클릭을 멈춘다(버튼 자신의 onclick 은 이미 실행된 뒤다).
+  return `<details class="opp" data-opp="${o.id}">
+    <summary>
+      <div class="score" title="점수 ${o.score ?? "—"} / 100 — 높을수록 먼저">${
+        Number.isFinite(o.score) ? Math.round(o.score) : "—"}<span class="u">점</span></div>
+      <div>
+        <div class="oh">
+          <span class="kind${tone}" title="${esc(o.kind)}">${esc(KIND_LABEL[o.kind] || o.kind)}</span>
+          <span class="dt">${esc(o.created || "")}</span>
+        </div>
+        <div class="target">${esc(o.target)}</div>
+        ${meter}
+        ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
+        ${acts ? `<div class="acts" onclick="event.stopPropagation()">${acts}</div>` : ""}
       </div>
-      <div class="target">${esc(o.target)}</div>
-      ${meter}
-      ${o.reasoning ? `<div class="why clamp" role="button" tabindex="0"
-        onclick="this.classList.toggle('clamp')"
-        onkeydown="if(event.key==='Enter'||event.key===' ')` +
-        `{event.preventDefault();this.classList.toggle('clamp')}"
-        title="눌러서 펼치기">${esc(o.reasoning)}</div>` : ""}
-      ${acts ? `<div class="acts">${acts}</div>` : ""}
-    </div>
-    <div class="st st-${o.status}">${OPP_LABEL[o.status] || esc(o.status)}</div>
-  </div>`;
+      <div class="st st-${o.status}">${OPP_LABEL[o.status] || esc(o.status)}</div>
+    </summary>
+    ${oppDetail(o)}
+  </details>`;
 }
 
 async function setOpp(id, status) {
@@ -276,6 +349,9 @@ VIEW("overview", function (d) {
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   OPPS = d.opps || [];
   OPP_COUNTS = d.opp_counts || {};
+  // 검색어별 페이지 표는 네 화면이 같이 본다 — window 에 건다(KIND_LABEL 과 같은 이유).
+  window.QUERY_PAGES = d.query_pages || {};
+  window.PAGE_AUDITS = d.page_audits || {};
   renderOpps(8);
 });
 </script>

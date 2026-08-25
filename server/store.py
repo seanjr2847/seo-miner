@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -270,10 +271,18 @@ def tenant(conn: sqlite3.Connection, user_id: int):
 
     ponytail: os.environ 은 프로세스 전역이라 동시 진입에 안전하지 않다. 워커가
     직렬로 돌기 때문에 지금은 문제없다. 병렬이 필요해지면 유저별 subprocess 로 바꾼다.
+
+    토큰 파일 이름은 **컨텍스트마다 다르다**. 한 이름(gsc_token.json)을 공유하던
+    시절엔 워커가 GSC 를 수집하는 몇 분 사이에 들어온 화면 요청이 같은 파일을 쓰고,
+    나갈 때 그것을 지웠다 — 아직 도는 워커가 토큰을 잃거나, 뒤늦게 지우려던 쪽이
+    FileNotFoundError 로 500 을 냈다(/api/data). 프로세스도 스레드도 자기 파일만
+    만들고 자기 파일만 지운다.
     """
     h = home(user_id)
     h.mkdir(parents=True, exist_ok=True)
-    tok = h / "gsc_token.json"
+    tok = h / f"gsc_token.{os.getpid()}.{threading.get_ident()}.json"
+    # 옛 고정 이름으로 남은 평문 토큰이 있으면 여기서 치운다(죽은 런의 잔해).
+    (h / "gsc_token.json").unlink(missing_ok=True)
 
     stored = load_token(conn, user_id)
     if stored:
@@ -287,7 +296,7 @@ def tenant(conn: sqlite3.Connection, user_id: int):
     finally:
         if tok.exists():
             save_token(conn, user_id, tok.read_text("utf-8"))
-            tok.unlink()                      # 평문 토큰을 디스크에 남기지 않는다
+        tok.unlink(missing_ok=True)           # 평문 토큰을 디스크에 남기지 않는다
         for k, v in saved.items():
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
@@ -322,7 +331,25 @@ def demo() -> None:
             Path(os.environ["GSC_TOKEN_FILE"]).write_text('{"refresh_token":"new"}', "utf-8")
         assert os.environ.get("CAPTURE_HOME") == before, "env 가 복원되지 않았다"
         assert load_token(conn, uid) == '{"refresh_token":"new"}', "갱신 토큰을 회수하지 못했다"
-        assert not (home(uid) / "gsc_token.json").exists(), "평문 토큰 파일이 남았다"
+        assert not list(home(uid).glob("gsc_token*.json")), "평문 토큰 파일이 남았다"
+
+        # 겹쳐 도는 두 컨텍스트 — 워커가 GSC 를 수집하는 몇 분 사이에 화면 요청이
+        # 들어오던 자리다. 나중 것이 나가면서 앞선 것의 토큰 파일을 지우면 안 된다.
+        def other() -> None:
+            c2 = connect()
+            try:
+                with tenant(c2, uid):
+                    pass
+            finally:
+                c2.close()
+
+        with tenant(conn, uid):
+            mine = Path(os.environ["GSC_TOKEN_FILE"])
+            t = threading.Thread(target=other)
+            t.start()
+            t.join()
+            assert mine.exists(), "다른 컨텍스트가 내 토큰 파일을 지웠다"
+        assert not list(home(uid).glob("gsc_token*.json")), "평문 토큰 파일이 남았다"
 
         sid = add_site(conn, uid, "myproj", "sc-domain:example.com", "example.com")
         assert len(sites(conn, uid)) == 1

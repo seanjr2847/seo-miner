@@ -10,6 +10,7 @@ references/scoring.md 는 이제 명세이고, 실행은 전부 여기서 한다
 self-check:  python scoring.py
 기회 적재:   python scoring.py load <project>   (striking·ctr_gap·… 계산 → opportunities upsert)
 """
+import json
 import math
 import re
 import sqlite3
@@ -336,6 +337,181 @@ def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> l
                         "expected_ctr": expected,
                         "lost_clicks": round(r["imp"] * (expected - actual) / 100)})
     return sorted(out, key=lambda x: -x["lost_clicks"])[:limit]
+
+
+# 페이지 감사 임계값 — 화면·리포트·산문이 같은 숫자를 본다.
+# 검색결과가 자르는 것은 글자 수가 아니라 픽셀 폭이라, 한글은 로마자의 약 두 배를
+# 먹는다. 한 벌로 두면 한국어 사이트는 멀쩡한 제목마다 "너무 길다"는 경고를 받는다.
+TITLE_MAX, TITLE_MAX_KO = 60, 30
+TITLE_MIN, TITLE_MIN_KO = 15, 8
+DESC_MIN, DESC_MIN_KO = 70, 40
+DESC_MAX, DESC_MAX_KO = 160, 80
+THIN_WORDS = 300        # 이보다 얇으면 "이 주제를 다뤘다"고 보기 어렵다
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _wide(text: str) -> bool:
+    """폭이 넓은 글자(한글)가 섞였나 — 길이 임계값을 어느 쪽으로 볼지 가른다."""
+    return bool(_HANGUL.search(text or ""))
+
+
+def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:
+    """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
+
+    반환: [{"tag": 손댈 자리, "level": "bad"|"warn", "now": 지금 상태, "fix": 할 일}]
+    빈 리스트면 "규칙으로 잡히는 문제 없음"이지 "완벽함"이 아니다.
+
+    queries 는 이 URL 이 실제로 걸린 검색어들(노출 많은 순). 첫 번째를 대표
+    검색어로 본다 — 제목에 넣으라고 말하려면 어느 말을 넣으라는 것인지 있어야 한다.
+    판정은 여기 한 곳이다: 화면이 같은 규칙을 다시 구현하면 두 벌이 되고,
+    사람은 그중 어느 쪽이 맞는지 알 수 없게 된다.
+    """
+    if not audit:
+        return []
+    out: list[dict] = []
+
+    def add(tag, level, now, fix):
+        out.append({"tag": tag, "level": level, "now": now, "fix": fix})
+
+    if audit.get("error"):
+        add("가져오기", "bad", audit["error"],
+            "이 URL 이 사람에게도 안 열리는지 확인하세요. 안 열리면 순위·색인 이전의 문제입니다.")
+        return out
+
+    kw = next((q for q in queries if q), "")
+    title = (audit.get("title") or "").strip()
+    if not title:
+        add("title", "bad", "title 태그가 없습니다",
+            f"<title>{kw or '대표 검색어'} — 페이지 요지</title> 를 넣으세요.")
+    else:
+        if kw and kw.lower() not in title.lower():
+            add("title", "bad", f"지금: {title}",
+                f"검색어 '{kw}' 가 title 에 없습니다. 앞부분에 그대로 넣으세요.")
+        t_max = TITLE_MAX_KO if _wide(title) else TITLE_MAX
+        t_min = TITLE_MIN_KO if _wide(title) else TITLE_MIN
+        if len(title) > t_max:
+            add("title", "warn", f"{len(title)}자 — 검색결과에서 잘립니다",
+                f"{t_max}자 이내로 줄이고, 브랜드명은 뒤로 미세요.")
+        elif len(title) < t_min:
+            add("title", "warn", f"{len(title)}자 — 너무 짧습니다",
+                "무엇에 대한 페이지인지 title 만 읽고 알 수 있게 늘리세요.")
+
+    desc = (audit.get("meta_description") or "").strip()
+    if not desc:
+        add("meta description", "bad", "설명이 없습니다",
+            "검색결과에 뜰 2~3문장을 직접 쓰세요 — 없으면 구글이 본문에서 임의로 뽑습니다.")
+    elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
+        add("meta description", "warn", f"{len(desc)}자 — 뒤가 잘립니다",
+            f"{DESC_MAX_KO if _wide(desc) else DESC_MAX}자 이내로. 중요한 말을 앞에 두세요.")
+    elif len(desc) < (DESC_MIN_KO if _wide(desc) else DESC_MIN):
+        add("meta description", "warn", f"{len(desc)}자 — 너무 짧습니다",
+            "숫자·연도·구체적 이득을 넣어 클릭할 이유를 적으세요.")
+
+    h1 = _as_list(audit.get("h1_json"))
+    if not h1:
+        add("H1", "bad", "H1 이 없습니다", "페이지 주제를 그대로 담은 H1 하나를 두세요.")
+    elif len(h1) > 1:
+        add("H1", "warn", f"H1 이 {len(h1)}개입니다 ({' / '.join(h1[:3])})",
+            "H1 은 하나만 두고 나머지는 H2 로 내리세요.")
+    elif kw and kw.lower() not in h1[0].lower():
+        add("H1", "warn", f"지금: {h1[0]}",
+            f"H1 에 '{kw}' 가 없습니다 — title 과 H1 이 같은 말을 하게 맞추세요.")
+
+    words = audit.get("words")
+    if isinstance(words, int) and words < THIN_WORDS:
+        add("본문", "warn", f"{words}단어 — 얇습니다",
+            f"이 검색어를 다루는 하위 질문을 채워 {THIN_WORDS}단어 이상으로 늘리세요.")
+
+    schema = _as_list(audit.get("schema_json"))
+    if not schema:
+        add("구조화 데이터", "warn", "ld+json 이 없습니다",
+            "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요 "
+            "— AI 답변과 리치 결과가 읽는 자리입니다.")
+
+    robots = (audit.get("robots") or "").lower()
+    if "noindex" in robots:
+        add("robots", "bad", f"meta robots: {audit['robots']}",
+            "noindex 를 지우기 전에는 이 페이지가 검색에 나오지 않습니다.")
+
+    canon = (audit.get("canonical") or "").strip()
+    if canon and host_of(canon) and domain and not owns(host_of(canon), domain):
+        add("canonical", "bad", f"canonical 이 남의 도메인을 가리킵니다: {canon}",
+            "자기 URL(또는 내 사이트의 정본)을 가리키게 고치세요.")
+    elif canon and norm(canon) != norm(audit.get("url") or ""):
+        add("canonical", "warn", f"canonical: {canon}",
+            "이 URL 이 정본이 아니라고 선언돼 있습니다 — 의도한 것인지 확인하세요.")
+
+    no_alt = audit.get("images_no_alt") or 0
+    if no_alt:
+        add("이미지", "warn", f"alt 없는 이미지 {no_alt}개",
+            "무엇을 보여주는 그림인지 alt 에 적으세요(이미지 검색 유입과 접근성).")
+
+    internal = audit.get("internal_links")
+    if isinstance(internal, int) and internal < 3:
+        add("내부 링크", "warn", f"이 페이지가 내보내는 내부 링크 {internal}개",
+            "관련 글로 3개 이상 연결하세요 — 링크가 없는 페이지는 크롤러도 사람도 덜 봅니다.")
+    return out
+
+
+def _as_list(blob) -> list:
+    """JSON 배열 문자열 → list. 깨져 있으면 빈 목록(판정이 멈추지 않는다)."""
+    if isinstance(blob, list):
+        return blob
+    try:
+        v = json.loads(blob or "[]")
+    except (TypeError, ValueError):
+        return []
+    return v if isinstance(v, list) else []
+
+
+def top_pages(conn: sqlite3.Connection, project_id: int, limit: int) -> list[str]:
+    """최신 스냅샷의 노출 상위 페이지. page IS NULL(구버전 CSV 스냅샷)은 뺀다.
+
+    snapshot_pair 로 period_days 까지 맞춰 고른다 — 같은 날짜에 기간이 다른
+    스냅샷이 섞여 있으면 노출 합계가 이중으로 잡힌다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    if not cur:
+        return []
+    return [r["page"] for r in conn.execute(
+        """SELECT page, SUM(impressions) imp FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY page ORDER BY imp DESC LIMIT ?""",
+        (project_id, cur, period, limit))]
+
+
+def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
+                   *, top: int = 5) -> dict[str, list[dict]]:
+    """검색어 → 그 검색어로 노출된 내 페이지들 (노출 많은 순).
+
+    기회를 펼쳤을 때 "그래서 어느 페이지 얘기냐"에 답하는 자리다. 근거 문장은
+    숫자를 요약할 뿐 어느 URL 인지는 말하지 않아서, 화면에서 손댈 곳을 못 찾았다.
+    cannibalization 과 같은 스냅샷·같은 period_days 를 본다 — 두 화면이 다른 날짜를
+    말하면 같은 검색어가 서로 다른 페이지 수를 갖는다.
+
+    page 가 NULL 인 구버전 스냅샷에서는 빈 dict — 데이터 부재이지 결함이 아니다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    qs = [q for q in dict.fromkeys(queries) if q]
+    if not cur or not qs:
+        return {}
+    out: dict[str, list[dict]] = {}
+    for i in range(0, len(qs), 200):        # SQLite 바인딩 상한(999) 안에서 끊는다
+        chunk = qs[i:i + 200]
+        for r in conn.execute(
+            f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
+                       ROUND(AVG(position),1) pos
+                  FROM gsc_snapshots
+                 WHERE project_id=? AND snapshot_date=? AND period_days=?
+                   AND page IS NOT NULL AND query IN ({','.join('?' * len(chunk))})
+                 GROUP BY query, page ORDER BY imp DESC""",
+                (project_id, cur, period, *chunk)):
+            rows = out.setdefault(r["query"], [])
+            if len(rows) < top:
+                rows.append({"page": r["page"], "impressions": r["imp"], "clicks": r["clk"],
+                             "position": r["pos"],
+                             "ctr": round(r["clk"] * 100.0 / r["imp"], 2) if r["imp"] else 0.0})
+    return out
 
 
 def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
@@ -834,6 +1010,40 @@ def _selfcheck() -> None:
     assert striking(conn, 1, None) == []
     cands = pseo_candidates(conn, 1, "2026-08-14")
     assert [c["query"] for c in cands] == ["내 키워드"], cands
+
+    # 기회를 펼쳤을 때 보여줄 페이지 표 — 노출 많은 순, CTR 은 여기서 계산한다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page,"
+        " clicks, impressions, ctr, position) VALUES(1, '2026-08-14', 28, ?, ?, ?, ?, 0.0, ?)",
+        [("내 키워드", "https://x.com/a", 3, 300, 12.0),
+         ("내 키워드", "https://x.com/b", 1, 100, 18.0)])
+    pg = pages_by_query(conn, 1, ["내 키워드", "없는 검색어"])
+    assert list(pg) == ["내 키워드"], pg
+    assert [r["page"] for r in pg["내 키워드"]] == ["https://x.com/a", "https://x.com/b"], pg
+    assert pg["내 키워드"][0]["ctr"] == 1.0, pg["내 키워드"][0]
+    assert pages_by_query(conn, 1, ["내 키워드"], top=1)["내 키워드"] == pg["내 키워드"][:1]
+    assert pages_by_query(conn, 1, []) == {}
+
+    # 페이지 진단 — 규칙이 무는지 하나씩. 여기가 화면 문구의 정본이다.
+    ok_page = {"url": "https://x.com/a", "title": "밀리아 제거 비용과 회복 기간 총정리",
+               "meta_description": "밀리아 제거 가격, 시술 방법, 회복 기간을 실제 사례와 "
+                                   "함께 정리했습니다. 2026년 기준 서울 평균가 포함.",
+               "h1_json": '["밀리아 제거 비용"]', "words": 900,
+               "schema_json": '["Article"]', "canonical": "https://x.com/a",
+               "robots": "index,follow", "images_no_alt": 0, "internal_links": 8}
+    assert page_advice(ok_page, ["밀리아 제거"], domain="x.com") == [],         page_advice(ok_page, ["밀리아 제거"], domain="x.com")
+    bad = dict(ok_page, title="가격표", meta_description="", h1_json='["A","B"]',
+               words=80, schema_json="[]", robots="noindex", images_no_alt=3,
+               internal_links=1)
+    tags = [a["tag"] for a in page_advice(bad, ["밀리아 제거"], domain="x.com")]
+    assert tags == ["title", "title", "meta description", "H1", "본문",
+                    "구조화 데이터", "robots", "이미지", "내부 링크"], tags
+    assert page_advice({"error": "HTTP 404 · text/html"})[0]["level"] == "bad"
+    assert page_advice(None) == []
+    # canonical 이 남을 가리키면 경고가 아니라 결함이다
+    other = page_advice(dict(ok_page, canonical="https://competitor.com/a"),
+                        ["밀리아 제거"], domain="x.com")
+    assert [a["tag"] for a in other] == ["canonical"] and other[0]["level"] == "bad", other
 
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at) "

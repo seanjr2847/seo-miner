@@ -43,6 +43,14 @@
 /* 순위차 막대: 숫자 밑에 같은 길이의 언어를 하나 더 깔아 줄 세우기를 눈으로 만든다. */
 .dgap { display:block; height:3px; margin:5px 0 0 auto; border-radius:2px;
   background:var(--copper); opacity:.5; }
+
+/* 행을 누르면 밑이 열린다 — 표가 목록에서 끝나면 "그래서 뭘 하냐"는 화면 밖에 남는다.
+   펼칠 수 있다는 사실은 첫 칸의 꺾쇠가 말한다(::before 라 정렬·CSV 에는 안 섞인다). */
+tr.rw { cursor:pointer; }
+tr.rw:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
+tr.rw[aria-expanded="true"] > td { background:var(--bar); }
+tr.rw > td:first-child::before { content:"▸ "; color:var(--slate); }
+tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section id="ix-sec">
@@ -68,6 +76,47 @@
 /* ── 기기 격차·색인 상태: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
       빈 목록으로 온다 — 서버가 준 최신 수집일로 갈라 안내한다. 키 자체가 없으면
       이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
+
+/* ── 행 펼침 한 벌 ──────────────────────────────────────────
+   두 표가 같은 몸짓을 쓴다: 행을 누르면 바로 밑에 <tr class="exp"> 하나가 끼어든다.
+   목록은 innerHTML 로 통째 갈리지만 그릇(#index·#devgap)은 남으므로 위임으로 한 번만 묶는다.
+   정렬은 tbody 를 통째로 재배치한다 — 펼친 줄이 부모와 떨어지므로 머리글을 누르면 먼저 접는다. */
+function stExpClose(host) {
+  host.querySelectorAll("tr.exp").forEach(t => t.remove());
+  host.querySelectorAll('tr.rw[aria-expanded="true"]')
+      .forEach(t => t.setAttribute("aria-expanded", "false"));
+}
+
+function stExpToggle(tr, detail) {
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("exp")) {
+    nx.remove();
+    return tr.setAttribute("aria-expanded", "false");
+  }
+  tr.setAttribute("aria-expanded", "true");
+  tr.insertAdjacentHTML("afterend",
+    `<tr class="exp"><td colspan="${tr.cells.length}">
+       <div class="det">${detail(tr.dataset.k)}</div></td></tr>`);
+}
+
+function stExpBind(host, detail) {
+  host.addEventListener("click", e => {
+    if (e.target.closest("th[data-s]")) return stExpClose(host);
+    const tr = e.target.closest("tr.rw");
+    if (tr) stExpToggle(tr, detail);
+  });
+  host.addEventListener("keydown", e => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const tr = e.target.closest("tr.rw");
+    if (!tr) return;
+    e.preventDefault();                 // Space 가 페이지를 스크롤하지 않게
+    stExpToggle(tr, detail);
+  });
+}
+
+// 행 하나가 여는 손잡이 — 표를 그리는 쪽은 이 속성만 달면 된다.
+const stRw = k => `class="rw" tabindex="0" role="button" aria-expanded="false"` +
+  ` data-k="${esc(k)}" title="눌러서 무엇을 어떻게 고칠지 보기"`;
 
 /* ── 색인 상태 ──────────────────────────────────────────── */
 // bucket 라벨·심각도·고칠 곳. 원문 bucket 은 title 로 남긴다(scoring.index_issues 와 대조용).
@@ -179,12 +228,54 @@ function stIxList() {
      "진단 · 처방?원인별로 무엇을 고치면 되는지"],
     list.map(r => {
       const b = ST_IX[r.bucket] || {label:r.bucket, sev:3};
-      return `<tr>
+      return `<tr ${stRw(r.url)}>
         <td class="ixb s${b.sev}" title="${esc(r.bucket)}">${esc(b.label)}</td>
         <td class="ixurl">${esc(r.url)}</td>
         <td class="ixstate">${esc(r.coverage_state || r.verdict || "—")}</td>
         <td class="ixfix">${esc(r.detail)}</td></tr>`;
     }));
+}
+
+// 갈래마다 손대는 자리가 다르다 — 여기 없는 갈래는 구글 응답 원문만 보여준다.
+const ST_IX_PLAY = {
+  robots_blocked: {
+    what: "내 사이트가 스스로 막고 있습니다 — 이걸 풀기 전에는 무엇을 고쳐도 색인되지 않습니다.",
+    acts: ["robots.txt 를 열어 이 경로를 막는 Disallow 가 어느 줄인지 찾습니다.",
+           '페이지 <head> 에 <meta name="robots" content="noindex"> 나 X-Robots-Tag 응답 헤더가 있는지 봅니다.',
+           "막을 의도였으면 그대로 둡니다 — 문제가 아닙니다. 아니면 그 규칙만 지웁니다.",
+           "지운 뒤 서치 콘솔 URL 검사에서 색인 생성을 요청합니다(재크롤은 며칠 걸립니다)."]},
+  fetch_error: {
+    what: "구글이 이 주소를 가져오다 실패했습니다 — 서버가 답을 못 줬거나 너무 늦게 줬습니다.",
+    acts: ["시크릿 창으로 직접 열어 사람 눈에 정상인지 먼저 봅니다.",
+           "응답 코드를 확인합니다 — 5xx·403·429 면 서버·방화벽·봇 차단 쪽입니다.",
+           "리다이렉트를 끝까지 따라갑니다 — 단계가 길거나 루프면 그 자리에서 끊깁니다.",
+           "느려서 끊긴 것이면(타임아웃) 그 시각 서버 로그와 부하를 봅니다.",
+           "고친 뒤 색인 생성을 요청합니다."]},
+  canonical_mismatch: {
+    what: "구글이 고른 대표 URL 이 내가 지정한 canonical 과 다릅니다 — 실적이 다른 주소로 쌓입니다.",
+    acts: ["구글이 고른 주소와 내 canonical 을 나란히 놓고 어느 쪽이 원본인지 정합니다.",
+           "같은 내용이 여러 주소로 있으면 하나로 합치고 나머지는 301 로 보냅니다.",
+           "구글이 고른 쪽이 맞으면 내 canonical 태그를 그쪽으로 맞춥니다.",
+           "사이트맵·내부 링크도 같은 주소만 가리키게 통일합니다."]},
+  not_indexed: {
+    what: "막힌 것도 실패한 것도 아닌데 아직 안 들어갔습니다 — 못 찾았거나, 담을 값이 모자란 것으로 본 것입니다.",
+    acts: ["사이트맵에 이 주소가 들어 있는지 확인합니다.",
+           "이 페이지로 들어오는 내부 링크가 하나라도 있는지 봅니다 — 없으면 고아 페이지입니다.",
+           "본문이 얇으면 실제로 답이 되는 내용을 채웁니다 — 얇은 페이지는 뒤로 밀립니다.",
+           "그다음 색인 생성을 요청합니다."]},
+};
+
+function stIxDetail(url) {
+  const r = ST_IX_ROWS.find(x => x.url === url);
+  if (!r) return "";
+  const p = ST_IX_PLAY[r.bucket] || {};
+  const said = [r.coverage_state, r.verdict].filter(Boolean).map(esc).join(" · ");
+  return `<p class="detn">구글 응답: ${said || "—"}</p>
+    ${r.detail ? `<p class="detw">${esc(r.detail)}</p>` : ""}
+    ${playList(p.what, p.acts)}
+    <p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>
+    ${pageFix(ST_AUDITS[url], url)}`;
 }
 
 function renderIndex(d) {
@@ -261,7 +352,7 @@ function stDevList() {
      ">순위차?모바일 평균 게재순위 − 데스크톱 평균 게재순위. 클수록 모바일에서만 밀린다",
      ">모바일 노출?이 검색어의 모바일 노출 수 — 큰 것부터 고쳐야 이득이 크다",
      ">모바일 CTR", ">데스크톱 CTR?같은 검색어인데 기기에 따라 클릭률이 얼마나 갈리는지"],
-    list.map(r => `<tr><td class="kwcell">${esc(r.query)}</td>
+    list.map(r => `<tr ${stRw(r.query)}><td class="kwcell">${esc(r.query)}</td>
       <td class="num down">${stP1(r.mobile_pos)}</td>
       <td class="num">${stP1(r.desktop_pos)}</td>
       <td class="num down">${stP1(r.dpos)}
@@ -269,6 +360,32 @@ function stDevList() {
       <td class="num">${num(r.mobile_imp)}</td>
       <td class="num">${r.mobile_ctr}%</td>
       <td class="num">${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+}
+
+// 모바일 격차는 검색어가 달라도 고치는 자리가 같다 — 글이 아니라 화면이다.
+const ST_DEV_PLAY = {
+  what: "순위가 아니라 모바일 화면이 문제입니다 — 같은 글인데 모바일에서만 밀립니다.",
+  acts: ["폰으로 직접 열어 첫 화면에 무엇이 보이는지 봅니다 — 본문이 아니라 배너·동의창이면 그게 원인입니다.",
+         "LCP·CLS 를 봅니다 — 이미지에 width·height 를 박고 광고·배너·위젯은 나중에 불러옵니다.",
+         "표·코드 블록이 화면 밖으로 삐져나가지 않는지 봅니다 — 가로 스크롤은 그 블록 안에서만.",
+         "전면 팝업(인터스티셜)을 없앱니다 — 모바일에서 특히 크게 깎입니다.",
+         "탭·아코디언 뒤에 본문을 숨겼는지 봅니다 — 접힌 채로 두면 덜 읽힙니다."]
+};
+
+function stDevDetail(q) {
+  const r = ST_DEV_ROWS.find(x => x.query === q);
+  if (!r) return "";
+  const pages = ST_QPAGES[q] || [];
+  const url = pages[0] && pages[0].page;   // 노출이 가장 큰 페이지가 곧 손댈 페이지
+  return `<p class="detw">모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 ${stP1(r.desktop_pos)}위
+      (${stP1(r.dpos)}칸 아래) · 모바일 CTR ${r.mobile_ctr}% vs 데스크톱 ${r.desktop_ctr}% ·
+      모바일 노출 ${num(r.mobile_imp)}</p>
+    ${pageTable(pages)}
+    ${pages.length ? "" : `<p class="detn">이 검색어로 걸린 페이지가 스냅샷에 없습니다 —
+      페이지별 분해를 아직 수집하지 않았습니다.</p>`}
+    ${playList(ST_DEV_PLAY.what, ST_DEV_PLAY.acts)}
+    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}`;
 }
 
 function renderDevice(d) {
@@ -297,8 +414,16 @@ function renderDevice(d) {
   stDevHead();
 }
 
+// 펼침이 읽는 재료 — 표 행에는 없고 payload 에만 있다.
+let ST_AUDITS = {}, ST_QPAGES = {};
+
 VIEW("site", function (d) {
+  ST_AUDITS = d.page_audits || {};
+  ST_QPAGES = d.query_pages || {};
   renderDevice(d);
   renderIndex(d);
 });
+
+stExpBind(document.getElementById("index"), stIxDetail);
+stExpBind(document.getElementById("devgap"), stDevDetail);
 </script>

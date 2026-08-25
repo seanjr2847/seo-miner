@@ -38,6 +38,7 @@ TIMEOUTS = {
     "serper": 30,
     "openrouter": 120,
     "suggest": 10,
+    "page": 20,        # 내 페이지 한 장 가져오기 (collect_page)
 }
 
 
@@ -368,7 +369,8 @@ def _selfcheck() -> None:
     assert caveats("dataforseo") == []
     assert any("모바일" in c for c in caveats("serper"))
     assert set(PROVIDERS) == {"dataforseo", "serper"}
-    assert TIMEOUTS == {"dataforseo": 60, "serper": 30, "openrouter": 120, "suggest": 10}
+    assert TIMEOUTS == {"dataforseo": 60, "serper": 30, "openrouter": 120,
+                    "suggest": 10, "page": 20}
     assert LABS_COST_PER_CALL == 0.001
     print("serp_adapter self-check ok")
 

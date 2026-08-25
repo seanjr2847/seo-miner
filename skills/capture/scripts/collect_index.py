@@ -50,20 +50,9 @@ FIELDS = {
 }
 
 
-def top_pages(conn, project_id: int, limit: int) -> list[str]:
-    """최신 스냅샷의 노출 상위 페이지. page IS NULL(구버전 CSV 스냅샷)은 뺀다.
-
-    snapshot_pair 로 period_days 까지 맞춰 고른다 — 같은 날짜에 기간이 다른
-    스냅샷이 섞여 있으면 노출 합계가 이중으로 잡힌다.
-    """
-    cur, _, period, _ = scoring.snapshot_pair(conn, project_id)
-    if not cur:
-        return []
-    return [r["page"] for r in conn.execute(
-        """SELECT page, SUM(impressions) imp FROM gsc_snapshots
-            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
-            GROUP BY page ORDER BY imp DESC LIMIT ?""",
-        (project_id, cur, period, limit))]
+# 노출 상위 페이지 목록의 정본은 scoring 이다 — 색인 검사와 페이지 감사가 같은
+# 목록을 봐야 "검사한 페이지"와 "고칠 페이지"가 어긋나지 않는다.
+top_pages = scoring.top_pages
 
 
 def to_row(url: str, result: dict) -> dict:
