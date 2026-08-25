@@ -1,6 +1,6 @@
 {
   "name": "seo-miner",
-  "version": "1.34.0",
+  "version": "1.34.1",
   "description": "개인용 SEO·AEO 채굴기 — capture(채굴·측정) + create(실행) + setup(닥터). /capture run 이 gsc→index→keywords→rank→ai→competitors→gaps→report 8단계를 한 번에 돈다. 자세한 구조는 README: https://github.com/seanjr2847/seo-miner",
   "author": {
     "name": "local"

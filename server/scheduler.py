@@ -110,7 +110,13 @@ def demo() -> None:
 
             async def one_tick():
                 t = asyncio.create_task(loop(0.01))
-                await asyncio.sleep(0.06)
+                # 벽시계로 기다리면 부하 걸린 머신에서 틱이 한 번도 스케줄되지 못해
+                # 헛되이 실패한다(12회 중 1회 재현). 조건이 설 때까지 기다리되 상한을
+                # 둔다 — 정말 안 도는 거면 그때 아래 단언이 잡는다.
+                for _ in range(500):
+                    if swept:
+                        break
+                    await asyncio.sleep(0.01)
                 t.cancel()
 
             asyncio.run(one_tick())

@@ -7,6 +7,7 @@
 
 self-check: python stage.py
 """
+import json
 import os
 import re
 import sys
@@ -264,19 +265,50 @@ def _check_seams() -> None:
     for gone in ("setOpp(", r"\/capture\s+"):
         assert gone not in dash, f"dash.html 에 정규식 고고학이 남아 있다: {gone}"
 
-    # 2) dash.html 의 VIEWS 표가 담는 요소 id 는 실제로 어딘가에 있어야 한다.
-    #    원본 화면(templates)이 갖고 있거나, dash.html 이 스스로 만들거나 둘 중 하나다.
-    m = re.search(r"var VIEWS = \[(.*?)\n  \];", dash, re.S)
-    assert m, "dash.html 의 VIEWS 표를 못 찾았다"
-    rows = re.findall(r'\["\w+",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\]', m.group(1), re.S)
-    assert len(rows) >= 7, f"VIEWS 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
-    rest = dash.replace(m.group(1), "")          # VIEWS 표 자신은 근거가 못 된다
+    # 2) 화면 목록의 정본은 원본 뷰의 view-def 다 — dash.html 은 그걸 읽고(매니페스트),
+    #    자기가 런타임에 만드는 것만 덧붙인다. 그 "덧붙인다"가 참인지가 이 검사다:
+    #    덧붙인 id 는 dash.html 안에서 만들어져야 하고, 원본에 이미 있으면 안 된다
+    #    (있으면 매니페스트가 소유할 것을 사본으로 들고 있는 것이다).
+    defs = {}
+    for p in sorted(views.glob("*.html")):
+        d = re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', p.read_text("utf-8"), re.S)
+        assert d, f"{p.name} 에 view-def 선언이 없다"
+        j = json.loads(d.group(1))
+        defs[j["id"]] = j
+    assert defs, "원본 뷰 선언을 하나도 못 읽었다"
+    assert "window.__VIEWS__" in dash, "dash.html 이 매니페스트를 안 읽는다 — 목록이 또 두 벌이다"
+    assert "var VIEWS = [" not in dash, "dash.html 에 화면 목록 사본이 되살아났다"
+
+    hs = re.search(r"var HOST_SEC = \[(.*?)\n  \];", dash, re.S)
+    hv = re.search(r"var HOST_VIEW = \[(.*?)\];", dash, re.S)
+    assert hs and hv, "dash.html 의 호스팅 전용 목록(HOST_SEC/HOST_VIEW)을 못 찾았다"
+    hv_m = re.match(r'\s*"(\w+)",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\],\s*"(\w+)"',
+                    hv.group(1))
+    assert hv_m, "HOST_VIEW 의 모양이 바뀌었다"
+    rows = re.findall(r'\["([\w-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\]', hs.group(1))
+    assert len(rows) >= 4, f"HOST_SEC 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+
+    body = dash.replace(hs.group(0), "").replace(hv.group(0), "")   # 표 자신은 근거가 못 된다
+    host_ids = [sec for _, sec, _ in rows] + re.findall(r'"([\w-]+)"', hv_m.group(2))
+    for i in host_ids:
+        assert f'"{i}"' in body, f"덧붙인다고 선언했는데 dash.html 이 만들지 않는다: {i}"
+        assert f'id="{i}"' not in tpl, f"원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다: {i}"
+    # 끼워 넣는 자리 — 못 찾으면 dash.html 이 말없이 맨 끝에 붙여 섹션 순서가 바뀐다.
+    # 앞줄이 넣은 것 뒤에도 붙일 수 있으므로(sm-dim ← sm-perf) 표 순서대로 쌓아 본다.
+    merged = {k: list(v["sections"]) for k, v in defs.items()}
+    for vid, sec, anchor in rows:
+        assert vid in defs, f"HOST_SEC 가 없는 화면에 붙는다: {vid}"
+        assert anchor in merged[vid], f"{sec} 를 붙일 자리가 {vid} 에 없다: {anchor}"
+        merged[vid].insert(merged[vid].index(anchor) + 1, sec)
+    assert hv_m.group(4) in defs, f"HOST_VIEW 를 넣을 자리가 없다: {hv_m.group(4)}"
+    assert hv_m.group(1) not in defs, f"원본 뷰가 있는데 호스팅 화면으로 또 만든다: {hv_m.group(1)}"
+
     have = set(re.findall(r'id="([\w-]+)"', tpl))
-    stage_ids = set()
-    for els, sts in rows:
-        stage_ids |= set(re.findall(r'"(\w+)"', sts))
-        for i in re.findall(r'"([\w-]+)"', els):
-            assert i in have or f'"{i}"' in rest, f"dash.html VIEWS 가 없는 요소 id 를 담는다: {i}"
+    for d in defs.values():             # 원본 선언이 담는 요소는 원본에 있어야 한다
+        for i in d["sections"]:
+            assert i in have, f'{d["id"]} 의 view-def 가 없는 요소 id 를 담는다: {i}'
+    stage_ids = {s for d in defs.values() for s in d["stages"]}
+    stage_ids |= set(re.findall(r'"(\w+)"', hv_m.group(3)))
 
     # 3) 단계 용어표는 한 벌이다 — 우리가 내보내는 id 를 전부 알아야 한다.
     g = re.search(r"var STAGE = \{(.*?)\n  \};", dash, re.S)

@@ -429,18 +429,43 @@
   // ── 화면 ─────────────────────────────────────────────────────
   // 섹션 열넷이 한 페이지에 세로로 쌓여 있었다 — 어디에 뭐가 있는지도, 지금 뭘
   // 하면 되는지도 안 보인다. 주제별로 나누고 좌측 메뉴로 전환한다.
-  // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
-  var VIEWS = [
-    ["overview",  "개요",        ["docban", "band", "opps", "daily", "sm-perf", "sm-dim"],
-                                                                         ["gsc", "gaps"]],
-    ["keywords",  "키워드",      ["log", "sm-kw", "movers"],
-                                                            ["keywords", "competitors"]],
-    ["rank",      "순위 추적",   ["ranks"],                           ["rank"]],
-    ["ai",        "AI 인용",     ["ai"],                              ["ai"]],
-    ["site",      "사이트 점검", ["index", "devgap"],                 ["index"]],
-    ["backlinks", "백링크",      ["sm-bl"],                           []],
-    ["history",   "기록",        ["acts", "runs", "made-sec", "sm-cc"], []]
+  // 목록의 정본은 원본 뷰다 — 각 views/*.html 이 자기 파일에서 선언한 것을
+  // dashboard.py 가 window.__VIEWS__ 로 방출한다. 여기서 다시 나열하지 않는다.
+  // 없으면 옛 사본으로 조용히 되돌아가지 않고 멈춘다 — 말없이 어긋난 두 표가
+  // 이 코드가 생긴 이유다.
+  if (!Array.isArray(window.__VIEWS__) || !window.__VIEWS__.length) {
+    throw new Error("window.__VIEWS__ 가 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
+  }
+
+  // ── 호스팅이 덧붙이는 것 ─────────────────────────────────────
+  // 원본 뷰에는 없고 이 애드온이 런타임에 만드는 것만 여기 적는다. 덧붙이는 자리는
+  // 이 두 표뿐이다 — 원본이 선언한 것은 매니페스트가 소유한다.
+  // HOST_SEC: [화면 id, 요소 id, 이 요소 바로 뒤에] — perfShell()·keywords()·handoff() 가 만든다
+  var HOST_SEC = [
+    ["overview", "sm-perf", "daily"],
+    ["overview", "sm-dim",  "sm-perf"],
+    ["keywords", "sm-kw",   "log"],
+    ["history",  "sm-cc",   "made-sec"]
   ];
+  // HOST_VIEW: 대응하는 원본 뷰 파일이 아예 없는 화면 — blRender() 가 만든다.
+  // [화면 id, 메뉴 이름, 담을 것, 채우는 단계, 이 화면 바로 뒤에]
+  var HOST_VIEW = ["backlinks", "백링크", ["sm-bl"], [], "site"];
+
+  function insertAfter(list, at, item) {   // at 바로 뒤 — 못 찾으면(-1) 맨 끝
+    list.splice(at < 0 ? list.length : at + 1, 0, item);
+  }
+
+  // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
+  var VIEWS = window.__VIEWS__.map(function (v) {
+    return [v.id, v.title, v.sections.slice(), v.stages.slice()];
+  });
+  HOST_SEC.forEach(function (h) {
+    var v = VIEWS.filter(function (x) { return x[0] === h[0]; })[0];
+    if (!v) throw new Error("호스팅 섹션이 붙을 화면이 없습니다: " + h[0] + " / " + h[1]);
+    insertAfter(v[2], v[2].indexOf(h[2]), h[1]);
+  });
+  insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === HOST_VIEW[4]; }),
+              HOST_VIEW.slice(0, 4));
   var view = "overview";
 
   // 원본 섹션을 화면별 상자로 옮긴다. 이미 제자리면 아무것도 하지 않는다 —
