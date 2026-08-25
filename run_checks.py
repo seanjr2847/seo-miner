@@ -44,10 +44,42 @@ def discover() -> list[tuple[str, list[str]]]:
                         [sys.executable, str(p), *args]))
     for js in sorted((ROOT / "server" / "assets").glob("*.js")):
         out.append((js.relative_to(ROOT).as_posix(), ["node", "--check", str(js)]))
+    # 화면 스크립트는 조립된 뒤에야 한 덩어리가 된다 — 뷰마다 따로 보면 못 잡는 것이 있다.
+    out.append(("dashboard 조립본 JS",
+                [sys.executable, str(ROOT / "run_checks.py"), "--check-dashboard-js"]))
     out.append(("SyntaxWarning (compile all)",
                 [sys.executable, "-W", "error::SyntaxWarning", str(ROOT / "run_checks.py"),
                  "--compile-only"]))
     return out
+
+
+def check_dashboard_js() -> int:
+    """조립된 대시보드의 <script> 를 전부 이어 붙여 node 로 파싱한다.
+
+    이어 붙이는 이유는 브라우저가 그렇게 보기 때문이다 — 서로 다른 <script> 라도
+    top-level let 은 같은 전역 렉시컬 환경에 들어간다. 뷰마다 따로 검사하면
+    같은 이름을 두 화면이 선언한 것도, 문자열 안에 개행이 박힌 것도 못 잡는다.
+    """
+    import shutil
+    import tempfile
+    if not shutil.which("node"):
+        print("node 가 없어 건너뜁니다")
+        return 0
+    sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
+    os.environ.setdefault("CAPTURE_HOME", tempfile.mkdtemp())
+    import dashboard                       # noqa: E402 (경로를 먼저 세운다)
+    blocks = re.findall(r"<script>\s*(.*?)</script>",
+                        dashboard.HTML.decode("utf-8"), re.S)
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "assembled.js"
+        f.write_text("\n;\n".join(blocks), encoding="utf-8")
+        r = subprocess.run(["node", "--check", str(f)], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
+    if r.returncode:
+        print((r.stderr or "").strip()[:1500])
+        return 1
+    print(f"조립본 {len(blocks)}블록 파싱 OK")
+    return 0
 
 
 def compile_only() -> int:
@@ -79,6 +111,8 @@ def run(label: str, argv: list[str]) -> tuple[bool, str, float]:
 def main() -> int:
     if "--compile-only" in sys.argv:
         return compile_only()
+    if "--check-dashboard-js" in sys.argv:
+        return check_dashboard_js()
     want = [a for a in sys.argv[1:] if not a.startswith("-")]
     checks = [c for c in discover() if not want or any(w in c[0] for w in want)]
     fails = []

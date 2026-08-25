@@ -265,6 +265,19 @@ const ST_IX_PLAY = {
            "그다음 색인 생성을 요청합니다."]},
 };
 
+// 색인이 막힌 페이지에 글을 시키지 않는다 — 색인 전에는 본문을 고쳐도 소용이 없다.
+const ST_IX_DELIVER = {
+  robots_blocked: ["막고 있는 robots.txt 줄 또는 meta robots 값을 어떻게 고칠지와 적용 위치",
+                   "고친 뒤 색인 요청·확인 절차 순서"],
+  fetch_error: ["이 URL 이 안 열리는 원인 후보와 확인 순서(응답 코드·리다이렉트 체인·타임아웃)",
+                "서버·인프라 쪽에서 확인할 항목"],
+  canonical_mismatch: ["canonical 을 어느 URL 로 맞출지와 그 근거",
+                       "중복 페이지를 합칠지 남길지 판단과 처리 계획(301 대상)"],
+  not_indexed: ["사이트맵 등록·내부 링크·색인 요청 중 무엇부터 할지 순서",
+                "이 페이지로 링크를 걸 글과 앵커 텍스트"],
+  _: ["색인을 막는 원인 후보와 확인 순서"],
+};
+
 function stIxDetail(url) {
   const r = ST_IX_ROWS.find(x => x.url === url);
   if (!r) return "";
@@ -277,6 +290,7 @@ function stIxDetail(url) {
       rel="noopener">${esc(url)}</a></p>
     ${pageFix(ST_AUDITS[url], url)}
     ${askBlock({url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
+                deliver: ST_IX_DELIVER[r.bucket] || ST_IX_DELIVER._,
                 problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}`;
 }
 
@@ -389,6 +403,9 @@ function stDevDetail(q) {
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
     ${askBlock({url, audit: ST_AUDITS[url], acts: ST_DEV_PLAY.acts,
+                deliver: ["모바일에서 고칠 것 목록 — 레이아웃·이미지 크기 지정·지연 로드·전면 팝업(코드/설정 수준)",
+                          "첫 화면에 무엇이 보여야 하는지",
+                          "가로로 넘치는 표·코드 블록 처리 방법"],
                 problem: `모바일 격차 — 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
                          + `${stP1(r.desktop_pos)}위, 모바일 CTR ${r.mobile_ctr}%`,
                 queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}`;

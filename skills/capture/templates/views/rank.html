@@ -181,44 +181,61 @@ const RK_aioText = r => r.aio == null ? "AI 오버뷰 정보 없음"
 // 화면과 프롬프트가 같은 한 벌을 본다 — 문구를 두 곳에 적으면 한쪽이 낡는다.
 function RK_playParts(r) {
   const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20, pos = r.pos;
-  let what, acts;
+  let what, acts, deliver;
   if (pos == null) {
     what = "이번 조회 깊이 안에서 찾지 못했습니다 — 순위 경쟁 이전의 문제입니다.";
     acts = ["이 검색어를 정면으로 다루는 페이지가 실제로 있는지 확인합니다.",
             "있다면 색인됐는지 봅니다 — noindex·canonical·robots.txt 순으로 확인합니다.",
             "없다면 대표 글 한 장부터 씁니다. 여러 장을 한 번에 찍지 않습니다.",
             "경쟁이 너무 세면 롱테일 변형(질문형·지역·비교)부터 잡습니다."];
+    deliver = ["이 검색어를 정면으로 다루는 페이지가 있는지 판단할 확인 순서",
+               "없다면 새 글 한 장의 제목과 목차 — 여러 장을 한 번에 찍지 않습니다",
+               "있는데 색인이 안 됐다면 무엇을 고칠지(설정 수준)"];
   } else if (pos <= 3) {
     what = "이미 상단입니다 — 더 올리는 것보다 지키는 쪽이 남는 자리입니다.";
     acts = ["title·설명을 클릭이 나오게 다듬습니다 — 순위가 같아도 클릭은 늡니다.",
             "본문의 숫자·날짜를 갱신합니다. 낡은 글부터 자리를 내줍니다.",
             "이 페이지로 들어오는 내부 링크를 끊지 않습니다.",
             "다음 확인 때 순위가 떨어지면 그날 바로 봅니다."];
+    deliver = ["클릭을 늘릴 title 3안과 meta description 2안 — 본문은 그대로 둡니다",
+               "본문에서 갱신할 숫자·날짜 항목 목록"];
   } else if (pos <= p1) {
     what = `1페이지 안 ${pos}위입니다 — 여기서 더 얻을 것은 순위보다 클릭입니다.`;
     acts = ["title 앞쪽에 검색어를 두고 숫자나 연도를 붙입니다.",
             "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
             "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
             "표·목록처럼 결과에 그대로 실리는 블록을 하나 만듭니다."];
+    deliver = ["새 title 3안 — 검색어를 앞에, 숫자나 연도를 붙여서",
+               "meta description 2안",
+               "질문 바로 아래 넣을 40~60자 직답 블록 문안",
+               "결과에 그대로 실릴 표나 목록 하나"];
   } else if (pos <= edge) {
     what = `1페이지까지 ${pos - p1}칸 남았습니다 — 가장 적은 손으로 가장 크게 움직이는 구간입니다.`;
     acts = ["title 과 H1 에 검색어를 그대로 넣습니다.",
             "상위 페이지가 답하는 하위 질문 중 빠진 것을 H2 로 채웁니다.",
             "관련 글 서너 곳에서 이 페이지로 내부 링크를 겁니다.",
             "본문을 갱신하고 갱신 날짜를 드러냅니다."];
+    deliver = ["새 title 과 H1 문안 — 검색어를 그대로 넣어서",
+               "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
+               "내부 링크를 걸 글 서너 곳과 앵커 텍스트"];
   } else {
     what = `${pos}위입니다 — 검색은 되지만 아무도 여기까지 내려오지 않습니다.`;
     acts = ["검색 의도(알아보기·비교·구매)와 페이지 종류가 맞는지 먼저 봅니다.",
             "맞다면 그 검색어 하나만 정면으로 다루도록 페이지를 다시 씁니다.",
             "안 맞으면 새 페이지를 만들고 기존 글은 그쪽으로 링크합니다.",
             "같은 주제 글이 여러 장이면 하나로 합칩니다 — 서로 순위를 갉아먹습니다."];
+    deliver = ["이 페이지가 검색 의도에 맞는지 판단과 그 근거",
+               "맞다면 이 검색어 하나만 다루도록 다시 쓴 제목·목차",
+               "안 맞다면 새 페이지 제안과 기존 글에서 걸 링크"];
   }
   // AI 오버뷰가 자리를 차지했는데 우리만 빠진 경우 — 순위 구간과 무관하게 더 붙는다.
   if (r.aio === 1 && !r.aio_cited)
     acts = acts.concat([
       "검색어(질문) 그대로를 H2 로 두고 바로 아래에 2~3문장으로 직답합니다.",
       "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다."]);
-  return [what, acts];
+  if (r.aio === 1 && !r.aio_cited)
+    deliver = deliver.concat(["검색어 그대로를 쓴 H2 와 그 아래 2~3문장 직답"]);
+  return [what, acts, deliver];
 }
 const RK_play = r => playList(...RK_playParts(r));
 
@@ -239,9 +256,9 @@ function RK_detail(r) {
     : `<p class="detn">이 조회는 순위에 걸린 페이지 URL 을 주지 않았습니다.</p>`;
   // 점검 대상은 순위에 걸린 페이지가 우선, 없으면 이 검색어로 노출이 가장 큰 페이지.
   const fix = r.url || (pages[0] && pages[0].page) || "";
-  const [what, acts] = RK_playParts(r);
+  const [what, acts, deliver] = RK_playParts(r);
   const ask = askBlock({
-    url: fix, audit: RK_AUDITS[fix], acts,
+    url: fix, audit: RK_AUDITS[fix], acts, deliver,
     problem: `순위 ${r.pos != null ? r.pos + "위" : "미검출"} — ${what}`,
     queries: [{q: r.keyword, note: r.pos != null ? `현재 ${r.pos}위` : "순위 미검출"}],
   });
