@@ -607,6 +607,48 @@ def api_run_status(request: Request):
         conn.close()
 
 
+# 자동 수집 주기 프리셋 — 값(시간)과 화면에 쓸 이름. 목록의 정본은 여기다:
+# 화면은 이걸 받아 그대로 그리고, 저장은 이 안의 값만 받는다(화면이 보낸 값을 안 믿는다).
+# 0 은 '자동 재측정만 끔' — 첫 측정과 [전체 분석 실행]은 그대로 돈다(store.due_sites).
+RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72, "3일"),
+               (168, "주 1회"))
+
+
+@app.get("/api/settings")
+def api_settings(project: str, request: Request):
+    """사이트별 설정. 지금은 수집 주기 하나 — 앞으로 항목이 늘어날 자리다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
+        return {"run_every_hours": store.every_hours(conn, uid, project),
+                "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/settings")
+async def api_settings_set(request: Request):
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    try:
+        hours = float(body.get("run_every_hours"))
+    except (TypeError, ValueError):
+        hours = None
+    if hours not in {float(h) for h, _ in RUN_PRESETS}:
+        raise HTTPException(status_code=400,
+                            detail="선택할 수 없는 수집 주기입니다. 새로고침 후 다시 시도해 주세요.")
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        store.set_every_hours(conn, uid, project, hours)
+        return {"ok": True, "run_every_hours": hours}
+    finally:
+        conn.close()
+
+
 def _own(conn, uid: int, project: str) -> None:
     if not any(r["project"] == project for r in store.sites(conn, uid)):
         raise HTTPException(status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
@@ -712,6 +754,7 @@ def demo() -> None:
         os.environ["GOOGLE_CLIENT_ID"] = "dummy.apps.googleusercontent.com"
         os.environ["GOOGLE_CLIENT_SECRET"] = "dummy"
         os.environ["OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
+        os.environ.pop("SEOMINER_RUN_EVERY_HOURS", None)   # 전역 폴백의 기본값을 본다
 
         c = TestClient(app)
 
@@ -735,9 +778,10 @@ def demo() -> None:
 
         # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
-                     "/api/perf?project=x", "/api/repos", "/auth/github"):
+                     "/api/perf?project=x", "/api/repos", "/auth/github",
+                     "/api/settings?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        for path in ("/api/repo", "/api/create"):
+        for path in ("/api/repo", "/api/create", "/api/settings"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
@@ -765,6 +809,20 @@ def demo() -> None:
 
         assert c.get("/api/projects").json() == ["p1"], c.get("/api/projects").text
         assert c.get("/d").status_code == 200
+
+        # 설정 — 값이 없으면 전역 기본값이 실효값이고, 프리셋 밖 값은 서버가 막는다.
+        r = c.get("/api/settings?project=p1")
+        assert r.status_code == 200 and r.json()["run_every_hours"] == 168.0, r.text
+        assert r.json()["presets"][0]["h"] == 0, r.text
+        assert c.get("/api/settings?project=없는사이트").status_code == 404
+        for bad in (5, "매일", None):
+            assert c.post("/api/settings", json={"project": "p1", "run_every_hours": bad}
+                          ).status_code == 400, f"프리셋 밖 값이 통과했다: {bad!r}"
+        assert c.post("/api/settings", json={"project": "없는사이트", "run_every_hours": 24}
+                      ).status_code == 404, "남의 사이트 설정이 열렸다"
+        assert c.post("/api/settings", json={"project": "p1", "run_every_hours": 24}
+                      ).status_code == 200
+        assert c.get("/api/settings?project=p1").json()["run_every_hours"] == 24.0, "저장이 안 됐다"
 
         # 실행 단계 이름 — 목록에 없는 단계는 400, 있는 단계는 워커로 간다.
         spawned, real_dispatch = [], scheduler.dispatch

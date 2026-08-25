@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sites (
   repo TEXT,                          -- owner/name — /create 가 PR 을 낼 곳
   repo_branch TEXT,                   -- 기본 브랜치
   repo_profile TEXT,                  -- 리포 관례(JSON) — 발견 결과 캐시
+  run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
   UNIQUE(user_id, project)
 );
 """
@@ -67,6 +68,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
+    # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
+    if "run_every_hours" not in cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN run_every_hours REAL")
     conn.commit()
 
 
@@ -139,18 +143,28 @@ def due_sites(conn: sqlite3.Connection, idle_days: int = 30,
     그 사람은 빈 대시보드만 보고 떠난다.
 
     last_run_at 이 NULL 이면(= 등록 직후) 즉시 대상이다.
+
+    주기는 행마다 다르다: sites.run_every_hours 가 있으면 그 값, 없으면(NULL) 인자로
+    받은 전역 기본값이다. 0 = '자동 재측정 끔'. 아직 한 번도 안 잰 사이트와 수동
+    요청(request_run 이 last_run_at 을 NULL 로 만든다)까지 막으면 등록도 '지금 재기'도
+    죽으므로, 0 은 last_run_at IS NULL 만 통과시킨다.
+
+    전역 0 과 사이트별 0 은 뜻이 다르다. 사이트별 0 은 그 사이트만 끄지만, **전역 0 은
+    배포 전체의 비상 브레이크라 사이트별 값을 이긴다** — SERP·AI 는 실행당 과금이라
+    운영자가 비용을 멈추려고 0 을 넣었는데 주기를 지정해 둔 사이트가 계속 돌면
+    브레이크가 아니다. 설정 설명("0 이면 자동 수집을 끈다")도 그 뜻이다.
     """
-    # 0 = '자동 재측정 끔'. 아직 한 번도 안 잰 사이트와 수동 요청(request_run 이
-    # last_run_at 을 NULL 로 만든다)까지 막으면 등록도 '지금 재기'도 죽는다.
-    if every_hours <= 0:
-        every_hours = 1e9
+    # 전역이 꺼져 있으면 주기 판정 자체를 건너뛴다 — 첫 측정과 수동 요청만 남는다.
+    period = ("s.last_run_at IS NULL" if every_hours <= 0 else
+              "(s.last_run_at IS NULL OR (COALESCE(s.run_every_hours, :every) > 0 AND "
+              " s.last_run_at <= datetime('now', '-' || COALESCE(s.run_every_hours, :every) || ' hours')))")
     return conn.execute(
         "SELECT s.*, u.email FROM sites s JOIN users u ON u.id = s.user_id "
-        "WHERE s.active=1 AND u.last_seen_at > datetime('now', ?) "
-        "  AND (s.last_run_at IS NULL OR s.last_run_at <= datetime('now', ?)) "
+        "WHERE s.active=1 AND u.last_seen_at > datetime('now', :idle) "
+        f"  AND {period} "
         "  AND (s.running_since IS NULL OR s.running_since <= datetime('now','-3 hours')) "
         "ORDER BY s.last_run_at IS NOT NULL, s.id",   # 첫 측정 대기자를 먼저
-        (f"-{idle_days} days", f"-{every_hours} hours")).fetchall()
+        {"idle": f"-{idle_days} days", "every": every_hours}).fetchall()
 
 
 def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
@@ -198,6 +212,24 @@ def set_profile(conn: sqlite3.Connection, user_id: int, project: str, profile: s
 def site(conn: sqlite3.Connection, user_id: int, project: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM sites WHERE user_id=? AND project=? AND active=1",
                         (user_id, project)).fetchone()
+
+
+def every_hours(conn: sqlite3.Connection, user_id: int, project: str) -> float:
+    """이 사이트에 실제로 적용되는 재측정 주기 — 값이 없으면 전역 기본값.
+    due_sites 의 COALESCE 와 같은 규칙이다. 두 곳이 다른 답을 하면 화면이 거짓말한다."""
+    row = site(conn, user_id, project)
+    v = row["run_every_hours"] if row else None
+    return float(v) if v is not None else settings.num("SEOMINER_RUN_EVERY_HOURS")
+
+
+def set_every_hours(conn: sqlite3.Connection, user_id: int, project: str,
+                    hours: float) -> bool:
+    """사이트별 재측정 주기를 정한다. 0 이면 자동만 끈다(첫 측정·수동 실행은 그대로).
+    범위를 user_id 로 좁힌다 — project 이름만으로 남의 사이트를 고칠 수 있으면 안 된다."""
+    cur = conn.execute("UPDATE sites SET run_every_hours=? WHERE user_id=? AND project=?",
+                       (float(hours), user_id, project))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def request_run(conn: sqlite3.Connection, user_id: int, project: str) -> bool:
@@ -318,6 +350,42 @@ def demo() -> None:
         add_site(conn, uid2, "fresh", "sc-domain:b.com", "b.com")
         due = due_sites(conn)
         assert [r["project"] for r in due] == ["fresh"], f"신규 사이트가 안 잡힌다: {due}"
+
+        # 주기는 행마다 본다 — 사이트별 값이 전역을 이기고, 없으면 전역을 쓴다.
+        os.environ.pop("SEOMINER_RUN_EVERY_HOURS", None)
+        sid2 = site(conn, uid2, "fresh")["id"]
+        mark_run(conn, sid2); mark_done(conn, sid2)
+        conn.execute("UPDATE sites SET last_run_at=datetime('now','-10 hours')")
+        conn.commit()
+        assert due_sites(conn, every_hours=1e9) == [], "전역 주기가 아직인데 잰다"
+        assert set_every_hours(conn, uid, "myproj", 6), "사이트 주기를 못 바꾼다"
+        assert every_hours(conn, uid, "myproj") == 6.0
+        assert [r["project"] for r in due_sites(conn, every_hours=1e9)] == ["myproj"], \
+            "사이트별 값이 전역을 못 이긴다"
+        assert every_hours(conn, uid2, "fresh") == 168.0, "NULL 인데 전역 기본값이 아니다"
+        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["myproj", "fresh"], \
+            "NULL 인 사이트가 전역 주기를 안 쓴다"
+        # 0 = 자동만 끔. 첫 측정(last_run_at IS NULL)과 수동 요청은 그대로 통과한다.
+        set_every_hours(conn, uid, "myproj", 0)
+        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["fresh"], \
+            "사이트 주기가 0 인데 자동 재측정이 안 꺼진다"
+        assert request_run(conn, uid, "myproj")
+        assert "myproj" in [r["project"] for r in due_sites(conn, every_hours=1)], \
+            "0 이면 첫 측정·수동 재측정까지 막힌다"
+        # 전역 0 은 비상 브레이크다 — 주기를 지정해 둔 사이트까지 멈춘다. 이걸 안 잡으면
+        # 운영자가 비용을 멈추려고 0 을 넣어도 설정된 사이트가 계속 유료 수집을 돈다.
+        set_every_hours(conn, uid, "myproj", 6)
+        conn.execute("UPDATE sites SET last_run_at = datetime('now','-999 hours')")
+        conn.commit()
+        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["myproj", "fresh"], \
+            "주기가 한참 지났는데 안 잰다"
+        assert due_sites(conn, every_hours=0) == [], \
+            "전역 0 인데 사이트별 주기가 있는 사이트가 계속 돈다 — 브레이크가 안 듣는다"
+        set_every_hours(conn, uid, "myproj", 0)      # 아래 단언이 보는 상태로 되돌린다
+        # 남의 사이트는 못 고친다 — project 이름만 알면 되는 게 아니다.
+        assert not set_every_hours(conn, uid2, "myproj", 24), "남의 사이트 주기를 고쳤다"
+        assert every_hours(conn, uid, "myproj") == 0.0, "남이 내 주기를 바꿨다"
+        set_every_hours(conn, uid, "myproj", 168)
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         assert due_sites(conn) == [], "휴면 계정이 스케줄에서 안 빠졌다"

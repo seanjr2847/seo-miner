@@ -280,16 +280,20 @@ def _check_seams() -> None:
     assert "var VIEWS = [" not in dash, "dash.html 에 화면 목록 사본이 되살아났다"
 
     hs = re.search(r"var HOST_SEC = \[(.*?)\n  \];", dash, re.S)
-    hv = re.search(r"var HOST_VIEW = \[(.*?)\];", dash, re.S)
-    assert hs and hv, "dash.html 의 호스팅 전용 목록(HOST_SEC/HOST_VIEW)을 못 찾았다"
-    hv_m = re.match(r'\s*"(\w+)",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\],\s*"(\w+)"',
-                    hv.group(1))
-    assert hv_m, "HOST_VIEW 의 모양이 바뀌었다"
+    hv = re.search(r"var HOST_VIEWS = \[(.*?)\n  \];", dash, re.S)
+    assert hs and hv, "dash.html 의 호스팅 전용 목록(HOST_SEC/HOST_VIEWS)을 못 찾았다"
+    # [화면 id, 메뉴 이름, 담을 것, 채우는 단계, 이 화면 바로 뒤에]
+    hv_rows = re.findall(
+        r'\["(\w+)",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\],\s*"(\w+)"\]', hv.group(1))
+    # 한 행이라도 정규식에서 빠지면 그 화면은 검사 없이 통과한다 — 개수로 못 박는다.
+    assert len(hv_rows) == hv.group(1).count('\n    ["') and hv_rows, \
+        f"HOST_VIEWS 행을 {len(hv_rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
     rows = re.findall(r'\["([\w-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\]', hs.group(1))
     assert len(rows) >= 4, f"HOST_SEC 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
 
     body = dash.replace(hs.group(0), "").replace(hv.group(0), "")   # 표 자신은 근거가 못 된다
-    host_ids = [sec for _, sec, _ in rows] + re.findall(r'"([\w-]+)"', hv_m.group(2))
+    host_ids = [sec for _, sec, _ in rows] + \
+        [i for r in hv_rows for i in re.findall(r'"([\w-]+)"', r[1])]
     for i in host_ids:
         assert f'"{i}"' in body, f"덧붙인다고 선언했는데 dash.html 이 만들지 않는다: {i}"
         assert f'id="{i}"' not in tpl, f"원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다: {i}"
@@ -300,15 +304,16 @@ def _check_seams() -> None:
         assert vid in defs, f"HOST_SEC 가 없는 화면에 붙는다: {vid}"
         assert anchor in merged[vid], f"{sec} 를 붙일 자리가 {vid} 에 없다: {anchor}"
         merged[vid].insert(merged[vid].index(anchor) + 1, sec)
-    assert hv_m.group(4) in defs, f"HOST_VIEW 를 넣을 자리가 없다: {hv_m.group(4)}"
-    assert hv_m.group(1) not in defs, f"원본 뷰가 있는데 호스팅 화면으로 또 만든다: {hv_m.group(1)}"
+    for vid, _, _, anchor in hv_rows:
+        assert anchor in defs, f"HOST_VIEWS 화면 {vid} 를 넣을 자리가 없다: {anchor}"
+        assert vid not in defs, f"원본 뷰가 있는데 호스팅 화면으로 또 만든다: {vid}"
 
     have = set(re.findall(r'id="([\w-]+)"', tpl))
     for d in defs.values():             # 원본 선언이 담는 요소는 원본에 있어야 한다
         for i in d["sections"]:
             assert i in have, f'{d["id"]} 의 view-def 가 없는 요소 id 를 담는다: {i}'
     stage_ids = {s for d in defs.values() for s in d["stages"]}
-    stage_ids |= set(re.findall(r'"(\w+)"', hv_m.group(3)))
+    stage_ids |= {s for r in hv_rows for s in re.findall(r'"(\w+)"', r[2])}
 
     # 3) 단계 용어표는 한 벌이다 — 우리가 내보내는 id 를 전부 알아야 한다.
     g = re.search(r"var STAGE = \{(.*?)\n  \};", dash, re.S)

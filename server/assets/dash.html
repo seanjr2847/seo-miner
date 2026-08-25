@@ -228,6 +228,14 @@
   #sm-cc button:hover{color:var(--patina);border-color:var(--patina)}
   @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
 
+  /* 설정 — 고르면 곧바로 저장한다. 저장 버튼이 따로 없으니 결과는 옆에서 말해 준다. */
+  #sm-set .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
+  #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #sm-set .opts button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+    border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
+  #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
+  #sm-set .msg{font:400 11.5px/1 var(--mono);color:var(--slate);margin-left:6px}
+
   /* 모바일: 차트 SVG 는 720px 고정이고 부모(.logwrap)가 overflow-x:auto 로 받는다.
      스크롤이 된다는 걸 알려주지 않으면 잘린 그림으로만 보인다. */
   @media(max-width:900px){
@@ -478,9 +486,12 @@
     ["keywords", "sm-kw",   "log"],
     ["history",  "sm-cc",   "made-sec"]
   ];
-  // HOST_VIEW: 대응하는 원본 뷰 파일이 아예 없는 화면 — blRender() 가 만든다.
+  // HOST_VIEWS: 대응하는 원본 뷰 파일이 아예 없는 화면 — blRender()·setShell() 이 만든다.
   // [화면 id, 메뉴 이름, 담을 것, 채우는 단계, 이 화면 바로 뒤에]
-  var HOST_VIEW = ["backlinks", "백링크", ["sm-bl"], [], "site"];
+  var HOST_VIEWS = [
+    ["backlinks", "백링크", ["sm-bl"],  [], "site"],
+    ["settings",  "설정",   ["sm-set"], [], "history"]
+  ];
 
   function insertAfter(list, at, item) {   // at 바로 뒤 — 못 찾으면(-1) 맨 끝
     list.splice(at < 0 ? list.length : at + 1, 0, item);
@@ -500,8 +511,10 @@
       if (!v) throw new Error("호스팅 섹션이 붙을 화면이 없습니다: " + h[0] + " / " + h[1]);
       insertAfter(v[2], v[2].indexOf(h[2]), h[1]);
     });
-    insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === HOST_VIEW[4]; }),
-                HOST_VIEW.slice(0, 4));
+    HOST_VIEWS.forEach(function (h) {
+      insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === h[4]; }),
+                  h.slice(0, 4));
+    });
   } catch (e) {
     VIEWS = [];       // 화면 분할을 포기한다 — nav() 는 실행 버튼만 달고 그대로 선다
     fail("화면 목록을 만들지 못했습니다 — 사이드바와 화면 분할 없이 이어갑니다", e);
@@ -809,6 +822,69 @@
     BL_DONE = ""; BL_Q = ""; BL_F = ""; backlinks();
   });
   backlinks();
+
+  // ── 설정 ─────────────────────────────────────────────────────
+  // 사이트마다 다른 값이 사는 자리. 지금은 수집 주기 하나뿐이고, 항목이 늘면 여기 붙는다.
+  // 프리셋 목록의 정본은 서버(app.RUN_PRESETS)다 — 화면은 받아서 그리기만 한다.
+  var SET_DONE = "", SET_H = null;
+
+  // 껍데기는 동기로 만든다 — place() 가 배치할 때 이미 있어야 한다(성과 상자와 같다).
+  step("설정 상자", function setShell() {
+    var host = document.querySelector("main");
+    if (!host || document.getElementById("sm-set")) return;
+    var sec = document.createElement("section");
+    sec.id = "sm-set";
+    sec.innerHTML = '<p class="eyebrow">설정</p><h2>자동 수집 주기</h2>' +
+      '<p class="sub">이 사이트를 얼마나 자주 다시 측정할지 정합니다. ' +
+      "끄더라도 [전체 분석 실행]과 아직 한 번도 안 잰 사이트의 첫 측정은 그대로 " +
+      "동작합니다 — 자동 재측정만 멈춥니다.</p>" +
+      '<div class="opts"></div>';
+    // 위임 한 번만 — 다시 그릴 때마다 붙이면 한 번 누른 게 여러 번 저장된다.
+    sec.addEventListener("click", function (ev) {
+      var t = ev.target.closest ? ev.target.closest("[data-h]") : null;
+      if (t) setSave(Number(t.dataset.h));
+    });
+    host.appendChild(sec);
+  });
+
+  function setRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec || !SET_H) return;
+    sec.querySelector(".opts").innerHTML = SET_H.presets.map(function (p) {
+      return '<button data-h="' + p.h + '"' +
+        (p.h === SET_H.run_every_hours ? ' class="on"' : "") + ">" + esc(p.label) +
+        "</button>";
+    }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
+  }
+
+  async function setLoad() {
+    var pj = proj();
+    if (!pj || SET_DONE === pj) return;
+    SET_DONE = pj;
+    try {
+      SET_H = await (await fetch("/api/settings?project=" +
+        encodeURIComponent(pj))).json();
+    } catch (e) { SET_DONE = ""; return; }   // 실패는 되돌려 다음 기회에 다시 받는다
+    setRender("");
+  }
+
+  async function setSave(h) {
+    var pj = proj();
+    if (!pj) return;
+    try {
+      var r = await fetch("/api/settings", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: pj, run_every_hours: h})});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      SET_H.run_every_hours = d.run_every_hours;
+      setRender("저장됨");
+    } catch (e) {
+      setRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+    }
+  }
+  if (sel) sel.addEventListener("change", function () { SET_DONE = ""; setLoad(); });
+  setLoad();
 
   // 좁은 화면에서 차트는 가로로 스크롤한다(원본 .logwrap 설계). 그 사실을 알린다 —
   // 모르면 잘린 그림으로만 보인다.
