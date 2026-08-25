@@ -601,7 +601,9 @@ def api_run_status(request: Request):
     conn = store.connect()
     try:
         return {r["project"]: {"running": bool(r["running_since"]),
-                               "last_run_at": r["last_run_at"]}
+                               "last_run_at": r["last_run_at"],
+                               "stage": r["stage"],
+                               "pct": r["stage_pct"]}
                 for r in store.sites(conn, uid)}
     finally:
         conn.close()

@@ -146,9 +146,17 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
     if not dry_run:
         store.mark_run(conn, site["id"])
+
+    # 화면이 폴링으로 읽는 값. 단계가 끝난 만큼만 센다 — 3단계를 시작한 시점의
+    # 진행률은 2/8 이지, 3/8 이 아니다.
+    def on_stage(idx, total, name):
+        if not dry_run:
+            store.mark_stage(conn, site["id"], name, round((idx - 1) * 100 / total))
+
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
-            results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only)
+            results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
+                                        on_stage=on_stage)
             run_all.print_summary(project, results, dry_run=dry_run)
             rc = run_all.chain_rc(results)
             # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
@@ -273,12 +281,16 @@ def demo() -> None:
 
         called: list[dict] = []
 
-        def fake_chain(project, *, dry_run=False, skip=None, only=None):
+        def fake_chain(project, *, dry_run=False, skip=None, only=None, on_stage=None):
+            if on_stage:
+                on_stage(3, 8, "keywords")  # 화면이 읽는 진행률이 실제로 찍히는지 본다
             called.append({
                 "project": project,
                 "capture_home": os.environ["CAPTURE_HOME"],
                 "openrouter": os.environ.get("OPENROUTER_API_KEY"),
                 "serper": os.environ.get("SERPER_API_KEY"),
+                "progress": conn.execute(
+                    "SELECT stage, stage_pct FROM sites").fetchone()[:2],
             })
             return []                       # run_chain 은 [(단계, StageResult)] 를 돌려준다
 
@@ -290,6 +302,9 @@ def demo() -> None:
         assert called[0]["capture_home"] == str(store.home(uid)), "CAPTURE_HOME 불일치"
         assert called[0]["openrouter"] == "test-key", "OPENROUTER_API_KEY 주입 실패"
         assert called[0]["serper"] is None, "짝 없는 잔여 키가 엔진에 노출됐다"
+        assert called[0]["progress"] == ("keywords", 25), called[0]["progress"]
+        assert conn.execute("SELECT stage_pct FROM sites").fetchone()[0] is None, \
+            "끝났는데 진행률이 남았다"
         assert len(results) == 1 and results[0]["ok"] is True, f"결과 이상: {results}"
 
         assert "CAPTURE_HOME" not in os.environ, "CAPTURE_HOME 복원 실패"

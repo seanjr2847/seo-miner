@@ -231,6 +231,7 @@ def run_chain(
     only: str | None = None,
     opts: dict[str, dict] | None = None,
     stages: tuple = STAGES,
+    on_stage=None,
 ) -> list[tuple[str, StageResult]]:
     """전체 수집 체인을 순서대로 실행하고 각 단계의 결과를 그대로 돌려줍니다.
 
@@ -241,6 +242,8 @@ def run_chain(
         only: 실행할 단계 이름 (쉼표 구분 문자열 하나)
         opts: {단계 이름: {kwarg: 값}} — 그 단계의 collect() 에 그대로 넘어간다
         stages: 실행할 단계 표. 테스트가 가짜 표를 주입하는 자리다.
+        on_stage: fn(idx, total, 단계 이름) — 단계 시작마다 불린다. 진행률 보고용이라
+            여기서 난 예외는 삼킨다(보고가 수집을 죽이면 안 된다).
 
     Returns:
         [(단계 이름, StageResult), ...] — stages 순서 그대로, 단계당 한 건.
@@ -277,6 +280,12 @@ def run_chain(
         if gsc_aborted:
             results.append((stage.name, StageResult(ok=True, skipped=True, reason=ABORT_REASON)))
             continue
+
+        if on_stage:
+            try:
+                on_stage(idx, total_stages, stage.name)
+            except Exception:
+                pass
 
         print(f"\n[{idx}/{total_stages}] {stage.name} — {stage.desc}")
         print(SUB_SEPARATOR)

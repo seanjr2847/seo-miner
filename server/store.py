@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS sites (
   repo_branch TEXT,                   -- 기본 브랜치
   repo_profile TEXT,                  -- 리포 관례(JSON) — 발견 결과 캐시
   run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
+  stage TEXT,                         -- 지금 도는 단계 id (run_all.STAGES 의 이름)
+  stage_pct INTEGER,                  -- 그 시점의 진행률 0~100 (끝난 단계 / 전체 단계)
   UNIQUE(user_id, project)
 );
 """
@@ -65,12 +67,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(sites)")}
     if not cols:
         return
-    for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile"):
+    for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile",
+                "stage"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
     if "run_every_hours" not in cols:
         conn.execute("ALTER TABLE sites ADD COLUMN run_every_hours REAL")
+    if "stage_pct" not in cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN stage_pct INTEGER")
     conn.commit()
 
 
@@ -171,12 +176,21 @@ def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
     """수집 시작 표시. 성공·실패 무관하게 찍는다 — 실패한 사이트가 매 틱마다
     재시도하면 비용이 샌다."""
     conn.execute("UPDATE sites SET last_run_at=CURRENT_TIMESTAMP, "
-                 "running_since=CURRENT_TIMESTAMP WHERE id=?", (site_id,))
+                 "running_since=CURRENT_TIMESTAMP, stage=NULL, stage_pct=0 WHERE id=?",
+                 (site_id,))
+    conn.commit()
+
+
+def mark_stage(conn: sqlite3.Connection, site_id: int, stage: str, pct: int) -> None:
+    """지금 도는 단계와 진행률. 화면이 '분석 중…' 대신 몇 %인지 말할 수 있게 하는 값이다."""
+    conn.execute("UPDATE sites SET stage=?, stage_pct=? WHERE id=?",
+                 (stage, max(0, min(100, int(pct))), site_id))
     conn.commit()
 
 
 def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
-    conn.execute("UPDATE sites SET running_since=NULL WHERE id=?", (site_id,))
+    conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
+                 "WHERE id=?", (site_id,))
     conn.commit()
 
 
@@ -318,7 +332,12 @@ def demo() -> None:
         assert due_sites(conn) == [], "방금 쟀는데 또 잰다"
         assert conn.execute("SELECT running_since FROM sites WHERE id=?",
                             (sid,)).fetchone()[0], "수집 중 표시가 안 켜졌다"
+        mark_stage(conn, sid, "keywords", 25)
+        r = conn.execute("SELECT stage, stage_pct FROM sites WHERE id=?", (sid,)).fetchone()
+        assert (r["stage"], r["stage_pct"]) == ("keywords", 25), tuple(r)
         mark_done(conn, sid)
+        assert conn.execute("SELECT stage_pct FROM sites WHERE id=?",
+                            (sid,)).fetchone()[0] is None, "끝났는데 진행률이 남았다"
         assert not conn.execute("SELECT running_since FROM sites WHERE id=?",
                                 (sid,)).fetchone()[0], "수집 중 표시가 안 꺼졌다"
         assert request_run(conn, uid, "myproj"), "지금 재기 요청이 안 먹는다"

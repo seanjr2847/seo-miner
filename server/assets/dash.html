@@ -307,24 +307,34 @@
     var r = st && st[proj()];
     if (!r) return;
     b.disabled = !!r.running;
-    b.textContent = r.running ? "분석 중…" : "전체 분석 실행";
+    b.textContent = !r.running ? "전체 분석 실행"
+      : (typeof r.pct === "number" ? "분석 중 " + r.pct + "%" : "분석 중…");
     waiting(r);
     if (ran && !r.running) { load(); loadDoctor(); perfLoad(); }   // 끝나면 스스로 채워진다
     ran = r.running;
   }
 
   // 도는 동안 화면은 빈 상태 문구로 뒤덮인다 — "실행하세요"라고 잘못 안내한다.
+  // 문구만 세우면 "얼마나 남았나"에 답을 못 한다. 워커가 단계마다 찍어 주는
+  // 진행률(sites.stage_pct)을 그대로 보여 준다 — 8분의 1씩 뛰지만 지어낸 값이 아니다.
   function waiting(r) {
     var el = document.getElementById("sm-wait"), main = document.querySelector("main");
     if (!r.running) { if (el) el.remove(); return; }
-    if (el || !main) return;
-    el = document.createElement("p");
-    el.id = "sm-wait";
-    el.textContent = r.last_run_at
-      ? "다시 분석하는 중입니다 — 끝나면 이 화면이 자동으로 갱신됩니다."
-      : "첫 분석이 진행 중입니다 — 검색 실적부터 개선 기회까지 순서대로 수집합니다. " +
-        "몇 분 걸리고, 끝나면 이 화면이 자동으로 갱신됩니다.";
-    main.insertBefore(el, main.firstChild);
+    if (!main) return;
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "sm-wait";
+      main.insertBefore(el, main.firstChild);
+    }
+    var s = (STAGE || {})[r.stage], now = (s && s.t) || r.stage;   // 폴링이 STAGE 보다 빠를 수 있다
+    var head = typeof r.pct === "number"
+      ? r.pct + "% 진행" + (now ? " — 지금 " + now : "")
+      : (r.last_run_at ? "다시 분석하는 중입니다" : "첫 분석이 진행 중입니다");
+    var tail = r.last_run_at
+      ? " · 끝나면 이 화면이 자동으로 갱신됩니다."
+      : " · 검색 실적부터 개선 기회까지 순서대로 수집합니다. 몇 분 걸리고, " +
+        "끝나면 이 화면이 자동으로 갱신됩니다.";
+    put(el, head + tail);
   }
   async function poll() {
     try { paint(await (await fetch("/api/run/status")).json()); } catch (e) {}
