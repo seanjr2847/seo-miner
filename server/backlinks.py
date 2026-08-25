@@ -6,8 +6,9 @@ SERP 에 이미 쓰는 DataForSEO 자격증명을 그대로 재사용한다 — 
 가격(2026-08 기준): 요청당 $0.024 + 행당 $0.000036. 1,000행이 $0.05 라서 자주 재도
 싸지만, 백링크는 하루 단위로 움직이지 않는다 — 기본 주기를 길게 둔다.
 
-Brain(capture 의 SQLite)에 테이블을 추가한다. 엔진 파일(db.py)은 손대지 않고
-CREATE TABLE IF NOT EXISTS 로 서버가 직접 만든다.
+Brain(capture 의 SQLite)에 쓴다. 테이블 정의는 여기 없다 — Brain 스키마의 소유자는
+db.py 하나이고(backlink_summary·referring_domains 는 db.SCHEMA 에 있다), 이 파일은
+db.connect() 가 보장해 준 테이블에 쓰기만 한다.
 """
 from __future__ import annotations
 
@@ -27,26 +28,9 @@ import serp_adapter                             # noqa: E402
 API = "https://api.dataforseo.com/v3/backlinks"
 TIMEOUT = 120
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS backlink_summary (
-  id INTEGER PRIMARY KEY,
-  project_id INTEGER NOT NULL,
-  checked_date TEXT NOT NULL,
-  rank INTEGER, backlinks INTEGER, referring_domains INTEGER,
-  referring_main_domains INTEGER, broken_backlinks INTEGER,
-  dofollow INTEGER, nofollow INTEGER,
-  UNIQUE(project_id, checked_date)
-);
-CREATE TABLE IF NOT EXISTS referring_domains (
-  id INTEGER PRIMARY KEY,
-  project_id INTEGER NOT NULL,
-  checked_date TEXT NOT NULL,
-  domain TEXT NOT NULL,
-  rank INTEGER, backlinks INTEGER, dofollow INTEGER, first_seen TEXT, lost_date TEXT,
-  UNIQUE(project_id, checked_date, domain)
-);
-CREATE INDEX IF NOT EXISTS idx_refdom ON referring_domains(project_id, checked_date);
-"""
+# db.SCHEMA 가 테이블을 만든다. 이 이름은 worker.py 가 아직 executescript 하므로
+# 하위 호환으로만 남긴다 — 빈 스크립트는 아무것도 안 한다.
+SCHEMA = ""
 
 
 class BacklinksError(RuntimeError):
@@ -78,7 +62,6 @@ def collect(project: str, *, limit: int = 200) -> dict:
     """요약 + 참조 도메인 상위 N. 반환: {summary, domains, cost}."""
     conn = db.connect()
     try:
-        conn.executescript(SCHEMA)
         p = db.get_project(conn, project)
         target = p["domain"]
         today = date.today().isoformat()
@@ -127,7 +110,6 @@ def latest(project: str, top: int = 25) -> dict:
     """대시보드용 조회. 수집한 적이 없으면 빈 값을 돌려준다(없는 걸 지어내지 않는다)."""
     conn = db.connect()
     try:
-        conn.executescript(SCHEMA)
         p = db.get_project(conn, project)
         s = conn.execute(
             "SELECT * FROM backlink_summary WHERE project_id=? ORDER BY checked_date DESC"

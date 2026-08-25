@@ -23,17 +23,12 @@ import html
 import json
 import re
 import secrets
-import subprocess
-import time
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
-import google.auth.transport.requests
-import google.oauth2.id_token
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from google_auth_oauthlib.flow import Flow
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 import backlinks
@@ -42,111 +37,39 @@ import dashboard
 import db
 import exports
 import gh
+import identity
+import pages
+import scheduler
+import settings
 import store
 import writer
-
-OAUTH_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
-
-# 고정 기본값을 두면 프로덕션에서 그대로 떠서 세션을 위조당한다. 없으면 랜덤 —
-# 재시작 때 세션이 끊길 뿐이고, 끊기는 게 위조당하는 것보다 낫다.
-SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_urlsafe(32)
-
-# --- 주기 실행 ---------------------------------------------------------------
-# Railway 볼륨은 서비스 하나에만 붙는다 — 크론을 별도 서비스로 빼면 이 서비스의 /data 를
-# 못 본다. 그렇다고 웹 프로세스 안에서 직접 수집하면 store.tenant() 가 갈아끼우는 전역
-# os.environ 을 동시에 들어온 웹 요청이 같이 보게 된다(남의 테넌트). 그래서 subprocess 다.
-
-def _run_every_hours() -> float:
-    """0 이면 자동 수집을 끈다. 호출 시점에 읽는다 — 얼려두면 env 를 바꿔도 안 먹는다."""
-    try:
-        return float(os.environ.get("SEOMINER_RUN_EVERY_HOURS", "168"))
-    except ValueError:
-        return 168.0
-
-
-def _pending() -> int:
-    """지금 잴 사이트 수. 주기 판정은 사이트별로 DB 가 한다 — 전역 스탬프 파일을 쓰면
-    먼저 등록한 사이트가 도장을 찍어서 방금 가입한 사람의 첫 측정이 통째로 밀렸다."""
-    conn = store.connect()
-    try:
-        return len(store.due_sites(conn, every_hours=_run_every_hours()))
-    finally:
-        conn.close()
-
-
-def _run_worker() -> None:
-    subprocess.run([sys.executable, str(ROOT / "server" / "worker.py"), "--all"],
-                   cwd=str(ROOT), timeout=3 * 3600)
-
-
-def _spawn_worker(args: list[str]) -> None:
-    try:
-        subprocess.Popen([sys.executable, str(ROOT / "server" / "worker.py"), *args],
-                         cwd=str(ROOT))
-    except Exception as e:
-        print(f"[worker] 실행 실패: {e}", flush=True)
-
-
-def _kick() -> None:
-    """등록 직후 곧바로 수집을 띄운다 — 틱을 기다리면 그동안 화면이 비어 있다.
-    워커가 사이트마다 시작 전에 도장을 찍으므로 스케줄러 틱과 겹쳐도 중복되지 않는다."""
-    _spawn_worker(["--all"])                       # 실패해도 다음 틱이 잡는다
-
-
-async def _scheduler() -> None:
-    # 60초 틱 — 등록 직후 첫 측정이 곧바로 잡혀야 온보딩이 성립한다. 잴 게 없으면
-    # DB 조회 한 번으로 끝나므로 틱이 잦아도 싸다.
-    while True:
-        await asyncio.sleep(60)
-        try:
-            if await asyncio.to_thread(_pending):
-                await asyncio.to_thread(_run_worker)
-        except Exception as e:                # 스케줄러가 죽으면 자동 수집이 조용히 멈춘다
-            print(f"[scheduler] 실패: {e}", flush=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_scheduler())
+    task = asyncio.create_task(scheduler.loop())
     yield
     task.cancel()
 
+
+# 고정 기본값을 두면 프로덕션에서 그대로 떠서 세션을 위조당한다. 없으면 랜덤 —
+# 재시작 때 세션이 끊길 뿐이고, 끊기는 게 위조당하는 것보다 낫다.
+# 다른 설정과 달리 여기만은 import 시점에 얼린다 — 미들웨어에 한 번 넘기면 못 바꾼다.
+SESSION_SECRET = settings.get("SESSION_SECRET") or secrets.token_urlsafe(32)
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
-    https_only=OAUTH_REDIRECT_URI.startswith("https://"),
+    https_only=settings.get("OAUTH_REDIRECT_URI").startswith("https://"),
 )
 
-SCOPES = collect_gsc.SCOPES + ["openid",
-                               "https://www.googleapis.com/auth/userinfo.email"]
 
-
-def _client_id() -> str:
-    """import 시점이 아니라 호출 시점에 읽는다 — 얼려두면 env 없이 뜬 서버가
-    빈 client_id 로 조용히 굴러가고, 유저가 로그인을 눌러야 실패를 안다."""
-    cid = os.environ.get("GOOGLE_CLIENT_ID")
-    if not cid:
-        raise HTTPException(status_code=500, detail="구글 로그인이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GOOGLE_CLIENT_ID)")
-    return cid
-
-
-def _flow() -> Flow:
-    secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    if not secret:
-        raise HTTPException(status_code=500, detail="구글 로그인이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GOOGLE_CLIENT_SECRET)")
-    config = {
-        "web": {
-            "client_id": _client_id(),
-            "client_secret": secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [OAUTH_REDIRECT_URI],
-        }
-    }
-    return Flow.from_client_config(config, scopes=SCOPES,
-                                   redirect_uri=OAUTH_REDIRECT_URI)
+@app.exception_handler(identity.NotConfigured)
+def _not_configured(request: Request, e: identity.NotConfigured):
+    """로그인 설정이 없는 배포. 문구는 유저에게 그대로 보여 준다 — 500 페이지만 뜨면
+    운영자도 뭐가 빠졌는지 모른다."""
+    return JSONResponse({"detail": str(e)}, status_code=500)
 
 
 def _uid(request: Request) -> Optional[int]:
@@ -160,25 +83,8 @@ def _require_uid(request: Request) -> int:
     return uid
 
 
-# 대시보드·보고서에 얹는 화면 조각은 server/assets/ 에 산다 — 파이썬 문자열에 JS 를
-# 1,000 줄 박아 두면 어느 쪽도 편집기가 도와주지 못한다.
-def _asset(name: str) -> str:
-    return (ROOT / "server" / "assets" / name).read_text("utf-8")
-
-
-def _addon(name: str) -> bytes:
-    return _asset(name).replace("@@TERMS@@", _TERMS_JS).encode("utf-8")
-
-
-def _page(name: str) -> str:
-    return (ROOT / "server" / name).read_text("utf-8")
-
-
 def _html(body: str, title: str = "seo-miner") -> HTMLResponse:
-    return HTMLResponse(
-        '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{html.escape(title)}</title></head><body>{body}</body></html>")
+    return HTMLResponse(pages.document(body, title))
 
 
 @app.get("/healthz")
@@ -190,7 +96,7 @@ def healthz():
 def home(request: Request):
     uid = _uid(request)
     if uid is None:
-        return _html(_page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
+        return _html(pages.page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
     conn = store.connect()
     try:
         rows = store.sites(conn, uid)
@@ -219,57 +125,41 @@ def home(request: Request):
     user_bar = (f'<span class="who">{who}</span>'
                 '<form method="post" action="/auth/logout" class="lo">'
                 '<button type="submit">로그아웃</button></form>') if who else ""
-    taken = json.dumps([r["gsc_property"] for r in rows], ensure_ascii=False)
-    site_list = json.dumps([{"project": r["project"], "repo": r["repo"]} for r in rows],
-                           ensure_ascii=False)
-    page = (_page("app.html")
-            .replace("<!--USER-->", user_bar)
-            .replace("<!--SITES-->", block)
-            .replace("<script>",
-                     f"<script>window.__TAKEN__={taken};window.__SITES__={site_list};", 1))
-    return _html(page, "사이트 관리 — seo-miner")
+    doc = pages.fill(pages.page("app.html"), USER=user_bar, SITES=block)
+    doc = pages.data(doc,
+                     __TAKEN__=[r["gsc_property"] for r in rows],
+                     __SITES__=[{"project": r["project"], "repo": r["repo"]} for r in rows])
+    return _html(doc, "사이트 관리 — seo-miner")
+
+
+def _begin(request: Request, provider: str) -> RedirectResponse:
+    url, carry = identity.start(provider)
+    request.session[identity.session_key(provider)] = carry
+    return RedirectResponse(url, status_code=302)
+
+
+def _carry(request: Request, provider: str, state: str) -> dict:
+    carry = identity.carried(request.session, provider, state)
+    if carry is None:
+        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
+    return carry
 
 
 @app.get("/auth/login")
 def auth_login(request: Request):
-    flow = _flow()
-    state = secrets.token_urlsafe(16)
-    request.session["oauth_state"] = state
-    # include_granted_scopes 는 쓰지 않는다 — 과거에 승인해 둔 스코프(webmasters 쓰기 등)까지
-    # 토큰에 합쳐진다. 여기는 읽기만 필요하다.
-    # select_account 가 없으면 로그아웃해도 구글이 직전 계정으로 그냥 들여보내서
-    # 계정 전환이 성립하지 않는다. consent 는 refresh token 을 받기 위해 유지한다.
-    url, _ = flow.authorization_url(access_type="offline",
-                                    prompt="select_account consent", state=state)
-    # PKCE: authorization_url() 이 만든 verifier 를 콜백까지 넘겨야 한다. 콜백은 Flow 를
-    # 새로 만들기 때문에, 안 넘기면 토큰 교환이 'Missing code verifier' 로 죽는다.
-    request.session["code_verifier"] = flow.code_verifier
-    return RedirectResponse(url, status_code=302)
+    return _begin(request, "google")
 
 
 @app.get("/auth/callback")
 def auth_callback(request: Request, code: str, state: str):
-    expected = request.session.pop("oauth_state", None)
-    if expected is None or state != expected:
-        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
-    verifier = request.session.pop("code_verifier", None)
-    if verifier is None:
-        raise HTTPException(status_code=400, detail="로그인 절차가 중단됐습니다. 처음 화면에서 다시 시작해 주세요.")
-    flow = _flow()
-    flow.code_verifier = verifier
-    flow.fetch_token(code=code)
-    creds = flow.credentials
-    email = google.oauth2.id_token.verify_oauth2_token(
-        creds.id_token, google.auth.transport.requests.Request(), _client_id(),
-    )["email"]
+    acct = identity.finish("google", code, _carry(request, "google", state))
     conn = store.connect()
     try:
-        uid = store.upsert_user(conn, email)
-        store.save_token(conn, uid, creds.to_json())
+        uid = identity.remember(conn, "google", acct)
     finally:
         conn.close()
     request.session["uid"] = uid
-    request.session["email"] = email
+    request.session["email"] = acct.who
     return RedirectResponse("/", status_code=302)
 
 
@@ -358,7 +248,7 @@ async def api_sites(request: Request):
         conn.close()
 
     if added:
-        _kick()
+        scheduler.kick()
     return {"ok": bool(added), "added": added, "failed": failed}
 
 
@@ -367,36 +257,16 @@ async def api_sites(request: Request):
 @app.get("/auth/github")
 def gh_login(request: Request):
     _require_uid(request)
-    cid = os.environ.get("GITHUB_CLIENT_ID")
-    if not cid:
-        raise HTTPException(status_code=500, detail="GitHub 연동이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. (GITHUB_CLIENT_ID)")
-    state = secrets.token_urlsafe(16)
-    request.session["gh_state"] = state
-    # repo 스코프: PR 브랜치를 만들려면 쓰기가 필요하다. 머지는 사람이 한다(발행 게이트).
-    return RedirectResponse(
-        "https://github.com/login/oauth/authorize"
-        f"?client_id={cid}&scope=repo&state={state}"
-        f"&redirect_uri={quote(_gh_redirect(), safe='')}", status_code=302)
-
-
-def _gh_redirect() -> str:
-    return os.environ.get("GITHUB_REDIRECT_URI",
-                          OAUTH_REDIRECT_URI.replace("/auth/callback", "/auth/github/callback"))
+    return _begin(request, "github")
 
 
 @app.get("/auth/github/callback")
 def gh_callback(request: Request, code: str, state: str):
     uid = _require_uid(request)
-    if state != request.session.pop("gh_state", None):
-        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
-    cid = os.environ.get("GITHUB_CLIENT_ID")
-    sec = os.environ.get("GITHUB_CLIENT_SECRET")
-    if not (cid and sec):
-        raise HTTPException(status_code=500, detail="GitHub 연동이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요.")
-    token = gh.exchange_code(cid, sec, code)
+    acct = identity.finish("github", code, _carry(request, "github", state))
     conn = store.connect()
     try:
-        store.save_github(conn, uid, token, gh.login(token))
+        identity.remember(conn, "github", acct, uid=uid)
     finally:
         conn.close()
     return RedirectResponse("/", status_code=302)
@@ -456,19 +326,15 @@ async def api_create(request: Request):
             c = db.connect()
             try:
                 p = db.get_project(c, project)
-                opp = c.execute("SELECT * FROM opportunities WHERE id=? AND project_id=?",
-                                (opp_id, p["id"])).fetchone()
+                opp = db.get_opportunity(c, opp_id, project_id=p["id"])
                 if not opp:
                     raise HTTPException(status_code=404, detail="선택한 개선 기회를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.")
                 opp = dict(opp)
-                ev = c.execute(
-                    "SELECT SUM(clicks) c, SUM(impressions) i, AVG(position) pos "
-                    "FROM gsc_snapshots WHERE project_id=? AND query=?",
-                    (p["id"], opp["target"])).fetchone()
+                perf = db.query_performance(c, p["id"], opp["target"])
             finally:
                 c.close()
-            evidence = ({"클릭": ev["c"], "노출": ev["i"],
-                         "평균 순위": round(ev["pos"], 1)} if ev and ev["i"] else {})
+            evidence = ({"클릭": perf["clicks"], "노출": perf["impressions"],
+                         "평균 순위": perf["position"]} if perf else {})
 
             profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
             if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
@@ -501,7 +367,7 @@ async def api_create(request: Request):
         conn.close()
 
 
-STAGES = ("gsc", "index", "keywords", "rank", "ai", "gaps", "report")
+STAGES = ("gsc", "index", "keywords", "rank", "ai", "competitors", "gaps", "report")
 
 
 @app.post("/api/run")
@@ -534,10 +400,10 @@ async def api_run(request: Request):
 
     if started:
         if stages:
-            _spawn_worker(["--user", str(uid), "--project", project,
-                           "--only", ",".join(stages)])
+            scheduler.dispatch("--user", str(uid), "--project", project,
+                               "--only", ",".join(stages))
         else:
-            _kick()
+            scheduler.kick()
     return {"ok": True, "started": started}
 
 
@@ -557,8 +423,8 @@ def api_report(project: str, request: Request):
                 bl = backlinks.latest(project)
             except Exception:
                 bl = None
-        blob = json.dumps(bl or {}, ensure_ascii=False).replace("</", "<\/")
-        data += (f"<script>window.__BACKLINKS__={blob}</script>").encode("utf-8")
+        data += (f"<script>window.__BACKLINKS__={pages.js(bl or {})}</script>"
+                 ).encode("utf-8")
         data += _REPORT_ADDON
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -633,7 +499,7 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
     노출된 것만 켠다. 나머지는 사람이 보고 골라야 해서 이 목록이 필요하다.
     """
     uid = _require_uid(request)
-    active = 1 if status == "active" else 0
+    active = status == "active"
     conn = store.connect()
     try:
         _own(conn, uid, project)
@@ -641,22 +507,12 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
-                rows = c.execute(
-                    "SELECT k.id, k.keyword, k.source, k.cluster,"
-                    "       COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk"
-                    "  FROM keywords k"
-                    "  LEFT JOIN gsc_snapshots g"
-                    "    ON g.project_id=k.project_id AND g.query=k.keyword"
-                    " WHERE k.project_id=? AND k.is_active=?"
-                    " GROUP BY k.id ORDER BY imp DESC, k.keyword LIMIT 500",
-                    (pid, active)).fetchall()
-                n_active = c.execute(
-                    "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-                    (pid,)).fetchone()[0]
+                rows = db.list_keywords(c, pid, active=active)
+                n_active = db.count_active_keywords(c, pid)
             finally:
                 c.close()
         return {"keywords": [dict(r) for r in rows], "active_total": n_active,
-                "limit": int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))}
+                "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:
@@ -682,24 +538,18 @@ async def api_keywords_set(request: Request):
             try:
                 pid = db.get_project(c, project)["id"]
                 if on:
-                    limit = int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))
-                    cur = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=?"
-                                    " AND is_active=1", (pid,)).fetchone()[0]
-                    room = max(0, limit - cur)
+                    limit = settings.count("SEOMINER_MAX_KEYWORDS")
+                    room = max(0, limit - db.count_active_keywords(c, pid))
                     if room == 0:
                         raise HTTPException(
                             status_code=409,
                             detail=f"추적 키워드가 한도({limit}개)에 도달했습니다. [추적 중] 탭에서 일부를 해제한 뒤 추가해 주세요.")
                     ids = ids[:room]
-                q = ",".join("?" * len(ids))
-                c.execute(f"UPDATE keywords SET is_active=? WHERE project_id=? AND id IN ({q})",
-                          [1 if on else 0, pid, *ids])
-                c.commit()
-                n = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-                              (pid,)).fetchone()[0]
+                changed = db.set_keywords_active(c, pid, ids, on)
+                n = db.count_active_keywords(c, pid)
             finally:
                 c.close()
-        return {"ok": True, "changed": len(ids), "active_total": n}
+        return {"ok": True, "changed": changed, "active_total": n}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:
@@ -734,10 +584,7 @@ def api_creations(project: str, request: Request):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
-                rows = c.execute(
-                    "SELECT id, kind, file_path, branch, note, merged, created_at "
-                    "FROM creations WHERE project_id=? ORDER BY id DESC LIMIT 50",
-                    (pid,)).fetchall()
+                rows = db.list_creations(c, pid, limit=50)
             finally:
                 c.close()
         return {"creations": [dict(r) for r in rows]}
@@ -771,17 +618,12 @@ def _own(conn, uid: int, project: str) -> None:
 
 # 로컬 대시보드는 조회 전용이고, 실행은 Claude Code 에서 /capture run 으로 했다.
 # 웹에는 명령을 칠 곳이 없다 — 원본 HTML 을 고치는 대신 뒤에 얹어서 버튼을 만든다.
-# 용어 치환 스크립트 — 대시보드와 보고서가 같은 말을 쓰게 한다.
-# 보고서는 서버·인터넷 없이 열려야 하므로 여기에 외부 링크를 넣지 않는다.
-_TERMS_JS = _asset("terms.js")
-
-
 # 보고서용 애드온 — 대시보드와 같은 용어·자간을 쓰되 실행 버튼과 외부 폰트는 뺀다.
 # 보고서는 손댈 수 없는 기록이고, 서버도 인터넷도 없이 열려야 한다(원본 export 의 약속).
-_REPORT_ADDON = _addon("report.html")
+_REPORT_ADDON = pages.addon("report.html")
 
 
-_DASH_ADDON = _addon("dash.html")
+_DASH_ADDON = pages.addon("dash.html")
 
 
 @app.get("/d")
@@ -821,7 +663,10 @@ def api_doctor(project: str, request: Request):
     conn = store.connect()
     try:
         _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        # 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료 키가 여기서도
+        # 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다. paid_keys() 가 세우는
+        # 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
+        with store.tenant(conn, uid), settings.paid_keys():
             return dashboard.setup_state(project)
     finally:
         conn.close()
@@ -849,16 +694,23 @@ async def api_opp(request: Request):
 
 
 def demo() -> None:
+    import base64
     import tempfile
     from cryptography.fernet import Fernet
     from fastapi.testclient import TestClient
+    from itsdangerous import TimestampSigner
+
+    def login_as(client, uid: int, email: str) -> None:
+        """SessionMiddleware 가 굽는 것과 같은 쿠키를 심는다 — 구글을 왕복할 수 없으니
+        로그인 뒤 화면은 이렇게만 눌러 볼 수 있다."""
+        blob = base64.b64encode(json.dumps({"uid": uid, "email": email}).encode())
+        client.cookies.set("session", TimestampSigner(SESSION_SECRET).sign(blob).decode())
 
     with tempfile.TemporaryDirectory() as d:
         os.environ["SEOMINER_DATA"] = d
         os.environ["SEOMINER_SECRET_KEY"] = Fernet.generate_key().decode()
         os.environ["GOOGLE_CLIENT_ID"] = "dummy.apps.googleusercontent.com"
         os.environ["GOOGLE_CLIENT_SECRET"] = "dummy"
-        os.environ["SESSION_SECRET"] = "x" * 32
         os.environ["OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
 
         c = TestClient(app)
@@ -869,17 +721,14 @@ def demo() -> None:
         r = c.get("/api/properties")
         assert r.status_code == 401, r.text
 
-        # 스케줄러 판정 — 사이트가 없으면 0, 새로 등록하면 즉시 대상, 0 시간이면 꺼진다.
-        os.environ["SEOMINER_RUN_EVERY_HOURS"] = "168"
-        assert _pending() == 0, "사이트가 없는데 잴 게 있다고 한다"
+        # 로그인 전 첫 화면은 랜딩이다 — 사이트 관리 화면이 새어 나오면 안 된다.
+        r = c.get("/")
+        assert r.status_code == 200 and "<!--SITES-->" not in r.text, r.status_code
+
         c2 = store.connect()
         u2 = store.upsert_user(c2, "sched@example.com")
         store.add_site(c2, u2, "p1", "sc-domain:p1.com", "p1.com")
         c2.close()
-        assert _pending() == 1, "등록 직후인데 첫 측정이 안 잡힌다"
-        os.environ["SEOMINER_RUN_EVERY_HOURS"] = "0"
-        assert _pending() == 1, "0 은 자동 재측정만 꺼야 한다 — 첫 측정까지 막혔다"
-        os.environ.pop("SEOMINER_RUN_EVERY_HOURS")
 
         # dash() 가 여기에 bytes 를 이어붙인다. str 로 바뀌면 그 자리에서 500 이 난다.
         assert isinstance(dashboard.HTML, bytes), "dashboard.HTML 이 bytes 가 아니다"
@@ -890,23 +739,57 @@ def demo() -> None:
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401, \
-            "/api/opp 가 로그인 없이 열렸다"
+        assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
         r = c.get("/auth/login", follow_redirects=False)
         assert r.status_code == 302, (r.status_code, r.text)
         assert r.headers["location"].startswith("https://accounts.google.com"), r.headers
-        assert "dummy.apps.googleusercontent.com" in r.headers["location"], \
-            "client_id 가 인가 URL 에 안 실렸다 — import 시점에 얼어붙었을 수 있다"
+        assert "dummy.apps.googleusercontent.com" in r.headers["location"],             "client_id 가 인가 URL 에 안 실렸다 — import 시점에 얼어붙었을 수 있다"
         # PKCE 가 켜져 있으면 콜백까지 code_verifier 를 넘겨야 한다(세션에 저장).
         assert "code_challenge=" in r.headers["location"], "PKCE 가 꺼졌다"
-        assert "include_granted_scopes" not in r.headers["location"], \
-            "과거 승인 스코프까지 합쳐진다 — 읽기 전용만 받아야 한다"
+        assert "include_granted_scopes" not in r.headers["location"],             "과거 승인 스코프까지 합쳐진다 — 읽기 전용만 받아야 한다"
+
+        # 남이 붙인 콜백은 state 가 안 맞는다 — 토큰 교환까지 가면 안 된다.
+        r = c.get("/auth/callback?code=x&state=위조", follow_redirects=False)
+        assert r.status_code == 400, r.status_code
+
+        # --- 로그인 뒤 화면 --------------------------------------------------
+        login_as(c, u2, "sched@example.com")
+
+        r = c.get("/")
+        assert r.status_code == 200, r.text
+        assert "<!--USER-->" not in r.text and "<!--SITES-->" not in r.text, "슬롯이 안 채워졌다"
+        assert "sched@example.com" in r.text and "sc-domain:p1.com" in r.text, "슬롯이 비었다"
+        assert 'window.__TAKEN__=["sc-domain:p1.com"]' in r.text, "값이 안 실렸다"
+        assert r.text.index("window.__SITES__") < r.text.index("const $ = id =>"),             "값이 페이지 스크립트보다 뒤에 실린다 — 화면이 undefined 를 읽는다"
+
+        assert c.get("/api/projects").json() == ["p1"], c.get("/api/projects").text
+        assert c.get("/d").status_code == 200
+
+        # 실행 단계 이름 — 목록에 없는 단계는 400, 있는 단계는 워커로 간다.
+        spawned, real_dispatch = [], scheduler.dispatch
+        scheduler.dispatch = lambda *a: spawned.append(a)
+        try:
+            assert c.post("/api/run", json={"project": "p1", "stages": "없는단계"}
+                          ).status_code == 400
+            assert c.post("/api/run", json={"project": "없는사이트"}).status_code == 404
+            r = c.post("/api/run", json={"project": "p1", "stages": "competitors"})
+            assert r.status_code == 200 and r.json()["started"], r.text
+            assert spawned and "competitors" in spawned[0], spawned
+        finally:
+            scheduler.dispatch = real_dispatch
+
+        # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
+        assert c.get("/api/data?project=p1").status_code == 404
+        assert c.get("/api/overview").json()["sites"][0]["project"] == "p1"
+
+        c.cookies.clear()
 
         # env 가 없으면 조용히 굴러가지 말고 실패해야 한다
         os.environ.pop("GOOGLE_CLIENT_ID")
         r = c.get("/auth/login", follow_redirects=False)
         assert r.status_code == 500, f"GOOGLE_CLIENT_ID 없이 {r.status_code} 로 통과했다"
+        assert "GOOGLE_CLIENT_ID" in r.json()["detail"], r.text
 
         print("app: ok")
 

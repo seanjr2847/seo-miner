@@ -1,10 +1,15 @@
+"""알림 메일 — 발송(transport)과 본문 조립을 나눠 둔다.
+
+자격증명은 settings 에서 읽어 _post 에 넘긴다. gh._req / backlinks._post 와 같은 모양 —
+네트워크를 아는 함수는 _post 하나뿐이다.
+"""
 import base64
 import os
 import requests
 
+import settings
+
 API_URL = "https://api.resend.com/emails"
-DEFAULT_FROM = "seo-miner <onboarding@resend.dev>"
-DEFAULT_PUBLIC_URL = "http://localhost:8000"
 TIMEOUT_SECONDS = 10
 
 LABELS = {
@@ -17,17 +22,11 @@ LABELS = {
 
 
 def available() -> bool:
-    return bool(os.environ.get("RESEND_API_KEY"))
+    return bool(settings.get("RESEND_API_KEY"))
 
 
-def send(to: str, subject: str, html: str,
-         attachments: list[dict] | None = None) -> bool:
-    """attachments: [{"filename": ..., "content": bytes}] — Resend 는 base64 를 받는다.
-    한도는 첨부 인코딩 후 메일당 40MB 라 보고서(수십 KB)는 여유롭다."""
-    api_key = os.environ.get("RESEND_API_KEY")
-    if not api_key:
-        return False
-    from_addr = os.environ.get("SEOMINER_MAIL_FROM", DEFAULT_FROM)
+def _post(api_key: str, body: dict) -> bool:
+    """Resend 한 방. 자격증명을 넘겨받는다 — 네트워크를 아는 곳은 여기뿐이다."""
     try:
         resp = requests.post(
             API_URL,
@@ -35,13 +34,27 @@ def send(to: str, subject: str, html: str,
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json=_payload(from_addr, to, subject, html, attachments),
+            json=body,
             timeout=TIMEOUT_SECONDS,
         )
         return 200 <= resp.status_code < 300
     except Exception as exc:
         print(f"[mailer] send failed: {exc}")
         return False
+
+
+def send(to: str, subject: str, html: str,
+         attachments: list[dict] | None = None, *,
+         api_key: str | None = None, from_addr: str | None = None) -> bool:
+    """attachments: [{"filename": ..., "content": bytes}] — Resend 는 base64 를 받는다.
+    한도는 첨부 인코딩 후 메일당 40MB 라 보고서(수십 KB)는 여유롭다.
+
+    api_key/from_addr 를 주면 그것을 쓴다. 안 주면 settings 가 답한다."""
+    api_key = api_key or settings.get("RESEND_API_KEY")
+    if not api_key:
+        return False
+    from_addr = from_addr or settings.get("SEOMINER_MAIL_FROM")
+    return _post(api_key, _payload(from_addr, to, subject, html, attachments))
 
 
 def _payload(from_addr: str, to: str, subject: str, html: str,
@@ -72,9 +85,15 @@ def run_done(to: str, project: str, stats: dict,
              report: bytes | None = None) -> bool:
     """분석 완료 알림. report 를 주면 보고서 HTML 을 첨부한다 —
     "들어와서 보세요"보다 "보고서가 왔습니다"가 마케터의 기대에 맞다."""
-    public_url = os.environ.get("SEOMINER_PUBLIC_URL", DEFAULT_PUBLIC_URL).rstrip("/")
-    dashboard_url = f"{public_url}/d"
+    dashboard_url = settings.get("SEOMINER_PUBLIC_URL").rstrip("/") + "/d"
+    return send(to, f"{project} 주간 SEO 보고서",
+                _body_html(project, stats, dashboard_url),
+                attachments=[{"filename": "report.html", "content": report}]
+                if report else None)
 
+
+def _body_html(project: str, stats: dict, dashboard_url: str) -> str:
+    """본문 조립. HTTP 는 모른다."""
     rows = []
     for key, label in LABELS.items():
         if key in stats:
@@ -88,9 +107,7 @@ def run_done(to: str, project: str, stats: dict,
             "수집된 데이터가 없습니다.</td></tr>"
         )
 
-    subject = f"{project} 주간 SEO 보고서"
-
-    html = (
+    return (
         '<html><body style="margin:0;padding:0;background:#F7F8F5;'
         'font-family:Arial,Helvetica,sans-serif;color:#121714;">'
         '<table role="presentation" cellpadding="0" cellspacing="0" '
@@ -121,8 +138,6 @@ def run_done(to: str, project: str, stats: dict,
         "seo-miner</td></tr>"
         "</table></td></tr></table></body></html>"
     )
-
-    return send(to, subject, html)
 
 
 def demo() -> None:
@@ -234,6 +249,18 @@ def demo() -> None:
             assert label not in empty_html, (
                 f"case4b: label {label!r} should be absent with empty stats"
             )
+
+        # 보고서를 주면 첨부한다 — 떨어뜨리면 "보고서가 왔습니다"가 거짓말이 된다.
+        calls.clear()
+        assert run_done("user@x.com", "P", {}, report=b"<html>r</html>") is True
+        att = calls[0][1]["json"]["attachments"][0]
+        assert base64.b64decode(att["content"]) == b"<html>r</html>", att
+
+        # 자격증명을 넘기면 그것을 쓴다 (transport 가 env 를 안 본다).
+        calls.clear()
+        assert send("a@b.c", "s", "<p>x</p>", api_key="given", from_addr="f@x") is True
+        assert calls[0][1]["headers"]["Authorization"] == "Bearer given"
+        assert calls[0][1]["json"]["from"] == "f@x"
 
         assert available() is True, "available() should be True when key set"
     finally:

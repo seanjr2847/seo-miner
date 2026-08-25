@@ -4,9 +4,8 @@
 다시 읽는다(db.py __getattr__). 그래서 테넌트 격리는 env 를 갈아끼우는 것으로 끝난다 —
 엔진 코드는 한 줄도 손대지 않는다.
 
-Env:
-  SEOMINER_DATA        서버 데이터 루트 (기본 ~/.seominer)
-  SEOMINER_SECRET_KEY  Fernet 키 — 구글 refresh token 암호화용 (필수)
+Env 는 settings.py 가 소유한다 — 여기서 기본값을 정하지 않는다.
+(SEOMINER_DATA, SEOMINER_SECRET_KEY)
 """
 from __future__ import annotations
 
@@ -17,9 +16,11 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+import settings
+
 
 def data_dir() -> Path:
-    return Path(os.environ.get("SEOMINER_DATA", Path.home() / ".seominer"))
+    return Path(settings.get("SEOMINER_DATA"))
 
 
 SCHEMA = """
@@ -70,13 +71,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _fernet() -> Fernet:
-    key = os.environ.get("SEOMINER_SECRET_KEY")
-    if not key:
-        raise RuntimeError(
-            "SEOMINER_SECRET_KEY 가 설정되지 않았습니다. "
-            "python -c \"from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())\" "
-            "로 키를 생성해 환경 변수에 넣어 주세요")
-    return Fernet(key)
+    # settings.Missing 은 RuntimeError 다 — 이 함수가 RuntimeError 를 던지던 계약 그대로.
+    return Fernet(settings.get("SEOMINER_SECRET_KEY"))
 
 
 def connect() -> sqlite3.Connection:
@@ -254,7 +250,15 @@ def demo() -> None:
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         os.environ["SEOMINER_DATA"] = d
+        # 필수 설정이 없으면 조용히 굴러가지 않고 RuntimeError 다 (settings.Missing).
+        os.environ.pop("SEOMINER_SECRET_KEY", None)
+        try:
+            _fernet()
+            raise AssertionError("암호화 키 없이 통과했다")
+        except RuntimeError as e:
+            assert "SEOMINER_SECRET_KEY" in str(e), e
         os.environ["SEOMINER_SECRET_KEY"] = Fernet.generate_key().decode()
+        assert data_dir() == Path(d), "설정을 호출 시점에 안 읽는다"
         conn = connect()
 
         uid = upsert_user(conn, "a@example.com")

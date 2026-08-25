@@ -1,3 +1,10 @@
+<!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
+     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
+<script type="application/json" class="view-def">
+{"id": "history", "title": "기록",
+ "sections": ["acts", "runs", "made-sec"], "stages": []}
+</script>
+
 <style>
 /* 기록 = 시추 로그 그 자체. 이 화면의 규칙은 하나다: 있었던 일만 적는다.
    모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다. */
@@ -95,6 +102,10 @@
 
 const HS_RUN_LABEL = {gsc:"서치콘솔", rank:"순위", ai:"AI 인용", keywords:"키워드",
   analysis:"기회 분석", gap:"경쟁 공백", index:"색인", report:"보고서", full:"전체"};
+// runs.kind 는 대부분 단계 id 와 같은 말이다. 단계 용어표를 얹은 화면(호스팅판)에서는
+// 그 한 벌을 따른다 — 안 그러면 같은 단계가 [안내]에서는 "검색 실적 수집",
+// 여기서는 "서치콘솔"로 나와 같은 것인지 알 수 없다.
+const HS_kind = k => ((window.SM_STAGE || {})[k] || {}).t || HS_RUN_LABEL[k] || k;
 // 수집기가 notes 에 남기는 key=value 를 사람 말로. 모르는 키는 원문 그대로 둔다 —
 // 새 수집기가 새 키를 남겨도 화면이 그걸 삼키면 안 된다.
 const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:"공급자",
@@ -158,18 +169,6 @@ function HS_notes(n) {
   return `<span class="hs-nt">${parts.join("")}</span>`;
 }
 
-// 기록은 화면 밖에서도 쓰인다(회계·리포트) — 지금 걸러 놓은 목록 그대로 내보낸다.
-// 맨 앞 BOM 이 있어야 엑셀이 한글을 안 깬다.
-function HS_csv(name, rows) {
-  const csv = "﻿" + rows.map(r => r.map(
-    c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
-  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
 /* ── 수집 이력 ─────────────────────────────────────────────── */
 let HS_RUNS = [], HS_RQ = "", HS_RRES = "", HS_RKIND = null, HS_RN = 12;
 const HS_RES_OPT = [["", "전체"], ["ok", "완료"], ["bad", "문제"], ["skip", "건너뜀"]];
@@ -179,7 +178,7 @@ function HS_runFiltered() {
   return HS_RUNS.filter(r =>
     (!HS_RKIND || r.kind === HS_RKIND) &&
     (!HS_RRES || HS_verdict(r).cls === HS_RRES) &&
-    (!q || `${r.kind} ${HS_RUN_LABEL[r.kind] || ""} ${r.notes || ""} ${r.started_at || ""}`
+    (!q || `${r.kind} ${HS_kind(r.kind)} ${r.notes || ""} ${r.started_at || ""}`
              .toLowerCase().includes(q)));
 }
 function HS_runFind(v) { HS_RQ = v; HS_RN = 12; HS_runList(); }
@@ -214,7 +213,7 @@ function HS_runSummary() {
   HS_RUNS.forEach(r => { if (!last[r.kind]) last[r.kind] = r; });
   $("lastby").innerHTML = Object.keys(last).map(k => {
     const r = last[k], stale = HS_days(r.started_at) >= HS_STALE_DAYS;
-    return `<div><div class="k" title="${esc(k)}">${esc(HS_RUN_LABEL[k] || k)}</div>
+    return `<div><div class="k" title="${esc(k)}">${esc(HS_kind(k))}</div>
       <div class="v">${esc((r.started_at || "").slice(0, 10))}
         <span class="ago${stale ? " stale" : ""}" title="${stale
           ? `${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다.`
@@ -238,7 +237,7 @@ function HS_runTools() {
     ? `<div class="oppchips">${kinds.map(k =>
         `<button class="chip${HS_RKIND === k ? " on" : ""}" data-k="${esc(k)}"
            onclick="HS_runKind(this)" title="${esc(k)}"
-           aria-pressed="${HS_RKIND === k}">${esc(HS_RUN_LABEL[k] || k)}
+           aria-pressed="${HS_RKIND === k}">${esc(HS_kind(k))}
            <b>${counts[k]}</b></button>`).join("")}</div>`
     : "";
   $("runs").innerHTML = `<div class="tools">
@@ -268,7 +267,7 @@ function HS_runList() {
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
         <span class="muted">${HS_ago(r.started_at)}</span></td>
-      <td class="kwcell" title="${esc(r.kind)}">${esc(HS_RUN_LABEL[r.kind] || r.kind)}</td>
+      <td class="kwcell" title="${esc(r.kind)}">${esc(HS_kind(r.kind))}</td>
       <td>${HS_badge(HS_verdict(r))}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
@@ -290,8 +289,8 @@ function HS_runList() {
 }
 
 function HS_runCsv() {
-  HS_csv("수집이력", [["시각", "종류", "결과", "소요(초)", "호출", "비용(USD)", "기록"]]
-    .concat(HS_runFiltered().map(r => [r.started_at, HS_RUN_LABEL[r.kind] || r.kind,
+  csv("수집이력", [["시각", "종류", "결과", "소요(초)", "호출", "비용(USD)", "기록"]]
+    .concat(HS_runFiltered().map(r => [r.started_at, HS_kind(r.kind),
       HS_verdict(r).label, HS_secs(r) ?? "", r.api_calls || 0,
       r.cost_estimate_usd || 0, r.notes || ""])));
 }
@@ -370,14 +369,14 @@ function HS_madeList() {
 }
 
 function HS_madeCsv() {
-  HS_csv("고친것", [["작성일", "종류", "파일", "브랜치", "병합", "기회", "근거"]]
+  csv("고친것", [["작성일", "종류", "파일", "브랜치", "병합", "기회", "근거"]]
     .concat(HS_madeFiltered().map(c => [c.created_at,
       (window.KIND_LABEL || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
       c.merged ? "병합됨" : "병합 전", c.opp_target || "",
       (c.note || "").replace(/\s+/g, " ")])));
 }
 
-VIEW_RENDER.push(function (d) {
+VIEW("history", function (d) {
   HS_RUNS = d.runs || [];
   HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_RN = 12;
   HS_runSummary();

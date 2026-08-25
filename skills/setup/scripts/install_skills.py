@@ -3,8 +3,9 @@
 
 이 스크립트가 존재하는 이유:
   기존에는 스킬 누락 시 '저장소 링크'만 안내하여 사용자가 수동으로 설치해야 했습니다.
-  이 스크립트는 빠진 필수 마케팅 스킬을 확인하고, Claude Code CLI를 통해
+  이 스크립트는 빠진 위임 마케팅 스킬을 확인하고, Claude Code CLI를 통해
   마켓플레이스 등록 및 플러그인 설치를 자동으로 수행합니다.
+  **개수와 목록의 정본은 doctor.ALL_SKILLS 하나다** — 여기서 다시 세지 않는다.
 
 사용자 동의에 대한 원칙:
   동의는 이 스크립트가 받지 않습니다. 호출하는 쪽(Claude 대화 또는 대시보드 버튼)에서
@@ -43,29 +44,33 @@ PLUGIN_NAME = "marketing-skills"
 TIMEOUT_SECONDS = 300
 
 
+def total_skills() -> int:
+    """개수 문장의 모수 — 명부(doctor.ALL_SKILLS) 하나만 센다.
+
+    예전에는 목록은 필수+선택 8개를 만들면서 모수는 필수 7개를 쓰는 바람에,
+    깨끗한 머신에서 "7개 중 8개가 설치되어 있지 않습니다"가 찍혔다.
+    """
+    return len(doctor.ALL_SKILLS)
+
+
 def get_missing_skills() -> list[str]:
-    """빠진 마케팅 스킬 이름 목록을 반환합니다 (doctor.py 의 판정 기준, 필수 + 선택)."""
-    return (
-        [k for k in doctor.MARKETING_SKILLS if not doctor.find_skill(k)]
-        + [k for k in doctor.OPTIONAL_SKILLS if not doctor.find_skill(k)]
-    )
+    """빠진 위임 스킬 이름 목록 (doctor.py 명부 그대로 — 필수 + 선택)."""
+    return [k for k in doctor.ALL_SKILLS if not doctor.find_skill(k)]
 
 
 def check_skills() -> int:
-    """--check: 빠진 필수 스킬 이름과 개수를 출력하고 설치 없이 종료합니다."""
+    """--check: 빠진 스킬 이름과 개수를 출력하고 설치 없이 종료합니다."""
     missing = get_missing_skills()
     if not missing:
         print("모든 마케팅 스킬이 이미 설치돼 있습니다.")
         return 0
 
-    total = len(doctor.MARKETING_SKILLS)
-    print(f"필수 마케팅 스킬 {total}개 중 {len(missing)}개가 설치되어 있지 않습니다:")
+    print(f"위임 마케팅 스킬 {total_skills()}개 중 "
+          f"{len(missing)}개가 설치되어 있지 않습니다:")
     for k in missing:
-        desc = doctor.MARKETING_SKILLS.get(k, "")
-        if desc:
-            print(f"  · {k}: {desc}")
-        else:
-            print(f"  · {k}")
+        tag = " [선택]" if k in doctor.OPTIONAL_SKILLS else ""
+        desc = doctor.ALL_SKILLS.get(k, "")
+        print(f"  · {k}{tag}: {desc}" if desc else f"  · {k}{tag}")
     return 0
 
 

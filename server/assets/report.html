@@ -25,12 +25,20 @@
   // 백링크는 원본 화면에 없는 축이다. 보고서에는 값이 박혀 오므로 그대로 그린다.
   var bl = window.__BACKLINKS__;
   if (bl && bl.summary) {
+    // 원본 화면(dashboard.html)의 esc 와 같은 다섯 글자를 막는다 — 작은따옴표까지.
+    // 넷만 막으면 속성값을 작은따옴표로 감싼 자리에서 빠져나간다.
     var esc = function (x) {
-      return String(x).replace(/[&<>"]/g, function (c) {
-        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c];
+      return String(x == null ? "" : x).replace(/[&<>"']/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
       });
     };
     var s = bl.summary;
+    // 라벨·기준은 대시보드 백링크 패널과 같은 말을 써야 한다 — 같은 값을 두 화면이
+    // 다르게 부르면(참조 도메인 / 참조 도메인 수) 같은 값인지 알 수 없다.
+    // dofollow 는 특히 뜻이 갈려 있었다: 여기서는 개수, 대시보드에서는 비율이었다.
+    var dof = s.dofollow, nof = s.nofollow;
+    var ratio = (dof == null || nof == null || dof + nof === 0)
+      ? "—" : Math.round(dof / (dof + nof) * 100) + "%";
     var rows = (bl.domains || []).map(function (x) {
       return "<tr><td>" + esc(x.domain) + '</td><td class="num">' +
         (x.rank == null ? "" : x.rank) + '</td><td class="num">' + (x.backlinks || 0) +
@@ -43,10 +51,10 @@
       "<h2>백링크 프로필</h2>" +
       '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
       '<div class="band" style="margin-bottom:18px">' +
-      '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인</div></div>' +
-      '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크</div></div>' +
-      '<div class="m"><div class="v">' + (s.dofollow || 0) + '</div><div class="l">dofollow</div></div>' +
-      '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">손실 백링크</div></div>' +
+      '<div class="m"><div class="v">' + (s.referring_domains || 0) + '</div><div class="l">참조 도메인 수</div></div>' +
+      '<div class="m"><div class="v">' + (s.backlinks || 0) + '</div><div class="l">총 백링크 수</div></div>' +
+      '<div class="m"><div class="v">' + ratio + '</div><div class="l">dofollow 비율</div></div>' +
+      '<div class="m"><div class="v">' + (s.broken_backlinks || 0) + '</div><div class="l">깨진 백링크</div></div>' +
       '<div class="m"><div class="v">' + (s.rank == null ? "—" : s.rank) + '</div><div class="l">도메인 지수</div></div>' +
       "</div>" +
       (rows ? '<table><thead><tr><th>참조 도메인</th><th class="num">지수</th>' +

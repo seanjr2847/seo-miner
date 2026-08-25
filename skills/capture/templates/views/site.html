@@ -1,3 +1,10 @@
+<!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
+     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
+<script type="application/json" class="view-def">
+{"id": "site", "title": "사이트 점검",
+ "sections": ["index", "devgap"], "stages": ["index"]}
+</script>
+
 <style>
 /* ── 사이트 점검 ────────────────────────────────────────────
    크롤러가 없는 대신 구글이 URL 하나하나에 직접 답한 것만 쓴다. 그래서 이 화면의
@@ -61,18 +68,6 @@
 /* ── 기기 격차·색인 상태: 둘 다 "아직 안 수집"과 "수집했는데 문제 없음"이 같은
       빈 목록으로 온다 — 서버가 준 최신 수집일로 갈라 안내한다. 키 자체가 없으면
       이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
-
-// 지금 걸러 놓은 것 그대로 표로 — 트리아지는 화면 밖에서도 이어진다(기회 목록과 같은 문법).
-// 맨 앞 BOM 이 없으면 엑셀이 한글을 깬다.
-function stCsv(name, rows) {
-  const csv = "\uFEFF" + rows.map(r => r.map(
-    c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
-  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
 
 /* ── 색인 상태 ──────────────────────────────────────────── */
 // bucket 라벨·심각도·고칠 곳. 원문 bucket 은 title 로 남긴다(scoring.index_issues 와 대조용).
@@ -139,7 +134,7 @@ function stIxReset() {
 }
 
 function stIxCsv() {
-  stCsv("색인문제", [["갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
+  csv("색인문제", [["갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
     stIxFiltered().map(r => [(ST_IX[r.bucket] || {}).label || r.bucket, r.url,
       r.coverage_state || "", r.verdict || "", r.detail || ""])));
 }
@@ -233,7 +228,7 @@ function stDevFiltered() {
 function stDevFind(v) { ST_DEV_Q = v; stDevList(); }
 function stDevReset() { ST_DEV_Q = ""; stDevHead(); }
 function stDevCsv() {
-  stCsv("모바일격차", [["검색어", "모바일 순위", "데스크톱 순위", "순위차",
+  csv("모바일격차", [["검색어", "모바일 순위", "데스크톱 순위", "순위차",
     "모바일 노출", "모바일 CTR(%)", "데스크톱 CTR(%)"]].concat(
     stDevFiltered().map(r => [r.query, stP1(r.mobile_pos), stP1(r.desktop_pos),
       stP1(r.dpos), r.mobile_imp, r.mobile_ctr, r.desktop_ctr])));
@@ -302,7 +297,7 @@ function renderDevice(d) {
   stDevHead();
 }
 
-VIEW_RENDER.push(function (d) {
+VIEW("site", function (d) {
   renderDevice(d);
   renderIndex(d);
 });

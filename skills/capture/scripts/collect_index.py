@@ -84,7 +84,9 @@ def to_row(url: str, result: dict) -> dict:
 def collect(project: str, *,
             dry_run: bool = False,
             index_urls: int | None = None,
-            throttle: float | None = None) -> collector.StageResult:
+            throttle: float | None = None,
+            conn=None,
+            service=None) -> collector.StageResult:
     """URL Inspection 으로 색인 상태를 Brain 에 적재한다. sys.exit 호출 없음.
 
     Args:
@@ -92,102 +94,97 @@ def collect(project: str, *,
         dry_run: True 면 검사 계획만 찍고 종료
         index_urls: 한 번에 검사할 URL 수. 0이면 끔
         throttle: 호출 간격(초). 분당 600회 제한을 넘지 않기 위한 것
+        conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
+        service: 서치콘솔 서비스 객체 — 주면 인증을 타지 않는다
+                 (자체점검이 globals() 를 갈아끼우던 자리)
 
     Returns:
         StageResult(ok=...). 정상 종료면 ok=True. 사유가 있는 비종료는
         ok=False, skipped=True, reason 에 한국어 안내.
     """
     _parser()
-    conn, p, cfg = collector.open_project(project)
-    ns = argparse.Namespace(
-        limit=index_urls,
-        throttle=throttle,
-    )
-    s = collector.settings(ns, cfg)
-    limit = s["index_urls"]
-    throttle = s["throttle"]
-    prop = p["gsc_property"]
-    if not prop:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason="project yaml has no gsc_property "
-                                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
-                                            "Add it, then: python db.py sync-project <yaml>")
-    if limit <= 0:
-        conn.close()
-        print("[index] index_urls=0 — 색인 검사를 끄셨습니다. "
-              "켜려면 config.yaml defaults.index_urls 를 올리거나 --limit N 을 주세요.")
-        return collector.StageResult(ok=True, skipped=True, rows=0)
+    with collector.stage(project, conn=conn, dry_run=dry_run) as st:
+        conn, p = st.conn, st.project
+        s = st.settings(argparse.Namespace(limit=index_urls, throttle=throttle))
+        limit = s["index_urls"]
+        throttle = st.throttle
+        prop = p["gsc_property"]
+        if not prop:
+            return st.skip("project yaml has no gsc_property "
+                           "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
+                           "Add it, then: python db.py sync-project <yaml>")
+        if limit <= 0:
+            print("[index] index_urls=0 — 색인 검사를 끄셨습니다. "
+                  "켜려면 config.yaml defaults.index_urls 를 올리거나 --limit N 을 주세요.")
+            return st.noop(rows=0)
 
-    urls = top_pages(conn, p["id"], limit)
-    if not urls:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason="최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
-                                            f"--project {project}` 로 수집하세요. (page NULL 인 구버전 "
-                                            "스냅샷만 있어도 여기서 멈춥니다)")
+        urls = top_pages(conn, p["id"], limit)
+        if not urls:
+            return st.skip("최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
+                           f"--project {project}` 로 수집하세요. (page NULL 인 구버전 "
+                           "스냅샷만 있어도 여기서 멈춥니다)")
 
-    print(f"[index] {prop}  URL {len(urls)}개 = {len(urls)}콜 (URL 당 정확히 1콜)")
-    if dry_run:
-        for i, u in enumerate(urls, 1):
-            print(f"  {i:>3}. {u}")
-        print(f"쿼터: 속성당 하루 2,000회 / 분당 600회. 이번 실행은 {len(urls)}회 "
-              f"(간격 {throttle}초 ≈ {len(urls) * (throttle + 0.5) / 60:.1f} min).")
-        conn.close()
-        return collector.StageResult(ok=True, skipped=True, rows=0)
+        print(f"[index] {prop}  URL {len(urls)}개 = {len(urls)}콜 (URL 당 정확히 1콜)")
+        if st.dry_run:
+            for i, u in enumerate(urls, 1):
+                print(f"  {i:>3}. {u}")
+            print(f"쿼터: 속성당 하루 2,000회 / 분당 600회. 이번 실행은 {len(urls)}회 "
+                  f"(간격 {throttle}초 ≈ {len(urls) * (throttle + 0.5) / 60:.1f} min).")
+            return st.noop(rows=0)
 
-    try:
-        service = get_service()
-    except db.ProjectNotFound as e:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True, reason=str(e))
-    from googleapiclient.errors import HttpError
-
-    rows: list[dict] = []
-    stop: str | None = None
-    with db.run(conn, p["id"], "index") as r:
-        for i, url in enumerate(urls, 1):
+        if service is None:
             try:
-                resp = service.urlInspection().index().inspect(body={
-                    "inspectionUrl": url, "siteUrl": prop}).execute()
-            except HttpError as e:
-                # 쿼터(429)·권한(403) 어느 쪽이든 여기까지 모은 것은 살린다.
-                # 예전 방식(예외를 그대로 올림)은 19개 검사하고 20번째에서
-                # 죽으면 19개도 같이 날아갔다.
-                stop = f"HTTP {getattr(e.resp, 'status', '?')} at {i}/{len(urls)}"
-                break
-            row = to_row(url, resp.get("inspectionResult") or {})
-            rows.append(row)
-            r.api_calls += 1
-            print(f"  {i:>3}/{len(urls)}  {row['verdict'] or '?':<8} "
-                  f"{row['coverage_state'] or ''}  {url}")
-            if i < len(urls):
-                time.sleep(throttle)
+                service = get_service()
+            except db.ProjectNotFound as e:
+                return st.skip(str(e))
+        from googleapiclient.errors import HttpError
 
-        checked = str(date.today())
-        db.write_index_status(conn, p["id"], checked, rows)
-        r.notes = f"urls={len(rows)}/{len(urls)} checked={checked}" + (
-            f" 중단: {stop}" if stop else "")
+        rows: list[dict] = []
+        stop: str | None = None
+        # 항목별 오류를 세고 넘어가는 st.each 를 쓰지 않는 유일한 수집기다 —
+        # 여기서 오류는 쿼터·권한이라 다음 URL 도 똑같이 죽는다. 세지 말고 멈춘다.
+        with st.record("index") as r:
+            for i, url in enumerate(urls, 1):
+                try:
+                    resp = service.urlInspection().index().inspect(body={
+                        "inspectionUrl": url, "siteUrl": prop}).execute()
+                except HttpError as e:
+                    # 쿼터(429)·권한(403) 어느 쪽이든 여기까지 모은 것은 살린다.
+                    # 예전 방식(예외를 그대로 올림)은 19개 검사하고 20번째에서
+                    # 죽으면 19개도 같이 날아갔다.
+                    stop = f"HTTP {getattr(e.resp, 'status', '?')} at {i}/{len(urls)}"
+                    break
+                row = to_row(url, resp.get("inspectionResult") or {})
+                rows.append(row)
+                r.api_calls += 1
+                print(f"  {i:>3}/{len(urls)}  {row['verdict'] or '?':<8} "
+                      f"{row['coverage_state'] or ''}  {url}")
+                if i < len(urls):
+                    time.sleep(throttle)
 
-    if stop:
-        print(f"\n[중단] {stop} — 여기까지 {len(rows)}개는 저장했습니다.", file=sys.stderr)
-        if "403" in stop:
-            print("  URL Inspection 은 속성의 '소유자' 또는 '전체 사용자' 권한이 필요합니다.\n"
-                  "  '제한된 사용자'는 Search Analytics 는 되지만 이 API 는 거부됩니다 —\n"
-                  "  Search Console → 설정 → 사용자 및 권한에서 권한을 올리세요.",
-                  file=sys.stderr)
-        else:
-            print("  쿼터(하루 2,000회/분당 600회)일 가능성이 큽니다 — "
-                  "--throttle 을 올리거나 내일 이어서 돌리세요.", file=sys.stderr)
+            checked = str(date.today())
+            db.write_index_status(conn, p["id"], checked, rows)
+            r.notes = f"urls={len(rows)}/{len(urls)} checked={checked}" + (
+                f" 중단: {stop}" if stop else "")
 
-    bad = [x for x in rows if (x["verdict"] or "") != "PASS"]
-    print(f"\nsaved {len(rows)} URLs. 색인 문제 {len(bad)}개:")
-    for x in bad[:10]:
-        print(f"  {x['verdict'] or '?':<8} {x['coverage_state'] or '?':<28} {x['url']}")
-    if not bad:
-        print("  (없음 — 검사한 URL 전부 PASS)")
-    conn.close()
-    return collector.StageResult(ok=True, skipped=False, rows=len(rows))
+        if stop:
+            print(f"\n[중단] {stop} — 여기까지 {len(rows)}개는 저장했습니다.", file=sys.stderr)
+            if "403" in stop:
+                print("  URL Inspection 은 속성의 '소유자' 또는 '전체 사용자' 권한이 필요합니다.\n"
+                      "  '제한된 사용자'는 Search Analytics 는 되지만 이 API 는 거부됩니다 —\n"
+                      "  Search Console → 설정 → 사용자 및 권한에서 권한을 올리세요.",
+                      file=sys.stderr)
+            else:
+                print("  쿼터(하루 2,000회/분당 600회)일 가능성이 큽니다 — "
+                      "--throttle 을 올리거나 내일 이어서 돌리세요.", file=sys.stderr)
+
+        bad = [x for x in rows if (x["verdict"] or "") != "PASS"]
+        print(f"\nsaved {len(rows)} URLs. 색인 문제 {len(bad)}개:")
+        for x in bad[:10]:
+            print(f"  {x['verdict'] or '?':<8} {x['coverage_state'] or '?':<28} {x['url']}")
+        if not bad:
+            print("  (없음 — 검사한 URL 전부 PASS)")
+        return st.done(rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -271,15 +268,12 @@ def _selfcheck() -> None:
         def inspect(self, body):
             return _Req(body)
 
-    globals()["get_service"] = lambda: _Svc()
-    orig_argv = sys.argv
-    try:
-        sys.argv = ["collect_index.py", "--project", "it", "--limit", "3", "--throttle", "0"]
-        main()
-    finally:
-        sys.argv = orig_argv
+    # 의존물은 인자로 준다 — 예전에는 globals()["get_service"] 를 갈아끼웠다.
+    # conn 도 같이 넘겨 러너가 빌린 것을 닫지 않는지까지 본다.
+    res = collect("it", index_urls=3, throttle=0, conn=conn, service=_Svc())
+    assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
+    conn.execute("SELECT 1")     # 빌린 conn 은 러너가 닫지 않는다
 
-    conn = db.connect()
     saved = [dict(r) for r in conn.execute(
         "SELECT * FROM gsc_index_status WHERE project_id=? ORDER BY url", (pid,))]
     assert len(saved) == 2, f"429 앞의 2개는 살아야 함: {saved}"
@@ -291,16 +285,16 @@ def _selfcheck() -> None:
                          (pid,)).fetchone()
     assert notes["api_calls"] == 2 and "429" in notes["notes"], dict(notes)
 
-    # dry-run 은 호출도 저장도 없어야 한다.
+    # dry-run 은 호출도 저장도 없어야 한다 — 지뢰 service 를 쥐여 주고 확인한다.
     conn.execute("DELETE FROM runs")
     conn.commit()
-    globals()["get_service"] = lambda: (_ for _ in ()).throw(
-        AssertionError("dry-run 이 인증을 건드렸다"))
-    try:
-        sys.argv = ["collect_index.py", "--project", "it", "--dry-run"]
-        main()
-    finally:
-        sys.argv = orig_argv
+
+    class _Boom:
+        def urlInspection(self):
+            raise AssertionError("dry-run 이 API 를 건드렸다")
+
+    res = collect("it", dry_run=True, conn=conn, service=_Boom())
+    assert (res.ok, res.skipped) == (True, True), res
     assert conn.execute("SELECT * FROM runs").fetchall() == [], "dry-run 은 runs 를 남기지 않는다"
     conn.close()
     print("collect_index self-check ok")

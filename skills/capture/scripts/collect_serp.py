@@ -26,7 +26,6 @@ Usage:
 import argparse
 import json
 import sys
-import time
 from collections import Counter
 from pathlib import Path
 
@@ -46,7 +45,8 @@ def collect(project: str, *,
             device: str | None = None,
             no_harvest: bool = False,
             ids: str | None = None,
-            force: bool = False) -> collector.StageResult:
+            force: bool = False,
+            conn=None) -> collector.StageResult:
     """SERP 순위 스냅샷 + 부산물(키워드 후보·경쟁사)을 Brain 에 적재한다.
 
     Args:
@@ -60,159 +60,135 @@ def collect(project: str, *,
         no_harvest: True 면 부산물(키워드 후보·경쟁사) 적재 안 함
         ids: 쉼표 구분 keyword id — 지정하면 is_active 무시하고 이것만
         force: 오늘 이미 확인한 키워드도 재확인
+        conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
     _parser()
-    conn, p, cfg = collector.open_project(project)
-    ns = argparse.Namespace(
-        max_keywords=max_keywords,
-        depth=serp_depth,
-        throttle=throttle,
-        device=device,
-    )
-    s = collector.settings(ns, cfg)
-    provider = provider or serp_adapter.detect_provider()
-    if not provider:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason="SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
-                                            "발급: https://dataforseo.com (권장) 또는 "
-                                            "https://serper.dev")
-    depth = s["serp_depth"]
-    throttle = s["throttle"]
-    limit = s["max_keywords"]
-    device = (s["device"] or "desktop").strip().lower()
+    with collector.stage(project, conn=conn, dry_run=dry_run) as st:
+        conn, p = st.conn, st.project
+        s = st.settings(argparse.Namespace(
+            max_keywords=max_keywords, depth=serp_depth,
+            throttle=throttle, device=device))
+        provider = provider or serp_adapter.detect_provider()
+        if not provider:
+            return st.skip("SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
+                           "발급: https://dataforseo.com (권장) 또는 "
+                           "https://serper.dev")
+        depth = s["serp_depth"]
+        throttle = st.throttle
+        limit = s["max_keywords"]
+        device = (s["device"] or "desktop").strip().lower()
 
-    if device not in ("desktop", "mobile"):
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason=f"유효하지 않은 device '{device}' — desktop 또는 mobile만 허용됩니다")
+        if device not in ("desktop", "mobile"):
+            return st.skip(f"유효하지 않은 device '{device}' — desktop 또는 mobile만 허용됩니다")
 
-    if device != "desktop":
-        print("[경고] 모바일 측정 시 직전 스냅샷(desktop)과의 순위 비교(Δ)가 한 번 왜곡될 수 있습니다.",
-              file=sys.stderr)
+        if device != "desktop":
+            print("[경고] 모바일 측정 시 직전 스냅샷(desktop)과의 순위 비교(Δ)가 한 번 왜곡될 수 있습니다.",
+                  file=sys.stderr)
 
-    if ids:
-        # 부분 실행. 이게 없으면 "이 몇 개만 다시" 하려고 is_active를 직접 토글하게
-        # 되는데, 되돌릴 때 통째로 UPDATE 해버려 큐레이션한 활성 집합이 날아간다.
-        ids_list = [int(x) for x in ids.split(",") if x.strip()]
-        target_kws = conn.execute(
-            f"""SELECT id, keyword, locale FROM keywords
-                 WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
-            (p["id"], *ids_list)).fetchall()
-    else:
-        target_kws = conn.execute(
-            """SELECT id, keyword, locale FROM keywords
-                WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
-            (p["id"], limit)).fetchall()
-    if not target_kws:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason="활성 키워드 없음 — /capture keywords 로 유니버스부터 구축")
+        if ids:
+            # 부분 실행. 이게 없으면 "이 몇 개만 다시" 하려고 is_active를 직접 토글하게
+            # 되는데, 되돌릴 때 통째로 UPDATE 해버려 큐레이션한 활성 집합이 날아간다.
+            ids_list = [int(x) for x in ids.split(",") if x.strip()]
+            target_kws = conn.execute(
+                f"""SELECT id, keyword, locale FROM keywords
+                     WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
+                (p["id"], *ids_list)).fetchall()
+        else:
+            target_kws = conn.execute(
+                """SELECT id, keyword, locale FROM keywords
+                    WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
+                (p["id"], limit)).fetchall()
+        if not target_kws:
+            return st.skip("활성 키워드 없음 — /capture keywords 로 유니버스부터 구축")
 
-    from datetime import datetime
-    today = datetime.now().strftime("%Y-%m-%d")
-    if not force:
-        # 오늘 이미 확인한 키워드는 재실행 비용 절감을 위해 건너뛴다 (--force로 무시 가능)
-        checked_today = {
-            r[0] for r in conn.execute(
-                """SELECT keyword_id FROM rank_snapshots
-                    WHERE date(checked_at) = ? OR date(checked_at, 'localtime') = ?""",
-                (today, today)
-            ).fetchall()
-        }
+        # 오늘 이미 확인한 키워드는 재실행 비용 절감을 위해 건너뛴다 (--force로 무시 가능).
+        # '오늘'을 만드는 자리와 --force 의 뜻은 러너가 갖는다 (collector.Stage.seen_today).
+        checked_today = st.seen_today(
+            "SELECT keyword_id FROM rank_snapshots "
+            f"WHERE {collector.today_clause('checked_at')}", force=force)
         kws = [k for k in target_kws if k["id"] not in checked_today]
         skipped = len(target_kws) - len(kws)
-    else:
-        kws = list(target_kws)
-        skipped = 0
 
-    # 키워드별 로케일. 어떤 로케일로 조회하는지 보여주지 않으면, 한국어 키워드를
-    # en-US로 긁어 전부 "순위 없음"으로 적재해도 아무도 눈치채지 못한다.
-    default_locale = p["locale"] or "ko-KR"
-    locales = Counter((k["locale"] or default_locale) for k in (kws if kws else target_kws))
-    est = serp_adapter.cost_per_query(provider) * len(kws)
-    skip_str = f" (skipped {skipped} 오늘 이미 확인)" if skipped else ""
-    print(f"[serp] provider={provider} keywords={len(kws)}{skip_str} depth={depth} device={device} "
-          f"est_cost≈${est:.2f} (~{len(kws) * (throttle + 2) / 60:.0f} min)")
-    if locales:
-        print("       locales: " + ", ".join(f"{loc}×{n}" for loc, n in locales.most_common()))
-        for loc in locales:   # 매핑 없는 로케일 경고는 여기서 떠야 한다 — 돈을 쓰기 전에
-            serp_adapter.warn_unmapped(loc)
-    for note in serp_adapter.caveats(provider):
-        print(f"       note: {note}")
-    if dry_run:
-        conn.close()
-        return collector.StageResult(ok=True, skipped=True, cost=est)
+        # 키워드별 로케일. 어떤 로케일로 조회하는지 보여주지 않으면, 한국어 키워드를
+        # en-US로 긁어 전부 "순위 없음"으로 적재해도 아무도 눈치채지 못한다.
+        default_locale = p["locale"] or "ko-KR"
+        locales = Counter((k["locale"] or default_locale) for k in (kws if kws else target_kws))
+        est = serp_adapter.cost_per_query(provider) * len(kws)
+        print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "
+              f"depth={depth} device={device} "
+              f"est_cost≈${est:.2f} (~{len(kws) * (throttle + 2) / 60:.0f} min)")
+        if locales:
+            print("       locales: " + ", ".join(f"{loc}×{n}" for loc, n in locales.most_common()))
+            for loc in locales:   # 매핑 없는 로케일 경고는 여기서 떠야 한다 — 돈을 쓰기 전에
+                serp_adapter.warn_unmapped(loc)
+        for note in serp_adapter.caveats(provider):
+            print(f"       note: {note}")
+        if st.dry_run:
+            return st.noop(cost=est)
 
-    if not kws:
-        print(f"\nsaved 0 snapshots (skipped {skipped} 오늘 이미 확인) "
-              f"actual_cost=$0.000 | 부산물: 키워드 후보 +0, 경쟁사 +0")
-        conn.close()
-        return collector.StageResult(ok=True, skipped=True, rows=0, cost=0.0)
+        if not kws:
+            print(f"\nsaved 0 snapshots{st.skip_note(skipped)} "
+                  f"actual_cost=$0.000 | 부산물: 키워드 후보 +0, 경쟁사 +0")
+            return st.noop(rows=0, cost=0.0)
 
-    own = p["domain"]
-    total_cost, done, errors = 0.0, 0, 0
-    domain_hits: Counter = Counter()
-    harvested_kw = set()
-    new_kw = new_comp = 0
+        own = p["domain"]
+        total_cost = 0.0
+        domain_hits: Counter = Counter()
+        harvested_kw = set()
+        new_kw = new_comp = 0
 
-    with db.run(conn, p["id"], "rank") as r:
-        for row in kws:
-            try:
-                kw_locale = row["locale"] or default_locale
-                res = serp_adapter.fetch(provider, row["keyword"], kw_locale, depth, device=device)
-                # 내 순위와 경쟁사 집계는 같은 한 바퀴에서 같은 규칙으로 갈린다.
-                position = url = None
-                for t in res["top"]:
-                    d = t.get("domain") or ""
-                    if not d:
-                        continue
-                    if scoring.owns(d, own):
-                        if position is None:
-                            position, url = t.get("pos"), t.get("url")
-                    else:
-                        domain_hits[d] += 1
-                aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
-                             if res["aio_present"] else None)
-                db.write_rank_snapshot(
-                    conn, row["id"], position, url,
-                    res["serp_features"], res["aio_present"], aio_cited)
-                total_cost += res["cost"]
-                done += 1
-                if not no_harvest:
-                    # 후보는 조회에 쓴 로케일을 물려받는다. 안 그러면 한국어 SERP에서
-                    # 캔 후보가 locale NULL로 들어가 다음 런에서 프로젝트 로케일로
-                    # 조회되고, 방금 고친 버그가 후보 전체에 그대로 재현된다.
-                    for kw in (res["related"] + res["paa"]):
-                        harvested_kw.add((kw.strip(), kw_locale))
-                pos = position if position is not None else "-"
-                aio = " AIO" + ("✓" if aio_cited else "") if res["aio_present"] else ""
-                print(f"  {pos!s:>3}  {row['keyword']}{aio}")
-            except Exception as e:
-                errors += 1
-                print(f"  !   {row['keyword']}: {e}", file=sys.stderr)
-            conn.commit()
-            time.sleep(throttle)
+        def one(row) -> None:
+            """키워드 하나 — 가져와서 쓴다. 실패는 러너가 세고 다음으로 넘어간다."""
+            nonlocal total_cost
+            kw_locale = row["locale"] or default_locale
+            res = serp_adapter.fetch(provider, row["keyword"], kw_locale, depth, device=device)
+            # 내 순위와 경쟁사 집계는 같은 한 바퀴에서 같은 규칙으로 갈린다.
+            position = url = None
+            for t in res["top"]:
+                d = t.get("domain") or ""
+                if not d:
+                    continue
+                if scoring.owns(d, own):
+                    if position is None:
+                        position, url = t.get("pos"), t.get("url")
+                else:
+                    domain_hits[d] += 1
+            aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
+                         if res["aio_present"] else None)
+            db.write_rank_snapshot(
+                conn, row["id"], position, url,
+                res["serp_features"], res["aio_present"], aio_cited)
+            total_cost += res["cost"]
+            if not no_harvest:
+                # 후보는 조회에 쓴 로케일을 물려받는다. 안 그러면 한국어 SERP에서
+                # 캔 후보가 locale NULL로 들어가 다음 런에서 프로젝트 로케일로
+                # 조회되고, 방금 고친 버그가 후보 전체에 그대로 재현된다.
+                for kw in (res["related"] + res["paa"]):
+                    harvested_kw.add((kw.strip(), kw_locale))
+            pos = position if position is not None else "-"
+            aio = " AIO" + ("✓" if aio_cited else "") if res["aio_present"] else ""
+            print(f"  {pos!s:>3}  {row['keyword']}{aio}")
 
-        if not no_harvest:
-            new_kw = db.add_keyword_candidates(
-                conn, p["id"], [(kw, loc, "serp") for kw, loc in harvested_kw])
-            new_comp = db.add_competitors(
-                conn, p["id"], [d for d, n in domain_hits.items() if n >= 3], "auto_serp")
+        with st.record("rank") as r:
+            done = st.each(kws, one, label=lambda row: row["keyword"])
 
-        r.api_calls, r.cost = done, total_cost
-        r.notes = (f"provider={provider} device={device} errors={errors} skipped={skipped} "
-                   f"harvest_kw={new_kw} harvest_comp={new_comp}")
+            if not no_harvest:
+                new_kw = db.add_keyword_candidates(
+                    conn, p["id"], [(kw, loc, "serp") for kw, loc in harvested_kw])
+                new_comp = db.add_competitors(
+                    conn, p["id"], [d for d, n in domain_hits.items() if n >= 3], "auto_serp")
 
-    skip_summary = f" (skipped {skipped} 오늘 이미 확인)" if skipped else ""
-    print(f"\nsaved {done} snapshots{skip_summary} (errors={errors}) "
-          f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
-          f"경쟁사 +{new_comp}\nrun_id={r.id}")
-    conn.close()
-    return collector.StageResult(ok=True, skipped=False, rows=done, cost=total_cost)
+            r.api_calls, r.cost = done, total_cost
+            r.notes = (f"provider={provider} device={device} errors={st.errors} skipped={skipped} "
+                       f"harvest_kw={new_kw} harvest_comp={new_comp}")
+
+        print(f"\nsaved {done} snapshots{st.skip_note(skipped)} (errors={st.errors}) "
+              f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
+              f"경쟁사 +{new_comp}\nrun_id={r.id}")
+        return st.done(rows=done, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:

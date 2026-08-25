@@ -126,7 +126,8 @@ def collect(project: str, *,
             dry_run: bool = False,
             mode: str = "all",
             per_seed_cap: int = 60,
-            throttle: float | None = None) -> collector.StageResult:
+            throttle: float | None = None,
+            conn=None) -> collector.StageResult:
     """자동완성 + GSC 실측으로 키워드 후보를 적재한다.
 
     Args:
@@ -135,56 +136,53 @@ def collect(project: str, *,
         mode: "all" | "autocomplete" | "gsc"
         per_seed_cap: 시드별 자동완성 후보 상한
         throttle: 요청 간격(초)
+        conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
     _parser()
-    conn, p, cfg = collector.open_project(project)
-    ns = argparse.Namespace(throttle=throttle)
-    s = collector.settings(ns, cfg)
-    throttle = s["throttle"]
-    locale = p["locale"] or "ko-KR"
-    hl, _, gl = locale.partition("-")
-    gl = (gl or "KR").lower()
+    with collector.stage(project, conn=conn, dry_run=dry_run) as st:
+        conn, p, cfg = st.conn, st.project, st.cfg
+        st.settings(argparse.Namespace(throttle=throttle))
+        throttle = st.throttle
+        locale = p["locale"] or "ko-KR"
+        hl, _, gl = locale.partition("-")
+        gl = (gl or "KR").lower()
 
-    # 시드의 locale까지 같이 읽는다 — 후보가 물려받을 값이 여기 있다.
-    seeds = [(r["keyword"], r["locale"]) for r in conn.execute(
-        "SELECT keyword, locale FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
-    seeds = seeds or [(kw, None) for kw in (cfg.get("seed_keywords") or [])]
-    # gsc 모드는 시드가 필요 없다 — 자동완성을 쓸 때만 요구한다.
-    if not seeds and mode in ("all", "autocomplete"):
-        if mode == "autocomplete":
-            conn.close()
-            return collector.StageResult(
-                ok=False, skipped=True,
-                reason="시드 키워드가 없습니다. 프로젝트 yaml의 seed_keywords에 3~10개를 넣고 "
-                       "sync-project 하거나, GSC 데이터만으로 시작하려면 --mode gsc 를 쓰세요.")
-        print("[안내] 시드 키워드가 없어 자동완성은 건너뜁니다 — GSC 실측만 캡니다.")
-        mode = "gsc"
+        # 시드의 locale까지 같이 읽는다 — 후보가 물려받을 값이 여기 있다.
+        seeds = [(r["keyword"], r["locale"]) for r in conn.execute(
+            "SELECT keyword, locale FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))]
+        seeds = seeds or [(kw, None) for kw in (cfg.get("seed_keywords") or [])]
+        # gsc 모드는 시드가 필요 없다 — 자동완성을 쓸 때만 요구한다.
+        if not seeds and mode in ("all", "autocomplete"):
+            if mode == "autocomplete":
+                return st.skip(
+                    "시드 키워드가 없습니다. 프로젝트 yaml의 seed_keywords에 3~10개를 넣고 "
+                    "sync-project 하거나, GSC 데이터만으로 시작하려면 --mode gsc 를 쓰세요.")
+            print("[안내] 시드 키워드가 없어 자동완성은 건너뜁니다 — GSC 실측만 캡니다.")
+            mode = "gsc"
 
-    if dry_run:
-        # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
-        if mode in ("all", "autocomplete"):
-            autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, True)
-        if mode in ("all", "gsc"):
-            print(f"[gsc] {len(gsc_mine(conn, p['id'], locale))}개가 후보로 들어올 예정")
-        print("(--dry-run: 저장하지 않음)")
-        conn.close()
-        return collector.StageResult(ok=True, skipped=True, rows=0)
+        if st.dry_run:
+            # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
+            if mode in ("all", "autocomplete"):
+                autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, True)
+            if mode in ("all", "gsc"):
+                print(f"[gsc] {len(gsc_mine(conn, p['id'], locale))}개가 후보로 들어올 예정")
+            print("(--dry-run: 저장하지 않음)")
+            return st.noop(rows=0)
 
-    with db.run(conn, p["id"], "keywords") as r:
-        cands: list[tuple[str, str, str]] = []
-        if mode in ("all", "autocomplete"):
-            cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, False)
-        if mode in ("all", "gsc"):
-            cands += gsc_mine(conn, p["id"], locale)
-        inserted = db.add_keyword_candidates(conn, p["id"], cands)
-        r.notes = f"mode={mode} candidates={len(cands)} inserted={inserted}"
-    print(f"done: {inserted} new candidates (is_active=0). "
-          f"Next: Claude curates & activates within limits.max_keywords.")
-    conn.close()
-    return collector.StageResult(ok=True, skipped=False, rows=inserted)
+        with st.record("keywords") as r:
+            cands: list[tuple[str, str, str]] = []
+            if mode in ("all", "autocomplete"):
+                cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, False)
+            if mode in ("all", "gsc"):
+                cands += gsc_mine(conn, p["id"], locale)
+            inserted = db.add_keyword_candidates(conn, p["id"], cands)
+            r.notes = f"mode={mode} candidates={len(cands)} inserted={inserted}"
+        print(f"done: {inserted} new candidates (is_active=0). "
+              f"Next: Claude curates & activates within limits.max_keywords.")
+        return st.done(rows=inserted)
 
 
 def _parser() -> argparse.ArgumentParser:

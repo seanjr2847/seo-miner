@@ -46,7 +46,6 @@ Usage:
 import argparse
 import os
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -120,7 +119,9 @@ def collect(project: str, *,
             dry_run: bool = False,
             domain: list[str] | None = None,
             gap_limit: int | None = None,
-            throttle: float | None = None) -> collector.StageResult:
+            throttle: float | None = None,
+            conn=None,
+            fetch=None) -> collector.StageResult:
     """경쟁사 역키워드를 Labs 로 캔 — 후보로 적재한다.
 
     Args:
@@ -130,97 +131,96 @@ def collect(project: str, *,
                 competitors 테이블의 도메인 전부.
         gap_limit: 도메인당 키워드 수 상한. 기본 100.
         throttle: 요청 간격(초)
+        conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
+        fetch: (domain, locale, limit) -> (items, cost) — 주면 Labs 대신 이것을
+               부른다 (자체점검이 requests.post 를 갈아끼우던 자리)
 
     Returns:
-        StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
+        StageResult(ok=...). 유료 키 부재만 ok=False, skipped=True (진짜 못 한
+        것). 경쟁사 0건·dry-run 은 ok=True, skipped=True — 체인을 깨지 않는다.
     """
     _parser()
-    conn, p, cfg = collector.open_project(project)
-    if not serp_adapter.has_dataforseo():
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason="Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
-                                            "발급: https://dataforseo.com")
+    fetch = fetch or serp_adapter.fetch_labs_ranked_keywords
+    with collector.stage(project, conn=conn, dry_run=dry_run) as st:
+        conn, p = st.conn, st.project
+        if not serp_adapter.has_dataforseo():
+            return st.skip("Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
+                           "발급: https://dataforseo.com")
 
-    ns = argparse.Namespace(
-        limit=gap_limit,
-        throttle=throttle,
-    )
-    s = collector.settings(ns, cfg)
-    limit = s["limits.gap_limit"]
-    throttle = s["throttle"]
+        s = st.settings(argparse.Namespace(limit=gap_limit, throttle=throttle))
+        limit = s["limits.gap_limit"]
+        throttle = st.throttle
 
-    domains = _resolve_domains(conn, p["id"], domain)
-    if not domains:
-        conn.close()
-        return collector.StageResult(ok=False, skipped=True,
-                                     reason=f"'{p['name']}' 에 등록된 경쟁사가 없습니다 — "
-                                            "`/capture add` 또는 `--domain` 으로 명시하세요.")
-    if len(domains) > DOMAIN_CAP:
-        print(f"[안내] 경쟁사 {len(domains)}개는 상한 {DOMAIN_CAP}개를 초과 — "
-              f"앞 {DOMAIN_CAP}개만 사용합니다. 더 정밀하게는 `--domain` 으로 명시하세요.",
-              file=sys.stderr)
-        domains = domains[:DOMAIN_CAP]
+        domains = _resolve_domains(conn, p["id"], domain)
+        if not domains:
+            # 경쟁사 부재는 실패가 아니라 아직 적재를 안 한 정상 상태다 (첫 바퀴,
+            # 또는 rank harvest 가 3회 이상 잡힌 도메인을 못 찾은 사이트).
+            # ok=False 로 돌리면 run_all 체인이 exit 1 로 끝나고 worker.py 의
+            # 주간 리포트 메일이 조용히 안 나간다.
+            reason = (f"'{p['name']}' 에 등록된 경쟁사가 아직 없습니다 — "
+                      f"`/capture rank {p['name']}` 으로 순위를 한 바퀴 돌리면 "
+                      "상위 도메인이 자동 적재됩니다. 급하면 프로젝트 yaml 의 "
+                      "`competitors_manual` 또는 `--domain` 으로 직접 지정하세요.")
+            print(f"[gap] {reason}")
+            return st.noop(reason=reason)
+        if len(domains) > DOMAIN_CAP:
+            print(f"[안내] 경쟁사 {len(domains)}개는 상한 {DOMAIN_CAP}개를 초과 — "
+                  f"앞 {DOMAIN_CAP}개만 사용합니다. 더 정밀하게는 `--domain` 으로 명시하세요.",
+                  file=sys.stderr)
+            domains = domains[:DOMAIN_CAP]
 
-    locale = p["locale"] or "ko-KR"
-    est_cost = len(domains) * serp_adapter.LABS_COST_PER_CALL
-    print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
-          f"est_cost≈${est_cost:.3f} (~{len(domains) * (throttle + 2) / 60:.1f} min)")
-    serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
+        locale = p["locale"] or "ko-KR"
+        est_cost = len(domains) * serp_adapter.LABS_COST_PER_CALL
+        print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
+              f"est_cost≈${est_cost:.3f} (~{len(domains) * (throttle + 2) / 60:.1f} min)")
+        serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
 
-    if dry_run:
-        for d in domains:
-            print(f"  - {d}")
-        print(f"단가 출처: DataForSEO Labs ranked_keywords/live ≈ ${serp_adapter.LABS_COST_PER_CALL}/call "
-              "(모듈 docstring). 실제 청구액은 응답 cost 로 기록.")
-        conn.close()
-        return collector.StageResult(ok=True, skipped=True, cost=est_cost)
+        if st.dry_run:
+            for d in domains:
+                print(f"  - {d}")
+            print(f"단가 출처: DataForSEO Labs ranked_keywords/live ≈ ${serp_adapter.LABS_COST_PER_CALL}/call "
+                  "(모듈 docstring). 실제 청구액은 응답 cost 로 기록.")
+            return st.noop(cost=est_cost)
 
-    own_norm = _existing_norms(conn, p["id"])
-    gsc_norm = _gsc_seen_norms(conn, p["id"])
-    print(f"     filter: existing={len(own_norm)} keywords, gsc_seen={len(gsc_norm)} queries")
+        own_norm = _existing_norms(conn, p["id"])
+        gsc_norm = _gsc_seen_norms(conn, p["id"])
+        print(f"     filter: existing={len(own_norm)} keywords, gsc_seen={len(gsc_norm)} queries")
 
-    total_cost = 0.0
-    inserted_total = 0
-    volumes_total = 0
-    per_domain: list[tuple[str, int, int]] = []  # (domain, fetched, kept)
+        total_cost = 0.0
+        inserted_total = 0
+        volumes_total = 0
 
-    with db.run(conn, p["id"], "gap") as r:
-        for d in domains:
-            try:
-                items, cost = serp_adapter.fetch_labs_ranked_keywords(d, locale, limit)
-                total_cost += cost
-                # 필터 — norm 비교로 케이스·공백 차이 흡수.
-                kept: list[tuple[str, int | None]] = []
-                for it in items:
-                    if scoring.norm(it["keyword"]) in own_norm:
-                        continue
-                    if scoring.norm(it["keyword"]) in gsc_norm:
-                        continue
-                    kept.append((it["keyword"], it["search_volume"]))
-                inserted = db.add_keyword_candidates(
-                    conn, p["id"],
-                    [(kw, locale, "competitor_gap") for kw, _ in kept])
-                inserted_total += inserted
-                volumes_total += _backfill_volumes(conn, p["id"], kept)
-                per_domain.append((d, len(items), inserted))
-                r.api_calls += 1
-                print(f"  {d}: fetched={len(items)} kept={len(kept)} inserted={inserted}")
-            except Exception as e:
-                print(f"  ! {d}: {e}", file=sys.stderr)
-            conn.commit()
-            time.sleep(throttle)
+        def one(d: str) -> None:
+            """도메인 하나 — 실패는 러너가 세고 다음 도메인으로 넘어간다."""
+            nonlocal total_cost, inserted_total, volumes_total
+            items, cost = fetch(d, locale, limit)
+            total_cost += cost
+            # 필터 — norm 비교로 케이스·공백 차이 흡수.
+            kept: list[tuple[str, int | None]] = []
+            for it in items:
+                if scoring.norm(it["keyword"]) in own_norm:
+                    continue
+                if scoring.norm(it["keyword"]) in gsc_norm:
+                    continue
+                kept.append((it["keyword"], it["search_volume"]))
+            inserted = db.add_keyword_candidates(
+                conn, p["id"],
+                [(kw, locale, "competitor_gap") for kw, _ in kept])
+            inserted_total += inserted
+            volumes_total += _backfill_volumes(conn, p["id"], kept)
+            print(f"  {d}: fetched={len(items)} kept={len(kept)} inserted={inserted}")
 
-        r.notes = (f"domains={len(domains)} inserted={inserted_total} "
-                   f"volumes_filled={volumes_total}")
+        with st.record("gap") as r:
+            r.api_calls = st.each(domains, one)
+            r.notes = (f"domains={len(domains)} inserted={inserted_total} "
+                       f"volumes_filled={volumes_total} errors={st.errors}")
 
-    print(f"\ncollected {len(domains)} domains, "
-          f"actual_cost=${total_cost:.3f} (inserted={inserted_total}, volumes={volumes_total})\n"
-          f"run_id={r.id}\n"
-          f"Next: 후보는 source='competitor_gap', is_active=0 — "
-          f"/capture keywords 의 큐레이션 단계로 활성화하세요.")
-    conn.close()
-    return collector.StageResult(ok=True, skipped=False, rows=inserted_total, cost=total_cost)
+        print(f"\ncollected {len(domains)} domains, "
+              f"actual_cost=${total_cost:.3f} (inserted={inserted_total}, volumes={volumes_total})\n"
+              f"run_id={r.id}\n"
+              f"Next: 후보는 source='competitor_gap', is_active=0 — "
+              f"/capture keywords 의 큐레이션 단계로 활성화하세요.")
+        return st.done(rows=inserted_total, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -252,14 +252,12 @@ def main() -> None:
 
 
 def _selfcheck() -> None:
-    """HTTP 모킹으로 파싱·필터·적재 경로 전부 검증 — 진짜 Brain 안 건드림.
+    """가짜 fetch 로 필터·적재 경로 전부 검증 — 진짜 Brain·Labs 안 건드림.
 
-    패턴: test_collectors.py 가 collect_ai/serp 에 쓰는 방식과 같은 family.
-    다른 작업자가 동시에 test_collectors.py 를 만지는 중이라 거기는 안 건드리고,
-    본 파일 하단의 _selfcheck 만 두는 게 책임 경계가 명확하다.
+    의존물(conn·fetch)을 인자로 주입한다. 예전에는 requests.post 를 갈아끼우고
+    sys.argv 를 세워 main() 을 부르는 우회로였다.
     """
     import tempfile
-    import requests
 
     home = Path(tempfile.mkdtemp(prefix="seo-miner-gap-selftest-"))
     os.environ["CAPTURE_HOME"] = str(home)
@@ -293,51 +291,22 @@ def _selfcheck() -> None:
         (pid,))
     conn.commit()
 
-    # Labs 모킹 응답 — 두 도메인 모두 같은 페이로드로 단순화.
+    # Labs 모킹 — 의존물은 인자로 준다 (예전에는 requests.post 를 갈아끼웠다).
     # "공통 키워드" / "gsc 잡힌 쿼리" 는 필터에 걸리고,
     # "신규 후보 A" / "신규 후보 B" 만 남아야 한다.
-    fake_resp = {
-        "tasks": [{
-            "status_code": 20000,
-            "cost": 0.0007,
-            "result": [{
-                "items": [
-                    {"keyword_data": {"keyword": "공통 키워드", "keyword_info": {"search_volume": 50}}},
-                    {"keyword_data": {"keyword": "신규 후보 A", "keyword_info": {"search_volume": 1200}}},
-                    {"keyword_data": {"keyword": "GSC 잡힌 쿼리", "keyword_info": {"search_volume": None}}},
-                    {"keyword_data": {"keyword": "신규 후보 B", "keyword_info": {"search_volume": 7}}},
-                ]
-            }]
-        }]
-    }
+    def fake_fetch(domain, locale, limit):
+        assert (domain, locale) == ("rival.com", "ko-KR"), (domain, locale)
+        return [
+            {"keyword": "공통 키워드", "search_volume": 50},
+            {"keyword": "신규 후보 A", "search_volume": 1200},
+            {"keyword": "GSC 잡힌 쿼리", "search_volume": None},
+            {"keyword": "신규 후보 B", "search_volume": 7},
+        ], 0.0007
 
-    class _R:
-        def __init__(self, d):
-            self._d, self.status_code = d, 200
-        def json(self):
-            return self._d
-        def raise_for_status(self):
-            return None
+    res = collect("gt", domain=["rival.com"], throttle=0, conn=conn, fetch=fake_fetch)
+    assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
+    conn.execute("SELECT 1")     # 빌린 conn 은 러너가 닫지 않는다
 
-    orig_post = requests.post
-
-    def fake_post(url, *args, **kwargs):
-        assert "ranked_keywords" in url, url
-        return _R(fake_resp)
-
-    requests.post = fake_post
-    orig_argv = sys.argv
-    try:
-        sys.argv = [
-            "collect_gap.py", "--project", "gt",
-            "--domain", "rival.com", "--throttle", "0",
-        ]
-        main()
-    finally:
-        requests.post = orig_post
-        sys.argv = orig_argv
-
-    conn = db.connect()
     added = [dict(r) for r in conn.execute(
         "SELECT keyword, source, is_active, locale, volume "
         "FROM keywords WHERE project_id=? AND source='competitor_gap' ORDER BY keyword",
@@ -350,16 +319,27 @@ def _selfcheck() -> None:
     assert by_kw["신규 후보 A"] == 1200, by_kw
     assert by_kw["신규 후보 B"] == 7, by_kw
 
-    # dry-run 도 같은 DB 가서 run 기록이 남지 않는지 — 추가 검증.
+    # dry-run 은 Labs 를 부르지도, run 을 남기지도 않아야 한다 — 지뢰 fetch 로 확인.
     conn.execute("DELETE FROM runs")
     conn.commit()
-    sys.argv = ["collect_gap.py", "--project", "gt", "--dry-run"]
-    try:
-        main()
-    finally:
-        sys.argv = orig_argv
+
+    def boom(*a, **kw):
+        raise AssertionError("dry-run 이 Labs 를 불렀다")
+
+    res = collect("gt", dry_run=True, conn=conn, fetch=boom)
+    assert (res.ok, res.skipped) == (True, True), res
     runs = conn.execute("SELECT * FROM runs").fetchall()
     assert runs == [], f"dry-run 은 runs 에 아무것도 남기지 않아야 함: {runs}"
+
+    # 경쟁사 0건 = 건너뜀이지 실패가 아니다. ok=False 로 돌아가면 run_all 체인이
+    # exit 1 → worker.py 의 주간 리포트 메일이 안 나간다 (test_collectors 의
+    # run_all 테스트는 가짜 fn 을 주입해서 이 경로를 못 잡는다).
+    conn.execute("DELETE FROM competitors WHERE project_id=?", (pid,))
+    conn.commit()
+    res = collect("gt", conn=conn, fetch=boom)
+    assert (res.ok, res.skipped) == (True, True), res
+    assert res.reason, "왜 건너뛰었는지·다음에 뭘 할지 말해야 한다"
+
     conn.close()
     print("collect_gap self-check ok")
 

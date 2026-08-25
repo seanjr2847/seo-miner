@@ -37,13 +37,40 @@ import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
 TPL = Path(__file__).parent.parent / "templates"
 VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site", "history"]
+_VIEW_DEF = re.compile(
+    r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
+
+
+def view_defs() -> list[dict]:
+    """뷰가 자기 파일 안에서 선언한 것 — id·제목·담는 요소·그 화면을 채우는 단계.
+
+    분할이 여태 두 번 구현돼 있었다: 여기 VIEW_ORDER 여섯 개와, 호스팅판
+    dash.html 의 VIEWS 표(같은 여섯 이름 + 요소 id 열몇)다. 이제 선언은 화면
+    자신에게 있고, 조립이 그걸 데이터로 방출한다(window.__VIEWS__).
+    선언이 없거나 id 가 파일 이름과 어긋나면 조립을 멈춘다 — 조용히 빠지면
+    읽는 쪽이 옛 목록으로 되돌아간다.
+    """
+    out = []
+    for n in VIEW_ORDER:
+        m = _VIEW_DEF.search((TPL / "views" / f"{n}.html").read_text("utf-8"))
+        if not m:
+            raise ValueError(f"{n}.html 에 view-def 선언이 없습니다")
+        d = json.loads(m.group(1))
+        if d.get("id") != n:
+            raise ValueError(f"{n}.html 의 view-def id 가 {d.get('id')!r} 입니다")
+        out.append(d)
+    return out
 
 
 def _assemble() -> bytes:
     """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다."""
     base = (TPL / "dashboard.html").read_text("utf-8")
     parts = "".join((TPL / "views" / f"{n}.html").read_text("utf-8") for n in VIEW_ORDER)
-    return base.replace("<!--VIEWS-->", parts).encode("utf-8")
+    defs = json.dumps(view_defs(), ensure_ascii=False).replace("</", "<\\/")
+    return (base
+            .replace("<!--MANIFEST-->", f"<script>window.__VIEWS__={defs};</script>", 1)
+            .replace("<!--VIEWS-->", parts)
+            .encode("utf-8"))
 
 
 HTML = _assemble()
@@ -570,6 +597,38 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _selfcheck() -> None:
+    """조립이 지켜야 할 것 — 브라우저를 안 띄우고 확인할 수 있는 만큼만."""
+    html = _assemble().decode("utf-8")
+    defs = view_defs()
+    assert [d["id"] for d in defs] == VIEW_ORDER, "선언 순서가 조립 순서와 다르다"
+    assert "window.__VIEWS__=" in html, "매니페스트가 안 실렸다"
+    for left in ("<!--MANIFEST-->", "<!--VIEWS-->"):
+        assert left not in html, f"자리표가 안 채워졌다: {left}"
+    for d in defs:
+        assert f'VIEW("{d["id"]}"' in html, f'{d["id"]} 가 VIEW() 로 등록되지 않았다'
+        assert d["title"] and isinstance(d["stages"], list)
+        for i in d["sections"]:                  # 담는다고 선언한 요소는 실제로 있어야
+            assert f'id="{i}"' in html, f'{d["id"]} 가 없는 요소 id 를 담는다: {i}'
+
+    # 접두사 관례(KW_·RK_…) 대신 기계가 센다 — 조립하면 한 문서라 최상위 이름이
+    # 겹치면 뒤가 앞을 조용히 덮는다. 실제로 두 파일이 관례를 어기고 있었다.
+    seen: dict[str, str] = {}
+    srcs = [((TPL / "dashboard.html").read_text("utf-8"), "dashboard.html")]
+    srcs += [((TPL / "views" / f"{n}.html").read_text("utf-8"), n) for n in VIEW_ORDER]
+    for src, who in srcs:
+        for _, name in re.findall(r"^(const|let|var|function)\s+([A-Za-z_$][\w$]*)",
+                                  src, re.M):
+            assert name not in seen, f"최상위 이름이 겹친다: {name} ({seen[name]} ↔ {who})"
+            seen[name] = who
+
+    # CSV 작성기는 한 벌뿐이다 — 뷰가 자기 사본을 다시 만들면 null 처리가 또 갈라진다
+    # (여덟 벌이던 시절 일곱 벌이 빈 칸을 literal "null" 로 내보냈다).
+    assert html.count("URL.createObjectURL") == 1, "CSV 작성기가 여러 벌이다"
+    assert "String(c ?? \"\")" in html, "CSV 가 빈 칸을 빈 칸으로 안 쓴다"
+    print(f"dashboard self-check ok — 뷰 {len(defs)}개, 최상위 이름 {len(seen)}개")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", help="시작 시 선택할 사이트 (생략하면 첫 번째)")
@@ -578,7 +637,12 @@ def main() -> None:
     ap.add_argument("--export", action="store_true",
                     help="서버를 띄우는 대신 그 시점 화면을 HTML 파일로 남긴다")
     ap.add_argument("--actions", help="--export 전용: Next Actions JSON 파일")
+    ap.add_argument("--selfcheck", action="store_true",
+                    help="조립 결과만 점검하고 끝낸다 (서버·Brain 필요 없음)")
     a = ap.parse_args()
+
+    if a.selfcheck:
+        return _selfcheck()
 
     if a.export:
         if not a.project:

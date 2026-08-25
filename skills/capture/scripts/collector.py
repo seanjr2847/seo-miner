@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""수집기 공통 서두 — 인자·설정 병합·프로젝트 열기.
+"""수집기 공통 서두 + 스테이지 러너 — 인자·설정 병합·프로젝트 열기·실행 루프.
 
 수집기 다섯 개가 각자 갖고 있던 argparse 블록·부팅·설정 읽기를 여기로 모았다.
 그 전에는 --throttle 기본값만 0.5/0.3/0.5 세 벌이었고 config.yaml 의
@@ -7,10 +7,17 @@ defaults·serp 섹션은 읽는 코드가 아예 없었다(장식).
 
 우선순위:  CLI > 프로젝트 yaml > config.yaml defaults > 코드 리터럴
 
+서두만 공유하던 시절에는 실행 루프를 수집기 여섯 개가 각자 다시 썼다 —
+dry-run 조기반환 / 오늘-중복 스킵 / db.run 기록 / 항목별 try-except /
+conn.commit() / sleep(throttle) / conn.close() / StageResult 조립.
+그 껍데기가 이제 Stage 한 벌이다 (아래 stage()).
+
 self-check:  python collector.py
 """
 import sys
+import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -163,15 +170,150 @@ def project_cfg(name: str) -> dict:
         return {}
 
 
-def open_project(name: str):
-    """(conn, project_row, project_cfg) — 수집기 다섯 개가 같은 세 줄을 쓰던 자리.
+def today_clause(col: str) -> str:
+    """'그 값이 오늘인가' — 저장된 시각이 UTC 든 localtime 이든 오늘로 친다.
+
+    ? 자리 두 개를 만든다. 값은 Stage.seen_today 가 채운다 —
+    "오늘"을 만드는 자리를 수집기마다 두지 않으려는 것이다.
+    """
+    return f"(date({col}) = ? OR date({col}, 'localtime') = ?)"
+
+
+class Stage:
+    """수집기 한 단계의 실행 문맥 — conn 수명·db.run 기록·항목별 오류 집계를 소유한다.
+
+    수집기가 러너에 주는 것은 "항목마다 무엇을 가져와 무엇을 쓸지"(each 의 fn)
+    뿐이다. 언제 멈추고·얼마를 쉬고·오류를 어떻게 세고·무엇을 돌려줄지는 러너가
+    갖는다.
+
+    conn.close() 가 파일마다 3~7번 흩어져 있던 것이 이 클래스를 만든 이유다 —
+    조기반환 분기를 하나 더 만들 때마다 닫기를 빠뜨릴 자리가 하나씩 늘었다.
+    이제 닫는 자리는 __exit__ 하나다.
+    """
+
+    def __init__(self, conn, project, cfg, *, dry_run: bool = False, own: bool = True):
+        self.conn = conn
+        self.project = project
+        self.cfg = cfg
+        self.dry_run = dry_run
+        self.throttle = 0.0     # settings() 가 물고 온다
+        self.errors = 0
+        self._own = own
+
+    @property
+    def pid(self) -> int:
+        return self.project["id"]
+
+    def __enter__(self) -> "Stage":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        if self._own:
+            self.conn.close()
+        return False            # 예외는 그대로 올린다
+
+    def settings(self, args) -> dict:
+        """이 단계의 설정 해석. throttle 은 러너가 바로 물고 간다 —
+        수집기마다 같은 값을 자기 지역변수로 다시 옮기던 자리다."""
+        s = settings(args, self.cfg)
+        if s.get("throttle") is not None:
+            self.throttle = float(s["throttle"])
+        return s
+
+    def record(self, kind: str):
+        """runs 한 줄 — db.run 위임. 예외가 나도 finished_at 이 남는다."""
+        return db.run(self.conn, self.pid, kind)
+
+    @property
+    def today(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def seen_today(self, sql: str, params: tuple = (), *, force: bool = False) -> set:
+        """오늘 이미 본 것들의 키 집합. force 면 빈 집합 — 전부 다시 본다.
+
+        무엇이 '봤다'인지는 단계마다 다르다(순위는 rank_snapshots.checked_at,
+        AI 는 runs.started_at). 그래서 SQL 은 수집기가 주되, 오늘을 만드는 자리와
+        --force 의 뜻은 여기 한 곳이다. sql 끝에는 today_clause() 를 붙이고,
+        그 ? 두 자리는 여기서 채운다.
+        """
+        if force:
+            return set()
+        rows = self.conn.execute(sql, (*params, self.today, self.today)).fetchall()
+        return {(tuple(r) if len(r) > 1 else r[0]) for r in rows}
+
+    @staticmethod
+    def skip_note(n: int) -> str:
+        """요약 줄에 붙는 '몇 개 건너뛰었다' — 안 건너뛰었으면 빈 문자열."""
+        return f" (skipped {n} 오늘 이미 확인)" if n else ""
+
+    def each(self, items, fn, *, label=None) -> int:
+        """항목마다 fn(item). 그 항목에서 난 예외는 여기서 잡아 세고 다음으로 간다.
+
+        열 개 중 하나가 죽었다고 아홉을 잃지 않는다. 수집기 셋(serp/gap/ai)이
+        글자 그대로 같은 블록을 갖고 있던 자리다 — errors += 1 + stderr 한 줄 /
+        conn.commit() / sleep(throttle).
+
+        label(item) 은 오류 줄에 찍을 이름. 반환값은 예외 없이 끝난 항목 수.
+
+        항목마다 commit 한다 — 도중에 죽어도 거기까지는 남는다. conn 을 빌려
+        준 호출자가 자기 트랜잭션을 열어 둔 채로 부르면 그것도 같이 커밋된다.
+        """
+        done = 0
+        for item in items:
+            try:
+                fn(item)
+                done += 1
+            except Exception as e:
+                self.errors += 1
+                print(f"  ! {label(item) if label else item}: {e}", file=sys.stderr)
+            self.conn.commit()
+            time.sleep(self.throttle)
+        return done
+
+    # ── StageResult 조립 — 세 가지 끝맺음 ────────────────────────────
+    def skip(self, reason: str) -> StageResult:
+        """사유 있는 비종료 (키 없음·구성 누락 등)."""
+        return StageResult(ok=False, skipped=True, reason=reason)
+
+    def noop(self, **kw) -> StageResult:
+        """의도적으로 아무것도 안 함 (--dry-run, 할 일 0건)."""
+        return StageResult(ok=True, skipped=True, **kw)
+
+    def done(self, **kw) -> StageResult:
+        """정상 완료."""
+        return StageResult(ok=True, skipped=False, **kw)
+
+
+def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
+    """수집기 한 단계를 연다 — with 에 넣으면 conn 수명이 러너 것이 된다.
 
     yaml은 등록할 때 기록해 둔 config_path 로 찾는다. 이름만으로 찾으면
     표준 폴더(~/.capture/projects) 밖에 둔 설정을 조용히 놓친다.
+
+    conn 을 주면 그것을 쓰고 닫지 않는다 — 빌린 것은 안 닫는다. 안 주면 여기서
+    열고 __exit__ 에서 닫는다(지금까지의 동작 그대로). 테스트가 globals() 를
+    갈아끼우던 자리가 이 인자다.
     """
-    conn = db.connect()
-    p = db.get_project(conn, name)
-    return conn, p, project_cfg(p["config_path"] or name)
+    own = conn is None
+    if own:
+        conn = db.connect()
+    try:
+        p = db.get_project(conn, name)
+    except BaseException:
+        if own:
+            conn.close()        # 프로젝트가 없어도 방금 연 conn 은 닫고 나간다
+        raise
+    return Stage(conn, p, project_cfg(p["config_path"] or name),
+                 dry_run=dry_run, own=own)
+
+
+def open_project(name: str):
+    """(conn, project_row, project_cfg) — 러너 이전의 호출 형태. 닫기는 호출자 몫.
+
+    새 코드는 stage() 를 쓴다.
+    """
+    st = stage(name)
+    return st.conn, st.project, st.cfg
 
 
 def _selfcheck() -> None:
@@ -206,7 +348,87 @@ def _selfcheck() -> None:
     assert s_fb["custom_key"] == 42
     assert s_fb["limits.max_keywords"] == 99
 
+    _runner_check()
     print("collector self-check ok")
+
+
+def _runner_check() -> None:
+    """러너를 실제로 돌린다 — 가짜 수집기 하나로 dry-run 단락 / 오류 집계 /
+    conn 닫힘 / 오늘-중복 스킵 / StageResult 모양을 확인한다.
+    임시 CAPTURE_HOME 에서만 돈다 (진짜 Brain 안 건드림)."""
+    import contextlib
+    import io
+    import os
+    import sqlite3
+    import tempfile
+
+    os.environ["CAPTURE_HOME"] = str(
+        Path(tempfile.mkdtemp(prefix="seo-miner-collector-selftest-")))
+    boot = db.connect()
+    boot.execute("INSERT INTO projects(name, domain, locale) VALUES('rt','rt.com','ko-KR')")
+    boot.commit()
+    boot.close()
+
+    # 1. dry-run 단락 + conn 이 닫힌다.
+    with stage("rt", dry_run=True) as st:
+        assert st.dry_run and st.project["name"] == "rt"
+        res = st.noop(cost=1.25)
+        leaked = st.conn
+    assert (res.ok, res.skipped, res.cost, res.rows) == (True, True, 1.25, 0)
+    try:
+        leaked.execute("SELECT 1")
+        raise AssertionError("러너가 conn 을 닫지 않았다")
+    except sqlite3.ProgrammingError:
+        pass
+
+    # 2. 항목 하나가 죽어도 나머지는 간다 — 오류는 세고 stderr 에 남긴다.
+    err = io.StringIO()
+    with stage("rt") as st:
+        seen: list[str] = []
+
+        def one(kw: str) -> None:
+            if kw == "b":
+                raise RuntimeError("터짐")
+            seen.append(kw)
+            st.conn.execute(
+                "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,?)",
+                (st.pid, kw, "ko-KR", "seed"))
+
+        with st.record("rank") as r:
+            with contextlib.redirect_stderr(err):
+                n = st.each(["a", "b", "c"], one, label=lambda kw: f"kw={kw}")
+            r.api_calls = n
+        res = st.done(rows=n)
+        run_row = st.conn.execute(
+            "SELECT api_calls, finished_at FROM runs WHERE project_id=?", (st.pid,)).fetchone()
+        assert run_row["api_calls"] == 2 and run_row["finished_at"], dict(run_row)
+    assert (n, st.errors, seen) == (2, 1, ["a", "c"]), (n, st.errors, seen)
+    assert "kw=b: 터짐" in err.getvalue(), err.getvalue()
+    assert (res.ok, res.skipped, res.rows) == (True, False, 2)
+
+    # 3. 빌린 conn 은 러너가 닫지 않는다 (테스트·호출자가 재사용하는 자리).
+    borrowed = db.connect()
+    with stage("rt", conn=borrowed) as st:
+        assert st.conn is borrowed
+        kid = st.conn.execute("SELECT id FROM keywords WHERE keyword='a'").fetchone()["id"]
+        db.write_rank_snapshot(st.conn, kid, 3, "https://rt.com/a", checked_at=db.now())
+        st.conn.commit()
+
+        # 4. 오늘-중복 스킵 한 벌 — force 는 그것을 끈다.
+        sql = f"SELECT keyword_id FROM rank_snapshots WHERE {today_clause('checked_at')}"
+        assert st.seen_today(sql) == {kid}
+        assert st.seen_today(sql, force=True) == set(), "force 면 오늘-중복 스킵을 끈다"
+        assert Stage.skip_note(2) == " (skipped 2 오늘 이미 확인)"
+        assert Stage.skip_note(0) == ""
+    borrowed.execute("SELECT 1")     # 안 닫혔다 — 닫혔으면 여기서 터진다
+    borrowed.close()
+
+    # 5. 사유 있는 비종료.
+    with stage("rt") as st:
+        res = st.skip("사유")
+    assert (res.ok, res.skipped, res.reason) == (False, True, "사유")
+
+    print("collector runner self-check ok")
 
 
 if __name__ == "__main__":

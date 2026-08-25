@@ -8,30 +8,79 @@ State lives OUTSIDE the skill folder so skill updates never touch data.
     ├── reports/{project}/{date}.html
     └── gsc_token.json / gsc_oauth_client.json
 
+경로·구글 자격증명은 paths.py 가 답한다 — 여기 있는 같은 이름들은 그쪽으로 넘기는
+얇은 위임이다(호출자를 고치지 않기 위해). 새 코드는 paths 를 직접 import 하면
+SQLite·SCHEMA·_migrate 를 끌고 오지 않는다.
+
 CLI:
   python db.py init
   python db.py sync-project <path/to/project.yaml>
   python db.py stats <project>
   python db.py sql "SELECT ..."        # read-only, for Brain queries
+  python db.py selfcheck               # 임시 brain.db 로 읽기 동사들을 돌려본다
 """
 import json
-import os
-import re
 import sqlite3
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-def capture_home() -> Path:
-    """상태 디렉토리. 매번 환경변수를 다시 읽는다 — import 시점에 얼리지 않는다."""
-    return Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
+import paths
+
+# ── paths.py 로 넘긴 것들 — 예전 이름 그대로 계속 노출한다 ─────────────
+# 호출자 19개(collect_*·doctor·connect_gsc·createdb·dashboard·server)가 이 이름들을
+# 쓰고 있다. 마이그레이션은 이 변경의 몫이 아니다 — seam 을 낸 것이 성과물이다.
+capture_home = paths.home
+db_path = paths.db_file
+load_env = paths.load_env
+creds_dir = paths.creds_dir
+docs_dir = paths.docs_dir
+downloads_dir = paths.downloads_dir
+repo_project = paths.repo_project
+gsc_oauth_bundled = paths.bundled_oauth_client
 
 
-def db_path() -> Path:
-    """Brain 파일 자리."""
-    env = os.environ.get("CAPTURE_DB")
-    return Path(env) if env else capture_home() / "brain.db"
+def _gsc() -> paths.GSC:
+    """해석된 자격증명 한 벌. 번들 위치는 **db 의 module 속성을 거쳐** 넘긴다 —
+    기존 테스트(test_collectors·test_setup_api)가 db.gsc_oauth_bundled 를 갈아끼워
+    "번들이 빠진 배포"를 흉내내고, 그 판정이 아래 함수들에 그대로 먹혀야 한다."""
+    return paths.gsc(gsc_oauth_bundled())
+
+
+def gsc_key() -> Path:
+    """구글 서비스 계정 키 (전 사이트 공용) — 무인 수집용 선택지."""
+    return _gsc().key
+
+
+def gsc_oauth_client() -> Path:
+    """실제로 쓸 OAuth 클라이언트 (env > 사용자가 깐 것 > 번들)."""
+    return _gsc().client
+
+
+def gsc_auth() -> str:
+    """지금 걸려 있는 인증 — "oauth" | "service_account" | "" (아직 없음)."""
+    return _gsc().auth
+
+
+def gsc_token() -> Path:
+    """구글 로그인 토큰을 보관하는 자리."""
+    return _gsc().token
+
+
+def gsc_token_legacy() -> Path:
+    """예전 MCP 서버가 쓰던 토큰 자리."""
+    return _gsc().token_legacy
+
+
+def gsc_token_file() -> Path | None:
+    """실제로 존재하는 토큰 파일 — 새 자리 우선, 없으면 레거시. 없으면 None."""
+    return _gsc().token_file
+
+
+def gsc_connected() -> bool:
+    """**진짜 연결됐나** — 클라이언트 파일이 있느냐가 아니라 토큰이 있느냐다."""
+    return _gsc().connected
 
 
 def __getattr__(name):
@@ -42,221 +91,6 @@ def __getattr__(name):
     if name == "DB_PATH":
         return db_path()
     raise AttributeError(name)
-
-
-# 한국어 Windows 콘솔(cp949)에서 '—'·'✓' 출력이 UnicodeEncodeError로 죽는 것 방지.
-# db는 모든 스크립트가 import하므로 여기 한 번이면 전부 커버된다 — doctor·connect_gsc·
-# createdb 도 각자 갖고 있던 사본을 지우고 이 import에 기댄다.
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):  # 파이프로 감싼 경우 등
-        pass
-
-
-def load_env(path: Path | None = None) -> None:
-    """~/.capture/env 의 KEY=VALUE를 환경변수로 — 대시보드 설정 화면이 여기 쓴다.
-    셸에 이미 export한 값이 우선(setdefault). # ponytail: dotenv 패키지 대신 4줄."""
-    path = path or capture_home() / "env"
-    for line in (path.read_text("utf-8").splitlines() if path.exists() else []):
-        k, sep, v = line.partition("=")
-        if sep and k.strip() and not k.lstrip().startswith("#"):
-            os.environ.setdefault(k.strip(), v.strip())
-
-
-load_env()
-
-
-# ── 자료가 어디 사는가 ─────────────────────────────────────────────
-# 경로 규칙은 여기서만 답한다. 예전에는 db·doctor·connect_gsc·createdb·collect_gsc가
-# 각자 계산해서 CAPTURE_HOME 5벌·GSC 키 4벌이 돌아다녔고 다운로드 폴더는 이미 어긋나 있었다.
-
-def gsc_key() -> Path:
-    """구글 서비스 계정 키 (전 사이트 공용) — 무인 수집용 선택지."""
-    return Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS",
-                               capture_home() / "gsc_service_account.json"))
-
-
-def gsc_oauth_bundled() -> Path:
-    """플러그인이 동봉한 OAuth 클라이언트 — 콘솔 작업을 사용자에게서 걷어낸다.
-
-    구글 OAuth 는 등록된 client_id/secret 없이는 성립하지 않는다. 우회로가 없어서,
-    지금까지는 **사용자마다** 클라우드 콘솔에서 앱을 등록하게 했다(API 사용 설정 →
-    동의 화면 → 데스크톱 앱 클라이언트 → JSON 다운로드). 그 4단계를 없애는 방법은
-    "콘솔 없는 OAuth"가 아니라 **콘솔 작업을 한 번 해서 그 결과를 배포에 넣는 것**이다.
-
-    설치형 앱의 client_secret 은 기밀이 아니다 — 구글이 그렇게 명시하고,
-    rclone·gcloud 같은 CLI 가 전부 자기 클라이언트를 박아서 배포한다. 대신
-    미검증 앱이라 동의 화면에 경고가 한 번 뜨고 사용자 100명 상한이 붙는다.
-
-    이 파일이 없어도 아무것도 깨지지 않는다 — 그냥 예전처럼 각자 클라이언트를
-    쓰는 흐름으로 돌아갈 뿐이다(배포에서 뺐거나, 로컬 개발 중이거나).
-    """
-    return Path(__file__).resolve().parents[2] / "setup" / "oauth_client.json"
-
-
-def gsc_oauth_client() -> Path:
-    """OAuth 클라이언트 시크릿(데스크톱 앱) — 기본 인증 방식.
-
-    이 파일만 있으면 구글 로그인 한 번으로 끝난다. 속성마다 사용자를 추가하는
-    단계가 없다 — 내 구글 계정이 이미 그 속성의 소유자이기 때문이다.
-
-    우선순위(이게 정본이다): 환경변수 > 사용자가 깐 것(~/.capture) > 번들.
-    **사용자 것이 번들을 이긴다** — 이미 자기 클라이언트로 붙여 둔 사람의 발밑을
-    업데이트가 바꿔치기하면 안 된다. 번들은 아무것도 안 한 사람의 기본값일 뿐이다.
-    """
-    env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
-    if env:
-        return Path(env)
-    own = capture_home() / "gsc_oauth_client.json"
-    if own.exists():
-        return own
-    bundled = gsc_oauth_bundled()
-    # 없으면 사용자 경로를 돌려준다 — "무엇이 없어서 막혔나"를 말할 때 가리킬 자리는
-    # 배포 안쪽이 아니라 사용자가 파일을 놓을 자리여야 한다.
-    return bundled if bundled.exists() else own
-
-
-def gsc_auth() -> str:
-    """지금 걸려 있는 인증 — "oauth" | "service_account" | "" (아직 없음).
-
-    **이 순서가 정본이다.** collect_gsc·gsc_query·doctor가 전부
-    이 판정을 따른다 — 예전에 같은 규칙이 여러 방언으로 흩어져 한쪽만 고쳐지는
-    일이 반복됐다. OAuth가 기본이고, 서비스 계정은 무인 수집이 필요할 때 쓴다.
-
-    **번들 OAuth 는 서비스 계정보다 뒤다.** 번들 파일은 설치만 하면 항상 존재하므로,
-    단순히 "OAuth 파일이 있나"로 판정하면 서비스 계정으로 무인 수집을 걸어 둔 사람이
-    매번 브라우저 로그인으로 끌려간다. 사용자가 **직접 놓은 것**이 항상 이긴다.
-    """
-    env = os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
-    if (env and Path(env).exists()) or (capture_home() / "gsc_oauth_client.json").exists():
-        return "oauth"
-    if gsc_key().exists():
-        return "service_account"
-    if gsc_oauth_bundled().exists():
-        return "oauth"
-    return ""
-
-
-def gsc_token() -> Path:
-    """구글 로그인 토큰을 보관하는 자리 — **이제 우리가 정한다.**
-
-    예전에는 gsc MCP 서버(mcp-search-console)가 로그인을 대신 해 줬고, 토큰도 그
-    패키지의 설정 폴더에 있었다. 그 서버를 걷어내면서 로그인도 우리 것이 됐으니
-    (collect_gsc._oauth_service) 토큰도 나머지 상태와 같은 곳 — CAPTURE_HOME — 에 둔다.
-    """
-    return Path(os.environ.get("GSC_TOKEN_FILE", capture_home() / "gsc_token.json"))
-
-
-def gsc_token_legacy() -> Path:
-    """예전 MCP 서버가 쓰던 토큰 자리 — 이미 로그인한 사람을 다시 로그인시키지 않는다.
-
-    업스트림 gsc_server.py 규칙이었다: GSC_CONFIG_DIR 또는 platformdirs 의 mcp-gsc
-    아래 token.json. 파일 형식은 google-auth 표준(Credentials.to_json)이라 그대로
-    읽힌다 — collect_gsc 가 이걸 읽어 쓰고 새 자리에 다시 쓴다.
-    윈도우 경로가 mcp-gsc 를 두 번 지나는 건 오타가 아니라 platformdirs 실측값이다.
-    """
-    d = os.environ.get("GSC_CONFIG_DIR")
-    if not d:
-        if sys.platform == "win32":
-            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
-        elif sys.platform == "darwin":
-            base = Path.home() / "Library" / "Application Support"
-        else:
-            base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-        d = base / "mcp-gsc" / "mcp-gsc" if sys.platform == "win32" else base / "mcp-gsc"
-    return Path(d) / "token.json"
-
-
-def gsc_token_file():
-    """실제로 존재하는 토큰 파일 — 새 자리 우선, 없으면 레거시. 없으면 None."""
-    for t in (gsc_token(), gsc_token_legacy()):
-        if t.exists():
-            return t
-    return None
-
-
-def gsc_connected() -> bool:
-    """**진짜 연결됐나** — 클라이언트 파일이 있느냐가 아니라 토큰이 있느냐다.
-
-    번들 OAuth 클라이언트(gsc_oauth_bundled)는 설치만 하면 항상 존재한다. 그래서
-    "파일이 있다"가 더 이상 "연결됐다"를 뜻하지 않는다 — 파일 유무로 판정하면
-    설치 직후 전원이 '연결됨'으로 보인다.
-
-    이건 실제로 한 번 당해 본 거짓말이다(예전 gsc MCP 서버는 인증 파일이 없어도
-    `Connected` 로 떠서 사용자가 한 번도 인증되지 않은 상태로 지냈다).
-    **우리 doctor 가 같은 거짓말을 하면 안 된다.**
-
-    서비스 계정은 로그인 자체가 없어서 키 파일 존재가 곧 연결이다.
-    """
-    auth = gsc_auth()
-    if auth == "service_account":
-        return gsc_key().exists()
-    if auth == "oauth":
-        return gsc_token_file() is not None
-    return False
-
-
-def creds_dir(project: str) -> Path:
-    """레거시 사이트별 OAuth 자격증명 폴더 — 서비스 계정 키로 대체됐다."""
-    return capture_home() / "creds" / project
-
-
-def downloads_dir() -> Path:
-    """브라우저 다운로드 폴더 — GSC 서비스 계정 키(connect_gsc)를 여기서 찾는다."""
-    return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
-
-
-_REPO_PATH_RE = re.compile(r"^repo_path:[ 	]*(.+?)[ 	]*$", re.M)
-
-
-def repo_project(cwd=None) -> str | None:
-    """지금 이 폴더가 어느 사이트의 리포인가 — `projects/{P}.repo.yaml` 의 repo_path 로 판정.
-
-    Brain 은 컴퓨터 전역(`~/.capture/brain.db`)이라 사이트가 여럿이면 "지금 이 폴더가
-    어느 사이트냐"에 아무도 답하지 못했다. 그 답은 `/create profile` 이 이미
-    `repo.yaml` 에 적어 두고 있었는데 읽는 코드가 없었다.
-
-    ponytail: yaml 파서 대신 한 줄 정규식으로 읽는다 — doctor 가 pip 이전에도 돌아야 해서
-    stdlib 밖으로 못 나간다. repo_path 를 블록 스칼라(`|`)로 적으면 못 읽는다.
-    """
-    try:
-        here = Path(cwd or Path.cwd()).resolve()
-    except OSError:
-        return None
-    d = capture_home() / "projects"
-    if not d.exists():
-        return None
-    best = None
-    for f in sorted(d.glob("*.repo.yaml")):
-        try:
-            m = _REPO_PATH_RE.search(f.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        if not m:
-            continue
-        raw = m.group(1).strip().strip('"').strip("'")
-        if not raw or raw.startswith("/path/to/"):   # 템플릿 그대로면 무시
-            continue
-        try:
-            root = Path(raw).expanduser().resolve()
-        except OSError:
-            continue
-        if root == here or root in here.parents:
-            # 가장 깊은 매치가 이긴다 — 리포 안에 리포가 있을 때 안쪽이 답이다.
-            if best is None or len(root.parts) > len(best[1].parts):
-                best = (f.name[: -len(".repo.yaml")], root)
-    return best[0] if best else None
-
-
-def docs_dir(project: str) -> Path:
-    """사이트별 마케팅 문서 자리 — positioning.md, aso.md 등.
-
-    setup 이 외부 스킬(product-marketing·aso)로 만들어 여기 두면, capture 는 AI
-    프롬프트를 쓸 때, create 는 콘텐츠 보이스를 잡을 때 같은 문서를 읽는다.
-    Brain(brain.db) 밖에 산문으로 두는 이유는 사람이 직접 고쳐야 하는 것이기 때문이다.
-    """
-    return capture_home() / "docs" / project
 
 
 class ProjectNotFound(Exception):
@@ -396,6 +230,24 @@ CREATE TABLE IF NOT EXISTS runs (
   cost_estimate_usd REAL DEFAULT 0,
   notes TEXT
 );
+CREATE TABLE IF NOT EXISTS backlink_summary (  -- 백링크 프로필 (server/backlinks.py 가 채운다)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  rank INTEGER, backlinks INTEGER, referring_domains INTEGER,
+  referring_main_domains INTEGER, broken_backlinks INTEGER,
+  dofollow INTEGER, nofollow INTEGER,
+  UNIQUE(project_id, checked_date)
+);
+CREATE TABLE IF NOT EXISTS referring_domains (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  rank INTEGER, backlinks INTEGER, dofollow INTEGER, first_seen TEXT, lost_date TEXT,
+  UNIQUE(project_id, checked_date, domain)
+);
+CREATE INDEX IF NOT EXISTS idx_refdom ON referring_domains(project_id, checked_date);
 CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 (루프 클로즈)
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -925,9 +777,67 @@ def list_creations(conn: sqlite3.Connection, project_id: int,
                    limit: int = 30) -> list[sqlite3.Row]:
     """작업 완료(creations) 목록 조회."""
     return conn.execute(
-        """SELECT id, opportunity_id, kind, file_path, branch, merged, created_at
+        """SELECT id, opportunity_id, kind, file_path, branch, note, merged, created_at
              FROM creations WHERE project_id=? ORDER BY id DESC LIMIT ?""",
         (int(project_id), int(limit))).fetchall()
+
+
+def count_active_keywords(conn: sqlite3.Connection, project_id: int) -> int:
+    """추적 중(is_active=1) 키워드 수. 상한 판정과 화면 표시가 같은 값을 본다."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
+        (int(project_id),)).fetchone()[0]
+
+
+def list_keywords(conn: sqlite3.Connection, project_id: int, *,
+                  active: bool, limit: int = 500) -> list[sqlite3.Row]:
+    """추적 중(active=True) 또는 후보(False) 키워드 + 서치콘솔 누적 노출·클릭.
+
+    노출 많은 순이다 — 후보 목록에서 사람이 고를 때 "구글이 이미 보여주고 있는 것"이
+    위로 와야 한다. 한 번도 노출된 적 없는 키워드는 0 으로 내려간다(NULL 아님).
+    """
+    return conn.execute(
+        """SELECT k.id, k.keyword, k.source, k.cluster,
+                  COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk
+             FROM keywords k
+             LEFT JOIN gsc_snapshots g
+               ON g.project_id=k.project_id AND g.query=k.keyword
+            WHERE k.project_id=? AND k.is_active=?
+            GROUP BY k.id ORDER BY imp DESC, k.keyword LIMIT ?""",
+        (int(project_id), 1 if active else 0, int(limit))).fetchall()
+
+
+def set_keywords_active(conn: sqlite3.Connection, project_id: int, ids,
+                        active: bool) -> int:
+    """키워드 추적 토글. 반환: 실제로 손댄 행 수(남의 사이트 id 는 안 세어진다).
+
+    상한(몇 개까지 켤 수 있나)은 여기 없다 — 값을 아는 호출부가 ids 를 잘라서 넘긴다.
+    """
+    ids = [int(x) for x in ids]
+    if not ids:
+        return 0
+    cur = conn.execute(
+        f"UPDATE keywords SET is_active=? WHERE project_id=? AND id IN ({','.join('?' * len(ids))})",
+        [1 if active else 0, int(project_id), *ids])
+    conn.commit()
+    return cur.rowcount
+
+
+def query_performance(conn: sqlite3.Connection, project_id: int,
+                      query: str) -> dict | None:
+    """검색어 하나의 서치콘솔 누적 성과 — {clicks, impressions, position}.
+
+    노출이 0 이면 None 이다. "노출 없음"과 "클릭 0"은 다르고, 근거로 쓸 수 있는 건
+    노출이 있을 때뿐이라 그 판정을 호출부마다 다시 쓰지 않게 여기서 끝낸다.
+    """
+    r = conn.execute(
+        """SELECT SUM(clicks) c, SUM(impressions) i, AVG(position) pos
+             FROM gsc_snapshots WHERE project_id=? AND query=?""",
+        (int(project_id), query)).fetchone()
+    if not r or not r["i"]:
+        return None
+    return {"clicks": int(r["c"] or 0), "impressions": int(r["i"]),
+            "position": round(float(r["pos"]), 1)}
 
 
 def stats(project: str) -> None:
@@ -968,6 +878,74 @@ def run_sql(query: str) -> None:
     conn.close()
 
 
+def _selfcheck() -> None:
+    """임시 brain.db 하나로 읽기 동사들을 실제로 돌려본다 — 서버 라우트가 SQL 대신
+    이 이름들을 부르므로, 여기서 깨지면 웹 화면이 같이 깨진다."""
+    import os
+    import tempfile
+
+    old = os.environ.get("CAPTURE_HOME")
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["CAPTURE_HOME"] = d
+        conn = connect()
+        try:
+            # 백링크 테이블의 소유자가 db.py 다 — server/backlinks.py 가 만들지 않는다.
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            assert {"backlink_summary", "referring_domains"} <= tables, tables
+
+            conn.execute("INSERT INTO projects(name,type,domain) VALUES('p','saas','example.com')")
+            conn.commit()
+            pid = get_project(conn, "p")["id"]
+
+            add_keyword_candidates(conn, pid, [("가", None, "autocomplete"),
+                                               ("나", None, "autocomplete"),
+                                               ("다", None, "autocomplete")])
+            kids = [r["id"] for r in conn.execute(
+                "SELECT id FROM keywords WHERE project_id=? ORDER BY keyword", (pid,))]
+            assert count_active_keywords(conn, pid) == 0
+
+            write_gsc_snapshot(conn, pid, "2026-08-01", 28,
+                               [("나", "/n", 3, 100, 0.03, 7.0),
+                                ("나", "/n2", 1, 50, 0.02, 9.0)])
+
+            cands = list_keywords(conn, pid, active=False)
+            assert [r["keyword"] for r in cands] == ["나", "가", "다"], \
+                [r["keyword"] for r in cands]          # 노출 많은 순, 그다음 가나다
+            assert cands[0]["imp"] == 150 and cands[0]["clk"] == 4, dict(cands[0])
+            assert cands[1]["imp"] == 0, dict(cands[1])   # 노출 없음은 0 (NULL 아님)
+
+            assert set_keywords_active(conn, pid, [kids[0], kids[1]], True) == 2
+            assert set_keywords_active(conn, pid, [999999], True) == 0, "남의 id 가 세어진다"
+            assert count_active_keywords(conn, pid) == 2
+            assert [r["keyword"] for r in list_keywords(conn, pid, active=True)] == ["나", "가"]
+            assert set_keywords_active(conn, pid, [], False) == 0, "빈 목록이 IN () 을 만든다"
+            assert set_keywords_active(conn, pid, [kids[1]], False) == 1
+            assert count_active_keywords(conn, pid) == 1
+
+            perf = query_performance(conn, pid, "나")
+            assert perf == {"clicks": 4, "impressions": 150, "position": 8.0}, perf
+            assert query_performance(conn, pid, "가") is None, "노출 0 인데 근거가 있다고 한다"
+
+            upsert_opportunities(conn, pid, None, [("striking_distance", "나", 80.0, "왜")])
+            opp = list_opportunities(conn, pid, order="screen", limit=5)[0]
+            got = get_opportunity(conn, opp["id"], project_id=pid)
+            assert got["target"] == "나" and got["status"] == "new", dict(got)
+
+            cid = record_creation(conn, pid, "docs/n.md", opportunity_id=opp["id"],
+                                  kind="striking_distance", branch="capture/x", note="pr-url")
+            rows = list_creations(conn, pid, limit=50)
+            assert len(rows) == 1 and rows[0]["id"] == cid, rows
+            assert rows[0]["note"] == "pr-url", dict(rows[0])   # 웹 화면이 PR 링크로 쓴다
+        finally:
+            conn.close()
+    if old is None:
+        os.environ.pop("CAPTURE_HOME", None)
+    else:
+        os.environ["CAPTURE_HOME"] = old
+    print("db: ok")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -975,6 +953,8 @@ if __name__ == "__main__":
     cmd = args[0]
     if cmd == "init":
         init_db()
+    elif cmd == "selfcheck":
+        _selfcheck()
     elif cmd == "sync-project" and len(args) > 1:
         sync_project(args[1])
     elif cmd == "stats" and len(args) > 1:

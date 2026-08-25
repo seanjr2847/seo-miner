@@ -22,8 +22,8 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import gh                                     # noqa: E402
 import serp_adapter                           # noqa: E402
+import settings                               # noqa: E402
 
-MODEL = os.environ.get("SEOMINER_WRITER_MODEL", "anthropic/claude-sonnet-4.5")
 CONTENT_HINT = re.compile(
     r"\.(md|mdx|markdown|html|astro|njk|liquid)$", re.I)
 SKIP = re.compile(r"(^|/)(node_modules|\.git|dist|build|vendor|\.next|public/assets)/", re.I)
@@ -33,17 +33,22 @@ class WriterError(RuntimeError):
     pass
 
 
-def _ask(prompt: str, max_tokens: int = 4000) -> str:
-    """OpenRouter 한 방. collect_ai 와 같은 키를 쓴다."""
+def _ask(prompt: str, max_tokens: int = 4000, *,
+         key: str | None = None, model: str | None = None) -> str:
+    """OpenRouter 한 방. collect_ai 와 같은 키를 쓴다.
+
+    키·모델은 넘겨받는다. 안 주면 settings 가 답한다 — 키는 tenant 안에서만 값이 있으므로
+    호출 시점에 읽어야 한다(얼리면 테넌트가 남의 키로 돈다)."""
     import requests
-    key = os.environ.get("OPENROUTER_API_KEY")
+    key = key or settings.paid_key("OPENROUTER_API_KEY")
     if not key:
         raise WriterError("콘텐츠 작성 기능이 아직 연결되지 않았습니다 (OPENROUTER_API_KEY 미설정)")
     r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         timeout=serp_adapter.TIMEOUTS.get("openrouter", 120),
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": MODEL, "max_tokens": max_tokens,
+        json={"model": model or settings.get("SEOMINER_WRITER_MODEL"),
+              "max_tokens": max_tokens,
               "messages": [{"role": "user", "content": prompt}]})
     if r.status_code >= 400:
         raise WriterError(f"글 작성에 실패했습니다. 잠시 후 다시 시도해 주세요 ({r.status_code})")
@@ -163,6 +168,19 @@ def demo() -> None:
             pass
 
         assert slug("AI Tier List!! 2026") == "ai-tier-list-2026", slug("AI Tier List!! 2026")
+
+        # 키는 호출 시점에 본다 — 없으면 네트워크에 나가지 않고 안내를 던진다.
+        g["_ask"] = orig
+        saved_key = os.environ.pop("OPENROUTER_API_KEY", None)
+        try:
+            _ask("x")
+            raise AssertionError("키 없이 호출됐다")
+        except WriterError as e:
+            assert "OPENROUTER_API_KEY" in str(e), e
+        finally:
+            if saved_key is not None:
+                os.environ["OPENROUTER_API_KEY"] = saved_key
+
         print("writer: ok")
     finally:
         g["_ask"] = orig

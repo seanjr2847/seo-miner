@@ -138,9 +138,11 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 
 기본은 내 구글 계정 로그인(OAuth)이고, 로그인 한 번이면 소유한 속성이 전부 붙는다 —
 **속성마다 권한을 주는 단계는 없다**(그건 무인 수집용 서비스 계정 갈래에만 있다).
-아직 안 붙어 있으면 수집을 시도하지 말고 setup 스킬의 "GSC 연결" 절차대로 콘솔
-클릭을 내가 대신 해준다(무료, 계정당 1회 5분). 절차를 사용자에게 읽어주지 말 것.
-첫 수집 때 브라우저 로그인 창이 한 번 열린다는 것만 미리 말해준다.
+아직 안 붙어 있으면 수집을 시도하지 말고 **구글 로그인 한 번**을 요청한다 —
+**콘솔 클릭은 없다**(무료, 30초, 준비물 없음). 할 말의 정본은 doctor 명부
+(`../setup/scripts/doctor.py` 의 `CAPABILITIES` → `구글 실적 읽기`)이고 절차의
+정본은 setup 스킬의 "GSC 연결" 절이다 — 어느 쪽도 사용자에게 읽어주지 말고,
+브라우저 로그인 창이 한 번 열린다는 것만 미리 말해준다.
 (구버전 사이트별 OAuth 경로와 CSV 내보내기 임시 경로는 제거됐다 — 2026-08-18.)
 
 연동돼 있으면 **즉석 질문**("어제 클릭 몇이야", "이 페이지 어떤 쿼리로 들어와")은
@@ -255,26 +257,47 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 (`scoring.md` 1절 content_gap 행).
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
-**풀런(`/capture run`)에 포함된다** — 6단계(`gaps`) + 분석 단계 1번(`scoring.py load`)까지
-대신 부른다. 따로 부를 때만 `scoring.py load` 를 직접 실행한다.
+**풀런(`/capture run`)에 포함된다** — 7단계(`gaps`). 그 단계가 실제로 하는 일은
+`scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로 부를 때만 직접 실행한다.
 
-sql로 (a) 인용 갭: cited=0 체크의 cited_domains_json 빈도 + 미노출 프롬프트,
-(b) striking distance, (c) rank_decay, (d) aio_exposure(rank 데이터 있을 때:
-aio_present=1 AND aio_cited=0 키워드), (e) pseo_pattern: 고노출·저CTR 쿼리를 뽑아
-변수 슬롯({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 클러스터링해 pSEO 캠페인
-후보를 찾는다 — 절차·가드레일은 `references/scoring.md` 1b절을 따른다.
-content_gap 후보는 별도 명령 `/capture gap {P}` (Labs 유료 키)로 먼저 적재한다 —
-여기서는 적재된 후보를 기회로 정리·판정한다.
+`scoring.py load` 가 적재하는 기회는 **기계 판정분 8종**이다 — striking_distance ·
+ctr_gap · cannibalization · rank_decay · pseo_pattern · device_gap · index_blocked ·
+coverage.
+
+**풀런이 대신 해 주지 않는 것 셋** (기대하고 기다리면 안 나온다):
+
+- `ai_citation_gap` — sql 로 cited=0 체크의 `cited_domains_json` 빈도와 미노출
+  프롬프트를 내가 직접 뽑는다.
+- `aio_exposure` — rank 데이터가 있을 때 `aio_present=1 AND aio_cited=0` 키워드.
+  역시 sql.
+- `content_gap` — **적재는 풀런의 `competitors` 단계가 한다**(DataForSEO 키가
+  있을 때). 다만 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는
+  조용히 건너뛰므로 후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저
+  적재한다(`--domain` 으로 도메인을 직접 줄 수도 있다). 어느 쪽으로 들어왔든
+  후보를 정리하고 기회로 판정하는 것은 `scoring.py load` 가 아니라 내 몫이다.
+
+`pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯
+({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은
+`references/scoring.md` 1b절.
 
 ### /capture run {P} — 풀런
 수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계 순서는 고정이다 —
-**gsc → index → keywords → rank → ai → gaps → report**, 그 7단계를
+**gsc → index → keywords → rank → ai → competitors → gaps → report**, 그 8단계를
 `scripts/run_all.py`가 순서대로 부른다.
 
 1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
    호출 수·비용 계획을 모아 보여주고 사용자 확인을 받는다 (철칙 2 — 비용 고지).
-   `rank`·`ai` 는 유료 축이지만 키가 없으면 **조용히 건너뛴다** — 에러가 아니다.
-   키가 없다고 사용자에게 되묻지 않는다.
+   유료 축은 **셋**이고, 각각 무엇에 돈이 나가는지가 다르다:
+   - `rank` — SERP 조회 1건당 과금(`SERPER_API_KEY` 또는 `DATAFORSEO_LOGIN`/
+     `DATAFORSEO_PASSWORD`). 추적 키워드 수에 비례한다.
+   - `ai` — AI 엔진 답변 1건당 과금(`OPENROUTER_API_KEY`). 프롬프트 × 엔진 ×
+     샘플 수에 비례한다.
+   - `competitors` — DataForSEO Labs `ranked_keywords/live`, 경쟁사 **도메인
+     한 곳당** 과금(~$0.001). 도메인은 상한 5개라 한 바퀴에 **~$0.005** 다.
+     키는 `rank` 와 같은 DataForSEO 자격을 쓴다.
+   셋 다 키가 없으면 **조용히 건너뛴다** — 에러가 아니고, 키가 없다고 사용자에게
+   되묻지 않는다. `competitors` 는 키가 있어도 등록된 경쟁사가 없으면 같은 톤으로
+   건너뛴다.
 2. 확인되면 `python scripts/run_all.py --project {P}` 를 **백그라운드로** 돌린다.
    수집이 길어질 수 있어 포그라운드로 잡으면 세션이 막힌다 — `/capture dash` 가
    같은 이유로 백그라운드인 것과 같은 톤이다.
@@ -291,9 +314,8 @@ content_gap 후보는 별도 명령 `/capture gap {P}` (Labs 유료 키)로 먼�
 축 이름은 아래 개별 명령과 같다.
 
 ### 분석 단계 (gaps 이후 자동)
-1. `python scripts/scoring.py load {P}` — 기계 판정분(striking_distance·ctr_gap·
-   cannibalization·rank_decay·pseo 후보·coverage)을 결정적 점수·수치 reasoning과
-   함께 opportunities에 적재한다.
+1. `python scripts/scoring.py load {P}` — 기계 판정분 8종(위 `/capture gaps` 절의
+   목록이 정본)을 결정적 점수·수치 reasoning과 함께 opportunities에 적재한다.
    `/capture run` 으로 들어온 경우 `run_all.py` 의 `gaps` 단계가 이걸 대신
    부른다 — **다시 부르지 않는다** (중복 실행). `/capture gaps` 를 따로 부른
    경우에만 직접 실행한다.

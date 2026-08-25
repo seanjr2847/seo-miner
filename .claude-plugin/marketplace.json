@@ -7,7 +7,7 @@
     {
       "name": "seo-miner",
       "source": "./",
-      "description": "capture(채굴·측정) + create(실행) + setup(닥터) — /capture run이 gsc→index→keywords→rank→ai→gaps→report 7단계를 한 번에 돌고, /setup이 마케팅 스킬을 대신 설치하는 개인용 SEO·AEO 채굴기"
+      "description": "개인용 SEO·AEO 채굴기 — capture(채굴·측정) + create(실행) + setup(닥터). /capture run 이 gsc→index→keywords→rank→ai→competitors→gaps→report 8단계를 한 번에 돈다. 자세한 구조는 README: https://github.com/seanjr2847/seo-miner"
     }
   ]
 }

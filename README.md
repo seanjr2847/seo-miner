@@ -54,7 +54,7 @@ pip install requests pyyaml
 /setup web                 # 같은 걸 화면으로: 부품 설치·사이트 등록·키 저장을 폼에서
 # 구글 로그인(무료)을 먼저 해 두면 다음 줄에서 서치콘솔 속성 표기를 물어보지 않습니다
 /capture add <사이트>       # 온보딩 인터뷰 3문항 (타입 · 도메인 · 시드 키워드)
-/capture run <사이트>       # 7단계를 한 번에 — gsc → index → keywords → rank → ai → gaps → report
+/capture run <사이트>       # 8단계를 한 번에 — gsc → index → keywords → rank → ai → competitors → gaps → report
 /capture dash <사이트>      # 대시보드 (아래)
 ```
 
@@ -94,7 +94,7 @@ pip install requests pyyaml
 |---|---|
 | `/setup [web]` | 환경 진단, 설치·키·구글 연결. `web`이면 대시보드 설정 화면 |
 | `/capture add` | 사이트 온보딩 — 3문항(타입·도메인·시드 키워드) + AI 질문 초안. 서치콘솔 속성은 로그인해 두면 목록에서 고릅니다 |
-| `/capture run` | **한 번에 끝까지** — `gsc → index → keywords → rank → ai → gaps → report` 순서로 스크립트가 묶어서 돌고, 끝나면 리포트 파일을 알려 줍니다. `rank`·`ai` 같은 유료 축은 키가 없으면 알아서 빠집니다 |
+| `/capture run` | **한 번에 끝까지** — `gsc → index → keywords → rank → ai → competitors → gaps → report` 순서로 스크립트가 묶어서 돌고, 끝나면 리포트 파일을 알려 줍니다. `rank`·`ai`·`competitors` 같은 유료 축은 키가 없으면 알아서 빠집니다 |
 | `/capture gsc` | Search Console 실적 자동 수집 — 합계·날짜별 추이·디바이스 분해 (구글 계정 연결 — 필수) |
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
@@ -110,22 +110,27 @@ pip install requests pyyaml
 | `/create status` | 작성 이력·머지 여부 |
 
 한 번 등록해 두면 이후에는 `/capture run {사이트}` 한 줄이 전부입니다. 스크립트가
-순서대로 7단계를 묶어서 돌립니다 — `gsc → index → keywords → rank → ai → gaps → report`.
+순서대로 8단계를 묶어서 돌립니다 — `gsc → index → keywords → rank → ai → competitors → gaps → report`.
 `gsc` 가 실패하면 거기서 멈춥니다(나머지 전부가 그 데이터를 재료로 쓰기 때문) —
 이때는 로그인 안내와 함께 **인증 없이 지금 되는 것**(`/capture keywords`)을 같이
 알려 주므로 빈손으로 끝나지 않습니다.
-다른 단계는 하나가 실패해도 나머지가 계속 갑니다. `rank`·`ai` 같은 유료 축은
+다른 단계는 하나가 실패해도 나머지가 계속 갑니다. `rank`·`ai`·`competitors` 같은 유료 축은
 키가 없으면 알아서 빠지고, 끝날 때 단계별 `완료 / 건너뜀 / 실패` 표 · 리포트 파일
 경로 · **손댈 것 1순위와 `/create plan`** · 다음 바퀴 시점을 알려 줍니다.
 (정기 자동 실행은 아직 없습니다 — 1~2주 뒤 같은 명령을 한 번 더 치는 방식입니다.)
 
 ## 준비물
 
-| 원하는 것 | 키 없이 (기본) | 키를 쓰면 |
-|---|---|---|
-| 구글 실적 (필수 연결) | 브라우저에서 **로그인 한 번**. 구글 클라우드 콘솔 작업 **0** — 플러그인이 OAuth 클라이언트를 동봉합니다 (무료, 계정당 1회) | — |
-| AI 인용 확인 | — | `OPENROUTER_API_KEY`로 프롬프트 수십 개 자동 (발급: https://openrouter.ai/keys) |
-| 검색 순위 추적 | — | `DATAFORSEO_LOGIN`/`PASSWORD` 권장(AI오버뷰·역키워드 포함, 발급: https://dataforseo.com) · `SERPER_API_KEY`는 대체재(선택, 발급: https://serper.dev) |
+**유료 키는 하나도 없어도 됩니다.** 필수는 구글 로그인 한 번(무료)뿐이고, 키는
+새 기능이 아니라 **자동화를 사는 것**입니다 — `OPENROUTER_API_KEY`가 AI 인용
+확인을, `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`(대체재 `SERPER_API_KEY`)가
+순위 추적을 켭니다.
+
+**지금 무엇이 켜져 있고 무엇이 무슨 키로 열리는지는 `/setup` 이 찍어 줍니다** —
+항목마다 무료/유료·발급처 주소·"그래서 뭘 하면 되는지"가 한 줄로 나옵니다.
+그 준비 상태 명부의 정본은 `skills/setup/scripts/doctor.py` 의 `CAPABILITIES`
+하나이고, 이 README는 그 목록을 복사해 두지 않습니다 — 두 벌이 되면 한쪽만
+낡고, 낡은 쪽이 없는 할 일을 시킵니다.
 
 키는 대시보드 **[설정] → API 키** 칸에 넣으면 `~/.capture/env`에 저장되고 모든
 스크립트가 읽습니다 — 셸 rc를 편집할 필요가 없습니다. 셸에 `export`한 값이 있으면
@@ -185,11 +190,13 @@ JSON을 내려받았다면 인자 없이 실행하면 다운로드 폴더에서 
 그 스킬들은 seo-miner의 **준비물**입니다 — `aso`는 앱 스토어 리스팅이 있는
 사이트에만 해당합니다. 출처: https://github.com/coreyhaines31/marketingskills.
 
-`/setup`의 doctor가 8개의 설치 여부를 봅니다. 빠진 게 있으면 [꼭 해야 할 일]에
-올리고 doctor가 "제가 대신 설치할까요?" 라고 묻습니다. **승낙해 주시면 그대로
-깎습니다 (무료)** — 끝나면 Claude Code를 한 번 재시작하시면 그 스킬이 다음
-세션부터 화면에 뜹니다. 거절하시거나 넘어가셔도 작업은 계속되고, 내장 규칙으로
-채웁니다 — 그 결과물에는 "이 부분은 내장 규칙으로 처리했습니다"를 한 줄 남깁니다.
+`/setup`의 doctor가 아래 표 전부의 설치 여부를 봅니다. 빠진 게 있으면 **[선택]**
+("더 켜고 싶으면") 통에 올립니다 — 측정·수집에는 필요가 없어서 첫 세션을 재시작으로
+끊지 않습니다. 첫 리포트가 나온 뒤에 Claude가 "제가 대신 설치할까요?" 라고 묻습니다.
+**승낙해 주시면 그대로 깔아 드립니다 (무료)** — 끝나면 Claude Code를 한 번
+재시작하시면 그 스킬이 다음 세션부터 화면에 뜹니다. 거절하시거나 넘어가셔도
+작업은 계속되고, 내장 규칙으로 채웁니다 — 그 결과물에는 "이 부분은 내장 규칙으로
+처리했습니다"를 한 줄 남깁니다.
 같은 세션에서 두 번 부탁드리지 않습니다.
 
 | 스킬 | 언제 |
@@ -239,10 +246,9 @@ Python 3.11+ · `requests`, `pyyaml`.
 **구글 계정 로그인(기본)이면 마지막 것도 선택이 아닙니다** — 없으면 로그인 자리에서
 멈춥니다. 서비스 계정으로 붙였다면 로그인이 없어 그것 없이도 됩니다.
 
-**마케팅 스킬 팩** (파이썬 패키지가 아니라 Claude Code 스킬입니다):
-`product-marketing`·`seo-audit`·`ai-seo`·`content-strategy`·`site-architecture`·
-`programmatic-seo`·`schema`·`aso` — 위임 대상 8개입니다. 출처:
-https://github.com/coreyhaines31/marketingskills. **`/setup` 이 설치까지
+**마케팅 스킬 팩** (파이썬 패키지가 아니라 Claude Code 스킬입니다): 목록은 위
+"마케팅 스킬 연계" 표이고, 개수를 세는 정본은 `doctor.py` 의 `ALL_SKILLS`입니다.
+출처: https://github.com/coreyhaines31/marketingskills. **`/setup` 이 설치까지
 도와드립니다** — 그 안의 버튼이나 채팅에 "마케팅 스킬 설치해줘" 한 마디면 됩니다
 (설치는 무료, 끝나면 Claude Code 재시작이 한 번 필요합니다).
 

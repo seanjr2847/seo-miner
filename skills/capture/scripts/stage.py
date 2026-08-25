@@ -8,6 +8,7 @@
 self-check: python stage.py
 """
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -75,8 +76,23 @@ def pick_project(projects, cwd=None) -> str | None:
     return None
 
 
+def skippable(step_id: str) -> bool:
+    """이 단계를 지금 환경에서 못 하는데, 아하 모먼트(gaps)를 막지도 않는가.
+
+    판정 근거는 doctor 의 준비 상태 명부다 — blocking=False 이고 이 기능을 여는 키가
+    하나도 없으면 여기서 멈출 이유가 없다. 예전에는 키 없는 사용자의 "지금 할 것"이
+    AI 단계에 영영 붙어서, 기회 목록(이 제품의 아하 모먼트)까지 못 갔다.
+    doctor 는 모듈 로드 때 stage 를 import 하므로 여기서는 늦게 import 한다.
+    """
+    import doctor
+    c = next((c for c in doctor.CAPABILITIES if c["id"] == step_id), None)
+    return bool(c) and not c["blocking"] and bool(c["keys"]) and \
+        not any(os.environ.get(k) for k in c["keys"])
+
+
 def from_progress(p: dict, name: str, domain: str) -> dict:
     gst = gsc_state()
+    ai_skip = skippable("ai")
     if gst == "connected":
         gsc_done = p.get("gsc_days", 0) > 0
         gsc_state_str = (f"{p['gsc_days']}번 읽음 · 최근 {p['gsc_last']}"
@@ -113,10 +129,13 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
                  "OpenRouter 키가 필요합니다.",
          "done": p.get("ai_checks", 0) > 0,
-         "state": (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
-                   if p.get("ai_checks", 0)
-                   else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
-                         else "물어볼 질문부터 필요")),
+         # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
+         "skip": ai_skip,
+         "state": ("건너뜀 — OpenRouter 연동하면 켜집니다" if ai_skip else
+                   (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
+                    if p.get("ai_checks", 0)
+                    else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
+                          else "물어볼 질문부터 필요"))),
          "cmd": (f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}")},
         {"id": "gaps", "t": "손댈 것 뽑기",
          "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
@@ -131,7 +150,9 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "state": f"{p['creations']}건 고침" if p.get("creations", 0) else "아직 한 건도 안 함",
          "cmd": f"/create plan {name}"},
     ]
-    here = next((i for i, s in enumerate(steps) if not s["done"]), -1)
+    # 못 하는 단계 앞에서 안내를 멈추지 않는다 — 건너뛸 수 있는 것은 건너뛴다.
+    here = next((i for i, s in enumerate(steps)
+                 if not s["done"] and not s.get("skip")), -1)
     return {"steps": steps, "here": here}
 
 
@@ -164,9 +185,12 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
         for m in d.get("must", [])
         if not (no_project and isinstance(m, dict) and m.get("id") == "first_project")
     ]
+    # owner 가 server 인 것은 뺀다 — 호스팅에서는 서버가 이미 낸 준비물이라,
+    # 여기 남겨 두면 낼 필요가 없는 사람에게 키 발급 목록을 보여 주게 된다.
+    # (로컬은 doctor 가 전부 user 로 렌더하므로 지금까지와 똑같다.)
     extra = [
         f"{c['name']} — {c['desc']}. 켜려면: {c.get('fix') or '필수 설치가 끝나면 켜집니다.'}"
-        for c in d.get("locked", [])
+        for c in d.get("locked", []) if c.get("owner", "user") != "server"
     ] + list(d.get("later", []))
     keys = d.get("keys", {})
     deps_gsc = d.get("deps_gsc", {})
@@ -210,9 +234,69 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     }
 
 
+def _check_seams() -> None:
+    """화면 쪽 이음매 점검 — 브라우저를 안 띄우고 확인할 수 있는 만큼만.
+
+    호스팅판(server/assets/dash.html)은 원본 화면 뒤에 얹히는 애드온이라, 원본이
+    말없이 바뀌면 조용히 멈춘다. 예전에는 그 이음매가 렌더된 한국어였다 —
+    버튼 라벨의 정규식으로 단계 id 를, onclick 문자열의 정규식으로 기회 id 를
+    되찾았다. 지금은 data- 속성과 id 키 조회다. 여기서 그 계약을 지킨다.
+
+    리포 밖(플러그인 설치본)에는 server/ 가 없다 — 그때는 조용히 건너뛴다.
+    """
+    root = Path(__file__).resolve().parents[3]
+    dash_f = root / "server" / "assets" / "dash.html"
+    views = root / "skills" / "capture" / "templates" / "views"
+    shell_f = root / "skills" / "capture" / "templates" / "dashboard.html"
+    if not (dash_f.exists() and views.is_dir() and shell_f.exists()):
+        return
+    dash = dash_f.read_text("utf-8")
+    shell = shell_f.read_text("utf-8")
+    tpl = shell + "".join(p.read_text("utf-8") for p in sorted(views.glob("*.html")))
+
+    # 1) id 는 페이로드에서 온다 — 렌더된 글자에서 되짚지 않는다.
+    assert 'data-opp="${o.id}"' in (views / "overview.html").read_text("utf-8"), \
+        "oppRow() 가 기회 id 를 data-opp 로 안 내보낸다"
+    for what, pat in (("단계 칸", r'class="stp \$\{cls\}"[^>]*data-stage='),
+                      ("실행 칩", r'<button class="cmd"[^>]*data-stage='),
+                      ("배너 이름", r"<b data-stage=")):
+        assert re.search(pat, shell), f"renderGuide() 의 {what}에 data-stage 가 없다"
+    for gone in ("setOpp(", r"\/capture\s+"):
+        assert gone not in dash, f"dash.html 에 정규식 고고학이 남아 있다: {gone}"
+
+    # 2) dash.html 의 VIEWS 표가 담는 요소 id 는 실제로 어딘가에 있어야 한다.
+    #    원본 화면(templates)이 갖고 있거나, dash.html 이 스스로 만들거나 둘 중 하나다.
+    m = re.search(r"var VIEWS = \[(.*?)\n  \];", dash, re.S)
+    assert m, "dash.html 의 VIEWS 표를 못 찾았다"
+    rows = re.findall(r'\["\w+",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\]', m.group(1), re.S)
+    assert len(rows) >= 7, f"VIEWS 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+    rest = dash.replace(m.group(1), "")          # VIEWS 표 자신은 근거가 못 된다
+    have = set(re.findall(r'id="([\w-]+)"', tpl))
+    stage_ids = set()
+    for els, sts in rows:
+        stage_ids |= set(re.findall(r'"(\w+)"', sts))
+        for i in re.findall(r'"([\w-]+)"', els):
+            assert i in have or f'"{i}"' in rest, f"dash.html VIEWS 가 없는 요소 id 를 담는다: {i}"
+
+    # 3) 단계 용어표는 한 벌이다 — 우리가 내보내는 id 를 전부 알아야 한다.
+    g = re.search(r"var STAGE = \{(.*?)\n  \};", dash, re.S)
+    assert g, "dash.html 의 STAGE 용어표를 못 찾았다"
+    entries = dict(re.findall(r"^\s{4}(\w+):\s*\{(.*?)\}", g.group(1), re.S | re.M))
+    ours = {s["id"] for s in from_progress(_DEMO, "demo", "demo.com")["steps"]}
+    assert ours <= set(entries), f"용어표에 없는 안내 단계: {sorted(ours - set(entries))}"
+    assert stage_ids <= set(entries), f"용어표에 없는 실행 단계: {sorted(stage_ids - set(entries))}"
+    for s in sorted(stage_ids):
+        assert "run:" in entries[s], f"화면에서 돌리는 단계인데 run 라벨이 없다: {s}"
+    for s in sorted(entries):
+        assert "t:" in entries[s], f"단계 이름이 없다: {s}"
+
+
+_DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
+         "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
+
+
 def _selfcheck() -> None:
-    pr = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
-          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
+    pr = _DEMO
 
     # 미연결 상태에서의 판정 검증
     st = from_progress(pr, "demo", "demo.com")
@@ -222,12 +306,25 @@ def _selfcheck() -> None:
     # GSC 연결된 상태에서의 진행 검증
     _orig_conn = db.gsc_connected
     _orig_auth = db.gsc_auth
+    _orig_key = os.environ.get("OPENROUTER_API_KEY")
     try:
         db.gsc_connected = lambda: True
+        os.environ["OPENROUTER_API_KEY"] = "k"     # 키가 있으면 AI 가 다음 걸음이다
         st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14", "keywords_found": 5,
                     "ai_prompts": 10}, "demo", "demo.com")
         assert st["here"] == 3
         assert st["steps"][3]["cmd"] == "/capture ai demo"        # 질문이 있으면 물어본다
+        assert not st["steps"][3]["skip"]
+
+        # 키가 없으면 AI 단계는 이 환경에서 못 한다 — 목록엔 남기되 "지금 할 것"은
+        # 아하 모먼트(gaps)로 넘어가야 한다. 예전엔 여기 영영 붙어 있었다.
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
+                            "keywords_found": 5, "ai_prompts": 10}, "demo", "demo.com")
+        assert st["steps"][3]["skip"] and "건너뜀" in st["steps"][3]["state"]
+        assert st["here"] == 4 and st["steps"][4]["id"] == "gaps", st["here"]
+        assert len(st["steps"]) == 6, "단계를 목록에서 빼 버렸다"
+        os.environ["OPENROUTER_API_KEY"] = "k"
         st = from_progress({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
                     "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
         assert st["here"] == -1                                    # 한 바퀴 다 돎
@@ -244,7 +341,10 @@ def _selfcheck() -> None:
     finally:
         db.gsc_connected = _orig_conn
         db.gsc_auth = _orig_auth
+        os.environ.pop("OPENROUTER_API_KEY", None) if _orig_key is None \
+            else os.environ.__setitem__("OPENROUTER_API_KEY", _orig_key)
 
+    _check_seams()
     print("stage self-check ok")
 
 

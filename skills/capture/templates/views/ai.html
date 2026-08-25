@@ -1,3 +1,10 @@
+<!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
+     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
+<script type="application/json" class="view-def">
+{"id": "ai", "title": "AI 인용",
+ "sections": ["ai"], "stages": ["ai"]}
+</script>
+
 <style>
 /* ── AI 인용: 깊이 로그와 같은 언어(등폭·괘선·patina/copper).
       얻는 것(우리 인용)은 녹청, 남이 가져간 자리는 산화동. ── */
@@ -320,19 +327,13 @@ function AI_list() {
 }
 
 // 질문 목록은 화면 밖에서 콘텐츠 기획서가 된다 — 지금 거른 그대로 표로 내보낸다.
-// 맨 앞의 BOM 이 있어야 엑셀이 한글을 안 깬다(기회 목록과 같은 규칙).
+// 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다(기회 목록과 같은 자리).
 function AI_csv() {
   const rows = [["질문", "카테고리", "인용", "언급", "응답", "대신 인용된 곳", "답변 발췌"]]
     .concat(AI_filtered().map(r => [r.prompt, r.category || "", r.cited, r.mentioned,
       r.checks, AI_doms(r.miss_domains).join(" "),
       (r.miss_answer || "").replace(/\s+/g, " ")]));
-  const csv = "﻿" + rows.map(r => r.map(
-    c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
-  a.download = `seo-miner-ai인용-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  csv("ai인용", rows);
 }
 
 /* ── 비어 있는 화면: 이 화면은 OpenRouter 키가 없으면 영원히 빈다.
@@ -362,7 +363,7 @@ function AI_emptyState(d) {
             {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div></div>`;
 }
 
-VIEW_RENDER.push(function (d) {
+VIEW("ai", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec"])

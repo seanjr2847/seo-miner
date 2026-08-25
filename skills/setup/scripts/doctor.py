@@ -5,8 +5,13 @@ Checks deps, CAPTURE_HOME/Brain, API keys, GSC 연결(3-상태: 연결됨 / 로�
 인증 없음 — 판정은 db.gsc_connected), then prints a verdict-first
 summary: 한 줄 요약 → 다음 한 걸음 → 사이트 → 기능(꺼진 것만 켜는 법 포함).
 
-Usage: python doctor.py [--json | --web]
+화면·skip 사유·--json 은 전부 모듈 수준 **준비 상태 명부**(CAPABILITIES)를 렌더한
+결과다 — 문구·발급 URL·버킷 라벨의 정본이 여기 한 벌이고, 산문 문서는 이 표를
+가리키기만 한다.
+
+Usage: python doctor.py [--json | --web | --selfcheck]
   --web: 텍스트 대신 로컬 대시보드를 브라우저로 띄운다 (진단 배너 + 데이터 함께)
+  --selfcheck: 명부가 데이터로 남아 있는지 assert 로 확인 (개수 산술 포함)
 Exit code: 0 = core usable, 1 = core setup incomplete.
 """
 import importlib.util
@@ -37,6 +42,97 @@ MARKETING_SKILLS = {
 OPTIONAL_SKILLS = {
     "aso": "앱 스토어 리스팅 최적화 (앱이 있는 사이트만)",
 }
+# 위임 스킬 **전체** — 개수와 설명의 정본. 세는 쪽은 전부 여기서 센다.
+# (예전엔 install_skills 가 필수 7개를 모수로 잡고 필수+선택 8개를 나열해서,
+#  깨끗한 머신에서 "7개 중 8개가 설치되어 있지 않습니다"를 찍었다.)
+ALL_SKILLS = {**MARKETING_SKILLS, **OPTIONAL_SKILLS}
+SKILLS_REPO = "https://github.com/coreyhaines31/marketingskills"
+
+# 버킷 라벨 — doctor 화면과 산문이 **같은 말**을 쓰게 하는 정본. 산문이 이걸
+# 다시 타이핑하면 doctor 가 찍지도 않는 머리말을 찾게 만든다(실제로 그랬다:
+# 문서는 [나중에 하면 좋은 것], 화면은 [선택]).
+BUCKET_MUST = "꼭 해야 할 일"
+BUCKET_LATER = "더 켜고 싶으면"
+LATER_TAG = "[선택]"
+
+CORE_PIP = "pip install requests pyyaml"
+GSC_PIP = "pip install google-api-python-client google-auth-oauthlib"
+
+# 이 런의 준비물을 **누가 대는가**. 값의 주인은 server/settings.py(HOSTED_ENV) 이고
+# 표식은 settings.paid_keys() 안에서만 서 있다 — 플러그인 설치본에는 server/ 가 없어
+# import 를 못 하므로 이름만 여기 적는다. 서 있으면 호스팅(서버가 유료 키·설치를
+# 이미 끝냈다), 없으면 로컬(전부 사용자 몫).
+HOSTED_ENV = "SEOMINER_HOSTED"
+
+# ── 준비 상태 명부 ───────────────────────────────────────────────────────────
+# "무엇이 무엇을 여는가"의 정본. 항목마다:
+#   id / name / desc — 화면에 찍는 이름과 한 줄 설명
+#   cost             — "무료" | "유료"
+#   keys             — 이 기능을 켜는 환경변수 이름들 (없으면 빈 튜플)
+#   url              — 키 발급처 (키가 없는 항목은 "")
+#   fix              — 잠겼을 때 할 말. None 이면 핵심 설치만 끝나면 켜진다.
+#                      dict 이면 상태별 문구(구글 연결의 3-상태: deps/pending/none).
+#   owner            — 호스팅에서 이걸 대는 쪽: "user" | "server". 로컬은 전부 user 다
+#                      (diagnose 가 HOSTED_ENV 를 보고 뒤집는다). server 인 항목은
+#                      사용자 할 일 목록(extra/locked)에서 빠진다 — 서버가 이미 냈다.
+#   blocking         — 없으면 아하 모먼트(기회 목록 = gaps)에 **못 가는가**.
+#                      False 면 그 단계만 건너뛰면 된다. 이 축이 없어서 키 없는
+#                      로컬 사용자의 "지금 할 것"이 AI 단계에 영영 붙어 있었다.
+# 산문 파일(README·SKILL.md·references)은 이 표를 **가리키기만** 하고 개수·URL·
+# 문구를 다시 적지 않는다 — 두 벌이 되면 한쪽만 낡는다(이 저장소가 반복해서 겪었다).
+CAPABILITIES = (
+    {"id": "keywords", "name": "키워드 찾기",
+     "desc": "검색창 자동완성으로 후보 수집 (무료)",
+     "cost": "무료", "keys": (), "url": "", "fix": None,
+     "owner": "server", "blocking": True},
+    {"id": "brain", "name": "보관함",
+     "desc": "수집한 자료를 내 컴퓨터에 저장 (없으면 자동 생성)",
+     "cost": "무료", "keys": (), "url": "", "fix": None,
+     "owner": "server", "blocking": True},
+    {"id": "create", "name": "글 만들기",
+     "desc": "모은 키워드로 콘텐츠 초안 작성",
+     # 글쓰기는 기회 목록 뒤의 단계다 — 이게 막혀도 아하 모먼트까지는 간다.
+     "cost": "무료", "keys": (), "url": "", "fix": None,
+     "owner": "server", "blocking": False},
+    {"id": "ai", "name": "AI 노출 확인",
+     "desc": "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
+     "cost": "유료", "keys": ("OPENROUTER_API_KEY",),
+     "url": "https://openrouter.ai/keys",
+     "fix": "OpenRouter 키가 필요합니다 (유료, 약 5분) — 발급: "
+            "https://openrouter.ai/keys · 크레딧 소액 충전 후 키 생성.",
+     # 호스팅에선 서버가 낸다. 로컬에서 키가 없으면 이 단계만 건너뛴다 —
+     # 무료로 쓰는 사람도 기회 목록까지는 간다.
+     "owner": "server", "blocking": False},
+    {"id": "gsc", "name": "구글 실적 읽기",
+     "desc": "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
+     "cost": "무료", "keys": (), "url": "",
+     # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
+     # 예전 문구("무료, 5분")는 사용자에게 있지도 않은 할 일을 시키는 거짓말이 됐다.
+     "fix": {
+         "deps": f"구글 연동 부품이 없습니다 — `{GSC_PIP}` (앞은 조회용, 뒤는 "
+                 "로그인 창을 여는 부품). 채팅에 \"설치해줘\" 하시면 제가 대신 "
+                 "실행합니다.",
+         "pending": "구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 "
+                    "없음) — 채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 "
+                    "열립니다.",
+         "none": "구글 인증 수단이 없습니다 (번들이 빠진 배포) — 채팅에 "
+                 "\"GSC 연동해줘\" 하시면 클라이언트 파일 놓는 것부터 제가 "
+                 "안내합니다 (무료).",
+     },
+     # 구글 로그인은 양쪽 다 사용자 몫이다(서버가 대신 로그인할 수 없다).
+     # 실측이 없으면 모든 판정에 재료가 없다 — 아하 모먼트를 막는다.
+     "owner": "user", "blocking": True},
+    {"id": "rank", "name": "순위 추적",
+     "desc": "검색결과 몇 등인지 매일 기록",
+     "cost": "유료",
+     "keys": ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "SERPER_API_KEY"),
+     "url": "https://dataforseo.com",
+     "fix": "유료 키가 필요합니다 — DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 "
+            "측정): https://dataforseo.com (가입 시 $1 무료 크레딧, API 비밀번호는 "
+            "계정 비번과 다름 — API Settings 에서 확인). 대체재 Serper: "
+            "https://serper.dev (무료 2,500콜, 카드 불필요, AI오버뷰 없음).",
+     "owner": "server", "blocking": False},
+)
 
 
 def find_skill(name: str) -> bool:
@@ -73,6 +169,10 @@ def has(mod: str) -> bool:
 
 def diagnose() -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
+    # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
+    # 표식은 settings.paid_keys() 가 세우고, 그 컨텍스트 안에서는 서버 키가 엔진 이름으로
+    # 실제로 보인다 — 그래서 아래 keys 판정도 "런이 보는 env" 그대로가 된다.
+    hosted = bool(os.environ.get(HOSTED_ENV))
     CAPTURE_HOME, DB = db.CAPTURE_HOME, db.DB_PATH
     marketing_skills = {name: find_skill(name) for name in MARKETING_SKILLS}
     marketing_optional = {name: find_skill(name) for name in OPTIONAL_SKILLS}
@@ -133,42 +233,33 @@ def diagnose() -> dict:
     brain_ok = not brain.get("error")
     gsc_linked = gsc_conn
 
-    # (이름, 한 줄 설명, 켜짐?, 켜는 법 — None이면 핵심 설치만 끝나면 켜진다)
-    caps = [
-        ("키워드 찾기", "검색창 자동완성으로 후보 수집 (무료)", core_ok, None),
-        ("보관함", "수집한 자료를 내 컴퓨터에 저장 (없으면 자동 생성)",
-         core_ok and brain_ok, None),
-        ("글 만들기", "모은 키워드로 콘텐츠 초안 작성", core_ok, None),
-        ("AI 노출 확인", "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
-         core_ok and bool(os.environ.get("OPENROUTER_API_KEY")),
-         "OpenRouter 키가 필요합니다 (유료, 약 5분) — 발급: "
-         "https://openrouter.ai/keys · 크레딧 소액 충전 후 키 생성."),
-        ("구글 실적 읽기", "서치콘솔 자동 수집으로 진짜 순위·클릭 확인 (필수 연결)",
-         core_ok and all(deps_gsc.values()) and gsc_linked,
-         # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
-         # 예전 문구("무료, 5분")는 사용자에게 있지도 않은 할 일을 시키는 거짓말이 됐다.
-         ("구글 연동 부품이 없습니다 — `pip install google-api-python-client "
-          "google-auth-oauthlib` (앞은 조회용, 뒤는 로그인 창을 여는 부품). 채팅에 "
-          "\"설치해줘\" 하시면 제가 대신 실행합니다."
-          if gsc_mode and not all(deps_gsc.values()) else
-          "구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 없음) — "
-          "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
-          if gsc_pending else
-          "구글 인증 수단이 없습니다 (번들이 빠진 배포) — 채팅에 \"GSC 연동해줘\" "
-          "하시면 클라이언트 파일 놓는 것부터 제가 안내합니다 (무료).")),
-        ("순위 추적", "검색결과 몇 등인지 매일 기록",
-         core_ok and (keys["dataforseo"] or keys["serper"]),
-         "유료 키가 필요합니다 — DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 측정): "
-         "https://dataforseo.com (가입 시 $1 무료 크레딧, API 비밀번호는 계정 비번과 "
-         "다름 — API Settings 에서 확인). 대체재 Serper: https://serper.dev "
-         "(무료 2,500콜, 카드 불필요, AI오버뷰 없음)."),
-    ]
+    # 명부(CAPABILITIES)를 지금 상태로 렌더한다 — 여기 있는 건 "켜졌나"의 판정뿐이고,
+    # 이름·설명·비용·발급처·고치는 문구는 전부 모듈 수준 명부가 갖는다.
+    is_on = {
+        "keywords": core_ok,
+        "brain": core_ok and brain_ok,
+        "create": core_ok,
+        "ai": core_ok and keys["openrouter"],
+        "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
+        "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
+    }
+    gsc_fix_state = ("deps" if gsc_mode and not all(deps_gsc.values())
+                     else "pending" if gsc_pending else "none")
+    readiness = []
+    for c in CAPABILITIES:
+        fix = c["fix"]
+        if isinstance(fix, dict):
+            fix = fix[gsc_fix_state]
+        readiness.append({**c, "keys": list(c["keys"]),
+                          "on": is_on[c["id"]], "fix": fix,
+                          # 로컬은 준비물이 전부 사용자 몫이다 — 명부값은 호스팅용.
+                          "owner": c["owner"] if hosted else "user"})
 
     must = []
     if not core_ok:
         must.append({
             "id": "core_deps",
-            "msg": "기본 부품 설치 — `pip install requests pyyaml` (1분). "
+            "msg": f"기본 부품 설치 — `{CORE_PIP}` (1분). "
                    "이것만 하면 기능 대부분이 켜집니다. 채팅에 \"설치해줘\" 하시면 "
                    "제가 대신 실행합니다."
         })
@@ -224,19 +315,21 @@ def diagnose() -> dict:
                      f"돌리면 \"질문이 없다\"며 멈춥니다. 채팅에 `/capture add {who.split(', ')[0]}` "
                      "이라고 하시면 사이트에 맞는 질문 10~30개를 만들어 드립니다 "
                      "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
-    # 유료 키 안내를 여기 다시 적지 않는다 — caps/locked 가 이미 같은 두 항목을
+    # 유료 키 안내를 여기 다시 적지 않는다 — 명부/locked 가 이미 같은 두 항목을
     # (발급 주소까지 붙여서) 말한다. 두 벌이 되면 화면이 "못 하는 것" 목록으로
     # 채워지고, 실제로 한쪽만 낡았다(여기 있던 사본은 링크로 바꾸기 전의 "setup.md
     # 5절"을 계속 가리키고 있었다).
-    # 구글 연동 부품(google-auth-oauthlib 등)도 여기 적지 않는다 — 위 caps 의
+    # 구글 연동 부품(google-auth-oauthlib 등)도 여기 적지 않는다 — 명부의
     # "구글 실적 읽기" 잠금 사유가 부품 누락을 먼저 보고 그 pip 명령을 말한다.
     # 로그인 창을 여는 게 그 부품이라, 없으면 "로그인해줘"가 그 자리에서 막힌다.
 
     # 마케팅 스킬 항목은 show_setup 판정(대시보드가 패널을 펼치는 여부)에서 빼기 위해
     # 메시지를 변수로 보관한다 — 그래야 doctor가 결론을 찍고, 대시보드는 그걸 읽기만
     # 한다.
+    # 호스팅에는 아예 해당 없다 — 스킬은 Claude Code 에 까는 것이고, 웹 사용자에겐
+    # 깔 곳도 재시작할 것도 없다. 키 유무로 안 갈리는 항목이라 hosted 로만 가른다.
     marketing_skills_msg = None
-    missing_marketing = [k for k, ok in marketing_skills.items() if not ok]
+    missing_marketing = [] if hosted else [k for k, ok in marketing_skills.items() if not ok]
     if missing_marketing:
         # 이름만 한 줄로 나열한다. 설명까지 괄호로 끼우면 한 문장이 화면을 넘겨서
         # 정작 "무엇을 하면 되는지"(저장소 주소)가 눈에 안 들어온다 — 설명은
@@ -249,19 +342,19 @@ def diagnose() -> dict:
             "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
             "끝나면 Claude Code 재시작이 한 번 필요합니다 — 그 전엔 화면에 안 뜹니다. "
             "없어도 측정·수집은 그대로 됩니다. "
-            "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
+            f"직접 하시려면: {SKILLS_REPO}"
         )
         # [꼭 해야 할 일]이 아니다 — 이 메시지 자신이 "없어도 측정·수집은 그대로"라고
         # 말한다. must 로 두면 첫 세션이 **Claude Code 재시작**으로 끊긴다 (온보딩에서
         # 제일 비싼 이탈 지점인데, 정작 측정에는 필요 없는 항목이다). 권하는 자리는
         # 첫 리포트가 나온 뒤다 — 그때는 "각도를 더 깊게"가 실제 이득이라 재시작 값을 한다.
         later.append(marketing_skills_msg)
-    elif not marketing_optional.get("aso", True):
+    elif not hosted and not marketing_optional.get("aso", True):
         marketing_skills_msg = (
             "aso (앱 스토어 리스팅 최적화) — 앱이 있는 사이트만 필요합니다. "
             "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
             "끝나면 Claude Code 재시작이 한 번 필요합니다. "
-            "직접 하시려면: https://github.com/coreyhaines31/marketingskills"
+            f"직접 하시려면: {SKILLS_REPO}"
         )
         later.append(marketing_skills_msg)
 
@@ -292,7 +385,8 @@ def diagnose() -> dict:
                    "것인지 모르겠습니다 — 이름을 하나 말씀해 주세요.")
         next_cmd = None
 
-    steps = [m["msg"] if isinstance(m, dict) else m for m in must] + [f"[선택] {s}" for s in later]
+    steps = ([m["msg"] if isinstance(m, dict) else m for m in must]
+             + [f"{LATER_TAG} {s}" for s in later])
     # 마케팅 스킬은 이제 must 에 안 들어간다(위 [선택] 강등). must_other 키는 대시보드
     # show_setup 판정이 읽으므로 이름만 남겨 둔다 — 지금은 must 와 같은 값이다.
     must_other = list(must)
@@ -302,9 +396,17 @@ def diagnose() -> dict:
             # gsc_mode는 남긴다 — 대시보드가 이 JSON을 먹으므로 기존 키를 없애면 화면이 깨진다.
             "gsc_connected": gsc_conn,    # 3-상태의 정본: 연결됨 / (mode만 있으면)로그인 대기 / 없음
             "gsc_bundled": gsc_bundled,   # 번들 클라이언트로 로그인하는 중인가
-            "capabilities": {f"{n} — {d}": on for n, d, on, _ in caps},
-            "locked": [{"name": n, "desc": d, "fix": fix}
-                       for n, d, on, fix in caps if not on],
+            "capabilities": {f"{c['name']} — {c['desc']}": c["on"] for c in readiness},
+            # owner/blocking 도 같이 실어 보낸다 — 화면(setup_payload)이 "이건 누구
+            # 할 일인가"를 문구에서 되짚지 않고 축으로 판단한다.
+            "locked": [{"name": c["name"], "desc": c["desc"], "fix": c["fix"],
+                        "cost": c["cost"], "keys": c["keys"], "url": c["url"],
+                        "owner": c["owner"], "blocking": c["blocking"]}
+                       for c in readiness if not c["on"]],
+            "readiness": readiness,   # 명부를 지금 상태로 렌더한 것 (정본은 CAPABILITIES)
+            "buckets": {"must": BUCKET_MUST, "later": BUCKET_LATER,
+                        "later_tag": LATER_TAG},
+            "skills_all": ALL_SKILLS, "skills_repo": SKILLS_REPO,
             "verdict": verdict, "next_command": next_cmd, "next_steps": steps,
             "must": must, "later": later,
             "must_other": must_other,             # 마케팅 스킬 항목이 빠진 must (show_setup 용)
@@ -365,7 +467,8 @@ def render(d: dict) -> None:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")
     else:
         print("\n지금 되는 것: 아직 없습니다 — 아래 [꼭 해야 할 일]만 하면 켜집니다.")
-    m_skills = d.get("marketing_skills", {})
+    # 모수는 위임 스킬 **전체**(필수+선택)다 — 산문도 install_skills 도 같은 8을 센다.
+    m_skills = {**d.get("marketing_skills", {}), **d.get("marketing_optional", {})}
     if m_skills:
         installed = sum(1 for v in m_skills.values() if v)
         total = len(m_skills)
@@ -376,7 +479,7 @@ def render(d: dict) -> None:
             print(f"마케팅 스킬: {installed}/{total} (모두 설치됨)")
 
     if d["must"]:
-        print("\n[꼭 해야 할 일]")
+        print(f"\n[{BUCKET_MUST}]")
         for i, s in enumerate(d["must"], 1):
             msg = s["msg"] if isinstance(s, dict) else s
             print(f"  {i}. {msg}")
@@ -385,17 +488,95 @@ def render(d: dict) -> None:
     # "아직 안 켠 것"과 "나중에 하면 좋은 것" 두 통이었고 같은 항목이 양쪽에 들어가,
     # 부담을 줄이려던 문구가 오히려 화면 절반을 "못 하는 것" 목록으로 만들었다.
     if d["locked"] or d["later"]:
-        print("\n더 켜고 싶으면 (전부 선택 — 안 하셔도 위 기능은 그대로입니다)")
+        print(f"\n{BUCKET_LATER} (전부 선택 — 안 하셔도 위 기능은 그대로입니다)")
         for c in d["locked"]:
             print(f"  · {c['name']} — {c['desc']}")
-            print(f"    {c['fix'] or '위 [꼭 해야 할 일]만 끝내면 자동으로 켜집니다.'}")
+            print(f"    {c['fix'] or f'위 [{BUCKET_MUST}]만 끝내면 자동으로 켜집니다.'}")
         for s2 in d["later"]:
             print(f"  · {s2}")
 
     print(f"\n자료 폴더: {d['brain']['home']}")
 
 
+def _selfcheck() -> None:
+    """명부가 **데이터**로 남아 있는지 지키는 자체점검 (assert 기반, 의존성 없음).
+
+    깨지면 누군가 산문을 코드로 되돌린 것이다 — 화면 문구를 함수 안에 다시 적었거나,
+    개수를 명부 밖에서 세었거나(그래서 "7개 중 8개"가 찍혔다).
+    """
+    ids = [c["id"] for c in CAPABILITIES]
+    assert len(ids) == len(set(ids)), ids
+    for c in CAPABILITIES:
+        for f in ("id", "name", "desc", "cost", "keys", "url", "fix"):
+            assert f in c, (c.get("id"), f)
+        assert c["cost"] in ("무료", "유료"), c["id"]
+        # 유료면 키 이름과 발급처를 명부가 갖는다 — 산문이 URL을 다시 적지 않게.
+        assert bool(c["keys"]) == (c["cost"] == "유료"), c["id"]
+        assert bool(c["keys"]) == c["url"].startswith("http"), c["id"]
+        if isinstance(c["fix"], dict):
+            assert set(c["fix"]) == {"deps", "pending", "none"}, c["id"]
+        # 두 축은 값이 정해져 있다 — 문자열 오타 하나면 판정이 조용히 뒤집힌다.
+        assert c["owner"] in ("user", "server"), c["id"]
+        assert isinstance(c["blocking"], bool), c["id"]
+        if c["cost"] == "유료":
+            # 호스팅에선 서버가 낸다(그래서 사용자 할 일 목록에서 빠진다) — 그리고
+            # 유료는 무엇도 막지 않는다. 로컬에서 무료로 쓰는 사람도 아하 모먼트까지 간다.
+            assert c["owner"] == "server", c["id"]
+            assert not c["blocking"], c["id"]
+    # 구글 로그인은 서버가 대신해 줄 수 없고, 실측 없이는 판정에 재료가 없다.
+    gsc = next(c for c in CAPABILITIES if c["id"] == "gsc")
+    assert gsc["owner"] == "user" and gsc["blocking"], gsc
+
+    d = diagnose()
+    assert len(d["readiness"]) == len(CAPABILITIES)
+    assert set(d["capabilities"]) == {f"{c['name']} — {c['desc']}" for c in CAPABILITIES}
+    for r in d["readiness"]:
+        assert isinstance(r["fix"], (str, type(None))), r["id"]   # 3-상태가 풀렸나
+        assert r["on"] or {"name": r["name"], "desc": r["desc"], "fix": r["fix"],
+                           "cost": r["cost"], "keys": r["keys"], "url": r["url"],
+                           "owner": r["owner"],
+                           "blocking": r["blocking"]} in d["locked"], r["id"]
+    assert d["buckets"] == {"must": BUCKET_MUST, "later": BUCKET_LATER,
+                            "later_tag": LATER_TAG}
+    assert all(s.startswith(LATER_TAG) for s in d["next_steps"][len(d["must"]):])
+    # 로컬(표식 없음)에서는 준비물이 전부 사용자 몫이다.
+    assert all(r["owner"] == "user" for r in d["readiness"]), "로컬인데 서버 몫이 있다"
+
+    # 호스팅 판정 — 표식이 서면 명부의 owner 를 그대로 쓰고, 서버 몫은 사용자 할 일
+    # 목록(extra)에서 빠진다. 결함 1: 키를 낼 필요 없는 사람에게 키 발급을 시켰다.
+    _saved = os.environ.get(HOSTED_ENV)
+    try:
+        os.environ[HOSTED_ENV] = "1"
+        h = diagnose()
+        assert {r["id"]: r["owner"] for r in h["readiness"]} == \
+            {c["id"]: c["owner"] for c in CAPABILITIES}
+        assert h["marketing_skills_msg"] is None, "호스팅인데 스킬 설치를 시킨다"
+        # Brain 을 건드리지 않으려고 사이트 목록을 비운 채 화면 payload 만 만든다.
+        payload = stage.setup_payload({**h, "brain": {**h["brain"], "projects": []}})
+        for c in h["locked"]:
+            if c["owner"] == "server":
+                assert not any(e.startswith(c["name"]) for e in payload["extra"]), c["name"]
+    finally:
+        os.environ.pop(HOSTED_ENV, None) if _saved is None \
+            else os.environ.__setitem__(HOSTED_ENV, _saved)
+
+    # 개수 산술 — install_skills 의 모수와 명부가 같아야 한다.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import install_skills
+    assert dict(ALL_SKILLS) == {**MARKETING_SKILLS, **OPTIONAL_SKILLS}
+    assert len(ALL_SKILLS) == len(MARKETING_SKILLS) + len(OPTIONAL_SKILLS)
+    missing = install_skills.get_missing_skills()
+    assert set(missing) <= set(ALL_SKILLS), missing
+    assert len(missing) <= install_skills.total_skills(), missing
+    print(f"selfcheck ok — 기능 {len(CAPABILITIES)}개 · 위임 스킬 "
+          f"{len(ALL_SKILLS)}개(필수 {len(MARKETING_SKILLS)} + 선택 "
+          f"{len(OPTIONAL_SKILLS)}) · 버킷 [{BUCKET_MUST}] / {BUCKET_LATER}")
+
+
 def main() -> None:
+    if "--selfcheck" in sys.argv:
+        _selfcheck()
+        return
     d = diagnose()
     if "--web" in sys.argv:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.

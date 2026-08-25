@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,39 +24,11 @@ import backlinks                              # noqa: E402
 import db                                     # noqa: E402
 import mailer                                 # noqa: E402
 import run_all                                # noqa: E402
+import settings                                # noqa: E402
 import store                                  # noqa: E402
 
-
-PAID_KEYS = (
-    "SERPER_API_KEY",
-    "DATAFORSEO_LOGIN",
-    "DATAFORSEO_PASSWORD",
-    "OPENROUTER_API_KEY",
-)
-
-
-@contextmanager
-def _paid_keys():
-    """서버 env(SEOMINER_<NAME>) 를 테넌트 안에서 <NAME> 으로 노출, 끝나면 복원.
-
-    SEOMINER_<NAME> 가 없으면 그 키를 pop — 외부 env 에 남아있던 잔여값을 엔진이
-    그대로 쓰면 비용 누수가 된다(엔진은 키가 보이면 그냥 쓴다).
-    """
-    saved = {k: os.environ.get(k) for k in PAID_KEYS}
-    for k in PAID_KEYS:
-        v = os.environ.get(f"SEOMINER_{k}")
-        if v:
-            os.environ[k] = v
-        else:
-            os.environ.pop(k, None)
-    try:
-        yield
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+# 유료 키 주입은 settings.paid_keys() 가 한다 — 명명 규칙(PAID_KEYS/SERVER_PREFIX)의
+# 주인이 거기고, /api/doctor 도 같은 컨텍스트를 둘러야 판정이 런과 같아진다.
 
 
 def activate_from_gsc(project: str, limit: int | None = None) -> int:
@@ -68,7 +39,7 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
     검색어에 노출시켰다'는 사실. 자동완성 후보(노출 0)는 관련성이 확인되지 않아
     그대로 후보로 둔다. 활성 키워드가 0 이면 rank 단계가 잴 대상 없이 돈다.
     """
-    limit = limit or int(os.environ.get("SEOMINER_MAX_KEYWORDS", "100"))
+    limit = limit or settings.count("SEOMINER_MAX_KEYWORDS")
     conn = db.connect()
     try:
         pid = db.get_project(conn, project)["id"]
@@ -176,13 +147,15 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     if not dry_run:
         store.mark_run(conn, site["id"])
     try:
-        with store.tenant(conn, user_id), _paid_keys():
-            rc = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only)
+        with store.tenant(conn, user_id), settings.paid_keys():
+            results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only)
+            run_all.print_summary(project, results, dry_run=dry_run)
+            rc = run_all.chain_rc(results)
             # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
             # 키가 없으면 조용히 건너뛴다(엔진의 유료 축과 같은 규칙).
             try:
                 if not dry_run and backlinks.available():
-                    every = float(os.environ.get("SEOMINER_BACKLINKS_EVERY_DAYS", "30"))
+                    every = settings.num("SEOMINER_BACKLINKS_EVERY_DAYS")
                     if _backlinks_due(project, every):
                         r = backlinks.collect(project)
                         print(f"[{project}] 백링크 {r['summary'].get('backlinks')}개 · "
@@ -244,7 +217,7 @@ def main() -> int:
     ap.add_argument("--project", help="--user 와 함께 — 사이트 프로젝트 이름")
     ap.add_argument("--idle-days", type=int, default=30)
     ap.add_argument("--every-hours", type=float,
-                    default=float(os.environ.get("SEOMINER_RUN_EVERY_HOURS", "168")),
+                    default=settings.num("SEOMINER_RUN_EVERY_HOURS"),
                     help="사이트별 재측정 주기. 0 이면 자동 수집을 끈다")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
@@ -295,6 +268,8 @@ def demo() -> None:
         uid = store.upsert_user(conn, "demo@example.com")
         store.add_site(conn, uid, "demo-proj", "sc-domain:demo.com", "demo.com")
         os.environ["SEOMINER_OPENROUTER_API_KEY"] = "test-key"
+        # 서버 env 에 짝이 없는 잔여 키는 엔진에 보이면 안 된다 — 보이면 그냥 쓰고 돈이 샌다.
+        os.environ["SERPER_API_KEY"] = "잔여값"
 
         called: list[dict] = []
 
@@ -303,8 +278,9 @@ def demo() -> None:
                 "project": project,
                 "capture_home": os.environ["CAPTURE_HOME"],
                 "openrouter": os.environ.get("OPENROUTER_API_KEY"),
+                "serper": os.environ.get("SERPER_API_KEY"),
             })
-            return 0
+            return []                       # run_chain 은 [(단계, StageResult)] 를 돌려준다
 
         run_all.run_chain = fake_chain
 
@@ -313,10 +289,12 @@ def demo() -> None:
         assert len(called) == 1, f"run_chain 호출 {len(called)}번"
         assert called[0]["capture_home"] == str(store.home(uid)), "CAPTURE_HOME 불일치"
         assert called[0]["openrouter"] == "test-key", "OPENROUTER_API_KEY 주입 실패"
+        assert called[0]["serper"] is None, "짝 없는 잔여 키가 엔진에 노출됐다"
         assert len(results) == 1 and results[0]["ok"] is True, f"결과 이상: {results}"
 
         assert "CAPTURE_HOME" not in os.environ, "CAPTURE_HOME 복원 실패"
         assert "OPENROUTER_API_KEY" not in os.environ, "OPENROUTER_API_KEY 복원 실패"
+        assert os.environ.pop("SERPER_API_KEY") == "잔여값", "바깥 env 를 복원하지 않았다"
 
         # 활성 키워드 상한 — 런마다 limit 개씩 더 켜면 추적 세트가 불어나 SERP 비용이 샌다.
         with store.tenant(conn, uid):

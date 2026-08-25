@@ -325,11 +325,58 @@
   reempty();
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
-  // 안내의 '이 명령을 치세요' 버튼을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
-  // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
-  var STAGE_LABEL = {gsc: "검색 실적 수집", index: "색인 생성 검사",
-    keywords: "키워드 발굴", rank: "순위 추적", ai: "AI 인용 확인",
-    gaps: "개선 기회 분석", report: "보고서 생성"};
+  // ── 단계 용어 한 벌 ─────────────────────────────────────────
+  // 같은 단계가 계층마다 다른 이름이었다 — 안내 제목(stage.py)·실행 버튼·화면 버튼,
+  // 거기에 terms.js 가 렌더된 한국어를 정규식으로 덮는 네 번째 패스까지. 이제 표는
+  // 여기 하나다. 키는 stage.py 가 payload 에 실어 보내는 단계 id 라 화면 글자를
+  // 되짚지 않는다 — 안내 문구를 고쳐도 이 표는 안 깨진다.
+  //   t    이 단계의 이름 (호스팅 어투)
+  //   run  그 화면 상단의 '다시 돌리기' 버튼 — 제목과 겹치지 않게 다르게 부른다
+  //   gain 안내의 설명 한 줄
+  var STAGE = {
+    register: {t: "사이트 등록",
+      gain: "분석할 도메인과 시드 키워드를 지정합니다."},
+    gsc:      {t: "검색 실적 수집", run: "실적 다시 수집",
+      gain: "서치콘솔에서 노출수·클릭수·평균 게재순위를 수집합니다. 이후 모든 분석이 " +
+            "이 실측값을 기준으로 합니다."},
+    index:    {t: "색인 생성 검사", run: "색인 다시 검사"},
+    keywords: {t: "키워드 발굴", run: "키워드 다시 발굴",
+      gain: "검색 자동완성으로 키워드 후보를 발굴해 추적 목록을 구성합니다. " +
+            "추가 비용이 없습니다."},
+    rank:     {t: "순위 추적", run: "순위 다시 확인"},
+    ai:       {t: "AI 인용 확인", run: "AI 인용 다시 확인",
+      gain: "ChatGPT·Perplexity·Gemini 답변에서 인용되는 도메인을 확인합니다. " +
+            "OpenRouter 연동이 필요합니다."},
+    competitors: {t: "경쟁사 역키워드", run: "경쟁사 다시 수집",
+      gain: "경쟁 도메인이 이미 순위를 잡은 검색어를 수집해 추적 후보로 올립니다. " +
+            "DataForSEO Labs 유료 호출입니다."},
+    gaps:     {t: "개선 기회 분석", run: "기회 다시 분석",
+      gain: "수집한 데이터에서 개선 기회를 산출합니다 — 순위 상승 기회, AI 인용 격차, " +
+            "프로그래매틱 SEO 패턴."},
+    report:   {t: "보고서 생성"},
+    create:   {t: "콘텐츠 작성",
+      gain: "도출된 개선 기회를 저장소의 콘텐츠 변경으로 반영합니다. 별도 브랜치와 " +
+            "PR 로 제출됩니다."}
+  };
+
+  // [기록] 화면의 실행 종류 라벨도 이 표를 본다(runs.kind 는 단계 id 와 같은 말이다).
+  window.SM_STAGE = STAGE;
+
+  // 안내 단계의 이름·설명을 id 로 다시 붙인다. 모르는 id 는 손대지 않는다 —
+  // stage.py 가 단계를 늘려도 payload 글자가 그대로 나오지, 빈 칸이 되지 않는다.
+  // 같은 글자면 안 쓴다: 아래 MutationObserver 가 이 함수를 다시 부르므로,
+  // 값이 같아도 textContent 를 넣으면 노드가 갈리며 무한히 서로를 깨운다.
+  function put(el, s) { if (el && s && el.textContent !== s) el.textContent = s; }
+
+  function restage(root) {
+    (root || document).querySelectorAll("[data-stage]").forEach(function (el) {
+      var g = STAGE[el.dataset.stage];
+      if (!g) return;
+      if (el.tagName === "B") return put(el, g.t);     // 배너·완주 줄의 단계 이름
+      put(el.querySelector(".t"), g.t);
+      put(el.querySelector(".gain"), g.gain);
+    });
+  }
 
   async function runStage(stage, btn) {
     var was = btn.textContent;
@@ -345,19 +392,25 @@
     setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
   }
 
+  // 안내의 '이 명령을 치세요' 칩을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
+  // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
+  // 어느 단계인지는 버튼의 data-stage 가 말한다 — 예전에는 버튼 라벨(명령어 문자열)에
+  // 정규식을 걸어 되짚었다.
   function wireSteps() {
     document.querySelectorAll("button.cmd").forEach(function (b) {
       if (b.dataset.smWired) return;
       b.dataset.smWired = "1";
-      var t = (b.textContent || "").trim();
-      var m = t.match(/^\/capture\s+(\w+)/);
-      if (m && STAGE_LABEL[m[1]]) {
-        var st = m[1];
-        b.textContent = STAGE_LABEL[st] + " 실행";
+      var st = b.dataset.stage || "";
+      // data-stage 는 "이 칩이 속한 단계"일 뿐이다 — 그 칩의 명령이 그 단계를 돈다는
+      // 뜻이 아니다. 질문이 0건이면 ai 단계의 명령이 `/capture add` 로 내려오고,
+      // GSC 미연결이면 gsc 단계의 명령이 `GSC 로그인해줘` 다. 그 판정은 payload 를
+      // 쥔 renderGuide 가 data-runnable 로 내려보낸다.
+      if (b.dataset.runnable === "1" && STAGE[st] && STAGE[st].run) {
+        b.textContent = STAGE[st].t + " 실행";
         b.onclick = function () { runStage(st, b); };
         return;
       }
-      if (/^\/create/.test(t)) {          // 기회는 아래 목록에 이미 있다
+      if (st === "create") {              // 기회는 아래 목록에 이미 있다
         b.textContent = "개선 기회 보기";
         b.onclick = function () {
           var o = document.getElementById("opps") || document.querySelector(".opp");
@@ -365,7 +418,11 @@
         };
         return;
       }
-      b.remove();      // 사이트 등록·구글 연동은 웹에서 이미 끝난 단계다
+      // 남는 건 웹에서 실행할 수 없는 칩이다 — 빈 상태 안의 명령 복사칩(사이트
+      // 등록·구글 연동)과, 단계는 알지만 그 명령이 다른 일을 하는 칩(`/capture add`,
+      // `GSC 로그인해줘`). 웹에는 명령을 칠 곳이 없고, 그 안내는 reempty()·배너가
+      // 따로 한다.
+      b.remove();
     });
   }
 
@@ -376,16 +433,14 @@
   var VIEWS = [
     ["overview",  "개요",        ["docban", "band", "opps", "daily", "sm-perf", "sm-dim"],
                                                                          ["gsc", "gaps"]],
-    ["keywords",  "키워드",      ["log", "sm-kw", "movers"],          ["keywords"]],
+    ["keywords",  "키워드",      ["log", "sm-kw", "movers"],
+                                                            ["keywords", "competitors"]],
     ["rank",      "순위 추적",   ["ranks"],                           ["rank"]],
     ["ai",        "AI 인용",     ["ai"],                              ["ai"]],
     ["site",      "사이트 점검", ["index", "devgap"],                 ["index"]],
     ["backlinks", "백링크",      ["sm-bl"],                           []],
     ["history",   "기록",        ["acts", "runs", "made-sec", "sm-cc"], []]
   ];
-  // 화면 제목과 겹치지 않게 — "순위 추적" 화면의 버튼이 [순위 추적]이면 뭘 하는지 모른다
-  var RUN_LABEL = {gsc: "실적 다시 수집", index: "색인 다시 검사", keywords: "키워드 다시 발굴",
-    rank: "순위 다시 확인", ai: "AI 인용 다시 확인", gaps: "기회 다시 분석"};
   var view = "overview";
 
   // 원본 섹션을 화면별 상자로 옮긴다. 이미 제자리면 아무것도 하지 않는다 —
@@ -406,8 +461,8 @@
         v[3].forEach(function (st) {      // 그 화면을 채우는 단계를 여기서 돌린다
           var rb = document.createElement("button");
           rb.className = "sm-refresh";
-          rb.textContent = RUN_LABEL[st];
-          rb.title = STAGE_LABEL[st];
+          rb.textContent = STAGE[st].run;   // 화면 제목과 겹치지 않게 다르게 부른다
+          rb.title = STAGE[st].t;
           rb.onclick = function () { runStage(st, rb); };
           h.appendChild(rb);
         });
@@ -1124,22 +1179,24 @@
   place();
   show(view);
 
-  // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 원본에는 id 를 담은 속성이 없고
-  // 트리아지 버튼의 onclick="setOpp(<id>,...)" 안에만 있다 — 거기서 꺼낸다.
+  // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 기회 id 는 카드의 data-opp 에
+  // 있다 — 예전에는 트리아지 버튼의 인라인 onclick 문자열을 정규식으로 뜯어 꺼냈다.
   var wire = function () {
-    document.querySelectorAll('button[onclick^="setOpp("]').forEach(function (b) {
-      var box = b.parentNode;
-      if (!box || box.querySelector("[data-write]")) return;
-      var m = (b.getAttribute("onclick") || "").match(/setOpp\((\d+)/);
-      if (!m) return;
+    document.querySelectorAll(".opp[data-opp] .acts").forEach(function (box) {
+      if (box.querySelector("[data-write]")) return;
       var w = document.createElement("button");
-      w.setAttribute("data-write", m[1]);
+      w.setAttribute("data-write", box.closest(".opp").dataset.opp);
       w.textContent = "콘텐츠 작성";
       box.appendChild(w);
     });
   };
+  // 화면은 비동기로 여러 번 다시 그려진다(사이트 전환·필터·분석 완료) — 그래서 이
+  // 손질들은 전부 idempotent 하고, 아래 MutationObserver 가 매번 다시 부른다.
+  // restage/wire/wireSteps 는 이제 id 로 찾으므로 문구가 바뀌어도 안 멈춘다.
+  // retitle/resentence/reempty 는 아직 남는다 — 원본 화면 열넷의 제목·설명·빈 상태
+  // 문구에는 붙일 id 가 없고, 그 파일들은 이 애드온이 손댈 수 있는 범위 밖이다.
   var all = function () {
-    wire(); wireSteps(); retitle(); resentence(); reempty(); kpi();
+    wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
     // 백링크는 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이 아직
     // 안 채워져 그냥 빠져나가므로(BL_DONE 이 막아 준다) 여기서 다시 시도한다 —
     // 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
