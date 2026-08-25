@@ -130,7 +130,7 @@ function RK_chips(bs) {
        <b>${b.n}</b></button>`).join("")}</div>`;
 }
 
-const RK_AIO_OPT = [["", "전체"], ["on", "AI오버뷰 뜸"], ["gap", "떴는데 미인용"],
+const RK_AIO_OPT = [["", "전체"], ["on", "AI 요약 뜸"], ["gap", "남의 링크만"],
                     ["off", "안 뜸"]];
 const RK_aioHit = (r, v) => v === "on" ? r.aio === 1
   : v === "gap" ? (r.aio === 1 && !r.aio_cited)
@@ -150,10 +150,10 @@ function RK_reset() { RK_Q = ""; RK_AIO = ""; RK_BAND = null; RK_paint(); }
 
 function RK_aioCell(r) {
   if (r.aio == null)
-    return `<span class="muted" title="이번 조회는 AI오버뷰를 보고하지 않았습니다">—</span>`;
-  if (!r.aio) return `<span class="muted">안 뜸</span>`;
-  return r.aio_cited ? `<span class="up">인용됨</span>`
-                     : `<span class="down">떴는데 미인용</span>`;
+    return `<span class="muted" title="이번 조회는 AI 요약이 떴는지 재지 않았습니다">—</span>`;
+  if (!r.aio) return `<span class="muted">요약 없음</span>`;
+  return r.aio_cited ? `<span class="up" title="AI 요약이 내 페이지를 출처로 실었습니다">내 링크 실림</span>`
+                     : `<span class="down" title="AI 요약이 떴는데 출처는 전부 남의 사이트입니다">남의 링크만</span>`;
 }
 
 /* ── 행 펼침: "몇 위"에서 "그래서 뭘 고치나"까지 한 자리에서 ─────────────
@@ -172,9 +172,10 @@ const RK_FEAT = {
   related_searches: "연관 검색어", discussions_and_forums: "커뮤니티 글",
 };
 
-const RK_aioText = r => r.aio == null ? "AI 오버뷰 정보 없음"
-  : !r.aio ? "AI 오버뷰 안 뜸"
-  : r.aio_cited ? "AI 오버뷰에 인용됨" : "AI 오버뷰 떴는데 미인용";
+const RK_aioText = r => r.aio == null ? "AI 요약은 이번에 재지 않음"
+  : !r.aio ? "AI 요약 안 뜸"
+  : r.aio_cited ? "AI 요약에 내 페이지가 실림"
+  : "AI 요약에 남의 링크만 실림";
 
 // 순위 구간마다 손댈 자리가 다르다 — 3위와 30위에 같은 할 일을 적으면 둘 다 안 한다.
 // 경계값은 RULES(서버)만 쓴다. 문구는 [개선 기회]의 PLAY 와 같은 어투다.
@@ -324,7 +325,7 @@ function RK_list() {
   if (RK_HAS_PREV)
     heads.push(">이전?직전 확인일의 순위 — 지금 순위에 Δ를 되돌린 값입니다",
       `>Δ?올라간 칸수입니다. ±${(RULES.rank_noise || 3) - 1}칸까지는 노이즈로 보고 보합으로 적습니다`);
-  heads.push("AI오버뷰?구글 AI 요약이 떴는지, 떴다면 우리 페이지를 인용했는지");
+  heads.push("AI 요약?구글이 검색 결과 맨 위에 붙이는 AI 답변 — 떴는지, 거기 내 페이지가 출처로 실렸는지");
   $("rk-list").innerHTML = table(heads, list.map(RK_row));
 }
 
@@ -336,7 +337,7 @@ function RK_paint() {
   $("rk-tools").innerHTML = `
     <input type="search" value="${esc(RK_Q)}" oninput="RK_find(this.value)"
       placeholder="검색어로 찾기" aria-label="검색어 찾기">
-    <select onchange="RK_setAio(this.value)" aria-label="AI오버뷰로 거르기">${
+    <select onchange="RK_setAio(this.value)" aria-label="AI 요약으로 거르기">${
       RK_AIO_OPT.map(([v, l]) => `<option value="${v}"${v === RK_AIO ? " selected" : ""}>${l}
         (${RK_ROWS.filter(r => RK_aioHit(r, v)).length})</option>`).join("")}</select>
     <span class="n" id="rk-n"></span>
@@ -350,12 +351,12 @@ function RK_paint() {
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다(기회 목록과 같은 자리).
 function RK_csv() {
   const bs = RK_bands();
-  const head = ["검색어", "순위", "이전", "Δ", "구간", "AI오버뷰"];
+  const head = ["검색어", "순위", "이전", "Δ", "구간", "AI 요약"];
   const rows = [head].concat(RK_filtered().map(r => {
     const b = bs.find(x => x.hit(r));
     return [r.keyword, r.pos ?? "밖", RK_prevPos(r) ?? "", RK_d(r) ?? "",
-      b ? b.t : "", r.aio == null ? "" : !r.aio ? "안 뜸"
-        : r.aio_cited ? "인용됨" : "떴는데 미인용"];
+      b ? b.t : "", r.aio == null ? "" : !r.aio ? "요약 없음"
+        : r.aio_cited ? "내 링크 실림" : "남의 링크만"];
   }));
   csv("순위", rows);
 }
@@ -384,7 +385,7 @@ VIEW("rank", function (d) {
     $("rk-sub").textContent = "";
     $("ranks").innerHTML = `<div class="empty">순위를 아직 한 번도 확인하지 않았습니다.
       구글 결과를 직접 조회하는 단계라 SERP 제공자 연동(DataForSEO 권장 · Serper는
-      AI오버뷰가 없는 대체재)이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다${
+      AI 요약 값이 없는 대체재)이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다${
         d.kw_active ? ` — 지금 활성 키워드는 ${num(d.kw_active)}개입니다` : ""}.
       연동이 없어도 나머지 분석은 그대로 돕니다: 서치콘솔의 <b>평균 게재순위</b>는
       [키워드] 화면에 이미 들어와 있고, 그건 무료입니다.
@@ -409,7 +410,7 @@ VIEW("rank", function (d) {
       <p class="rk-note" id="rk-cap"></p>
     </div>
     <div class="rk-part" id="rk-aio-part">
-      <div class="eyebrow">AI오버뷰</div>
+      <div class="eyebrow">AI 요약</div>
       <div id="rk-aio"></div>
     </div>`;
 
@@ -455,25 +456,27 @@ VIEW("rank", function (d) {
       `CSV도 같은 ${RK_ROWS.length}개입니다.`
     : `순위·이전·Δ는 열 이름을 누르면 정렬됩니다.`) + how;
 
-  // AI오버뷰: 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
-  // 어느 검색어에서 떴는데 우리만 빠졌는지가 [개선 기회]의 AI 인용 공백이 된다.
+  // AI 요약(구글 AI Overview): 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
+  // 요약이 떴는데 내 링크만 빠진 검색어는 아직 기회로 적재되지 않는다 —
+  // aio_exposure kind 는 선언·점수·라벨만 있고 scoring.load 가 만들지 않는다.
   const known = RK_ROWS.filter(r => r.aio != null);
   const on = known.filter(r => r.aio === 1);
   const cited = on.filter(r => r.aio_cited).length;
   const gap = d.aio_gap || [];
   if (!known.length) {
-    $("rk-aio").innerHTML = `<div class="empty">이번 조회는 AI오버뷰를 보고하지 않았습니다${
-      grab("provider") === "serper" ? " — Serper는 AI오버뷰를 주지 않습니다. " +
-      "DataForSEO로 조회하면 이 칸이 채워집니다" : ""}.</div>`;
+    $("rk-aio").innerHTML = `<div class="empty">이번 조회는 AI 요약이 떴는지 재지 않았습니다${
+      grab("provider") === "serper" ? " — Serper는 이 값을 주지 않습니다. " +
+      "DataForSEO로 조회하면 채워집니다" : ""}.</div>`;
   } else if (!on.length) {
     $("rk-aio").innerHTML = `<p class="rk-note">확인한 ${known.length}개 어디에도
-      AI오버뷰가 뜨지 않았습니다. 이 주제는 아직 구글이 요약을 안 붙입니다.</p>`;
+      AI 요약이 뜨지 않았습니다. 이 주제는 아직 구글이 답을 직접 붙이지 않습니다.</p>`;
   } else {
     $("rk-aio").innerHTML = `<p class="rk-note">
-      AI오버뷰가 뜬 검색어 <b>${on.length}개</b> 중 <b>${cited}개</b>에서 우리 페이지가
-      인용됐습니다. 나머지 ${on.length - cited}개는 요약이 자리를 차지하는데 우리는 빠져
-      있습니다 — [개선 기회]의 <b>AI 인용 공백</b>이 여기서 나옵니다.</p>` +
-      (gap.length ? `<div class="oppchips" style="margin-top:12px">${gap.map(k =>
+      AI 요약이 뜬 검색어 <b>${on.length}개</b> 중 <b>${cited}개</b>에 내 페이지가 출처로
+      실렸습니다. 나머지 ${on.length - cited}개는 요약이 맨 위 자리를 차지하는데 거기
+      내 링크가 없습니다 — 순위가 그대로여도 클릭이 줄어듭니다.</p>` +
+      (gap.length ? `<p class="rk-note" style="margin-top:10px">내 링크가 빠진 검색어:</p>
+        <div class="oppchips" style="margin-top:6px">${gap.map(k =>
         `<span class="chip">${esc(k)}</span>`).join("")}</div>` : "");
   }
 });

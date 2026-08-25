@@ -122,9 +122,9 @@ const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed
 // window 에 건다: 다른 화면(history)이 이 한 벌을 읽어 쓴다. 최상위 const 는 전역
 // 렉시컬 스코프에만 들어가 window.KIND_LABEL 이 undefined 였고, 그래서 [기록] 화면의
 // 종류 칸이 조용히 영문 kind 원문으로 떨어져 있었다.
-window.KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 인용 공백",
+window.KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 챗봇 인용 없음",
   ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
-  coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"AI오버뷰 노출",
+  coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"구글 AI 요약 빠짐",
   content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘"};
 /* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
@@ -187,15 +187,16 @@ const PLAY = {
            "템플릿 한 벌 + 실제 데이터로 페이지를 찍습니다 — 빈 껍데기는 색인에서 걸러집니다.",
            "허브 페이지를 만들어 전부 링크합니다."],
     deliver: ["이 패턴의 축과 값 목록(도구·지역·비교 대상)", "템플릿 한 벌의 골격 — 어느 자리에 데이터가 들어가는지", "허브 페이지 구성"]},
-  ai_citation_gap: {what: "AI 답변이 이 주제에서 남을 인용하고 나를 빼놓습니다.",
+  ai_citation_gap: {what: "ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
     acts: ["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
            "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다.",
            "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
     deliver: ["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답", "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)", "Article·FAQPage 구조화 데이터(JSON-LD)"]},
-  aio_exposure: {what: "AI 오버뷰가 뜨는 검색어입니다 — 거기 인용되지 않으면 클릭이 줄어듭니다.",
-    acts: ["오버뷰가 답하는 질문에 직답 블록을 만듭니다.",
+  aio_exposure: {what: "구글이 이 검색어에 AI 요약을 붙입니다 — 거기 내 링크가 없으면 순위가 그대로여도 클릭이 줄어듭니다.",
+    acts: ["요약이 답하는 질문에 직답 블록을 만듭니다.",
            "Article·FAQ 구조화 데이터를 붙입니다."],
-    deliver: ["AI 오버뷰가 답하는 질문에 대한 직답 블록", "Article·FAQ 구조화 데이터(JSON-LD)"]},
+    deliver: ["구글 AI 요약이 답하는 질문에 대한 직답 블록",
+              "Article·FAQ 구조화 데이터(JSON-LD)"]},
   coverage: {what: "추적은 하는데 노출도 순위도 없습니다 — 이 주제를 다루는 페이지가 없다는 뜻입니다.",
     acts: ["이 클러스터를 다루는 페이지가 실제로 있는지 확인합니다.",
            "없으면 대표 글 하나부터 만듭니다 — 클러스터 전체를 한 번에 찍지 않습니다.",
