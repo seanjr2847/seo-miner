@@ -322,10 +322,16 @@ function AI_detail(r, doms) {
   // 질문 문장이 그대로 검색어인 경우에만 페이지를 붙인다 — 비슷해 보인다고 갖다 대지 않는다.
   const pages = AI_QP[r.prompt] || [];
   const url = pages.length ? pages[0].page : "";
+  // 프롬프트에는 "이 질문에 답하는 글을 써라"가 목적이라, 페이지가 없어도 낼 수 있다.
+  const ask = askBlock({
+    url, audit: url ? AI_PA[url] : null, acts: p.acts,
+    problem: `AI 인용 — ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
+    queries: [{q: r.prompt, note: `AI 답변 ${r.checks}건 중 인용 ${r.cited}건`}],
+  });
   return `<div class="det">${playList(p.what, p.acts)}${AI_rival(doms)}
     ${pageTable(pages)}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(AI_PA[url], url)}` : ""}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(AI_PA[url], url)}` : ""}${ask}</div>`;
 }
 
 function AI_row(r) {

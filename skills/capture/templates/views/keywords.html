@@ -315,6 +315,8 @@ function KW_det(r) {
          구글 실적을 한 번 더 읽으면 페이지별로 채워집니다.</p>`}
     ${playList(what, acts)}
     ${url ? pageFix(KW_AUDITS[url], url) : ""}
+    ${askBlock({url, audit: KW_AUDITS[url], acts, problem: what,
+                queries: [{q: r.query, note: KW_state(r).replace(/<[^>]+>/g, "")}]})}
   </div>`;
 }
 

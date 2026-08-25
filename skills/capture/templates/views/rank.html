@@ -178,7 +178,8 @@ const RK_aioText = r => r.aio == null ? "AI 오버뷰 정보 없음"
 
 // 순위 구간마다 손댈 자리가 다르다 — 3위와 30위에 같은 할 일을 적으면 둘 다 안 한다.
 // 경계값은 RULES(서버)만 쓴다. 문구는 [개선 기회]의 PLAY 와 같은 어투다.
-function RK_play(r) {
+// 화면과 프롬프트가 같은 한 벌을 본다 — 문구를 두 곳에 적으면 한쪽이 낡는다.
+function RK_playParts(r) {
   const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20, pos = r.pos;
   let what, acts;
   if (pos == null) {
@@ -217,8 +218,9 @@ function RK_play(r) {
     acts = acts.concat([
       "검색어(질문) 그대로를 H2 로 두고 바로 아래에 2~3문장으로 직답합니다.",
       "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다."]);
-  return playList(what, acts);
+  return [what, acts];
 }
+const RK_play = r => playList(...RK_playParts(r));
 
 function RK_detail(r) {
   const prev = r.prev_pos ?? RK_prevPos(r);
@@ -237,8 +239,14 @@ function RK_detail(r) {
     : `<p class="detn">이 조회는 순위에 걸린 페이지 URL 을 주지 않았습니다.</p>`;
   // 점검 대상은 순위에 걸린 페이지가 우선, 없으면 이 검색어로 노출이 가장 큰 페이지.
   const fix = r.url || (pages[0] && pages[0].page) || "";
+  const [what, acts] = RK_playParts(r);
+  const ask = askBlock({
+    url: fix, audit: RK_AUDITS[fix], acts,
+    problem: `순위 ${r.pos != null ? r.pos + "위" : "미검출"} — ${what}`,
+    queries: [{q: r.keyword, note: r.pos != null ? `현재 ${r.pos}위` : "순위 미검출"}],
+  });
   return `<div class="det"><p class="detn">${line}</p>${urlp}${pageTable(pages)}
-    ${RK_play(r)}${fix ? pageFix(RK_AUDITS[fix], fix) : ""}</div>`;
+    ${RK_play(r)}${fix ? pageFix(RK_AUDITS[fix], fix) : ""}${ask}</div>`;
 }
 
 function RK_toggle(tr) {

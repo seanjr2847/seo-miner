@@ -275,7 +275,9 @@ function stIxDetail(url) {
     ${playList(p.what, p.acts)}
     <p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>
-    ${pageFix(ST_AUDITS[url], url)}`;
+    ${pageFix(ST_AUDITS[url], url)}
+    ${askBlock({url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
+                problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}`;
 }
 
 function renderIndex(d) {
@@ -385,7 +387,11 @@ function stDevDetail(q) {
       페이지별 분해를 아직 수집하지 않았습니다.</p>`}
     ${playList(ST_DEV_PLAY.what, ST_DEV_PLAY.acts)}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
+    ${askBlock({url, audit: ST_AUDITS[url], acts: ST_DEV_PLAY.acts,
+                problem: `모바일 격차 — 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
+                         + `${stP1(r.desktop_pos)}위, 모바일 CTR ${r.mobile_ctr}%`,
+                queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}`;
 }
 
 function renderDevice(d) {

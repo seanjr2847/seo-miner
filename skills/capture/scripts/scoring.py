@@ -385,7 +385,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
             f"<title>{kw or '대표 검색어'} — 페이지 요지</title> 를 넣으세요.")
     else:
         if kw and kw.lower() not in title.lower():
-            add("title", "bad", f"지금: {title}",
+            add("title", "bad", title,
                 f"검색어 '{kw}' 가 title 에 없습니다. 앞부분에 그대로 넣으세요.")
         t_max = TITLE_MAX_KO if _wide(title) else TITLE_MAX
         t_min = TITLE_MIN_KO if _wide(title) else TITLE_MIN
@@ -414,7 +414,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         add("H1", "warn", f"H1 이 {len(h1)}개입니다 ({' / '.join(h1[:3])})",
             "H1 은 하나만 두고 나머지는 H2 로 내리세요.")
     elif kw and kw.lower() not in h1[0].lower():
-        add("H1", "warn", f"지금: {h1[0]}",
+        add("H1", "warn", h1[0],
             f"H1 에 '{kw}' 가 없습니다 — title 과 H1 이 같은 말을 하게 맞추세요.")
 
     words = audit.get("words")

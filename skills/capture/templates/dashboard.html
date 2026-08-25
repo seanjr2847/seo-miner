@@ -214,6 +214,23 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 tr.exp > td { background:var(--bar); padding:12px 8px 16px; }
 tr.exp .det { padding-left:0; }
 td.expcell { padding:0 !important; }
+/* 프롬프트 상자 — 펼침 패널 안의 접이식. 손잡이는 버튼처럼 보이게 둔다. */
+.ask { margin:10px 0 4px; }
+.ask > summary { display:inline-block; cursor:pointer; list-style:none;
+  font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
+  border:1px solid var(--rule); border-radius:2px; padding:6px 10px; }
+.ask > summary::-webkit-details-marker { display:none; }
+.ask > summary:hover { color:var(--patina); border-color:var(--patina); }
+.ask[open] > summary { color:var(--patina); border-color:var(--patina); }
+.pbox { margin-top:8px; }
+.pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
+  font-size:11.5px; color:var(--slate); margin-bottom:5px; }
+.pb-h button { font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
+  border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
+.pb-h button:hover { color:var(--patina); border-color:var(--patina); }
+.pbox textarea { width:100%; box-sizing:border-box; resize:vertical;
+  font:400 11.5px/1.6 var(--mono); color:var(--ink); background:var(--bar);
+  border:1px solid var(--rule-soft); border-radius:2px; padding:10px; }
 .st { font:400 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
   padding:3px 7px; border:1px solid var(--rule); border-radius:2px; white-space:nowrap; }
 .st-new { color:var(--patina); border-color:var(--patina); }
@@ -552,6 +569,93 @@ const pageFix = (audit, url) => {
 const playList = (what, acts) => (!what && !(acts || []).length) ? "" :
   `${what ? `<p class="detw">${esc(what)}</p>` : ""}
    <ol class="deta">${(acts || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol>`;
+
+/* ── AI 에게 줄 수정 요청 프롬프트 ─────────────────────────────────
+   화면은 "무엇을 바꿔야 하는지"까지 말한다. 그다음 사람이 하는 일은 그것을
+   다시 손으로 옮겨 적는 것이었다 — 지금 title 이 무엇이고 검색어가 무엇이고
+   본문이 몇 단어인지를. 그 옮겨 적기를 없앤다: 펼친 패널이 이미 아는 사실만
+   모아 프롬프트 한 장으로 세우고, 복사 버튼 하나를 둔다.
+   여기서 새로 판정하지 않는다 — audit·advice·할 일은 받은 것을 그대로 옮긴다. */
+function fixPrompt(c) {
+  const L = [];
+  L.push("아래 페이지를 검색·AI 노출 관점에서 고쳐 주세요.", "");
+  L.push("## 대상");
+  if (c.url) L.push(`- 페이지: ${c.url}`);
+  (c.queries || []).slice(0, 5).forEach(q => L.push(
+    `- 노리는 검색어: ${q.q}` + (q.note ? ` (${q.note})` : "")));
+  if (c.problem) L.push(`- 지금 문제: ${c.problem}`);
+  L.push("");
+
+  const a = c.audit;
+  if (a && !a.error) {
+    const h1 = (() => { try { return JSON.parse(a.h1_json || "[]"); } catch (e) { return []; } })();
+    const sc = (() => { try { return JSON.parse(a.schema_json || "[]"); } catch (e) { return []; } })();
+    L.push(`## 지금 이 페이지 상태 (${a.checked_date || "점검일 미상"} 직접 확인)`);
+    L.push(`- title: ${a.title || "(없음)"}${a.title ? ` — ${a.title.length}자` : ""}`);
+    L.push(`- meta description: ${a.meta_description || "(없음)"}`);
+    L.push(`- H1: ${h1.length ? h1.join(" / ") : "(없음)"}`);
+    L.push(`- 본문 길이: ${a.words}단어`);
+    L.push(`- 구조화 데이터: ${sc.length ? sc.join(", ") : "(없음)"}`);
+    if (a.canonical) L.push(`- canonical: ${a.canonical}`);
+    if (a.robots) L.push(`- meta robots: ${a.robots}`);
+    L.push("");
+    if ((a.advice || []).length) {
+      L.push("## 진단 — 고쳐야 할 것");
+      a.advice.forEach((x, i) => L.push(`${i + 1}. [${x.tag}] 지금: ${x.now} → ${x.fix}`));
+      L.push("");
+    }
+  } else if (c.url) {
+    L.push("## 지금 이 페이지 상태",
+           a && a.error ? `- 점검 실패: ${a.error}`
+                        : "- 아직 페이지를 직접 점검하지 않았습니다. 아래 내용을 확인하고 고쳐 주세요.",
+           "");
+  }
+
+  if ((c.acts || []).length) {
+    L.push("## 이 상황에서 해야 할 일");
+    c.acts.forEach((x, i) => L.push(`${i + 1}. ${x}`));
+    L.push("");
+  }
+
+  L.push("## 만들어 줄 것",
+    "1. 새 title 3안 — 검색어를 앞에 두고, 한글 30자(로마자 60자) 이내",
+    "2. meta description 2안 — 한글 80자(로마자 160자) 이내, 클릭할 이유를 담아서",
+    "3. H1 하나와 본문 목차(H2 목록) — 위 검색어의 하위 질문을 빠짐없이",
+    "4. 이 페이지에 맞는 구조화 데이터(JSON-LD) 한 벌",
+    "5. 위 진단 항목별로 무엇을 어떻게 바꿨는지 한 줄씩",
+    "",
+    "규칙: 확인되지 않은 수치·후기·효능 표현은 쓰지 마세요. 사실은 이 페이지에 이미",
+    "있는 내용에서만 가져오고, 모르는 것은 [확인 필요]로 남겨 주세요.");
+  return L.join("\n");
+}
+
+// 프롬프트 상자 — 접혀 있다가 펴면 본문이 보이고, 버튼 하나로 복사한다.
+const askBlock = c => {
+  const t = fixPrompt(c);
+  return `<details class="ask"><summary>AI 에게 수정 요청 — 프롬프트 만들기</summary>
+    <div class="pbox">
+      <div class="pb-h"><span>그대로 복사해 Claude·ChatGPT 에 붙여 넣으세요</span>
+        <button type="button" onclick="copyPrompt(this)">복사</button></div>
+      <textarea readonly rows="14" spellcheck="false">${esc(t)}</textarea>
+    </div></details>`;
+};
+
+// 박제 보고서는 file:// 로도 열린다 — 거기서는 clipboard API 가 막히므로
+// execCommand 로 물러선다(둘 다 실패하면 사용자가 직접 고르게 안내한다).
+window.copyPrompt = function (btn) {
+  const ta = btn.closest(".pbox").querySelector("textarea");
+  const done = ok => {
+    btn.textContent = ok ? "복사함" : "직접 복사하세요";
+    setTimeout(() => { btn.textContent = "복사"; }, 2000);
+  };
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  if (navigator.clipboard && window.isSecureContext)
+    return navigator.clipboard.writeText(ta.value).then(() => done(true), () => done(false));
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  done(ok);
+};
 
 // SERP 정수 순위의 Δ — 판정(flat 여부)은 서버(scoring.rank_delta)가 하고,
 // 여기서는 마크업만 만든다. 보합일 때 실제 값은 title로 남긴다.

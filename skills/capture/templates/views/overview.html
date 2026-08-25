@@ -192,9 +192,19 @@ function oppDetail(o) {
   const note = pages.length || o.target.startsWith("http") ? "" :
     `<p class="detn">이 검색어로 걸린 페이지가 스냅샷에 없습니다 — 대상이 URL 이거나,
       페이지 분해를 아직 수집하지 않았습니다.</p>`;
+  // 프롬프트 재료는 여기 이미 다 있다 — 손으로 다시 옮겨 적지 않게 한 장으로 세운다.
+  const ask = askBlock({
+    url, audit, acts: p.acts,
+    problem: `${KIND_LABEL[o.kind] || o.kind} — ${o.reasoning || ""}`,
+    queries: o.target.startsWith("http") ? [] : [{
+      q: o.target,
+      note: pages[0] ? `노출 ${num(pages[0].impressions)} · 클릭 ${num(pages[0].clicks)}`
+                       + ` · CTR ${pages[0].ctr}% · 평균 ${pages[0].position ?? "—"}위` : "",
+    }],
+  });
   return `<div class="det">${playList(p.what, p.acts)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}</div>`;
 }
 
 function oppRow(o) {
