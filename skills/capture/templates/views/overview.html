@@ -131,12 +131,27 @@ window.KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
       할 일은 아래 PLAY 한 벌이 댄다. kind 마다 손대는 자리가 다르다. ── */
 const PLAY = {
-  striking_distance: {what: "11~20위 — 1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다.",
+  // 이 kind 는 4~20위를 잡는다(scoring.STRIKING_LO/HI). 4~10위는 이미 1페이지라
+  // 할 일이 다르다 — 밴드는 payload 의 striking 행이 알려 준다.
+  striking_distance: o => (SD_BAND[o.target] === "page1" ? {
+    what: "이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다.",
+    acts: ["title 앞쪽에 검색어를 두고 숫자·연도를 붙여 옆 결과와 다르게 보이게 합니다.",
+           "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
+           "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
+           "상단 3위권을 노린다면 상위 페이지에만 있는 구간을 본문에 채웁니다."],
+    deliver: ["새 title 3안 — 검색어를 앞에, 숫자나 연도를 붙여서",
+              "meta description 2안",
+              "질문 바로 아래 넣을 40~60자 직답 문안"]
+  } : {
+    what: "11~20위 — 1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다.",
     acts: ["아래 페이지의 title 과 H1 을 이 검색어로 시작하게 고칩니다.",
            "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
            "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
            "표·목록·정의 블록을 만들어 스니펫 후보로 올립니다."],
-    deliver: ["새 title 3안과 H1 문안 — 검색어를 앞에 두고", "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)", "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]},
+    deliver: ["새 title 3안과 H1 문안 — 검색어를 앞에 두고",
+              "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
+              "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]
+  }),
   ctr_gap: {what: "순위는 1페이지인데 클릭률이 기대치의 절반 이하 — 순위가 아니라 제목·설명 문제입니다.",
     acts: ["title 앞 60자 안에 검색어를 넣고, 브랜드명은 뒤로 밉니다.",
            "meta description 에 숫자·연도·구체적 이득을 적습니다.",
@@ -195,7 +210,8 @@ const PLAY = {
 
 function oppDetail(o) {
   const pages = (window.QUERY_PAGES || {})[o.target] || [];
-  const p = PLAY[o.kind] || {};
+  const pd = PLAY[o.kind];
+  const p = (typeof pd === "function" ? pd(o) : pd) || {};
   // 이 기회에서 실제로 손댈 페이지 — 노출이 가장 큰 것. 감사 결과가 있으면
   // "지금 title 이 무엇이고 무엇을 바꿔라"까지 나온다(없으면 왜 없는지 말한다).
   const url = o.target.startsWith("http") ? o.target : (pages[0] && pages[0].page);
@@ -260,7 +276,7 @@ async function setOpp(id, status) {
   load();
 }
 
-let OPPS = [], OPP_COUNTS = {}, KIND_FILTER = null, OPP_Q = "", OPP_ST = "", OPP_N = 8;
+let OPPS = [], OPP_COUNTS = {}, SD_BAND = {}, KIND_FILTER = null, OPP_Q = "", OPP_ST = "", OPP_N = 8;
 // 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
 const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
   closed:["done", "dismissed"]};
@@ -373,6 +389,8 @@ VIEW("overview", function (d) {
   // 검색어별 페이지 표는 네 화면이 같이 본다 — window 에 건다(KIND_LABEL 과 같은 이유).
   window.QUERY_PAGES = d.query_pages || {};
   window.PAGE_AUDITS = d.page_audits || {};
+  // 1페이지 목전 기회는 4~20위를 담는다 — 어느 밴드인지는 striking 행만 안다.
+  SD_BAND = Object.fromEntries((d.striking || []).map(r => [r.query, r.band]));
   renderOpps(8);
 });
 </script>
