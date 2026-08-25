@@ -13,6 +13,11 @@
   #toggle-setup,#setup{display:none!important}
   #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
 
+  /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
+  #sm-fail{border:1px solid var(--copper);border-radius:8px;padding:12px 16px;
+    margin:0 0 18px;color:var(--copper);font:400 13px/1.6 var(--sans)}
+  #sm-fail p{margin:0}
+
   /* ── 좌측 네비게이션 ────────────────────────────────────────
      원본은 한 페이지에 섹션 열넷을 세로로 쌓는다. 어디에 뭐가 있는지도, 지금 뭘
      하면 되는지도 안 보인다. 주제별 화면으로 쪼개고 메뉴로 전환한다.
@@ -251,6 +256,35 @@
 <script>
 (function () {
 @@TERMS@@
+  // 이 조각은 호스팅 대시보드에만 얹힌다(server/app.py 의 /d). 그 배포에서는 유료 키를
+  // 서버가 대므로 doctor 의 준비물 명부에서도 owner 가 server 로 뒤집혀 있다
+  // (SEOMINER_HOSTED). 원본 뷰가 "키를 발급하세요"라고 말하면 안 되는 자리를 이 표식
+  // 하나로 판단한다 — 렌더된 한국어를 정규식으로 되짚지 않는다.
+  window.SM_HOSTED = true;
+
+  // 초기화 한 곳이 터져도 나머지는 돈다. 조용히 넘어가지도 않는다 — 콘솔에 원인을
+  // 남기고 화면 맨 위에 배너를 세운다. 예전에는 여기서 throw 해서 아래
+  // addEventListener 가 하나도 안 걸렸다: 사이드바도, 사이트 전환도, 실행 버튼도
+  // 같이 죽었다. 어긋남을 '알리는 것'과 화면을 '못 쓰게 만드는 것'은 다르다.
+  var FAILED = {};
+  function fail(what, e) {
+    if (FAILED[what]) return;      // MutationObserver 가 다시 부른다 — 한 번만 알린다
+    FAILED[what] = 1;
+    console.error("[seo-miner] " + what, e);
+    var host = document.querySelector("main") || document.body;
+    if (!host) return;
+    var box = document.getElementById("sm-fail");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "sm-fail";
+      host.insertBefore(box, host.firstChild);
+    }
+    var line = document.createElement("p");
+    line.textContent = what + " — " + ((e && e.message) || e);
+    box.appendChild(line);
+  }
+  function step(what, fn) { try { fn(); } catch (e) { fail(what, e); } }
+
   var b = document.createElement("button");
   b.id = "sm-run"; b.textContent = "전체 분석 실행";
 
@@ -320,9 +354,7 @@
     } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
   });
 
-  retitle();
-  resentence();
-  reempty();
+  step("용어 손질", function () { retitle(); resentence(); reempty(); });
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
   // ── 단계 용어 한 벌 ─────────────────────────────────────────
@@ -431,11 +463,10 @@
   // 하면 되는지도 안 보인다. 주제별로 나누고 좌측 메뉴로 전환한다.
   // 목록의 정본은 원본 뷰다 — 각 views/*.html 이 자기 파일에서 선언한 것을
   // dashboard.py 가 window.__VIEWS__ 로 방출한다. 여기서 다시 나열하지 않는다.
-  // 없으면 옛 사본으로 조용히 되돌아가지 않고 멈춘다 — 말없이 어긋난 두 표가
-  // 이 코드가 생긴 이유다.
-  if (!Array.isArray(window.__VIEWS__) || !window.__VIEWS__.length) {
-    throw new Error("window.__VIEWS__ 가 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
-  }
+  // 없으면 옛 사본으로 조용히 되돌아가지 않는다 — 말없이 어긋난 두 표가 이 코드가
+  // 생긴 이유다. 다만 어긋남을 '알리는 것'과 화면을 '못 쓰게 만드는 것'은 다르다:
+  // 아래 조립이 터지면 배너로 알리고 사이드바·화면 분할만 포기한다. 원본은 한 줄
+  // 스크롤로 남고(원래 그 모양이다), 사이트 전환·실행 버튼·백링크·성과·키워드는 산다.
 
   // ── 호스팅이 덧붙이는 것 ─────────────────────────────────────
   // 원본 뷰에는 없고 이 애드온이 런타임에 만드는 것만 여기 적는다. 덧붙이는 자리는
@@ -456,16 +487,25 @@
   }
 
   // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
-  var VIEWS = window.__VIEWS__.map(function (v) {
-    return [v.id, v.title, v.sections.slice(), v.stages.slice()];
-  });
-  HOST_SEC.forEach(function (h) {
-    var v = VIEWS.filter(function (x) { return x[0] === h[0]; })[0];
-    if (!v) throw new Error("호스팅 섹션이 붙을 화면이 없습니다: " + h[0] + " / " + h[1]);
-    insertAfter(v[2], v[2].indexOf(h[2]), h[1]);
-  });
-  insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === HOST_VIEW[4]; }),
-              HOST_VIEW.slice(0, 4));
+  var VIEWS;
+  try {
+    if (!Array.isArray(window.__VIEWS__) || !window.__VIEWS__.length) {
+      throw new Error("window.__VIEWS__ 가 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
+    }
+    VIEWS = window.__VIEWS__.map(function (v) {
+      return [v.id, v.title, v.sections.slice(), v.stages.slice()];
+    });
+    HOST_SEC.forEach(function (h) {
+      var v = VIEWS.filter(function (x) { return x[0] === h[0]; })[0];
+      if (!v) throw new Error("호스팅 섹션이 붙을 화면이 없습니다: " + h[0] + " / " + h[1]);
+      insertAfter(v[2], v[2].indexOf(h[2]), h[1]);
+    });
+    insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === HOST_VIEW[4]; }),
+                HOST_VIEW.slice(0, 4));
+  } catch (e) {
+    VIEWS = [];       // 화면 분할을 포기한다 — nav() 는 실행 버튼만 달고 그대로 선다
+    fail("화면 목록을 만들지 못했습니다 — 사이드바와 화면 분할 없이 이어갑니다", e);
+  }
   var view = "overview";
 
   // 원본 섹션을 화면별 상자로 옮긴다. 이미 제자리면 아무것도 하지 않는다 —
@@ -519,7 +559,7 @@
     window.scrollTo(0, 0);
   }
 
-  (function nav() {
+  step("사이드바", function nav() {
     if (document.getElementById("sm-bar")) return;
     var head = document.querySelector("header");
     if (!head) return;
@@ -547,7 +587,7 @@
     act.appendChild(rep);
     box.appendChild(act);
     head.appendChild(box);
-  })();
+  });
 
   // ── 백링크 ───────────────────────────────────────────────────
   // 원본 화면에 없는 축이다. 섹션을 만들어 끼운다(원본 HTML 은 그대로).
@@ -789,7 +829,7 @@
       }
     });
   }
-  swipeHint();
+  step("가로 스크롤 안내", swipeHint);
   window.addEventListener("resize", swipeHint);
 
   // ── 키워드 선별 ────────────────────────────────────────────
@@ -874,7 +914,7 @@
     });
     kwLoad();
   }
-  keywords();
+  step("키워드 패널", keywords);
   if (sel) sel.addEventListener("change", function () { kwLoad(); });
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
@@ -919,7 +959,7 @@
       });
     });
   }
-  handoff();
+  step("고급 분석 패널", handoff);
 
   // ── 서치콘솔 성과 ───────────────────────────────────────────
   // 화면이 쓰던 것은 클릭·노출 둘뿐이었다. CTR 과 게재순위는 gsc_snapshots 에 이미
@@ -1178,7 +1218,7 @@
 
   // 껍데기는 동기로 만들어 둔다 — place() 가 화면에 배치할 때 이미 있어야 한다.
   // 채워지기 전까지는 감춰 둔다: 빈 상자 둘이 개요 밑에 떠 있으면 고장으로 보인다.
-  (function perfShell() {
+  step("성과 상자", function perfShell() {
     var host = document.querySelector("main");
     if (!host) return;
     ["sm-perf", "sm-dim"].forEach(function (id) {
@@ -1188,7 +1228,7 @@
       sec.hidden = true;
       host.appendChild(sec);
     });
-  })();
+  });
 
   async function perfLoad() {
     var pj = proj();
@@ -1201,8 +1241,7 @@
   if (sel) sel.addEventListener("change", function () { PERF = null; perfLoad(); });
   perfLoad();
 
-  place();
-  show(view);
+  step("화면 배치", function () { place(); show(view); });
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 기회 id 는 카드의 data-opp 에
   // 있다 — 예전에는 트리아지 버튼의 인라인 onclick 문자열을 정규식으로 뜯어 꺼냈다.
@@ -1221,11 +1260,13 @@
   // retitle/resentence/reempty 는 아직 남는다 — 원본 화면 열넷의 제목·설명·빈 상태
   // 문구에는 붙일 id 가 없고, 그 파일들은 이 애드온이 손댈 수 있는 범위 밖이다.
   var all = function () {
-    wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
+    step("화면 손질", function () {
+      wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
+    });
     // 백링크는 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이 아직
     // 안 채워져 그냥 빠져나가므로(BL_DONE 이 막아 준다) 여기서 다시 시도한다 —
     // 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
-    backlinks();
+    step("백링크", backlinks);
   };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();

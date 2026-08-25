@@ -336,15 +336,30 @@ function AI_csv() {
   csv("ai인용", rows);
 }
 
-/* ── 비어 있는 화면: 이 화면은 OpenRouter 키가 없으면 영원히 빈다.
-      막다른 길로 두지 않고 발급처와 다음 한 걸음을 같이 준다. ── */
+/* ── 비어 있는 화면: 이 화면이 비는 진짜 이유는 늘 ai_checks == 0 — 아직 안 물어봤다는
+      것이다. 키를 넣는다고 지난 데이터가 생기지는 않는다.
+      경로마다 다른 건 "키가 누구 몫인가" 하나뿐이다. 로컬은 사용자가 발급해 넣고,
+      호스팅은 서버가 댄다(doctor 준비물 명부의 owner 축이 그 배포에서 server 로
+      뒤집힌다 — 그래서 호스팅 화면에는 키 입력 폼 자체가 없다). 그쪽에 "키를
+      발급하세요"라고 말하면 낼 필요도 낼 자리도 없는 일을 시키는 것이다. ── */
 function AI_emptyState(d) {
   const nm = esc(d.project.name || "mysite");
   const pr = d.progress || {};
-  const key = `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
+  const hosted = !!window.SM_HOSTED;   // 호스팅 애드온이 세우는 표식
+  const key = hosted
+    ? `<b>OpenRouter 키는 서버가 댑니다</b> — 따로 발급하거나 넣으실 것은 없습니다.`
+    : `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
     <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
       >openrouter.ai/keys</a>에서 발급해 헤더의 <b>[설정] → 4. API 키</b> 칸에
     붙여넣으면 됩니다.`;
+  // 물어보는 법. 호스팅에는 명령을 칠 곳이 없다 — 화면 위의 실행 버튼이 그 자리다
+  // (버튼 이름은 dash.html 의 STAGE 표가 정한다).
+  const ask = hosted
+    ? `<div style="margin-top:9px">이 화면 위의 <b>[AI 인용 다시 확인]</b>을 누르면
+        채워집니다.</div>`
+    : `<div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' ')
+          {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div>`;
   return pr.ai_prompts === 0
     ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
         이 화면은 chatgpt·perplexity·gemini에 같은 질문을 던져 <b>누가 인용되는지</b>를
@@ -357,10 +372,7 @@ function AI_emptyState(d) {
     : `<div class="empty"><b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는
         준비됐는데 아직 안 물어봤습니다.</b>
         한 번 확인하면 이 화면이 채워집니다 — 질문 × 엔진 3곳 × 샘플만큼 요청이 나갑니다.
-        <div style="margin-top:9px">${key}</div>
-        <div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
-          onkeydown="if(event.key==='Enter'||event.key===' ')
-            {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div></div>`;
+        <div style="margin-top:9px">${key}</div>${ask}</div>`;
 }
 
 VIEW("ai", function (d) {
