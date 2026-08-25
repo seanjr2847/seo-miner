@@ -211,7 +211,7 @@ def fetch(url: str, timeout: int | None = None) -> dict:
 
 def collect(project: str, *,
             dry_run: bool = False,
-            page_urls: int | None = None,
+            limit: int | None = None,
             throttle: float | None = None,
             conn=None) -> collector.StageResult:
     """내 페이지를 가져와 감사 결과를 Brain 에 적재한다. sys.exit 호출 없음.
@@ -219,7 +219,9 @@ def collect(project: str, *,
     Args:
         project: 사이트 이름
         dry_run: True 면 가져올 목록만 찍고 종료
-        page_urls: 한 번에 감사할 URL 수. 0이면 끔
+        limit: 한 번에 감사할 URL 수(config 키는 page_urls). 0이면 끔 —
+            CLI 플래그(--limit)와 이름을 맞춘다. 어긋나면 `--opt pages.limit=5` 가
+            TypeError 로 죽는다(collect_index 의 --limit vs index_urls 가 그 사례).
         throttle: 요청 간격(초) — 내 서버를 두드리는 속도다
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
@@ -229,7 +231,7 @@ def collect(project: str, *,
     _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(limit=page_urls, throttle=throttle))
+        s = st.settings(argparse.Namespace(limit=limit, throttle=throttle))
         limit = s["page_urls"]
         if limit <= 0:
             print("[pages] page_urls=0 — 페이지 감사를 끄셨습니다.")
@@ -286,7 +288,7 @@ def main() -> None:
         _selfcheck()
         return
     a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run, page_urls=a.limit, throttle=a.throttle)
+    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, throttle=a.throttle)
     if not r.ok and r.reason:
         sys.exit(r.reason)
 
