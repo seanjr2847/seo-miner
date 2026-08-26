@@ -938,6 +938,7 @@
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
     });
     host.appendChild(sec);
+    setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
 
   function setRender(msg) {
@@ -1043,10 +1044,7 @@
       setRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
     }
   }
-  if (sel) sel.addEventListener("change", function () {
-    SET_DONE = ""; REPO_LIST = null; SET_H = null; setLoad();
-  });
-  setLoad();
+  // 갱신 계기는 "sm:site" 하나다 — 아래 한 자리에서 같이 받는다.
 
   // 좁은 화면에서 차트는 가로로 스크롤한다(원본 .logwrap 설계). 그 사실을 알린다 —
   // 모르면 잘린 그림으로만 보인다.
@@ -1153,7 +1151,19 @@
     kwLoad();
   }
   step("키워드 패널", keywords);
-  if (sel) sel.addEventListener("change", function () { kwLoad(); });
+
+  // ── 사이트가 정해졌을 때 ─────────────────────────────────────
+  // 원본(dashboard.html 의 load)이 데이터를 다 그린 뒤 한 번 쏜다. 여태 이 계층은
+  // #proj 의 change 이벤트로만 그걸 알았는데, hash 로 자동 선택될 때는 change 가
+  // 안 난다 — 그래서 백링크·설정·키워드가 각자 첫 로드에 비어 있었다(같은 함정에
+  // 세 번 빠졌다). 계기를 한 자리로 모은다: 여기 안 걸린 것은 안 채워진다.
+  document.addEventListener("sm:site", function () {
+    BL_DONE = ""; SET_DONE = ""; REPO_LIST = null; SET_H = null; PERF = null;
+    step("백링크", backlinks);
+    step("설정", setLoad);
+    step("성과", perfLoad);
+    step("키워드", kwLoad);
+  });
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
   // 웹에서 못 하는 게 분명히 있다(관련성 판단·스킬 해석·자유 질문). 없는 척하지 말고
@@ -1476,8 +1486,7 @@
     } catch (e) { return; }
     kpi(); perfRender(); dimRender();
   }
-  if (sel) sel.addEventListener("change", function () { PERF = null; perfLoad(); });
-  perfLoad();
+  // 갱신 계기는 "sm:site" 하나다 — 아래 한 자리에서 같이 받는다.
 
   step("화면 배치", function () { place(); show(view); });
 
@@ -1523,13 +1532,8 @@
     step("화면 손질", function () {
       wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
     });
-    // 백링크·설정은 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이
-    // 아직 안 채워져 그냥 빠져나가므로(BL_DONE/SET_DONE 이 막아 준다) 여기서 다시
-    // 시도한다 — 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
-    // 설정이 여기 없어서 [설정] 화면이 첫 로드에 통째로 비어 있었다. 그리고 이제는
-    // [콘텐츠 작성] 이 저장소 상태(SET_H)를 보므로, 늦게 오면 버튼도 안 선다.
-    step("백링크", backlinks);
-    step("설정", setLoad);
+    // 사이트 데이터를 부르는 것들은 여기 없다 — "sm:site" 가 정확한 계기를 준다.
+    // (재시도 루프로 때우면 언제 채워지는지가 운에 달린다.)
   };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();

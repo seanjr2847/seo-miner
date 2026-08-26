@@ -954,6 +954,12 @@ async function load() {
   $("err").hidden = true;
   $("content").hidden = false;
   render(d);
+  // 사이트가 확정됐다고 한 번 알린다. 뒤에 얹히는 계층(호스팅 애드온)은 자기 데이터를
+  // 사이트 이름이 정해진 뒤에야 부를 수 있는데, 여태 그걸 아는 방법이 #proj 의
+  // change 이벤트뿐이었다 — 그리고 hash 로 자동 선택될 때는 change 가 안 난다.
+  // 그래서 백링크·설정·키워드가 각자 첫 로드에 비어 있었고(백링크는 재시도 루프로,
+  // 나머지는 사용자가 탭을 한 번 눌러야 채워지는 식으로) 세 곳이 따로 때워졌다.
+  document.dispatchEvent(new CustomEvent("sm:site", {detail: {project: name}}));
 }
 
 async function loadDoctor() {
