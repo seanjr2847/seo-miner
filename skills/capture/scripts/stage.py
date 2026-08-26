@@ -335,6 +335,36 @@ def _check_seams() -> None:
         assert '<li><a href="/d#' in app_f.read_text("utf-8"),             "사이트 목록 링크가 hash 없이 /d 로만 간다 — 무엇을 눌러도 첫 사이트가 열린다"
         assert "location.hash.slice(1)" in shell,             "대시보드가 hash 로 사이트를 고르지 않는다 — 링크가 실어 보낸 이름이 버려진다"
 
+    # 5) 화면이 부르는 API 는 그 화면이 뜨는 **모든** 서버에 있어야 한다.
+    #    경로 오타 하나면 fetch 가 조용히 404 로 죽고 화면에는 "불러오지 못했습니다"
+    #    만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
+    #    호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
+    #    /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
+    app_f = root / "server" / "app.py"
+    local_f = root / "skills" / "capture" / "scripts" / "dashboard.py"
+    if app_f.exists() and local_f.exists():
+        app_src, local_src = app_f.read_text("utf-8"), local_f.read_text("utf-8")
+        app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', app_src))
+        assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
+
+        def api_calls(src):
+            # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다
+            return set(re.findall(r'"(/api/[a-z][a-z/-]*)', src))
+
+        for who, src, servers in (
+                ("원본 화면", shell + "".join(p.read_text("utf-8")
+                                            for p in sorted(views.glob("*.html"))),
+                 (("로컬", None), ("호스팅", None))),
+                ("dash.html", dash, (("호스팅", None),))):
+            for call in sorted(api_calls(src)):
+                for where, _ in servers:
+                    if where == "호스팅":
+                        if call.startswith("/api/setup/"):
+                            continue          # 호스팅은 설정 화면 자체가 없다
+                        assert call in app_routes,                             f"{who} 가 부르는데 호스팅 서버에 없다: {call}"
+                    else:
+                        assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
+
 
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
