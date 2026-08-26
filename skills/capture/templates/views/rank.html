@@ -36,7 +36,7 @@
 
 <section>
   <div class="eyebrow">SERP</div>
-  <h2>순위 기록</h2>
+  <h2 data-web="순위 추적 기록">순위 기록</h2>
   <p class="sub" id="rk-sub"></p>
   <div id="ranks"></div>
 </section>
@@ -383,18 +383,22 @@ VIEW("rank", function (d) {
 
   if (!RK_ROWS.length) {
     $("rk-sub").textContent = "";
-    $("ranks").innerHTML = `<div class="empty">순위를 아직 한 번도 확인하지 않았습니다.
+    // 웹에는 명령을 칠 곳이 없다 — 복사 칩째로 짧은 문구 한 줄로 갈아 낀다.
+    $("ranks").innerHTML = `<div class="empty">${W(
+      `순위를 아직 한 번도 확인하지 않았습니다.
       구글 결과를 직접 조회하는 단계라 SERP 제공자 연동(DataForSEO 권장 · Serper는
       AI 요약 값이 없는 대체재)이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다${
         d.kw_active ? ` — 지금 활성 키워드는 ${num(d.kw_active)}개입니다` : ""}.
       연동이 없어도 나머지 분석은 그대로 돕니다: 서치콘솔의 <b>평균 게재순위</b>는
       [키워드] 화면에 이미 들어와 있고, 그건 무료입니다.
-      <button class="cmd" onclick="copyCmd(this)">/capture rank</button></div>`;
+      <button class="cmd" onclick="copyCmd(this)">/capture rank</button>`,
+      "순위를 아직 확인하지 않았습니다 — 구글 결과를 직접 조회하는 단계라 SERP 제공자 " +
+      "연동이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다. 서치콘솔의 평균 " +
+      "게재순위는 [키워드] 화면에 이미 들어와 있고 무료입니다.")}</div>`;
     return;
   }
 
-  // eyebrow("SERP")와 제목("순위 기록")은 글자 그대로 둔다 — 호스팅판 terms.js 가
-  // 완전 일치로 표시 문구를 갈아끼운다. 조회 조건은 부제에 싣는다.
+  // 제목의 호스팅판 문구는 위 <h2> 의 data-web 이 나란히 들고 있다. 조회 조건은 부제에.
   $("rk-sub").textContent = [`검색어 ${RK_ROWS.length}개`, cond].filter(Boolean).join(" · ");
   $("ranks").innerHTML = `
     <div class="band" id="rk-band"></div>

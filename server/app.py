@@ -429,6 +429,9 @@ def api_report(project: str, request: Request):
                 bl = backlinks.latest(project)
             except Exception:
                 bl = None
+        # 보고서도 호스팅 문구를 쓴다 — 메일로 나가는 것이라 받는 사람은 웹 사용자다.
+        # /d 와 같은 이유로 표식을 **첫 <script> 앞**에 세운다(app.py 의 dash 주석 참고).
+        data = pages.data(data.decode("utf-8"), SM_HOSTED=True).encode("utf-8")
         data += (f"<script>window.__BACKLINKS__={pages.js(bl or {})}</script>"
                  ).encode("utf-8")
         data += _REPORT_ADDON
@@ -691,7 +694,14 @@ _DASH_ADDON = pages.addon("dash.html")
 def dash(request: Request):
     _require_uid(request)
     # 호스팅에서는 API 키·의존성 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 키를 댄다).
-    return HTMLResponse(dashboard.HTML + _DASH_ADDON)
+    #
+    # 표식은 **첫 <script> 앞**에 세운다. 애드온이 문서 끝에서 세우면 늦는다 —
+    # 원본의 loadProjects().then(load) 가 파서보다 먼저 완주해서 첫 렌더가
+    # SM_HOSTED=false 를 보고 로컬 문구로 그려 버린다(응답이 빠를수록 잘 진다).
+    # terms.js 가 MutationObserver 를 달아 "그린 뒤에 또 갈아치우던" 이유가 이것이다.
+    # 값이 스크립트보다 먼저 서면 화면이 처음부터 맞는 문구를 고른다.
+    return HTMLResponse(pages.data(dashboard.HTML.decode("utf-8"), SM_HOSTED=True)
+                        + _DASH_ADDON.decode("utf-8"))
 
 
 @app.get("/api/projects")

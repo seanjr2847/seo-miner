@@ -18,15 +18,16 @@
 <div class="band" id="band"></div>
 
 <section id="daily-sec">
-  <div class="eyebrow">성과일 기준 · 하루 = 점 하나</div>
+  <div class="eyebrow" data-web="성과일 기준 · 일별">성과일 기준 · 하루 = 점 하나</div>
   <h2>일별 추이</h2>
-  <p class="sub">위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.</p>
+  <p class="sub" data-web="위 지표의 증감은 직전 분석 대비 값입니다. 아래 그래프는 일별 추이입니다."
+    >위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.</p>
   <div id="daily"></div>
 </section>
 
 <section>
   <div class="eyebrow" id="opp-eyebrow">기회</div>
-  <h2>다음에 손댈 것</h2>
+  <h2 data-web="개선 기회">다음에 손댈 것</h2>
   <p class="sub">카드를 누르면 어느 페이지가 걸렸는지와 할 일이 펼쳐집니다. 확인·완료·제외는 누르면 바로 저장됩니다.</p>
   <div id="opps"></div>
 </section>
@@ -39,8 +40,11 @@
       (좁은 화면에선 축소 대신 가로 스크롤). ── */
 function dailyChart(rows, stats) {
   if (rows.length < 2)
-    return `<div class="empty">일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.</div>`;
-  const W = 1000, H = 214, L = 52, R = W - 62, T = 26, B = 28, n = rows.length;
+    return `<div class="empty">${W(
+      "일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.",
+      "일별 데이터가 아직 없습니다 — [전체 분석 실행]을 누르면 최근 28일이 채워집니다.")}</div>`;
+  // 가로폭은 VW 다 — 이 함수 안에서 W 는 문구를 고르는 뼈대의 W(local, web) 다.
+  const VW = 1000, H = 214, L = 52, R = VW - 62, T = 26, B = 28, n = rows.length;
   const x = i => L + i * (R - L) / (n - 1);
   const mxC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0), 1);
   const mxI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0), 1);
@@ -78,7 +82,7 @@ function dailyChart(rows, stats) {
     >${esc(String(rows[i].date).slice(5))}</text>`;
   const sumC = stats?.clicks_sum ?? rows.reduce((a, r) => a + (r.clicks || 0), 0);
   const sumI = stats?.impressions_sum ?? rows.reduce((a, r) => a + (r.impressions || 0), 0);
-  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${VW} ${H}" role="img"
       aria-label="최근 ${n}일 클릭·노출 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}">
     <text class="axis" x="${L - 9}" y="${T - 12}" text-anchor="end"
       fill="var(--patina)">클릭</text>
@@ -94,7 +98,8 @@ function dailyChart(rows, stats) {
   </svg></div>
   <div class="legend"><b style="color:var(--patina)">■</b> 클릭 ${n}일 합계 ${num(sumC)}
     (하루 최고 ${num(mxC)}) · <b style="color:var(--slate)">■</b> 노출 ${num(sumI)}
-    (하루 최고 ${num(mxI)}) — 자릿수가 달라 세로축은 각자입니다</div>`;
+    (하루 최고 ${num(mxI)}) — ${W("자릿수가 달라 세로축은 각자입니다",
+      "자릿수가 달라 세로축은 각각 적용됩니다")}</div>`;
 }
 
 /* ── KPI 마이크로 추이: 스냅샷 3개부터, 변동이 있을 때만. 축·라벨 없이 흐름만 —
@@ -322,7 +327,9 @@ function renderOpps(n) {
   OPP_N = n;
   if (!OPPS.length)
     return $("opps").innerHTML =
-      `<div class="empty">아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.</div>`;
+      `<div class="empty">${W(
+        "아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.",
+        "아직 도출된 개선 기회가 없습니다 — 이 화면의 [기회 다시 분석]을 누르면 채워집니다.")}</div>`;
   const counts = OPP_COUNTS;
   const kinds = Object.keys(counts);
   if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 사이트 전환 시 잔존 필터
@@ -385,13 +392,15 @@ VIEW("overview", function (d) {
     ? [per && `${per} 합계`, `이전 ${num(prev[k])}`].filter(Boolean).join(" · ")
     : [per && `${per} 합계`, "비교할 직전 기록 없음"].filter(Boolean).join(" · ");
   $("band").innerHTML = [
-    ["클릭", num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),
+    // KPI 라벨만 서치콘솔 한국어를 따른다 — 그래프 축·툴팁의 "클릭"·"노출" 은 그대로다.
+    [W("클릭", "총 클릭수"), num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),
       kpiSpark(t.map(x => x.clk), dates, "var(--patina)"), was("clk")],
-    ["노출", num(last.imp), delta(last.imp - prev.imp, false, prev.imp, cmp),
+    [W("노출", "총 노출수"), num(last.imp), delta(last.imp - prev.imp, false, prev.imp, cmp),
       kpiSpark(t.map(x => x.imp), dates, "var(--slate)"), was("imp")],
-    ["노출된 검색어", num(last.q), delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
+    [W("노출된 검색어", "검색어 수"), num(last.q),
+      delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
     ["추적 키워드", num(d.kw_active), "", "", "순위·AI 인용을 확인하는 대상"],
-    ["남은 기회", num(d.opps_total), "", "", "아직 손대지 않은 것만"],
+    [W("남은 기회", "개선 기회"), num(d.opps_total), "", "", "아직 손대지 않은 것만"],
   ].map(([l, v, dd, sp, b]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${b ? `<div class="b">${b}</div>` : ""}${sp}</div>`).join("");
 

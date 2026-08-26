@@ -76,13 +76,13 @@
 
 <section id="acts" hidden>
   <div class="eyebrow">이 기록을 남길 때 정한 것</div>
-  <h2>다음 행동</h2>
+  <h2 data-web="권장 조치">다음 행동</h2>
   <ol id="acts-list"></ol>
 </section>
 
 <section>
   <div class="eyebrow">RUNS</div>
-  <h2>수집 이력</h2>
+  <h2 data-web="실행 기록">수집 이력</h2>
   <p class="sub">무엇을 언제 팠고, 얼마나 걸렸고, 무엇이 걸렸는지. 아래 요약은 이 목록 기준입니다.</p>
   <div id="runsum"></div>
   <div id="lastby"></div>
@@ -225,9 +225,13 @@ function HS_runSummary() {
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
 function HS_runTools() {
   if (!HS_RUNS.length)
-    return $("runs").innerHTML = `<div class="empty">아직 수집한 적이 없습니다.
+    // 웹에는 명령을 칠 곳이 없다 — 복사 칩 대신 화면 위 실행 버튼을 가리킨다.
+    return $("runs").innerHTML = `<div class="empty">${W(
+      `아직 수집한 적이 없습니다.
       한 번 돌리면 무엇을 얼마에 팠는지가 여기 줄로 남습니다.
-      <button class="cmd" onclick="copyCmd(this)">/capture run</button></div>`;
+      <button class="cmd" onclick="copyCmd(this)">/capture run</button>`,
+      "아직 실행한 적이 없습니다 — [전체 분석 실행]을 누르면 무엇을 언제 수집했는지 " +
+      "여기 남습니다.")}</div>`;
   const counts = {};
   HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   if (HS_RKIND && !counts[HS_RKIND]) HS_RKIND = null;   // 사이트 전환 시 잔존 필터
@@ -334,9 +338,12 @@ function HS_madeRow(c) {
 
 function HS_madeTools() {
   if (!HS_MADE.length)
-    return $("made").innerHTML = `<div class="empty">아직 고친 기록이 없습니다.
+    return $("made").innerHTML = `<div class="empty">${W(
+      `아직 고친 기록이 없습니다.
       [개요]에서 고른 기회를 실제 파일 수정으로 옮기면 여기 쌓입니다.
-      <button class="cmd" onclick="copyCmd(this)">/create plan</button></div>`;
+      <button class="cmd" onclick="copyCmd(this)">/create plan</button>`,
+      "아직 반영된 콘텐츠 변경이 없습니다 — [개요]에서 개선 기회를 고르고 " +
+      "[콘텐츠 작성]을 누르면 여기 쌓입니다.")}</div>`;
   const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
   $("made").innerHTML = `<div class="tools">
       <input type="search" value="${esc(HS_MQ)}" oninput="HS_madeFind(this.value)"

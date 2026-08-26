@@ -96,10 +96,9 @@
 <!-- 이 화면 전체의 자리표 — 뼈대(nav·앵커)가 화면 하나를 이 id 로 잡는다. -->
 <div id="ai">
 <section id="ai-sec">
-  <!-- 이 두 줄(eyebrow·h2)은 호스팅판 terms.js 가 완전 일치로 갈아끼운다 —
-       글자를 바꾸면 치환이 조용히 끊긴다. 실제로 확인한 엔진·날짜는 아래 sub 가 말한다. -->
+  <!-- 실제로 확인한 엔진·날짜는 아래 sub 가 말한다. -->
   <div class="eyebrow">chatgpt · perplexity · gemini</div>
-  <h2>AI가 누구를 인용하나</h2>
+  <h2 data-web="AI 인용 현황">AI가 누구를 인용하나</h2>
   <p class="sub" id="ai-sub"></p>
   <div id="ai-empty"></div>
   <div class="band" id="ai-band" hidden></div>
@@ -433,14 +432,13 @@ function AI_emptyState(d) {
     <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
       >openrouter.ai/keys</a>에서 발급해 헤더의 <b>[설정] → 4. API 키</b> 칸에
     붙여넣으면 됩니다.`;
-  // 물어보는 법. 호스팅에는 명령을 칠 곳이 없다 — 화면 위의 실행 버튼이 그 자리다
-  // (버튼 이름은 dash.html 의 STAGE 표가 정한다).
-  const ask = hosted
-    ? `<div style="margin-top:9px">이 화면 위의 <b>[AI 인용 다시 확인]</b>을 누르면
-        채워집니다.</div>`
-    : `<div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+  // 물어보는 법. 호스팅에서는 아래 W() 가 이 블록을 통째로 한 줄로 갈아 끼우므로
+  // 여기 명령 칩은 로컬 몫이다 — 웹에서는 화면 위의 실행 버튼이 그 자리다.
+  const ask = `<div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
         onkeydown="if(event.key==='Enter'||event.key===' ')
           {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div>`;
+  // 아래 첫 갈래(질문 0개)의 복사 칩은 양쪽 다 남긴다 — 호스팅 등록은 질문을 심지
+  // 않으므로 웹에 경로가 없고, 그 칩이 플러그인으로 건너가는 인계 지점이다.
   return pr.ai_prompts === 0
     ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
         이 화면은 chatgpt·perplexity·gemini에 같은 질문을 던져 <b>누가 인용되는지</b>를
@@ -450,10 +448,13 @@ function AI_emptyState(d) {
           onkeydown="if(event.key==='Enter'||event.key===' ')
             {event.preventDefault();copyCmd(this)}">/capture add ${nm}</div>
         <div style="margin-top:11px">${key}</div></div>`
-    : `<div class="empty"><b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는
+    : `<div class="empty">${W(
+        `<b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는
         준비됐는데 아직 안 물어봤습니다.</b>
         한 번 확인하면 이 화면이 채워집니다 — 질문 × 엔진 3곳 × 샘플만큼 요청이 나갑니다.
-        <div style="margin-top:9px">${key}</div>${ask}</div>`;
+        <div style="margin-top:9px">${key}</div>${ask}`,
+        "AI 인용을 아직 확인하지 않았습니다 — 이 화면의 [AI 인용 다시 확인]을 " +
+        "누르면 채워집니다.")}</div>`;
 }
 
 VIEW("ai", function (d) {

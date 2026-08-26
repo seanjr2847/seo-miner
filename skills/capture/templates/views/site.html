@@ -55,7 +55,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
 
 <section id="ix-sec">
   <div class="eyebrow">URL 검사</div>
-  <h2>색인 문제</h2>
+  <h2 data-web="색인 생성 오류">색인 문제</h2>
   <p class="sub" id="ix-sub"></p>
   <div id="index"></div>
   <p class="note">이 화면이 답하는 건 <b>구글이 이 URL 을 색인했는가</b> 하나입니다 —
@@ -66,7 +66,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
 
 <section id="dev-sec">
   <div class="eyebrow">MOBILE vs DESKTOP</div>
-  <h2>모바일에서 밀리는 검색어</h2>
+  <h2 data-web="모바일 순위 격차">모바일에서 밀리는 검색어</h2>
   <p class="sub" id="dev-sub"></p>
   <div id="devgap"></div>
 </section>
@@ -302,20 +302,24 @@ function renderIndex(d) {
   ST_IX_TOTAL = d.index_date ? stIxChecked(d) : null;
   if (!d.index_date) {
     $("ix-sub").textContent = "";
-    return $("index").innerHTML = `<div class="empty">색인 점검을 아직 안 했습니다 —
-      구글에 URL 하나씩 물어 색인 여부를 받아 옵니다(노출 상위 페이지부터).
-      <button class="cmd" onclick="copyCmd(this)">/capture index</button></div>`;
+    // 웹에는 명령을 칠 곳이 없다 — 복사 칩 없이 화면 안의 버튼을 가리킨다.
+    return $("index").innerHTML = W(
+      `<div class="empty">색인 점검을 아직 안 했습니다 —
+        구글에 URL 하나씩 물어 색인 여부를 받아 옵니다(노출 상위 페이지부터).
+        <button class="cmd" onclick="copyCmd(this)">/capture index</button></div>`,
+      `<div class="empty">색인 생성을 아직 확인하지 않았습니다 — 이 화면의 ` +
+      `[색인 다시 검사]를 누르면 채워집니다.</div>`);
   }
   const total = ST_IX_TOTAL, n = ST_IX_ROWS.length;
   const scope = total == null ? "" : `URL ${num(total)}개 중 `;
   if (!n) {
-    // 이 한 줄은 호스팅판(terms.js)이 통째로 갈아끼우는 문장이다 — 글자를 바꾸면
-    // 치환이 조용히 끊긴다. 개수·축하는 위 sub 가 맡는다.
+    // 개수·축하는 위 sub 가 맡는다.
     $("ix-sub").innerHTML = `${esc(d.index_date)} 점검` +
       (total == null ? "" : ` · URL ${num(total)}개`) +
       ` — 구글이 하나하나 색인했다고 답했습니다.`;
     return $("index").innerHTML = stIxBar({}, total || 1) +
-      `<div class="empty">검사한 URL이 전부 색인돼 있습니다.</div>`;
+      `<div class="empty">${W("검사한 URL이 전부 색인돼 있습니다.",
+                             "검사한 URL 이 모두 색인 생성됐습니다.")}</div>`;
   }
   $("ix-sub").innerHTML = `${esc(d.index_date)} 점검 · ${scope}<b>${n}건</b>이 색인에 못 들어갔습니다` +
     (total == null ? "" : ` · 정상 ${num(total - n)}개`) +
@@ -418,15 +422,19 @@ function renderDevice(d) {
   ST_DEV_Q = "";
   if (!d.device_date) {
     $("dev-sub").textContent = "";
-    return $("devgap").innerHTML = `<div class="empty">기기별 실적을 아직 안 읽었습니다 —
-      설정에 <code>gsc_breakdown: device</code> 를 넣고 실적을 다시 읽으면 채워집니다.
-      <button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>`;
+    return $("devgap").innerHTML = W(
+      `<div class="empty">기기별 실적을 아직 안 읽었습니다 —
+        설정에 <code>gsc_breakdown: device</code> 를 넣고 실적을 다시 읽으면 채워집니다.
+        <button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>`,
+      `<div class="empty">기기별 데이터를 아직 수집하지 않았습니다 — ` +
+      `[전체 분석 실행]을 누르면 채워집니다.</div>`);
   }
   if (!ST_DEV_ROWS.length) {
     $("dev-sub").textContent = `${d.device_date} 기준`;
-    // terms.js 가 문장 통째로 치환한다 — 글자 그대로 유지한다.
-    return $("devgap").innerHTML = `<div class="empty">모바일이 크게 밀리는 검색어가 ` +
-      `없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.</div>`;
+    return $("devgap").innerHTML = `<div class="empty">` + W(
+      "모바일이 크게 밀리는 검색어가 없습니다. 콘텐츠 문제지 화면 문제는 아닙니다.",
+      "모바일 게재순위가 크게 낮은 검색어가 없습니다 — 콘텐츠 문제이지 모바일 화면 문제는 아닙니다."
+      ) + `</div>`;
   }
   const imp = ST_DEV_ROWS.reduce((a, r) => a + (r.mobile_imp || 0), 0);
   const worst = Math.max(...ST_DEV_ROWS.map(r => r.dpos));

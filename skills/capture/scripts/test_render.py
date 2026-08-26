@@ -93,6 +93,10 @@ MUSTS = [
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
 HOSTED_MUSTS = MUSTS + [
+    # 배포마다 다른 문구는 화면이 data-web / W() 로 직접 고른다(dashboard.html).
+    # 하나라도 남아 있으면 표식(SM_HOSTED)이 첫 렌더보다 늦게 선 것이다 — 응답이
+    # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
+    (r"!data-web=", "호스팅인데 대체 문구가 안 입혀졌다 — SM_HOSTED 가 첫 렌더보다 늦게 섰다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
     (r'id="sm-nav"', "사이드바 메뉴가 없다"),
     (r'id="smv-overview"', "화면 상자(개요)가 안 만들어졌다"),
@@ -175,9 +179,12 @@ def js_errors(html: str) -> list[str]:
 def check(label: str, html: str, musts) -> None:
     errs = js_errors(html)
     assert not errs, f"{label} 에서 JS 가 터졌다:\n  " + "\n  ".join(errs[:6])
+    # --dump-dom 은 <script>·<style> 안의 소스까지 준다. "없어야 한다"는 검사는
+    # 거기 걸리면 거짓 실패가 된다 — 화면에 안 보이는 코드 조각이니까.
+    seen = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", "", html)
     for pat, why in musts:
         if pat.startswith("!"):
-            assert not re.search(pat[1:], html, re.S), f"{label}: {why}"
+            assert not re.search(pat[1:], seen, re.S), f"{label}: {why}"
         else:
             assert re.search(pat, html, re.S), f"{label}: {why}"
 
@@ -201,7 +208,11 @@ def run() -> None:
         if (ROOT / "server" / "assets" / "dash.html").exists():
             sys.path.insert(0, str(ROOT))
             from server import pages
-            targets.append(("호스팅 조립본", shell + pages.addon("dash.html"), HOSTED_MUSTS))
+            # /d 와 똑같이 만든다: 표식을 첫 <script> 앞에 세우고 애드온을 뒤에 붙인다.
+            # 서버와 다른 방식으로 조립하면 검사가 실제로 나가는 화면을 안 보게 된다.
+            hosted = (pages.data(shell.decode("utf-8"), SM_HOSTED=True)
+                      + pages.addon("dash.html").decode("utf-8")).encode("utf-8")
+            targets.append(("호스팅 조립본", hosted, HOSTED_MUSTS))
 
         for label, page, musts in targets:
             srv = serve(page)

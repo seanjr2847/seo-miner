@@ -35,10 +35,10 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 </style>
 
 <section>
-  <!-- 이 문구는 호스팅판(server/assets/terms.js)이 완전 일치로 갈아끼운다 — 글자 그대로 둔다.
+  <!-- 호스팅판 문구는 data-web 으로 나란히 선다 — applyWording() 이 한 번 갈아 끼운다.
        지금 무엇으로 정렬 중인지는 아래 도구줄의 정렬 칸이 말한다. -->
-  <div class="eyebrow">4~20위 · 노출 많은 순</div>
-  <h2>1페이지까지 남은 거리</h2>
+  <div class="eyebrow" data-web="11~20위 · 노출수 많은 순">4~20위 · 노출 많은 순</div>
+  <h2 data-web="순위 상승 기회">1페이지까지 남은 거리</h2>
   <p class="sub" id="log-sub"></p>
   <div id="log-tools"></div>
   <div id="log"></div>
@@ -46,7 +46,7 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 
 <section>
   <div class="eyebrow">지난번 대비</div>
-  <h2>움직인 검색어</h2>
+  <h2 data-web="순위 변동">움직인 검색어</h2>
   <p class="sub" id="mv-sub"></p>
   <div id="movers"></div>
 </section>
@@ -63,10 +63,11 @@ const KW_SORTS = [["imp", "노출 많은 순"], ["pos", "1페이지에 가까운
 /* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
 function depthLog(rows, brandCatalogEmpty, period) {
-  const W = 1000, LANE = 30, PAD_T = 44;
+  // 폭은 WIDTH 다 — W 는 뼈대의 문구 고르개(W(로컬, 웹))라 여기서 가리면 안 된다.
+  const WIDTH = 1000, LANE = 30, PAD_T = 44;
   // 줄이 길어지면 위쪽 눈금이 화면 밖으로 나간다 — 아래에도 같은 눈금을 깐다.
   const botAxis = rows.length >= 8, PAD_B = botAxis ? 26 : 10;
-  const L = 330, R = W - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
+  const L = 330, R = WIDTH - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
   const H = PAD_T + rows.length * LANE + PAD_B;
   const x = p => L + Math.min(p, EDGE) / EDGE * (R - L);
   const x10 = x(RULES.page1);
@@ -88,7 +89,7 @@ function depthLog(rows, brandCatalogEmpty, period) {
     const gap = onPage1 ? "이미 1페이지"
       : `1페이지까지 ${gap1(r).toFixed(1)}칸`;
     return `<g class="lane">
-      <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${W}" height="${LANE}" fill="none"/>
+      <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${WIDTH}" height="${LANE}" fill="none"/>
       <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
         ? r.query.slice(0, 35) + "…" : r.query)}</text>
       <line class="track" x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke-width="1"/>
@@ -96,7 +97,7 @@ function depthLog(rows, brandCatalogEmpty, period) {
       <circle cx="${px}" cy="${y}" r="4.5" fill="${c}"/>
       <text class="num" x="${px + (onPage1 ? 0 : 10)}" y="${y - 9}"
             text-anchor="${onPage1 ? "middle" : "start"}">${r.pos}</text>
-      <text class="num" x="${W}" y="${y + 4}" text-anchor="end">${num(r.imp)}</text>
+      <text class="num" x="${WIDTH}" y="${y + 4}" text-anchor="end">${num(r.imp)}</text>
       <title>${esc(r.query)} — ${r.pos}위, 노출 ${num(r.imp)}, 클릭 ${num(r.clk)} (${gap})</title>
     </g>`;
   }).join("");
@@ -112,7 +113,9 @@ function depthLog(rows, brandCatalogEmpty, period) {
     .length;
   const impLabel = period ? `${period} 노출` : "노출";
   const warn = brandCatalogEmpty
-    ? `\n  <div class="legend">남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.</div>`
+    ? `\n  <div class="legend">${W(
+        "남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.",
+        "경쟁사 브랜드 필터가 비어 있어 타사 브랜드 검색어가 섞일 수 있습니다.")}</div>`
     : "";
   // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 접어 둔다.
   const tbl = table([
@@ -127,7 +130,7 @@ function depthLog(rows, brandCatalogEmpty, period) {
       <td class="num">${num(r.imp)}</td>
       <td class="num">${num(r.clk)}</td></tr>`));
 
-  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" role="img"
       aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리 — 1페이지 안 ${p1}개, 2페이지 ${rows.length - p1}개">
     <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--wash)"/>
     ${grid}
@@ -137,7 +140,7 @@ function depthLog(rows, brandCatalogEmpty, period) {
     <text class="axis" x="${x10 - 6}" y="${PAD_T - 26}" text-anchor="end"
           fill="var(--patina)">1페이지 경계</text>
     ${tick(PAD_T - 14)}
-    <text class="axis" x="${W}" y="${PAD_T - 14}" text-anchor="end">${esc(impLabel)}</text>
+    <text class="axis" x="${WIDTH}" y="${PAD_T - 14}" text-anchor="end">${esc(impLabel)}</text>
     ${lanes}
     ${botAxis ? tick(H - 7) : ""}
   </svg></div>
@@ -146,7 +149,8 @@ function depthLog(rows, brandCatalogEmpty, period) {
     <b style="color:var(--copper)">▬</b> 막대 = 1페이지까지 밀 거리 ·
     오른쪽 숫자 = ${esc(impLabel)}<br>
     <b style="color:var(--patina)">1페이지 안 ${p1}개</b> ·
-    <b style="color:var(--copper)">2페이지 ${rows.length - p1}개</b> — 막대만큼 밀면 1페이지입니다
+    <b style="color:var(--copper)">2페이지 ${rows.length - p1}개</b> — ${
+      W("막대만큼 밀면 1페이지입니다", "막대만큼 올리면 1페이지입니다")}
   </div>${warn}
   <details class="kwtable"><summary>표로 보기 · 값 그대로 (${rows.length}개)</summary>${tbl}</details>`;
 }
@@ -371,6 +375,10 @@ document.addEventListener("click", e => {
   if (e.target.closest && e.target.closest("th[data-s]")) KW_closeAll();
 }, true);
 
+// 빈 상태의 명령어 복사 칩 — 로컬 플러그인에만. 웹에는 명령을 칠 곳이 없다.
+const KW_cmd = () => W(
+  `<div><button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>`, "");
+
 // ── 내보내기: 지금 걸러 놓은 목록 그대로. 파일로 만드는 일은 뼈대의 csv() 몫이다.
 function KW_csvLog() {
   csv("1페이지까지", [["검색어", "평균순위", "1페이지까지", "노출", "클릭", "구간"]].concat(
@@ -394,18 +402,22 @@ VIEW("keywords", function (d) {
   KW_BAND = "";                                   // 사이트를 바꾸면 필터도 처음으로
   const p2 = d.striking_page2 ?? KW_ROWS.filter(r => r.band === "page2").length;
   $("log-sub").textContent = KW_ROWS.length
-    ? `${KW_ROWS.length}개 중 ${p2}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
-      `순위만 밀면 클릭으로 바뀝니다.`
+    ? W(`${KW_ROWS.length}개 중 ${p2}개가 2페이지에 있습니다. 노출은 이미 나오는 검색어라, ` +
+        `순위만 밀면 클릭으로 바뀝니다.`,
+        `${KW_ROWS.length}개 중 ${p2}개가 2페이지(${RULES.page1 + 1}위 이하)에 있습니다. ` +
+        `이미 노출되는 검색어이므로 게재순위만 올리면 클릭으로 이어집니다.`)
     : "";
   if (!KW_ROWS.length) {
     // 빈 이유가 둘이다 — 아직 안 읽었다 / 읽었는데 이 구간에 걸린 게 없다.
+    // 명령어 칩은 로컬에만 — 웹에는 명령을 칠 곳이 없다(버튼이 대신한다).
     $("log-tools").innerHTML = "";
     $("log").innerHTML = `<div class="empty">${d.gsc_date
-      ? `${esc(d.gsc_date)} 실적까지 읽었지만 ${RULES.striking_lo}~${RULES.striking_hi}위 ` +
-        `구간에 노출이 잡힌 검색어가 없습니다. 노출이 쌓이면 여기부터 채워집니다.`
-      : "구글 실적을 아직 안 읽었습니다 — 읽으면 여기가 채워집니다."}
-      <div><button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>
-      </div>`;
+      ? W(`${esc(d.gsc_date)} 실적까지 읽었지만 ${RULES.striking_lo}~${RULES.striking_hi}위 ` +
+          `구간에 노출이 잡힌 검색어가 없습니다. 노출이 쌓이면 여기부터 채워집니다.`,
+          "아직 순위 상승 기회로 잡힌 검색어가 없습니다 — 노출이 쌓이면 여기부터 채워집니다.")
+      : W("구글 실적을 아직 안 읽었습니다 — 읽으면 여기가 채워집니다.",
+          "검색 실적을 아직 수집하지 않았습니다 — [전체 분석 실행]을 누르면 채워집니다.")}
+      ${KW_cmd()}</div>`;
   } else {
     KW_tools();
     KW_drawLog();
@@ -414,7 +426,7 @@ VIEW("keywords", function (d) {
   // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면
   // Δ가 전부 거짓이라, 짝을 못 찾으면 비교를 접고 그 이유를 여기에 적는다.
   $("mv-sub").textContent = d.gsc_prev
-    ? `${d.gsc_prev} → ${d.gsc_date} (${d.gsc_period}일치끼리)`
+    ? `${d.gsc_prev} → ${d.gsc_date} (${d.gsc_period}${W("일치끼리", "일 기준")})`
     : d.period_mismatch
     ? `직전 기록과 기간이 달라 비교하지 않았습니다 — 지금은 ${d.gsc_period}일치입니다. ` +
       `같은 기간으로 한 번 더 읽으면 채워집니다.`
@@ -423,14 +435,16 @@ VIEW("keywords", function (d) {
     .concat((d.downs || []).map(m => ({...m, dir: "down"})));
   KW_MQ = ""; KW_MDIR = "";
   if (KW_MV.length) return KW_mvRender();
-  // 기간 불일치 문구는 호스팅판이 문장 전체 일치로 갈아끼운다 — 다른 글자를 섞지 않는다.
   // (같은 기간으로 다시 읽으라는 안내는 바로 위 #mv-sub 가 이미 하고 있다.)
   $("movers").innerHTML = d.period_mismatch
-    ? `<div class="empty">기간이 다른 기록끼리는 비교하지 않습니다.</div>`
+    ? `<div class="empty">${W("기간이 다른 기록끼리는 비교하지 않습니다.",
+        "기간이 다른 분석 결과는 비교하지 않습니다.")}</div>`
     : `<div class="empty">${d.gsc_prev
-      ? "직전 기록과 견줘 움직인 검색어가 없습니다 — 전부 노이즈 범위 안입니다."
-      : "비교할 직전 기록이 없습니다 — 한 번 더 읽으면 그때부터 변동이 잡힙니다."}
-      <div><button class="cmd" onclick="copyCmd(this)">/capture gsc</button></div>
-      </div>`;
+      ? W("직전 기록과 견줘 움직인 검색어가 없습니다 — 전부 노이즈 범위 안입니다.",
+          "직전 분석과 견줘 게재순위가 움직인 검색어가 없습니다 — 전부 노이즈 범위입니다.")
+      : W("비교할 직전 기록이 없습니다 — 한 번 더 읽으면 그때부터 변동이 잡힙니다.",
+          "비교할 직전 분석이 없습니다 — [전체 분석 실행]을 한 번 더 누르면 " +
+          "그때부터 변동이 잡힙니다.")}
+      ${KW_cmd()}</div>`;
 });
 </script>
