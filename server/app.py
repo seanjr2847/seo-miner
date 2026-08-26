@@ -25,7 +25,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -108,8 +108,13 @@ def home(request: Request):
     if rows:
         # 등록 직후에는 볼 데이터가 없다. 무슨 일이 일어나는 중인지 말해 주지 않으면
         # 빈 대시보드만 보고 떠난다.
+        # 링크에 사이트 이름을 실어 보낸다 — 대시보드는 location.hash 로만 어느
+        # 사이트를 열지 안다(dashboard.html 의 loadProjects). 여태 전부 "/d" 라
+        # hash 가 비었고, 그러면 <select> 기본값인 첫 옵션이 잡혀서 무엇을 눌러도
+        # 맨 처음 등록한 사이트가 열렸다. quote 는 % 인코딩만 남기므로 속성에 안전하다.
         items = "".join(
-            f'<li><a href="/d"><span class="nm">{e(r["project"])}</span>'
+            f'<li><a href="/d#{quote(str(r["project"]), safe="")}">'
+            f'<span class="nm">{e(r["project"])}</span>'
             f'<span class="pr">{e(r["gsc_property"])}</span>'
             + ('<span class="st wait">첫 분석 진행 중</span>' if not r["last_run_at"]
                else f'<span class="st">{e(str(r["last_run_at"])[:16])} 분석</span>')

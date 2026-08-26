@@ -327,6 +327,14 @@ def _check_seams() -> None:
     for s in sorted(entries):
         assert "t:" in entries[s], f"단계 이름이 없다: {s}"
 
+    # 4) 사이트 목록 → 대시보드의 이음매는 URL 의 hash 하나다. 대시보드는 그것만
+    #    읽고(loadProjects), 비어 있으면 <select> 기본값인 첫 옵션이 잡힌다 —
+    #    무엇을 눌러도 맨 처음 등록한 사이트가 열린다. 양쪽 끝을 함께 못 박는다.
+    app_f = root / "server" / "app.py"
+    if app_f.exists():
+        assert '<li><a href="/d#' in app_f.read_text("utf-8"),             "사이트 목록 링크가 hash 없이 /d 로만 간다 — 무엇을 눌러도 첫 사이트가 열린다"
+        assert "location.hash.slice(1)" in shell,             "대시보드가 hash 로 사이트를 고르지 않는다 — 링크가 실어 보낸 이름이 버려진다"
+
 
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
