@@ -890,7 +890,9 @@ def load(project: str) -> None:
                                      "fit": _fit_of(conn, pid, r["query"])}, ptype),
                      # 이 kind 는 4~20위를 잡고 band 로 갈린다. 4~10위는 이미 1페이지라
                      # "1페이지까지 0.0"이라는 문장이 뜻을 잃는다 — 밴드마다 다르게 말한다.
-                     "reasoning": f"{r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
+                     # "12.8위"는 실측 순위로 읽힌다 — 직접 검색해도 안 보인다는 문의가
+                     # 여기서 나왔다. GSC 가 보고한 기간 평균이라고 앞에서 못 박는다.
+                     "reasoning": f"평균 {r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
                                   + (f"이미 1페이지, 상단(3위권)까지 "
                                      f"{round(max(0.0, r['pos'] - 3), 1)}칸"
                                      if r["band"] == "page1" else f"1페이지까지 {r['gap']}")

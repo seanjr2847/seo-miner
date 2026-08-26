@@ -365,6 +365,18 @@ def _check_seams() -> None:
                     else:
                         assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
 
+    # 6) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
+    #    않게 하려는 것이고, 원본 버튼들은 인라인 onclick 이라 영향이 없다.
+    #    애드온이 그 안에 심는 버튼은 사정이 다르다: document 위임으로 잡으면
+    #    이벤트가 영영 안 닿아 **버튼은 떠 있는데 눌러도 아무 일이 없다**.
+    #    실제로 [콘텐츠 작성]이 그렇게 죽어 있었고, 렌더 검사도 그건 못 잡는다
+    #    (DOM 에는 멀쩡히 있다). 그래서 여기서 계약으로 못 박는다.
+    ov = (views / "overview.html").read_text("utf-8")
+    if 'class="acts" onclick="event.stopPropagation()"' in ov:
+        assert not re.search(r'document\.addEventListener\(\s*"click"[\s\S]{0,500}?data-write',
+                             dash),             ".acts 안 버튼을 document 위임으로 잡는다 — 전파가 멈춰 클릭이 안 닿는다"
+        assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash),             "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
+
 
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}

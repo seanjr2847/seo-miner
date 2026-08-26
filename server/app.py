@@ -624,14 +624,25 @@ RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72
 
 @app.get("/api/settings")
 def api_settings(project: str, request: Request):
-    """사이트별 설정. 지금은 수집 주기 하나 — 앞으로 항목이 늘어날 자리다."""
+    """사이트별 설정 — 수집 주기와 연결된 저장소.
+
+    저장소를 여기 같이 싣는 이유: 대시보드가 [콘텐츠 작성]을 심을지 말지 판단해야
+    한다. 예전에는 저장소가 없어도 버튼이 그대로 떴고, **눌러야** 428 로 "저장소를
+    먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
+    """
     uid = _require_uid(request)
     conn = store.connect()
     try:
         _own(conn, uid, project)
+        row = store.site(conn, uid, project)
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
         return {"run_every_hours": store.every_hours(conn, uid, project),
-                "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS]}
+                "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
+                "repo": (row["repo"] if row else None) or "",
+                "repo_branch": (row["repo_branch"] if row else None) or "main",
+                # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
+                # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
+                "github_connected": bool(store.github(conn, uid))}
     finally:
         conn.close()
 

@@ -276,6 +276,16 @@
     border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
   #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
   #sm-set .msg{font:400 11.5px/1 var(--mono);color:var(--slate);margin-left:6px}
+  #sm-set h2+h2,#sm-set .repo{margin-top:26px}
+  #sm-set .repo select{font:400 12.5px/1 var(--sans);color:var(--ink);background:var(--card);
+    border:1px solid var(--rule);border-radius:6px;padding:8px 10px;max-width:340px}
+  #sm-set .repo input{font:400 12.5px/1 var(--mono);color:var(--ink);background:var(--card);
+    border:1px solid var(--rule);border-radius:6px;padding:8px 10px;width:130px}
+  #sm-set .repo .now{font:500 13px/1.5 var(--mono);color:var(--patina)}
+  #sm-set .repo .none{font:400 13px/1.5 var(--sans);color:var(--slate)}
+  #sm-set .repo a{color:var(--patina)}
+  /* 저장소가 없으면 [콘텐츠 작성]은 못 쓴다 — 눌러 보게 하지 않고 그 자리에서 말한다 */
+  .opp [data-write][data-need]{color:var(--slate);border-color:var(--rule)}
 
   /* 모바일: 차트 SVG 는 720px 고정이고 부모(.logwrap)가 overflow-x:auto 로 받는다.
      스크롤이 된다는 걸 알려주지 않으면 잘린 그림으로만 보인다. */
@@ -397,10 +407,20 @@
 
   // 기회 카드마다 '글 쓰기' — /create run 의 자리다. 리포가 안 붙어 있으면 서버가
   // 428 로 알려 주고, 그때 연결 링크를 보여 준다.
-  document.addEventListener("click", async function (ev) {
-    var b = ev.target.closest ? ev.target.closest("[data-write]") : null;
-    if (!b) return;
+  //
+  // **버튼 자신에 건다. document 위임으로 잡으면 안 된다** — 원본은 기회 카드의
+  // .acts 에서 event.stopPropagation() 을 한다(카드가 같이 펼쳐지지 않게).
+  // 그래서 위임 리스너에는 이 클릭이 영영 안 닿았고, 버튼은 떠 있는데 눌러도
+  // 아무 일이 없었다. 원본 주석이 이미 답을 갖고 있다: "버튼 자신의 onclick 은
+  // 이미 실행된 뒤다". wire() 가 이 함수를 w.onclick 에 건다(재할당이라 중복 없음).
+  async function writeClick(b) {
     var id = b.getAttribute("data-write");
+    if (b.hasAttribute("data-need")) {     // 못 쓰는 걸 아는데 서버까지 갈 이유가 없다
+      show("settings");
+      var sec = document.getElementById("sm-set");
+      if (sec) sec.scrollIntoView({block: "start"});
+      return;
+    }
     b.disabled = true; b.textContent = "작성 중…";
     try {
       var r = await fetch("/api/create", {method: "POST",
@@ -408,10 +428,14 @@
         body: JSON.stringify({project: proj(), opportunity_id: Number(id)})});
       var d = await r.json();
       if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 확인하기 →</a>'; return; }
-      if (r.status === 428) { b.outerHTML = '<a href="/">저장소를 먼저 연결하세요 →</a>'; return; }
+      if (r.status === 428) {            // SET_H 가 낡았다 — 설정을 다시 읽고 그 자리로
+        SET_DONE = ""; REPO_LIST = null; await setLoad(); wire();
+        show("settings");
+        return;
+      }
       b.textContent = (d.detail || "작성하지 못했습니다").slice(0, 60); b.disabled = false;
     } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
-  });
+  }
 
   step("용어 손질", function () { retitle(); resentence(); reempty(); });
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
@@ -900,11 +924,18 @@
       '<p class="sub">이 사이트를 얼마나 자주 다시 측정할지 정합니다. ' +
       "끄더라도 [전체 분석 실행]과 아직 한 번도 안 잰 사이트의 첫 측정은 그대로 " +
       "동작합니다 — 자동 재측정만 멈춥니다.</p>" +
-      '<div class="opts"></div>';
+      '<div class="opts"></div>' +
+      '<div class="repo"><h2>저장소 연결</h2>' +
+      '<p class="sub">개선 기회를 콘텐츠로 만들어 PR 로 보낼 곳입니다. main 에는 직접 ' +
+      "커밋하지 않고 새 브랜치와 PR 까지만 만듭니다 — 머지는 직접 해 주세요. " +
+      "연결하지 않아도 나머지 측정은 그대로 돕니다.</p>" +
+      '<div class="body"></div></div>';
     // 위임 한 번만 — 다시 그릴 때마다 붙이면 한 번 누른 게 여러 번 저장된다.
     sec.addEventListener("click", function (ev) {
       var t = ev.target.closest ? ev.target.closest("[data-h]") : null;
-      if (t) setSave(Number(t.dataset.h));
+      if (t) return setSave(Number(t.dataset.h));
+      if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
+      if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
     });
     host.appendChild(sec);
   });
@@ -917,6 +948,73 @@
         (p.h === SET_H.run_every_hours ? ' class="on"' : "") + ">" + esc(p.label) +
         "</button>";
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
+    repoRender();
+  }
+
+  // 저장소 칸. 세 상태뿐이다 — GitHub 계정이 없다 / 계정은 있고 저장소만 없다 /
+  // 붙어 있다. 셋을 한 문장으로 뭉치면 "무엇을 먼저 하라"를 말할 수 없다.
+  var REPO_LIST = null;
+  function repoRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec || !SET_H) return;
+    var body = sec.querySelector(".repo .body");
+    if (!body) return;
+    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    if (!SET_H.github_connected) {
+      body.innerHTML = '<p class="none">GitHub 계정이 아직 연결되지 않았습니다 — ' +
+        '<a href="/auth/github">GitHub 연결하기 →</a></p>' + note;
+      return;
+    }
+    if (REPO_LIST) {                       // [바꾸기] 를 눌러 목록을 받아 온 상태
+      body.innerHTML = '<div class="opts">' +
+        "<select>" + REPO_LIST.map(function (r) {
+          var n = r.full_name || r;
+          return '<option' + (n === SET_H.repo ? " selected" : "") + ">" + esc(n) + "</option>";
+        }).join("") + "</select>" +
+        '<input value="' + esc(SET_H.repo_branch || "main") + '" aria-label="브랜치">' +
+        '<button data-repo-save>저장</button></div>' + note;
+      return;
+    }
+    body.innerHTML = '<div class="opts">' +
+      (SET_H.repo ? '<span class="now">' + esc(SET_H.repo) + " · " +
+                    esc(SET_H.repo_branch || "main") + "</span>"
+                  : '<span class="none">아직 연결된 저장소가 없습니다</span>') +
+      "<button data-repo-pick>" + (SET_H.repo ? "바꾸기" : "저장소 고르기") + "</button>" +
+      "</div>" + note;
+  }
+
+  // 목록은 누를 때 받는다 — GitHub API 호출이라 화면을 열 때마다 부르지 않는다.
+  async function repoPick() {
+    repoRender("불러오는 중…");
+    try {
+      var r = await fetch("/api/repos");
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      REPO_LIST = d.repos || [];
+      if (!REPO_LIST.length) return repoRender("이 계정에서 쓸 수 있는 저장소가 없습니다");
+    } catch (e) {
+      return repoRender("저장소 목록을 불러오지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+    }
+    repoRender("");
+  }
+
+  async function repoSave() {
+    var sec = document.getElementById("sm-set");
+    var repo = sec.querySelector(".repo select").value;
+    var branch = sec.querySelector(".repo input").value.trim() || "main";
+    try {
+      var r = await fetch("/api/repo", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), repo: repo, branch: branch})});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      SET_H.repo = repo; SET_H.repo_branch = branch;
+      REPO_LIST = null;                    // 고른 것을 보여 주는 상태로 돌아간다
+      repoRender("저장됨");
+      wire();                              // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
+    } catch (e) {
+      repoRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+    }
   }
 
   async function setLoad() {
@@ -945,7 +1043,9 @@
       setRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
     }
   }
-  if (sel) sel.addEventListener("change", function () { SET_DONE = ""; setLoad(); });
+  if (sel) sel.addEventListener("change", function () {
+    SET_DONE = ""; REPO_LIST = null; SET_H = null; setLoad();
+  });
   setLoad();
 
   // 좁은 화면에서 차트는 가로로 스크롤한다(원본 .logwrap 설계). 그 사실을 알린다 —
@@ -1384,12 +1484,34 @@
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 기회 id 는 카드의 data-opp 에
   // 있다 — 예전에는 트리아지 버튼의 인라인 onclick 문자열을 정규식으로 뜯어 꺼냈다.
   var wire = function () {
+    // 저장소가 안 붙었으면 이 버튼은 못 쓴다 — 숨기지는 않는다(기능이 있다는 건
+    // 알려야 한다). 대신 눌러 보게 하지 않고 그 자리에서 무엇이 필요한지 말한다.
+    // SET_H 가 아직 안 왔으면 판단을 미룬다: 아래 MutationObserver 가 다시 부른다.
+    if (!SET_H) return;
+    var need = !SET_H.repo;
     document.querySelectorAll(".opp[data-opp] .acts").forEach(function (box) {
-      if (box.querySelector("[data-write]")) return;
-      var w = document.createElement("button");
-      w.setAttribute("data-write", box.closest(".opp").dataset.opp);
-      w.textContent = "콘텐츠 작성";
-      box.appendChild(w);
+      var w = box.querySelector("[data-write]");
+      if (!w) {
+        w = document.createElement("button");
+        w.setAttribute("data-write", box.closest(".opp").dataset.opp);
+        w.onclick = function () { writeClick(w); };   // 위임 불가 — 위 주석 참고
+        box.appendChild(w);
+      } else if (w.disabled) {
+        return;                            // 작성 중인 버튼은 건드리지 않는다
+      }
+      // 상태가 바뀌면 따라간다 — 설정에서 저장소를 붙이면 그 자리에서 쓸 수 있게 된다.
+      // **값이 같으면 쓰지 않는다**: 이 함수는 MutationObserver 가 부르므로, 매번
+      // DOM 에 쓰면 자기가 자기를 깨워 무한 루프가 된다(화면이 얼어붙는다).
+      if (need !== w.hasAttribute("data-need")) {
+        if (need) w.setAttribute("data-need", "1");
+        else w.removeAttribute("data-need");
+      }
+      var want = need ? "저장소 연결 필요" : "콘텐츠 작성";
+      if (w.textContent !== want) w.textContent = want;
+      var tip = need ? "이 사이트에 저장소가 연결되지 않았습니다 — [설정]에서 연결하세요."
+                     + " 지금은 아래 [AI 에게 수정 요청]으로 프롬프트를 복사해 쓰실 수 있습니다."
+                     : "";
+      if (w.title !== tip) w.title = tip;
     });
   };
   // 화면은 비동기로 여러 번 다시 그려진다(사이트 전환·필터·분석 완료) — 그래서 이
@@ -1401,10 +1523,13 @@
     step("화면 손질", function () {
       wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
     });
-    // 백링크는 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이 아직
-    // 안 채워져 그냥 빠져나가므로(BL_DONE 이 막아 준다) 여기서 다시 시도한다 —
-    // 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
+    // 백링크·설정은 사이트 이름이 정해진 뒤에야 부를 수 있다. 처음 한 번은 목록이
+    // 아직 안 채워져 그냥 빠져나가므로(BL_DONE/SET_DONE 이 막아 준다) 여기서 다시
+    // 시도한다 — 안 그러면 사이트를 바꿀 때까지 화면이 비어 있다.
+    // 설정이 여기 없어서 [설정] 화면이 첫 로드에 통째로 비어 있었다. 그리고 이제는
+    // [콘텐츠 작성] 이 저장소 상태(SET_H)를 보므로, 늦게 오면 버튼도 안 선다.
     step("백링크", backlinks);
+    step("설정", setLoad);
   };
   new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
   all();

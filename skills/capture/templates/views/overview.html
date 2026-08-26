@@ -122,10 +122,25 @@ const OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed
 // window 에 건다: 다른 화면(history)이 이 한 벌을 읽어 쓴다. 최상위 const 는 전역
 // 렉시컬 스코프에만 들어가 window.KIND_LABEL 이 undefined 였고, 그래서 [기록] 화면의
 // 종류 칸이 조용히 영문 kind 원문으로 떨어져 있었다.
-window.KIND_LABEL = {striking_distance:"1페이지 목전", ai_citation_gap:"AI 챗봇 인용 없음",
+window.KIND_LABEL = {striking_distance:"밀면 오를 검색어", ai_citation_gap:"AI 챗봇 인용 없음",
   ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
   coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"구글 AI 요약 빠짐",
   content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘"};
+/* ── striking_distance 는 4~20위를 한 kind 로 담아 밴드가 둘이다. 4.2위에 "1페이지
+      진입"이라 말하면 거짓말이 된다 — 밴드를 아는 자리(카드 배지·프롬프트·CSV)만
+      갈라 말하고, kind 단위로만 아는 자리(필터 칩·[기록] 화면)는 통칭을 쓴다.
+      KIND_LABEL 은 kind 한 벌 그대로 둔다 — history 가 window 에서 그걸 읽는다. ── */
+// "1페이지 상단"은 상태로 읽힌다 — 이미 거기 있다는 뜻이 된다. 이건 기회 목록이니
+// 가능성으로 적는다: 지금 위치가 아니라 밀면 닿을 자리를 말하는 이름이다.
+const SD_LABEL = {page1:"1페이지 상단 가능", page2:"1페이지 진입 가능"};
+// 밴드를 모르면(다른 kind, 또는 band 없는 옛 박제본) 통칭으로 물러선다.
+const kindLabel = o => (o.kind === "striking_distance" && SD_LABEL[SD_BAND[o.target]])
+  || KIND_LABEL[o.kind] || o.kind;
+// 순위 숫자의 정본 표현은 [키워드] 화면 툴팁이다 — 같은 말로 적는다. 두 밴드가
+// 같은 문장을 쓰므로 한 벌만 둔다.
+let SD_PERIOD = "";                       // VIEW 에서 d.gsc_period 로 채운다
+const sdAvgNote = () => `이 순위는 구글이 보고한 ${SD_PERIOD || "기간"} 평균 게재순위입니다`
+  + ` — 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있고, 실측은 [순위 추적] 화면입니다.`;
 /* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
@@ -134,7 +149,7 @@ const PLAY = {
   // 이 kind 는 4~20위를 잡는다(scoring.STRIKING_LO/HI). 4~10위는 이미 1페이지라
   // 할 일이 다르다 — 밴드는 payload 의 striking 행이 알려 준다.
   striking_distance: o => (SD_BAND[o.target] === "page1" ? {
-    what: "이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다.",
+    what: `이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다. ${sdAvgNote()}`,
     acts: ["title 앞쪽에 검색어를 두고 숫자·연도를 붙여 옆 결과와 다르게 보이게 합니다.",
            "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
            "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
@@ -143,7 +158,7 @@ const PLAY = {
               "meta description 2안",
               "질문 바로 아래 넣을 40~60자 직답 문안"]
   } : {
-    what: "11~20위 — 1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다.",
+    what: `1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다. ${sdAvgNote()}`,
     acts: ["아래 페이지의 title 과 H1 을 이 검색어로 시작하게 고칩니다.",
            "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
            "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
@@ -223,7 +238,7 @@ function oppDetail(o) {
   // 프롬프트 재료는 여기 이미 다 있다 — 손으로 다시 옮겨 적지 않게 한 장으로 세운다.
   const ask = askBlock({
     url, audit, acts: p.acts, deliver: p.deliver,
-    problem: `${KIND_LABEL[o.kind] || o.kind} — ${o.reasoning || ""}`,
+    problem: `${kindLabel(o)} — ${o.reasoning || ""}`,
     queries: o.target.startsWith("http") ? [] : [{
       q: o.target,
       note: pages[0] ? `노출 ${num(pages[0].impressions)} · 클릭 ${num(pages[0].clicks)}`
@@ -258,7 +273,7 @@ function oppRow(o) {
         Number.isFinite(o.score) ? Math.round(o.score) : "—"}<span class="u">점</span></div>
       <div>
         <div class="oh">
-          <span class="kind${tone}" title="${esc(o.kind)}">${esc(KIND_LABEL[o.kind] || o.kind)}</span>
+          <span class="kind${tone}" title="${esc(o.kind)}">${esc(kindLabel(o))}</span>
           <span class="dt">${esc(o.created || "")}</span>
         </div>
         <div class="target">${esc(o.target)}</div>
@@ -352,7 +367,7 @@ function oppList() {
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다 — 여기는 무엇을 담을지만 정한다.
 function oppCsv() {
   csv("기회", [["점수", "종류", "상태", "대상", "근거", "생성일"]].concat(
-    oppFiltered().map(o => [o.score ?? "", KIND_LABEL[o.kind] || o.kind,
+    oppFiltered().map(o => [o.score ?? "", kindLabel(o),
       OPP_LABEL[o.status] || o.status, o.target,
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }
@@ -390,8 +405,9 @@ VIEW("overview", function (d) {
   // 검색어별 페이지 표는 네 화면이 같이 본다 — window 에 건다(KIND_LABEL 과 같은 이유).
   window.QUERY_PAGES = d.query_pages || {};
   window.PAGE_AUDITS = d.page_audits || {};
-  // 1페이지 목전 기회는 4~20위를 담는다 — 어느 밴드인지는 striking 행만 안다.
+  // 밀면 오를 검색어는 4~20위를 담는다 — 어느 밴드인지는 striking 행만 안다.
   SD_BAND = Object.fromEntries((d.striking || []).map(r => [r.query, r.band]));
+  SD_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   renderOpps(8);
 });
 </script>
