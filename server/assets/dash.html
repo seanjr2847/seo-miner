@@ -314,7 +314,6 @@
 </style>
 <script>
 (function () {
-@@TERMS@@
   // 이 조각은 호스팅 대시보드에만 얹힌다(server/app.py 의 /d). 그 배포에서는 유료 키를
   // 서버가 대므로 doctor 의 준비물 명부에서도 owner 가 server 로 뒤집혀 있다
   // (SEOMINER_HOSTED). 원본 뷰가 "키를 발급하세요"라고 말하면 안 되는 자리를 이 표식
@@ -440,7 +439,6 @@
     } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
   }
 
-  step("용어 손질", function () { retitle(); resentence(); reempty(); });
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
   // ── 단계 용어 한 벌 ─────────────────────────────────────────
@@ -541,7 +539,7 @@
       }
       // 남는 건 웹에서 실행할 수 없는 칩이다 — 빈 상태 안의 명령 복사칩(사이트
       // 등록·구글 연동)과, 단계는 알지만 그 명령이 다른 일을 하는 칩(`/capture add`,
-      // `GSC 로그인해줘`). 웹에는 명령을 칠 곳이 없고, 그 안내는 reempty()·배너가
+      // `GSC 로그인해줘`). 웹에는 명령을 칠 곳이 없고, 그 안내는 화면·배너가
       // 따로 한다.
       b.remove();
     });
@@ -1527,13 +1525,14 @@
     });
   };
   // 화면은 비동기로 여러 번 다시 그려진다(사이트 전환·필터·분석 완료) — 그래서 이
-  // 손질들은 전부 idempotent 하고, 아래 MutationObserver 가 매번 다시 부른다.
-  // restage/wire/wireSteps 는 이제 id 로 찾으므로 문구가 바뀌어도 안 멈춘다.
-  // retitle/resentence/reempty 는 아직 남는다 — 원본 화면 열넷의 제목·설명·빈 상태
-  // 문구에는 붙일 id 가 없고, 그 파일들은 이 애드온이 손댈 수 있는 범위 밖이다.
+  // 손질들은 전부 **idempotent** 해야 한다. 아래 MutationObserver 가 매번 다시 부르는데,
+  // 값이 같아도 DOM 에 쓰면 자기가 자기를 깨워 화면이 얼어붙는다.
+  // (terms.js 의 reempty 가 정확히 그랬다: 자기 결과물이 자기 정규식에 다시 걸렸다.)
+  // 남은 넷은 전부 id·data 속성으로 찾고, 값이 바뀔 때만 쓴다 — 문구는 이제
+  // 화면이 스스로 고르므로(data-web / W) 여기서 글자를 되짚지 않는다.
   var all = function () {
     step("화면 손질", function () {
-      wire(); wireSteps(); restage(); retitle(); resentence(); reempty(); kpi();
+      wire(); wireSteps(); restage(); kpi();
     });
     // 사이트 데이터를 부르는 것들은 여기 없다 — "sm:site" 가 정확한 계기를 준다.
     // (재시도 루프로 때우면 언제 채워지는지가 운에 달린다.)

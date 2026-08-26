@@ -1,8 +1,11 @@
 """화면 조립 — 문서에 이름 붙은 슬롯을 채운다.
 
-마커 문법이 셋이었다: `<!--USER-->` (server/*.html), `@@TERMS@@` (server/assets/*.html),
-그리고 "첫 `<script>` 바로 뒤에 window.__X__ 를 끼워 넣기". 셋 다 같은 연산이다 —
-fill() 이 앞의 둘을, data() 가 나머지를 맡는다.
+마커 문법이 둘이다: `<!--USER-->` (server/*.html) 와 "첫 `<script>` 앞에 window.__X__ 를
+끼워 넣기". 같은 연산이다 — fill() 이 앞을, data() 가 뒤를 맡는다.
+
+`@@TERMS@@` 도 있었다: terms.js 를 조각마다 끼워 넣어, 렌더된 한국어를 정규식으로
+되짚어 배포별 문구로 갈아치웠다. 이제 화면이 자기 문구를 직접 고른다
+(dashboard.html 의 data-web / W). 표식은 서버가 data() 로 첫 스크립트 앞에 세운다.
 
 HTML 은 편집기가 도와주는 자리에 둔다: 페이지는 server/, 뒤에 얹는 조각은
 server/assets/. 파이썬 문자열에 JS 를 1,000 줄 박아 두면 어느 쪽도 도와주지 못한다.
@@ -79,22 +82,17 @@ def document(body: str, title: str = "seo-miner") -> str:
             f"<title>{html.escape(title)}</title></head><body>{body}</body></html>")
 
 
-# 용어 치환 스크립트 — 대시보드와 보고서가 같은 말을 쓰게 한다.
-# 보고서는 서버·인터넷 없이 열려야 하므로 여기에 외부 링크를 넣지 않는다.
-TERMS = asset("terms.js")
-
-
 def addon(name: str) -> bytes:
     """대시보드·보고서 뒤에 이어붙이는 조각. HTML 뒤에 bytes 로 붙으므로 bytes 다."""
-    return fill(asset(name), TERMS=TERMS).encode("utf-8")
+    return asset(name).encode("utf-8")
 
 
 def demo() -> None:
-    doc = '<p><!--USER--></p><style>@@TERMS@@</style><script>var x=1;</script>'
+    doc = '<p><!--USER--></p><style>@@LEFT@@</style><script>var x=1;</script>'
 
     out = fill(doc, USER="<b>나</b>")
-    assert "<b>나</b>" in out and "@@TERMS@@" in out, out    # 안 채운 슬롯은 그대로
-    assert fill(doc, TERMS="T").count("T") == 1, "@@NAME@@ 을 못 채운다"
+    assert "<b>나</b>" in out and "@@LEFT@@" in out, out     # 안 채운 슬롯은 그대로
+    assert fill(doc, LEFT="T").count("T") == 1, "@@NAME@@ 을 못 채운다"
     try:
         fill(doc, NOPE="x")
         raise AssertionError("문서에 없는 슬롯이 조용히 통과했다")
@@ -122,7 +120,10 @@ def demo() -> None:
     real = data(fill(page("app.html"), USER="U", SITES="S"), __TAKEN__=[])
     assert "<!--USER-->" not in real and "<!--SITES-->" not in real, "슬롯이 안 채워졌다"
     assert "window.__TAKEN__=[]" in real, "값이 안 실렸다"
-    assert isinstance(addon("report.html"), bytes) and b"@@TERMS@@" not in addon("dash.html")
+    assert isinstance(addon("report.html"), bytes)
+    # 렌더된 한국어를 되짚던 층은 걷어냈다 — 되살아나면 여기서 잡는다.
+    for a in ("dash.html", "report.html"):
+        assert b"@@TERMS@@" not in addon(a) and b"retitle(" not in addon(a),             f"{a} 에 용어 치환 층이 되살아났다 — 문구는 화면이 data-web/W 로 고른다"
 
     print("pages: ok")
 
