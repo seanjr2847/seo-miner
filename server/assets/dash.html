@@ -42,29 +42,68 @@
   .sm-act .cmd::after{content:none}   /* 원본 .cmd 는 복사 칩이라 아이콘을 달고 있다 */
   :is(#sm-bar,.opp) button:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
 
+  /* ── 사이드바 (>=1000px) ────────────────────────────────────
+     세로로 세우면 가로 바와 같은 규칙이 통하지 않는다. 세 통으로 나눈다:
+       머리 — 무엇을 보고 있나 (사이트·기준 수집일·축별 날짜)
+       레일 — 어디를 보고 있나 (화면 메뉴)
+       바닥 — 무엇을 하나 (실행·보고서·안내·새로고침)
+     예전에는 셋이 한 줄기로 흘러서, 이동하는 것과 실행하는 것이 같은 모양이었다. */
   @media (min-width:1000px){
     body{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start}
     header{grid-column:1;position:sticky;top:0;height:100vh;overflow-y:auto;
       display:flex;flex-direction:column;      /* .sm-act 의 margin-top:auto 가 먹으려면 */
       border-bottom:0;border-right:1px solid var(--ink)}
-    .hbar{flex-direction:column;align-items:stretch;gap:12px;padding:20px 16px 8px;
+    .hbar{flex-direction:column;align-items:stretch;gap:10px;padding:18px 16px 6px;
       max-width:none;margin:0}
     .hbar .sp{display:none}
-    .tag{display:block!important;letter-spacing:.06em;font-size:10.5px;
-      color:var(--slate);opacity:.5;margin-top:-8px}
+    .tag{display:block!important;letter-spacing:.14em;font-size:10px;
+      color:currentColor;opacity:.4;margin-top:-5px}
     #proj,#gscdate{max-width:none;width:100%}
-    /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. */
-    #meta{font-size:11px;line-height:1.6;opacity:.65;white-space:normal;
-      word-break:break-all;display:block;margin-top:2px}
-    /* 축별 수집일 줄도 세로 바 폭에 맞춘다 — 원본 여백(22px)은 여기서 넘친다 */
-    .hax{max-width:none;margin:0;padding:0 16px 10px;opacity:.65;gap:2px 10px}
+    /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. break-all 은
+       너무 세다: 날짜를 "20 / 26-08-21" 로 반토막 냈다. 긴 토큰(도메인) 하나만
+       끊고 한글·숫자는 붙여 둔다. */
+    #meta{font-size:11px;line-height:1.6;opacity:.6;white-space:normal;
+      word-break:keep-all;overflow-wrap:anywhere;display:block;margin-top:2px}
+    /* 축별 수집일 줄도 세로 바 폭에 맞춘다 — 원본 여백(22px)은 여기서 넘친다.
+       아래 괘선이 '무엇을 보고 있나'와 '어디를 보고 있나'의 경계다. */
+    .hax{max-width:none;margin:0 16px;padding:9px 0 14px;opacity:.55;gap:2px 10px;
+      font-size:10.5px;border-bottom:1px solid currentColor}
+    /* 안내·새로고침은 이동이 아니라 실행이다 — nav() 가 바닥 통으로 옮긴다.
+       옮기기 전(조립 실패 시)에도 읽히도록 규칙은 남긴다. */
     .hbar .hbtn{width:100%;text-align:left;padding-left:11px;opacity:.5;font-size:11.5px}
     .hbar .hbtn:hover{opacity:1}
-    #sm-bar{flex-direction:column;align-items:stretch;gap:0;flex:1;padding:10px 12px 22px}
-    #sm-nav{flex-direction:column;gap:1px;overflow:visible;flex:none}
+    #sm-bar{flex-direction:column;align-items:stretch;gap:0;flex:1;padding:14px 12px 18px}
+
+    /* 시추관 레일 — 세로 메뉴에는 눈이 따라 내려갈 왼쪽 기준선이 있어야 한다.
+       (예전에는 button 기본값 그대로 가운데 정렬이라 매 줄 시작점이 달랐다.)
+       활성 화면은 레일에 돋는 눈금 하나로만 말한다 — 알약을 걷어낸 자리다.
+       색은 눈금에만 쓴다: 다크에서 헤더 배경이 밝아져 patina 글자는 대비가 안 나온다. */
+    #sm-nav{flex-direction:column;gap:2px;overflow:visible;flex:1;
+      position:relative;padding-left:12px;padding-bottom:16px}
+    #sm-nav::before{content:"";position:absolute;left:0;top:5px;bottom:16px;width:1px;
+      background:currentColor;opacity:.24}
+    #sm-nav button{position:relative;text-align:left;padding:8px 10px;opacity:.55}
+    #sm-nav button::before{content:"";position:absolute;left:-12px;top:50%;width:3px;
+      height:0;background:var(--patina);transform:translateY(-50%);
+      transition:height .18s cubic-bezier(.4,0,.2,1)}
+    #sm-nav button:hover{opacity:.85;background:transparent}
+    #sm-nav button.on{opacity:1;font-weight:650;background:transparent;color:currentColor}
+    #sm-nav button.on::before{height:19px}
+    @media (prefers-reduced-motion:reduce){#sm-nav button::before{transition:none}}
+
     .sm-act{flex-direction:column;align-items:stretch;gap:9px;margin-top:auto;padding:0 2px}
     .sm-act .cmd{text-align:left}
+    /* 안내·새로고침 — 실행이지만 주 동작이 아니다. 한 줄에 나란히 눕혀 둔다. */
+    .sm-util{display:flex;gap:14px;margin-top:2px}
+    .sm-util .hbtn{width:auto;border:0;padding:2px 0;font-size:11px;opacity:.58}
+    .sm-util .hbtn:hover{opacity:1}
     main{grid-column:2;max-width:1180px;margin:0;padding:26px 34px 80px}
+  }
+  /* 다크에서는 헤더 배경(--ink)이 밝아진다 — 중간톤 patina 눈금은 거기서 대비가
+     3:1 을 못 넘긴다. 색을 포기하고 형태만 남긴다: 눈금은 그대로 서 있고, 활성
+     항목은 굵기·밝기로도 이미 갈린다. */
+  @media (min-width:1000px) and (prefers-color-scheme:dark){
+    #sm-nav button.on::before{background:currentColor}
   }
 
   /* ── 화면 ───────────────────────────────────────────────────
@@ -613,6 +652,14 @@
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
     });
     act.appendChild(rep);
+    // 안내·새로고침은 이동이 아니라 실행이다 — 머리에 두면 메뉴와 같은 줄로 읽힌다.
+    var util = document.createElement("div");
+    util.className = "sm-util";
+    ["toggle-guide", "refresh"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) util.appendChild(el);          // 옮기기만 한다 — 이벤트는 원본이 이미 걸었다
+    });
+    if (util.children.length) act.appendChild(util);
     box.appendChild(act);
     head.appendChild(box);
   });
