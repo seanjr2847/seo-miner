@@ -98,7 +98,8 @@ CAPABILITIES = (
      "desc": "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
      "cost": "유료", "keys": ("OPENROUTER_API_KEY",),
      "url": "https://openrouter.ai/keys",
-     "fix": "OpenRouter 키가 필요합니다 (유료, 약 5분) — 발급: "
+     "fix": "AI 노출 확인만 켜는 데 OpenRouter 키가 필요합니다 "
+            "(유료, 약 5분 · 없어도 기회 목록까지는 갑니다) — 발급: "
             "https://openrouter.ai/keys · 크레딧 소액 충전 후 키 생성.",
      # 호스팅에선 서버가 낸다. 로컬에서 키가 없으면 이 단계만 건너뛴다 —
      # 무료로 쓰는 사람도 기회 목록까지는 간다.
@@ -127,7 +128,8 @@ CAPABILITIES = (
      "cost": "유료",
      "keys": ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "SERPER_API_KEY"),
      "url": "https://dataforseo.com",
-     "fix": "유료 키가 필요합니다 — DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 "
+     "fix": "순위 추적만 켜는 데 유료 키가 필요합니다 (없어도 기회 목록까지는 갑니다) "
+            "— DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 "
             "측정): https://dataforseo.com (가입 시 $1 무료 크레딧, API 비밀번호는 "
             "계정 비번과 다름 — API Settings 에서 확인). 대체재 Serper: "
             "https://serper.dev (무료 2,500콜, 카드 불필요, AI오버뷰 없음).",

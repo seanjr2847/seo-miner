@@ -348,6 +348,7 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .step .why code, .stat { font-family:var(--mono); font-size:11.5px; }
 .stat { letter-spacing:.08em; text-transform:uppercase; font-weight:400; }
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
+.stat.opt { color:var(--slate); }   /* 안 해도 되는 것 — 경고색으로 찍으면 할 일이 된다 */
 label { display:block; font:400 10px/1 var(--mono); letter-spacing:.12em;
   text-transform:uppercase; color:var(--slate); margin:12px 0 5px; }
 label b, label a { color:var(--patina); font-weight:400; text-transform:none;
@@ -464,10 +465,12 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 
     <div class="step">
       <h3>4. API 키 <span class="stat" id="s-keys"></span></h3>
-      <p class="why">자동화의 두 축은 채우는 걸 권합니다: <b>OpenRouter</b>는 AI 노출
-        확인을 질문 수십 개씩 자동 실행, <b>DataForSEO</b>는 순위·AI 오버뷰·경쟁사
-        역키워드 측정. <b>Serper만 선택</b>입니다 — DataForSEO 대신 쓰는 더 싸고 단순한
-        대체재(AI 오버뷰 없음)라 보통은 필요 없습니다.
+      <p class="why"><b>키가 하나도 없어도 기회 목록까지 갑니다.</b> 측정을 막는 것은
+        위 <b>3번 구글 로그인 하나뿐</b>이고 그건 무료입니다. 아래 키는 새 기능을 사는 게
+        아니라 <b>자동화를 사는 것</b>입니다 — 없으면 그 단계만 건너뛰고 나머지는 그대로
+        돕니다. <b>OpenRouter</b>는 AI 노출 확인(ChatGPT·Perplexity·Gemini에 질문 수십
+        개를 자동 실행), <b>DataForSEO</b>는 순위·AI 요약·경쟁사 역키워드 측정.
+        <b>Serper</b>는 DataForSEO 대체재(AI 요약 없음)라 보통은 필요 없습니다.
         저장하면 <code>~/.capture/env</code>에만 들어가고 화면에 다시 표시되지
         않습니다. 비운 채 저장하면 지워집니다.</p>
       <div class="grid">
@@ -1029,7 +1032,7 @@ function renderSetup(d) {
   renderGsc(d);
   $("s-keys").outerHTML = d.nkeys
     ? `<span id="s-keys" class="stat ok">${d.nkeys}개 저장됨</span>`
-    : `<span id="s-keys" class="stat todo">권장 — Serper만 선택</span>`;
+    : `<span id="s-keys" class="stat opt">없어도 됨</span>`;
   // 마케팅 스킬 칸 — doctor가 빠진 게 있으면 보일 버튼만 켠다. show_setup 과 따로
   // 놀기 때문에 패널이 접혀 있어도 doctor 진단 결과로 표시가 결정된다.
   $("s-skills").outerHTML = d.show_skills_btn
