@@ -233,15 +233,41 @@ def is_defensive(kind: str | None) -> bool:
 
 
 
-def snapshot_pair(conn: sqlite3.Connection, project_id: int) -> tuple[str | None, str | None, int | None, bool]:
+def snapshot_dates(conn: sqlite3.Connection, project_id: int, *,
+                   limit: int = 60) -> list[dict]:
+    """화면의 [기준 수집일] 목록 — 실제로 수집한 날만.
+
+    달력 위젯이 아니라 목록인 이유가 여기 있다: 스냅샷은 수집한 날에만 있고,
+    달력은 없는 날을 고르게 한다. 고를 수 있는 것과 데이터가 있는 것을 같게 둔다.
+    """
+    return [{"date": r[0], "period": r[1]} for r in conn.execute(
+        """SELECT snapshot_date, MAX(period_days) FROM gsc_snapshots
+            WHERE project_id=? GROUP BY snapshot_date ORDER BY 1 DESC LIMIT ?""",
+        (project_id, limit))]
+
+
+def snapshot_pair(conn: sqlite3.Connection, project_id: int,
+                  at: str | None = None) -> tuple[str | None, str | None, int | None, bool]:
     """직전 스냅샷을 같은 period_days 중 가장 최근으로 고른다 (scoring.md 4-3b).
 
     기간이 다른 스냅샷끼리 빼면 Δ순위·Δ클릭이 전부 거짓이 된다.
+
+    at: 기준 수집일을 그날로 고정한다 (화면의 [기준 수집일] 선택). None 이면 최신.
+        비교 짝(prev)은 고정한 날보다 **이전** 중에서 고른다 — 과거 시점으로
+        돌아가도 Δ가 "그때 기준의 변화"여야지 미래를 빼면 부호가 뒤집힌다.
+        없는 날짜를 받으면 빈 짝을 준다 — 있지도 않은 날의 숫자를 지어내지 않는다.
     """
+    # at 이 있으면 LIMIT 을 뺀다 — 10회보다 오래된 날을 고르면 목록에서 못 찾는다.
     snaps = [(r[0], r[1]) for r in conn.execute(
         """SELECT snapshot_date, MAX(period_days) period_days
              FROM gsc_snapshots WHERE project_id=?
-            GROUP BY snapshot_date ORDER BY 1 DESC LIMIT 10""", (project_id,)).fetchall()]
+            GROUP BY snapshot_date ORDER BY 1 DESC""" + ("" if at else " LIMIT 10"),
+        (project_id,)).fetchall()]
+    if at:
+        i = next((n for n, (d, _) in enumerate(snaps) if d == at), None)
+        if i is None:
+            return None, None, None, False
+        snaps = snaps[i:]
     cur, period = snaps[0] if snaps else (None, None)
     prev = next((d for d, pd in snaps[1:] if pd == period), None)
     period_mismatch = bool(snaps[1:]) and prev is None
@@ -481,7 +507,7 @@ def top_pages(conn: sqlite3.Connection, project_id: int, limit: int) -> list[str
 
 
 def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
-                   *, top: int = 5) -> dict[str, list[dict]]:
+                   *, top: int = 5, at: str | None = None) -> dict[str, list[dict]]:
     """검색어 → 그 검색어로 노출된 내 페이지들 (노출 많은 순).
 
     기회를 펼쳤을 때 "그래서 어느 페이지 얘기냐"에 답하는 자리다. 근거 문장은
@@ -490,8 +516,10 @@ def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
     말하면 같은 검색어가 서로 다른 페이지 수를 갖는다.
 
     page 가 NULL 인 구버전 스냅샷에서는 빈 dict — 데이터 부재이지 결함이 아니다.
+    at 은 화면이 고정한 기준 수집일이다 — 화면이 과거를 보고 있으면 근거 페이지도
+    그때 것이어야 한다. 안 넘기면 여기만 최신을 봐서 표와 근거가 어긋난다.
     """
-    cur, _, period, _ = snapshot_pair(conn, project_id)
+    cur, _, period, _ = snapshot_pair(conn, project_id, at)
     qs = [q for q in dict.fromkeys(queries) if q]
     if not cur or not qs:
         return {}
@@ -1073,6 +1101,18 @@ def _selfcheck() -> None:
                  "VALUES(3,'2026-08-10',90,'_meta')")
     cur, prev, period, mismatch = snapshot_pair(conn, 3)
     assert (cur, prev, period, mismatch) == ("2026-08-20", None, 28, True), (cur, prev, period, mismatch)
+
+    # ── 기준 수집일 고정(화면의 [기준 수집일] 선택) ──
+    # 8/10 은 90일치라 28일치 8/01 과 짝이 안 맞는다 — 짝 없음 + mismatch 가 정답이다.
+    assert snapshot_pair(conn, 2, "2026-08-10") == ("2026-08-10", None, 90, True)
+    # 가장 오래된 날을 고르면 비교할 이전이 없다 — mismatch 가 아니라 그냥 없는 것이다.
+    assert snapshot_pair(conn, 2, "2026-08-01") == ("2026-08-01", None, 28, False)
+    # 미래를 prev 로 끌어오지 않는다 (부호가 뒤집힌다)
+    assert snapshot_pair(conn, 2, "2026-08-20")[1] == "2026-08-01"
+    # 수집한 적 없는 날 — 지어내지 않고 빈 짝
+    assert snapshot_pair(conn, 2, "2026-07-04") == (None, None, None, False)
+    assert [x["date"] for x in snapshot_dates(conn, 2)] == [
+        "2026-08-20", "2026-08-10", "2026-08-01"]
 
     # ── 신규 판정 함수들 ──
     assert RANK_NOISE == 3

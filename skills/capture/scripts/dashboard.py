@@ -337,10 +337,16 @@ def q(conn, sql, args=()):
     return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
 
-def gather(conn, p) -> dict:
-    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다."""
+def gather(conn, p, at: str | None = None) -> dict:
+    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
+
+    at: 화면이 고정한 기준 수집일. GSC 스냅샷 축(KPI·추이·움직인 검색어·아깝다·
+        근거 페이지)만 그날로 돌아간다. 순위·색인·기기·AI·기회는 수집 주기가 따로라
+        각자 최신을 본다 — 그래서 화면 머리가 축별 날짜를 다 적는다. 한 날짜로
+        묶으면 대부분의 축이 "그날 데이터 없음"이 된다.
+    """
     pid = p["id"]
-    cur, prev, period, period_mismatch = scoring.snapshot_pair(conn, pid)
+    cur, prev, period, period_mismatch = scoring.snapshot_pair(conn, pid, at)
 
     # 집계는 scoring._snap_agg 하나로 — 여기 사본이 있었는데 period_days 조건이
     # 빠져 있어서, 한 날짜에 28일치와 90일치가 같이 있으면 화면의 '움직인 검색어'만
@@ -365,6 +371,7 @@ def gather(conn, p) -> dict:
     ai_run = conn.execute(
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
         "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    ai_date = (ai_run["started_at"] or "")[:10] if ai_run else None
     matrix, gap_domains, missed = [], [], []
     cite_share, ai_by_prompt = [], []
     if ai_run:
@@ -494,7 +501,7 @@ def gather(conn, p) -> dict:
         *(o["target"] for o in opps),
         *(r["query"] for r in striking),
         *(r["keyword"] for r in ranks),
-        *(r["query"] for r in ups), *(r["query"] for r in downs)])
+        *(r["query"] for r in ups), *(r["query"] for r in downs)], at=at)
 
     # 내 페이지 감사(collect_page) — 최신 검사일 한 벌. 진단 문장은 여기서 만들지
     # 않는다: scoring.page_advice 가 정본이고 화면은 그 결과를 그리기만 한다.
@@ -517,6 +524,9 @@ def gather(conn, p) -> dict:
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     return {"schema": 1,
             "project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+            # 고를 수 있는 날 = 실제로 수집한 날. 화면의 [기준 수집일]이 이걸 그린다.
+            "gsc_dates": scoring.snapshot_dates(conn, pid),
+            "gsc_pinned": bool(at), "ai_date": ai_date,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
             "striking": striking, "striking_page2": striking_page2,
             "brand_catalog_empty": len(brands) == 0,
@@ -553,11 +563,11 @@ def gather(conn, p) -> dict:
             "guide": guide}
 
 
-def payload(project: str) -> dict:
+def payload(project: str, at: str | None = None) -> dict:
     conn = db.connect()
     try:
         p = db.get_project(conn, project)
-        return gather(conn, p)
+        return gather(conn, p, at)
     finally:
         conn.close()
 
@@ -589,9 +599,11 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self._json(names)
         if u.path == "/api/data":
-            name = parse_qs(u.query).get("project", [""])[0]
+            qs_ = parse_qs(u.query)
+            name = qs_.get("project", [""])[0]
+            at = qs_.get("date", [""])[0] or None
             try:
-                return self._json(payload(name))
+                return self._json(payload(name, at))
             except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
                 return self._json({"error": str(e)}, 404)
         return self._send(404, b"not found", "text/plain")

@@ -689,13 +689,14 @@ def api_projects(request: Request):
 
 
 @app.get("/api/data")
-def api_data(project: str, request: Request):
+def api_data(project: str, request: Request, date: str = ""):
+    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다."""
     uid = _require_uid(request)
     conn = store.connect()
     try:
         _own(conn, uid, project)
         with store.tenant(conn, uid):
-            return dashboard.payload(project)
+            return dashboard.payload(project, date or None)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:

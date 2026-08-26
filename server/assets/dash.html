@@ -52,10 +52,12 @@
     .hbar .sp{display:none}
     .tag{display:block!important;letter-spacing:.06em;font-size:10.5px;
       color:var(--slate);opacity:.5;margin-top:-8px}
-    #proj{max-width:none;width:100%}
+    #proj,#gscdate{max-width:none;width:100%}
     /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. */
     #meta{font-size:11px;line-height:1.6;opacity:.65;white-space:normal;
       word-break:break-all;display:block;margin-top:2px}
+    /* 축별 수집일 줄도 세로 바 폭에 맞춘다 — 원본 여백(22px)은 여기서 넘친다 */
+    .hax{max-width:none;margin:0;padding:0 16px 10px;opacity:.65;gap:2px 10px}
     .hbar .hbtn{width:100%;text-align:left;padding-left:11px;opacity:.5;font-size:11.5px}
     .hbar .hbtn:hover{opacity:1}
     #sm-bar{flex-direction:column;align-items:stretch;gap:0;flex:1;padding:10px 12px 22px}

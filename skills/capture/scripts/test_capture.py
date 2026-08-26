@@ -120,6 +120,33 @@ def test_gather_refuses_mixed_periods():
     conn.close()
 
 
+def test_gather_pins_gsc_axis_to_chosen_date():
+    """[기준 수집일]로 과거를 고르면 GSC 축만 그날로 간다 — 미래를 prev 로 안 쓴다."""
+    conn = db.connect()
+    p = _project(conn, "pin")
+    for d_, pos, clk in (("2026-03-01", 20.0, 1), ("2026-04-01", 15.0, 4),
+                         ("2026-05-01", 9.0, 9)):
+        _snap(conn, p["id"], d_, 28, "kw", pos, clk)
+
+    d = dashboard.gather(conn, p)                       # 고정 없음 = 최신
+    assert (d["gsc_date"], d["gsc_prev"]) == ("2026-05-01", "2026-04-01")
+    assert d["gsc_pinned"] is False
+    assert [x["date"] for x in d["gsc_dates"]] == [
+        "2026-05-01", "2026-04-01", "2026-03-01"]
+
+    d = dashboard.gather(conn, p, "2026-04-01")         # 한 칸 과거로
+    # 05-01 을 prev 로 끌어오면 Δ의 부호가 뒤집힌다
+    assert (d["gsc_date"], d["gsc_prev"]) == ("2026-04-01", "2026-03-01"),         (d["gsc_date"], d["gsc_prev"])
+    assert d["gsc_pinned"] is True
+    assert d["ups"] and d["ups"][0]["dpos"] == 5.0      # 20.0 -> 15.0
+    # 고를 수 있는 목록은 고정과 무관하게 전부 — 되돌아올 길이 있어야 한다
+    assert len(d["gsc_dates"]) == 3
+
+    # 수집한 적 없는 날 — 지어내지 않고 빈 축. 화면이 이걸 보고 고정을 푼다.
+    assert dashboard.gather(conn, p, "2025-12-25")["gsc_date"] is None
+    conn.close()
+
+
 def test_opportunity_upsert_does_not_duplicate():
     conn = db.connect()
     p = _project(conn, "opp")

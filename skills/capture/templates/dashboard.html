@@ -48,20 +48,28 @@ header { background:var(--ink); color:var(--stone); position:sticky; top:0; z-in
   color:var(--slate); white-space:nowrap; }
 @media (max-width:1080px) { .tag { display:none; } }   /* 좁아지면 정체성보다 기능이 먼저 */
 .hbar .sp { flex:1; }
-#proj { font:600 13px/1 var(--mono); color:var(--stone); background:transparent;
+#proj, #gscdate { font:600 13px/1 var(--mono); color:var(--stone); background:transparent;
   border:0; border-bottom:1px solid var(--patina); padding:3px 20px 3px 2px; cursor:pointer;
   appearance:none; flex:0 0 auto; max-width:220px;
   background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
                    linear-gradient(135deg,currentColor 50%,transparent 50%);
   background-position:right 8px center,right 4px center; background-size:4px 4px,4px 4px;
   background-repeat:no-repeat; }
-#proj option { color:var(--ink); background:var(--card); }
+#proj option, #gscdate option { color:var(--ink); background:var(--card); }
+/* 과거 시점을 보고 있으면 눈에 띄어야 한다 — 최신인 줄 알고 읽으면 오독이다 */
+#gscdate.past { color:var(--copper); border-bottom-color:var(--copper); }
 .hbtn { font:500 12px/1 var(--mono); color:var(--stone); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:6px 11px; cursor:pointer;
   white-space:nowrap; flex:0 0 auto; }
 .hbtn:hover { border-color:var(--patina); color:var(--patina); }
 #meta { font:400 11px/1.4 var(--mono); color:var(--slate); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+/* 축별 수집일 줄. 머리 바(.hbar)는 한 줄 nowrap 이라 여기 것을 거기 넣으면 잘린다 —
+   잘린 경고는 경고가 아니다. 그래서 바 아래 자기 줄을 준다. */
+.hax { max-width:1180px; margin:0 auto; padding:0 22px 9px; display:flex; flex-wrap:wrap;
+  gap:2px 14px; font:400 11px/1.5 var(--mono); color:var(--slate); }
+.hax[hidden] { display:none; }
+.hax b { color:var(--copper); font-weight:600; flex:0 0 100%; }
 
 main { max-width:1180px; margin:0 auto; padding:0 22px 80px; }
 
@@ -376,12 +384,14 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
     <span class="mark">seo<b>·</b>miner</span>
     <span class="tag">채굴 로그</span>
     <select id="proj" aria-label="사이트 선택"></select>
+    <select id="gscdate" aria-label="기준 수집일" hidden></select>
     <span class="sp"></span>
     <span id="meta"></span>
     <button class="hbtn" id="toggle-guide">안내</button>
     <button class="hbtn" id="refresh">새로고침</button>
     <button class="hbtn" id="toggle-setup">설정</button>
   </div>
+  <div class="hax" id="axes" hidden></div>
 </header>
 
 <main>
@@ -825,6 +835,38 @@ function copyCmd(el) {
   });
 }
 
+// 화면마다 날짜 축이 다르다 — GSC 스냅샷·순위·색인·기기·AI 는 수집 주기가 따로 돈다.
+// 머리말이 축별 날짜를 다 적는 이유가 그것이다: 하나만 적으면 나머지 화면의 숫자까지
+// 그 날짜로 읽는다. [기준 수집일]이 되돌리는 것도 GSC 축 하나뿐이라고 여기서 말한다.
+const AXES = [["순위", "rank_date"], ["색인", "index_date"],
+              ["기기", "device_date"], ["AI 인용", "ai_date"]];
+
+function renderDates(d) {
+  const sel = $("gscdate"), dates = d.gsc_dates || [];
+  // 박제본에는 서버가 없어 되돌릴 수 없고, 고를 게 하나뿐이면 선택지가 아니다.
+  sel.hidden = READONLY || dates.length < 2;
+  if (!sel.hidden) {
+    sel.innerHTML = dates.map(x =>
+      `<option value="${esc(x.date)}">${esc(x.date)}` +
+      `${x.period ? ` · ${x.period}일치` : ""}</option>`).join("");
+    sel.value = d.gsc_date || "";
+  }
+  // 최신이 아닌 날을 보고 있으면 눈에 띄게 한다 — 최신인 줄 알고 읽으면 오독이다.
+  const past = !!(dates.length && d.gsc_date && d.gsc_date !== dates[0].date);
+  sel.classList.toggle("past", past);
+
+  $("meta").textContent = (d.project.gsc_property || d.project.domain || "") +
+    ` · 구글 실적 ${d.gsc_date || "아직 없음"}` +
+    (d.gsc_period ? ` (${d.gsc_period}일치)` : "");
+
+  const ax = AXES.filter(([, key]) => d[key])
+                 .map(([name, key]) => `<span>${esc(name)} ${esc(d[key])}</span>`);
+  $("axes").innerHTML = (past
+    ? "<b>과거 시점 — 되돌린 것은 구글 실적뿐입니다. 아래 축은 최신 그대로입니다.</b>"
+    : "") + ax.join("");
+  $("axes").hidden = !ax.length && !past;
+}
+
 function render(d) {
   if (d.schema == null) {
     // schema 필드가 없는 옛 박제본 호환 분기: 박제본 호환 분기는 schema 번호 하나로 한다.
@@ -871,8 +913,7 @@ function render(d) {
   // 그냥 마지막 두 줄을 빼면 28일치에서 90일치를 빼는 일이 생긴다.
   if (d.rules) RULES = {...d.rules};  // 서버가 준 경계값이 이 화면의 유일한 기준
   renderGuide(d);
-  $("meta").innerHTML = `${esc(d.project.gsc_property || d.project.domain || "")} · ` +
-    `구글 실적 ${esc(d.gsc_date || "아직 없음")}`;
+  renderDates(d);
 
   // 화면 하나가 던져도 나머지는 그려져야 한다 — 예전에는 조립 순서상 뒤에 오는
   // 화면이 통째로 비었고, 왜 비었는지는 아무 데도 안 남았다.
@@ -894,13 +935,19 @@ async function loadProjects() {
   return names.length ? $("proj").value : null;
 }
 
+let PINNED = "";                    // [기준 수집일]로 고정한 GSC 수집일 ("" = 최신)
+
 async function load() {
   const name = $("proj").value;
   if (!name) { $("content").hidden = true; return; }   // 배너가 온보딩을 안내한다
   location.hash = encodeURIComponent(name);
-  const res = await fetch("/api/data?project=" + encodeURIComponent(name));
+  const res = await fetch("/api/data?project=" + encodeURIComponent(name) +
+                          (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
   const d = await res.json();
   if (!res.ok) { $("err").hidden = false; $("err").textContent = d.error || "로드 실패"; return; }
+  // 그 사이트에 없는 날을 고정하면 서버가 빈 짝을 준다 — 고정을 풀고 최신으로 되돌린다.
+  // (PINNED 를 먼저 비우므로 데이터가 아예 없는 사이트에서도 두 번 이상 돌지 않는다.)
+  if (PINNED && !d.gsc_date) { PINNED = ""; return load(); }
   $("err").hidden = true;
   $("content").hidden = false;
   render(d);
@@ -1142,7 +1189,8 @@ $("btn-proj").addEventListener("click", async () => {
   setTimeout(() => { $("setup").hidden = true; window.scrollTo({top: 0}); }, 900);
 });
 
-$("proj").addEventListener("change", load);
+$("proj").addEventListener("change", () => { PINNED = ""; load(); });
+$("gscdate").addEventListener("change", () => { PINNED = $("gscdate").value; load(); });
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
 $("toggle-setup").addEventListener("click", () => $("setup").hidden = !$("setup").hidden);
 $("toggle-guide").addEventListener("click", () => {
@@ -1157,7 +1205,7 @@ if (window.__SNAPSHOT__) {
   READONLY = true;
   $("proj").outerHTML = `<span class="mark" style="color:var(--patina)">` +
     `${esc(s.data.project.name)}</span>`;
-  for (const id of ["refresh", "toggle-setup", "toggle-guide"]) $(id).hidden = true;
+  for (const id of ["refresh", "toggle-setup", "toggle-guide", "gscdate"]) $(id).hidden = true;
   $("setup").remove();                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
   $("guide").remove();
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
