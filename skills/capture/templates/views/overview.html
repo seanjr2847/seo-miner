@@ -28,7 +28,7 @@
 <section>
   <div class="eyebrow" id="opp-eyebrow">기회</div>
   <h2 data-web="개선 기회">다음에 손댈 것</h2>
-  <p class="sub">카드를 누르면 어느 페이지가 걸렸는지와 할 일이 펼쳐집니다. 확인·완료·제외는 누르면 바로 저장됩니다.</p>
+  <p class="sub" id="opp-sub"></p>
   <div id="opps"></div>
 </section>
 
@@ -342,7 +342,12 @@ function renderOpps(n) {
            aria-pressed="${KIND_FILTER === k}">${esc(KIND_LABEL[k] || k)}
            <b>${counts[k]}</b></button>`).join("")}</div>`
     : "";
-  $("opps").innerHTML = `<div class="tools">
+  // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
+  // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
+  const tools = READONLY
+    ? `<div class="tools"><span class="n" id="oppn"></span><span class="sp"></span>
+        <button class="go sec" onclick="oppCsv()">CSV 내보내기</button></div>`
+    : `<div class="tools">
       <input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
         placeholder="검색어·주소로 찾기" aria-label="기회 찾기">
       <select onchange="oppStatus(this.value)" aria-label="상태로 거르기">${ST_OPT.map(
@@ -352,7 +357,8 @@ function renderOpps(n) {
       <span class="sp"></span>
       <button class="go sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
-    </div>${chips}<div id="opplist"></div>`;
+    </div>`;
+  $("opps").innerHTML = tools + (READONLY ? "" : chips) + `<div id="opplist"></div>`;
   oppList();
 }
 
@@ -408,6 +414,13 @@ VIEW("overview", function (d) {
   if (d.daily) $("daily").innerHTML = dailyChart(d.daily, d.daily_stats);
 
   $("opp-eyebrow").textContent = `아직 안 한 기회 ${d.opps_total}건`;
+  // 박제본에서 "누르면 저장됩니다"는 거짓말이다 — 서버가 없다. 상태 배지는 그 시점의
+  // 기록이라 그대로 두고, 무엇을 보고 있는지만 말한다.
+  $("opp-sub").innerHTML = READONLY
+    ? "이 기록을 남긴 시점의 개선 기회입니다. 카드를 누르면 어느 페이지가 걸렸는지와 " +
+      "할 일이 펼쳐집니다. <b>확인·완료·제외 표시는 그때의 상태</b>이고 여기서는 바꿀 수 없습니다."
+    : "카드를 누르면 어느 페이지가 걸렸는지와 할 일이 펼쳐집니다. " +
+      "확인·완료·제외는 누르면 바로 저장됩니다.";
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   OPPS = d.opps || [];
   OPP_COUNTS = d.opp_counts || {};

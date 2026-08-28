@@ -116,6 +116,39 @@ MUSTS = [
     (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
 ] + view_sections()
+# 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
+# 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
+# 화면 목록은 여기 옮겨 적지 않는다 — view-def 에서 읽되 박제본이 빼는 둘만 뺀다.
+REPORT_DROPPED = ("settings", "guide")
+
+
+def view_defs_ids() -> list[str]:
+    """뷰 선언에 있는 화면 id 전부 — 목록을 여기 옮겨 적지 않는다."""
+    out = []
+    for f in sorted((ROOT / "skills" / "capture" / "templates" / "views").glob("*.html")):
+        m = re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', f.read_text("utf-8"), re.S)
+        assert m, f"{f.name} 에 view-def 선언이 없다"
+        out.append(json.loads(m.group(1))["id"])
+    return out
+REPORT_MUSTS = [
+    (r'id="content"(?![^>]*hidden)', "본문(#content)이 숨은 채로 남았다"),
+    (r'id="meta"[^>]*>[^<]*\d{4}-\d{2}-\d{2}', "머리말이 기준 수집일을 안 적었다"),
+    # 종이 표지 — 인쇄하면 레일이 빠지므로 여기 말고는 "누구의 무엇을 언제"가 없다.
+    (r'id="printhead"[^>]*>\s*<div class="t">[^<]+—', "종이 표지가 안 채워졌다"),
+    # 손댈 수 없는 기록이라고 말만 하고 손잡이를 남겨 두면 안 된다.
+    (r"!검색어·주소로 찾기", "박제본에 기회 찾기 칸이 남아 있다 — 서버가 없어 아무 일도 안 한다"),
+    (r"!상태로 거르기", "박제본에 상태 필터가 남아 있다"),
+    # 기회 칩만 콕 집는다 — 다른 화면(경쟁 분석·크롤)의 칩은 읽는 도구라 남아도 된다.
+    (r"!filterKind\(", "박제본에 기회 갈래 필터가 남아 있다"),
+    (r"여기서는 바꿀 수 없습니다", "박제본이 트리아지가 되는 것처럼 말한다"),
+    (r"!id=\"view-settings\"", "박제본에 [설정] 화면이 남았다 — 남한테 보내는 파일이다"),
+    (r"!id=\"view-guide\"", "박제본에 [안내] 화면이 남았다"),
+    # 값이 실제로 그려졌는가 — 라이브와 같은 표식을 쓴다
+    (re.escape(BL_DOMAIN), "박제본이 링크 교집합을 안 그렸다"),
+    (re.escape(RIVAL), "박제본이 경쟁사를 안 그렸다"),
+    (re.escape(CRAWL_NEW), "박제본이 크롤 이슈를 안 그렸다"),
+]
+
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
 HOSTED_MUSTS = MUSTS + [
@@ -144,6 +177,14 @@ def find_browser() -> str | None:
 def _axes(conn, pid: int) -> None:
     """백링크·경쟁·크롤 — 화면이 이걸 그리는지 보려고 최소한만 심는다."""
     d, prev = "2026-06-01", "2026-05-01"
+    # 기회가 0건이면 [다음에 손댈 것]이 빈 상태에서 끝나 도구줄(찾기·거르기)이 아예
+    # 안 그려진다 — "박제본에 찾기 칸이 없다"는 검사가 그 때문에 헛통과했다.
+    # 갈래가 둘 이상이어야 칩 필터가 그려진다 — 하나면 그 검사도 헛통과한다.
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+        " VALUES(?,?,?,?,?,'new')",
+        [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 12.4위 — 1페이지까지 2.4칸"),
+         (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출은 나오는데 클릭이 0")])
     conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
                  "referring_domains,broken_backlinks,dofollow,nofollow)"
                  " VALUES(?,?,412,1840,?,17,1512,328)", (pid, d, BL_REFDOMS))
@@ -260,6 +301,25 @@ def check(label: str, html: str, musts) -> None:
             assert re.search(pat, seen, re.S), f"{label}: {why}"
 
 
+def print_all(browser: str, url: str, home: Path, views: int) -> None:
+    """인쇄하면 **모든 화면**이 나오는가.
+
+    화면은 한 번에 하나만 세운다 — 눌러서 옮겨 다니는 것이니까. 종이에는 누를 데가
+    없어서, 인쇄 규칙이 숨긴 화면을 안 펴면 보고서를 인쇄했는데 열 화면 중 한 장만
+    나온다(실제로 그랬다: 2쪽). 쪽수로 못 박는다 — 화면 수보다는 많이 나와야 한다.
+    """
+    pdf = home / "report.pdf"
+    subprocess.run(
+        [browser, "--headless=new", "--disable-gpu", "--no-sandbox",
+         f"--user-data-dir={home / 'chrome-profile'}", "--virtual-time-budget=9000",
+         f"--print-to-pdf={pdf}", "--no-pdf-header-footer", url],
+        capture_output=True, timeout=180)
+    assert pdf.exists(), "인쇄본을 못 만들었다"
+    pages_n = len(re.findall(rb"/Type\s*/Page[^s]", pdf.read_bytes()))
+    assert pages_n >= views, (
+        f"인쇄하면 {pages_n}쪽뿐이다 — 화면이 {views}개인데 숨은 것이 안 펴졌다")
+
+
 def run() -> None:
     browser = find_browser()
     if not browser:
@@ -285,12 +345,24 @@ def run() -> None:
                       + pages.addon("dash.html").decode("utf-8")).encode("utf-8")
             targets.append(("호스팅 조립본", hosted, HOSTED_MUSTS))
 
+        # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
+        report = dashboard.export(SITES[1]).read_bytes().replace(
+            b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+        targets.append(("박제본", report,
+                        REPORT_MUSTS + [m for m in view_sections()
+                                        if not any(f'[{v}]' in m[1] for v in REPORT_DROPPED)]))
+
         for label, page, musts in targets:
             srv = serve(page)
             try:
                 # 두 번째 사이트를 hash 로 지목한다 — 첫 사이트가 열리면 그게 버그다
                 url = f"http://127.0.0.1:{srv.server_address[1]}/d#{SITES[1]}"
                 check(label, dom(browser, url, home / "chrome-profile"), musts)
+                if label == "박제본":
+                    # 화면 상자는 런타임에 생긴다 — 소스에서 세면 0 이라 단언이 늘 참이다.
+                    # 선언(view-def)에서 세고 박제본이 빼는 둘을 뺀다.
+                    print_all(browser, url, home,
+                              len(view_defs_ids()) - len(REPORT_DROPPED))
                 print(f"  {label}: ok")
             finally:
                 srv.shutdown()

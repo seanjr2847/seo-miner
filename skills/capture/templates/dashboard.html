@@ -138,6 +138,38 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 .hax b { color:var(--copper); font-weight:600; flex:0 0 100%; }
 
 main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-width:0; }
+
+/* ── 인쇄 ─────────────────────────────────────────────────────
+   화면은 한 번에 한 화면만 세운다 — 눌러서 옮겨 다니는 것이니까. 종이에는 누를 데가
+   없다. 그래서 인쇄에서는 **숨긴 화면까지 전부 펴서** 차례대로 내보낸다(안 그러면
+   보고서를 인쇄했는데 열 화면 중 한 장만 나온다).
+   레일은 이동 수단이라 종이에서 빠진다 — 대신 화면 제목이 목차 노릇을 한다. */
+.printhead { display:none; }
+@media print {
+  :root { --stone:#fff; --card:#fff; }
+  .printhead { display:block; padding:0 0 14px; margin:0 0 8px;
+    border-bottom:1px solid var(--rule); }
+  .printhead .t { font:650 15pt/1.3 var(--sans); }
+  .printhead .m { font:400 9.5pt/1.6 var(--mono); color:var(--slate); margin-top:5px; }
+  body { display:block; background:#fff; font-size:10.5pt; }
+  header, .rail-foot, #nav, .tools, .ask, .cmd, .hint { display:none !important; }
+  main { max-width:none; padding:0; }
+  /* 색으로만 말하는 것이 몇 개 있다(막대·배지·상태) — 배경을 지우면 뜻이 사라진다. */
+  * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .view[hidden] { display:block; }
+  .view { break-before:page; }
+  .view:first-child { break-before:auto; }
+  .vh h1 { font-size:17pt; }
+  /* 표는 쪽을 넘길 때 머리글을 다시 찍는다 — 안 그러면 두 쪽째부터 열 이름이 없다. */
+  .tw { max-height:none; overflow:visible; }
+  thead { display:table-header-group; }
+  tr, .opp, section { break-inside:avoid; }
+  /* 링크 주소를 뒤에 펴 붙이지 않는다 — 이 자리들은 앵커 글자가 이미 URL 이라
+     `주소 (주소)` 로 두 번 찍힌다. 글자가 주소와 다른 링크는 짧아서 그냥 읽힌다. */
+  /* 가로 스크롤은 종이에 없다 — 넘치는 폭은 잘려 나간다. 줄여서 다 보이게 한다. */
+  .logwrap, .tw { overflow:visible; }
+  .log { min-width:0; width:100%; }
+}
 /* 표·차트는 넓어도 읽히지만 산문은 아니다 — 문장이 든 것만 폭을 재운다. */
 .sub, .empty, #docban .verdict, #docban .nx, #docban ul, #guide .lead,
 .donebar, .loopback { max-width:74ch; }
@@ -461,6 +493,9 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 </header>
 
 <main>
+  <!-- 종이 표지. 화면에서는 레일이 이 말을 하고 있지만 인쇄하면 레일이 빠진다 —
+       누구의 무엇을 언제 잰 것인지가 어디에도 안 남는다. -->
+  <div class="printhead" id="printhead" hidden></div>
   <div class="hax" id="axes" hidden></div>
   <section id="docban" hidden></section>
 
@@ -941,6 +976,13 @@ function renderDates(d) {
   $("meta").textContent = (d.project.gsc_property || d.project.domain || "") +
     ` · 구글 실적 ${d.gsc_date || "아직 없음"}` +
     (d.gsc_period ? ` (${d.gsc_period}일치)` : "");
+  // 종이 표지 — 화면에서는 안 보이고 인쇄에만 선다. 값은 위 머리말과 같은 것이다.
+  const ph = $("printhead");
+  if (ph) {
+    const when = window.__SNAPSHOT__ ? `${window.__SNAPSHOT__.exported} 기록` : "";
+    ph.innerHTML = `<div class="t">${esc(d.project.name)} — 검색·AI 가시성 보고서</div>` +
+      `<div class="m">${esc($("meta").textContent)}${when ? " · " + esc(when) : ""}</div>`;
+  }
 
   const ax = AXES.filter(([, key]) => d[key])
                  .map(([name, key]) => `<span>${esc(name)} ${esc(d[key])}</span>`);
@@ -1288,6 +1330,18 @@ $("gscdate").addEventListener("change", () => { PINNED = $("gscdate").value; loa
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
 
 SM.sync();
+
+// 인쇄 전에 접힌 것을 편다. `<details>` 는 CSS 로 못 연다(open 은 속성이다) —
+// 안 펴면 보고서를 인쇄했는데 "무엇을 할지"가 접힌 채로 나간다. 끝나면 되돌린다.
+let PRINT_OPENED = [];
+addEventListener("beforeprint", () => {
+  PRINT_OPENED = [...document.querySelectorAll("details:not([open])")];
+  PRINT_OPENED.forEach(x => { x.open = true; });
+});
+addEventListener("afterprint", () => {
+  PRINT_OPENED.forEach(x => { x.open = false; });
+  PRINT_OPENED = [];
+});
 
 // 박제된 기록(--export)이면 서버가 없다 — 페이지에 박힌 데이터를 그리고, 손댈 수
 // 없는 것들(트리아지·설정·새로고침·사이트 전환)은 아예 감춘다.
