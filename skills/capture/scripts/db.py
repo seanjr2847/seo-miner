@@ -550,6 +550,22 @@ def write_index_status(conn: sqlite3.Connection, project_id: int, checked_date: 
     return len(rows)
 
 
+def add_ai_prompts(conn: sqlite3.Connection, project_id: int, rows) -> int:
+    """AI에 물어볼 질문 적재. 이미 있는 질문은 건드리지 않는다(사람이 끈 것을 되살리지
+    않는다 — is_active 는 큐레이션 결과다). 돌려주는 값은 **새로 들어간 개수**다."""
+    rows = [r for r in rows if (r.get("prompt") or "").strip()]
+    before = conn.execute("SELECT COUNT(*) FROM ai_prompts WHERE project_id=?",
+                          (project_id,)).fetchone()[0]
+    conn.executemany(
+        "INSERT INTO ai_prompts(project_id, prompt, category, is_active) VALUES(?,?,?,1) "
+        "ON CONFLICT(project_id, prompt) DO NOTHING",
+        [(project_id, r["prompt"].strip(), r.get("category") or "general") for r in rows])
+    conn.commit()
+    after = conn.execute("SELECT COUNT(*) FROM ai_prompts WHERE project_id=?",
+                         (project_id,)).fetchone()[0]
+    return after - before
+
+
 def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: str,
                       rows) -> int:
     """내 페이지 감사 결과 적재. rows: dict (키는 테이블 컬럼명 그대로, url 필수).

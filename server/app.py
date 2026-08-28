@@ -36,6 +36,7 @@ import collect_gsc
 import dashboard
 import db
 import exports
+import gen_prompts
 import gh
 import identity
 import pages
@@ -374,6 +375,44 @@ async def api_create(request: Request):
 
 STAGES = ("gsc", "index", "keywords", "rank", "ai", "competitors", "gaps",
           "pages", "report")
+
+
+@app.post("/api/ai/prompts")
+async def api_ai_prompts(request: Request):
+    """AI에 물어볼 질문을 만들어 심는다 — 웹에는 `/capture add` 를 칠 채팅이 없다.
+
+    이 화면이 비어 있던 이유가 그것이다: ai 단계는 ai_prompts 를 재료로 도는데
+    대시보드 폼으로 만든 사이트는 그 표가 비어 있었고, [AI 인용 다시 확인]은
+    "질문이 아직 없습니다"로 즉시 실패했다. 만들기만 하고 인용 확인은 돌리지
+    않는다 — 그쪽이 돈 나가는 단계라 사용자가 눌러서 시작해야 한다.
+    """
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    n = body.get("limit")
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        # 수집 런과 같은 env 를 두른다 — 유료 키는 서버가 댄다(paid_keys).
+        with store.tenant(conn, uid), settings.paid_keys():
+            c = db.connect()
+            try:
+                rows = gen_prompts.suggest(project, n=int(n or 20), conn=c)
+                if not rows:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="질문을 만들지 못했습니다 — 잠시 후 다시 시도해 주세요.")
+                added = gen_prompts.save(c, project, rows)
+            finally:
+                c.close()
+        return {"ok": True, "added": added, "total": len(rows),
+                "prompts": [r["prompt"] for r in rows[:5]]}
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:                 # 키 부재 등 — 사유를 그대로 화면에 보낸다
+        raise HTTPException(status_code=503, detail=str(e))
+    finally:
+        conn.close()
 
 
 @app.post("/api/run")
@@ -811,7 +850,7 @@ def demo() -> None:
                      "/api/perf?project=x", "/api/repos", "/auth/github",
                      "/api/settings?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        for path in ("/api/repo", "/api/create", "/api/settings"):
+        for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
@@ -866,6 +905,25 @@ def demo() -> None:
             assert spawned and "competitors" in spawned[0], spawned
         finally:
             scheduler.dispatch = real_dispatch
+
+        # 질문 만들기 — 웹에는 `/capture add` 를 칠 채팅이 없어서 생긴 자리다.
+        # 키가 없으면 조용히 빈 목록이 아니라 503 + 사유(화면이 그대로 보여 준다).
+        saved_key = os.environ.pop("OPENROUTER_API_KEY", None)
+        r = c.post("/api/ai/prompts", json={"project": "p1"})
+        assert r.status_code == 503 and "OPENROUTER_API_KEY" in r.json()["detail"], r.text
+        assert c.post("/api/ai/prompts", json={"project": "없는사이트"}).status_code == 404,             "남의 사이트에 질문을 심을 수 있다"
+        made, real_suggest, real_save = [], gen_prompts.suggest, gen_prompts.save
+        gen_prompts.suggest = lambda project, **kw: [
+            {"prompt": f"{project} 어디가 잘해?", "category": "추천"}]
+        gen_prompts.save = lambda conn, project, rows: made.extend(rows) or len(rows)
+        try:
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
+            assert r.status_code == 200 and r.json()["added"] == 1, r.text
+            assert made and made[0]["prompt"].startswith("p1"), made
+        finally:
+            gen_prompts.suggest, gen_prompts.save = real_suggest, real_save
+            if saved_key:
+                os.environ["OPENROUTER_API_KEY"] = saved_key
 
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
         assert c.get("/api/data?project=p1").status_code == 404

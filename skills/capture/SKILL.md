@@ -91,6 +91,11 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 4. `python scripts/db.py sync-project $CAPTURE_HOME/projects/{P}.yaml`
 5. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
    사용자 검수 후 ai_prompts에 INSERT (scoring.md 5절의 파이썬 패턴 사용, is_active=1).
+   손으로 짓기 어려우면 `python scripts/gen_prompts.py --project {P} --dry-run` 이
+   사이트의 업종·GSC 상위 검색어를 재료로 초안을 뽑아 준다(OpenRouter 호출 1회).
+   검수 후 `--dry-run` 없이 다시 돌리면 저장된다 — 이미 있는 질문은 안 건드린다.
+   **호스팅 대시보드에는 [AI 인용] 화면의 [질문 만들기] 버튼이 이 자리다**(웹에는
+   명령을 칠 채팅이 없다).
 
 등록이 끝나면 **구글 연결 여부로 갈린다** — 첫 수확을 로그인 뒤로 미루지 않는다:
 

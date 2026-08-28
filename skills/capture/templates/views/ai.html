@@ -439,14 +439,21 @@ function AI_emptyState(d) {
           {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div>`;
   // 아래 첫 갈래(질문 0개)의 복사 칩은 양쪽 다 남긴다 — 호스팅 등록은 질문을 심지
   // 않으므로 웹에 경로가 없고, 그 칩이 플러그인으로 건너가는 인계 지점이다.
+  // 질문을 만드는 길이 배포마다 다르다. 로컬은 채팅에 명령을 붙여넣고, 웹에는
+  // 붙여넣을 채팅이 없다 — 그래서 여기 버튼이 그 자리다(핸들러는 애드온이 건다).
+  // 웹에 복사칩만 두던 시절엔 눌러도 아무 일이 없어 버튼이 죽은 것처럼 보였다.
+  const mk = `<div class="acts" style="margin-top:11px">
+        <button class="go" data-sm-act="make-prompts">질문 만들기</button></div>
+      <p class="sub" style="margin-top:7px">이 사이트의 업종·검색어를 보고 20개를
+        지어 드립니다. 만들기만 하고 인용 확인은 따로 누르셔야 합니다.</p>`;
   return pr.ai_prompts === 0
     ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
         이 화면은 chatgpt·perplexity·gemini에 같은 질문을 던져 <b>누가 인용되는지</b>를
         셉니다 — 질문 목록이 그 재료입니다.<br>
-        아래를 채팅에 붙여넣으시면 이 사이트에 맞는 질문 10~30개를 만들어 드립니다.
+        ${W(`아래를 채팅에 붙여넣으시면 이 사이트에 맞는 질문 10~30개를 만들어 드립니다.
         <div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
           onkeydown="if(event.key==='Enter'||event.key===' ')
-            {event.preventDefault();copyCmd(this)}">/capture add ${nm}</div>
+            {event.preventDefault();copyCmd(this)}">/capture add ${nm}</div>`, mk)}
         <div style="margin-top:11px">${key}</div></div>`
     : `<div class="empty">${W(
         `<b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는

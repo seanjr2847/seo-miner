@@ -511,6 +511,35 @@
     setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
   }
 
+  // [질문 만들기] — 웹에는 `/capture add` 를 칠 채팅이 없다. 이 버튼이 그 자리다.
+  // 만들기만 하고 인용 확인(유료)은 사용자가 따로 눌러야 한다.
+  async function makePrompts(btn) {
+    var was = btn.textContent;
+    btn.disabled = true; btn.textContent = "질문 만드는 중…";
+    try {
+      var r = await fetch("/api/ai/prompts", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), limit: 20})});
+      var d = await r.json();
+      if (!r.ok) { btn.textContent = (d.detail || "만들지 못했습니다").slice(0, 60); }
+      else {
+        btn.textContent = "질문 " + d.added + "개 완성 — [AI 인용 다시 확인]을 누르세요";
+        load(); loadDoctor();
+        return;                                   // 화면이 다시 그려지며 이 버튼은 사라진다
+      }
+    } catch (e) { btn.textContent = "서버에 연결하지 못했습니다"; }
+    setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 6000);
+  }
+
+  // 화면이 자기 마크업에 심어 둔 동작을 잇는다 — 렌더된 글자를 되짚지 않는다.
+  function wireActs() {
+    document.querySelectorAll('[data-sm-act="make-prompts"]').forEach(function (b) {
+      if (b.dataset.smWired) return;
+      b.dataset.smWired = "1";
+      b.onclick = function () { makePrompts(b); };
+    });
+  }
+
   // 안내의 '이 명령을 치세요' 칩을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
   // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
   // 어느 단계인지는 버튼의 data-stage 가 말한다 — 예전에는 버튼 라벨(명령어 문자열)에
@@ -1532,7 +1561,7 @@
   // 화면이 스스로 고르므로(data-web / W) 여기서 글자를 되짚지 않는다.
   var all = function () {
     step("화면 손질", function () {
-      wire(); wireSteps(); restage(); kpi();
+      wire(); wireSteps(); wireActs(); restage(); kpi();
     });
     // 사이트 데이터를 부르는 것들은 여기 없다 — "sm:site" 가 정확한 계기를 준다.
     // (재시도 루프로 때우면 언제 채워지는지가 운에 달린다.)
