@@ -8,126 +8,55 @@
     --sans:"IBM Plex Sans KR","Segoe UI",system-ui,sans-serif;
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
   }
-  body{word-break:keep-all}          /* 한글은 어절 단위로 끊는다 */
-
-  #toggle-setup,#setup{display:none!important}
-  #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
-
   /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
   #sm-fail{border:1px solid var(--copper);border-radius:8px;padding:12px 16px;
     margin:0 0 18px;color:var(--copper);font:400 13px/1.6 var(--sans)}
   #sm-fail p{margin:0}
 
-  /* ── 좌측 네비게이션 ────────────────────────────────────────
-     원본은 한 페이지에 섹션 열넷을 세로로 쌓는다. 어디에 뭐가 있는지도, 지금 뭘
-     하면 되는지도 안 보인다. 주제별 화면으로 쪼개고 메뉴로 전환한다.
-     실행은 각 화면 안으로 내려보낸다 — 메뉴는 이동만 하고, 누르면 화면이 바뀐다.
-     (전에는 메뉴처럼 생긴 것이 누르면 수집을 돌리는 버튼이었다.) */
-  #sm-bar{display:flex;align-items:center;gap:10px 14px;padding:0 22px 10px;flex-wrap:wrap}
-  /* 좁은 화면에서는 메뉴가 한 줄을 다 쓴다 — 실행 줄과 나눠 쓰면 두 칸만 남는다 */
-  #sm-nav{display:flex;gap:3px;overflow-x:auto;flex:1 0 100%;min-width:0;scrollbar-width:none}
-  #sm-nav::-webkit-scrollbar{display:none}
-  #sm-nav button{font:500 13px/1 var(--sans);color:var(--stone);background:transparent;
-    border:0;border-radius:6px;padding:9px 12px;cursor:pointer;white-space:nowrap;opacity:.6}
-  #sm-nav button:hover{opacity:1}
-  #sm-nav button.on{opacity:1;background:var(--patina);color:var(--stone)}
-  .sm-act{display:flex;align-items:center;gap:12px;flex:none}
+  /* 원본 셸(dashboard.html)이 레일·화면 전환·괘선 체계를 다 갖는다. 여기서는
+     호스팅에만 있는 것만 칠한다 — 예전에는 이 애드온이 body 격자부터 카드까지
+     원본을 !important 로 덮어써서, 같은 조립본이 배포마다 다른 몸으로 섰다. */
+
+  /* 로컬 설정(부품 설치·API 키·구글 클라이언트)은 호스팅에서 유저 몫이 아니다.
+     지우지 않고 감춘다 — 원본 스크립트가 이 칸들에 이벤트를 이미 걸어 뒀다. */
+  #setup { display:none; }
+  #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
+
+  /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
+  #sm-fail{border-left:2px solid var(--copper);padding:12px 0 12px 16px;
+    margin:0 0 18px;color:var(--copper);font:400 13px/1.6 var(--sans)}
+  #sm-fail p{margin:0}
+
+  /* 레일 바닥 통 — 이동(메뉴)이 아니라 실행이다. 원본 .rail-foot 안에 들어간다. */
   #sm-run{font:500 13px/1 var(--sans);cursor:pointer;border:1px solid var(--patina);
-    background:var(--patina);color:var(--stone);border-radius:6px;padding:9px 15px}
+    background:var(--patina);color:var(--stone);border-radius:4px;padding:9px 14px}
   #sm-run:hover:not(:disabled){filter:brightness(1.12)}
   #sm-run:disabled{opacity:.5;cursor:default}
-  .sm-act .cmd{font:400 12.5px/1 var(--sans);color:var(--stone);opacity:.62;cursor:pointer;
-    text-decoration:none;border:0;background:none;padding:4px 2px}
-  .sm-act .cmd:hover{opacity:1}
-  .sm-act .cmd::after{content:none}   /* 원본 .cmd 는 복사 칩이라 아이콘을 달고 있다 */
-  :is(#sm-bar,.opp) button:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
-
-  /* ── 사이드바 (>=1000px) ────────────────────────────────────
-     세로로 세우면 가로 바와 같은 규칙이 통하지 않는다. 세 통으로 나눈다:
-       머리 — 무엇을 보고 있나 (사이트·기준 수집일·축별 날짜)
-       레일 — 어디를 보고 있나 (화면 메뉴)
-       바닥 — 무엇을 하나 (실행·보고서·안내·새로고침)
-     예전에는 셋이 한 줄기로 흘러서, 이동하는 것과 실행하는 것이 같은 모양이었다. */
+  .rail-foot .cmd{font:400 12.5px/1 var(--sans);color:var(--on-ink-dim);
+    cursor:pointer;text-decoration:none;border:0;background:none;padding:2px 0}
+  .rail-foot .cmd:hover{opacity:1}
+  .rail-foot .cmd::after{content:none}   /* 원본 .cmd 는 복사 칩이라 아이콘을 달고 있다 */
   @media (min-width:1000px){
-    body{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start}
-    header{grid-column:1;position:sticky;top:0;height:100vh;overflow-y:auto;
-      display:flex;flex-direction:column;      /* .sm-act 의 margin-top:auto 가 먹으려면 */
-      border-bottom:0;border-right:1px solid var(--ink)}
-    .hbar{flex-direction:column;align-items:stretch;gap:10px;padding:18px 16px 6px;
-      max-width:none;margin:0}
-    .hbar .sp{display:none}
-    .tag{display:block!important;letter-spacing:.14em;font-size:10px;
-      color:currentColor;opacity:.4;margin-top:-5px}
-    #proj,#gscdate{max-width:none;width:100%}
-    /* 원본은 한 줄 바에 있어서 nowrap 이었다 — 세로로 세우면 잘린다. break-all 은
-       너무 세다: 날짜를 "20 / 26-08-21" 로 반토막 냈다. 긴 토큰(도메인) 하나만
-       끊고 한글·숫자는 붙여 둔다. */
-    #meta{font-size:11px;line-height:1.6;opacity:.6;white-space:normal;
-      word-break:keep-all;overflow-wrap:anywhere;display:block;margin-top:2px}
-    /* 축별 수집일 줄도 세로 바 폭에 맞춘다 — 원본 여백(22px)은 여기서 넘친다.
-       아래 괘선이 '무엇을 보고 있나'와 '어디를 보고 있나'의 경계다. */
-    .hax{max-width:none;margin:0 16px;padding:9px 0 14px;opacity:.55;gap:2px 10px;
-      font-size:10.5px;border-bottom:1px solid currentColor}
-    /* 안내·새로고침은 이동이 아니라 실행이다 — nav() 가 바닥 통으로 옮긴다.
-       옮기기 전(조립 실패 시)에도 읽히도록 규칙은 남긴다. */
-    .hbar .hbtn{width:100%;text-align:left;padding-left:11px;opacity:.5;font-size:11.5px}
-    .hbar .hbtn:hover{opacity:1}
-    #sm-bar{flex-direction:column;align-items:stretch;gap:0;flex:1;padding:14px 12px 18px}
-
-    /* 시추관 레일 — 세로 메뉴에는 눈이 따라 내려갈 왼쪽 기준선이 있어야 한다.
-       (예전에는 button 기본값 그대로 가운데 정렬이라 매 줄 시작점이 달랐다.)
-       활성 화면은 레일에 돋는 눈금 하나로만 말한다 — 알약을 걷어낸 자리다.
-       색은 눈금에만 쓴다: 다크에서 헤더 배경이 밝아져 patina 글자는 대비가 안 나온다. */
-    #sm-nav{flex-direction:column;gap:2px;overflow:visible;flex:1;
-      position:relative;padding-left:12px;padding-bottom:16px}
-    #sm-nav::before{content:"";position:absolute;left:0;top:5px;bottom:16px;width:1px;
-      background:currentColor;opacity:.24}
-    #sm-nav button{position:relative;text-align:left;padding:8px 10px;opacity:.55}
-    #sm-nav button::before{content:"";position:absolute;left:-12px;top:50%;width:3px;
-      height:0;background:var(--patina);transform:translateY(-50%);
-      transition:height .18s cubic-bezier(.4,0,.2,1)}
-    #sm-nav button:hover{opacity:.85;background:transparent}
-    #sm-nav button.on{opacity:1;font-weight:650;background:transparent;color:currentColor}
-    #sm-nav button.on::before{height:19px}
-    @media (prefers-reduced-motion:reduce){#sm-nav button::before{transition:none}}
-
-    .sm-act{flex-direction:column;align-items:stretch;gap:9px;margin-top:auto;padding:0 2px}
-    .sm-act .cmd{text-align:left}
-    /* 안내·새로고침 — 실행이지만 주 동작이 아니다. 한 줄에 나란히 눕혀 둔다. */
-    .sm-util{display:flex;gap:14px;margin-top:2px}
-    .sm-util .hbtn{width:auto;border:0;padding:2px 0;font-size:11px;opacity:.58}
-    .sm-util .hbtn:hover{opacity:1}
-    main{grid-column:2;max-width:1180px;margin:0;padding:26px 34px 80px}
-  }
-  /* 다크에서는 헤더 배경(--ink)이 밝아진다 — 중간톤 patina 눈금은 거기서 대비가
-     3:1 을 못 넘긴다. 색을 포기하고 형태만 남긴다: 눈금은 그대로 서 있고, 활성
-     항목은 굵기·밝기로도 이미 갈린다. */
-  @media (min-width:1000px) and (prefers-color-scheme:dark){
-    #sm-nav button.on::before{background:currentColor}
+    .rail-foot{flex-direction:column;align-items:stretch}
+    #sm-run{width:100%}
   }
 
-  /* ── 화면 ───────────────────────────────────────────────────
-     한 화면에는 한 주제만. 괘선으로 이어 붙이던 섹션을 카드로 떼어 놓는다 —
-     화면이 나뉘었으면 경계도 나뉘어야 어디까지가 한 덩어리인지 읽힌다. */
-  main{padding-top:22px}
-  .sm-view{display:flex;flex-direction:column;gap:16px}
-  .sm-view[hidden]{display:none}   /* display:flex 가 hidden 의 display:none 을 이긴다 */
-  .sm-vh{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-  .sm-vh h1{font:650 22px/1.25 var(--sans);letter-spacing:-.02em;margin:0;flex:1;min-width:0}
-  .sm-refresh{font:500 12.5px/1 var(--sans);color:var(--patina);background:var(--card);
-    border:1px solid var(--rule);border-radius:6px;padding:9px 14px;cursor:pointer;flex:none}
+  /* 화면 제목 옆 실행 버튼 — 그 화면을 채우는 단계를 거기서 돌린다. */
+  .sm-refresh{font:500 12.5px/1 var(--sans);color:var(--patina);background:transparent;
+    border:1px solid var(--rule);border-radius:4px;padding:8px 13px;cursor:pointer;flex:none}
   .sm-refresh:hover:not(:disabled){border-color:var(--patina);background:var(--wash)}
   .sm-refresh:disabled{opacity:.5;cursor:default}
   .sm-refresh:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
-  .sm-view section,.sm-view > .band{background:var(--card);border:1px solid var(--rule);
-    border-radius:10px;padding:20px 22px 22px;margin:0}
-  .sm-view section:first-of-type{border-top:1px solid var(--rule)}
-  .sm-view > .band{padding:4px 22px 6px}
-  .sm-view .band .m{padding:18px 18px 16px 0}
-  /* KPI 가 다섯에서 일곱으로 늘었다 — 고정 5칸이면 두 줄로 어긋난다 */
-  .sm-view > .band{grid-template-columns:repeat(auto-fit,minmax(146px,1fr))}
-  .sm-view .band .v{white-space:nowrap}
-  .sm-view .band .d{font-size:11px;margin-left:6px}
+
+  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
+  #sm-wait{margin:0 0 16px;padding:13px 0 13px 16px;border-left:2px solid var(--patina);
+    background:var(--wash);color:var(--ink);font-size:13.5px;line-height:1.6}
+  #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--patina);margin-right:9px;vertical-align:middle}
+  @media (prefers-reduced-motion:no-preference){
+    #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
+    @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  }
 
   /* 검색 성과 — 서치콘솔 4대 지표를 같은 크기로 나란히 둔다.
      축이 서로 달라 한 그림에 겹치지 않는다(게재순위는 방향까지 반대다). */
@@ -143,7 +72,7 @@
      SVG 안에 글자를 두면 늘어난다. */
   .sm-plot{position:relative}
   .sm-gl{position:absolute;right:0;font:400 10.5px/1 var(--mono);color:var(--slate);
-    background:var(--card);padding:1px 0 1px 7px;pointer-events:none}
+    background:var(--stone);padding:1px 0 1px 7px;pointer-events:none}
   .sm-gl.t{top:-4px} .sm-gl.b{bottom:-4px}
   .sm-line{display:block;width:100%;height:76px;overflow:visible}
   .sm-line path{fill:none;stroke:var(--patina);stroke-width:1.2;
@@ -159,8 +88,8 @@
 
   /* 분해 표 — 긴 URL 이 표 폭을 밀지 않게 첫 칸만 줄인다 */
   #sm-dim .tabs{display:flex;gap:6px;margin:2px 0 12px}
-  #sm-dim .tabs button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
+  #sm-dim .tabs button{font:400 12px/1 var(--sans);color:var(--slate);background:transparent;
+    border:1px solid var(--rule);border-radius:4px;padding:6px 12px;cursor:pointer}
   #sm-dim .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
   #sm-dim table{table-layout:fixed;width:100%}
   #sm-dim th:first-child,#sm-dim td:first-child{width:46%}
@@ -177,42 +106,14 @@
   #sm-dim .sm-share i{display:block;height:100%;border-radius:2px;background:var(--patina);
     opacity:.55}
   #sm-dim .tools{margin-bottom:10px}
-  /* 붙박이 머리글은 원본에서 var(--stone) 을 깐다 — 카드 위에서는 카드색이어야 한다. */
-  .sm-view .tw thead th{background:var(--card)}
-
-  #docban{background:var(--card);border:1px solid var(--rule);
-    border-left:3px solid var(--patina);border-radius:10px;padding:16px 20px;margin:0 0 16px}
-
-  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
-  #sm-wait{margin:0 0 16px;padding:13px 18px;border:1px solid var(--rule);
-    border-left:3px solid var(--patina);border-radius:10px;background:var(--wash);
-    color:var(--ink);font-size:13.5px;line-height:1.6}
-  #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
-    background:var(--patina);margin-right:9px;vertical-align:middle}
-  @media (prefers-reduced-motion:no-preference){
-    #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
-    @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
-  }
-
-  /* 원본 자간은 영문 대문자 라벨 기준(.24em)이라 한글에서는 글자가 흩어진다. */
-  .eyebrow{letter-spacing:.08em}
-  .tag{letter-spacing:.12em}
-  th{letter-spacing:.05em}
-  .opp .kind{letter-spacing:.05em}
-  /* KPI 라벨은 한글이다 — mono 로 두면 폴백 서체로 떨어져 자간이 벌어진다. */
-  .band .l{font-family:var(--sans);font-weight:500;letter-spacing:.03em}
-  /* 기준 줄·단위도 한글이 섞인다 — 같은 이유로 sans 로 되돌린다(숫자만 등폭 자리수). */
-  .band .b,.score .u,.tools .n{font-family:var(--sans);font-variant-numeric:tabular-nums}
 
   /* ── 백링크 ────────────────────────────────────────────────
-     요약·추이·목록을 한 상자에 몰아넣으면 카드 하나가 화면 높이를 다 먹는다.
-     display:contents 로 껍데기를 지워 자식 <section> 이 화면(.sm-view)의 칸이 되게
-     한다 — 그러면 다른 화면과 같은 카드·같은 간격을 공짜로 받는다. */
+     요약·추이·목록을 한 덩어리에 몰아넣으면 그 하나가 화면 높이를 다 먹는다.
+     display:contents 로 껍데기를 지워 자식 <section> 이 화면의 칸이 되게 한다 —
+     그러면 다른 화면과 같은 괘선·같은 간격을 공짜로 받는다. */
   #sm-bl{display:contents}
   #sm-bl .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
-  /* 밴드가 카드 안에 들어간다 — 카드가 이미 테를 가졌으니 밑줄은 뺀다. */
-  #sm-bl .band{border-bottom:0;margin:0;
-    grid-template-columns:repeat(auto-fit,minmax(148px,1fr))}
+  #sm-bl .band{margin:0}
   #sm-bl .band .m{padding:14px 18px 12px 0}
   #sm-bl .band .v{white-space:nowrap}
   #sm-bl .band .d{font-size:11px;margin-left:6px}
@@ -574,149 +475,73 @@
     });
   }
 
-  // ── 화면 ─────────────────────────────────────────────────────
-  // 섹션 열넷이 한 페이지에 세로로 쌓여 있었다 — 어디에 뭐가 있는지도, 지금 뭘
-  // 하면 되는지도 안 보인다. 주제별로 나누고 좌측 메뉴로 전환한다.
-  // 목록의 정본은 원본 뷰다 — 각 views/*.html 이 자기 파일에서 선언한 것을
-  // dashboard.py 가 window.__VIEWS__ 로 방출한다. 여기서 다시 나열하지 않는다.
-  // 없으면 옛 사본으로 조용히 되돌아가지 않는다 — 말없이 어긋난 두 표가 이 코드가
-  // 생긴 이유다. 다만 어긋남을 '알리는 것'과 화면을 '못 쓰게 만드는 것'은 다르다:
-  // 아래 조립이 터지면 배너로 알리고 사이드바·화면 분할만 포기한다. 원본은 한 줄
-  // 스크롤로 남고(원래 그 모양이다), 사이트 전환·실행 버튼·백링크·성과·키워드는 산다.
+  // ── 호스팅이 덧붙이는 화면·섹션 ───────────────────────────────
+  // 화면 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이
+  // window.__VIEWS__ 로 실어 보내고, 원본 셸(dashboard.html 의 SM)이 그걸로
+  // 레일과 화면 상자를 만든다. 여기서 다시 나열하지 않는다.
+  // 원본에 없고 이 애드온이 런타임에 만드는 것만 아래 두 표에 적는다.
+  //
+  // 예전에는 이 파일이 사이드바·배치·전환을 통째로 다시 구현하고 원본 격자를
+  // !important 로 덮어썼다. 그래서 같은 조립본이 배포마다 다른 몸으로 섰다 —
+  // 로컬은 파일 순서로 섹션을 쌓고 호스팅은 view-def 순서로 옮겨서, 두 화면의
+  // 섹션 순서가 실제로 달랐다. 셸이 원본으로 내려간 지금은 덧붙이기만 한다.
 
-  // ── 호스팅이 덧붙이는 것 ─────────────────────────────────────
-  // 원본 뷰에는 없고 이 애드온이 런타임에 만드는 것만 여기 적는다. 덧붙이는 자리는
-  // 이 두 표뿐이다 — 원본이 선언한 것은 매니페스트가 소유한다.
-  // HOST_SEC: [화면 id, 요소 id, 이 요소 바로 뒤에] — perfShell()·keywords()·handoff() 가 만든다
+  // HOST_SEC: [화면 id, 요소 id, 이 요소 바로 뒤에]
+  //   perfShell()·keywords()·handoff()·setShell() 이 그 요소를 만든다.
   var HOST_SEC = [
     ["overview", "sm-perf", "daily"],
     ["overview", "sm-dim",  "sm-perf"],
     ["keywords", "sm-kw",   "log"],
-    ["history",  "sm-cc",   "made-sec"]
+    ["history",  "sm-cc",   "made-sec"],
+    ["settings", "sm-set",  "setup"]
   ];
-  // HOST_VIEWS: 대응하는 원본 뷰 파일이 아예 없는 화면 — blRender()·setShell() 이 만든다.
+  // HOST_VIEWS: 대응하는 원본 뷰 파일이 아예 없는 화면 — blRender() 가 만든다.
   // [화면 id, 메뉴 이름, 담을 것, 채우는 단계, 이 화면 바로 뒤에]
   var HOST_VIEWS = [
-    ["backlinks", "백링크", ["sm-bl"],  [], "site"],
-    ["settings",  "설정",   ["sm-set"], [], "history"]
+    ["backlinks", "백링크", ["sm-bl"], [], "site"]
   ];
 
-  function insertAfter(list, at, item) {   // at 바로 뒤 — 못 찾으면(-1) 맨 끝
-    list.splice(at < 0 ? list.length : at + 1, 0, item);
-  }
-
-  // [화면 id, 메뉴 이름, 담을 것(요소 id), 이 화면을 채우는 단계]
-  var VIEWS;
-  try {
-    if (!Array.isArray(window.__VIEWS__) || !window.__VIEWS__.length) {
-      throw new Error("window.__VIEWS__ 가 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
+  step("화면 덧붙이기", function () {
+    if (!window.SM) {
+      throw new Error("원본 셸(SM)이 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
     }
-    VIEWS = window.__VIEWS__.map(function (v) {
-      return [v.id, v.title, v.sections.slice(), v.stages.slice()];
-    });
-    HOST_SEC.forEach(function (h) {
-      var v = VIEWS.filter(function (x) { return x[0] === h[0]; })[0];
-      if (!v) throw new Error("호스팅 섹션이 붙을 화면이 없습니다: " + h[0] + " / " + h[1]);
-      insertAfter(v[2], v[2].indexOf(h[2]), h[1]);
-    });
     HOST_VIEWS.forEach(function (h) {
-      insertAfter(VIEWS, VIEWS.findIndex(function (v) { return v[0] === h[4]; }),
-                  h.slice(0, 4));
+      SM.addView({id: h[0], title: h[1], sections: h[2], stages: h[3]}, h[4]);
     });
-  } catch (e) {
-    VIEWS = [];       // 화면 분할을 포기한다 — nav() 는 실행 버튼만 달고 그대로 선다
-    fail("화면 목록을 만들지 못했습니다 — 사이드바와 화면 분할 없이 이어갑니다", e);
-  }
-  var view = "overview";
+    HOST_SEC.forEach(function (h) { SM.addSection(h[0], h[1], h[2]); });
+  });
 
-  // 원본 섹션을 화면별 상자로 옮긴다. 이미 제자리면 아무것도 하지 않는다 —
-  // 애드온 섹션(백링크·키워드)은 늦게 생겨서 이 함수가 여러 번 불린다.
-  function place() {
-    var c = document.getElementById("content");
-    if (!c) return;
-    VIEWS.forEach(function (v) {
-      var box = document.getElementById("smv-" + v[0]);
-      if (!box) {
-        box = document.createElement("div");
-        box.id = "smv-" + v[0];
-        box.className = "sm-view";
-        box.hidden = v[0] !== view;
-        var h = document.createElement("div");
-        h.className = "sm-vh";
-        h.innerHTML = "<h1>" + v[1] + "</h1>";
-        v[3].forEach(function (st) {      // 그 화면을 채우는 단계를 여기서 돌린다
-          var rb = document.createElement("button");
-          rb.className = "sm-refresh";
-          rb.textContent = STAGE[st].run;   // 화면 제목과 겹치지 않게 다르게 부른다
-          rb.title = STAGE[st].t;
-          rb.onclick = function () { runStage(st, rb); };
-          h.appendChild(rb);
-        });
-        box.appendChild(h);
-        c.appendChild(box);
-      }
-      v[2].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        var sec = el.closest("section") || el;      // band 는 section 이 아니다
-        if (sec.parentNode !== box) box.appendChild(sec);
-      });
-    });
-    var cols = document.querySelector(".cols");     // 두 칸 틀은 빈 껍데기가 됐다
-    if (cols && !cols.querySelector("section")) cols.remove();
-  }
-
-  function show(name) {
-    view = name;
-    VIEWS.forEach(function (v) {
-      var box = document.getElementById("smv-" + v[0]);
-      if (box) box.hidden = v[0] !== name;
-    });
-    document.querySelectorAll("#sm-nav button").forEach(function (x) {
-      var on = x.dataset.v === name;
-      x.classList.toggle("on", on);
-      x.setAttribute("aria-current", on ? "page" : "false");
-    });
-    window.scrollTo(0, 0);
-  }
-
-  step("사이드바", function nav() {
-    if (document.getElementById("sm-bar")) return;
-    var head = document.querySelector("header");
-    if (!head) return;
-    var box = document.createElement("div");
-    box.id = "sm-bar";
-    var nv = document.createElement("nav");
-    nv.id = "sm-nav";
-    nv.setAttribute("aria-label", "화면");
-    VIEWS.forEach(function (v) {
-      var t = document.createElement("button");
-      t.dataset.v = v[0]; t.dataset.smWired = "1";
-      t.textContent = v[1];
-      t.onclick = function () { show(v[0]); };
-      nv.appendChild(t);
-    });
-    box.appendChild(nv);
-    var act = document.createElement("div");
-    act.className = "sm-act";
-    act.appendChild(b);                       // 위에서 만든 '전체 분석 실행'
+  step("레일 바닥", function foot() {
+    var box = document.querySelector(".rail-foot");
+    if (!box || document.getElementById("sm-run")) return;
+    box.prepend(b);                           // 위에서 만든 '전체 분석 실행'
     var rep = document.createElement("a");
     rep.className = "cmd"; rep.textContent = "보고서 다운로드 ↓";
     rep.addEventListener("click", function () {
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
     });
-    act.appendChild(rep);
-    // 안내·새로고침은 이동이 아니라 실행이다 — 머리에 두면 메뉴와 같은 줄로 읽힌다.
-    var util = document.createElement("div");
-    util.className = "sm-util";
-    ["toggle-guide", "refresh"].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) util.appendChild(el);          // 옮기기만 한다 — 이벤트는 원본이 이미 걸었다
-    });
-    if (util.children.length) act.appendChild(util);
-    box.appendChild(act);
-    head.appendChild(box);
+    box.appendChild(rep);
   });
+
+  // 화면 제목 옆 실행 버튼 — 그 화면을 채우는 단계를 거기서 돌린다.
+  // 셸이 화면 상자를 (다시) 세울 때마다 부른다. 이미 붙어 있으면 아무것도 안 한다.
+  function runButtons() {
+    (window.SM ? SM.views : []).forEach(function (v) {
+      var head = document.querySelector("#view-" + v.id + " .vh");
+      if (!head) return;
+      v.stages.forEach(function (st) {
+        if (!STAGE[st] || head.querySelector('[data-run="' + st + '"]')) return;
+        var rb = document.createElement("button");
+        rb.className = "sm-refresh";
+        rb.dataset.run = st;
+        rb.textContent = STAGE[st].run;       // 화면 제목과 겹치지 않게 다르게 부른다
+        rb.title = STAGE[st].t;
+        rb.onclick = function () { runStage(st, rb); };
+        head.appendChild(rb);
+      });
+    });
+  }
+  document.addEventListener("sm:views", function () { step("실행 버튼", runButtons); });
 
   // ── 백링크 ───────────────────────────────────────────────────
   // 원본 화면에 없는 축이다. 섹션을 만들어 끼운다(원본 HTML 은 그대로).
@@ -919,7 +744,7 @@
       if (cs) cs.addEventListener("click", blCsv);
       blList();
     }
-    place();
+    SM.sync();          // 방금 만든 섹션을 백링크 화면 안으로
   }
 
   async function backlinks() {
@@ -944,7 +769,7 @@
   // 프리셋 목록의 정본은 서버(app.RUN_PRESETS)다 — 화면은 받아서 그리기만 한다.
   var SET_DONE = "", SET_H = null;
 
-  // 껍데기는 동기로 만든다 — place() 가 배치할 때 이미 있어야 한다(성과 상자와 같다).
+  // 껍데기는 동기로 만든다 — 셸이 배치할 때 이미 있어야 한다(성과 상자와 같다).
   step("설정 상자", function setShell() {
     var host = document.querySelector("main");
     if (!host || document.getElementById("sm-set")) return;
@@ -1494,7 +1319,7 @@
     dimTable();
   }
 
-  // 껍데기는 동기로 만들어 둔다 — place() 가 화면에 배치할 때 이미 있어야 한다.
+  // 껍데기는 동기로 만들어 둔다 — 셸이 화면에 배치할 때 이미 있어야 한다.
   // 채워지기 전까지는 감춰 둔다: 빈 상자 둘이 개요 밑에 떠 있으면 고장으로 보인다.
   step("성과 상자", function perfShell() {
     var host = document.querySelector("main");
@@ -1518,7 +1343,7 @@
   }
   // 갱신 계기는 "sm:site" 하나다 — 아래 한 자리에서 같이 받는다.
 
-  step("화면 배치", function () { place(); show(view); });
+  step("화면 배치", function () { SM.sync(); runButtons(); });
 
   // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 기회 id 는 카드의 data-opp 에
   // 있다 — 예전에는 트리아지 버튼의 인라인 onclick 문자열을 정규식으로 뜯어 꺼냈다.

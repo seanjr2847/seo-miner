@@ -1,0 +1,19 @@
+<script type="application/json" class="view-def">
+{"id": "guide", "title": "안내",
+ "render": "shell", "sections": ["guide"], "stages": []}
+</script>
+<!-- 여태 헤더의 [안내] 토글이 본문 위에 얹던 패널이었다. 화면 하나로 세운다 —
+     토글은 상태를 하나 더 만들고(열렸나 닫혔나), 그 상태는 아무 데도 안 남았다. -->
+<section id="guide">
+  <div class="eyebrow" data-web="분석 절차 · 6단계">이 도구를 쓰는 순서 · 6단계</div>
+  <h2 style="margin-top:8px" data-web="분석 절차">다음에 뭘 하면 되나</h2>
+  <p class="lead"><b data-web="분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석">재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는</b> 반복입니다.
+    한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 끝난 단계는 실제로 모인
+    자료를 보고 표시하니, 아래 <span data-web="[권장 조치]">[지금 할 것]</span> 하나만 하시면 됩니다.</p>
+  <div class="donebar" id="donebar" hidden></div>
+  <div class="shaft" id="shaft"></div>
+  <div class="loopback">2~5번은 <code>/capture run</code> 하나로 한 번에 돌릴 수도
+    있습니다(중간에 비용이 드는 단계에서 물어봅니다).<br>
+    6번이 끝나면 <b>2번으로 돌아옵니다</b> — 고친 게 순위와 인용에 반영됐는지는
+    다음번에 실적을 읽을 때 숫자로 나옵니다.</div>
+</section>

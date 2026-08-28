@@ -14,8 +14,8 @@
 #acts li::marker { font-family:var(--mono); color:var(--patina); }
 
 /* ── 결과 배지: 완료(녹청)·문제(산화동)·건너뜀(회색). 두 목록이 같은 말을 쓴다. ── */
-.hs-r { display:inline-block; font:400 10px/1 var(--mono); letter-spacing:.1em;
-  text-transform:uppercase; padding:3px 7px; border:1px solid var(--rule);
+.hs-r { display:inline-block; font:var(--micro);
+  padding:3px 7px; border:1px solid var(--rule);
   border-radius:2px; white-space:nowrap; color:var(--slate); }
 .hs-r.ok { color:var(--patina); border-color:var(--patina); }
 .hs-r.bad { color:var(--copper); border-color:var(--copper); }
@@ -36,7 +36,7 @@
   border-top:1px solid var(--rule-soft); margin:12px 0 20px; }
 #lastby div { padding:10px 14px 10px 0; border-right:1px solid var(--rule-soft); }
 #lastby div:last-child { border-right:0; }
-#lastby .k { font:400 10px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+#lastby .k { font:var(--micro);
   color:var(--slate); }
 #lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
   margin-top:6px; }
@@ -56,7 +56,7 @@
 #made .mk:hover { background:var(--bar); }
 #made .mk:last-of-type { border-bottom:0; }
 #made .mh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-#made .kind { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+#made .kind { font:var(--micro);
   color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
 #made .dt, #made .br { font:400 11px/1 var(--mono); color:var(--slate); }
 #made .br::before { content:"⑂ "; }
@@ -81,7 +81,7 @@
 </section>
 
 <section>
-  <div class="eyebrow">RUNS</div>
+  <div class="eyebrow lat">RUNS</div>
   <h2 data-web="실행 기록">수집 이력</h2>
   <p class="sub">무엇을 언제 팠고, 얼마나 걸렸고, 무엇이 걸렸는지. 아래 요약은 이 목록 기준입니다.</p>
   <div id="runsum"></div>
@@ -90,7 +90,7 @@
 </section>
 
 <section id="made-sec">
-  <div class="eyebrow">CREATIONS</div>
+  <div class="eyebrow lat">CREATIONS</div>
   <h2>고친 것</h2>
   <p class="sub">기회가 실제 코드 수정이 된 기록입니다. 여기 줄이 생겼다면 한 바퀴가 닫힌 겁니다.</p>
   <div id="made"></div>

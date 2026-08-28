@@ -276,8 +276,20 @@ def _check_seams() -> None:
         j = json.loads(d.group(1))
         defs[j["id"]] = j
     assert defs, "원본 뷰 선언을 하나도 못 읽었다"
-    assert "window.__VIEWS__" in dash, "dash.html 이 매니페스트를 안 읽는다 — 목록이 또 두 벌이다"
+    assert "window.__VIEWS__" in shell,         "원본 셸이 매니페스트를 안 읽는다 — 목록이 또 두 벌이다"
     assert "var VIEWS = [" not in dash, "dash.html 에 화면 목록 사본이 되살아났다"
+    # 셸(레일·화면 상자·전환)은 원본 하나뿐이다. 애드온이 그걸 다시 구현하면 같은
+    # 조립본이 배포마다 다른 몸으로 선다 — 섹션 순서가 실제로 갈라졌던 자리다.
+    for gone, why in (("function place(", "배치"), ("function show(", "전환"),
+                      ('nv.id = "sm-nav"', "메뉴")):
+        assert gone not in dash, f"dash.html 이 셸의 {why}를 다시 구현한다: {gone}"
+    for hook in ("SM.addView(", "SM.addSection(", "SM.sync("):
+        assert hook in dash, f"dash.html 이 셸에 덧붙이지 않는다: {hook}"
+    # 원본 레일을 힘으로 덮지 않는다 — !important 는 "두 시스템이 싸우는 중"의 표식이다.
+    # 주석은 근거가 못 된다(왜 걷어냈는지 적어 둔 자리가 검사에 걸리면 안 된다).
+    bare = re.sub(r"/\*[\s\S]*?\*/", "", dash)
+    bare = re.sub(r"^\s*//.*$", "", bare, flags=re.M)
+    assert "!important" not in bare, "dash.html 이 원본 규칙을 !important 로 덮는다"
 
     hs = re.search(r"var HOST_SEC = \[(.*?)\n  \];", dash, re.S)
     hv = re.search(r"var HOST_VIEWS = \[(.*?)\n  \];", dash, re.S)

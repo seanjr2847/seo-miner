@@ -36,7 +36,10 @@ import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
 TPL = Path(__file__).parent.parent / "templates"
-VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site", "history"]
+# 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
+# — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
+VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site", "history",
+              "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
 
@@ -655,7 +658,11 @@ def _selfcheck() -> None:
     for left in ("<!--MANIFEST-->", "<!--VIEWS-->"):
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
-        assert f'VIEW("{d["id"]}"' in html, f'{d["id"]} 가 VIEW() 로 등록되지 않았다'
+        # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 셸이 직접 그리는 화면
+        # ([안내]·[설정] — renderGuide/renderSetup)은 자기 선언에 그렇다고 적는다.
+        # 목록을 여기 또 두지 않으려고 뷰가 말하게 한다.
+        if d.get("render") != "shell":
+            assert f'VIEW("{d["id"]}"' in html, f'{d["id"]} 가 VIEW() 로 등록되지 않았다'
         assert d["title"] and isinstance(d["stages"], list)
         for i in d["sections"]:                  # 담는다고 선언한 요소는 실제로 있어야
             assert f'id="{i}"' in html, f'{d["id"]} 가 없는 요소 id 를 담는다: {i}'

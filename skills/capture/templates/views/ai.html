@@ -71,7 +71,7 @@
 .aiq-p { font:400 12.5px/1.5 var(--mono); max-width:54ch; }
 .aiev { margin:9px 0 3px; padding:11px 13px; border-left:2px solid var(--copper);
   background:var(--wash-copper); max-width:74ch; }
-.aiev .lb { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+.aiev .lb { font:var(--micro);
   color:var(--slate); display:block; margin-bottom:8px; }
 .aiev .q { font-size:12.5px; line-height:1.7; color:var(--ink); white-space:pre-wrap;
   margin:0; }
@@ -87,7 +87,7 @@
 
 /* 질문마다 반복되는 조건은 질문 밖에 한 번만 접어 둔다. */
 .aichk { margin:6px 0 18px; padding:2px 0 2px 13px; border-left:2px solid var(--rule-soft); }
-.aichk summary { font:400 12px/1.5 var(--mono); color:var(--slate); cursor:pointer; }
+.aichk summary { font:500 12.5px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
 .aichk summary:hover { color:var(--patina); }
 .aichk ol { margin:9px 0 2px; padding-left:18px; font-size:12.5px; color:var(--slate); }
 .aichk li { margin:5px 0; }
@@ -97,19 +97,12 @@
 <div id="ai">
 <section id="ai-sec">
   <!-- 실제로 확인한 엔진·날짜는 아래 sub 가 말한다. -->
-  <div class="eyebrow">chatgpt · perplexity · gemini</div>
+  <div class="eyebrow lat">chatgpt · perplexity · gemini</div>
   <h2 data-web="AI 인용 현황">AI가 누구를 인용하나</h2>
   <p class="sub" id="ai-sub"></p>
   <div id="ai-empty"></div>
   <div class="band" id="ai-band" hidden></div>
   <div id="ai-trend"></div>
-</section>
-
-<section id="ai-share-sec" hidden>
-  <div class="eyebrow">인용 점유 · 최근 확인</div>
-  <h2>우리 대신 인용되는 곳</h2>
-  <p class="sub" id="ai-share-sub"></p>
-  <div class="aishare" id="ai-share"></div>
 </section>
 
 <section id="ai-eng-sec" hidden>
@@ -146,6 +139,13 @@
   <h2>어디에도 안 잡힌 질문</h2>
   <p class="sub" id="ai-miss-sub"></p>
   <div id="ai-missed"></div>
+</section>
+
+<section id="ai-share-sec" hidden>
+  <div class="eyebrow">인용 점유 · 최근 확인</div>
+  <h2>우리 대신 인용되는 곳</h2>
+  <p class="sub" id="ai-share-sub"></p>
+  <div class="aishare" id="ai-share"></div>
 </section>
 </div>
 
@@ -430,7 +430,7 @@ function AI_emptyState(d) {
     ? `<b>OpenRouter 키는 서버가 댑니다</b> — 따로 발급하거나 넣으실 것은 없습니다.`
     : `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
     <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
-      >openrouter.ai/keys</a>에서 발급해 헤더의 <b>[설정] → 4. API 키</b> 칸에
+      >openrouter.ai/keys</a>에서 발급해 왼쪽 메뉴의 <b>[설정] → 4. API 키</b> 칸에
     붙여넣으면 됩니다.`;
   // 물어보는 법. 호스팅에서는 아래 W() 가 이 블록을 통째로 한 줄로 갈아 끼우므로
   // 여기 명령 칩은 로컬 몫이다 — 웹에서는 화면 위의 실행 버튼이 그 자리다.

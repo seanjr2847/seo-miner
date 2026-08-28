@@ -18,10 +18,18 @@
   --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
+  /* 레일(헤더) 위의 글자. --slate 는 #121714 바탕에서 2.6:1 밖에 안 나온다 —
+     읽으라고 적어 둔 글자가 안 읽혔다. 배경이 --ink 이므로 이 셋은 --stone 쪽,
+     즉 다크에서 같이 뒤집힌다(안 뒤집으면 밝은 바탕에 밝은 글자가 된다). */
+  --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
+  --on-ink-rule:rgba(230,233,228,.26);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
          "Malgun Gothic",monospace;
   --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,
          "Malgun Gothic","Apple SD Gothic Neo",sans-serif;
+  /* 마이크로 라벨 한 벌 — 눈금·열 이름·배지가 같은 크기로 선다. 한글이 기본이라
+     자간을 벌리지 않는다(벌리면 "아 직 안 딴 기 회"가 된다). 위계는 크기·굵기·색. */
+  --micro:500 11px/1.35 var(--sans);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -29,27 +37,82 @@
     --patina:#57B49C; --copper:#DE8351; --rule:rgba(228,235,231,.16);
     --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
+    --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
+    --on-ink-rule:rgba(16,21,19,.28);
   }
 }
+/* 자간 확장·대문자 변환은 라틴 문자열에만 뜻이 있다. 문서에 실제로 라틴만 적힌
+   자리(SERP·RUNS·CREATIONS…)에 이 클래스를 손으로 붙인다. :lang() 으로는 못 가른다
+   — 한 요소 안에 한글과 라틴이 섞여 있으면 어느 쪽으로도 못 정한다. */
+.lat { font-family:var(--mono); text-transform:uppercase; letter-spacing:.16em; }
+
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
-body { margin:0; background:var(--stone); color:var(--ink); font:15px/1.55 var(--sans); }
+body { margin:0; background:var(--stone); color:var(--ink); font:15px/1.6 var(--sans);
+  word-break:keep-all; overflow-wrap:break-word; }
 :focus-visible { outline:2px solid var(--patina); outline-offset:2px; border-radius:2px; }
 
-/* ── 헤더: 시추공 상단 케이싱 ─────────────────────────────── */
-header { background:var(--ink); color:var(--stone); position:sticky; top:0; z-index:9;
+/* ── 셸: 레일 + 화면 ──────────────────────────────────────────
+   섹션 열넷이 한 페이지에 세로로 쌓여 있었다 — 어디에 뭐가 있는지도, 지금 뭘
+   하면 되는지도 안 보인다. 화면 전환은 여태 호스팅 애드온만 갖고 있었고, 그래서
+   같은 조립본이 배포마다 다른 몸으로 섰다: 로컬은 파일 순서로 쌓고 호스팅은
+   view-def 순서로 옮겨서, 두 화면의 섹션 순서가 실제로 달랐다. 이제 셸이
+   원본에 있다 — 애드온은 콘텐츠만 덧붙인다.
+
+   레일은 세 통이다: 머리(무엇을 보고 있나) · 메뉴(어디를 보고 있나) ·
+   바닥(무엇을 하나). 셋이 한 줄기로 흐르면 이동하는 것과 실행하는 것이 같은
+   모양이 된다. */
+header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-index:9;
   border-bottom:1px solid var(--ink); }
 .hbar { max-width:1180px; margin:0 auto; padding:11px 22px;
   display:flex; align-items:baseline; gap:18px; }
 @media (max-width:860px) { .hbar { flex-wrap:wrap; gap:10px 14px; } .tag { display:none; } }
-.mark { font:600 15px/1 var(--mono); letter-spacing:.06em; }
+
+/* 화면 메뉴 — 좁은 화면에서는 가로 스크롤러, 레일에서는 세로 목록 */
+#nav { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none;
+  max-width:1180px; margin:0 auto; padding:0 22px 9px; }
+#nav::-webkit-scrollbar { display:none; }
+#nav button { font:500 13px/1 var(--sans); color:var(--on-ink); background:transparent;
+  border:0; border-radius:5px; padding:8px 11px; cursor:pointer; white-space:nowrap;
+  opacity:.62; }
+#nav button:hover { opacity:1; }
+#nav button.on { opacity:1; background:var(--patina); color:var(--stone); }
+
+/* 화면 상자 — 한 번에 하나만 선다 */
+.view[hidden] { display:none; }
+.vh { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:26px 0 4px; }
+.vh h1 { font:650 22px/1.3 var(--sans); letter-spacing:-.01em; margin:0; }
+.vh .sp { flex:1; }
+.vh + section, .view > section:first-child { border-top:0; }
+
+@media (min-width:1000px) {
+  body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
+  header { grid-column:1; top:0; height:100vh; overflow-y:auto; display:flex;
+    flex-direction:column; border-bottom:0; border-right:1px solid var(--ink); }
+  .hbar { flex-direction:column; align-items:stretch; gap:9px; padding:18px 16px 4px;
+    max-width:none; margin:0; }
+  .hbar .sp { display:none; }
+  .tag { display:block !important; margin-top:-4px; }
+  #nav { flex-direction:column; overflow:visible; padding:14px 10px 0; margin:0;
+    max-width:none; flex:1; }
+  #nav button { text-align:left; padding:8px 10px; }
+  main { grid-column:2; }
+  /* 바닥 통 — 실행·보고서·새로고침. 애드온이 여기에 자기 버튼을 넣는다. */
+  .rail-foot { margin-top:auto; padding:16px; display:flex; flex-wrap:wrap;
+    gap:8px 12px; align-items:center; }
+}
+@media (max-width:999px) {
+  .rail-foot { max-width:1180px; margin:0 auto; padding:0 22px 10px;
+    display:flex; gap:8px 12px; flex-wrap:wrap; align-items:center; }
+}
+.mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
 .mark b { color:var(--patina); font-weight:600; }
-.tag { font:400 10px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
-  color:var(--slate); white-space:nowrap; }
+.tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; }
 @media (max-width:1080px) { .tag { display:none; } }   /* 좁아지면 정체성보다 기능이 먼저 */
 .hbar .sp { flex:1; }
-#proj, #gscdate { font:600 13px/1 var(--mono); color:var(--stone); background:transparent;
-  border:0; border-bottom:1px solid var(--patina); padding:3px 20px 3px 2px; cursor:pointer;
+#proj, #gscdate { font:600 13px/1 var(--mono); color:var(--on-ink); background:transparent;
+  border:0; border-bottom:1px solid var(--patina); padding:3px 26px 3px 2px; cursor:pointer;
   appearance:none; flex:0 0 auto; max-width:220px;
   background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
                    linear-gradient(135deg,currentColor 50%,transparent 50%);
@@ -58,23 +121,30 @@ header { background:var(--ink); color:var(--stone); position:sticky; top:0; z-in
 #proj option, #gscdate option { color:var(--ink); background:var(--card); }
 /* 과거 시점을 보고 있으면 눈에 띄어야 한다 — 최신인 줄 알고 읽으면 오독이다 */
 #gscdate.past { color:var(--copper); border-bottom-color:var(--copper); }
-.hbtn { font:500 12px/1 var(--mono); color:var(--stone); background:transparent;
+.hbtn { font:500 12px/1 var(--sans); color:var(--on-ink); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:6px 11px; cursor:pointer;
   white-space:nowrap; flex:0 0 auto; }
 .hbtn:hover { border-color:var(--patina); color:var(--patina); }
-#meta { font:400 11px/1.4 var(--mono); color:var(--slate); overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.rail-foot .hbtn { border-color:var(--on-ink-rule); }
+/* 레일에서는 잘리면 안 된다 — 어느 속성을 보고 있는지가 이 줄의 전부다. */
+#meta { font:400 11px/1.5 var(--mono); color:var(--on-ink-dim); min-width:0; }
+@media (max-width:999px) { #meta { overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; } }
 /* 축별 수집일 줄. 머리 바(.hbar)는 한 줄 nowrap 이라 여기 것을 거기 넣으면 잘린다 —
    잘린 경고는 경고가 아니다. 그래서 바 아래 자기 줄을 준다. */
-.hax { max-width:1180px; margin:0 auto; padding:0 22px 9px; display:flex; flex-wrap:wrap;
+.hax { max-width:1180px; margin:0 auto; padding:14px 0 0; display:flex; flex-wrap:wrap;
   gap:2px 14px; font:400 11px/1.5 var(--mono); color:var(--slate); }
 .hax[hidden] { display:none; }
 .hax b { color:var(--copper); font-weight:600; flex:0 0 100%; }
 
-main { max-width:1180px; margin:0 auto; padding:0 22px 80px; }
+main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-width:0; }
+/* 표·차트는 넓어도 읽히지만 산문은 아니다 — 문장이 든 것만 폭을 재운다. */
+.sub, .empty, #docban .verdict, #docban .nx, #docban ul, #guide .lead,
+.donebar, .loopback { max-width:74ch; }
 
 /* ── 측정 요약: 카드가 아니라 한 줄 계기판 ────────────────── */
-.band { display:grid; grid-template-columns:repeat(5,1fr); border-bottom:1px solid var(--rule); }
+.band { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  border-bottom:1px solid var(--rule); }
 .band .m { padding:20px 18px 18px 0; border-right:1px solid var(--rule-soft); }
 .band .m:last-child { border-right:0; }
 @media (max-width:720px) {
@@ -85,8 +155,7 @@ main { max-width:1180px; margin:0 auto; padding:0 22px 80px; }
   .band .v { font-size:23px; }
 }
 .band .v { font:600 27px/1 var(--mono); letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
-.band .l { font:400 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-  color:var(--slate); margin-top:9px; }
+.band .l { font:var(--micro); color:var(--slate); margin-top:9px; }
 .band .d { font:500 12px/1 var(--mono); margin-left:7px; letter-spacing:0; }
 /* 값만 있는 숫자는 못 읽는다 — 무엇에 대한 얼마인지(기간·직전값)를 한 줄로 붙인다. */
 .band .b { font:400 11px/1.4 var(--mono); color:var(--slate); margin-top:5px;
@@ -100,8 +169,7 @@ main { max-width:1180px; margin:0 auto; padding:0 22px 80px; }
 /* ── 섹션 ───────────────────────────────────────────────── */
 section { padding:34px 0 6px; border-top:1px solid var(--rule-soft); }
 section:first-of-type { border-top:0; }
-.eyebrow { font:400 10px/1 var(--mono); letter-spacing:.24em; text-transform:uppercase;
-  color:var(--slate); }
+.eyebrow { font:var(--micro); color:var(--slate); }
 h2 { font:650 19px/1.3 var(--sans); letter-spacing:-.01em; margin:9px 0 3px; }
 .sub { font-size:13px; color:var(--slate); margin:0 0 16px; }
 
@@ -110,9 +178,9 @@ h2 { font:650 19px/1.3 var(--sans); letter-spacing:-.01em; margin:9px 0 3px; }
 .logwrap { overflow-x:auto; }
 .log { width:100%; min-width:720px; display:block; }
 .log text { font-family:var(--mono); }
-.log .axis { font-size:10px; fill:var(--slate); letter-spacing:.1em; }
+.log .axis { font-size:10.5px; fill:var(--slate); font-family:var(--sans); }
 @keyframes grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
-.legend { font:400 11.5px/1.6 var(--mono); color:var(--slate); margin-top:10px; }
+.legend { font:400 12px/1.6 var(--sans); color:var(--slate); margin-top:10px; }
 .legend b { color:var(--ink); font-weight:500; }
 
 /* ── 두 칸 ──────────────────────────────────────────────── */
@@ -121,14 +189,13 @@ h2 { font:650 19px/1.3 var(--sans); letter-spacing:-.01em; margin:9px 0 3px; }
 
 /* ── 표: 상자 없이 괘선만 ───────────────────────────────── */
 table { border-collapse:collapse; width:100%; font-size:13.5px; }
-th { text-align:left; font:400 10px/1 var(--mono); letter-spacing:.16em;
-  text-transform:uppercase; color:var(--slate); padding:0 12px 8px 0;
+th { text-align:left; font:var(--micro); color:var(--slate); padding:0 12px 8px 0;
   border-bottom:1px solid var(--rule); white-space:nowrap; }
 td { padding:8px 12px 8px 0; border-bottom:1px solid var(--rule-soft); vertical-align:baseline; }
 tr:last-child td { border-bottom:0; }
 .num, td.num, th.num { text-align:right; font-family:var(--mono);
   font-variant-numeric:tabular-nums; padding-right:0; }
-.kwcell { font-family:var(--mono); font-size:12.5px; }
+.kwcell { font-size:13px; }
 .empty { font-size:13px; color:var(--slate); padding:14px 0;
   border-top:1px solid var(--rule-soft); }
 
@@ -147,12 +214,10 @@ th[data-s].asc::after { content:"↑"; opacity:1; color:var(--patina); }
 th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 /* 표 위 도구줄: 찾기·개수·내보내기. 표가 길 때만 붙는다. */
 .tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 11px; }
-.tools input { width:auto; flex:1 1 190px; max-width:280px; font-family:var(--mono);
-  font-size:12.5px; }
-.tools select { width:auto; flex:0 0 auto; font-family:var(--mono); font-size:12.5px;
-  padding-right:2px; }
-.tools .n { font:400 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-  color:var(--slate); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.tools input { width:auto; flex:1 1 190px; max-width:280px; font-size:13px; }
+.tools select { width:auto; flex:0 0 auto; font-size:13px; padding-right:2px; }
+.tools .n { font:var(--micro); color:var(--slate); white-space:nowrap;
+  font-variant-numeric:tabular-nums; }
 .tools .sp { flex:1; }
 .tools .go { flex:0 0 auto; }
 /* 빈 화면은 막다른 길이 아니라 다음 한 걸음 — 뭘 하면 채워지는지 같이 준다. */
@@ -177,12 +242,11 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .score { font:600 19px/1 var(--mono); font-variant-numeric:tabular-nums; width:44px;
   text-align:right; }
 /* 숫자만 있으면 88이 뭔지 모른다 — 단위를 붙여 100점 만점임을 그 자리에서 말한다. */
-.score .u { display:block; font:400 9px/1 var(--mono); letter-spacing:.1em;
-  text-transform:uppercase; color:var(--slate); margin-top:5px; }
+.score .u { display:block; font:500 10px/1 var(--sans); color:var(--slate); margin-top:5px; }
 .opp .oh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
 /* 종류는 채워서(분류), 상태는 테를 둘러서(상태) — 두 배지가 서로 다른 말을 한다. */
-.opp .kind { font:400 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
-  color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
+.opp .kind { font:var(--micro); color:var(--patina); background:var(--wash);
+  border-radius:2px; padding:4px 7px; }
 .opp .dt { font:400 11px/1 var(--mono); color:var(--slate); }
 .opp .target { font-family:var(--mono); font-size:13.5px; margin:7px 0 3px;
   word-break:break-word; }
@@ -206,8 +270,7 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .deta { margin:0 0 12px; padding-left:18px; font-size:12.5px; color:var(--slate); }
 .deta li { margin:4px 0; }
 .dett { width:100%; border-collapse:collapse; font-size:12px; }
-.dett th { text-align:left; font:400 10px/1 var(--mono); letter-spacing:.1em;
-  text-transform:uppercase; color:var(--slate); padding:6px 8px;
+.dett th { text-align:left; font:var(--micro); color:var(--slate); padding:6px 8px;
   border-bottom:1px solid var(--rule); }
 .dett td { padding:6px 8px; border-bottom:1px solid var(--rule-soft); vertical-align:top; }
 .dett td a { font-family:var(--mono); word-break:break-all; }
@@ -225,7 +288,7 @@ td.expcell { padding:0 !important; }
 /* 프롬프트 상자 — 펼침 패널 안의 접이식. 손잡이는 버튼처럼 보이게 둔다. */
 .ask { margin:10px 0 4px; }
 .ask > summary { display:inline-block; cursor:pointer; list-style:none;
-  font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
+  font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:6px 10px; }
 .ask > summary::-webkit-details-marker { display:none; }
 .ask > summary:hover { color:var(--patina); border-color:var(--patina); }
@@ -233,14 +296,14 @@ td.expcell { padding:0 !important; }
 .pbox { margin-top:8px; }
 .pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
   font-size:11.5px; color:var(--slate); margin-bottom:5px; }
-.pb-h button { font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
+.pb-h button { font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
 .pb-h button:hover { color:var(--patina); border-color:var(--patina); }
 .pbox textarea { width:100%; box-sizing:border-box; resize:vertical;
   font:400 11.5px/1.6 var(--mono); color:var(--ink); background:var(--bar);
   border:1px solid var(--rule-soft); border-radius:2px; padding:10px; }
-.st { font:400 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-  padding:3px 7px; border:1px solid var(--rule); border-radius:2px; white-space:nowrap; }
+.st { font:var(--micro); padding:3px 7px; border:1px solid var(--rule);
+  border-radius:2px; white-space:nowrap; }
 .st-new { color:var(--patina); border-color:var(--patina); }
 .st-acked { color:var(--copper); border-color:var(--copper); }
 .st-done { color:var(--slate); }
@@ -251,12 +314,12 @@ td.expcell { padding:0 !important; }
   .opp .st { grid-column:2; justify-self:start; margin-top:9px; }
 }
 .acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
-.acts button { font:400 11px/1 var(--mono); color:var(--slate); background:transparent;
+.acts button { font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
   border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
 .acts button:hover { color:var(--patina); border-color:var(--patina); }
 
 /* ── 칩·로그줄 ─────────────────────────────────────────── */
-.chip { display:inline-block; font:400 12px/1 var(--mono); border:1px solid var(--rule);
+.chip { display:inline-block; font:400 12.5px/1 var(--sans); border:1px solid var(--rule);
   border-radius:2px; padding:5px 9px; margin:0 6px 6px 0; color:var(--slate); }
 .chip b { color:var(--ink); font-weight:500; }
 /* kind 칩: 기회 목록 필터. 누른 칩만 보이고, 다시 누르면 전체로. */
@@ -266,8 +329,7 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .oppchips { margin:0 0 10px; }
 /* ── 안내: 시추 진행도 ─────────────────────────────────────
    6단계가 갱도다. 지금 프로젝트가 어디까지 팠는지 Brain에서 읽어 채운다. */
-#guide { background:var(--card); border:1px solid var(--rule); padding:26px 26px 30px;
-  margin-top:26px; }
+#guide { padding:18px 0 30px; }
 #guide .lead { font-size:14px; color:var(--slate); margin:6px 0 26px; max-width:68ch; }
 #guide .lead b { color:var(--ink); font-weight:600; }
 .shaft { display:grid; grid-template-columns:26px 1fr; gap:0 18px; }
@@ -289,7 +351,8 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .stp.done .dot { background:var(--patina); border-color:var(--patina); color:var(--card); }
 .stp.here .dot { border-color:var(--patina); box-shadow:0 0 0 4px var(--wash);
   color:var(--patina); }
-.stp .body { padding:4px 0 26px; display:grid; grid-template-columns:1fr auto;
+.stp .body { padding:4px 0 26px; display:grid;
+  grid-template-columns:minmax(0,62ch) auto; justify-content:start;
   gap:0 28px; align-items:start; }
 .stp .body .txt { min-width:0; }
 .stp:last-child .body { padding-bottom:0; }
@@ -298,12 +361,12 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
   align-items:baseline; flex-wrap:wrap; }
 .stp.later h3 { color:var(--slate); }
 .stp .gain { font-size:13.5px; color:var(--slate); margin:5px 0 0; max-width:62ch; }
-.stp .state { font:400 11.5px/1 var(--mono); letter-spacing:.04em; }
+.stp .state { font:400 12px/1 var(--sans); }
 .stp.done .state { color:var(--patina); }
 .stp.here .state { color:var(--copper); }
 .stp.later .state { color:var(--slate); }
-.stp .now { font:400 10px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase;
-  color:var(--copper); border:1px solid var(--copper); border-radius:2px; padding:3px 7px; }
+.stp .now { font:var(--micro); color:var(--copper); border:1px solid var(--copper);
+  border-radius:2px; padding:3px 7px; }
 .cmd { display:inline-block; font:500 12.5px/1 var(--mono); margin:11px 8px 0 0;
   background:var(--stone); border:1px solid var(--rule); border-radius:2px;
   padding:7px 11px; cursor:pointer; color:var(--ink); }
@@ -315,13 +378,13 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .loopback b { color:var(--patina); font-weight:600; }
 .loopback code { font:500 12.5px/1 var(--mono); background:var(--stone);
   border:1px solid var(--rule); border-radius:2px; padding:4px 7px; color:var(--ink); }
-.runlog { font:400 12px/1.9 var(--mono); color:var(--slate); }
+.runlog { font:400 12.5px/1.9 var(--sans); color:var(--slate); }
 .runlog b { color:var(--ink); font-weight:500; }
 .runlog .r { display:block; border-bottom:1px solid var(--rule-soft); padding:5px 0; }
 
 /* ── 진단 배너 ─────────────────────────────────────────── */
-#docban { border-left:2px solid var(--patina); padding:16px 0 16px 16px; margin:26px 0 0;
-  background:var(--wash); }
+#docban { border-left:2px solid var(--patina); padding:16px 18px 16px 16px; margin:26px 0 0;
+  background:var(--wash); max-width:80ch; }
 #docban .verdict { font:650 16px/1.35 var(--sans); }
 #docban .nx { font:400 13px/1 var(--sans); margin-top:7px; color:var(--slate); }
 #docban code { font:500 12.5px/1 var(--mono); background:var(--card); color:var(--ink);
@@ -329,11 +392,10 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 #docban ul { margin:10px 0 0; padding-left:17px; font-size:13.5px; }
 #docban ul.must { color:var(--copper); }
 #docban details { margin-top:9px; }
-#docban summary { font:400 12px/1 var(--mono); color:var(--slate); cursor:pointer; }
+#docban summary { font:500 12.5px/1 var(--sans); color:var(--slate); cursor:pointer; }
 
 /* ── 설정 패널 ─────────────────────────────────────────── */
-#setup { background:var(--card); border:1px solid var(--rule); padding:4px 22px 22px;
-  margin-top:26px; }
+#setup { padding:18px 0 22px; }
 .step { padding:18px 0; border-top:1px solid var(--rule-soft); }
 .step:first-of-type { border-top:0; }
 .step h3 { font:600 14px/1.3 var(--sans); margin:0 0 5px;
@@ -342,17 +404,15 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .step .why b { color:var(--ink); }
 /* 자기 OAuth 클라이언트를 쓰는 사람은 소수다 — 접어 두고 필요한 사람만 편다. */
 .step details { margin-top:18px; border-top:1px solid var(--rule-soft); padding-top:14px; }
-.step summary { font:400 12px/1.5 var(--mono); color:var(--slate); cursor:pointer; }
+.step summary { font:500 13px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
 .step summary:hover { color:var(--patina); }
 .step details .why { margin:12px 0 0; }
 .step .why code, .stat { font-family:var(--mono); font-size:11.5px; }
-.stat { letter-spacing:.08em; text-transform:uppercase; font-weight:400; }
+.stat { font:var(--micro); }
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
 .stat.opt { color:var(--slate); }   /* 안 해도 되는 것 — 경고색으로 찍으면 할 일이 된다 */
-label { display:block; font:400 10px/1 var(--mono); letter-spacing:.12em;
-  text-transform:uppercase; color:var(--slate); margin:12px 0 5px; }
-label b, label a { color:var(--patina); font-weight:400; text-transform:none;
-  letter-spacing:0; }
+label { display:block; font:var(--micro); color:var(--slate); margin:12px 0 5px; }
+label b, label a { color:var(--patina); font-weight:500; }
 label a { text-decoration:underline; text-underline-offset:2px; }
 input, select, textarea { font:400 13.5px/1.4 var(--sans); width:100%; color:var(--ink);
   background:transparent; border:0; border-bottom:1px solid var(--rule); padding:5px 2px; }
@@ -364,7 +424,7 @@ option { background:var(--card); }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 22px; }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
 .row { margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-.go { font:500 12px/1 var(--mono); letter-spacing:.04em; color:var(--card);
+.go { font:500 13px/1 var(--sans); color:var(--card);
   background:var(--ink); border:1px solid var(--ink); border-radius:2px;
   padding:8px 14px; cursor:pointer; }
 .go:hover { background:var(--patina); border-color:var(--patina); }
@@ -372,11 +432,11 @@ option { background:var(--card); }
 /* 이미 끝난 단계의 버튼은 물러나 있게 — 다시 누를 일이 거의 없다. */
 .go.sec { background:transparent; color:var(--slate); border-color:var(--rule); }
 .go.sec:hover { color:var(--patina); border-color:var(--patina); }
-.msg { font:400 12px/1.5 var(--mono); }
+.msg { font:400 12.5px/1.5 var(--sans); }
 .msg.bad { color:var(--copper); } .msg.good { color:var(--patina); }
 pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px solid var(--rule);
   padding:11px 13px; max-height:210px; overflow:auto; white-space:pre-wrap; margin:14px 0 0; }
-#err { color:var(--copper); font-family:var(--mono); font-size:13px; padding:26px 0; }
+#err { color:var(--copper); font-size:13.5px; padding:26px 0; }
 </style>
 </head>
 <body>
@@ -388,130 +448,18 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
     <select id="gscdate" aria-label="기준 수집일" hidden></select>
     <span class="sp"></span>
     <span id="meta"></span>
-    <button class="hbtn" id="toggle-guide">안내</button>
-    <button class="hbtn" id="refresh">새로고침</button>
-    <button class="hbtn" id="toggle-setup">설정</button>
   </div>
-  <div class="hax" id="axes" hidden></div>
+  <!-- 메뉴 항목은 여기 적지 않는다 — 정본은 뷰 파일의 view-def 이고, 조립이 그걸
+       window.__VIEWS__ 로 실어 보낸다(문서 머리의 MANIFEST 자리). -->
+  <nav id="nav" aria-label="화면"></nav>
+  <div class="rail-foot">
+    <button class="hbtn" id="refresh">새로고침</button>
+  </div>
 </header>
 
 <main>
+  <div class="hax" id="axes" hidden></div>
   <section id="docban" hidden></section>
-
-  <section id="setup" hidden>
-    <div class="step">
-      <h3>1. 기본 부품 <span class="stat" id="s-deps"></span></h3>
-      <p class="why">키워드 수집과 리포트에 쓰는 파이썬 부품 2개. 무료, 1분.</p>
-      <div class="row"><button class="go" id="btn-deps">설치하기</button>
-        <span class="msg" id="m-deps"></span></div>
-    </div>
-
-    <div class="step">
-      <h3>2. 첫 사이트 <span class="stat" id="s-proj"></span></h3>
-      <p class="why">측정할 사이트를 등록합니다. 나중에 <code>~/.capture/projects/</code>에서
-        고칠 수 있습니다.</p>
-      <div class="grid">
-        <div><label>이름 — 명령에 쓸 짧은 영문</label><input id="p-name" placeholder="mysite"></div>
-        <div><label>종류</label><select id="p-type">
-          <option value="saas">saas — 서비스·앱</option>
-          <option value="game">game — 게임</option>
-          <option value="local_clinic">local_clinic — 지역 매장·병원</option>
-          <option value="directory">directory — 목록·디렉터리</option>
-        </select></div>
-        <div><label>도메인</label><input id="p-domain" placeholder="example.com"></div>
-        <div><label>언어-지역</label><input id="p-locale" value="ko-KR"></div>
-        <div><label>서치콘솔 속성 — 비우면 sc-domain:도메인</label>
-          <input id="p-gsc" placeholder="sc-domain:example.com"></div>
-        <div><label>브랜드 표기 — 쉼표로 여러 개</label>
-          <input id="p-alias" placeholder="마이사이트, MySite"></div>
-      </div>
-      <label>씨앗 키워드 — 떠오르는 검색어 3~10개 (쉼표나 줄바꿈)</label>
-      <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
-      <label>경쟁사 도메인 — 선택</label>
-      <input id="p-comp" placeholder="competitor.com, other.com">
-      <label>등재·경쟁 도구 이름 — 남의 브랜드 검색을 걸러냅니다 (쉼표)</label>
-      <input id="p-tools" placeholder="ecrett, paperpal, future tools">
-      <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
-        <span class="msg" id="m-proj"></span></div>
-    </div>
-
-    <div class="step">
-      <h3>3. 구글 서치콘솔 연결 <span class="stat" id="s-gsc"></span></h3>
-      <!-- 문구는 3-상태(연결됨 / 로그인 대기 / 인증 없음)마다 다르다 — renderSetup이 채운다.
-           파일이 놓였나가 아니라 **연결됐나**로 갈린다(번들 클라이언트는 늘 존재한다). -->
-      <p class="why" id="why-gsc"></p>
-      <div class="row"><button class="go" id="btn-gsclogin" hidden>구글 로그인 열기</button>
-        <button class="go" id="btn-gsc">받은 인증 파일 가져오기</button>
-        <button class="go" id="btn-depsgsc" hidden>구글 수집용 부품 설치</button>
-        <span class="msg" id="m-gsc"></span></div>
-      <details id="own-client">
-        <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
-        <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
-          [OAuth 클라이언트 ID 만들기] → <b>데스크톱 앱</b>. 다 만들면 화면에 뜨는
-          <b>두 문자열만</b> 옮겨 적으시면 됩니다 — JSON 다운로드는 필요 없습니다.
-          저장하면 <code>~/.capture/gsc_oauth_client.json</code> 이 되고, 동봉 클라이언트
-          대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 하셔야
-          합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
-        <div class="grid">
-          <div><label>client_id</label>
-            <input id="oc-id" placeholder="1234-abc.apps.googleusercontent.com"></div>
-          <div><label>client_secret</label>
-            <input id="oc-secret" type="password" placeholder="GOCSPX-..."></div>
-        </div>
-        <div class="row"><button class="go sec" id="btn-ocsave">클라이언트 저장</button>
-          <span class="msg" id="m-oc"></span></div>
-      </details>
-    </div>
-
-    <div class="step">
-      <h3>4. API 키 <span class="stat" id="s-keys"></span></h3>
-      <p class="why"><b>키가 하나도 없어도 기회 목록까지 갑니다.</b> 측정을 막는 것은
-        위 <b>3번 구글 로그인 하나뿐</b>이고 그건 무료입니다. 아래 키는 새 기능을 사는 게
-        아니라 <b>자동화를 사는 것</b>입니다 — 없으면 그 단계만 건너뛰고 나머지는 그대로
-        돕니다. <b>OpenRouter</b>는 AI 노출 확인(ChatGPT·Perplexity·Gemini에 질문 수십
-        개를 자동 실행), <b>DataForSEO</b>는 순위·AI 요약·경쟁사 역키워드 측정.
-        <b>Serper</b>는 DataForSEO 대체재(AI 요약 없음)라 보통은 필요 없습니다.
-        저장하면 <code>~/.capture/env</code>에만 들어가고 화면에 다시 표시되지
-        않습니다. 비운 채 저장하면 지워집니다.</p>
-      <div class="grid">
-        <div><label>OpenRouter — AI 노출 자동화 · 발급 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a></label>
-          <input id="k-or" type="password" placeholder="sk-or-..."></div>
-        <div><label>DataForSEO 아이디 — 순위·AI 요약·역키워드 · 발급 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a></label>
-          <input id="k-dfsl" placeholder="가입 이메일"></div>
-        <div><label>DataForSEO 비밀번호 — 계정 비번 아님 · API Settings 에서 확인</label>
-          <input id="k-dfsp" type="password" placeholder="API 비밀번호"></div>
-        <div><label>Serper — 선택 (DataForSEO 대체재) · 발급 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a></label>
-          <input id="k-serper" type="password" placeholder="선택 — 보통 필요 없음"></div>
-      </div>
-      <div class="row"><button class="go" id="btn-keys">키 저장</button>
-        <span class="msg" id="m-keys"></span></div>
-    </div>
-
-    <div class="step">
-      <h3>5. 마케팅 스킬 <span class="stat" id="s-skills"></span></h3>
-      <!-- doctor가 누락을 보고해 채팅(또는 이 버튼)이 설치를 끝낸다. 완료 후에는
-           Claude Code를 한 번 재시작해야 화면에 뜬다 — 그 동안은 현재 세션이
-           그 스킬을 모른다. 그래서 "재시작 필요"를 명시한다. -->
-      <p class="why" id="why-skills"></p>
-      <div class="row"><button class="go" id="btn-skills" hidden>마케팅 스킬 설치하기</button>
-        <span class="msg" id="m-skills"></span></div>
-    </div>
-    <pre id="setup-log" hidden></pre>
-  </section>
-
-  <section id="guide" hidden>
-    <div class="eyebrow" data-web="분석 절차 · 6단계">이 도구를 쓰는 순서 · 6단계</div>
-    <h2 style="margin-top:8px" data-web="분석 절차">다음에 뭘 하면 되나</h2>
-    <p class="lead"><b data-web="분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석">재고 → 손댈 것을 뽑고 → 고치고 → 다시 재는</b> 반복입니다.
-      한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 끝난 단계는 실제로 모인
-      자료를 보고 표시하니, 아래 <span data-web="[권장 조치]">[지금 할 것]</span> 하나만 하시면 됩니다.</p>
-    <div class="donebar" id="donebar" hidden></div>
-    <div class="shaft" id="shaft"></div>
-    <div class="loopback">2~5번은 <code>/capture run</code> 하나로 한 번에 돌릴 수도
-      있습니다(중간에 비용이 드는 단계에서 물어봅니다).<br>
-      6번이 끝나면 <b>2번으로 돌아옵니다</b> — 고친 게 순위와 인용에 반영됐는지는
-      다음번에 실적을 읽을 때 숫자로 나옵니다.</div>
-  </section>
 
   <div id="err" hidden></div>
 
@@ -557,6 +505,119 @@ function applyWording(root) {
     el.removeAttribute("data-web");
   });
 }
+// ── 셸: 화면 목록 · 메뉴 · 전환 ───────────────────────────────
+// 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이 window.__VIEWS__ 로
+// 실어 보낸다. 여기서 이름을 다시 나열하지 않는다: 말없이 어긋난 두 표가 예전에
+// 로컬과 호스팅의 섹션 순서를 서로 다르게 만든 원인이다.
+// 뒤에 얹히는 층(호스팅 애드온)은 add*/drop 으로 덧붙이고 뺄 뿐이다.
+const SM = {
+  views: (window.__VIEWS__ || []).map(v => ({
+    id: v.id, title: v.title,
+    sections: (v.sections || []).slice(), stages: (v.stages || []).slice()})),
+  cur: "",
+
+  at(id) { return this.views.findIndex(v => v.id === id); },
+
+  // after 바로 뒤에 — 못 찾으면 맨 끝. 원본 뷰 파일이 없는 화면(백링크)이 쓴다.
+  addView(def, after) {
+    if (this.at(def.id) >= 0) return;
+    const i = this.at(after);
+    this.views.splice(i < 0 ? this.views.length : i + 1, 0,
+      {id: def.id, title: def.title,
+       sections: (def.sections || []).slice(), stages: (def.stages || []).slice()});
+    this.sync();
+  },
+
+  // 원본 뷰에 없는 섹션을 그 화면 안 제자리에 끼운다.
+  addSection(viewId, secId, after) {
+    const v = this.views[this.at(viewId)];
+    if (!v || v.sections.indexOf(secId) >= 0) return;
+    const i = v.sections.indexOf(after);
+    v.sections.splice(i < 0 ? v.sections.length : i + 1, 0, secId);
+    this.sync();
+  },
+
+  // 이 배포에 없는 화면을 뺀다 — 호스팅의 [설정], 박제본의 [설정]·[안내].
+  drop(id) {
+    const i = this.at(id);
+    if (i < 0) return;
+    const v = this.views.splice(i, 1)[0];
+    const box = $("view-" + v.id);
+    if (box) box.remove();
+    if (this.cur === v.id) this.cur = "";
+    this.sync();
+  },
+
+  touched: false,
+  landed: 0,
+  // rank 가 큰 쪽이 이긴다: 설정(2) > 안내(1). 사용자가 메뉴를 누르면 끝.
+  land(id, rank) {
+    if (this.touched || rank <= this.landed || this.at(id) < 0) return;
+    this.landed = rank;
+    this.show(id);
+  },
+
+  show(id) {
+    if (this.at(id) < 0) return;
+    this.cur = id;
+    for (const v of this.views) {
+      const box = $("view-" + v.id);
+      if (box) box.hidden = v.id !== id;
+    }
+    document.querySelectorAll("#nav button").forEach(b => {
+      const on = b.dataset.v === id;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-current", on ? "page" : "false");
+    });
+    window.scrollTo(0, 0);
+  },
+
+  // 상자를 만들고 섹션을 제자리로 옮긴다. 여러 번 불려도 공짜다 — 애드온이
+  // 만드는 섹션은 늦게 생기므로 실제로 여러 번 불린다.
+  sync() {
+    const c = $("content");
+    if (!c) return;
+    if (!this.cur && this.views.length) this.cur = this.views[0].id;
+    for (const v of this.views) {
+      let box = $("view-" + v.id);
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "view-" + v.id;
+        box.className = "view";
+        box.hidden = v.id !== this.cur;
+        box.innerHTML = '<div class="vh"><h1></h1><span class="sp"></span></div>';
+        box.querySelector("h1").textContent = v.title;
+        c.appendChild(box);
+      }
+      c.appendChild(box);                       // view-def 순서가 곧 화면 순서다
+      for (const id of v.sections) {
+        const el = $(id);
+        if (!el) continue;
+        const sec = el.closest("section") || el;   // band 는 section 이 아니다
+        if (sec.parentNode !== box) box.appendChild(sec);
+      }
+    }
+    const nav = $("nav");
+    if (nav) {
+      nav.innerHTML = "";
+      for (const v of this.views) {
+        const b = document.createElement("button");
+        b.dataset.v = v.id;
+        b.textContent = v.title;
+        b.onclick = () => { SM.touched = true; SM.show(v.id); };
+        nav.appendChild(b);
+      }
+    }
+    this.show(this.at(this.cur) >= 0 ? this.cur
+              : (this.views[0] ? this.views[0].id : ""));
+    // 상자가 (다시) 섰다고 알린다 — 뒤에 얹히는 층이 화면 머리에 자기 버튼을 단다.
+    document.dispatchEvent(new CustomEvent("sm:views"));
+  },
+};
+// 최상위 const 는 global lexical 환경에 들어간다 — 다른 스크립트에서 이름으로는
+// 보이지만 window 의 속성은 아니다. 뒤에 얹히는 층이 "셸이 있나"를 물을 자리를 준다.
+window.SM = SM;
+
 // base(직전 값)를 주면 증감률까지 같이 말한다 — +471 만으로는 큰 건지 알 수 없다.
 const delta = (d, invert, base, tip) => {
   if (!Number.isFinite(d) || d === 0) return "";   // 스냅샷 0개면 NaN — 안 그린다
@@ -850,8 +911,8 @@ function renderGuide(d) {
        ${back}부터입니다. 고친 게 순위·인용에 반영됐는지는
        다시 잴 때 숫자로 나옵니다.`;
   }
-  // 아직 한 바퀴도 안 돈 프로젝트면 펴서 보여준다. 다 돌았으면 헤더 [안내]로 연다.
-  if (here !== -1 && !d.progress.gsc_days) $("guide").hidden = false;
+  // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
+  if (here !== -1 && !d.progress.gsc_days) SM.land("guide", 1);
   // 이 함수가 방금 새로 그린 자리에도 대체 문구를 입힌다. render() 끝에서도 한 번
   // 돌지만 순서에 기대지 않는다 — applyWording 은 속성을 지우므로 두 번 돌아도 공짜다.
   applyWording($("guide"));
@@ -969,7 +1030,9 @@ let PINNED = "";                    // [기준 수집일]로 고정한 GSC 수�
 
 async function load() {
   const name = $("proj").value;
-  if (!name) { $("content").hidden = true; return; }   // 배너가 온보딩을 안내한다
+  // 사이트가 없어도 본문은 세워 둔다 — 첫 등록을 하는 곳이 [설정] 화면이고,
+  // 통째로 감추면 거기 갈 길이 없다(배너만 남아 막다른 길이 된다).
+  if (!name) { SM.show(SM.at("settings") >= 0 ? "settings" : "guide"); return; }
   location.hash = encodeURIComponent(name);
   const res = await fetch("/api/data?project=" + encodeURIComponent(name) +
                           (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
@@ -1081,8 +1144,10 @@ function renderSetup(d) {
   $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
   $("btn-deps").className = d.core_ok ? "go sec" : "go";
   $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치하기";
-  // 할 게 남았으면 펼쳐 둔다. 다 끝난 뒤엔 헤더의 [설정]으로 연다.
-  if (d.show_setup) $("setup").hidden = false;
+  // 준비물이 덜 됐으면 거기서부터 — 측정 자체가 안 도는 상태다.
+  // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
+  // 할 수 있는 게 없는 화면에 떨어진다.
+  if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 2);
   prefillProject();
 }
 
@@ -1221,18 +1286,15 @@ $("btn-proj").addEventListener("click", async () => {
                 `채팅에 /capture add ${r.name}`, true);
   loadDoctor();
   loadProjects().then(n => { if (n) load(); });
-  // 등록이 끝나면 설정은 접고 방금 만든 사이트 화면을 보여준다.
-  setTimeout(() => { $("setup").hidden = true; window.scrollTo({top: 0}); }, 900);
+  // 등록이 끝나면 방금 만든 사이트의 개요로 간다.
+  setTimeout(() => SM.show("overview"), 900);
 });
 
 $("proj").addEventListener("change", () => { PINNED = ""; load(); });
 $("gscdate").addEventListener("change", () => { PINNED = $("gscdate").value; load(); });
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
-$("toggle-setup").addEventListener("click", () => $("setup").hidden = !$("setup").hidden);
-$("toggle-guide").addEventListener("click", () => {
-  $("guide").hidden = !$("guide").hidden;
-  if (!$("guide").hidden) $("guide").scrollIntoView({block: "start"});
-});
+
+SM.sync();
 
 // 박제된 기록(--export)이면 서버가 없다 — 페이지에 박힌 데이터를 그리고, 손댈 수
 // 없는 것들(트리아지·설정·새로고침·사이트 전환)은 아예 감춘다.
@@ -1241,9 +1303,9 @@ if (window.__SNAPSHOT__) {
   READONLY = true;
   $("proj").outerHTML = `<span class="mark" style="color:var(--patina)">` +
     `${esc(s.data.project.name)}</span>`;
-  for (const id of ["refresh", "toggle-setup", "toggle-guide", "gscdate"]) $(id).hidden = true;
-  $("setup").remove();                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
-  $("guide").remove();
+  for (const id of ["refresh", "gscdate"]) $(id).hidden = true;
+  SM.drop("settings");                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
+  SM.drop("guide");
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
   if (s.actions.length) {
     $("acts").hidden = false;
@@ -1252,7 +1314,7 @@ if (window.__SNAPSHOT__) {
   render(s.data);
 } else {
   loadDoctor();
-  loadProjects().then(n => { if (n) load(); else $("content").hidden = true; });
+  loadProjects().then(load);
 }
 </script>
 </body>

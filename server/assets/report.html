@@ -1,14 +1,7 @@
 
 <style>
-  body{word-break:keep-all}
-  /* 원본 자간은 영문 대문자 기준이라 한글이 흩어진다 */
-  .eyebrow{letter-spacing:.08em}
-  .band .l{letter-spacing:.03em;font-family:var(--sans);font-weight:500}
-  .band .b,.score .u{font-family:var(--sans);font-variant-numeric:tabular-nums}
-  .tag{letter-spacing:.12em}
-  th{letter-spacing:.05em}
-  .opp .kind{letter-spacing:.05em}
-  #sm-bl{padding:26px 0 10px}
+  /* 자간·줄바꿈은 원본(dashboard.html)이 이미 한글 기준으로 잡는다 — 여기서
+     되돌리지 않는다. 이 애드온은 보고서에만 있는 것(백링크)만 칠한다. */
   #sm-bl table{width:100%;table-layout:fixed}
   #sm-bl th:first-child,#sm-bl td:first-child{width:42%}
   #sm-bl th:last-child,#sm-bl td:last-child{text-align:right;width:20%}
@@ -43,7 +36,7 @@
     }).join("");
     var sec = document.createElement("section");
     sec.id = "sm-bl";
-    sec.innerHTML = '<p class="eyebrow">BACKLINKS · ' + esc(s.checked_date) + "</p>" +
+    sec.innerHTML = '<p class="eyebrow lat">BACKLINKS · ' + esc(s.checked_date) + "</p>" +
       "<h2>백링크 프로필</h2>" +
       '<p class="sub">참조 도메인 수가 백링크 총수보다 중요합니다 — 한 도메인에서 100개보다 100개 도메인에서 1개씩이 낫습니다.</p>' +
       '<div class="band" style="margin-bottom:18px">' +
@@ -56,8 +49,12 @@
       (rows ? '<table><thead><tr><th>참조 도메인</th><th class="num">지수</th>' +
         '<th class="num">백링크</th><th class="num">dofollow</th><th>최초 발견</th></tr></thead>' +
         "<tbody>" + rows + "</tbody></table>" : "");
-    var main = document.querySelector("main");
-    if (main) main.appendChild(sec);
+    // 화면이 나뉘어 있다 — main 에 그냥 붙이면 어느 화면을 보고 있든 아래에 남는다.
+    // 호스팅판과 같은 자리에 같은 이름으로 세운다(사이트 점검 다음).
+    var box = document.getElementById("content") || document.querySelector("main");
+    box.appendChild(sec);
+    if (window.SM) SM.addView({id: "backlinks", title: "백링크",
+                               sections: ["sm-bl"], stages: []}, "site");
   }
 })();
 </script>

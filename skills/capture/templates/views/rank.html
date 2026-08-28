@@ -11,8 +11,8 @@
    못 찾은 건 그보다 더 아래다. 지층 막대가 그 단면이고, 표가 시추 기록이다. */
 .rk-strata text { font-family:var(--mono); }
 .rk-strata .n { font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
-.rk-strata .lb { font-size:10.5px; fill:var(--slate); letter-spacing:.1em; }
-.rk-strata .edge { font-size:10px; fill:var(--patina); letter-spacing:.1em; }
+.rk-strata .lb { font-size:10.5px; fill:var(--slate); font-family:var(--sans); }
+.rk-strata .edge { font-size:10.5px; fill:var(--patina); font-family:var(--sans); }
 @keyframes rk-fade { from { opacity:0; } to { opacity:1; } }
 @media (prefers-reduced-motion: no-preference) {
   .rk-strata .bar { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
@@ -35,7 +35,7 @@
 </style>
 
 <section>
-  <div class="eyebrow">SERP</div>
+  <div class="eyebrow lat">SERP</div>
   <h2 data-web="순위 추적 기록">순위 기록</h2>
   <p class="sub" id="rk-sub"></p>
   <div id="ranks"></div>
