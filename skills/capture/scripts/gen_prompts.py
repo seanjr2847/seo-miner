@@ -24,7 +24,9 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -45,9 +47,65 @@ SYSTEM = (
     "Cover all four categories: 추천 (asking for recommendations in this field), "
     "비교 (comparing options), 문제해결 (solving the problem the site addresses), "
     "브랜드 (asking about this brand by name). Most prompts must NOT name the brand — "
-    "the point is to find out who gets cited when the user does not already know us."
+    "the point is to find out who gets cited when the user does not already know us. "
+    "Ground every prompt in the page list you are given — that is what this site actually "
+    "offers. Prefer what is specific to this site (its own named services, the niche "
+    "conditions it treats, its practitioners) over generic industry terms that every "
+    "competitor also targets. Never invent a service the page list does not show. "
+    "For 브랜드, ask about the site's own named services and people too, not just its name."
 )
 
+
+# 다국어 사본은 같은 것을 두세 번 말한다 — 경로 앞의 로케일 조각을 접는다.
+_LOCALE_SEG = re.compile(r"^/(?:[a-z]{2}(?:-[a-z]{2,4})?)(?=/)", re.I)
+# 목록·공지처럼 무엇을 파는지 안 말하는 자리는 재료가 못 된다.
+_NOISE = re.compile(r"^/(?:category|notice|page|tag|author|search|wp-)", re.I)
+
+
+def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
+    """사이트가 **무엇을 하는 곳인지** — 질문을 지을 때 이게 없으면 업종 일반형만 나온다.
+
+    이 함수가 없던 시절의 결과가 그 증거다: 어느 피부과에 물어도 "강남 써마지 잘하는
+    피부과 추천해줘"가 나왔다. 병원이 자기 이름을 붙여 파는 시술(디아더 PTT)도,
+    특수클리닉(한관종·비립종)도 재료에 없었으니 모델이 알 길이 없었다.
+
+    제목이 있으면 제목을 쓴다(사람 말이다). 없으면 URL 경로가 대신 말해 준다 —
+    /signature/theother-ptt/ 는 경로 자체가 그 병원만의 시술 이름을 담는다.
+    셋 다 없으면 빈 목록이다: 없는 것을 지어내지 않는다.
+    """
+    rows = []
+    # 1) 페이지 감사 — 제목·H1 까지 있는 가장 좋은 재료
+    try:
+        rows = [(r["url"], r["title"]) for r in conn.execute(
+            """SELECT url, title FROM page_audits WHERE project_id=?
+                AND checked_date=(SELECT MAX(checked_date) FROM page_audits
+                                   WHERE project_id=?)""", (project_id, project_id))]
+    except sqlite3.Error:
+        rows = []
+    # 2) 크롤 회차의 제목
+    if not rows:
+        rows = [(r["url"], r["title"]) for r in conn.execute(
+            """SELECT url, title FROM crawl_pages WHERE run_id=(
+                 SELECT MAX(id) FROM crawl_runs WHERE project_id=?)""", (project_id,))]
+    # 3) GSC 가 본 페이지 — 제목은 없지만 경로가 남는다. 노출 많은 순이 곧 중요한 순이다.
+    if not rows:
+        rows = [(r["page"], None) for r in conn.execute(
+            """SELECT page, SUM(impressions) imp FROM gsc_snapshots
+                WHERE project_id=? AND page IS NOT NULL
+             GROUP BY page ORDER BY imp DESC""", (project_id,))]
+
+    out, seen = [], set()
+    for url, title in rows:
+        path = urllib.parse.unquote(re.sub(r"^https?://[^/]+", "", str(url or "")))
+        path = _LOCALE_SEG.sub("", path.split("?")[0]).rstrip("/") or "/"
+        if path == "/" or _NOISE.match(path) or path in seen:
+            continue
+        seen.add(path)
+        t = " ".join(str(title or "").split())
+        out.append(f"{path} — {t}" if t else path)
+        if len(out) >= limit:
+            break
+    return out
 
 def brief(conn, project: str, top_n: int = 15) -> dict:
     """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다."""
@@ -70,16 +128,25 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
     return {"name": p["name"], "domain": p["domain"], "type": p["type"],
             "locale": p["locale"] or "ko-KR",
             "aliases": cfg.get("brand_aliases") or [],
-            "queries": queries}
+            "queries": queries,
+            # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
+            # 알고 짓게 되고, 그러면 어느 병원에 물어도 같은 질문이 나온다.
+            "offers": offers(conn, p["id"]),
+            "seeds": (cfg.get("seed_keywords") or [])[:20]}
 
 
 def user_msg(b: dict, n: int) -> str:
     q = ", ".join(b["queries"][:15]) or "(아직 없음)"
     alias = ", ".join(x for x in [b["name"], *b["aliases"]] if x)
+    seeds = ", ".join(b.get("seeds") or []) or "(없음)"
+    # 페이지 목록은 줄바꿈으로 준다 — 쉼표로 이으면 경로끼리 붙어 한 줄로 읽힌다.
+    pages = "\n".join(f"  {x}" for x in (b.get("offers") or [])) or "  (아직 없음)"
     return (f"Site: {b['name']} ({b['domain']})\n"
             f"Kind: {b['type']}\nAudience locale: {b['locale']}\n"
             f"Brand names: {alias}\n"
-            f"Search queries this site already gets impressions for: {q}\n\n"
+            f"Search queries this site already gets impressions for: {q}\n"
+            f"Keywords this site targets: {seeds}\n"
+            f"Pages this site actually has (its services, in its own words):\n{pages}\n\n"
             f"Write exactly {n} prompts.")
 
 
@@ -210,6 +277,26 @@ def _selfcheck() -> None:
     b = brief(conn, "clinic")
     assert b["queries"] == ["밀리아 제거", "점 빼기"], b        # 노출 많은 순
     assert "clinic.kr" in user_msg(b, 5) and "exactly 5" in user_msg(b, 5)
+
+    # 사이트가 **무엇을 파는지**가 재료에 실리는가. 이게 빠져 있어서 어느 병원에
+    # 물어도 업종 일반형("강남 써마지 잘하는 피부과")만 나왔다 — 자기 이름을 붙인
+    # 시술도 특수클리닉도 모델이 알 길이 없었다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(1,'2026-08-20',28,?,?,1,?,0.1,9.0)",
+        [("밀리아 제거", "https://clinic.kr/signature/clinic-ptt/", 500),
+         ("밀리아 제거", "https://clinic.kr/en/signature/clinic-ptt/", 400),   # 다국어 사본
+         ("점 빼기", "https://clinic.kr/category/notice/", 300),               # 목록 자리
+         ("점 빼기", "https://clinic.kr/special-clinic/syringoma-milia/", 200)])
+    conn.commit()
+    o = offers(conn, 1)
+    assert "/signature/clinic-ptt" in o, o                  # 노출 많은 순으로 먼저
+    assert "/special-clinic/syringoma-milia" in o, o
+    assert not [x for x in o if x.startswith("/en/")], f"다국어 사본을 안 접었다: {o}"
+    assert not [x for x in o if "/category/" in x], f"목록 자리를 안 걸렀다: {o}"
+    msg = user_msg(brief(conn, "clinic"), 5)
+    assert "/signature/clinic-ptt" in msg, "페이지 목록이 재료에 안 실렸다"
+    assert "Pages this site actually has" in msg, msg
 
     # 키가 없으면 조용히 빈 목록이 아니라 RuntimeError — 화면이 이유를 말해야 한다
     saved = os.environ.pop("OPENROUTER_API_KEY", None)
