@@ -31,6 +31,10 @@
 
 /* ── 요약: 아래 목록이 통째로 답하는 다섯 가지 ── */
 #runsum { margin:0 0 4px; }
+/* 낡은 수집은 색으로만 말했다 — 아래 칸들 사이에 붉은 글씨가 흩어져 있으면
+   "뭐부터 다시 돌리나"가 스캔이 안 된다. 몇 종류인지 한 줄로 세운다. */
+#runsum .stale { margin-top:10px; font-size:13px; color:var(--copper); }
+#runsum .stale .cmd { margin-top:0; }
 /* 종류별 마지막 — "무엇을 다시 돌릴 때가 됐나"에 답하는 자리다. */
 #lastby { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
   border-top:1px solid var(--rule-soft); margin:12px 0 20px; }
@@ -48,6 +52,10 @@
 
 #runs .when { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
   white-space:nowrap; }
+/* 판정 이유(HS_verdict.why)가 title 속성에만 들어 있었다 — 배지는 "오류 3"이라고만
+   보이고 무슨 일이 났는지는 손을 얹어야 나왔다. 실패·중단만 항상 편다: 성공한 40줄까지
+   다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. */
+#runs .why { font-size:12.5px; color:var(--copper); margin-top:4px; }
 
 /* ── 고친 것: 표가 아니라 줄이다. 경로·근거가 산문이라 칸에 안 들어간다. ── */
 #made .mk { display:grid; grid-template-columns:1fr auto; gap:0 14px;
@@ -62,9 +70,19 @@
 #made .br::before { content:"⑂ "; }
 #made .path { font-family:var(--mono); font-size:13px; margin:8px 0 0;
   word-break:break-all; }
-/* 이 줄이 루프다: 어느 기회가 이 수정을 낳았나. */
-#made .from { font:400 12px/1.6 var(--mono); color:var(--patina); margin-top:5px; }
+/* 이 줄이 루프다: 어느 기회가 이 수정을 낳았나 — 그래서 눌러서 그 기회로 간다.
+   등폭을 뺀 이유: 여기 담기는 건 대부분 한글 검색어다(등폭은 숫자·URL·날짜·식별자만). */
+#made .from { font:400 12.5px/1.6 var(--sans); color:var(--patina); margin-top:5px;
+  display:block; background:transparent; border:0; padding:0; cursor:pointer;
+  text-align:left; }
+#made .from:hover { text-decoration:underline; }
 #made .why { font-size:12.5px; color:var(--slate); margin-top:5px; }
+/* 회고의 결론이 붙는 자리 — 고친 날 앞뒤로 클릭이 어떻게 됐나. */
+#made .eff { font-size:12.5px; color:var(--slate); margin-top:5px; }
+#made .eff b { font:500 12.5px/1.6 var(--mono); font-variant-numeric:tabular-nums;
+  color:var(--ink); }
+#made .eff.up b { color:var(--patina); }
+#made .eff.down b { color:var(--copper); }
 #made .loop { margin-top:20px; padding-top:16px; border-top:1px solid var(--rule-soft);
   font-size:13px; color:var(--slate); }
 #made .loop b { color:var(--patina); font-weight:600; }
@@ -75,7 +93,9 @@
 </style>
 
 <section id="acts" hidden>
-  <div class="eyebrow">이 기록을 남길 때 정한 것</div>
+  <!-- 머리말은 두 출처가 나눠 쓴다: 박제본은 그때 정한 것을 셸이 채우고(문구 그대로),
+       라이브는 지금 남은 것을 HS_acts 가 채우며 이 머리말도 같이 바꾼다. -->
+  <div class="eyebrow" id="acts-eyebrow">이 기록을 남길 때 정한 것</div>
   <h2 data-web="권장 조치">다음 행동</h2>
   <ol id="acts-list"></ol>
 </section>
@@ -139,8 +159,9 @@ const HS_mmss = s => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초
       finished_at 이 없다는 건 그 컨텍스트조차 못 닫혔다는 뜻이다. ── */
 function HS_verdict(r) {
   const n = String(r.notes || "");
+  // 이유를 "기록 칸에 있다"고 가리키지 않는다 — 이제 그 칸에 이 문장과 나란히 편다.
   if (n.includes("중단:"))
-    return {cls:"bad", label:"중단", why:"도중에 예외로 멈췄습니다 — 기록 칸에 이유가 있습니다."};
+    return {cls:"bad", label:"중단", why:"도중에 예외로 멈췄습니다."};
   if (r.finished_at === null)
     return {cls:"bad", label:"미완", why:"끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
   const e = +((n.match(/\berrors=(\d+)/) || [])[1] || 0);
@@ -190,6 +211,18 @@ function HS_runKind(el) {
   HS_runTools();
 }
 
+// 종류별 마지막 수집. runs 는 최신순으로 온다 — 처음 만난 kind 가 그 종류의 마지막이다.
+// 낡은 것을 앞으로, 그 안에서는 오래 묵은 것부터. Object.keys 순서(=처음 나온 순)로 두면
+// 다시 돌려야 할 종류가 멀쩡한 종류들 사이에 흩어진다.
+function HS_lastBy() {
+  const last = {};
+  HS_RUNS.forEach(r => { if (!last[r.kind]) last[r.kind] = r; });
+  return Object.keys(last)
+    .map(k => ({k, r: last[k], stale: HS_days(last[k].started_at) >= HS_STALE_DAYS}))
+    .sort((a, b) => (b.stale - a.stale) ||
+                    (Date.parse(a.r.started_at) - Date.parse(b.r.started_at)));
+}
+
 // 요약·마지막 수집은 거르기와 무관하게 전체를 말한다 — 걸러 놓고 "총액"을 읽으면 거짓말이 된다.
 function HS_runSummary() {
   // 한 번도 안 돈 로그가 "0회 · $0.000" 이라고 말하면 안 된다 — 빈 상태에 자리를 내준다.
@@ -206,20 +239,31 @@ function HS_runSummary() {
     chip("호출", num(calls), "이 실행들이 부른 외부 API 횟수 합계입니다.") +
     chip("비용", `$${cost.toFixed(3)}`, "수집기가 적어 둔 추정치의 합계입니다 — 청구서가 아닙니다.") +
     (HS_RUNS.length ? chip("마지막", HS_ago(HS_RUNS[0].started_at),
-      HS_RUNS[0].started_at) : "");
+      HS_RUNS[0].started_at) : "") + HS_staleLine();
 
-  // runs 는 최신순으로 온다 — 처음 만난 kind 가 그 종류의 마지막 수집이다.
-  const last = {};
-  HS_RUNS.forEach(r => { if (!last[r.kind]) last[r.kind] = r; });
-  $("lastby").innerHTML = Object.keys(last).map(k => {
-    const r = last[k], stale = HS_days(r.started_at) >= HS_STALE_DAYS;
-    return `<div><div class="k" title="${esc(k)}">${esc(HS_kind(k))}</div>
+  $("lastby").innerHTML = HS_lastBy().map(({k, r, stale}) =>
+    `<div><div class="k" title="${esc(k)}">${esc(HS_kind(k))}</div>
       <div class="v">${esc((r.started_at || "").slice(0, 10))}
         <span class="ago${stale ? " stale" : ""}" title="${stale
           ? `${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다.`
-          : "마지막으로 이 종류를 돌린 때입니다."}">${HS_ago(r.started_at)}</span></div></div>`;
-  }).join("");
+          : "마지막으로 이 종류를 돌린 때입니다."}">${HS_ago(r.started_at)}</span></div></div>`)
+    .join("");
 }
+
+// 몇 종류가 묵었는지 한 문장으로. 요약 줄과 [다음 행동]이 같은 자리를 두 번 말하므로
+// 문구는 여기 한 벌만 둔다. 웹에는 명령을 칠 곳이 없다 — 화면 위 실행 버튼을 가리킨다.
+function HS_staleMsg() {
+  const s = HS_lastBy().filter(x => x.stale);
+  if (!s.length) return "";
+  return `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다 (${
+    s.map(x => esc(HS_kind(x.k))).join(", ")}) — 다시 재야 그동안 고친 게 숫자에 섞입니다.${
+    W(` <button class="cmd" onclick="copyCmd(this)">/capture run</button>`,
+      " 화면 위 [전체 분석 실행]을 누르면 다시 잽니다.")}`;
+}
+const HS_staleLine = () => {
+  const m = HS_staleMsg();
+  return m ? `<div class="stale">${m}</div>` : "";
+};
 
 // 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
@@ -266,18 +310,20 @@ function HS_runList() {
     return $("runlist").innerHTML = `<div class="empty">거른 조건에 맞는 실행이 없습니다.
       <div class="acts"><button onclick="HS_runReset()">필터 지우기</button></div></div>`;
   const rows = list.slice(0, HS_RN).map(r => {
-    const s = HS_secs(r);
+    const s = HS_secs(r), v = HS_verdict(r);
     return `<tr>
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
         <span class="muted">${HS_ago(r.started_at)}</span></td>
       <td class="kwcell" title="${esc(r.kind)}">${esc(HS_kind(r.kind))}</td>
-      <td>${HS_badge(HS_verdict(r))}</td>
+      <td>${HS_badge(v)}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
       <td class="num">${num(r.api_calls || 0)}</td>
       <td class="num">${(r.cost_estimate_usd || 0) ? "$" + r.cost_estimate_usd : "—"}</td>
-      <td>${HS_notes(r.notes)}</td>
+      <td>${HS_notes(r.notes)}${
+        // 실패는 배지 글자("오류 3")만으로는 무슨 일인지 안 읽힌다 — 이유를 항상 편다.
+        v.cls === "bad" ? `<div class="why">${esc(v.why)}</div>` : ""}</td>
     </tr>`;
   });
   const rest = list.length - HS_RN;
@@ -300,7 +346,69 @@ function HS_runCsv() {
 }
 
 /* ── 고친 것 ──────────────────────────────────────────────── */
-let HS_MADE = [], HS_MQ = "", HS_MM = "";
+let HS_MADE = [], HS_MQ = "", HS_MM = "", HS_DAILY = [];
+
+/* ── 좋아졌나 ──────────────────────────────────────────────
+      이 화면은 회고인데 결론이 없었다: 고친 목록을 늘어놓고 "숫자로 돌아왔는지는
+      [개요]가 답합니다"라며 남에게 넘겼다. 재료는 같은 페이로드에 이미 실려 온다
+      (d.daily — 일별 클릭·노출). 고친 날 앞뒤 하루 평균 클릭을 그 줄에 붙인다.
+      새 SQL 은 없다.
+      인과가 아니다: 같은 기간에 다른 것도 바뀐다. 그래서 "덕분에"라고 쓰지 않고,
+      전후 어느 쪽이든 날이 모자라면 숫자를 지어내지 않고 모자라다고 말한다. ── */
+const HS_EFF_WIN = 7;   // 앞뒤로 볼 날 수 — 7일이면 요일 편차가 한 바퀴 돌아 상쇄된다
+const HS_EFF_MIN = 3;   // 이보다 짧은 쪽이 있으면 평균이라 부를 수 없다
+
+function HS_effect(created) {
+  const day = String(created || "").slice(0, 10);
+  if (!day || !HS_DAILY.length) return null;
+  if (day < HS_DAILY[0].date) return {old: true};   // 일별 기록이 닿지 않는 옛날 수정
+  const before = HS_DAILY.filter(r => r.date < day).slice(-HS_EFF_WIN);
+  const after = HS_DAILY.filter(r => r.date >= day).slice(0, HS_EFF_WIN);
+  if (before.length < HS_EFF_MIN || after.length < HS_EFF_MIN) return {short: true};
+  const avg = a => a.reduce((s, r) => s + (r.clicks || 0), 0) / a.length;
+  const b = avg(before), f = avg(after);
+  return {b, f, d: f - b, nb: before.length, nf: after.length};
+}
+
+function HS_effLine(c) {
+  const e = HS_effect(c.created_at);
+  if (!e) return "";
+  if (e.old)
+    return `<div class="eff" title="일별 클릭은 최근 ${HS_DAILY.length}일치만 남습니다."
+      >일별 기록이 닿지 않는 날입니다 — 전후를 못 잽니다</div>`;
+  if (e.short)
+    return `<div class="eff" title="고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 있어야 잽니다."
+      >아직 판단할 날이 모자랍니다</div>`;
+  const one = n => n.toFixed(1);
+  return `<div class="eff${e.d > 0 ? " up" : e.d < 0 ? " down" : ""}"
+    title="고친 날 앞 ${e.nb}일과 뒤 ${e.nf}일의 하루 평균 클릭입니다 — 같은 기간에 다른 것도
+바뀌므로 이 수정만의 몫이라는 뜻은 아닙니다."
+    >고친 뒤 하루 평균 클릭 <b>${one(e.b)}</b> → <b>${one(e.f)}</b>
+    (${e.d >= 0 ? "+" : "−"}${one(Math.abs(e.d))})</div>`;
+}
+
+/* 루프의 반대쪽 끝 — 이 수정을 낳은 기회 카드로 데려간다. 기회 id 는 페이로드에 이미
+   실려 온다(opportunity_id). 대상 문자열은 data- 로 넘긴다: onclick 문자열에 박으면
+   따옴표 든 검색어에서 깨진다. 개요는 점수 높은 순 8건만 펼쳐 두므로 대상으로 먼저
+   걸러야 그 카드가 목록에 남는다. */
+function HS_toOpp(el) {
+  SM.show("overview");
+  if (window.oppReset) oppReset();      // 남아 있던 거르기가 그 카드를 숨길 수 있다
+  const t = el.dataset.t || "";
+  const box = document.querySelector("#opps input[type=search]");
+  if (box && window.oppFind) { box.value = t; oppFind(t); }
+  const card = document.querySelector(`#opplist [data-opp="${+el.dataset.o}"]`);
+  if (!card) return;                    // 지운 기회·옛 박제본이면 카드가 없다 — 개요까지만
+  card.open = true;
+  card.scrollIntoView({behavior: "smooth", block: "center"});
+}
+
+// 병합 전만 남기고 그 자리로 데려간다 — 목록 위 칩과 [다음 행동]이 같은 손잡이를 쓴다.
+function HS_showUnmerged() {
+  HS_MM = "n";
+  HS_madeTools();                       // 거르개(select)도 같이 "병합 전"으로 맞춰진다
+  $("made-sec").scrollIntoView({behavior: "smooth", block: "start"});
+}
 
 function HS_madeFiltered() {
   const q = HS_MQ.trim().toLowerCase();
@@ -325,9 +433,12 @@ function HS_madeRow(c) {
       </div>
       <div class="path">${esc(c.file_path)}</div>
       ${c.opp_target
-        ? `<div class="from" title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)})"
-             >← ${esc(c.opp_target)}</div>` : ""}
+        ? `<button class="from" data-o="${esc(c.opportunity_id)}"
+             data-t="${esc(c.opp_target)}" onclick="HS_toOpp(this)"
+             title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)}) — 누르면 [개요]의 그 카드로 갑니다"
+             >← ${esc(c.opp_target)}</button>` : ""}
       ${c.note ? `<div class="why">${esc(c.note)}</div>` : ""}
+      ${HS_effLine(c)}
     </div>
     <span class="hs-r ${c.merged ? "ok" : "skip"}" title="${c.merged
       ? "병합됐습니다 — 다음 수집부터 이 수정이 숫자에 섞입니다."
@@ -340,12 +451,18 @@ function HS_madeTools() {
   if (!HS_MADE.length)
     return $("made").innerHTML = `<div class="empty">${W(
       `아직 고친 기록이 없습니다.
-      [개요]에서 고른 기회를 실제 파일 수정으로 옮기면 여기 쌓입니다.
+      ${window.go("overview")}에서 고른 기회를 실제 파일 수정으로 옮기면 여기 쌓입니다.
       <button class="cmd" onclick="copyCmd(this)">/create plan</button>`,
-      "아직 반영된 콘텐츠 변경이 없습니다 — [개요]에서 개선 기회를 고르고 " +
+      `아직 반영된 콘텐츠 변경이 없습니다 — ${window.go("overview")}에서 개선 기회를 고르고 ` +
       "[콘텐츠 작성]을 누르면 여기 쌓입니다.")}</div>`;
   const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
-  $("made").innerHTML = `<div class="tools">
+  // 병합 전 건수는 거르개 옵션 라벨 안에만 있었다 — 이 화면에서 지금 당장 할 수 있는
+  // 유일한 일인데 드롭다운을 열어야 보였다. 머리로 올린다.
+  const un = mn("n");
+  $("made").innerHTML = (un ? `<div class="oppchips"><button class="chip"
+      onclick="HS_showUnmerged()"
+      title="아직 병합 전입니다 — 병합해야 검색엔진이 봅니다. 눌러서 그것만 봅니다."
+      >병합 전 <b>${un}건</b></button></div>` : "") + `<div class="tools">
       <input type="search" value="${esc(HS_MQ)}" oninput="HS_madeFind(this.value)"
         placeholder="파일·기회·근거로 찾기" aria-label="고친 것 찾기">
       <select onchange="HS_madeMerged(this.value)" aria-label="병합 상태로 거르기">${
@@ -368,11 +485,30 @@ function HS_madeList() {
     return $("madelist").innerHTML = `<div class="empty">거른 조건에 맞는 기록이 없습니다.
       <div class="acts"><button onclick="HS_madeReset()">필터 지우기</button></div></div>`;
   const linked = HS_MADE.filter(c => c.opportunity_id).length;
+  // 회고의 결론은 이 화면이 낸다 — 줄마다 붙인 전후 델타를 여기서 합쳐 말한다.
+  const eff = HS_MADE.map(c => HS_effect(c.created_at));
+  const up = eff.filter(e => e && e.d > 0).length;
+  const down = eff.filter(e => e && e.d < 0).length;
+  const same = eff.filter(e => e && e.d === 0).length;
+  const cant = eff.filter(e => !e || e.old || e.short).length;
+  // 잰 것과 못 잰 것을 갈라 적는다 — 합이 안 맞으면 어느 쪽이 빠졌는지 읽는 사람이 못 센다.
+  const bits = [`오른 것 ${up}건`, `내린 것 ${down}건`];
+  if (same) bits.push(`그대로 ${same}건`);
+  const verdict = !HS_DAILY.length
+    ? "일별 클릭 기록이 아직 없어 전후를 못 잽니다 — 서치콘솔을 한 번 더 읽으면 " +
+      "줄마다 붙습니다."
+    : (up + down + same)
+      ? `고친 날 앞뒤 ${HS_EFF_WIN}일 하루 평균 클릭으로 보면 잴 수 있는 ${
+          up + down + same}건 중 ${bits.join(", ")}입니다${cant
+          ? `. 나머지 ${cant}건은 아직 잴 날이 없습니다` : ""}. ` +
+        "같은 기간에 다른 것도 바뀌므로 이 수정들만의 몫은 아닙니다."
+      : `아직 전후를 잰 건이 없습니다 — 고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 ` +
+        "일별 기록이 있어야 잽니다.";
   $("madelist").innerHTML = list.map(HS_madeRow).join("") +
     `<div class="loop"><b>한 바퀴</b> — 서치콘솔에서 재고, 기회로 뽑고, 이 ${
       HS_MADE.length}건을 고쳤습니다${linked
       ? ` (그중 ${linked}건은 뽑아 둔 기회에서 곧장 왔습니다)`
-      : ""}. 고친 게 숫자로 돌아왔는지는 [개요]의 일별 추이가 답합니다.</div>`;
+      : ""}. ${verdict}</div>`;
 }
 
 function HS_madeCsv() {
@@ -381,6 +517,38 @@ function HS_madeCsv() {
       (window.KIND_LABEL || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
       c.merged ? "병합됨" : "병합 전", c.opp_target || "",
       (c.note || "").replace(/\s+/g, " ")])));
+}
+
+/* ── 다음 행동 ─────────────────────────────────────────────
+      이 섹션은 view-def 가 화면 구성요소로 선언해 놓고도 라이브에서는 영영 hidden
+      이었다 — 여는 코드가 셸의 __SNAPSHOT__ 분기 하나뿐이라, 박제본에만 보이고 정작
+      매일 여는 대시보드에는 안 나왔다. 같은 #acts-list 를 여기서 채운다.
+      새 판정은 만들지 않는다: 안 판 단계는 안내(stage.py)가 이미 고른 것을 그대로 쓰고
+      (d.guide.here), 명령도 그 단계가 들고 있는 cmd 를 가리킨다. ── */
+function HS_acts(d) {
+  if (READONLY) return;                 // 박제본은 그때 정한 것을 셸이 이미 채웠다
+  const out = [];
+  const g = d.guide || {}, steps = g.steps || [];
+  const next = g.here >= 0 ? steps[g.here] : null;
+  if (next)
+    out.push(`아직 안 판 단계가 있습니다 — <b>${esc(next.t)}</b>${
+      next.state ? ` (${esc(next.state)})` : ""}${next.cmd
+      ? W(` <button class="cmd" onclick="copyCmd(this)">${esc(next.cmd)}</button>`, "")
+      : ""}`);
+  const stale = HS_staleMsg();
+  if (stale) out.push(stale);
+  const un = HS_MADE.filter(c => !c.merged).length;
+  if (un)
+    out.push(`${un}건이 병합 전입니다 — 병합해야 검색엔진이 봅니다. 이 화면에서 지금 ` +
+      `당장 할 수 있는 건 이것뿐입니다. <button class="chip" ` +
+      `onclick="HS_showUnmerged()">병합 전만 보기</button>`);
+  if (d.opps_total)
+    out.push(`아직 안 한 기회 ${num(d.opps_total)}건이 남아 있습니다. ` +
+      `<button class="chip" onclick="SM.show('overview')">[개요]에서 고르기</button>`);
+  $("acts").hidden = !out.length;
+  if (!out.length) return;
+  $("acts-eyebrow").textContent = "이 기록이 말하는 다음 걸음";
+  $("acts-list").innerHTML = out.map(x => `<li>${x}</li>`).join("");
 }
 
 VIEW("history", function (d) {
@@ -393,6 +561,11 @@ VIEW("history", function (d) {
   // 둘 다 "여기 쌓입니다"가 맞는 다음 걸음이다.
   HS_MADE = d.creations || [];
   HS_MQ = ""; HS_MM = "";
+  // 전후 델타의 재료. 옛 박제본에는 없을 수 있다 — 그때는 못 잰다고 말한다.
+  HS_DAILY = d.daily || [];
   HS_madeTools();
+
+  // 목록이 다 선 뒤에 부른다 — 무엇이 남았는지는 위 두 목록에서 세기 때문이다.
+  HS_acts(d);
 });
 </script>

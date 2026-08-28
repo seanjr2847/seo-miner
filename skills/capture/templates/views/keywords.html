@@ -2,12 +2,16 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "keywords", "title": "키워드",
- "sections": ["log", "movers"], "stages": ["keywords", "competitors"]}
+ "sections": ["log", "movers"], "stages": ["gsc", "gaps"]}
 </script>
 
 <style>
 /* ── 깊이 로그(시그니처) ─────────────────────────────────── */
 .log .lane:hover .lane-bg { fill:var(--bar); }
+/* 레인을 누르면 아래 표의 그 줄이 펼쳐진다 — 그림에서 찍은 점과 할 일이 이어진다.
+   칠하지 않은 배경 사각형(fill:none)은 기본값으로 포인터를 안 받으므로 여기서 연다. */
+.log .lane { cursor:pointer; }
+.log .lane-bg { pointer-events:all; }
 .log .kw { font-size:12.5px; fill:var(--ink); }
 .log .num { font-size:11.5px; fill:var(--slate); }
 .log .track { stroke:var(--rule-soft); }
@@ -18,7 +22,8 @@
 @media (prefers-reduced-motion: no-preference) {
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
-/* 그림은 마우스에만 답한다 — 같은 값을 키보드·화면낭독기로도 읽게 표를 접어 둔다. */
+/* 표는 그림의 각주가 아니라 이 화면의 할 일 목록이다 — 점수·근거·행동이 줄마다
+   붙으면서 여기가 답이 됐다. 그래서 접지 않는다(펼침은 depthLog 이 open 으로 낸다). */
 .kwtable { margin-top:14px; }
 .kwtable summary { font:500 12.5px/1 var(--sans); color:var(--slate); cursor:pointer; }
 .kwtable summary:hover { color:var(--patina); }
@@ -37,7 +42,7 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 <section>
   <!-- 호스팅판 문구는 data-web 으로 나란히 선다 — applyWording() 이 한 번 갈아 끼운다.
        지금 무엇으로 정렬 중인지는 아래 도구줄의 정렬 칸이 말한다. -->
-  <div class="eyebrow" data-web="11~20위 · 노출수 많은 순">4~20위 · 노출 많은 순</div>
+  <div class="eyebrow" data-web="11~20위 구간">4~20위 구간</div>
   <h2 data-web="순위 상승 기회">1페이지까지 남은 거리</h2>
   <p class="sub" id="log-sub"></p>
   <div id="log-tools"></div>
@@ -57,8 +62,12 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 let KW_ROWS = [], KW_SORT = "imp", KW_BAND = "", KW_PERIOD = "", KW_BRAND_EMPTY = false;
 let KW_MV = [], KW_MQ = "", KW_MDIR = "";
 let KW_PAGES = {}, KW_AUDITS = {};      // 검색어 → 걸린 내 페이지들, url → 점검 결과
-const KW_SORTS = [["imp", "노출 많은 순"], ["pos", "1페이지에 가까운 순"],
-                  ["clk", "클릭 많은 순"]];
+/* 첫째가 기본값이다 — 노출이 많은 순은 "큰 것"을 말할 뿐 "먼저 할 것"을 못 말한다.
+   순서는 셸의 기회 점수(scoring.WEIGHTS)가 정한다 — 이 화면이 다시 매기지 않는다. */
+const KW_SORTS = [["opp", "먼저 할 순"], ["imp", "노출 많은 순"],
+                  ["pos", "1페이지에 가까운 순"], ["clk", "클릭 많은 순"]];
+// 오름차순으로 세우므로 점수는 음수로 뒤집는다. 기회가 없는 행은 1 로 두어 뒤로 민다.
+const KW_score = q => { const o = oppOf(q); return Number.isFinite(o && o.score) ? -o.score : 1; };
 
 /* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
@@ -88,7 +97,9 @@ function depthLog(rows, brandCatalogEmpty, period) {
     // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
     const gap = onPage1 ? "이미 1페이지"
       : `1페이지까지 ${gap1(r).toFixed(1)}칸`;
-    return `<g class="lane">
+    // data-lane 은 아래 표의 몇 번째 줄인가다 — 검색어 문자열로 되짚지 않는다(따옴표·
+    // 대소문자에서 어긋난다). 표는 같은 rows 를 같은 순서로 그리므로 번호가 정본이다.
+    return `<g class="lane" data-lane="${i}">
       <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${WIDTH}" height="${LANE}" fill="none"/>
       <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
         ? r.query.slice(0, 35) + "…" : r.query)}</text>
@@ -117,17 +128,19 @@ function depthLog(rows, brandCatalogEmpty, period) {
   const impLabel = period ? `${period} 노출` : "노출";
   const warn = brandCatalogEmpty
     ? `\n  <div class="legend">${W(
-        "남의 브랜드 필터가 비어 있습니다 — [설정]의 도구 이름을 채우면 이 목록이 정확해집니다.",
+        `남의 브랜드 필터가 비어 있습니다 — ${window.go("settings")}의 도구 이름을 채우면 이 목록이 정확해집니다.`,
         "경쟁사 브랜드 필터가 비어 있어 타사 브랜드 검색어가 섞일 수 있습니다.")}</div>`
     : "";
-  // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 접어 둔다.
+  // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
+  // 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
   const tbl = table([
     "검색어",
+    KW_SCORE_TH,
     `>순위?구글이 보고한 ${period || "기간"} 평균 게재순위`,
     `>1페이지까지?${RULES.page1}위 경계까지 되밀어야 할 칸 수 — 이미 1페이지면 —`,
     `>${impLabel}?기간 합계 노출 — 순위를 밀면 클릭으로 바뀔 몫`,
     ">클릭?기간 합계 클릭"],
-    rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}><td class="kwcell">${esc(r.query)}</td>
+    rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}>${KW_qcell(r.query)}
       <td class="num">${r.pos}</td>
       <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
       <td class="num">${num(r.imp)}</td>
@@ -155,13 +168,15 @@ function depthLog(rows, brandCatalogEmpty, period) {
     <b style="color:var(--copper)">2페이지 ${rows.length - p1}개</b> — ${
       W("막대만큼 밀면 1페이지입니다", "막대만큼 올리면 1페이지입니다")}
   </div>${warn}
-  <details class="kwtable"><summary>표로 보기 · 값 그대로 (${rows.length}개)</summary>${tbl}</details>`;
+  <details class="kwtable" open><summary>줄을 누르면 그 검색어로 무엇을 고칠지 나옵니다
+    (${rows.length}개)</summary>${tbl}</details>`;
 }
 
 // 거르기·정렬은 화면에서 한다 — 서버가 준 15개가 이 화면이 가진 전부다.
 function KW_filtered() {
   const rows = KW_BAND ? KW_ROWS.filter(r => r.band === KW_BAND) : KW_ROWS.slice();
-  const key = {imp: r => -(r.imp || 0), pos: r => r.pos, clk: r => -(r.clk || 0)}[KW_SORT];
+  const key = {opp: r => KW_score(r.query), imp: r => -(r.imp || 0),
+               pos: r => r.pos, clk: r => -(r.clk || 0)}[KW_SORT];
   return rows.sort((a, b) => key(a) - key(b));
 }
 function KW_setSort(v) { KW_SORT = v; KW_drawLog(); }
@@ -235,11 +250,12 @@ function KW_mvList() {
   const per = KW_PERIOD || "기간";
   $("mv-list").innerHTML = table([
     "검색어",
+    KW_SCORE_TH,
     `>순위?구글이 보고한 ${per} 평균 게재순위`,
     ">Δ순위?직전 기록 대비 — 양수면 위로 올라온 것입니다",
     `>클릭?${per} 합계 클릭 · 옆 숫자는 직전 기록 대비 증감`,
     `>노출?${per} 합계 노출 — 노출이 적으면 순위도 크게 흔들립니다`],
-    list.map(m => `<tr ${KW_rowAttr(m.query, "mv")}><td class="kwcell">${esc(m.query)}</td>
+    list.map(m => `<tr ${KW_rowAttr(m.query, "mv")}>${KW_qcell(m.query)}
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
@@ -252,6 +268,18 @@ function KW_mvList() {
    쓴다. 같은 패널을 화면마다 다시 만들면 언제 하나는 낡는다. */
 const KW_rowAttr = (q, src) =>
   `data-kwq="${esc(q)}" data-kwsrc="${src}" tabindex="0" role="button" aria-expanded="false"`;
+
+/* 두 표의 앞 두 칸은 같은 것을 묻는다: 어느 검색어이고, 이걸 먼저 해야 하나.
+   점수·막대·종류·근거는 전부 셸의 한 벌(oppScore/oppMeter/oppWhy)이다 — 접힌
+   줄에서도 "왜"가 보여야 목록이 훑어진다. 기회가 없는 줄은 빈 칸으로 둔다:
+   숫자가 없다는 말과 "아직 안 캤다"는 말은 펼친 패널이 한 번만 한다. */
+const KW_SCORE_TH = ">먼저?기회 점수 100점 만점 — 높을수록 먼저 합니다."
+  + " 빈 칸은 아직 기회 목록에 없는 검색어입니다";
+function KW_qcell(q) {
+  const o = oppOf(q);
+  return `<td class="kwcell">${esc(q)}${o ? oppMeter(o) + oppWhy(o) : ""}</td>
+    <td class="num">${o ? oppScore(o) : '<span class="muted">—</span>'}</td>`;
+}
 const KW_find = tr => (tr.dataset.kwsrc === "mv" ? KW_MV : KW_ROWS)
   .find(r => r.query === tr.dataset.kwq);
 const KW_pos = p => Number.isFinite(p) ? String(+p.toFixed(1)) : "—";
@@ -322,7 +350,16 @@ function KW_plan(r) {
      "스니펫을 노릴 표·목록·Q&A 블록 하나"]];
 }
 
+/* 기회가 있으면 셸의 패널이 더 넓다 — 할 일·고칠 URL·프롬프트가 kind 마다 갈린다
+   (셸의 PLAY 한 벌). 그래서 있을 때는 그쪽을 쓰고, 없을 때만 아래 KW_plan 으로
+   물러선다. 두 벌을 겹쳐 내면 같은 검색어에 서로 다른 할 일이 두 장 나온다.
+   행동 기록(확인·완료·제외)은 패널 끝에 — 무엇을 할지 읽은 다음에 누르는 것이다. */
 function KW_det(r) {
+  const o = oppOf(r.query);
+  if (o) {
+    const acts = oppActs(o);
+    return oppPanel(o) + (acts ? `<div class="det">${acts}</div>` : "");
+  }
   const pages = KW_PAGES[r.query] || [];
   const url = pages.length ? pages[0].page : "";
   const [what, acts, deliver] = KW_plan(r);
@@ -335,8 +372,13 @@ function KW_det(r) {
     ${url ? pageFix(KW_AUDITS[url], url) : ""}
     ${askBlock({url, audit: KW_AUDITS[url], acts, deliver, problem: what,
                 queries: [{q: r.query, note: KW_state(r).replace(/<[^>]+>/g, "")}]})}
+    ${KW_noOpp()}
   </div>`;
 }
+// 점수도 확인·완료 버튼도 없는 이유를 그 자리에서 말한다 — 빈 칸만 두면 고장으로 읽힌다.
+// 명령은 로컬에만 있다(웹에는 칠 곳이 없어 버튼이 대신한다) — 문구는 W 가 가른다.
+const KW_noOpp = () => `<p class="detn">이 검색어는 아직 기회 목록에 없습니다 — ${W(
+  "<code>/capture gaps</code> 를 돌리면", "[전체 분석 실행]을 누르면")} 채워집니다.</p>`;
 
 function KW_toggle(tr) {
   const nx = tr.nextElementSibling;
@@ -363,7 +405,17 @@ function KW_closeAll() {
 
 document.addEventListener("click", e => {
   const tr = e.target.closest && e.target.closest("tr[data-kwq]");
-  if (tr) KW_toggle(tr);
+  if (tr) return KW_toggle(tr);
+  // 그림에서 찍은 점과 할 일 사이가 두 번 클릭만큼 떨어져 있었다 — 레인을 누르면
+  // 아래 표의 같은 줄이 펼쳐진다. 펼침 줄(tr.exp)에는 data-kwq 가 없으므로
+  // data-lane 번호와 이 목록의 순서가 계속 맞는다.
+  const g = e.target.closest && e.target.closest("g[data-lane]");
+  if (!g) return;
+  const row = $("log").querySelectorAll("tr[data-kwq]")[+g.dataset.lane];
+  if (!row) return;
+  KW_toggle(row);
+  if (row.getAttribute("aria-expanded") === "true")
+    row.scrollIntoView({block: "nearest"});
 });
 document.addEventListener("keydown", e => {
   if (e.key !== "Enter" && e.key !== " ") return;
@@ -384,10 +436,15 @@ const KW_cmd = () => W(
 
 // ── 내보내기: 지금 걸러 놓은 목록 그대로. 파일로 만드는 일은 뼈대의 csv() 몫이다.
 function KW_csvLog() {
-  csv("1페이지까지", [["검색어", "평균순위", "1페이지까지", "노출", "클릭", "구간"]].concat(
-    KW_filtered().map(r => [r.query, r.pos,
-      Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1),
-      r.imp, r.clk, r.band === "page1" ? "1페이지" : "2페이지"])));
+  // 화면이 점수 순으로 서 있는데 파일에 점수가 없으면 순서가 이유 없는 것이 된다.
+  csv("1페이지까지",
+    [["검색어", "기회점수", "종류", "평균순위", "1페이지까지", "노출", "클릭", "구간"]].concat(
+    KW_filtered().map(r => {
+      const o = oppOf(r.query);
+      return [r.query, o && o.score != null ? o.score : "", o ? window.kindLabel(o) : "", r.pos,
+        Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1),
+        r.imp, r.clk, r.band === "page1" ? "1페이지" : "2페이지"];
+    })));
 }
 function KW_csvMv() {
   csv("순위변동", [["검색어", "순위", "Δ순위", "클릭", "Δ클릭", "노출"]].concat(
@@ -401,7 +458,9 @@ VIEW("keywords", function (d) {
   KW_AUDITS = d.page_audits || {};
   KW_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   KW_BRAND_EMPTY = !!d.brand_catalog_empty;
-  KW_SORT = "imp";
+  // 기본은 "먼저 할 순" — 다만 아직 아무것도 안 캤으면 전부 무점수라 그 이름이
+  // 거짓이 된다. 그때만 예전 기본(노출 많은 순)으로 물러선다.
+  KW_SORT = KW_ROWS.some(r => oppOf(r.query)) ? "opp" : "imp";
   KW_BAND = "";                                   // 사이트를 바꾸면 필터도 처음으로
   const p2 = d.striking_page2 ?? KW_ROWS.filter(r => r.band === "page2").length;
   $("log-sub").textContent = KW_ROWS.length

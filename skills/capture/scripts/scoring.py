@@ -98,7 +98,15 @@ INTENT_NAVIGATIONAL = {
 
 # 지키는 기회(방어) kind 집합. 판정은 is_defensive() 하나이고 화면은 그 결과를 읽는다.
 # 순위 하락·내부 경쟁은 잃던 것을 막는 방어 기회다.
-DEFENSIVE_KINDS = {"rank_decay", "cannibalization"}
+DEFENSIVE_KINDS = {"rank_decay", "cannibalization", "backlink_broken", "crawl_issue"}
+
+# 이 리포가 만드는 기회 종류 한 벌 — 화면의 KIND_LABEL·PLAY 와 짝이 맞아야 한다
+# (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). stage._check_seams 가
+# 이 튜플과 dashboard.html 의 두 표를 대조한다 — 여기가 정본이다.
+ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
+             "pseo_pattern", "device_gap", "index_blocked", "coverage",
+             "ai_citation_gap", "aio_exposure", "content_gap",
+             "crawl_issue", "backlink_broken", "backlink_prospect")
 
 
 
@@ -846,6 +854,121 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
             "volume_by_cluster": vol_by_cluster}
 
 
+_LATEST_KG = "SELECT MAX(checked_date) FROM keyword_gap WHERE project_id=?"
+_LATEST_BL = "SELECT MAX(checked_date) FROM backlinks WHERE project_id=?"
+_LATEST_LI = "SELECT MAX(checked_date) FROM link_intersect WHERE project_id=?"
+
+
+def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
+            limit: int = 30) -> list[dict]:
+    """챗봇이 한 번도 나를 출처로 쓰지 않은 질문 — 최신 ai 회차 기준.
+
+    ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 "인용 0"이 성립한다.
+    답이 비결정적이라 한 번 빠진 것은 신호가 아니다 — 그 회차 전부에서 빠진 것만 센다.
+    """
+    run = conn.execute(
+        "SELECT MAX(c.run_id) FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id"
+        " WHERE p.project_id=?", (project_id,)).fetchone()[0]
+    if not run:
+        return []
+    rows = []
+    for r in conn.execute(
+            """SELECT p.id, p.prompt, p.category, COUNT(*) checks,
+                      SUM(c.mentioned) mentioned, COUNT(DISTINCT c.engine) engines
+                 FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id
+                WHERE c.run_id=? AND p.is_active=1
+             GROUP BY p.id HAVING SUM(c.cited)=0
+             ORDER BY COUNT(*) DESC, p.id LIMIT ?""", (run, limit)):
+        # 나 대신 누가 인용됐나 — "그래서 무엇을 이겨야 하나"가 근거의 나머지 절반이다
+        tally: dict[str, int] = {}
+        for c in conn.execute(
+                "SELECT cited_domains_json FROM ai_checks"
+                " WHERE run_id=? AND prompt_id=?", (run, r["id"])):
+            try:
+                for dom in json.loads(c[0] or "[]"):
+                    h = host_of(str(dom))
+                    if h:
+                        tally[h] = tally.get(h, 0) + 1
+            except (TypeError, ValueError):
+                continue
+        rivals = sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:2]
+        rows.append({"prompt": r["prompt"], "category": r["category"],
+                     "checks": r["checks"], "mentioned": r["mentioned"] or 0,
+                     "engines": r["engines"], "rivals": [d for d, _ in rivals]})
+    return rows
+
+
+def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """구글이 AI 요약을 붙이는데 거기 내 링크가 없는 검색어 — 최신 순위 회차 기준."""
+    d = conn.execute(
+        "SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs"
+        " JOIN keywords k ON k.id=rs.keyword_id WHERE k.project_id=?",
+        (project_id,)).fetchone()[0]
+    if not d:
+        return []
+    return [dict(r) for r in conn.execute(
+        """SELECT k.keyword, k.volume, rs.position
+             FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
+            WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?
+              AND rs.aio_present=1 AND rs.aio_cited=0
+         ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""", (project_id, d))]
+
+
+def content_gaps(conn: sqlite3.Connection, project_id: int, *,
+                 limit: int = 25) -> list[dict]:
+    """경쟁사는 잡는데 나는 없거나(missing) 밀리는(weak) 검색어 — keyword_gap 정본."""
+    d = _latest(conn, _LATEST_KG, (project_id,))
+    if not d:
+        return []
+    return [dict(r) for r in conn.execute(
+        """SELECT keyword, domain, position, our_position, volume, kind
+             FROM keyword_gap
+            WHERE project_id=? AND checked_date=? AND kind IN ('missing','weak')
+         ORDER BY volume IS NULL, volume DESC, keyword LIMIT ?""",
+        (project_id, d, limit))]
+
+
+def crawl_gaps(conn: sqlite3.Connection, project_id: int, *,
+               limit: int = 20) -> list[dict]:
+    """크롤에서 걸린 것 중 심각한 것만 — 회차 전체는 [사이트 점검] 화면이 표로 본다.
+
+    ponytail: severity='bad' 만 기회로 올린다. 500건을 다 올리면 기회 목록이 크롤
+    로그가 된다. warn·info 는 화면의 표에 그대로 있고, 거기서 심각도로 정렬된다.
+    """
+    cr = conn.execute(
+        "SELECT id FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
+        " ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+    if not cr:
+        return []
+    return [dict(r) for r in conn.execute(
+        """SELECT kind, url, detail FROM crawl_issues
+            WHERE run_id=? AND severity='bad' AND url IS NOT NULL
+         ORDER BY kind, url LIMIT ?""", (cr["id"], limit))]
+
+
+def backlink_gaps(conn: sqlite3.Connection, project_id: int, *,
+                  limit: int = 15) -> tuple[list[dict], list[dict]]:
+    """되찾을 링크(깨진 것)와 새로 받을 곳(경쟁사만 받는 도메인).
+
+    깨진 링크는 이미 번 것이다 — 새로 얻는 것보다 늘 싸다. 그래서 둘을 함께 낸다.
+    """
+    broken, prospects = [], []
+    d = _latest(conn, _LATEST_BL, (project_id,))
+    if d:
+        broken = [dict(r) for r in conn.execute(
+            """SELECT url_from, url_to, domain_from, anchor, rank FROM backlinks
+                WHERE project_id=? AND checked_date=? AND is_broken=1
+             ORDER BY rank IS NULL, rank DESC LIMIT ?""", (project_id, d, limit))]
+    di = _latest(conn, _LATEST_LI, (project_id,))
+    if di:
+        prospects = [dict(r) for r in conn.execute(
+            """SELECT domain, rank, hits, targets FROM link_intersect
+                WHERE project_id=? AND checked_date=? AND we_have=0
+             ORDER BY hits DESC, rank IS NULL, rank DESC LIMIT ?""",
+            (project_id, di, limit))]
+    return broken, prospects
+
+
 def score(kind: str, metrics: dict, project_type: str) -> float:
     """결정적 0~100 점수 — 같은 입력이면 언제나 같은 출력 (계수는 WEIGHTS).
 
@@ -974,6 +1097,64 @@ def load(project: str) -> None:
                      "reasoning": f"활성 키워드 {n}개가 GSC 노출·순위 체크 모두 부재 — "
                                   f"클러스터 '{cl}'"
                                   + (f" · 월 검색량 합 {vol:,}" if vol else "")})
+    # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
+    #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
+    #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
+    for r in ai_gaps(conn, pid):
+        rivals = ", ".join(r["rivals"]) if r["rivals"] else ""
+        rows.append({"kind": "ai_citation_gap", "target": r["prompt"],
+                     "score": score("ai_citation_gap",
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, r["prompt"])}, ptype),
+                     "reasoning": f"엔진 {r['engines']}곳 답변 {r['checks']}건 중 인용 0"
+                                  + (f"·언급만 {r['mentioned']}건" if r["mentioned"] else "")
+                                  + (f" — 대신 {rivals} 가 인용됩니다" if rivals else "")})
+    for r in aio_gaps(conn, pid):
+        rows.append({"kind": "aio_exposure", "target": r["keyword"],
+                     "score": score("aio_exposure",
+                                    {"impressions": 0, "volume": r["volume"] or 0,
+                                     "position": r["position"],
+                                     "fit": _fit_of(conn, pid, r["keyword"])}, ptype),
+                     "reasoning": f"구글이 AI 요약을 붙이는데 내 링크가 없습니다"
+                                  + (f" · 실측 {r['position']}위" if r["position"] else "")
+                                  + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")})
+    for r in content_gaps(conn, pid):
+        # missing 은 our_position 이 NULL — score() 가 보수적 0.3 으로 본다(맞다: 아직 없다)
+        rows.append({"kind": "content_gap", "target": r["keyword"],
+                     "score": score("content_gap",
+                                    {"impressions": 0, "volume": r["volume"] or 0,
+                                     "position": r["our_position"],
+                                     "fit": _fit_of(conn, pid, r["keyword"])}, ptype),
+                     "reasoning": f"{r['domain']} 가 {r['position']}위"
+                                  + (f", 나는 {r['our_position']}위 — 밀립니다"
+                                     if r["our_position"] else ", 나는 아예 없습니다")
+                                  + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")})
+    for r in crawl_gaps(conn, pid):
+        rows.append({"kind": "crawl_issue", "target": r["url"],
+                     "score": score("crawl_issue",
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, r["url"])}, ptype),
+                     "reasoning": f"{r['kind']} — {r['detail'] or '크롤에서 걸렸습니다'}"})
+    bl_broken, bl_prospects = backlink_gaps(conn, pid)
+    for r in bl_broken:
+        rows.append({"kind": "backlink_broken", "target": r["url_to"],
+                     "score": score("backlink_broken",
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, r["url_to"])}, ptype),
+                     "reasoning": f"{r['domain_from'] or host_of(r['url_from'])} 가 이 주소로 "
+                                  f"링크를 걸었는데 페이지가 없습니다"
+                                  + (f" (지수 {r['rank']})" if r["rank"] else "")
+                                  + " — 이미 번 링크입니다"})
+    for r in bl_prospects:
+        tg = (r["targets"] or "").split(",")[:2]
+        rows.append({"kind": "backlink_prospect", "target": r["domain"],
+                     "score": score("backlink_prospect",
+                                    {"impressions": 0, "position": None,
+                                     "fit": _fit_of(conn, pid, r["domain"])}, ptype),
+                     "reasoning": f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 없습니다"
+                                  + (f" — {', '.join(t.strip() for t in tg if t.strip())}"
+                                     if any(t.strip() for t in tg) else "")
+                                  + (f" (지수 {r['rank']})" if r["rank"] else "")})
     with db.run(conn, pid, "analysis") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"

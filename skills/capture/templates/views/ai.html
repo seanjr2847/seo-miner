@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "ai", "title": "AI 인용",
- "sections": ["ai"], "stages": ["ai"]}
+ "sections": ["ai"], "stages": ["ai", "gaps"]}
 </script>
 
 <style>
@@ -256,19 +256,30 @@ function AI_shareBars(share, ours, ourN) {
       줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
       "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
 let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "";
-// 펼침 안의 "할 일"이 쓰는 재료 — 질문 행이 VIEW 밖에서 그려져서 여기 받아 둔다.
-let AI_QP = {}, AI_PA = {}, AI_SHARE_N = {};
+// 펼침이 쓰는 재료. 페이지·감사(query_pages·page_audits)는 셸이 화면을 그리기 전에
+// window 에 한 벌 세운다 — 여기 사본을 두면 같은 목록이 두 벌이 된다. 이 화면 몫은
+// 도메인 집계와 명령 칩에 넣을 사이트 이름뿐이다.
+let AI_SHARE_N = {}, AI_NM = "";
 
 const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
   ["none", "안 잡힘"]];
 const AI_stOf = r => r.cited > 0 ? "cited" : r.mentioned > 0 ? "mention" : "none";
+
+/* 서버는 인용 많은 순으로 준다(dashboard.py 의 ORDER BY cited DESC) — 이미 인용되는
+   질문이 맨 위라 할 일 목록으로는 거꾸로다. 화면에서 기회 점수 내림차순으로 뒤집는다:
+   기회(ai_citation_gap)는 인용 0인 질문에만 붙으므로, 손댈 질문이 먼저 온다. */
+const AI_score = r => {
+  const o = oppOf(r.prompt);
+  return Number.isFinite(o && o.score) ? o.score : -1;
+};
 
 function AI_filtered() {
   const q = AI_Q.trim().toLowerCase();
   return AI_ROWS.filter(r =>
     (!AI_CAT || r.category === AI_CAT) &&
     (!AI_ST || AI_stOf(r) === AI_ST) &&
-    (!q || `${r.prompt} ${r.miss_answer || ""}`.toLowerCase().includes(q)));
+    (!q || `${r.prompt} ${r.miss_answer || ""}`.toLowerCase().includes(q)))
+    .sort((a, b) => AI_score(b) - AI_score(a));
 }
 function AI_find(v) { AI_Q = v; AI_list(); }
 function AI_cat(v) { AI_CAT = v; AI_list(); }
@@ -280,7 +291,9 @@ function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_render(); }
 function AI_ev(btn) {
   const on = btn.getAttribute("aria-expanded") === "true";
   btn.setAttribute("aria-expanded", String(!on));
-  btn.nextElementSibling.hidden = on;
+  // 칸 안에서 펼침을 이름으로 찾는다 — nextElementSibling 이었을 때, 버튼과 펼침
+  // 사이에 근거(oppWhy)를 끼우자 화살표만 뒤집히고 아무것도 안 열렸다.
+  btn.closest("td").querySelector(".aiq-d").hidden = on;
 }
 function AI_doms(json) {
   try { return JSON.parse(json || "[]"); } catch (e) { return []; }
@@ -325,24 +338,33 @@ function AI_rival(doms) {
     확인한 답변 중 ${n}건에서 인용됐습니다.</p>` : "";
 }
 
+/* 기회가 없는 질문(이미 인용되는 쪽)의 펼침. 기회가 있으면 셸의 oppPanel 이 이 자리를
+   통째로 대신한다 — 같은 말을 두 벌 쓰지 않으려고 여기는 그때 부르지 않는다. */
 function AI_detail(r, doms) {
   const p = AI_play(r);
   // 질문 문장이 그대로 검색어인 경우에만 페이지를 붙인다 — 비슷해 보인다고 갖다 대지 않는다.
-  const pages = AI_QP[r.prompt] || [];
+  const pages = (window.QUERY_PAGES || {})[r.prompt] || [];
   const url = pages.length ? pages[0].page : "";
+  // 이 표가 비는 이유는 늘 같다: query_pages 는 GSC 검색어로만 키가 잡히는데 AI 질문은
+  // 문장이라 검색어 목록에 그대로 있는 일이 드물다. 빈 표를 그리는 대신 그렇다고 말한다.
+  const note = pages.length ? "" : `<p class="detn">이 질문으로 걸린 내 페이지가 스냅샷에
+    없습니다 — AI 질문은 문장이라 구글 검색어 목록에 그대로 잡히는 일이 드뭅니다.</p>`;
   // 프롬프트에는 "이 질문에 답하는 글을 써라"가 목적이라, 페이지가 없어도 낼 수 있다.
   const ask = askBlock({
-    url, audit: url ? AI_PA[url] : null, acts: p.acts, deliver: p.deliver,
+    url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts: p.acts, deliver: p.deliver,
     problem: `AI 인용 — ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
     queries: [{q: r.prompt, note: `AI 답변 ${r.checks}건 중 인용 ${r.cited}건`}],
   });
   return `<div class="det">${playList(p.what, p.acts)}${AI_rival(doms)}
-    ${pageTable(pages)}
+    ${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(AI_PA[url], url)}` : ""}${ask}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix((window.PAGE_AUDITS || {})[url], url)}`
+    : ""}${ask}</div>`;
 }
 
 function AI_row(r) {
+  // 이 질문에 걸린 기회 — 인용 0인 질문마다 하나씩 있다(scoring.ai_gaps).
+  const o = oppOf(r.prompt);
   const doms = AI_doms(r.miss_domains);
   const chips = doms.slice(0, 3).map(x => `<span class="chip">${esc(x)}</span>`).join("") +
     (doms.length > 3 ? `<span class="chip" title="${esc(doms.slice(3).join(", "))}"
@@ -358,15 +380,36 @@ function AI_row(r) {
         <p class="q">${esc(r.miss_answer)}</p>` : ""}
       <div class="ft">우리가 인용되지 않은 응답 1건에서 가져온 발췌입니다. 답변은 매번
         달라지므로 한 건은 사실이 아니라 표본입니다.</div>
-    </div>` : ""}${AI_detail(r, doms)}</div>`;
+    </div>` : ""}${o ? oppActs(o) + oppPanel(o) : AI_detail(r, doms)}</div>`;
+  // 접힌 줄에도 근거를 낸다 — 질문마다 다른 실물(엔진 N곳 답변 M건 중 인용 0, 대신 누가)
+  // 이 여기서만 보인다. 상태마다 같은 문장 3종을 돌려 쓰던 자리를 이게 대신한다.
   const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-       >${esc(r.prompt)}</button>${body}`;
-  return `<tr><td>${q}</td>
+       >${esc(r.prompt)}</button>${o ? oppWhy(o) : ""}${body}`;
+  // 부품 CSS(.kind·.why)가 .opp 아래에만 걸려 있다 — 줄에 그 조상만 빌린다.
+  // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
+  return `<tr${o ? ` class="opp"` : ""}>
+    <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">—</span>'}</td>
+    <td>${q}</td>
     <td class="kwcell">${esc(r.category || "")}</td>
     <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
     <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
     <td class="num muted">${r.checks}</td>
     <td class="aidoms">${chips || '<span class="muted">—</span>'}</td></tr>`;
+}
+
+/* 채워진 화면에도 다음 한 걸음을 준다 — 지금까지 다음 명령은 빈 화면에만 있었고,
+   질문이 채워지고 나면 안 잡힌 질문을 세어 놓고도 넘길 자리가 없었다.
+   세는 것은 기회가 붙은 질문 수다 — /create plan 이 실제로 집어 가는 것이 그것이라,
+   화면의 "안 잡힘" 눈금(인용도 언급도 없음)으로 세면 언급만 된 질문을 빠뜨린다. */
+function AI_handoff() {
+  const n = AI_ROWS.filter(r => oppOf(r.prompt)).length;
+  if (!n) return "";
+  return `<p class="sub" style="margin:0 0 12px">한 번도 인용되지 않은 질문 <b>${n}개</b>가
+    그대로 다음 글의 주제입니다 — 아래를 Claude Code 에 붙여넣으면 이 질문들을 기회
+    목록에서 집어 무엇부터 쓸지 계획을 세웁니다.
+    <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+      onkeydown="if(event.key==='Enter'||event.key===' ')
+        {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span></p>`;
 }
 
 function AI_render() {
@@ -386,7 +429,8 @@ function AI_render() {
       <span class="sp"></span>
       <button class="go sec" onclick="AI_csv()"
         title="지금 걸러 놓은 질문 그대로 내려받습니다">CSV 내보내기</button>
-    </div><div class="oppchips">${chips}</div><div id="ai-plist"></div>`;
+    </div><div class="oppchips">${chips}</div>${AI_handoff()}
+    <div id="ai-plist"></div>`;
   AI_list();
 }
 
@@ -398,7 +442,8 @@ function AI_list() {
     return $("ai-plist").innerHTML = `<div class="empty">거른 조건에 맞는 질문이 없습니다.
       <div class="acts"><button onclick="AI_reset()">필터 지우기</button></div></div>`;
   $("ai-plist").innerHTML = table(
-    ["질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
+    [">점수?인용이 0인 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
+     "질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
      ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
      ">응답?질문 × 엔진 × 샘플 — 이 질문에 실제로 받은 답변 수",
@@ -423,14 +468,14 @@ function AI_csv() {
       뒤집힌다 — 그래서 호스팅 화면에는 키 입력 폼 자체가 없다). 그쪽에 "키를
       발급하세요"라고 말하면 낼 필요도 낼 자리도 없는 일을 시키는 것이다. ── */
 function AI_emptyState(d) {
-  const nm = esc(d.project.name || "mysite");
+  const nm = esc(AI_NM);
   const pr = d.progress || {};
   const hosted = !!window.SM_HOSTED;   // 호스팅 애드온이 세우는 표식
   const key = hosted
     ? `<b>OpenRouter 키는 서버가 댑니다</b> — 따로 발급하거나 넣으실 것은 없습니다.`
     : `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
     <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
-      >openrouter.ai/keys</a>에서 발급해 왼쪽 메뉴의 <b>[설정] → 4. API 키</b> 칸에
+      >openrouter.ai/keys</a>에서 발급해 ${window.go("settings")}의 <b>4. API 키</b> 칸에
     붙여넣으면 됩니다.`;
   // 물어보는 법. 호스팅에서는 아래 W() 가 이 블록을 통째로 한 줄로 갈아 끼우므로
   // 여기 명령 칩은 로컬 몫이다 — 웹에서는 화면 위의 실행 버튼이 그 자리다.
@@ -467,6 +512,7 @@ function AI_emptyState(d) {
 VIEW("ai", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
+  AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec"])
     $(id).hidden = true;
   $("ai-band").hidden = !has;
@@ -498,8 +544,6 @@ VIEW("ai", function (d) {
   const rankTxt = !sameScale || tot.cited === 0 ? "—"
     : capped ? "15위 밖" : `${above + 1}위`;
   // 펼침이 쓸 재료 — 질문 행은 VIEW 밖에서 다시 그려지므로 여기서 받아 둔다.
-  AI_QP = d.query_pages || {};
-  AI_PA = d.page_audits || {};
   AI_SHARE_N = {};
   for (const s of (d.cite_share || [])) AI_SHARE_N[s.domain] = s.n;
 

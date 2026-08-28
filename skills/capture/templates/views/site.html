@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "site", "title": "사이트 점검",
- "sections": ["index", "crawl", "devgap"], "stages": ["index", "crawl"]}
+ "sections": ["index", "crawl", "devgap"], "stages": ["index", "crawl", "gsc"]}
 </script>
 
 <style>
@@ -120,9 +120,10 @@ function stExpToggle(tr, detail) {
     return tr.setAttribute("aria-expanded", "false");
   }
   tr.setAttribute("aria-expanded", "true");
+  // 펼침 내용은 detail() 이 통째로 만든다 — 셸의 oppPanel() 은 이미 .det 를 달고
+  // 나오므로 여기서 한 겹 더 두르면 같은 들여쓰기가 두 번 걸린다.
   tr.insertAdjacentHTML("afterend",
-    `<tr class="exp"><td colspan="${tr.cells.length}">
-       <div class="det">${detail(tr.dataset.k)}</div></td></tr>`);
+    `<tr class="exp"><td colspan="${tr.cells.length}">${detail(tr.dataset.k)}</td></tr>`);
 }
 
 function stExpBind(host, detail) {
@@ -143,6 +144,27 @@ function stExpBind(host, detail) {
 // 행 하나가 여는 손잡이 — 표를 그리는 쪽은 이 속성만 달면 된다.
 const stRw = k => `class="rw" tabindex="0" role="button" aria-expanded="false"` +
   ` data-k="${esc(k)}" title="눌러서 무엇을 어떻게 고칠지 보기"`;
+
+/* ── 기회 한 벌에 물리기 ────────────────────────────────────────────
+   이 화면의 세 표는 각자 다른 잣대로 줄을 세운다 — 색인은 심각도, 크롤도 심각도,
+   모바일은 순위차. 그래서 "세 표 중 무엇부터"에는 답이 없었다. 점수는 셋을
+   가로지르는 유일한 축이다: 대상(색인·크롤은 URL, 모바일은 검색어)으로 셸의
+   기회 색인을 찾아 같은 칸을 낸다. 색인은 셸의 render() 가 이미 세워 뒀다. ── */
+const stOppCell = t => {
+  const o = oppOf(t);
+  return `<td class="num">${o ? oppScore(o) + oppMeter(o) : "—"}</td>`;
+};
+// 점수 없는 줄은 −1 로 민다 — 0점짜리 기회보다도 뒤다("아직 기회가 아니다").
+const stOppVal = t => { const o = oppOf(t); return Number.isFinite(o && o.score) ? o.score : -1; };
+// 정렬은 안정적이다(JS 명세) — 점수가 같으면 서버가 준 순서(심각도)가 그대로 남는다.
+const stByOpp = (rows, key) => rows.slice().sort((a, b) => stOppVal(key(b)) - stOppVal(key(a)));
+// 행동 기록 버튼. 박제본·READONLY 에서는 셸이 빈 문자열을 준다 — 빈 상자를 안 만든다.
+const stActs = o => { const a = oppActs(o); return a ? `<div class="det">${a}</div>` : ""; };
+// 기회로 올라온 줄은 셸의 패널 한 벌이 답한다 — 화면이 같은 처방을 두 벌 쓰지 않는다.
+const stOppDet = (head, o) => `<div class="det">${head}${oppWhy(o)}</div>${oppPanel(o)}${stActs(o)}`;
+// 표 머리글 한 벌 — 세 표가 같은 칸을 같은 말로 부른다.
+const ST_OPP_H = "기회?채굴이 매긴 점수(100점 만점) — 세 표를 가로지르는 하나뿐인 축입니다." +
+  " 표는 이 순서로 서 있고, 눌러서 펼치면 왜 걸렸고 뭘 하면 되는지가 나옵니다.";
 
 /* ── 색인 상태 ──────────────────────────────────────────── */
 // bucket 라벨·심각도·고칠 곳. 원문 bucket 은 title 로 남긴다(scoring.index_issues 와 대조용).
@@ -191,6 +213,8 @@ function stIxFiltered() {
     (!ST_IX_B || r.bucket === ST_IX_B) &&
     (!q || `${r.url} ${r.coverage_state || ""} ${r.detail || ""}`.toLowerCase().includes(q)));
 }
+// 표·CSV 가 같은 줄 세우기를 본다. 갈래(심각도) 순은 위 막대·칩이 그대로 지킨다.
+const stIxSorted = () => stByOpp(stIxFiltered(), r => r.url);
 
 // 칩은 다시 그리지 않고 상태만 뒤집는다 — 갈아치우면 방금 누른 칩이 포커스를 잃는다.
 function stIxChip(el) {
@@ -208,9 +232,11 @@ function stIxReset() {
   stIxHead();
 }
 
+// 화면과 같은 순서·같은 칸으로 내보낸다 — "지금 걸러 놓은 목록 그대로"가 참이어야 한다.
 function stIxCsv() {
-  csv("색인문제", [["갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
-    stIxFiltered().map(r => [(ST_IX[r.bucket] || {}).label || r.bucket, r.url,
+  csv("색인문제", [["점수", "갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
+    stIxSorted().map(r => [stOppVal(r.url) < 0 ? "" : stOppVal(r.url),
+      (ST_IX[r.bucket] || {}).label || r.bucket, r.url,
       r.coverage_state || "", r.verdict || "", r.detail || ""])));
 }
 
@@ -242,7 +268,7 @@ function stIxHead() {
 }
 
 function stIxList() {
-  const list = stIxFiltered(), n = ST_IX_ROWS.length;
+  const list = stIxSorted(), n = ST_IX_ROWS.length;
   $("ixn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
   if (!list.length)
     return $("ixlist").innerHTML = `<div class="empty">거른 조건에 맞는 URL이 없습니다.
@@ -251,14 +277,14 @@ function stIxList() {
     ["갈래?robots·가져오기·대표 URL 순으로 원인 하나에 접은 것 — 위 갈래부터 손대야 아래가 풀린다",
      "URL",
      "구글 판정?URL 검사 API 가 보고한 coverageState 원문 — 구글이 이 주소를 어떻게 다루는지",
-     "진단 · 처방?원인별로 무엇을 고치면 되는지"],
+     "진단 · 처방?원인별로 무엇을 고치면 되는지", ST_OPP_H],
     list.map(r => {
       const b = ST_IX[r.bucket] || {label:r.bucket, sev:3};
       return `<tr ${stRw(r.url)}>
         <td class="ixb s${b.sev}" title="${esc(r.bucket)}">${esc(b.label)}</td>
         <td class="ixurl">${esc(r.url)}</td>
         <td class="ixstate">${esc(r.coverage_state || r.verdict || "—")}</td>
-        <td class="ixfix">${esc(r.detail)}</td></tr>`;
+        <td class="ixfix">${esc(r.detail)}</td>${stOppCell(r.url)}</tr>`;
     }));
 }
 
@@ -307,17 +333,24 @@ const ST_IX_DELIVER = {
 function stIxDetail(url) {
   const r = ST_IX_ROWS.find(x => x.url === url);
   if (!r) return "";
-  const p = ST_IX_PLAY[r.bucket] || {};
+  // 구글이 뭐라고 답했는지는 어느 쪽으로 가든 먼저 말한다 — 이 화면의 유일한 근거다.
   const said = [r.coverage_state, r.verdict].filter(Boolean).map(esc).join(" · ");
-  return `<p class="detn">구글 응답: ${said || "—"}</p>
-    ${r.detail ? `<p class="detw">${esc(r.detail)}</p>` : ""}
+  const head = `<p class="detn">구글 응답: ${said || "—"}</p>` +
+    (r.detail ? `<p class="detw">${esc(r.detail)}</p>` : "");
+  const o = oppOf(url);
+  if (o) return stOppDet(head, o);
+  // 기회로 안 올라온 줄 — 갈래별 처방은 이 화면이 원래 갖고 있던 한 벌로 물러선다.
+  const p = ST_IX_PLAY[r.bucket] || {};
+  return `<div class="det">${head}
     ${playList(p.what, p.acts)}
     <p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>
     ${pageFix(ST_AUDITS[url], url)}
     ${askBlock({url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
                 deliver: ST_IX_DELIVER[r.bucket] || ST_IX_DELIVER._,
-                problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}`;
+                problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}
+    <p class="detn">이 URL 은 기회 목록에 없어 확인·완료 표시를 못 답니다 —
+      기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
 function renderIndex(d) {
@@ -349,7 +382,11 @@ function renderIndex(d) {
   }
   $("ix-sub").innerHTML = `${esc(d.index_date)} 점검 · ${scope}<b>${n}건</b>이 색인에 못 들어갔습니다` +
     (total == null ? "" : ` · 정상 ${num(total - n)}개`) +
-    ` — 위 갈래부터 손대세요(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨).`;
+    ` — 위 갈래 칩은 심각도 순(막힌 것 → 못 가져온 것 → 대표 URL 엇갈림 → 색인 안 됨),` +
+    ` 아래 표는 기회 점수 순입니다. ` +
+    W(`고친 뒤 <code class="cmd" onclick="copyCmd(this)">/capture index</code> 로 다시 검사해야 `
+      + `구글 판정이 바뀝니다.`,
+      "고친 뒤 [색인 다시 검사]를 눌러야 구글 판정이 바뀝니다.");
   stIxHead();
 }
 
@@ -362,12 +399,15 @@ function stDevFiltered() {
   const q = ST_DEV_Q.trim().toLowerCase();
   return ST_DEV_ROWS.filter(r => !q || r.query.toLowerCase().includes(q));
 }
+// 여기 대상은 URL 이 아니라 검색어다 — scoring 의 device_gap 이 그렇게 담는다.
+const stDevSorted = () => stByOpp(stDevFiltered(), r => r.query);
 function stDevFind(v) { ST_DEV_Q = v; stDevList(); }
 function stDevReset() { ST_DEV_Q = ""; stDevHead(); }
 function stDevCsv() {
-  csv("모바일격차", [["검색어", "모바일 순위", "데스크톱 순위", "순위차",
+  csv("모바일격차", [["점수", "검색어", "모바일 순위", "데스크톱 순위", "순위차",
     "모바일 노출", "모바일 CTR(%)", "데스크톱 CTR(%)"]].concat(
-    stDevFiltered().map(r => [r.query, stP1(r.mobile_pos), stP1(r.desktop_pos),
+    stDevSorted().map(r => [stOppVal(r.query) < 0 ? "" : stOppVal(r.query),
+      r.query, stP1(r.mobile_pos), stP1(r.desktop_pos),
       stP1(r.dpos), r.mobile_imp, r.mobile_ctr, r.desktop_ctr])));
 }
 
@@ -385,7 +425,7 @@ function stDevHead() {
 }
 
 function stDevList() {
-  const list = stDevFiltered(), n = ST_DEV_ROWS.length;
+  const list = stDevSorted(), n = ST_DEV_ROWS.length;
   $("devn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
   if (!list.length)
     return $("devlist").innerHTML = `<div class="empty">거른 조건에 맞는 검색어가 없습니다.
@@ -397,7 +437,8 @@ function stDevList() {
     ["검색어", ">모바일?모바일 평균 게재순위", ">데스크톱?데스크톱 평균 게재순위",
      ">순위차?모바일 평균 게재순위 − 데스크톱 평균 게재순위. 클수록 모바일에서만 밀린다",
      ">모바일 노출?이 검색어의 모바일 노출 수 — 큰 것부터 고쳐야 이득이 크다",
-     ">모바일 CTR", ">데스크톱 CTR?같은 검색어인데 기기에 따라 클릭률이 얼마나 갈리는지"],
+     ">모바일 CTR", ">데스크톱 CTR?같은 검색어인데 기기에 따라 클릭률이 얼마나 갈리는지",
+     ST_OPP_H],
     list.map(r => `<tr ${stRw(r.query)}><td class="kwcell">${esc(r.query)}</td>
       <td class="num down">${stP1(r.mobile_pos)}</td>
       <td class="num">${stP1(r.desktop_pos)}</td>
@@ -405,7 +446,7 @@ function stDevList() {
         <i class="dgap" style="width:${(r.dpos / mx * 100).toFixed(0)}%"></i></td>
       <td class="num">${num(r.mobile_imp)}</td>
       <td class="num">${r.mobile_ctr}%</td>
-      <td class="num">${r.desktop_ctr}%</td></tr>`)) + `</div>`;
+      <td class="num">${r.desktop_ctr}%</td>${stOppCell(r.query)}</tr>`)) + `</div>`;
 }
 
 // 모바일 격차는 검색어가 달라도 고치는 자리가 같다 — 글이 아니라 화면이다.
@@ -423,9 +464,13 @@ function stDevDetail(q) {
   if (!r) return "";
   const pages = ST_QPAGES[q] || [];
   const url = pages[0] && pages[0].page;   // 노출이 가장 큰 페이지가 곧 손댈 페이지
-  return `<p class="detw">모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 ${stP1(r.desktop_pos)}위
+  // 숫자 요약은 어느 쪽으로 가든 먼저 말한다 — 이 줄이 왜 걸렸는지의 원문이다.
+  const head = `<p class="detw">모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 ${stP1(r.desktop_pos)}위
       (${stP1(r.dpos)}칸 아래) · 모바일 CTR ${r.mobile_ctr}% vs 데스크톱 ${r.desktop_ctr}% ·
-      모바일 노출 ${num(r.mobile_imp)}</p>
+      모바일 노출 ${num(r.mobile_imp)}</p>`;
+  const o = oppOf(q);
+  if (o) return stOppDet(head, o);
+  return `<div class="det">${head}
     ${pageTable(pages)}
     ${pages.length ? "" : `<p class="detn">이 검색어로 걸린 페이지가 스냅샷에 없습니다 —
       페이지별 분해를 아직 수집하지 않았습니다.</p>`}
@@ -438,7 +483,9 @@ function stDevDetail(q) {
                           "가로로 넘치는 표·코드 블록 처리 방법"],
                 problem: `모바일 격차 — 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
                          + `${stP1(r.desktop_pos)}위, 모바일 CTR ${r.mobile_ctr}%`,
-                queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}`;
+                queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}
+    <p class="detn">이 검색어는 기회 목록에 없어 확인·완료 표시를 못 답니다 —
+      기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
 function renderDevice(d) {
@@ -467,7 +514,10 @@ function renderDevice(d) {
   $("dev-sub").innerHTML = `${esc(d.device_date)} 기준 <b>${ST_DEV_ROWS.length}개</b> ` +
     `— 모바일 평균순위가 데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 모바일 노출 ` +
     `${num(RULES.device_min_imp)} 이상인 검색어. 걸린 모바일 노출 ${num(imp)}, 최대 격차 ` +
-    `${stP1(worst)}칸. 고칠 곳은 글이 아니라 모바일 화면입니다.`;
+    `${stP1(worst)}칸. 고칠 곳은 글이 아니라 모바일 화면입니다. ` +
+    W(`고친 뒤 <code class="cmd" onclick="copyCmd(this)">/capture gsc</code> 로 실적을 다시 읽으면 `
+      + `격차가 줄었는지 보입니다.`,
+      "고친 뒤 [전체 분석 실행]으로 실적을 다시 읽으면 격차가 줄었는지 보입니다.");
   stDevHead();
 }
 
@@ -499,22 +549,56 @@ let CR_D = null;
 let CR_PICK = "";                 // "" = 전체
 
 function CR_label(k) { return (CR_KIND[k] || [k])[0]; }
+// 이슈의 정체성은 (kind, url) 이다 — dashboard.crawl_compare 가 그렇게 짝을 짓는다.
+// 같은 URL 에 갈래가 여럿이라 URL 만으로는 눌린 행을 되찾지 못한다.
+const CR_key = r => r.kind + " " + (r.url || "");
+const CR_all = () => (((CR_D || {}).crawl || {}).issues) || [];
+const CR_picked = () => {
+  const a = CR_all();
+  return CR_PICK ? a.filter(r => r.kind === CR_PICK) : a;
+};
+// 서버는 심각도 순으로 준다. 점수 순으로 다시 세운다 — 크롤만 다른 잣대로 줄을
+// 세우면 "세 표 중 무엇부터"에 또 답이 없어진다. 점수가 같으면 심각도 순이 남는다.
+const CR_sorted = () => stByOpp(CR_picked(), r => r.url || "");
 
 function CR_rows(d) {
   const c = (d.crawl || {});
-  const all = c.issues || [];
   // 이번에 새로 생긴 것을 줄에 표시한다 — 같은 갈래라도 새 것이 먼저 눈에 들어와야 한다.
-  const fresh = new Set(((c.compare || {}).new || []).map(x => x.kind + " " + (x.url || "")));
-  const rows = (CR_PICK ? all.filter(r => r.kind === CR_PICK) : all).map(r =>
-    `<tr><td class="cr-url">${esc(r.url || "")}` +
-    `${fresh.has(r.kind + " " + (r.url || "")) ? '<span class="cr-new">새로 생김</span>' : ""}</td>` +
+  const fresh = new Set(((c.compare || {}).new || []).map(CR_key));
+  const rows = CR_sorted().map(r =>
+    `<tr ${stRw(CR_key(r))}><td class="cr-url">${esc(r.url || "")}` +
+    `${fresh.has(CR_key(r)) ? '<span class="cr-new">새로 생김</span>' : ""}</td>` +
     `<td>${esc(CR_label(r.kind))}</td>` +
     `<td class="cr-sev ${esc(r.severity || "")}">${esc(CR_SEV[r.severity] || r.severity || "")}</td>` +
-    `<td>${esc(r.detail || "")}</td></tr>`);
+    `<td>${esc(r.detail || "")}</td>${stOppCell(r.url || "")}</tr>`);
   return `<div class="tools"><span class="n">${rows.length}개</span><span class="sp"></span>
       <button class="go sec" onclick="CR_csv()">CSV 내보내기</button></div>` +
-    table(["URL", "갈래", "심각도", "무엇이"], rows,
+    table(["URL", "갈래", "심각도", "무엇이", ST_OPP_H], rows,
           CR_PICK ? "이 갈래에는 없습니다." : "이번 크롤에서 걸린 게 없습니다.");
+}
+
+/* ── 크롤 행 펼침 ────────────────────────────────────────────
+   500줄짜리 표가 눌러도 아무 일이 없었다 — 갈래마다 "왜 문제고 어떻게 고치나"가
+   CR_KIND 에 이미 한 줄씩 적혀 있는데 칩의 title 툴팁에만 갇혀 있었고, 페이지
+   점검 결과(ST_AUDITS)는 채워져 있는데 크롤 코드가 안 읽었다. 여기서 둘 다 낸다. ── */
+function CR_detail(k) {
+  const r = CR_all().find(x => CR_key(x) === k);
+  if (!r) return "";
+  const url = r.url || "";
+  const o = oppOf(url);
+  if (o) return stOppDet("", o);
+  // 왜 버튼이 없는지를 말한다 — 없는 이유를 안 적으면 고장으로 읽힌다.
+  const no = r.severity === "bad"
+    ? "이번 회차 기회 목록(심각한 것 20건까지)에는 안 들어갔습니다 — 표에는 그대로 남습니다."
+    : `심각도 ${esc(CR_SEV[r.severity] || r.severity || "")} 는 기회 목록에 올리지 않습니다 — `
+      + "심각한 것부터 줄 세우려고 그렇게 잘랐습니다. 여기서 바로 고치면 됩니다.";
+  const why = (CR_KIND[r.kind] || [, ""])[1];
+  return `<div class="det">
+    <p class="detw">${esc(CR_label(r.kind))}${why ? " — " + esc(why) : ""}</p>
+    ${r.detail ? `<p class="detn">${esc(r.detail)}</p>` : ""}
+    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
+    <p class="detn">${no}</p></div>`;
 }
 
 function CR_chips(d) {
@@ -535,12 +619,20 @@ function CR_pick(kind) {
   $("crawl").innerHTML = CR_rows(CR_D);
 }
 
+// 화면과 같은 순서·같은 칸으로 내보낸다 — "지금 걸러 놓은 목록 그대로"가 참이어야 한다.
 function CR_csv() {
-  const all = ((CR_D.crawl || {}).issues) || [];
-  csv("crawl-issues", [["URL", "갈래", "심각도", "무엇이"],
-    ...(CR_PICK ? all.filter(r => r.kind === CR_PICK) : all).map(r =>
-      [r.url, CR_label(r.kind), CR_SEV[r.severity] || r.severity, r.detail])]);
+  csv("crawl-issues", [["점수", "URL", "갈래", "심각도", "무엇이"],
+    ...CR_sorted().map(r => [stOppVal(r.url || "") < 0 ? "" : stOppVal(r.url || ""),
+      r.url, CR_label(r.kind), CR_SEV[r.severity] || r.severity, r.detail])]);
 }
+
+/* 개수만 세고 목록은 버리고 있었다 — 지난번엔 있었는데 이번엔 없는 것, 그게 곧
+   재크롤을 누를 이유다. 무엇이 사라졌는지 보여야 "또 돌려서 뭐하나"가 답을 얻는다.
+   .cr-diff 는 가로로 흐르는 배지 줄이라 목록은 한 줄을 통째로 쓴다. */
+const CR_fixed = f => !f.length ? "" :
+  `<details style="flex-basis:100%"><summary>고쳐진 것 ${f.length}건 보기</summary>
+     <ul class="deta">${f.map(x => `<li>${esc(CR_label(x.kind))} —
+       <span class="cr-url">${esc(x.url || "")}</span></li>`).join("")}</ul></details>`;
 
 // 회차 비교 — 이 섹션의 결론. 첫 바퀴에는 비교할 게 없다고 그대로 말한다.
 function CR_diff(d) {
@@ -548,10 +640,10 @@ function CR_diff(d) {
   if (!cmp.prev_run_id)
     return "<span class=\"muted\">첫 크롤입니다 — 다음 크롤부터 " +
            "<b>지난번 대비 새로 깨진 것</b>을 여기에 적습니다.</span>";
-  const n = (cmp.new || []).length, f = (cmp.fixed || []).length;
+  const n = (cmp.new || []).length, f = cmp.fixed || [];
   return `<span class="${n ? "up" : "muted"}">새로 생긴 것 <b>${n}</b>건</span>` +
-         `<span class="${f ? "ok" : "muted"}">해결된 것 <b>${f}</b>건</span>` +
-         `<span class="muted">직전 크롤 대비</span>`;
+         `<span class="${f.length ? "ok" : "muted"}">해결된 것 <b>${f.length}</b>건</span>` +
+         `<span class="muted">직전 크롤 대비</span>` + CR_fixed(f);
 }
 
 function renderCrawl(d) {
@@ -564,7 +656,11 @@ function renderCrawl(d) {
   $("cr-sub").innerHTML = has
     ? `${c.run.seed === "sitemap" ? "사이트맵" : "홈에서 내부 링크"}를 따라 돌았습니다. ` +
       "깨진 내부 링크·리다이렉트 사슬·고아 페이지는 <b>전수를 봐야만</b> 나옵니다 — " +
-      "그래서 색인 화면과 따로 있습니다."
+      "그래서 색인 화면과 따로 있습니다. " +
+      // 다음 한 수는 빈 상태에만 있었다 — 찬 화면에서도 "그래서 이제 뭘"에 답한다.
+      W(`고친 뒤 <code class="cmd" onclick="copyCmd(this)">/capture crawl</code> 로 다시 돌리면 `
+        + `위 [해결된 것]에 쌓입니다.`,
+        "고친 뒤 [사이트 다시 크롤]을 누르면 위 [해결된 것]에 쌓입니다.")
     : W(`사이트를 아직 크롤하지 않았습니다 — <code class="cmd" onclick="copyCmd(this)">/capture crawl</code> 하면 채워집니다. 비용은 없습니다(내 사이트만 두드립니다).`,
         "사이트를 아직 크롤하지 않았습니다 — 이 화면의 [사이트 다시 크롤]을 누르면 채워집니다. 비용은 없습니다.");
   $("cr-diff").innerHTML = has ? CR_diff(d) : "";
@@ -582,4 +678,5 @@ VIEW("site", function (d) {
 
 stExpBind(document.getElementById("index"), stIxDetail);
 stExpBind(document.getElementById("devgap"), stDevDetail);
+stExpBind(document.getElementById("crawl"), CR_detail);
 </script>

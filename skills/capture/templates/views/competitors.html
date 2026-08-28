@@ -6,7 +6,7 @@
      무엇부터 손댈지는 여전히 화면 밖에 있었다. -->
 <script type="application/json" class="view-def">
 {"id": "competitors", "title": "경쟁 분석",
- "sections": ["cp-share", "cp-gap"], "stages": ["competitors"]}
+ "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"]}
 </script>
 
 <style>
@@ -29,7 +29,6 @@
   .cp-bar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
 .cp-meta { font:400 11.5px/1.5 var(--sans); color:var(--slate); }
-.cp-kw { font-size:13px; word-break:break-word; min-width:16ch; }
 /* 우리가 아예 없는 것(missing)과 밀리는 것(weak)은 손대는 방법이 다르다 —
    전자는 새로 쓰는 일, 후자는 있는 걸 고치는 일. 배지가 그 둘을 가른다. */
 .cp-kind { font:var(--micro); padding:3px 7px; border-radius:2px; white-space:nowrap; }
@@ -84,23 +83,44 @@ function CP_shares(d) {
   }).join("");
 }
 
+/* 점수가 없는 줄 — 왜 없는지를 화면이 말한다. 빈칸으로 두면 "고장인가"가 된다.
+   상한의 정본은 scoring.content_gaps(limit=25) 다. */
+const CP_noOpp = r => r.kind === "shared"
+  ? "우리가 같거나 위입니다 — 지킬 자리라 새 작업이 붙지 않습니다."
+  : "점수는 검색량이 큰 25건까지만 매깁니다 — 이 줄은 그 밖이거나, 수집 뒤 점수를 아직 안 냈습니다.";
+
+// 정렬 자 — 기회가 없는 줄은 맨 아래(-1). 점수가 같으면 원래 순서(검색량 큰 순)가 남는다.
+const CP_rank = r => { const o = oppOf(r.keyword); return Number.isFinite(o && o.score) ? o.score : -1; };
+
+/* 갭 한 줄 = 기회 한 건. 여태 6열 텍스트라 무엇부터 손댈지도, 왜인지도, 했다는
+   표시도 없었고 유일한 출구가 CSV 였다. 점수·근거·행동·펼침은 전부 셸의 한 벌이고
+   (oppScore/oppMeter/oppWhy/oppActs/oppPanel) 이 화면은 대상 문자열(검색어)만 댄다.
+   할 일 목록은 PLAY.content_gap 이 갖는다 — 여기 옮겨 적지 않는다. */
+function CP_card(r) {
+  const o = oppOf(r.keyword);
+  const head = `<div class="oh">
+      <span class="cp-kind ${esc(r.kind || "")}">${
+        esc((CP_KINDS.find(k => k[0] === r.kind) || [, r.kind || ""])[1])}</span>
+      <span class="cp-meta"><span class="cp-dom">${esc(r.domain)}</span> ${
+        r.position == null ? "—" : r.position}위 · 우리 ${
+        r.our_position == null ? "없음" : r.our_position + "위"}${
+        // 점수가 붙은 줄은 근거 문장이 검색량까지 말한다 — 같은 숫자를 두 번 적지 않는다.
+        o || r.volume == null ? "" : ` · 월 검색량 ${num(r.volume)}`}</span>
+    </div>
+    <div class="target">${esc(r.keyword)}</div>`;
+  if (!o) return `<div class="opp">${head}<div class="why">${CP_noOpp(r)}</div></div>`;
+  return `<details class="opp" data-opp="${o.id}"><summary>${oppScore(o)}<div>${head}
+      ${oppMeter(o)}${oppWhy(o)}${oppActs(o)}</div></summary>${oppPanel(o)}</details>`;
+}
+
 function CP_gapRows(d) {
   const all = d.kw_gap || [];
-  const rows = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).map(r =>
-    `<tr><td class="cp-kw">${esc(r.keyword)}</td>` +
-    `<td><span class="cp-kind ${esc(r.kind || "")}">${
-       esc((CP_KINDS.find(k => k[0] === r.kind) || [, r.kind || ""])[1])}</span></td>` +
-    `<td class="cp-dom">${esc(r.domain)}</td>` +
-    `<td class="num">${r.position == null ? "—" : r.position}</td>` +
-    `<td class="num">${r.our_position == null ? "없음" : r.our_position}</td>` +
-    `<td class="num">${r.volume == null ? "—" : num(r.volume)}</td></tr>`);
+  const rows = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all.slice())
+    .sort((a, b) => CP_rank(b) - CP_rank(a));
   return `<div class="tools"><span class="n">${rows.length}개</span><span class="sp"></span>
       <button class="go sec" onclick="CP_csv()">CSV 내보내기</button></div>` +
-    table(["검색어", "갈래", "잡고 있는 곳",
-           ">경쟁사 순위?그 도메인의 평균 게재순위",
-           ">우리 순위?비어 있으면 우리는 그 검색어에 아예 안 뜹니다",
-           ">월 검색량?DataForSEO 기준 · 지역 한정"], rows,
-      CP_KIND ? "이 갈래에는 아직 없습니다." : "");
+    (rows.length ? rows.map(CP_card).join("")
+      : `<div class="empty">${CP_KIND ? "이 갈래에는 아직 없습니다." : "격차가 없습니다."}</div>`);
 }
 
 function CP_chips(d) {
@@ -133,6 +153,15 @@ const CP_run = () => W(
   `<code class="cmd" onclick="copyCmd(this)">/capture competitors</code> 하면 채워집니다.`,
   "이 화면의 [경쟁사 다시 수집]을 누르면 채워집니다.");
 
+/* 데이터가 찬 뒤의 다음 명령이 없었다 — 표를 다 읽고 나면 갈 곳이 CSV 뿐이었다.
+   collect_gap 은 같은 수집에서 경쟁사 키워드를 keywords 에 source='competitor_gap',
+   is_active=0 으로 이미 넣어 둔다(이미 추적 중이거나 GSC 에 잡힌 것은 필터로 빠진다).
+   화면이 그 사실을 한 글자도 말하지 않아서, 사용자는 같은 목록을 손으로 다시 넣고 있었다. */
+const CP_cand = () => "경쟁사가 잡은 검색어는 같은 수집에서 <b>승인 대기 후보</b>로 이미 " +
+  "들어가 있습니다(이미 추적 중이거나 구글 실적에 잡힌 것은 빠집니다) — " +
+  W(`<code class="cmd" onclick="copyCmd(this)">/capture keywords</code> 의 큐레이션에서 켜세요.`,
+    "키워드 큐레이션 단계에서 켜세요.");
+
 VIEW("competitors", function (d) {
   CP_D = d;
   const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
@@ -154,7 +183,7 @@ VIEW("competitors", function (d) {
   $("cp-gap-sub").innerHTML = !d.gap_date
     ? "키워드 격차를 아직 재지 않았습니다 — " + CP_run()
     : "<b>우리는 없음</b>은 새로 써야 하는 것, <b>밀리는 중</b>은 있는 글을 고치는 " +
-      "것입니다. 검색량이 큰 것부터 정렬돼 있습니다.";
+      "것입니다. 점수가 높은 것부터 놓았습니다 — 검색량 순서와 다릅니다. " + CP_cand();
   $("cp-chips").innerHTML = d.gap_date ? CP_chips(d) : "";
   $("cp-gaps").innerHTML = d.gap_date ? CP_gapRows(d) : "";
 });

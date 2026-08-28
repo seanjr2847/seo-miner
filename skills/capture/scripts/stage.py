@@ -394,6 +394,57 @@ def _check_seams() -> None:
         assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash),             "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
 
 
+    # 7) 기회 종류는 한 벌이다 — 만드는 쪽(scoring.ALL_KINDS)과 말하는 쪽(셸의
+    #    KIND_LABEL·PLAY)이 어긋나면 화면에 영문 kind 원문이 그대로 뜨거나
+    #    (라벨 누락) 펼쳐도 할 일이 안 나온다(플레이북 누락). 실제로 그 반대가
+    #    오래 있었다: 라벨과 플레이북은 있는데 **만드는 쪽이 없어서**
+    #    ai_citation_gap·content_gap·aio_exposure 가 한 건도 안 생겼다.
+    #    정본은 scoring.ALL_KINDS 다 — 여기서 양쪽 끝을 함께 검사한다.
+    sc_f = root / "skills" / "capture" / "scripts" / "scoring.py"
+    if sc_f.exists():
+        m = re.search(r"ALL_KINDS = \((.*?)\)", sc_f.read_text("utf-8"), re.S)
+        assert m, "scoring.ALL_KINDS 를 못 찾았다 — 기회 종류의 정본이 사라졌다"
+        kinds = set(re.findall(r'"(\w+)"', m.group(1)))
+        assert len(kinds) >= 8, f"ALL_KINDS 를 {len(kinds)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+
+        lb = re.search(r"window\.KIND_LABEL = \{(.*?)\n?\};", shell, re.S)
+        assert lb, "셸의 KIND_LABEL 을 못 찾았다"
+        labels = set(re.findall(r"(\w+)\s*:", lb.group(1)))
+        assert kinds <= labels, f"한국어 라벨이 없는 기회 종류: {sorted(kinds - labels)}"
+
+        pl = re.search(r"window\.PLAY = \{(.*?)\n\};", shell, re.S)
+        assert pl, "셸의 PLAY 플레이북을 못 찾았다"
+        plays = set(re.findall(r"^  (\w+):", pl.group(1), re.M))
+        assert kinds <= plays, f"할 일(PLAY)이 없는 기회 종류: {sorted(kinds - plays)}"
+
+        # 반대 방향도 본다 — 라벨·플레이북만 있고 만드는 쪽이 없으면 그 화면은
+        # 영원히 빈손이다. 이게 바로 ai_citation_gap 이 죽어 있던 모양이다.
+        assert plays <= kinds, f"플레이북은 있는데 만드는 쪽이 없다: {sorted(plays - kinds)}"
+
+
+    # 8) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.
+    #    view-def 의 stages 는 "이 단계들이 이 화면을 채운다"는 선언이고, 호스팅은
+    #    그걸 읽어 화면 머리에 실행 버튼을 단다. [키워드] 는 "키워드 발굴·경쟁사
+    #    수집"이라 선언해 놓고 실제로는 GSC 스냅샷만 읽었다 — 버튼은 떴는데 눌러도
+    #    화면이 안 채워졌다. 화면 자신이 빈 상태에서 부르는 명령이 정답을 알고 있다.
+    #    (add·run 은 단계가 아니다: 질문 추가와 전 단계 일괄 실행.)
+    NON_STAGE = {"add", "run"}
+    #    다른 화면으로 넘기는 손잡이는 여기 적어 둔다 — 적지 않으면 검사에 걸린다.
+    CROSS = {("competitors", "keywords")}     # 갭 검색어는 승인 대기 후보로 들어간다
+    for p in sorted(views.glob("*.html")):
+        vid = p.stem
+        if vid not in defs:
+            continue
+        declared = set(defs[vid]["stages"])
+        for cmd in sorted(set(re.findall(r"/capture ([a-z]+)", p.read_text("utf-8")))):
+            if cmd in NON_STAGE or (vid, cmd) in CROSS:
+                continue
+            assert cmd in declared, (
+                f"[{vid}] 화면이 /capture {cmd} 를 부르는데 view-def 의 stages 에 없다 "
+                f"— 선언은 {sorted(declared)}. 그 단계가 이 화면을 채우면 stages 에 넣고, "
+                f"다른 화면으로 넘기는 손잡이면 CROSS 에 적어라")
+
+
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
 
