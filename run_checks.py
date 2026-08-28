@@ -68,8 +68,14 @@ def check_dashboard_js() -> int:
     sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
     os.environ.setdefault("CAPTURE_HOME", tempfile.mkdtemp())
     import dashboard                       # noqa: E402 (경로를 먼저 세운다)
-    blocks = re.findall(r"<script>\s*(.*?)</script>",
-                        dashboard.HTML.decode("utf-8"), re.S)
+    # 호스팅은 이 조립본 뒤에 애드온(server/assets/dash.html)을 얹어서 낸다 —
+    # 브라우저가 보는 한 덩어리는 그것까지다. 빼고 보면 애드온의 문법 오류도,
+    # 셸과 이름이 겹치는 top-level 선언도 배포에 가서야 드러난다.
+    src = dashboard.HTML.decode("utf-8")
+    addon = ROOT / "server" / "assets" / "dash.html"
+    if addon.exists():
+        src += "\n" + addon.read_text(encoding="utf-8")
+    blocks = re.findall(r"<script>\s*(.*?)</script>", src, re.S)
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "assembled.js"
         f.write_text("\n;\n".join(blocks), encoding="utf-8")

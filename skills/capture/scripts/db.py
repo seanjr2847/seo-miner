@@ -687,6 +687,87 @@ def add_ai_prompts(conn: sqlite3.Connection, project_id: int, rows) -> int:
     return after - before
 
 
+def list_ai_prompts(conn: sqlite3.Connection, project_id: int,
+                    limit: int = 300) -> list[sqlite3.Row]:
+    """AI에 물어볼 질문 전부 + 지금까지 물어본 횟수·인용된 횟수.
+
+    만들기만 하고 볼 수가 없었다 — 인용 확인을 한 번 돌리기 전에는 어떤 질문이
+    심겼는지 화면 어디에도 안 나왔고, 그래서 엉뚱한 질문이 섞여도 지울 방법이
+    없었다. 켠 것을 먼저, 그다음 만든 순서로 준다.
+    """
+    return conn.execute(
+        """SELECT p.id, p.prompt, p.category, p.is_active,
+                  COUNT(c.id) checks, COALESCE(SUM(c.cited), 0) cited
+             FROM ai_prompts p
+             LEFT JOIN ai_checks c ON c.prompt_id = p.id
+            WHERE p.project_id=?
+            GROUP BY p.id ORDER BY p.is_active DESC, p.id LIMIT ?""",
+        (int(project_id), int(limit))).fetchall()
+
+
+def count_active_ai_prompts(conn: sqlite3.Connection, project_id: int) -> int:
+    """켜진 질문 수. 상한 판정과 화면 표시가 같은 값을 본다 —
+    한 번 물을 때 이 수 × 엔진 수 × 샘플 수만큼 돈이 나간다."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM ai_prompts WHERE project_id=? AND is_active=1",
+        (int(project_id),)).fetchone()[0]
+
+
+def set_ai_prompts_active(conn: sqlite3.Connection, project_id: int, ids,
+                          active: bool) -> int:
+    """질문 켜기/끄기. 반환: 실제로 손댄 행 수(남의 사이트 id 는 안 세어진다).
+
+    지우는 것과 다르다 — 끈 질문은 지금까지 쌓인 ai_checks 를 그대로 들고 있어
+    추이가 끊기지 않는다. 상한은 여기 없다(값을 아는 호출부가 ids 를 자른다).
+    """
+    ids = [int(x) for x in ids]
+    if not ids:
+        return 0
+    cur = conn.execute(
+        f"UPDATE ai_prompts SET is_active=? WHERE project_id=? "
+        f"AND id IN ({','.join('?' * len(ids))})",
+        [1 if active else 0, int(project_id), *ids])
+    conn.commit()
+    return cur.rowcount
+
+
+def update_ai_prompt(conn: sqlite3.Connection, project_id: int, prompt_id: int,
+                     prompt: str, category: str | None = None) -> int:
+    """질문 문구 고치기. 같은 사이트에 같은 문구가 이미 있으면 IntegrityError —
+    UNIQUE(project_id, prompt) 가 그 사실을 말하게 두고 여기서 삼키지 않는다."""
+    prompt = " ".join(str(prompt).split())
+    if not prompt:
+        return 0
+    cur = conn.execute(
+        "UPDATE ai_prompts SET prompt=?, category=COALESCE(?, category) "
+        "WHERE project_id=? AND id=?",
+        (prompt, category or None, int(project_id), int(prompt_id)))
+    conn.commit()
+    return cur.rowcount
+
+
+def delete_ai_prompts(conn: sqlite3.Connection, project_id: int, ids) -> int:
+    """질문과 그 질문으로 받은 확인 기록을 함께 지운다.
+
+    ai_checks 를 남겨 두면 prompt_id 가 가리킬 곳이 없어 화면의 질문별 결과가
+    빈 줄로 남는다. 기록만 지키고 싶으면 delete 가 아니라 끄기(set_..._active)다.
+    """
+    ids = [int(x) for x in ids]
+    if not ids:
+        return 0
+    marks = ','.join('?' * len(ids))
+    own = [r[0] for r in conn.execute(
+        f"SELECT id FROM ai_prompts WHERE project_id=? AND id IN ({marks})",
+        [int(project_id), *ids])]
+    if not own:
+        return 0
+    marks = ','.join('?' * len(own))
+    conn.execute(f"DELETE FROM ai_checks WHERE prompt_id IN ({marks})", own)
+    cur = conn.execute(f"DELETE FROM ai_prompts WHERE id IN ({marks})", own)
+    conn.commit()
+    return cur.rowcount
+
+
 def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: str,
                       rows) -> int:
     """내 페이지 감사 결과 적재. rows: dict (키는 테이블 컬럼명 그대로, url 필수).
@@ -1116,6 +1197,38 @@ def _selfcheck() -> None:
             rows = list_creations(conn, pid, limit=50)
             assert len(rows) == 1 and rows[0]["id"] == cid, rows
             assert rows[0]["note"] == "pr-url", dict(rows[0])   # 웹 화면이 PR 링크로 쓴다
+
+            # AI 질문 — 만들고, 보고, 고치고, 끄고, 지운다 (웹 화면이 이 순서로 쓴다)
+            assert add_ai_prompts(conn, pid, [
+                {"prompt": "밀리아 제거 잘하는 병원 어디야?", "category": "추천"},
+                {"prompt": "점 빼기랑 밀리아 제거 뭐가 달라?", "category": "비교"}]) == 2
+            qs = list_ai_prompts(conn, pid)
+            assert [r["prompt"] for r in qs] == ["밀리아 제거 잘하는 병원 어디야?",
+                                                 "점 빼기랑 밀리아 제거 뭐가 달라?"], qs
+            assert qs[0]["checks"] == 0 and qs[0]["cited"] == 0, dict(qs[0])
+            assert count_active_ai_prompts(conn, pid) == 2
+
+            record_ai_check(conn, qs[0]["id"], None, "chatgpt", 0, True, True,
+                            ["rival.com"], "답변 본문")
+            assert dict(list_ai_prompts(conn, pid)[0])["checks"] == 1
+
+            assert update_ai_prompt(conn, pid, qs[1]["id"], "  밀리아 왜   생겨? ") == 1
+            assert list_ai_prompts(conn, pid)[1]["prompt"] == "밀리아 왜 생겨?"
+            try:      # 같은 사이트에 같은 문구 둘 — UNIQUE 가 말하게 둔다
+                update_ai_prompt(conn, pid, qs[1]["id"], "밀리아 제거 잘하는 병원 어디야?")
+                raise AssertionError("중복 문구가 통과했다")
+            except sqlite3.IntegrityError:
+                conn.rollback()
+            assert update_ai_prompt(conn, pid, 999999, "남의 질문") == 0, "남의 id 가 고쳐진다"
+
+            assert set_ai_prompts_active(conn, pid, [qs[1]["id"]], False) == 1
+            assert count_active_ai_prompts(conn, pid) == 1
+            assert set_ai_prompts_active(conn, pid, [], True) == 0, "빈 목록이 IN () 을 만든다"
+            assert [r["is_active"] for r in list_ai_prompts(conn, pid)] == [1, 0]  # 켠 것 먼저
+
+            assert delete_ai_prompts(conn, pid, [999999]) == 0, "남의 id 가 지워진다"
+            assert delete_ai_prompts(conn, pid, [qs[0]["id"]]) == 1
+            assert conn.execute("SELECT COUNT(*) FROM ai_checks").fetchone()[0] == 0,                 "질문은 지웠는데 확인 기록이 남아 화면에 빈 줄이 선다"
         finally:
             conn.close()
     if old is None:

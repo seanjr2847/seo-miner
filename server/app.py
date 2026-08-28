@@ -23,6 +23,7 @@ import html
 import json
 import re
 import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import quote, urlparse
@@ -411,6 +412,118 @@ async def api_ai_prompts(request: Request):
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:                 # 키 부재 등 — 사유를 그대로 화면에 보낸다
         raise HTTPException(status_code=503, detail=str(e))
+    finally:
+        conn.close()
+
+
+def _ai_prompts_view(c, project: str) -> dict:
+    """질문 목록 한 벌 — 화면은 조회든 편집이든 이 모양만 받아 다시 그린다.
+
+    limit 은 사이트 yaml 의 limits.max_ai_prompts 다. collect_ai 가 켜진 질문을
+    그 수만큼만 물어보므로, 화면이 다른 수를 말하면 사용자는 자기가 켠 질문이
+    조용히 빠지는 걸 보게 된다.
+    """
+    p = db.get_project(c, project)
+    limit = 30
+    if p["config_path"]:
+        try:
+            cfg = db.load_project_yaml(p["config_path"])
+            limit = int((cfg.get("limits") or {}).get("max_ai_prompts") or 30)
+        except (db.ProjectConfigNotFound, ImportError, TypeError, ValueError):
+            pass
+    return {"prompts": [dict(r) for r in db.list_ai_prompts(c, p["id"])],
+            "active_total": db.count_active_ai_prompts(c, p["id"]),
+            "limit": limit}
+
+
+@app.get("/api/ai/prompts")
+def api_ai_prompts_list(project: str, request: Request):
+    """심긴 질문 목록. 인용 확인을 한 번 돌리기 전에는 이걸 볼 곳이 없었다 —
+    만들기 버튼만 있고 무엇이 만들어졌는지는 화면 어디에도 안 나왔다."""
+    uid = _require_uid(request)
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                return _ai_prompts_view(c, project)
+            finally:
+                c.close()
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/ai/prompts/edit")
+async def api_ai_prompts_edit(request: Request):
+    """질문 고치기·켜기·끄기·지우기·직접 추가.
+
+    모델이 지은 질문은 초안이다 — 우리 업종과 상관없는 게 섞이고, 정작 물어야 할
+    질문이 빠진다. 그걸 사람이 손볼 데가 없으면 [AI 인용] 화면의 수치는 엉뚱한
+    질문의 성적표가 된다. 어느 op 든 돌려주는 건 목록 한 벌이다(화면은 다시 그린다).
+    """
+    uid = _require_uid(request)
+    b = await request.json()
+    project, op = str(b.get("project") or ""), str(b.get("op") or "")
+    if op not in ("save", "active", "delete"):
+        raise HTTPException(status_code=400, detail="처리할 수 없는 요청입니다. 새로고침 후 다시 시도해 주세요.")
+    try:      # 화면이 보내는 값이다 — 숫자가 아닌 게 오면 500 이 아니라 400 이다
+        ids = [int(x) for x in (b.get("ids") or [])][:300]
+        pid_edit = int(b["id"]) if b.get("id") else 0
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail="처리할 수 없는 요청입니다. 새로고침 후 다시 시도해 주세요.")
+    text = " ".join(str(b.get("prompt") or "").split())
+    cat = str(b.get("category") or "").strip()
+    if cat and cat not in (*gen_prompts.CATEGORIES, "general"):
+        cat = "general"
+
+    conn = store.connect()
+    try:
+        _own(conn, uid, project)
+        with store.tenant(conn, uid):
+            c = db.connect()
+            try:
+                pid = db.get_project(c, project)["id"]
+                view = _ai_prompts_view(c, project)
+                if op == "save":
+                    if not (gen_prompts.MIN_LEN <= len(text) <= gen_prompts.MAX_LEN):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"질문은 {gen_prompts.MIN_LEN}~{gen_prompts.MAX_LEN}자로 적어 주세요.")
+                    try:
+                        if pid_edit:
+                            db.update_ai_prompt(c, pid, pid_edit, text, cat or None)
+                        elif db.add_ai_prompts(c, pid, [{"prompt": text,
+                                                         "category": cat or "general"}]) == 0:
+                            # 조용히 무시하면 화면은 아무 변화 없이 다시 그려진다 —
+                            # 사용자는 자기가 뭘 잘못 눌렀는지 알 길이 없다.
+                            raise HTTPException(status_code=409,
+                                                detail="같은 질문이 이미 있습니다.")
+                    except sqlite3.IntegrityError:
+                        raise HTTPException(status_code=409,
+                                            detail="같은 질문이 이미 있습니다.")
+                elif op == "active":
+                    on = bool(b.get("active"))
+                    if on:
+                        # 켜진 질문 × 엔진 수 × 샘플 수만큼 돈이 나간다. 상한 너머로
+                        # 켜 봐야 collect_ai 가 LIMIT 으로 자르므로, 여기서 막고 말한다.
+                        room = max(0, view["limit"] - view["active_total"])
+                        if room == 0:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"켤 수 있는 질문은 {view['limit']}개까지입니다 — 다른 질문을 먼저 꺼 주세요.")
+                        ids = ids[:room]
+                    db.set_ai_prompts_active(c, pid, ids, on)
+                else:
+                    db.delete_ai_prompts(c, pid, ids)
+                return {"ok": True, **_ai_prompts_view(c, project)}
+            finally:
+                c.close()
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
     finally:
         conn.close()
 
@@ -842,9 +955,10 @@ def demo() -> None:
         # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
-                     "/api/settings?project=x"):
+                     "/api/settings?project=x", "/api/ai/prompts?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts"):
+        for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
+                     "/api/ai/prompts/edit"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
@@ -922,6 +1036,39 @@ def demo() -> None:
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
         assert c.get("/api/data?project=p1").status_code == 404
         assert c.get("/api/overview").json()["sites"][0]["project"] == "p1"
+
+        # 질문 목록·편집 — 만들기 버튼만 있고 무엇이 심겼는지 볼 데가 없었다.
+        assert c.get("/api/ai/prompts?project=없는사이트").status_code == 404,             "남의 사이트 질문이 열린다"
+        conn = store.connect()
+        try:
+            with store.tenant(conn, u2):
+                assert dashboard.create_project(
+                    {"name": "p1", "type": "local_clinic", "domain": "p1.com"})["ok"]
+        finally:
+            conn.close()
+        r = c.get("/api/ai/prompts?project=p1")
+        assert r.status_code == 200 and r.json()["prompts"] == [], r.text
+        # 상한은 사이트 yaml 의 limits.max_ai_prompts 다 — collect_ai 가 그 수만큼만 묻는다.
+        assert r.json()["limit"] == 30, r.text
+
+        def edit(**b):
+            return c.post("/api/ai/prompts/edit", json={"project": "p1", **b})
+
+        d = edit(op="save", prompt="  밀리아  제거 잘하는 곳 어디야? ", category="추천").json()
+        assert [q["prompt"] for q in d["prompts"]] == ["밀리아 제거 잘하는 곳 어디야?"], d
+        assert d["prompts"][0]["category"] == "추천" and d["active_total"] == 1, d
+        assert edit(op="save", prompt="짧음").status_code == 400, "한 글자짜리도 질문이 된다"
+        assert edit(op="save", prompt="같은 질문 또 넣기 되나요?").status_code == 200
+        assert edit(op="save", prompt="같은 질문 또 넣기 되나요?").status_code == 409,             "중복 추가가 조용히 무시된다 — 화면은 아무 변화 없이 다시 그려진다"
+        qid = d["prompts"][0]["id"]
+        d = edit(op="active", ids=[qid], active=False).json()
+        assert d["active_total"] == 1 and d["prompts"][-1]["is_active"] == 0, d
+        d = edit(op="save", id=qid, prompt="밀리아는 왜 생겨?").json()
+        assert "밀리아는 왜 생겨?" in [q["prompt"] for q in d["prompts"]], d
+        assert edit(op="save", id=qid, prompt="같은 질문 또 넣기 되나요?").status_code == 409,             "다른 질문과 같은 문구로 덮어써진다"
+        assert len(edit(op="delete", ids=[qid]).json()["prompts"]) == 1
+        assert edit(op="드롭테이블", ids=[qid]).status_code == 400
+        assert edit(op="delete", ids=["1; DROP TABLE"]).status_code == 400, "숫자가 아닌 id 가 500 을 낸다"
 
         c.cookies.clear()
 

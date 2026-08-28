@@ -134,6 +134,39 @@
   #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
   #sm-kw .warn{color:var(--copper)}
 
+  /* AI 질문 관리 — 만들어 놓고 볼 데가 없었다. 목록이 곧 편집기다. */
+  #sm-aiq .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
+  #sm-aiq .list{max-height:420px;overflow:auto;border:1px solid var(--rule-soft);
+    border-radius:6px}
+  #sm-aiq .q{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;
+    align-items:center;gap:10px;padding:7px 12px;
+    border-bottom:1px solid var(--rule-soft)}
+  #sm-aiq .q:last-child{border-bottom:0}
+  #sm-aiq .q input[type=checkbox]{accent-color:var(--patina);margin:0}
+  /* 꺼진 질문은 목록에 남지만 이번 확인에는 안 나간다 — 그 사실이 보여야 한다. */
+  #sm-aiq .q.off .t,#sm-aiq .q.off .n{opacity:.45}
+  #sm-aiq .t{min-width:0;font:400 13.5px/1.5 var(--sans);color:var(--ink);
+    background:transparent;border:1px solid transparent;border-radius:4px;
+    padding:4px 6px;text-transform:none}
+  #sm-aiq .t:hover{border-color:var(--rule-soft)}
+  #sm-aiq .t:focus{outline:0;border-color:var(--patina);background:var(--wash)}
+  #sm-aiq select{font:400 11.5px/1 var(--mono);color:var(--slate);
+    background:transparent;border:1px solid var(--rule);border-radius:6px;
+    padding:5px 6px}
+  #sm-aiq .n{font:400 11.5px/1 var(--mono);color:var(--slate);white-space:nowrap}
+  #sm-aiq .del{font:400 15px/1 var(--mono);color:var(--slate);background:transparent;
+    border:0;padding:2px 6px;cursor:pointer}
+  #sm-aiq .del:hover{color:var(--copper)}
+  #sm-aiq .bar2{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  #sm-aiq .new{flex:1 1 260px;font:400 13.5px/1 var(--sans);color:var(--ink);
+    background:transparent;border:1px solid var(--rule);border-radius:6px;padding:9px 10px}
+  #sm-aiq .go2{font:500 13px/1 var(--sans);color:var(--stone);background:var(--patina);
+    border:0;border-radius:6px;padding:9px 16px;cursor:pointer}
+  #sm-aiq .go2.ghost{color:var(--slate);background:transparent;border:1px solid var(--rule)}
+  #sm-aiq .go2:disabled{opacity:.4;cursor:default}
+  #sm-aiq .cnt{font-size:12.5px;color:var(--slate)}
+  #sm-aiq .warn{color:var(--copper)}
+
   /* 플러그인으로 넘기는 일 — 조용한 목록. 화면의 결론이 아니라 각주다. */
   #sm-cc .sub{color:var(--slate);font-size:13px;margin:4px 0 16px}
   #sm-cc ul{list-style:none;padding:0;margin:0;border-top:1px solid var(--rule-soft)}
@@ -411,8 +444,8 @@
       var d = await r.json();
       if (!r.ok) { btn.textContent = (d.detail || "만들지 못했습니다").slice(0, 60); }
       else {
-        btn.textContent = "질문 " + d.added + "개 완성 — [AI 인용 다시 확인]을 누르세요";
-        load(); loadDoctor();
+        btn.textContent = "질문 " + d.added + "개 완성 — 아래 목록에서 확인하세요";
+        load(); loadDoctor(); aiqLoad();
         return;                                   // 화면이 다시 그려지며 이 버튼은 사라진다
       }
     } catch (e) { btn.textContent = "서버에 연결하지 못했습니다"; }
@@ -481,6 +514,7 @@
     ["overview", "sm-perf", "daily"],
     ["overview", "sm-dim",  "sm-perf"],
     ["keywords", "sm-kw",   "log"],
+    ["ai",       "sm-aiq", "ai"],
     ["history",  "sm-cc",   "made-sec"],
     ["settings", "sm-set",  "setup"]
   ];
@@ -777,6 +811,129 @@
   }
   step("키워드 패널", keywords);
 
+  // ── AI 질문 관리 ───────────────────────────────────────────
+  // [질문 만들기]는 있었는데 무엇이 만들어졌는지 볼 데가 없었다. 인용 확인을 한 번
+  // 돌리기 전에는 목록이 화면 어디에도 안 나와서, 업종과 안 맞는 질문이 섞여도
+  // 그대로 물어보는 수밖에 없었다. 목록이 곧 편집기다 — 고치고, 끄고, 지운다.
+  var AIQ_CATS = ["추천", "비교", "문제해결", "브랜드", "general"];
+
+  function aiqPaint(box, d) {
+    var list = box.querySelector(".list");
+    box.querySelector(".cnt").innerHTML =
+      "켠 질문 " + d.active_total + " / " + d.limit +
+      (d.active_total >= d.limit ? ' <b class="warn">· 상한 도달</b>' : "");
+    if (!(d.prompts || []).length) {
+      list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
+        "아직 질문이 없습니다 — [AI에게 질문 만들게 하기]를 누르거나 직접 추가하세요.</p>";
+      return;
+    }
+    list.innerHTML = d.prompts.map(function (q) {
+      return '<div class="q' + (q.is_active ? "" : " off") + '" data-id="' + q.id + '">' +
+        '<input type="checkbox" class="on"' + (q.is_active ? " checked" : "") +
+          ' title="켜면 이번 확인에 물어봅니다">' +
+        '<input class="t" value="' + esc(q.prompt) + '">' +
+        '<select class="c">' + AIQ_CATS.map(function (c) {
+          return '<option' + (c === q.category ? " selected" : "") + ">" + esc(c) + "</option>";
+        }).join("") + "</select>" +
+        '<span class="n">' + (q.checks ? q.checks + "회 · 인용 " + q.cited : "아직 안 물음") +
+          "</span>" +
+        '<button class="del" title="지우기 — 확인 기록도 함께 사라집니다">×</button>' +
+        "</div>";
+    }).join("");
+  }
+
+  function aiqSay(box, msg) {
+    box.querySelector(".cnt").innerHTML = '<b class="warn">' + esc(msg) + "</b>";
+  }
+
+  async function aiqLoad() {
+    var box = document.getElementById("sm-aiq");
+    if (!box) return;
+    try {
+      var r = await fetch("/api/ai/prompts?project=" + encodeURIComponent(proj()));
+      var d = await r.json();
+      if (!r.ok) return aiqSay(box, d.detail || "질문을 불러오지 못했습니다");
+      aiqPaint(box, d);
+    } catch (e) { aiqSay(box, "질문을 불러오지 못했습니다. 새로고침해 주세요"); }
+  }
+
+  async function aiqSend(body) {
+    var box = document.getElementById("sm-aiq");
+    try {
+      var r = await fetch("/api/ai/prompts/edit", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(Object.assign({project: proj()}, body))});
+      var d = await r.json();
+      if (!r.ok) { aiqSay(box, d.detail || "저장하지 못했습니다"); return aiqLoad(); }
+      aiqPaint(box, d);
+    } catch (e) { aiqSay(box, "서버에 연결하지 못했습니다"); }
+  }
+
+  function aiqPanel() {
+    var host = document.querySelector("main");
+    if (!host || document.getElementById("sm-aiq")) return;
+    var sec = document.createElement("section");
+    sec.id = "sm-aiq";
+    sec.innerHTML = '<p class="eyebrow">AI QUESTIONS</p><h2>물어볼 질문</h2>' +
+      '<p class="sub">여기 켜 둔 질문을 그대로 AI에 물어보고, 답변에 우리 도메인이 ' +
+      "인용되는지 셉니다. 모델이 지은 질문은 초안입니다 — 업종과 안 맞는 것은 끄거나 " +
+      "지우고, 손님이 실제로 물을 법한 말투로 고치세요. 질문 하나마다 엔진 수만큼 확인 " +
+      "비용이 듭니다.</p>" +
+      '<div class="list"></div>' +
+      '<div class="bar2"><input class="new" maxlength="120" ' +
+        'placeholder="질문을 직접 추가 — 예: 강남 밀리아 제거 잘하는 곳 어디야?">' +
+      '<button class="go2 add">추가</button>' +
+      '<button class="go2 ghost gen">AI에게 질문 만들게 하기</button>' +
+      '<span class="cnt"></span></div>';
+    host.appendChild(sec);
+
+    var list = sec.querySelector(".list");
+    var idOf = function (el) { return Number(el.closest(".q").dataset.id); };
+    list.addEventListener("change", function (ev) {
+      var t = ev.target;
+      if (t.classList.contains("on")) {
+        aiqSend({op: "active", ids: [idOf(t)], active: t.checked});
+      } else if (t.classList.contains("c")) {
+        aiqSend({op: "save", id: idOf(t), category: t.value,
+                 prompt: t.closest(".q").querySelector(".t").value});
+      }
+    });
+    // 문구 수정은 포커스를 뗄 때 저장한다 — 타이핑 한 글자마다 쏘지 않는다.
+    list.addEventListener("focusout", function (ev) {
+      var t = ev.target;
+      if (!t.classList || !t.classList.contains("t")) return;
+      if (t.value.trim() === t.defaultValue.trim()) return;
+      aiqSend({op: "save", id: idOf(t), prompt: t.value,
+               category: t.closest(".q").querySelector(".c").value});
+    });
+    list.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && ev.target.classList.contains("t")) ev.target.blur();
+    });
+    list.addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest(".del") : null;
+      if (!b) return;
+      var row = b.closest(".q");
+      // 지우면 이 질문으로 쌓인 확인 기록도 같이 사라진다 — 되돌릴 수 없다.
+      if (!window.confirm("이 질문과 지금까지의 확인 기록을 지웁니다. 기록을 남기려면 " +
+                          "지우지 말고 체크를 꺼 주세요.\n\n" +
+                          row.querySelector(".t").value)) return;
+      aiqSend({op: "delete", ids: [Number(row.dataset.id)]});
+    });
+
+    var box = sec.querySelector(".new");
+    var addOne = function () {
+      var v = box.value.trim();
+      if (!v) return;
+      box.value = "";
+      aiqSend({op: "save", prompt: v});
+    };
+    sec.querySelector(".add").addEventListener("click", addOne);
+    box.addEventListener("keydown", function (ev) { if (ev.key === "Enter") addOne(); });
+    sec.querySelector(".gen").addEventListener("click", function () { makePrompts(this); });
+    aiqLoad();
+  }
+  step("AI 질문 패널", aiqPanel);
+
   // ── 사이트가 정해졌을 때 ─────────────────────────────────────
   // 원본(dashboard.html 의 load)이 데이터를 다 그린 뒤 한 번 쏜다. 여태 이 계층은
   // #proj 의 change 이벤트로만 그걸 알았는데, hash 로 자동 선택될 때는 change 가
@@ -787,6 +944,7 @@
     step("설정", setLoad);
     step("성과", perfLoad);
     step("키워드", kwLoad);
+    step("AI 질문", aiqLoad);
   });
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
