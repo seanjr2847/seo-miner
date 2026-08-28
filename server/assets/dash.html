@@ -1,11 +1,10 @@
 
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  /* 원본은 시스템 폰트(Segoe UI/Cascadia)라 한글이 맑은고딕으로 떨어져 수치와 섞이면
-     지저분하다. 변수만 갈아끼우면 화면 전체가 따라온다 — 원본 규칙은 손대지 않는다. */
+  /* 본문 서체는 원본이 Pretendard 로 간다 — 여기서 덮지 않는다. 등폭만 갈아끼운다:
+     원본의 Cascadia/Consolas 는 윈도우 기준이라 다른 OS 에서 폴백이 제각각이다. */
   :root{
-    --sans:"IBM Plex Sans KR","Segoe UI",system-ui,sans-serif;
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
   }
   /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */

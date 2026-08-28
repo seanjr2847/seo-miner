@@ -285,6 +285,11 @@ def _check_seams() -> None:
         assert gone not in dash, f"dash.html 이 셸의 {why}를 다시 구현한다: {gone}"
     for hook in ("SM.addSection(", "SM.sync("):
         assert hook in dash, f"dash.html 이 셸에 덧붙이지 않는다: {hook}"
+    # 본문 서체는 한 벌이다. 애드온이 --sans 를 덮으면 같은 조립본이 배포마다 다른
+    # 글자로 서고, 그러면 자간·줄바꿈·표 폭이 전부 달라진다(그걸 한 번 겪고 걷어냈다).
+    # 등폭(--mono)은 예외다: 원본이 윈도우 기준이라 호스팅이 갈아끼운다.
+    assert not re.search(r"--sans\s*:", dash),         "dash.html 이 본문 서체를 덮는다 — 서체는 원본(dashboard.html) 한 곳이다"
+
     # 원본 레일을 힘으로 덮지 않는다 — !important 는 "두 시스템이 싸우는 중"의 표식이다.
     # 주석은 근거가 못 된다(왜 걷어냈는지 적어 둔 자리가 검사에 걸리면 안 된다).
     bare = re.sub(r"/\*[\s\S]*?\*/", "", dash)
