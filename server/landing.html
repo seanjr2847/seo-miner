@@ -1,6 +1,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
+     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
+     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
    색은 광물에서: 녹청(patina)·산화동(copper)·석회(stone). 숫자는 전부 등폭.
@@ -10,7 +15,8 @@
   --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
-  --sans:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
+         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
 }
 @media (prefers-color-scheme:dark){

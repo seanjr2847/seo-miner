@@ -9,6 +9,11 @@
      화면 위에 얹히는 층(호스팅판)이 화면 이름 여섯과 요소 id 열몇을 다시 나열하는
      대신 window.__VIEWS__ 를 읽으면 된다. -->
 <!--MANIFEST-->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
+     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
+     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⛏</text></svg>">
 <style>
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
@@ -25,8 +30,8 @@
   --on-ink-rule:rgba(230,233,228,.26);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
          "Malgun Gothic",monospace;
-  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,
-         "Malgun Gothic","Apple SD Gothic Neo",sans-serif;
+  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
+         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
   /* 마이크로 라벨 한 벌 — 눈금·열 이름·배지가 같은 크기로 선다. 한글이 기본이라
      자간을 벌리지 않는다(벌리면 "아 직 안 딴 기 회"가 된다). 위계는 크기·굵기·색. */
   --micro:500 11px/1.35 var(--sans);

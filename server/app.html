@@ -1,3 +1,8 @@
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
+     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
+     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 /* 시추 로그(core log)와 같은 광물 팔레트 — 이 화면이 대시보드의 입구다.
    여기서 고른 사이트가 곧 갱도가 되므로, 색·서체·괘선을 dashboard.html 과 맞춘다. */
@@ -12,8 +17,8 @@
   --on-ink-rule:rgba(230,233,228,.26);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
          "Malgun Gothic",monospace;
-  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,
-         "Malgun Gothic","Apple SD Gothic Neo",sans-serif;
+  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
+         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root {
