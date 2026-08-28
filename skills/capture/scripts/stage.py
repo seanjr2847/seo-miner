@@ -381,7 +381,17 @@ def _check_seams() -> None:
                     else:
                         assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
 
-    # 6) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
+    # 6) 화면에서 돌릴 수 있는 단계는 서버가 전부 받아야 한다. dash.html 의 용어표에
+    #    run 라벨이 있으면 그 버튼이 /api/run 으로 그 id 를 보낸다 — 서버가 단계
+    #    목록 사본을 들고 있으면 새 단계는 화면에만 생기고 눌렀을 때 "실행할 수
+    #    없는 단계입니다: crawl" 로 튕긴다(실제로 crawl·metrics·backlinks 가 그랬다).
+    import run_all
+    runnable = {s for s, body in entries.items() if "run:" in body}
+    assert runnable <= set(run_all.VALID_STAGE_NAMES),         f"화면은 돌리자는데 엔진 단계표에 없다: {sorted(runnable - set(run_all.VALID_STAGE_NAMES))}"
+    if app_f.exists():
+        assert "run_all.VALID_STAGE_NAMES" in app_f.read_text("utf-8"),             "app.py 가 단계 목록 사본을 들고 있다 — 화면에만 있는 단계가 400 으로 튕긴다"
+
+    # 7) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
     #    않게 하려는 것이고, 원본 버튼들은 인라인 onclick 이라 영향이 없다.
     #    애드온이 그 안에 심는 버튼은 사정이 다르다: document 위임으로 잡으면
     #    이벤트가 영영 안 닿아 **버튼은 떠 있는데 눌러도 아무 일이 없다**.
@@ -394,7 +404,7 @@ def _check_seams() -> None:
         assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash),             "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
 
 
-    # 7) 기회 종류는 한 벌이다 — 만드는 쪽(scoring.ALL_KINDS)과 말하는 쪽(셸의
+    # 8) 기회 종류는 한 벌이다 — 만드는 쪽(scoring.ALL_KINDS)과 말하는 쪽(셸의
     #    KIND_LABEL·PLAY)이 어긋나면 화면에 영문 kind 원문이 그대로 뜨거나
     #    (라벨 누락) 펼쳐도 할 일이 안 나온다(플레이북 누락). 실제로 그 반대가
     #    오래 있었다: 라벨과 플레이북은 있는데 **만드는 쪽이 없어서**
@@ -422,7 +432,7 @@ def _check_seams() -> None:
         assert plays <= kinds, f"플레이북은 있는데 만드는 쪽이 없다: {sorted(plays - kinds)}"
 
 
-    # 8) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.
+    # 9) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.
     #    view-def 의 stages 는 "이 단계들이 이 화면을 채운다"는 선언이고, 호스팅은
     #    그걸 읽어 화면 머리에 실행 버튼을 단다. [키워드] 는 "키워드 발굴·경쟁사
     #    수집"이라 선언해 놓고 실제로는 GSC 스냅샷만 읽었다 — 버튼은 떴는데 눌러도
