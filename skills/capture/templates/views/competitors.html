@@ -1,0 +1,161 @@
+<!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
+     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다.
+
+     여태 경쟁사 축은 "경쟁사가 잡은 키워드를 우리 추적 목록에 부어 넣는 것"뿐이었다
+     (collect_gap). 누가 몇 위로 잡고 있고 우리는 몇 위인지가 없어서, 목록만 늘고
+     무엇부터 손댈지는 여전히 화면 밖에 있었다. -->
+<script type="application/json" class="view-def">
+{"id": "competitors", "title": "경쟁 분석",
+ "sections": ["cp-share", "cp-gap"], "stages": ["competitors"]}
+</script>
+
+<style>
+/* ── 경쟁 분석 ────────────────────────────────────────────────
+   몫은 숫자보다 길이로 읽힌다. 우리 줄만 녹청, 나머지는 회색 — 색으로 "누가 우리인가"
+   하나만 말하고, 크기 비교는 막대 길이가 한다. */
+.cp-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 14px;
+  align-items:baseline; padding:9px 0; border-bottom:1px solid var(--rule-soft); }
+.cp-row:last-child { border-bottom:0; }
+.cp-dom { font-family:var(--mono); font-size:13px; word-break:break-all; }
+.cp-row.me .cp-dom { color:var(--patina); font-weight:600; }
+.cp-n { font-family:var(--mono); font-size:13px; font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
+.cp-bar { grid-column:1 / -1; height:4px; border-radius:2px; background:var(--bar);
+  margin-top:6px; }
+.cp-bar i { display:block; height:100%; border-radius:2px; background:var(--slate);
+  opacity:.45; }
+.cp-row.me .cp-bar i { background:var(--patina); opacity:.75; }
+@media (prefers-reduced-motion: no-preference) {
+  .cp-bar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+}
+.cp-meta { font:400 11.5px/1.5 var(--sans); color:var(--slate); }
+.cp-kw { font-size:13px; word-break:break-word; min-width:16ch; }
+/* 우리가 아예 없는 것(missing)과 밀리는 것(weak)은 손대는 방법이 다르다 —
+   전자는 새로 쓰는 일, 후자는 있는 걸 고치는 일. 배지가 그 둘을 가른다. */
+.cp-kind { font:var(--micro); padding:3px 7px; border-radius:2px; white-space:nowrap; }
+.cp-kind.missing { color:var(--copper); background:var(--wash-copper); }
+.cp-kind.weak { color:var(--patina); background:var(--wash); }
+.cp-kind.shared { color:var(--slate); border:1px solid var(--rule); }
+</style>
+
+<section id="cp-share">
+  <div class="eyebrow" id="cp-share-eyebrow">유기 검색 규모</div>
+  <h2 data-web="경쟁사 트래픽 점유">누가 이 주제를 먹고 있나</h2>
+  <p class="sub" id="cp-share-sub"></p>
+  <div id="cp-shares"></div>
+</section>
+
+<section id="cp-gap">
+  <div class="eyebrow" id="cp-gap-eyebrow">키워드 격차</div>
+  <h2 data-web="키워드 격차">경쟁사는 잡았고 우리는 놓친 것</h2>
+  <p class="sub" id="cp-gap-sub"></p>
+  <div id="cp-chips" class="oppchips"></div>
+  <div id="cp-gaps"></div>
+</section>
+
+<script>
+"use strict";
+/* 이 화면의 이름은 전부 CP_ 로 시작한다 — 조립하면 한 문서라 최상위 이름이 겹치면
+   뒤가 앞을 조용히 덮는다(dashboard._selfcheck 가 그걸 센다). */
+
+let CP_D = null;
+let CP_KIND = "";                 // "" = 전체. 칩이 거른다.
+
+const CP_KINDS = [
+  ["missing", "우리는 없음", "그 검색어에서 우리는 순위가 아예 없습니다 — 새로 써야 하는 것"],
+  ["weak",    "밀리는 중",   "둘 다 있는데 우리가 더 아래입니다 — 있는 글을 고치는 것"],
+  ["shared",  "우리가 위",   "같거나 우리가 위입니다 — 지킬 자리"],
+];
+
+function CP_shares(d) {
+  const rows = d.comp_metrics || [];
+  if (!rows.length) return "";
+  const max = rows.reduce((m, r) => Math.max(m, r.etv || 0), 0) || 1;
+  return rows.map(r => {
+    const w = Math.round((r.etv || 0) / max * 100);
+    return `<div class="cp-row${r.is_self ? " me" : ""}">
+      <div class="cp-dom">${esc(r.domain)}${r.is_self ? " — 우리" : ""}</div>
+      <div class="cp-n">${r.share == null ? "—" : Math.round(r.share * 100) + "%"}</div>
+      <div class="cp-meta" style="grid-column:1">순위를 가진 검색어 ${num(r.keywords)}개` +
+      `${r.top10 == null ? "" : ` · 1페이지 ${num(r.top10)}개`}</div>
+      <div class="cp-meta">${r.etv == null ? "" : "추정 트래픽 " + num(Math.round(r.etv))}</div>
+      <span class="cp-bar"><i style="width:${w}%"></i></span>
+    </div>`;
+  }).join("");
+}
+
+function CP_gapRows(d) {
+  const all = d.kw_gap || [];
+  const rows = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).map(r =>
+    `<tr><td class="cp-kw">${esc(r.keyword)}</td>` +
+    `<td><span class="cp-kind ${esc(r.kind || "")}">${
+       esc((CP_KINDS.find(k => k[0] === r.kind) || [, r.kind || ""])[1])}</span></td>` +
+    `<td class="cp-dom">${esc(r.domain)}</td>` +
+    `<td class="num">${r.position == null ? "—" : r.position}</td>` +
+    `<td class="num">${r.our_position == null ? "없음" : r.our_position}</td>` +
+    `<td class="num">${r.volume == null ? "—" : num(r.volume)}</td></tr>`);
+  return `<div class="tools"><span class="n">${rows.length}개</span><span class="sp"></span>
+      <button class="go sec" onclick="CP_csv()">CSV 내보내기</button></div>` +
+    table(["검색어", "갈래", "잡고 있는 곳",
+           ">경쟁사 순위?그 도메인의 평균 게재순위",
+           ">우리 순위?비어 있으면 우리는 그 검색어에 아예 안 뜹니다",
+           ">월 검색량?DataForSEO 기준 · 지역 한정"], rows,
+      CP_KIND ? "이 갈래에는 아직 없습니다." : "");
+}
+
+function CP_chips(d) {
+  const c = d.kw_gap_counts || {};
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  if (!total) return "";
+  const chip = (k, label, why, n) =>
+    `<button class="chip${CP_KIND === k ? " on" : ""}" title="${esc(why)}"` +
+    ` onclick="CP_pick('${k}')">${esc(label)} <b>${n}</b></button>`;
+  return chip("", "전체", "모든 갈래", total) +
+    CP_KINDS.filter(([k]) => c[k]).map(([k, l, w]) => chip(k, l, w, c[k])).join("");
+}
+
+function CP_pick(kind) {
+  CP_KIND = (CP_KIND === kind) ? "" : kind;
+  $("cp-chips").innerHTML = CP_chips(CP_D);
+  $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+}
+
+function CP_csv() {
+  const all = CP_D.kw_gap || [];
+  csv("keyword-gap", [["검색어", "갈래", "잡고 있는 곳", "경쟁사 순위", "우리 순위", "월 검색량"],
+    ...(CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).map(r =>
+      [r.keyword, r.kind, r.domain, r.position, r.our_position, r.volume])]);
+}
+
+/* 빈 화면이 갈리는 자리 — 아직 안 돌렸다 / 돌렸는데 경쟁사를 못 찾았다.
+   둘을 같은 "데이터 없음"으로 뭉치면 무엇을 하면 채워지는지가 화면 밖에 남는다. */
+const CP_run = () => W(
+  `<code class="cmd" onclick="copyCmd(this)">/capture competitors</code> 하면 채워집니다.`,
+  "이 화면의 [경쟁사 다시 수집]을 누르면 채워집니다.");
+
+VIEW("competitors", function (d) {
+  CP_D = d;
+  const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
+
+  $("cp-share-eyebrow").textContent = d.comp_date
+    ? `유기 검색 규모 · ${String(d.comp_date).slice(0, 10)} 기준` : "유기 검색 규모";
+  $("cp-share-sub").innerHTML = !d.comp_date
+    ? "경쟁사를 아직 찾지 않았습니다 — " + CP_run()
+    : rivals
+      ? "몫은 추정 트래픽(etv) 기준입니다 — <b>실측이 아니라 추정</b>이라, 순위를 " +
+        "가진 검색어 수와 같이 읽으세요. 우리 줄이 녹청입니다."
+      : "겹치는 경쟁 도메인을 찾지 못했습니다. 주제가 아주 좁거나, 아직 순위를 가진 " +
+        "검색어가 적을 때 이렇게 나옵니다.";
+  $("cp-shares").innerHTML = d.comp_date
+    ? (CP_shares(d) || `<div class="empty">겹치는 경쟁 도메인이 없습니다.</div>`) : "";
+
+  $("cp-gap-eyebrow").textContent = d.gap_date
+    ? `키워드 격차 · ${String(d.gap_date).slice(0, 10)} 기준` : "키워드 격차";
+  $("cp-gap-sub").innerHTML = !d.gap_date
+    ? "키워드 격차를 아직 재지 않았습니다 — " + CP_run()
+    : "<b>우리는 없음</b>은 새로 써야 하는 것, <b>밀리는 중</b>은 있는 글을 고치는 " +
+      "것입니다. 검색량이 큰 것부터 정렬돼 있습니다.";
+  $("cp-chips").innerHTML = d.gap_date ? CP_chips(d) : "";
+  $("cp-gaps").innerHTML = d.gap_date ? CP_gapRows(d) : "";
+});
+</script>

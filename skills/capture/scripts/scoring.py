@@ -824,10 +824,10 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
             """SELECT query FROM gsc_snapshots
                 WHERE project_id=? AND snapshot_date=? AND period_days=? AND impressions>0""",
             (project_id, cur, period))}
-    missing, by_cluster = [], {}
+    missing, by_cluster, vol_by_cluster = [], {}, {}
     for r in conn.execute(
-            "SELECT id, keyword, cluster FROM keywords WHERE project_id=? AND is_active=1",
-            (project_id,)):
+            "SELECT id, keyword, cluster, volume FROM keywords"
+            " WHERE project_id=? AND is_active=1", (project_id,)):
         if norm(r["keyword"]) in seen:
             continue
         rank = conn.execute(
@@ -836,9 +836,14 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
         if rank and rank["position"] is not None:
             continue
         cl = r["cluster"] or "(미분류)"
-        missing.append({"keyword": r["keyword"], "cluster": cl})
+        missing.append({"keyword": r["keyword"], "cluster": cl,
+                        "volume": r["volume"]})
         by_cluster[cl] = by_cluster.get(cl, 0) + 1
-    return {"keywords": missing, "by_cluster": by_cluster}
+        # 아직 안 뜨는 키워드는 노출이 0이라 수요 신호가 없다 — 검색량이 유일한 근거다.
+        # 없으면(NULL) 0으로 둔다: 모르는 것을 있다고 치지 않는다.
+        vol_by_cluster[cl] = vol_by_cluster.get(cl, 0) + (r["volume"] or 0)
+    return {"keywords": missing, "by_cluster": by_cluster,
+            "volume_by_cluster": vol_by_cluster}
 
 
 def score(kind: str, metrics: dict, project_type: str) -> float:
@@ -849,7 +854,12 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     """
     w = WEIGHTS.get(project_type) or WEIGHTS["saas"]
     imp = float(metrics.get("impressions") or metrics.get("imp") or 0)
-    demand = min(1.0, math.log10(1 + imp) / 5.0)          # 노출 10만이면 1.0
+    # 수요는 여태 GSC 노출수 하나였다 — 그러면 **이미 뜨는 검색어만** 점수를 받는다.
+    # 아직 순위가 없는 검색어는 노출이 0이라 늘 바닥이었고, 그게 "새로 쓸 글"을
+    # 고를 때 이 점수가 쓸모없던 이유다. 월 검색량(collect_metrics)이 있으면 큰 쪽을
+    # 쓴다: GSC 노출은 28일치, 검색량은 월 단위라 자릿수가 서로 견줄 만하다.
+    vol = float(metrics.get("volume") or 0)
+    demand = min(1.0, math.log10(1 + max(imp, vol)) / 5.0)   # 10만이면 1.0
     pos = metrics.get("position", metrics.get("pos"))
     # 순위 미확인이면 보수적(0.3) — 신뢰 낮은 추정치엔 보수적 (scoring.md 2절)
     reach = 0.3 if pos is None else max(0.0, 1.0 - gap_to_page1(pos) / PAGE1)
@@ -950,13 +960,20 @@ def load(project: str) -> None:
                                     {"impressions": 0, "position": None,
                                      "fit": _fit_of(conn, pid, r["url"])}, ptype),
                      "reasoning": f"{r['detail']} (gsc 색인 {ix})"})
-    for cl, n in sorted(coverage(conn, pid)["by_cluster"].items(), key=lambda x: -x[1]):
+    cov = coverage(conn, pid)
+    cov_vol = cov.get("volume_by_cluster") or {}
+    for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1]):
+        vol = cov_vol.get(cl, 0)
         rows.append({"kind": "coverage", "target": f"cluster:{cl}",
+                     # 이 kind 는 정의상 노출이 0이다("아직 아무 데도 안 뜬다").
+                     # 검색량이 없으면 수요 신호도 0이라 점수가 늘 바닥이었다 —
+                     # 그래서 "새로 쓸 글"을 고를 때 이 목록의 순서가 뜻이 없었다.
                      "score": score("coverage",
-                                    {"impressions": 0, "position": None,
+                                    {"impressions": 0, "volume": vol, "position": None,
                                      "fit": _fit_of(conn, pid, f"cluster:{cl}")}, ptype),
                      "reasoning": f"활성 키워드 {n}개가 GSC 노출·순위 체크 모두 부재 — "
-                                  f"클러스터 '{cl}'"})
+                                  f"클러스터 '{cl}'"
+                                  + (f" · 월 검색량 합 {vol:,}" if vol else "")})
     with db.run(conn, pid, "analysis") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"

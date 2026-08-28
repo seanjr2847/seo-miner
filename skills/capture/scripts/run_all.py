@@ -37,9 +37,12 @@ from pathlib import Path
 # db import를 통해 CAPTURE_HOME/env 자동 로딩 및 콘솔 UTF-8 설정 적용
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_ai          # noqa: E402
+import collect_backlinks   # noqa: E402
+import collect_crawl       # noqa: E402
 import collect_gap         # noqa: E402
 import collect_gsc         # noqa: E402
 import collect_index       # noqa: E402
+import collect_metrics     # noqa: E402
 import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
 import collector           # noqa: E402
@@ -124,9 +127,13 @@ STAGES = (
     Stage("gsc",         "GSC 실적 적재 (합계·일별·디바이스 분해)", collect_gsc.collect,     False),
     Stage("index",       "URL 색인 상태 수집",                      collect_index.collect,   False),
     Stage("keywords",    "자동완성 키워드 발굴",                    expand_keywords.collect, False),
+    # 볼륨은 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 재료로 쓴다.
+    Stage("metrics",     "키워드 지표 (검색량·난이도·CPC)",         collect_metrics.collect, True),
     Stage("rank",        "순위 스냅샷 수집",                        collect_serp.collect,    True),
+    Stage("crawl",       "사이트 크롤 (깨진 링크·리다이렉트·고아)", collect_crawl.collect,   False),
     Stage("ai",          "AI 인용 체크",                            collect_ai.collect,      True),
-    Stage("competitors", "경쟁사 역키워드 수집 (DataForSEO Labs)",  collect_gap.collect,     True),
+    Stage("competitors", "경쟁사 탐지·역키워드·트래픽 몫 (Labs)",   collect_gap.collect,     True),
+    Stage("backlinks",   "백링크 프로필·앵커·링크 교집합",          collect_backlinks.collect, True),
     Stage("gaps",        "기회 적재 (외부 호출 0)",                 load_opportunities,      False),
     Stage("pages",       "내 페이지 감사 (제목·설명·본문·스키마)",  collect_page.collect,    False),
     Stage("report",      "리포트 HTML 박제",                        export_report,           False),
@@ -150,6 +157,12 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
         if not serp_adapter.has_openrouter():
             return False, ("OPENROUTER_API_KEY 가 없어 건너뜀 — 있으면 AI 인용 갭을 캘 수 있습니다. "
                           "발급: https://openrouter.ai/keys")
+    elif stage_name in ("metrics", "backlinks"):
+        if not serp_adapter.has_dataforseo():
+            what = ("검색량·난이도를 캘 수 있습니다" if stage_name == "metrics"
+                    else "백링크 프로필과 링크 교집합을 캘 수 있습니다")
+            return False, (f"DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — 있으면 {what}. "
+                          "발급: https://dataforseo.com")
     elif stage_name == "competitors":
         if not serp_adapter.has_dataforseo():
             return False, ("DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — 있으면 경쟁사가 "

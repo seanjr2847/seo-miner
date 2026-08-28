@@ -171,7 +171,9 @@ clicks/impressions 로 다시 계산한 퍼센트(소수 1자리)라, 순위 차
 두 런의 점수를 비교할 수 없었다.
 
 ```
-score = w_demand · 수요        min(1, log10(1+impressions)/5)  — 노출 10만이면 1.0
+score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  — 10만이면 1.0
+                               노출은 GSC 28일치, volume 은 월 검색량(collect_metrics).
+                               큰 쪽을 쓴다 — 노출만 보면 아직 안 뜨는 검색어가 늘 0점이다.
       + w_reach  · 달성가능성   1 - gap_to_page1(pos)/10. 순위 미확인이면 보수적 0.3
       + w_fit    · 관련성      metrics["fit"] 0~1, 기본은 _fit_of() 근사
       + w_ai     · AI 노출     metrics["ai"], 미지정 시 ai_citation_gap·aio_exposure만 1.0

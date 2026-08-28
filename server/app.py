@@ -462,17 +462,11 @@ def api_report(project: str, request: Request):
         with store.tenant(conn, uid):
             path = dashboard.export(project)
             data = Path(path).read_bytes()
-            # 화면과 보고서가 다른 말을 쓰면 안 된다 — export 는 원본 템플릿만 쓰므로
-            # 여기서 용어·자간을 얹는다. 백링크는 원본 payload 에 없어서 값을 박아 넣는다.
-            try:
-                bl = backlinks.latest(project)
-            except Exception:
-                bl = None
         # 보고서도 호스팅 문구를 쓴다 — 메일로 나가는 것이라 받는 사람은 웹 사용자다.
         # /d 와 같은 이유로 표식을 **첫 <script> 앞**에 세운다(app.py 의 dash 주석 참고).
+        # 백링크는 여기서 박아 넣지 않는다 — 수집이 capture 단계로 내려오면서
+        # payload 에 실리고, [백링크] 화면이 로컬·호스팅·박제본에서 같이 그린다.
         data = pages.data(data.decode("utf-8"), SM_HOSTED=True).encode("utf-8")
-        data += (f"<script>window.__BACKLINKS__={pages.js(bl or {})}</script>"
-                 ).encode("utf-8")
         data += _REPORT_ADDON
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

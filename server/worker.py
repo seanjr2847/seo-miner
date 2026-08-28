@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
-import backlinks                              # noqa: E402
 import db                                     # noqa: E402
 import mailer                                 # noqa: E402
 import run_all                                # noqa: E402
@@ -117,21 +116,17 @@ def _latest_report(project: str) -> bytes | None:
         return None
 
 
-def _backlinks_due(project: str, every_days: float) -> bool:
-    """마지막 수집이 every_days 를 넘겼나. 기록이 없으면 잰다."""
+def backlinks_plan(skip: str | None, every_days: float) -> tuple[str | None, dict]:
+    """백링크 주기를 체인이 알아듣는 모양으로 — (skip, opts).
+
+    여태 이 판정이 체인 **밖**에 따로 있었다(_backlinks_due). 백링크가 수집 단계가
+    되면서 신선도 판정이 두 벌이 됐고, 그건 한 런에 두 번 사는 길이다. 유료 호출이라
+    그게 곧 돈이다. 0 은 신선도로 표현할 수 없으므로(0일보다 오래됐나 = 늘 참) 단계를
+    통째로 건너뛴다.
+    """
     if every_days <= 0:
-        return False
-    conn = db.connect()
-    try:
-        conn.executescript(backlinks.SCHEMA)
-        pid = db.get_project(conn, project)["id"]
-        row = conn.execute(
-            "SELECT 1 FROM backlink_summary WHERE project_id=? AND"
-            " checked_date > date('now', ?) LIMIT 1",
-            (pid, f"-{every_days} days")).fetchone()
-        return row is None
-    finally:
-        conn.close()
+        return ",".join(x for x in [skip, "backlinks"] if x), {}
+    return skip, {"backlinks": {"max_age": every_days}}
 
 
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
@@ -153,23 +148,15 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
         if not dry_run:
             store.mark_stage(conn, site["id"], name, round((idx - 1) * 100 / total))
 
+    # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
+    skip, opts = backlinks_plan(skip, settings.num("SEOMINER_BACKLINKS_EVERY_DAYS"))
+
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
             results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
-                                        on_stage=on_stage)
+                                        opts=opts, on_stage=on_stage)
             run_all.print_summary(project, results, dry_run=dry_run)
             rc = run_all.chain_rc(results)
-            # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
-            # 키가 없으면 조용히 건너뛴다(엔진의 유료 축과 같은 규칙).
-            try:
-                if not dry_run and backlinks.available():
-                    every = settings.num("SEOMINER_BACKLINKS_EVERY_DAYS")
-                    if _backlinks_due(project, every):
-                        r = backlinks.collect(project)
-                        print(f"[{project}] 백링크 {r['summary'].get('backlinks')}개 · "
-                              f"참조 도메인 {r['domains']}개 (${r['cost']})")
-            except Exception as e:
-                print(f"[{project}] 백링크 건너뜀: {e}")
 
             # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
             # 부수 작업이다 — 여기서 터져도 이미 끝난 수집을 실패로 만들지 않는다.
@@ -281,11 +268,14 @@ def demo() -> None:
 
         called: list[dict] = []
 
-        def fake_chain(project, *, dry_run=False, skip=None, only=None, on_stage=None):
+        def fake_chain(project, *, dry_run=False, skip=None, only=None, opts=None,
+                       on_stage=None):
             if on_stage:
                 on_stage(3, 8, "keywords")  # 화면이 읽는 진행률이 실제로 찍히는지 본다
             called.append({
                 "project": project,
+                "skip": skip,
+                "opts": opts,
                 "capture_home": os.environ["CAPTURE_HOME"],
                 "openrouter": os.environ.get("OPENROUTER_API_KEY"),
                 "serper": os.environ.get("SERPER_API_KEY"),
@@ -303,6 +293,14 @@ def demo() -> None:
         assert called[0]["openrouter"] == "test-key", "OPENROUTER_API_KEY 주입 실패"
         assert called[0]["serper"] is None, "짝 없는 잔여 키가 엔진에 노출됐다"
         assert called[0]["progress"] == ("keywords", 25), called[0]["progress"]
+        # 백링크 주기는 체인 **안**에서 정해져야 한다. 여기 밖에 또 두면 한 런에 두 번
+        # 사게 된다 — 유료 호출이라 그게 곧 돈이다.
+        assert (called[0]["opts"] or {}).get("backlinks", {}).get("max_age") == 30.0,             f"백링크 주기가 단계 옵션으로 안 갔다: {called[0]['opts']}"
+        assert "backlinks" not in (called[0]["skip"] or ""), "주기가 켜져 있는데 단계를 건너뛴다"
+        # 0 = 끔. 신선도로는 못 끄므로(0일보다 오래됐나 = 늘 참) 단계를 건너뛰어야 한다.
+        assert backlinks_plan(None, 0) == ("backlinks", {}), backlinks_plan(None, 0)
+        assert backlinks_plan("rank", 0) == ("rank,backlinks", {}), backlinks_plan("rank", 0)
+        assert backlinks_plan("rank", 7) == ("rank", {"backlinks": {"max_age": 7}})
         assert conn.execute("SELECT stage_pct FROM sites").fetchone()[0] is None, \
             "끝났는데 진행률이 남았다"
         assert len(results) == 1 and results[0]["ok"] is True, f"결과 이상: {results}"

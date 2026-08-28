@@ -194,7 +194,10 @@ th { text-align:left; font:var(--micro); color:var(--slate); padding:0 12px 8px 
 td { padding:8px 12px 8px 0; border-bottom:1px solid var(--rule-soft); vertical-align:baseline; }
 tr:last-child td { border-bottom:0; }
 .num, td.num, th.num { text-align:right; font-family:var(--mono);
-  font-variant-numeric:tabular-nums; padding-right:0; }
+  font-variant-numeric:tabular-nums; }
+/* 오른쪽 여백을 지우는 건 숫자 열이 **마지막일 때만**이다. 가운데 있는 숫자 열에서
+   지우면 다음 칸 글자와 맞붙어 `12` 와 `2026-03-02` 가 `122026-03-02` 로 읽힌다. */
+td.num:last-child, th.num:last-child { padding-right:0; }
 .kwcell { font-size:13px; }
 .empty { font-size:13px; color:var(--slate); padding:14px 0;
   border-top:1px solid var(--rule-soft); }
@@ -517,16 +520,6 @@ const SM = {
   cur: "",
 
   at(id) { return this.views.findIndex(v => v.id === id); },
-
-  // after 바로 뒤에 — 못 찾으면 맨 끝. 원본 뷰 파일이 없는 화면(백링크)이 쓴다.
-  addView(def, after) {
-    if (this.at(def.id) >= 0) return;
-    const i = this.at(after);
-    this.views.splice(i < 0 ? this.views.length : i + 1, 0,
-      {id: def.id, title: def.title,
-       sections: (def.sections || []).slice(), stages: (def.stages || []).slice()});
-    this.sync();
-  },
 
   // 원본 뷰에 없는 섹션을 그 화면 안 제자리에 끼운다.
   addSection(viewId, secId, after) {

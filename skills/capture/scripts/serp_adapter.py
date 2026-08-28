@@ -290,6 +290,33 @@ def fetch_labs_ranked_keywords(target: str, locale: str, limit: int = 100) -> tu
     return items, cost
 
 
+def post_dataforseo(path: str, body: list, timeout: int | None = None) -> tuple[list, float]:
+    """DataForSEO 아무 엔드포인트나 한 번 친다. 반환: (result, 실청구액).
+
+    인증·타임아웃·task 오류 판정이 여기 한 곳이다. 새 축(백링크 상세·키워드 지표·
+    도메인 교집합)이 붙을 때마다 requests.post 를 다시 쓰면 그 판정도 같이 복제된다
+    — 실제로 server/backlinks.py 가 자기 _post 를 따로 갖고 있었고, 그래서 오류
+    문구와 cost 읽는 자리가 두 벌이었다.
+
+    cost 는 응답이 말하는 **실청구액**이다. 추정하지 않는다.
+
+    Args:
+        path: /v3 뒤의 경로. 예: "/backlinks/anchors/live"
+        body: DataForSEO 규약대로 task 배열(대개 원소 하나)
+    """
+    if not has_dataforseo():
+        raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    r = requests.post(
+        f"https://api.dataforseo.com/v3{path}",
+        auth=(os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]),
+        timeout=timeout or TIMEOUTS["dataforseo"], json=body)
+    r.raise_for_status()
+    data = r.json()
+    task = _check_dataforseo_task(data)
+    cost = float(task.get("cost") or data.get("cost") or 0.0)
+    return (task.get("result") or []), cost
+
+
 def cost_per_query(provider: str) -> float:
     """제공자 단가($/쿼리) — 예산 고지용. 가격표는 이 모듈에만 있다."""
     return PROVIDERS[provider]["cost"]

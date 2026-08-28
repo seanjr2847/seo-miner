@@ -264,6 +264,120 @@ CREATE TABLE IF NOT EXISTS referring_domains (
   UNIQUE(project_id, checked_date, domain)
 );
 CREATE INDEX IF NOT EXISTS idx_refdom ON referring_domains(project_id, checked_date);
+-- ── 백링크 상세 (collect_backlinks.py) ───────────────────────────────────────
+-- 요약(backlink_summary)만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤
+-- 앵커로 링크를 받았는지, 그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가
+-- 실제로 손댈 자리다.
+CREATE TABLE IF NOT EXISTS backlinks (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  url_from TEXT NOT NULL,
+  url_to TEXT NOT NULL,
+  domain_from TEXT,
+  anchor TEXT,
+  rank INTEGER,
+  dofollow INTEGER,
+  is_broken INTEGER DEFAULT 0,                -- url_to 가 4xx/5xx (되찾을 수 있는 링크)
+  first_seen TEXT,
+  last_seen TEXT,
+  UNIQUE(project_id, checked_date, url_from, url_to)
+);
+CREATE INDEX IF NOT EXISTS idx_bl ON backlinks(project_id, checked_date);
+CREATE TABLE IF NOT EXISTS backlink_anchors (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  anchor TEXT NOT NULL,
+  backlinks INTEGER, referring_domains INTEGER, dofollow INTEGER,
+  UNIQUE(project_id, checked_date, anchor)
+);
+CREATE TABLE IF NOT EXISTS link_intersect (   -- 경쟁사는 링크를 받는데 우리는 못 받는 곳
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  rank INTEGER,
+  hits INTEGER,                               -- 이 도메인에서 링크를 받는 경쟁사 수
+  targets TEXT,                               -- 쉼표 구분 — 누가 받고 있나
+  we_have INTEGER DEFAULT 0,                  -- 우리도 받고 있으면 1 (제안에서 뺀다)
+  UNIQUE(project_id, checked_date, domain)
+);
+
+-- ── 경쟁 분석 (collect_gap.py) ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS competitor_metrics (  -- 도메인별 유기 규모 = 트래픽 몫의 재료
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  is_self INTEGER DEFAULT 0,                  -- 1 = 우리 도메인 (몫 계산의 분자)
+  keywords INTEGER, etv REAL, top10 INTEGER,
+  UNIQUE(project_id, checked_date, domain)
+);
+CREATE TABLE IF NOT EXISTS keyword_gap (      -- 경쟁사 대비 키워드 위치 (Content Gap 정본)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  keyword TEXT NOT NULL,
+  domain TEXT NOT NULL,                       -- 그 키워드를 잡고 있는 경쟁사
+  position INTEGER,
+  our_position INTEGER,                       -- NULL = 우리는 아예 부재
+  volume INTEGER,
+  kind TEXT,                                  -- missing|weak|shared
+  UNIQUE(project_id, checked_date, keyword, domain)
+);
+CREATE INDEX IF NOT EXISTS idx_kwgap ON keyword_gap(project_id, checked_date, kind);
+
+-- ── 사이트 크롤 (collect_crawl.py) ────────────────────────────────────────────
+-- page_audits 는 '기회가 걸린 페이지 20개'를 깊게 본다. 이쪽은 반대다: 사이트를
+-- 넓게 돌아 깨진 링크·리다이렉트 사슬·고아 페이지처럼 **전수를 봐야만 나오는 것**을
+-- 잡는다. 회차(crawl_runs)로 남기는 이유는 하나다 — 지난번 대비 새로 깨진 것.
+CREATE TABLE IF NOT EXISTS crawl_runs (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  finished_at TEXT,
+  seed TEXT,                                  -- sitemap|home
+  pages INTEGER DEFAULT 0,
+  issues INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS crawl_pages (
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
+  url TEXT NOT NULL,
+  status INTEGER,
+  redirect_to TEXT,
+  depth INTEGER,                              -- 홈에서 몇 번 눌러야 닿나
+  title TEXT, description TEXT, h1 TEXT,
+  canonical TEXT, robots TEXT,
+  words INTEGER,
+  schema_types TEXT,
+  links_in INTEGER DEFAULT 0, links_out INTEGER DEFAULT 0,
+  images_no_alt INTEGER DEFAULT 0,
+  bytes INTEGER,
+  UNIQUE(run_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_crawl_pages ON crawl_pages(run_id);
+CREATE TABLE IF NOT EXISTS crawl_links (
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
+  url_from TEXT NOT NULL,
+  url_to TEXT NOT NULL,
+  anchor TEXT,
+  is_internal INTEGER DEFAULT 1,
+  nofollow INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_crawl_links ON crawl_links(run_id, url_to);
+CREATE TABLE IF NOT EXISTS crawl_issues (     -- 도출 결과를 저장한다 — 그래야 회차 비교가 된다
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
+  kind TEXT NOT NULL,                         -- http_error|redirect_chain|broken_internal|...
+  severity TEXT,                              -- bad|warn|info
+  url TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_crawl_issues ON crawl_issues(run_id, kind);
+
 CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 (루프 클로즈)
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -286,6 +400,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     테이블을 건드리지 않으므로, 컬럼을 새로 추가하면 기존 Brain에는 반영되지 않는다.
     """
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
+    # volume·difficulty 는 처음부터 있었지만 채우는 코드가 없어 늘 NULL 이었다.
+    # cpc·metrics_at 이 붙으면서 "언제 잰 값인가"를 말할 수 있게 된다 — 지표는
+    # 유료로 사 오는 것이라 언제 산 값인지가 재구매 판단의 전부다.
+    for col, decl in (("cpc", "REAL"), ("metrics_at", "TEXT")):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
+            conn.commit()
     if "locale" not in cols:
         conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
         # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
@@ -845,19 +966,23 @@ def count_active_keywords(conn: sqlite3.Connection, project_id: int) -> int:
 
 def list_keywords(conn: sqlite3.Connection, project_id: int, *,
                   active: bool, limit: int = 500) -> list[sqlite3.Row]:
-    """추적 중(active=True) 또는 후보(False) 키워드 + 서치콘솔 누적 노출·클릭.
+    """추적 중(active=True) 또는 후보(False) 키워드 + 서치콘솔 누적 노출·클릭·검색량.
 
-    노출 많은 순이다 — 후보 목록에서 사람이 고를 때 "구글이 이미 보여주고 있는 것"이
-    위로 와야 한다. 한 번도 노출된 적 없는 키워드는 0 으로 내려간다(NULL 아님).
+    노출 많은 순이되, 노출이 같으면(대개 0이다) 검색량 큰 순이다 — 후보 목록에서
+    사람이 고를 때 "구글이 이미 보여주고 있는 것"이 먼저 오고, 아직 안 뜨는 것들
+    사이에서는 **수요가 큰 것**이 위로 와야 한다. 검색량은 collect_metrics 가 채운다
+    (NULL = 아직 안 샀다는 뜻이지 0 이 아니다).
     """
     return conn.execute(
         """SELECT k.id, k.keyword, k.source, k.cluster,
+                  k.volume, k.difficulty, k.cpc,
                   COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk
              FROM keywords k
              LEFT JOIN gsc_snapshots g
                ON g.project_id=k.project_id AND g.query=k.keyword
             WHERE k.project_id=? AND k.is_active=?
-            GROUP BY k.id ORDER BY imp DESC, k.keyword LIMIT ?""",
+            GROUP BY k.id
+            ORDER BY imp DESC, k.volume IS NULL, k.volume DESC, k.keyword LIMIT ?""",
         (int(project_id), 1 if active else 0, int(limit))).fetchall()
 
 

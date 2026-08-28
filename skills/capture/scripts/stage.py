@@ -283,7 +283,7 @@ def _check_seams() -> None:
     for gone, why in (("function place(", "배치"), ("function show(", "전환"),
                       ('nv.id = "sm-nav"', "메뉴")):
         assert gone not in dash, f"dash.html 이 셸의 {why}를 다시 구현한다: {gone}"
-    for hook in ("SM.addView(", "SM.addSection(", "SM.sync("):
+    for hook in ("SM.addSection(", "SM.sync("):
         assert hook in dash, f"dash.html 이 셸에 덧붙이지 않는다: {hook}"
     # 원본 레일을 힘으로 덮지 않는다 — !important 는 "두 시스템이 싸우는 중"의 표식이다.
     # 주석은 근거가 못 된다(왜 걷어냈는지 적어 둔 자리가 검사에 걸리면 안 된다).
@@ -292,18 +292,17 @@ def _check_seams() -> None:
     assert "!important" not in bare, "dash.html 이 원본 규칙을 !important 로 덮는다"
 
     hs = re.search(r"var HOST_SEC = \[(.*?)\n  \];", dash, re.S)
-    hv = re.search(r"var HOST_VIEWS = \[(.*?)\n  \];", dash, re.S)
-    assert hs and hv, "dash.html 의 호스팅 전용 목록(HOST_SEC/HOST_VIEWS)을 못 찾았다"
-    # [화면 id, 메뉴 이름, 담을 것, 채우는 단계, 이 화면 바로 뒤에]
-    hv_rows = re.findall(
-        r'\["(\w+)",\s*"[^"]*",\s*\[([^\]]*)\],\s*\[([^\]]*)\],\s*"(\w+)"\]', hv.group(1))
-    # 한 행이라도 정규식에서 빠지면 그 화면은 검사 없이 통과한다 — 개수로 못 박는다.
-    assert len(hv_rows) == hv.group(1).count('\n    ["') and hv_rows, \
-        f"HOST_VIEWS 행을 {len(hv_rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+    assert hs, "dash.html 의 호스팅 전용 섹션 목록(HOST_SEC)을 못 찾았다"
+    # 화면 자체를 덧붙이던 표(HOST_VIEWS)는 없어졌다 — 백링크가 원본 뷰로 내려가면서
+    # 원본에 대응 파일이 없는 화면이 하나도 안 남았다. 되살아나면 검사도 같이 와야
+    # 한다: 그때까지는 "없다"를 못 박아 둔다(있는데 안 보는 상태가 제일 나쁘다).
+    assert "var HOST_VIEWS" not in dash, \
+        "HOST_VIEWS 가 되살아났다 — 그 화면들을 검사하는 코드부터 되살려라"
+    hv_rows: list = []
     rows = re.findall(r'\["([\w-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\]', hs.group(1))
     assert len(rows) >= 4, f"HOST_SEC 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
 
-    body = dash.replace(hs.group(0), "").replace(hv.group(0), "")   # 표 자신은 근거가 못 된다
+    body = dash.replace(hs.group(0), "")           # 표 자신은 근거가 못 된다
     host_ids = [sec for _, sec, _ in rows] + \
         [i for r in hv_rows for i in re.findall(r'"([\w-]+)"', r[1])]
     for i in host_ids:

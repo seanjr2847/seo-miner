@@ -38,8 +38,8 @@ import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 TPL = Path(__file__).parent.parent / "templates"
 # 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
 # — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
-VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site", "history",
-              "guide", "settings"]
+VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site",
+              "backlinks", "competitors", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
 
@@ -340,6 +340,25 @@ def q(conn, sql, args=()):
     return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
 
+def crawl_compare(conn, pid: int, run_id: int) -> dict:
+    """직전 회차 대비 신규·해결된 이슈. 회차를 남기는 이유가 이것 하나다.
+
+    (kind, url) 을 이슈의 정체성으로 본다 — detail 은 같은 문제의 서술이라
+    거기 숫자가 바뀌었다고 '새 이슈'가 되면 비교가 소음이 된다.
+    """
+    prev = conn.execute("SELECT id FROM crawl_runs WHERE project_id=? AND id<?"
+                        " AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+                        (pid, run_id)).fetchone()
+    if not prev:
+        return {"prev_run_id": None, "new": [], "fixed": []}
+    def keys(rid):
+        return {(r["kind"], r["url"] or "") for r in
+                conn.execute("SELECT kind, url FROM crawl_issues WHERE run_id=?", (rid,))}
+    now, was = keys(run_id), keys(prev["id"])
+    fmt = lambda s: [{"kind": k, "url": u} for k, u in sorted(s)][:100]
+    return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now)}
+
+
 def gather(conn, p, at: str | None = None) -> dict:
     """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
 
@@ -524,6 +543,65 @@ def gather(conn, p, at: str | None = None) -> dict:
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
             page_audits[a["url"]] = a
 
+    # ── 백링크 (collect_backlinks) ────────────────────────────────────────
+    # 요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
+    # 그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가 실제로 손댈 자리다.
+    bl_date = conn.execute(
+        "SELECT MAX(checked_date) FROM backlink_summary WHERE project_id=?", (pid,)).fetchone()[0]
+    bl_summary, bl_domains, bl_links, bl_anchors, bl_intersect, bl_trend = {}, [], [], [], [], []
+    if bl_date:
+        row = conn.execute(
+            "SELECT * FROM backlink_summary WHERE project_id=? AND checked_date=?",
+            (pid, bl_date)).fetchone()
+        bl_summary = dict(row) if row else {}
+        bl_domains = q(conn, "SELECT * FROM referring_domains WHERE project_id=? AND checked_date=?"
+                             " ORDER BY rank DESC NULLS LAST LIMIT 200", (pid, bl_date))
+        bl_links = q(conn, "SELECT * FROM backlinks WHERE project_id=? AND checked_date=?"
+                           " ORDER BY is_broken DESC, rank DESC LIMIT 300", (pid, bl_date))
+        bl_anchors = q(conn, "SELECT * FROM backlink_anchors WHERE project_id=? AND checked_date=?"
+                             " ORDER BY backlinks DESC LIMIT 100", (pid, bl_date))
+        # 이미 우리도 받고 있는 곳은 제안이 아니다 — 화면에 올릴 이유가 없다.
+        bl_intersect = q(conn, "SELECT * FROM link_intersect WHERE project_id=? AND checked_date=?"
+                               " AND we_have=0 ORDER BY hits DESC, rank DESC LIMIT 100",
+                         (pid, bl_date))
+        bl_trend = q(conn, "SELECT checked_date d, referring_domains rd, backlinks bl"
+                           " FROM backlink_summary WHERE project_id=? ORDER BY 1", (pid,))
+
+    # ── 경쟁 분석 (collect_gap) ───────────────────────────────────────────
+    # 몫(share)은 저장하지 않는다 — 분모가 바뀌면 낡는다. 여기서 계산한다.
+    cm_date = conn.execute(
+        "SELECT MAX(checked_date) FROM competitor_metrics WHERE project_id=?", (pid,)).fetchone()[0]
+    comp_metrics, kw_gap, kw_gap_counts = [], [], {}
+    if cm_date:
+        comp_metrics = q(conn, "SELECT * FROM competitor_metrics WHERE project_id=? AND"
+                               " checked_date=? ORDER BY etv DESC NULLS LAST", (pid, cm_date))
+        total_etv = sum((r["etv"] or 0) for r in comp_metrics)
+        for r in comp_metrics:
+            r["share"] = round((r["etv"] or 0) / total_etv, 4) if total_etv else None
+    gap_date = conn.execute(
+        "SELECT MAX(checked_date) FROM keyword_gap WHERE project_id=?", (pid,)).fetchone()[0]
+    if gap_date:
+        kw_gap = q(conn, "SELECT * FROM keyword_gap WHERE project_id=? AND checked_date=?"
+                         " ORDER BY volume DESC NULLS LAST LIMIT 300", (pid, gap_date))
+        kw_gap_counts = {r["kind"]: r["n"] for r in q(
+            conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
+                  " GROUP BY 1", (pid, gap_date))}
+
+    # ── 사이트 크롤 (collect_crawl) ───────────────────────────────────────
+    # 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것.
+    crawl = {}
+    cr = conn.execute("SELECT * FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
+                      " ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    if cr:
+        crawl = {"run": dict(cr),
+                 "issues": q(conn, "SELECT * FROM crawl_issues WHERE run_id=?"
+                                   " ORDER BY CASE severity WHEN 'bad' THEN 0 WHEN 'warn' THEN 1"
+                                   " ELSE 2 END, kind LIMIT 500", (cr["id"],)),
+                 "counts": {r["kind"]: r["n"] for r in q(
+                     conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
+                     (cr["id"],))},
+                 "compare": crawl_compare(conn, pid, cr["id"])}
+
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     return {"schema": 1,
             "project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
@@ -562,6 +640,12 @@ def gather(conn, p, at: str | None = None) -> dict:
                           SUM(impressions) imp, COUNT(DISTINCT query) q
                      FROM gsc_snapshots WHERE project_id=? AND period_days=?
                     GROUP BY 1 ORDER BY 1""", (pid, period))],
+            "bl_date": bl_date, "bl_summary": bl_summary, "bl_domains": bl_domains,
+            "bl_links": bl_links, "bl_anchors": bl_anchors, "bl_intersect": bl_intersect,
+            "bl_trend": bl_trend,
+            "comp_date": cm_date, "comp_metrics": comp_metrics,
+            "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
+            "crawl": crawl,
             "progress": prog,
             "guide": guide}
 
