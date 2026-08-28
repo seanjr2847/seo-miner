@@ -982,7 +982,7 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
                ON g.project_id=k.project_id AND g.query=k.keyword
             WHERE k.project_id=? AND k.is_active=?
             GROUP BY k.id
-            ORDER BY imp DESC, k.volume IS NULL, k.volume DESC, k.keyword LIMIT ?""",
+            ORDER BY imp DESC, k.volume DESC, k.keyword LIMIT ?""",
         (int(project_id), 1 if active else 0, int(limit))).fetchall()
 
 

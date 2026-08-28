@@ -9,8 +9,13 @@
 여기서 보는 것은 **눈으로 봐야 아는 것이 아니라, 열어만 봐도 아는 것**이다:
   · JS 가 터졌는가 (window.onerror / unhandledrejection / console.error / 조립 실패 배너)
   · 화면이 실제로 그려졌는가 (필수 요소가 DOM 에 있는가)
+  · 데이터를 준 화면이 그 값을 **그렸는가** (백링크·경쟁 분석·크롤 회차 비교)
   · 사이트가 URL 이 시킨 대로 열렸는가 (hash 회귀)
 정렬·대비·문구가 읽히는지는 여기서 안 나온다 — 그건 사람이 봐야 한다.
+
+"있어야 한다"는 검사는 <script> 를 뺀 DOM 에서만 찾는다. 소스까지 뒤지면 렌더러가
+만들 수 있는 문자열은 **그 코드가 한 번도 안 돌아도** 통과한다 — 실제로 그랬다.
+그래서 픽스처 값은 리포 어디에도 없는 표식을 쓴다(화면 문구와 겹치면 같은 일이 난다).
 
 크롬(또는 엣지)이 없으면 조용히 건너뛴다. node --check 와 같은 규칙이다.
 사용자의 진짜 Brain 은 안 건드린다 — 임시 CAPTURE_HOME 에 픽스처를 만든다.
@@ -83,12 +88,33 @@ def view_sections() -> list[tuple[str, str]]:
     return out
 
 
+# 새 축(백링크·경쟁·크롤)에 넣는 값. 화면이 이 글자를 실제로 그리는지로 검사한다 —
+# 섹션 상자가 DOM 에 있는 것과 그 안이 채워진 것은 다른 이야기다.
+# 값은 리포 어디에도 없는 표식이어야 한다 — 화면 문구와 겹치면 렌더러를 꺼도
+# 통과한다(실제로 "빠진 검색어"가 rank.html 본문에 이미 있어서 그랬다).
+BL_DOMAIN = "ixZ9.example"          # 링크 교집합: 경쟁사는 받는데 우리는 못 받는 곳
+RIVAL = "rivalZ9.example"           # 경쟁 분석: 트래픽 몫이 가장 큰 곳
+GAP_KW = "격차검색어Z9"             # Content Gap: 우리가 아예 없는 것
+CRAWL_NEW = "/crawlZ9"              # 크롤: 직전 회차에 없던 이슈
+GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — RIVAL 과 갈라 둔다
+#   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
+BL_REFDOMS = 20241                  # 요약 계기판에만 나오는 수 — 문구와 안 겹친다
+
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
     (r"<option[^>]*selected[^>]*>" + SITES[1],
      "hash 가 지목한 사이트가 안 열렸다 — 링크가 실어 보낸 이름이 버려진다"),
     (r'id="content"(?![^>]*hidden)', "본문(#content)이 숨은 채로 남았다 — 데이터를 못 그렸다"),
     (r'id="meta"[^>]*>[^<]*\d{4}-\d{2}-\d{2}', "머리말이 기준 수집일을 안 적었다"),
+    # 새 축은 상자가 서는 것과 그 안이 채워지는 것이 다르다 — 값이 실제로 그려졌나를 본다.
+    # (숨은 화면도 DOM 에는 있으므로 --dump-dom 으로 보인다.)
+    (re.escape(BL_DOMAIN), "백링크 화면이 링크 교집합을 안 그렸다"),
+    (r"20,241", "백링크 화면이 요약 계기판을 안 그렸다"),
+    (re.escape(RIVAL), "경쟁 분석 화면이 경쟁사를 안 그렸다"),
+    (re.escape(GAP_KW), "경쟁 분석 화면이 키워드 격차를 안 그렸다"),
+    (re.escape(CRAWL_NEW), "사이트 점검이 크롤 이슈를 안 그렸다"),
+    (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
+    (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
 ] + view_sections()
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
@@ -114,8 +140,46 @@ def find_browser() -> str | None:
     return None
 
 
+
+def _axes(conn, pid: int) -> None:
+    """백링크·경쟁·크롤 — 화면이 이걸 그리는지 보려고 최소한만 심는다."""
+    d, prev = "2026-06-01", "2026-05-01"
+    conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
+                 "referring_domains,broken_backlinks,dofollow,nofollow)"
+                 " VALUES(?,?,412,1840,?,17,1512,328)", (pid, d, BL_REFDOMS))
+    conn.execute("INSERT INTO referring_domains(project_id,checked_date,domain,rank,backlinks)"
+                 " VALUES(?,?,'ref.example',700,9)", (pid, d))
+    conn.execute("INSERT INTO backlinks(project_id,checked_date,url_from,url_to,anchor,"
+                 "rank,dofollow,is_broken)"
+                 " VALUES(?,?,'https://ref.example/1','https://x/y','앵커',700,1,0)", (pid, d))
+    conn.execute("INSERT INTO backlink_anchors(project_id,checked_date,anchor,backlinks,"
+                 "referring_domains) VALUES(?,?,'브랜드',12,4)", (pid, d))
+    conn.execute("INSERT INTO link_intersect(project_id,checked_date,domain,rank,hits,"
+                 "targets,we_have) VALUES(?,?,?,810,3,'r1,r2,r3',0)", (pid, d, BL_DOMAIN))
+    conn.executemany(
+        "INSERT INTO competitor_metrics(project_id,checked_date,domain,is_self,keywords,etv,"
+        "top10) VALUES(?,?,?,?,?,?,?)",
+        [(pid, d, RIVAL, 0, 4120, 8800.0, 610), (pid, d, "me.example", 1, 380, 900.0, 41)])
+    conn.execute("INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
+                 "our_position,volume,kind) VALUES(?,?,?,?,2,NULL,2400,'missing')",
+                 (pid, d, GAP_KW, GAP_RIVAL))
+    r1 = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"
+                      " VALUES(?,?,'sitemap',10,1)", (pid, prev)).lastrowid
+    r2 = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"
+                      " VALUES(?,?,'sitemap',12,2)", (pid, d)).lastrowid
+    conn.executemany("INSERT INTO crawl_issues(run_id,kind,severity,url,detail)"
+                     " VALUES(?,?,?,?,?)",
+                     [(r1, "dup_title", "warn", "/a", "같은 제목"),
+                      (r2, "dup_title", "warn", "/a", "같은 제목"),
+                      (r2, "broken_internal", "bad", CRAWL_NEW, "404")])
+
+
 def fixture(home: Path) -> None:
-    """임시 Brain — 사이트 둘, 각각 GSC 스냅샷 두 날짜(비교 짝이 서야 KPI 가 산다)."""
+    """임시 Brain — 사이트 둘, 각각 GSC 스냅샷 두 날짜(비교 짝이 서야 KPI 가 산다).
+
+    두 번째 사이트(테스트가 여는 쪽)에는 백링크·경쟁·크롤 축도 심는다 — 그 화면들이
+    데이터를 받았을 때 실제로 그리는지가 이 파일이 볼 수 있는 유일한 자리다.
+    """
     os.environ["CAPTURE_HOME"] = str(home)
     import db
     conn = db.connect()
@@ -132,6 +196,8 @@ def fixture(home: Path) -> None:
                          query,page,clicks,impressions,ctr,position)
                        VALUES(?,?,28,?,?,?,120,0.1,?)""",
                     (pid, d, f"{name} 검색어", f"https://{name}.example/a", clk, pos))
+            if name == SITES[1]:            # 테스트가 여는 사이트
+                _axes(conn, pid)
         conn.commit()
     finally:
         conn.close()
@@ -180,14 +246,18 @@ def js_errors(html: str) -> list[str]:
 def check(label: str, html: str, musts) -> None:
     errs = js_errors(html)
     assert not errs, f"{label} 에서 JS 가 터졌다:\n  " + "\n  ".join(errs[:6])
-    # --dump-dom 은 <script>·<style> 안의 소스까지 준다. "없어야 한다"는 검사는
-    # 거기 걸리면 거짓 실패가 된다 — 화면에 안 보이는 코드 조각이니까.
+    # --dump-dom 은 <script>·<style> 안의 소스까지 준다. 양쪽 다 그걸 빼고 본다.
+    #
+    # "없어야 한다"는 당연하고("화면에 안 보이는 코드 조각"), **"있어야 한다"도 그렇다**:
+    # 소스까지 뒤지면 렌더러가 만들 수 있는 문자열은 그 코드가 한 번도 안 돌아도
+    # 통과한다. 실제로 그랬다 — 화면이 그리는 걸 통째로 꺼도 검사가 초록이었다.
+    # 그림에 있는 것만 근거로 삼는다.
     seen = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", "", html)
     for pat, why in musts:
         if pat.startswith("!"):
             assert not re.search(pat[1:], seen, re.S), f"{label}: {why}"
         else:
-            assert re.search(pat, html, re.S), f"{label}: {why}"
+            assert re.search(pat, seen, re.S), f"{label}: {why}"
 
 
 def run() -> None:

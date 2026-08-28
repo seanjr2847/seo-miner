@@ -555,7 +555,7 @@ def gather(conn, p, at: str | None = None) -> dict:
             (pid, bl_date)).fetchone()
         bl_summary = dict(row) if row else {}
         bl_domains = q(conn, "SELECT * FROM referring_domains WHERE project_id=? AND checked_date=?"
-                             " ORDER BY rank DESC NULLS LAST LIMIT 200", (pid, bl_date))
+                             " ORDER BY rank DESC LIMIT 200", (pid, bl_date))
         bl_links = q(conn, "SELECT * FROM backlinks WHERE project_id=? AND checked_date=?"
                            " ORDER BY is_broken DESC, rank DESC LIMIT 300", (pid, bl_date))
         bl_anchors = q(conn, "SELECT * FROM backlink_anchors WHERE project_id=? AND checked_date=?"
@@ -574,7 +574,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     comp_metrics, kw_gap, kw_gap_counts = [], [], {}
     if cm_date:
         comp_metrics = q(conn, "SELECT * FROM competitor_metrics WHERE project_id=? AND"
-                               " checked_date=? ORDER BY etv DESC NULLS LAST", (pid, cm_date))
+                               " checked_date=? ORDER BY etv DESC", (pid, cm_date))
         total_etv = sum((r["etv"] or 0) for r in comp_metrics)
         for r in comp_metrics:
             r["share"] = round((r["etv"] or 0) / total_etv, 4) if total_etv else None
@@ -582,7 +582,7 @@ def gather(conn, p, at: str | None = None) -> dict:
         "SELECT MAX(checked_date) FROM keyword_gap WHERE project_id=?", (pid,)).fetchone()[0]
     if gap_date:
         kw_gap = q(conn, "SELECT * FROM keyword_gap WHERE project_id=? AND checked_date=?"
-                         " ORDER BY volume DESC NULLS LAST LIMIT 300", (pid, gap_date))
+                         " ORDER BY volume DESC LIMIT 300", (pid, gap_date))
         kw_gap_counts = {r["kind"]: r["n"] for r in q(
             conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " GROUP BY 1", (pid, gap_date))}

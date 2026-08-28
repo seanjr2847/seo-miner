@@ -42,6 +42,20 @@ TIMEOUTS = {
 }
 
 
+class _FakeResp:
+    """_selfcheck 전용 — requests.Response 중 이 모듈이 실제로 쓰는 두 가지만."""
+
+    def __init__(self, data, status_code: int = 200):
+        self._data, self.status_code = data, status_code
+
+    def json(self):
+        return self._data
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
 def has_dataforseo() -> bool:
     return bool(os.environ.get("DATAFORSEO_LOGIN")) and bool(os.environ.get("DATAFORSEO_PASSWORD"))
 
@@ -392,6 +406,57 @@ def _selfcheck() -> None:
     nest = {"items": [{"type": "ai_overview_element",
                        "images": [{"items": [{"url": "https://nested.example.com/x"}]}]}]}
     assert _domains_in(nest) == [], _domains_in(nest)
+
+    # ── post_dataforseo ─────────────────────────────────────────────
+    # 네 수집기(metrics·backlinks·competitors·gap)가 전부 이 하나를 지난다 —
+    # 여기가 틀리면 넷이 같이 틀린다. 네트워크는 안 탄다.
+    calls = []
+
+    def fake_post(url, auth=None, timeout=None, json=None):
+        calls.append({"url": url, "auth": auth, "timeout": timeout, "body": json})
+        return _FakeResp(fake_post.reply)
+
+    real_post, real_env = requests.post, dict(os.environ)
+    try:
+        os.environ["DATAFORSEO_LOGIN"] = "u"
+        os.environ["DATAFORSEO_PASSWORD"] = "p"
+        requests.post = fake_post
+
+        fake_post.reply = {"cost": 9.9,          # 최상위 cost 는 여러 task 의 합이다 —
+                           "tasks": [{"status_code": 20000, "cost": 0.024,
+                                      "result": [{"items": [1, 2]}]}]}
+        res, cost = post_dataforseo("/backlinks/anchors/live", [{"target": "x"}])
+        assert res == [{"items": [1, 2]}], res
+        assert cost == 0.024, f"task 의 실청구액을 써야 한다(합계 말고): {cost}"
+        assert calls[-1]["url"] == "https://api.dataforseo.com/v3/backlinks/anchors/live",             calls[-1]["url"]
+        assert calls[-1]["auth"] == ("u", "p")
+        assert calls[-1]["timeout"] == TIMEOUTS["dataforseo"]
+
+        # task 오류는 조용히 빈 목록으로 넘기지 않는다 — 그러면 "수집했는데 0건"이 된다
+        fake_post.reply = {"tasks": [{"status_code": 40501, "status_message": "no rows"}]}
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("task 오류를 안 올렸다")
+        except RuntimeError as e:
+            assert "no rows" in str(e), e
+
+        # cost 가 없으면 0 — None 을 그대로 흘리면 합산이 터진다
+        fake_post.reply = {"tasks": [{"status_code": 20000, "result": []}]}
+        assert post_dataforseo("/x/live", [{}]) == ([], 0.0)
+
+        # 키가 없으면 부르기 전에 멈춘다(401 을 사러 가지 않는다)
+        del os.environ["DATAFORSEO_LOGIN"]
+        n = len(calls)
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("키가 없는데 요청을 보냈다")
+        except RuntimeError:
+            pass
+        assert len(calls) == n, "키 없이 네트워크를 탔다"
+    finally:
+        requests.post = real_post
+        os.environ.clear()
+        os.environ.update(real_env)
     assert cost_per_query("serper") < cost_per_query("dataforseo")
     assert caveats("dataforseo") == []
     assert any("모바일" in c for c in caveats("serper"))
