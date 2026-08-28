@@ -381,7 +381,17 @@ def _check_seams() -> None:
                     else:
                         assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
 
-    # 6) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
+    # 6) 화면에서 돌릴 수 있는 단계는 서버가 전부 받아야 한다. dash.html 의 용어표에
+    #    run 라벨이 있으면 그 버튼이 /api/run 으로 그 id 를 보낸다 — 서버가 단계
+    #    목록 사본을 들고 있으면 새 단계는 화면에만 생기고 눌렀을 때 "실행할 수
+    #    없는 단계입니다: crawl" 로 튕긴다(실제로 crawl·metrics·backlinks 가 그랬다).
+    import run_all
+    runnable = {s for s, body in entries.items() if "run:" in body}
+    assert runnable <= set(run_all.VALID_STAGE_NAMES),         f"화면은 돌리자는데 엔진 단계표에 없다: {sorted(runnable - set(run_all.VALID_STAGE_NAMES))}"
+    if app_f.exists():
+        assert "run_all.VALID_STAGE_NAMES" in app_f.read_text("utf-8"),             "app.py 가 단계 목록 사본을 들고 있다 — 화면에만 있는 단계가 400 으로 튕긴다"
+
+    # 7) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
     #    않게 하려는 것이고, 원본 버튼들은 인라인 onclick 이라 영향이 없다.
     #    애드온이 그 안에 심는 버튼은 사정이 다르다: document 위임으로 잡으면
     #    이벤트가 영영 안 닿아 **버튼은 떠 있는데 눌러도 아무 일이 없다**.

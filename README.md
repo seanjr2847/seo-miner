@@ -54,7 +54,7 @@ pip install requests pyyaml
 /setup web                 # 같은 걸 화면으로: 부품 설치·사이트 등록·키 저장을 폼에서
 # 구글 로그인(무료)을 먼저 해 두면 다음 줄에서 서치콘솔 속성 표기를 물어보지 않습니다
 /capture add <사이트>       # 온보딩 인터뷰 3문항 (타입 · 도메인 · 시드 키워드)
-/capture run <사이트>       # 9단계를 한 번에 — gsc → index → keywords → rank → ai → competitors → gaps → pages → report
+/capture run <사이트>       # 수집·분석 전 단계를 한 번에 (단계표 정본: run_all.py 의 STAGES)
 /capture dash <사이트>      # 대시보드 (아래)
 ```
 
@@ -110,7 +110,7 @@ pip install requests pyyaml
 | `/create status` | 작성 이력·머지 여부 |
 
 한 번 등록해 두면 이후에는 `/capture run {사이트}` 한 줄이 전부입니다. 스크립트가
-순서대로 9단계를 묶어서 돌립니다 — `gsc → index → keywords → rank → ai → competitors → gaps → pages → report`.
+표에 적힌 순서대로 전 단계를 묶어서 돌립니다 — 단계 목록의 정본은 `skills/capture/scripts/run_all.py` 의 `STAGES` 하나입니다.
 `gsc` 가 실패하면 거기서 멈춥니다(나머지 전부가 그 데이터를 재료로 쓰기 때문) —
 이때는 로그인 안내와 함께 **인증 없이 지금 되는 것**(`/capture keywords`)을 같이
 알려 주므로 빈손으로 끝나지 않습니다.

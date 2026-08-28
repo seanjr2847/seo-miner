@@ -287,8 +287,7 @@ coverage.
 
 ### /capture run {P} — 풀런
 수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계 순서는 고정이다 —
-**gsc → index → keywords → rank → ai → competitors → gaps → pages → report**, 그 9단계를
-`scripts/run_all.py`가 순서대로 부른다.
+`scripts/run_all.py` 의 `STAGES` 표가 정본이고, 거기 적힌 순서대로 전 단계를 부른다.
 
 1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
    호출 수·비용 계획을 모아 보여주고 사용자 확인을 받는다 (철칙 2 — 비용 고지).

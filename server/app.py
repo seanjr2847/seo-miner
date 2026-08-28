@@ -41,6 +41,7 @@ import gen_prompts
 import gh
 import identity
 import pages
+import run_all
 import scheduler
 import settings
 import store
@@ -374,8 +375,10 @@ async def api_create(request: Request):
         conn.close()
 
 
-STAGES = ("gsc", "index", "keywords", "rank", "ai", "competitors", "gaps",
-          "pages", "report")
+# 단계 목록의 정본은 run_all 의 표 하나다. 여기에 사본을 두면 화면에는 있는
+# 단계(crawl·metrics·backlinks)가 서버에서만 "실행할 수 없는 단계"로 튕긴다 —
+# 실제로 그렇게 났다.
+STAGES = run_all.VALID_STAGE_NAMES
 
 
 @app.post("/api/ai/prompts")
