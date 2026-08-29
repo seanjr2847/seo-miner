@@ -543,8 +543,6 @@ def gather(conn, p, at: str | None = None) -> dict:
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
-    for o in opps:
-        o["is_defensive"] = scoring.is_defensive(o["kind"])
     opp_counts = {}
     for o in opps:
         opp_counts[o["kind"]] = opp_counts.get(o["kind"], 0) + 1
@@ -642,6 +640,19 @@ def gather(conn, p, at: str | None = None) -> dict:
             conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " GROUP BY 1", (pid, gap_date))}
 
+    # 라벨·처방·방어여부는 여기서 한 번 풀어 opps 에 싣는다 — 화면은 그리기만 한다.
+    # striking_distance·content_gap 은 밴드/갈래로 처방이 갈리는데, 그 판정은 이미
+    # striking()·content_gaps() 가 낸 원본 행(band/kind)에 있다 — 검색어·키워드
+    # 문자열로 한 번만 짝짓는다(대상 문자열 자체가 판정하지 않는다).
+    sd_band = {r["query"]: r["band"] for r in striking}
+    gap_kind = {r["keyword"].strip().lower(): r["kind"] for r in kw_gap}
+    for o in opps:
+        o["is_defensive"] = scoring.is_defensive(o["kind"])
+        band = sd_band.get(o["target"]) if o["kind"] == "striking_distance" else None
+        gk = gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap" else None
+        o["label"] = scoring.kind_label(o["kind"], band=band)
+        o["play"] = scoring.kind_play(o["kind"], band=band, gap_kind=gk)
+
     # ── 사이트 크롤 (collect_crawl) ───────────────────────────────────────
     # 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것.
     crawl = {}
@@ -676,9 +687,10 @@ def gather(conn, p, at: str | None = None) -> dict:
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
             "ranks": ranks[:30], "aio_gap": aio_gap,
-            "kw_active": conn.execute(
-                "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-                (pid,)).fetchone()[0],
+            "kw_active": db.count_active_keywords(conn, pid),
+            # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
+            # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
+            "kind_labels": {k.name: k.label for k in scoring.KINDS},
             "daily": daily, "daily_stats": daily_stats,
             "device_gap": scoring.device_gap(conn, pid),
             "index_issues": scoring.index_issues(conn, pid),

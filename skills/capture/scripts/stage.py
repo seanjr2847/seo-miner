@@ -434,32 +434,36 @@ def _check_seams() -> None:
         assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash),             "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
 
 
-    # 8) 기회 종류는 한 벌이다 — 만드는 쪽(scoring.ALL_KINDS)과 말하는 쪽(셸의
-    #    KIND_LABEL·PLAY)이 어긋나면 화면에 영문 kind 원문이 그대로 뜨거나
-    #    (라벨 누락) 펼쳐도 할 일이 안 나온다(플레이북 누락). 실제로 그 반대가
-    #    오래 있었다: 라벨과 플레이북은 있는데 **만드는 쪽이 없어서**
-    #    ai_citation_gap·content_gap·aio_exposure 가 한 건도 안 생겼다.
-    #    정본은 scoring.ALL_KINDS 다 — 여기서 양쪽 끝을 함께 검사한다.
+    # 8) 기회 종류의 라벨·처방(what/acts/deliver)은 이제 scoring.py 의 KINDS
+    #    명부가 정하고 dashboard.py 의 gather() 가 label·play 로 실어 보낸다 —
+    #    화면은 그리기만 한다(window.KIND_LABEL·PLAY 는 없앴다). 그쪽 정합성은
+    #    scoring.py 자체 self-check(set(_KIND_SPECS) == set(ALL_KINDS),
+    #    all(k.play for k in KINDS))가 지킨다 — 여기서 다시 볼 게 없다.
+    #
+    #    화면에 남은 유일한 kind 사본은 isDefensive() 의 배열 폴백이다
+    #    (o.is_defensive 가 없는 옛 박제본에서만 쓰인다) — scoring.DEFENSIVE_KINDS
+    #    와 어긋나면 옛 박제본에서 방어 기회가 덜 잡히거나(2종만 알던 시절처럼)
+    #    엉뚱한 게 방어로 뜬다.
     sc_f = root / "skills" / "capture" / "scripts" / "scoring.py"
     if sc_f.exists():
-        m = re.search(r"ALL_KINDS = \((.*?)\)", sc_f.read_text("utf-8"), re.S)
-        assert m, "scoring.ALL_KINDS 를 못 찾았다 — 기회 종류의 정본이 사라졌다"
-        kinds = set(re.findall(r'"(\w+)"', m.group(1)))
-        assert len(kinds) >= 8, f"ALL_KINDS 를 {len(kinds)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+        import scoring
+        df = re.search(
+            r"const isDefensive = o => o && \(o\.is_defensive\s*\n?\s*\?\?\s*\[(.*?)\]",
+            shell, re.S)
+        assert df, "셸의 isDefensive() 폴백 목록을 못 찾았다"
+        js_defensive = set(re.findall(r'"(\w+)"', df.group(1)))
+        assert js_defensive == set(scoring.DEFENSIVE_KINDS),             f"isDefensive() 폴백이 scoring.DEFENSIVE_KINDS 와 어긋났다: " \
+            f"{js_defensive ^ set(scoring.DEFENSIVE_KINDS)}"
 
-        lb = re.search(r"window\.KIND_LABEL = \{(.*?)\n?\};", shell, re.S)
-        assert lb, "셸의 KIND_LABEL 을 못 찾았다"
-        labels = set(re.findall(r"(\w+)\s*:", lb.group(1)))
-        assert kinds <= labels, f"한국어 라벨이 없는 기회 종류: {sorted(kinds - labels)}"
-
-        pl = re.search(r"window\.PLAY = \{(.*?)\n\};", shell, re.S)
-        assert pl, "셸의 PLAY 플레이북을 못 찾았다"
-        plays = set(re.findall(r"^  (\w+):", pl.group(1), re.M))
-        assert kinds <= plays, f"할 일(PLAY)이 없는 기회 종류: {sorted(kinds - plays)}"
-
-        # 반대 방향도 본다 — 라벨·플레이북만 있고 만드는 쪽이 없으면 그 화면은
-        # 영원히 빈손이다. 이게 바로 ai_citation_gap 이 죽어 있던 모양이다.
-        assert plays <= kinds, f"플레이북은 있는데 만드는 쪽이 없다: {sorted(plays - kinds)}"
+        # 색인 실패 갈래(bucket)도 한 벌이다 — 만드는 쪽(scoring.INDEX_BUCKETS)과
+        # site.html 의 ST_IX(갈래별 라벨·심각도·처방)가 어긋나면 새 갈래가 화면에
+        # 원문 그대로 뜨거나 처방 없이 걸린다.
+        st_f = root / "skills" / "capture" / "templates" / "views" / "site.html"
+        ix = re.search(r"const ST_IX = \{(.*?)\n\};", st_f.read_text("utf-8"), re.S)
+        assert ix, "site.html 의 ST_IX 를 못 찾았다"
+        ix_buckets = set(re.findall(r"^  (\w+):", ix.group(1), re.M))
+        assert ix_buckets == set(scoring.INDEX_BUCKETS),             f"site.html 의 ST_IX 가 scoring.INDEX_BUCKETS 와 어긋났다: " \
+            f"{ix_buckets ^ set(scoring.INDEX_BUCKETS)}"
 
 
     # 9) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.

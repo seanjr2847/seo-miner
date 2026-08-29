@@ -441,7 +441,7 @@ function KW_csvLog() {
     [["검색어", "기회점수", "종류", "평균순위", "1페이지까지", "노출", "클릭", "구간"]].concat(
     KW_filtered().map(r => {
       const o = oppOf(r.query);
-      return [r.query, o && o.score != null ? o.score : "", o ? window.kindLabel(o) : "", r.pos,
+      return [r.query, o && o.score != null ? o.score : "", o ? (o.label || o.kind) : "", r.pos,
         Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1),
         r.imp, r.clk, r.band === "page1" ? "1페이지" : "2페이지"];
     })));
