@@ -114,7 +114,7 @@ def test_collect_ai_cycle_and_failure_summary():
     collect_ai.requests.post = fake_post
     try:
         collect_ai.collect("ai_test_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0)
+                           samples=1, throttle=0)
     finally:
         collect_ai.requests.post = orig_post
         if orig_env_key is not None:
@@ -434,14 +434,14 @@ def test_collect_ai_today_skip_and_force():
         # 1. 기본 실행: p_done_id 는 skip -> p_new_id 만 1회 호출
         post_calls.clear()
         collect_ai.collect("ai_skip_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0)
+                           samples=1, throttle=0)
         assert len(post_calls) == 1, f"오늘 이미 확인된 질문은 skip되어야 함 (호출수={len(post_calls)})"
         assert post_calls[0] == "오늘_미확인_질문"
 
         # 2. --force 실행: 2개 질문 모두 호출
         post_calls.clear()
         collect_ai.collect("ai_skip_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0, force=True)
+                           samples=1, throttle=0, force=True)
         assert len(post_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(post_calls)})"
         assert set(post_calls) == {"오늘_확인_질문", "오늘_미확인_질문"}
     finally:
@@ -643,7 +643,7 @@ def test_side_calls_cannot_kill_the_main_snapshot():
     orig = collect_gsc.get_service
     collect_gsc.get_service = lambda: _Service()
     try:
-        collect_gsc.collect("sidefail", gsc_breakdown="device")
+        collect_gsc.collect("sidefail", breakdown="device")
     finally:
         collect_gsc.get_service = orig
 

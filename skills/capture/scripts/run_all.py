@@ -369,7 +369,73 @@ def _top_opportunity(project: str):
         return None
 
 
+# 단계 이름 -> 그 수집기 모듈. --opt STAGE.KEY 의 STAGE 가 어느 모듈의 _parser() 를
+# 봐야 하는지 여기서 정한다. gaps/report 는 자체 모듈이 아니라 이 파일의 함수라 없다 —
+# 애초에 --opt 를 받지 않는다(외부 호출 0건, 노브도 없다).
+STAGE_MODULES = {
+    "gsc": collect_gsc, "index": collect_index, "keywords": expand_keywords,
+    "metrics": collect_metrics, "rank": collect_serp, "crawl": collect_crawl,
+    "ai": collect_ai, "competitors": collect_gap, "backlinks": collect_backlinks,
+    "pages": collect_page,
+}
+
+
+def _selfcheck() -> None:
+    """--opt STAGE.KEY=VALUE 통로가 실제로 도는지 두 겹으로 못 박는다.
+
+    이 통로는 수집기가 이미 CLI 로 노출한 노브(--limit --depth --device ...)를
+    체인으로도 쓰게 하려는 것이다. 그런데 CLI 플래그 이름과 collect() 의 키워드
+    인자 이름이 어긋나면 --opt rank.depth=20 같은 흔한 사용이 TypeError 로
+    죽는다(collect_index 의 --limit vs 예전 index_urls 가 그 사례). 이 자체점검은
+    그 어긋남을 회귀로 못 박는다.
+
+    1. 계약 검사 — 각 단계가 등록한 설정의 dest 가 collect() 의 '명시' 인자에
+       있는지 inspect.signature 로 본다. **opts 로 삼키는 것은 안 쳐준다 —
+       조용히 삼켜서 값이 무시되는 것이 TypeError 보다 나쁘다(사용자는 옵션을
+       줬다고 믿는다).
+    2. 실측 — 12단계 전부에 그 설정의 fallback 값을 --opt 로 흘려 dry_run 호출.
+       dry_run 이면 대부분 DB 도 안 건드리고 바로 반환하므로 가짜 project 로도
+       된다. ProjectNotFound 는 "인자는 받아들여졌다"는 뜻이라 통과로 친다 —
+       TypeError 만 이 검사가 잡으려는 것이다.
+    """
+    import inspect
+    import os
+    import tempfile
+
+    for stage in STAGES:
+        mod = STAGE_MODULES.get(stage.name)
+        if mod is None:
+            continue
+        specs = getattr(mod._parser(), "_collector_settings", [])
+        params = inspect.signature(stage.fn).parameters
+        for spec in specs:
+            ok = (spec.dest in params
+                 and params[spec.dest].kind != inspect.Parameter.VAR_KEYWORD)
+            assert ok, (
+                f"[{stage.name}] --opt {stage.name}.{spec.dest}=... 가 "
+                f"{mod.__name__}.collect() 의 명시 인자가 아니다 (**opts 로 "
+                "삼키는 것도 불허) — collect() 의 키워드 인자 이름을 CLI 플래그"
+                f"(--{spec.dest.replace('_', '-')})와 맞춰라.")
+
+    os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-runall-selftest-")))
+    for stage in STAGES:
+        mod = STAGE_MODULES.get(stage.name)
+        specs = getattr(mod._parser(), "_collector_settings", []) if mod else []
+        opts = {spec.dest: spec.fallback for spec in specs}
+        try:
+            stage.fn(project="__selfcheck__", dry_run=True, **opts)
+        except db.ProjectNotFound:
+            pass    # 인자는 받아들여졌다 — 여기서 잡으려는 건 TypeError 뿐
+        except TypeError as e:
+            raise AssertionError(f"[{stage.name}] --opt 통로가 TypeError 로 죽는다: {e}") from e
+
+    print("run_all self-check ok")
+
+
 def main() -> None:
+    if len(sys.argv) == 1:
+        _selfcheck()
+        return
     ap = argparse.ArgumentParser(
         description="전체 수집 체인 실행 — "
                     "gsc → index → keywords → rank → ai → competitors → gaps → pages → report"

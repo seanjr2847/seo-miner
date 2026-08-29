@@ -132,7 +132,7 @@ def _jobs(rows, default_locale: str) -> list[tuple[str, list]]:
 
 def collect(project: str, *,
             dry_run: bool = False,
-            metrics_limit: int | None = None,
+            limit: int | None = None,
             max_age: int | None = None,
             conn=None,
             post=None,
@@ -142,7 +142,8 @@ def collect(project: str, *,
     Args:
         project: 사이트 이름
         dry_run: True 면 몇 개를 어느 로케일로 살지 + 예상 비용만 찍고 종료
-        metrics_limit: 이번 실행에서 살 키워드 수 상한. 0 이면 끈다.
+        limit: 이번 실행에서 살 키워드 수 상한(config 키는 limits.metrics_limit).
+            0 이면 끈다 — CLI 플래그(--limit)와 이름을 맞춘다.
         max_age: 이 일수 안에 산 지표는 다시 사지 않는다
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         post: (path, body) -> (result, cost) — 주면 post_dataforseo 대신 이것을
@@ -156,7 +157,7 @@ def collect(project: str, *,
             return st.skip("키워드 지표는 유료 — DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(ap, argparse.Namespace(limit=metrics_limit, max_age=max_age))
+        s = st.settings(ap, argparse.Namespace(limit=limit, max_age=max_age))
         limit = s["limits.metrics_limit"]
         max_age_days = s["metrics_max_age_days"]
         if limit <= 0:
@@ -265,7 +266,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         return _selfcheck()
     a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run, metrics_limit=a.limit, max_age=a.max_age)
+    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_age=a.max_age)
     print(r)
     sys.exit(0 if r.ok or r.skipped else 1)
 
@@ -356,7 +357,7 @@ def _selfcheck() -> None:
         [(pid, f"대량 {i}") for i in range(1200)])
     conn.commit()
     calls.clear()
-    res = collect("mt", metrics_limit=1200, conn=conn, post=fake_post)
+    res = collect("mt", limit=1200, conn=conn, post=fake_post)
     sv_calls = [w for path, _, w in calls if path == SV_PATH]
     assert len(sv_calls) == 2, [len(c) for c in sv_calls]
     assert [len(c) for c in sv_calls] == [1000, 200], [len(c) for c in sv_calls]
@@ -374,7 +375,7 @@ def _selfcheck() -> None:
     assert conn.execute("SELECT * FROM runs").fetchall() == []
 
     # --limit 0 은 끄기.
-    res = collect("mt", metrics_limit=0, conn=conn, post=boom)
+    res = collect("mt", limit=0, conn=conn, post=boom)
     assert (res.ok, res.skipped) == (True, True) and res.reason, res
 
     # 살 것이 없으면 건너뜀 (실패 아님) — run_all 체인을 깨지 않는다.

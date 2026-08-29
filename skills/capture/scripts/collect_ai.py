@@ -80,8 +80,8 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
 def collect(project: str, *,
             dry_run: bool = False,
             engines: str | None = None,
-            ai_samples: int | None = None,
-            max_ai_prompts: int | None = None,
+            samples: int | None = None,
+            max_prompts: int | None = None,
             throttle: float | None = None,
             ids: str | None = None,
             category: str | None = None,
@@ -93,8 +93,10 @@ def collect(project: str, *,
         project: 사이트 이름
         dry_run: True 면 호출 계획만 찍고 종료
         engines: comma list (예: "chatgpt,perplexity,gemini"). 미지정시 config.
-        ai_samples: 프롬프트×엔진 당 샘플 수
-        max_ai_prompts: 활성 프롬프트 상한
+        samples: 프롬프트×엔진 당 샘플 수(config 키는 ai_samples) —
+            CLI 플래그(--samples)와 이름을 맞춘다.
+        max_prompts: 활성 프롬프트 상한(config 키는 limits.max_ai_prompts) —
+            CLI 플래그(--max-prompts)와 이름을 맞춘다.
         throttle: 요청 간격(초)
         ids: 쉼표 구분 ai_prompt id — 지정하면 is_active 무시
         category: 이 카테고리의 활성 프롬프트만 실행
@@ -109,7 +111,7 @@ def collect(project: str, *,
         conn, p, cfg = st.conn, st.project, st.cfg
         gcfg = collector.config()
         s = st.settings(ap, argparse.Namespace(
-            throttle=throttle, samples=ai_samples, max_prompts=max_ai_prompts))
+            throttle=throttle, samples=samples, max_prompts=max_prompts))
         samples = s["ai_samples"]
         max_ai_prompts = s["limits.max_ai_prompts"]
 
@@ -244,8 +246,8 @@ def main() -> None:
     a = _parser().parse_args()
     r = collect(a.project, dry_run=a.dry_run,
                 engines=a.engines,
-                ai_samples=a.samples,
-                max_ai_prompts=a.max_prompts,
+                samples=a.samples,
+                max_prompts=a.max_prompts,
                 throttle=a.throttle,
                 ids=a.ids,
                 category=a.category,
