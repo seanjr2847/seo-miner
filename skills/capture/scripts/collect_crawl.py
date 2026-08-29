@@ -423,10 +423,10 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
         throttle: 요청 간격(초) — 내 서버를 두드리는 속도
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(limit=limit, max_depth=max_depth,
+        s = st.settings(ap, argparse.Namespace(limit=limit, max_depth=max_depth,
                                            throttle=throttle))
         limit, depth = s["crawl_urls"], s["crawl_depth"]
         if limit <= 0:

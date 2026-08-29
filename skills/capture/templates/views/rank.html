@@ -411,7 +411,7 @@ function RK_csv() {
     const b = bs.find(x => x.hit(r));
     const o = oppOf(r.keyword);
     const top = (RK_PAGES[r.keyword] || [])[0];
-    return [r.keyword, o && o.score != null ? o.score : "", o ? kindLabel(o) : "",
+    return [r.keyword, o && o.score != null ? o.score : "", o ? (o.label || o.kind) : "",
       r.pos ?? "밖", RK_prevPos(r) ?? "", RK_d(r) ?? "",
       top && top.impressions != null ? top.impressions : "",
       b ? b.t : "", r.aio == null ? "" : !r.aio ? "요약 없음"

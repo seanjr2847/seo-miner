@@ -148,6 +148,61 @@ def test_gather_keyword_gap_counts_and_order():
     conn.close()
 
 
+# ── 기회 라벨·처방 — 밴드/갈래로 갈리는 자리가 v1.38.2 버그(6.4위에 "11~20위"가
+#    붙음)가 났던 곳이다. gather() 가 원본 행(striking/kw_gap)과 대상 문자열로
+#    한 번만 짝지어 label·play 를 붙인다 — 여기서 그 짝짓기를 검증한다.
+def test_gather_resolves_striking_band_and_content_gap_kind():
+    conn, pid = _brain("lp")
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,"
+        "impressions,ctr,position) VALUES(?,?,?,?,?,?,0.0,?)",
+        [(pid, D, 28, "1페이지상단권", 5, 200, 6.0),      # band=page1 (4~10위)
+         (pid, D, 28, "2페이지권", 2, 150, 15.0),          # band=page2 (11~20위)
+         (pid, D, 28, "_meta", 0, 1, 50.0)])
+    conn.executemany(
+        "INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
+        "our_position,volume,kind) VALUES(?,?,?,?,?,?,?,?)",
+        [(pid, D, "약한글", "r.com", 2, 9, 500, "weak"),
+         (pid, D, "없는글", "r.com", 3, None, 400, "missing")])
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "striking_distance", "1페이지상단권", 80, "r", "new", D),
+         (pid, "striking_distance", "2페이지권", 70, "r", "new", D),
+         (pid, "striking_distance", "안잡히는검색어", 10, "r", "new", D),  # 원본 행이 없다
+         (pid, "content_gap", "약한글", 60, "r", "new", D),
+         (pid, "content_gap", "  없는글  ", 50, "r", "new", D),   # 앞뒤 공백 — 정규화 확인
+         (pid, "rank_decay", "아무거나", 40, "r", "new", D)])
+    conn.commit()
+    d = dashboard.gather(conn, db.get_project(conn, "lp"))
+    by_target = {o["target"]: o for o in d["opps"]}
+
+    p1 = by_target["1페이지상단권"]
+    assert p1["label"] == "1페이지 상단 가능", p1["label"]
+    assert p1["play"]["what"] == "이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다."
+    assert p1["is_defensive"] is False
+
+    p2 = by_target["2페이지권"]
+    assert p2["label"] == "1페이지 진입 가능", p2["label"]
+    assert p2["play"]["what"].startswith("1페이지 진입까지")
+
+    # 밴드를 모르면(원본 striking 행이 없다) 통칭 라벨·page2 기본 처방으로 물러선다
+    unknown = by_target["안잡히는검색어"]
+    assert unknown["label"] == "밀면 오를 검색어", unknown["label"]
+    assert unknown["play"]["what"].startswith("1페이지 진입까지")
+
+    weak = by_target["약한글"]
+    assert weak["play"]["what"].startswith("경쟁 도메인이 나보다 위에")
+
+    missing = by_target["  없는글  "]
+    assert missing["play"]["what"].startswith("경쟁 도메인은 잡고 있는데")
+
+    decay = by_target["아무거나"]
+    assert decay["label"] == "순위 하락"
+    assert decay["is_defensive"] is True
+    conn.close()
+
+
 # ── 사이트 크롤 ───────────────────────────────────────────────────────────
 def _run(conn, pid, finished, issues):
     rid = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"

@@ -135,7 +135,7 @@ function oppRow(o) {
       <div>
         <div class="oh">
           <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
-            >${esc(window.kindLabel(o))}</span>
+            >${esc(o.label || o.kind)}</span>
           <span class="dt">${esc(o.created || "")}</span>
         </div>
         <div class="target">${esc(o.target)}</div>
@@ -192,7 +192,7 @@ function renderOpps(n) {
     ? `<div class="oppchips">${kinds.map(k =>
         `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
            onclick="filterKind(this)" title="${esc(k)}"
-           aria-pressed="${KIND_FILTER === k}">${esc(KIND_LABEL[k] || k)}
+           aria-pressed="${KIND_FILTER === k}">${esc((window.KIND_LABELS || {})[k] || k)}
            <b>${counts[k]}</b></button>`).join("")}</div>`
     : "";
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
@@ -233,7 +233,7 @@ function oppList() {
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다 — 여기는 무엇을 담을지만 정한다.
 function oppCsv() {
   csv("기회", [["점수", "종류", "상태", "대상", "근거", "생성일"]].concat(
-    oppFiltered().map(o => [o.score ?? "", window.kindLabel(o),
+    oppFiltered().map(o => [o.score ?? "", o.label || o.kind,
       window.OPP_LABEL[o.status] || o.status, o.target,
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }

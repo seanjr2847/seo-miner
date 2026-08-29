@@ -72,7 +72,7 @@ def to_row(url: str, result: dict) -> dict:
 
 def collect(project: str, *,
             dry_run: bool = False,
-            index_urls: int | None = None,
+            limit: int | None = None,
             throttle: float | None = None,
             conn=None,
             service=None) -> collector.StageResult:
@@ -81,7 +81,8 @@ def collect(project: str, *,
     Args:
         project: 사이트 이름
         dry_run: True 면 검사 계획만 찍고 종료
-        index_urls: 한 번에 검사할 URL 수. 0이면 끔
+        limit: 한 번에 검사할 URL 수(config 키는 index_urls). 0이면 끔 —
+            CLI 플래그(--limit)와 이름을 맞춘다.
         throttle: 호출 간격(초). 분당 600회 제한을 넘지 않기 위한 것
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         service: 서치콘솔 서비스 객체 — 주면 인증을 타지 않는다
@@ -91,10 +92,10 @@ def collect(project: str, *,
         StageResult(ok=...). 정상 종료면 ok=True. 사유가 있는 비종료는
         ok=False, skipped=True, reason 에 한국어 안내.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(limit=index_urls, throttle=throttle))
+        s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle))
         limit = s["index_urls"]
         throttle = st.throttle
         prop = p["gsc_property"]
@@ -196,7 +197,7 @@ def main() -> None:
         a = _parser().parse_args()
 
         r = collect(a.project, dry_run=a.dry_run,
-                    index_urls=a.limit, throttle=a.throttle)
+                    limit=a.limit, throttle=a.throttle)
     except db.ProjectNotFound as e:
         sys.exit(str(e))
     if not r.ok and r.reason:
@@ -259,7 +260,7 @@ def _selfcheck() -> None:
 
     # 의존물은 인자로 준다 — 예전에는 globals()["get_service"] 를 갈아끼웠다.
     # conn 도 같이 넘겨 러너가 빌린 것을 닫지 않는지까지 본다.
-    res = collect("it", index_urls=3, throttle=0, conn=conn, service=_Svc())
+    res = collect("it", limit=3, throttle=0, conn=conn, service=_Svc())
     assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
     conn.execute("SELECT 1")     # 빌린 conn 은 러너가 닫지 않는다
 

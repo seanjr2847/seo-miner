@@ -422,8 +422,9 @@ function HS_madeMerged(v) { HS_MM = v; HS_madeList(); }
 function HS_madeReset() { HS_MQ = ""; HS_MM = ""; HS_madeTools(); }
 
 function HS_madeRow(c) {
-  // kind 한국어 라벨은 개요 화면이 정본이다 — 여기 사본을 두면 언젠가 한쪽만 고쳐진다.
-  const label = (window.KIND_LABEL || {})[c.kind] || c.kind || "수동 작업";
+  // kind 한국어 라벨의 정본은 scoring.py(KINDS 명부) — payload 의 kind_labels 로 온다.
+  // 여기는 대상 없이 kind 만 아는 자리라 통칭을 쓴다(밴드별 라벨은 못 낸다).
+  const label = (window.KIND_LABELS || {})[c.kind] || c.kind || "수동 작업";
   return `<div class="mk">
     <div>
       <div class="mh">
@@ -514,7 +515,7 @@ function HS_madeList() {
 function HS_madeCsv() {
   csv("고친것", [["작성일", "종류", "파일", "브랜치", "병합", "기회", "근거"]]
     .concat(HS_madeFiltered().map(c => [c.created_at,
-      (window.KIND_LABEL || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
+      (window.KIND_LABELS || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
       c.merged ? "병합됨" : "병합 전", c.opp_target || "",
       (c.note || "").replace(/\s+/g, " ")])));
 }

@@ -114,7 +114,7 @@ def test_collect_ai_cycle_and_failure_summary():
     collect_ai.requests.post = fake_post
     try:
         collect_ai.collect("ai_test_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0)
+                           samples=1, throttle=0)
     finally:
         collect_ai.requests.post = orig_post
         if orig_env_key is not None:
@@ -434,14 +434,14 @@ def test_collect_ai_today_skip_and_force():
         # 1. 기본 실행: p_done_id 는 skip -> p_new_id 만 1회 호출
         post_calls.clear()
         collect_ai.collect("ai_skip_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0)
+                           samples=1, throttle=0)
         assert len(post_calls) == 1, f"오늘 이미 확인된 질문은 skip되어야 함 (호출수={len(post_calls)})"
         assert post_calls[0] == "오늘_미확인_질문"
 
         # 2. --force 실행: 2개 질문 모두 호출
         post_calls.clear()
         collect_ai.collect("ai_skip_proj", engines="chatgpt",
-                           ai_samples=1, throttle=0, force=True)
+                           samples=1, throttle=0, force=True)
         assert len(post_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(post_calls)})"
         assert set(post_calls) == {"오늘_확인_질문", "오늘_미확인_질문"}
     finally:
@@ -643,7 +643,7 @@ def test_side_calls_cannot_kill_the_main_snapshot():
     orig = collect_gsc.get_service
     collect_gsc.get_service = lambda: _Service()
     try:
-        collect_gsc.collect("sidefail", gsc_breakdown="device")
+        collect_gsc.collect("sidefail", breakdown="device")
     finally:
         collect_gsc.get_service = orig
 
@@ -1258,55 +1258,56 @@ def test_run_all_chain_order_and_paid_skips():
 
 
 def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard():
-    """gaps/report 는 subprocess 격리를 유지하되 표에서는 다른 단계와 같은 모양이다 —
-    fn(project, *, dry_run) -> StageResult.
+    """gaps/report 는 이제 scoring.load / dashboard.export 직접 호출이다 — 표에서는
+    다른 단계와 같은 모양(fn(project, *, dry_run) -> StageResult).
 
-    리포트 경로는 dashboard 가 찍는 `report: ...` 한 줄에서 읽는다. run_all 이
-    같은 경로 규칙을 다시 계산하면 dashboard.export() 와 두 벌이 된다.
+    리포트 경로는 dashboard.export() 가 돌려주는 Path 를 그대로 옮긴다(파싱 없음) —
+    run_all 이 같은 경로 규칙을 다시 계산하면 dashboard.export() 와 두 벌이 된다.
+    예외는 여기서 삼키지 않는다 — run_chain 의 _run_stage 가 StageResult(ok=False) 로 접는다.
     """
     import run_all
 
-    orig_run = run_all.subprocess.run
+    orig_load, orig_export = run_all.scoring.load, run_all.dashboard.export
     try:
         # dry-run 이면 외부 호출이 아예 없다
         def boom(*a, **k):
-            raise AssertionError("dry-run 인데 subprocess 를 탔다")
-        run_all.subprocess.run = boom
+            raise AssertionError("dry-run 인데 scoring.load/dashboard.export 를 탔다")
+        run_all.scoring.load = boom
+        run_all.dashboard.export = boom
         with contextlib.redirect_stdout(io.StringIO()):
             assert run_all.load_opportunities("p", dry_run=True).skipped
             assert run_all.export_report("p", dry_run=True).skipped
 
         seen: dict = {}
 
-        class _Res:
-            returncode = 0
-            stdout = "report: /x/reports/p/2026-08-25.html\n"
-            stderr = ""
+        fake_path = Path(tempfile.gettempdir()) / "reports" / "p" / "2026-08-25.html"
 
-        def fake_run(cmd, **k):
-            seen["cmd"] = [str(x) for x in cmd]
-            return _Res()
+        def fake_export(project, actions_file=None):
+            seen["project"] = project
+            return fake_path
 
-        run_all.subprocess.run = fake_run
-        with contextlib.redirect_stdout(io.StringIO()):
-            r = run_all.export_report("p")
-        assert r.ok and r.artifact == "/x/reports/p/2026-08-25.html", r
-        assert seen["cmd"][1].endswith("dashboard.py") and "--export" in seen["cmd"], seen
+        run_all.dashboard.export = fake_export
+        r = run_all.export_report("p")
+        assert r.ok and r.artifact == str(fake_path), r
+        assert seen["project"] == "p", seen
 
-        with contextlib.redirect_stdout(io.StringIO()):
-            g = run_all.load_opportunities("p")
-        assert g.ok and seen["cmd"][1].endswith("scoring.py") and seen["cmd"][2] == "load", seen
+        def fake_load(project):
+            seen["loaded"] = project
 
-        # 비정상 종료는 StageResult(ok=False) 로 접힌다
-        class _Bad(_Res):
-            returncode = 3
+        run_all.scoring.load = fake_load
+        g = run_all.load_opportunities("p")
+        assert g.ok and seen["loaded"] == "p", seen
 
-        run_all.subprocess.run = lambda cmd, **k: _Bad()
-        with contextlib.redirect_stdout(io.StringIO()):
-            bad = run_all.export_report("p")
-        assert not bad.ok and "exit code 3" in bad.reason, bad
+        # 예외는 여기서 삼키지 않고 그대로 올린다 — _run_stage 가 StageResult(ok=False)로 접는다.
+        def raises(*a, **k):
+            raise RuntimeError("db 잠김")
+        run_all.dashboard.export = raises
+        stage = run_all.Stage("report", "리포트", run_all.export_report, False)
+        bad = run_all._run_stage(stage, "p", dry_run=False, skip_set=set(), only_set=set(), opts={})
+        assert not bad.ok and "db 잠김" in bad.reason, bad
     finally:
-        run_all.subprocess.run = orig_run
+        run_all.scoring.load = orig_load
+        run_all.dashboard.export = orig_export
 
 
 def test_serp_adapter_credentials_timeouts_and_labs():

@@ -7,11 +7,6 @@
   :root{
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
   }
-  /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
-  #sm-fail{border:1px solid var(--copper);border-radius:8px;padding:12px 16px;
-    margin:0 0 18px;color:var(--copper);font:400 13px/1.6 var(--sans)}
-  #sm-fail p{margin:0}
-
   /* 원본 셸(dashboard.html)이 레일·화면 전환·괘선 체계를 다 갖는다. 여기서는
      호스팅에만 있는 것만 칠한다 — 예전에는 이 애드온이 body 격자부터 카드까지
      원본을 !important 로 덮어써서, 같은 조립본이 배포마다 다른 몸으로 섰다. */
@@ -352,51 +347,11 @@
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
   // ── 단계 용어 한 벌 ─────────────────────────────────────────
-  // 같은 단계가 계층마다 다른 이름이었다 — 안내 제목(stage.py)·실행 버튼·화면 버튼,
-  // 거기에 terms.js 가 렌더된 한국어를 정규식으로 덮는 네 번째 패스까지. 이제 표는
-  // 여기 하나다. 키는 stage.py 가 payload 에 실어 보내는 단계 id 라 화면 글자를
-  // 되짚지 않는다 — 안내 문구를 고쳐도 이 표는 안 깨진다.
-  //   t    이 단계의 이름 (호스팅 어투)
-  //   run  그 화면 상단의 '다시 돌리기' 버튼 — 제목과 겹치지 않게 다르게 부른다
-  //   gain 안내의 설명 한 줄
-  var STAGE = {
-    register: {t: "사이트 등록",
-      gain: "분석할 도메인과 시드 키워드를 지정합니다."},
-    gsc:      {t: "검색 실적 수집", run: "실적 다시 수집",
-      gain: "서치콘솔에서 노출수·클릭수·평균 게재순위를 수집합니다. 이후 모든 분석이 " +
-            "이 실측값을 기준으로 합니다."},
-    index:    {t: "색인 생성 검사", run: "색인 다시 검사"},
-    keywords: {t: "키워드 발굴", run: "키워드 다시 발굴",
-      gain: "검색 자동완성으로 키워드 후보를 발굴해 추적 목록을 구성합니다. " +
-            "추가 비용이 없습니다."},
-    metrics:  {t: "키워드 지표", run: "지표 다시 조회",
-      gain: "발굴한 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 " +
-            "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. " +
-            "DataForSEO 유료 호출입니다."},
-    rank:     {t: "순위 추적", run: "순위 다시 확인"},
-    crawl:    {t: "사이트 크롤", run: "사이트 다시 크롤",
-      gain: "사이트를 따라 돌며 깨진 내부 링크·리다이렉트 사슬·고아 페이지·중복 " +
-            "제목을 찾습니다. 한 페이지만 봐서는 나오지 않는 항목입니다. 비용이 없습니다."},
-    ai:       {t: "AI 인용 확인", run: "AI 인용 다시 확인",
-      gain: "ChatGPT·Perplexity·Gemini 답변에서 인용되는 도메인을 확인합니다. " +
-            "OpenRouter 연동이 필요합니다."},
-    competitors: {t: "경쟁사 역키워드", run: "경쟁사 다시 수집",
-      gain: "경쟁 도메인이 이미 순위를 잡은 검색어를 수집해 추적 후보로 올립니다. " +
-            "DataForSEO Labs 유료 호출입니다."},
-    backlinks: {t: "백링크 프로필", run: "백링크 다시 수집",
-      gain: "참조 도메인·앵커 텍스트·개별 링크를 수집하고, 경쟁사는 링크를 받는데 " +
-            "우리는 못 받는 도메인을 찾습니다. DataForSEO 유료 호출입니다."},
-    gaps:     {t: "개선 기회 분석", run: "기회 다시 분석",
-      gain: "수집한 데이터에서 개선 기회를 산출합니다 — 순위 상승 기회, AI 인용 격차, " +
-            "프로그래매틱 SEO 패턴."},
-    pages:    {t: "내 페이지 점검", run: "페이지 다시 점검",
-      gain: "기회에 걸린 내 페이지를 직접 열어 제목·설명·H1·본문 길이·구조화 데이터를 " +
-            "확인합니다. 비용이 없습니다."},
-    report:   {t: "보고서 생성"},
-    create:   {t: "콘텐츠 작성",
-      gain: "도출된 개선 기회를 저장소의 콘텐츠 변경으로 반영합니다. 별도 브랜치와 " +
-            "PR 로 제출됩니다."}
-  };
+  // 정본은 stage.STAGE_LABELS(파이썬)다 — 조립(dashboard.py._assemble)이
+  // window.__STAGES__ 로 실어 보낸다. 여기서 사본을 만들지 않는다: 예전엔 여기와
+  // stage.py 에 각자 있었고, 문구가 이미 갈라져 있었다(gsc.t: "검색 실적 수집" vs
+  // "구글 실적 읽기" 등). 키는 단계 id 라 화면 글자를 되짚지 않는다.
+  var STAGE = window.__STAGES__ || {};
 
   // [기록] 화면의 실행 종류 라벨도 이 표를 본다(runs.kind 는 단계 id 와 같은 말이다).
   window.SM_STAGE = STAGE;
@@ -498,31 +453,16 @@
   // 화면 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이
   // window.__VIEWS__ 로 실어 보내고, 원본 셸(dashboard.html 의 SM)이 그걸로
   // 레일과 화면 상자를 만든다. 여기서 다시 나열하지 않는다.
-  // 원본에 없고 이 애드온이 런타임에 만드는 섹션만 아래 표에 적는다.
-  // 화면 자체를 덧붙이던 표(HOST_VIEWS)는 없어졌다 — 백링크가 원본 뷰로 내려가면서
-  // 원본에 대응 파일이 없는 화면이 하나도 안 남았다.
   //
-  // 예전에는 이 파일이 사이드바·배치·전환을 통째로 다시 구현하고 원본 격자를
-  // !important 로 덮어썼다. 그래서 같은 조립본이 배포마다 다른 몸으로 섰다 —
-  // 로컬은 파일 순서로 섹션을 쌓고 호스팅은 view-def 순서로 옮겨서, 두 화면의
-  // 섹션 순서가 실제로 달랐다. 셸이 원본으로 내려간 지금은 덧붙이기만 한다.
-
-  // HOST_SEC: [화면 id, 요소 id, 이 요소 바로 뒤에]
-  //   perfShell()·keywords()·handoff()·setShell() 이 그 요소를 만든다.
-  var HOST_SEC = [
-    ["overview", "sm-perf", "daily"],
-    ["overview", "sm-dim",  "sm-perf"],
-    ["keywords", "sm-kw",   "log"],
-    ["ai",       "sm-aiq", "ai"],
-    ["history",  "sm-cc",   "made-sec"],
-    ["settings", "sm-set",  "setup"]
-  ];
-  step("화면 덧붙이기", function () {
-    if (!window.SM) {
-      throw new Error("원본 셸(SM)이 없습니다 — 이 애드온은 dashboard.py 조립본 뒤에 얹힙니다");
-    }
-    HOST_SEC.forEach(function (h) { SM.addSection(h[0], h[1], h[2]); });
-  });
+  // 호스팅 전용 섹션(성과·분해·키워드 관리·AI 질문·고급 분석·설정)의 정적 마크업도
+  // 이제 여기서 안 짓는다 — templates/sections/*.html 의 section-def 로 선언하고,
+  // dashboard.py._assemble("hosted") 가 조립 시점에 원본 뷰 순서 안에 끼운다.
+  // 여기 남는 건 이미 서 있는 그 요소를 찾아 데이터를 채우고 이벤트를 붙이는
+  // 것뿐이다(perfLoad·kwLoad·aiqLoad·handoff·setLoad 아래). 예전에는 이 파일이
+  // createElement/innerHTML 로 섹션 자체를 짓고, HOST_SEC 라는 표로 어디에
+  // 붙는지를 따로 말했다 — 그 표와 실제로 만드는 것이 어긋날 수 있었다(그리고
+  // 사이드바·배치·전환까지 통째로 다시 구현해 !important 로 원본을 덮어써서, 같은
+  // 조립본이 배포마다 다른 몸으로 섰다). 셸도 섹션도 원본 하나뿐이다.
 
   step("레일 바닥", function foot() {
     var box = document.querySelector(".rail-foot");
@@ -561,30 +501,18 @@
   // 프리셋 목록의 정본은 서버(app.RUN_PRESETS)다 — 화면은 받아서 그리기만 한다.
   var SET_DONE = "", SET_H = null;
 
-  // 껍데기는 동기로 만든다 — 셸이 배치할 때 이미 있어야 한다(성과 상자와 같다).
-  step("설정 상자", function setShell() {
-    var host = document.querySelector("main");
-    if (!host || document.getElementById("sm-set")) return;
-    var sec = document.createElement("section");
-    sec.id = "sm-set";
-    sec.innerHTML = '<p class="eyebrow">설정</p><h2>자동 수집 주기</h2>' +
-      '<p class="sub">이 사이트를 얼마나 자주 다시 측정할지 정합니다. ' +
-      "끄더라도 [전체 분석 실행]과 아직 한 번도 안 잰 사이트의 첫 측정은 그대로 " +
-      "동작합니다 — 자동 재측정만 멈춥니다.</p>" +
-      '<div class="opts"></div>' +
-      '<div class="repo"><h2>저장소 연결</h2>' +
-      '<p class="sub">개선 기회를 콘텐츠로 만들어 PR 로 보낼 곳입니다. main 에는 직접 ' +
-      "커밋하지 않고 새 브랜치와 PR 까지만 만듭니다 — 머지는 직접 해 주세요. " +
-      "연결하지 않아도 나머지 측정은 그대로 돕니다.</p>" +
-      '<div class="body"></div></div>';
-    // 위임 한 번만 — 다시 그릴 때마다 붙이면 한 번 누른 게 여러 번 저장된다.
+  // 마크업은 이미 서 있다(templates/sections/sm-set.html) — 여기서는 이벤트만
+  // 한 번 건다. 위임 한 번만: 다시 부르면 한 번 누른 게 여러 번 저장된다.
+  step("설정 배선", function setShell() {
+    var sec = document.getElementById("sm-set");
+    if (!sec || sec.dataset.smWired) return;
+    sec.dataset.smWired = "1";
     sec.addEventListener("click", function (ev) {
       var t = ev.target.closest ? ev.target.closest("[data-h]") : null;
       if (t) return setSave(Number(t.dataset.h));
       if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
     });
-    host.appendChild(sec);
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
 
@@ -718,7 +646,7 @@
   // ── 키워드 선별 ────────────────────────────────────────────
   // 자동 활성화는 '구글이 이미 노출시킨' 검색어만 켠다. 자동완성에서 캔 후보는
   // 관련성이 확인되지 않아 그대로 잠들어 있다 — 여기서 사람이 고른다.
-  var kwMode = "candidate", kwWired = false;
+  var kwMode = "candidate";
 
   async function kwLoad() {
     var box = document.getElementById("sm-kw");
@@ -777,20 +705,12 @@
     kwLoad();
   }
 
+  // 마크업은 이미 서 있다(templates/sections/sm-kw.html) — 여기서는 탭·버튼에
+  // 이벤트만 건다.
   function keywords() {
-    var host = document.querySelector("main");
-    if (!host || document.getElementById("sm-kw")) return;
-    var sec = document.createElement("section");
-    sec.id = "sm-kw";
-    sec.innerHTML = '<p class="eyebrow">KEYWORDS</p><h2>추적 키워드 관리</h2>' +
-      '<p class="sub">서치콘솔에 노출된 검색어는 자동으로 추적합니다. 자동완성으로 발굴한 후보는 ' +
-      "관련 있는 것만 직접 선택하세요 — 추적 키워드 수만큼 순위 추적 비용이 발생합니다.</p>" +
-      '<div class="tabs"><button data-m="candidate" class="on">후보</button>' +
-      '<button data-m="active">추적 중</button></div>' +
-      '<div class="list"></div>' +
-      '<div class="bar2"><button class="go2">고른 것 추적하기</button>' +
-      '<span class="cnt"></span></div>';
-    host.appendChild(sec);
+    var sec = document.getElementById("sm-kw");
+    if (!sec || sec.dataset.smWired) return;
+    sec.dataset.smWired = "1";
 
     sec.querySelector(".tabs").addEventListener("click", function (ev) {
       var b = ev.target.closest ? ev.target.closest("[data-m]") : null;
@@ -868,23 +788,12 @@
     } catch (e) { aiqSay(box, "서버에 연결하지 못했습니다"); }
   }
 
+  // 마크업은 이미 서 있다(templates/sections/sm-aiq.html) — 여기서는 이벤트를
+  // 걸고 목록을 채운다.
   function aiqPanel() {
-    var host = document.querySelector("main");
-    if (!host || document.getElementById("sm-aiq")) return;
-    var sec = document.createElement("section");
-    sec.id = "sm-aiq";
-    sec.innerHTML = '<p class="eyebrow">AI QUESTIONS</p><h2>물어볼 질문</h2>' +
-      '<p class="sub">여기 켜 둔 질문을 그대로 AI에 물어보고, 답변에 우리 도메인이 ' +
-      "인용되는지 셉니다. 모델이 지은 질문은 초안입니다 — 업종과 안 맞는 것은 끄거나 " +
-      "지우고, 손님이 실제로 물을 법한 말투로 고치세요. 질문 하나마다 엔진 수만큼 확인 " +
-      "비용이 듭니다.</p>" +
-      '<div class="list"></div>' +
-      '<div class="bar2"><input class="new" maxlength="120" ' +
-        'placeholder="질문을 직접 추가 — 예: 강남 밀리아 제거 잘하는 곳 어디야?">' +
-      '<button class="go2 add">추가</button>' +
-      '<button class="go2 ghost gen">AI에게 질문 만들게 하기</button>' +
-      '<span class="cnt"></span></div>';
-    host.appendChild(sec);
+    var sec = document.getElementById("sm-aiq");
+    if (!sec || sec.dataset.smWired) return;
+    sec.dataset.smWired = "1";
 
     var list = sec.querySelector(".list");
     var idOf = function (el) { return Number(el.closest(".q").dataset.id); };
@@ -948,35 +857,12 @@
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
   // 웹에서 못 하는 게 분명히 있다(관련성 판단·스킬 해석·자유 질문). 없는 척하지 말고
-  // 명령어를 그대로 준다 — 여기서만은 '복사'가 맞는 동작이다.
-  var HANDOFF = [
-    ["발굴 후보 키워드 선별",
-     "관련성 판단이 필요합니다. 대시보드는 서치콘솔 노출 기준으로만 자동 선택합니다.",
-     "/capture keywords "],
-    ["개선 기회 심층 분석",
-     "seo-audit·ai-seo 전문 지침으로 원인과 조치 방안까지 도출합니다.",
-     "/capture gaps "],
-    ["데이터 질의응답",
-     "“클릭수 0인 검색어의 원인은?” 같은 질문에 수집 데이터를 조회해 답변합니다.",
-     "/capture ask "],
-    ["콘텐츠 작업 계획 수립",
-     "저장소 커밋 이력과 대조해 작업 우선순위를 배치합니다.",
-     "/create plan "]
-  ];
-
+  // 명령어를 그대로 준다 — 여기서만은 '복사'가 맞는 동작이다. 목록 자체는
+  // templates/sections/sm-cc.html 에 정적으로 적혀 있다 — 여기서는 클릭(복사)만 건다.
   function handoff() {
-    var host = document.querySelector("main");
-    if (!host || document.getElementById("sm-cc")) return;
-    var sec = document.createElement("section");
-    sec.id = "sm-cc";
-    sec.innerHTML = '<p class="eyebrow">CLAUDE CODE</p>' +
-      "<h2>고급 분석</h2>" +
-      '<p class="sub">해석과 판단이 필요한 작업은 Claude Code 플러그인에서 실행합니다. 명령어를 복사해 붙여 넣으세요.</p>' +
-      "<ul>" + HANDOFF.map(function (h) {
-        return "<li><div><b>" + esc(h[0]) + "</b><span>" + esc(h[1]) + "</span></div>" +
-               '<button data-cc="' + esc(h[2]) + '">' + esc(h[2].trim()) + "</button></li>";
-      }).join("") + "</ul>";
-    host.appendChild(sec);
+    var sec = document.getElementById("sm-cc");
+    if (!sec || sec.dataset.smWired) return;
+    sec.dataset.smWired = "1";
     sec.addEventListener("click", function (ev) {
       var b = ev.target.closest ? ev.target.closest("[data-cc]") : null;
       if (!b) return;
@@ -999,7 +885,10 @@
   var pos = function (v) { return v == null ? "—" : v.toFixed(1); };
 
   // 증감. 게재순위만 방향이 반대다 — 작아지는 게 오르는 것이다.
-  function delta(now, was, fmt, lowerIsBetter) {
+  // 이름은 smDelta — 셸의 delta(d, invert, base, tip)(dashboard.html)와 시그니처가
+  // 달라서, 같은 이름이면 어느 걸 부르는지 헷갈린다(IIFE 안이라 실제로 덮어쓰진
+  // 않지만, 읽는 사람은 그걸 모른다).
+  function smDelta(now, was, fmt, lowerIsBetter) {
     if (now == null || was == null) return "";
     var d = now - was;
     if (Math.abs(d) < 1e-9) return ' <span class="d muted">—</span>';
@@ -1018,16 +907,21 @@
     box.style.display = "contents";
     box.setAttribute("data-sm-kpi", "1");
     // 옆 칸들과 같은 기준 줄을 단다 — 무엇을 어떻게 잰 값이고 직전이 얼마였는지.
+    // 직전이 없는 이유가 둘이다 — 아직 두 번을 안 쟀거나, 쟀는데 기간(period_days)이
+    // 달라 비교하지 않았거나. 말없이 사라지면 Δ가 그냥 없어진 것처럼 보인다
+    // (views/keywords.html 의 period_mismatch 안내와 같은 말을 한다).
     var basis = function (how, was, fmt) {
-      return '<div class="b">' + how + " · " +
-        (was == null ? "비교할 직전 기록 없음" : "이전 " + fmt(was)) + "</div>";
+      var note = was != null ? "이전 " + fmt(was)
+        : PERF.period_mismatch ? "직전 기록과 기간이 달라 비교하지 않음"
+        : "비교할 직전 기록 없음";
+      return '<div class="b">' + how + " · " + note + "</div>";
     };
     box.innerHTML =
       '<div class="m"><div class="v">' + pct(t.ctr) +
-        delta(t.ctr, pv.ctr, function (x) { return (x * 100).toFixed(2) + "%p"; }, false) +
+        smDelta(t.ctr, pv.ctr, function (x) { return (x * 100).toFixed(2) + "%p"; }, false) +
         '</div><div class="l">CTR</div>' + basis("노출 대비 클릭", pv.ctr, pct) + "</div>" +
       '<div class="m"><div class="v">' + pos(t.position) +
-        delta(t.position, pv.position, function (x) { return x.toFixed(1); }, true) +
+        smDelta(t.position, pv.position, function (x) { return x.toFixed(1); }, true) +
         '</div><div class="l">평균 게재순위</div>' +
         basis("노출 가중 평균", pv.position, pos) + "</div>";
     band.appendChild(box);
@@ -1040,7 +934,7 @@
     var pts = [];
     rows.forEach(function (r, i) { if (r[key] != null) pts.push([i, r[key]]); });
     var now = opt.now == null ? "" : '<span class="nowv">' + opt.fmt(opt.now) +
-      delta(opt.now, opt.was, opt.dfmt, !!opt.invert) + "</span>";
+      smDelta(opt.now, opt.was, opt.dfmt, !!opt.invert) + "</span>";
     var head = function () {
       return '<div class="sm-ct"><span>' + opt.label + "</span>" + now + "</div>";
     };
@@ -1105,7 +999,9 @@
       "<h2>검색 성과</h2>" +
       '<p class="sub">위 일별 추이가 클릭·노출을 그립니다. 나머지 두 지표가 여기 있습니다 — ' +
       "게재순위는 노출 가중 평균이라 서치콘솔 화면의 값과 같고, 선이 위로 갈수록 순위가 높습니다. " +
-      "제목 옆 숫자는 현재 값이고 증감은 직전 분석 대비입니다.</p>" +
+      "제목 옆 숫자는 현재 값이고 증감은 직전 분석 대비입니다." +
+      (PERF.period_mismatch ? " 직전 기록과 기간이 달라 이번엔 증감을 비교하지 않았습니다 " +
+        "— 같은 기간으로 한 번 더 읽으면 채워집니다." : "") + "</p>" +
       '<div class="sm-charts">' +
       ['<div>' + line(dl, "ctr", {label: "CTR", fmt: pct, now: t.ctr, was: pv.ctr,
           dfmt: function (x) { return (x * 100).toFixed(2) + "%p"; }}) + "</div>",
@@ -1184,23 +1080,15 @@
     box.innerHTML = rows.length >= 8 ? '<div class="tw">' + t + "</div>" : t;
   }
 
-  // 지금 보이는 줄 그대로 표로 내보낸다. BOM 을 붙여야 엑셀이 한글을 안 깬다.
+  // 지금 보이는 줄 그대로 표로 내보낸다 — 만드는 코드는 셸의 csv(name, rows)
+  // 하나다(null 처리가 갈라졌던 자리라 사본을 안 둔다).
   function dimCsv() {
     var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
     var rows = [[head, "클릭", "노출", "CTR", "게재순위"]].concat(
       dimRows().map(function (r) {
         return [r.key, r.clicks || 0, r.impressions || 0, pct(r.ctr), pos(r.position)];
       }));
-    var csv = "\uFEFF" + rows.map(function (r) {
-      return r.map(function (c) {
-        return '"' + String(c).replace(/"/g, '""') + '"';
-      }).join(",");
-    }).join("\r\n");
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
-    a.download = "seo-miner-" + dimMode + "-" + (PERF.snapshot || "") + ".csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    csv(dimMode + "-" + (PERF.snapshot || ""), rows);
   }
 
   function dimRender() {
@@ -1245,20 +1133,9 @@
     dimTable();
   }
 
-  // 껍데기는 동기로 만들어 둔다 — 셸이 화면에 배치할 때 이미 있어야 한다.
-  // 채워지기 전까지는 감춰 둔다: 빈 상자 둘이 개요 밑에 떠 있으면 고장으로 보인다.
-  step("성과 상자", function perfShell() {
-    var host = document.querySelector("main");
-    if (!host) return;
-    ["sm-perf", "sm-dim"].forEach(function (id) {
-      if (document.getElementById(id)) return;
-      var sec = document.createElement("section");
-      sec.id = id;
-      sec.hidden = true;
-      host.appendChild(sec);
-    });
-  });
-
+  // 껍데기(#sm-perf·#sm-dim)는 이미 hidden 으로 서 있다
+  // (templates/sections/sm-perf.html, sm-dim.html) — 채워지기 전까지는 감춰 둔다:
+  // 빈 상자 둘이 개요 밑에 떠 있으면 고장으로 보인다.
   async function perfLoad() {
     var pj = proj();
     if (!pj) return;

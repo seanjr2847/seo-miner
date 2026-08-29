@@ -219,7 +219,7 @@ def _put_intersect(conn, pid: int, today: str, res, pos: dict[str, str]) -> int:
 
 def collect(project: str, *,
             dry_run: bool = False,
-            backlink_limit: int | None = None,
+            limit: int | None = None,
             max_age: int | None = None,
             conn=None,
             post=None,
@@ -229,7 +229,8 @@ def collect(project: str, *,
     Args:
         project: 사이트 이름
         dry_run: True 면 호출 계획 + 예상 비용만 찍고 종료 (실제 호출 0건)
-        backlink_limit: 참조 도메인·개별 링크·앵커 공통 상한. 0이면 요약만 산다.
+        limit: 참조 도메인·개별 링크·앵커 공통 상한(config 키는 limits.backlink_limit).
+            0이면 요약만 산다 — CLI 플래그(--limit)와 이름을 맞춘다.
         max_age: 이 일수 안에 이미 샀으면 건너뛴다. 0이면 항상 산다.
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         post: (path, body) -> (result, cost) — 주면 DataForSEO 대신 이것을 부른다
@@ -237,7 +238,7 @@ def collect(project: str, *,
     Returns:
         StageResult. 유료 키 부재만 ok=False(skip). 신선도·dry-run 은 ok=True, skipped=True.
     """
-    _parser()
+    ap = _parser()
     post = post or serp_adapter.post_dataforseo
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
@@ -246,7 +247,7 @@ def collect(project: str, *,
                            "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 설정하세요. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(argparse.Namespace(limit=backlink_limit, max_age=max_age))
+        s = st.settings(ap, argparse.Namespace(limit=limit, max_age=max_age))
         limit = int(s["limits.backlink_limit"])
         max_age = int(s["backlink_max_age_days"])
         pid, today = p["id"], st.today
@@ -384,7 +385,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         return _selfcheck()
     a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run, backlink_limit=a.limit, max_age=a.max_age)
+    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_age=a.max_age)
     if not r.ok and r.reason:
         sys.exit(r.reason)
 
@@ -544,7 +545,7 @@ def _selfcheck() -> None:
     conn.execute("DELETE FROM backlink_summary")
     conn.commit()
     calls = []
-    res = collect("bt", conn=conn, post=_fake_post(calls), max_age=0, backlink_limit=0)
+    res = collect("bt", conn=conn, post=_fake_post(calls), max_age=0, limit=0)
     assert len(calls) == 1 and calls[0][0].endswith("/summary/live"), calls
 
     conn.execute("SELECT 1")            # 빌린 conn 은 러너가 닫지 않는다

@@ -17,11 +17,10 @@ StageResult 를 그대로 호출자에게 넘긴다.
 
 설계 원칙:
   - 표(STAGES)에는 디스패치가 한 종류뿐이다. 모든 단계가
-    fn(project, *, dry_run, **opts) -> StageResult 다. scoring.py / dashboard.py 는
-    수정 금지 파일이라 subprocess 격리 실행이 유지되지만, 그 호출은
-    load_opportunities / export_report 라는 얇은 함수 뒤로 들어가 표에서는
-    다른 단계와 구분되지 않는다.
-  - sys.executable 사용 (Windows 스토어 파이썬 스텁 회피).
+    fn(project, *, dry_run, **opts) -> StageResult 다. scoring.load / dashboard.export 는
+    직접 호출이다 — 나머지 열 단계와 마찬가지로 in-process 로 돈다. 둘 다 로컬
+    sqlite/파일 I/O 뿐이라(외부 네트워크·os.environ 변경 없음) 격리할 이유가 없었고,
+    scoring 은 이미 collect_* 절반이 물고 와 있었다.
   - --dry-run 은 각 단계에 위임하여 비용 고지.
   - 하나의 단계가 실패해도 체인은 계속 진행 (단, gsc 실패 시 즉시 중단).
   - run_chain 은 판정도 요약도 하지 않는다 — [(단계 이름, StageResult)] 를 돌려주고,
@@ -29,7 +28,6 @@ StageResult 를 그대로 호출자에게 넘긴다.
     행 수·비용·산출물 경로가 정수 exit code 로 접혀 버려지던 자리가 이것이다.
 """
 import argparse
-import subprocess
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -46,76 +44,39 @@ import collect_metrics     # noqa: E402
 import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
 import collector           # noqa: E402
+import dashboard           # noqa: E402
 import db                  # noqa: E402
 import expand_keywords     # noqa: E402
+import scoring             # noqa: E402
 import serp_adapter        # noqa: E402
 
 StageResult = collector.StageResult
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-TIMEOUT_SECONDS = 1800  # 외부 스크립트 단계 subprocess 최대 30분 타임아웃
 ABORT_REASON = "GSC 수집 실패로 체인 중단됨"
 
 SEPARATOR = "=" * 62
 SUB_SEPARATOR = "-" * 62
 
 
-def _run_script(script: str, argv: list[str], *, capture: bool = False):
-    """수정 금지 스크립트(scoring.py / dashboard.py)를 subprocess 로 돌린다.
-
-    표를 균질하게 만들려고 결과를 StageResult 로 접어 돌려준다.
-    capture=True 면 stdout 을 받아 그대로 콘솔에 흘리고 함께 반환한다 —
-    호출부가 거기서 산출물 경로를 읽는다.
-
-    Returns:
-        (StageResult, stdout 문자열)
-    """
-    cmd = [sys.executable, str(SCRIPTS_DIR / script), *argv]
-    kwargs = {"timeout": TIMEOUT_SECONDS}
-    if capture:
-        kwargs.update(capture_output=True, text=True, encoding="utf-8", errors="replace")
-    try:
-        res = subprocess.run(cmd, **kwargs)
-    except subprocess.TimeoutExpired:
-        return StageResult(ok=False, reason=f"타임아웃 ({TIMEOUT_SECONDS}초 초과)"), ""
-
-    out = (getattr(res, "stdout", "") or "") if capture else ""
-    if capture:
-        if out:
-            print(out, end="")
-        err = getattr(res, "stderr", "") or ""
-        if err:
-            print(err, end="", file=sys.stderr)
-    if res.returncode != 0:
-        return StageResult(ok=False, reason=f"exit code {res.returncode}"), out
-    return StageResult(ok=True), out
-
-
 def load_opportunities(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
-    """gaps 단계 — scoring.py load. 외부 호출 0건이라 --dry-run 플래그가 없다."""
+    """gaps 단계 — scoring.load. 외부 호출 0건이라 --dry-run 플래그가 없다."""
     if dry_run:
         reason = "외부 호출 0건 — 실제 실행 시 기회를 적재합니다 (돌 예정)"
         print(f"[gaps] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
-    return _run_script("scoring.py", ["load", project])[0]
+    scoring.load(project)
+    return StageResult(ok=True)
 
 
 def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
-    """report 단계 — dashboard.py --export.
-
-    산출물 경로는 dashboard 가 찍는 `report: ...` 한 줄에서 읽는다. 경로 규칙의
-    정본은 dashboard.export() 이고, 여기서 같은 규칙을 다시 계산하지 않는다.
-    """
+    """report 단계 — dashboard.export. 산출물 경로 규칙의 정본은 dashboard.export() 고,
+    여기서는 그게 돌려주는 Path 를 그대로 옮긴다(파싱 없음)."""
     if dry_run:
         reason = "외부 호출 0건 — 실제 실행 시 대시보드 리포트 HTML을 내보냅니다 (돌 예정)"
         print(f"[report] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
-    r, out = _run_script("dashboard.py", ["--export", "--project", project], capture=True)
-    if r.ok:
-        for line in out.splitlines():
-            if line.startswith("report: "):
-                r.artifact = line[len("report: "):].strip()
-    return r
+    out = dashboard.export(project)
+    return StageResult(ok=True, artifact=str(out))
 
 
 # 단계 정의. 표에는 디스패치가 한 종류뿐 — fn(project, *, dry_run, **opts) -> StageResult.
@@ -408,7 +369,73 @@ def _top_opportunity(project: str):
         return None
 
 
+# 단계 이름 -> 그 수집기 모듈. --opt STAGE.KEY 의 STAGE 가 어느 모듈의 _parser() 를
+# 봐야 하는지 여기서 정한다. gaps/report 는 자체 모듈이 아니라 이 파일의 함수라 없다 —
+# 애초에 --opt 를 받지 않는다(외부 호출 0건, 노브도 없다).
+STAGE_MODULES = {
+    "gsc": collect_gsc, "index": collect_index, "keywords": expand_keywords,
+    "metrics": collect_metrics, "rank": collect_serp, "crawl": collect_crawl,
+    "ai": collect_ai, "competitors": collect_gap, "backlinks": collect_backlinks,
+    "pages": collect_page,
+}
+
+
+def _selfcheck() -> None:
+    """--opt STAGE.KEY=VALUE 통로가 실제로 도는지 두 겹으로 못 박는다.
+
+    이 통로는 수집기가 이미 CLI 로 노출한 노브(--limit --depth --device ...)를
+    체인으로도 쓰게 하려는 것이다. 그런데 CLI 플래그 이름과 collect() 의 키워드
+    인자 이름이 어긋나면 --opt rank.depth=20 같은 흔한 사용이 TypeError 로
+    죽는다(collect_index 의 --limit vs 예전 index_urls 가 그 사례). 이 자체점검은
+    그 어긋남을 회귀로 못 박는다.
+
+    1. 계약 검사 — 각 단계가 등록한 설정의 dest 가 collect() 의 '명시' 인자에
+       있는지 inspect.signature 로 본다. **opts 로 삼키는 것은 안 쳐준다 —
+       조용히 삼켜서 값이 무시되는 것이 TypeError 보다 나쁘다(사용자는 옵션을
+       줬다고 믿는다).
+    2. 실측 — 12단계 전부에 그 설정의 fallback 값을 --opt 로 흘려 dry_run 호출.
+       dry_run 이면 대부분 DB 도 안 건드리고 바로 반환하므로 가짜 project 로도
+       된다. ProjectNotFound 는 "인자는 받아들여졌다"는 뜻이라 통과로 친다 —
+       TypeError 만 이 검사가 잡으려는 것이다.
+    """
+    import inspect
+    import os
+    import tempfile
+
+    for stage in STAGES:
+        mod = STAGE_MODULES.get(stage.name)
+        if mod is None:
+            continue
+        specs = getattr(mod._parser(), "_collector_settings", [])
+        params = inspect.signature(stage.fn).parameters
+        for spec in specs:
+            ok = (spec.dest in params
+                 and params[spec.dest].kind != inspect.Parameter.VAR_KEYWORD)
+            assert ok, (
+                f"[{stage.name}] --opt {stage.name}.{spec.dest}=... 가 "
+                f"{mod.__name__}.collect() 의 명시 인자가 아니다 (**opts 로 "
+                "삼키는 것도 불허) — collect() 의 키워드 인자 이름을 CLI 플래그"
+                f"(--{spec.dest.replace('_', '-')})와 맞춰라.")
+
+    os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-runall-selftest-")))
+    for stage in STAGES:
+        mod = STAGE_MODULES.get(stage.name)
+        specs = getattr(mod._parser(), "_collector_settings", []) if mod else []
+        opts = {spec.dest: spec.fallback for spec in specs}
+        try:
+            stage.fn(project="__selfcheck__", dry_run=True, **opts)
+        except db.ProjectNotFound:
+            pass    # 인자는 받아들여졌다 — 여기서 잡으려는 건 TypeError 뿐
+        except TypeError as e:
+            raise AssertionError(f"[{stage.name}] --opt 통로가 TypeError 로 죽는다: {e}") from e
+
+    print("run_all self-check ok")
+
+
 def main() -> None:
+    if len(sys.argv) == 1:
+        _selfcheck()
+        return
     ap = argparse.ArgumentParser(
         description="전체 수집 체인 실행 — "
                     "gsc → index → keywords → rank → ai → competitors → gaps → pages → report"

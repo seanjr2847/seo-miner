@@ -41,32 +41,31 @@ def due() -> int:
         conn.close()
 
 
-def dispatch(*args: str) -> None:
+def dispatch(*args: str, spawn=subprocess.Popen) -> None:
     """워커를 띄우고 곧바로 돌아온다. 실패는 삼킨다 — 다음 틱이 잡는다."""
     try:
-        subprocess.Popen([sys.executable, WORKER, *args], cwd=str(ROOT))
+        spawn([sys.executable, WORKER, *args], cwd=str(ROOT))
     except Exception as e:
         print(f"[worker] 실행 실패: {e}", flush=True)
 
 
-def kick() -> None:
+def kick(*, spawn=subprocess.Popen) -> None:
     """등록 직후 곧바로 수집을 띄운다 — 틱을 기다리면 그동안 화면이 비어 있다.
     워커가 사이트마다 시작 전에 도장을 찍으므로 스케줄러 틱과 겹쳐도 중복되지 않는다."""
-    dispatch("--all")
+    dispatch("--all", spawn=spawn)
 
 
-def sweep() -> None:
+def sweep(*, run=subprocess.run) -> None:
     """워커가 끝날 때까지 기다린다 — 안 기다리면 다음 틱이 두 벌째를 띄운다."""
-    subprocess.run([sys.executable, WORKER, "--all"],
-                   cwd=str(ROOT), timeout=SWEEP_TIMEOUT)
+    run([sys.executable, WORKER, "--all"], cwd=str(ROOT), timeout=SWEEP_TIMEOUT)
 
 
-async def loop(tick: float = TICK) -> None:
+async def loop(tick: float = TICK, *, run=subprocess.run) -> None:
     while True:
         await asyncio.sleep(tick)
         try:
             if await asyncio.to_thread(due):
-                await asyncio.to_thread(sweep)
+                await asyncio.to_thread(sweep, run=run)
         except Exception as e:          # 여기서 죽으면 자동 수집이 조용히 멈춘다
             print(f"[scheduler] 실패: {e}", flush=True)
 
@@ -78,7 +77,6 @@ def demo() -> None:
 
     saved = {n: os.environ.get(n) for n in
              ("SEOMINER_DATA", "SEOMINER_SECRET_KEY", "SEOMINER_RUN_EVERY_HOURS")}
-    real_popen, real_run = subprocess.Popen, subprocess.run
     try:
         with tempfile.TemporaryDirectory() as d:
             os.environ["SEOMINER_DATA"] = d
@@ -98,18 +96,16 @@ def demo() -> None:
 
             # dispatch: 워커를 띄우기만 한다. 실패해도 예외가 새어 나오면 안 된다.
             seen = []
-            subprocess.Popen = lambda cmd, **kw: seen.append(cmd)
-            kick()
+            kick(spawn=lambda cmd, **kw: seen.append(cmd))
             assert seen and seen[0][-1] == "--all" and seen[0][1] == WORKER, seen
-            subprocess.Popen = lambda cmd, **kw: (_ for _ in ()).throw(OSError("no"))
-            dispatch("--all")           # 여기서 터지면 등록이 통째로 실패한다
+            dispatch("--all", spawn=lambda cmd, **kw: (_ for _ in ()).throw(OSError("no")))
+            # 여기서 터지면 등록이 통째로 실패한다
 
             # 틱: 잴 게 있을 때만 워커를 기다린다.
             swept = []
-            subprocess.run = lambda cmd, **kw: swept.append(cmd)
 
             async def one_tick():
-                t = asyncio.create_task(loop(0.01))
+                t = asyncio.create_task(loop(0.01, run=lambda cmd, **kw: swept.append(cmd)))
                 # 벽시계로 기다리면 부하 걸린 머신에서 틱이 한 번도 스케줄되지 못해
                 # 헛되이 실패한다(12회 중 1회 재현). 조건이 설 때까지 기다리되 상한을
                 # 둔다 — 정말 안 도는 거면 그때 아래 단언이 잡는다.
@@ -124,7 +120,6 @@ def demo() -> None:
 
         print("scheduler: ok")
     finally:
-        subprocess.Popen, subprocess.run = real_popen, real_run
         for n, v in saved.items():
             os.environ.pop(n, None) if v is None else os.environ.__setitem__(n, v)
 

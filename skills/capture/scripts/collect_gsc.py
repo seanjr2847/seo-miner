@@ -137,8 +137,8 @@ def _query(service, prop: str, body: dict) -> dict:
 def collect(project: str, *,
             dry_run: bool = False,
             row_limit: int = 100000,
-            gsc_days: int | None = None,
-            gsc_breakdown: str | None = None,
+            days: int | None = None,
+            breakdown: str | None = None,
             conn=None) -> collector.StageResult:
     """GSC 실측을 Brain 에 적재한다. sys.exit 호출 없음 — 결과를 StageResult 로 반환.
 
@@ -146,18 +146,20 @@ def collect(project: str, *,
         project: 사이트 이름 (project yaml 의 name)
         dry_run: True 면 호출 계획만 찍고 종료
         row_limit: 가져올 최대 행 수 (25,000행씩 나눠 받는다)
-        gsc_days: 수집 창 (오늘-3일 기준 N일)
-        gsc_breakdown: 분해 수집 차원 (콤마 구분 문자열)
+        days: 수집 창(config 키는 gsc_days, 오늘-3일 기준 N일) —
+            CLI 플래그(--days)와 이름을 맞춘다.
+        breakdown: 분해 수집 차원(config 키는 gsc_breakdown, 콤마 구분 문자열) —
+            CLI 플래그(--breakdown)와 이름을 맞춘다.
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
         StageResult(ok=...) — 정상 종료면 ok=True. 인증 누락·구성 누락은
         ok=False, skipped=True, reason 에 한국어 안내.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
-        s = st.settings(argparse.Namespace(days=gsc_days, breakdown=gsc_breakdown))
+        s = st.settings(ap, argparse.Namespace(days=days, breakdown=breakdown))
         days = s["gsc_days"]
         breakdown = s["gsc_breakdown"]
         dims = [d.strip().lower() for d in (breakdown or "").split(",") if d.strip()]
@@ -306,7 +308,7 @@ def main() -> None:
     try:
         a = _parser().parse_args()
         r = collect(a.project, dry_run=a.dry_run, row_limit=a.row_limit,
-                    gsc_days=a.days, gsc_breakdown=a.breakdown)
+                    days=a.days, breakdown=a.breakdown)
     except db.ProjectNotFound as e:
         sys.exit(str(e))
     if not r.ok and r.reason:

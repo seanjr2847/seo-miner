@@ -40,7 +40,7 @@ def collect(project: str, *,
             dry_run: bool = False,
             provider: str | None = None,
             max_keywords: int | None = None,
-            serp_depth: int | None = None,
+            depth: int | None = None,
             throttle: float | None = None,
             device: str | None = None,
             no_harvest: bool = False,
@@ -54,7 +54,7 @@ def collect(project: str, *,
         dry_run: True 면 호출 계획만 찍고 종료
         provider: dataforseo|serper — 미지정시 환경에서 자동 판정
         max_keywords: is_active 키워드 상한 (limits.max_keywords)
-        serp_depth: top-N 깊이
+        depth: top-N 깊이(config 키는 serp_depth) — CLI 플래그(--depth)와 이름을 맞춘다.
         throttle: 요청 간격(초)
         device: desktop|mobile
         no_harvest: True 면 부산물(키워드 후보·경쟁사) 적재 안 함
@@ -65,11 +65,11 @@ def collect(project: str, *,
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(
-            max_keywords=max_keywords, depth=serp_depth,
+        s = st.settings(ap, argparse.Namespace(
+            max_keywords=max_keywords, depth=depth,
             throttle=throttle, device=device))
         provider = provider or serp_adapter.detect_provider()
         if not provider:
@@ -212,7 +212,7 @@ def main() -> None:
     r = collect(a.project, dry_run=a.dry_run,
                 provider=a.provider,
                 max_keywords=a.max_keywords,
-                serp_depth=a.depth,
+                depth=a.depth,
                 throttle=a.throttle,
                 device=a.device,
                 no_harvest=a.no_harvest,

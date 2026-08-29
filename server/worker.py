@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import db                                     # noqa: E402
+import exports                                # noqa: E402
 import mailer                                 # noqa: E402
 import run_all                                # noqa: E402
 import settings                                # noqa: E402
@@ -44,53 +45,41 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         pid = db.get_project(conn, project)["id"]
         # 이미 켜 둔 것까지 세어 남은 자리만 채운다. 매번 limit 개씩 더 켜면
         # 추적 세트가 런마다 불어나고, SERP 는 키워드당 과금이라 비용이 샌다.
-        active = conn.execute(
-            "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-            (pid,)).fetchone()[0]
+        active = db.count_active_keywords(conn, pid)
         room = max(0, limit - active)
         if room == 0:
             return 0
-        cur = conn.execute(
-            "UPDATE keywords SET is_active=1 WHERE id IN ("
-            "  SELECT k.id FROM keywords k"
+        # "노출 순으로 골라 room 개" 는 db.py 에 없다 (GSC 조인이 필요한 선택 로직이라
+        # db.count_active_keywords/set_keywords_active 와는 층이 다르다) — 여기 남긴다.
+        # TODO(db.py): 이 선택 로직이 다른 곳에서도 필요해지면 db.py 로 옮긴다.
+        ids = [r[0] for r in conn.execute(
+            "SELECT k.id FROM keywords k"
             "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
-            "  WHERE k.project_id=? AND k.is_active=0"
-            "  GROUP BY k.id ORDER BY SUM(g.impressions) DESC LIMIT ?)",
-            (pid, room))
-        conn.commit()
-        return cur.rowcount
+            " WHERE k.project_id=? AND k.is_active=0"
+            " GROUP BY k.id ORDER BY SUM(g.impressions) DESC LIMIT ?",
+            (pid, room)).fetchall()]
+        return db.set_keywords_active(conn, pid, ids, True)
     finally:
         conn.close()
 
 
 def _mail_stats(project: str) -> dict:
-    """알림에 넣을 숫자. 없는 값은 넣지 않는다 — 0 으로 지어내면 거짓말이 된다."""
+    """알림에 넣을 숫자. 없는 값은 넣지 않는다 — 0 으로 지어내면 거짓말이 된다.
+
+    집계는 exports.summary() 하나로 — 최신 스냅샷 클릭/노출, 신규 기회 수·최상위
+    기회, 활성 키워드 수는 화면 요약과 같은 쿼리여야 값이 어긋나지 않는다.
+    """
     out: dict = {}
     try:
-        conn = db.connect()
-        try:
-            pid = db.get_project(conn, project)["id"]
-            g = conn.execute(
-                "SELECT SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots WHERE"
-                " project_id=? AND snapshot_date=(SELECT MAX(snapshot_date) FROM"
-                " gsc_snapshots WHERE project_id=?)", (pid, pid)).fetchone()
-            if g and g["i"]:
-                out["clicks"], out["impressions"] = g["c"] or 0, g["i"]
-            n = conn.execute("SELECT COUNT(*) FROM opportunities WHERE project_id=?"
-                             " AND status='new'", (pid,)).fetchone()[0]
-            if n:
-                out["opportunities"] = n
-                top = conn.execute(
-                    "SELECT target FROM opportunities WHERE project_id=? AND status='new'"
-                    " ORDER BY score DESC LIMIT 1", (pid,)).fetchone()
-                if top:
-                    out["top"] = top["target"]
-            k = conn.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND"
-                             " is_active=1", (pid,)).fetchone()[0]
-            if k:
-                out["keywords"] = k
-        finally:
-            conn.close()
+        s = exports.summary(project)
+        if s["impressions"]:
+            out["clicks"], out["impressions"] = s["clicks"] or 0, s["impressions"]
+        if s["opportunities"]:
+            out["opportunities"] = s["opportunities"]
+            if s["top_opportunity"]:
+                out["top"] = s["top_opportunity"]
+        if s["keywords_active"]:
+            out["keywords"] = s["keywords_active"]
     except Exception:
         pass                      # 통계를 못 모아도 메일은 보낸다
     return out

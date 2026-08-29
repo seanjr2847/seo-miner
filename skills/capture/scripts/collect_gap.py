@@ -322,7 +322,7 @@ def _backfill_volumes(conn, project_id: int, items: list[tuple[str, int | None]]
 def collect(project: str, *,
             dry_run: bool = False,
             domain: list[str] | None = None,
-            gap_limit: int | None = None,
+            limit: int | None = None,
             rivals: int | None = None,
             intersect: int | None = None,
             throttle: float | None = None,
@@ -337,7 +337,8 @@ def collect(project: str, *,
         domain: 분석할 경쟁사 도메인 (반복 지정 가능). None/빈 리스트면
                 competitors 테이블의 도메인 전부. 명시하면 자동 탐지는 꺼진다 —
                 사용자가 이미 대상을 정한 것이다.
-        gap_limit: 도메인당 키워드 수 상한. 기본 100.
+        limit: 도메인당 키워드 수 상한(config 키는 limits.gap_limit). 기본 100 —
+            CLI 플래그(--limit)와 이름을 맞춘다.
         rivals: 자동 탐지할 경쟁사 수. 0이면 자동 탐지 끔.
         intersect: Content Gap 을 돌릴 경쟁사 수 상한. 0이면 끔.
         throttle: 요청 간격(초)
@@ -351,7 +352,7 @@ def collect(project: str, *,
         StageResult(ok=...). 유료 키 부재만 ok=False, skipped=True (진짜 못 한
         것). 경쟁사 0건·dry-run 은 ok=True, skipped=True — 체인을 깨지 않는다.
     """
-    _parser()
+    ap = _parser()
     fetch = fetch or serp_adapter.fetch_labs_ranked_keywords
     post = post or serp_adapter.post_dataforseo
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
@@ -360,7 +361,7 @@ def collect(project: str, *,
             return st.skip("Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(argparse.Namespace(limit=gap_limit, throttle=throttle,
+        s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle,
                                            rivals=rivals, intersect=intersect))
         limit = s["limits.gap_limit"]
         # --domain 으로 좁혔으면 자동 탐지는 끈다 — 대상은 이미 사용자가 정했다.
@@ -562,7 +563,7 @@ def main() -> None:
 
     r = collect(a.project, dry_run=a.dry_run,
                 domain=a.domain,
-                gap_limit=a.limit,
+                limit=a.limit,
                 rivals=a.rivals,
                 intersect=a.intersect,
                 throttle=a.throttle)

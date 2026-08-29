@@ -141,10 +141,10 @@ def collect(project: str, *,
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
-        st.settings(argparse.Namespace(throttle=throttle))
+        st.settings(ap, argparse.Namespace(throttle=throttle))
         throttle = st.throttle
         locale = p["locale"] or "ko-KR"
         hl, _, gl = locale.partition("-")

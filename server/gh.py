@@ -55,16 +55,16 @@ def exchange_code(client_id: str, client_secret: str, code: str) -> str:
     return d["access_token"]
 
 
-def login(token: str) -> str:
-    return _req("GET", "/user", token)["login"]
+def login(token: str, *, req=_req) -> str:
+    return req("GET", "/user", token)["login"]
 
 
-def repos(token: str, limit: int = 100) -> list[dict]:
+def repos(token: str, limit: int = 100, *, req=_req) -> list[dict]:
     """쓰기 권한이 있는 리포만 — 읽기만 되는 곳에는 PR 브랜치를 못 만든다."""
     out = []
     for page in (1, 2):
-        rows = _req("GET", f"/user/repos?per_page=50&page={page}&sort=pushed"
-                           f"&affiliation=owner,collaborator,organization_member", token)
+        rows = req("GET", f"/user/repos?per_page=50&page={page}&sort=pushed"
+                          f"&affiliation=owner,collaborator,organization_member", token)
         out += [{"full_name": r["full_name"], "default_branch": r["default_branch"],
                  "private": r["private"], "pushed_at": r["pushed_at"]}
                 for r in rows if (r.get("permissions") or {}).get("push")]
@@ -73,32 +73,32 @@ def repos(token: str, limit: int = 100) -> list[dict]:
     return out[:limit]
 
 
-def tree(token: str, repo: str, branch: str) -> list[str]:
+def tree(token: str, repo: str, branch: str, *, req=_req) -> list[str]:
     """리포의 파일 경로 전부(재귀). 관례 파악에 쓴다."""
-    d = _req("GET", f"/repos/{repo}/git/trees/{branch}?recursive=1", token)
+    d = req("GET", f"/repos/{repo}/git/trees/{branch}?recursive=1", token)
     if d.get("truncated"):
         pass                      # 큰 리포는 잘린다 — 관례 추론에는 앞부분으로 충분하다
     return [n["path"] for n in d.get("tree", []) if n["type"] == "blob"]
 
 
-def read_file(token: str, repo: str, path: str, ref: str) -> str:
-    d = _req("GET", f"/repos/{repo}/contents/{path}?ref={ref}", token)
+def read_file(token: str, repo: str, path: str, ref: str, *, req=_req) -> str:
+    d = req("GET", f"/repos/{repo}/contents/{path}?ref={ref}", token)
     if isinstance(d, list) or d.get("encoding") != "base64":
         raise GitHubError(f"이 경로는 파일이 아닙니다 ({path})")
     return base64.b64decode(d["content"]).decode("utf-8", "replace")
 
 
 def open_pr(token: str, repo: str, base: str, branch: str, title: str, body: str,
-            files: list[dict], commit_message: str) -> dict:
+            files: list[dict], commit_message: str, *, req=_req) -> dict:
     """브랜치를 만들어 파일을 쓰고 PR 을 연다. files: [{"path":..., "content":...}]
 
     브랜치가 이미 있으면 그 위에 얹는다 — 같은 기회를 다시 실행했을 때 충돌로 죽지 않게.
     """
-    head = _req("GET", f"/repos/{repo}/git/ref/heads/{base}", token)
+    head = req("GET", f"/repos/{repo}/git/ref/heads/{base}", token)
     base_sha = head["object"]["sha"]
     try:
-        _req("POST", f"/repos/{repo}/git/refs", token,
-             json={"ref": f"refs/heads/{branch}", "sha": base_sha})
+        req("POST", f"/repos/{repo}/git/refs", token,
+            json={"ref": f"refs/heads/{branch}", "sha": base_sha})
     except GitHubError as e:
         if "already exists" not in str(e).lower():
             raise
@@ -107,20 +107,20 @@ def open_pr(token: str, repo: str, base: str, branch: str, title: str, body: str
         payload = {"message": commit_message, "branch": branch,
                    "content": base64.b64encode(f["content"].encode("utf-8")).decode()}
         try:                       # 이미 있는 파일은 sha 를 줘야 덮어쓴다
-            cur = _req("GET", f"/repos/{repo}/contents/{f['path']}?ref={branch}", token)
+            cur = req("GET", f"/repos/{repo}/contents/{f['path']}?ref={branch}", token)
             if isinstance(cur, dict) and cur.get("sha"):
                 payload["sha"] = cur["sha"]
         except GitHubError:
             pass                   # 없는 파일 = 새로 만드는 것
-        _req("PUT", f"/repos/{repo}/contents/{f['path']}", token, json=payload)
+        req("PUT", f"/repos/{repo}/contents/{f['path']}", token, json=payload)
 
     try:
-        pr = _req("POST", f"/repos/{repo}/pulls", token,
-                  json={"title": title, "body": body, "head": branch, "base": base})
+        pr = req("POST", f"/repos/{repo}/pulls", token,
+                 json={"title": title, "body": body, "head": branch, "base": base})
         return {"url": pr["html_url"], "number": pr["number"], "branch": branch}
     except GitHubError as e:
         if "already exist" in str(e).lower():   # 열린 PR 이 있으면 그걸 돌려준다
-            prs = _req("GET", f"/repos/{repo}/pulls?head={repo.split('/')[0]}:{branch}", token)
+            prs = req("GET", f"/repos/{repo}/pulls?head={repo.split('/')[0]}:{branch}", token)
             if prs:
                 return {"url": prs[0]["html_url"], "number": prs[0]["number"],
                         "branch": branch}
@@ -128,7 +128,6 @@ def open_pr(token: str, repo: str, base: str, branch: str, title: str, body: str
 
 
 def demo() -> None:
-    import types
     calls = []
 
     def fake(method, path, token, **kw):
@@ -141,28 +140,22 @@ def demo() -> None:
             return {"html_url": "https://github.com/o/r/pull/7", "number": 7}
         return {}
 
-    g = globals()
-    orig, g["_req"] = g["_req"], fake
-    try:
-        r = open_pr("t", "o/r", "main", "capture/x", "T", "B",
-                    [{"path": "src/a.md", "content": "안녕"}], "msg")
-        assert r["url"].endswith("/pull/7"), r
-        assert ("POST", "/repos/o/r/git/refs") in calls, "브랜치를 안 만들었다"
-        assert ("PUT", "/repos/o/r/contents/src/a.md") in calls, "파일을 안 썼다"
-        assert not any(m == "PUT" and p.endswith("/heads/main") for m, p in calls), \
-            "main 에 직접 썼다 — 발행 게이트 위반"
+    r = open_pr("t", "o/r", "main", "capture/x", "T", "B",
+               [{"path": "src/a.md", "content": "안녕"}], "msg", req=fake)
+    assert r["url"].endswith("/pull/7"), r
+    assert ("POST", "/repos/o/r/git/refs") in calls, "브랜치를 안 만들었다"
+    assert ("PUT", "/repos/o/r/contents/src/a.md") in calls, "파일을 안 썼다"
+    assert not any(m == "PUT" and p.endswith("/heads/main") for m, p in calls), \
+        "main 에 직접 썼다 — 발행 게이트 위반"
 
-        # 브랜치가 이미 있어도 죽지 않아야 한다(같은 기회 재실행).
-        def fake2(method, path, token, **kw):
-            if method == "POST" and path.endswith("/git/refs"):
-                raise GitHubError("GitHub 422: Reference already exists")
-            return fake(method, path, token, **kw)
-        g["_req"] = fake2
-        assert open_pr("t", "o/r", "main", "capture/x", "T", "B",
-                       [{"path": "a.md", "content": "x"}], "m")["number"] == 7
-        print("gh: ok")
-    finally:
-        g["_req"] = orig
+    # 브랜치가 이미 있어도 죽지 않아야 한다(같은 기회 재실행).
+    def fake2(method, path, token, **kw):
+        if method == "POST" and path.endswith("/git/refs"):
+            raise GitHubError("GitHub 422: Reference already exists")
+        return fake(method, path, token, **kw)
+    assert open_pr("t", "o/r", "main", "capture/x", "T", "B",
+                   [{"path": "a.md", "content": "x"}], "m", req=fake2)["number"] == 7
+    print("gh: ok")
 
 
 if __name__ == "__main__":

@@ -339,10 +339,14 @@ def run() -> None:
         if (ROOT / "server" / "assets" / "dash.html").exists():
             sys.path.insert(0, str(ROOT))
             from server import pages
-            # /d 와 똑같이 만든다: 표식을 첫 <script> 앞에 세우고 애드온을 뒤에 붙인다.
-            # 서버와 다른 방식으로 조립하면 검사가 실제로 나가는 화면을 안 보게 된다.
-            hosted = (pages.data(shell.decode("utf-8"), SM_HOSTED=True)
-                      + pages.addon("dash.html").decode("utf-8")).encode("utf-8")
+            # /d 와 똑같이 만든다: assemble("hosted") 가 호스팅 전용 섹션(성과·키워드
+            # 관리·AI 질문·고급 분석·설정)을 원본 뷰 순서 안에 끼우고 SM_HOSTED 를 첫
+            # <script> 로 세운 뒤, 애드온을 뒤에 붙인다. local 조립(dashboard.HTML)으로
+            # 대신 만들면 그 섹션들이 없어서 검사가 실제로 나가는 화면을 안 보게 된다.
+            hosted = dashboard.assemble("hosted").encode("utf-8").replace(
+                b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+            assert b"__probe__" in hosted, "오류 수집기를 끼울 </head> 를 못 찾았다"
+            hosted += pages.addon("dash.html")
             targets.append(("호스팅 조립본", hosted, HOSTED_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.

@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -90,6 +90,22 @@ def _html(body: str, title: str = "seo-miner") -> HTMLResponse:
     return HTMLResponse(pages.document(body, title))
 
 
+# 워커 실행 진입점 — 직접 부르지 않고 Depends 로 받는다. app.dependency_overrides 로
+# demo() 가 실제 subprocess 를 안 띄우고 갈아끼울 수 있게(globals() 수술 대신).
+def _dispatch_dep():
+    return scheduler.dispatch
+
+
+def _kick_dep():
+    return scheduler.kick
+
+
+def _capped(ids: list[int], limit: int, active: int) -> list[int]:
+    """상한 안에서만 켠다 — SERP·AI 인용은 켜진 항목 수만큼 과금이라 상한 너머로
+    켜면 그만큼 비용이 샌다. AI 질문·키워드 두 자리가 같은 규칙을 썼다."""
+    return ids[:max(0, limit - active)]
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -100,11 +116,8 @@ def home(request: Request):
     uid = _uid(request)
     if uid is None:
         return _html(pages.page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
-    conn = store.connect()
-    try:
+    with store.session(uid) as conn:
         rows = store.sites(conn, uid)
-    finally:
-        conn.close()
     # create_project 는 name 만 정규식으로 검증한다 — domain·gsc_property 는 그대로
     # 저장되므로 <script> 가 들어올 수 있다.
     e = html.escape
@@ -186,12 +199,8 @@ def logout(request: Request):
 @app.get("/api/properties")
 def api_properties(request: Request):
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
-        with store.tenant(conn, uid):
-            res = collect_gsc.get_service().sites().list().execute()
-    finally:
-        conn.close()
+    with store.session(uid, isolate=True) as conn:
+        res = collect_gsc.get_service().sites().list().execute()
     return {"properties": [{"property": s["siteUrl"], "level": s["permissionLevel"]}
                            for s in res.get("siteEntry", [])]}
 
@@ -217,7 +226,7 @@ def _host_of(prop: str) -> str:
 
 
 @app.post("/api/sites")
-async def api_sites(request: Request):
+async def api_sites(request: Request, kick=Depends(_kick_dep)):
     """속성 여러 개를 한 번에 등록한다. 이름·도메인은 속성에서 짓고, 종류만 받는다."""
     uid = _require_uid(request)
     body = await request.json()
@@ -228,35 +237,31 @@ async def api_sites(request: Request):
         raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 선택해 주세요.")
     types = body.get("types") or {}
 
-    conn = store.connect()
     added, failed = [], []
-    try:
+    with store.session(uid, isolate=True) as conn:
         taken = {r["project"] for r in store.sites(conn, uid)}
-        with store.tenant(conn, uid):
-            for prop in props[:20]:
-                host = _host_of(str(prop))
-                if not host:
-                    failed.append({"property": prop, "error": "도메인을 알 수 없습니다"})
-                    continue
-                name = _slug(host, taken)
-                r = dashboard.create_project({
-                    "name": name, "type": types.get(prop, "saas"), "domain": host,
-                    "gsc_property": prop, "locale": body.get("locale", "ko-KR"),
-                    "brand_aliases": host.split(".")[0], "seed_keywords": "",
-                    "competitors_manual": "",
-                })
-                if r.get("ok"):
-                    taken.add(name)
-                    added.append({"project": name, "property": prop})
-                else:
-                    failed.append({"property": prop, "error": r.get("error", "등록 실패")})
+        for prop in props[:20]:
+            host = _host_of(str(prop))
+            if not host:
+                failed.append({"property": prop, "error": "도메인을 알 수 없습니다"})
+                continue
+            name = _slug(host, taken)
+            r = dashboard.create_project({
+                "name": name, "type": types.get(prop, "saas"), "domain": host,
+                "gsc_property": prop, "locale": body.get("locale", "ko-KR"),
+                "brand_aliases": host.split(".")[0], "seed_keywords": "",
+                "competitors_manual": "",
+            })
+            if r.get("ok"):
+                taken.add(name)
+                added.append({"project": name, "property": prop})
+            else:
+                failed.append({"property": prop, "error": r.get("error", "등록 실패")})
         for a in added:
             store.add_site(conn, uid, a["project"], a["property"], _host_of(a["property"]))
-    finally:
-        conn.close()
 
     if added:
-        scheduler.kick()
+        kick()
     return {"ok": bool(added), "added": added, "failed": failed}
 
 
@@ -272,11 +277,8 @@ def gh_login(request: Request):
 def gh_callback(request: Request, code: str, state: str):
     uid = _require_uid(request)
     acct = identity.finish("github", code, _carry(request, "github", state))
-    conn = store.connect()
-    try:
+    with store.session(uid) as conn:
         identity.remember(conn, "github", acct, uid=uid)
-    finally:
-        conn.close()
     return RedirectResponse("/", status_code=302)
 
 
@@ -290,13 +292,11 @@ def _gh_token(conn, uid: int) -> str:
 @app.get("/api/repos")
 def api_repos(request: Request):
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        return {"repos": gh.repos(_gh_token(conn, uid))}
+        with store.session(uid) as conn:
+            return {"repos": gh.repos(_gh_token(conn, uid))}
     except gh.GitHubError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.post("/api/repo")
@@ -305,13 +305,58 @@ async def api_repo(request: Request):
     uid = _require_uid(request)
     b = await request.json()
     project, repo, branch = str(b.get("project") or ""), str(b.get("repo") or ""),         str(b.get("branch") or "main")
-    conn = store.connect()
-    try:
-        _own(conn, uid, project)
+    with store.session(uid, project) as conn:
         store.set_repo(conn, uid, project, repo, branch)
-    finally:
-        conn.close()
     return {"ok": True}
+
+
+def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
+    """/api/create 워크플로: 기회 조회 → 리포 프로필 → 글 작성 → PR → 기록.
+
+    row 는 저장소가 연결된 store.site() 결과. isolate=True 세션(tenant) 안에서
+    불러야 한다 — db.* 는 Brain(tenant) 을, store.* 는 서버 DB 를 함께 쓴다.
+    """
+    token = _gh_token(conn, uid)
+    repo, branch = row["repo"], row["repo_branch"] or "main"
+
+    c = db.connect()
+    try:
+        p = db.get_project(c, project)
+        opp = db.get_opportunity(c, opp_id, project_id=p["id"])
+        if not opp:
+            raise HTTPException(status_code=404, detail="선택한 개선 기회를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.")
+        opp = dict(opp)
+        perf = db.query_performance(c, p["id"], opp["target"])
+    finally:
+        c.close()
+    evidence = ({"클릭": perf["clicks"], "노출": perf["impressions"],
+                 "평균 순위": perf["position"]} if perf else {})
+
+    profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
+    if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
+        profile = writer.discover_profile(token, repo, branch)
+        store.set_profile(conn, uid, project, json.dumps(profile, ensure_ascii=False))
+
+    doc = writer.write_for(opp, profile, dict(p), evidence)
+    br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
+    body = (f"{doc.get('summary', '')}\n\n"
+            f"기회 #{opp_id} · {opp['kind']} · 대상: {opp['target']}\n\n"
+            f"— seo-miner")
+    pr = gh.open_pr(
+        token, repo, branch, br, doc["title"], body,
+        [{"path": doc["path"], "content": doc["content"]}],
+        # 커밋 메시지의 [opp #id] 는 create 스킬의 규약이다 — 나중에
+        # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
+        f"content: {doc['title']} [opp #{opp_id}]")
+
+    c = db.connect()
+    try:
+        db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
+                           kind=opp["kind"], branch=br, note=pr["url"])
+        db.set_opportunity_status(c, opp_id, "done")
+    finally:
+        c.close()
+    return {"pr": pr["url"], "path": doc["path"]}
 
 
 @app.post("/api/create")
@@ -321,58 +366,15 @@ async def api_create(request: Request):
     b = await request.json()
     project = str(b.get("project") or "")
     opp_id = int(b.get("opportunity_id") or 0)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        row = store.site(conn, uid, project)
-        if not row or not row["repo"]:
-            raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결되지 않았습니다. 사이트 화면에서 저장소를 먼저 선택해 주세요.")
-        token = _gh_token(conn, uid)
-        repo, branch = row["repo"], row["repo_branch"] or "main"
-
-        with store.tenant(conn, uid):
-            c = db.connect()
-            try:
-                p = db.get_project(c, project)
-                opp = db.get_opportunity(c, opp_id, project_id=p["id"])
-                if not opp:
-                    raise HTTPException(status_code=404, detail="선택한 개선 기회를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.")
-                opp = dict(opp)
-                perf = db.query_performance(c, p["id"], opp["target"])
-            finally:
-                c.close()
-            evidence = ({"클릭": perf["clicks"], "노출": perf["impressions"],
-                         "평균 순위": perf["position"]} if perf else {})
-
-            profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
-            if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
-                profile = writer.discover_profile(token, repo, branch)
-                store.set_profile(conn, uid, project, json.dumps(profile, ensure_ascii=False))
-
-            doc = writer.write_for(opp, profile, dict(p), evidence)
-            br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
-            body = (f"{doc.get('summary', '')}\n\n"
-                    f"기회 #{opp_id} · {opp['kind']} · 대상: {opp['target']}\n\n"
-                    f"— seo-miner")
-            pr = gh.open_pr(
-                token, repo, branch, br, doc["title"], body,
-                [{"path": doc["path"], "content": doc["content"]}],
-                # 커밋 메시지의 [opp #id] 는 create 스킬의 규약이다 — 나중에
-                # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
-                f"content: {doc['title']} [opp #{opp_id}]")
-
-            c = db.connect()
-            try:
-                db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
-                                   kind=opp["kind"], branch=br, note=pr["url"])
-                db.set_opportunity_status(c, opp_id, "done")
-            finally:
-                c.close()
-        return {"ok": True, "pr": pr["url"], "path": doc["path"]}
+        with store.session(uid, project, isolate=True) as conn:
+            row = store.site(conn, uid, project)
+            if not row or not row["repo"]:
+                raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결되지 않았습니다. 사이트 화면에서 저장소를 먼저 선택해 주세요.")
+            result = _create_content(conn, uid, project, opp_id, row)
+        return {"ok": True, **result}
     except (gh.GitHubError, writer.WriterError) as e:
         raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        conn.close()
 
 
 # 단계 목록의 정본은 run_all 의 표 하나다. 여기에 사본을 두면 화면에는 있는
@@ -394,11 +396,9 @@ async def api_ai_prompts(request: Request):
     body = await request.json()
     project = str(body.get("project") or "")
     n = body.get("limit")
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
         # 수집 런과 같은 env 를 두른다 — 유료 키는 서버가 댄다(paid_keys).
-        with store.tenant(conn, uid), settings.paid_keys():
+        with store.session(uid, project, isolate=True, paid=True):
             c = db.connect()
             try:
                 rows = gen_prompts.suggest(project, n=int(n or 20), conn=c)
@@ -415,8 +415,6 @@ async def api_ai_prompts(request: Request):
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:                 # 키 부재 등 — 사유를 그대로 화면에 보낸다
         raise HTTPException(status_code=503, detail=str(e))
-    finally:
-        conn.close()
 
 
 def _ai_prompts_view(c, project: str) -> dict:
@@ -444,10 +442,8 @@ def api_ai_prompts_list(project: str, request: Request):
     """심긴 질문 목록. 인용 확인을 한 번 돌리기 전에는 이걸 볼 곳이 없었다 —
     만들기 버튼만 있고 무엇이 만들어졌는지는 화면 어디에도 안 나왔다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             c = db.connect()
             try:
                 return _ai_prompts_view(c, project)
@@ -455,8 +451,6 @@ def api_ai_prompts_list(project: str, request: Request):
                 c.close()
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.post("/api/ai/prompts/edit")
@@ -483,10 +477,8 @@ async def api_ai_prompts_edit(request: Request):
     if cat and cat not in (*gen_prompts.CATEGORIES, "general"):
         cat = "general"
 
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
@@ -513,12 +505,11 @@ async def api_ai_prompts_edit(request: Request):
                     if on:
                         # 켜진 질문 × 엔진 수 × 샘플 수만큼 돈이 나간다. 상한 너머로
                         # 켜 봐야 collect_ai 가 LIMIT 으로 자르므로, 여기서 막고 말한다.
-                        room = max(0, view["limit"] - view["active_total"])
-                        if room == 0:
+                        ids = _capped(ids, view["limit"], view["active_total"])
+                        if not ids:
                             raise HTTPException(
                                 status_code=409,
                                 detail=f"켤 수 있는 질문은 {view['limit']}개까지입니다 — 다른 질문을 먼저 꺼 주세요.")
-                        ids = ids[:room]
                     db.set_ai_prompts_active(c, pid, ids, on)
                 else:
                     db.delete_ai_prompts(c, pid, ids)
@@ -527,12 +518,10 @@ async def api_ai_prompts_edit(request: Request):
                 c.close()
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.post("/api/run")
-async def api_run(request: Request):
+async def api_run(request: Request, dispatch=Depends(_dispatch_dep), kick=Depends(_kick_dep)):
     """'지금 다시 재기' — /capture run 에 해당한다. stages 를 주면 그 단계만
     돈다(/capture gsc, /capture ai …). 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다."""
     uid = _require_uid(request)
@@ -543,9 +532,7 @@ async def api_run(request: Request):
     if bad:
         raise HTTPException(status_code=400, detail=f"실행할 수 없는 단계입니다: {', '.join(bad)}")
 
-    conn = store.connect()
-    try:
-        _own(conn, uid, project)
+    with store.session(uid, project) as conn:
         row = store.site(conn, uid, project)
         if row and row["running_since"]:
             return {"ok": True, "started": False}      # 이미 도는 중
@@ -556,15 +543,12 @@ async def api_run(request: Request):
             # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다.
             store.mark_run(conn, row["id"])
             started = True
-    finally:
-        conn.close()
 
     if started:
         if stages:
-            scheduler.dispatch("--user", str(uid), "--project", project,
-                               "--only", ",".join(stages))
+            dispatch("--user", str(uid), "--project", project, "--only", ",".join(stages))
         else:
-            scheduler.kick()
+            kick()
     return {"ok": True, "started": started}
 
 
@@ -572,10 +556,8 @@ async def api_run(request: Request):
 def api_report(project: str, request: Request):
     """/capture report — 그 시점 화면을 자립형 HTML 로 박제해 내려준다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             path = dashboard.export(project)
             data = Path(path).read_bytes()
         # 보고서도 호스팅 문구를 쓴다 — 메일로 나가는 것이라 받는 사람은 웹 사용자다.
@@ -586,8 +568,6 @@ def api_report(project: str, request: Request):
         data += _REPORT_ADDON
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
     return Response(data, media_type="text/html; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="{project}-report.html"'})
 
@@ -596,10 +576,8 @@ def api_report(project: str, request: Request):
 def api_export(project: str, table: str, request: Request):
     """CSV 내려받기 — 마케터는 결국 엑셀로 옮긴다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             data, name = exports.csv_bytes(project, table)
     except ValueError:
         # exports 의 ValueError 는 개발자용 문구다 — 그대로 내보내지 않는다.
@@ -607,8 +585,6 @@ def api_export(project: str, table: str, request: Request):
                             detail="내려받을 수 없는 항목입니다. 화면에서 다시 선택해 주세요.")
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
     return Response(data, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -617,36 +593,28 @@ def api_export(project: str, table: str, request: Request):
 def api_perf(project: str, request: Request):
     """서치콘솔 4대 지표와 검색어·페이지·기기 분해 — 개요 화면이 쓴다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             return exports.perf(project)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.get("/api/overview")
 def api_overview(request: Request):
     """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
+    with store.session(uid, isolate=True) as conn:
         out = []
         for r in store.sites(conn, uid):
-            with store.tenant(conn, uid):
-                try:
-                    d = exports.summary(r["project"])
-                except db.ProjectNotFound:
-                    d = {"project": r["project"], "domain": r["domain"]}
+            try:
+                d = exports.summary(r["project"])
+            except db.ProjectNotFound:
+                d = {"project": r["project"], "domain": r["domain"]}
             d["running"] = bool(r["running_since"])
             d["last_run_at"] = r["last_run_at"]
             out.append(d)
         return {"sites": out}
-    finally:
-        conn.close()
 
 
 @app.get("/api/keywords")
@@ -658,10 +626,8 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
     """
     uid = _require_uid(request)
     active = status == "active"
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
@@ -673,8 +639,6 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
                 "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.post("/api/keywords")
@@ -688,21 +652,18 @@ async def api_keywords_set(request: Request):
     on = bool(b.get("active"))
     if not ids:
         raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 선택해 주세요.")
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
                 if on:
                     limit = settings.count("SEOMINER_MAX_KEYWORDS")
-                    room = max(0, limit - db.count_active_keywords(c, pid))
-                    if room == 0:
+                    ids = _capped(ids, limit, db.count_active_keywords(c, pid))
+                    if not ids:
                         raise HTTPException(
                             status_code=409,
                             detail=f"추적 키워드가 한도({limit}개)에 도달했습니다. [추적 중] 탭에서 일부를 해제한 뒤 추가해 주세요.")
-                    ids = ids[:room]
                 changed = db.set_keywords_active(c, pid, ids, on)
                 n = db.count_active_keywords(c, pid)
             finally:
@@ -710,35 +671,27 @@ async def api_keywords_set(request: Request):
         return {"ok": True, "changed": changed, "active_total": n}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.get("/api/backlinks")
 def api_backlinks(project: str, request: Request):
     """백링크 프로필 — 없으면 빈 값. 지어내지 않는다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             data = backlinks.latest(project)
             data["available"] = backlinks.available()
         return data
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.get("/api/creations")
 def api_creations(project: str, request: Request):
     """/create status — 이 사이트에서 실제로 고친 것들."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             c = db.connect()
             try:
                 pid = db.get_project(c, project)["id"]
@@ -748,23 +701,18 @@ def api_creations(project: str, request: Request):
         return {"creations": [dict(r) for r in rows]}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.get("/api/run/status")
 def api_run_status(request: Request):
     """사이트별 수집 상태 — 화면이 폴링한다."""
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
+    with store.session(uid) as conn:
         return {r["project"]: {"running": bool(r["running_since"]),
                                "last_run_at": r["last_run_at"],
                                "stage": r["stage"],
                                "pct": r["stage_pct"]}
                 for r in store.sites(conn, uid)}
-    finally:
-        conn.close()
 
 
 # 자동 수집 주기 프리셋 — 값(시간)과 화면에 쓸 이름. 목록의 정본은 여기다:
@@ -783,9 +731,7 @@ def api_settings(project: str, request: Request):
     먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
     """
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
-        _own(conn, uid, project)
+    with store.session(uid, project) as conn:
         row = store.site(conn, uid, project)
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
         return {"run_every_hours": store.every_hours(conn, uid, project),
@@ -795,8 +741,6 @@ def api_settings(project: str, request: Request):
                 # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
                 # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
                 "github_connected": bool(store.github(conn, uid))}
-    finally:
-        conn.close()
 
 
 @app.post("/api/settings")
@@ -811,18 +755,9 @@ async def api_settings_set(request: Request):
     if hours not in {float(h) for h, _ in RUN_PRESETS}:
         raise HTTPException(status_code=400,
                             detail="선택할 수 없는 수집 주기입니다. 새로고침 후 다시 시도해 주세요.")
-    conn = store.connect()
-    try:
-        _own(conn, uid, project)
+    with store.session(uid, project) as conn:
         store.set_every_hours(conn, uid, project, hours)
         return {"ok": True, "run_every_hours": hours}
-    finally:
-        conn.close()
-
-
-def _own(conn, uid: int, project: str) -> None:
-    if not any(r["project"] == project for r in store.sites(conn, uid)):
-        raise HTTPException(status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
 
 
 # --- 대시보드 -----------------------------------------------------------------
@@ -843,54 +778,37 @@ _DASH_ADDON = pages.addon("dash.html")
 def dash(request: Request):
     _require_uid(request)
     # 호스팅에서는 API 키·의존성 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 키를 댄다).
-    #
-    # 표식은 **첫 <script> 앞**에 세운다. 애드온이 문서 끝에서 세우면 늦는다 —
-    # 원본의 loadProjects().then(load) 가 파서보다 먼저 완주해서 첫 렌더가
-    # SM_HOSTED=false 를 보고 로컬 문구로 그려 버린다(응답이 빠를수록 잘 진다).
-    # terms.js 가 MutationObserver 를 달아 "그린 뒤에 또 갈아치우던" 이유가 이것이다.
-    # 값이 스크립트보다 먼저 서면 화면이 처음부터 맞는 문구를 고른다.
-    return HTMLResponse(pages.data(dashboard.HTML.decode("utf-8"), SM_HOSTED=True)
-                        + _DASH_ADDON.decode("utf-8"))
+    # "hosted" 조립본이 window.SM_HOSTED=true 를 페이지 스크립트보다 먼저 세우고
+    # 호스팅 전용 섹션을 포함해 조립한다(dashboard.assemble).
+    return HTMLResponse(dashboard.assemble("hosted") + _DASH_ADDON.decode("utf-8"))
 
 
 @app.get("/api/projects")
 def api_projects(request: Request):
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
+    with store.session(uid) as conn:
         return [r["project"] for r in store.sites(conn, uid)]
-    finally:
-        conn.close()
 
 
 @app.get("/api/data")
 def api_data(project: str, request: Request, date: str = ""):
     """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다."""
     uid = _require_uid(request)
-    conn = store.connect()
     try:
-        _own(conn, uid, project)
-        with store.tenant(conn, uid):
+        with store.session(uid, project, isolate=True):
             return dashboard.payload(project, date or None)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    finally:
-        conn.close()
 
 
 @app.get("/api/doctor")
 def api_doctor(project: str, request: Request):
     uid = _require_uid(request)
-    conn = store.connect()
-    try:
-        _own(conn, uid, project)
-        # 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료 키가 여기서도
-        # 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다. paid_keys() 가 세우는
-        # 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
-        with store.tenant(conn, uid), settings.paid_keys():
-            return dashboard.setup_state(project)
-    finally:
-        conn.close()
+    # 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료 키가 여기서도
+    # 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다. paid_keys() 가 세우는
+    # 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
+    with store.session(uid, project, isolate=True, paid=True):
+        return dashboard.setup_state(project)
 
 
 @app.post("/api/opp")
@@ -901,17 +819,13 @@ async def api_opp(request: Request):
     body = await request.json()
     if body.get("status") not in db.OPP_STATUSES:
         raise HTTPException(status_code=400, detail="처리할 수 없는 상태값입니다. 새로고침 후 다시 시도해 주세요.")
-    conn = store.connect()
-    try:
-        with store.tenant(conn, uid):
-            c = db.connect()
-            try:
-                return {"updated": db.set_opportunity_status(c, int(body.get("id") or 0),
-                                                             body["status"])}
-            finally:
-                c.close()
-    finally:
-        conn.close()
+    with store.session(uid, isolate=True):
+        c = db.connect()
+        try:
+            return {"updated": db.set_opportunity_status(c, int(body.get("id") or 0),
+                                                         body["status"])}
+        finally:
+            c.close()
 
 
 def demo() -> None:
@@ -952,16 +866,20 @@ def demo() -> None:
         store.add_site(c2, u2, "p1", "sc-domain:p1.com", "p1.com")
         c2.close()
 
-        # dash() 가 여기에 bytes 를 이어붙인다. str 로 바뀌면 그 자리에서 500 이 난다.
-        assert isinstance(dashboard.HTML, bytes), "dashboard.HTML 이 bytes 가 아니다"
+        # dash() 가 dashboard.assemble("hosted") 뒤에 애드온 bytes 를 이어붙인다.
+        # assemble() 이 str 이 아니게 바뀌면 그 자리에서 500 이 난다.
+        assert isinstance(dashboard.assemble("hosted"), str), "assemble() 이 str 이 아니다"
 
         # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
-                     "/api/settings?project=x", "/api/ai/prompts?project=x"):
+                     "/api/settings?project=x", "/api/ai/prompts?project=x",
+                     "/api/report?project=x", "/api/export?project=x&table=keywords",
+                     "/api/keywords?project=x", "/api/backlinks?project=x",
+                     "/api/creations?project=x", "/api/run/status"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
-                     "/api/ai/prompts/edit"):
+                     "/api/ai/prompts/edit", "/api/sites", "/api/keywords"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
@@ -1005,8 +923,11 @@ def demo() -> None:
         assert c.get("/api/settings?project=p1").json()["run_every_hours"] == 24.0, "저장이 안 됐다"
 
         # 실행 단계 이름 — 목록에 없는 단계는 400, 있는 단계는 워커로 간다.
-        spawned, real_dispatch = [], scheduler.dispatch
-        scheduler.dispatch = lambda *a: spawned.append(a)
+        # dispatch/kick 은 Depends 로 받는다 — 실제 subprocess 를 안 띄우고
+        # app.dependency_overrides 로 갈아끼운다(globals() 수술 대신 FastAPI 표준).
+        spawned, kicked = [], []
+        app.dependency_overrides[_dispatch_dep] = lambda: (lambda *a: spawned.append(a))
+        app.dependency_overrides[_kick_dep] = lambda: (lambda: kicked.append(True))
         try:
             assert c.post("/api/run", json={"project": "p1", "stages": "없는단계"}
                           ).status_code == 400
@@ -1014,8 +935,16 @@ def demo() -> None:
             r = c.post("/api/run", json={"project": "p1", "stages": "competitors"})
             assert r.status_code == 200 and r.json()["started"], r.text
             assert spawned and "competitors" in spawned[0], spawned
+
+            # /api/sites — 등록 진입점. 여태 demo() 어디에도 안 나왔다.
+            assert c.post("/api/sites", json={"properties": []}).status_code == 400
+            r = c.post("/api/sites", json={"properties": ["sc-domain:new1.com"]})
+            assert r.status_code == 200 and r.json()["ok"], r.text
+            assert r.json()["added"][0]["project"] == "new1", r.json()
+            assert kicked, "새 사이트 등록인데 워커를 안 띄웠다"
         finally:
-            scheduler.dispatch = real_dispatch
+            app.dependency_overrides.pop(_dispatch_dep, None)
+            app.dependency_overrides.pop(_kick_dep, None)
 
         # 질문 만들기 — 웹에는 `/capture add` 를 칠 채팅이 없어서 생긴 자리다.
         # 키가 없으면 조용히 빈 목록이 아니라 503 + 사유(화면이 그대로 보여 준다).
@@ -1072,6 +1001,36 @@ def demo() -> None:
         assert len(edit(op="delete", ids=[qid]).json()["prompts"]) == 1
         assert edit(op="드롭테이블", ids=[qid]).status_code == 400
         assert edit(op="delete", ids=["1; DROP TABLE"]).status_code == 400, "숫자가 아닌 id 가 500 을 낸다"
+
+        # 세션 모듈로 옮기면서 demo() 에 한 번도 안 나오던 라우트들 — 최소한 로그인
+        # 상태에서 200/404 를 확인한다.
+        # 위 /api/run(stages=competitors) 가 mark_run 을 찍어 놓고 워커는 가짜였다 —
+        # 그래서 아직 '도는 중'이다. 화면 폴링이 읽는 값이 실제로 반영되는지만 본다.
+        assert c.get("/api/run/status").json()["p1"]["running"] is True
+
+        assert c.get("/api/keywords?project=없는사이트").status_code == 404
+        r = c.get("/api/keywords?project=p1")
+        assert r.status_code == 200 and r.json()["keywords"] == [], r.text
+        assert c.post("/api/keywords", json={"project": "p1", "ids": []}).status_code == 400
+        assert c.post("/api/keywords", json={"project": "없는사이트", "ids": [1], "active": True}
+                      ).status_code == 404, "남의 사이트 키워드를 건드릴 수 있다"
+
+        assert c.get("/api/backlinks?project=없는사이트").status_code == 404
+        r = c.get("/api/backlinks?project=p1")
+        assert r.status_code == 200 and "available" in r.json(), r.text
+
+        assert c.get("/api/creations?project=없는사이트").status_code == 404
+        r = c.get("/api/creations?project=p1")
+        assert r.status_code == 200 and r.json()["creations"] == [], r.text
+
+        assert c.get("/api/export?project=없는사이트&table=keywords").status_code == 404
+        assert c.get("/api/export?project=p1&table=nope").status_code == 400
+        r = c.get("/api/export?project=p1&table=keywords")
+        assert r.status_code == 200 and r.content.startswith(b"\xef\xbb\xbf"), "CSV BOM 누락"
+
+        assert c.get("/api/report?project=없는사이트").status_code == 404
+        r = c.get("/api/report?project=p1")
+        assert r.status_code == 200 and len(r.content) > 0, r.status_code
 
         c.cookies.clear()
 

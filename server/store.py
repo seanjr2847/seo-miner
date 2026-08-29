@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from fastapi import HTTPException
 
 import settings
 
@@ -301,6 +302,37 @@ def tenant(conn: sqlite3.Connection, user_id: int):
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
+@contextmanager
+def session(uid: int, project: str | None = None, *, own: bool = True,
+            isolate: bool = False, paid: bool = False):
+    """라우트 하나가 필요로 하는 걸 한 번에: conn 열기 → (project 를 주면) 소유
+    확인 → (isolate 면) tenant 두르기 → (paid 면) 유료 키까지 → 끝나면 정리.
+
+    conn = store.connect(); try: ... finally: conn.close() 와 _own() 과
+    with store.tenant() 가 라우트마다 손으로 반복되던 것을 한 곳으로 모은다.
+
+    project 를 주면 소유 확인이 **기본값**이다(own=True) — 빠뜨림이 기본이면 안
+    된다. own=False 는 아직 소유가 성립하지 않는 자리에만 쓴다(예: 새 사이트 등록).
+    """
+    conn = connect()
+    try:
+        if project is not None and own and not any(
+                r["project"] == project for r in sites(conn, uid)):
+            raise HTTPException(
+                status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
+        if isolate:
+            with tenant(conn, uid):
+                if paid:
+                    with settings.paid_keys():
+                        yield conn
+                else:
+                    yield conn
+        else:
+            yield conn
+    finally:
+        conn.close()
+
+
 def demo() -> None:
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -441,6 +473,32 @@ def demo() -> None:
         assert b"ghp_secret" not in raw, "GitHub 토큰이 평문으로 저장됐다"
         set_repo(conn, uid, "myproj", "octocat/site", "main")
         assert site(conn, uid, "myproj")["repo"] == "octocat/site"
+
+        # session() — 라우트가 conn 열기·소유 확인·tenant·유료 키를 한 번에 쓰는 자리.
+        with session(uid, "myproj") as c:
+            assert c is not None
+        # project 를 주면 소유 확인이 기본값이다 — 없는 사이트도, 남의 사이트도 404.
+        try:
+            with session(uid, "없는사이트"):
+                raise AssertionError("없는 사이트가 세션을 열었다")
+        except HTTPException as e:
+            assert e.status_code == 404, e.status_code
+        try:
+            with session(uid2, "myproj"):        # uid2 는 myproj 의 주인이 아니다
+                raise AssertionError("소유 확인 기본값이 빠졌다 — 남의 사이트가 열렸다")
+        except HTTPException as e:
+            assert e.status_code == 404, e.status_code
+        with session(uid, "myproj", own=False):  # 새 사이트 등록처럼 아직 소유가 없는 자리
+            pass
+        with session(uid, "myproj", isolate=True) as c:
+            assert os.environ["CAPTURE_HOME"] == str(home(uid)), "tenant 가 안 둘러졌다"
+        assert "CAPTURE_HOME" not in os.environ, "session 을 나간 뒤 env 가 안 돌아왔다"
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ["SEOMINER_OPENROUTER_API_KEY"] = "srv-key"
+        with session(uid, "myproj", isolate=True, paid=True):
+            assert os.environ["OPENROUTER_API_KEY"] == "srv-key", "paid=True 인데 유료 키가 안 섰다"
+        assert "OPENROUTER_API_KEY" not in os.environ, "유료 키가 안 걷혔다"
+        os.environ.pop("SEOMINER_OPENROUTER_API_KEY", None)
 
         conn.close()                          # 윈도우는 열린 파일을 지우지 못한다
         print("store: ok")

@@ -526,6 +526,10 @@ const VIEW_RENDER = [];
 function VIEW(id, render) { VIEW_RENDER.push({id, render}); }
 </script>
     <!--VIEWS-->
+    <!-- 배포 전용 섹션(templates/sections/*.html) — 담긴 뷰는 여기가 아니라
+         자기 section-def 의 view/after 다. SM.sync() 가 view-def 순서를 보고
+         제자리로 옮긴다(원본 뷰의 다른 섹션과 같은 방식). -->
+    <!--SECTIONS-->
   </div>
 </main>
 
@@ -861,8 +865,6 @@ window.copyPrompt = function (btn) {
       대상 문자열은 화면마다 출처가 다르다(GSC 검색어·추적 키워드·URL·도메인).
       대소문자와 앞뒤 공백만 맞춰 찾는다 — 그 이상은 맞히려 들지 않는다.  ── */
 window.OPP_LABEL = {new:"새 기회", acked:"확인함", done:"완료", dismissed:"제외함"};
-window.SD_BAND = {};          // 검색어 → page1|page2 (render 가 payload 에서 채운다)
-window.GAP_KIND = {};         // 검색어 → missing|weak (같은 자리에서 채운다)
 window.SD_PERIOD = "";        // "28일" — 평균 게재순위라는 주석에 쓰는 기간
 
 const oppKey = t => String(t ?? "").trim().toLowerCase();
@@ -894,7 +896,7 @@ const isDefensive = o => o && (o.is_defensive
 
 window.oppWhy = o => !o ? "" : `<div class="oh">
     <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
-      >${esc(kindLabel(o))}</span>
+      >${esc(o.label || o.kind)}</span>
     <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}`;
 
@@ -923,28 +925,11 @@ window.go = (id, label) => {
 };
 
 
-// 기회 kind의 한국어 라벨 — 원문 kind는 title로 남긴다(문서·DB와 대조할 때 필요).
-// window 에 건다: 다른 화면(history)이 이 한 벌을 읽어 쓴다. 최상위 const 는 전역
-// 렉시컬 스코프에만 들어가 window.KIND_LABEL 이 undefined 였고, 그래서 [기록] 화면의
-// 종류 칸이 조용히 영문 kind 원문으로 떨어져 있었다.
-window.KIND_LABEL = {striking_distance:"밀면 오를 검색어", ai_citation_gap:"AI 챗봇 인용 없음",
-  ctr_gap:"CTR 미달", cannibalization:"내부 경쟁", rank_decay:"순위 하락",
-  coverage:"미커버", pseo_pattern:"pSEO 패턴", aio_exposure:"구글 AI 요약 빠짐",
-  content_gap:"콘텐츠 공백", device_gap:"모바일 격차", index_blocked:"색인 막힘",
-  crawl_issue:"크롤에서 걸림", backlink_broken:"깨진 백링크",
-  backlink_prospect:"경쟁사만 받는 링크"};
-/* ── striking_distance 는 4~20위를 한 kind 로 담아 밴드가 둘이다. 4.2위에 "1페이지
-      진입"이라 말하면 거짓말이 된다 — 밴드를 아는 자리(카드 배지·프롬프트·CSV)만
-      갈라 말하고, kind 단위로만 아는 자리(필터 칩·[기록] 화면)는 통칭을 쓴다.
-      KIND_LABEL 은 kind 한 벌 그대로 둔다 — history 가 window 에서 그걸 읽는다. ── */
-// "1페이지 상단"은 상태로 읽힌다 — 이미 거기 있다는 뜻이 된다. 이건 기회 목록이니
-// 가능성으로 적는다: 지금 위치가 아니라 밀면 닿을 자리를 말하는 이름이다.
-window.SD_LABEL = {page1:"1페이지 상단 가능", page2:"1페이지 진입 가능"};
-// 밴드를 모르면(다른 kind, 또는 band 없는 옛 박제본) 통칭으로 물러선다.
-window.kindLabel = o => (o.kind === "striking_distance" && window.SD_LABEL[window.SD_BAND[o.target]])
-  || KIND_LABEL[o.kind] || o.kind;
-// 순위 숫자의 정본 표현은 [키워드] 화면 툴팁이다 — 같은 말로 적는다. 두 밴드가
-// 같은 문장을 쓰므로 한 벌만 둔다.
+// 기회 kind 의 한국어 라벨·처방(what/acts/deliver)은 이제 파이썬(scoring.py 의
+// KINDS 명부)이 정하고, dashboard.py 의 gather() 가 각 기회에 label·play 로 실어
+// 보낸다 — 화면은 그리기만 한다. striking_distance(밴드)·content_gap(갈래)도
+// 서버가 이미 갈라 낸 것을 받는다. 예전에는 이 산문이 여기 KIND_LABEL·SD_LABEL·
+// PLAY 세 벌로 있었고, SD_BAND·GAP_KIND 곁표를 매 렌더마다 되짚었다.
 
 window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다`
   + ` — 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있고,`
@@ -952,121 +937,15 @@ window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD |
 /* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
-      할 일은 아래 PLAY 한 벌이 댄다. kind 마다 손대는 자리가 다르다. ── */
-window.PLAY = {
-  // 이 kind 는 4~20위를 잡는다(scoring.STRIKING_LO/HI). 4~10위는 이미 1페이지라
-  // 할 일이 다르다 — 밴드는 payload 의 striking 행이 알려 준다.
-  striking_distance: o => (window.SD_BAND[o.target] === "page1" ? {
-    what: `이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다. ${window.sdAvgNote()}`,
-    acts: ["title 앞쪽에 검색어를 두고 숫자·연도를 붙여 옆 결과와 다르게 보이게 합니다.",
-           "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
-           "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
-           "상단 3위권을 노린다면 상위 페이지에만 있는 구간을 본문에 채웁니다."],
-    deliver: ["새 title 3안 — 검색어를 앞에, 숫자나 연도를 붙여서",
-              "meta description 2안",
-              "질문 바로 아래 넣을 40~60자 직답 문안"]
-  } : {
-    what: `1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다. ${window.sdAvgNote()}`,
-    acts: ["아래 페이지의 title 과 H1 을 이 검색어로 시작하게 고칩니다.",
-           "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
-           "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
-           "표·목록·정의 블록을 만들어 스니펫 후보로 올립니다."],
-    deliver: ["새 title 3안과 H1 문안 — 검색어를 앞에 두고",
-              "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
-              "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]
-  }),
-  ctr_gap: {what: "순위는 1페이지인데 클릭률이 기대치의 절반 이하 — 순위가 아니라 제목·설명 문제입니다.",
-    acts: ["title 앞 60자 안에 검색어를 넣고, 브랜드명은 뒤로 밉니다.",
-           "meta description 에 숫자·연도·구체적 이득을 적습니다.",
-           "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
-           "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."],
-    deliver: ["새 title 3안 — 한글 30자 이내, 검색어를 앞에", "meta description 2안 — 한글 80자 이내", "검색 결과 면적을 넓힐 FAQ·HowTo 구조화 데이터(JSON-LD)"]},
-  cannibalization: {what: "같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다 — 구글이 어느 쪽을 올릴지 못 정합니다.",
-    acts: ["아래 표에서 노출·클릭이 가장 큰 페이지를 정본으로 정합니다.",
-           "나머지는 정본으로 301 리다이렉트하거나 canonical 을 정본으로 겁니다.",
-           "합칠 수 없으면 검색 의도를 갈라 제목·H1 을 서로 다르게 씁니다.",
-           "나머지 페이지에서 정본으로 내부 링크를 겁니다."],
-    deliver: ["어느 페이지를 정본으로 할지와 그 근거(노출·클릭·의도 기준)", "나머지 페이지 처리 계획 — 301 리다이렉트 대상과 canonical 지정", "합칠 경우 병합 후 목차 한 벌 — 새 글을 쓰는 게 아니라 두 글을 합칩니다"]},
-  rank_decay: {what: "잡고 있던 순위가 밀렸습니다 — 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
-    acts: ["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
-           "지금 그 자리를 가져간 페이지와 목차를 비교해 빠진 구간을 채웁니다.",
-           "본문을 실제로 갱신합니다 — 날짜만 바꾸는 것은 효과가 없습니다.",
-           "그 페이지로 오던 내부 링크가 끊겼는지 확인합니다."],
-    deliver: ["되찾기 위해 본문에 채울 구간(H2 목록) — 지금 그 자리를 가져간 페이지와 비교해서", "끊긴 내부 링크를 어디서 다시 걸지"]},
-  device_gap: {what: "모바일에서만 순위가 낮습니다 — 콘텐츠가 아니라 모바일 화면·속도 문제인 경우가 많습니다.",
-    acts: ["모바일로 그 페이지를 직접 열어 첫 화면에 답이 있는지 봅니다.",
-           "LCP·CLS 를 확인합니다(이미지 크기 지정, 광고·배너 지연 로드).",
-           "표·코드 블록이 가로로 넘치는지 봅니다.",
-           "전면 팝업(인터스티셜)을 걷어냅니다."],
-    deliver: ["모바일에서 고칠 것 목록 — 레이아웃·이미지 크기·지연 로드·팝업(코드/설정 수준)", "첫 화면에 무엇이 보여야 하는지"]},
-  index_blocked: {what: "색인되지 않은 URL 입니다 — 색인 전에는 순위 자체가 없습니다.",
-    acts: ["robots.txt·noindex·canonical 이 이 URL 을 막고 있는지 확인합니다.",
-           "사이트맵에 넣고 Search Console 에서 색인을 요청합니다.",
-           "들어오는 내부 링크가 하나도 없으면(고아 페이지) 최소 한 개를 겁니다.",
-           "중복이면 정본 하나만 남깁니다."],
-    deliver: ["막고 있는 규칙을 어떻게 고칠지 — robots.txt 줄 또는 meta robots 값과 적용 위치", "색인 요청·확인 절차 순서", "(콘텐츠는 손대지 않습니다 — 색인 전에는 글을 고쳐도 소용이 없습니다)"]},
-  pseo_pattern: {what: "같은 꼴의 검색어가 무리로 있습니다 — 한 장씩 쓰는 대신 템플릿으로 찍을 자리입니다.",
-    acts: ["같은 패턴의 검색어를 모읍니다(도구별·지역별·비교 축).",
-           "템플릿 한 벌 + 실제 데이터로 페이지를 찍습니다 — 빈 껍데기는 색인에서 걸러집니다.",
-           "허브 페이지를 만들어 전부 링크합니다."],
-    deliver: ["이 패턴의 축과 값 목록(도구·지역·비교 대상)", "템플릿 한 벌의 골격 — 어느 자리에 데이터가 들어가는지", "허브 페이지 구성"]},
-  ai_citation_gap: {what: "ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
-    acts: ["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
-           "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다.",
-           "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
-    deliver: ["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답", "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)", "Article·FAQPage 구조화 데이터(JSON-LD)"]},
-  aio_exposure: {what: "구글이 이 검색어에 AI 요약을 붙입니다 — 거기 내 링크가 없으면 순위가 그대로여도 클릭이 줄어듭니다.",
-    acts: ["요약이 답하는 질문에 직답 블록을 만듭니다.",
-           "Article·FAQ 구조화 데이터를 붙입니다."],
-    deliver: ["구글 AI 요약이 답하는 질문에 대한 직답 블록",
-              "Article·FAQ 구조화 데이터(JSON-LD)"]},
-  coverage: {what: "추적은 하는데 노출도 순위도 없습니다 — 이 주제를 다루는 페이지가 없다는 뜻입니다.",
-    acts: ["이 클러스터를 다루는 페이지가 실제로 있는지 확인합니다.",
-           "없으면 대표 글 하나부터 만듭니다 — 클러스터 전체를 한 번에 찍지 않습니다.",
-           "있는데 안 걸린다면 제목·본문에 그 검색어가 실제로 등장하는지 봅니다."],
-    deliver: ["이 주제를 다룰 대표 글 한 장의 제목과 목차 — 클러스터 전체를 한 번에 찍지 않습니다"]},
-  crawl_issue: {what: "사이트를 전부 돌아 보니 이 주소에서 걸립니다 — 404·리다이렉트 사슬처럼 전수를 봐야 나오는 것들입니다.",
-    acts: ["그 주소를 직접 열어 지금도 깨져 있는지 확인합니다.",
-           "살릴 수 있으면 살리고, 없어진 것이면 가장 가까운 페이지로 301 합니다.",
-           "그 주소로 걸린 내부 링크를 새 주소로 고칩니다 — 리다이렉트는 임시 방편입니다.",
-           "고친 뒤 다시 크롤해 회차 비교에서 사라지는지 봅니다."],
-    deliver: ["이 주소를 살릴지 301 할지와 그 대상", "고쳐야 할 내부 링크 목록 — 어느 글의 어느 앵커인지"]},
-  backlink_broken: {what: "남이 우리에게 링크를 걸었는데 그 주소에 페이지가 없습니다 — 이미 번 링크라 새로 얻는 것보다 늘 쌉니다.",
-    acts: ["그 주소에 무엇이 있었는지 확인합니다(옮겼는지, 지웠는지).",
-           "가장 가까운 지금 페이지로 301 을 겁니다 — 홈으로 몰면 값이 거의 사라집니다.",
-           "옮길 곳이 없으면 그 주제로 페이지를 다시 세우는 쪽이 나을 수 있습니다.",
-           "링크를 건 쪽에 새 주소를 알려 링크 자체를 고치게 합니다."],
-    deliver: ["301 대상 주소와 그 근거", "링크를 건 쪽에 보낼 짧은 안내문 한 벌"]},
-  backlink_prospect: {what: "경쟁사는 이 도메인에서 링크를 받는데 나는 못 받습니다 — 이미 우리 주제를 다루는 곳이라 문이 열려 있습니다.",
-    acts: ["그 도메인이 경쟁사를 **어느 글에서** 링크했는지 찾습니다 — 그게 우리 자리입니다.",
-           "그 글이 다루는 주제에서 우리가 더 잘 답하는 지점을 하나 고릅니다.",
-           "그 지점을 근거로 짧게 연락합니다 — 링크를 달라고 하지 말고 무엇이 빠졌는지를 말합니다.",
-           "받을 만한 페이지가 우리에게 없으면 먼저 그것부터 만듭니다."],
-    deliver: ["이 도메인에 보낼 연락문 한 벌 — 경쟁사가 링크된 그 글을 짚어서",
-              "그쪽이 링크할 만한 우리 페이지와, 없다면 무엇을 먼저 만들지"]},
-  // 이 kind 는 "아예 없다"와 "밀린다"를 함께 담는다 — 할 일이 정반대라 갈라 말한다.
-  // 갈래는 payload 의 kw_gap 행이 알려 준다(렌더된 근거 문장을 되짚지 않는다).
-  content_gap: o => (window.GAP_KIND[String(o.target ?? "").trim().toLowerCase()] === "weak" ? {
-    what: "경쟁 도메인이 나보다 위에 있습니다 — 페이지는 있으니 새로 쓰는 게 아니라 그 페이지를 고칩니다.",
-    acts: ["나를 이기고 있는 그 페이지의 목차와 내 페이지를 나란히 놓고 빠진 구간을 찾습니다.",
-           "그 검색어를 title 과 H1 앞쪽으로 올립니다.",
-           "내 제품·데이터로만 말할 수 있는 구간을 하나 더 넣습니다 — 같은 말을 더 길게 쓰는 건 소용없습니다.",
-           "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다."],
-    deliver: ["내 페이지에 추가할 H2 목록 — 이기고 있는 페이지와 비교해서",
-              "새 title 3안과 H1 문안", "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]
-  } : {
-    what: "경쟁 도메인은 잡고 있는데 나는 페이지 자체가 없는 검색어입니다.",
-    acts: ["상위 3개 페이지의 목차를 훑어 다뤄야 할 구간을 정합니다.",
-           "내 제품·데이터로만 말할 수 있는 구간을 하나 넣습니다.",
-           "발행 후 관련 글에서 내부 링크를 겁니다."],
-    deliver: ["이 검색어를 정면으로 다루는 새 글의 제목·목차", "내 제품·데이터로만 쓸 수 있는 구간 하나"]
-  })
-};
-
+      할 일은 o.play 가 댄다. ── */
 function oppDetail(o) {
   const pages = (window.QUERY_PAGES || {})[o.target] || [];
-  const pd = window.PLAY[o.kind];
-  const p = (typeof pd === "function" ? pd(o) : pd) || {};
+  const p = o.play || {};
+  // striking_distance 의 "무엇을" 뒤에는 평균 게재순위 안내 + [순위] 화면 버튼이
+  // 이어 붙는다 — 그 버튼(window.go)은 화면에서만 만들 수 있어 서버 문구에는
+  // 없다(scoring._SD_PLAY 주석 참고). 여기서만 이어 붙인다.
+  const what = o.kind === "striking_distance" && p.what
+    ? `${p.what} ${window.sdAvgNote()}` : p.what;
   // 이 기회에서 실제로 손댈 페이지 — 노출이 가장 큰 것. 감사 결과가 있으면
   // "지금 title 이 무엇이고 무엇을 바꿔라"까지 나온다(없으면 왜 없는지 말한다).
   const url = o.target.startsWith("http") ? o.target : (pages[0] && pages[0].page);
@@ -1086,14 +965,14 @@ function oppDetail(o) {
   // 프롬프트 재료는 여기 이미 다 있다 — 손으로 다시 옮겨 적지 않게 한 장으로 세운다.
   const ask = askBlock({
     url, audit, acts: p.acts, deliver: p.deliver,
-    problem: `${window.kindLabel(o)} — ${o.reasoning || ""}`,
+    problem: `${o.label || o.kind} — ${o.reasoning || ""}`,
     queries: o.target.startsWith("http") ? [] : [{
       q: o.target,
       note: pages[0] ? `노출 ${num(pages[0].impressions)} · 클릭 ${num(pages[0].clicks)}`
                        + ` · CTR ${pages[0].ctr}% · 평균 ${pages[0].position ?? "—"}위` : "",
     }],
   });
-  return `<div class="det">${playList(p.what, p.acts)}${pageTable(pages)}${note}
+  return `<div class="det">${playList(what, p.acts)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}</div>`;
 }
@@ -1310,11 +1189,11 @@ function render(d) {
       }
     }
     if (d.opps) {
-      for (const o of d.opps) {
-        if (o.is_defensive == null) {
-          o.is_defensive = o.kind === "rank_decay" || o.kind === "cannibalization";
-        }
-      }
+      // is_defensive 는 isDefensive(o) 가 필요할 때마다 o.is_defensive ?? 4종 목록으로
+      // 풀어낸다 — 여기서 미리 채우지 않는다(예전엔 이 자리가 2종만 아는 사본이었다).
+      // label·play(방어여부와 달리 kind 만으로 못 되짚는다 — 밴드/갈래는 옛 박제본에
+      // 없다)는 옛 박제본이면 비어 있고, playList()·oppWhy() 가 그걸 빈 처방·kind
+      // 원문으로 그대로 받아들인다.
       if (!d.opp_counts) {
         d.opp_counts = {};
         for (const o of d.opps) d.opp_counts[o.kind] = (d.opp_counts[o.kind] || 0) + 1;
@@ -1342,22 +1221,16 @@ function render(d) {
   // 예전에는 개요의 VIEW 안에서 세웠고, 그래서 개요보다 먼저 그려지는 화면은
   // 같은 페이로드를 손에 쥐고도 빈손이었다.
   oppIndex(d.opps);
-  window.SD_BAND = Object.fromEntries((d.striking || []).map(r => [r.query, r.band]));
-  // content_gap 은 "아예 없다"(missing)와 "밀린다"(weak)를 한 kind 로 담는다 —
-  // 할 일이 정반대다(새로 쓴다 vs 있는 걸 고친다). 어느 쪽인지는 kw_gap 행만 안다.
-  window.GAP_KIND = Object.fromEntries(
-    (d.kw_gap || []).map(r => [String(r.keyword ?? "").trim().toLowerCase(), r.kind]));
   window.SD_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   window.QUERY_PAGES = d.query_pages || {};
   window.PAGE_AUDITS = d.page_audits || {};
+  window.KIND_LABELS = d.kind_labels || {};  // kind → 통칭 라벨. [기록]·필터 칩처럼
+                                              // 대상 없이 kind 만 아는 자리가 쓴다.
 
   // 화면 하나가 던져도 나머지는 그려져야 한다 — 예전에는 조립 순서상 뒤에 오는
   // 화면이 통째로 비었고, 왜 비었는지는 아무 데도 안 남았다.
-  // 공유 부품은 인자로도 건넨다: 새 뷰는 파일 스코프에서 집어 가지 말고 이걸 받는다.
-  const helpers = {$, esc, num, delta, rankDelta, table, csv, post, copyCmd,
-                   rules: RULES, readonly: READONLY};
   for (const v of VIEW_RENDER) {
-    try { (v.render || v)(d, helpers); }
+    try { (v.render || v)(d); }
     catch (e) { console.error(`화면 [${(v && v.id) || "?"}] 을 그리지 못했습니다`, e); }
   }
 }
