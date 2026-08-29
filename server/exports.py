@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import db  # noqa: E402
+import scoring  # noqa: E402
 
 
 _ALLOWED = ("keywords", "opportunities", "queries", "index")
@@ -148,9 +149,7 @@ def summary(project: str) -> dict:
                 GROUP BY snapshot_date
                 ORDER BY snapshot_date DESC LIMIT 1 OFFSET 1""", (pid,)).fetchone()
         delta_clicks = (clicks - int(prev[0])) if (last_run and prev) else None
-        keywords_active = int(conn.execute(
-            "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
-            (pid,)).fetchone()[0])
+        keywords_active = db.count_active_keywords(conn, pid)
         opp_count = int(conn.execute(
             "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
             (pid,)).fetchone()[0])
@@ -199,11 +198,12 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
     try:
         p = db.get_project(conn, project)
         pid = p["id"]
-        snaps = [r[0] for r in conn.execute(
-            "SELECT DISTINCT snapshot_date FROM gsc_snapshots WHERE project_id=?"
-            " ORDER BY snapshot_date DESC LIMIT 2", (pid,))]
-        if not snaps:
+        # 짝짓기는 scoring.snapshot_pair() 하나로 — 날짜만 보고 직전을 고르면
+        # period_days 가 다른 스냅샷끼리 빼져서 Δ가 거짓이 된다 (scoring.md 4-3b).
+        cur, prev_date, period, period_mismatch = scoring.snapshot_pair(conn, pid)
+        if not cur:
             return {"snapshot": None, "totals": None, "prev": None,
+                    "period_mismatch": False,
                     "daily": [], "queries": [], "pages": [], "devices": []}
 
         def totals(snap: str) -> dict:
@@ -220,7 +220,7 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
             return [{"key": k, "clicks": int(c), "impressions": int(i),
                      "ctr": _rate(int(c), int(i)), "position": _pos(pw, int(i))}
                     for k, c, i, pw in conn.execute(
-                        _DIM_SQL.format(col=col), (pid, snaps[0], top))]
+                        _DIM_SQL.format(col=col), (pid, cur, top))]
 
         # 기기 분해는 별도 테이블이고 수집 주기가 본체와 어긋날 수 있다 — 자기 최신을 쓴다.
         bsnap = conn.execute(
@@ -243,8 +243,9 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
                      "SELECT date, clicks, impressions, ctr, position FROM gsc_daily"
                      " WHERE project_id=? ORDER BY date DESC LIMIT ?", (pid, days))][::-1]
 
-        return {"snapshot": snaps[0], "totals": totals(snaps[0]),
-                "prev": totals(snaps[1]) if len(snaps) > 1 else None,
+        return {"snapshot": cur, "totals": totals(cur),
+                "prev": totals(prev_date) if prev_date else None,
+                "period_mismatch": period_mismatch,
                 "daily": daily, "queries": dim("query"), "pages": dim("page"),
                 "devices": devices}
     finally:
@@ -362,6 +363,27 @@ def demo() -> None:
         assert [q["key"] for q in pf["queries"]] == ["q", "q2"], pf["queries"]
         assert pf["pages"][0]["key"] == "/p", pf["pages"]
         assert pf["devices"] == [] and pf["daily"] == [], "없는 축이 빈 목록이 아니다"
+        assert pf["prev"] is None and pf["period_mismatch"] is False,             "스냅샷이 하나뿐인데 mismatch 로 잘못 판정"
+
+        # period_mismatch — 일부러 기간이 다른 스냅샷 두 개를 넣는다. 고치기 전
+        # 코드(날짜만 보고 직전을 고름)는 이걸 조용히 삼켜 prev 를 내준다.
+        conn4 = db.connect()
+        conn4.execute(
+            "INSERT INTO projects(name, type, domain) VALUES (?,?,?)",
+            ("mismatch", "saas", "m.example.com"))
+        pid4 = conn4.execute(
+            "SELECT id FROM projects WHERE name=?", ("mismatch",)).fetchone()[0]
+        conn4.executemany(
+            """INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days,
+                 query, page, clicks, impressions, ctr, position)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            [(pid4, "2026-02-01", 90, "q", "/p", 3, 60, 0.05, 6.0),
+             (pid4, "2026-01-01", 28, "q", "/p", 1, 20, 0.05, 8.0)])
+        conn4.commit(); conn4.close()
+        pf2 = perf("mismatch")
+        assert pf2["snapshot"] == "2026-02-01", pf2["snapshot"]
+        assert pf2["prev"] is None, "기간이 다른 스냅샷을 짝으로 골랐다"
+        assert pf2["period_mismatch"] is True, "period_mismatch 를 안 알렸다"
 
         conn.close()
     print("exports: ok")

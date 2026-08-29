@@ -169,6 +169,89 @@ def test_scoring_rules():
     scoring._selfcheck()
 
 
+def test_load_covers_every_kind():
+    """scoring.load() 가 KINDS 명부 14종을 전부 실제로 낸다 — end-to-end.
+
+    scoring._selfcheck() 는 ALL_KINDS·KINDS·라벨이 서로 어긋나지 않는지만 본다
+    (정적 대조). 이 테스트는 그걸 넘어 진짜 데이터를 깔고 load() 를 돌려서
+    "명부에 있는 kind 가 실제로 opportunities 에 찍히는가"를 증명한다 — 검출기
+    시그니처가 달라 명부 순회가 어느 한 kind 를 조용히 건너뛰어도 여기서 잡힌다.
+    """
+    conn = db.connect()
+    p = _project(conn, "kinds")
+    pid = p["id"]
+
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+        "clicks,impressions,ctr,position) VALUES(?,?,?,?,?,?,?,0.0,?)",
+        [(pid, "2026-08-07", 28, "밀리는키워드", None, 5, 100, 12.0),
+         (pid, "2026-08-07", 28, "1페이지키워드", None, 9, 300, 3.0),
+         (pid, "2026-08-07", 28, "하락키워드", None, 10, 100, 5.0),
+         (pid, "2026-08-14", 28, "밀리는키워드", None, 6, 110, 11.5),
+         (pid, "2026-08-14", 28, "1페이지키워드", None, 9, 300, 3.0),
+         (pid, "2026-08-14", 28, "하락키워드", None, 1, 100, 9.0),
+         (pid, "2026-08-14", 28, "pseo후보", None, 0, 60, 6.0),
+         (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/a", 3, 60, 4.0),
+         (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0)])
+
+    conn.execute("INSERT INTO keywords(project_id, keyword, cluster, is_active) "
+                 "VALUES(?, '미커버키워드', 'c1', 1)", (pid,))
+    conn.execute("INSERT INTO keywords(project_id, keyword, is_active, volume) "
+                 "VALUES(?, 'aio빠진키워드', 1, 500)", (pid,))
+    aio_kw_id = conn.execute("SELECT id FROM keywords WHERE keyword='aio빠진키워드'").fetchone()[0]
+    conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present, "
+                 "aio_cited) VALUES(?, '2026-08-14T00:00:00Z', 15, 1, 0)", (aio_kw_id,))
+
+    conn.executemany(
+        "INSERT INTO gsc_breakdown(project_id, snapshot_date, period_days, dim, dim_value, "
+        "query, clicks, impressions, ctr, position) VALUES(?, '2026-08-17', 28, 'device', ?, "
+        "'모바일밀림', ?, ?, 0.0, ?)",
+        [(pid, "MOBILE", 20, 1240, 12.4), (pid, "DESKTOP", 50, 500, 7.1)])
+
+    conn.execute(
+        "INSERT INTO gsc_index_status(project_id, checked_date, url, verdict, coverage_state, "
+        "robots_txt_state) VALUES(?, '2026-08-18', '/blocked', 'FAIL', 'Blocked by robots.txt', "
+        "'DISALLOWED')", (pid,))
+
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, '이 도구 추천해줘')", (pid,))
+    prompt_id = conn.execute("SELECT id FROM ai_prompts WHERE project_id=?", (pid,)).fetchone()[0]
+    with db.run(conn, pid, "ai") as r:
+        conn.execute("INSERT INTO ai_checks(prompt_id, run_id, engine, cited_domains_json) "
+                     "VALUES(?, ?, 'chatgpt', '[\"rival.com\"]')", (prompt_id, r.id))
+
+    conn.execute(
+        "INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position, "
+        "our_position, volume, kind) VALUES(?, '2026-08-14', '경쟁사만있는키워드', 'rival.com', "
+        "3, NULL, 800, 'missing')", (pid,))
+
+    run_id = conn.execute(
+        "INSERT INTO crawl_runs(project_id, finished_at, seed) VALUES(?, '2026-08-18T00:00:00Z', "
+        "'sitemap') RETURNING id", (pid,)).fetchone()[0]
+    conn.execute("INSERT INTO crawl_issues(run_id, kind, severity, url, detail) "
+                 "VALUES(?, 'http_error', 'bad', '/404', '404')", (run_id,))
+
+    conn.execute(
+        "INSERT INTO backlinks(project_id, checked_date, url_from, url_to, domain_from, rank, "
+        "is_broken) VALUES(?, '2026-08-18', 'https://o.com/a', 'https://e.com/dead', 'o.com', "
+        "40, 1)", (pid,))
+    conn.execute(
+        "INSERT INTO link_intersect(project_id, checked_date, domain, rank, hits, targets, "
+        "we_have) VALUES(?, '2026-08-18', 'authority.com', 55, 2, 'r1.com,r2.com', 0)", (pid,))
+    conn.commit()
+    conn.close()
+
+    scoring.load("kinds")
+
+    conn = db.connect()
+    kinds = {r[0] for r in conn.execute(
+        "SELECT DISTINCT kind FROM opportunities WHERE project_id=?", (pid,))}
+    conn.close()
+    missing = set(scoring.ALL_KINDS) - kinds
+    assert not missing, f"명부엔 있는데 load() 가 안 낸 kind: {missing}"
+    extra = kinds - set(scoring.ALL_KINDS)
+    assert not extra, f"load() 가 냈는데 명부엔 없는 kind: {extra}"
+
+
 def test_collector_settings():
     """설정 우선순위(CLI > 프로젝트 yaml > config.yaml > 리터럴) 및 0값 존중 자체점검."""
     import argparse
@@ -177,10 +260,14 @@ def test_collector_settings():
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.7, type=float)
     collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=99, type=int)
     collector.add_setting(ap, "--custom", key="custom_key", fallback=42, type=int)
+    specs = ap._collector_settings   # settings() 는 이제 이 명부를 명시적으로 받는다 —
+                                      # 프로세스 전역이던 시절엔 수집기끼리 같은 dest 를
+                                      # 다른 key 로 등록해도 서로 덮어썼다.
 
     # 1. CLI 최우선 + 0도 유효값 (0이 fallback 및 프로젝트 yaml을 이긴다)
     a1 = ap.parse_args(["--depth", "3", "--max-keywords", "0", "--throttle", "0"])
-    s1 = collector.settings(a1, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0})
+    s1 = collector.settings(a1, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0},
+                            specs)
     assert s1["serp_depth"] == 3
     assert s1["limits.max_keywords"] == 0, "CLI 0이 프로젝트 yaml 및 fallback을 이겨야 한다"
     assert s1["max_keywords"] == 0
@@ -188,17 +275,17 @@ def test_collector_settings():
 
     # 2. 프로젝트 yaml
     a2 = ap.parse_args([])
-    s2 = collector.settings(a2, {"serp_depth": 9, "limits": {"max_keywords": 5}})
+    s2 = collector.settings(a2, {"serp_depth": 9, "limits": {"max_keywords": 5}}, specs)
     assert s2["serp_depth"] == 9
     assert s2["limits.max_keywords"] == 5
 
     # 3. config.yaml defaults
-    s3 = collector.settings(a2, None)
+    s3 = collector.settings(a2, None, specs)
     assert s3["throttle"] in (0.5, 0.7)
     assert s3["serp_depth"] == 10
 
     # 4. fallback
-    s4 = collector.settings(a2, {})
+    s4 = collector.settings(a2, {}, specs)
     assert s4["custom_key"] == 42
     assert s4["limits.max_keywords"] == 99
 

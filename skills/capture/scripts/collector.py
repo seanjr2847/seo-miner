@@ -74,17 +74,19 @@ class _Setting:
         self.help = help_text
 
 
-_REGISTRY: dict[str, _Setting] = {}
-
-
 def add_setting(ap, flag: str, *, key: str, fallback, type=int, help: str | None = None) -> None:
-    """argparse에 default=None으로 등록하고 설정 메타데이터(dest, key, fallback, type)를 기록한다."""
+    """argparse에 default=None으로 등록하고 설정 메타데이터(dest, key, fallback, type)를 ap에 기록한다.
+
+    ap 마다 지역이다 — 모듈 전역에 쌓지 않는다. 프로세스 하나가 수집기 열 개를 돌리며
+    _parser() 를 열 번 부르던 시절엔 이걸 전역 dict 에 key 로 쌓아서, 수집기 A 의
+    --limit(dest="limit")이 수집기 B 의 --limit(dest 는 같고 key 는 다른)까지 같이
+    덮어썼다. ap 지역으로 내리면 그 섞임이 구조적으로 안 생긴다.
+    """
     dest = flag.lstrip("-").replace("-", "_")
     spec = _Setting(dest=dest, key=key, fallback=fallback, type_fn=type, help_text=help)
     if not hasattr(ap, "_collector_settings"):
         ap._collector_settings = []
     ap._collector_settings.append(spec)
-    _REGISTRY[key] = spec
 
     kwargs = {"type": type, "default": None}
     if help is not None:
@@ -92,15 +94,15 @@ def add_setting(ap, flag: str, *, key: str, fallback, type=int, help: str | None
     ap.add_argument(flag, **kwargs)
 
 
-def settings(args, cfg: dict | None) -> dict:
-    """등록된 모든 설정을 우선순위대로 해석한다:
+def settings(args, cfg: dict | None, specs: list) -> dict:
+    """specs(이 수집기가 add_setting 으로 등록한 것들, 보통 ap._collector_settings)를
+    우선순위대로 해석한다:
     CLI (None 아니면, 0도 유효값) > 프로젝트 yaml > config.yaml defaults > fallback.
     limits.* 키는 프로젝트 yaml의 limits 아래에서 읽는다.
     """
     out = {}
     gcfg_defaults = (config().get("defaults") or {})
 
-    specs = list(_REGISTRY.values())
     for spec in specs:
         val = None
 
@@ -212,10 +214,11 @@ class Stage:
             self.conn.close()
         return False            # 예외는 그대로 올린다
 
-    def settings(self, args) -> dict:
-        """이 단계의 설정 해석. throttle 은 러너가 바로 물고 간다 —
+    def settings(self, ap, args) -> dict:
+        """이 단계의 설정 해석. ap 는 이 수집기의 _parser() 가 만든 것 — 거기 등록된
+        설정만 푼다(다른 수집기 것과 안 섞인다). throttle 은 러너가 바로 물고 간다 —
         수집기마다 같은 값을 자기 지역변수로 다시 옮기던 자리다."""
-        s = settings(args, self.cfg)
+        s = settings(args, self.cfg, getattr(ap, "_collector_settings", []))
         if s.get("throttle") is not None:
             self.throttle = float(s["throttle"])
         return s
@@ -324,9 +327,11 @@ def _selfcheck() -> None:
     add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=99, type=int)
     add_setting(ap, "--custom", key="custom_key", fallback=42, type=int)
 
+    specs = ap._collector_settings
+
     # 1. CLI 최우선 + 0도 유효값 (fallback을 이긴다)
     a = ap.parse_args(["--depth", "3", "--max-keywords", "0", "--throttle", "0"])
-    s = settings(a, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0})
+    s = settings(a, {"serp_depth": 9, "limits": {"max_keywords": 50}, "throttle": 1.0}, specs)
     assert s["serp_depth"] == 3
     assert s["limits.max_keywords"] == 0, "CLI 0이 프로젝트 yaml/fallback을 이겨야 한다"
     assert s["max_keywords"] == 0
@@ -334,19 +339,30 @@ def _selfcheck() -> None:
 
     # 2. 프로젝트 yaml
     a_none = ap.parse_args([])
-    s_yaml = settings(a_none, {"serp_depth": 9, "limits": {"max_keywords": 5}})
+    s_yaml = settings(a_none, {"serp_depth": 9, "limits": {"max_keywords": 5}}, specs)
     assert s_yaml["serp_depth"] == 9
     assert s_yaml["limits.max_keywords"] == 5
 
     # 3. config.yaml defaults
-    s_cfg = settings(a_none, None)
+    s_cfg = settings(a_none, None, specs)
     assert s_cfg["throttle"] in (0.5, 0.7)
     assert s_cfg["serp_depth"] == 10
 
     # 4. 코드 fallback
-    s_fb = settings(a_none, {})
+    s_fb = settings(a_none, {}, specs)
     assert s_fb["custom_key"] == 42
     assert s_fb["limits.max_keywords"] == 99
+
+    # 5. 격리 — 다른 수집기가 같은 dest, 다른 key로 등록해도 안 섞인다.
+    #    (run_all 이 한 프로세스에서 수집기 여러 개를 부를 때 --limit 이 dest="limit"로
+    #    6번 등록되던 자리 — 예전엔 전역 registry 라 한쪽 CLI 값이 나머지 다섯 키를
+    #    같이 덮어썼다. 지금 코드로 이 assert 만 빼고 돌리면 재현된다.)
+    ap_a, ap_b = argparse.ArgumentParser(), argparse.ArgumentParser()
+    add_setting(ap_a, "--limit", key="crawl_urls", fallback=300, type=int)
+    add_setting(ap_b, "--limit", key="limits.backlink_limit", fallback=200, type=int)
+    s_a = settings(ap_a.parse_args(["--limit", "5"]), None, ap_a._collector_settings)
+    assert s_a == {"crawl_urls": 5, "limit": 5}, s_a
+    assert "limits.backlink_limit" not in s_a, "다른 수집기의 키가 섞였다"
 
     _runner_check()
     print("collector self-check ok")

@@ -17,11 +17,10 @@ StageResult 를 그대로 호출자에게 넘긴다.
 
 설계 원칙:
   - 표(STAGES)에는 디스패치가 한 종류뿐이다. 모든 단계가
-    fn(project, *, dry_run, **opts) -> StageResult 다. scoring.py / dashboard.py 는
-    수정 금지 파일이라 subprocess 격리 실행이 유지되지만, 그 호출은
-    load_opportunities / export_report 라는 얇은 함수 뒤로 들어가 표에서는
-    다른 단계와 구분되지 않는다.
-  - sys.executable 사용 (Windows 스토어 파이썬 스텁 회피).
+    fn(project, *, dry_run, **opts) -> StageResult 다. scoring.load / dashboard.export 는
+    직접 호출이다 — 나머지 열 단계와 마찬가지로 in-process 로 돈다. 둘 다 로컬
+    sqlite/파일 I/O 뿐이라(외부 네트워크·os.environ 변경 없음) 격리할 이유가 없었고,
+    scoring 은 이미 collect_* 절반이 물고 와 있었다.
   - --dry-run 은 각 단계에 위임하여 비용 고지.
   - 하나의 단계가 실패해도 체인은 계속 진행 (단, gsc 실패 시 즉시 중단).
   - run_chain 은 판정도 요약도 하지 않는다 — [(단계 이름, StageResult)] 를 돌려주고,
@@ -29,7 +28,6 @@ StageResult 를 그대로 호출자에게 넘긴다.
     행 수·비용·산출물 경로가 정수 exit code 로 접혀 버려지던 자리가 이것이다.
 """
 import argparse
-import subprocess
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -46,76 +44,39 @@ import collect_metrics     # noqa: E402
 import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
 import collector           # noqa: E402
+import dashboard           # noqa: E402
 import db                  # noqa: E402
 import expand_keywords     # noqa: E402
+import scoring             # noqa: E402
 import serp_adapter        # noqa: E402
 
 StageResult = collector.StageResult
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-TIMEOUT_SECONDS = 1800  # 외부 스크립트 단계 subprocess 최대 30분 타임아웃
 ABORT_REASON = "GSC 수집 실패로 체인 중단됨"
 
 SEPARATOR = "=" * 62
 SUB_SEPARATOR = "-" * 62
 
 
-def _run_script(script: str, argv: list[str], *, capture: bool = False):
-    """수정 금지 스크립트(scoring.py / dashboard.py)를 subprocess 로 돌린다.
-
-    표를 균질하게 만들려고 결과를 StageResult 로 접어 돌려준다.
-    capture=True 면 stdout 을 받아 그대로 콘솔에 흘리고 함께 반환한다 —
-    호출부가 거기서 산출물 경로를 읽는다.
-
-    Returns:
-        (StageResult, stdout 문자열)
-    """
-    cmd = [sys.executable, str(SCRIPTS_DIR / script), *argv]
-    kwargs = {"timeout": TIMEOUT_SECONDS}
-    if capture:
-        kwargs.update(capture_output=True, text=True, encoding="utf-8", errors="replace")
-    try:
-        res = subprocess.run(cmd, **kwargs)
-    except subprocess.TimeoutExpired:
-        return StageResult(ok=False, reason=f"타임아웃 ({TIMEOUT_SECONDS}초 초과)"), ""
-
-    out = (getattr(res, "stdout", "") or "") if capture else ""
-    if capture:
-        if out:
-            print(out, end="")
-        err = getattr(res, "stderr", "") or ""
-        if err:
-            print(err, end="", file=sys.stderr)
-    if res.returncode != 0:
-        return StageResult(ok=False, reason=f"exit code {res.returncode}"), out
-    return StageResult(ok=True), out
-
-
 def load_opportunities(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
-    """gaps 단계 — scoring.py load. 외부 호출 0건이라 --dry-run 플래그가 없다."""
+    """gaps 단계 — scoring.load. 외부 호출 0건이라 --dry-run 플래그가 없다."""
     if dry_run:
         reason = "외부 호출 0건 — 실제 실행 시 기회를 적재합니다 (돌 예정)"
         print(f"[gaps] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
-    return _run_script("scoring.py", ["load", project])[0]
+    scoring.load(project)
+    return StageResult(ok=True)
 
 
 def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
-    """report 단계 — dashboard.py --export.
-
-    산출물 경로는 dashboard 가 찍는 `report: ...` 한 줄에서 읽는다. 경로 규칙의
-    정본은 dashboard.export() 이고, 여기서 같은 규칙을 다시 계산하지 않는다.
-    """
+    """report 단계 — dashboard.export. 산출물 경로 규칙의 정본은 dashboard.export() 고,
+    여기서는 그게 돌려주는 Path 를 그대로 옮긴다(파싱 없음)."""
     if dry_run:
         reason = "외부 호출 0건 — 실제 실행 시 대시보드 리포트 HTML을 내보냅니다 (돌 예정)"
         print(f"[report] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
-    r, out = _run_script("dashboard.py", ["--export", "--project", project], capture=True)
-    if r.ok:
-        for line in out.splitlines():
-            if line.startswith("report: "):
-                r.artifact = line[len("report: "):].strip()
-    return r
+    out = dashboard.export(project)
+    return StageResult(ok=True, artifact=str(out))
 
 
 # 단계 정의. 표에는 디스패치가 한 종류뿐 — fn(project, *, dry_run, **opts) -> StageResult.

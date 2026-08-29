@@ -91,10 +91,10 @@ def collect(project: str, *,
         StageResult(ok=...). 정상 종료면 ok=True. 사유가 있는 비종료는
         ok=False, skipped=True, reason 에 한국어 안내.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(limit=index_urls, throttle=throttle))
+        s = st.settings(ap, argparse.Namespace(limit=index_urls, throttle=throttle))
         limit = s["index_urls"]
         throttle = st.throttle
         prop = p["gsc_property"]

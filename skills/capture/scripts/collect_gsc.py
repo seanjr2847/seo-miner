@@ -154,10 +154,10 @@ def collect(project: str, *,
         StageResult(ok=...) — 정상 종료면 ok=True. 인증 누락·구성 누락은
         ok=False, skipped=True, reason 에 한국어 안내.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
-        s = st.settings(argparse.Namespace(days=gsc_days, breakdown=gsc_breakdown))
+        s = st.settings(ap, argparse.Namespace(days=gsc_days, breakdown=gsc_breakdown))
         days = s["gsc_days"]
         breakdown = s["gsc_breakdown"]
         dims = [d.strip().lower() for d in (breakdown or "").split(",") if d.strip()]

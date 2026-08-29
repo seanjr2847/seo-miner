@@ -104,11 +104,11 @@ def collect(project: str, *,
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
         gcfg = collector.config()
-        s = st.settings(argparse.Namespace(
+        s = st.settings(ap, argparse.Namespace(
             throttle=throttle, samples=ai_samples, max_prompts=max_ai_prompts))
         samples = s["ai_samples"]
         max_ai_prompts = s["limits.max_ai_prompts"]

@@ -15,6 +15,7 @@ import math
 import re
 import sqlite3
 import sys
+from collections import namedtuple
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
 PAGE1 = 10
@@ -96,13 +97,12 @@ INTENT_NAVIGATIONAL = {
     "로그인", "공식", "홈페이지", "login", "official", "homepage",
 }
 
-# 지키는 기회(방어) kind 집합. 판정은 is_defensive() 하나이고 화면은 그 결과를 읽는다.
-# 순위 하락·내부 경쟁은 잃던 것을 막는 방어 기회다.
-DEFENSIVE_KINDS = {"rank_decay", "cannibalization", "backlink_broken", "crawl_issue"}
-
 # 이 리포가 만드는 기회 종류 한 벌 — 화면의 KIND_LABEL·PLAY 와 짝이 맞아야 한다
 # (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). stage._check_seams 가
-# 이 튜플과 dashboard.html 의 두 표를 대조한다 — 여기가 정본이다.
+# 이 튜플을 정규식으로 읽는다 — 리터럴 문자열 나열 그대로 둬야 한다(파생시키지 않는다).
+# 이름·순서의 정본은 여기다. 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래
+# KINDS 명부(_KIND_SPECS)가 이 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도
+# 거기서 파생된다 (is_defensive() 는 그 결과를 읽는다).
 ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
              "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
@@ -994,8 +994,212 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     return round(min(100.0, max(0.0, raw * 100)), 1)
 
 
+# 기회 종류 명부 — 한 행이 "어떻게 찾고(detect) · score()에 뭘 넘기고(metrics) ·
+# 무엇을 대상(target)이라 부르고 · 근거 문장을 어떻게 쓰는지(reasoning)"를 다 쥔다.
+# load() 는 이 명부를 순회할 뿐 kind 문자열을 직접 적지 않는다 — 명부에 없는 kind 는
+# 나올 수가 없다(구조적으로), 명부에 있는데 빠지는 kind 도 없다(전부 돈다).
+#
+# ALL_KINDS(위)가 이름·순서의 정본이다 — stage._check_seams 가 그 튜플을 정규식으로
+# 읽는다. KINDS 는 ALL_KINDS 를 그대로 따라가며 _KIND_SPECS 에서 나머지를 채운
+# 파생값이다(반대 방향이 아니라 이 방향인 이유: ALL_KINDS 가 문자열 리터럴 나열
+# 그대로여야 그 정규식이 계속 읽을 수 있다). DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
+#
+# 검출기 시그니처가 저마다 달라(striking 은 brands=, pseo_pattern 은 limit=10,
+# backlink_* 는 backlink_gaps() 한 번의 앞/뒤 절반) 억지로 한 모양에 밀어 넣지
+# 않는다 — detect 는 ctx(dict) 하나만 받는 걸로 통일해 그 안에서 각자 필요한 인자를
+# 골라 쓰게 한다.
+_Kind = namedtuple("_Kind", "name label defensive detect metrics target reasoning")
+
+
+def _coverage_rows(ctx: dict) -> list[dict]:
+    """coverage() 는 클러스터별 dict 하나를 주지, per-row 목록을 안 준다 — 여기서 편다."""
+    cov = coverage(ctx["conn"], ctx["pid"])
+    cov_vol = cov.get("volume_by_cluster") or {}
+    return [{"cluster": cl, "n": n, "vol": cov_vol.get(cl, 0)}
+            for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1])]
+
+
+def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
+    tg = [t.strip() for t in (r["targets"] or "").split(",")[:2] if t.strip()]
+    s = f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 없습니다"
+    if tg:
+        s += f" — {', '.join(tg)}"
+    if r["rank"]:
+        s += f" (지수 {r['rank']})"
+    return s
+
+
+_KIND_SPECS = {
+    "striking_distance": dict(
+        label="밀면 오를 검색어", defensive=False,
+        detect=lambda ctx: striking(ctx["conn"], ctx["pid"], ctx["cur"], brands=ctx["brands"]),
+        metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        # 이 kind 는 4~20위를 잡고 band 로 갈린다. 4~10위는 이미 1페이지라
+        # "1페이지까지 0.0"이라는 문장이 뜻을 잃는다 — 밴드마다 다르게 말한다.
+        # "12.8위"는 실측 순위로 읽힌다 — 직접 검색해도 안 보인다는 문의가
+        # 여기서 나왔다. GSC 가 보고한 기간 평균이라고 앞에서 못 박는다.
+        reasoning=lambda r, ctx: (
+            f"평균 {r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
+            + (f"이미 1페이지, 상단(3위권)까지 {round(max(0.0, r['pos'] - 3), 1)}칸"
+               if r["band"] == "page1" else f"1페이지까지 {r['gap']}")
+            + f" ({r['band']}) (gsc {ctx['cur']})")),
+    "ctr_gap": dict(
+        label="CTR 미달", defensive=False,
+        detect=lambda ctx: ctr_gaps(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": r["impressions"], "position": r["position"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        reasoning=lambda r, ctx: (
+            f"{r['position']}위·노출 {r['impressions']:,}·CTR "
+            f"{r['actual_ctr']}%(기대 {r['expected_ctr']}%) — "
+            f"손실 약 {r['lost_clicks']:,}클릭/기간 (gsc {ctx['cur']})")),
+    "cannibalization": dict(
+        label="내부 경쟁", defensive=True,
+        detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": r["impressions"],
+                                 "position": r["pages"][0]["position"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        reasoning=lambda r, ctx: (
+            f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
+            f"{' vs '.join(pg['page'] for pg in r['pages'][:2])} (gsc {ctx['cur']})")),
+    "rank_decay": dict(
+        label="순위 하락", defensive=True,
+        detect=lambda ctx: rank_decay(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        reasoning=lambda r, ctx: (
+            f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
+            f"클릭 {r['dclk']:+d} — 방어 필요 (gsc {ctx['prev']}→{ctx['cur']})")),
+    "pseo_pattern": dict(
+        label="pSEO 패턴", defensive=False,
+        detect=lambda ctx: pseo_candidates(ctx["conn"], ctx["pid"], ctx["cur"], limit=10),
+        metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        reasoning=lambda r, ctx: (
+            f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
+            f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) (gsc {ctx['cur']})")),
+    # 분해 수집은 gsc_snapshots 와 수집일이 어긋날 수 있다(분해 수집을 끄면 뒤처진다)
+    # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 ctx['bd']로 따로 읽는다.
+    "device_gap": dict(
+        label="모바일 격차", defensive=False,
+        detect=lambda ctx: device_gap(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": r["mobile_imp"], "position": r["mobile_pos"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+        target=lambda r, ctx: r["query"],
+        reasoning=lambda r, ctx: (
+            f"모바일 {r['mobile_pos']}위 vs 데스크톱 {r['desktop_pos']}위 "
+            f"(Δ{r['dpos']})·모바일 노출 {r['mobile_imp']:,}·"
+            f"CTR {r['mobile_ctr']}% vs {r['desktop_ctr']}% — "
+            f"모바일에서만 밀린다 (gsc {ctx['bd']})")),
+    "index_blocked": dict(
+        label="색인 막힘", defensive=False,
+        detect=lambda ctx: index_issues(ctx["conn"], ctx["pid"]),
+        # 색인 안 된 URL 은 순위가 없다 — position None 을 score() 가 보수적 0.3 으로 본다
+        metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["url"])},
+        target=lambda r, ctx: r["url"],
+        reasoning=lambda r, ctx: f"{r['detail']} (gsc 색인 {ctx['ix']})"),
+    "coverage": dict(
+        label="미커버", defensive=False,
+        detect=_coverage_rows,
+        # 이 kind 는 정의상 노출이 0이다("아직 아무 데도 안 뜬다"). 검색량이 없으면
+        # 수요 신호도 0이라 점수가 늘 바닥이었다 — "새로 쓸 글"을 고를 때 순서가
+        # 뜻이 없었던 이유. volume 이 있으면 score() 가 그걸 수요로 대신 본다.
+        metrics=lambda r, ctx: {"impressions": 0, "volume": r["vol"], "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], f"cluster:{r['cluster']}")},
+        target=lambda r, ctx: f"cluster:{r['cluster']}",
+        reasoning=lambda r, ctx: (
+            f"활성 키워드 {r['n']}개가 GSC 노출·순위 체크 모두 부재 — 클러스터 '{r['cluster']}'"
+            + (f" · 월 검색량 합 {r['vol']:,}" if r["vol"] else ""))),
+    # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
+    #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
+    #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
+    "ai_citation_gap": dict(
+        label="AI 챗봇 인용 없음", defensive=False,
+        detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"])},
+        target=lambda r, ctx: r["prompt"],
+        reasoning=lambda r, ctx: (
+            f"엔진 {r['engines']}곳 답변 {r['checks']}건 중 인용 0"
+            + (f"·언급만 {r['mentioned']}건" if r["mentioned"] else "")
+            + (f" — 대신 {', '.join(r['rivals'])} 가 인용됩니다" if r["rivals"] else ""))),
+    "aio_exposure": dict(
+        label="구글 AI 요약 빠짐", defensive=False,
+        detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,
+                                 "position": r["position"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["keyword"])},
+        target=lambda r, ctx: r["keyword"],
+        reasoning=lambda r, ctx: (
+            "구글이 AI 요약을 붙이는데 내 링크가 없습니다"
+            + (f" · 실측 {r['position']}위" if r["position"] else "")
+            + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else ""))),
+    "content_gap": dict(
+        label="콘텐츠 공백", defensive=False,
+        detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"]),
+        # missing 은 our_position 이 NULL — score() 가 보수적 0.3 으로 본다(맞다: 아직 없다)
+        metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,
+                                 "position": r["our_position"],
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["keyword"])},
+        target=lambda r, ctx: r["keyword"],
+        reasoning=lambda r, ctx: (
+            f"{r['domain']} 가 {r['position']}위"
+            + (f", 나는 {r['our_position']}위 — 밀립니다" if r["our_position"] else ", 나는 아예 없습니다")
+            + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else ""))),
+    "crawl_issue": dict(
+        label="크롤에서 걸림", defensive=True,
+        detect=lambda ctx: crawl_gaps(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["url"])},
+        target=lambda r, ctx: r["url"],
+        reasoning=lambda r, ctx: f"{r['kind']} — {r['detail'] or '크롤에서 걸렸습니다'}"),
+    # backlink_broken·backlink_prospect 는 backlink_gaps() 한 번이 (broken, prospects)
+    # 튜플을 같이 준다 — detect 가 그중 자기 절반만 골라 쓴다(호출은 두 번 하지만
+    # 쿼리가 가벼워 굳이 ctx 로 캐싱하지 않는다. 억지로 공유하면 오히려 순서 의존이 생긴다).
+    "backlink_broken": dict(
+        label="깨진 백링크", defensive=True,
+        detect=lambda ctx: backlink_gaps(ctx["conn"], ctx["pid"])[0],
+        metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["url_to"])},
+        target=lambda r, ctx: r["url_to"],
+        reasoning=lambda r, ctx: (
+            f"{r['domain_from'] or host_of(r['url_from'])} 가 이 주소로 링크를 걸었는데 "
+            f"페이지가 없습니다"
+            + (f" (지수 {r['rank']})" if r["rank"] else "")
+            + " — 이미 번 링크입니다")),
+    "backlink_prospect": dict(
+        label="경쟁사만 받는 링크", defensive=False,
+        detect=lambda ctx: backlink_gaps(ctx["conn"], ctx["pid"])[1],
+        metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["domain"])},
+        target=lambda r, ctx: r["domain"],
+        reasoning=_reason_backlink_prospect),
+}
+
+# ALL_KINDS 의 순서·이름 그대로 명부를 만든다 — 이름은 위 한 곳(ALL_KINDS)에만 적혀
+# 있고, 여기서 빠진 이름이 있으면 KeyError 로 즉시 죽는다(조용히 빠지지 않는다).
+KINDS: tuple[_Kind, ...] = tuple(_Kind(name, **_KIND_SPECS[name]) for name in ALL_KINDS)
+_KIND_BY_NAME = {k.name: k for k in KINDS}
+DEFENSIVE_KINDS = frozenset(k.name for k in KINDS if k.defensive)
+
+
+def kind_label(kind: str) -> str:
+    """기회 종류의 한국어 라벨 — 셸의 KIND_LABEL 과 짝이 맞는 정본.
+
+    모르는 kind 면 원문을 그대로 돌려준다 — 화면의 window.kindLabel() 폴백과 같은 태도.
+    """
+    k = _KIND_BY_NAME.get(kind)
+    return k.label if k else (kind or "")
+
+
 def load(project: str) -> None:
-    """서브커맨드 load — 분석 함수 전부 돌려 opportunities 에 적재.
+    """서브커맨드 load — KINDS 명부를 순회해 opportunities 에 적재.
 
     projects.type 을 읽어 프리셋 계수(WEIGHTS)를 적용한다 — 분석 코드가 type 을
     안 읽던 결함의 수정. 트리아지 상태(acked·done·dismissed) 보존은
@@ -1015,146 +1219,15 @@ def load(project: str) -> None:
     brands = foreign_brands(conn, pid, cfg)
     # 의도 미분류(NULL)만 채움 — Claude/사람 보정은 살아남음
     n_intent = _backfill_intents(conn, pid)
+    ctx = {"conn": conn, "pid": pid, "cur": cur, "prev": prev, "brands": brands,
+           "bd": _latest(conn, _LATEST_BD, (pid, "device")),
+           "ix": _latest(conn, _LATEST_IX, (pid,))}
     rows = []
-    for r in striking(conn, pid, cur, brands=brands):
-        rows.append({"kind": "striking_distance", "target": r["query"],
-                     "score": score("striking_distance",
-                                    {"impressions": r["imp"], "position": r["pos"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     # 이 kind 는 4~20위를 잡고 band 로 갈린다. 4~10위는 이미 1페이지라
-                     # "1페이지까지 0.0"이라는 문장이 뜻을 잃는다 — 밴드마다 다르게 말한다.
-                     # "12.8위"는 실측 순위로 읽힌다 — 직접 검색해도 안 보인다는 문의가
-                     # 여기서 나왔다. GSC 가 보고한 기간 평균이라고 앞에서 못 박는다.
-                     "reasoning": f"평균 {r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
-                                  + (f"이미 1페이지, 상단(3위권)까지 "
-                                     f"{round(max(0.0, r['pos'] - 3), 1)}칸"
-                                     if r["band"] == "page1" else f"1페이지까지 {r['gap']}")
-                                  + f" ({r['band']}) (gsc {cur})"})
-    for r in ctr_gaps(conn, pid):
-        rows.append({"kind": "ctr_gap", "target": r["query"],
-                     "score": score("ctr_gap",
-                                    {"impressions": r["impressions"],
-                                     "position": r["position"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     "reasoning": f"{r['position']}위·노출 {r['impressions']:,}·CTR "
-                                  f"{r['actual_ctr']}%(기대 {r['expected_ctr']}%) — "
-                                  f"손실 약 {r['lost_clicks']:,}클릭/기간 (gsc {cur})"})
-    for r in cannibalization(conn, pid):
-        tops = " vs ".join(pg["page"] for pg in r["pages"][:2])
-        rows.append({"kind": "cannibalization", "target": r["query"],
-                     "score": score("cannibalization",
-                                    {"impressions": r["impressions"],
-                                     "position": r["pages"][0]["position"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     "reasoning": f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
-                                  f"{tops} (gsc {cur})"})
-    for r in rank_decay(conn, pid):
-        rows.append({"kind": "rank_decay", "target": r["query"],
-                     "score": score("rank_decay",
-                                    {"impressions": r["imp"], "position": r["pos"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     "reasoning": f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
-                                  f"클릭 {r['dclk']:+d} — 방어 필요 (gsc {prev}→{cur})"})
-    for r in pseo_candidates(conn, pid, cur, limit=10):
-        rows.append({"kind": "pseo_pattern", "target": r["query"],
-                     "score": score("pseo_pattern",
-                                    {"impressions": r["imp"], "position": r["pos"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     "reasoning": f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
-                                  f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) "
-                                  f"(gsc {cur})"})
-    # 분해·색인은 gsc_snapshots 와 수집일이 어긋날 수 있다 (분해 수집을 끄면 뒤처진다)
-    # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 각자의 최신일을 따로 읽는다.
-    bd = _latest(conn, _LATEST_BD, (pid, "device"))
-    for r in device_gap(conn, pid):
-        rows.append({"kind": "device_gap", "target": r["query"],
-                     "score": score("device_gap",
-                                    {"impressions": r["mobile_imp"], "position": r["mobile_pos"],
-                                     "fit": _fit_of(conn, pid, r["query"])}, ptype),
-                     "reasoning": f"모바일 {r['mobile_pos']}위 vs 데스크톱 {r['desktop_pos']}위 "
-                                  f"(Δ{r['dpos']})·모바일 노출 {r['mobile_imp']:,}·"
-                                  f"CTR {r['mobile_ctr']}% vs {r['desktop_ctr']}% — "
-                                  f"모바일에서만 밀린다 (gsc {bd})"})
-    ix = _latest(conn, _LATEST_IX, (pid,))
-    for r in index_issues(conn, pid):
-        # 색인 안 된 URL 은 순위가 없다 — position None 을 score() 가 보수적 0.3 으로 본다
-        rows.append({"kind": "index_blocked", "target": r["url"],
-                     "score": score("index_blocked",
-                                    {"impressions": 0, "position": None,
-                                     "fit": _fit_of(conn, pid, r["url"])}, ptype),
-                     "reasoning": f"{r['detail']} (gsc 색인 {ix})"})
-    cov = coverage(conn, pid)
-    cov_vol = cov.get("volume_by_cluster") or {}
-    for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1]):
-        vol = cov_vol.get(cl, 0)
-        rows.append({"kind": "coverage", "target": f"cluster:{cl}",
-                     # 이 kind 는 정의상 노출이 0이다("아직 아무 데도 안 뜬다").
-                     # 검색량이 없으면 수요 신호도 0이라 점수가 늘 바닥이었다 —
-                     # 그래서 "새로 쓸 글"을 고를 때 이 목록의 순서가 뜻이 없었다.
-                     "score": score("coverage",
-                                    {"impressions": 0, "volume": vol, "position": None,
-                                     "fit": _fit_of(conn, pid, f"cluster:{cl}")}, ptype),
-                     "reasoning": f"활성 키워드 {n}개가 GSC 노출·순위 체크 모두 부재 — "
-                                  f"클러스터 '{cl}'"
-                                  + (f" · 월 검색량 합 {vol:,}" if vol else "")})
-    # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
-    #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
-    #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
-    for r in ai_gaps(conn, pid):
-        rivals = ", ".join(r["rivals"]) if r["rivals"] else ""
-        rows.append({"kind": "ai_citation_gap", "target": r["prompt"],
-                     "score": score("ai_citation_gap",
-                                    {"impressions": 0, "position": None,
-                                     "fit": _fit_of(conn, pid, r["prompt"])}, ptype),
-                     "reasoning": f"엔진 {r['engines']}곳 답변 {r['checks']}건 중 인용 0"
-                                  + (f"·언급만 {r['mentioned']}건" if r["mentioned"] else "")
-                                  + (f" — 대신 {rivals} 가 인용됩니다" if rivals else "")})
-    for r in aio_gaps(conn, pid):
-        rows.append({"kind": "aio_exposure", "target": r["keyword"],
-                     "score": score("aio_exposure",
-                                    {"impressions": 0, "volume": r["volume"] or 0,
-                                     "position": r["position"],
-                                     "fit": _fit_of(conn, pid, r["keyword"])}, ptype),
-                     "reasoning": f"구글이 AI 요약을 붙이는데 내 링크가 없습니다"
-                                  + (f" · 실측 {r['position']}위" if r["position"] else "")
-                                  + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")})
-    for r in content_gaps(conn, pid):
-        # missing 은 our_position 이 NULL — score() 가 보수적 0.3 으로 본다(맞다: 아직 없다)
-        rows.append({"kind": "content_gap", "target": r["keyword"],
-                     "score": score("content_gap",
-                                    {"impressions": 0, "volume": r["volume"] or 0,
-                                     "position": r["our_position"],
-                                     "fit": _fit_of(conn, pid, r["keyword"])}, ptype),
-                     "reasoning": f"{r['domain']} 가 {r['position']}위"
-                                  + (f", 나는 {r['our_position']}위 — 밀립니다"
-                                     if r["our_position"] else ", 나는 아예 없습니다")
-                                  + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")})
-    for r in crawl_gaps(conn, pid):
-        rows.append({"kind": "crawl_issue", "target": r["url"],
-                     "score": score("crawl_issue",
-                                    {"impressions": 0, "position": None,
-                                     "fit": _fit_of(conn, pid, r["url"])}, ptype),
-                     "reasoning": f"{r['kind']} — {r['detail'] or '크롤에서 걸렸습니다'}"})
-    bl_broken, bl_prospects = backlink_gaps(conn, pid)
-    for r in bl_broken:
-        rows.append({"kind": "backlink_broken", "target": r["url_to"],
-                     "score": score("backlink_broken",
-                                    {"impressions": 0, "position": None,
-                                     "fit": _fit_of(conn, pid, r["url_to"])}, ptype),
-                     "reasoning": f"{r['domain_from'] or host_of(r['url_from'])} 가 이 주소로 "
-                                  f"링크를 걸었는데 페이지가 없습니다"
-                                  + (f" (지수 {r['rank']})" if r["rank"] else "")
-                                  + " — 이미 번 링크입니다"})
-    for r in bl_prospects:
-        tg = (r["targets"] or "").split(",")[:2]
-        rows.append({"kind": "backlink_prospect", "target": r["domain"],
-                     "score": score("backlink_prospect",
-                                    {"impressions": 0, "position": None,
-                                     "fit": _fit_of(conn, pid, r["domain"])}, ptype),
-                     "reasoning": f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 없습니다"
-                                  + (f" — {', '.join(t.strip() for t in tg if t.strip())}"
-                                     if any(t.strip() for t in tg) else "")
-                                  + (f" (지수 {r['rank']})" if r["rank"] else "")})
+    for k in KINDS:
+        for r in k.detect(ctx):
+            rows.append({"kind": k.name, "target": k.target(r, ctx),
+                         "score": score(k.name, k.metrics(r, ctx), ptype),
+                         "reasoning": k.reasoning(r, ctx)})
     with db.run(conn, pid, "analysis") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
@@ -1328,6 +1401,19 @@ def _selfcheck() -> None:
     assert is_defensive("striking_distance") is False
     assert is_defensive("") is False
     assert is_defensive(None) is False
+
+    # ── KINDS 명부 — 정본(ALL_KINDS)·산출물(load 가 도는 명부)·라벨이 한 벌인지.
+    # 일부러 하나를 빼거나 더하면 여기서 바로 터져야 한다(조용히 안 맞는 채로 못 있는다).
+    assert set(_KIND_SPECS) == set(ALL_KINDS),                         f"_KIND_SPECS 와 ALL_KINDS 가 어긋났다: {set(_KIND_SPECS) ^ set(ALL_KINDS)}"
+    assert tuple(k.name for k in KINDS) == ALL_KINDS                   # 순서까지 같다
+    assert DEFENSIVE_KINDS == {"rank_decay", "cannibalization",
+                               "backlink_broken", "crawl_issue"}, DEFENSIVE_KINDS
+    assert all(k.label for k in KINDS), "라벨 없는 kind 가 있다"
+    assert len(set(k.label for k in KINDS)) == len(KINDS), "라벨이 겹치는 kind 가 있다"
+    assert kind_label("striking_distance") == "밀면 오를 검색어"
+    assert kind_label("crawl_issue") == "크롤에서 걸림"
+    assert kind_label("없는kind") == "없는kind"      # 모르면 원문 그대로 — window.kindLabel() 폴백과 같다
+    assert kind_label("") == ""
     assert gap_to_page1(10.0) == 0.0                                 # 1페이지 안이면 0 클램프
     assert gap_to_page1(9.9) == 0.0
     assert gap_to_page1(1.0) == 0.0

@@ -228,10 +228,10 @@ def collect(project: str, *,
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(limit=limit, throttle=throttle))
+        s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle))
         limit = s["page_urls"]
         if limit <= 0:
             print("[pages] page_urls=0 — 페이지 감사를 끄셨습니다.")

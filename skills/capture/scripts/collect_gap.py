@@ -351,7 +351,7 @@ def collect(project: str, *,
         StageResult(ok=...). 유료 키 부재만 ok=False, skipped=True (진짜 못 한
         것). 경쟁사 0건·dry-run 은 ok=True, skipped=True — 체인을 깨지 않는다.
     """
-    _parser()
+    ap = _parser()
     fetch = fetch or serp_adapter.fetch_labs_ranked_keywords
     post = post or serp_adapter.post_dataforseo
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
@@ -360,7 +360,7 @@ def collect(project: str, *,
             return st.skip("Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(argparse.Namespace(limit=gap_limit, throttle=throttle,
+        s = st.settings(ap, argparse.Namespace(limit=gap_limit, throttle=throttle,
                                            rivals=rivals, intersect=intersect))
         limit = s["limits.gap_limit"]
         # --domain 으로 좁혔으면 자동 탐지는 끈다 — 대상은 이미 사용자가 정했다.

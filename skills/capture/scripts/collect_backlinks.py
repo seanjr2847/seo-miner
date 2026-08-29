@@ -237,7 +237,7 @@ def collect(project: str, *,
     Returns:
         StageResult. 유료 키 부재만 ok=False(skip). 신선도·dry-run 은 ok=True, skipped=True.
     """
-    _parser()
+    ap = _parser()
     post = post or serp_adapter.post_dataforseo
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
@@ -246,7 +246,7 @@ def collect(project: str, *,
                            "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 설정하세요. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(argparse.Namespace(limit=backlink_limit, max_age=max_age))
+        s = st.settings(ap, argparse.Namespace(limit=backlink_limit, max_age=max_age))
         limit = int(s["limits.backlink_limit"])
         max_age = int(s["backlink_max_age_days"])
         pid, today = p["id"], st.today

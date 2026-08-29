@@ -65,10 +65,10 @@ def collect(project: str, *,
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
     """
-    _parser()
+    ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(argparse.Namespace(
+        s = st.settings(ap, argparse.Namespace(
             max_keywords=max_keywords, depth=serp_depth,
             throttle=throttle, device=device))
         provider = provider or serp_adapter.detect_provider()

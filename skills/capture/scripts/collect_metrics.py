@@ -148,7 +148,7 @@ def collect(project: str, *,
         post: (path, body) -> (result, cost) — 주면 post_dataforseo 대신 이것을
               부른다 (자체점검이 갈아끼우는 자리)
     """
-    _parser()
+    ap = _parser()
     post = post or serp_adapter.post_dataforseo
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
@@ -156,7 +156,7 @@ def collect(project: str, *,
             return st.skip("키워드 지표는 유료 — DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
-        s = st.settings(argparse.Namespace(limit=metrics_limit, max_age=max_age))
+        s = st.settings(ap, argparse.Namespace(limit=metrics_limit, max_age=max_age))
         limit = s["limits.metrics_limit"]
         max_age_days = s["metrics_max_age_days"]
         if limit <= 0:
