@@ -304,6 +304,9 @@ const LEVELS = {siteOwner:"소유자", siteFullUser:"전체 권한", siteRestric
 const esc = s => String(s).replace(/[&<>"]/g, c =>
   ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const TAKEN = new Set(window.__TAKEN__ || []);
+// 로컬 플러그인이 링크로 실어 보낸 사이트 설정 — 서버가 세션에 들고 있다가
+// 등록 때 그대로 쓴다. 화면이 할 일은 그 속성을 미리 골라 두는 것뿐이다.
+const CARRY = window.__CARRY__ || {};
 
 function sync() {
   const all = [...document.querySelectorAll("#props input:not(:disabled)")];
@@ -373,6 +376,19 @@ async function load() {
     $("ptool").hidden = false;
     const boxes = box.querySelectorAll("input:not(:disabled)");
     if (boxes.length === 1) boxes[0].checked = true;   // 하나뿐이면 클릭 한 번을 아낀다
+    if (CARRY.gsc_property) {
+      const b = box.querySelector('input[value="' + CSS.escape(CARRY.gsc_property) + '"]');
+      if (b) {
+        boxes.forEach(i => { i.checked = false; });    // 실어 온 그것 하나만 고른다
+        b.checked = true;
+        const sel = b.closest(".prop").querySelector("select");
+        if (sel && CARRY.type) sel.value = CARRY.type;
+        $("sub").innerHTML = "플러그인에서 넘어온 설정으로 골라 뒀습니다 — " +
+          "씨앗 키워드·브랜드 표기·경쟁사도 같이 등록됩니다. 다른 사이트를 고르셔도 됩니다.";
+      } else if (TAKEN.has(CARRY.gsc_property)) {
+        $("sub").textContent = "플러그인에서 넘어온 사이트는 이미 분석 중입니다.";
+      }
+    }
     sync();
   } catch (e) {
     note(box, "warn", "서치콘솔에 연결하지 못했습니다",
@@ -389,6 +405,39 @@ $("all").addEventListener("change", () => {
 });
 
 load();
+
+// ── 첫 분석은 몇 분 걸린다 — 지금 뭘 하는 중인지 여기서 말한다 ──────────
+// 등록 직후 사용자가 보는 화면이 정확히 이것이고, 여태 "첫 분석 진행 중"에서 굳어
+// 있었다. 무슨 일이 일어나는 중인지 안 보이면 빈 대시보드만 보고 떠난다.
+// 단계 이름표는 서버가 실어 보낸다(stage.STAGE_LABELS) — 사본을 여기 두지 않는다.
+(function () {
+  const wait = [...document.querySelectorAll(".sites .st.wait")];
+  if (!wait.length) return;
+  const STAGES = window.__STAGES__ || {};
+  async function tick() {
+    let st;
+    try { st = await (await fetch("/api/run/status")).json(); } catch (e) { return; }
+    let left = 0;
+    wait.forEach(el => {
+      const nm = el.closest("li").querySelector(".nm");
+      const s = nm && st[nm.textContent];
+      if (!s) return;
+      if (s.last_run_at) {
+        el.className = "st";
+        el.textContent = "첫 분석 완료 — 열어 보세요";
+        return;
+      }
+      left++;
+      const t = s.stage && (STAGES[s.stage] || {}).t;
+      el.textContent = t ? t + (s.pct ? " " + s.pct + "%" : "") : "첫 분석 진행 중";
+    });
+    if (left) return setTimeout(tick, 5000);
+    // 다 끝났는데 "몇 분에 걸쳐 수집됩니다"가 남아 있으면 그 문구가 거짓이 된다.
+    const note = document.querySelector(".wait-note");
+    if (note) note.remove();
+  }
+  tick();
+})();
 
 // ── 사이트가 이미 있으면 이 화면은 "추가"이고, 갱도는 이미 파고 있다 ──────
 (function () {

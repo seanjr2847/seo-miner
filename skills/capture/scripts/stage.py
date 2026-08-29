@@ -142,6 +142,10 @@ STAGE_LABELS: dict[str, dict] = {
 
 
 def from_progress(p: dict, name: str, domain: str) -> dict:
+    # 사이트가 아직 없어도 안내는 그린다 — 첫 사용자가 정확히 이 상태이고, 여태
+    # 그 사람에게만 6단계가 통째로 비어 있었다("아래 [지금 할 것] 하나만 하시면
+    # 됩니다" 밑에 아무것도 없는 화면). 이름 자리는 고쳐 쓸 자리표로 둔다.
+    name = name or "사이트이름"
     gst = gsc_state()
     ai_skip = skippable("ai")
     if gst == "connected":
@@ -161,7 +165,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
     L = STAGE_LABELS
     steps = [
         {"id": "register", "t": L["register"]["t"], "gain": L["register"]["gain"],
-         "done": True, "state": domain or "", "cmd": None},
+         "done": bool(domain), "state": domain or "아직 없음",
+         "cmd": None if domain else "/capture add"},
         {"id": "gsc", "t": L["gsc"]["t"], "gain": L["gsc"]["gain"],
          "done": gsc_done,
          "state": gsc_state_str,
@@ -241,7 +246,11 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     show_skills_btn = bool(d.get("marketing_skills_msg"))
     show_setup = bool(d.get("must_other")) or no_project
 
-    guide = None
+    # 사이트가 하나도 없으면 빈 진행으로 그린다 — 안내가 통째로 사라지는 대신
+    # 1번(사이트 등록)이 "지금 할 것"으로 선다. 첫 사용자가 정확히 이 상태다.
+    # **여럿이라 못 고르는 것과는 다르다**: 그때는 사이트가 이미 있으므로 여기서
+    # 빈 안내를 그리면 "사이트를 등록하세요"라고 틀린 말을 하게 된다 — 안 그린다.
+    guide = from_progress({}, "", "") if no_project else None
     close_conn = False
     picked = project if project in projects else pick_project(projects)
     if picked:
@@ -487,6 +496,35 @@ def _check_seams() -> None:
                 f"[{vid}] 화면이 /capture {cmd} 를 부르는데 view-def 의 stages 에 없다 "
                 f"— 선언은 {sorted(declared)}. 그 단계가 이 화면을 채우면 stages 에 넣고, "
                 f"다른 화면으로 넘기는 손잡이면 CROSS 에 적어라")
+
+    # 11) 로컬이 실어 보내는 사이트 설정(carry)과 호스팅이 꺼내 쓰는 이름은 한 벌이다.
+    #     이 이음매도 양쪽 다 멀쩡해 보인다: 로컬은 정상적인 링크를 만들고 호스팅은
+    #     정상적인 dict 를 읽는다. 이름이 하나 어긋나면 carry_read 가 그것을 걸러
+    #     버려서(정본은 PREFILL_KEYS) **씨앗 키워드만 조용히 빈 채로** 등록된다 —
+    #     화면에도 로그에도 아무것도 안 남는다. 그래서 이름을 여기서 대조한다.
+    if app_f.exists():
+        app_src = app_f.read_text("utf-8")
+        assert "dashboard.carry_read" in app_src, \
+            "호스팅이 carry 를 직접 푼다 — 형식의 정본은 dashboard 의 carry_pack/carry_read 다"
+        m = re.search(r"CARRY_FIELDS = \(([^)]*)\)", app_src)
+        assert m, "app.py 의 CARRY_FIELDS 를 못 찾았다 — 표 모양이 바뀌었다"
+        used = set(re.findall(r'"(\w+)"', m.group(1)))
+        used |= set(re.findall(r"CARRY\.(\w+)",
+                               (root / "server" / "app.html").read_text("utf-8")))
+        used.add("gsc_property")          # 어느 속성에 얹을지 — 아래에서 쓰는지 본다
+        assert used <= set(dashboard.PREFILL_KEYS), \
+            f"호스팅이 carry 에서 꺼내는데 로컬이 싣지 않는 이름: " \
+            f"{sorted(used - set(dashboard.PREFILL_KEYS))}"
+        assert 'carry.get("gsc_property"' in app_src, \
+            "호스팅이 carry 가 가리키는 속성을 안 본다 — 남의 사이트에 씨앗이 얹힌다"
+
+        # 단계 용어표는 한 벌이다 — 등록 화면(app.html)도 사본을 갖지 않는다.
+        # 대시보드에 대해 위 3) 이 지키는 것과 같은 계약이다.
+        app_html = (root / "server" / "app.html").read_text("utf-8")
+        assert "window.__STAGES__" in app_html, \
+            "app.html 이 서버가 실어 보낸 단계 용어표를 안 읽는다"
+        assert "__STAGES__=stage.STAGE_LABELS" in app_src, \
+            "app.py 가 등록 화면에 단계 용어표를 안 싣는다 — 화면이 사본을 갖게 된다"
 
     # 10) 화면이 읽는 페이로드 키는 gather() 가 실제로 싣는 것이어야 한다.
     #     이 이음매는 양쪽 다 멀쩡해 보인다: 뷰는 정상적인 자바스크립트고 gather 는

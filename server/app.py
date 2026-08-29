@@ -44,6 +44,7 @@ import pages
 import run_all
 import scheduler
 import settings
+import stage
 import store
 import writer
 
@@ -100,6 +101,15 @@ def _kick_dep():
     return scheduler.kick
 
 
+# 로컬 플러그인이 링크로 실어 보낸 사이트 설정 중, 등록에 실제로 얹는 것.
+# 이름·도메인·속성은 서버가 정한 것이 이긴다(슬러그 충돌·표기 검증). 종류(type)도
+# 여기 없다 — 화면이 carry 값으로 미리 골라 두므로 types 에 담겨 오고, 사용자가
+# 바꿨으면 그쪽이 이긴다. 여기 남는 건 사람이 정했고 기계가 못 짓는 것뿐이다.
+# 이름의 정본은 dashboard.PREFILL_KEYS 이고 stage._check_seams 가 대조한다.
+CARRY_FIELDS = ("locale", "brand_aliases", "seed_keywords",
+                "competitors_manual", "tools")
+
+
 def _capped(ids: list[int], limit: int, active: int) -> list[int]:
     """상한 안에서만 켠다 — SERP·AI 인용은 켜진 항목 수만큼 과금이라 상한 너머로
     켜면 그만큼 비용이 샌다. AI 질문·키워드 두 자리가 같은 규칙을 썼다."""
@@ -113,6 +123,13 @@ def healthz():
 
 @app.get("/")
 def home(request: Request):
+    # 로컬 플러그인이 실어 보낸 사이트 설정(?carry=). 로그인 전에 눌러도 잃지 않게
+    # 세션에 둔다 — 구글 로그인이 이 화면을 한 번 떠났다 돌아오기 때문이다.
+    # 정본은 dashboard.carry_pack/carry_read 다. 여기서 형식을 다시 정하지 않는다.
+    if request.query_params.get("carry"):
+        request.session["carry"] = request.query_params["carry"][:8000]
+    carry = dashboard.carry_read(request.session.get("carry", ""))
+
     uid = _uid(request)
     if uid is None:
         return _html(pages.page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
@@ -149,7 +166,11 @@ def home(request: Request):
     doc = pages.fill(pages.page("app.html"), USER=user_bar, SITES=block)
     doc = pages.data(doc,
                      __TAKEN__=[r["gsc_property"] for r in rows],
-                     __SITES__=[{"project": r["project"], "repo": r["repo"]} for r in rows])
+                     __SITES__=[{"project": r["project"], "repo": r["repo"]} for r in rows],
+                     __CARRY__=carry,
+                     # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
+                     # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
+                     __STAGES__=stage.STAGE_LABELS)
     return _html(doc, "사이트 관리 — seo-miner")
 
 
@@ -237,6 +258,11 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
         raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 선택해 주세요.")
     types = body.get("types") or {}
 
+    # 로컬에서 넘어온 설정은 그 속성 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
+    # (다음에 다른 사이트를 등록할 때 남의 씨앗이 섞이면 안 된다).
+    carry = dashboard.carry_read(request.session.pop("carry", ""))
+    carry_prop = carry.get("gsc_property", "")
+
     added, failed = [], []
     with store.session(uid, isolate=True) as conn:
         taken = {r["project"] for r in store.sites(conn, uid)}
@@ -246,12 +272,15 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
                 failed.append({"property": prop, "error": "도메인을 알 수 없습니다"})
                 continue
             name = _slug(host, taken)
-            r = dashboard.create_project({
+            f = {
                 "name": name, "type": types.get(prop, "saas"), "domain": host,
                 "gsc_property": prop, "locale": body.get("locale", "ko-KR"),
                 "brand_aliases": host.split(".")[0], "seed_keywords": "",
                 "competitors_manual": "",
-            })
+            }
+            if prop == carry_prop:
+                f.update({k: carry[k] for k in CARRY_FIELDS if carry.get(k)})
+            r = dashboard.create_project(f)
             if r.get("ok"):
                 taken.add(name)
                 added.append({"project": name, "property": prop})

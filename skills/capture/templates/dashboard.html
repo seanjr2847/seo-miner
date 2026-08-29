@@ -474,6 +474,7 @@ option { background:var(--card); }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 22px; }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
 .row { margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+#c-proj { width:auto; flex:0 0 auto; max-width:240px; }
 .go { font:500 13px/1 var(--sans); color:var(--card);
   background:var(--ink); border:1px solid var(--ink); border-radius:2px;
   padding:8px 14px; cursor:pointer; }
@@ -1116,7 +1117,8 @@ function renderGuide(d) {
        다시 잴 때 숫자로 나옵니다.`;
   }
   // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
-  if (here !== -1 && !d.progress.gsc_days) SM.land("guide", 1);
+  // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
+  if (here !== -1 && !(d.progress || {}).gsc_days) SM.land("guide", 1);
   // 이 함수가 방금 새로 그린 자리에도 대체 문구를 입힌다. render() 끝에서도 한 번
   // 돌지만 순서에 기대지 않는다 — applyWording 은 속성을 지우므로 두 번 돌아도 공짜다.
   applyWording($("guide"));
@@ -1287,6 +1289,12 @@ async function loadDoctor() {
     if (d.extra && d.extra.length)
       h += `<details><summary>더 켜고 싶으면 ${d.extra.length}개 — 전부 선택입니다</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
+    // 사이트가 없으면 render() 가 아예 안 돈다(부를 /api/data 가 없다) — 그래서
+    // 여태 [안내] 화면이 **첫 사용자에게만** 통째로 비어 있었다. 제목만 있고 6단계가
+    // 없는 화면이 정확히 이 경우였다. doctor 도 같은 guide 를 실어 보내므로 여기서
+    // 그린다. docban 을 쓰기 **전에** 부른다 — #nx 가 아직 없어 배너를 안 건드린다
+    // (배너는 이 상태에서 [설정]의 사이트 등록 칸을 가리키는 쪽이 더 구체적이다).
+    if (d.no_project) renderGuide(d);
     $("docban").innerHTML = h;
     $("docban").hidden = false;
     renderSetup(d);
@@ -1360,7 +1368,36 @@ function renderSetup(d) {
   // 할 수 있는 게 없는 화면에 떨어진다.
   if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 2);
   prefillProject();
+  renderCarry(d);
 }
+
+// 웹에서 이어 하기 — 로컬에 적어 둔 사이트 설정을 호스팅 등록 폼으로 실어 보낸다.
+// 링크를 만드는 것은 서버다(프로젝트 yaml 을 읽어야 한다) — 화면은 고르고 연다.
+function renderCarry(d) {
+  const sel = $("c-proj");
+  if (!sel) return;
+  const names = d.projects || [];
+  sel.innerHTML = names.map(p => `<option>${esc(p)}</option>`).join("");
+  sel.hidden = $("btn-carry").hidden = !names.length;
+  if (!names.length) say("m-carry", "위 2번에서 사이트를 먼저 등록하세요.", false);
+}
+
+$("btn-carry").addEventListener("click", async () => {
+  const a = $("c-url");
+  a.hidden = true;
+  const r = await (await fetch("/api/setup/carry?project=" +
+    encodeURIComponent($("c-proj").value))).json();
+  if (!r.ok) return say("m-carry", r.error, false);
+  a.href = r.url;
+  a.textContent = "웹에서 이 사이트 등록하기 →";
+  a.hidden = false;
+  try {
+    await navigator.clipboard.writeText(r.url);
+    say("m-carry", "링크를 복사했습니다 — 다른 기기에 붙여 넣어도 됩니다.", true);
+  } catch (e) {
+    say("m-carry", "아래 링크를 여세요.", true);   // 클립보드 권한이 없는 브라우저
+  }
+});
 
 // 대시보드를 띄운 폴더(레포)에서 폼 초기값을 채운다 — 이름·도메인은 코드 추론,
 // 씨앗 키워드·브랜드·도구는 setup 스킬(Claude)이 레포를 읽고 써 둔 판단 프리필.

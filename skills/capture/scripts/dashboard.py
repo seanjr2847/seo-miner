@@ -15,6 +15,7 @@ Usage:
   python dashboard.py --export --project NAME [--actions actions.json] [--open]
 """
 import argparse
+import base64
 import json
 import os
 import re
@@ -312,6 +313,51 @@ def create_project(f: dict) -> dict:
                                       "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
     PREFILL_FILE.unlink(missing_ok=True)   # 다 썼다 — 다음 사이트 폼에 새면 오염이다
     return {"ok": True, "name": name, "path": str(path)}
+
+
+# 호스팅(웹) 주소 — 로컬에서 만든 "웹에서 이어 하기" 링크가 가리키는 곳.
+# 배포 주소가 바뀌면 여기 한 줄만 고친다(env 로도 덮는다).
+HOSTED_URL = os.environ.get("SEOMINER_HOSTED_URL",
+                            "https://seo-miner.up.railway.app")
+
+
+def carry_pack(project: str) -> dict:
+    """로컬 사이트 설정을 호스팅 등록 폼으로 실어 보내는 링크.
+
+    싣는 키의 정본은 PREFILL_KEYS 다 — 로컬 폼이 채우는 것, 호스팅이 등록에 쓰는 것,
+    여기 싣는 것이 전부 같은 이름이어야 한다. 데이터는 안 옮긴다(웹이 다시 잰다):
+    옮기는 건 사람이 정한 것뿐 — 도메인·종류·씨앗·브랜드·경쟁사.
+
+    리스트는 문자열로 접는다. 받는 쪽(create_project.items)이 쉼표·줄바꿈을 쪼갠다.
+    """
+    path = db.CAPTURE_HOME / "projects" / f"{project}.yaml"
+    if not path.exists():
+        return {"ok": False, "error": f"{project}.yaml 을 못 찾았습니다"}
+    try:
+        import yaml
+    except ImportError:
+        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — 1번을 먼저 눌러 주세요."}
+    doc = yaml.safe_load(path.read_text("utf-8")) or {}
+    f = {}
+    for k in PREFILL_KEYS:
+        v = doc.get(k)
+        if v:
+            f[k] = ", ".join(v) if isinstance(v, list) else str(v)
+    blob = base64.urlsafe_b64encode(
+        json.dumps(f, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    return {"ok": True, "url": f"{HOSTED_URL.rstrip('/')}/?carry={blob}"}
+
+
+def carry_read(blob: str) -> dict:
+    """carry_pack 이 실은 것을 되읽는다. 남이 보낸 문자열이므로 못 읽으면 빈손이다 —
+    등록을 막지 않는다(설정만 안 채워질 뿐)."""
+    try:
+        d = json.loads(base64.urlsafe_b64decode(str(blob or "").encode("ascii")))
+    except Exception:
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    return {k: str(d[k])[:2000] for k in PREFILL_KEYS if isinstance(d.get(k), str)}
 
 
 # Claude(setup 스킬)가 레포를 읽고 판단해 둔 프리필 — 씨앗 키워드·브랜드 별칭처럼
@@ -752,6 +798,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(setup_state(parse_qs(u.query).get("project", [""])[0]))
         if u.path == "/api/setup/prefill":   # 읽기 전용 — 레포 추론값
             return self._json(repo_prefill())
+        if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
+            return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
         if u.path == "/api/projects":
             conn = db.connect()
             names = [r[0] for r in
@@ -858,6 +906,16 @@ def _selfcheck() -> None:
     # 애드온이 다시 만든 사본이 구조적으로 안 보인다.
     addon_f = Path(__file__).resolve().parents[3] / "server" / "assets" / "dash.html"
     combined = hosted_html + (addon_f.read_text("utf-8") if addon_f.exists() else "")
+    # carry 는 URL 을 왕복한다 — 한글 씨앗과 쉼표가 그대로 돌아와야 하고, 남이 보낸
+    # 쓰레기에는 빈손이어야 한다(등록을 막지 않는다).
+    packed = base64.urlsafe_b64encode(json.dumps(
+        {"gsc_property": "sc-domain:x.com", "seed_keywords": "ai 티어표, 순위표",
+         "허튼키": "무시"}, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    got = carry_read(packed)
+    assert got["seed_keywords"] == "ai 티어표, 순위표", got
+    assert "허튼키" not in got, "PREFILL_KEYS 밖의 키가 새어 들어온다"
+    assert carry_read("!!not base64!!") == {} and carry_read("") == {}
+
     assert combined.count("URL.createObjectURL") == 1, "CSV 작성기가 여러 벌이다"
     assert "String(c ?? \"\")" in combined, "CSV 가 빈 칸을 빈 칸으로 안 쓴다"
     print(f"dashboard self-check ok — 뷰 {len(defs)}개, 섹션 {len(secs)}개, "
