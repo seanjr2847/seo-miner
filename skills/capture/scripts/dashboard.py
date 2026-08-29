@@ -38,7 +38,7 @@ import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 TPL = Path(__file__).parent.parent / "templates"
 # 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
 # — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
-VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site",
+VIEW_ORDER = ["overview", "analysis", "keywords", "rank", "ai", "site",
               "backlinks", "competitors", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
@@ -433,6 +433,14 @@ def gather(conn, p, at: str | None = None) -> dict:
 
     ups, downs = scoring.movers(gsc_agg(cur), gsc_agg(prev))
 
+    # 왜 그렇게 됐나 — 클릭 변화를 노출 탓/CTR 탓으로 가르고, 순위 인원수의 이동을
+    # 센다. 여태 화면은 "클릭 −12%" 까지만 말하고 원인은 사람에게 미뤘다.
+    shift = scoring.click_shift(conn, pid, cur, prev, period)
+    bands = scoring.rank_bands(conn, pid, cur, prev, period)
+    # 순위는 이미 좋은데 안 눌리는 것 — 고치면 얼마를 되찾는지까지 이미 센다.
+    # 판정 함수가 내내 있었는데 기회 적재용으로만 쓰이고 화면에는 안 왔다.
+    ctr_gaps = scoring.ctr_gaps(conn, pid, at=at)
+
     # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
     # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
     cfg = collector.project_cfg(p["config_path"] or p["name"])
@@ -672,6 +680,7 @@ def gather(conn, p, at: str | None = None) -> dict:
             "gsc_dates": scoring.snapshot_dates(conn, pid),
             "gsc_pinned": bool(at), "ai_date": ai_date,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
+            "shift": shift, "rank_bands": bands, "ctr_gaps": ctr_gaps,
             "striking": striking, "striking_page2": striking_page2,
             "brand_catalog_empty": len(brands) == 0,
             "matrix": matrix, "gap_domains": gap_domains,

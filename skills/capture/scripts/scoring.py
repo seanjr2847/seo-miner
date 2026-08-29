@@ -59,6 +59,14 @@ CANNI_MIN_SHARE = 0.2    # 부(副)페이지 노출 비중 하한 — 미만이�
 DEVICE_GAP_POS = 2.0
 DEVICE_MIN_IMP = 50      # 모바일 노출 하한. 노출 몇 개짜리 기기 차이는 통계가 아니다
 
+# 순위 구간 — 화면·산문이 같은 경계를 본다. GSC 평균순위를 반올림해 넣는다.
+RANK_BANDS = ((1, 3, "1–3위"), (4, PAGE1, "4–10위"),
+              (PAGE1 + 1, STRIKING_HI, "11–20위"), (STRIKING_HI + 1, None, "21위+"))
+
+# 원인 분해에서 검색어 하나를 이름 붙여 세울 노출 하한. 총계는 전부 세지만(안 그러면
+# 합이 Δ클릭과 안 맞는다), 노출 몇 개짜리 CTR 흔들림을 "원인"이라 부르지는 않는다.
+SHIFT_MIN_IMP = 30
+
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
 # local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
@@ -349,12 +357,15 @@ def pseo_candidates(conn: sqlite3.Connection, project_id: int, snapshot_date: st
         (project_id, snapshot_date, min_imp, max_ctr, limit))]
 
 
-def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
+def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15,
+             at: str | None = None) -> list[dict]:
     """1페이지(1~10위)인데 기대 CTR의 절반도 못 받는 쿼리 — 제목·설명 손볼 곳.
 
-    최신 스냅샷(같은 period_days)만 본다. 손실 클릭 = 노출 × (기대 - 실제) CTR.
+    한 스냅샷(같은 period_days)만 본다. 손실 클릭 = 노출 × (기대 - 실제) CTR.
+    at 은 화면이 고정한 기준 수집일 — 안 주면 최신. 화면이 과거로 돌아갔는데 여기만
+    최신을 보면 같은 화면 안에서 두 날짜가 섞인다.
     """
-    cur, _, period, _ = snapshot_pair(conn, project_id)
+    cur, _, period, _ = snapshot_pair(conn, project_id, at)
     if not cur:
         return []
     out = []
@@ -751,6 +762,119 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
                          "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
                          "imp": r["imp"]})
     return sorted(rows, key=lambda x: x["dpos"])[:limit]
+
+
+def _band_of(pos) -> str:
+    """평균순위를 구간 이름으로. 3.4위는 3위로 읽는다 — 소수점은 표본의 흔들림이다."""
+    if pos is None:
+        return RANK_BANDS[-1][2]
+    n = round(pos)
+    for lo, hi, label in RANK_BANDS:
+        if n >= lo and (hi is None or n <= hi):
+            return label
+    return RANK_BANDS[-1][2]
+
+
+def click_shift(conn: sqlite3.Connection, project_id: int, cur: str | None,
+                prev: str | None, period: int | None, *, limit: int = 8) -> dict:
+    """Δ클릭이 어디서 왔나 — 노출이 준 건지, 안 눌린 건지, 검색어가 빠진 건지.
+
+    "클릭 -12%" 만으로는 손댈 자리가 안 나온다. 노출이 줄어서 준 것이면 색인·수요를
+    봐야 하고, 순위는 그대로인데 CTR 이 준 것이면 제목·설명을 봐야 한다 — 정반대의
+    일이다. 쿼리별로 clk = imp × ctr 이므로 두 항으로 정확히 갈린다(중간점 분해):
+
+        Δclk = Δimp × (ctr₀+ctr₁)/2   노출 효과
+             + Δctr × (imp₀+imp₁)/2   CTR 효과
+
+    교호항을 따로 두는 흔한 분해 대신 이걸 쓰는 이유는 사람이 읽을 항이 둘뿐이어서다
+    (교호항은 부호가 뒤집혀도 뜻을 말할 수 없다). 항등식이라 합은 정확히 맞는다.
+    한쪽 스냅샷에만 있는 쿼리는 갈리지 않는다 — 새로 뜬 것·사라진 것으로 센다.
+    네 항의 합은 언제나 Δ클릭과 같다 (_selfcheck 가 못 박는다).
+
+    cur/prev/period 는 호출부(snapshot_pair)가 고른 짝을 그대로 받는다 — 여기서
+    다시 고르면 화면이 고정한 기준일과 어긋난다.
+    """
+    out = {"clicks": 0, "prev_clicks": 0, "d_clicks": 0,
+           "imp_effect": 0.0, "ctr_effect": 0.0, "new": 0, "lost": 0,
+           "up": [], "down": [], "thin": 0}
+    if not (cur and prev and period):
+        return out
+    now_ = _snap_agg(conn, project_id, cur, period)
+    before = _snap_agg(conn, project_id, prev, period)
+    out["clicks"] = sum(r["clk"] or 0 for r in now_.values())
+    out["prev_clicks"] = sum(r["clk"] or 0 for r in before.values())
+    out["d_clicks"] = out["clicks"] - out["prev_clicks"]
+
+    rows = []
+    for query, r in now_.items():
+        b = before.get(query)
+        if not b:
+            out["new"] += r["clk"] or 0
+            rows.append({"query": query, "dclk": r["clk"] or 0, "cause": "new",
+                         "imp_effect": 0.0, "ctr_effect": 0.0,
+                         "imp": r["imp"], "prev_imp": 0,
+                         "ctr": _ctr_pct(r["clk"], r["imp"], 2), "prev_ctr": None,
+                         "pos": round(r["pos"], 1), "prev_pos": None})
+            continue
+        c0 = (b["clk"] or 0) / b["imp"] if b["imp"] else 0.0
+        c1 = (r["clk"] or 0) / r["imp"] if r["imp"] else 0.0
+        ie = ((r["imp"] or 0) - (b["imp"] or 0)) * (c0 + c1) / 2
+        ce = (c1 - c0) * ((b["imp"] or 0) + (r["imp"] or 0)) / 2
+        out["imp_effect"] += ie
+        out["ctr_effect"] += ce
+        rows.append({"query": query, "dclk": (r["clk"] or 0) - (b["clk"] or 0),
+                     "cause": "imp" if abs(ie) >= abs(ce) else "ctr",
+                     "imp_effect": round(ie, 1), "ctr_effect": round(ce, 1),
+                     "imp": r["imp"], "prev_imp": b["imp"],
+                     "ctr": round(c1 * 100, 2), "prev_ctr": round(c0 * 100, 2),
+                     "pos": round(r["pos"], 1), "prev_pos": round(b["pos"], 1)})
+    for query, b in before.items():
+        if query in now_:
+            continue
+        out["lost"] -= b["clk"] or 0
+        rows.append({"query": query, "dclk": -(b["clk"] or 0), "cause": "lost",
+                     "imp_effect": 0.0, "ctr_effect": 0.0,
+                     "imp": 0, "prev_imp": b["imp"], "ctr": None,
+                     "prev_ctr": _ctr_pct(b["clk"], b["imp"], 2),
+                     "pos": None, "prev_pos": round(b["pos"], 1)})
+
+    for k in ("imp_effect", "ctr_effect"):
+        out[k] = round(out[k], 1)
+    # 이름 붙여 세우는 자리에서만 표본을 거른다 — 위 총계는 전부 셌다.
+    named = [r for r in rows if max(r["imp"] or 0, r["prev_imp"] or 0) >= SHIFT_MIN_IMP]
+    out["thin"] = len(rows) - len(named)
+    out["down"] = sorted([r for r in named if r["dclk"] < 0],
+                         key=lambda r: r["dclk"])[:limit]
+    out["up"] = sorted([r for r in named if r["dclk"] > 0],
+                       key=lambda r: -r["dclk"])[:limit]
+    return out
+
+
+def rank_bands(conn: sqlite3.Connection, project_id: int, cur: str | None,
+               prev: str | None, period: int | None) -> list[dict]:
+    """순위 구간별 검색어 수와 그 이동 — 어디에 몰려 있고, 어디로 밀렸나.
+
+    개별 순위 변동은 노이즈가 많지만(4-4), 구간 인원수의 이동은 그 노이즈가 상쇄돼
+    "1페이지에서 밀려난 게 몇 개"를 말한다. 노출 하한을 넘는 쿼리만 센다 — 노출
+    한두 번짜리 순위는 구간을 말할 표본이 아니다.
+    """
+    if not (cur and period):
+        return []
+
+    def tally(snap):
+        c = {}
+        for r in _snap_agg(conn, project_id, snap, period).values() if snap else ():
+            if (r["imp"] or 0) < SHIFT_MIN_IMP:
+                continue
+            b = _band_of(r["pos"])
+            c[b] = c.get(b, 0) + 1
+        return c
+
+    now_, before = tally(cur), tally(prev)
+    return [{"label": lb, "n": now_.get(lb, 0),
+             "prev_n": before.get(lb, 0) if prev else None,
+             "d": now_.get(lb, 0) - before.get(lb, 0) if prev else None}
+            for _, _, lb in RANK_BANDS]
 
 
 def classify_intent(keyword: str) -> str:
@@ -1569,6 +1693,45 @@ def _selfcheck() -> None:
     assert snapshot_pair(conn, 2, "2026-07-04") == (None, None, None, False)
     assert [x["date"] for x in snapshot_dates(conn, 2)] == [
         "2026-08-20", "2026-08-10", "2026-08-01"]
+
+    # ── 클릭 변화 분해 ──
+    # 항등식이므로 합은 반올림 오차 안에서 Δ클릭과 정확히 같아야 한다. 이게 깨지면
+    # 화면이 "원인 합계"라고 부르는 것이 원인이 아니게 된다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,"
+        "impressions,ctr,position) VALUES(4,?,28,?,?,?,0.0,?)",
+        [("2026-08-01", "a", 100, 1000, 2.0),    # CTR 만 반토막 → CTR 효과 −50
+         ("2026-08-15", "a", 50, 1000, 2.0),
+         ("2026-08-01", "b", 50, 500, 7.0),      # 노출만 반토막 → 노출 효과 −25
+         ("2026-08-15", "b", 25, 250, 7.0),
+         ("2026-08-15", "c", 20, 200, 15.0),     # 새로 뜬 것 → new +20
+         ("2026-08-01", "d", 10, 100, 25.0),     # 사라진 것 → lost −10
+         # 둘 다 움직인 쿼리 — 교호분을 어느 항에 얹느냐로 답이 갈리는 유일한 모양이다.
+         # 이 줄이 없으면 어떤 분해를 써도 검사가 통과한다(실제로 그랬다).
+         ("2026-08-01", "f", 40, 400, 5.0),      # 10% → 15%, 노출 2배
+         ("2026-08-15", "f", 120, 800, 5.0)])    # ie +50, ce +30
+    sh = click_shift(conn, 4, "2026-08-15", "2026-08-01", 28)
+    assert (sh["d_clicks"], sh["imp_effect"], sh["ctr_effect"], sh["new"], sh["lost"]) ==         (15, 25.0, -20.0, 20, -10), sh
+    total = sh["imp_effect"] + sh["ctr_effect"] + sh["new"] + sh["lost"]
+    assert abs(total - sh["d_clicks"]) < 1, (total, sh["d_clicks"])
+    assert [r["query"] for r in sh["down"]] == ["a", "b", "d"], sh["down"]
+    assert [r["query"] for r in sh["up"]] == ["f", "c"], sh["up"]
+    assert [r["cause"] for r in sh["down"]] == ["ctr", "imp", "lost"], sh["down"]
+    assert sh["up"][0]["cause"] == "imp", sh["up"][0]
+    # 표본이 얇은 검색어는 총계에는 들어가되 원인으로 이름 붙지 않는다
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
+                 "clicks,impressions,ctr,position) VALUES(4,'2026-08-15',28,'e',3,5,0.0,2.0)")
+    sh2 = click_shift(conn, 4, "2026-08-15", "2026-08-01", 28)
+    assert sh2["new"] == 23 and sh2["thin"] == 1, sh2
+    assert "e" not in [r["query"] for r in sh2["up"]], sh2["up"]
+    assert click_shift(conn, 4, "2026-08-15", None, 28)["d_clicks"] == 0
+
+    # 순위 구간 이동 — 개별 변동이 아니라 인원수의 이동이다
+    assert _band_of(3.4) == "1–3위" and _band_of(3.6) == "4–10위"
+    assert _band_of(None) == "21위+" and _band_of(999) == "21위+"
+    bands = {b["label"]: b["d"] for b in rank_bands(conn, 4, "2026-08-15", "2026-08-01", 28)}
+    assert bands == {"1–3위": 0, "4–10위": 0, "11–20위": 1, "21위+": -1}, bands
+    assert rank_bands(conn, 4, None, None, 28) == []
 
     # ── 신규 판정 함수들 ──
     assert RANK_NOISE == 3

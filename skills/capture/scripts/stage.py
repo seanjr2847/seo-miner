@@ -488,6 +488,26 @@ def _check_seams() -> None:
                 f"— 선언은 {sorted(declared)}. 그 단계가 이 화면을 채우면 stages 에 넣고, "
                 f"다른 화면으로 넘기는 손잡이면 CROSS 에 적어라")
 
+    # 10) 화면이 읽는 페이로드 키는 gather() 가 실제로 싣는 것이어야 한다.
+    #     이 이음매는 양쪽 다 멀쩡해 보인다: 뷰는 정상적인 자바스크립트고 gather 는
+    #     정상적인 dict 다. 어긋나면 조용히 undefined 가 흘러 화면에 "—" 나 빈 표가
+    #     뜰 뿐, 콘솔에도 검사에도 아무것도 안 남는다. 뷰 렌더러의 인자 이름은
+    #     관례가 아니라 계약이다(VIEW(id, function (d) {...})) — 그래서 d.* 로 센다.
+    import sqlite3 as _sq, io, contextlib
+    _c = _sq.connect(":memory:")
+    _c.row_factory = _sq.Row
+    _c.executescript(db.SCHEMA)
+    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    _null = io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
+    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
+        served = set(dashboard.gather(_c, db.get_project(_c, "_seam")))
+    _c.close()
+    read = set()
+    for p in sorted(views.glob("*.html")):
+        read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
+                                                p.read_text("utf-8"))}
+    assert read <= served,         f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}"
+
 
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}

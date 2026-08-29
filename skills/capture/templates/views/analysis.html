@@ -1,0 +1,247 @@
+<!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지. -->
+<script type="application/json" class="view-def">
+{"id": "analysis", "title": "분석",
+ "sections": ["an-shift", "an-movers", "an-ctr", "an-bands"], "stages": ["gsc"]}
+</script>
+
+<style>
+/* 0 을 가운데 둔 좌우 막대 — 부호가 방향이고 길이가 크기다. 항이 넷뿐이라
+   축·눈금 없이 서로의 길이만 비교하면 된다. */
+.anbar { position:relative; height:9px; background:var(--bar); border-radius:2px; }
+.anbar::before { content:""; position:absolute; left:50%; top:-3px; bottom:-3px;
+  width:1px; background:var(--rule); }
+.anbar i { position:absolute; top:0; bottom:0; display:block; border-radius:2px; }
+.anbar i.pos { left:50%; background:var(--patina); }
+.anbar i.neg { right:50%; background:var(--copper); }
+/* 분해 표 — 항 이름 / 막대 / 값 / 그래서 무엇을 보나 */
+.anwf { width:100%; border-collapse:collapse; margin-top:14px; }
+.anwf td { padding:9px 0; border-bottom:1px solid var(--rule-soft); vertical-align:middle; }
+.anwf td:nth-child(1) { width:104px; font:var(--micro); color:var(--slate); }
+.anwf td:nth-child(2) { padding:9px 14px; }
+.anwf td:nth-child(3) { width:76px; text-align:right; font:600 14px/1 var(--mono);
+  font-variant-numeric:tabular-nums; }
+.anwf td:nth-child(4) { width:46%; padding-left:16px; font-size:13px; color:var(--slate); }
+.anwf tr.sum td { border-bottom:0; border-top:1px solid var(--rule);
+  padding-top:12px; font-weight:600; }
+.anwf tr.sum td:nth-child(1), .anwf tr.sum td:nth-child(4) { color:var(--ink); }
+.anwf tr.sum td:nth-child(3) { font-size:19px; }
+@media (max-width:720px) {
+  .anwf td:nth-child(4) { display:none; }
+  .anwf td:nth-child(1) { width:78px; }
+}
+/* 원인 배지 — 표 안에서 한 눈에 갈린다 */
+.ancause { font:var(--micro); padding:2px 6px; border-radius:2px; white-space:nowrap; }
+.ancause.imp { color:var(--slate); background:var(--bar); }
+.ancause.ctr { color:var(--patina); background:var(--wash); }
+.ancause.new { color:var(--patina); background:var(--wash); }
+.ancause.lost { color:var(--copper); background:var(--wash-copper); }
+.anverdict { font-size:15px; line-height:1.65; margin:0 0 2px; }
+.anverdict b { color:var(--ink); }
+.anthin { font:var(--micro); color:var(--slate); margin-top:10px; line-height:1.5; }
+</style>
+
+<section id="an-shift">
+  <div class="eyebrow" id="an-shift-eye">원인 분해</div>
+  <h2>클릭이 왜 그렇게 됐나</h2>
+  <p class="sub">클릭 = 노출 × CTR 입니다. 그래서 클릭의 변화도 그 둘로 정확히
+    갈립니다 — 노출이 줄어서 준 것과, 노출은 그대로인데 덜 눌려서 준 것은 손댈 자리가
+    정반대입니다.</p>
+  <div id="an-shift-body"></div>
+</section>
+
+<section id="an-movers">
+  <div class="eyebrow">검색어별 기여</div>
+  <h2>누가 그 변화를 만들었나</h2>
+  <p class="sub">위 합계를 만든 검색어들입니다. 원인 배지가 그 검색어에서 무엇이
+    움직였는지 말합니다.</p>
+  <div id="an-movers-body"></div>
+</section>
+
+<section id="an-ctr">
+  <div class="eyebrow">되찾을 클릭</div>
+  <h2>순위는 좋은데 안 눌린다</h2>
+  <p class="sub" id="an-ctr-sub"></p>
+  <div id="an-ctr-body"></div>
+</section>
+
+<section id="an-bands">
+  <div class="eyebrow">순위 분포</div>
+  <h2>어디에 몰려 있고, 어디로 밀렸나</h2>
+  <p class="sub">검색어 하나하나의 순위는 흔들리지만, 구간별 인원수의 이동은 그 흔들림이
+    상쇄돼 "1페이지에서 몇 개가 빠졌나"를 말합니다.</p>
+  <div id="an-bands-body"></div>
+</section>
+
+<script>
+"use strict";
+
+/* 원인 이름표 한 벌 — 배지·문장·CSV 가 같은 말을 쓴다. */
+const AN_CAUSE = {
+  imp:  {t: "노출", why: "노출이 움직였습니다"},
+  ctr:  {t: "CTR", why: "같은 노출에서 눌린 비율이 움직였습니다"},
+  new:  {t: "새로", why: "이번에 새로 걸린 검색어입니다"},
+  lost: {t: "빠짐", why: "이번 수집에서 사라졌습니다"},
+};
+
+const anNum = v => (v > 0 ? "+" : v < 0 ? "−" : "") +
+  Math.abs(Math.round(v * 10) / 10).toLocaleString("ko-KR");
+
+function anBar(v, mx) {
+  const w = mx ? Math.min(50, Math.abs(v) / mx * 50) : 0;
+  if (!w) return '<div class="anbar"></div>';
+  return `<div class="anbar"><i class="${v < 0 ? "neg" : "pos"}"
+    style="width:${w.toFixed(1)}%"></i></div>`;
+}
+
+/* 네 항 중 가장 큰 것이 곧 "다음에 볼 자리"다. 화면이 그걸 문장으로 말한다 —
+   숫자만 놓아두면 읽는 사람이 매번 같은 비교를 손으로 한다. */
+const AN_NEXT = {
+  imp_up: "노출이 늘어서 번 것입니다. 수요나 색인이 좋아졌다는 뜻이니, [순위] 화면에서 어느 검색어가 올라왔는지 봅니다.",
+  imp_down: "노출이 줄어서 잃었습니다. 순위보다 <b>색인·수요</b>를 먼저 봅니다 — [사이트] 화면의 색인 점검이 그 자리입니다.",
+  ctr_up: "같은 노출에서 더 눌렸습니다. 제목·설명 손질이 먹혔거나 검색결과 생김새가 바뀌었습니다.",
+  ctr_down: "노출은 그대로인데 덜 눌렸습니다. <b>제목·설명</b>이 손댈 자리이고, 아래 [순위는 좋은데 안 눌린다]가 그 목록입니다.",
+  new_up: "새로 걸린 검색어들이 번 것입니다. 새 페이지·새 주제가 잡히기 시작했습니다.",
+  new_down: "새로 걸린 검색어가 오히려 클릭을 깎았습니다. 흔치 않은 모양이니 수집 범위가 바뀌지 않았는지 봅니다.",
+  lost_up: "사라진 검색어 쪽이 오히려 플러스입니다. 수집 범위가 바뀌지 않았는지 봅니다.",
+  lost_down: "걸려 있던 검색어가 통째로 빠졌습니다. 색인에서 빠졌거나 20위 밖으로 밀렸다는 뜻이니 [사이트] 화면을 먼저 봅니다.",
+};
+
+function anVerdict(s) {
+  const parts = [["imp", s.imp_effect], ["ctr", s.ctr_effect],
+                 ["new", s.new], ["lost", s.lost]];
+  const top = parts.slice().sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+  if (!top || !top[1]) return "";
+  const msg = AN_NEXT[top[0] + (top[1] > 0 ? "_up" : "_down")] || "";
+  const dir = s.d_clicks > 0 ? "늘었습니다" : s.d_clicks < 0 ? "줄었습니다" : "그대로입니다";
+  return `<p class="anverdict">클릭이 ${num(Math.abs(s.d_clicks))} ${dir}.
+    가장 크게 움직인 것은 <b>${AN_CAUSE[top[0]].t}</b>(${anNum(top[1])})입니다.
+    ${msg}</p>`;
+}
+
+function anShift(s, cmp) {
+  if (!s || (!s.prev_clicks && !s.clicks))
+    return `<div class="empty">${W(
+      "아직 비교할 수집이 없습니다 — <code>/capture gsc</code> 를 한 번 더 돌리면 두 시점이 생깁니다.",
+      "아직 비교할 수집이 없습니다 — 분석을 한 번 더 실행하면 두 시점이 생깁니다.")}</div>`;
+  const rows = [
+    ["노출 효과", s.imp_effect, "노출이 변한 몫 — 수요·색인"],
+    ["CTR 효과", s.ctr_effect, "같은 노출에서 눌린 비율이 변한 몫 — 제목·설명"],
+    ["새 검색어", s.new, "이번에 새로 걸린 검색어가 가져온 클릭"],
+    ["빠진 검색어", s.lost, "지난번엔 있었는데 이번에 사라진 검색어"],
+  ];
+  const mx = Math.max(...rows.map(r => Math.abs(r[1])), 1);
+  const body = rows.map(([l, v, why]) => `<tr>
+      <td>${l}</td><td>${anBar(v, mx)}</td>
+      <td class="${v > 0 ? "up" : v < 0 ? "down" : "muted"}">${anNum(v)}</td>
+      <td>${why}</td></tr>`).join("");
+  const thin = s.thin
+    ? `<div class="anthin">노출 30 미만인 검색어 ${num(s.thin)}개는 아래 목록에
+        이름을 올리지 않았습니다 — 위 합계에는 들어 있습니다. 노출 몇 번짜리 CTR
+        흔들림은 원인이 아니라 표본 부족입니다.</div>` : "";
+  return anVerdict(s) + `<table class="anwf">${body}
+    <tr class="sum"><td>클릭 변화</td><td></td>
+      <td class="${s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted"}"
+        >${anNum(s.d_clicks)}</td>
+      <td>${esc(cmp || "")} · ${num(s.prev_clicks)} → ${num(s.clicks)}</td></tr>
+  </table>` + thin;
+}
+
+function anMoverRow(r) {
+  const c = AN_CAUSE[r.cause] || {t: r.cause, why: ""};
+  // 화살표는 뒤 값에 붙인다(nbsp) — 좁은 화면에서 접힐 때 "1.56% →" 로 반토막 나면
+  // 화살표만 줄 끝에 남아 읽히지 않는다. "→ 2.46%" 로 넘어가야 한 덩어리로 읽힌다.
+  const arrow = (a, b) => `${a} → ${b}`;
+  const ctr = r.prev_ctr == null ? `${r.ctr ?? "—"}%`
+    : r.ctr == null ? `${r.prev_ctr}% →` : arrow(`${r.prev_ctr}%`, `${r.ctr}%`);
+  const pos = r.prev_pos == null ? `${r.pos ?? "—"}`
+    : r.pos == null ? `${r.prev_pos} →` : arrow(r.prev_pos, r.pos);
+  return `<tr>
+    <td>${esc(r.query)}</td>
+    <td><span class="ancause ${esc(r.cause)}" title="${esc(c.why)}">${c.t}</span></td>
+    <td class="num ${r.dclk > 0 ? "up" : "down"}">${anNum(r.dclk)}</td>
+    <td class="num">${num(r.imp)}</td>
+    <td class="num">${ctr}</td>
+    <td class="num">${pos}</td></tr>`;
+}
+
+const AN_HEAD = ["검색어", "원인?그 검색어에서 무엇이 움직였는지 — 노출인지, 눌린 비율인지",
+  ">Δ클릭", ">노출", ">CTR?지난번 → 이번", ">평균순위?지난번 → 이번"];
+
+let AN_SHIFT = null;
+
+function anMovers(s) {
+  if (!s || (!s.down.length && !s.up.length))
+    return `<div class="empty">노출이 통계로 볼 만한 검색어 중 클릭이 움직인 것이
+      없습니다.</div>`;
+  const block = (title, rows, empty) => `<div class="eyebrow"
+      style="margin:18px 0 8px">${title}</div>` +
+    table(AN_HEAD, rows.map(anMoverRow), empty);
+  return block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 없습니다.")
+    + block("얻은 쪽", s.up, "클릭이 늘어난 검색어가 없습니다.")
+    + `<div class="acts" style="margin-top:14px">
+        <button class="go sec" onclick="anCsv()">CSV 내보내기</button></div>`;
+}
+
+function anCsv() {
+  const s = AN_SHIFT || {down: [], up: []};
+  csv("클릭변화", [["검색어", "원인", "Δ클릭", "노출", "이전 노출",
+    "CTR", "이전 CTR", "평균순위", "이전 평균순위", "노출 효과", "CTR 효과"]].concat(
+    s.down.concat(s.up).map(r => [r.query, (AN_CAUSE[r.cause] || {}).t || r.cause,
+      r.dclk, r.imp, r.prev_imp, r.ctr, r.prev_ctr, r.pos, r.prev_pos,
+      r.imp_effect, r.ctr_effect])));
+}
+
+function anCtr(rows) {
+  if (!rows || !rows.length)
+    return `<div class="empty">1페이지에 있으면서 기대 CTR의 절반도 못 받는 검색어가
+      없습니다. 노출 100 이상만 봅니다 — 그보다 적으면 CTR 자체가 통계가 아닙니다.</div>`;
+  const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
+  return `<p class="anverdict">아래를 다 고치면 같은 순위에서
+    <b>${num(total)}클릭</b>쯤을 되찾습니다 — 순위를 올리는 일이 아니라 제목·설명을
+    고치는 일입니다.</p>` +
+    table(["검색어", ">평균순위", ">노출", ">실제 CTR",
+           ">기대 CTR?이 순위면 보통 이 정도는 눌립니다",
+           ">되찾을 클릭?노출 × (기대 − 실제) CTR"],
+      rows.map(r => `<tr><td>${esc(r.query)}</td>
+        <td class="num">${r.position}</td>
+        <td class="num">${num(r.impressions)}</td>
+        <td class="num down">${r.actual_ctr}%</td>
+        <td class="num muted">${r.expected_ctr}%</td>
+        <td class="num up">+${num(r.lost_clicks)}</td></tr>`));
+}
+
+function anBands(rows) {
+  if (!rows || !rows.length)
+    return '<div class="empty">아직 순위를 말할 수집이 없습니다.</div>';
+  const mx = Math.max(...rows.map(r => r.n), 1);
+  const has = rows.some(r => r.d != null);
+  // 좋고 나쁨이 구간마다 뒤집힌다 — 1페이지 안이 느는 건 벌었다는 뜻이고,
+  // 2페이지 밖이 느는 건 밀렸다는 뜻이다. 한 방향으로 칠하면 색이 거짓말을 한다.
+  const good = (r, i) => i < 2 ? r.d > 0 : r.d < 0;
+  return table(["구간", ">검색어 수", "분포", ...(has ? [">Δ?1페이지 안이 늘면 초록, 2페이지 밖이 늘면 주황 — 밀려난 것입니다"] : [])],
+    rows.map((r, i) => `<tr><td>${esc(r.label)}</td>
+      <td class="num">${num(r.n)}</td>
+      <td><div class="anbar"><i class="pos" style="width:${(r.n / mx * 50).toFixed(1)}%"
+        ></i></div></td>
+      ${has ? `<td class="num ${!r.d ? "muted" : good(r, i) ? "up" : "down"}"
+        >${r.d ? anNum(r.d) : "—"}</td>` : ""}</tr>`))
+    + `<div class="anthin">노출 30 이상인 검색어만 셉니다. 1–3위가 줄고 11–20위가
+        늘었다면 순위가 밀린 것이고, 전체 수가 함께 늘었다면 새 검색어가 들어온
+        것입니다.</div>`;
+}
+
+VIEW("analysis", function (d) {
+  const per = d.gsc_period ? `${d.gsc_period}일` : "";
+  const cmp = d.gsc_prev && d.gsc_date
+    ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
+  $("an-shift-eye").textContent = cmp || "원인 분해";
+  AN_SHIFT = d.shift || null;
+  $("an-shift-body").innerHTML = anShift(d.shift, cmp);
+  $("an-movers-body").innerHTML = anMovers(d.shift);
+  $("an-ctr-sub").innerHTML = `1페이지(1–${(d.rules || {}).page1 || 10}위)에 있는데
+    그 순위면 보통 나오는 CTR의 절반도 못 받는 검색어입니다. 순위를 올릴 필요가
+    없으므로 여기가 가장 싼 클릭입니다.`;
+  $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);
+  $("an-bands-body").innerHTML = anBands(d.rank_bands);
+});
+</script>
