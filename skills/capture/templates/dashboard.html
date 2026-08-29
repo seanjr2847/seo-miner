@@ -1188,17 +1188,10 @@ function render(d) {
         d.striking_page2 = d.striking.filter(r => r.band === "page2").length;
       }
     }
-    if (d.opps) {
-      // is_defensive 는 isDefensive(o) 가 필요할 때마다 o.is_defensive ?? 4종 목록으로
-      // 풀어낸다 — 여기서 미리 채우지 않는다(예전엔 이 자리가 2종만 아는 사본이었다).
-      // label·play(방어여부와 달리 kind 만으로 못 되짚는다 — 밴드/갈래는 옛 박제본에
-      // 없다)는 옛 박제본이면 비어 있고, playList()·oppWhy() 가 그걸 빈 처방·kind
-      // 원문으로 그대로 받아들인다.
-      if (!d.opp_counts) {
-        d.opp_counts = {};
-        for (const o of d.opps) d.opp_counts[o.kind] = (d.opp_counts[o.kind] || 0) + 1;
-      }
-    }
+    // d.opps 는 손보지 않는다. is_defensive 는 isDefensive(o) 가 필요할 때마다
+    // o.is_defensive ?? 4종 목록으로 풀어내고(예전엔 이 자리가 2종만 아는 사본이었다),
+    // 종류별 개수는 화면이 지금 보고 있는 상태 묶음에서 직접 센다. label·play 는 옛
+    // 박제본이면 비어 있고, playList()·oppWhy() 가 빈 처방·kind 원문으로 받아들인다.
     if (d.daily && !d.daily_stats) {
       d.daily_stats = {
         clicks_max: Math.max(...d.daily.map(r => r.clicks || 0), 1),

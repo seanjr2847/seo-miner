@@ -543,9 +543,6 @@ def gather(conn, p, at: str | None = None) -> dict:
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
-    opp_counts = {}
-    for o in opps:
-        opp_counts[o["kind"]] = opp_counts.get(o["kind"], 0) + 1
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
         (pid,)).fetchone()[0]
@@ -680,7 +677,7 @@ def gather(conn, p, at: str | None = None) -> dict:
             "matrix": matrix, "gap_domains": gap_domains,
             "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
             "missed": missed, "ai_trend": ai_trend,
-            "opps": opps, "opps_total": opps_total, "opp_counts": opp_counts,
+            "opps": opps, "opps_total": opps_total,
             "query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date,
             "runs": runs, "creations": creations,

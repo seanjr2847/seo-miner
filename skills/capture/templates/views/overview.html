@@ -150,23 +150,31 @@ function oppRow(o) {
 }
 
 
-let OPPS = [], OPP_COUNTS = {}, KIND_FILTER = null, OPP_Q = "", OPP_ST = "", OPP_N = 8;
+// OPP_ST 가 null 이면 아직 안 정한 것 — 첫 적재 때 정한다. 여기서 READONLY 를 못
+// 읽는다(뷰는 셸 스크립트보다 위에 꽂혀서 아직 선언 전이다).
+let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = 8;
 // 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
 const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
   closed:["done", "dismissed"]};
 const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "새 기회"],
   ["acked", "확인함"], ["closed", "완료·제외"]];
 
+// 상태로 먼저 가른다 — 칩 개수도 이 묶음을 세야 "CTR 미달 12" 를 눌렀는데 8건이
+// 나오는 일이 없다.
+function oppByStatus() {
+  const st = ST_GROUP[OPP_ST];
+  return OPPS.filter(o => !st || st.indexOf(o.status) >= 0);
+}
 function oppFiltered() {
-  const q = OPP_Q.trim().toLowerCase(), st = ST_GROUP[OPP_ST];
-  return OPPS.filter(o =>
+  const q = OPP_Q.trim().toLowerCase();
+  return oppByStatus().filter(o =>
     (!KIND_FILTER || o.kind === KIND_FILTER) &&
-    (!st || st.indexOf(o.status) >= 0) &&
     (!q || `${o.target} ${o.reasoning || ""}`.toLowerCase().includes(q)));
 }
 function oppFind(v) { OPP_Q = v; OPP_N = 8; oppList(); }
 function oppStatus(v) { OPP_ST = v; OPP_N = 8; oppList(); }
 function oppMore(n) { OPP_N = n; oppList(); }
+// [필터 지우기]는 말 그대로 전부 보여 준다 — 첫 화면의 기본값(아직 안 함)이 아니다.
 function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(8); }
 function filterKind(el) {
   const k = el.dataset.k;
@@ -183,18 +191,7 @@ function renderOpps(n) {
       `<div class="empty">${W(
         "아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.",
         "아직 도출된 개선 기회가 없습니다 — 이 화면의 [기회 다시 분석]을 누르면 채워집니다.")}</div>`;
-  const counts = OPP_COUNTS;
-  const kinds = Object.keys(counts);
-  if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 사이트 전환 시 잔존 필터
   const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
-  // kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
-  const chips = kinds.length > 1
-    ? `<div class="oppchips">${kinds.map(k =>
-        `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
-           onclick="filterKind(this)" title="${esc(k)}"
-           aria-pressed="${KIND_FILTER === k}">${esc((window.KIND_LABELS || {})[k] || k)}
-           <b>${counts[k]}</b></button>`).join("")}</div>`
-    : "";
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
   // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
   const tools = READONLY
@@ -211,11 +208,29 @@ function renderOpps(n) {
       <button class="go sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
     </div>`;
-  $("opps").innerHTML = tools + (READONLY ? "" : chips) + `<div id="opplist"></div>`;
+  $("opps").innerHTML = tools + (READONLY ? "" : `<div class="oppchips" id="oppchips"></div>`)
+    + `<div id="opplist"></div>`;
   oppList();
 }
 
+// kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
+// 개수는 지금 보고 있는 상태 묶음 기준이다.
+function oppChips() {
+  const el = $("oppchips");
+  if (!el) return;                       // 박제본에는 칩이 없다
+  const counts = {};
+  for (const o of oppByStatus()) counts[o.kind] = (counts[o.kind] || 0) + 1;
+  if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 상태·사이트 전환 시 잔존 필터
+  const kinds = Object.keys(counts);
+  el.innerHTML = kinds.length > 1 ? kinds.map(k =>
+    `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
+       onclick="filterKind(this)" title="${esc(k)}"
+       aria-pressed="${KIND_FILTER === k}">${esc((window.KIND_LABELS || {})[k] || k)}
+       <b>${counts[k]}</b></button>`).join("") : "";
+}
+
 function oppList() {
+  oppChips();
   const list = oppFiltered();
   $("oppn").textContent = list.length === OPPS.length
     ? `${OPPS.length}건` : `${list.length}건 / 전체 ${OPPS.length}건`;
@@ -276,7 +291,10 @@ VIEW("overview", function (d) {
       "확인·완료·제외는 누르면 바로 저장됩니다.";
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   OPPS = d.opps || [];
-  OPP_COUNTS = d.opp_counts || {};
+  // 첫 적재에서만 기본값을 정한다 — 사람이 고른 필터를 재적재로 되돌리지 않는다.
+  // 완료·제외는 끝난 일이라 목록에 안 낀다(윗줄 "아직 안 한 기회 N건"과 같은 몫).
+  // 박제본은 그때의 트리아지 기록 자체가 볼거리라 전부 남긴다.
+  if (OPP_ST === null) OPP_ST = READONLY ? "" : "open";
   // 검색어별 페이지 표·밴드·기회 색인은 셸의 render() 가 화면 전부를 위해 먼저 세운다.
   renderOpps(8);
 });
