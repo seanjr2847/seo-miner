@@ -66,7 +66,7 @@ def _json_block(text: str) -> dict:
         raise WriterError(f"글 작성에 실패했습니다. 다시 시도해 주세요 (응답 형식 오류)")
 
 
-def discover_profile(token: str, repo: str, branch: str) -> dict:
+def discover_profile(token: str, repo: str, branch: str, *, ask=_ask) -> dict:
     """리포의 관례를 찾아 캐시한다 — /create profile 에 해당.
 
     스택별 지식을 코드에 두지 않는다. 리포에서 관찰한 것만 쓴다(철칙 2).
@@ -90,7 +90,7 @@ def discover_profile(token: str, repo: str, branch: str) -> dict:
     if not bodies:
         raise WriterError("저장소의 글 내용을 읽지 못했습니다. 다른 저장소를 연결해 주세요")
 
-    out = _ask(
+    out = ask(
         "너는 이 저장소의 콘텐츠 관례를 파악한다. 추측하지 말고 아래에서 관찰된 것만 적어라.\n\n"
         f"[파일 경로 일부]\n" + "\n".join(content[:120]) + "\n\n"
         f"[본보기 파일]\n" + "\n\n".join(bodies) + "\n\n"
@@ -108,11 +108,11 @@ def discover_profile(token: str, repo: str, branch: str) -> dict:
 
 
 def write_for(opportunity: dict, profile: dict, project: dict,
-              evidence: dict | None = None) -> dict:
+              evidence: dict | None = None, *, ask=_ask) -> dict:
     """기회 하나 → 파일 하나. 반환 {path, content, title, summary}."""
     ev = evidence or {}
     facts = "\n".join(f"- {k}: {v}" for k, v in ev.items()) or "- (추가 수치 없음)"
-    out = _ask(
+    out = ask(
         f"너는 {project.get('domain')} 의 콘텐츠를 쓴다. 아래 저장소 관례를 그대로 따른다.\n\n"
         f"[저장소 관례]\n{json.dumps(profile, ensure_ascii=False, indent=1)}\n\n"
         f"[다룰 기회]\n종류: {opportunity.get('kind')}\n대상: {opportunity.get('target')}\n"
@@ -142,48 +142,42 @@ def slug(text: str, n: int = 40) -> str:
 
 
 def demo() -> None:
-    g = globals()
-    orig = g["_ask"]
+    fake_ok = lambda p, max_tokens=4000: (
+        '설명 붙임 {"path":"src/content/blog/a.md","title":"T","summary":"S",'
+        '"content":"---\\ntitle: T\\n---\\n본문"} 끝')
+    d = write_for({"kind": "striking_distance", "target": "ai tier list"},
+                  {"content_dir": "src/content/blog"}, {"domain": "x.com"}, ask=fake_ok)
+    assert d["path"] == "src/content/blog/a.md", d
+    assert d["content"].startswith("---"), d
+
+    fake_escape = lambda p, max_tokens=4000: '{"path":"../../etc/passwd","title":"t","content":"x"}'
     try:
-        g["_ask"] = lambda p, max_tokens=4000: (
-            '설명 붙임 {"path":"src/content/blog/a.md","title":"T","summary":"S",'
-            '"content":"---\\ntitle: T\\n---\\n본문"} 끝')
-        d = write_for({"kind": "striking_distance", "target": "ai tier list"},
-                      {"content_dir": "src/content/blog"}, {"domain": "x.com"})
-        assert d["path"] == "src/content/blog/a.md", d
-        assert d["content"].startswith("---"), d
+        write_for({}, {}, {}, ask=fake_escape)
+        raise AssertionError("저장소 밖 경로를 막지 못했다")
+    except WriterError as e:
+        assert "저장소 밖" in str(e), e
 
-        g["_ask"] = lambda p, max_tokens=4000: '{"path":"../../etc/passwd","title":"t","content":"x"}'
-        try:
-            write_for({}, {}, {})
-            raise AssertionError("저장소 밖 경로를 막지 못했다")
-        except WriterError as e:
-            assert "저장소 밖" in str(e), e
+    fake_junk = lambda p, max_tokens=4000: "JSON 아님"
+    try:
+        write_for({}, {}, {}, ask=fake_junk)
+        raise AssertionError("JSON 아닌 응답을 통과시켰다")
+    except WriterError:
+        pass
 
-        g["_ask"] = lambda p, max_tokens=4000: "JSON 아님"
-        try:
-            write_for({}, {}, {})
-            raise AssertionError("JSON 아닌 응답을 통과시켰다")
-        except WriterError:
-            pass
+    assert slug("AI Tier List!! 2026") == "ai-tier-list-2026", slug("AI Tier List!! 2026")
 
-        assert slug("AI Tier List!! 2026") == "ai-tier-list-2026", slug("AI Tier List!! 2026")
-
-        # 키는 호출 시점에 본다 — 없으면 네트워크에 나가지 않고 안내를 던진다.
-        g["_ask"] = orig
-        saved_key = os.environ.pop("OPENROUTER_API_KEY", None)
-        try:
-            _ask("x")
-            raise AssertionError("키 없이 호출됐다")
-        except WriterError as e:
-            assert "OPENROUTER_API_KEY" in str(e), e
-        finally:
-            if saved_key is not None:
-                os.environ["OPENROUTER_API_KEY"] = saved_key
-
-        print("writer: ok")
+    # 키는 호출 시점에 본다 — 없으면 네트워크에 나가지 않고 안내를 던진다(실제 _ask).
+    saved_key = os.environ.pop("OPENROUTER_API_KEY", None)
+    try:
+        _ask("x")
+        raise AssertionError("키 없이 호출됐다")
+    except WriterError as e:
+        assert "OPENROUTER_API_KEY" in str(e), e
     finally:
-        g["_ask"] = orig
+        if saved_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = saved_key
+
+    print("writer: ok")
 
 
 if __name__ == "__main__":

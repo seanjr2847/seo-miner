@@ -42,6 +42,9 @@ VIEW_ORDER = ["overview", "keywords", "rank", "ai", "site",
               "backlinks", "competitors", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
+_SECTION_DEF = re.compile(
+    r'<script type="application/json" class="section-def">\s*(\{.*?\})\s*</script>\s*(.*)', re.S)
+SECTIONS = TPL / "sections"
 
 
 def view_defs() -> list[dict]:
@@ -65,18 +68,70 @@ def view_defs() -> list[dict]:
     return out
 
 
-def _assemble() -> bytes:
-    """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다."""
+def section_defs() -> list[dict]:
+    """배포별로만 붙는 섹션 — 원본 뷰에는 없는 정적 마크업을 여기서 선언한다.
+
+    예전에는 이 마크업이 호스팅 애드온(dash.html) 안에서 createElement/innerHTML로
+    런타임에 지어졌다. 그러면 조립이 검사할 수 없는 층(JS 문자열)에 구조가 숨는다 —
+    view-def 와 같은 자리(templates/)에 같은 모양(id·소속 뷰·붙일 자리)으로 둔다.
+    only: "hosted" 처럼 붙는 배포를 적으면 그 variant 조립에만 낀다 — 생략하면
+    전부에 낀다.
+    """
+    out = []
+    for p in sorted(SECTIONS.glob("*.html")) if SECTIONS.is_dir() else []:
+        m = _SECTION_DEF.match(p.read_text("utf-8"))
+        if not m:
+            raise ValueError(f"{p.name} 에 section-def 선언이 없습니다")
+        d = json.loads(m.group(1))
+        if d.get("id") != p.stem:
+            raise ValueError(f"{p.name} 의 section-def id 가 {d.get('id')!r} 입니다")
+        d["html"] = m.group(2)
+        out.append(d)
+    return out
+
+
+def _assemble(variant: str = "local") -> bytes:
+    """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다.
+
+    variant: "local"(플러그인) | "hosted"(server/app.py 의 /d) | "frozen"(박제본).
+    hosted 전용 섹션(templates/sections/*.html, only:"hosted")은 hosted 조립에만
+    낀다 — 자리는 그 섹션이 선언한 view/after 로 정한다(원본 뷰 순서 안에 끼운다).
+    """
     base = (TPL / "dashboard.html").read_text("utf-8")
     parts = "".join((TPL / "views" / f"{n}.html").read_text("utf-8") for n in VIEW_ORDER)
-    defs = json.dumps(view_defs(), ensure_ascii=False).replace("</", "<\\/")
+    defs = view_defs()
+    by_id = {d["id"]: d for d in defs}
+    secs = [s for s in section_defs() if s.get("only") in (None, variant)]
+    # 자리(after)가 다른 섹션일 수 있다(sm-dim ← sm-perf) — 파일 이름 순서로 끼우면
+    # 그 짝이 아직 안 꽂힌 채로 올 수 있다. 꽂을 수 있는 것부터 반복해서 끼운다.
+    pending = list(secs)
+    while pending:
+        i0 = len(pending)
+        for s in list(pending):
+            v = by_id[s["view"]]
+            if s["after"] in v["sections"]:
+                i = v["sections"].index(s["after"])
+                v["sections"].insert(i + 1, s["id"])
+                pending.remove(s)
+        if len(pending) == i0:
+            raise ValueError(f"섹션을 끼울 자리를 못 찾았다: {[s['id'] for s in pending]}")
+    views_json = json.dumps(defs, ensure_ascii=False).replace("</", "<\\/")
+    stages_json = json.dumps(stage.STAGE_LABELS, ensure_ascii=False).replace("</", "<\\/")
+    hosted_flag = "window.SM_HOSTED=true;" if variant == "hosted" else ""
+    manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
+                f"window.__STAGES__={stages_json};</script>")
     return (base
-            .replace("<!--MANIFEST-->", f"<script>window.__VIEWS__={defs};</script>", 1)
+            .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VIEWS-->", parts)
+            .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
             .encode("utf-8"))
 
 
-HTML = _assemble()
+def assemble(variant: str = "local") -> str:
+    return _assemble(variant).decode("utf-8")
+
+
+HTML = _assemble()   # local — assemble("local").encode("utf-8") 과 같다
 
 # 구글 로그인 창을 여는 건 collect_gsc.get_service() 다 — 수집기·즉석 조회와 같은
 # 경로를 그대로 빌린다. 덕분에 사이트를 하나도 등록하지 않은 사람도 로그인만 먼저
@@ -126,7 +181,7 @@ def export(project: str, actions_file: str | None = None) -> Path:
         actions = json.loads(Path(actions_file).read_text(encoding="utf-8"))
     snap = {"data": data, "actions": actions, "exported": str(date.today())}
     blob = json.dumps(snap, ensure_ascii=False).replace("</", "<\\/")  # </script> 차단
-    html = HTML.decode("utf-8").replace(
+    html = assemble("frozen").replace(
         "<!--SNAPSHOT-->", f"<script>window.__SNAPSHOT__={blob}</script>", 1)
     out = db.CAPTURE_HOME / "reports" / project / f"{date.today()}.html"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -735,11 +790,13 @@ class Handler(BaseHTTPRequestHandler):
 
 def _selfcheck() -> None:
     """조립이 지켜야 할 것 — 브라우저를 안 띄우고 확인할 수 있는 만큼만."""
-    html = _assemble().decode("utf-8")
+    html = _assemble().decode("utf-8")             # local
+    hosted_html = _assemble("hosted").decode("utf-8")
     defs = view_defs()
     assert [d["id"] for d in defs] == VIEW_ORDER, "선언 순서가 조립 순서와 다르다"
     assert "window.__VIEWS__=" in html, "매니페스트가 안 실렸다"
-    for left in ("<!--MANIFEST-->", "<!--VIEWS-->"):
+    assert "window.__STAGES__=" in html, "단계 용어표가 안 실렸다"
+    for left in ("<!--MANIFEST-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
         # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 셸이 직접 그리는 화면
@@ -750,6 +807,22 @@ def _selfcheck() -> None:
         assert d["title"] and isinstance(d["stages"], list)
         for i in d["sections"]:                  # 담는다고 선언한 요소는 실제로 있어야
             assert f'id="{i}"' in html, f'{d["id"]} 가 없는 요소 id 를 담는다: {i}'
+
+    # 배포 전용 섹션 — 선언한 view/after 가 실제로 있어야 하고(after 는 원본 뷰의
+    # 섹션이거나, 같은 화면을 가리키는 다른 섹션의 id 여도 된다 — sm-dim 은
+    # sm-perf 뒤에 붙는다), 해당 variant 조립에만 껴야 한다(local 에 새면 원본
+    # 없는 요소가 로컬에도 뜬다).
+    secs = section_defs()
+    base_sections = {d["id"]: d["sections"] for d in defs}
+    sec_ids = {s["id"] for s in secs}
+    for s in secs:
+        assert s.get("view") in base_sections, f"{s['id']} 가 없는 화면을 가리킨다: {s.get('view')}"
+        assert s["id"] not in base_sections[s["view"]],             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
+        assert s.get("after") in base_sections[s["view"]] or s.get("after") in sec_ids,             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
+        if s.get("only") in (None, "hosted"):
+            assert f'id="{s["id"]}"' in hosted_html, f"{s['id']} 가 hosted 조립에 안 낀다"
+        if s.get("only") not in (None,):
+            assert f'id="{s["id"]}"' not in html, f"{s['id']} 가 안 실려야 할 local 조립에 꼈다"
 
     # 접두사 관례(KW_·RK_…) 대신 기계가 센다 — 조립하면 한 문서라 최상위 이름이
     # 겹치면 뒤가 앞을 조용히 덮는다. 실제로 두 파일이 관례를 어기고 있었다.
@@ -762,11 +835,15 @@ def _selfcheck() -> None:
             assert name not in seen, f"최상위 이름이 겹친다: {name} ({seen[name]} ↔ {who})"
             seen[name] = who
 
-    # CSV 작성기는 한 벌뿐이다 — 뷰가 자기 사본을 다시 만들면 null 처리가 또 갈라진다
-    # (여덟 벌이던 시절 일곱 벌이 빈 칸을 literal "null" 로 내보냈다).
-    assert html.count("URL.createObjectURL") == 1, "CSV 작성기가 여러 벌이다"
-    assert "String(c ?? \"\")" in html, "CSV 가 빈 칸을 빈 칸으로 안 쓴다"
-    print(f"dashboard self-check ok — 뷰 {len(defs)}개, 최상위 이름 {len(seen)}개")
+    # CSV 작성기는 한 벌뿐이다 — 브라우저가 실제로 받는 한 덩어리(hosted 조립 +
+    # 애드온)를 본다. 애드온은 assemble() 산출물 밖에 있어서, 조립본만 보면
+    # 애드온이 다시 만든 사본이 구조적으로 안 보인다.
+    addon_f = Path(__file__).resolve().parents[3] / "server" / "assets" / "dash.html"
+    combined = hosted_html + (addon_f.read_text("utf-8") if addon_f.exists() else "")
+    assert combined.count("URL.createObjectURL") == 1, "CSV 작성기가 여러 벌이다"
+    assert "String(c ?? \"\")" in combined, "CSV 가 빈 칸을 빈 칸으로 안 쓴다"
+    print(f"dashboard self-check ok — 뷰 {len(defs)}개, 섹션 {len(secs)}개, "
+          f"최상위 이름 {len(seen)}개")
 
 
 def main() -> None:

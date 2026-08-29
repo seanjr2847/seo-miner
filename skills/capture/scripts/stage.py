@@ -91,6 +91,56 @@ def skippable(step_id: str) -> bool:
         not any(os.environ.get(k) for k in c["keys"])
 
 
+# 단계 이름표 — 로컬 안내([안내] 화면)와 호스팅 애드온(배너·화면 머리의 '다시
+# 돌리기' 버튼)이 같이 쓰는 유일한 정본이다. 예전에는 여기와 server/assets/dash.html
+# 에 각자 있었고 문구가 이미 갈라져 있었다(gsc.gain: "측정할 도메인과…" vs
+# "분석할 도메인과…", gsc.t: "구글 실적 읽기" vs "검색 실적 수집").
+#   t     이 단계의 이름
+#   gain  안내(6단계) 설명 한 줄 — 안내에 나오는 단계만 갖는다
+#   run   화면 머리의 '다시 돌리기' 버튼 라벨 — 제목과 겹치지 않게 다르게 부른다.
+#         view-def 의 stages 에 실제로 등장하는 단계만 갖는다.
+# 조립(dashboard.py._assemble)이 이 표를 window.__STAGES__ 로 실어 보낸다 —
+# dash.html 은 자기 사본을 갖지 않는다.
+STAGE_LABELS: dict[str, dict] = {
+    "register": {"t": "사이트 등록",
+        "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다."},
+    "gsc": {"t": "구글 실적 읽기", "run": "실적 다시 수집",
+        "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
+                "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다."},
+    "index": {"t": "색인 생성 검사", "run": "색인 다시 검사"},
+    "keywords": {"t": "키워드 캐기", "run": "키워드 다시 발굴",
+        "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
+                "늘린 만큼 다음 단계가 볼 게 많아집니다."},
+    "metrics": {"t": "키워드 지표", "run": "지표 다시 조회",
+        "gain": "발굴한 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
+                "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. "
+                "DataForSEO 유료 호출입니다."},
+    "rank": {"t": "순위 추적", "run": "순위 다시 확인"},
+    "crawl": {"t": "사이트 크롤", "run": "사이트 다시 크롤",
+        "gain": "사이트를 따라 돌며 깨진 내부 링크·리다이렉트 사슬·고아 페이지·중복 "
+                "제목을 찾습니다. 한 페이지만 봐서는 나오지 않는 항목입니다. 비용이 없습니다."},
+    "ai": {"t": "AI 노출 확인", "run": "AI 인용 다시 확인",
+        "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
+                "OpenRouter 키가 필요합니다."},
+    "competitors": {"t": "경쟁사 역키워드", "run": "경쟁사 다시 수집",
+        "gain": "경쟁 도메인이 이미 순위를 잡은 검색어를 수집해 추적 후보로 올립니다. "
+                "DataForSEO Labs 유료 호출입니다."},
+    "backlinks": {"t": "백링크 프로필", "run": "백링크 다시 수집",
+        "gain": "참조 도메인·앵커 텍스트·개별 링크를 수집하고, 경쟁사는 링크를 받는데 "
+                "우리는 못 받는 도메인을 찾습니다. DataForSEO 유료 호출입니다."},
+    "gaps": {"t": "손댈 것 뽑기", "run": "기회 다시 분석",
+        "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
+                "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지."},
+    "pages": {"t": "내 페이지 점검", "run": "페이지 다시 점검",
+        "gain": "기회에 걸린 내 페이지를 직접 열어 제목·설명·H1·본문 길이·구조화 데이터를 "
+                "확인합니다. 비용이 없습니다."},
+    "report": {"t": "보고서 생성"},
+    "create": {"t": "실제로 고치기",
+        "gain": "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 "
+                "나가고, 끝나면 그 기회가 완료로 닫힙니다."},
+}
+
+
 def from_progress(p: dict, name: str, domain: str) -> dict:
     gst = gsc_state()
     ai_skip = skippable("ai")
@@ -108,27 +158,21 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
         gsc_state_str = "구글 인증 없음"
         gsc_cmd = "GSC 연동해줘"
 
+    L = STAGE_LABELS
     steps = [
-        {"id": "register", "t": "사이트 등록",
-         "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다.",
+        {"id": "register", "t": L["register"]["t"], "gain": L["register"]["gain"],
          "done": True, "state": domain or "", "cmd": None},
-        {"id": "gsc", "t": "구글 실적 읽기",
-         "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
-                 "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다.",
+        {"id": "gsc", "t": L["gsc"]["t"], "gain": L["gsc"]["gain"],
          "done": gsc_done,
          "state": gsc_state_str,
          "cmd": gsc_cmd},
-        {"id": "keywords", "t": "키워드 캐기",
-         "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
-                 "늘린 만큼 다음 단계가 볼 게 많아집니다.",
+        {"id": "keywords", "t": L["keywords"]["t"], "gain": L["keywords"]["gain"],
          "done": p.get("keywords_found", 0) > 0,
          "state": (f"캔 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
                    if p.get("keywords_found", 0)
                    else (f"직접 적은 {p['keywords']}개뿐" if p.get("keywords", 0) else "아직 없음")),
          "cmd": f"/capture keywords {name}"},
-        {"id": "ai", "t": "AI 노출 확인",
-         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
-                 "OpenRouter 키가 필요합니다.",
+        {"id": "ai", "t": L["ai"]["t"], "gain": L["ai"]["gain"],
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
          "skip": ai_skip,
@@ -138,15 +182,11 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
                           else "물어볼 질문부터 필요"))),
          "cmd": (f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}")},
-        {"id": "gaps", "t": "손댈 것 뽑기",
-         "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
-                 "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지.",
+        {"id": "gaps", "t": L["gaps"]["t"], "gain": L["gaps"]["gain"],
          "done": p.get("opps", 0) > 0,
          "state": f"{p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
          "cmd": f"/capture gaps {name}"},
-        {"id": "create", "t": "실제로 고치기",
-         "gain": "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 "
-                 "나가고, 끝나면 그 기회가 완료로 닫힙니다.",
+        {"id": "create", "t": L["create"]["t"], "gain": L["create"]["gain"],
          "done": p.get("creations", 0) > 0,
          "state": f"{p['creations']}건 고침" if p.get("creations", 0) else "아직 한 건도 안 함",
          "cmd": f"/create plan {name}"},
@@ -266,9 +306,12 @@ def _check_seams() -> None:
         assert gone not in dash, f"dash.html 에 정규식 고고학이 남아 있다: {gone}"
 
     # 2) 화면 목록의 정본은 원본 뷰의 view-def 다 — dash.html 은 그걸 읽고(매니페스트),
-    #    자기가 런타임에 만드는 것만 덧붙인다. 그 "덧붙인다"가 참인지가 이 검사다:
-    #    덧붙인 id 는 dash.html 안에서 만들어져야 하고, 원본에 이미 있으면 안 된다
-    #    (있으면 매니페스트가 소유할 것을 사본으로 들고 있는 것이다).
+    #    자기가 정적으로 갖는 섹션은 templates/sections/*.html 의 section-def 로
+    #    선언한다(dashboard.py._assemble 이 조립 시점에 끼운다). 예전에는 이 마크업이
+    #    dash.html 안에서 createElement/innerHTML 로 런타임에 지어졌고, HOST_SEC 라는
+    #    표가 어디에 붙는지를 따로 말했다 — 그 표와 dash.html 이 실제로 만드는 것이
+    #    어긋날 수 있었다. 지금은 section-def 자체가 자리와 소속을 말하므로 어긋날
+    #    길이 없다: 검사는 선언이 가리키는 자리가 실제로 있는지만 본다.
     defs = {}
     for p in sorted(views.glob("*.html")):
         d = re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', p.read_text("utf-8"), re.S)
@@ -283,8 +326,7 @@ def _check_seams() -> None:
     for gone, why in (("function place(", "배치"), ("function show(", "전환"),
                       ('nv.id = "sm-nav"', "메뉴")):
         assert gone not in dash, f"dash.html 이 셸의 {why}를 다시 구현한다: {gone}"
-    for hook in ("SM.addSection(", "SM.sync("):
-        assert hook in dash, f"dash.html 이 셸에 덧붙이지 않는다: {hook}"
+    assert "SM.sync(" in dash, "dash.html 이 셸에 덧붙이지 않는다: SM.sync("
     # 본문 서체는 한 벌이다. 애드온이 --sans 를 덮으면 같은 조립본이 배포마다 다른
     # 글자로 서고, 그러면 자간·줄바꿈·표 폭이 전부 달라진다(그걸 한 번 겪고 걷어냈다).
     # 등폭(--mono)은 예외다: 원본이 윈도우 기준이라 호스팅이 갈아끼운다.
@@ -296,52 +338,40 @@ def _check_seams() -> None:
     bare = re.sub(r"^\s*//.*$", "", bare, flags=re.M)
     assert "!important" not in bare, "dash.html 이 원본 규칙을 !important 로 덮는다"
 
-    hs = re.search(r"var HOST_SEC = \[(.*?)\n  \];", dash, re.S)
-    assert hs, "dash.html 의 호스팅 전용 섹션 목록(HOST_SEC)을 못 찾았다"
-    # 화면 자체를 덧붙이던 표(HOST_VIEWS)는 없어졌다 — 백링크가 원본 뷰로 내려가면서
-    # 원본에 대응 파일이 없는 화면이 하나도 안 남았다. 되살아나면 검사도 같이 와야
-    # 한다: 그때까지는 "없다"를 못 박아 둔다(있는데 안 보는 상태가 제일 나쁘다).
-    assert "var HOST_VIEWS" not in dash, \
-        "HOST_VIEWS 가 되살아났다 — 그 화면들을 검사하는 코드부터 되살려라"
-    hv_rows: list = []
-    rows = re.findall(r'\["([\w-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\]', hs.group(1))
-    assert len(rows) >= 4, f"HOST_SEC 행을 {len(rows)}개밖에 못 읽었다 — 표 모양이 바뀌었다"
+    # HOST_SEC/HOST_VIEWS 표는 구조적으로 없어졌다 — section-def 가 그 자리를
+    # 대신한다. 되살아나면 사본이 두 벌이 된 것이다.
+    for gone in ("var HOST_SEC", "var HOST_VIEWS"):
+        assert gone not in dash,             f"{gone} 가 되살아났다 — templates/sections/*.html 의 section-def 로 옮겨라"
 
-    body = dash.replace(hs.group(0), "")           # 표 자신은 근거가 못 된다
-    host_ids = [sec for _, sec, _ in rows] + \
-        [i for r in hv_rows for i in re.findall(r'"([\w-]+)"', r[1])]
-    for i in host_ids:
-        assert f'"{i}"' in body, f"덧붙인다고 선언했는데 dash.html 이 만들지 않는다: {i}"
-        assert f'id="{i}"' not in tpl, f"원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다: {i}"
-    # 끼워 넣는 자리 — 못 찾으면 dash.html 이 말없이 맨 끝에 붙여 섹션 순서가 바뀐다.
-    # 앞줄이 넣은 것 뒤에도 붙일 수 있으므로(sm-dim ← sm-perf) 표 순서대로 쌓아 본다.
-    merged = {k: list(v["sections"]) for k, v in defs.items()}
-    for vid, sec, anchor in rows:
-        assert vid in defs, f"HOST_SEC 가 없는 화면에 붙는다: {vid}"
-        assert anchor in merged[vid], f"{sec} 를 붙일 자리가 {vid} 에 없다: {anchor}"
-        merged[vid].insert(merged[vid].index(anchor) + 1, sec)
-    for vid, _, _, anchor in hv_rows:
-        assert anchor in defs, f"HOST_VIEWS 화면 {vid} 를 넣을 자리가 없다: {anchor}"
-        assert vid not in defs, f"원본 뷰가 있는데 호스팅 화면으로 또 만든다: {vid}"
-
+    import dashboard
+    secs = dashboard.section_defs()
+    assert secs, "호스팅 섹션 선언(templates/sections/*.html)을 하나도 못 읽었다"
     have = set(re.findall(r'id="([\w-]+)"', tpl))
+    sec_ids = {s["id"] for s in secs}
+    for s in secs:
+        assert s.get("view") in defs, f"section-def {s['id']} 가 없는 화면을 가리킨다: {s.get('view')}"
+        # after 는 원본 뷰의 섹션이거나 같은 화면의 다른 섹션 id 여도 된다(sm-dim ← sm-perf).
+        assert s.get("after") in defs[s["view"]]["sections"] or s.get("after") in sec_ids,             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
+        assert s["id"] not in have,             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
+        assert f'"{s["id"]}"' in dash,             f"section-def 가 선언하는데 dash.html 이 쓰지 않는다(참조가 없다): {s['id']}"
+
     for d in defs.values():             # 원본 선언이 담는 요소는 원본에 있어야 한다
         for i in d["sections"]:
             assert i in have, f'{d["id"]} 의 view-def 가 없는 요소 id 를 담는다: {i}'
     stage_ids = {s for d in defs.values() for s in d["stages"]}
-    stage_ids |= {s for r in hv_rows for s in re.findall(r'"(\w+)"', r[2])}
 
-    # 3) 단계 용어표는 한 벌이다 — 우리가 내보내는 id 를 전부 알아야 한다.
-    g = re.search(r"var STAGE = \{(.*?)\n  \};", dash, re.S)
-    assert g, "dash.html 의 STAGE 용어표를 못 찾았다"
-    entries = dict(re.findall(r"^\s{4}(\w+):\s*\{(.*?)\}", g.group(1), re.S | re.M))
+    # 3) 단계 용어표는 한 벌이다 — dash.html 은 자기 사본을 갖지 않고 조립이 실어
+    #    보내는 window.__STAGES__(=STAGE_LABELS)를 읽는다.
+    assert "var STAGE = {" not in dash,         "dash.html 에 단계 용어표 사본이 되살아났다 — stage.STAGE_LABELS 가 정본이다"
+    assert "window.__STAGES__" in dash,         "dash.html 이 조립이 실어 보낸 단계 용어표(window.__STAGES__)를 안 읽는다"
+    entries = STAGE_LABELS
     ours = {s["id"] for s in from_progress(_DEMO, "demo", "demo.com")["steps"]}
     assert ours <= set(entries), f"용어표에 없는 안내 단계: {sorted(ours - set(entries))}"
     assert stage_ids <= set(entries), f"용어표에 없는 실행 단계: {sorted(stage_ids - set(entries))}"
     for s in sorted(stage_ids):
-        assert "run:" in entries[s], f"화면에서 돌리는 단계인데 run 라벨이 없다: {s}"
+        assert entries[s].get("run"), f"화면에서 돌리는 단계인데 run 라벨이 없다: {s}"
     for s in sorted(entries):
-        assert "t:" in entries[s], f"단계 이름이 없다: {s}"
+        assert entries[s].get("t"), f"단계 이름이 없다: {s}"
 
     # 4) 사이트 목록 → 대시보드의 이음매는 URL 의 hash 하나다. 대시보드는 그것만
     #    읽고(loadProjects), 비어 있으면 <select> 기본값인 첫 옵션이 잡힌다 —
@@ -386,7 +416,7 @@ def _check_seams() -> None:
     #    목록 사본을 들고 있으면 새 단계는 화면에만 생기고 눌렀을 때 "실행할 수
     #    없는 단계입니다: crawl" 로 튕긴다(실제로 crawl·metrics·backlinks 가 그랬다).
     import run_all
-    runnable = {s for s, body in entries.items() if "run:" in body}
+    runnable = {s for s, v in entries.items() if v.get("run")}
     assert runnable <= set(run_all.VALID_STAGE_NAMES),         f"화면은 돌리자는데 엔진 단계표에 없다: {sorted(runnable - set(run_all.VALID_STAGE_NAMES))}"
     if app_f.exists():
         assert "run_all.VALID_STAGE_NAMES" in app_f.read_text("utf-8"),             "app.py 가 단계 목록 사본을 들고 있다 — 화면에만 있는 단계가 400 으로 튕긴다"

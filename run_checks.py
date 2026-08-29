@@ -68,10 +68,11 @@ def check_dashboard_js() -> int:
     sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
     os.environ.setdefault("CAPTURE_HOME", tempfile.mkdtemp())
     import dashboard                       # noqa: E402 (경로를 먼저 세운다)
-    # 호스팅은 이 조립본 뒤에 애드온(server/assets/dash.html)을 얹어서 낸다 —
-    # 브라우저가 보는 한 덩어리는 그것까지다. 빼고 보면 애드온의 문법 오류도,
-    # 셸과 이름이 겹치는 top-level 선언도 배포에 가서야 드러난다.
-    src = dashboard.HTML.decode("utf-8")
+    # 호스팅 조립("hosted" — 애드온 전용 섹션까지 낀 것) 뒤에 애드온
+    # (server/assets/dash.html)을 얹어서 낸다. 브라우저가 보는 한 덩어리는 그것까지다.
+    # local 조립으로 보면 애드온이 참조하는 섹션 id 도, 문법 오류도, 셸과 이름이
+    # 겹치는 top-level 선언도 배포에 가서야 드러난다.
+    src = dashboard.assemble("hosted")
     addon = ROOT / "server" / "assets" / "dash.html"
     if addon.exists():
         src += "\n" + addon.read_text(encoding="utf-8")
