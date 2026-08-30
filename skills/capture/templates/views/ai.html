@@ -262,7 +262,10 @@ function AI_engineCards(m) {
       cite_share 는 "그 도메인이 인용된 응답 수" 라 우리 인용 수(SUM cited)와 단위가
       같다 — 그래서 나란히 놓아도 거짓이 아니다. ── */
 function AI_shareBars(share, ours, ourN) {
-  const rows = share.map(s => ({domain: s.domain, n: s.n}));
+  // cite_share 는 인용된 도메인을 전부 세므로 우리 도메인도 이미 그 안에 있다 —
+  // 걸러내지 않고 아래에서 우리 줄을 또 밀어 넣으면 같은 도메인이 두 줄로 뜬다.
+  const rows = share.filter(s => s.domain.replace(/^www\./, "") !== ours)
+    .map(s => ({domain: s.domain, n: s.n}));
   if (ours) rows.push({domain: ours, n: ourN, us: true});
   rows.sort((a, b) => b.n - a.n);
   const mx = rows[0] ? rows[0].n : 1;

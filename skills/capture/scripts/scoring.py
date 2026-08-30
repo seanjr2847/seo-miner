@@ -1066,9 +1066,12 @@ def _bucket_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
         return acc
 
     now_, before = fold(cur), fold(prev)
+    # 클릭 내림차순이다 — 화면의 판정 문장이 "클릭이 가장 많은 갈래"를 지목하는데
+    # 노출순으로 세우면 그 주인공이 표 네 번째 줄에 앉는다. 미분류는 잔여 갈래라
+    # 아무리 커도 맨 아래다.
     return sorted((_perf_row(k, now_.get(k), before.get(k))
                    for k in set(now_) | set(before)),
-                  key=lambda x: -x["impressions"])
+                  key=lambda x: (x["label"] == UNCLASSIFIED, -x["clicks"], -x["impressions"]))
 
 
 def brand_split(conn: sqlite3.Connection, project_id: int, cur: str | None,
@@ -1085,6 +1088,18 @@ def brand_split(conn: sqlite3.Connection, project_id: int, cur: str | None,
     return [rows.get(k) or _perf_row(k, None, None) for k in ("brand", "nonbrand")]
 
 
+def canon_intent(v: str | None) -> str:
+    """DB 의 intent 표기를 classify_intent 어휘로 접는다.
+
+    이 컬럼은 자유 문자열이라 사람·Claude 보정이 'informational' 을 넣어 왔다.
+    정본은 classify_intent 가 내는 넷(info·commercial·transactional·navigational)이고,
+    접지 않으면 화면이 라벨을 못 찾아 영문 원문이 그대로 뜬다 — 이 리포가 kind
+    라벨에서 이미 한 번 겪은 사고다.
+    """
+    s = (v or "").strip().lower()
+    return "info" if s == "informational" else s
+
+
 def keyword_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
                  prev: str | None, period: int | None, col: str) -> list[dict]:
     """활성 키워드의 intent / cluster 별 성과.
@@ -1093,7 +1108,8 @@ def keyword_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
     정보성만 잡고 거래성이 0인 상태가 제일 흔한 실패인데, 여태 화면이 그걸
     말하지 않았다 — intent 는 채워만 놓고 아무도 안 읽는 컬럼이었다.
     """
-    m = {norm(r["keyword"]): r[col] for r in conn.execute(
+    fold_ = canon_intent if col == "intent" else (lambda v: v)
+    m = {norm(r["keyword"]): fold_(r[col]) for r in conn.execute(
         f"SELECT keyword, {col} FROM keywords "
         f"WHERE project_id=? AND is_active=1 AND {col} IS NOT NULL",
         (project_id,)) if norm(r["keyword"])}
@@ -1131,7 +1147,7 @@ def country_perf(conn: sqlite3.Connection, project_id: int, *,
 
     now_, before = fold(dates[0]), (fold(dates[1]) if len(dates) > 1 else {})
     return sorted((_perf_row(k, now_.get(k), before.get(k)) for k in now_),
-                  key=lambda x: -x["impressions"])[:limit]
+                  key=lambda x: (-x["clicks"], -x["impressions"]))[:limit]
 
 
 def classify_intent(keyword: str) -> str:
@@ -2283,12 +2299,17 @@ def _selfcheck() -> None:
          ("2026-08-07", "가격 비교", 10, 500, 8.0),
          ("2026-08-14", "마이사이트 로그인", 60, 120, 1.5),
          ("2026-08-14", "가격 비교", 20, 400, 6.0),
-         ("2026-08-14", "새 검색어", 5, 200, 11.0)])
+         ("2026-08-14", "새 검색어", 5, 200, 11.0),
+         ("2026-08-14", "정보 검색어", 3, 300, 9.0)])
     conn.executemany(
         "INSERT INTO keywords(project_id, keyword, cluster, intent, is_active) VALUES(9, ?, ?, ?, ?)",
         [("가격 비교", "가격", "transactional", 1),
          ("마이사이트 로그인", "브랜드", "navigational", 1),
+         ("정보 검색어", "가격", "Informational", 1),   # 사람이 넣은 다른 표기
          ("끈 키워드", "가격", "info", 0)])          # 비활성은 지도에 안 넣는다
+
+    assert canon_intent("Informational") == "info" and canon_intent(" info ") == "info"
+    assert canon_intent("commercial") == "commercial" and canon_intent(None) == ""
 
     assert is_brand_query("마이사이트 로그인", ["마이사이트"])
     assert is_brand_query("MySite Pricing", ["MySite"])            # norm 이 대소문자·공백을 접는다
@@ -2299,18 +2320,24 @@ def _selfcheck() -> None:
     assert [r["label"] for r in bs] == ["brand", "nonbrand"], bs    # 순서 고정 — 화면이 그 순서로 읽는다
     assert bs[0]["clicks"] == 60 and bs[0]["d_clicks"] == 10 and bs[0]["ctr"] == 50.0, bs[0]
     assert bs[0]["d_position"] == 0.5, bs[0]                        # 2.0 → 1.5, 양수가 좋아진 쪽
-    assert bs[1]["clicks"] == 25 and bs[1]["impressions"] == 600, bs[1]
-    assert bs[1]["position"] == 7.7, bs[1]                          # (6×400 + 11×200)/600, 노출 가중
+    assert bs[1]["clicks"] == 28 and bs[1]["impressions"] == 900, bs[1]
+    # (6×400 + 11×200 + 9×300)/900, 노출 가중
+    assert bs[1]["position"] == 8.1, bs[1]
     assert brand_split(conn, 9, "2026-08-14", "2026-08-07", 28, []) == []   # 별칭 없으면 판정 불가
 
-    it = {r["label"]: r for r in keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "intent")}
-    assert set(it) == {"transactional", "navigational", UNCLASSIFIED}, it
+    it_rows = keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "intent")
+    # 클릭 내림차순 + 미분류 맨 아래. 노출순으로 세우면 transactional(400노출/20클릭)이
+    # 맨 위에 오는데, 화면은 "클릭이 가장 많은 갈래"를 지목하므로 표와 문장이 어긋난다.
+    assert [r["label"] for r in it_rows] == ["navigational", "transactional", "info",
+                                             UNCLASSIFIED], it_rows
+    it = {r["label"]: r for r in it_rows}
     assert it["transactional"]["clicks"] == 20 and it["navigational"]["clicks"] == 60
+    assert it["info"]["clicks"] == 3, it            # 'Informational' 이 info 로 접힌다
     assert it[UNCLASSIFIED]["clicks"] == 5, it                      # 매칭 안 된 검색어를 버리지 않는다
-    assert sum(r["clicks"] for r in it.values()) == 85              # 합이 총계와 맞는다
+    assert sum(r["clicks"] for r in it.values()) == 88              # 합이 총계와 맞는다
     cl = {r["label"]: r for r in keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "cluster")}
     assert set(cl) == {"가격", "브랜드", UNCLASSIFIED}, cl
-    assert cl["가격"]["queries"] == 1 and cl["가격"]["d_impressions"] == -100, cl["가격"]
+    assert cl["가격"]["queries"] == 2 and cl["가격"]["d_impressions"] == 200, cl["가격"]
     assert cl[UNCLASSIFIED]["unclassified"] and not cl["가격"]["unclassified"], cl
     assert keyword_perf(conn, 9, None, None, None, "intent") == []  # 수집이 없으면 빈 목록
 
@@ -2322,7 +2349,7 @@ def _selfcheck() -> None:
          ("2026-08-14", "kor", "q1", 10, 200, 5.0),
          ("2026-08-14", "usa", "q2", 1, 50, 20.0)])
     cp = country_perf(conn, 9)
-    assert [r["label"] for r in cp] == ["kor", "usa"], cp           # 노출 내림차순
+    assert [r["label"] for r in cp] == ["kor", "usa"], cp           # 클릭 내림차순
     assert cp[0]["d_clicks"] == 5 and cp[0]["d_position"] == 5.0 and cp[0]["has_prev"], cp[0]
     assert cp[1]["ctr"] == 2.0 and not cp[1]["has_prev"], cp[1]     # 이번에 처음 뜬 나라
 
