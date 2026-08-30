@@ -26,6 +26,7 @@ from pathlib import Path
 # doctor가 import해도 안전하다 — 진단하러 왔다가 Brain을 만들어 버리는 일도 없다.
 CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
+import collect_gsc  # noqa: E402
 import db  # noqa: E402
 import stage  # noqa: E402
 
@@ -169,6 +170,24 @@ def has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
+def gsc_missing_scopes() -> list[str]:
+    """저장된 OAuth 토큰이 갖고 있던 스코프가 지금 collect_gsc.SCOPES 에 못 미치면
+    그 차집합 — GA4용 analytics.readonly 가 나중에 추가돼서, 그 전에 로그인해 둔
+    토큰은 안 갖고 있을 수 있다. 서비스 계정은 호출마다 SCOPES 를 새로 요청하므로
+    (저장된 동의가 없다) 해당 없음 — 빈 리스트.
+    """
+    if db.gsc_auth() != "oauth":
+        return []
+    token = db.gsc_token_file()
+    if token is None:
+        return []
+    try:
+        saved = set(json.loads(token.read_text(encoding="utf-8")).get("scopes") or [])
+    except (OSError, ValueError):
+        return []                      # 손상된 토큰은 다른 경로(로그인 안내)가 잡는다
+    return [s for s in collect_gsc.SCOPES if s not in saved]
+
+
 def diagnose() -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
@@ -212,6 +231,9 @@ def diagnose() -> dict:
     # 번들 클라이언트를 쓰는 중인가 — 동의 화면 경고("확인되지 않은 앱")와 100명 상한이
     # 붙는 갈래라, 사용자에게 미리 말해 줘야 로그인 도중에 멈추지 않는다.
     gsc_bundled = gsc_mode == "oauth" and db.gsc_oauth_client() == db.gsc_oauth_bundled()
+    # 토큰은 있는데(연결됨) 그 토큰이 지금 SCOPES 를 다 못 덮을 수 있다 — analytics.readonly
+    # 가 나중에 추가돼서, 그 전에 로그인해 둔 사람은 GA4 수집이 403 으로 막힌다.
+    gsc_missing = gsc_missing_scopes() if gsc_conn else []
     # Brain 은 컴퓨터 전역이라 "지금 이 폴더가 어느 사이트냐"를 따로 정해야 한다.
     # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
     # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
@@ -309,6 +331,19 @@ def diagnose() -> dict:
                    "파일을 놓는 것부터 제가 안내합니다 (내 클라이언트를 쓰시려면 "
                    "connect_gsc.py --client-id ... --client-secret ...)."
         })
+    # analytics.readonly 가 나중에 추가된 스코프라, 그 전에 로그인해 둔 토큰은
+    # GA4 를 못 읽는다 — 조용히 403 으로 막히기 전에 여기서 먼저 말한다.
+    if core_ok and brain_ok and gsc_missing:
+        must.append({
+            "id": "gsc_rescope",
+            "msg": "구글 재로그인 필요 (무료) — 저장된 로그인에 GA4 읽기 권한이 없어 "
+                   "GA4 수집이 403 으로 막힙니다 (검색 실적 수집은 그대로 됩니다). "
+                   + (f"기존 토큰이 유효하면 \"GSC 로그인해줘\"가 그걸 그대로 재사용해 "
+                      f"재동의 창이 안 뜹니다 — 먼저 토큰을 지우세요: {db.gsc_token()} "
+                      "그다음 채팅에 \"GSC 로그인해줘\"." if not hosted else
+                      "대시보드에서 구글 계정을 다시 연결해 주세요 — 재로그인하면 "
+                      "새 권한까지 다시 동의합니다.")
+        })
 
     later = []
     if brain["no_prompts"]:
@@ -377,6 +412,9 @@ def diagnose() -> dict:
         verdict = ("구글 인증 수단이 없습니다 — 로그인에 쓸 클라이언트 파일이 "
                    "이 배포에 빠져 있습니다.")
         next_cmd = "GSC 연동해줘"
+    elif gsc_missing:
+        verdict = "구글 재로그인이 한 번 더 필요합니다 — GA4 읽기 권한이 저장된 토큰에 없습니다."
+        next_cmd = "구글 계정 다시 연결해줘" if hosted else "토큰 삭제하고 GSC 로그인해줘"
     elif brain["picked"]:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
         next_cmd = f"/capture run {brain['picked']}"
@@ -398,6 +436,7 @@ def diagnose() -> dict:
             # gsc_mode는 남긴다 — 대시보드가 이 JSON을 먹으므로 기존 키를 없애면 화면이 깨진다.
             "gsc_connected": gsc_conn,    # 3-상태의 정본: 연결됨 / (mode만 있으면)로그인 대기 / 없음
             "gsc_bundled": gsc_bundled,   # 번들 클라이언트로 로그인하는 중인가
+            "gsc_missing_scopes": gsc_missing,   # 연결된 토큰에 없는 SCOPES (보통 GA4)
             "capabilities": {f"{c['name']} — {c['desc']}": c["on"] for c in readiness},
             # owner/blocking 도 같이 실어 보낸다 — 화면(setup_payload)이 "이건 누구
             # 할 일인가"를 문구에서 되짚지 않고 축으로 판단한다.
@@ -436,6 +475,8 @@ def render(d: dict) -> None:
                 tag = "연결됨 (서비스 계정 — 무인 수집)"
             elif conn:
                 tag = "연결됨 (내 구글 계정 로그인)"
+                if d.get("gsc_missing_scopes"):
+                    tag += " — GA4 읽기 권한 없음, 재로그인 필요"
             elif mode:
                 # 새로 생긴 상태다. 예전엔 인증 파일이 있으면 곧 연결됨이었는데,
                 # 번들 클라이언트가 항상 존재하면서 그 등식이 깨졌다.

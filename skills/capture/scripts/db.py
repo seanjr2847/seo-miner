@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS projects (
   domain TEXT NOT NULL,
   locale TEXT DEFAULT 'ko-KR',
   gsc_property TEXT,                          -- e.g. sc-domain:example.com
+  ga4_property TEXT,                          -- GA4 속성 숫자 ID만 (예: '123456789') — 'properties/' 접두는 API 부를 때 collect_ga4 가 붙인다
   config_path TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -168,6 +169,23 @@ CREATE TABLE IF NOT EXISTS gsc_breakdown (
   clicks INTEGER, impressions INTEGER, ctr REAL, position REAL
 );
 CREATE INDEX IF NOT EXISTS idx_gsc_bd ON gsc_breakdown(project_id, snapshot_date, dim);
+-- gsc_snapshots 와 같은 축(project_id, snapshot_date, period_days)이다 — GSC 와 GA4 를
+-- 나중에 이으려면 이 축이 어긋나면 안 된다. landing_page 는 GA4 landingPage 차원값을
+-- collect_ga4._landing_path() 로 경로만 남긴 정규형이다(호스트 없음, 쿼리스트링 제거).
+-- GSC 의 page(절대 URL)와 이을 때는 urlsplit(page).path 로 맞춘다 — 규칙의 정본은
+-- collect_ga4.py 상단 주석.
+CREATE TABLE IF NOT EXISTS ga4_snapshots (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,                -- YYYY-MM-DD (수집일)
+  period_days INTEGER NOT NULL,
+  landing_page TEXT NOT NULL,                 -- 경로만 (정규화 규칙은 위 주석)
+  sessions INTEGER,
+  key_events REAL,                            -- GA4 'conversions' 의 새 이름(2024-05 개명). 컨센트 모델링으로 소수일 수 있다
+  total_revenue REAL,
+  bounce_rate REAL
+);
+CREATE INDEX IF NOT EXISTS idx_ga4_proj_date ON ga4_snapshots(project_id, snapshot_date);
 CREATE TABLE IF NOT EXISTS gsc_index_status (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -399,6 +417,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     SCHEMA는 매 연결마다 재실행되지만 CREATE TABLE IF NOT EXISTS는 이미 존재하는
     테이블을 건드리지 않으므로, 컬럼을 새로 추가하면 기존 Brain에는 반영되지 않는다.
     """
+    proj_cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
+    if "ga4_property" not in proj_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN ga4_property TEXT")
+        conn.commit()
+
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
     # volume·difficulty 는 처음부터 있었지만 채우는 코드가 없어 늘 NULL 이었다.
     # cpc·metrics_at 이 붙으면서 "언제 잰 값인가"를 말할 수 있게 된다 — 지표는
@@ -512,13 +535,13 @@ def sync_project(yaml_path: str) -> None:
     cfg = load_project_yaml(yaml_path)
     conn = connect()
     conn.execute(
-        """INSERT INTO projects(name,type,domain,locale,gsc_property,config_path)
-           VALUES(?,?,?,?,?,?)
+        """INSERT INTO projects(name,type,domain,locale,gsc_property,ga4_property,config_path)
+           VALUES(?,?,?,?,?,?,?)
            ON CONFLICT(name) DO UPDATE SET type=excluded.type, domain=excluded.domain,
              locale=excluded.locale, gsc_property=excluded.gsc_property,
-             config_path=excluded.config_path""",
+             ga4_property=excluded.ga4_property, config_path=excluded.config_path""",
         (cfg["name"], cfg.get("type", "saas"), cfg["domain"], cfg.get("locale", "ko-KR"),
-         cfg.get("gsc_property"), cfg["_path"]),
+         cfg.get("gsc_property"), cfg.get("ga4_property"), cfg["_path"]),
     )
     pid = conn.execute("SELECT id FROM projects WHERE name=?", (cfg["name"],)).fetchone()[0]
     for kw in cfg.get("seed_keywords", []) or []:
@@ -644,6 +667,41 @@ def write_gsc_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date
           int(clk or 0), int(imp or 0), round(float(ctr or 0), 4),
           round(float(pos or 0), 1))
          for dv, q, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def set_ga4_property(conn, project_id: int, property_id: str | None) -> None:
+    """GA4 속성을 프로젝트에 건다. 빈 값이면 연결 해제.
+
+    저장은 숫자 ID 문자열이다 — 'properties/' 접두는 collect_ga4 가 API 부를 때
+    붙인다(ga4_snapshots 테이블 주석과 같은 계약). projects 스키마를 아는 것은
+    이 파일이라, 호스팅 라우트가 UPDATE 문을 따로 들고 있지 않게 여기에 둔다.
+    """
+    conn.execute("UPDATE projects SET ga4_property=? WHERE id=?",
+                 (property_id or None, project_id))
+    conn.commit()
+
+
+def write_ga4_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                       period_days: int, rows) -> int:
+    """GA4 스냅샷 적재. write_gsc_snapshot 과 같은 규칙 — 같은 날 다시 넣으면 덮어쓴다.
+
+    rows: (landing_page, sessions, key_events, total_revenue, bounce_rate) 순회 가능 객체.
+    landing_page 는 이미 collect_ga4._landing_path() 로 정규화된 값이어야 한다(여기서는
+    다시 손대지 않는다 — 정규화 규칙의 정본은 collect_ga4.py 한 곳).
+    """
+    rows = list(rows)
+    conn.execute("DELETE FROM ga4_snapshots WHERE project_id=? AND snapshot_date=?",
+                 (project_id, snapshot_date))
+    conn.executemany(
+        """INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days,
+             landing_page, sessions, key_events, total_revenue, bounce_rate)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, lp,
+          int(sessions or 0), round(float(ke or 0), 2),
+          round(float(rev or 0), 2), round(float(br or 0), 4))
+         for lp, sessions, ke, rev, br in rows])
     conn.commit()
     return len(rows)
 

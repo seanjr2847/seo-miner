@@ -16,6 +16,7 @@ import re
 import sqlite3
 import sys
 from collections import namedtuple
+from urllib.parse import urlsplit
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
 PAGE1 = 10
@@ -578,6 +579,13 @@ STARVED_TOP_N = 20
 # 걸린 상태"의 경계다 — 그 위면 누군가 본문에서 그 페이지를 가리키고 있다는 뜻이다.
 STARVED_LINKS_IN = 3
 
+# GA4 교차: 클릭은 버는데 전환(key_events)이 0인 페이지. 둘 다 넘어야 잡는다 —
+# 클릭만 보면 GA4 세션이 0인(태그가 안 붙었거나 광고 차단·봇으로 GA4 만 못 잡은)
+# 페이지까지 "왔는데 안 샀다"로 잘못 읽는다. 클릭 20은 SHIFT_MIN_IMP(노출 30)보다
+# 낮췄다 — 클릭은 노출보다 이미 한 번 걸러진 신호라 표본이 노출만큼 필요 없다.
+GA4_NOCONV_MIN_CLICKS = 20
+GA4_NOCONV_MIN_SESSIONS = 10
+
 
 def url_key(url: str) -> str:
     """GSC 의 page 와 크롤의 url 을 같은 것으로 보기 위한 열쇠.
@@ -602,6 +610,19 @@ def _page_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
             GROUP BY page""", (project_id, snapshot_date, period))}
 
 
+def _ga4_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -> dict[str, dict]:
+    """GA4 최신 스냅샷을 landing_page(경로) 기준으로 접는다 (_page_agg 의 GA4 짝).
+
+    키는 collect_ga4._landing_path() 가 이미 정규화한 경로 그대로다 — GSC page 와
+    이을 때는 urlsplit(page).path 로 맞춘다(매칭 규칙의 정본은 collect_ga4.py).
+    """
+    return {r["landing_page"]: dict(r) for r in conn.execute(
+        """SELECT landing_page, SUM(sessions) sessions, SUM(key_events) key_events,
+                  SUM(total_revenue) revenue
+             FROM ga4_snapshots WHERE project_id=? AND snapshot_date=?
+            GROUP BY landing_page""", (project_id, snapshot_date))}
+
+
 def page_performance(conn: sqlite3.Connection, project_id: int, *,
                      limit: int = 30) -> list[dict]:
     """최신 스냅샷의 페이지별 성과 + 직전 대비 Δ클릭 — 많이 잃은 페이지가 위다.
@@ -609,20 +630,32 @@ def page_performance(conn: sqlite3.Connection, project_id: int, *,
     비교 짝은 snapshot_pair 가 고른다 (scoring.md 4-3b) — 28일치에서 90일치를 빼면
     Δ가 전부 거짓이 된다. page 가 NULL 인 구버전 스냅샷에서는 빈 목록이다
     (결함이 아니라 데이터 부재).
+
+    GA4 가 연결돼 있으면(ga4_snapshots 에 최신 행이 있으면) 같은 줄에 sessions·
+    key_events·revenue 를 얹는다 — 없으면 그 키 자체를 안 넣는다. 화면이 열 유무로
+    GA4 연결 여부를 가른다(빈 열을 보여주면 고장으로 읽힌다).
     """
     cur, prev, period, _ = snapshot_pair(conn, project_id)
     if not cur:
         return []
     now_ = _page_agg(conn, project_id, cur, period)
     before = _page_agg(conn, project_id, prev, period) if prev else {}
+    ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
+    ga4 = _ga4_agg(conn, project_id, ga4_date) if ga4_date else {}
     rows = []
     for page, r in now_.items():
         b = before.get(page)
-        rows.append({"page": page, "clicks": r["clk"], "impressions": r["imp"],
-                     "ctr": _ctr_pct(r["clk"], r["imp"], 2),
-                     "position": round(r["pos"], 1) if r["pos"] is not None else None,
-                     "queries": r["q"],
-                     "dclk": (r["clk"] - b["clk"]) if b else None})
+        row = {"page": page, "clicks": r["clk"], "impressions": r["imp"],
+               "ctr": _ctr_pct(r["clk"], r["imp"], 2),
+               "position": round(r["pos"], 1) if r["pos"] is not None else None,
+               "queries": r["q"],
+               "dclk": (r["clk"] - b["clk"]) if b else None}
+        if ga4_date:
+            g = ga4.get(urlsplit(page).path)
+            row["sessions"] = g["sessions"] if g else None
+            row["key_events"] = g["key_events"] if g else None
+            row["revenue"] = g["revenue"] if g else None
+        rows.append(row)
     # 잃은 쪽이 먼저다 — 이 표의 존재 이유가 "어느 페이지가 죽고 있나"라서다.
     # 비교 짝이 없거나 이번에 새로 뜬 페이지는 0 자리에 두고 노출 큰 순으로 민다.
     return sorted(rows, key=lambda r: (r["dclk"] or 0, -r["impressions"]))[:limit]
@@ -701,6 +734,34 @@ def starved_pages(conn: sqlite3.Connection, project_id: int, *,
     return sorted(out, key=lambda x: (x["links_in"], -x["impressions"]))[:limit]
 
 
+def zero_conversion_pages(conn: sqlite3.Connection, project_id: int, *,
+                          limit: int = 20) -> list[dict]:
+    """클릭은 GA4_NOCONV_MIN_CLICKS 이상 버는데 GA4 key_events 가 0인 페이지.
+
+    GSC 가 여태 못 보던 자리 — 클릭까지는 벌어도 그 뒤(전환)가 없다. GA4 미연결
+    (ga4_snapshots 에 이 프로젝트 행이 없음)이면 빈 목록. **왜 전환이 안 되는지는
+    여기서 판정하지 않는다** — CTA 부재인지 상품이 안 맞는지는 이 데이터로 못 본다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
+    if not (cur and ga4_date):
+        return []
+    ga4 = _ga4_agg(conn, project_id, ga4_date)
+    out = []
+    for page, r in _page_agg(conn, project_id, cur, period).items():
+        g = ga4.get(urlsplit(page).path)
+        if not g:
+            continue
+        clicks, sessions = r["clk"] or 0, g["sessions"] or 0
+        if clicks < GA4_NOCONV_MIN_CLICKS or sessions < GA4_NOCONV_MIN_SESSIONS:
+            continue
+        if g["key_events"]:
+            continue
+        out.append({"page": page, "clicks": clicks, "impressions": r["imp"],
+                    "sessions": sessions, "queries": r["q"]})
+    return sorted(out, key=lambda x: -x["clicks"])[:limit]
+
+
 def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
     """같은 쿼리에 내 페이지 2개 이상이 노출을 나눠 갖는 경우 (키워드 카니벌라이제이션).
 
@@ -750,6 +811,7 @@ def _latest(conn: sqlite3.Connection, sql: str, params: tuple) -> str | None:
 
 _LATEST_BD = "SELECT MAX(snapshot_date) FROM gsc_breakdown WHERE project_id=? AND dim=?"
 _LATEST_IX = "SELECT MAX(checked_date) FROM gsc_index_status WHERE project_id=?"
+_LATEST_GA4 = "SELECT MAX(snapshot_date) FROM ga4_snapshots WHERE project_id=?"
 
 
 def daily_trend(conn: sqlite3.Connection, project_id: int, days: int = 28) -> list[dict]:
@@ -1155,6 +1217,59 @@ def keyword_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
     for r in rows:
         r["unclassified"] = r["label"] == UNCLASSIFIED
     return rows
+
+
+def ga4_intent_approx(conn: sqlite3.Connection, project_id: int, cur: str | None,
+                      period: int | None) -> list[dict]:
+    """의도 갈래별 GA4 전환 — keyword_perf(by_intent) 의 클릭·노출 옆에 세울 근사치.
+
+    GSC 검색어와 GA4 세션은 직접 이어지지 않는다 — 다리는 페이지뿐이다: 그 의도의
+    검색어가 걸린 페이지들을 모아 GA4 실적을 더한다. 그래서 이건 **그 의도 자체의
+    전환이 아니라, 그 의도의 검색어가 데려온 페이지들 전체의 전환**이다. 페이지
+    하나가 여러 의도의 검색어에 걸리면 그 페이지의 전환은 각 의도에 중복으로
+    잡힌다 — shared_pages 가 그 개수를 말한다(화면은 이걸 숫자 옆에 반드시 적는다).
+
+    GA4 미연결이거나 intent 붙은 활성 키워드가 없으면 빈 목록.
+    """
+    ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
+    if not (cur and period and ga4_date):
+        return []
+    intent_of = {norm(r["keyword"]): canon_intent(r["intent"]) for r in conn.execute(
+        "SELECT keyword, intent FROM keywords "
+        "WHERE project_id=? AND is_active=1 AND intent IS NOT NULL", (project_id,))
+        if norm(r["keyword"])}
+    if not intent_of:
+        return []
+
+    # 검색어 → 그 검색어가 걸린 페이지 경로(distinct). 의도별로 모은다.
+    pages_of: dict[str, set[str]] = {}
+    for r in conn.execute(
+        """SELECT DISTINCT query, page FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL""",
+        (project_id, cur, period)):
+        label = intent_of.get(norm(r["query"]))
+        if not label:
+            continue
+        pages_of.setdefault(label, set()).add(urlsplit(r["page"]).path)
+    if not pages_of:
+        return []
+
+    ga4 = _ga4_agg(conn, project_id, ga4_date)
+    # 한 페이지가 몇 갈래에 걸렸는지 — 중복 집계 경고에 쓴다.
+    intent_count: dict[str, int] = {}
+    for paths in pages_of.values():
+        for path in paths:
+            intent_count[path] = intent_count.get(path, 0) + 1
+
+    out = []
+    for label, paths in pages_of.items():
+        matched = [p for p in paths if p in ga4]
+        out.append({"label": label, "pages": len(paths), "pages_matched": len(matched),
+                    "sessions": sum(ga4[p]["sessions"] or 0 for p in matched),
+                    "key_events": round(sum(ga4[p]["key_events"] or 0 for p in matched), 2),
+                    "revenue": round(sum(ga4[p]["revenue"] or 0 for p in matched), 2),
+                    "shared_pages": sum(1 for p in matched if intent_count[p] > 1)})
+    return sorted(out, key=lambda x: -x["key_events"])
 
 
 def country_perf(conn: sqlite3.Connection, project_id: int, *,
@@ -2484,6 +2599,8 @@ def _selfcheck() -> None:
     assert (pp[0]["dclk"], pp[1]["dclk"]) == (-35, 15), pp
     assert pp[0]["queries"] == 2 and pp[0]["impressions"] == 1080, pp[0]
     assert pp[0]["ctr"] == 1.39, pp[0]                                   # 저장값이 아닌 재계산
+    assert "sessions" not in pp[0], pp[0]        # GA4 미연결 — 열 자체가 없다(빈 열 아님)
+    assert zero_conversion_pages(conn, 8) == []  # GA4 미연결이면 이 판정 자체가 없다
 
     conn.execute("INSERT INTO crawl_runs(id, project_id, finished_at, seed, pages)"
                  " VALUES(80, 8, '2026-08-09', 'sitemap', 4)")
@@ -2500,6 +2617,51 @@ def _selfcheck() -> None:
     sp = starved_pages(conn, 8)
     assert [r["page"] for r in sp] == ["https://www.x.com/rising"], sp   # links_in 1 < 3
     assert (sp[0]["crawl_url"], sp[0]["rank"]) == ("https://www.x.com/rising/", 2), sp[0]
+
+    # ── GA4 교차: 페이지 실적에 세션·전환을 얹고, 전환 0 페이지를 잡고, 의도별
+    # 근사를 낸다 (프로젝트 8, 위 GSC 픽스처를 그대로 잇는다). 클릭 하한(20)·세션
+    # 하한(10) 시험용으로 페이지 둘을 더 건다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page,"
+        " clicks, impressions, ctr, position) VALUES(8, '2026-08-08', 28, ?, ?, ?, ?, 0.0, ?)",
+        [("q1", "https://www.x.com/flat", 25, 400, 6.0),
+         ("q1", "https://www.x.com/paid", 30, 500, 7.0),
+         ("q2", "https://www.x.com/low", 10, 150, 8.0)])
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, cluster, intent, is_active) VALUES(8, ?, ?, ?, 1)",
+        [("q1", None, "transactional"), ("q2", None, "info")])
+    conn.executemany(
+        "INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days, landing_page,"
+        " sessions, key_events, total_revenue, bounce_rate) VALUES(8, '2026-08-10', 28, ?, ?, ?, ?, ?)",
+        [("/dying/", 12, 3, 50.0, 0.4),    # 클릭 15 < GA4_NOCONV_MIN_CLICKS(20) — 굶은 축엔 안 걸린다
+         ("/rising", 15, 0, 0.0, 0.6),     # 클릭 20·세션 15·전환 0 — 이 판정의 표본 케이스
+         ("/flat", 3, 0, 0.0, 0.5),        # 클릭 25 지만 세션 3 < 하한(10) — 제외
+         ("/paid", 20, 2, 80.0, 0.3),      # 전환이 있다 — 제외
+         ("/low", 12, 0, 0.0, 0.7),        # 세션 12 는 하한을 넘지만 클릭 10 < 하한(20) — 제외
+         ("/orphan", 5, 0, 0.0, 0.9)])     # GSC 에 없는 경로 — 어느 결과에도 안 새어 나온다
+
+    pp2 = {r["page"]: r for r in page_performance(conn, 8)}
+    assert (pp2["https://www.x.com/dying/"]["sessions"],
+           pp2["https://www.x.com/dying/"]["key_events"]) == (12, 3.0), pp2["https://www.x.com/dying/"]
+    assert (pp2["https://www.x.com/rising"]["sessions"],
+           pp2["https://www.x.com/rising"]["key_events"]) == (15, 0.0), pp2["https://www.x.com/rising"]
+    assert pp2["https://www.x.com/paid"]["sessions"] == 20, pp2["https://www.x.com/paid"]
+
+    zc = zero_conversion_pages(conn, 8)
+    assert [r["page"] for r in zc] == ["https://www.x.com/rising"], zc  # 나머지는 하한/전환 있음으로 빠진다
+    assert (zc[0]["clicks"], zc[0]["sessions"], zc[0]["queries"]) == (20, 15, 1), zc[0]
+
+    assert ga4_intent_approx(conn, 8, None, None) == []            # 기준 수집일이 없으면 빈 목록
+    assert ga4_intent_approx(conn, 9, "2026-08-14", 28) == []      # GA4 미연결 프로젝트는 빈 목록
+    gi = ga4_intent_approx(conn, 8, "2026-08-08", 28)
+    assert [r["label"] for r in gi] == ["transactional", "info"], gi   # 전환 내림차순
+    tr, info = gi
+    # transactional = q1 이 걸린 4페이지(dying·rising·flat·paid) 합. dying 은 info(q2)에도
+    # 걸려 있어 두 갈래 모두에 전환이 중복으로 잡힌다 — shared_pages 가 그걸 센다.
+    assert (tr["pages"], tr["pages_matched"], tr["sessions"], tr["key_events"], tr["shared_pages"]) \
+        == (4, 4, 50, 5.0, 1), tr
+    assert (info["pages"], info["pages_matched"], info["sessions"], info["key_events"], info["shared_pages"]) \
+        == (2, 2, 24, 3.0, 1), info    # info = q2 가 걸린 dying·low 합
 
     # page 가 NULL 인 구버전 스냅샷 — 크롤이 있어도 전 페이지를 '노출 0' 이라 부르지 않는다
     conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"

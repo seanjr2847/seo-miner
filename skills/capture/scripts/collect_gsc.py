@@ -28,12 +28,16 @@ import collector  # noqa: E402
 import db  # noqa: E402
 import scoring  # noqa: E402
 
-SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
+# analytics.readonly 하나로 GA4 Data API(리포트)와 Admin API(속성 목록)를 다 커버한다
+# — collect_ga4.py 가 이 열쇠를 그대로 빌려 쓴다(열쇠는 한 벌이다, 파일 docstring 참조).
+# 여기 두는 이유: 이 상수가 인증의 유일한 정본이라 GSC 든 GA4 든 스코프는 여기 하나뿐이어야 한다.
+SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly",
+         "https://www.googleapis.com/auth/analytics.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
-def _oauth_service():
-    """내 구글 계정으로 로그인해서 서비스 객체를 만든다 — 토큰은 우리가 보관한다.
+def _oauth_credentials():
+    """내 구글 계정으로 로그인해서 Credentials 를 만든다 — 토큰은 우리가 보관한다.
 
     예전에는 이 자리를 gsc MCP 서버(mcp-search-console)의 인증 해석기가 대신 했다.
     그 패키지를 걷어내면서 로그인도 우리 것이 됐다 — 하는 일은 같다:
@@ -44,7 +48,6 @@ def _oauth_service():
     """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
 
     creds = None
     src = db.gsc_token_file()
@@ -75,11 +78,39 @@ def _oauth_service():
     tok = db.gsc_token()
     tok.parent.mkdir(parents=True, exist_ok=True)
     tok.write_text(creds.to_json(), encoding="utf-8")
-    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    return creds
+
+
+def get_credentials():
+    """지금 걸린 인증으로 Credentials 객체 하나. 판정 정본은 db.gsc_auth().
+
+    get_service() 가 이 위에 선다. collect_ga4 도 이 함수를 직접 불러 GA4/Admin
+    서비스를 만든다 — 열쇠는 한 벌이라는 원칙의 실행체다(googleapiclient 서비스
+    객체의 private 속성에 기대지 않는다).
+    """
+    mode = db.gsc_auth()
+
+    # 서비스 계정만 걸려 있으면 직결한다 — 읽기 전용 스코프에 무인 실행이라
+    # 브라우저 로그인 경로를 아예 타지 않는다.
+    if mode == "service_account":
+        from google.oauth2 import service_account
+        return service_account.Credentials.from_service_account_file(
+            str(db.gsc_key()), scopes=SCOPES)
+
+    # 기본은 OAuth — 토큰이 아직 없으면 여기서 브라우저 로그인이 한 번 열린다.
+    if mode == "oauth":
+        creds = _oauth_credentials()
+        if creds is not None:
+            return creds
+
+    sys.exit("구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다.\n"
+             f"  · 기본(OAuth): {db.gsc_oauth_client()} 에 클라이언트 파일이 없습니다 —\n"
+             "    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
+             "  · 무인 수집(서비스 계정)을 쓰신다면 같은 스크립트가 그쪽 키도 받습니다.")
 
 
 def get_service():
-    """지금 걸린 인증으로 서치콘솔 서비스 객체 하나. 판정 정본은 db.gsc_auth().
+    """지금 걸린 인증으로 서치콘솔 서비스 객체 하나.
 
     벌크 수집(이 파일)·색인 검사(collect_index)·즉석 조회(gsc_query)가 전부
     이 함수 하나를 부른다 — 열쇠는 한 벌이라는 원칙의 실행체다.
@@ -89,28 +120,8 @@ def get_service():
     except ImportError:
         sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
                  "pip install google-api-python-client")
-
-    mode = db.gsc_auth()
-
-    # 서비스 계정만 걸려 있으면 직결한다 — 읽기 전용 스코프에 무인 실행이라
-    # 브라우저 로그인 경로를 아예 타지 않는다.
-    if mode == "service_account":
-        from google.oauth2 import service_account
-        creds = service_account.Credentials.from_service_account_file(
-            str(db.gsc_key()), scopes=SCOPES)
-        return build("searchconsole", "v1", credentials=creds,
-                     cache_discovery=False)
-
-    # 기본은 OAuth — 토큰이 아직 없으면 여기서 브라우저 로그인이 한 번 열린다.
-    if mode == "oauth":
-        svc = _oauth_service()
-        if svc is not None:
-            return svc
-
-    sys.exit("구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다.\n"
-             f"  · 기본(OAuth): {db.gsc_oauth_client()} 에 클라이언트 파일이 없습니다 —\n"
-             "    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
-             "  · 무인 수집(서비스 계정)을 쓰신다면 같은 스크립트가 그쪽 키도 받습니다.")
+    return build("searchconsole", "v1", credentials=get_credentials(),
+                 cache_discovery=False)
 
 
 def _query(service, prop: str, body: dict) -> dict:

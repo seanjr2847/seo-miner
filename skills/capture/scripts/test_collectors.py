@@ -11,7 +11,7 @@ I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 �
     (+ 선택 aso = 명부 ALL_SKILLS 8개) 완비 시 해제 검증
   · install_skills: 스킬 완비 시 실행 방지, 누락 시 marketplace/install 호출 검증
   · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
-  · run_all: 체인 순서(gsc→index→keywords→rank→ai→competitors→gaps→report), 유료 키 없을 시 건너뜀,
+  · run_all: 체인 순서(gsc→ga4→index→keywords→rank→ai→competitors→gaps→report), 유료 키 없을 시 건너뜀,
     gsc 실패 시 즉시 중단, 스테이지 옵션 전달, 결과 리스트(StageResult)의 행 수·비용 합산
 """
 import contextlib
@@ -702,6 +702,53 @@ def test_doctor_json_subprocess():
         "대시보드가 gsc_ok 로 먹는 키가 로그인 전에 True 다 — 화면이 거짓말한다"
 
 
+def test_doctor_detects_gsc_missing_scopes():
+    """doctor.py: 연결된 OAuth 토큰에 analytics.readonly 가 없으면(GA4 추가 전에
+    로그인해 둔 사람) 재로그인 안내가 must 에 뜨는지, 스코프가 다 있으면 안 뜨는지.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
+    import doctor
+
+    doc_home = Path(tempfile.mkdtemp(prefix="seo-miner-doc-scope-test-"))
+    token = doc_home / "gsc_token.json"
+    env_keys = {"CAPTURE_HOME": str(doc_home), "GSC_TOKEN_FILE": str(token),
+               "GSC_CONFIG_DIR": str(doc_home / "legacy-none")}
+    saved = {k: os.environ.get(k) for k in env_keys}
+    os.environ.update(env_keys)
+    try:
+        # analytics.readonly 없는 구버전 토큰 — GA4 스코프가 추가되기 전에 로그인한 사람.
+        token.write_text(json.dumps({
+            "token": "x", "refresh_token": "y",
+            "scopes": ["https://www.googleapis.com/auth/webmasters.readonly"],
+        }), encoding="utf-8")
+
+        d = doctor.diagnose()
+        assert d["gsc_connected"] is True, "토큰이 있는데 연결 안 됐다고 했다"
+        assert d["gsc_missing_scopes"] == ["https://www.googleapis.com/auth/analytics.readonly"], \
+            d["gsc_missing_scopes"]
+        assert any(m["id"] == "gsc_rescope" for m in d["must"]), \
+            f"스코프 부족인데 재로그인 안내가 없다: {d['must']}"
+        rescope = next(m for m in d["must"] if m["id"] == "gsc_rescope")
+        assert "GA4" in rescope["msg"] and str(doctor.db.gsc_token()) in rescope["msg"], \
+            rescope["msg"]
+
+        # 스코프를 다 갖춘 토큰이면 안내가 사라져야 한다 — 일부러 깨 보는 대조군.
+        token.write_text(json.dumps({
+            "token": "x", "refresh_token": "y",
+            "scopes": list(doctor.collect_gsc.SCOPES),
+        }), encoding="utf-8")
+        d2 = doctor.diagnose()
+        assert d2["gsc_missing_scopes"] == [], d2["gsc_missing_scopes"]
+        assert not any(m["id"] == "gsc_rescope" for m in d2["must"]), d2["must"]
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(doc_home, ignore_errors=True)
+
+
 def test_doctor_detects_marketing_skills():
     """doctor.py: CLAUDE_SKILLS_DIR 환경변수 기반 마케팅 스킬 탐지 검증.
 
@@ -1043,11 +1090,16 @@ def test_connect_gsc_assembles_client_and_never_prints_the_secret():
 
 def test_collect_gsc_auth_routes_by_mode():
     """collect_gsc: OAuth면 브라우저 로그인 경로, 서비스 계정이면 직결, 없으면 안내.
+    collect_ga4 도 같은 판정(get_credentials) 위에 서는지 함께 본다 — 열쇠는 한 벌
+    이라 private 속성(service._http.credentials)을 빌리지 않는다.
 
-    로그인은 이제 우리 것이다(예전엔 MCP 서버가 대신했다). 세 갈래가 실제로
-    갈라지는지 본다 (네트워크는 타지 않는다 — 서비스 객체는 가짜다).
+    로그인은 이제 우리 것이다(예전엔 MCP 서버가 대신했다). 갈래가 실제로 갈라지는지
+    본다 (네트워크는 타지 않는다 — Credentials 는 가짜, build() 는 static discovery
+    라 네트워크를 안 탄다).
     """
+    import collect_ga4
     import collect_gsc
+    from google.oauth2.credentials import Credentials
 
     # 사용자 자리를 직접 가리킨다 — db.gsc_oauth_client() 는 번들까지 훑는 해석기라
     # 여기서 쓰면 배포에 들어간 번들 파일을 테스트가 지운다.
@@ -1062,13 +1114,27 @@ def test_collect_gsc_auth_routes_by_mode():
     db.gsc_oauth_bundled = lambda: bundled
     bundled.unlink(missing_ok=True)
     called = []
-    real_oauth = collect_gsc._oauth_service
-    collect_gsc._oauth_service = lambda: (called.append("oauth"), "oauth-service")[1]
+    real_oauth = collect_gsc._oauth_credentials
+    fake_creds = Credentials(token="fake")
+    collect_gsc._oauth_credentials = lambda: (called.append("oauth"), fake_creds)[1]
     try:
         # ① OAuth 클라이언트가 있으면 로그인 경로로 간다.
         oauth.write_text(json.dumps({"installed": {"client_id": "x"}}), encoding="utf-8")
-        assert collect_gsc.get_service() == "oauth-service", "OAuth면 로그인 경로여야 한다"
+        assert collect_gsc.get_credentials() is fake_creds, "OAuth면 로그인 경로여야 한다"
         assert called == ["oauth"]
+
+        # get_service(gsc) 는 get_credentials() 위에 선다 — 같은 Credentials 로 짓는다.
+        called.clear()
+        gsc_svc = collect_gsc.get_service()
+        assert called == ["oauth"], "get_service 가 get_credentials 를 거치지 않는다"
+        assert hasattr(gsc_svc, "searchanalytics"), "서치콘솔 서비스가 아니다"
+
+        # collect_ga4 는 그 함수를 직접 빌려 쓴다 — private 속성 우회가 없어야 한다.
+        called.clear()
+        data_svc, admin_svc = collect_ga4.get_service()
+        assert called == ["oauth"], "collect_ga4 가 collect_gsc 의 인증을 빌리지 않는다"
+        assert hasattr(data_svc, "properties"), "GA4 Data 서비스가 아니다"
+        assert hasattr(admin_svc, "accountSummaries"), "GA4 Admin 서비스가 아니다"
 
         # ② 서비스 계정만 있으면 직결한다 (가짜 키라 파싱에서 터지는 건 정상 —
         #    여기서 보는 건 "로그인 경로로 새지 않는다" 하나다).
@@ -1078,7 +1144,7 @@ def test_collect_gsc_auth_routes_by_mode():
                                    "client_email": "x@y.iam.gserviceaccount.com"}),
                        encoding="utf-8")
         try:
-            assert collect_gsc.get_service() != "oauth-service"
+            assert collect_gsc.get_credentials() is not fake_creds
         except SystemExit:
             raise
         except Exception:
@@ -1088,14 +1154,14 @@ def test_collect_gsc_auth_routes_by_mode():
         # ③ 번들까지 하나도 없으면 두 경로를 다 알려주고 멈춘다.
         key.unlink()
         try:
-            collect_gsc.get_service()
+            collect_gsc.get_credentials()
             raise AssertionError("인증이 하나도 없는데 그냥 진행했다")
         except SystemExit as e:
             msg = str(e)
             assert "connect_gsc.py" in msg and "OAuth" in msg, \
                 f"안내가 두 경로를 다 말하지 않는다: {msg}"
     finally:
-        collect_gsc._oauth_service = real_oauth
+        collect_gsc._oauth_credentials = real_oauth
         db.gsc_oauth_bundled = real_bundled
         for f in (oauth, key, bundled):
             f.unlink(missing_ok=True)
@@ -1162,7 +1228,7 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 1. 유료 키 없음 — rank/ai/competitors 는 건너뜀, 나머지는 순서대로
         results, out = run()
-        assert calls == ["gsc", "index", "keywords", "crawl", "gaps", "pages", "report"], calls
+        assert calls == ["gsc", "ga4", "index", "keywords", "crawl", "gaps", "pages", "report"], calls
         assert run_all.chain_rc(results) == 0, results
         assert [n for n, _ in results] == list(run_all.VALID_STAGE_NAMES), results
         for name in ("rank", "ai", "competitors"):
@@ -1219,7 +1285,7 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 7. skip / only
         run(skip="index,ai")
-        assert calls == ["gsc", "keywords", "crawl", "gaps", "pages", "report"], calls
+        assert calls == ["gsc", "ga4", "keywords", "crawl", "gaps", "pages", "report"], calls
         run(only="gsc,gaps")
         assert calls == ["gsc", "gaps"], calls
 

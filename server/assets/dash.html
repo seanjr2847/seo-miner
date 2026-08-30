@@ -180,7 +180,9 @@
   #sm-set .opts button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
     border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
   #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
-  #sm-set .msg{font:400 11.5px/1 var(--mono);color:var(--slate);margin-left:6px}
+  /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
+     자간이 벌어지고 획이 얇아진다(CLAUDE.md). 등폭은 숫자·명령·URL 에만. */
+  #sm-set .msg{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-left:6px}
   #sm-set h2+h2,#sm-set .repo{margin-top:26px}
   #sm-set .repo select{font:400 12.5px/1 var(--sans);color:var(--ink);background:var(--card);
     border:1px solid var(--rule);border-radius:6px;padding:8px 10px;max-width:340px}
@@ -512,6 +514,8 @@
       if (t) return setSave(Number(t.dataset.h));
       if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
+      if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
+      if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
     });
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
@@ -525,6 +529,7 @@
         "</button>";
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
     repoRender();
+    ga4Render();
   }
 
   // 저장소 칸. 세 상태뿐이다 — GitHub 계정이 없다 / 계정은 있고 저장소만 없다 /
@@ -590,6 +595,81 @@
       wire();                              // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
     } catch (e) {
       repoRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+    }
+  }
+
+  // GA4 칸. GSC 와 달리 속성 ID(숫자)는 도메인에서 유추가 안 돼 목록에서 사람이
+  // 고른다. suggest_property 의 제안은 select 에 미리 골라만 둔다 — 저장은 사람이
+  // 눌러야 확정된다(엉뚱한 속성이 붙으면 그 뒤 모든 숫자가 조용히 거짓이 된다).
+  var GA4_LIST = null, GA4_SUGGESTED = [], GA4_AUTH_ERR = "";
+  function ga4Render(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec || !SET_H) return;
+    var body = sec.querySelector(".ga4 .body");
+    if (!body) return;
+    if (GA4_AUTH_ERR) {           // 스코프 부족 — 재로그인 손잡이를 준다
+      body.innerHTML = '<p class="none">' + esc(GA4_AUTH_ERR) + "</p>" +
+        '<a href="/auth/login">다시 로그인하기 →</a>';
+      return;
+    }
+    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    if (GA4_LIST) {                       // [연결하기]/[바꾸기] 를 눌러 목록을 받아 온 상태
+      body.innerHTML = '<div class="opts"><select>' + GA4_LIST.map(function (p) {
+        var sel = p.id === (SET_H.ga4_property || GA4_SUGGESTED[0] || "");
+        return '<option value="' + esc(p.id) + '"' + (sel ? " selected" : "") + ">" +
+          esc(p.account) + " · " + esc(p.name) + " (" + esc(p.id) + ")</option>";
+      }).join("") + '</select><button data-ga4-save>저장</button></div>' +
+        (GA4_SUGGESTED.length ?
+          '<p class="msg">이것 같습니다 — 도메인·이름이 비슷한 속성을 먼저 골라 뒀습니다. 확인 후 저장하세요.</p>' : "") +
+        note;
+      return;
+    }
+    if (SET_H.ga4_property) {
+      body.innerHTML = '<div class="opts"><span class="now">속성 ' +
+        esc(SET_H.ga4_property) + ' 연결됨</span>' +
+        "<button data-ga4-pick>바꾸기</button></div>" + note;
+      return;
+    }
+    body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다 — ' +
+      '세션·매출 같은 클릭 다음 실적을 보려면 연결하세요.</span>' +
+      "<button data-ga4-pick>GA4 속성 연결하기</button></div>" + note;
+  }
+
+  async function ga4Pick() {
+    GA4_AUTH_ERR = "";
+    ga4Render("불러오는 중…");
+    var r, d;
+    try {
+      r = await fetch("/api/ga4/properties?project=" + encodeURIComponent(proj()));
+      d = await r.json();
+    } catch (e) {
+      return ga4Render("서버에 연결하지 못했습니다 — 다시 시도해 주세요");
+    }
+    if (r.status === 403) {
+      GA4_AUTH_ERR = d.detail || "GA4 접근 권한이 없습니다 — 재로그인이 필요합니다";
+      return ga4Render();
+    }
+    if (!r.ok) return ga4Render("속성 목록을 불러오지 못했습니다 — " + (d.detail || "다시 시도해 주세요"));
+    GA4_LIST = d.properties || [];
+    GA4_SUGGESTED = d.suggested || [];
+    if (!GA4_LIST.length) return ga4Render("이 계정에서 접근 가능한 GA4 속성이 없습니다");
+    ga4Render("");
+  }
+
+  async function ga4Save() {
+    var sec = document.getElementById("sm-set");
+    var propId = sec.querySelector(".ga4 select").value;
+    try {
+      var r = await fetch("/api/ga4/property", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), property_id: propId})});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      SET_H.ga4_property = d.ga4_property;
+      GA4_LIST = null;
+      ga4Render("저장됨");
+    } catch (e) {
+      ga4Render("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
     }
   }
 
@@ -853,7 +933,8 @@
   // 안 난다 — 그래서 백링크·설정·키워드가 각자 첫 로드에 비어 있었다(같은 함정에
   // 세 번 빠졌다). 계기를 한 자리로 모은다: 여기 안 걸린 것은 안 채워진다.
   document.addEventListener("sm:site", function () {
-    SET_DONE = ""; REPO_LIST = null; SET_H = null; PERF = null;
+    SET_DONE = ""; REPO_LIST = null; GA4_LIST = null; GA4_SUGGESTED = []; GA4_AUTH_ERR = "";
+    SET_H = null; PERF = null;
     step("설정", setLoad);
     step("성과", perfLoad);
     step("키워드", kwLoad);

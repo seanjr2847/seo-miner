@@ -672,6 +672,14 @@ def gather(conn, p, at: str | None = None) -> dict:
     dead_pages = scoring.dead_pages(conn, pid)
     starved_pages = scoring.starved_pages(conn, pid)
 
+    # ── GA4 (collect_ga4) ───────────────────────────────────────────────
+    # 클릭 뒤에 무슨 일이 났는지 — page_perf 는 이미 GA4 가 있으면 세션·전환을
+    # 얹어서 온다(scoring.page_performance). ga4_date 는 "GA4 를 연결했나"를 화면이
+    # 가르는 열쇠다 — 없으면 이 셋(추가 열·전환 없는 페이지·의도별 근사)을 통째로 숨긴다.
+    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
+    zero_conv_pages = scoring.zero_conversion_pages(conn, pid)
+    ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
+
     # ── 백링크 (collect_backlinks) ────────────────────────────────────────
     # 요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
     # 그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가 실제로 손댈 자리다.
@@ -769,10 +777,13 @@ def gather(conn, p, at: str | None = None) -> dict:
             "page_audit_date": audit_date,
             "page_perf": page_perf, "dead_pages": dead_pages,
             "starved_pages": starved_pages,
+            "ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent,
             # 페이지 축 임계는 이 뭉치에 같이 싣는다 — 화면이 "왜 이 줄이 걸렸나"를
             # 말할 때 숫자를 다시 적지 않게(정본은 scoring 의 상수다).
             "page_rules": {"starved_links_in": scoring.STARVED_LINKS_IN,
-                           "starved_top_n": scoring.STARVED_TOP_N},
+                           "starved_top_n": scoring.STARVED_TOP_N,
+                           "ga4_noconv_min_clicks": scoring.GA4_NOCONV_MIN_CLICKS,
+                           "ga4_noconv_min_sessions": scoring.GA4_NOCONV_MIN_SESSIONS},
             "runs": runs, "creations": creations,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,

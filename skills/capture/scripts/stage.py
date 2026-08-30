@@ -107,6 +107,7 @@ STAGE_LABELS: dict[str, dict] = {
     "gsc": {"t": "구글 실적 읽기", "run": "실적 다시 수집",
         "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
                 "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다."},
+    "ga4": {"t": "GA4 실적 읽기", "run": "GA4 실적 다시 수집"},
     "index": {"t": "색인 생성 검사", "run": "색인 다시 검사"},
     "keywords": {"t": "키워드 캐기", "run": "키워드 다시 발굴",
         "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
@@ -403,8 +404,10 @@ def _check_seams() -> None:
         assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
 
         def api_calls(src):
-            # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다
-            return set(re.findall(r'"(/api/[a-z][a-z/-]*)', src))
+            # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다.
+            # 숫자를 받는다 — 안 받으면 /api/ga4/... 를 /api/ga 로 잘라 읽어서,
+            # 서버에 라우트를 제대로 만들어 놔도 이 검사가 영영 어긋난다.
+            return set(re.findall(r'"(/api/[a-z][a-z0-9/-]*)', src))
 
         for who, src, servers in (
                 ("원본 화면", shell + "".join(p.read_text("utf-8")

@@ -513,7 +513,30 @@ function anUnmatched(rows, what) {
     키워드로 올리면 갈래가 넓어집니다.</div>`;
 }
 
-function anIntent(rows) {
+// GA4 대조 — by_intent 는 검색어 클릭·노출이고, 이건 그 의도의 검색어가 걸린
+// 페이지들의 GA4 실적 합이다(scoring.ga4_intent_approx). 검색어와 GA4 세션은
+// 직접 안 이어지므로 **근사치**다 — 페이지 하나가 여러 의도에 걸리면 그 페이지의
+// 전환은 각 의도에 중복으로 잡힌다. GA4 미연결이면(빈 목록) 조용히 아무것도
+// 안 낸다 — 대부분의 프로젝트가 그 상태다.
+function anGa4Intent(rows) {
+  if (!rows || !rows.length) return "";
+  const head = ["의도", ">페이지?이 의도의 검색어가 걸린 페이지 수(그중 GA4 실적이 잡힌 수)",
+    ">세션", ">전환?GA4 key_events 합",
+    ">겹친 페이지?다른 의도의 검색어에도 걸려 전환이 중복 집계된 페이지 수"];
+  return `<p class="anthin"><b>GA4 대조 — 근사치입니다.</b> 검색어와 GA4 세션은 직접
+      이어지지 않아서, 그 의도의 검색어가 걸린 페이지들의 GA4 실적을 더한 값입니다.
+      <b>이 의도만의 전환이 아니라, 이 의도가 데려온 페이지 전체의 전환</b>으로 읽으세요 —
+      페이지 하나가 여러 의도에 걸리면 그 전환은 갈래마다 중복으로 잡힙니다("겹친 페이지" 열).</p>` +
+    table(head, rows.map(r => `<tr>
+      <td>${esc(AN_INTENT[r.label] || r.label)}</td>
+      <td class="num">${num(r.pages_matched)}/${num(r.pages)}</td>
+      <td class="num">${num(r.sessions)}</td>
+      <td class="num">${num(r.key_events)}</td>
+      <td class="num">${r.shared_pages ? num(r.shared_pages) : "—"}</td>
+    </tr>`));
+}
+
+function anIntent(rows, gaRows) {
   if (!rows || !rows.length)
     return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
   const named = rows.filter(r => !r.unclassified);
@@ -531,7 +554,7 @@ function anIntent(rows) {
        거래성은 ${num(tx.clicks)}클릭(평균순위 ${tx.position ?? "—"})입니다.
        거래성 순위가 정보성보다 아래라면 돈이 되는 쪽을 먼저 밉니다.`;
   return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "의도") +
-    anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent");
+    anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent") + anGa4Intent(gaRows);
 }
 
 function anCluster(rows) {
@@ -604,7 +627,7 @@ VIEW("analysis", function (d) {
   $("an-brand-sub").innerHTML = `검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
     20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
     쪽에서만 옵니다.${anMixHint("brand")}`;
-  $("an-intent-body").innerHTML = anIntent(d.by_intent);
+  $("an-intent-body").innerHTML = anIntent(d.by_intent, d.ga4_intent);
   $("an-intent-sub").innerHTML = `같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
     정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
     사람이 없는 것이라 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.${anMixHint("intent")}`;

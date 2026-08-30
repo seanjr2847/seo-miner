@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from starlette.middleware.sessions import SessionMiddleware
 
 import backlinks
+import collect_ga4
 import collect_gsc
 import dashboard
 import db
@@ -760,8 +761,16 @@ def api_settings(project: str, request: Request):
     먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
     """
     uid = _require_uid(request)
-    with store.session(uid, project) as conn:
+    with store.session(uid, project, isolate=True) as conn:
         row = store.site(conn, uid, project)
+        try:
+            c = db.connect()
+            try:
+                ga4 = db.get_project(c, project)["ga4_property"] or ""
+            finally:
+                c.close()
+        except db.ProjectNotFound:
+            ga4 = ""      # 등록 직후 Brain 이 아직 없어도 설정 화면은 열려야 한다
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
         return {"run_every_hours": store.every_hours(conn, uid, project),
                 "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -769,7 +778,8 @@ def api_settings(project: str, request: Request):
                 "repo_branch": (row["repo_branch"] if row else None) or "main",
                 # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
                 # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
-                "github_connected": bool(store.github(conn, uid))}
+                "github_connected": bool(store.github(conn, uid)),
+                "ga4_property": ga4}
 
 
 @app.post("/api/settings")
@@ -787,6 +797,70 @@ async def api_settings_set(request: Request):
     with store.session(uid, project) as conn:
         store.set_every_hours(conn, uid, project, hours)
         return {"ok": True, "run_every_hours": hours}
+
+
+# --- GA4 ------------------------------------------------------------------
+# GSC 와 달리 GA4 속성 ID 는 도메인에서 유추가 안 된다(숫자 ID 이고 도메인과 매핑이
+# 없다) — 그래서 목록에서 사람이 직접 고른다. list_properties/suggest_property 는
+# collect_ga4.py 가 이미 갖고 있다(여기서 새로 안 짠다).
+
+@app.get("/api/ga4/properties")
+def api_ga4_properties(project: str, request: Request):
+    """GA4 속성 후보 — [속성 고르기]를 누를 때만 부른다(관리자 API 호출이라 설정을
+    열 때마다 부르지 않는다, /api/repos 와 같은 자리). 도메인·이름이 겹치는 것을
+    제안으로 얹지만 확정은 사람이 한다 — 엉뚱한 속성이 붙으면 그 뒤 모든 숫자가
+    조용히 거짓이 된다(collect_ga4.suggest_property 참고).
+
+    403 은 스코프 부족이다 — analytics.readonly 가 나중에 collect_gsc.SCOPES 에
+    더해졌으므로, 그 전에 로그인한 사람의 토큰에는 없다. 재로그인 손잡이를 준다.
+    """
+    uid = _require_uid(request)
+    from googleapiclient.errors import HttpError
+    try:
+        with store.session(uid, project, isolate=True):
+            c = db.connect()
+            try:
+                domain = db.get_project(c, project)["domain"]
+            finally:
+                c.close()
+            _, admin_svc = collect_ga4.get_service()
+            try:
+                props = collect_ga4.list_properties(admin_svc)
+            except HttpError as e:
+                if getattr(e.resp, "status", None) == 403:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
+                               "재로그인이 필요합니다. 다시 구글 계정으로 로그인해 주세요.")
+                raise
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"properties": props,
+           "suggested": [p["id"] for p in collect_ga4.suggest_property(props, domain)]}
+
+
+@app.post("/api/ga4/property")
+async def api_ga4_set(request: Request):
+    """GA4 속성 연결 — 목록에서 사람이 고른 것만 저장한다(자동 확정 없음).
+    property_id 는 숫자 ID 문자열로만 저장한다 — 'properties/' 접두는 collect_ga4 가
+    API 부를 때 붙인다(db.py 의 컬럼 주석과 같은 계약)."""
+    uid = _require_uid(request)
+    b = await request.json()
+    project = str(b.get("project") or "")
+    prop_id = str(b.get("property_id") or "").strip()
+    if prop_id and not prop_id.isdigit():
+        raise HTTPException(status_code=400,
+                            detail="올바르지 않은 속성입니다. 새로고침 후 다시 선택해 주세요.")
+    try:
+        with store.session(uid, project, isolate=True):
+            c = db.connect()
+            try:
+                db.set_ga4_property(c, db.get_project(c, project)["id"], prop_id)
+            finally:
+                c.close()
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "ga4_property": prop_id}
 
 
 # --- 대시보드 -----------------------------------------------------------------
@@ -905,10 +979,11 @@ def demo() -> None:
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
                      "/api/report?project=x", "/api/export?project=x&table=keywords",
                      "/api/keywords?project=x", "/api/backlinks?project=x",
-                     "/api/creations?project=x", "/api/run/status"):
+                     "/api/creations?project=x", "/api/run/status",
+                     "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
-                     "/api/ai/prompts/edit", "/api/sites", "/api/keywords"):
+                     "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
 
@@ -941,6 +1016,9 @@ def demo() -> None:
         r = c.get("/api/settings?project=p1")
         assert r.status_code == 200 and r.json()["run_every_hours"] == 168.0, r.text
         assert r.json()["presets"][0]["h"] == 0, r.text
+        # p1 은 아직 Brain 에 동기화되지 않았다(store.add_site 로만 등록) — GA4 는
+        # 없는 것으로 답해야지, 설정 화면 전체가 깨지면 안 된다.
+        assert r.json()["ga4_property"] == "", "Brain 없는 사이트에서 설정이 깨진다"
         assert c.get("/api/settings?project=없는사이트").status_code == 404
         for bad in (5, "매일", None):
             assert c.post("/api/settings", json={"project": "p1", "run_every_hours": bad}
@@ -1030,6 +1108,41 @@ def demo() -> None:
         assert len(edit(op="delete", ids=[qid]).json()["prompts"]) == 1
         assert edit(op="드롭테이블", ids=[qid]).status_code == 400
         assert edit(op="delete", ids=["1; DROP TABLE"]).status_code == 400, "숫자가 아닌 id 가 500 을 낸다"
+
+        # GA4 속성 고르기 — GSC 와 달리 도메인에서 유추가 안 되니 목록에서 사람이
+        # 고른다. list_properties/get_service 를 가짜로 갈아끼운다(네트워크 없이).
+        real_get_service, real_list_props = collect_ga4.get_service, collect_ga4.list_properties
+        collect_ga4.get_service = lambda: (None, "admin-svc-stub")
+        collect_ga4.list_properties = lambda admin_svc: [
+            {"account": "A", "id": "111", "name": "p1.com - GA4"},
+            {"account": "A", "id": "222", "name": "다른회사"}]
+        try:
+            assert c.get("/api/ga4/properties?project=없는사이트").status_code == 404,                 "남의 사이트 GA4 속성이 열린다"
+            r = c.get("/api/ga4/properties?project=p1")
+            assert r.status_code == 200, r.text
+            assert r.json()["suggested"] == ["111"], r.json()   # 도메인과 겹치는 것만 제안
+            assert len(r.json()["properties"]) == 2, r.json()
+
+            assert c.post("/api/ga4/property", json={"project": "p1", "property_id": "abc"}
+                          ).status_code == 400, "숫자가 아닌 속성이 저장된다"
+            assert c.post("/api/ga4/property", json={"project": "없는사이트", "property_id": "111"}
+                          ).status_code == 404, "남의 사이트에 GA4 속성을 저장할 수 있다"
+            r = c.post("/api/ga4/property", json={"project": "p1", "property_id": "111"})
+            assert r.status_code == 200 and r.json()["ga4_property"] == "111", r.text
+            assert c.get("/api/settings?project=p1").json()["ga4_property"] == "111",                 "설정 화면이 연결된 속성을 안 보여준다"
+
+            # 403 — 스코프 부족(analytics.readonly 가 나중에 더해졌다). 재로그인 안내가 나와야 한다.
+            def _scope_missing(admin_svc):
+                from googleapiclient.errors import HttpError
+                class _Resp:
+                    status = 403
+                    reason = "Forbidden"
+                raise HttpError(_Resp(), b'{"error": "insufficient scope"}')
+            collect_ga4.list_properties = _scope_missing
+            r = c.get("/api/ga4/properties?project=p1")
+            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+        finally:
+            collect_ga4.get_service, collect_ga4.list_properties = real_get_service, real_list_props
 
         # 세션 모듈로 옮기면서 demo() 에 한 번도 안 나오던 라우트들 — 최소한 로그인
         # 상태에서 200/404 를 확인한다.

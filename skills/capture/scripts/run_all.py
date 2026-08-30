@@ -6,14 +6,15 @@ StageResult 를 그대로 호출자에게 넘긴다.
 
 실행 순서 및 이유:
   1. gsc         : 다른 모든 판정의 기본 재료. 실패 시 뒤가 빈손이므로 체인 중단.
-  2. index       : 색인은 순위 이전의 문제. GSC 최신 스냅샷 상위 페이지 대상.
-  3. keywords    : 자동완성 키워드 발굴 (expand_keywords.py --mode all).
-  4. rank        : 유료 SERP 순위 스냅샷. 키 없으면 건너뜀.
-  5. ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
-  6. competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
-  7. gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
-  8. pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
-  9. report      : dashboard.py --export --project <project> (리포트 HTML 박제).
+  2. ga4         : 클릭 뒤(세션·전환·이탈) — GSC 의 page 축과 잇는다. 속성 미연결이면 건너뜀.
+  3. index       : 색인은 순위 이전의 문제. GSC 최신 스냅샷 상위 페이지 대상.
+  4. keywords    : 자동완성 키워드 발굴 (expand_keywords.py --mode all).
+  5. rank        : 유료 SERP 순위 스냅샷. 키 없으면 건너뜀.
+  6. ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
+  7. competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
+  8. gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
+  9. pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
+  10. report     : dashboard.py --export --project <project> (리포트 HTML 박제).
 
 설계 원칙:
   - 표(STAGES)에는 디스패치가 한 종류뿐이다. 모든 단계가
@@ -37,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_ai          # noqa: E402
 import collect_backlinks   # noqa: E402
 import collect_crawl       # noqa: E402
+import collect_ga4         # noqa: E402
 import collect_gap         # noqa: E402
 import collect_gsc         # noqa: E402
 import collect_index       # noqa: E402
@@ -86,6 +88,7 @@ def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResul
 Stage = namedtuple("Stage", ["name", "desc", "fn", "is_paid"])
 STAGES = (
     Stage("gsc",         "GSC 실적 적재 (합계·일별·디바이스 분해)", collect_gsc.collect,     False),
+    Stage("ga4",         "GA4 실적 적재 (세션·전환·이탈, 랜딩페이지별)", collect_ga4.collect, False),
     Stage("index",       "URL 색인 상태 수집",                      collect_index.collect,   False),
     Stage("keywords",    "자동완성 키워드 발굴",                    expand_keywords.collect, False),
     # 볼륨은 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 재료로 쓴다.
@@ -373,7 +376,7 @@ def _top_opportunity(project: str):
 # 봐야 하는지 여기서 정한다. gaps/report 는 자체 모듈이 아니라 이 파일의 함수라 없다 —
 # 애초에 --opt 를 받지 않는다(외부 호출 0건, 노브도 없다).
 STAGE_MODULES = {
-    "gsc": collect_gsc, "index": collect_index, "keywords": expand_keywords,
+    "gsc": collect_gsc, "ga4": collect_ga4, "index": collect_index, "keywords": expand_keywords,
     "metrics": collect_metrics, "rank": collect_serp, "crawl": collect_crawl,
     "ai": collect_ai, "competitors": collect_gap, "backlinks": collect_backlinks,
     "pages": collect_page,
@@ -438,7 +441,7 @@ def main() -> None:
         return
     ap = argparse.ArgumentParser(
         description="전체 수집 체인 실행 — "
-                    "gsc → index → keywords → rank → ai → competitors → gaps → pages → report"
+                    "gsc → ga4 → index → keywords → rank → ai → competitors → gaps → pages → report"
     )
     ap.add_argument("--project", required=True, help="프로젝트 이름")
     ap.add_argument("--dry-run", action="store_true", help="실제 실행 없이 호출 계획 및 비용만 확인")
