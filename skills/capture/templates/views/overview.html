@@ -124,8 +124,11 @@ function kpiSpark(vals, dates, color) {
 
 
 // 카드 자체가 <details> 다 — 어디를 눌러도 펼쳐지고, 키보드·스크린리더가 공짜로
-// 따라온다. 점수·근거·트리아지·펼침은 셸의 한 벌(oppScore/oppMeter/oppWhy/
-// oppActs/oppPanel)이다 — 다른 화면도 같은 부품으로 같은 카드를 만든다.
+// 따라온다. 점수·트리아지·펼침·배지는 셸의 한 벌(oppScore/oppMeter/oppActs/
+// oppPanel/gaBadge)이다 — 다른 화면도 같은 부품으로 같은 카드를 만든다.
+// 근거 줄만 oppWhy 를 안 쓰고 직접 짠다: 이 카드는 날짜(.dt)를 라벨 옆에 두고
+// 상태(.st)를 오른쪽 끝에 세우는데 oppWhy 는 상태를 라벨 옆에 넣기 때문이다.
+// 그래서 셸에 부품이 늘면 여기도 손대야 한다 — GA4 배지가 실제로 그랬다.
 // id 는 페이로드에 이미 있다 — data- 로 내보낸다(호스팅 애드온이 onclick 문자열을
 // 정규식으로 되짚던 자리다).
 function oppRow(o) {
@@ -136,6 +139,7 @@ function oppRow(o) {
         <div class="oh">
           <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
             >${esc(o.label || o.kind)}</span>
+          ${window.gaBadge(o)}
           <span class="dt">${esc(o.created || "")}</span>
         </div>
         <div class="target">${esc(o.target)}</div>

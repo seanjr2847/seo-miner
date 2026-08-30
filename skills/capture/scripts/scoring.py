@@ -586,6 +586,24 @@ STARVED_LINKS_IN = 3
 GA4_NOCONV_MIN_CLICKS = 20
 GA4_NOCONV_MIN_SESSIONS = 10
 
+# 매출 잠재력 보정 승수 (score() 가 raw *= value_mult() 로 곱한다) — scoring.md 2절의
+# 점수 프레임·WEIGHTS 는 안 건드리고 GA4 신호로 살짝만 기울인다. 범위를 좁게 두는
+# 이유: 순위가 크게 뒤집히면 화면을 못 믿는다. 표본 하한은 GA4_NOCONV_MIN_* 를 그대로
+# 쓴다 — "세션 몇 개짜리로 돈 안 된다고 단정하지 않는다"는 논리가 zero_conversion_pages
+# 와 같아서다.
+GA4_MULT_LO, GA4_MULT_HI = 0.85, 1.15
+# 전환율(key_events/sessions)이 이 이상이면 승수 상한까지 다 준다(포화) — 업종마다
+# 절대 전환율 스케일이 다르므로(전자상거래 vs 리드폼) 절대값이 아니라 상대 신호로만 쓴다.
+GA4_MULT_SATURATE_RATE = 0.05
+
+# GA4 승수가 붙는 kind 한 벌 — 이미 존재하는 GSC 페이지가 있는 kind 로 한정한다.
+# content_gap·coverage·backlink_* 는 페이지가 없거나 페이지 개념이 아니라서 뺀다
+# (붙을 자리가 없다는 뜻이지, 판정을 건너뛴다는 뜻이 아니다). dashboard.py 의 배지가
+# 이 한 벌을 그대로 본다 — 두 벌 두지 않는다.
+GA4_VALUE_KINDS = frozenset({
+    "striking_distance", "ctr_gap", "cannibalization", "rank_decay", "device_gap",
+})
+
 
 def url_key(url: str) -> str:
     """GSC 의 page 와 크롤의 url 을 같은 것으로 보기 위한 열쇠.
@@ -1630,6 +1648,27 @@ def backlink_gaps(conn: sqlite3.Connection, project_id: int, *,
     return broken, prospects
 
 
+def value_mult(metrics: dict) -> float:
+    """GA4 전환 신호로 raw 점수를 보정하는 승수 — score() 가 raw *= 로 곱한다.
+
+    metrics 에 ga4_sessions·ga4_key_events 가 없으면(GA4 미연결, 또는 이 kind 에
+    페이지 개념이 없어 애초에 안 채움) **정확히** 1.0을 리터럴로 돌려준다(반올림으로도
+    안 새게). 표본(페이지 클릭·GA4 세션)이 GA4_NOCONV_MIN_* 하한 미만이어도 1.0 —
+    표본이 될 때만 판단한다. 표본이 되면: 전환이 있으면 전환율에 비례해
+    GA4_MULT_HI 까지 올리고(포화 후 고정), 전환이 0으로 확인되면 GA4_MULT_LO 로 내린다.
+    """
+    sessions, key_events = metrics.get("ga4_sessions"), metrics.get("ga4_key_events")
+    if sessions is None or key_events is None:
+        return 1.0
+    clicks = metrics.get("ga4_clicks")
+    if clicks is None or clicks < GA4_NOCONV_MIN_CLICKS or sessions < GA4_NOCONV_MIN_SESSIONS:
+        return 1.0
+    if key_events <= 0:
+        return GA4_MULT_LO
+    rate = min(key_events / sessions, GA4_MULT_SATURATE_RATE) / GA4_MULT_SATURATE_RATE
+    return round(1.0 + rate * (GA4_MULT_HI - 1.0), 4)
+
+
 def score(kind: str, metrics: dict, project_type: str) -> float:
     """결정적 0~100 점수 — 같은 입력이면 언제나 같은 출력 (계수는 WEIGHTS).
 
@@ -1652,6 +1691,7 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
                            1.0 if kind in ("ai_citation_gap", "aio_exposure") else 0.0))
     raw = (w["w_demand"] * demand + w["w_reach"] * reach
            + w["w_fit"] * fit + w["w_ai"] * ai)
+    raw *= value_mult(metrics)
     return round(min(100.0, max(0.0, raw * 100)), 1)
 
 
@@ -1675,6 +1715,32 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
 # 화면에 낼 때(kind_play()를 통해) 쓰인다. dashboard.html 의 window.PLAY 산문이
 # 그대로 옮겨왔다 — 문구는 한 글자도 새로 쓰지 않았다.
 _Kind = namedtuple("_Kind", "name label defensive detect metrics target reasoning play")
+
+
+def _ga4_metrics(ctx: dict, *, query: str | None = None, page: str | None = None) -> dict:
+    """검색어(또는 이미 아는 페이지)에서 GA4 조각을 뽑아 metrics 에 얹는다.
+
+    GA4 미연결(ctx['ga4']가 비어 있음)이면 빈 dict — value_mult() 가 그걸 보고
+    정확히 1.0을 곱한다. page 를 모르면 pages_by_query 로 그 검색어의 1등 페이지를
+    찾는다 (cannibalization 처럼 detect() 가 이미 페이지를 아는 kind 는 page= 로
+    바로 넘겨 이 조회를 건너뛴다). 표본 게이트(클릭·세션 하한)는 value_mult() 몫이다
+    — 여기는 신호만 옮긴다.
+    """
+    if not ctx.get("ga4"):
+        return {}
+    if page is None:
+        if not query:
+            return {}
+        rows = pages_by_query(ctx["conn"], ctx["pid"], [query], top=1, at=ctx["cur"]).get(query)
+        if not rows:
+            return {}
+        page = rows[0]["page"]
+    g = ctx["ga4"].get(urlsplit(page).path)
+    if not g:
+        return {}
+    pg = (ctx.get("page_agg") or {}).get(page)
+    return {"ga4_clicks": pg["clk"] if pg else None,
+            "ga4_sessions": g["sessions"], "ga4_key_events": g["key_events"]}
 
 
 def _coverage_rows(ctx: dict) -> list[dict]:
@@ -1746,7 +1812,8 @@ _KIND_SPECS = {
         label="밀면 오를 검색어", defensive=False,
         detect=lambda ctx: striking(ctx["conn"], ctx["pid"], ctx["cur"], brands=ctx["brands"]),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
+                                 **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         # 이 kind 는 4~20위를 잡고 band 로 갈린다. 4~10위는 이미 1페이지라
         # "1페이지까지 0.0"이라는 문장이 뜻을 잃는다 — 밴드마다 다르게 말한다.
@@ -1762,7 +1829,8 @@ _KIND_SPECS = {
         label="CTR 미달", defensive=False,
         detect=lambda ctx: ctr_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"], "position": r["position"],
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
+                                 **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
             f"{r['position']}위·노출 {r['impressions']:,}·CTR "
@@ -1782,7 +1850,8 @@ _KIND_SPECS = {
         detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"],
                                  "position": r["pages"][0]["position"],
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
+                                 **_ga4_metrics(ctx, page=r["pages"][0]["page"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
             f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
@@ -1800,7 +1869,8 @@ _KIND_SPECS = {
         label="순위 하락", defensive=True,
         detect=lambda ctx: rank_decay(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
+                                 **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
             f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
@@ -1836,7 +1906,8 @@ _KIND_SPECS = {
         label="모바일 격차", defensive=False,
         detect=lambda ctx: device_gap(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["mobile_imp"], "position": r["mobile_pos"],
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
+                                 **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
             f"모바일 {r['mobile_pos']}위 vs 데스크톱 {r['desktop_pos']}위 "
@@ -2052,13 +2123,19 @@ def load(project: str) -> None:
             cfg = db.load_project_yaml(p["config_path"])
         except (db.ProjectConfigNotFound, ImportError):   # yaml 이 없어도 적재는 계속한다 (브랜드 필터만 얕아짐)
             pass
-    cur, prev, _, _ = snapshot_pair(conn, pid)
+    cur, prev, period, _ = snapshot_pair(conn, pid)
     brands = foreign_brands(conn, pid, cfg)
     # 의도 미분류(NULL)만 채움 — Claude/사람 보정은 살아남음
     n_intent = _backfill_intents(conn, pid)
+    # GA4 미연결이면 둘 다 빈 dict — _ga4_metrics() 가 그대로 빈 조각을 돌려주고
+    # value_mult() 는 정확히 1.0을 곱한다(점수 불변, scoring.md 2절 프레임 안 건드림).
+    ga4_date = _latest(conn, _LATEST_GA4, (pid,))
+    ga4 = _ga4_agg(conn, pid, ga4_date) if ga4_date else {}
+    page_agg = _page_agg(conn, pid, cur, period) if ga4_date and cur else {}
     ctx = {"conn": conn, "pid": pid, "cur": cur, "prev": prev, "brands": brands,
            "bd": _latest(conn, _LATEST_BD, (pid, "device")),
-           "ix": _latest(conn, _LATEST_IX, (pid,))}
+           "ix": _latest(conn, _LATEST_IX, (pid,)),
+           "ga4": ga4, "page_agg": page_agg}
     rows = []
     for k in KINDS:
         for r in k.detect(ctx):
@@ -2662,6 +2739,48 @@ def _selfcheck() -> None:
         == (4, 4, 50, 5.0, 1), tr
     assert (info["pages"], info["pages_matched"], info["sessions"], info["key_events"], info["shared_pages"]) \
         == (2, 2, 24, 3.0, 1), info    # info = q2 가 걸린 dying·low 합
+
+    # ── value_mult(): GA4 매출 잠재력 보정 승수. 위 GA4 픽스처(프로젝트 8)를 그대로
+    # 쓴다 — /rising 은 클릭 20·세션 15·전환 0(표본 되고 전환 없음), /paid 는 클릭
+    # 30·세션 20·전환 2(표본 되고 전환 있음), /flat·/low 는 표본 미달.
+    ga4_ctx = {"conn": conn, "pid": 8, "cur": "2026-08-08",
+              "ga4": _ga4_agg(conn, 8, "2026-08-10"),
+              "page_agg": _page_agg(conn, 8, "2026-08-08", 28)}
+    assert value_mult({}) == 1.0                                    # ① GA4 미연결 — 정확히 1.0
+    assert value_mult({"impressions": 100}) == 1.0
+    gm_rising = _ga4_metrics(ga4_ctx, page="https://www.x.com/rising")
+    assert gm_rising == {"ga4_clicks": 20, "ga4_sessions": 15, "ga4_key_events": 0}, gm_rising
+    gm_paid = _ga4_metrics(ga4_ctx, page="https://www.x.com/paid")
+    assert gm_paid == {"ga4_clicks": 30, "ga4_sessions": 20, "ga4_key_events": 2}, gm_paid
+    assert _ga4_metrics(ga4_ctx, page="https://www.x.com/never-was") == {}   # GA4 에 없는 경로
+    assert _ga4_metrics({"ga4": {}}, page="https://www.x.com/rising") == {}  # GA4 미연결(빈 ctx)
+
+    base = score("striking_distance", {"impressions": 500, "position": 5.0}, "saas")
+    assert score("striking_distance", {"impressions": 500, "position": 5.0}, "saas") == base  # ① 불변(결정적)
+
+    up = score("striking_distance", {"impressions": 500, "position": 5.0, **gm_paid}, "saas")
+    down = score("striking_distance", {"impressions": 500, "position": 5.0, **gm_rising}, "saas")
+    assert down < base < up, (down, base, up)                       # ② 전환 있으면 오르고 0이면 내린다
+
+    assert value_mult({"ga4_clicks": 5, "ga4_sessions": 20, "ga4_key_events": 3}) == 1.0    # ③ 클릭 표본 미달
+    assert value_mult({"ga4_clicks": 30, "ga4_sessions": 5, "ga4_key_events": 3}) == 1.0    # ③ 세션 표본 미달
+
+    for m in ({"ga4_clicks": 30, "ga4_sessions": 20, "ga4_key_events": 0},
+              {"ga4_clicks": 30, "ga4_sessions": 20, "ga4_key_events": 2},
+              {"ga4_clicks": 500, "ga4_sessions": 20, "ga4_key_events": 5000}):
+        v = value_mult(m)
+        assert GA4_MULT_LO <= v <= GA4_MULT_HI, (m, v)               # ④ 범위 [0.85, 1.15] 안
+    assert value_mult({"ga4_clicks": 500, "ga4_sessions": 20, "ga4_key_events": 5000}) == GA4_MULT_HI  # 포화
+
+    kb = _KIND_BY_NAME
+    cg_m = kb["content_gap"].metrics(
+        {"keyword": "k", "domain": "riv.com", "position": 3, "our_position": None, "volume": 100}, ga4_ctx)
+    cov_m = kb["coverage"].metrics({"cluster": "clu", "n": 3, "vol": 50}, ga4_ctx)
+    bb_m = kb["backlink_broken"].metrics(     # target url_to 는 GA4 실측이 있는 페이지를 일부러 쓴다 —
+        {"url_to": "https://www.x.com/rising", "url_from": "https://y.com/b",   # "데이터가 없어서" 가 아니라
+         "domain_from": "y.com", "rank": None}, ga4_ctx)                        # "이 kind 는 안 본다"를 증명한다
+    for m in (cg_m, cov_m, bb_m):             # ⑤ 페이지 없는 kind — GA4 가 붙어 있어도 안 건드린다
+        assert "ga4_sessions" not in m and "ga4_key_events" not in m, m
 
     # page 가 NULL 인 구버전 스냅샷 — 크롤이 있어도 전 페이지를 '노출 0' 이라 부르지 않는다
     conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"

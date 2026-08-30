@@ -613,6 +613,23 @@ def gather(conn, p, at: str | None = None) -> dict:
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
 
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
+    # GA4 매출 잠재력 보정 배지 — scoring.load() 가 저장할 때 이미 score() 로 승수를
+    # 반영해 놨다. 여기서는 화면이 "왜 이게 위로 왔는지" 말할 수 있게 같은 승수를
+    # 다시 구해서 얹기만 한다(저장은 안 한다 — DB 스키마는 안 건드린다). 승수가
+    # 1.0(GA4 없음·표본 미달·페이지 없는 kind)이면 키 자체를 안 붙인다 — 화면은
+    # ga4_mult 유무로 배지를 켠다.
+    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
+    if ga4_date:
+        ga4_ctx = {"conn": conn, "pid": pid, "cur": cur,
+                   "ga4": scoring._ga4_agg(conn, pid, ga4_date),
+                   "page_agg": scoring._page_agg(conn, pid, cur, period) if cur else {}}
+        for o in opps:
+            if o["kind"] not in scoring.GA4_VALUE_KINDS:
+                continue
+            m = scoring.value_mult(scoring._ga4_metrics(ga4_ctx, query=o["target"]))
+            if m != 1.0:
+                o["ga4_mult"] = m
+                o["ga4_pre_score"] = round(o["score"] / m, 1)
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
         (pid,)).fetchone()[0]
@@ -676,7 +693,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 클릭 뒤에 무슨 일이 났는지 — page_perf 는 이미 GA4 가 있으면 세션·전환을
     # 얹어서 온다(scoring.page_performance). ga4_date 는 "GA4 를 연결했나"를 화면이
     # 가르는 열쇠다 — 없으면 이 셋(추가 열·전환 없는 페이지·의도별 근사)을 통째로 숨긴다.
-    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
+    # (opps 근처에서 이미 구해 뒀다 — 여기서 다시 안 구한다)
     zero_conv_pages = scoring.zero_conversion_pages(conn, pid)
     ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
 

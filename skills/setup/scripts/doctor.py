@@ -234,6 +234,21 @@ def diagnose() -> dict:
     # 토큰은 있는데(연결됨) 그 토큰이 지금 SCOPES 를 다 못 덮을 수 있다 — analytics.readonly
     # 가 나중에 추가돼서, 그 전에 로그인해 둔 사람은 GA4 수집이 403 으로 막힌다.
     gsc_missing = gsc_missing_scopes() if gsc_conn else []
+    # 스코프가 모자라도 GA4 를 아직 안 붙인 사람에게는 막힌 일이 없다 —
+    # 검색 실적 수집은 그대로 돈다. 속성을 이미 연결한 프로젝트가 있을 때만
+    # 전체 판정(verdict)까지 올린다. 아니면 할 일 목록에만 남긴다.
+    ga4_linked = False
+    if gsc_missing:
+        try:
+            c = db.connect()
+            try:
+                ga4_linked = bool(c.execute(
+                    "SELECT 1 FROM projects WHERE ga4_property IS NOT NULL "
+                    "AND ga4_property<>'' LIMIT 1").fetchone())
+            finally:
+                c.close()
+        except Exception:
+            ga4_linked = False        # Brain 이 없거나 옛 스키마면 판단 자체가 불가
     # Brain 은 컴퓨터 전역이라 "지금 이 폴더가 어느 사이트냐"를 따로 정해야 한다.
     # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
     # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
@@ -412,8 +427,8 @@ def diagnose() -> dict:
         verdict = ("구글 인증 수단이 없습니다 — 로그인에 쓸 클라이언트 파일이 "
                    "이 배포에 빠져 있습니다.")
         next_cmd = "GSC 연동해줘"
-    elif gsc_missing:
-        verdict = "구글 재로그인이 한 번 더 필요합니다 — GA4 읽기 권한이 저장된 토큰에 없습니다."
+    elif gsc_missing and ga4_linked:
+        verdict = "구글 재로그인이 한 번 더 필요합니다 — GA4 를 연결해 두셨는데 저장된 토큰에 그 권한이 없습니다."
         next_cmd = "구글 계정 다시 연결해줘" if hosted else "토큰 삭제하고 GSC 로그인해줘"
     elif brain["picked"]:
         verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."

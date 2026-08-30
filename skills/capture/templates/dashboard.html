@@ -303,6 +303,11 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
   .meter i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
 .kind.k-def { color:var(--copper); background:var(--wash-copper); }
+/* GA4 매출 잠재력 보정 배지 — scoring.value_mult() 가 1.0이 아닐 때만 나온다.
+   오르면 .kind 와 같은 녹청, 내리면 .k-def 와 같은 산화동 — 같은 문법을 그대로 쓴다. */
+.gm { font:var(--micro); border-radius:2px; padding:4px 7px; border:1px solid; }
+.gm-up { color:var(--patina); border-color:var(--patina); }
+.gm-down { color:var(--copper); border-color:var(--copper); }
 .why { font-size:12.5px; color:var(--slate); }
 /* 접힌 카드에서는 근거를 두 줄까지만 — 전문은 펼친 패널이 다시 말한다. */
 .opp:not([open]) .why { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
@@ -897,10 +902,19 @@ window.oppMeter = o => Number.isFinite(o && o.score)
 const isDefensive = o => o && (o.is_defensive
   ?? ["rank_decay", "cannibalization", "backlink_broken", "crawl_issue"].includes(o.kind));
 
+// GA4 매출 잠재력 배지 — dashboard.py gather() 가 승수가 1.0이 아닐 때만 ga4_mult 를
+// 얹어 보낸다(scoring.value_mult). 값이 없으면 아무것도 안 그린다 — GA4 미연결
+// 프로젝트는 지금까지와 똑같다.
+window.gaBadge = o => o && o.ga4_mult != null
+  ? `<span class="gm lat ${o.ga4_mult > 1 ? "gm-up" : "gm-down"}"
+       title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "—"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
+       >GA4 ${o.ga4_mult > 1 ? "▲" : "▼"} ×${o.ga4_mult}</span>` : "";
+
 window.oppWhy = o => !o ? "" : `<div class="oh">
     <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
       >${esc(o.label || o.kind)}</span>
     <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
+    ${window.gaBadge(o)}
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}`;
 
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
