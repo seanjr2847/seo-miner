@@ -3,7 +3,7 @@
 {"id": "analysis", "title": "분석",
  "sections": ["an-shift", "an-movers", "an-ctr", "an-bands",
               "an-brand", "an-intent", "an-cluster", "an-country"],
- "stages": ["gsc"]}
+ "stages": ["gsc", "gaps"]}
 </script>
 
 <style>
@@ -43,6 +43,17 @@
 .anverdict { font-size:15px; line-height:1.65; margin:0 0 2px; }
 .anverdict b { color:var(--ink); }
 .anthin { font:var(--micro); color:var(--slate); margin-top:10px; line-height:1.5; }
+/* 검색어 행 펼침 — rank.html/keywords.html 과 같은 손잡이(행 자체가 버튼). */
+#an-movers-body tbody tr[role="button"],
+#an-ctr-body tbody tr[role="button"] { cursor:pointer; }
+#an-movers-body tbody tr[role="button"]:hover > td,
+#an-ctr-body tbody tr[role="button"]:hover > td { background:var(--bar); }
+#an-movers-body tbody tr[role="button"]:focus-visible > td,
+#an-ctr-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--patina); outline-offset:-2px; }
+#an-movers-body tbody tr[aria-expanded="false"] > td:first-child::before,
+#an-ctr-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
+#an-movers-body tbody tr[aria-expanded="true"] > td:first-child::before,
+#an-ctr-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section id="an-shift">
@@ -186,17 +197,89 @@ function anShift(s, cmp) {
   </table>` + thin;
 }
 
-function anMoverRow(r) {
+/* ── 검색어 행 펼침: 클릭을 움직인 검색어에서 바로 그 페이지로 ───────────────────────────────
+   원인 배지까지는 "무엇이 움직였나"였다. 그다음 "그래서 어느 페이지를 고치나"는
+   순위표까지 가서 다시 찾아야 했다 — rank.html/keywords.html 과 같은 문법(행 자체가
+   손잡이)으로 여기서 바로 답한다. 이미 기회로 채굴됐으면 셸의 한 벌(oppPanel)이
+   페이지·할 일·프롬프트를 통째로 낸다. 아직 안 잡힌 것만 이 화면의 재료
+   (QUERY_PAGES/PAGE_AUDITS)로 물러선다. ──────────────────────────── */
+function anQueryPanel(r, problem, note) {
+  const o = oppOf(r.query);
+  if (o) return oppPanel(o) + (oppActs(o) ? `<div class="det">${oppActs(o)}</div>` : "");
+  const pages = (window.QUERY_PAGES || {})[r.query] || [];
+  const url = pages.length ? pages[0].page : "";
+  return `<div class="det">
+    ${pages.length ? pageTable(pages) : `<p class="detn">이 검색어로 어느 페이지가 걸렸는지는
+      아직 모릅니다 — 구글 실적을 한 번 더 읽으면 페이지별로 채워집니다.</p>`}
+    ${url ? pageFix((window.PAGE_AUDITS || {})[url], url) : ""}
+    ${askBlock({url, audit: url ? (window.PAGE_AUDITS || {})[url] : null,
+      problem, queries: [{q: r.query, note}]})}
+    <p class="detn">${W(
+      `이 검색어는 아직 기회 목록에 없습니다 —
+       <button class="cmd" onclick="copyCmd(this)">/capture gaps</button> 가 채굴합니다.`,
+      "이 검색어는 아직 기회 목록에 없습니다 — [전체 분석 실행]을 누르면 채워집니다.")}</p>
+  </div>`;
+}
+const anMoverPanel = r => {
+  const c = AN_CAUSE[r.cause] || {t: r.cause, why: r.cause};
+  return anQueryPanel(r, `${c.t} — ${c.why}`, `Δ클릭 ${anNum(r.dclk)}`);
+};
+const anCtrPanel = r => anQueryPanel(r,
+  `순위는 ${r.position}위인데 CTR ${r.actual_ctr}%로 기대 ${r.expected_ctr}%의 절반이 안 됩니다`,
+  `노출 ${num(r.impressions)} · 되찾을 클릭 +${num(r.lost_clicks)}`);
+
+let AN_MV_VIEW = [], AN_CTR_VIEW = [];
+const AN_SRC = {mv: {view: () => AN_MV_VIEW, panel: anMoverPanel},
+                ctr: {view: () => AN_CTR_VIEW, panel: anCtrPanel}};
+
+function anToggle(tr) {
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("exp")) {
+    nx.remove();
+    return tr.setAttribute("aria-expanded", "false");
+  }
+  const src = AN_SRC[tr.dataset.ansrc];
+  const r = src && src.view()[+tr.dataset.i];
+  if (!r) return;
+  const row = document.createElement("tr");
+  row.className = "exp";
+  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${src.panel(r)}</td>`;
+  tr.after(row);
+  tr.setAttribute("aria-expanded", "true");
+}
+function anKey(e, tr) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();                 // Space 가 화면을 스크롤하지 않게
+  anToggle(tr);
+}
+// 뼈대의 정렬은 tbody 행을 통째로 재배열한다 — 펼친 줄을 그냥 두면 엉뚱한 행 밑에
+// 붙는다. 위임보다 먼저 받아서(capture) 접는다.
+function anCollapse(id) {
+  const l = $(id);
+  if (!l) return;
+  l.querySelectorAll("tr.exp").forEach(t => t.remove());
+  l.querySelectorAll("tr[aria-expanded]").forEach(t => t.setAttribute("aria-expanded", "false"));
+}
+document.addEventListener("click", e => {
+  const th = e.target.closest &&
+    e.target.closest("#an-movers-body th[data-s], #an-ctr-body th[data-s]");
+  if (th) anCollapse(th.closest("#an-movers-body") ? "an-movers-body" : "an-ctr-body");
+}, true);
+
+function anMoverRow(r, i) {
   const c = AN_CAUSE[r.cause] || {t: r.cause, why: ""};
   // 화살표는 뒤 값에 붙인다(nbsp) — 좁은 화면에서 접힐 때 "1.56% →" 로 반토막 나면
   // 화살표만 줄 끝에 남아 읽히지 않는다. "→ 2.46%" 로 넘어가야 한 덩어리로 읽힌다.
-  const arrow = (a, b) => `${a} → ${b}`;
+  const arrow = (a, b) => `${a} → ${b}`;
   const ctr = r.prev_ctr == null ? `${r.ctr ?? "—"}%`
     : r.ctr == null ? `${r.prev_ctr}% →` : arrow(`${r.prev_ctr}%`, `${r.ctr}%`);
   const pos = r.prev_pos == null ? `${r.pos ?? "—"}`
     : r.pos == null ? `${r.prev_pos} →` : arrow(r.prev_pos, r.pos);
-  return `<tr>
-    <td>${esc(r.query)}</td>
+  const o = oppOf(r.query);
+  return `<tr class="opp" tabindex="0" role="button" aria-expanded="false"
+    data-ansrc="mv" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
+    title="누르면 이 검색어의 페이지와 할 일이 펼쳐집니다">
+    <td class="kwcell">${esc(r.query)}${oppWhy(o)}</td>
     <td><span class="ancause ${esc(r.cause)}" title="${esc(c.why)}">${c.t}</span></td>
     <td class="num ${r.dclk > 0 ? "up" : "down"}">${anNum(r.dclk)}</td>
     <td class="num">${num(r.imp)}</td>
@@ -213,11 +296,12 @@ function anMovers(s) {
   if (!s || (!s.down.length && !s.up.length))
     return `<div class="empty">노출이 통계로 볼 만한 검색어 중 클릭이 움직인 것이
       없습니다.</div>`;
-  const block = (title, rows, empty) => `<div class="eyebrow"
+  AN_MV_VIEW = s.down.concat(s.up);          // 행의 data-i 는 이 배열을 가리킨다
+  const block = (title, rows, empty, off) => `<div class="eyebrow"
       style="margin:18px 0 8px">${title}</div>` +
-    table(AN_HEAD, rows.map(anMoverRow), empty);
-  return block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 없습니다.")
-    + block("얻은 쪽", s.up, "클릭이 늘어난 검색어가 없습니다.")
+    table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)), empty);
+  return block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 없습니다.", 0)
+    + block("얻은 쪽", s.up, "클릭이 늘어난 검색어가 없습니다.", s.down.length)
     + `<div class="acts" style="margin-top:14px">
         <button class="go sec" onclick="anCsv()">CSV 내보내기</button></div>`;
 }
@@ -235,6 +319,7 @@ function anCtr(rows) {
   if (!rows || !rows.length)
     return `<div class="empty">1페이지에 있으면서 기대 CTR의 절반도 못 받는 검색어가
       없습니다. 노출 100 이상만 봅니다 — 그보다 적으면 CTR 자체가 통계가 아닙니다.</div>`;
+  AN_CTR_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
   const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
   return `<p class="anverdict">아래를 다 고치면 같은 순위에서
     <b>${num(total)}클릭</b>쯤을 되찾습니다 — 순위를 올리는 일이 아니라 제목·설명을
@@ -242,12 +327,19 @@ function anCtr(rows) {
     table(["검색어", ">평균순위", ">노출", ">실제 CTR",
            ">기대 CTR?이 순위면 보통 이 정도는 눌립니다",
            ">되찾을 클릭?노출 × (기대 − 실제) CTR"],
-      rows.map(r => `<tr><td>${esc(r.query)}</td>
-        <td class="num">${r.position}</td>
-        <td class="num">${num(r.impressions)}</td>
-        <td class="num down">${r.actual_ctr}%</td>
-        <td class="num muted">${r.expected_ctr}%</td>
-        <td class="num up">+${num(r.lost_clicks)}</td></tr>`));
+      rows.map(anCtrRow));
+}
+function anCtrRow(r, i) {
+  const o = oppOf(r.query);
+  return `<tr class="opp" tabindex="0" role="button" aria-expanded="false"
+    data-ansrc="ctr" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
+    title="누르면 이 검색어의 페이지와 할 일이 펼쳐집니다">
+    <td class="kwcell">${esc(r.query)}${oppWhy(o)}</td>
+    <td class="num">${r.position}</td>
+    <td class="num">${num(r.impressions)}</td>
+    <td class="num down">${r.actual_ctr}%</td>
+    <td class="num muted">${r.expected_ctr}%</td>
+    <td class="num up">+${num(r.lost_clicks)}</td></tr>`;
 }
 
 function anBands(rows) {
@@ -405,10 +497,13 @@ function anCountry(rows, date) {
   const msg = share >= 80
     ? `클릭의 <b>${share}%</b>가 <span class="lat">${esc(top.label).toUpperCase()}</span>
        한 나라에서 옵니다. 다른 나라 노출은 있는데 클릭이 안 붙는다면 그 나라 말로
-       된 페이지가 없다는 뜻입니다.`
+       된 페이지가 없다는 뜻입니다 — 그 나라 언어로 페이지를 새로 쓰거나, 지금 페이지를
+       hreflang 으로 그 나라에 연결합니다. 새 페이지를 냈다면 ${window.go("site")}
+       화면에서 색인됐는지 확인합니다.`
     : `클릭이 <b>${rows.length}개 나라</b>에 갈려 있고 1위가 ${share}% 입니다.
        타깃 밖 나라가 노출을 먹고 있으면 그 노출은 CTR·평균순위만 끌어내립니다 —
-       숫자를 볼 때 그 몫을 빼고 봅니다.`;
+       숫자를 볼 때 그 몫을 빼고 보고, 다른 나라 수요가 꾸준하면 다국어 페이지나
+       hreflang 을 검토합니다.`;
   return `<p class="anverdict">${msg}</p>` +
     anMix(rows, r => `<span class="lat">${esc(r.label).toUpperCase()}</span>`);
 }

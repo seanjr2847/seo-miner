@@ -84,10 +84,15 @@ function CP_shares(d) {
 }
 
 /* 점수가 없는 줄 — 왜 없는지를 화면이 말한다. 빈칸으로 두면 "고장인가"가 된다.
-   상한의 정본은 scoring.content_gaps(limit=25) 다. */
-const CP_noOpp = r => r.kind === "shared"
-  ? "우리가 같거나 위입니다 — 지킬 자리라 새 작업이 붙지 않습니다."
-  : "점수는 검색량이 큰 25건까지만 매깁니다 — 이 줄은 그 밖이거나, 수집 뒤 점수를 아직 안 냈습니다.";
+   상한의 정본은 scoring.content_gaps(limit=25) 다. missing/weak 이 뭘 해야 하는지는
+   CP_KINDS(위)가 이미 갖고 있다 — 칩 툴팁에만 쓰던 것을 여기서도 그대로 읽는다. */
+const CP_noOpp = r => {
+  if (r.kind === "shared")
+    return "우리가 같거나 위입니다 — 지킬 자리라 새 작업이 붙지 않습니다.";
+  const k = CP_KINDS.find(x => x[0] === r.kind);
+  return `${k ? k[2] + "입니다. " : ""}점수는 검색량이 큰 25건까지만 매깁니다 — ` +
+    "이 줄은 그 밖이거나, 수집 뒤 점수를 아직 안 냈습니다.";
+};
 
 // 정렬 자 — 기회가 없는 줄은 맨 아래(-1). 점수가 같으면 원래 순서(검색량 큰 순)가 남는다.
 const CP_rank = r => { const o = oppOf(r.keyword); return Number.isFinite(o && o.score) ? o.score : -1; };
@@ -108,9 +113,10 @@ function CP_card(r) {
         o || r.volume == null ? "" : ` · 월 검색량 ${num(r.volume)}`}</span>
     </div>
     <div class="target">${esc(r.keyword)}</div>`;
-  if (!o) return `<div class="opp">${head}<div class="why">${CP_noOpp(r)}</div></div>`;
-  return `<details class="opp" data-opp="${o.id}"><summary>${oppScore(o)}<div>${head}
-      ${oppMeter(o)}${oppWhy(o)}${oppActs(o)}</div></summary>${oppPanel(o)}</details>`;
+  // 점수가 없어도 펼친다 — BLK_row 와 같은 어투: <details> 는 늘, 안에서만 갈린다.
+  return `<details class="opp"${o ? ` data-opp="${o.id}"` : ""}><summary>${oppScore(o)}<div>${head}
+      ${o ? oppMeter(o) + oppWhy(o) + oppActs(o) : ""}</div></summary>
+      ${o ? oppPanel(o) : `<div class="why">${CP_noOpp(r)}</div>`}</details>`;
 }
 
 function CP_gapRows(d) {
@@ -174,7 +180,7 @@ VIEW("competitors", function (d) {
       ? "몫은 추정 트래픽(etv) 기준입니다 — <b>실측이 아니라 추정</b>이라, 순위를 " +
         "가진 검색어 수와 같이 읽으세요. 우리 줄이 녹청입니다."
       : "겹치는 경쟁 도메인을 찾지 못했습니다. 주제가 아주 좁거나, 아직 순위를 가진 " +
-        "검색어가 적을 때 이렇게 나옵니다.";
+        "검색어가 적을 때 이렇게 나옵니다 — 추적 키워드를 늘린 뒤 " + CP_run();
   $("cp-shares").innerHTML = d.comp_date
     ? (CP_shares(d) || `<div class="empty">겹치는 경쟁 도메인이 없습니다.</div>`) : "";
 

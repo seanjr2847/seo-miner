@@ -519,7 +519,9 @@ function stDevDetail(q) {
   return `<div class="det">${head}
     ${pageTable(pages)}
     ${pages.length ? "" : `<p class="detn">이 검색어로 걸린 페이지가 스냅샷에 없습니다 —
-      페이지별 분해를 아직 수집하지 않았습니다.</p>`}
+      페이지별 분해를 아직 수집하지 않았습니다. ` + W(
+      `<code class="cmd" onclick="copyCmd(this)">/capture gsc</code> 로 다시 읽으면 채워집니다.`,
+      `[전체 분석 실행]으로 다시 읽으면 채워집니다.`) + `</p>`}
     ${playList(ST_DEV_PLAY.what, ST_DEV_PLAY.acts)}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
@@ -868,13 +870,55 @@ function renderPageStarved(d) {
       <span class="n">${num(PG_STARVED.length)}개</span><span class="sp"></span>
       <button class="go sec" onclick="pgStarvedCsv()">CSV 내보내기</button>
     </div>` + table(PG_ST_HEAD, PG_STARVED.map(r =>
-    `<tr><td class="pgurl"><a href="${esc(r.page)}" target="_blank"
-       rel="noopener">${esc(r.page)}</a></td>
+    `<tr ${stRw(r.page)}><td class="pgurl">${esc(r.page)}</td>
      <td class="num">${num(r.rank)}</td>
      <td class="num">${num(r.impressions)}</td>
      <td class="num">${num(r.clicks)}</td>
      <td class="num">${r.position ?? "—"}</td>
      <td class="num pglow">${num(r.links_in)}</td></tr>`));
+}
+
+// ST_QPAGES 는 검색어 → 페이지 방향이라 페이지 → 검색어로는 못 묻는다. 뒤집어서
+// 찾는다 — 단 이 화면이 이미 받은 재료(추적 중인 검색어·기회·순위 변동에 걸린
+// 것) 안에서만이라, 굶은 페이지의 진짜 1등 검색어가 여기 없을 수 있다.
+function stPageQueries(url) {
+  const out = [];
+  for (const q in ST_QPAGES)
+    for (const r of ST_QPAGES[q]) if (r.page === url) out.push({q, imp: r.impressions});
+  return out.sort((a, b) => b.imp - a.imp);
+}
+
+const PG_ST_PLAY = {
+  what: "성과는 이미 증명됐는데 사이트 안에서 아무도 이 페이지를 가리키지 않습니다 — 링크 한 줄이면 끝입니다.",
+  acts: ["주제가 겹치는 글을 골라 본문 중간에 이 페이지로 가는 링크를 겁니다 — 헤더·푸터·사이트맵 링크는 안 셉니다.",
+         "앵커 텍스트는 아래 후보 검색어를 그대로 씁니다(후보가 없으면 페이지 제목이나 핵심 문구를 씁니다).",
+         "다음 크롤·GSC 수집에서 내부링크 수와 순위가 올라오는지 봅니다."]
+};
+
+function pgStarvedDetail(page) {
+  const r = PG_STARVED.find(x => x.page === page);
+  if (!r) return "";
+  const qs = stPageQueries(page);
+  const anchors = qs.length
+    ? `<ul class="deta">${qs.map(x => `<li><b>${esc(x.q)}</b>
+         <span class="muted"> — 노출 ${num(x.imp)}</span></li>`).join("")}</ul>`
+    : `<p class="detn">이 페이지가 걸린 검색어를 이 수집본에서 못 찾았습니다 — 추적 중인
+        검색어·기회·순위 변동에 걸린 것만 모아 둔 재료라 빠질 수 있습니다. 그때까지는
+        페이지 제목이나 핵심 문구를 앵커로 씁니다.</p>`;
+  const head = `<p class="detw">노출 ${num(r.impressions)} · 클릭 ${num(r.clicks)} ·
+      평균순위 ${r.position ?? "—"} · 내부링크 ${num(r.links_in)}개</p>`;
+  // 할 일이 먼저고 앵커 후보가 그 재료다 — acts 가 "아래 후보 검색어"라고 부른다.
+  return `<div class="det">${head}
+    ${playList(PG_ST_PLAY.what, PG_ST_PLAY.acts)}${anchors}
+    <p class="detw">고칠 페이지: <a href="${esc(r.page)}" target="_blank"
+      rel="noopener">${esc(r.page)}</a></p>
+    ${pageFix(ST_AUDITS[r.page], r.page)}
+    ${askBlock({url: r.page, audit: ST_AUDITS[r.page], acts: PG_ST_PLAY.acts,
+                queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
+                deliver: ["이 페이지로 링크를 걸 글과 앵커 텍스트"],
+                problem: `내부링크 굶음 — 노출 ${num(r.impressions)}인데 내부링크 ${num(r.links_in)}개`})}
+    <p class="detn">이 페이지는 기회 목록에 없어 확인·완료 표시를 못 답니다 —
+      내부링크 굶음은 아직 기회로 채점하지 않습니다.</p></div>`;
 }
 
 function renderPageAxis(d) {
@@ -901,4 +945,5 @@ VIEW("site", function (d) {
 stExpBind(document.getElementById("index"), stIxDetail);
 stExpBind(document.getElementById("devgap"), stDevDetail);
 stExpBind(document.getElementById("crawl"), CR_detail);
+stExpBind(document.getElementById("pg-starved"), pgStarvedDetail);
 </script>

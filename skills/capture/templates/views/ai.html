@@ -497,6 +497,41 @@ const AI_gscCmd = () =>
   `<div style="margin-top:9px"><button class="cmd" onclick="copyCmd(this)"
     >/capture gsc ${esc(AI_NM)}</button></div>`;
 
+// 한 줄 = "검색은 이 검색어로 이기는데, AI 는 이 질문에서 안 씀". 누르면 그 검색어로
+// 이미 걸린 페이지가 나온다 — AI_detail 과 같은 재료(QUERY_PAGES·PAGE_AUDITS)를
+// 같은 방식(pageFix·askBlock)으로 쓴다. 다른 점은 오직 키뿐이다: 저기는 질문
+// 문장으로 찾고, 여기는 이미 걸린 검색어(r.query)로 찾는다 — 그래서 훨씬 잘 걸린다.
+function AI_vsRow(r) {
+  const pages = (window.QUERY_PAGES || {})[r.query] || [];
+  const url = pages.length ? pages[0].page : "";
+  const note = pages.length ? "" : `<p class="detn">이 검색어로 걸린 내 페이지가
+    스냅샷에 없습니다.</p>`;
+  const acts = ["이 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2를 얹습니다.",
+    "그 밑에 숫자·출처·갱신일이 들어간 직답 2~3문장을 붙입니다."];
+  const deliver = ["질문 그대로를 쓴 H2 와 그 아래 직답 문안",
+                    "숫자·출처·갱신일이 들어간 근거 블록"];
+  const ask = askBlock({
+    url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts, deliver,
+    problem: `검색 ${r.pos}위로 이기는데 AI 질문에서는 인용되지 않음` +
+      (r.rivals.length ? ` — 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),
+    queries: [{q: r.query, note: `평균 ${r.pos}위 · 노출 ${num(r.imp)}`}],
+  });
+  const body = `<div class="aiq-d" hidden><div class="det">${playList("", acts)}
+    ${pageTable(pages)}${note}
+    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix((window.PAGE_AUDITS || {})[url], url)}`
+    : ""}${ask}</div></div>`;
+  return `<tr>
+    <td><button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
+        >${esc(r.prompt)}</button>${body}</td>
+    <td class="kwcell">${esc(r.query)}</td>
+    <td class="num up">${r.pos}</td>
+    <td class="num muted">${num(r.imp)}</td>
+    <td class="aidoms">${r.rivals.length
+      ? r.rivals.map(x2 => `<span class="chip">${esc(x2)}</span>`).join("")
+      : '<span class="muted">—</span>'}</td></tr>`;
+}
+
 function AI_vsSearch(x, gscDate) {
   const rows = x.rows || [];
   if (!gscDate) return ["검색 순위와 AI 인용을 한 줄에 놓는 표입니다.",
@@ -517,19 +552,12 @@ function AI_vsSearch(x, gscDate) {
     아니라는 뜻입니다 — 새 글을 쓰기 전에, 그 검색어로 이미 걸린 페이지에 질문 문장
     그대로의 H2와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다.`;
   return [sub, table(
-    ["질문?AI 답변에서 한 번도 인용되지 않은 질문",
+    ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
      "겹치는 내 검색어?이 질문과 낱말이 겹치는 검색어 중 우리가 상위인 것",
      ">내 평균순위?그 검색어에서 구글이 보고한 평균 게재순위",
      ">노출?그 검색어의 노출 수 — 자리의 크기",
      "대신 인용된 곳?그 질문의 답변에서 우리 자리에 인용된 도메인"],
-    rows.map(r => `<tr>
-      <td>${esc(r.prompt)}</td>
-      <td class="kwcell">${esc(r.query)}</td>
-      <td class="num up">${r.pos}</td>
-      <td class="num muted">${num(r.imp)}</td>
-      <td class="aidoms">${r.rivals.length
-        ? r.rivals.map(x2 => `<span class="chip">${esc(x2)}</span>`).join("")
-        : '<span class="muted">—</span>'}</td></tr>`))];
+    rows.map(AI_vsRow))];
 }
 
 function AI_outranked(o) {
@@ -557,15 +585,19 @@ function AI_outranked(o) {
     table(["도메인?AI 답변에서 인용된 경쟁사",
       ">AI 인용?이번 확인에서 그 도메인이 인용된 답변 수",
       ">우리가 위인 검색어?경쟁 검색어 중 우리 순위가 더 높은 것의 수",
-      "그중 몇 개?우리 순위 대 저쪽 순위"],
+      "그중 몇 개?우리 순위 대 저쪽 순위 — 누르면 그 검색어로 걸린 내 페이지로 갑니다"],
       rows.map(r => `<tr>
         <td><a class="dm" href="https://${esc(r.domain)}" target="_blank"
           rel="noopener noreferrer">${esc(r.domain)}</a></td>
         <td class="num down">${r.cites}</td>
         <td class="num up">${r.won}</td>
-        <td class="kwcell">${r.top.map(w =>
-          `${esc(w.keyword)} <span class="muted">${w.our_position}위 대 ${w.position}위</span>`
-        ).join(" · ")}${r.won > r.top.length
+        <td class="kwcell">${r.top.map(w => {
+          const pages = (window.QUERY_PAGES || {})[w.keyword] || [];
+          const label = `${esc(w.keyword)}
+            <span class="muted">${w.our_position}위 대 ${w.position}위</span>`;
+          return pages.length ? `<a href="${esc(pages[0].page)}" target="_blank"
+            rel="noopener" title="이 검색어로 걸린 내 페이지 열기">${label}</a>` : label;
+        }).join(" · ")}${r.won > r.top.length
           ? ` <span class="muted">외 ${r.won - r.top.length}개</span>` : ""}</td>
       </tr>`))];
 }
@@ -736,8 +768,13 @@ VIEW("ai", function (d) {
     AI_render();
   } else if ((d.missed || []).length) {
     $("ai-miss-sec").hidden = false;
-    $("ai-miss-sub").textContent =
-      "인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다.";
+    $("ai-miss-sub").innerHTML = W(
+      `인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다. 아래를 Claude Code 에
+      붙여넣으면 이 질문들로 무엇부터 쓸지 계획을 세웁니다.
+      <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' ')
+          {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`,
+      "인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다.");
     $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
       d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
         <td class="kwcell">${esc(r.category || "")}</td>

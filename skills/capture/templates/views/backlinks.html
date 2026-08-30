@@ -25,6 +25,12 @@
   margin-top:6px; max-width:220px; }
 .blk-bar i { display:block; height:100%; border-radius:2px; background:var(--patina);
   opacity:.6; }
+/* 링크를 뗀 도메인도 깨진 링크와 같은 대접 — 눌러서 펼치는 줄이다(BLK_domToggle). */
+#blk-domains tbody tr[role="button"] { cursor:pointer; }
+#blk-domains tbody tr[role="button"]:hover { background:var(--bar); }
+#blk-domains tbody tr[role="button"]:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
+#blk-domains tbody tr[aria-expanded="false"] .blk-dom::before { content:"▸ "; color:var(--slate); }
+#blk-domains tbody tr[aria-expanded="true"] .blk-dom::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section id="bl-profile">
@@ -68,6 +74,7 @@
    뒤가 앞을 조용히 덮는다(dashboard._selfcheck 가 그걸 센다). */
 
 let BLK_D = null;                 // 마지막 payload — CSV 버튼이 지금 보이는 것을 그대로 낸다
+let BLK_DOMS = [];                // 마지막으로 그린 참조 도메인 목록 — 펼침이 data-i 로 찾는다
 
 const BLK_pct = v => (v == null ? "—" : Math.round(v * 100) + "%");
 const BLK_day = v => (v ? String(v).slice(0, 10) : "");
@@ -96,6 +103,49 @@ function BLK_row(target, head, meta, none) {
 const BLK_sc = t => { const o = oppOf(t); return Number.isFinite(o && o.score) ? o.score : -1; };
 // 빈 상태 문구는 셸의 table() 한 벌을 그대로 쓴다 — 카드라고 다시 쓰지 않는다.
 const BLK_cards = (rows, empty) => rows.length ? rows.join("") : table([], [], empty);
+
+// 링크를 뗀 도메인 — rank.html 의 RK_toggle 과 같은 문법이다: 누른 줄 다음에
+// 펼침 행을 끼워 넣는다(BLK_row 를 그대로 쓴다 — 카드를 다시 그리지 않는다).
+function BLK_domToggle(tr) {
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("exp")) {
+    nx.remove();
+    return tr.setAttribute("aria-expanded", "false");
+  }
+  const r = BLK_DOMS[+tr.dataset.i];
+  if (!r) return;
+  const row = document.createElement("tr");
+  row.className = "exp";
+  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${BLK_row(r.domain,
+    `<span class="blk-dom">${esc(r.domain)}</span>`,
+    `지수 ${r.rank == null ? "—" : r.rank} · 이 도메인에서 온 링크 ${num(r.backlinks)}개 · ` +
+    `최초 발견 ${esc(BLK_day(r.first_seen))} · 잃은 날 ${esc(BLK_day(r.lost_date))}`,
+    "이 도메인이 링크를 뗐습니다 — 개별 링크가 깨진 것이면 위 되찾을 링크에서 따로 잡힙니다. " +
+    "그 도메인에 지금도 관련 페이지가 있는지 확인하고, 있으면 다시 링크해 달라고 요청하세요.")}</td>`;
+  // BLK_row 는 <details> 라 그냥 두면 두 번 눌러야 본문이 나온다 — 이미 한 번
+  // 눌러서 편 줄이니 열어 둔다.
+  const det = row.querySelector("details");
+  if (det) det.open = true;
+  tr.after(row);
+  tr.setAttribute("aria-expanded", "true");
+}
+function BLK_domKey(e, tr) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  BLK_domToggle(tr);
+}
+// 표 정렬은 tbody 행을 통째로 재배열한다(셸의 위임 리스너) — 펼친 도메인 줄을
+// 그냥 두면 엉뚱한 행 밑에 붙는다(rank.html 의 RK_collapse 와 같은 문제).
+// 정렬 클릭보다 먼저(capture) 받아서 접는다.
+function BLK_domCollapse() {
+  const l = $("blk-domains");
+  if (!l) return;
+  l.querySelectorAll("tr.exp").forEach(t => t.remove());
+  l.querySelectorAll("tr[aria-expanded]").forEach(t => t.setAttribute("aria-expanded", "false"));
+}
+document.addEventListener("click", e => {
+  if (e.target.closest && e.target.closest("#blk-domains th[data-s]")) BLK_domCollapse();
+}, true);
 
 // 요약 밴드 — 다른 화면의 계기판과 같은 문법을 쓴다(.band/.m/.v/.l/.b).
 function BLK_band(d) {
@@ -127,21 +177,30 @@ function BLK_band(d) {
 
 function BLK_domains(d) {
   // lost_date 는 여태 payload 에만 있고 화면에 한 글자도 안 나왔다. 링크를 뗀
-  // 도메인도 깨진 링크와 같은 대접이다 — 잃은 게 아니라 되찾을 것이라 색을 가른다.
-  const rows = (d.bl_domains || []).map(r =>
-    `<tr class="${r.lost_date ? "blk-broken" : ""}"><td class="blk-dom">${esc(r.domain)}</td>` +
-    `<td class="num">${r.rank == null ? "—" : r.rank}</td>` +
-    `<td class="num">${num(r.backlinks)}</td>` +
-    `<td class="num">${num(r.dofollow)}</td>` +
-    `<td>${esc(BLK_day(r.first_seen))}</td>` +
-    `<td>${esc(BLK_day(r.lost_date))}</td></tr>`);
+  // 도메인도 깨진 링크와 같은 대접이다 — 눌러서 펼치면 위 되찾을 링크와 같은
+  // 점수·근거·할 일(BLK_row)이 나온다. 잃은 게 아니라 되찾을 것이라 색도 가른다.
+  const doms = d.bl_domains || [];
+  BLK_DOMS = doms;
+  const rows = doms.map((r, i) => {
+    const cells = `<td class="blk-dom">${esc(r.domain)}</td>` +
+      `<td class="num">${r.rank == null ? "—" : r.rank}</td>` +
+      `<td class="num">${num(r.backlinks)}</td>` +
+      `<td class="num">${num(r.dofollow)}</td>` +
+      `<td>${esc(BLK_day(r.first_seen))}</td>` +
+      `<td>${esc(BLK_day(r.lost_date))}</td>`;
+    return r.lost_date
+      ? `<tr class="blk-broken" tabindex="0" role="button" aria-expanded="false" data-i="${i}"
+          onclick="BLK_domToggle(this)" onkeydown="BLK_domKey(event,this)"
+          title="누르면 이 도메인의 상세와 할 일이 펼쳐집니다">${cells}</tr>`
+      : `<tr>${cells}</tr>`;
+  });
   return `<div class="tools">
       <span class="n">${rows.length}개</span><span class="sp"></span>
       <button class="go sec" onclick="BLK_csvDomains()">CSV 내보내기</button>
     </div>` +
     table([">참조 도메인?우리에게 링크를 건 도메인", ">지수?DataForSEO 도메인 지수",
            ">링크 수?그 도메인에서 온 링크 개수", ">dofollow", ">최초 발견",
-           ">잃은 날?링크를 뗀 날 — 비어 있으면 아직 걸려 있습니다"].map(
+           ">잃은 날?링크를 뗀 날 — 비어 있으면 아직 걸려 있습니다. 누르면 펼쳐집니다"].map(
       (h, i) => (i === 0 ? h.slice(1) : h)), rows,
       "참조 도메인이 아직 없습니다.");
 }
@@ -174,15 +233,27 @@ function BLK_intersect(d) {
   return BLK_cards(rows, "");
 }
 
+// 과최적화 기준 — CSS·sub 문구는 "한 앵커가 전부를 먹고 있으면"이라고만 하고
+// 숫자를 안 준다. 문구에 없는 숫자라 보수적으로 절반(50%)을 넘을 때만 신호로 본다.
+const BLK_ANCHOR_MAX = 0.5;
+
 function BLK_anchors(d) {
   const a = d.bl_anchors || [];
+  const total = a.reduce((s, r) => s + (r.backlinks || 0), 0) || 1;
   const max = a.reduce((m, r) => Math.max(m, r.backlinks || 0), 0) || 1;
+  const top = a.reduce((t, r) => (r.backlinks || 0) > (t.backlinks || 0) ? r : t, a[0] || {});
+  const over = (top.backlinks || 0) / total > BLK_ANCHOR_MAX;
   const rows = a.map(r =>
-    `<tr><td class="blk-anchor">${esc(r.anchor || "(빈 앵커)")}` +
+    `<tr${over && r === top ? ' class="blk-broken"' : ""}><td class="blk-anchor">${esc(r.anchor || "(빈 앵커)")}` +
     `<span class="blk-bar"><i style="width:${Math.round((r.backlinks || 0) / max * 100)}%"></i></span></td>` +
     `<td class="num">${num(r.backlinks)}</td>` +
     `<td class="num">${num(r.referring_domains)}</td></tr>`);
-  return `<div class="eyebrow" style="margin-bottom:10px">앵커 텍스트</div>` +
+  const warn = over
+    ? `<p class="detn" style="color:var(--copper)">앵커 <b>${esc(top.anchor || "(빈 앵커)")}</b>가 ` +
+      `전체 링크의 ${Math.round(top.backlinks / total * 100)}%를 차지합니다 — 과최적화 신호입니다. ` +
+      `새로 받는 링크는 다른 문구로 요청하세요.</p>`
+    : "";
+  return `<div class="eyebrow" style="margin-bottom:10px">앵커 텍스트</div>${warn}` +
     table(["앵커?링크에 실제로 적힌 글자", ">링크 수", ">도메인 수"], rows,
           "앵커를 아직 수집하지 않았습니다.");
 }

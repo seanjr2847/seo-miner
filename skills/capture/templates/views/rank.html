@@ -283,7 +283,7 @@ function RK_detail(r) {
   const none = `<p class="detn">${W(
     `이 검색어는 아직 기회 목록에 없습니다 —
      <button class="cmd" onclick="copyCmd(this)">/capture gaps</button> 가 채굴합니다.`,
-    "이 검색어는 아직 기회 목록에 없습니다 — 다음 전체 분석 때 채굴됩니다.")}</p>`;
+    "이 검색어는 아직 기회 목록에 없습니다 — [전체 분석 실행]을 누르면 채워집니다.")}</p>`;
   return `<div class="det"><p class="detn">${line}</p>${urlp}${o ? oppActs(o) : none}</div>`
     + (o ? oppPanel(o) : RK_fallback(r));
 }
@@ -437,7 +437,8 @@ VIEW("rank", function (d) {
   const DEV = {desktop: "데스크톱", mobile: "모바일"};
   const cond = [d.rank_date && `${d.rank_date} 조회`,
     grab("provider"), DEV[grab("device")] || grab("device"),
-    grab("errors") && grab("errors") !== "0" && `실패 ${grab("errors")}건`,
+    grab("errors") && grab("errors") !== "0" &&
+      `실패 ${grab("errors")}건 — ${W("/capture rank 로 재시도", "전체 분석 실행으로 재시도")}`,
     d.rank_prev && `직전 ${d.rank_prev} 대비`].filter(Boolean).join(" · ");
 
   if (!RK_ROWS.length) {

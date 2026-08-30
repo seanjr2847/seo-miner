@@ -737,8 +737,10 @@ const pageFix = (audit, url) => {
 };
 
 // 할 일 목록 — kind 마다 손대는 자리가 다르다. 표는 각 화면이 갖는다.
-const playList = (what, acts) => (!what && !(acts || []).length) ? "" :
-  `${what ? `<p class="detw">${esc(what)}</p>` : ""}
+// tail 은 이미 만든 마크업이라 esc 하지 않는다 — what 은 서버 산문이라 esc 한다.
+// (둘을 한 문자열로 뭉쳐 넘기면 버튼이 글자로 나온다. 실제로 그랬다.)
+const playList = (what, acts, tail) => (!what && !(acts || []).length) ? "" :
+  `${what ? `<p class="detw">${esc(what)}${tail || ""}</p>` : ""}
    <ol class="deta">${(acts || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol>`;
 
 /* ── AI 에게 줄 수정 요청 프롬프트 ─────────────────────────────────
@@ -945,8 +947,8 @@ function oppDetail(o) {
   // striking_distance 의 "무엇을" 뒤에는 평균 게재순위 안내 + [순위] 화면 버튼이
   // 이어 붙는다 — 그 버튼(window.go)은 화면에서만 만들 수 있어 서버 문구에는
   // 없다(scoring._SD_PLAY 주석 참고). 여기서만 이어 붙인다.
-  const what = o.kind === "striking_distance" && p.what
-    ? `${p.what} ${window.sdAvgNote()}` : p.what;
+  const sdTail = o.kind === "striking_distance" && p.what
+    ? ` ${window.sdAvgNote()}` : "";
   // 이 기회에서 실제로 손댈 페이지 — 노출이 가장 큰 것. 감사 결과가 있으면
   // "지금 title 이 무엇이고 무엇을 바꿔라"까지 나온다(없으면 왜 없는지 말한다).
   const url = o.target.startsWith("http") ? o.target : (pages[0] && pages[0].page);
@@ -973,7 +975,7 @@ function oppDetail(o) {
                        + ` · CTR ${pages[0].ctr}% · 평균 ${pages[0].position ?? "—"}위` : "",
     }],
   });
-  return `<div class="det">${playList(what, p.acts)}${pageTable(pages)}${note}
+  return `<div class="det">${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}</div>`;
 }

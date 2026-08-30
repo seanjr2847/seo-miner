@@ -664,7 +664,7 @@
     if (!ks.length) {
       list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
         (kwMode === "candidate" ? "발굴된 후보가 없습니다 — 위 [키워드 다시 발굴]을 누르면 채워집니다."
-                                : "추적 중인 키워드가 없습니다.") + "</p>";
+                                : "추적 중인 키워드가 없습니다 — 후보 탭에서 골라 여기로 옮기세요.") + "</p>";
       return;
     }
     // 오른쪽 한 줄이 "이걸 왜 켜야 하나"에 답해야 한다. 노출이 있으면 실측이 먼저고,
@@ -772,6 +772,7 @@
   async function aiqLoad() {
     var box = document.getElementById("sm-aiq");
     if (!box) return;
+    box.querySelector(".list").innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">불러오는 중…</p>';
     try {
       var r = await fetch("/api/ai/prompts?project=" + encodeURIComponent(proj()));
       var d = await r.json();
@@ -1052,7 +1053,7 @@
     var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
     if (!all) {
       box.innerHTML = '<p class="sm-none">' + (dimMode === "devices"
-        ? "기기별 데이터를 아직 수집하지 않았습니다 — 다음 분석에서 함께 수집합니다."
+        ? "기기별 데이터를 아직 수집하지 않았습니다 — 위 [실적 다시 수집]을 누르면 채워집니다."
         : "아직 수집된 데이터가 없습니다.") + "</p>";
       return;
     }
