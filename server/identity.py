@@ -68,7 +68,8 @@ def _need(name: str, what: str) -> str:
         v = None
     if not v:
         raise NotConfigured(
-            f"{what}이 아직 연결되지 않았습니다. 운영자에게 문의해 주세요. ({name})")
+            f"{what}이 이 배포에 아직 연결되지 않았습니다. 환경 변수 {name} 을 "
+            "설정하면 켜집니다. (자가 호스팅이면 이 배포의 운영자가 본인일 수 있습니다.)")
     return v
 
 
@@ -173,7 +174,7 @@ def demo() -> None:
                 start(p)
                 raise AssertionError(f"{p}: 설정 없이 인가 URL 이 나왔다")
             except NotConfigured as e:
-                assert "운영자에게" in str(e), e
+                assert p.upper() + "_CLIENT_ID" in str(e), e
         try:
             start("gitlab")
             raise AssertionError("모르는 제공자가 통과했다")

@@ -36,6 +36,20 @@ SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly",
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
 
 
+def _can_open_browser() -> bool:
+    """이 프로세스가 대화형 로그인을 띄울 수 있나 — 띄울 브라우저가 실제로 있나.
+
+    서버·워커·CI 에는 없다. 있는 척하고 run_local_server 를 부르면 그 안에서
+    webbrowser.Error 로 죽고, FastAPI 라우트에서는 그게 500 이 된다.
+    """
+    import webbrowser
+    try:
+        webbrowser.get()
+        return True
+    except webbrowser.Error:
+        return False
+
+
 def _oauth_credentials():
     """내 구글 계정으로 로그인해서 Credentials 를 만든다 — 토큰은 우리가 보관한다.
 
@@ -70,6 +84,14 @@ def _oauth_credentials():
         except ImportError:
             sys.exit("구글 로그인 부품이 없습니다 — 먼저 실행: "
                      "pip install google-auth-oauthlib")
+        # 여기서부터는 **사람이 브라우저를 눌러 주는** 흐름이다. 서버에는 브라우저가
+        # 없으므로 run_local_server 가 webbrowser.Error 로 죽는다 — 실제로 호스팅에서
+        # /api/ga4/properties 가 그렇게 500 을 냈다(Railway 로그, 2026-08-31).
+        # 라우트마다 막으면 다음에 생기는 라우트가 또 빠지므로 여기서 한 번 막는다.
+        # 판정은 환경변수가 아니라 **실제 조건**(브라우저가 있나)이다 — 설정이 필요 없고
+        # CLI 는 그대로 브라우저가 열린다.
+        if not _can_open_browser():
+            return None          # 호출자가 "로그인이 필요하다"로 다룬다
         print("[gsc] 브라우저에서 구글 로그인 창이 한 번 열립니다 "
               "(계정당 1회, 이후에는 토큰을 재사용합니다).")
         creds = InstalledAppFlow.from_client_secrets_file(

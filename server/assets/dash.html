@@ -541,6 +541,11 @@
     var body = sec.querySelector(".repo .body");
     if (!body) return;
     var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    if (!SET_H.github_enabled) {           // 이 배포 자체가 GitHub 연동을 안 갖고 있다
+      body.innerHTML = '<p class="none">이 배포에는 GitHub 연동이 꺼져 있습니다 — ' +
+        '기회는 그대로 보이니, 글은 손으로 옮겨 주세요.</p>' + note;
+      return;
+    }
     if (!SET_H.github_connected) {
       body.innerHTML = '<p class="none">GitHub 계정이 아직 연결되지 않았습니다 — ' +
         '<a href="/auth/github">GitHub 연결하기 →</a></p>' + note;

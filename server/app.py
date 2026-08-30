@@ -37,6 +37,7 @@ import collect_ga4
 import collect_gsc
 import dashboard
 import db
+import doctor    # setup 스킬의 진단 — dashboard 가 이미 skills/setup/scripts 를 sys.path 에 얹는다
 import exports
 import gen_prompts
 import gh
@@ -220,9 +221,28 @@ def logout(request: Request):
 
 @app.get("/api/properties")
 def api_properties(request: Request):
+    """서치콘솔 속성 목록 — 사이트를 등록할 때 고르는 자리.
+
+    /api/ga4/properties 와 같은 이유로 부르기 전에 연결 상태를 본다:
+    collect_gsc.get_credentials() 는 CLI 전제라 토큰이 없으면 대화형 로그인을
+    시도하고(서버에는 브라우저가 없다) 수단 자체가 없으면 sys.exit 한다.
+    """
     uid = _require_uid(request)
     with store.session(uid, isolate=True) as conn:
-        res = collect_gsc.get_service().sites().list().execute()
+        if not db.gsc_connected():
+            raise HTTPException(
+                status_code=403,
+                detail="구글 계정이 아직 연결되지 않았습니다 — "
+                       "다시 구글 계정으로 로그인해 주세요.")
+        try:
+            res = collect_gsc.get_service().sites().list().execute()
+        except HTTPException:
+            raise
+        except BaseException:      # SystemExit 도 잡는다 — 스택트레이스가 나가면 안 된다
+            raise HTTPException(
+                status_code=502,
+                detail="서치콘솔 속성 목록을 가져오지 못했습니다. "
+                       "잠시 후 다시 시도해 주세요.")
     return {"properties": [{"property": s["siteUrl"], "level": s["permissionLevel"]}
                            for s in res.get("siteEntry", [])]}
 
@@ -779,6 +799,9 @@ def api_settings(project: str, request: Request):
                 # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
                 # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
                 "github_connected": bool(store.github(conn, uid)),
+                # "이 배포가 GitHub 연동을 지원하나" — 키가 없으면 화면은 버튼 대신
+                # 안내만 낸다. 존재 여부만 준다, 값은 절대 안 내보낸다.
+                "github_enabled": bool(settings.get("GITHUB_CLIENT_ID")),
                 "ga4_property": ga4}
 
 
@@ -811,11 +834,18 @@ def api_ga4_properties(project: str, request: Request):
     제안으로 얹지만 확정은 사람이 한다 — 엉뚱한 속성이 붙으면 그 뒤 모든 숫자가
     조용히 거짓이 된다(collect_ga4.suggest_property 참고).
 
-    403 은 스코프 부족이다 — analytics.readonly 가 나중에 collect_gsc.SCOPES 에
-    더해졌으므로, 그 전에 로그인한 사람의 토큰에는 없다. 재로그인 손잡이를 준다.
+    403 은 스코프 부족이거나 아직 연결이 안 된 상태다 — 둘 다 재로그인 손잡이를 준다.
+    collect_gsc.get_credentials() 는 CLI 전제라(토큰이 없으면 브라우저를 열려 하고,
+    수단 자체가 없으면 sys.exit) 서버에서 부르면 안 된다 — 부르기 전에 doctor 로
+    스코프·토큰 상태를 먼저 본다. 그래도 남는 예외(SystemExit 포함)는 사람 말로
+    바꾼다 — 스택트레이스가 화면에 그대로 나가면 안 된다.
     """
     uid = _require_uid(request)
     from googleapiclient.errors import HttpError
+    need_relogin = HTTPException(
+        status_code=403,
+        detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
+               "재로그인이 필요합니다. 다시 구글 계정으로 로그인해 주세요.")
     try:
         with store.session(uid, project, isolate=True):
             c = db.connect()
@@ -823,18 +853,23 @@ def api_ga4_properties(project: str, request: Request):
                 domain = db.get_project(c, project)["domain"]
             finally:
                 c.close()
-            _, admin_svc = collect_ga4.get_service()
+            if not db.gsc_connected() or doctor.gsc_missing_scopes():
+                raise need_relogin
             try:
+                _, admin_svc = collect_ga4.get_service()
                 props = collect_ga4.list_properties(admin_svc)
             except HttpError as e:
                 if getattr(e.resp, "status", None) == 403:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
-                               "재로그인이 필요합니다. 다시 구글 계정으로 로그인해 주세요.")
+                    raise need_relogin
                 raise
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except BaseException as e:
+        raise HTTPException(
+            status_code=502,
+            detail="GA4 속성 목록을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
     return {"properties": props,
            "suggested": [p["id"] for p in collect_ga4.suggest_property(props, domain)]}
 
@@ -1019,6 +1054,15 @@ def demo() -> None:
         # p1 은 아직 Brain 에 동기화되지 않았다(store.add_site 로만 등록) — GA4 는
         # 없는 것으로 답해야지, 설정 화면 전체가 깨지면 안 된다.
         assert r.json()["ga4_property"] == "", "Brain 없는 사이트에서 설정이 깨진다"
+        # GITHUB_CLIENT_ID 가 없는 배포다 — "이 배포가 지원하나"는 false, 값은 안 실린다.
+        assert r.json()["github_enabled"] is False, "키 없이도 지원한다고 답한다"
+        assert "GITHUB_CLIENT_ID" not in json.dumps(r.json()), "설정 값 자체가 새어 나간다"
+        os.environ["GITHUB_CLIENT_ID"] = "gh-dummy"
+        try:
+            assert c.get("/api/settings?project=p1").json()["github_enabled"] is True,                 "운영자가 키를 넣어도 안 켜진다"
+        finally:
+            os.environ.pop("GITHUB_CLIENT_ID", None)
+        assert c.get("/api/settings?project=p1").json()["github_enabled"] is False
         assert c.get("/api/settings?project=없는사이트").status_code == 404
         for bad in (5, "매일", None):
             assert c.post("/api/settings", json={"project": "p1", "run_every_hours": bad}
@@ -1112,10 +1156,15 @@ def demo() -> None:
         # GA4 속성 고르기 — GSC 와 달리 도메인에서 유추가 안 되니 목록에서 사람이
         # 고른다. list_properties/get_service 를 가짜로 갈아끼운다(네트워크 없이).
         real_get_service, real_list_props = collect_ga4.get_service, collect_ga4.list_properties
+        real_missing_scopes, real_gsc_connected = doctor.gsc_missing_scopes, db.gsc_connected
         collect_ga4.get_service = lambda: (None, "admin-svc-stub")
         collect_ga4.list_properties = lambda admin_svc: [
             {"account": "A", "id": "111", "name": "p1.com - GA4"},
             {"account": "A", "id": "222", "name": "다른회사"}]
+        # 테스트 환경엔 실제 구글 토큰이 없다 — 아래 성공 경로를 보려면 "스코프도
+        # 토큰도 이미 멀쩡하다"를 흉내낸다. 진짜 값은 별도로 아래에서 검사한다.
+        doctor.gsc_missing_scopes = lambda: []
+        db.gsc_connected = lambda: True
         try:
             assert c.get("/api/ga4/properties?project=없는사이트").status_code == 404,                 "남의 사이트 GA4 속성이 열린다"
             r = c.get("/api/ga4/properties?project=p1")
@@ -1141,8 +1190,36 @@ def demo() -> None:
             collect_ga4.list_properties = _scope_missing
             r = c.get("/api/ga4/properties?project=p1")
             assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+
+            # 스코프가 모자란 걸 doctor 로 미리 알면 — API 를 아예 안 부르고 같은
+            # 403 을 예측 가능하게 낸다(브라우저 로그인·SystemExit 경로를 안 탄다).
+            def _must_not_call(*a, **kw):
+                raise AssertionError("스코프 부족인데 GA4 API 를 불렀다")
+            collect_ga4.get_service = _must_not_call
+            doctor.gsc_missing_scopes = lambda: [
+                "https://www.googleapis.com/auth/analytics.readonly"]
+            r = c.get("/api/ga4/properties?project=p1")
+            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            doctor.gsc_missing_scopes = lambda: []
+
+            # 아예 연결이 안 된 상태(토큰 없음)도 같은 재로그인 안내 — collect_gsc 가
+            # 여는 브라우저 로그인 경로(run_local_server)는 서버에서 절대 타면 안 된다.
+            db.gsc_connected = lambda: False
+            r = c.get("/api/ga4/properties?project=p1")
+            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            db.gsc_connected = lambda: True
+
+            # 그래도 남는 예외(SystemExit 포함, collect_gsc.get_credentials 가 실제로
+            # 던지는 것) — 스택트레이스 대신 사람 말로 된 예측 가능한 502.
+            def _boom():
+                sys.exit("구글 서치콘솔 인증이 없습니다")
+            collect_ga4.get_service = _boom
+            r = c.get("/api/ga4/properties?project=p1")
+            assert r.status_code == 502, r.text
+            assert "다시 시도" in r.json()["detail"], r.json()
         finally:
             collect_ga4.get_service, collect_ga4.list_properties = real_get_service, real_list_props
+            doctor.gsc_missing_scopes, db.gsc_connected = real_missing_scopes, real_gsc_connected
 
         # 세션 모듈로 옮기면서 demo() 에 한 번도 안 나오던 라우트들 — 최소한 로그인
         # 상태에서 200/404 를 확인한다.
