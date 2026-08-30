@@ -663,7 +663,7 @@
       (d.active_total >= d.limit ? ' <b class="warn">· 한도 도달</b>' : "");
     if (!ks.length) {
       list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
-        (kwMode === "candidate" ? "발굴된 후보가 없습니다 — 키워드 발굴을 먼저 실행하세요."
+        (kwMode === "candidate" ? "발굴된 후보가 없습니다 — 위 [키워드 다시 발굴]을 누르면 채워집니다."
                                 : "추적 중인 키워드가 없습니다.") + "</p>";
       return;
     }
@@ -698,10 +698,14 @@
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), ids: ids, active: on})});
       var d = await r.json();
+      btn.disabled = false;
       if (!r.ok) { box.querySelector(".cnt").innerHTML =
-        '<b class="warn">' + esc(d.detail || "변경하지 못했습니다") + "</b>"; }
-    } catch (e) {}
-    btn.disabled = false;
+        '<b class="warn">' + esc(d.detail || "변경하지 못했습니다") + "</b>"; return; }
+    } catch (e) {
+      btn.disabled = false;
+      box.querySelector(".cnt").innerHTML = '<b class="warn">서버에 연결하지 못했습니다</b>';
+      return;
+    }
     kwLoad();
   }
 
@@ -783,7 +787,7 @@
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(Object.assign({project: proj()}, body))});
       var d = await r.json();
-      if (!r.ok) { aiqSay(box, d.detail || "저장하지 못했습니다"); return aiqLoad(); }
+      if (!r.ok) { aiqSay(box, d.detail || "저장하지 못했습니다"); return; }
       aiqPaint(box, d);
     } catch (e) { aiqSay(box, "서버에 연결하지 못했습니다"); }
   }

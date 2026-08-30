@@ -438,7 +438,9 @@ function HS_madeRow(c) {
              data-t="${esc(c.opp_target)}" onclick="HS_toOpp(this)"
              title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)}) — 누르면 [개요]의 그 카드로 갑니다"
              >← ${esc(c.opp_target)}</button>` : ""}
-      ${c.note ? `<div class="why">${esc(c.note)}</div>` : ""}
+      ${c.note ? (c.note.startsWith("http")
+        ? `<div class="why"><a href="${esc(c.note)}" target="_blank" rel="noopener">${esc(c.note)}</a></div>`
+        : `<div class="why">${esc(c.note)}</div>`) : ""}
       ${HS_effLine(c)}
     </div>
     <span class="hs-r ${c.merged ? "ok" : "skip"}" title="${c.merged

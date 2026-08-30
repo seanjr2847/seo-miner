@@ -133,23 +133,25 @@ function anBar(v, mx) {
 
 /* 네 항 중 가장 큰 것이 곧 "다음에 볼 자리"다. 화면이 그걸 문장으로 말한다 —
    숫자만 놓아두면 읽는 사람이 매번 같은 비교를 손으로 한다. */
-const AN_NEXT = {
-  imp_up: "노출이 늘어서 번 것입니다. 수요나 색인이 좋아졌다는 뜻이니, [순위] 화면에서 어느 검색어가 올라왔는지 봅니다.",
-  imp_down: "노출이 줄어서 잃었습니다. 순위보다 <b>색인·수요</b>를 먼저 봅니다 — [사이트] 화면의 색인 점검이 그 자리입니다.",
+// window.go 는 SM/뷰 목록이 갖춰진 렌더 시점에만 불러야 한다 — 이 object 를
+// 모듈 로드 때 바로 평가되는 top-level const 로 두면 이르므로 함수로 감싼다.
+const AN_NEXT = () => ({
+  imp_up: `노출이 늘어서 번 것입니다. 수요나 색인이 좋아졌다는 뜻이니, ${window.go("rank")} 화면에서 어느 검색어가 올라왔는지 봅니다.`,
+  imp_down: `노출이 줄어서 잃었습니다. 순위보다 <b>색인·수요</b>를 먼저 봅니다 — ${window.go("site")} 화면의 색인 점검이 그 자리입니다.`,
   ctr_up: "같은 노출에서 더 눌렸습니다. 제목·설명 손질이 먹혔거나 검색결과 생김새가 바뀌었습니다.",
   ctr_down: "노출은 그대로인데 덜 눌렸습니다. <b>제목·설명</b>이 손댈 자리이고, 아래 [순위는 좋은데 안 눌린다]가 그 목록입니다.",
   new_up: "새로 걸린 검색어들이 번 것입니다. 새 페이지·새 주제가 잡히기 시작했습니다.",
   new_down: "새로 걸린 검색어가 오히려 클릭을 깎았습니다. 흔치 않은 모양이니 수집 범위가 바뀌지 않았는지 봅니다.",
   lost_up: "사라진 검색어 쪽이 오히려 플러스입니다. 수집 범위가 바뀌지 않았는지 봅니다.",
-  lost_down: "걸려 있던 검색어가 통째로 빠졌습니다. 색인에서 빠졌거나 20위 밖으로 밀렸다는 뜻이니 [사이트] 화면을 먼저 봅니다.",
-};
+  lost_down: `걸려 있던 검색어가 통째로 빠졌습니다. 색인에서 빠졌거나 20위 밖으로 밀렸다는 뜻이니 ${window.go("site")} 화면을 먼저 봅니다.`,
+});
 
 function anVerdict(s) {
   const parts = [["imp", s.imp_effect], ["ctr", s.ctr_effect],
                  ["new", s.new], ["lost", s.lost]];
   const top = parts.slice().sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
   if (!top || !top[1]) return "";
-  const msg = AN_NEXT[top[0] + (top[1] > 0 ? "_up" : "_down")] || "";
+  const msg = AN_NEXT()[top[0] + (top[1] > 0 ? "_up" : "_down")] || "";
   const dir = s.d_clicks > 0 ? "늘었습니다" : s.d_clicks < 0 ? "줄었습니다" : "그대로입니다";
   return `<p class="anverdict">클릭이 ${num(Math.abs(s.d_clicks))} ${dir}.
     가장 크게 움직인 것은 <b>${AN_CAUSE[top[0]].t}</b>(${anNum(top[1])})입니다.
@@ -309,7 +311,7 @@ function anBrand(rows, hasSnap) {
            프로젝트 설정의 <code>brand_aliases</code> 에 사람들이 실제로 치는 이름을
            적어 두면 채워집니다.`,
           `내 브랜드 별칭이 비어 있어 브랜드/논브랜드를 가를 수가 없습니다 —
-           [설정] 화면의 브랜드 별칭에 사람들이 실제로 치는 이름을 적어 주세요.`)
+           ${window.go("settings")} 화면의 브랜드 별칭에 사람들이 실제로 치는 이름을 적어 주세요.`)
       : "아직 검색 실적 수집이 없습니다."}</div>`;
   const [b, n] = rows;
   const total = b.clicks + n.clicks;
@@ -324,7 +326,7 @@ function anBrand(rows, hasSnap) {
       [순위는 좋은데 안 눌린다]에서 논브랜드 검색어를 먼저 봅니다.`;
   else if (n.d_clicks < 0)
     msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 줄었습니다. 브랜드는 광고·입소문이
-      떠받치지만 논브랜드는 순위·색인이 떠받칩니다 — [사이트] 화면을 먼저 봅니다.`;
+      떠받치지만 논브랜드는 순위·색인이 떠받칩니다 — ${window.go("site")} 화면을 먼저 봅니다.`;
   else
     msg = "두 갈래 다 직전과 같습니다.";
   return `<p class="anverdict">전체 클릭의 <b>${share}%</b>가 논브랜드입니다.
@@ -344,8 +346,8 @@ function anUnmatched(rows, what) {
   if (share < 50) return "";
   return `<div class="anthin">노출의 <b>${share}%</b>가 미분류입니다 — 실제로 걸리는
     검색어를 키워드 목록이 못 따라가고 있다는 뜻이라, 아래 ${what} 비교는 나머지
-    ${100 - share}% 얘기입니다. [키워드] 화면에서 실제로 걸린 검색어를 키워드로
-    올리면 갈래가 넓어집니다.</div>`;
+    ${100 - share}% 얘기입니다. ${window.go("keywords")} 화면에서 실제로 걸린 검색어를
+    키워드로 올리면 갈래가 넓어집니다.</div>`;
 }
 
 function anIntent(rows) {
@@ -354,8 +356,8 @@ function anIntent(rows) {
   const named = rows.filter(r => !r.unclassified);
   if (!named.length)
     return `<div class="empty">걸린 검색어 중 내 키워드 목록과 맞는 것이 하나도
-      없습니다 — 의도를 말하려면 먼저 키워드가 있어야 합니다. [키워드] 화면에서
-      키워드부터 채웁니다.</div>`;
+      없습니다 — 의도를 말하려면 먼저 키워드가 있어야 합니다. ${window.go("keywords")}
+      화면에서 키워드부터 채웁니다.</div>`;
   const tx = named.find(r => r.label === "transactional");
   const top = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const msg = !tx || !tx.clicks
@@ -375,7 +377,7 @@ function anCluster(rows) {
   const named = rows.filter(r => !r.unclassified && r.impressions);
   if (!named.length)
     return `<div class="empty">클러스터가 붙은 키워드로 걸린 검색어가 없습니다 —
-      [키워드] 화면에서 키워드를 주제별로 묶으면 여기가 채워집니다.</div>`;
+      ${window.go("keywords")} 화면에서 키워드를 주제별로 묶으면 여기가 채워집니다.</div>`;
   const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
   const msg = named.length > 1 && worst.label !== best.label

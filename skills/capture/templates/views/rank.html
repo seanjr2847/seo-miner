@@ -445,15 +445,17 @@ VIEW("rank", function (d) {
     // 웹에는 명령을 칠 곳이 없다 — 복사 칩째로 짧은 문구 한 줄로 갈아 낀다.
     $("ranks").innerHTML = `<div class="empty">${W(
       `순위를 아직 한 번도 확인하지 않았습니다.
-      구글 결과를 직접 조회하는 단계라 SERP 제공자 연동(DataForSEO 권장 · Serper는
-      AI 요약 값이 없는 대체재)이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다${
+      구글 결과를 직접 조회하는 단계라 ${window.go("settings")} 화면의 SERP 제공자
+      연동(DataForSEO 권장 · Serper는 AI 요약 값이 없는 대체재)이 필요하고, 추적 키워드
+      수만큼 조회 비용이 붙습니다${
         d.kw_active ? ` — 지금 활성 키워드는 ${num(d.kw_active)}개입니다` : ""}.
       연동이 없어도 나머지 분석은 그대로 돕니다: 서치콘솔의 <b>평균 게재순위</b>는
       ${window.go("keywords")} 화면에 이미 들어와 있고, 그건 무료입니다.
       <button class="cmd" onclick="copyCmd(this)">/capture rank</button>`,
-      "순위를 아직 확인하지 않았습니다 — 구글 결과를 직접 조회하는 단계라 SERP 제공자 " +
-      "연동이 필요하고, 추적 키워드 수만큼 조회 비용이 붙습니다. 서치콘솔의 평균 " +
-      `게재순위는 ${window.go("keywords")} 화면에 이미 들어와 있고 무료입니다.`)}</div>`;
+      `순위를 아직 확인하지 않았습니다 — 구글 결과를 직접 조회하는 단계라 ` +
+      `${window.go("settings")} 화면의 SERP 제공자 연동이 필요하고, 추적 키워드 수만큼 ` +
+      `조회 비용이 붙습니다. 서치콘솔의 평균 게재순위는 ${window.go("keywords")} 화면에 ` +
+      "이미 들어와 있고 무료입니다.")}</div>`;
     return;
   }
 

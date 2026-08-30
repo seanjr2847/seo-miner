@@ -1250,7 +1250,11 @@ async function load() {
   const res = await fetch("/api/data?project=" + encodeURIComponent(name) +
                           (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
   const d = await res.json();
-  if (!res.ok) { $("err").hidden = false; $("err").textContent = d.error || "로드 실패"; return; }
+  if (!res.ok) {
+    $("err").hidden = false;
+    $("err").textContent = (d.error || "로드 실패") + " — 왼쪽 아래 [새로고침]으로 다시 시도하세요.";
+    return;
+  }
   // 그 사이트에 없는 날을 고정하면 서버가 빈 짝을 준다 — 고정을 풀고 최신으로 되돌린다.
   // (PINNED 를 먼저 비우므로 데이터가 아예 없는 사이트에서도 두 번 이상 돌지 않는다.)
   if (PINNED && !d.gsc_date) { PINNED = ""; return load(); }
@@ -1298,7 +1302,13 @@ async function loadDoctor() {
     $("docban").innerHTML = h;
     $("docban").hidden = false;
     renderSetup(d);
-  } catch (e) { /* 배너 실패는 치명이 아님 — 본문은 그대로 뜬다 */ }
+  } catch (e) {
+    // 배너 실패는 치명이 아님 — 본문은 그대로 뜬다. 다만 조용히 넘어가면 상태 배지
+    // 5개(#s-*)와 조건부 버튼 3개가 영영 안 채워지는데 그 사실이 화면 어디에도
+    // 안 남는다 — 그러니 실패했다는 말과 되돌릴 손잡이는 남긴다.
+    $("docban").innerHTML = `<div class="verdict msg bad">진단을 불러오지 못했습니다 — 왼쪽 아래 [새로고침]으로 다시 시도하세요.</div>`;
+    $("docban").hidden = false;
+  }
 }
 
 // ── 설정 화면 ──────────────────────────────────────────────
