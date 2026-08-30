@@ -561,6 +561,142 @@ def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
     return out
 
 
+# ── 페이지 축 ──────────────────────────────────────────────────────────
+# 이 리포의 판정은 내내 검색어 단위였다. gsc_snapshots.page 는 내내 있었는데
+# pages_by_query 룩업으로만 쓰였다. 검색어 하나하나의 순위는 흔들려도 페이지는 안
+# 흔들린다 — 어느 페이지가 죽고 있는지는 페이지로 합쳐야 보인다. 크롤(crawl_pages)과
+# GSC 가 서로를 처음 보는 자리이기도 하다.
+
+# 내부링크 굶음: 노출 상위 이만큼 안에 드는 페이지만 본다. 꼬리까지 세면 링크 굶은
+# 페이지가 수백 개 나오고, 그건 목록이 아니라 사이트 전체 얘기다.
+STARVED_TOP_N = 20
+# 들어오는 내부 링크가 이보다 적으면 굶었다고 본다. 3 은 "헤더·푸터·사이트맵에서만
+# 걸린 상태"의 경계다 — 그 위면 누군가 본문에서 그 페이지를 가리키고 있다는 뜻이다.
+STARVED_LINKS_IN = 3
+
+
+def url_key(url: str) -> str:
+    """GSC 의 page 와 크롤의 url 을 같은 것으로 보기 위한 열쇠.
+
+    둘은 출처가 달라 표기가 어긋난다 — GSC 는 속성에 등록된 형태로, 크롤은 링크에
+    적힌 그대로 준다. 스킴·www·끝 슬래시만 벗긴다(host_of 가 앞을, 여기가 뒤를).
+    쿼리는 남긴다 — `?page=2` 는 다른 페이지다.
+    """
+    rest = re.sub(r"^[a-z]+://", "", (url or "").strip().lower()).split("/", 1)
+    tail = ("/" + rest[1]) if len(rest) > 1 else "/"
+    return host_of(url) + (tail.split("#")[0].rstrip("/") or "/")
+
+
+def _page_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+              period: int) -> dict[str, dict]:
+    """스냅샷 하나를 페이지 단위로 접는다 (_snap_agg 의 페이지 축 짝)."""
+    return {r["page"]: dict(r) for r in conn.execute(
+        """SELECT page, SUM(clicks) clk, SUM(impressions) imp, AVG(position) pos,
+                  COUNT(DISTINCT query) q
+             FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY page""", (project_id, snapshot_date, period))}
+
+
+def page_performance(conn: sqlite3.Connection, project_id: int, *,
+                     limit: int = 30) -> list[dict]:
+    """최신 스냅샷의 페이지별 성과 + 직전 대비 Δ클릭 — 많이 잃은 페이지가 위다.
+
+    비교 짝은 snapshot_pair 가 고른다 (scoring.md 4-3b) — 28일치에서 90일치를 빼면
+    Δ가 전부 거짓이 된다. page 가 NULL 인 구버전 스냅샷에서는 빈 목록이다
+    (결함이 아니라 데이터 부재).
+    """
+    cur, prev, period, _ = snapshot_pair(conn, project_id)
+    if not cur:
+        return []
+    now_ = _page_agg(conn, project_id, cur, period)
+    before = _page_agg(conn, project_id, prev, period) if prev else {}
+    rows = []
+    for page, r in now_.items():
+        b = before.get(page)
+        rows.append({"page": page, "clicks": r["clk"], "impressions": r["imp"],
+                     "ctr": _ctr_pct(r["clk"], r["imp"], 2),
+                     "position": round(r["pos"], 1) if r["pos"] is not None else None,
+                     "queries": r["q"],
+                     "dclk": (r["clk"] - b["clk"]) if b else None})
+    # 잃은 쪽이 먼저다 — 이 표의 존재 이유가 "어느 페이지가 죽고 있나"라서다.
+    # 비교 짝이 없거나 이번에 새로 뜬 페이지는 0 자리에 두고 노출 큰 순으로 민다.
+    return sorted(rows, key=lambda r: (r["dclk"] or 0, -r["impressions"]))[:limit]
+
+
+def _latest_crawl_run(conn: sqlite3.Connection, project_id: int) -> int | None:
+    """마지막으로 끝까지 돈 크롤 회차. 돌다 만 회차는 전수가 아니라 조각이다."""
+    r = conn.execute("SELECT id FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
+                     " ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+    return r["id"] if r else None
+
+
+def _gsc_page_keys(conn: sqlite3.Connection, project_id: int) -> set[str]:
+    """최신 스냅샷에서 노출이 한 번이라도 있었던 페이지의 열쇠."""
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    if not cur:
+        return set()
+    return {url_key(r[0]) for r in conn.execute(
+        """SELECT page FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY page HAVING SUM(impressions) > 0""", (project_id, cur, period))}
+
+
+def dead_pages(conn: sqlite3.Connection, project_id: int, *,
+               limit: int = 30) -> list[dict]:
+    """크롤에는 200 으로 있는데 GSC 노출이 0 인 페이지 — 아무도 안 오는 자리.
+
+    크롤엔 있는데 검색엔 없다는 건 색인·수요·내부링크 중 하나가 없다는 뜻이다.
+    GSC 쪽 페이지 축이 통째로 없으면(구버전 스냅샷) 빈 목록을 준다 — 그때는 전
+    페이지가 '노출 0' 으로 보이는데, 그건 판정이 아니라 착시다.
+    """
+    run = _latest_crawl_run(conn, project_id)
+    seen = _gsc_page_keys(conn, project_id)
+    if run is None or not seen:
+        return []
+    rows = [{"url": r["url"], "depth": r["depth"], "words": r["words"],
+             "links_in": r["links_in"], "title": r["title"]}
+            for r in conn.execute(
+                "SELECT url, depth, words, links_in, title FROM crawl_pages"
+                " WHERE run_id=? AND status=200", (run,))
+            if url_key(r["url"]) not in seen]
+    # 얕고 링크 많은 페이지가 먼저다 — 사이트가 이미 밀어 주는데도 안 온다는 뜻이라
+    # 색인이나 수요 쪽을 봐야 한다. 깊은 페이지는 링크부터가 원인이다.
+    return sorted(rows, key=lambda r: (r["depth"] if r["depth"] is not None else 99,
+                                       -(r["links_in"] or 0), r["url"]))[:limit]
+
+
+def starved_pages(conn: sqlite3.Connection, project_id: int, *,
+                  limit: int = 15) -> list[dict]:
+    """노출은 상위인데 들어오는 내부 링크가 굶은 페이지 — 제일 싸게 손대는 자리.
+
+    성과는 이미 증명됐는데 사이트가 안 밀어 주고 있다는 신호다. 링크 한 줄은 글 한
+    편보다 훨씬 싸다. 크롤이 없으면 links_in 을 알 길이 없어 빈 목록이다.
+    """
+    run = _latest_crawl_run(conn, project_id)
+    cur, _, period, _ = snapshot_pair(conn, project_id)
+    if run is None or not cur:
+        return []
+    crawled = {}
+    for r in conn.execute("SELECT url, links_in FROM crawl_pages"
+                          " WHERE run_id=? AND status=200", (run,)):
+        crawled[url_key(r["url"])] = (r["url"], r["links_in"] or 0)
+    out = []
+    for n, r in enumerate(conn.execute(
+        """SELECT page, SUM(clicks) clk, SUM(impressions) imp, AVG(position) pos
+             FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY page ORDER BY imp DESC LIMIT ?""",
+            (project_id, cur, period, STARVED_TOP_N)), 1):
+        m = crawled.get(url_key(r["page"]))
+        if m is None or m[1] >= STARVED_LINKS_IN:
+            continue
+        out.append({"page": r["page"], "crawl_url": m[0], "links_in": m[1], "rank": n,
+                    "impressions": r["imp"], "clicks": r["clk"],
+                    "position": round(r["pos"], 1) if r["pos"] is not None else None})
+    return sorted(out, key=lambda x: (x["links_in"], -x["impressions"]))[:limit]
+
+
 def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
     """같은 쿼리에 내 페이지 2개 이상이 노출을 나눠 갖는 경우 (키워드 카니벌라이제이션).
 
@@ -1934,6 +2070,60 @@ def _selfcheck() -> None:
     assert got["비활성널"] is None                                      # 그대로
     # 두 번째 호출은 채울 게 없음
     assert _backfill_intents(conn, 5) == 0
+
+    # ── 페이지 축: 성과·무노출·내부링크 굶음 (프로젝트 8·9) ──
+    # 열쇠가 스킴·www·끝 슬래시를 벗기는지. 이게 안 맞으면 크롤과 GSC 가 서로를
+    # 영영 못 알아보고, 모든 페이지가 '아무도 안 온다'로 나온다.
+    assert url_key("https://www.x.com/a/") == url_key("http://x.com/a") == "x.com/a"
+    assert url_key("https://x.com") == "x.com/"
+    assert url_key("https://x.com/a?p=2") != url_key("https://x.com/a")
+
+    assert page_performance(conn, 8) == [] and dead_pages(conn, 8) == []
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page,"
+        " clicks, impressions, ctr, position) VALUES(8, ?, 28, ?, ?, ?, ?, 0.0, ?)",
+        [("2026-08-01", "q1", "https://www.x.com/dying/", 40, 1000, 5.0),
+         ("2026-08-01", "q2", "https://www.x.com/dying/", 10, 200, 8.0),
+         ("2026-08-01", "q1", "https://www.x.com/rising", 5, 100, 9.0),
+         ("2026-08-08", "q1", "https://www.x.com/dying/", 12, 900, 7.0),
+         ("2026-08-08", "q2", "https://www.x.com/dying/", 3, 180, 9.0),
+         ("2026-08-08", "q1", "https://www.x.com/rising", 20, 300, 4.0)])
+    # 사이에 90일치가 끼어 있어도 28일치끼리만 뺀다 — 섞으면 Δ가 전부 거짓이 된다
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position)"
+                 " VALUES(8,'2026-08-05',90,'q1','https://www.x.com/dying/',999,9999,0.0,1.0)")
+    pp = page_performance(conn, 8)
+    assert [r["page"] for r in pp] == ["https://www.x.com/dying/",
+                                       "https://www.x.com/rising"], pp   # 잃은 쪽이 위
+    assert (pp[0]["dclk"], pp[1]["dclk"]) == (-35, 15), pp
+    assert pp[0]["queries"] == 2 and pp[0]["impressions"] == 1080, pp[0]
+    assert pp[0]["ctr"] == 1.39, pp[0]                                   # 저장값이 아닌 재계산
+
+    conn.execute("INSERT INTO crawl_runs(id, project_id, finished_at, seed, pages)"
+                 " VALUES(80, 8, '2026-08-09', 'sitemap', 4)")
+    conn.executemany(
+        "INSERT INTO crawl_pages(run_id, url, status, depth, words, links_in, title)"
+        " VALUES(80, ?, ?, ?, ?, ?, ?)",
+        # 크롤 URL 은 스킴·www·끝 슬래시가 GSC 와 일부러 어긋나 있다 — 같은 페이지다
+        [("http://x.com/dying", 200, 1, 800, 9, "죽는 중"),
+         ("https://www.x.com/rising/", 200, 2, 600, 1, "뜨는 중"),
+         ("https://www.x.com/nobody", 200, 3, 400, 2, "아무도 안 옴"),
+         ("https://www.x.com/broken", 404, 3, 0, 0, "깨짐")])
+    dp = dead_pages(conn, 8)
+    assert [r["url"] for r in dp] == ["https://www.x.com/nobody"], dp    # 200 이고 노출 0 만
+    sp = starved_pages(conn, 8)
+    assert [r["page"] for r in sp] == ["https://www.x.com/rising"], sp   # links_in 1 < 3
+    assert (sp[0]["crawl_url"], sp[0]["rank"]) == ("https://www.x.com/rising/", 2), sp[0]
+
+    # page 가 NULL 인 구버전 스냅샷 — 크롤이 있어도 전 페이지를 '노출 0' 이라 부르지 않는다
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(9,'2026-08-08',28,'q',NULL,1,10,0.0,5.0)")
+    conn.execute("INSERT INTO crawl_runs(id, project_id, finished_at, seed, pages)"
+                 " VALUES(90, 9, '2026-08-09', 'home', 1)")
+    conn.execute("INSERT INTO crawl_pages(run_id,url,status,depth,words,links_in,title)"
+                 " VALUES(90,'https://y.com/a',200,0,500,0,'a')")
+    assert page_performance(conn, 9) == [] and dead_pages(conn, 9) == []
+    assert starved_pages(conn, 9) == []
 
     # ── _fit_of: 0.8 활성 키워드 일치 / 0.65 cluster 매칭 / 0.5 무관 / coverage 0.65
     conn.execute("DELETE FROM keywords")

@@ -647,6 +647,15 @@ def gather(conn, p, at: str | None = None) -> dict:
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
             page_audits[a["url"]] = a
 
+    # ── 페이지 축 (scoring 의 page_performance·dead_pages·starved_pages) ───
+    # 나머지 화면은 전부 검색어 단위다. 검색어 하나하나의 순위는 흔들려도 페이지는
+    # 안 흔들린다 — 어느 페이지가 죽고 있는지는 페이지로 합쳐야 보인다. 뒤 둘은
+    # 크롤(crawl_pages)과 GSC 를 맞대 본 결과다: 새로 캐는 것 없이 이미 있는 두
+    # 수집본을 처음 겹쳐 놓은 것뿐이다.
+    page_perf = scoring.page_performance(conn, pid)
+    dead_pages = scoring.dead_pages(conn, pid)
+    starved_pages = scoring.starved_pages(conn, pid)
+
     # ── 백링크 (collect_backlinks) ────────────────────────────────────────
     # 요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
     # 그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가 실제로 손댈 자리다.
@@ -735,6 +744,12 @@ def gather(conn, p, at: str | None = None) -> dict:
             "opps": opps, "opps_total": opps_total,
             "query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date,
+            "page_perf": page_perf, "dead_pages": dead_pages,
+            "starved_pages": starved_pages,
+            # 페이지 축 임계는 이 뭉치에 같이 싣는다 — 화면이 "왜 이 줄이 걸렸나"를
+            # 말할 때 숫자를 다시 적지 않게(정본은 scoring 의 상수다).
+            "page_rules": {"starved_links_in": scoring.STARVED_LINKS_IN,
+                           "starved_top_n": scoring.STARVED_TOP_N},
             "runs": runs, "creations": creations,
             "rank_date": rank_dates[0] if rank_dates else None,
             "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
