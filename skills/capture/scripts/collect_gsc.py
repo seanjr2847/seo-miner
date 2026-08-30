@@ -296,7 +296,9 @@ def _parser() -> argparse.ArgumentParser:
     collector.add_common(ap)
     collector.add_setting(ap, "--days", key="gsc_days", fallback=28, type=int)
     # 콤마 구분 문자열이다 — add_setting 의 type_fn 이 스칼라만 다루므로 리스트를 못 받는다.
-    collector.add_setting(ap, "--breakdown", key="gsc_breakdown", fallback="device",
+    # country 를 기본에 넣는다 — 스키마도 적재도 내내 있었는데 안 캐서 화면이 빈
+    # 표였다. 호출 1회 추가로 [분석]의 국가 축이 산다.
+    collector.add_setting(ap, "--breakdown", key="gsc_breakdown", fallback="device,country",
                           type=str,
                           help="분해 수집 차원 (콤마 구분: device,country / 빈 문자열이면 안 함)")
     ap.add_argument("--row-limit", type=int, default=100000,
