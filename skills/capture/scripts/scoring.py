@@ -67,6 +67,10 @@ RANK_BANDS = ((1, 3, "1–3위"), (4, PAGE1, "4–10위"),
 # 합이 Δ클릭과 안 맞는다), 노출 몇 개짜리 CTR 흔들림을 "원인"이라 부르지는 않는다.
 SHIFT_MIN_IMP = 30
 
+# 순위 구간·갈래(브랜드·의도·클러스터) 표를 펼쳤을 때 딸려 보낼 검색어 목록 상한.
+# 화면은 펼침 UI라 클릭 상위 몇 개면 충분하고, 다 실으면 페이로드가 무거워진다.
+DETAIL_TOP_N = 15
+
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
 # local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
@@ -993,23 +997,39 @@ def rank_bands(conn: sqlite3.Connection, project_id: int, cur: str | None,
     개별 순위 변동은 노이즈가 많지만(4-4), 구간 인원수의 이동은 그 노이즈가 상쇄돼
     "1페이지에서 밀려난 게 몇 개"를 말한다. 노출 하한을 넘는 쿼리만 센다 — 노출
     한두 번짜리 순위는 구간을 말할 표본이 아니다.
+
+    각 구간에 딸린 "queries"는 그 구간에 지금 있는 검색어(클릭 내림차순, 상한
+    DETAIL_TOP_N) — 화면이 펼쳤을 때 보여줄 목록이다. "was"는 그 검색어가 직전
+    스냅샷에서 있던 구간 이름(직전에 없었으면 None) — "이 구간이 +1" 일 때
+    어디서 밀려왔는지가 여기서 나온다.
     """
     if not (cur and period):
         return []
 
-    def tally(snap):
-        c = {}
-        for r in _snap_agg(conn, project_id, snap, period).values() if snap else ():
-            if (r["imp"] or 0) < SHIFT_MIN_IMP:
-                continue
-            b = _band_of(r["pos"])
-            c[b] = c.get(b, 0) + 1
-        return c
+    def snap_bands(snap):
+        """노출 하한을 넘는 검색어만 {query: (row, band)} 로."""
+        rows = _snap_agg(conn, project_id, snap, period).items() if snap else ()
+        return {q: (r, _band_of(r["pos"])) for q, r in rows if (r["imp"] or 0) >= SHIFT_MIN_IMP}
 
-    now_, before = tally(cur), tally(prev)
+    now_rows, before_rows = snap_bands(cur), snap_bands(prev)
+    now_ = {}
+    for _, b in now_rows.values():
+        now_[b] = now_.get(b, 0) + 1
+    before = {}
+    for _, b in before_rows.values():
+        before[b] = before.get(b, 0) + 1
+
+    def queries_of(label):
+        items = [{"q": q, "clicks": r["clk"] or 0, "impressions": r["imp"] or 0,
+                  "position": round(r["pos"], 1) if r["pos"] is not None else None,
+                  "was": before_rows[q][1] if q in before_rows else None}
+                 for q, (r, b) in now_rows.items() if b == label]
+        return sorted(items, key=lambda x: -x["clicks"])[:DETAIL_TOP_N]
+
     return [{"label": lb, "n": now_.get(lb, 0),
              "prev_n": before.get(lb, 0) if prev else None,
-             "d": now_.get(lb, 0) - before.get(lb, 0) if prev else None}
+             "d": now_.get(lb, 0) - before.get(lb, 0) if prev else None,
+             "queries": queries_of(lb)}
             for _, _, lb in RANK_BANDS]
 
 
@@ -1028,9 +1048,10 @@ def is_brand_query(query: str, aliases: list[str]) -> bool:
     return any(a in q for a in (norm(x) for x in aliases) if a)
 
 
-def _perf_row(label: str, a: dict | None, b: dict | None) -> dict:
+def _perf_row(label: str, a: dict | None, b: dict | None, top: list[dict] | None = None) -> dict:
     """한 갈래의 이번/직전 누적을 화면이 읽을 한 줄로. Δ순위는 양수가 좋아진 쪽이다
-    (movers·rank_decay 의 dpos 규약과 같다)."""
+    (movers·rank_decay 의 dpos 규약과 같다). top 은 이 갈래에 속한 검색어 목록
+    (없으면 빈 목록) — "queries" 는 이미 개수로 쓰이므로 다른 이름을 쓴다."""
     z = {"clicks": 0, "imp": 0, "pw": 0.0, "n": 0}
     a, b = a or z, b or z
     pos = round(a["pw"] / a["imp"], 1) if a["imp"] else None
@@ -1042,7 +1063,8 @@ def _perf_row(label: str, a: dict | None, b: dict | None) -> dict:
             "d_clicks": a["clicks"] - b["clicks"],
             "d_impressions": a["imp"] - b["imp"],
             "d_ctr": round(ctr - _ctr_pct(b["clicks"], b["imp"], 2), 2) if b["imp"] else None,
-            "d_position": round(ppos - pos, 1) if pos is not None and ppos is not None else None}
+            "d_position": round(ppos - pos, 1) if pos is not None and ppos is not None else None,
+            "top": top or []}
 
 
 def _bucket_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
@@ -1057,19 +1079,32 @@ def _bucket_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
 
     def fold(snap):
         acc: dict[str, dict] = {}
+        rows: dict[str, dict[str, dict]] = {}
         for query, r in (_snap_agg(conn, project_id, snap, period) if snap else {}).items():
-            a = acc.setdefault(key_of(query), {"clicks": 0, "imp": 0, "pw": 0.0, "n": 0})
+            k = key_of(query)
+            a = acc.setdefault(k, {"clicks": 0, "imp": 0, "pw": 0.0, "n": 0})
             a["clicks"] += r["clk"] or 0
             a["imp"] += r["imp"] or 0
             a["pw"] += (r["pos"] or 0) * (r["imp"] or 0)
             a["n"] += 1
-        return acc
+            rows.setdefault(k, {})[query] = r
+        return acc, rows
 
-    now_, before = fold(cur), fold(prev)
+    now_, now_rows = fold(cur)
+    before, before_rows = fold(prev)
+
+    def top_of(label):
+        b_rows = before_rows.get(label, {})
+        items = [{"q": q, "clicks": r["clk"] or 0, "impressions": r["imp"] or 0,
+                  "position": round(r["pos"], 1) if r["pos"] is not None else None,
+                  "d_clicks": (r["clk"] or 0) - (b_rows[q]["clk"] or 0) if q in b_rows else None}
+                 for q, r in now_rows.get(label, {}).items()]
+        return sorted(items, key=lambda x: -x["clicks"])[:DETAIL_TOP_N]
+
     # 클릭 내림차순이다 — 화면의 판정 문장이 "클릭이 가장 많은 갈래"를 지목하는데
     # 노출순으로 세우면 그 주인공이 표 네 번째 줄에 앉는다. 미분류는 잔여 갈래라
     # 아무리 커도 맨 아래다.
-    return sorted((_perf_row(k, now_.get(k), before.get(k))
+    return sorted((_perf_row(k, now_.get(k), before.get(k), top_of(k))
                    for k in set(now_) | set(before)),
                   key=lambda x: (x["label"] == UNCLASSIFIED, -x["clicks"], -x["impressions"]))
 
@@ -2113,6 +2148,34 @@ def _selfcheck() -> None:
     assert bands == {"1–3위": 0, "4–10위": 0, "11–20위": 1, "21위+": -1}, bands
     assert rank_bands(conn, 4, None, None, 28) == []
 
+    # 순위 구간 표를 펼쳤을 때 딸린 검색어 목록 — was 가 실제로 직전 구간을 가리키는지.
+    # x1 은 4–10위(08-01)에서 1–3위(08-15)로 넘어왔다 — was 가 그 이전 구간 이름이어야
+    # 한다. x3 은 08-15 에만 있으므로 was 는 None. tiny 는 노출 5 < SHIFT_MIN_IMP라
+    # 목록·개수 어느 쪽에도 안 잡혀야 한다 (세는 기준과 보여주는 기준이 같아야 한다).
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, clicks, impressions, ctr, position) "
+        "VALUES(10, ?, 28, ?, ?, ?, 0.0, ?)",
+        [("2026-08-01", "x1", 5, 100, 8.0), ("2026-08-01", "x2", 1, 100, 25.0),
+         ("2026-08-15", "x1", 20, 100, 2.0), ("2026-08-15", "x3", 2, 50, 2.5),
+         ("2026-08-15", "tiny", 1, 5, 2.0)])
+    r10 = {b["label"]: b for b in rank_bands(conn, 10, "2026-08-15", "2026-08-01", 28)}
+    q13 = r10["1–3위"]["queries"]
+    assert r10["1–3위"]["n"] == 2, r10["1–3위"]                      # tiny 는 노출 하한 미달이라 안 센다
+    assert [q["q"] for q in q13] == ["x1", "x3"], q13                # 클릭 내림차순
+    assert q13[0] == {"q": "x1", "clicks": 20, "impressions": 100,
+                      "position": 2.0, "was": "4–10위"}, q13[0]      # 구간을 넘어온 검색어
+    assert q13[1]["was"] is None, q13[1]                             # 직전엔 없던 검색어
+    assert "tiny" not in [q["q"] for q in q13], q13
+
+    # 상한(DETAIL_TOP_N) — 넘치면 클릭 상위만 남기고 자른다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, clicks, impressions, ctr, position) "
+        "VALUES(10, '2026-08-15', 28, ?, ?, 40, 0.0, 25.0)",
+        [(f"z{i}", i) for i in range(1, 18)])                        # 17개 — 상한(15) 초과
+    z = {b["label"]: b for b in rank_bands(conn, 10, "2026-08-15", None, 28)}["21위+"]["queries"]
+    assert len(z) == DETAIL_TOP_N == 15, len(z)
+    assert [q["q"] for q in z[:3]] == ["z17", "z16", "z15"], z[:3]
+
     # ── 신규 판정 함수들 ──
     assert RANK_NOISE == 3
     assert rank_delta(None, 5) == {"delta": None, "flat": False}
@@ -2323,6 +2386,12 @@ def _selfcheck() -> None:
     assert bs[1]["clicks"] == 28 and bs[1]["impressions"] == 900, bs[1]
     # (6×400 + 11×200 + 9×300)/900, 노출 가중
     assert bs[1]["position"] == 8.1, bs[1]
+    # 갈래에 속한 검색어 목록 — d_clicks 는 직전 대비, 직전에 없던 검색어는 0 이 아니라 None.
+    assert bs[0]["top"] == [{"q": "마이사이트 로그인", "clicks": 60, "impressions": 120,
+                            "position": 1.5, "d_clicks": 10}], bs[0]["top"]
+    assert [t["q"] for t in bs[1]["top"]] == ["가격 비교", "새 검색어", "정보 검색어"], bs[1]["top"]
+    assert bs[1]["top"][0]["d_clicks"] == 10, bs[1]["top"][0]           # 직전에도 있던 검색어
+    assert bs[1]["top"][1]["d_clicks"] is None, bs[1]["top"][1]         # 직전엔 없던 검색어(0 이 아니다)
     assert brand_split(conn, 9, "2026-08-14", "2026-08-07", 28, []) == []   # 별칭 없으면 판정 불가
 
     it_rows = keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "intent")
@@ -2339,7 +2408,18 @@ def _selfcheck() -> None:
     assert set(cl) == {"가격", "브랜드", UNCLASSIFIED}, cl
     assert cl["가격"]["queries"] == 2 and cl["가격"]["d_impressions"] == 200, cl["가격"]
     assert cl[UNCLASSIFIED]["unclassified"] and not cl["가격"]["unclassified"], cl
+    # brand_split·keyword_perf 가 _bucket_perf 를 공유하니 여기서도 top 이 클릭 내림차순.
+    assert [t["q"] for t in cl["가격"]["top"]] == ["가격 비교", "정보 검색어"], cl["가격"]["top"]
     assert keyword_perf(conn, 9, None, None, None, "intent") == []  # 수집이 없으면 빈 목록
+
+    # top 상한(DETAIL_TOP_N) — 넘치면 클릭 상위만 남기고 자른다.
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, clicks, impressions, ctr, position) "
+        "VALUES(11, '2026-08-14', 28, ?, ?, 50, 0.0, 5.0)",
+        [(f"w{i}", i) for i in range(1, 18)])                        # 17개 — 상한(15) 초과
+    top11 = brand_split(conn, 11, "2026-08-14", None, 28, ["없는브랜드"])[1]["top"]
+    assert len(top11) == DETAIL_TOP_N == 15, len(top11)
+    assert [t["q"] for t in top11[:3]] == ["w17", "w16", "w15"], top11[:3]
 
     assert country_perf(conn, 9) == []                              # 국가는 아직 안 캤다
     conn.executemany(

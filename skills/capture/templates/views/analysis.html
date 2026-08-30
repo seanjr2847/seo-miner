@@ -45,15 +45,35 @@
 .anthin { font:var(--micro); color:var(--slate); margin-top:10px; line-height:1.5; }
 /* 검색어 행 펼침 — rank.html/keywords.html 과 같은 손잡이(행 자체가 버튼). */
 #an-movers-body tbody tr[role="button"],
-#an-ctr-body tbody tr[role="button"] { cursor:pointer; }
+#an-ctr-body tbody tr[role="button"],
+#an-bands-body tbody tr[role="button"],
+#an-brand-body tbody tr[role="button"],
+#an-intent-body tbody tr[role="button"],
+#an-cluster-body tbody tr[role="button"] { cursor:pointer; }
 #an-movers-body tbody tr[role="button"]:hover > td,
-#an-ctr-body tbody tr[role="button"]:hover > td { background:var(--bar); }
+#an-ctr-body tbody tr[role="button"]:hover > td,
+#an-bands-body tbody tr[role="button"]:hover > td,
+#an-brand-body tbody tr[role="button"]:hover > td,
+#an-intent-body tbody tr[role="button"]:hover > td,
+#an-cluster-body tbody tr[role="button"]:hover > td { background:var(--bar); }
 #an-movers-body tbody tr[role="button"]:focus-visible > td,
-#an-ctr-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--patina); outline-offset:-2px; }
+#an-ctr-body tbody tr[role="button"]:focus-visible > td,
+#an-bands-body tbody tr[role="button"]:focus-visible > td,
+#an-brand-body tbody tr[role="button"]:focus-visible > td,
+#an-intent-body tbody tr[role="button"]:focus-visible > td,
+#an-cluster-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--patina); outline-offset:-2px; }
 #an-movers-body tbody tr[aria-expanded="false"] > td:first-child::before,
-#an-ctr-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
+#an-ctr-body tbody tr[aria-expanded="false"] > td:first-child::before,
+#an-bands-body tbody tr[aria-expanded="false"] > td:first-child::before,
+#an-brand-body tbody tr[aria-expanded="false"] > td:first-child::before,
+#an-intent-body tbody tr[aria-expanded="false"] > td:first-child::before,
+#an-cluster-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
 #an-movers-body tbody tr[aria-expanded="true"] > td:first-child::before,
-#an-ctr-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
+#an-ctr-body tbody tr[aria-expanded="true"] > td:first-child::before,
+#an-bands-body tbody tr[aria-expanded="true"] > td:first-child::before,
+#an-brand-body tbody tr[aria-expanded="true"] > td:first-child::before,
+#an-intent-body tbody tr[aria-expanded="true"] > td:first-child::before,
+#an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section id="an-shift">
@@ -83,34 +103,28 @@
 <section id="an-bands">
   <div class="eyebrow">순위 분포</div>
   <h2>어디에 몰려 있고, 어디로 밀렸나</h2>
-  <p class="sub">검색어 하나하나의 순위는 흔들리지만, 구간별 검색어 수의 이동은 그 흔들림이
-    상쇄돼 "1페이지에서 몇 개가 빠졌나"를 말합니다.</p>
+  <p class="sub" id="an-bands-sub"></p>
   <div id="an-bands-body"></div>
 </section>
 
 <section id="an-brand">
   <div class="eyebrow">수요 구성</div>
   <h2>나를 아는 사람인가, 모르던 사람인가</h2>
-  <p class="sub">검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
-    20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
-    쪽에서만 옵니다.</p>
+  <p class="sub" id="an-brand-sub"></p>
   <div id="an-brand-body"></div>
 </section>
 
 <section id="an-intent">
   <div class="eyebrow">의도별</div>
   <h2>사고 싶은 사람이 오고 있나</h2>
-  <p class="sub">같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
-    정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
-    사람이 없는 것이라 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.</p>
+  <p class="sub" id="an-intent-sub"></p>
   <div id="an-intent-body"></div>
 </section>
 
 <section id="an-cluster">
   <div class="eyebrow">클러스터별</div>
   <h2>어느 주제가 클릭을 벌고 있나</h2>
-  <p class="sub">주제 묶음별 성적입니다. 노출은 많은데 CTR·순위가 낮은 묶음은 글을
-    더 쓸 곳이 아니라 있는 글을 고칠 곳입니다.</p>
+  <p class="sub" id="an-cluster-sub"></p>
   <div id="an-cluster-body"></div>
 </section>
 
@@ -203,6 +217,14 @@ function anShift(s, cmp) {
    손잡이)으로 여기서 바로 답한다. 이미 기회로 채굴됐으면 셸의 한 벌(oppPanel)이
    페이지·할 일·프롬프트를 통째로 낸다. 아직 안 잡힌 것만 이 화면의 재료
    (QUERY_PAGES/PAGE_AUDITS)로 물러선다. ──────────────────────────── */
+// 구간·갈래 펼침은 검색어를 나열만 한다 — 있는 페이지만 조용히 이어 준다.
+const anQueryLink = q => {
+  const pages = (window.QUERY_PAGES || {})[q] || [];
+  return pages.length
+    ? `<a href="${esc(pages[0].page)}" target="_blank" rel="noopener">${esc(q)}</a>`
+    : esc(q);
+};
+
 function anQueryPanel(r, problem, note) {
   const o = oppOf(r.query);
   if (o) return oppPanel(o) + (oppActs(o) ? `<div class="det">${oppActs(o)}</div>` : "");
@@ -228,9 +250,43 @@ const anCtrPanel = r => anQueryPanel(r,
   `순위는 ${r.position}위인데 CTR ${r.actual_ctr}%로 기대 ${r.expected_ctr}%의 절반이 안 됩니다`,
   `노출 ${num(r.impressions)} · 되찾을 클릭 +${num(r.lost_clicks)}`);
 
-let AN_MV_VIEW = [], AN_CTR_VIEW = [];
+// 순위 구간 펼침 — 그 구간의 검색어와, 직전에 어느 구간에서 왔는지(was).
+function anBandsQueryRow(q, curLabel, idx) {
+  const curIdx = idx[curLabel];
+  let move;
+  if (q.was == null) move = '<span class="ancause new">새로</span>';
+  else if (q.was === curLabel) move = esc(q.was);
+  else {
+    const up = idx[q.was] != null && curIdx != null && idx[q.was] > curIdx; // 더 나쁜 구간에서 왔다
+    move = `<span class="${up ? "up" : "down"}">${esc(q.was)} → ${esc(curLabel)}</span>`;
+  }
+  return `<tr><td class="kwcell">${anQueryLink(q.q)}</td>
+    <td class="num">${num(q.clicks)}</td><td class="num">${num(q.impressions)}</td>
+    <td class="num">${q.position}</td><td>${move}</td></tr>`;
+}
+const anBandsPanel = r => {
+  const idx = {};
+  AN_BANDS_VIEW.forEach((b, i) => { idx[b.label] = i; });
+  return table(["검색어", ">클릭", ">노출", ">평균순위", "이전 구간"],
+    r.queries.map(q => anBandsQueryRow(q, r.label, idx)));
+};
+
+// 수요 구성 갈래 펼침(brand·intent·cluster 공유) — 그 갈래 안에서 클릭이 큰 검색어.
+const anMixPanel = r => table(["검색어", ">클릭", ">노출", ">평균순위", ">Δ클릭"],
+  r.top.map(q => `<tr><td class="kwcell">${anQueryLink(q.q)}</td>
+    <td class="num">${num(q.clicks)}</td><td class="num">${num(q.impressions)}</td>
+    <td class="num">${q.position}</td>
+    <td class="num ${q.d_clicks == null ? "muted" : q.d_clicks > 0 ? "up" : q.d_clicks < 0 ? "down" : "muted"}"
+      >${q.d_clicks == null ? "—" : anNum(q.d_clicks)}</td></tr>`));
+
+let AN_MV_VIEW = [], AN_CTR_VIEW = [], AN_BANDS_VIEW = [];
+const AN_MIX_VIEW = {};
 const AN_SRC = {mv: {view: () => AN_MV_VIEW, panel: anMoverPanel},
-                ctr: {view: () => AN_CTR_VIEW, panel: anCtrPanel}};
+                ctr: {view: () => AN_CTR_VIEW, panel: anCtrPanel},
+                bands: {view: () => AN_BANDS_VIEW, panel: anBandsPanel},
+                brand: {view: () => AN_MIX_VIEW.brand || [], panel: anMixPanel},
+                intent: {view: () => AN_MIX_VIEW.intent || [], panel: anMixPanel},
+                cluster: {view: () => AN_MIX_VIEW.cluster || [], panel: anMixPanel}};
 
 function anToggle(tr) {
   const nx = tr.nextElementSibling;
@@ -261,9 +317,9 @@ function anCollapse(id) {
   l.querySelectorAll("tr[aria-expanded]").forEach(t => t.setAttribute("aria-expanded", "false"));
 }
 document.addEventListener("click", e => {
-  const th = e.target.closest &&
-    e.target.closest("#an-movers-body th[data-s], #an-ctr-body th[data-s]");
-  if (th) anCollapse(th.closest("#an-movers-body") ? "an-movers-body" : "an-ctr-body");
+  const th = e.target.closest && e.target.closest("[id$='-body'] th[data-s]");
+  const box = th && th.closest("[id$='-body']");
+  if (box) anCollapse(box.id);
 }, true);
 
 function anMoverRow(r, i) {
@@ -350,13 +406,19 @@ function anBands(rows) {
   // 좋고 나쁨이 구간마다 뒤집힌다 — 1페이지 안이 느는 건 벌었다는 뜻이고,
   // 2페이지 밖이 느는 건 밀렸다는 뜻이다. 한 방향으로 칠하면 색이 거짓말을 한다.
   const good = (r, i) => i < 2 ? r.d > 0 : r.d < 0;
+  AN_BANDS_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
   return table(["구간", ">검색어 수", "분포", ...(has ? [">Δ?1페이지 안이 늘면 초록, 2페이지 밖이 늘면 주황 — 밀려난 것입니다"] : [])],
-    rows.map((r, i) => `<tr><td>${esc(r.label)}</td>
+    rows.map((r, i) => {
+      const canOpen = r.queries && r.queries.length;
+      return `<tr${canOpen ? ` class="opp" tabindex="0" role="button" aria-expanded="false"
+        data-ansrc="bands" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
+        title="누르면 이 구간의 검색어가 펼쳐집니다"` : ""}><td>${esc(r.label)}</td>
       <td class="num">${num(r.n)}</td>
       <td><div class="anbar"><i class="pos" style="width:${(r.n / mx * 50).toFixed(1)}%"
         ></i></div></td>
       ${has ? `<td class="num ${!r.d ? "muted" : good(r, i) ? "up" : "down"}"
-        >${r.d ? anNum(r.d) : "—"}</td>` : ""}</tr>`))
+        >${r.d ? anNum(r.d) : "—"}</td>` : ""}</tr>`;
+    }))
     + `<div class="anthin">노출 30 이상인 검색어만 셉니다. 1–3위가 줄고 11–20위가
         늘었다면 순위가 밀린 것이고, 전체 수가 함께 늘었다면 새 검색어가 들어온
         것입니다.</div>`;
@@ -369,13 +431,22 @@ const AN_MIX_HEAD = ["구분", ">검색어 수", ">클릭", ">노출", ">CTR",
 
 const anD = (v, unit) => !v ? "" :
   `<small class="andelta ${v > 0 ? "up" : "down"}">${anNum(v)}${unit || ""}</small>`;
+// 누를 줄이 없을 때 "줄을 누르면" 이라고 하면 화면이 거짓말을 한다. 넘긴 rows 가
+// 아니라 anMix 가 **실제로 그린 것**을 본다 — anIntent·anCluster 는 미분류를
+// 걸러서 rows 에 top 이 있어도 표가 빈다. 거르는 규칙은 그 함수들에만 둔다.
+const anMixHint = srcKey => (AN_MIX_VIEW[srcKey] || []).some(r => r.top && r.top.length)
+  ? " 줄을 누르면 상위 검색어가 나옵니다." : "";
 
-function anMix(rows, name, empty) {
-  return table(AN_MIX_HEAD, (rows || []).map(r => {
+function anMix(rows, name, empty, srcKey) {
+  AN_MIX_VIEW[srcKey] = rows || [];            // 행의 data-i 는 이 배열을 가리킨다
+  return table(AN_MIX_HEAD, (rows || []).map((r, i) => {
     // 직전에 없던 갈래는 Δ 를 안 적는다 — "+2" 로 찍으면 늘어난 것처럼 읽히지만
     // 실제로는 이번에 처음 생긴 것이라 비교 대상이 없다.
     const D = r.has_prev ? anD : () => "";
-    return `<tr>
+    const canOpen = r.top && r.top.length;
+    return `<tr${canOpen ? ` class="opp" tabindex="0" role="button" aria-expanded="false"
+      data-ansrc="${srcKey}" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
+      title="누르면 이 갈래의 검색어가 펼쳐집니다"` : ""}>
       <td>${name(r)}</td>
       <td class="num">${num(r.queries)}</td>
       <td class="num">${num(r.clicks)}${D(r.d_clicks)}</td>
@@ -424,7 +495,7 @@ function anBrand(rows, hasSnap) {
   return `<p class="anverdict">전체 클릭의 <b>${share}%</b>가 논브랜드입니다.
     ${msg}</p>` +
     anMix(rows, r => r.label === "brand" ? "브랜드 · 내 이름을 치고 온" :
-      "논브랜드 · 나를 모르고 온");
+      "논브랜드 · 나를 모르고 온", null, "brand");
 }
 
 /* intent·cluster 는 같은 조인(검색어 ↔ 키워드)을 쓰므로 안내도 한 벌이다.
@@ -460,7 +531,7 @@ function anIntent(rows) {
        거래성은 ${num(tx.clicks)}클릭(평균순위 ${tx.position ?? "—"})입니다.
        거래성 순위가 정보성보다 아래라면 돈이 되는 쪽을 먼저 밉니다.`;
   return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "의도") +
-    anMix(rows, r => esc(AN_INTENT[r.label] || r.label));
+    anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent");
 }
 
 function anCluster(rows) {
@@ -479,7 +550,7 @@ function anCluster(rows) {
     : `<b>${esc(best.label)}</b> 한 묶음이 실적을 다 지고 있습니다. 이 묶음이 흔들리면
        전체가 흔들린다는 뜻이라, 두 번째 기둥을 만드는 것이 다음 일입니다.`;
   return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "클러스터") +
-    anMix(rows, r => esc(r.label));
+    anMix(rows, r => esc(r.label), null, "cluster");
 }
 
 function anCountry(rows, date) {
@@ -509,6 +580,9 @@ function anCountry(rows, date) {
 }
 
 VIEW("analysis", function (d) {
+  // 빈 상태에서는 anMix 가 아예 안 불린다 — 안 비우면 지난 회차의 목록이 남아
+  // 힌트가 "누르라"고 하고 표에는 누를 줄이 없다.
+  for (const k in AN_MIX_VIEW) delete AN_MIX_VIEW[k];
   const per = d.gsc_period ? `${d.gsc_period}일` : "";
   const cmp = d.gsc_prev && d.gsc_date
     ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
@@ -522,10 +596,21 @@ VIEW("analysis", function (d) {
     없으므로 여기가 가장 싼 클릭입니다${(d.ctr_gaps || []).length
       ? " — 줄을 누르면 고칠 페이지가 나옵니다" : ""}.`;
   $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);
+  $("an-bands-sub").innerHTML = `검색어 하나하나의 순위는 흔들리지만, 구간별 검색어 수의 이동은 그 흔들림이
+    상쇄돼 "1페이지에서 몇 개가 빠졌나"를 말합니다.${(d.rank_bands || []).some(r => r.queries && r.queries.length)
+      ? " 줄을 누르면 그 구간의 검색어가 나옵니다." : ""}`;
   $("an-bands-body").innerHTML = anBands(d.rank_bands);
   $("an-brand-body").innerHTML = anBrand(d.brand_split, !!d.gsc_date);
+  $("an-brand-sub").innerHTML = `검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
+    20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
+    쪽에서만 옵니다.${anMixHint("brand")}`;
   $("an-intent-body").innerHTML = anIntent(d.by_intent);
+  $("an-intent-sub").innerHTML = `같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
+    정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
+    사람이 없는 것이라 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.${anMixHint("intent")}`;
   $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
+  $("an-cluster-sub").innerHTML = `주제 묶음별 성적입니다. 노출은 많은데 CTR·순위가 낮은 묶음은 글을
+    더 쓸 곳이 아니라 있는 글을 고칠 곳입니다.${anMixHint("cluster")}`;
   $("an-country-sub").innerHTML = `국가별 클릭·노출·CTR·평균순위입니다.` +
     (d.country_date ? ` ${esc(d.country_date)} 수집 기준이고, Δ는 그 직전 수집과의
       차이입니다 — 위 표들과 달리 이 축은 분해 수집일을 따로 씁니다.` : "");
