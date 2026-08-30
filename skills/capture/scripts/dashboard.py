@@ -560,6 +560,12 @@ def gather(conn, p, at: str | None = None) -> dict:
         r["cite_rate"] = round(100 * r["cited"] / r["checks"], 1)
         r["mention_rate"] = round(100 * r["mentioned"] / r["checks"], 1)
 
+    # ── 검색 × AI 교차. 재료는 위 두 블록이 이미 잡아 둔 것뿐이라 새 수집이 0이다:
+    # 질문별 결과(같은 AI 런)와 GSC 스냅샷을 토큰 겹침으로 맞붙인다. 두 축을 한
+    # Brain 에 담아 놓고도 여태 서로 안 보던 자리다.
+    ai_vs_search = scoring.search_wins_ai_loses(conn, pid, ai_by_prompt)
+    ai_outranked = scoring.ai_outranked(conn, pid, cite_share)
+
     rank_dates = [r[0] for r in conn.execute(
         """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
              JOIN keywords k ON k.id=rs.keyword_id
@@ -741,6 +747,7 @@ def gather(conn, p, at: str | None = None) -> dict:
             "matrix": matrix, "gap_domains": gap_domains,
             "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
             "missed": missed, "ai_trend": ai_trend,
+            "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
             "opps": opps, "opps_total": opps_total,
             "query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date,

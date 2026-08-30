@@ -1165,6 +1165,113 @@ def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
     return rows
 
 
+# ── 검색 × AI 교차 ───────────────────────────────────────────────────────────
+# 두 축(gsc_snapshots·ai_checks)은 여태 서로를 한 번도 안 봤다. 잇는 다리는 "같은
+# 주제인가" 하나뿐인데, AI 질문은 문장이고 검색어는 낱말 뭉치라 문자열로는 절대
+# 만나지 않는다 — 토큰 겹침으로 잰다. 휴리스틱이라 임계를 여기 이름 붙여 둔다.
+XAI_MIN_TOKEN = 2      # 한 글자 토큰은 조사·수사(이·그·앱·툴)라 겹쳐도 뜻이 없다
+XAI_MIN_OVERLAP = 2    # 한 낱말만 겹치면("가격") 아무 질문이 아무 검색어에나 붙는다
+XAI_LIMIT = 12         # 화면이 읽는 목록이지 전수 목록이 아니다
+
+
+def _xai_tokens(s: str) -> set[str]:
+    return {t for t in tokens(s) if len(t) >= XAI_MIN_TOKEN}
+
+
+def _xai_doms(raw) -> list[str]:
+    """그 질문에서 대신 인용된 도메인 — 근거의 나머지 절반이다."""
+    try:
+        return [h for h in (host_of(str(d)) for d in json.loads(raw or "[]")) if h][:3]
+    except (TypeError, ValueError):
+        return []
+
+
+def _xai_match(prompt: str, queries: list[dict]) -> dict | None:
+    """질문에 가장 많이 겹치는 상위 검색어 하나. 동점이면 노출이 큰 쪽 — 더 큰 자리다."""
+    ts, best, hit = _xai_tokens(prompt), None, 0
+    for q in queries:
+        n = len(ts & q["_ts"])
+        if n > hit or (n == hit and n and q["imp"] > best["imp"]):
+            best, hit = q, n
+    return best if hit >= XAI_MIN_OVERLAP else None
+
+
+def _xai_top_queries(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """최신 스냅샷에서 우리가 상위(평균순위 ≤ PAGE1)인 검색어 — 교차의 왼쪽 축."""
+    cur, _prev, period, _mm = snapshot_pair(conn, project_id)
+    if not cur:
+        return []
+    return [{"query": q, "pos": round(r["pos"], 1), "imp": r["imp"] or 0,
+             "_ts": _xai_tokens(q)}
+            for q, r in _snap_agg(conn, project_id, cur, period).items()
+            if r["pos"] is not None and r["pos"] <= PAGE1]
+
+
+def search_wins_ai_loses(conn: sqlite3.Connection, project_id: int,
+                         ai_rows: list[dict]) -> dict:
+    """검색은 이기는데 AI 는 지는 질문 — "구글 3위인데 ChatGPT 는 우리를 안 쓴다".
+
+    ai_rows 는 gather() 가 이미 최신 AI 런에서 접어 둔 질문별 결과다 — 같은 런을
+    본다. 겹치는 검색어가 없는 질문은 여기 넣지 않는다: 그건 [어디에도 안 잡힌
+    질문]이 이미 하는 일이고, 섞으면 두 표가 같은 말을 한다.
+
+    비는 이유가 둘이라(상위 검색어가 없다 / 겹치는 질문이 없다) 개수도 같이 낸다.
+    """
+    tops = _xai_top_queries(conn, project_id)
+    rows = []
+    for r in ai_rows:
+        if r.get("cited"):
+            continue
+        m = _xai_match(r.get("prompt") or "", tops)
+        if not m:
+            continue
+        rows.append({"prompt": r["prompt"], "category": r.get("category") or "",
+                     "query": m["query"], "pos": m["pos"], "imp": m["imp"],
+                     "checks": r.get("checks") or 0,
+                     "rivals": _xai_doms(r.get("miss_domains"))})
+    rows.sort(key=lambda x: (x["pos"], -x["imp"]))
+    return {"rows": rows[:XAI_LIMIT], "top_queries": len(tops)}
+
+
+def ai_outranked(conn: sqlite3.Connection, project_id: int,
+                 cite_share: list[dict]) -> dict:
+    """AI 는 저쪽을 쓰는데 검색에서는 우리가 위인 경쟁사.
+
+    순위로 지고 있는 게 아니다 — 인용될 근거가 우리 페이지에 없다는 뜻이라, 손댈
+    자리가 순위가 아니라 페이지의 모양이다. 그래서 위 표와 처방이 다르다.
+
+    비는 이유가 셋이라(경쟁사 미등록 / keyword_gap 미수집 / 겹치는 자리 없음)
+    개수를 같이 낸다 — 화면이 빈 표 대신 이유를 말한다.
+    """
+    comps = [r[0] for r in conn.execute(
+        "SELECT domain FROM competitors WHERE project_id=?", (project_id,))]
+    d = _latest(conn, _LATEST_KG, (project_id,))
+    cites: dict[str, int] = {}
+    for s in cite_share:
+        h = host_of(s.get("domain") or "")
+        if h:
+            cites[h] = cites.get(h, 0) + (s.get("n") or 0)
+    rows, cited = [], 0
+    for c in comps:
+        n = cites.get(host_of(c), 0)
+        if not n:
+            continue
+        cited += 1
+        if not d:
+            continue
+        wins = [dict(r) for r in conn.execute(
+            """SELECT keyword, position, our_position, volume FROM keyword_gap
+                WHERE project_id=? AND checked_date=? AND domain=?
+                  AND our_position IS NOT NULL AND our_position<=?
+                  AND our_position<position
+             ORDER BY our_position, keyword""", (project_id, d, c, PAGE1))]
+        if wins:
+            rows.append({"domain": host_of(c), "cites": n, "won": len(wins),
+                         "top": wins[:3]})
+    rows.sort(key=lambda x: (-x["cites"], x["domain"]))
+    return {"rows": rows, "competitors": len(comps), "cited": cited, "gap_date": d}
+
+
 def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     """구글이 AI 요약을 붙이는데 거기 내 링크가 없는 검색어 — 최신 순위 회차 기준."""
     d = conn.execute(
@@ -2141,6 +2248,43 @@ def _selfcheck() -> None:
     assert _fit_of(conn, 6, "cluster:없는클러스터") == 0.5          # active 키워드 0개
     # 일치하는 active 키워드는 없지만 다른 cluster 키워드와 겹치지 않는 경우 — 0.5
     assert _fit_of(conn, 6, "서울 맛집") == 0.5
+
+    # ── 검색 × AI 교차. 프로젝트 1 의 스냅샷이 왼쪽 축이다:
+    #    '1페이지 키워드' 3.0위 · 'ecrett' 8.6위가 상위, '내 키워드' 14.0위는 밖.
+    assert _xai_tokens("AI 툴 고르는 법") == {"ai", "고르는"}, _xai_tokens("AI 툴 고르는 법")
+    ai_rows = [
+        {"prompt": "1페이지 키워드 고르는 법", "category": "추천", "cited": 0, "checks": 6,
+         "miss_domains": '["https://www.ecrett.com/a", "b.com"]'},
+        {"prompt": "키워드 뭐가 좋아", "category": "추천", "cited": 0, "checks": 6,
+         "miss_domains": None},                     # 한 낱말만 겹친다 — 짝을 안 짓는다
+        {"prompt": "ecrett 어때", "category": "브랜드", "cited": 0, "checks": 6,
+         "miss_domains": None},                     # 검색어가 한 낱말이라 임계 미달
+        {"prompt": "1페이지 키워드 정리법", "category": "추천", "cited": 2, "checks": 6,
+         "miss_domains": None},                     # 이미 인용된다 — 여기 올 자리가 아니다
+    ]
+    xs = search_wins_ai_loses(conn, 1, ai_rows)
+    assert xs["top_queries"] == 2, xs
+    assert [r["prompt"] for r in xs["rows"]] == ["1페이지 키워드 고르는 법"], xs
+    assert xs["rows"][0]["query"] == "1페이지 키워드" and xs["rows"][0]["pos"] == 3.0, xs
+    assert xs["rows"][0]["rivals"] == ["ecrett.com", "b.com"], xs["rows"][0]
+    assert search_wins_ai_loses(conn, 999, ai_rows) == {"rows": [], "top_queries": 0}
+
+    # 경쟁사(ecrett.com)는 등록돼 있고, keyword_gap 이 "검색은 우리가 위"를 말한다.
+    conn.executemany(
+        "INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+        " our_position, volume, kind) VALUES(1, '2026-08-20', ?, 'ecrett.com', ?, ?, ?, ?)",
+        [("1페이지 키워드", 7, 3, 400, "shared"),      # 우리가 위 — 이 자리를 센다
+         ("둘 다 1페이지", 2, 9, 300, "shared"),        # 둘 다 상위인데 우리가 아래
+         ("2페이지 싸움", 30, 15, 200, "shared"),       # 저쪽보단 위지만 우리도 밖이다
+         ("내 키워드", 2, 12, 300, "weak")])           # 우리가 아래 — 안 센다
+    xo = ai_outranked(conn, 1, [{"domain": "ecrett.com", "n": 4},
+                                {"domain": "www.other.com", "n": 9}])
+    assert (xo["competitors"], xo["cited"], xo["gap_date"]) == (1, 1, "2026-08-20"), xo
+    assert [r["domain"] for r in xo["rows"]] == ["ecrett.com"], xo
+    assert xo["rows"][0]["cites"] == 4 and xo["rows"][0]["won"] == 1, xo["rows"][0]
+    assert xo["rows"][0]["top"][0]["keyword"] == "1페이지 키워드", xo["rows"][0]
+    # 등록 안 된 도메인은 아무리 인용돼도 이 표에 없다 — competitors 가 정본이다
+    assert ai_outranked(conn, 1, [{"domain": "other.com", "n": 9}])["cited"] == 0
 
     s = score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
     assert s == score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
