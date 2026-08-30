@@ -487,6 +487,16 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 판정 함수가 내내 있었는데 기회 적재용으로만 쓰이고 화면에는 안 왔다.
     ctr_gaps = scoring.ctr_gaps(conn, pid, at=at)
 
+    # 총계가 어떻게 구성돼 있나 — 정보성만 잡고 거래성이 0이면 트래픽이 매출로
+    # 안 간다. 셋 다 새 수집 없이 이미 DB 에 있던 축인데(intent 는 채워만 놓고
+    # 아무도 안 읽었다) 화면 어디에도 안 나오고 있었다. 브랜드 축은 별칭이
+    # 필요해서 cfg 를 읽은 뒤, 반환 dict 에서 조립한다.
+    by_intent = scoring.keyword_perf(conn, pid, cur, prev, period, "intent")
+    by_cluster = scoring.keyword_perf(conn, pid, cur, prev, period, "cluster")
+    # 국가는 수집 차원이라 "안 캤다"와 "캤는데 없다"가 다르다 — device 와 같은 규약.
+    country_date = scoring._latest(conn, scoring._LATEST_BD, (pid, "country"))
+    by_country = scoring.country_perf(conn, pid)
+
     # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
     # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
     cfg = collector.project_cfg(p["config_path"] or p["name"])
@@ -742,6 +752,12 @@ def gather(conn, p, at: str | None = None) -> dict:
             "gsc_pinned": bool(at), "ai_date": ai_date,
             "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
             "shift": shift, "rank_bands": bands, "ctr_gaps": ctr_gaps,
+            # 클릭이 늘어도 그게 브랜드 검색이면 SEO 는 제자리다. 별칭 정본은
+            # aliases_of 하나 — 비면 판정 불가라 빈 목록이 오고 화면이 그렇게 말한다.
+            "brand_split": scoring.brand_split(conn, pid, cur, prev, period,
+                                               scoring.aliases_of(cfg)),
+            "by_intent": by_intent, "by_cluster": by_cluster,
+            "by_country": by_country, "country_date": country_date,
             "striking": striking, "striking_page2": striking_page2,
             "brand_catalog_empty": len(brands) == 0,
             "matrix": matrix, "gap_domains": gap_domains,

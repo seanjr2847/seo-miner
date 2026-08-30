@@ -1,7 +1,9 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지. -->
 <script type="application/json" class="view-def">
 {"id": "analysis", "title": "분석",
- "sections": ["an-shift", "an-movers", "an-ctr", "an-bands"], "stages": ["gsc"]}
+ "sections": ["an-shift", "an-movers", "an-ctr", "an-bands",
+              "an-brand", "an-intent", "an-cluster", "an-country"],
+ "stages": ["gsc"]}
 </script>
 
 <style>
@@ -35,6 +37,9 @@
 .ancause.ctr { color:var(--patina); background:var(--wash); }
 .ancause.new { color:var(--patina); background:var(--wash); }
 .ancause.lost { color:var(--copper); background:var(--wash-copper); }
+/* Δ는 값 아래에 작게 붙인다 — 축마다 열을 두 벌로 늘리면 좁은 화면에서 표가
+   가로로 흘러 아무것도 못 읽는다. */
+.andelta { display:block; font:var(--micro); font-variant-numeric:tabular-nums; }
 .anverdict { font-size:15px; line-height:1.65; margin:0 0 2px; }
 .anverdict b { color:var(--ink); }
 .anthin { font:var(--micro); color:var(--slate); margin-top:10px; line-height:1.5; }
@@ -70,6 +75,39 @@
   <p class="sub">검색어 하나하나의 순위는 흔들리지만, 구간별 인원수의 이동은 그 흔들림이
     상쇄돼 "1페이지에서 몇 개가 빠졌나"를 말합니다.</p>
   <div id="an-bands-body"></div>
+</section>
+
+<section id="an-brand">
+  <div class="eyebrow">수요 구성</div>
+  <h2>나를 아는 사람인가, 모르던 사람인가</h2>
+  <p class="sub">검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
+    20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
+    쪽에서만 옵니다.</p>
+  <div id="an-brand-body"></div>
+</section>
+
+<section id="an-intent">
+  <div class="eyebrow">의도별</div>
+  <h2>사고 싶은 사람이 오고 있나</h2>
+  <p class="sub">같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
+    정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
+    사람이 없는 것이라 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.</p>
+  <div id="an-intent-body"></div>
+</section>
+
+<section id="an-cluster">
+  <div class="eyebrow">클러스터별</div>
+  <h2>어느 주제가 실적을 내고 있나</h2>
+  <p class="sub">주제 묶음별 성적입니다. 노출은 많은데 CTR·순위가 낮은 묶음은 글을
+    더 쓸 곳이 아니라 있는 글을 고칠 곳입니다.</p>
+  <div id="an-cluster-body"></div>
+</section>
+
+<section id="an-country">
+  <div class="eyebrow">국가별</div>
+  <h2>어디서 들어오고 있나</h2>
+  <p class="sub" id="an-country-sub"></p>
+  <div id="an-country-body"></div>
 </section>
 
 <script>
@@ -230,6 +268,149 @@ function anBands(rows) {
         것입니다.</div>`;
 }
 
+/* ── 수요 구성 축 넷은 같은 열·같은 규칙을 쓴다. 표를 축마다 다르게 그리면
+   읽는 사람이 매번 열 이름을 다시 읽어야 한다. ────────────────────────── */
+const AN_MIX_HEAD = ["구분", ">검색어 수", ">클릭", ">노출", ">CTR",
+  ">평균순위?작을수록 위입니다. 아래 Δ는 양수가 올라간 쪽입니다"];
+
+const anD = (v, unit) => !v ? "" :
+  `<small class="andelta ${v > 0 ? "up" : "down"}">${anNum(v)}${unit || ""}</small>`;
+
+function anMix(rows, name, empty) {
+  return table(AN_MIX_HEAD, (rows || []).map(r => {
+    // 직전에 없던 갈래는 Δ 를 안 적는다 — "+2" 로 찍으면 늘어난 것처럼 읽히지만
+    // 실제로는 이번에 처음 생긴 것이라 비교 대상이 없다.
+    const D = r.has_prev ? anD : () => "";
+    return `<tr>
+      <td>${name(r)}</td>
+      <td class="num">${num(r.queries)}</td>
+      <td class="num">${num(r.clicks)}${D(r.d_clicks)}</td>
+      <td class="num">${num(r.impressions)}${D(r.d_impressions)}</td>
+      <td class="num">${r.ctr}%${D(r.d_ctr, "%p")}</td>
+      <td class="num">${r.position == null ? "—" : r.position}${D(r.d_position)}</td>
+    </tr>`;
+  }), empty);
+}
+
+/* 갈래 이름을 화면 말로. 값 자체(info·kor)는 페이로드에서 오고, 여기는 그걸
+   부르는 이름만 갖는다 — 모르는 값이 와도 그대로 찍어 표가 안 비게 한다. */
+const AN_INTENT = {
+  info: "정보성 · 알아보는 중",
+  commercial: "비교성 · 고르는 중",
+  transactional: "거래성 · 사려는 중",
+  navigational: "탐색성 · 찾아가는 중",
+};
+const anShare = (part, whole) => whole ? Math.round(part / whole * 100) : 0;
+
+function anBrand(rows, hasSnap) {
+  if (!rows || !rows.length)
+    return `<div class="empty">${hasSnap
+      ? W(`내 브랜드 별칭이 비어 있어 브랜드/논브랜드를 가를 수가 없습니다 —
+           프로젝트 설정의 <code>brand_aliases</code> 에 사람들이 실제로 치는 이름을
+           적어 두면 채워집니다.`,
+          `내 브랜드 별칭이 비어 있어 브랜드/논브랜드를 가를 수가 없습니다 —
+           [설정] 화면의 브랜드 별칭에 사람들이 실제로 치는 이름을 적어 주세요.`)
+      : "아직 검색 실적 수집이 없습니다."}</div>`;
+  const [b, n] = rows;
+  const total = b.clicks + n.clicks;
+  const share = anShare(n.clicks, total);
+  let msg;
+  if (n.d_clicks > 0)
+    msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 늘었습니다 — 나를 모르던
+      사람이 들어온 몫이고, SEO 가 실제로 움직인 자리가 여기입니다.`;
+  else if (b.d_clicks > 0)
+    msg = `늘어난 클릭이 <b>브랜드 검색뿐</b>입니다. 이미 나를 아는 사람이 더 온
+      것이라 SEO 는 제자리입니다 — <b>새 수요를 못 잡고 있습니다</b>. 위 [순위 분포]와
+      [순위는 좋은데 안 눌린다]에서 논브랜드 검색어를 먼저 봅니다.`;
+  else if (n.d_clicks < 0)
+    msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 줄었습니다. 브랜드는 광고·입소문이
+      떠받치지만 논브랜드는 순위·색인이 떠받칩니다 — [사이트] 화면을 먼저 봅니다.`;
+  else
+    msg = "두 갈래 다 직전과 같습니다.";
+  return `<p class="anverdict">전체 클릭의 <b>${share}%</b>가 논브랜드입니다.
+    ${msg}</p>` +
+    anMix(rows, r => r.label === "brand" ? "브랜드 · 내 이름을 치고 온" :
+      "논브랜드 · 나를 모르고 온");
+}
+
+/* intent·cluster 는 같은 조인(검색어 ↔ 키워드)을 쓰므로 안내도 한 벌이다.
+   매칭 안 된 검색어를 버리면 합이 총계와 안 맞아 표를 못 믿게 된다 — 그래서
+   미분류로 남기고, 그게 절반을 넘으면 표보다 그 사실을 먼저 말한다. */
+function anUnmatched(rows, what) {
+  const total = rows.reduce((a, r) => a + r.impressions, 0);
+  const un = rows.find(r => r.unclassified);
+  if (!un) return "";
+  const share = anShare(un.impressions, total);
+  if (share < 50) return "";
+  return `<div class="anthin">노출의 <b>${share}%</b>가 미분류입니다 — 실제로 걸리는
+    검색어를 키워드 목록이 못 따라가고 있다는 뜻이라, 아래 ${what} 비교는 나머지
+    ${100 - share}% 얘기입니다. [키워드] 화면에서 실제로 걸린 검색어를 키워드로
+    올리면 갈래가 넓어집니다.</div>`;
+}
+
+function anIntent(rows) {
+  if (!rows || !rows.length)
+    return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
+  const named = rows.filter(r => !r.unclassified);
+  if (!named.length)
+    return `<div class="empty">걸린 검색어 중 내 키워드 목록과 맞는 것이 하나도
+      없습니다 — 의도를 말하려면 먼저 키워드가 있어야 합니다. [키워드] 화면에서
+      키워드부터 채웁니다.</div>`;
+  const tx = named.find(r => r.label === "transactional");
+  const top = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
+  const msg = !tx || !tx.clicks
+    ? `<b>거래성 검색어에서 온 클릭이 0</b>입니다. 사람은 오는데 살 사람이 없다는
+       뜻이라, 트래픽을 더 늘려도 매출로 가는 길이 안 생깁니다 — 가격·비교·신청처럼
+       사려는 사람이 치는 말로 페이지를 하나 만드는 것이 먼저입니다.`
+    : `클릭이 가장 많은 갈래는 <b>${esc(AN_INTENT[top.label] || top.label)}</b>이고,
+       거래성은 ${num(tx.clicks)}클릭(평균순위 ${tx.position ?? "—"})입니다.
+       거래성 순위가 정보성보다 아래라면 돈이 되는 쪽을 먼저 밉니다.`;
+  return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "의도") +
+    anMix(rows, r => esc(AN_INTENT[r.label] || r.label));
+}
+
+function anCluster(rows) {
+  if (!rows || !rows.length)
+    return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
+  const named = rows.filter(r => !r.unclassified && r.impressions);
+  if (!named.length)
+    return `<div class="empty">클러스터가 붙은 키워드로 걸린 검색어가 없습니다 —
+      [키워드] 화면에서 키워드를 주제별로 묶으면 여기가 채워집니다.</div>`;
+  const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
+  const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
+  const msg = named.length > 1 && worst.label !== best.label
+    ? `클릭을 끌고 있는 묶음은 <b>${esc(best.label)}</b>, 가장 안 눌리는 묶음은
+       <b>${esc(worst.label)}</b>입니다 — 노출 ${num(worst.impressions)}에 CTR
+       ${worst.ctr}%. 글을 더 쓸 곳이 아니라 있는 글의 제목·설명을 고칠 곳입니다.`
+    : `<b>${esc(best.label)}</b> 한 묶음이 실적을 다 지고 있습니다. 이 묶음이 흔들리면
+       전체가 흔들린다는 뜻이라, 두 번째 기둥을 만드는 것이 다음 일입니다.`;
+  return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "클러스터") +
+    anMix(rows, r => esc(r.label));
+}
+
+function anCountry(rows, date) {
+  if (!date)
+    return `<div class="empty">국가별 실적을 아직 안 읽었습니다 — ` + W(
+      `설정의 <code>gsc_breakdown</code> 에 <code>country</code> 가 들어간 뒤
+       <code class="cmd" onclick="copyCmd(this)">/capture gsc</code> 를 한 번 돌리면
+       채워집니다(이제 기본값입니다).`,
+      "[전체 분석 실행]을 한 번 누르면 채워집니다.") + `</div>`;
+  if (!rows || !rows.length)
+    return '<div class="empty">국가를 읽었는데 담긴 행이 없습니다 — 수집 창에 노출이 아예 없었습니다.</div>';
+  const total = rows.reduce((a, r) => a + r.clicks, 0);
+  const top = rows[0];
+  const share = anShare(top.clicks, total);
+  const msg = share >= 80
+    ? `클릭의 <b>${share}%</b>가 <span class="lat">${esc(top.label).toUpperCase()}</span>
+       한 나라에서 옵니다. 다른 나라 노출은 있는데 클릭이 안 붙는다면 그 나라 말로
+       된 페이지가 없다는 뜻입니다.`
+    : `클릭이 <b>${rows.length}개 나라</b>에 갈려 있고 1위가 ${share}% 입니다.
+       타깃 밖 나라가 노출을 먹고 있으면 그 노출은 CTR·평균순위만 끌어내립니다 —
+       숫자를 볼 때 그 몫을 빼고 봅니다.`;
+  return `<p class="anverdict">${msg}</p>` +
+    anMix(rows, r => `<span class="lat">${esc(r.label).toUpperCase()}</span>`);
+}
+
 VIEW("analysis", function (d) {
   const per = d.gsc_period ? `${d.gsc_period}일` : "";
   const cmp = d.gsc_prev && d.gsc_date
@@ -243,5 +424,12 @@ VIEW("analysis", function (d) {
     없으므로 여기가 가장 싼 클릭입니다.`;
   $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);
   $("an-bands-body").innerHTML = anBands(d.rank_bands);
+  $("an-brand-body").innerHTML = anBrand(d.brand_split, !!d.gsc_date);
+  $("an-intent-body").innerHTML = anIntent(d.by_intent);
+  $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
+  $("an-country-sub").innerHTML = `국가별 클릭·노출·CTR·평균순위입니다.` +
+    (d.country_date ? ` ${esc(d.country_date)} 수집 기준이고, Δ는 그 직전 수집과의
+      차이입니다 — 위 표들과 달리 이 축은 분해 수집일을 따로 씁니다.` : "");
+  $("an-country-body").innerHTML = anCountry(d.by_country, d.country_date);
 });
 </script>

@@ -134,12 +134,13 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 2. **날짜별 추이**(`gsc_daily`) — 같은 창을 하루 단위로. 합계만 있던 시절엔
    "언제부터 떨어졌나"에 답할 수가 없었다. 날짜 키로 **upsert** 한다 — GSC는 최근
    2~3일 값을 나중에 채우므로 다시 돌리면 그 며칠이 갱신된다.
-3. **디바이스 분해**(`gsc_breakdown`) — dim=device 로 쿼리별 MOBILE/DESKTOP/TABLET.
-   `device_gap` 기회(모바일만 순위가 낮은 검색어)의 유일한 근거다.
+3. **디바이스·국가 분해**(`gsc_breakdown`) — dim=device 로 쿼리별
+   MOBILE/DESKTOP/TABLET, dim=country 로 국가별. 앞은 `device_gap` 기회의 유일한
+   근거이고, 뒤는 [분석] 화면의 국가 축이다.
 
 분해 축은 `--breakdown` 으로 바꾼다 — **콤마 구분 문자열**이다(`--breakdown device,country`).
-기본값은 config `gsc_breakdown: "device"`, `--breakdown ""` 이면 분해 수집을 아예 건너뛴다.
-축을 늘리면 그만큼 API 요청이 는다 — 필요할 때만 country 를 붙인다.
+기본값은 config `gsc_breakdown` 이 정본이고, `--breakdown ""` 이면 분해 수집을 아예 건너뛴다.
+축 하나가 API 요청 하나다 — 줄이려면 config 에서 뺀다.
 
 기본은 내 구글 계정 로그인(OAuth)이고, 로그인 한 번이면 소유한 속성이 전부 붙는다 —
 **속성마다 권한을 주는 단계는 없다**(그건 무인 수집용 서비스 계정 갈래에만 있다).

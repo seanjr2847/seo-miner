@@ -1013,6 +1013,127 @@ def rank_bands(conn: sqlite3.Connection, project_id: int, cur: str | None,
             for _, _, lb in RANK_BANDS]
 
 
+# 갈래에 못 넣은 것을 버리면 표의 합이 총계와 안 맞고, 그러면 읽는 사람이 표
+# 전체를 못 믿는다. 남는 것은 언제나 이 이름으로 묶어 낸다.
+UNCLASSIFIED = "미분류"
+
+
+def is_brand_query(query: str, aliases: list[str]) -> bool:
+    """검색어가 내 브랜드 별칭을 품었나. 별칭 정본은 aliases_of(cfg) 하나다.
+
+    클릭 +20% 가 브랜드 검색이 는 것이면 SEO 는 제자리다 — 이 둘을 안 가르면
+    화면의 모든 증감이 "잘 되고 있다"로 읽힌다.
+    """
+    q = norm(query)
+    return any(a in q for a in (norm(x) for x in aliases) if a)
+
+
+def _perf_row(label: str, a: dict | None, b: dict | None) -> dict:
+    """한 갈래의 이번/직전 누적을 화면이 읽을 한 줄로. Δ순위는 양수가 좋아진 쪽이다
+    (movers·rank_decay 의 dpos 규약과 같다)."""
+    z = {"clicks": 0, "imp": 0, "pw": 0.0, "n": 0}
+    a, b = a or z, b or z
+    pos = round(a["pw"] / a["imp"], 1) if a["imp"] else None
+    ppos = round(b["pw"] / b["imp"], 1) if b["imp"] else None
+    ctr = _ctr_pct(a["clicks"], a["imp"], 2)
+    return {"label": label, "clicks": a["clicks"], "impressions": a["imp"],
+            "ctr": ctr, "position": pos, "queries": a["n"],
+            "has_prev": bool(b["imp"] or b["clicks"]),
+            "d_clicks": a["clicks"] - b["clicks"],
+            "d_impressions": a["imp"] - b["imp"],
+            "d_ctr": round(ctr - _ctr_pct(b["clicks"], b["imp"], 2), 2) if b["imp"] else None,
+            "d_position": round(ppos - pos, 1) if pos is not None and ppos is not None else None}
+
+
+def _bucket_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
+                 prev: str | None, period: int | None, key_of) -> list[dict]:
+    """스냅샷을 갈래별로 접는다 — 클릭·노출·CTR·평균순위 + 직전 대비 Δ.
+
+    평균순위는 노출 가중이다. 검색어 수로 그냥 나누면 노출 3짜리 1위가 노출
+    3천짜리 12위를 끌어내려 갈래 전체가 거짓말을 한다.
+    """
+    if not (cur and period):
+        return []
+
+    def fold(snap):
+        acc: dict[str, dict] = {}
+        for query, r in (_snap_agg(conn, project_id, snap, period) if snap else {}).items():
+            a = acc.setdefault(key_of(query), {"clicks": 0, "imp": 0, "pw": 0.0, "n": 0})
+            a["clicks"] += r["clk"] or 0
+            a["imp"] += r["imp"] or 0
+            a["pw"] += (r["pos"] or 0) * (r["imp"] or 0)
+            a["n"] += 1
+        return acc
+
+    now_, before = fold(cur), fold(prev)
+    return sorted((_perf_row(k, now_.get(k), before.get(k))
+                   for k in set(now_) | set(before)),
+                  key=lambda x: -x["impressions"])
+
+
+def brand_split(conn: sqlite3.Connection, project_id: int, cur: str | None,
+                prev: str | None, period: int | None, aliases: list[str]) -> list[dict]:
+    """브랜드 vs 논브랜드 두 줄. 별칭이 없으면 판정 자체가 불가능하므로 빈 목록."""
+    if not aliases:
+        return []
+    rows = {r["label"]: r for r in _bucket_perf(
+        conn, project_id, cur, prev, period,
+        lambda q: "brand" if is_brand_query(q, aliases) else "nonbrand")}
+    if not rows:
+        return []
+    # 한쪽이 통째로 없어도 두 줄을 낸다 — "논브랜드가 0"은 빈 표가 아니라 답이다.
+    return [rows.get(k) or _perf_row(k, None, None) for k in ("brand", "nonbrand")]
+
+
+def keyword_perf(conn: sqlite3.Connection, project_id: int, cur: str | None,
+                 prev: str | None, period: int | None, col: str) -> list[dict]:
+    """활성 키워드의 intent / cluster 별 성과.
+
+    조인 축은 gsc_snapshots.query ↔ keywords.keyword 이고 비교는 norm() 이다.
+    정보성만 잡고 거래성이 0인 상태가 제일 흔한 실패인데, 여태 화면이 그걸
+    말하지 않았다 — intent 는 채워만 놓고 아무도 안 읽는 컬럼이었다.
+    """
+    m = {norm(r["keyword"]): r[col] for r in conn.execute(
+        f"SELECT keyword, {col} FROM keywords "
+        f"WHERE project_id=? AND is_active=1 AND {col} IS NOT NULL",
+        (project_id,)) if norm(r["keyword"])}
+    rows = _bucket_perf(conn, project_id, cur, prev, period,
+                        lambda q: m.get(norm(q)) or UNCLASSIFIED)
+    # 어느 줄이 미분류인지는 여기서 못 박는다 — 화면이 "미분류" 라는 글자를
+    # 자기 사본으로 들고 있으면 이름을 고칠 때 한쪽만 낡는다.
+    for r in rows:
+        r["unclassified"] = r["label"] == UNCLASSIFIED
+    return rows
+
+
+def country_perf(conn: sqlite3.Connection, project_id: int, *,
+                 limit: int = 12) -> list[dict]:
+    """국가별 성과 — gsc_breakdown dim='country'. 직전 수집일과 비교한다.
+
+    스키마도 적재 함수도 내내 있었는데 기본 수집 차원이 device 뿐이라 이 축은
+    한 번도 안 찍혔다. 같은 조립을 device_gap 이 dim='device' 로 하고 있다.
+    """
+    dates = [r[0] for r in conn.execute(
+        "SELECT DISTINCT snapshot_date FROM gsc_breakdown "
+        "WHERE project_id=? AND dim='country' ORDER BY 1 DESC LIMIT 2", (project_id,))]
+    if not dates:
+        return []
+
+    def fold(snap):
+        return {r["dim_value"]: {"clicks": r["clk"] or 0, "imp": r["imp"] or 0,
+                                 "pw": r["pw"] or 0.0, "n": r["n"]}
+                for r in conn.execute(
+                    """SELECT dim_value, SUM(clicks) clk, SUM(impressions) imp,
+                              SUM(position * impressions) pw, COUNT(*) n
+                         FROM gsc_breakdown
+                        WHERE project_id=? AND snapshot_date=? AND dim='country'
+                        GROUP BY dim_value""", (project_id, snap))}
+
+    now_, before = fold(dates[0]), (fold(dates[1]) if len(dates) > 1 else {})
+    return sorted((_perf_row(k, now_.get(k), before.get(k)) for k in now_),
+                  key=lambda x: -x["impressions"])[:limit]
+
+
 def classify_intent(keyword: str) -> str:
     """결정적 인텐트 분류 — transactional > commercial > navigational > info.
 
@@ -2153,6 +2274,57 @@ def _selfcheck() -> None:
     # 사전 자체: 우선순위대로 정확히 매칭되는지 (한 토큰씩 확인)
     assert "가격" in INTENT_TRANSACTIONAL and "후기" in INTENT_COMMERCIAL \
         and "공식" in INTENT_NAVIGATIONAL
+
+    # ── 수요 구성 축 (프로젝트 9): 브랜드·intent·cluster·국가 ──
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks, impressions, ctr, position) "
+        "VALUES(9, ?, 28, ?, NULL, ?, ?, 0.0, ?)",
+        [("2026-08-07", "마이사이트 로그인", 50, 100, 2.0),
+         ("2026-08-07", "가격 비교", 10, 500, 8.0),
+         ("2026-08-14", "마이사이트 로그인", 60, 120, 1.5),
+         ("2026-08-14", "가격 비교", 20, 400, 6.0),
+         ("2026-08-14", "새 검색어", 5, 200, 11.0)])
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, cluster, intent, is_active) VALUES(9, ?, ?, ?, ?)",
+        [("가격 비교", "가격", "transactional", 1),
+         ("마이사이트 로그인", "브랜드", "navigational", 1),
+         ("끈 키워드", "가격", "info", 0)])          # 비활성은 지도에 안 넣는다
+
+    assert is_brand_query("마이사이트 로그인", ["마이사이트"])
+    assert is_brand_query("MySite Pricing", ["MySite"])            # norm 이 대소문자·공백을 접는다
+    assert not is_brand_query("가격 비교", ["마이사이트"])
+    assert not is_brand_query("마이사이트", [])                     # 별칭 없으면 아무것도 브랜드가 아니다
+
+    bs = brand_split(conn, 9, "2026-08-14", "2026-08-07", 28, ["마이사이트"])
+    assert [r["label"] for r in bs] == ["brand", "nonbrand"], bs    # 순서 고정 — 화면이 그 순서로 읽는다
+    assert bs[0]["clicks"] == 60 and bs[0]["d_clicks"] == 10 and bs[0]["ctr"] == 50.0, bs[0]
+    assert bs[0]["d_position"] == 0.5, bs[0]                        # 2.0 → 1.5, 양수가 좋아진 쪽
+    assert bs[1]["clicks"] == 25 and bs[1]["impressions"] == 600, bs[1]
+    assert bs[1]["position"] == 7.7, bs[1]                          # (6×400 + 11×200)/600, 노출 가중
+    assert brand_split(conn, 9, "2026-08-14", "2026-08-07", 28, []) == []   # 별칭 없으면 판정 불가
+
+    it = {r["label"]: r for r in keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "intent")}
+    assert set(it) == {"transactional", "navigational", UNCLASSIFIED}, it
+    assert it["transactional"]["clicks"] == 20 and it["navigational"]["clicks"] == 60
+    assert it[UNCLASSIFIED]["clicks"] == 5, it                      # 매칭 안 된 검색어를 버리지 않는다
+    assert sum(r["clicks"] for r in it.values()) == 85              # 합이 총계와 맞는다
+    cl = {r["label"]: r for r in keyword_perf(conn, 9, "2026-08-14", "2026-08-07", 28, "cluster")}
+    assert set(cl) == {"가격", "브랜드", UNCLASSIFIED}, cl
+    assert cl["가격"]["queries"] == 1 and cl["가격"]["d_impressions"] == -100, cl["가격"]
+    assert cl[UNCLASSIFIED]["unclassified"] and not cl["가격"]["unclassified"], cl
+    assert keyword_perf(conn, 9, None, None, None, "intent") == []  # 수집이 없으면 빈 목록
+
+    assert country_perf(conn, 9) == []                              # 국가는 아직 안 캤다
+    conn.executemany(
+        "INSERT INTO gsc_breakdown(project_id, snapshot_date, period_days, dim, dim_value, query, clicks, impressions, ctr, position) "
+        "VALUES(9, ?, 28, 'country', ?, ?, ?, ?, 0.0, ?)",
+        [("2026-08-07", "kor", "q1", 5, 100, 10.0),
+         ("2026-08-14", "kor", "q1", 10, 200, 5.0),
+         ("2026-08-14", "usa", "q2", 1, 50, 20.0)])
+    cp = country_perf(conn, 9)
+    assert [r["label"] for r in cp] == ["kor", "usa"], cp           # 노출 내림차순
+    assert cp[0]["d_clicks"] == 5 and cp[0]["d_position"] == 5.0 and cp[0]["has_prev"], cp[0]
+    assert cp[1]["ctr"] == 2.0 and not cp[1]["has_prev"], cp[1]     # 이번에 처음 뜬 나라
 
     # ── _backfill_intents: NULL 인 활성만 채우고, 값 있는 건 보존
     conn.execute("DELETE FROM keywords")
