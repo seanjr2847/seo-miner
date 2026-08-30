@@ -74,8 +74,13 @@ app.add_middleware(
 @app.exception_handler(identity.NotConfigured)
 def _not_configured(request: Request, e: identity.NotConfigured):
     """로그인 설정이 없는 배포. 문구는 유저에게 그대로 보여 준다 — 500 페이지만 뜨면
-    운영자도 뭐가 빠졌는지 모른다."""
-    return JSONResponse({"detail": str(e)}, status_code=500)
+    운영자도 뭐가 빠졌는지 모른다.
+
+    상태코드는 빠진 설정이 required 냐로 가른다. 구글 로그인(GOOGLE_CLIENT_ID 등)은
+    required — 없으면 이 배포 자체가 고장난 것이니 500. GitHub 연동은 optional —
+    없어도 나머지는 다 돌아가는, 그냥 안 켠 기능이니 501(Not Implemented)이다."""
+    required = settings.SETTINGS[e.name].required
+    return JSONResponse({"detail": str(e)}, status_code=500 if required else 501)
 
 
 def _uid(request: Request) -> Optional[int]:
@@ -834,14 +839,19 @@ def api_ga4_properties(project: str, request: Request):
     제안으로 얹지만 확정은 사람이 한다 — 엉뚱한 속성이 붙으면 그 뒤 모든 숫자가
     조용히 거짓이 된다(collect_ga4.suggest_property 참고).
 
-    403 은 스코프 부족이거나 아직 연결이 안 된 상태다 — 둘 다 재로그인 손잡이를 준다.
-    collect_gsc.get_credentials() 는 CLI 전제라(토큰이 없으면 브라우저를 열려 하고,
-    수단 자체가 없으면 sys.exit) 서버에서 부르면 안 된다 — 부르기 전에 doctor 로
-    스코프·토큰 상태를 먼저 본다. 그래도 남는 예외(SystemExit 포함)는 사람 말로
-    바꾼다 — 스택트레이스가 화면에 그대로 나가면 안 된다.
+    403 은 둘 중 하나다 — 실제로 터진 건 ①(Railway 로그, 2026-08-31): 토큰이 아예
+    없어서 collect_gsc._oauth_credentials() 가 브라우저를 열려다 죽었다. ②는 이미
+    로그인은 했지만 GA4 스코프가 나중에 추가돼 그 전 토큰엔 없는 경우다. 우선순위
+    ①→②로 먼저 본다 — 부르기 전에 doctor/db 로 미리 확인해 그 무엇도 부르지 않고
+    바로 답한다. 그래도 남는 예외(SystemExit 포함, collect_gsc 쪽 CLI 최종 안내가
+    새는 경우)는 사람 말로 바꾼다 — 스택트레이스가 화면에 그대로 나가면 안 된다.
     """
     uid = _require_uid(request)
     from googleapiclient.errors import HttpError
+    not_connected = HTTPException(
+        status_code=403,
+        detail="구글 계정이 아직 연결되지 않았습니다 — 로그인해야 GA4 속성을 "
+               "볼 수 있습니다. 구글 계정으로 로그인해 주세요.")
     need_relogin = HTTPException(
         status_code=403,
         detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
@@ -853,7 +863,9 @@ def api_ga4_properties(project: str, request: Request):
                 domain = db.get_project(c, project)["domain"]
             finally:
                 c.close()
-            if not db.gsc_connected() or doctor.gsc_missing_scopes():
+            if not db.gsc_connected():
+                raise not_connected
+            if doctor.gsc_missing_scopes():
                 raise need_relogin
             try:
                 _, admin_svc = collect_ga4.get_service()
@@ -1037,6 +1049,18 @@ def demo() -> None:
         # --- 로그인 뒤 화면 --------------------------------------------------
         login_as(c, u2, "sched@example.com")
 
+        # NotConfigured 상태코드 — required(구글) 는 배포가 고장난 것=500,
+        # optional(GitHub) 은 그냥 안 켠 기능=501. GITHUB_CLIENT_ID 는 여기까지
+        # 한 번도 안 세웠다.
+        r = c.get("/auth/github", follow_redirects=False)
+        assert r.status_code == 501 and "GITHUB_CLIENT_ID" in r.json()["detail"],             "안 켠 기능인데 500 이다 — 배포 고장과 구분이 안 된다"
+        saved_gid = os.environ.pop("GOOGLE_CLIENT_ID")
+        try:
+            r = c.get("/auth/login", follow_redirects=False)
+            assert r.status_code == 500, "필수 설정이 빠졌다 — 배포가 고장난 것이니 500 이어야 한다"
+        finally:
+            os.environ["GOOGLE_CLIENT_ID"] = saved_gid
+
         r = c.get("/")
         assert r.status_code == 200, r.text
         assert "<!--USER-->" not in r.text and "<!--SITES-->" not in r.text, "슬롯이 안 채워졌다"
@@ -1202,11 +1226,12 @@ def demo() -> None:
             assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
             doctor.gsc_missing_scopes = lambda: []
 
-            # 아예 연결이 안 된 상태(토큰 없음)도 같은 재로그인 안내 — collect_gsc 가
-            # 여는 브라우저 로그인 경로(run_local_server)는 서버에서 절대 타면 안 된다.
+            # 아예 연결이 안 된 상태(토큰 없음) — 실제로 터진 게 이거다(Railway 로그,
+            # 2026-08-31: 토큰이 없어 collect_gsc 가 브라우저를 열려다 500). "재로그인"이
+            # 아니라 "아직 연결 안 됨" — 한 번도 안 붙인 사람에게 "다시"는 말이 안 된다.
             db.gsc_connected = lambda: False
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "아직 연결되지 않았습니다" in r.json()["detail"],                 r.text
             db.gsc_connected = lambda: True
 
             # 그래도 남는 예외(SystemExit 포함, collect_gsc.get_credentials 가 실제로

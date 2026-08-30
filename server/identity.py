@@ -52,7 +52,14 @@ SCOPES = collect_gsc.SCOPES + ["openid",
 
 
 class NotConfigured(RuntimeError):
-    """이 제공자를 쓸 설정이 없다. 문구는 유저에게 그대로 보인다."""
+    """이 제공자를 쓸 설정이 없다. 문구는 유저에게 그대로 보인다.
+
+    name 은 빠진 설정 이름 — app.py 의 핸들러가 settings.SETTINGS[name].required 를
+    봐서 상태코드를 고른다(필수면 배포가 고장난 것=500, 아니면 꺼둔 기능=501)."""
+
+    def __init__(self, message: str, name: str):
+        super().__init__(message)
+        self.name = name
 
 
 @dataclass(frozen=True)
@@ -69,7 +76,8 @@ def _need(name: str, what: str) -> str:
     if not v:
         raise NotConfigured(
             f"{what}이 이 배포에 아직 연결되지 않았습니다. 환경 변수 {name} 을 "
-            "설정하면 켜집니다. (자가 호스팅이면 이 배포의 운영자가 본인일 수 있습니다.)")
+            "설정하면 켜집니다. (자가 호스팅이면 이 배포의 운영자가 본인일 수 있습니다.)",
+            name)
     return v
 
 
@@ -175,6 +183,7 @@ def demo() -> None:
                 raise AssertionError(f"{p}: 설정 없이 인가 URL 이 나왔다")
             except NotConfigured as e:
                 assert p.upper() + "_CLIENT_ID" in str(e), e
+                assert e.name == p.upper() + "_CLIENT_ID", e.name    # app.py 가 이걸로 상태코드를 고른다
         try:
             start("gitlab")
             raise AssertionError("모르는 제공자가 통과했다")

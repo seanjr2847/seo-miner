@@ -1167,6 +1167,55 @@ def test_collect_gsc_auth_routes_by_mode():
             f.unlink(missing_ok=True)
 
 
+def test_oauth_credentials_skips_browser_when_none_available():
+    """_oauth_credentials(): 브라우저가 없으면(_can_open_browser()==False) 그
+    조건만 보고 InstalledAppFlow 를 아예 안 부른다 — 실제로 호스팅에서 이게
+    webbrowser.Error 로 500 을 냈다(Railway 로그, 2026-08-31: 토큰 없는 사이트에서
+    /api/ga4/properties 를 부르니 서버가 브라우저를 열려다 죽었다). 브라우저가
+    있으면(CLI) 로컬 로그인 흐름은 그대로 열려야 한다 — 이것도 여기서 같이 본다.
+    """
+    import collect_gsc
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    oauth = db.CAPTURE_HOME / "gsc_oauth_client.json"
+    oauth.parent.mkdir(parents=True, exist_ok=True)
+    oauth.write_text(json.dumps({"installed": {"client_id": "x"}}), encoding="utf-8")
+    token = db.gsc_token()
+    token.unlink(missing_ok=True)              # 토큰이 없어야 로그인 경로로 떨어진다
+
+    class _FakeCreds:
+        def to_json(self):
+            return '{"token":"fake"}'
+
+    class _FakeFlow:
+        def run_local_server(self, port=0):
+            return _FakeCreds()
+
+    real_from_secrets = InstalledAppFlow.from_client_secrets_file
+    real_can_open = collect_gsc._can_open_browser
+    try:
+        # 브라우저 없음 — 로그인 흐름을 부르면 그 자체가 실패다.
+        def _must_not_call(*a, **kw):
+            raise AssertionError("브라우저가 없는데 InstalledAppFlow 를 불렀다")
+        InstalledAppFlow.from_client_secrets_file = classmethod(_must_not_call)
+        collect_gsc._can_open_browser = lambda: False
+        assert collect_gsc._oauth_credentials() is None, "브라우저 없이도 로그인을 시도했다"
+
+        # 브라우저 있음(CLI) — 로컬 로그인 흐름은 그대로 살아 있어야 한다.
+        called = []
+        InstalledAppFlow.from_client_secrets_file = classmethod(
+            lambda cls, *a, **kw: (called.append(1), _FakeFlow())[1])
+        collect_gsc._can_open_browser = lambda: True
+        creds = collect_gsc._oauth_credentials()
+        assert called, "브라우저가 있는데도 CLI 로그인 흐름을 안 불렀다 — 로컬 로그인이 깨졌다"
+        assert creds is not None and token.exists(), "로그인 뒤 토큰을 저장하지 않았다"
+    finally:
+        InstalledAppFlow.from_client_secrets_file = real_from_secrets
+        collect_gsc._can_open_browser = real_can_open
+        oauth.unlink(missing_ok=True)
+        token.unlink(missing_ok=True)
+
+
 def test_gsc_query_selfcheck():
     """gsc_query: 창 계산·필터 파싱·노출 가중평균 — 즉석 조회가 MCP 서버를 대신한다.
 
