@@ -539,6 +539,12 @@ def _check_seams() -> None:
     _c.row_factory = _sq.Row
     _c.executescript(db.SCHEMA)
     _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    # GA4 다섯 키(ga4_funnel 등, dashboard.py gather())는 GA4 연결(ga4_snapshots 존재)일
+    # 때만 조건부로 실린다 — 안 심으면 그 키를 읽는 화면이 전부 이 검사에서만 걸린다.
+    _c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,impressions,ctr,position)"
+               " VALUES(1,'2026-01-01',28,'_seam',1,1,1.0,1.0)")
+    _c.execute("INSERT INTO ga4_snapshots(project_id,snapshot_date,period_days,landing_page,sessions,sessions_all,key_events)"
+               " VALUES(1,'2026-01-01',28,'/',1,1,0)")
     _null = io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
     with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
         served = set(dashboard.gather(_c, db.get_project(_c, "_seam")))

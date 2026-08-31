@@ -1,8 +1,9 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지. -->
 <script type="application/json" class="view-def">
 {"id": "analysis", "title": "분석",
- "sections": ["an-shift", "an-movers", "an-ctr", "an-bands",
-              "an-brand", "an-intent", "an-cluster", "an-country"],
+ "sections": ["an-top", "an-shift", "an-movers", "an-daily", "an-ctr", "an-bands",
+              "an-brand", "an-newret-body", "an-intent", "an-cluster",
+              "an-funnel-body", "an-channels-body", "an-country"],
  "stages": ["gsc", "gaps"]}
 </script>
 
@@ -15,22 +16,6 @@
 .anbar i { position:absolute; top:0; bottom:0; display:block; border-radius:2px; }
 .anbar i.pos { left:50%; background:var(--patina); }
 .anbar i.neg { right:50%; background:var(--copper); }
-/* 분해 표 — 항 이름 / 막대 / 값 / 그래서 무엇을 보나 */
-.anwf { width:100%; border-collapse:collapse; margin-top:14px; }
-.anwf td { padding:9px 0; border-bottom:1px solid var(--rule-soft); vertical-align:middle; }
-.anwf td:nth-child(1) { width:104px; font:var(--micro); color:var(--slate); }
-.anwf td:nth-child(2) { padding:9px 14px; }
-.anwf td:nth-child(3) { width:76px; text-align:right; font:600 14px/1 var(--mono);
-  font-variant-numeric:tabular-nums; }
-.anwf td:nth-child(4) { width:46%; padding-left:16px; font-size:13px; color:var(--slate); }
-.anwf tr.sum td { border-bottom:0; border-top:1px solid var(--rule);
-  padding-top:12px; font-weight:600; }
-.anwf tr.sum td:nth-child(1), .anwf tr.sum td:nth-child(4) { color:var(--ink); }
-.anwf tr.sum td:nth-child(3) { font-size:19px; }
-@media (max-width:720px) {
-  .anwf td:nth-child(4) { display:none; }
-  .anwf td:nth-child(1) { width:78px; }
-}
 /* 원인 배지 — 표 안에서 한 눈에 갈린다 */
 .ancause { font:var(--micro); padding:2px 6px; border-radius:2px; white-space:nowrap; }
 .ancause.imp { color:var(--slate); background:var(--bar); }
@@ -74,7 +59,25 @@
 #an-brand-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-intent-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
+
+/* 맨 위 결론의 KPI 넷 — 재료가 모자라면 셋·넷을 오간다(칸을 억지로 안 채운다). */
+.ankpis { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--rule-soft);
+  border:1px solid var(--rule-soft); border-radius:2px; overflow:hidden; margin-top:14px; }
+.ankpi { background:var(--card); padding:14px 16px; display:flex; flex-direction:column; gap:3px; }
+.ankpi .k { font:var(--micro); color:var(--slate); }
+.ankpi b { font:600 24px/1.15 var(--mono); font-variant-numeric:tabular-nums; }
+.ankpi .s { font-size:12px; color:var(--slate); }
+@media (max-width:720px) { .ankpis { grid-template-columns:repeat(2,1fr); } }
+/* 채널 도넛 + 한 줄 설명 — 나란히, 좁은 화면에선 세로로. */
+.anchannels { display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+.anchannels .anverdict { flex:1; min-width:220px; }
 </style>
+
+<section id="an-top">
+  <div class="eyebrow">요약</div>
+  <h2>이번 수집에서 무슨 일이 있었나</h2>
+  <div id="an-top-body"></div>
+</section>
 
 <section id="an-shift">
   <div class="eyebrow" id="an-shift-eye">원인 분해</div>
@@ -91,6 +94,13 @@
   <p class="sub">위 합계를 만든 검색어들입니다. 옆의 원인이 그 검색어에서 무엇이
     움직였는지 말하고, 줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
   <div id="an-movers-body"></div>
+</section>
+
+<section id="an-daily">
+  <div class="eyebrow">검색 실적</div>
+  <h2>일별 클릭 추이</h2>
+  <p class="sub">위 숫자는 수집 간격만큼 성깁니다. 이건 하루 단위 오르내림입니다.</p>
+  <div id="an-daily-body"></div>
 </section>
 
 <section id="an-ctr">
@@ -114,6 +124,12 @@
   <div id="an-brand-body"></div>
 </section>
 
+<section id="an-newret-sec">
+  <div class="eyebrow">수요 구성 · GA4</div>
+  <h2>신규 방문인가, 재방문인가</h2>
+  <div id="an-newret-body"></div>
+</section>
+
 <section id="an-intent">
   <div class="eyebrow">의도별</div>
   <h2>사고 싶은 사람이 오고 있나</h2>
@@ -126,6 +142,18 @@
   <h2>어느 주제가 클릭을 벌고 있나</h2>
   <p class="sub" id="an-cluster-sub"></p>
   <div id="an-cluster-body"></div>
+</section>
+
+<section id="an-funnel-sec">
+  <div class="eyebrow">방문 이후 · GA4</div>
+  <h2>검색에서 전환까지의 단계별 이탈</h2>
+  <div id="an-funnel-body"></div>
+</section>
+
+<section id="an-channels-sec">
+  <div class="eyebrow">방문 이후 · GA4</div>
+  <h2>채널별 세션 구성</h2>
+  <div id="an-channels-body"></div>
 </section>
 
 <section id="an-country">
@@ -148,13 +176,6 @@ const AN_CAUSE = {
 
 const anNum = v => (v > 0 ? "+" : v < 0 ? "−" : "") +
   Math.abs(Math.round(v * 10) / 10).toLocaleString("ko-KR");
-
-function anBar(v, mx) {
-  const w = mx ? Math.min(50, Math.abs(v) / mx * 50) : 0;
-  if (!w) return '<div class="anbar"></div>';
-  return `<div class="anbar"><i class="${v < 0 ? "neg" : "pos"}"
-    style="width:${w.toFixed(1)}%"></i></div>`;
-}
 
 /* 네 항 중 가장 큰 것이 곧 "다음에 볼 자리"다. 화면이 그걸 문장으로 말한다 —
    숫자만 놓아두면 읽는 사람이 매번 같은 비교를 손으로 한다. */
@@ -183,32 +204,92 @@ function anVerdict(s) {
     ${msg}</p>`;
 }
 
+/* ── 맨 위 결론 + KPI ── 아래 절들이 다 낸 재료를 여기서 엮는다. 재료가 없으면
+   그 조각은 조용히 뺀다(지어내지 않는다) — GA4 미연결이면 KPI 가 셋으로 준다. */
+function anKpi(k, v, s, cls) {
+  return `<div class="ankpi"><span class="k">${esc(k)}</span>
+    <b class="${cls || ""}">${v}</b><span class="s">${esc(s || "")}</span></div>`;
+}
+
+function anTopKpis(d) {
+  const out = [];
+  const s = d.shift;
+  if (s && (s.prev_clicks || s.clicks))
+    out.push(anKpi("클릭 변화", anNum(s.d_clicks), `${num(s.prev_clicks)} → ${num(s.clicks)}`,
+      s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted"));
+  const bs = d.brand_split;
+  if (bs && bs.length === 2 && bs[1].d_clicks != null)
+    out.push(anKpi("논브랜드 증감", anNum(bs[1].d_clicks),
+      `전체 Δ${anNum((bs[0].d_clicks || 0) + bs[1].d_clicks)} 중`,
+      bs[1].d_clicks > 0 ? "up" : bs[1].d_clicks < 0 ? "down" : "muted"));
+  const gaps = d.ctr_gaps;
+  if (gaps && gaps.length)
+    out.push(anKpi("되찾을 클릭", "+" + num(gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0)),
+      `검색어 ${num(gaps.length)}개`, "up"));
+  if (d.ga4_funnel && d.ga4_funnel.sessions) {
+    const rate = Math.round(d.ga4_funnel.engaged_sessions / d.ga4_funnel.sessions * 100);
+    out.push(anKpi("참여 세션", rate + "%", `세션 ${num(d.ga4_funnel.sessions)} 중`,
+      rate < 50 ? "down" : ""));
+  } else {
+    const b1 = (d.rank_bands || []).find(r => r.label === "1–3위");
+    if (b1) out.push(anKpi("1–3위 검색어", num(b1.n),
+      b1.d != null ? `직전 대비 ${anNum(b1.d)}` : "노출 30 이상 기준"));
+  }
+  return out.slice(0, 4).join("");
+}
+
+function anTopVerdict(d) {
+  const parts = [];
+  const s = d.shift;
+  if (s && (s.prev_clicks || s.clicks))
+    parts.push(`클릭이 <b>${num(s.prev_clicks)} → ${num(s.clicks)}</b> ${
+      s.d_clicks > 0 ? "늘었습니다" : s.d_clicks < 0 ? "줄었습니다" : "그대로입니다"}`);
+  const bs = d.brand_split;
+  if (bs && bs.length === 2 && bs[1].d_clicks != null) {
+    const total = (bs[0].d_clicks || 0) + bs[1].d_clicks;
+    if (total) parts.push(`그중 논브랜드가 만든 몫은 <b>${anNum(bs[1].d_clicks)}</b>뿐입니다`);
+  }
+  const tx = (d.ga4_intent || []).find(r => r.label === "transactional");
+  const txClicks = (d.by_intent || []).find(r => r.label === "transactional");
+  if (tx && txClicks && txClicks.clicks && !tx.key_events)
+    parts.push(`거래성 검색어가 <b>${num(txClicks.clicks)}클릭</b>을 받고도 전환은 <b class="down">0</b>입니다`);
+  if (d.ga4_funnel && d.ga4_funnel.sessions) {
+    const rate = Math.round(d.ga4_funnel.engaged_sessions / d.ga4_funnel.sessions * 100);
+    if (rate < 60) parts.push(`참여 세션은 <b>${rate}%</b>뿐입니다`);
+  }
+  return parts.length ? `<p class="anverdict">${parts.join(", ")}.</p>` : "";
+}
+
+function anTop(d) {
+  const verdict = anTopVerdict(d), kpis = anTopKpis(d);
+  if (!verdict && !kpis)
+    return `<div class="empty">${W(
+      "아직 비교할 수집이 없습니다 — <code>/capture gsc</code> 를 한 번 더 돌리면 결론이 여기 채워집니다.",
+      "아직 비교할 수집이 없습니다 — 분석을 한 번 더 실행하면 결론이 여기 채워집니다.")}</div>`;
+  return verdict + (kpis ? `<div class="ankpis">${kpis}</div>` : "");
+}
+
+// 원인 넷은 "이전"에서 흘러 "현재"에 닿는 워터폴 하나로 — 합이 Δ클릭임이
+// 눈에 보인다. "현재" 막대는 kind:"total"(0부터 다시)이라 분해 합의 반올림
+// 오차와 무관하게 실제 값을 그대로 보여준다(검산 역할).
 function anShift(s, cmp) {
   if (!s || (!s.prev_clicks && !s.clicks))
     return `<div class="empty">${W(
       "아직 비교할 수집이 없습니다 — <code>/capture gsc</code> 를 한 번 더 돌리면 두 시점이 생깁니다.",
       "아직 비교할 수집이 없습니다 — 분석을 한 번 더 실행하면 두 시점이 생깁니다.")}</div>`;
-  const rows = [
-    ["노출 효과", s.imp_effect, "노출이 변한 몫 — 수요·색인"],
-    ["CTR 효과", s.ctr_effect, "같은 노출에서 눌린 비율이 변한 몫 — 제목·설명"],
-    ["새 검색어", s.new, "이번에 새로 걸린 검색어가 가져온 클릭"],
-    ["빠진 검색어", s.lost, "지난번엔 있었는데 이번에 사라진 검색어"],
-  ];
-  const mx = Math.max(...rows.map(r => Math.abs(r[1])), 1);
-  const body = rows.map(([l, v, why]) => `<tr>
-      <td>${l}</td><td>${anBar(v, mx)}</td>
-      <td class="${v > 0 ? "up" : v < 0 ? "down" : "muted"}">${anNum(v)}</td>
-      <td>${why}</td></tr>`).join("");
+  const chart = window.chWaterfall([
+    {label: "이전", value: s.prev_clicks, kind: "base"},
+    {label: "노출 효과", value: s.imp_effect, kind: "delta"},
+    {label: "CTR 효과", value: s.ctr_effect, kind: "delta"},
+    {label: "새 검색어", value: s.new, kind: "delta"},
+    {label: "빠진 검색어", value: s.lost, kind: "delta"},
+    {label: "현재", value: s.clicks, kind: "total"},
+  ], {width: 760, height: 220});
   const thin = s.thin
     ? `<div class="anthin">노출 30 미만인 검색어 ${num(s.thin)}개는 아래 목록에
         이름을 올리지 않았습니다 — 위 합계에는 들어 있습니다. 노출 몇 번짜리 CTR
         흔들림은 원인이 아니라 표본 부족입니다.</div>` : "";
-  return anVerdict(s) + `<table class="anwf">${body}
-    <tr class="sum"><td>클릭 변화</td><td></td>
-      <td class="${s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted"}"
-        >${anNum(s.d_clicks)}</td>
-      <td>${esc(cmp || "")} · ${num(s.prev_clicks)} → ${num(s.clicks)}</td></tr>
-  </table>` + thin;
+  return anVerdict(s) + chart + thin;
 }
 
 /* ── 검색어 행 펼침: 클릭을 움직인 검색어에서 바로 그 페이지로 ───────────────────────────────
@@ -371,6 +452,28 @@ function anCsv() {
       r.imp_effect, r.ctr_effect])));
 }
 
+// 일별 추이 — [개요]는 클릭·노출 이중축 로그를 그리지만, 여기는 위 원인 분해
+// 뒤에 붙는 보조 시각이라 클릭 한 줄이면 된다(셸 helper 재사용, 새 차트 안 만든다).
+function anDaily(rows) {
+  if (!rows || rows.length < 2)
+    return `<div class="empty">${W(
+      "일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.",
+      "일별 데이터가 아직 없습니다 — [전체 분석 실행]을 누르면 최근 28일이 채워집니다.")}</div>`;
+  return window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180});
+}
+
+// CTR 곡선 — ctr_gaps 는 이미 "기대의 절반도 못 받는" 검색어만 걸러 둔 목록이라,
+// 순위별 전 구간 곡선이 아니라 그 검색어들의 실제 vs 기대 CTR을 나란히 보여준다
+// (작은 배수 — 각자 자기 축). 전체 목록은 아래 표에 있다.
+function anCtrChart(rows) {
+  if (!rows || !rows.length) return "";
+  const groups = rows.slice(0, 8).map(r => ({
+    title: `${r.position}위 · ${r.query}`,
+    lo: 0, hi: Math.max(r.actual_ctr, r.expected_ctr, 1) * 1.1,
+    items: [{label: "실제", value: r.actual_ctr}, {label: "기대", value: r.expected_ctr}]}));
+  return window.chDumbbell(groups, {width: 640, unit: "%"});
+}
+
 function anCtr(rows) {
   if (!rows || !rows.length)
     return `<div class="empty">1페이지에 있으면서 기대 CTR의 절반도 못 받는 검색어가
@@ -379,7 +482,7 @@ function anCtr(rows) {
   const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
   return `<p class="anverdict">아래를 다 고치면 같은 순위에서
     <b>${num(total)}클릭</b>쯤을 되찾습니다 — 순위를 올리는 일이 아니라 제목·설명을
-    고치는 일입니다.</p>` +
+    고치는 일입니다.</p>` + anCtrChart(rows) +
     table(["검색어", ">평균순위", ">노출", ">실제 CTR",
            ">기대 CTR?이 순위면 보통 이 정도는 눌립니다",
            ">되찾을 클릭?노출 × (기대 − 실제) CTR"],
@@ -398,6 +501,16 @@ function anCtrRow(r, i) {
     <td class="num up">+${num(r.lost_clicks)}</td></tr>`;
 }
 
+// 이번·직전 두 줄 — 작은 배수(chDumbbell) 하나에 공유 축(0~전 구간 최댓값)을
+// 줘서 구간끼리도 서로 비교되게 한다(각자 축이면 "몇 개나 늘었나"가 안 보인다).
+function anBandsChart(rows) {
+  if (!rows.every(r => r.prev_n != null)) return "";
+  const mx = Math.max(1, ...rows.map(r => Math.max(r.n, r.prev_n)));
+  return window.chDumbbell(rows.map(r => ({title: r.label, lo: 0, hi: mx,
+    items: [{label: "이번", value: r.n}, {label: "직전", value: r.prev_n}]})),
+    {width: 640, unit: "개"});
+}
+
 function anBands(rows) {
   if (!rows || !rows.length)
     return '<div class="empty">아직 순위를 말할 수집이 없습니다.</div>';
@@ -407,7 +520,8 @@ function anBands(rows) {
   // 2페이지 밖이 느는 건 밀렸다는 뜻이다. 한 방향으로 칠하면 색이 거짓말을 한다.
   const good = (r, i) => i < 2 ? r.d > 0 : r.d < 0;
   AN_BANDS_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
-  return table(["구간", ">검색어 수", "분포", ...(has ? [">Δ?1페이지 안이 늘면 초록, 2페이지 밖이 늘면 주황 — 밀려난 것입니다"] : [])],
+  return anBandsChart(rows) +
+    table(["구간", ">검색어 수", "분포", ...(has ? [">Δ?1페이지 안이 늘면 초록, 2페이지 밖이 늘면 주황 — 밀려난 것입니다"] : [])],
     rows.map((r, i) => {
       const canOpen = r.queries && r.queries.length;
       return `<tr${canOpen ? ` class="opp" tabindex="0" role="button" aria-expanded="false"
@@ -492,10 +606,33 @@ function anBrand(rows, hasSnap) {
       떠받치지만 논브랜드는 순위·색인이 떠받칩니다 — ${window.go("site")} 화면을 먼저 봅니다.`;
   else
     msg = "두 갈래 다 직전과 같습니다.";
+  const chart = window.chStackRow([
+    {label: "브랜드", value: b.clicks, tone: "patina"},
+    {label: "논브랜드", value: n.clicks, tone: "slate"}], {width: 640, unit: "클릭"});
   return `<p class="anverdict">전체 클릭의 <b>${share}%</b>가 논브랜드입니다.
-    ${msg}</p>` +
+    ${msg}</p>` + chart +
     anMix(rows, r => r.label === "brand" ? "브랜드 · 내 이름을 치고 온" :
       "논브랜드 · 나를 모르고 온", null, "brand");
+}
+
+/* ── 신규·재방문(GA4) — 08. 다섯 GA4 키가 통째로 없으면 VIEW() 가 이 절 자체를
+   숨긴다. dim_value 는 GA4 원문("new"/"returning")이라 화면 말로 바꿔 낸다. */
+const AN_NEWRET = {new: "신규", returning: "재방문"};
+function anNewret(rows) {
+  if (!rows || !rows.length) return "";
+  const total = rows.reduce((a, r) => a + (r.sessions || 0), 0);
+  if (!total) return "";
+  const nw = rows.find(r => r.label === "new");
+  const share = anShare(nw ? nw.sessions : 0, total);
+  const chart = window.chStackRow(rows.map(r => ({
+    label: AN_NEWRET[r.label] || r.label, value: r.sessions,
+    tone: r.label === "new" ? "patina" : "slate"})), {width: 640, unit: "세션"});
+  return `<p class="anverdict">유기 세션의 <b>${share}%</b>가 신규 방문입니다.
+    재방문은 이미 우리를 아는 사람이 검색으로 돌아온 몫이라, 새 수요는 신규 쪽에서만
+    옵니다.</p>` + chart +
+    `<p class="anthin">GSC 클릭(구글만)과 GA4 세션(네이버·빙 등도 포함)은 같은 것을
+      세지 않습니다 — 위 [수요 구성]의 브랜드·논브랜드와 이 축은 서로 다른 집계라
+      1:1로 안 겹칩니다.</p>`;
 }
 
 /* intent·cluster 는 같은 조인(검색어 ↔ 키워드)을 쓰므로 안내도 한 벌이다.
@@ -536,6 +673,21 @@ function anGa4Intent(rows) {
     </tr>`));
 }
 
+// 클릭 비중 막대 + 오른쪽에 GA4 전환(gaRows 있을 때만) — 클릭은 있는데 전환이
+// 0인 갈래는 flag(산화동)로 눈에 띄게 한다. gaRows 없으면(GA4 미연결) right 를
+// 안 채워 기본 클릭 수만 낸다.
+function anIntentChart(named, gaRows) {
+  const gaBy = {};
+  (gaRows || []).forEach(r => { gaBy[r.label] = r; });
+  const hasGa = !!(gaRows && gaRows.length);
+  return window.chBarList(named.map(r => {
+    const ga = gaBy[r.label];
+    return {label: AN_INTENT[r.label] || r.label, value: r.clicks,
+      right: hasGa ? (ga ? num(ga.key_events) : "—") : undefined,
+      flag: hasGa && ga && !ga.key_events && r.clicks > 0};
+  }), {width: 640});
+}
+
 function anIntent(rows, gaRows) {
   if (!rows || !rows.length)
     return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
@@ -553,7 +705,8 @@ function anIntent(rows, gaRows) {
     : `클릭이 가장 많은 갈래는 <b>${esc(AN_INTENT[top.label] || top.label)}</b>이고,
        거래성은 ${num(tx.clicks)}클릭(평균순위 ${tx.position ?? "—"})입니다.
        거래성 순위가 정보성보다 아래라면 돈이 되는 쪽을 먼저 밉니다.`;
-  return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "의도") +
+  return `<p class="anverdict">${msg}</p>` + anIntentChart(named, gaRows) +
+    anUnmatched(rows, "의도") +
     anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent") + anGa4Intent(gaRows);
 }
 
@@ -572,11 +725,27 @@ function anCluster(rows) {
        ${worst.ctr}%. 글을 더 쓸 곳이 아니라 있는 글의 제목·설명을 고칠 곳입니다.`
     : `<b>${esc(best.label)}</b> 한 묶음이 실적을 다 지고 있습니다. 이 묶음이 흔들리면
        전체가 흔들린다는 뜻이라, 두 번째 기둥을 만드는 것이 다음 일입니다.`;
-  return `<p class="anverdict">${msg}</p>` + anUnmatched(rows, "클러스터") +
+  // 주제 묶음은 GA4 전환 근사(anGa4Intent 같은 것)가 없다 — 만들면 지어낸 값이라
+  // 클릭 비중만 낸다. 전환까지 보려면 위 [의도별]을 본다.
+  const chart = window.chBarList(named.map(r => ({label: r.label, value: r.clicks})), {width: 640});
+  return `<p class="anverdict">${msg}</p>` + chart + anUnmatched(rows, "클러스터") +
     anMix(rows, r => esc(r.label), null, "cluster");
 }
 
-function anCountry(rows, date) {
+// 클릭 비중 막대 + 오른쪽에 GA4 국가별 전환(있을 때만). GSC·GA4 둘 다 국가를
+// 같은 ISO 코드(kor/usa/…)로 낸다 — 그래서 label 로 그대로 조인된다.
+function anCountryChart(rows, gaRows) {
+  const gaBy = {};
+  (gaRows || []).forEach(r => { gaBy[r.label] = r; });
+  const hasGa = !!(gaRows && gaRows.length);
+  return window.chBarList(rows.slice(0, 8).map(r => {
+    const ga = gaBy[r.label];
+    return {label: r.label.toUpperCase(), value: r.clicks,
+      right: hasGa ? (ga ? num(ga.key_events) : "—") : undefined};
+  }), {width: 640});
+}
+
+function anCountry(rows, date, gaRows) {
   if (!date)
     return `<div class="empty">국가별 실적을 아직 안 읽었습니다 — ` + W(
       `설정의 <code>gsc_breakdown</code> 에 <code>country</code> 가 들어간 뒤
@@ -598,8 +767,44 @@ function anCountry(rows, date) {
        타깃 밖 나라가 노출을 먹고 있으면 그 노출은 CTR·평균순위만 끌어내립니다 —
        숫자를 볼 때 그 몫을 빼고 보고, 다른 나라 수요가 꾸준하면 다국어 페이지나
        hreflang 을 검토합니다.`;
-  return `<p class="anverdict">${msg}</p>` +
+  return `<p class="anverdict">${msg}</p>` + anCountryChart(rows, gaRows) +
     anMix(rows, r => `<span class="lat">${esc(r.label).toUpperCase()}</span>`);
+}
+
+/* ── 검색에서 전환까지 단계별 이탈(11) — GSC 축(노출·클릭)과 GA4 축(세션부터)이
+   섞인 한 깔때기다. 두 축이 같은 것을 안 센다는 문장을 반드시 붙인다. */
+function anFunnel(f) {
+  if (!f) return "";
+  const steps = [
+    {label: "노출", value: f.impressions}, {label: "클릭", value: f.clicks},
+    {label: "유기 세션", value: f.sessions}, {label: "참여 세션", value: f.engaged_sessions},
+    {label: "전환", value: f.key_events},
+  ];
+  const rate = f.sessions ? Math.round(f.engaged_sessions / f.sessions * 100) : 0;
+  return `<p class="anverdict">들어온 세션의 <b>${rate}%</b>만 무언가를 하고 나머지는
+    그대로 나갑니다.</p>` + window.chFunnel(steps, {width: 640}) +
+    `<p class="anthin">노출·클릭은 GSC(구글 검색결과만) 축이고, 유기 세션부터는
+      GA4(네이버·빙 등 다른 검색엔진 유입도 포함) 축입니다 — 하나로 이어진 값이 아니라
+      각자 자기 축의 스냅샷을 나란히 놓은 것이라 <b>클릭과 세션은 1:1로 비교하지
+      않습니다.</b></p>`;
+}
+
+/* ── 채널별 세션 구성(12) — 우리가 가진 GA4 분해는 organic/all 뿐이라, 그 이상
+   (직접·추천·소셜 등 세부 채널)은 지어내지 않고 "그 외"로 접는다. */
+function anChannels(c) {
+  if (!c) return "";
+  const other = Math.max(0, (c.all || 0) - (c.organic || 0));
+  const total = c.organic + other;
+  if (!total) return "";
+  const share = anShare(c.organic, total);
+  const donut = window.chDonut([
+    {label: "유기 검색", value: c.organic, on: true},
+    {label: "그 외 채널", value: other}], {width: 160});
+  return `<div class="anchannels">${donut}
+    <p class="anverdict" style="margin:0">전체 세션의 <b>${share}%</b>를 검색이
+      데려옵니다. 검색이 흔들리면 대체할 채널의 몫이 그만큼 좁다는 뜻입니다.</p></div>
+    <p class="anthin">유기 검색 세션에는 네이버·빙 등도 들어갑니다 — GSC 클릭(구글만)과는
+      같은 것을 세지 않습니다.</p>`;
 }
 
 VIEW("analysis", function (d) {
@@ -609,10 +814,12 @@ VIEW("analysis", function (d) {
   const per = d.gsc_period ? `${d.gsc_period}일` : "";
   const cmp = d.gsc_prev && d.gsc_date
     ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
+  $("an-top-body").innerHTML = anTop(d);
   $("an-shift-eye").textContent = cmp || "원인 분해";
   AN_SHIFT = d.shift || null;
   $("an-shift-body").innerHTML = anShift(d.shift, cmp);
   $("an-movers-body").innerHTML = anMovers(d.shift);
+  $("an-daily-body").innerHTML = anDaily(d.daily);
   // 누를 줄이 없을 때 "줄을 누르면" 이라고 하면 화면이 거짓말을 한다.
   $("an-ctr-sub").innerHTML = `1페이지(1–${(d.rules || {}).page1 || 10}위)에 있는데
     그 순위면 보통 나오는 CTR의 절반도 못 받는 검색어입니다. 순위를 올릴 필요가
@@ -627,6 +834,11 @@ VIEW("analysis", function (d) {
   $("an-brand-sub").innerHTML = `검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
     20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
     쪽에서만 옵니다.${anMixHint("brand")}`;
+  // 다섯 GA4 키(ga4_funnel/channels/by_device/by_country/by_newret)는 GA4 미연결이면
+  // 통째로 없다 — d.ga4_funnel 하나로 이 화면의 GA4 절 셋을 함께 접는다/편다.
+  const hasGa4 = !!d.ga4_funnel;
+  $("an-newret-sec").hidden = !hasGa4;
+  if (hasGa4) $("an-newret-body").innerHTML = anNewret(d.ga4_by_newret);
   $("an-intent-body").innerHTML = anIntent(d.by_intent, d.ga4_intent);
   $("an-intent-sub").innerHTML = `같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
     정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
@@ -634,9 +846,13 @@ VIEW("analysis", function (d) {
   $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
   $("an-cluster-sub").innerHTML = `주제 묶음별 성적입니다. 노출은 많은데 CTR·순위가 낮은 묶음은 글을
     더 쓸 곳이 아니라 있는 글을 고칠 곳입니다.${anMixHint("cluster")}`;
+  $("an-funnel-sec").hidden = !hasGa4;
+  if (hasGa4) $("an-funnel-body").innerHTML = anFunnel(d.ga4_funnel);
+  $("an-channels-sec").hidden = !hasGa4;
+  if (hasGa4) $("an-channels-body").innerHTML = anChannels(d.ga4_channels);
   $("an-country-sub").innerHTML = `국가별 클릭·노출·CTR·평균순위입니다.` +
     (d.country_date ? ` ${esc(d.country_date)} 수집 기준이고, Δ는 그 직전 수집과의
       차이입니다 — 위 표들과 달리 이 축은 분해 수집일을 따로 씁니다.` : "");
-  $("an-country-body").innerHTML = anCountry(d.by_country, d.country_date);
+  $("an-country-body").innerHTML = anCountry(d.by_country, d.country_date, d.ga4_by_country);
 });
 </script>

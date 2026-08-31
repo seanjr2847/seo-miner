@@ -45,6 +45,15 @@
 .dgap { display:block; height:3px; margin:5px 0 0 auto; border-radius:2px;
   background:var(--copper); opacity:.5; }
 
+/* 순위 격차 옆에 GA4 기기별 전환율을 나란히 놓는다 — 단위가 달라 작은 배수로 각자
+   축을 준다(chDumbbell). GA4 미연결이면 stDevChart() 가 빈 문자열을 내 이 자리
+   자체가 안 생긴다. */
+.devcharts { display:flex; flex-wrap:wrap; gap:20px 34px; margin:4px 0 14px; }
+.devchart { flex:1 1 260px; min-width:220px; }
+.devchart-t { font:var(--micro); color:var(--slate); margin:0 0 4px; }
+.devchart-verdict { font-size:13px; line-height:1.6; margin:0 0 14px; }
+.devchart-verdict b { color:var(--copper); font-weight:600; }
+
 /* 행을 누르면 밑이 열린다 — 표가 목록에서 끝나면 "그래서 뭘 하냐"는 화면 밖에 남는다.
    펼칠 수 있다는 사실은 첫 칸의 꺾쇠가 말한다(::before 라 정렬·CSV 에는 안 섞인다). */
 tr.rw { cursor:pointer; }
@@ -105,6 +114,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   <div class="eyebrow lat">MOBILE vs DESKTOP</div>
   <h2 data-web="모바일 순위 격차">모바일에서 밀리는 검색어</h2>
   <p class="sub" id="dev-sub"></p>
+  <div id="dev-chart"></div>
   <div id="devgap"></div>
 </section>
 
@@ -548,11 +558,47 @@ function stDevDetail(q) {
       기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
+// GSC 순위 격차만으로는 "그래서 페이지를 고쳐야 하나"가 안 나온다 — GA4 기기별
+// 전환율을 나란히 놓아야 나온다. 순위(이 표에 걸린 검색어의 가중평균)와 전환율
+// (사이트 전체 GA4)은 모집단이 달라 숫자를 더하지 않는다 — 각자 자기 축을 가진
+// 작은 배수(chDumbbell) 둘로 나란히 보여주고, 결론 문장은 GA4 쪽도 나쁠 때만 낸다.
+// d.ga4_by_device 자체가 없으면(GA4 미연결) 빈 문자열을 내 이 절이 통째로 안 보인다.
+function stDevChart(d) {
+  const bd = d.ga4_by_device;
+  if (!bd || !bd.length || !ST_DEV_ROWS.length) return "";
+  const by = {};
+  for (const r of bd) by[r.label] = r;
+  const m = by.MOBILE, k = by.DESKTOP;
+  if (!m || !k || !m.sessions || !k.sessions) return "";
+  const mCvr = Math.round(m.key_events / m.sessions * 1000) / 10;
+  const kCvr = Math.round(k.key_events / k.sessions * 1000) / 10;
+  let w = 0, mSum = 0, dSum = 0;
+  for (const r of ST_DEV_ROWS) {
+    w += r.mobile_imp; mSum += r.mobile_pos * r.mobile_imp; dSum += r.desktop_pos * r.mobile_imp;
+  }
+  if (!w) return "";
+  const mPos = Math.round(mSum / w * 10) / 10, dPos = Math.round(dSum / w * 10) / 10;
+  const rankCh = window.chDumbbell(
+    [{title: "", items: [{label: "데스크톱", pos: dPos}, {label: "모바일", pos: mPos}]}],
+    {width: 320, unit: "위"});
+  const cvrCh = window.chDumbbell(
+    [{title: "", items: [{label: "데스크톱", pos: kCvr}, {label: "모바일", pos: mCvr}]}],
+    {width: 320, unit: "%"});
+  return `<div class="devcharts">
+      <div class="devchart"><p class="devchart-t">이 표에 걸린 검색어의 평균 순위</p>${rankCh}</div>
+      <div class="devchart"><p class="devchart-t">전환율 · GA4 사이트 전체</p>${cvrCh}</div>
+    </div>` + (mCvr < kCvr
+    ? `<p class="devchart-verdict">모바일이 순위도 ${stP1(dPos)}위 → ${stP1(mPos)}위로 아래고
+      전환율도 ${kCvr}% → ${mCvr}%로 아래다 — 순위만이 아니라 <b>페이지 자체를 의심</b>할 자리다.</p>`
+    : "");
+}
+
 function renderDevice(d) {
   if (!d.device_gap) return $("dev-sec").hidden = true;
   $("dev-sec").hidden = false;
   ST_DEV_ROWS = d.device_gap;
   ST_DEV_Q = "";
+  $("dev-chart").innerHTML = "";
   if (!d.device_date) {
     $("dev-sub").textContent = "";
     return $("devgap").innerHTML = W(
@@ -578,6 +624,7 @@ function renderDevice(d) {
     W(`고친 뒤 <code class="cmd" onclick="copyCmd(this)">/capture gsc</code> 로 실적을 다시 읽으면 `
       + `격차가 줄었는지 보입니다.`,
       "고친 뒤 [전체 분석 실행]으로 실적을 다시 읽으면 격차가 줄었는지 보입니다.");
+  $("dev-chart").innerHTML = stDevChart(d);
   stDevHead();
 }
 
