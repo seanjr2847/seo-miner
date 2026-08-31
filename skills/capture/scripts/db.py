@@ -180,12 +180,33 @@ CREATE TABLE IF NOT EXISTS ga4_snapshots (
   snapshot_date TEXT NOT NULL,                -- YYYY-MM-DD (수집일)
   period_days INTEGER NOT NULL,
   landing_page TEXT NOT NULL,                 -- 경로만 (정규화 규칙은 위 주석)
-  sessions INTEGER,
+  sessions INTEGER,                           -- 유기 검색(Organic Search) 세션 — GSC 클릭과 성격이 같다
+  sessions_all INTEGER,                       -- 전 채널 세션 — 유기 몫을 보려면 이게 분모다
   key_events REAL,                            -- GA4 'conversions' 의 새 이름(2024-05 개명). 컨센트 모델링으로 소수일 수 있다
   total_revenue REAL,
-  bounce_rate REAL
+  engagement_rate REAL,                       -- bounceRate의 여집합. 전환 미설정 사이트도 항상 값이 있어 이쪽을 남겼다(bounceRate는 버림, collect_ga4.py 참조)
+  avg_session_duration REAL,                  -- 평균 세션 길이(초) — 체류
+  pageviews_per_session REAL                  -- 세션당 페이지뷰 — 깊이
 );
 CREATE INDEX IF NOT EXISTS idx_ga4_proj_date ON ga4_snapshots(project_id, snapshot_date);
+-- gsc_breakdown 과 같은 문법(dim/dim_value)에 query 대신 landing_page 축(GA4엔 검색어
+-- 개념이 없다). 유기 검색 기준으로만 담는다. device는 GSC 표기(MOBILE/DESKTOP/TABLET)로,
+-- country는 GA4 countryId(alpha-2)를 GSC의 alpha-3 소문자로 맞춘다 — 변환표의 정본은
+-- collect_ga4.py의 _ALPHA2_ALPHA3.
+CREATE TABLE IF NOT EXISTS ga4_breakdown (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,
+  period_days INTEGER NOT NULL,
+  dim TEXT NOT NULL,                          -- device|country|newvsreturning
+  dim_value TEXT NOT NULL,
+  landing_page TEXT NOT NULL,
+  sessions INTEGER,
+  key_events REAL,
+  total_revenue REAL,
+  engagement_rate REAL
+);
+CREATE INDEX IF NOT EXISTS idx_ga4_bd ON ga4_breakdown(project_id, snapshot_date, dim);
 CREATE TABLE IF NOT EXISTS gsc_index_status (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -420,6 +441,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     proj_cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
     if "ga4_property" not in proj_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN ga4_property TEXT")
+        conn.commit()
+
+    # 전체 유기 검색 필터·참여율/체류/깊이 지표가 새로 생겼다(collect_ga4.py 참조).
+    # bounceRate는 engagementRate의 여집합이라 버렸다 — 컬럼도 같이 정리한다.
+    ga4_cols = {r["name"] for r in conn.execute("PRAGMA table_info(ga4_snapshots)")}
+    for col, decl in (("sessions_all", "INTEGER"), ("engagement_rate", "REAL"),
+                      ("avg_session_duration", "REAL"), ("pageviews_per_session", "REAL")):
+        if col not in ga4_cols:
+            conn.execute(f"ALTER TABLE ga4_snapshots ADD COLUMN {col} {decl}")
+            conn.commit()
+    if "bounce_rate" in ga4_cols:
+        conn.execute("ALTER TABLE ga4_snapshots DROP COLUMN bounce_rate")
         conn.commit()
 
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
@@ -687,7 +720,10 @@ def write_ga4_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date:
                        period_days: int, rows) -> int:
     """GA4 스냅샷 적재. write_gsc_snapshot 과 같은 규칙 — 같은 날 다시 넣으면 덮어쓴다.
 
-    rows: (landing_page, sessions, key_events, total_revenue, bounce_rate) 순회 가능 객체.
+    rows: (landing_page, sessions, sessions_all, key_events, total_revenue,
+           engagement_rate, avg_session_duration, pageviews_per_session) 순회 가능 객체.
+    sessions 는 유기 검색(Organic Search) 세션 — GSC 클릭과 성격이 같은 쪽은 이것이다.
+    sessions_all(전 채널)은 유기 몫을 보여주는 맥락용(collect_ga4.py 모듈 docstring 참조).
     landing_page 는 이미 collect_ga4._landing_path() 로 정규화된 값이어야 한다(여기서는
     다시 손대지 않는다 — 정규화 규칙의 정본은 collect_ga4.py 한 곳).
     """
@@ -696,12 +732,40 @@ def write_ga4_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date:
                  (project_id, snapshot_date))
     conn.executemany(
         """INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days,
-             landing_page, sessions, key_events, total_revenue, bounce_rate)
-           VALUES(?,?,?,?,?,?,?,?)""",
+             landing_page, sessions, sessions_all, key_events, total_revenue,
+             engagement_rate, avg_session_duration, pageviews_per_session)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         [(project_id, snapshot_date, period_days, lp,
+          int(sessions or 0), int(sessions_all or 0), round(float(ke or 0), 2),
+          round(float(rev or 0), 2), round(float(er or 0), 4),
+          round(float(dur or 0), 1), round(float(ppv or 0), 2))
+         for lp, sessions, sessions_all, ke, rev, er, dur, ppv in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_ga4_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                        period_days: int, dim: str, rows) -> int:
+    """GA4 차원 분해(device/country/newvsreturning) 적재 — write_gsc_breakdown 과 같은
+    규칙(같은 (project, snapshot_date, dim)만 지우고 다시 넣는다; dim별로만 지우는 게
+    핵심이다 — 하나가 실패해도 다른 축의 지난 수집분을 지우지 않는다).
+
+    rows: (dim_value, landing_page, sessions, key_events, total_revenue, engagement_rate).
+    유기 검색 기준(collect_ga4.py 모듈 docstring). dim_value 는 이미 GSC 표기로 정규화된
+    값이어야 한다(device→대문자, country→alpha-3 소문자 — 정본은 collect_ga4.py).
+    """
+    rows = list(rows)
+    conn.execute(
+        "DELETE FROM ga4_breakdown WHERE project_id=? AND snapshot_date=? AND dim=?",
+        (project_id, snapshot_date, dim))
+    conn.executemany(
+        """INSERT INTO ga4_breakdown(project_id, snapshot_date, period_days, dim,
+             dim_value, landing_page, sessions, key_events, total_revenue, engagement_rate)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, dim, dv, lp,
           int(sessions or 0), round(float(ke or 0), 2),
-          round(float(rev or 0), 2), round(float(br or 0), 4))
-         for lp, sessions, ke, rev, br in rows])
+          round(float(rev or 0), 2), round(float(er or 0), 4))
+         for dv, lp, sessions, ke, rev, er in rows])
     conn.commit()
     return len(rows)
 

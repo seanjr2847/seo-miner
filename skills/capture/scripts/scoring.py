@@ -2708,14 +2708,17 @@ def _selfcheck() -> None:
         "INSERT INTO keywords(project_id, keyword, cluster, intent, is_active) VALUES(8, ?, ?, ?, 1)",
         [("q1", None, "transactional"), ("q2", None, "info")])
     conn.executemany(
+        # sessions 는 이제 **유기 검색만**이고 sessions_all 이 전 채널이다(collect_ga4).
+        # bounce_rate 는 engagement_rate 의 여집합이라 컬럼째 걷어냈다 — 값도 뒤집어 옮긴다.
         "INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days, landing_page,"
-        " sessions, key_events, total_revenue, bounce_rate) VALUES(8, '2026-08-10', 28, ?, ?, ?, ?, ?)",
-        [("/dying/", 12, 3, 50.0, 0.4),    # 클릭 15 < GA4_NOCONV_MIN_CLICKS(20) — 굶은 축엔 안 걸린다
-         ("/rising", 15, 0, 0.0, 0.6),     # 클릭 20·세션 15·전환 0 — 이 판정의 표본 케이스
-         ("/flat", 3, 0, 0.0, 0.5),        # 클릭 25 지만 세션 3 < 하한(10) — 제외
-         ("/paid", 20, 2, 80.0, 0.3),      # 전환이 있다 — 제외
-         ("/low", 12, 0, 0.0, 0.7),        # 세션 12 는 하한을 넘지만 클릭 10 < 하한(20) — 제외
-         ("/orphan", 5, 0, 0.0, 0.9)])     # GSC 에 없는 경로 — 어느 결과에도 안 새어 나온다
+        " sessions, key_events, total_revenue, engagement_rate, sessions_all)"
+        " VALUES(8, '2026-08-10', 28, ?, ?, ?, ?, ?, ?)",
+        [("/dying/", 12, 3, 50.0, 0.6, 18),   # 클릭 15 < GA4_NOCONV_MIN_CLICKS(20) — 굶은 축엔 안 걸린다
+         ("/rising", 15, 0, 0.0, 0.4, 22),    # 클릭 20·세션 15·전환 0 — 이 판정의 표본 케이스
+         ("/flat", 3, 0, 0.0, 0.5, 5),        # 클릭 25 지만 세션 3 < 하한(10) — 제외
+         ("/paid", 20, 2, 80.0, 0.7, 31),     # 전환이 있다 — 제외
+         ("/low", 12, 0, 0.0, 0.3, 15),       # 세션 12 는 하한을 넘지만 클릭 10 < 하한(20) — 제외
+         ("/orphan", 5, 0, 0.0, 0.1, 9)])     # GSC 에 없는 경로 — 어느 결과에도 안 새어 나온다
 
     pp2 = {r["page"]: r for r in page_performance(conn, 8)}
     assert (pp2["https://www.x.com/dying/"]["sessions"],
