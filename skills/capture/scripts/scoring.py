@@ -641,6 +641,111 @@ def _ga4_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -> d
             GROUP BY landing_page""", (project_id, snapshot_date))}
 
 
+def ga4_funnel(conn: sqlite3.Connection, project_id: int, cur: str | None,
+              period: int | None) -> tuple[dict | None, dict | None]:
+    """검색 유입 깔때기 — GSC 노출·클릭 옆에 GA4 유기 세션부터 참여·전환·매출까지
+    나란히 놓는다. 채널 몫(organic/all)도 같이 낸다.
+
+    **노출·클릭과 세션 이후는 같은 것을 세지 않는다** — impressions/clicks 는 GSC
+    축(구글 검색결과 노출·클릭만)이고, sessions 부터는 GA4 축(유기 검색 세션 —
+    네이버·빙 등 다른 검색엔진 유입도 포함)이다. 하나로 이어진 깔때기가 아니라
+    각자 자기 축의 스냅샷에서 낸 숫자를 나란히 보여줄 뿐이다. 화면은 이 사실을
+    사용자에게 그대로 보여준다.
+
+    engaged_sessions 는 GA4 가 직접 안 준다 — 랜딩페이지별 sessions × engagement_rate
+    를 더한 값이다(세션 가중 — 단순 평균은 세션 적은 페이지 비중을 부풀린다),
+    round() 로 정수화한다.
+
+    channels 의 organic/all 은 sessions/sessions_all 합이다 — 랜딩페이지별로 이미
+    "그 페이지의 전 채널 세션"이 들어있는 열이라(sessions_all, ga4_snapshots 테이블
+    주석) 페이지 합으로 프로젝트 전체 몫이 나온다.
+
+    GSC 기준 수집일이 없거나 GA4 미연결(ga4_snapshots 에 이 프로젝트 행이 없음)
+    이면 (None, None) — 화면은 이 부재로 깔때기 자체를 접는다.
+    """
+    ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
+    if not (cur and ga4_date):
+        return None, None
+    imp, clk = conn.execute(
+        "SELECT SUM(impressions), SUM(clicks) FROM gsc_snapshots"
+        " WHERE project_id=? AND snapshot_date=? AND period_days=?",
+        (project_id, cur, period)).fetchone()
+    sessions = sessions_all = key_events = revenue = engaged = 0.0
+    for r in conn.execute(
+        "SELECT sessions, sessions_all, key_events, total_revenue, engagement_rate"
+        " FROM ga4_snapshots WHERE project_id=? AND snapshot_date=?",
+        (project_id, ga4_date)):
+        s = r["sessions"] or 0
+        sessions += s
+        sessions_all += r["sessions_all"] or 0
+        key_events += r["key_events"] or 0
+        revenue += r["total_revenue"] or 0
+        engaged += s * (r["engagement_rate"] or 0)
+    funnel = {"impressions": int(imp or 0), "clicks": int(clk or 0),
+              "sessions": int(sessions), "engaged_sessions": round(engaged),
+              "key_events": round(key_events, 2), "revenue": round(revenue, 2)}
+    channels = {"organic": int(sessions), "all": int(sessions_all)}
+    return funnel, channels
+
+
+# GA4 국가 분해는 country_perf(GSC)처럼 나라 수가 늘어날 수 있다 — 상위
+# GA4_BD_COUNTRY_TOP 개만 남기고 나머지는 "기타"로 접는다. device·newvsreturning
+# 은 값 종류 자체가 적어(2~3개) 접을 필요가 없다 — ga4_breakdown(top=None) 기본값.
+GA4_BD_COUNTRY_TOP = 8
+
+
+def _ga4_bd_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                dim: str) -> dict[str, dict]:
+    """ga4_breakdown 한 축(dim)을 dim_value 기준으로 접는다(landing_page 는 버린다).
+
+    engaged 는 sessions × engagement_rate 합(세션 가중 참여수) — round 는 호출부
+    (_ga4_bd_row)가 한다.
+    """
+    agg: dict[str, dict] = {}
+    for r in conn.execute(
+        """SELECT dim_value, sessions, key_events, total_revenue, engagement_rate
+             FROM ga4_breakdown WHERE project_id=? AND snapshot_date=? AND dim=?""",
+        (project_id, snapshot_date, dim)):
+        a = agg.setdefault(r["dim_value"], {"sessions": 0, "key_events": 0.0,
+                                            "revenue": 0.0, "engaged": 0.0})
+        s = r["sessions"] or 0
+        a["sessions"] += s
+        a["key_events"] += r["key_events"] or 0
+        a["revenue"] += r["total_revenue"] or 0
+        a["engaged"] += s * (r["engagement_rate"] or 0)
+    return agg
+
+
+def _ga4_bd_row(label: str, v: dict) -> dict:
+    s = v["sessions"]
+    return {"label": label, "sessions": s, "key_events": round(v["key_events"], 2),
+            "revenue": round(v["revenue"], 2),
+            "engagement_rate": round(v["engaged"] / s, 4) if s else 0.0}
+
+
+def ga4_breakdown(conn: sqlite3.Connection, project_id: int, dim: str, *,
+                  top: int | None = None) -> list[dict]:
+    """ga4_breakdown 한 축(device|country|newvsreturning)을 세션 내림차순으로.
+
+    top 을 주면 상위 top 개만 남기고 나머지를 "기타" 한 줄로 접는다(합산 sessions·
+    key_events·revenue, engagement_rate 는 세션 가중 재계산 — country 축에 쓴다,
+    GA4_BD_COUNTRY_TOP 참조). GA4 미연결이면 빈 목록.
+    """
+    ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
+    if not ga4_date:
+        return []
+    agg = _ga4_bd_agg(conn, project_id, ga4_date, dim)
+    items = sorted(agg.items(), key=lambda kv: -kv[1]["sessions"])
+    if top and len(items) > top:
+        head, tail = items[:top], items[top:]
+        merged = {"sessions": 0, "key_events": 0.0, "revenue": 0.0, "engaged": 0.0}
+        for _, v in tail:
+            for k in merged:
+                merged[k] += v[k]
+        return [_ga4_bd_row(k, v) for k, v in head] + [_ga4_bd_row("기타", merged)]
+    return [_ga4_bd_row(k, v) for k, v in items]
+
+
 def page_performance(conn: sqlite3.Connection, project_id: int, *,
                      limit: int = 30) -> list[dict]:
     """최신 스냅샷의 페이지별 성과 + 직전 대비 Δ클릭 — 많이 잃은 페이지가 위다.
@@ -2742,6 +2847,59 @@ def _selfcheck() -> None:
         == (4, 4, 50, 5.0, 1), tr
     assert (info["pages"], info["pages_matched"], info["sessions"], info["key_events"], info["shared_pages"]) \
         == (2, 2, 24, 3.0, 1), info    # info = q2 가 걸린 dying·low 합
+
+    # ── ga4_funnel(): GSC 축(2026-08-08, period 28)·GA4 축(2026-08-10) 을 나란히.
+    # 위 GA4 픽스처(프로젝트 8) 6행을 그대로 쓴다 — sessions 합 67, sessions_all 합
+    # 100, key_events 합 5.0, revenue 합 130.0, engaged = Σ(sessions*engagement_rate)
+    # = 7.2+6.0+1.5+14.0+3.6+0.5 = 32.8 → round 33. GSC 는 프로젝트 8·2026-08-08·
+    # period 28 전체(위 세 판정이 나눠 쓴 6행) 합 — 클릭 100, 노출 2430.
+    assert ga4_funnel(conn, 8, None, 28) == (None, None)           # 기준 수집일이 없으면 부재
+    assert ga4_funnel(conn, 9, "2026-08-08", 28) == (None, None)   # GA4 미연결 프로젝트는 부재
+    funnel, channels = ga4_funnel(conn, 8, "2026-08-08", 28)
+    assert funnel == {"impressions": 2430, "clicks": 100, "sessions": 67,
+                      "engaged_sessions": 33, "key_events": 5.0, "revenue": 130.0}, funnel
+    assert channels == {"organic": 67, "all": 100}, channels
+
+    # ── ga4_breakdown(): device·country·newvsreturning 을 세션 내림차순으로.
+    conn.executemany(
+        "INSERT INTO ga4_breakdown(project_id, snapshot_date, period_days, dim, dim_value,"
+        " landing_page, sessions, key_events, total_revenue, engagement_rate)"
+        " VALUES(8, '2026-08-10', 28, 'device', ?, ?, ?, ?, ?, ?)",
+        [("MOBILE", "/rising", 15, 1.0, 20.0, 0.5),   # MOBILE 은 두 landing_page 에 걸쳐 있다
+         ("MOBILE", "/paid", 5, 0.5, 5.0, 0.3),       # → 합산·세션가중 engagement_rate 확인용
+         ("DESKTOP", "/rising", 10, 2.0, 40.0, 0.6)])
+    conn.executemany(
+        "INSERT INTO ga4_breakdown(project_id, snapshot_date, period_days, dim, dim_value,"
+        " landing_page, sessions, key_events, total_revenue, engagement_rate)"
+        " VALUES(8, '2026-08-10', 28, 'newvsreturning', ?, '/rising', ?, ?, ?, ?)",
+        [("new", 12, 1.0, 10.0, 0.4), ("returning", 8, 1.0, 15.0, 0.7)])
+    # 10개국 — GA4_BD_COUNTRY_TOP(8)을 넘겨 접힘을 시험한다. engagement_rate 를
+    # 전부 0.5로 둬 접힌 "기타"의 세션가중 평균도 그대로 0.5가 되게 한다.
+    _countries = [("kor", 100), ("usa", 90), ("jpn", 80), ("gbr", 70), ("deu", 60),
+                 ("fra", 50), ("can", 40), ("aus", 30), ("ind", 20), ("bra", 10)]
+    conn.executemany(
+        "INSERT INTO ga4_breakdown(project_id, snapshot_date, period_days, dim, dim_value,"
+        " landing_page, sessions, key_events, total_revenue, engagement_rate)"
+        " VALUES(8, '2026-08-10', 28, 'country', ?, '/rising', ?, ?, ?, 0.5)",
+        [(cc, s, s / 10.0, float(s)) for cc, s in _countries])
+
+    assert ga4_breakdown(conn, 9, "device") == []                  # GA4 미연결이면 빈 목록
+    bd_dev = ga4_breakdown(conn, 8, "device")
+    assert [r["label"] for r in bd_dev] == ["MOBILE", "DESKTOP"], bd_dev  # 세션 내림차순
+    assert (bd_dev[0]["sessions"], bd_dev[0]["key_events"], bd_dev[0]["revenue"],
+           bd_dev[0]["engagement_rate"]) == (20, 1.5, 25.0, 0.45), bd_dev[0]  # 두 행 합산
+    assert bd_dev[1]["engagement_rate"] == 0.6, bd_dev[1]
+
+    bd_nr = ga4_breakdown(conn, 8, "newvsreturning")
+    assert [r["label"] for r in bd_nr] == ["new", "returning"], bd_nr
+
+    bd_co_full = ga4_breakdown(conn, 8, "country")            # top 없으면 안 접는다
+    assert len(bd_co_full) == 10, bd_co_full
+    bd_co = ga4_breakdown(conn, 8, "country", top=GA4_BD_COUNTRY_TOP)
+    assert [r["label"] for r in bd_co] == \
+        ["kor", "usa", "jpn", "gbr", "deu", "fra", "can", "aus", "기타"], bd_co
+    assert (bd_co[-1]["sessions"], bd_co[-1]["key_events"], bd_co[-1]["revenue"],
+           bd_co[-1]["engagement_rate"]) == (30, 3.0, 30.0, 0.5), bd_co[-1]  # ind+bra 접힘
 
     # ── value_mult(): GA4 매출 잠재력 보정 승수. 위 GA4 픽스처(프로젝트 8)를 그대로
     # 쓴다 — /rising 은 클릭 20·세션 15·전환 0(표본 되고 전환 없음), /paid 는 클릭

@@ -696,6 +696,9 @@ def gather(conn, p, at: str | None = None) -> dict:
     # (opps 근처에서 이미 구해 뒀다 — 여기서 다시 안 구한다)
     zero_conv_pages = scoring.zero_conversion_pages(conn, pid)
     ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
+    # 깔때기·채널·분해(기기/국가/신규-재방문) — funnel 이 None 이면(부재) 아래
+    # return 딕셔너리에서 키 자체를 안 싣는다(zero_conv_pages 와 달리 부재 규약).
+    ga4_funnel, ga4_channels = scoring.ga4_funnel(conn, pid, cur, period)
 
     # ── 백링크 (collect_backlinks) ────────────────────────────────────────
     # 요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
@@ -832,7 +835,15 @@ def gather(conn, p, at: str | None = None) -> dict:
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
             "crawl": crawl,
             "progress": prog,
-            "guide": guide}
+            "guide": guide,
+            # GA4 미연결이면 이 다섯 키는 아예 안 싣는다(빈 값이 아니라 부재) —
+            # 화면은 `if (!d.ga4_funnel) return;` 으로 조용히 접는다.
+            **({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
+                "ga4_by_device": scoring.ga4_breakdown(conn, pid, "device"),
+                "ga4_by_country": scoring.ga4_breakdown(conn, pid, "country",
+                                                        top=scoring.GA4_BD_COUNTRY_TOP),
+                "ga4_by_newret": scoring.ga4_breakdown(conn, pid, "newvsreturning")}
+              if ga4_funnel else {})}
 
 
 def payload(project: str, at: str | None = None) -> dict:
