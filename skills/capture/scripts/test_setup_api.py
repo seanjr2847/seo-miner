@@ -117,6 +117,59 @@ code, r = post("/api/setup/project", {"name": "demo", "type": "saas",
                                       "domain": "demo.com"})
 assert code == 400 and "이미 있습니다" in r["error"], r
 
+# ── 프로젝트 설정 조회 및 수정 API 검증 (/api/project/config) ────────
+code, r = post("/api/setup/project", {
+    "name": "cfgdemo", "type": "saas", "domain": "cfgdemo.com",
+    "brand_aliases": "별칭1, 별칭2", "seed_keywords": "씨앗1, 씨앗2"})
+assert code == 200 and r["ok"], r
+
+# 1) 조회
+code, cfg_res = get("/api/project/config?project=cfgdemo")
+assert code == 200 and cfg_res["ok"], cfg_res
+assert cfg_res["config"]["name"] == "cfgdemo"
+assert "preset" in cfg_res["yaml_raw"]
+
+# 2) 폼 방식 수정 (기존 preset 유지 및 별칭/키워드 업데이트)
+code, edit_res = post("/api/project/config", {
+    "project": "cfgdemo",
+    "form": {
+        "domain": "cfgdemo-updated.com",
+        "type": "saas",
+        "brand_aliases": "별칭1, 별칭수정, AliasNew",
+        "seed_keywords": "새키워드1\n새키워드2"
+    }
+})
+assert code == 200 and edit_res["ok"], edit_res
+doc_after = yaml.safe_load((HOME / "projects" / "cfgdemo.yaml").read_text("utf-8"))
+assert doc_after["domain"] == "cfgdemo-updated.com"
+assert doc_after["brand_aliases"] == ["별칭1", "별칭수정", "AliasNew"]
+assert "preset" in doc_after
+
+# 3) YAML 직접 수정
+new_yaml = (
+    "name: cfgdemo\n"
+    "type: saas\n"
+    "domain: cfgdemo-direct-yaml.com\n"
+    "locale: ko-KR\n"
+    "brand_aliases: [직접수정브랜드]\n"
+    "seed_keywords: [직접키워드]\n"
+)
+code, yaml_res = post("/api/project/config", {
+    "project": "cfgdemo",
+    "yaml_raw": new_yaml
+})
+assert code == 200 and yaml_res["ok"], yaml_res
+doc_yaml = yaml.safe_load((HOME / "projects" / "cfgdemo.yaml").read_text("utf-8"))
+assert doc_yaml["domain"] == "cfgdemo-direct-yaml.com"
+assert doc_yaml["brand_aliases"] == ["직접수정브랜드"]
+
+# 4) 문법 오류 YAML 거부 확인
+code, err_res = post("/api/project/config", {
+    "project": "cfgdemo",
+    "yaml_raw": "invalid: [unclosed"
+})
+assert code == 400 and not err_res["ok"], err_res
+
 post("/api/setup/keys", {"OPENROUTER_API_KEY": "sk-test", "SERPER_API_KEY": ""})
 env = (HOME / "env").read_text("utf-8")
 assert env.strip() == "OPENROUTER_API_KEY=sk-test", env

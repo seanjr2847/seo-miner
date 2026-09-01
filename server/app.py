@@ -850,6 +850,32 @@ async def api_settings_set(request: Request):
         return {"ok": True, "run_every_hours": hours}
 
 
+@app.get("/api/project/config")
+def api_project_config(project: str, request: Request):
+    """사이트별 설정 YAML 및 파싱된 폼 메타데이터 조회."""
+    uid = _require_uid(request)
+    with store.session(uid, project, isolate=True):
+        r = dashboard.read_project_config(project)
+        if not r.get("ok"):
+            raise HTTPException(status_code=400, detail=r.get("error", "설정을 읽지 못했습니다"))
+        return r
+
+
+@app.post("/api/project/config")
+async def api_project_config_save(request: Request):
+    """사이트별 설정 수정 (YAML 직접 저장 또는 폼 저장) -> 동기화."""
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or body.get("name") or "")
+    if not project:
+        raise HTTPException(status_code=400, detail="프로젝트 이름을 지정해 주세요.")
+    with store.session(uid, project):
+        r = dashboard.save_project_config(body)
+        if not r.get("ok"):
+            raise HTTPException(status_code=400, detail=r.get("error", "설정 저장 실패"))
+        return r
+
+
 # --- GA4 ------------------------------------------------------------------
 # GSC 와 달리 GA4 속성 ID 는 도메인에서 유추가 안 된다(숫자 ID 이고 도메인과 매핑이
 # 없다) — 그래서 목록에서 사람이 직접 고른다. list_properties/suggest_property 는
@@ -1040,16 +1066,19 @@ def demo() -> None:
         # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
-                     "/api/settings?project=x", "/api/ai/prompts?project=x",
+                     "/api/settings?project=x", "/api/project/config?project=x",
+                     "/api/ai/prompts?project=x",
                      "/api/report?project=x", "/api/export?project=x&table=keywords",
                      "/api/keywords?project=x", "/api/backlinks?project=x",
                      "/api/creations?project=x", "/api/run/status",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
-                     "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
+        for path in ("/api/repo", "/api/create", "/api/settings", "/api/project/config",
+                     "/api/ai/prompts", "/api/ai/prompts/edit", "/api/sites", "/api/keywords",
+                     "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
+        assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401, \
+            "/api/opp 가 로그인 없이 열렸다"
 
         r = c.get("/auth/login", follow_redirects=False)
         assert r.status_code == 302, (r.status_code, r.text)

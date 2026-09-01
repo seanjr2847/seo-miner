@@ -315,6 +315,104 @@ def create_project(f: dict) -> dict:
     return {"ok": True, "name": name, "path": str(path)}
 
 
+def read_project_config(project: str) -> dict:
+    """프로젝트의 YAML 원문과 파싱된 설정을 읽는다."""
+    name = str(project or "").strip()
+    if not name:
+        return {"ok": False, "error": "프로젝트 이름을 지정해 주세요."}
+    path = db.CAPTURE_HOME / "projects" / f"{name}.yaml"
+    if not path.exists():
+        return {"ok": False, "error": f"'{name}' 설정 파일({name}.yaml)을 찾을 수 없습니다."}
+    try:
+        import yaml
+    except ImportError:
+        return {"ok": False, "error": "기본 부품(pyyaml)이 설치되지 않았습니다."}
+    try:
+        yaml_raw = path.read_text("utf-8")
+        parsed = yaml.safe_load(yaml_raw) or {}
+    except Exception as e:
+        return {"ok": False, "error": f"YAML 읽기 오류: {e}"}
+    return {"ok": True, "project": name, "yaml_raw": yaml_raw, "config": parsed}
+
+
+def save_project_config(f: dict) -> dict:
+    """기존 프로젝트 설정 저장 (YAML 직접 수정 or 폼 수정) -> 파일 갱신 및 db.sync_project 실행."""
+    name = str(f.get("project") or f.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "프로젝트 이름을 지정해 주세요."}
+    path = db.CAPTURE_HOME / "projects" / f"{name}.yaml"
+    if not path.exists():
+        return {"ok": False, "error": f"'{name}' 설정 파일({name}.yaml)이 존재하지 않습니다."}
+
+    try:
+        import yaml
+    except ImportError:
+        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다."}
+
+    if "yaml_raw" in f:
+        # YAML 직접 저장 모드
+        raw = str(f.get("yaml_raw") or "")
+        try:
+            doc = yaml.safe_load(raw)
+            if not isinstance(doc, dict):
+                return {"ok": False, "error": "YAML 내용은 딕셔너리(키-값 쌍) 형태여야 합니다."}
+        except Exception as e:
+            return {"ok": False, "error": f"YAML 문법 오류: {e}"}
+
+        doc_name = str(doc.get("name") or "").strip()
+        if doc_name and doc_name != name:
+            return {"ok": False, "error": f"설정 내 'name'({doc_name})은 프로젝트 이름({name})과 일치해야 합니다."}
+        if not doc.get("domain"):
+            return {"ok": False, "error": "도메인('domain')은 필수 항목입니다."}
+
+        path.write_text(raw, "utf-8")
+    else:
+        # 폼 필드 저장 모드
+        form = f.get("form") or f
+        try:
+            existing = yaml.safe_load(path.read_text("utf-8")) or {}
+            if not isinstance(existing, dict):
+                existing = {}
+        except Exception:
+            existing = {}
+
+        def items(key: str) -> list[str]:
+            val = form.get(key, "")
+            if isinstance(val, list):
+                return [str(s).strip() for s in val if str(s).strip()]
+            return [s.strip() for s in re.split(r"[,\n]", str(val)) if s.strip()]
+
+        domain = str(form.get("domain", "")).strip() or str(existing.get("domain", "")).strip()
+        if not domain:
+            return {"ok": False, "error": "도메인을 입력해 주세요."}
+
+        proj_type = form.get("type") or existing.get("type", "saas")
+        if proj_type not in PROJECT_TYPES:
+            return {"ok": False, "error": f"종류는 {'/'.join(PROJECT_TYPES)} 중 하나여야 합니다."}
+
+        existing["name"] = name
+        existing["type"] = proj_type
+        existing["domain"] = domain
+        existing["locale"] = str(form.get("locale") or existing.get("locale") or "ko-KR").strip()
+        existing["gsc_property"] = str(form.get("gsc_property") or existing.get("gsc_property") or f"sc-domain:{domain}").strip()
+        existing["brand_aliases"] = items("brand_aliases")
+        existing["seed_keywords"] = items("seed_keywords")
+        existing["competitors_manual"] = items("competitors_manual")
+        existing["tools"] = items("tools")
+
+        path.write_text(
+            f"# 대시보드 설정 화면에서 수정 — 손으로 고친 뒤에는\n"
+            f"# python db.py sync-project {path} 를 다시 돌리면 반영됩니다.\n"
+            + yaml.safe_dump(existing, allow_unicode=True, sort_keys=False), "utf-8")
+
+    try:
+        db.sync_project(str(path))
+    except Exception as e:
+        return {"ok": False, "error": f"DB 동기화 실패: {e}"}
+
+    return {"ok": True, "name": name, "path": str(path)}
+
+
 # 호스팅(웹) 주소 — 로컬에서 만든 "웹에서 이어 하기" 링크가 가리키는 곳.
 # 배포 주소가 바뀌면 여기 한 줄만 고친다(env 로도 덮는다).
 HOSTED_URL = os.environ.get("SEOMINER_HOSTED_URL",
@@ -877,6 +975,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(repo_prefill())
         if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
             return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
+        if u.path in ("/api/setup/project/config", "/api/project/config"):
+            proj_name = parse_qs(u.query).get("project", [""])[0]
+            return self._json(read_project_config(proj_name))
         if u.path == "/api/projects":
             conn = db.connect()
             names = [r[0] for r in
@@ -896,7 +997,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path not in ("/api/opp", "/api/setup/run", "/api/setup/keys",
-                        "/api/setup/project", "/api/setup/gsc-client"):
+                        "/api/setup/project", "/api/setup/project/config",
+                        "/api/setup/gsc-client", "/api/project/config"):
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -918,6 +1020,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/project":
             r = create_project(body)
+            return self._json(r, 200 if r["ok"] else 400)
+        if path in ("/api/setup/project/config", "/api/project/config"):
+            r = save_project_config(body)
             return self._json(r, 200 if r["ok"] else 400)
 
         if body.get("status") not in db.OPP_STATUSES:

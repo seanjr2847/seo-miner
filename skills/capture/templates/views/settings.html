@@ -15,32 +15,53 @@
   </div>
 
   <div class="step">
-    <h3>2. 첫 사이트 <span class="stat" id="s-proj"></span></h3>
-    <p class="why">측정할 사이트를 등록합니다. 나중에 <code>~/.capture/projects/</code>에서
-      고칠 수 있습니다.</p>
-    <div class="grid">
-      <div><label>이름 — 명령에 쓸 짧은 영문</label><input id="p-name" placeholder="mysite"></div>
-      <div><label>종류</label><select id="p-type">
-        <option value="saas">saas — 서비스·앱</option>
-        <option value="game">game — 게임</option>
-        <option value="local_clinic">local_clinic — 지역 매장·병원</option>
-        <option value="directory">directory — 목록·디렉터리</option>
-      </select></div>
-      <div><label>도메인</label><input id="p-domain" placeholder="example.com"></div>
-      <div><label>언어-지역</label><input id="p-locale" value="ko-KR"></div>
-      <div><label>서치콘솔 속성 — 비우면 sc-domain:도메인</label>
-        <input id="p-gsc" placeholder="sc-domain:example.com"></div>
-      <div><label>브랜드 표기 — 쉼표로 여러 개</label>
-        <input id="p-alias" placeholder="마이사이트, MySite"></div>
+    <h3>2. 사이트 등록 및 설정 <span class="stat" id="s-proj"></span></h3>
+    <p class="why">측정할 사이트를 등록하거나 기존 사이트 설정을 수정합니다. 설정은 <code>~/.capture/projects/{name}.yaml</code> 파일에 보관되며 저장 즉시 동기화됩니다.</p>
+    <div id="p-sel-wrap" class="row" style="margin-bottom: 12px; display: none; align-items: center; gap: 8px;">
+      <label style="font-weight: 500;">대상 사이트:</label>
+      <select id="p-select" aria-label="대상 사이트 선택"></select>
+      <button class="go sec" id="btn-proj-new" type="button">+ 새 사이트 등록</button>
     </div>
-    <label>씨앗 키워드 — 떠오르는 검색어 3~10개 (쉼표나 줄바꿈)</label>
-    <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
-    <label>경쟁사 도메인 — 선택</label>
-    <input id="p-comp" placeholder="competitor.com, other.com">
-    <label>등재·경쟁 도구 이름 — 남의 브랜드 검색을 걸러냅니다 (쉼표)</label>
-    <input id="p-tools" placeholder="ecrett, paperpal, future tools">
-    <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
-      <span class="msg" id="m-proj"></span></div>
+    <div class="tabs" id="p-tabs" style="display: flex; gap: 6px; margin: 10px 0 16px;">
+      <button class="on" id="tab-proj-form" type="button">간편 폼</button>
+      <button id="tab-proj-yaml" type="button">YAML 직접 편집</button>
+    </div>
+    <div id="proj-form-panel">
+      <div class="grid">
+        <div><label>이름 — 명령에 쓸 짧은 영문</label><input id="p-name" placeholder="mysite"></div>
+        <div><label>종류</label><select id="p-type">
+          <option value="saas">saas — 서비스·앱</option>
+          <option value="game">game — 게임</option>
+          <option value="local_clinic">local_clinic — 지역 매장·병원</option>
+          <option value="directory">directory — 목록·디렉터리</option>
+        </select></div>
+        <div><label>도메인</label><input id="p-domain" placeholder="example.com"></div>
+        <div><label>언어-지역</label><input id="p-locale" value="ko-KR"></div>
+        <div><label>서치콘솔 속성 — 비우면 sc-domain:도메인</label>
+          <input id="p-gsc" placeholder="sc-domain:example.com"></div>
+        <div><label>브랜드 표기 (brand_aliases) — 쉼표로 여러 개</label>
+          <input id="p-alias" placeholder="마이사이트, MySite"></div>
+      </div>
+      <label>씨앗 키워드 (seed_keywords) — 떠오르는 검색어 3~10개 (쉼표나 줄바꿈)</label>
+      <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
+      <label>경쟁사 도메인 (competitors_manual) — 선택 (쉼표)</label>
+      <input id="p-comp" placeholder="competitor.com, other.com">
+      <label>등재·경쟁 도구 이름 (tools/foreign_brands) — 남의 브랜드 검색을 걸러냅니다 (쉼표)</label>
+      <input id="p-tools" placeholder="ecrett, paperpal, future tools">
+      <div class="row">
+        <button class="go" id="btn-proj">사이트 등록</button>
+        <button class="go" id="btn-proj-save" style="display: none;">설정 저장</button>
+        <span class="msg" id="m-proj"></span>
+      </div>
+    </div>
+    <div id="proj-yaml-panel" style="display: none;">
+      <p class="why" style="margin-top:0"><code>brand_aliases</code>, <code>seed_keywords</code>, <code>limits</code>, <code>preset</code> 등 YAML 파일 내용을 직접 편집할 수 있습니다.</p>
+      <textarea id="p-yaml-raw" style="font-family: var(--mono, monospace); width: 100%; min-height: 240px; font-size: 13px; line-height: 1.5; tab-size: 2; box-sizing: border-box;"></textarea>
+      <div class="row" style="margin-top: 10px;">
+        <button class="go" id="btn-proj-yaml-save">YAML 저장 및 동기화</button>
+        <span class="msg" id="m-proj-yaml"></span>
+      </div>
+    </div>
   </div>
 
   <div class="step">

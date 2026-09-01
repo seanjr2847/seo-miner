@@ -512,6 +512,13 @@
     sec.addEventListener("click", function (ev) {
       var t = ev.target.closest ? ev.target.closest("[data-h]") : null;
       if (t) return setSave(Number(t.dataset.h));
+      var tab = ev.target.closest ? ev.target.closest("[data-cfg-tab]") : null;
+      if (tab) {
+        CFG_TAB = tab.dataset.cfgTab;
+        return cfgRender("");
+      }
+      if (ev.target.closest && ev.target.closest("[data-cfg-form-save]")) return cfgFormSave();
+      if (ev.target.closest && ev.target.closest("[data-cfg-yaml-save]")) return cfgYamlSave();
       if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
@@ -528,8 +535,128 @@
         (p.h === SET_H.run_every_hours ? ' class="on"' : "") + ">" + esc(p.label) +
         "</button>";
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
+    cfgRender();
     repoRender();
     ga4Render();
+  }
+
+  // 사이트 설정 (브랜드 별칭, 씨앗 키워드, 타사 도구, YAML 편집)
+  var CFG_DATA = null, CFG_TAB = "form";
+  async function cfgLoad() {
+    var pj = proj();
+    if (!pj) return;
+    try {
+      var r = await fetch("/api/project/config?project=" + encodeURIComponent(pj));
+      var d = await r.json();
+      if (r.ok && d.ok) {
+        CFG_DATA = d;
+        cfgRender("");
+      }
+    } catch (e) {}
+  }
+
+  function cfgRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec) return;
+    var body = sec.querySelector(".repo.cfg .body");
+    if (!body) return;
+    if (!CFG_DATA) {
+      body.innerHTML = '<p class="none">설정을 불러오는 중…</p>';
+      return;
+    }
+    var cfg = CFG_DATA.config || {};
+    var join = function (v) { return Array.isArray(v) ? v.join(", ") : (v || ""); };
+    var note = msg ? '<span class="msg" style="margin-left:8px">' + esc(msg) + '</span>' : "";
+
+    var tabs = '<div class="tabs" style="display:flex;gap:6px;margin:2px 0 12px">' +
+      '<button data-cfg-tab="form"' + (CFG_TAB === "form" ? ' class="on"' : '') + '>간편 폼</button>' +
+      '<button data-cfg-tab="yaml"' + (CFG_TAB === "yaml" ? ' class="on"' : '') + '>YAML 직접 편집</button>' +
+      '</div>';
+
+    if (CFG_TAB === "yaml") {
+      body.innerHTML = tabs +
+        '<p class="none" style="margin-bottom:8px">YAML 설정을 직접 수정합니다. 저장 시 Brain과 즉시 동기화됩니다.</p>' +
+        '<textarea class="sm-cfg-yaml" style="width:100%;font-family:var(--mono);min-height:220px;font-size:13px;line-height:1.5;box-sizing:border-box;margin-bottom:10px">' +
+        esc(CFG_DATA.yaml_raw || "") + '</textarea>' +
+        '<div class="opts"><button data-cfg-yaml-save>YAML 저장</button>' + note + '</div>';
+      return;
+    }
+
+    body.innerHTML = tabs +
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:10px">' +
+      '<div><label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">종류 (type)</label>' +
+      '<select class="sm-cfg-type" style="width:100%">' +
+      ['saas', 'game', 'local_clinic', 'directory'].map(function (t) {
+        return '<option value="' + t + '"' + (cfg.type === t ? ' selected' : '') + '>' + t + '</option>';
+      }).join("") + '</select></div>' +
+      '<div><label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">도메인 (domain)</label>' +
+      '<input class="sm-cfg-domain" style="width:100%" value="' + esc(cfg.domain || "") + '"></div>' +
+      '<div><label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">언어-지역 (locale)</label>' +
+      '<input class="sm-cfg-locale" style="width:100%" value="' + esc(cfg.locale || "ko-KR") + '"></div>' +
+      '<div><label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">서치콘솔 속성 (gsc_property)</label>' +
+      '<input class="sm-cfg-gsc" style="width:100%" value="' + esc(cfg.gsc_property || "") + '"></div>' +
+      '<div style="grid-column:1/-1"><label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">브랜드 표기 (brand_aliases) — 쉼표로 여러 개</label>' +
+      '<input class="sm-cfg-alias" style="width:100%" value="' + esc(join(cfg.brand_aliases)) + '"></div>' +
+      '</div>' +
+      '<label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">씨앗 키워드 (seed_keywords) — 쉼표나 줄바꿈</label>' +
+      '<textarea class="sm-cfg-seeds" style="width:100%;min-height:60px;margin-bottom:10px;box-sizing:border-box">' + esc(join(cfg.seed_keywords)) + '</textarea>' +
+      '<label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">경쟁사 도메인 (competitors_manual) — 쉼표</label>' +
+      '<input class="sm-cfg-comp" style="width:100%;margin-bottom:10px;box-sizing:border-box" value="' + esc(join(cfg.competitors_manual)) + '">' +
+      '<label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">등재·경쟁 도구 이름 (tools/foreign_brands) — 쉼표</label>' +
+      '<input class="sm-cfg-tools" style="width:100%;margin-bottom:12px;box-sizing:border-box" value="' + esc(join(cfg.tools)) + '">' +
+      '<div class="opts"><button data-cfg-form-save>설정 저장</button>' + note + '</div>';
+  }
+
+  async function cfgFormSave() {
+    var sec = document.getElementById("sm-set");
+    var pj = proj();
+    if (!sec || !pj) return;
+    cfgRender("저장 중…");
+    var form = {
+      project: pj,
+      type: sec.querySelector(".sm-cfg-type") ? sec.querySelector(".sm-cfg-type").value : "saas",
+      domain: sec.querySelector(".sm-cfg-domain") ? sec.querySelector(".sm-cfg-domain").value : "",
+      locale: sec.querySelector(".sm-cfg-locale") ? sec.querySelector(".sm-cfg-locale").value : "ko-KR",
+      gsc_property: sec.querySelector(".sm-cfg-gsc") ? sec.querySelector(".sm-cfg-gsc").value : "",
+      brand_aliases: sec.querySelector(".sm-cfg-alias") ? sec.querySelector(".sm-cfg-alias").value : "",
+      seed_keywords: sec.querySelector(".sm-cfg-seeds") ? sec.querySelector(".sm-cfg-seeds").value : "",
+      competitors_manual: sec.querySelector(".sm-cfg-comp") ? sec.querySelector(".sm-cfg-comp").value : "",
+      tools: sec.querySelector(".sm-cfg-tools") ? sec.querySelector(".sm-cfg-tools").value : ""
+    };
+    try {
+      var r = await fetch("/api/project/config", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: pj, form: form})
+      });
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.error || "");
+      await cfgLoad();
+      cfgRender("저장됨");
+    } catch (e) {
+      cfgRender("저장 실패: " + ((e && e.message) || "다시 시도해 주세요"));
+    }
+  }
+
+  async function cfgYamlSave() {
+    var sec = document.getElementById("sm-set");
+    var pj = proj();
+    if (!sec || !pj) return;
+    var yaml_raw = sec.querySelector(".sm-cfg-yaml") ? sec.querySelector(".sm-cfg-yaml").value : "";
+    cfgRender("저장 중…");
+    try {
+      var r = await fetch("/api/project/config", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: pj, yaml_raw: yaml_raw})
+      });
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.error || "");
+      await cfgLoad();
+      cfgRender("저장됨");
+    } catch (e) {
+      cfgRender("저장 실패: " + ((e && e.message) || "다시 시도해 주세요"));
+    }
   }
 
   // 저장소 칸. 세 상태뿐이다 — GitHub 계정이 없다 / 계정은 있고 저장소만 없다 /
@@ -686,6 +813,7 @@
       SET_H = await (await fetch("/api/settings?project=" +
         encodeURIComponent(pj))).json();
     } catch (e) { SET_DONE = ""; return; }   // 실패는 되돌려 다음 기회에 다시 받는다
+    await cfgLoad();
     setRender("");
   }
 

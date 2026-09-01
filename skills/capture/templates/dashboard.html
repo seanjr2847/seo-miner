@@ -1646,9 +1646,131 @@ function renderSetup(d) {
   // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
   // 할 수 있는 게 없는 화면에 떨어진다.
   if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 2);
+  renderProjectSelector(d);
   prefillProject();
   renderCarry(d);
 }
+
+// 사이트 선택기 및 설정 로드
+let CURR_SETUP_PROJECT = "";
+async function loadSetupProjectConfig(name) {
+  if (!name) return;
+  CURR_SETUP_PROJECT = name;
+  try {
+    const r = await (await fetch("/api/setup/project/config?project=" + encodeURIComponent(name))).json();
+    if (!r.ok) return;
+    const cfg = r.config || {};
+    const join = v => Array.isArray(v) ? v.join(", ") : (v || "");
+    if ($("p-name")) { $("p-name").value = cfg.name || name; $("p-name").disabled = true; }
+    if ($("p-type")) $("p-type").value = cfg.type || "saas";
+    if ($("p-domain")) $("p-domain").value = cfg.domain || "";
+    if ($("p-locale")) $("p-locale").value = cfg.locale || "ko-KR";
+    if ($("p-gsc")) $("p-gsc").value = cfg.gsc_property || "";
+    if ($("p-alias")) $("p-alias").value = join(cfg.brand_aliases);
+    if ($("p-seeds")) $("p-seeds").value = join(cfg.seed_keywords);
+    if ($("p-comp")) $("p-comp").value = join(cfg.competitors_manual);
+    if ($("p-tools")) $("p-tools").value = join(cfg.tools);
+    if ($("p-yaml-raw")) $("p-yaml-raw").value = r.yaml_raw || "";
+    if ($("btn-proj")) $("btn-proj").style.display = "none";
+    if ($("btn-proj-save")) $("btn-proj-save").style.display = "";
+    say("m-proj", `'${name}' 설정을 불러왔습니다.`, true);
+    say("m-proj-yaml", `'${name}' YAML을 불러왔습니다.`, true);
+  } catch (e) {}
+}
+
+function renderProjectSelector(d) {
+  const sel = $("p-select");
+  const wrap = $("p-sel-wrap");
+  if (!sel || !wrap) return;
+  const names = d.projects || [];
+  if (!names.length) {
+    wrap.style.display = "none";
+    if ($("p-name")) $("p-name").disabled = false;
+    if ($("btn-proj")) $("btn-proj").style.display = "";
+    if ($("btn-proj-save")) $("btn-proj-save").style.display = "none";
+    return;
+  }
+  wrap.style.display = "flex";
+  sel.innerHTML = names.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  const target = (CURR_SETUP_PROJECT && names.includes(CURR_SETUP_PROJECT))
+    ? CURR_SETUP_PROJECT
+    : ($("proj") && $("proj").value && names.includes($("proj").value) ? $("proj").value : names[0]);
+  sel.value = target;
+  if (!CURR_SETUP_PROJECT) loadSetupProjectConfig(target);
+}
+
+// 탭 전환
+$("tab-proj-form")?.addEventListener("click", () => {
+  $("tab-proj-form").className = "on";
+  $("tab-proj-yaml").className = "";
+  $("proj-form-panel").style.display = "block";
+  $("proj-yaml-panel").style.display = "none";
+});
+$("tab-proj-yaml")?.addEventListener("click", () => {
+  $("tab-proj-yaml").className = "on";
+  $("tab-proj-form").className = "";
+  $("proj-yaml-panel").style.display = "block";
+  $("proj-form-panel").style.display = "none";
+});
+
+$("p-select")?.addEventListener("change", () => {
+  loadSetupProjectConfig($("p-select").value);
+});
+
+$("btn-proj-new")?.addEventListener("click", () => {
+  CURR_SETUP_PROJECT = "";
+  if ($("p-name")) { $("p-name").value = ""; $("p-name").disabled = false; }
+  if ($("p-type")) $("p-type").value = "saas";
+  if ($("p-domain")) $("p-domain").value = "";
+  if ($("p-locale")) $("p-locale").value = "ko-KR";
+  if ($("p-gsc")) $("p-gsc").value = "";
+  if ($("p-alias")) $("p-alias").value = "";
+  if ($("p-seeds")) $("p-seeds").value = "";
+  if ($("p-comp")) $("p-comp").value = "";
+  if ($("p-tools")) $("p-tools").value = "";
+  if ($("p-yaml-raw")) $("p-yaml-raw").value = "";
+  if ($("btn-proj")) $("btn-proj").style.display = "";
+  if ($("btn-proj-save")) $("btn-proj-save").style.display = "none";
+  say("m-proj", "새 사이트 정보를 입력하세요.", true);
+  say("m-proj-yaml", "", true);
+  PREFILLED = false;
+  prefillProject();
+});
+
+$("btn-proj-save")?.addEventListener("click", async () => {
+  const name = $("p-name").value || $("p-select").value;
+  busy("btn-proj-save", "m-proj", true);
+  const [ok, r] = await post("/api/setup/project/config", {
+    project: name,
+    form: {
+      name: name, type: $("p-type").value, domain: $("p-domain").value,
+      locale: $("p-locale").value, gsc_property: $("p-gsc").value,
+      brand_aliases: $("p-alias").value, seed_keywords: $("p-seeds").value,
+      competitors_manual: $("p-comp").value, tools: $("p-tools").value
+    }
+  });
+  busy("btn-proj-save", "m-proj", false);
+  if (!ok) return say("m-proj", r.error || "저장 실패", false);
+  say("m-proj", `${r.name || name} 설정 저장 완료 (DB 동기화됨)`, true);
+  loadSetupProjectConfig(name);
+  loadDoctor();
+  load();
+});
+
+$("btn-proj-yaml-save")?.addEventListener("click", async () => {
+  const name = $("p-name").value || $("p-select").value;
+  busy("btn-proj-yaml-save", "m-proj-yaml", true);
+  const [ok, r] = await post("/api/setup/project/config", {
+    project: name,
+    yaml_raw: $("p-yaml-raw").value
+  });
+  busy("btn-proj-yaml-save", "m-proj-yaml", false);
+  if (!ok) return say("m-proj-yaml", r.error || "YAML 저장 실패", false);
+  say("m-proj-yaml", `${r.name || name} YAML 저장 완료 (DB 동기화됨)`, true);
+  loadSetupProjectConfig(name);
+  loadDoctor();
+  load();
+});
 
 // 웹에서 이어 하기 — 로컬에 적어 둔 사이트 설정을 호스팅 등록 폼으로 실어 보낸다.
 // 링크를 만드는 것은 서버다(프로젝트 yaml 을 읽어야 한다) — 화면은 고르고 연다.
@@ -1683,7 +1805,7 @@ $("btn-carry").addEventListener("click", async () => {
 // 빈 칸만 채운다 — 사용자가 적던 값을 덮지 않는다.
 let PREFILLED = false;
 async function prefillProject() {
-  if (PREFILLED || !$("p-name")) return;
+  if (PREFILLED || !$("p-name") || $("p-name").disabled) return;
   PREFILLED = true;
   try {
     const p = await (await fetch("/api/setup/prefill")).json();
