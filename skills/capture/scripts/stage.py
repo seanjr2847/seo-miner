@@ -486,7 +486,10 @@ def _check_seams() -> None:
     #    (add·run 은 단계가 아니다: 질문 추가와 전 단계 일괄 실행.)
     NON_STAGE = {"add", "run"}
     #    다른 화면으로 넘기는 손잡이는 여기 적어 둔다 — 적지 않으면 검사에 걸린다.
-    CROSS = {("competitors", "keywords")}     # 갭 검색어는 승인 대기 후보로 들어간다
+    CROSS = {("competitors", "keywords"),     # 갭 검색어는 승인 대기 후보로 들어간다
+             # [주제별] 축은 keywords 단계가 아니라 그 단계의 **큐레이션**(Claude 가
+             # cluster 를 붙이는 일)이 채운다 — 화면에는 그걸 붙일 자리가 없다.
+             ("analysis", "keywords")}
     for p in sorted(views.glob("*.html")):
         vid = p.stem
         if vid not in defs:
