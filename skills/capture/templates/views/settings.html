@@ -62,6 +62,18 @@
         <span class="msg" id="m-proj-yaml"></span>
       </div>
     </div>
+
+    <!-- 웹 ↔ 로컬 전체 동기화 (YAML + 실적 데이터) -->
+    <div id="proj-sync-wrap" style="margin-top: 20px; padding-top: 14px; border-top: 1px dashed var(--rule, #e5e5e5);">
+      <h4 style="margin: 0 0 6px; font-size: 13px; font-weight: 500;">웹 ↔ 로컬 전체 동기화 (Sync Package)</h4>
+      <p class="why" style="margin-top: 0;">웹(호스팅 SaaS)과 로컬 간에 사이트의 <b>YAML 설정 + 수집 실적(GSC 스냅샷·AI 노출·개선 기회 등)</b> 전체를 파일(.json) 하나로 내보내거나 가져옵니다.</p>
+      <div class="row" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button class="go sec" id="btn-sync-export" type="button">동기화 패키지 다운로드 (.json)</button>
+        <button class="go sec" id="btn-sync-import-btn" type="button">패키지 가져오기 (.json)</button>
+        <input type="file" id="sync-file-input" accept=".json" style="display: none;">
+        <span class="msg" id="m-sync"></span>
+      </div>
+    </div>
   </div>
 
   <div class="step">

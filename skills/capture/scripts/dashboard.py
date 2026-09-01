@@ -35,6 +35,7 @@ import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
+import sync       # noqa: E402  (웹-로컬 동기화 패키지)
 
 TPL = Path(__file__).parent.parent / "templates"
 # 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
@@ -975,6 +976,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(repo_prefill())
         if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
             return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
+        if u.path == "/api/sync/export":
+            proj_name = parse_qs(u.query).get("project", [""])[0]
+            conn = db.connect()
+            try:
+                pkg = sync.export_package(conn, proj_name)
+                body = json.dumps(pkg, ensure_ascii=False, indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="{proj_name}-sync.json"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            except db.ProjectNotFound as e:
+                return self._json({"error": str(e)}, 404)
+            except Exception as e:
+                return self._json({"error": str(e)}, 500)
+            finally:
+                conn.close()
         if u.path in ("/api/setup/project/config", "/api/project/config"):
             proj_name = parse_qs(u.query).get("project", [""])[0]
             return self._json(read_project_config(proj_name))
@@ -998,7 +1018,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path not in ("/api/opp", "/api/setup/run", "/api/setup/keys",
                         "/api/setup/project", "/api/setup/project/config",
-                        "/api/setup/gsc-client", "/api/project/config"):
+                        "/api/setup/gsc-client", "/api/project/config",
+                        "/api/sync/import"):
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -1024,6 +1045,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/setup/project/config", "/api/project/config"):
             r = save_project_config(body)
             return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/sync/import":
+            conn = db.connect()
+            try:
+                r = sync.import_package(conn, body)
+                return self._json(r, 200 if r.get("ok") else 400)
+            finally:
+                conn.close()
 
         if body.get("status") not in db.OPP_STATUSES:
             return self._json({"error": f"status must be one of {db.OPP_STATUSES}"}, 400)

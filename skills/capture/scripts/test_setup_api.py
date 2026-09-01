@@ -170,6 +170,21 @@ code, err_res = post("/api/project/config", {
 })
 assert code == 400 and not err_res["ok"], err_res
 
+# 5) 동기화 패키지 내보내기 및 가져오기 (/api/sync/export, /api/sync/import)
+code, sync_pkg = get("/api/sync/export?project=cfgdemo")
+assert code == 200 and sync_pkg["type"] == "seo-miner-sync-package", sync_pkg
+assert sync_pkg["project"] == "cfgdemo"
+assert "직접수정브랜드" in sync_pkg["yaml_raw"]
+
+# 패키지를 수정하여 다른 프로젝트 이름으로 가져오기
+sync_pkg["project"] = "imported_site"
+sync_pkg["yaml_raw"] = sync_pkg["yaml_raw"].replace("name: cfgdemo", "name: imported_site")
+code, imp_res = post("/api/sync/import", sync_pkg)
+assert code == 200 and imp_res["ok"], imp_res
+assert (HOME / "projects" / "imported_site.yaml").exists()
+code, doc_imp = get("/api/project/config?project=imported_site")
+assert code == 200 and doc_imp["config"]["name"] == "imported_site"
+
 post("/api/setup/keys", {"OPENROUTER_API_KEY": "sk-test", "SERPER_API_KEY": ""})
 env = (HOME / "env").read_text("utf-8")
 assert env.strip() == "OPENROUTER_API_KEY=sk-test", env

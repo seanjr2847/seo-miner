@@ -49,6 +49,7 @@ import scheduler
 import settings
 import stage
 import store
+import sync
 import writer
 
 
@@ -876,6 +877,44 @@ async def api_project_config_save(request: Request):
         return r
 
 
+@app.get("/api/sync/export")
+def api_sync_export(project: str, request: Request):
+    """사이트의 YAML 설정과 수집 데이터를 단일 동기화 JSON 패키지로 다운로드."""
+    uid = _require_uid(request)
+    with store.session(uid, project, isolate=True):
+        conn = db.connect()
+        try:
+            pkg = sync.export_package(conn, project)
+            return Response(
+                content=json.dumps(pkg, ensure_ascii=False, indent=2),
+                media_type="application/json; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{project}-sync.json"'}
+            )
+        except db.ProjectNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        finally:
+            conn.close()
+
+
+@app.post("/api/sync/import")
+async def api_sync_import(request: Request):
+    """동기화 JSON 패키지를 받아 사이트 YAML 및 DB 데이터 병합."""
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    if not project:
+        raise HTTPException(status_code=400, detail="패키지에 프로젝트 이름이 누락되었습니다.")
+    with store.session(uid, project):
+        conn = db.connect()
+        try:
+            r = sync.import_package(conn, body)
+            if not r.get("ok"):
+                raise HTTPException(status_code=400, detail=r.get("error", "가져오기 실패"))
+            return r
+        finally:
+            conn.close()
+
+
 # --- GA4 ------------------------------------------------------------------
 # GSC 와 달리 GA4 속성 ID 는 도메인에서 유추가 안 된다(숫자 ID 이고 도메인과 매핑이
 # 없다) — 그래서 목록에서 사람이 직접 고른다. list_properties/suggest_property 는
@@ -1067,6 +1106,7 @@ def demo() -> None:
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
                      "/api/settings?project=x", "/api/project/config?project=x",
+                     "/api/sync/export?project=x",
                      "/api/ai/prompts?project=x",
                      "/api/report?project=x", "/api/export?project=x&table=keywords",
                      "/api/keywords?project=x", "/api/backlinks?project=x",
@@ -1074,6 +1114,7 @@ def demo() -> None:
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create", "/api/settings", "/api/project/config",
+                     "/api/sync/import",
                      "/api/ai/prompts", "/api/ai/prompts/edit", "/api/sites", "/api/keywords",
                      "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"

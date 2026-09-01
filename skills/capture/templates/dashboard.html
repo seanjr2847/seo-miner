@@ -1772,6 +1772,41 @@ $("btn-proj-yaml-save")?.addEventListener("click", async () => {
   load();
 });
 
+$("btn-sync-export")?.addEventListener("click", () => {
+  const name = $("p-name").value || $("p-select")?.value;
+  if (!name) return say("m-sync", "선택된 사이트가 없습니다.", false);
+  window.location.href = "/api/sync/export?project=" + encodeURIComponent(name);
+  say("m-sync", `${name} 동기화 패키지 다운로드를 시작했습니다.`, true);
+});
+
+$("btn-sync-import-btn")?.addEventListener("click", () => {
+  $("sync-file-input")?.click();
+});
+
+$("sync-file-input")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const pkg = JSON.parse(ev.target.result);
+      say("m-sync", "동기화 패키지 가져오는 중...", true);
+      const [ok, r] = await post("/api/sync/import", pkg);
+      if (!ok) return say("m-sync", r.error || "가져오기 실패", false);
+      const projName = r.project || pkg.project;
+      say("m-sync", `${projName} 동기화 완료! (설정 및 실적 데이터 병합됨)`, true);
+      loadDoctor();
+      loadSetupProjectConfig(projName);
+      load();
+    } catch (err) {
+      say("m-sync", "JSON 파일 파싱 실패: " + err.message, false);
+    } finally {
+      e.target.value = "";
+    }
+  };
+  reader.readAsText(file);
+});
+
 // 웹에서 이어 하기 — 로컬에 적어 둔 사이트 설정을 호스팅 등록 폼으로 실어 보낸다.
 // 링크를 만드는 것은 서버다(프로젝트 yaml 을 읽어야 한다) — 화면은 고르고 연다.
 function renderCarry(d) {

@@ -519,11 +519,51 @@
       }
       if (ev.target.closest && ev.target.closest("[data-cfg-form-save]")) return cfgFormSave();
       if (ev.target.closest && ev.target.closest("[data-cfg-yaml-save]")) return cfgYamlSave();
+      if (ev.target.closest && ev.target.closest("[data-sync-export]")) {
+        var pj = proj();
+        if (pj) window.location.href = "/api/sync/export?project=" + encodeURIComponent(pj);
+        return;
+      }
+      if (ev.target.closest && ev.target.closest("[data-sync-import-trigger]")) {
+        var fi = sec.querySelector(".sm-sync-file");
+        if (fi) fi.click();
+        return;
+      }
       if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
     });
+    var syncInput = sec.querySelector(".sm-sync-file");
+    if (syncInput && !syncInput.dataset.smWired) {
+      syncInput.dataset.smWired = "1";
+      syncInput.addEventListener("change", function (e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = async function (ev) {
+          try {
+            var pkg = JSON.parse(ev.target.result);
+            cfgRender("동기화 패키지 가져오는 중…");
+            var r = await fetch("/api/sync/import", {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify(pkg)
+            });
+            var d = await r.json();
+            if (!r.ok) throw new Error(d.detail || d.error || "");
+            await cfgLoad();
+            cfgRender("동기화 완료 (설정 및 실적 병합됨)");
+            if (window.load) window.load();
+          } catch (err) {
+            cfgRender("가져오기 실패: " + ((err && err.message) || "다시 시도해 주세요"));
+          } finally {
+            e.target.value = "";
+          }
+        };
+        reader.readAsText(file);
+      });
+    }
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
 
@@ -573,12 +613,21 @@
       '<button data-cfg-tab="yaml"' + (CFG_TAB === "yaml" ? ' class="on"' : '') + '>YAML 직접 편집</button>' +
       '</div>';
 
+    var syncBlock = '<div class="sync-row" style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--rule, #e5e5e5)">' +
+      '<label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">로컬 ↔ 웹 전체 동기화 (YAML 설정 + 실적 데이터)</label>' +
+      '<div class="opts" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<button data-sync-export type="button">동기화 패키지 다운로드 (.json)</button>' +
+      '<button data-sync-import-trigger type="button">패키지 가져오기 (.json)</button>' +
+      '<input type="file" class="sm-sync-file" accept=".json" style="display:none">' +
+      '</div></div>';
+
     if (CFG_TAB === "yaml") {
       body.innerHTML = tabs +
         '<p class="none" style="margin-bottom:8px">YAML 설정을 직접 수정합니다. 저장 시 Brain과 즉시 동기화됩니다.</p>' +
         '<textarea class="sm-cfg-yaml" style="width:100%;font-family:var(--mono);min-height:220px;font-size:13px;line-height:1.5;box-sizing:border-box;margin-bottom:10px">' +
         esc(CFG_DATA.yaml_raw || "") + '</textarea>' +
-        '<div class="opts"><button data-cfg-yaml-save>YAML 저장</button>' + note + '</div>';
+        '<div class="opts"><button data-cfg-yaml-save>YAML 저장</button>' + note + '</div>' +
+        syncBlock;
       return;
     }
 
@@ -604,7 +653,8 @@
       '<input class="sm-cfg-comp" style="width:100%;margin-bottom:10px;box-sizing:border-box" value="' + esc(join(cfg.competitors_manual)) + '">' +
       '<label style="display:block;font-size:12px;margin-bottom:4px;color:var(--slate)">등재·경쟁 도구 이름 (tools/foreign_brands) — 쉼표</label>' +
       '<input class="sm-cfg-tools" style="width:100%;margin-bottom:12px;box-sizing:border-box" value="' + esc(join(cfg.tools)) + '">' +
-      '<div class="opts"><button data-cfg-form-save>설정 저장</button>' + note + '</div>';
+      '<div class="opts"><button data-cfg-form-save>설정 저장</button>' + note + '</div>' +
+      syncBlock;
   }
 
   async function cfgFormSave() {
