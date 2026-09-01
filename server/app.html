@@ -338,7 +338,13 @@ async function load() {
   $("ptool").hidden = true;
   try {
     const r = await fetch("/api/properties");
-    if (!r.ok) throw new Error(r.status);
+    // 서버는 이유를 detail 에 담아 보낸다(미연결·스코프 부족·일시 실패). 그걸 버리고
+    // "권한이 있는지 확인해 주세요"로 뭉개면, 재로그인 한 번이면 끝날 일을 사용자가
+    // 서치콘솔 권한 화면에서 찾아 헤맨다 — 실제로 그랬다.
+    if (!r.ok) {
+      const d = await r.json().catch(() => null);
+      throw new Error((d && d.detail) || "");
+    }
     const { properties } = await r.json();
     if (!properties.length) {
       note(box, "warn", "서치콘솔에 등록된 사이트가 없습니다",
@@ -392,6 +398,7 @@ async function load() {
     sync();
   } catch (e) {
     note(box, "warn", "서치콘솔에 연결하지 못했습니다",
+      esc(e.message) ||
       "로그인한 구글 계정에 이 사이트의 서치콘솔 권한이 있는지 확인해 주세요. " +
       "계정을 잘못 골랐다면 로그아웃 후 다시 로그인하면 됩니다.", true);
   }

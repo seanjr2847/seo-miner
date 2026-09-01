@@ -24,6 +24,7 @@ import json
 import re
 import secrets
 import sqlite3
+import traceback
 from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import quote, urlparse
@@ -224,6 +225,30 @@ def logout(request: Request):
     return RedirectResponse("/", status_code=302)
 
 
+def _require_google() -> None:
+    """구글 API 를 부르기 전 두 가지를 본다 — 연결됐나, **그 토큰이 지금 스코프를 덮나**.
+
+    둘째가 없어서 났던 일: analytics.readonly 가 나중에 추가되면서, 그 전에
+    로그인해 둔 토큰은 갱신할 때 "요청한 스코프를 다 못 받았다"로 죽는다.
+    collect_gsc 는 그 자리에서 로그인을 다시 받으려 하고(서버엔 브라우저가 없다)
+    결국 sys.exit → 라우트는 원인 없는 502. 화면에는 "권한이 있는지 확인해
+    주세요"만 남아서, 사실은 재로그인 한 번이면 끝날 일을 아무도 못 알아봤다.
+
+    라우트마다 검사를 붙이면 다음에 생기는 라우트가 또 빠진다 — 한 곳이다.
+    """
+    if not db.gsc_connected():
+        raise HTTPException(
+            status_code=403,
+            detail="구글 계정이 아직 연결되지 않았습니다 — "
+                   "다시 구글 계정으로 로그인해 주세요.")
+    if doctor.gsc_missing_scopes():
+        raise HTTPException(
+            status_code=403,
+            detail="로그인한 뒤에 필요한 권한이 늘었습니다(GA4 읽기) — "
+                   "로그아웃 후 다시 구글 계정으로 로그인해 주세요. "
+                   "권한 문제가 아니라 토큰이 오래된 것입니다.")
+
+
 @app.get("/api/properties")
 def api_properties(request: Request):
     """서치콘솔 속성 목록 — 사이트를 등록할 때 고르는 자리.
@@ -234,16 +259,14 @@ def api_properties(request: Request):
     """
     uid = _require_uid(request)
     with store.session(uid, isolate=True) as conn:
-        if not db.gsc_connected():
-            raise HTTPException(
-                status_code=403,
-                detail="구글 계정이 아직 연결되지 않았습니다 — "
-                       "다시 구글 계정으로 로그인해 주세요.")
+        _require_google()
         try:
             res = collect_gsc.get_service().sites().list().execute()
         except HTTPException:
             raise
         except BaseException:      # SystemExit 도 잡는다 — 스택트레이스가 나가면 안 된다
+            # 로그에는 남긴다 — 안 남겨서 이 502 의 원인을 로그로는 끝내 못 봤다.
+            traceback.print_exc()
             raise HTTPException(
                 status_code=502,
                 detail="서치콘솔 속성 목록을 가져오지 못했습니다. "
@@ -842,16 +865,12 @@ def api_ga4_properties(project: str, request: Request):
     403 은 둘 중 하나다 — 실제로 터진 건 ①(Railway 로그, 2026-08-31): 토큰이 아예
     없어서 collect_gsc._oauth_credentials() 가 브라우저를 열려다 죽었다. ②는 이미
     로그인은 했지만 GA4 스코프가 나중에 추가돼 그 전 토큰엔 없는 경우다. 우선순위
-    ①→②로 먼저 본다 — 부르기 전에 doctor/db 로 미리 확인해 그 무엇도 부르지 않고
-    바로 답한다. 그래도 남는 예외(SystemExit 포함, collect_gsc 쪽 CLI 최종 안내가
+    ①→②로 먼저 본다 — 부르기 전에 _require_google() 이 그 둘을 함께 확인한다
+    (같은 검사가 /api/properties 에도 필요했다 — 라우트마다 두면 새 라우트가 빠진다). 그래도 남는 예외(SystemExit 포함, collect_gsc 쪽 CLI 최종 안내가
     새는 경우)는 사람 말로 바꾼다 — 스택트레이스가 화면에 그대로 나가면 안 된다.
     """
     uid = _require_uid(request)
     from googleapiclient.errors import HttpError
-    not_connected = HTTPException(
-        status_code=403,
-        detail="구글 계정이 아직 연결되지 않았습니다 — 로그인해야 GA4 속성을 "
-               "볼 수 있습니다. 구글 계정으로 로그인해 주세요.")
     need_relogin = HTTPException(
         status_code=403,
         detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
@@ -863,10 +882,7 @@ def api_ga4_properties(project: str, request: Request):
                 domain = db.get_project(c, project)["domain"]
             finally:
                 c.close()
-            if not db.gsc_connected():
-                raise not_connected
-            if doctor.gsc_missing_scopes():
-                raise need_relogin
+            _require_google()
             try:
                 _, admin_svc = collect_ga4.get_service()
                 props = collect_ga4.list_properties(admin_svc)
@@ -879,6 +895,7 @@ def api_ga4_properties(project: str, request: Request):
     except HTTPException:
         raise
     except BaseException as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=502,
             detail="GA4 속성 목록을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
@@ -1213,7 +1230,7 @@ def demo() -> None:
                 raise HttpError(_Resp(), b'{"error": "insufficient scope"}')
             collect_ga4.list_properties = _scope_missing
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"],                 r.text
 
             # 스코프가 모자란 걸 doctor 로 미리 알면 — API 를 아예 안 부르고 같은
             # 403 을 예측 가능하게 낸다(브라우저 로그인·SystemExit 경로를 안 탄다).
@@ -1223,7 +1240,7 @@ def demo() -> None:
             doctor.gsc_missing_scopes = lambda: [
                 "https://www.googleapis.com/auth/analytics.readonly"]
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"],                 r.text
             doctor.gsc_missing_scopes = lambda: []
 
             # 아예 연결이 안 된 상태(토큰 없음) — 실제로 터진 게 이거다(Railway 로그,
@@ -1233,6 +1250,25 @@ def demo() -> None:
             r = c.get("/api/ga4/properties?project=p1")
             assert r.status_code == 403 and "아직 연결되지 않았습니다" in r.json()["detail"],                 r.text
             db.gsc_connected = lambda: True
+
+            # 같은 함정이 사이트 등록 화면(/api/properties)에도 있었다 — 스코프가
+            # 모자란 토큰으로 부르면 collect_gsc 가 브라우저 로그인을 열려다 죽고
+            # 502 만 남았다. 화면에는 "서치콘솔 권한이 있는지 확인해 주세요"가 떠서,
+            # 재로그인 한 번이면 끝날 일을 권한 화면에서 찾게 만들었다(2026-09-01).
+            real_gsc_service = collect_gsc.get_service
+            collect_gsc.get_service = _must_not_call
+            try:
+                doctor.gsc_missing_scopes = lambda: [
+                    "https://www.googleapis.com/auth/analytics.readonly"]
+                r = c.get("/api/properties")
+                assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"],                     r.text
+                doctor.gsc_missing_scopes = lambda: []
+                db.gsc_connected = lambda: False
+                r = c.get("/api/properties")
+                assert r.status_code == 403 and "아직 연결되지 않았습니다" in r.json()["detail"],                     r.text
+                db.gsc_connected = lambda: True
+            finally:
+                collect_gsc.get_service = real_gsc_service
 
             # 그래도 남는 예외(SystemExit 포함, collect_gsc.get_credentials 가 실제로
             # 던지는 것) — 스택트레이스 대신 사람 말로 된 예측 가능한 502.
