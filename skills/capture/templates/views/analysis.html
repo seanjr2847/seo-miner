@@ -715,8 +715,11 @@ function anCluster(rows) {
     return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
   const named = rows.filter(r => !r.unclassified && r.impressions);
   if (!named.length)
-    return `<div class="empty">클러스터가 붙은 키워드로 걸린 검색어가 없습니다 —
-      ${window.go("keywords")} 화면에서 키워드를 주제별로 묶으면 여기가 채워집니다.</div>`;
+    // 클러스터를 붙이는 자리는 화면이 아니라 플러그인 대화다 — 여기서 "화면에서
+    // 묶으면"이라고 말하면, 있지도 않은 버튼을 찾게 만든다(2026-09-01 신고).
+    return `<div class="empty">클러스터가 붙은 키워드가 없습니다 — 묶는 자리는 아직
+      화면이 아니라 플러그인입니다. Claude 에게 <code>/capture keywords</code> 를
+      시키면 활성 키워드에 주제 묶음이 붙고, 그 다음 수집부터 여기가 채워집니다.</div>`;
   const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
   const msg = named.length > 1 && worst.label !== best.label
