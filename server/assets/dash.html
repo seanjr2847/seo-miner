@@ -177,7 +177,10 @@
   /* 설정 — 고르면 곧바로 저장한다. 저장 버튼이 따로 없으니 결과는 옆에서 말해 준다. */
   #sm-set .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
   #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  #sm-set .opts button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+  /* 버튼 라벨은 전부 한글이다("하루 한 번"·"저장소 고르기"·"연결 명령 만들기") —
+     등폭으로 찍으면 폴백 서체로 떨어져 자간이 벌어진다(CLAUDE.md). 아래 .repo input
+     은 브랜치 이름(식별자)이라 등폭 그대로 둔다. */
+  #sm-set .opts button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
     border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
   #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
   /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
@@ -191,6 +194,12 @@
   #sm-set .repo .now{font:500 13px/1.5 var(--mono);color:var(--patina)}
   #sm-set .repo .none{font:400 13px/1.5 var(--sans);color:var(--slate)}
   #sm-set .repo a{color:var(--patina)}
+  /* 연결 명령은 한 줄이 길다 — 셸의 .cmd 칩(등폭 + 복사 손잡이)을 그대로 쓰되
+     칸 안에서 접히게만 한다. 등폭이 걸리는 건 명령·주소·토큰뿐이고, 위 설명은
+     한글이라 --sans 그대로다(CLAUDE.md: 등폭·자간은 한글에 안 건다). */
+  #sm-set .cli .cmd{display:block;max-width:100%;margin:2px 0 0;padding:10px 12px;
+    line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left}
+  #sm-set .cli .warn{color:var(--copper)}
   /* 저장소가 없으면 [콘텐츠 작성]은 못 쓴다 — 눌러 보게 하지 않고 그 자리에서 말한다 */
   .opp [data-write][data-need]{color:var(--slate);border-color:var(--rule)}
 
@@ -516,7 +525,9 @@
       if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
+      if (ev.target.closest && ev.target.closest("[data-cli-new]")) return cliNew();
     });
+    cliRender();       // 이 칸은 사이트 설정과 무관하다 — /api/settings 를 안 기다린다
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
 
@@ -676,6 +687,56 @@
     } catch (e) {
       ga4Render("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
     }
+  }
+
+  // 명령어로 연결하기. 토큰 원문은 발급 응답에만 있다 — 서버는 해시만 보관하므로
+  // 다시 물어봐도 못 준다. 그래서 화면에 쟁여 두지 않고(새로고침하면 사라진다),
+  // 누르기 전에 "한 번만 보인다"를 먼저 말한다(칸 설명은 sm-set.html 에 있다).
+  var CLI_TOKEN = "";
+  function cliRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec) return;
+    var body = sec.querySelector(".cli .body");
+    if (!body) return;
+    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    if (!CLI_TOKEN) {
+      body.innerHTML = '<div class="opts"><button data-cli-new>연결 명령 만들기</button>' +
+        '<span class="msg">이미 연결해 뒀다면 다시 만들지 마세요 — 쓰던 연결이 끊깁니다.</span>' +
+        "</div>" + note;
+      return;
+    }
+    // 명령 한 줄이 곧 복사 대상이다 — 셸의 copyCmd 가 textContent 를 그대로 집는다.
+    // **button 으로 만들지 않는다**: wireSteps() 가 `button.cmd` 를 훑어 웹에서
+    // 못 돌리는 칩을 지운다(안내의 명령 복사칩). 이 칩은 지워지면 안 되는 유일한
+    // 복사칩이라 — 터미널로 가져갈 명령이 본문이다 — 뷰들과 같은 관례를 쓴다
+    // (ai.html 의 role="button" 복사칩).
+    // 자리표까지 라틴이다 — 명령 칩은 통째로 등폭이라 한글을 넣으면 그 낱자만
+    // 폴백 서체로 떨어져 흩어진다(CLAUDE.md). 무엇을 채울지는 아래 줄이 말한다.
+    body.innerHTML = '<div class="cmd" role="button" tabindex="0">' +
+      esc("python PLUGIN_DIR/skills/capture/scripts/remote.py connect " +
+          location.origin + " " + CLI_TOKEN) + "</div>" +
+      '<p class="msg warn">이 명령은 지금만 보입니다 — 클로드 코드 채팅에 그대로 ' +
+      '붙여 넣으세요. <code>PLUGIN_DIR</code> 자리는 클로드가 채웁니다.</p>' +
+      note;
+    var chip = body.querySelector(".cmd");
+    chip.onclick = function () { copyCmd(chip); };
+    chip.onkeydown = function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyCmd(chip); }
+    };
+  }
+
+  async function cliNew() {
+    cliRender("만드는 중…");
+    try {
+      var r = await fetch("/api/cli/token", {method: "POST"});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      CLI_TOKEN = d.token;
+    } catch (e) {
+      return cliRender("연결 명령을 만들지 못했습니다 — " +
+        ((e && e.message) || "다시 시도해 주세요"));
+    }
+    cliRender("");
   }
 
   async function setLoad() {

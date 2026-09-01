@@ -12,6 +12,8 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import sys
 from pathlib import Path
@@ -118,11 +120,33 @@ def backlinks_plan(skip: str | None, every_days: float) -> tuple[str | None, dic
     return skip, {"backlinks": {"max_age": every_days}}
 
 
+class _Tee(io.StringIO):
+    """잡으면서 흘린다 — 런 내레이션을 DB 로 가져간다고 운영자가 보던 콘솔 로그
+    (Railway) 를 뺏으면 안 된다. redirect_stdout 이 이걸 받는다."""
+
+    def __init__(self, out):
+        super().__init__()
+        self._out = out
+
+    def write(self, s):
+        try:
+            self._out.write(s)
+            self._out.flush()
+        except Exception:
+            pass                      # 콘솔이 죽었다고 수집을 죽이지 않는다
+        return super().write(s)
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
-             only: str | None = None) -> dict:
+             only: str | None = None, opts: dict[str, dict] | None = None) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
 
     only 를 주면 그 단계만 돈다 — 웹에서 '구글 실적만 다시 읽기' 같은 부분 실행에 쓴다.
+    opts 는 `--opt STAGE.KEY=VALUE` 로 들어온 단계별 노브다(원격 CLI 가 쓴다).
+
+    체인이 뱉는 내레이션은 그대로 잡아 sites.run_log 에 둔다 — 원격 CLI 는 자기가
+    요약표를 다시 만들지 않고 이걸 받아 그대로 print 한다(문구는 한 벌이다).
+    ponytail: 런당 1벌만 보관. 이력이 필요해지면 runs 테이블로.
     """
     user_id = site["user_id"]
     project = site["project"]
@@ -130,21 +154,31 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
     if not dry_run:
         store.mark_run(conn, site["id"])
+        store.save_run_log(conn, site["id"], "")     # 지난 런의 로그를 남기지 않는다
+
+    buf = _Tee(sys.stdout)
 
     # 화면이 폴링으로 읽는 값. 단계가 끝난 만큼만 센다 — 3단계를 시작한 시점의
     # 진행률은 2/8 이지, 3/8 이 아니다.
+    # 로그도 여기서 흘려 보낸다 — 끝나고 한 번만 쓰면 몇 분짜리 런 내내 화면이 빈다.
     def on_stage(idx, total, name):
         if not dry_run:
             store.mark_stage(conn, site["id"], name, round((idx - 1) * 100 / total))
+            store.save_run_log(conn, site["id"], buf.getvalue())
 
     # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
-    skip, opts = backlinks_plan(skip, settings.num("SEOMINER_BACKLINKS_EVERY_DAYS"))
+    skip, chain_opts = backlinks_plan(skip, settings.num("SEOMINER_BACKLINKS_EVERY_DAYS"))
+    # 요청이 준 노브가 이긴다. 단계 단위가 아니라 키 단위로 합친다 — 단계째로 덮으면
+    # 위에서 정한 백링크 주기가 사라져 한 런에 두 번 산다.
+    for name, kv in (opts or {}).items():
+        chain_opts.setdefault(name, {}).update(kv)
 
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
-            results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
-                                        opts=opts, on_stage=on_stage)
-            run_all.print_summary(project, results, dry_run=dry_run)
+            with contextlib.redirect_stdout(buf):
+                results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
+                                            opts=chain_opts, on_stage=on_stage)
+                run_all.print_summary(project, results, dry_run=dry_run)
             rc = run_all.chain_rc(results)
 
             # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
@@ -174,10 +208,14 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
         return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
                 "activated": n}
     except Exception as e:
+        # 로그에도 남긴다 — 원격 CLI 는 이 텍스트가 전부라, 여기 없으면 사용자에게는
+        # 런이 조용히 끊긴 것으로 보인다.
+        buf.write(f"\n[오류] 수집이 중단됐습니다: {e}\n")
         return {"user_id": user_id, "project": project, "ok": False, "error": str(e)}
     finally:
         if not dry_run:
-            store.mark_done(conn, site["id"])
+            store.save_run_log(conn, site["id"], buf.getvalue())
+            store.mark_done(conn, site["id"])     # 마지막에 끈다 — 로그를 먼저 굳힌다
 
 
 def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
@@ -206,10 +244,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
     ap.add_argument("--only", help="이 단계만 (쉼표 구분, 예: gsc)")
+    # 형식·타입 추정의 정본은 run_all.parse_opts 다 — 여기서 다시 파싱하지 않는다.
+    ap.add_argument("--opt", action="append", metavar="STAGE.KEY=VALUE",
+                    help="단계별 옵션 (반복 지정). 예: --opt rank.device=mobile")
     args = ap.parse_args()
 
     if args.user is not None and not args.project:
         ap.error("--user 는 --project 와 함께 써야 합니다")
+    if args.opt and args.all:
+        # 조용히 무시하면 옵션을 줬다고 믿는 쪽이 틀린 결과를 맞는 결과로 읽는다.
+        ap.error("--opt 는 --user/--project 단일 실행에만 쓸 수 있습니다")
 
     conn = store.connect()
     try:
@@ -224,7 +268,7 @@ def main() -> int:
                 print(f"프로젝트 '{args.project}' 없음 (user={args.user})", file=sys.stderr)
                 return 1
             results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip,
-                                only=args.only)]
+                                only=args.only, opts=run_all.parse_opts(args.opt))]
     finally:
         conn.close()
 
@@ -259,9 +303,13 @@ def demo() -> None:
 
         def fake_chain(project, *, dry_run=False, skip=None, only=None, opts=None,
                        on_stage=None):
+            print("[가짜체인] 내레이션 한 줄")     # run_log 에 잡혀야 한다
             if on_stage:
                 on_stage(3, 8, "keywords")  # 화면이 읽는 진행률이 실제로 찍히는지 본다
             called.append({
+                # 단계 콜백이 지금까지의 텍스트를 이미 흘려 보냈는지 — 끝나고 한 번만
+                # 쓰면 몇 분짜리 런 내내 원격 화면이 비어 있다.
+                "log_midrun": conn.execute("SELECT run_log FROM sites").fetchone()[0],
                 "project": project,
                 "skip": skip,
                 "opts": opts,
@@ -282,6 +330,10 @@ def demo() -> None:
         assert called[0]["openrouter"] == "test-key", "OPENROUTER_API_KEY 주입 실패"
         assert called[0]["serper"] is None, "짝 없는 잔여 키가 엔진에 노출됐다"
         assert called[0]["progress"] == ("keywords", 25), called[0]["progress"]
+        assert "내레이션" in (called[0]["log_midrun"] or ""), \
+            "단계 중간에 런 로그가 흘러가지 않는다 — 원격은 런이 끝날 때까지 빈 화면이다"
+        assert "내레이션" in conn.execute("SELECT run_log FROM sites").fetchone()[0], \
+            "런이 끝났는데 로그가 안 남았다"
         # 백링크 주기는 체인 **안**에서 정해져야 한다. 여기 밖에 또 두면 한 런에 두 번
         # 사게 된다 — 유료 호출이라 그게 곧 돈이다.
         assert (called[0]["opts"] or {}).get("backlinks", {}).get("max_age") == 30.0,             f"백링크 주기가 단계 옵션으로 안 갔다: {called[0]['opts']}"
@@ -342,6 +394,15 @@ def demo() -> None:
         # 돌고 나면 사이트에 도장이 찍혀서 다음 틱에 또 돌지 않아야 한다.
         assert run_all_due(conn) == [], "방금 쟀는데 또 잰다"
         assert len(called) == 1, "중복 실행됐다"
+
+        # --opt 로 들어온 노브(원격 CLI 의 `--device mobile`)가 체인까지 간다.
+        # 단계째로 덮으면 안 된다 — 위에서 정한 백링크 주기가 사라져 한 런에 두 번 산다.
+        run_site(conn, store.sites(conn, uid)[0], opts={"rank": {"device": "mobile"}})
+        assert called[-1]["opts"]["rank"] == {"device": "mobile"}, called[-1]["opts"]
+        assert called[-1]["opts"]["backlinks"]["max_age"] == 30.0, \
+            f"요청 옵션이 백링크 주기를 덮어썼다: {called[-1]['opts']}"
+        assert conn.execute("SELECT run_log FROM sites").fetchone()[0].count("내레이션") == 1, \
+            "런 로그가 지난 런에 이어붙었다 — 런당 1벌이어야 한다"
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         conn.commit()

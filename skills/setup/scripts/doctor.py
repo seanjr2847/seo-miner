@@ -9,7 +9,8 @@ summary: 한 줄 요약 → 다음 한 걸음 → 사이트 → 기능(꺼진 �
 결과다 — 문구·발급 URL·버킷 라벨의 정본이 여기 한 벌이고, 산문 문서는 이 표를
 가리키기만 한다.
 
-Usage: python doctor.py [--json | --web | --selfcheck]
+Usage: python doctor.py [--json | --web | --selfcheck] [--project NAME]
+  --project: 그 사이트가 원격(호스팅)이면 서버가 진단하고 여기서는 그 결과만 그린다
   --web: 텍스트 대신 로컬 대시보드를 브라우저로 띄운다 (진단 배너 + 데이터 함께)
   --selfcheck: 명부가 데이터로 남아 있는지 assert 로 확인 (개수 산술 포함)
 Exit code: 0 = core usable, 1 = core setup incomplete.
@@ -28,6 +29,7 @@ CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
 import collect_gsc  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import stage  # noqa: E402
 
 
@@ -188,7 +190,7 @@ def gsc_missing_scopes() -> list[str]:
     return [s for s in collect_gsc.SCOPES if s not in saved]
 
 
-def diagnose() -> dict:
+def diagnose(project: str = "") -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
     # 표식은 settings.paid_keys() 가 세우고, 그 컨텍스트 안에서는 서버 키가 엔진 이름으로
@@ -253,7 +255,11 @@ def diagnose() -> dict:
     # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
     # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
     brain["repo_match"] = db.repo_project()
-    brain["picked"] = stage.pick_project(brain["projects"])
+    # 호출자가 사이트를 명시했으면 그것이 폴더 추론을 이긴다 — stage.setup_payload 와
+    # 같은 규칙이다(화면이 고른 것 > 이 폴더의 리포 > 하나뿐이면 그것 > 못 고름).
+    # 원격 CLI 는 `--project` 로 사이트를 대므로 여기서 다시 추측하면 안 된다.
+    brain["picked"] = (project if project in brain["projects"]
+                       else stage.pick_project(brain["projects"]))
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: gsc_conn for name in brain["projects"]}
@@ -631,10 +637,30 @@ def _selfcheck() -> None:
           f"{len(OPTIONAL_SKILLS)}) · 버킷 [{BUCKET_MUST}] / {BUCKET_LATER}")
 
 
+def _arg(flag: str) -> str:
+    """`--flag VALUE` 하나를 꺼낸다 — doctor 는 argparse 를 안 쓴다(플래그가 몇 개뿐)."""
+    a = sys.argv
+    return a[a.index(flag) + 1] if flag in a[:-1] else ""
+
+
 def main() -> None:
     if "--selfcheck" in sys.argv:
         _selfcheck()
         return
+    project = _arg("--project")
+    # --web 은 화면을 띄우는 명령이라 여기서 가로채지 않는다 — 텍스트 진단만 넘긴다.
+    if project and "--web" not in sys.argv and remote.owns(project):
+        # 서버가 자기 env(유료 키 포함) 안에서 진단한다 — 로컬 키 유무로 거짓
+        # 판정하지 않으려는 것. 렌더러는 아래 render() 한 벌뿐이다.
+        d = remote.api("GET", "/api/doctor", params={"project": project})
+        if "capabilities" not in d:
+            sys.exit("원격 /api/doctor 가 진단 페이로드(doctor.diagnose)가 아닌 것을 "
+                     "돌려줬습니다 — 서버 라우트를 확인하세요.")
+        if "--json" in sys.argv:
+            print(json.dumps(d, ensure_ascii=False, indent=2))
+        else:
+            render(d)
+        sys.exit(0 if d.get("core_ok") and d.get("brain_ok") else 1)
     d = diagnose()
     if "--web" in sys.argv:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.

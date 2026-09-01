@@ -33,6 +33,7 @@ sys.path.insert(0, str(SETUP_SCRIPTS))
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
@@ -1017,11 +1018,27 @@ def main() -> None:
     if a.export:
         if not a.project:
             sys.exit("--export 에는 --project 가 필요합니다.")
-        out = export(a.project, a.actions)
+        if remote.owns(a.project):
+            # 서버가 자기 brain 으로 같은 템플릿을 박제한다 — 여기서 다시 만들지 않는다.
+            out = db.CAPTURE_HOME / "reports" / a.project / f"{date.today()}.html"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(remote.fetch("/api/report", params={"project": a.project}))
+        else:
+            out = export(a.project, a.actions)
         print(f"report: {out}")
         if a.open:
             import webbrowser
             webbrowser.open(out.as_uri())
+        return
+
+    # 원격 사이트는 로컬 서버를 띄우지 않는다 — 데이터가 서버 brain 에 있어서
+    # 여기서 띄우면 빈 화면을 보여 준다. 호스팅 화면의 그 사이트로 보낸다.
+    if a.project and remote.owns(a.project):
+        url = f"{remote.config()['url']}/d#{a.project}"
+        print(f"dashboard: {url}")
+        if a.open:
+            import webbrowser
+            webbrowser.open(url)
         return
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.

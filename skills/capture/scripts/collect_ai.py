@@ -27,6 +27,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -244,6 +245,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     a = _parser().parse_args()
+    if remote.dispatch(a, "ai"):   # 원격 사이트면 서버가 돈다
+        return
     r = collect(a.project, dry_run=a.dry_run,
                 engines=a.engines,
                 samples=a.samples,

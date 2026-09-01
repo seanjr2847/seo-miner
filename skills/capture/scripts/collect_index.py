@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import scoring  # noqa: E402
 from collect_gsc import get_service  # noqa: E402
 
@@ -195,6 +196,8 @@ def main() -> None:
         return
     try:
         a = _parser().parse_args()
+        if remote.dispatch(a, "index"):   # 원격 사이트면 서버가 돈다
+            return
 
         r = collect(a.project, dry_run=a.dry_run,
                     limit=a.limit, throttle=a.throttle)

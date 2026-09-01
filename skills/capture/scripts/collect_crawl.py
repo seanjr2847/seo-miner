@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collect_page  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -488,6 +489,8 @@ def main() -> None:
     if len(sys.argv) == 1:
         return _selfcheck()
     a = _parser().parse_args()
+    if remote.dispatch(a, "crawl"):   # 원격 사이트면 서버가 돈다
+        return
     r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_depth=a.max_depth,
                 throttle=a.throttle)
     print(r)

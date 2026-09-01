@@ -16,7 +16,9 @@ CLI:
   python db.py init
   python db.py sync-project <path/to/project.yaml>
   python db.py stats <project>
-  python db.py sql "SELECT ..."        # read-only, for Brain queries
+  python db.py sql "SELECT ..." [--project NAME]
+                                       # read-only, for Brain queries.
+                                       # --project 가 원격 사이트면 서버 brain 에 묻는다.
   python db.py selfcheck               # 임시 brain.db 로 읽기 동사들을 돌려본다
 """
 import json
@@ -1374,6 +1376,17 @@ if __name__ == "__main__":
     elif cmd == "stats" and len(args) > 1:
         stats(args[1])
     elif cmd == "sql" and len(args) > 1:
-        run_sql(args[1])
+        # `sql "<쿼리>" [--project NAME]` — 이름이 원격이면 서버 brain 에 묻는다.
+        # 플래그를 안 주면 여태와 똑같이 로컬 Brain 이다(원격 경로가 아예 안 열린다).
+        rest = args[2:]
+        proj = rest[rest.index("--project") + 1] if "--project" in rest[:-1] else ""
+        import remote
+        if proj and remote.owns(proj):
+            # 가드(읽기 전용 커넥션 + SELECT/WITH)는 서버가 이 함수로 그대로 건다.
+            res = remote.api("POST", "/api/sql", json={"project": proj, "sql": args[1]})
+            print(res if isinstance(res, str)
+                  else json.dumps(res, ensure_ascii=False, indent=2, default=str))
+        else:
+            run_sql(args[1])
     else:
         sys.exit(__doc__)

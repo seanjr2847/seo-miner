@@ -49,6 +49,7 @@ import collector           # noqa: E402
 import dashboard           # noqa: E402
 import db                  # noqa: E402
 import expand_keywords     # noqa: E402
+import remote              # noqa: E402
 import scoring             # noqa: E402
 import serp_adapter        # noqa: E402
 
@@ -174,7 +175,16 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
         stage_name, dot, key = target.partition(".")
         if not dot or not key.strip() or not stage_name.strip():
             raise ValueError(f"--opt 형식이 아닙니다 (STAGE.KEY=VALUE): {item}")
-        out.setdefault(stage_name.strip(), {})[key.strip().replace("-", "_")] = _coerce(value)
+        bag = out.setdefault(stage_name.strip(), {})
+        k = key.strip().replace("-", "_")
+        # 같은 키가 두 번 이상 오면 리스트로 모은다 — argparse 의 append 인자
+        # (competitors.domain)가 통로를 지나 리스트로 도착해야 한다. 덮어쓰면
+        # 도메인 세 개를 준 사용자가 마지막 하나만 잰 결과를 받는다.
+        if k in bag:
+            cur = bag[k]
+            bag[k] = (cur if isinstance(cur, list) else [cur]) + [_coerce(value)]
+        else:
+            bag[k] = _coerce(value)
     return out
 
 
@@ -450,6 +460,10 @@ def main() -> None:
     ap.add_argument("--opt", action="append", metavar="STAGE.KEY=VALUE",
                     help="스테이지별 옵션 (반복 지정). 예: --only rank --opt rank.device=mobile")
     args = ap.parse_args()
+
+    # 원격 사이트면 서버가 같은 run_chain 을 돌고, 그 내레이션을 그대로 받아 찍는다.
+    if remote.dispatch(args, None):
+        return
 
     try:
         results = run_chain(

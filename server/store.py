@@ -9,7 +9,9 @@ Env 는 settings.py 가 소유한다 — 여기서 기본값을 정하지 않는
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -43,6 +45,11 @@ CREATE TABLE IF NOT EXISTS github_tokens (
   login TEXT,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS cli_tokens (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  token_hash TEXT NOT NULL,         -- sha256 hex. 위 token_enc 들과 달리 복호화가 없다
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -59,6 +66,7 @@ CREATE TABLE IF NOT EXISTS sites (
   run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
   stage TEXT,                         -- 지금 도는 단계 id (run_all.STAGES 의 이름)
   stage_pct INTEGER,                  -- 그 시점의 진행률 0~100 (끝난 단계 / 전체 단계)
+  run_log TEXT,                       -- 이번 런의 화면 출력 (워커 stdout). 런당 1벌
   UNIQUE(user_id, project)
 );
 """
@@ -70,7 +78,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if not cols:
         return
     for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile",
-                "stage"):
+                "stage", "run_log"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
@@ -120,6 +128,39 @@ def load_token(conn: sqlite3.Connection, user_id: int) -> str | None:
     row = conn.execute("SELECT token_enc FROM google_tokens WHERE user_id=?",
                        (user_id,)).fetchone()
     return _fernet().decrypt(row["token_enc"]).decode("utf-8") if row else None
+
+
+# --- CLI 토큰 ---------------------------------------------------------------
+#
+# 위의 google_tokens / github_tokens 는 **암호화**다. 남의 API 를 다시 부르려면 원문이
+# 필요하기 때문이다. 이건 성격이 다르다 — 서버가 스스로 발급한 값이라 원문을 되찾을
+# 일이 영영 없고 대조만 하면 된다. 그래서 sha256 해시로 둔다(복호화할 수 없는 쪽이
+# 더 안전하다). Fernet 을 여기 끌어오지 마라.
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_cli_token(conn: sqlite3.Connection, user_id: int) -> str:
+    """CLI 원격 조작용 토큰을 발급하고 **원문을 여기서 딱 한 번** 돌려준다.
+
+    유저당 1행이다(INSERT OR REPLACE) — 재발급하면 이전 토큰은 그 자리에서 무효다.
+    돌려준 원문은 호출자가 화면에 한 번 보여 주고 버린다. 로그에 찍지 않는다.
+    """
+    token = "smt_" + secrets.token_urlsafe(32)
+    conn.execute("INSERT OR REPLACE INTO cli_tokens(user_id, token_hash, created_at) "
+                 "VALUES (?,?,CURRENT_TIMESTAMP)", (user_id, _token_hash(token)))
+    conn.commit()
+    return token
+
+
+def uid_for_cli_token(conn: sqlite3.Connection, token: str) -> int | None:
+    """토큰 원문 → user_id. 모르는 토큰이면 None (호출자가 401 로 옮긴다)."""
+    if not token:
+        return None
+    row = conn.execute("SELECT user_id FROM cli_tokens WHERE token_hash=?",
+                       (_token_hash(token),)).fetchone()
+    return row["user_id"] if row else None
 
 
 # --- 사이트 -----------------------------------------------------------------
@@ -194,6 +235,21 @@ def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
     conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
                  "WHERE id=?", (site_id,))
     conn.commit()
+
+
+def save_run_log(conn: sqlite3.Connection, site_id: int, text: str) -> None:
+    """이번 런의 워커 stdout. 로컬이 폴링으로 흘려받는 그 텍스트다.
+
+    ponytail: 런당 1벌만 보관. 이력이 필요해지면 runs 테이블로.
+    """
+    conn.execute("UPDATE sites SET run_log=? WHERE id=?", (text, site_id))
+    conn.commit()
+
+
+def load_run_log(conn: sqlite3.Connection, user_id: int, project: str) -> str:
+    """user_id 로 범위를 좁혀 읽는다 — project 이름만으로 남의 런 로그가 열리면 안 된다."""
+    row = site(conn, user_id, project)
+    return (row["run_log"] or "") if row else ""
 
 
 def save_github(conn: sqlite3.Connection, user_id: int, token: str, login: str) -> None:
@@ -473,6 +529,29 @@ def demo() -> None:
         assert b"ghp_secret" not in raw, "GitHub 토큰이 평문으로 저장됐다"
         set_repo(conn, uid, "myproj", "octocat/site", "main")
         assert site(conn, uid, "myproj")["repo"] == "octocat/site"
+
+        # CLI 토큰 — 해시만 남고, 재발급하면 앞 토큰이 그 자리에서 죽는다.
+        t1 = issue_cli_token(conn, uid)
+        assert t1.startswith("smt_") and len(t1) > 20, t1
+        assert uid_for_cli_token(conn, t1) == uid, "발급한 토큰으로 유저를 못 찾는다"
+        assert uid_for_cli_token(conn, "smt_틀린값") is None, "아무 토큰이나 통과한다"
+        assert uid_for_cli_token(conn, "") is None, "빈 토큰이 통과한다"
+        assert t1 not in conn.execute(
+            "SELECT token_hash FROM cli_tokens").fetchone()["token_hash"], "토큰이 평문으로 저장됐다"
+        t2 = issue_cli_token(conn, uid)
+        assert t2 != t1 and uid_for_cli_token(conn, t2) == uid
+        assert uid_for_cli_token(conn, t1) is None, "재발급했는데 이전 토큰이 살아 있다"
+        assert conn.execute("SELECT COUNT(*) FROM cli_tokens").fetchone()[0] == 1, \
+            "유저당 1행이 아니다"
+
+        # 런 로그 — 런당 1벌, 남의 것은 안 보인다.
+        assert load_run_log(conn, uid, "myproj") == "", "처음부터 로그가 있다"
+        save_run_log(conn, sid, "[1/13] gsc\n")
+        assert load_run_log(conn, uid, "myproj") == "[1/13] gsc\n"
+        save_run_log(conn, sid, "[1/13] gsc\n[2/13] ga4\n")   # 덮어쓴다(누적 아님)
+        assert load_run_log(conn, uid, "myproj").count("gsc") == 1, "로그가 이어붙었다"
+        assert load_run_log(conn, uid2, "myproj") == "", "남의 런 로그가 열린다"
+        assert load_run_log(conn, uid, "없는사이트") == ""
 
         # session() — 라우트가 conn 열기·소유 확인·tenant·유료 키를 한 번에 쓰는 자리.
         with session(uid, "myproj") as c:

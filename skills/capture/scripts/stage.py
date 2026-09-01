@@ -558,6 +558,41 @@ def _check_seams() -> None:
                                                 p.read_text("utf-8"))}
     assert read <= served,         f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}"
 
+    # 12) 원격 클라이언트가 부르는 /api/* 는 호스팅 서버에 전부 있어야 한다.
+    #     5) 와 같은 종류의 이음매인데 부르는 쪽만 다르다 — 화면 대신 로컬 CLI 다.
+    #     양쪽 다 소스에서 뽑는다(목록을 손으로 적으면 그게 곧 두 번째 사본이다).
+    #     경로가 하나 어긋나면 클라이언트도 서버도 따로 보면 멀쩡한데, 사용자는
+    #     "원격 서버 오류 404" 한 줄만 보고 무엇이 없는지 영영 모른다.
+    #     부르는 쪽은 remote.py 와 그 api()/fetch() 를 쓰는 진입점들(db sql,
+    #     dashboard --export, doctor)이다 — 그것도 소스에서 훑는다.
+    scripts = Path(__file__).resolve().parent
+    if app_f.exists():
+        app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"',
+                                    app_f.read_text("utf-8")))
+        assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
+        remote_call = re.compile(r'(?:remote\.)?\b(?:api|fetch)\('
+                                 r'\s*(?:"(?:GET|POST)"\s*,\s*)?"(/api/[a-z0-9/_-]+)"')
+        for p in sorted(scripts.glob("*.py")) + sorted(SETUP_SCRIPTS.glob("*.py")):
+            for call in sorted(set(remote_call.findall(p.read_text("utf-8")))):
+                assert call in app_routes,                     f"{p.name} 가 원격으로 부르는데 호스팅 서버에 없다: {call}"
+
+    # 13) 수집기는 전부 remote.dispatch 를 통과해야 한다. 이 줄을 빠뜨린 수집기는
+    #     원격 사이트인데도 **조용히 로컬 brain.db 에** 쓴다 — 화면에도 로그에도
+    #     아무것도 안 남고, 사용자는 웹에서 그 단계만 영영 안 채워지는 걸 본다.
+    #     넘기는 이름까지 본다: 파일명과 단계명이 다른 것들이 있어서(collect_serp→
+    #     rank, collect_gap→competitors) 짝이 어긋나면 `/capture rank` 를 쳤는데
+    #     서버에서 다른 단계가 돈다. 명부는 run_all.STAGE_MODULES 하나다.
+    assert set(run_all.STAGE_MODULES) <= set(run_all.VALID_STAGE_NAMES),         f"STAGE_MODULES 에 단계표에 없는 이름이 있다: " \
+        f"{sorted(set(run_all.STAGE_MODULES) - set(run_all.VALID_STAGE_NAMES))}"
+    for name, mod in sorted(run_all.STAGE_MODULES.items()):
+        f = Path(mod.__file__)
+        got = set(re.findall(r"remote\.dispatch\([^)]*?,\s*[\"'](\w+)[\"']",
+                             f.read_text("utf-8")))
+        assert got,             f"{f.name} 이 remote.dispatch 를 안 부른다 — 원격 사이트인데 로컬 " \
+            f"보관함에 조용히 쓴다: /capture {name}"
+        assert got == {name},             f"{f.name} 이 remote.dispatch 에 넘기는 단계 이름이 자기 단계와 다르다: " \
+            f"{sorted(got)} != {name} — 서버에서 엉뚱한 단계가 돈다"
+
 
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}

@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import collector  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import serp_adapter  # noqa: E402
 
 # DataForSEO 요청당 키워드 상한 — 두 엔드포인트 모두 1000.
@@ -266,6 +267,8 @@ def main() -> None:
     if len(sys.argv) == 1:
         return _selfcheck()
     a = _parser().parse_args()
+    if remote.dispatch(a, "metrics"):   # 원격 사이트면 서버가 돈다
+        return
     r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_age=a.max_age)
     print(r)
     sys.exit(0 if r.ok or r.skipped else 1)

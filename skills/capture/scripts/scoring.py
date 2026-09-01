@@ -3021,8 +3021,15 @@ def _selfcheck() -> None:
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "load":
         try:
+            import argparse
+
             import db
-            load(sys.argv[2])
+            import remote
+            # 원격 사이트면 서버가 gaps 단계를 돈다. 이 모듈은 argparse 를 안 쓰므로
+            # dispatch 가 읽는 두 이름만 세워 준다 (gaps 에는 노브가 없다).
+            if not remote.dispatch(argparse.Namespace(project=sys.argv[2], dry_run=False),
+                                   "gaps"):
+                load(sys.argv[2])
         except (db.ProjectNotFound, db.ProjectConfigNotFound) as e:
             sys.exit(str(e))
     else:

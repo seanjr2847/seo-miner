@@ -75,6 +75,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collect_gsc  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 
 # runReport 의 metrics 순서 — 응답 row 의 metricValues 인덱스와 이 순서가 맞아야 한다.
 # 앞 3개(sessions, keyEvents, totalRevenue)는 합산 가능한 카운트류, 뒤 3개는
@@ -368,6 +369,8 @@ def main() -> None:
         return
     try:
         a = _parser().parse_args()
+        if remote.dispatch(a, "ga4"):   # 원격 사이트면 서버가 돈다
+            return
         r = collect(a.project, dry_run=a.dry_run, days=a.days, row_limit=a.row_limit)
     except db.ProjectNotFound as e:
         sys.exit(str(e))
