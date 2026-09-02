@@ -32,8 +32,11 @@ def home() -> Path:
     return Path(os.environ.get("CAPTURE_HOME", Path.home() / ".capture"))
 
 
-def db_file() -> Path:
-    """Brain 파일 자리."""
+def db_file(home_dir: Path | None = None) -> Path:
+    """Brain 파일 자리. home_dir 을 주면 env 를 안 보고 그 경로를 쓴다 —
+    server/store.py 의 Tenant.brain() 이 이걸로 특정 유저의 brain 을 연다."""
+    if home_dir is not None:
+        return Path(home_dir) / "brain.db"
     env = os.environ.get("CAPTURE_DB")
     return Path(env) if env else home() / "brain.db"
 
@@ -271,6 +274,8 @@ def _selfcheck() -> None:
         os.environ["CAPTURE_HOME"] = str(h2)
         assert home() == h2, "CAPTURE_HOME 을 갈아끼웠는데 따라오지 않았다"
         assert db_file() == h2 / "brain.db", "DB 경로가 import 시점에 얼었다"
+        assert db_file(h1) == h1 / "brain.db", "home_dir 을 주면 그 경로를 써야 한다"
+        assert home() == h2, "home_dir 인자가 전역 CAPTURE_HOME 을 건드리면 안 된다"
 
         # ── 인증 3-상태
         assert gsc(missing).auth == "", "아무것도 없으면 빈 문자열"
