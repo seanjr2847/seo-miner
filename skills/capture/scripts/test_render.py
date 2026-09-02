@@ -99,6 +99,7 @@ CRAWL_NEW = "/crawlZ9"              # 크롤: 직전 회차에 없던 이슈
 GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — RIVAL 과 갈라 둔다
 #   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
 BL_REFDOMS = 20241                  # 요약 계기판에만 나오는 수 — 문구와 안 겹친다
+AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -115,6 +116,12 @@ MUSTS = [
     (re.escape(CRAWL_NEW), "사이트 점검이 크롤 이슈를 안 그렸다"),
     (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
+    (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
+    # 엔진 이름 옆의 로고와, 엔진×카테고리 줄에서 질문 목록으로 내려가는 손잡이.
+    # "chatgpt 브랜드 4 3 10 40%" 를 눌러도 아무 일도 안 나던 자리다.
+    (r'<svg class="ailogo', "AI 인용 화면이 엔진 로고를 안 그렸다"),
+    (r'<tr class="aimx"[^>]*data-e="chatgpt"[^>]*data-c="브랜드"[^>]*onclick="AI_drill',
+     "엔진×카테고리 줄이 질문 목록으로 안 내려간다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -221,6 +228,19 @@ def _axes(conn, pid: int) -> None:
                      [(r1, "dup_title", "warn", "/a", "같은 제목"),
                       (r2, "dup_title", "warn", "/a", "같은 제목"),
                       (r2, "broken_internal", "bad", CRAWL_NEW, "404")])
+    # AI 인용 — 질문 둘 × 엔진 셋. chatgpt 만 브랜드 질문을 인용한다.
+    import db
+    conn.executemany("INSERT INTO ai_prompts(project_id,prompt,category) VALUES(?,?,?)",
+                     [(pid, AI_PROMPT, "브랜드"), (pid, f"{AI_PROMPT} 추천", "추천")])
+    pids = [r[0] for r in conn.execute("SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id",
+                                       (pid,))]
+    with db.run(conn, pid, "ai") as r:
+        for eng in ("chatgpt", "perplexity", "gemini"):
+            for i, qid in enumerate(pids):
+                cited = 1 if eng == "chatgpt" and i == 0 else 0
+                conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned,"
+                             "cited_domains_json,answer_excerpt) VALUES(?,?,?,?,?,?,?)",
+                             (qid, r.id, eng, cited, cited, '["rival.example"]', "답변"))
 
 
 def fixture(home: Path) -> None:

@@ -640,8 +640,18 @@ def _axis_ai(conn, pid: int) -> dict:
                  FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
                 WHERE c.run_id=? GROUP BY p2.id
                 ORDER BY cited DESC, mentioned DESC""", (ai_run["id"],))
+        # 질문 × 엔진 — "chatgpt 가 어느 질문을 인용했나"는 이 내역에서만 읽힌다.
+        # 엔진×카테고리 표의 한 줄을 누르면 화면이 이걸로 질문 목록을 거른다.
+        by_eng: dict[int, dict] = {}
+        for r in q(conn,
+            """SELECT prompt_id, engine, SUM(cited) cited, SUM(mentioned) mentioned,
+                      COUNT(*) checks
+                 FROM ai_checks WHERE run_id=? GROUP BY 1,2""", (ai_run["id"],)):
+            by_eng.setdefault(r["prompt_id"], {})[r["engine"]] = {
+                "cited": r["cited"], "mentioned": r["mentioned"], "checks": r["checks"]}
         for r in ai_by_prompt:
             r["miss_answer"] = (r["miss_answer"] or "")[:600]
+            r["by_engine"] = by_eng.get(r["id"], {})
         missed = q(conn,
             """SELECT p2.prompt, p2.category,
                       GROUP_CONCAT(DISTINCT c.engine) engines
