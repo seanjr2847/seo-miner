@@ -15,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
+import dashboard  # noqa: E402  (GSC 축 재사용 — summary/perf 가 스냅샷 짝을 직접 안 고른다)
 import db  # noqa: E402
-import scoring  # noqa: E402
 
 
 _ALLOWED = ("keywords", "opportunities", "queries", "index")
@@ -134,21 +134,20 @@ def summary(project: str) -> dict:
     try:
         p = db.get_project(conn, project)
         pid = p["id"]
-        latest = conn.execute(
-            """SELECT snapshot_date, COALESCE(SUM(clicks),0), COALESCE(SUM(impressions),0)
-                 FROM gsc_snapshots WHERE project_id=?
-                GROUP BY snapshot_date
-                ORDER BY snapshot_date DESC LIMIT 1""", (pid,)).fetchone()
-        if latest:
-            last_run, clicks, impressions = latest[0], int(latest[1]), int(latest[2])
+        # 스냅샷 짝은 gsc 축(dashboard._axis_gsc) 이 고른다 — 날짜만 보고 직전을
+        # 고르면(예전 코드) period_days 가 다른 스냅샷끼리 빼져서 delta_clicks 가
+        # 거짓이 된다. gather() 가 화면에 쓰는 것과 같은 짝짓기다.
+        cfg = dashboard.collector.project_cfg(p["config_path"] or p["name"])
+        gsc = dashboard._axis_gsc(conn, pid, cfg, at=None)
+        by_date = {r["d"]: r for r in gsc["trend"]}
+        cur, prev = gsc["gsc_date"], gsc["gsc_prev"]
+        if cur:
+            last_run = cur
+            clicks = int(by_date[cur]["clk"] or 0)
+            impressions = int(by_date[cur]["imp"] or 0)
         else:
             last_run, clicks, impressions = None, None, None
-        prev = conn.execute(
-            """SELECT COALESCE(SUM(clicks),0)
-                 FROM gsc_snapshots WHERE project_id=?
-                GROUP BY snapshot_date
-                ORDER BY snapshot_date DESC LIMIT 1 OFFSET 1""", (pid,)).fetchone()
-        delta_clicks = (clicks - int(prev[0])) if (last_run and prev) else None
+        delta_clicks = (clicks - int(by_date[prev]["clk"] or 0)) if (cur and prev) else None
         keywords_active = db.count_active_keywords(conn, pid)
         opp_count = int(conn.execute(
             "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
@@ -198,9 +197,13 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
     try:
         p = db.get_project(conn, project)
         pid = p["id"]
-        # 짝짓기는 scoring.snapshot_pair() 하나로 — 날짜만 보고 직전을 고르면
-        # period_days 가 다른 스냅샷끼리 빼져서 Δ가 거짓이 된다 (scoring.md 4-3b).
-        cur, prev_date, period, period_mismatch = scoring.snapshot_pair(conn, pid)
+        # 짝짓기는 gsc 축(dashboard._axis_gsc, scoring.snapshot_pair 를 이미 쓴다)
+        # 하나로 — 날짜만 보고 직전을 고르면 period_days 가 다른 스냅샷끼리
+        # 빼져서 Δ가 거짓이 된다 (scoring.md 4-3b). summary() 와 같은 짝짓기를 본다.
+        cfg = dashboard.collector.project_cfg(p["config_path"] or p["name"])
+        gsc = dashboard._axis_gsc(conn, pid, cfg, at=None)
+        cur, prev_date, period, period_mismatch = (
+            gsc["gsc_date"], gsc["gsc_prev"], gsc["gsc_period"], gsc["period_mismatch"])
         if not cur:
             return {"snapshot": None, "totals": None, "prev": None,
                     "period_mismatch": False,
@@ -384,6 +387,13 @@ def demo() -> None:
         assert pf2["snapshot"] == "2026-02-01", pf2["snapshot"]
         assert pf2["prev"] is None, "기간이 다른 스냅샷을 짝으로 골랐다"
         assert pf2["period_mismatch"] is True, "period_mismatch 를 안 알렸다"
+
+        # summary() 도 같은 짝짓기를 봐야 한다 — 예전 코드(ORDER BY snapshot_date
+        # DESC LIMIT 1 OFFSET 1)는 period_days 를 안 보고 2026-01-01(28일치)을
+        # prev 로 집어 delta_clicks 를 3-1=2 로 지어냈다. 기간이 다르면 짝이 없다.
+        s2 = summary("mismatch")
+        assert s2["clicks"] == 3, s2
+        assert s2["delta_clicks"] is None,             f"기간이 다른 스냅샷을 짝으로 써서 delta_clicks 를 지어냈다: {s2}"
 
         conn.close()
     print("exports: ok")

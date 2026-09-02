@@ -461,15 +461,12 @@ def crawl_compare(conn, pid: int, run_id: int) -> dict:
     return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now)}
 
 
-def gather(conn, p, at: str | None = None) -> dict:
-    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
+def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
+    """검색(GSC) 축 — KPI·추이·움직인 검색어·아깝다·의도/클러스터/국가/기기/색인.
 
-    at: 화면이 고정한 기준 수집일. GSC 스냅샷 축(KPI·추이·움직인 검색어·아깝다·
-        근거 페이지)만 그날로 돌아간다. 순위·색인·기기·AI·기회는 수집 주기가 따로라
-        각자 최신을 본다 — 그래서 화면 머리가 축별 날짜를 다 적는다. 한 날짜로
-        묶으면 대부분의 축이 "그날 데이터 없음"이 된다.
+    at: 화면이 고정한 기준 수집일. 이 축 전체가 그날로 돌아간다(다른 축은 각자
+        수집 주기가 달라 안 따라간다 — gather() 의 docstring 참고).
     """
-    pid = p["id"]
     cur, prev, period, period_mismatch = scoring.snapshot_pair(conn, pid, at)
 
     # 집계는 scoring._snap_agg 하나로 — 여기 사본이 있었는데 period_days 조건이
@@ -490,8 +487,7 @@ def gather(conn, p, at: str | None = None) -> dict:
 
     # 총계가 어떻게 구성돼 있나 — 정보성만 잡고 거래성이 0이면 트래픽이 매출로
     # 안 간다. 셋 다 새 수집 없이 이미 DB 에 있던 축인데(intent 는 채워만 놓고
-    # 아무도 안 읽었다) 화면 어디에도 안 나오고 있었다. 브랜드 축은 별칭이
-    # 필요해서 cfg 를 읽은 뒤, 반환 dict 에서 조립한다.
+    # 아무도 안 읽었다) 화면 어디에도 안 나오고 있었다.
     by_intent = scoring.keyword_perf(conn, pid, cur, prev, period, "intent")
     by_cluster = scoring.keyword_perf(conn, pid, cur, prev, period, "cluster")
     # 국가는 수집 차원이라 "안 캤다"와 "캤는데 없다"가 다르다 — device 와 같은 규약.
@@ -500,16 +496,109 @@ def gather(conn, p, at: str | None = None) -> dict:
 
     # 남의 브랜드 카탈로그는 yaml에 있다. Brain에는 등록됐는데 yaml을 지운
     # 프로젝트도 화면은 떠야 한다 — project_cfg가 경고만 하고 빈 설정을 준다.
-    cfg = collector.project_cfg(p["config_path"] or p["name"])
     brands = scoring.foreign_brands(conn, pid, cfg)
     striking = scoring.striking(conn, pid, cur, brands=brands)
+    striking_page2 = sum(1 for r in striking if r.get("band") == "page2")
 
     # 일별 추이·기기 격차·색인 점검. 판정 함수가 빈 목록을 주는 경우가 두 가지라
     # (아직 안 수집 / 수집했는데 문제 없음) 최신 수집일도 같이 내려보낸다 —
     # 화면이 그 둘을 구분해서 안내 문구를 갈라 쓴다.
     device_date = scoring._latest(conn, scoring._LATEST_BD, (pid, "device"))
     index_date = scoring._latest(conn, scoring._LATEST_IX, (pid,))
+    daily = scoring.daily_trend(conn, pid)
+    daily_stats = {
+        "clicks_sum": sum(r["clicks"] or 0 for r in daily),
+        "impressions_sum": sum(r["impressions"] or 0 for r in daily),
+        "clicks_max": max([r["clicks"] or 0 for r in daily] + [1]),
+        "impressions_max": max([r["impressions"] or 0 for r in daily] + [1]),
+    }
 
+    return {
+        "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+        # 고를 수 있는 날 = 실제로 수집한 날. 화면의 [기준 수집일]이 이걸 그린다.
+        "gsc_dates": scoring.snapshot_dates(conn, pid),
+        "gsc_pinned": bool(at),
+        "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
+        "shift": shift, "rank_bands": bands, "ctr_gaps": ctr_gaps,
+        # 클릭이 늘어도 그게 브랜드 검색이면 SEO 는 제자리다. 별칭 정본은
+        # aliases_of 하나 — 비면 판정 불가라 빈 목록이 오고 화면이 그렇게 말한다.
+        "brand_split": scoring.brand_split(conn, pid, cur, prev, period,
+                                           scoring.aliases_of(cfg)),
+        "by_intent": by_intent, "by_cluster": by_cluster,
+        "by_country": by_country, "country_date": country_date,
+        "striking": striking, "striking_page2": striking_page2,
+        "brand_catalog_empty": len(brands) == 0,
+        "daily": daily, "daily_stats": daily_stats,
+        "device_gap": scoring.device_gap(conn, pid),
+        "index_issues": scoring.index_issues(conn, pid),
+        "device_date": device_date, "index_date": index_date,
+        "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
+                  "striking_hi": scoring.STRIKING_HI,
+                  "rank_noise": scoring.RANK_NOISE,
+                  "device_gap_pos": scoring.DEVICE_GAP_POS,
+                  "device_min_imp": scoring.DEVICE_MIN_IMP},
+        # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
+        # 그래프·Δ가 전부 거짓이 된다. SQL이 이미 period_days로 걸렀으므로 p 필드는 뺀다.
+        "trend": [dict(r) for r in conn.execute(
+            """SELECT snapshot_date d, SUM(clicks) clk,
+                      SUM(impressions) imp, COUNT(DISTINCT query) q
+                 FROM gsc_snapshots WHERE project_id=? AND period_days=?
+                GROUP BY 1 ORDER BY 1""", (pid, period))],
+    }
+
+
+def _axis_rank(conn, pid: int) -> dict:
+    """순위(rank_snapshots) 축 — SERP 순위·AIO 인용 갭·추적 중인 키워드 수.
+
+    "ranks" 는 여기서 자르지 않은 전체 목록이다 — gather() 가 화면용으로 30개까지
+    자르고, 그 앞의 전체는 query_pages 근거 조립에 쓴다.
+    """
+    rank_dates = [r[0] for r in conn.execute(
+        """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
+             JOIN keywords k ON k.id=rs.keyword_id
+            WHERE k.project_id=? ORDER BY d DESC LIMIT 2""", (pid,))]
+
+    def rank_agg(d):
+        if not d:
+            return {}
+        # url·피처까지 읽는다 — 예전엔 순위 숫자만 실어서, 화면이 "몇 위"는 알아도
+        # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
+        return {r["keyword"]: r for r in q(conn,
+            """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
+                      rs.aio_present, rs.aio_cited
+                 FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
+                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
+
+    r_cur = rank_agg(rank_dates[0] if rank_dates else None)
+    r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
+    ranks, aio_gap = [], []
+    for kw, r in r_cur.items():
+        prev_r = r_prev.get(kw)
+        prev_pos = prev_r["position"] if prev_r else None
+        cur_pos = r["position"]
+        rd = scoring.rank_delta(prev_pos, cur_pos)
+        try:
+            feats = json.loads(r["serp_features_json"] or "[]")
+        except (TypeError, ValueError):
+            feats = []
+        ranks.append({"keyword": kw, "pos": cur_pos, "dpos": rd["delta"],
+                      "delta": rd, "url": r["url"], "features": feats,
+                      "prev_pos": prev_pos,
+                      "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
+        if r["aio_present"] == 1 and r["aio_cited"] == 0:
+            aio_gap.append(kw)
+    ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
+
+    return {
+        "rank_date": rank_dates[0] if rank_dates else None,
+        "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
+        "ranks": ranks, "aio_gap": aio_gap,
+        "kw_active": db.count_active_keywords(conn, pid),
+    }
+
+
+def _axis_ai(conn, pid: int) -> dict:
+    """AI 인용 축 (collect_ai) — 엔진×카테고리 인용률, 빠진 질문, 검색×AI 교차."""
     ai_run = conn.execute(
         "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
         "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
@@ -577,133 +666,67 @@ def gather(conn, p, at: str | None = None) -> dict:
     ai_vs_search = scoring.search_wins_ai_loses(conn, pid, ai_by_prompt)
     ai_outranked = scoring.ai_outranked(conn, pid, cite_share)
 
-    rank_dates = [r[0] for r in conn.execute(
-        """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
-             JOIN keywords k ON k.id=rs.keyword_id
-            WHERE k.project_id=? ORDER BY d DESC LIMIT 2""", (pid,))]
-
-    def rank_agg(d):
-        if not d:
-            return {}
-        # url·피처까지 읽는다 — 예전엔 순위 숫자만 실어서, 화면이 "몇 위"는 알아도
-        # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
-        return {r["keyword"]: r for r in q(conn,
-            """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
-                      rs.aio_present, rs.aio_cited
-                 FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
-                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
-
-    r_cur = rank_agg(rank_dates[0] if rank_dates else None)
-    r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
-    ranks, aio_gap = [], []
-    for kw, r in r_cur.items():
-        prev_r = r_prev.get(kw)
-        prev_pos = prev_r["position"] if prev_r else None
-        cur_pos = r["position"]
-        rd = scoring.rank_delta(prev_pos, cur_pos)
-        try:
-            feats = json.loads(r["serp_features_json"] or "[]")
-        except (TypeError, ValueError):
-            feats = []
-        ranks.append({"keyword": kw, "pos": cur_pos, "dpos": rd["delta"],
-                      "delta": rd, "url": r["url"], "features": feats,
-                      "prev_pos": prev_pos,
-                      "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
-        if r["aio_present"] == 1 and r["aio_cited"] == 0:
-            aio_gap.append(kw)
-    ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
-
-    opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
-    # GA4 매출 잠재력 보정 배지 — scoring.load() 가 저장할 때 이미 score() 로 승수를
-    # 반영해 놨다. 여기서는 화면이 "왜 이게 위로 왔는지" 말할 수 있게 같은 승수를
-    # 다시 구해서 얹기만 한다(저장은 안 한다 — DB 스키마는 안 건드린다). 승수가
-    # 1.0(GA4 없음·표본 미달·페이지 없는 kind)이면 키 자체를 안 붙인다 — 화면은
-    # ga4_mult 유무로 배지를 켠다.
-    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
-    if ga4_date:
-        ga4_ctx = {"conn": conn, "pid": pid, "cur": cur,
-                   "ga4": scoring._ga4_agg(conn, pid, ga4_date),
-                   "page_agg": scoring._page_agg(conn, pid, cur, period) if cur else {}}
-        for o in opps:
-            if o["kind"] not in scoring.GA4_VALUE_KINDS:
-                continue
-            m = scoring.value_mult(scoring._ga4_metrics(ga4_ctx, query=o["target"]))
-            if m != 1.0:
-                o["ga4_mult"] = m
-                o["ga4_pre_score"] = round(o["score"] / m, 1)
-    opps_total = conn.execute(
-        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
-        (pid,)).fetchone()[0]
-    runs = q(conn,
-        """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
-             FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 40""", (pid,))
-    # /create 가 실제로 고친 것 — 측정→기회→수정→재측정 루프가 닫혔음을 보여주는 자리.
-    creations = q(conn,
-        """SELECT c.id, c.kind, c.file_path, c.branch, c.note, c.merged,
-                  c.created_at, c.opportunity_id, o.target opp_target
-             FROM creations c LEFT JOIN opportunities o ON o.id=c.opportunity_id
-            WHERE c.project_id=? ORDER BY c.id DESC LIMIT 50""", (pid,))
-    prog = stage.progress(conn, pid)
-    guide = stage.state(conn, p, p["domain"] or "")
-    daily = scoring.daily_trend(conn, pid)
-    daily_stats = {
-        "clicks_sum": sum(r["clicks"] or 0 for r in daily),
-        "impressions_sum": sum(r["impressions"] or 0 for r in daily),
-        "clicks_max": max([r["clicks"] or 0 for r in daily] + [1]),
-        "impressions_max": max([r["impressions"] or 0 for r in daily] + [1]),
+    return {
+        "ai_date": ai_date, "matrix": matrix, "gap_domains": gap_domains,
+        "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
+        "missed": missed, "ai_trend": ai_trend,
+        "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
     }
-    striking_page2 = sum(1 for r in striking if r.get("band") == "page2")
 
-    # 행을 펼쳤을 때 보여줄 근거 — 그 검색어에 실제로 걸린 내 페이지들. 기회·키워드·
-    # 순위·움직인 검색어가 같은 한 벌을 본다(화면마다 다른 표를 만들면 같은 검색어가
-    # 화면마다 다른 페이지를 말한다).
-    query_pages = scoring.pages_by_query(conn, pid, [
-        *(o["target"] for o in opps),
-        *(r["query"] for r in striking),
-        *(r["keyword"] for r in ranks),
-        *(r["query"] for r in ups), *(r["query"] for r in downs)], at=at)
 
-    # 내 페이지 감사(collect_page) — 최신 검사일 한 벌. 진단 문장은 여기서 만들지
-    # 않는다: scoring.page_advice 가 정본이고 화면은 그 결과를 그리기만 한다.
-    # 검색어를 같이 넘기는 이유는 "title 에 무엇을 넣어라"의 '무엇'이 그것이라서다.
-    audit_date = conn.execute(
-        "SELECT MAX(checked_date) FROM page_audits WHERE project_id=?", (pid,)).fetchone()[0]
-    q_of_url: dict[str, list] = {}
-    for qq, prows in query_pages.items():
-        for pr in prows:
-            q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
-    page_audits = {}
-    if audit_date:
-        for a in q(conn, "SELECT * FROM page_audits WHERE project_id=? AND checked_date=?",
-                   (pid, audit_date)):
-            qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
-            a["queries"] = qs
-            a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
-            page_audits[a["url"]] = a
+def _axis_page_perf(conn, pid: int) -> dict:
+    """페이지 축 (scoring 의 page_performance·dead_pages·starved_pages).
 
-    # ── 페이지 축 (scoring 의 page_performance·dead_pages·starved_pages) ───
-    # 나머지 화면은 전부 검색어 단위다. 검색어 하나하나의 순위는 흔들려도 페이지는
-    # 안 흔들린다 — 어느 페이지가 죽고 있는지는 페이지로 합쳐야 보인다. 뒤 둘은
-    # 크롤(crawl_pages)과 GSC 를 맞대 본 결과다: 새로 캐는 것 없이 이미 있는 두
-    # 수집본을 처음 겹쳐 놓은 것뿐이다.
-    page_perf = scoring.page_performance(conn, pid)
-    dead_pages = scoring.dead_pages(conn, pid)
-    starved_pages = scoring.starved_pages(conn, pid)
+    나머지 화면은 전부 검색어 단위다. 검색어 하나하나의 순위는 흔들려도 페이지는
+    안 흔들린다 — 어느 페이지가 죽고 있는지는 페이지로 합쳐야 보인다. 뒤 둘은
+    크롤(crawl_pages)과 GSC 를 맞대 본 결과다: 새로 캐는 것 없이 이미 있는 두
+    수집본을 처음 겹쳐 놓은 것뿐이다.
+    """
+    return {
+        "page_perf": scoring.page_performance(conn, pid),
+        "dead_pages": scoring.dead_pages(conn, pid),
+        "starved_pages": scoring.starved_pages(conn, pid),
+        # 페이지 축 임계는 이 뭉치에 같이 싣는다 — 화면이 "왜 이 줄이 걸렸나"를
+        # 말할 때 숫자를 다시 적지 않게(정본은 scoring 의 상수다).
+        "page_rules": {"starved_links_in": scoring.STARVED_LINKS_IN,
+                       "starved_top_n": scoring.STARVED_TOP_N,
+                       "ga4_noconv_min_clicks": scoring.GA4_NOCONV_MIN_CLICKS,
+                       "ga4_noconv_min_sessions": scoring.GA4_NOCONV_MIN_SESSIONS},
+    }
 
-    # ── GA4 (collect_ga4) ───────────────────────────────────────────────
-    # 클릭 뒤에 무슨 일이 났는지 — page_perf 는 이미 GA4 가 있으면 세션·전환을
-    # 얹어서 온다(scoring.page_performance). ga4_date 는 "GA4 를 연결했나"를 화면이
-    # 가르는 열쇠다 — 없으면 이 셋(추가 열·전환 없는 페이지·의도별 근사)을 통째로 숨긴다.
-    # (opps 근처에서 이미 구해 뒀다 — 여기서 다시 안 구한다)
+
+def _axis_ga4(conn, pid: int, at: str | None) -> dict:
+    """GA4 축 (collect_ga4) — 클릭 뒤에 무슨 일이 났는지.
+
+    page_perf 는 이미 GA4 가 있으면 세션·전환을 얹어서 온다(scoring.page_performance,
+    _axis_page_perf 소관 — 여기서 다시 안 구한다). ga4_date 는 "GA4 를 연결했나"를
+    화면이 가르는 열쇠다 — 없으면 나머지 GA4 키를 통째로 숨긴다.
+
+    깔때기·채널·분해(기기/국가/신규-재방문)는 funnel 이 None 이면(부재) 반환
+    딕셔너리에 키 자체를 안 싣는다(zero_conv_pages 와 달리 부재 규약).
+    """
+    cur, _prev, period, _mismatch = scoring.snapshot_pair(conn, pid, at)
+    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
     zero_conv_pages = scoring.zero_conversion_pages(conn, pid)
     ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
-    # 깔때기·채널·분해(기기/국가/신규-재방문) — funnel 이 None 이면(부재) 아래
-    # return 딕셔너리에서 키 자체를 안 싣는다(zero_conv_pages 와 달리 부재 규약).
     ga4_funnel, ga4_channels = scoring.ga4_funnel(conn, pid, cur, period)
 
-    # ── 백링크 (collect_backlinks) ────────────────────────────────────────
-    # 요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
-    # 그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가 실제로 손댈 자리다.
+    out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent}
+    if ga4_funnel:
+        out.update({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
+                    "ga4_by_device": scoring.ga4_breakdown(conn, pid, "device"),
+                    "ga4_by_country": scoring.ga4_breakdown(conn, pid, "country",
+                                                            top=scoring.GA4_BD_COUNTRY_TOP),
+                    "ga4_by_newret": scoring.ga4_breakdown(conn, pid, "newvsreturning")})
+    return out
+
+
+def _axis_backlinks(conn, pid: int) -> dict:
+    """백링크 축 (collect_backlinks).
+
+    요약만으로는 "무엇을 할지"가 안 나온다. 어느 페이지가 어떤 앵커로 받았는지,
+    그리고 경쟁사는 받는데 우리는 못 받는 곳이 어디인지가 실제로 손댈 자리다.
+    """
     bl_date = conn.execute(
         "SELECT MAX(checked_date) FROM backlink_summary WHERE project_id=?", (pid,)).fetchone()[0]
     bl_summary, bl_domains, bl_links, bl_anchors, bl_intersect, bl_trend = {}, [], [], [], [], []
@@ -724,9 +747,13 @@ def gather(conn, p, at: str | None = None) -> dict:
                          (pid, bl_date))
         bl_trend = q(conn, "SELECT checked_date d, referring_domains rd, backlinks bl"
                            " FROM backlink_summary WHERE project_id=? ORDER BY 1", (pid,))
+    return {"bl_date": bl_date, "bl_summary": bl_summary, "bl_domains": bl_domains,
+            "bl_links": bl_links, "bl_anchors": bl_anchors, "bl_intersect": bl_intersect,
+            "bl_trend": bl_trend}
 
-    # ── 경쟁 분석 (collect_gap) ───────────────────────────────────────────
-    # 몫(share)은 저장하지 않는다 — 분모가 바뀌면 낡는다. 여기서 계산한다.
+
+def _axis_competitors(conn, pid: int) -> dict:
+    """경쟁 분석 축 (collect_gap). 몫(share)은 저장하지 않는다 — 분모가 바뀌면 낡는다."""
     cm_date = conn.execute(
         "SELECT MAX(checked_date) FROM competitor_metrics WHERE project_id=?", (pid,)).fetchone()[0]
     comp_metrics, kw_gap, kw_gap_counts = [], [], {}
@@ -744,6 +771,55 @@ def gather(conn, p, at: str | None = None) -> dict:
         kw_gap_counts = {r["kind"]: r["n"] for r in q(
             conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " GROUP BY 1", (pid, gap_date))}
+    return {"comp_date": cm_date, "comp_metrics": comp_metrics,
+            "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts}
+
+
+def _axis_crawl(conn, pid: int) -> dict:
+    """사이트 크롤 축 (collect_crawl). 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것."""
+    crawl = {}
+    cr = conn.execute("SELECT * FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
+                      " ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    if cr:
+        crawl = {"run": dict(cr),
+                 "issues": q(conn, "SELECT * FROM crawl_issues WHERE run_id=?"
+                                   " ORDER BY CASE severity WHEN 'bad' THEN 0 WHEN 'warn' THEN 1"
+                                   " ELSE 2 END, kind LIMIT 500", (cr["id"],)),
+                 "counts": {r["kind"]: r["n"] for r in q(
+                     conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
+                     (cr["id"],))},
+                 "compare": crawl_compare(conn, pid, cr["id"])}
+    return {"crawl": crawl}
+
+
+def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict]) -> dict:
+    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)이 낸 원본 행을 대상 문자열로
+    한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
+    """
+    opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
+
+    # GA4 매출 잠재력 보정 배지 — scoring.load() 가 저장할 때 이미 score() 로 승수를
+    # 반영해 놨다. 여기서는 화면이 "왜 이게 위로 왔는지" 말할 수 있게 같은 승수를
+    # 다시 구해서 얹기만 한다(저장은 안 한다 — DB 스키마는 안 건드린다). 승수가
+    # 1.0(GA4 없음·표본 미달·페이지 없는 kind)이면 키 자체를 안 붙인다 — 화면은
+    # ga4_mult 유무로 배지를 켠다.
+    cur, _prev, period, _mismatch = scoring.snapshot_pair(conn, pid, at)
+    ga4_date = scoring._latest(conn, scoring._LATEST_GA4, (pid,))
+    if ga4_date:
+        ga4_ctx = {"conn": conn, "pid": pid, "cur": cur,
+                   "ga4": scoring._ga4_agg(conn, pid, ga4_date),
+                   "page_agg": scoring._page_agg(conn, pid, cur, period) if cur else {}}
+        for o in opps:
+            if o["kind"] not in scoring.GA4_VALUE_KINDS:
+                continue
+            m = scoring.value_mult(scoring._ga4_metrics(ga4_ctx, query=o["target"]))
+            if m != 1.0:
+                o["ga4_mult"] = m
+                o["ga4_pre_score"] = round(o["score"] / m, 1)
+
+    opps_total = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
+        (pid,)).fetchone()[0]
 
     # 라벨·처방·방어여부는 여기서 한 번 풀어 opps 에 싣는다 — 화면은 그리기만 한다.
     # striking_distance·content_gap 은 밴드/갈래로 처방이 갈리는데, 그 판정은 이미
@@ -758,93 +834,95 @@ def gather(conn, p, at: str | None = None) -> dict:
         o["label"] = scoring.kind_label(o["kind"], band=band)
         o["play"] = scoring.kind_play(o["kind"], band=band, gap_kind=gk)
 
-    # ── 사이트 크롤 (collect_crawl) ───────────────────────────────────────
-    # 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것.
-    crawl = {}
-    cr = conn.execute("SELECT * FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
-                      " ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
-    if cr:
-        crawl = {"run": dict(cr),
-                 "issues": q(conn, "SELECT * FROM crawl_issues WHERE run_id=?"
-                                   " ORDER BY CASE severity WHEN 'bad' THEN 0 WHEN 'warn' THEN 1"
-                                   " ELSE 2 END, kind LIMIT 500", (cr["id"],)),
-                 "counts": {r["kind"]: r["n"] for r in q(
-                     conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
-                     (cr["id"],))},
-                 "compare": crawl_compare(conn, pid, cr["id"])}
+    return {"opps": opps, "opps_total": opps_total}
+
+
+def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
+                      striking: list[dict], ranks_all: list[dict],
+                      ups: list[dict], downs: list[dict]) -> dict:
+    """행을 펼쳤을 때 보여줄 근거 — 그 검색어에 실제로 걸린 내 페이지들, 그리고 페이지
+    감사. 기회·키워드·순위·움직인 검색어가 같은 한 벌을 본다(화면마다 다른 표를
+    만들면 같은 검색어가 화면마다 다른 페이지를 말한다) — 그래서 이 축은 다른 축이
+    이미 낸 결과(opps/striking/ranks_all/ups/downs)를 그대로 받는다.
+    """
+    query_pages = scoring.pages_by_query(conn, pid, [
+        *(o["target"] for o in opps),
+        *(r["query"] for r in striking),
+        *(r["keyword"] for r in ranks_all),
+        *(r["query"] for r in ups), *(r["query"] for r in downs)], at=at)
+
+    # 내 페이지 감사(collect_page) — 최신 검사일 한 벌. 진단 문장은 여기서 만들지
+    # 않는다: scoring.page_advice 가 정본이고 화면은 그 결과를 그리기만 한다.
+    # 검색어를 같이 넘기는 이유는 "title 에 무엇을 넣어라"의 '무엇'이 그것이라서다.
+    audit_date = conn.execute(
+        "SELECT MAX(checked_date) FROM page_audits WHERE project_id=?", (pid,)).fetchone()[0]
+    q_of_url: dict[str, list] = {}
+    for qq, prows in query_pages.items():
+        for pr in prows:
+            q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
+    page_audits = {}
+    if audit_date:
+        for a in q(conn, "SELECT * FROM page_audits WHERE project_id=? AND checked_date=?",
+                   (pid, audit_date)):
+            qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
+            a["queries"] = qs
+            a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
+            page_audits[a["url"]] = a
+
+    return {"query_pages": query_pages, "page_audits": page_audits, "page_audit_date": audit_date}
+
+
+def gather(conn, p, at: str | None = None) -> dict:
+    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
+
+    각 축(_axis_*)이 자기 키 묶음을 내고, 여기서는 그 합집합만 한다 — 축끼리
+    공유하는 중간값(스냅샷 짝 cur/prev/period 등)은 인자로 안 넘긴다. 필요한 축이
+    scoring.snapshot_pair() 를 각자 다시 부른다(같은 conn/pid/at 이면 같은 값이라
+    비용 말고는 잃는 게 없다). opps·query_pages 처럼 다른 축의 *결과 행*이 실제로
+    필요한 경우만 그 축의 반환값을 인자로 받는다.
+
+    at: 화면이 고정한 기준 수집일. GSC 스냅샷 축(KPI·추이·움직인 검색어·아깝다·
+        근거 페이지)만 그날로 돌아간다. 순위·색인·기기·AI·기회는 수집 주기가 따로라
+        각자 최신을 본다 — 그래서 화면 머리가 축별 날짜를 다 적는다. 한 날짜로
+        묶으면 대부분의 축이 "그날 데이터 없음"이 된다.
+    """
+    pid = p["id"]
+    cfg = collector.project_cfg(p["config_path"] or p["name"])
+
+    gsc = _axis_gsc(conn, pid, cfg, at)
+    rank = _axis_rank(conn, pid)
+    ranks_all = rank["ranks"]                 # query_pages 근거용 — 자르기 전 전체
+    rank["ranks"] = ranks_all[:30]            # 화면에 실리는 것은 30개까지
+
+    ai = _axis_ai(conn, pid)
+    comp = _axis_competitors(conn, pid)
+    opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"])
+    qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
+                           ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
+    page_perf = _axis_page_perf(conn, pid)
+    ga4 = _axis_ga4(conn, pid, at)
+    bl = _axis_backlinks(conn, pid)
+    crawl = _axis_crawl(conn, pid)
+
+    runs = q(conn,
+        """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
+             FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 40""", (pid,))
+    # /create 가 실제로 고친 것 — 측정→기회→수정→재측정 루프가 닫혔음을 보여주는 자리.
+    creations = q(conn,
+        """SELECT c.id, c.kind, c.file_path, c.branch, c.note, c.merged,
+                  c.created_at, c.opportunity_id, o.target opp_target
+             FROM creations c LEFT JOIN opportunities o ON o.id=c.opportunity_id
+            WHERE c.project_id=? ORDER BY c.id DESC LIMIT 50""", (pid,))
 
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
-    return {"schema": 1,
-            "project": dict(p), "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
-            # 고를 수 있는 날 = 실제로 수집한 날. 화면의 [기준 수집일]이 이걸 그린다.
-            "gsc_dates": scoring.snapshot_dates(conn, pid),
-            "gsc_pinned": bool(at), "ai_date": ai_date,
-            "period_mismatch": period_mismatch, "ups": ups, "downs": downs,
-            "shift": shift, "rank_bands": bands, "ctr_gaps": ctr_gaps,
-            # 클릭이 늘어도 그게 브랜드 검색이면 SEO 는 제자리다. 별칭 정본은
-            # aliases_of 하나 — 비면 판정 불가라 빈 목록이 오고 화면이 그렇게 말한다.
-            "brand_split": scoring.brand_split(conn, pid, cur, prev, period,
-                                               scoring.aliases_of(cfg)),
-            "by_intent": by_intent, "by_cluster": by_cluster,
-            "by_country": by_country, "country_date": country_date,
-            "striking": striking, "striking_page2": striking_page2,
-            "brand_catalog_empty": len(brands) == 0,
-            "matrix": matrix, "gap_domains": gap_domains,
-            "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
-            "missed": missed, "ai_trend": ai_trend,
-            "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
-            "opps": opps, "opps_total": opps_total,
-            "query_pages": query_pages, "page_audits": page_audits,
-            "page_audit_date": audit_date,
-            "page_perf": page_perf, "dead_pages": dead_pages,
-            "starved_pages": starved_pages,
-            "ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent,
-            # 페이지 축 임계는 이 뭉치에 같이 싣는다 — 화면이 "왜 이 줄이 걸렸나"를
-            # 말할 때 숫자를 다시 적지 않게(정본은 scoring 의 상수다).
-            "page_rules": {"starved_links_in": scoring.STARVED_LINKS_IN,
-                           "starved_top_n": scoring.STARVED_TOP_N,
-                           "ga4_noconv_min_clicks": scoring.GA4_NOCONV_MIN_CLICKS,
-                           "ga4_noconv_min_sessions": scoring.GA4_NOCONV_MIN_SESSIONS},
+    return {"schema": 1, "project": dict(p),
+            **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
             "runs": runs, "creations": creations,
-            "rank_date": rank_dates[0] if rank_dates else None,
-            "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
-            "ranks": ranks[:30], "aio_gap": aio_gap,
-            "kw_active": db.count_active_keywords(conn, pid),
             # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
             # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
             "kind_labels": {k.name: k.label for k in scoring.KINDS},
-            "daily": daily, "daily_stats": daily_stats,
-            "device_gap": scoring.device_gap(conn, pid),
-            "index_issues": scoring.index_issues(conn, pid),
-            "device_date": device_date, "index_date": index_date,
-            "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
-                      "striking_hi": scoring.STRIKING_HI,
-                      "rank_noise": scoring.RANK_NOISE,
-                      "device_gap_pos": scoring.DEVICE_GAP_POS,
-                      "device_min_imp": scoring.DEVICE_MIN_IMP},
-            # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
-            # 그래프·Δ가 전부 거짓이 된다. SQL이 이미 period_days로 걸렀으므로 p 필드는 뺀다.
-            "trend": [dict(r) for r in conn.execute(
-                """SELECT snapshot_date d, SUM(clicks) clk,
-                          SUM(impressions) imp, COUNT(DISTINCT query) q
-                     FROM gsc_snapshots WHERE project_id=? AND period_days=?
-                    GROUP BY 1 ORDER BY 1""", (pid, period))],
-            "bl_date": bl_date, "bl_summary": bl_summary, "bl_domains": bl_domains,
-            "bl_links": bl_links, "bl_anchors": bl_anchors, "bl_intersect": bl_intersect,
-            "bl_trend": bl_trend,
-            "comp_date": cm_date, "comp_metrics": comp_metrics,
-            "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
-            "crawl": crawl,
-            "progress": prog,
-            "guide": guide,
-            # GA4 미연결이면 이 다섯 키는 아예 안 싣는다(빈 값이 아니라 부재) —
-            # 화면은 `if (!d.ga4_funnel) return;` 으로 조용히 접는다.
-            **({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
-                "ga4_by_device": scoring.ga4_breakdown(conn, pid, "device"),
-                "ga4_by_country": scoring.ga4_breakdown(conn, pid, "country",
-                                                        top=scoring.GA4_BD_COUNTRY_TOP),
-                "ga4_by_newret": scoring.ga4_breakdown(conn, pid, "newvsreturning")}
-              if ga4_funnel else {})}
+            "progress": stage.progress(conn, pid),
+            "guide": stage.state(conn, p, p["domain"] or "")}
 
 
 def payload(project: str, at: str | None = None) -> dict:
