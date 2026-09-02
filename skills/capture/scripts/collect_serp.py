@@ -182,13 +182,13 @@ def collect(project: str, *,
                     conn, p["id"], [d for d, n in domain_hits.items() if n >= 3], "auto_serp")
 
             r.api_calls, r.cost = done, total_cost
-            r.notes = (f"provider={provider} device={device} errors={st.errors} skipped={skipped} "
+            r.notes = (f"provider={provider} device={device} {st.err_note} skipped={skipped} "
                        f"harvest_kw={new_kw} harvest_comp={new_comp}")
 
         print(f"\nsaved {done} snapshots{st.skip_note(skipped)} (errors={st.errors}) "
               f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
               f"경쟁사 +{new_comp}\nrun_id={r.id}")
-        return st.done(rows=done, cost=total_cost)
+        return st.verdict(done, rows=done, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:

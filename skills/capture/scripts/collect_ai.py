@@ -48,6 +48,34 @@ SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
           "to a {locale} audience.")
 
 
+def openrouter_ok() -> tuple[bool, str]:
+    """키가 살아 있나 — GET /auth/key, **무료 호출**. 반환: (쓸 수 있나, 사람 말).
+
+    돈 쓰는 ai 단계 앞과 doctor 진단이 같은 이 함수를 쓴다(판정 두 벌 금지).
+    확인 자체가 실패하면(네트워크·모르는 응답) True 다 — 카나리아가 수집을
+    막으면 안 된다. 막는 건 "확실히 못 쓴다"일 때뿐.
+    """
+    import os
+    if not serp_adapter.has_openrouter():
+        return False, "OPENROUTER_API_KEY 없음"
+    try:
+        r = requests.get(
+            "https://openrouter.ai/api/v1/auth/key",
+            timeout=serp_adapter.TIMEOUTS["canary"],
+            headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+        if r.status_code in serp_adapter.FATAL_STATUS:
+            return False, str(serp_adapter.fatal("OpenRouter", r.status_code))
+        r.raise_for_status()
+        d = (r.json().get("data") or {})
+        limit, used = d.get("limit"), d.get("usage")
+        if limit is not None and used is not None and float(used) >= float(limit):
+            return False, (f"OpenRouter 크레딧 소진 (${float(used):.2f}/${float(limit):.2f}) — "
+                           f"{serp_adapter.FATAL_FIX['OpenRouter']}")
+        return True, "OpenRouter 키 유효"
+    except Exception as e:
+        return True, f"OpenRouter 키 확인 실패 ({e}) — 그대로 진행합니다"
+
+
 def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
     body = {
         "model": model,
@@ -62,7 +90,8 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"},
         json=body)
-    r.raise_for_status()
+    # 401/402 는 Fatal — 키가 죽었거나 크레딧이 없는데 질문 60개를 계속 던지지 않는다.
+    serp_adapter.raise_for(r, "OpenRouter")
     data = r.json()
     msg = data.get("choices", [{}])[0].get("message", {}) or {}
     content = msg.get("content") or ""
@@ -205,7 +234,7 @@ def collect(project: str, *,
                 if n:
                     print(f"  prompt#{row['id']} [{row['category']}] done")
             r.notes = (f"engines={list(engines_d)} samples={samples} "
-                       f"errors={st.errors} skipped={skipped_calls}")
+                       f"{st.err_note} skipped={skipped_calls}")
 
         # 실패는 카운트만 하고 계속 갔으니, 끝에서 한 번 크게 말한다 —
         # 아래 매트릭스의 분모가 그만큼 줄어든 것을 보이게.
@@ -224,7 +253,7 @@ def collect(project: str, *,
         print(f"\nrun_id={run_id} saved{st.skip_note(skipped_calls)}. "
               f"failures={st.errors}/{calls_to_make}. "
               f"Next: /capture gaps or /capture report")
-        return st.done(rows=calls_to_make - st.errors)
+        return st.verdict(calls_to_make - st.errors, rows=calls_to_make - st.errors)
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -515,8 +515,7 @@ def collect(project: str, *,
                 try:
                     auto_axis()
                 except Exception as e:      # 한 축이 죽어도 나머지 축은 산다
-                    st.errors += 1
-                    print(f"  ! 자동 경쟁사 탐지 실패: {e}", file=sys.stderr)
+                    st.fail(f"자동 경쟁사 탐지 실패: {e}", first=str(e))
                 conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
                     domains = _cap(_resolve_domains(conn, p["id"], None))
@@ -526,7 +525,7 @@ def collect(project: str, *,
             r.api_calls += extra_calls
             r.notes = (f"domains={len(domains)} inserted={inserted_total} "
                        f"volumes_filled={volumes_total} auto_new={auto_new} "
-                       f"metrics={metric_rows} gap_rows={gap_rows} errors={st.errors}")
+                       f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}")
 
         print(f"\ncollected {len(domains)} domains, "
               f"actual_cost=${total_cost:.3f} (inserted={inserted_total}, volumes={volumes_total})\n"
@@ -534,7 +533,11 @@ def collect(project: str, *,
               f"run_id={r.id}\n"
               f"Next: 후보는 source='competitor_gap', is_active=0 — "
               f"/capture keywords 의 큐레이션 단계로 활성화하세요.")
-        return st.done(rows=inserted_total, cost=total_cost)
+        # 적재 0건인데 오류가 있었으면 완료가 아니다 — 판정은 collector 한 벌이다.
+        # "실제로 뭔가 했나"는 세 축의 합이다. inserted_total 만 보면 자동 탐지가
+        # 죽고 Gap 축은 3행을 넣은 바퀴도 실패로 읽힌다 (아래 자체점검이 그 자리).
+        return st.verdict(inserted_total + gap_rows + metric_rows,
+                          rows=inserted_total, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:

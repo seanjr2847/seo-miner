@@ -50,6 +50,49 @@ SV_COST_PER_CALL = 0.05     # dry-run 고지용 상한. 실청구액은 응답 c
 KD_COST_PER_CALL = 0.01
 
 
+# DataForSEO 는 키워드 하나에 금지 문자가 있으면 **묶음 전체**를 거절한다:
+#   Invalid Field: 'keywords'. Keyword text has invalid characters or symbols:
+#   'How much does stem cell exosome therapy cost?'
+# 9/1 자동 런에서 500개 묶음 하나가 물음표 하나 때문에 통째로 날아가 updated=0
+# 이었는데 로그는 "볼륨이 채워졌으니…" 라고 말했다. 그래서 경계에서 한 번 씻는다.
+# 목록은 보수적으로 — 확실한 것(물음표)과 문장부호·따옴표·제어문자만.
+BAD_CHARS = "?!\"'"
+# 묶음이 이 문구로 거절되면 반으로 쪼개 재시도한다. 타임아웃 같은 것까지 이분하면
+# 요청 수만 늘어나므로 "우리가 못 씻은 글자가 남았다" 류만 고른다.
+REJECT_HINTS = ("invalid field", "invalid characters")
+
+
+def clean(kw: str) -> str:
+    """DataForSEO 로 보낼 모양. 금지 문자·제어문자를 공백으로 바꾸고 공백 정리.
+
+    빈 문자열이 나오면 보낼 것이 없다는 뜻이다 — 호출부가 뺀다.
+    """
+    out = "".join(" " if (ch in BAD_CHARS or ord(ch) < 32) else ch for ch in kw)
+    return " ".join(out.split())
+
+
+def _ask(post, path: str, words: list[str], body_of) -> tuple[list[dict], float, list[str]]:
+    """묶음 하나를 친다. 거절당하면 반으로 쪼개 재시도. 반환: (항목, 비용, 못 산 키워드).
+
+    정제로 대부분 막히지만 우리가 모르는 금지 문자가 하나 남아도 500개가 같이
+    날아가면 안 된다. 비용은 성공한 요청만 센다 — 거절된 요청은 청구되지 않는다.
+    """
+    try:
+        result, cost = post(path, body_of(words))
+        return _rows(result), cost, []
+    except collector.Fatal:
+        raise                       # 잔액·인증은 쪼개도 안 낫는다
+    except Exception as e:
+        if not any(h in str(e).lower() for h in REJECT_HINTS):
+            raise
+        if len(words) <= 1:
+            return [], 0.0, list(words)
+        mid = len(words) // 2
+        a_items, a_cost, a_bad = _ask(post, path, words[:mid], body_of)
+        b_items, b_cost, b_bad = _ask(post, path, words[mid:], body_of)
+        return a_items + b_items, a_cost + b_cost, a_bad + b_bad
+
+
 def _rows(result) -> list[dict]:
     """응답의 항목들. result 가 항목 배열이든 result[i]['items'] 든 둘 다 받는다.
 
@@ -193,14 +236,32 @@ def collect(project: str, *,
             nonlocal total_cost, calls, updated
             loc, group = job
             loc_name, lang, _ = serp_adapter.location(loc)
-            words = [r["keyword"] for r in group]
-            body = [{"keywords": words, "location_name": loc_name, "language_code": lang}]
 
-            result, cost = post(SV_PATH, body)
-            calls += 1
+            # 보내는 모양(정제본) ↔ Brain 의 행. 정제하면 글자가 달라지므로
+            # 응답을 원문 keyword 로 되찾을 수 없다 — 그 다리를 여기서 놓는다.
+            by_clean: dict[str, list] = {}
+            for r in group:
+                c = clean(r["keyword"])
+                if c:
+                    by_clean.setdefault(c, []).append(r)
+            dropped = len(group) - sum(len(v) for v in by_clean.values())
+            if dropped:
+                st.fail(f"{loc}: 정제 후 빈 문자열이 된 키워드 {dropped}개는 건너뜁니다")
+            if not by_clean:
+                return
+            words = sorted(by_clean)
+
+            def body_of(ws):
+                # 요청 수를 여기서 센다 — 이분 재시도로 한 청크가 여러 번 나갈 수
+                # 있어서, 바깥에서 +1 하면 실제 호출 수와 어긋난다.
+                nonlocal calls
+                calls += 1
+                return [{"keywords": ws, "location_name": loc_name, "language_code": lang}]
+
+            items, cost, bad = _ask(post, SV_PATH, words, body_of)
             total_cost += cost
             metrics: dict[str, dict] = {}
-            for it in _rows(result):
+            for it in items:
                 kw = _kw(it)
                 if kw:
                     metrics.setdefault(kw, {})["volume"] = _num(it, "search_volume", int)
@@ -208,32 +269,39 @@ def collect(project: str, *,
 
             # 난이도는 부차적이다 — 여기서 죽어도 이미 사 온 볼륨은 적재한다.
             try:
-                result, cost = post(KD_PATH, body)
-                calls += 1
+                items, cost, _ = _ask(post, KD_PATH, words, body_of)
                 total_cost += cost
-                for it in _rows(result):
+                for it in items:
                     kw = _kw(it)
                     if kw:
                         metrics.setdefault(kw, {})["difficulty"] = _num(
                             it, "keyword_difficulty")
+            except collector.Fatal:
+                raise
             except Exception as e:
                 print(f"  ! {loc} 난이도 조회 실패 (볼륨은 적재됨): {e}", file=sys.stderr)
 
+            if bad:
+                # 끝까지 거절된 것들 — 이름을 적는다. 다음에 BAD_CHARS 를 넓힐 단서다.
+                st.fail(f"{loc}: DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개 — "
+                        + ", ".join(bad[:3]) + ("…" if len(bad) > 3 else ""))
+
             stamp = db.now()
             got = 0
-            for r in group:
-                m = metrics.get(r["keyword"]) or {}
+            for c, rows_ in by_clean.items():
+                m = metrics.get(c) or {}
                 if all(m.get(k) is None for k in ("volume", "difficulty", "cpc")):
                     continue        # 응답에 없거나 전부 빈 값 — 기존 값을 건드리지 않는다
-                conn.execute(
-                    """UPDATE keywords
-                          SET volume     = COALESCE(?, volume),
-                              difficulty = COALESCE(?, difficulty),
-                              cpc        = COALESCE(?, cpc),
-                              metrics_at = ?
-                        WHERE id=?""",
-                    (m.get("volume"), m.get("difficulty"), m.get("cpc"), stamp, r["id"]))
-                got += 1
+                for r in rows_:
+                    conn.execute(
+                        """UPDATE keywords
+                              SET volume     = COALESCE(?, volume),
+                                  difficulty = COALESCE(?, difficulty),
+                                  cpc        = COALESCE(?, cpc),
+                                  metrics_at = ?
+                            WHERE id=?""",
+                        (m.get("volume"), m.get("difficulty"), m.get("cpc"), stamp, r["id"]))
+                    got += 1
             updated += got
             print(f"  {loc}: asked={len(group)} filled={got}")
 
@@ -242,13 +310,18 @@ def collect(project: str, *,
             r.api_calls = calls
             r.cost = total_cost
             r.notes = (f"keywords={len(rows)} chunks={len(jobs)} updated={updated} "
-                       f"errors={st.errors}")
+                       f"{st.err_note}")
 
         print(f"\ncollected {len(rows)} keywords in {len(jobs)} chunks, "
               f"actual_cost=${total_cost:.3f} (updated={updated})\n"
-              f"run_id={r.id}\n"
-              f"Next: 볼륨이 채워졌으니 `/capture gaps` 로 기회 점수를 다시 매기세요.")
-        return st.done(rows=updated, cost=total_cost)
+              f"run_id={r.id}")
+        # 다음 걸음은 **결과가 있을 때만** 말한다. updated=0 인데 "볼륨이 채워졌으니"
+        # 라고 말하던 것이 9/1 실패를 성공처럼 보이게 만든 문장이다.
+        if updated:
+            print("Next: 볼륨이 채워졌으니 `/capture gaps` 로 기회 점수를 다시 매기세요.")
+        else:
+            print("채워진 볼륨이 없습니다 — 위 오류 줄을 먼저 보세요.", file=sys.stderr)
+        return st.verdict(updated, rows=updated, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -273,6 +346,8 @@ def _selfcheck() -> None:
 
     진짜 Brain·DataForSEO 는 안 건드린다 (임시 CAPTURE_HOME + post 주입).
     """
+    import contextlib
+    import io
     import os
     import tempfile
 
@@ -359,6 +434,89 @@ def _selfcheck() -> None:
     assert len(sv_calls) == 2, [len(c) for c in sv_calls]
     assert [len(c) for c in sv_calls] == [1000, 200], [len(c) for c in sv_calls]
     assert res.rows == 1199, res     # "응답에 없는 키워드" 하나는 여전히 안 채워진다
+
+    # 6. 경계 정제 — 물음표가 붙은 키워드가 요청에서 씻겨 나가고, 볼륨은
+    #    **원문 행**에 들어간다(정제본으로 답이 오므로 매핑이 필요하다).
+    #    (9/1: 물음표 하나가 500개 묶음을 통째로 날렸다)
+    assert clean("stem cell cost?") == "stem cell cost"
+    assert clean('a "b" c!') == "a b c"
+    assert clean("???") == ""
+    conn.execute("DELETE FROM keywords")
+    conn.execute(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
+        (pid, "how much does therapy cost?", "ko-KR"))
+    conn.commit()
+    calls.clear()
+    res = collect("mt", conn=conn, post=fake_post)
+    assert all("?" not in w for _, _, ws in calls for w in ws), calls
+    row = conn.execute("SELECT volume FROM keywords WHERE project_id=?", (pid,)).fetchone()
+    assert row["volume"], "정제본으로 받은 볼륨이 원문 행에 안 들어갔다"
+    assert res.ok and res.rows == 1, res
+
+    # 7. 그래도 거절되면 묶음을 반으로 쪼개 나머지를 살린다 — 한 개 때문에 전부
+    #    잃지 않는다. 끝까지 거절되는 것은 이름과 함께 오류로 남고, 비용은
+    #    성공한 요청만 센다.
+    conn.execute("DELETE FROM keywords")
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','seed')",
+        [(pid, f"kw{i}") for i in range(4)] + [(pid, "독약")])
+    conn.commit()
+
+    def picky_post(path, body):
+        ws = body[0]["keywords"]
+        if "독약" in ws:
+            raise RuntimeError("Invalid Field: 'keywords'. Keyword text has "
+                               "invalid characters or symbols: '독약'")
+        if path == SV_PATH:
+            return [{"keyword": w, "search_volume": 7, "cpc": 0.1} for w in ws], 0.05
+        return [{"items": []}], 0.01
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        res = collect("mt", conn=conn, post=picky_post)
+    filled = conn.execute("SELECT COUNT(*) c FROM keywords WHERE volume IS NOT NULL "
+                          "AND project_id=?", (pid,)).fetchone()["c"]
+    assert filled == 4, f"이분 재시도로 나머지 4개가 들어와야 한다: {filled}"
+    assert "독약" in err.getvalue(), err.getvalue()
+    assert res.ok and res.partial, res      # 일부 실패는 완료(노란 표시)
+    # 거절된 요청은 청구되지 않는다 — 성공한 3+3 건만 (SV 0.05×3 + KD 0.01×3)
+    assert round(res.cost, 4) == 0.18, res
+
+    # 8. 전부 실패면 완료가 아니다 (errors>0, updated=0 → ok=False).
+    conn.execute("DELETE FROM keywords")
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, source) "
+                 "VALUES(?,'독약','ko-KR','seed')", (pid,))
+    conn.commit()
+    with contextlib.redirect_stderr(io.StringIO()):
+        res = collect("mt", conn=conn, post=picky_post)
+    assert (res.ok, res.rows) == (False, 0), res
+    assert "독약" in res.reason, res
+
+    # 9. 402 는 Fatal 이라 묶음을 쪼개지도, 다음 청크로 넘어가지도 않는다.
+    conn.execute("DELETE FROM keywords")
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','seed')",
+        [(pid, f"z{i}") for i in range(3)])
+    conn.commit()
+    hits = []
+
+    def broke_post(path, body):
+        hits.append(path)
+        raise collector.Fatal("DataForSEO 잔액 없음(402) — 충전하세요")
+
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            collect("mt", conn=conn, post=broke_post)
+        raise AssertionError("Fatal 을 삼켰다")
+    except collector.Fatal as e:
+        assert "402" in str(e), e
+    assert len(hits) == 1, f"Fatal 뒤로도 계속 물었다: {hits}"
+
+    conn.execute("DELETE FROM keywords")
+    conn.executemany(
+        """INSERT INTO keywords(project_id, keyword, locale, source, metrics_at)
+           VALUES(?,?,'ko-KR','seed',?)""", [(pid, f"q{i}", db.now()) for i in range(3)])
+    conn.commit()
 
     # dry-run 은 호출도 적재도 안 한다 — 지뢰 post 로 확인.
     def boom(*a, **kw):

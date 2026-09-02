@@ -1263,6 +1263,8 @@ def test_run_all_chain_order_and_paid_skips():
         calls.clear()
         seen.clear()
         stages = kw.pop("stages", None) or table()
+        # 카나리아는 네트워크를 탄다 — 여기서는 아무것도 안 막는 가짜를 준다.
+        kw.setdefault("preflight", lambda stgs: {})
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             results = run_all.run_chain("test_proj", stages=stages, **kw)
@@ -1367,6 +1369,93 @@ def test_run_all_chain_order_and_paid_skips():
             assert False, f"ValueError 가 나야 함: {bad}"
     finally:
         for k, v in orig_env.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
+def test_paid_failures_are_failures_and_the_canary_runs_first():
+    """유료 단계가 통째로 실패했는데 rc=0 "완료"로 나가던 자리를 못 박는다.
+
+    실측(8/30·9/1·9/2 자동 런): rank 는 402 를 키워드 100개에 100번 맞고
+    errors=100/api_calls=0 인 채로 "완료", metrics 는 updated=0 인데 "볼륨이
+    채워졌으니…". 셋 다 초록불이었다.
+
+    여기서 지키는 것:
+      1. 잔액 < $1 이면 유료 단계를 **부르지도 않는다** (402 를 100번 사지 않는다)
+      2. Fatal 이 올라오면 그 단계는 ok=False 이고 사유가 그 사람 말 그대로다
+      3. 전부 실패한 단계는 chain_rc 가 1 이다 / 일부 실패는 0 이되 요약표에 표시
+    """
+    import collector as _collector
+    import run_all
+
+    calls: list[str] = []
+
+    def fake(name, result=None, raises=None):
+        def fn(project, *, dry_run=False, **opts):
+            calls.append(name)
+            if raises:
+                raise raises
+            return result or _collector.StageResult(ok=True)
+        return fn
+
+    def table(results=None, raises=None):
+        results, raises = results or {}, raises or {}
+        return tuple(s._replace(fn=fake(s.name, results.get(s.name), raises.get(s.name)))
+                     for s in run_all.STAGES)
+
+    def run(**kw):
+        calls.clear()
+        buf = io.StringIO()
+        stages = kw.pop("stages", None) or table()
+        with contextlib.redirect_stdout(buf):
+            results = run_all.run_chain("test_proj", stages=stages, **kw)
+            run_all.print_summary("test_proj", results, dry_run=False)
+        return results, buf.getvalue()
+
+    orig = {k: os.environ.get(k) for k in
+            ("SERPER_API_KEY", "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "OPENROUTER_API_KEY")}
+    try:
+        for k in orig:
+            os.environ.pop(k, None)
+        os.environ["DATAFORSEO_LOGIN"] = "u"
+        os.environ["DATAFORSEO_PASSWORD"] = "p"
+
+        # 1. 잔액이 없으면 DataForSEO 단계를 아예 안 부른다.
+        broke = {n: "DataForSEO 잔액 없음 ($0.12)" for n in run_all.DFS_STAGES}
+        results, out = run(preflight=lambda stgs: broke)
+        for name in run_all.DFS_STAGES:
+            assert name not in calls, f"잔액 0 인데 {name} 을 불렀다: {calls}"
+            r = dict(results)[name]
+            assert (r.ok, r.skipped) == (True, True) and "$0.12" in r.reason, r
+        assert run_all.chain_rc(results) == 0, results
+        assert "$0.12" in out, out
+
+        # 2. Fatal 은 사유가 사람 말 그대로 올라오고 rc 가 1 이 된다.
+        msg = "DataForSEO 잔액 없음(402) — https://app.dataforseo.com 에서 잔액·키 확인"
+        results, out = run(only="rank", stages=table(raises={"rank": _collector.Fatal(msg)}))
+        assert dict(results)["rank"].reason == msg, dict(results)["rank"]
+        assert run_all.chain_rc(results) == 1, results
+        assert msg in out, out          # 요약표에 첫 오류 문장이 붙는다
+
+        # 3. 전부 실패(ok=False)는 rc 1, 일부 실패(partial)는 rc 0 + 노란 표시
+        results, out = run(only="rank", stages=table({
+            "rank": _collector.StageResult(ok=False, reason="402 Payment Required")}))
+        assert run_all.chain_rc(results) == 1 and "402" in out, out
+        results, out = run(only="rank", stages=table({
+            "rank": _collector.StageResult(ok=True, rows=3, partial=True,
+                                           reason="97건 실패: 402 Payment Required")}))
+        assert run_all.chain_rc(results) == 0, results
+        assert "완료 ⚠" in out and "97건 실패" in out, out
+
+        # 4. 카나리아 자체는 유료 단계가 남아 있을 때만 돈다 (돈 안 드는 바퀴엔 불필요)
+        seen: list = []
+        run(only="gsc,gaps", preflight=lambda stgs: seen.append(stgs) or {})
+        assert seen == [], "유료 단계가 없는데 카나리아를 불렀다"
+        run(only="rank", preflight=lambda stgs: seen.append([s.name for s in stgs]) or {})
+        assert seen == [["rank"]], seen
+    finally:
+        for k, v in orig.items():
             os.environ.pop(k, None)
             if v is not None:
                 os.environ[k] = v
@@ -1488,6 +1577,7 @@ def test_serp_adapter_credentials_timeouts_and_labs():
         "openrouter": 120,
         "suggest": 10,
         "page": 20,
+        "canary": 15,
     }
     assert serp_adapter.LABS_COST_PER_CALL == 0.001
 
@@ -1549,9 +1639,20 @@ def test_serp_adapter_credentials_timeouts_and_labs():
             assert kw["timeout"] == serp_adapter.TIMEOUTS["dataforseo"]
             assert kw["auth"] == ("login_test", "pw_test")
 
-            # task error 검증
+            # task error 검증 — 인증·결제 계열(401xx·402xx)은 Fatal 이다.
+            # 다음 키워드에서 낫지 않는 오류라 각 항목마다 다시 사러 가면 안 된다.
             serp_adapter.requests.post = lambda *a, **k: FakeResponse({
                 "tasks": [{"status_code": 40100, "status_message": "Invalid auth"}]
+            })
+            try:
+                serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
+                raise AssertionError("status_code >= 40000 은 에러를 내야 함")
+            except serp_adapter.Fatal as e:
+                assert "401" in str(e) and "Invalid auth" in str(e), e
+
+            # 그 밖의 task 오류는 그대로 항목 오류(RuntimeError) — 다음 항목은 살 수 있다
+            serp_adapter.requests.post = lambda *a, **k: FakeResponse({
+                "tasks": [{"status_code": 40501, "status_message": "no rows"}]
             })
             try:
                 serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
