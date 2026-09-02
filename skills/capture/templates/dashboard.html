@@ -683,28 +683,54 @@ const SM = {
 // 보이지만 window 의 속성은 아니다. 뒤에 얹히는 층이 "셸이 있나"를 물을 자리를 준다.
 window.SM = SM;
 
+/* ── 배포 손잡이 (로컬 ↔ 호스팅) ───────────────────────────────────────────
+      명령 칩·기회 카드는 배포마다 하는 일이 다르다 — 로컬은 터미널이 있어
+      "복사해서 붙여넣으세요"가 맞고, 호스팅은 터미널이 없어 그 자리에서 API 를
+      불러야 한다. 예전에는 그 차이를 dash.html 이 원본이 **그려 놓은 DOM 을
+      되짚어**(렌더된 버튼을 찾아 onclick 을 갈아 끼우고, 안 되는 칩은 지우는 식으로)
+      만들었다 — MutationObserver 로 매번 다시 훑어야 했고, 못 잡는 경합(SM_HOSTED 가
+      늦게 서는 것)과 죽은 버튼(.acts 의 클릭 위임 실패)이 둘 다 여기서 났다.
+      이제 그 차이는 이 객체 하나에 있다 — 렌더 함수(renderGuide·viewCmds·oppActs)가
+      그릴 때마다 이 훅을 불러 HTML 을 **직접** 받는다. 호스팅 애드온(dash.html)은
+      자기 스크립트 맨 앞에서 이 객체를 통째로 갈아 끼울 뿐, 다 그려진 뒤에
+      DOM 을 다시 손대지 않는다. */
+SM.host = {
+  // 안내 단계 칩 — 로컬 기본은 명령을 클립보드로 복사한다.
+  stepChip: s => s.cmd
+    ? `<button class="cmd" data-stage="${esc(s.id)}" onclick="SM.host.copy(this)"
+         >${esc(s.cmd)}</button>` : "",
+  // 화면 제목 옆 칩 — 로컬 기본도 같은 명령을 복사한다.
+  viewChip: st => `<button class="cmd vh-cmd" onclick="SM.host.copy(this)"
+      title="이 화면을 채우는 단계입니다 — 눌러 복사한 뒤 채팅에 붙여넣으세요"
+      >/capture ${esc(st)}</button>`,
+  copy(btn) { copyCmd(btn); },
+  // 기회 카드의 '콘텐츠 작성' 버튼 — 로컬에는 없다(플러그인은 Claude 채팅으로 간다).
+  oppBtn: null,
+};
 
-/* ── 화면 머리의 갱신 손잡이 (로컬) ─────────────────────────────────────────
-      호스팅은 dash.html 의 runButtons 가 같은 자리에 실행 버튼을 단다. 로컬에는
-      그게 없었고, 명령 칩은 **빈 상태 안에만** 있었다 — 그래서 데이터가 차는
-      순간 그 화면을 다시 채울 방법이 화면에서 사라졌다("빈 화면은 다음 걸음을
-      말하는데 찬 화면은 말이 없다").
+/* ── 화면 머리의 갱신 손잡이 ─────────────────────────────────────────────
+      로컬에는 이게 없었고, 명령 칩은 **빈 상태 안에만** 있었다 — 그래서 데이터가
+      차는 순간 그 화면을 다시 채울 방법이 화면에서 사라졌다("빈 화면은 다음 걸음을
+      말하는데 찬 화면은 말이 없다"). 호스팅은 SM.host.viewChip 을 실행 버튼으로
+      갈아 끼운다 — 이 함수 자체는 배포를 모른다.
 
       명령은 단계 이름에서 그대로 나온다: run_all.STAGES 의 name 이 곧 인자다
       (`/capture gsc`, `/capture rank`, …). 그래서 표를 새로 두지 않는다 —
       화면이 어느 단계로 채워지는지는 view-def 의 stages 가 정본이고,
-      stage._check_seams 8번이 그 선언과 화면이 부르는 명령을 대조한다. ── */
+      test_seams.py 9번이 그 선언과 화면이 부르는 명령을 대조한다. ── */
 function viewCmds() {
-  if (window.SM_HOSTED || window.__SNAPSHOT__) return;   // 실행 버튼·박제본은 각자의 자리다
+  if (window.__SNAPSHOT__) return;      // 박제본은 손댈 수 없는 기록이다 — 칩이 없다
   for (const v of SM.views) {
     const box = $("view-" + v.id);
     if (!box || !v.stages.length) continue;
     const vh = box.querySelector(".vh");
-    if (!vh || vh.querySelector(".vh-cmd")) continue;    // 여러 번 불려도 공짜다
-    vh.insertAdjacentHTML("beforeend", v.stages.map(s =>
-      `<button class="cmd vh-cmd" onclick="copyCmd(this)"
-         title="이 화면을 채우는 단계입니다 — 눌러 복사한 뒤 채팅에 붙여넣으세요"
-         >/capture ${esc(s)}</button>`).join(""));
+    if (!vh) continue;
+    // 지우고 다시 그린다 — "이미 있으면 건너뛴다"로는 안 된다: 이 함수는 SM.sync() 가
+    // 다시 부를 때마다 불리는데, 호스팅 애드온이 SM.host 를 갈아 끼운 **뒤에** 한 번
+    // 더 불린다(자기 스크립트가 원본 스크립트보다 뒤에 있어서 처음 호출 때는 아직
+    // 로컬 기본값이다). 그때 낡은 칩이 남아 있으면 못 지우고 그대로 있는다.
+    vh.querySelectorAll(".vh-cmd").forEach(el => el.remove());
+    vh.insertAdjacentHTML("beforeend", v.stages.map(SM.host.viewChip).join(""));
   }
 }
 document.addEventListener("sm:views", viewCmds);
@@ -930,12 +956,14 @@ window.oppWhy = o => !o ? "" : `<div class="oh">
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}`;
 
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
+// 콘텐츠 작성 버튼은 호스팅에만 있다(SM.host.oppBtn) — 플러그인은 Claude 채팅으로 간다.
 window.oppActs = o => {
   if (!o || READONLY || o.id == null) return "";
   const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
+  const write = SM.host.oppBtn ? SM.host.oppBtn(o.id) : "";
   return `<div class="acts" onclick="event.stopPropagation()">${o.status === "new"
     ? btn("acked", "확인") + btn("done", "완료") + btn("dismissed", "제외")
-    : btn("new", "되돌리기")}</div>`;
+    : btn("new", "되돌리기")}${write}</div>`;
 };
 
 window.oppPanel = o => o ? oppDetail(o) : "";
@@ -1336,15 +1364,9 @@ let READONLY = false;                    // 박제된 기록에서는 상태를 
 
 /* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
    순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
-   판정(done·지금 할 것·명령)은 서버가 한다(stage.state) — 여기서 다시 판정하면
-   화면과 doctor·CLI가 서로 다른 다음 할 일을 말하게 된다. 이 화면은 그리기만 한다. */
-// 이 칩의 명령이 정말 이 단계를 돌리는가. id 는 "이 칩이 속한 단계"일 뿐이라
-// 그걸로는 못 판단한다 — stage.py 는 재료가 없으면 다른 명령을 내려보낸다
-// (질문 0건이면 ai 단계에 `/capture add`, GSC 미연결이면 `GSC 로그인해줘`).
-// 그 칩을 실행 버튼으로 바꾸는 층(호스팅판)이 이 값을 본다.
-const runnable = s => (s.cmd || "").split(/\s+/).slice(0, 2).join(" ")
-                      === `/capture ${s.id}`;
-
+   판정(done·지금 할 것·명령·runnable)은 서버가 한다(stage.from_progress) — 여기서
+   다시 판정하면 화면과 doctor·CLI가 서로 다른 다음 할 일을 말하게 된다. 이 화면은
+   그 칩을 SM.host.stepChip 에 넘겨 그리기만 한다. */
 function renderGuide(d) {
   if (READONLY || !d.guide) return;      // 박제본에는 "지금 할 것"이 없다
   const steps = d.guide.steps, here = d.guide.here;
@@ -1361,9 +1383,7 @@ function renderGuide(d) {
             ${i === here ? '<span class="now" data-web="권장 조치">지금 할 것</span>' : ""}</h3>
           <p class="gain">${esc(s.gain)}</p>
         </div>
-        <div>${s.cmd && !s.done
-          ? `<button class="cmd" data-stage="${esc(s.id)}"${runnable(s) ? ' data-runnable="1"' : ""} onclick="copyCmd(this)"
-          >${esc(s.cmd)}</button>` : ""}</div>
+        <div>${s.done ? "" : SM.host.stepChip(s)}</div>
       </div></div>`;
   }).join("");
   // 되돌아갈 자리는 2번 단계다 — 이름을 여기 박아 두면 stage.py 와 어긋난다.
@@ -1439,7 +1459,9 @@ function renderDates(d) {
   $("axes").hidden = !ax.length && !past;
 }
 
+let LAST_D = null;          // 마지막으로 그린 페이로드 — SM.repaint() 가 다시 쓴다
 function render(d) {
+  LAST_D = d;
   if (d.schema == null) {
     // schema 필드가 없는 옛 박제본 호환 분기: 박제본 호환 분기는 schema 번호 하나로 한다.
     // 옛 박제본에 없는 규칙·필드를 여기서 한 번만 채워 하위 렌더러의 임시 분기들을 대체한다.
@@ -1498,6 +1520,12 @@ function render(d) {
     catch (e) { console.error(`화면 [${(v && v.id) || "?"}] 을 그리지 못했습니다`, e); }
   }
 }
+
+// 서버 재요청 없이 다시 그린다 — 화면 렌더는 늘 페이로드 하나의 함수다. 호스팅
+// 애드온이 자기만 아는 상태(예: 저장소를 막 연결했다)가 바뀌어서 이미 그려진
+// 카드를 갱신해야 할 때 쓴다. **DOM 을 되짚어 고치는 대신** 같은 페이로드로 render()
+// 를 다시 부른다 — oppActs() 등 렌더 함수가 SM.host 를 다시 물어 새로 그린다.
+SM.repaint = () => { if (LAST_D) render(LAST_D); };
 
 async function loadProjects() {
   const names = await (await fetch("/api/projects")).json();

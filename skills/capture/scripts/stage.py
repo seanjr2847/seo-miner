@@ -140,6 +140,15 @@ STAGE_LABELS: dict[str, dict] = {
 }
 
 
+def _runnable(step_id: str, cmd: str | None) -> bool:
+    """이 칩의 명령이 정말 이 단계를 돌리는가. id 는 "이 칩이 속한 단계"일 뿐이라
+    그걸로는 못 판단한다 — 재료가 없으면 다른 명령을 내려보낸다(질문 0건이면 ai
+    단계에 `/capture add`, GSC 미연결이면 `GSC 로그인해줘`). 그 칩을 실행 버튼으로
+    바꾸는 층(호스팅판)이 이 값을 본다 — 화면은 더 이상 명령 문자열을 되짚지 않는다.
+    """
+    return bool(cmd) and cmd.split()[:2] == ["/capture", step_id]
+
+
 def from_progress(p: dict, name: str, domain: str) -> dict:
     # 사이트가 아직 없어도 안내는 그린다 — 첫 사용자가 정확히 이 상태이고, 여태
     # 그 사람에게만 6단계가 통째로 비어 있었다("아래 [지금 할 것] 하나만 하시면
@@ -162,20 +171,25 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
         gsc_cmd = "GSC 연동해줘"
 
     L = STAGE_LABELS
+    cmd_register = None if domain else "/capture add"
+    cmd_keywords = f"/capture keywords {name}"
+    cmd_ai = f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}"
+    cmd_gaps = f"/capture gaps {name}"
+    cmd_create = f"/create plan {name}"
     steps = [
         {"id": "register", "t": L["register"]["t"], "gain": L["register"]["gain"],
          "done": bool(domain), "state": domain or "아직 없음",
-         "cmd": None if domain else "/capture add"},
+         "cmd": cmd_register, "runnable": _runnable("register", cmd_register)},
         {"id": "gsc", "t": L["gsc"]["t"], "gain": L["gsc"]["gain"],
          "done": gsc_done,
          "state": gsc_state_str,
-         "cmd": gsc_cmd},
+         "cmd": gsc_cmd, "runnable": _runnable("gsc", gsc_cmd)},
         {"id": "keywords", "t": L["keywords"]["t"], "gain": L["keywords"]["gain"],
          "done": p.get("keywords_found", 0) > 0,
          "state": (f"캔 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
                    if p.get("keywords_found", 0)
                    else (f"직접 적은 {p['keywords']}개뿐" if p.get("keywords", 0) else "아직 없음")),
-         "cmd": f"/capture keywords {name}"},
+         "cmd": cmd_keywords, "runnable": _runnable("keywords", cmd_keywords)},
         {"id": "ai", "t": L["ai"]["t"], "gain": L["ai"]["gain"],
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
@@ -185,15 +199,15 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
                     if p.get("ai_checks", 0)
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
                           else "물어볼 질문부터 필요"))),
-         "cmd": (f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}")},
+         "cmd": cmd_ai, "runnable": _runnable("ai", cmd_ai)},
         {"id": "gaps", "t": L["gaps"]["t"], "gain": L["gaps"]["gain"],
          "done": p.get("opps", 0) > 0,
          "state": f"{p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
-         "cmd": f"/capture gaps {name}"},
+         "cmd": cmd_gaps, "runnable": _runnable("gaps", cmd_gaps)},
         {"id": "create", "t": L["create"]["t"], "gain": L["create"]["gain"],
          "done": p.get("creations", 0) > 0,
          "state": f"{p['creations']}건 고침" if p.get("creations", 0) else "아직 한 건도 안 함",
-         "cmd": f"/create plan {name}"},
+         "cmd": cmd_create, "runnable": _runnable("create", cmd_create)},
     ]
     # 못 하는 단계 앞에서 안내를 멈추지 않는다 — 건너뛸 수 있는 것은 건너뛴다.
     here = next((i for i, s in enumerate(steps)
@@ -294,6 +308,9 @@ def _selfcheck() -> None:
     st = from_progress(pr, "demo", "demo.com")
     assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
     assert st["steps"][3]["cmd"] == "/capture add demo"       # 질문이 없으면 add 부터
+    assert not st["steps"][3]["runnable"], "add 는 ai 단계를 안 돈다 — runnable 이면 안 된다"
+    assert st["steps"][2]["runnable"], "키워드 단계는 /capture keywords 그대로라 늘 runnable"
+    assert not st["steps"][0]["runnable"], "register 의 명령은 /capture add 라 runnable 이면 안 된다"
 
     # GSC 연결된 상태에서의 진행 검증
     _orig_conn = db.gsc_connected
@@ -307,6 +324,7 @@ def _selfcheck() -> None:
         assert st["here"] == 3
         assert st["steps"][3]["cmd"] == "/capture ai demo"        # 질문이 있으면 물어본다
         assert not st["steps"][3]["skip"]
+        assert st["steps"][3]["runnable"], "질문이 있으면 ai 단계 명령이 그대로라 runnable"
 
         # 키가 없으면 AI 단계는 이 환경에서 못 한다 — 목록엔 남기되 "지금 할 것"은
         # 아하 모먼트(gaps)로 넘어가야 한다. 예전엔 여기 영영 붙어 있었다.

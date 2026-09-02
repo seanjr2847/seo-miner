@@ -162,6 +162,14 @@ HOSTED_MUSTS = MUSTS + [
     (r'id="view-backlinks"', "호스팅 전용 화면(백링크)이 안 붙었다"),
     (r'id="sm-set"', "호스팅 설정 섹션이 안 만들어졌다"),
     (r'id="sm-run"', "레일 바닥의 [전체 분석 실행]이 안 붙었다"),
+    # 안내의 실행 칩은 SM.host 를 렌더 시점에 부른다(dashboard.html 의 renderGuide) —
+    # 호스팅판은 그 훅을 실행 버튼으로 갈아 낀다(dash.html 의 SM.host.stepChip).
+    # 이 픽스처(beta-site)는 GSC 는 읽었지만 키워드를 아직 안 캤으므로 "지금 할 것"이
+    # runnable 인 키워드 단계다 — 그 칩(class="cmd", 화면 제목 옆 칩과는 클래스가
+    # 다르다)이 실제로 host.run 을 부르는지를 본다. 로컬 기본값(SM.host.copy)이
+    # 남아 있으면(=SM.host 가 늦게 섰거나 안 갈렸으면) 이 패턴이 없다.
+    (r'class="cmd" data-stage="[^"]+" onclick="SM\.host\.run\(',
+     "안내의 실행 칩이 host.run 을 안 부른다 — 복사 칩인 채로 남았다"),
 ]
 
 

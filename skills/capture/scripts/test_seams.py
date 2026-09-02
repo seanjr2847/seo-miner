@@ -9,9 +9,13 @@
 리포 밖(플러그인 설치본)에는 server/ 가 없다 — 그때는 각 검사가 조용히 건너뛴다.
 
 원래 stage.py 의 _check_seams() 한 함수 안에 13개 블록(주석 번호 #1~#13)으로
-있던 것을 검사 하나 = 함수 하나로 옮겼다. CLAUDE.md 의 규율: 검사를 추가했으면
-일부러 깨서 FAIL 이 나는 것까지 확인한다 — 안 그러면 통과하는 검사가 아니라
-아무것도 안 보는 검사가 된다.
+있던 것을 검사 하나 = 함수 하나로 옮겼다. #7(.acts 클릭 위임)은 이후 없앴다 —
+그 버튼(SM.host.oppBtn)이 렌더 시점에 자기 onclick 을 직접 다는 구조가 되면서,
+가드 조건(overview.html 에 그 마크업이 있는지)이 원래도 늘 거짓이라 몸통이 한
+번도 안 돌던 죽은 검사였다(마크업은 dashboard.html 의 oppActs() 가 만든다). 번호는
+비워 둔 채 남겨 뒀다 — 나머지 함수 이름을 옮기면 그 자체가 또 하나의 diff 가 된다.
+CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다 —
+안 그러면 통과하는 검사가 아니라 아무것도 안 보는 검사가 된다.
 
 self-check: python test_seams.py
 """
@@ -242,27 +246,6 @@ def test_seam_06_runnable_stages_known_to_server():
     if app_f.exists():
         assert "run_all.VALID_STAGE_NAMES" in app_f.read_text("utf-8"), \
             "app.py 가 단계 목록 사본을 들고 있다 — 화면에만 있는 단계가 400 으로 튕긴다"
-
-
-def test_seam_07_acts_click_propagation():
-    """7) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
-    않게 하려는 것이고, 원본 버튼들은 인라인 onclick 이라 영향이 없다.
-    애드온이 그 안에 심는 버튼은 사정이 다르다: document 위임으로 잡으면
-    이벤트가 영영 안 닿아 **버튼은 떠 있는데 눌러도 아무 일이 없다**.
-    실제로 [콘텐츠 작성]이 그렇게 죽어 있었고, 렌더 검사도 그건 못 잡는다
-    (DOM 에는 멀쩡히 있다). 그래서 여기서 계약으로 못 박는다.
-    """
-    ctx = _load()
-    if ctx is None:
-        return
-    views, dash = ctx["views"], ctx["dash"]
-    ov = (views / "overview.html").read_text("utf-8")
-    if 'class="acts" onclick="event.stopPropagation()"' in ov:
-        assert not re.search(r'document\.addEventListener\(\s*"click"[\s\S]{0,500}?data-write',
-                             dash), \
-            ".acts 안 버튼을 document 위임으로 잡는다 — 전파가 멈춰 클릭이 안 닿는다"
-        assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash), \
-            "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
 
 
 def test_seam_08_opportunity_kind_labels_match():
