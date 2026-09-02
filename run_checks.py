@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv"}
+SKIP_DIRS = {".claude", ".git", "__pycache__", "node_modules", ".venv"}
 
 
 def py_files() -> list[Path]:
