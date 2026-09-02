@@ -66,10 +66,17 @@ CREATE TABLE IF NOT EXISTS sites (
   run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
   stage TEXT,                         -- 지금 도는 단계 id (run_all.STAGES 의 이름)
   stage_pct INTEGER,                  -- 그 시점의 진행률 0~100 (끝난 단계 / 전체 단계)
-  run_log TEXT,                       -- 이번 런의 화면 출력 (워커 stdout). 런당 1벌
+  run_log TEXT,                       -- 이번 런의 화면 출력 (워커 stdout+stderr). 런당 1벌
+  last_ok INTEGER,                    -- 마지막 런의 결과. 1=전부 성공, 0=실패한 단계 있음, NULL=아직
+  last_error TEXT,                    -- 그 실패의 사람 말 (단계명: 이유; …)
   UNIQUE(user_id, project)
 );
 """
+
+# 프로세스째 죽은 런에 남기는 문구. 로그(사용자가 보는 것)와 last_error(배너가 보는 것)를
+# 한 벌로 둔다 — 두 벌이면 한쪽만 낡는다.
+DEAD_RUN_NOTE = "\n[오류] 서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다.\n"
+DEAD_RUN_ERROR = "서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다."
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -78,14 +85,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if not cols:
         return
     for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile",
-                "stage", "run_log"):
+                "stage", "run_log", "last_error"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
     if "run_every_hours" not in cols:
         conn.execute("ALTER TABLE sites ADD COLUMN run_every_hours REAL")
-    if "stage_pct" not in cols:
-        conn.execute("ALTER TABLE sites ADD COLUMN stage_pct INTEGER")
+    for col in ("stage_pct", "last_ok"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE sites ADD COLUMN {col} INTEGER")
     conn.commit()
 
 
@@ -231,10 +239,42 @@ def mark_stage(conn: sqlite3.Connection, site_id: int, stage: str, pct: int) -> 
     conn.commit()
 
 
-def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
-    conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
-                 "WHERE id=?", (site_id,))
+def mark_done(conn: sqlite3.Connection, site_id: int, *,
+              ok: bool | None = None, error: str = "") -> None:
+    """수집 종료 표시. ok 를 주면 결과까지 같이 굳힌다.
+
+    결과를 여기 붙이는 이유: 런이 끝나는 자리는 이 한 곳뿐이다(워커의 finally, 그리고
+    죽은 런을 회수하는 reclaim_dead_runs). 따로 두면 한쪽 경로가 결과를 안 남겨서
+    화면이 "마지막 수집 성공"이라고 거짓말한다. ok=None 은 '결과는 건드리지 마라' —
+    옛 호출부(진행률만 끄는 자리)가 마지막 런의 성패를 지우면 안 된다.
+    """
+    if ok is None:
+        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
+                     "WHERE id=?", (site_id,))
+    else:
+        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL, "
+                     "last_ok=?, last_error=? WHERE id=?",
+                     (1 if ok else 0, (error or "")[:2000] or None, site_id))
     conn.commit()
+
+
+def reclaim_dead_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """프로세스째 죽은 런을 회수한다 — 반환: 회수한 사이트 행들.
+
+    워커의 finally 는 프로세스가 살아 있을 때만 돈다. Railway 는 push 마다 컨테이너를
+    갈아치우므로 수집 도중 SIGKILL 이 정상 경로다. 그러면 running_since 가 남아
+    (1) 화면이 3시간 동안 "분석 중 38%" 로 고정되고(due_sites 의 -3시간 회수 규칙),
+    (2) request_run 이 running_since IS NULL 을 요구해 수동 재실행까지 막히고,
+    (3) 사용자에게는 아무 말도 안 간다. 서버가 뜨는 자리에서 그 셋을 한 번에 푼다.
+
+    재개는 호출자(app.lifespan)가 한다 — 저장소는 무엇이 죽었는지만 말한다.
+    """
+    rows = conn.execute("SELECT * FROM sites WHERE running_since IS NOT NULL").fetchall()
+    for r in rows:
+        conn.execute("UPDATE sites SET run_log = COALESCE(run_log,'') || ? WHERE id=?",
+                     (DEAD_RUN_NOTE, r["id"]))
+        mark_done(conn, r["id"], ok=False, error=DEAD_RUN_ERROR)
+    return rows
 
 
 def save_run_log(conn: sqlite3.Connection, site_id: int, text: str) -> None:
@@ -594,6 +634,31 @@ def demo() -> None:
         assert load_run_log(conn, uid, "myproj").count("gsc") == 1, "로그가 이어붙었다"
         assert load_run_log(conn, uid2, "myproj") == "", "남의 런 로그가 열린다"
         assert load_run_log(conn, uid, "없는사이트") == ""
+
+        # 런 결과 — 화면 배너와 실패 메일이 읽는 값. ok=None 은 안 건드린다.
+        mark_done(conn, sid, ok=False, error="rank: DataForSEO 잔액 없음(402)")
+        r = site(conn, uid, "myproj")
+        assert (r["last_ok"], r["last_error"]) == (0, "rank: DataForSEO 잔액 없음(402)"), tuple(r)
+        mark_done(conn, sid)
+        assert site(conn, uid, "myproj")["last_ok"] == 0, "ok=None 인데 지난 런의 결과를 지웠다"
+        mark_done(conn, sid, ok=True)
+        r = site(conn, uid, "myproj")
+        assert (r["last_ok"], r["last_error"]) == (1, None), tuple(r)
+
+        # 죽은 런 회수 — 컨테이너가 교체되면 워커의 finally 는 안 돈다.
+        mark_run(conn, sid)
+        save_run_log(conn, sid, "[1/13] gsc\n")
+        got = reclaim_dead_runs(conn)
+        assert [r["id"] for r in got] == [sid], f"죽은 런을 못 찾았다: {[dict(r) for r in got]}"
+        r = site(conn, uid, "myproj")
+        assert not r["running_since"], "회수했는데 '수집 중' 표시가 남았다"
+        assert r["last_ok"] == 0 and "서버 재시작" in (r["last_error"] or ""), tuple(r)
+        assert load_run_log(conn, uid, "myproj").startswith("[1/13] gsc\n"), \
+            "회수가 지금까지의 로그를 날렸다"
+        assert "서버 재시작" in load_run_log(conn, uid, "myproj"), \
+            "런이 왜 끊겼는지 로그에 안 남았다"
+        assert reclaim_dead_runs(conn) == [], "도는 런이 없는데 또 회수한다"
+        mark_done(conn, sid, ok=True)
 
         # session() — 라우트가 conn 열기·소유 확인·tenant·유료 키를 한 번에 쓰는 자리.
         with session(uid, "myproj") as c:

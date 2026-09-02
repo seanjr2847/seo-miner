@@ -82,6 +82,12 @@ claude plugin update seo-miner@seo-miner     # 풀네임 필수
 
 `server/` 만 바뀌었으면 플러그인 갱신은 필요 없다 — 반영은 Railway 자동 배포다.
 
+거꾸로, **문서만 바뀐 push 는 재배포를 일으키지 않는다** — `railway.json` 의
+`build.watchPatterns` 가 서버가 실제로 쓰는 경로(`server/**`, `skills/capture/**`,
+`skills/setup/**`, `requirements*.txt`, `railway.json`)만 본다. 재배포는 컨테이너를
+갈아치우고 그건 도는 수집을 죽이기 때문이다(회수는 `store.reclaim_dead_runs`).
+서버가 새로 읽는 경로가 생기면 그 목록에 넣어야 한다 — 안 넣으면 고쳐도 안 나간다.
+
 ## 검사
 
 ```
