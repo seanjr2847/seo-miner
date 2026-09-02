@@ -2247,7 +2247,7 @@ def load(project: str) -> None:
             rows.append({"kind": k.name, "target": k.target(r, ctx),
                          "score": score(k.name, k.metrics(r, ctx), ptype),
                          "reasoning": k.reasoning(r, ctx)})
-    with db.run(conn, pid, "analysis") as r:
+    with db.run(conn, pid, "gaps") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
     print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur}; "

@@ -35,7 +35,7 @@ C 는 A 가 못 주는 것을 준다. A 는 "경쟁사가 잡은 키워드" 목�
   4) 적재 — db.add_keyword_candidates(is_active=0, source='competitor_gap',
      locale=projects.locale). Labs 가 search_volume 을 주면 keywords.volume
      에 기록 (실측값이라 '볼륨 창작 금지' 규칙 위반 아님 — 주석 참조).
-  5) 실행 전체를 db.run(conn, pid, "gap") 컨텍스트로 감싸 api_calls·cost 기록.
+  5) 실행 전체를 db.run(conn, pid, "competitors") 컨텍스트로 감싸 api_calls·cost 기록.
 
 인증: 기존 DataForSEO 자격 (DATAFORSEO_LOGIN/PASSWORD). collect_serp 와 같은
 env 경로 — Labs 도 같은 키가 통한다 (유료 크레딧 차감).
@@ -73,7 +73,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
-import remote  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -511,7 +510,7 @@ def collect(project: str, *,
             gap_rows += n
             print(f"  gap {rival}: rows={n}")
 
-        with st.record("gap") as r:
+        with st.record("competitors") as r:
             if n_auto:
                 try:
                     auto_axis()
@@ -560,18 +559,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
         return
-    a = _parser().parse_args()
-    if remote.dispatch(a, "competitors"):   # 원격 사이트면 서버가 돈다
-        return
-
-    r = collect(a.project, dry_run=a.dry_run,
-                domain=a.domain,
-                limit=a.limit,
-                rivals=a.rivals,
-                intersect=a.intersect,
-                throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("competitors")
 
 
 def _selfcheck() -> None:

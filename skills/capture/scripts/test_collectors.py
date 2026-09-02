@@ -1425,6 +1425,60 @@ def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard(
         run_all.dashboard.export = orig_export
 
 
+def test_collector_cli_forwards_knob_and_dispatches_correct_stage_name():
+    """collector.cli 가 열 개 수집기의 main() 을 대신하는 공통 통로다.
+
+    main() 열 벌을 이 한 함수로 접으면서 "CLI 플래그 하나가 실제로 collect() 까지
+    도달하는가"와 "remote.dispatch 에 넘기는 단계 이름이 그 단계 자신과 같은가"를
+    개별 파일마다 손으로 확인하던 걸 표(run_all.STAGES) 하나를 돌며 검사한다.
+    """
+    import collector
+    import run_all
+
+    orig_dispatch = collector.remote.dispatch
+    orig_argv = sys.argv
+    try:
+        for stg in run_all.STAGES:
+            if stg.module is None:      # gaps·report — 자체 모듈이 아니다
+                continue
+            specs = getattr(stg.module._parser(), "_collector_settings", [])
+            assert specs, f"[{stg.name}] add_setting 으로 등록한 노브가 하나도 없다"
+            spec = specs[0]
+            probe = {"int": "97", "float": "0.97"}.get(
+                spec.type_fn.__name__ if spec.type_fn else "", "probe")
+            sys.argv = ["prog", "--project", "p", "--dry-run",
+                       f"--{spec.dest.replace('_', '-')}", probe]
+
+            captured: dict = {}
+
+            def fake_collect(project, *, dry_run=False, **kwargs):
+                captured.update(project=project, dry_run=dry_run, kwargs=kwargs)
+                return collector.StageResult(ok=True, skipped=True)
+
+            dispatched: dict = {}
+
+            def fake_dispatch(args, stage_name):
+                dispatched.update(name=stage_name, project=getattr(args, "project", None))
+                return False   # 로컬로 계속 진행 — collect() 까지 가는지를 봐야 한다
+
+            orig_collect = stg.module.collect
+            stg.module.collect = fake_collect
+            collector.remote.dispatch = fake_dispatch
+            try:
+                collector.cli(stg.name)
+            finally:
+                stg.module.collect = orig_collect
+
+            assert dispatched.get("name") == stg.name, (stg.name, dispatched)
+            assert dispatched.get("project") == "p", (stg.name, dispatched)
+            expected = spec.type_fn(probe) if spec.type_fn else probe
+            assert captured.get("kwargs", {}).get(spec.dest) == expected,                 (stg.name, spec.dest, expected, captured)
+            assert captured.get("dry_run") is True, (stg.name, captured)
+    finally:
+        collector.remote.dispatch = orig_dispatch
+        sys.argv = orig_argv
+
+
 def test_serp_adapter_credentials_timeouts_and_labs():
     """serp_adapter: 타임아웃 상수 정본, 키 판정 정본, Labs ranked_keywords 단일화 검증."""
     # 1. 타임아웃 정본

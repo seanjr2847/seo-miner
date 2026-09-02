@@ -26,7 +26,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
-import remote  # noqa: E402
 import scoring  # noqa: E402
 
 # analytics.readonly 하나로 GA4 Data API(리포트)와 Admin API(속성 목록)를 다 커버한다
@@ -341,16 +340,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    try:
-        a = _parser().parse_args()
-        if remote.dispatch(a, "gsc"):   # 원격 사이트면 서버가 돈다
-            return
-        r = collect(a.project, dry_run=a.dry_run, row_limit=a.row_limit,
-                    days=a.days, breakdown=a.breakdown)
-    except db.ProjectNotFound as e:
-        sys.exit(str(e))
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("gsc")
 
 
 if __name__ == "__main__":

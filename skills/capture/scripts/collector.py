@@ -21,7 +21,8 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import db  # noqa: E402
+import db      # noqa: E402
+import remote  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 _cache: dict | None = None
@@ -317,6 +318,36 @@ def open_project(name: str):
     """
     st = stage(name)
     return st.conn, st.project, st.cfg
+
+
+def cli(stage_name: str) -> None:
+    """수집기 main() 을 대체하는 한 줄 — collect_*.py 열 개가 각자 다시 쓰던
+    parser 생성 → 원격 위임 → collect() 호출 → 종료코드 변환을 여기 하나로 모았다.
+
+    단계 이름 -> 모듈 -> parser 의 정본은 run_all.STAGES 하나다(순환 임포트를 피하려고
+    여기서 늦게 읽는다). 파싱된 인자는 project·dry_run 만 이름을 갈라 나머지는 그대로
+    collect(**kwargs) 에 넘긴다 — run_all 의 `--opt STAGE.KEY=VALUE` 통로와 같다:
+    argparse 의 dest 이름이 곧 collect() 의 키워드 인자 이름이어야 한다(어긋나면 여기서
+    바로 TypeError 로 죽는다).
+    """
+    import run_all   # 늦은 import — run_all 이 수집기 열 개를, 수집기가 이 모듈을 읽는다
+
+    st = run_all.STAGE_BY_NAME.get(stage_name)
+    if st is None or st.module is None:
+        raise RuntimeError(f"'{stage_name}' 은 run_all.STAGES 에 모듈이 딸린 단계가 아니다")
+
+    ap = st.module._parser()
+    args = ap.parse_args()
+    if remote.dispatch(args, stage_name):   # 원격 사이트면 서버가 돈다
+        return
+
+    kwargs = {k: v for k, v in vars(args).items() if k not in ("project", "dry_run")}
+    try:
+        r = st.module.collect(args.project, dry_run=args.dry_run, **kwargs)
+    except db.ProjectNotFound as e:
+        sys.exit(str(e))
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 def _selfcheck() -> None:

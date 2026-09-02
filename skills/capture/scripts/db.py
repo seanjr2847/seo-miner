@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
-  kind TEXT NOT NULL,                         -- gsc|ai|keywords|analysis|report|full|index
+  kind TEXT NOT NULL,                         -- run_all.STAGES 의 단계 id (+ full)
   started_at TEXT DEFAULT CURRENT_TIMESTAMP,
   finished_at TEXT,
   api_calls INTEGER DEFAULT 0,
@@ -505,6 +505,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE UNIQUE INDEX idx_rank_kw_day "
                      "ON rank_snapshots(keyword_id, date(checked_at))")
         conn.commit()
+
+    # runs.kind 는 단계 id 와 같은 말이어야 한다(run_all.STAGES 정본) — 화면
+    # (history.html)이 단계 용어표 하나로 라벨을 달려면 그래야 한다. collect_gap.py 는
+    # 'competitors' 단계인데 kind='gap' 으로, scoring.load() 는 'gaps' 단계인데
+    # kind='analysis' 로 적었었다. WHERE 조건 자체가 재실행에 안전하다(이미 바뀐
+    # 행은 다시 안 걸린다).
+    conn.execute("UPDATE runs SET kind='competitors' WHERE kind='gap'")
+    conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
+    conn.commit()
 
 
 def connect() -> sqlite3.Connection:

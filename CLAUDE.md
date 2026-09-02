@@ -43,8 +43,8 @@
 9. 화면이 부르는 `/capture X` 가 그 화면 `view-def` 의 `stages` 안에 있다
 10. 원격 클라이언트(`remote.py` 와 그 `api()`/`fetch()` 를 쓰는 진입점)가 부르는
     `/api/*` 가 호스팅 서버에 전부 있다
-11. 수집기가 전부 `remote.dispatch` 를 통과하고, 넘기는 단계 이름이 그 모듈이 맡은
-    단계와 같다 (정본은 `run_all.STAGE_MODULES`)
+11. 수집기가 전부 `collector.cli`(=`remote.dispatch` 를 통과하는 진입점)를 쓰고,
+    넘기는 단계 이름이 그 모듈이 맡은 단계와 같다 (정본은 `run_all.STAGES`)
 
 검사를 추가했으면 **일부러 깨서 FAIL 나는 것까지 확인**한다. 안 그러면 통과하는
 검사가 아니라 아무것도 안 보는 검사가 된다.

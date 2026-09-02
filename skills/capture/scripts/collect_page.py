@@ -31,7 +31,6 @@ from urllib.parse import urljoin
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
-import remote  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -288,12 +287,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
         return
-    a = _parser().parse_args()
-    if remote.dispatch(a, "pages"):   # 원격 사이트면 서버가 돈다
-        return
-    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("pages")
 
 
 def _selfcheck() -> None:
