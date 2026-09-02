@@ -1,6 +1,4 @@
 
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   /* 본문 서체는 원본이 Pretendard 로 간다 — 여기서 덮지 않는다. 등폭만 갈아끼운다:
      원본의 Cascadia/Consolas 는 윈도우 기준이라 다른 OS 에서 폴백이 제각각이다. */
@@ -245,7 +243,7 @@
   // 같이 죽었다. 어긋남을 '알리는 것'과 화면을 '못 쓰게 만드는 것'은 다르다.
   var FAILED = {};
   function fail(what, e) {
-    if (FAILED[what]) return;      // MutationObserver 가 다시 부른다 — 한 번만 알린다
+    if (FAILED[what]) return;      // "sm:site" 마다 다시 부르는 step 이 있다 — 한 번만 알린다
     FAILED[what] = 1;
     console.error("[seo-miner] " + what, e);
     var host = document.querySelector("main") || document.body;
@@ -327,14 +325,13 @@
   // 428 로 알려 주고, 그때 연결 링크를 보여 준다.
   //
   // **버튼 자신에 건다. document 위임으로 잡으면 안 된다** — 원본은 기회 카드의
-  // .acts 에서 event.stopPropagation() 을 한다(카드가 같이 펼쳐지지 않게).
-  // 그래서 위임 리스너에는 이 클릭이 영영 안 닿았고, 버튼은 떠 있는데 눌러도
-  // 아무 일이 없었다. 원본 주석이 이미 답을 갖고 있다: "버튼 자신의 onclick 은
-  // 이미 실행된 뒤다". wire() 가 이 함수를 w.onclick 에 건다(재할당이라 중복 없음).
+  // .acts 에서 event.stopPropagation() 을 한다(카드가 같이 펼쳐지지 않게). 위임
+  // 리스너에는 이 클릭이 영영 안 닿는다. 그래서 SM.host.oppBtn 이 만드는 버튼은
+  // 자기 onclick 을 인라인으로 직접 단다(아래 SM.host) — 나중에 걸지 않는다.
   async function writeClick(b) {
     var id = b.getAttribute("data-write");
     if (b.hasAttribute("data-need")) {     // 못 쓰는 걸 아는데 서버까지 갈 이유가 없다
-      show("settings");
+      SM.show("settings");
       var sec = document.getElementById("sm-set");
       if (sec) sec.scrollIntoView({block: "start"});
       return;
@@ -347,8 +344,8 @@
       var d = await r.json();
       if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 확인하기 →</a>'; return; }
       if (r.status === 428) {            // SET_H 가 낡았다 — 설정을 다시 읽고 그 자리로
-        SET_DONE = ""; REPO_LIST = null; await setLoad(); wire();
-        show("settings");
+        SET_DONE = ""; REPO_LIST = null; await setLoad();   // setLoad 가 SM.repaint 로 다시 그린다
+        SM.show("settings");
         return;
       }
       b.textContent = (d.detail || "작성하지 못했습니다").slice(0, 60); b.disabled = false;
@@ -367,21 +364,11 @@
   // [기록] 화면의 실행 종류 라벨도 이 표를 본다(runs.kind 는 단계 id 와 같은 말이다).
   window.SM_STAGE = STAGE;
 
-  // 안내 단계의 이름·설명을 id 로 다시 붙인다. 모르는 id 는 손대지 않는다 —
-  // stage.py 가 단계를 늘려도 payload 글자가 그대로 나오지, 빈 칸이 되지 않는다.
-  // 같은 글자면 안 쓴다: 아래 MutationObserver 가 이 함수를 다시 부르므로,
-  // 값이 같아도 textContent 를 넣으면 노드가 갈리며 무한히 서로를 깨운다.
+  // 안내 단계의 이름·설명은 이제 이 애드온이 되짚어 붙이지 않는다 — stage.py 가
+  // 같은 STAGE_LABELS 로 이미 렌더한 값을 payload 에 실어 보내므로 원본이 처음부터
+  // 맞게 그린다(renderGuide). 여기 남는 건 그 값과 다르게(실행 버튼으로) 그릴
+  // 자리뿐이다 — 아래 SM.host.
   function put(el, s) { if (el && s && el.textContent !== s) el.textContent = s; }
-
-  function restage(root) {
-    (root || document).querySelectorAll("[data-stage]").forEach(function (el) {
-      var g = STAGE[el.dataset.stage];
-      if (!g) return;
-      if (el.tagName === "B") return put(el, g.t);     // 배너·완주 줄의 단계 이름
-      put(el.querySelector(".t"), g.t);
-      put(el.querySelector(".gain"), g.gain);
-    });
-  }
 
   async function runStage(stage, btn) {
     var was = btn.textContent;
@@ -426,39 +413,57 @@
     });
   }
 
-  // 안내의 '이 명령을 치세요' 칩을 실제 실행 버튼으로 바꾼다. 원본은 명령어를
-  // 클립보드로 복사할 뿐이라, 터미널이 없는 웹에서는 막다른 길이었다.
-  // 어느 단계인지는 버튼의 data-stage 가 말한다 — 예전에는 버튼 라벨(명령어 문자열)에
-  // 정규식을 걸어 되짚었다.
-  function wireSteps() {
-    document.querySelectorAll("button.cmd").forEach(function (b) {
-      if (b.dataset.smWired) return;
-      b.dataset.smWired = "1";
-      var st = b.dataset.stage || "";
-      // data-stage 는 "이 칩이 속한 단계"일 뿐이다 — 그 칩의 명령이 그 단계를 돈다는
-      // 뜻이 아니다. 질문이 0건이면 ai 단계의 명령이 `/capture add` 로 내려오고,
-      // GSC 미연결이면 gsc 단계의 명령이 `GSC 로그인해줘` 다. 그 판정은 payload 를
-      // 쥔 renderGuide 가 data-runnable 로 내려보낸다.
-      if (b.dataset.runnable === "1" && STAGE[st] && STAGE[st].run) {
-        b.textContent = STAGE[st].t + " 실행";
-        b.onclick = function () { runStage(st, b); };
-        return;
-      }
-      if (st === "create") {              // 기회는 아래 목록에 이미 있다
-        b.textContent = "개선 기회 보기";
-        b.onclick = function () {
-          var o = document.getElementById("opps") || document.querySelector(".opp");
-          if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
-        };
-        return;
-      }
-      // 남는 건 웹에서 실행할 수 없는 칩이다 — 빈 상태 안의 명령 복사칩(사이트
-      // 등록·구글 연동)과, 단계는 알지만 그 명령이 다른 일을 하는 칩(`/capture add`,
-      // `GSC 로그인해줘`). 웹에는 명령을 칠 곳이 없고, 그 안내는 화면·배너가
-      // 따로 한다.
-      b.remove();
-    });
-  }
+  // SM.repaint() 는 셸의 렌더 함수만 다시 부른다 — 이 애드온이 렌더 **뒤에** 직접
+  // 심는 것들(질문 만들기 핸들러·KPI 두 칸)은 셸이 모르니 그 뒤에 한 번 더 잇는다.
+  function repaint() { SM.repaint(); wireActs(); kpi(); }
+
+  // ── 배포 손잡이 — 원본이 렌더 시점에 부르는 훅을 통째로 갈아 낀다 ────────────
+  // (renderGuide·viewCmds·oppActs, dashboard.html). 로컬 기본값(명령 복사)이 아니라
+  // 여기서는 실제로 돌리거나, 못 돌리는 칩은 아예 안 그린다. 다 그려진 뒤 DOM 을
+  // 되짚어 고치지 않는다 — 그릴 내용 자체가 다르다.
+  //
+  // 예외 하나: 이 스크립트가 원본 스크립트보다 뒤에 있어서, 화면 제목 옆 칩
+  // (viewChip)은 SM.sync() 가 처음 부를 때 이미 로컬 기본값(복사 칩)으로 한 번
+  // 그려진 뒤다. 그래서 이 객체를 세운 다음 sm:views 를 한 번 더 알려 다시
+  // 그리게 한다(원본의 viewCmds() 가 듣는다) — 아래 파일 끝.
+  SM.host = {
+    // 안내 단계 칩 — s.runnable 은 stage.py 가 낸 판정이다(화면은 명령 문자열을
+    // 다시 안 본다). [실제로 고치기]만 예외다: 명령이 늘 /create 라 runnable 이
+    // 못 되는데, 그 기회는 이미 아래 목록에 있으니 거기로 스크롤만 시킨다.
+    stepChip(s) {
+      if (s.runnable && STAGE[s.id] && STAGE[s.id].run)
+        return '<button class="cmd" data-stage="' + esc(s.id) + '" onclick="SM.host.run(\'' +
+          esc(s.id) + '\', this)">' + esc(STAGE[s.id].t) + ' 실행</button>';
+      if (s.id === "create")
+        return '<button class="cmd" data-stage="create" onclick="SM.host.gotoOpps()"' +
+          '>개선 기회 보기</button>';
+      // 남는 건 웹에서 실행할 수 없는 칩이다(빈 상태 안의 명령 복사칩, 단계는
+      // 알지만 명령이 다른 일을 하는 칩) — 웹에는 칠 채팅이 없다.
+      return "";
+    },
+    // 화면 제목 옆 칩 — 그 화면을 채우는 단계를 그 자리에서 돌린다.
+    viewChip(st) {
+      if (!STAGE[st]) return "";
+      return '<button class="sm-refresh vh-cmd" title="' + esc(STAGE[st].t) +
+        '" onclick="SM.host.run(\'' + esc(st) + '\', this)">' + esc(STAGE[st].run) + '</button>';
+    },
+    run(st, btn) { runStage(st, btn); },
+    gotoOpps() {
+      var o = document.getElementById("opps") || document.querySelector(".opp");
+      if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
+    },
+    // 기회 카드의 '콘텐츠 작성' 버튼 — 저장소가 없으면 못 쓴다는 것도 그 자리에서 말한다.
+    oppBtn(id) {
+      var need = !SET_H || !SET_H.repo;
+      var attrs = 'data-write="' + id + '"' + (need ? ' data-need="1"' : "");
+      if (need) attrs += ' title="' + esc("이 사이트에 저장소가 연결되지 않았습니다 — " +
+        "[설정]에서 연결하세요. 지금은 아래 [AI 에게 수정 요청]으로 프롬프트를 복사해 " +
+        "쓰실 수 있습니다.") + '"';
+      return '<button ' + attrs + ' onclick="SM.host.write(this)">' +
+        (need ? "저장소 연결 필요" : "콘텐츠 작성") + '</button>';
+    },
+    write(btn) { writeClick(btn); },
+  };
 
   // ── 호스팅이 덧붙이는 화면·섹션 ───────────────────────────────
   // 화면 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이
@@ -487,25 +492,8 @@
     box.appendChild(rep);
   });
 
-  // 화면 제목 옆 실행 버튼 — 그 화면을 채우는 단계를 거기서 돌린다.
-  // 셸이 화면 상자를 (다시) 세울 때마다 부른다. 이미 붙어 있으면 아무것도 안 한다.
-  function runButtons() {
-    (window.SM ? SM.views : []).forEach(function (v) {
-      var head = document.querySelector("#view-" + v.id + " .vh");
-      if (!head) return;
-      v.stages.forEach(function (st) {
-        if (!STAGE[st] || head.querySelector('[data-run="' + st + '"]')) return;
-        var rb = document.createElement("button");
-        rb.className = "sm-refresh";
-        rb.dataset.run = st;
-        rb.textContent = STAGE[st].run;       // 화면 제목과 겹치지 않게 다르게 부른다
-        rb.title = STAGE[st].t;
-        rb.onclick = function () { runStage(st, rb); };
-        head.appendChild(rb);
-      });
-    });
-  }
-  document.addEventListener("sm:views", function () { step("실행 버튼", runButtons); });
+  // 화면 제목 옆 실행 버튼은 이제 원본의 viewCmds() 가 그린다 — 원본이 부르는
+  // SM.host.viewChip(위) 이 이 자리를 채운다. 여기서 따로 만들지 않는다.
 
   // ── 설정 ─────────────────────────────────────────────────────
   // 사이트마다 다른 값이 사는 자리. 지금은 수집 주기 하나뿐이고, 항목이 늘면 여기 붙는다.
@@ -608,7 +596,7 @@
       SET_H.repo = repo; SET_H.repo_branch = branch;
       REPO_LIST = null;                    // 고른 것을 보여 주는 상태로 돌아간다
       repoRender("저장됨");
-      wire();                              // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
+      repaint();                           // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
     } catch (e) {
       repoRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
     }
@@ -706,10 +694,9 @@
       return;
     }
     // 명령 한 줄이 곧 복사 대상이다 — 셸의 copyCmd 가 textContent 를 그대로 집는다.
-    // **button 으로 만들지 않는다**: wireSteps() 가 `button.cmd` 를 훑어 웹에서
-    // 못 돌리는 칩을 지운다(안내의 명령 복사칩). 이 칩은 지워지면 안 되는 유일한
-    // 복사칩이라 — 터미널로 가져갈 명령이 본문이다 — 뷰들과 같은 관례를 쓴다
-    // (ai.html 의 role="button" 복사칩).
+    // button 대신 role="button" div 를 쓴다 — 뷰들과 같은 관례다(ai.html 의
+    // role="button" 복사칩). 이 칩은 안내의 SM.host.stepChip 이 그리는 게 아니라
+    // 이 파일이 직접 심으므로 button.cmd 와 섞일 이유가 원래 없다.
     // 자리표까지 라틴이다 — 명령 칩은 통째로 등폭이라 한글을 넣으면 그 낱자만
     // 폴백 서체로 떨어져 흩어진다(CLAUDE.md). 무엇을 채울지는 아래 줄이 말한다.
     body.innerHTML = '<div class="cmd" role="button" tabindex="0">' +
@@ -748,6 +735,9 @@
         encodeURIComponent(pj))).json();
     } catch (e) { SET_DONE = ""; return; }   // 실패는 되돌려 다음 기회에 다시 받는다
     setRender("");
+    // 처음 도착한 SET_H(저장소 연결 여부)가 이미 그려진 기회 카드의 [콘텐츠 작성]
+    // 버튼에 반영되게 다시 그린다 — 그 버튼은 렌더 시점에만 SM.host.oppBtn 을 본다.
+    repaint();
   }
 
   async function setSave(h) {
@@ -1005,6 +995,9 @@
     step("성과", perfLoad);
     step("키워드", kwLoad);
     step("AI 질문", aiqLoad);
+    // render() 가 방금 새로 그린 자리에 이벤트를 잇는다 — [질문 만들기]는 렌더
+    // 함수(ai.html)가 직접 심는 정적 마크업이라 SM.host 훅이 없다.
+    step("빈 상태 버튼", wireActs);
   });
 
   // ── Claude Code 로 넘길 일 ─────────────────────────────────
@@ -1050,7 +1043,7 @@
   }
 
   // KPI 두 칸을 원본 밴드에 끼운다. render() 가 band 를 다시 그리면 사라지므로
-  // MutationObserver 쪽에서 다시 부른다 — 이미 있으면 아무것도 하지 않는다.
+  // repaint() 가 다시 부른다(아래) — 이미 있으면 아무것도 하지 않는다.
   function kpi() {
     var band = document.getElementById("band");
     if (!band || !PERF || !PERF.totals || band.querySelector("[data-sm-kpi]")) return;
@@ -1298,55 +1291,25 @@
   }
   // 갱신 계기는 "sm:site" 하나다 — 아래 한 자리에서 같이 받는다.
 
-  step("화면 배치", function () { SM.sync(); runButtons(); });
+  // 화면 상자는 원본이 이미 다 지었다(section-def 가 조립 시점에 끼운다) — 여기서
+  // 다시 세울 게 없다. SM.sync() 를 한 번 더 부르는 이유는 하나: 이 스크립트가
+  // 원본 스크립트보다 뒤에 있어서, 화면 제목 옆 칩(viewCmds)이 이미 로컬 기본값
+  // (복사 칩)으로 한 번 그려진 뒤이기 때문이다 — SM.host 를 방금 갈아 끼웠으니
+  // sm:views 를 다시 알려 실행 버튼으로 다시 그리게 한다.
+  step("화면 배치", function () { SM.sync(); });
 
-  // 기회 목록이 다시 그려질 때마다 버튼을 심는다. 기회 id 는 카드의 data-opp 에
-  // 있다 — 예전에는 트리아지 버튼의 인라인 onclick 문자열을 정규식으로 뜯어 꺼냈다.
-  var wire = function () {
-    // 저장소가 안 붙었으면 이 버튼은 못 쓴다 — 숨기지는 않는다(기능이 있다는 건
-    // 알려야 한다). 대신 눌러 보게 하지 않고 그 자리에서 무엇이 필요한지 말한다.
-    // SET_H 가 아직 안 왔으면 판단을 미룬다: 아래 MutationObserver 가 다시 부른다.
-    if (!SET_H) return;
-    var need = !SET_H.repo;
-    document.querySelectorAll(".opp[data-opp] .acts").forEach(function (box) {
-      var w = box.querySelector("[data-write]");
-      if (!w) {
-        w = document.createElement("button");
-        w.setAttribute("data-write", box.closest(".opp").dataset.opp);
-        w.onclick = function () { writeClick(w); };   // 위임 불가 — 위 주석 참고
-        box.appendChild(w);
-      } else if (w.disabled) {
-        return;                            // 작성 중인 버튼은 건드리지 않는다
-      }
-      // 상태가 바뀌면 따라간다 — 설정에서 저장소를 붙이면 그 자리에서 쓸 수 있게 된다.
-      // **값이 같으면 쓰지 않는다**: 이 함수는 MutationObserver 가 부르므로, 매번
-      // DOM 에 쓰면 자기가 자기를 깨워 무한 루프가 된다(화면이 얼어붙는다).
-      if (need !== w.hasAttribute("data-need")) {
-        if (need) w.setAttribute("data-need", "1");
-        else w.removeAttribute("data-need");
-      }
-      var want = need ? "저장소 연결 필요" : "콘텐츠 작성";
-      if (w.textContent !== want) w.textContent = want;
-      var tip = need ? "이 사이트에 저장소가 연결되지 않았습니다 — [설정]에서 연결하세요."
-                     + " 지금은 아래 [AI 에게 수정 요청]으로 프롬프트를 복사해 쓰실 수 있습니다."
-                     : "";
-      if (w.title !== tip) w.title = tip;
-    });
-  };
-  // 화면은 비동기로 여러 번 다시 그려진다(사이트 전환·필터·분석 완료) — 그래서 이
-  // 손질들은 전부 **idempotent** 해야 한다. 아래 MutationObserver 가 매번 다시 부르는데,
-  // 값이 같아도 DOM 에 쓰면 자기가 자기를 깨워 화면이 얼어붙는다.
-  // (terms.js 의 reempty 가 정확히 그랬다: 자기 결과물이 자기 정규식에 다시 걸렸다.)
-  // 남은 넷은 전부 id·data 속성으로 찾고, 값이 바뀔 때만 쓴다 — 문구는 이제
-  // 화면이 스스로 고르므로(data-web / W) 여기서 글자를 되짚지 않는다.
-  var all = function () {
-    step("화면 손질", function () {
-      wire(); wireSteps(); wireActs(); restage(); kpi();
-    });
-    // 사이트 데이터를 부르는 것들은 여기 없다 — "sm:site" 가 정확한 계기를 준다.
-    // (재시도 루프로 때우면 언제 채워지는지가 운에 달린다.)
-  };
-  new MutationObserver(all).observe(document.body, {childList: true, subtree: true});
-  all();
+  // 안내 단계 칩(SM.host.stepChip)과 기회 카드의 [콘텐츠 작성](SM.host.oppBtn)은
+  // 이제 원본 렌더 함수(renderGuide·oppActs)가 그릴 때 직접 부른다 — 다 그려진
+  // 뒤에 이 파일이 DOM 을 되짚어 고치지 않는다. 그래서 여기 있던 wire()·wireSteps()·
+  // MutationObserver 는 전부 없앴다: 값이 바뀌면(설정 저장 등) repaint() 가 같은
+  // 페이로드로 render() 를 다시 부르고, 그 안에서 이 훅들이 다시 불린다.
+  // [질문 만들기](data-sm-act)만 예외다 — ai.html 이 직접 심는 정적 마크업이라
+  // "sm:site" 핸들러에서 렌더 뒤에 한 번씩 잇는다(위).
 })();
 </script>
+<!-- 폰트 링크는 <script> 뒤에 둔다 — 대기 중인 외부 스타일시트는 그 앞에 있는
+     스크립트의 실행을 막을 수 있다(파서가 CSSOM 확정을 기다린다). 이 스크립트가
+     SM.host 를 이 자리에서 세우는데, 그게 밀리면 원본의 첫 렌더가 로컬 기본값
+     (복사 칩)으로 나간다 — 실제로 헤드리스 검사에서 간헐적으로 재현됐다. -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
