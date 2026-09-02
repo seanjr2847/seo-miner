@@ -70,7 +70,14 @@
 정본을 **가리키기만** 한다 — `run_all.py` 의 단계표, `doctor.py` 의
 `CAPABILITIES`/`ALL_SKILLS`, 뷰의 `view-def`.
 
-## 릴리스는 세 다리다
+## 릴리스는 세 다리다 (그 앞에 0번 다리가 있다)
+
+**0. push 전에 `python run_checks.py remote`.** 호스팅에 런이 돌고 있으면 push 하지
+않는다 — main push 가 Railway 재배포를 일으키고, 워커는 subprocess 라 컨테이너와
+함께 죽는다(실제로 돌던 런 하나를 그렇게 죽였다). 마지막 런에 실패 단계가 있으면
+그것부터 본다 — 자동 런 3회(8/30·9/1·9/2)에서 유료 단계가 통째로 실패한 채
+`runs.notes` 에 `errors=100` 만 남아 있었고, 로컬 226개는 그동안 전부 초록이었다.
+자세한 이유는 `docs/adr/0002-hosted-run-result-is-a-release-gate.md`.
 
 `.claude-plugin/plugin.json` version 범프 → push → 설치 캐시 갱신.
 자세한 이유는 `docs/adr/0001-plugin-version-is-install-cache-signal.md`.
@@ -87,4 +94,5 @@ claude plugin update seo-miner@seo-miner     # 풀네임 필수
 ```
 python run_checks.py            # 전부
 python run_checks.py render     # 화면만
+python run_checks.py remote     # 호스팅 런만 (원격 미연결이면 건너뜀)
 ```
