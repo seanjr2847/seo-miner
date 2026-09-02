@@ -38,7 +38,6 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 
-import backlinks
 import collect_ga4
 import collect_gsc
 import dashboard
@@ -821,23 +820,6 @@ def api_report(project: str, request: Request):
         "Content-Disposition": f'attachment; filename="{project}-report.html"'})
 
 
-@app.get("/api/export")
-def api_export(project: str, table: str, request: Request):
-    """CSV 내려받기 — 마케터는 결국 엑셀로 옮긴다."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            data, name = exports.csv_bytes(project, table)
-    except ValueError:
-        # exports 의 ValueError 는 개발자용 문구다 — 그대로 내보내지 않는다.
-        raise HTTPException(status_code=400,
-                            detail="내려받을 수 없는 항목입니다. 화면에서 다시 선택해 주세요.")
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return Response(data, media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
-
 @app.get("/api/perf")
 def api_perf(project: str, request: Request):
     """서치콘솔 4대 지표와 검색어·페이지·기기 분해 — 개요 화면이 쓴다."""
@@ -847,23 +829,6 @@ def api_perf(project: str, request: Request):
             return exports.perf(project)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.get("/api/overview")
-def api_overview(request: Request):
-    """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
-    uid = _require_uid(request)
-    with store.session(uid, isolate=True) as conn:
-        out = []
-        for r in store.sites(conn, uid):
-            try:
-                d = exports.summary(r["project"])
-            except db.ProjectNotFound:
-                d = {"project": r["project"], "domain": r["domain"]}
-            d["running"] = bool(r["running_since"])
-            d["last_run_at"] = r["last_run_at"]
-            out.append(d)
-        return {"sites": out}
 
 
 @app.get("/api/keywords")
@@ -918,36 +883,6 @@ async def api_keywords_set(request: Request):
             finally:
                 c.close()
         return {"ok": True, "changed": changed, "active_total": n}
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.get("/api/backlinks")
-def api_backlinks(project: str, request: Request):
-    """백링크 프로필 — 없으면 빈 값. 지어내지 않는다."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            data = backlinks.latest(project)
-            data["available"] = backlinks.available()
-        return data
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.get("/api/creations")
-def api_creations(project: str, request: Request):
-    """/create status — 이 사이트에서 실제로 고친 것들."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
-            try:
-                pid = db.get_project(c, project)["id"]
-                rows = db.list_creations(c, pid, limit=50)
-            finally:
-                c.close()
-        return {"creations": [dict(r) for r in rows]}
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1123,6 +1058,9 @@ def dash(request: Request):
 
 @app.get("/api/projects")
 def api_projects(request: Request):
+    """존재는 dashboard.ROUTES 가 로컬 Handler 와 함께 못 박는다(둘 다 화면이 부른다).
+    몸은 다르다: 호스팅은 사이트 소유를 Brain 동기화 여부와 무관하게 store.sites
+    (등록 즉시 반영)로 판정해야 해서, 표의 call(Brain 의 projects 테이블)을 못 쓴다."""
     uid = _require_uid(request)
     with store.session(uid) as conn:
         return [r["project"] for r in store.sites(conn, uid)]
@@ -1130,11 +1068,12 @@ def api_projects(request: Request):
 
 @app.get("/api/data")
 def api_data(project: str, request: Request, date: str = ""):
-    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다."""
+    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다.
+    본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다."""
     uid = _require_uid(request)
     try:
         with store.session(uid, project, isolate=True):
-            return dashboard.payload(project, date or None)
+            return dashboard.ROUTES[("GET", "/api/data")](project, {"date": date}, None)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1145,30 +1084,31 @@ def api_doctor(project: str, request: Request, full: bool = False):
 
     두 모양은 다르다 — `doctor.render()` 가 capabilities·gsc_sites 를 읽으므로
     setup_state 를 먹이면 KeyError 로 죽는다. 화면 쪽 기본값은 건드리지 않는다.
+    화면 쪽 본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다.
     """
     uid = _require_uid(request)
     # 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료 키가 여기서도
     # 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다. paid_keys() 가 세우는
     # 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
     with store.session(uid, project, isolate=True, paid=True):
-        return doctor.diagnose(project) if full else dashboard.setup_state(project)
+        if full:
+            return doctor.diagnose(project)
+        return dashboard.ROUTES[("GET", "/api/doctor")](project, {}, None)
 
 
 @app.post("/api/opp")
 async def api_opp(request: Request):
     # 로컬 대시보드는 X-Token 으로 CSRF 를 막았다. 여기서는 세션 로그인이 그 역할을 하므로
-    # 화면이 보내는 헤더는 무시한다.
+    # 화면이 보내는 헤더는 무시한다. 본체는 dashboard.ROUTES 것 하나 — 상태값 검증도
+    # 거기서 부르는 db.set_opportunity_status 가 한다(잘못되면 ValueError).
     uid = _require_uid(request)
     body = await request.json()
-    if body.get("status") not in db.OPP_STATUSES:
-        raise HTTPException(status_code=400, detail="처리할 수 없는 상태값입니다. 새로고침 후 다시 시도해 주세요.")
     with store.session(uid, isolate=True):
-        c = db.connect()
         try:
-            return {"updated": db.set_opportunity_status(c, int(body.get("id") or 0),
-                                                         body["status"])}
-        finally:
-            c.close()
+            return dashboard.ROUTES[("POST", "/api/opp")]("", {}, body)
+        except ValueError:
+            raise HTTPException(status_code=400,
+                                detail="처리할 수 없는 상태값입니다. 새로고침 후 다시 시도해 주세요.")
 
 
 def demo() -> None:
@@ -1217,9 +1157,8 @@ def demo() -> None:
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
-                     "/api/report?project=x", "/api/export?project=x&table=keywords",
-                     "/api/keywords?project=x", "/api/backlinks?project=x",
-                     "/api/creations?project=x", "/api/run/status", "/api/brain",
+                     "/api/report?project=x",
+                     "/api/keywords?project=x", "/api/run/status", "/api/brain",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
@@ -1344,7 +1283,6 @@ def demo() -> None:
 
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
         assert c.get("/api/data?project=p1").status_code == 404
-        assert c.get("/api/overview").json()["sites"][0]["project"] == "p1"
 
         # 질문 목록·편집 — 만들기 버튼만 있고 무엇이 심겼는지 볼 데가 없었다.
         assert c.get("/api/ai/prompts?project=없는사이트").status_code == 404,             "남의 사이트 질문이 열린다"
@@ -1479,19 +1417,6 @@ def demo() -> None:
         assert c.post("/api/keywords", json={"project": "p1", "ids": []}).status_code == 400
         assert c.post("/api/keywords", json={"project": "없는사이트", "ids": [1], "active": True}
                       ).status_code == 404, "남의 사이트 키워드를 건드릴 수 있다"
-
-        assert c.get("/api/backlinks?project=없는사이트").status_code == 404
-        r = c.get("/api/backlinks?project=p1")
-        assert r.status_code == 200 and "available" in r.json(), r.text
-
-        assert c.get("/api/creations?project=없는사이트").status_code == 404
-        r = c.get("/api/creations?project=p1")
-        assert r.status_code == 200 and r.json()["creations"] == [], r.text
-
-        assert c.get("/api/export?project=없는사이트&table=keywords").status_code == 404
-        assert c.get("/api/export?project=p1&table=nope").status_code == 400
-        r = c.get("/api/export?project=p1&table=keywords")
-        assert r.status_code == 200 and r.content.startswith(b"\xef\xbb\xbf"), "CSV BOM 누락"
 
         assert c.get("/api/report?project=없는사이트").status_code == 404
         r = c.get("/api/report?project=p1")

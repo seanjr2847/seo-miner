@@ -396,10 +396,12 @@ def _check_seams() -> None:
     #    만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
     #    호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
     #    /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
+    #    로컬 쪽은 이제 dashboard.ROUTES(+LOCAL_ONLY_PATHS)가 정본이라 소스 정규식
+    #    대신 그 경로 집합을 본다 — Handler 가 실제로 등록하는 것과 같은 자료다.
     app_f = root / "server" / "app.py"
     local_f = root / "skills" / "capture" / "scripts" / "dashboard.py"
     if app_f.exists() and local_f.exists():
-        app_src, local_src = app_f.read_text("utf-8"), local_f.read_text("utf-8")
+        app_src = app_f.read_text("utf-8")
         app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', app_src))
         assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
 
@@ -421,7 +423,7 @@ def _check_seams() -> None:
                             continue          # 호스팅은 설정 화면 자체가 없다
                         assert call in app_routes,                             f"{who} 가 부르는데 호스팅 서버에 없다: {call}"
                     else:
-                        assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
+                        assert call in dashboard.LOCAL_PATHS,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
 
     # 6) 화면에서 돌릴 수 있는 단계는 서버가 전부 받아야 한다. dash.html 의 용어표에
     #    run 라벨이 있으면 그 버튼이 /api/run 으로 그 id 를 보낸다 — 서버가 단계
