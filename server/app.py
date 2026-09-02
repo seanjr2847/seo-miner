@@ -341,8 +341,8 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     carry_prop = carry.get("gsc_property", "")
 
     added, failed = [], []
-    with store.session(uid, isolate=True) as conn:
-        taken = {r["project"] for r in store.sites(conn, uid)}
+    with store.session(uid, isolate=True) as t:
+        taken = {r["project"] for r in store.sites(t.conn, uid)}
         for prop in props[:20]:
             host = _host_of(str(prop))
             if not host:
@@ -364,7 +364,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
             else:
                 failed.append({"property": prop, "error": r.get("error", "등록 실패")})
         for a in added:
-            store.add_site(conn, uid, a["project"], a["property"], _host_of(a["property"]))
+            store.add_site(t.conn, uid, a["project"], a["property"], _host_of(a["property"]))
 
     if added:
         kick()
@@ -416,16 +416,16 @@ async def api_repo(request: Request):
     return {"ok": True}
 
 
-def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
+def _create_content(t: store.Tenant, uid: int, project: str, opp_id: int, row) -> dict:
     """/api/create 워크플로: 기회 조회 → 리포 프로필 → 글 작성 → PR → 기록.
 
-    row 는 저장소가 연결된 store.site() 결과. isolate=True 세션(tenant) 안에서
-    불러야 한다 — db.* 는 Brain(tenant) 을, store.* 는 서버 DB 를 함께 쓴다.
+    row 는 저장소가 연결된 store.site() 결과. t 는 isolate=True 세션의 Tenant —
+    t.brain() 은 Brain(tenant) 을, t.conn 은 서버 DB 를 함께 쓴다.
     """
-    token = _gh_token(conn, uid)
+    token = _gh_token(t.conn, uid)
     repo, branch = row["repo"], row["repo_branch"] or "main"
 
-    c = db.connect()
+    c = t.brain()
     try:
         p = db.get_project(c, project)
         opp = db.get_opportunity(c, opp_id, project_id=p["id"])
@@ -441,7 +441,7 @@ def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
     profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
     if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
         profile = writer.discover_profile(token, repo, branch)
-        store.set_profile(conn, uid, project, json.dumps(profile, ensure_ascii=False))
+        store.set_profile(t.conn, uid, project, json.dumps(profile, ensure_ascii=False))
 
     doc = writer.write_for(opp, profile, dict(p), evidence)
     br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
@@ -455,7 +455,7 @@ def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
         # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
         f"content: {doc['title']} [opp #{opp_id}]")
 
-    c = db.connect()
+    c = t.brain()
     try:
         db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
                            kind=opp["kind"], branch=br, note=pr["url"])
@@ -473,11 +473,11 @@ async def api_create(request: Request):
     project = str(b.get("project") or "")
     opp_id = int(b.get("opportunity_id") or 0)
     try:
-        with store.session(uid, project, isolate=True) as conn:
-            row = store.site(conn, uid, project)
+        with store.session(uid, project, isolate=True) as t:
+            row = store.site(t.conn, uid, project)
             if not row or not row["repo"]:
                 raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결되지 않았습니다. 사이트 화면에서 저장소를 먼저 선택해 주세요.")
-            result = _create_content(conn, uid, project, opp_id, row)
+            result = _create_content(t, uid, project, opp_id, row)
         return {"ok": True, **result}
     except (gh.GitHubError, writer.WriterError) as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -556,8 +556,8 @@ async def api_ai_prompts(request: Request):
     n = body.get("limit")
     try:
         # 수집 런과 같은 env 를 두른다 — 유료 키는 서버가 댄다(paid_keys).
-        with store.session(uid, project, isolate=True, paid=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True, paid=True) as t:
+            c = t.brain()
             try:
                 rows = gen_prompts.suggest(project, n=int(n or 20), conn=c)
                 if not rows:
@@ -601,8 +601,8 @@ def api_ai_prompts_list(project: str, request: Request):
     만들기 버튼만 있고 무엇이 만들어졌는지는 화면 어디에도 안 나왔다."""
     uid = _require_uid(request)
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 return _ai_prompts_view(c, project)
             finally:
@@ -636,8 +636,8 @@ async def api_ai_prompts_edit(request: Request):
         cat = "general"
 
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 view = _ai_prompts_view(c, project)
@@ -853,9 +853,9 @@ def api_perf(project: str, request: Request):
 def api_overview(request: Request):
     """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
     uid = _require_uid(request)
-    with store.session(uid, isolate=True) as conn:
+    with store.session(uid, isolate=True) as t:
         out = []
-        for r in store.sites(conn, uid):
+        for r in store.sites(t.conn, uid):
             try:
                 d = exports.summary(r["project"])
             except db.ProjectNotFound:
@@ -876,8 +876,8 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
     uid = _require_uid(request)
     active = status == "active"
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 rows = db.list_keywords(c, pid, active=active)
@@ -902,8 +902,8 @@ async def api_keywords_set(request: Request):
     if not ids:
         raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 선택해 주세요.")
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 if on:
@@ -940,8 +940,8 @@ def api_creations(project: str, request: Request):
     """/create status — 이 사이트에서 실제로 고친 것들."""
     uid = _require_uid(request)
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 rows = db.list_creations(c, pid, limit=50)
@@ -980,10 +980,10 @@ def api_settings(project: str, request: Request):
     먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
     """
     uid = _require_uid(request)
-    with store.session(uid, project, isolate=True) as conn:
-        row = store.site(conn, uid, project)
+    with store.session(uid, project, isolate=True) as tn:
+        row = store.site(tn.conn, uid, project)
         try:
-            c = db.connect()
+            c = tn.brain()
             try:
                 ga4 = db.get_project(c, project)["ga4_property"] or ""
             finally:
@@ -991,13 +991,13 @@ def api_settings(project: str, request: Request):
         except db.ProjectNotFound:
             ga4 = ""      # 등록 직후 Brain 이 아직 없어도 설정 화면은 열려야 한다
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
-        return {"run_every_hours": store.every_hours(conn, uid, project),
+        return {"run_every_hours": store.every_hours(tn.conn, uid, project),
                 "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
                 "repo": (row["repo"] if row else None) or "",
                 "repo_branch": (row["repo_branch"] if row else None) or "main",
                 # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
                 # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
-                "github_connected": bool(store.github(conn, uid)),
+                "github_connected": bool(store.github(tn.conn, uid)),
                 # "이 배포가 GitHub 연동을 지원하나" — 키가 없으면 화면은 버튼 대신
                 # 안내만 낸다. 존재 여부만 준다, 값은 절대 안 내보낸다.
                 "github_enabled": bool(settings.get("GITHUB_CLIENT_ID")),
@@ -1047,8 +1047,8 @@ def api_ga4_properties(project: str, request: Request):
         detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
                "재로그인이 필요합니다. 다시 구글 계정으로 로그인해 주세요.")
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 domain = db.get_project(c, project)["domain"]
             finally:
@@ -1087,8 +1087,8 @@ async def api_ga4_set(request: Request):
         raise HTTPException(status_code=400,
                             detail="올바르지 않은 속성입니다. 새로고침 후 다시 선택해 주세요.")
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 db.set_ga4_property(c, db.get_project(c, project)["id"], prop_id)
             finally:
@@ -1350,7 +1350,24 @@ def demo() -> None:
         assert c.get("/api/ai/prompts?project=없는사이트").status_code == 404,             "남의 사이트 질문이 열린다"
         conn = store.connect()
         try:
-            with store.tenant(conn, u2):
+            with store.tenant(conn, u2) as t:
+                assert t.home == store.home(u2), "Tenant.home 이 그 유저의 home 이 아니다"
+                # 격리를 env 가 아니라 객체로 확인한다: CAPTURE_DB 를 엉뚱한 곳으로 흔들어
+                # 놔도(운영 실수·다른 스레드의 잔재) t.brain() 은 home= 을 직접 넘기니
+                # 흔들리면 안 된다 — env(CAPTURE_HOME) 만 보던 예전 방식이면 이 경우
+                # 조용히 엉뚱한 brain.db 를 연다.
+                rogue = Path(d) / "rogue.db"
+                os.environ["CAPTURE_DB"] = str(rogue)
+                try:
+                    bc = t.brain()
+                    try:
+                        opened = Path(bc.execute("PRAGMA database_list").fetchone()["file"])
+                        assert opened == t.home / "brain.db",                             f"CAPTURE_DB 에 흔들려 엉뚱한 brain 을 열었다: {opened}"
+                        assert not rogue.exists(), "env 기반 경로에 파일을 만들었다"
+                    finally:
+                        bc.close()
+                finally:
+                    os.environ.pop("CAPTURE_DB", None)
                 assert dashboard.create_project(
                     {"name": "p1", "type": "local_clinic", "domain": "p1.com"})["ok"]
         finally:

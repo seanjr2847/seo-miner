@@ -319,12 +319,51 @@ def home(user_id: int) -> Path:
     return data_dir() / "users" / str(user_id)
 
 
+class Tenant:
+    """유저 한 명의 home 에 묶인 손잡이 — session(isolate=True) 이 이걸 내준다.
+
+    .conn 은 서버 DB(store.* 가 쓰는 것, tenant() 를 부른 쪽 것 그대로),
+    .home 은 그 유저의 CAPTURE_HOME, .brain() 은 **그 home 의** brain.db 연결이다.
+    라우트가 db.connect() 를 손으로 열던 자리를 t.brain() 으로 바꾸면, isolate 플래그를
+    빠뜨리거나 db.connect() 를 깜빡해도 엉뚱한(서버 기본) brain 을 열 수 없다 — home
+    이 이 객체에 이미 못 박혀 있기 때문이다.
+    """
+
+    def __init__(self, uid: int, home: Path, conn: sqlite3.Connection):
+        self.uid = uid
+        self.home = home
+        self.conn = conn
+
+    def brain(self) -> sqlite3.Connection:
+        """이 유저의 brain.db 연결. env(CAPTURE_HOME) 를 안 봐도 항상 이 home 을 연다."""
+        import db  # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 이미 세워 뒀다
+        return db.connect(home=self.home)
+
+    @contextmanager
+    def activate(self, token_file: Path | None = None):
+        """엔진(subprocess 포함)이 보는 CAPTURE_HOME/GSC_TOKEN_FILE 을 이 home 으로
+        갈아끼운다. worker.run_site 처럼 env 만 보는 코드를 위한 것 — t.brain() 을
+        쓰는 라우트는 이게 필요 없다."""
+        keys = ("CAPTURE_HOME",) if token_file is None else ("CAPTURE_HOME", "GSC_TOKEN_FILE")
+        saved = {k: os.environ.get(k) for k in keys}
+        os.environ["CAPTURE_HOME"] = str(self.home)
+        if token_file is not None:
+            os.environ["GSC_TOKEN_FILE"] = str(token_file)
+        try:
+            yield self
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
 @contextmanager
 def tenant(conn: sqlite3.Connection, user_id: int):
-    """유저 한 명의 env 로 갈아끼운다. 엔진은 이 env 만 보고 돈다.
+    """유저 한 명의 env 로 갈아끼우고, 그 home 에 묶인 Tenant 를 내준다.
 
-    나갈 때 토큰 파일을 회수해 DB 에 되쓴다 — collect_gsc 가 갱신한 access token 이
-    거기 담기므로(collect_gsc.py:74), 안 거두면 매 실행마다 refresh 왕복을 한다.
+    엔진(run_chain 같은 subprocess 포함)은 env 만 보고 돈다 — 그 스왑은
+    Tenant.activate() 가 한다. 나갈 때 토큰 파일을 회수해 DB 에 되쓴다 —
+    collect_gsc 가 갱신한 access token 이 거기 담기므로(collect_gsc.py:74),
+    안 거두면 매 실행마다 refresh 왕복을 한다.
 
     ponytail: os.environ 은 프로세스 전역이라 동시 진입에 안전하지 않다. 워커가
     직렬로 돌기 때문에 지금은 문제없다. 병렬이 필요해지면 유저별 subprocess 로 바꾼다.
@@ -345,17 +384,14 @@ def tenant(conn: sqlite3.Connection, user_id: int):
     if stored:
         tok.write_text(stored, "utf-8")
 
-    saved = {k: os.environ.get(k) for k in ("CAPTURE_HOME", "GSC_TOKEN_FILE")}
-    os.environ["CAPTURE_HOME"] = str(h)
-    os.environ["GSC_TOKEN_FILE"] = str(tok)
+    t = Tenant(user_id, h, conn)
     try:
-        yield h
+        with t.activate(tok):
+            yield t
     finally:
         if tok.exists():
             save_token(conn, user_id, tok.read_text("utf-8"))
         tok.unlink(missing_ok=True)           # 평문 토큰을 디스크에 남기지 않는다
-        for k, v in saved.items():
-            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 @contextmanager
@@ -367,6 +403,10 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
     conn = store.connect(); try: ... finally: conn.close() 와 _own() 과
     with store.tenant() 가 라우트마다 손으로 반복되던 것을 한 곳으로 모은다.
 
+    isolate=False 면 `as` 로 받는 건 그냥 서버 conn 이다. isolate=True 면 Tenant
+    (t.home, t.brain(), t.conn=서버 conn) 다 — 라우트는 db.connect() 를 손으로
+    열지 않고 t.brain() 으로 그 유저의 brain 만 연다.
+
     project 를 주면 소유 확인이 **기본값**이다(own=True) — 빠뜨림이 기본이면 안
     된다. own=False 는 아직 소유가 성립하지 않는 자리에만 쓴다(예: 새 사이트 등록).
     """
@@ -377,12 +417,12 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
             raise HTTPException(
                 status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
         if isolate:
-            with tenant(conn, uid):
+            with tenant(conn, uid) as t:
                 if paid:
                     with settings.paid_keys():
-                        yield conn
+                        yield t
                 else:
-                    yield conn
+                    yield t
         else:
             yield conn
     finally:
@@ -413,8 +453,10 @@ def demo() -> None:
         assert b"secret" not in raw, "토큰이 평문으로 저장됐다"
 
         before = os.environ.get("CAPTURE_HOME")
-        with tenant(conn, uid) as h:
-            assert os.environ["CAPTURE_HOME"] == str(h)
+        with tenant(conn, uid) as t0:
+            assert isinstance(t0, Tenant) and t0.uid == uid and t0.conn is conn
+            assert t0.home == home(uid)
+            assert os.environ["CAPTURE_HOME"] == str(t0.home)
             assert Path(os.environ["GSC_TOKEN_FILE"]).read_text("utf-8") == '{"refresh_token":"secret"}'
             Path(os.environ["GSC_TOKEN_FILE"]).write_text('{"refresh_token":"new"}', "utf-8")
         assert os.environ.get("CAPTURE_HOME") == before, "env 가 복원되지 않았다"

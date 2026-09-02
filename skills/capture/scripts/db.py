@@ -507,9 +507,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def connect() -> sqlite3.Connection:
-    capture_home().mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path())
+def connect(home: Path | None = None) -> sqlite3.Connection:
+    """home 을 주면 env(CAPTURE_HOME/CAPTURE_DB) 를 안 보고 그 유저의 brain 을 연다
+    (server/store.py 의 Tenant.brain() 이 쓴다). 안 주면 예전처럼 env 를 읽는다."""
+    dbp = db_path(home)
+    dbp.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(dbp)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
@@ -1271,6 +1274,16 @@ def _selfcheck() -> None:
     old = os.environ.get("CAPTURE_HOME")
     with tempfile.TemporaryDirectory() as d:
         os.environ["CAPTURE_HOME"] = d
+
+        # home= 을 주면 env(CAPTURE_HOME) 을 안 보고 그 경로의 brain 을 연다 —
+        # server/store.py 의 Tenant.brain() 이 기대는 계약.
+        other = Path(d) / "other-tenant"
+        c2 = connect(home=other)
+        try:
+            assert (other / "brain.db").exists(), "home= 이 준 경로에 안 생겼다"
+        finally:
+            c2.close()
+
         conn = connect()
         try:
             # 백링크 테이블의 소유자가 db.py 다 — server/backlinks.py 가 만들지 않는다.
