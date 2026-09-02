@@ -139,7 +139,7 @@ def _kick_dep():
 # 이름·도메인·속성은 서버가 정한 것이 이긴다(슬러그 충돌·표기 검증). 종류(type)도
 # 여기 없다 — 화면이 carry 값으로 미리 골라 두므로 types 에 담겨 오고, 사용자가
 # 바꿨으면 그쪽이 이긴다. 여기 남는 건 사람이 정했고 기계가 못 짓는 것뿐이다.
-# 이름의 정본은 dashboard.PREFILL_KEYS 이고 stage._check_seams 가 대조한다.
+# 이름의 정본은 dashboard.PREFILL_KEYS 이고 test_seams 가 대조한다.
 CARRY_FIELDS = ("locale", "brand_aliases", "seed_keywords",
                 "competitors_manual", "tools")
 

@@ -955,7 +955,7 @@ def set_opp_status(body: dict) -> dict:
 
 
 # 전송 중립 route 표 — 원본 화면(shell+views)이 로컬·호스팅 둘 다에서 부르는 API 넷의
-# 본체. 예전엔 두 서버가 이 넷을 각자 손으로 등록해서, 이음매 검사(stage._check_seams
+# 본체. 예전엔 두 서버가 이 넷을 각자 손으로 등록해서, 이음매 검사(test_seams
 # #5)가 두 소스를 정규식으로 훑어 존재를 대조해야 했다. 이제 로컬 Handler 는 이 표를
 # 그대로 조회해 등록·디스패치하고(do_GET/do_POST), 호스팅(server/app.py)도 자기
 # 인증·세션 격리를 두른 뒤 같은 call 을 부른다 — stage.py 는 정규식 대신 이 표의
@@ -980,7 +980,7 @@ ROUTES = {
 }
 
 # 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용 여섯). 호스팅엔
-# /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — stage._check_seams 가 그 차이를 안다.
+# /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — test_seams 가 그 차이를 안다.
 LOCAL_ONLY_PATHS = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/run",
                     "/api/setup/keys", "/api/setup/project", "/api/setup/gsc-client"}
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS

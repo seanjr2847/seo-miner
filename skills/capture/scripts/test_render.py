@@ -73,7 +73,7 @@ addEventListener("DOMContentLoaded", function () {
 def view_sections() -> list[tuple[str, str]]:
     """각 뷰가 자기 view-def 에 선언한 섹션 id — 그게 DOM 에 실제로 있어야 한다.
 
-    목록을 여기 옮겨 적지 않는다. 선언이 정본이고(stage._check_seams 도 같은 것을
+    목록을 여기 옮겨 적지 않는다. 선언이 정본이고(test_seams 도 같은 것을
     읽는다), 화면이 늘면 이 검사가 저절로 따라간다.
     """
     out = []
