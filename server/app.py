@@ -55,8 +55,36 @@ import store
 import writer
 
 
+def resume_dead_runs(dispatch=None) -> list[str]:
+    """서버가 뜨는 자리에서 죽은 런을 회수하고 그 사이트만 다시 띄운다.
+
+    Railway 는 push 마다 컨테이너를 갈아치운다 — 수집 도중 SIGKILL 이 정상 경로이고,
+    워커의 finally 는 프로세스째 죽으면 안 돈다. 회수를 안 하면 running_since 가 남아
+    화면이 3시간 동안 "분석 중 38%" 로 굳고 수동 재실행까지 막힌다.
+
+    `--all` 로 띄우지 않는다 — 스윕은 due 판정을 거치므로 방금 잰 것으로 찍힌
+    (mark_run 이 last_run_at 을 남겼다) 사이트가 통째로 빠진다. 죽은 사이트만
+    직접 띄운다. 처음부터 다시 도는 것으로 충분하다 — 수집기들이 seen_today 로
+    오늘 이미 한 항목을 건너뛰므로 싸다.
+    """
+    dispatch = dispatch or scheduler.dispatch
+    conn = store.connect()
+    try:
+        rows = store.reclaim_dead_runs(conn)
+    finally:
+        conn.close()
+    for r in rows:
+        print(f"[resume] 죽은 런 회수: {r['user_id']}/{r['project']}", flush=True)
+        dispatch("--user", str(r["user_id"]), "--project", r["project"])
+    return [r["project"] for r in rows]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        resume_dead_runs()
+    except Exception as e:              # 회수가 안 됐다고 서버가 안 뜨면 안 된다
+        print(f"[resume] 실패: {e}", flush=True)
     task = asyncio.create_task(scheduler.loop())
     yield
     task.cancel()
@@ -891,10 +919,14 @@ def api_run_status(request: Request):
     """사이트별 수집 상태 — 화면이 폴링한다."""
     uid = _require_uid(request)
     with store.session(uid) as conn:
+        # last_ok/last_error 를 같이 싣는다 — 실패한 단계가 있어도 화면이 아무 말도
+        # 안 하던 자리다. 폴링이 이미 도는 곳이라 새 라우트를 만들지 않는다.
         return {r["project"]: {"running": bool(r["running_since"]),
                                "last_run_at": r["last_run_at"],
                                "stage": r["stage"],
-                               "pct": r["stage_pct"]}
+                               "pct": r["stage_pct"],
+                               "last_ok": r["last_ok"],
+                               "last_error": r["last_error"]}
                 for r in store.sites(conn, uid)}
 
 
@@ -1426,6 +1458,36 @@ def demo() -> None:
         # 위 /api/run(stages=competitors) 가 mark_run 을 찍어 놓고 워커는 가짜였다 —
         # 그래서 아직 '도는 중'이다. 화면 폴링이 읽는 값이 실제로 반영되는지만 본다.
         assert c.get("/api/run/status").json()["p1"]["running"] is True
+
+        # 런 결과가 화면까지 간다 — 여태 실패한 단계가 있어도 화면은 아무 말도 안 했다.
+        cs = store.connect()
+        try:
+            sid_st = store.site(cs, u2, "p1")["id"]
+            store.mark_done(cs, sid_st, ok=False, error="rank: DataForSEO 잔액 없음(402)")
+        finally:
+            cs.close()
+        st = c.get("/api/run/status").json()["p1"]
+        assert st["last_ok"] == 0 and "402" in st["last_error"], st
+        # 죽은 런 회수 — 컨테이너 교체로 워커가 통째로 죽은 자리. 회수하고 그 사이트만
+        # 다시 띄운다(--all 은 due 판정에 걸려 방금 잰 사이트를 빼 버린다).
+        cs = store.connect()
+        try:
+            store.mark_run(cs, sid_st)
+        finally:
+            cs.close()
+        spawned = []
+        assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == ["p1"], "죽은 런을 못 찾았다"
+        assert spawned and spawned[0][:1] == ("--user",) and "p1" in spawned[0], spawned
+        st = c.get("/api/run/status").json()["p1"]
+        assert st["running"] is False and st["last_ok"] == 0, st
+        assert "서버 재시작" in c.get("/api/run/log?project=p1").json()["text"], \
+            "왜 끊겼는지 사용자에게 한 줄도 안 간다"
+        assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == [], "도는 런이 없는데 또 띄운다"
+        cs = store.connect()
+        try:
+            store.mark_run(cs, sid_st)     # 아래 런 로그 검사가 보던 '도는 중' 으로 되돌린다
+        finally:
+            cs.close()
 
         assert c.get("/api/keywords?project=없는사이트").status_code == 404
         r = c.get("/api/keywords?project=p1")

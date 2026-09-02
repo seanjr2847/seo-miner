@@ -168,6 +168,10 @@ function HS_verdict(r) {
     return {cls:"bad", label:"중단", why:"도중에 예외로 멈췄습니다."};
   if (r.finished_at === null)
     return {cls:"bad", label:"미완", why:"끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
+  // notes 를 정규식으로 되짚는 건 이 리포가 싫어하는 방식이다(사실은 페이로드에서
+  // 온다). 여기서만 타협하는 이유: notes 는 애초에 자유 문자열이고 수집기가 남긴
+  // **원본**이지 렌더된 글자가 아니다. 되짚을 구조화된 칸이 runs 에 없다. 읽는 키는
+  // errors/skipped 둘뿐이고, 그 칸이 생기면 이 두 줄이 먼저 지워질 자리다.
   const e = +((n.match(/\berrors=(\d+)/) || [])[1] || 0);
   const k = +((n.match(/\bskipped=(\d+)/) || [])[1] || 0);
   if (e) return {cls:"bad", label:`오류 ${e}`, why:`${e}건이 실패했습니다.`};
