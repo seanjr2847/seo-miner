@@ -190,7 +190,32 @@ def gsc_missing_scopes() -> list[str]:
     return [s for s in collect_gsc.SCOPES if s not in saved]
 
 
-def diagnose(project: str = "") -> dict:
+def probe_keys() -> list[str]:
+    """유료 키가 **실제로 살아 있나** — 무료 호출 한 번씩. 사람이 읽을 한 줄씩 반환.
+
+    "키가 env 에 있다"와 "그 키로 살 수 있다"는 다른 말이다. 잔액 0 인 계정이
+    키를 다 갖고 있어서 doctor 는 "다 준비됐습니다"라고 했고, 자동 런은 402 를
+    100번 맞았다(8/30). 판정 함수의 정본은 수집기 쪽 하나다 — 여기서 다시 안 쓴다.
+
+    이 파일은 pip 이전에도 도는 자리라 requests 를 쓰는 모듈은 늦게 읽는다.
+    """
+    out: list[str] = []
+    try:
+        import collect_ai
+        import serp_adapter
+    except Exception:
+        return out          # 부품이 없으면 이 줄은 생략 — 진단 자체를 막지 않는다
+    if serp_adapter.has_dataforseo():
+        try:
+            out.append(f"DataForSEO 잔액 ${serp_adapter.dataforseo_balance():.2f}")
+        except Exception as e:
+            out.append(f"DataForSEO 잔액 확인 실패: {e}")
+    if serp_adapter.has_openrouter():
+        out.append(collect_ai.openrouter_ok()[1])
+    return out
+
+
+def diagnose(project: str = "", *, probe: bool = False) -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
     # 표식은 settings.paid_keys() 가 세우고, 그 컨텍스트 안에서는 서버 키가 엔진 이름으로
@@ -473,6 +498,8 @@ def diagnose(project: str = "") -> dict:
             "gsc_bundled": gsc_bundled,   # 번들 클라이언트로 로그인하는 중인가
             "gsc_missing_scopes": gsc_missing,   # 연결된 토큰에 없는 SCOPES (보통 GA4)
             "capabilities": {f"{c['name']} — {c['desc']}": c["on"] for c in readiness},
+            # 키가 살아 있나 (probe=True 일 때만 — 네트워크를 탄다)
+            "key_status": probe_keys() if probe else [],
             # owner/blocking 도 같이 실어 보낸다 — 화면(setup_payload)이 "이건 누구
             # 할 일인가"를 문구에서 되짚지 않고 축으로 판단한다.
             "locked": [{"name": c["name"], "desc": c["desc"], "fix": c["fix"],
@@ -545,6 +572,9 @@ def render(d: dict) -> None:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")
     else:
         print("\n지금 되는 것: 아직 없습니다 — 아래 [꼭 해야 할 일]만 하면 켜집니다.")
+    if d.get("key_status"):
+        # "키가 있다"가 아니라 "그 키로 살 수 있다" — 잔액 0 은 여기서 드러난다.
+        print("유료 키 상태: " + " · ".join(d["key_status"]))
     # 모수는 위임 스킬 **전체**(필수+선택)다 — 산문도 install_skills 도 같은 8을 센다.
     m_skills = {**d.get("marketing_skills", {}), **d.get("marketing_optional", {})}
     if m_skills:
@@ -705,7 +735,9 @@ def main() -> None:
         else:
             render(d)
         sys.exit(0 if d.get("core_ok") and d.get("brain_ok") else 1)
-    d = diagnose()
+    # 잔액·키 확인은 네트워크를 탄다 — 화면(--web)과 기계용(--json)은 즉답이
+    # 생명이라 텍스트 진단에서만 묻는다 (둘 다 무료 호출이지만 공짜는 아니다: 시간).
+    d = diagnose(probe=not {"--web", "--json"} & set(sys.argv))
     if "--web" in sys.argv:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.
         import subprocess

@@ -32,6 +32,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import scoring  # noqa: E402
 
+# 단계를 그 자리에서 끝내는 예외. 정의는 collector 에 있다 — Stage.each 가 이걸
+# 알아야 하는데 collector 가 serp_adapter 를 읽으면 순환이 된다. 여기서는 이름만
+# 다시 내건다(호출부는 serp_adapter.Fatal 로 잡아도 같은 클래스다).
+Fatal = collector.Fatal
+
 # HTTP 타임아웃 정본 — 각 스크립트에 리터럴로 적지 않는다
 TIMEOUTS = {
     "dataforseo": 60,
@@ -39,7 +44,33 @@ TIMEOUTS = {
     "openrouter": 120,
     "suggest": 10,
     "page": 20,        # 내 페이지 한 장 가져오기 (collect_page)
+    "canary": 15,      # 잔액·키 확인 — 돈도 안 들고 오래 기다릴 이유도 없다
 }
+
+# 재시도해도 안 낫는 HTTP 상태 — 다음 항목에서도 같은 답이 온다.
+FATAL_STATUS = {401: "인증 실패", 402: "잔액 없음", 403: "접근 거부"}
+# 사람이 지금 할 수 있는 일. 오류 문장은 코드가 아니라 이 한 줄로 끝나야 한다.
+FATAL_FIX = {
+    "DataForSEO": "https://app.dataforseo.com 에서 잔액·키 확인",
+    "OpenRouter": "https://openrouter.ai/settings/keys 에서 잔액·키 확인",
+}
+
+
+def fatal(who: str, status: int, detail: str = "") -> Fatal:
+    """`DataForSEO 잔액 없음(402) — https://... 에서 충전` 꼴의 사람 말."""
+    tail = f" [{detail}]" if detail else ""
+    return Fatal(f"{who} {FATAL_STATUS.get(status, '호출 실패')}({status}) — "
+                 f"{FATAL_FIX.get(who, '키를 확인하세요')}{tail}")
+
+
+def raise_for(r, who: str = "DataForSEO") -> None:
+    """raise_for_status 자리 — 결제·인증 계열만 Fatal 로 올린다.
+
+    이 함수를 지나지 않는 요청이 하나라도 남으면 그 경로만 402 를 100번 맞는다.
+    """
+    if r.status_code in FATAL_STATUS:
+        raise fatal(who, r.status_code)
+    r.raise_for_status()
 
 
 class _FakeResp:
@@ -70,8 +101,15 @@ def has_openrouter() -> bool:
 
 def _check_dataforseo_task(data: dict) -> dict:
     task = (data.get("tasks") or [{}])[0]
-    if task.get("status_code", 0) >= 40000:
-        raise RuntimeError(f"dataforseo task error: {task.get('status_message')}")
+    code = task.get("status_code", 0)
+    if code >= 40000:
+        msg = task.get("status_message")
+        # DataForSEO 의 task status_code 는 HTTP 코드 x100 꼴이다 (40501 = 405.01).
+        # 결제·인증 계열이면 HTTP 200 으로 와도 Fatal 이다 — 엔드포인트에 따라
+        # 잔액 부족이 본문으로 오기 때문. 이 짐작이 틀려도 손해는 없다(예전 동작).
+        if code // 100 in FATAL_STATUS:
+            raise fatal("DataForSEO", code // 100, str(msg))
+        raise RuntimeError(f"dataforseo task error: {msg}")
     return task
 
 LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, serper gl/hl)
@@ -176,7 +214,7 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
         auth=(login, pw), timeout=TIMEOUTS["dataforseo"],
         json=[{"keyword": keyword, "location_name": loc, "language_code": lang,
                "device": device, "depth": depth}])
-    r.raise_for_status()
+    raise_for(r, "DataForSEO")
     data = r.json()
     task = _check_dataforseo_task(data)
     items = ((task.get("result") or [{}])[0].get("items")) or []
@@ -220,7 +258,7 @@ def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desk
     r = requests.post("https://google.serper.dev/search", timeout=TIMEOUTS["serper"],
                       headers={"X-API-KEY": key, "Content-Type": "application/json"},
                       json={"q": keyword, "gl": gl, "hl": hl, "num": depth})
-    r.raise_for_status()
+    raise_for(r, "Serper")
     data = r.json()
     top = [{"pos": it.get("position"), "domain": scoring.host_of(it.get("link", "")),
             "url": it.get("link"), "title": it.get("title")}
@@ -278,7 +316,7 @@ def fetch_labs_ranked_keywords(target: str, locale: str, limit: int = 100) -> tu
     r = requests.post(
         "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live",
         auth=(login, pw), timeout=TIMEOUTS["dataforseo"], json=body)
-    r.raise_for_status()
+    raise_for(r, "DataForSEO")
     data = r.json()
     task = _check_dataforseo_task(data)
     cost = float(task.get("cost") or data.get("cost") or 0.0)
@@ -324,11 +362,30 @@ def post_dataforseo(path: str, body: list, timeout: int | None = None) -> tuple[
         f"https://api.dataforseo.com/v3{path}",
         auth=(os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]),
         timeout=timeout or TIMEOUTS["dataforseo"], json=body)
-    r.raise_for_status()
+    raise_for(r, "DataForSEO")
     data = r.json()
     task = _check_dataforseo_task(data)
     cost = float(task.get("cost") or data.get("cost") or 0.0)
     return (task.get("result") or []), cost
+
+
+def dataforseo_balance() -> float:
+    """남은 잔액($). GET /v3/appendix/user_data — **무료 호출**이다.
+
+    돈 쓰는 단계 앞에서 한 번 묻는 카나리아. 이게 없어서 잔액 0 인 계정이
+    키워드 100개에 402 를 100번 맞고 "완료"로 끝났다(8/30·9/1·9/2 자동 런).
+    판정(얼마 아래면 건너뛰나)은 여기서 안 한다 — run_all.preflight 이 한 벌로 갖는다.
+    """
+    if not has_dataforseo():
+        raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    r = requests.get(
+        "https://api.dataforseo.com/v3/appendix/user_data",
+        auth=(os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]),
+        timeout=TIMEOUTS["canary"])
+    raise_for(r, "DataForSEO")
+    task = _check_dataforseo_task(r.json())
+    money = ((task.get("result") or [{}])[0].get("money")) or {}
+    return float(money.get("balance") or 0.0)
 
 
 def cost_per_query(provider: str) -> float:
@@ -444,6 +501,52 @@ def _selfcheck() -> None:
         fake_post.reply = {"tasks": [{"status_code": 20000, "result": []}]}
         assert post_dataforseo("/x/live", [{}]) == ([], 0.0)
 
+        # 402 는 Fatal 이다 — 이게 RuntimeError 로 남으면 each 가 삼키고
+        # 키워드 100개에 100번 402 를 맞는다(8/30 자동 런이 그 자리다).
+        def post_402(url, auth=None, timeout=None, json=None):
+            return _FakeResp({}, status_code=402)
+
+        requests.post = post_402
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("402 를 Fatal 로 안 올렸다")
+        except collector.Fatal as e:
+            assert "402" in str(e) and "잔액" in str(e) and "http" in str(e), e
+        requests.post = fake_post
+
+        # HTTP 200 인데 task status_code 가 결제 계열이어도 Fatal (40200 = 402.00)
+        fake_post.reply = {"tasks": [{"status_code": 40200,
+                                      "status_message": "Payment Required."}]}
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("task 40200 을 Fatal 로 안 올렸다")
+        except collector.Fatal as e:
+            assert "402" in str(e), e
+        # 그 밖의 task 오류는 그대로 항목 오류다 — 이건 다음 묶음에서 낫는다
+        fake_post.reply = {"tasks": [{"status_code": 40501, "status_message": "no rows"}]}
+        try:
+            post_dataforseo("/x/live", [{}])
+        except collector.Fatal:
+            raise AssertionError("40501 은 Fatal 이 아니다")
+        except RuntimeError:
+            pass
+
+        # 잔액 카나리아 — 무료 GET 한 번, money.balance 를 그대로 돌려준다
+        got = {}
+
+        def fake_get(url, auth=None, timeout=None, headers=None):
+            got["url"], got["timeout"] = url, timeout
+            return _FakeResp({"tasks": [{"status_code": 20000,
+                                         "result": [{"money": {"balance": 0.12}}]}]})
+
+        real_get, requests.get = requests.get, fake_get
+        try:
+            assert dataforseo_balance() == 0.12
+            assert got["url"].endswith("/v3/appendix/user_data"), got
+            assert got["timeout"] == TIMEOUTS["canary"], got
+        finally:
+            requests.get = real_get
+
         # 키가 없으면 부르기 전에 멈춘다(401 을 사러 가지 않는다)
         del os.environ["DATAFORSEO_LOGIN"]
         n = len(calls)
@@ -462,7 +565,7 @@ def _selfcheck() -> None:
     assert any("모바일" in c for c in caveats("serper"))
     assert set(PROVIDERS) == {"dataforseo", "serper"}
     assert TIMEOUTS == {"dataforseo": 60, "serper": 30, "openrouter": 120,
-                    "suggest": 10, "page": 20}
+                    "suggest": 10, "page": 20, "canary": 15}
     assert LABS_COST_PER_CALL == 0.001
     print("serp_adapter self-check ok")
 

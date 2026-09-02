@@ -236,9 +236,47 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
     return out
 
 
+# 카나리아 — 돈 쓰기 전 무료 점검 한 번. 이게 없어서 잔액 0 인 계정이 키워드마다
+# 402 를 맞고 "완료"로 끝났다 (8/30·9/1·9/2 자동 런).
+MIN_BALANCE = 1.0                       # 이보다 적으면 유료 단계는 어차피 실패한다
+DFS_STAGES = ("metrics", "rank", "competitors", "backlinks")
+
+
+def preflight(stages=STAGES) -> dict[str, str]:
+    """유료 단계를 돌리기 전 한 번. 반환: {건너뛸 단계: 사유}.
+
+    두 호출(DataForSEO user_data, OpenRouter auth/key)이 다 무료라 dry-run 에서도
+    한다. 확인 자체가 실패하면(네트워크 등) 아무것도 막지 않는다 — 카나리아가
+    수집을 죽이면 안 된다.
+    """
+    blocked: dict[str, str] = {}
+    paid = {s.name for s in stages if s.is_paid}
+    # rank 는 serper 로도 돈다 — 지금 쓸 제공자가 DataForSEO 일 때만 잔액이 문제다.
+    dfs = [n for n in DFS_STAGES
+           if n in paid and (n != "rank" or serp_adapter.detect_provider() == "dataforseo")]
+    if dfs and serp_adapter.has_dataforseo():
+        try:
+            bal = serp_adapter.dataforseo_balance()
+        except Exception as e:
+            print(f"[사전점검] DataForSEO 잔액을 못 읽었습니다 ({e}) — 그대로 진행합니다.")
+            bal = None
+        if bal is not None and bal < MIN_BALANCE:
+            print(f"[경고] DataForSEO 잔액 ${bal:.2f} — {'·'.join(dfs)} 가 실패합니다. "
+                  f"충전: https://app.dataforseo.com")
+            for n in dfs:
+                blocked[n] = f"DataForSEO 잔액 없음 (${bal:.2f})"
+    if "ai" in paid and serp_adapter.has_openrouter():
+        ok, msg = collect_ai.openrouter_ok()
+        if not ok:
+            print(f"[경고] {msg} — ai 단계를 건너뜁니다.")
+            blocked["ai"] = msg
+    return blocked
+
+
 def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
-               only_set: set[str], opts: dict) -> StageResult:
+               only_set: set[str], opts: dict, blocked: dict | None = None) -> StageResult:
     """단계 하나 — 건너뛸 이유를 먼저 보고, 아니면 fn 을 부른다."""
+    blocked = blocked or {}
     if stage.name in skip_set:
         reason = "--skip 옵션으로 건너뜀"
         print(f"[{stage.name}] {reason}")
@@ -254,9 +292,16 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
         if not has_keys:
             print(f"[{stage.name}] {paid_skip_msg}")
             return StageResult(ok=True, skipped=True, reason=paid_skip_msg)
+        if stage.name in blocked:
+            # 카나리아가 이미 답을 알고 있다 — 402 를 100번 사러 가지 않는다.
+            print(f"[{stage.name}] {blocked[stage.name]}")
+            return StageResult(ok=True, skipped=True, reason=blocked[stage.name])
 
     try:
         return stage.fn(project=project, dry_run=dry_run, **opts)
+    except collector.Fatal as e:
+        # 잔액·인증 — 사람 말 그대로 사유로 싣는다("예외 발생 (...)" 로 감싸지 않는다)
+        return StageResult(ok=False, reason=str(e))
     except Exception as e:
         return StageResult(ok=False, reason=f"예외 발생 ({e})")
 
@@ -270,6 +315,7 @@ def run_chain(
     opts: dict[str, dict] | None = None,
     stages: tuple = STAGES,
     on_stage=None,
+    preflight=preflight,
 ) -> list[tuple[str, StageResult]]:
     """전체 수집 체인을 순서대로 실행하고 각 단계의 결과를 그대로 돌려줍니다.
 
@@ -280,6 +326,8 @@ def run_chain(
         only: 실행할 단계 이름 (쉼표 구분 문자열 하나)
         opts: {단계 이름: {kwarg: 값}} — 그 단계의 collect() 에 그대로 넘어간다
         stages: 실행할 단계 표. 테스트가 가짜 표를 주입하는 자리다.
+        preflight: fn(stages) -> {건너뛸 단계: 사유}. 유료 단계 전에 한 번 불린다
+            (무료 호출). 테스트가 네트워크를 막는 자리다.
         on_stage: fn(idx, total, 단계 이름) — 단계 시작마다 불린다. 진행률 보고용이라
             여기서 난 예외는 삼킨다(보고가 수집을 죽이면 안 된다).
 
@@ -313,6 +361,11 @@ def run_chain(
     print(f"체인 러너 시작: 프로젝트 '{project}' (dry_run={dry_run})")
     print(f"{SEPARATOR}")
 
+    # 돈 쓰는 단계가 하나라도 남아 있으면 그 앞에서 무료로 한 번 묻는다.
+    to_run = [s for s in stages
+              if s.name not in skip_set and (not only_set or s.name in only_set)]
+    blocked = preflight(to_run) if any(s.is_paid for s in to_run) else {}
+
     for idx, stage in enumerate(stages, start=1):
         # gsc 가 실패했을 때 나머지 단계는 실행하지 않고 중단 상태로 기록
         if gsc_aborted:
@@ -329,7 +382,7 @@ def run_chain(
         print(SUB_SEPARATOR)
 
         r = _run_stage(stage, project, dry_run=dry_run, skip_set=skip_set,
-                       only_set=only_set, opts=opts.get(stage.name) or {})
+                       only_set=only_set, opts=opts.get(stage.name) or {}, blocked=blocked)
         results.append((stage.name, r))
 
         if not r.ok:
@@ -362,6 +415,9 @@ def _label(r: StageResult, dry_run: bool) -> str:
         return "미실행"
     if r.skipped:
         return "건너뜀"
+    if r.partial:
+        # 초록불 아래로 나가지 않게 — 사유(N건 실패: 첫 오류)는 아래 detail 이 붙인다
+        return "완료 ⚠"
     return "돌 예정" if dry_run else "완료"
 
 

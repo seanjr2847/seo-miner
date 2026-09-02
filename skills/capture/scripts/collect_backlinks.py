@@ -334,13 +334,13 @@ def collect(project: str, *,
             r.api_calls = st.each(tasks, lambda t: t[1](t), label=lambda t: t[0])
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
-                       + f" errors={st.errors}"
+                       + f" {st.err_note}"
                        + ("" if not notes else " | " + " | ".join(notes)))
 
         total = sum(rows.values())
         print(f"\ncollected {total} rows ({r.notes}), actual_cost=${cost:.4f}\n"
               f"run_id={r.id}")
-        return st.done(rows=total, cost=cost)
+        return st.verdict(total, rows=total, cost=cost)
 
 
 def latest(project: str, top: int = 25) -> dict:
