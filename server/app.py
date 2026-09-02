@@ -20,7 +20,6 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import asyncio
 import html
-import inspect
 import io
 import json
 import re
@@ -494,9 +493,10 @@ def _stage_opts(raw) -> dict[str, str | list[str]]:
     조용히 무시하면 `--device mobile` 을 준 사용자가 데스크톱 결과를 모바일 결과로
     읽는다 — 이 리포가 가장 싫어하는 실패 방식이다.
 
-    노브 목록은 여기 사본으로 두지 않는다. 정본은 run_all.STAGE_MODULES(어느 단계가
-    옵션을 받나)와 그 수집기 collect() 의 인자 이름(어떤 키를 받나)이다. `**opts` 로
-    삼키는 자리는 안 쳐준다 — 조용히 삼켜서 값이 무시되는 것이 오류보다 나쁘다.
+    노브 목록은 여기 사본으로 두지 않는다. 정본은 run_all.STAGES(stage.knobs) 다 —
+    어느 단계가 옵션을 받나, 그 단계 파서가 노출한 어떤 키를 받나가 거기서 함께
+    나온다. `**opts` 로 삼키는 자리(conn·post·fetch 같은 테스트 주입 kwarg)는 stage.knobs
+    에 애초에 없다 — 조용히 삼켜서 값이 무시되는 것이 오류보다 나쁘다.
     """
     if not raw:
         return {}
@@ -506,16 +506,15 @@ def _stage_opts(raw) -> dict[str, str | list[str]]:
     out: dict[str, str | list[str]] = {}
     for k, v in raw.items():
         stage_name, dot, key = str(k).partition(".")
-        mod = run_all.STAGE_MODULES.get(stage_name) if dot else None
         key = key.strip().replace("-", "_")
-        params = inspect.signature(mod.collect).parameters if mod else {}
-        ok = (mod is not None and key not in ("project", "dry_run") and key in params
-              and params[key].kind is not inspect.Parameter.VAR_KEYWORD)
+        stg = run_all.STAGE_BY_NAME.get(stage_name) if dot else None
+        ok = stg is not None and key in stg.knobs
         if not ok:
+            valid = sorted(s.name for s in run_all.STAGES if s.knobs)
             raise HTTPException(
                 status_code=400,
                 detail=f"알 수 없는 옵션입니다: {k} — '단계.키' 모양이어야 하고, "
-                       f"옵션을 받는 단계는 {', '.join(sorted(run_all.STAGE_MODULES))} 입니다.")
+                       f"옵션을 받는 단계는 {', '.join(valid)} 입니다.")
         # 리스트는 접지 않는다 — str(["a.com"]) 은 "['a.com']" 이 되고 _coerce 가 그걸
         # 문자열로 되돌려 수집기가 도메인 하나도 못 읽는다(competitors.domain 이 그 자리다).
         # 여러 값은 --opt 를 여러 번 실어 보내고 parse_opts 가 리스트로 모은다.

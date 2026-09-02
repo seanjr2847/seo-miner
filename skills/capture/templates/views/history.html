@@ -120,12 +120,16 @@
 "use strict";
 /* 조립하면 형제 화면들과 한 문서가 된다 — 이 파일의 전역은 전부 HS_ 로 시작한다. */
 
-const HS_RUN_LABEL = {gsc:"서치콘솔", rank:"순위", ai:"AI 인용", keywords:"키워드",
-  analysis:"기회 분석", gap:"경쟁 공백", index:"색인", report:"보고서", full:"전체"};
-// runs.kind 는 대부분 단계 id 와 같은 말이다. 단계 용어표를 얹은 화면(호스팅판)에서는
-// 그 한 벌을 따른다 — 안 그러면 같은 단계가 [안내]에서는 "검색 실적 수집",
-// 여기서는 "서치콘솔"로 나와 같은 것인지 알 수 없다.
-const HS_kind = k => ((window.SM_STAGE || {})[k] || {}).t || HS_RUN_LABEL[k] || k;
+// runs.kind 는 이제 전부 단계 id 와 같은 말이다(run_all.STAGES 정본, db._migrate 가
+// 옛 값 gap/analysis 를 competitors/gaps 로 옮겼다) — 라벨은 단계 용어표
+// (window.__STAGES__ = stage.STAGE_LABELS, dashboard.py._assemble 이 세 변형
+// local/hosted/frozen 전부에 싣는다) 하나만 따른다. SM_STAGE 가 아니라 __STAGES__ 를
+// 직접 본다 — SM_STAGE 는 dash.html 애드온이 만든 별칭이라 로컬 조립본에는 없다.
+// full 은 단계가 아니라 "전체 실행" 요약 kind 라 여기 사본으로 남긴다 — 안 그러면
+// 같은 단계가 [안내]에서는 "검색 실적 수집", 여기서는 "서치콘솔"로 나와 같은
+// 것인지 알 수 없는 사고가 다시 난다.
+const HS_RUN_LABEL = {full:"전체"};
+const HS_kind = k => ((window.__STAGES__ || {})[k] || {}).t || HS_RUN_LABEL[k] || k;
 // 수집기가 notes 에 남기는 key=value 를 사람 말로. 모르는 키는 원문 그대로 둔다 —
 // 새 수집기가 새 키를 남겨도 화면이 그걸 삼키면 안 된다.
 const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:"공급자",

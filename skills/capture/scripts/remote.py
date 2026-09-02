@@ -418,16 +418,16 @@ def _shadow_warn(project: str) -> None:
 
 
 def _defaults(stage: str) -> dict | None:
-    """그 단계 수집기 파서의 dest→기본값. 정본은 run_all.STAGE_MODULES 다.
+    """그 단계 수집기 파서의 dest→기본값. 정본은 run_all.STAGES(stage.knobs) 다.
 
-    gaps·report 는 자체 모듈이 아니라 run_all 의 함수라 여기 없다 — 애초에
-    노브가 없으므로 opts 도 없다.
+    gaps·report 는 자체 모듈이 아니라 run_all 의 함수라 노브가 없다 — 애초에
+    opts 도 없다.
     """
     import run_all      # 늦은 import — run_all 이 수집기를, 수집기가 이 모듈을 읽는다
-    mod = run_all.STAGE_MODULES.get(stage)
-    if mod is None:
+    stg = run_all.STAGE_BY_NAME.get(stage)
+    if stg is None or not stg.knobs:
         return None
-    return {a.dest: a.default for a in mod._parser()._actions}
+    return {dest: default for dest, (_typ, default) in stg.knobs.items()}
 
 
 def opts_of(args, stage: str) -> dict:

@@ -41,7 +41,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import collector  # noqa: E402
 import db  # noqa: E402
-import remote  # noqa: E402
 import serp_adapter  # noqa: E402
 
 REQUEST_COST = 0.024        # 요청 1건 (dry-run 고지용 추정)
@@ -385,12 +384,7 @@ def main() -> None:
     """인자가 없으면 자기검사 — run_checks.py 가 이 관례로 진입점을 찾는다."""
     if len(sys.argv) == 1:
         return _selfcheck()
-    a = _parser().parse_args()
-    if remote.dispatch(a, "backlinks"):   # 원격 사이트면 서버가 돈다
-        return
-    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_age=a.max_age)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("backlinks")
 
 
 # ── 자기검사 ─────────────────────────────────────────────────────────────────

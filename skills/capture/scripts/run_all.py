@@ -29,6 +29,7 @@ StageResult 를 그대로 호출자에게 넘긴다.
     행 수·비용·산출물 경로가 정수 exit code 로 접혀 버려지던 자리가 이것이다.
 """
 import argparse
+import inspect
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -86,25 +87,60 @@ def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResul
 # 단계 순서·정의의 정본은 여기 하나다. 어떤 키가 있어야 유료 단계가 도는지는
 # check_paid_keys 가 답한다 — 그 판정을 여기에도 적어 두면 두 벌이 되고, 한쪽만
 # 고쳐지는 사고가 난다(이 저장소가 반복해서 겪은 것).
-Stage = namedtuple("Stage", ["name", "desc", "fn", "is_paid"])
+#
+# module·knobs 는 collector.cli(원격 위임·인자 전달)와 remote.opts_of/app._stage_opts
+# (원격 --opt 검증)가 함께 보는 자리다 — "이 단계가 무슨 모듈이고 어떤 노브를
+# 받나"를 여기 말고 또 어딘가(STAGE_MODULES 사본, inspect.signature 재조회)에
+# 적으면 둘 중 하나만 고쳐지는 사고가 난다.
+Stage = namedtuple("Stage", ["name", "desc", "fn", "is_paid", "module", "knobs"],
+                    defaults=(None, {}))
+
+
+def _knobs(mod) -> dict:
+    """mod._parser() 가 노출하는 CLI 플래그를 dest -> (type, default) 로 편다.
+
+    collect() 의 명시 키워드 인자가 아닌 dest(conn·post·fetch 같은 테스트 주입
+    전용, 또는 이름이 어긋난 것)는 걸러낸다 — --opt STAGE.KEY 도, 원격 opts_of 도
+    거기까지는 안 닿게. mod 가 없으면(gaps·report — 자체 모듈이 아니라 이 파일의
+    함수라 노브가 없다) 빈 dict.
+    """
+    if mod is None:
+        return {}
+    params = inspect.signature(mod.collect).parameters
+    out = {}
+    for act in mod._parser()._actions:
+        dest = act.dest
+        if dest in ("help", "project", "dry_run"):
+            continue
+        if dest not in params or params[dest].kind == inspect.Parameter.VAR_KEYWORD:
+            continue
+        out[dest] = (act.type, act.default)
+    return out
+
+
+def _stage(name, desc, fn, is_paid, module=None) -> Stage:
+    return Stage(name, desc, fn, is_paid, module, _knobs(module))
+
+
 STAGES = (
-    Stage("gsc",         "GSC 실적 적재 (합계·일별·디바이스 분해)", collect_gsc.collect,     False),
-    Stage("ga4",         "GA4 실적 적재 (세션·전환·이탈, 랜딩페이지별)", collect_ga4.collect, False),
-    Stage("index",       "URL 색인 상태 수집",                      collect_index.collect,   False),
-    Stage("keywords",    "자동완성 키워드 발굴",                    expand_keywords.collect, False),
+    _stage("gsc",         "GSC 실적 적재 (합계·일별·디바이스 분해)", collect_gsc.collect,     False, collect_gsc),
+    _stage("ga4",         "GA4 실적 적재 (세션·전환·이탈, 랜딩페이지별)", collect_ga4.collect, False, collect_ga4),
+    _stage("index",       "URL 색인 상태 수집",                      collect_index.collect,   False, collect_index),
+    _stage("keywords",    "자동완성 키워드 발굴",                    expand_keywords.collect, False, expand_keywords),
     # 볼륨은 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 재료로 쓴다.
-    Stage("metrics",     "키워드 지표 (검색량·난이도·CPC)",         collect_metrics.collect, True),
-    Stage("rank",        "순위 스냅샷 수집",                        collect_serp.collect,    True),
-    Stage("crawl",       "사이트 크롤 (깨진 링크·리다이렉트·고아)", collect_crawl.collect,   False),
-    Stage("ai",          "AI 인용 체크",                            collect_ai.collect,      True),
-    Stage("competitors", "경쟁사 탐지·역키워드·트래픽 몫 (Labs)",   collect_gap.collect,     True),
-    Stage("backlinks",   "백링크 프로필·앵커·링크 교집합",          collect_backlinks.collect, True),
-    Stage("gaps",        "기회 적재 (외부 호출 0)",                 load_opportunities,      False),
-    Stage("pages",       "내 페이지 감사 (제목·설명·본문·스키마)",  collect_page.collect,    False),
-    Stage("report",      "리포트 HTML 박제",                        export_report,           False),
+    _stage("metrics",     "키워드 지표 (검색량·난이도·CPC)",         collect_metrics.collect, True, collect_metrics),
+    _stage("rank",        "순위 스냅샷 수집",                        collect_serp.collect,    True, collect_serp),
+    _stage("crawl",       "사이트 크롤 (깨진 링크·리다이렉트·고아)", collect_crawl.collect,   False, collect_crawl),
+    _stage("ai",          "AI 인용 체크",                            collect_ai.collect,      True, collect_ai),
+    _stage("competitors", "경쟁사 탐지·역키워드·트래픽 몫 (Labs)",   collect_gap.collect,     True, collect_gap),
+    _stage("backlinks",   "백링크 프로필·앵커·링크 교집합",          collect_backlinks.collect, True, collect_backlinks),
+    _stage("gaps",        "기회 적재 (외부 호출 0)",                 load_opportunities,      False),
+    _stage("pages",       "내 페이지 감사 (제목·설명·본문·스키마)",  collect_page.collect,    False, collect_page),
+    _stage("report",      "리포트 HTML 박제",                        export_report,           False),
 )
 
 VALID_STAGE_NAMES = tuple(s.name for s in STAGES)
+STAGE_BY_NAME = {s.name: s for s in STAGES}
 
 
 def check_paid_keys(stage_name: str) -> tuple[bool, str]:
@@ -147,9 +183,16 @@ def _stage_names(raw: str | None, label: str, valid: tuple[str, ...]) -> set[str
     return names
 
 
-def _coerce(v: str):
-    """--opt 값의 타입 추정. 수집기 kwargs 가 int/float/bool 을 받는 자리가 있다."""
+def _coerce(v: str, type_fn=None):
+    """--opt 값의 타입 변환. type_fn 이 있으면 그걸 신뢰한다(stage.knobs 가 정본 —
+    파서가 --depth 를 int 로 등록했으면 그대로 int() 다. bool("false")==True 인
+    파이썬 함정이 있어 bool 은 따로 다룬다). 모르는 단계·키(방금 추가돼 아직 표에
+    없는 것 등)라 type_fn 이 없으면 예전처럼 이름으로 추정한다."""
     s = v.strip()
+    if type_fn is bool:
+        return s.lower() == "true"
+    if type_fn is not None:
+        return type_fn(s)
     low = s.lower()
     if low in ("true", "false"):
         return low == "true"
@@ -165,7 +208,9 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
     """`--opt rank.device=mobile` 형태를 {단계: {kwarg: 값}} 으로 편다.
 
     수집기들이 이미 노출한 노브(--provider --depth --device --ids --force --limit
-    --breakdown --row-limit --mode)가 체인으로도 도달하게 하는 통로다.
+    --breakdown --row-limit --mode)가 체인으로도 도달하게 하는 통로다. 값의 타입은
+    STAGE_BY_NAME[stage].knobs 가 안다 — 없으면(단계 이름 자체가 틀린 경우 등)
+    이름으로 추정한다.
     """
     out: dict[str, dict] = {}
     for item in items or []:
@@ -177,14 +222,17 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
             raise ValueError(f"--opt 형식이 아닙니다 (STAGE.KEY=VALUE): {item}")
         bag = out.setdefault(stage_name.strip(), {})
         k = key.strip().replace("-", "_")
+        stg = STAGE_BY_NAME.get(stage_name.strip())
+        type_fn = stg.knobs.get(k, (None, None))[0] if stg else None
+        coerced = _coerce(value, type_fn)
         # 같은 키가 두 번 이상 오면 리스트로 모은다 — argparse 의 append 인자
         # (competitors.domain)가 통로를 지나 리스트로 도착해야 한다. 덮어쓰면
         # 도메인 세 개를 준 사용자가 마지막 하나만 잰 결과를 받는다.
         if k in bag:
             cur = bag[k]
-            bag[k] = (cur if isinstance(cur, list) else [cur]) + [_coerce(value)]
+            bag[k] = (cur if isinstance(cur, list) else [cur]) + [coerced]
         else:
-            bag[k] = _coerce(value)
+            bag[k] = coerced
     return out
 
 
@@ -382,65 +430,35 @@ def _top_opportunity(project: str):
         return None
 
 
-# 단계 이름 -> 그 수집기 모듈. --opt STAGE.KEY 의 STAGE 가 어느 모듈의 _parser() 를
-# 봐야 하는지 여기서 정한다. gaps/report 는 자체 모듈이 아니라 이 파일의 함수라 없다 —
-# 애초에 --opt 를 받지 않는다(외부 호출 0건, 노브도 없다).
-STAGE_MODULES = {
-    "gsc": collect_gsc, "ga4": collect_ga4, "index": collect_index, "keywords": expand_keywords,
-    "metrics": collect_metrics, "rank": collect_serp, "crawl": collect_crawl,
-    "ai": collect_ai, "competitors": collect_gap, "backlinks": collect_backlinks,
-    "pages": collect_page,
-}
-
-
 def _selfcheck() -> None:
-    """--opt STAGE.KEY=VALUE 통로가 실제로 도는지 두 겹으로 못 박는다.
+    """--opt STAGE.KEY=VALUE 통로(및 collector.cli 가 쓰는 같은 통로)가 실제로
+    도는지 못 박는다.
 
     이 통로는 수집기가 이미 CLI 로 노출한 노브(--limit --depth --device ...)를
-    체인으로도 쓰게 하려는 것이다. 그런데 CLI 플래그 이름과 collect() 의 키워드
-    인자 이름이 어긋나면 --opt rank.depth=20 같은 흔한 사용이 TypeError 로
-    죽는다(collect_index 의 --limit vs 예전 index_urls 가 그 사례). 이 자체점검은
-    그 어긋남을 회귀로 못 박는다.
+    체인으로도, collector.cli 로도 쓰게 하려는 것이다. 그런데 CLI 플래그 이름과
+    collect() 의 키워드 인자 이름이 어긋나면 --opt rank.depth=20 같은 흔한 사용이
+    TypeError 로 죽는다(collect_index 의 --limit vs 예전 index_urls 가 그 사례).
 
-    1. 계약 검사 — 각 단계가 등록한 설정의 dest 가 collect() 의 '명시' 인자에
-       있는지 inspect.signature 로 본다. **opts 로 삼키는 것은 안 쳐준다 —
-       조용히 삼켜서 값이 무시되는 것이 TypeError 보다 나쁘다(사용자는 옵션을
-       줬다고 믿는다).
-    2. 실측 — 12단계 전부에 그 설정의 fallback 값을 --opt 로 흘려 dry_run 호출.
-       dry_run 이면 대부분 DB 도 안 건드리고 바로 반환하므로 가짜 project 로도
-       된다. ProjectNotFound 는 "인자는 받아들여졌다"는 뜻이라 통과로 친다 —
-       TypeError 만 이 검사가 잡으려는 것이다.
+    각 단계의 파서를 실제로 파싱해(기본값만, --project·--dry-run 만 채워서) 그
+    결과를 collect() 에 그대로 흘린다 — collector.cli 가 하는 것과 같은 일이다.
+    ProjectNotFound 는 "인자는 받아들여졌다"는 뜻이라 통과로 친다 — TypeError 만
+    이 검사가 잡으려는 것이다.
     """
-    import inspect
     import os
     import tempfile
 
-    for stage in STAGES:
-        mod = STAGE_MODULES.get(stage.name)
-        if mod is None:
-            continue
-        specs = getattr(mod._parser(), "_collector_settings", [])
-        params = inspect.signature(stage.fn).parameters
-        for spec in specs:
-            ok = (spec.dest in params
-                 and params[spec.dest].kind != inspect.Parameter.VAR_KEYWORD)
-            assert ok, (
-                f"[{stage.name}] --opt {stage.name}.{spec.dest}=... 가 "
-                f"{mod.__name__}.collect() 의 명시 인자가 아니다 (**opts 로 "
-                "삼키는 것도 불허) — collect() 의 키워드 인자 이름을 CLI 플래그"
-                f"(--{spec.dest.replace('_', '-')})와 맞춰라.")
-
     os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-runall-selftest-")))
-    for stage in STAGES:
-        mod = STAGE_MODULES.get(stage.name)
-        specs = getattr(mod._parser(), "_collector_settings", []) if mod else []
-        opts = {spec.dest: spec.fallback for spec in specs}
+    for stg in STAGES:
+        if stg.module is None:
+            continue
+        args = stg.module._parser().parse_args(["--project", "__selfcheck__", "--dry-run"])
+        kwargs = {k: v for k, v in vars(args).items() if k not in ("project", "dry_run")}
         try:
-            stage.fn(project="__selfcheck__", dry_run=True, **opts)
+            stg.module.collect(project=args.project, dry_run=True, **kwargs)
         except db.ProjectNotFound:
             pass    # 인자는 받아들여졌다 — 여기서 잡으려는 건 TypeError 뿐
         except TypeError as e:
-            raise AssertionError(f"[{stage.name}] --opt 통로가 TypeError 로 죽는다: {e}") from e
+            raise AssertionError(f"[{stg.name}] 파서 기본값으로 collect() 를 못 부른다: {e}") from e
 
     print("run_all self-check ok")
 

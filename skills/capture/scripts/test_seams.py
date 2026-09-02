@@ -437,31 +437,26 @@ def test_seam_12_remote_client_api_calls_exist():
                     f"{p.name} 가 원격으로 부르는데 호스팅 서버에 없다: {call}"
 
 
-def test_seam_13_collectors_use_remote_dispatch():
-    """13) 수집기는 전부 remote.dispatch 를 통과해야 한다. 이 줄을 빠뜨린 수집기는
-    원격 사이트인데도 **조용히 로컬 brain.db 에** 쓴다 — 화면에도 로그에도
-    아무것도 안 남고, 사용자는 웹에서 그 단계만 영영 안 채워지는 걸 본다.
-    넘기는 이름까지 본다: 파일명과 단계명이 다른 것들이 있어서(collect_serp→
-    rank, collect_gap→competitors) 짝이 어긋나면 `/capture rank` 를 쳤는데
-    서버에서 다른 단계가 돈다. 명부는 run_all.STAGE_MODULES 하나다.
+def test_seam_13_collectors_use_collector_cli():
+    """13) 수집기는 전부 collector.cli(=remote.dispatch 를 통과하는 진입점)를 써야
+    한다. 이 줄을 빠뜨린 수집기는 원격 사이트인데도 **조용히 로컬 brain.db 에**
+    쓴다 — 화면에도 로그에도 아무것도 안 남고, 사용자는 웹에서 그 단계만
+    영영 안 채워지는 걸 본다. 넘기는 이름까지 본다: 파일명과 단계명이 다른
+    것들이 있어서(collect_serp→rank, collect_gap→competitors) 짝이 어긋나면
+    `/capture rank` 를 쳤는데 서버에서 다른 단계가 돈다. 명부는 run_all.STAGES
+    (모듈이 딸린 것) 하나다.
     """
     ctx = _load()
     if ctx is None:
         return
     import run_all
-    assert set(run_all.STAGE_MODULES) <= set(run_all.VALID_STAGE_NAMES), \
-        f"STAGE_MODULES 에 단계표에 없는 이름이 있다: " \
-        f"{sorted(set(run_all.STAGE_MODULES) - set(run_all.VALID_STAGE_NAMES))}"
-    for name, mod in sorted(run_all.STAGE_MODULES.items()):
+    modular = {s.name: s.module for s in run_all.STAGES if s.module}
+    for name, mod in sorted(modular.items()):
         f = Path(mod.__file__)
-        got = set(re.findall(r"remote\.dispatch\([^)]*?,\s*[\"'](\w+)[\"']",
+        got = set(re.findall(r"collector\.cli\(\s*[\"'](\w+)[\"']",
                              f.read_text("utf-8")))
-        assert got, \
-            f"{f.name} 이 remote.dispatch 를 안 부른다 — 원격 사이트인데 로컬 " \
-            f"보관함에 조용히 쓴다: /capture {name}"
-        assert got == {name}, \
-            f"{f.name} 이 remote.dispatch 에 넘기는 단계 이름이 자기 단계와 다르다: " \
-            f"{sorted(got)} != {name} — 서버에서 엉뚱한 단계가 돈다"
+        assert got,             f"{f.name} 이 collector.cli 를 안 부른다 — 원격 사이트인데 로컬 "             f"보관함에 조용히 쓴다: /capture {name}"
+        assert got == {name},             f"{f.name} 이 collector.cli 에 넘기는 단계 이름이 자기 단계와 다르다: "             f"{sorted(got)} != {name} — 서버에서 엉뚱한 단계가 돈다"
 
 
 if __name__ == "__main__":

@@ -22,7 +22,6 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
-import remote  # noqa: E402
 import serp_adapter  # noqa: E402
 
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
@@ -197,15 +196,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    a = _parser().parse_args()
-    if remote.dispatch(a, "keywords"):   # 원격 사이트면 서버가 돈다
-        return
-    r = collect(a.project, dry_run=a.dry_run,
-                mode=a.mode,
-                per_seed_cap=a.per_seed_cap,
-                throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("keywords")
 
 
 if __name__ == "__main__":
