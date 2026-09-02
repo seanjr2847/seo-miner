@@ -190,14 +190,17 @@ def test_seam_05_api_calls_exist_on_servers():
     만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
     호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
     /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
+    로컬 쪽은 dashboard.ROUTES(+LOCAL_ONLY_PATHS)가 정본이라 소스 정규식 대신
+    그 경로 집합을 본다 — Handler 가 실제로 등록하는 것과 같은 자료다.
     """
+    import dashboard
     ctx = _load()
     if ctx is None:
         return
     views, shell, dash = ctx["views"], ctx["shell"], ctx["dash"]
     app_f, local_f = ctx["app_f"], ctx["local_f"]
     if app_f.exists() and local_f.exists():
-        app_src, local_src = app_f.read_text("utf-8"), local_f.read_text("utf-8")
+        app_src = app_f.read_text("utf-8")
         app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', app_src))
         assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
 
@@ -220,7 +223,7 @@ def test_seam_05_api_calls_exist_on_servers():
                         assert call in app_routes, \
                             f"{who} 가 부르는데 호스팅 서버에 없다: {call}"
                     else:
-                        assert f'"{call}"' in local_src, \
+                        assert call in dashboard.LOCAL_PATHS, \
                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
 
 

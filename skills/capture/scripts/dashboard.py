@@ -934,6 +934,58 @@ def payload(project: str, at: str | None = None) -> dict:
         conn.close()
 
 
+def list_projects() -> list[str]:
+    """Brain 에 등록된 사이트 이름 — 로컬 대시보드의 사이트 선택지."""
+    conn = db.connect()
+    try:
+        return [r[0] for r in conn.execute("SELECT name FROM projects ORDER BY name")]
+    finally:
+        conn.close()
+
+
+def set_opp_status(body: dict) -> dict:
+    """POST /api/opp 본체 — 로컬·호스팅이 이 함수 하나를 부른다.
+    상태값 검증은 db.set_opportunity_status 가 한다(잘못되면 ValueError)."""
+    conn = db.connect()
+    try:
+        return {"updated": db.set_opportunity_status(
+            conn, int(body.get("id") or 0), body.get("status"))}
+    finally:
+        conn.close()
+
+
+# 전송 중립 route 표 — 원본 화면(shell+views)이 로컬·호스팅 둘 다에서 부르는 API 넷의
+# 본체. 예전엔 두 서버가 이 넷을 각자 손으로 등록해서, 이음매 검사(stage._check_seams
+# #5)가 두 소스를 정규식으로 훑어 존재를 대조해야 했다. 이제 로컬 Handler 는 이 표를
+# 그대로 조회해 등록·디스패치하고(do_GET/do_POST), 호스팅(server/app.py)도 자기
+# 인증·세션 격리를 두른 뒤 같은 call 을 부른다 — stage.py 는 정규식 대신 이 표의
+# 경로 집합을 본다.
+#
+# call(project, query, body) -> JSON 직렬화 가능한 값. query 는 parse_qs 를 이미
+# 첫 값으로 편 문자열 dict, GET 이면 body 는 None.
+#
+# /api/projects 는 예외다: 존재는 이 표로 함께 못 박지만 몸은 다르다 — 호스팅은
+# 사이트 소유를 Brain 동기화 여부와 무관하게 store.sites(등록 즉시 반영)로 판정해야
+# 해서 여기 call 을 못 쓴다. server/app.py 가 자기 구현을 그대로 갖는다(그 자리
+# 주석 참고).
+ROUTES = {
+    ("GET", "/api/data"):
+        lambda project, query, body: payload(project, query.get("date") or None),
+    ("GET", "/api/doctor"):
+        lambda project, query, body: setup_state(project),
+    ("POST", "/api/opp"):
+        lambda project, query, body: set_opp_status(body),
+    ("GET", "/api/projects"):
+        lambda project, query, body: list_projects(),
+}
+
+# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용 여섯). 호스팅엔
+# /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — stage._check_seams 가 그 차이를 안다.
+LOCAL_ONLY_PATHS = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/run",
+                    "/api/setup/keys", "/api/setup/project", "/api/setup/gsc-client"}
+LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes,
               ctype: str = "application/json; charset=utf-8") -> None:
@@ -950,32 +1002,24 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
-        if u.path == "/api/doctor":
-            return self._json(setup_state(parse_qs(u.query).get("project", [""])[0]))
         if u.path == "/api/setup/prefill":   # 읽기 전용 — 레포 추론값
             return self._json(repo_prefill())
         if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
             return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
-        if u.path == "/api/projects":
-            conn = db.connect()
-            names = [r[0] for r in
-                     conn.execute("SELECT name FROM projects ORDER BY name")]
-            conn.close()
-            return self._json(names)
-        if u.path == "/api/data":
-            qs_ = parse_qs(u.query)
-            name = qs_.get("project", [""])[0]
-            at = qs_.get("date", [""])[0] or None
-            try:
-                return self._json(payload(name, at))
-            except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
-                return self._json({"error": str(e)}, 404)
-        return self._send(404, b"not found", "text/plain")
+        call = ROUTES.get(("GET", u.path))
+        if not call:
+            return self._send(404, b"not found", "text/plain")
+        query = {k: v[0] for k, v in parse_qs(u.query).items()}
+        try:
+            return self._json(call(query.get("project", ""), query, None))
+        except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
+            return self._json({"error": str(e)}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path not in ("/api/opp", "/api/setup/run", "/api/setup/keys",
-                        "/api/setup/project", "/api/setup/gsc-client"):
+        call = ROUTES.get(("POST", path))
+        if path not in ("/api/setup/run", "/api/setup/keys",
+                        "/api/setup/project", "/api/setup/gsc-client") and not call:
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -999,12 +1043,10 @@ class Handler(BaseHTTPRequestHandler):
             r = create_project(body)
             return self._json(r, 200 if r["ok"] else 400)
 
-        if body.get("status") not in db.OPP_STATUSES:
-            return self._json({"error": f"status must be one of {db.OPP_STATUSES}"}, 400)
-        conn = db.connect()
-        updated = db.set_opportunity_status(conn, int(body.get("id") or 0), body["status"])
-        conn.close()
-        return self._json({"updated": updated})
+        try:
+            return self._json(call("", {}, body))
+        except ValueError as e:
+            return self._json({"error": str(e)}, 400)
 
     def log_message(self, fmt, *args) -> None:  # 요청 로그 소음 제거
         pass
