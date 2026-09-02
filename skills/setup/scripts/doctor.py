@@ -222,6 +222,12 @@ def diagnose(project: str = "") -> dict:
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
+    # 호스팅 연결 — 웹을 먼저 쓰던 사람이 플러그인을 깔면 여기가 비어 있다. 자동으로는
+    # 못 붙는다(플러그인은 사용자가 누구인지 모른다 — 신원은 웹이 발급한 토큰뿐이다) — 웹
+    # [설정]의 "명령어로 연결하기" 한 줄이 유일한 경로다. 그래서 첫 진단이 그걸 묻는다.
+    rc = remote.config()
+    linked = {"linked": bool(rc), "url": (rc or {}).get("url", ""),
+              "projects": list((rc or {}).get("projects") or [])}
     # 구글 연결은 이제 **2단**이다: 인증 수단이 있나(gsc_auth) ≠ 실제로 붙었나(gsc_connected).
     # 플러그인이 OAuth 클라이언트를 동봉하면서 gsc_auth()는 **아무것도 안 한 사람에게도**
     # "oauth"를 답한다 — 파일 유무로 판정하면 doctor가 설치 직후 전원에게 "연결됨"이라고
@@ -325,11 +331,18 @@ def diagnose(project: str = "") -> dict:
                     "돌리세요 — 리포 경로가 기록돼 다음부터 이 폴더에서 자동으로 붙습니다.")
         })
     if core_ok and brain_ok and not brain["projects"]:
-        must.append({
-            "id": "first_project",
-            "msg": "첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
-                   "하시면 제가 물어보면서 만들어 드립니다."
-        })
+        # 보관함이 비었고 호스팅도 안 붙었다 — 웹을 먼저 쓰던 사람이면 등록을 다시
+        # 시키는 게 아니라 연결이 답이다. 한 번만 묻고, 아니면 로컬 등록으로 간다.
+        if linked["linked"]:
+            msg = ("첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
+                   "하시면 제가 물어보면서 만들어 드립니다.")
+        else:
+            msg = ("웹(호스팅)에서 이미 쓰고 계셨나요? 그러면 웹 [설정] > "
+                   "'명령어로 연결하기' 에서 나오는 한 줄을 채팅에 그대로 붙여 주세요 — "
+                   "등록해 둔 사이트가 여기서도 같은 명령으로 돌아갑니다. "
+                   "아니면 첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
+                   "하시면 제가 물어보면서 만들어 드립니다.")
+        must.append({"id": "first_project", "msg": msg})
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
     if core_ok and brain_ok and gsc_pending:
@@ -452,6 +465,7 @@ def diagnose(project: str = "") -> dict:
     # show_setup 판정이 읽으므로 이름만 남겨 둔다 — 지금은 must 와 같은 값이다.
     must_other = list(must)
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
+            "remote": linked,   # 호스팅 연결 — remote.config() 를 그대로 렌더한 것
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
             # gsc_mode는 남긴다 — 대시보드가 이 JSON을 먹으므로 기존 키를 없애면 화면이 깨진다.
@@ -560,6 +574,11 @@ def render(d: dict) -> None:
             print(f"  · {s2}")
 
     print(f"\n자료 폴더: {d['brain']['home']}")
+    r = d.get("remote") or {}
+    if r.get("linked"):
+        print(f"호스팅 연결: {r['url']} (웹에 등록된 사이트 {len(r['projects'])}개)")
+    else:
+        print("호스팅 연결: 없음 — 이 컴퓨터의 보관함만 씁니다")
 
 
 def _selfcheck() -> None:
@@ -623,6 +642,31 @@ def _selfcheck() -> None:
     finally:
         os.environ.pop(HOSTED_ENV, None) if _saved is None \
             else os.environ.__setitem__(HOSTED_ENV, _saved)
+
+    # 호스팅 연결 판정 — 빈 보관함 + 연결 없음이면 첫 항목이 웹 연결을 묻고,
+    # 연결돼 있으면 묻지 않는다. 진짜 home 을 안 건드리려고 임시 CAPTURE_HOME 을 쓴다.
+    import tempfile
+    _keep = {k: os.environ.get(k) for k in ("CAPTURE_HOME", "CAPTURE_DB")}
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.environ["CAPTURE_HOME"] = tmp
+            os.environ.pop("CAPTURE_DB", None)
+            e = diagnose()
+            assert e["remote"] == {"linked": False, "url": "", "projects": []}, e["remote"]
+            first = next((m for m in e["must"] if m["id"] == "first_project"), None)
+            if first:   # core 부품이 없으면 이 항목 자체가 안 뜬다 — 그건 여기 관심사가 아니다
+                assert "명령어로 연결하기" in first["msg"], first["msg"]
+            remote._save({"url": "https://h.example", "token": "smt_x",
+                          "projects": ["a", "b"]})
+            e = diagnose()
+            assert e["remote"] == {"linked": True, "url": "https://h.example",
+                                   "projects": ["a", "b"]}, e["remote"]
+            first = next((m for m in e["must"] if m["id"] == "first_project"), None)
+            if first:
+                assert "명령어로 연결하기" not in first["msg"], first["msg"]
+        finally:
+            for k, v in _keep.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
     # 개수 산술 — install_skills 의 모수와 명부가 같아야 한다.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
