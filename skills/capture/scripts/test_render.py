@@ -98,7 +98,7 @@ GAP_KW = "격차검색어Z9"             # Content Gap: 우리가 아예 없는 
 CRAWL_NEW = "/crawlZ9"              # 크롤: 직전 회차에 없던 이슈
 GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — RIVAL 과 갈라 둔다
 #   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
-BL_REFDOMS = 20241                  # 요약 계기판에만 나오는 수 — 문구와 안 겹친다
+BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -183,11 +183,11 @@ def _axes(conn, pid: int) -> None:
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
         " VALUES(?,?,?,?,?,'new')",
-        [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 12.4위 — 1페이지까지 2.4칸"),
-         (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출은 나오는데 클릭이 0")])
+        [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 12.4위 · 노출 120 · 클릭 7. 1페이지까지 2.4칸 남았습니다"),
+         (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다")])
     conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
                  "referring_domains,broken_backlinks,dofollow,nofollow)"
-                 " VALUES(?,?,412,1840,?,17,1512,328)", (pid, d, BL_REFDOMS))
+                 " VALUES(?,?,412,?,1840,0,1512,328)", (pid, d, BL_TOTAL))   # 끊긴 링크 0 — 아래 목록(is_broken=0)과 같은 말
     conn.execute("INSERT INTO referring_domains(project_id,checked_date,domain,rank,backlinks)"
                  " VALUES(?,?,'ref.example',700,9)", (pid, d))
     conn.execute("INSERT INTO backlinks(project_id,checked_date,url_from,url_to,anchor,"

@@ -6,38 +6,61 @@
      끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 호스팅은 이 화면을 통째로
      감춘다(서버가 키를 댄다) — server/assets/dash.html 이 #setup 을 CSS 로
      숨긴다(메뉴에는 [설정]이 남는다 — 저장소 연결 칸은 호스팅에서도 쓴다). -->
+<style>
+/* 라벨이 "이름 — 무엇을 바꾸는지"를 줄표로 이으면 둘이 같은 크기·같은 색으로 붙어
+   어디까지가 칸 이름인지 안 읽힌다. 이름만 라벨에 두고 설명은 아래 한 줄로 내린다.
+   크기는 그대로 두고 색으로만 가른다 — 셸의 label 규칙을 다시 만들지 않는다. */
+#setup label { color:var(--ink); margin-bottom:2px; }
+#setup .lh { display:block; font:var(--micro); color:var(--slate);
+  margin:0 0 5px; max-width:52ch; }
+#setup .lh a { color:var(--patina); text-decoration:underline; text-underline-offset:2px; }
+</style>
+
 <section id="setup">
   <div class="step">
     <h3>1. 기본 부품 <span class="stat" id="s-deps"></span></h3>
-    <p class="why">키워드 수집과 리포트에 쓰는 파이썬 부품 2개. 무료, 1분.</p>
+    <p class="why">키워드 수집과 보고서에 쓰는 파이썬 부품 두 개를 설치합니다.
+      무료이고 1분쯤 걸립니다.</p>
     <div class="row"><button class="go" id="btn-deps">설치하기</button>
       <span class="msg" id="m-deps"></span></div>
   </div>
 
   <div class="step">
     <h3>2. 첫 사이트 <span class="stat" id="s-proj"></span></h3>
-    <p class="why">측정할 사이트를 등록합니다. 나중에 <code>~/.capture/projects/</code>에서
-      고칠 수 있습니다.</p>
+    <p class="why">측정할 사이트를 등록합니다. 여기 적은 값이 이후 모든 수집의 기준이
+      됩니다. 나중에 <code>~/.capture/projects/</code> 에서 고칠 수 있습니다.</p>
     <div class="grid">
-      <div><label>이름 — 명령에 쓸 짧은 영문</label><input id="p-name" placeholder="mysite"></div>
-      <div><label>종류</label><select id="p-type">
+      <div><label>이름</label>
+        <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다.</span>
+        <input id="p-name" placeholder="mysite"></div>
+      <div><label>종류</label>
+        <span class="lh">기회를 뽑는 기준이 종류마다 다릅니다.</span><select id="p-type">
         <option value="saas">saas — 서비스·앱</option>
         <option value="game">game — 게임</option>
         <option value="local_clinic">local_clinic — 지역 매장·병원</option>
         <option value="directory">directory — 목록·디렉터리</option>
       </select></div>
-      <div><label>도메인</label><input id="p-domain" placeholder="example.com"></div>
-      <div><label>언어-지역</label><input id="p-locale" value="ko-KR"></div>
-      <div><label>서치콘솔 속성 — 비우면 sc-domain:도메인</label>
+      <div><label>도메인</label>
+        <span class="lh">순위 확인과 크롤이 이 주소를 봅니다.</span>
+        <input id="p-domain" placeholder="example.com"></div>
+      <div><label>언어-지역</label>
+        <span class="lh">어느 나라 검색 결과에서 잴지 정합니다.</span>
+        <input id="p-locale" value="ko-KR"></div>
+      <div><label>서치콘솔 속성</label>
+        <span class="lh">실적을 읽어 올 자리입니다. 비우면 sc-domain:도메인 을 씁니다.</span>
         <input id="p-gsc" placeholder="sc-domain:example.com"></div>
-      <div><label>브랜드 표기 — 쉼표로 여러 개</label>
+      <div><label>브랜드 표기</label>
+        <span class="lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
         <input id="p-alias" placeholder="마이사이트, MySite"></div>
     </div>
-    <label>씨앗 키워드 — 떠오르는 검색어 3~10개 (쉼표나 줄바꿈)</label>
+    <label>씨앗 키워드</label>
+    <span class="lh">여기서 자동완성으로 후보를 넓힙니다. 3~10개, 쉼표나 줄바꿈으로.</span>
     <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
-    <label>경쟁사 도메인 — 선택</label>
+    <label>경쟁사 도메인</label>
+    <span class="lh">역키워드와 백링크를 견줄 상대입니다. 선택이고 쉼표로 여러 개.</span>
     <input id="p-comp" placeholder="competitor.com, other.com">
-    <label>등재·경쟁 도구 이름 — 남의 브랜드 검색을 걸러냅니다 (쉼표)</label>
+    <label>등재·경쟁 도구 이름</label>
+    <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
     <input id="p-tools" placeholder="ecrett, paperpal, future tools">
     <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
       <span class="msg" id="m-proj"></span></div>
@@ -56,9 +79,9 @@
       <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
       <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
         [OAuth 클라이언트 ID 만들기] → <b>데스크톱 앱</b>. 다 만들면 화면에 뜨는
-        <b>두 문자열만</b> 옮겨 적으시면 됩니다 — JSON 다운로드는 필요 없습니다.
+        <b>두 문자열만</b> 옮겨 적으면 됩니다. JSON 다운로드는 필요 없습니다.
         저장하면 <code>~/.capture/gsc_oauth_client.json</code> 이 되고, 동봉 클라이언트
-        대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 하셔야
+        대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 해야
         합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
       <div class="grid">
         <div><label>client_id</label>
@@ -74,21 +97,25 @@
   <div class="step">
     <h3>4. API 키 <span class="stat" id="s-keys"></span></h3>
     <p class="why"><b>키가 하나도 없어도 기회 목록까지 갑니다.</b> 측정을 막는 것은
-      위 <b>3번 구글 로그인 하나뿐</b>이고 그건 무료입니다. 아래 키는 새 기능을 사는 게
-      아니라 <b>자동화를 사는 것</b>입니다 — 없으면 그 단계만 건너뛰고 나머지는 그대로
-      돕니다. <b>OpenRouter</b>는 AI 노출 확인(ChatGPT·Perplexity·Gemini에 질문 수십
-      개를 자동 실행), <b>DataForSEO</b>는 순위·AI 요약·경쟁사 역키워드 측정.
-      <b>Serper</b>는 DataForSEO 대체재(AI 요약 없음)라 보통은 필요 없습니다.
-      저장하면 <code>~/.capture/env</code>에만 들어가고 화면에 다시 표시되지
-      않습니다. 비운 채 저장하면 지워집니다.</p>
+      위 <b>3번 구글 로그인 하나뿐</b>이고 그건 무료입니다. 아래 키는 새 기능이 아니라
+      <b>자동화를 삽니다</b>. 없으면 그 단계만 건너뛰고 나머지는 그대로 돕니다.
+      저장하면 <code>~/.capture/env</code> 에만 들어가고 화면에 다시 표시되지 않습니다.
+      비운 채 저장하면 지워집니다.</p>
     <div class="grid">
-      <div><label>OpenRouter — AI 노출 자동화 · 발급 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a></label>
+      <div><label>OpenRouter</label>
+        <span class="lh">ChatGPT·Perplexity·Gemini에 질문 수십 개를 자동으로 던집니다.
+          발급은 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a>.</span>
         <input id="k-or" type="password" placeholder="sk-or-..."></div>
-      <div><label>DataForSEO 아이디 — 순위·AI 요약·역키워드 · 발급 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a></label>
+      <div><label>DataForSEO 아이디</label>
+        <span class="lh">순위·AI 요약·경쟁사 역키워드를 잽니다.
+          발급은 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a>.</span>
         <input id="k-dfsl" placeholder="가입 이메일"></div>
-      <div><label>DataForSEO 비밀번호 — 계정 비번 아님 · API Settings 에서 확인</label>
+      <div><label>DataForSEO 비밀번호</label>
+        <span class="lh">계정 비밀번호가 아닙니다. API Settings 에서 확인합니다.</span>
         <input id="k-dfsp" type="password" placeholder="API 비밀번호"></div>
-      <div><label>Serper — 선택 (DataForSEO 대체재) · 발급 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a></label>
+      <div><label>Serper</label>
+        <span class="lh">DataForSEO 대체재입니다. AI 요약을 못 재서 보통은 필요 없습니다.
+          발급은 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a>.</span>
         <input id="k-serper" type="password" placeholder="선택 — 보통 필요 없음"></div>
     </div>
     <div class="row"><button class="go" id="btn-keys">키 저장</button>
@@ -107,10 +134,10 @@
   <div class="step">
     <h3>6. 웹에서 이어 하기 <span class="stat opt">선택</span></h3>
     <p class="why">같은 사이트를 <b>웹에서 알아서 계속 재게</b> 하고 싶을 때 씁니다.
-      아래 링크를 열고 구글 로그인만 하면, 여기 적어 둔 설정 그대로(도메인·종류·씨앗
-      키워드·브랜드 표기·경쟁사) 등록됩니다 — API 키는 서버가 대므로 다시 넣지
-      않습니다. <b>측정한 자료는 넘어가지 않습니다</b> — 웹이 자기 계정에서 처음부터
-      다시 잽니다. 여기서 쓰던 것은 그대로 남습니다.</p>
+      아래 링크를 열고 구글 로그인만 하면 여기 적어 둔 설정 그대로 등록됩니다.
+      도메인·종류·씨앗 키워드·브랜드 표기·경쟁사가 넘어갑니다. API 키는 서버가 대므로
+      다시 넣지 않습니다. <b>측정한 자료는 넘어가지 않습니다</b>. 웹이 자기 계정에서
+      처음부터 다시 잽니다. 여기서 쓰던 것은 그대로 남습니다.</p>
     <div class="row"><select id="c-proj" aria-label="넘길 사이트"></select>
       <button class="go sec" id="btn-carry">이어하기 링크 만들기</button>
       <span class="msg" id="m-carry"></span></div>
@@ -118,3 +145,25 @@
   </div>
   <pre id="setup-log" hidden></pre>
 </section>
+
+<script>
+"use strict";
+/* 이 화면에서 사람이 헷갈리는 것은 "어디까지 해야 재기 시작하나" 하나다. 답은
+   서버가 이미 골라 두었다 — 안내 단계(d.guide)가 등록·연결을 앞 두 단계로 들고
+   있다. 여기서 다시 판정하지 않고 그 결론만 머리로 올린다.
+   호스팅에서는 아래 마법사(#setup)가 통째로 감춰지고 연결·저장소 칸만 남는다 —
+   그래서 명령도 경로도 말하지 않는다. */
+VIEW("settings", function (d) {
+  if (!window.nextStep) return;
+  if (READONLY) return void nextStep("settings", "");
+  // 등록과 연결은 안내 목록의 앞 두 단계다 — 여기서 그 이름을 다시 적지 않는다.
+  const gate = ((d.guide || {}).steps || []).slice(0, 2).find(s => !s.done);
+  if (gate)
+    return void nextStep("settings", `<p>${W(
+      `측정이 시작되려면 <b>${esc(gate.t)}</b>이 먼저 끝나야 합니다. 아래 칸이 그 자리입니다.`,
+      `측정이 시작되려면 <b>${esc(gate.t)}</b>이 먼저 끝나야 합니다.`)}</p>`);
+  nextStep("settings", `<p>${W(
+    "측정에 필요한 것은 다 됐습니다. 아래 키는 없어도 되고, 넣으면 그 단계가 자동으로 돕니다.",
+    "측정에 필요한 연결은 다 됐습니다. 여기서 바꾼 값은 다음 실행부터 적용됩니다.")}</p>`);
+});
+</script>

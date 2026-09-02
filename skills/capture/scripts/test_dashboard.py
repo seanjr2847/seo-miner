@@ -179,7 +179,7 @@ def test_gather_resolves_striking_band_and_content_gap_kind():
 
     p1 = by_target["1페이지상단권"]
     assert p1["label"] == "1페이지 상단 가능", p1["label"]
-    assert p1["play"]["what"] == "이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다."
+    assert p1["play"]["what"] == "이미 1페이지 안입니다. 여기서 남은 것은 순위가 아니라 클릭입니다."
     assert p1["is_defensive"] is False
 
     p2 = by_target["2페이지권"]

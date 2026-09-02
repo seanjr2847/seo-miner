@@ -17,6 +17,7 @@ Exit code: 0 = core usable, 1 = core setup incomplete.
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -52,9 +53,23 @@ SKILLS_REPO = "https://github.com/coreyhaines31/marketingskills"
 # 버킷 라벨 — doctor 화면과 산문이 **같은 말**을 쓰게 하는 정본. 산문이 이걸
 # 다시 타이핑하면 doctor 가 찍지도 않는 머리말을 찾게 만든다(실제로 그랬다:
 # 문서는 [나중에 하면 좋은 것], 화면은 [선택]).
+# 이 폴더 개념이라 **웹에는 뜻이 없는** must 항목. 호스팅의 사이트 선택은 레일이
+# 하고, brain["picked"] 는 폴더 매칭이라 웹에서는 늘 비어 있다 — 안 빼면 사이트를
+# 이미 고른 사람에게도 "고르세요"가 영영 떠 있는다.
+LOCAL_ONLY_MUST = {"pick_project"}
+
+# 할 일이 하나도 없을 때만 쓰는 요약. 위 분기 구조가 그것을 보장한다 —
+# 목록과 어긋나는 요약("다 준비됐는데 GA4 가 막혔다")이 나올 길을 구조로 막는다.
+READY_VERDICT = "다 준비됐습니다. 바로 쓰시면 됩니다."
+
 BUCKET_MUST = "꼭 해야 할 일"
 BUCKET_LATER = "더 켜고 싶으면"
 LATER_TAG = "[선택]"
+
+# 복구를 유발하는 채팅 문구. must 의 cmd 와 verdict 의 next_command 가 같은 것을
+# 가리켜야 한다 — 두 벌이 되면 화면과 CLI 가 서로 다른 말을 시킨다.
+RESCOPE_CMD = "토큰 삭제하고 GSC 로그인해줘"
+BRAIN_RESET_CMD = "보관함 파일 다시 만들어줘"
 
 CORE_PIP = "pip install requests pyyaml"
 GSC_PIP = "pip install google-api-python-client google-auth-oauthlib"
@@ -99,9 +114,9 @@ CAPABILITIES = (
      "desc": "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
      "cost": "유료", "keys": ("OPENROUTER_API_KEY",),
      "url": "https://openrouter.ai/keys",
-     "fix": "AI 노출 확인만 켜는 데 OpenRouter 키가 필요합니다 "
-            "(유료, 약 5분 · 없어도 기회 목록까지는 갑니다) — 발급: "
-            "https://openrouter.ai/keys · 크레딧 소액 충전 후 키 생성.",
+     "fix": "OpenRouter 키를 넣으면 켜집니다. 없어도 기회 목록까지는 그대로 갑니다. "
+            "https://openrouter.ai/keys 에서 크레딧을 조금 충전하고 키를 만드시면 "
+            "됩니다.",
      # 호스팅에선 서버가 낸다. 로컬에서 키가 없으면 이 단계만 건너뛴다 —
      # 무료로 쓰는 사람도 기회 목록까지는 간다.
      "owner": "server", "blocking": False},
@@ -111,31 +126,42 @@ CAPABILITIES = (
      # 콘솔 작업은 이제 없다 — 번들 클라이언트가 그 자리를 대신한다.
      # 예전 문구("무료, 5분")는 사용자에게 있지도 않은 할 일을 시키는 거짓말이 됐다.
      "fix": {
-         "deps": f"구글 연동 부품이 없습니다 — `{GSC_PIP}` (앞은 조회용, 뒤는 "
-                 "로그인 창을 여는 부품). 채팅에 \"설치해줘\" 하시면 제가 대신 "
-                 "실행합니다.",
-         "pending": "구글 계정으로 로그인 한 번만 하면 됩니다 (무료, 30초, 준비물 "
-                    "없음) — 채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 "
+         "deps": "구글 연동 부품이 빠져 로그인 창이 안 열립니다. Claude 에게 "
+                 "설치를 부탁하시면 대신 설치합니다. [설정] 화면에 버튼도 있습니다.",
+         "pending": "구글 계정으로 로그인 한 번이면 켜집니다. 30초 걸리고 준비물은 "
+                    "없습니다. Claude 에게 구글 로그인을 부탁하시면 브라우저 창이 "
                     "열립니다.",
-         "none": "구글 인증 수단이 없습니다 (번들이 빠진 배포) — 채팅에 "
-                 "\"GSC 연동해줘\" 하시면 클라이언트 파일 놓는 것부터 제가 "
-                 "안내합니다 (무료).",
+         "none": "이 배포에 구글 로그인용 클라이언트 파일이 없습니다. Claude 에게 "
+                 "구글 연동을 부탁하시면 파일 놓는 것부터 안내합니다. 무료입니다.",
      },
      # 구글 로그인은 양쪽 다 사용자 몫이다(서버가 대신 로그인할 수 없다).
      # 실측이 없으면 모든 판정에 재료가 없다 — 아하 모먼트를 막는다.
      "owner": "user", "blocking": True},
+    # 위 fix 는 로컬(플러그인) 문구다 — 채팅과 pip 이 있는 사람에게만 뜻이 있다.
+    # 호스팅에는 채팅도 셸도 없으므로 같은 3-상태를 웹 문구로 한 벌 더 갖는다
+    # (아래 GSC_FIX_WEB). 두 벌이 아니라 두 청중이다 — 키는 반드시 같다.
     {"id": "rank", "name": "순위 추적",
      "desc": "검색결과 몇 등인지 매일 기록",
      "cost": "유료",
      "keys": ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "SERPER_API_KEY"),
      "url": "https://dataforseo.com",
-     "fix": "순위 추적만 켜는 데 유료 키가 필요합니다 (없어도 기회 목록까지는 갑니다) "
-            "— DataForSEO 권장(AI오버뷰·경쟁사 역키워드까지 "
-            "측정): https://dataforseo.com (가입 시 $1 무료 크레딧, API 비밀번호는 "
-            "계정 비번과 다름 — API Settings 에서 확인). 대체재 Serper: "
-            "https://serper.dev (무료 2,500콜, 카드 불필요, AI오버뷰 없음).",
+     "fix": "DataForSEO 아이디와 비밀번호를 넣으면 켜집니다. 없어도 기회 목록까지는 "
+            "그대로 갑니다. https://dataforseo.com 에 가입하면 $1 크레딧이 붙습니다. "
+            "API 비밀번호는 계정 비밀번호와 달라서 API Settings 에서 따로 봐야 "
+            "합니다. 더 싸게 쓰시려면 https://serper.dev 도 됩니다. 무료 2,500콜에 "
+            "카드가 필요 없고, 대신 구글 AI 요약은 못 봅니다.",
      "owner": "server", "blocking": False},
 )
+
+# 구글 연결이 잠겼을 때 **웹 사용자**에게 할 말. 키는 위 gsc fix 와 같은 3-상태다
+# (_selfcheck 가 대조한다). 웹에는 채팅도 파일 시스템도 없으므로 명령·경로를
+# 넣지 않는다 — 넣으면 할 수 없는 일을 시키는 안내가 된다.
+GSC_FIX_WEB = {
+    "deps": "서버에 구글 연동 부품이 빠졌습니다. 잠시 뒤 다시 시도해 주세요.",
+    "pending": "구글 계정을 연결하면 켜집니다. 로그인 한 번이면 끝나고 준비물은 "
+               "없습니다.",
+    "none": "서버에 구글 로그인 설정이 없습니다. 잠시 뒤 다시 시도해 주세요.",
+}
 
 
 def find_skill(name: str) -> bool:
@@ -188,6 +214,17 @@ def gsc_missing_scopes() -> list[str]:
     return [s for s in collect_gsc.SCOPES if s not in saved]
 
 
+def _drop_local_only(must: list, hosted: bool) -> list:
+    """호스팅에서 뜻이 없는 항목을 뺀다. 판정은 항목의 id 하나다.
+
+    조건문 안에 숨기지 않고 여기로 뺀 이유: 이 머신의 상태가 어떻든 selfcheck 가
+    가짜 목록을 먹여 실제로 걸러지는지 볼 수 있어야 한다(대부분의 머신에서는
+    그 갈래가 아예 안 만들어져서, 조건문에 숨기면 검사가 아무것도 안 본다).
+    """
+    return [m for m in must
+            if not (hosted and isinstance(m, dict) and m.get("id") in LOCAL_ONLY_MUST)]
+
+
 def diagnose() -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
@@ -234,21 +271,6 @@ def diagnose() -> dict:
     # 토큰은 있는데(연결됨) 그 토큰이 지금 SCOPES 를 다 못 덮을 수 있다 — analytics.readonly
     # 가 나중에 추가돼서, 그 전에 로그인해 둔 사람은 GA4 수집이 403 으로 막힌다.
     gsc_missing = gsc_missing_scopes() if gsc_conn else []
-    # 스코프가 모자라도 GA4 를 아직 안 붙인 사람에게는 막힌 일이 없다 —
-    # 검색 실적 수집은 그대로 돈다. 속성을 이미 연결한 프로젝트가 있을 때만
-    # 전체 판정(verdict)까지 올린다. 아니면 할 일 목록에만 남긴다.
-    ga4_linked = False
-    if gsc_missing:
-        try:
-            c = db.connect()
-            try:
-                ga4_linked = bool(c.execute(
-                    "SELECT 1 FROM projects WHERE ga4_property IS NOT NULL "
-                    "AND ga4_property<>'' LIMIT 1").fetchone())
-            finally:
-                c.close()
-        except Exception:
-            ga4_linked = False        # Brain 이 없거나 옛 스키마면 판단 자체가 불가
     # Brain 은 컴퓨터 전역이라 "지금 이 폴더가 어느 사이트냐"를 따로 정해야 한다.
     # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
     # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
@@ -288,41 +310,62 @@ def diagnose() -> dict:
     for c in CAPABILITIES:
         fix = c["fix"]
         if isinstance(fix, dict):
-            fix = fix[gsc_fix_state]
+            fix = (GSC_FIX_WEB if hosted else fix)[gsc_fix_state]
         readiness.append({**c, "keys": list(c["keys"]),
                           "on": is_on[c["id"]], "fix": fix,
                           # 로컬은 준비물이 전부 사용자 몫이다 — 명부값은 호스팅용.
                           "owner": c["owner"] if hosted else "user"})
 
+    # 여기서부터 사용자에게 그대로 찍히는 문장이다. 두 축으로 갈린다.
+    #
+    #   청중  로컬(채팅·셸이 있다)과 호스팅(둘 다 없다)은 **할 수 있는 행동이
+    #         다르므로** 문장도 갈린다. 판정은 hosted 하나다.
+    #   자리  msg 는 산문 본문이다 — 명령·파일 경로·따옴표 친 채팅 문구를 **넣지
+    #         않는다**. 그대로 복사해 쓰는 것 한 줄은 cmd 에만 둔다(로컬 전용,
+    #         호스팅은 항상 None). 안내 화면 단계의 cmd 와 같은 뜻이고 같은 칩으로
+    #         그려진다. 화면이 아직 칩을 안 그려도 msg 는 혼자 읽힌다 — 그래서
+    #         "아래" 같은 지시어를 쓰지 않는다.
     must = []
+    # 이 폴더 개념이라 **웹에는 뜻이 없는** 항목. 호스팅의 사이트 선택은 레일이
+    # 하고, brain["picked"] 는 폴더 매칭이라 웹에서는 늘 비어 있다 — 그대로 두면
+    # 사이트를 이미 고른 사람에게도 "고르세요"가 영영 떠 있는다.
     if not core_ok:
         must.append({
             "id": "core_deps",
-            "msg": f"기본 부품 설치 — `{CORE_PIP}` (1분). "
-                   "이것만 하면 기능 대부분이 켜집니다. 채팅에 \"설치해줘\" 하시면 "
-                   "제가 대신 실행합니다."
+            "msg": "서버에 기본 부품이 빠졌습니다. 잠시 뒤 다시 시도해 주세요."
+                   if hosted else
+                   "기본 부품을 설치하면 기능 대부분이 켜집니다. 1분 걸립니다. "
+                   "Claude 에게 설치를 부탁하시면 대신 실행합니다.",
+            "cmd": None if hosted else CORE_PIP,
         })
     if not brain_ok:
         must.append({
             "id": "brain_broken",
-            "msg": f"보관함 파일이 손상됐습니다 — {DB} 를 다른 이름으로 옮기면 "
-                   "다음 실행 때 새로 만들어집니다 (지금까지 모은 자료는 사라짐)"
+            "msg": "보관함 파일이 손상돼 자료를 못 읽습니다. 잠시 뒤 다시 시도해 "
+                   "주세요." if hosted else
+                   "보관함 파일이 손상돼 자료를 못 읽습니다. 그 파일을 옆으로 치우면 "
+                   "다음 실행 때 새로 만듭니다. 지금까지 모은 자료는 사라집니다. "
+                   "Claude 에게 부탁하시면 치우는 것부터 대신 합니다.",
+            "cmd": None if hosted else BRAIN_RESET_CMD,
         })
     if core_ok and brain_ok and brain["projects"] and not brain["picked"]:
         must.append({
             "id": "pick_project",
-            "msg": ("이 폴더가 어느 사이트인지 모르겠습니다 — 등록된 사이트: "
-                    + ", ".join(brain["projects"]) +
-                    ". 채팅에 이름을 말씀해 주시면 그 사이트로 진행합니다. "
-                    "이 폴더가 아직 등록 안 된 새 사이트면 `/capture add <원하는이름>`. "
-                    "매번 안 묻게 하려면 이 폴더에서 `/create profile <이름>` 을 한 번 "
-                    "돌리세요 — 리포 경로가 기록돼 다음부터 이 폴더에서 자동으로 붙습니다.")
+            # 웹에는 "이 폴더"가 없다 — 사이트는 화면 위에서 고르는 것이다.
+            # 요약(verdict)이 이미 상황을 말했으므로 여기서는 할 일만 적는다.
+            "msg": ("등록된 사이트: " + ", ".join(brain["projects"]) +
+                    ". 아래 명령으로 이 폴더의 사이트를 정하세요. 한 번 정해 두면 "
+                    "폴더 경로가 기록돼 다음부터 자동으로 붙습니다."),
+            "cmd": "/create profile <이름>",
         })
     if core_ok and brain_ok and not brain["projects"]:
         must.append({
             "id": "first_project",
-            "msg": "첫 사이트 등록 — 채팅에 `/capture add <원하는이름>` 이라고 "
-                   "하시면 제가 물어보면서 만들어 드립니다."
+            "msg": "사이트를 하나 등록하면 수집이 시작됩니다. 처음 화면에서 "
+                   "도메인과 검색어를 넣으세요." if hosted else
+                   "사이트를 하나 등록하면 수집이 시작됩니다. Claude 에게 사이트 "
+                   "등록을 부탁하시면 물어보면서 만들어 드립니다.",
+            "cmd": None if hosted else "/capture add <이름>",
         })
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
@@ -331,42 +374,53 @@ def diagnose() -> dict:
         # 다시 찾으러 간다. 다음 걸음은 **로그인을 유발하는 행동** 하나여야 한다.
         must.append({
             "id": "gsc_login",
-            "msg": "구글 로그인 한 번 (무료, 30초, 계정당 1회) — 자동 수집과 "
-                   "Claude 즉석 조회(/capture ask)의 재료입니다. 준비물은 없고 "
-                   "구글 계정으로 로그인만 하면 됩니다 (속성마다 권한 주는 단계 없음). "
-                   "채팅에 \"GSC 로그인해줘\" 하시면 브라우저 창이 한 번 열립니다."
-                   + (" 이때 \"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]을 "
-                      "누르시면 됩니다 — 정상입니다." if gsc_bundled else "")
+            "msg": ("구글 계정을 연결하면 실적이 자동으로 쌓입니다. 로그인 한 번이면 "
+                    "끝나고 속성마다 권한을 주는 단계는 없습니다." if hosted else
+                    "구글 로그인 한 번이면 실적이 자동으로 쌓입니다. 계정당 1회, "
+                    "30초 걸리고 준비물은 없습니다. 속성마다 권한을 주는 단계도 "
+                    "없습니다. Claude 에게 구글 로그인을 부탁하시면 브라우저 창이 "
+                    "열립니다.")
+                   + (" 로그인 창에 \"확인되지 않은 앱\" 경고가 한 번 뜨는데 "
+                      "정상입니다. [고급] 다음 [이동]을 누르시면 됩니다."
+                      if gsc_bundled else ""),
+            "cmd": None if hosted else "GSC 로그인해줘",
         })
     if core_ok and brain_ok and not gsc_mode:
         must.append({
             "id": "gsc_client",
-            "msg": "구글 인증 수단 놓기 (무료) — 이 배포에는 로그인에 쓸 OAuth "
-                   "클라이언트 파일이 빠져 있습니다. 채팅에 \"GSC 연동해줘\" 하시면 "
-                   "파일을 놓는 것부터 제가 안내합니다 (내 클라이언트를 쓰시려면 "
-                   "connect_gsc.py --client-id ... --client-secret ...)."
+            "msg": "서버에 구글 로그인 설정이 없습니다. 잠시 뒤 다시 시도해 주세요."
+                   if hosted else
+                   "이 배포에 구글 로그인용 클라이언트 파일이 없어 로그인을 시작할 "
+                   "수 없습니다. Claude 에게 구글 연동을 부탁하시면 파일 놓는 "
+                   "것부터 안내합니다. 내 클라이언트를 쓰는 길도 함께 알려 드립니다.",
+            "cmd": None if hosted else "GSC 연동해줘",
         })
     # analytics.readonly 가 나중에 추가된 스코프라, 그 전에 로그인해 둔 토큰은
     # GA4 를 못 읽는다 — 조용히 403 으로 막히기 전에 여기서 먼저 말한다.
     if core_ok and brain_ok and gsc_missing:
         must.append({
             "id": "gsc_rescope",
-            "msg": "구글 재로그인 필요 (무료) — 저장된 로그인에 GA4 읽기 권한이 없어 "
-                   "GA4 수집이 403 으로 막힙니다 (검색 실적 수집은 그대로 됩니다). "
-                   + (f"기존 토큰이 유효하면 \"GSC 로그인해줘\"가 그걸 그대로 재사용해 "
-                      f"재동의 창이 안 뜹니다 — 먼저 토큰을 지우세요: {db.gsc_token()} "
-                      "그다음 채팅에 \"GSC 로그인해줘\"." if not hosted else
-                      "대시보드에서 구글 계정을 다시 연결해 주세요 — 재로그인하면 "
-                      "새 권한까지 다시 동의합니다.")
+            "msg": "저장된 로그인에 GA4 읽기 권한이 없어 GA4 수집이 막힙니다. "
+                   "검색 실적 수집은 그대로 됩니다. "
+                   + ("구글 계정을 다시 연결하면 새 권한까지 함께 동의합니다."
+                      if hosted else
+                      "저장된 로그인을 지우고 다시 로그인해야 새 권한까지 동의합니다. "
+                      "안 지우면 기존 로그인을 그대로 재사용해 동의 창이 안 뜹니다. "
+                      "Claude 에게 부탁하시면 지우는 것부터 대신 합니다."),
+            "cmd": None if hosted else RESCOPE_CMD,
         })
+
+    must = _drop_local_only(must, hosted)
 
     later = []
     if brain["no_prompts"]:
         who = ", ".join(brain["no_prompts"])
-        later.append(f"AI에 물어볼 질문 만들기 ({who}) — 지금 이 사이트로 AI 노출 확인을 "
-                     f"돌리면 \"질문이 없다\"며 멈춥니다. 채팅에 `/capture add {who.split(', ')[0]}` "
-                     "이라고 하시면 사이트에 맞는 질문 10~30개를 만들어 드립니다 "
-                     "(1분, 무료). 다른 기능은 지금도 다 됩니다.")
+        later.append(f"AI 노출 확인에 쓸 질문이 없는 사이트: {who}. 질문이 없으면 그 "
+                     "단계가 바로 멈춥니다. 다른 기능은 지금도 다 됩니다. "
+                     + ("[AI 인용] 화면에서 질문을 추가하세요." if hosted else
+                        "Claude 에게 질문 만들기를 부탁하시면 사이트에 맞는 질문 "
+                        "10~30개를 만들어 드립니다. 1분, 무료입니다. 명령은 [안내] "
+                        "화면의 AI 단계에 있습니다."))
     # 유료 키 안내를 여기 다시 적지 않는다 — 명부/locked 가 이미 같은 두 항목을
     # (발급 주소까지 붙여서) 말한다. 두 벌이 되면 화면이 "못 하는 것" 목록으로
     # 채워지고, 실제로 한쪽만 낡았다(여기 있던 사본은 링크로 바꾸기 전의 "setup.md
@@ -389,12 +443,12 @@ def diagnose() -> dict:
         # **핵심은 "채팅에 마케팅 스킬 설치해줘 하시면 제가 대신 설치합니다"다** —
         # 사용자에게 저장소 안내를 떠넘기지 않고, 같은 자리에서 설치를 끝낸다.
         marketing_skills_msg = (
-            f"마케팅 스킬 {len(missing_marketing)}개 "
-            f"({', '.join(missing_marketing)}) 설치 — 글의 각도와 진단을 맡는 전문 팩입니다. "
-            "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
-            "끝나면 Claude Code 재시작이 한 번 필요합니다 — 그 전엔 화면에 안 뜹니다. "
-            "없어도 측정·수집은 그대로 됩니다. "
-            f"직접 하시려면: {SKILLS_REPO}"
+            f"마케팅 스킬 {len(missing_marketing)}개를 깔면 글의 각도와 진단이 "
+            "깊어집니다. 없어도 측정·수집은 그대로 됩니다. Claude 에게 마케팅 스킬 "
+            "설치를 부탁하시면 대신 설치합니다. 무료입니다. "
+            "끝나면 Claude Code 를 한 번 재시작해야 화면에 뜹니다. "
+            f"빠진 것: {', '.join(missing_marketing)}. "
+            f"직접 하시려면 {SKILLS_REPO}"
         )
         # [꼭 해야 할 일]이 아니다 — 이 메시지 자신이 "없어도 측정·수집은 그대로"라고
         # 말한다. must 로 두면 첫 세션이 **Claude Code 재시작**으로 끊긴다 (온보딩에서
@@ -403,41 +457,56 @@ def diagnose() -> dict:
         later.append(marketing_skills_msg)
     elif not hosted and not marketing_optional.get("aso", True):
         marketing_skills_msg = (
-            "aso (앱 스토어 리스팅 최적화) — 앱이 있는 사이트만 필요합니다. "
-            "채팅에 \"마케팅 스킬 설치해줘\" 하시면 제가 대신 설치합니다 (무료). "
-            "끝나면 Claude Code 재시작이 한 번 필요합니다. "
-            f"직접 하시려면: {SKILLS_REPO}"
+            "앱 스토어 리스팅을 손보시려면 aso 스킬이 필요합니다. 앱이 있는 "
+            "사이트만 해당합니다. Claude 에게 마케팅 스킬 설치를 부탁하시면 대신 "
+            "설치합니다. 무료입니다. 끝나면 Claude Code 를 한 번 재시작해야 "
+            f"화면에 뜹니다. 직접 하시려면 {SKILLS_REPO}"
         )
         later.append(marketing_skills_msg)
 
     # 한 줄 요약 + 다음 한 걸음 하나 — 읽는 사람이 이 두 줄만 봐도 되게.
     if not core_ok:
-        verdict = "설치가 조금 남았습니다 — 아래 [꼭 해야 할 일] 1번이면 대부분 켜집니다."
+        verdict = ("서버에 기본 부품이 빠졌습니다." if hosted else
+                   "기본 부품만 설치하면 대부분 켜집니다.")
         next_cmd = "pip install requests pyyaml"
     elif not brain_ok:
-        verdict = "보관함 파일에 문제가 있습니다 — 아래 [꼭 해야 할 일]을 봐 주세요."
+        verdict = "보관함 파일이 손상돼 자료를 못 읽습니다."
         next_cmd = None
     elif not brain["projects"]:
-        verdict = "설치는 끝났습니다 — 첫 사이트만 등록하면 바로 시작입니다."
+        verdict = "설치는 끝났습니다. 첫 사이트만 등록하면 시작합니다."
         next_cmd = "/capture add <원하는이름>"
     elif gsc_pending:
-        verdict = "구글 로그인 한 번만 남았습니다 — 그래야 실측이 자동으로 쌓입니다."
+        verdict = ("구글 계정 연결 한 번만 남았습니다. 그래야 실적이 쌓입니다."
+                   if hosted else
+                   "구글 로그인 한 번만 남았습니다. 그래야 실적이 쌓입니다.")
         next_cmd = "GSC 로그인해줘"
     elif not gsc_mode:
-        verdict = ("구글 인증 수단이 없습니다 — 로그인에 쓸 클라이언트 파일이 "
-                   "이 배포에 빠져 있습니다.")
+        verdict = ("서버에 구글 로그인 설정이 없습니다." if hosted else
+                   "구글 로그인용 클라이언트 파일이 이 배포에 빠져 있습니다.")
         next_cmd = "GSC 연동해줘"
-    elif gsc_missing and ga4_linked:
-        verdict = "구글 재로그인이 한 번 더 필요합니다 — GA4 를 연결해 두셨는데 저장된 토큰에 그 권한이 없습니다."
-        next_cmd = "구글 계정 다시 연결해줘" if hosted else "토큰 삭제하고 GSC 로그인해줘"
-    elif brain["picked"]:
-        verdict = "다 준비됐습니다 — 바로 쓰시면 됩니다."
-        next_cmd = f"/capture run {brain['picked']}"
-    else:
+    elif not hosted and brain["projects"] and not brain["picked"]:
         # 사이트가 여럿인데 이 폴더가 어느 것인지 모른다. 아무거나 집어서 보여주면
         # 사용자는 그게 이 폴더의 사이트인 줄 안다 — 조용히 틀리느니 물어본다.
-        verdict = (f"등록된 사이트가 {len(brain['projects'])}개인데 이 폴더가 어느 "
-                   "것인지 모르겠습니다 — 이름을 하나 말씀해 주세요.")
+        # (웹은 여기 안 온다: 폴더가 없으니 고르는 것은 레일 몫이다.)
+        verdict = (f"등록된 사이트 {len(brain['projects'])}개 중 이 폴더가 어느 "
+                   "것인지 모릅니다.")
+        next_cmd = None
+    elif gsc_missing:
+        # GA4 를 아직 안 붙인 사람에게도 이 말은 사실이다 — 막힌 것이 GA4 하나뿐이고
+        # 검색 실적은 그대로 돈다. 전에는 GA4 를 붙인 사람에게만 이 분기를 태웠는데,
+        # 그러면 나머지 사람은 목록에 할 일이 남은 채 "다 준비됐습니다"를 읽었다.
+        verdict = ("검색 실적은 그대로 됩니다. GA4 만 구글 계정을 다시 연결하면 "
+                   "됩니다." if hosted else
+                   "검색 실적은 그대로 됩니다. GA4 만 로그인을 다시 하면 됩니다.")
+        next_cmd = "구글 계정 다시 연결해줘" if hosted else RESCOPE_CMD
+    elif not must:
+        verdict = READY_VERDICT
+        next_cmd = f"/capture run {brain['picked']}" if brain["picked"] else None
+    else:
+        # 여기 오면 분기를 빠뜨린 것이다. 목록에 할 일이 있는데 요약할 말이 없다 —
+        # 조용히 "다 준비됐습니다"라고 하느니 남은 일이 있다고 말한다. 이 구조 때문에
+        # READY_VERDICT 는 must 가 빈 경우에만 나올 수 있다.
+        verdict = "아직 할 일이 남았습니다."
         next_cmd = None
 
     steps = ([m["msg"] if isinstance(m, dict) else m for m in must]
@@ -487,24 +556,24 @@ def render(d: dict) -> None:
         conn = d.get("gsc_connected", False)
         for name in d["gsc_sites"]:
             if conn and mode == "service_account":
-                tag = "연결됨 (서비스 계정 — 무인 수집)"
+                tag = "연결됨 (서비스 계정, 무인 수집)"
             elif conn:
                 tag = "연결됨 (내 구글 계정 로그인)"
                 if d.get("gsc_missing_scopes"):
-                    tag += " — GA4 읽기 권한 없음, 재로그인 필요"
+                    tag += ". GA4 읽기 권한이 없어 재로그인이 필요합니다"
             elif mode:
                 # 새로 생긴 상태다. 예전엔 인증 파일이 있으면 곧 연결됨이었는데,
                 # 번들 클라이언트가 항상 존재하면서 그 등식이 깨졌다.
-                tag = "로그인 대기 — 구글 로그인 한 번이면 끝납니다 (\"GSC 로그인해줘\")"
+                tag = "로그인 대기. 로그인 한 번이면 끝납니다 (\"GSC 로그인해줘\")"
             elif d["gsc_legacy"].get(name):
-                tag = ("예전 방식 토큰만 있음 — 이제 안 씁니다. 다시 연결하세요 "
+                tag = ("예전 방식 토큰만 있어 이제 안 쓰입니다. 다시 연결하세요 "
                        "(connect_gsc.py)")
             else:
-                tag = "인증 없음 — 클라이언트 파일부터 놓아야 합니다 (\"GSC 연동해줘\")"
+                tag = "인증 없음. 클라이언트 파일부터 놓아야 합니다 (\"GSC 연동해줘\")"
             # 어느 사이트를 보고 있는지 조용히 정하지 않는다 — 화면에 이유까지 적는다.
             if name == d["brain"].get("picked"):
                 mark = ("  ← 이 폴더의 사이트" if d["brain"].get("repo_match") == name
-                        else "  ← 등록된 사이트가 이것뿐")
+                        else "  ← 등록된 사이트가 이것 하나")
             else:
                 mark = ""
             print(f"  · {name} — 구글 자동 수집: {tag}{mark}")
@@ -515,16 +584,16 @@ def render(d: dict) -> None:
                   "추가한 사이트만 읽습니다 (확인: connect_gsc.py --status)")
         elif mode == "oauth":
             print("    * 내 계정이 소유한 속성은 따로 권한을 줄 필요가 없습니다. "
-                  + ("로그인은 이미 끝났습니다 (토큰 보관 중)." if conn else
+                  + ("로그인은 이미 끝났고 보관 중입니다." if conn else
                      "첫 조회 때 브라우저 로그인 창이 한 번 열립니다."))
             if d.get("gsc_bundled") and not conn:
-                print("    * 로그인 화면에 \"확인되지 않은 앱\" 경고가 한 번 뜹니다 — "
-                      "[고급] → [이동]을 누르시면 됩니다 (플러그인 동봉 클라이언트).")
+                print("    * 로그인 화면에 \"확인되지 않은 앱\" 경고가 한 번 뜨는데 "
+                      "정상입니다. [고급] 다음 [이동]을 누르시면 됩니다.")
 
     if caps_on:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")
     else:
-        print("\n지금 되는 것: 아직 없습니다 — 아래 [꼭 해야 할 일]만 하면 켜집니다.")
+        print(f"\n지금 되는 것: 아직 없습니다. 아래 [{BUCKET_MUST}]만 하면 켜집니다.")
     # 모수는 위임 스킬 **전체**(필수+선택)다 — 산문도 install_skills 도 같은 8을 센다.
     m_skills = {**d.get("marketing_skills", {}), **d.get("marketing_optional", {})}
     if m_skills:
@@ -546,7 +615,7 @@ def render(d: dict) -> None:
     # "아직 안 켠 것"과 "나중에 하면 좋은 것" 두 통이었고 같은 항목이 양쪽에 들어가,
     # 부담을 줄이려던 문구가 오히려 화면 절반을 "못 하는 것" 목록으로 만들었다.
     if d["locked"] or d["later"]:
-        print(f"\n{BUCKET_LATER} (전부 선택 — 안 하셔도 위 기능은 그대로입니다)")
+        print(f"\n{BUCKET_LATER} (전부 선택입니다. 안 하셔도 위 기능은 그대로입니다)")
         for c in d["locked"]:
             print(f"  · {c['name']} — {c['desc']}")
             print(f"    {c['fix'] or f'위 [{BUCKET_MUST}]만 끝내면 자동으로 켜집니다.'}")
@@ -554,6 +623,30 @@ def render(d: dict) -> None:
             print(f"  · {s2}")
 
     print(f"\n자료 폴더: {d['brain']['home']}")
+
+
+def _must_prose() -> list[str]:
+    """diagnose() 의 must 항목이 msg 자리에 적어 둔 산문 조각 전부.
+
+    실행만으로는 갈래를 다 못 본다 — 설치가 멀쩡한 머신에서는 core_deps 문장이
+    만들어지지도 않아서, 거기 명령을 도로 적어 넣어도 검사가 아무것도 못 본다.
+    검사하려는 것은 "그 자리에 무엇을 적었나"이므로 소스를 ast 로 읽는다.
+    later.append 는 dict 가 아니라 문자열이라 여기 안 걸린다(그쪽은 cmd 자리가
+    없어 명령을 아예 안 쓴다).
+    """
+    import ast
+    out: list[str] = []
+    for node in ast.walk(ast.parse(Path(__file__).read_text(encoding="utf-8"))):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "append" and node.args
+                and isinstance(node.args[0], ast.Dict)):
+            continue
+        for k, v in zip(node.args[0].keys, node.args[0].values):
+            if isinstance(k, ast.Constant) and k.value == "msg":
+                out += [n.value for n in ast.walk(v)
+                        if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    assert out, "must 항목의 msg 를 하나도 못 읽었다 — 표 모양이 바뀌었다"
+    return out
 
 
 def _selfcheck() -> None:
@@ -573,6 +666,9 @@ def _selfcheck() -> None:
         assert bool(c["keys"]) == c["url"].startswith("http"), c["id"]
         if isinstance(c["fix"], dict):
             assert set(c["fix"]) == {"deps", "pending", "none"}, c["id"]
+            # 웹 문구는 같은 3-상태를 덮어야 한다 — 한 상태만 빠지면 그 상태의
+            # 웹 사용자에게 채팅·pip 안내가 그대로 나간다(KeyError 도 안 난다).
+            assert set(GSC_FIX_WEB) == set(c["fix"]), sorted(GSC_FIX_WEB)
         # 두 축은 값이 정해져 있다 — 문자열 오타 하나면 판정이 조용히 뒤집힌다.
         assert c["owner"] in ("user", "server"), c["id"]
         assert isinstance(c["blocking"], bool), c["id"]
@@ -599,6 +695,25 @@ def _selfcheck() -> None:
     assert all(s.startswith(LATER_TAG) for s in d["next_steps"][len(d["must"]):])
     # 로컬(표식 없음)에서는 준비물이 전부 사용자 몫이다.
     assert all(r["owner"] == "user" for r in d["readiness"]), "로컬인데 서버 몫이 있다"
+    # 요약은 목록과 어긋나면 안 된다 — 할 일이 남았는데 "다 준비됐습니다"는 거짓이다.
+    # 분기 순서를 바꾸다 보면 조용히 깨지는 자리라 못 박는다.
+    assert not (d["must"] and d["verdict"] == READY_VERDICT), (d["verdict"], d["must"])
+    # 로컬도 산문 본문에는 명령·경로를 안 넣는다 — 복사할 것은 cmd 한 자리에만 있다.
+    # 이 규칙이 풀리면 같은 문장이 호스팅 배너로 새는 길이 다시 열린다. 이 머신의
+    # 상태가 어떻든 모든 갈래를 보려고 must 를 강제로 한 바퀴 돌린다.
+    for text in _must_prose():
+        for banned in ("채팅", "/capture ", "/create ", "pip install", "`"):
+            assert banned not in text, f"must 산문에 {banned!r} 이 있다: {text}"
+    # 칩은 사용자가 그대로 쓰는 것이다 — 파일 경로를 실으면 경로를 손으로 다루라는
+    # 뜻이 되고, 머신마다 다른 임시 경로가 화면에 그대로 뜬다. 복구를 부르는 문구를
+    # 싣는다(그건 Claude 가 경로를 찾아 처리한다). pip 한 줄만 예외다: 그건 경로가
+    # 아니라 명령이고, 사용자가 셸에 그대로 칠 수 있는 유일한 것이다.
+    for m in d["must"]:
+        cmd = m.get("cmd")
+        if not cmd or cmd == CORE_PIP:
+            continue
+        assert "\\" not in cmd and not re.match(r"^[A-Za-z]:", cmd),             f"must 의 cmd 가 파일 경로다: {m}"
+        assert str(db.CAPTURE_HOME) not in cmd, f"must 의 cmd 에 보관함 경로가 있다: {m}"
 
     # 호스팅 판정 — 표식이 서면 명부의 owner 를 그대로 쓰고, 서버 몫은 사용자 할 일
     # 목록(extra)에서 빠진다. 결함 1: 키를 낼 필요 없는 사람에게 키 발급을 시켰다.
@@ -614,6 +729,28 @@ def _selfcheck() -> None:
         for c in h["locked"]:
             if c["owner"] == "server":
                 assert not any(e.startswith(c["name"]) for e in payload["extra"]), c["name"]
+        # 웹 사용자에게는 채팅도 셸도 파일 시스템도 없다. 이 문장들이 그대로
+        # 호스팅 배너에 찍히므로, 명령·경로가 섞이면 할 수 없는 일을 시키는
+        # 안내가 된다 — 그 자리를 여기서 못 박는다 (로컬 갈래는 그대로 둔다).
+        for text in [h["verdict"], *(m["msg"] for m in h["must"]),
+                     *payload["extra"]]:
+            for banned in ("채팅", "/capture ", "/create ", "pip install",
+                           "connect_gsc", "`", "\\"):
+                assert banned not in text, f"호스팅 문구에 {banned!r} 이 있다: {text}"
+        # 이 폴더 개념인 항목은 호스팅에 안 나간다. 이 머신에서는 그 갈래가 아예
+        # 안 만들어질 수 있으므로 거르는 함수에 가짜 목록을 직접 먹여 본다 —
+        # 그래야 통과하는 검사가 아니라 실제로 무언가를 보는 검사가 된다.
+        assert not (h["must"] and h["verdict"] == READY_VERDICT), (h["verdict"], h["must"])
+        assert not any(m["id"] in LOCAL_ONLY_MUST for m in h["must"]), h["must"]
+        # 명부를 통째로 비우면 위 줄은 아무것도 안 보게 된다 — 아는 항목을 이름으로
+        # 못 박고, 거르는 함수에 고정된 가짜 목록을 먹여 실제 동작까지 본다.
+        assert "pick_project" in LOCAL_ONLY_MUST, "폴더 개념 항목이 명부에서 빠졌다"
+        _fake = [{"id": "pick_project", "msg": "x"}, {"id": "gsc_login", "msg": "y"}]
+        assert [m["id"] for m in _drop_local_only(_fake, True)] == ["gsc_login"]
+        assert _drop_local_only(_fake, False) == _fake
+        # 복사 칩은 로컬 전용이다 — 호스팅에 실리면 화면이 못 쓸 칩을 그린다.
+        assert all(m.get("cmd") is None for m in h["must"]), h["must"]
+        assert all(m.get("cmd") is None for m in payload["must"]), payload["must"]
     finally:
         os.environ.pop(HOSTED_ENV, None) if _saved is None \
             else os.environ.__setitem__(HOSTED_ENV, _saved)
@@ -647,7 +784,7 @@ def main() -> None:
                                 errors="replace")
         line = (proc.stdout.readline() or "").strip()
         proc.stdout.close()
-        print("대시보드를 띄웠습니다 — 상단 배너가 점검 결과이고, 그 아래 [설정]에서 "
+        print("대시보드를 띄웠습니다. 위쪽 배너가 점검 결과입니다. [설정] 화면에서 "
               "부품 설치·사이트 등록·API 키 저장을 바로 하실 수 있습니다.")
         print(line or f"(안 열리면: python {dash} --open)")
     elif "--json" in sys.argv:

@@ -14,7 +14,6 @@
   /* 로컬 설정(부품 설치·API 키·구글 클라이언트)은 호스팅에서 유저 몫이 아니다.
      지우지 않고 감춘다 — 원본 스크립트가 이 칸들에 이벤트를 이미 걸어 뒀다. */
   #setup { display:none; }
-  #nx code{display:none}             /* 배너의 명령어 — 웹에는 칠 곳이 없다 */
 
   /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
   #sm-fail{border-left:2px solid var(--copper);padding:12px 0 12px 16px;
@@ -42,15 +41,42 @@
   .sm-refresh:disabled{opacity:.5;cursor:default}
   .sm-refresh:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
 
-  /* 분석 진행 배너 — 빈 화면의 이유를 맨 위에서 알린다. */
-  #sm-wait{margin:0 0 16px;padding:13px 0 13px 16px;border-left:2px solid var(--patina);
-    background:var(--wash);color:var(--ink);font-size:13.5px;line-height:1.6}
+  /* 실행 배너 — 눌렀다·도는 중·끝났다·못 했다를 한 자리에서 말한다.
+     세 상태가 각자 다른 데 있으면 "지금 뭐가 되고 있나"를 화면이 못 답한다.
+     화면 위에 붙어 따라온다: main 첫 자식이라 스크롤하면 그냥 사라졌고, 긴
+     화면에서는 눌러 놓고 아래를 보는 사이 진행 상황이 안 보였다.
+     바탕은 반투명 위에 종이색을 깐다 — 그냥 --wash 만 쓰면 붙어 있는 동안
+     아래 글자가 비쳐 읽힌다. */
+  #sm-wait{position:sticky;top:0;z-index:5;margin:0 0 16px;
+    padding:13px 16px 13px 16px;border-left:2px solid var(--patina);
+    background:linear-gradient(var(--wash),var(--wash)),var(--stone);
+    color:var(--ink);font-size:13.5px;line-height:1.6;max-width:74ch}
   #sm-wait::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
     background:var(--patina);margin-right:9px;vertical-align:middle}
   @media (prefers-reduced-motion:no-preference){
     #sm-wait::before{animation:sm-pulse 1.6s ease-in-out infinite}
     @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.25}}
   }
+  /* 끝난 것과 못 한 것은 안 뛴다 — 맥박은 "지금 돌고 있다"는 뜻만 갖는다.
+     (미디어 질의 뒤에 둔다 — 앞에 두면 그 안의 animation 이 이깁니다.) */
+  #sm-wait.done::before,#sm-wait.bad::before{animation:none}
+  /* 오류가 초록 바탕을 쓰면 색이 뜻과 반대로 말한다. */
+  #sm-wait.bad{border-left-color:var(--copper);color:var(--copper);
+    background:linear-gradient(var(--wash-copper),var(--wash-copper)),var(--stone)}
+  #sm-wait.bad::before{background:var(--copper)}
+
+  /* 목록 자리의 빈 상태·오류. 생김새는 셸의 .empty 가 갖는다 — 여기서는 그것이
+     테두리 있는 상자(.list) 안에 설 때만 손본다: 상자 안 상자가 되지 않게
+     바깥 테두리를 지우고(.bare), 안쪽 여백을 준다. */
+  .sm-note{margin:14px}
+  #sm-kw .list.bare,#sm-aiq .list.bare{border:0}
+  p.sm-note{padding:16px 0;margin:0;color:var(--slate);font-size:13px}
+  .sm-note button:not(.go){font:500 12.5px/1 var(--sans);color:var(--patina);
+    background:transparent;border:1px solid var(--rule);border-radius:6px;
+    padding:8px 13px;cursor:pointer}
+  .sm-note button:not(.go):hover:not(:disabled){border-color:var(--patina);
+    background:var(--wash)}
+  .sm-note button:disabled{opacity:.5;cursor:default}
 
   /* 검색 성과 — 서치콘솔 4대 지표를 같은 크기로 나란히 둔다.
      축이 서로 달라 한 그림에 겹치지 않는다(게재순위는 방향까지 반대다). */
@@ -104,7 +130,8 @@
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
   #sm-kw .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
   #sm-kw .tabs{display:flex;gap:6px;margin-bottom:10px}
-  #sm-kw .tabs button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+  /* 탭 이름은 한글이다 — 등폭으로 찍으면 폴백 서체로 떨어진다(CLAUDE.md). */
+  #sm-kw .tabs button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
     border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
   #sm-kw .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
   #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule-soft);
@@ -120,10 +147,14 @@
      검색어는 사용자가 실제로 친 문자열이라 그대로 보여야 한다. */
   #sm-kw .kw{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     color:var(--ink);text-transform:none}
-  #sm-kw .n{font:400 11.5px/1 var(--mono);color:var(--slate);white-space:nowrap}
+  /* "노출 1,234" 는 한글과 숫자가 한 요소에 섞인다 — 등폭은 숫자 정렬만 얻는다. */
+  #sm-kw .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--slate);
+    white-space:nowrap}
   #sm-kw .bar2{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
-  #sm-kw .go2{font:500 13px/1 var(--sans);color:var(--stone);background:var(--patina);
-    border:0;border-radius:6px;padding:9px 16px;cursor:pointer}
+  /* 채운 버튼은 화면에 하나다(다음 행동 띠가 갖는다) — 여기는 테두리로 선다. */
+  #sm-kw .go2{font:500 13px/1 var(--sans);color:var(--patina);background:transparent;
+    border:1px solid var(--patina);border-radius:6px;padding:9px 16px;cursor:pointer}
+  #sm-kw .go2:hover:not(:disabled){background:var(--wash)}
   #sm-kw .go2:disabled{opacity:.4;cursor:default}
   #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
   #sm-kw .warn{color:var(--copper)}
@@ -144,19 +175,23 @@
     padding:4px 6px;text-transform:none}
   #sm-aiq .t:hover{border-color:var(--rule-soft)}
   #sm-aiq .t:focus{outline:0;border-color:var(--patina);background:var(--wash)}
-  #sm-aiq select{font:400 11.5px/1 var(--mono);color:var(--slate);
+  /* 갈래 이름(추천·비교·문제해결)도 한글이다 — 등폭에 걸지 않는다. */
+  #sm-aiq select{font:400 12px/1 var(--sans);color:var(--slate);
     background:transparent;border:1px solid var(--rule);border-radius:6px;
     padding:5px 6px}
-  #sm-aiq .n{font:400 11.5px/1 var(--mono);color:var(--slate);white-space:nowrap}
+  #sm-aiq .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--slate);
+    white-space:nowrap}
   #sm-aiq .del{font:400 15px/1 var(--mono);color:var(--slate);background:transparent;
     border:0;padding:2px 6px;cursor:pointer}
   #sm-aiq .del:hover{color:var(--copper)}
   #sm-aiq .bar2{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
   #sm-aiq .new{flex:1 1 260px;font:400 13.5px/1 var(--sans);color:var(--ink);
     background:transparent;border:1px solid var(--rule);border-radius:6px;padding:9px 10px}
-  #sm-aiq .go2{font:500 13px/1 var(--sans);color:var(--stone);background:var(--patina);
-    border:0;border-radius:6px;padding:9px 16px;cursor:pointer}
-  #sm-aiq .go2.ghost{color:var(--slate);background:transparent;border:1px solid var(--rule)}
+  #sm-aiq .go2{font:500 13px/1 var(--sans);color:var(--patina);background:transparent;
+    border:1px solid var(--patina);border-radius:6px;padding:9px 16px;cursor:pointer}
+  #sm-aiq .go2:hover:not(:disabled){background:var(--wash)}
+  #sm-aiq .go2.ghost{color:var(--slate);border-color:var(--rule)}
+  #sm-aiq .go2.ghost:hover:not(:disabled){color:var(--patina);border-color:var(--patina)}
   #sm-aiq .go2:disabled{opacity:.4;cursor:default}
   #sm-aiq .cnt{font-size:12.5px;color:var(--slate)}
   #sm-aiq .warn{color:var(--copper)}
@@ -169,26 +204,43 @@
   #sm-cc li div{flex:1;min-width:0}
   #sm-cc li b{display:block;font-weight:600;font-size:14px}
   #sm-cc li span{color:var(--slate);font-size:12.5px}
-  #sm-cc button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:6px;padding:6px 10px;cursor:pointer;flex:none}
-  #sm-cc button:hover{color:var(--patina);border-color:var(--patina)}
+  /* 칩은 셸의 .cmd.sec 을 그대로 쓴다 — 명령을 복사하는 칩이라는 뜻이 이미 그
+     부품에 있다(복사 아이콘·[복사됨] 표시). 여기서 다시 칠하면 같은 것이 화면마다
+     다르게 보인다. 줄 안에서 안 눌리게 하는 것만 손본다. */
+  #sm-cc .cmd{flex:none;margin:0}
   @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
 
   /* 설정 — 고르면 곧바로 저장한다. 저장 버튼이 따로 없으니 결과는 옆에서 말해 준다. */
   #sm-set .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
+  /* 칸 셋(주기·저장소·GA4)은 한 섹션 안의 형제다 — 섹션 제목(h2)과 같은 크기로
+     세우면 어느 것이 상위인지가 안 읽힌다. */
+  #sm-set .grp{padding-top:22px;margin-top:22px;border-top:1px solid var(--rule-soft)}
+  #sm-set .grp h3{font:600 14.5px/1.35 var(--sans);color:var(--ink);margin:0}
+  #sm-set .grp .sub{margin:5px 0 12px}
   #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  #sm-set .opts button{font:400 12px/1 var(--mono);color:var(--slate);background:transparent;
+  #sm-set .opts button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
     border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
+  #sm-set .opts button:hover{color:var(--patina);border-color:var(--patina)}
   #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
+  /* 설정 화면의 주요 행동은 하나다 — 안 끝난 첫 칸만 채운 버튼을 갖는다.
+     선택자를 `.opts button` 보다 무겁게 잡는다: 가볍게 두면 위 규칙에 밀려
+     클래스만 붙고 생김새는 그대로다(한 번 그렇게 나갔다). */
+  #sm-set .opts button.lead,#sm-set a.lead{color:var(--stone);
+    background:var(--patina);border:1px solid var(--patina)}
+  #sm-set .opts button.lead:hover,#sm-set a.lead:hover{color:var(--stone);
+    background:var(--patina);border-color:var(--patina);filter:brightness(1.12)}
+  #sm-set a.lead{display:inline-block;font:500 12.5px/1 var(--sans);border-radius:6px;
+    padding:8px 13px;text-decoration:none}
   /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
      자간이 벌어지고 획이 얇아진다(CLAUDE.md). 등폭은 숫자·명령·URL 에만. */
   #sm-set .msg{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-left:6px}
-  #sm-set h2+h2,#sm-set .repo{margin-top:26px}
   #sm-set .repo select{font:400 12.5px/1 var(--sans);color:var(--ink);background:var(--card);
     border:1px solid var(--rule);border-radius:6px;padding:8px 10px;max-width:340px}
   #sm-set .repo input{font:400 12.5px/1 var(--mono);color:var(--ink);background:var(--card);
     border:1px solid var(--rule);border-radius:6px;padding:8px 10px;width:130px}
-  #sm-set .repo .now{font:500 13px/1.5 var(--mono);color:var(--patina)}
+  /* 상태 문장은 한글이라 --sans 다. 등폭은 그 안의 식별자(저장소·브랜치·속성 번호)에만. */
+  #sm-set .repo .now{font:500 13px/1.5 var(--sans);color:var(--patina)}
+  #sm-set .repo .now code{font:500 12.5px/1.5 var(--mono)}
   #sm-set .repo .none{font:400 13px/1.5 var(--sans);color:var(--slate)}
   #sm-set .repo a{color:var(--patina)}
   /* 저장소가 없으면 [콘텐츠 작성]은 못 쓴다 — 눌러 보게 하지 않고 그 자리에서 말한다 */
@@ -202,7 +254,7 @@
       -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);
       mask-image:linear-gradient(90deg,#000 88%,transparent)}
     .logwrap.at-end{-webkit-mask-image:none;mask-image:none}
-    .sm-swipe{font:400 11px/1 var(--mono);color:var(--slate);margin:6px 0 0;
+    .sm-swipe{font:var(--micro);color:var(--slate);margin:6px 0 0;
       display:flex;align-items:center;gap:6px}
   }
   @media(min-width:901px){.sm-swipe{display:none}}
@@ -247,8 +299,12 @@
       box.id = "sm-fail";
       host.insertBefore(box, host.firstChild);
     }
+    // 유저가 읽는 줄이다 — 무엇이 안 뜨는지와 무엇을 하면 되는지를 먼저 말하고,
+    // 기술적 원인은 뒤에 붙인다(그대로 붙여 보내면 원인 추적이 된다).
     var line = document.createElement("p");
-    line.textContent = what + " — " + ((e && e.message) || e);
+    line.textContent = "화면의 일부(" + what + ")를 세우지 못했습니다. " +
+      "새로고침해 주세요. 그래도 같으면 이 줄을 그대로 알려 주세요. 원인: " +
+      ((e && e.message) || e);
     box.appendChild(line);
   }
   function step(what, fn) { try { fn(); } catch (e) { fail(what, e); } }
@@ -260,17 +316,50 @@
     var p = document.getElementById("proj");
     return p ? p.value : "";
   }
+  // 실행 배너 한 자리. 누른 직후·도는 중·끝났다·못 했다가 전부 여기로 온다 —
+  // 예전에는 버튼 글자만 4초 바뀌고 끝이라, 무엇이 언제 끝나는지 화면에 없었다.
+  function banner(kind, text) {
+    var main = document.querySelector("main");
+    if (!main) return;
+    var el = document.getElementById("sm-wait");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "sm-wait";
+      // 화면을 안 보고 있어도 알아야 한다 — 실행은 몇 분 걸리고, 그동안 유저는
+      // 다른 데를 본다. polite 라 읽던 문장을 끊지 않고 다음 틈에 읽어 준다.
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      main.insertBefore(el, main.firstChild);
+    }
+    if (el.className !== kind) el.className = kind;      // "" 도는 중 · done · bad
+    put(el, text);
+  }
+  // 도는 중 배너만 지운다. 결과(done·bad)는 사람이 읽을 시간을 준다.
+  function unbanner() {
+    var el = document.getElementById("sm-wait");
+    if (el && !el.className) el.remove();
+  }
+
   // 분석은 워커가 백그라운드로 돈다. 끝난 걸 화면이 모르면 유저는 빈 대시보드를
   // 보고 있다가 직접 새로고침해야 한다 — 첫 분석이면 그게 이탈 지점이다.
-  var ran = null;
+  var ran = null, ranStage = "", RUNNING = false;
   function paint(st) {
     var r = st && st[proj()];
     if (!r) return;
-    b.disabled = !!r.running;
-    b.textContent = !r.running ? "전체 분석 실행"
+    RUNNING = !!r.running;
+    b.disabled = RUNNING;
+    b.textContent = !RUNNING ? "전체 분석 실행"
       : (typeof r.pct === "number" ? "분석 중 " + r.pct + "%" : "분석 중…");
-    waiting(r);
-    if (ran && !r.running) { load(); loadDoctor(); perfLoad(); }   // 끝나면 스스로 채워진다
+    runLock(RUNNING);
+    if (RUNNING) {
+      if (r.stage) ranStage = r.stage;
+      waiting(r);
+    } else if (ran) {
+      load(); loadDoctor(); perfLoad();                  // 끝나면 스스로 채워진다
+      done(r);
+    } else {
+      unbanner();
+    }
     ran = r.running;
   }
 
@@ -278,37 +367,91 @@
   // 문구만 세우면 "얼마나 남았나"에 답을 못 한다. 워커가 단계마다 찍어 주는
   // 진행률(sites.stage_pct)을 그대로 보여 준다 — 8분의 1씩 뛰지만 지어낸 값이 아니다.
   function waiting(r) {
-    var el = document.getElementById("sm-wait"), main = document.querySelector("main");
-    if (!r.running) { if (el) el.remove(); return; }
-    if (!main) return;
-    if (!el) {
-      el = document.createElement("p");
-      el.id = "sm-wait";
-      main.insertBefore(el, main.firstChild);
-    }
-    var s = (STAGE || {})[r.stage], now = (s && s.t) || r.stage;   // 폴링이 STAGE 보다 빠를 수 있다
+    var s = (STAGE || {})[r.stage], now = (s && s.t) || "";   // 폴링이 STAGE 보다 빠를 수 있다
     var head = typeof r.pct === "number"
-      ? r.pct + "% 진행" + (now ? " — 지금 " + now : "")
-      : (r.last_run_at ? "다시 분석하는 중입니다" : "첫 분석이 진행 중입니다");
+      ? r.pct + "% 진행했습니다." + (now ? " 지금 " + now + " 단계입니다." : "")
+      : (r.last_run_at ? "다시 측정하는 중입니다." : "첫 측정이 진행 중입니다.");
     var tail = r.last_run_at
-      ? " · 끝나면 이 화면이 자동으로 갱신됩니다."
-      : " · 검색 실적부터 개선 기회까지 순서대로 수집합니다. 몇 분 걸리고, " +
-        "끝나면 이 화면이 자동으로 갱신됩니다.";
-    put(el, head + tail);
+      ? " 끝나면 이 화면이 저절로 갱신됩니다."
+      : " 검색 실적부터 개선 기회까지 순서대로 모읍니다. 몇 분 걸립니다." +
+        " 끝나면 이 화면이 저절로 갱신됩니다.";
+    banner("", head + tail);
   }
+
+  // 끝난 순간이 가장 중요한 한 줄이다 — 무엇이 끝났고 화면의 어디가 방금 값인지.
+  function done(r) {
+    var s = (STAGE || {})[ranStage];
+    banner("done", (s ? s.t + ul(s.t) + " 마쳤습니다." : "분석을 마쳤습니다.") +
+      " 이 화면의 숫자를 방금 값으로 바꿨습니다." +
+      (r && r.last_run_at ? " 기준 시각은 " + r.last_run_at + "입니다." : ""));
+    ranStage = "";
+    setTimeout(function () {
+      var el = document.getElementById("sm-wait");
+      if (el && el.className === "done") el.remove();
+    }, 20000);
+  }
+
+  // 폴링이 계속 실패하면 화면은 옛 숫자를 진짜인 것처럼 들고 있게 된다.
+  // 한 번 끊긴 것과 계속 끊긴 것은 다르다 — 세 번(약 24초) 이어질 때만 말한다.
+  var pollBad = 0;
   async function poll() {
-    try { paint(await (await fetch("/api/run/status")).json()); } catch (e) {}
-  }
-  b.addEventListener("click", async function () {
-    if (!proj()) return;
-    b.disabled = true; b.textContent = "시작하는 중…";
     try {
-      await fetch("/api/run", {method: "POST",
+      paint(await (await fetch("/api/run/status")).json());
+      pollBad = 0;
+    } catch (e) {
+      if (++pollBad === 3 && !RUNNING) {
+        banner("bad", OFFLINE + " 지금 보이는 숫자는 마지막으로 받은 값입니다." +
+          " 새로고침해 주세요.");
+      }
+    }
+  }
+  // 전 단계 일괄 실행. 레일 바닥 버튼과, 화면이 `data-run="run"` 으로 부르는
+  // 버튼이 같은 것을 탄다 — [기록]·[안내]처럼 선언된 단계가 없는 화면은 이것이
+  // 유일한 다음 걸음이라, 예전에는 띠가 "왼쪽 아래 [전체 분석 실행]" 이라고
+  // 글자로 가리키기만 했다. 가리키는 대신 그 자리에서 누르게 한다.
+  // ("run" 은 단계가 아니다 — 이음매 검사의 NON_STAGE 에 이미 들어 있다.)
+  async function runAll(btn) {
+    if (!proj()) return;
+    var was = btn.textContent;
+    btn.disabled = true; btn.textContent = "시작하는 중…";
+    try {
+      var rr = await fetch("/api/run", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj()})});
-    } catch (e) {}
+      if (!rr.ok) throw new Error((await rr.json().catch(noDetail)).detail || "");
+    } catch (e) {
+      btn.disabled = false; btn.textContent = was;
+      banner("bad", "분석을 시작하지 못했습니다. " + reason(e) +
+        " 잠시 뒤 다시 눌러 주세요.");
+      return;
+    }
+    ranStage = "";
+    btn.textContent = was;                 // 잠금은 폴링이 푼다(runLock)
+    btn.dataset.smLock = "1";
+    banner("", "전체 분석을 시작했습니다. 끝나면 이 화면이 저절로 갱신됩니다.");
     poll();
-  });
+    setTimeout(function () { if (!RUNNING) runLock(false); }, 12000);
+  }
+  b.addEventListener("click", function () { runAll(b); });
+
+  // 오류 문구는 원인 + 복구 행동이다. "실패했습니다" 로 끝내지 않는다.
+  //
+  // 서버가 안 받아 준 일은 **한 가지 말로만** 한다. 예전에는 같은 사건을 네 가지로
+  // 말했다("서버에 연결하지 못했습니다"·"질문 목록을 주지 않았습니다"·"요청을 받지
+  // 않았습니다"·"연결이 끊겼습니다"). 읽는 사람에게는 전부 같은 고장인데, 말이
+  // 갈리면 서로 다른 고장으로 읽힌다.
+  var OFFLINE = "서버가 응답하지 않았습니다.";
+  function noDetail() { return {}; }
+  function reason(e) {
+    var m = (e && e.message) || "";
+    return m ? m.slice(0, 90) : OFFLINE;
+  }
+  // 을/를 — 단계 이름이 표에서 오므로 조사를 손으로 못 고른다("순위 추적을",
+  // "키워드 찾기를"). 받침 유무만 보면 되고, 안 그러면 문장이 매번 어색해진다.
+  function ul(w) {
+    var c = String(w || "").charCodeAt(String(w).length - 1);
+    return (c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28) ? "을" : "를";
+  }
   var sel = document.getElementById("proj");
   if (sel) sel.addEventListener("change", poll);
   poll();
@@ -325,7 +468,7 @@
   async function writeClick(b) {
     var id = b.getAttribute("data-write");
     if (b.hasAttribute("data-need")) {     // 못 쓰는 걸 아는데 서버까지 갈 이유가 없다
-      show("settings");
+      SM.touched = true; SM.show("settings");
       var sec = document.getElementById("sm-set");
       if (sec) sec.scrollIntoView({block: "start"});
       return;
@@ -335,15 +478,23 @@
       var r = await fetch("/api/create", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), opportunity_id: Number(id)})});
-      var d = await r.json();
-      if (r.ok && d.pr) { b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 확인하기 →</a>'; return; }
-      if (r.status === 428) {            // SET_H 가 낡았다 — 설정을 다시 읽고 그 자리로
-        SET_DONE = ""; REPO_LIST = null; await setLoad(); wire();
-        show("settings");
+      var d = await r.json().catch(noDetail);
+      if (r.ok && d.pr) {
+        banner("done", "초안을 PR 로 올렸습니다. 내용을 확인하고 머지하면 반영됩니다.");
+        b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 확인하기 →</a>';
         return;
       }
-      b.textContent = (d.detail || "작성하지 못했습니다").slice(0, 60); b.disabled = false;
-    } catch (e) { b.textContent = "서버에 연결하지 못했습니다"; b.disabled = false; }
+      if (r.status === 428) {            // SET_H 가 낡았다 — 설정을 다시 읽고 그 자리로
+        SET_DONE = ""; REPO_LIST = null; await setLoad(); wire();
+        SM.touched = true; SM.show("settings");
+        return;
+      }
+      banner("bad", "초안을 만들지 못했습니다. " + (d.detail || OFFLINE) +
+        " 잠시 뒤 다시 눌러 주세요.");
+    } catch (e) {
+      banner("bad", OFFLINE + " 잠시 뒤 다시 눌러 주세요.");
+    }
+    b.disabled = false; b.textContent = "콘텐츠 작성";
   }
 
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
@@ -374,18 +525,83 @@
     });
   }
 
+  // 단계 하나를 돌린다. 피드백은 세 박자다 — 눌렀다(버튼) · 도는 중(배너) ·
+  // 끝났다(배너 + 화면 갱신). 실패는 버튼 라벨을 44자로 자르지 않고 배너에서
+  // 원인과 다음 행동을 말한다.
   async function runStage(stage, btn) {
-    var was = btn.textContent;
-    btn.disabled = true; btn.textContent = "실행 중…";
+    var was = btn.textContent, g = (STAGE || {})[stage], nm = (g && g.t) || "분석";
+    btn.disabled = true; btn.textContent = "시작하는 중…";
     try {
       var r = await fetch("/api/run", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), stages: stage})});
-      if (!r.ok) { var d = await r.json(); btn.textContent = (d.detail || "실행하지 못했습니다").slice(0, 44); }
-      else { btn.textContent = "실행 시작"; }
-    } catch (e) { btn.textContent = "서버에 연결하지 못했습니다"; }
+      if (!r.ok) throw new Error((await r.json().catch(noDetail)).detail || "");
+    } catch (e) {
+      btn.disabled = false; btn.textContent = was;
+      banner("bad", nm + ul(nm) + " 시작하지 못했습니다. " + reason(e) +
+        " 잠시 뒤 다시 눌러 주세요.");
+      return;
+    }
+    ranStage = stage;
+    btn.textContent = was;                 // 잠금은 폴링이 푼다(runLock)
+    btn.dataset.smLock = "1";
+    banner("", nm + ul(nm) + " 시작했습니다. 끝나면 이 화면이 저절로 갱신됩니다.");
     poll();
-    setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 4000);
+    // 폴링 자체가 못 돌면 버튼이 영영 잠긴 채로 남는다 — 그때만 손으로 푼다.
+    setTimeout(function () { if (!RUNNING) runLock(false); }, 12000);
+  }
+
+  // 도는 동안에는 어느 단계를 눌러도 서버가 같은 이유로 막는다 — 눌러 보게 하지
+  // 않는다. 여기서 잠근 것만 여기서 푼다(다른 이유로 꺼 둔 버튼을 켜지 않는다).
+  function runLock(on) {
+    document.querySelectorAll("[data-run]").forEach(function (x) {
+      if (on) { x.disabled = true; x.dataset.smLock = "1"; }
+      else if (x.dataset.smLock) { x.disabled = false; delete x.dataset.smLock; }
+    });
+  }
+
+  // 화면이 자기 마크업에 심어 둔 실행 손잡이를 잇는다 — 다음 행동 띠(.next)와
+  // 빈 상태(.empty)의 버튼은 셸이 window.act 로 만들고, 무엇을 할지는 배포가
+  // 정한다. 로컬은 명령 복사 칩이고, 호스팅에서는 여기가 그 클릭을 받는다.
+  // 다시 불러오기(data-sm-retry)도 같은 자리에서 받는다.
+  //
+  // 자리로 고르지 않고 **표식으로 고른다**. 처음엔 `.next [data-run], .empty
+  // [data-run]` 만 봤는데, 뷰가 펼침 패널(.det .acts)에도 같은 버튼을 달자
+  // 그것만 조용히 죽었다 — 떠 있는데 눌러도 아무 일이 없는, 이 리포가 이미
+  // 한 번 겪은 그 모양이다. data-run 이 계약이지 상자 이름이 계약이 아니다.
+  // 두 부류만 뺀다:
+  //   · .sm-refresh — 머리줄 버튼은 runButtons() 가 자기 onclick 을 건다
+  //   · 인라인 onclick 을 가진 것 — 그 버튼은 자기가 할 일을 이미 안다
+  // 둘 다 여기서 또 받으면 한 번 누른 게 두 번 돈다.
+  document.addEventListener("click", function (ev) {
+    if (!ev.target.closest) return;
+    var t = ev.target.closest("[data-run]");
+    if (t && !t.classList.contains("sm-refresh") && !t.hasAttribute("onclick")) {
+      ev.preventDefault();
+      if (t.disabled) return;
+      var st = t.getAttribute("data-run");
+      // "run" 은 단계가 아니라 전 단계 일괄 실행이다 — 레일 바닥 버튼과 같은 것.
+      return st === "run" ? runAll(t) : runStage(st, t);
+    }
+    var rt = ev.target.closest("[data-sm-retry]");
+    if (rt) { ev.preventDefault(); retry(rt.getAttribute("data-sm-retry")); }
+  });
+
+  function retry(what) {
+    if (what === "kw") return kwLoad();
+    if (what === "aiq") return aiqLoad();
+    if (what === "set") { SET_DONE = ""; return setLoad(); }
+  }
+
+  // 목록 자리의 빈 상태·오류. 셸의 .empty 계약을 그대로 쓴다 — 없는 것 · 왜
+  // 필요한지 · 무엇을 하면 되는지. 행동이 없는 빈 상태는 막다른 길이다.
+  // 안내가 목록을 통째로 채울 때는 바깥 상자 테두리를 지운다 — 점선 상자가
+  // 실선 상자 안에 또 서면 무엇이 한 덩어리인지가 안 읽힌다.
+  function bare(list, on) { if (list) list.classList.toggle("bare", !!on); }
+
+  function emptyNote(title, why, acts) {
+    return '<div class="empty sm-note"><b>' + esc(title) + "</b><p>" + esc(why) +
+      "</p>" + (acts ? '<div class="acts">' + acts + "</div>" : "") + "</div>";
   }
 
   // [질문 만들기] — 웹에는 `/capture add` 를 칠 채팅이 없다. 이 버튼이 그 자리다.
@@ -397,15 +613,16 @@
       var r = await fetch("/api/ai/prompts", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({project: proj(), limit: 20})});
-      var d = await r.json();
-      if (!r.ok) { btn.textContent = (d.detail || "만들지 못했습니다").slice(0, 60); }
-      else {
-        btn.textContent = "질문 " + d.added + "개 완성 — 아래 목록에서 확인하세요";
-        load(); loadDoctor(); aiqLoad();
-        return;                                   // 화면이 다시 그려지며 이 버튼은 사라진다
-      }
-    } catch (e) { btn.textContent = "서버에 연결하지 못했습니다"; }
-    setTimeout(function () { btn.disabled = false; btn.textContent = was; }, 6000);
+      var d = await r.json().catch(noDetail);
+      if (!r.ok) throw new Error(d.detail || "");
+      banner("done", "질문 " + d.added + "개를 만들었습니다. 아래 목록에서 읽어 보고," +
+        " 업종과 안 맞는 것은 끄거나 고치세요.");
+      load(); loadDoctor(); aiqLoad();
+      return;                                     // 화면이 다시 그려지며 이 버튼은 사라진다
+    } catch (e) {
+      banner("bad", "질문을 만들지 못했습니다. " + reason(e) + " 잠시 뒤 다시 눌러 주세요.");
+    }
+    btn.disabled = false; btn.textContent = was;
   }
 
   // 화면이 자기 마크업에 심어 둔 동작을 잇는다 — 렌더된 글자를 되짚지 않는다.
@@ -423,6 +640,10 @@
   // 정규식을 걸어 되짚었다.
   function wireSteps() {
     document.querySelectorAll("button.cmd").forEach(function (b) {
+      // 인계 섹션의 칩은 남긴다 — 웹에서 못 하는 일을 Claude Code 로 넘기는 자리라
+      // '복사'가 맞는 동작이고, 배선은 handoff() 가 따로 한다. 이 표식이 없으면
+      // 아래 b.remove() 가 그 넷을 통째로 지운다(칩에 .cmd 를 준 순간 그렇게 됐다).
+      if (b.closest("#sm-cc")) return;
       if (b.dataset.smWired) return;
       b.dataset.smWired = "1";
       var st = b.dataset.stage || "";
@@ -479,14 +700,26 @@
   });
 
   // 화면 제목 옆 실행 버튼 — 그 화면을 채우는 단계를 거기서 돌린다.
-  // 셸이 화면 상자를 (다시) 세울 때마다 부른다. 이미 붙어 있으면 아무것도 안 한다.
+  //
+  // 다음 행동 띠가 같은 단계를 **주요 버튼으로** 들고 있으면 머리줄에서는 아예
+  // 뺀다. 예전에는 흐리게만 했는데, 그러면 그 화면에서 제일 중요한 단계의 버튼이
+  // 화면에서 제일 흐린 버튼이 된다 — 위계가 거꾸로 선다. 같은 일을 두 번 놓지
+  // 않는 편이 낫다. 띠가 그 단계를 놓거나 보조로 내리면 다시 붙는다.
+  //
+  // 양방향이라 한 함수에 둔다. 여러 번 불려도 공짜고(값이 같으면 DOM 에 안 쓴다),
+  // 아래 MutationObserver 가 매번 다시 부른다.
   function runButtons() {
     (window.SM ? SM.views : []).forEach(function (v) {
-      var head = document.querySelector("#view-" + v.id + " .vh");
+      var box = document.getElementById("view-" + v.id);
+      var head = box && box.querySelector(".vh");
       if (!head) return;
       v.stages.forEach(function (st) {
-        if (!STAGE[st] || head.querySelector('[data-run="' + st + '"]')) return;
-        var rb = document.createElement("button");
+        if (!STAGE[st]) return;
+        var rb = head.querySelector('.sm-refresh[data-run="' + st + '"]');
+        var lead = box.querySelector('.next [data-run="' + st + '"]:not(.sec)');
+        if (lead) { if (rb) rb.remove(); return; }
+        if (rb) return;
+        rb = document.createElement("button");
         rb.className = "sm-refresh";
         rb.dataset.run = st;
         rb.textContent = STAGE[st].run;       // 화면 제목과 겹치지 않게 다르게 부른다
@@ -523,6 +756,7 @@
   function setRender(msg) {
     var sec = document.getElementById("sm-set");
     if (!sec || !SET_H) return;
+    if (!SET_H.presets) return setFail();       // 응답은 왔는데 내용이 아니다
     sec.querySelector(".opts").innerHTML = SET_H.presets.map(function (p) {
       return '<button data-h="' + p.h + '"' +
         (p.h === SET_H.run_every_hours ? ' class="on"' : "") + ">" + esc(p.label) +
@@ -530,6 +764,74 @@
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
     repoRender();
     ga4Render();
+    setNext(true);
+  }
+
+  // 설정 화면의 주요 행동은 하나다 — 안 끝난 첫 칸이 갖는다(저장소 다음 GA4).
+  // 둘 다 끝났으면 채운 버튼은 없다: 그 화면에서 더 할 일이 없다는 뜻이다.
+  function firstTodo() {
+    if (!SET_H) return "";
+    if (SET_H.github_enabled && (!SET_H.github_connected || !SET_H.repo)) return "repo";
+    if (!SET_H.ga4_property) return "ga4";
+    return "";
+  }
+  var leadCls = function (who) { return firstTodo() === who ? " lead" : ""; };
+
+  // 설정을 못 받으면 세 칸이 통째로 빈다 — 빈 화면은 고장으로 보이지, 이유를
+  // 말하지 않는다. 세 칸 다 빈 상태 상자를 세운다: 회색 한 줄만 남기면 그 칸이
+  // 고장 난 것처럼 읽히고, 다시 불러올 손잡이도 그 자리에 없다.
+  function setFail() {
+    var sec = document.getElementById("sm-set");
+    if (!sec) return;
+    var retry = '<button data-sm-retry="set">다시 불러오기</button>';
+    var opts = sec.querySelector(".opts");
+    if (opts) {
+      opts.innerHTML = emptyNote("수집 주기를 불러오지 못했습니다",
+        OFFLINE + " 지금 어떤 주기로 재고 있는지 볼 수 없습니다.", retry);
+    }
+    var body = sec.querySelectorAll(".repo .body");
+    if (body[0]) {
+      body[0].innerHTML = emptyNote("저장소 연결 상태를 불러오지 못했습니다",
+        OFFLINE + " 개선 기회를 PR 로 보낼 곳이 붙어 있는지 볼 수 없습니다.", retry);
+    }
+    if (body[1]) {
+      body[1].innerHTML = emptyNote("GA4 연결 상태를 불러오지 못했습니다",
+        OFFLINE + " 클릭 다음 실적을 읽고 있는지 볼 수 없습니다.", retry);
+    }
+    setNext(false);
+  }
+
+  // 설정 화면의 다음 행동 띠는 서버 응답을 보고 정해야 한다. 뷰는 페이로드가
+  // 오기 전에 "측정에 필요한 연결은 다 됐습니다" 라고 낙관했다 — 실제로는 아직
+  // 아무것도 안 읽은 상태였다. 받은 뒤 여기서 사실로 덮는다.
+  //
+  // 띠에 상태 이름을 표식으로 남기고, 같은 상태면 다시 쓰지 않는다. nextStep 은
+  // 부를 때마다 innerHTML 을 새로 쓰므로, 표식 없이 MutationObserver 에서 부르면
+  // 자기가 자기를 깨워 화면이 얼어붙는다. 뷰가 띠를 다시 그리면 표식이 사라지고,
+  // 그때 한 번만 다시 덮는다.
+  var SET_NEXT = {
+    fail: "<p>설정을 불러오지 못해 지금 상태를 알 수 없습니다.</p>" +
+      '<div class="acts"><button class="go" data-sm-retry="set">다시 불러오기</button></div>',
+    repo: "<p>개선 기회를 콘텐츠 초안으로 받으려면 저장소를 연결하세요. " +
+      "연결 전에도 나머지 측정은 그대로 됩니다.</p>",
+    ga4: "<p>클릭 다음에 일어난 일까지 보려면 GA4 속성을 연결하세요. " +
+      "연결 전에도 검색 실적은 그대로 쌓입니다.</p>",
+    done: "<p>연결은 다 됐습니다. 여기서 바꾼 값은 다음 실행부터 적용됩니다.</p>"
+  };
+  var SET_STATE = "";
+  function setNext(ok) {
+    SET_STATE = !ok ? "fail" : (firstTodo() || "done");
+    paintSetNext();
+  }
+  function paintSetNext() {
+    if (!SET_STATE || typeof window.nextStep !== "function") return;
+    var box = document.getElementById("view-settings");
+    if (!box) return;
+    var cur = box.querySelector(".next");
+    if (cur && cur.dataset.smSet === SET_STATE) return;
+    nextStep("settings", SET_NEXT[SET_STATE]);
+    cur = box.querySelector(".next");
+    if (cur) cur.dataset.smSet = SET_STATE;
   }
 
   // 저장소 칸. 세 상태뿐이다 — GitHub 계정이 없다 / 계정은 있고 저장소만 없다 /
@@ -542,13 +844,14 @@
     if (!body) return;
     var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
     if (!SET_H.github_enabled) {           // 이 배포 자체가 GitHub 연동을 안 갖고 있다
-      body.innerHTML = '<p class="none">이 배포에는 GitHub 연동이 꺼져 있습니다 — ' +
-        '기회는 그대로 보이니, 글은 손으로 옮겨 주세요.</p>' + note;
+      body.innerHTML = '<p class="none">이 서비스에서는 GitHub 연결을 쓰지 않습니다. ' +
+        "개선 기회는 그대로 보이니 글은 직접 옮기세요.</p>" + note;
       return;
     }
     if (!SET_H.github_connected) {
-      body.innerHTML = '<p class="none">GitHub 계정이 아직 연결되지 않았습니다 — ' +
-        '<a href="/auth/github">GitHub 연결하기 →</a></p>' + note;
+      body.innerHTML = '<p class="none">GitHub 계정이 아직 연결되지 않았습니다. ' +
+        '연결하면 개선 기회를 PR 로 바로 받을 수 있습니다.</p>' +
+        '<a class="' + leadCls("repo").trim() + '" href="/auth/github">GitHub 연결하기 →</a>' + note;
       return;
     }
     if (REPO_LIST) {                       // [바꾸기] 를 눌러 목록을 받아 온 상태
@@ -562,11 +865,11 @@
       return;
     }
     body.innerHTML = '<div class="opts">' +
-      (SET_H.repo ? '<span class="now">' + esc(SET_H.repo) + " · " +
-                    esc(SET_H.repo_branch || "main") + "</span>"
+      (SET_H.repo ? '<span class="now"><code>' + esc(SET_H.repo) + "</code> · <code>" +
+                    esc(SET_H.repo_branch || "main") + "</code> 에 보냅니다</span>"
                   : '<span class="none">아직 연결된 저장소가 없습니다</span>') +
-      "<button data-repo-pick>" + (SET_H.repo ? "바꾸기" : "저장소 고르기") + "</button>" +
-      "</div>" + note;
+      '<button data-repo-pick class="' + (SET_H.repo ? "" : leadCls("repo").trim()) + '">' +
+      (SET_H.repo ? "저장소 바꾸기" : "저장소 고르기") + "</button></div>" + note;
   }
 
   // 목록은 누를 때 받는다 — GitHub API 호출이라 화면을 열 때마다 부르지 않는다.
@@ -577,9 +880,9 @@
       var d = await r.json();
       if (!r.ok) throw new Error(d.detail || "");
       REPO_LIST = d.repos || [];
-      if (!REPO_LIST.length) return repoRender("이 계정에서 쓸 수 있는 저장소가 없습니다");
+      if (!REPO_LIST.length) return repoRender("이 계정에 쓸 수 있는 저장소가 없습니다. GitHub 에서 만든 뒤 다시 눌러 주세요.");
     } catch (e) {
-      return repoRender("저장소 목록을 불러오지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+      return repoRender("저장소 목록을 불러오지 못했습니다. " + reason(e) + " 다시 눌러 주세요.");
     }
     repoRender("");
   }
@@ -596,10 +899,10 @@
       if (!r.ok) throw new Error(d.detail || "");
       SET_H.repo = repo; SET_H.repo_branch = branch;
       REPO_LIST = null;                    // 고른 것을 보여 주는 상태로 돌아간다
-      repoRender("저장됨");
+      repoRender("저장했습니다.");
       wire();                              // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
     } catch (e) {
-      repoRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+      repoRender("저장하지 못했습니다. " + reason(e) + " 다시 눌러 주세요.");
     }
   }
 
@@ -625,19 +928,20 @@
           esc(p.account) + " · " + esc(p.name) + " (" + esc(p.id) + ")</option>";
       }).join("") + '</select><button data-ga4-save>저장</button></div>' +
         (GA4_SUGGESTED.length ?
-          '<p class="msg">이것 같습니다 — 도메인·이름이 비슷한 속성을 먼저 골라 뒀습니다. 확인 후 저장하세요.</p>' : "") +
+          '<p class="msg">도메인·이름이 비슷한 속성을 미리 골라 뒀습니다. 맞는지 확인하고 저장하세요.</p>' : "") +
         note;
       return;
     }
     if (SET_H.ga4_property) {
-      body.innerHTML = '<div class="opts"><span class="now">속성 ' +
-        esc(SET_H.ga4_property) + ' 연결됨</span>' +
-        "<button data-ga4-pick>바꾸기</button></div>" + note;
+      body.innerHTML = '<div class="opts"><span class="now">속성 <code>' +
+        esc(SET_H.ga4_property) + "</code> 를 읽고 있습니다</span>" +
+        "<button data-ga4-pick>속성 바꾸기</button></div>" + note;
       return;
     }
-    body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다 — ' +
-      '세션·매출 같은 클릭 다음 실적을 보려면 연결하세요.</span>' +
-      "<button data-ga4-pick>GA4 속성 연결하기</button></div>" + note;
+    body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다. ' +
+      "연결하면 클릭 다음에 일어난 일(세션·매출)까지 봅니다.</span>" +
+      '<button data-ga4-pick class="' + leadCls("ga4").trim() +
+      '">GA4 속성 연결하기</button></div>' + note;
   }
 
   async function ga4Pick() {
@@ -648,16 +952,16 @@
       r = await fetch("/api/ga4/properties?project=" + encodeURIComponent(proj()));
       d = await r.json();
     } catch (e) {
-      return ga4Render("서버에 연결하지 못했습니다 — 다시 시도해 주세요");
+      return ga4Render(OFFLINE + " 다시 눌러 주세요.");
     }
     if (r.status === 403) {
-      GA4_AUTH_ERR = d.detail || "GA4 접근 권한이 없습니다 — 재로그인이 필요합니다";
+      GA4_AUTH_ERR = d.detail || "이 로그인에는 GA4 읽기 권한이 없습니다. 다시 로그인하면 권한을 받습니다.";
       return ga4Render();
     }
-    if (!r.ok) return ga4Render("속성 목록을 불러오지 못했습니다 — " + (d.detail || "다시 시도해 주세요"));
+    if (!r.ok) return ga4Render("속성 목록을 불러오지 못했습니다. " + (d.detail || "잠시 뒤 다시 눌러 주세요."));
     GA4_LIST = d.properties || [];
     GA4_SUGGESTED = d.suggested || [];
-    if (!GA4_LIST.length) return ga4Render("이 계정에서 접근 가능한 GA4 속성이 없습니다");
+    if (!GA4_LIST.length) return ga4Render("이 계정으로 볼 수 있는 GA4 속성이 없습니다. 속성 읽기 권한을 받은 계정으로 로그인하세요.");
     ga4Render("");
   }
 
@@ -672,9 +976,9 @@
       if (!r.ok) throw new Error(d.detail || "");
       SET_H.ga4_property = d.ga4_property;
       GA4_LIST = null;
-      ga4Render("저장됨");
+      ga4Render("저장했습니다.");
     } catch (e) {
-      ga4Render("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+      ga4Render("저장하지 못했습니다. " + reason(e) + " 다시 눌러 주세요.");
     }
   }
 
@@ -685,7 +989,10 @@
     try {
       SET_H = await (await fetch("/api/settings?project=" +
         encodeURIComponent(pj))).json();
-    } catch (e) { SET_DONE = ""; return; }   // 실패는 되돌려 다음 기회에 다시 받는다
+    } catch (e) {
+      SET_DONE = "";                         // 실패는 되돌려 다음 기회에 다시 받는다
+      return setFail();
+    }
     setRender("");
   }
 
@@ -699,9 +1006,9 @@
       var d = await r.json();
       if (!r.ok) throw new Error(d.detail || "");
       SET_H.run_every_hours = d.run_every_hours;
-      setRender("저장됨");
+      setRender("저장했습니다.");
     } catch (e) {
-      setRender("저장하지 못했습니다 — " + ((e && e.message) || "다시 시도해 주세요"));
+      setRender("저장하지 못했습니다. " + reason(e) + " 다시 눌러 주세요.");
     }
   }
   // 갱신 계기는 "sm:site" 하나다 — 아래 한 자리에서 같이 받는다.
@@ -737,19 +1044,30 @@
     var box = document.getElementById("sm-kw");
     if (!box) return;
     var list = box.querySelector(".list");
-    list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">불러오는 중…</p>';
+    bare(list, true);
+    list.innerHTML = '<p class="sm-note">불러오는 중…</p>';
     var d;
     try {
       d = await (await fetch("/api/keywords?status=" + kwMode +
                              "&project=" + encodeURIComponent(proj()))).json();
-    } catch (e) { list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">키워드를 불러오지 못했습니다. 새로고침해 주세요.</p>'; return; }
+    } catch (e) {
+      list.innerHTML = emptyNote("검색어 목록을 불러오지 못했습니다",
+        OFFLINE + " 지금은 무엇을 추적 중인지 확인할 수 없습니다.",
+        '<button data-sm-retry="kw">다시 불러오기</button>');
+      return;
+    }
     var ks = d.keywords || [];
-    box.querySelector(".cnt").innerHTML = "추적 키워드 " + d.active_total + " / " + d.limit +
-      (d.active_total >= d.limit ? ' <b class="warn">· 한도 도달</b>' : "");
+    box.querySelector(".cnt").innerHTML = "추적 중 " + d.active_total + " / " + d.limit +
+      "개" + (d.active_total >= d.limit ? ' <b class="warn">· 한도에 닿았습니다</b>' : "");
     if (!ks.length) {
-      list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
-        (kwMode === "candidate" ? "발굴된 후보가 없습니다 — 위 [키워드 다시 발굴]을 누르면 채워집니다."
-                                : "추적 중인 키워드가 없습니다 — 후보 탭에서 골라 여기로 옮기세요.") + "</p>";
+      list.innerHTML = kwMode === "candidate"
+        ? emptyNote("아직 찾아 둔 후보가 없습니다",
+               "후보가 있어야 무엇을 추적할지 고를 수 있습니다. 검색창 자동완성에서 " +
+               "관련 검색어를 모아 옵니다.",
+               '<button class="go sec" data-run="keywords">키워드 찾기</button>')
+        : emptyNote("추적 중인 검색어가 없습니다",
+               "추적을 켜면 그 검색어의 순위를 날마다 재고, 1페이지까지 얼마나 남았는지 봅니다.",
+               '<button class="go sec" data-m="candidate">후보에서 고르기</button>');
       return;
     }
     // 오른쪽 한 줄이 "이걸 왜 켜야 하나"에 답해야 한다. 노출이 있으면 실측이 먼저고,
@@ -763,6 +1081,7 @@
       }
       return esc(k.source || "");
     };
+    bare(list, false);
     list.innerHTML = ks.map(function (k) {
       return '<label><input type="checkbox" value="' + k.id + '">' +
              '<span class="kw">' + esc(k.keyword) + "</span>" +
@@ -788,7 +1107,7 @@
         '<b class="warn">' + esc(d.detail || "변경하지 못했습니다") + "</b>"; return; }
     } catch (e) {
       btn.disabled = false;
-      box.querySelector(".cnt").innerHTML = '<b class="warn">서버에 연결하지 못했습니다</b>';
+      box.querySelector(".cnt").innerHTML = '<b class="warn">' + OFFLINE + "</b>";
       return;
     }
     kwLoad();
@@ -801,15 +1120,17 @@
     if (!sec || sec.dataset.smWired) return;
     sec.dataset.smWired = "1";
 
-    sec.querySelector(".tabs").addEventListener("click", function (ev) {
+    // 섹션 전체에서 받는다 — 빈 상태의 [후보에서 고르기]도 같은 탭 전환이다.
+    // 그래서 켜진 탭은 "눌린 것"이 아니라 지금 모드로 판단한다.
+    sec.addEventListener("click", function (ev) {
       var b = ev.target.closest ? ev.target.closest("[data-m]") : null;
       if (!b) return;
       kwMode = b.getAttribute("data-m");
       sec.querySelectorAll(".tabs button").forEach(function (x) {
-        x.classList.toggle("on", x === b);
+        x.classList.toggle("on", x.getAttribute("data-m") === kwMode);
       });
       sec.querySelector(".go2").textContent =
-        kwMode === "candidate" ? "선택 항목 추적" : "추적 해제";
+        kwMode === "candidate" ? "고른 것 추적하기" : "고른 것 추적 끄기";
       kwLoad();
     });
     sec.querySelector(".go2").addEventListener("click", function () {
@@ -829,23 +1150,26 @@
     var list = box.querySelector(".list");
     box.querySelector(".cnt").innerHTML =
       "켠 질문 " + d.active_total + " / " + d.limit +
-      (d.active_total >= d.limit ? ' <b class="warn">· 상한 도달</b>' : "");
+      "개" + (d.active_total >= d.limit ? ' <b class="warn">· 상한에 닿았습니다</b>' : "");
     if (!(d.prompts || []).length) {
-      list.innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">' +
-        "아직 질문이 없습니다 — [AI에게 질문 만들게 하기]를 누르거나 직접 추가하세요.</p>";
+      list.innerHTML = emptyNote("아직 물어볼 질문이 없습니다",
+        "질문이 있어야 AI 답변에 우리 도메인이 나오는지 셀 수 있습니다. " +
+        "업종과 검색어를 보고 스무 개를 지어 드립니다.",
+        '<button class="go sec" data-sm-act="make-prompts">질문 만들기</button>');
       return;
     }
+    bare(list, false);
     list.innerHTML = d.prompts.map(function (q) {
       return '<div class="q' + (q.is_active ? "" : " off") + '" data-id="' + q.id + '">' +
         '<input type="checkbox" class="on"' + (q.is_active ? " checked" : "") +
-          ' title="켜면 이번 확인에 물어봅니다">' +
+          ' title="켜 두면 다음 확인에 이 질문을 물어봅니다">' +
         '<input class="t" value="' + esc(q.prompt) + '">' +
         '<select class="c">' + AIQ_CATS.map(function (c) {
           return '<option' + (c === q.category ? " selected" : "") + ">" + esc(c) + "</option>";
         }).join("") + "</select>" +
-        '<span class="n">' + (q.checks ? q.checks + "회 · 인용 " + q.cited : "아직 안 물음") +
+        '<span class="n">' + (q.checks ? q.checks + "회 물음 · 인용 " + q.cited + "회" : "아직 안 물어봤습니다") +
           "</span>" +
-        '<button class="del" title="지우기 — 확인 기록도 함께 사라집니다">×</button>' +
+        '<button class="del" title="지우기. 확인 기록도 함께 사라집니다">×</button>' +
         "</div>";
     }).join("");
   }
@@ -854,16 +1178,27 @@
     box.querySelector(".cnt").innerHTML = '<b class="warn">' + esc(msg) + "</b>";
   }
 
+  // 목록을 못 받으면 상자가 "불러오는 중…" 인 채로 굳는다 — 오류는 목록 자리에
+  // 둔다. 오른쪽 끝 개수 칸(.cnt)에만 적으면 읽는 사람이 그걸 못 본다.
+  function aiqDead(box, why) {
+    box.querySelector(".list").innerHTML = emptyNote("질문 목록을 불러오지 못했습니다", why,
+      '<button data-sm-retry="aiq">다시 불러오기</button>');
+    box.querySelector(".cnt").textContent = "";
+  }
+
   async function aiqLoad() {
     var box = document.getElementById("sm-aiq");
     if (!box) return;
-    box.querySelector(".list").innerHTML = '<p style="padding:14px;color:var(--slate);font-size:13px">불러오는 중…</p>';
+    bare(box.querySelector(".list"), true);
+    box.querySelector(".list").innerHTML = '<p class="sm-note">불러오는 중…</p>';
     try {
       var r = await fetch("/api/ai/prompts?project=" + encodeURIComponent(proj()));
-      var d = await r.json();
-      if (!r.ok) return aiqSay(box, d.detail || "질문을 불러오지 못했습니다");
+      var d = await r.json().catch(noDetail);
+      if (!r.ok) return aiqDead(box, d.detail || OFFLINE);
       aiqPaint(box, d);
-    } catch (e) { aiqSay(box, "질문을 불러오지 못했습니다. 새로고침해 주세요"); }
+    } catch (e) {
+      aiqDead(box, OFFLINE);
+    }
   }
 
   async function aiqSend(body) {
@@ -875,7 +1210,7 @@
       var d = await r.json();
       if (!r.ok) { aiqSay(box, d.detail || "저장하지 못했습니다"); return; }
       aiqPaint(box, d);
-    } catch (e) { aiqSay(box, "서버에 연결하지 못했습니다"); }
+    } catch (e) { aiqSay(box, OFFLINE); }
   }
 
   // 마크업은 이미 서 있다(templates/sections/sm-aiq.html) — 여기서는 이벤트를
@@ -958,10 +1293,11 @@
       var b = ev.target.closest ? ev.target.closest("[data-cc]") : null;
       if (!b) return;
       var cmd = b.getAttribute("data-cc") + proj();
+      // 복사됐다는 표시는 셸의 .cmd.copied 가 갖는다 — 글자를 갈아치우면 그 자리에
+      // 있던 명령이 사라져, 무엇을 복사했는지가 화면에서 없어진다.
       navigator.clipboard.writeText(cmd).then(function () {
-        var was = b.textContent;
-        b.textContent = "복사됨 ✓";
-        setTimeout(function () { b.textContent = was; }, 1400);
+        b.classList.add("copied");
+        setTimeout(function () { b.classList.remove("copied"); }, 1400);
       });
     });
   }
@@ -1079,20 +1415,22 @@
     sec.hidden = false;
     var t = PERF.totals;
     if (!t) {
-      sec.innerHTML = '<p class="eyebrow">PERFORMANCE</p><h2>검색 성과</h2>' +
-        '<p class="sm-none">검색 실적을 아직 수집하지 않았습니다 — 위 [실적 다시 수집]을 누르면 채워집니다.</p>';
+      sec.innerHTML = '<p class="eyebrow">검색 실적</p><h2>클릭률과 게재순위</h2>' +
+        emptyNote("검색 실적을 아직 한 번도 읽지 않았습니다",
+          "서치콘솔에서 실적을 읽어야 평균 CTR 과 평균 게재순위가 나옵니다.",
+          '<button class="go sec" data-run="gsc">실적 수집</button>');
       return;
     }
     var dl = PERF.daily || [], pv = PERF.prev || {};
     var span = dl.length ? dl[0].d + " → " + dl[dl.length - 1].d : PERF.snapshot;
-    sec.innerHTML = '<p class="eyebrow">PERFORMANCE · ' + esc(span) +
+    sec.innerHTML = '<p class="eyebrow">검색 실적 · ' + esc(span) +
       (dl.length ? " · " + dl.length + "일" : "") + "</p>" +
-      "<h2>검색 성과</h2>" +
-      '<p class="sub">위 일별 추이가 클릭·노출을 그립니다. 나머지 두 지표가 여기 있습니다 — ' +
+      "<h2>클릭률과 게재순위</h2>" +
+      '<p class="sub">위 일별 추이가 클릭과 노출을 그립니다. 남은 두 지표를 여기서 봅니다. ' +
       "게재순위는 노출 가중 평균이라 서치콘솔 화면의 값과 같고, 선이 위로 갈수록 순위가 높습니다. " +
-      "제목 옆 숫자는 현재 값이고 증감은 직전 분석 대비입니다." +
-      (PERF.period_mismatch ? " 직전 기록과 기간이 달라 이번엔 증감을 비교하지 않았습니다 " +
-        "— 같은 기간으로 한 번 더 읽으면 채워집니다." : "") + "</p>" +
+      "제목 옆 숫자가 지금 값이고, 증감은 직전 측정 대비입니다." +
+      (PERF.period_mismatch ? " 직전 기록과 기간이 달라 이번에는 증감을 비교하지 않았습니다. " +
+        "같은 기간으로 한 번 더 읽으면 채워집니다." : "") + "</p>" +
       '<div class="sm-charts">' +
       ['<div>' + line(dl, "ctr", {label: "CTR", fmt: pct, now: t.ctr, was: pv.ctr,
           dfmt: function (x) { return (x * 100).toFixed(2) + "%p"; }}) + "</div>",
@@ -1138,13 +1476,14 @@
       ? all + "행" : rows.length + "행 / 전체 " + all + "행";
     var head = DIMS.filter(function (x) { return x[0] === dimMode; })[0][1];
     if (!all) {
-      box.innerHTML = '<p class="sm-none">' + (dimMode === "devices"
-        ? "기기별 데이터를 아직 수집하지 않았습니다 — 위 [실적 다시 수집]을 누르면 채워집니다."
-        : "아직 수집된 데이터가 없습니다.") + "</p>";
+      box.innerHTML = emptyNote(
+        dimMode === "devices" ? "기기별 실적이 아직 없습니다" : "이 축의 실적이 아직 없습니다",
+        "서치콘솔에서 실적을 한 번 더 읽으면 이 표가 채워집니다.",
+        '<button class="go sec" data-run="gsc">실적 수집</button>');
       return;
     }
     if (!rows.length) {
-      box.innerHTML = '<p class="sm-none">찾는 말과 맞는 줄이 없습니다.</p>';
+      box.innerHTML = '<p class="sm-none">찾는 말과 맞는 줄이 없습니다. 다른 말로 찾아 보세요.</p>';
       return;
     }
     // 노출 비중 막대 — 상위 몇 줄이 전부인지, 고르게 퍼졌는지가 숫자보다 빨리 보인다.
@@ -1154,7 +1493,7 @@
         var on = c[0] === dimSort;
         return '<th class="num"><button data-s="' + c[0] + '"' +
           (on ? ' class="on' + (dimAsc ? " asc" : "") + '"' : "") +
-          ' title="' + c[1] + ' 기준으로 정렬' + (on ? " — 다시 누르면 반대 순서" : "") +
+          ' title="' + c[1] + ' 기준으로 정렬' + (on ? ". 다시 누르면 반대 순서" : "") +
           '">' + c[1] + "</button></th>";
       }).join("") + "</tr></thead><tbody>" +
       rows.map(function (r) {
@@ -1189,10 +1528,10 @@
     if (!PERF.totals) { sec.hidden = true; return; }
     sec.hidden = false;
     if (!sec.querySelector(".sm-dimt")) {
-      sec.innerHTML = '<p class="eyebrow">BREAKDOWN</p><h2>무엇으로 들어오나</h2>' +
-        '<p class="sub">열 이름을 누르면 그 기준으로 정렬되고, 같은 열을 다시 누르면 반대 ' +
-        "순서가 됩니다. 노출은 많은데 CTR 이 낮은 줄이 제목·설명을 고칠 자리입니다. " +
-        "노출 상위 25개까지 가져옵니다.</p>" +
+      sec.innerHTML = '<p class="eyebrow">유입 분해</p><h2>무엇으로 들어오나</h2>' +
+        '<p class="sub">노출은 많은데 CTR 이 낮은 줄을 찾으세요. 거기가 제목과 설명을 ' +
+        "고칠 자리입니다. 열 이름을 누르면 그 기준으로 정렬하고, 같은 열을 다시 누르면 " +
+        "반대 순서가 됩니다. 노출 상위 25개까지 봅니다.</p>" +
         '<div class="tabs">' + DIMS.map(function (d) {
           return '<button data-d="' + d[0] + '">' + d[1] + "</button>";
         }).join("") + "</div>" +
@@ -1266,8 +1605,8 @@
       }
       var want = need ? "저장소 연결 필요" : "콘텐츠 작성";
       if (w.textContent !== want) w.textContent = want;
-      var tip = need ? "이 사이트에 저장소가 연결되지 않았습니다 — [설정]에서 연결하세요."
-                     + " 지금은 아래 [AI 에게 수정 요청]으로 프롬프트를 복사해 쓰실 수 있습니다."
+      var tip = need ? "이 사이트에 저장소가 연결되지 않았습니다. 눌러서 [설정]으로 갑니다. "
+                     + "연결 전에는 아래 [AI 에게 수정 요청]으로 초안을 받으세요."
                      : "";
       if (w.title !== tip) w.title = tip;
     });
@@ -1280,7 +1619,8 @@
   // 화면이 스스로 고르므로(data-web / W) 여기서 글자를 되짚지 않는다.
   var all = function () {
     step("화면 손질", function () {
-      wire(); wireSteps(); wireActs(); restage(); kpi();
+      wire(); wireSteps(); wireActs(); restage(); kpi(); runButtons();
+      paintSetNext();   // 뷰가 띠를 다시 그렸으면 사실로 덮는다(표식이 루프를 막는다)
     });
     // 사이트 데이터를 부르는 것들은 여기 없다 — "sm:site" 가 정확한 계기를 준다.
     // (재시도 루프로 때우면 언제 채워지는지가 운에 달린다.)

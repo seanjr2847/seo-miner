@@ -18,6 +18,9 @@
   --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
          system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+  /* 마이크로 라벨 한 벌 — 대시보드(:root --micro)와 같은 값. 눈금·열 이름·배지가
+     같은 크기로 선다. 자간은 안 벌린다(한글이 흩어진다) — 위계는 크기·굵기·색. */
+  --micro:500 11px/1.35 var(--sans);
 }
 @media (prefers-color-scheme:dark){
   :root{
@@ -38,7 +41,9 @@ body{margin:0;background:var(--stone);color:var(--ink);font-family:var(--sans);
 :focus-visible{outline:2px solid var(--patina);outline-offset:3px;border-radius:2px}
 a{color:inherit}
 .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
-.narrow{max-width:760px}
+/* 폭만 좁히고 가운데로 옮기지는 않는다 — 상자를 좁히면 다른 섹션과 왼쪽 선이
+   어긋나서, 훑던 눈이 FAQ 에서 한 번 멈춘다. */
+.narrow > *{max-width:760px}
 
 /* ── 케이싱 헤더 ─────────────────────────────────────────── */
 header{background:var(--ink);position:sticky;top:0;z-index:9}
@@ -62,7 +67,9 @@ header{background:var(--ink);position:sticky;top:0;z-index:9}
 section{scroll-margin-top:64px}
 /* 세로 리듬은 한 벌: 섹션 상하 --pad + 구분 괘선. */
 :root{--pad:48px}
-.eyebrow{font-size:10px;font-weight:500;line-height:1;color:var(--slate);margin:0 0 14px}
+/* .lat 이 font-family 를 갈아 끼우므로 여기서 font 단축을 쓰면 안 된다 —
+   --micro 와 같은 크기·굵기·행간을 낱개로 적는다. */
+.eyebrow{font-size:11px;font-weight:500;line-height:1.35;color:var(--slate);margin:0 0 14px}
 h2{font-size:clamp(22px,3.2vw,30px);line-height:1.32;font-weight:600;
   margin:0 0 12px;max-width:24ch}
 .sub{color:var(--slate);margin:0 0 28px;max-width:56ch;font-weight:300}
@@ -84,15 +91,11 @@ h1 em{font-style:normal;color:var(--patina)}
   font-weight:500;font-size:15px;transition:filter .15s}
 .cta:hover{filter:brightness(1.12)}
 .cta svg{width:17px;height:17px}
-.ghost{font-size:14px;color:var(--slate);text-decoration:none;border-bottom:1px solid var(--rule)}
-.ghost:hover{color:var(--ink);border-color:var(--patina)}
 .assure{display:flex;flex-wrap:wrap;gap:8px 26px;margin:22px 0 0;padding:0;list-style:none;
   font-size:13px;color:var(--slate);font-weight:300}
 .assure li{display:flex;align-items:center;gap:7px}
 .assure li::before{content:"";width:5px;height:5px;border-radius:50%;
   background:var(--patina);flex:none}
-.note{font-size:13px;color:var(--slate);margin:18px 0 0;font-weight:300;max-width:58ch}
-.note b{font-weight:500;color:var(--ink)}
 
 /* ── 히어로 시각물: 대시보드 패널 ─────────────────────────── */
 /* 패널은 히어로 오른쪽 단에 들어가 좁아진다 — 폭 기준은 뷰포트가 아니라 이 상자다. */
@@ -102,15 +105,18 @@ h1 em{font-style:normal;color:var(--patina)}
   border-bottom:1px solid var(--rule-soft)}
 .phead .t{font-size:13px;font-weight:500;line-height:1.2;color:var(--ink)}
 .phead .sp{flex:1}
-.chip{font-size:11px;font-weight:500;line-height:1.2;white-space:nowrap;
+.chip{font:var(--micro);white-space:nowrap;
   color:var(--slate);border:1px solid var(--rule);border-radius:2px;padding:4px 8px}
 
 .tiles{display:grid;grid-template-columns:repeat(4,1fr)}
 .tile{padding:18px;border-right:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)}
 .tile:last-child{border-right:0}
-.tile .k{font-size:11px;color:var(--slate);margin:0 0 6px;font-weight:400}
+.tile .k{font:var(--micro);color:var(--slate);margin:0 0 6px}
 .tile .v{font:600 25px/1.1 var(--mono);letter-spacing:-.02em;margin:0}
-.tile .d{font:400 11px/1 var(--mono);margin:7px 0 0;color:var(--slate)}
+/* 값 밑의 변화량에는 "1.6칸 상승" 처럼 한글이 섞인다 — 등폭으로 찍으면 폴백 서체로
+   떨어져 자간이 벌어진다. 자릿수 정렬은 tabular-nums 로 얻는다. */
+.tile .d{font:400 11.5px/1.35 var(--sans);font-variant-numeric:tabular-nums;
+  margin:7px 0 0;color:var(--slate)}
 .tile .d.up{color:var(--patina)}
 .tile .d.down{color:var(--copper)}
 @container (max-width:560px){
@@ -139,8 +145,11 @@ h1 em{font-style:normal;color:var(--patina)}
 .fill[data-near="1"]{background:var(--wash);border-left-color:var(--patina)}
 .dot{position:absolute;top:7px;width:8px;height:8px;border-radius:50%;
   background:var(--patina);transform:translateX(-50%)}
-.rk{font:500 12px/1 var(--mono);color:var(--ink);text-align:right}
-.gp{font:400 12px/1 var(--mono);color:var(--slate);text-align:right}
+/* "12위"·"2칸"·"1페이지" — 숫자에 한글 단위가 붙는다. 등폭은 안 쓴다. */
+.rk{font:500 12.5px/1 var(--sans);font-variant-numeric:tabular-nums;
+  color:var(--ink);text-align:right}
+.gp{font:400 12.5px/1 var(--sans);font-variant-numeric:tabular-nums;
+  color:var(--slate);text-align:right}
 .gp.in{color:var(--patina)}
 .ticks{position:relative;height:14px;font:400 10px/1 var(--mono);color:var(--slate)}
 .ticks span{position:absolute;top:0;transform:translateX(-50%)}
@@ -166,7 +175,7 @@ h1 em{font-style:normal;color:var(--patina)}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);
   border:1px solid var(--rule-soft)}
 .cell{background:var(--card);padding:24px 22px}
-.cell .k{font-size:10px;font-weight:500;line-height:1;color:var(--slate);margin:0 0 12px}
+.cell .k{font-size:11px;font-weight:500;line-height:1.35;color:var(--slate);margin:0 0 12px}
 .cell h3{font-size:15px;font-weight:600;margin:0 0 7px}
 .cell p{margin:0;font-size:14px;color:var(--slate);font-weight:300}
 @media (max-width:900px){.grid{grid-template-columns:1fr 1fr}}
@@ -240,27 +249,23 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 <section class="hero wrap">
  <div class="hgrid">
   <div>
-  <p class="eyebrow lat">Search Console · Measured, not estimated</p>
-  <h1>추정치 말고 <em>내 사이트 실측값</em>으로 순위를 올립니다.</h1>
-  <p class="lede">서치콘솔에 실제로 기록된 노출·클릭·순위를 읽어, 1페이지에 가장 가까운
-    검색어부터 짚습니다. 고칠 것이 정해지면 저장소에 PR까지 보냅니다.</p>
+  <p class="eyebrow lat">Search Console · measured, not estimated</p>
+  <h1>서치콘솔 숫자로 <em>다음에 고칠 검색어</em>를 정합니다.</h1>
+  <p class="lede">구글 계정을 연결하면 내 사이트의 노출·클릭·평균 순위를 그대로 읽습니다.
+    1페이지까지 몇 칸 남았는지로 검색어를 줄 세워, 가장 적은 손으로 올릴 것을 맨 위에 둡니다.</p>
 
   <div class="actions">
     <a class="cta" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google 계정으로 시작
     </a>
-    <a class="ghost" href="#how">무엇을 보여주는지 먼저 보기</a>
   </div>
 
   <ul class="assure">
     <li>서치콘솔 읽기 전용 권한</li>
     <li>카드 등록 없음</li>
-    <li>등록 즉시 첫 측정, 이후 주 1회 자동</li>
+    <li>사이트를 고르면 첫 측정이 바로 시작</li>
   </ul>
-
-  <p class="note">구글 확인 절차 전까지 <b>"이 앱은 Google에서 확인하지 않았습니다"</b>
-    경고가 한 번 뜹니다. <b>[고급] → [seo-miner(으)로 이동]</b>을 눌러 진행해 주세요.</p>
 
   </div>
 
@@ -301,8 +306,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
         <div class="ticks"><span style="left:0">1</span><span style="left:33.4%">10</span>
           <span style="left:66.7%">20</span><span style="left:100%">30</span></div>
         <span></span><span></span></div>
-      <p class="legend">막대는 1페이지까지 끌어올려야 할 거리입니다 —
-        <b>가장 짧은 막대가 가장 싸게 이기는 자리</b>이고, 여기부터 손댑니다.</p>
+      <p class="legend">막대는 1페이지까지 끌어올려야 할 거리입니다.
+        <b>가장 짧은 막대가 가장 적은 손으로 이기는 자리</b>입니다. 여기부터 손댑니다.</p>
     </div>
   </div>
  </div>
@@ -310,27 +315,27 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 
 <section id="how" class="band wrap">
   <p class="eyebrow lat">How it works</p>
-  <h2>연결 한 번, 그다음은 알아서 돕니다.</h2>
-  <p class="sub">측정은 스크립트가, 판단은 사람이 합니다. 한 바퀴 돌 때마다 자료가 쌓여
-    다음 바퀴가 쉬워집니다.</p>
+  <h2>한 번 연결하면 손댈 것만 남습니다.</h2>
+  <p class="sub">측정은 자동으로 돌고, 무엇을 고칠지는 사람이 고릅니다. 준비할 파일도
+    설치할 것도 없습니다.</p>
   <div class="steps">
     <div class="step">
       <p class="n lat">01</p>
       <h3>구글 계정을 연결합니다</h3>
-      <p>로그인하면 소유한 서치콘솔 속성이 목록으로 뜹니다. 분석할 사이트를 고르면
-        첫 측정이 그 자리에서 시작합니다. 클라우드 콘솔에서 할 일은 없습니다.</p>
+      <p>로그인하면 소유한 서치콘솔 사이트가 목록으로 뜹니다. 하나를 고르면 첫 측정이
+        그 자리에서 시작합니다. 클라우드 콘솔에서 할 일은 없습니다.</p>
     </div>
     <div class="step">
       <p class="n lat">02</p>
-      <h3>실측값에서 기회를 뽑습니다</h3>
-      <p>순위·CTR·색인·모바일·AI 인용을 훑어 고칠 자리를 목록으로 만듭니다.
-        각 항목에는 근거가 되는 숫자가 붙습니다 — 추측한 값은 없습니다.</p>
+      <h3>고칠 자리를 순서대로 받습니다</h3>
+      <p>순위·클릭률·색인·모바일·AI 인용을 훑어 손댈 곳을 목록으로 만듭니다. 항목마다
+        근거가 된 숫자가 붙습니다. 추측한 값은 쓰지 않습니다.</p>
     </div>
     <div class="step">
       <p class="n lat">03</p>
-      <h3>고른 것을 PR로 보냅니다</h3>
-      <p>깃허브 저장소를 연결해 두면, 기회 하나를 골라 실제 파일 변경까지 만듭니다.
-        main에 직접 쓰지 않습니다 — 브랜치와 PR로 오고, 머지는 사람이 합니다.</p>
+      <h3>고른 것을 PR로 받습니다</h3>
+      <p>깃허브 저장소를 연결해 두면 항목 하나를 골라 실제 파일 변경까지 만듭니다.
+        새 브랜치와 PR로만 옵니다. main에는 쓰지 않고, 머지는 직접 하십시오.</p>
     </div>
   </div>
 </section>
@@ -338,29 +343,29 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 <section id="what" class="band wrap">
   <p class="eyebrow lat">What we look at</p>
   <h2>여섯 갈래로 훑고, 손댈 것 하나를 남깁니다.</h2>
-  <p class="sub">전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다. 데이터가 없으면
-    "없다"고 말하고 수집을 제안합니다.</p>
+  <p class="sub">전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다. 자료가 없는 갈래는
+    없다고 말하고 수집부터 제안합니다.</p>
   <div class="grid">
     <div class="cell"><p class="k lat">Rank</p><h3>1페이지까지 남은 거리</h3>
-      <p>11~20위 검색어가 10위 경계까지 몇 칸 남았는지. 짧은 것부터 손댑니다.</p></div>
-    <div class="cell"><p class="k lat">CTR</p><h3>노출은 되는데 클릭이 0</h3>
-      <p>순위는 나오는데 아무도 안 누르는 검색어. 제목·메타 문제인지 경쟁 문제인지 가릅니다.</p></div>
+      <p>11~20위 검색어가 10위 경계까지 몇 칸 남았는지 셉니다. 짧은 것부터 손댑니다.</p></div>
+    <div class="cell"><p class="k lat">CTR</p><h3>노출은 되는데 클릭이 없는 검색어</h3>
+      <p>순위는 나오는데 아무도 안 누르는 자리입니다. 제목·설명 문제인지 경쟁 문제인지 가릅니다.</p></div>
     <div class="cell"><p class="k lat">Index</p><h3>색인이 막힌 페이지</h3>
-      <p>robots·크롤 실패·canonical 불일치·미색인 네 갈래로 분류합니다.</p></div>
+      <p>robots 차단·크롤 실패·canonical 불일치·미색인 네 갈래로 나눕니다.</p></div>
     <div class="cell"><p class="k lat">Mobile</p><h3>모바일에서만 밀리는 검색어</h3>
       <p>같은 검색어의 모바일과 데스크톱 평균 순위를 비교해 2칸 이상 벌어진 곳을 찾습니다.</p></div>
-    <div class="cell"><p class="k lat">AI</p><h3>AI 답변의 인용 출처</h3>
-      <p>ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지, 내 사이트는 왜 빠졌는지.</p></div>
+    <div class="cell"><p class="k lat">AI</p><h3>AI 답변이 인용한 곳</h3>
+      <p>ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지, 내 사이트가 왜 빠졌는지 봅니다.</p></div>
     <div class="cell"><p class="k lat">Trend</p><h3>날짜별 추이와 순위 변동</h3>
-      <p>클릭·노출을 하루 단위로. 지난주 대비 움직인 검색어를 따로 모읍니다.</p></div>
+      <p>클릭과 노출을 하루 단위로 놓습니다. 지난주 대비 움직인 검색어를 따로 모읍니다.</p></div>
   </div>
 </section>
 
 <section id="diff" class="band wrap">
   <p class="eyebrow lat">Measured vs estimated</p>
   <h2>같은 화면처럼 보여도, 숫자의 출처가 다릅니다.</h2>
-  <p class="sub">대부분의 키워드 도구는 남의 사이트도 볼 수 있는 대신 값을 추정합니다.
-    seo-miner는 내가 소유한 사이트만 보는 대신 실제로 기록된 값을 씁니다.</p>
+  <p class="sub">키워드 도구 대부분은 남의 사이트까지 볼 수 있는 대신 값을 추정합니다.
+    seo-miner는 내가 소유한 사이트만 보는 대신 구글이 기록한 값을 그대로 씁니다.</p>
   <div class="cmpbox"><table class="cmp">
     <thead><tr><th scope="col"></th><th scope="col">일반 키워드 도구</th><th scope="col">seo-miner</th></tr></thead>
     <tbody>
@@ -371,23 +376,23 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
       <tr><th scope="row">대상</th><td class="them">아무 도메인이나 조회</td>
         <td class="us">내가 소유권을 가진 속성만</td></tr>
       <tr><th scope="row">결과물</th><td class="them">보고서까지</td>
-        <td class="us">보고서 + 저장소에 올라온 PR</td></tr>
+        <td class="us">보고서와 저장소에 올라온 PR</td></tr>
     </tbody>
   </table></div>
 </section>
 
 <section class="band wrap">
   <p class="eyebrow lat">Ground rules</p>
-  <h2>먼저 안 하는 것부터 말씀드립니다.</h2>
+  <h2>안 하는 것부터 말씀드립니다.</h2>
   <ul class="pledge">
     <li><b>읽기 전용으로만 봅니다</b>
-      <span>서치콘솔은 읽기 권한만 요청합니다. 데이터를 고치거나 지우지 않습니다.</span></li>
+      <span>서치콘솔은 읽기 권한만 요청합니다. 자료를 고치거나 지우지 않습니다.</span></li>
     <li><b>main에 직접 쓰지 않습니다</b>
       <span>코드 변경은 새 브랜치와 PR로만 옵니다. 머지 여부는 사람이 정합니다.</span></li>
     <li><b>추측한 숫자를 쓰지 않습니다</b>
-      <span>모든 주장에 근거 행이 붙습니다. 자료가 없으면 없다고 말합니다.</span></li>
+      <span>주장마다 근거가 된 숫자가 붙습니다. 자료가 없으면 없다고 말합니다.</span></li>
     <li><b>보고서는 그대로 가져갈 수 있습니다</b>
-      <span>측정이 끝나면 그 시점 화면을 박아 넣은 HTML을 메일로 보내 드립니다.</span></li>
+      <span>측정이 끝나면 그 시점 화면을 담은 HTML 한 장이 메일로 갑니다.</span></li>
   </ul>
 </section>
 
@@ -396,26 +401,25 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <h2>자주 묻는 질문</h2>
   <div class="faq">
     <details><summary>비용이 드나요?</summary>
-      <p>구글 계정 로그인 외에 준비할 것이 없습니다. 카드 등록도 받지 않습니다.</p></details>
+      <p>구글 계정 로그인 말고는 준비할 것이 없습니다. 카드도 받지 않습니다.</p></details>
     <details><summary>어떤 권한을 요구하나요?</summary>
-      <p>서치콘솔 <b>읽기 전용</b> 권한 하나입니다. 데이터를 수정·삭제하지 않으며,
-        본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다.</p></details>
+      <p>서치콘솔 <b>읽기 전용</b> 권한 하나입니다. 자료를 고치거나 지우지 않으며,
+        본인이 서치콘솔에 등록한 사이트만 분석합니다.</p></details>
     <details><summary>"Google에서 확인하지 않은 앱" 경고가 뜹니다.</summary>
       <p>구글 확인 절차를 아직 밟지 않은 앱이라 동의 화면에 경고가 한 번 뜹니다.
-        <b>[고급] → [seo-miner(으)로 이동]</b>으로 지나가면 됩니다. 요청하는 권한은
-        그 화면에 그대로 표시됩니다.</p></details>
+        <b>[고급]</b>을 누른 뒤 <b>[seo-miner(으)로 이동]</b>으로 지나가면 됩니다.
+        요청하는 권한은 그 화면에 그대로 적혀 있습니다.</p></details>
     <details><summary>제 저장소에 마음대로 커밋하나요?</summary>
-      <p>아닙니다. 깃허브는 연결하지 않아도 나머지 기능이 전부 돌아갑니다. 연결하더라도
-        변경은 새 브랜치와 PR로만 만들고, main에는 쓰지 않습니다.</p></details>
+      <p>아닙니다. 깃허브는 연결하지 않아도 나머지 기능이 전부 돕니다. 연결해도 변경은
+        새 브랜치와 PR로만 만들고, main에는 쓰지 않습니다.</p></details>
     <details><summary>얼마나 자주 측정하나요?</summary>
-      <p>사이트를 등록하면 바로 한 번 재고, 이후 주 1회 자동으로 다시 잽니다. 끝나면
-        보고서를 첨부한 메일이 갑니다. 화면에서 <b>[지금 다시 재기]</b>로 언제든
-        앞당길 수 있습니다.</p></details>
+      <p>사이트를 고르면 바로 한 번 재고, 그다음부터 주 1회 자동으로 다시 잽니다. 끝나면
+        보고서를 붙인 메일이 갑니다. 화면의 <b>[지금 다시 재기]</b>로 언제든 앞당길 수 있습니다.</p></details>
     <details><summary>네이버나 다음도 보나요?</summary>
-      <p>지금은 구글 검색과 AI 답변만 봅니다. 국내 검색 표면은 아직 넣지 않았습니다.</p></details>
-    <details><summary>서치콘솔 데이터가 며칠씩 비어 보입니다.</summary>
-      <p>구글이 값을 확정할 때까지 기다리기 때문에 <b>최근 3일은 비어 있습니다</b>.
-        빠진 게 아니라 아직 확정되지 않은 구간입니다.</p></details>
+      <p>지금은 구글 검색과 AI 답변만 봅니다. 국내 검색 화면은 아직 넣지 않았습니다.</p></details>
+    <details><summary>서치콘솔 숫자가 며칠씩 비어 보입니다.</summary>
+      <p>구글이 값을 확정할 때까지 기다리므로 <b>최근 3일은 비어 있습니다</b>.
+        빠진 것이 아니라 아직 확정되지 않은 구간입니다.</p></details>
   </div>
 </section>
 
@@ -423,7 +427,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <div class="wrap">
     <p class="eyebrow lat">Start measuring</p>
     <h2>내 사이트가 지금 몇 위인지, 1분이면 봅니다.</h2>
-    <p class="sub">로그인하고 속성 하나만 고르면 첫 측정이 바로 시작합니다.</p>
+    <p class="sub">로그인하고 사이트 하나만 고르면 첫 측정이 바로 시작합니다.
+      구글 동의 화면에서 경고가 한 번 뜨는데, [고급]으로 지나가면 됩니다.</p>
     <a class="cta" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google 계정으로 시작
@@ -433,7 +438,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 </main>
 
 <footer><div class="wrap fbar">
-  <span>주 1회 자동 분석으로 데이터가 쌓이고, 판단은 사람이 직접 합니다.</span>
+  <span>주 1회 자동으로 다시 재고, 무엇을 고칠지는 사람이 정합니다.</span>
   <span class="sp"></span>
   <a href="https://github.com/seanjr2847/seo-miner">GitHub</a>
 </div></footer>

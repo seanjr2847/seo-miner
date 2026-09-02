@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>seo-miner 채굴 로그</title>
+<title>seo-miner 대시보드</title>
 <!--SNAPSHOT-->
 <!-- 뷰 선언표 — dashboard.py 가 뷰 파일들의 view-def 를 모아 여기 박는다.
      화면 위에 얹히는 층(호스팅판)이 화면 이름 여섯과 요소 id 열몇을 다시 나열하는
@@ -19,7 +19,10 @@
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
    색은 광물에서: 녹청(patina)·산화동(copper)·석회(stone). 숫자는 전부 등폭. */
 :root {
-  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#66726D;
+  /* --slate 는 눈금·부제·표 머리·KPI 라벨을 전부 칠한다 — 읽으라고 적어 둔 글자다.
+     #66726D 은 --stone 위에서 4.09:1 로 AA(4.5:1)를 못 넘겼다. 기준은 가장 불리한
+     자리다: --bar 를 깐 표 머리 위에서도 4.5 를 넘어야 한다(#5A655F 은 거기서 4.45). */
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#576259;
   --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
@@ -27,7 +30,7 @@
      읽으라고 적어 둔 글자가 안 읽혔다. 배경이 --ink 이므로 이 셋은 --stone 쪽,
      즉 다크에서 같이 뒤집힌다(안 뒤집으면 밝은 바탕에 밝은 글자가 된다). */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
-  --on-ink-rule:rgba(230,233,228,.26);
+  --on-ink-rule:rgba(230,233,228,.26); --on-ink-wash:rgba(230,233,228,.10);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
          "Malgun Gothic",monospace;
   --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
@@ -43,7 +46,7 @@
     --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
     --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
-    --on-ink-rule:rgba(16,21,19,.28);
+    --on-ink-rule:rgba(16,21,19,.28); --on-ink-wash:rgba(16,21,19,.12);
   }
 }
 /* 자간 확장·대문자 변환은 라틴 문자열에만 뜻이 있다. 문서에 실제로 라틴만 적힌
@@ -69,57 +72,115 @@ body { margin:0; background:var(--stone); color:var(--ink); font:15px/1.6 var(--
    모양이 된다. */
 header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-index:9;
   border-bottom:1px solid var(--ink); }
-.hbar { max-width:1180px; margin:0 auto; padding:11px 22px;
-  display:flex; align-items:baseline; gap:18px; }
-@media (max-width:860px) { .hbar { flex-wrap:wrap; gap:10px 14px; } .tag { display:none; } }
+.hbar { max-width:1180px; margin:0 auto; padding:12px 24px;
+  display:flex; align-items:baseline; gap:16px; }
+@media (max-width:860px) { .hbar { flex-wrap:wrap; gap:8px 16px; } }
+/* 고른 것 위의 이름표 — 레일에서만 선다. 좁은 화면의 한 줄 머리바에서는 자리를
+   못 내므로 감춘다(그때는 select 자체가 사이트 이름을 이미 말한다). */
+.rl { font:var(--micro); color:var(--on-ink-dim); }
+@media (max-width:999px) {
+  .rl { display:none; }
+  /* 메뉴가 열한 개인데 좁은 화면에는 여섯 개만 들어간다. 잘렸다는 표시가 없으면
+     나머지 다섯은 없는 것이 된다 — 오른쪽 끝을 흐려 더 있다고 말한다.
+     배경 그라데이션으로는 안 된다: 배경은 글자 **아래**에 깔려서 글자를 못 흐린다.
+     마스크는 글자까지 걸린다. 끝까지 밀었거나 넘칠 게 없으면 navFade 가 .end 를
+     달아 페이드를 끈다 — 더 볼 게 없을 때 더 있다고 말하지 않는다. */
+  #nav { --fade:34px;
+    -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
+            mask-image:linear-gradient(to right, #000 calc(100% - var(--fade)), transparent); }
+  #nav.end { --fade:0px; }
+}
 
-/* 화면 메뉴 — 좁은 화면에서는 가로 스크롤러, 레일에서는 세로 목록 */
+/* 화면 메뉴 — 좁은 화면에서는 가로 스크롤러, 레일에서는 세로 목록.
+   위계는 투명도가 아니라 색과 바탕이다 — 흐린 글자는 비활성처럼 읽힌다. */
 #nav { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none;
-  max-width:1180px; margin:0 auto; padding:0 22px 9px; }
+  max-width:1180px; margin:0 auto; padding:0 24px 10px; }
 #nav::-webkit-scrollbar { display:none; }
-#nav button { font:500 13px/1 var(--sans); color:var(--on-ink); background:transparent;
-  border:0; border-radius:5px; padding:8px 11px; cursor:pointer; white-space:nowrap;
-  opacity:.62; }
-#nav button:hover { opacity:1; }
-#nav button.on { opacity:1; background:var(--patina); color:var(--stone); }
+#nav button { font:500 13.5px/1.25 var(--sans); color:var(--on-ink-dim);
+  background:transparent; border:0; border-radius:6px; padding:9px 11px; cursor:pointer;
+  white-space:nowrap; transition:color .12s, background .12s; }
+#nav button:hover { color:var(--on-ink); background:var(--on-ink-wash); }
+#nav button.on { font-weight:600; background:var(--patina); color:var(--stone); }
 
 /* 화면 상자 — 한 번에 하나만 선다 */
 .view[hidden] { display:none; }
-.vh { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
-  padding:26px 0 4px; }
-.vh h1 { font:650 22px/1.3 var(--sans); letter-spacing:-.01em; margin:0; }
+.vh { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+  padding:28px 0 0; }
+.vh h1 { font:650 23px/1.3 var(--sans); letter-spacing:-.012em; margin:0; }
 /* 화면을 채우는 단계의 명령 칩 — .cmd 의 위 여백은 문단용이라 머리줄에서는 없앤다. */
 .vh .vh-cmd { margin:0; }
+/* 좁은 화면에서는 이 칩 둘이 제목 아래 두 줄을 잡아먹어 다음 행동 띠를 화면
+   밖으로 밀어낸다 — 줄여서 한 줄에 세운다(누르는 자리는 그대로 32px 이상). */
+@media (max-width:560px) { .vh .vh-cmd { font-size:11.5px; padding:8px 9px; } }
 .vh .sp { flex:1; }
 .vh + section, .view > section:first-child { border-top:0; }
+
+/* ── 다음 행동 띠 ────────────────────────────────────────────
+   화면당 하나. 머리(.vh) 바로 밑에 서서 "무엇을 왜"를 한 문장으로 말하고, 그
+   문장 옆에 누를 것을 둔다. 여태 이 말은 빈 화면에만 있었다 — 데이터가 차는
+   순간 다음 걸음이 화면에서 사라졌다. 심는 것은 window.nextStep 이다.
+   박제본에서는 누를 서버가 없어 .acts 를 떼고 문장만 남긴다. */
+.next { display:flex; align-items:center; gap:10px 20px; flex-wrap:wrap;
+  margin:16px 0 0; padding:14px 16px; border:1px solid var(--rule);
+  border-left:3px solid var(--patina); border-radius:6px; background:var(--card); }
+.next p { margin:0; flex:1 1 min(340px,100%); font:500 14px/1.55 var(--sans);
+  color:var(--ink); max-width:74ch; }
+.next p b { font-weight:650; }
+.next .acts { margin:0; flex:0 0 auto; }
+/* 좁은 화면에서는 행동이 문장 옆에 못 선다. 아래로 내리고, 등폭 명령 칩이 상자를
+   뚫지 않게 줄바꿈을 연다 — `/capture rank beta-site` 가 390px 에서 13px 넘쳤다. */
+@media (max-width:560px) {
+  .next .acts { flex:1 1 100%; }
+  .next .acts .cmd { white-space:normal; overflow-wrap:anywhere; max-width:100%;
+    text-align:left; }
+}
+/* 띠 안의 명령 칩은 그 화면의 주요 행동이다 — 채운 배경으로 .go 와 같은 무게로
+   세운다. 안 그러면 로컬 화면만 주요 행동이 테두리 칩이고 호스팅은 채운 버튼이라,
+   같은 자리가 배포마다 다른 무게로 읽힌다. 보조(.sec)는 테두리 그대로다. */
+.next .acts .cmd:not(.sec) { background:var(--patina); border-color:var(--patina);
+  color:var(--card); font-weight:600; }
+.next .acts .cmd:not(.sec):hover { background:var(--ink); border-color:var(--ink);
+  color:var(--stone); }
+.next .acts .cmd:not(.sec)::after { color:var(--card); }
+.next .acts .cmd:not(.sec).copied::after { color:var(--card); }
+
+/* 띠가 주요 버튼으로 든 단계는 머리줄에서 **뺀다**. 흐리게만 두면 그 화면의 주
+   단계 칩이 머리줄에서 가장 흐린 글자가 되어 위계가 거꾸로 선다. 지우지 않고
+   감추는 이유는 viewCmds 가 다시 돌 때 되살아나면 안 되기 때문이다. */
+.vh .taken, .stp .taken { display:none; }
 
 @media (min-width:1000px) {
   body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
   header { grid-column:1; top:0; height:100vh; overflow-y:auto; display:flex;
     flex-direction:column; border-bottom:0; border-right:1px solid var(--ink); }
-  .hbar { flex-direction:column; align-items:stretch; gap:9px; padding:18px 16px 4px;
+  .hbar { flex-direction:column; align-items:stretch; gap:4px; padding:20px 16px 8px;
     max-width:none; margin:0; }
   .hbar .sp { display:none; }
-  .tag { display:block !important; margin-top:-4px; }
-  #nav { flex-direction:column; overflow:visible; padding:14px 10px 0; margin:0;
+  .tag { margin:-2px 0 12px; }
+  .hbar .rl { margin-top:12px; }
+  #nav { flex-direction:column; overflow:visible; padding:12px 8px 0; margin:0;
     max-width:none; flex:1; }
-  #nav button { text-align:left; padding:8px 10px; }
+  #nav button { text-align:left; padding:9px 10px; }
   main { grid-column:2; }
-  /* 바닥 통 — 실행·보고서·새로고침. 애드온이 여기에 자기 버튼을 넣는다. */
+  /* 바닥 통 — 실행·보고서·새로고침. 애드온이 여기에 자기 버튼을 넣는다.
+     메뉴(이동)와 다른 일이므로 괘선으로 갈라 놓는다. */
   .rail-foot { margin-top:auto; padding:16px; display:flex; flex-wrap:wrap;
-    gap:8px 12px; align-items:center; }
+    gap:8px 12px; align-items:center; border-top:1px solid var(--on-ink-rule); }
+  .rail-foot .hbtn { width:100%; }
 }
 @media (max-width:999px) {
-  .rail-foot { max-width:1180px; margin:0 auto; padding:0 22px 10px;
+  .rail-foot { max-width:1180px; margin:0 auto; padding:0 24px 12px;
     display:flex; gap:8px 12px; flex-wrap:wrap; align-items:center; }
 }
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
 .mark b { color:var(--patina); font-weight:600; }
 .tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; }
-@media (max-width:1080px) { .tag { display:none; } }   /* 좁아지면 정체성보다 기능이 먼저 */
+/* 좁아지면 정체성보다 기능이 먼저. 레일이 서는 폭(1000px 이상)에서만 보인다 —
+   경계를 하나로 두면 두 규칙이 겹쳐 !important 로 싸울 일이 없다. */
+@media (max-width:999px) { .tag { display:none; } }
 .hbar .sp { flex:1; }
-#proj, #gscdate { font:600 13px/1 var(--mono); color:var(--on-ink); background:transparent;
-  border:0; border-bottom:1px solid var(--patina); padding:3px 26px 3px 2px; cursor:pointer;
+#proj, #gscdate { font:600 13.5px/1.3 var(--mono); color:var(--on-ink); background:transparent;
+  border:0; border-bottom:1px solid var(--patina); padding:4px 26px 5px 2px; cursor:pointer;
   appearance:none; flex:0 0 auto; max-width:220px;
   background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
                    linear-gradient(135deg,currentColor 50%,transparent 50%);
@@ -128,19 +189,23 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 #proj option, #gscdate option { color:var(--ink); background:var(--card); }
 /* 과거 시점을 보고 있으면 눈에 띄어야 한다 — 최신인 줄 알고 읽으면 오독이다 */
 #gscdate.past { color:var(--copper); border-bottom-color:var(--copper); }
-.hbtn { font:500 12px/1 var(--sans); color:var(--on-ink); background:transparent;
-  border:1px solid var(--rule); border-radius:2px; padding:6px 11px; cursor:pointer;
-  white-space:nowrap; flex:0 0 auto; }
+.hbtn { font:500 12.5px/1 var(--sans); color:var(--on-ink); background:transparent;
+  border:1px solid var(--rule); border-radius:5px; padding:8px 12px; cursor:pointer;
+  white-space:nowrap; flex:0 0 auto; transition:border-color .12s, color .12s; }
 .hbtn:hover { border-color:var(--patina); color:var(--patina); }
 .rail-foot .hbtn { border-color:var(--on-ink-rule); }
-/* 레일에서는 잘리면 안 된다 — 어느 속성을 보고 있는지가 이 줄의 전부다. */
-#meta { font:400 11px/1.5 var(--mono); color:var(--on-ink-dim); min-width:0; }
+/* 레일에서는 잘리면 안 된다 — 어느 속성을 보고 있는지가 이 줄의 전부다.
+   등폭은 안 쓴다: 이 줄에는 한글이 섞여 있고, 한글을 등폭으로 찍으면 폴백 서체로
+   떨어져 낱자가 벌어진다(`구 글  실 적`). 숫자만 표 자리를 맞춘다. */
+#meta { font:400 11.5px/1.55 var(--sans); color:var(--on-ink-dim); min-width:0;
+  font-variant-numeric:tabular-nums; }
 @media (max-width:999px) { #meta { overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap; } }
 /* 축별 수집일 줄. 머리 바(.hbar)는 한 줄 nowrap 이라 여기 것을 거기 넣으면 잘린다 —
    잘린 경고는 경고가 아니다. 그래서 바 아래 자기 줄을 준다. */
-.hax { max-width:1180px; margin:0 auto; padding:14px 0 0; display:flex; flex-wrap:wrap;
-  gap:2px 14px; font:400 11px/1.5 var(--mono); color:var(--slate); }
+.hax { max-width:1180px; margin:0 auto; padding:16px 0 0; display:flex; flex-wrap:wrap;
+  gap:2px 16px; font:400 11.5px/1.6 var(--sans); color:var(--slate);
+  font-variant-numeric:tabular-nums; }
 .hax[hidden] { display:none; }
 .hax b { color:var(--copper); font-weight:600; flex:0 0 100%; }
 
@@ -159,7 +224,12 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
   .printhead .t { font:650 15pt/1.3 var(--sans); }
   .printhead .m { font:400 9.5pt/1.6 var(--mono); color:var(--slate); margin-top:5px; }
   body { display:block; background:#fff; font-size:10.5pt; }
-  header, .rail-foot, #nav, .tools, .ask, .cmd, .hint { display:none !important; }
+  /* 종이에는 누를 데가 없다 — 버튼은 전부 뺀다. 다음 행동 띠는 **문장만** 남긴다:
+     "무엇을 왜"는 종이에서도 읽을 값이 있고, 그 옆의 버튼만 거짓말이 된다. */
+  header, .rail-foot, #nav, .tools, .ask, .cmd, .hint, .acts, .go {
+    display:none !important; }
+  .next { border:0; border-left:2px solid var(--patina); border-radius:0;
+    background:none; padding:6px 0 6px 12px; }
   main { max-width:none; padding:0; }
   /* 색으로만 말하는 것이 몇 개 있다(막대·배지·상태) — 배경을 지우면 뜻이 사라진다. */
   * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -177,28 +247,36 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
   .logwrap, .tw { overflow:visible; }
   .log { min-width:0; width:100%; }
 }
-/* 표·차트는 넓어도 읽히지만 산문은 아니다 — 문장이 든 것만 폭을 재운다. */
+/* 표·차트는 넓어도 읽히지만 산문은 아니다 — 문장이 든 것만 폭을 재운다.
+   펼침 패널의 설명·할 일도 같은 폭이다: 1400px 화면에서 한 줄이 130자를 넘으면
+   눈이 다음 줄 머리를 못 찾는다. */
 .sub, .empty, #docban .verdict, #docban .nx, #docban ul, #guide .lead,
-.donebar, .loopback { max-width:74ch; }
+.donebar, .loopback, .detw, .deta, .detn { max-width:74ch; }
 
 /* ── 측정 요약: 카드가 아니라 한 줄 계기판 ────────────────── */
 .band { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
   border-bottom:1px solid var(--rule); }
-.band .m { padding:20px 18px 18px 0; border-right:1px solid var(--rule-soft); }
+.band .m { padding:24px 20px 20px 0; border-right:1px solid var(--rule-soft); }
 .band .m:last-child { border-right:0; }
 @media (max-width:720px) {
   .band { grid-template-columns:repeat(2,1fr); }
-  .band .m { padding:15px 14px 14px 0; border-top:1px solid var(--rule-soft); }
+  .band .m { padding:16px 16px 16px 0; border-top:1px solid var(--rule-soft); }
   .band .m:nth-child(2n) { border-right:0; }
   .band .m:nth-child(-n+2) { border-top:0; }
+  /* 지표가 홀수면 마지막 칸이 왼쪽에 혼자 남고 오른쪽 절반이 빈다 — 그 줄만 전폭으로
+     펴서 격자가 도중에 끊긴 것처럼 보이지 않게 한다. */
+  .band .m:last-child:nth-child(odd) { grid-column:1 / -1; border-right:0; }
   .band .v { font-size:23px; }
 }
-.band .v { font:600 27px/1 var(--mono); letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
-.band .l { font:var(--micro); color:var(--slate); margin-top:9px; }
-.band .d { font:500 12px/1 var(--mono); margin-left:7px; letter-spacing:0; }
-/* 값만 있는 숫자는 못 읽는다 — 무엇에 대한 얼마인지(기간·직전값)를 한 줄로 붙인다. */
-.band .b { font:400 11px/1.4 var(--mono); color:var(--slate); margin-top:5px;
-  font-variant-numeric:tabular-nums; letter-spacing:0; }
+/* 셋의 위계: 값(크게·등폭) → 이름(무엇의 값인가) → 기준(무엇에 대한 얼마인가).
+   이름은 눈금이 아니라 지표 이름이라 마이크로보다 한 단 크게 세운다. */
+.band .v { font:600 28px/1 var(--mono); letter-spacing:-.022em; font-variant-numeric:tabular-nums; }
+.band .l { font:500 12.5px/1.35 var(--sans); color:var(--slate); margin-top:10px; }
+.band .d { font:600 12px/1 var(--mono); margin-left:8px; letter-spacing:0; }
+/* 값만 있는 숫자는 못 읽는다 — 무엇에 대한 얼마인지(기간·직전값)를 한 줄로 붙인다.
+   한글이 섞이므로 등폭이 아니라 본문 서체에 숫자만 표 자리를 맞춘다. */
+.band .b { font:400 11.5px/1.5 var(--sans); color:var(--slate); margin-top:6px;
+  font-variant-numeric:tabular-nums; }
 .band .d em { font-style:normal; font-size:.86em; opacity:.72; margin-left:3px; }
 .up { color:var(--patina); } .down { color:var(--copper); } .muted { color:var(--slate); }
 /* 스냅샷이 3개 이상 쌓이면 숫자 밑에 흐름이 생긴다 — 2점을 잇는 선은 안 그린다. */
@@ -206,11 +284,12 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
 .band .spark svg { display:block; width:96px; height:22px; }
 
 /* ── 섹션 ───────────────────────────────────────────────── */
-section { padding:34px 0 6px; border-top:1px solid var(--rule-soft); }
+section { padding:40px 0 8px; border-top:1px solid var(--rule-soft); }
 section:first-of-type { border-top:0; }
-.eyebrow { font:var(--micro); color:var(--slate); }
-h2 { font:650 19px/1.3 var(--sans); letter-spacing:-.01em; margin:9px 0 3px; }
-.sub { font-size:13px; color:var(--slate); margin:0 0 16px; }
+/* 눈썹 → 제목 → 부제. 부제는 설명문이 아니라 "이 섹션으로 무엇을 하라"는 문장이다. */
+.eyebrow { font:600 11px/1.35 var(--sans); color:var(--slate); }
+h2 { font:650 19px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 4px; }
+.sub { font-size:13.5px; line-height:1.6; color:var(--slate); margin:0 0 20px; }
 
 /* ── 차트 공통: 깊이 로그·일별 추이·기기 격차가 같은 언어를 쓴다 ── */
 /* 좁은 화면에선 축소 대신 가로 스크롤 — 줄여 봐야 글자를 못 읽는다. */
@@ -244,19 +323,33 @@ th { text-align:left; font:var(--micro); color:var(--slate); padding:0 12px 8px 
   border-bottom:1px solid var(--rule); white-space:nowrap; }
 td { padding:8px 12px 8px 0; border-bottom:1px solid var(--rule-soft); vertical-align:baseline; }
 tr:last-child td { border-bottom:0; }
-.num, td.num, th.num { text-align:right; font-family:var(--mono);
-  font-variant-numeric:tabular-nums; }
+/* 오른쪽 정렬과 표 자리 맞춤은 숫자 열 전체가 쓴다. 등폭은 **값 칸만**이다 —
+   열 이름은 "노출"·"평균 순위"처럼 한글이라, 등폭으로 찍으면 폴백 서체로 떨어져
+   낱자가 벌어진다. 머리글은 정렬만 물려받고 서체는 본문 것을 쓴다. */
+.num, td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+td.num, td .num { font-family:var(--mono); }
 /* 오른쪽 여백을 지우는 건 숫자 열이 **마지막일 때만**이다. 가운데 있는 숫자 열에서
    지우면 다음 칸 글자와 맞붙어 `12` 와 `2026-03-02` 가 `122026-03-02` 로 읽힌다. */
 td.num:last-child, th.num:last-child { padding-right:0; }
 .kwcell { font-size:13px; }
-.empty { font-size:13px; color:var(--slate); padding:14px 0;
-  border-top:1px solid var(--rule-soft); }
+/* 빈 상태는 막다른 길이 아니라 다음 한 걸음이다. 셋으로 읽힌다:
+   무엇이 없나(<b>) · 채우면 무엇을 얻나(문장) · 무엇을 누르나(.acts / .cmd). */
+.empty { font-size:13px; line-height:1.65; color:var(--slate); padding:20px 18px;
+  border:1px dashed var(--rule); border-radius:6px; margin:4px 0 0; }
+/* 제목 줄만 블록으로 세운다. `.empty b` 로 두면 본문 문장 안의 강조까지 잡혀
+   한 문장이 세 토막으로 갈라진다(순위 추적 빈 상태가 그랬다). */
+.empty > b:first-child { display:block; font:650 14px/1.45 var(--sans);
+  color:var(--ink); margin-bottom:4px; }
+.empty p { margin:0; max-width:60ch; }
 
 /* ── 표 살림: 긴 표를 실제로 읽을 수 있게 ─────────────────────
    시추공은 깊다 — 표가 40줄을 넘으면 머리글이 화면 밖으로 나간다. 머리글을 붙박고,
    줄에 손을 얹으면 그 줄만 밝히고, 숫자 열은 눌러서 정렬한다. */
-.tw { overflow:auto; max-height:min(62vh,560px); }
+/* 표는 줄 수와 상관없이 이 상자 안에서 넘친다 — 세 줄짜리 표도 열이 여섯이면
+   390px 를 넘고, 상자가 없으면 표가 페이지 전체를 옆으로 민다. 세로로 재우는 것은
+   실제로 긴 표(.long)만이다: 짧은 표에 최대 높이를 걸 이유가 없다. */
+.tw { overflow:auto; }
+.tw.long { max-height:min(62vh,560px); }
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
   padding-top:9px; }
@@ -267,15 +360,15 @@ th[data-s]::after { content:"↕"; margin-left:5px; opacity:.32; font-size:9px; 
 th[data-s].asc::after { content:"↑"; opacity:1; color:var(--patina); }
 th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 /* 표 위 도구줄: 찾기·개수·내보내기. 표가 길 때만 붙는다. */
-.tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 11px; }
+.tools { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; margin:0 0 14px; }
 .tools input { width:auto; flex:1 1 190px; max-width:280px; font-size:13px; }
 .tools select { width:auto; flex:0 0 auto; font-size:13px; padding-right:2px; }
-.tools .n { font:var(--micro); color:var(--slate); white-space:nowrap;
+.tools .n { font:500 11.5px/1.35 var(--sans); color:var(--slate); white-space:nowrap;
   font-variant-numeric:tabular-nums; }
 .tools .sp { flex:1; }
 .tools .go { flex:0 0 auto; }
-/* 빈 화면은 막다른 길이 아니라 다음 한 걸음 — 뭘 하면 채워지는지 같이 준다. */
-.empty .cmd { margin-top:9px; }
+.empty .cmd { margin-top:12px; }
+.empty .acts { margin-top:12px; }
 /* 열 이름 옆 근거: 이 숫자가 어디서 온 건지 그 자리에서 답한다. */
 .hint { display:inline-block; width:13px; height:13px; margin-left:5px; border-radius:50%;
   border:1px solid var(--rule); font:400 9px/11px var(--mono); text-align:center;
@@ -297,14 +390,18 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
   text-align:right; }
 /* 숫자만 있으면 88이 뭔지 모른다 — 단위를 붙여 100점 만점임을 그 자리에서 말한다. */
 .score .u { display:block; font:500 10px/1 var(--sans); color:var(--slate); margin-top:5px; }
+.score.none { color:var(--slate); font-weight:400; }
 .oh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
 /* 종류는 채워서(분류), 상태는 테를 둘러서(상태) — 두 배지가 서로 다른 말을 한다.
    .opp 안에만 두면 표로 그리는 화면(키워드·순위·AI)이 같은 부품을 쓰고도 배지가
    평문으로 떨어진다 — 스코프를 푼다. 카드 전용 배치(.target·접힘 두 줄)만 남긴다. */
 .kind { font:var(--micro); color:var(--patina); background:var(--wash);
-  border-radius:2px; padding:4px 7px; }
-.dt { font:400 11px/1 var(--mono); color:var(--slate); }
-.opp .target { font-family:var(--mono); font-size:13.5px; margin:7px 0 3px;
+  border-radius:4px; padding:4px 8px; }
+.dt { font:400 11.5px/1 var(--mono); color:var(--slate);
+  font-variant-numeric:tabular-nums; }
+/* 카드의 표제 — 검색어이거나 URL 이다. 등폭으로 찍으면 한글 검색어가 폴백 서체로
+   떨어져 `beta-site 검 색 어` 처럼 벌어진다(URL 은 어차피 링크로 읽힌다). */
+.opp .target { font:600 14.5px/1.5 var(--sans); margin:8px 0 4px;
   word-break:break-word; }
 /* 광맥 게이지: 결정적 점수(scoring.WEIGHTS)를 깊이 로그와 같은 막대 언어로.
    얻는 kind는 녹청, 지키는 kind(순위 하락·내부 경쟁)는 산화동 — 상승/하락과 같은 문법. */
@@ -317,7 +414,7 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .kind.k-def { color:var(--copper); background:var(--wash-copper); }
 /* GA4 매출 잠재력 보정 배지 — scoring.value_mult() 가 1.0이 아닐 때만 나온다.
    오르면 .kind 와 같은 녹청, 내리면 .k-def 와 같은 산화동 — 같은 문법을 그대로 쓴다. */
-.gm { font:var(--micro); border-radius:2px; padding:4px 7px; border:1px solid; }
+.gm { font:var(--micro); border-radius:4px; padding:4px 8px; border:1px solid; }
 .gm-up { color:var(--patina); border-color:var(--patina); }
 .gm-down { color:var(--copper); border-color:var(--copper); }
 .why { font-size:12.5px; color:var(--slate); }
@@ -330,15 +427,19 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .detw { font-size:12.5px; color:var(--ink); margin:10px 0 8px; }
 .deta { margin:0 0 12px; padding-left:18px; font-size:12.5px; color:var(--slate); }
 .deta li { margin:4px 0; }
-.dett { width:100%; border-collapse:collapse; font-size:12px; }
-.dett th { text-align:left; font:var(--micro); color:var(--slate); padding:6px 8px;
-  border-bottom:1px solid var(--rule); }
-.dett td { padding:6px 8px; border-bottom:1px solid var(--rule-soft); vertical-align:top; }
+.dett { width:100%; border-collapse:collapse; font-size:12.5px; line-height:1.6; }
+.dett th { text-align:left; font:var(--micro); color:var(--slate); padding:8px 10px 7px;
+  border-bottom:1px solid var(--rule); background:var(--bar); }
+.dett th:first-child { border-top-left-radius:4px; }
+.dett th:last-child { border-top-right-radius:4px; }
+.dett td { padding:8px 10px; border-bottom:1px solid var(--rule-soft); vertical-align:top; }
 .dett td a { font-family:var(--mono); word-break:break-all; }
 .dett .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .detn { font-size:12px; color:var(--slate); margin:8px 0 4px; }
 /* 진단 표: 심각한 것은 산화동, 권고는 회색. 색만으로 말하지 않게 첫 칸에 이름을 둔다. */
-.dett.fix td:first-child { font:400 11px/1.5 var(--mono); white-space:nowrap; }
+/* 손댈 자리 이름은 라틴(title·H1)과 한글(본문·구조화 데이터)이 섞인다 — 등폭이면
+   한글 쪽만 폴백 서체로 떨어져 두 줄이 서로 다른 글자로 선다. */
+.dett.fix td:first-child { font:500 12px/1.5 var(--sans); white-space:nowrap; }
 .dett.fix tr.lv-bad td:first-child { color:var(--copper); }
 .dett.fix tr.lv-warn td:first-child { color:var(--slate); }
 .dett.fix td:nth-child(2) { color:var(--slate); }
@@ -349,39 +450,58 @@ td.expcell { padding:0 !important; }
 /* 프롬프트 상자 — 펼침 패널 안의 접이식. 손잡이는 버튼처럼 보이게 둔다. */
 .ask { margin:10px 0 4px; }
 .ask > summary { display:inline-block; cursor:pointer; list-style:none;
-  font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
-  border:1px solid var(--rule); border-radius:2px; padding:6px 10px; }
+  font:500 12.5px/1 var(--sans); color:var(--ink); background:transparent;
+  border:1px solid var(--rule); border-radius:5px; padding:7px 11px; }
 .ask > summary::-webkit-details-marker { display:none; }
 .ask > summary:hover { color:var(--patina); border-color:var(--patina); }
 .ask[open] > summary { color:var(--patina); border-color:var(--patina); }
+/* 펼침 패널 안에서는 이게 그 기회의 다음 행동이다 — 상태 바꾸기(보조)보다 앞에
+   서게 주요 버튼 무게를 준다. 펴고 나면 할 일은 복사라 테두리로 물러난다. */
+.det > .ask:not([open]) > summary { background:var(--patina); border-color:var(--patina);
+  color:var(--card); font-weight:600; }
+.det > .ask:not([open]) > summary:hover { background:var(--ink); border-color:var(--ink);
+  color:var(--stone); }
+/* 상태 바꾸기 묶음 — 패널 맨 밑, 괘선 위로 갈라 둔다. */
+.det > .oppset { margin-top:16px; padding-top:14px; border-top:1px solid var(--rule-soft); }
 .pbox { margin-top:8px; }
 .pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
   font-size:11.5px; color:var(--slate); margin-bottom:5px; }
-.pb-h button { font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
-  border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
+.pb-h button { font:500 12.5px/1 var(--sans); color:var(--ink); background:transparent;
+  border:1px solid var(--rule); border-radius:5px; padding:6px 10px; cursor:pointer; }
 .pb-h button:hover { color:var(--patina); border-color:var(--patina); }
 .pbox textarea { width:100%; box-sizing:border-box; resize:vertical;
   font:400 11.5px/1.6 var(--mono); color:var(--ink); background:var(--bar);
   border:1px solid var(--rule-soft); border-radius:2px; padding:10px; }
-.st { font:var(--micro); padding:3px 7px; border:1px solid var(--rule);
-  border-radius:2px; white-space:nowrap; }
-.st-new { color:var(--patina); border-color:var(--patina); }
+/* 상태 배지 — 색만으로 뜻을 말하지 않는다(글자가 정본이고 색은 거들 뿐이다). */
+.st { font:var(--micro); padding:4px 8px; border:1px solid var(--rule);
+  border-radius:4px; white-space:nowrap; }
+.st-new { color:var(--patina); border-color:var(--patina); background:var(--wash); }
 .st-acked { color:var(--copper); border-color:var(--copper); }
 .st-done { color:var(--slate); }
 .st-dismissed { color:var(--slate); text-decoration:line-through; }
 /* 좁은 화면에선 세 칸이 안 들어간다 — 상태 배지를 본문 밑으로 내린다. */
 @media (max-width:560px) {
+  /* 세 칸이 안 들어가면 상태 배지가 줄바꿈으로 본문 **뒤**로 밀려, 행동 버튼보다
+     아래에서 읽힌다 — 무엇인지 알기 전에 무엇을 할지부터 읽는 순서가 된다.
+     자리를 손으로 못 박아 상태가 늘 먼저 온다. */
   .opp > summary { grid-template-columns:auto 1fr; }
-  .opp .st { grid-column:2; justify-self:start; margin-top:9px; }
+  .opp > summary > .st { grid-column:2; grid-row:1; justify-self:end; align-self:start; }
+  .opp > summary > div:not(.st):not(.score) { grid-column:2; grid-row:2; }
 }
-.acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
-.acts button { font:500 12px/1 var(--sans); color:var(--slate); background:transparent;
-  border:1px solid var(--rule); border-radius:2px; padding:5px 9px; cursor:pointer; }
-.acts button:hover { color:var(--patina); border-color:var(--patina); }
+.acts { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
+/* 회색 글자는 비활성으로 읽힌다 — 누를 수 있는 것은 본문 색으로 세운다.
+   .go(주요 버튼)·.cmd(명령 칩)는 자기 위계를 이미 갖고 있어 여기서 안 덮는다. */
+.acts button:not(.go):not(.cmd) { font:500 12.5px/1 var(--sans); color:var(--ink);
+  background:transparent; border:1px solid var(--rule); border-radius:5px;
+  padding:7px 11px; cursor:pointer;
+  transition:color .12s, border-color .12s, background .12s; }
+.acts button:not(.go):not(.cmd):hover { color:var(--patina); border-color:var(--patina);
+  background:var(--wash); }
+.acts .cmd { margin:0; }
 
 /* ── 칩·로그줄 ─────────────────────────────────────────── */
 .chip { display:inline-block; font:400 12.5px/1 var(--sans); border:1px solid var(--rule);
-  border-radius:2px; padding:5px 9px; margin:0 6px 6px 0; color:var(--slate); }
+  border-radius:5px; padding:6px 10px; margin:0 6px 6px 0; color:var(--slate); }
 .chip b { color:var(--ink); font-weight:500; }
 /* kind 칩: 기회 목록 필터. 누른 칩만 보이고, 다시 누르면 전체로. */
 button.chip { background:transparent; cursor:pointer; }
@@ -396,9 +516,12 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .shaft { display:grid; grid-template-columns:26px 1fr; gap:0 18px; }
 /* 완주 표시. 배너(#nx)는 이미 같은 말을 하지만, [안내]를 열면 모든 단계가 done 이고
    "지금 할 것"이 없어 화면이 애매해진다 — 여기서 한 번 더 못박는다. */
-.donebar { border:1px solid var(--patina); background:var(--wash); border-radius:6px;
-  padding:12px 14px; margin:0 0 20px; font-size:13px; color:var(--ink); }
-.donebar b { font-weight:600; }
+.donebar { border:1px solid var(--rule); border-left:3px solid var(--patina);
+  background:var(--wash); border-radius:6px; padding:14px 16px; margin:0 0 24px;
+  font-size:13px; line-height:1.7; color:var(--ink); }
+.donebar > b:first-child { display:block; font:650 14px/1.45 var(--sans);
+  margin-bottom:3px; }
+.donebar b { font-weight:650; }
 .stp { display:contents; }
 .stp .rail { position:relative; }
 /* 갱도 벽: 위·아래로 이어지는 선. 판 데는 녹청, 안 판 데는 회색. */
@@ -412,26 +535,39 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .stp.done .dot { background:var(--patina); border-color:var(--patina); color:var(--card); }
 .stp.here .dot { border-color:var(--patina); box-shadow:0 0 0 4px var(--wash);
   color:var(--patina); }
-.stp .body { padding:4px 0 26px; display:grid;
+.stp .body { padding:4px 0 28px; display:grid;
   grid-template-columns:minmax(0,62ch) auto; justify-content:start;
   gap:0 28px; align-items:start; }
 .stp .body .txt { min-width:0; }
 .stp:last-child .body { padding-bottom:0; }
 @media (max-width:720px) { .stp .body { grid-template-columns:1fr; } }
+/* 끝난 표시는 번호를 밀어내지 않는다 — 원 안이 3·4·✓·6 이 되면 몇 번째 단계인지
+   세는 것이 그 자리에서 끊긴다. 번호는 원이 갖고, ✓ 는 제목 옆에 선다. */
+.stp .ok { color:var(--patina); font-weight:600; margin-left:-4px; }
 .stp h3 { font:650 15px/1.4 var(--sans); margin:0; display:flex; gap:10px;
   align-items:baseline; flex-wrap:wrap; }
 .stp.later h3 { color:var(--slate); }
-.stp .gain { font-size:13.5px; color:var(--slate); margin:5px 0 0; max-width:62ch; }
+.stp .gain { font-size:13.5px; line-height:1.7; color:var(--slate); margin:6px 0 0; max-width:62ch; }
 .stp .state { font:400 12px/1 var(--sans); }
 .stp.done .state { color:var(--patina); }
 .stp.here .state { color:var(--copper); }
 .stp.later .state { color:var(--slate); }
 .stp .now { font:var(--micro); color:var(--copper); border:1px solid var(--copper);
-  border-radius:2px; padding:3px 7px; }
-.cmd { display:inline-block; font:500 12.5px/1 var(--mono); margin:11px 8px 0 0;
-  background:var(--stone); border:1px solid var(--rule); border-radius:2px;
-  padding:7px 11px; cursor:pointer; color:var(--ink); }
+  border-radius:4px; padding:4px 8px; }
+/* 지금 할 단계가 아닌 줄에서는 명령 칩도 제목만큼 물러난다 — 흐린 제목 옆에
+   선명한 칩이 서면 눈이 안 할 일부터 읽는다. */
+.stp:not(.here) .cmd { color:var(--slate); border-color:var(--rule-soft);
+  background:transparent; }
+.stp:not(.here) .cmd::after { color:var(--rule); }
+.stp:not(.here) .cmd:hover { color:var(--patina); border-color:var(--patina); }
+.cmd { display:inline-block; font:500 12.5px/1 var(--mono); margin:12px 8px 0 0;
+  background:var(--stone); border:1px solid var(--rule); border-radius:5px;
+  padding:8px 12px; cursor:pointer; color:var(--ink);
+  transition:border-color .12s, color .12s; }
 .cmd:hover { border-color:var(--patina); color:var(--patina); }
+/* 보조 명령 칩 — 주요 행동 옆에서 물러난다(호스팅의 .go.sec 과 같은 자리). */
+.cmd.sec { color:var(--slate); background:transparent; }
+.cmd.sec:hover { color:var(--patina); }
 .cmd::after { content:" ⧉"; color:var(--slate); }
 .cmd.copied::after { content:" 복사됨"; color:var(--patina); font-size:11px; }
 .loopback { margin-top:22px; padding-left:44px; font-size:13.5px; color:var(--slate);
@@ -444,24 +580,40 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .runlog .r { display:block; border-bottom:1px solid var(--rule-soft); padding:5px 0; }
 
 /* ── 진단 배너 ─────────────────────────────────────────── */
-#docban { border-left:2px solid var(--patina); padding:16px 18px 16px 16px; margin:26px 0 0;
-  background:var(--wash); max-width:80ch; }
-#docban .verdict { font:650 16px/1.35 var(--sans); }
-#docban .nx { font:400 13px/1 var(--sans); margin-top:7px; color:var(--slate); }
-#docban code { font:500 12.5px/1 var(--mono); background:var(--card); color:var(--ink);
-  padding:4px 7px; border-radius:2px; }
-#docban ul { margin:10px 0 0; padding-left:17px; font-size:13.5px; }
+#docban { border:1px solid var(--rule); border-left:3px solid var(--patina);
+  border-radius:6px; padding:16px 18px; margin:28px 0 0; background:var(--card);
+  max-width:80ch; }
+#docban .verdict { font:650 16px/1.45 var(--sans); }
+/* 안내 한 줄만 남았을 때 — 상자를 두르지 않는다(위 주석의 이유는 banSync 에). */
+#docban.thin { border:0; border-radius:0; padding:0; background:transparent;
+  margin:24px 0 0; }
+#docban.thin .nx { margin-top:0; color:var(--slate); }
+#docban.thin .nx b { color:var(--ink); }
+/* 다음 한 걸음 — 이름표(무엇을 할 때인가)와 단계 이름(무엇을)을 갈라 놓는다.
+   줄표로 잇던 자리다: 줄표는 두 문장을 붙일 뿐 위계를 만들지 못했다. */
+#docban .nx { font:400 13.5px/1.6 var(--sans); margin-top:10px; color:var(--ink);
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+#docban .nx:empty, #docban .nx[hidden] { display:none; }
+#docban .nx b { font-weight:650; }
+.nxk { font:var(--micro); color:var(--patina); border:1px solid var(--patina);
+  border-radius:4px; padding:3px 8px; white-space:nowrap; }
+#docban code { font:500 12.5px/1 var(--mono); background:var(--bar); color:var(--ink);
+  padding:5px 8px; border-radius:4px; }
+#docban ul { margin:12px 0 0; padding-left:18px; font-size:13.5px; line-height:1.7; }
 #docban ul.must { color:var(--copper); }
-#docban details { margin-top:9px; }
-#docban summary { font:500 12.5px/1 var(--sans); color:var(--slate); cursor:pointer; }
+/* 준비물 줄의 복사 칩 — .cmd 의 위 여백은 문단용이라 목록 안에서는 줄인다. */
+#docban .must .cmd { margin:7px 0 3px; }
+#docban details { margin-top:12px; }
+#docban summary { font:500 12.5px/1.4 var(--sans); color:var(--slate); cursor:pointer; }
+#docban summary:hover { color:var(--patina); }
 
 /* ── 설정 패널 ─────────────────────────────────────────── */
 #setup { padding:18px 0 22px; }
-.step { padding:18px 0; border-top:1px solid var(--rule-soft); }
+.step { padding:24px 0; border-top:1px solid var(--rule-soft); }
 .step:first-of-type { border-top:0; }
-.step h3 { font:600 14px/1.3 var(--sans); margin:0 0 5px;
+.step h3 { font:650 15px/1.35 var(--sans); margin:0 0 6px;
   display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-.step .why { font-size:12.5px; color:var(--slate); margin:0 0 12px; max-width:64ch; }
+.step .why { font-size:13px; line-height:1.7; color:var(--slate); margin:0 0 16px; max-width:64ch; }
 .step .why b { color:var(--ink); }
 /* 자기 OAuth 클라이언트를 쓰는 사람은 소수다 — 접어 두고 필요한 사람만 편다. */
 .step details { margin-top:18px; border-top:1px solid var(--rule-soft); padding-top:14px; }
@@ -492,27 +644,39 @@ option { background:var(--card); }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
 .row { margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 #c-proj { width:auto; flex:0 0 auto; max-width:240px; }
-.go { font:500 13px/1 var(--sans); color:var(--card);
-  background:var(--ink); border:1px solid var(--ink); border-radius:2px;
-  padding:8px 14px; cursor:pointer; }
-.go:hover { background:var(--patina); border-color:var(--patina); }
+/* 주요 버튼 — 화면에 하나. 채운 녹청이라 멀리서도 "여기를 누른다"로 읽힌다.
+   호버는 먹색으로 뒤집는다: --ink/--stone 은 다크에서 서로 자리를 바꾸므로
+   두 테마에서 같은 대비가 나온다. */
+.go { font:600 13px/1 var(--sans); color:var(--card);
+  background:var(--patina); border:1px solid var(--patina); border-radius:5px;
+  padding:10px 16px; cursor:pointer;
+  transition:background .12s, border-color .12s, color .12s; }
+.go:hover { background:var(--ink); border-color:var(--ink); color:var(--stone); }
 .go[disabled] { opacity:.45; cursor:default; }
-/* 이미 끝난 단계의 버튼은 물러나 있게 — 다시 누를 일이 거의 없다. */
-.go.sec { background:transparent; color:var(--slate); border-color:var(--rule); }
-.go.sec:hover { color:var(--patina); border-color:var(--patina); }
-.msg { font:400 12.5px/1.5 var(--sans); }
+.go[disabled]:hover { background:var(--patina); border-color:var(--patina); color:var(--card); }
+/* 보조 버튼 — 되돌리기·내보내기·다시 하기. 테두리만 두르고 물러나 있는다. */
+.go.sec { background:transparent; color:var(--ink); border-color:var(--rule); }
+.go.sec:hover { color:var(--patina); border-color:var(--patina); background:var(--wash); }
+.msg { font:400 13px/1.6 var(--sans); max-width:64ch; }
 .msg.bad { color:var(--copper); } .msg.good { color:var(--patina); }
 pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px solid var(--rule);
   padding:11px 13px; max-height:210px; overflow:auto; white-space:pre-wrap; margin:14px 0 0; }
-#err { color:var(--copper); font-size:13.5px; padding:26px 0; }
+/* 오류는 원인과 되돌릴 손잡이를 같이 낸다 — "실패했습니다"로 끝나지 않는다. */
+#err { color:var(--copper); font:400 13.5px/1.65 var(--sans); margin:28px 0 0;
+  padding:16px 18px; border:1px solid var(--copper); border-left-width:3px;
+  border-radius:6px; max-width:74ch; }
 </style>
 </head>
 <body>
 <header>
+  <!-- 레일 머리 = "무엇을 보고 있나". 고른 것 위에 이름표를 세워 두 select 가
+       서로 다른 것을 고른다는 사실이 한눈에 보이게 한다(사이트 / 기준일). -->
   <div class="hbar">
     <span class="mark">seo<b>·</b>miner</span>
-    <span class="tag" data-web="SEO 대시보드">채굴 로그</span>
+    <span class="tag" data-web="SEO 대시보드">검색 가시성</span>
+    <span class="rl" id="projlab">보는 사이트</span>
     <select id="proj" aria-label="사이트 선택"></select>
+    <span class="rl" id="datelab" hidden>구글 실적 기준일</span>
     <select id="gscdate" aria-label="기준 수집일" hidden></select>
     <span class="sp"></span>
     <span id="meta"></span>
@@ -700,14 +864,110 @@ function viewCmds() {
     const box = $("view-" + v.id);
     if (!box || !v.stages.length) continue;
     const vh = box.querySelector(".vh");
-    if (!vh || vh.querySelector(".vh-cmd")) continue;    // 여러 번 불려도 공짜다
-    vh.insertAdjacentHTML("beforeend", v.stages.map(s =>
-      `<button class="cmd vh-cmd" onclick="copyCmd(this)"
-         title="이 화면을 채우는 단계입니다 — 눌러 복사한 뒤 채팅에 붙여넣으세요"
-         >/capture ${esc(s)}</button>`).join(""));
+    if (!vh) continue;
+    if (!vh.querySelector(".vh-cmd"))                    // 여러 번 불려도 공짜다
+      vh.insertAdjacentHTML("beforeend", v.stages.map(s =>
+        `<button class="cmd vh-cmd" data-run="${esc(s)}" onclick="copyCmd(this)"
+           title="이 화면을 채우는 단계입니다. 눌러서 복사한 뒤 채팅에 붙여 넣으세요."
+           >/capture ${esc(s)}</button>`).join(""));
+    // 사이트 이름은 레일의 선택이 정해진 뒤에야 안다. 이 칩은 셸이 그보다 먼저
+    // 세우므로 이름을 나중에 채운다 — 안 그러면 머리줄 칩만 이름 없는 명령을 들고
+    // 있고 띠의 칩은 이름을 실어서, 한 화면에 두 모양이 섞인다.
+    vh.querySelectorAll(".vh-cmd").forEach(b => {
+      b.innerHTML = `/capture ${esc(b.dataset.run)}${siteArg()}`;
+    });
   }
 }
-document.addEventListener("sm:views", viewCmds);
+// 좁은 화면의 메뉴는 가로 스크롤러다. 오른쪽 페이드는 "더 있다"는 말이라, 끝까지
+// 밀었거나 애초에 안 넘치면 꺼야 한다 — 안 그러면 없는 것을 있다고 말한다.
+function navFade() {
+  const n = $("nav");
+  if (n) n.classList.toggle("end", n.scrollLeft + n.clientWidth >= n.scrollWidth - 1);
+}
+$("nav").addEventListener("scroll", navFade, {passive: true});
+addEventListener("resize", navFade);
+
+document.addEventListener("sm:views", () => { viewCmds(); dimHead(); navFade(); });
+document.addEventListener("sm:site", viewCmds);
+
+/* ── 다음 행동 띠: 화면당 하나 ──────────────────────────────────────────────
+      화면 머리(.vh) 바로 밑에 "무엇을 왜"를 한 문장으로 세우고, 그 문장 옆에
+      누를 것을 둔다. 뷰는 자기 render 안에서 nextStep(id, html) 을 부른다 —
+      상태(빈·진행·찬)에 따라 문장이 바뀌므로 매 렌더마다 다시 심는다.
+
+      박제본에는 서버가 없다: 버튼을 남기면 눌러도 아무 일이 안 일어나는 거짓말이
+      되므로 .acts 를 떼고 문장만 남긴다. */
+window.nextStep = (viewId, html) => {
+  const box = $("view-" + viewId);
+  if (!box) return;
+  let el = box.querySelector(":scope > .next");
+  if (!html) { if (el) el.remove(); dimHead(viewId); return banSync(); }
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "next";
+    const vh = box.querySelector(".vh");
+    if (vh) vh.insertAdjacentElement("afterend", el); else box.prepend(el);
+  }
+  el.innerHTML = html;
+  if (READONLY) el.querySelectorAll(".acts").forEach(a => a.remove());
+  applyWording(el);
+  dimHead(viewId);
+  banSync();     // 이 화면에 띠가 섰으니 배너의 "지금 할 것" 줄은 물러난다
+};
+
+/* 단계 하나를 실행하는 버튼. 배포가 모양을 고른다 — 로컬에는 누를 서버가 없고
+   (명령을 복사해 채팅에 붙인다), 호스팅에는 칠 채팅이 없다(버튼이 서버를 부른다).
+   호스팅의 클릭은 애드온(dash.html)이 [data-run] 위임으로 잇는다. */
+// .sec 는 두 배포에서 같은 뜻이다(이 행동은 주요가 아니다) — 그래야 머리줄 톤을
+// 정하는 쪽이 배포마다 다른 규칙을 갖지 않는다.
+window.act = (stage, label, primary = true) => window.SM_HOSTED
+  ? `<button class="go${primary ? "" : " sec"}" data-run="${esc(stage)}">${esc(label)}</button>`
+  : `<button class="cmd${primary ? "" : " sec"}" data-run="${esc(stage)}" onclick="copyCmd(this)"
+       >/capture ${esc(stage)}${siteArg()}</button>`;
+// 사이트가 여럿인 로컬에서 이름 없는 명령은 doctor 가 되묻는다. 그래서 칩은 이름을 싣는다.
+const siteArg = () => { const p = $("proj"); return p && p.value ? ` ${esc(p.value)}` : ""; };
+
+/* 단계를 부르는 이름은 stage.STAGE_LABELS 한 벌이고, 조립이 window.__STAGES__ 로
+   실어 보낸다(dashboard.py·app.py 둘 다). 뷰가 그 라벨을 글자로 옮겨 적으면
+   파이썬이 이름을 바꿀 때 화면만 낡는다 — 실제로 index 가 "색인 다시 검사"에서
+   "색인 다시 확인"으로 바뀌었을 때 뷰 두 곳이 옛 이름으로 남았다.
+   run 은 실행 버튼용(화면 제목과 안 겹치게 다르게 부른다), t 는 단계 이름이다. */
+window.stageRun = id => {
+  const s = (window.__STAGES__ || {})[id] || {};
+  return s.run || s.t || id;
+};
+
+// 띠가 이미 주요 버튼으로 들고 있는 단계면 머리줄의 같은 버튼은 물러난다 —
+// 한 화면에 주요 행동은 하나다. (로컬은 .vh-cmd, 호스팅은 애드온의 .sm-refresh.)
+function dimHead(only) {
+  for (const v of SM.views) {
+    if (only && v.id !== only) continue;
+    const box = $("view-" + v.id);
+    if (!box) continue;
+    const band = box.querySelector(":scope > .next");
+    // 띠가 **주요 버튼으로** 들고 있을 때만이다 — 보조(.sec)로 들고 있는 단계까지
+    // 빼면 그 행동에 닿을 자리가 화면에서 사라진다.
+    const taken = new Set([...(band ? band.querySelectorAll("[data-run]:not(.sec)") : [])]
+      .map(b => b.dataset.run));
+    // 호스팅의 머리줄 버튼(.sm-refresh)은 애드온이 같은 규칙으로 직접 칠한다 —
+    // 두 곳이 같은 요소를 서로 끄고 켜지 않게 여기서는 로컬 칩만 본다.
+    box.querySelectorAll(".vh .vh-cmd[data-run]").forEach(b =>
+      b.classList.toggle("taken", taken.has(b.dataset.run)));
+    // [안내]의 단계 목록도 같은 화면이다. 그 칩은 data-run 이 아니라 data-stage 로
+    // 자기 단계를 말하고, 그 명령이 정말 그 단계를 돌 때만 data-runnable 이 선다
+    // (질문 0건이면 ai 단계의 명령이 /capture add 다). 그때만 같은 규칙을 받는다.
+    box.querySelectorAll('.stp [data-runnable="1"][data-stage]').forEach(b =>
+      b.classList.toggle("taken", taken.has(b.dataset.stage)));
+  }
+}
+// 머리줄 버튼을 다는 시점은 이 파일이 못 정한다: 로컬은 viewCmds 가, 호스팅은
+// 애드온(dash.html)이 자기 초기화 중 아무 때나 단다. 이벤트 순서로 맞추려 들면
+// 응답이 빠를수록 잘 지는 경합이 된다 — 늦게 붙은 버튼도 같은 규칙을 받게
+// 머리줄이 바뀌는 것만 지켜본다. (바꾸는 건 class 뿐이라 되돌아 불리지 않는다.)
+const HEAD_WATCH = new MutationObserver(ms => {
+  if (ms.some(m => m.target.closest && m.target.closest(".vh"))) dimHead();
+});
+HEAD_WATCH.observe($("content"), {childList: true, subtree: true});
 
 // base(직전 값)를 주면 증감률까지 같이 말한다 — +471 만으로는 큰 건지 알 수 없다.
 const delta = (d, invert, base, tip) => {
@@ -725,32 +985,34 @@ const delta = (d, invert, base, tip) => {
    그 페이지의 무엇이 잘못됐는지(진단), 그래서 뭘 하는지(할 일). 화면마다 따로
    만들면 같은 사실이 네 벌이 되고, 그중 셋은 언젠가 낡는다.
    진단 문장은 여기서 만들지 않는다 — scoring.page_advice 가 만든 것을 그린다. */
+// 표는 좁은 화면에서 상자 안에서 넘친다 — 열이 다섯이라 390px 를 넘고, 상자가
+// 없으면 펼침 패널이 아니라 페이지 전체가 옆으로 밀린다(table() 과 같은 규칙).
 const pageTable = rows => !rows || !rows.length ? "" :
-  `<table class="dett"><thead><tr><th>페이지</th><th class="n">노출</th>
+  `<div class="tw"><table class="dett"><thead><tr><th>페이지</th><th class="n">노출</th>
      <th class="n">클릭</th><th class="n">CTR</th><th class="n">평균순위</th></tr></thead>
    <tbody>${rows.map(r => `<tr><td><a href="${esc(r.page)}" target="_blank"
        rel="noopener">${esc(r.page)}</a></td>
      <td class="n">${num(r.impressions)}</td><td class="n">${num(r.clicks)}</td>
      <td class="n">${r.ctr}%</td><td class="n">${r.position ?? "—"}</td></tr>`).join("")}
-   </tbody></table>`;
+   </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
 const pageFix = (audit, url) => {
   if (!audit)
-    return `<p class="detn">${esc(url || "이 페이지")}는 아직 점검하지 않았습니다 —
-      [전체 분석 실행]의 <b>내 페이지 점검</b> 단계가 돌면 제목·설명·본문을 직접 읽고
-      무엇을 바꿔야 하는지 여기에 적습니다.</p>`;
-  const head = `<p class="detn">점검 ${esc(audit.checked_date || "")} ·
-    title ${audit.title ? `<b>${esc(audit.title)}</b>` : "없음"} ·
+    return `<p class="detn">${esc(url || "이 페이지")}는 아직 점검하지 않았습니다.
+      <b>내 페이지 점검</b>이 돌면 제목·설명·본문을 직접 읽고 무엇을 바꿔야 하는지
+      여기에 적습니다.</p>`;
+  const head = `<p class="detn">${esc(audit.checked_date || "")} 점검 ·
+    제목 ${audit.title ? `<b>${esc(audit.title)}</b>` : "없음"} ·
     본문 ${num(audit.words)}단어</p>`;
   const a = audit.advice || [];
   if (!a.length)
-    return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다 — 제목·설명·H1·본문 길이·
-      구조화 데이터는 정상입니다.</p>`;
-  return head + `<table class="dett fix"><thead><tr><th>손댈 자리</th><th>지금</th>
-      <th>이렇게</th></tr></thead><tbody>${a.map(x =>
+    return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다.
+      제목·설명·H1·본문 길이·구조화 데이터가 모두 기준 안입니다.</p>`;
+  return head + `<div class="tw"><table class="dett fix"><thead><tr><th>손댈 자리</th>
+      <th>지금 값</th><th>바꿀 값</th></tr></thead><tbody>${a.map(x =>
       `<tr class="lv-${esc(x.level)}"><td>${esc(x.tag)}</td><td>${esc(x.now)}</td>
-        <td>${esc(x.fix)}</td></tr>`).join("")}</tbody></table>`;
+        <td>${esc(x.fix)}</td></tr>`).join("")}</tbody></table></div>`;
 };
 
 // 할 일 목록 — kind 마다 손대는 자리가 다르다. 표는 각 화면이 갖는다.
@@ -846,7 +1108,7 @@ function deliverFrom(audit) {
 // 프롬프트 상자 — 접혀 있다가 펴면 본문이 보이고, 버튼 하나로 복사한다.
 const askBlock = c => {
   const t = fixPrompt(c);
-  return `<details class="ask"><summary>AI 에게 수정 요청 — 프롬프트 만들기</summary>
+  return `<details class="ask"><summary>고칠 내용 요청문 만들기</summary>
     <div class="pbox">
       <div class="pb-h"><span>그대로 복사해 Claude·ChatGPT 에 붙여 넣으세요</span>
         <button type="button" onclick="copyPrompt(this)">복사</button></div>
@@ -903,12 +1165,17 @@ function oppIndex(opps) {
 window.oppsOf = t => OPP_INDEX[oppKey(t)] || [];
 window.oppOf = t => (OPP_INDEX[oppKey(t)] || [])[0] || null;
 
-window.oppScore = o => `<div class="score" title="점수 ${o && o.score != null ? o.score : "—"}`
-  + ` / 100 — 높을수록 먼저">${Number.isFinite(o && o.score) ? Math.round(o.score) : "—"}`
-  + `<span class="u">점</span></div>`;
+// 점수가 없는 줄(기회가 안 붙은 대상)에서는 단위도 설명도 안 붙인다 — 좁은 칸에서
+// "—" 와 "점" 이 두 줄로 갈라져 고장난 것처럼 읽히고, 뜯어보면 "— 점 / 100점"이라는
+// 말이 안 되는 안내가 붙어 있었다. 자리(width)는 그대로 잡아 둔다: 빼 버리면
+// 옆 열이 줄마다 다른 자리에서 시작한다.
+window.oppScore = o => Number.isFinite(o && o.score)
+  ? `<div class="score" title="${o.score}점 / 100점. 높을수록 먼저 손댑니다.">`
+    + `${Math.round(o.score)}<span class="u">점</span></div>`
+  : `<div class="score none" title="이 줄에는 아직 붙은 기회가 없습니다.">—</div>`;
 
 window.oppMeter = o => Number.isFinite(o && o.score)
-  ? `<div class="meter${isDefensive(o) ? " def" : ""}" title="점수 ${o.score}/100">
+  ? `<div class="meter${isDefensive(o) ? " def" : ""}" title="${o.score}점 / 100점">
        <i style="width:${Math.min(100, Math.max(0, o.score))}%"></i></div>` : "";
 
 const isDefensive = o => o && (o.is_defensive
@@ -929,13 +1196,34 @@ window.oppWhy = o => !o ? "" : `<div class="oh">
     ${window.gaBadge(o)}
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}`;
 
+/* 상태 바꾸기. 라벨은 누른 뒤에 무엇이 보이는지로 짓는다 — "확인"은 무엇이
+   달라지는지를 말하지 않는다. 누르면 카드의 상태 배지가 그 말로 바뀐다.
+
+   접힌 줄에는 **다음 하나만** 둔다. 셋을 다 두면 두 줄짜리 목록에 버튼이 여섯 개
+   서고, 그중 다섯은 지금 누를 일이 없는 것이라 목록이 버튼밭으로 읽힌다.
+   나머지는 펼침 패널이 갖는다 — 거기서는 진짜 다음 행동(요청문 만들기)이
+   주요고 상태 바꾸기는 보조다. */
+const OPP_NEXT = {new: ["acked", "확인 표시"], acked: ["done", "완료 표시"],
+                  done: ["new", "새 기회로 되돌리기"], dismissed: ["new", "새 기회로 되돌리기"]};
+const OPP_SET = {acked: "확인 표시", done: "완료 표시",
+                 dismissed: "목록에서 빼기", new: "새 기회로 되돌리기"};
+const oppBtn = (o, st) => `<button onclick="setOpp(${o.id},'${st}')">${OPP_SET[st]}</button>`;
+
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
 window.oppActs = o => {
   if (!o || READONLY || o.id == null) return "";
-  const btn = (st, label) => `<button onclick="setOpp(${o.id},'${st}')">${label}</button>`;
-  return `<div class="acts" onclick="event.stopPropagation()">${o.status === "new"
-    ? btn("acked", "확인") + btn("done", "완료") + btn("dismissed", "제외")
-    : btn("new", "되돌리기")}</div>`;
+  const n = OPP_NEXT[o.status];
+  if (!n) return "";
+  return `<div class="acts" onclick="event.stopPropagation()">${oppBtn(o, n[0])}</div>`;
+};
+
+// 펼침 패널이 갖는 나머지 상태 — 지금 상태와 접힌 줄이 이미 낸 것은 뺀다.
+const oppRest = o => {
+  if (!o || READONLY || o.id == null) return "";
+  const shown = (OPP_NEXT[o.status] || [])[0];
+  const rest = Object.keys(OPP_SET).filter(st => st !== o.status && st !== shown);
+  return rest.length
+    ? `<div class="acts oppset">${rest.map(st => oppBtn(o, st)).join("")}</div>` : "";
 };
 
 window.oppPanel = o => o ? oppDetail(o) : "";
@@ -1003,8 +1291,20 @@ window.chWaterfall = (rows, opt = {}) => {
     `<line x1="${(x(i) + bw).toFixed(1)}" y1="${y(b.end).toFixed(1)}"
        x2="${x(i + 1).toFixed(1)}" y2="${y(b.end).toFixed(1)}"
        stroke="var(--rule)" stroke-dasharray="2 3"/>`).join("");
+  // 눈금이 없으면 막대 높이가 값에 비례하는지를 눈으로 검산할 수 없다 — 실제로
+  // 같은 높이인 두 막대가 다르게 읽혔다("+4 가 4 보다 커 보인다"). 왼쪽 여백은
+  // 이미 비어 있으니 거기에 0·절반·최고 셋을 적고 옅은 가로선을 긋는다.
+  // 반올림해서 같은 값이 되는 눈금은 하나만 남긴다(값 범위가 작을 때 겹친다).
+  const seen = new Set();
+  const grid = [mn, (mn + mx) / 2, mx].map(v => Math.round(v))
+    .filter(v => !seen.has(v) && seen.add(v))
+    .map(v => `<line class="grid" x1="${L}" y1="${y(v).toFixed(1)}" x2="${R}"
+        y2="${y(v).toFixed(1)}"/>
+      <text class="axis" x="${(L - 9).toFixed(1)}" y="${(y(v) + 3.5).toFixed(1)}"
+        text-anchor="end">${chVal(v, unit)}</text>`).join("");
   const aria = `${n}단계 워터폴 — 시작 ${chVal(bars[0].end, unit)}, 끝 ${chVal(bars[n - 1].end, unit)}`;
   return `<div class="chwrap"><svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">
+    ${grid}
     <line x1="${L}" y1="${y(0).toFixed(1)}" x2="${R}" y2="${y(0).toFixed(1)}" stroke="var(--rule)"/>
     ${connectors}${rects}
   </svg></div>`;
@@ -1201,9 +1501,9 @@ window.chLine = (series, opt = {}) => {
 // 서버가 이미 갈라 낸 것을 받는다. 예전에는 이 산문이 여기 KIND_LABEL·SD_LABEL·
 // PLAY 세 벌로 있었고, SD_BAND·GAP_KIND 곁표를 매 렌더마다 되짚었다.
 
-window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다`
-  + ` — 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있고,`
-  + ` 실측은 ${window.go("rank")} 화면입니다.`;
+window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다.`
+  + ` 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있습니다.`
+  + ` 실제로 검색해서 잰 순위는 ${window.go("rank")} 화면에 있습니다.`;
 /* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
@@ -1224,14 +1524,14 @@ function oppDetail(o) {
   // 애초에 GSC 검색어 목록에 없고, 도메인·클러스터는 페이지 개념이 아니다.
   // 한 문장으로 뭉치면 "대상이 URL 이거나…"처럼 틀린 이유를 대게 된다.
   const NOTE = {
-    ai_citation_gap: "이 질문으로 걸린 내 페이지가 스냅샷에 없습니다 — 챗봇 질문은 문장이라 "
+    ai_citation_gap: "이 질문으로 걸린 내 페이지가 아직 없습니다. 챗봇 질문은 문장이라 "
       + "구글 검색어 목록에 그대로 잡히는 일이 드뭅니다. 아래 할 일은 새로 쓸 글 기준입니다.",
-    backlink_prospect: "이 대상은 남의 도메인입니다 — 고칠 내 페이지가 아니라 연락할 곳입니다.",
-    coverage: "이 대상은 클러스터입니다 — 아직 이 주제를 다루는 페이지가 없다는 뜻입니다.",
+    backlink_prospect: "이 대상은 남의 도메인입니다. 고칠 내 페이지가 아니라 연락할 곳입니다.",
+    coverage: "이 대상은 주제 묶음입니다. 아직 이 주제를 다루는 페이지가 없다는 뜻입니다.",
   };
   const note = pages.length || o.target.startsWith("http") ? ""
-    : `<p class="detn">${NOTE[o.kind] || "이 검색어로 걸린 페이지가 스냅샷에 없습니다 — "
-      + "페이지 분해를 아직 수집하지 않았습니다."}</p>`;
+    : `<p class="detn">${NOTE[o.kind] || "이 검색어로 걸린 페이지를 아직 모으지 않았습니다. "
+      + "페이지별 실적을 수집하면 어느 페이지가 걸렸는지 여기에 나옵니다."}</p>`;
   // 프롬프트 재료는 여기 이미 다 있다 — 손으로 다시 옮겨 적지 않게 한 장으로 세운다.
   const ask = askBlock({
     url, audit, acts: p.acts, deliver: p.deliver,
@@ -1242,9 +1542,10 @@ function oppDetail(o) {
                        + ` · CTR ${pages[0].ctr}% · 평균 ${pages[0].position ?? "—"}위` : "",
     }],
   });
+  // 패널 맨 밑이 이 기회의 다음 행동이다: 요청문 만들기가 주요고, 상태 바꾸기는 보조.
   return `<div class="det">${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}${oppRest(o)}</div>`;
 }
 
 async function setOpp(id, status) {
@@ -1260,8 +1561,8 @@ const rankDelta = rd => {
   const flat = typeof rd === "object" ? rd.flat : (Number.isFinite(d) && Math.abs(d) < (RULES.rank_noise || 3));
   if (!Number.isFinite(d)) return "";
   if (flat)
-    return `<span class="d muted" title="실제 Δ ${d > 0 ? "+" : d < 0 ? "−" : ""}` +
-           `${Math.abs(d)} — ±${(RULES.rank_noise || 3) - 1}칸은 노이즈로 봅니다">보합</span>`;
+    return `<span class="d muted" title="실제 변화 ${d > 0 ? "+" : d < 0 ? "−" : ""}` +
+           `${Math.abs(d)}칸. ±${(RULES.rank_noise || 3) - 1}칸까지는 흔들림으로 봅니다.">보합</span>`;
   return delta(d);
 };
 // 머리글 표기: ">"로 시작하면 숫자 열(우측 정렬), "?"뒤는 그 열의 근거 설명.
@@ -1269,8 +1570,12 @@ const rankDelta = rd => {
 // 줄이 SORT_MIN 을 넘으면 머리글이 정렬 손잡이가 되고 머리글 자체가 붙박인다.
 const SORT_MIN = 8;
 const table = (heads, rows, empty) => {
+  // 빈 표에도 다음 걸음이 있어야 한다 — 부르는 쪽이 empty 로 더 구체적인 말을
+  // 주면 그쪽이 이긴다(그 화면이 무엇을 돌려야 채워지는지 안다).
   if (!rows.length)
-    return `<div class="empty">${empty || W("아직 데이터가 없습니다.", "아직 수집된 데이터가 없습니다.")}</div>`;
+    return `<div class="empty">${empty || W(
+      "<b>아직 채울 자료가 없습니다</b><p>이 화면을 채우는 단계를 한 번 돌리면 표가 생깁니다.</p>",
+      "<b>아직 채울 자료가 없습니다</b><p>화면 위 실행 버튼을 누르면 수집이 시작되고, 끝나면 표가 생깁니다.</p>")}</div>`;
   const long = rows.length >= SORT_MIN;
   const th = heads.map((h, i) => {
     const num = h.startsWith(">");
@@ -1279,7 +1584,7 @@ const table = (heads, rows, empty) => {
       `${esc(name)}${why ? `<i class="hint" title="${esc(why)}">i</i>` : ""}</th>`;
   }).join("");
   const t = `<table><thead><tr>${th}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
-  return long ? `<div class="tw">${t}</div>` : t;
+  return `<div class="tw${long ? " long" : ""}">${t}</div>`;
 };
 
 // 표는 화면 밖에서도 이어진다 — 지금 걸러 놓은 목록 그대로 파일로 준다.
@@ -1354,10 +1659,11 @@ function renderGuide(d) {
   $("shaft").innerHTML = steps.map((s, i) => {
     const cls = s.done ? "done" : i === here ? "here" : "later";
     return `<div class="stp ${cls}" data-stage="${esc(s.id)}">
-      <div class="rail"><div class="dot">${s.done ? "✓" : i + 1}</div></div>
+      <div class="rail"><div class="dot">${i + 1}</div></div>
       <div class="body">
         <div class="txt">
-          <h3><span class="t">${esc(s.t)}</span> <span class="state">${esc(s.state)}</span>
+          <h3><span class="t">${esc(s.t)}</span>${s.done ? '<span class="ok">✓</span>' : ""}
+            <span class="state">${esc(s.state)}</span>
             ${i === here ? '<span class="now" data-web="권장 조치">지금 할 것</span>' : ""}</h3>
           <p class="gain">${esc(s.gain)}</p>
         </div>
@@ -1369,21 +1675,31 @@ function renderGuide(d) {
   // 되돌아갈 자리는 2번 단계다 — 이름을 여기 박아 두면 stage.py 와 어긋난다.
   const back = steps[1]
     ? `2. <b data-stage="${esc(steps[1].id)}">${esc(steps[1].t)}</b>` : "<b>2번 단계</b>";
-  // 배너의 "지금 할 것" 채우기
+  // 배너의 "지금 할 것" 채우기. 이름표와 단계 이름을 줄표로 잇지 않는다 —
+  // 이름표는 .nxk 로 세우고 단계 이름이 문장의 주어가 된다.
   const nx = $("nx");
   if (nx) {
+    // 이름표는 W() 로 고른다 — data-web 은 applyWording 이 훑는 자리(#guide) 밖이라
+    // 여기서 쓰면 호스팅에서 속성이 안 벗겨진 채 남는다.
     nx.innerHTML = here === -1
-      ? `한 바퀴 다 돌았습니다 — ${back}부터 다시 재면 그동안 고친 게 숫자로 보입니다.`
-      : `${W("지금 할 것", "권장 조치")} — <b data-stage="${esc(steps[here].id)}">${esc(steps[here].t)}</b>` +
-        (steps[here].cmd ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+      ? `<span class="nxk">한 바퀴 완주</span>` +
+        `<span>${back}부터 다시 재면 그동안 고친 것이 숫자로 보입니다.</span>`
+      : `<span class="nxk">${W("지금 할 것", "권장 조치")}</span>` +
+        `<span><b data-stage="${esc(steps[here].id)}">${esc(steps[here].t)}</b></span>` +
+        // 명령은 칠 곳이 있는 배포에서만 낸다 — 웹에는 채팅이 없다. 애드온이
+        // CSS 로 감추고 있었지만, 감춘 글자는 여전히 화면 글자다(복사·읽어주기).
+        (!window.SM_HOSTED && steps[here].cmd
+          ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+    banSync();          // 이제 배너에 할 말이 생겼다
   }
   const db_ = $("donebar");
   if (db_) {
     db_.hidden = here !== -1;
+    // 단계 수는 여기서 세지 않는다 — stage.py 가 실어 보낸 목록 길이가 정본이다.
     if (here === -1) db_.innerHTML =
-      `✓ <b>한 바퀴 완주</b> — 여섯 단계를 모두 돌았습니다. 다음은
-       ${back}부터입니다. 고친 게 순위·인용에 반영됐는지는
-       다시 잴 때 숫자로 나옵니다.`;
+      `<b>한 바퀴를 다 돌았습니다</b> ${steps.length}단계를 모두 마쳤습니다.
+       다음은 ${back}부터입니다. 고친 것이 순위와 인용에 반영됐는지는 다시 잴 때
+       숫자로 나옵니다.`;
   }
   // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
   // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
@@ -1410,6 +1726,7 @@ function renderDates(d) {
   const sel = $("gscdate"), dates = d.gsc_dates || [];
   // 박제본에는 서버가 없어 되돌릴 수 없고, 고를 게 하나뿐이면 선택지가 아니다.
   sel.hidden = READONLY || dates.length < 2;
+  if ($("datelab")) $("datelab").hidden = sel.hidden;   // 이름표는 고를 게 있을 때만
   if (!sel.hidden) {
     sel.innerHTML = dates.map(x =>
       `<option value="${esc(x.date)}">${esc(x.date)}` +
@@ -1434,7 +1751,7 @@ function renderDates(d) {
   const ax = AXES.filter(([, key]) => d[key])
                  .map(([name, key]) => `<span>${esc(name)} ${esc(d[key])}</span>`);
   $("axes").innerHTML = (past
-    ? "<b>과거 시점 — 되돌린 것은 구글 실적뿐입니다. 아래 축은 최신 그대로입니다.</b>"
+    ? "<b>과거 시점을 보고 있습니다. 되돌린 것은 구글 실적뿐이고 아래 날짜는 최신입니다.</b>"
     : "") + ax.join("");
   $("axes").hidden = !ax.length && !past;
 }
@@ -1505,6 +1822,7 @@ async function loadProjects() {
   $("proj").innerHTML = names.map(n =>
     `<option${n === want ? " selected" : ""}>${esc(n)}</option>`).join("");
   $("proj").hidden = !names.length;      // 사이트가 없으면 빈 칸을 띄우지 않는다
+  if ($("projlab")) $("projlab").hidden = !names.length;
   return names.length ? $("proj").value : null;
 }
 
@@ -1521,7 +1839,8 @@ async function load() {
   const d = await res.json();
   if (!res.ok) {
     $("err").hidden = false;
-    $("err").textContent = (d.error || "로드 실패") + " — 왼쪽 아래 [새로고침]으로 다시 시도하세요.";
+    $("err").textContent = (d.error || "이 사이트의 자료를 불러오지 못했습니다.") +
+      " [새로고침]을 누르면 다시 시도합니다.";
     return;
   }
   // 그 사이트에 없는 날을 고정하면 서버가 빈 짝을 준다 — 고정을 풀고 최신으로 되돌린다.
@@ -1538,29 +1857,62 @@ async function load() {
   document.dispatchEvent(new CustomEvent("sm:site", {detail: {project: name}}));
 }
 
+// 배너는 "할 말이 있을 때만" 선다. 안에 든 것이 빈 #nx 뿐이면 감춘다.
+function banSync() {
+  const b = $("docban");
+  if (!b) return;
+  const nx = $("nx");
+  // 이 배너가 얹힌 화면에 행동 띠가 있으면 "지금 할 것" 줄을 뺀다. 띠는 이 화면에서
+  // 무엇을 누르라고 말하고, 이 줄은 파이프라인 전체가 어디쯤인지를 말한다 — 나란히
+  // 세우면 한 화면에 다음 행동이 둘이 된다. 그 안내를 통째로 갖는 화면은 [안내]다.
+  const host = b.closest(".view");
+  if (nx) nx.hidden = !!(host && host.querySelector(":scope > .next"));
+  // 막는 항목이 있을 때만 상자로 선다. 준비물이 다 됐는데 상자가 첫 화면을 먹으면
+  // 눈이 지표보다 배너를 먼저 읽는다.
+  const heavy = !!b.querySelector("ul.must");
+  b.classList.toggle("thin", !heavy);
+  b.hidden = !(b.querySelector(".verdict, ul, details") ||
+               (nx && !nx.hidden && nx.innerHTML.trim()));
+}
+
 async function loadDoctor() {
   try {
     // 화면이 보고 있는 사이트를 같이 보낸다 — 안 보내면 서버가 폴더로 추론하고,
     // 추론이 안 되면(사이트 여럿 + 리포 미등록) 안내가 비어 버린다.
     const cur = $("proj") ? $("proj").value : "";
     const d = await (await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""))).json();
-    let h = `<div class="verdict">${esc(d.verdict)}</div>`;
+    // verdict·must·extra 는 이제 청중별로 갈려서 온다(doctor.py 가 SEOMINER_HOSTED
+    // 로 가른다) — 호스팅 갈래에는 명령·파일 경로·"채팅에"가 안 들어가고,
+    // doctor._selfcheck() 가 그걸 못 박는다. 그래서 화면이 다시 가릴 이유가 없다.
+    // 오히려 가리면 호스팅에서 **유일한 사용자 몫**(구글 계정 연결)이 안 보인다 —
+    // 그건 서버가 대신 로그인해 줄 수 없어 owner 가 user 이고 blocking 이다.
+    // 여기서 배포로 가르는 것은 복사할 것(cmd) 하나뿐이다: 웹에는 칠 곳이 없다.
+    const local = !window.SM_HOSTED;
+    let h = d.verdict ? `<div class="verdict">${esc(d.verdict)}</div>` : "";
     let nxHtml = "";
     if (d.no_project) {
-      nxHtml = `아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을 누르시면 됩니다.`;
+      nxHtml = `<span class="nxk">지금 할 것</span>` +
+        `<span>아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을 누르세요.</span>`;
     } else if (d.guide) {
       const g = d.guide, gh = g.here, gs = g.steps;
+      // 돌아갈 단계 이름을 여기 옮겨 적지 않는다 — 정본은 stage.py 가 실어 보낸 목록이다.
+      const back = gs[1] ? `<b>2. ${esc(gs[1].t)}</b>` : "<b>2번 단계</b>";
       nxHtml = gh === -1
-        ? `한 바퀴 다 돌았습니다 — <b>2. 구글 실적 읽기</b>부터 다시 재면 그동안 고친 게
-           숫자로 보입니다.`
-        : `${W("지금 할 것", "권장 조치")} — <b>${esc(gs[gh].t)}</b>` +
-          (gs[gh].cmd ? ` <code>${esc(gs[gh].cmd)}</code>` : "");
+        ? `<span class="nxk">한 바퀴 완주</span>` +
+          `<span>${back}부터 다시 재면 그동안 고친 것이 숫자로 보입니다.</span>`
+        : `<span class="nxk">${W("지금 할 것", "권장 조치")}</span>` +
+          `<span><b>${esc(gs[gh].t)}</b></span>` +
+          (local && gs[gh].cmd ? ` <code>${esc(gs[gh].cmd)}</code>` : "");
     }
     h += `<div class="nx" id="nx">${nxHtml}</div>`;
+    // must 는 {msg, cmd} 다. 산문은 칩 없이도 혼자 읽히고, cmd 는 "그대로 복사해
+    // 쓰는 것 한 줄"이라 안내 화면 단계와 같은 .cmd 칩으로 그린다(호스팅은 항상 없다).
     if (d.must && d.must.length)
-      h += `<ul class="must">${d.must.map(s => `<li>${esc(s.msg || s)}</li>`).join("")}</ul>`;
+      h += `<ul class="must">${d.must.map(s => `<li>${esc(s.msg || s)}` +
+        (s.cmd ? ` <button class="cmd" onclick="copyCmd(this)">${esc(s.cmd)}</button>` : "") +
+        `</li>`).join("")}</ul>`;
     if (d.extra && d.extra.length)
-      h += `<details><summary>더 켜고 싶으면 ${d.extra.length}개 — 전부 선택입니다</summary>
+      h += `<details><summary>더 켤 수 있는 기능 ${d.extra.length}개. 모두 선택입니다.</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     // 사이트가 없으면 render() 가 아예 안 돈다(부를 /api/data 가 없다) — 그래서
     // 여태 [안내] 화면이 **첫 사용자에게만** 통째로 비어 있었다. 제목만 있고 6단계가
@@ -1569,13 +1921,17 @@ async function loadDoctor() {
     // (배너는 이 상태에서 [설정]의 사이트 등록 칸을 가리키는 쪽이 더 구체적이다).
     if (d.no_project) renderGuide(d);
     $("docban").innerHTML = h;
-    $("docban").hidden = false;
+    // 할 말이 없으면 상자도 안 세운다 — 호스팅에서 준비물 목록을 뺀 뒤 빈 띠만
+    // 남아 화면 맨 위에 뜻 없는 상자가 서는 일이 없게 한다. 뒤늦게 renderGuide 가
+    // #nx 를 채우면 그쪽이 다시 연다.
+    banSync();
     renderSetup(d);
   } catch (e) {
     // 배너 실패는 치명이 아님 — 본문은 그대로 뜬다. 다만 조용히 넘어가면 상태 배지
     // 5개(#s-*)와 조건부 버튼 3개가 영영 안 채워지는데 그 사실이 화면 어디에도
     // 안 남는다 — 그러니 실패했다는 말과 되돌릴 손잡이는 남긴다.
-    $("docban").innerHTML = `<div class="verdict msg bad">진단을 불러오지 못했습니다 — 왼쪽 아래 [새로고침]으로 다시 시도하세요.</div>`;
+    $("docban").innerHTML = `<div class="verdict msg bad">준비 상태를 확인하지 못했습니다.` +
+      ` 서버에서 응답이 오지 않았습니다. [새로고침]을 누르면 다시 시도합니다.</div>`;
     $("docban").hidden = false;
   }
 }
@@ -1590,31 +1946,30 @@ function renderGsc(d) {
     (st === "connected" ? "연결됨" : st === "pending" ? "로그인 대기" : "인증 없음") + `</span>`;
   $("why-gsc").innerHTML = st === "connected"
     ? (sa
-      ? `<b>연결됐습니다</b> — 서비스 계정(무인 수집) 방식입니다. 로그인 단계가 없는
-         대신, 서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한 속성만
-         읽습니다. 확인: <code>connect_gsc.py --status</code>`
-      : `<b>연결됐습니다</b> — 구글 로그인이 이미 끝났고 토큰을 보관 중입니다. 다시
+      ? `<b>연결됐습니다.</b> 서비스 계정으로 사람 없이 수집합니다. 로그인 단계가
+         없는 대신, 서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한
+         속성만 읽습니다. 확인은 <code>connect_gsc.py --status</code> 입니다.`
+      : `<b>연결됐습니다.</b> 구글 로그인이 끝났고 토큰을 보관 중입니다. 다시
          로그인하실 일은 없습니다. 벌크 수집(<code>/capture gsc</code>)과 Claude 즉석
-         조회가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성은 따로
-         권한을 줄 필요가 없습니다.`)
+         조회가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성에는 따로
+         권한을 주지 않아도 됩니다.`)
     : st === "pending"
-    ? `<b>남은 건 구글 로그인 한 번뿐입니다</b> — 무료, 30초, 준비물 없음. 인증 수단은
-       이미 깔려 있어서 <b>구글 클라우드 콘솔에 가실 일이 없습니다</b>.<br>
-       아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번 열립니다 (채팅에
-       <code>GSC 로그인해줘</code> 하셔도 같습니다). 로그인이 끝나면 이 칸이 저절로
+    ? `<b>남은 것은 구글 로그인 한 번뿐입니다.</b> 무료이고 30초 걸립니다. 인증
+       수단은 이미 깔려 있어서 <b>구글 클라우드 콘솔에 가실 일이 없습니다</b>.<br>
+       아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번 열립니다. 채팅에
+       <code>GSC 로그인해줘</code> 라고 해도 같습니다. 로그인이 끝나면 이 칸이 저절로
        <b>[연결됨]</b>으로 바뀝니다.`
       + (d.gsc_bundled
-        ? `<br>이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다 — <b>[고급] → [이동]</b>을
-           누르시면 됩니다. 플러그인이 동봉한 클라이언트라 정상입니다 (경고 없이 쓰시려면
-           아래 [내 OAuth 클라이언트 쓰기]).`
+        ? `<br>이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다. <b>[고급]</b> 다음
+           <b>[이동]</b>을 누르면 됩니다. 플러그인이 동봉한 클라이언트라 정상입니다.
+           경고 없이 쓰시려면 아래 [내 OAuth 클라이언트 쓰기]를 펴세요.`
         : "")
-    : `<b>구글 인증 수단이 없습니다</b> — 로그인에 쓸 OAuth 클라이언트 파일이 이 배포에서
-       빠졌습니다. 아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을 넣으시거나,
-       콘솔에서 받은 JSON을 다운로드 폴더에 두고 [받은 인증 파일 가져오기]를 누르세요.
-       실적(클릭·노출)이 이 도구의 재료라 연결 없이는 측정이 시작되지 않습니다.`;
+    : `<b>구글 인증 수단이 없습니다.</b> 로그인에 쓸 OAuth 클라이언트 파일이 이
+       배포에서 빠졌습니다. 아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을
+       넣거나, 콘솔에서 받은 JSON 을 다운로드 폴더에 두고 [받은 인증 파일
+       가져오기]를 누르세요. 클릭과 노출이 이 도구의 재료라 연결 없이는 측정이
+       시작되지 않습니다.`;
   $("btn-gsclogin").hidden = st !== "pending";
-  // 파일 가져오기는 이제 예외 경로다(직접 받은 JSON·서비스 계정 키) — 물러나 있게.
-  $("btn-gsc").className = st === "pending" ? "go sec" : "go";
   // 인증이 아예 없으면 여기가 유일한 출구라 펴 준다. **닫지는 않는다** —
   // 저장 직후 loadDoctor가 다시 그리면서 방금 편 칸을 접으면 결과 문구까지 같이 숨는다.
   if (st === "none") $("own-client").open = true;
@@ -1634,20 +1989,40 @@ function renderSetup(d) {
     : `<span id="s-skills" class="stat ok">모두 설치됨</span>`;
   $("btn-skills").hidden = !d.show_skills_btn;
   $("why-skills").innerHTML = d.show_skills_btn
-    ? `<b>빠진 마케팅 스킬을 제가 깔아드립니다</b> — 글의 각도와 진단을 맡는 스킬 팩입니다
-       (무료). 끝나면 <b>Claude Code를 한 번 재시작</b>하셔야 그 스킬이 화면에 뜹니다.
-       없어도 측정·수집은 그대로지만, 글 품질과 진단 깊이만 안 좋아집니다.`
-    : `글의 각도와 진단을 맡는 스킬 팩 — 모두 설치됐습니다. (재시작 후엔 이 칸이 사라지거나
-       "모두 설치됨"으로 표시됩니다.) 새로 추가하려면 Claude Code를 재시작하세요.`;
+    ? `<b>빠진 마케팅 스킬을 대신 깔아 드립니다.</b> 글의 각도와 진단을 맡는 무료
+       스킬 묶음입니다. 끝나면 <b>Claude Code 를 한 번 재시작</b>해야 그 스킬이 화면에
+       뜹니다. 없어도 측정과 수집은 그대로 돌고, 글 품질과 진단 깊이만 얕아집니다.`
+    : `글의 각도와 진단을 맡는 스킬 묶음이 모두 설치돼 있습니다. 새로 추가하려면
+       Claude Code 를 재시작하세요.`;
   $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
-  $("btn-deps").className = d.core_ok ? "go sec" : "go";
   $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치하기";
+  setupPrimary(d);
   // 준비물이 덜 됐으면 거기서부터 — 측정 자체가 안 도는 상태다.
   // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
   // 할 수 있는 게 없는 화면에 떨어진다.
   if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 2);
   prefillProject();
   renderCarry(d);
+}
+
+/* 설정 화면에도 채운 버튼은 하나다 — 안 끝난 **첫** 단계의 것.
+   여섯 개가 다 채워져 있으면 어디서부터 시작하는지가 화면에 안 남는다: 순서가 있는
+   단계인데 여섯 곳이 똑같이 "여기를 누르세요"라고 말하는 셈이다.
+   순서는 이 화면의 단계 순서다(부품 → 사이트 → 구글). 키·스킬은 없어도 측정이
+   도는 선택 단계라 주요가 되지 않는다 — 안 해도 되는 일을 할 일로 만들지 않는다. */
+const SETUP_BTNS = ["btn-deps", "btn-proj", "btn-gsclogin", "btn-gsc",
+                    "btn-depsgsc", "btn-keys", "btn-skills"];
+function setupPrimary(d) {
+  const st = d.gsc_state || (d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none");
+  const first = !d.core_ok ? "btn-deps"
+    : d.no_project ? "btn-proj"
+    : st === "pending" ? "btn-gsclogin"
+    : st !== "connected" ? "btn-gsc"
+    : "";
+  for (const id of SETUP_BTNS) {
+    const b = $(id);
+    if (b) b.className = id === first ? "go" : "go sec";
+  }
 }
 
 // 웹에서 이어 하기 — 로컬에 적어 둔 사이트 설정을 호스팅 등록 폼으로 실어 보낸다.
@@ -1658,7 +2033,7 @@ function renderCarry(d) {
   const names = d.projects || [];
   sel.innerHTML = names.map(p => `<option>${esc(p)}</option>`).join("");
   sel.hidden = $("btn-carry").hidden = !names.length;
-  if (!names.length) say("m-carry", "위 2번에서 사이트를 먼저 등록하세요.", false);
+  if (!names.length) say("m-carry", "실어 보낼 사이트가 없습니다. 위 2번에서 먼저 등록하세요.", false);
 }
 
 $("btn-carry").addEventListener("click", async () => {
@@ -1672,9 +2047,9 @@ $("btn-carry").addEventListener("click", async () => {
   a.hidden = false;
   try {
     await navigator.clipboard.writeText(r.url);
-    say("m-carry", "링크를 복사했습니다 — 다른 기기에 붙여 넣어도 됩니다.", true);
+    say("m-carry", "링크를 복사했습니다. 다른 기기에 붙여 넣어도 열립니다.", true);
   } catch (e) {
-    say("m-carry", "아래 링크를 여세요.", true);   // 클립보드 권한이 없는 브라우저
+    say("m-carry", "복사 권한이 없는 브라우저입니다. 아래 링크를 직접 여세요.", true);
   }
 });
 
@@ -1696,13 +2071,13 @@ async function prefillProject() {
       if (p[key] && (!$(id).value || $(id).value === "ko-KR" && key === "locale"))
         { $(id).value = join(p[key]); used = true; }
     if (p.type && $("p-type")) $("p-type").value = p.type;
-    if (used) say("m-proj", "이 폴더의 레포에서 읽어 미리 채웠습니다 — 지우거나 고친 뒤 등록만 누르세요.", true);
+    if (used) say("m-proj", "이 폴더의 저장소를 읽어 미리 채웠습니다. 고칠 곳만 고치고 [사이트 등록]을 누르세요.", true);
   } catch (e) { /* 추론 실패는 빈 폼과 같다 */ }
 }
 
 function busy(btn, msg, on) {
   $(btn).disabled = on;
-  if (on) { $(msg).className = "msg"; $(msg).textContent = "실행 중… 최대 몇 분"; }
+  if (on) { $(msg).className = "msg"; $(msg).textContent = "실행 중입니다. 최대 몇 분 걸립니다."; }
 }
 function say(msg, text, ok) {
   $(msg).className = "msg " + (ok ? "good" : "bad");
@@ -1717,7 +2092,7 @@ async function runAction(action, btn, msg, okText) {
   busy(btn, msg, true);
   const [, r] = await post("/api/setup/run", {action});
   busy(btn, msg, false);
-  say(msg, r.ok ? okText : "실패했습니다 — 아래 로그를 봐 주세요.", r.ok);
+  say(msg, r.ok ? okText : "끝내지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
   showLog(r.log);
   loadDoctor();
 }
@@ -1738,15 +2113,15 @@ $("btn-gsc").addEventListener("click", async () => {
   const [, dep] = await post("/api/setup/run", {action: "deps_gsc"});
   if (!dep.ok) {
     busy("btn-gsc", "m-gsc", false);
-    say("m-gsc", "부품 설치에 실패했습니다 — 아래 로그를 봐 주세요.", false);
+    say("m-gsc", "구글 수집용 부품을 설치하지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", false);
     showLog(dep.log);
     return;
   }
   const [, r] = await post("/api/setup/run", {action: "gsc"});
   busy("btn-gsc", "m-gsc", false);
-  say("m-gsc", r.ok ? "연결했습니다 — 처음 조회할 때 브라우저 로그인 창이 한 번 열립니다. "
-                    + "(서비스 계정 키를 넣으셨다면 아래 로그의 남은 일을 봐 주세요.)"
-                    : "실패했습니다 — 아래 로그를 봐 주세요.", r.ok);
+  say("m-gsc", r.ok ? "인증 파일을 넣었습니다. 처음 조회할 때 브라우저 로그인 창이 한 번 열립니다. "
+                    + "서비스 계정 키를 넣으셨다면 아래 로그에 남은 일이 적혀 있습니다."
+                    : "인증 파일을 가져오지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
   showLog(r.log);
   loadDoctor();
 });
@@ -1759,15 +2134,15 @@ $("btn-gsclogin").addEventListener("click", async () => {
   const [, dep] = await post("/api/setup/run", {action: "deps_gsc"});
   if (!dep.ok) {
     busy("btn-gsclogin", "m-gsc", false);
-    say("m-gsc", "부품 설치에 실패했습니다 — 아래 로그를 봐 주세요.", false);
+    say("m-gsc", "구글 수집용 부품을 설치하지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", false);
     return showLog(dep.log);
   }
-  say("m-gsc", "브라우저 창이 열립니다 — 구글 계정으로 로그인해 주세요 " +
-               "(\"확인되지 않은 앱\" 경고가 뜨면 [고급] → [이동]).", true);
+  say("m-gsc", "브라우저 창이 열립니다. 구글 계정으로 로그인하세요. " +
+               "\"확인되지 않은 앱\" 경고가 뜨면 [고급] 다음 [이동] 입니다.", true);
   const [, r] = await post("/api/setup/run", {action: "gsc_login"});
   busy("btn-gsclogin", "m-gsc", false);
-  say("m-gsc", r.ok ? "연결됐습니다 — 이제 실적을 읽을 수 있습니다."
-                    : "로그인이 끝나지 않았습니다 — 아래 로그를 봐 주세요.", r.ok);
+  say("m-gsc", r.ok ? "연결됐습니다. 이제 구글 실적을 읽을 수 있습니다."
+                    : "로그인이 끝나지 않았습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
   showLog(r.log);
   loadDoctor();
 });
@@ -1781,8 +2156,8 @@ $("btn-ocsave").addEventListener("click", async () => {
   busy("btn-ocsave", "m-oc", false);
   if (!ok) return say("m-oc", r.error, false);
   $("oc-id").value = $("oc-secret").value = "";
-  say("m-oc", `저장했습니다 (${r.client_id}) → ${r.path} — 클라이언트가 바뀌었으니 ` +
-              `위 [구글 로그인 열기]로 한 번 더 로그인해 주세요.`, true);
+  say("m-oc", `저장했습니다 (${r.client_id}) → ${r.path}. 클라이언트가 바뀌었으니 ` +
+              `위 [구글 로그인 열기]로 한 번 더 로그인하세요.`, true);
   loadDoctor();
 });
 
@@ -1809,8 +2184,8 @@ $("btn-proj").addEventListener("click", async () => {
     competitors_manual: $("p-comp").value, tools: $("p-tools").value});
   busy("btn-proj", "m-proj", false);
   if (!ok) return say("m-proj", r.error, false);
-  say("m-proj", `${r.name} 등록 완료 — 남은 건 AI에 물어볼 질문뿐입니다: ` +
-                `채팅에 /capture add ${r.name}`, true);
+  say("m-proj", `${r.name} 사이트를 등록했습니다. 남은 것은 AI에 물어볼 질문뿐입니다. ` +
+                `채팅에 /capture add ${r.name} 를 치면 만들어 드립니다.`, true);
   loadDoctor();
   loadProjects().then(n => { if (n) load(); });
   // 등록이 끝나면 방금 만든 사이트의 개요로 간다.
@@ -1818,6 +2193,19 @@ $("btn-proj").addEventListener("click", async () => {
 });
 
 $("proj").addEventListener("change", () => { PINNED = ""; load(); });
+/* 사이트 목록 → 대시보드의 이음매는 URL 의 hash 하나다(이음매 5번). 여태 그 hash 를
+   **첫 적재에만** 읽었다: 대시보드를 열어 둔 채 #alpha-site → #beta-site 로 옮기면
+   주소는 바뀌는데 화면은 그대로였다. 뒤로 가기도 같은 일이다.
+   load() 가 다시 hash 를 쓰므로 이 핸들러가 또 돈다 — 값이 같으면 그냥 나간다. */
+addEventListener("hashchange", () => {
+  const want = decodeURIComponent(location.hash.slice(1));
+  const sel = $("proj");
+  if (!sel || !want || sel.value === want) return;
+  if (![...sel.options].some(o => o.value === want)) return;   // 없는 사이트는 무시
+  sel.value = want;
+  PINNED = "";
+  load();
+});
 $("gscdate").addEventListener("change", () => { PINNED = $("gscdate").value; load(); });
 $("refresh").addEventListener("click", () => { loadDoctor(); load(); });
 
@@ -1842,7 +2230,7 @@ if (window.__SNAPSHOT__) {
   READONLY = true;
   $("proj").outerHTML = `<span class="mark" style="color:var(--patina)">` +
     `${esc(s.data.project.name)}</span>`;
-  for (const id of ["refresh", "gscdate"]) $(id).hidden = true;
+  for (const id of ["refresh", "gscdate", "datelab"]) if ($(id)) $(id).hidden = true;
   SM.drop("settings");                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
   SM.drop("guide");
   document.querySelector(".tag").textContent = `${s.exported} 기록`;

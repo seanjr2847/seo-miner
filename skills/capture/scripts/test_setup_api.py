@@ -55,7 +55,9 @@ expected_keys = {"verdict", "no_project", "must", "extra", "core_ok",
                  "show_setup"}
 assert expected_keys.issubset(doc.keys()), f"누락된 키: {expected_keys - doc.keys()}"
 assert doc["no_project"] is True
-assert not any("/capture add" in s for s in doc["must"]), f"must에 /capture add가 남음: {doc['must']}"
+# 산문에는 명령이 안 들어간다(복사할 것은 cmd 자리다). 여기서는 그 규칙과
+# "사이트가 없으면 first_project 를 배너에 또 적지 않는다"를 같이 본다.
+assert not any("/capture add" in m["msg"] for m in doc["must"]), f"must 산문에 명령이 남음: {doc['must']}"
 assert doc["show_setup"] is True
 
 
@@ -219,7 +221,12 @@ code, doc_amb = get("/api/doctor")
 assert code == 200, code
 assert len(doc_amb["projects"]) > 1, doc_amb["projects"]
 assert doc_amb["project"] is None and doc_amb["guide"] is None, doc_amb["project"]
-assert any("어느 사이트인지" in m for m in doc_amb["must"]), doc_amb["must"]
+# 상황은 요약(verdict)이 말하고, 할 일은 must 가 말한다 — 둘 다 있어야 한다.
+assert "어느 것인지 모릅니다" in doc_amb["verdict"], doc_amb["verdict"]
+assert any("등록된 사이트:" in m["msg"] for m in doc_amb["must"]), doc_amb["must"]
+# 복사할 것은 cmd 로 따로 실린다 — 산문에 도로 섞이면 호스팅 배너까지 따라간다.
+amb = next(m for m in doc_amb["must"] if "등록된 사이트:" in m["msg"])
+assert amb["cmd"] == "/create profile <이름>", amb
 assert doc["guide"]["here"] == d_demo["guide"]["here"], (doc["guide"]["here"], d_demo["guide"]["here"])
 assert doc["guide"]["steps"][doc["guide"]["here"]]["cmd"] == d_demo["guide"]["steps"][d_demo["guide"]["here"]]["cmd"]
 

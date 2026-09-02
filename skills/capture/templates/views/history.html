@@ -8,10 +8,12 @@
 <style>
 /* 기록 = 시추 로그 그 자체. 이 화면의 규칙은 하나다: 있었던 일만 적는다.
    모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다. */
-#acts { border-left:2px solid var(--patina); padding-left:18px; }
-#acts ol { margin:8px 0 0; padding-left:20px; }
-#acts li { margin:7px 0; font-size:14.5px; }
-#acts li::marker { font-family:var(--mono); color:var(--patina); }
+/* 이 섹션은 [다음 행동] 띠가 아니다 — 띠가 가져가고 남은 것을 적는 일반 섹션이다.
+   녹청 세로선을 달아 두었더니 띠 바로 아래에서 두 번째 띠로 읽혔다. 머리는 다른
+   섹션과 같은 한 벌(eyebrow → h2 → .sub)을 쓴다. */
+#acts ol { margin:14px 0 0; padding-left:20px; }
+#acts li { margin:14px 0; font-size:14.5px; }
+#acts li::marker { font-family:var(--mono); color:var(--slate); }
 
 /* ── 결과 배지: 완료(녹청)·문제(산화동)·건너뜀(회색). 두 목록이 같은 말을 쓴다. ── */
 .hs-r { display:inline-block; font:var(--micro);
@@ -94,25 +96,32 @@
 
 <section id="acts" hidden>
   <!-- 머리말은 두 출처가 나눠 쓴다: 박제본은 그때 정한 것을 셸이 채우고(문구 그대로),
-       라이브는 지금 남은 것을 HS_acts 가 채우며 이 머리말도 같이 바꾼다. -->
+       라이브는 지금 남은 것을 HS_next 가 채우며 이 머리말도 같이 바꾼다.
+       머리의 [다음 행동] 띠가 첫 번째 것을 가져가고, 이 목록은 그 뒤에 남은 것만
+       받는다 — 같은 문장을 한 화면에서 두 번 읽히지 않게 한다. -->
   <div class="eyebrow" id="acts-eyebrow">이 기록을 남길 때 정한 것</div>
-  <h2 data-web="권장 조치">다음 행동</h2>
+  <h2 id="acts-title" data-web="권장 조치">다음 행동</h2>
+  <p class="sub" id="acts-sub" data-web="이 기록을 남긴 시점에 정해 둔 조치입니다."
+    >이 기록을 남긴 시점에 정해 둔 다음 행동입니다.</p>
   <ol id="acts-list"></ol>
 </section>
 
 <section>
-  <div class="eyebrow lat">RUNS</div>
-  <h2 data-web="실행 기록">수집 이력</h2>
-  <p class="sub">무엇을 언제 팠고, 얼마나 걸렸고, 무엇이 걸렸는지. 아래 요약은 이 목록 기준입니다.</p>
+  <div class="eyebrow">수집 이력</div>
+  <h2 data-web="실행 기록">무엇이 언제 돌았나</h2>
+  <p class="sub" data-web="종류별 마지막 실행을 보고 다시 돌릴 것을 고릅니다. 아래 요약은 이 목록 기준입니다."
+    >종류별 마지막 실행을 보고 다시 돌릴 것을 고릅니다. 아래 요약은 이 목록 기준입니다.</p>
   <div id="runsum"></div>
   <div id="lastby"></div>
   <div id="runs"></div>
 </section>
 
 <section id="made-sec">
-  <div class="eyebrow lat">CREATIONS</div>
-  <h2>고친 것</h2>
-  <p class="sub">기회가 실제 코드 수정이 된 기록입니다. 여기 줄이 생겼다면 한 바퀴가 닫힌 겁니다.</p>
+  <div class="eyebrow">콘텐츠 수정</div>
+  <h2 data-web="반영한 콘텐츠 변경">고친 것</h2>
+  <p class="sub" data-web="기회가 실제 콘텐츠 변경이 된 기록입니다. 아직 사이트에 반영되지 않은(병합 전) 줄이 있으면 그것부터 처리합니다."
+    >기회가 실제 파일 수정이 된 기록입니다. 아직 사이트에 반영되지 않은(병합 전) 줄이
+    있으면 그것부터 처리합니다.</p>
   <div id="made"></div>
 </section>
 
@@ -135,6 +144,20 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   checked:"검사", striking:"밀면 오를 검색어", pseo:"pSEO"};
 // 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
 const HS_STALE_DAYS = 14;
+
+// 이 화면의 명령 칩은 셸의 act() 로 못 만든다 — run 은 단계가 아니라 일괄 실행이고
+// /create plan 은 다른 스킬이다. 그래도 사이트 이름은 실어야 한다: 사이트가 여럿인
+// 로컬에서 이름 없는 명령은 doctor 가 어느 사이트냐고 되묻는다. 이름을 붙이는 규칙은
+// 셸의 siteArg() 한 벌을 그대로 쓴다 — act() 가 만드는 칩과 같은 모양이 나온다.
+const HS_cmd = (c, primary = true) =>
+  `<button class="cmd${primary ? "" : " sec"}" onclick="copyCmd(this)"
+    >${c}${siteArg()}</button>`;
+
+/* 이 화면은 선언한 단계가 없다(view-def 의 stages 가 비었다) — 다음 걸음은 늘
+   "전부 다시 돌리기" 하나다. 그 손잡이는 셸의 act() 가 배포에 맞춰 만든다:
+   로컬은 /capture run 칩, 호스팅은 data-run="run" 버튼이고 애드온이 그걸
+   runAll() 에 잇는다(stages 를 안 보내는 것이 곧 전체 실행이다). */
+const HS_runAll = (primary = true) => act("run", "전체 분석 실행", primary);
 
 function HS_ago(iso) {
   const t = Date.parse(iso);
@@ -254,28 +277,27 @@ function HS_runSummary() {
 // 문구는 여기 한 벌만 둔다. 웹에는 명령을 칠 곳이 없다 — 화면 위 실행 버튼을 가리킨다.
 function HS_staleMsg() {
   const s = HS_lastBy().filter(x => x.stale);
-  if (!s.length) return "";
-  return `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다 (${
-    s.map(x => esc(HS_kind(x.k))).join(", ")}) — 다시 재야 그동안 고친 게 숫자에 섞입니다.${
-    W(` <button class="cmd" onclick="copyCmd(this)">/capture run</button>`,
-      " 화면 위 [전체 분석 실행]을 누르면 다시 잽니다.")}`;
+  if (!s.length) return null;
+  return {say: `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다 (${
+      s.map(x => esc(HS_kind(x.k))).join(", ")}). ` +
+      "다시 재야 그동안 고친 게 숫자에 섞입니다.",
+    act: p => HS_runAll(p)};
 }
 const HS_staleLine = () => {
   const m = HS_staleMsg();
-  return m ? `<div class="stale">${m}</div>` : "";
+  // 요약 줄의 칩은 늘 보조다 — 이 화면의 주요 행동은 머리의 띠가 들고 있다.
+  return m ? `<div class="stale">${m.say} ${READONLY ? "" : m.act(false)}</div>` : "";
 };
 
 // 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
 function HS_runTools() {
   if (!HS_RUNS.length)
-    // 웹에는 명령을 칠 곳이 없다 — 복사 칩 대신 화면 위 실행 버튼을 가리킨다.
-    return $("runs").innerHTML = `<div class="empty">${W(
-      `아직 수집한 적이 없습니다.
-      한 번 돌리면 무엇을 얼마에 팠는지가 여기 줄로 남습니다.
-      <button class="cmd" onclick="copyCmd(this)">/capture run</button>`,
-      "아직 실행한 적이 없습니다 — [전체 분석 실행]을 누르면 무엇을 언제 수집했는지 " +
-      "여기 남습니다.")}</div>`;
+    return $("runs").innerHTML = `<div class="empty">
+      <b>${W("아직 수집한 적이 없습니다", "아직 실행한 적이 없습니다")}</b>
+      <p>${W("한 번 돌리면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.",
+        "한 번 실행하면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.")}</p>
+      ${READONLY ? "" : `<div class="acts">${HS_runAll(false)}</div>`}</div>`;
   const counts = {};
   HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   if (HS_RKIND && !counts[HS_RKIND]) HS_RKIND = null;   // 사이트 전환 시 잔존 필터
@@ -304,11 +326,16 @@ function HS_runTools() {
 
 function HS_runList() {
   const list = HS_runFiltered();
-  $("runn").textContent = list.length === HS_RUNS.length
-    ? `${HS_RUNS.length}회` : `${list.length}회 / 전체 ${HS_RUNS.length}회`;
+  // 개수를 두 번 적지 않는다 — 결과 거르개가 이미 "완료 (12)" 로 말한다. 그 위에
+  // 무엇이 더 걸렸을 때(찾는 말·종류 칩)만 몇 회가 남았는지 적는다.
+  const byRes = HS_RUNS.filter(r => !HS_RRES || HS_verdict(r).cls === HS_RRES).length;
+  $("runn").textContent = list.length !== byRes
+    ? `${list.length}회 / 전체 ${HS_RUNS.length}회` : "";
   if (!list.length)
-    return $("runlist").innerHTML = `<div class="empty">거른 조건에 맞는 실행이 없습니다.
-      <div class="acts"><button onclick="HS_runReset()">필터 지우기</button></div></div>`;
+    return $("runlist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 실행이 없습니다</b>
+      <p>종류나 결과를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+      <div class="acts"><button class="go sec" onclick="HS_runReset()">조건 지우기</button>
+      </div></div>`;
   const rows = list.slice(0, HS_RN).map(r => {
     const s = HS_secs(r), v = HS_verdict(r);
     return `<tr>
@@ -444,27 +471,30 @@ function HS_madeRow(c) {
       ${HS_effLine(c)}
     </div>
     <span class="hs-r ${c.merged ? "ok" : "skip"}" title="${c.merged
-      ? "병합됐습니다 — 다음 수집부터 이 수정이 숫자에 섞입니다."
-      : "아직 병합 전입니다 — 병합해야 검색엔진이 봅니다."}"
+      ? "사이트에 반영됐습니다. 다음 수집부터 이 수정이 숫자에 섞입니다."
+      : "아직 사이트에 반영되지 않았습니다. 반영해야 검색엔진이 이 수정을 봅니다."}"
       >${c.merged ? "병합됨" : "병합 전"}</span>
   </div>`;
 }
 
 function HS_madeTools() {
   if (!HS_MADE.length)
-    return $("made").innerHTML = `<div class="empty">${W(
-      `아직 고친 기록이 없습니다.
-      ${window.go("overview")}에서 고른 기회를 실제 파일 수정으로 옮기면 여기 쌓입니다.
-      <button class="cmd" onclick="copyCmd(this)">/create plan</button>`,
-      `아직 반영된 콘텐츠 변경이 없습니다 — ${window.go("overview")}에서 개선 기회를 고르고 ` +
-      "[콘텐츠 작성]을 누르면 여기 쌓입니다.")}</div>`;
+    return $("made").innerHTML = `<div class="empty">
+      <b>${W("아직 고친 기록이 없습니다", "아직 반영된 콘텐츠 변경이 없습니다")}</b>
+      <p>${W(`${window.go("overview")}에서 고른 기회를 실제 파일 수정으로 옮기면 ` +
+        "여기 쌓이고, 고친 뒤 클릭이 어떻게 됐는지가 줄마다 붙습니다.",
+        `${window.go("overview")}에서 기회 카드를 펼쳐 [콘텐츠 작성]을 누르면 ` +
+        "여기 쌓이고, 반영 뒤 클릭이 어떻게 됐는지가 줄마다 붙습니다.")}</p>
+      ${READONLY ? "" : `<div class="acts">${W(HS_cmd("/create plan", false),
+        `<button class="go sec" onclick="SM.touched=true;SM.show('overview')"
+          >개선 기회 보기</button>`)}</div>`}</div>`;
   const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
   // 병합 전 건수는 거르개 옵션 라벨 안에만 있었다 — 이 화면에서 지금 당장 할 수 있는
   // 유일한 일인데 드롭다운을 열어야 보였다. 머리로 올린다.
   const un = mn("n");
   $("made").innerHTML = (un ? `<div class="oppchips"><button class="chip"
       onclick="HS_showUnmerged()"
-      title="아직 병합 전입니다 — 병합해야 검색엔진이 봅니다. 눌러서 그것만 봅니다."
+      title="아직 사이트에 반영되지 않았습니다. 반영해야 검색엔진이 봅니다. 눌러서 그것만 봅니다."
       >병합 전 <b>${un}건</b></button></div>` : "") + `<div class="tools">
       <input type="search" value="${esc(HS_MQ)}" oninput="HS_madeFind(this.value)"
         placeholder="파일·기회·근거로 찾기" aria-label="고친 것 찾기">
@@ -485,8 +515,10 @@ function HS_madeList() {
   $("maden").textContent = list.length === HS_MADE.length
     ? `${HS_MADE.length}건` : `${list.length}건 / 전체 ${HS_MADE.length}건`;
   if (!list.length)
-    return $("madelist").innerHTML = `<div class="empty">거른 조건에 맞는 기록이 없습니다.
-      <div class="acts"><button onclick="HS_madeReset()">필터 지우기</button></div></div>`;
+    return $("madelist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 기록이 없습니다</b>
+      <p>파일이나 병합 상태를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+      <div class="acts"><button class="go sec" onclick="HS_madeReset()">조건 지우기</button>
+      </div></div>`;
   const linked = HS_MADE.filter(c => c.opportunity_id).length;
   // 회고의 결론은 이 화면이 낸다 — 줄마다 붙인 전후 델타를 여기서 합쳐 말한다.
   const eff = HS_MADE.map(c => HS_effect(c.created_at));
@@ -526,32 +558,68 @@ function HS_madeCsv() {
       이 섹션은 view-def 가 화면 구성요소로 선언해 놓고도 라이브에서는 영영 hidden
       이었다 — 여는 코드가 셸의 __SNAPSHOT__ 분기 하나뿐이라, 박제본에만 보이고 정작
       매일 여는 대시보드에는 안 나왔다. 같은 #acts-list 를 여기서 채운다.
-      새 판정은 만들지 않는다: 안 판 단계는 안내(stage.py)가 이미 고른 것을 그대로 쓰고
-      (d.guide.here), 명령도 그 단계가 들고 있는 cmd 를 가리킨다. ── */
-function HS_acts(d) {
-  if (READONLY) return;                 // 박제본은 그때 정한 것을 셸이 이미 채웠다
+      새 판정은 만들지 않는다: 안 한 단계는 안내(stage.py)가 이미 고른 것을 그대로 쓰고
+      (d.guide.here), 명령도 그 단계가 들고 있는 cmd 를 가리킨다.
+      역할을 가른다: 맨 앞 하나는 화면 머리의 [다음 행동] 띠가 가져가고, 이 목록은
+      그 뒤에 남은 것만 받는다. 둘 다 같은 문장을 읽으면 어느 쪽이 지금 할 일인지
+      알 수 없다. ── */
+function HS_todo(d) {
   const out = [];
   const g = d.guide || {}, steps = g.steps || [];
   const next = g.here >= 0 ? steps[g.here] : null;
   if (next)
-    out.push(`아직 안 판 단계가 있습니다 — <b>${esc(next.t)}</b>${
-      next.state ? ` (${esc(next.state)})` : ""}${next.cmd
-      ? W(` <button class="cmd" onclick="copyCmd(this)">${esc(next.cmd)}</button>`, "")
-      : ""}`);
-  const stale = HS_staleMsg();
+    out.push({say: `${W("아직 안 한 단계가 있습니다", "아직 실행하지 않은 단계가 있습니다")}. ` +
+      `다음은 <b>${esc(next.t)}</b>입니다${next.state ? ` (${esc(next.state)})` : ""}.`,
+      act: p => W(next.cmd
+        ? `<button class="cmd${p ? "" : " sec"}" onclick="copyCmd(this)"
+            >${esc(next.cmd)}</button>`
+        : "", HS_runAll(p))});
+  const stale = HS_staleMsg();          // 문구 한 벌 — 요약 줄과 여기가 같은 것을 쓴다
   if (stale) out.push(stale);
   const un = HS_MADE.filter(c => !c.merged).length;
   if (un)
-    out.push(`${un}건이 병합 전입니다 — 병합해야 검색엔진이 봅니다. 이 화면에서 지금 ` +
-      `당장 할 수 있는 건 이것뿐입니다. <button class="chip" ` +
-      `onclick="HS_showUnmerged()">병합 전만 보기</button>`);
+    out.push({say: `${un}건이 아직 사이트에 반영되지 않았습니다(병합 전). ` +
+        "반영해야 검색엔진이 그 수정을 봅니다.",
+      act: p => `<button class="go${p ? "" : " sec"}"
+        onclick="HS_showUnmerged()">병합 전만 보기</button>`});
+  // 화면을 넘기는 손잡이도 버튼 계약을 따른다 — window.go 는 문장 안에 섞이는
+  // 밑줄 링크(.gov)라 .acts 안에서는 버튼이 아닌 것으로 읽힌다.
   if (d.opps_total)
-    out.push(`아직 안 한 기회 ${num(d.opps_total)}건이 남아 있습니다. ` +
-      `<button class="chip" onclick="SM.show('overview')">[개요]에서 고르기</button>`);
-  $("acts").hidden = !out.length;
-  if (!out.length) return;
-  $("acts-eyebrow").textContent = "이 기록이 말하는 다음 걸음";
-  $("acts-list").innerHTML = out.map(x => `<li>${x}</li>`).join("");
+    out.push({say: `${W("아직 안 한 기회", "미처리 개선 기회")} ${num(d.opps_total)}건이 ` +
+        "남아 있습니다. 점수가 높은 것부터 고릅니다.",
+      act: p => `<button class="go${p ? "" : " sec"}"
+        onclick="SM.touched=true;SM.show('overview')"
+        >${W("기회 고르기", "개선 기회 보기")}</button>`});
+  return out;
+}
+
+function HS_acts(d) {
+  const out = HS_todo(d);
+  // 맨 앞 하나는 머리의 띠가 가져간다. 띠가 없는 조립본에서는 목록이 전부 받는다.
+  const rest = window.nextStep ? out.slice(1) : out;
+  // 박제본이라고 띠를 지우지 않는다 — 문장은 종이에서도 읽을 값이 있고, 누를 수
+  // 없는 것만 떼는 일은 셸의 nextStep 이 한 벌로 한다(.acts 를 뗀다).
+  if (window.nextStep) {
+    const top = out[0] && out[0].act(true);     // 띠의 것만 주요 버튼이다
+    nextStep("history", out.length
+      ? `<p>${out[0].say}</p>${top ? `<div class="acts">${top}</div>` : ""}`
+      : `<p>${W("지금 이 화면에서 할 일은 없습니다. 아래는 여태 돌린 기록입니다.",
+          "지금 이 화면에서 할 일은 없습니다. 아래는 여태 실행한 기록입니다.")}</p>`);
+  }
+  // 아래 목록은 다르다: 박제본에서는 그때 정한 것을 셸이 이미 채웠다. 지금 상태로
+  // 다시 계산해 덮으면 "그때의 기록"이 아니게 된다.
+  if (READONLY) return;
+  $("acts").hidden = !rest.length;
+  if (!rest.length) return;
+  $("acts-eyebrow").textContent = W("그다음에 남은 것", "이어서 남은 조치");
+  $("acts-title").textContent = W("이 기록이 말하는 남은 일", "남은 조치");
+  $("acts-sub").textContent = W("띠가 가리키는 것 다음으로 남은 일입니다. 위에서부터 처리합니다.",
+    "권장 조치 다음으로 남은 항목입니다. 위에서부터 처리합니다.");
+  // 목록의 행동은 전부 보조다 — 주요 버튼은 화면에 하나(머리의 띠)뿐이다.
+  $("acts-list").innerHTML = rest.map(x => {
+    const a = x.act(false);
+    return `<li>${x.say}${a ? `<div class="acts">${a}</div>` : ""}</li>`;
+  }).join("");
 }
 
 VIEW("history", function (d) {

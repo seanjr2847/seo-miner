@@ -105,41 +105,79 @@ STAGE_LABELS: dict[str, dict] = {
     "register": {"t": "사이트 등록",
         "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다."},
     "gsc": {"t": "구글 실적 읽기", "run": "실적 다시 수집",
-        "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 이 도구의 모든 판단이 "
-                "이 숫자 위에서 이뤄집니다 — 추측을 안 하려고 제일 먼저 합니다."},
-    "ga4": {"t": "GA4 실적 읽기", "run": "GA4 실적 다시 수집"},
-    "index": {"t": "색인 생성 검사", "run": "색인 다시 검사"},
-    "keywords": {"t": "키워드 캐기", "run": "키워드 다시 발굴",
-        "gain": "자동완성으로 후보를 모아 추적할 목록을 만듭니다. 무료이고, 여기서 "
-                "늘린 만큼 다음 단계가 볼 게 많아집니다."},
+        "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 모든 판단이 이 숫자 "
+                "위에서 이뤄집니다. 추측을 안 하려고 제일 먼저 합니다."},
+    "ga4": {"t": "GA4 실적 읽기", "run": "GA4 다시 수집"},
+    "index": {"t": "색인 상태 확인", "run": "색인 다시 확인"},
+    "keywords": {"t": "키워드 찾기", "run": "키워드 다시 찾기",
+        "gain": "검색창 자동완성으로 후보를 모아 추적 목록을 만듭니다. 무료입니다. "
+                "여기서 늘린 만큼 다음 단계가 볼 게 많아집니다."},
     "metrics": {"t": "키워드 지표", "run": "지표 다시 조회",
-        "gain": "발굴한 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
+        "gain": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
                 "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. "
                 "DataForSEO 유료 호출입니다."},
     "rank": {"t": "순위 추적", "run": "순위 다시 확인"},
     "crawl": {"t": "사이트 크롤", "run": "사이트 다시 크롤",
         "gain": "사이트를 따라 돌며 깨진 내부 링크·리다이렉트 사슬·고아 페이지·중복 "
-                "제목을 찾습니다. 한 페이지만 봐서는 나오지 않는 항목입니다. 비용이 없습니다."},
+                "제목을 찾습니다. 한 페이지만 봐서는 안 나오는 것들입니다. 무료입니다."},
     "ai": {"t": "AI 노출 확인", "run": "AI 인용 다시 확인",
         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
                 "OpenRouter 키가 필요합니다."},
     "competitors": {"t": "경쟁사 역키워드", "run": "경쟁사 다시 수집",
-        "gain": "경쟁 도메인이 이미 순위를 잡은 검색어를 수집해 추적 후보로 올립니다. "
+        "gain": "경쟁 도메인이 이미 순위를 잡은 검색어를 모아 추적 후보로 올립니다. "
                 "DataForSEO Labs 유료 호출입니다."},
     "backlinks": {"t": "백링크 프로필", "run": "백링크 다시 수집",
-        "gain": "참조 도메인·앵커 텍스트·개별 링크를 수집하고, 경쟁사는 링크를 받는데 "
-                "우리는 못 받는 도메인을 찾습니다. DataForSEO 유료 호출입니다."},
+        "gain": "참조 도메인·앵커 텍스트·개별 링크를 수집합니다. 경쟁사는 링크를 받는데 "
+                "우리는 못 받는 도메인도 함께 찾습니다. DataForSEO 유료 호출입니다."},
     "gaps": {"t": "손댈 것 뽑기", "run": "기회 다시 분석",
-        "gain": "모은 숫자에서 기회를 계산합니다 — 조금만 밀면 1페이지인 검색어, 우리 "
-                "대신 인용되는 곳, 같은 틀로 여러 장 찍을 수 있는 페이지."},
+        "gain": "모은 숫자에서 기회를 계산합니다. 조금만 밀면 1페이지인 검색어, 우리 "
+                "대신 인용되는 곳, 같은 틀로 여러 장 찍을 페이지를 찾습니다."},
     "pages": {"t": "내 페이지 점검", "run": "페이지 다시 점검",
         "gain": "기회에 걸린 내 페이지를 직접 열어 제목·설명·H1·본문 길이·구조화 데이터를 "
-                "확인합니다. 비용이 없습니다."},
+                "확인합니다. 무료입니다."},
     "report": {"t": "보고서 생성"},
     "create": {"t": "실제로 고치기",
-        "gain": "뽑은 기회를 리포의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR로 "
+        "gain": "뽑은 기회를 저장소의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR 로 "
                 "나가고, 끝나면 그 기회가 완료로 닫힙니다."},
 }
+
+
+# 유료 키 언급은 **로컬 전용**이다 — 호스팅은 서버가 키를 댄다(doctor 명부의
+# owner="server"). 같은 문장이 웹으로 나가면 넣을 곳도 없는 키를 넣으라고 시키는
+# 셈이고, 실제로 [AI 인용] 화면은 같은 자리에서 "키는 서버가 댑니다"라고 말한다.
+# 표를 두 벌 만들지 않는다: **갈리는 문장만** 여기 적고 stage_labels() 가 덮는다.
+GAIN_WEB = {
+    "ai": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
+          "키는 서버가 댑니다.",
+    "metrics": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
+               "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. "
+               "조회 비용은 서버가 냅니다.",
+    "competitors": "경쟁 도메인이 이미 순위를 잡은 검색어를 모아 추적 후보로 "
+                   "올립니다. 조회 비용은 서버가 냅니다.",
+    "backlinks": "참조 도메인·앵커 텍스트·개별 링크를 수집합니다. 경쟁사는 링크를 "
+                 "받는데 우리는 못 받는 도메인도 함께 찾습니다. 조회 비용은 서버가 "
+                 "냅니다.",
+}
+
+
+def _hosted() -> bool:
+    """이 런이 호스팅인가. 표식의 주인은 server/settings.py 고 이름은 doctor 가 갖는다
+    — 여기서 세 번째 사본을 만들지 않는다(doctor 는 stage 를 import 하므로 늦게 건다).
+    """
+    import doctor
+    return bool(os.environ.get(doctor.HOSTED_ENV))
+
+
+def stage_labels(variant: str = "local") -> dict:
+    """화면에 실어 보낼 단계 용어표. 호스팅은 유료 키 문장만 갈아 끼운다.
+
+    조립(dashboard._assemble)이 변종을 알고 있으므로 그쪽이 골라 부른다. 나머지
+    항목은 STAGE_LABELS 그대로다 — 갈리는 문장 말고는 사본이 없다.
+    """
+    if variant != "hosted":
+        return STAGE_LABELS
+    return {k: ({**v, "gain": GAIN_WEB[k]} if k in GAIN_WEB else v)
+            for k, v in STAGE_LABELS.items()}
 
 
 def from_progress(p: dict, name: str, domain: str) -> dict:
@@ -163,7 +201,9 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
         gsc_state_str = "구글 인증 없음"
         gsc_cmd = "GSC 연동해줘"
 
-    L = STAGE_LABELS
+    # 안내 단계의 설명도 같은 규칙을 탄다 — 호스팅에서는 dash.html 의 restage() 가
+    # 실어 보낸 표로 다시 덮지만, 페이로드 자체가 맞아야 박제본·API 응답도 맞는다.
+    L = stage_labels("hosted" if _hosted() else "local")
     steps = [
         {"id": "register", "t": L["register"]["t"], "gain": L["register"]["gain"],
          "done": bool(domain), "state": domain or "아직 없음",
@@ -174,7 +214,7 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "cmd": gsc_cmd},
         {"id": "keywords", "t": L["keywords"]["t"], "gain": L["keywords"]["gain"],
          "done": p.get("keywords_found", 0) > 0,
-         "state": (f"캔 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
+         "state": (f"찾은 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
                    if p.get("keywords_found", 0)
                    else (f"직접 적은 {p['keywords']}개뿐" if p.get("keywords", 0) else "아직 없음")),
          "cmd": f"/capture keywords {name}"},
@@ -182,7 +222,7 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
          "skip": ai_skip,
-         "state": ("건너뜀 — OpenRouter 연동하면 켜집니다" if ai_skip else
+         "state": ("건너뜀 · OpenRouter 를 연동하면 켜집니다" if ai_skip else
                    (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
                     if p.get("ai_checks", 0)
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
@@ -227,16 +267,22 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     projects = d.get("brain", {}).get("projects", [])
     no_project = not bool(projects)
 
+    # 산문(msg)과 복사할 것(cmd)을 갈라서 그대로 넘긴다 — 예전에는 여기서 문자열
+    # 하나로 눌러 붙였고, 그래서 명령·파일 경로가 산문 안에 섞여 호스팅 배너까지
+    # 따라갔다. 화면은 msg 를 그리고 cmd 가 있으면 칩으로 단다(cmd 는 로컬 전용).
     must = [
-        m["msg"] if isinstance(m, dict) else m
+        {"msg": m["msg"], "cmd": m.get("cmd")} if isinstance(m, dict) else {"msg": m}
         for m in d.get("must", [])
         if not (no_project and isinstance(m, dict) and m.get("id") == "first_project")
     ]
     # owner 가 server 인 것은 뺀다 — 호스팅에서는 서버가 이미 낸 준비물이라,
     # 여기 남겨 두면 낼 필요가 없는 사람에게 키 발급 목록을 보여 주게 된다.
     # (로컬은 doctor 가 전부 user 로 렌더하므로 지금까지와 똑같다.)
+    # 이름은 라벨이라 쌍점으로 붙이고, 그 뒤는 문장이라 마침표로 끊는다 — 예전에는
+    # 줄표 하나가 라벨 구분과 문장 접속을 겸해서 어디까지가 이름인지 흐렸다.
+    # "켜려면:" 은 뗐다: 잠금 사유가 이미 "…를 넣으면 켜집니다"로 끝난다.
     extra = [
-        f"{c['name']} — {c['desc']}. 켜려면: {c.get('fix') or '필수 설치가 끝나면 켜집니다.'}"
+        f"{c['name']}: {c['desc']}. {c.get('fix') or '필수 설치가 끝나면 켜집니다.'}"
         for c in d.get("locked", []) if c.get("owner", "user") != "server"
     ] + list(d.get("later", []))
     keys = d.get("keys", {})
@@ -382,6 +428,16 @@ def _check_seams() -> None:
         assert entries[s].get("run"), f"화면에서 돌리는 단계인데 run 라벨이 없다: {s}"
     for s in sorted(entries):
         assert entries[s].get("t"), f"단계 이름이 없다: {s}"
+    #    웹 갈래는 원본 표를 덮어쓰는 것이라 반드시 같은 단계를 가리켜야 한다.
+    #    이름이 하나 어긋나면 그 단계만 조용히 로컬 문장(유료 키 안내)으로 남는다.
+    assert set(GAIN_WEB) <= set(entries),         f"GAIN_WEB 가 없는 단계를 덮는다: {sorted(set(GAIN_WEB) - set(entries))}"
+    for s in sorted(GAIN_WEB):
+        assert entries[s].get("gain"), f"원본에 gain 이 없는데 웹 갈래만 있다: {s}"
+    web = stage_labels("hosted")
+    assert set(web) == set(entries) and stage_labels("local") is entries
+    for word in ("키가 필요합니다", "유료 호출입니다"):
+        for k, v in web.items():
+            assert word not in (v.get("gain") or ""),                 f"호스팅 단계 설명에 {word!r} 이 남았다: {k}"
 
     # 4) 사이트 목록 → 대시보드의 이음매는 URL 의 hash 하나다. 대시보드는 그것만
     #    읽고(loadProjects), 비어 있으면 <select> 기본값인 첫 옵션이 잡힌다 —
@@ -492,13 +548,74 @@ def _check_seams() -> None:
         if vid not in defs:
             continue
         declared = set(defs[vid]["stages"])
-        for cmd in sorted(set(re.findall(r"/capture ([a-z]+)", p.read_text("utf-8")))):
+        # 화면이 단계를 부르는 세 모양: 명령 칩 글자, 셸의 act("x", …), 호스팅 버튼 data-run="x".
+        src = p.read_text("utf-8")
+        called = (set(re.findall(r"/capture ([a-z]+)", src))
+                  | set(re.findall(r"""\bact\(\s*["']([a-z]+)["']""", src))
+                  | set(re.findall(r'data-run="([a-z]+)"', src)))
+        for cmd in sorted(called):
             if cmd in NON_STAGE or (vid, cmd) in CROSS:
                 continue
             assert cmd in declared, (
                 f"[{vid}] 화면이 /capture {cmd} 를 부르는데 view-def 의 stages 에 없다 "
                 f"— 선언은 {sorted(declared)}. 그 단계가 이 화면을 채우면 stages 에 넣고, "
                 f"다른 화면으로 넘기는 손잡이면 CROSS 에 적어라")
+
+    #    같은 계약이 dash.html 에도 걸린다 — 호스팅 전용 섹션 안의 실행 버튼은
+    #    원본 뷰가 아니라 애드온이 심는다. 위 루프는 views/*.html 만 훑으므로 그쪽
+    #    끝이 비어 있었다: [키워드] 사고("키워드 발굴이라 선언해 놓고 GSC 만 읽었다")가
+    #    호스팅 섹션에서 다시 나도 안 잡혔다. 어느 화면 것인지는 section-def 의 view 가
+    #    이미 말한다 — 버튼을 **바로 앞에 나온 섹션 id** 로 귀속시켜 그 화면과 대조한다
+    #    (dash.html 은 섹션 하나당 렌더 함수 하나라 이 귀속이 흔들리지 않는다).
+    #    섹션 파일이 자기 마크업 안에 직접 다는 버튼은 귀속을 추측할 필요가 없다 —
+    #    그 파일의 section-def 가 이미 어느 화면 것인지 말한다.
+    for sp in sorted((root / "skills" / "capture" / "templates" / "sections").glob("*.html")):
+        sd = re.search(r'class="section-def">\s*(\{.*?\})\s*</script>',
+                       sp.read_text("utf-8"), re.S)
+        assert sd, f"{sp.name} 에 section-def 선언이 없다"
+        j = json.loads(sd.group(1))
+        declared = set(defs[j["view"]]["stages"])
+        for st in sorted(set(re.findall(r'data-run="([a-z0-9]+)"', sp.read_text("utf-8")))):
+            assert st in declared, (
+                f"[{j['id']}] 섹션이 data-run=\"{st}\" 버튼을 다는데 그 섹션이 속한 "
+                f"[{j['view']}] 화면의 stages 에 없다 — 선언은 {sorted(declared)}")
+
+    #    주석은 근거가 못 된다 — "화면이 data-run=\"run\" 으로 부른다"고 적어 둔
+    #    설명문이 검사에 걸리면 안 된다. 위치를 세는 스캔이라 길이를 지키며 지운다.
+    bare_dash = re.sub(r"/\*[\s\S]*?\*/",
+                       lambda m: re.sub(r"\S", " ", m.group(0)), dash)
+    bare_dash = re.sub(r"^([ 	]*)//.*$",
+                       lambda m: m.group(1) + " " * (len(m.group(0)) - len(m.group(1))),
+                       bare_dash, flags=re.M)
+    assert len(bare_dash) == len(dash), "주석을 지우며 길이가 틀어졌다 — 위치가 어긋난다"
+    sec_at = sorted((m.start(), s["id"]) for s in secs
+                    for m in re.finditer(f'"{re.escape(s["id"])}"', bare_dash))
+    sec_view = {s["id"]: s["view"] for s in secs}
+    for m in re.finditer(r'data-run="([a-z0-9]+)"', bare_dash):
+        if m.group(1) in NON_STAGE:
+            continue          # 레일 바닥의 일괄 실행은 어느 화면 것도 아니다
+        owner = next((sid for pos, sid in reversed(sec_at) if pos < m.start()), None)
+        assert owner, (
+            f'dash.html 의 data-run="{m.group(1)}" 앞에 섹션 id 가 없다 — 어느 화면 '
+            "버튼인지 못 정한다. 그 섹션 안에서 만들어라")
+        vid = sec_view[owner]
+        declared = set(defs[vid]["stages"])
+        assert m.group(1) in declared, (
+            f"[{owner}] 섹션이 data-run=\"{m.group(1)}\" 버튼을 다는데 그 섹션이 속한 "
+            f"[{vid}] 화면의 stages 에 없다 — 선언은 {sorted(declared)}. 그 단계가 이 "
+            "화면을 채우면 view-def 의 stages 에 넣어라")
+
+    # 12) 실행 버튼은 표식(data-run)으로 받는다 — 자리(.next/.empty)로 받으면 새 자리마다
+    #     조용히 죽는다(펼침 패널의 버튼이 실제로 그랬다). 대신 자기 onclick 을 가진 둘은
+    #     반드시 빼야 한다. 안 빼면 한 번 누른 게 두 번 돈다:
+    #       · .sm-refresh   — runButtons() 가 자기 onclick 을 건다
+    #       · 인라인 onclick — act() 의 로컬 갈래가 data-run 과 onclick 을 같이 낸다
+    assert 'closest("[data-run]")' in dash, (
+        "dash.html 이 data-run 을 표식으로 안 받는다 — 자리로 고르면 새 자리마다 버튼이 조용히 죽는다")
+    for guard, why in (('classList.contains("sm-refresh")', "머리줄 버튼"),
+                       ('hasAttribute("onclick")', "인라인 onclick 버튼")):
+        assert guard in dash, (
+            f"dash.html 의 data-run 위임이 {why}을 안 뺀다 — 한 번 누른 게 두 번 돈다")
 
     # 11) 로컬이 실어 보내는 사이트 설정(carry)과 호스팅이 꺼내 쓰는 이름은 한 벌이다.
     #     이 이음매도 양쪽 다 멀쩡해 보인다: 로컬은 정상적인 링크를 만들고 호스팅은

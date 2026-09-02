@@ -9,8 +9,9 @@
 /* ── 순위 추적: 시추 코어의 단면 ──────────────────────────────
    순위는 깊이다. 1위가 지표면, 10위가 1페이지 바닥, 20위 아래는 암반,
    못 찾은 건 그보다 더 아래다. 지층 막대가 그 단면이고, 표가 시추 기록이다. */
-.rk-strata text { font-family:var(--mono); }
-.rk-strata .n { font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
+/* 등폭은 숫자에만 건다 — 글자를 등폭으로 찍으면 한글이 폴백 서체로 떨어진다. */
+.rk-strata .n { font-family:var(--mono); font-size:13px; font-weight:600;
+  font-variant-numeric:tabular-nums; }
 .rk-strata .lb { font-size:10.5px; fill:var(--slate); font-family:var(--sans); }
 .rk-strata .edge { font-size:10.5px; fill:var(--patina); font-family:var(--sans); }
 @keyframes rk-fade { from { opacity:0; } to { opacity:1; } }
@@ -26,12 +27,23 @@
 .rk-part > .eyebrow { margin-bottom:9px; }
 .rk-note { font-size:12.5px; color:var(--slate); margin:10px 0 0; }
 .rk-note b { color:var(--ink); font-weight:500; }
+/* 셸의 table() 은 8줄 미만이면 가로 스크롤 상자(.tw)를 안 두른다 — 좁은 화면에서
+   그 표가 페이지를 가로로 민다. 이 목록은 자기 상자 안에서 민다. */
+#rk-list { overflow-x:auto; }
+@media print { #rk-list { overflow:visible; } }
+/* 검색어는 낱말째로 읽는다 — 좁은 화면에서 하이픈 뒤가 갈려 이름이 반토막 났다.
+   한 낱말이 칸보다 길 때만 낱말 안에서 끊는다. .kwcell 은 다른 화면도 쓰므로 여기서만. */
+#rk-list .kwcell { word-break:keep-all; overflow-wrap:break-word; }
+/* 검색어 자체는 아예 안 쪼갠다 — keep-all 은 한글 어절만 지킨다. 이름보다 칸이 좁으면
+   목록이 자기 상자 안에서 가로로 민다. */
+#rk-list .kwq { white-space:nowrap; }
 /* 행 자체가 펼침 손잡이 — 표 안이라 <details> 를 못 쓴다(tr 사이에 넣을 자리가 없다). */
 #rk-list tbody tr[role="button"] { cursor:pointer; }
 #rk-list tbody tr[role="button"]:hover { background:var(--bar); }
 #rk-list tbody tr[role="button"]:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
-#rk-list tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
-#rk-list tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
+/* 표식은 이름과 한 덩어리다 — 칸에 걸면 좁은 화면에서 화살표만 윗줄에 남는다. */
+#rk-list tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--slate); }
+#rk-list tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
 </style>
 
 <section>
@@ -48,6 +60,26 @@
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
    추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
 let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_AIO = "", RK_HAS_PREV = false;
+
+/* ── 다음 행동 띠 ────────────────────────────────────────────────
+   문장은 화면 머리 아래 한 자리(.next)에만 선다 — 셸이 심는다(window.nextStep).
+   셸 스크립트는 이 파일보다 뒤에 조립되므로 렌더 시점에만 부른다.
+   행동 버튼도 셸이 배포에 맞게 고른다(window.act): 로컬은 명령 칩, 호스팅은 버튼. */
+const RK_next = (msg, acts) => window.nextStep &&
+  nextStep("rank", `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : ""));
+const RK_act = (stage, label, primary) => window.act ? window.act(stage, label, primary)
+  : W(`<button class="cmd" onclick="copyCmd(this)">/capture ${esc(stage)}</button>`, "");
+// 연동으로 보내는 주요 버튼 — 그 화면이 없는 배포(박제본)에서는 아무것도 안 낸다.
+const RK_setup = (primary = true) => SM.at("settings") >= 0
+  ? `<button class="go${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('settings')"
+      >SERP 제공자 연동</button>`
+  : "";
+// 띠가 말한 묶음을 그 자리에서 남긴다 — 문장과 목록이 같은 것을 가리켜야 한다.
+function RK_only(k) {
+  RK_BAND = k;
+  RK_paint();
+  $("rk-list").scrollIntoView({behavior: "smooth", block: "center"});
+}
 
 const RK_d = r => {
   const v = r.delta && typeof r.delta === "object" ? r.delta.delta : r.dpos;
@@ -67,7 +99,7 @@ function RK_bands() {
      hit:r => r.pos != null && r.pos > p1 && r.pos <= edge},
     {k:"deep",  t:`${edge}위 밖`,        c:"var(--copper)", o:.55,
      hit:r => r.pos != null && r.pos > edge},
-    {k:"none",  t:"미검출",              c:"url(#rk-hatch)", o:1,
+    {k:"none",  t:"못 찾음",             c:"url(#rk-hatch)", o:1,
      hit:r => r.pos == null},
   ];
 }
@@ -90,7 +122,7 @@ function RK_strata(bs, total) {
   const bars = segs.map(s =>
     `<g><rect x="${s.x.toFixed(1)}" y="${T}" width="${(s.w - 1.5).toFixed(1)}"
         height="${BH}" fill="${s.c}" opacity="${s.o}"/>
-      <title>${esc(s.t)} — ${s.n}개 (${(s.n / total * 100).toFixed(0)}%)</title></g>`).join("");
+      <title>${esc(s.t)} · ${s.n}개 (${(s.n / total * 100).toFixed(0)}%)</title></g>`).join("");
   const marks = segs.map(s => {
     const cx = (s.x + s.w / 2).toFixed(1);
     return (s.w >= 52
@@ -108,14 +140,14 @@ function RK_strata(bs, total) {
          >1페이지 경계</text>` : "";
   const label = bs.filter(b => b.n).map(b => `${b.t} ${b.n}개`).join(", ");
   return `<div class="logwrap"><svg class="rk-strata log" viewBox="0 0 ${W} ${H}" role="img"
-      aria-label="확인한 ${total}개를 깊이별로 가른 단면 — ${esc(label)}">
+      aria-label="확인한 ${total}개를 순위 구간별로 가른 띠. ${esc(label)}">
     <defs><pattern id="rk-hatch" width="6" height="6" patternUnits="userSpaceOnUse"
         patternTransform="rotate(45)">
       <rect width="6" height="6" fill="var(--bar)"/>
       <line x1="0" y1="0" x2="0" y2="6" stroke="var(--rule)" stroke-width="1.4"/>
     </pattern></defs>
-    <text class="lb" x="0" y="${T - 15}">지표면 · 1위</text>
-    <text class="lb" x="${W}" y="${T - 15}" text-anchor="end">깊어짐 →</text>
+    <text class="lb" x="0" y="${T - 15}">1위</text>
+    <text class="lb" x="${W}" y="${T - 15}" text-anchor="end">순위가 뒤로 →</text>
     <g class="bar">${bars}</g><g class="lbl">${marks}</g>${edge}
   </svg></div>`;
 }
@@ -130,8 +162,9 @@ function RK_chips(bs) {
        <b>${b.n}</b></button>`).join("")}</div>`;
 }
 
+// 고르개 이름은 표의 칸 글자와 같은 말을 쓴다 — 다르면 무엇을 걸렀는지 되짚어야 한다.
 const RK_AIO_OPT = [["", "전체"], ["on", "AI 요약 뜸"], ["gap", "남의 링크만"],
-                    ["off", "안 뜸"]];
+                    ["off", "요약 없음"]];
 const RK_aioHit = (r, v) => v === "on" ? r.aio === 1
   : v === "gap" ? (r.aio === 1 && !r.aio_cited)
   : v === "off" ? r.aio === 0 : true;
@@ -206,47 +239,47 @@ function RK_playParts(r) {
   const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20, pos = r.pos;
   let what, acts, deliver;
   if (pos == null) {
-    what = "이번 조회 깊이 안에서 찾지 못했습니다 — 순위 경쟁 이전의 문제입니다.";
+    what = "이번 조회에서 찾지 못했습니다. 순위 경쟁 이전의 문제입니다.";
     acts = ["이 검색어를 정면으로 다루는 페이지가 실제로 있는지 확인합니다.",
-            "있다면 색인됐는지 봅니다 — noindex·canonical·robots.txt 순으로 확인합니다.",
+            "있다면 색인됐는지 봅니다. noindex·canonical·robots.txt 순으로 확인합니다.",
             "없다면 대표 글 한 장부터 씁니다. 여러 장을 한 번에 찍지 않습니다.",
             "경쟁이 너무 세면 롱테일 변형(질문형·지역·비교)부터 잡습니다."];
     deliver = ["이 검색어를 정면으로 다루는 페이지가 있는지 판단할 확인 순서",
-               "없다면 새 글 한 장의 제목과 목차 — 여러 장을 한 번에 찍지 않습니다",
+               "없다면 새 글 한 장의 제목과 목차. 여러 장을 한 번에 쓰지 않습니다",
                "있는데 색인이 안 됐다면 무엇을 고칠지(설정 수준)"];
   } else if (pos <= 3) {
-    what = "이미 상단입니다 — 더 올리는 것보다 지키는 쪽이 남는 자리입니다.";
-    acts = ["title·설명을 클릭이 나오게 다듬습니다 — 순위가 같아도 클릭은 늡니다.",
+    what = "이미 상단입니다. 더 올리는 것보다 지키는 쪽이 남는 자리입니다.";
+    acts = ["title·설명을 클릭이 나오게 다듬습니다. 순위가 같아도 클릭은 늡니다.",
             "본문의 숫자·날짜를 갱신합니다. 낡은 글부터 자리를 내줍니다.",
             "이 페이지로 들어오는 내부 링크를 끊지 않습니다.",
             "다음 확인 때 순위가 떨어지면 그날 바로 봅니다."];
-    deliver = ["클릭을 늘릴 title 3안과 meta description 2안 — 본문은 그대로 둡니다",
+    deliver = ["클릭을 늘릴 title 3안과 meta description 2안. 본문은 그대로 둡니다",
                "본문에서 갱신할 숫자·날짜 항목 목록"];
   } else if (pos <= p1) {
-    what = `1페이지 안 ${pos}위입니다 — 여기서 더 얻을 것은 순위보다 클릭입니다.`;
+    what = `1페이지 안 ${pos}위입니다. 남은 문제는 순위가 아니라 클릭입니다.`;
     acts = ["title 앞쪽에 검색어를 두고 숫자나 연도를 붙입니다.",
             "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
-            "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
+            "질문 바로 아래 40~60자 직답 블록을 둡니다. 강조 스니펫이 거기서 나옵니다.",
             "표·목록처럼 결과에 그대로 실리는 블록을 하나 만듭니다."];
-    deliver = ["새 title 3안 — 검색어를 앞에, 숫자나 연도를 붙여서",
+    deliver = ["새 title 3안. 검색어를 앞에 두고 숫자나 연도를 붙여서",
                "meta description 2안",
                "질문 바로 아래 넣을 40~60자 직답 블록 문안",
                "결과에 그대로 실릴 표나 목록 하나"];
   } else if (pos <= edge) {
-    what = `1페이지까지 ${pos - p1}칸 남았습니다 — 가장 적은 손으로 가장 크게 움직이는 구간입니다.`;
+    what = `1페이지 문턱입니다. 1페이지까지 ${pos - p1}칸 남았습니다. 가장 적은 손으로 가장 크게 움직이는 자리입니다.`;
     acts = ["title 과 H1 에 검색어를 그대로 넣습니다.",
             "상위 페이지가 답하는 하위 질문 중 빠진 것을 H2 로 채웁니다.",
             "관련 글 서너 곳에서 이 페이지로 내부 링크를 겁니다.",
             "본문을 갱신하고 갱신 날짜를 드러냅니다."];
-    deliver = ["새 title 과 H1 문안 — 검색어를 그대로 넣어서",
+    deliver = ["새 title 과 H1 문안. 검색어를 그대로 넣어서",
                "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
                "내부 링크를 걸 글 서너 곳과 앵커 텍스트"];
   } else {
-    what = `${pos}위입니다 — 검색은 되지만 아무도 여기까지 내려오지 않습니다.`;
+    what = `${pos}위입니다. 검색에는 잡히지만 여기까지 내려오는 사람이 없습니다.`;
     acts = ["검색 의도(알아보기·비교·구매)와 페이지 종류가 맞는지 먼저 봅니다.",
             "맞다면 그 검색어 하나만 정면으로 다루도록 페이지를 다시 씁니다.",
             "안 맞으면 새 페이지를 만들고 기존 글은 그쪽으로 링크합니다.",
-            "같은 주제 글이 여러 장이면 하나로 합칩니다 — 서로 순위를 갉아먹습니다."];
+            "같은 주제 글이 여러 장이면 하나로 합칩니다. 서로 순위를 갉아먹습니다."];
     deliver = ["이 페이지가 검색 의도에 맞는지 판단과 그 근거",
                "맞다면 이 검색어 하나만 다루도록 다시 쓴 제목·목차",
                "안 맞다면 새 페이지 제안과 기존 글에서 걸 링크"];
@@ -255,7 +288,7 @@ function RK_playParts(r) {
   if (r.aio === 1 && !r.aio_cited)
     acts = acts.concat([
       "검색어(질문) 그대로를 H2 로 두고 바로 아래에 2~3문장으로 직답합니다.",
-      "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다."]);
+      "숫자·출처·갱신 날짜를 본문에 남깁니다. 인용은 검증 가능한 문장에서 나옵니다."]);
   if (r.aio === 1 && !r.aio_cited)
     deliver = deliver.concat(["검색어 그대로를 쓴 H2 와 그 아래 2~3문장 직답"]);
   return [what, acts, deliver];
@@ -267,7 +300,7 @@ function RK_detail(r) {
   const d = rankDelta(r.delta ?? r.dpos);
   const feats = (r.features || []).map(f => esc(RK_FEAT[f] || f));
   const line = [
-    r.pos != null ? `지금 <b>${r.pos}위</b>` : "이번 조회 깊이 안에서 <b>못 찾았습니다</b>",
+    r.pos != null ? `지금 <b>${r.pos}위</b>` : "이번 조회에서 <b>못 찾았습니다</b>",
     prev != null ? `직전 ${prev}위${d ? " " + d : ""}` : "직전 확인 없음",
     RK_aioText(r),
     feats.length ? `SERP 피처 ${feats.join(" · ")}` : "SERP 피처 없음",
@@ -281,9 +314,9 @@ function RK_detail(r) {
   // 아직 안 잡힌 검색어만 아래 순위 구간별 처방으로 물러선다.
   const o = oppOf(r.keyword);
   const none = `<p class="detn">${W(
-    `이 검색어는 아직 기회 목록에 없습니다 —
-     <button class="cmd" onclick="copyCmd(this)">/capture gaps</button> 가 채굴합니다.`,
-    "이 검색어는 아직 기회 목록에 없습니다 — [전체 분석 실행]을 누르면 채워집니다.")}</p>`;
+    `이 검색어는 아직 기회 목록에 없습니다.
+     <button class="cmd" onclick="copyCmd(this)">/capture gaps</button> 를 돌리면 점수가 붙습니다.`,
+    "이 검색어는 아직 기회 목록에 없습니다. 기회 분석을 한 번 돌리면 점수가 붙습니다.")}</p>`;
   return `<div class="det"><p class="detn">${line}</p>${urlp}${o ? oppActs(o) : none}</div>`
     + (o ? oppPanel(o) : RK_fallback(r));
 }
@@ -296,7 +329,7 @@ function RK_fallback(r) {
   const [what, acts, deliver] = RK_playParts(r);
   const ask = askBlock({
     url: fix, audit: RK_AUDITS[fix], acts, deliver,
-    problem: `순위 ${r.pos != null ? r.pos + "위" : "미검출"} — ${what}`,
+    problem: `순위 ${r.pos != null ? r.pos + "위" : "못 찾음"}. ${what}`,
     queries: [{q: r.keyword, note: r.pos != null ? `현재 ${r.pos}위` : "순위 미검출"}],
   });
   return `<div class="det">${pageTable(pages)}
@@ -341,7 +374,8 @@ function RK_row(r, i) {
   const o = oppOf(r.keyword);
   const top = (RK_PAGES[r.keyword] || [])[0];
   // 종류·근거를 접힌 행에도 둔다 — 펼쳐야만 "왜"가 나오면 목록에서 고를 수가 없다.
-  const cells = [`<td class="kwcell">${esc(r.keyword)}${oppWhy(o)}</td>`,
+  const cells = [`<td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${
+      oppWhy(o)}</td>`,
     // .score 는 폭 44px 블록이라 오른쪽 정렬 칸에서도 왼쪽에 붙는다 — 머리글과 40px
     // 어긋나 보였다. 셸 CSS 를 건드리는 대신 이 칸에서만 상자를 오른쪽으로 민다.
     // 막대도 같은 폭으로 잘려 숫자 바로 밑에 선다.
@@ -349,7 +383,7 @@ function RK_row(r, i) {
         oppScore(o)}${oppMeter(o)}</div>`
       : `<span class="muted" title="아직 기회 목록에 없는 검색어입니다">—</span>`}</td>`,
     `<td class="num">${r.pos != null ? r.pos
-      : `<span class="muted" title="조회한 깊이 안에서 못 찾았습니다">밖</span>`}</td>`];
+      : `<span class="muted" title="이번 조회에서 못 찾았습니다">밖</span>`}</td>`];
   if (RK_HAS_PREV)
     cells.push(`<td class="num muted">${p != null ? p : "—"}</td>`,
       `<td class="num">${rankDelta(r.delta ?? r.dpos) || `<span class="muted">—</span>`}</td>`);
@@ -372,13 +406,13 @@ function RK_list() {
     return $("rk-list").innerHTML = `<div class="empty">거른 조건에 맞는 검색어가 없습니다.
       <div class="acts"><button onclick="RK_reset()">필터 지우기</button></div></div>`;
   const heads = ["키워드",
-    ">점수?기회 점수입니다 — 높을수록 먼저 손댈 자리이고, 이 목록의 기본 정렬입니다",
+    ">점수?기회 점수입니다. 높을수록 먼저 손댈 자리이고, 이 목록의 기본 정렬입니다",
     ">순위?조회 시점의 구글 결과에서 우리 페이지가 실제로 있던 자리입니다"];
   if (RK_HAS_PREV)
-    heads.push(">이전?직전 확인일의 순위 — 지금 순위에 Δ를 되돌린 값입니다",
+    heads.push(">이전?직전 확인일의 순위입니다. 지금 순위에 Δ를 되돌린 값입니다",
       `>Δ?올라간 칸수입니다. ±${(RULES.rank_noise || 3) - 1}칸까지는 노이즈로 보고 보합으로 적습니다`);
-  heads.push(">노출?이 검색어로 노출이 가장 큰 페이지의 노출 수입니다 — 같은 순위라도 규모는 다릅니다");
-  heads.push("AI 요약?구글이 검색 결과 맨 위에 붙이는 AI 답변 — 떴는지, 거기 내 페이지가 출처로 실렸는지");
+  heads.push(">노출?이 검색어로 노출이 가장 큰 페이지의 노출 수입니다. 같은 순위라도 규모는 다릅니다");
+  heads.push("AI 요약?구글이 검색 결과 맨 위에 붙이는 AI 답변입니다. 떴는지, 거기 내 페이지가 출처로 실렸는지를 적습니다");
   $("rk-list").innerHTML = table(heads, list.map(RK_row));
 }
 
@@ -438,34 +472,47 @@ VIEW("rank", function (d) {
   const cond = [d.rank_date && `${d.rank_date} 조회`,
     grab("provider"), DEV[grab("device")] || grab("device"),
     grab("errors") && grab("errors") !== "0" &&
-      `실패 ${grab("errors")}건 — ${W("/capture rank 로 재시도", "전체 분석 실행으로 재시도")}`,
+      `실패 ${grab("errors")}건. ${W("/capture rank 로 다시 조회", "다시 조회하세요")}`,
     d.rank_prev && `직전 ${d.rank_prev} 대비`].filter(Boolean).join(" · ");
 
   if (!RK_ROWS.length) {
     $("rk-sub").textContent = "";
-    // 웹에는 명령을 칠 곳이 없다 — 복사 칩째로 짧은 문구 한 줄로 갈아 낀다.
-    $("ranks").innerHTML = `<div class="empty">${W(
-      `순위를 아직 한 번도 확인하지 않았습니다.
-      구글 결과를 직접 조회하는 단계라 ${window.go("settings")} 화면의 SERP 제공자
-      연동(DataForSEO 권장 · Serper는 AI 요약 값이 없는 대체재)이 필요하고, 추적 키워드
-      수만큼 조회 비용이 붙습니다${
-        d.kw_active ? ` — 지금 활성 키워드는 ${num(d.kw_active)}개입니다` : ""}.
-      연동이 없어도 나머지 분석은 그대로 돕니다: 서치콘솔의 <b>평균 게재순위</b>는
-      ${window.go("keywords")} 화면에 이미 들어와 있고, 그건 무료입니다.
-      <button class="cmd" onclick="copyCmd(this)">/capture rank</button>`,
-      `순위를 아직 확인하지 않았습니다 — 구글 결과를 직접 조회하는 단계라 ` +
-      `${window.go("settings")} 화면의 SERP 제공자 연동이 필요하고, 추적 키워드 수만큼 ` +
-      `조회 비용이 붙습니다. 서치콘솔의 평균 게재순위는 ${window.go("keywords")} 화면에 ` +
-      "이미 들어와 있고 무료입니다.")}</div>`;
+    // 빈 화면도 다음 걸음을 말한다. 다만 한 번도 조회한 적이 없으면 SERP 제공자 연동이
+    // 아직 없다는 뜻이라, 조회부터 권하면 눌러도 실패한다 — 그때는 연동을 가리킨다.
+    // 조회 기록(runs)이 이 화면이 연동 여부를 알 수 있는 유일한 자리다.
+    if (run)
+      RK_next(W(
+        "순위를 다시 확인하면 검색어마다 지금 몇 위인지, AI 요약에 내 링크가 실렸는지 잡힙니다.",
+        "순위를 다시 확인하면 검색어마다 현재 게재순위와 AI 요약 인용 여부가 잡힙니다."),
+        RK_act("rank", W("순위 다시 조회", "순위 다시 확인")));
+    else
+      RK_next(W(
+        "구글 결과의 실제 순위는 SERP 제공자를 연동해야 봅니다. 설정에서 연동한 다음 조회합니다.",
+        "구글 결과의 실제 게재순위는 SERP 제공자를 연동해야 확인합니다. 설정에서 연동한 다음 " +
+        "조회합니다."),
+        RK_setup());        // 조회 자체는 아래 빈 상태가 보조 톤으로 들고 있다
+    $("ranks").innerHTML = `<div class="empty">
+      <b>순위를 아직 확인하지 않았습니다</b>
+      <p>구글 결과를 직접 조회하는 단계라 SERP 제공자 연동이 필요하고, 추적 키워드 수만큼
+        조회 비용이 붙습니다${
+          d.kw_active ? `. 지금 추적 중인 키워드는 ${num(d.kw_active)}개입니다` : ""}.</p>
+      <p>연동 전에도 서치콘솔의 평균 게재순위는 ${window.go("keywords")} 화면에 있고,
+        그건 무료입니다.</p>
+      <div class="acts">${RK_setup(false)}${RK_act("rank", "순위 확인", false)}</div></div>`;
     return;
   }
 
   // 제목의 호스팅판 문구는 위 <h2> 의 data-web 이 나란히 들고 있다. 조회 조건은 부제에.
-  $("rk-sub").textContent = [`검색어 ${RK_ROWS.length}개`, cond].filter(Boolean).join(" · ");
+  // 평균 순위는 여기 산다 — 계기판 자리는 손댈 묶음(문턱·오른 것·내린 것)이 가져간다.
+  const RANKED = RK_ROWS.filter(r => r.pos != null);
+  const AVG = RANKED.length
+    ? (RANKED.reduce((a, r) => a + r.pos, 0) / RANKED.length).toFixed(1) : null;
+  $("rk-sub").textContent = [`검색어 ${RK_ROWS.length}개`,
+    AVG && `순위에 잡힌 ${RANKED.length}개 평균 ${AVG}위`, cond].filter(Boolean).join(" · ");
   $("ranks").innerHTML = `
     <div class="band" id="rk-band"></div>
     <div class="rk-part">
-      <div class="eyebrow">깊이 분포</div>
+      <div class="eyebrow">순위 구간</div>
       <div id="rk-strata"></div>
       <p class="rk-note" id="rk-trend"></p>
     </div>
@@ -480,11 +527,12 @@ VIEW("rank", function (d) {
       <div id="rk-aio"></div>
     </div>`;
 
-  const ranked = RK_ROWS.filter(r => r.pos != null);
-  const p1 = RULES.page1 || 10;
+  const ranked = RANKED;
+  const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20;
   const onP1 = ranked.filter(r => r.pos <= p1).length;
-  const avg = ranked.length
-    ? (ranked.reduce((a, r) => a + r.pos, 0) / ranked.length).toFixed(1) : "—";
+  const nEdge = ranked.filter(r => r.pos > p1 && r.pos <= edge).length;   // 1페이지 문턱
+  const nDeep = ranked.filter(r => r.pos > edge).length;
+  const nNone = RK_ROWS.length - ranked.length;
   const moved = f => RK_ROWS.filter(r => {
     const v = RK_d(r);
     const flat = r.delta && typeof r.delta === "object" ? r.delta.flat
@@ -493,34 +541,57 @@ VIEW("rank", function (d) {
   }).length;
   const up = moved(v => v > 0), down = moved(v => v < 0);
   const noPrev = "비교할 직전 확인 없음";
+  // 계기판은 "손댈 묶음"으로 세운다 — 문턱·오른 것·내린 것이 먼저 보여야 한다.
   $("rk-band").innerHTML = [
-    ["순위에 잡힘", num(ranked.length), `확인한 ${RK_ROWS.length}개 중`],
-    ["1페이지", num(onP1), `${p1}위 안 · 잡힌 것의 ${
-      ranked.length ? Math.round(onP1 / ranked.length * 100) : 0}%`],
-    ["평균 순위", avg + (ranked.length ? "위" : ""), "순위에 잡힌 것만 평균"],
-    ["올라감", RK_HAS_PREV ? `<span class="up">${up}</span>` : "—",
+    ["1페이지 안", num(onP1), `${p1}위 안 · 확인한 ${RK_ROWS.length}개 중`],
+    ["1페이지 문턱", num(nEdge), `${p1 + 1}~${edge}위 · 한 걸음이면 1페이지`],
+    ["오른 것", RK_HAS_PREV ? `<span class="up">${up}</span>` : "—",
       RK_HAS_PREV ? `±${(RULES.rank_noise || 3) - 1}칸은 보합으로 셉니다` : noPrev],
-    ["내려감", RK_HAS_PREV ? `<span class="down">${down}</span>` : "—",
+    ["내린 것", RK_HAS_PREV ? `<span class="down">${down}</span>` : "—",
       RK_HAS_PREV ? `${esc(d.rank_prev)} 대비` : noPrev],
+    [`${edge}위 밖·못 찾음`, num(nDeep + nNone), "페이지가 있는지부터 봅니다"],
   ].map(([l, v, b]) => `<div class="m"><div class="v">${v}</div>
     <div class="l">${l}</div><div class="b">${b}</div></div>`).join("");
 
   RK_paint();
 
+  // 다음 행동 띠 — 화면 하나에 하나. 내려간 것이 있으면 그 사실을 먼저 말하고,
+  // 그다음에 지금 가장 크게 움직일 묶음을 가리킨다(그 묶음만 남기는 버튼과 함께).
+  const fell = down ? `직전 확인보다 ${down}개가 내려갔습니다. ` : "";
+  if (nEdge) {
+    RK_next(fell + W(
+      `1페이지 문턱(${p1 + 1}~${edge}위)에 ${nEdge}개가 있습니다. 가장 적은 손으로 움직입니다.`,
+      `게재순위 ${p1 + 1}~${edge}위에 ${nEdge}개가 있습니다. 가장 적은 손으로 움직이는 자리입니다.`),
+      `<button class="go" onclick="RK_only('page2')">문턱 ${nEdge}개만 보기</button>` +
+      RK_act("rank", W("순위 다시 조회", "순위 다시 확인"), false));
+  } else if (nDeep + nNone) {
+    const k = nDeep >= nNone ? "deep" : "none";
+    RK_next(fell + `${nDeep + nNone}개가 ${edge}위 밖이거나 검색에 안 잡혔습니다. ` +
+      "그 자리는 순위보다 페이지가 있는지부터 봅니다.",
+      `<button class="go" onclick="RK_only('${k}')">${
+        k === "deep" ? `${edge}위 밖 ${nDeep}개` : `못 찾은 ${nNone}개`}만 보기</button>` +
+      RK_act("rank", W("순위 다시 조회", "순위 다시 확인"), false));
+  } else {
+    RK_next(fell + W(
+      `확인한 ${RK_ROWS.length}개가 전부 1페이지 안입니다. 남은 문제는 순위가 아니라 클릭입니다.`,
+      `확인한 ${RK_ROWS.length}개가 모두 1페이지 안입니다. 남은 과제는 게재순위가 아니라 ` +
+      `클릭률입니다.`),
+      RK_act("rank", W("순위 다시 조회", "순위 다시 확인")));
+  }
+
   // 추이 선은 확인일이 3회는 쌓여야 그린다 — 2점을 잇는 선은 추세가 아니다.
-  $("rk-trend").textContent = RK_HAS_PREV
-    ? `확인일 2회(${d.rank_prev} → ${d.rank_date})분이 쌓였습니다. 시간축 추이 그래프는 ` +
-      `3회부터 그립니다 — 그 전까지는 위 칸의 올라감·내려감이 변화의 전부입니다.`
-    : `확인일이 1회뿐이라 변화가 아직 없습니다. 한 번 더 확인하면 검색어마다 ` +
-      `이전 순위와 Δ가 붙습니다.`;
+  $("rk-trend").textContent = "구간 칩을 누르면 아래 목록이 그 구간만 남깁니다. " + (RK_HAS_PREV
+    ? `확인일은 2회(${d.rank_prev} → ${d.rank_date})입니다. 추이 그래프는 3회부터 그립니다.`
+    : "확인일이 1회뿐이라 아직 변화가 없습니다. 한 번 더 확인하면 검색어마다 " +
+      "이전 순위와 Δ가 붙습니다.");
 
   const capped = RK_ROWS.length >= 30 && (d.kw_active || 0) > RK_ROWS.length;
-  const how = ` 행을 누르면 그 검색어에서 걸린 페이지와 지금 할 일이 펼쳐집니다`
-    + (d.page_audit_date ? ` — 페이지 점검은 ${d.page_audit_date} 기준입니다.` : `.`);
+  const how = W(" 줄을", " 행을") + ` 누르면 그 검색어로 걸린 페이지와 지금 할 일이 펼쳐집니다`
+    + (d.page_audit_date ? `. 페이지 점검은 ${d.page_audit_date} 기준입니다.` : `.`);
   $("rk-cap").textContent = (capped
     ? `추적 키워드 ${num(d.kw_active)}개 중 ${RK_ROWS.length}개까지만 이 화면에 옵니다. ` +
       `CSV도 같은 ${RK_ROWS.length}개입니다.`
-    : `기본은 기회 점수 내림차순입니다 — 순위·노출·Δ는 열 이름을 누르면 그 열로 다시 ` +
+    : `기본은 기회 점수 내림차순입니다. 순위·노출·Δ는 열 이름을 누르면 그 열로 다시 ` +
       `정렬됩니다.`) + how;
 
   // AI 요약(구글 AI Overview): 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
@@ -531,9 +602,12 @@ VIEW("rank", function (d) {
   const cited = on.filter(r => r.aio_cited).length;
   const gap = d.aio_gap || [];
   if (!known.length) {
-    $("rk-aio").innerHTML = `<div class="empty">이번 조회는 AI 요약이 떴는지 재지 않았습니다${
-      grab("provider") === "serper" ? " — Serper는 이 값을 주지 않습니다. " +
-      "DataForSEO로 조회하면 채워집니다" : ""}.</div>`;
+    $("rk-aio").innerHTML = `<div class="empty">
+      <b>이번 조회는 AI 요약을 재지 않았습니다</b>
+      <p>${grab("provider") === "serper"
+        ? "Serper 는 이 값을 주지 않습니다. DataForSEO 로 조회하면 채워집니다."
+        : "다음 조회부터 검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지 붙습니다."}</p>
+      </div>`;
   } else if (!on.length) {
     $("rk-aio").innerHTML = `<p class="rk-note">확인한 ${known.length}개 어디에도
       AI 요약이 뜨지 않았습니다. 이 주제는 아직 구글이 답을 직접 붙이지 않습니다.</p>`;
@@ -541,9 +615,9 @@ VIEW("rank", function (d) {
     $("rk-aio").innerHTML = `<p class="rk-note">
       AI 요약이 뜬 검색어 <b>${on.length}개</b> 중 <b>${cited}개</b>에 내 페이지가 출처로
       실렸습니다. 나머지 ${on.length - cited}개는 요약이 맨 위 자리를 차지하는데 거기
-      내 링크가 없습니다 — 순위가 그대로여도 클릭이 줄어듭니다.</p>` +
-      (gap.length ? `<p class="rk-note" style="margin-top:10px">내 링크가 빠진 검색어
-        — 누르면 위 목록이 이 행들만 남깁니다:</p>
+      내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.</p>` +
+      (gap.length ? `<p class="rk-note" style="margin-top:10px">내 링크가 빠진 검색어입니다.
+        누르면 위 목록이 그 검색어만 남깁니다.</p>
         <div class="oppchips" style="margin-top:6px">${gap.map(k =>
         `<button class="chip" onclick="RK_gapOnly()"
            title="AI 요약에 내 링크가 빠진 검색어만 위 목록에 남깁니다">${esc(k)}</button>`

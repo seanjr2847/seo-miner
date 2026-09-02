@@ -117,7 +117,9 @@ def _assemble(variant: str = "local") -> bytes:
         if len(pending) == i0:
             raise ValueError(f"섹션을 끼울 자리를 못 찾았다: {[s['id'] for s in pending]}")
     views_json = json.dumps(defs, ensure_ascii=False).replace("</", "<\\/")
-    stages_json = json.dumps(stage.STAGE_LABELS, ensure_ascii=False).replace("</", "<\\/")
+    # 호스팅은 유료 키 문장이 갈린다 — 서버가 키를 대므로 "키가 필요합니다"가
+    # 거짓말이 된다. 갈래를 아는 것은 여기(variant)뿐이라 여기서 골라 싣는다.
+    stages_json = json.dumps(stage.stage_labels(variant), ensure_ascii=False).replace("</", "<\\/")
     hosted_flag = "window.SM_HOSTED=true;" if variant == "hosted" else ""
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
                 f"window.__STAGES__={stages_json};</script>")

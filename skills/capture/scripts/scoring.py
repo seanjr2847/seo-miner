@@ -425,7 +425,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
 
     if audit.get("error"):
         add("가져오기", "bad", audit["error"],
-            "이 URL 이 사람에게도 안 열리는지 확인하세요. 안 열리면 순위·색인 이전의 문제입니다.")
+            "이 주소를 브라우저로 직접 열어 보세요. 사람에게도 안 열리면 순위·색인 이전의 문제입니다.")
         return out
 
     kw = next((q for q in queries if q), "")
@@ -440,21 +440,21 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         t_max = TITLE_MAX_KO if _wide(title) else TITLE_MAX
         t_min = TITLE_MIN_KO if _wide(title) else TITLE_MIN
         if len(title) > t_max:
-            add("title", "warn", f"{len(title)}자 — 검색결과에서 잘립니다",
+            add("title", "warn", f"{len(title)}자라 검색결과에서 잘립니다",
                 f"{t_max}자 이내로 줄이고, 브랜드명은 뒤로 미세요.")
         elif len(title) < t_min:
-            add("title", "warn", f"{len(title)}자 — 너무 짧습니다",
+            add("title", "warn", f"{len(title)}자라 너무 짧습니다",
                 "무엇에 대한 페이지인지 title 만 읽고 알 수 있게 늘리세요.")
 
     desc = (audit.get("meta_description") or "").strip()
     if not desc:
         add("meta description", "bad", "설명이 없습니다",
-            "검색결과에 뜰 2~3문장을 직접 쓰세요 — 없으면 구글이 본문에서 임의로 뽑습니다.")
+            "검색결과에 뜰 2~3문장을 직접 쓰세요. 안 쓰면 구글이 본문에서 아무 데나 뽑습니다.")
     elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
-        add("meta description", "warn", f"{len(desc)}자 — 뒤가 잘립니다",
+        add("meta description", "warn", f"{len(desc)}자라 뒤가 잘립니다",
             f"{DESC_MAX_KO if _wide(desc) else DESC_MAX}자 이내로. 중요한 말을 앞에 두세요.")
     elif len(desc) < (DESC_MIN_KO if _wide(desc) else DESC_MIN):
-        add("meta description", "warn", f"{len(desc)}자 — 너무 짧습니다",
+        add("meta description", "warn", f"{len(desc)}자라 너무 짧습니다",
             "숫자·연도·구체적 이득을 넣어 클릭할 이유를 적으세요.")
 
     h1 = _as_list(audit.get("h1_json"))
@@ -465,18 +465,18 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
             "H1 은 하나만 두고 나머지는 H2 로 내리세요.")
     elif kw and kw.lower() not in h1[0].lower():
         add("H1", "warn", h1[0],
-            f"H1 에 '{kw}' 가 없습니다 — title 과 H1 이 같은 말을 하게 맞추세요.")
+            f"H1 에 '{kw}' 가 없습니다. title 과 H1 이 같은 말을 하게 맞추세요.")
 
     words = audit.get("words")
     if isinstance(words, int) and words < THIN_WORDS:
-        add("본문", "warn", f"{words}단어 — 얇습니다",
+        add("본문", "warn", f"{words}단어로 얇습니다",
             f"이 검색어를 다루는 하위 질문을 채워 {THIN_WORDS}단어 이상으로 늘리세요.")
 
     schema = _as_list(audit.get("schema_json"))
     if not schema:
         add("구조화 데이터", "warn", "ld+json 이 없습니다",
-            "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요 "
-            "— AI 답변과 리치 결과가 읽는 자리입니다.")
+            "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요. "
+            "AI 답변과 리치 결과가 읽는 자리입니다.")
 
     robots = (audit.get("robots") or "").lower()
     if "noindex" in robots:
@@ -489,17 +489,17 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
             "자기 URL(또는 내 사이트의 정본)을 가리키게 고치세요.")
     elif canon and norm(canon) != norm(audit.get("url") or ""):
         add("canonical", "warn", f"canonical: {canon}",
-            "이 URL 이 정본이 아니라고 선언돼 있습니다 — 의도한 것인지 확인하세요.")
+            "이 주소가 정본이 아니라고 선언돼 있습니다. 의도한 것인지 확인하세요.")
 
     no_alt = audit.get("images_no_alt") or 0
     if no_alt:
         add("이미지", "warn", f"alt 없는 이미지 {no_alt}개",
-            "무엇을 보여주는 그림인지 alt 에 적으세요(이미지 검색 유입과 접근성).")
+            "무엇을 보여주는 그림인지 alt 에 적으세요. 이미지 검색 유입과 접근성에 씁니다.")
 
     internal = audit.get("internal_links")
     if isinstance(internal, int) and internal < 3:
         add("내부 링크", "warn", f"이 페이지가 내보내는 내부 링크 {internal}개",
-            "관련 글로 3개 이상 연결하세요 — 링크가 없는 페이지는 크롤러도 사람도 덜 봅니다.")
+            "관련 글로 3개 이상 연결하세요. 링크가 없는 페이지는 크롤러도 사람도 덜 봅니다.")
     return out
 
 
@@ -1020,14 +1020,14 @@ def _index_bucket(r: sqlite3.Row) -> tuple[str, str]:
     fetch = (r["page_fetch_state"] or "").upper()
     gc, uc = (r["google_canonical"] or "").strip(), (r["user_canonical"] or "").strip()
     if robots and robots != "ALLOWED":
-        return "robots_blocked", "robots.txt 가 크롤을 막고 있다 — 허용으로 풀기 전엔 절대 색인 안 된다"
+        return "robots_blocked", "robots.txt 가 크롤을 막고 있습니다. 허용으로 풀기 전에는 색인되지 않습니다"
     if fetch and fetch != "SUCCESSFUL":
-        return "fetch_error", f"구글이 페이지를 못 가져왔다({fetch}) — 서버 응답·리다이렉트부터 확인"
+        return "fetch_error", f"구글이 페이지를 못 가져왔습니다({fetch}). 서버 응답과 리다이렉트부터 확인하세요"
     if gc and uc and gc != uc:
-        return "canonical_mismatch", (f"구글이 고른 대표 URL 이 다르다: {gc} (내 선언 {uc}) — "
-                                      f"중복 페이지를 정리하거나 canonical 을 맞춰라")
+        return "canonical_mismatch", (f"구글이 고른 대표 주소가 다릅니다: {gc} (내 선언 {uc}). "
+                                      f"중복 페이지를 정리하거나 canonical 을 맞추세요")
     state = r["coverage_state"] or r["indexing_state"] or r["verdict"] or "원인 미상"
-    return "not_indexed", f"색인 안 됨({state}) — 내부 링크·사이트맵으로 크롤을 유도해라"
+    return "not_indexed", f"아직 색인되지 않았습니다({state}). 내부 링크와 사이트맵으로 크롤을 유도하세요"
 
 
 def index_issues(conn: sqlite3.Connection, project_id: int) -> list[dict]:
@@ -1858,11 +1858,11 @@ def _coverage_rows(ctx: dict) -> list[dict]:
 
 def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
     tg = [t.strip() for t in (r["targets"] or "").split(",")[:2] if t.strip()]
-    s = f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 없습니다"
+    s = f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 못 받았습니다"
     if tg:
-        s += f" — {', '.join(tg)}"
+        s += f". 링크가 걸린 곳: {', '.join(tg)}"
     if r["rank"]:
-        s += f" (지수 {r['rank']})"
+        s += f" (도메인 지수 {r['rank']})"
     return s
 
 
@@ -1872,21 +1872,21 @@ def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
 # 없다. dashboard.html 의 oppDetail 이 이어 붙인다(둘 다 같은 문장을 뒤에 단다).
 _SD_PLAY = {
     "page1": dict(
-        what="이미 1페이지 안입니다 — 여기서 남은 것은 순위보다 클릭입니다.",
+        what="이미 1페이지 안입니다. 여기서 남은 것은 순위가 아니라 클릭입니다.",
         acts=["title 앞쪽에 검색어를 두고 숫자·연도를 붙여 옆 결과와 다르게 보이게 합니다.",
               "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
-              "질문 바로 아래 40~60자 직답 블록을 둡니다 — 강조 스니펫이 거기서 나옵니다.",
+              "질문 바로 아래 40~60자 직답 블록을 둡니다. 강조 스니펫이 거기서 나옵니다.",
               "상단 3위권을 노린다면 상위 페이지에만 있는 구간을 본문에 채웁니다."],
-        deliver=["새 title 3안 — 검색어를 앞에, 숫자나 연도를 붙여서",
+        deliver=["새 title 3안. 검색어를 앞에 두고 숫자나 연도를 붙여서",
                  "meta description 2안",
                  "질문 바로 아래 넣을 40~60자 직답 문안"]),
     "page2": dict(
-        what="1페이지 진입까지 몇 칸 남았고, 그 몇 칸이 클릭의 대부분입니다.",
+        what="1페이지 진입까지 몇 칸 남았습니다. 그 몇 칸이 클릭의 대부분입니다.",
         acts=["아래 페이지의 title 과 H1 을 이 검색어로 시작하게 고칩니다.",
               "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
               "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
               "표·목록·정의 블록을 만들어 스니펫 후보로 올립니다."],
-        deliver=["새 title 3안과 H1 문안 — 검색어를 앞에 두고",
+        deliver=["새 title 3안과 H1 문안. 검색어를 앞에 두고",
                  "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
                  "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]),
 }
@@ -1896,12 +1896,12 @@ _SD_PLAY = {
 # kind('missing'/'weak')가 안다.
 _CG_PLAY = {
     "weak": dict(
-        what="경쟁 도메인이 나보다 위에 있습니다 — 페이지는 있으니 새로 쓰는 게 아니라 그 페이지를 고칩니다.",
+        what="경쟁 도메인이 나보다 위에 있습니다. 페이지는 이미 있으니 새로 쓰지 말고 그 페이지를 고칩니다.",
         acts=["나를 이기고 있는 그 페이지의 목차와 내 페이지를 나란히 놓고 빠진 구간을 찾습니다.",
               "그 검색어를 title 과 H1 앞쪽으로 올립니다.",
-              "내 제품·데이터로만 말할 수 있는 구간을 하나 더 넣습니다 — 같은 말을 더 길게 쓰는 건 소용없습니다.",
+              "내 제품·데이터로만 말할 수 있는 구간을 하나 더 넣습니다. 같은 말을 길게 늘리는 건 소용없습니다.",
               "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다."],
-        deliver=["내 페이지에 추가할 H2 목록 — 이기고 있는 페이지와 비교해서",
+        deliver=["내 페이지에 추가할 H2 목록. 이기고 있는 페이지와 비교해서",
                  "새 title 3안과 H1 문안", "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]),
     "missing": dict(
         what="경쟁 도메인은 잡고 있는데 나는 페이지 자체가 없는 검색어입니다.",
@@ -1925,10 +1925,10 @@ _KIND_SPECS = {
         # "12.8위"는 실측 순위로 읽힌다 — 직접 검색해도 안 보인다는 문의가
         # 여기서 나왔다. GSC 가 보고한 기간 평균이라고 앞에서 못 박는다.
         reasoning=lambda r, ctx: (
-            f"평균 {r['pos']}위·노출 {r['imp']:,}·클릭 {r['clk']:,} — "
-            + (f"이미 1페이지, 상단(3위권)까지 {round(max(0.0, r['pos'] - 3), 1)}칸"
-               if r["band"] == "page1" else f"1페이지까지 {r['gap']}")
-            + f" ({r['band']}) (gsc {ctx['cur']})"),
+            f"평균 {r['pos']}위 · 노출 {r['imp']:,} · 클릭 {r['clk']:,}. "
+            + (f"이미 1페이지이고 상단 3위권까지 {round(max(0.0, r['pos'] - 3), 1)}칸"
+               if r["band"] == "page1" else f"1페이지까지 {r['gap']}칸")
+            + f" 남았습니다 (구글 실적 {ctx['cur']} 기준)"),
         play=_SD_PLAY),
     "ctr_gap": dict(
         label="CTR 미달", defensive=False,
@@ -1938,17 +1938,18 @@ _KIND_SPECS = {
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"{r['position']}위·노출 {r['impressions']:,}·CTR "
-            f"{r['actual_ctr']}%(기대 {r['expected_ctr']}%) — "
-            f"손실 약 {r['lost_clicks']:,}클릭/기간 (gsc {ctx['cur']})"),
+            f"{r['position']}위 · 노출 {r['impressions']:,} · CTR "
+            f"{r['actual_ctr']}% (이 순위의 기대치 {r['expected_ctr']}%). "
+            f"이 기간에 약 {r['lost_clicks']:,}클릭을 놓쳤습니다 "
+            f"(구글 실적 {ctx['cur']} 기준)"),
         play=dict(
-            what="순위는 1페이지인데 클릭률이 기대치의 절반 이하 — 순위가 아니라 제목·설명 문제입니다.",
+            what="순위는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
             acts=["title 앞 60자 안에 검색어를 넣고, 브랜드명은 뒤로 밉니다.",
                   "meta description 에 숫자·연도·구체적 이득을 적습니다.",
                   "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
                   "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."],
-            deliver=["새 title 3안 — 한글 30자 이내, 검색어를 앞에",
-                     "meta description 2안 — 한글 80자 이내",
+            deliver=["새 title 3안. 한글 30자 이내, 검색어를 앞에",
+                     "meta description 2안. 한글 80자 이내",
                      "검색 결과 면적을 넓힐 FAQ·HowTo 구조화 데이터(JSON-LD)"])),
     "cannibalization": dict(
         label="내부 경쟁", defensive=True,
@@ -1959,17 +1960,18 @@ _KIND_SPECS = {
                                  **_ga4_metrics(ctx, page=r["pages"][0]["page"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,} 분산 — "
-            f"{' vs '.join(pg['page'] for pg in r['pages'][:2])} (gsc {ctx['cur']})"),
+            f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,}을 나눠 갖습니다: "
+            f"{' vs '.join(pg['page'] for pg in r['pages'][:2])} "
+            f"(구글 실적 {ctx['cur']} 기준)"),
         play=dict(
-            what="같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다 — 구글이 어느 쪽을 올릴지 못 정합니다.",
+            what="같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다. 구글이 어느 쪽을 올릴지 못 정합니다.",
             acts=["아래 표에서 노출·클릭이 가장 큰 페이지를 정본으로 정합니다.",
                   "나머지는 정본으로 301 리다이렉트하거나 canonical 을 정본으로 겁니다.",
                   "합칠 수 없으면 검색 의도를 갈라 제목·H1 을 서로 다르게 씁니다.",
                   "나머지 페이지에서 정본으로 내부 링크를 겁니다."],
             deliver=["어느 페이지를 정본으로 할지와 그 근거(노출·클릭·의도 기준)",
-                     "나머지 페이지 처리 계획 — 301 리다이렉트 대상과 canonical 지정",
-                     "합칠 경우 병합 후 목차 한 벌 — 새 글을 쓰는 게 아니라 두 글을 합칩니다"])),
+                     "나머지 페이지 처리 계획: 301 리다이렉트 대상과 canonical 지정",
+                     "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다"])),
     "rank_decay": dict(
         label="순위 하락", defensive=True,
         detect=lambda ctx: rank_decay(ctx["conn"], ctx["pid"]),
@@ -1978,32 +1980,34 @@ _KIND_SPECS = {
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"{r['prev_pos']}위 → {r['pos']}위 (Δ{r['dpos']})·"
-            f"클릭 {r['dclk']:+d} — 방어 필요 (gsc {ctx['prev']}→{ctx['cur']})"),
+            f"{r['prev_pos']}위에서 {r['pos']}위로 {r['dpos']}칸 밀렸습니다. "
+            f"같은 기간 클릭은 {abs(r['dclk'])}회 "
+            f"{'줄었' if r['dclk'] < 0 else '늘었'}습니다 "
+            f"(구글 실적 {ctx['prev']}과 {ctx['cur']} 비교)"),
         play=dict(
-            what="잡고 있던 순위가 밀렸습니다 — 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
+            what="잡고 있던 순위가 밀렸습니다. 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
             acts=["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
                   "지금 그 자리를 가져간 페이지와 목차를 비교해 빠진 구간을 채웁니다.",
-                  "본문을 실제로 갱신합니다 — 날짜만 바꾸는 것은 효과가 없습니다.",
+                  "본문을 실제로 갱신합니다. 날짜만 바꾸는 것은 효과가 없습니다.",
                   "그 페이지로 오던 내부 링크가 끊겼는지 확인합니다."],
-            deliver=["되찾기 위해 본문에 채울 구간(H2 목록) — 지금 그 자리를 가져간 페이지와 비교해서",
+            deliver=["되찾으려고 본문에 채울 구간(H2 목록). 지금 그 자리를 가져간 페이지와 비교해서",
                      "끊긴 내부 링크를 어디서 다시 걸지"])),
     "pseo_pattern": dict(
-        label="pSEO 패턴", defensive=False,
+        label="템플릿 패턴", defensive=False,
         detect=lambda ctx: pseo_candidates(ctx["conn"], ctx["pid"], ctx["cur"], limit=10),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"노출 {r['imp']:,}·CTR {r['ctr_pct']}%·{r['pos']}위 — "
-            f"pSEO 군집 후보, 군집화는 Claude 판단 (scoring.md 1b) (gsc {ctx['cur']})"),
+            f"노출 {r['imp']:,} · CTR {r['ctr_pct']}% · {r['pos']}위. "
+            f"같은 꼴로 여러 장 찍을 후보입니다 (구글 실적 {ctx['cur']} 기준)"),
         play=dict(
-            what="같은 꼴의 검색어가 무리로 있습니다 — 한 장씩 쓰는 대신 템플릿으로 찍을 자리입니다.",
+            what="같은 꼴의 검색어가 무리로 있습니다. 한 장씩 쓰지 말고 템플릿으로 찍을 자리입니다.",
             acts=["같은 패턴의 검색어를 모읍니다(도구별·지역별·비교 축).",
-                  "템플릿 한 벌 + 실제 데이터로 페이지를 찍습니다 — 빈 껍데기는 색인에서 걸러집니다.",
+                  "템플릿 한 벌과 실제 데이터로 페이지를 찍습니다. 빈 껍데기는 색인에서 걸러집니다.",
                   "허브 페이지를 만들어 전부 링크합니다."],
             deliver=["이 패턴의 축과 값 목록(도구·지역·비교 대상)",
-                     "템플릿 한 벌의 골격 — 어느 자리에 데이터가 들어가는지",
+                     "템플릿 한 벌의 골격: 어느 자리에 데이터가 들어가는지",
                      "허브 페이지 구성"])),
     # 분해 수집은 gsc_snapshots 와 수집일이 어긋날 수 있다(분해 수집을 끄면 뒤처진다)
     # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 ctx['bd']로 따로 읽는다.
@@ -2015,17 +2019,17 @@ _KIND_SPECS = {
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"모바일 {r['mobile_pos']}위 vs 데스크톱 {r['desktop_pos']}위 "
-            f"(Δ{r['dpos']})·모바일 노출 {r['mobile_imp']:,}·"
-            f"CTR {r['mobile_ctr']}% vs {r['desktop_ctr']}% — "
-            f"모바일에서만 밀린다 (gsc {ctx['bd']})"),
+            f"모바일 {r['mobile_pos']}위, 데스크톱 {r['desktop_pos']}위로 "
+            f"{r['dpos']}칸 차이가 납니다. 모바일 노출 {r['mobile_imp']:,} · "
+            f"CTR {r['mobile_ctr']}% (데스크톱은 {r['desktop_ctr']}%) "
+            f"(구글 실적 {ctx['bd']} 기준)"),
         play=dict(
-            what="모바일에서만 순위가 낮습니다 — 콘텐츠가 아니라 모바일 화면·속도 문제인 경우가 많습니다.",
+            what="모바일에서만 순위가 낮습니다. 글이 아니라 모바일 화면·속도가 원인인 경우가 많습니다.",
             acts=["모바일로 그 페이지를 직접 열어 첫 화면에 답이 있는지 봅니다.",
                   "LCP·CLS 를 확인합니다(이미지 크기 지정, 광고·배너 지연 로드).",
                   "표·코드 블록이 가로로 넘치는지 봅니다.",
                   "전면 팝업(인터스티셜)을 걷어냅니다."],
-            deliver=["모바일에서 고칠 것 목록 — 레이아웃·이미지 크기·지연 로드·팝업(코드/설정 수준)",
+            deliver=["모바일에서 고칠 것 목록. 레이아웃·이미지 크기·지연 로드·팝업",
                      "첫 화면에 무엇이 보여야 하는지"])),
     "index_blocked": dict(
         label="색인 막힘", defensive=False,
@@ -2034,18 +2038,18 @@ _KIND_SPECS = {
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["url"])},
         target=lambda r, ctx: r["url"],
-        reasoning=lambda r, ctx: f"{r['detail']} (gsc 색인 {ctx['ix']})",
+        reasoning=lambda r, ctx: f"{r['detail']} (색인 확인 {ctx['ix']} 기준)",
         play=dict(
-            what="색인되지 않은 URL 입니다 — 색인 전에는 순위 자체가 없습니다.",
+            what="구글이 이 주소를 색인하지 않았습니다. 색인 전에는 순위 자체가 없습니다.",
             acts=["robots.txt·noindex·canonical 이 이 URL 을 막고 있는지 확인합니다.",
                   "사이트맵에 넣고 Search Console 에서 색인을 요청합니다.",
                   "들어오는 내부 링크가 하나도 없으면(고아 페이지) 최소 한 개를 겁니다.",
                   "중복이면 정본 하나만 남깁니다."],
-            deliver=["막고 있는 규칙을 어떻게 고칠지 — robots.txt 줄 또는 meta robots 값과 적용 위치",
+            deliver=["막고 있는 규칙을 어떻게 고칠지. robots.txt 줄 또는 meta robots 값과 적용 위치",
                      "색인 요청·확인 절차 순서",
-                     "(콘텐츠는 손대지 않습니다 — 색인 전에는 글을 고쳐도 소용이 없습니다)"])),
+                     "(글은 손대지 않습니다. 색인 전에는 고쳐도 소용이 없습니다)"])),
     "coverage": dict(
-        label="미커버", defensive=False,
+        label="안 다룬 주제", defensive=False,
         detect=_coverage_rows,
         # 이 kind 는 정의상 노출이 0이다("아직 아무 데도 안 뜬다"). 검색량이 없으면
         # 수요 신호도 0이라 점수가 늘 바닥이었다 — "새로 쓸 글"을 고를 때 순서가
@@ -2054,14 +2058,15 @@ _KIND_SPECS = {
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], f"cluster:{r['cluster']}")},
         target=lambda r, ctx: f"cluster:{r['cluster']}",
         reasoning=lambda r, ctx: (
-            f"활성 키워드 {r['n']}개가 GSC 노출·순위 체크 모두 부재 — 클러스터 '{r['cluster']}'"
-            + (f" · 월 검색량 합 {r['vol']:,}" if r["vol"] else "")),
+            f"'{r['cluster']}' 주제로 추적 중인 키워드 {r['n']}개가 노출도 순위도 "
+            "잡히지 않았습니다"
+            + (f" (월 검색량 합 {r['vol']:,})" if r["vol"] else "")),
         play=dict(
-            what="추적은 하는데 노출도 순위도 없습니다 — 이 주제를 다루는 페이지가 없다는 뜻입니다.",
+            what="추적은 하는데 노출도 순위도 없습니다. 이 주제를 다루는 페이지가 없다는 뜻입니다.",
             acts=["이 클러스터를 다루는 페이지가 실제로 있는지 확인합니다.",
-                  "없으면 대표 글 하나부터 만듭니다 — 클러스터 전체를 한 번에 찍지 않습니다.",
+                  "없으면 대표 글 하나부터 만듭니다. 클러스터 전체를 한 번에 찍지 않습니다.",
                   "있는데 안 걸린다면 제목·본문에 그 검색어가 실제로 등장하는지 봅니다."],
-            deliver=["이 주제를 다룰 대표 글 한 장의 제목과 목차 — 클러스터 전체를 한 번에 찍지 않습니다"])),
+            deliver=["이 주제를 다룰 대표 글 한 장의 제목과 목차. 클러스터 전체를 한 번에 찍지 않습니다"])),
     # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
@@ -2072,13 +2077,14 @@ _KIND_SPECS = {
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"])},
         target=lambda r, ctx: r["prompt"],
         reasoning=lambda r, ctx: (
-            f"엔진 {r['engines']}곳 답변 {r['checks']}건 중 인용 0"
-            + (f"·언급만 {r['mentioned']}건" if r["mentioned"] else "")
-            + (f" — 대신 {', '.join(r['rivals'])} 가 인용됩니다" if r["rivals"] else "")),
+            f"AI {r['engines']}곳의 답변 {r['checks']}건에서 한 번도 인용되지 "
+            "않았습니다"
+            + (f". 이름만 나온 것은 {r['mentioned']}건입니다" if r["mentioned"] else "")
+            + (f". 대신 인용되는 곳: {', '.join(r['rivals'])}" if r["rivals"] else "")),
         play=dict(
             what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
             acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
-                  "숫자·출처·갱신 날짜를 본문에 박습니다 — 인용은 검증 가능한 문장을 고릅니다.",
+                  "숫자·출처·갱신 날짜를 본문에 적습니다. 인용은 검증 가능한 문장에 붙습니다.",
                   "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
             deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
                      "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
@@ -2092,10 +2098,12 @@ _KIND_SPECS = {
         target=lambda r, ctx: r["keyword"],
         reasoning=lambda r, ctx: (
             "구글이 AI 요약을 붙이는데 내 링크가 없습니다"
-            + (f" · 실측 {r['position']}위" if r["position"] else "")
-            + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")),
+            + (f" (실제 순위 {r['position']}위" if r["position"] else "")
+            + (f"{' · ' if r['position'] else ' ('}월 검색량 {r['volume']:,}"
+               if r["volume"] else "")
+            + (")" if r["position"] or r["volume"] else "")),
         play=dict(
-            what="구글이 이 검색어에 AI 요약을 붙입니다 — 거기 내 링크가 없으면 순위가 그대로여도 클릭이 줄어듭니다.",
+            what="구글이 이 검색어에 AI 요약을 붙이는데 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.",
             acts=["요약이 답하는 질문에 직답 블록을 만듭니다.",
                   "Article·FAQ 구조화 데이터를 붙입니다."],
             deliver=["구글 AI 요약이 답하는 질문에 대한 직답 블록",
@@ -2109,9 +2117,10 @@ _KIND_SPECS = {
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["keyword"])},
         target=lambda r, ctx: r["keyword"],
         reasoning=lambda r, ctx: (
-            f"{r['domain']} 가 {r['position']}위"
-            + (f", 나는 {r['our_position']}위 — 밀립니다" if r["our_position"] else ", 나는 아예 없습니다")
-            + (f" · 월 검색량 {r['volume']:,}" if r["volume"] else "")),
+            f"경쟁 도메인 {r['domain']} 순위 {r['position']}위"
+            + (f". 나는 {r['our_position']}위로 밀려 있습니다" if r["our_position"]
+               else ". 나는 이 검색어에 아예 없습니다")
+            + (f" (월 검색량 {r['volume']:,})" if r["volume"] else "")),
         play=_CG_PLAY),
     "crawl_issue": dict(
         label="크롤에서 걸림", defensive=True,
@@ -2119,15 +2128,15 @@ _KIND_SPECS = {
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["url"])},
         target=lambda r, ctx: r["url"],
-        reasoning=lambda r, ctx: f"{r['kind']} — {r['detail'] or '크롤에서 걸렸습니다'}",
+        reasoning=lambda r, ctx: f"{r['kind']}: {r['detail'] or '크롤에서 걸렸습니다'}",
         play=dict(
-            what="사이트를 전부 돌아 보니 이 주소에서 걸립니다 — 404·리다이렉트 사슬처럼 전수를 봐야 나오는 것들입니다.",
+            what="사이트를 전부 돌아 보니 이 주소에서 걸립니다. 404 나 리다이렉트 사슬처럼 전수를 봐야 나오는 것들입니다.",
             acts=["그 주소를 직접 열어 지금도 깨져 있는지 확인합니다.",
                   "살릴 수 있으면 살리고, 없어진 것이면 가장 가까운 페이지로 301 합니다.",
-                  "그 주소로 걸린 내부 링크를 새 주소로 고칩니다 — 리다이렉트는 임시 방편입니다.",
+                  "그 주소로 걸린 내부 링크를 새 주소로 고칩니다. 리다이렉트는 임시 방편입니다.",
                   "고친 뒤 다시 크롤해 회차 비교에서 사라지는지 봅니다."],
             deliver=["이 주소를 살릴지 301 할지와 그 대상",
-                     "고쳐야 할 내부 링크 목록 — 어느 글의 어느 앵커인지"])),
+                     "고쳐야 할 내부 링크 목록: 어느 글의 어느 앵커인지"])),
     # backlink_broken·backlink_prospect 는 backlink_gaps() 한 번이 (broken, prospects)
     # 튜플을 같이 준다 — detect 가 그중 자기 절반만 골라 쓴다(호출은 두 번 하지만
     # 쿼리가 가벼워 굳이 ctx 로 캐싱하지 않는다. 억지로 공유하면 오히려 순서 의존이 생긴다).
@@ -2138,14 +2147,13 @@ _KIND_SPECS = {
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["url_to"])},
         target=lambda r, ctx: r["url_to"],
         reasoning=lambda r, ctx: (
-            f"{r['domain_from'] or host_of(r['url_from'])} 가 이 주소로 링크를 걸었는데 "
-            f"페이지가 없습니다"
-            + (f" (지수 {r['rank']})" if r["rank"] else "")
-            + " — 이미 번 링크입니다"),
+            f"{r['domain_from'] or host_of(r['url_from'])} 에서 이 주소로 링크를 "
+            "걸었는데 페이지가 없습니다. 이미 번 링크입니다"
+            + (f" (도메인 지수 {r['rank']})" if r["rank"] else "")),
         play=dict(
-            what="남이 우리에게 링크를 걸었는데 그 주소에 페이지가 없습니다 — 이미 번 링크라 새로 얻는 것보다 늘 쌉니다.",
+            what="남이 우리에게 링크를 걸었는데 그 주소에 페이지가 없습니다. 이미 번 링크라 새로 얻는 것보다 늘 쌉니다.",
             acts=["그 주소에 무엇이 있었는지 확인합니다(옮겼는지, 지웠는지).",
-                  "가장 가까운 지금 페이지로 301 을 겁니다 — 홈으로 몰면 값이 거의 사라집니다.",
+                  "가장 가까운 지금 페이지로 301 을 겁니다. 홈으로 몰면 값이 거의 사라집니다.",
                   "옮길 곳이 없으면 그 주제로 페이지를 다시 세우는 쪽이 나을 수 있습니다.",
                   "링크를 건 쪽에 새 주소를 알려 링크 자체를 고치게 합니다."],
             deliver=["301 대상 주소와 그 근거", "링크를 건 쪽에 보낼 짧은 안내문 한 벌"])),
@@ -2157,13 +2165,13 @@ _KIND_SPECS = {
         target=lambda r, ctx: r["domain"],
         reasoning=_reason_backlink_prospect,
         play=dict(
-            what="경쟁사는 이 도메인에서 링크를 받는데 나는 못 받습니다 — 이미 우리 주제를 다루는 곳이라 문이 열려 있습니다.",
-            acts=["그 도메인이 경쟁사를 **어느 글에서** 링크했는지 찾습니다 — 그게 우리 자리입니다.",
+            what="경쟁사는 이 도메인에서 링크를 받는데 나는 못 받습니다. 이미 우리 주제를 다루는 곳이라 문이 열려 있습니다.",
+            acts=["그 도메인이 경쟁사를 **어느 글에서** 링크했는지 찾습니다. 그 자리가 우리 자리입니다.",
                   "그 글이 다루는 주제에서 우리가 더 잘 답하는 지점을 하나 고릅니다.",
-                  "그 지점을 근거로 짧게 연락합니다 — 링크를 달라고 하지 말고 무엇이 빠졌는지를 말합니다.",
+                  "그 지점을 근거로 짧게 연락합니다. 링크를 달라고 하지 말고 무엇이 빠졌는지를 말합니다.",
                   "받을 만한 페이지가 우리에게 없으면 먼저 그것부터 만듭니다."],
-            deliver=["이 도메인에 보낼 연락문 한 벌 — 경쟁사가 링크된 그 글을 짚어서",
-                     "그쪽이 링크할 만한 우리 페이지와, 없다면 무엇을 먼저 만들지"])),
+            deliver=["이 도메인에 보낼 연락문 한 벌. 경쟁사가 링크된 그 글을 짚어서",
+                     "그쪽이 링크할 만한 우리 페이지. 없다면 무엇을 먼저 만들지"])),
 }
 
 # ALL_KINDS 의 순서·이름 그대로 명부를 만든다 — 이름은 위 한 곳(ALL_KINDS)에만 적혀
@@ -2629,7 +2637,7 @@ def _selfcheck() -> None:
     assert [i["bucket"] for i in ix] == ["robots_blocked", "fetch_error",
                                          "canonical_mismatch", "not_indexed"], ix
     # verdict 가 PASS 여도 coverage 가 색인됨이 아니면 잡힌다 (한국어 부정형)
-    assert ix[3]["verdict"] == "PASS" and "색인 안 됨" in ix[3]["detail"], ix[3]
+    assert ix[3]["verdict"] == "PASS" and "색인되지 않았습니다" in ix[3]["detail"], ix[3]
     assert set(ix[0]) == {"url", "bucket", "verdict", "coverage_state", "detail"}, ix[0]
     assert _indexed("Submitted and indexed") and not _indexed("Crawled - currently not indexed")
     assert _indexed("색인이 생성됨") and not _indexed("색인 생성 안 됨") and not _indexed(None)

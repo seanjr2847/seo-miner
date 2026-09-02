@@ -90,7 +90,7 @@ def _uid(request: Request) -> Optional[int]:
 def _require_uid(request: Request) -> int:
     uid = _uid(request)
     if uid is None:
-        raise HTTPException(status_code=401, detail="로그인이 필요합니다. 처음 화면에서 구글 계정으로 로그인해 주세요.")
+        raise HTTPException(status_code=401, detail="로그인이 풀렸습니다. 처음 화면에서 구글 계정으로 다시 로그인하세요.")
     return uid
 
 
@@ -190,7 +190,7 @@ def _begin(request: Request, provider: str) -> RedirectResponse:
 def _carry(request: Request, provider: str, state: str) -> dict:
     carry = identity.carried(request.session, provider, state)
     if carry is None:
-        raise HTTPException(status_code=400, detail="로그인 정보가 만료됐습니다. 처음 화면에서 다시 로그인해 주세요.")
+        raise HTTPException(status_code=400, detail="로그인이 만료됐습니다. 처음 화면에서 다시 로그인하세요.")
     return carry
 
 
@@ -237,8 +237,8 @@ def api_properties(request: Request):
         if not db.gsc_connected():
             raise HTTPException(
                 status_code=403,
-                detail="구글 계정이 아직 연결되지 않았습니다 — "
-                       "다시 구글 계정으로 로그인해 주세요.")
+                detail="구글 계정이 연결돼 있지 않아 속성 목록을 못 읽습니다. "
+                       "구글 계정으로 다시 로그인하세요.")
         try:
             res = collect_gsc.get_service().sites().list().execute()
         except HTTPException:
@@ -246,8 +246,8 @@ def api_properties(request: Request):
         except BaseException:      # SystemExit 도 잡는다 — 스택트레이스가 나가면 안 된다
             raise HTTPException(
                 status_code=502,
-                detail="서치콘솔 속성 목록을 가져오지 못했습니다. "
-                       "잠시 후 다시 시도해 주세요.")
+                detail="서치콘솔이 응답하지 않아 속성 목록을 못 읽었습니다. "
+                       "잠시 뒤 다시 시도하세요.")
     return {"properties": [{"property": s["siteUrl"], "level": s["permissionLevel"]}
                            for s in res.get("siteEntry", [])]}
 
@@ -281,7 +281,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     if isinstance(props, str):
         props = [props]
     if not props:
-        raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 선택해 주세요.")
+        raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 고르세요.")
     types = body.get("types") or {}
 
     # 로컬에서 넘어온 설정은 그 속성 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
@@ -340,7 +340,7 @@ def gh_callback(request: Request, code: str, state: str):
 def _gh_token(conn, uid: int) -> str:
     got = store.github(conn, uid)
     if not got:
-        raise HTTPException(status_code=428, detail="GitHub 계정을 먼저 연결해 주세요. 사이트 화면에서 연결할 수 있습니다.")
+        raise HTTPException(status_code=428, detail="GitHub 계정이 연결돼 있지 않습니다. 사이트 화면에서 먼저 연결하세요.")
     return got[0]
 
 
@@ -379,7 +379,7 @@ def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
         p = db.get_project(c, project)
         opp = db.get_opportunity(c, opp_id, project_id=p["id"])
         if not opp:
-            raise HTTPException(status_code=404, detail="선택한 개선 기회를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.")
+            raise HTTPException(status_code=404, detail="고른 기회를 찾을 수 없습니다. 새로고침한 뒤 다시 고르세요.")
         opp = dict(opp)
         perf = db.query_performance(c, p["id"], opp["target"])
     finally:
@@ -425,7 +425,7 @@ async def api_create(request: Request):
         with store.session(uid, project, isolate=True) as conn:
             row = store.site(conn, uid, project)
             if not row or not row["repo"]:
-                raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결되지 않았습니다. 사이트 화면에서 저장소를 먼저 선택해 주세요.")
+                raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결돼 있지 않습니다. 사이트 화면에서 먼저 고르세요.")
             result = _create_content(conn, uid, project, opp_id, row)
         return {"ok": True, **result}
     except (gh.GitHubError, writer.WriterError) as e:
@@ -460,7 +460,7 @@ async def api_ai_prompts(request: Request):
                 if not rows:
                     raise HTTPException(
                         status_code=502,
-                        detail="질문을 만들지 못했습니다 — 잠시 후 다시 시도해 주세요.")
+                        detail="질문을 하나도 만들지 못했습니다. 잠시 뒤 다시 시도하세요.")
                 added = gen_prompts.save(c, project, rows)
             finally:
                 c.close()
@@ -520,13 +520,13 @@ async def api_ai_prompts_edit(request: Request):
     b = await request.json()
     project, op = str(b.get("project") or ""), str(b.get("op") or "")
     if op not in ("save", "active", "delete"):
-        raise HTTPException(status_code=400, detail="처리할 수 없는 요청입니다. 새로고침 후 다시 시도해 주세요.")
+        raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
     try:      # 화면이 보내는 값이다 — 숫자가 아닌 게 오면 500 이 아니라 400 이다
         ids = [int(x) for x in (b.get("ids") or [])][:300]
         pid_edit = int(b["id"]) if b.get("id") else 0
     except (TypeError, ValueError):
         raise HTTPException(status_code=400,
-                            detail="처리할 수 없는 요청입니다. 새로고침 후 다시 시도해 주세요.")
+                            detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
     text = " ".join(str(b.get("prompt") or "").split())
     cat = str(b.get("category") or "").strip()
     if cat and cat not in (*gen_prompts.CATEGORIES, "general"):
@@ -542,7 +542,7 @@ async def api_ai_prompts_edit(request: Request):
                     if not (gen_prompts.MIN_LEN <= len(text) <= gen_prompts.MAX_LEN):
                         raise HTTPException(
                             status_code=400,
-                            detail=f"질문은 {gen_prompts.MIN_LEN}~{gen_prompts.MAX_LEN}자로 적어 주세요.")
+                            detail=f"질문은 {gen_prompts.MIN_LEN}~{gen_prompts.MAX_LEN}자로 적어야 저장됩니다.")
                     try:
                         if pid_edit:
                             db.update_ai_prompt(c, pid, pid_edit, text, cat or None)
@@ -564,7 +564,7 @@ async def api_ai_prompts_edit(request: Request):
                         if not ids:
                             raise HTTPException(
                                 status_code=409,
-                                detail=f"켤 수 있는 질문은 {view['limit']}개까지입니다 — 다른 질문을 먼저 꺼 주세요.")
+                                detail=f"켤 수 있는 질문은 {view['limit']}개까지입니다. 다른 질문을 먼저 끄세요.")
                     db.set_ai_prompts_active(c, pid, ids, on)
                 else:
                     db.delete_ai_prompts(c, pid, ids)
@@ -585,7 +585,7 @@ async def api_run(request: Request, dispatch=Depends(_dispatch_dep), kick=Depend
     stages = [x for x in str(body.get("stages") or "").split(",") if x]
     bad = [x for x in stages if x not in STAGES]
     if bad:
-        raise HTTPException(status_code=400, detail=f"실행할 수 없는 단계입니다: {', '.join(bad)}")
+        raise HTTPException(status_code=400, detail=f"이 화면에서 돌릴 수 없는 단계입니다: {', '.join(bad)}. 새로고침한 뒤 다시 눌러 보세요.")
 
     with store.session(uid, project) as conn:
         row = store.site(conn, uid, project)
@@ -637,7 +637,7 @@ def api_export(project: str, table: str, request: Request):
     except ValueError:
         # exports 의 ValueError 는 개발자용 문구다 — 그대로 내보내지 않는다.
         raise HTTPException(status_code=400,
-                            detail="내려받을 수 없는 항목입니다. 화면에서 다시 선택해 주세요.")
+                            detail="내려받을 수 없는 항목입니다. 화면에서 다시 고르세요.")
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     return Response(data, media_type="text/csv; charset=utf-8",
@@ -706,7 +706,7 @@ async def api_keywords_set(request: Request):
     ids = [int(x) for x in (b.get("ids") or [])][:500]
     on = bool(b.get("active"))
     if not ids:
-        raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 선택해 주세요.")
+        raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 먼저 고르세요.")
     try:
         with store.session(uid, project, isolate=True):
             c = db.connect()
@@ -718,7 +718,7 @@ async def api_keywords_set(request: Request):
                     if not ids:
                         raise HTTPException(
                             status_code=409,
-                            detail=f"추적 키워드가 한도({limit}개)에 도달했습니다. [추적 중] 탭에서 일부를 해제한 뒤 추가해 주세요.")
+                            detail=f"추적 키워드가 한도 {limit}개를 채웠습니다. [추적 중] 탭에서 몇 개를 해제한 뒤 다시 추가하세요.")
                 changed = db.set_keywords_active(c, pid, ids, on)
                 n = db.count_active_keywords(c, pid)
             finally:
@@ -821,7 +821,7 @@ async def api_settings_set(request: Request):
         hours = None
     if hours not in {float(h) for h, _ in RUN_PRESETS}:
         raise HTTPException(status_code=400,
-                            detail="선택할 수 없는 수집 주기입니다. 새로고침 후 다시 시도해 주세요.")
+                            detail="고를 수 없는 수집 주기입니다. 새로고침한 뒤 다시 고르세요.")
     with store.session(uid, project) as conn:
         store.set_every_hours(conn, uid, project, hours)
         return {"ok": True, "run_every_hours": hours}
@@ -850,12 +850,12 @@ def api_ga4_properties(project: str, request: Request):
     from googleapiclient.errors import HttpError
     not_connected = HTTPException(
         status_code=403,
-        detail="구글 계정이 아직 연결되지 않았습니다 — 로그인해야 GA4 속성을 "
-               "볼 수 있습니다. 구글 계정으로 로그인해 주세요.")
+        detail="구글 계정이 연결돼 있지 않아 GA4 속성을 못 읽습니다. "
+               "구글 계정으로 로그인하세요.")
     need_relogin = HTTPException(
         status_code=403,
-        detail="GA4 접근 권한이 없습니다 — 로그인 뒤에 권한이 추가되어 "
-               "재로그인이 필요합니다. 다시 구글 계정으로 로그인해 주세요.")
+        detail="저장된 로그인에 GA4 읽기 권한이 없습니다. 로그인 뒤에 권한이 "
+               "추가돼서 그렇습니다. 구글 계정으로 다시 로그인하세요.")
     try:
         with store.session(uid, project, isolate=True):
             c = db.connect()
@@ -881,7 +881,7 @@ def api_ga4_properties(project: str, request: Request):
     except BaseException as e:
         raise HTTPException(
             status_code=502,
-            detail="GA4 속성 목록을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
+            detail="GA4 가 응답하지 않아 속성 목록을 못 읽었습니다. 잠시 뒤 다시 시도하세요.") from e
     return {"properties": props,
            "suggested": [p["id"] for p in collect_ga4.suggest_property(props, domain)]}
 
@@ -897,7 +897,7 @@ async def api_ga4_set(request: Request):
     prop_id = str(b.get("property_id") or "").strip()
     if prop_id and not prop_id.isdigit():
         raise HTTPException(status_code=400,
-                            detail="올바르지 않은 속성입니다. 새로고침 후 다시 선택해 주세요.")
+                            detail="알아볼 수 없는 속성입니다. 새로고침한 뒤 다시 고르세요.")
     try:
         with store.session(uid, project, isolate=True):
             c = db.connect()
@@ -968,7 +968,7 @@ async def api_opp(request: Request):
     uid = _require_uid(request)
     body = await request.json()
     if body.get("status") not in db.OPP_STATUSES:
-        raise HTTPException(status_code=400, detail="처리할 수 없는 상태값입니다. 새로고침 후 다시 시도해 주세요.")
+        raise HTTPException(status_code=400, detail="알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.")
     with store.session(uid, isolate=True):
         c = db.connect()
         try:
@@ -1213,7 +1213,7 @@ def demo() -> None:
                 raise HttpError(_Resp(), b'{"error": "insufficient scope"}')
             collect_ga4.list_properties = _scope_missing
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 로그인" in r.json()["detail"], r.text
 
             # 스코프가 모자란 걸 doctor 로 미리 알면 — API 를 아예 안 부르고 같은
             # 403 을 예측 가능하게 낸다(브라우저 로그인·SystemExit 경로를 안 탄다).
@@ -1223,7 +1223,7 @@ def demo() -> None:
             doctor.gsc_missing_scopes = lambda: [
                 "https://www.googleapis.com/auth/analytics.readonly"]
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "재로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 로그인" in r.json()["detail"], r.text
             doctor.gsc_missing_scopes = lambda: []
 
             # 아예 연결이 안 된 상태(토큰 없음) — 실제로 터진 게 이거다(Railway 로그,
@@ -1231,7 +1231,7 @@ def demo() -> None:
             # 아니라 "아직 연결 안 됨" — 한 번도 안 붙인 사람에게 "다시"는 말이 안 된다.
             db.gsc_connected = lambda: False
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "아직 연결되지 않았습니다" in r.json()["detail"],                 r.text
+            assert r.status_code == 403 and "연결돼 있지 않아" in r.json()["detail"],                 r.text
             db.gsc_connected = lambda: True
 
             # 그래도 남는 예외(SystemExit 포함, collect_gsc.get_credentials 가 실제로

@@ -729,8 +729,11 @@ def test_doctor_detects_gsc_missing_scopes():
         assert any(m["id"] == "gsc_rescope" for m in d["must"]), \
             f"스코프 부족인데 재로그인 안내가 없다: {d['must']}"
         rescope = next(m for m in d["must"] if m["id"] == "gsc_rescope")
-        assert "GA4" in rescope["msg"] and str(doctor.db.gsc_token()) in rescope["msg"], \
-            rescope["msg"]
+        assert "GA4" in rescope["msg"], rescope["msg"]
+        # 칩에는 파일 경로가 아니라 복구를 부르는 문구가 실린다 — 사용자가 경로를
+        # 손으로 다룰 일이 없게. 문구의 정본은 doctor.RESCOPE_CMD 한 곳이다.
+        assert rescope["cmd"] == doctor.RESCOPE_CMD, rescope
+        assert str(doctor.db.gsc_token()) not in str(rescope), rescope
 
         # 스코프를 다 갖춘 토큰이면 안내가 사라져야 한다 — 일부러 깨 보는 대조군.
         token.write_text(json.dumps({

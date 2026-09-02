@@ -28,6 +28,10 @@
 .anverdict { font-size:15px; line-height:1.65; margin:0 0 2px; }
 .anverdict b { color:var(--ink); }
 .anthin { font:var(--micro); color:var(--slate); margin-top:10px; line-height:1.5; }
+/* 좋은 소식은 상자를 안 쓴다 — 테두리 친 빈 상자가 문제 있는 자리와 같은 무게로
+   서면 "여긴 괜찮다"가 스캔을 방해한다. 한 줄로 접고 색으로만 좋다고 말한다. */
+.anok { font-size:13px; line-height:1.6; color:var(--slate); margin:6px 0 0; }
+.anok b { color:var(--patina); font-weight:600; }
 /* 검색어 행 펼침 — rank.html/keywords.html 과 같은 손잡이(행 자체가 버튼). */
 #an-movers-body tbody tr[role="button"],
 #an-ctr-body tbody tr[role="button"],
@@ -60,8 +64,10 @@
 #an-intent-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
 
-/* 맨 위 결론의 KPI 넷 — 재료가 모자라면 셋·넷을 오간다(칸을 억지로 안 채운다). */
-.ankpis { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--rule-soft);
+/* 맨 위 결론의 KPI 넷 — 재료가 모자라면 셋·넷을 오간다(칸을 억지로 안 채운다).
+   칸 수를 4로 못 박으면 둘만 있을 때 빈 회색 상자 둘이 남아 고장으로 읽힌다. */
+.ankpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1px;
+  background:var(--rule-soft);
   border:1px solid var(--rule-soft); border-radius:2px; overflow:hidden; margin-top:14px; }
 .ankpi { background:var(--card); padding:14px 16px; display:flex; flex-direction:column; gap:3px; }
 .ankpi .k { font:var(--micro); color:var(--slate); }
@@ -83,23 +89,24 @@
   <div class="eyebrow" id="an-shift-eye">원인 분해</div>
   <h2>클릭이 왜 그렇게 됐나</h2>
   <p class="sub">클릭 = 노출 × CTR 입니다. 그래서 클릭의 변화도 그 둘로 정확히
-    갈립니다 — 노출이 줄어서 준 것과, 노출은 그대로인데 덜 눌려서 준 것은 손댈 자리가
-    정반대입니다.</p>
+    갈립니다. 노출이 줄어서 준 것과 덜 눌려서 준 것은 손댈 자리가 정반대입니다.
+    아래 막대에서 가장 긴 것이 이번에 손댈 자리입니다.</p>
   <div id="an-shift-body"></div>
 </section>
 
 <section id="an-movers">
   <div class="eyebrow">검색어별 기여</div>
   <h2>누가 그 변화를 만들었나</h2>
-  <p class="sub">위 합계를 만든 검색어들입니다. 옆의 원인이 그 검색어에서 무엇이
-    움직였는지 말하고, 줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
+  <p class="sub">위 합계를 만든 검색어들입니다. 잃은 쪽 맨 위부터 봅니다.
+    줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
   <div id="an-movers-body"></div>
 </section>
 
 <section id="an-daily">
   <div class="eyebrow">검색 실적</div>
-  <h2>일별 클릭 추이</h2>
-  <p class="sub">위 숫자는 수집 간격만큼 성깁니다. 이건 하루 단위 오르내림입니다.</p>
+  <h2>언제 꺾였나</h2>
+  <p class="sub">위 숫자는 수집과 수집 사이만큼 성깁니다. 여기는 하루 단위라
+    어느 날부터 달라졌는지가 보입니다.</p>
   <div id="an-daily-body"></div>
 </section>
 
@@ -183,7 +190,7 @@ const anNum = v => (v > 0 ? "+" : v < 0 ? "−" : "") +
 // 모듈 로드 때 바로 평가되는 top-level const 로 두면 이르므로 함수로 감싼다.
 const AN_NEXT = () => ({
   imp_up: `노출이 늘어서 번 것입니다. 수요나 색인이 좋아졌다는 뜻이니, ${window.go("rank")} 화면에서 어느 검색어가 올라왔는지 봅니다.`,
-  imp_down: `노출이 줄어서 잃었습니다. 순위보다 <b>색인·수요</b>를 먼저 봅니다 — ${window.go("site")} 화면의 색인 점검이 그 자리입니다.`,
+  imp_down: `노출이 줄어서 잃었습니다. 순위보다 <b>색인·수요</b>를 먼저 봅니다. ${window.go("site")} 화면의 색인 점검이 그 자리입니다.`,
   ctr_up: "같은 노출에서 더 눌렸습니다. 제목·설명 손질이 먹혔거나 검색결과 생김새가 바뀌었습니다.",
   ctr_down: "노출은 그대로인데 덜 눌렸습니다. <b>제목·설명</b>이 손댈 자리이고, 아래 [순위는 좋은데 안 눌린다]가 그 목록입니다.",
   new_up: "새로 걸린 검색어들이 번 것입니다. 새 페이지·새 주제가 잡히기 시작했습니다.",
@@ -191,6 +198,40 @@ const AN_NEXT = () => ({
   lost_up: "사라진 검색어 쪽이 오히려 플러스입니다. 수집 범위가 바뀌지 않았는지 봅니다.",
   lost_down: `걸려 있던 검색어가 통째로 빠졌습니다. 색인에서 빠졌거나 20위 밖으로 밀렸다는 뜻이니 ${window.go("site")} 화면을 먼저 봅니다.`,
 });
+
+/* ── 이 화면의 다음 한 수 ───────────────────────────────────
+   차트가 열둘이라 "그래서 뭘"이 열두 번 갈린다. 데이터 상태로 갈라 문장 하나와
+   버튼 하나만 머리 밑에 세운다. 셸이 아직 이 부품을 안 세운 조립본에서는 아무것도
+   안 한다. */
+function anNext(d) {
+  if (!window.nextStep || !window.act) return;
+  const s = d.shift, gaps = d.ctr_gaps || [];
+  let msg, acts;
+  if (!d.gsc_date) {
+    msg = "검색 실적이 아직 없습니다. 여기 있는 판단은 전부 그 숫자 위에서 나옵니다.";
+    acts = act("gsc", "실적 수집");
+  } else if (!s || (!s.prev_clicks && !s.clicks)) {
+    msg = "수집이 한 번뿐이라 아직 비교할 게 없습니다. 한 번 더 읽으면 두 시점이 생깁니다.";
+    acts = act("gsc", "실적 다시 수집");
+  } else if (gaps.length) {
+    const lost = gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0);
+    msg = `순위를 안 올리고도 되찾을 클릭이 ${num(lost)}회 있습니다. 제목·설명만 고치면 되는 자리입니다.`;
+    acts = act("gaps", "손댈 것 뽑기");
+  } else if (s.d_clicks < 0) {
+    const down = Math.abs(s.imp_effect) >= Math.abs(s.ctr_effect);
+    msg = down
+      ? `클릭이 ${num(-s.d_clicks)}회 줄었고 원인은 노출입니다. 순위보다 색인과 수요를 먼저 봅니다.`
+      : `클릭이 ${num(-s.d_clicks)}회 줄었고 원인은 CTR 입니다. 제목·설명이 손댈 자리입니다.`;
+    acts = act("gaps", "손댈 것 뽑기");
+  } else {
+    // 손댈 것이 없는 회차에도 다음 걸음은 있다 — 다시 재는 것이다. 그게 이 화면에서
+    // 누를 수 있는 유일한 일이므로 보조가 아니라 주요다(찬 화면에 주요 버튼이 하나도
+    // 없으면 "여기서 뭘 하지"가 다시 화면 밖으로 나간다).
+    msg = "이번 회차에 무너진 자리가 없습니다. 다음 수집에서 같은 축을 다시 맞대 봅니다.";
+    acts = act("gsc", "실적 다시 수집");
+  }
+  nextStep("analysis", `<p>${msg}</p><div class="acts">${acts}</div>`);
+}
 
 function anVerdict(s) {
   const parts = [["imp", s.imp_effect], ["ctr", s.ctr_effect],
@@ -257,16 +298,27 @@ function anTopVerdict(d) {
     const rate = Math.round(d.ga4_funnel.engaged_sessions / d.ga4_funnel.sessions * 100);
     if (rate < 60) parts.push(`참여 세션은 <b>${rate}%</b>뿐입니다`);
   }
-  return parts.length ? `<p class="anverdict">${parts.join(", ")}.</p>` : "";
+  // 한 문장 한 뜻 — 쉼표로 이으면 세 가지가 한 덩어리로 뭉쳐 첫 줄이 안 읽힌다.
+  return parts.length ? `<p class="anverdict">${parts.join(". ")}.</p>` : "";
 }
+
+/* GA4 를 안 붙인 프로젝트가 대다수다 — 방문 이후(세션·전환) 절 셋은 조용히 접히지만,
+   왜 없는지를 한 줄도 안 적으면 화면이 빠진 것처럼 읽힌다. 재촉이 아니라 사실만 적고,
+   호스팅에서는 연결하는 화면을 가리킨다(웹에는 설정 파일이 없다). */
+const anNoGa4 = () => `<p class="anthin">여기까지는 검색결과 안(노출·클릭)입니다.
+  방문 이후의 세션·전환은 GA4 를 연결해야 보입니다. ` + W(
+  "프로젝트 설정에 GA4 속성 ID 를 넣으면 다음 수집부터 붙습니다.",
+  `${window.go("settings", "GA4 연결하기")} 에서 속성을 고르면 다음 분석부터 붙습니다.`)
+  + `</p>`;
 
 function anTop(d) {
   const verdict = anTopVerdict(d), kpis = anTopKpis(d);
+  const ga4 = d.ga4_funnel ? "" : anNoGa4();
   if (!verdict && !kpis)
-    return `<div class="empty">${W(
-      "아직 비교할 수집이 없습니다 — <code>/capture gsc</code> 를 한 번 더 돌리면 결론이 여기 채워집니다.",
-      "아직 비교할 수집이 없습니다 — 분석을 한 번 더 실행하면 결론이 여기 채워집니다.")}</div>`;
-  return verdict + (kpis ? `<div class="ankpis">${kpis}</div>` : "");
+    return `<div class="empty"><b>아직 비교할 수집이 없습니다.</b>
+      <p>결론은 두 시점을 맞대야 나옵니다. 실적을 한 번 더 읽으면 여기가 채워집니다.</p>
+      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>` + ga4;
+  return verdict + (kpis ? `<div class="ankpis">${kpis}</div>` : "") + ga4;
 }
 
 // 원인 넷은 "이전"에서 흘러 "현재"에 닿는 워터폴 하나로 — 합이 Δ클릭임이
@@ -274,9 +326,10 @@ function anTop(d) {
 // 오차와 무관하게 실제 값을 그대로 보여준다(검산 역할).
 function anShift(s, cmp) {
   if (!s || (!s.prev_clicks && !s.clicks))
-    return `<div class="empty">${W(
-      "아직 비교할 수집이 없습니다 — <code>/capture gsc</code> 를 한 번 더 돌리면 두 시점이 생깁니다.",
-      "아직 비교할 수집이 없습니다 — 분석을 한 번 더 실행하면 두 시점이 생깁니다.")}</div>`;
+    return `<div class="empty"><b>아직 비교할 수집이 없습니다.</b>
+      <p>클릭이 왜 그렇게 됐는지는 두 시점을 맞대야 갈립니다. 실적을 한 번 더 읽으면
+      이전과 현재가 생깁니다.</p>
+      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
   const chart = window.chWaterfall([
     {label: "이전", value: s.prev_clicks, kind: "base"},
     {label: "노출 효과", value: s.imp_effect, kind: "delta"},
@@ -287,7 +340,7 @@ function anShift(s, cmp) {
   ], {width: 760, height: 220});
   const thin = s.thin
     ? `<div class="anthin">노출 30 미만인 검색어 ${num(s.thin)}개는 아래 목록에
-        이름을 올리지 않았습니다 — 위 합계에는 들어 있습니다. 노출 몇 번짜리 CTR
+        이름을 올리지 않았습니다. 위 합계에는 들어 있습니다. 노출 몇 번짜리 CTR
         흔들림은 원인이 아니라 표본 부족입니다.</div>` : "";
   return anVerdict(s) + chart + thin;
 }
@@ -313,14 +366,12 @@ function anQueryPanel(r, problem, note) {
   const url = pages.length ? pages[0].page : "";
   return `<div class="det">
     ${pages.length ? pageTable(pages) : `<p class="detn">이 검색어로 어느 페이지가 걸렸는지는
-      아직 모릅니다 — 구글 실적을 한 번 더 읽으면 페이지별로 채워집니다.</p>`}
+      아직 모릅니다. 구글 실적을 한 번 더 읽으면 페이지별로 채워집니다.</p>`}
     ${url ? pageFix((window.PAGE_AUDITS || {})[url], url) : ""}
     ${askBlock({url, audit: url ? (window.PAGE_AUDITS || {})[url] : null,
       problem, queries: [{q: r.query, note}]})}
-    <p class="detn">${W(
-      `이 검색어는 아직 기회 목록에 없습니다 —
-       <button class="cmd" onclick="copyCmd(this)">/capture gaps</button> 가 채굴합니다.`,
-      "이 검색어는 아직 기회 목록에 없습니다 — [전체 분석 실행]을 누르면 채워집니다.")}</p>
+    <p class="detn">이 검색어는 아직 기회 목록에 없습니다. 기회를 다시 뽑으면 올라옵니다.</p>
+    <div class="acts">${act("gaps", "손댈 것 뽑기", false)}</div>
   </div>`;
 }
 const anMoverPanel = r => {
@@ -424,20 +475,22 @@ function anMoverRow(r, i) {
     <td class="num">${pos}</td></tr>`;
 }
 
-const AN_HEAD = ["검색어", "원인?그 검색어에서 무엇이 움직였는지 — 노출인지, 눌린 비율인지",
+const AN_HEAD = ["검색어", "원인?그 검색어에서 무엇이 움직였는지. 노출인지, 눌린 비율인지",
   ">Δ클릭", ">노출", ">CTR?지난번 → 이번", ">평균순위?지난번 → 이번"];
 
 let AN_SHIFT = null;
 
 function anMovers(s) {
   if (!s || (!s.down.length && !s.up.length))
-    return `<div class="empty">노출이 통계로 볼 만한 검색어 중 클릭이 움직인 것이
-      없습니다.</div>`;
+    return `<div class="empty"><b>클릭이 움직인 검색어가 없습니다.</b>
+      <p>노출 30 이상인 검색어만 셉니다. 그보다 적으면 표본이 아니라 잡음입니다.</p></div>`;
   AN_MV_VIEW = s.down.concat(s.up);          // 행의 data-i 는 이 배열을 가리킨다
-  const block = (title, rows, empty, off) => `<div class="eyebrow"
+  // 한쪽이 비면 표를 안 그린다 — 빈 표는 좋은 소식인데 상자로 그리면 나쁜 소식처럼 읽힌다.
+  const block = (title, rows, ok, off) => `<div class="eyebrow"
       style="margin:18px 0 8px">${title}</div>` +
-    table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)), empty);
-  return block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 없습니다.", 0)
+    (rows.length ? table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)))
+                 : `<p class="anok">${ok}</p>`);
+  return block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 <b>없습니다</b>.", 0)
     + block("얻은 쪽", s.up, "클릭이 늘어난 검색어가 없습니다.", s.down.length)
     + `<div class="acts" style="margin-top:14px">
         <button class="go sec" onclick="anCsv()">CSV 내보내기</button></div>`;
@@ -456,10 +509,14 @@ function anCsv() {
 // 뒤에 붙는 보조 시각이라 클릭 한 줄이면 된다(셸 helper 재사용, 새 차트 안 만든다).
 function anDaily(rows) {
   if (!rows || rows.length < 2)
-    return `<div class="empty">${W(
-      "일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.",
-      "일별 데이터가 아직 없습니다 — [전체 분석 실행]을 누르면 최근 28일이 채워집니다.")}</div>`;
-  return window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180});
+    return `<div class="empty"><b>하루 단위 실적이 아직 없습니다.</b>
+      <p>실적을 한 번 읽으면 최근 28일이 하루씩 채워집니다. 이틀 치가 쌓여야 선이 그어집니다.</p>
+      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+  // 선 하나만 놓아두면 "그래서"가 안 나온다 — 가장 높았던 날을 짚어 준다.
+  const top = rows.reduce((a, r) => (r.clicks > a.clicks ? r : a), rows[0]);
+  return `<p class="anverdict">가장 많이 눌린 날은 <b>${esc(top.date)}</b>(${num(top.clicks)}클릭)입니다.
+    선이 한 칸에서만 꺾였다면 그날 무엇이 바뀌었는지부터 봅니다.</p>` +
+    window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180});
 }
 
 // CTR 곡선 — ctr_gaps 는 이미 "기대의 절반도 못 받는" 검색어만 걸러 둔 목록이라,
@@ -476,12 +533,12 @@ function anCtrChart(rows) {
 
 function anCtr(rows) {
   if (!rows || !rows.length)
-    return `<div class="empty">1페이지에 있으면서 기대 CTR의 절반도 못 받는 검색어가
-      없습니다. 노출 100 이상만 봅니다 — 그보다 적으면 CTR 자체가 통계가 아닙니다.</div>`;
+    return `<p class="anok">여기서 되찾을 클릭이 <b>없습니다</b>. 1페이지에 있으면서
+      기대 CTR 의 절반도 못 받는 검색어가 없습니다. 노출 100 이상만 봅니다.</p>`;
   AN_CTR_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
   const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
   return `<p class="anverdict">아래를 다 고치면 같은 순위에서
-    <b>${num(total)}클릭</b>쯤을 되찾습니다 — 순위를 올리는 일이 아니라 제목·설명을
+    <b>${num(total)}클릭</b>쯤을 되찾습니다. 순위를 올리는 일이 아니라 제목·설명을
     고치는 일입니다.</p>` + anCtrChart(rows) +
     table(["검색어", ">평균순위", ">노출", ">실제 CTR",
            ">기대 CTR?이 순위면 보통 이 정도는 눌립니다",
@@ -501,41 +558,55 @@ function anCtrRow(r, i) {
     <td class="num up">+${num(r.lost_clicks)}</td></tr>`;
 }
 
-// 이번·직전 두 줄 — 작은 배수(chDumbbell) 하나에 공유 축(0~전 구간 최댓값)을
-// 줘서 구간끼리도 서로 비교되게 한다(각자 축이면 "몇 개나 늘었나"가 안 보인다).
-function anBandsChart(rows) {
-  if (!rows.every(r => r.prev_n != null)) return "";
-  const mx = Math.max(1, ...rows.map(r => Math.max(r.n, r.prev_n)));
-  return window.chDumbbell(rows.map(r => ({title: r.label, lo: 0, hi: mx,
-    items: [{label: "이번", value: r.n}, {label: "직전", value: r.prev_n}]})),
-    {width: 640, unit: "개"});
+/* 점 차트를 뺐다. 바로 밑 표가 같은 네 값을 이미 그리고 있었고(검색어 수 열 +
+   분포 막대 + Δ 열), 점 차트에는 축 라벨도 범례도 없어서 "11–20위 0개"인데 점이
+   오른쪽 끝에 찍히는 것을 아무도 못 읽었다(그 점은 직전 회차 값이었다). 표는
+   줄을 눌러 그 구간의 검색어까지 펼치므로, 남길 쪽은 표다. */
+
+// 구간 넷을 눈으로 읽는 것과 "1페이지 안에 몇 개인가"를 아는 것은 다르다 — 앞
+// 두 구간(1–3위·4–10위)이 1페이지다. 그 합과 직전 대비 이동을 한 줄로 말한다.
+function anBandsVerdict(rows) {
+  const p1 = rows.slice(0, 2).reduce((a, r) => a + r.n, 0);
+  const total = rows.reduce((a, r) => a + r.n, 0);
+  if (!total) return "";
+  const dp1 = rows.slice(0, 2).every(r => r.d != null)
+    ? rows.slice(0, 2).reduce((a, r) => a + r.d, 0) : null;
+  const move = dp1 == null ? "직전과 비교할 수집이 없습니다."
+    : dp1 > 0 ? `직전보다 ${num(dp1)}개 늘었습니다.`
+    : dp1 < 0 ? `직전보다 ${num(-dp1)}개 빠졌습니다. 어느 구간으로 밀렸는지 아래에서 봅니다.`
+    : "직전과 같습니다.";
+  return `<p class="anverdict">노출 30 이상인 검색어 <b>${num(total)}개</b> 중
+    <b>${num(p1)}개</b>가 1페이지(1–10위) 안에 있습니다. ${move}</p>`;
 }
 
 function anBands(rows) {
   if (!rows || !rows.length)
-    return '<div class="empty">아직 순위를 말할 수집이 없습니다.</div>';
+    return '<div class="empty"><b>아직 순위를 말할 수집이 없습니다.</b>'
+      + '<p>노출 30 이상인 검색어가 쌓여야 구간을 셀 수 있습니다.</p></div>';
   const mx = Math.max(...rows.map(r => r.n), 1);
   const has = rows.some(r => r.d != null);
   // 좋고 나쁨이 구간마다 뒤집힌다 — 1페이지 안이 느는 건 벌었다는 뜻이고,
   // 2페이지 밖이 느는 건 밀렸다는 뜻이다. 한 방향으로 칠하면 색이 거짓말을 한다.
   const good = (r, i) => i < 2 ? r.d > 0 : r.d < 0;
   AN_BANDS_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
-  return anBandsChart(rows) +
-    table(["구간", ">검색어 수", "분포", ...(has ? [">Δ?1페이지 안이 늘면 초록, 2페이지 밖이 늘면 주황 — 밀려난 것입니다"] : [])],
+  return anBandsVerdict(rows) +
+    table(["구간?구글 검색결과에서 이 검색어가 선 자리. 1–10위가 1페이지입니다",
+           ">검색어 수?노출 30 이상인 검색어 중 이 구간에 선 개수",
+           "분포?막대 길이가 곧 검색어 수입니다. 가장 많은 구간이 꽉 찹니다",
+           ...(has ? [">Δ?직전 수집 대비 증감입니다. 1페이지 안이 늘면 초록입니다. 2페이지 밖이 늘면 주황이고, 밀려난 것입니다"] : [])],
     rows.map((r, i) => {
       const canOpen = r.queries && r.queries.length;
       return `<tr${canOpen ? ` class="opp" tabindex="0" role="button" aria-expanded="false"
         data-ansrc="bands" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
-        title="누르면 이 구간의 검색어가 펼쳐집니다"` : ""}><td>${esc(r.label)}</td>
+        title="누르면 이 구간에 어느 검색어가 있는지 나옵니다"` : ""}><td>${esc(r.label)}</td>
       <td class="num">${num(r.n)}</td>
       <td><div class="anbar"><i class="pos" style="width:${(r.n / mx * 50).toFixed(1)}%"
         ></i></div></td>
       ${has ? `<td class="num ${!r.d ? "muted" : good(r, i) ? "up" : "down"}"
         >${r.d ? anNum(r.d) : "—"}</td>` : ""}</tr>`;
     }))
-    + `<div class="anthin">노출 30 이상인 검색어만 셉니다. 1–3위가 줄고 11–20위가
-        늘었다면 순위가 밀린 것이고, 전체 수가 함께 늘었다면 새 검색어가 들어온
-        것입니다.</div>`;
+    + `<div class="anthin">1–3위가 줄고 11–20위가 늘었다면 순위가 밀린 것이고,
+        전체 수가 함께 늘었다면 새 검색어가 들어온 것입니다.</div>`;
 }
 
 /* ── 수요 구성 축 넷은 같은 열·같은 규칙을 쓴다. 표를 축마다 다르게 그리면
@@ -549,7 +620,7 @@ const anD = (v, unit) => !v ? "" :
 // 아니라 anMix 가 **실제로 그린 것**을 본다 — anIntent·anCluster 는 미분류를
 // 걸러서 rows 에 top 이 있어도 표가 빈다. 거르는 규칙은 그 함수들에만 둔다.
 const anMixHint = srcKey => (AN_MIX_VIEW[srcKey] || []).some(r => r.top && r.top.length)
-  ? " 줄을 누르면 상위 검색어가 나옵니다." : "";
+  ? " 줄을 누르면 그 갈래에 어느 검색어가 있는지 나옵니다." : "";
 
 function anMix(rows, name, empty, srcKey) {
   AN_MIX_VIEW[srcKey] = rows || [];            // 행의 data-i 는 이 배열을 가리킨다
@@ -560,7 +631,7 @@ function anMix(rows, name, empty, srcKey) {
     const canOpen = r.top && r.top.length;
     return `<tr${canOpen ? ` class="opp" tabindex="0" role="button" aria-expanded="false"
       data-ansrc="${srcKey}" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
-      title="누르면 이 갈래의 검색어가 펼쳐집니다"` : ""}>
+      title="누르면 이 갈래에 어느 검색어가 있는지 나옵니다"` : ""}>
       <td>${name(r)}</td>
       <td class="num">${num(r.queries)}</td>
       <td class="num">${num(r.clicks)}${D(r.d_clicks)}</td>
@@ -584,26 +655,30 @@ const anShare = (part, whole) => whole ? Math.round(part / whole * 100) : 0;
 function anBrand(rows, hasSnap) {
   if (!rows || !rows.length)
     return `<div class="empty">${hasSnap
-      ? W(`내 브랜드 별칭이 비어 있어 브랜드/논브랜드를 가를 수가 없습니다 —
-           프로젝트 설정의 <code>brand_aliases</code> 에 사람들이 실제로 치는 이름을
-           적어 두면 채워집니다.`,
-          `내 브랜드 별칭이 비어 있어 브랜드/논브랜드를 가를 수가 없습니다 —
-           ${window.go("settings")} 화면의 브랜드 별칭에 사람들이 실제로 치는 이름을 적어 주세요.`)
-      : "아직 검색 실적 수집이 없습니다."}</div>`;
+      // 브랜드 별칭을 고칠 칸은 어느 배포의 설정 화면에도 없다 — 정본이 프로젝트
+      // yaml 뿐이다. 그래서 로컬에는 그 파일을 대고, 호스팅에는 버튼을 안 단다.
+      // 없는 칸으로 보내는 버튼이 이번 점검에서 잡힌 그 버그다.
+      ? `<b>브랜드 표기가 비어 있습니다.</b>
+         <p>내 이름을 치고 온 사람과 나를 모르고 온 사람을 가를 수가 없습니다. ${W(
+           "사람들이 실제로 치는 이름을 브랜드 표기에 적으면 다음 분석부터 갈립니다.",
+           "사람들이 실제로 치는 이름이 브랜드 표기에 있어야 갈립니다. "
+           + "지금은 도메인 이름만 잡혀 있습니다.")}</p>
+         ${W(`<div class="acts">${window.go("settings", "브랜드 표기 적기")}</div>`, "")}`
+      : "<b>아직 검색 실적이 없습니다.</b><p>브랜드 구성은 실적을 읽은 뒤에 나옵니다.</p>"}</div>`;
   const [b, n] = rows;
   const total = b.clicks + n.clicks;
   const share = anShare(n.clicks, total);
   let msg;
   if (n.d_clicks > 0)
-    msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 늘었습니다 — 나를 모르던
+    msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 늘었습니다. 나를 모르던
       사람이 들어온 몫이고, SEO 가 실제로 움직인 자리가 여기입니다.`;
   else if (b.d_clicks > 0)
     msg = `늘어난 클릭이 <b>브랜드 검색뿐</b>입니다. 이미 나를 아는 사람이 더 온
-      것이라 SEO 는 제자리입니다 — <b>새 수요를 못 잡고 있습니다</b>. 위 [순위 분포]와
+      것이라 <b>새 수요를 못 잡고 있습니다</b>. 위 [순위 분포]와
       [순위는 좋은데 안 눌린다]에서 논브랜드 검색어를 먼저 봅니다.`;
   else if (n.d_clicks < 0)
     msg = `논브랜드가 <b>${anNum(n.d_clicks)}클릭</b> 줄었습니다. 브랜드는 광고·입소문이
-      떠받치지만 논브랜드는 순위·색인이 떠받칩니다 — ${window.go("site")} 화면을 먼저 봅니다.`;
+      떠받치지만 논브랜드는 순위·색인이 떠받칩니다. ${window.go("site")} 화면을 먼저 봅니다.`;
   else
     msg = "두 갈래 다 직전과 같습니다.";
   const chart = window.chStackRow([
@@ -628,10 +703,10 @@ function anNewret(rows) {
     label: AN_NEWRET[r.label] || r.label, value: r.sessions,
     tone: r.label === "new" ? "patina" : "slate"})), {width: 640, unit: "세션"});
   return `<p class="anverdict">유기 세션의 <b>${share}%</b>가 신규 방문입니다.
-    재방문은 이미 우리를 아는 사람이 검색으로 돌아온 몫이라, 새 수요는 신규 쪽에서만
+    재방문은 이미 나를 아는 사람이 검색으로 돌아온 몫이라, 새 수요는 신규 쪽에서만
     옵니다.</p>` + chart +
     `<p class="anthin">GSC 클릭(구글만)과 GA4 세션(네이버·빙 등도 포함)은 같은 것을
-      세지 않습니다 — 위 [수요 구성]의 브랜드·논브랜드와 이 축은 서로 다른 집계라
+      세지 않습니다. 위 [수요 구성]의 브랜드·논브랜드와 이 축은 서로 다른 집계라
       1:1로 안 겹칩니다.</p>`;
 }
 
@@ -644,7 +719,7 @@ function anUnmatched(rows, what) {
   if (!un) return "";
   const share = anShare(un.impressions, total);
   if (share < 50) return "";
-  return `<div class="anthin">노출의 <b>${share}%</b>가 미분류입니다 — 실제로 걸리는
+  return `<div class="anthin">노출의 <b>${share}%</b>가 미분류입니다. 실제로 걸리는
     검색어를 키워드 목록이 못 따라가고 있다는 뜻이라, 아래 ${what} 비교는 나머지
     ${100 - share}% 얘기입니다. ${window.go("keywords")} 화면에서 실제로 걸린 검색어를
     키워드로 올리면 갈래가 넓어집니다.</div>`;
@@ -660,9 +735,9 @@ function anGa4Intent(rows) {
   const head = ["의도", ">페이지?이 의도의 검색어가 걸린 페이지 수(그중 GA4 실적이 잡힌 수)",
     ">세션", ">전환?GA4 key_events 합",
     ">겹친 페이지?다른 의도의 검색어에도 걸려 전환이 중복 집계된 페이지 수"];
-  return `<p class="anthin"><b>GA4 대조 — 근사치입니다.</b> 검색어와 GA4 세션은 직접
+  return `<p class="anthin"><b>GA4 대조는 근사치입니다.</b> 검색어와 GA4 세션은 직접
       이어지지 않아서, 그 의도의 검색어가 걸린 페이지들의 GA4 실적을 더한 값입니다.
-      <b>이 의도만의 전환이 아니라, 이 의도가 데려온 페이지 전체의 전환</b>으로 읽으세요 —
+      <b>이 의도만의 전환이 아니라, 이 의도가 데려온 페이지 전체의 전환</b>으로 읽습니다.
       페이지 하나가 여러 의도에 걸리면 그 전환은 갈래마다 중복으로 잡힙니다("겹친 페이지" 열).</p>` +
     table(head, rows.map(r => `<tr>
       <td>${esc(AN_INTENT[r.label] || r.label)}</td>
@@ -690,17 +765,18 @@ function anIntentChart(named, gaRows) {
 
 function anIntent(rows, gaRows) {
   if (!rows || !rows.length)
-    return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
+    return '<div class="empty"><b>아직 검색 실적이 없습니다.</b>'
+      + '<p>의도별 구성은 실적을 읽은 뒤에 나옵니다.</p></div>';
   const named = rows.filter(r => !r.unclassified);
   if (!named.length)
-    return `<div class="empty">걸린 검색어 중 내 키워드 목록과 맞는 것이 하나도
-      없습니다 — 의도를 말하려면 먼저 키워드가 있어야 합니다. ${window.go("keywords")}
-      화면에서 키워드부터 채웁니다.</div>`;
+    return `<div class="empty"><b>키워드 목록과 맞는 검색어가 하나도 없습니다.</b>
+      <p>의도를 말하려면 먼저 키워드가 있어야 합니다.</p>
+      <div class="acts">${window.go("keywords", "키워드 채우기")}</div></div>`;
   const tx = named.find(r => r.label === "transactional");
   const top = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const msg = !tx || !tx.clicks
     ? `<b>거래성 검색어에서 온 클릭이 0</b>입니다. 사람은 오는데 살 사람이 없다는
-       뜻이라, 트래픽을 더 늘려도 매출로 가는 길이 안 생깁니다 — 가격·비교·신청처럼
+       뜻이라, 트래픽을 더 늘려도 매출로 가는 길이 안 생깁니다. 가격·비교·신청처럼
        사려는 사람이 치는 말로 페이지를 하나 만드는 것이 먼저입니다.`
     : `클릭이 가장 많은 갈래는 <b>${esc(AN_INTENT[top.label] || top.label)}</b>이고,
        거래성은 ${num(tx.clicks)}클릭(평균순위 ${tx.position ?? "—"})입니다.
@@ -712,17 +788,19 @@ function anIntent(rows, gaRows) {
 
 function anCluster(rows) {
   if (!rows || !rows.length)
-    return '<div class="empty">아직 검색 실적 수집이 없습니다.</div>';
+    return '<div class="empty"><b>아직 검색 실적이 없습니다.</b>'
+      + '<p>주제별 성적은 실적을 읽은 뒤에 나옵니다.</p></div>';
   const named = rows.filter(r => !r.unclassified && r.impressions);
   if (!named.length)
-    return `<div class="empty">클러스터가 붙은 키워드로 걸린 검색어가 없습니다 —
-      ${window.go("keywords")} 화면에서 키워드를 주제별로 묶으면 여기가 채워집니다.</div>`;
+    return `<div class="empty"><b>주제 묶음으로 걸린 검색어가 없습니다.</b>
+      <p>키워드를 주제별로 묶으면 묶음마다 성적이 갈려 나옵니다.</p>
+      <div class="acts">${window.go("keywords", "주제별로 묶기")}</div></div>`;
   const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
   const msg = named.length > 1 && worst.label !== best.label
     ? `클릭을 끌고 있는 묶음은 <b>${esc(best.label)}</b>, 가장 안 눌리는 묶음은
-       <b>${esc(worst.label)}</b>입니다 — 노출 ${num(worst.impressions)}에 CTR
-       ${worst.ctr}%. 글을 더 쓸 곳이 아니라 있는 글의 제목·설명을 고칠 곳입니다.`
+       <b>${esc(worst.label)}</b>입니다. 노출 ${num(worst.impressions)}에 CTR
+       ${worst.ctr}% 입니다. 글을 더 쓸 곳이 아니라 있는 글의 제목·설명을 고칠 곳입니다.`
     : `<b>${esc(best.label)}</b> 한 묶음이 실적을 다 지고 있습니다. 이 묶음이 흔들리면
        전체가 흔들린다는 뜻이라, 두 번째 기둥을 만드는 것이 다음 일입니다.`;
   // 주제 묶음은 GA4 전환 근사(anGa4Intent 같은 것)가 없다 — 만들면 지어낸 값이라
@@ -747,24 +825,25 @@ function anCountryChart(rows, gaRows) {
 
 function anCountry(rows, date, gaRows) {
   if (!date)
-    return `<div class="empty">국가별 실적을 아직 안 읽었습니다 — ` + W(
-      `설정의 <code>gsc_breakdown</code> 에 <code>country</code> 가 들어간 뒤
-       <code class="cmd" onclick="copyCmd(this)">/capture gsc</code> 를 한 번 돌리면
-       채워집니다(이제 기본값입니다).`,
-      "[전체 분석 실행]을 한 번 누르면 채워집니다.") + `</div>`;
+    return `<div class="empty"><b>국가별 실적을 아직 안 읽었습니다.</b>
+      <p>타깃 밖 나라가 노출을 먹고 있으면 CTR·평균순위가 그만큼 눌립니다. ${W(
+        "프로젝트 설정에서 국가별 분해를 켠 뒤 실적을 한 번 다시 읽으면 채워집니다. 이제 기본값입니다.",
+        "실적을 한 번 다시 읽으면 채워집니다.")}</p>
+      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
   if (!rows || !rows.length)
-    return '<div class="empty">국가를 읽었는데 담긴 행이 없습니다 — 수집 창에 노출이 아예 없었습니다.</div>';
+    return '<div class="empty"><b>국가를 읽었는데 담긴 행이 없습니다.</b>'
+      + '<p>이 기간에 노출이 아예 없었습니다.</p></div>';
   const total = rows.reduce((a, r) => a + r.clicks, 0);
   const top = rows[0];
   const share = anShare(top.clicks, total);
   const msg = share >= 80
     ? `클릭의 <b>${share}%</b>가 <span class="lat">${esc(top.label).toUpperCase()}</span>
        한 나라에서 옵니다. 다른 나라 노출은 있는데 클릭이 안 붙는다면 그 나라 말로
-       된 페이지가 없다는 뜻입니다 — 그 나라 언어로 페이지를 새로 쓰거나, 지금 페이지를
+       된 페이지가 없다는 뜻입니다. 그 나라 언어로 페이지를 새로 쓰거나, 지금 페이지를
        hreflang 으로 그 나라에 연결합니다. 새 페이지를 냈다면 ${window.go("site")}
        화면에서 색인됐는지 확인합니다.`
     : `클릭이 <b>${rows.length}개 나라</b>에 갈려 있고 1위가 ${share}% 입니다.
-       타깃 밖 나라가 노출을 먹고 있으면 그 노출은 CTR·평균순위만 끌어내립니다 —
+       타깃 밖 나라가 노출을 먹고 있으면 그 노출은 CTR·평균순위만 끌어내립니다.
        숫자를 볼 때 그 몫을 빼고 보고, 다른 나라 수요가 꾸준하면 다국어 페이지나
        hreflang 을 검토합니다.`;
   return `<p class="anverdict">${msg}</p>` + anCountryChart(rows, gaRows) +
@@ -784,8 +863,8 @@ function anFunnel(f) {
   return `<p class="anverdict">들어온 세션의 <b>${rate}%</b>만 무언가를 하고 나머지는
     그대로 나갑니다.</p>` + window.chFunnel(steps, {width: 640}) +
     `<p class="anthin">노출·클릭은 GSC(구글 검색결과만) 축이고, 유기 세션부터는
-      GA4(네이버·빙 등 다른 검색엔진 유입도 포함) 축입니다 — 하나로 이어진 값이 아니라
-      각자 자기 축의 스냅샷을 나란히 놓은 것이라 <b>클릭과 세션은 1:1로 비교하지
+      GA4(네이버·빙 등 다른 검색엔진 유입도 포함) 축입니다. 하나로 이어진 값이 아니라
+      각자 자기 축에서 읽은 값을 나란히 놓은 것이라 <b>클릭과 세션은 1:1로 비교하지
       않습니다.</b></p>`;
 }
 
@@ -822,18 +901,18 @@ VIEW("analysis", function (d) {
   $("an-daily-body").innerHTML = anDaily(d.daily);
   // 누를 줄이 없을 때 "줄을 누르면" 이라고 하면 화면이 거짓말을 한다.
   $("an-ctr-sub").innerHTML = `1페이지(1–${(d.rules || {}).page1 || 10}위)에 있는데
-    그 순위면 보통 나오는 CTR의 절반도 못 받는 검색어입니다. 순위를 올릴 필요가
-    없으므로 여기가 가장 싼 클릭입니다${(d.ctr_gaps || []).length
-      ? " — 줄을 누르면 고칠 페이지가 나옵니다" : ""}.`;
+    그 순위면 보통 나오는 CTR 의 절반도 못 받는 검색어입니다. 순위를 올릴 필요가
+    없어 여기가 가장 싼 클릭입니다.${(d.ctr_gaps || []).length
+      ? " 줄을 누르면 고칠 페이지가 나옵니다." : ""}`;
   $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);
   $("an-bands-sub").innerHTML = `검색어 하나하나의 순위는 흔들리지만, 구간별 검색어 수의 이동은 그 흔들림이
-    상쇄돼 "1페이지에서 몇 개가 빠졌나"를 말합니다.${(d.rank_bands || []).some(r => r.queries && r.queries.length)
-      ? " 줄을 누르면 그 구간의 검색어가 나옵니다." : ""}`;
+    상쇄돼 1페이지에서 몇 개가 빠졌는지를 말합니다.${(d.rank_bands || []).some(r => r.queries && r.queries.length)
+      ? " 줄을 누르면 그 구간에 어느 검색어가 있는지 나옵니다." : ""}`;
   $("an-bands-body").innerHTML = anBands(d.rank_bands);
   $("an-brand-body").innerHTML = anBrand(d.brand_split, !!d.gsc_date);
   $("an-brand-sub").innerHTML = `검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이
-    20% 늘어도 그게 전부 브랜드 검색이면 SEO 는 제자리입니다 — 새 수요는 논브랜드
-    쪽에서만 옵니다.${anMixHint("brand")}`;
+    20% 늘어도 그게 전부 브랜드 검색이면 새 수요를 못 잡은 것입니다. 새 수요는
+    논브랜드 쪽에서만 옵니다.${anMixHint("brand")}`;
   // 다섯 GA4 키(ga4_funnel/channels/by_device/by_country/by_newret)는 GA4 미연결이면
   // 통째로 없다 — d.ga4_funnel 하나로 이 화면의 GA4 절 셋을 함께 접는다/편다.
   const hasGa4 = !!d.ga4_funnel;
@@ -841,8 +920,8 @@ VIEW("analysis", function (d) {
   if (hasGa4) $("an-newret-body").innerHTML = anNewret(d.ga4_by_newret);
   $("an-intent-body").innerHTML = anIntent(d.by_intent, d.ga4_intent);
   $("an-intent-sub").innerHTML = `같은 클릭이라도 "…란 무엇인가"와 "…가격"은 값이 다릅니다.
-    정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다 — 사람은 오는데 살
-    사람이 없는 것이라 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.${anMixHint("intent")}`;
+    정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다. 사람은 오는데 살
+    사람이 없어 트래픽을 아무리 늘려도 매출로 가는 길이 없습니다.${anMixHint("intent")}`;
   $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
   $("an-cluster-sub").innerHTML = `주제 묶음별 성적입니다. 노출은 많은데 CTR·순위가 낮은 묶음은 글을
     더 쓸 곳이 아니라 있는 글을 고칠 곳입니다.${anMixHint("cluster")}`;
@@ -850,9 +929,10 @@ VIEW("analysis", function (d) {
   if (hasGa4) $("an-funnel-body").innerHTML = anFunnel(d.ga4_funnel);
   $("an-channels-sec").hidden = !hasGa4;
   if (hasGa4) $("an-channels-body").innerHTML = anChannels(d.ga4_channels);
-  $("an-country-sub").innerHTML = `국가별 클릭·노출·CTR·평균순위입니다.` +
+  $("an-country-sub").innerHTML = `타깃 밖 나라가 노출을 먹고 있는지를 봅니다.` +
     (d.country_date ? ` ${esc(d.country_date)} 수집 기준이고, Δ는 그 직전 수집과의
-      차이입니다 — 위 표들과 달리 이 축은 분해 수집일을 따로 씁니다.` : "");
+      차이입니다. 위 표들과 달리 이 축은 분해 수집일을 따로 씁니다.` : "");
   $("an-country-body").innerHTML = anCountry(d.by_country, d.country_date, d.ga4_by_country);
+  anNext(d);
 });
 </script>

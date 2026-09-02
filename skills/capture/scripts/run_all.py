@@ -54,7 +54,7 @@ import serp_adapter        # noqa: E402
 
 StageResult = collector.StageResult
 
-ABORT_REASON = "GSC 수집 실패로 체인 중단됨"
+ABORT_REASON = "구글 실적 수집이 실패해 여기서 멈췄습니다"
 
 SEPARATOR = "=" * 62
 SUB_SEPARATOR = "-" * 62
@@ -63,7 +63,7 @@ SUB_SEPARATOR = "-" * 62
 def load_opportunities(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
     """gaps 단계 — scoring.load. 외부 호출 0건이라 --dry-run 플래그가 없다."""
     if dry_run:
-        reason = "외부 호출 0건 — 실제 실행 시 기회를 적재합니다 (돌 예정)"
+        reason = "외부 호출이 없습니다. 실제로 돌리면 기회를 뽑아 저장합니다"
         print(f"[gaps] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
     scoring.load(project)
@@ -74,7 +74,7 @@ def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResul
     """report 단계 — dashboard.export. 산출물 경로 규칙의 정본은 dashboard.export() 고,
     여기서는 그게 돌려주는 Path 를 그대로 옮긴다(파싱 없음)."""
     if dry_run:
-        reason = "외부 호출 0건 — 실제 실행 시 대시보드 리포트 HTML을 내보냅니다 (돌 예정)"
+        reason = "외부 호출이 없습니다. 실제로 돌리면 보고서 HTML 을 내보냅니다"
         print(f"[report] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
     out = dashboard.export(project)
@@ -87,20 +87,20 @@ def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResul
 # 고쳐지는 사고가 난다(이 저장소가 반복해서 겪은 것).
 Stage = namedtuple("Stage", ["name", "desc", "fn", "is_paid"])
 STAGES = (
-    Stage("gsc",         "GSC 실적 적재 (합계·일별·디바이스 분해)", collect_gsc.collect,     False),
-    Stage("ga4",         "GA4 실적 적재 (세션·전환·이탈, 랜딩페이지별)", collect_ga4.collect, False),
-    Stage("index",       "URL 색인 상태 수집",                      collect_index.collect,   False),
-    Stage("keywords",    "자동완성 키워드 발굴",                    expand_keywords.collect, False),
+    Stage("gsc",         "구글 실적 수집 (합계·일별·기기별)",       collect_gsc.collect,     False),
+    Stage("ga4",         "GA4 실적 수집 (세션·전환·이탈, 페이지별)", collect_ga4.collect,    False),
+    Stage("index",       "색인 상태 확인",                          collect_index.collect,   False),
+    Stage("keywords",    "자동완성으로 키워드 찾기",                expand_keywords.collect, False),
     # 볼륨은 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 재료로 쓴다.
-    Stage("metrics",     "키워드 지표 (검색량·난이도·CPC)",         collect_metrics.collect, True),
-    Stage("rank",        "순위 스냅샷 수집",                        collect_serp.collect,    True),
+    Stage("metrics",     "키워드 지표 조회 (검색량·난이도·CPC)",    collect_metrics.collect, True),
+    Stage("rank",        "순위 확인",                               collect_serp.collect,    True),
     Stage("crawl",       "사이트 크롤 (깨진 링크·리다이렉트·고아)", collect_crawl.collect,   False),
-    Stage("ai",          "AI 인용 체크",                            collect_ai.collect,      True),
-    Stage("competitors", "경쟁사 탐지·역키워드·트래픽 몫 (Labs)",   collect_gap.collect,     True),
-    Stage("backlinks",   "백링크 프로필·앵커·링크 교집합",          collect_backlinks.collect, True),
-    Stage("gaps",        "기회 적재 (외부 호출 0)",                 load_opportunities,      False),
-    Stage("pages",       "내 페이지 감사 (제목·설명·본문·스키마)",  collect_page.collect,    False),
-    Stage("report",      "리포트 HTML 박제",                        export_report,           False),
+    Stage("ai",          "AI 인용 확인",                            collect_ai.collect,      True),
+    Stage("competitors", "경쟁사 역키워드·트래픽 몫 수집",          collect_gap.collect,     True),
+    Stage("backlinks",   "백링크 프로필·앵커·링크 교집합 수집",     collect_backlinks.collect, True),
+    Stage("gaps",        "손댈 것 뽑기 (외부 호출 없음)",           load_opportunities,      False),
+    Stage("pages",       "내 페이지 점검 (제목·설명·본문·구조화 데이터)", collect_page.collect, False),
+    Stage("report",      "보고서 HTML 내보내기",                    export_report,           False),
 )
 
 VALID_STAGE_NAMES = tuple(s.name for s in STAGES)
@@ -114,23 +114,25 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
     """
     if stage_name == "rank":
         if not (serp_adapter.has_serper() or serp_adapter.has_dataforseo()):
-            return False, ("SERPER_API_KEY 또는 DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — "
-                          "있으면 순위 스냅샷을 캘 수 있습니다. 발급: https://dataforseo.com "
-                          "(권장) 또는 https://serper.dev")
+            return False, ("키가 없어 건너뜁니다. SERPER_API_KEY 또는 "
+                          "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 넣으면 순위를 "
+                          "확인합니다. 발급: https://dataforseo.com (권장) 또는 "
+                          "https://serper.dev")
     elif stage_name == "ai":
         if not serp_adapter.has_openrouter():
-            return False, ("OPENROUTER_API_KEY 가 없어 건너뜀 — 있으면 AI 인용 갭을 캘 수 있습니다. "
-                          "발급: https://openrouter.ai/keys")
+            return False, ("키가 없어 건너뜁니다. OPENROUTER_API_KEY 를 넣으면 AI 가 "
+                          "누구를 인용하는지 확인합니다. 발급: https://openrouter.ai/keys")
     elif stage_name in ("metrics", "backlinks"):
         if not serp_adapter.has_dataforseo():
-            what = ("검색량·난이도를 캘 수 있습니다" if stage_name == "metrics"
-                    else "백링크 프로필과 링크 교집합을 캘 수 있습니다")
-            return False, (f"DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — 있으면 {what}. "
-                          "발급: https://dataforseo.com")
+            what = ("검색량과 난이도를 조회합니다" if stage_name == "metrics"
+                    else "백링크 프로필과 링크 교집합을 수집합니다")
+            return False, ("키가 없어 건너뜁니다. DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD "
+                          f"를 넣으면 {what}. 발급: https://dataforseo.com")
     elif stage_name == "competitors":
         if not serp_adapter.has_dataforseo():
-            return False, ("DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 가 없어 건너뜀 — 있으면 경쟁사가 "
-                          "잡는데 나는 부재인 키워드를 캘 수 있습니다. 발급: https://dataforseo.com")
+            return False, ("키가 없어 건너뜁니다. DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD "
+                          "를 넣으면 경쟁사는 잡는데 나는 없는 검색어를 찾습니다. "
+                          "발급: https://dataforseo.com")
     return True, ""
 
 
@@ -140,8 +142,8 @@ def _stage_names(raw: str | None, label: str, valid: tuple[str, ...]) -> set[str
     invalid = names - set(valid)
     if invalid:
         raise ValueError(
-            f"유효하지 않은 {label} 단계 이름: {', '.join(sorted(invalid))} — "
-            f"가능한 단계: {', '.join(valid)}"
+            f"{label} 에 없는 단계 이름이 있습니다: {', '.join(sorted(invalid))}. "
+            f"쓸 수 있는 단계: {', '.join(valid)}"
         )
     return names
 
@@ -182,12 +184,12 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
                only_set: set[str], opts: dict) -> StageResult:
     """단계 하나 — 건너뛸 이유를 먼저 보고, 아니면 fn 을 부른다."""
     if stage.name in skip_set:
-        reason = "--skip 옵션으로 건너뜀"
+        reason = "--skip 으로 지정해 건너뜁니다"
         print(f"[{stage.name}] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
 
     if only_set and stage.name not in only_set:
-        reason = "--only 대상이 아니므로 건너뜀"
+        reason = "--only 대상이 아니라 건너뜁니다"
         print(f"[{stage.name}] {reason}")
         return StageResult(ok=True, skipped=True, reason=reason)
 
@@ -200,7 +202,7 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
     try:
         return stage.fn(project=project, dry_run=dry_run, **opts)
     except Exception as e:
-        return StageResult(ok=False, reason=f"예외 발생 ({e})")
+        return StageResult(ok=False, reason=f"이 단계에서 오류가 났습니다 ({e})")
 
 
 def run_chain(
@@ -243,8 +245,8 @@ def run_chain(
     unknown = set(opts) - set(valid)
     if unknown:
         raise ValueError(
-            f"유효하지 않은 --opt 대상 단계: {', '.join(sorted(unknown))} — "
-            f"가능한 단계: {', '.join(valid)}"
+            f"--opt 가 없는 단계를 가리킵니다: {', '.join(sorted(unknown))}. "
+            f"쓸 수 있는 단계: {', '.join(valid)}"
         )
 
     results: list[tuple[str, StageResult]] = []
@@ -252,7 +254,7 @@ def run_chain(
     gsc_aborted = False
 
     print(f"\n{SEPARATOR}")
-    print(f"체인 러너 시작: 프로젝트 '{project}' (dry_run={dry_run})")
+    print(f"수집 시작: {project}" + (" (실행 없이 계획만 봅니다)" if dry_run else ""))
     print(f"{SEPARATOR}")
 
     for idx, stage in enumerate(stages, start=1):
@@ -275,11 +277,12 @@ def run_chain(
         results.append((stage.name, r))
 
         if not r.ok:
-            print(f"\n[오류] 단계 '{stage.name}' 실행 실패 ({r.reason or '실패'})", file=sys.stderr)
+            print(f"\n[오류] {stage.name} 단계가 실패했습니다 ({r.reason or '원인 불명'})",
+                  file=sys.stderr)
             if stage.name == "gsc":
                 print(
-                    "\n[중단] GSC 실적 수집이 실패하여 체인을 중단합니다. "
-                    "나머지 모든 단계가 GSC 데이터를 기본 재료로 사용하므로 진행할 수 없습니다.",
+                    "\n[중단] 구글 실적 수집이 실패해 여기서 멈춥니다. "
+                    "나머지 단계가 전부 이 숫자를 재료로 쓰기 때문입니다.",
                     file=sys.stderr,
                 )
                 gsc_aborted = True
@@ -301,7 +304,7 @@ def _label(r: StageResult, dry_run: bool) -> str:
     if not r.ok:
         return "실패"
     if r.reason == ABORT_REASON:
-        return "미실행"
+        return "안 돎"
     if r.skipped:
         return "건너뜀"
     return "돌 예정" if dry_run else "완료"
@@ -313,7 +316,7 @@ def print_summary(project: str, results: list[tuple[str, StageResult]], *,
     aborted = any(r.reason == ABORT_REASON for _, r in results)
 
     print(f"\n{SEPARATOR}")
-    print(f"체인 실행 결과 요약 ({project})")
+    print(f"수집 결과 ({project})")
     print(SUB_SEPARATOR)
     for name, r in results:
         detail = []
@@ -335,15 +338,15 @@ def print_summary(project: str, results: list[tuple[str, StageResult]], *,
     if aborted:
         # 여기서 끝나면 사용자는 빈손이다. 인증 없이 도는 유일한 수집으로 안내해
         # 첫 수확이라도 남긴다 — 로그인 실패가 곧 "아무것도 못 봄"이 되지 않게.
-        print('  구글 로그인 먼저: 채팅에 "GSC 로그인해줘"')
+        print('  구글 로그인부터 하세요: 채팅에 "GSC 로그인해줘"')
         print(f"  로그인 없이 지금 되는 것: /capture keywords {project} "
-              "(자동완성 — 인증·키 안 씀)\n")
+              "(자동완성이라 인증도 키도 안 씁니다)\n")
         return
 
     report = next((r.artifact for name, r in results if name == "report" and r.artifact), "")
     if report:
-        print(f"  리포트 파일: {report}")
-    print(f"  대시보드 실행: /capture dash {project}")
+        print(f"  보고서 파일: {report}")
+    print(f"  대시보드 열기: /capture dash {project}")
     top = _top_opportunity(project)
     if top:
         # 리포트 경로만 주고 끝내면 "그래서 뭘 고치나"로 안 이어진다 — 이 도구의
@@ -351,8 +354,9 @@ def print_summary(project: str, results: list[tuple[str, StageResult]], *,
         print(f"  손댈 것 1순위: [{top['kind']}] {top['target']}")
         print(f"  고치러 가기: /create plan {project}")
     # 2회차 수집부터 Δ가 나온다. 그 2회차를 부르는 것이 아무데도 없었다.
-    print(f"  다음 바퀴: 1~2주 뒤 같은 명령 한 줄 — /capture run {project} "
-          "(구글이 최근 3일 수치를 나중에 채우고, 순위도 주 단위로 움직인다)\n")
+    print(f"  다음 바퀴: 1~2주 뒤 같은 명령을 한 번 더 — /capture run {project}")
+    print("  그때 가서 재는 이유: 구글이 최근 3일 수치를 나중에 채우고, "
+          "순위도 주 단위로 움직입니다\n")
 
 
 def _top_opportunity(project: str):

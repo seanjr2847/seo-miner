@@ -18,10 +18,10 @@
 <div class="band" id="band"></div>
 
 <section id="daily-sec">
-  <div class="eyebrow" data-web="성과일 기준 · 일별">성과일 기준 · 하루 = 점 하나</div>
-  <h2>일별 추이</h2>
-  <p class="sub" data-web="위 지표의 증감은 직전 분석 대비 값입니다. 아래 그래프는 일별 추이입니다."
-    >위 KPI의 Δ는 수집을 돌린 간격만큼만 성깁니다. 이건 하루 단위입니다.</p>
+  <div class="eyebrow" data-web="성과일 기준 · 하루가 점 하나">성과일 기준 · 하루가 점 하나</div>
+  <h2 data-web="총 클릭수가 어느 날 늘고 줄었나">클릭이 어느 날 늘고 줄었나</h2>
+  <p class="sub" data-web="위 지표의 증감은 분석을 돌린 간격만큼 성깁니다. 여기서 하루 단위로 봅니다."
+    >위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기서 하루 단위로 봅니다.</p>
   <div id="daily"></div>
 </section>
 
@@ -34,15 +34,25 @@
 
 <script>
 "use strict";
+/* 단계 하나를 돌리는 손잡이는 셸이 배포에 맞춰 고른다(로컬은 명령 칩, 호스팅은 실행
+   버튼). 셸 스크립트가 뷰보다 뒤에 있어도 렌더 시점에는 서 있지만, 조립이 반쯤
+   나간 상태에서도 화면이 서게 없으면 빈 문자열로 물러난다. */
+const OV_act = (stage, label, primary) =>
+  (READONLY || !window.act) ? "" : act(stage, label, primary);
+// 박제본에는 누를 서버가 없다 — 손잡이가 없으면 상자도 만들지 않는다.
+const OV_acts = html => html ? `<div class="acts">${html}</div>` : "";
+
 /* ── 일별 추이: gsc_daily 의 date 는 성과일(수집일이 아니다)이라 하루가 점 하나다.
       클릭과 노출은 자릿수가 달라 각자 축을 쓴다 — 여기서 읽는 건 모양이고,
       값은 점 위에 올리면 나온다. 깊이 로그와 같은 .log/.logwrap 을 그대로 쓴다
       (좁은 화면에선 축소 대신 가로 스크롤). ── */
 function dailyChart(rows, stats) {
   if (rows.length < 2)
-    return `<div class="empty">${W(
-      "일별 실적이 아직 없습니다 — <code>/capture gsc</code> 하면 최근 28일이 하루 단위로 채워집니다.",
-      "일별 데이터가 아직 없습니다 — [전체 분석 실행]을 누르면 최근 28일이 채워집니다.")}</div>`;
+    return `<div class="empty"><b>${W("일별 실적이 아직 없습니다",
+        "일별 데이터가 아직 없습니다")}</b>
+      <p>${W("하루 단위로 보면 클릭이 어느 날 움직였는지가 나옵니다. 최근 28일이 채워집니다.",
+        "하루 단위로 보면 총 클릭수가 어느 날 움직였는지가 나옵니다. 최근 28일이 채워집니다.")}</p>
+      ${OV_acts(OV_act("gsc", "실적 수집", false))}</div>`;
   // 가로폭은 VW 다 — 이 함수 안에서 W 는 문구를 고르는 뼈대의 W(local, web) 다.
   const VW = 1000, H = 214, L = 52, R = VW - 62, T = 26, B = 28, n = rows.length;
   const x = i => L + i * (R - L) / (n - 1);
@@ -192,9 +202,11 @@ function renderOpps(n) {
   OPP_N = n;
   if (!OPPS.length)
     return $("opps").innerHTML =
-      `<div class="empty">${W(
-        "아직 뽑은 게 없습니다 — <code>/capture gaps</code> 하면 모은 숫자에서 찾아 드립니다.",
-        "아직 도출된 개선 기회가 없습니다 — 이 화면의 [기회 다시 분석]을 누르면 채워집니다.")}</div>`;
+      `<div class="empty"><b>${W("아직 뽑아 둔 기회가 없습니다",
+          "아직 도출된 개선 기회가 없습니다")}</b>
+        <p>${W("모아 둔 숫자에서 손댈 곳을 점수 순으로 찾아 드립니다.",
+          "수집한 지표에서 개선 기회를 점수 순으로 찾아 드립니다.")}</p>
+        ${OV_acts(OV_act("gaps", "기회 분석", false))}</div>`;
   const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
   // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
@@ -236,11 +248,16 @@ function oppChips() {
 function oppList() {
   oppChips();
   const list = oppFiltered();
-  $("oppn").textContent = list.length === OPPS.length
-    ? `${OPPS.length}건` : `${list.length}건 / 전체 ${OPPS.length}건`;
+  // 개수를 두 번 적지 않는다 — 상태 거르개가 이미 "아직 안 함 (2)" 로 말한다.
+  // 그 위에 무엇이 더 걸렸을 때(찾는 말·종류 칩)만 몇 건이 남았는지 적는다.
+  // 박제본에는 거르개가 없다 — 거기서는 이 자리가 개수를 말하는 유일한 곳이다.
+  const narrowed = list.length !== oppByStatus().length;
+  $("oppn").textContent = narrowed ? `${list.length}건 / 전체 ${OPPS.length}건`
+    : READONLY ? `${OPPS.length}건` : "";
   if (!list.length)
-    return $("opplist").innerHTML = `<div class="empty">거른 조건에 맞는 기회가 없습니다.
-      <div class="acts"><button onclick="oppReset()">필터 지우기</button></div></div>`;
+    return $("opplist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 기회가 없습니다</b>
+      <p>찾는 말이나 상태를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+      <div class="acts"><button class="go sec" onclick="oppReset()">조건 지우기</button></div></div>`;
   const rest = list.length - OPP_N;
   $("opplist").innerHTML = list.slice(0, OPP_N).map(oppRow).join("") + (rest > 0
     ? `<div class="acts" style="margin-top:14px">
@@ -257,6 +274,46 @@ function oppCsv() {
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }
 
+/* ── 다음 행동 띠 ───────────────────────────────────────────
+      이 화면은 첫 화면이다 — 세 상태(수집 전 · 뽑기 전 · 찬 화면) 어디서든 "그래서
+      뭘 하나"가 머리 바로 아래 한 문장으로 서야 한다. 여태는 찬 화면일 때만 말이
+      없었다: 기회가 스무 건 쌓여 있어도 어느 것부터 여는지는 아무 데도 안 적혔다.
+      새 판정을 만들지 않는다 — 목록 맨 위가 곧 점수 1등이다(서버가 정렬해 보낸다). */
+function OV_openTop() {
+  const card = document.querySelector("#opplist details.opp");
+  if (!card) return;
+  card.open = true;
+  card.scrollIntoView({behavior: "smooth", block: "center"});
+}
+
+function OV_next(d) {
+  if (!window.nextStep) return;
+  // 박제본이라고 여기서 띠를 지우지 않는다 — 문장은 종이에서도 읽을 값이 있고,
+  // 누를 수 없는 것만 떼는 일은 셸의 nextStep 이 한 벌로 한다(.acts 를 뗀다).
+  const top = oppFiltered()[0];
+  let html;
+  if (!d.gsc_date)
+    html = `<p>${W("구글 실적을 아직 안 읽었습니다. 이 화면의 숫자가 전부 그 위에서 나옵니다.",
+      "서치콘솔 실적을 아직 읽지 않았습니다. 이 화면의 지표가 전부 그 위에서 나옵니다.")}</p>
+      <div class="acts">${OV_act("gsc", "실적 수집")}</div>`;
+  else if (!OPPS.length)
+    html = `<p>${W("실적은 읽었습니다. 이제 그 숫자에서 손댈 곳을 뽑을 차례입니다.",
+      "실적은 수집했습니다. 이제 개선 기회를 도출할 차례입니다.")}</p>
+      <div class="acts">${OV_act("gaps", "기회 분석")}</div>`;
+  // 다시 뽑는 손잡이는 머리줄이 이미 들고 있다 — 띠에 보조로 또 달면 같은 행동이
+  // 한 화면에 둘이다. 띠의 주요 행동은 [이 기회 열기] 하나다.
+  else if (top)
+    html = `<p>${W("점수가 가장 높은 것은", "점수가 가장 높은 개선 기회는")}
+      <b>${esc(top.label || top.kind)}</b>입니다. ${W("대상은", "대상 페이지는")}
+      ${esc(top.target)}.</p>
+      <div class="acts"><button class="go" onclick="OV_openTop()">이 기회 열기</button></div>`;
+  else
+    html = `<p>${W("걸러 놓은 조건에 남은 기회가 없습니다. 조건을 풀면 전체가 보입니다.",
+      "필터 조건에 남은 개선 기회가 없습니다. 조건을 풀면 전체가 보입니다.")}</p>
+      <div class="acts"><button class="go" onclick="oppReset()">조건 지우기</button></div>`;
+  nextStep("overview", html);
+}
+
 VIEW("overview", function (d) {
   const t = d.trend || [];
   const last = t.find(x => x.d === d.gsc_date) || t[t.length - 1] || {};
@@ -267,8 +324,8 @@ VIEW("overview", function (d) {
   const cmp = d.gsc_prev && d.gsc_date
     ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
   const was = k => Number.isFinite(prev[k])
-    ? [per && `${per} 합계`, `이전 ${num(prev[k])}`].filter(Boolean).join(" · ")
-    : [per && `${per} 합계`, "비교할 직전 기록 없음"].filter(Boolean).join(" · ");
+    ? [per && `${per} 합계`, `직전 ${per || "기간"} ${num(prev[k])}`].filter(Boolean).join(" · ")
+    : [per && `${per} 합계`, "견줄 직전 기록 없음"].filter(Boolean).join(" · ");
   $("band").innerHTML = [
     // KPI 라벨만 서치콘솔 한국어를 따른다 — 그래프 축·툴팁의 "클릭"·"노출" 은 그대로다.
     [W("클릭", "총 클릭수"), num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),
@@ -277,22 +334,26 @@ VIEW("overview", function (d) {
       kpiSpark(t.map(x => x.imp), dates, "var(--slate)"), was("imp")],
     [W("노출된 검색어", "검색어 수"), num(last.q),
       delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
-    ["추적 키워드", num(d.kw_active), "", "", "순위·AI 인용을 확인하는 대상"],
-    [W("남은 기회", "개선 기회"), num(d.opps_total), "", "", "아직 손대지 않은 것만"],
+    ["추적 키워드", num(d.kw_active), "", "", "순위와 AI 인용을 확인하는 대상"],
+    [W("남은 기회", "개선 기회"), num(d.opps_total), "", "",
+      W("확인·완료·제외 전인 것만", "미처리 상태인 것만")],
   ].map(([l, v, dd, sp, b]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${b ? `<div class="b">${b}</div>` : ""}${sp}</div>`).join("");
 
   $("daily-sec").hidden = !d.daily;
   if (d.daily) $("daily").innerHTML = dailyChart(d.daily, d.daily_stats);
 
-  $("opp-eyebrow").textContent = `아직 안 한 기회 ${d.opps_total}건`;
+  $("opp-eyebrow").textContent = W(`아직 안 한 기회 ${d.opps_total}건`,
+    `미처리 개선 기회 ${d.opps_total}건`);
   // 박제본에서 "누르면 저장됩니다"는 거짓말이다 — 서버가 없다. 상태 배지는 그 시점의
   // 기록이라 그대로 두고, 무엇을 보고 있는지만 말한다.
   $("opp-sub").innerHTML = READONLY
     ? "이 기록을 남긴 시점의 개선 기회입니다. 카드를 누르면 어느 페이지가 걸렸는지와 " +
       "할 일이 펼쳐집니다. <b>확인·완료·제외 표시는 그때의 상태</b>이고 여기서는 바꿀 수 없습니다."
-    : "카드를 누르면 어느 페이지가 걸렸는지와 할 일이 펼쳐집니다. " +
-      "확인·완료·제외는 누르면 바로 저장됩니다.";
+    : W("점수가 높은 것부터 하나씩 봅니다. 줄 끝 버튼이 다음 한 걸음이고, " +
+        "카드를 펼치면 할 일과 나머지 상태가 나옵니다.",
+        "점수가 높은 것부터 하나씩 봅니다. 줄 끝 버튼이 다음 한 단계이고, " +
+        "카드를 펼치면 조치 내용과 나머지 상태가 나옵니다.");
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   OPPS = d.opps || [];
   // 첫 적재에서만 기본값을 정한다 — 사람이 고른 필터를 재적재로 되돌리지 않는다.
@@ -301,5 +362,6 @@ VIEW("overview", function (d) {
   if (OPP_ST === null) OPP_ST = READONLY ? "" : "open";
   // 검색어별 페이지 표·밴드·기회 색인은 셸의 render() 가 화면 전부를 위해 먼저 세운다.
   renderOpps(8);
+  OV_next(d);
 });
 </script>

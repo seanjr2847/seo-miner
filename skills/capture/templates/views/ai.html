@@ -146,15 +146,15 @@
 <section id="ai-prompt-sec" hidden>
   <div class="eyebrow" id="ai-prompt-eyebrow">질문별</div>
   <h2>어느 질문에서 빠졌나</h2>
-  <p class="sub">질문을 누르면 <b>그 질문에서 실제로 온 답변</b>이 펼쳐집니다 — 우리가
-    왜 빠졌는지는 거기서만 읽힙니다.</p>
+  <p class="sub">먼저 손댈 질문이 위입니다. 질문을 누르면 <b>그 질문에서 실제로 온
+    답변</b>과 무엇을 고칠지가 펼쳐집니다. 우리가 왜 빠졌는지는 거기서만 읽힙니다.</p>
   <details class="aichk">
-    <summary>질문마다 다시 말하지 않는 것 — AI가 인용해 가는 페이지의 공통 조건 다섯</summary>
+    <summary>질문마다 다시 말하지 않는 것. AI가 인용해 가는 페이지의 공통 조건 다섯</summary>
     <ol>
       <li>질문 문장 그대로가 <b>H2</b>로 있고, 바로 밑 2~3문장이 그 질문의 답입니다.</li>
-      <li>그 답에 숫자·단위·출처·갱신일이 박혀 있습니다 — 검증되는 문장만 인용됩니다.</li>
-      <li>정의 한 문단과 비교표 하나가 있습니다 — 그대로 떠가기 쉬운 모양입니다.</li>
-      <li>저자와 마지막 갱신일이 페이지에 드러납니다 — 출처로 고를 근거가 됩니다.</li>
+      <li>그 답에 숫자·단위·출처·갱신일이 박혀 있습니다. 검증되는 문장만 인용됩니다.</li>
+      <li>정의 한 문단과 비교표 하나가 있습니다. 그대로 떠가기 쉬운 모양입니다.</li>
+      <li>저자와 마지막 갱신일이 페이지에 드러납니다. 출처로 고를 근거가 됩니다.</li>
       <li>Article·FAQPage 구조화 데이터가 붙어 있고, robots가 AI 크롤러를 막지 않습니다.</li>
     </ol>
   </details>
@@ -255,7 +255,7 @@ function AI_trendChart(rows) {
   </svg></div>
   <div class="legend"><b style="color:var(--patina)">■</b> 인용률 최근
     ${AI_PCT(last.cite_rate)} (최고 ${AI_PCT(best)}) ·
-    <b style="color:var(--slate)">■</b> 언급률 ${AI_PCT(last.mention_rate)} — 확인 ${n}회.
+    <b style="color:var(--slate)">■</b> 언급률 ${AI_PCT(last.mention_rate)}. 확인 ${n}회.
     세로축은 0~100% 고정이라 확인끼리 그대로 견줄 수 있습니다.</div>`;
 }
 
@@ -399,26 +399,26 @@ function AI_doms(json) {
 function AI_play(r) {
   const st = AI_stOf(r);
   if (st === "none") return {
-    what: "이 질문에 답하는 페이지가 아예 없거나, 있어도 AI가 못 찾습니다 — 인용 이전에 답이 없는 상태입니다.",
+    what: "이 질문에 답하는 페이지가 아예 없거나, 있어도 AI가 못 찾습니다. 인용 이전에 답이 없는 상태입니다.",
     acts: ["질문 문장 그대로를 H2로 두고, 바로 밑 2~3문장으로 직답합니다.",
-      "그 답에 숫자·출처·갱신일을 박습니다 — 검증되는 문장만 인용됩니다.",
-      "정의 블록과 비교표를 하나씩 넣습니다 — 그대로 떠가기 쉬운 모양입니다.",
+      "그 답에 숫자·출처·갱신일을 박습니다. 검증되는 문장만 인용됩니다.",
+      "정의 블록과 비교표를 하나씩 넣습니다. 그대로 떠가기 쉬운 모양입니다.",
       "이 질문을 정면으로 다루는 페이지가 없다면 한 장부터 만듭니다."],
     deliver: ["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답 문안",
               "숫자·출처·갱신일이 들어간 근거 블록(표 또는 목록) 하나",
               "다루는 페이지가 없다면 새 글 한 장의 제목과 목차"]};
   if (st === "mention") return {
-    what: "이름은 나오는데 링크가 안 걸립니다 — 링크로 걸릴 근거가 우리 쪽에 없다는 뜻입니다.",
+    what: "이름은 나오는데 링크가 안 걸립니다. 링크로 걸릴 근거가 우리 쪽에 없다는 뜻입니다.",
     acts: ["가격표·비교표·자체 조사처럼 원문 출처가 될 데이터를 한 덩이 만듭니다.",
-      "저자와 갱신일을 페이지에 드러냅니다 — 출처로 고를 근거가 됩니다.",
+      "저자와 갱신일을 페이지에 드러냅니다. 출처로 고를 근거가 됩니다.",
       "Article·FAQPage 구조화 데이터를 붙입니다."],
     deliver: ["원문 출처가 될 데이터 한 덩이의 형태와 항목(가격표·비교표·자체 조사)",
               "저자·갱신일을 어디에 어떻게 드러낼지",
               "Article·FAQPage 구조화 데이터(JSON-LD)"]};
   return {
-    what: "이미 인용되고 있습니다 — 여기서는 넓히기보다 지키는 게 먼저입니다.",
+    what: "이미 인용되고 있습니다. 여기서는 넓히기보다 지키는 것이 먼저입니다.",
     acts: ["같은 답변에 함께 인용된 곳이 무엇을 갖고 있는지 보고, 우리에게 없는 구간만 채웁니다.",
-      "숫자와 갱신일을 주기적으로 손봅니다 — 낡은 페이지가 먼저 밀립니다.",
+      "숫자와 갱신일을 주기적으로 손봅니다. 낡은 페이지가 먼저 밀립니다.",
       "이 질문의 파생 질문으로 같은 페이지의 H2를 늘립니다."],
     deliver: ["함께 인용된 곳에는 있고 우리에게 없는 구간 목록",
               "주기적으로 갱신할 숫자·날짜 항목",
@@ -429,7 +429,7 @@ function AI_play(r) {
 function AI_rival(doms) {
   let top = "", n = 0;
   for (const dm of doms) if ((AI_SHARE_N[dm] || 0) > n) { n = AI_SHARE_N[dm]; top = dm; }
-  return n >= 2 ? `<p class="aiq-note">${esc(top)} 이(가) 이 질문에서 계속 인용됩니다 —
+  return n >= 2 ? `<p class="aiq-note">${esc(top)} 이(가) 이 질문에서 계속 인용됩니다.
     확인한 답변 중 ${n}건에서 인용됐습니다.</p>` : "";
 }
 
@@ -442,8 +442,8 @@ function AI_detail(r, doms) {
   const url = pages.length ? pages[0].page : "";
   // 이 표가 비는 이유는 늘 같다: query_pages 는 GSC 검색어로만 키가 잡히는데 AI 질문은
   // 문장이라 검색어 목록에 그대로 있는 일이 드물다. 빈 표를 그리는 대신 그렇다고 말한다.
-  const note = pages.length ? "" : `<p class="detn">이 질문으로 걸린 내 페이지가 스냅샷에
-    없습니다 — AI 질문은 문장이라 구글 검색어 목록에 그대로 잡히는 일이 드뭅니다.</p>`;
+  const note = pages.length ? "" : `<p class="detn">이 질문으로 걸린 내 페이지가 구글
+    실적에 없습니다. AI 질문은 문장이라 검색어 목록에 그대로 잡히는 일이 드뭅니다.</p>`;
   // 프롬프트에는 "이 질문에 답하는 글을 써라"가 목적이라, 페이지가 없어도 낼 수 있다.
   const ask = askBlock({
     url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts: p.acts, deliver: p.deliver,
@@ -495,16 +495,44 @@ function AI_row(r) {
 /* 채워진 화면에도 다음 한 걸음을 준다 — 지금까지 다음 명령은 빈 화면에만 있었고,
    질문이 채워지고 나면 안 잡힌 질문을 세어 놓고도 넘길 자리가 없었다.
    세는 것은 기회가 붙은 질문 수다 — /create plan 이 실제로 집어 가는 것이 그것이라,
-   화면의 "안 잡힘" 눈금(인용도 언급도 없음)으로 세면 언급만 된 질문을 빠뜨린다. */
+   화면의 "안 잡힘" 눈금(인용도 언급도 없음)으로 세면 언급만 된 질문을 빠뜨린다.
+   넘기는 자리는 배포마다 다르다: 로컬은 채팅에 붙여넣는 명령, 웹에는 붙여넣을
+   채팅이 없어 기회 목록을 든 화면으로 보낸다. */
 function AI_handoff() {
   const n = AI_ROWS.filter(r => oppOf(r.prompt)).length;
   if (!n) return "";
-  return `<p class="sub" style="margin:0 0 12px">한 번도 인용되지 않은 질문 <b>${n}개</b>가
-    그대로 다음 글의 주제입니다 — 아래를 Claude Code 에 붙여넣으면 이 질문들을 기회
-    목록에서 집어 무엇부터 쓸지 계획을 세웁니다.
-    <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
-      onkeydown="if(event.key==='Enter'||event.key===' ')
-        {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span></p>`;
+  return `<p class="sub" style="margin:0 0 12px">한 번도 인용되지 않은 질문
+    <b>${n}개</b>가 그대로 다음 글의 주제입니다. ${W(
+      `아래를 채팅에 붙여넣으면 무엇부터 쓸지 계획을 세웁니다.
+      <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' ')
+          {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`,
+      `${window.go("overview")} 화면의 기회 목록에 점수 순으로 올라와 있습니다.`)}</p>`;
+}
+
+/* ── 다음 한 걸음: 화면 머리 아래 띠 한 줄. 이 화면의 상태는 셋이고 문장도 셋이다 —
+      질문이 없다 / 질문은 있는데 아직 안 물어봤다 / 확인이 끝났다. 띠와 버튼은
+      셸이 갖는다(nextStep·act). 아직 안 선 배포에서는 그냥 건너뛴다.
+      질문 만들기만 배포가 갈린다: 로컬은 명령, 웹은 애드온이 핸들러를 거는 버튼이라
+      act() 로 뽑으면 서버에 없는 단계를 부른다. */
+function AI_nextStep(d, has, missN) {
+  if (!window.nextStep || !window.act) return;
+  const pr = d.progress || {};
+  const put = (t, acts) =>
+    window.nextStep("ai", `<p>${t}</p><div class="acts">${acts}</div>`);
+  if (!has && !pr.ai_prompts)
+    return put("AI에 물어볼 질문이 아직 없습니다. 질문을 만들어야 인용을 확인할 수 있습니다.",
+      W(window.act("add", "질문 만들기"),
+        `<button class="go" data-sm-act="make-prompts">질문 만들기</button>`));
+  if (!has)
+    return put(`질문 ${num(pr.ai_prompts)}개가 준비됐습니다. 한 번 확인하면 어느 질문에서
+      지고 있는지 보입니다.`, window.act("ai", "인용 확인"));
+  if (missN)
+    return put(`한 번도 인용되지 않은 질문 ${num(missN)}개가 다음 글의 주제입니다.
+      답변은 매번 달라지므로 한 번 더 확인해 평균으로 읽으세요.`,
+      window.act("ai", "인용 다시 확인") + window.act("gaps", "기회 다시 계산", false));
+  return put("확인한 질문 전부에서 인용되고 있습니다. 지키는 자리라 주기적으로 다시 확인하세요.",
+    window.act("ai", "인용 다시 확인"));
 }
 
 function AI_render() {
@@ -534,14 +562,15 @@ function AI_list() {
   $("ai-n").textContent = list.length === AI_ROWS.length
     ? `${AI_ROWS.length}개` : `${list.length}개 / 전체 ${AI_ROWS.length}개`;
   if (!list.length)
-    return $("ai-plist").innerHTML = `<div class="empty">거른 조건에 맞는 질문이 없습니다.
+    return $("ai-plist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 질문이
+      없습니다.</b>
       <div class="acts"><button onclick="AI_reset()">필터 지우기</button></div></div>`;
   $("ai-plist").innerHTML = table(
     [">점수?인용이 0인 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
      "질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
      ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
-     ">응답?질문 × 엔진 × 샘플 — 이 질문에 실제로 받은 답변 수",
+     ">응답?질문 × 엔진 × 샘플. 이 질문에 실제로 받은 답변 수",
      "대신 인용된 곳?우리가 인용되지 않은 응답에서 대신 인용된 도메인"],
     list.map(AI_row));
 }
@@ -573,7 +602,7 @@ function AI_vsRow(r) {
   const pages = (window.QUERY_PAGES || {})[r.query] || [];
   const url = pages.length ? pages[0].page : "";
   const note = pages.length ? "" : `<p class="detn">이 검색어로 걸린 내 페이지가
-    스냅샷에 없습니다.</p>`;
+    구글 실적에 없습니다.</p>`;
   const acts = ["이 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2를 얹습니다.",
     "그 밑에 숫자·출처·갱신일이 들어간 직답 2~3문장을 붙입니다."];
   const deliver = ["질문 그대로를 쓴 H2 와 그 아래 직답 문안",
@@ -602,23 +631,29 @@ function AI_vsRow(r) {
 
 function AI_vsSearch(x, gscDate) {
   const rows = x.rows || [];
-  if (!gscDate) return ["검색 순위와 AI 인용을 한 줄에 놓는 표입니다.",
-    `<div class="empty"><b>구글 서치 콘솔을 아직 안 캤습니다.</b> 우리가 검색에서
-      몇 위인지를 모르면 AI와 견줄 왼쪽 축이 없습니다.${W(AI_gscCmd(),
-      " 화면 머리의 [실적 다시 수집]을 누르면 채워집니다.")}</div>`];
-  if (!x.top_queries) return ["검색 순위와 AI 인용을 한 줄에 놓는 표입니다.",
-    `<div class="empty">서치 콘솔은 읽었는데 <b>평균순위 ${RULES.page1 || 10}위 안에
-      든 검색어가 아직 없습니다.</b> 검색에서 이기는 자리가 하나라도 생기면,
-      그 주제를 AI가 어떻게 다루는지 여기서 바로 견줍니다.</div>`];
-  if (!rows.length) return ["검색 순위와 AI 인용을 한 줄에 놓는 표입니다.",
-    `<div class="empty">상위 검색어 <b>${x.top_queries}개</b>와 낱말이 겹치는 미인용
-      질문이 없습니다 — 지금 검색에서 이기는 주제와 AI에 물어본 질문이 서로 다른
-      얘기를 하고 있다는 뜻입니다. 상위 검색어를 그대로 질문으로 만들어 물어보면
-      이 표가 채워집니다.</div>`];
+  const lead = "검색 순위와 AI 인용을 한 줄에 놓는 표입니다.";
+  if (!gscDate) return [lead,
+    `<div class="empty"><b>구글 실적을 아직 수집하지 않았습니다.</b>
+      <p>우리가 검색에서 몇 위인지를 모르면 AI와 견줄 왼쪽 축이 없습니다.</p>
+      ${READONLY ? "" : window.act
+        ? `<div class="acts">${window.act("gsc", "실적 수집", false)}</div>`
+        : W(AI_gscCmd(), `<p class="detn">화면 머리의 [실적 다시 수집]을 누르면
+            채워집니다.</p>`)}</div>`];
+  if (!x.top_queries) return [lead,
+    `<div class="empty"><b>평균순위 ${RULES.page1 || 10}위 안에 든 검색어가 아직
+      없습니다.</b>
+      <p>검색에서 이기는 자리가 하나라도 생기면 그 주제를 AI가 어떻게 다루는지
+        여기서 바로 견줍니다.</p></div>`];
+  if (!rows.length) return [lead,
+    `<div class="empty"><b>상위 검색어 ${x.top_queries}개와 낱말이 겹치는 미인용 질문이
+      없습니다.</b>
+      <p>지금 검색에서 이기는 주제와 AI에 물어본 질문이 서로 다른 얘기를 하고 있다는
+        뜻입니다. 상위 검색어를 그대로 질문으로 만들어 물어보면 이 표가 채워집니다.</p>
+      </div>`];
   const sub = `구글에서는 우리가 위인 주제인데 AI 답변에서는 한 번도 인용되지 않은
     질문 <b>${rows.length}개</b>입니다. 순위가 모자란 게 아니라 <b>인용될 모양</b>이
-    아니라는 뜻입니다 — 새 글을 쓰기 전에, 그 검색어로 이미 걸린 페이지에 질문 문장
-    그대로의 H2와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다.`;
+    아니라는 뜻입니다. 새 글을 쓰기 전에 그 검색어로 이미 걸린 페이지에 질문 문장
+    그대로의 H2와 숫자·출처·갱신일을 얹으세요. 이 화면에서 가장 싼 손질입니다.`;
   return [sub, table(
     ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
      "겹치는 내 검색어?이 질문과 낱말이 겹치는 검색어 중 우리가 상위인 것",
@@ -632,23 +667,27 @@ function AI_outranked(o) {
   const rows = o.rows || [];
   const sub = "AI가 인용해 가는 곳 중, 검색에서는 우리가 위인 경쟁사입니다.";
   if (!o.competitors) return [sub,
-    `<div class="empty"><b>경쟁사가 아직 등록돼 있지 않습니다.</b> 누가 경쟁사인지를
-      알아야 "AI가 인용하는 저 도메인이 우리가 이미 이기는 상대"라고 말할 수
-      있습니다 — ${window.go("competitors")} 화면에서 등록합니다.</div>`];
+    `<div class="empty"><b>경쟁사가 아직 등록돼 있지 않습니다.</b>
+      <p>누가 경쟁사인지를 알아야 "AI가 인용하는 저 도메인이 우리가 이미 이기는
+        상대"라고 말할 수 있습니다.</p>
+      <div class="acts">${window.go("competitors", "경쟁 분석 화면 열기")}</div></div>`];
   if (!o.gap_date) return [sub,
-    `<div class="empty">경쟁사 <b>${o.competitors}곳</b>은 등록됐는데 <b>경쟁 검색어를
-      아직 안 캤습니다</b> — 검색에서 누가 위인지 견줄 데이터가 그것입니다.
-      ${window.go("competitors")} 화면의 경쟁사 수집이 그 자리입니다.</div>`];
+    `<div class="empty"><b>경쟁사 ${o.competitors}곳은 등록됐는데 경쟁 검색어를 아직
+      수집하지 않았습니다.</b>
+      <p>검색에서 누가 위인지 견줄 데이터가 그것입니다.</p>
+      <div class="acts">${window.go("competitors", "경쟁 분석 화면 열기")}</div></div>`];
   if (!o.cited) return [sub,
-    `<div class="empty">등록된 경쟁사 <b>${o.competitors}곳</b> 중 이번 확인에서
-      AI가 인용한 곳은 없습니다 — 우리 자리를 가져가는 것은 위 [우리 대신 인용되는
-      곳]의 도메인들이고, 그중 경쟁사로 등록할 만한 곳이 있는지 보세요.</div>`];
+    `<div class="empty"><b>등록된 경쟁사 ${o.competitors}곳 중 이번 확인에서 AI가
+      인용한 곳은 없습니다.</b>
+      <p>우리 자리를 가져가는 것은 위 [우리 대신 인용되는 곳]의 도메인들입니다.
+        그중 경쟁사로 등록할 만한 곳이 있는지 보세요.</p></div>`];
   if (!rows.length) return [sub,
-    `<div class="empty">AI가 인용하는 경쟁사 <b>${o.cited}곳</b>은 있는데, 그중
-      <b>검색에서 우리가 위인 검색어를 가진 곳은 없습니다</b> — 지금은 AI만이 아니라
-      검색에서도 밀리고 있다는 뜻입니다. 순위부터 올릴 자리입니다.</div>`];
+    `<div class="empty"><b>AI가 인용하는 경쟁사 ${o.cited}곳 중 검색에서 우리가 위인
+      검색어를 가진 곳은 없습니다.</b>
+      <p>지금은 AI만이 아니라 검색에서도 밀리고 있다는 뜻입니다. 순위부터 올릴
+        자리입니다.</p></div>`];
   return [`${sub} 순위를 더 올릴 게 아니라 <b>그 페이지가 인용될 모양인지</b>를 봐야
-    하는 자리입니다 — 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·
+    하는 자리입니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·
     비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다.`,
     table(["도메인?AI 답변에서 인용된 경쟁사",
       ">AI 인용?이번 확인에서 그 도메인이 인용된 답변 수",
@@ -679,43 +718,31 @@ function AI_outranked(o) {
 function AI_emptyState(d) {
   const nm = esc(AI_NM);
   const pr = d.progress || {};
-  const hosted = !!window.SM_HOSTED;   // 호스팅 애드온이 세우는 표식
-  const key = hosted
-    ? `<b>OpenRouter 키는 서버가 댑니다</b> — 따로 발급하거나 넣으실 것은 없습니다.`
-    : `돌리려면 <b>OpenRouter 키</b>가 하나 필요합니다 —
-    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
-      >openrouter.ai/keys</a>에서 발급해 ${window.go("settings")}의 <b>4. API 키</b> 칸에
-    붙여넣으면 됩니다.`;
-  // 물어보는 법. 호스팅에서는 아래 W() 가 이 블록을 통째로 한 줄로 갈아 끼우므로
-  // 여기 명령 칩은 로컬 몫이다 — 웹에서는 화면 위의 실행 버튼이 그 자리다.
-  const ask = `<div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
-        onkeydown="if(event.key==='Enter'||event.key===' ')
-          {event.preventDefault();copyCmd(this)}">/capture ai ${nm}</div>`;
-  // 아래 첫 갈래(질문 0개)의 복사 칩은 양쪽 다 남긴다 — 호스팅 등록은 질문을 심지
-  // 않으므로 웹에 경로가 없고, 그 칩이 플러그인으로 건너가는 인계 지점이다.
-  // 질문을 만드는 길이 배포마다 다르다. 로컬은 채팅에 명령을 붙여넣고, 웹에는
-  // 붙여넣을 채팅이 없다 — 그래서 여기 버튼이 그 자리다(핸들러는 애드온이 건다).
-  // 웹에 복사칩만 두던 시절엔 눌러도 아무 일이 없어 버튼이 죽은 것처럼 보였다.
-  const mk = `<div class="acts" style="margin-top:11px">
-        <button class="go" data-sm-act="make-prompts">질문 만들기</button></div>
-      <p class="sub" style="margin-top:7px">이 사이트의 업종·검색어를 보고 20개를
-        지어 드립니다. 만들기만 하고 인용 확인은 따로 누르셔야 합니다.</p>`;
+  // 비용은 결제 벽이 아니라 눈금이다 — 무엇이 얼마나 나가는지만 한 줄로 말한다.
+  // 키가 누구 몫인지도 같은 줄에 붙인다: 상자를 문단으로 채우면 아무도 안 읽는다.
+  const cost = `<p class="detn">확인 1회는 질문마다 엔진 3곳에 요청이 나갑니다. ${W(
+    `<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
+       >openrouter.ai/keys</a>에서 받은 OpenRouter 키를 ${window.go("settings")}에
+     넣어 두셔야 합니다.`,
+    "키는 서버가 대므로 따로 넣으실 것은 없습니다.")}</p>`;
+  // 행동은 화면 머리의 띠가 갖는다 — 같은 버튼을 250px 안에 두 번 두지 않는다.
+  // 띠가 없는 배포(셸이 nextStep 을 안 세운 경우)에서만 여기로 물러선다.
+  const act1 = (stage, chip) => READONLY || window.nextStep ? ""
+    : W(`<div class="acts"><div class="cmd" role="button" tabindex="0"
+           onclick="copyCmd(this)" onkeydown="if(event.key==='Enter'||event.key===' ')
+             {event.preventDefault();copyCmd(this)}">/capture ${stage} ${nm}</div></div>`,
+        chip);
   return pr.ai_prompts === 0
     ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
-        이 화면은 chatgpt·perplexity·gemini에 같은 질문을 던져 <b>누가 인용되는지</b>를
-        셉니다 — 질문 목록이 그 재료입니다.<br>
-        ${W(`아래를 채팅에 붙여넣으시면 이 사이트에 맞는 질문 10~30개를 만들어 드립니다.
-        <div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
-          onkeydown="if(event.key==='Enter'||event.key===' ')
-            {event.preventDefault();copyCmd(this)}">/capture add ${nm}</div>`, mk)}
-        <div style="margin-top:11px">${key}</div></div>`
-    : `<div class="empty">${W(
-        `<b>질문${pr.ai_prompts ? ` ${pr.ai_prompts}개` : ""}는
-        준비됐는데 아직 안 물어봤습니다.</b>
-        한 번 확인하면 이 화면이 채워집니다 — 질문 × 엔진 3곳 × 샘플만큼 요청이 나갑니다.
-        <div style="margin-top:9px">${key}</div>${ask}`,
-        "AI 인용을 아직 확인하지 않았습니다 — 이 화면의 [AI 인용 다시 확인]을 " +
-        "누르면 채워집니다.")}</div>`;
+        <p>질문을 채우면 chatgpt·perplexity·gemini가 그 질문에 누구를 인용하는지
+          세어 보여 줍니다.</p>
+        ${act1("add",
+          `<div class="acts"><button class="go sec"
+             data-sm-act="make-prompts">질문 만들기</button></div>`)}</div>`
+    : `<div class="empty"><b>질문 ${num(pr.ai_prompts)}개를 아직 물어보지 않았습니다.</b>
+        <p>확인을 돌리면 질문마다 어느 엔진이 우리를 인용했는지, 안 했다면 우리 자리에
+          누가 인용됐는지가 남습니다.</p>
+        ${act1("ai", "")}${cost}</div>`;
 }
 
 VIEW("ai", function (d) {
@@ -726,6 +753,8 @@ VIEW("ai", function (d) {
                     "ai-vs-search", "ai-outranked"])
     $(id).hidden = true;
   $("ai-band").hidden = !has;
+  // 띠가 먼저다 — 빈 상태는 띠가 섰는지를 보고 자기 행동을 낼지 정한다.
+  if (!has) AI_nextStep(d, false, 0);
   $("ai-empty").innerHTML = has ? "" : AI_emptyState(d);
   $("ai-trend").innerHTML = "";
   if (!has) {
@@ -761,10 +790,11 @@ VIEW("ai", function (d) {
   const missN = byPrompt.length
     ? byPrompt.filter(r => !r.cited && !r.mentioned).length
     : (d.missed || []).length;
+  AI_nextStep(d, true, missN);
 
   $("ai-sub").innerHTML = `<b>${esc(engines.join(" · "))}</b>${
-    when ? ` · ${esc(when)} 확인` : ""} — 받은 답변 <b>${num(tot.total)}건</b> 기준입니다.
-    답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 <b>표본</b>입니다 —
+    when ? ` · ${esc(when)} 확인` : ""}. 받은 답변 <b>${num(tot.total)}건</b> 기준입니다.
+    답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 <b>표본</b>입니다.
     같은 질문을 여러 번 물어 평균으로 읽으세요.`;
 
   $("ai-band").innerHTML = [
@@ -782,8 +812,9 @@ VIEW("ai", function (d) {
     <div class="l">${esc(l)}</div><div class="b">${b}</div></div>`).join("");
 
   if (at.length >= 2) $("ai-trend").innerHTML = AI_trendChart(at);
-  else $("ai-trend").innerHTML = `<div class="empty">확인이 아직 1회뿐이라 추이가 없습니다 —
-    한 번 더 확인하면 인용률이 오르는지 내리는지 여기에 선으로 남습니다.</div>`;
+  else $("ai-trend").innerHTML = `<div class="empty"><b>확인이 아직 1회뿐이라 추이가
+    없습니다.</b><p>한 번 더 확인하면 인용률이 오르는지 내리는지 여기에 선으로
+    남습니다.</p></div>`;
 
   // ── 인용 점유
   if (share.length || (sameScale && ours && tot.cited)) {
@@ -792,10 +823,10 @@ VIEW("ai", function (d) {
       ? `<b>우리가 인용되지 않은 답변</b>에서 대신 인용된 도메인입니다. 이 기록에는
          우리 인용 수를 같은 자로 잴 값이 없어 나란히 놓지 않았습니다.`
       : tot.cited
-      ? `한 도메인이 <b>인용된 답변 수</b>입니다 — 우리 도메인도 같은 자로 쟀습니다.
+      ? `한 도메인이 <b>인용된 답변 수</b>입니다. 우리 도메인도 같은 자로 쟀습니다.
          우리 위에 있는 곳이 그 질문에서 우리가 차지했어야 할 자리입니다.`
       : `한 도메인이 <b>인용된 답변 수</b>입니다. 우리 도메인은 아직 한 번도 인용되지
-         않아 이 목록에 없습니다 — 아래 질문별 결과에서 어떤 답변이 오갔는지 보세요.`;
+         않아 이 목록에 없습니다. 아래 질문별 결과에서 어떤 답변이 오갔는지 보세요.`;
     const shareRows = AI_shareRows(share, ours, tot.cited);
     $("ai-donut").innerHTML = sameScale ? AI_donut(shareRows) : "";
     $("ai-share").innerHTML = AI_shareBars(shareRows);
@@ -807,7 +838,7 @@ VIEW("ai", function (d) {
   $("ai-matrix").innerHTML = table(
     ["엔진", "카테고리", ">인용?그 조합에서 우리 도메인이 인용된 답변 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 답변 수",
-     ">답변?질문 × 샘플 — 그 조합에서 실제로 받은 답변 수", ">인용률"],
+     ">답변?질문 × 샘플. 그 조합에서 실제로 받은 답변 수", ">인용률"],
     m.map(r => `<tr><td class="kwcell">${esc(r.engine)}</td>
       <td>${esc(r.category)}</td>
       <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
@@ -839,12 +870,12 @@ VIEW("ai", function (d) {
   } else if ((d.missed || []).length) {
     $("ai-miss-sec").hidden = false;
     $("ai-miss-sub").innerHTML = W(
-      `인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다. 아래를 Claude Code 에
+      `인용도 언급도 없던 질문입니다. 여기가 다음 글의 재료입니다. 아래를 채팅에
       붙여넣으면 이 질문들로 무엇부터 쓸지 계획을 세웁니다.
       <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
         onkeydown="if(event.key==='Enter'||event.key===' ')
           {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`,
-      "인용도 언급도 없던 질문입니다 — 여기가 다음 글의 재료입니다.");
+      "인용도 언급도 없던 질문입니다. 여기가 다음 글의 재료입니다.");
     $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
       d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
         <td class="kwcell">${esc(r.category || "")}</td>
