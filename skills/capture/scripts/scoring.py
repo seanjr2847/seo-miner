@@ -111,7 +111,7 @@ INTENT_NAVIGATIONAL = {
 }
 
 # 이 리포가 만드는 기회 종류 한 벌 — 화면의 KIND_LABEL·PLAY 와 짝이 맞아야 한다
-# (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). stage._check_seams 가
+# (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). test_seams 가
 # 이 튜플을 정규식으로 읽는다 — 리터럴 문자열 나열 그대로 둬야 한다(파생시키지 않는다).
 # 이름·순서의 정본은 여기다. 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래
 # KINDS 명부(_KIND_SPECS)가 이 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도
@@ -1005,7 +1005,7 @@ def _indexed(coverage_state: str | None) -> bool:
 # 색인 실패 원인 갈래 — _index_bucket() 반환값의 정본이자 손대는 순서(막힌 것 →
 # 못 가져온 것 → 대표 URL 엇갈림 → 그냥 색인 안 됨). site.html 의 ST_IX 가 갈래마다
 # 라벨·심각도·처방을 갖는다 — 이름이 늘거나 바뀌면 거기서도 고쳐야 한다.
-# stage._check_seams 가 이 튜플과 화면을 대조한다.
+# test_seams 가 이 튜플과 화면을 대조한다.
 INDEX_BUCKETS = ("robots_blocked", "fetch_error", "canonical_mismatch", "not_indexed")
 
 
@@ -1805,7 +1805,7 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
 # load() 는 이 명부를 순회할 뿐 kind 문자열을 직접 적지 않는다 — 명부에 없는 kind 는
 # 나올 수가 없다(구조적으로), 명부에 있는데 빠지는 kind 도 없다(전부 돈다).
 #
-# ALL_KINDS(위)가 이름·순서의 정본이다 — stage._check_seams 가 그 튜플을 정규식으로
+# ALL_KINDS(위)가 이름·순서의 정본이다 — test_seams 가 그 튜플을 정규식으로
 # 읽는다. KINDS 는 ALL_KINDS 를 그대로 따라가며 _KIND_SPECS 에서 나머지를 채운
 # 파생값이다(반대 방향이 아니라 이 방향인 이유: ALL_KINDS 가 문자열 리터럴 나열
 # 그대로여야 그 정규식이 계속 읽을 수 있다). DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
@@ -2255,7 +2255,7 @@ def load(project: str) -> None:
             rows.append({"kind": k.name, "target": k.target(r, ctx),
                          "score": score(k.name, k.metrics(r, ctx), ptype),
                          "reasoning": k.reasoning(r, ctx)})
-    with db.run(conn, pid, "analysis") as r:
+    with db.run(conn, pid, "gaps") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
     print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur}; "
@@ -3029,8 +3029,15 @@ def _selfcheck() -> None:
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "load":
         try:
+            import argparse
+
             import db
-            load(sys.argv[2])
+            import remote
+            # 원격 사이트면 서버가 gaps 단계를 돈다. 이 모듈은 argparse 를 안 쓰므로
+            # dispatch 가 읽는 두 이름만 세워 준다 (gaps 에는 노브가 없다).
+            if not remote.dispatch(argparse.Namespace(project=sys.argv[2], dry_run=False),
+                                   "gaps"):
+                load(sys.argv[2])
         except (db.ProjectNotFound, db.ProjectConfigNotFound) as e:
             sys.exit(str(e))
     else:

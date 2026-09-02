@@ -9,7 +9,8 @@ summary: 한 줄 요약 → 다음 한 걸음 → 사이트 → 기능(꺼진 �
 결과다 — 문구·발급 URL·버킷 라벨의 정본이 여기 한 벌이고, 산문 문서는 이 표를
 가리키기만 한다.
 
-Usage: python doctor.py [--json | --web | --selfcheck]
+Usage: python doctor.py [--json | --web | --selfcheck] [--project NAME]
+  --project: 그 사이트가 원격(호스팅)이면 서버가 진단하고 여기서는 그 결과만 그린다
   --web: 텍스트 대신 로컬 대시보드를 브라우저로 띄운다 (진단 배너 + 데이터 함께)
   --selfcheck: 명부가 데이터로 남아 있는지 assert 로 확인 (개수 산술 포함)
 Exit code: 0 = core usable, 1 = core setup incomplete.
@@ -29,6 +30,7 @@ CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
 import collect_gsc  # noqa: E402
 import db  # noqa: E402
+import remote  # noqa: E402
 import stage  # noqa: E402
 
 
@@ -225,7 +227,32 @@ def _drop_local_only(must: list, hosted: bool) -> list:
             if not (hosted and isinstance(m, dict) and m.get("id") in LOCAL_ONLY_MUST)]
 
 
-def diagnose() -> dict:
+def probe_keys() -> list[str]:
+    """유료 키가 **실제로 살아 있나** — 무료 호출 한 번씩. 사람이 읽을 한 줄씩 반환.
+
+    "키가 env 에 있다"와 "그 키로 살 수 있다"는 다른 말이다. 잔액 0 인 계정이
+    키를 다 갖고 있어서 doctor 는 "다 준비됐습니다"라고 했고, 자동 런은 402 를
+    100번 맞았다(8/30). 판정 함수의 정본은 수집기 쪽 하나다 — 여기서 다시 안 쓴다.
+
+    이 파일은 pip 이전에도 도는 자리라 requests 를 쓰는 모듈은 늦게 읽는다.
+    """
+    out: list[str] = []
+    try:
+        import collect_ai
+        import serp_adapter
+    except Exception:
+        return out          # 부품이 없으면 이 줄은 생략 — 진단 자체를 막지 않는다
+    if serp_adapter.has_dataforseo():
+        try:
+            out.append(f"DataForSEO 잔액 ${serp_adapter.dataforseo_balance():.2f}")
+        except Exception as e:
+            out.append(f"DataForSEO 잔액 확인 실패: {e}")
+    if serp_adapter.has_openrouter():
+        out.append(collect_ai.openrouter_ok()[1])
+    return out
+
+
+def diagnose(project: str = "", *, probe: bool = False) -> dict:
     db.load_env()   # 대시보드가 방금 저장한 키를 같은 프로세스에서도 집어 올린다
     # 호스팅이면 유료 키·pip 설치·구글 클라이언트 등록이 유저 몫이 아니다(서버가 댄다).
     # 표식은 settings.paid_keys() 가 세우고, 그 컨텍스트 안에서는 서버 키가 엔진 이름으로
@@ -257,6 +284,12 @@ def diagnose() -> dict:
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
+    # 호스팅 연결 — 웹을 먼저 쓰던 사람이 플러그인을 깔면 여기가 비어 있다. 자동으로는
+    # 못 붙는다(플러그인은 사용자가 누구인지 모른다 — 신원은 웹이 발급한 토큰뿐이다) — 웹
+    # [설정]의 "명령어로 연결하기" 한 줄이 유일한 경로다. 그래서 첫 진단이 그걸 묻는다.
+    rc = remote.config()
+    linked = {"linked": bool(rc), "url": (rc or {}).get("url", ""),
+              "projects": list((rc or {}).get("projects") or [])}
     # 구글 연결은 이제 **2단**이다: 인증 수단이 있나(gsc_auth) ≠ 실제로 붙었나(gsc_connected).
     # 플러그인이 OAuth 클라이언트를 동봉하면서 gsc_auth()는 **아무것도 안 한 사람에게도**
     # "oauth"를 답한다 — 파일 유무로 판정하면 doctor가 설치 직후 전원에게 "연결됨"이라고
@@ -275,7 +308,11 @@ def diagnose() -> dict:
     # 예전에는 projects[0](먼저 등록한 것)을 집어서, 사이트와 무관한 다른 리포에서
     # /setup 을 돌려도 늘 같은 사이트를 띄웠다 (사용자 신고).
     brain["repo_match"] = db.repo_project()
-    brain["picked"] = stage.pick_project(brain["projects"])
+    # 호출자가 사이트를 명시했으면 그것이 폴더 추론을 이긴다 — stage.setup_payload 와
+    # 같은 규칙이다(화면이 고른 것 > 이 폴더의 리포 > 하나뿐이면 그것 > 못 고름).
+    # 원격 CLI 는 `--project` 로 사이트를 대므로 여기서 다시 추측하면 안 된다.
+    brain["picked"] = (project if project in brain["projects"]
+                       else stage.pick_project(brain["projects"]))
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: gsc_conn for name in brain["projects"]}
@@ -359,14 +396,20 @@ def diagnose() -> dict:
             "cmd": "/create profile <이름>",
         })
     if core_ok and brain_ok and not brain["projects"]:
-        must.append({
-            "id": "first_project",
-            "msg": "사이트를 하나 등록하면 수집이 시작됩니다. 처음 화면에서 "
-                   "도메인과 검색어를 넣으세요." if hosted else
-                   "사이트를 하나 등록하면 수집이 시작됩니다. Claude 에게 사이트 "
-                   "등록을 부탁하시면 물어보면서 만들어 드립니다.",
-            "cmd": None if hosted else "/capture add <이름>",
-        })
+        # 보관함이 비었는데 호스팅에도 안 붙었다 — 웹을 먼저 쓰던 사람이면 등록을
+        # 다시 시키는 게 아니라 연결이 답이다. 한 번만 묻고, 아니면 로컬 등록으로 간다.
+        if hosted:
+            msg, cmd = ("사이트를 하나 등록하면 수집이 시작됩니다. 처음 화면에서 "
+                        "도메인과 검색어를 넣으세요."), None
+        elif linked["linked"]:
+            msg, cmd = ("사이트를 하나 등록하면 수집이 시작됩니다. Claude 에게 사이트 "
+                        "등록을 부탁하시면 물어보면서 만들어 드립니다."), "/capture add <이름>"
+        else:
+            msg, cmd = ("웹에서 이미 쓰고 계셨다면 등록을 다시 하실 필요가 없습니다. "
+                        "웹 [설정]의 '명령어로 연결하기'가 주는 한 줄을 그대로 붙이시면 "
+                        "등록해 둔 사이트가 여기서도 같은 명령으로 돌아갑니다. 처음이시면 "
+                        "Claude 에게 사이트 등록을 부탁하시면 물어보면서 만들어 드립니다."),                       "/capture add <이름>"
+        must.append({"id": "first_project", "msg": msg, "cmd": cmd})
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
     if core_ok and brain_ok and gsc_pending:
@@ -515,6 +558,7 @@ def diagnose() -> dict:
     # show_setup 판정이 읽으므로 이름만 남겨 둔다 — 지금은 must 와 같은 값이다.
     must_other = list(must)
     return {"deps_core": deps_core, "deps_gsc": deps_gsc, "brain": brain,
+            "remote": linked,   # 호스팅 연결 — remote.config() 를 그대로 렌더한 것
             "keys": keys, "gsc_sites": gsc_sites, "gsc_legacy": gsc_legacy,
             "gsc_mode": gsc_mode,   # "oauth" | "service_account" | "" (db.gsc_auth)
             # gsc_mode는 남긴다 — 대시보드가 이 JSON을 먹으므로 기존 키를 없애면 화면이 깨진다.
@@ -522,6 +566,8 @@ def diagnose() -> dict:
             "gsc_bundled": gsc_bundled,   # 번들 클라이언트로 로그인하는 중인가
             "gsc_missing_scopes": gsc_missing,   # 연결된 토큰에 없는 SCOPES (보통 GA4)
             "capabilities": {f"{c['name']} — {c['desc']}": c["on"] for c in readiness},
+            # 키가 살아 있나 (probe=True 일 때만 — 네트워크를 탄다)
+            "key_status": probe_keys() if probe else [],
             # owner/blocking 도 같이 실어 보낸다 — 화면(setup_payload)이 "이건 누구
             # 할 일인가"를 문구에서 되짚지 않고 축으로 판단한다.
             "locked": [{"name": c["name"], "desc": c["desc"], "fix": c["fix"],
@@ -594,6 +640,9 @@ def render(d: dict) -> None:
         print(f"\n지금 되는 것: {' · '.join(caps_on)}")
     else:
         print(f"\n지금 되는 것: 아직 없습니다. 아래 [{BUCKET_MUST}]만 하면 켜집니다.")
+    if d.get("key_status"):
+        # "키가 있다"가 아니라 "그 키로 살 수 있다" — 잔액 0 은 여기서 드러난다.
+        print("유료 키 상태: " + " · ".join(d["key_status"]))
     # 모수는 위임 스킬 **전체**(필수+선택)다 — 산문도 install_skills 도 같은 8을 센다.
     m_skills = {**d.get("marketing_skills", {}), **d.get("marketing_optional", {})}
     if m_skills:
@@ -623,6 +672,11 @@ def render(d: dict) -> None:
             print(f"  · {s2}")
 
     print(f"\n자료 폴더: {d['brain']['home']}")
+    r = d.get("remote") or {}
+    if r.get("linked"):
+        print(f"호스팅 연결: {r['url']} (웹에 등록된 사이트 {len(r['projects'])}개)")
+    else:
+        print("호스팅 연결: 없음 — 이 컴퓨터의 보관함만 씁니다")
 
 
 def _must_prose() -> list[str]:
@@ -755,6 +809,31 @@ def _selfcheck() -> None:
         os.environ.pop(HOSTED_ENV, None) if _saved is None \
             else os.environ.__setitem__(HOSTED_ENV, _saved)
 
+    # 호스팅 연결 판정 — 빈 보관함 + 연결 없음이면 첫 항목이 웹 연결을 묻고,
+    # 연결돼 있으면 묻지 않는다. 진짜 home 을 안 건드리려고 임시 CAPTURE_HOME 을 쓴다.
+    import tempfile
+    _keep = {k: os.environ.get(k) for k in ("CAPTURE_HOME", "CAPTURE_DB")}
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.environ["CAPTURE_HOME"] = tmp
+            os.environ.pop("CAPTURE_DB", None)
+            e = diagnose()
+            assert e["remote"] == {"linked": False, "url": "", "projects": []}, e["remote"]
+            first = next((m for m in e["must"] if m["id"] == "first_project"), None)
+            if first:   # core 부품이 없으면 이 항목 자체가 안 뜬다 — 그건 여기 관심사가 아니다
+                assert "명령어로 연결하기" in first["msg"], first["msg"]
+            remote._save({"url": "https://h.example", "token": "smt_x",
+                          "projects": ["a", "b"]})
+            e = diagnose()
+            assert e["remote"] == {"linked": True, "url": "https://h.example",
+                                   "projects": ["a", "b"]}, e["remote"]
+            first = next((m for m in e["must"] if m["id"] == "first_project"), None)
+            if first:
+                assert "명령어로 연결하기" not in first["msg"], first["msg"]
+        finally:
+            for k, v in _keep.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
     # 개수 산술 — install_skills 의 모수와 명부가 같아야 한다.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import install_skills
@@ -768,11 +847,33 @@ def _selfcheck() -> None:
           f"{len(OPTIONAL_SKILLS)}) · 버킷 [{BUCKET_MUST}] / {BUCKET_LATER}")
 
 
+def _arg(flag: str) -> str:
+    """`--flag VALUE` 하나를 꺼낸다 — doctor 는 argparse 를 안 쓴다(플래그가 몇 개뿐)."""
+    a = sys.argv
+    return a[a.index(flag) + 1] if flag in a[:-1] else ""
+
+
 def main() -> None:
     if "--selfcheck" in sys.argv:
         _selfcheck()
         return
-    d = diagnose()
+    project = _arg("--project")
+    # --web 은 화면을 띄우는 명령이라 여기서 가로채지 않는다 — 텍스트 진단만 넘긴다.
+    if project and "--web" not in sys.argv and remote.owns(project):
+        # 서버가 자기 env(유료 키 포함) 안에서 진단한다 — 로컬 키 유무로 거짓
+        # 판정하지 않으려는 것. 렌더러는 아래 render() 한 벌뿐이다.
+        d = remote.api("GET", "/api/doctor", params={"project": project})
+        if "capabilities" not in d:
+            sys.exit("원격 /api/doctor 가 진단 페이로드(doctor.diagnose)가 아닌 것을 "
+                     "돌려줬습니다 — 서버 라우트를 확인하세요.")
+        if "--json" in sys.argv:
+            print(json.dumps(d, ensure_ascii=False, indent=2))
+        else:
+            render(d)
+        sys.exit(0 if d.get("core_ok") and d.get("brain_ok") else 1)
+    # 잔액·키 확인은 네트워크를 탄다 — 화면(--web)과 기계용(--json)은 즉답이
+    # 생명이라 텍스트 진단에서만 묻는다 (둘 다 무료 호출이지만 공짜는 아니다: 시간).
+    d = diagnose(probe=not {"--web", "--json"} & set(sys.argv))
     if "--web" in sys.argv:
         # 대시보드(capture 스킬)가 /api/doctor로 이 진단을 배너로 보여준다.
         import subprocess

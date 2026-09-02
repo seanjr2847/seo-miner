@@ -28,7 +28,7 @@
 이 리포의 버그 상당수는 **파일 하나만 보면 어느 쪽도 멀쩡한** 종류다. 사이트 링크는
 정상적인 링크였고 대시보드는 정상적으로 hash 를 읽었다. 어긋난 건 둘 사이다.
 
-새 이음매를 만들면 `stage._check_seams` 에 못 박는다. 지금 지키는 것:
+새 이음매를 만들면 `test_seams.py` 에 못 박는다. 지금 지키는 것:
 
 1. 화면 id 는 페이로드에서 온다 (렌더된 글자를 정규식으로 되짚지 않는다)
 2. 화면 목록의 정본은 뷰의 `view-def` 다 (`dash.html` 은 사본을 안 갖는다)
@@ -41,6 +41,10 @@
 8. 기회 종류는 한 벌이다 — 만드는 쪽(`scoring.ALL_KINDS`)과 말하는 쪽(셸의
    `KIND_LABEL`·`PLAY`)을 양방향으로 대조한다
 9. 화면이 부르는 `/capture X` 가 그 화면 `view-def` 의 `stages` 안에 있다
+10. 원격 클라이언트(`remote.py` 와 그 `api()`/`fetch()` 를 쓰는 진입점)가 부르는
+    `/api/*` 가 호스팅 서버에 전부 있다
+11. 수집기가 전부 `collector.cli`(=`remote.dispatch` 를 통과하는 진입점)를 쓰고,
+    넘기는 단계 이름이 그 모듈이 맡은 단계와 같다 (정본은 `run_all.STAGES`)
 
 검사를 추가했으면 **일부러 깨서 FAIL 나는 것까지 확인**한다. 안 그러면 통과하는
 검사가 아니라 아무것도 안 보는 검사가 된다.
@@ -66,7 +70,14 @@
 정본을 **가리키기만** 한다 — `run_all.py` 의 단계표, `doctor.py` 의
 `CAPABILITIES`/`ALL_SKILLS`, 뷰의 `view-def`.
 
-## 릴리스는 세 다리다
+## 릴리스는 세 다리다 (그 앞에 0번 다리가 있다)
+
+**0. push 전에 `python run_checks.py remote`.** 호스팅에 런이 돌고 있으면 push 하지
+않는다 — main push 가 Railway 재배포를 일으키고, 워커는 subprocess 라 컨테이너와
+함께 죽는다(실제로 돌던 런 하나를 그렇게 죽였다). 마지막 런에 실패 단계가 있으면
+그것부터 본다 — 자동 런 3회(8/30·9/1·9/2)에서 유료 단계가 통째로 실패한 채
+`runs.notes` 에 `errors=100` 만 남아 있었고, 로컬 226개는 그동안 전부 초록이었다.
+자세한 이유는 `docs/adr/0002-hosted-run-result-is-a-release-gate.md`.
 
 `.claude-plugin/plugin.json` version 범프 → push → 설치 캐시 갱신.
 자세한 이유는 `docs/adr/0001-plugin-version-is-install-cache-signal.md`.
@@ -78,9 +89,16 @@ claude plugin update seo-miner@seo-miner     # 풀네임 필수
 
 `server/` 만 바뀌었으면 플러그인 갱신은 필요 없다 — 반영은 Railway 자동 배포다.
 
+거꾸로, **문서만 바뀐 push 는 재배포를 일으키지 않는다** — `railway.json` 의
+`build.watchPatterns` 가 서버가 실제로 쓰는 경로(`server/**`, `skills/capture/**`,
+`skills/setup/**`, `requirements*.txt`, `railway.json`)만 본다. 재배포는 컨테이너를
+갈아치우고 그건 도는 수집을 죽이기 때문이다(회수는 `store.reclaim_dead_runs`).
+서버가 새로 읽는 경로가 생기면 그 목록에 넣어야 한다 — 안 넣으면 고쳐도 안 나간다.
+
 ## 검사
 
 ```
 python run_checks.py            # 전부
 python run_checks.py render     # 화면만
+python run_checks.py remote     # 호스팅 런만 (원격 미연결이면 건너뜀)
 ```

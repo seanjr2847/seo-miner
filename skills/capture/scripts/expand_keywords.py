@@ -196,13 +196,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run,
-                mode=a.mode,
-                per_seed_cap=a.per_seed_cap,
-                throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("keywords")
 
 
 if __name__ == "__main__":

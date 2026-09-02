@@ -365,7 +365,13 @@ async function load() {
   $("ptool").hidden = true;
   try {
     const r = await fetch("/api/properties");
-    if (!r.ok) throw new Error(r.status);
+    // 서버는 이유를 detail 에 담아 보낸다(미연결·스코프 부족·일시 실패). 그걸 버리고
+    // "권한이 있는지 확인해 주세요"로 뭉개면, 재로그인 한 번이면 끝날 일을 사용자가
+    // 서치콘솔 권한 화면에서 찾아 헤맨다 — 실제로 그랬다.
+    if (!r.ok) {
+      const d = await r.json().catch(() => null);
+      throw new Error((d && d.detail) || "");
+    }
     const { properties } = await r.json();
     if (!properties.length) {
       note(box, "warn", "서치콘솔에 등록된 사이트가 없습니다",
@@ -422,7 +428,14 @@ async function load() {
     }
     sync();
   } catch (e) {
+    // 서버가 detail 에 담아 보낸 이유가 있으면 그것이 가장 정확하다 — 502 로 죽은 것을
+    // "권한을 확인하라"고 뭉개면, 재로그인 한 번이면 끝날 일을 사용자가 서치콘솔
+    // 권한 화면에서 찾아 헤맨다. 이유가 안 왔을 때만 흔한 원인을 추측해서 말한다.
+    // 단, fetch 가 네트워크로 실패하면 브라우저가 TypeError("Failed to fetch")를 던진다 —
+    // 그건 서버가 준 이유가 아니라 브라우저의 영어 문장이라 한국어 화면에 못 내보낸다.
+    // 위에서 우리가 던지는 것은 Error 라 TypeError 가 아니다. 그 하나로 갈린다.
     note(box, "warn", "서치콘솔 사이트 목록을 가져오지 못했습니다",
+      (e instanceof TypeError ? "" : esc(e.message)) ||
       "로그인한 구글 계정에 서치콘솔 권한이 없거나, 연결이 끊겼습니다. " +
       "계정을 잘못 골랐다면 로그아웃한 뒤 다시 로그인하십시오.", "", true);
   }

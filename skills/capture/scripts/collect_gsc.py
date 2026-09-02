@@ -340,14 +340,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    try:
-        a = _parser().parse_args()
-        r = collect(a.project, dry_run=a.dry_run, row_limit=a.row_limit,
-                    days=a.days, breakdown=a.breakdown)
-    except db.ProjectNotFound as e:
-        sys.exit(str(e))
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("gsc")
 
 
 if __name__ == "__main__":

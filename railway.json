@@ -1,5 +1,14 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "watchPatterns": [
+      "server/**",
+      "skills/capture/**",
+      "skills/setup/**",
+      "requirements*.txt",
+      "railway.json"
+    ]
+  },
   "deploy": {
     "startCommand": "uvicorn server.app:app --host 0.0.0.0 --port $PORT",
     "restartPolicyType": "ON_FAILURE",

@@ -280,6 +280,66 @@ def test_gather_crawl_orders_by_severity():
     conn.close()
 
 
+# ── 축 함수 단독 — gather() 를 통째로 안 돌리고 축 하나만 부른다 ─────────────
+def test_axis_gsc_pairs_same_period_snapshots_only():
+    """gather() 가 아니라 _axis_gsc() 자체가 period_days 를 가려 짝짓는지.
+
+    scoring.md 4-3b — 28일치와 90일치를 섞으면 Δ가 거짓이 된다. 이 규칙이
+    gather() 안이 아니라 축 함수 안에 있어야 exports.summary/perf 도 안전하다.
+    """
+    conn, pid = _brain("ax_gsc")
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,"
+        "impressions,ctr,position) VALUES(?,?,?,?,?,?,0.0,?)",
+        [(pid, "2026-01-01", 90, "kw", 5, 100, 12.0),
+         (pid, "2026-02-01", 28, "kw", 9, 100, 8.0)])
+    conn.commit()
+    d = dashboard._axis_gsc(conn, pid, {}, None)
+    assert d["gsc_date"] == "2026-02-01" and d["gsc_period"] == 28
+    assert d["gsc_prev"] is None, d["gsc_prev"]           # 90일치와는 짝짓지 않는다
+    assert d["period_mismatch"] is True
+    assert d["ups"] == [] and d["downs"] == []
+
+    conn.execute(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,"
+        "impressions,ctr,position) VALUES(?,?,?,?,?,?,0.0,?)",
+        (pid, "2026-01-15", 28, "kw", 4, 90, 11.0))
+    conn.commit()
+    d2 = dashboard._axis_gsc(conn, pid, {}, None)
+    assert d2["gsc_prev"] == "2026-01-15", d2["gsc_prev"]  # 같은 28일치를 찾아간다
+    assert d2["period_mismatch"] is False
+    assert d2["ups"] and d2["ups"][0]["dpos"] == 3.0        # 11.0 -> 8.0
+    conn.close()
+
+
+def test_axis_opps_resolves_band_and_gap_kind_standalone():
+    """_axis_opps() 가 gsc/경쟁 축의 *결과 행*(striking/kw_gap)만 받아도 라벨·
+    처방을 똑같이 붙이는지 — gather() 를 거치지 않고 손으로 만든 목록으로 확인한다.
+    """
+    conn, pid = _brain("ax_opps")
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "striking_distance", "1페이지권", 80, "r", "new", D),
+         (pid, "content_gap", "새글", 50, "r", "new", D),
+         (pid, "rank_decay", "아무거나", 40, "r", "new", D),
+         (pid, "content_gap", "먹은기회", 10, "r", "acked", D)])
+    conn.commit()
+    striking = [{"query": "1페이지권", "band": "page1"}]
+    kw_gap = [{"keyword": "새글", "kind": "missing"}]
+
+    d = dashboard._axis_opps(conn, pid, None, striking, kw_gap)
+    by_target = {o["target"]: o for o in d["opps"]}
+
+    assert by_target["1페이지권"]["label"] == "1페이지 상단 가능", by_target["1페이지권"]
+    assert by_target["새글"]["play"]["what"].startswith("경쟁 도메인은 잡고 있는데")
+    decay = by_target["아무거나"]
+    assert decay["label"] == "순위 하락" and decay["is_defensive"] is True
+    # opps_total 은 status='new' 만 — 'acked' 는 새 기회 개수에서 빠진다
+    assert d["opps_total"] == 3, d["opps_total"]
+    conn.close()
+
+
 # ── 검색량이 점수에 닿는가 ─────────────────────────────────────────────────
 def test_volume_feeds_demand():
     """노출만 보면 아직 안 뜨는 검색어는 영원히 0점이다 — 검색량이 그 자리를 채운다."""

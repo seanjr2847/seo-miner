@@ -19,7 +19,21 @@
 .aiengs { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
   gap:22px 30px; }
 .aieng .hd { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-.aieng .e { font:500 13px/1 var(--mono); }
+.aieng .e { font:500 13px/1 var(--mono); display:flex; align-items:center; gap:7px; }
+/* 카드·표 줄은 질문 목록으로 내려가는 손잡이다 — 눌리는 것처럼 보여야 한다. */
+.aieng[role="button"] { cursor:pointer; border-radius:4px; }
+.aieng[role="button"]:hover .e, .aieng[role="button"]:focus-visible .e { color:var(--patina); }
+tr.aimx { cursor:pointer; }
+tr.aimx:hover td, tr.aimx:focus-visible td { color:var(--patina); }
+/* 엔진 로고 — 글자색을 따른다(currentColor). 엔진마다 브랜드색을 칠하지 않는다 —
+   이 화면의 색은 뜻(녹청=인용, 회색=언급)에만 쓴다. */
+.ailogo { width:14px; height:14px; flex:none; fill:currentColor; vertical-align:-2px; }
+td .ailogo, #ai-sub .ailogo { margin-right:6px; }
+/* 질문 줄의 엔진 띠 — 로고 하나가 엔진 하나. 진한 녹청은 인용, 회색은 언급, 흐림은 없음. */
+.aiengst { display:inline-flex; gap:7px; align-items:center; }
+.aiengst .ailogo { opacity:.2; margin:0; }
+.aiengst .ailogo.m { opacity:.6; }
+.aiengst .ailogo.c { opacity:1; color:var(--patina); }
 .aieng .v { font:600 20px/1 var(--mono); font-variant-numeric:tabular-nums;
   letter-spacing:-.02em; }
 .aieng .tr { position:relative; height:6px; background:var(--bar); border-radius:2px;
@@ -139,7 +153,8 @@
     <b>언급</b>(이름만 나옴)입니다. 둘의 차이가 클수록 링크로 이어질 자리를 놓치고
     있다는 뜻입니다.</p>
   <div class="aiengs" id="ai-engines"></div>
-  <p class="sub" style="margin:26px 0 10px">엔진 × 카테고리</p>
+  <p class="sub" style="margin:26px 0 10px">줄을 누르면 그 조합의 질문 목록으로
+    내려갑니다. 어느 엔진이 어느 주제에서 우리를 빼는지는 거기서 읽힙니다.</p>
   <div id="ai-matrix"></div>
 </section>
 
@@ -259,6 +274,36 @@ function AI_trendChart(rows) {
     세로축은 0~100% 고정이라 확인끼리 그대로 견줄 수 있습니다.</div>`;
 }
 
+/* ── 엔진 로고 (simple-icons, CC0). 키는 collect_ai.DEFAULT_ENGINES 의 엔진 id 다 —
+      여기 없는 엔진(사용자 설정 추가분)은 로고 없이 이름만 찍힌다. ── */
+const AI_LOGO = {
+  chatgpt: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+  perplexity: "M22.3977 7.0896h-2.3106V.0676l-7.5094 6.3542V.1577h-1.1554v6.1966L4.4904 0v7.0896H1.6023v10.3976h2.8882V24l6.932-6.3591v6.2005h1.1554v-6.0469l6.9318 6.1807v-6.4879h2.8882V7.0896zm-3.4657-4.531v4.531h-5.355l5.355-4.531zm-13.2862.0676 4.8691 4.4634H5.6458V2.6262zM2.7576 16.332V8.245h7.8476l-6.1149 6.1147v1.9723H2.7576zm2.8882 5.0404v-3.8852h.0001v-2.6488l5.7763-5.7764v7.0111l-5.7764 5.2993zm12.7086.0248-5.7766-5.1509V9.0618l5.7766 5.7766v6.5588zm2.8882-5.0652h-1.733v-1.9723L13.3948 8.245h7.8478v8.087z",
+  gemini: "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81",
+};
+const AI_ENG_NAME = {chatgpt: "ChatGPT", perplexity: "Perplexity", gemini: "Gemini"};
+function AI_logo(k, cls) {
+  const d = AI_LOGO[k];
+  return d ? `<svg class="ailogo${cls ? " " + cls : ""}" viewBox="0 0 24 24" aria-hidden="true"
+    ><path d="${d}"/></svg>` : "";
+}
+const AI_engName = k => AI_ENG_NAME[k] || k;
+const AI_engLabel = k => AI_logo(k) + esc(AI_engName(k));
+
+/* 엔진(·카테고리)을 집어 질문 목록으로 내려간다 — "chatgpt 가 뭘 인용했나"는 거기서만
+   읽힌다. 질문 목록이 없는 옛 박제본에서는 손잡이를 안 만든다(AI_DRILL=false). */
+let AI_DRILL = false;
+const AI_drillAttrs = (e, c) => AI_DRILL
+  ? ` role="button" tabindex="0" data-e="${esc(e)}" data-c="${esc(c || "")}"
+      title="이 조합의 질문 목록으로 내려갑니다" onclick="AI_drill(this)"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();AI_drill(this)}"`
+  : "";
+function AI_drill(el) {
+  AI_ENG = el.dataset.e; AI_CAT = el.dataset.c; AI_ST = ""; AI_Q = "";
+  AI_render();
+  $("ai-prompt-sec").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 /* ── 엔진별: matrix(엔진×카테고리)를 엔진으로 접는다. ── */
 function AI_engineCards(m) {
   const by = {};
@@ -268,8 +313,8 @@ function AI_engineCards(m) {
   }
   return Object.keys(by).sort().map(k => {
     const e = by[k], cr = AI_RATE(e.cited, e.total), mr = AI_RATE(e.mentioned, e.total);
-    return `<div class="aieng">
-      <div class="hd"><span class="e">${esc(k)}</span>
+    return `<div class="aieng"${AI_drillAttrs(k, "")}>
+      <div class="hd"><span class="e">${AI_engLabel(k)}</span>
         <span class="v ${e.cited ? "up" : "muted"}">${AI_PCT(cr)}</span></div>
       <div class="tr" title="인용 ${AI_PCT(cr)} · 언급 ${AI_PCT(mr)}">
         <i class="m" style="width:${mr}%"></i><i class="c" style="width:${cr}%"></i></div>
@@ -350,7 +395,7 @@ function AI_donut(rows) {
 /* ── 질문별 결과: 이 화면의 주인공.
       줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
       "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
-let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "";
+let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "", AI_ENG = "";
 // 펼침이 쓰는 재료. 페이지·감사(query_pages·page_audits)는 셸이 화면을 그리기 전에
 // window 에 한 벌 세운다 — 여기 사본을 두면 같은 목록이 두 벌이 된다. 이 화면 몫은
 // 도메인 집계와 명령 칩에 넣을 사이트 이름뿐이다.
@@ -358,7 +403,14 @@ let AI_SHARE_N = {}, AI_NM = "";
 
 const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
   ["none", "안 잡힘"]];
-const AI_stOf = r => r.cited > 0 ? "cited" : r.mentioned > 0 ? "mention" : "none";
+// 엔진을 골랐으면 그 엔진 몫(by_engine)으로 센다 — 상태·숫자·칩 수가 전부 이걸 따른다.
+const AI_cnt = r => AI_ENG && r.by_engine
+  ? (r.by_engine[AI_ENG] || {cited: 0, mentioned: 0, checks: 0}) : r;
+const AI_stOf = r => {
+  const c = AI_cnt(r);
+  return c.cited > 0 ? "cited" : c.mentioned > 0 ? "mention" : "none";
+};
+const AI_engines = () => [...new Set(AI_ROWS.flatMap(r => Object.keys(r.by_engine || {})))].sort();
 
 /* 서버는 인용 많은 순으로 준다(dashboard.py 의 ORDER BY cited DESC) — 이미 인용되는
    질문이 맨 위라 할 일 목록으로는 거꾸로다. 화면에서 기회 점수 내림차순으로 뒤집는다:
@@ -371,6 +423,7 @@ const AI_score = r => {
 function AI_filtered() {
   const q = AI_Q.trim().toLowerCase();
   return AI_ROWS.filter(r =>
+    (!AI_ENG || (r.by_engine || {})[AI_ENG]) &&
     (!AI_CAT || r.category === AI_CAT) &&
     (!AI_ST || AI_stOf(r) === AI_ST) &&
     (!q || `${r.prompt} ${r.miss_answer || ""}`.toLowerCase().includes(q)))
@@ -378,11 +431,12 @@ function AI_filtered() {
 }
 function AI_find(v) { AI_Q = v; AI_list(); }
 function AI_cat(v) { AI_CAT = v; AI_list(); }
+function AI_engine(v) { AI_ENG = v; AI_render(); }   // 칩 수도 바뀌므로 통째로
 function AI_status(el) {
   AI_ST = AI_ST === el.dataset.s ? "" : el.dataset.s;
   AI_render();
 }
-function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_render(); }
+function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_ENG = ""; AI_render(); }
 function AI_ev(btn) {
   const on = btn.getAttribute("aria-expanded") === "true";
   btn.setAttribute("aria-expanded", String(!on));
@@ -482,13 +536,18 @@ function AI_row(r) {
        >${esc(r.prompt)}</button>${o ? oppWhy(o) : ""}${body}`;
   // 부품 CSS(.kind·.why)가 .opp 아래에만 걸려 있다 — 줄에 그 조상만 빌린다.
   // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
+  const c = AI_cnt(r);
+  const strip = Object.entries(r.by_engine || {}).sort().map(([k, v]) =>
+    `<span title="${esc(AI_engName(k))} · 인용 ${v.cited}/${v.checks} · 언급 ${v.mentioned}/${v.checks}"
+      >${AI_logo(k, v.cited ? "c" : v.mentioned ? "m" : "") || esc(k)}</span>`).join("");
   return `<tr${o ? ` class="opp"` : ""}>
     <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">—</span>'}</td>
     <td>${q}</td>
     <td class="kwcell">${esc(r.category || "")}</td>
-    <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
-    <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
-    <td class="num muted">${r.checks}</td>
+    <td><span class="aiengst">${strip || '<span class="muted">—</span>'}</span></td>
+    <td class="num ${c.cited ? "up" : "muted"}">${c.cited}</td>
+    <td class="num ${c.mentioned ? "" : "muted"}">${c.mentioned}</td>
+    <td class="num muted">${c.checks}</td>
     <td class="aidoms">${chips || '<span class="muted">—</span>'}</td></tr>`;
 }
 
@@ -537,6 +596,7 @@ function AI_nextStep(d, has, missN) {
 
 function AI_render() {
   const cats = [...new Set(AI_ROWS.map(r => r.category).filter(Boolean))].sort();
+  const engs = AI_engines();
   const stn = s => AI_ROWS.filter(r => !s || AI_stOf(r) === s).length;
   const chips = AI_ST_OPT.slice(1).map(([v, l]) => `<button class="chip${
     AI_ST === v ? " on" : ""}" data-s="${v}" onclick="AI_status(this)"
@@ -547,6 +607,10 @@ function AI_render() {
       ${cats.length > 1 ? `<select onchange="AI_cat(this.value)" aria-label="카테고리로 거르기">
         <option value="">카테고리 전체</option>${cats.map(c =>
           `<option value="${esc(c)}"${c === AI_CAT ? " selected" : ""}>${esc(c)}</option>`
+        ).join("")}</select>` : ""}
+      ${engs.length > 1 ? `<select onchange="AI_engine(this.value)" aria-label="엔진으로 거르기">
+        <option value="">엔진 전체</option>${engs.map(e =>
+          `<option value="${esc(e)}"${e === AI_ENG ? " selected" : ""}>${esc(AI_engName(e))}</option>`
         ).join("")}</select>` : ""}
       <span class="n" id="ai-n"></span>
       <span class="sp"></span>
@@ -568,6 +632,7 @@ function AI_list() {
   $("ai-plist").innerHTML = table(
     [">점수?인용이 0인 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
      "질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
+     "엔진?진한 녹청은 인용, 회색은 언급, 흐린 것은 둘 다 없음. 로고 위에 올리면 수가 보입니다",
      ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
      ">응답?질문 × 엔진 × 샘플. 이 질문에 실제로 받은 답변 수",
@@ -658,7 +723,7 @@ function AI_vsSearch(x, gscDate) {
     ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
      "겹치는 내 검색어?이 질문과 낱말이 겹치는 검색어 중 우리가 상위인 것",
      ">내 평균순위?그 검색어에서 구글이 보고한 평균 게재순위",
-     ">노출?그 검색어의 노출 수 — 자리의 크기",
+     ">노출?그 검색어의 노출 수. 자리의 크기입니다",
      "대신 인용된 곳?그 질문의 답변에서 우리 자리에 인용된 도메인"],
     rows.map(AI_vsRow))];
 }
@@ -692,7 +757,7 @@ function AI_outranked(o) {
     table(["도메인?AI 답변에서 인용된 경쟁사",
       ">AI 인용?이번 확인에서 그 도메인이 인용된 답변 수",
       ">우리가 위인 검색어?경쟁 검색어 중 우리 순위가 더 높은 것의 수",
-      "그중 몇 개?우리 순위 대 저쪽 순위 — 누르면 그 검색어로 걸린 내 페이지로 갑니다"],
+      "그중 몇 개?우리 순위 대 저쪽 순위. 누르면 그 검색어로 걸린 내 페이지로 갑니다"],
       rows.map(r => `<tr>
         <td><a class="dm" href="https://${esc(r.domain)}" target="_blank"
           rel="noopener noreferrer">${esc(r.domain)}</a></td>
@@ -787,12 +852,13 @@ VIEW("ai", function (d) {
   for (const s of (d.cite_share || [])) AI_SHARE_N[s.domain] = s.n;
 
   const byPrompt = d.ai_by_prompt || [];
+  AI_DRILL = byPrompt.length > 0;
   const missN = byPrompt.length
     ? byPrompt.filter(r => !r.cited && !r.mentioned).length
     : (d.missed || []).length;
   AI_nextStep(d, true, missN);
 
-  $("ai-sub").innerHTML = `<b>${esc(engines.join(" · "))}</b>${
+  $("ai-sub").innerHTML = `<b>${engines.map(AI_engLabel).join(" · ")}</b>${
     when ? ` · ${esc(when)} 확인` : ""}. 받은 답변 <b>${num(tot.total)}건</b> 기준입니다.
     답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 <b>표본</b>입니다.
     같은 질문을 여러 번 물어 평균으로 읽으세요.`;
@@ -839,7 +905,8 @@ VIEW("ai", function (d) {
     ["엔진", "카테고리", ">인용?그 조합에서 우리 도메인이 인용된 답변 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 답변 수",
      ">답변?질문 × 샘플. 그 조합에서 실제로 받은 답변 수", ">인용률"],
-    m.map(r => `<tr><td class="kwcell">${esc(r.engine)}</td>
+    m.map(r => `<tr class="aimx"${AI_drillAttrs(r.engine, r.category)}>
+      <td class="kwcell">${AI_engLabel(r.engine)}</td>
       <td>${esc(r.category)}</td>
       <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
       <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
@@ -865,7 +932,7 @@ VIEW("ai", function (d) {
     $("ai-prompt-sec").hidden = false;
     $("ai-prompt-eyebrow").textContent = `질문 ${byPrompt.length}개 · 안 잡힘 ${missN}개`;
     AI_ROWS = byPrompt;
-    AI_Q = ""; AI_CAT = ""; AI_ST = "";      // 사이트를 바꾸면 필터도 새로 시작한다
+    AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_ENG = "";   // 사이트를 바꾸면 필터도 새로
     AI_render();
   } else if ((d.missed || []).length) {
     $("ai-miss-sec").hidden = false;

@@ -35,7 +35,7 @@ C 는 A 가 못 주는 것을 준다. A 는 "경쟁사가 잡은 키워드" 목�
   4) 적재 — db.add_keyword_candidates(is_active=0, source='competitor_gap',
      locale=projects.locale). Labs 가 search_volume 을 주면 keywords.volume
      에 기록 (실측값이라 '볼륨 창작 금지' 규칙 위반 아님 — 주석 참조).
-  5) 실행 전체를 db.run(conn, pid, "gap") 컨텍스트로 감싸 api_calls·cost 기록.
+  5) 실행 전체를 db.run(conn, pid, "competitors") 컨텍스트로 감싸 api_calls·cost 기록.
 
 인증: 기존 DataForSEO 자격 (DATAFORSEO_LOGIN/PASSWORD). collect_serp 와 같은
 env 경로 — Labs 도 같은 키가 통한다 (유료 크레딧 차감).
@@ -510,13 +510,12 @@ def collect(project: str, *,
             gap_rows += n
             print(f"  gap {rival}: rows={n}")
 
-        with st.record("gap") as r:
+        with st.record("competitors") as r:
             if n_auto:
                 try:
                     auto_axis()
                 except Exception as e:      # 한 축이 죽어도 나머지 축은 산다
-                    st.errors += 1
-                    print(f"  ! 자동 경쟁사 탐지 실패: {e}", file=sys.stderr)
+                    st.fail(f"자동 경쟁사 탐지 실패: {e}", first=str(e))
                 conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
                     domains = _cap(_resolve_domains(conn, p["id"], None))
@@ -526,7 +525,7 @@ def collect(project: str, *,
             r.api_calls += extra_calls
             r.notes = (f"domains={len(domains)} inserted={inserted_total} "
                        f"volumes_filled={volumes_total} auto_new={auto_new} "
-                       f"metrics={metric_rows} gap_rows={gap_rows} errors={st.errors}")
+                       f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}")
 
         print(f"\ncollected {len(domains)} domains, "
               f"actual_cost=${total_cost:.3f} (inserted={inserted_total}, volumes={volumes_total})\n"
@@ -534,7 +533,11 @@ def collect(project: str, *,
               f"run_id={r.id}\n"
               f"Next: 후보는 source='competitor_gap', is_active=0 — "
               f"/capture keywords 의 큐레이션 단계로 활성화하세요.")
-        return st.done(rows=inserted_total, cost=total_cost)
+        # 적재 0건인데 오류가 있었으면 완료가 아니다 — 판정은 collector 한 벌이다.
+        # "실제로 뭔가 했나"는 세 축의 합이다. inserted_total 만 보면 자동 탐지가
+        # 죽고 Gap 축은 3행을 넣은 바퀴도 실패로 읽힌다 (아래 자체점검이 그 자리).
+        return st.verdict(inserted_total + gap_rows + metric_rows,
+                          rows=inserted_total, cost=total_cost)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -559,16 +562,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
         return
-    a = _parser().parse_args()
-
-    r = collect(a.project, dry_run=a.dry_run,
-                domain=a.domain,
-                limit=a.limit,
-                rivals=a.rivals,
-                intersect=a.intersect,
-                throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("competitors")
 
 
 def _selfcheck() -> None:

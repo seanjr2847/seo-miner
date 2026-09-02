@@ -308,7 +308,7 @@ assert 'src="http' not in html, "외부 요청이 섞였다 (src)"
 assert "@import" not in html, "외부 요청이 섞였다 (@import)"
 # <link> 자체는 금지가 아니다 — 파비콘이 data: URI 로 인라인돼 있다. 막을 것은
 # 바깥에서 끌어오는 스타일시트뿐이다.
-assert not re.search(r'<link[^>]*?href="https?:', html), "외부 요청이 섞였다 (스타일시트)"
+assert not re.search(r'<link\b[^>]*?href="https?:', html), "외부 요청이 섞였다 (스타일시트)"
 snap = json.loads(html.split("window.__SNAPSHOT__=", 1)[1].split("</script>", 1)[0])
 assert snap["data"]["schema"] == 1, f"박제본 schema 필드 1 기대, 실제: {snap['data'].get('schema')}"
 assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap

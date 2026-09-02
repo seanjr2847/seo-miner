@@ -16,7 +16,9 @@ CLI:
   python db.py init
   python db.py sync-project <path/to/project.yaml>
   python db.py stats <project>
-  python db.py sql "SELECT ..."        # read-only, for Brain queries
+  python db.py sql "SELECT ..." [--project NAME]
+                                       # read-only, for Brain queries.
+                                       # --project 가 원격 사이트면 서버 brain 에 묻는다.
   python db.py selfcheck               # 임시 brain.db 로 읽기 동사들을 돌려본다
 """
 import json
@@ -278,7 +280,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
-  kind TEXT NOT NULL,                         -- gsc|ai|keywords|analysis|report|full|index
+  kind TEXT NOT NULL,                         -- run_all.STAGES 의 단계 id (+ full)
   started_at TEXT DEFAULT CURRENT_TIMESTAMP,
   finished_at TEXT,
   api_calls INTEGER DEFAULT 0,
@@ -504,10 +506,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
                      "ON rank_snapshots(keyword_id, date(checked_at))")
         conn.commit()
 
+    # runs.kind 는 단계 id 와 같은 말이어야 한다(run_all.STAGES 정본) — 화면
+    # (history.html)이 단계 용어표 하나로 라벨을 달려면 그래야 한다. collect_gap.py 는
+    # 'competitors' 단계인데 kind='gap' 으로, scoring.load() 는 'gaps' 단계인데
+    # kind='analysis' 로 적었었다. WHERE 조건 자체가 재실행에 안전하다(이미 바뀐
+    # 행은 다시 안 걸린다).
+    conn.execute("UPDATE runs SET kind='competitors' WHERE kind='gap'")
+    conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
+    conn.commit()
 
-def connect() -> sqlite3.Connection:
-    capture_home().mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path())
+
+def connect(home: Path | None = None) -> sqlite3.Connection:
+    """home 을 주면 env(CAPTURE_HOME/CAPTURE_DB) 를 안 보고 그 유저의 brain 을 연다
+    (server/store.py 의 Tenant.brain() 이 쓴다). 안 주면 예전처럼 env 를 읽는다."""
+    dbp = db_path(home)
+    dbp.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(dbp)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
@@ -1269,6 +1283,16 @@ def _selfcheck() -> None:
     old = os.environ.get("CAPTURE_HOME")
     with tempfile.TemporaryDirectory() as d:
         os.environ["CAPTURE_HOME"] = d
+
+        # home= 을 주면 env(CAPTURE_HOME) 을 안 보고 그 경로의 brain 을 연다 —
+        # server/store.py 의 Tenant.brain() 이 기대는 계약.
+        other = Path(d) / "other-tenant"
+        c2 = connect(home=other)
+        try:
+            assert (other / "brain.db").exists(), "home= 이 준 경로에 안 생겼다"
+        finally:
+            c2.close()
+
         conn = connect()
         try:
             # 백링크 테이블의 소유자가 db.py 다 — server/backlinks.py 가 만들지 않는다.
@@ -1374,6 +1398,17 @@ if __name__ == "__main__":
     elif cmd == "stats" and len(args) > 1:
         stats(args[1])
     elif cmd == "sql" and len(args) > 1:
-        run_sql(args[1])
+        # `sql "<쿼리>" [--project NAME]` — 이름이 원격이면 서버 brain 에 묻는다.
+        # 플래그를 안 주면 여태와 똑같이 로컬 Brain 이다(원격 경로가 아예 안 열린다).
+        rest = args[2:]
+        proj = rest[rest.index("--project") + 1] if "--project" in rest[:-1] else ""
+        import remote
+        if proj and remote.owns(proj):
+            # 가드(읽기 전용 커넥션 + SELECT/WITH)는 서버가 이 함수로 그대로 건다.
+            res = remote.api("POST", "/api/sql", json={"project": proj, "sql": args[1]})
+            print(res if isinstance(res, str)
+                  else json.dumps(res, ensure_ascii=False, indent=2, default=str))
+        else:
+            run_sql(args[1])
     else:
         sys.exit(__doc__)

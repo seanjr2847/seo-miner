@@ -21,10 +21,24 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import db  # noqa: E402
+import db      # noqa: E402
+import remote  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 _cache: dict | None = None
+
+
+class Fatal(Exception):
+    """항목 하나가 아니라 **단계 전체**를 끝내야 하는 오류 — 잔액 0, 키 만료 같은 것.
+
+    Stage.each 는 항목 예외를 세고 다음으로 간다(내구성). 그런데 402 Payment
+    Required 는 다음 키워드에서 낫지 않는다 — 8/30·9/1·9/2 자동 런이 키워드
+    100개에 402 를 100번 맞고도 errors=100, rc=0 "완료"로 나갔다.
+    그래서 이 종류만 each 가 안 삼키고 즉시 올린다.
+
+    올리는 자리는 경계다(serp_adapter.raise_for / collect_ai.ask) — 판정을 여기
+    말고 수집기마다 다시 쓰면 다섯 벌이 된다.
+    """
 
 
 @dataclass
@@ -42,6 +56,8 @@ class StageResult:
       rows     이 단계가 Brain 에 넣은 행 수 (모르면 0)
       cost     이 단계가 쓴 돈 (모르면 0.0)
       artifact 만든 파일 경로 (없으면 빈 문자열)
+      partial  일부만 실패한 완료 — 요약표가 노란 표시를 붙인다. 문구에서
+               "실패"를 되짚지 않으려고 축으로 둔다(reason 은 사람이 읽는 말이다)
     """
     ok: bool
     skipped: bool = False
@@ -49,6 +65,7 @@ class StageResult:
     rows: int = 0
     cost: float = 0.0
     artifact: str = ""
+    partial: bool = False
 
 
 def config() -> dict:
@@ -200,6 +217,10 @@ class Stage:
         self.dry_run = dry_run
         self.throttle = 0.0     # settings() 가 물고 온다
         self.errors = 0
+        # 오류 줄은 stderr 로 나가는데 사용자 화면 로그는 stdout 만 잡는다 —
+        # 그래서 "402 가 100번" 이 사용자에게 한 글자도 안 보였다. 첫 문장 하나를
+        # 여기 남겨 두면 notes·요약표·StageResult.reason 이 그걸 실어 나른다.
+        self.first_error: str | None = None
         self._own = own
 
     @property
@@ -266,14 +287,35 @@ class Stage:
             try:
                 fn(item)
                 done += 1
+            except Fatal:
+                # 잔액·인증은 다음 항목에서도 낫지 않는다 — 여기서 끝낸다.
+                # 그때까지 모은 것은 commit 된 채로 남는다.
+                self.conn.commit()
+                raise
             except Exception as e:
-                self.errors += 1
-                print(f"  ! {label(item) if label else item}: {e}", file=sys.stderr)
+                self.fail(f"{label(item) if label else item}: {e}", first=str(e))
             self.conn.commit()
             time.sleep(self.throttle)
         return done
 
-    # ── StageResult 조립 — 세 가지 끝맺음 ────────────────────────────
+    def fail(self, msg: str, *, first: str | None = None) -> None:
+        """오류 한 건 — each 밖(축 하나가 통째로 죽는 자리)에서도 같은 자리에 센다.
+
+        first 는 first_error 에 남길 문장. 안 주면 msg 그대로.
+        """
+        self.errors += 1
+        if self.first_error is None:
+            self.first_error = first if first is not None else msg
+        print(f"  ! {msg}", file=sys.stderr)
+
+    @property
+    def err_note(self) -> str:
+        """runs.notes 에 붙는 오류 요약 — stderr 로만 흐르던 문장을 기록에 남긴다."""
+        if not self.errors:
+            return "errors=0"
+        return f"errors={self.errors} first_error={(self.first_error or '')[:100]}"
+
+    # ── StageResult 조립 — 네 가지 끝맺음 ────────────────────────────
     def skip(self, reason: str) -> StageResult:
         """사유 있는 비종료 (키 없음·구성 누락 등)."""
         return StageResult(ok=False, skipped=True, reason=reason)
@@ -285,6 +327,26 @@ class Stage:
     def done(self, **kw) -> StageResult:
         """정상 완료."""
         return StageResult(ok=True, skipped=False, **kw)
+
+    def verdict(self, done: int, **kw) -> StageResult:
+        """유료 단계의 끝맺음 — **한 건도 못 한 것은 완료가 아니다**.
+
+        done 은 실제로 처리한 건수다(호출 횟수가 아니라 적재 건수). rank 는 저장한
+        스냅샷, metrics 는 실제로 갱신한 키워드 — 500개를 물어 0개를 채우고도
+        "볼륨이 채워졌으니…" 라고 말하던 자리가 그 차이다.
+
+        판정을 수집기 다섯이 각자 쓰지 않게 여기 한 벌로 둔다:
+          errors>0, done==0  →  실패 (사유 = 첫 오류 문장) → chain_rc 가 1 이 된다
+          errors>0, done>0   →  완료지만 partial (요약표에 노란 표시)
+          errors==0          →  그냥 완료
+        """
+        if self.errors and not done:
+            return StageResult(ok=False, reason=self.first_error or f"{self.errors}건 전부 실패",
+                               **kw)
+        if self.errors:
+            tail = f": {self.first_error}" if self.first_error else ""
+            return self.done(reason=f"{self.errors}건 실패{tail}"[:200], partial=True, **kw)
+        return self.done(**kw)
 
 
 def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
@@ -317,6 +379,38 @@ def open_project(name: str):
     """
     st = stage(name)
     return st.conn, st.project, st.cfg
+
+
+def cli(stage_name: str) -> None:
+    """수집기 main() 을 대체하는 한 줄 — collect_*.py 열 개가 각자 다시 쓰던
+    parser 생성 → 원격 위임 → collect() 호출 → 종료코드 변환을 여기 하나로 모았다.
+
+    단계 이름 -> 모듈 -> parser 의 정본은 run_all.STAGES 하나다(순환 임포트를 피하려고
+    여기서 늦게 읽는다). 파싱된 인자는 project·dry_run 만 이름을 갈라 나머지는 그대로
+    collect(**kwargs) 에 넘긴다 — run_all 의 `--opt STAGE.KEY=VALUE` 통로와 같다:
+    argparse 의 dest 이름이 곧 collect() 의 키워드 인자 이름이어야 한다(어긋나면 여기서
+    바로 TypeError 로 죽는다).
+    """
+    import run_all   # 늦은 import — run_all 이 수집기 열 개를, 수집기가 이 모듈을 읽는다
+
+    st = run_all.STAGE_BY_NAME.get(stage_name)
+    if st is None or st.module is None:
+        raise RuntimeError(f"'{stage_name}' 은 run_all.STAGES 에 모듈이 딸린 단계가 아니다")
+
+    ap = st.module._parser()
+    args = ap.parse_args()
+    if remote.dispatch(args, stage_name):   # 원격 사이트면 서버가 돈다
+        return
+
+    kwargs = {k: v for k, v in vars(args).items() if k not in ("project", "dry_run")}
+    try:
+        r = st.module.collect(args.project, dry_run=args.dry_run, **kwargs)
+    except db.ProjectNotFound as e:
+        sys.exit(str(e))
+    except Fatal as e:
+        sys.exit(str(e))    # 잔액·인증 — 트레이스백 대신 사람 말 한 줄로 끝낸다
+    if not r.ok and r.reason:
+        sys.exit(r.reason)
 
 
 def _selfcheck() -> None:
@@ -443,6 +537,38 @@ def _runner_check() -> None:
     with stage("rt") as st:
         res = st.skip("사유")
     assert (res.ok, res.skipped, res.reason) == (False, True, "사유")
+
+    # 6. Fatal 은 안 삼킨다 — 잔액 0 이면 100번 더 물어도 잔액 0 이다.
+    #    (이 except 를 지우고 돌리면 8/30 자동 런이 그대로 재현된다: 3건 전부
+    #     실패인데 errors 만 늘고 계속 감)
+    err = io.StringIO()
+    with stage("rt") as st:
+        tried: list[str] = []
+
+        def boom(kw: str) -> None:
+            tried.append(kw)
+            raise Fatal("DataForSEO 잔액 없음(402) — 충전하세요")
+
+        with contextlib.redirect_stderr(err):
+            try:
+                st.each(["a", "b", "c"], boom)
+                raise AssertionError("Fatal 을 삼켰다")
+            except Fatal as e:
+                assert "402" in str(e), e
+        assert tried == ["a"], f"Fatal 뒤로도 계속 갔다: {tried}"
+
+    # 7. 판정 한 벌 (verdict) — 전부 실패는 완료가 아니다.
+    with stage("rt") as st:
+        st.errors, st.first_error = 3, "402 Payment Required"
+        r_all = st.verdict(0, rows=0)
+        r_part = st.verdict(7, rows=7)
+        assert st.err_note == "errors=3 first_error=402 Payment Required", st.err_note
+        st.errors, st.first_error = 0, None
+        r_ok = st.verdict(7, rows=7)
+        assert st.err_note == "errors=0", st.err_note
+    assert (r_all.ok, r_all.reason) == (False, "402 Payment Required"), r_all
+    assert (r_part.ok, r_part.partial) == (True, True) and "3건 실패" in r_part.reason, r_part
+    assert (r_ok.ok, r_ok.partial, r_ok.reason) == (True, False, ""), r_ok
 
     print("collector runner self-check ok")
 

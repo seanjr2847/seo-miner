@@ -287,10 +287,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
         return
-    a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, throttle=a.throttle)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("pages")
 
 
 def _selfcheck() -> None:

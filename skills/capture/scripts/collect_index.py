@@ -193,15 +193,7 @@ def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
         return
-    try:
-        a = _parser().parse_args()
-
-        r = collect(a.project, dry_run=a.dry_run,
-                    limit=a.limit, throttle=a.throttle)
-    except db.ProjectNotFound as e:
-        sys.exit(str(e))
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("index")
 
 
 def _selfcheck() -> None:

@@ -7,9 +7,7 @@
 
 self-check: python stage.py
 """
-import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -180,6 +178,15 @@ def stage_labels(variant: str = "local") -> dict:
             for k, v in STAGE_LABELS.items()}
 
 
+def _runnable(step_id: str, cmd: str | None) -> bool:
+    """이 칩의 명령이 정말 이 단계를 돌리는가. id 는 "이 칩이 속한 단계"일 뿐이라
+    그걸로는 못 판단한다 — 재료가 없으면 다른 명령을 내려보낸다(질문 0건이면 ai
+    단계에 `/capture add`, GSC 미연결이면 `GSC 로그인해줘`). 그 칩을 실행 버튼으로
+    바꾸는 층(호스팅판)이 이 값을 본다 — 화면은 더 이상 명령 문자열을 되짚지 않는다.
+    """
+    return bool(cmd) and cmd.split()[:2] == ["/capture", step_id]
+
+
 def from_progress(p: dict, name: str, domain: str) -> dict:
     # 사이트가 아직 없어도 안내는 그린다 — 첫 사용자가 정확히 이 상태이고, 여태
     # 그 사람에게만 6단계가 통째로 비어 있었다("아래 [지금 할 것] 하나만 하시면
@@ -204,20 +211,25 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
     # 안내 단계의 설명도 같은 규칙을 탄다 — 호스팅에서는 dash.html 의 restage() 가
     # 실어 보낸 표로 다시 덮지만, 페이로드 자체가 맞아야 박제본·API 응답도 맞는다.
     L = stage_labels("hosted" if _hosted() else "local")
+    cmd_register = None if domain else "/capture add"
+    cmd_keywords = f"/capture keywords {name}"
+    cmd_ai = f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}"
+    cmd_gaps = f"/capture gaps {name}"
+    cmd_create = f"/create plan {name}"
     steps = [
         {"id": "register", "t": L["register"]["t"], "gain": L["register"]["gain"],
          "done": bool(domain), "state": domain or "아직 없음",
-         "cmd": None if domain else "/capture add"},
+         "cmd": cmd_register, "runnable": _runnable("register", cmd_register)},
         {"id": "gsc", "t": L["gsc"]["t"], "gain": L["gsc"]["gain"],
          "done": gsc_done,
          "state": gsc_state_str,
-         "cmd": gsc_cmd},
+         "cmd": gsc_cmd, "runnable": _runnable("gsc", gsc_cmd)},
         {"id": "keywords", "t": L["keywords"]["t"], "gain": L["keywords"]["gain"],
          "done": p.get("keywords_found", 0) > 0,
          "state": (f"찾은 것 {p['keywords_found']}개 · 추적 {p['keywords']}개"
                    if p.get("keywords_found", 0)
                    else (f"직접 적은 {p['keywords']}개뿐" if p.get("keywords", 0) else "아직 없음")),
-         "cmd": f"/capture keywords {name}"},
+         "cmd": cmd_keywords, "runnable": _runnable("keywords", cmd_keywords)},
         {"id": "ai", "t": L["ai"]["t"], "gain": L["ai"]["gain"],
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
@@ -227,15 +239,15 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
                     if p.get("ai_checks", 0)
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
                           else "물어볼 질문부터 필요"))),
-         "cmd": (f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}")},
+         "cmd": cmd_ai, "runnable": _runnable("ai", cmd_ai)},
         {"id": "gaps", "t": L["gaps"]["t"], "gain": L["gaps"]["gain"],
          "done": p.get("opps", 0) > 0,
          "state": f"{p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
-         "cmd": f"/capture gaps {name}"},
+         "cmd": cmd_gaps, "runnable": _runnable("gaps", cmd_gaps)},
         {"id": "create", "t": L["create"]["t"], "gain": L["create"]["gain"],
          "done": p.get("creations", 0) > 0,
          "state": f"{p['creations']}건 고침" if p.get("creations", 0) else "아직 한 건도 안 함",
-         "cmd": f"/create plan {name}"},
+         "cmd": cmd_create, "runnable": _runnable("create", cmd_create)},
     ]
     # 못 하는 단계 앞에서 안내를 멈추지 않는다 — 건너뛸 수 있는 것은 건너뛴다.
     here = next((i for i, s in enumerate(steps)
@@ -331,348 +343,6 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     }
 
 
-def _check_seams() -> None:
-    """화면 쪽 이음매 점검 — 브라우저를 안 띄우고 확인할 수 있는 만큼만.
-
-    호스팅판(server/assets/dash.html)은 원본 화면 뒤에 얹히는 애드온이라, 원본이
-    말없이 바뀌면 조용히 멈춘다. 예전에는 그 이음매가 렌더된 한국어였다 —
-    버튼 라벨의 정규식으로 단계 id 를, onclick 문자열의 정규식으로 기회 id 를
-    되찾았다. 지금은 data- 속성과 id 키 조회다. 여기서 그 계약을 지킨다.
-
-    리포 밖(플러그인 설치본)에는 server/ 가 없다 — 그때는 조용히 건너뛴다.
-    """
-    root = Path(__file__).resolve().parents[3]
-    dash_f = root / "server" / "assets" / "dash.html"
-    views = root / "skills" / "capture" / "templates" / "views"
-    shell_f = root / "skills" / "capture" / "templates" / "dashboard.html"
-    if not (dash_f.exists() and views.is_dir() and shell_f.exists()):
-        return
-    dash = dash_f.read_text("utf-8")
-    shell = shell_f.read_text("utf-8")
-    tpl = shell + "".join(p.read_text("utf-8") for p in sorted(views.glob("*.html")))
-
-    # 1) id 는 페이로드에서 온다 — 렌더된 글자에서 되짚지 않는다.
-    assert 'data-opp="${o.id}"' in (views / "overview.html").read_text("utf-8"), \
-        "oppRow() 가 기회 id 를 data-opp 로 안 내보낸다"
-    for what, pat in (("단계 칸", r'class="stp \$\{cls\}"[^>]*data-stage='),
-                      ("실행 칩", r'<button class="cmd"[^>]*data-stage='),
-                      ("배너 이름", r"<b data-stage=")):
-        assert re.search(pat, shell), f"renderGuide() 의 {what}에 data-stage 가 없다"
-    for gone in ("setOpp(", r"\/capture\s+"):
-        assert gone not in dash, f"dash.html 에 정규식 고고학이 남아 있다: {gone}"
-
-    # 2) 화면 목록의 정본은 원본 뷰의 view-def 다 — dash.html 은 그걸 읽고(매니페스트),
-    #    자기가 정적으로 갖는 섹션은 templates/sections/*.html 의 section-def 로
-    #    선언한다(dashboard.py._assemble 이 조립 시점에 끼운다). 예전에는 이 마크업이
-    #    dash.html 안에서 createElement/innerHTML 로 런타임에 지어졌고, HOST_SEC 라는
-    #    표가 어디에 붙는지를 따로 말했다 — 그 표와 dash.html 이 실제로 만드는 것이
-    #    어긋날 수 있었다. 지금은 section-def 자체가 자리와 소속을 말하므로 어긋날
-    #    길이 없다: 검사는 선언이 가리키는 자리가 실제로 있는지만 본다.
-    defs = {}
-    for p in sorted(views.glob("*.html")):
-        d = re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', p.read_text("utf-8"), re.S)
-        assert d, f"{p.name} 에 view-def 선언이 없다"
-        j = json.loads(d.group(1))
-        defs[j["id"]] = j
-    assert defs, "원본 뷰 선언을 하나도 못 읽었다"
-    assert "window.__VIEWS__" in shell,         "원본 셸이 매니페스트를 안 읽는다 — 목록이 또 두 벌이다"
-    assert "var VIEWS = [" not in dash, "dash.html 에 화면 목록 사본이 되살아났다"
-    # 셸(레일·화면 상자·전환)은 원본 하나뿐이다. 애드온이 그걸 다시 구현하면 같은
-    # 조립본이 배포마다 다른 몸으로 선다 — 섹션 순서가 실제로 갈라졌던 자리다.
-    for gone, why in (("function place(", "배치"), ("function show(", "전환"),
-                      ('nv.id = "sm-nav"', "메뉴")):
-        assert gone not in dash, f"dash.html 이 셸의 {why}를 다시 구현한다: {gone}"
-    assert "SM.sync(" in dash, "dash.html 이 셸에 덧붙이지 않는다: SM.sync("
-    # 본문 서체는 한 벌이다. 애드온이 --sans 를 덮으면 같은 조립본이 배포마다 다른
-    # 글자로 서고, 그러면 자간·줄바꿈·표 폭이 전부 달라진다(그걸 한 번 겪고 걷어냈다).
-    # 등폭(--mono)은 예외다: 원본이 윈도우 기준이라 호스팅이 갈아끼운다.
-    assert not re.search(r"--sans\s*:", dash),         "dash.html 이 본문 서체를 덮는다 — 서체는 원본(dashboard.html) 한 곳이다"
-
-    # 원본 레일을 힘으로 덮지 않는다 — !important 는 "두 시스템이 싸우는 중"의 표식이다.
-    # 주석은 근거가 못 된다(왜 걷어냈는지 적어 둔 자리가 검사에 걸리면 안 된다).
-    bare = re.sub(r"/\*[\s\S]*?\*/", "", dash)
-    bare = re.sub(r"^\s*//.*$", "", bare, flags=re.M)
-    assert "!important" not in bare, "dash.html 이 원본 규칙을 !important 로 덮는다"
-
-    # HOST_SEC/HOST_VIEWS 표는 구조적으로 없어졌다 — section-def 가 그 자리를
-    # 대신한다. 되살아나면 사본이 두 벌이 된 것이다.
-    for gone in ("var HOST_SEC", "var HOST_VIEWS"):
-        assert gone not in dash,             f"{gone} 가 되살아났다 — templates/sections/*.html 의 section-def 로 옮겨라"
-
-    import dashboard
-    secs = dashboard.section_defs()
-    assert secs, "호스팅 섹션 선언(templates/sections/*.html)을 하나도 못 읽었다"
-    have = set(re.findall(r'id="([\w-]+)"', tpl))
-    sec_ids = {s["id"] for s in secs}
-    for s in secs:
-        assert s.get("view") in defs, f"section-def {s['id']} 가 없는 화면을 가리킨다: {s.get('view')}"
-        # after 는 원본 뷰의 섹션이거나 같은 화면의 다른 섹션 id 여도 된다(sm-dim ← sm-perf).
-        assert s.get("after") in defs[s["view"]]["sections"] or s.get("after") in sec_ids,             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
-        assert s["id"] not in have,             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
-        assert f'"{s["id"]}"' in dash,             f"section-def 가 선언하는데 dash.html 이 쓰지 않는다(참조가 없다): {s['id']}"
-
-    for d in defs.values():             # 원본 선언이 담는 요소는 원본에 있어야 한다
-        for i in d["sections"]:
-            assert i in have, f'{d["id"]} 의 view-def 가 없는 요소 id 를 담는다: {i}'
-    stage_ids = {s for d in defs.values() for s in d["stages"]}
-
-    # 3) 단계 용어표는 한 벌이다 — dash.html 은 자기 사본을 갖지 않고 조립이 실어
-    #    보내는 window.__STAGES__(=STAGE_LABELS)를 읽는다.
-    assert "var STAGE = {" not in dash,         "dash.html 에 단계 용어표 사본이 되살아났다 — stage.STAGE_LABELS 가 정본이다"
-    assert "window.__STAGES__" in dash,         "dash.html 이 조립이 실어 보낸 단계 용어표(window.__STAGES__)를 안 읽는다"
-    entries = STAGE_LABELS
-    ours = {s["id"] for s in from_progress(_DEMO, "demo", "demo.com")["steps"]}
-    assert ours <= set(entries), f"용어표에 없는 안내 단계: {sorted(ours - set(entries))}"
-    assert stage_ids <= set(entries), f"용어표에 없는 실행 단계: {sorted(stage_ids - set(entries))}"
-    for s in sorted(stage_ids):
-        assert entries[s].get("run"), f"화면에서 돌리는 단계인데 run 라벨이 없다: {s}"
-    for s in sorted(entries):
-        assert entries[s].get("t"), f"단계 이름이 없다: {s}"
-    #    웹 갈래는 원본 표를 덮어쓰는 것이라 반드시 같은 단계를 가리켜야 한다.
-    #    이름이 하나 어긋나면 그 단계만 조용히 로컬 문장(유료 키 안내)으로 남는다.
-    assert set(GAIN_WEB) <= set(entries),         f"GAIN_WEB 가 없는 단계를 덮는다: {sorted(set(GAIN_WEB) - set(entries))}"
-    for s in sorted(GAIN_WEB):
-        assert entries[s].get("gain"), f"원본에 gain 이 없는데 웹 갈래만 있다: {s}"
-    web = stage_labels("hosted")
-    assert set(web) == set(entries) and stage_labels("local") is entries
-    for word in ("키가 필요합니다", "유료 호출입니다"):
-        for k, v in web.items():
-            assert word not in (v.get("gain") or ""),                 f"호스팅 단계 설명에 {word!r} 이 남았다: {k}"
-
-    # 4) 사이트 목록 → 대시보드의 이음매는 URL 의 hash 하나다. 대시보드는 그것만
-    #    읽고(loadProjects), 비어 있으면 <select> 기본값인 첫 옵션이 잡힌다 —
-    #    무엇을 눌러도 맨 처음 등록한 사이트가 열린다. 양쪽 끝을 함께 못 박는다.
-    app_f = root / "server" / "app.py"
-    if app_f.exists():
-        assert '<li><a href="/d#' in app_f.read_text("utf-8"),             "사이트 목록 링크가 hash 없이 /d 로만 간다 — 무엇을 눌러도 첫 사이트가 열린다"
-        assert "location.hash.slice(1)" in shell,             "대시보드가 hash 로 사이트를 고르지 않는다 — 링크가 실어 보낸 이름이 버려진다"
-
-    # 5) 화면이 부르는 API 는 그 화면이 뜨는 **모든** 서버에 있어야 한다.
-    #    경로 오타 하나면 fetch 가 조용히 404 로 죽고 화면에는 "불러오지 못했습니다"
-    #    만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
-    #    호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
-    #    /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
-    app_f = root / "server" / "app.py"
-    local_f = root / "skills" / "capture" / "scripts" / "dashboard.py"
-    if app_f.exists() and local_f.exists():
-        app_src, local_src = app_f.read_text("utf-8"), local_f.read_text("utf-8")
-        app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', app_src))
-        assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
-
-        def api_calls(src):
-            # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다.
-            # 숫자를 받는다 — 안 받으면 /api/ga4/... 를 /api/ga 로 잘라 읽어서,
-            # 서버에 라우트를 제대로 만들어 놔도 이 검사가 영영 어긋난다.
-            return set(re.findall(r'"(/api/[a-z][a-z0-9/-]*)', src))
-
-        for who, src, servers in (
-                ("원본 화면", shell + "".join(p.read_text("utf-8")
-                                            for p in sorted(views.glob("*.html"))),
-                 (("로컬", None), ("호스팅", None))),
-                ("dash.html", dash, (("호스팅", None),))):
-            for call in sorted(api_calls(src)):
-                for where, _ in servers:
-                    if where == "호스팅":
-                        if call.startswith("/api/setup/"):
-                            continue          # 호스팅은 설정 화면 자체가 없다
-                        assert call in app_routes,                             f"{who} 가 부르는데 호스팅 서버에 없다: {call}"
-                    else:
-                        assert f'"{call}"' in local_src,                             f"{who} 가 부르는데 로컬 서버에 없다: {call}"
-
-    # 6) 화면에서 돌릴 수 있는 단계는 서버가 전부 받아야 한다. dash.html 의 용어표에
-    #    run 라벨이 있으면 그 버튼이 /api/run 으로 그 id 를 보낸다 — 서버가 단계
-    #    목록 사본을 들고 있으면 새 단계는 화면에만 생기고 눌렀을 때 "실행할 수
-    #    없는 단계입니다: crawl" 로 튕긴다(실제로 crawl·metrics·backlinks 가 그랬다).
-    import run_all
-    runnable = {s for s, v in entries.items() if v.get("run")}
-    assert runnable <= set(run_all.VALID_STAGE_NAMES),         f"화면은 돌리자는데 엔진 단계표에 없다: {sorted(runnable - set(run_all.VALID_STAGE_NAMES))}"
-    if app_f.exists():
-        assert "run_all.VALID_STAGE_NAMES" in app_f.read_text("utf-8"),             "app.py 가 단계 목록 사본을 들고 있다 — 화면에만 있는 단계가 400 으로 튕긴다"
-
-    # 7) 원본은 기회 카드의 .acts 에서 클릭 전파를 멈춘다 — 카드가 같이 펼쳐지지
-    #    않게 하려는 것이고, 원본 버튼들은 인라인 onclick 이라 영향이 없다.
-    #    애드온이 그 안에 심는 버튼은 사정이 다르다: document 위임으로 잡으면
-    #    이벤트가 영영 안 닿아 **버튼은 떠 있는데 눌러도 아무 일이 없다**.
-    #    실제로 [콘텐츠 작성]이 그렇게 죽어 있었고, 렌더 검사도 그건 못 잡는다
-    #    (DOM 에는 멀쩡히 있다). 그래서 여기서 계약으로 못 박는다.
-    ov = (views / "overview.html").read_text("utf-8")
-    if 'class="acts" onclick="event.stopPropagation()"' in ov:
-        assert not re.search(r'document\.addEventListener\(\s*"click"[\s\S]{0,500}?data-write',
-                             dash),             ".acts 안 버튼을 document 위임으로 잡는다 — 전파가 멈춰 클릭이 안 닿는다"
-        assert re.search(r'data-write[\s\S]{0,400}?\.onclick\s*=', dash),             "애드온이 .acts 안 버튼에 자기 핸들러를 안 단다 — 눌러도 아무 일이 없다"
-
-
-    # 8) 기회 종류의 라벨·처방(what/acts/deliver)은 이제 scoring.py 의 KINDS
-    #    명부가 정하고 dashboard.py 의 gather() 가 label·play 로 실어 보낸다 —
-    #    화면은 그리기만 한다(window.KIND_LABEL·PLAY 는 없앴다). 그쪽 정합성은
-    #    scoring.py 자체 self-check(set(_KIND_SPECS) == set(ALL_KINDS),
-    #    all(k.play for k in KINDS))가 지킨다 — 여기서 다시 볼 게 없다.
-    #
-    #    화면에 남은 유일한 kind 사본은 isDefensive() 의 배열 폴백이다
-    #    (o.is_defensive 가 없는 옛 박제본에서만 쓰인다) — scoring.DEFENSIVE_KINDS
-    #    와 어긋나면 옛 박제본에서 방어 기회가 덜 잡히거나(2종만 알던 시절처럼)
-    #    엉뚱한 게 방어로 뜬다.
-    sc_f = root / "skills" / "capture" / "scripts" / "scoring.py"
-    if sc_f.exists():
-        import scoring
-        df = re.search(
-            r"const isDefensive = o => o && \(o\.is_defensive\s*\n?\s*\?\?\s*\[(.*?)\]",
-            shell, re.S)
-        assert df, "셸의 isDefensive() 폴백 목록을 못 찾았다"
-        js_defensive = set(re.findall(r'"(\w+)"', df.group(1)))
-        assert js_defensive == set(scoring.DEFENSIVE_KINDS),             f"isDefensive() 폴백이 scoring.DEFENSIVE_KINDS 와 어긋났다: " \
-            f"{js_defensive ^ set(scoring.DEFENSIVE_KINDS)}"
-
-        # 색인 실패 갈래(bucket)도 한 벌이다 — 만드는 쪽(scoring.INDEX_BUCKETS)과
-        # site.html 의 ST_IX(갈래별 라벨·심각도·처방)가 어긋나면 새 갈래가 화면에
-        # 원문 그대로 뜨거나 처방 없이 걸린다.
-        st_f = root / "skills" / "capture" / "templates" / "views" / "site.html"
-        ix = re.search(r"const ST_IX = \{(.*?)\n\};", st_f.read_text("utf-8"), re.S)
-        assert ix, "site.html 의 ST_IX 를 못 찾았다"
-        ix_buckets = set(re.findall(r"^  (\w+):", ix.group(1), re.M))
-        assert ix_buckets == set(scoring.INDEX_BUCKETS),             f"site.html 의 ST_IX 가 scoring.INDEX_BUCKETS 와 어긋났다: " \
-            f"{ix_buckets ^ set(scoring.INDEX_BUCKETS)}"
-
-
-    # 9) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.
-    #    view-def 의 stages 는 "이 단계들이 이 화면을 채운다"는 선언이고, 호스팅은
-    #    그걸 읽어 화면 머리에 실행 버튼을 단다. [키워드] 는 "키워드 발굴·경쟁사
-    #    수집"이라 선언해 놓고 실제로는 GSC 스냅샷만 읽었다 — 버튼은 떴는데 눌러도
-    #    화면이 안 채워졌다. 화면 자신이 빈 상태에서 부르는 명령이 정답을 알고 있다.
-    #    (add·run 은 단계가 아니다: 질문 추가와 전 단계 일괄 실행.)
-    NON_STAGE = {"add", "run"}
-    #    다른 화면으로 넘기는 손잡이는 여기 적어 둔다 — 적지 않으면 검사에 걸린다.
-    CROSS = {("competitors", "keywords")}     # 갭 검색어는 승인 대기 후보로 들어간다
-    for p in sorted(views.glob("*.html")):
-        vid = p.stem
-        if vid not in defs:
-            continue
-        declared = set(defs[vid]["stages"])
-        # 화면이 단계를 부르는 세 모양: 명령 칩 글자, 셸의 act("x", …), 호스팅 버튼 data-run="x".
-        src = p.read_text("utf-8")
-        called = (set(re.findall(r"/capture ([a-z]+)", src))
-                  | set(re.findall(r"""\bact\(\s*["']([a-z]+)["']""", src))
-                  | set(re.findall(r'data-run="([a-z]+)"', src)))
-        for cmd in sorted(called):
-            if cmd in NON_STAGE or (vid, cmd) in CROSS:
-                continue
-            assert cmd in declared, (
-                f"[{vid}] 화면이 /capture {cmd} 를 부르는데 view-def 의 stages 에 없다 "
-                f"— 선언은 {sorted(declared)}. 그 단계가 이 화면을 채우면 stages 에 넣고, "
-                f"다른 화면으로 넘기는 손잡이면 CROSS 에 적어라")
-
-    #    같은 계약이 dash.html 에도 걸린다 — 호스팅 전용 섹션 안의 실행 버튼은
-    #    원본 뷰가 아니라 애드온이 심는다. 위 루프는 views/*.html 만 훑으므로 그쪽
-    #    끝이 비어 있었다: [키워드] 사고("키워드 발굴이라 선언해 놓고 GSC 만 읽었다")가
-    #    호스팅 섹션에서 다시 나도 안 잡혔다. 어느 화면 것인지는 section-def 의 view 가
-    #    이미 말한다 — 버튼을 **바로 앞에 나온 섹션 id** 로 귀속시켜 그 화면과 대조한다
-    #    (dash.html 은 섹션 하나당 렌더 함수 하나라 이 귀속이 흔들리지 않는다).
-    #    섹션 파일이 자기 마크업 안에 직접 다는 버튼은 귀속을 추측할 필요가 없다 —
-    #    그 파일의 section-def 가 이미 어느 화면 것인지 말한다.
-    for sp in sorted((root / "skills" / "capture" / "templates" / "sections").glob("*.html")):
-        sd = re.search(r'class="section-def">\s*(\{.*?\})\s*</script>',
-                       sp.read_text("utf-8"), re.S)
-        assert sd, f"{sp.name} 에 section-def 선언이 없다"
-        j = json.loads(sd.group(1))
-        declared = set(defs[j["view"]]["stages"])
-        for st in sorted(set(re.findall(r'data-run="([a-z0-9]+)"', sp.read_text("utf-8")))):
-            assert st in declared, (
-                f"[{j['id']}] 섹션이 data-run=\"{st}\" 버튼을 다는데 그 섹션이 속한 "
-                f"[{j['view']}] 화면의 stages 에 없다 — 선언은 {sorted(declared)}")
-
-    #    주석은 근거가 못 된다 — "화면이 data-run=\"run\" 으로 부른다"고 적어 둔
-    #    설명문이 검사에 걸리면 안 된다. 위치를 세는 스캔이라 길이를 지키며 지운다.
-    bare_dash = re.sub(r"/\*[\s\S]*?\*/",
-                       lambda m: re.sub(r"\S", " ", m.group(0)), dash)
-    bare_dash = re.sub(r"^([ 	]*)//.*$",
-                       lambda m: m.group(1) + " " * (len(m.group(0)) - len(m.group(1))),
-                       bare_dash, flags=re.M)
-    assert len(bare_dash) == len(dash), "주석을 지우며 길이가 틀어졌다 — 위치가 어긋난다"
-    sec_at = sorted((m.start(), s["id"]) for s in secs
-                    for m in re.finditer(f'"{re.escape(s["id"])}"', bare_dash))
-    sec_view = {s["id"]: s["view"] for s in secs}
-    for m in re.finditer(r'data-run="([a-z0-9]+)"', bare_dash):
-        if m.group(1) in NON_STAGE:
-            continue          # 레일 바닥의 일괄 실행은 어느 화면 것도 아니다
-        owner = next((sid for pos, sid in reversed(sec_at) if pos < m.start()), None)
-        assert owner, (
-            f'dash.html 의 data-run="{m.group(1)}" 앞에 섹션 id 가 없다 — 어느 화면 '
-            "버튼인지 못 정한다. 그 섹션 안에서 만들어라")
-        vid = sec_view[owner]
-        declared = set(defs[vid]["stages"])
-        assert m.group(1) in declared, (
-            f"[{owner}] 섹션이 data-run=\"{m.group(1)}\" 버튼을 다는데 그 섹션이 속한 "
-            f"[{vid}] 화면의 stages 에 없다 — 선언은 {sorted(declared)}. 그 단계가 이 "
-            "화면을 채우면 view-def 의 stages 에 넣어라")
-
-    # 12) 실행 버튼은 표식(data-run)으로 받는다 — 자리(.next/.empty)로 받으면 새 자리마다
-    #     조용히 죽는다(펼침 패널의 버튼이 실제로 그랬다). 대신 자기 onclick 을 가진 둘은
-    #     반드시 빼야 한다. 안 빼면 한 번 누른 게 두 번 돈다:
-    #       · .sm-refresh   — runButtons() 가 자기 onclick 을 건다
-    #       · 인라인 onclick — act() 의 로컬 갈래가 data-run 과 onclick 을 같이 낸다
-    assert 'closest("[data-run]")' in dash, (
-        "dash.html 이 data-run 을 표식으로 안 받는다 — 자리로 고르면 새 자리마다 버튼이 조용히 죽는다")
-    for guard, why in (('classList.contains("sm-refresh")', "머리줄 버튼"),
-                       ('hasAttribute("onclick")', "인라인 onclick 버튼")):
-        assert guard in dash, (
-            f"dash.html 의 data-run 위임이 {why}을 안 뺀다 — 한 번 누른 게 두 번 돈다")
-
-    # 11) 로컬이 실어 보내는 사이트 설정(carry)과 호스팅이 꺼내 쓰는 이름은 한 벌이다.
-    #     이 이음매도 양쪽 다 멀쩡해 보인다: 로컬은 정상적인 링크를 만들고 호스팅은
-    #     정상적인 dict 를 읽는다. 이름이 하나 어긋나면 carry_read 가 그것을 걸러
-    #     버려서(정본은 PREFILL_KEYS) **씨앗 키워드만 조용히 빈 채로** 등록된다 —
-    #     화면에도 로그에도 아무것도 안 남는다. 그래서 이름을 여기서 대조한다.
-    if app_f.exists():
-        app_src = app_f.read_text("utf-8")
-        assert "dashboard.carry_read" in app_src, \
-            "호스팅이 carry 를 직접 푼다 — 형식의 정본은 dashboard 의 carry_pack/carry_read 다"
-        m = re.search(r"CARRY_FIELDS = \(([^)]*)\)", app_src)
-        assert m, "app.py 의 CARRY_FIELDS 를 못 찾았다 — 표 모양이 바뀌었다"
-        used = set(re.findall(r'"(\w+)"', m.group(1)))
-        used |= set(re.findall(r"CARRY\.(\w+)",
-                               (root / "server" / "app.html").read_text("utf-8")))
-        used.add("gsc_property")          # 어느 속성에 얹을지 — 아래에서 쓰는지 본다
-        assert used <= set(dashboard.PREFILL_KEYS), \
-            f"호스팅이 carry 에서 꺼내는데 로컬이 싣지 않는 이름: " \
-            f"{sorted(used - set(dashboard.PREFILL_KEYS))}"
-        assert 'carry.get("gsc_property"' in app_src, \
-            "호스팅이 carry 가 가리키는 속성을 안 본다 — 남의 사이트에 씨앗이 얹힌다"
-
-        # 단계 용어표는 한 벌이다 — 등록 화면(app.html)도 사본을 갖지 않는다.
-        # 대시보드에 대해 위 3) 이 지키는 것과 같은 계약이다.
-        app_html = (root / "server" / "app.html").read_text("utf-8")
-        assert "window.__STAGES__" in app_html, \
-            "app.html 이 서버가 실어 보낸 단계 용어표를 안 읽는다"
-        assert "__STAGES__=stage.STAGE_LABELS" in app_src, \
-            "app.py 가 등록 화면에 단계 용어표를 안 싣는다 — 화면이 사본을 갖게 된다"
-
-    # 10) 화면이 읽는 페이로드 키는 gather() 가 실제로 싣는 것이어야 한다.
-    #     이 이음매는 양쪽 다 멀쩡해 보인다: 뷰는 정상적인 자바스크립트고 gather 는
-    #     정상적인 dict 다. 어긋나면 조용히 undefined 가 흘러 화면에 "—" 나 빈 표가
-    #     뜰 뿐, 콘솔에도 검사에도 아무것도 안 남는다. 뷰 렌더러의 인자 이름은
-    #     관례가 아니라 계약이다(VIEW(id, function (d) {...})) — 그래서 d.* 로 센다.
-    import sqlite3 as _sq, io, contextlib
-    _c = _sq.connect(":memory:")
-    _c.row_factory = _sq.Row
-    _c.executescript(db.SCHEMA)
-    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
-    # GA4 다섯 키(ga4_funnel 등, dashboard.py gather())는 GA4 연결(ga4_snapshots 존재)일
-    # 때만 조건부로 실린다 — 안 심으면 그 키를 읽는 화면이 전부 이 검사에서만 걸린다.
-    _c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,impressions,ctr,position)"
-               " VALUES(1,'2026-01-01',28,'_seam',1,1,1.0,1.0)")
-    _c.execute("INSERT INTO ga4_snapshots(project_id,snapshot_date,period_days,landing_page,sessions,sessions_all,key_events)"
-               " VALUES(1,'2026-01-01',28,'/',1,1,0)")
-    _null = io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
-    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
-        served = set(dashboard.gather(_c, db.get_project(_c, "_seam")))
-    _c.close()
-    read = set()
-    for p in sorted(views.glob("*.html")):
-        read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
-                                                p.read_text("utf-8"))}
-    assert read <= served,         f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}"
-
-
 _DEMO = {"gsc_days": 0, "gsc_last": "", "keywords": 2, "keywords_found": 0,
          "ai_checks": 0, "ai_prompts": 0, "opps": 0, "creations": 0}
 
@@ -684,6 +354,9 @@ def _selfcheck() -> None:
     st = from_progress(pr, "demo", "demo.com")
     assert st["here"] == 1 and st["steps"][1]["id"] == "gsc", st["here"]
     assert st["steps"][3]["cmd"] == "/capture add demo"       # 질문이 없으면 add 부터
+    assert not st["steps"][3]["runnable"], "add 는 ai 단계를 안 돈다 — runnable 이면 안 된다"
+    assert st["steps"][2]["runnable"], "키워드 단계는 /capture keywords 그대로라 늘 runnable"
+    assert not st["steps"][0]["runnable"], "register 의 명령은 /capture add 라 runnable 이면 안 된다"
 
     # GSC 연결된 상태에서의 진행 검증
     _orig_conn = db.gsc_connected
@@ -697,6 +370,7 @@ def _selfcheck() -> None:
         assert st["here"] == 3
         assert st["steps"][3]["cmd"] == "/capture ai demo"        # 질문이 있으면 물어본다
         assert not st["steps"][3]["skip"]
+        assert st["steps"][3]["runnable"], "질문이 있으면 ai 단계 명령이 그대로라 runnable"
 
         # 키가 없으면 AI 단계는 이 환경에서 못 한다 — 목록엔 남기되 "지금 할 것"은
         # 아하 모먼트(gaps)로 넘어가야 한다. 예전엔 여기 영영 붙어 있었다.
@@ -726,7 +400,6 @@ def _selfcheck() -> None:
         os.environ.pop("OPENROUTER_API_KEY", None) if _orig_key is None \
             else os.environ.__setitem__("OPENROUTER_API_KEY", _orig_key)
 
-    _check_seams()
     print("stage self-check ok")
 
 

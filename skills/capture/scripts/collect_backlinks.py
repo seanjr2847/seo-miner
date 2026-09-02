@@ -334,13 +334,13 @@ def collect(project: str, *,
             r.api_calls = st.each(tasks, lambda t: t[1](t), label=lambda t: t[0])
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
-                       + f" errors={st.errors}"
+                       + f" {st.err_note}"
                        + ("" if not notes else " | " + " | ".join(notes)))
 
         total = sum(rows.values())
         print(f"\ncollected {total} rows ({r.notes}), actual_cost=${cost:.4f}\n"
               f"run_id={r.id}")
-        return st.done(rows=total, cost=cost)
+        return st.verdict(total, rows=total, cost=cost)
 
 
 def latest(project: str, top: int = 25) -> dict:
@@ -384,10 +384,7 @@ def main() -> None:
     """인자가 없으면 자기검사 — run_checks.py 가 이 관례로 진입점을 찾는다."""
     if len(sys.argv) == 1:
         return _selfcheck()
-    a = _parser().parse_args()
-    r = collect(a.project, dry_run=a.dry_run, limit=a.limit, max_age=a.max_age)
-    if not r.ok and r.reason:
-        sys.exit(r.reason)
+    collector.cli("backlinks")
 
 
 # ── 자기검사 ─────────────────────────────────────────────────────────────────

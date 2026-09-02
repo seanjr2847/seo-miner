@@ -9,7 +9,9 @@ Env 는 settings.py 가 소유한다 — 여기서 기본값을 정하지 않는
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -43,6 +45,11 @@ CREATE TABLE IF NOT EXISTS github_tokens (
   login TEXT,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS cli_tokens (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  token_hash TEXT NOT NULL,         -- sha256 hex. 위 token_enc 들과 달리 복호화가 없다
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -59,9 +66,17 @@ CREATE TABLE IF NOT EXISTS sites (
   run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
   stage TEXT,                         -- 지금 도는 단계 id (run_all.STAGES 의 이름)
   stage_pct INTEGER,                  -- 그 시점의 진행률 0~100 (끝난 단계 / 전체 단계)
+  run_log TEXT,                       -- 이번 런의 화면 출력 (워커 stdout+stderr). 런당 1벌
+  last_ok INTEGER,                    -- 마지막 런의 결과. 1=전부 성공, 0=실패한 단계 있음, NULL=아직
+  last_error TEXT,                    -- 그 실패의 사람 말 (단계명: 이유; …)
   UNIQUE(user_id, project)
 );
 """
+
+# 프로세스째 죽은 런에 남기는 문구. 로그(사용자가 보는 것)와 last_error(배너가 보는 것)를
+# 한 벌로 둔다 — 두 벌이면 한쪽만 낡는다.
+DEAD_RUN_NOTE = "\n[오류] 서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다.\n"
+DEAD_RUN_ERROR = "서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다."
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -70,14 +85,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if not cols:
         return
     for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile",
-                "stage"):
+                "stage", "run_log", "last_error"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
     if "run_every_hours" not in cols:
         conn.execute("ALTER TABLE sites ADD COLUMN run_every_hours REAL")
-    if "stage_pct" not in cols:
-        conn.execute("ALTER TABLE sites ADD COLUMN stage_pct INTEGER")
+    for col in ("stage_pct", "last_ok"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE sites ADD COLUMN {col} INTEGER")
     conn.commit()
 
 
@@ -120,6 +136,39 @@ def load_token(conn: sqlite3.Connection, user_id: int) -> str | None:
     row = conn.execute("SELECT token_enc FROM google_tokens WHERE user_id=?",
                        (user_id,)).fetchone()
     return _fernet().decrypt(row["token_enc"]).decode("utf-8") if row else None
+
+
+# --- CLI 토큰 ---------------------------------------------------------------
+#
+# 위의 google_tokens / github_tokens 는 **암호화**다. 남의 API 를 다시 부르려면 원문이
+# 필요하기 때문이다. 이건 성격이 다르다 — 서버가 스스로 발급한 값이라 원문을 되찾을
+# 일이 영영 없고 대조만 하면 된다. 그래서 sha256 해시로 둔다(복호화할 수 없는 쪽이
+# 더 안전하다). Fernet 을 여기 끌어오지 마라.
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_cli_token(conn: sqlite3.Connection, user_id: int) -> str:
+    """CLI 원격 조작용 토큰을 발급하고 **원문을 여기서 딱 한 번** 돌려준다.
+
+    유저당 1행이다(INSERT OR REPLACE) — 재발급하면 이전 토큰은 그 자리에서 무효다.
+    돌려준 원문은 호출자가 화면에 한 번 보여 주고 버린다. 로그에 찍지 않는다.
+    """
+    token = "smt_" + secrets.token_urlsafe(32)
+    conn.execute("INSERT OR REPLACE INTO cli_tokens(user_id, token_hash, created_at) "
+                 "VALUES (?,?,CURRENT_TIMESTAMP)", (user_id, _token_hash(token)))
+    conn.commit()
+    return token
+
+
+def uid_for_cli_token(conn: sqlite3.Connection, token: str) -> int | None:
+    """토큰 원문 → user_id. 모르는 토큰이면 None (호출자가 401 로 옮긴다)."""
+    if not token:
+        return None
+    row = conn.execute("SELECT user_id FROM cli_tokens WHERE token_hash=?",
+                       (_token_hash(token),)).fetchone()
+    return row["user_id"] if row else None
 
 
 # --- 사이트 -----------------------------------------------------------------
@@ -190,10 +239,57 @@ def mark_stage(conn: sqlite3.Connection, site_id: int, stage: str, pct: int) -> 
     conn.commit()
 
 
-def mark_done(conn: sqlite3.Connection, site_id: int) -> None:
-    conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
-                 "WHERE id=?", (site_id,))
+def mark_done(conn: sqlite3.Connection, site_id: int, *,
+              ok: bool | None = None, error: str = "") -> None:
+    """수집 종료 표시. ok 를 주면 결과까지 같이 굳힌다.
+
+    결과를 여기 붙이는 이유: 런이 끝나는 자리는 이 한 곳뿐이다(워커의 finally, 그리고
+    죽은 런을 회수하는 reclaim_dead_runs). 따로 두면 한쪽 경로가 결과를 안 남겨서
+    화면이 "마지막 수집 성공"이라고 거짓말한다. ok=None 은 '결과는 건드리지 마라' —
+    옛 호출부(진행률만 끄는 자리)가 마지막 런의 성패를 지우면 안 된다.
+    """
+    if ok is None:
+        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
+                     "WHERE id=?", (site_id,))
+    else:
+        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL, "
+                     "last_ok=?, last_error=? WHERE id=?",
+                     (1 if ok else 0, (error or "")[:2000] or None, site_id))
     conn.commit()
+
+
+def reclaim_dead_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """프로세스째 죽은 런을 회수한다 — 반환: 회수한 사이트 행들.
+
+    워커의 finally 는 프로세스가 살아 있을 때만 돈다. Railway 는 push 마다 컨테이너를
+    갈아치우므로 수집 도중 SIGKILL 이 정상 경로다. 그러면 running_since 가 남아
+    (1) 화면이 3시간 동안 "분석 중 38%" 로 고정되고(due_sites 의 -3시간 회수 규칙),
+    (2) request_run 이 running_since IS NULL 을 요구해 수동 재실행까지 막히고,
+    (3) 사용자에게는 아무 말도 안 간다. 서버가 뜨는 자리에서 그 셋을 한 번에 푼다.
+
+    재개는 호출자(app.lifespan)가 한다 — 저장소는 무엇이 죽었는지만 말한다.
+    """
+    rows = conn.execute("SELECT * FROM sites WHERE running_since IS NOT NULL").fetchall()
+    for r in rows:
+        conn.execute("UPDATE sites SET run_log = COALESCE(run_log,'') || ? WHERE id=?",
+                     (DEAD_RUN_NOTE, r["id"]))
+        mark_done(conn, r["id"], ok=False, error=DEAD_RUN_ERROR)
+    return rows
+
+
+def save_run_log(conn: sqlite3.Connection, site_id: int, text: str) -> None:
+    """이번 런의 워커 stdout. 로컬이 폴링으로 흘려받는 그 텍스트다.
+
+    ponytail: 런당 1벌만 보관. 이력이 필요해지면 runs 테이블로.
+    """
+    conn.execute("UPDATE sites SET run_log=? WHERE id=?", (text, site_id))
+    conn.commit()
+
+
+def load_run_log(conn: sqlite3.Connection, user_id: int, project: str) -> str:
+    """user_id 로 범위를 좁혀 읽는다 — project 이름만으로 남의 런 로그가 열리면 안 된다."""
+    row = site(conn, user_id, project)
+    return (row["run_log"] or "") if row else ""
 
 
 def save_github(conn: sqlite3.Connection, user_id: int, token: str, login: str) -> None:
@@ -263,12 +359,51 @@ def home(user_id: int) -> Path:
     return data_dir() / "users" / str(user_id)
 
 
+class Tenant:
+    """유저 한 명의 home 에 묶인 손잡이 — session(isolate=True) 이 이걸 내준다.
+
+    .conn 은 서버 DB(store.* 가 쓰는 것, tenant() 를 부른 쪽 것 그대로),
+    .home 은 그 유저의 CAPTURE_HOME, .brain() 은 **그 home 의** brain.db 연결이다.
+    라우트가 db.connect() 를 손으로 열던 자리를 t.brain() 으로 바꾸면, isolate 플래그를
+    빠뜨리거나 db.connect() 를 깜빡해도 엉뚱한(서버 기본) brain 을 열 수 없다 — home
+    이 이 객체에 이미 못 박혀 있기 때문이다.
+    """
+
+    def __init__(self, uid: int, home: Path, conn: sqlite3.Connection):
+        self.uid = uid
+        self.home = home
+        self.conn = conn
+
+    def brain(self) -> sqlite3.Connection:
+        """이 유저의 brain.db 연결. env(CAPTURE_HOME) 를 안 봐도 항상 이 home 을 연다."""
+        import db  # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 이미 세워 뒀다
+        return db.connect(home=self.home)
+
+    @contextmanager
+    def activate(self, token_file: Path | None = None):
+        """엔진(subprocess 포함)이 보는 CAPTURE_HOME/GSC_TOKEN_FILE 을 이 home 으로
+        갈아끼운다. worker.run_site 처럼 env 만 보는 코드를 위한 것 — t.brain() 을
+        쓰는 라우트는 이게 필요 없다."""
+        keys = ("CAPTURE_HOME",) if token_file is None else ("CAPTURE_HOME", "GSC_TOKEN_FILE")
+        saved = {k: os.environ.get(k) for k in keys}
+        os.environ["CAPTURE_HOME"] = str(self.home)
+        if token_file is not None:
+            os.environ["GSC_TOKEN_FILE"] = str(token_file)
+        try:
+            yield self
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
 @contextmanager
 def tenant(conn: sqlite3.Connection, user_id: int):
-    """유저 한 명의 env 로 갈아끼운다. 엔진은 이 env 만 보고 돈다.
+    """유저 한 명의 env 로 갈아끼우고, 그 home 에 묶인 Tenant 를 내준다.
 
-    나갈 때 토큰 파일을 회수해 DB 에 되쓴다 — collect_gsc 가 갱신한 access token 이
-    거기 담기므로(collect_gsc.py:74), 안 거두면 매 실행마다 refresh 왕복을 한다.
+    엔진(run_chain 같은 subprocess 포함)은 env 만 보고 돈다 — 그 스왑은
+    Tenant.activate() 가 한다. 나갈 때 토큰 파일을 회수해 DB 에 되쓴다 —
+    collect_gsc 가 갱신한 access token 이 거기 담기므로(collect_gsc.py:74),
+    안 거두면 매 실행마다 refresh 왕복을 한다.
 
     ponytail: os.environ 은 프로세스 전역이라 동시 진입에 안전하지 않다. 워커가
     직렬로 돌기 때문에 지금은 문제없다. 병렬이 필요해지면 유저별 subprocess 로 바꾼다.
@@ -289,17 +424,14 @@ def tenant(conn: sqlite3.Connection, user_id: int):
     if stored:
         tok.write_text(stored, "utf-8")
 
-    saved = {k: os.environ.get(k) for k in ("CAPTURE_HOME", "GSC_TOKEN_FILE")}
-    os.environ["CAPTURE_HOME"] = str(h)
-    os.environ["GSC_TOKEN_FILE"] = str(tok)
+    t = Tenant(user_id, h, conn)
     try:
-        yield h
+        with t.activate(tok):
+            yield t
     finally:
         if tok.exists():
             save_token(conn, user_id, tok.read_text("utf-8"))
         tok.unlink(missing_ok=True)           # 평문 토큰을 디스크에 남기지 않는다
-        for k, v in saved.items():
-            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 @contextmanager
@@ -311,6 +443,10 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
     conn = store.connect(); try: ... finally: conn.close() 와 _own() 과
     with store.tenant() 가 라우트마다 손으로 반복되던 것을 한 곳으로 모은다.
 
+    isolate=False 면 `as` 로 받는 건 그냥 서버 conn 이다. isolate=True 면 Tenant
+    (t.home, t.brain(), t.conn=서버 conn) 다 — 라우트는 db.connect() 를 손으로
+    열지 않고 t.brain() 으로 그 유저의 brain 만 연다.
+
     project 를 주면 소유 확인이 **기본값**이다(own=True) — 빠뜨림이 기본이면 안
     된다. own=False 는 아직 소유가 성립하지 않는 자리에만 쓴다(예: 새 사이트 등록).
     """
@@ -321,12 +457,12 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
             raise HTTPException(
                 status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
         if isolate:
-            with tenant(conn, uid):
+            with tenant(conn, uid) as t:
                 if paid:
                     with settings.paid_keys():
-                        yield conn
+                        yield t
                 else:
-                    yield conn
+                    yield t
         else:
             yield conn
     finally:
@@ -357,8 +493,10 @@ def demo() -> None:
         assert b"secret" not in raw, "토큰이 평문으로 저장됐다"
 
         before = os.environ.get("CAPTURE_HOME")
-        with tenant(conn, uid) as h:
-            assert os.environ["CAPTURE_HOME"] == str(h)
+        with tenant(conn, uid) as t0:
+            assert isinstance(t0, Tenant) and t0.uid == uid and t0.conn is conn
+            assert t0.home == home(uid)
+            assert os.environ["CAPTURE_HOME"] == str(t0.home)
             assert Path(os.environ["GSC_TOKEN_FILE"]).read_text("utf-8") == '{"refresh_token":"secret"}'
             Path(os.environ["GSC_TOKEN_FILE"]).write_text('{"refresh_token":"new"}', "utf-8")
         assert os.environ.get("CAPTURE_HOME") == before, "env 가 복원되지 않았다"
@@ -473,6 +611,54 @@ def demo() -> None:
         assert b"ghp_secret" not in raw, "GitHub 토큰이 평문으로 저장됐다"
         set_repo(conn, uid, "myproj", "octocat/site", "main")
         assert site(conn, uid, "myproj")["repo"] == "octocat/site"
+
+        # CLI 토큰 — 해시만 남고, 재발급하면 앞 토큰이 그 자리에서 죽는다.
+        t1 = issue_cli_token(conn, uid)
+        assert t1.startswith("smt_") and len(t1) > 20, t1
+        assert uid_for_cli_token(conn, t1) == uid, "발급한 토큰으로 유저를 못 찾는다"
+        assert uid_for_cli_token(conn, "smt_틀린값") is None, "아무 토큰이나 통과한다"
+        assert uid_for_cli_token(conn, "") is None, "빈 토큰이 통과한다"
+        assert t1 not in conn.execute(
+            "SELECT token_hash FROM cli_tokens").fetchone()["token_hash"], "토큰이 평문으로 저장됐다"
+        t2 = issue_cli_token(conn, uid)
+        assert t2 != t1 and uid_for_cli_token(conn, t2) == uid
+        assert uid_for_cli_token(conn, t1) is None, "재발급했는데 이전 토큰이 살아 있다"
+        assert conn.execute("SELECT COUNT(*) FROM cli_tokens").fetchone()[0] == 1, \
+            "유저당 1행이 아니다"
+
+        # 런 로그 — 런당 1벌, 남의 것은 안 보인다.
+        assert load_run_log(conn, uid, "myproj") == "", "처음부터 로그가 있다"
+        save_run_log(conn, sid, "[1/13] gsc\n")
+        assert load_run_log(conn, uid, "myproj") == "[1/13] gsc\n"
+        save_run_log(conn, sid, "[1/13] gsc\n[2/13] ga4\n")   # 덮어쓴다(누적 아님)
+        assert load_run_log(conn, uid, "myproj").count("gsc") == 1, "로그가 이어붙었다"
+        assert load_run_log(conn, uid2, "myproj") == "", "남의 런 로그가 열린다"
+        assert load_run_log(conn, uid, "없는사이트") == ""
+
+        # 런 결과 — 화면 배너와 실패 메일이 읽는 값. ok=None 은 안 건드린다.
+        mark_done(conn, sid, ok=False, error="rank: DataForSEO 잔액 없음(402)")
+        r = site(conn, uid, "myproj")
+        assert (r["last_ok"], r["last_error"]) == (0, "rank: DataForSEO 잔액 없음(402)"), tuple(r)
+        mark_done(conn, sid)
+        assert site(conn, uid, "myproj")["last_ok"] == 0, "ok=None 인데 지난 런의 결과를 지웠다"
+        mark_done(conn, sid, ok=True)
+        r = site(conn, uid, "myproj")
+        assert (r["last_ok"], r["last_error"]) == (1, None), tuple(r)
+
+        # 죽은 런 회수 — 컨테이너가 교체되면 워커의 finally 는 안 돈다.
+        mark_run(conn, sid)
+        save_run_log(conn, sid, "[1/13] gsc\n")
+        got = reclaim_dead_runs(conn)
+        assert [r["id"] for r in got] == [sid], f"죽은 런을 못 찾았다: {[dict(r) for r in got]}"
+        r = site(conn, uid, "myproj")
+        assert not r["running_since"], "회수했는데 '수집 중' 표시가 남았다"
+        assert r["last_ok"] == 0 and "서버 재시작" in (r["last_error"] or ""), tuple(r)
+        assert load_run_log(conn, uid, "myproj").startswith("[1/13] gsc\n"), \
+            "회수가 지금까지의 로그를 날렸다"
+        assert "서버 재시작" in load_run_log(conn, uid, "myproj"), \
+            "런이 왜 끊겼는지 로그에 안 남았다"
+        assert reclaim_dead_runs(conn) == [], "도는 런이 없는데 또 회수한다"
+        mark_done(conn, sid, ok=True)
 
         # session() — 라우트가 conn 열기·소유 확인·tenant·유료 키를 한 번에 쓰는 자리.
         with session(uid, "myproj") as c:

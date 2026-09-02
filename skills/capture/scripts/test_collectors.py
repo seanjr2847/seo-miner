@@ -1266,6 +1266,8 @@ def test_run_all_chain_order_and_paid_skips():
         calls.clear()
         seen.clear()
         stages = kw.pop("stages", None) or table()
+        # 카나리아는 네트워크를 탄다 — 여기서는 아무것도 안 막는 가짜를 준다.
+        kw.setdefault("preflight", lambda stgs: {})
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             results = run_all.run_chain("test_proj", stages=stages, **kw)
@@ -1375,6 +1377,93 @@ def test_run_all_chain_order_and_paid_skips():
                 os.environ[k] = v
 
 
+def test_paid_failures_are_failures_and_the_canary_runs_first():
+    """유료 단계가 통째로 실패했는데 rc=0 "완료"로 나가던 자리를 못 박는다.
+
+    실측(8/30·9/1·9/2 자동 런): rank 는 402 를 키워드 100개에 100번 맞고
+    errors=100/api_calls=0 인 채로 "완료", metrics 는 updated=0 인데 "볼륨이
+    채워졌으니…". 셋 다 초록불이었다.
+
+    여기서 지키는 것:
+      1. 잔액 < $1 이면 유료 단계를 **부르지도 않는다** (402 를 100번 사지 않는다)
+      2. Fatal 이 올라오면 그 단계는 ok=False 이고 사유가 그 사람 말 그대로다
+      3. 전부 실패한 단계는 chain_rc 가 1 이다 / 일부 실패는 0 이되 요약표에 표시
+    """
+    import collector as _collector
+    import run_all
+
+    calls: list[str] = []
+
+    def fake(name, result=None, raises=None):
+        def fn(project, *, dry_run=False, **opts):
+            calls.append(name)
+            if raises:
+                raise raises
+            return result or _collector.StageResult(ok=True)
+        return fn
+
+    def table(results=None, raises=None):
+        results, raises = results or {}, raises or {}
+        return tuple(s._replace(fn=fake(s.name, results.get(s.name), raises.get(s.name)))
+                     for s in run_all.STAGES)
+
+    def run(**kw):
+        calls.clear()
+        buf = io.StringIO()
+        stages = kw.pop("stages", None) or table()
+        with contextlib.redirect_stdout(buf):
+            results = run_all.run_chain("test_proj", stages=stages, **kw)
+            run_all.print_summary("test_proj", results, dry_run=False)
+        return results, buf.getvalue()
+
+    orig = {k: os.environ.get(k) for k in
+            ("SERPER_API_KEY", "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "OPENROUTER_API_KEY")}
+    try:
+        for k in orig:
+            os.environ.pop(k, None)
+        os.environ["DATAFORSEO_LOGIN"] = "u"
+        os.environ["DATAFORSEO_PASSWORD"] = "p"
+
+        # 1. 잔액이 없으면 DataForSEO 단계를 아예 안 부른다.
+        broke = {n: "DataForSEO 잔액 없음 ($0.12)" for n in run_all.DFS_STAGES}
+        results, out = run(preflight=lambda stgs: broke)
+        for name in run_all.DFS_STAGES:
+            assert name not in calls, f"잔액 0 인데 {name} 을 불렀다: {calls}"
+            r = dict(results)[name]
+            assert (r.ok, r.skipped) == (True, True) and "$0.12" in r.reason, r
+        assert run_all.chain_rc(results) == 0, results
+        assert "$0.12" in out, out
+
+        # 2. Fatal 은 사유가 사람 말 그대로 올라오고 rc 가 1 이 된다.
+        msg = "DataForSEO 잔액 없음(402) — https://app.dataforseo.com 에서 잔액·키 확인"
+        results, out = run(only="rank", stages=table(raises={"rank": _collector.Fatal(msg)}))
+        assert dict(results)["rank"].reason == msg, dict(results)["rank"]
+        assert run_all.chain_rc(results) == 1, results
+        assert msg in out, out          # 요약표에 첫 오류 문장이 붙는다
+
+        # 3. 전부 실패(ok=False)는 rc 1, 일부 실패(partial)는 rc 0 + 노란 표시
+        results, out = run(only="rank", stages=table({
+            "rank": _collector.StageResult(ok=False, reason="402 Payment Required")}))
+        assert run_all.chain_rc(results) == 1 and "402" in out, out
+        results, out = run(only="rank", stages=table({
+            "rank": _collector.StageResult(ok=True, rows=3, partial=True,
+                                           reason="97건 실패: 402 Payment Required")}))
+        assert run_all.chain_rc(results) == 0, results
+        assert "완료 ⚠" in out and "97건 실패" in out, out
+
+        # 4. 카나리아 자체는 유료 단계가 남아 있을 때만 돈다 (돈 안 드는 바퀴엔 불필요)
+        seen: list = []
+        run(only="gsc,gaps", preflight=lambda stgs: seen.append(stgs) or {})
+        assert seen == [], "유료 단계가 없는데 카나리아를 불렀다"
+        run(only="rank", preflight=lambda stgs: seen.append([s.name for s in stgs]) or {})
+        assert seen == [["rank"]], seen
+    finally:
+        for k, v in orig.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
 def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard():
     """gaps/report 는 이제 scoring.load / dashboard.export 직접 호출이다 — 표에서는
     다른 단계와 같은 모양(fn(project, *, dry_run) -> StageResult).
@@ -1428,6 +1517,60 @@ def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard(
         run_all.dashboard.export = orig_export
 
 
+def test_collector_cli_forwards_knob_and_dispatches_correct_stage_name():
+    """collector.cli 가 열 개 수집기의 main() 을 대신하는 공통 통로다.
+
+    main() 열 벌을 이 한 함수로 접으면서 "CLI 플래그 하나가 실제로 collect() 까지
+    도달하는가"와 "remote.dispatch 에 넘기는 단계 이름이 그 단계 자신과 같은가"를
+    개별 파일마다 손으로 확인하던 걸 표(run_all.STAGES) 하나를 돌며 검사한다.
+    """
+    import collector
+    import run_all
+
+    orig_dispatch = collector.remote.dispatch
+    orig_argv = sys.argv
+    try:
+        for stg in run_all.STAGES:
+            if stg.module is None:      # gaps·report — 자체 모듈이 아니다
+                continue
+            specs = getattr(stg.module._parser(), "_collector_settings", [])
+            assert specs, f"[{stg.name}] add_setting 으로 등록한 노브가 하나도 없다"
+            spec = specs[0]
+            probe = {"int": "97", "float": "0.97"}.get(
+                spec.type_fn.__name__ if spec.type_fn else "", "probe")
+            sys.argv = ["prog", "--project", "p", "--dry-run",
+                       f"--{spec.dest.replace('_', '-')}", probe]
+
+            captured: dict = {}
+
+            def fake_collect(project, *, dry_run=False, **kwargs):
+                captured.update(project=project, dry_run=dry_run, kwargs=kwargs)
+                return collector.StageResult(ok=True, skipped=True)
+
+            dispatched: dict = {}
+
+            def fake_dispatch(args, stage_name):
+                dispatched.update(name=stage_name, project=getattr(args, "project", None))
+                return False   # 로컬로 계속 진행 — collect() 까지 가는지를 봐야 한다
+
+            orig_collect = stg.module.collect
+            stg.module.collect = fake_collect
+            collector.remote.dispatch = fake_dispatch
+            try:
+                collector.cli(stg.name)
+            finally:
+                stg.module.collect = orig_collect
+
+            assert dispatched.get("name") == stg.name, (stg.name, dispatched)
+            assert dispatched.get("project") == "p", (stg.name, dispatched)
+            expected = spec.type_fn(probe) if spec.type_fn else probe
+            assert captured.get("kwargs", {}).get(spec.dest) == expected,                 (stg.name, spec.dest, expected, captured)
+            assert captured.get("dry_run") is True, (stg.name, captured)
+    finally:
+        collector.remote.dispatch = orig_dispatch
+        sys.argv = orig_argv
+
+
 def test_serp_adapter_credentials_timeouts_and_labs():
     """serp_adapter: 타임아웃 상수 정본, 키 판정 정본, Labs ranked_keywords 단일화 검증."""
     # 1. 타임아웃 정본
@@ -1437,6 +1580,7 @@ def test_serp_adapter_credentials_timeouts_and_labs():
         "openrouter": 120,
         "suggest": 10,
         "page": 20,
+        "canary": 15,
     }
     assert serp_adapter.LABS_COST_PER_CALL == 0.001
 
@@ -1498,9 +1642,20 @@ def test_serp_adapter_credentials_timeouts_and_labs():
             assert kw["timeout"] == serp_adapter.TIMEOUTS["dataforseo"]
             assert kw["auth"] == ("login_test", "pw_test")
 
-            # task error 검증
+            # task error 검증 — 인증·결제 계열(401xx·402xx)은 Fatal 이다.
+            # 다음 키워드에서 낫지 않는 오류라 각 항목마다 다시 사러 가면 안 된다.
             serp_adapter.requests.post = lambda *a, **k: FakeResponse({
                 "tasks": [{"status_code": 40100, "status_message": "Invalid auth"}]
+            })
+            try:
+                serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
+                raise AssertionError("status_code >= 40000 은 에러를 내야 함")
+            except serp_adapter.Fatal as e:
+                assert "401" in str(e) and "Invalid auth" in str(e), e
+
+            # 그 밖의 task 오류는 그대로 항목 오류(RuntimeError) — 다음 항목은 살 수 있다
+            serp_adapter.requests.post = lambda *a, **k: FakeResponse({
+                "tasks": [{"status_code": 40501, "status_message": "no rows"}]
             })
             try:
                 serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)

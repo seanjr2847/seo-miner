@@ -73,7 +73,7 @@ addEventListener("DOMContentLoaded", function () {
 def view_sections() -> list[tuple[str, str]]:
     """각 뷰가 자기 view-def 에 선언한 섹션 id — 그게 DOM 에 실제로 있어야 한다.
 
-    목록을 여기 옮겨 적지 않는다. 선언이 정본이고(stage._check_seams 도 같은 것을
+    목록을 여기 옮겨 적지 않는다. 선언이 정본이고(test_seams 도 같은 것을
     읽는다), 화면이 늘면 이 검사가 저절로 따라간다.
     """
     out = []
@@ -99,6 +99,7 @@ CRAWL_NEW = "/crawlZ9"              # 크롤: 직전 회차에 없던 이슈
 GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — RIVAL 과 갈라 둔다
 #   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
+AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -115,6 +116,12 @@ MUSTS = [
     (re.escape(CRAWL_NEW), "사이트 점검이 크롤 이슈를 안 그렸다"),
     (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
+    (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
+    # 엔진 이름 옆의 로고와, 엔진×카테고리 줄에서 질문 목록으로 내려가는 손잡이.
+    # "chatgpt 브랜드 4 3 10 40%" 를 눌러도 아무 일도 안 나던 자리다.
+    (r'<svg class="ailogo', "AI 인용 화면이 엔진 로고를 안 그렸다"),
+    (r'<tr class="aimx"[^>]*data-e="chatgpt"[^>]*data-c="브랜드"[^>]*onclick="AI_drill',
+     "엔진×카테고리 줄이 질문 목록으로 안 내려간다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -162,6 +169,14 @@ HOSTED_MUSTS = MUSTS + [
     (r'id="view-backlinks"', "호스팅 전용 화면(백링크)이 안 붙었다"),
     (r'id="sm-set"', "호스팅 설정 섹션이 안 만들어졌다"),
     (r'id="sm-run"', "레일 바닥의 [전체 분석 실행]이 안 붙었다"),
+    # 안내의 실행 칩은 SM.host 를 렌더 시점에 부른다(dashboard.html 의 renderGuide) —
+    # 호스팅판은 그 훅을 실행 버튼으로 갈아 낀다(dash.html 의 SM.host.stepChip).
+    # 이 픽스처(beta-site)는 GSC 는 읽었지만 키워드를 아직 안 캤으므로 "지금 할 것"이
+    # runnable 인 키워드 단계다 — 그 칩(class="cmd", 화면 제목 옆 칩과는 클래스가
+    # 다르다)이 실제로 host.run 을 부르는지를 본다. 로컬 기본값(SM.host.copy)이
+    # 남아 있으면(=SM.host 가 늦게 섰거나 안 갈렸으면) 이 패턴이 없다.
+    (r'class="cmd" data-stage="[^"]+" onclick="SM\.host\.run\(',
+     "안내의 실행 칩이 host.run 을 안 부른다 — 복사 칩인 채로 남았다"),
 ]
 
 
@@ -213,6 +228,19 @@ def _axes(conn, pid: int) -> None:
                      [(r1, "dup_title", "warn", "/a", "같은 제목"),
                       (r2, "dup_title", "warn", "/a", "같은 제목"),
                       (r2, "broken_internal", "bad", CRAWL_NEW, "404")])
+    # AI 인용 — 질문 둘 × 엔진 셋. chatgpt 만 브랜드 질문을 인용한다.
+    import db
+    conn.executemany("INSERT INTO ai_prompts(project_id,prompt,category) VALUES(?,?,?)",
+                     [(pid, AI_PROMPT, "브랜드"), (pid, f"{AI_PROMPT} 추천", "추천")])
+    pids = [r[0] for r in conn.execute("SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id",
+                                       (pid,))]
+    with db.run(conn, pid, "ai") as r:
+        for eng in ("chatgpt", "perplexity", "gemini"):
+            for i, qid in enumerate(pids):
+                cited = 1 if eng == "chatgpt" and i == 0 else 0
+                conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned,"
+                             "cited_domains_json,answer_excerpt) VALUES(?,?,?,?,?,?,?)",
+                             (qid, r.id, eng, cited, cited, '["rival.example"]', "답변"))
 
 
 def fixture(home: Path) -> None:

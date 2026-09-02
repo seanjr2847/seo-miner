@@ -81,15 +81,70 @@ def _stats_row(label: str, value) -> str:
     )
 
 
+def _dashboard_url() -> str:
+    """메일이 가리키는 화면. 두 벌 만들지 않는다 — 한쪽만 낡으면 링크가 어긋난다."""
+    return settings.get("SEOMINER_PUBLIC_URL").rstrip("/") + "/d"
+
+
 def run_done(to: str, project: str, stats: dict,
              report: bytes | None = None) -> bool:
     """분석 완료 알림. report 를 주면 보고서 HTML 을 첨부한다 —
     "들어와서 보세요"보다 "보고서가 왔습니다"가 마케터의 기대에 맞다."""
-    dashboard_url = settings.get("SEOMINER_PUBLIC_URL").rstrip("/") + "/d"
+    dashboard_url = _dashboard_url()
     return send(to, f"{project} 주간 SEO 보고서",
                 _body_html(project, stats, dashboard_url),
                 attachments=[{"filename": "report.html", "content": report}]
                 if report else None)
+
+
+def run_failed(to: str, project: str, failed: list[tuple[str, str]],
+               dashboard_url: str | None = None) -> bool:
+    """수집은 돌았는데 실패한 단계가 있다는 알림.
+
+    성공만 알리면 "메일이 안 왔다"가 "아직 도는 중"과 구분되지 않는다 — 잔액이
+    떨어져 순위가 3주째 안 걸려도 사용자는 낡은 숫자를 최신으로 읽는다.
+    failed 는 [(단계명, 이유)] — 이유는 수집기가 남긴 한국어 문장 그대로다.
+    """
+    head = failed[0][0] if failed else ""
+    return send(to, f"{project} 수집에서 {len(failed)}개 단계가 실패했습니다"
+                + (f" ({head})" if head else ""),
+                _fail_html(project, failed, dashboard_url or _dashboard_url()))
+
+
+def _fail_html(project: str, failed: list[tuple[str, str]], dashboard_url: str) -> str:
+    rows = "".join(_stats_row(name, reason) for name, reason in failed)
+    return (
+        '<html><body style="margin:0;padding:0;background:#F7F8F5;'
+        'font-family:Arial,Helvetica,sans-serif;color:#121714;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'border="0" width="100%" style="background:#F7F8F5;">'
+        '<tr><td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'border="0" width="560" style="max-width:560px;background:#ffffff;'
+        'border:1px solid #e5e7eb;">'
+        '<tr><td style="padding:28px 32px 8px 32px;font-size:20px;'
+        'font-weight:bold;color:#9A5B3C;">수집에서 실패한 단계가 있습니다</td></tr>'
+        '<tr><td style="padding:0 32px 24px 32px;font-size:14px;'
+        'line-height:1.6;color:#121714;">'
+        f'<strong style="color:#22705F;">{project}</strong> 프로젝트의 수집이 끝났지만 '
+        "아래 단계는 결과를 남기지 못했습니다. 그만큼의 숫자는 지난 수집 값 그대로입니다."
+        "</td></tr>"
+        '<tr><td style="padding:0 32px 24px 32px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'border="0" width="100%" style="border-collapse:collapse;">'
+        f"{rows}"
+        '</table></td></tr>'
+        '<tr><td align="center" style="padding:8px 32px 32px 32px;">'
+        f'<a href="{dashboard_url}" style="display:inline-block;'
+        'background:#22705F;color:#ffffff;text-decoration:none;'
+        'padding:12px 24px;font-size:14px;font-weight:bold;'
+        'border-radius:4px;">대시보드 열기</a>'
+        '</td></tr>'
+        '<tr><td style="padding:16px 32px 24px 32px;font-size:12px;'
+        'color:#6b7280;text-align:center;border-top:1px solid #e5e7eb;">'
+        "seo-miner</td></tr>"
+        "</table></td></tr></table></body></html>"
+    )
 
 
 def _body_html(project: str, stats: dict, dashboard_url: str) -> str:
@@ -255,6 +310,16 @@ def demo() -> None:
         assert run_done("user@x.com", "P", {}, report=b"<html>r</html>") is True
         att = calls[0][1]["json"]["attachments"][0]
         assert base64.b64decode(att["content"]) == b"<html>r</html>", att
+
+        # 실패 알림 — 성공만 알리면 "메일이 없다"가 "아직 도는 중"과 구분되지 않는다.
+        calls.clear()
+        os.environ["SEOMINER_PUBLIC_URL"] = "https://x.example"
+        assert run_failed("user@x.com", "P",
+                          [("rank", "DataForSEO 잔액 없음(402)")]) is True
+        body = calls[0][1]["json"]
+        assert "rank" in body["subject"] and "1개 단계" in body["subject"], body["subject"]
+        assert "DataForSEO 잔액 없음(402)" in body["html"], "실패 이유가 본문에 없다"
+        assert "https://x.example/d" in body["html"], "대시보드 링크가 없다"
 
         # 자격증명을 넘기면 그것을 쓴다 (transport 가 env 를 안 본다).
         calls.clear()

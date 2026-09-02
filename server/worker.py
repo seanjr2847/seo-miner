@@ -12,8 +12,11 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -118,11 +121,59 @@ def backlinks_plan(skip: str | None, every_days: float) -> tuple[str | None, dic
     return skip, {"backlinks": {"max_age": every_days}}
 
 
+# 런 로그를 DB 에 흘려 보내는 간격(초). 단계 하나가 14분이다(rank 100개) — 끝나고만
+# 저장하면 그동안 화면이 안 움직인다. 줄마다 UPDATE 하지 않는 이유는 반대쪽이다:
+# 한 런의 내레이션은 수천 줄이라 줄마다 쓰면 그게 곧 수천 번의 트랜잭션이다.
+SAVE_EVERY_SECONDS = 4.0
+
+
+class _Tee(io.StringIO):
+    """잡으면서 흘린다 — 런 내레이션을 DB 로 가져간다고 운영자가 보던 콘솔 로그
+    (Railway) 를 뺏으면 안 된다. redirect_stdout / redirect_stderr 가 이걸 받는다.
+
+    into 를 주면 글은 그쪽 버퍼에 쌓인다. stdout 과 stderr 를 각각 감싸되 **버퍼는
+    한 벌**로 두려고 있는 인자다 — 수집기의 오류 문장은 전부 stderr 인데
+    (collector.Stage.each, run_all 의 `[오류]` 줄) 여태 stdout 만 잡아서 화면 로그에
+    한 줄도 안 실렸다. 402 를 100번 맞은 런이 사용자에게는 조용한 성공으로 보였다.
+    따로 모으면 순서가 사라지므로 버퍼를 나누지 않는다. 콘솔로 흘릴 때만 각자의
+    원래 스트림으로 간다.
+    """
+
+    def __init__(self, out, into=None, save=None, every=SAVE_EVERY_SECONDS):
+        super().__init__()
+        self._out = out
+        self._into = into
+        self._save, self._every, self._last = save, every, 0.0
+
+    def write(self, s):
+        try:
+            self._out.write(s)
+            self._out.flush()
+        except Exception:
+            pass                      # 콘솔이 죽었다고 수집을 죽이지 않는다
+        return (self._into or self)._append(s)
+
+    def _append(self, s):
+        n = io.StringIO.write(self, s)
+        if self._save and time.monotonic() - self._last >= self._every:
+            self._last = time.monotonic()
+            try:
+                self._save(self.getvalue())
+            except Exception:
+                pass                  # 로그를 못 저장했다고 수집을 죽이지 않는다
+        return n
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
-             only: str | None = None) -> dict:
+             only: str | None = None, opts: dict[str, dict] | None = None) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
 
     only 를 주면 그 단계만 돈다 — 웹에서 '구글 실적만 다시 읽기' 같은 부분 실행에 쓴다.
+    opts 는 `--opt STAGE.KEY=VALUE` 로 들어온 단계별 노브다(원격 CLI 가 쓴다).
+
+    체인이 뱉는 내레이션은 그대로 잡아 sites.run_log 에 둔다 — 원격 CLI 는 자기가
+    요약표를 다시 만들지 않고 이걸 받아 그대로 print 한다(문구는 한 벌이다).
+    ponytail: 런당 1벌만 보관. 이력이 필요해지면 runs 테이블로.
     """
     user_id = site["user_id"]
     project = site["project"]
@@ -130,22 +181,45 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
     if not dry_run:
         store.mark_run(conn, site["id"])
+        store.save_run_log(conn, site["id"], "")     # 지난 런의 로그를 남기지 않는다
+
+    def save_log(text: str) -> None:
+        if not dry_run:
+            store.save_run_log(conn, site["id"], text)
+
+    # 로그는 단계 경계뿐 아니라 **단계 도중에도** 흘려 보낸다(_Tee 의 시간 스로틀) —
+    # rank 한 단계가 14분이라 경계에서만 쓰면 그동안 화면이 멈춰 보인다.
+    buf = _Tee(sys.stdout, save=save_log)
+    err = _Tee(sys.stderr, into=buf)          # 오류 줄도 같은 버퍼에, 순서대로
 
     # 화면이 폴링으로 읽는 값. 단계가 끝난 만큼만 센다 — 3단계를 시작한 시점의
     # 진행률은 2/8 이지, 3/8 이 아니다.
     def on_stage(idx, total, name):
         if not dry_run:
             store.mark_stage(conn, site["id"], name, round((idx - 1) * 100 / total))
+            save_log(buf.getvalue())
 
     # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
-    skip, opts = backlinks_plan(skip, settings.num("SEOMINER_BACKLINKS_EVERY_DAYS"))
+    skip, chain_opts = backlinks_plan(skip, settings.num("SEOMINER_BACKLINKS_EVERY_DAYS"))
+    # 요청이 준 노브가 이긴다. 단계 단위가 아니라 키 단위로 합친다 — 단계째로 덮으면
+    # 위에서 정한 백링크 주기가 사라져 한 런에 두 번 산다.
+    for name, kv in (opts or {}).items():
+        chain_opts.setdefault(name, {}).update(kv)
 
+    ok, error, failed = False, "", []
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
-            results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
-                                        opts=opts, on_stage=on_stage)
-            run_all.print_summary(project, results, dry_run=dry_run)
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
+                                            opts=chain_opts, on_stage=on_stage)
+                run_all.print_summary(project, results, dry_run=dry_run)
             rc = run_all.chain_rc(results)
+            # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
+            # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
+            failed = [(n, r.reason or "이유가 기록되지 않았습니다")
+                      for n, r in results if not r.ok]
+            ok = rc == 0
+            error = "; ".join(f"{n}: {why}" for n, why in failed)
 
             # 이번 런에서 모은 GSC 실적으로 다음 런의 순위 측정 대상을 정한다.
             # 부수 작업이다 — 여기서 터져도 이미 끝난 수집을 실패로 만들지 않는다.
@@ -160,7 +234,8 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
             # 메일 재료는 반드시 tenant 안에서 모은다 — 밖에서는 db.CAPTURE_HOME 이
             # 서버 기본 경로를 가리켜 남의(혹은 빈) Brain 을 읽는다.
             stats, rep, to = None, None, _email_of(conn, site)
-            if not dry_run and rc == 0 and mailer.available() and to:
+            notify = not dry_run and mailer.available() and to
+            if notify and rc == 0:
                 stats = _mail_stats(project)
                 rep = _latest_report(project)
 
@@ -171,13 +246,27 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                 mailer.run_done(to, project, stats, report=rep)
             except Exception as e:
                 print(f"[{project}] 알림 메일 건너뜀: {e}")
+        # 실패도 같은 자리에서 알린다. 성공만 메일이 가면 "메일이 안 왔다"는
+        # "아직 도는 중"과 구분이 안 된다 — 사용자는 조용히 낡은 숫자를 본다.
+        elif notify and failed:
+            try:
+                mailer.run_failed(to, project, failed)
+            except Exception as e:
+                print(f"[{project}] 실패 알림 메일 건너뜀: {e}")
         return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
                 "activated": n}
     except Exception as e:
+        # 로그에도 남긴다 — 원격 CLI 는 이 텍스트가 전부라, 여기 없으면 사용자에게는
+        # 런이 조용히 끊긴 것으로 보인다.
+        ok, error = False, f"수집이 중단됐습니다: {e}"
+        buf.write(f"\n[오류] {error}\n")
         return {"user_id": user_id, "project": project, "ok": False, "error": str(e)}
     finally:
         if not dry_run:
-            store.mark_done(conn, site["id"])
+            store.save_run_log(conn, site["id"], buf.getvalue())
+            # 마지막에 끈다 — 로그를 먼저 굳힌다. 결과도 여기서 같이 굳혀야
+            # 예외로 죽은 런까지 화면에 실패로 남는다.
+            store.mark_done(conn, site["id"], ok=ok, error=error)
 
 
 def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
@@ -206,10 +295,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
     ap.add_argument("--only", help="이 단계만 (쉼표 구분, 예: gsc)")
+    # 형식·타입 추정의 정본은 run_all.parse_opts 다 — 여기서 다시 파싱하지 않는다.
+    ap.add_argument("--opt", action="append", metavar="STAGE.KEY=VALUE",
+                    help="단계별 옵션 (반복 지정). 예: --opt rank.device=mobile")
     args = ap.parse_args()
 
     if args.user is not None and not args.project:
         ap.error("--user 는 --project 와 함께 써야 합니다")
+    if args.opt and args.all:
+        # 조용히 무시하면 옵션을 줬다고 믿는 쪽이 틀린 결과를 맞는 결과로 읽는다.
+        ap.error("--opt 는 --user/--project 단일 실행에만 쓸 수 있습니다")
 
     conn = store.connect()
     try:
@@ -224,7 +319,7 @@ def main() -> int:
                 print(f"프로젝트 '{args.project}' 없음 (user={args.user})", file=sys.stderr)
                 return 1
             results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip,
-                                only=args.only)]
+                                only=args.only, opts=run_all.parse_opts(args.opt))]
     finally:
         conn.close()
 
@@ -259,9 +354,16 @@ def demo() -> None:
 
         def fake_chain(project, *, dry_run=False, skip=None, only=None, opts=None,
                        on_stage=None):
+            print("[가짜체인] 내레이션 한 줄")     # run_log 에 잡혀야 한다
+            # 수집기의 오류 문장은 전부 stderr 다(collector.Stage.each) — 여태 화면
+            # 로그에 한 줄도 안 실렸다. stdout 줄과 순서대로 섞여야 한다.
+            print("[가짜체인] 402 Payment Required", file=sys.stderr)
             if on_stage:
                 on_stage(3, 8, "keywords")  # 화면이 읽는 진행률이 실제로 찍히는지 본다
             called.append({
+                # 단계 콜백이 지금까지의 텍스트를 이미 흘려 보냈는지 — 끝나고 한 번만
+                # 쓰면 몇 분짜리 런 내내 원격 화면이 비어 있다.
+                "log_midrun": conn.execute("SELECT run_log FROM sites").fetchone()[0],
                 "project": project,
                 "skip": skip,
                 "opts": opts,
@@ -282,6 +384,33 @@ def demo() -> None:
         assert called[0]["openrouter"] == "test-key", "OPENROUTER_API_KEY 주입 실패"
         assert called[0]["serper"] is None, "짝 없는 잔여 키가 엔진에 노출됐다"
         assert called[0]["progress"] == ("keywords", 25), called[0]["progress"]
+        assert "내레이션" in (called[0]["log_midrun"] or ""), \
+            "단계 중간에 런 로그가 흘러가지 않는다 — 원격은 런이 끝날 때까지 빈 화면이다"
+        log = conn.execute("SELECT run_log FROM sites").fetchone()[0]
+        assert "내레이션" in log, "런이 끝났는데 로그가 안 남았다"
+        # stderr 도 같은 버퍼에, 순서대로. 402 를 100번 맞은 런이 사용자에게는
+        # 조용한 성공으로 보이던 자리다.
+        assert "402 Payment Required" in log, "stderr 가 화면 로그에 안 실린다"
+        assert log.index("내레이션") < log.index("402"), "stdout·stderr 순서가 섞였다"
+
+        # 런 결과가 사이트에 굳는다 — 화면 배너와 실패 메일이 읽는 값이다.
+        assert conn.execute("SELECT last_ok, last_error FROM sites").fetchone()[:2] == (1, None), \
+            conn.execute("SELECT last_ok, last_error FROM sites").fetchone()[:2]
+
+        # 단계 경계가 아니라 **단계 도중**에도 저장돼야 한다 — rank 한 단계가 14분이다.
+        sid_t = store.sites(conn, uid)[0]["id"]
+        rlog = lambda: conn.execute("SELECT run_log FROM sites WHERE id=?",  # noqa: E731
+                                    (sid_t,)).fetchone()[0]
+        store.save_run_log(conn, sid_t, "")
+        tee = _Tee(io.StringIO(), save=lambda s: store.save_run_log(conn, sid_t, s),
+                   every=0.05)
+        tee.write("첫 줄\n")
+        assert rlog() == "첫 줄\n", f"첫 줄이 안 흘렀다: {rlog()!r}"
+        tee.write("바로 다음 줄\n")     # 아직 간격 안 지남 — 매 줄 UPDATE 하면 안 된다
+        assert rlog() == "첫 줄\n", "줄마다 DB 를 쓴다 — 수천 줄이면 수천 번의 트랜잭션이다"
+        time.sleep(0.06)
+        tee.write("간격 지난 줄\n")
+        assert "간격 지난 줄" in rlog(), "간격이 지났는데 중간 저장이 안 된다"
         # 백링크 주기는 체인 **안**에서 정해져야 한다. 여기 밖에 또 두면 한 런에 두 번
         # 사게 된다 — 유료 호출이라 그게 곧 돈이다.
         assert (called[0]["opts"] or {}).get("backlinks", {}).get("max_age") == 30.0,             f"백링크 주기가 단계 옵션으로 안 갔다: {called[0]['opts']}"
@@ -342,6 +471,44 @@ def demo() -> None:
         # 돌고 나면 사이트에 도장이 찍혀서 다음 틱에 또 돌지 않아야 한다.
         assert run_all_due(conn) == [], "방금 쟀는데 또 잰다"
         assert len(called) == 1, "중복 실행됐다"
+
+        # --opt 로 들어온 노브(원격 CLI 의 `--device mobile`)가 체인까지 간다.
+        # 단계째로 덮으면 안 된다 — 위에서 정한 백링크 주기가 사라져 한 런에 두 번 산다.
+        run_site(conn, store.sites(conn, uid)[0], opts={"rank": {"device": "mobile"}})
+        assert called[-1]["opts"]["rank"] == {"device": "mobile"}, called[-1]["opts"]
+        assert called[-1]["opts"]["backlinks"]["max_age"] == 30.0, \
+            f"요청 옵션이 백링크 주기를 덮어썼다: {called[-1]['opts']}"
+        assert conn.execute("SELECT run_log FROM sites").fetchone()[0].count("내레이션") == 1, \
+            "런 로그가 지난 런에 이어붙었다 — 런당 1벌이어야 한다"
+
+        # 실패한 단계가 있으면 화면과 메일이 그것을 안다. 여태 chain_rc 는 반환값으로만
+        # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
+        from collector import StageResult          # 계약: run_chain 은 [(단계, StageResult)]
+        run_all.run_chain = lambda project, **kw: [
+            ("gsc", StageResult(ok=True)),
+            ("rank", StageResult(ok=False, reason="DataForSEO 잔액 없음(402)"))]
+        sent, real_avail, real_failed = [], mailer.available, mailer.run_failed
+        mailer.available = lambda: True
+        mailer.run_failed = lambda *a, **kw: sent.append(a)
+        try:
+            r = run_site(conn, store.sites(conn, uid)[0])
+        finally:
+            mailer.available, mailer.run_failed = real_avail, real_failed
+        assert r["ok"] is False and r["rc"] == 1, r
+        row = conn.execute("SELECT last_ok, last_error FROM sites").fetchone()
+        assert (row["last_ok"], row["last_error"]) == (0, "rank: DataForSEO 잔액 없음(402)"), \
+            tuple(row)
+        assert sent and sent[0][2] == [("rank", "DataForSEO 잔액 없음(402)")], sent
+
+        # 예외로 죽은 런도 실패로 남아야 한다 — 조용히 '완료' 로 남으면 안 된다.
+        def boom(project, **kw):
+            raise RuntimeError("체인이 터졌다")
+
+        run_all.run_chain = boom
+        run_site(conn, store.sites(conn, uid)[0])
+        row = conn.execute("SELECT last_ok, last_error FROM sites").fetchone()
+        assert row["last_ok"] == 0 and "체인이 터졌다" in (row["last_error"] or ""), tuple(row)
+        run_all.run_chain = fake_chain
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         conn.commit()

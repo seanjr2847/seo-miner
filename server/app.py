@@ -20,19 +20,23 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import asyncio
 import html
+import io
 import json
 import re
 import secrets
 import sqlite3
-from contextlib import asynccontextmanager
+import tempfile
+import traceback
+from contextlib import asynccontextmanager, redirect_stdout
 from typing import Optional
 from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, Response)
+from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 
-import backlinks
 import collect_ga4
 import collect_gsc
 import dashboard
@@ -51,8 +55,36 @@ import store
 import writer
 
 
+def resume_dead_runs(dispatch=None) -> list[str]:
+    """서버가 뜨는 자리에서 죽은 런을 회수하고 그 사이트만 다시 띄운다.
+
+    Railway 는 push 마다 컨테이너를 갈아치운다 — 수집 도중 SIGKILL 이 정상 경로이고,
+    워커의 finally 는 프로세스째 죽으면 안 돈다. 회수를 안 하면 running_since 가 남아
+    화면이 3시간 동안 "분석 중 38%" 로 굳고 수동 재실행까지 막힌다.
+
+    `--all` 로 띄우지 않는다 — 스윕은 due 판정을 거치므로 방금 잰 것으로 찍힌
+    (mark_run 이 last_run_at 을 남겼다) 사이트가 통째로 빠진다. 죽은 사이트만
+    직접 띄운다. 처음부터 다시 도는 것으로 충분하다 — 수집기들이 seen_today 로
+    오늘 이미 한 항목을 건너뛰므로 싸다.
+    """
+    dispatch = dispatch or scheduler.dispatch
+    conn = store.connect()
+    try:
+        rows = store.reclaim_dead_runs(conn)
+    finally:
+        conn.close()
+    for r in rows:
+        print(f"[resume] 죽은 런 회수: {r['user_id']}/{r['project']}", flush=True)
+        dispatch("--user", str(r["user_id"]), "--project", r["project"])
+    return [r["project"] for r in rows]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        resume_dead_runs()
+    except Exception as e:              # 회수가 안 됐다고 서버가 안 뜨면 안 된다
+        print(f"[resume] 실패: {e}", flush=True)
     task = asyncio.create_task(scheduler.loop())
     yield
     task.cancel()
@@ -83,14 +115,43 @@ def _not_configured(request: Request, e: identity.NotConfigured):
     return JSONResponse({"detail": str(e)}, status_code=500 if required else 501)
 
 
+UNAUTHORIZED = "로그인이 풀렸습니다. 처음 화면에서 구글 계정으로 다시 로그인하세요."
+# GA4 스코프가 모자랄 때 할 말. 두 자리가 이 사실을 말한다 — 부르기 전 검사
+# (_require_google)와, 그걸 뚫고 구글이 직접 403 을 준 경우. 같은 사실이니
+# 문구도 한 벌이다.
+RELOGIN_FOR_GA4 = ("로그인한 뒤에 GA4 읽기 권한이 늘었습니다. 권한 문제가 아니라 "
+                   "저장된 로그인이 오래된 것입니다. 로그아웃한 뒤 "
+                   "다시 구글 계정으로 로그인하세요.")
+
+
 def _uid(request: Request) -> Optional[int]:
     return request.session.get("uid")
 
 
+def _bearer_uid(request: Request) -> Optional[int]:
+    """`Authorization: Bearer smt_...` → user_id. 로컬 CLI 가 원격을 조작하는 통로다."""
+    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    conn = store.connect()
+    try:
+        return store.uid_for_cli_token(conn, token.strip())
+    finally:
+        conn.close()
+
+
 def _require_uid(request: Request) -> int:
+    """세션이 없으면 CLI 토큰을 본다.
+
+    검증 훅이 **여기 한 곳**인 것이 설계의 핵심이다 — 라우트마다 인증을 적으면 새
+    라우트가 그 줄을 빠뜨린 채 조용히 열린다. 원격 CLI 가 쓰는 라우트를 따로
+    고르지도 않는다: 화면이 부르는 것과 같은 API 를 같은 권한으로 부른다.
+    """
     uid = _uid(request)
     if uid is None:
-        raise HTTPException(status_code=401, detail="로그인이 풀렸습니다. 처음 화면에서 구글 계정으로 다시 로그인하세요.")
+        uid = _bearer_uid(request)
+    if uid is None:
+        raise HTTPException(status_code=401, detail=UNAUTHORIZED)
     return uid
 
 
@@ -112,7 +173,7 @@ def _kick_dep():
 # 이름·도메인·속성은 서버가 정한 것이 이긴다(슬러그 충돌·표기 검증). 종류(type)도
 # 여기 없다 — 화면이 carry 값으로 미리 골라 두므로 types 에 담겨 오고, 사용자가
 # 바꿨으면 그쪽이 이긴다. 여기 남는 건 사람이 정했고 기계가 못 짓는 것뿐이다.
-# 이름의 정본은 dashboard.PREFILL_KEYS 이고 stage._check_seams 가 대조한다.
+# 이름의 정본은 dashboard.PREFILL_KEYS 이고 test_seams 가 대조한다.
 CARRY_FIELDS = ("locale", "brand_aliases", "seed_keywords",
                 "competitors_manual", "tools")
 
@@ -224,6 +285,28 @@ def logout(request: Request):
     return RedirectResponse("/", status_code=302)
 
 
+def _require_google() -> None:
+    """구글 API 를 부르기 전 두 가지를 본다 — 연결됐나, **그 토큰이 지금 스코프를 덮나**.
+
+    둘째가 없어서 났던 일: analytics.readonly 가 나중에 추가되면서, 그 전에
+    로그인해 둔 토큰은 갱신할 때 "요청한 스코프를 다 못 받았다"로 죽는다.
+    collect_gsc 는 그 자리에서 로그인을 다시 받으려 하고(서버엔 브라우저가 없다)
+    결국 sys.exit → 라우트는 원인 없는 502. 화면에는 "권한이 있는지 확인해
+    주세요"만 남아서, 사실은 재로그인 한 번이면 끝날 일을 아무도 못 알아봤다.
+
+    라우트마다 검사를 붙이면 다음에 생기는 라우트가 또 빠진다 — 한 곳이다.
+    """
+    if not db.gsc_connected():
+        raise HTTPException(
+            status_code=403,
+            detail="구글 계정이 연결돼 있지 않습니다. "
+                   "다시 구글 계정으로 로그인하세요.")
+    if doctor.gsc_missing_scopes():
+        raise HTTPException(
+            status_code=403,
+            detail=RELOGIN_FOR_GA4)
+
+
 @app.get("/api/properties")
 def api_properties(request: Request):
     """서치콘솔 속성 목록 — 사이트를 등록할 때 고르는 자리.
@@ -234,16 +317,14 @@ def api_properties(request: Request):
     """
     uid = _require_uid(request)
     with store.session(uid, isolate=True) as conn:
-        if not db.gsc_connected():
-            raise HTTPException(
-                status_code=403,
-                detail="구글 계정이 연결돼 있지 않아 속성 목록을 못 읽습니다. "
-                       "구글 계정으로 다시 로그인하세요.")
+        _require_google()
         try:
             res = collect_gsc.get_service().sites().list().execute()
         except HTTPException:
             raise
         except BaseException:      # SystemExit 도 잡는다 — 스택트레이스가 나가면 안 된다
+            # 로그에는 남긴다 — 안 남겨서 이 502 의 원인을 로그로는 끝내 못 봤다.
+            traceback.print_exc()
             raise HTTPException(
                 status_code=502,
                 detail="서치콘솔이 응답하지 않아 속성 목록을 못 읽었습니다. "
@@ -290,8 +371,8 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     carry_prop = carry.get("gsc_property", "")
 
     added, failed = [], []
-    with store.session(uid, isolate=True) as conn:
-        taken = {r["project"] for r in store.sites(conn, uid)}
+    with store.session(uid, isolate=True) as t:
+        taken = {r["project"] for r in store.sites(t.conn, uid)}
         for prop in props[:20]:
             host = _host_of(str(prop))
             if not host:
@@ -313,7 +394,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
             else:
                 failed.append({"property": prop, "error": r.get("error", "등록 실패")})
         for a in added:
-            store.add_site(conn, uid, a["project"], a["property"], _host_of(a["property"]))
+            store.add_site(t.conn, uid, a["project"], a["property"], _host_of(a["property"]))
 
     if added:
         kick()
@@ -365,16 +446,16 @@ async def api_repo(request: Request):
     return {"ok": True}
 
 
-def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
+def _create_content(t: store.Tenant, uid: int, project: str, opp_id: int, row) -> dict:
     """/api/create 워크플로: 기회 조회 → 리포 프로필 → 글 작성 → PR → 기록.
 
-    row 는 저장소가 연결된 store.site() 결과. isolate=True 세션(tenant) 안에서
-    불러야 한다 — db.* 는 Brain(tenant) 을, store.* 는 서버 DB 를 함께 쓴다.
+    row 는 저장소가 연결된 store.site() 결과. t 는 isolate=True 세션의 Tenant —
+    t.brain() 은 Brain(tenant) 을, t.conn 은 서버 DB 를 함께 쓴다.
     """
-    token = _gh_token(conn, uid)
+    token = _gh_token(t.conn, uid)
     repo, branch = row["repo"], row["repo_branch"] or "main"
 
-    c = db.connect()
+    c = t.brain()
     try:
         p = db.get_project(c, project)
         opp = db.get_opportunity(c, opp_id, project_id=p["id"])
@@ -390,7 +471,7 @@ def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
     profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
     if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
         profile = writer.discover_profile(token, repo, branch)
-        store.set_profile(conn, uid, project, json.dumps(profile, ensure_ascii=False))
+        store.set_profile(t.conn, uid, project, json.dumps(profile, ensure_ascii=False))
 
     doc = writer.write_for(opp, profile, dict(p), evidence)
     br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
@@ -404,7 +485,7 @@ def _create_content(conn, uid: int, project: str, opp_id: int, row) -> dict:
         # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
         f"content: {doc['title']} [opp #{opp_id}]")
 
-    c = db.connect()
+    c = t.brain()
     try:
         db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
                            kind=opp["kind"], branch=br, note=pr["url"])
@@ -422,11 +503,11 @@ async def api_create(request: Request):
     project = str(b.get("project") or "")
     opp_id = int(b.get("opportunity_id") or 0)
     try:
-        with store.session(uid, project, isolate=True) as conn:
-            row = store.site(conn, uid, project)
+        with store.session(uid, project, isolate=True) as t:
+            row = store.site(t.conn, uid, project)
             if not row or not row["repo"]:
                 raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결돼 있지 않습니다. 사이트 화면에서 먼저 고르세요.")
-            result = _create_content(conn, uid, project, opp_id, row)
+            result = _create_content(t, uid, project, opp_id, row)
         return {"ok": True, **result}
     except (gh.GitHubError, writer.WriterError) as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -436,6 +517,58 @@ async def api_create(request: Request):
 # 단계(crawl·metrics·backlinks)가 서버에서만 "실행할 수 없는 단계"로 튕긴다 —
 # 실제로 그렇게 났다.
 STAGES = run_all.VALID_STAGE_NAMES
+
+
+def _stage_opts(raw) -> dict[str, str | list[str]]:
+    """`{"rank.device": "mobile"}` 을 검증한다. 모르는 키는 **400 이다**.
+
+    조용히 무시하면 `--device mobile` 을 준 사용자가 데스크톱 결과를 모바일 결과로
+    읽는다 — 이 리포가 가장 싫어하는 실패 방식이다.
+
+    노브 목록은 여기 사본으로 두지 않는다. 정본은 run_all.STAGES(stage.knobs) 다 —
+    어느 단계가 옵션을 받나, 그 단계 파서가 노출한 어떤 키를 받나가 거기서 함께
+    나온다. `**opts` 로 삼키는 자리(conn·post·fetch 같은 테스트 주입 kwarg)는 stage.knobs
+    에 애초에 없다 — 조용히 삼켜서 값이 무시되는 것이 오류보다 나쁘다.
+    """
+    if not raw:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400,
+                            detail='opts 는 {"단계.키": "값"} 모양이어야 합니다.')
+    out: dict[str, str | list[str]] = {}
+    for k, v in raw.items():
+        stage_name, dot, key = str(k).partition(".")
+        key = key.strip().replace("-", "_")
+        stg = run_all.STAGE_BY_NAME.get(stage_name) if dot else None
+        ok = stg is not None and key in stg.knobs
+        if not ok:
+            valid = sorted(s.name for s in run_all.STAGES if s.knobs)
+            raise HTTPException(
+                status_code=400,
+                detail=f"알 수 없는 옵션입니다: {k} — '단계.키' 모양이어야 하고, "
+                       f"옵션을 받는 단계는 {', '.join(valid)} 입니다.")
+        # 리스트는 접지 않는다 — str(["a.com"]) 은 "['a.com']" 이 되고 _coerce 가 그걸
+        # 문자열로 되돌려 수집기가 도메인 하나도 못 읽는다(competitors.domain 이 그 자리다).
+        # 여러 값은 --opt 를 여러 번 실어 보내고 parse_opts 가 리스트로 모은다.
+        out[f"{stage_name}.{key}"] = [str(x) for x in v] if isinstance(v, list) else str(v)
+    return out
+
+
+@app.post("/api/cli/token")
+def api_cli_token(request: Request):
+    """로컬 CLI 가 원격을 조작할 토큰을 발급한다 — 원문은 여기서 한 번만 나온다.
+
+    **세션 인증 전용이다.** _require_uid 를 안 쓰고 _uid 를 직접 본다 — Bearer 로
+    이걸 부를 수 있으면 유출된 토큰이 스스로를 갱신해 영구히 살아남는다.
+    """
+    uid = _uid(request)
+    if uid is None:
+        raise HTTPException(status_code=401, detail=UNAUTHORIZED)
+    conn = store.connect()
+    try:
+        return {"ok": True, "token": store.issue_cli_token(conn, uid)}
+    finally:
+        conn.close()
 
 
 @app.post("/api/ai/prompts")
@@ -453,8 +586,8 @@ async def api_ai_prompts(request: Request):
     n = body.get("limit")
     try:
         # 수집 런과 같은 env 를 두른다 — 유료 키는 서버가 댄다(paid_keys).
-        with store.session(uid, project, isolate=True, paid=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True, paid=True) as t:
+            c = t.brain()
             try:
                 rows = gen_prompts.suggest(project, n=int(n or 20), conn=c)
                 if not rows:
@@ -498,8 +631,8 @@ def api_ai_prompts_list(project: str, request: Request):
     만들기 버튼만 있고 무엇이 만들어졌는지는 화면 어디에도 안 나왔다."""
     uid = _require_uid(request)
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 return _ai_prompts_view(c, project)
             finally:
@@ -533,8 +666,8 @@ async def api_ai_prompts_edit(request: Request):
         cat = "general"
 
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 view = _ai_prompts_view(c, project)
@@ -578,7 +711,10 @@ async def api_ai_prompts_edit(request: Request):
 @app.post("/api/run")
 async def api_run(request: Request, dispatch=Depends(_dispatch_dep), kick=Depends(_kick_dep)):
     """'지금 다시 재기' — /capture run 에 해당한다. stages 를 주면 그 단계만
-    돈다(/capture gsc, /capture ai …). 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다."""
+    돈다(/capture gsc, /capture ai …). 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다.
+
+    opts 는 원격 CLI 가 실어 보내는 단계별 노브다(`--opt rank.device=mobile`).
+    """
     uid = _require_uid(request)
     body = await request.json()
     project = str(body.get("project") or "")
@@ -586,6 +722,7 @@ async def api_run(request: Request, dispatch=Depends(_dispatch_dep), kick=Depend
     bad = [x for x in stages if x not in STAGES]
     if bad:
         raise HTTPException(status_code=400, detail=f"이 화면에서 돌릴 수 없는 단계입니다: {', '.join(bad)}. 새로고침한 뒤 다시 눌러 보세요.")
+    opts = _stage_opts(body.get("opts"))
 
     with store.session(uid, project) as conn:
         row = store.site(conn, uid, project)
@@ -598,13 +735,100 @@ async def api_run(request: Request, dispatch=Depends(_dispatch_dep), kick=Depend
             # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다.
             store.mark_run(conn, row["id"])
             started = True
+        if started:
+            # 새 런의 로그는 여기서부터다. 워커가 뜨기까지 몇 초가 걸리는데, 그 사이
+            # 폴링이 지난 런 텍스트를 읽으면 사용자는 끝난 런을 지금 도는 런으로 읽는다.
+            store.save_run_log(conn, row["id"], "")
 
     if started:
-        if stages:
-            dispatch("--user", str(uid), "--project", project, "--only", ",".join(stages))
+        # opts 가 있으면 kick(--all) 로 못 보낸다 — 스윕은 사이트를 안 가리므로
+        # 옵션이 갈 곳이 없다. 그 사이트를 직접 띄운다.
+        if stages or opts:
+            argv = ["--user", str(uid), "--project", project]
+            if stages:
+                argv += ["--only", ",".join(stages)]
+            for k, v in opts.items():
+                for one in (v if isinstance(v, list) else [v]):
+                    argv += ["--opt", f"{k}={one}"]
+            dispatch(*argv)
         else:
             kick()
     return {"ok": True, "started": started}
+
+
+@app.get("/api/run/log")
+def api_run_log(project: str, request: Request, since: int = 0):
+    """런 내레이션을 흘려준다 — 원격 CLI 가 폴링으로 받아 그대로 print 한다.
+
+    문구를 클라이언트에서 다시 만들면 요약표가 두 벌이 된다. 그래서 서버 워커가
+    뱉은 텍스트 자체를 보낸다. since 는 **문자 오프셋**이고 text 는 그 뒤부터다.
+    """
+    uid = _require_uid(request)
+    with store.session(uid, project) as conn:
+        full = store.load_run_log(conn, uid, project)
+        row = store.site(conn, uid, project)
+    since = max(0, min(int(since or 0), len(full)))
+    return {"text": full[since:], "next": len(full),
+            "running": bool(row and row["running_since"])}
+
+
+@app.post("/api/sql")
+async def api_sql(request: Request):
+    """`db.py sql` 의 원격판 — Claude 가 Brain 에 묻는 통로.
+
+    가드(읽기 전용 커넥션 + SELECT/WITH 만)를 여기서 다시 만들지 않는다. db.run_sql
+    을 그대로 부르고 그것이 stdout 에 찍는 JSON 을 되돌려준다 — 로컬과 응답 모양이
+    같아야 SKILL.md 가 두 벌이 되지 않는다.
+    """
+    uid = _require_uid(request)
+    body = await request.json()
+    project, sql = str(body.get("project") or ""), str(body.get("sql") or "")
+    buf = io.StringIO()
+    try:
+        with store.session(uid, project, isolate=True), redirect_stdout(buf):
+            db.run_sql(sql)
+    except SystemExit as e:
+        # run_sql 은 거절을 sys.exit(문구) 로 낸다 — 문구는 그대로 사용자에게 간다.
+        raise HTTPException(status_code=400, detail=str(e))
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=400, detail=f"질의를 실행하지 못했습니다: {e}")
+    return json.loads(buf.getvalue())
+
+
+@app.get("/api/brain")
+def api_brain(request: Request):
+    """테넌트 brain.db 를 통째로 내려준다 — `remote.py pull` 이 로컬에 남기는 사본의 원본.
+
+    파일을 그냥 읽으면 안 된다: 워커가 같은 파일에 쓰는 중이면 반쯤 쓰인 페이지가
+    섞여 **찢어진 DB** 를 준다. sqlite 의 backup() 은 쓰기와 겹쳐도 일관된 스냅샷을
+    떠 주므로, 임시 파일로 한 벌 뜬 뒤 그것을 보내고 전송이 끝나면 지운다.
+
+    사이트별로 자르지 않는다 — 자르는 쪽은 로컬 병합기다(remote.merge). 여기서
+    한 번 더 자르면 "이 사이트에 속한 행" 규칙이 두 벌이 된다.
+    """
+    uid = _require_uid(request)
+    with store.session(uid, isolate=True):
+        src = db.db_path()
+        if not src.exists():
+            raise HTTPException(status_code=404,
+                                detail="서버에 아직 보관함이 없습니다 — 먼저 한 번 측정해 주세요.")
+        fd, tmp = tempfile.mkstemp(prefix="brain-", suffix=".db")
+        os.close(fd)
+        try:
+            s = sqlite3.connect(src.resolve().as_uri() + "?mode=ro", uri=True)
+            d = sqlite3.connect(tmp)
+            try:
+                s.backup(d)
+            finally:
+                d.close()
+                s.close()
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+    return FileResponse(tmp, media_type="application/octet-stream", filename="brain.db",
+                        background=BackgroundTask(lambda: Path(tmp).unlink(missing_ok=True)))
 
 
 @app.get("/api/report")
@@ -627,23 +851,6 @@ def api_report(project: str, request: Request):
         "Content-Disposition": f'attachment; filename="{project}-report.html"'})
 
 
-@app.get("/api/export")
-def api_export(project: str, table: str, request: Request):
-    """CSV 내려받기 — 마케터는 결국 엑셀로 옮긴다."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            data, name = exports.csv_bytes(project, table)
-    except ValueError:
-        # exports 의 ValueError 는 개발자용 문구다 — 그대로 내보내지 않는다.
-        raise HTTPException(status_code=400,
-                            detail="내려받을 수 없는 항목입니다. 화면에서 다시 고르세요.")
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return Response(data, media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
-
 @app.get("/api/perf")
 def api_perf(project: str, request: Request):
     """서치콘솔 4대 지표와 검색어·페이지·기기 분해 — 개요 화면이 쓴다."""
@@ -653,23 +860,6 @@ def api_perf(project: str, request: Request):
             return exports.perf(project)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.get("/api/overview")
-def api_overview(request: Request):
-    """사이트 전부를 한 줄씩 — 드롭다운으로 하나씩 전환하지 않아도 되게."""
-    uid = _require_uid(request)
-    with store.session(uid, isolate=True) as conn:
-        out = []
-        for r in store.sites(conn, uid):
-            try:
-                d = exports.summary(r["project"])
-            except db.ProjectNotFound:
-                d = {"project": r["project"], "domain": r["domain"]}
-            d["running"] = bool(r["running_since"])
-            d["last_run_at"] = r["last_run_at"]
-            out.append(d)
-        return {"sites": out}
 
 
 @app.get("/api/keywords")
@@ -682,8 +872,8 @@ def api_keywords(project: str, request: Request, status: str = "candidate"):
     uid = _require_uid(request)
     active = status == "active"
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 rows = db.list_keywords(c, pid, active=active)
@@ -708,8 +898,8 @@ async def api_keywords_set(request: Request):
     if not ids:
         raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 먼저 고르세요.")
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 pid = db.get_project(c, project)["id"]
                 if on:
@@ -728,45 +918,19 @@ async def api_keywords_set(request: Request):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/api/backlinks")
-def api_backlinks(project: str, request: Request):
-    """백링크 프로필 — 없으면 빈 값. 지어내지 않는다."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            data = backlinks.latest(project)
-            data["available"] = backlinks.available()
-        return data
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.get("/api/creations")
-def api_creations(project: str, request: Request):
-    """/create status — 이 사이트에서 실제로 고친 것들."""
-    uid = _require_uid(request)
-    try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
-            try:
-                pid = db.get_project(c, project)["id"]
-                rows = db.list_creations(c, pid, limit=50)
-            finally:
-                c.close()
-        return {"creations": [dict(r) for r in rows]}
-    except db.ProjectNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
 @app.get("/api/run/status")
 def api_run_status(request: Request):
     """사이트별 수집 상태 — 화면이 폴링한다."""
     uid = _require_uid(request)
     with store.session(uid) as conn:
+        # last_ok/last_error 를 같이 싣는다 — 실패한 단계가 있어도 화면이 아무 말도
+        # 안 하던 자리다. 폴링이 이미 도는 곳이라 새 라우트를 만들지 않는다.
         return {r["project"]: {"running": bool(r["running_since"]),
                                "last_run_at": r["last_run_at"],
                                "stage": r["stage"],
-                               "pct": r["stage_pct"]}
+                               "pct": r["stage_pct"],
+                               "last_ok": r["last_ok"],
+                               "last_error": r["last_error"]}
                 for r in store.sites(conn, uid)}
 
 
@@ -786,10 +950,10 @@ def api_settings(project: str, request: Request):
     먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
     """
     uid = _require_uid(request)
-    with store.session(uid, project, isolate=True) as conn:
-        row = store.site(conn, uid, project)
+    with store.session(uid, project, isolate=True) as tn:
+        row = store.site(tn.conn, uid, project)
         try:
-            c = db.connect()
+            c = tn.brain()
             try:
                 ga4 = db.get_project(c, project)["ga4_property"] or ""
             finally:
@@ -797,13 +961,13 @@ def api_settings(project: str, request: Request):
         except db.ProjectNotFound:
             ga4 = ""      # 등록 직후 Brain 이 아직 없어도 설정 화면은 열려야 한다
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
-        return {"run_every_hours": store.every_hours(conn, uid, project),
+        return {"run_every_hours": store.every_hours(tn.conn, uid, project),
                 "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
                 "repo": (row["repo"] if row else None) or "",
                 "repo_branch": (row["repo_branch"] if row else None) or "main",
                 # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
                 # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
-                "github_connected": bool(store.github(conn, uid)),
+                "github_connected": bool(store.github(tn.conn, uid)),
                 # "이 배포가 GitHub 연동을 지원하나" — 키가 없으면 화면은 버튼 대신
                 # 안내만 낸다. 존재 여부만 준다, 값은 절대 안 내보낸다.
                 "github_enabled": bool(settings.get("GITHUB_CLIENT_ID")),
@@ -842,31 +1006,21 @@ def api_ga4_properties(project: str, request: Request):
     403 은 둘 중 하나다 — 실제로 터진 건 ①(Railway 로그, 2026-08-31): 토큰이 아예
     없어서 collect_gsc._oauth_credentials() 가 브라우저를 열려다 죽었다. ②는 이미
     로그인은 했지만 GA4 스코프가 나중에 추가돼 그 전 토큰엔 없는 경우다. 우선순위
-    ①→②로 먼저 본다 — 부르기 전에 doctor/db 로 미리 확인해 그 무엇도 부르지 않고
-    바로 답한다. 그래도 남는 예외(SystemExit 포함, collect_gsc 쪽 CLI 최종 안내가
+    ①→②로 먼저 본다 — 부르기 전에 _require_google() 이 그 둘을 함께 확인한다
+    (같은 검사가 /api/properties 에도 필요했다 — 라우트마다 두면 새 라우트가 빠진다). 그래도 남는 예외(SystemExit 포함, collect_gsc 쪽 CLI 최종 안내가
     새는 경우)는 사람 말로 바꾼다 — 스택트레이스가 화면에 그대로 나가면 안 된다.
     """
     uid = _require_uid(request)
     from googleapiclient.errors import HttpError
-    not_connected = HTTPException(
-        status_code=403,
-        detail="구글 계정이 연결돼 있지 않아 GA4 속성을 못 읽습니다. "
-               "구글 계정으로 로그인하세요.")
-    need_relogin = HTTPException(
-        status_code=403,
-        detail="저장된 로그인에 GA4 읽기 권한이 없습니다. 로그인 뒤에 권한이 "
-               "추가돼서 그렇습니다. 구글 계정으로 다시 로그인하세요.")
+    need_relogin = HTTPException(status_code=403, detail=RELOGIN_FOR_GA4)
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 domain = db.get_project(c, project)["domain"]
             finally:
                 c.close()
-            if not db.gsc_connected():
-                raise not_connected
-            if doctor.gsc_missing_scopes():
-                raise need_relogin
+            _require_google()
             try:
                 _, admin_svc = collect_ga4.get_service()
                 props = collect_ga4.list_properties(admin_svc)
@@ -879,6 +1033,7 @@ def api_ga4_properties(project: str, request: Request):
     except HTTPException:
         raise
     except BaseException as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=502,
             detail="GA4 가 응답하지 않아 속성 목록을 못 읽었습니다. 잠시 뒤 다시 시도하세요.") from e
@@ -899,8 +1054,8 @@ async def api_ga4_set(request: Request):
         raise HTTPException(status_code=400,
                             detail="알아볼 수 없는 속성입니다. 새로고침한 뒤 다시 고르세요.")
     try:
-        with store.session(uid, project, isolate=True):
-            c = db.connect()
+        with store.session(uid, project, isolate=True) as t:
+            c = t.brain()
             try:
                 db.set_ga4_property(c, db.get_project(c, project)["id"], prop_id)
             finally:
@@ -935,6 +1090,9 @@ def dash(request: Request):
 
 @app.get("/api/projects")
 def api_projects(request: Request):
+    """존재는 dashboard.ROUTES 가 로컬 Handler 와 함께 못 박는다(둘 다 화면이 부른다).
+    몸은 다르다: 호스팅은 사이트 소유를 Brain 동기화 여부와 무관하게 store.sites
+    (등록 즉시 반영)로 판정해야 해서, 표의 call(Brain 의 projects 테이블)을 못 쓴다."""
     uid = _require_uid(request)
     with store.session(uid) as conn:
         return [r["project"] for r in store.sites(conn, uid)]
@@ -942,40 +1100,47 @@ def api_projects(request: Request):
 
 @app.get("/api/data")
 def api_data(project: str, request: Request, date: str = ""):
-    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다."""
+    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다.
+    본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다."""
     uid = _require_uid(request)
     try:
         with store.session(uid, project, isolate=True):
-            return dashboard.payload(project, date or None)
+            return dashboard.ROUTES[("GET", "/api/data")](project, {"date": date}, None)
     except db.ProjectNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/api/doctor")
-def api_doctor(project: str, request: Request):
+def api_doctor(project: str, request: Request, full: bool = False):
+    """화면은 평평한 요약(setup_state)을, 원격 CLI 는 진단 전문(diagnose)을 받는다.
+
+    두 모양은 다르다 — `doctor.render()` 가 capabilities·gsc_sites 를 읽으므로
+    setup_state 를 먹이면 KeyError 로 죽는다. 화면 쪽 기본값은 건드리지 않는다.
+    화면 쪽 본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다.
+    """
     uid = _require_uid(request)
     # 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료 키가 여기서도
     # 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다. paid_keys() 가 세우는
     # 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
     with store.session(uid, project, isolate=True, paid=True):
-        return dashboard.setup_state(project)
+        if full:
+            return doctor.diagnose(project)
+        return dashboard.ROUTES[("GET", "/api/doctor")](project, {}, None)
 
 
 @app.post("/api/opp")
 async def api_opp(request: Request):
     # 로컬 대시보드는 X-Token 으로 CSRF 를 막았다. 여기서는 세션 로그인이 그 역할을 하므로
-    # 화면이 보내는 헤더는 무시한다.
+    # 화면이 보내는 헤더는 무시한다. 본체는 dashboard.ROUTES 것 하나 — 상태값 검증도
+    # 거기서 부르는 db.set_opportunity_status 가 한다(잘못되면 ValueError).
     uid = _require_uid(request)
     body = await request.json()
-    if body.get("status") not in db.OPP_STATUSES:
-        raise HTTPException(status_code=400, detail="알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.")
     with store.session(uid, isolate=True):
-        c = db.connect()
         try:
-            return {"updated": db.set_opportunity_status(c, int(body.get("id") or 0),
-                                                         body["status"])}
-        finally:
-            c.close()
+            return dashboard.ROUTES[("POST", "/api/opp")]("", {}, body)
+        except ValueError:
+            raise HTTPException(status_code=400,
+                                detail="알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.")
 
 
 def demo() -> None:
@@ -1024,9 +1189,8 @@ def demo() -> None:
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x", "/api/repos", "/auth/github",
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
-                     "/api/report?project=x", "/api/export?project=x&table=keywords",
-                     "/api/keywords?project=x", "/api/backlinks?project=x",
-                     "/api/creations?project=x", "/api/run/status",
+                     "/api/report?project=x",
+                     "/api/keywords?project=x", "/api/run/status", "/api/brain",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
@@ -1107,9 +1271,18 @@ def demo() -> None:
             assert c.post("/api/run", json={"project": "p1", "stages": "없는단계"}
                           ).status_code == 400
             assert c.post("/api/run", json={"project": "없는사이트"}).status_code == 404
-            r = c.post("/api/run", json={"project": "p1", "stages": "competitors"})
+            # opts — 모르는 키를 조용히 무시하면 --device mobile 을 준 사용자가
+            # 데스크톱 결과를 모바일 결과로 읽는다. 400 이어야 한다.
+            for bad in ({"rank.없는노브": "x"}, {"device": "mobile"}, {"gaps.limit": 1},
+                        {"rank.project": "남의사이트"}, {"rank.dry_run": True}, "mobile"):
+                assert c.post("/api/run", json={"project": "p1", "opts": bad}
+                              ).status_code == 400, f"모르는 opt 가 통과했다: {bad!r}"
+            r = c.post("/api/run", json={"project": "p1", "stages": "competitors",
+                                         "opts": {"rank.device": "mobile"}})
             assert r.status_code == 200 and r.json()["started"], r.text
             assert spawned and "competitors" in spawned[0], spawned
+            # 검증을 통과한 값은 워커가 알아듣는 `--opt K=V` 로 간다.
+            assert "--opt" in spawned[0] and "rank.device=mobile" in spawned[0], spawned
 
             # /api/sites — 등록 진입점. 여태 demo() 어디에도 안 나왔다.
             assert c.post("/api/sites", json={"properties": []}).status_code == 400
@@ -1142,13 +1315,29 @@ def demo() -> None:
 
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
         assert c.get("/api/data?project=p1").status_code == 404
-        assert c.get("/api/overview").json()["sites"][0]["project"] == "p1"
 
         # 질문 목록·편집 — 만들기 버튼만 있고 무엇이 심겼는지 볼 데가 없었다.
         assert c.get("/api/ai/prompts?project=없는사이트").status_code == 404,             "남의 사이트 질문이 열린다"
         conn = store.connect()
         try:
-            with store.tenant(conn, u2):
+            with store.tenant(conn, u2) as t:
+                assert t.home == store.home(u2), "Tenant.home 이 그 유저의 home 이 아니다"
+                # 격리를 env 가 아니라 객체로 확인한다: CAPTURE_DB 를 엉뚱한 곳으로 흔들어
+                # 놔도(운영 실수·다른 스레드의 잔재) t.brain() 은 home= 을 직접 넘기니
+                # 흔들리면 안 된다 — env(CAPTURE_HOME) 만 보던 예전 방식이면 이 경우
+                # 조용히 엉뚱한 brain.db 를 연다.
+                rogue = Path(d) / "rogue.db"
+                os.environ["CAPTURE_DB"] = str(rogue)
+                try:
+                    bc = t.brain()
+                    try:
+                        opened = Path(bc.execute("PRAGMA database_list").fetchone()["file"])
+                        assert opened == t.home / "brain.db",                             f"CAPTURE_DB 에 흔들려 엉뚱한 brain 을 열었다: {opened}"
+                        assert not rogue.exists(), "env 기반 경로에 파일을 만들었다"
+                    finally:
+                        bc.close()
+                finally:
+                    os.environ.pop("CAPTURE_DB", None)
                 assert dashboard.create_project(
                     {"name": "p1", "type": "local_clinic", "domain": "p1.com"})["ok"]
         finally:
@@ -1213,7 +1402,8 @@ def demo() -> None:
                 raise HttpError(_Resp(), b'{"error": "insufficient scope"}')
             collect_ga4.list_properties = _scope_missing
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "다시 로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"], \
+                r.text
 
             # 스코프가 모자란 걸 doctor 로 미리 알면 — API 를 아예 안 부르고 같은
             # 403 을 예측 가능하게 낸다(브라우저 로그인·SystemExit 경로를 안 탄다).
@@ -1223,7 +1413,8 @@ def demo() -> None:
             doctor.gsc_missing_scopes = lambda: [
                 "https://www.googleapis.com/auth/analytics.readonly"]
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "다시 로그인" in r.json()["detail"], r.text
+            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"], \
+                r.text
             doctor.gsc_missing_scopes = lambda: []
 
             # 아예 연결이 안 된 상태(토큰 없음) — 실제로 터진 게 이거다(Railway 로그,
@@ -1231,8 +1422,27 @@ def demo() -> None:
             # 아니라 "아직 연결 안 됨" — 한 번도 안 붙인 사람에게 "다시"는 말이 안 된다.
             db.gsc_connected = lambda: False
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "연결돼 있지 않아" in r.json()["detail"],                 r.text
+            assert r.status_code == 403 and "연결돼 있지 않습니다" in r.json()["detail"],                 r.text
             db.gsc_connected = lambda: True
+
+            # 같은 함정이 사이트 등록 화면(/api/properties)에도 있었다 — 스코프가
+            # 모자란 토큰으로 부르면 collect_gsc 가 브라우저 로그인을 열려다 죽고
+            # 502 만 남았다. 화면에는 "서치콘솔 권한이 있는지 확인해 주세요"가 떠서,
+            # 재로그인 한 번이면 끝날 일을 권한 화면에서 찾게 만들었다(2026-09-01).
+            real_gsc_service = collect_gsc.get_service
+            collect_gsc.get_service = _must_not_call
+            try:
+                doctor.gsc_missing_scopes = lambda: [
+                    "https://www.googleapis.com/auth/analytics.readonly"]
+                r = c.get("/api/properties")
+                assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"],                     r.text
+                doctor.gsc_missing_scopes = lambda: []
+                db.gsc_connected = lambda: False
+                r = c.get("/api/properties")
+                assert r.status_code == 403 and "연결돼 있지 않습니다" in r.json()["detail"],                     r.text
+                db.gsc_connected = lambda: True
+            finally:
+                collect_gsc.get_service = real_gsc_service
 
             # 그래도 남는 예외(SystemExit 포함, collect_gsc.get_credentials 가 실제로
             # 던지는 것) — 스택트레이스 대신 사람 말로 된 예측 가능한 502.
@@ -1252,6 +1462,36 @@ def demo() -> None:
         # 그래서 아직 '도는 중'이다. 화면 폴링이 읽는 값이 실제로 반영되는지만 본다.
         assert c.get("/api/run/status").json()["p1"]["running"] is True
 
+        # 런 결과가 화면까지 간다 — 여태 실패한 단계가 있어도 화면은 아무 말도 안 했다.
+        cs = store.connect()
+        try:
+            sid_st = store.site(cs, u2, "p1")["id"]
+            store.mark_done(cs, sid_st, ok=False, error="rank: DataForSEO 잔액 없음(402)")
+        finally:
+            cs.close()
+        st = c.get("/api/run/status").json()["p1"]
+        assert st["last_ok"] == 0 and "402" in st["last_error"], st
+        # 죽은 런 회수 — 컨테이너 교체로 워커가 통째로 죽은 자리. 회수하고 그 사이트만
+        # 다시 띄운다(--all 은 due 판정에 걸려 방금 잰 사이트를 빼 버린다).
+        cs = store.connect()
+        try:
+            store.mark_run(cs, sid_st)
+        finally:
+            cs.close()
+        spawned = []
+        assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == ["p1"], "죽은 런을 못 찾았다"
+        assert spawned and spawned[0][:1] == ("--user",) and "p1" in spawned[0], spawned
+        st = c.get("/api/run/status").json()["p1"]
+        assert st["running"] is False and st["last_ok"] == 0, st
+        assert "서버 재시작" in c.get("/api/run/log?project=p1").json()["text"], \
+            "왜 끊겼는지 사용자에게 한 줄도 안 간다"
+        assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == [], "도는 런이 없는데 또 띄운다"
+        cs = store.connect()
+        try:
+            store.mark_run(cs, sid_st)     # 아래 런 로그 검사가 보던 '도는 중' 으로 되돌린다
+        finally:
+            cs.close()
+
         assert c.get("/api/keywords?project=없는사이트").status_code == 404
         r = c.get("/api/keywords?project=p1")
         assert r.status_code == 200 and r.json()["keywords"] == [], r.text
@@ -1259,24 +1499,90 @@ def demo() -> None:
         assert c.post("/api/keywords", json={"project": "없는사이트", "ids": [1], "active": True}
                       ).status_code == 404, "남의 사이트 키워드를 건드릴 수 있다"
 
-        assert c.get("/api/backlinks?project=없는사이트").status_code == 404
-        r = c.get("/api/backlinks?project=p1")
-        assert r.status_code == 200 and "available" in r.json(), r.text
-
-        assert c.get("/api/creations?project=없는사이트").status_code == 404
-        r = c.get("/api/creations?project=p1")
-        assert r.status_code == 200 and r.json()["creations"] == [], r.text
-
-        assert c.get("/api/export?project=없는사이트&table=keywords").status_code == 404
-        assert c.get("/api/export?project=p1&table=nope").status_code == 400
-        r = c.get("/api/export?project=p1&table=keywords")
-        assert r.status_code == 200 and r.content.startswith(b"\xef\xbb\xbf"), "CSV BOM 누락"
-
         assert c.get("/api/report?project=없는사이트").status_code == 404
         r = c.get("/api/report?project=p1")
         assert r.status_code == 200 and len(r.content) > 0, r.status_code
 
-        c.cookies.clear()
+        # brain.db 통째 — 로컬 사본(remote.py pull)의 원본. 파일이 아니라 backup()
+        # 스냅샷이 나가야 하고, 나간 뒤 임시 파일은 남지 않아야 한다.
+        tmps = set(Path(tempfile.gettempdir()).glob("brain-*.db"))
+        r = c.get("/api/brain")
+        assert r.status_code == 200 and r.content.startswith(b"SQLite format 3\x00"), \
+            (r.status_code, r.content[:20])
+        snap = Path(tempfile.gettempdir()) / "seo-miner-brain-check.db"
+        snap.write_bytes(r.content)
+        sc = sqlite3.connect(snap)
+        try:                       # 찢어진 파일이 아니라 열리는 DB 여야 한다
+            assert sc.execute("SELECT count(*) FROM projects").fetchone() is not None
+        finally:
+            sc.close()
+            snap.unlink(missing_ok=True)
+        assert not (set(Path(tempfile.gettempdir()).glob("brain-*.db")) - tmps), \
+            "스냅샷 임시 파일이 남았다"
+
+        # --- 원격 CLI 통로 ---------------------------------------------------
+        # 런 로그 — since 는 문자 오프셋이고 text 는 그 뒤부터다. p1 은 위
+        # /api/run 이 mark_run 을 찍어 놓고 워커는 가짜였으니 아직 '도는 중'이다.
+        cs = store.connect()
+        try:
+            sid_p1 = store.site(cs, u2, "p1")["id"]
+            store.save_run_log(cs, sid_p1, "첫줄\n둘째줄\n")
+        finally:
+            cs.close()
+        assert c.get("/api/run/log?project=p1").json() == {
+            "text": "첫줄\n둘째줄\n", "next": 7, "running": True}, c.get("/api/run/log?project=p1").json()
+        assert c.get("/api/run/log?project=p1&since=3").json()["text"] == "둘째줄\n",             c.get("/api/run/log?project=p1&since=3").json()
+        assert c.get("/api/run/log?project=p1&since=999").json()["text"] == "",             "오프셋이 넘쳐도 빈 문자열이어야 한다"
+        assert c.get("/api/run/log?project=없는사이트").status_code == 404, "남의 런 로그가 열린다"
+
+        # 새 런을 띄우면 지난 런의 텍스트는 그 자리에서 사라진다 — 워커가 뜨기까지
+        # 몇 초가 걸리고, 그 사이 폴링이 옛 로그를 읽으면 끝난 런을 지금 도는 런으로 읽는다.
+        app.dependency_overrides[_dispatch_dep] = lambda: (lambda *a: None)
+        try:
+            cs = store.connect()
+            try:
+                store.mark_done(cs, sid_p1)            # '도는 중' 을 풀어야 다시 뜬다
+            finally:
+                cs.close()
+            assert c.post("/api/run", json={"project": "p1", "stages": "gsc"}
+                          ).json()["started"], "런이 안 떴다"
+            assert c.get("/api/run/log?project=p1").json() == {
+                "text": "", "next": 0, "running": True}, c.get("/api/run/log?project=p1").json()
+        finally:
+            app.dependency_overrides.pop(_dispatch_dep, None)
+
+        # /api/sql — 가드는 db.run_sql 것을 그대로 쓴다. 여기서 재구현하지 않는다.
+        r = c.post("/api/sql", json={"project": "p1", "sql": "DELETE FROM keywords"})
+        assert r.status_code == 400 and "read-only" in r.json()["detail"], r.text
+        # 문자열 검사만으로는 못 막는 모양 — 읽기 전용 커넥션이 잡아야 한다.
+        r = c.post("/api/sql", json={"project": "p1",
+                                     "sql": "WITH x AS (SELECT 1) DELETE FROM keywords"})
+        assert r.status_code == 400 and "조회 전용" in r.json()["detail"], r.text
+        r = c.post("/api/sql", json={"project": "p1",
+                                     "sql": "SELECT name FROM projects WHERE name='p1'"})
+        assert r.status_code == 200 and r.json() == [{"name": "p1"}], r.text
+        assert c.post("/api/sql", json={"project": "없는사이트", "sql": "SELECT 1"}
+                      ).status_code == 404, "남의 Brain 에 질의할 수 있다"
+
+        # 토큰 발급은 세션 전용이고, 발급된 토큰은 라우트 전부를 연다.
+        r = c.post("/api/cli/token")
+        assert r.status_code == 200 and r.json()["token"].startswith("smt_"), r.status_code
+        token = r.json()["token"]
+
+        c.cookies.clear()                       # 세션을 버리고 토큰만으로 붙어 본다
+        h = {"Authorization": f"Bearer {token}"}
+        assert c.get("/api/projects").status_code == 401, "세션이 안 지워졌다"
+        assert "p1" in c.get("/api/projects", headers=h).json(), "Bearer 가 안 먹는다"
+        assert c.get("/api/projects", headers={"Authorization": "Bearer smt_notatoken"}
+                     ).status_code == 401, "아무 토큰이나 통과한다"
+        assert c.get("/api/projects", headers={"Authorization": token}
+                     ).status_code == 401, "Bearer 스킴 없이 통과한다"
+        # 훅이 _require_uid 한 곳이라는 증거 — 라우트를 하나도 안 고쳤는데 열린다.
+        assert c.post("/api/sql", json={"project": "p1", "sql": "SELECT 1 AS n"},
+                      headers=h).json() == [{"n": 1}], "Bearer 로 /api/sql 이 안 열린다"
+        # 토큰으로 토큰 재발급은 금지 — 유출된 토큰이 스스로를 갱신하면 영영 산다.
+        assert c.post("/api/cli/token", headers=h).status_code == 401,             "Bearer 로 토큰을 재발급했다"
+        assert c.post("/api/cli/token").status_code == 401, "세션 없이 토큰이 발급됐다"
 
         # env 가 없으면 조용히 굴러가지 말고 실패해야 한다
         os.environ.pop("GOOGLE_CLIENT_ID")

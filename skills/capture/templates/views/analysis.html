@@ -792,9 +792,15 @@ function anCluster(rows) {
       + '<p>주제별 성적은 실적을 읽은 뒤에 나옵니다.</p></div>';
   const named = rows.filter(r => !r.unclassified && r.impressions);
   if (!named.length)
-    return `<div class="empty"><b>주제 묶음으로 걸린 검색어가 없습니다.</b>
-      <p>키워드를 주제별로 묶으면 묶음마다 성적이 갈려 나옵니다.</p>
-      <div class="acts">${window.go("keywords", "주제별로 묶기")}</div></div>`;
+    // 묶음을 붙이는 자리는 화면이 아니다 — keywords 단계의 큐레이션이 채운다.
+    // 여기서 "화면에서 묶으면"이라고 말하면 있지도 않은 버튼을 찾게 만든다
+    // (2026-09-01 신고). 그래서 [키워드] 화면으로 보내지 않는다.
+    // 행동은 로컬에만 둔다: 호스팅에서 keywords 단계를 돌려도 묶음은 안 붙는다.
+    // act() 를 W() 의 로컬 쪽에서만 쓰는 이유가 그것이다(호스팅 버튼은 거짓말이다).
+    return `<div class="empty"><b>주제 묶음이 붙은 키워드가 없습니다.</b>
+      <p>묶음은 키워드를 찾을 때 함께 붙습니다. 붙고 나면 다음 수집부터 묶음마다
+      성적이 갈려 나옵니다.</p>${W(
+        `<div class="acts">${act("keywords", "키워드 찾기", false)}</div>`, "")}</div>`;
   const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
   const msg = named.length > 1 && worst.label !== best.label
