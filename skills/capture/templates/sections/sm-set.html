@@ -4,7 +4,7 @@
 <!-- 껍데기만 정적이다 — .opts/.repo .body 는 dash.html 의 setRender()/repoRender() 가
      채운다. 원본 [설정] 화면(#setup)은 호스팅에서 CSS 로 숨는다 — 이 섹션은 그
      뒤(view-def 의 "setup" 다음)에 붙는, 호스팅에서 유일하게 보이는 설정 칸이다.
-     칸 넷은 h3 다: 섹션 제목(h2)과 같은 크기로 세우면 위계가 사라진다.
+     칸 다섯은 h3 다: 섹션 제목(h2)과 같은 크기로 세우면 위계가 사라진다.
      부제는 한 문장이다 — 나머지 설명은 제목 옆 ⓘ 툴팁으로 접는다(copy-guide 5장). -->
 <section id="sm-set">
   <div class="sh">
@@ -30,6 +30,15 @@
       aria-label="연결하지 않아도 검색 실적 측정은 그대로 됩니다."
       >i</span></h3>
     <p class="sub">클릭 다음에 일어난 일을 랜딩페이지 축으로 봅니다.</p>
+    <div class="body"></div>
+  </div>
+  <!-- .repo 는 스타일용이다. 저장소 칸(repoRender/repoSave)이 ".repo select" 로 첫 번째
+       .repo 를 집으므로 이 칸은 저장소·GA4 뒤에 선다 — 앞에 세우면 저장소 저장이 이 select 를 읽는다. -->
+  <div class="repo lang grp"><h3>언어-지역<span class="hint" tabindex="0"
+      data-tip="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
+      aria-label="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
+      >i</span></h3>
+    <p class="sub">고르면 그 자리에서 저장되고 다음 측정부터 적용됩니다.</p>
     <div class="body"></div>
   </div>
   <!-- 토큰 원문은 발급 응답에만 있다(서버는 해시만 보관한다) — 그래서 이 칸은

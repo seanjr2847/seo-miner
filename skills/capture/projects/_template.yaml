@@ -2,7 +2,7 @@
 name: myproject
 type: saas                 # game | local_clinic | saas | directory  (see _presets.yaml)
 domain: example.com
-locale: ko-KR              # hl-GL: drives autocomplete language & judgment context
+locale: ko-KR              # 언어-지역: SERP 나라·자동완성 언어·AI 질문 언어. 고를 수 있는 값은 serp_adapter.LOCALES
 gsc_property: sc-domain:example.com   # or "https://example.com/"
 brand_aliases: [MyProject, 마이프로젝트]   # for 'mentioned' detection in AI answers
 seed_keywords: []

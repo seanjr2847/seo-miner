@@ -77,10 +77,18 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
 `gsc_property` 를 도메인에서 추정하므로 **2번의 대조는 한 번 해 준다**.
 
-1. **인터뷰는 3문항이다** — 타입(game|local_clinic|saas|directory), 도메인,
-   시드 키워드 3~10개. `projects/_presets.yaml`에서 타입 프리셋을 읽고 그 각도에
-   맞춰 질문을 구체화한다. 나머지는 **묻지 않는다**:
-   - `locale` — 도메인·사용자가 쓰는 언어에서 추론하고 한 줄로 확인만 받는다.
+1. **인터뷰는 4문항이다** — 타입(game|local_clinic|saas|directory), 도메인,
+   **언어-지역**, 시드 키워드 3~10개. `projects/_presets.yaml`에서 타입 프리셋을
+   읽고 그 각도에 맞춰 질문을 구체화한다. 나머지는 **묻지 않는다**:
+   - `locale` — **사용자가 고른다.** 도메인·사용자가 쓰는 언어에서 추정한 값을
+     기본으로 제시하되, "어느 언어·나라의 검색 결과에서 잴까요?" 를 반드시 한 번
+     묻는다 — 한국어 회사의 영어 사이트, 한 계정의 일본어 사이트가 흔하다. 고를 수
+     있는 값은 `python -c "import serp_adapter; print([c for c,_ in serp_adapter.LOCALES])"`
+     (정본 `scripts/serp_adapter.py` 의 `LOCALES`). 목록 밖 값은 미국/영어 SERP 로
+     떨어진다 — 그 언어가 필요하면 `LOCATION_MAP`·`LOCALES` 에 한 줄 더한다.
+     이 값이 SERP 나라, 자동완성 언어, AI 질문 언어를 전부 정한다. 시드 키워드는
+     그 언어로 받는다 — 문자권이 다른 시드(영어 사이트에 한글 시드)는 글자로
+     판별해 제 언어 로케일을 받는다(`expand_keywords.locale_of`).
    - `tools` — directory·saas 타입에서만 묻는다. 이 두 타입은 비면 남의 브랜드
      카탈로그가 비어서 striking_distance에 노이즈가 흘러든다 (`scoring.md` 1a).
      game·local_clinic은 해당 없음.

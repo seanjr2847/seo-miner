@@ -908,6 +908,9 @@
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
       if (ev.target.closest && ev.target.closest("[data-cli-new]")) return cliNew();
     });
+    sec.addEventListener("change", function (ev) {
+      if (ev.target.matches && ev.target.matches("[data-lang]")) langSave(ev.target.value);
+    });
     cliRender();       // 이 칸은 사이트 설정과 무관하다 — /api/settings 를 안 기다린다
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
@@ -927,9 +930,43 @@
       return '<button data-h="' + p.h + '" aria-pressed="' + on + '"' +
         (on ? ' class="on"' : "") + ">" + esc(p.label) + "</button>";
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
+    langRender();
     repoRender();
     ga4Render();
     setNext(true);
+  }
+
+  // 언어-지역 — 목록은 /api/settings 가 실어 보낸다(정본 serp_adapter.LOCALES).
+  // 고르면 바로 저장한다(수집 주기와 같은 방식).
+  function langRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec || !SET_H) return;
+    var body = sec.querySelector(".lang .body");
+    if (!body) return;
+    var list = SET_H.locales || [];
+    if (!SET_H.locale || !list.length) {   // 등록 직후 Brain 이 아직 없다
+      body.innerHTML = '<p class="none">첫 측정이 끝나면 여기서 바꿀 수 있습니다.</p>';
+      return;
+    }
+    body.innerHTML = '<div class="opts"><select data-lang>' + list.map(function (l) {
+      return '<option value="' + esc(l.code) + '"' + (l.code === SET_H.locale ? " selected" : "") +
+        ">" + esc(l.label) + "</option>";
+    }).join("") + "</select>" + (msg ? '<span class="msg">' + esc(msg) + "</span>" : "") + "</div>";
+  }
+
+  async function langSave(code) {
+    try {
+      var r = await fetch("/api/settings", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), locale: code})});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      SET_H.locale = d.locale;
+      langRender("저장했습니다. 다음 측정부터 이 언어로 잽니다.");
+      say("저장했습니다", "ok");
+    } catch (e) {
+      langRender("저장하지 못했습니다. " + reason(e) + " 다시 고르면 재시도합니다.");
+    }
   }
 
   // 안 끝난 첫 칸(저장소 다음 GA4). 다음 행동 띠가 이 판정으로 문장을 고른다.

@@ -1736,6 +1736,20 @@ def test_repo_binds_project_and_ambiguity_is_not_guessed():
     assert stage.pick_project(["zeta", "other"], cwd=repo_a) is None
 
 
+def test_expand_keywords_locale_of_by_script():
+    """문자권으로 언어를 가른다 — 프로젝트 언어와 같으면 프로젝트 로케일(zh-CN 유지),
+    다르면 그 언어의 대표 로케일. 라틴 문자는 언어를 못 가르니 프로젝트 값."""
+    lo = expand_keywords.locale_of
+    assert lo("밀리아 제거", "en-US") == "ko-KR"
+    assert lo("東京 ラーメン", "en-US") == "ja-JP"       # 가나가 섞이면 한자가 있어도 일본어
+    assert lo("北京 美食", "en-US") == "zh-TW"
+    assert lo("北京", "zh-CN") == "zh-CN"                 # 같은 언어면 프로젝트 로케일 보존
+    assert lo("купить", "en-US") == "ru-RU"
+    assert lo("kaufen", "de-DE") == "de-DE" and lo("", "de-DE") == "de-DE"
+    assert expand_keywords.modifiers("ja-JP", "ja")[0] == "あ"
+    assert expand_keywords.modifiers("de-DE", "de") == expand_keywords._LATIN
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

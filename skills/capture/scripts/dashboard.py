@@ -35,6 +35,7 @@ import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
+import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
 TPL = Path(__file__).parent.parent / "templates"
@@ -122,11 +123,15 @@ def _assemble(variant: str = "local") -> bytes:
     # 거짓말이 된다. 갈래를 아는 것은 여기(variant)뿐이라 여기서 골라 싣는다.
     stages_json = json.dumps(stage.stage_labels(variant), ensure_ascii=False).replace("</", "<\\/")
     hosted_flag = "window.SM_HOSTED=true;" if variant == "hosted" else ""
+    # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES) — 설정 폼의 <select> 는 여기서
+    # 채우고, 호스팅 애드온(dash.html)은 window.__LOCALES__ 로 같은 표를 읽는다.
+    locales_json = json.dumps(serp_adapter.LOCALES, ensure_ascii=False).replace("</", "<\\/")
+    locale_opts = "".join(f'<option value="{c}">{c} — {t}</option>' for c, t in serp_adapter.LOCALES)
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
-                f"window.__STAGES__={stages_json};</script>")
+                f"window.__STAGES__={stages_json};window.__LOCALES__={locales_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
-            .replace("<!--VIEWS-->", parts)
+            .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
             .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
             .encode("utf-8"))
 

@@ -336,6 +336,8 @@ footer a:hover { color:var(--patina); }
 const $ = id => document.getElementById(id);
 const TYPES = [["saas","SaaS / 웹 서비스"],["directory","디렉터리 / 목록형"],["game","게임"],
                ["local_clinic","지역 비즈니스"]];
+// 언어-지역 목록은 서버가 실어 보낸다(serp_adapter.LOCALES) — 사본을 여기 두지 않는다.
+const LOCALES = window.__LOCALES__ || [["ko-KR", "한국어 · 한국"]];
 // 서치콘솔 권한 등급. 미확인 계정은 실적 API 가 막혀 있어 분석이 반드시 실패한다.
 const LEVELS = {siteOwner:"소유자", siteFullUser:"전체 권한", siteRestrictedUser:"제한 권한"};
 const esc = s => String(s).replace(/[&<>"]/g, c =>
@@ -425,10 +427,14 @@ async function load() {
                '<span class="pname">' + pname(p.property) + '</span>' +
                '<span class="lv bad">소유 확인 필요</span></div>';
       const opts = TYPES.map(t => '<option value="' + t[0] + '">' + t[1] + '</option>').join("");
+      // 언어-지역은 사이트마다 고른다 — 어느 나라 검색 결과에서 잴지가 여기서 정해진다.
+      const lopts = LOCALES.map(l => '<option value="' + esc(l[0]) + '"' +
+        (l[0] === (CARRY.locale || "ko-KR") ? " selected" : "") + '>' + esc(l[1]) + '</option>').join("");
       return '<label class="prop"><input type="checkbox" value="' + v + '">' +
              '<span class="pname">' + pname(p.property) + '</span>' +
              '<span class="lv">' + LEVELS[p.level] + '</span>' +
              '<select data-for="' + v + '" aria-label="' + v + ' 사이트 종류">' + opts + '</select>' +
+             '<select data-loc="' + v + '" aria-label="' + v + ' 언어-지역">' + lopts + '</select>' +
              '</label>';
     }).join("");
     $("ptool").hidden = false;
@@ -605,10 +611,12 @@ load();
 $("btn").addEventListener("click", async () => {
   const picked = [...document.querySelectorAll("#props input:checked")].map(i => i.value);
   if (!picked.length) return;
-  const types = {};
+  const types = {}, locales = {};
   picked.forEach(v => {
     const s = document.querySelector('#props select[data-for="' + CSS.escape(v) + '"]');
     if (s) types[v] = s.value;
+    const l = document.querySelector('#props select[data-loc="' + CSS.escape(v) + '"]');
+    if (l) locales[v] = l.value;
   });
   const msg = $("msg"), btn = $("btn");
   msg.className = "msg"; msg.textContent = "";
@@ -616,7 +624,7 @@ $("btn").addEventListener("click", async () => {
   try {
     const r = await fetch("/api/sites", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: picked, types: types })
+      body: JSON.stringify({ properties: picked, types: types, locales: locales })
     });
     const d = await r.json();
     if (r.ok && d.ok) {

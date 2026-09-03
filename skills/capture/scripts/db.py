@@ -730,6 +730,19 @@ def set_ga4_property(conn, project_id: int, property_id: str | None) -> None:
     conn.commit()
 
 
+def set_locale(conn, project_id: int, locale: str) -> None:
+    """언어-지역을 바꾼다 — Brain 과 yaml 둘 다. yaml 을 안 고치면 다음 sync-project 가
+    옛 값으로 되돌린다. 이미 캔 키워드의 locale 은 그대로다(그 언어로 잰 값이다)."""
+    conn.execute("UPDATE projects SET locale=? WHERE id=?", (locale, project_id))
+    conn.commit()
+    path = conn.execute("SELECT config_path FROM projects WHERE id=?", (project_id,)).fetchone()[0]
+    if path and Path(path).exists():
+        import yaml
+        cfg = yaml.safe_load(Path(path).read_text("utf-8")) or {}
+        cfg["locale"] = locale
+        Path(path).write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), "utf-8")
+
+
 def write_ga4_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
                        period_days: int, rows) -> int:
     """GA4 스냅샷 적재. write_gsc_snapshot 과 같은 규칙 — 같은 날 다시 넣으면 덮어쓴다.

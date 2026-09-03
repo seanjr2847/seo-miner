@@ -131,7 +131,51 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "ar": ("United Arab Emirates", "ar", ("ae", "ar")),
     "hi": ("India", "hi", ("in", "hi")),
     "zh": ("Taiwan", "zh", ("tw", "zh")),  # Taiwan — 구글 접근 가능 지역
+    # 전체 로케일 키 — 같은 언어라도 나라가 다르면 SERP 가 다르다. location() 은
+    # 전체 키를 먼저 보고, 없으면 언어 접두로 떨어진다.
+    "en-gb": ("United Kingdom", "en", ("gb", "en")),
+    "en-au": ("Australia", "en", ("au", "en")),
+    "en-ca": ("Canada", "en", ("ca", "en")),
+    "en-in": ("India", "en", ("in", "en")),
+    "es-mx": ("Mexico", "es", ("mx", "es")),
+    "pt-pt": ("Portugal", "pt", ("pt", "pt")),
+    "fr-ca": ("Canada", "fr", ("ca", "fr")),
+    "de-at": ("Austria", "de", ("at", "de")),
+    "de-ch": ("Switzerland", "de", ("ch", "de")),
 }
+
+# 사용자가 고르는 언어-지역 목록 — 설정 폼·호스팅 등록 화면·호스팅 설정이 전부
+# 이 한 벌을 그린다(사본 금지, test_seams 가 대조한다). 키는 전부 LOCATION_MAP 에
+# 닿아야 한다 — 고를 수 있는데 미국 SERP 로 떨어지는 항목이 있으면 안 된다.
+LOCALES = [
+    ("ko-KR", "한국어 · 한국"),
+    ("en-US", "영어 · 미국"),
+    ("en-GB", "영어 · 영국"),
+    ("en-AU", "영어 · 호주"),
+    ("en-CA", "영어 · 캐나다"),
+    ("en-IN", "영어 · 인도"),
+    ("ja-JP", "일본어 · 일본"),
+    ("zh-TW", "중국어(번체) · 대만"),
+    ("de-DE", "독일어 · 독일"),
+    ("de-AT", "독일어 · 오스트리아"),
+    ("de-CH", "독일어 · 스위스"),
+    ("fr-FR", "프랑스어 · 프랑스"),
+    ("fr-CA", "프랑스어 · 캐나다"),
+    ("es-ES", "스페인어 · 스페인"),
+    ("es-MX", "스페인어 · 멕시코"),
+    ("it-IT", "이탈리아어 · 이탈리아"),
+    ("pt-BR", "포르투갈어 · 브라질"),
+    ("pt-PT", "포르투갈어 · 포르투갈"),
+    ("nl-NL", "네덜란드어 · 네덜란드"),
+    ("pl-PL", "폴란드어 · 폴란드"),
+    ("ru-RU", "러시아어 · 러시아"),
+    ("tr-TR", "튀르키예어 · 튀르키예"),
+    ("vi-VN", "베트남어 · 베트남"),
+    ("th-TH", "태국어 · 태국"),
+    ("id-ID", "인도네시아어 · 인도네시아"),
+    ("ar-AE", "아랍어 · 아랍에미리트"),
+    ("hi-IN", "힌디어 · 인도"),
+]
 
 
 def location(locale: str) -> tuple:
@@ -140,7 +184,8 @@ def location(locale: str) -> tuple:
     조회용 순수 함수다. 경고는 warn_unmapped()가 한다 — 예전엔 이 함수가 경고까지
     겸해서, 호출부가 값도 안 쓸 거면서 부작용만 보고 이걸 호출하고 있었다.
     """
-    return LOCATION_MAP.get((locale or "").split("-")[0].lower(), LOCATION_MAP["en"])
+    key = (locale or "").lower()
+    return LOCATION_MAP.get(key) or LOCATION_MAP.get(key.split("-")[0], LOCATION_MAP["en"])
 
 
 def warn_unmapped(locale: str) -> bool:
@@ -437,6 +482,11 @@ def _selfcheck() -> None:
     assert location("de-DE")[0] == "Germany"
     assert location("pt-BR")[0] == "Brazil"
     assert location("zh-TW")[0] == "Taiwan"
+    assert location("en-GB")[0] == "United Kingdom" and location("en-NZ")[0] == "United States"
+    for code, _ in LOCALES:     # 고를 수 있는 것은 전부 제 나라로 간다
+        assert location(code) is not LOCATION_MAP["en"] or code == "en-US", code
+        assert warn_unmapped(code) is False, code
+    assert len({c for c, _ in LOCALES}) == len(LOCALES), "LOCALES 에 중복이 있다"
     assert location("xx-XX") == LOCATION_MAP["en"]      # 매핑 없으면 미국/영어 폴백
     assert warn_unmapped("ko-KR") is False
     assert warn_unmapped("de-DE") is False

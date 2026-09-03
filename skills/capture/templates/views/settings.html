@@ -92,8 +92,9 @@
           <span class="lh">순위 확인과 크롤이 이 주소를 봅니다.</span>
           <input id="p-domain" placeholder="example.com"></div>
         <div><label>언어-지역</label>
-          <span class="lh">어느 나라 검색 결과에서 잴지 정합니다.</span>
-          <input id="p-locale" value="ko-KR"></div>
+          <span class="lh">어느 언어·나라의 검색 결과에서 잴지 정합니다. 자동완성·AI 질문도 이 언어로 갑니다.</span>
+          <!-- 목록은 조립(dashboard.py)이 serp_adapter.LOCALES 로 채운다 — 사본을 두지 않는다 -->
+          <select id="p-locale"><!--LOCALE_OPTIONS--></select></div>
         <div><label>서치콘솔 속성</label>
           <span class="lh">실적을 읽어 올 자리입니다. 비우면 sc-domain:도메인 을 씁니다.</span>
           <input id="p-gsc" placeholder="sc-domain:example.com"></div>

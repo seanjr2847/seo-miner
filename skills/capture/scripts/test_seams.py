@@ -535,6 +535,46 @@ def test_seam_13_collectors_use_collector_cli():
         assert got == {name},             f"{f.name} 이 collector.cli 에 넘기는 단계 이름이 자기 단계와 다르다: "             f"{sorted(got)} != {name} — 서버에서 엉뚱한 단계가 돈다"
 
 
+def test_seam_14_locale_list_single_source():
+    """14) 언어-지역 목록은 한 벌이다(serp_adapter.LOCALES). 고르는 자리가 셋이다 —
+    로컬 설정 폼(settings.html 의 <select>, 조립이 채운다), 호스팅 등록 화면
+    (app.html 이 window.__LOCALES__ 를 읽는다), 호스팅 설정(dash.html 이 /api/settings
+    의 locales 를 읽는다). 셋 중 하나라도 사본을 들면 새 언어를 한 곳에만 더하게
+    되고, 고를 수 있는데 미국 SERP 로 떨어지는 항목이 생긴다 — 그래서 목록의 모든
+    키가 LOCATION_MAP 에 닿는지까지 본다.
+    """
+    import dashboard
+    import serp_adapter
+    codes = [c for c, _ in serp_adapter.LOCALES]
+    assert codes and codes[0] == "ko-KR", "기본값(ko-KR)이 첫 항목이어야 폼 기본 선택이 맞다"
+    for c in codes:
+        assert not serp_adapter.warn_unmapped(c), f"{c} 는 고를 수 있는데 SERP 매핑이 없다"
+    settings = (SCRIPTS.parent / "templates" / "views" / "settings.html").read_text("utf-8")
+    assert '<select id="p-locale"><!--LOCALE_OPTIONS--></select>' in settings, \
+        "설정 폼의 언어-지역이 조립이 채우는 <select> 가 아니다 — 사본이거나 자유 입력이다"
+    html = dashboard._assemble("local").decode("utf-8")
+    for c in codes:
+        assert f'<option value="{c}">' in html, f"조립본 설정 폼에 {c} 가 없다"
+    assert "window.__LOCALES__=" in html, "조립이 언어-지역 목록을 안 실었다"
+    ctx = _load()
+    if ctx is None:
+        return
+    assert "window.__LOCALES__" in (ROOT / "server" / "app.html").read_text("utf-8"), \
+        "app.html 이 서버가 실어 보낸 언어-지역 목록을 안 읽는다"
+    app_src = ctx["app_f"].read_text("utf-8")
+    assert "__LOCALES__=serp_adapter.LOCALES" in app_src, \
+        "app.py 가 app.html 에 언어-지역 목록을 안 싣는다"
+    assert "serp_adapter.LOCALES" in app_src.split("def api_settings(")[1].split("@app.")[0], \
+        "/api/settings 가 언어-지역 목록을 안 준다 — dash.html 의 선택지가 빈다"
+    assert "SET_H.locales" in ctx["dash"] and "[data-lang]" in ctx["dash"], \
+        "dash.html 이 /api/settings 의 locales 로 선택지를 안 그린다"
+    # 저장소 칸은 ".repo select" 로 **첫 번째** .repo 를 집는다 — 언어 칸이 그 앞에
+    # 서면 저장소 저장이 언어 select 를 읽는다(실제로 그렇게 됐다).
+    sm = (SCRIPTS.parent / "templates" / "sections" / "sm-set.html").read_text("utf-8")
+    assert sm.index('class="repo lang') > sm.index('class="repo ga4'), \
+        "sm-set.html 의 언어 칸이 저장소·GA4 칸보다 앞에 있다 — repoSave 가 이 select 를 읽는다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

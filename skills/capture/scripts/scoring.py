@@ -390,19 +390,19 @@ def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15,
 
 
 # 페이지 감사 임계값 — 화면·리포트·산문이 같은 숫자를 본다.
-# 검색결과가 자르는 것은 글자 수가 아니라 픽셀 폭이라, 한글은 로마자의 약 두 배를
-# 먹는다. 한 벌로 두면 한국어 사이트는 멀쩡한 제목마다 "너무 길다"는 경고를 받는다.
+# 검색결과가 자르는 것은 글자 수가 아니라 픽셀 폭이라, 한글·가나·한자는 로마자의 약
+# 두 배를 먹는다. 한 벌로 두면 CJK 사이트는 멀쩡한 제목마다 "너무 길다"는 경고를 받는다.
 TITLE_MAX, TITLE_MAX_KO = 60, 30
 TITLE_MIN, TITLE_MIN_KO = 15, 8
 DESC_MIN, DESC_MIN_KO = 70, 40
 DESC_MAX, DESC_MAX_KO = 160, 80
 THIN_WORDS = 300        # 이보다 얇으면 "이 주제를 다뤘다"고 보기 어렵다
-_HANGUL = re.compile(r"[가-힣]")
+_CJK = re.compile(r"[가-힣぀-ヿ一-鿿]")
 
 
 def _wide(text: str) -> bool:
-    """폭이 넓은 글자(한글)가 섞였나 — 길이 임계값을 어느 쪽으로 볼지 가른다."""
-    return bool(_HANGUL.search(text or ""))
+    """폭이 넓은 글자(한글·가나·한자)가 섞였나 — 길이 임계값을 어느 쪽으로 볼지 가른다."""
+    return bool(_CJK.search(text or ""))
 
 
 def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:

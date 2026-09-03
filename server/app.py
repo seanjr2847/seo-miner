@@ -47,6 +47,7 @@ import gen_prompts
 import gh
 import identity
 import pages
+import serp_adapter   # 언어-지역 목록 정본 — 등록·설정 화면이 이걸 그린다
 import run_all
 import scheduler
 import settings
@@ -255,7 +256,9 @@ def home(request: Request):
                      __CARRY__=carry,
                      # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
                      # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
-                     __STAGES__=stage.STAGE_LABELS)
+                     __STAGES__=stage.STAGE_LABELS,
+                     # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES)
+                     __LOCALES__=serp_adapter.LOCALES)
     return _html(doc, "사이트 관리 — seo-miner")
 
 
@@ -381,6 +384,13 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     if not props:
         raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 고르세요.")
     types = body.get("types") or {}
+    # 언어-지역은 사이트마다 고른다(한 계정에 한국어·영어 사이트가 같이 있다).
+    # 목록 밖 값은 미국 SERP 로 조용히 떨어지므로 여기서 막는다.
+    locales = body.get("locales") or {}
+    known = dict(serp_adapter.LOCALES)
+    for loc in set(locales.values()) | {body.get("locale", "ko-KR")}:
+        if loc not in known:
+            raise HTTPException(status_code=400, detail=f"고를 수 없는 언어-지역입니다: {loc}")
 
     # 로컬에서 넘어온 설정은 그 속성 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
     # (다음에 다른 사이트를 등록할 때 남의 씨앗이 섞이면 안 된다).
@@ -398,7 +408,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
             name = _slug(host, taken)
             f = {
                 "name": name, "type": types.get(prop, "saas"), "domain": host,
-                "gsc_property": prop, "locale": body.get("locale", "ko-KR"),
+                "gsc_property": prop, "locale": locales.get(prop) or body.get("locale", "ko-KR"),
                 "brand_aliases": host.split(".")[0], "seed_keywords": "",
                 "competitors_manual": "",
             }
@@ -972,11 +982,12 @@ def api_settings(project: str, request: Request):
         try:
             c = tn.brain()
             try:
-                ga4 = db.get_project(c, project)["ga4_property"] or ""
+                pr = db.get_project(c, project)
+                ga4, locale = pr["ga4_property"] or "", pr["locale"] or "ko-KR"
             finally:
                 c.close()
         except db.ProjectNotFound:
-            ga4 = ""      # 등록 직후 Brain 이 아직 없어도 설정 화면은 열려야 한다
+            ga4, locale = "", ""   # 등록 직후 Brain 이 아직 없어도 설정 화면은 열려야 한다
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
         return {"run_every_hours": store.every_hours(tn.conn, uid, project),
                 "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -988,7 +999,10 @@ def api_settings(project: str, request: Request):
                 # "이 배포가 GitHub 연동을 지원하나" — 키가 없으면 화면은 버튼 대신
                 # 안내만 낸다. 존재 여부만 준다, 값은 절대 안 내보낸다.
                 "github_enabled": bool(settings.get("GITHUB_CLIENT_ID")),
-                "ga4_property": ga4}
+                "ga4_property": ga4,
+                # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
+                "locale": locale,
+                "locales": [{"code": c, "label": t} for c, t in serp_adapter.LOCALES]}
 
 
 @app.post("/api/settings")
@@ -996,6 +1010,21 @@ async def api_settings_set(request: Request):
     uid = _require_uid(request)
     body = await request.json()
     project = str(body.get("project") or "")
+    if "locale" in body:      # 언어-지역만 바꾸는 호출 — 수집 주기는 안 건드린다
+        loc = str(body.get("locale") or "")
+        if loc not in dict(serp_adapter.LOCALES):
+            raise HTTPException(status_code=400,
+                                detail="고를 수 없는 언어-지역입니다. 새로고침한 뒤 다시 고르세요.")
+        try:
+            with store.session(uid, project, isolate=True) as t:
+                c = t.brain()
+                try:
+                    db.set_locale(c, db.get_project(c, project)["id"], loc)
+                finally:
+                    c.close()
+        except db.ProjectNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return {"ok": True, "locale": loc}
     try:
         hours = float(body.get("run_every_hours"))
     except (TypeError, ValueError):
@@ -1307,6 +1336,15 @@ def demo() -> None:
             assert r.status_code == 200 and r.json()["ok"], r.text
             assert r.json()["added"][0]["project"] == "new1", r.json()
             assert kicked, "새 사이트 등록인데 워커를 안 띄웠다"
+            # 언어-지역은 사이트마다 — 목록 밖은 400, 고른 값은 그 사이트의 yaml 로 간다.
+            assert c.post("/api/sites", json={"properties": ["sc-domain:new2.com"],
+                                              "locales": {"sc-domain:new2.com": "xx-XX"}}
+                          ).status_code == 400, "목록 밖 언어로 등록된다"
+            r = c.post("/api/sites", json={"properties": ["sc-domain:new2.com"],
+                                           "locales": {"sc-domain:new2.com": "en-GB"}})
+            assert r.status_code == 200 and r.json()["ok"], r.text
+            assert c.get("/api/settings?project=new2").json()["locale"] == "en-GB", \
+                "고른 언어가 안 실렸다"
         finally:
             app.dependency_overrides.pop(_dispatch_dep, None)
             app.dependency_overrides.pop(_kick_dep, None)
@@ -1409,6 +1447,17 @@ def demo() -> None:
             r = c.post("/api/ga4/property", json={"project": "p1", "property_id": "111"})
             assert r.status_code == 200 and r.json()["ga4_property"] == "111", r.text
             assert c.get("/api/settings?project=p1").json()["ga4_property"] == "111",                 "설정 화면이 연결된 속성을 안 보여준다"
+
+            # 언어-지역 — 목록 밖은 400, 바꾸면 Brain 이 그 값을 들고 있다.
+            s0 = c.get("/api/settings?project=p1").json()
+            assert s0["locale"] == "ko-KR" and s0["locales"][0]["code"] == "ko-KR", s0
+            assert c.post("/api/settings", json={"project": "p1", "locale": "xx-XX"}
+                          ).status_code == 400, "목록 밖 언어가 저장된다"
+            assert c.post("/api/settings", json={"project": "없는사이트", "locale": "ja-JP"}
+                          ).status_code == 404
+            r = c.post("/api/settings", json={"project": "p1", "locale": "ja-JP"})
+            assert r.status_code == 200 and r.json()["locale"] == "ja-JP", r.text
+            assert c.get("/api/settings?project=p1").json()["locale"] == "ja-JP", "언어가 저장이 안 됐다"
 
             # 403 — 스코프 부족(analytics.readonly 가 나중에 더해졌다). 재로그인 안내가 나와야 한다.
             def _scope_missing(admin_svc):
