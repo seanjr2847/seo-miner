@@ -383,7 +383,7 @@ def collect(project: str, *,
             print(f"[gap] {reason}")
             return st.noop(reason=reason)
 
-        locale = p["locale"] or "ko-KR"
+        locale = db.project_locale(p)
         # 콜 수: 역키워드(도메인당 1) + 자동탐지 1 + 우리 지표 1 + Gap(경쟁사당 2).
         # 자동 탐지가 경쟁사를 더 붙이면 실제 콜은 이보다 늘 수 있다 — 상한이 아니라 예상치다.
         n_gap_hosts = min(n_gap, max(len(domains), n_auto)) if n_gap and ours else 0

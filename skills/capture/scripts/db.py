@@ -556,6 +556,16 @@ def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# 스키마의 projects.locale DEFAULT 와 같은 값 — 로케일이 비었을 때의 폴백은 이 하나다.
+# 수집기마다 "ko-KR" 리터럴을 들고 있던 것을 여기로 모았다.
+DEFAULT_LOCALE = "ko-KR"
+
+
+def project_locale(p) -> str:
+    """프로젝트 행(또는 dict)의 언어-지역 — 비어 있으면 DEFAULT_LOCALE."""
+    return p["locale"] or DEFAULT_LOCALE
+
+
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
@@ -587,7 +597,7 @@ def sync_project(yaml_path: str) -> None:
            ON CONFLICT(name) DO UPDATE SET type=excluded.type, domain=excluded.domain,
              locale=excluded.locale, gsc_property=excluded.gsc_property,
              ga4_property=excluded.ga4_property, config_path=excluded.config_path""",
-        (cfg["name"], cfg.get("type", "saas"), cfg["domain"], cfg.get("locale", "ko-KR"),
+        (cfg["name"], cfg.get("type", "saas"), cfg["domain"], cfg.get("locale", DEFAULT_LOCALE),
          cfg.get("gsc_property"), cfg.get("ga4_property"), cfg["_path"]),
     )
     pid = conn.execute("SELECT id FROM projects WHERE name=?", (cfg["name"],)).fetchone()[0]

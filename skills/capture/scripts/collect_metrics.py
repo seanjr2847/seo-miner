@@ -213,7 +213,7 @@ def collect(project: str, *,
             print(f"[metrics] {reason}")
             return st.noop(reason=reason)
 
-        jobs = _jobs(rows, p["locale"] or "ko-KR")
+        jobs = _jobs(rows, db.project_locale(p))
         est_cost = len(jobs) * (SV_COST_PER_CALL + KD_COST_PER_CALL)
         print(f"[metrics] project={p['name']} keywords={len(rows)} "
               f"requests={len(jobs) * 2} est_cost≈${est_cost:.3f}")

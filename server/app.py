@@ -388,7 +388,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     # 목록 밖 값은 미국 SERP 로 조용히 떨어지므로 여기서 막는다.
     locales = body.get("locales") or {}
     known = dict(serp_adapter.LOCALES)
-    for loc in set(locales.values()) | {body.get("locale", "ko-KR")}:
+    for loc in set(locales.values()) | {body.get("locale", db.DEFAULT_LOCALE)}:
         if loc not in known:
             raise HTTPException(status_code=400, detail=f"고를 수 없는 언어-지역입니다: {loc}")
 
@@ -408,7 +408,7 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
             name = _slug(host, taken)
             f = {
                 "name": name, "type": types.get(prop, "saas"), "domain": host,
-                "gsc_property": prop, "locale": locales.get(prop) or body.get("locale", "ko-KR"),
+                "gsc_property": prop, "locale": locales.get(prop) or body.get("locale", db.DEFAULT_LOCALE),
                 "brand_aliases": host.split(".")[0], "seed_keywords": "",
                 "competitors_manual": "",
             }
@@ -983,7 +983,7 @@ def api_settings(project: str, request: Request):
             c = tn.brain()
             try:
                 pr = db.get_project(c, project)
-                ga4, locale = pr["ga4_property"] or "", pr["locale"] or "ko-KR"
+                ga4, locale = pr["ga4_property"] or "", db.project_locale(pr)
             finally:
                 c.close()
         except db.ProjectNotFound:

@@ -178,14 +178,32 @@ LOCALES = [
 ]
 
 
+# 모델에게 말할 때 쓰는 영어 언어 이름 — "ko-KR" 코드만 주면 모델이 언어를 짐작한다.
+LANG_NAME = {"ko": "Korean", "en": "English", "ja": "Japanese", "de": "German", "fr": "French",
+             "es": "Spanish", "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
+             "ru": "Russian", "tr": "Turkish", "vi": "Vietnamese", "th": "Thai",
+             "id": "Indonesian", "ar": "Arabic", "hi": "Hindi", "zh": "Chinese"}
+
+
+def lang_of(locale: str) -> str:
+    """'ja-JP' -> 'ja'. 언어 접두 하나를 세 함수와 expand_keywords 가 같은 규칙으로 뽑는다."""
+    return (locale or "").split("-")[0].lower()
+
+
+def describe(locale: str) -> tuple[str, str]:
+    """locale -> (언어 이름, 나라 이름) 영어. 프롬프트가 "Write in Japanese, for Japan" 처럼
+    말하도록. 매핑 없는 언어는 location() 과 같은 폴백(영어/미국)."""
+    return LANG_NAME.get(lang_of(locale), "English"), location(locale)[0]
+
+
 def location(locale: str) -> tuple:
     """locale -> (location_name, language_code, (gl, hl)). 매핑에 없으면 미국/영어.
 
     조회용 순수 함수다. 경고는 warn_unmapped()가 한다 — 예전엔 이 함수가 경고까지
     겸해서, 호출부가 값도 안 쓸 거면서 부작용만 보고 이걸 호출하고 있었다.
     """
-    key = (locale or "").lower()
-    return LOCATION_MAP.get(key) or LOCATION_MAP.get(key.split("-")[0], LOCATION_MAP["en"])
+    return (LOCATION_MAP.get((locale or "").lower())
+            or LOCATION_MAP.get(lang_of(locale), LOCATION_MAP["en"]))
 
 
 def warn_unmapped(locale: str) -> bool:
@@ -195,7 +213,7 @@ def warn_unmapped(locale: str) -> bool:
     SERP를 재고 "순위 없음"으로 적재돼도 아무도 눈치채지 못한다(한국어 키워드에서
     이미 한 번 겪은 일).
     """
-    key = (locale or "").split("-")[0].lower()
+    key = lang_of(locale)
     if key in LOCATION_MAP:
         return False
     print(f"[주의] '{locale}' 로케일 매핑이 없어 United States/en 으로 조회합니다 — "

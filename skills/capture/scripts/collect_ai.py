@@ -45,7 +45,7 @@ DEFAULT_ENGINES = {
 SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
           "normally would for a real user, citing web sources. "
           "Answer in the language of the question, and prefer sources relevant "
-          "to a {locale} audience.")
+          "to a {lang}-speaking audience in {country} ({locale}).")
 
 
 def openrouter_ok() -> tuple[bool, str]:
@@ -77,11 +77,13 @@ def openrouter_ok() -> tuple[bool, str]:
 
 
 def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
+    locale = locale or db.DEFAULT_LOCALE
+    lang, country = serp_adapter.describe(locale)
     body = {
         "model": model,
         "max_tokens": 1200,  # 700이면 긴 답변 뒤쪽 인용이 잘린다 — 토큰 비용 최대 ~1.7배
         "messages": [
-            {"role": "system", "content": SYSTEM.format(locale=locale or "ko-KR")},
+            {"role": "system", "content": SYSTEM.format(locale=locale, lang=lang, country=country)},
             {"role": "user", "content": prompt},
         ],
     }

@@ -114,7 +114,7 @@ def collect(project: str, *,
 
         # 키워드별 로케일. 어떤 로케일로 조회하는지 보여주지 않으면, 한국어 키워드를
         # en-US로 긁어 전부 "순위 없음"으로 적재해도 아무도 눈치채지 못한다.
-        default_locale = p["locale"] or "ko-KR"
+        default_locale = db.project_locale(p)
         locales = Counter((k["locale"] or default_locale) for k in (kws if kws else target_kws))
         est = serp_adapter.cost_per_query(provider) * len(kws)
         print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "

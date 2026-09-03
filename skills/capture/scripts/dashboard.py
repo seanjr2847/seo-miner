@@ -292,7 +292,7 @@ def create_project(f: dict) -> dict:
                                       "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
     gsc = str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}"
     doc = {"name": name, "type": f["type"], "domain": domain,
-           "locale": str(f.get("locale") or "ko-KR").strip(),
+           "locale": str(f.get("locale") or db.DEFAULT_LOCALE).strip(),
            "gsc_property": gsc,
            "brand_aliases": items("brand_aliases"),
            "seed_keywords": items("seed_keywords"),

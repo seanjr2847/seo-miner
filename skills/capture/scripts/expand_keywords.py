@@ -70,7 +70,7 @@ def locale_of(text: str, default: str) -> str:
     언어를 못 가르므로(영어·독일어·베트남어…) 프로젝트 로케일을 따른다."""
     lang = next((lg for (lo, hi), lg in _SCRIPTS
                  if any(lo <= c <= hi for c in (text or ""))), None)
-    if lang is None or lang == (default or "").split("-")[0].lower():
+    if lang is None or lang == serp_adapter.lang_of(default):
         return default
     return f"{lang}-{serp_adapter.location(lang)[2][0].upper()}"
 
@@ -167,9 +167,9 @@ def collect(project: str, *,
         conn, p, cfg = st.conn, st.project, st.cfg
         st.settings(ap, argparse.Namespace(throttle=throttle))
         throttle = st.throttle
-        locale = p["locale"] or "ko-KR"
+        locale = db.project_locale(p)
         hl, _, gl = locale.partition("-")
-        gl = (gl or "KR").lower()
+        gl = (gl or serp_adapter.location(locale)[2][0]).lower()   # 나라 없는 로케일은 그 언어의 대표 나라
 
         # 시드의 locale까지 같이 읽는다 — 후보가 물려받을 값이 여기 있다.
         seeds = [(r["keyword"], r["locale"]) for r in conn.execute(

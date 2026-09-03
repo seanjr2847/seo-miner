@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import db  # noqa: E402
+import serp_adapter  # noqa: E402  (로케일 → 영어 언어·나라 이름)
 
 # 검색이 필요 없는 작업이다(:online 을 안 붙인다) — 질문을 짓는 것뿐이라 싸고 빠른
 # 모델로 충분하다. 인용 확인에 쓰는 엔진 표(collect_ai.DEFAULT_ENGINES)와는 별개다.
@@ -42,8 +43,10 @@ SYSTEM = (
     "You design the question set used to measure whether a site gets cited by AI "
     "assistants. Return ONLY a JSON array, no prose, no code fence. Each item: "
     '{"prompt": "...", "category": "추천|비교|문제해결|브랜드"}. '
-    "Write the prompts in the site's language, phrased the way a real person types "
-    "into ChatGPT — full questions, not keywords, and never mention that this is a test. "
+    "Write every prompt in the audience language named in the message (never in another "
+    "language), phrased the way a real person there types into ChatGPT — full questions, "
+    "not keywords, and never mention that this is a test. Keep the category values exactly "
+    "as given even though they are Korean labels. "
     "Cover all four categories: 추천 (asking for recommendations in this field), "
     "비교 (comparing options), 문제해결 (solving the problem the site addresses), "
     "브랜드 (asking about this brand by name). Most prompts must NOT name the brand — "
@@ -126,7 +129,7 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
                 GROUP BY query ORDER BY imp DESC LIMIT ?""",
             (p["id"], cur, period, top_n))]
     return {"name": p["name"], "domain": p["domain"], "type": p["type"],
-            "locale": p["locale"] or "ko-KR",
+            "locale": db.project_locale(p),
             "aliases": cfg.get("brand_aliases") or [],
             "queries": queries,
             # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
@@ -136,13 +139,15 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
 
 
 def user_msg(b: dict, n: int) -> str:
-    q = ", ".join(b["queries"][:15]) or "(아직 없음)"
+    q = ", ".join(b["queries"][:15]) or "(none yet)"
     alias = ", ".join(x for x in [b["name"], *b["aliases"]] if x)
-    seeds = ", ".join(b.get("seeds") or []) or "(없음)"
+    seeds = ", ".join(b.get("seeds") or []) or "(none)"
     # 페이지 목록은 줄바꿈으로 준다 — 쉼표로 이으면 경로끼리 붙어 한 줄로 읽힌다.
-    pages = "\n".join(f"  {x}" for x in (b.get("offers") or [])) or "  (아직 없음)"
+    pages = "\n".join(f"  {x}" for x in (b.get("offers") or [])) or "  (none yet)"
+    lang, country = serp_adapter.describe(b["locale"])
     return (f"Site: {b['name']} ({b['domain']})\n"
-            f"Kind: {b['type']}\nAudience locale: {b['locale']}\n"
+            f"Kind: {b['type']}\n"
+            f"Audience: {lang} speakers in {country} ({b['locale']}) — write in {lang}.\n"
             f"Brand names: {alias}\n"
             f"Search queries this site already gets impressions for: {q}\n"
             f"Keywords this site targets: {seeds}\n"

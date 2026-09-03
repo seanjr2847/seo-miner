@@ -26,6 +26,9 @@ from pathlib import Path
 
 HOME = Path(tempfile.mkdtemp(prefix="seo-miner-collector-test-"))
 os.environ["CAPTURE_HOME"] = str(HOME)
+# 레거시 토큰 자리(paths._legacy_token)도 격리한다 — 이 기계에 예전 mcp-gsc 토큰이
+# 생기자 "토큰 없음" 을 전제한 OAuth 테스트가 진짜 토큰을 읽어 깨졌다(2026-09-04).
+os.environ["GSC_CONFIG_DIR"] = str(HOME / "no-legacy")
 sys.path.insert(0, str(Path(__file__).parent))
 
 import collect_ai         # noqa: E402
