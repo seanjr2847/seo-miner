@@ -1,16 +1,34 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
      unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
-     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+     못 받으면(오프라인·사내망) --sans 의 뒤쪽 스택으로 조용히 떨어진다 — 화면은 그대로 선다.
+
+     **막지 않게 받는다.** 평범한 stylesheet 링크는 파서를 막아, 뒤에 오는 모든
+     스크립트가 이 파일을 받을 때까지 실행되지 않는다. CDN 이 안 열리는
+     환경(오프라인·사내망·검사 샌드박스)에서는 그게 곧 이 화면이 죽는 것이다:
+     사이트 목록도 진행 상황도 아래 페이지 스크립트가 /api 를 불러 채우는데 그것이
+     시작을 못 한다. (이 주석에 여는 스크립트 태그를 글자로 적으면 안 된다 —
+     pages.data 가 "문서의 첫 script 태그 앞"에 값을 싣는데, 주석 안의 글자가 그
+     자리로 잡히면 window.__SITES__ 가 통째로 주석 속에 묻힌다. 실제로 묻혔다.)
+     media=print 로 받으면 이 파일은 처음부터 이 화면의 스타일이
+     아니라서 아무것도 막지 않고, 다 받은 뒤 onload 가 media 를 열어 그때 글꼴이
+     적용된다. 서체는 읽는 데 필요한 게 아니라 좋아지는 것이므로 늦게 와도 된다.
+     (정본은 dashboard.html 의 같은 자리다.) -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<noscript><link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
 <style>
 /* 이 화면이 대시보드의 입구다 — 색·서체·괘선·마이크로 라벨을 dashboard.html 의
    :root 와 한 벌로 맞춘다. 정본은 그쪽이고 여기는 같은 값을 적어 둔 사본이다. */
 :root {
-  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#66726D;
+  /* --slate 는 부제·눈금·상태 글자를 전부 칠한다. #66726D 은 --stone 위에서 4.09:1 로
+     AA 를 못 넘겼다 — 대시보드가 #576259 로 옮겼고 여기도 같은 값을 쓴다. */
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#576259;
   --patina:#22705F; --patina-hi:#1A5A4C; --copper:#A9491F; --btn-ink:#F7F8F5;
   --rule:rgba(18,23,20,.13); --rule-soft:rgba(18,23,20,.07);
-  --wash:rgba(34,112,95,.10); --bar:rgba(18,23,20,.05);
+  --wash:rgba(34,112,95,.10); --wash-copper:rgba(169,73,31,.10);
+  --bar:rgba(18,23,20,.05);
   /* 헤더 배경(--ink) 위의 글자 — --slate 는 거기서 2.6:1 이라 안 읽힌다.
      다크에서 --ink 가 밝아지므로 이 셋도 같이 뒤집는다. */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.68);
@@ -27,7 +45,8 @@
     --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
     --patina:#57B49C; --patina-hi:#6CC4AD; --copper:#DE8351; --btn-ink:#0E1412;
     --rule:rgba(228,235,231,.16); --rule-soft:rgba(228,235,231,.08);
-    --wash:rgba(87,180,156,.14); --bar:rgba(228,235,231,.06);
+    --wash:rgba(87,180,156,.14); --wash-copper:rgba(222,131,81,.14);
+    --bar:rgba(228,235,231,.06);
     --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.70);
     --on-ink-rule:rgba(16,21,19,.28);
   }
@@ -42,74 +61,56 @@ body { margin:0; background:var(--stone); color:var(--ink);
    화면의 위계는 크기·굵기·색으로만 만든다. 트래킹이 붙은 곳은 로고(.mark) 하나뿐이고,
    거기에는 라틴 글자만 들어간다. 등폭(--mono)도 URL·날짜·식별자에만 쓴다. */
 
-.wrap { max-width:1180px; margin:0 auto; padding:0 26px; }
+.wrap { max-width:1080px; margin:0 auto; padding:0 26px; }
+
+/* ── 버튼: 행동은 전부 이 한 벌이다. 상태는 .badge 가 맡는다 ─── */
+.go { display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  font:600 14px/1 var(--sans); color:var(--btn-ink); background:var(--patina);
+  border:1px solid var(--patina); border-radius:3px; padding:12px 20px;
+  cursor:pointer; text-decoration:none; white-space:nowrap; }
+.go:hover:not(:disabled) { background:var(--patina-hi); border-color:var(--patina-hi); }
+/* 비활성은 "옅은 초록"이 아니라 빈 테두리다 — 켜졌는지 껐는지가 형태로 갈린다. */
+.go:disabled { background:transparent; color:var(--slate);
+  border-color:var(--rule); cursor:default; }
+.go.sec { background:transparent; color:var(--ink); border-color:var(--rule); }
+.go.sec:hover { background:var(--wash); color:var(--patina); border-color:var(--patina); }
+.go.ghost { background:transparent; color:var(--slate); border-color:transparent; }
+.go.ghost:hover { background:var(--bar); color:var(--patina); border-color:var(--rule); }
+.go.sm { font-size:12.5px; padding:8px 13px; }
+
+/* ── 상태 배지: 절대 버튼 모양이 아니다 ───────────────────── */
+.badge { display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+  font:500 11.5px/1.35 var(--sans); border:1px solid var(--rule);
+  border-radius:999px; padding:4px 10px; color:var(--slate); }
+.badge::before { content:""; width:5px; height:5px; border-radius:50%;
+  background:currentColor; flex:none; }
+.badge.ok { color:var(--patina); border-color:rgba(34,112,95,.35); background:var(--wash); }
+.badge.run { color:var(--copper); border-color:rgba(169,73,31,.35);
+  background:var(--wash-copper); }
+.badge.muted::before { display:none; }
 
 /* ── 헤더: 시추공 상단 케이싱 ─────────────────────────────── */
 header { background:var(--ink); color:var(--on-ink); }
-.hbar { display:flex; align-items:baseline; gap:16px; padding:13px 26px; }
+.hbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:13px 26px; }
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
 .mark b { color:var(--patina); font-weight:600; }
-.tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; }
+h1.tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; margin:0; }
 .hbar .sp { flex:1; }
 .who { font:400 11.5px/1 var(--mono); color:var(--on-ink-dim); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .lo { margin:0; flex:0 0 auto; }
-.lo button { font:400 12px/1 var(--sans); color:var(--on-ink); background:transparent;
-  border:1px solid var(--on-ink-rule); border-radius:2px; padding:6px 11px; cursor:pointer; }
-.lo button:hover:not(:disabled) { background:transparent; border-color:var(--patina);
-  color:var(--patina); }
-@media (max-width:640px) { .tag { display:none; } }
+.lo button { font:400 12px/1 var(--sans); color:var(--on-ink-dim); background:transparent;
+  border:1px solid transparent; border-radius:3px; padding:7px 11px; cursor:pointer; }
+.lo button:hover { color:var(--on-ink); border-color:var(--on-ink-rule); }
 
 main { padding:0 0 12px; }
 section { padding:34px 0 0; }
 
-/* ── 두 단: 고르는 일이 넓은 쪽, 이미 분석 중인 사이트가 옆 ── */
-.cols { display:flex; flex-wrap:wrap; gap:0 40px; align-items:flex-start; }
-.pick { flex:1 1 560px; min-width:0; }
-.side { flex:0 1 330px; min-width:0; }
-.side:empty { display:none; }          /* 사이트가 아직 없으면 단 자체가 없다 */
-@media (max-width:979px) {
-  .side { order:-1; flex-basis:100%; } /* 좁으면 이미 도는 사이트가 먼저 */
-  .pick { flex-basis:100%; }
-  /* 한 단으로 서면 사이트 목록도 가로를 쓴다 — 세로로 길게 늘어놓지 않는다. */
-  .sites { display:grid; gap:1px; overflow:hidden;
-    grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));
-    background:var(--rule-soft); }
-  .sites li { background:var(--card); }
-  .sites li + li { border-top:0; }
-  .sites a { height:100%; }
-  .sites li:first-child a, .sites li:last-child a { border-radius:0; }
-}
-
-/* ── 제목 묶음: 대시보드와 같은 문법(eyebrow → h → sub) ──── */
+/* ── 제목 묶음: 대시보드와 같은 문법(eyebrow → h2 → sub) ──── */
 .eyebrow, .label { font:var(--micro); color:var(--slate); margin:0; }
 .eyebrow { color:var(--patina); }
-h1, h2 { font:650 22px/1.35 var(--sans); margin:9px 0 6px; }
+h2 { font:650 21px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 5px; }
 .sub { font-size:13.5px; color:var(--slate); margin:0 0 18px; max-width:62ch; }
-
-/* ── 분석 중인 사이트(서버가 채운다) ──────────────────────── */
-.label { margin-bottom:12px; }
-.sites { list-style:none; margin:0; padding:0; background:var(--card);
-  border:1px solid var(--rule); border-radius:4px; }
-.sites li + li { border-top:1px solid var(--rule-soft); }
-/* 한 줄에 이름·주소·상태를 밀어 넣으면 좁은 단에서 날짜가 반토막 난다 — 쌓는다. */
-.sites a { display:grid; gap:3px; padding:12px 14px;
-  text-decoration:none; color:inherit; }
-.sites a:hover { background:var(--bar); }
-.sites li:first-child a { border-radius:4px 4px 0 0; }
-.sites li:last-child a { border-radius:0 0 4px 4px; }
-.nm { font:600 14px/1.35 var(--sans); }
-.pr { font:400 11.5px/1.4 var(--mono); color:var(--slate); overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap; }
-/* 이 자리에는 "첫 분석 진행 중" 같은 한글이 들어온다 — 등폭으로 찍으면 폴백 서체로
-   떨어져 낱자가 흩어진다. 날짜의 자릿수 정렬은 tabular-nums 로 얻는다. */
-.st { justify-self:start; margin-top:5px; font:400 12px/1.35 var(--sans);
-  font-variant-numeric:tabular-nums; color:var(--slate); white-space:nowrap; }
-.st.wait { color:var(--copper); border:1px solid var(--copper); border-radius:2px;
-  padding:5px 8px; font-size:11.5px; }
-.st.wait::before { content:""; display:inline-block; width:5px; height:5px;
-  border-radius:50%; background:var(--copper); margin-right:6px; vertical-align:middle; }
-.wait-note { font-size:12.5px; color:var(--slate); margin:12px 0 0; }
 
 /* ── 진행 레일: 지금 어느 걸음인지 ────────────────────────── */
 .rail { padding-top:26px; }
@@ -128,6 +129,34 @@ h1, h2 { font:650 22px/1.35 var(--sans); margin:9px 0 6px; }
 .rail .done .n { background:var(--patina); border-color:var(--patina); color:var(--btn-ink); }
 .rail .done .n::before { content:"✓"; }
 .rail .done .n b { display:none; }
+
+/* ── 분석 중인 사이트(서버가 채운다) — 사이트가 있으면 이게 주역 ── */
+.sites { list-style:none; margin:0; padding:0; background:var(--card);
+  border:1px solid var(--rule); border-radius:4px; overflow:hidden; }
+.sites li + li { border-top:1px solid var(--rule-soft); }
+/* 이름·주소 / 상태 / 행동 세 통. 좁아지면 세 통이 세로로 쌓인다. */
+.sites li { display:grid; grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center; gap:10px 16px; padding:15px 16px; }
+.sites li:hover { background:var(--bar); }
+.s-id { min-width:0; display:grid; gap:2px; }
+.nm { font:650 14.5px/1.35 var(--sans); }
+.pr { font:400 11.5px/1.4 var(--mono); color:var(--slate); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.s-state { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+/* 날짜는 등폭 — 자릿수가 줄마다 같은 자리에 선다. */
+.when { font:400 11.5px/1.35 var(--mono); font-variant-numeric:tabular-nums;
+  color:var(--slate); white-space:nowrap; }
+/* 진행 막대는 행 아래 한 줄을 다 쓴다 — 상태 칸에 끼우면 3px 짜리 실이 된다. */
+.prog { grid-column:1 / -1; display:grid; gap:6px; }
+.progress { height:3px; border-radius:2px; background:var(--rule); overflow:hidden; }
+.progress i { display:block; height:100%; width:6%; background:var(--patina);
+  transition:width .5s ease; }
+.stg { margin:0; font:400 12px/1.35 var(--sans); color:var(--slate); }
+.wait-note { font-size:12.5px; color:var(--slate); margin:12px 0 0; max-width:62ch; }
+@media (max-width:620px) {
+  .sites li { grid-template-columns:minmax(0,1fr); }
+  .sites li .go { justify-self:start; }
+}
 
 /* ── 선택 패널 ───────────────────────────────────────────── */
 .panel { background:var(--card); border:1px solid var(--rule); border-radius:4px;
@@ -148,7 +177,7 @@ h1, h2 { font:650 22px/1.35 var(--sans); margin:9px 0 6px; }
 .props { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));
   gap:1px; background:var(--rule-soft); }
 /* 빈 상태·오류는 한 칸이 아니라 한 폭 */
-.props > .note, #repo-body > .note { grid-column:1/-1; }
+.props > .empty, #repo-body > .empty { grid-column:1/-1; }
 
 .prop { display:flex; flex-wrap:wrap; align-items:center; gap:9px 12px;
   padding:12px 15px; cursor:pointer; background:var(--card);
@@ -177,44 +206,32 @@ select:hover { border-color:var(--patina); }
 #props select { flex:1 1 100%; margin-left:28px; max-width:420px; }
 .prop:not(.on) select { opacity:.6; }
 
-/* ── 안내·오류: 무엇이 잘못됐고 어떻게 고치는지 ───────────── */
-.note { padding:18px 16px; display:grid; gap:7px; background:var(--card); }
-.note b { font:600 14.5px/1.45 var(--sans); }
-.note span { font-size:13.5px; color:var(--slate); }
-.note a { color:var(--patina); }
-.note.warn { border-left:2px solid var(--copper);
-  background-image:linear-gradient(var(--bar),var(--bar)); }
-.note.info { border-left:2px solid var(--patina);
+/* ── 빈 상태·오류: 무엇이 없다 / 왜 / 지금 누를 것 ─────────── */
+.empty { padding:20px 17px; display:grid; gap:6px; background:var(--card); }
+.empty b { font:650 14.5px/1.45 var(--sans); }
+.empty span { font-size:13.5px; color:var(--slate); }
+.empty a { color:var(--patina); }
+/* 셋째 줄이 없으면 사용자는 이 화면에서 할 일이 없다 — 행동 줄을 못 박아 둔다. */
+.empty .acts { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:8px; }
+.empty.err { border-left:2px solid var(--copper);
+  background-image:linear-gradient(var(--wash-copper),var(--wash-copper)); }
+.empty.info { border-left:2px solid var(--patina);
   background-image:linear-gradient(var(--wash),var(--wash)); }
-/* 빈 상태·오류는 셋으로 읽힌다: 무엇이 없다 / 채우면 무엇이 되나 / 지금 무엇을 누르나.
-   셋째가 없으면 사용자는 이 화면에서 할 일이 없다 — 그래서 행동 줄을 못 박아 둔다. */
-.note .acts { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:5px; }
-.note .retry { font:400 12.5px/1 var(--sans);
-  color:var(--slate); background:transparent; border:1px solid var(--rule);
-  border-radius:2px; padding:9px 13px; cursor:pointer; }
-.note .retry:hover { color:var(--patina); border-color:var(--patina); }
-/* `.note a` 가 링크를 patina 로 칠한다 — 그 색이 그대로 patina 바탕 위에 얹히면
+/* `.empty a` 가 링크를 patina 로 칠한다 — 그 색이 그대로 patina 바탕 위에 얹히면
    버튼이 글자 없는 초록 사각형이 된다. 버튼은 버튼 색을 되찾아야 한다. */
-.note .acts .ghbtn { font-size:13px; padding:9px 15px; color:var(--btn-ink); }
+.empty .acts .go { color:var(--btn-ink); }
+.empty .acts .go.sec { color:var(--ink); }
 
 /* ── 다음 한 걸음 ────────────────────────────────────────── */
-.go { margin-top:20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.act { margin-top:18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
 /* .ptool 과 같은 함정 — display:flex 가 [hidden] 을 이긴다. 고를 것이 하나도 없는
    화면에서 꺼진 "분석 시작"이 남아 있으면 주요 행동이 둘로 보인다. */
-.go[hidden] { display:none; }
-button, .ghbtn { font:600 14.5px/1 var(--sans); color:var(--btn-ink);
-  background:var(--patina); border:1px solid var(--patina); border-radius:3px;
-  padding:13px 22px; cursor:pointer; text-decoration:none; display:inline-block; }
-button:hover:not(:disabled), .ghbtn:hover {
-  background:var(--patina-hi); border-color:var(--patina-hi); }
-/* 비활성은 "옅은 초록"이 아니라 빈 테두리다 — 켜졌는지 껐는지가 형태로 갈린다. */
-button:disabled { background:transparent; color:var(--slate);
-  border-color:var(--rule); cursor:default; }
+.act[hidden] { display:none; }
 .msg { font-size:13px; color:var(--slate); }
 .msg.err { color:var(--copper); }
 .msg.ok { color:var(--patina); }
 
-/* ── 저장소 연결 ─────────────────────────────────────────── */
+/* ── 저장소 연결(선택 사항) ──────────────────────────────── */
 #repo-sec { margin-top:34px; border-top:1px solid var(--rule-soft); }
 /* 사이트마다 한 칸 — 이름 / 저장소 / 저장 상태를 쌓는다. 한 줄로 쭉 늘이면
    1440 에서 이름과 <select> 사이가 손바닥만큼 벌어진다. */
@@ -222,7 +239,7 @@ button:disabled { background:transparent; color:var(--slate);
   grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); }
 #repo-body .prop { cursor:default; }
 #repo-body .prop:hover { background-image:none; }
-#repo-body .pname { flex:1 1 100%; font-family:var(--sans); font-weight:600;
+#repo-body .pname { flex:1 1 100%; font-family:var(--sans); font-weight:650;
   white-space:normal; }
 #repo-body select { flex:1 1 100%; margin-left:0; max-width:520px; font-size:12px; }
 .save { flex:1 1 100%; font:400 11.5px/1.4 var(--sans); color:var(--slate); }
@@ -235,9 +252,9 @@ button:disabled { background:transparent; color:var(--slate);
 @media (prefers-reduced-motion: no-preference) {
   .skel { animation:sh 1.3s linear infinite; }
   @keyframes sh { to { background-position:-200% 0; } }
-  .st.wait::before { animation:pulse 1.6s ease-in-out infinite; }
+  .badge.run::before { animation:pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
-  .prop, button, .ghbtn { transition:background .13s, box-shadow .13s; }
+  .prop, .go { transition:background .13s, box-shadow .13s; }
 }
 
 /* footer 는 .wrap 이기도 하다 — `.wrap { margin:0 auto }` 가 클래스라 요소 선택자보다
@@ -247,19 +264,25 @@ footer.wrap { margin-top:44px; border-top:1px solid var(--rule-soft);
   padding-top:18px; padding-bottom:44px;   /* 좌우는 .wrap 것을 그대로 쓴다 */
   font:400 12.5px/1.5 var(--sans); color:var(--slate);
   display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+/* display:flex 가 [hidden] 의 display:none 을 이긴다 — .ptool·.act 와 같은 함정이다. */
+footer[hidden] { display:none; }
 footer a { color:var(--slate); }
 footer a:hover { color:var(--patina); }
 
 @media (max-width:560px) {
   .wrap { padding:0 18px; }
   .hbar { padding:13px 18px; }
+  /* 넷이 한 줄에 안 들어가면 "로그아웃"만 다음 줄로 떨어져 나간다 — 그러느니
+     여백을 통째로 접어 계정 묶음을 둘째 줄 오른쪽에 세운다. */
+  .hbar .sp { flex:1 0 100%; height:0; }
+  .who { margin-left:auto; }
   .pname { white-space:normal; overflow-wrap:anywhere; }
 }
 </style>
 
 <header><div class="wrap hbar">
   <span class="mark">seo<b>·</b>miner</span>
-  <span class="tag">사이트 관리</span>
+  <h1 class="tag">사이트 관리</h1>
   <span class="sp"></span>
   <!--USER-->
 </div></header>
@@ -273,44 +296,40 @@ footer a:hover { color:var(--patina); }
     </ol>
   </nav>
 
-  <div class="cols">
-    <section class="pick">
-      <p class="eyebrow" id="eb">1단계 · 사이트 선택</p>
-      <h1 id="h">분석할 사이트 선택</h1>
-      <p class="sub" id="sub">본인이 서치콘솔에 등록한 사이트만 분석할 수 있습니다.
-        사이트 종류를 고르면 뽑는 키워드의 방향과 기회 점수가 달라집니다.</p>
+  <!--SITES-->
 
-      <div class="panel">
-        <div class="ptool" id="ptool" hidden>
-          <label class="all"><input type="checkbox" id="all">전체 선택</label>
-          <span class="cnt" id="cnt"></span>
-        </div>
-        <div class="props" id="props">
-          <div class="skel"></div><div class="skel"></div><div class="skel"></div>
-        </div>
+  <section id="pick">
+    <p class="eyebrow" id="eb">1단계 · 사이트 선택</p>
+    <h2 id="h">분석할 사이트 선택</h2>
+    <p class="sub" id="sub">본인이 서치콘솔에 등록한 사이트만 분석합니다.</p>
+
+    <div class="panel">
+      <div class="ptool" id="ptool" hidden>
+        <label class="all"><input type="checkbox" id="all">전체 선택</label>
+        <span class="cnt" id="cnt"></span>
       </div>
-
-      <div class="go">
-        <button id="btn" disabled>분석 시작</button>
-        <span class="msg" id="msg">사이트를 하나 이상 고르면 시작할 수 있습니다.</span>
+      <div class="props" id="props">
+        <div class="skel"></div><div class="skel"></div><div class="skel"></div>
       </div>
-    </section>
+    </div>
 
-    <aside class="side"><!--SITES--></aside>
-  </div>
+    <div class="act">
+      <button class="go" id="btn" disabled>분석 시작</button>
+      <span class="msg" id="msg">사이트를 하나 이상 고르면 시작할 수 있습니다.</span>
+    </div>
+  </section>
 
   <section id="repo-sec" hidden>
     <p class="eyebrow">선택 사항</p>
     <h2>GitHub 저장소 연결</h2>
-    <p class="sub" id="repo-sub">연결하면 개선 기회 하나를 골라 실제 파일 변경까지 만듭니다.
-      새 브랜치와 PR로만 오고 main에는 쓰지 않습니다. 연결하지 않아도 나머지는 그대로 돕니다.</p>
+    <p class="sub" id="repo-sub">연결하면 기회 하나를 골라 PR까지 만듭니다. 연결하지 않아도
+      측정과 보고서는 그대로 돕니다.</p>
     <div class="panel" id="repo-body"></div>
   </section>
 </main>
 
 <footer class="wrap">
   <span>등록한 사이트는 주 1회 자동으로 다시 잽니다.</span>
-  <a href="/d">대시보드 열기</a>
 </footer>
 
 <script>
@@ -325,6 +344,9 @@ const TAKEN = new Set(window.__TAKEN__ || []);
 // 로컬 플러그인이 링크로 실어 보낸 사이트 설정 — 서버가 세션에 들고 있다가
 // 등록 때 그대로 쓴다. 화면이 할 일은 그 속성을 미리 골라 두는 것뿐이다.
 const CARRY = window.__CARRY__ || {};
+// 채운 버튼은 화면에 하나다. 사이트가 이미 있으면 그 하나는 줄마다 있는
+// [대시보드 열기] 라서, 이 아래 오류·빈 상태의 복구 버튼은 테두리로 내려간다.
+const FIX = (window.__SITES__ || []).length ? "go sec" : "go";
 
 function sync() {
   const all = [...document.querySelectorAll("#props input:not(:disabled)")];
@@ -342,15 +364,15 @@ function sync() {
   $("all").indeterminate = on.length > 0 && on.length < all.length;
 }
 
-// what: 무엇이 없다/틀어졌다 · how: 그래서 무엇이 되나(또는 왜 그런가) · acts: 지금 누를 것.
+// what: 무엇이 없다/틀어졌다 · how: 왜 그런가 · acts: 지금 누를 것.
 function note(box, kind, what, how, acts, retry) {
-  box.innerHTML = '<div class="note ' + kind + '"><b>' + what + '</b><span>' + how + '</span>' +
+  box.innerHTML = '<div class="empty ' + kind + '"><b>' + what + '</b><span>' + how + '</span>' +
     (acts || retry ? '<div class="acts">' + (acts || "") +
-      (retry ? '<button class="retry" type="button">다시 시도</button>' : '') + '</div>' : '') +
+      (retry ? '<button class="go sec" type="button">다시 시도</button>' : '') + '</div>' : '') +
     '</div>';
   $("ptool").hidden = true;
-  document.querySelector(".go").hidden = true;   // 고를 것이 없으면 시작 버튼도 없다
-  if (retry) box.querySelector(".retry").addEventListener("click", load);
+  document.querySelector(".act").hidden = true;   // 고를 것이 없으면 시작 버튼도 없다
+  if (retry) box.querySelector(".acts .go.sec").addEventListener("click", load);
 }
 
 // sc-domain: / https:// 접두사는 흐리게 — 사람이 훑는 건 도메인이다.
@@ -374,12 +396,11 @@ async function load() {
     }
     const { properties } = await r.json();
     if (!properties.length) {
-      note(box, "warn", "서치콘솔에 등록된 사이트가 없습니다",
-        "서치콘솔에 사이트를 추가하고 소유를 확인하면, 그 사이트의 노출·클릭·평균 순위를 " +
-        "여기서 바로 잽니다.",
-        '<a class="ghbtn" href="https://search.google.com/search-console" ' +
-        'target="_blank" rel="noopener">서치콘솔에서 사이트 추가</a>', true);
-      $("sub").textContent = "서치콘솔에 등록된 사이트가 분석 대상입니다. 추가한 뒤 다시 시도하십시오.";
+      note(box, "err", "서치콘솔에 등록된 사이트가 없습니다",
+        "서치콘솔에서 사이트를 추가하고 소유를 확인하면 여기 목록에 나타납니다.",
+        '<a class="' + FIX + '" href="https://search.google.com/search-console" ' +
+        'target="_blank" rel="noopener">서치콘솔 열기</a>', true);
+      $("sub").textContent = "서치콘솔에 등록된 사이트가 분석 대상입니다.";
       return;
     }
     // 이미 분석 중인 것은 아래로 — 고를 수 있는 줄이 위에 모인다.
@@ -388,8 +409,9 @@ async function load() {
     const pickable = rows.filter(p => !TAKEN.has(p.property) && LEVELS[p.level]);
     if (!pickable.length && rows.every(p => TAKEN.has(p.property))) {
       note(box, "info", "서치콘솔 사이트를 모두 분석 중입니다",
-        "여기서 더 고를 것이 없습니다. 서치콘솔에 새 사이트를 추가하면 이 목록에 나타납니다.",
-        '<a class="ghbtn" href="/d">대시보드에서 결과 보기</a>');
+        "서치콘솔에 새 사이트를 추가하면 이 목록에 나타납니다.",
+        '<a class="go sec" href="https://search.google.com/search-console" ' +
+        'target="_blank" rel="noopener">서치콘솔 열기</a>');
       return;
     }
     box.innerHTML = rows.map(p => {
@@ -410,7 +432,10 @@ async function load() {
              '</label>';
     }).join("");
     $("ptool").hidden = false;
-    document.querySelector(".go").hidden = false;
+    document.querySelector(".act").hidden = false;
+    // 목록이 실제로 떴을 때만 회색 줄을 가리킨다(B33).
+    if (TAKEN.size)
+      $("sub").textContent = "서치콘솔 사이트를 더 넣을 수 있습니다. 분석 중인 것은 회색입니다.";
     const boxes = box.querySelectorAll("input:not(:disabled)");
     if (boxes.length === 1) boxes[0].checked = true;   // 하나뿐이면 클릭 한 번을 아낀다
     if (CARRY.gsc_property) {
@@ -420,8 +445,8 @@ async function load() {
         b.checked = true;
         const sel = b.closest(".prop").querySelector("select");
         if (sel && CARRY.type) sel.value = CARRY.type;
-        $("sub").innerHTML = "플러그인에서 넘어온 설정으로 미리 골라 뒀습니다. " +
-          "씨앗 키워드·브랜드 표기·경쟁사도 같이 등록됩니다. 다른 사이트를 고르셔도 됩니다.";
+        $("sub").textContent = "플러그인에서 넘어온 설정으로 미리 골라 뒀습니다. " +
+          "다른 사이트를 고르셔도 됩니다.";
       } else if (TAKEN.has(CARRY.gsc_property)) {
         $("sub").textContent = "플러그인에서 넘어온 사이트는 이미 분석 중입니다.";
       }
@@ -434,10 +459,13 @@ async function load() {
     // 단, fetch 가 네트워크로 실패하면 브라우저가 TypeError("Failed to fetch")를 던진다 —
     // 그건 서버가 준 이유가 아니라 브라우저의 영어 문장이라 한국어 화면에 못 내보낸다.
     // 위에서 우리가 던지는 것은 Error 라 TypeError 가 아니다. 그 하나로 갈린다.
-    note(box, "warn", "서치콘솔 사이트 목록을 가져오지 못했습니다",
+    // 두 원인(권한 없음·연결 끊김) 중 어느 쪽도 [다시 시도] 로는 안 고쳐진다 —
+    // 실제로 고치는 행동이 주요 버튼이어야 한다. 그리고 처음 온 사람에게는
+    // 이 화면이 오류 상자 하나뿐이므로, 고치면 무엇이 되는지도 같이 적는다.
+    note(box, "err", "서치콘솔 사이트 목록을 가져오지 못했습니다",
       (e instanceof TypeError ? "" : esc(e.message)) ||
-      "로그인한 구글 계정에 서치콘솔 권한이 없거나, 연결이 끊겼습니다. " +
-      "계정을 잘못 골랐다면 로그아웃한 뒤 다시 로그인하십시오.", "", true);
+      "구글 계정을 다시 연결하면 소유한 사이트가 목록에 뜨고, 하나를 고르면 첫 측정이 시작합니다.",
+      '<a class="' + FIX + '" href="/auth/login">구글 다시 연결</a>', true);
   }
 }
 
@@ -455,25 +483,36 @@ load();
 // 있었다. 무슨 일이 일어나는 중인지 안 보이면 빈 대시보드만 보고 떠난다.
 // 단계 이름표는 서버가 실어 보낸다(stage.STAGE_LABELS) — 사본을 여기 두지 않는다.
 (function () {
-  const wait = [...document.querySelectorAll(".sites .st.wait")];
-  if (!wait.length) return;
+  const rows = [...document.querySelectorAll(".sites li.waiting")];
+  if (!rows.length) return;
   const STAGES = window.__STAGES__ || {};
   async function tick() {
     let st;
     try { st = await (await fetch("/api/run/status")).json(); } catch (e) { return; }
     let left = 0;
-    wait.forEach(el => {
-      const nm = el.closest("li").querySelector(".nm");
+    rows.forEach(li => {
+      const nm = li.querySelector(".nm");
       const s = nm && st[nm.textContent];
       if (!s) return;
       if (s.last_run_at) {
-        el.className = "st";
-        el.textContent = "첫 분석 완료. 눌러서 열기";
+        // 끝난 줄은 상태도 행동도 바뀐다 — 배지는 완료로, 링크는 주요 행동으로.
+        li.classList.remove("waiting");
+        const b = li.querySelector(".badge");
+        b.className = "badge ok"; b.textContent = "분석 완료";
+        const w = li.querySelector(".when");
+        if (w) w.textContent = String(s.last_run_at).slice(0, 16);
+        const a = li.querySelector(".go");
+        if (a) a.className = "go sm";
+        const p = li.querySelector(".prog");
+        if (p) p.remove();
         return;
       }
       left++;
       const t = s.stage && (STAGES[s.stage] || {}).t;
-      el.textContent = t ? t + (s.pct ? " " + s.pct + "%" : "") : "첫 분석 진행 중";
+      const stg = li.querySelector(".stg");
+      if (stg && t) stg.textContent = t;
+      const bar = li.querySelector(".progress i");
+      if (bar && s.pct) bar.style.width = Math.max(6, s.pct) + "%";
     });
     if (left) return setTimeout(tick, 5000);
     // 다 끝났는데 "몇 분에 걸쳐 수집됩니다"가 남아 있으면 그 문구가 거짓이 된다.
@@ -487,16 +526,21 @@ load();
 // 머리글이 레일과 어긋나면(레일은 2단계인데 머리는 "1단계"라고 말하면) 어느 쪽을
 // 믿어야 할지 알 수 없다 — 그래서 눈썹 줄도 같이 옮긴다.
 (function () {
-  if (!(window.__SITES__ || []).length) return;
-  const waiting = document.querySelector(".sites .st.wait");
+  if (!(window.__SITES__ || []).length) {
+    // 사이트가 0개인데 "등록한 사이트는 주 1회 다시 잽니다" 가 서 있으면, 아직
+    // 아무것도 등록하지 않은 사람에게 없는 사실을 말하는 것이 된다.
+    document.querySelector("footer").hidden = true;
+    return;
+  }
+  const waiting = document.querySelector(".sites li.waiting");
   $("s1").className = "done";
   $("s2").className = waiting ? "here" : "done";
   if (!waiting) $("s3").className = "here";
-  $("eb").textContent = waiting ? "2단계 · 첫 분석 진행 중" : "3단계 · 결과 확인";
+  $("eb").textContent = waiting ? "2단계 · 첫 분석" : "3단계 · 결과 확인";
   $("h").textContent = "사이트 더 추가";
-  $("sub").textContent = waiting
-    ? "첫 분석이 도는 동안 사이트를 더 넣을 수 있습니다. 이미 분석 중인 사이트는 아래에 회색으로 표시됩니다."
-    : "분석이 끝난 사이트는 대시보드에서 볼 수 있습니다. 여기서는 사이트를 더 넣습니다.";
+  // 부제는 목록이 실제로 떴을 때만 "회색으로 표시됩니다"를 말한다 — load() 가
+  // 성공 경로에서 덧붙인다. 목록을 못 불러온 화면에서 회색 줄을 가리키면 거짓말이다.
+  $("sub").textContent = "서치콘솔 사이트를 더 넣을 수 있습니다.";
 })();
 
 // ── 저장소 연결 (/create) ──────────────────────────────────────────────
@@ -510,24 +554,22 @@ load();
   try {
     var r = await fetch("/api/repos");
     if (r.status === 428) {
-      body.innerHTML = '<div class="note info"><b>GitHub 계정이 아직 연결되지 않았습니다</b>' +
-        '<span>연결하면 개선 기회 하나를 골라 새 브랜치와 PR까지 만듭니다. ' +
-        '연결하지 않아도 측정과 보고서는 그대로 돕니다.</span>' +
-        '<div class="acts"><a class="ghbtn" href="/auth/github">GitHub 연결</a></div></div>';
+      body.innerHTML = '<div class="empty info"><b>GitHub 계정이 아직 연결되지 않았습니다</b>' +
+        '<span>연결하면 기회 하나를 골라 새 브랜치와 PR까지 만듭니다.</span>' +
+        '<div class="acts"><a class="go sec" href="/auth/github">GitHub 연결</a></div></div>';
       return;
     }
     repos = (await r.json()).repos || [];
   } catch (e) {
-    body.innerHTML = '<div class="note warn"><b>GitHub 저장소 목록을 가져오지 못했습니다</b>' +
-      '<span>GitHub 연결이 만료된 것으로 보입니다. 다시 연결하면 저장소 목록이 돌아옵니다.</span>' +
-      '<div class="acts"><a class="ghbtn" href="/auth/github">GitHub 다시 연결</a></div></div>';
+    body.innerHTML = '<div class="empty err"><b>GitHub 저장소 목록을 가져오지 못했습니다</b>' +
+      '<span>GitHub 연결이 만료된 것으로 보입니다.</span>' +
+      '<div class="acts"><a class="go sec" href="/auth/github">GitHub 다시 연결</a></div></div>';
     return;
   }
   if (!repos.length) {
-    body.innerHTML = '<div class="note warn"><b>쓰기 권한이 있는 저장소가 없습니다</b>' +
-      '<span>GitHub 앱이 접근할 저장소를 아직 못 골랐습니다. ' +
-      '허용할 저장소를 고른 뒤 이 화면을 새로고침하십시오.</span>' +
-      '<div class="acts"><a class="ghbtn" href="/auth/github">접근할 저장소 고르기</a></div></div>';
+    body.innerHTML = '<div class="empty err"><b>쓰기 권한이 있는 저장소가 없습니다</b>' +
+      '<span>허용할 저장소를 고르면 목록이 돌아옵니다.</span>' +
+      '<div class="acts"><a class="go sec" href="/auth/github">저장소 고르기</a></div></div>';
     return;
   }
   body.innerHTML = sites.map(function (s) {
@@ -555,7 +597,7 @@ load();
       st.className = "save ok";
       st.textContent = sel.value ? "저장됨. 개선안이 이 저장소로 갑니다." : "연결 해제됨";
     } catch (e) {
-      st.className = "save err"; st.textContent = "저장하지 못했습니다. 다시 골라 주십시오.";
+      st.className = "save err"; st.textContent = "저장하지 못했습니다. 사이트를 다시 고르면 재시도합니다.";
     }
   });
 })();
@@ -578,16 +620,16 @@ $("btn").addEventListener("click", async () => {
     });
     const d = await r.json();
     if (r.ok && d.ok) {
-      msg.className = "msg ok"; msg.textContent = "분석을 시작했습니다. 진행 상황이 곧 표시됩니다.";
+      msg.className = "msg ok"; msg.textContent = "분석을 시작했습니다.";
       setTimeout(function () { location.reload(); }, 600);
       return;
     }
     msg.className = "msg err";
     msg.textContent = (d.failed && d.failed[0] && d.failed[0].error) || d.detail ||
-                      "분석을 시작하지 못했습니다. 잠시 후 버튼을 다시 누르십시오.";
+                      "분석을 시작하지 못했습니다. 잠시 후 다시 누르십시오.";
   } catch (e) {
     msg.className = "msg err";
-    msg.textContent = "서버에 연결하지 못했습니다. 새로고침한 뒤 다시 시도하십시오.";
+    msg.textContent = "서버에 연결하지 못했습니다. 새로고침하면 다시 붙습니다.";
   }
   btn.disabled = false; sync();
 });

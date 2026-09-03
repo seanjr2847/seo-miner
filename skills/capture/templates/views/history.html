@@ -7,21 +7,12 @@
 
 <style>
 /* 기록 = 시추 로그 그 자체. 이 화면의 규칙은 하나다: 있었던 일만 적는다.
-   모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다. */
-/* 이 섹션은 [다음 행동] 띠가 아니다 — 띠가 가져가고 남은 것을 적는 일반 섹션이다.
-   녹청 세로선을 달아 두었더니 띠 바로 아래에서 두 번째 띠로 읽혔다. 머리는 다른
-   섹션과 같은 한 벌(eyebrow → h2 → .sub)을 쓴다. */
-#acts ol { margin:14px 0 0; padding-left:20px; }
+   모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다.
+   상태는 셸의 .badge 한 벌을 쓴다(여기서 .hs-r 로 배지를 또 만들지 않는다). */
+#acts ol { margin:0; padding-left:20px; }
 #acts li { margin:14px 0; font-size:14.5px; }
+#acts li:first-child { margin-top:0; }
 #acts li::marker { font-family:var(--mono); color:var(--slate); }
-
-/* ── 결과 배지: 완료(녹청)·문제(산화동)·건너뜀(회색). 두 목록이 같은 말을 쓴다. ── */
-.hs-r { display:inline-block; font:var(--micro);
-  padding:3px 7px; border:1px solid var(--rule);
-  border-radius:2px; white-space:nowrap; color:var(--slate); }
-.hs-r.ok { color:var(--patina); border-color:var(--patina); }
-.hs-r.bad { color:var(--copper); border-color:var(--copper); }
-.hs-r.skip { border-style:dashed; }
 
 /* ── 한 실행이 남긴 key=value: 원문 대신 사람 말 + 등폭 값 ── */
 .hs-nt { display:block; font:400 11.5px/1.7 var(--mono); color:var(--slate);
@@ -31,40 +22,40 @@
 .hs-nt .p.bad b { color:var(--copper); }
 .hs-nt .p.free { white-space:normal; color:var(--slate); }
 
-/* ── 요약: 아래 목록이 통째로 답하는 다섯 가지 ── */
-#runsum { margin:0 0 4px; }
-/* 낡은 수집은 색으로만 말했다 — 아래 칸들 사이에 붉은 글씨가 흩어져 있으면
-   "뭐부터 다시 돌리나"가 스캔이 안 된다. 몇 종류인지 한 줄로 세운다. */
-#runsum .stale { margin-top:10px; font-size:13px; color:var(--copper); }
-#runsum .stale .cmd { margin-top:0; }
-/* 종류별 마지막 — "무엇을 다시 돌릴 때가 됐나"에 답하는 자리다. */
-#lastby { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
-  border-top:1px solid var(--rule-soft); margin:12px 0 20px; }
-#lastby div { padding:10px 14px 10px 0; border-right:1px solid var(--rule-soft); }
-#lastby div:last-child { border-right:0; }
-#lastby .k { font:var(--micro);
-  color:var(--slate); }
-#lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
-  margin-top:6px; }
-#lastby .ago { color:var(--slate); }
-#lastby .ago.stale { color:var(--copper); }
+/* ── 요약: 아래 목록이 통째로 답하는 네 가지. 숫자 KPI 는 셸의 .band 한 벌이다 ──
+   (칩 줄로 그렸더니 버튼처럼 읽혔다 — 상태·수치를 누를 수 있는 것과 같은 모양으로
+   그리지 않는다.) */
+#runsum { margin:0 0 var(--sp-5); }
+#runsum:empty { display:none; }
+/* 범위가 없으면 눈썹도 없다 — 빈 눈썹이 제목 위에 여백만 남기지 않게. */
+#runs-eb:empty, #made-eb:empty { display:none; }
+/* 종류별 마지막 — "무엇을 다시 돌릴 때가 됐나"에 답하는 자리다. 칸을 괘선으로
+   가르지 않는다: auto-fit 이라 줄바꿈이 생기면 마지막 칸 괘선이 허공에 남는다. */
+#lastby { margin:0 0 var(--sp-5); }
 #lastby:empty { display:none; }
-@media (max-width:560px) { #lastby div { border-right:0;
-  border-bottom:1px solid var(--rule-soft); } }
+#lastby .lbh { font:var(--micro); color:var(--slate); margin:0 0 var(--sp-3); }
+#lastby .lb { display:grid; gap:var(--sp-3) var(--sp-4);
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
+#lastby .k { font:var(--micro); color:var(--slate); }
+#lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
+  margin-top:6px; display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
+#lastby .ago { color:var(--slate); }
 
 #runs .when { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
   white-space:nowrap; }
 /* 판정 이유(HS_verdict.why)가 title 속성에만 들어 있었다 — 배지는 "오류 3"이라고만
    보이고 무슨 일이 났는지는 손을 얹어야 나왔다. 실패·중단만 항상 편다: 성공한 40줄까지
-   다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. */
+   다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. 이유 아래에 그 종류를 다시 돌리는
+   손잡이를 같이 둔다 — 실패한 줄에서 다음 걸음까지 한 자리에서 끝난다. */
 #runs .why { font-size:12.5px; color:var(--copper); margin-top:4px; }
+#runs .why + .acts { margin-top:8px; }
 
 /* ── 고친 것: 표가 아니라 줄이다. 경로·근거가 산문이라 칸에 안 들어간다. ── */
 #made .mk { display:grid; grid-template-columns:1fr auto; gap:0 14px;
-  padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft);
+  padding:13px 0; border-bottom:1px solid var(--rule-soft);
   align-items:baseline; }
-#made .mk:hover { background:var(--bar); }
-#made .mk:last-of-type { border-bottom:0; }
+#made .mk:first-of-type { padding-top:0; }
+#made .mk:last-of-type { border-bottom:0; padding-bottom:0; }
 #made .mh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
 #made .kind { font:var(--micro);
   color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
@@ -79,18 +70,22 @@
   text-align:left; }
 #made .from:hover { text-decoration:underline; }
 #made .why { font-size:12.5px; color:var(--slate); margin-top:5px; }
+/* 근거가 PR 주소면 링크다 — 브라우저 기본 파랑은 어두운 배경에서 안 읽힌다. */
+#made .why a { color:var(--patina); text-decoration:underline; text-underline-offset:2px;
+  word-break:break-all; }
 /* 회고의 결론이 붙는 자리 — 고친 날 앞뒤로 클릭이 어떻게 됐나. */
 #made .eff { font-size:12.5px; color:var(--slate); margin-top:5px; }
 #made .eff b { font:500 12.5px/1.6 var(--mono); font-variant-numeric:tabular-nums;
   color:var(--ink); }
 #made .eff.up b { color:var(--patina); }
 #made .eff.down b { color:var(--copper); }
-#made .loop { margin-top:20px; padding-top:16px; border-top:1px solid var(--rule-soft);
-  font-size:13px; color:var(--slate); }
+#made .loop { margin-top:var(--sp-4); font-size:13px; color:var(--slate); }
 #made .loop b { color:var(--patina); font-weight:600; }
 @media (max-width:560px) {
   #made .mk { grid-template-columns:1fr; }
-  #made .hs-r { margin-top:9px; justify-self:start; }
+  #made .mk .badge { margin-top:9px; justify-self:start; }
+  /* 좁은 화면에서는 상자 여백이 표가 쓸 폭을 먹는다 — 표는 상자 안에서 옆으로 넘친다. */
+  #runlist .card, #madelist .card { padding:var(--sp-3); }
 }
 </style>
 
@@ -99,29 +94,28 @@
        라이브는 지금 남은 것을 HS_next 가 채우며 이 머리말도 같이 바꾼다.
        머리의 [다음 행동] 띠가 첫 번째 것을 가져가고, 이 목록은 그 뒤에 남은 것만
        받는다 — 같은 문장을 한 화면에서 두 번 읽히지 않게 한다. -->
-  <div class="eyebrow" id="acts-eyebrow">이 기록을 남길 때 정한 것</div>
-  <h2 id="acts-title" data-web="권장 조치">다음 행동</h2>
-  <p class="sub" id="acts-sub" data-web="이 기록을 남긴 시점에 정해 둔 조치입니다."
-    >이 기록을 남긴 시점에 정해 둔 다음 행동입니다.</p>
+  <div class="sh">
+    <h2 id="acts-title">다음 행동</h2>
+    <p class="sub" id="acts-sub">이 기록을 남긴 시점에 정해 둔 다음 행동입니다.</p>
+  </div>
   <ol id="acts-list"></ol>
 </section>
 
 <section>
-  <div class="eyebrow">수집 이력</div>
-  <h2 data-web="실행 기록">무엇이 언제 돌았나</h2>
-  <p class="sub" data-web="종류별 마지막 실행을 보고 다시 돌릴 것을 고릅니다. 아래 요약은 이 목록 기준입니다."
-    >종류별 마지막 실행을 보고 다시 돌릴 것을 고릅니다. 아래 요약은 이 목록 기준입니다.</p>
+  <div class="sh">
+    <p class="eyebrow" id="runs-eb"></p><h2>실행 기록</h2>
+    <p class="sub">종류별 마지막 실행을 보고 다시 돌릴 것을 고릅니다.</p>
+  </div>
   <div id="runsum"></div>
   <div id="lastby"></div>
   <div id="runs"></div>
 </section>
 
 <section id="made-sec">
-  <div class="eyebrow">콘텐츠 수정</div>
-  <h2 data-web="반영한 콘텐츠 변경">고친 것</h2>
-  <p class="sub" data-web="기회가 실제 콘텐츠 변경이 된 기록입니다. 아직 사이트에 반영되지 않은(병합 전) 줄이 있으면 그것부터 처리합니다."
-    >기회가 실제 파일 수정이 된 기록입니다. 아직 사이트에 반영되지 않은(병합 전) 줄이
-    있으면 그것부터 처리합니다.</p>
+  <div class="sh">
+    <p class="eyebrow" id="made-eb"></p><h2>고친 것</h2>
+    <p class="sub">기회가 실제 파일 수정이 된 기록입니다.</p>
+  </div>
   <div id="made"></div>
 </section>
 
@@ -163,6 +157,12 @@ const HS_cmd = (c, primary = true) =>
    runAll() 에 잇는다(stages 를 안 보내는 것이 곧 전체 실행이다). */
 const HS_runAll = (primary = true) => act("run", "전체 분석 실행", primary);
 
+/* 한 종류를 다시 돌리는 손잡이. 라벨은 단계 용어표(stageRun)에서 오고 이름을 글자로
+   옮겨 적지 않는다. full 은 단계가 아니라 일괄 실행이라 그쪽으로 보낸다. */
+const HS_rerun = (kind, primary = false) =>
+  kind === "full" ? HS_runAll(primary)
+    : (window.__STAGES__ || {})[kind] ? act(kind, stageRun(kind), primary) : "";
+
 function HS_ago(iso) {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "";
@@ -174,6 +174,15 @@ function HS_ago(iso) {
   return `${Math.round(s / 86400)}일 전`;
 }
 const HS_days = iso => (Date.now() - Date.parse(iso)) / 86400000;
+/* 섹션 눈썹은 범위·기간만 적는다(개수·상태·결론은 부제와 배지가 갖는다) — 이 목록이
+   실제로 덮는 기간을 가장 오래된 줄에서 잰다. 잴 것이 없으면 눈썹도 없다. */
+function HS_eyebrow(id, rows, key) {
+  const el = $(id);
+  if (!el) return;
+  const ds = rows.map(r => Date.parse(r[key])).filter(Number.isFinite);
+  const d = ds.length ? Math.round((Date.now() - Math.min(...ds)) / 86400000) : -1;
+  el.textContent = d < 0 ? "" : d < 1 ? "오늘" : `최근 ${d}일`;
+}
 // 소요는 초로 적는다 — 로그의 단위이고, 표 정렬(숫자 열)이 그대로 성립한다.
 function HS_secs(r) {
   const s = (Date.parse(r.finished_at) - Date.parse(r.started_at)) / 1000;
@@ -181,27 +190,14 @@ function HS_secs(r) {
 }
 const HS_mmss = s => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`;
 
-/* ── 결과 판정: Brain 이 남긴 흔적만 읽는다. 여기서 새 사실을 만들지 않는다.
-      중단은 db.run 컨텍스트가 예외를 만나면 notes 끝에 "중단: …" 로 붙여 둔 것이고,
-      finished_at 이 없다는 건 그 컨텍스트조차 못 닫혔다는 뜻이다. ── */
-function HS_verdict(r) {
-  const n = String(r.notes || "");
-  // 이유를 "기록 칸에 있다"고 가리키지 않는다 — 이제 그 칸에 이 문장과 나란히 편다.
-  if (n.includes("중단:"))
-    return {cls:"bad", label:"중단", why:"도중에 예외로 멈췄습니다."};
-  if (r.finished_at === null)
-    return {cls:"bad", label:"미완", why:"끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
-  // notes 를 정규식으로 되짚는 건 이 리포가 싫어하는 방식이다(사실은 페이로드에서
-  // 온다). 여기서만 타협하는 이유: notes 는 애초에 자유 문자열이고 수집기가 남긴
-  // **원본**이지 렌더된 글자가 아니다. 되짚을 구조화된 칸이 runs 에 없다. 읽는 키는
-  // errors/skipped 둘뿐이고, 그 칸이 생기면 이 두 줄이 먼저 지워질 자리다.
-  const e = +((n.match(/\berrors=(\d+)/) || [])[1] || 0);
-  const k = +((n.match(/\bskipped=(\d+)/) || [])[1] || 0);
-  if (e) return {cls:"bad", label:`오류 ${e}`, why:`${e}건이 실패했습니다.`};
-  if (k) return {cls:"skip", label:`건너뜀 ${k}`, why:`${k}건을 건너뛰었습니다 — 보통 한도·키 없음입니다.`};
-  return {cls:"ok", label:"완료", why:"끝까지 돌았고 오류가 없습니다."};
-}
-const HS_badge = v => `<span class="hs-r ${v.cls}" title="${esc(v.why)}">${esc(v.label)}</span>`;
+/* ── 결과 판정 ─────────────────────────────────────────────
+      판정은 셸의 window.runVerdict 한 벌이다 — 이 화면이 정본이었는데 [개요]·애드온이
+      같은 정규식을 각자 갖게 되면서 셸로 올라갔다. 여기서 사본을 들면 두 벌이 된다. ── */
+const HS_verdict = r => window.runVerdict(r);
+// 상태는 배지 한 벌(셸의 .badge)로 말한다: 완료=녹청, 문제=채운 산화동, 건너뜀=회색.
+const HS_BADGE = {ok:"ok", bad:"bad", skip:"muted"};
+const HS_badge = v =>
+  `<span class="badge ${HS_BADGE[v.cls]}" title="${esc(v.why)}">${esc(v.label)}</span>`;
 
 function HS_notes(n) {
   if (!n) return "";
@@ -257,54 +253,54 @@ function HS_lastBy() {
 // 요약·마지막 수집은 거르기와 무관하게 전체를 말한다 — 걸러 놓고 "총액"을 읽으면 거짓말이 된다.
 function HS_runSummary() {
   // 한 번도 안 돈 로그가 "0회 · $0.000" 이라고 말하면 안 된다 — 빈 상태에 자리를 내준다.
-  if (!HS_RUNS.length) return void ($("runsum").innerHTML = $("lastby").innerHTML = "");
+  if (!HS_RUNS.length)
+    return void ($("runsum").className = "", $("runsum").innerHTML = "",
+                 $("lastby").innerHTML = "");
   const bad = HS_RUNS.filter(r => HS_verdict(r).cls === "bad").length;
   const skip = HS_RUNS.filter(r => HS_verdict(r).cls === "skip").length;
   const calls = HS_RUNS.reduce((a, r) => a + (r.api_calls || 0), 0);
   const cost = HS_RUNS.reduce((a, r) => a + (r.cost_estimate_usd || 0), 0);
-  const chip = (l, v, t) => `<span class="chip" title="${esc(t)}">${l} <b>${v}</b></span>`;
-  $("runsum").innerHTML =
-    chip("실행", `${HS_RUNS.length}회`, "이 목록에 담긴 실행 수입니다 (최근 40회까지).") +
-    chip("문제", `${bad}회`, "중단·미완·오류가 있던 실행입니다.") +
-    (skip ? chip("건너뜀", `${skip}회`, "일부를 건너뛴 실행입니다 — 보통 한도·키 없음입니다.") : "") +
-    chip("호출", num(calls), "이 실행들이 부른 외부 API 횟수 합계입니다.") +
-    chip("비용", `$${cost.toFixed(3)}`, "수집기가 적어 둔 추정치의 합계입니다 — 청구서가 아닙니다.") +
-    (HS_RUNS.length ? chip("마지막", HS_ago(HS_RUNS[0].started_at),
-      HS_RUNS[0].started_at) : "") + HS_staleLine();
+  // 눈금 줄(.b)에는 사실(모수·기간)만 적는다 — 조언은 여기 자리가 아니다.
+  // "마지막 실행"은 KPI 가 아니다: 값이 한글이라 등폭 눈금에 못 앉고, 그 사실은
+  // 아래 [종류별 마지막 실행]과 머리의 띠가 이미 말한다.
+  const met = [[HS_RUNS.length, "실행", "최근 40회까지 담습니다"],
+               [bad, "문제", "중단·미완·오류"]];
+  if (skip) met.push([skip, "건너뜀", "보통 한도·키 없음"]);
+  met.push([num(calls), "외부 호출", "이 목록의 합계"],
+           [`$${cost.toFixed(3)}`, "비용", "수집기가 적어 둔 추정치"]);
+  $("runsum").className = "band";
+  $("runsum").innerHTML = met.map(([v, l, b]) =>
+    `<div class="m"><div class="v">${v}</div><div class="l">${l}</div>
+      <div class="b">${b}</div></div>`).join("");
 
-  $("lastby").innerHTML = HS_lastBy().map(({k, r, stale}) =>
+  // 낡은 종류는 여기서 문장으로 또 말하지 않는다 — 그 말은 [다음 행동] 한 자리가
+  // 갖고, 여기서는 어느 종류가 묵었는지를 배지로만 짚는다.
+  $("lastby").innerHTML = `<div class="card">
+    <p class="lbh">종류별 마지막 실행</p><div class="lb">${HS_lastBy().map(({k, r, stale}) =>
     `<div><div class="k" title="${esc(k)}">${esc(HS_kind(k))}</div>
       <div class="v">${esc((r.started_at || "").slice(0, 10))}
-        <span class="ago${stale ? " stale" : ""}" title="${stale
-          ? `${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다.`
-          : "마지막으로 이 종류를 돌린 때입니다."}">${HS_ago(r.started_at)}</span></div></div>`)
-    .join("");
+        <span class="ago" title="마지막으로 이 종류를 돌린 때입니다.">${HS_ago(r.started_at)}</span>
+        ${stale ? `<span class="badge warn" title="${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다."
+          >${HS_STALE_DAYS}일 지남</span>` : ""}</div></div>`).join("")}</div></div>`;
 }
 
-// 몇 종류가 묵었는지 한 문장으로. 요약 줄과 [다음 행동]이 같은 자리를 두 번 말하므로
-// 문구는 여기 한 벌만 둔다. 웹에는 명령을 칠 곳이 없다 — 화면 위 실행 버튼을 가리킨다.
+// 몇 종류가 묵었는지 한 문장으로. 요약 줄과 [다음 행동]이 같은 자리를 두 번 말하지
+// 않도록 문구는 여기 한 벌만 둔다 — 화면에는 [다음 행동] 쪽으로만 나간다.
 function HS_staleMsg() {
   const s = HS_lastBy().filter(x => x.stale);
   if (!s.length) return null;
-  return {say: `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다 (${
-      s.map(x => esc(HS_kind(x.k))).join(", ")}). ` +
-      "다시 재야 그동안 고친 게 숫자에 섞입니다.",
+  return {say: `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다.` +
+      `<span class="live"> 다시 재야 그동안 고친 게 숫자에 섞입니다.</span>`,
     act: p => HS_runAll(p)};
 }
-const HS_staleLine = () => {
-  const m = HS_staleMsg();
-  // 요약 줄의 칩은 늘 보조다 — 이 화면의 주요 행동은 머리의 띠가 들고 있다.
-  return m ? `<div class="stale">${m.say} ${READONLY ? "" : m.act(false)}</div>` : "";
-};
 
 // 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
 function HS_runTools() {
   if (!HS_RUNS.length)
     return $("runs").innerHTML = `<div class="empty">
-      <b>${W("아직 수집한 적이 없습니다", "아직 실행한 적이 없습니다")}</b>
-      <p>${W("한 번 돌리면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.",
-        "한 번 실행하면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.")}</p>
+      <b>아직 실행한 적이 없습니다</b>
+      <p>한 번 실행하면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.</p>
       ${READONLY ? "" : `<div class="acts">${HS_runAll(false)}</div>`}</div>`;
   const counts = {};
   HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
@@ -326,8 +322,8 @@ function HS_runTools() {
           `(${resn(v)})</option>`).join("")}</select>
       <span class="n" id="runn"></span>
       <span class="sp"></span>
-      <button class="go sec" onclick="HS_runCsv()"
-        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+      <button class="go sec sm" onclick="HS_runCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>
     </div>${chips}<div id="runlist"></div>`;
   HS_runList();
 }
@@ -340,12 +336,15 @@ function HS_runList() {
   $("runn").textContent = list.length !== byRes
     ? `${list.length}회 / 전체 ${HS_RUNS.length}회` : "";
   if (!list.length)
-    return $("runlist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 실행이 없습니다</b>
+    return $("runlist").innerHTML = `<div class="empty"><b>맞는 실행이 없습니다</b>
       <p>종류나 결과를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
-      <div class="acts"><button class="go sec" onclick="HS_runReset()">조건 지우기</button>
+      <div class="acts"><button class="go sec sm" onclick="HS_runReset()">조건 지우기</button>
       </div></div>`;
   const rows = list.slice(0, HS_RN).map(r => {
     const s = HS_secs(r), v = HS_verdict(r);
+    // 실패는 배지 글자("오류 3")만으로는 무슨 일인지 안 읽힌다 — 이유를 항상 펴고,
+    // 그 아래에 그 종류를 다시 돌리는 손잡이를 둔다(박제본에서는 셸이 뗀다).
+    const fix = v.cls === "bad" && !READONLY ? HS_rerun(r.kind, false) : "";
     return `<tr>
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
@@ -357,19 +356,19 @@ function HS_runList() {
       <td class="num">${num(r.api_calls || 0)}</td>
       <td class="num">${(r.cost_estimate_usd || 0) ? "$" + r.cost_estimate_usd : "—"}</td>
       <td>${HS_notes(r.notes)}${
-        // 실패는 배지 글자("오류 3")만으로는 무슨 일인지 안 읽힌다 — 이유를 항상 편다.
-        v.cls === "bad" ? `<div class="why">${esc(v.why)}</div>` : ""}</td>
+        v.cls === "bad" ? `<div class="why">${esc(v.why)}</div>` : ""}${
+        fix ? `<div class="acts">${fix}</div>` : ""}</td>
     </tr>`;
   });
   const rest = list.length - HS_RN;
-  $("runlist").innerHTML = table(
+  $("runlist").innerHTML = `<div class="card">${table(
     ["시각", "종류", "결과?완료·건너뜀·문제는 수집기가 남긴 기록으로만 가릅니다",
      ">소요(초)?시작과 끝의 차이입니다. 1분이 넘으면 칸에 손을 얹어 분·초로 봅니다",
      ">호출?그 실행이 부른 외부 API 횟수",
      ">비용?수집기가 적어 둔 추정치입니다 — 청구서가 아닙니다",
-     "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows) + (rest > 0
-    ? `<div class="acts" style="margin-top:14px">
-         <button onclick="HS_runMore(${HS_RN + 20})">${rest}회 더 보기</button></div>`
+     "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows)}</div>` + (rest > 0
+    ? `<div class="acts">
+         <button class="go sec sm" onclick="HS_runMore(${HS_RN + 20})">${rest}건 더 보기</button></div>`
     : "");
 }
 
@@ -478,7 +477,7 @@ function HS_madeRow(c) {
         : `<div class="why">${esc(c.note)}</div>`) : ""}
       ${HS_effLine(c)}
     </div>
-    <span class="hs-r ${c.merged ? "ok" : "skip"}" title="${c.merged
+    <span class="badge ${c.merged ? "ok" : "warn"}" title="${c.merged
       ? "사이트에 반영됐습니다. 다음 수집부터 이 수정이 숫자에 섞입니다."
       : "아직 사이트에 반영되지 않았습니다. 반영해야 검색엔진이 이 수정을 봅니다."}"
       >${c.merged ? "병합됨" : "병합 전"}</span>
@@ -487,15 +486,14 @@ function HS_madeRow(c) {
 
 function HS_madeTools() {
   if (!HS_MADE.length)
+    // 화면 이동은 대괄호 글자가 아니라 버튼이다 — 아래 [기회 열기]가 그 손잡이다.
     return $("made").innerHTML = `<div class="empty">
-      <b>${W("아직 고친 기록이 없습니다", "아직 반영된 콘텐츠 변경이 없습니다")}</b>
-      <p>${W(`${window.go("overview")}에서 고른 기회를 실제 파일 수정으로 옮기면 ` +
-        "여기 쌓이고, 고친 뒤 클릭이 어떻게 됐는지가 줄마다 붙습니다.",
-        `${window.go("overview")}에서 기회 카드를 펼쳐 [콘텐츠 작성]을 누르면 ` +
-        "여기 쌓이고, 반영 뒤 클릭이 어떻게 됐는지가 줄마다 붙습니다.")}</p>
-      ${READONLY ? "" : `<div class="acts">${W(HS_cmd("/create plan", false),
-        `<button class="go sec" onclick="SM.touched=true;SM.show('overview')"
-          >개선 기회 보기</button>`)}</div>`}</div>`;
+      <b>아직 고친 기록이 없습니다</b>
+      <p>고른 기회를 콘텐츠로 옮기면 여기 쌓이고, 고친 뒤 클릭이 어떻게 됐는지가
+        줄마다 붙습니다.</p>
+      ${READONLY ? "" : `<div class="acts">${W(HS_cmd("/create plan", false), "")}
+        <button class="go sm sec" onclick="SM.touched=true;SM.show('overview')"
+          >기회 열기</button></div>`}</div>`;
   const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
   // 병합 전 건수는 거르개 옵션 라벨 안에만 있었다 — 이 화면에서 지금 당장 할 수 있는
   // 유일한 일인데 드롭다운을 열어야 보였다. 머리로 올린다.
@@ -512,8 +510,8 @@ function HS_madeTools() {
         ).join("")}</select>
       <span class="n" id="maden"></span>
       <span class="sp"></span>
-      <button class="go sec" onclick="HS_madeCsv()"
-        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+      <button class="go sec sm" onclick="HS_madeCsv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>
     </div><div id="madelist"></div>`;
   HS_madeList();
 }
@@ -523,9 +521,9 @@ function HS_madeList() {
   $("maden").textContent = list.length === HS_MADE.length
     ? `${HS_MADE.length}건` : `${list.length}건 / 전체 ${HS_MADE.length}건`;
   if (!list.length)
-    return $("madelist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 기록이 없습니다</b>
+    return $("madelist").innerHTML = `<div class="empty"><b>맞는 기록이 없습니다</b>
       <p>파일이나 병합 상태를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
-      <div class="acts"><button class="go sec" onclick="HS_madeReset()">조건 지우기</button>
+      <div class="acts"><button class="go sec sm" onclick="HS_madeReset()">조건 지우기</button>
       </div></div>`;
   const linked = HS_MADE.filter(c => c.opportunity_id).length;
   // 회고의 결론은 이 화면이 낸다 — 줄마다 붙인 전후 델타를 여기서 합쳐 말한다.
@@ -538,7 +536,7 @@ function HS_madeList() {
   const bits = [`오른 것 ${up}건`, `내린 것 ${down}건`];
   if (same) bits.push(`그대로 ${same}건`);
   const verdict = !HS_DAILY.length
-    ? "일별 클릭 기록이 아직 없어 전후를 못 잽니다 — 서치콘솔을 한 번 더 읽으면 " +
+    ? "일별 클릭 기록이 아직 없어 전후를 못 잽니다 — 실적을 한 번 더 수집하면 " +
       "줄마다 붙습니다."
     : (up + down + same)
       ? `고친 날 앞뒤 ${HS_EFF_WIN}일 하루 평균 클릭으로 보면 잴 수 있는 ${
@@ -547,8 +545,8 @@ function HS_madeList() {
         "같은 기간에 다른 것도 바뀌므로 이 수정들만의 몫은 아닙니다."
       : `아직 전후를 잰 건이 없습니다 — 고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 ` +
         "일별 기록이 있어야 잽니다.";
-  $("madelist").innerHTML = list.map(HS_madeRow).join("") +
-    `<div class="loop"><b>한 바퀴</b> — 서치콘솔에서 재고, 기회로 뽑고, 이 ${
+  $("madelist").innerHTML = `<div class="card">${list.map(HS_madeRow).join("")}</div>` +
+    `<div class="loop"><b>한 바퀴</b> — 실적을 수집하고, 기회로 뽑고, 이 ${
       HS_MADE.length}건을 고쳤습니다${linked
       ? ` (그중 ${linked}건은 뽑아 둔 기회에서 곧장 왔습니다)`
       : ""}. ${verdict}</div>`;
@@ -563,41 +561,58 @@ function HS_madeCsv() {
 }
 
 /* ── 다음 행동 ─────────────────────────────────────────────
-      이 섹션은 view-def 가 화면 구성요소로 선언해 놓고도 라이브에서는 영영 hidden
-      이었다 — 여는 코드가 셸의 __SNAPSHOT__ 분기 하나뿐이라, 박제본에만 보이고 정작
-      매일 여는 대시보드에는 안 나왔다. 같은 #acts-list 를 여기서 채운다.
+      맨 앞 하나는 화면 머리의 [다음 행동] 띠가 가져가고, 아래 #acts 목록은 그 뒤에
+      남은 것만 받는다. 둘 다 같은 문장을 읽으면 어느 쪽이 지금 할 일인지 알 수 없다.
+      (#acts 는 한동안 라이브에서 영영 hidden 이었다 — 여는 코드가 셸의 __SNAPSHOT__
+      분기 하나뿐이었다. 지금은 HS_acts 가 두 배포 모두에서 연다.)
       새 판정은 만들지 않는다: 안 한 단계는 안내(stage.py)가 이미 고른 것을 그대로 쓰고
-      (d.guide.here), 명령도 그 단계가 들고 있는 cmd 를 가리킨다.
-      역할을 가른다: 맨 앞 하나는 화면 머리의 [다음 행동] 띠가 가져가고, 이 목록은
-      그 뒤에 남은 것만 받는다. 둘 다 같은 문장을 읽으면 어느 쪽이 지금 할 일인지
-      알 수 없다. ── */
+      (d.guide.here), 명령도 그 단계가 들고 있는 cmd 를 가리킨다. ── */
 function HS_todo(d) {
   const out = [];
+  // 마지막 실행이 실패로 끝났으면 그것이 이 화면의 첫 걸음이다 — 실패한 종류를
+  // 그대로 다시 돌린다. 이유는 짧게 툴팁에 두고 문장은 다음 걸음으로 끝낸다.
+  const last = HS_RUNS[0], lv = last && HS_verdict(last);
+  if (lv && lv.cls === "bad")
+    out.push({say: `지난 <b>${esc(HS_kind(last.kind))}</b> 실행이 실패했습니다.` +
+        `<span class="live"> 다시 돌리면 이어서 채워집니다.</span>` +
+        `<span class="hint" tabindex="0" data-tip="${esc(lv.why)}" title="${esc(lv.why)}"
+          aria-label="${esc(lv.why)}">i</span>`,
+      act: p => HS_rerun(last.kind, p)});
   const g = d.guide || {}, steps = g.steps || [];
   const next = g.here >= 0 ? steps[g.here] : null;
   if (next)
-    out.push({say: `${W("아직 안 한 단계가 있습니다", "아직 실행하지 않은 단계가 있습니다")}. ` +
-      `다음은 <b>${esc(next.t)}</b>입니다${next.state ? ` (${esc(next.state)})` : ""}.`,
-      act: p => W(next.cmd
-        ? `<button class="cmd${p ? "" : " sec"}" onclick="copyCmd(this)"
-            >${esc(next.cmd)}</button>`
-        : "", HS_runAll(p))});
-  const stale = HS_staleMsg();          // 문구 한 벌 — 요약 줄과 여기가 같은 것을 쓴다
+    // 그 단계의 지금 상태(next.state)는 괄호로 달지 않는다 — 「(아직 없음)」이 단계
+    // 상태인지 결과 개수인지 문장만 봐서는 못 읽는다. 이름을 붙여 툴팁으로 내린다.
+    out.push({say: `아직 실행하지 않은 단계가 있습니다. ` +
+      `다음은 <b>${esc(next.t)}</b>입니다.${next.state
+        ? `<span class="hint" tabindex="0" data-tip="지금 상태: ${esc(next.state)}"
+             title="지금 상태: ${esc(next.state)}"
+             aria-label="지금 상태: ${esc(next.state)}">i</span>` : ""}`,
+      // 그 단계가 그대로 돌 수 있으면 두 배포가 같은 일을 한다 — act() 한 벌로 낸다
+      // (로컬은 그 단계의 명령 칩, 호스팅은 그 단계의 실행 버튼). 못 도는 단계
+      // (사이트 등록·콘텐츠 작성)만 갈린다: 로컬은 안내가 든 명령, 호스팅은 일괄 실행.
+      // 아직 한 번도 안 돈 단계다 — 라벨은 재실행(stageRun)이 아니라 단계 이름(t)이다.
+      act: p => next.runnable
+        ? act(next.id, HS_kind(next.id), p)
+        : W(next.cmd
+            ? `<button class="cmd${p ? "" : " sec"}" onclick="copyCmd(this)"
+                >${esc(next.cmd)}</button>`
+            : "", HS_runAll(p))});
+  const stale = HS_staleMsg();          // 문구 한 벌 — 요약 줄은 배지로만 짚는다
   if (stale) out.push(stale);
   const un = HS_MADE.filter(c => !c.merged).length;
   if (un)
-    out.push({say: `${un}건이 아직 사이트에 반영되지 않았습니다(병합 전). ` +
-        "반영해야 검색엔진이 그 수정을 봅니다.",
+    out.push({say: `${un}건이 아직 사이트에 반영되지 않았습니다(병합 전).` +
+        `<span class="live"> 반영해야 검색엔진이 그 수정을 봅니다.</span>`,
       act: p => `<button class="go${p ? "" : " sec"}"
         onclick="HS_showUnmerged()">병합 전만 보기</button>`});
   // 화면을 넘기는 손잡이도 버튼 계약을 따른다 — window.go 는 문장 안에 섞이는
   // 밑줄 링크(.gov)라 .acts 안에서는 버튼이 아닌 것으로 읽힌다.
   if (d.opps_total)
-    out.push({say: `${W("아직 안 한 기회", "미처리 개선 기회")} ${num(d.opps_total)}건이 ` +
-        "남아 있습니다. 점수가 높은 것부터 고릅니다.",
+    out.push({say: `남은 기회 ${num(d.opps_total)}건이 있습니다.` +
+        `<span class="live"> 점수가 높은 것부터 고릅니다.</span>`,
       act: p => `<button class="go${p ? "" : " sec"}"
-        onclick="SM.touched=true;SM.show('overview')"
-        >${W("기회 고르기", "개선 기회 보기")}</button>`});
+        onclick="SM.touched=true;SM.show('overview')">기회 열기</button>`});
   return out;
 }
 
@@ -608,21 +623,32 @@ function HS_acts(d) {
   // 박제본이라고 띠를 지우지 않는다 — 문장은 종이에서도 읽을 값이 있고, 누를 수
   // 없는 것만 떼는 일은 셸의 nextStep 이 한 벌로 한다(.acts 를 뗀다).
   if (window.nextStep) {
-    const top = out[0] && out[0].act(true);     // 띠의 것만 주요 버튼이다
-    nextStep("history", out.length
-      ? `<p>${out[0].say}</p>${top ? `<div class="acts">${top}</div>` : ""}`
-      : `<p>${W("지금 이 화면에서 할 일은 없습니다. 아래는 여태 돌린 기록입니다.",
-          "지금 이 화면에서 할 일은 없습니다. 아래는 여태 실행한 기록입니다.")}</p>`);
+    if (out.length) {
+      const top = out[0].act(true);              // 띠의 것만 주요 버튼이다
+      nextStep("history", `<p>${out[0].say}</p>` +
+        (top ? `<div class="acts">${top}</div>` : ""));
+    } else {
+      // 할 일이 없으면 마지막 실행이 언제 문제없이 끝났는지를 말하고, 다시 재는
+      // 손잡이를 준다 — "할 일 없음"으로 끝나는 화면을 남기지 않는다.
+      const last = HS_RUNS[0];
+      nextStep("history", `<p>${last
+        ? `마지막 실행은 <b>${esc(HS_ago(last.started_at))}</b> 문제없이 끝났습니다.` +
+          `<span class="live"> 다시 재면 그동안 고친 것이 숫자에 섞입니다.</span>`
+        : `아직 실행한 기록이 없습니다.` +
+          `<span class="live"> 한 번 돌리면 여기부터 채워집니다.</span>`}</p>` +
+        `<div class="acts">${HS_runAll(true)}</div>`);
+    }
   }
   // 아래 목록은 다르다: 박제본에서는 그때 정한 것을 셸이 이미 채웠다. 지금 상태로
   // 다시 계산해 덮으면 "그때의 기록"이 아니게 된다.
   if (READONLY) return;
   $("acts").hidden = !rest.length;
   if (!rest.length) return;
-  $("acts-eyebrow").textContent = W("그다음에 남은 것", "이어서 남은 조치");
-  $("acts-title").textContent = W("이 기록이 말하는 남은 일", "남은 조치");
-  $("acts-sub").textContent = W("띠가 가리키는 것 다음으로 남은 일입니다. 위에서부터 처리합니다.",
-    "권장 조치 다음으로 남은 항목입니다. 위에서부터 처리합니다.");
+  // 「다음 행동 다음으로 남은 것입니다」는 같은 낱말이 두 자리에서 다른 품사로 쓰여
+  // (앞은 띠의 이름, 뒤는 순서) 읽다 끊긴다. 카피 정본 27c 의 정정을 따르되, 띠에는
+  // 화면에 보이는 이름표가 없어서 「[다음 행동]」 대신 위치로 가리킨다.
+  $("acts-title").textContent = "남은 일";
+  $("acts-sub").textContent = "맨 위에 나온 것을 뺀 나머지를 위에서부터 처리합니다.";
   // 목록의 행동은 전부 보조다 — 주요 버튼은 화면에 하나(머리의 띠)뿐이다.
   $("acts-list").innerHTML = rest.map(x => {
     const a = x.act(false);
@@ -631,8 +657,10 @@ function HS_acts(d) {
 }
 
 VIEW("history", function (d) {
+  viewSub("history", "무엇이 언제 돌았고 무엇을 고쳤는지 봅니다.");
   HS_RUNS = d.runs || [];
   HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_RN = 12;
+  HS_eyebrow("runs-eb", HS_RUNS, "started_at");
   HS_runSummary();
   HS_runTools();
 
@@ -642,6 +670,7 @@ VIEW("history", function (d) {
   HS_MQ = ""; HS_MM = "";
   // 전후 델타의 재료. 옛 박제본에는 없을 수 있다 — 그때는 못 잰다고 말한다.
   HS_DAILY = d.daily || [];
+  HS_eyebrow("made-eb", HS_MADE, "created_at");
   HS_madeTools();
 
   // 목록이 다 선 뒤에 부른다 — 무엇이 남았는지는 위 두 목록에서 세기 때문이다.

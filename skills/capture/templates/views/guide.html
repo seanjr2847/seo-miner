@@ -1,25 +1,114 @@
 <script type="application/json" class="view-def">
 {"id": "guide", "title": "안내",
+ "sub": "한 바퀴를 도는 순서와 지금 어디까지 왔는지를 봅니다.",
  "render": "shell", "sections": ["guide"], "stages": []}
 </script>
 <!-- 여태 헤더의 [안내] 토글이 본문 위에 얹던 패널이었다. 화면 하나로 세운다 —
      토글은 상태를 하나 더 만들고(열렸나 닫혔나), 그 상태는 아무 데도 안 남았다. -->
+
+<style>
+/* 단계 줄을 부품 계약에 맞춘다 — 마크업은 셸(renderGuide)이 만들고, 여기서는
+   그 마크업이 [카드 + 번호 + 상태 배지 + 행동 하나]로 읽히게 자리만 잡는다.
+   토큰만 쓴다(자체 색상값·!important 없음). */
+
+/* ① 단계 하나가 카드 하나다. 여태는 괘선도 상자도 없어서 여섯 줄이 한 덩어리로
+      흘렀고, 어디까지가 3번이고 어디부터 4번인지 여백으로만 갈렸다. */
+#guide .stp .body { border:1px solid var(--rule-soft); border-radius:var(--r-md);
+  background:var(--card); padding:var(--sp-4) var(--sp-5);
+  margin:0 0 var(--sp-3); }
+#guide .stp:last-child .body { margin-bottom:0; }
+/* ② 행동은 카드의 오른쪽 끝에 붙는다. 62ch 고정폭이라 넓은 화면에서 명령 칩이
+      본문에서 30rem 쯤 떨어져 혼자 떠 있었다 — 어느 단계의 손잡이인지 안 보였다. */
+#guide .stp .body { grid-template-columns:minmax(0,1fr) auto; align-items:center;
+  gap:0 var(--sp-5); }
+#guide .stp .body .txt { max-width:66ch; }
+#guide .stp .cmd, #guide .stp .go { margin-top:0; }
+/* 지금 할 단계만 도드라진다 — 나머지는 같은 카드 안에서 물러난다. */
+#guide .stp.here .body { border-color:var(--patina); background:var(--wash); }
+/* ③ 상태는 배지다. 여태는 제목 옆 회색 글씨라 제목의 일부처럼 읽혔다.
+      모양은 셸의 .badge 와 같다(끝난 것=ok, 지금=warn, 아직=muted). */
+#guide .stp .state { display:inline-flex; align-items:center; min-height:22px;
+  border:1px solid var(--rule); border-radius:var(--r-sm);
+  padding:2px var(--sp-2); font:var(--micro); white-space:nowrap; }
+#guide .stp.done .state { color:var(--patina); border-color:var(--patina);
+  background:var(--wash); }
+/* 지금 할 단계에서는 배지가 둘이다(자료 상태 + [지금 할 것]). 둘 다 산화동으로
+   칠하면 같은 것이 두 번 선 것처럼 읽힌다 — 강조는 [지금 할 것] 한쪽만 갖는다. */
+#guide .stp.here .state, #guide .stp.later .state { color:var(--slate); }
+/* 배지가 섰으니 제목 옆 ✓ 는 같은 말을 두 번 하는 것이다. */
+#guide .stp .ok { display:none; }
+/* 갱도 벽은 카드 사이를 잇는다 — 카드에 여백이 생겨 점과 선이 어긋난 자리를 맞춘다. */
+#guide .stp .dot { top:var(--sp-4); }
+/* ④ 접은 산문 — 세 문장짜리 설명이 마지막 단계 밑에 그대로 깔려 있었다. */
+#guide .loopback > summary { font:500 13px/1.5 var(--sans); color:var(--slate);
+  cursor:pointer; }
+#guide .loopback > summary:hover { color:var(--patina); }
+#guide .loopback p { margin:var(--sp-2) 0 0; }
+@media (max-width:720px) {
+  #guide .stp .body { grid-template-columns:minmax(0,1fr); align-items:start; }
+  #guide .stp .cmd, #guide .stp .go { margin-top:var(--sp-3); }
+  #guide .loopback { padding-left:0; }
+}
+</style>
+
 <section id="guide">
-  <div class="eyebrow" data-web="분석 절차">이 도구를 쓰는 순서</div>
-  <h2 style="margin-top:8px" data-web="한 바퀴는 이렇게 돕니다">한 바퀴는 이렇게 돕니다</h2>
-  <p class="lead"><b data-web="분석 → 개선 기회 도출 → 콘텐츠 반영 → 재분석">재고 → 손댈 것을 고르고 → 고치고 → 다시 재는</b> 반복입니다.
-    한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 끝난 단계는 실제로 모인
-    자료를 보고 표시하니, 순서를 외울 필요는 없습니다.</p>
-  <div class="donebar" id="donebar" hidden></div>
+  <div class="sh">
+    <h2>한 바퀴 순서</h2>
+    <p class="sub">끝난 단계는 실제로 모인 자료를 보고 스스로 표시됩니다.<span class="hint"
+      tabindex="0" data-tip="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+      title="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+      aria-label="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+      >i</span></p>
+  </div>
   <div class="shaft" id="shaft"></div>
-  <div class="loopback" data-web="가운데 단계들은 [전체 분석 실행] 하나로 이어서 돌릴 수도 있습니다. 비용이 드는 단계는 실행 전에 확인을 받습니다. 마지막 단계가 끝나면 다시 실적을 읽는 단계로 돌아옵니다. 고친 게 순위와 인용에 반영됐는지는 그때 숫자로 나옵니다."
-    >가운데 단계들은 <code>/capture run</code> 하나로 이어서 돌릴 수도 있습니다.
-    비용이 드는 단계는 돌리기 전에 물어봅니다.
-    마지막 단계가 끝나면 <b>다시 실적을 읽는 단계로 돌아옵니다</b>. 고친 게 순위와
-    인용에 반영됐는지는 그때 숫자로 나옵니다.</div>
+  <!-- 설명 산문은 접는다. 갈래(data-web)는 남긴다 — 로컬은 채팅에 명령을 치고
+       호스팅은 레일의 버튼을 누른다. 할 수 있는 일이 실제로 다른 자리다. -->
+  <details class="loopback">
+    <summary data-web="가운데 단계들은 [전체 분석 실행] 하나로 이어서 돌릴 수 있습니다"
+      >가운데 단계들은 <code>/capture run</code> 하나로 이어서 돌릴 수 있습니다</summary>
+    <p>비용이 드는 단계는 돌리기 전에 물어봅니다. 마지막 단계가 끝나면
+      <b>다시 실적을 수집하는 단계로 돌아옵니다</b>. 고친 것이 순위와 인용에
+      반영됐는지는 그때 숫자로 나옵니다.</p>
+  </details>
 </section>
 
-<!-- 이 화면에는 [다음 행동] 띠를 심지 않는다. 단계 목록 자체가 "지금 할 것"을
-     말하는 장치라서, 띠를 얹으면 같은 단계 이름과 같은 명령이 한 화면에 두 번
-     선다. 다른 화면은 목록이 그 말을 안 하니 띠가 필요하고, 여기는 아니다. -->
+<script>
+"use strict";
+/* ── 다음 행동 띠 ───────────────────────────────────────────
+      여태 이 화면에만 띠가 없었다. "단계 목록이 곧 지금 할 것"이라고 봤는데,
+      실제로 열어 보면 여섯 카드가 나란히 서 있고 채운 버튼이 하나도 없어서
+      어느 것부터 누르는지가 가장 안 보이는 화면이었다(11화면 중 유일).
 
+      판정은 새로 하지 않는다 — 어디까지 팠는지는 서버가 정한다(stage.from_progress).
+      여기는 그 판정(d.guide.here)을 문장 하나와 버튼 하나로 옮길 뿐이다.
+
+      버튼은 act() 로 만든다: 배포가 모양을 고르고(로컬 명령 칩·호스팅 실행 버튼)
+      라벨은 stage.py 의 단계 이름이 그대로 온다. 그러면 셸의 dimHead 가 같은
+      단계를 든 카드 안 칩을 목록에서 뺀다 — 한 화면에 같은 행동이 두 번 서지 않는다.
+      단계로 못 돌리는 자리(마지막 [콘텐츠 작성])는 그 화면이 이미 가진 손잡이를
+      그대로 쓴다(SM.host.stepChip). ── */
+VIEW("guide", function (d) {
+  if (!window.nextStep) return;
+  const g = d.guide;
+  if (!g || !g.steps || !g.steps.length) return nextStep("guide", "");
+  const steps = g.steps, here = g.here;
+  const done = steps.filter(x => x.done).length;
+  // 한 바퀴를 다 돌았으면 되돌아갈 자리는 2번 단계다 — 이름을 여기 적지 않는다.
+  if (here === -1) {
+    const back = steps[1];
+    const act2 = back && window.act && window.stageRun
+      ? act(back.id, stageRun(back.id)) : "";
+    return nextStep("guide", `<p>${steps.length}단계를 모두 마쳤습니다.
+      <span class="live">다시 재면 그동안 고친 것이 숫자로 나옵니다.</span></p>`
+      + (act2 ? `<div class="acts">${act2}</div>` : ""));
+  }
+  const s = steps[here];
+  // 돌릴 수 있는 단계면 act() 가 정본 라벨을 실어 준다. 아니면(마지막 단계처럼
+  // 명령이 다른 일을 하는 자리) 이 화면이 원래 쓰던 손잡이를 그대로 쓴다.
+  const btn = (s.runnable && window.act) ? act(s.id, s.t)
+    : (window.SM && SM.host && SM.host.stepChip) ? SM.host.stepChip(s) : "";
+  nextStep("guide", `<p>${steps.length}단계 중 ${done}단계가 끝났습니다.
+    <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
+    + (btn ? `<div class="acts">${btn}</div>` : ""));
+});
+</script>

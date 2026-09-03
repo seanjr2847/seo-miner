@@ -213,17 +213,34 @@ def home(request: Request):
         # 사이트를 열지 안다(dashboard.html 의 loadProjects). 여태 전부 "/d" 라
         # hash 가 비었고, 그러면 <select> 기본값인 첫 옵션이 잡혀서 무엇을 눌러도
         # 맨 처음 등록한 사이트가 열렸다. quote 는 % 인코딩만 남기므로 속성에 안전하다.
+        # 줄 하나가 셋을 말한다: 무엇인가(이름·속성) · 지금 상태인가(배지) · 무엇을
+        # 누르나(대시보드 열기). 상태는 배지고 행동은 버튼이다 — 섞이면 "첫 분석
+        # 진행 중"이 누를 수 있는 것처럼 보인다.
         items = "".join(
-            f'<li><a href="/d#{quote(str(r["project"]), safe="")}">'
-            f'<span class="nm">{e(r["project"])}</span>'
-            f'<span class="pr">{e(r["gsc_property"])}</span>'
-            + ('<span class="st wait">첫 분석 진행 중</span>' if not r["last_run_at"]
-               else f'<span class="st">{e(str(r["last_run_at"])[:16])} 분석</span>')
-            + '</a></li>' for r in rows)
-        block = f'<section><p class="label">분석 중인 사이트</p><ul class="sites">{items}</ul>'
+            f'<li class="{"waiting" if not r["last_run_at"] else "done"}">'
+            f'<div class="s-id"><span class="nm">{e(r["project"])}</span>'
+            f'<span class="pr">{e(r["gsc_property"])}</span></div>'
+            '<div class="s-state">'
+            + ('<span class="badge run">첫 분석 진행 중</span><span class="when"></span>'
+               if not r["last_run_at"]
+               else '<span class="badge ok">분석 완료</span>'
+                    f'<span class="when">{e(str(r["last_run_at"])[:16])}</span>')
+            + '</div>'
+            + f'<a class="go sm{"" if r["last_run_at"] else " sec"}"'
+              f' href="/d#{quote(str(r["project"]), safe="")}">대시보드 열기</a>'
+            + ('' if r["last_run_at"] else
+               '<div class="prog"><div class="progress"><i></i></div>'
+               '<p class="stg">수집을 준비합니다</p></div>')
+            + '</li>' for r in rows)
+        block = (f'<section id="live"><p class="eyebrow">사이트 {len(rows)}개</p>'
+                 # 「분석 중인 사이트」라고 부르면 끝난 사이트가 섞인 목록을 잘못
+                 # 가리킨다 — 이 목록은 등록한 것 전부다.
+                 '<h2>내 사이트</h2>'
+                 '<p class="sub">첫 분석이 끝나면 이 줄에서 대시보드로 들어갑니다.</p>'
+                 f'<ul class="sites">{items}</ul>')
         if any(not r["last_run_at"] for r in rows):
-            block += ('<p class="wait-note">검색 실적 · 색인 생성 · 키워드 순으로 몇 분에 '
-                      '걸쳐 수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
+            block += ('<p class="wait-note">검색 실적 · 색인 · 키워드 순으로 몇 분에 걸쳐 '
+                      '수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
         block += "</section>"
     else:
         block = ""

@@ -12,8 +12,22 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
      unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
-     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다.
+
+     **막지 않게 받는다.** 평범한 stylesheet 링크는 파서를 막아, 뒤에 오는 모든
+     스크립트가 이 파일을 받을 때까지 실행되지 않는다. CDN 이 안 열리는
+     환경(오프라인·사내망·검사 샌드박스)에서는 그게 곧 **화면이 아예 안 서는** 것이다:
+     레일도 화면 목록도 SM.sync() 가 만드는데 그 스크립트가 시작을 못 한다.
+     실제로 그 상태를 재현했고(CDN 을 막으면 #nav 버튼이 6초 뒤에도 0개),
+     헤드리스 렌더 검사가 간헐적으로 "레일 메뉴가 비었다"로 떨어지던 원인이었다.
+     media=print 로 받으면 이 파일은 처음부터 이 화면의 스타일이 아니라서 아무것도
+     막지 않고, 다 받은 뒤 onload 가 media 를 열어 그때 글꼴이 적용된다.
+     서체는 읽는 데 필요한 게 아니라 좋아지는 것이므로 늦게 와도 된다.
+     (같은 버그를 dash.html 이 자기 폰트 <link> 로 한 번 겪었다.) -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<noscript><link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⛏</text></svg>">
 <style>
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
@@ -38,6 +52,19 @@
   /* 마이크로 라벨 한 벌 — 눈금·열 이름·배지가 같은 크기로 선다. 한글이 기본이라
      자간을 벌리지 않는다(벌리면 "아 직 안 딴 기 회"가 된다). 위계는 크기·굵기·색. */
   --micro:500 11px/1.35 var(--sans);
+  /* 간격 한 벌. 여백을 눈대중으로 고르면 같은 뜻의 자리가 화면마다 2px 씩 어긋난다.
+     1=붙은 것, 2=한 부품 안, 3=부품 사이, 4=묶음 사이, 5=섹션 안, 6=섹션 사이. */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:36px;
+  /* 반지름 세 단. sm=누르는 것(버튼·칩·배지), md=담는 것(카드·띠·배너), lg=큰 상자. */
+  --r-sm:5px; --r-md:8px; --r-lg:12px;
+  /* 그림자는 "떠 있다"는 말이라 카드·토스트에만 쓴다. 다크에서는 검정을 더 진하게
+     깐다 — 밝은 그림자는 어두운 바탕에서 그냥 안 보인다(아래 다크 블록에서 덮는다). */
+  --shadow-1:0 1px 2px rgba(18,23,20,.05), 0 1px 3px rgba(18,23,20,.07);
+  --shadow-2:0 6px 16px rgba(18,23,20,.10), 0 1px 3px rgba(18,23,20,.07);
+  --focus:var(--patina);
+  /* 누르는 것은 전부 같은 높이로 선다 — 버튼·명령 칩·고스트가 한 줄에 섞여도
+     밑선이 흔들리지 않는다. 상태 배지는 이 높이를 안 쓴다(버튼처럼 보이면 안 된다). */
+  --btn-h:32px; --btn-h-sm:28px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -47,6 +74,9 @@
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
     --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
     --on-ink-rule:rgba(16,21,19,.28); --on-ink-wash:rgba(16,21,19,.12);
+    /* 밝은 그림자는 어두운 바탕에서 안 보인다 — 검정을 더 진하게 깔아 같은 깊이를 낸다. */
+    --shadow-1:0 1px 2px rgba(0,0,0,.32), 0 1px 3px rgba(0,0,0,.24);
+    --shadow-2:0 6px 18px rgba(0,0,0,.42), 0 1px 3px rgba(0,0,0,.28);
   }
 }
 /* 자간 확장·대문자 변환은 라틴 문자열에만 뜻이 있다. 문서에 실제로 라틴만 적힌
@@ -54,11 +84,38 @@
    — 한 요소 안에 한글과 라틴이 섞여 있으면 어느 쪽으로도 못 정한다. */
 .lat { font-family:var(--mono); text-transform:uppercase; letter-spacing:.16em; }
 
+/* ── <details> 마커 한 벌 ─────────────────────────────────────────
+   펼침이 있는 자리마다 마커가 달랐다: 어떤 데는 `+`, 어떤 데는 아무것도 없어서
+   접혀 있다는 사실 자체가 안 보였다(기회 카드가 그랬다 — 펼침이 그 화면의 주
+   상호작용인데 마커가 없었다). 셰브론 하나로 통일한다: 오른쪽을 보면 접힌 것,
+   아래를 보면 펼친 것. 색은 글자를 따라가고(currentColor), 뷰는 자기 마커를 안 갖는다. */
+:root { --chev:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 1.5 8.5 6 4 10.5'/%3E%3C/svg%3E"); }
+summary { list-style:none; }
+summary::-webkit-details-marker { display:none; }
+summary::before { content:""; display:inline-block; flex:0 0 9px;
+  width:9px; height:9px; margin-right:7px; vertical-align:-1px;
+  background:currentColor;
+  -webkit-mask:var(--chev) center/9px 9px no-repeat;
+          mask:var(--chev) center/9px 9px no-repeat;
+  transition:transform .15s; }
+details[open] > summary::before { transform:rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { summary::before { transition:none; } }
+
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
 body { margin:0; background:var(--stone); color:var(--ink); font:15px/1.6 var(--sans);
   word-break:keep-all; overflow-wrap:break-word; }
-:focus-visible { outline:2px solid var(--patina); outline-offset:2px; border-radius:2px; }
+/* 포커스 링은 한 벌이다 — 부품마다 자기 링을 그리면 두께와 색이 제각각이 된다.
+   레일은 바탕이 --ink 라 녹청 링이 3:1 을 못 넘긴다(#22705F/#121714 = 3.07:1 로 겨우
+   걸친다) — 거기서만 --on-ink 로 뒤집는다(13:1). */
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; border-radius:2px; }
+header :focus-visible { outline-color:var(--on-ink); }
+/* 움직임에 민감한 사람에게 화면이 흔들리지 않는다 — 뜻은 색과 글자가 이미 말한다. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+  *, *::before, *::after { animation-duration:.001ms; animation-iteration-count:1;
+    transition-duration:.001ms; }
+}
 
 /* ── 셸: 레일 + 화면 ──────────────────────────────────────────
    섹션 열넷이 한 페이지에 세로로 쌓여 있었다 — 어디에 뭐가 있는지도, 지금 뭘
@@ -94,24 +151,61 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 /* 화면 메뉴 — 좁은 화면에서는 가로 스크롤러, 레일에서는 세로 목록.
    위계는 투명도가 아니라 색과 바탕이다 — 흐린 글자는 비활성처럼 읽힌다. */
 #nav { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none;
-  max-width:1180px; margin:0 auto; padding:0 24px 10px; }
+  max-width:1180px; margin:0 auto; padding:0 24px 10px; align-items:center; }
 #nav::-webkit-scrollbar { display:none; }
-#nav button { font:500 13.5px/1.25 var(--sans); color:var(--on-ink-dim);
-  background:transparent; border:0; border-radius:6px; padding:9px 11px; cursor:pointer;
+#nav button { position:relative; display:inline-flex; align-items:center; gap:9px;
+  font:500 13.5px/1.25 var(--sans); color:var(--on-ink-dim);
+  background:transparent; border:0; border-radius:var(--r-sm); padding:0 11px;
+  min-height:var(--btn-h); cursor:pointer;
   white-space:nowrap; transition:color .12s, background .12s; }
+/* 아이콘은 이름 옆의 눈금이다 — 줄을 훑을 때 글자를 읽기 전에 자리를 잡아 준다.
+   색은 글자를 따라간다(currentColor): 활성 줄에서만 같이 선명해진다. */
+#nav button svg { flex:0 0 16px; width:16px; height:16px; stroke:currentColor;
+  fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round;
+  opacity:.8; }
 #nav button:hover { color:var(--on-ink); background:var(--on-ink-wash); }
-#nav button.on { font-weight:600; background:var(--patina); color:var(--stone); }
+#nav button.on { font-weight:600; color:var(--on-ink); background:var(--on-ink-wash); }
+#nav button.on svg { opacity:1; }
+/* 활성 표시는 통짜 채움이 아니라 인디케이터다 — 채우면 메뉴 한 줄이 버튼으로
+   읽혀 "누를 것"과 "지금 있는 곳"이 같은 모양이 된다.
+   막대는 --on-ink 로 긋는다: 녹청은 --ink 바탕에서 3.07:1 이라 비텍스트 최소(3:1)에
+   겨우 걸치고, --on-ink 는 13:1 이다. */
+#nav button.on::before { content:""; position:absolute; background:var(--on-ink);
+  border-radius:2px; left:8px; right:8px; bottom:-4px; height:2px; }
+/* 메뉴 묶음 이름 — 측정하는 화면과 관리하는 화면을 갈라 놓는다. 자리가 있는 것은
+   세로 레일뿐이라 좁은 화면(가로 스크롤러)에서는 아예 안 그린다. */
+.navgrp { display:none; }
 
 /* 화면 상자 — 한 번에 하나만 선다 */
 .view[hidden] { display:none; }
-.vh { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+.vh { display:flex; align-items:center; gap:var(--sp-2) var(--sp-3); flex-wrap:wrap;
   padding:28px 0 0; }
 .vh h1 { font:650 23px/1.3 var(--sans); letter-spacing:-.012em; margin:0; }
+/* 한 줄 부제 — "여기가 어디고 무엇을 보여주나"의 나머지 절반. 뷰가 넣는다
+   (view-def 의 sub, 또는 viewSub(id, 글)). 없으면 아예 안 그린다.
+   order 로 줄을 내린다: 제목과 보조 행동이 한 줄에 서고, 부제가 그 아래 통째로. */
+/* 읽는 폭은 padding 으로 재운다 — max-width 로 재우면 줄바꿈을 결정하는 크기까지
+   같이 줄어들어, 부제가 제목 옆에 끼어 서고 오른쪽 보조 행동을 밀어낸다.
+   (flex 는 max-width 로 좁힌 크기를 보고 "한 줄에 들어간다"고 판단한다.) */
+.vh .sub1 { order:1; flex:0 0 100%; min-width:100%; margin:2px 0 0;
+  padding-right:max(0px, calc(100% - 74ch));
+  font:400 13.5px/1.6 var(--sans); color:var(--slate); }
+.vh .sub1:empty, .vh .sub1[hidden] { display:none; }
+/* 실행 배너 자리 — 화면 머리 다음, 띠 앞. 폭은 .view 상자가 준다(=본문 폭).
+   색·배지·진행 막대는 채우는 쪽이 그린다. 셸은 자리와 간격만 잡는다. */
+.vban { display:flex; flex-direction:column; gap:var(--sp-3); margin:var(--sp-4) 0 0; }
+.vban:empty { display:none; }
+.vban > * { margin:0; }
 /* 화면을 채우는 단계의 명령 칩 — .cmd 의 위 여백은 문단용이라 머리줄에서는 없앤다. */
 .vh .vh-cmd { margin:0; }
 /* 좁은 화면에서는 이 칩 둘이 제목 아래 두 줄을 잡아먹어 다음 행동 띠를 화면
    밖으로 밀어낸다 — 줄여서 한 줄에 세운다(누르는 자리는 그대로 32px 이상). */
-@media (max-width:560px) { .vh .vh-cmd { font-size:11.5px; padding:8px 9px; } }
+/* 390 에서 머리 칩 둘은 제목과 부제 사이를 갈라 놓고 다음 행동 띠를 화면 밖으로
+   밀어냈다. 좁은 화면에서는 뺀다 — 그 화면의 주요 행동은 바로 아래 띠가 갖고
+   있고, 머리 칩은 같은 단계를 한 번 더 부르는 보조일 뿐이다. */
+@media (max-width:560px) {
+  .vh .vh-cmd, .vh .sm-refresh { display:none; }
+}
 .vh .sp { flex:1; }
 .vh + section, .view > section:first-child { border-top:0; }
 
@@ -121,10 +215,35 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
    순간 다음 걸음이 화면에서 사라졌다. 심는 것은 window.nextStep 이다.
    박제본에서는 누를 서버가 없어 .acts 를 떼고 문장만 남긴다. */
 .next { display:flex; align-items:center; gap:10px 20px; flex-wrap:wrap;
-  margin:16px 0 0; padding:14px 16px; border:1px solid var(--rule);
-  border-left:3px solid var(--patina); border-radius:6px; background:var(--card); }
-.next p { margin:0; flex:1 1 min(340px,100%); font:500 14px/1.55 var(--sans);
+  margin:var(--sp-4) 0 0; padding:14px var(--sp-4); border:1px solid var(--rule);
+  border-left:3px solid var(--patina); border-radius:var(--r-md); background:var(--card);
+  box-shadow:var(--shadow-1); }
+.next p { margin:0; flex:1 1 min(320px,100%); font:500 14px/1.55 var(--sans);
   color:var(--ink); max-width:74ch; }
+/* 왼쪽 눈금 — 이 상자가 "다음 걸음"이라는 표시다. 마크업이 아니라 CSS 가 그린다:
+   nextStep 이 받은 html 을 그대로 심어야 하는 자리라 한 글자도 더하지 않는다.
+   색은 mask + background 로 낸다(data URI 안에서는 currentColor 가 안 산다). */
+.next::before { content:""; flex:0 0 18px; width:18px; height:18px;
+  background:var(--patina);
+  -webkit-mask:var(--next-ico) center/18px 18px no-repeat;
+          mask:var(--next-ico) center/18px 18px no-repeat; }
+:root { --next-ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 1.9 3.3 9.1h3.9L7 14.1l5.7-7.2H8.8z'/%3E%3C/svg%3E"); }
+/* 돌고 있는 상태 — 색이 산화동으로 넘어가고 진행 막대가 선다. */
+.next.run { border-left-color:var(--copper); }
+.next.run::before { background:var(--copper); }
+/* 진행 막대는 띠 밖에서도 쓴다(카드 안·표 위) — 띠 안에서만 자리(order·전폭)를
+   따로 잡는다. `<div class="progress"><i style="width:40%"></i></div>` 가 정해진 값,
+   `.progress.wait` 는 얼마나 남았는지 모를 때다. */
+.progress { height:3px; border-radius:2px; background:var(--bar); overflow:hidden; }
+.progress i { display:block; height:100%; width:100%; border-radius:2px;
+  background:var(--patina); }
+.next .progress { order:2; flex:0 0 100%; }
+.next.run .progress i { background:var(--copper); }
+@keyframes slide { from { transform:translateX(-100%); } to { transform:translateX(320%); } }
+.progress.wait i { width:32%; animation:slide 1.5s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .progress.wait i { width:100%; opacity:.5; animation:none; }
+}
 .next p b { font-weight:650; }
 .next .acts { margin:0; flex:0 0 auto; }
 /* 좁은 화면에서는 행동이 문장 옆에 못 선다. 아래로 내리고, 등폭 명령 칩이 상자를
@@ -148,6 +267,15 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
    단계 칩이 머리줄에서 가장 흐린 글자가 되어 위계가 거꾸로 선다. 지우지 않고
    감추는 이유는 viewCmds 가 다시 돌 때 되살아나면 안 되기 때문이다. */
 .vh .taken, .stp .taken { display:none; }
+/* 띠가 **보조로** 든 단계는 빼지 않고 물러나게만 한다 — 빼면 그 행동에 닿을 자리가
+   띠 하나로 줄고, 그대로 두면 같은 명령이 두 벌 같은 무게로 선다. 위계만 낮춘다:
+   테두리를 연하게, 글자를 눈금 색으로. 눌리는 것은 그대로라 호버는 살려 둔다
+   ([안내]의 안 할 단계 칩과 같은 문법이다). */
+.vh .faded, .stp .faded { color:var(--slate); border-color:var(--rule-soft);
+  background:transparent; }
+.vh .faded::after, .stp .faded::after { color:var(--rule); }
+.vh .faded:hover, .stp .faded:hover { color:var(--patina); border-color:var(--patina);
+  background:var(--wash); }
 
 @media (min-width:1000px) {
   body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
@@ -158,9 +286,14 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
   .hbar .sp { display:none; }
   .tag { margin:-2px 0 12px; }
   .hbar .rl { margin-top:12px; }
-  #nav { flex-direction:column; overflow:visible; padding:12px 8px 0; margin:0;
-    max-width:none; flex:1; }
-  #nav button { text-align:left; padding:9px 10px; }
+  #nav { flex-direction:column; overflow:visible; padding:10px 8px 0; margin:0;
+    max-width:none; flex:1; align-items:stretch; gap:1px; }
+  #nav button { text-align:left; padding:0 10px; min-height:34px; }
+  /* 세로 레일에서는 인디케이터가 왼쪽 모서리에 선다 — 눈이 훑는 축과 같은 방향이다. */
+  #nav button.on::before { left:-8px; right:auto; top:6px; bottom:6px;
+    width:3px; height:auto; border-radius:0 2px 2px 0; }
+  .navgrp { display:block; padding:16px 11px 6px; }
+  #nav > .navgrp:first-child { padding-top:2px; }
   main { grid-column:2; }
   /* 바닥 통 — 실행·보고서·새로고침. 애드온이 여기에 자기 버튼을 넣는다.
      메뉴(이동)와 다른 일이므로 괘선으로 갈라 놓는다. */
@@ -186,14 +319,20 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
                    linear-gradient(135deg,currentColor 50%,transparent 50%);
   background-position:right 8px center,right 4px center; background-size:4px 4px,4px 4px;
   background-repeat:no-repeat; }
+/* 기준일 값은 `2026-06-01 · 28일치` 로 한글이 섞인다 — 등폭으로 찍으면 "일치"가
+   폴백 서체로 떨어져 낱자가 벌어진다. 숫자만 표 자리를 맞춘다. */
+#gscdate { font-family:var(--sans); font-weight:500; font-variant-numeric:tabular-nums; }
 #proj option, #gscdate option { color:var(--ink); background:var(--card); }
 /* 과거 시점을 보고 있으면 눈에 띄어야 한다 — 최신인 줄 알고 읽으면 오독이다 */
 #gscdate.past { color:var(--copper); border-bottom-color:var(--copper); }
-.hbtn { font:500 12.5px/1 var(--sans); color:var(--on-ink); background:transparent;
-  border:1px solid var(--rule); border-radius:5px; padding:8px 12px; cursor:pointer;
-  white-space:nowrap; flex:0 0 auto; transition:border-color .12s, color .12s; }
-.hbtn:hover { border-color:var(--patina); color:var(--patina); }
-.rail-foot .hbtn { border-color:var(--on-ink-rule); }
+/* 레일 바닥의 보조 손잡이. 녹청은 --ink 바탕에서 3.07:1 이라 글자로는 못 쓴다 —
+   호버는 색을 바꾸지 않고 바탕만 밝힌다(--on-ink 는 13:1). */
+.hbtn { display:inline-flex; align-items:center; justify-content:center;
+  font:500 12.5px/1 var(--sans); color:var(--on-ink-dim); background:transparent;
+  border:1px solid transparent; border-radius:var(--r-sm); padding:0 12px;
+  min-height:var(--btn-h); cursor:pointer;
+  white-space:nowrap; flex:0 0 auto; transition:background .12s, color .12s; }
+.hbtn:hover { color:var(--on-ink); background:var(--on-ink-wash); }
 /* 레일에서는 잘리면 안 된다 — 어느 속성을 보고 있는지가 이 줄의 전부다.
    등폭은 안 쓴다: 이 줄에는 한글이 섞여 있고, 한글을 등폭으로 찍으면 폴백 서체로
    떨어져 낱자가 벌어진다(`구 글  실 적`). 숫자만 표 자리를 맞춘다. */
@@ -203,11 +342,19 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
   white-space:nowrap; } }
 /* 축별 수집일 줄. 머리 바(.hbar)는 한 줄 nowrap 이라 여기 것을 거기 넣으면 잘린다 —
    잘린 경고는 경고가 아니다. 그래서 바 아래 자기 줄을 준다. */
-.hax { max-width:1180px; margin:0 auto; padding:16px 0 0; display:flex; flex-wrap:wrap;
-  gap:2px 16px; font:400 11.5px/1.6 var(--sans); color:var(--slate);
-  font-variant-numeric:tabular-nums; }
+/* 날짜만 늘어놓으면 그게 무엇의 날짜인지 안 읽힌다 — 무엇을 언제 마지막으로
+   거뒀는지를 이름표 하나 + 배지들로 말한다. 날짜는 등폭, 이름은 본문 서체다. */
+.hax { max-width:1180px; margin:0 auto; padding:18px 0 0; display:flex; flex-wrap:wrap;
+  gap:6px var(--sp-2); align-items:center; }
 .hax[hidden] { display:none; }
-.hax b { color:var(--copper); font-weight:600; flex:0 0 100%; }
+.hax .k { font:var(--micro); color:var(--slate); }
+.hax .ax { display:inline-flex; align-items:center; gap:6px; min-height:22px;
+  padding:2px var(--sp-2); border:1px solid var(--rule); border-radius:var(--r-sm);
+  background:var(--card); font:var(--micro); color:var(--slate); white-space:nowrap; }
+.hax .ax em { font:500 11px/1.35 var(--mono); font-style:normal; color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+.hax b { color:var(--copper); font-weight:600; flex:0 0 100%;
+  font:500 12px/1.6 var(--sans); }
 
 main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-width:0; }
 
@@ -229,7 +376,10 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
   header, .rail-foot, #nav, .tools, .ask, .cmd, .hint, .acts, .go {
     display:none !important; }
   .next { border:0; border-left:2px solid var(--patina); border-radius:0;
-    background:none; padding:6px 0 6px 12px; }
+    background:none; padding:6px 0 6px 12px; box-shadow:none; }
+  .next::before { display:none; }        /* 눈금은 누를 것을 가리킨다 — 종이에는 없다 */
+  /* 그림자는 화면에서 "떠 있다"는 말이다. 종이에서는 회색 얼룩으로만 찍힌다. */
+  .card, .opp, #docban, #err { box-shadow:none; }
   main { max-width:none; padding:0; }
   /* 색으로만 말하는 것이 몇 개 있다(막대·배지·상태) — 배경을 지우면 뜻이 사라진다. */
   * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -290,6 +440,67 @@ section:first-of-type { border-top:0; }
 .eyebrow { font:600 11px/1.35 var(--sans); color:var(--slate); }
 h2 { font:650 19px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 4px; }
 .sub { font-size:13.5px; line-height:1.6; color:var(--slate); margin:0 0 20px; }
+/* 섹션 머리 한 벌 — 눈썹·제목·부제는 왼쪽 한 줄기로, 도구는 오른쪽에.
+   여태 셋이 그냥 형제로 쌓여 있어서 화면마다 도구줄이 다른 자리에 섰다. */
+.sh { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end;
+  gap:0 var(--sp-4); margin:0 0 var(--sp-5); }
+.sh > .eyebrow, .sh > h2, .sh > .sub { grid-column:1; margin:0; }
+.sh > h2 { margin-top:6px; }
+.sh > .sub { margin-top:4px; }
+.sh > .tools { grid-column:2; grid-row:1 / -1; align-self:center; margin:0; }
+@media (max-width:640px) {
+  .sh { grid-template-columns:minmax(0,1fr); }
+  /* 도구줄이 제목 옆에 못 서면 아래로 내린다. 찾기 칸은 한 줄을 통째로 쓰고
+     개수·내보내기가 그 아래 한 줄에 선다 — 셋을 한 줄에 우겨 넣으면 390 에서
+     찾기 칸이 40px 로 줄어 아무것도 안 보인다. */
+  .sh > .tools { grid-column:1; grid-row:auto; margin-top:var(--sp-3); }
+  .tools input { flex:1 1 100%; max-width:none; }
+  .tools .sp { display:none; }
+}
+/* 부제 끝의 (i) 는 줄바꿈을 막지 않는다 — 긴 한 줄 부제 + (i) 가 통째로 한 덩어리로
+   묶이면 390 에서 그 줄이 화면 폭을 넘고, 페이지 전체가 옆으로 밀렸다. */
+.sub, .sh > .sub, .vh .sub1 { overflow-wrap:anywhere; }
+.hint { overflow-wrap:normal; }
+
+/* ── 카드 ────────────────────────────────────────────────
+   표·차트·폼을 담는 상자. 괘선만으로 가르던 자리 중 "한 덩어리로 읽혀야 하는 것"
+   에만 쓴다 — 전부 카드로 싸면 화면이 상자밭이 되고 위계가 도로 사라진다. */
+.card { border:1px solid var(--rule); border-radius:var(--r-md); background:var(--card);
+  padding:var(--sp-4) var(--sp-5); box-shadow:var(--shadow-1); }
+.card + .card { margin-top:var(--sp-3); }
+.card > :first-child { margin-top:0; }
+.card > :last-child { margin-bottom:0; }
+
+/* ── 스켈레톤 ─────────────────────────────────────────────
+   불러오는 동안. "불러오는 중입니다" 라고 쓰는 대신 채워질 자리의 모양을 보여 준다. */
+@keyframes shimmer { from { background-position:-200% 0; } to { background-position:200% 0; } }
+.skel { display:block; height:12px; border-radius:3px; margin:8px 0;
+  background:linear-gradient(90deg, var(--bar) 25%, var(--rule-soft) 37%, var(--bar) 63%);
+  background-size:200% 100%; }
+.skel.line2 { width:72%; } .skel.line3 { width:45%; }
+.skel.box { height:96px; border-radius:var(--r-md); }
+@media (prefers-reduced-motion: no-preference) {
+  .skel { animation:shimmer 1.4s linear infinite; }
+}
+
+/* ── 토스트 ──────────────────────────────────────────────
+   행동의 결과(복사됨·실행 시작·실패)를 그 자리에서 말한다. 우하단에 쌓이고
+   3초 뒤 스스로 사라진다. role="status" 라 화면 낭독기도 같이 읽는다. */
+#toasts { position:fixed; right:var(--sp-4); bottom:var(--sp-4); z-index:60;
+  display:flex; flex-direction:column; align-items:flex-end; gap:var(--sp-2);
+  pointer-events:none; max-width:min(360px, calc(100vw - 32px)); }
+.toast { pointer-events:auto; display:flex; align-items:flex-start; gap:var(--sp-2);
+  padding:10px var(--sp-3); border:1px solid var(--rule);
+  border-left:3px solid var(--slate); border-radius:var(--r-md);
+  background:var(--card); box-shadow:var(--shadow-2); color:var(--ink);
+  font:500 13px/1.5 var(--sans); }
+.toast.ok { border-left-color:var(--patina); }
+.toast.bad { border-left-color:var(--copper); }
+@keyframes toastin { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation:toastin .16s ease-out both; }
+}
+@media print { #toasts { display:none; } }
 
 /* ── 차트 공통: 깊이 로그·일별 추이·기기 격차가 같은 언어를 쓴다 ── */
 /* 좁은 화면에선 축소 대신 가로 스크롤 — 줄여 봐야 글자를 못 읽는다. */
@@ -335,12 +546,24 @@ td.num:last-child, th.num:last-child { padding-right:0; }
 /* 빈 상태는 막다른 길이 아니라 다음 한 걸음이다. 셋으로 읽힌다:
    무엇이 없나(<b>) · 채우면 무엇을 얻나(문장) · 무엇을 누르나(.acts / .cmd). */
 .empty { font-size:13px; line-height:1.65; color:var(--slate); padding:20px 18px;
-  border:1px dashed var(--rule); border-radius:6px; margin:4px 0 0; }
+  border:1px dashed var(--rule); border-radius:var(--r-md); margin:4px 0 0; }
 /* 제목 줄만 블록으로 세운다. `.empty b` 로 두면 본문 문장 안의 강조까지 잡혀
    한 문장이 세 토막으로 갈라진다(순위 추적 빈 상태가 그랬다). */
 .empty > b:first-child { display:block; font:650 14px/1.45 var(--sans);
   color:var(--ink); margin-bottom:4px; }
 .empty p { margin:0; max-width:60ch; }
+/* 오류는 빈 것과 다른 일이다 — 비었으면 채우면 되고, 실패했으면 무엇이 실패했는지
+   알아야 다시 할 수 있다. 실선 + 산화동 좌측선으로 갈라 세운다. */
+.empty.err { border-style:solid; border-color:var(--rule);
+  border-left:3px solid var(--copper); background:var(--card); }
+.empty.err > b:first-child { color:var(--copper); }
+/* 세 번째 상태: **검사했고 문제가 없다.** 비어 있는 것과 다른 일이다 — 비었으면
+   채우면 되고, 문제가 없으면 할 일이 아예 없다. 여태 이 자리가 상자 없는 회색
+   평문이라 "아직 안 했다"와 구별이 안 됐다. 점선 대신 실선, 옅은 녹청 바탕, 체크. */
+.empty.ok { border-style:solid; border-color:var(--rule);
+  border-left:3px solid var(--patina); background:var(--wash); }
+.empty.ok > b:first-child { color:var(--patina); }
+.empty.ok > b:first-child::before { content:"✓"; margin-right:6px; }
 
 /* ── 표 살림: 긴 표를 실제로 읽을 수 있게 ─────────────────────
    시추공은 깊다 — 표가 40줄을 넘으면 머리글이 화면 밖으로 나간다. 머리글을 붙박고,
@@ -348,11 +571,24 @@ td.num:last-child, th.num:last-child { padding-right:0; }
 /* 표는 줄 수와 상관없이 이 상자 안에서 넘친다 — 세 줄짜리 표도 열이 여섯이면
    390px 를 넘고, 상자가 없으면 표가 페이지 전체를 옆으로 민다. 세로로 재우는 것은
    실제로 긴 표(.long)만이다: 짧은 표에 최대 높이를 걸 이유가 없다. */
+/* 표가 옆으로 넘칠 때 오른쪽 끝을 흐려 "더 있다"고 말한다 — 좁은 화면에서 열이
+   잘리면 그 열이 없는 것으로 읽힌다(메뉴 페이드와 같은 문법이다).
+   배경 그라데이션으로는 안 된다: 배경은 글자 아래에 깔려 글자를 못 흐린다.
+   스크롤 끝에 닿으면 페이드가 꺼져야 하지만, 그건 스크롤을 지켜봐야 알 수 있다 —
+   여기서는 넘칠 때만 켜지는 마스크로 두고 끝 판정은 tableFade() 가 한다. */
 .tw { overflow:auto; }
+.tw.over { --tfade:28px;
+  -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--tfade)), transparent);
+          mask-image:linear-gradient(to right, #000 calc(100% - var(--tfade)), transparent); }
+.tw.over.end { --tfade:0px; }
 .tw.long { max-height:min(62vh,560px); }
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
   padding-top:9px; }
+/* 붙박이 머리글은 아래 줄을 가려야 해서 불투명한 바탕이 있어야 한다 — 그 바탕이
+   페이지 바탕(--stone)이라, 표를 카드에 넣으면 머리글만 다른 색으로 뜬다.
+   담는 상자가 색을 정한다. 뷰마다 자기 화면에서 이걸 다시 덮지 않게 셸이 갖는다. */
+.card .tw thead th { background:var(--card); }
 tbody tr:hover { background:var(--bar); }
 th[data-s] { cursor:pointer; user-select:none; }
 th[data-s]:hover { color:var(--patina); }
@@ -369,23 +605,45 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .tools .go { flex:0 0 auto; }
 .empty .cmd { margin-top:12px; }
 .empty .acts { margin-top:12px; }
-/* 열 이름 옆 근거: 이 숫자가 어디서 온 건지 그 자리에서 답한다. */
-.hint { display:inline-block; width:13px; height:13px; margin-left:5px; border-radius:50%;
-  border:1px solid var(--rule); font:400 9px/11px var(--mono); text-align:center;
-  color:var(--slate); cursor:help; vertical-align:1px; }
+/* 열 이름 옆 근거: 이 숫자가 어디서 온 건지 그 자리에서 답한다. 설명 산문을 본문에
+   풀어 놓는 대신 여기로 접는다. */
+.hint { position:relative; display:inline-block; width:14px; height:14px; margin-left:5px;
+  border-radius:50%; border:1px solid var(--rule); font:400 9px/12px var(--mono);
+  text-align:center; color:var(--slate); cursor:help; vertical-align:1px; }
 .hint:hover { border-color:var(--patina); color:var(--patina); }
+/* 툴팁은 화면에 고정(fixed)해서 띄운다. absolute 로 두면 두 가지가 깨졌다:
+   표 상자(.tw) 안에서는 잘려 반쪽만 보이고, 390px 에서 오른쪽 끝의 (i) 에 뜨면
+   말풍선이 화면 밖으로 나가 페이지를 옆으로 밀었다. fixed 는 어느 조상도 자르지
+   못하고, 자리는 tipPlace() 가 뷰포트 안으로 물려서 잡는다(--tip-l/--tip-t).
+   키보드 포커스에도 뜬다 — 마우스만 쓰는 사람의 것이 아니다. 그래서
+   .hint[data-tip] 은 tabindex="0" 와 aria-label 을 같이 갖는다. */
+.hint[data-tip]::after { content:attr(data-tip); position:fixed; z-index:40;
+  left:var(--tip-l,0); top:var(--tip-t,0); transform:translate(-50%,-100%);
+  width:max-content; max-width:min(280px, calc(100vw - 24px)); padding:7px 10px;
+  border:1px solid var(--rule); border-radius:var(--r-sm); background:var(--card);
+  box-shadow:var(--shadow-2); color:var(--ink);
+  font:400 12px/1.5 var(--sans); text-align:left; white-space:normal;
+  opacity:0; visibility:hidden; transition:opacity .12s; pointer-events:none; }
+.hint[data-tip]:hover::after, .hint[data-tip]:focus-visible::after {
+  opacity:1; visibility:visible; }
 
 /* ── 기회 트리아지 ──────────────────────────────────────── */
 /* 이 화면의 주인공. 줄에 손을 얹으면 그 줄만 밝힌다 — 표와 같은 문법이다. */
 /* 카드는 <details> 다 — 격자는 summary 가 갖는다(자식 셋이 그 안에 있다).
    삼각 마커는 지운다: 카드 전체가 이미 누르는 자리라 마커가 뜻을 더하지 않는다. */
-.opp { padding:13px 12px; margin:0 -12px; border-bottom:1px solid var(--rule-soft); }
-.opp > summary { display:grid; grid-template-columns:auto 1fr auto; gap:0 14px;
+.opp { padding:14px var(--sp-4); margin:0 0 var(--sp-2); border:1px solid var(--rule);
+  border-radius:var(--r-md); background:var(--card);
+  transition:box-shadow .12s, border-color .12s; }
+/* 마커가 격자의 첫 칸을 하나 더 먹는다 — 셰브론·점수·본문·상태 넷이다.
+   ::before 는 자동으로 첫 자식이 되므로 열만 하나 늘리면 제자리에 선다. */
+.opp > summary { display:grid; grid-template-columns:auto auto 1fr auto; gap:0 14px;
   align-items:baseline; cursor:pointer; list-style:none; }
+.opp > summary::before { align-self:start; margin:7px 0 0; }
 .opp > summary::-webkit-details-marker { display:none; }
 .opp > summary:focus-visible { outline:2px solid var(--patina); outline-offset:3px; }
-.opp:hover { background:var(--bar); }
-.opp:last-child { border-bottom:0; }
+.opp:hover, .opp[open] { box-shadow:var(--shadow-1); border-color:var(--rule); }
+.opp[open] { border-left:3px solid var(--patina); padding-left:calc(var(--sp-4) - 2px); }
+.opp:last-child { margin-bottom:0; }
 .score { font:600 19px/1 var(--mono); font-variant-numeric:tabular-nums; width:44px;
   text-align:right; }
 /* 숫자만 있으면 88이 뭔지 모른다 — 단위를 붙여 100점 만점임을 그 자리에서 말한다. */
@@ -395,8 +653,10 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 /* 종류는 채워서(분류), 상태는 테를 둘러서(상태) — 두 배지가 서로 다른 말을 한다.
    .opp 안에만 두면 표로 그리는 화면(키워드·순위·AI)이 같은 부품을 쓰고도 배지가
    평문으로 떨어진다 — 스코프를 푼다. 카드 전용 배치(.target·접힘 두 줄)만 남긴다. */
-.kind { font:var(--micro); color:var(--patina); background:var(--wash);
-  border-radius:4px; padding:4px 8px; }
+/* 종류는 배지와 같은 높이로 서되 테두리가 없다 — 상태(테 두른 것)와 한눈에 갈린다. */
+.kind { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
+  color:var(--patina); background:var(--wash); border:1px solid transparent;
+  border-radius:var(--r-sm); padding:2px var(--sp-2); white-space:nowrap; }
 .dt { font:400 11.5px/1 var(--mono); color:var(--slate);
   font-variant-numeric:tabular-nums; }
 /* 카드의 표제 — 검색어이거나 URL 이다. 등폭으로 찍으면 한글 검색어가 폴백 서체로
@@ -414,7 +674,8 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .kind.k-def { color:var(--copper); background:var(--wash-copper); }
 /* GA4 매출 잠재력 보정 배지 — scoring.value_mult() 가 1.0이 아닐 때만 나온다.
    오르면 .kind 와 같은 녹청, 내리면 .k-def 와 같은 산화동 — 같은 문법을 그대로 쓴다. */
-.gm { font:var(--micro); border-radius:4px; padding:4px 8px; border:1px solid; }
+.gm { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
+  border-radius:var(--r-sm); padding:2px var(--sp-2); border:1px solid; white-space:nowrap; }
 .gm-up { color:var(--patina); border-color:var(--patina); }
 .gm-down { color:var(--copper); border-color:var(--copper); }
 .why { font-size:12.5px; color:var(--slate); }
@@ -449,9 +710,10 @@ tr.exp .det { padding-left:0; }
 td.expcell { padding:0 !important; }
 /* 프롬프트 상자 — 펼침 패널 안의 접이식. 손잡이는 버튼처럼 보이게 둔다. */
 .ask { margin:10px 0 4px; }
-.ask > summary { display:inline-block; cursor:pointer; list-style:none;
+.ask > summary { display:inline-flex; align-items:center; cursor:pointer; list-style:none;
   font:500 12.5px/1 var(--sans); color:var(--ink); background:transparent;
-  border:1px solid var(--rule); border-radius:5px; padding:7px 11px; }
+  border:1px solid var(--rule); border-radius:var(--r-sm); padding:0 var(--sp-3);
+  min-height:var(--btn-h); white-space:nowrap; }
 .ask > summary::-webkit-details-marker { display:none; }
 .ask > summary:hover { color:var(--patina); border-color:var(--patina); }
 .ask[open] > summary { color:var(--patina); border-color:var(--patina); }
@@ -466,19 +728,41 @@ td.expcell { padding:0 !important; }
 .pbox { margin-top:8px; }
 .pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
   font-size:11.5px; color:var(--slate); margin-bottom:5px; }
-.pb-h button { font:500 12.5px/1 var(--sans); color:var(--ink); background:transparent;
-  border:1px solid var(--rule); border-radius:5px; padding:6px 10px; cursor:pointer; }
+.pb-h button { display:inline-flex; align-items:center; font:500 12.5px/1 var(--sans);
+  color:var(--ink); background:transparent; border:1px solid var(--rule);
+  border-radius:var(--r-sm); padding:0 var(--sp-3); min-height:var(--btn-h-sm);
+  cursor:pointer; white-space:nowrap; }
 .pb-h button:hover { color:var(--patina); border-color:var(--patina); }
 .pbox textarea { width:100%; box-sizing:border-box; resize:vertical;
   font:400 11.5px/1.6 var(--mono); color:var(--ink); background:var(--bar);
   border:1px solid var(--rule-soft); border-radius:2px; padding:10px; }
-/* 상태 배지 — 색만으로 뜻을 말하지 않는다(글자가 정본이고 색은 거들 뿐이다). */
-.st { font:var(--micro); padding:4px 8px; border:1px solid var(--rule);
-  border-radius:4px; white-space:nowrap; }
-.st-new { color:var(--patina); border-color:var(--patina); background:var(--wash); }
-.st-acked { color:var(--copper); border-color:var(--copper); }
-.st-done { color:var(--slate); }
+/* ── 상태 배지 ─────────────────────────────────────────────
+   상태는 배지고, 행동은 버튼이다. 여태 이 둘이 같은 모양이었다 — "저장소 연결 필요"
+   가 [확인 표시] 옆에 같은 크기·같은 테두리로 서서, 누를 수 있는 것처럼 읽혔다.
+   그래서 갈라 놓는다: 버튼은 32px 높이(--btn-h), 배지는 22px 이고 마이크로 글자다.
+   색만으로 뜻을 말하지 않는다 — 글자가 정본이고 색은 거들 뿐이다.
+   대비(--stone 위, 가장 불리한 자리 기준): patina 4.82:1 · copper 4.68:1 ·
+   slate 5.20:1 · 채운 bad 는 --card/--copper 5.38:1. 전부 AA(4.5:1)를 넘는다. */
+.badge, .st { display:inline-flex; align-items:center; gap:5px; min-height:22px;
+  padding:2px var(--sp-2); border:1px solid var(--rule); border-radius:var(--r-sm);
+  font:var(--micro); color:var(--slate); background:transparent;
+  white-space:nowrap; vertical-align:1px; }
+.badge.ok, .st-new { color:var(--patina); border-color:var(--patina); background:var(--wash); }
+.badge.warn, .st-acked { color:var(--copper); border-color:var(--copper);
+  background:var(--wash-copper); }
+/* 막힌 것 — 경고보다 한 단 세다. 채워서 눈이 먼저 가게 하되 높이는 배지 그대로다. */
+.badge.bad { color:var(--card); border-color:var(--copper); background:var(--copper); }
+.badge.muted, .st-done { color:var(--slate); border-color:var(--rule); }
 .st-dismissed { color:var(--slate); text-decoration:line-through; }
+/* 도는 중 — 점 하나가 깜빡인다. 글자("수집 중")가 정본이고 점은 거들 뿐이라
+   움직임을 끄면 점은 그대로 켜져 있다. */
+.badge.run { color:var(--patina); border-color:var(--patina); background:var(--wash); }
+.badge.run::before { content:""; width:6px; height:6px; border-radius:50%;
+  background:currentColor; flex:0 0 6px; }
+@keyframes blip { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+@media (prefers-reduced-motion: no-preference) {
+  .badge.run::before { animation:blip 1.3s ease-in-out infinite; }
+}
 /* 좁은 화면에선 세 칸이 안 들어간다 — 상태 배지를 본문 밑으로 내린다. */
 @media (max-width:560px) {
   /* 세 칸이 안 들어가면 상태 배지가 줄바꿈으로 본문 **뒤**로 밀려, 행동 버튼보다
@@ -491,17 +775,20 @@ td.expcell { padding:0 !important; }
 .acts { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
 /* 회색 글자는 비활성으로 읽힌다 — 누를 수 있는 것은 본문 색으로 세운다.
    .go(주요 버튼)·.cmd(명령 칩)는 자기 위계를 이미 갖고 있어 여기서 안 덮는다. */
-.acts button:not(.go):not(.cmd) { font:500 12.5px/1 var(--sans); color:var(--ink);
-  background:transparent; border:1px solid var(--rule); border-radius:5px;
-  padding:7px 11px; cursor:pointer;
+.acts button:not(.go):not(.cmd) { display:inline-flex; align-items:center;
+  font:500 12.5px/1 var(--sans); color:var(--ink);
+  background:transparent; border:1px solid var(--rule); border-radius:var(--r-sm);
+  padding:0 var(--sp-3); min-height:var(--btn-h); cursor:pointer; white-space:nowrap;
   transition:color .12s, border-color .12s, background .12s; }
 .acts button:not(.go):not(.cmd):hover { color:var(--patina); border-color:var(--patina);
   background:var(--wash); }
+.acts button:not(.go):not(.cmd):active { transform:translateY(1px); }
 .acts .cmd { margin:0; }
 
 /* ── 칩·로그줄 ─────────────────────────────────────────── */
-.chip { display:inline-block; font:400 12.5px/1 var(--sans); border:1px solid var(--rule);
-  border-radius:5px; padding:6px 10px; margin:0 6px 6px 0; color:var(--slate); }
+.chip { display:inline-flex; align-items:center; gap:6px; font:400 12.5px/1 var(--sans);
+  border:1px solid var(--rule); border-radius:var(--r-sm); padding:0 var(--sp-3);
+  min-height:var(--btn-h-sm); margin:0 6px 6px 0; color:var(--slate); }
 .chip b { color:var(--ink); font-weight:500; }
 /* kind 칩: 기회 목록 필터. 누른 칩만 보이고, 다시 누르면 전체로. */
 button.chip { background:transparent; cursor:pointer; }
@@ -552,24 +839,35 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .stp.done .state { color:var(--patina); }
 .stp.here .state { color:var(--copper); }
 .stp.later .state { color:var(--slate); }
-.stp .now { font:var(--micro); color:var(--copper); border:1px solid var(--copper);
-  border-radius:4px; padding:4px 8px; }
+.stp .now { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
+  color:var(--copper); border:1px solid var(--copper); background:var(--wash-copper);
+  border-radius:var(--r-sm); padding:2px var(--sp-2); white-space:nowrap; }
 /* 지금 할 단계가 아닌 줄에서는 명령 칩도 제목만큼 물러난다 — 흐린 제목 옆에
    선명한 칩이 서면 눈이 안 할 일부터 읽는다. */
 .stp:not(.here) .cmd { color:var(--slate); border-color:var(--rule-soft);
   background:transparent; }
 .stp:not(.here) .cmd::after { color:var(--rule); }
 .stp:not(.here) .cmd:hover { color:var(--patina); border-color:var(--patina); }
-.cmd { display:inline-block; font:500 12.5px/1 var(--mono); margin:12px 8px 0 0;
-  background:var(--stone); border:1px solid var(--rule); border-radius:5px;
-  padding:8px 12px; cursor:pointer; color:var(--ink);
-  transition:border-color .12s, color .12s; }
-.cmd:hover { border-color:var(--patina); color:var(--patina); }
-/* 보조 명령 칩 — 주요 행동 옆에서 물러난다(호스팅의 .go.sec 과 같은 자리). */
-.cmd.sec { color:var(--slate); background:transparent; }
+/* 명령 칩 — 로컬에서는 이게 버튼 자리다. 그래서 .go 와 같은 높이·반지름으로 선다
+   (안 그러면 같은 줄에서 두 배포의 주요 행동이 서로 다른 크기로 읽힌다).
+   글자는 명령이라 등폭이 맞다 — 한글이 안 섞인 자리다. */
+.cmd { display:inline-flex; align-items:center; gap:6px; font:500 12.5px/1.35 var(--mono);
+  margin:12px 8px 0 0; min-height:var(--btn-h);
+  background:var(--stone); border:1px solid var(--rule); border-radius:var(--r-sm);
+  padding:0 var(--sp-3); cursor:pointer; color:var(--ink); white-space:nowrap;
+  transition:border-color .12s, color .12s, background .12s; }
+.cmd:hover { border-color:var(--patina); color:var(--patina); background:var(--wash); }
+.cmd:active { transform:translateY(1px); }
+/* 보조 명령 칩 — 주요 행동 옆에서 물러난다(호스팅의 .go.sec 과 같은 자리).
+   물러나는 것은 **바탕**이지 글자가 아니다. 글자를 회색으로 내리면 --card 위에서
+   3.3:1 까지 떨어져 AA 를 못 넘겼다 — 누를 수 있는 것을 못 읽게 만든 셈이다.
+   위계는 채운 바탕(주요) ↔ 빈 바탕(보조)이 만든다. 글자는 --ink 로 15:1 이다. */
+.cmd.sec { color:var(--ink); background:transparent; font-weight:400; }
 .cmd.sec:hover { color:var(--patina); }
-.cmd::after { content:" ⧉"; color:var(--slate); }
-.cmd.copied::after { content:" 복사됨"; color:var(--patina); font-size:11px; }
+/* 칩이 inline-flex 라 ::after 는 별개의 항목이 된다 — 글자 앞의 공백은 잘려 나가고
+   글자에 딱 붙는다. 사이는 gap 이 벌린다. */
+.cmd::after { content:"⧉"; color:var(--slate); }
+.cmd.copied::after { content:"복사됨"; color:var(--patina); font:500 11px/1 var(--sans); }
 .loopback { margin-top:22px; padding-left:44px; font-size:13.5px; color:var(--slate);
   line-height:1.9; }
 .loopback b { color:var(--patina); font-weight:600; }
@@ -580,10 +878,17 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .runlog .r { display:block; border-bottom:1px solid var(--rule-soft); padding:5px 0; }
 
 /* ── 진단 배너 ─────────────────────────────────────────── */
-#docban { border:1px solid var(--rule); border-left:3px solid var(--patina);
-  border-radius:6px; padding:16px 18px; margin:28px 0 0; background:var(--card);
-  max-width:80ch; }
-#docban .verdict { font:650 16px/1.45 var(--sans); }
+/* 배너는 "파이프라인 전체가 어디쯤인가"를 말하고, 바로 위의 띠(.next)는 "이 화면에서
+   무엇을 누르나"를 말한다. 둘이 같은 무게로 서면 한 화면에 다음 행동이 둘이 된다 —
+   배너를 한 단 낮춘다: 그림자를 빼고 바탕을 --bar 로, 제목을 한 급 줄인다. */
+#docban { border:1px solid var(--rule-soft); border-left:3px solid var(--patina);
+  border-radius:var(--r-md); padding:14px 16px; margin:var(--sp-5) 0 0;
+  background:var(--bar); max-width:80ch; }
+/* 막는 항목(ul.must)이 있으면 경고다 — banSync 가 그때만 .thin 을 뗀다.
+   경고는 산화동, 안내는 녹청. 색이 상태를 말하고 글자가 그 뜻을 말한다. */
+#docban:not(.thin) { border-left-color:var(--copper); }
+#docban.bad { border-left-color:var(--copper); }
+#docban .verdict { font:600 14px/1.5 var(--sans); }
 /* 안내 한 줄만 남았을 때 — 상자를 두르지 않는다(위 주석의 이유는 banSync 에). */
 #docban.thin { border:0; border-radius:0; padding:0; background:transparent;
   margin:24px 0 0; }
@@ -595,8 +900,9 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
   display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
 #docban .nx:empty, #docban .nx[hidden] { display:none; }
 #docban .nx b { font-weight:650; }
-.nxk { font:var(--micro); color:var(--patina); border:1px solid var(--patina);
-  border-radius:4px; padding:3px 8px; white-space:nowrap; }
+.nxk { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
+  color:var(--patina); border:1px solid var(--patina); background:var(--wash);
+  border-radius:var(--r-sm); padding:2px var(--sp-2); white-space:nowrap; }
 #docban code { font:500 12.5px/1 var(--mono); background:var(--bar); color:var(--ink);
   padding:5px 8px; border-radius:4px; }
 #docban ul { margin:12px 0 0; padding-left:18px; font-size:13.5px; line-height:1.7; }
@@ -620,6 +926,11 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 .step summary { font:500 13px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
 .step summary:hover { color:var(--patina); }
 .step details .why { margin:12px 0 0; }
+/* 근거 칸 안에 접어 둔 설명 — 섹션 직속 <details> 와 달리 괘선으로 가르지 않는다.
+   바로 위에 한 줄 부제가 이미 서 있어서, 선을 하나 더 그으면 한 칸이 둘로 읽힌다. */
+.why > p { margin:0; }
+.why > details { margin-top:var(--sp-2); border-top:0; padding-top:0; }
+.why > details > p { margin:6px 0 0; }
 .step .why code, .stat { font-family:var(--mono); font-size:11.5px; }
 .stat { font:var(--micro); }
 .stat.ok { color:var(--patina); } .stat.todo { color:var(--copper); }
@@ -630,12 +941,19 @@ label a { text-decoration:underline; text-underline-offset:2px; }
 /* 화면끼리 잇는 손잡이. 여태 [개요]·[순위 추적] 은 글자였을 뿐이라 눌러도 아무 일이
    없었다 — 화면 사이를 잇는 링크가 뷰 파일에 한 개도 없었다. 문장 안에 앉으므로
    버튼 모양이 아니라 밑줄 링크처럼 보이게 한다(버튼인 이유는 라우터를 부르기 때문). */
-.gov { font:inherit; color:var(--patina); background:transparent; border:0; padding:0;
+.gov, .lnk { font:inherit; color:var(--patina); background:transparent; border:0; padding:0;
   cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
-.gov:hover { color:var(--ink); }
+.gov:hover, .lnk:hover { color:var(--ink); }
 input, select, textarea { font:400 13.5px/1.4 var(--sans); width:100%; color:var(--ink);
   background:transparent; border:0; border-bottom:1px solid var(--rule); padding:5px 2px; }
 input:focus, select:focus, textarea:focus { border-bottom-color:var(--patina); outline:0; }
+/* 위 줄의 outline:0 이 전역 포커스 링을 껐다 — 키보드로 다니면 레일의 select 둘과
+   표 위 찾기 칸에서 지금 어디에 있는지가 사라졌다. 밑줄 강조는 그대로 두고 링만
+   되살린다. :focus-visible 이라 마우스로 눌렀을 때는 안 뜬다. */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline:2px solid var(--focus); outline-offset:2px; }
+/* 레일은 바탕이 --ink 라 녹청 링이 3:1 을 겨우 넘긴다 — 거기서만 뒤집는다(13:1). */
+header select:focus-visible, header input:focus-visible { outline-color:var(--on-ink); }
 input::placeholder, textarea::placeholder { color:var(--slate); opacity:.6; }
 textarea { min-height:48px; resize:vertical; }
 select { cursor:pointer; }
@@ -647,24 +965,60 @@ option { background:var(--card); }
 /* 주요 버튼 — 화면에 하나. 채운 녹청이라 멀리서도 "여기를 누른다"로 읽힌다.
    호버는 먹색으로 뒤집는다: --ink/--stone 은 다크에서 서로 자리를 바꾸므로
    두 테마에서 같은 대비가 나온다. */
-.go { font:600 13px/1 var(--sans); color:var(--card);
-  background:var(--patina); border:1px solid var(--patina); border-radius:5px;
-  padding:10px 16px; cursor:pointer;
+/* 누르는 것은 전부 같은 높이(--btn-h)·같은 반지름(--r-sm)으로 선다 — .go 계열과
+   명령 칩(.cmd), 목록 안의 맨 버튼이 한 줄에 섞여도 밑선이 흔들리지 않는다.
+   위계는 채움 → 테두리 → 고스트 세 단이다. 대비: --card/--patina 5.54:1,
+   --card/--copper 5.38:1, --ink 글자는 --stone 위에서 15:1 이상. */
+.go { display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  font:600 13px/1 var(--sans); color:var(--card);
+  background:var(--patina); border:1px solid var(--patina); border-radius:var(--r-sm);
+  padding:0 var(--sp-4); min-height:var(--btn-h); cursor:pointer; white-space:nowrap;
+  text-decoration:none;
   transition:background .12s, border-color .12s, color .12s; }
 .go:hover { background:var(--ink); border-color:var(--ink); color:var(--stone); }
-.go[disabled] { opacity:.45; cursor:default; }
+.go:active { transform:translateY(1px); }
+.go[disabled], .go[aria-disabled="true"] { opacity:.45; cursor:default; }
 .go[disabled]:hover { background:var(--patina); border-color:var(--patina); color:var(--card); }
+.go[disabled]:active { transform:none; }
 /* 보조 버튼 — 되돌리기·내보내기·다시 하기. 테두리만 두르고 물러나 있는다. */
 .go.sec { background:transparent; color:var(--ink); border-color:var(--rule); }
 .go.sec:hover { color:var(--patina); border-color:var(--patina); background:var(--wash); }
+/* 고스트 — 표 도구줄·카드 모서리처럼 테두리를 하나 더 그으면 시끄러운 자리. */
+.go.ghost { background:transparent; color:var(--slate); border-color:transparent; }
+.go.ghost:hover { color:var(--patina); background:var(--wash); border-color:transparent; }
+/* 작게 — 표 줄 안·카드 머리. 누르는 자리는 28px 까지만 줄인다. */
+.go.sm { min-height:var(--btn-h-sm); padding:0 var(--sp-3); font-size:12.5px; }
+/* 되돌릴 수 없는 것 하나에만. 채워서 다른 버튼과 섞이지 않게 한다. */
+.go.danger { background:var(--copper); border-color:var(--copper); color:var(--card); }
+.go.danger:hover { background:var(--ink); border-color:var(--ink); color:var(--stone); }
 .msg { font:400 13px/1.6 var(--sans); max-width:64ch; }
 .msg.bad { color:var(--copper); } .msg.good { color:var(--patina); }
 pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px solid var(--rule);
   padding:11px 13px; max-height:210px; overflow:auto; white-space:pre-wrap; margin:14px 0 0; }
 /* 오류는 원인과 되돌릴 손잡이를 같이 낸다 — "실패했습니다"로 끝나지 않는다. */
-#err { color:var(--copper); font:400 13.5px/1.65 var(--sans); margin:28px 0 0;
-  padding:16px 18px; border:1px solid var(--copper); border-left-width:3px;
-  border-radius:6px; max-width:74ch; }
+/* 오류 상자는 배너와 같은 몸이다 — 다른 것은 왼쪽 선 색 하나다. 테두리를 통째로
+   산화동으로 두르면 화면에서 가장 시끄러운 상자가 되어 정작 다음 행동을 덮는다. */
+#err { color:var(--ink); font:400 13.5px/1.65 var(--sans); margin:28px 0 0;
+  padding:16px 18px; border:1px solid var(--rule); border-left:3px solid var(--copper);
+  border-radius:var(--r-md); background:var(--card); box-shadow:var(--shadow-1);
+  max-width:74ch; }
+#err b { color:var(--copper); font-weight:650; }
+#err .acts { margin-top:var(--sp-3); }
+
+/* ── hidden 은 마지막에 이긴다 ─────────────────────────────────────
+   `hidden` 은 브라우저가 `display:none` 으로 구현한다 — 그냥 UA 스타일시트의 한 줄이라
+   저자 규칙이면 무엇이든 이긴다. 부품이 `display:inline-flex` 를 갖는 순간(버튼·칩·
+   배지가 전부 그렇다) 같은 특정도에서 뒤에 온 쪽이 이겨, 감춰야 할 요소가 다시 선다.
+   실제로 설정 화면의 hidden 버튼 셋이 그렇게 살아났다.
+   속성 하나를 더 얹어 특정도를 올리고 규칙들 맨 뒤에 세운다 — !important 로 싸우지
+   않는다. `[class]` 는 "클래스가 있는 요소"라는 뜻일 뿐이라 무엇도 새로 감추지 않는다.
+
+   화면에서만이다. 종이에서는 숨은 화면을 **일부러** 편다(.view[hidden]{display:block})
+   — 미디어를 안 가르면 이 규칙이 그걸 이겨서, 열 화면짜리 보고서가 네 쪽으로 나온다.
+   실제로 그렇게 인쇄 검사가 FAIL 했다. */
+@media screen {
+  [hidden], [hidden][class] { display:none; }
+}
 </style>
 </head>
 <body>
@@ -706,6 +1060,16 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 <script>
 const VIEW_RENDER = [];
 function VIEW(id, render) { VIEW_RENDER.push({id, render}); }
+
+/* 뷰 파일이 쓰는 아주 작은 것 셋은 **뷰보다 먼저** 세운다. 뷰 스크립트는 문서
+   가운데(#content)에 있고 셸의 본 스크립트는 문서 끝에 있다 — 뷰가 자기 스크립트
+   맨 위에서 이걸 부르면 아직 없다. 실제로 그렇게 터졌다(`$ is not defined`).
+   최상위 const 는 스크립트끼리 같은 global lexical 환경을 쓰므로 아래에서 다시
+   선언하면 안 된다 — 정본은 여기 한 벌이다. */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num = n => (n ?? 0).toLocaleString("ko-KR");
 </script>
     <!--VIEWS-->
     <!-- 배포 전용 섹션(templates/sections/*.html) — 담긴 뷰는 여기가 아니라
@@ -717,10 +1081,8 @@ function VIEW(id, render) { VIEW_RENDER.push({id, render}); }
 
 <script>
 "use strict";
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? "").replace(/[&<>"']/g,
-  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const num = n => (n ?? 0).toLocaleString("ko-KR");
+// $ · esc · num 은 문서 가운데의 작은 스크립트가 이미 세웠다(뷰보다 먼저 있어야
+// 하기 때문이다). 여기서 다시 선언하면 같은 global lexical 환경에서 중복 선언이다.
 // 배포마다 같은 것을 다르게 부른다: 플러그인은 쉬운 우리말("손댈 것"), 호스팅판은
 // 마케터가 쓰는 서치콘솔 한국어 UI 표준어("개선 기회"). 화면이 **자기가 고른다**.
 //
@@ -744,6 +1106,30 @@ function applyWording(root) {
     el.removeAttribute("data-web");
   });
 }
+/* ── 메뉴 아이콘·묶음 ──────────────────────────────────────────────────
+   아이콘은 이름 옆의 눈금이다 — 열한 줄을 훑을 때 글자를 읽기 전에 자리를 잡아
+   준다. 정본은 화면 id 하나뿐이고 뷰 파일은 아이콘을 모른다: 뷰가 각자 그리면
+   열한 벌이 되고 그중 몇은 언젠가 낡는다(이 리포가 목록을 두 벌 만들고 겪은 일).
+   16px · 스트로크 1.5 · 색은 currentColor — 활성 줄에서 글자와 같이 선명해진다.
+   외부 아이콘 묶음은 안 쓴다(오프라인·사내망에서 화면이 반쪽이 된다). */
+const NAV_ICON = {
+  overview: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`,
+  analysis: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14h12"/><path d="M4.5 14V8.5"/><path d="M8 14V3"/><path d="M11.5 14V6"/></svg>`,
+  keywords: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/></svg>`,
+  rank: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5 6 7l3 3 5-5.5"/><path d="M10.5 4.5H14V8"/></svg>`,
+  ai: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 2.2 8.3 5.4 11.5 6.7 8.3 8 7 11.2 5.7 8 2.5 6.7 5.7 5.4z"/><path d="M12 10l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>`,
+  site: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 6.5V13a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 13V3A1.5 1.5 0 0 1 5 1.5h4z"/><path d="M9 1.5v4a1 1 0 0 0 1 1h2.5"/><path d="M6 10.2 7.4 11.6 10 9"/></svg>`,
+  backlinks: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.4 6.6a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1"/></svg>`,
+  competitors: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h8"/><path d="M8 2.5 10.5 5 8 7.5"/><path d="M13.5 11h-8"/><path d="M8 8.5 5.5 11 8 13.5"/></svg>`,
+  history: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.4 1.5"/></svg>`,
+  guide: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M10.6 5.4 9.2 9.2 5.4 10.6 6.8 6.8z"/></svg>`,
+  settings: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4M11 4.5h2.5"/><circle cx="8.8" cy="4.5" r="1.8"/><path d="M2.5 11.5h2.2M9 11.5h4.5"/><circle cx="6.9" cy="11.5" r="1.8"/></svg>`,
+};
+// 재는 화면과 살림하는 화면은 하는 일이 다르다 — 열한 줄을 한 덩어리로 두면
+// [기록]·[안내]·[설정]이 지표 화면과 같은 무게로 읽힌다.
+const NAV_MANAGE = new Set(["history", "guide", "settings"]);
+const NAV_GROUP = id => NAV_MANAGE.has(id) ? "관리" : "측정";
+
 // ── 셸: 화면 목록 · 메뉴 · 전환 ───────────────────────────────
 // 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이 window.__VIEWS__ 로
 // 실어 보낸다. 여기서 이름을 다시 나열하지 않는다: 말없이 어긋난 두 표가 예전에
@@ -751,7 +1137,7 @@ function applyWording(root) {
 // 뒤에 얹히는 층(호스팅 애드온)은 add*/drop 으로 덧붙이고 뺄 뿐이다.
 const SM = {
   views: (window.__VIEWS__ || []).map(v => ({
-    id: v.id, title: v.title,
+    id: v.id, title: v.title, sub: v.sub || "",
     sections: (v.sections || []).slice(), stages: (v.stages || []).slice()})),
   cur: "",
 
@@ -787,7 +1173,16 @@ const SM = {
   },
 
   show(id) {
-    if (this.at(id) < 0) return;
+    // 이 배포에 없는 화면으로 보내면 여태 조용히 아무 일도 안 일어났다 — 누른
+    // 사람에게는 버튼이 고장 난 것으로 읽힌다. 박제본에서 [설정]·[안내] 로 가는
+    // 링크가 정확히 그랬다. 왜 안 가는지 말한다. 첫 적재(cur 가 아직 빈 때)는
+    // 사용자가 누른 것이 아니므로 말하지 않는다.
+    if (this.at(id) < 0) {
+      if (this.cur && window.toast)
+        toast(window.__SNAPSHOT__ ? "이 보고서에는 없는 화면입니다."
+                                  : "이 배포에는 없는 화면입니다.");
+      return;
+    }
     this.cur = id;
     for (const v of this.views) {
       const box = $("view-" + v.id);
@@ -798,7 +1193,19 @@ const SM = {
       b.classList.toggle("on", on);
       b.setAttribute("aria-current", on ? "page" : "false");
     });
+    // 실행 배너는 화면에 매인 것이 아니라 **런에 매인 것**이다 — 화면을 바꿔도
+    // 따라온다. 고르는 것은 id 가 아니라 표식(data-vban)이다: id 를 여기 적으면
+    // 배너가 셋째로 늘어나는 날 그것만 조용히 안 따라온다.
+    const moving = document.querySelectorAll("[data-vban]");
+    if (moving.length) {
+      const slot = this.slot();
+      if (slot) moving.forEach(b => slot.appendChild(b));
+    }
     window.scrollTo(0, 0);
+    // 화면이 바뀌었다고 알린다. 여태 이 신호가 없어서, 뒤에 얹히는 층이 "지금 어느
+    // 화면인가"를 알려면 SM.cur 를 400ms 마다 들여다보는 수밖에 없었다.
+    // sm:views 는 상자를 다시 세울 때만 나므로 이 자리를 대신 못 한다.
+    document.dispatchEvent(new CustomEvent("sm:view", {detail: {view: id}}));
   },
 
   // 상자를 만들고 섹션을 제자리로 옮긴다. 여러 번 불려도 공짜다 — 애드온이
@@ -814,9 +1221,15 @@ const SM = {
         box.id = "view-" + v.id;
         box.className = "view";
         box.hidden = v.id !== this.cur;
-        box.innerHTML = '<div class="vh"><h1></h1><span class="sp"></span></div>';
+        box.innerHTML = '<div class="vh"><h1></h1><span class="sp"></span>'
+                      + '<p class="sub1" hidden></p></div><div class="vban"></div>';
         box.querySelector("h1").textContent = v.title;
+        // 한 줄 부제. 정본은 view-def 의 sub 이고, 화면 상태에 따라 달라지는 것은
+        // 뷰가 viewSub(id, 글) 로 덮는다. 빈 글이면 아예 안 그린다 — 빈 상자가
+        // 제목과 다음 행동 사이에 여백만 벌려 놓는 일이 없게. 여기서 한 번만
+        // 쓴다: sync() 는 여러 번 불리는데 매번 덮으면 뷰가 심은 말이 지워진다.
         c.appendChild(box);
+        viewSub(v.id, v.sub);
       }
       c.appendChild(box);                       // view-def 순서가 곧 화면 순서다
       for (const id of v.sections) {
@@ -829,10 +1242,24 @@ const SM = {
     const nav = $("nav");
     if (nav) {
       nav.innerHTML = "";
+      let grp = "";
       for (const v of this.views) {
+        // 묶음 이름은 화면이 바뀌는 자리에만 한 번 선다. 그 배포에 없는 화면은
+        // SM.drop 이 이미 뺐으므로 빈 묶음의 이름이 남을 일이 없다.
+        const g = NAV_GROUP(v.id);
+        if (g !== grp) {
+          grp = g;
+          const lab = document.createElement("span");
+          lab.className = "rl navgrp";
+          lab.textContent = g;
+          nav.appendChild(lab);
+        }
         const b = document.createElement("button");
         b.dataset.v = v.id;
-        b.textContent = v.title;
+        // 아이콘은 화면 id 로 고른다 — 뷰 파일이 자기 아이콘을 적지 않는다(적으면
+        // 열한 벌이 되고 그중 몇은 언젠가 낡는다). 모르는 id 면 글자만 선다.
+        b.innerHTML = (NAV_ICON[v.id] || "") + "<span></span>";
+        b.lastChild.textContent = v.title;
         b.onclick = () => { SM.touched = true; SM.show(v.id); };
         nav.appendChild(b);
       }
@@ -869,7 +1296,7 @@ SM.host = {
   // 이름 없는 명령은 doctor 가 되묻는다. siteArg() 는 레일의 선택이 정해진 뒤에야
   // 값을 내므로, 사이트가 바뀌면 sm:site 가 viewCmds() 를 다시 불러 새로 그린다.
   viewChip: st => `<button class="cmd vh-cmd" data-run="${esc(st)}" onclick="SM.host.copy(this)"
-      title="이 화면을 채우는 단계입니다. 눌러서 복사한 뒤 채팅에 붙여 넣으세요."
+      title="이 화면을 채우는 단계입니다. 눌러서 복사한 뒤 채팅에 붙여 넣습니다."
       >/capture ${esc(st)}${siteArg()}</button>`,
   copy(btn) { copyCmd(btn); },
   // 기회 카드의 '콘텐츠 작성' 버튼 — 로컬에는 없다(플러그인은 Claude 채팅으로 간다).
@@ -923,6 +1350,100 @@ document.addEventListener("sm:site", () => { viewCmds(); dimHead(); });
 
       박제본에는 서버가 없다: 버튼을 남기면 눌러도 아무 일이 안 일어나는 거짓말이
       되므로 .acts 를 떼고 문장만 남긴다. */
+/* ── 박제본에서 거짓말이 되는 것을 뗀다 ────────────────────────────────────
+   박제본(--export)에는 서버가 없다. 그런데 화면에는 누를 것과 "누르면 이렇게 된다"는
+   말이 그대로 남아 있었다 — 명령 칩은 복사되지만 칠 채팅이 없고, 띠 문장은 "연결하면
+   여기가 채워집니다"라고 약속한다. 둘 다 파일 하나를 남에게 보낸 사람에게는 거짓이다.
+
+   뗄 것 셋:
+     .acts  행동 묶음 (nextStep 이 이미 뗀다)
+     .cmd   명령 칩 — 칠 곳이 없다
+     .live  뷰가 감싼 **행동 전제 구절**. 감싸는 것은 뷰의 몫이고(그 화면이 자기
+            문장의 어디까지가 약속인지 안다), 떼는 것은 셸의 몫이다. 남는 문장만으로
+            "지금 상태"가 읽혀야 한다는 것이 이 계약의 조건이다.
+
+   문장 중간을 들어내면 앞뒤 공백이 둘로 붙는다 — 지운 자리의 공백도 같이 정리한다. */
+function deadSweep(root) {
+  if (!READONLY) return;
+  const box = root || document;
+  box.querySelectorAll(".cmd, .live, .acts").forEach(el => {
+    const prev = el.previousSibling;
+    el.remove();
+    if (prev && prev.nodeType === 3) prev.textContent = prev.textContent.replace(/\s+$/, " ");
+  });
+}
+window.deadSweep = deadSweep;
+
+/* 툴팁 자리잡기 — CSS 는 말풍선을 그릴 수 있어도 "화면 밖으로 나가면 안으로 밀어라"를
+   못 한다. (i) 위 가운데를 기본으로 잡고, 양 끝에서만 뷰포트 안으로 물린다.
+   위임으로 단다 — (i) 는 표를 다시 그릴 때마다 새로 생기므로 각자에게 걸 수 없다. */
+function tipPlace(el) {
+  const r = el.getBoundingClientRect();
+  const half = Math.min(280, innerWidth - 24) / 2;
+  const pad = 12;
+  el.style.setProperty("--tip-l",
+    Math.min(Math.max(r.left + r.width / 2, pad + half), innerWidth - pad - half) + "px");
+  el.style.setProperty("--tip-t", (r.top - 7) + "px");
+}
+for (const ev of ["pointerenter", "focusin"])
+  document.addEventListener(ev, e => {
+    const h = e.target.closest && e.target.closest(".hint[data-tip]");
+    if (h) tipPlace(h);
+  }, true);          // 캡처로 듣는다 — pointerenter 는 위로 안 올라온다
+
+/* 표가 옆으로 넘치는지는 그려 봐야 안다 — 열 수와 글자 길이가 자료마다 다르다.
+   넘칠 때만 오른쪽 페이드를 켜고, 끝까지 밀면 끈다(없는 것을 있다고 말하지 않는다).
+   메뉴의 navFade 와 같은 문법이다. */
+function tableFade(root) {
+  (root || document).querySelectorAll(".tw").forEach(w => {
+    const over = w.scrollWidth > w.clientWidth + 1;
+    w.classList.toggle("over", over);
+    w.classList.toggle("end", !over || w.scrollLeft + w.clientWidth >= w.scrollWidth - 1);
+    if (over && !w.dataset.fade) {
+      w.dataset.fade = "1";
+      w.addEventListener("scroll", () => w.classList.toggle("end",
+        w.scrollLeft + w.clientWidth >= w.scrollWidth - 1), {passive: true});
+    }
+  });
+}
+window.tableFade = tableFade;
+addEventListener("resize", () => tableFade());
+
+/* 화면 머리의 한 줄 부제 — "여기가 어디고 무엇을 보여주나"의 나머지 절반.
+   설명 산문을 본문에 풀어 놓는 대신 한 문장으로 여기 세운다. 빈 글이면 감춘다. */
+function viewSub(viewId, text) {
+  const box = $("view-" + viewId);
+  if (!box) return;
+  const el = box.querySelector(":scope > .vh > .sub1");
+  if (!el) return;
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+window.viewSub = viewSub;
+
+/* 배너 자리 — 화면 머리(.vh) 다음, 다음 행동 띠(.next) 앞. 폭은 .view 상자가 주므로
+   본문 폭 그대로다. 뒤에 얹히는 층(호스팅 애드온)이 실행 실패·진행 배너를 여기
+   넣는다 — 자리를 각자 정하면 화면 머리 위 y=0 에 폭 595px 짜리 상자가 뜨는 식으로
+   제각각이 된다. 채우면 보이고 비우면(:empty) 사라진다.
+   SM.slot() 은 **지금 보고 있는 화면**의 자리, viewBanner(id) 는 지정한 화면의 자리다. */
+window.viewBanner = viewId => {
+  const box = $("view-" + viewId);
+  if (!box) return null;
+  let s = box.querySelector(":scope > .vban");
+  if (!s) {
+    s = document.createElement("div");
+    s.className = "vban";
+    box.prepend(s);
+  }
+  // 부를 때마다 자리를 다시 본다. 한 번만 끼우면 안 된다: .vh 가 아직 안 선
+  // 순간에 만들어진 자리는 제목 **위**에 그대로 남아, 고쳤는데도 같은 증상이
+  // 그대로 재현된다(호스팅 담당이 자기 폴백에서 먼저 밟은 자리다).
+  const vh = box.querySelector(":scope > .vh");
+  if (vh && vh.nextElementSibling !== s) vh.insertAdjacentElement("afterend", s);
+  return s;
+};
+SM.slot = function () { return window.viewBanner(this.cur); };
+
 window.nextStep = (viewId, html) => {
   const box = $("view-" + viewId);
   if (!box) return;
@@ -931,14 +1452,50 @@ window.nextStep = (viewId, html) => {
   if (!el) {
     el = document.createElement("div");
     el.className = "next";
-    const vh = box.querySelector(".vh");
-    if (vh) vh.insertAdjacentElement("afterend", el); else box.prepend(el);
+    // 배너 자리가 있으면 그 **뒤**다 — 앞에 넣으면 실행 실패·진행 배너가 띠 아래로
+    // 밀려, 지금 무엇이 도는지가 다음에 누를 것보다 아래에서 읽힌다.
+    const anchor = box.querySelector(":scope > .vban") || box.querySelector(":scope > .vh");
+    if (anchor) anchor.insertAdjacentElement("afterend", el); else box.prepend(el);
   }
+  // 왼쪽 눈금은 CSS(::before)가 그린다 — 여기서 마크업에 끼우면 innerHTML 이
+  // 넘겨받은 글자와 달라져, 이 띠를 자기가 세웠는지 내용으로 판별하는 층
+  // (dash.html 의 paintSetNext)이 매번 "내 말이 아니다"라고 읽는다.
   el.innerHTML = html;
   if (READONLY) el.querySelectorAll(".acts").forEach(a => a.remove());
+  deadSweep(el);
   applyWording(el);
   dimHead(viewId);
   banSync();     // 이 화면에 띠가 섰으니 배너의 "지금 할 것" 줄은 물러난다
+};
+
+/* 띠를 "도는 중"으로 세운다 — 문장은 그대로 두고 상태만 바꾼다. 실행을 거는 층
+   (호스팅 애드온)이 켜고 끈다. 문장까지 여기서 갈아 끼우지 않는 이유는, 무엇이
+   도는 중인지는 그 층이 알고 이 함수는 모르기 때문이다. */
+window.nextRunning = (viewId, on) => {
+  const el = $("view-" + viewId) &&
+             $("view-" + viewId).querySelector(":scope > .next");
+  if (el) el.classList.toggle("run", !!on);
+};
+
+/* ── 토스트 ────────────────────────────────────────────────────────────
+   눌렀는데 화면이 그대로면 눌렸는지 알 수 없다. 복사됨·실행 시작·실패를 우하단에
+   3초 띄운다. 여러 개면 쌓인다. role="status" 라 화면 낭독기도 같이 읽는다 —
+   색만으로 성공과 실패를 가르지 않는다(글자가 정본이다).
+   kind: "ok" | "bad" | 없음(중립). */
+window.toast = (msg, kind) => {
+  if (!msg) return;
+  let box = $("toasts");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toasts";
+    document.body.appendChild(box);
+  }
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.setAttribute("role", "status");
+  t.textContent = msg;
+  box.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
 };
 
 /* 단계 하나를 실행하는 버튼. 배포가 모양을 고른다 — 로컬에는 누를 서버가 없고
@@ -946,10 +1503,16 @@ window.nextStep = (viewId, html) => {
    호스팅의 클릭은 애드온(dash.html)이 [data-run] 위임으로 잇는다. */
 // .sec 는 두 배포에서 같은 뜻이다(이 행동은 주요가 아니다) — 그래야 머리줄 톤을
 // 정하는 쪽이 배포마다 다른 규칙을 갖지 않는다.
-window.act = (stage, label, primary = true) => window.SM_HOSTED
-  ? `<button class="go${primary ? "" : " sec"}" data-run="${esc(stage)}">${esc(label)}</button>`
-  : `<button class="cmd${primary ? "" : " sec"}" data-run="${esc(stage)}" onclick="copyCmd(this)"
-       >/capture ${esc(stage)}${siteArg()}</button>`;
+// 라벨을 비우면 단계 용어표(stage.STAGE_LABELS)의 run 이 들어온다 — 뷰가 단계 이름을
+// 글자로 옮겨 적지 않고도 버튼을 낼 수 있는 자리다. 여태 빈 라벨은 호스팅에서
+// **글자 없는 버튼**으로 나갔다(로컬은 명령을 찍으니 티가 안 났다).
+window.act = (stage, label, primary = true) => {
+  const t = label || window.stageRun(stage);
+  return window.SM_HOSTED
+    ? `<button class="go${primary ? "" : " sec"}" data-run="${esc(stage)}">${esc(t)}</button>`
+    : `<button class="cmd${primary ? "" : " sec"}" data-run="${esc(stage)}" onclick="copyCmd(this)"
+         >/capture ${esc(stage)}${siteArg()}</button>`;
+};
 // 사이트가 여럿인 로컬에서 이름 없는 명령은 doctor 가 되묻는다. 그래서 칩은 이름을 싣는다.
 const siteArg = () => { const p = $("proj"); return p && p.value ? ` ${esc(p.value)}` : ""; };
 
@@ -962,26 +1525,86 @@ window.stageRun = id => {
   const s = (window.__STAGES__ || {})[id] || {};
   return s.run || s.t || id;
 };
+// 짝: 단계 **이름**. stageRun 이 "돌리는 버튼에 쓸 말"이라면 이쪽은 그 단계를
+// 문장 안에서 부르는 이름이다("색인 다시 확인" ↔ "내 페이지 색인"). run 으로
+// 물러서지 않는다 — 물러서면 문장 안에 버튼 문구가 들어앉는다.
+window.stageName = id => {
+  const s = (window.__STAGES__ || {})[id] || {};
+  return s.t || id;
+};
 
-// 띠가 이미 주요 버튼으로 들고 있는 단계면 머리줄의 같은 버튼은 물러난다 —
-// 한 화면에 주요 행동은 하나다. (로컬은 .vh-cmd, 호스팅은 애드온의 .sm-refresh.)
+/* ── 이 단계의 마지막 런이 실패했나 ────────────────────────────────────────
+   유료 단계는 키·잔액 때문에 통째로 실패하고도 화면에는 "아직 안 했음"으로만
+   보였다 — 자동 런 3회가 `errors=100` 만 남기고 죽었는데 화면이 아무 말도 안 한
+   사고가 그것이다(docs/adr/0002). 그 뒤로 [기록]이 판정을 갖고, [백링크]·[경쟁 분석]
+   이 그중 "실패했나" 한 줄씩을 축약 복사해 들고 있었다 — 사본 셋이다.
+
+   여기서 새 사실을 만들지 않는다. Brain 이 남긴 흔적만 읽는다: 중단은 db.run
+   컨텍스트가 예외를 만나면 notes 끝에 "중단: …" 로 붙여 둔 것이고, finished_at 이
+   없다는 건 그 컨텍스트조차 못 닫혔다는 뜻이다.
+
+   notes 를 정규식으로 되짚는 건 이 리포가 싫어하는 방식이다(사실은 페이로드에서
+   온다). 여기서만 타협하는 이유: notes 는 애초에 자유 문자열이고 수집기가 남긴
+   **원본**이지 렌더된 글자가 아니다. 되짚을 구조화된 칸이 runs 에 없다. 읽는 키는
+   errors/skipped 둘뿐이고, 그 칸이 생기면 이 두 줄이 먼저 지워질 자리다. ── */
+// 낱말 경계를 둔다 — 없으면 `ai_errors=0` 같은 다른 키의 꼬리를 errors 로 읽는다.
+const RE_ERRORS = /\berrors=(\d+)/;
+const RE_SKIPPED = /\bskipped=(\d+)/;
+window.runVerdict = r => {
+  if (!r) return null;
+  const n = String(r.notes || "");
+  if (n.includes("중단:"))
+    return {cls: "bad", label: "중단", why: "도중에 예외로 멈췄습니다."};
+  if (r.finished_at === null)
+    return {cls: "bad", label: "미완",
+            why: "끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
+  const e = +((n.match(RE_ERRORS) || [])[1] || 0);
+  const k = +((n.match(RE_SKIPPED) || [])[1] || 0);
+  if (e) return {cls: "bad", label: `오류 ${e}`, why: `${e}건이 실패했습니다.`};
+  if (k) return {cls: "skip", label: `건너뜀 ${k}`,
+                 why: `${k}건을 건너뛰었습니다 — 보통 한도·키 없음입니다.`};
+  return {cls: "ok", label: "완료", why: "끝까지 돌았고 오류가 없습니다."};
+};
+/* 실패한 런 한 건을 돌려준다(없으면 null). 실패는 runVerdict 의 bad 하나다 —
+   건너뜀은 실패가 아니다(한도·키 없음은 사용자가 고를 수 있는 상태다).
+   d 를 안 주면 마지막으로 그린 페이로드를 본다. 화면이 자기 render 안에서 부를
+   때는 그게 곧 자기가 받은 d 다(render 첫 줄이 LAST_D 를 세운다). */
+window.runFailed = (stage, d) => {
+  const runs = ((d || LAST_D || {}).runs) || [];
+  const r = runs.find(x => x.kind === stage);
+  const v = window.runVerdict(r);
+  return v && v.cls === "bad" ? r : null;
+};
+
+// 띠가 이미 들고 있는 단계면 머리줄의 같은 버튼은 물러난다 — 한 화면에 같은 명령이
+// 두 벌 같은 무게로 서지 않게. (로컬은 .vh-cmd, 호스팅은 애드온의 .sm-refresh.)
+// 물러나는 방식은 띠가 그 단계를 어느 무게로 들고 있느냐로 갈린다:
+//   주요(.taken)  띠가 채운 버튼으로 들고 있다 → 머리줄에서 뺀다.
+//   보조(.faded)  띠가 테두리 버튼으로 들고 있다 → 흐리게만 한다.
+// 보조까지 빼면 그 행동에 닿을 자리가 한 군데로 줄고, 그대로 두면 로컬에서
+// `/capture gaps beta-site` 가 머리줄과 띠에 똑같은 무게로 두 벌 선다.
 function dimHead(only) {
   for (const v of SM.views) {
     if (only && v.id !== only) continue;
     const box = $("view-" + v.id);
     if (!box) continue;
     const band = box.querySelector(":scope > .next");
-    // 띠가 **주요 버튼으로** 들고 있을 때만이다 — 보조(.sec)로 들고 있는 단계까지
-    // 빼면 그 행동에 닿을 자리가 화면에서 사라진다.
-    const taken = new Set([...(band ? band.querySelectorAll("[data-run]:not(.sec)") : [])]
+    const runs = [...(band ? band.querySelectorAll("[data-run]") : [])];
+    const at = sec => new Set(runs.filter(b => b.classList.contains("sec") === sec)
       .map(b => b.dataset.run));
+    // 한 단계를 띠가 주요로도 보조로도 들고 있으면 주요가 이긴다 — 뺀 것을 다시
+    // 흐리게 칠할 일이 없게 faded 에서 taken 을 덜어 낸다.
+    const taken = at(false), faded = at(true);
     // 호스팅의 머리줄 버튼(.sm-refresh)은 애드온이 같은 규칙으로 직접 칠한다 —
     // 두 곳이 같은 요소를 서로 끄고 켜지 않게 여기서는 로컬 칩만 본다.
     // [안내]의 단계 목록도 같은 화면이라 같은 규칙을 받는다. 표식은 한 벌이다:
     // data-run 은 "이 버튼을 누르면 이 단계가 돈다"는 뜻이고, 안내 칩에는 서버가
     // runnable 이라고 한 줄에만 붙는다(질문 0건이면 ai 단계의 명령이 /capture add 다).
-    box.querySelectorAll(".vh .vh-cmd[data-run], .stp [data-run]").forEach(b =>
-      b.classList.toggle("taken", taken.has(b.dataset.run)));
+    box.querySelectorAll(".vh .vh-cmd[data-run], .stp [data-run]").forEach(b => {
+      const on = taken.has(b.dataset.run);
+      b.classList.toggle("taken", on);
+      b.classList.toggle("faded", !on && faded.has(b.dataset.run));
+    });
   }
 }
 // 머리줄 버튼을 다는 시점은 이 파일이 못 정한다: 로컬은 viewCmds 가, 호스팅은
@@ -1132,9 +1755,9 @@ function deliverFrom(audit) {
 // 프롬프트 상자 — 접혀 있다가 펴면 본문이 보이고, 버튼 하나로 복사한다.
 const askBlock = c => {
   const t = fixPrompt(c);
-  return `<details class="ask"><summary>고칠 내용 요청문 만들기</summary>
+  return `<details class="ask"><summary>요청문 만들기</summary>
     <div class="pbox">
-      <div class="pb-h"><span>그대로 복사해 Claude·ChatGPT 에 붙여 넣으세요</span>
+      <div class="pb-h"><span>그대로 복사해 Claude·ChatGPT 에 붙여 넣습니다</span>
         <button type="button" onclick="copyPrompt(this)">복사</button></div>
       <textarea readonly rows="14" spellcheck="false">${esc(t)}</textarea>
     </div></details>`;
@@ -1145,7 +1768,7 @@ const askBlock = c => {
 window.copyPrompt = function (btn) {
   const ta = btn.closest(".pbox").querySelector("textarea");
   const done = ok => {
-    btn.textContent = ok ? "복사함" : "직접 복사하세요";
+    btn.textContent = ok ? "복사함" : "직접 선택";
     setTimeout(() => { btn.textContent = "복사"; }, 2000);
   };
   ta.select();
@@ -1213,8 +1836,12 @@ window.gaBadge = o => o && o.ga4_mult != null
        title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "—"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
        >GA4 ${o.ga4_mult > 1 ? "▲" : "▼"} ×${o.ga4_mult}</span>` : "";
 
+// 칩에 손을 얹으면 여태 `striking_distance` 같은 **내부 id** 가 떴다 — 사용자가
+// 본 적 없는 말이고, 라벨이 이미 한글인데 그 옆에 영문 id 를 들이미는 셈이었다.
+// 통칭표(kind_labels, 정본은 scoring.KINDS)의 한글 말로 답한다.
+window.kindTip = o => (window.KIND_LABELS || {})[o.kind] || o.label || "";
 window.oppWhy = o => !o ? "" : `<div class="oh">
-    <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
+    <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(window.kindTip(o))}"
       >${esc(o.label || o.kind)}</span>
     <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
     ${window.gaBadge(o)}
@@ -1577,10 +2204,19 @@ function oppDetail(o) {
       rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${ask}${oppRest(o)}</div>`;
 }
 
+/* 상태 바꾸기. 여태 응답을 안 봤다 — 403(토큰 만료)이 와도 load() 가 돌고 화면은
+   바뀐 것이 없는 채로 조용했다. 누른 사람에게는 버튼이 죽은 것으로 보인다.
+   실패하면 말하고 배지는 그대로 둔다(거짓 성공을 그리지 않는다). */
 async function setOpp(id, status) {
-  await post("/api/opp", {id, status});
+  const [ok, r] = await post("/api/opp", {id, status});
+  if (!ok) return toast((r && r.error) ||
+    "상태를 바꾸지 못했습니다. [새로고침] 뒤 다시 하면 됩니다.", "bad");
+  toast(OPP_DONE[status] || "바꿨습니다.", "ok");
   load();
 }
+// 누른 뒤에 무엇이 달라졌는지로 말한다 — "저장됨"은 무엇이 저장됐는지 말하지 않는다.
+const OPP_DONE = {acked: "확인했습니다.", done: "완료로 옮겼습니다.",
+                  dismissed: "목록에서 뺐습니다.", new: "새 기회로 되돌렸습니다."};
 
 // SERP 정수 순위의 Δ — 판정(flat 여부)은 서버(scoring.rank_delta)가 하고,
 // 여기서는 마크업만 만든다. 보합일 때 실제 값은 title로 남긴다.
@@ -1601,16 +2237,22 @@ const SORT_MIN = 8;
 const table = (heads, rows, empty) => {
   // 빈 표에도 다음 걸음이 있어야 한다 — 부르는 쪽이 empty 로 더 구체적인 말을
   // 주면 그쪽이 이긴다(그 화면이 무엇을 돌려야 채워지는지 안다).
+  // 이 기본 문장은 배포로 안 가른다: 무엇을 누르는지는 화면 머리의 칩·버튼이 이미
+  // 말하고, 여기서 "명령을 치세요 / 버튼을 누르세요"를 갈라 봐야 같은 말을 두 낱말로
+  // 부르는 것뿐이다. 갈라야 할 것은 낱말이 아니라 행동이고, 행동은 empty 가 갖는다.
   if (!rows.length)
-    return `<div class="empty">${empty || W(
-      "<b>아직 채울 자료가 없습니다</b><p>이 화면을 채우는 단계를 한 번 돌리면 표가 생깁니다.</p>",
-      "<b>아직 채울 자료가 없습니다</b><p>화면 위 실행 버튼을 누르면 수집이 시작되고, 끝나면 표가 생깁니다.</p>")}</div>`;
+    return `<div class="empty">${empty ||
+      "<b>아직 채울 자료가 없습니다</b><p>이 화면을 채우는 단계를 한 번 돌리면 표가 생깁니다.</p>"}</div>`;
   const long = rows.length >= SORT_MIN;
   const th = heads.map((h, i) => {
     const num = h.startsWith(">");
     const [name, why] = h.replace(/^>/, "").split("?");
     return `<th class="${num ? "num" : ""}"${long ? ` data-s="${i}"` : ""}>` +
-      `${esc(name)}${why ? `<i class="hint" title="${esc(why)}">i</i>` : ""}</th>`;
+      // 툴팁은 fixed 라 표 상자 안에서도 안 잘린다 — title 은 안 싣는다(실으면
+      // 말풍선과 브라우저 툴팁이 같은 말을 두 번 띄운다). 키보드로도 닿아야 하므로
+      // tabindex 를 주고 aria-label 로 같은 말을 갖는다.
+      `${esc(name)}${why ? `<span class="hint" tabindex="0" data-tip="${esc(why)}"` +
+        ` aria-label="${esc(why)}">i</span>` : ""}</th>`;
   }).join("");
   const t = `<table><thead><tr>${th}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
   return `<div class="tw${long ? " long" : ""}">${t}</div>`;
@@ -1687,7 +2329,7 @@ function renderGuide(d) {
         <div class="txt">
           <h3><span class="t">${esc(s.t)}</span>${s.done ? '<span class="ok">✓</span>' : ""}
             <span class="state">${esc(s.state)}</span>
-            ${i === here ? '<span class="now" data-web="권장 조치">지금 할 것</span>' : ""}</h3>
+            ${i === here ? '<span class="now">지금 할 것</span>' : ""}</h3>
           <p class="gain">${esc(s.gain)}</p>
         </div>
         <div>${s.done ? "" : SM.host.stepChip(s)}</div>
@@ -1700,12 +2342,11 @@ function renderGuide(d) {
   // 이름표는 .nxk 로 세우고 단계 이름이 문장의 주어가 된다.
   const nx = $("nx");
   if (nx) {
-    // 이름표는 W() 로 고른다 — data-web 은 applyWording 이 훑는 자리(#guide) 밖이라
-    // 여기서 쓰면 호스팅에서 속성이 안 벗겨진 채 남는다.
+    // 이름표는 한 벌이다 — 두 배포가 할 수 있는 일이 다른 게 아니라 낱말만 달랐다.
     nx.innerHTML = here === -1
       ? `<span class="nxk">한 바퀴 완주</span>` +
         `<span>${back}부터 다시 재면 그동안 고친 것이 숫자로 보입니다.</span>`
-      : `<span class="nxk">${W("지금 할 것", "권장 조치")}</span>` +
+      : `<span class="nxk">지금 할 것</span>` +
         `<span><b data-stage="${esc(steps[here].id)}">${esc(steps[here].t)}</b></span>` +
         // 명령은 칠 곳이 있는 배포에서만 낸다 — 웹에는 채팅이 없다. 애드온이
         // CSS 로 감추고 있었지만, 감춘 글자는 여전히 화면 글자다(복사·읽어주기).
@@ -1731,10 +2372,16 @@ function renderGuide(d) {
 }
 
 function copyCmd(el) {
-  navigator.clipboard?.writeText(el.textContent.trim()).then(() => {
+  // 칩 안의 글자만 바뀌면 눌렀는지 놓치기 쉽다 — 토스트로 한 번 더 말한다.
+  // 클립보드가 막힌 환경(권한 거부·비보안 출처)에서는 조용히 끝나면 안 된다:
+  // 무엇을 하면 되는지까지 말한다.
+  const p = navigator.clipboard && navigator.clipboard.writeText(el.textContent.trim());
+  if (!p) return window.toast("복사하지 못했습니다. 명령 글자를 직접 선택하면 복사됩니다.", "bad");
+  p.then(() => {
     el.classList.add("copied");
     setTimeout(() => el.classList.remove("copied"), 1400);
-  });
+    window.toast("명령을 복사했습니다. 채팅에 붙여 넣으면 실행됩니다.", "ok");
+  }, () => window.toast("복사하지 못했습니다. 명령 글자를 직접 선택하면 복사됩니다.", "bad"));
 }
 
 // 화면마다 날짜 축이 다르다 — GSC 스냅샷·순위·색인·기기·AI 는 수집 주기가 따로 돈다.
@@ -1769,11 +2416,15 @@ function renderDates(d) {
       `<div class="m">${esc($("meta").textContent)}${when ? " · " + esc(when) : ""}</div>`;
   }
 
+  // 날짜만 늘어놓으면 그게 무엇의 날짜인지 안 읽힌다("AI 인용 2026-09-03" 은
+  // 인용이 그날 있었다는 말처럼 보였다). 이름표 하나로 무엇의 날짜인지 못 박고,
+  // 축마다 배지 하나씩 세운다 — 이름은 본문 서체, 날짜만 등폭이다.
   const ax = AXES.filter(([, key]) => d[key])
-                 .map(([name, key]) => `<span>${esc(name)} ${esc(d[key])}</span>`);
+                 .map(([name, key]) =>
+                   `<span class="ax">${esc(name)}<em>${esc(d[key])}</em></span>`);
   $("axes").innerHTML = (past
     ? "<b>과거 시점을 보고 있습니다. 되돌린 것은 구글 실적뿐이고 아래 날짜는 최신입니다.</b>"
-    : "") + ax.join("");
+    : "") + (ax.length ? `<span class="k">마지막 수집</span>` + ax.join("") : "");
   $("axes").hidden = !ax.length && !past;
 }
 
@@ -1837,6 +2488,10 @@ function render(d) {
     try { (v.render || v)(d); }
     catch (e) { console.error(`화면 [${(v && v.id) || "?"}] 을 그리지 못했습니다`, e); }
   }
+  // 뷰가 방금 그린 자리에서도 박제본의 거짓말을 뗀다 — 뷰마다 READONLY 를 물어보게
+  // 하면 열한 곳이 각자 기억해야 하고, 그중 몇은 언젠가 잊는다(실제로 잊었다).
+  deadSweep($("content"));
+  tableFade($("content"));      // 방금 생긴 표가 넘치는지는 그린 다음에야 안다
 }
 
 // 서버 재요청 없이 다시 그린다 — 화면 렌더는 늘 페이로드 하나의 함수다. 호스팅
@@ -1848,6 +2503,13 @@ SM.repaint = () => { if (LAST_D) render(LAST_D); };
 async function loadProjects() {
   const names = await (await fetch("/api/projects")).json();
   const want = decodeURIComponent(location.hash.slice(1));
+  // 없는 사이트를 가리키는 주소로 들어오면 여태 조용히 첫 사이트가 열렸다 —
+  // 링크를 받은 사람은 자기가 부른 사이트를 보고 있다고 믿는다. 말하고, 주소를
+  // 치운다(안 치우면 hashchange 가 돌 때마다 같은 말을 다시 한다).
+  if (want && !names.includes(want)) {
+    if (window.toast) toast("등록되지 않은 사이트입니다. 첫 사이트를 엽니다.", "bad");
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   $("proj").innerHTML = names.map(n =>
     `<option${n === want ? " selected" : ""}>${esc(n)}</option>`).join("");
   $("proj").hidden = !names.length;      // 사이트가 없으면 빈 칸을 띄우지 않는다
@@ -1904,6 +2566,35 @@ function banSync() {
                (nx && !nx.hidden && nx.innerHTML.trim()));
 }
 
+/* 배너 항목을 "첫 문장 + 접은 나머지"로 가른다. 다섯 문장짜리 산문이 화면 맨 위에
+   서면 눈이 지표보다 그것을 먼저 읽는다.
+
+   정본은 서버가 갈라 주는 것이다(doctor.py 가 {msg, detail} 로 돌려주면 그대로 쓴다).
+   아직 안 갈라 온 항목은 여기서 합니다체 문장 경계로 자른다 — 세 문장 이상일 때만.
+   두 문장은 접을 이유가 없고, 접으면 여는 수고가 읽는 수고보다 크다. */
+function banSplit(s) {
+  // msg 는 항상 한 문장이고 그것만 읽어도 뜻이 선다 — doctor._selfcheck 가 못 박는다.
+  // detail 은 없으면 아예 안 온다(그때는 <details> 를 만들지 않는다).
+  return [(s && s.msg) || s || "", (s && s.detail) || ""];
+}
+
+/* 배너 항목의 행동. 두 갈래뿐이고 **둘 다 서버가 준다.**
+     cmd  로컬에만 온다 — 칠 채팅이 있는 배포다. 복사 칩.
+     go   {label, href} — 갈 곳이 있는 항목에만 온다. 없으면 버튼을 안 만든다.
+
+   셸이 doctor 의 id 를 보고 목적지를 고르지 않는다. 한 번 그렇게 짰다가 틀렸다:
+   호스팅에서 실제로 뜨는 배너는 구글 재연결인데 [설정] 화면에는 구글 연결 항목이
+   없어서, 눌러도 아무것도 못 하는 막다른 길로 보내고 있었다. 게다가 서버가 고칠
+   문제(부품 설치·Brain 손상)는 사용자가 갈 데 자체가 없다 — 거기 버튼을 붙이면
+   눌러도 아무 일이 없다. 어느 항목이 어디로 가는지는 서버만 안다. */
+function banAct(s, local) {
+  if (local && s.cmd)
+    return ` <button class="cmd" onclick="copyCmd(this)">${esc(s.cmd)}</button>`;
+  if (s.go && s.go.href)
+    return ` <a class="go sm sec" href="${esc(s.go.href)}">${esc(s.go.label)}</a>`;
+  return "";
+}
+
 async function loadDoctor() {
   try {
     // 화면이 보고 있는 사이트를 같이 보낸다 — 안 보내면 서버가 폴더로 추론하고,
@@ -1921,7 +2612,7 @@ async function loadDoctor() {
     let nxHtml = "";
     if (d.no_project) {
       nxHtml = `<span class="nxk">지금 할 것</span>` +
-        `<span>아래 <b>2. 첫 사이트</b> 칸을 채우고 [사이트 등록]을 누르세요.</span>`;
+        `<span>아래 <b>2. 첫 사이트</b> 칸을 채우면 여기서 시작됩니다.</span>`;
     } else if (d.guide) {
       const g = d.guide, gh = g.here, gs = g.steps;
       // 돌아갈 단계 이름을 여기 옮겨 적지 않는다 — 정본은 stage.py 가 실어 보낸 목록이다.
@@ -1929,7 +2620,7 @@ async function loadDoctor() {
       nxHtml = gh === -1
         ? `<span class="nxk">한 바퀴 완주</span>` +
           `<span>${back}부터 다시 재면 그동안 고친 것이 숫자로 보입니다.</span>`
-        : `<span class="nxk">${W("지금 할 것", "권장 조치")}</span>` +
+        : `<span class="nxk">지금 할 것</span>` +
           `<span><b>${esc(gs[gh].t)}</b></span>` +
           (local && gs[gh].cmd ? ` <code>${esc(gs[gh].cmd)}</code>` : "");
     }
@@ -1937,9 +2628,16 @@ async function loadDoctor() {
     // must 는 {msg, cmd} 다. 산문은 칩 없이도 혼자 읽히고, cmd 는 "그대로 복사해
     // 쓰는 것 한 줄"이라 안내 화면 단계와 같은 .cmd 칩으로 그린다(호스팅은 항상 없다).
     if (d.must && d.must.length)
-      h += `<ul class="must">${d.must.map(s => `<li>${esc(s.msg || s)}` +
-        (s.cmd ? ` <button class="cmd" onclick="copyCmd(this)">${esc(s.cmd)}</button>` : "") +
-        `</li>`).join("")}</ul>`;
+      // 명령 칩은 칠 곳이 있는 배포에서만 낸다. 서버가 이미 청중별로 갈라 보내지만
+      // (doctor.py 의 SEOMINER_HOSTED), 화면도 같은 선을 긋는다 — 이 한 줄이
+      // 없으면 서버 쪽 분기가 한 번 새는 날 호스팅 화면에 `/create profile` 이 뜬다.
+      h += `<ul class="must">${d.must.map(s => {
+        const [lead, detail] = banSplit(s);
+        // 행동은 접힌 곳 **밖**이다 — 접은 자리에 누를 것을 숨기지 않는다.
+        return `<li>${esc(lead)}` + banAct(s, local) +
+          (detail ? `<details><summary>자세히</summary><p>${esc(detail)}</p></details>` : "") +
+          `</li>`;
+      }).join("")}</ul>`;
     if (d.extra && d.extra.length)
       h += `<details><summary>더 켤 수 있는 기능 ${d.extra.length}개. 모두 선택입니다.</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
@@ -1959,45 +2657,58 @@ async function loadDoctor() {
     // 배너 실패는 치명이 아님 — 본문은 그대로 뜬다. 다만 조용히 넘어가면 상태 배지
     // 5개(#s-*)와 조건부 버튼 3개가 영영 안 채워지는데 그 사실이 화면 어디에도
     // 안 남는다 — 그러니 실패했다는 말과 되돌릴 손잡이는 남긴다.
-    $("docban").innerHTML = `<div class="verdict msg bad">준비 상태를 확인하지 못했습니다.` +
-      ` 서버에서 응답이 오지 않았습니다. [새로고침]을 누르면 다시 시도합니다.</div>`;
+    // "다시 시도합니다"라고 글로 적어 두면 어디를 누르라는 말인지 화면이 안 말한다 —
+    // 누를 것을 그 자리에 둔다.
+    $("docban").className = "bad";
+    $("docban").innerHTML = `<div class="verdict">준비 상태를 확인하지 못했습니다</div>` +
+      `<p class="nx">서버가 응답하지 않았습니다. 다시 시도하면 대개 붙습니다.</p>` +
+      `<div class="acts"><button class="go sec" onclick="loadDoctor()">다시 시도</button></div>`;
     $("docban").hidden = false;
   }
 }
 
 // ── 설정 화면 ──────────────────────────────────────────────
+// 준비 상태는 배지다 — 버튼처럼 생긴 상태 칸이 이 화면의 원래 문제였다.
+// ok=됐다 / warn=해야 한다 / muted=안 해도 된다.
 const mark = (id, done, todo) => $(id).outerHTML =
-  `<span id="${id}" class="stat ${done ? "ok" : "todo"}">${done ? "완료" : todo}</span>`;
+  `<span id="${id}" class="badge ${done ? "ok" : "warn"}">${done ? "완료" : todo}</span>`;
+
+/* 근거 칸 한 벌 — 한 문장으로 지금 상태를 말하고, 나머지는 접는다. 여태 이 칸이
+   네댓 문장짜리 산문이라 설정 화면이 읽을 것 반 페이지로 시작했다.
+   자리(settings.html)는 <p class="why"> 로 서 있지만 <details> 는 <p> 안에 못 든다 —
+   #s-* 와 같은 방식으로 상자째 갈아 끼운다. 여러 번 불려도 공짜다. */
+const why = (id, lead, moreLabel, more) => $(id).outerHTML =
+  `<div class="why" id="${id}"><p>${lead}</p>` +
+  (more ? `<details><summary>${moreLabel}</summary><p>${more}</p></details>` : "") +
+  `</div>`;
 
 function renderGsc(d) {
   const st = d.gsc_state || (d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none"), sa = d.gsc_mode === "service_account";
-  $("s-gsc").outerHTML = `<span id="s-gsc" class="stat ${st === "connected" ? "ok" : "todo"}">` +
+  $("s-gsc").outerHTML = `<span id="s-gsc" class="badge ${st === "connected" ? "ok" : "warn"}">` +
     (st === "connected" ? "연결됨" : st === "pending" ? "로그인 대기" : "인증 없음") + `</span>`;
-  $("why-gsc").innerHTML = st === "connected"
-    ? (sa
-      ? `<b>연결됐습니다.</b> 서비스 계정으로 사람 없이 수집합니다. 로그인 단계가
-         없는 대신, 서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한
-         속성만 읽습니다. 확인은 <code>connect_gsc.py --status</code> 입니다.`
-      : `<b>연결됐습니다.</b> 구글 로그인이 끝났고 토큰을 보관 중입니다. 다시
-         로그인하실 일은 없습니다. 벌크 수집(<code>/capture gsc</code>)과 Claude 즉석
-         조회가 이 토큰 한 벌을 같이 씁니다. 내 계정이 소유한 속성에는 따로
-         권한을 주지 않아도 됩니다.`)
-    : st === "pending"
-    ? `<b>남은 것은 구글 로그인 한 번뿐입니다.</b> 무료이고 30초 걸립니다. 인증
-       수단은 이미 깔려 있어서 <b>구글 클라우드 콘솔에 가실 일이 없습니다</b>.<br>
-       아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번 열립니다. 채팅에
-       <code>GSC 로그인해줘</code> 라고 해도 같습니다. 로그인이 끝나면 이 칸이 저절로
-       <b>[연결됨]</b>으로 바뀝니다.`
+  // 배지가 이미 "연결됨"이라고 말한다 — 부제가 그 말을 되풀이하지 않는다.
+  if (st === "connected" && sa)
+    why("why-gsc", "서비스 계정으로 사람 없이 수집합니다.", "읽는 범위와 확인 방법",
+      `서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한 속성만 읽습니다.
+       확인은 <code>connect_gsc.py --status</code> 입니다.`);
+  else if (st === "connected")
+    why("why-gsc", "구글 로그인이 끝났고 다시 하실 일은 없습니다.", "이 토큰을 무엇이 쓰나",
+      `벌크 수집(<code>/capture gsc</code>)과 Claude 즉석 조회가 토큰 한 벌을 같이 씁니다.
+       내 계정이 소유한 속성에는 따로 권한을 주지 않아도 됩니다.`);
+  else if (st === "pending")
+    why("why-gsc", "남은 것은 구글 로그인 한 번뿐입니다.", "로그인하면 무슨 일이 일어나나",
+      `무료이고 30초 걸립니다. 아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번
+       열립니다. 채팅에 <code>GSC 로그인해줘</code> 라고 해도 같습니다. 끝나면 이 칸이
+       저절로 <b>[연결됨]</b>으로 바뀝니다. 구글 클라우드 콘솔에 가실 일은 없습니다.`
       + (d.gsc_bundled
-        ? `<br>이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다. <b>[고급]</b> 다음
+        ? ` 이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다. <b>[고급]</b> 다음
            <b>[이동]</b>을 누르면 됩니다. 플러그인이 동봉한 클라이언트라 정상입니다.
-           경고 없이 쓰시려면 아래 [내 OAuth 클라이언트 쓰기]를 펴세요.`
-        : "")
-    : `<b>구글 인증 수단이 없습니다.</b> 로그인에 쓸 OAuth 클라이언트 파일이 이
-       배포에서 빠졌습니다. 아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을
-       넣거나, 콘솔에서 받은 JSON 을 다운로드 폴더에 두고 [받은 인증 파일
-       가져오기]를 누르세요. 클릭과 노출이 이 도구의 재료라 연결 없이는 측정이
-       시작되지 않습니다.`;
+           경고 없이 쓰려면 아래 [내 OAuth 클라이언트 쓰기]를 펴면 됩니다.`
+        : ""));
+  else
+    why("why-gsc", "연결 없이는 측정이 시작되지 않습니다.", "인증 수단을 넣는 두 가지 길",
+      `아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을 넣습니다. 또는 콘솔에서 받은
+       JSON 을 다운로드 폴더에 두고 [받은 인증 파일 가져오기]를 누르면 됩니다.`);
   $("btn-gsclogin").hidden = st !== "pending";
   // 인증이 아예 없으면 여기가 유일한 출구라 펴 준다. **닫지는 않는다** —
   // 저장 직후 loadDoctor가 다시 그리면서 방금 편 칸을 접으면 결과 문구까지 같이 숨는다.
@@ -2006,25 +2717,33 @@ function renderGsc(d) {
 
 function renderSetup(d) {
   mark("s-deps", d.core_ok, "설치 필요");
-  mark("s-proj", !d.no_project, "아직 없음");
+  // 「완료」는 이 칸에서 뜻이 얕다 — 사이트는 하나 등록하고 끝나는 것이 아니라
+  // 늘어나는 것이다. 몇 개인지가 그 자리에서 알고 싶은 값이다.
+  const np = (d.projects || []).length;
+  $("s-proj").outerHTML = d.no_project
+    ? `<span id="s-proj" class="badge warn">아직 없음</span>`
+    : `<span id="s-proj" class="badge ok">${np ? `${np}개 등록` : "완료"}</span>`;
   renderGsc(d);
+  // 안 해도 되는 것은 경고색으로 찍지 않는다 — 찍으면 할 일이 된다.
   $("s-keys").outerHTML = d.nkeys
-    ? `<span id="s-keys" class="stat ok">${d.nkeys}개 저장됨</span>`
-    : `<span id="s-keys" class="stat opt">없어도 됨</span>`;
+    ? `<span id="s-keys" class="badge ok">${d.nkeys}개 저장됨</span>`
+    : `<span id="s-keys" class="badge muted">없어도 됨</span>`;
   // 마케팅 스킬 칸 — doctor가 빠진 게 있으면 보일 버튼만 켠다. show_setup 과 따로
   // 놀기 때문에 패널이 접혀 있어도 doctor 진단 결과로 표시가 결정된다.
   $("s-skills").outerHTML = d.show_skills_btn
-    ? `<span id="s-skills" class="stat todo">일부 누락</span>`
-    : `<span id="s-skills" class="stat ok">모두 설치됨</span>`;
+    ? `<span id="s-skills" class="badge warn">일부 누락</span>`
+    : `<span id="s-skills" class="badge ok">모두 설치됨</span>`;
   $("btn-skills").hidden = !d.show_skills_btn;
-  $("why-skills").innerHTML = d.show_skills_btn
-    ? `<b>빠진 마케팅 스킬을 대신 깔아 드립니다.</b> 글의 각도와 진단을 맡는 무료
-       스킬 묶음입니다. 끝나면 <b>Claude Code 를 한 번 재시작</b>해야 그 스킬이 화면에
-       뜹니다. 없어도 측정과 수집은 그대로 돌고, 글 품질과 진단 깊이만 얕아집니다.`
-    : `글의 각도와 진단을 맡는 스킬 묶음이 모두 설치돼 있습니다. 새로 추가하려면
-       Claude Code 를 재시작하세요.`;
+  if (d.show_skills_btn)
+    why("why-skills", "빠진 마케팅 스킬을 대신 깔아 드립니다.", "무엇이 달라지나",
+      `글의 각도와 진단을 맡는 무료 스킬 묶음입니다. 끝나면 <b>Claude Code 를 한 번
+       재시작</b>해야 그 스킬이 화면에 뜹니다. 없어도 측정과 수집은 그대로 돌고,
+       글 품질과 진단 깊이만 얕아집니다.`);
+  else
+    why("why-skills", "글의 각도와 진단을 맡는 스킬이 모두 깔려 있습니다.", "나중에 더 깔려면",
+      `새로 추가한 스킬은 <b>Claude Code 를 한 번 재시작</b>해야 화면에 뜹니다.`);
   $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
-  $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치하기";
+  $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치";
   setupPrimary(d);
   // 준비물이 덜 됐으면 거기서부터 — 측정 자체가 안 도는 상태다.
   // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
@@ -2061,8 +2780,12 @@ function renderCarry(d) {
   if (!sel) return;
   const names = d.projects || [];
   sel.innerHTML = names.map(p => `<option>${esc(p)}</option>`).join("");
+  // 기본값은 **지금 보고 있는 사이트**다. 여태 목록 첫 줄이 잡혀서, alpha-site 를
+  // 보다가 6단계로 내려오면 beta-site 를 실어 보내겠다고 서 있었다.
+  const cur = ($("proj") || {}).value;
+  sel.value = names.includes(cur) ? cur : (names[0] || "");
   sel.hidden = $("btn-carry").hidden = !names.length;
-  if (!names.length) say("m-carry", "실어 보낼 사이트가 없습니다. 위 2번에서 먼저 등록하세요.", false);
+  if (!names.length) say("m-carry", "실어 보낼 사이트가 없습니다. 위 2번에서 사이트를 먼저 등록합니다.", false);
 }
 
 $("btn-carry").addEventListener("click", async () => {
@@ -2072,13 +2795,13 @@ $("btn-carry").addEventListener("click", async () => {
     encodeURIComponent($("c-proj").value))).json();
   if (!r.ok) return say("m-carry", r.error, false);
   a.href = r.url;
-  a.textContent = "웹에서 이 사이트 등록하기 →";
+  a.textContent = "웹에서 등록";
   a.hidden = false;
   try {
     await navigator.clipboard.writeText(r.url);
     say("m-carry", "링크를 복사했습니다. 다른 기기에 붙여 넣어도 열립니다.", true);
   } catch (e) {
-    say("m-carry", "복사 권한이 없는 브라우저입니다. 아래 링크를 직접 여세요.", true);
+    say("m-carry", "복사 권한이 없는 브라우저입니다. 아래 링크를 눌러 바로 열 수 있습니다.", true);
   }
 });
 
@@ -2100,7 +2823,7 @@ async function prefillProject() {
       if (p[key] && (!$(id).value || $(id).value === "ko-KR" && key === "locale"))
         { $(id).value = join(p[key]); used = true; }
     if (p.type && $("p-type")) $("p-type").value = p.type;
-    if (used) say("m-proj", "이 폴더의 저장소를 읽어 미리 채웠습니다. 고칠 곳만 고치고 [사이트 등록]을 누르세요.", true);
+    if (used) say("m-proj", "이 폴더의 저장소를 읽어 미리 채웠습니다. 고칠 곳만 고치면 됩니다.", true);
   } catch (e) { /* 추론 실패는 빈 폼과 같다 */ }
 }
 
@@ -2166,7 +2889,7 @@ $("btn-gsclogin").addEventListener("click", async () => {
     say("m-gsc", "구글 수집용 부품을 설치하지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", false);
     return showLog(dep.log);
   }
-  say("m-gsc", "브라우저 창이 열립니다. 구글 계정으로 로그인하세요. " +
+  say("m-gsc", "브라우저 창이 열립니다. 구글 계정으로 로그인하면 끝납니다. " +
                "\"확인되지 않은 앱\" 경고가 뜨면 [고급] 다음 [이동] 입니다.", true);
   const [, r] = await post("/api/setup/run", {action: "gsc_login"});
   busy("btn-gsclogin", "m-gsc", false);
@@ -2185,8 +2908,10 @@ $("btn-ocsave").addEventListener("click", async () => {
   busy("btn-ocsave", "m-oc", false);
   if (!ok) return say("m-oc", r.error, false);
   $("oc-id").value = $("oc-secret").value = "";
-  say("m-oc", `저장했습니다 (${r.client_id}) → ${r.path}. 클라이언트가 바뀌었으니 ` +
-              `위 [구글 로그인 열기]로 한 번 더 로그인하세요.`, true);
+  // 저장됐다는 사실은 토스트가 말하고, 칸에는 **아직 남은 일**만 남긴다 — 3초 뒤
+  // 사라지는 자리에 다음 걸음을 적으면 그 걸음이 같이 사라진다.
+  toast("저장했습니다.", "ok");
+  say("m-oc", `클라이언트가 바뀌었습니다. 위 [구글 로그인 열기]로 한 번 더 로그인합니다.`, true);
   loadDoctor();
 });
 
@@ -2200,7 +2925,9 @@ $("btn-keys").addEventListener("click", async () => {
   const [, r] = await post("/api/setup/keys", vals);
   busy("btn-keys", "m-keys", false);
   for (const [id] of f) $(id).value = "";
-  say("m-keys", `저장했습니다 → ${r.path}`, true);
+  // 남은 일이 없다 — 칸을 비우고 토스트만 낸다(배지가 몇 개 저장됐는지 다시 말한다).
+  $("m-keys").textContent = "";
+  toast("저장했습니다.", "ok");
   loadDoctor();
 });
 
@@ -2213,8 +2940,11 @@ $("btn-proj").addEventListener("click", async () => {
     competitors_manual: $("p-comp").value, tools: $("p-tools").value});
   busy("btn-proj", "m-proj", false);
   if (!ok) return say("m-proj", r.error, false);
-  say("m-proj", `${r.name} 사이트를 등록했습니다. 남은 것은 AI에 물어볼 질문뿐입니다. ` +
-                `채팅에 /capture add ${r.name} 를 치면 만들어 드립니다.`, true);
+  // 이 화면은 900ms 뒤 [개요]로 넘어간다 — 칸에 적은 말은 그때 같이 사라진다.
+  // 화면을 넘어가서도 남는 자리는 토스트뿐이다. 다음 걸음은 [개요]의 배너가 말한다.
+  // busy() 가 써 둔 "실행 중입니다"는 손으로 지운다 — say() 를 안 부르면 안 지워진다.
+  $("m-proj").textContent = "";
+  toast(`${r.name} 사이트를 등록했습니다.`, "ok");
   loadDoctor();
   loadProjects().then(n => { if (n) load(); });
   // 등록이 끝나면 방금 만든 사이트의 개요로 간다.

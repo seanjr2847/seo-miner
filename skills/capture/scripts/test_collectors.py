@@ -1688,7 +1688,11 @@ def test_doctor_never_says_the_same_thing_twice():
         for k in orig:
             os.environ.pop(k, None)          # 키 0개 — 두 항목이 다 잠긴 상태
         d = doctor.diagnose()
-        assert {"AI 노출 확인", "순위 추적"} <= {c["name"] for c in d["locked"]}, d["locked"]
+        # 이름을 여기 옮겨 적지 않는다 — 정본은 명부다. 문구가 바뀌었다고 검사가
+        # 깨지면 안 되고, 그 두 항목이 잠겼는지는 id 로 물어야 한다.
+        paid = {c["name"] for c in doctor.CAPABILITIES if c["id"] in ("ai", "rank")}
+        assert len(paid) == 2, doctor.CAPABILITIES
+        assert paid <= {c["name"] for c in d["locked"]}, d["locked"]
         for marker in ("openrouter.ai", "dataforseo.com", "serper.dev", "pip install google-"):
             assert not any(marker in s for s in d["later"]), \
                 f"{marker} 안내가 later 에도 있다(locked 와 두 벌): {d['later']}"

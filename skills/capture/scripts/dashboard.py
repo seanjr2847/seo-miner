@@ -189,7 +189,9 @@ def export(project: str, actions_file: str | None = None) -> Path:
         "<!--SNAPSHOT-->", f"<script>window.__SNAPSHOT__={blob}</script>", 1)
     # 박제본은 남에게 보내는 파일이라 열 때 바깥을 부르지 않는다 — 웹폰트 <link> 를
     # 뗀다(셸의 서체 스택이 시스템 폰트로 조용히 떨어진다). test_setup_api 가 지킨다.
-    html = re.sub(r'[ \t]*<link[^>]*https?://[^>]*>\n?', "", html)
+    # href 가 http 로 시작하는 것만 — favicon 의 data: URL 안에 svg xmlns(http://…)가
+    # 있어서 그걸로 잡으면 아이콘 태그가 반쯤 잘려 글자로 새어 나온다.
+    html = re.sub(r'[ \t]*<link[^>]*href="https?://[^>]*>\n?', "", html)
     out = db.CAPTURE_HOME / "reports" / project / f"{date.today()}.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

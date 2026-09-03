@@ -182,7 +182,10 @@ def test_seam_04_site_list_hash_link():
         return
     shell, app_f = ctx["shell"], ctx["app_f"]
     if app_f.exists():
-        assert '<li><a href="/d#' in app_f.read_text("utf-8"), \
+        # 줄 전체가 <a> 이던 시절의 literal(`<li><a href="/d#`)로는 못 본다 — 줄 안에
+        # 상태 배지와 "대시보드 열기" 버튼이 따로 서면서 링크가 <li> 안쪽으로 들어갔다.
+        # 못 박는 것은 그때나 지금이나 하나다: 그 링크가 hash 를 싣는가.
+        assert re.search(r'<li class=[^>]*>.*?href="/d#', app_f.read_text("utf-8"), re.S), \
             "사이트 목록 링크가 hash 없이 /d 로만 간다 — 무엇을 눌러도 첫 사이트가 열린다"
         assert "location.hash.slice(1)" in shell, \
             "대시보드가 hash 로 사이트를 고르지 않는다 — 링크가 실어 보낸 이름이 버려진다"

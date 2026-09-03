@@ -28,7 +28,10 @@
 @media (prefers-reduced-motion: no-preference) {
   .cp-bar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
+/* 곁줄 한 벌 — 막대 밑의 설명과 카드 안의 범례가 같은 무게로 읽혀야 한다.
+   .left 는 격자 왼쪽 칸에 붙는 곁줄이다(인라인 style 로 박아 두던 자리). */
 .cp-meta { font:400 11.5px/1.5 var(--sans); color:var(--slate); }
+.cp-meta.left { grid-column:1; }
 /* 우리가 아예 없는 것(missing)과 밀리는 것(weak)은 손대는 방법이 다르다 —
    전자는 새로 쓰는 일, 후자는 있는 걸 고치는 일. 배지가 그 둘을 가른다. */
 .cp-kind { font:var(--micro); padding:3px 7px; border-radius:2px; white-space:nowrap; }
@@ -38,18 +41,24 @@
 </style>
 
 <section id="cp-share">
-  <div class="eyebrow" id="cp-share-eyebrow">유기 검색 규모</div>
-  <h2 data-web="경쟁사 트래픽 점유">누가 이 주제를 먹고 있나</h2>
-  <p class="sub" id="cp-share-sub"></p>
-  <div id="cp-shares"></div>
+  <div class="sh">
+    <p class="eyebrow" id="cp-share-eyebrow">유기 검색</p>
+    <h2>유기 검색 몫</h2>
+    <p class="sub" id="cp-share-sub"></p>
+  </div>
+  <!-- 첫 그림은 빈 상자가 아니라 채워질 자리의 모양이다 — VIEW() 가 덮는다. -->
+  <div id="cp-shares"><span class="skel"></span><span class="skel line2"></span></div>
 </section>
 
 <section id="cp-gap">
-  <div class="eyebrow" id="cp-gap-eyebrow">키워드 격차</div>
-  <h2 data-web="키워드 격차">경쟁사는 잡았고 우리는 놓친 것</h2>
-  <p class="sub" id="cp-gap-sub"></p>
+  <div class="sh">
+    <p class="eyebrow" id="cp-gap-eyebrow">키워드 격차</p>
+    <h2>경쟁사만 잡은 검색어</h2>
+    <p class="sub" id="cp-gap-sub"></p>
+    <div class="tools" id="cp-gap-tools"></div>
+  </div>
   <div id="cp-chips" class="oppchips"></div>
-  <div id="cp-gaps"></div>
+  <div id="cp-gaps"><span class="skel"></span><span class="skel line2"></span></div>
 </section>
 
 <script>
@@ -59,6 +68,7 @@
 
 let CP_D = null;
 let CP_KIND = "";                 // "" = 전체. 칩이 거른다.
+let CP_TOP = "";                  // 격차가 가장 큰 검색어 — 띠의 주요 행동이 여는 줄
 
 const CP_KINDS = [
   ["missing", "우리는 없음", "그 검색어에서 우리는 순위가 아예 없습니다. 새로 써야 하는 것"],
@@ -66,21 +76,33 @@ const CP_KINDS = [
   ["shared",  "우리가 위",   "같거나 우리가 위입니다. 지킬 자리"],
 ];
 
+/* 단계 이름·설명은 stage.STAGE_LABELS 한 벌이고 조립이 window.__STAGES__ 로 실어
+   보낸다. t 는 단계 이름(버튼 라벨), gain 은 "무엇을 얻고 무엇이 드는가" 한 문단인데
+   유료 키 문장이 배포마다 갈린다(로컬은 DataForSEO Labs 키, 호스팅은 서버가 냄) —
+   그 갈림도 파이썬이 이미 했다. 그래서 빈 상태는 W() 를 쓰지 않는다. */
+const CP_name = s => ((window.__STAGES__ || {})[s] || {}).t || "";
+const CP_gain = s => ((window.__STAGES__ || {})[s] || {}).gain || "";
+
+/* 부제는 한 문장이다 — 두 문장째부터는 이 (i) 안으로 접는다. */
+const CP_tip = t =>
+  `<span class="hint" tabindex="0" data-tip="${esc(t)}" title="${esc(t)}"
+     aria-label="${esc(t)}">i</span>`;
+
 function CP_shares(d) {
   const rows = d.comp_metrics || [];
   if (!rows.length) return "";
   const max = rows.reduce((m, r) => Math.max(m, r.etv || 0), 0) || 1;
-  return rows.map(r => {
+  return `<div class="card">` + rows.map(r => {
     const w = Math.round((r.etv || 0) / max * 100);
     return `<div class="cp-row${r.is_self ? " me" : ""}">
       <div class="cp-dom">${esc(r.domain)}${r.is_self ? " ← 우리" : ""}</div>
       <div class="cp-n">${r.share == null ? "—" : Math.round(r.share * 100) + "%"}</div>
-      <div class="cp-meta" style="grid-column:1">순위를 가진 검색어 ${num(r.keywords)}개` +
+      <div class="cp-meta left">순위를 가진 검색어 ${num(r.keywords)}개` +
       `${r.top10 == null ? "" : ` · 1페이지 ${num(r.top10)}개`}</div>
       <div class="cp-meta">${r.etv == null ? "" : "추정 트래픽 " + num(Math.round(r.etv))}</div>
       <span class="cp-bar"><i style="width:${w}%"></i></span>
     </div>`;
-  }).join("");
+  }).join("") + `</div>`;
 }
 
 /* 점수가 없는 줄 — 왜 없는지를 화면이 말한다. 빈칸으로 두면 "고장인가"가 된다.
@@ -100,7 +122,9 @@ const CP_rank = r => { const o = oppOf(r.keyword); return Number.isFinite(o && o
 /* 갭 한 줄 = 기회 한 건. 여태 6열 텍스트라 무엇부터 손댈지도, 왜인지도, 했다는
    표시도 없었고 유일한 출구가 CSV 였다. 점수·근거·행동·펼침은 전부 셸의 한 벌이고
    (oppScore/oppMeter/oppWhy/oppActs/oppPanel) 이 화면은 대상 문자열(검색어)만 댄다.
-   할 일 목록은 PLAY.content_gap 이 갖는다 — 여기 옮겨 적지 않는다. */
+   할 일 목록은 PLAY.content_gap 이 갖는다 — 여기 옮겨 적지 않는다.
+   data-key 는 띠의 주요 행동이 이 줄을 도로 찾는 손잡이다 — 검색어를 onclick 에
+   실으면 따옴표 하나에 깨지므로, 찾는 쪽이 dataset 으로 맞춘다. */
 function CP_card(r) {
   const o = oppOf(r.keyword);
   // 카드의 주인공은 검색어다 — 배지와 출처는 그 검색어를 설명하는 곁줄이라 밑에 둔다.
@@ -116,7 +140,8 @@ function CP_card(r) {
         o || r.volume == null ? "" : ` · 월 검색량 ${num(r.volume)}`}</span>
     </div>`;
   // 점수가 없어도 펼친다 — BLK_row 와 같은 어투: <details> 는 늘, 안에서만 갈린다.
-  return `<details class="opp"${o ? ` data-opp="${o.id}"` : ""}><summary>${
+  return `<details class="opp" data-key="${esc(r.keyword)}"${
+      o ? ` data-opp="${o.id}"` : ""}><summary>${
       o ? oppScore(o) : `<div class="score"></div>`}<div>${head}
       ${o ? oppMeter(o) + oppWhy(o) + oppActs(o) : ""}</div></summary>
       ${o ? oppPanel(o) : `<div class="why">${CP_noOpp(r)}</div>`}</details>`;
@@ -126,15 +151,19 @@ function CP_gapRows(d) {
   const all = d.kw_gap || [];
   const rows = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all.slice())
     .sort((a, b) => CP_rank(b) - CP_rank(a));
-  return `<div class="tools"><span class="n">${rows.length}개</span><span class="sp"></span>
-      <button class="go sec" onclick="CP_csv()">CSV 내보내기</button></div>` +
-    (rows.length ? rows.map(CP_card).join("")
-      : `<div class="empty"><b>${CP_KIND ? "이 갈래에는 아직 없습니다."
-          : "지금은 지킬 자리입니다."}</b>
-          <p>${CP_KIND ? "칩을 다시 눌러 전체를 보세요."
-            : "경쟁사가 앞선 검색어가 하나도 없습니다."}</p>
-          ${CP_KIND ? `<div class="acts"><button onclick="CP_pick('')">전체 보기</button></div>`
-            : CP_do("gaps", "격차 다시 재기")}</div>`);
+  if (rows.length) return rows.map(CP_card).join("");
+  // 거르고 나서 빈 것과 애초에 없는 것은 다른 일이다 — 전자는 칩을 풀면 되고,
+  // 후자는 지금이 지킬 자리라는 결론이다.
+  return CP_KIND
+    ? `<div class="empty"><b>이 갈래에는 아직 없습니다</b>
+        <p>다른 갈래에는 남아 있습니다. 조건을 지우면 전체가 다시 보입니다.</p>
+        <div class="acts"><button type="button" class="go sm sec"
+          onclick="CP_pick('')">조건 지우기</button></div></div>`
+    // 자료가 없는 게 아니라 **재 봤고 문제가 없는** 상태다 — 점선 빈 상자로 그리면
+    // 좋은 소식이 실패처럼 읽힌다. 행동은 안 단다: 재실행은 화면 머리가 이미 갖는다.
+    : `<div class="empty ok"><b>지금은 지킬 자리입니다</b>
+        <p>경쟁사가 앞선 검색어가 하나도 없습니다. 주기적으로 다시 재면 뒤집힌 자리가 잡힙니다.</p>
+        </div>`;
 }
 
 function CP_chips(d) {
@@ -152,6 +181,17 @@ function CP_pick(kind) {
   CP_KIND = (CP_KIND === kind) ? "" : kind;
   $("cp-chips").innerHTML = CP_chips(CP_D);
   $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+  CP_tools(CP_D);
+}
+
+// 표 위 도구줄은 섹션 머리 오른쪽 한 자리다(.sh > .tools) — 화면마다 다른 데
+// 서 있던 것을 셸이 한 벌로 잡았다. 개수는 지금 걸러 놓은 것을 센다.
+function CP_tools(d) {
+  const all = (d && d.kw_gap) || [];
+  const n = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).length;
+  $("cp-gap-tools").innerHTML = n
+    ? `<span class="n">${num(n)}개</span>` +
+      `<button class="go sm sec" onclick="CP_csv()">CSV 내려받기</button>` : "";
 }
 
 function CP_csv() {
@@ -163,7 +203,8 @@ function CP_csv() {
 
 /* 빈 화면이 갈리는 자리 — 아직 안 돌렸다 / 돌렸는데 경쟁사를 못 찾았다.
    둘을 같은 "데이터 없음"으로 뭉치면 무엇을 하면 채워지는지가 화면 밖에 남는다.
-   셸이 act() 를 세운 배포에서는 배포에 맞는 버튼 하나로 끝난다. */
+   셸이 act() 를 세운 배포에서는 배포에 맞는 버튼 하나로 끝난다. 라벨을 비우면
+   셸이 STAGE_LABELS 의 재실행 라벨(run)로 채운다 — 여기서 다시 대지 않는다. */
 const CP_do = (stage, label, primary = false) => READONLY ? ""
   : window.act
   ? `<div class="acts">${window.act(stage, label, primary)}</div>`
@@ -172,49 +213,84 @@ const CP_do = (stage, label, primary = false) => READONLY ? ""
           {event.preventDefault();copyCmd(this)}">/capture ${stage}</div>`,
       `<p class="cp-meta">화면 머리의 실행 버튼이 그 자리입니다.</p>`);
 
-/* 데이터가 찬 뒤의 다음 명령이 없었다 — 표를 다 읽고 나면 갈 곳이 CSV 뿐이었다.
-   collect_gap 은 같은 수집에서 경쟁사 키워드를 keywords 에 source='competitor_gap',
-   is_active=0 으로 이미 넣어 둔다(이미 추적 중이거나 GSC 에 잡힌 것은 필터로 빠진다).
-   화면이 그 사실을 한 글자도 말하지 않아서, 사용자는 같은 목록을 손으로 다시 넣고 있었다. */
-/* 용어는 키워드 화면(sections/sm-kw.html)의 것을 그대로 쓴다 — 거기 탭이 [후보]와
-   [추적 중]이라, 여기서만 "승인 대기 후보"·"큐레이션"이라고 부르면 같은 것이 두 이름을
-   갖는다. 로컬 명령 칩은 셸의 siteArg() 로 사이트 이름을 싣는다(칩 모양 한 벌). */
-const CP_cand = () => "경쟁사가 잡은 검색어는 같은 수집에서 <b>후보</b>로 이미 " +
-  "들어가 있습니다. 이미 추적 중이거나 구글 실적에 잡힌 것은 빠집니다. " +
-  W(`켜는 자리는 키워드 화면의 [후보] 탭입니다.
-     <code class="cmd" onclick="copyCmd(this)">/capture keywords${siteArg()}</code>`,
-    `${window.go("keywords")} 화면의 [후보] 탭에서 켜세요.`);
+/* 경쟁 도메인을 손으로 적어 두면 수집이 그것부터 맞댄다 — 그 자리는 [설정]이다.
+   window.go 는 본문 글자에 섞이는 손잡이(.gov)라 빈 상태의 행동으로는 안 읽힌다.
+   같은 이동을 보조 버튼 톤으로 낸다. 그 화면이 이 배포에 없으면(호스팅) 안 그린다. */
+const CP_toSettings = () => (READONLY || SM.at("settings") < 0) ? ""
+  : `<button type="button" class="go sec"
+       onclick="SM.touched=true;SM.show('settings')">경쟁사 등록</button>`;
+
+/* 행동 묶음 — 박제본에서는 둘 다 비므로 빈 .acts 상자를 그리지 않는다. */
+const CP_acts = (...parts) => {
+  const h = parts.filter(Boolean).join("");
+  return h ? `<div class="acts">${h}</div>` : "";
+};
+
+/* 빈 상태 한 벌 — 무엇이 없나(<b>) · 채우면 무엇을 얻고 무엇이 드나(<p>, 정본은
+   STAGE_LABELS 의 gain) · 무엇을 누르나(.acts). */
+const CP_empty = (title, why, acts, tip) =>
+  `<div class="empty"><b>${title}${tip ? CP_tip(tip) : ""}</b><p>${why}</p>${acts || ""}</div>`;
+
+/* 격차가 가장 큰 검색어를 그 자리에서 편다 — 띠가 이름을 말했으니 누르면 그 줄이
+   열려야 한다. 칩으로 걸러 둔 상태라 안 보이면 조건부터 푼다. */
+function CP_open() {
+  if (CP_KIND) CP_pick("");
+  const box = $("cp-gaps");
+  if (!box) return;
+  const det = [...box.querySelectorAll("details[data-key]")]
+    .find(x => x.dataset.key === CP_TOP);
+  if (!det) return;
+  det.open = true;
+  // 카드만 가운데로 밀면 짧은 화면에서는 몇 px 밖에 안 움직여 눌린 티가 안 난다.
+  // 섹션 머리를 위로 올려 목록이 화면을 채우게 한다 — 열린 카드가 그 첫 줄이다.
+  const sec = $("cp-gap");
+  (sec || det).scrollIntoView({behavior: "smooth", block: "start"});
+}
 
 /* ── 다음 한 걸음: 이 화면의 상태는 넷이다 — 경쟁사를 안 찾았다 / 찾았는데 없다 /
-      찾았고 격차는 아직 / 다 찼다. 다 찬 뒤의 행동은 다시 수집이 아니라 넘기기다:
-      경쟁사 검색어는 이미 승인 대기 후보로 들어와 있고, 그걸 켜는 자리는 옆 화면이다. */
+      찾았고 격차는 아직 / 다 찼다. 다 찬 뒤의 행동은 다시 수집이 아니라 가장 큰
+      격차 하나를 여는 것이다 — 목록을 다 읽으라는 말은 다음 걸음이 아니다. */
 function CP_nextStep(d) {
   if (!window.nextStep || !window.act) return;
   const put = (t, acts) =>
     window.nextStep("competitors", `<p>${t}</p><div class="acts">${acts}</div>`);
   const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
+  if (!d.comp_date && window.runFailed("competitors", d))
+    return put(`지난 <b>${esc(CP_name("competitors"))}</b>에서 멈췄습니다.
+      <span class="live">다시 찾으면 이어서 채워집니다.</span>`,
+      window.act("competitors", "", true));
   if (!d.comp_date)
-    return put("경쟁사를 아직 찾지 않았습니다. 누가 이 주제를 먹고 있는지부터 봅니다.",
-      window.act("competitors", "경쟁사 찾기"));
+    return put(`경쟁사를 아직 찾지 않았습니다.
+      <span class="live">한 번 찾으면 이 주제의 유기 검색 몫과 우리 자리가 같이
+      채워집니다.</span>`, window.act("competitors", CP_name("competitors")));
   if (!rivals)
-    return put("겹치는 경쟁 도메인을 찾지 못했습니다. 추적 검색어를 늘린 뒤 다시 찾으세요.",
-      window.act("competitors", "경쟁사 다시 찾기"));
+    return put(`겹치는 경쟁 도메인을 찾지 못했습니다.
+      <span class="live">추적 검색어를 늘리거나 경쟁 도메인을 직접 적어 두면 맞댈 대상이
+      생깁니다.</span>`, window.act("competitors", "", true) + CP_toSettings());
   if (!d.gap_date)
-    return put(`경쟁사 ${num(rivals)}곳을 찾았습니다. 격차를 재면 어느 검색어에서 지고
-      있는지 나옵니다.`, window.act("gaps", "격차 재기"));
+    return put(`경쟁사 ${num(rivals)}곳을 찾았습니다.
+      <span class="live">격차를 재면 어느 검색어에서 지고 있는지 나옵니다.</span>`,
+      window.act("gaps", CP_name("gaps")));
   const c = d.kw_gap_counts || {};
   const lose = (c.missing || 0) + (c.weak || 0);
   if (!lose)
-    return put(`경쟁사 ${num(rivals)}곳보다 아래인 검색어가 없습니다. 지키는 자리라
-      주기적으로 다시 재세요.`, window.act("gaps", "격차 다시 재기"));
-  // window.go 는 본문 글자에 섞이는 버튼(.gov)이라 띠에서는 주요 행동으로 안 읽힌다.
-  // 같은 이동을 주요 톤으로 낸다. 그 화면이 이 배포에 없으면 격차 재기가 주요로 올라선다.
+    return put(`경쟁사 ${num(rivals)}곳보다 아래인 검색어가 없습니다.
+      <span class="live">지키는 자리라 주기적으로 다시 재면 뒤집힌 자리가 잡힙니다.</span>`,
+      window.act("gaps", "", true));
+  // 가장 큰 격차 하나 — 점수가 정본이고, 점수가 없으면 검색량이 대신한다.
+  const top = (d.kw_gap || []).filter(r => r.kind !== "shared")
+    .slice().sort((a, b) => CP_rank(b) - CP_rank(a) || (b.volume || 0) - (a.volume || 0))[0];
+  CP_TOP = top ? top.keyword : "";
+  /* 이 버튼은 키워드 화면으로 **옮기기만** 한다 — 후보를 켜는 것은 그 화면의 일이다.
+     여태 라벨이 「추적에 넣기」라 누르면 추적에 들어간 줄 알았고, 실제로는 아무것도
+     안 들어갔다. 라벨을 하는 일에 맞춘다. */
   const jump = SM.at("keywords") >= 0
-    ? `<button type="button" class="go"
-         onclick="SM.touched=true;SM.show('keywords')">후보 검색어 켜기</button>` : "";
-  return put(`경쟁사가 앞선 검색어가 ${num(lose)}개입니다. 그중 ${num(c.missing || 0)}개는
-    우리 순위가 아예 없어 새로 써야 합니다.`,
-    jump + window.act("gaps", "격차 다시 재기", !jump));
+    ? `<button type="button" class="go sec"
+         onclick="SM.touched=true;SM.show('keywords')">키워드 열기</button>` : "";
+  return put(`경쟁사가 앞선 검색어가 ${num(lose)}개이고 그중 ${num(c.missing || 0)}개는 우리
+    순위가 아예 없습니다. 격차가 가장 큰 것은 <b>${esc(CP_TOP)}</b>입니다.`,
+    (CP_TOP ? `<button type="button" class="go" onclick="CP_open()">검색어 열기</button>`
+            : window.act("gaps", "", true)) + jump);
 }
 
 /* 몫 한 줄 — 숫자 옆에 늘 견줄 상대를 놓는다. 목록을 읽기 전에 "우리가 몇 등인가"에
@@ -224,45 +300,64 @@ function CP_standing(d) {
   const me = rows.find(r => r.is_self), top = rows.find(r => !r.is_self);
   const pc = r => (r && r.share != null) ? Math.round(r.share * 100) + "%" : null;
   const mine = pc(me), best = pc(top);
+  const tip = CP_tip("몫은 추정 트래픽 기준이라 실측이 아니라 추정입니다. 순위를 가진 " +
+                     "검색어 수와 같이 읽습니다. 우리 줄이 녹청입니다.");
   return (mine && best
-    ? `우리 몫은 <b>${mine}</b>입니다. 가장 큰 곳은 ${esc(top.domain)} <b>${best}</b>입니다. `
-    : "") +
-    "몫은 추정 트래픽 기준이라 <b>실측이 아니라 추정</b>입니다. 순위를 가진 검색어 " +
-    "수와 같이 읽으세요. 우리 줄이 녹청입니다.";
+    ? `우리 몫은 <b>${mine}</b>, 가장 큰 곳은 ${esc(top.domain)} <b>${best}</b>입니다.`
+    : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세웠습니다.") + tip;
 }
 
 VIEW("competitors", function (d) {
   CP_D = d;
   const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
   CP_nextStep(d);
+  window.viewSub && viewSub("competitors",
+    "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.");
 
+  // eyebrow 는 "언제·어느 범위"만 적는다 — 개수·상태·결론은 부제와 배지가 갖는다.
   $("cp-share-eyebrow").textContent = d.comp_date
-    ? `유기 검색 규모 · ${String(d.comp_date).slice(0, 10)} 기준` : "유기 검색 규모";
+    ? `${String(d.comp_date).slice(0, 10)} 기준` : "유기 검색";
   $("cp-share-sub").innerHTML = !d.comp_date
-    ? "누가 이 주제에서 얼마를 가져가는지, 우리는 그중 몇 %인지를 세는 자리입니다."
+    ? "누가 이 주제에서 얼마를 가져가는지 세는 자리입니다."
     : rivals
       ? CP_standing(d)
       : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세우는 자리입니다.";
-  $("cp-shares").innerHTML = !d.comp_date
-    ? `<div class="empty"><b>경쟁사 목록이 비어 있습니다.</b>
-        <p>같은 검색어에서 순위를 가진 도메인을 찾아 우리 몫과 나란히 세웁니다.</p>
-        ${CP_do("competitors", "경쟁사 찾기")}</div>`
-    : (CP_shares(d) || `<div class="empty"><b>겹치는 경쟁 도메인이 없습니다.</b>
-        <p>주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 추적 검색어를
-          늘린 뒤 다시 찾으면 잡힙니다.</p>
-        ${CP_do("competitors", "경쟁사 다시 찾기")}</div>`);
+  // 실패는 비어 있는 것과 다른 일이다 — 비었으면 채우면 되고, 실패했으면 무엇이
+  // 실패했는지 알아야 다시 할 수 있다. 그래서 상자 모양부터 가른다(.empty.err).
+  $("cp-shares").innerHTML = d.comp_date
+    ? (CP_shares(d) || CP_empty("겹치는 경쟁 도메인이 없습니다",
+        "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
+        "적어 두면 그것부터 맞댑니다.",
+        CP_acts(READONLY ? "" : window.act("competitors", "", false), CP_toSettings())))
+    : window.runFailed("competitors", d)
+      ? `<div class="empty err"><b>${esc(CP_name("competitors"))}에서 멈췄습니다</b>
+          <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
+            이어서 채워집니다.</p>${CP_do("competitors", "", false)}</div>`
+      : CP_empty("경쟁사를 아직 찾지 않았습니다", CP_gain("competitors"),
+          CP_acts(READONLY ? "" : window.act("competitors", CP_name("competitors"), false),
+                  CP_toSettings()),
+          "선택 단계입니다. 안 돌려도 다른 화면과 기회 목록은 그대로 채워집니다.");
 
   $("cp-gap-eyebrow").textContent = d.gap_date
-    ? `키워드 격차 · ${String(d.gap_date).slice(0, 10)} 기준` : "키워드 격차";
+    ? `${String(d.gap_date).slice(0, 10)} 기준` : "키워드 격차";
   $("cp-gap-sub").innerHTML = !d.gap_date
     ? "경쟁사가 순위를 가졌는데 우리는 없거나 아래인 검색어를 모으는 자리입니다."
-    : "<b>우리는 없음</b>은 새로 써야 하는 것, <b>밀리는 중</b>은 있는 글을 고치는 " +
-      "것입니다. 점수가 높은 것부터 놓았습니다. 검색량 순서와 다릅니다. " + CP_cand();
+    // 배지 이름을 산문에 박으면 배지 문구를 바꿀 때마다 두 벌이 된다 — 갈래가
+    // 무슨 뜻인지는 배지 자신이 CP_KINDS 툴팁으로 말한다.
+    : "점수가 높은 것부터 놓았습니다." +
+      CP_tip("점수 순은 검색량 순서와 다릅니다. 경쟁사가 잡은 검색어는 같은 수집에서 " +
+             "후보로 이미 들어가 있고(이미 추적 중이거나 구글 실적에 잡힌 것은 빠집니다), " +
+             "켜는 자리는 키워드 화면의 후보 탭입니다.");
   $("cp-chips").innerHTML = d.gap_date ? CP_chips(d) : "";
   $("cp-gaps").innerHTML = d.gap_date ? CP_gapRows(d)
-    : `<div class="empty"><b>키워드 격차를 아직 재지 않았습니다.</b>
-        <p>경쟁사가 잡은 검색어를 우리 순위와 맞대어, 새로 쓸 것과 고칠 것을
-          가릅니다.</p>
-        ${CP_do("gaps", "격차 재기")}</div>`;
+    : window.runFailed("gaps", d)
+      ? `<div class="empty err"><b>${esc(CP_name("gaps"))}에서 멈췄습니다</b>
+          <p>지난 실행이 도중에 멈췄습니다. 다시 분석하면 이어서 채워집니다.</p>
+          ${CP_do("gaps", "", false)}</div>`
+      : CP_empty("키워드 격차를 아직 재지 않았습니다",
+          "경쟁사가 잡은 검색어를 우리 순위와 맞대어 새로 쓸 것과 고칠 것을 가릅니다. " +
+          "이미 모은 숫자만 쓰므로 조회 비용이 들지 않습니다.",
+          CP_do("gaps", CP_name("gaps"), false));
+  CP_tools(d.gap_date ? d : null);
 });
 </script>

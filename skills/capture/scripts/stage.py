@@ -101,44 +101,53 @@ def skippable(step_id: str) -> bool:
 # dash.html 은 자기 사본을 갖지 않는다.
 STAGE_LABELS: dict[str, dict] = {
     "register": {"t": "사이트 등록",
-        "gain": "측정할 도메인과 시작 검색어를 정합니다. 여기서 출발합니다."},
-    "gsc": {"t": "구글 실적 읽기", "run": "실적 다시 수집",
-        "gain": "서치콘솔에서 실제 노출·클릭·순위를 가져옵니다. 모든 판단이 이 숫자 "
-                "위에서 이뤄집니다. 추측을 안 하려고 제일 먼저 합니다."},
-    "ga4": {"t": "GA4 실적 읽기", "run": "GA4 다시 수집"},
-    "index": {"t": "색인 상태 확인", "run": "색인 다시 확인"},
+        "gain": "측정할 도메인과 씨앗 키워드를 정합니다. 여기서 출발합니다."},
+    "gsc": {"t": "검색 실적 수집", "run": "실적 다시 수집",
+        "gain": "서치콘솔에서 노출·클릭·평균 순위를 그대로 가져옵니다. 추측을 안 "
+                "하려고 제일 먼저 하고, 모든 판단이 이 숫자 위에서 이뤄집니다."},
+    "ga4": {"t": "GA4 실적 수집", "run": "GA4 다시 수집"},
+    "index": {"t": "색인 검사", "run": "색인 다시 검사"},
     "keywords": {"t": "키워드 찾기", "run": "키워드 다시 찾기",
-        "gain": "검색창 자동완성으로 후보를 모아 추적 목록을 만듭니다. 무료입니다. "
+        "gain": "검색창 자동완성으로 후보를 모아 추적 목록을 만듭니다. 무료이고, "
                 "여기서 늘린 만큼 다음 단계가 볼 게 많아집니다."},
-    "metrics": {"t": "키워드 지표", "run": "지표 다시 조회",
-        "gain": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
-                "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. "
-                "DataForSEO 유료 호출입니다."},
-    "rank": {"t": "순위 추적", "run": "순위 다시 확인"},
+    "metrics": {"t": "키워드 지표 조회", "run": "지표 다시 조회",
+        "gain": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다 — 아직 "
+                "순위가 없는 검색어의 가치는 이 숫자로만 잽니다. 없어도 기회 "
+                "목록까지는 그대로 가고, DataForSEO 키를 넣으면 켜집니다."},
+    "rank": {"t": "순위 확인", "run": "순위 다시 확인"},
     "crawl": {"t": "사이트 크롤", "run": "사이트 다시 크롤",
         "gain": "사이트를 따라 돌며 깨진 내부 링크·리다이렉트 사슬·고아 페이지·중복 "
-                "제목을 찾습니다. 한 페이지만 봐서는 안 나오는 것들입니다. 무료입니다."},
-    "ai": {"t": "AI 노출 확인", "run": "AI 인용 다시 확인",
+                "제목을 찾습니다. 한 페이지만 봐서는 안 나오는 것들이고, 무료입니다."},
+    "ai": {"t": "AI 인용 확인", "run": "인용 다시 확인",
         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
-                "OpenRouter 키가 필요합니다."},
-    "competitors": {"t": "경쟁사 역키워드", "run": "경쟁사 다시 수집",
+                "없어도 기회 목록까지는 그대로 가고, OpenRouter 키를 넣으면 "
+                "켜집니다."},
+    "competitors": {"t": "경쟁사 찾기", "run": "경쟁사 다시 찾기",
         "gain": "경쟁 도메인이 이미 순위를 잡은 검색어를 모아 추적 후보로 올립니다. "
-                "DataForSEO Labs 유료 호출입니다."},
-    "backlinks": {"t": "백링크 프로필", "run": "백링크 다시 수집",
-        "gain": "참조 도메인·앵커 텍스트·개별 링크를 수집합니다. 경쟁사는 링크를 받는데 "
-                "우리는 못 받는 도메인도 함께 찾습니다. DataForSEO 유료 호출입니다."},
-    "gaps": {"t": "손댈 것 뽑기", "run": "기회 다시 분석",
-        "gain": "모은 숫자에서 기회를 계산합니다. 조금만 밀면 1페이지인 검색어, 우리 "
-                "대신 인용되는 곳, 같은 틀로 여러 장 찍을 페이지를 찾습니다."},
+                "없어도 기회 목록까지는 그대로 가고, DataForSEO 키를 넣으면 "
+                "켜집니다."},
+    "backlinks": {"t": "백링크 수집", "run": "백링크 다시 수집",
+        "gain": "참조 도메인·앵커 텍스트·개별 링크를 수집하고, 경쟁사는 받는데 우리는 "
+                "못 받는 도메인도 함께 찾습니다. 없어도 기회 목록까지는 그대로 가고, "
+                "DataForSEO 키를 넣으면 켜집니다."},
+    "gaps": {"t": "기회 분석", "run": "기회 다시 분석",
+        "gain": "모은 숫자에서 손댈 곳을 점수 순으로 뽑습니다. 조금만 밀면 1페이지인 "
+                "검색어, 우리 대신 인용되는 곳, 같은 틀로 여러 장 찍을 페이지입니다."},
     "pages": {"t": "내 페이지 점검", "run": "페이지 다시 점검",
         "gain": "기회에 걸린 내 페이지를 직접 열어 제목·설명·H1·본문 길이·구조화 데이터를 "
                 "확인합니다. 무료입니다."},
     "report": {"t": "보고서 생성"},
-    "create": {"t": "실제로 고치기",
+    "create": {"t": "콘텐츠 작성",
         "gain": "뽑은 기회를 저장소의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR 로 "
                 "나가고, 끝나면 그 기회가 완료로 닫힙니다."},
 }
 
+
+# 유료 단계가 무엇도 막지 않는다는 약속. 카피 정본(docs/copy-guide.md)의 금지 1번:
+# 결제 벽처럼 읽히는 문장을 쓰지 않는다 — 키를 요구하기 **전에** 없어도 되는 것부터
+# 말한다. doctor 의 잠금 사유(CAPABILITIES.fix)도 같은 말로 시작한다. 문장을 여기
+# 한 줄로 두고 갖다 쓴다 — 두 벌이 되면 한쪽만 낡는다. _selfcheck 가 대조한다.
+NOT_BLOCKING = "없어도 기회 목록까지는 그대로 가고"
 
 # 유료 키 언급은 **로컬 전용**이다 — 호스팅은 서버가 키를 댄다(doctor 명부의
 # owner="server"). 같은 문장이 웹으로 나가면 넣을 곳도 없는 키를 넣으라고 시키는
@@ -147,9 +156,9 @@ STAGE_LABELS: dict[str, dict] = {
 GAIN_WEB = {
     "ai": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
           "키는 서버가 댑니다.",
-    "metrics": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 검색량이 "
-               "있어야 아직 순위가 없는 검색어의 가치를 판단할 수 있습니다. "
-               "조회 비용은 서버가 냅니다.",
+    "metrics": "찾은 키워드의 월간 검색량·경쟁 난이도·CPC 를 조회합니다. 아직 "
+               "순위가 없는 검색어의 가치는 이 숫자로만 잽니다. 조회 비용은 "
+               "서버가 냅니다.",
     "competitors": "경쟁 도메인이 이미 순위를 잡은 검색어를 모아 추적 후보로 "
                    "올립니다. 조회 비용은 서버가 냅니다.",
     "backlinks": "참조 도메인·앵커 텍스트·개별 링크를 수집합니다. 경쟁사는 링크를 "
@@ -196,8 +205,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
     ai_skip = skippable("ai")
     if gst == "connected":
         gsc_done = p.get("gsc_days", 0) > 0
-        gsc_state_str = (f"{p['gsc_days']}번 읽음 · 최근 {p['gsc_last']}"
-                         if p.get("gsc_days", 0) else "아직 안 읽음")
+        gsc_state_str = (f"{p['gsc_days']}번 수집 · 최근 {p['gsc_last']}"
+                         if p.get("gsc_days", 0) else "아직 수집 안 함")
         gsc_cmd = f"/capture gsc {name}"
     elif gst == "pending":
         gsc_done = False
@@ -279,11 +288,14 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     projects = d.get("brain", {}).get("projects", [])
     no_project = not bool(projects)
 
-    # 산문(msg)과 복사할 것(cmd)을 갈라서 그대로 넘긴다 — 예전에는 여기서 문자열
-    # 하나로 눌러 붙였고, 그래서 명령·파일 경로가 산문 안에 섞여 호스팅 배너까지
-    # 따라갔다. 화면은 msg 를 그리고 cmd 가 있으면 칩으로 단다(cmd 는 로컬 전용).
+    # 결론(msg)·나머지 사정(detail)·복사할 것(cmd)을 갈라서 그대로 넘긴다 —
+    # 예전에는 여기서 문자열 하나로 눌러 붙였고, 그래서 명령·파일 경로가 산문 안에
+    # 섞여 호스팅 배너까지 따라갔다. 화면은 msg 를 그리고, detail 이 있으면
+    # [자세히] 로 접고, cmd 가 있으면 칩으로 단다(cmd 는 로컬 전용).
     must = [
-        {"msg": m["msg"], "cmd": m.get("cmd")} if isinstance(m, dict) else {"msg": m}
+        {"msg": m["msg"], "detail": m.get("detail"), "go": m.get("go"),
+         "cmd": m.get("cmd")}
+        if isinstance(m, dict) else {"msg": m, "detail": None, "go": None}
         for m in d.get("must", [])
         if not (no_project and isinstance(m, dict) and m.get("id") == "first_project")
     ]
@@ -399,6 +411,21 @@ def _selfcheck() -> None:
         db.gsc_auth = _orig_auth
         os.environ.pop("OPENROUTER_API_KEY", None) if _orig_key is None \
             else os.environ.__setitem__("OPENROUTER_API_KEY", _orig_key)
+
+    # 결제 벽 어투 금지 — 유료 키를 요구하는 로컬 설명은 **먼저** 없어도 된다고
+    # 말해야 한다. 예전 ai 문장이 "OpenRouter 키가 필요합니다."로 끝나서, 키가
+    # 없는 사람에게는 안내 4단계가 결제 벽으로 읽혔다(실제로는 그 단계만 건너뛴다).
+    # 호스팅(GAIN_WEB)은 서버가 키를 대므로 요구 자체가 없어 이 검사 대상이 아니다.
+    demands = [k for k, v in STAGE_LABELS.items()
+               if v.get("gain") and ("유료" in v["gain"] or "키를 넣으면" in v["gain"]
+                                     or "키가 필요" in v["gain"])]
+    assert demands, "유료 키를 말하는 단계가 하나도 없다 — 검사가 아무것도 안 본다"
+    for k in demands:
+        g = STAGE_LABELS[k]["gain"]
+        assert NOT_BLOCKING in g, \
+            f"{k} 의 gain 이 막히지 않는다는 말 없이 키를 요구한다: {g}"
+        assert g.index(NOT_BLOCKING) < g.index("키를 넣으면"), \
+            f"{k} 의 gain 이 키 요구를 먼저 한다 — 없어도 된다는 말이 앞에 와야 한다: {g}"
 
     print("stage self-check ok")
 

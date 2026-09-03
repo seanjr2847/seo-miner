@@ -1,33 +1,60 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
-     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
-     못 받으면(오프라인·사내망) 아래 스택으로 조용히 떨어진다 — 화면은 그대로 선다. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<!-- 서체 둘(IBM Plex Mono·Pretendard) — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로
+     선다. Pretendard 의 dynamic-subset 은 unicode-range 로 쪼개져 있어 실제로 쓴 글자
+     묶음만 내려온다. 못 받으면(오프라인·사내망) --sans/--mono 의 뒤쪽 스택으로 조용히
+     떨어진다 — 화면은 그대로 선다.
+
+     **막지 않게 받는다.** 평범한 stylesheet 링크는 파서를 막아, 뒤에 오는 모든
+     스크립트가 이 파일을 받을 때까지 실행되지 않는다. CDN 이 안 열리는
+     환경(오프라인·사내망·검사 샌드박스)에서는 그게 곧 화면 스크립트가 시작을 못 하는
+     것이다 — 이 화면에서는 붙박이 헤더의 테두리를 세우는 스크립트가 그렇다.
+     media=print 로 받으면 이 파일은 처음부터 이 화면의 스타일이 아니라서 아무것도
+     막지 않고, 다 받은 뒤 onload 가 media 를 열어 그때 글꼴이 적용된다.
+     서체는 읽는 데 필요한 게 아니라 좋아지는 것이므로 늦게 와도 된다.
+     (정본은 dashboard.html 의 같은 자리다.) -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+</noscript>
 <style>
 /* 시추 로그(core log) — 순위는 깊이다. 1페이지가 지표면, 20위가 암반.
    색은 광물에서: 녹청(patina)·산화동(copper)·석회(stone). 숫자는 전부 등폭.
-   토큰은 대시보드(skills/capture/templates/dashboard.html)의 :root 가 정본이다. */
+   토큰은 대시보드(skills/capture/templates/dashboard.html)의 :root 가 정본이다 —
+   값을 여기서 따로 정하지 않고 같은 것을 적는다. */
 :root{
-  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#66726D;
-  --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
+  /* --slate 는 눈금·부제·표 머리를 전부 칠한다. #66726D 은 --stone 위에서 4.09:1 로
+     AA 를 못 넘겼다 — 대시보드가 #576259 로 옮겼고 여기도 같이 옮긴다. */
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#576259;
+  --patina:#22705F; --patina-hi:#1A5A4C; --copper:#A9491F; --btn-ink:#F7F8F5;
+  --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
+  --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
+  --on-ink-rule:rgba(230,233,228,.26);
   --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
          system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
   /* 마이크로 라벨 한 벌 — 대시보드(:root --micro)와 같은 값. 눈금·열 이름·배지가
      같은 크기로 선다. 자간은 안 벌린다(한글이 흩어진다) — 위계는 크기·굵기·색. */
   --micro:500 11px/1.35 var(--sans);
+  --pad:56px;
 }
 @media (prefers-color-scheme:dark){
   :root{
     --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
-    --patina:#57B49C; --copper:#DE8351; --rule:rgba(228,235,231,.16);
+    --patina:#57B49C; --patina-hi:#6CC4AD; --copper:#DE8351; --btn-ink:#0E1412;
+    --rule:rgba(228,235,231,.16);
     --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
+    --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
+    --on-ink-rule:rgba(16,21,19,.28);
   }
 }
 *{box-sizing:border-box}
@@ -40,16 +67,28 @@ body{margin:0;background:var(--stone);color:var(--ink);font-family:var(--sans);
 .lat{font-family:var(--mono);text-transform:uppercase;letter-spacing:.16em}
 :focus-visible{outline:2px solid var(--patina);outline-offset:3px;border-radius:2px}
 a{color:inherit}
-.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
 /* 폭만 좁히고 가운데로 옮기지는 않는다 — 상자를 좁히면 다른 섹션과 왼쪽 선이
    어긋나서, 훑던 눈이 FAQ 에서 한 번 멈춘다. */
 .narrow > *{max-width:760px}
 
+/* ── 버튼: 행동은 전부 이 한 벌이다 ──────────────────────── */
+.go{display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  font:600 14.5px/1 var(--sans);color:var(--btn-ink);background:var(--patina);
+  border:1px solid var(--patina);border-radius:3px;padding:14px 22px;
+  text-decoration:none;white-space:nowrap;cursor:pointer}
+.go:hover{background:var(--patina-hi);border-color:var(--patina-hi)}
+.go svg{width:17px;height:17px;flex:none}
+.go.sec{background:transparent;color:var(--ink);border-color:var(--rule)}
+.go.sec:hover{background:var(--wash);color:var(--patina);border-color:var(--patina)}
+.go.sm{font-size:13px;padding:9px 14px}
+
 /* ── 케이싱 헤더 ─────────────────────────────────────────── */
-header{background:var(--ink);position:sticky;top:0;z-index:9}
-@media (prefers-color-scheme:dark){header{border-bottom:1px solid var(--rule)}}
+header{background:var(--ink);position:sticky;top:0;z-index:9;
+  border-bottom:1px solid transparent;transition:border-color .18s}
+header.sc{border-bottom-color:var(--on-ink-rule)}
 .hbar{display:flex;align-items:center;gap:26px;padding:12px 24px;
-  max-width:1080px;margin:0 auto}
+  max-width:1120px;margin:0 auto}
 .mark{font:600 15px/1 var(--mono);letter-spacing:.06em;color:#E6E9E4;
   text-decoration:none;white-space:nowrap}
 .mark b{color:#57B49C;font-weight:600}
@@ -57,127 +96,127 @@ header{background:var(--ink);position:sticky;top:0;z-index:9}
 .hbar nav a{color:#A7B2AC;text-decoration:none}
 .hbar nav a:hover{color:#E6E9E4}
 .hbar .sp{flex:1}
-.hcta{font:500 13px/1 var(--sans);color:#E6E9E4;text-decoration:none;
-  border:1px solid rgba(230,233,228,.28);border-radius:2px;padding:8px 14px;
+.hcta{font:500 13px/1 var(--sans);color:#101513;background:#57B49C;
+  text-decoration:none;border:1px solid #57B49C;border-radius:3px;padding:9px 15px;
   white-space:nowrap}
-.hcta:hover{border-color:#57B49C;color:#57B49C}
-@media (max-width:720px){.hbar nav{display:none}.hbar{gap:14px}}
+.hcta:hover{filter:brightness(1.08)}
+/* 좁은 화면에서 메뉴를 통째로 감추면 절 이동 수단이 스크롤밖에 안 남는다 — 감추는
+   대신 둘째 줄로 내려 가로 스크롤러로 세운다(대시보드 레일의 #nav 와 같은 처리). */
+@media (max-width:760px){
+  .hbar{flex-wrap:wrap;gap:9px 14px;padding:10px 18px}
+  .hbar .sp{display:none}
+  .mark{flex:1}
+  .hbar nav{order:3;flex:1 0 100%;gap:18px;overflow-x:auto;scrollbar-width:none}
+  .hbar nav::-webkit-scrollbar{display:none}
+  .hbar nav a{white-space:nowrap}
+}
 
 /* ── 공통 조판 ───────────────────────────────────────────── */
 section{scroll-margin-top:64px}
-/* 세로 리듬은 한 벌: 섹션 상하 --pad + 구분 괘선. */
-:root{--pad:48px}
 /* .lat 이 font-family 를 갈아 끼우므로 여기서 font 단축을 쓰면 안 된다 —
    --micro 와 같은 크기·굵기·행간을 낱개로 적는다. */
 .eyebrow{font-size:11px;font-weight:500;line-height:1.35;color:var(--slate);margin:0 0 14px}
-h2{font-size:clamp(22px,3.2vw,30px);line-height:1.32;font-weight:600;
-  margin:0 0 12px;max-width:24ch}
-.sub{color:var(--slate);margin:0 0 28px;max-width:56ch;font-weight:300}
-.band{border-top:1px solid var(--rule-soft);padding:var(--pad) 24px}
-@media (max-width:640px){:root{--pad:38px}}
+h2{font-size:clamp(23px,3.2vw,31px);line-height:1.3;font-weight:650;
+  letter-spacing:-.014em;margin:0 0 10px;max-width:20ch}
+.sub{color:var(--slate);margin:0 0 30px;max-width:52ch;font-weight:400}
+.band-sec{border-top:1px solid var(--rule-soft);padding:var(--pad) 24px}
+@media (max-width:640px){:root{--pad:40px}}
 
 /* ── 히어로 ──────────────────────────────────────────────── */
-.hero{padding:var(--pad) 24px}
-.hgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);
-  gap:44px;align-items:start}
-@media (max-width:960px){.hgrid{grid-template-columns:minmax(0,1fr);gap:34px}}
-h1{font-size:clamp(30px,5.4vw,50px);line-height:1.22;font-weight:600;
-  margin:0 0 22px;max-width:19ch}
+.hero{padding:calc(var(--pad) + 4px) 24px}
+.hgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);
+  gap:48px;align-items:center}
+@media (max-width:980px){.hgrid{grid-template-columns:minmax(0,1fr);gap:36px;align-items:start}}
+h1{font-size:clamp(31px,5.2vw,49px);line-height:1.2;font-weight:650;
+  letter-spacing:-.02em;margin:0 0 20px;max-width:17ch}
 h1 em{font-style:normal;color:var(--patina)}
-.lede{font-size:17px;color:var(--slate);max-width:52ch;margin:0 0 32px;font-weight:300}
-.actions{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
-.cta{display:inline-flex;align-items:center;gap:10px;background:var(--patina);
-  color:var(--card);text-decoration:none;padding:14px 24px;border-radius:2px;
-  font-weight:500;font-size:15px;transition:filter .15s}
-.cta:hover{filter:brightness(1.12)}
-.cta svg{width:17px;height:17px}
-.assure{display:flex;flex-wrap:wrap;gap:8px 26px;margin:22px 0 0;padding:0;list-style:none;
-  font-size:13px;color:var(--slate);font-weight:300}
+.lede{font-size:17px;color:var(--slate);max-width:46ch;margin:0 0 30px}
+.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+/* 신뢰 문구 셋 — 체크 하나에 명사구 하나. 문장이 되면 읽는 데 시간이 든다. */
+.assure{display:flex;flex-wrap:wrap;gap:9px 24px;margin:24px 0 0;padding:0;list-style:none;
+  font-size:13px;color:var(--slate)}
 .assure li{display:flex;align-items:center;gap:7px}
-.assure li::before{content:"";width:5px;height:5px;border-radius:50%;
-  background:var(--patina);flex:none}
+.assure svg{width:15px;height:15px;flex:none;color:var(--patina)}
 
-/* ── 히어로 시각물: 대시보드 패널 ─────────────────────────── */
+/* ── 히어로 시각물: 대시보드 그대로의 부품 ────────────────── */
 /* 패널은 히어로 오른쪽 단에 들어가 좁아진다 — 폭 기준은 뷰포트가 아니라 이 상자다. */
 .panel{background:var(--card);border:1px solid var(--rule);
-  border-radius:3px;overflow:hidden;container-type:inline-size}
-.phead{display:flex;align-items:center;gap:12px;padding:12px 18px;
+  border-radius:4px;overflow:hidden;container-type:inline-size}
+.phead{display:flex;align-items:center;gap:12px;padding:13px 18px;
   border-bottom:1px solid var(--rule-soft)}
-.phead .t{font-size:13px;font-weight:500;line-height:1.2;color:var(--ink)}
+.phead .t{font-size:13px;font-weight:600;line-height:1.2;color:var(--ink)}
 .phead .sp{flex:1}
-.chip{font:var(--micro);white-space:nowrap;
-  color:var(--slate);border:1px solid var(--rule);border-radius:2px;padding:4px 8px}
+.badge{display:inline-flex;align-items:center;gap:6px;font:var(--micro);
+  white-space:nowrap;color:var(--slate);border:1px solid var(--rule);
+  border-radius:999px;padding:4px 10px}
 
-.tiles{display:grid;grid-template-columns:repeat(4,1fr)}
-.tile{padding:18px;border-right:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)}
-.tile:last-child{border-right:0}
-.tile .k{font:var(--micro);color:var(--slate);margin:0 0 6px}
-.tile .v{font:600 25px/1.1 var(--mono);letter-spacing:-.02em;margin:0}
-/* 값 밑의 변화량에는 "1.6칸 상승" 처럼 한글이 섞인다 — 등폭으로 찍으면 폴백 서체로
-   떨어져 자간이 벌어진다. 자릿수 정렬은 tabular-nums 로 얻는다. */
-.tile .d{font:400 11.5px/1.35 var(--sans);font-variant-numeric:tabular-nums;
-  margin:7px 0 0;color:var(--slate)}
-.tile .d.up{color:var(--patina)}
-.tile .d.down{color:var(--copper)}
-@container (max-width:560px){
-  .tiles{grid-template-columns:1fr 1fr}
-  .tile:nth-child(2n){border-right:0}
-  .tile .v{font-size:21px}
-}
-@media (max-width:640px){
-  .tiles{grid-template-columns:1fr 1fr}
-  .tile:nth-child(2n){border-right:0}
-  .tile .v{font-size:21px}
-}
+/* KPI 띠 — 대시보드 `.band` 와 같은 위계: 값(크게·등폭) → 이름 → 기준. */
+/* 넷을 한 줄에 세우면 값(26px 등폭)과 증감이 한 칸에 못 들어가 "−0.3%p" 만 다음
+   줄로 넘어간다 — 그러면 지표 이름 넉 줄이 서로 다른 높이에 선다. 2×2 로 세운다. */
+.band{display:grid;grid-template-columns:1fr 1fr;padding:0 18px}
+.band .m{padding:18px 16px 16px 0;border-right:1px solid var(--rule-soft)}
+.band .m:nth-child(2n){border-right:0}
+.band .m:nth-child(n+3){border-top:1px solid var(--rule-soft)}
+.band .v{font:600 26px/1 var(--mono);letter-spacing:-.022em;
+  font-variant-numeric:tabular-nums}
+.band .d{font:600 12px/1 var(--mono);margin-left:7px;letter-spacing:0}
+.band .l{font:500 12.5px/1.35 var(--sans);color:var(--slate);margin-top:10px}
+.band .b{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-top:5px;
+  font-variant-numeric:tabular-nums}
+.up{color:var(--patina)} .down{color:var(--copper)}
+@container (max-width:340px){.band .v{font-size:22px}}
 
-.chart{padding:22px 18px 20px}
-.clabel{font-size:12px;color:var(--slate);margin:0 0 16px}
-.rows{display:grid;gap:5px}
-.row,.axis{display:grid;grid-template-columns:minmax(92px,21%) 1fr 46px 50px;
-  align-items:center;gap:14px}
-.q{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.track{position:relative;height:22px}
-.track::before{content:"";position:absolute;inset:0 66.6% 0 0;background:var(--bar)}
-.track::after{content:"";position:absolute;top:-3px;bottom:-3px;left:33.4%;width:1px;
+/* 시추 로그 — 대시보드 `.log` 와 같은 문법: 가로축이 순위(깊이), 옅은 칸이
+   1페이지 영역, 점이 지금 순위, 막대가 1페이지까지 남은 거리. */
+.log{padding:22px 18px 20px;border-top:1px solid var(--rule-soft)}
+.lrow{display:grid;grid-template-columns:minmax(84px,26%) 1fr 54px;
+  align-items:center;gap:0 14px}
+.lrow + .lrow{margin-top:4px}
+.lhead{margin-bottom:9px}
+.lhead .cap{font:var(--micro);color:var(--slate)}
+.lhead .cap.r{text-align:right}
+.ticks{position:relative;height:15px;font:400 10px/1 var(--mono);color:var(--slate)}
+.ticks span{position:absolute;top:2px;transform:translateX(-50%)}
+.q{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;text-align:right}
+/* 순위 숫자가 점 위에 선다 — 트랙이 낮으면 그 숫자가 윗줄 막대에 얹힌다. */
+.track{position:relative;height:32px}
+/* 1페이지 영역(1~10위) — 대시보드에서 이 칸은 옅은 녹청이다. */
+.track::before{content:"";position:absolute;inset:12px 52.6% 8px 0;background:var(--wash)}
+.track::after{content:"";position:absolute;top:9px;bottom:5px;left:47.4%;width:1px;
   background:var(--rule)}
-.fill{position:absolute;top:6px;height:10px;background:var(--wash-copper);
-  border-left:2px solid var(--copper);transform-origin:left center}
-.fill[data-near="1"]{background:var(--wash);border-left-color:var(--patina)}
-.dot{position:absolute;top:7px;width:8px;height:8px;border-radius:50%;
+.fill{position:absolute;top:17px;height:6px;border-radius:3px;
+  background:var(--copper);transform-origin:left center}
+.dot{position:absolute;top:15.5px;width:9px;height:9px;border-radius:50%;
   background:var(--patina);transform:translateX(-50%)}
-/* "12위"·"2칸"·"1페이지" — 숫자에 한글 단위가 붙는다. 등폭은 안 쓴다. */
-.rk{font:500 12.5px/1 var(--sans);font-variant-numeric:tabular-nums;
-  color:var(--ink);text-align:right}
-.gp{font:400 12.5px/1 var(--sans);font-variant-numeric:tabular-nums;
+.rk{position:absolute;top:0;font:500 10.5px/1 var(--mono);color:var(--slate);
+  transform:translateX(-50%)}
+.imp{font:400 12px/1 var(--mono);font-variant-numeric:tabular-nums;
   color:var(--slate);text-align:right}
-.gp.in{color:var(--patina)}
-.ticks{position:relative;height:14px;font:400 10px/1 var(--mono);color:var(--slate)}
-.ticks span{position:absolute;top:0;transform:translateX(-50%)}
-.axis{margin-top:9px}
-.legend{font-size:13px;color:var(--slate);margin:18px 0 0;font-weight:300;max-width:62ch}
-.legend b{font-weight:500;color:var(--ink)}
-@media (max-width:640px){
-  .row,.axis{grid-template-columns:1fr 44px 48px;gap:8px}
-  .q{grid-column:1/-1;font-size:12px;color:var(--slate)}
-  .ticks{grid-column:1}
+.legend{font:400 12px/1.6 var(--sans);color:var(--slate);margin:16px 0 0;max-width:60ch}
+.legend b{font-weight:600;color:var(--ink)}
+@container (max-width:520px){
+  .lrow{grid-template-columns:1fr 44px;gap:0 8px}
+  .q{grid-column:1/-1;text-align:left;font-size:12px;color:var(--slate);margin-bottom:2px}
+  .lhead .cap:first-child{display:none}
 }
 
 /* ── 3단계 ───────────────────────────────────────────────── */
 .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);
-  border:1px solid var(--rule-soft)}
+  border:1px solid var(--rule-soft);border-radius:4px;overflow:hidden}
 .step{background:var(--card);padding:26px 22px}
 .step .n{font-size:11px;font-weight:600;line-height:1;color:var(--patina);margin:0 0 14px}
-.step h3{font-size:16px;font-weight:600;margin:0 0 8px}
-.step p{margin:0;font-size:14px;color:var(--slate);font-weight:300}
+.step h3{font-size:16px;font-weight:650;margin:0 0 8px}
+.step p{margin:0;font-size:14px;color:var(--slate)}
 @media (max-width:720px){.steps{grid-template-columns:1fr}}
 
 /* ── 분석 영역 카드 ──────────────────────────────────────── */
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);
-  border:1px solid var(--rule-soft)}
+  border:1px solid var(--rule-soft);border-radius:4px;overflow:hidden}
 .cell{background:var(--card);padding:24px 22px}
 .cell .k{font-size:11px;font-weight:500;line-height:1.35;color:var(--slate);margin:0 0 12px}
-.cell h3{font-size:15px;font-weight:600;margin:0 0 7px}
-.cell p{margin:0;font-size:14px;color:var(--slate);font-weight:300}
+.cell h3{font-size:15px;font-weight:650;margin:0 0 7px}
+.cell p{margin:0;font-size:14px;color:var(--slate)}
 @media (max-width:900px){.grid{grid-template-columns:1fr 1fr}}
 @media (max-width:620px){.grid{grid-template-columns:1fr}}
 
@@ -188,17 +227,19 @@ h1 em{font-style:normal;color:var(--patina)}
 .cmp thead th{font-size:12px;font-weight:600;line-height:1.2;
   color:var(--slate);border-bottom:1px solid var(--rule);padding-bottom:11px}
 .cmp tbody th{font-size:13px;font-weight:500;color:var(--slate);width:22%}
-.cmp .them{color:var(--slate);font-weight:300;width:39%}
-.cmp .us{background:var(--wash);font-weight:400}
-.cmpbox{overflow-x:auto;border:1px solid var(--rule-soft);background:var(--card)}
+.cmp .them{color:var(--slate);width:39%}
+.cmp .us{background:var(--wash)}
+.cmpbox{overflow-x:auto;border:1px solid var(--rule-soft);border-radius:4px;
+  background:var(--card)}
 @media (max-width:640px){.cmp{min-width:560px}}
 
 /* ── 약속 ────────────────────────────────────────────────── */
 .pledge{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;
-  gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft)}
+  gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft);
+  border-radius:4px;overflow:hidden}
 .pledge li{background:var(--card);padding:22px}
-.pledge b{display:block;font-size:15px;font-weight:600;margin:0 0 6px}
-.pledge span{font-size:14px;color:var(--slate);font-weight:300}
+.pledge b{display:block;font-size:15px;font-weight:650;margin:0 0 6px}
+.pledge span{font-size:14px;color:var(--slate)}
 @media (max-width:620px){.pledge{grid-template-columns:1fr}}
 
 /* ── FAQ ─────────────────────────────────────────────────── */
@@ -207,21 +248,23 @@ h1 em{font-style:normal;color:var(--patina)}
 .faq summary{cursor:pointer;list-style:none;padding:18px 34px 18px 0;position:relative;
   font-size:15px;font-weight:500}
 .faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:"+";position:absolute;right:6px;top:16px;
-  font:400 18px/1 var(--mono);color:var(--slate)}
-.faq details[open] summary::after{content:"−"}
-.faq p{margin:0 0 18px;font-size:14px;color:var(--slate);font-weight:300;max-width:64ch}
-.faq p b{font-weight:500;color:var(--ink)}
+.faq .chev{position:absolute;right:4px;top:19px;width:16px;height:16px;
+  color:var(--slate);transition:transform .18s}
+.faq details[open] .chev{transform:rotate(180deg);color:var(--patina)}
+@media (prefers-reduced-motion:reduce){.faq .chev{transition:none}}
+.faq p{margin:0 0 18px;font-size:14px;color:var(--slate);max-width:64ch}
+.faq p b{font-weight:600;color:var(--ink)}
 
 /* ── 마감 CTA ────────────────────────────────────────────── */
 .close{background:var(--ink);color:#E6E9E4;padding:var(--pad) 0}
-.close h2{color:#E6E9E4;max-width:20ch}
-.close .sub{color:#A7B2AC;margin-bottom:30px}
-.close .cta{background:#57B49C;color:#101513}
+.close h2{color:#E6E9E4;max-width:18ch}
+.close .sub{color:#A7B2AC;margin-bottom:28px}
 .close .eyebrow{color:#8B9791}
+.close .go{background:#57B49C;border-color:#57B49C;color:#101513}
+.close .go:hover{filter:brightness(1.08)}
 
 footer{border-top:1px solid var(--rule-soft);padding:26px 0 44px;font-size:13px;
-  color:var(--slate);font-weight:300}
+  color:var(--slate)}
 .fbar{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center}
 .fbar .sp{flex:1}
 footer a{text-decoration:none;border-bottom:1px solid var(--rule)}
@@ -242,7 +285,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
     <a href="#faq">자주 묻는 질문</a>
   </nav>
   <span class="sp"></span>
-  <a class="hcta" href="/auth/login">시작하기</a>
+  <!-- 주요 CTA 이름은 세 자리(머리·히어로·바닥)가 한 벌이다. -->
+  <a class="hcta" href="/auth/login">Google로 시작</a>
 </div></header>
 
 <main>
@@ -252,125 +296,142 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <p class="eyebrow lat">Search Console · measured, not estimated</p>
   <h1>서치콘솔 숫자로 <em>다음에 고칠 검색어</em>를 정합니다.</h1>
   <p class="lede">구글 계정을 연결하면 내 사이트의 노출·클릭·평균 순위를 그대로 읽습니다.
-    1페이지까지 몇 칸 남았는지로 검색어를 줄 세워, 가장 적은 손으로 올릴 것을 맨 위에 둡니다.</p>
+    1페이지까지 몇 칸 남았는지로 줄을 세워 맨 위부터 손댑니다.</p>
 
   <div class="actions">
-    <a class="cta" href="/auth/login">
+    <a class="go" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
-      Google 계정으로 시작
+      Google로 시작
     </a>
+    <a class="go sec" href="#example">예시 화면 보기</a>
   </div>
 
   <ul class="assure">
-    <li>서치콘솔 읽기 전용 권한</li>
-    <li>카드 등록 없음</li>
-    <li>사이트를 고르면 첫 측정이 바로 시작</li>
+    <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>서치콘솔 읽기 전용</li>
+    <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>카드 등록 없음</li>
+    <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>첫 측정까지 1분</li>
   </ul>
 
   </div>
 
-  <div class="panel">
+  <div class="panel" id="example">
     <div class="phead">
       <span class="t">1페이지까지 남은 거리</span>
       <span class="sp"></span>
-      <span class="chip">예시 화면</span>
+      <span class="badge">예시 화면</span>
     </div>
 
-    <div class="tiles">
-      <div class="tile"><p class="k">클릭</p><p class="v">1,284</p><p class="d up">+18.2%</p></div>
-      <div class="tile"><p class="k">노출</p><p class="v">42,910</p><p class="d up">+6.4%</p></div>
-      <div class="tile"><p class="k">CTR</p><p class="v">3.0%</p><p class="d down">−0.3%p</p></div>
-      <div class="tile"><p class="k">평균 순위</p><p class="v">14.2</p><p class="d up">1.6칸 상승</p></div>
+    <div class="band">
+      <div class="m"><div class="v">1,284<span class="d up">+18%</span></div>
+        <div class="l">클릭</div><div class="b">28일 · 직전 1,086</div></div>
+      <div class="m"><div class="v">42,910<span class="d up">+6%</span></div>
+        <div class="l">노출</div><div class="b">28일 · 직전 40,330</div></div>
+      <div class="m"><div class="v">3.0%<span class="d down">−0.3%p</span></div>
+        <div class="l">클릭률</div><div class="b">28일 · 직전 3.3%</div></div>
+      <div class="m"><div class="v">14.2<span class="d up">▲1.6</span></div>
+        <div class="l">평균 순위</div><div class="b">28일 · 직전 15.8위</div></div>
     </div>
 
-    <div class="chart">
-      <p class="clabel">회색 구간이 1페이지(10위 이내), 세로선이 그 경계입니다.</p>
-      <div class="rows">
-        <div class="row"><span class="q">seo 자동화 도구</span>
-          <div class="track"><i class="fill" data-near="1" style="left:33.4%;width:6.6%;animation-delay:.05s"></i></div>
-          <span class="rk">12위</span><span class="gp">2칸</span></div>
-        <div class="row"><span class="q">서치콘솔 분석</span>
-          <div class="track"><i class="fill" data-near="1" style="left:33.4%;width:13.3%;animation-delay:.12s"></i></div>
-          <span class="rk">14위</span><span class="gp">4칸</span></div>
-        <div class="row"><span class="q">ai 검색 노출</span>
-          <div class="track"><i class="fill" style="left:33.4%;width:23.3%;animation-delay:.19s"></i></div>
-          <span class="rk">17위</span><span class="gp">7칸</span></div>
-        <div class="row"><span class="q">키워드 순위 추적</span>
-          <div class="track"><i class="fill" style="left:33.4%;width:43.3%;animation-delay:.26s"></i></div>
-          <span class="rk">23위</span><span class="gp">13칸</span></div>
-        <div class="row"><span class="q">색인 오류 확인</span>
-          <div class="track"><i class="dot" style="left:23.3%"></i></div>
-          <span class="rk">7위</span><span class="gp in">1페이지</span></div>
+    <div class="log">
+      <div class="lrow lhead">
+        <span class="cap">검색어</span>
+        <div class="ticks"><span style="left:0">1</span><span style="left:21.1%">5</span>
+          <span style="left:47.4%">10</span><span style="left:73.7%">15</span>
+          <span style="left:100%">20</span></div>
+        <span class="cap r">28일 노출</span>
       </div>
-      <div class="axis"><span></span>
-        <div class="ticks"><span style="left:0">1</span><span style="left:33.4%">10</span>
-          <span style="left:66.7%">20</span><span style="left:100%">30</span></div>
-        <span></span><span></span></div>
-      <p class="legend">막대는 1페이지까지 끌어올려야 할 거리입니다.
-        <b>가장 짧은 막대가 가장 적은 손으로 이기는 자리</b>입니다. 여기부터 손댑니다.</p>
+
+      <div class="lrow"><span class="q">seo 자동화 도구</span>
+        <div class="track"><i class="fill" style="left:47.4%;width:10.5%;animation-delay:.05s"></i>
+          <i class="dot" style="left:57.9%"></i><b class="rk" style="left:57.9%">12</b></div>
+        <span class="imp">1,240</span></div>
+      <div class="lrow"><span class="q">서치콘솔 분석</span>
+        <div class="track"><i class="fill" style="left:47.4%;width:21%;animation-delay:.12s"></i>
+          <i class="dot" style="left:68.4%"></i><b class="rk" style="left:68.4%">14</b></div>
+        <span class="imp">940</span></div>
+      <div class="lrow"><span class="q">ai 검색 노출</span>
+        <div class="track"><i class="fill" style="left:47.4%;width:36.8%;animation-delay:.19s"></i>
+          <i class="dot" style="left:84.2%"></i><b class="rk" style="left:84.2%">17</b></div>
+        <span class="imp">610</span></div>
+      <div class="lrow"><span class="q">키워드 순위 추적</span>
+        <div class="track"><i class="fill" style="left:47.4%;width:47.3%;animation-delay:.26s"></i>
+          <i class="dot" style="left:94.7%"></i><b class="rk" style="left:94.7%">19</b></div>
+        <span class="imp">430</span></div>
+      <div class="lrow"><span class="q">색인 오류 확인</span>
+        <div class="track"><i class="dot" style="left:31.6%"></i>
+          <b class="rk" style="left:31.6%">7</b></div>
+        <span class="imp">2,180</span></div>
+
+      <p class="legend">옅은 칸이 1페이지, 점이 지금 평균 순위, 막대가 1페이지까지 남은 거리입니다.
+        <b>가장 짧은 막대가 가장 적은 손으로 이기는 자리</b>입니다.</p>
     </div>
   </div>
  </div>
 </section>
 
-<section id="how" class="band wrap">
+<section id="how" class="band-sec wrap">
+  <!-- 소제목은 헤더 메뉴가 부르는 이름 그대로다 — 눌러서 도착한 곳에 그 낱말이
+       없으면 어디에 왔는지 확인이 안 된다. 문장은 부제로 내린다. -->
   <p class="eyebrow lat">How it works</p>
-  <h2>한 번 연결하면 손댈 것만 남습니다.</h2>
-  <p class="sub">측정은 자동으로 돌고, 무엇을 고칠지는 사람이 고릅니다. 준비할 파일도
-    설치할 것도 없습니다.</p>
+  <h2>작동 방식</h2>
+  <p class="sub">연결하면 측정은 자동으로 돌고, 무엇을 고칠지는 사람이 고릅니다.</p>
   <div class="steps">
     <div class="step">
       <p class="n lat">01</p>
-      <h3>구글 계정을 연결합니다</h3>
+      <h3>구글 계정 연결</h3>
       <p>로그인하면 소유한 서치콘솔 사이트가 목록으로 뜹니다. 하나를 고르면 첫 측정이
-        그 자리에서 시작합니다. 클라우드 콘솔에서 할 일은 없습니다.</p>
+        그 자리에서 시작합니다.</p>
     </div>
     <div class="step">
       <p class="n lat">02</p>
-      <h3>고칠 자리를 순서대로 받습니다</h3>
-      <p>순위·클릭률·색인·모바일·AI 인용을 훑어 손댈 곳을 목록으로 만듭니다. 항목마다
-        근거가 된 숫자가 붙습니다. 추측한 값은 쓰지 않습니다.</p>
+      <h3>고칠 자리 확인</h3>
+      <p>순위·클릭률·색인·모바일·AI 인용을 훑어 손댈 곳을 순서대로 세웁니다. 항목마다
+        근거가 된 숫자가 붙습니다.</p>
     </div>
     <div class="step">
       <p class="n lat">03</p>
-      <h3>고른 것을 PR로 받습니다</h3>
-      <p>깃허브 저장소를 연결해 두면 항목 하나를 골라 실제 파일 변경까지 만듭니다.
-        새 브랜치와 PR로만 옵니다. main에는 쓰지 않고, 머지는 직접 하십시오.</p>
+      <h3>고른 것을 PR로 수령</h3>
+      <p>깃허브 저장소를 연결해 두면 기회 하나를 골라 파일 변경까지 만듭니다.
+        새 브랜치와 PR로만 오고 머지는 직접 합니다.</p>
     </div>
   </div>
 </section>
 
-<section id="what" class="band wrap">
+<section id="what" class="band-sec wrap">
   <p class="eyebrow lat">What we look at</p>
-  <h2>여섯 갈래로 훑고, 손댈 것 하나를 남깁니다.</h2>
-  <p class="sub">전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다. 자료가 없는 갈래는
-    없다고 말하고 수집부터 제안합니다.</p>
+  <h2>분석 영역</h2>
+  <p class="sub">여섯 갈래를 훑고, 전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다.</p>
+  <!-- 카드 제목은 가입 후 화면에서 그대로 만나는 이름이다 — 기회 종류는
+       scoring 의 label, 화면은 view-def 의 title 이 정본이고 여기는 그걸 따른다.
+       가입 전에 본 여섯 갈래를 가입 후에 못 찾으면 같은 제품으로 안 읽힌다. -->
   <div class="grid">
     <div class="cell"><p class="k lat">Rank</p><h3>1페이지까지 남은 거리</h3>
       <p>11~20위 검색어가 10위 경계까지 몇 칸 남았는지 셉니다. 짧은 것부터 손댑니다.</p></div>
-    <div class="cell"><p class="k lat">CTR</p><h3>노출은 되는데 클릭이 없는 검색어</h3>
+    <div class="cell"><p class="k lat">CTR</p><h3>클릭률 미달</h3>
       <p>순위는 나오는데 아무도 안 누르는 자리입니다. 제목·설명 문제인지 경쟁 문제인지 가릅니다.</p></div>
-    <div class="cell"><p class="k lat">Index</p><h3>색인이 막힌 페이지</h3>
+    <div class="cell"><p class="k lat">Index</p><h3>색인 막힘</h3>
       <p>robots 차단·크롤 실패·canonical 불일치·미색인 네 갈래로 나눕니다.</p></div>
-    <div class="cell"><p class="k lat">Mobile</p><h3>모바일에서만 밀리는 검색어</h3>
+    <div class="cell"><p class="k lat">Mobile</p><h3>모바일 격차</h3>
       <p>같은 검색어의 모바일과 데스크톱 평균 순위를 비교해 2칸 이상 벌어진 곳을 찾습니다.</p></div>
-    <div class="cell"><p class="k lat">AI</p><h3>AI 답변이 인용한 곳</h3>
+    <div class="cell"><p class="k lat">AI</p><h3>AI 인용</h3>
       <p>ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지, 내 사이트가 왜 빠졌는지 봅니다.</p></div>
-    <div class="cell"><p class="k lat">Trend</p><h3>날짜별 추이와 순위 변동</h3>
+    <div class="cell"><p class="k lat">Trend</p><h3>순위 변동</h3>
       <p>클릭과 노출을 하루 단위로 놓습니다. 지난주 대비 움직인 검색어를 따로 모읍니다.</p></div>
   </div>
 </section>
 
-<section id="diff" class="band wrap">
+<section id="diff" class="band-sec wrap">
   <p class="eyebrow lat">Measured vs estimated</p>
-  <h2>같은 화면처럼 보여도, 숫자의 출처가 다릅니다.</h2>
-  <p class="sub">키워드 도구 대부분은 남의 사이트까지 볼 수 있는 대신 값을 추정합니다.
-    seo-miner는 내가 소유한 사이트만 보는 대신 구글이 기록한 값을 그대로 씁니다.</p>
+  <h2>실측과 추정</h2>
+  <p class="sub">추정값 대신 구글이 기록한 값을 그대로 씁니다.</p>
   <div class="cmpbox"><table class="cmp">
     <thead><tr><th scope="col"></th><th scope="col">일반 키워드 도구</th><th scope="col">seo-miner</th></tr></thead>
     <tbody>
       <tr><th scope="row">순위</th><td class="them">제3자 크롤링으로 추정한 값</td>
-        <td class="us">서치콘솔에 기록된 내 사이트의 평균 게재순위</td></tr>
+        <td class="us">서치콘솔에 기록된 내 사이트의 평균 순위</td></tr>
       <tr><th scope="row">트래픽</th><td class="them">검색량 모델로 추정한 방문 수</td>
         <td class="us">실제 노출 수와 클릭 수</td></tr>
       <tr><th scope="row">대상</th><td class="them">아무 도메인이나 조회</td>
@@ -381,9 +442,10 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   </table></div>
 </section>
 
-<section class="band wrap">
+<section class="band-sec wrap">
   <p class="eyebrow lat">Ground rules</p>
   <h2>안 하는 것부터 말씀드립니다.</h2>
+  <p class="sub">권한과 결과물의 경계를 먼저 정해 두었습니다.</p>
   <ul class="pledge">
     <li><b>읽기 전용으로만 봅니다</b>
       <span>서치콘솔은 읽기 권한만 요청합니다. 자료를 고치거나 지우지 않습니다.</span></li>
@@ -396,28 +458,44 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   </ul>
 </section>
 
-<section id="faq" class="band wrap narrow">
+<!-- FAQ 도 다른 절과 같은 폭을 쓴다. 여기만 좁히면 왼쪽 66% 에 몰려 오른쪽 1/3 이
+     빈 채로 남고, 훑던 눈이 이 절에서 한 번 멈춘다. -->
+<section id="faq" class="band-sec wrap">
   <p class="eyebrow lat">FAQ</p>
   <h2>자주 묻는 질문</h2>
   <div class="faq">
-    <details><summary>비용이 드나요?</summary>
+    <details><summary>비용이 드나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>구글 계정 로그인 말고는 준비할 것이 없습니다. 카드도 받지 않습니다.</p></details>
-    <details><summary>어떤 권한을 요구하나요?</summary>
+    <details><summary>어떤 권한을 요구하나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>서치콘솔 <b>읽기 전용</b> 권한 하나입니다. 자료를 고치거나 지우지 않으며,
         본인이 서치콘솔에 등록한 사이트만 분석합니다.</p></details>
-    <details><summary>"Google에서 확인하지 않은 앱" 경고가 뜹니다.</summary>
+    <details><summary>"확인하지 않은 앱" 경고는 왜 뜨나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>구글 확인 절차를 아직 밟지 않은 앱이라 동의 화면에 경고가 한 번 뜹니다.
         <b>[고급]</b>을 누른 뒤 <b>[seo-miner(으)로 이동]</b>으로 지나가면 됩니다.
         요청하는 권한은 그 화면에 그대로 적혀 있습니다.</p></details>
-    <details><summary>제 저장소에 마음대로 커밋하나요?</summary>
+    <details><summary>제 저장소에 마음대로 커밋하나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>아닙니다. 깃허브는 연결하지 않아도 나머지 기능이 전부 돕니다. 연결해도 변경은
         새 브랜치와 PR로만 만들고, main에는 쓰지 않습니다.</p></details>
-    <details><summary>얼마나 자주 측정하나요?</summary>
-      <p>사이트를 고르면 바로 한 번 재고, 그다음부터 주 1회 자동으로 다시 잽니다. 끝나면
-        보고서를 붙인 메일이 갑니다. 화면의 <b>[지금 다시 재기]</b>로 언제든 앞당길 수 있습니다.</p></details>
-    <details><summary>네이버나 다음도 보나요?</summary>
+    <details><summary>얼마나 자주 측정하나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
+      <p>사이트를 고르면 바로 한 번 재고, 그다음부터 주 1회 자동으로 다시 잽니다.
+        주기는 <b>[설정]</b>에서 바꿉니다. 끝나면 보고서를 붙인 메일이 갑니다.</p></details>
+    <details><summary>네이버나 다음도 보나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>지금은 구글 검색과 AI 답변만 봅니다. 국내 검색 화면은 아직 넣지 않았습니다.</p></details>
-    <details><summary>서치콘솔 숫자가 며칠씩 비어 보입니다.</summary>
+    <details><summary>최근 며칠 숫자가 왜 비어 있나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+      aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
       <p>구글이 값을 확정할 때까지 기다리므로 <b>최근 3일은 비어 있습니다</b>.
         빠진 것이 아니라 아직 확정되지 않은 구간입니다.</p></details>
   </div>
@@ -426,12 +504,11 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 <section class="close">
   <div class="wrap">
     <p class="eyebrow lat">Start measuring</p>
-    <h2>내 사이트가 지금 몇 위인지, 1분이면 봅니다.</h2>
-    <p class="sub">로그인하고 사이트 하나만 고르면 첫 측정이 바로 시작합니다.
-      구글 동의 화면에서 경고가 한 번 뜨는데, [고급]으로 지나가면 됩니다.</p>
-    <a class="cta" href="/auth/login">
+    <h2>1분이면 첫 순위를 봅니다.</h2>
+    <p class="sub">로그인하고 사이트 하나만 고르면 첫 측정이 바로 시작합니다.</p>
+    <a class="go" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
-      Google 계정으로 시작
+      Google로 시작
     </a>
   </div>
 </section>
@@ -442,3 +519,14 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <span class="sp"></span>
   <a href="https://github.com/seanjr2847/seo-miner">GitHub</a>
 </div></footer>
+
+<script>
+// 스크롤이 시작되면 붙박이 헤더 아래에 얇은 선을 세운다 — 안 세우면 검은 머리가
+// 본문 위에 그냥 떠 있고, 무엇이 겹쳐 있는지가 안 보인다.
+(function () {
+  var h = document.querySelector("header");
+  var sync = function () { h.classList.toggle("sc", window.scrollY > 8); };
+  addEventListener("scroll", sync, { passive: true });
+  sync();
+})();
+</script>

@@ -25,12 +25,9 @@
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
 /* 표는 그림의 각주가 아니라 이 화면의 할 일 목록이다 — 점수·근거·행동이 줄마다
-   붙으면서 여기가 답이 됐다. 그래서 접지 않는다(펼침은 depthLog 이 open 으로 낸다). */
-/* 셸의 table() 은 8줄 미만이면 가로 스크롤 상자(.tw)를 안 두른다 — 좁은 화면에서
-   그 표가 페이지를 통째로 가로로 밀었다(390px 에서 body 가 425px). 이 화면의 두 표는
-   자기 상자 안에서 민다. 종이에는 스크롤이 없으므로 인쇄에서는 도로 편다. */
-.kwtable, #mv-list { overflow-x:auto; }
-@media print { .kwtable, #mv-list { overflow:visible; } }
+   붙으면서 여기가 답이 됐다. 그래서 그림과 같은 무게(.card)로 세운다.
+   가로로 넘치는 일은 셸의 table() 이 늘 두르는 .tw 가 맡는다 — 여기서 또 두르면
+   스크롤 상자가 둘 겹쳐 안쪽 표가 카드 테두리를 물고 잘린다. */
 /* 검색어는 낱말째로 읽는다 — 좁은 화면에서 "beta-site 검색어"가 하이픈 뒤에서 갈려
    "beta- / site 검색어"로 읽혔다. 한글 어절도 같은 이유로 안 쪼갠다. 한 낱말이 칸보다 길면(긴 URL 같은 것)
    그때만 낱말 안에서 끊는다(anywhere 는 칸을 최소 너비로 줄여 더 잘게 갈랐다). .kwcell 은 다른 화면도 쓰므로
@@ -39,10 +36,23 @@
 /* 검색어 자체는 아예 안 쪼갠다 — keep-all 은 한글 어절만 지키고 "beta-site" 의
    하이픈 뒤는 그대로 갈랐다. 이름보다 칸이 좁으면 표가 자기 상자 안에서 가로로 민다. */
 .kwtable .kwq, #mv-list .kwq { white-space:nowrap; }
-.kwtable { margin-top:14px; }
-.kwtable summary { font:500 12.5px/1 var(--sans); color:var(--slate); cursor:pointer; }
-.kwtable summary:hover { color:var(--patina); }
-.kwtable table { margin-top:12px; }
+/* 범례는 그림 위에 선다 — 색이 무슨 뜻인지 모른 채로 그림을 먼저 읽게 두지 않는다.
+   부품은 셸의 .chleg 를 그대로 쓰고, 조각의 모양(점·막대·영역)만 여기서 준다. */
+.kwleg { margin:0 0 12px; }
+.kwleg i.dot { border-radius:50%; background:var(--patina); }
+.kwleg i.bar { width:15px; height:6px; border-radius:3px; background:var(--copper); opacity:.5; }
+.kwleg i.zone { background:var(--wash); border:1px solid var(--rule); }
+/* 목록이 무엇에 오염됐는지는 상태다 — 배지로 말하고, 고치러 갈 자리를 옆에 둔다.
+   여태 이 자리에 산문 두 줄이 서 있어서 경고인지 설명인지 갈리지 않았다. */
+.kwwarn { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-size:12.5px; color:var(--slate); margin:12px 0 0; }
+/* 비교 기간은 눈썹에 선다 — 날짜뿐이라 등폭이 맞고, 없으면 자리를 안 차지한다. */
+#mv-eb { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:0; }
+.sh > .eyebrow:empty { display:none; }
+/* 그림은 최소 720px 다 — 390 에서는 눈금 왼쪽 끝만 남아 「평균 순위 → / 1」로 잘렸다.
+   잘린 그림은 정보가 아니라 고장으로 읽히므로, 좁은 화면에서는 표만 남긴다.
+   같은 값을 표가 전부 들고 있어서 잃는 것이 없다. */
+@media (max-width:640px) { .kwchart { display:none; } }
 /* 표의 줄은 그 자체로 답이 아니다 — 눌러야 "어느 페이지를 뭘 고치나"가 나온다.
    눌러도 되는 줄임을 커서와 첫 칸의 표식으로 말한다(색만으로 말하지 않는다). */
 tr[data-kwq] { cursor:pointer; }
@@ -55,20 +65,24 @@ tr[data-kwq]:focus-visible > td { background:var(--bar); }
 tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patina); }
 </style>
 
+<!-- 눈썹의 구간은 RULES(서버)가 정한다 — 여기에 숫자를 적으면 경계값이 바뀔 때
+     화면만 낡는다. 제목은 한 벌이다: 로컬과 호스팅이 같은 것을 본다. -->
 <section>
-  <!-- 호스팅판 문구는 data-web 으로 나란히 선다 — applyWording() 이 한 번 갈아 끼운다.
-       지금 무엇으로 정렬 중인지는 아래 도구줄의 정렬 칸이 말한다. -->
-  <div class="eyebrow" data-web="11~20위 구간">4~20위 구간</div>
-  <h2 data-web="순위 상승 기회">1페이지까지 남은 거리</h2>
-  <p class="sub" id="log-sub"></p>
-  <div id="log-tools"></div>
+  <div class="sh">
+    <p class="eyebrow" id="log-eb"></p>
+    <h2>순위 상승 기회</h2>
+    <p class="sub" id="log-sub"></p>
+  </div>
+  <div class="tools" id="log-tools"></div>
   <div id="log"></div>
 </section>
 
 <section>
-  <div class="eyebrow">지난번 대비</div>
-  <h2 data-web="순위 변동">움직인 검색어</h2>
-  <p class="sub" id="mv-sub"></p>
+  <div class="sh">
+    <p class="eyebrow" id="mv-eb"></p>
+    <h2>순위 변동</h2>
+    <p class="sub" id="mv-sub"></p>
+  </div>
   <div id="movers"></div>
 </section>
 
@@ -91,8 +105,11 @@ const KW_score = q => { const o = oppOf(q); return Number.isFinite(o && o.score)
    행동 버튼도 셸이 배포에 맞게 고른다(window.act): 로컬은 명령 칩, 호스팅은 버튼. */
 const KW_next = (msg, acts) => window.nextStep &&
   nextStep("keywords", `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : ""));
-const KW_act = (stage, label, primary) => window.act ? window.act(stage, label, primary)
-  : W(`<button class="cmd" onclick="copyCmd(this)">/capture ${esc(stage)}</button>`, "");
+// 명령 칩의 정본은 셸의 window.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg).
+// 예전에 여기 있던 폴백은 이름 없는 `/capture gsc` 를 찍어서, 박제본을 받은 사람이
+// 복사하면 doctor 가 어느 사이트냐고 되묻는 명령이 됐다. 셸이 없으면 아무것도 안 낸다.
+const KW_act = (stage, label, primary) =>
+  window.act ? window.act(stage, label, primary) : "";
 // 띠의 주요 행동 — 띠가 이름을 부른 검색어를 그 자리에서 펼친다. 목록을 훑는 대신
 // "제일 먼저 할 것"이 바로 열린다. 검색어를 선택자로 쓰지 않는다(따옴표에서 어긋난다).
 let KW_TOP = "";
@@ -167,19 +184,20 @@ function depthLog(rows, brandCatalogEmpty, period) {
   const p1 = rows.filter(r => (r.band || (r.pos <= RULES.page1 ? "page1" : "page2")) === "page1")
     .length;
   const impLabel = period ? `${period} 노출` : "노출";
+  // 목록이 남의 브랜드로 오염됐다는 것은 상태다 — 배지로 말하고 고치러 갈 자리를
+  // 옆에 둔다. 설정이 없는 배포(호스팅)에서는 window.go 가 글자로 물러선다.
   const warn = brandCatalogEmpty
-    ? `\n  <div class="legend">${W(
-        `경쟁사 브랜드 필터가 비어 있어 남의 브랜드 검색어가 섞입니다. ` +
-        `${window.go("settings")}에서 경쟁 도구 이름을 채우면 빠집니다.`,
-        "경쟁사 브랜드 필터가 비어 있어 타사 브랜드 검색어가 섞일 수 있습니다. " +
-        "설정에서 경쟁사 이름을 채우면 목록에서 빠집니다.")}</div>`
+    ? `\n  <p class="kwwarn"><span class="badge warn">타사 섞임</span>
+        <span>경쟁사 이름을 채우면 남의 브랜드 검색어가 목록에서 빠집니다.</span>
+        ${window.SM && SM.at("settings") >= 0
+          ? window.go("settings", "설정 열기") : ""}</p>`
     : "";
   // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
   // 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
   const tbl = table([
     "검색어",
     KW_SCORE_TH,
-    `>평균 순위?구글이 보고한 ${period || "기간"} 평균 게재순위입니다`,
+    `>평균 순위?서치콘솔이 보고한 ${period || "기간"} 평균 순위입니다`,
     `>1페이지까지?${RULES.page1}위 경계까지 올려야 할 칸 수입니다. 이미 1페이지면 빈 칸입니다`,
     `>${impLabel}?${period || "기간"} 합계 노출입니다. 순위를 올리면 클릭으로 바뀔 몫입니다`,
     `>클릭?${period || "기간"} 합계 클릭입니다`],
@@ -189,32 +207,27 @@ function depthLog(rows, brandCatalogEmpty, period) {
       <td class="num">${num(r.imp)}</td>
       <td class="num">${num(r.clk)}</td></tr>`));
 
-  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" role="img"
+  return `<div class="card kwchart">
+  <div class="chleg kwleg">
+    <span><i class="dot"></i>지금 평균 순위</span>
+    <span><i class="bar"></i>1페이지까지 남은 거리</span>
+    <span><i class="zone"></i>1페이지 영역(1~${RULES.page1}위)</span>
+  </div>
+  <div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" role="img"
       aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리. 1페이지 안 ${p1}개, 문턱 ${rows.length - p1}개">
     <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--wash)"/>
     ${grid}
     <line x1="${x10}" y1="${top - 6}" x2="${x10}" y2="${bot}"
           stroke="var(--patina)" stroke-width="1"/>
-    <text class="axis" x="${L}" y="${PAD_T - 26}">평균 게재순위 →</text>
+    <text class="axis" x="${L}" y="${PAD_T - 26}">평균 순위 →</text>
     <text class="axis" x="${x10 - 6}" y="${PAD_T - 26}" text-anchor="end"
           fill="var(--patina)">1페이지 경계</text>
     ${tick(PAD_T - 14)}
     <text class="axis" x="${WIDTH}" y="${PAD_T - 14}" text-anchor="end">${esc(impLabel)}</text>
     ${lanes}
     ${botAxis ? tick(H - 7) : ""}
-  </svg></div>
-  <div class="legend">
-    <b style="color:var(--patina)">●</b> 점 = 지금 평균 순위 ·
-    <b style="color:var(--copper)">▬</b> 막대 = 1페이지까지 남은 거리 ·
-    옅은 칸 = 1페이지 영역(1~${RULES.page1}위) ·
-    오른쪽 숫자 = ${esc(impLabel)}<br>
-    <b style="color:var(--patina)">1페이지 안 ${p1}개</b> ·
-    <b style="color:var(--copper)">문턱 ${rows.length - p1}개</b>.${rows.length - p1 ? " " +
-      W("막대만큼 올리면 1페이지입니다", "막대 길이만큼 올리면 1페이지입니다") : ""}
-  </div>${warn}
-  <details class="kwtable" open><summary>${W(
-    `줄을 누르면 그 검색어로 고칠 것이 나옵니다 (${rows.length}개)`,
-    `행을 누르면 그 검색어로 고칠 것이 나옵니다 (${rows.length}개)`)}</summary>${tbl}</details>`;
+  </svg></div></div>${warn}
+  <div class="card kwtable">${tbl}</div>`;
 }
 
 // 거르기·정렬은 화면에서 한다 — 서버가 준 15개가 이 화면이 가진 전부다.
@@ -234,7 +247,8 @@ function KW_tools() {
   const bands = [["", "전체"],
     ["page2", `1페이지 문턱 ${RULES.page1 + 1}~${RULES.striking_hi}위`],
     ["page1", `1페이지 안 ${RULES.striking_lo}~${RULES.page1}위`]];
-  $("log-tools").innerHTML = `<div class="tools">
+  // #log-tools 가 곧 도구줄이다 — 안에 .tools 를 한 겹 더 두면 여백이 두 번 선다.
+  $("log-tools").innerHTML = `
     <select onchange="KW_setSort(this.value)" aria-label="정렬 기준">${KW_SORTS.map(
       ([v, l]) => `<option value="${v}"${v === KW_SORT ? " selected" : ""}>${l}</option>`
       ).join("")}</select>
@@ -243,9 +257,8 @@ function KW_tools() {
         `(${cnt(v)})</option>`).join("")}</select>
     <span class="n" id="logn"></span>
     <span class="sp"></span>
-    <button class="go sec" onclick="KW_csvLog()"
-      title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
-  </div>`;
+    <button class="go sm sec" onclick="KW_csvLog()"
+      title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
 }
 
 function KW_drawLog() {
@@ -256,7 +269,7 @@ function KW_drawLog() {
     ? depthLog(rows, KW_BRAND_EMPTY, KW_PERIOD)
     : `<div class="empty"><b>이 구간에는 검색어가 없습니다</b>
         <p>다른 구간에는 ${KW_ROWS.length}개가 있습니다.</p>
-        <div class="acts"><button onclick="KW_reset()">전체 다시 보기</button></div></div>`;
+        <div class="acts"><button onclick="KW_reset()">전체 보기</button></div></div>`;
 }
 
 // ── 움직인 검색어 ────────────────────────────────────────────
@@ -280,8 +293,8 @@ function KW_mvRender() {
           `(${cnt(v)})</option>`).join("")}</select>
       <span class="n" id="mvn"></span>
       <span class="sp"></span>
-      <button class="go sec" onclick="KW_csvMv()"
-        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내보내기</button>
+      <button class="go sm sec" onclick="KW_csvMv()"
+        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>
     </div><div id="mv-list"></div>`;
   KW_mvList();
 }
@@ -293,12 +306,12 @@ function KW_mvList() {
   if (!list.length)
     return $("mv-list").innerHTML = `<div class="empty"><b>이 조건에 맞는 검색어가 없습니다</b>
       <p>움직인 검색어는 모두 ${KW_MV.length}개입니다.</p>
-      <div class="acts"><button onclick="KW_mvReset()">전체 다시 보기</button></div></div>`;
+      <div class="acts"><button onclick="KW_mvReset()">전체 보기</button></div></div>`;
   const per = KW_PERIOD || "기간";
-  $("mv-list").innerHTML = table([
+  $("mv-list").innerHTML = `<div class="card">` + table([
     "검색어",
     KW_SCORE_TH,
-    `>평균 순위?구글이 보고한 ${per} 평균 게재순위입니다`,
+    `>평균 순위?서치콘솔이 보고한 ${per} 평균 순위입니다`,
     ">Δ순위?직전 기록 대비 움직인 칸수입니다. 양수면 위로 올라온 것입니다",
     `>클릭?${per} 합계 클릭입니다. 옆 숫자는 직전 기록 대비 증감입니다`,
     `>노출?${per} 합계 노출입니다. 노출이 적으면 순위도 크게 흔들립니다`],
@@ -306,21 +319,25 @@ function KW_mvList() {
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
-      <td class="num">${num(m.imp)}</td></tr>`));
+      <td class="num">${num(m.imp)}</td></tr>`)) + `</div>`;
 }
 
 /* ── 행 펼침 ────────────────────────────────────────────────────────
    두 표의 줄은 "몇 위인가"까지만 말한다. 그 다음 질문("그래서 어느 페이지를
    뭘 고치나")은 펼친 줄이 답한다 — 뼈대의 pageTable/pageFix/playList 를 그대로
    쓴다. 같은 패널을 화면마다 다시 만들면 언제 하나는 낡는다. */
+// 눌러도 되는 줄임은 첫 칸의 셰브론(CSS ::before)과 손 커서가 말한다 — 표 위에
+// "줄을 누르면 …" 한 줄을 따로 세우던 자리를 그 표식이 가져갔다.
 const KW_rowAttr = (q, src) =>
-  `data-kwq="${esc(q)}" data-kwsrc="${src}" tabindex="0" role="button" aria-expanded="false"`;
+  `data-kwq="${esc(q)}" data-kwsrc="${src}" tabindex="0" role="button" aria-expanded="false"
+   title="누르면 이 검색어로 고칠 것이 펼쳐집니다"`;
 
 /* 두 표의 앞 두 칸은 같은 것을 묻는다: 어느 검색어이고, 이걸 먼저 해야 하나.
    점수·막대·종류·근거는 전부 셸의 한 벌(oppScore/oppMeter/oppWhy)이다 — 접힌
    줄에서도 "왜"가 보여야 목록이 훑어진다. 기회가 없는 줄은 빈 칸으로 둔다:
    숫자가 없다는 말과 "아직 안 캤다"는 말은 펼친 패널이 한 번만 한다. */
-const KW_SCORE_TH = ">먼저?기회 점수 100점 만점입니다. 높을수록 먼저 손댈 자리입니다."
+// 열 이름은 그 칸에 든 값의 이름이다 — 「먼저」는 정렬 의도였지 값의 이름이 아니었다.
+const KW_SCORE_TH = ">점수?기회 점수 100점 만점입니다. 높을수록 먼저 손댈 자리입니다."
   + " 빈 칸은 아직 기회 목록에 없는 검색어입니다";
 function KW_qcell(q) {
   const o = oppOf(q);
@@ -407,11 +424,9 @@ function KW_det(r, src) {
   // 같은 검색어가 두 표에 다 서면 펼침 본문도 두 벌이 된다 — 아래 표는 본문을 안 갖고
   // 위 표의 그 줄로 데려간다. 위에 그 줄이 없을 때만(예: 필터로 빠졌을 때) 직접 그린다.
   if (src === "mv" && KW_logRow(r.query))
-    return `<div class="det"><p class="detn">${W(
-      "이 검색어의 페이지와 할 일은 위 [1페이지까지 남은 거리]에 있습니다.",
-      "이 검색어의 페이지와 할 일은 위 [순위 상승 기회]에 있습니다.")}
-      <button class="go sec" onclick="KW_jump(this)">${
-        W("그 줄 열기", "그 행 열기")}</button></p></div>`;
+    return `<div class="det"><p class="detn">이 검색어의 페이지와 할 일은
+      위 [순위 상승 기회]에 있습니다.
+      <button class="go sm sec" onclick="KW_jump(this)">그 줄 열기</button></p></div>`;
   const o = oppOf(r.query);
   if (o) {
     const acts = oppActs(o);
@@ -423,10 +438,8 @@ function KW_det(r, src) {
   return `<div class="det">
     <p class="detw">${KW_state(r)}</p>
     ${pages.length ? pageTable(pages)
-      : `<p class="detn">${W("이 검색어로 어느 페이지가 걸렸는지는 아직 모릅니다. 구글 실적을 " +
-         "한 번 더 읽으면 페이지별로 채워집니다.",
-         "이 검색어로 어느 페이지가 노출됐는지는 아직 모릅니다. 검색 실적을 한 번 더 " +
-         "수집하면 페이지별로 채워집니다.")}</p>`}
+      : `<p class="detn">이 검색어로 어느 페이지가 노출됐는지는 아직 모릅니다.
+         실적을 한 번 더 수집하면 페이지별로 채워집니다.</p>`}
     ${playList(what, acts)}
     ${url ? pageFix(KW_AUDITS[url], url) : ""}
     ${askBlock({url, audit: KW_AUDITS[url], acts, deliver, problem: what,
@@ -435,9 +448,14 @@ function KW_det(r, src) {
   </div>`;
 }
 // 점수도 확인·완료 버튼도 없는 이유를 그 자리에서 말한다 — 빈 칸만 두면 고장으로 읽힌다.
-// 명령은 로컬에만 있다(웹에는 칠 곳이 없어 버튼이 대신한다) — 문구는 W 가 가른다.
-const KW_noOpp = () => `<p class="detn">이 검색어는 아직 기회 목록에 없습니다. ${W(
-  "<code>/capture gaps</code> 를 돌리면", "기회 분석을 한 번 돌리면")} 점수가 붙습니다.</p>`;
+// 단계 이름은 조립이 실어 보낸 정본(window.__STAGES__)에서 온다 — 글자로 옮겨 적으면
+// 파이썬이 이름을 바꿀 때 이 문장만 낡는다.
+const KW_stage = id => ((window.__STAGES__ || {})[id] || {}).t || id;
+// 재실행 버튼 라벨도 같은 정본에서 온다(STAGE_LABELS 의 run).
+const KW_run = id => window.stageRun ? stageRun(id)
+  : ((window.__STAGES__ || {})[id] || {}).run || id;
+const KW_noOpp = () => `<p class="detn">이 검색어는 아직 기회 목록에 없습니다.
+  ${esc(KW_stage("gaps"))} 단계를 한 번 돌리면 점수가 붙습니다.</p>`;
 
 function KW_toggle(tr) {
   const nx = tr.nextElementSibling;
@@ -523,30 +541,34 @@ VIEW("keywords", function (d) {
   KW_SORT = KW_ROWS.some(r => oppOf(r.query)) ? "opp" : "imp";
   KW_BAND = "";                                   // 사이트를 바꾸면 필터도 처음으로
   const p2 = d.striking_page2 ?? KW_ROWS.filter(r => r.band === "page2").length;
-  // 부제는 "이 섹션으로 무엇을 하라"다. 문턱(11~20위)이 있으면 그 이야기고, 없으면
-  // 남은 문제가 클릭이라는 이야기다 — 문턱 0개인데 문턱 설명이 서 있으면 안 읽힌다.
+  /* 이 화면의 상태 판정은 **한 번만** 한다. 여태 화면 부제·눈썹·섹션 부제·띠가
+     각자 판정해서, 부제는 "문턱에 걸린 검색어를 봅니다"라고 하고 띠는 "문턱에 걸린
+     검색어가 없습니다"라고 하는 화면이 나왔다. 아래 세 값이 그 한 판정이다. */
+  // 화면 부제는 상태를 말하지 않는다 — 어느 상태에서도 참인 "여기가 무엇을 보여주나".
+  viewSub("keywords", "검색어를 기회 점수 순으로 놓고 무엇부터 손댈지 봅니다.");
+  // 눈썹은 데이터에서 온다 — 상수(4~20)를 적어 두면 목록이 전부 1페이지 안일 때도
+  // 「4~20위 구간」이라고 말해 내용과 반대가 된다. 개수·결론은 넣지 않는다.
+  const poss = KW_ROWS.map(r => r.pos).filter(Number.isFinite);
+  const lo = poss.length && Math.floor(Math.min(...poss));
+  const hi = poss.length && Math.ceil(Math.max(...poss));
+  $("log-eb").textContent = !poss.length ? ""
+    : lo === hi ? `${lo}위` : `${lo}~${hi}위 구간`;
+  // 섹션 부제는 한 문장, 지금 상태만. 무엇을 하라는 말은 띠가 한다.
   $("log-sub").textContent = !KW_ROWS.length ? ""
-    : p2 ? W(`${KW_ROWS.length}개 중 ${p2}개가 1페이지 문턱(${RULES.page1 + 1}~` +
-             `${RULES.striking_hi}위)입니다. 노출은 이미 나옵니다. 순위만 올리면 클릭이 됩니다.`,
-             `${KW_ROWS.length}개 중 ${p2}개가 게재순위 ${RULES.page1 + 1}~` +
-             `${RULES.striking_hi}위입니다. 이미 노출되는 검색어이므로 게재순위만 올리면 ` +
-             `클릭으로 이어집니다.`)
-         : W(`${KW_ROWS.length}개가 전부 1페이지 안입니다. 남은 문제는 순위가 아니라 클릭입니다.`,
-             `${KW_ROWS.length}개가 모두 1페이지 안(${RULES.page1}위 이내)입니다. ` +
-             `남은 과제는 게재순위가 아니라 클릭률입니다.`);
+    : p2 ? `${KW_ROWS.length}개 중 ${p2}개가 1페이지 문턱입니다.`
+         : `${KW_ROWS.length}개가 전부 1페이지 안입니다.`;
   if (!KW_ROWS.length) {
-    // 빈 이유가 둘이다 — 아직 안 읽었다 / 읽었는데 이 구간에 걸린 게 없다.
+    // 빈 이유가 둘이다 — 아직 안 수집했다 / 수집했는데 이 구간에 걸린 게 없다.
     $("log-tools").innerHTML = "";
     $("log").innerHTML = d.gsc_date
       ? `<div class="empty">
-          <b>${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 아직 없습니다</b>
-          <p>${W(`${esc(d.gsc_date)} 실적까지 읽었습니다. 노출이 쌓이면 여기부터 채워집니다.`,
-                 `${esc(d.gsc_date)} 실적까지 수집했습니다. 노출이 쌓이면 여기부터 채워집니다.`)}</p>
-          ${KW_cmd("gsc", W("실적 다시 읽기", "실적 다시 수집"))}</div>`
-      : `<div class="empty"><b>${W("구글 실적을 아직 안 읽었습니다",
-                                   "검색 실적을 아직 수집하지 않았습니다")}</b>
-          <p>${W("읽으면 1페이지 문턱에 걸린 검색어부터 채워집니다.",
-                 "수집하면 순위 상승 기회부터 채워집니다.")}</p>
+          <b>${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 없습니다</b>
+          <p>${esc(d.gsc_date)} 실적까지 수집했습니다.
+            <span class="live">추적할 검색어를 더 캐면 여기부터 채워집니다.</span></p>
+          ${KW_cmd("keywords", "키워드 찾기")}</div>`
+      : `<div class="empty"><b>실적을 아직 수집하지 않았습니다</b>
+          <p><span class="live">수집하면 1페이지 문턱에 걸린 검색어부터
+            채워집니다.</span></p>
           ${KW_cmd("gsc", "실적 수집")}</div>`;
   } else {
     KW_tools();
@@ -560,23 +582,30 @@ VIEW("keywords", function (d) {
   const sorted = KW_ROWS.length ? KW_filtered() : [];
   const top = (p2 ? sorted.find(r => r.band === "page2") : null) || sorted[0] || null;
   KW_TOP = top ? top.query : "";
+  /* 띠 문장은 [지금 상태] + [누르면 무엇이 되나] 두 토막이다. 뒤 토막은 누를 것이
+     있어야 참이므로 .live 로 감싼다 — 박제본에는 서버가 없어 셸이 그 토막과 버튼을
+     함께 떼고, 남는 앞 토막만으로 "지금 상태"가 읽힌다. */
+  const live = s => `<span class="live">${s}</span>`;
   if (!KW_ROWS.length) {
+    // 실적을 이미 읽었는데 이 구간이 비었으면 다시 읽어도 같다 — 그때는 추적할
+    // 검색어를 더 캐는 쪽이 다음 걸음이다.
     KW_next(d.gsc_date
-      ? W("노출이 더 쌓이면 문턱에 걸린 검색어부터 여기 채워집니다. 다시 읽어 확인합니다.",
-          "노출이 더 쌓이면 순위 상승 기회부터 여기 채워집니다. 다시 수집해 확인합니다.")
-      : W("구글 실적을 읽으면 1페이지 문턱에 걸린 검색어부터 나옵니다.",
-          "검색 실적을 수집하면 순위 상승 기회부터 나옵니다."),
-      KW_act("gsc", d.gsc_date ? W("실적 다시 읽기", "실적 다시 수집") : "실적 수집"));
+      ? "실적은 들어와 있는데 문턱 구간이 비었습니다. " +
+        live("검색어를 더 캐면 여기부터 채워집니다.")
+      : "실적을 아직 수집하지 않았습니다. " +
+        live("수집하면 1페이지 문턱에 걸린 검색어부터 나옵니다."),
+      d.gsc_date
+        ? KW_act("keywords", "키워드 찾기") + KW_act("gsc", KW_run("gsc"), false)
+        : KW_act("gsc", "실적 수집"));
   } else {
-    const lead = `"${esc(top.query)}"`;
+    // 검색어 이름은 <b> 한 벌이다 — 따옴표로 감싸면 화면마다 강조가 달라진다.
+    const lead = `<b>${esc(top.query)}</b>`;
     KW_next(p2
-      ? W(`1페이지 문턱에 ${p2}개가 있습니다. 가장 먼저 볼 것은 ${lead}입니다.`,
-          `게재순위 ${RULES.page1 + 1}~${RULES.striking_hi}위에 ${p2}개가 있습니다. ` +
-          `가장 먼저 볼 것은 ${lead}입니다.`)
-      : W(`문턱에 걸린 검색어가 없습니다. 클릭을 늘릴 자리는 ${lead}입니다.`,
-          `문턱 구간이 비어 있습니다. 클릭률을 올릴 자리는 ${lead}입니다.`),
-      `<button class="go" onclick="KW_openTop()">첫 검색어 열기</button>` +
-      KW_act("gaps", W("기회 다시 매기기", "기회 다시 분석"), false));
+      ? `1페이지 문턱에 ${p2}개가 있습니다. 가장 먼저 볼 것은 ${lead}입니다.`
+      : `문턱에 걸린 검색어가 없어 남은 문제는 순위가 아니라 클릭입니다. ` +
+        `가장 큰 자리는 ${lead}입니다.`,
+      `<button class="go" onclick="KW_openTop()">검색어 열기</button>` +
+      KW_act("gaps", KW_run("gaps"), false));
   }
 
   // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면
@@ -584,32 +613,28 @@ VIEW("keywords", function (d) {
   KW_MV = (d.ups || []).map(m => ({...m, dir: "up"}))
     .concat((d.downs || []).map(m => ({...m, dir: "down"})));
   KW_MQ = ""; KW_MDIR = "";
-  // 부제는 기준(어느 두 날짜를, 같은 기간끼리)과 이 표로 할 일을 함께 말한다.
+  // 비교 기간(날짜 둘)은 눈썹에, 이 표로 할 일은 부제에. 한 문장에 섞으면 둘 다 안 읽힌다.
   const nUp = (d.ups || []).length, nDown = (d.downs || []).length;
-  const when = d.gsc_prev
-    ? `${d.gsc_prev} → ${d.gsc_date} (${d.gsc_period}${W("일치끼리", "일 기준")})`
-    : d.period_mismatch
-    ? `직전 기록과 기간이 달라 비교하지 않았습니다. 지금은 ${d.gsc_period}일치입니다. ` +
-      `같은 기간으로 한 번 더 읽으면 채워집니다.`
-    : W("구글 실적을 두 번 이상 읽으면 채워집니다.", "검색 실적을 두 번 이상 수집하면 채워집니다.");
+  $("mv-eb").textContent = d.gsc_prev ? `${d.gsc_prev} → ${d.gsc_date}` : "";
   $("mv-sub").textContent = KW_MV.length
-    ? `${when} · 오른 것 ${nUp}개, 내린 것 ${nDown}개. ` +
-      W("오른 검색어는 같은 페이지를 넓히고, 내린 검색어는 무엇이 달라졌는지부터 봅니다.",
-        "오른 검색어는 같은 페이지를 넓히고, 내린 검색어는 원인부터 확인합니다.")
-    : when;
+    ? `${d.gsc_period}일치끼리 견줘 오른 것 ${nUp}개, 내린 것 ${nDown}개입니다.`
+    : d.period_mismatch
+    ? `직전 기록과 기간이 달라 견주지 않았습니다.`
+    : d.gsc_prev
+    ? `직전 기록과 견줘 움직인 검색어가 없습니다.`
+    : `실적을 두 번 이상 수집하면 채워집니다.`;
   if (KW_MV.length) return KW_mvRender();
   $("movers").innerHTML = d.period_mismatch
-    ? `<div class="empty"><b>기간이 다른 기록끼리는 비교하지 않습니다</b>
-        <p>${W("같은 기간으로 한 번 더 읽으면 검색어마다 Δ순위가 붙습니다.",
-               "같은 기간으로 한 번 더 수집하면 검색어마다 게재순위 변동이 붙습니다.")}</p>
-        ${KW_cmd("gsc", W("같은 기간으로 다시 읽기", "같은 기간으로 다시 수집"))}</div>`
+    ? `<div class="empty"><b>기간이 달라 견주지 않았습니다</b>
+        <p>지금은 ${d.gsc_period}일치입니다. <span class="live">같은 기간으로 한 번 더
+          수집하면 검색어마다 Δ순위가 붙습니다.</span></p>
+        ${KW_cmd("gsc", KW_run("gsc"))}</div>`
     : d.gsc_prev
-    ? `<div class="empty"><b>움직인 검색어가 없습니다</b>
-        <p>${W("직전 기록과 견줘 전부 노이즈 범위 안입니다.",
-               "직전 분석과 견줘 게재순위 변동이 전부 노이즈 범위입니다.")}</p></div>`
-    : `<div class="empty"><b>비교할 직전 기록이 없습니다</b>
-        <p>${W("한 번 더 읽으면 그때부터 오른 검색어와 내린 검색어가 갈립니다.",
-               "한 번 더 수집하면 그때부터 오른 검색어와 내린 검색어가 갈립니다.")}</p>
-        ${KW_cmd("gsc", W("실적 한 번 더 읽기", "실적 한 번 더 수집"))}</div>`;
+    ? `<div class="empty ok"><b>움직인 검색어가 없습니다</b>
+        <p>직전 기록과 견줬고, 변동이 전부 노이즈 범위 안입니다.</p></div>`
+    : `<div class="empty"><b>견줄 직전 기록이 없습니다</b>
+        <p><span class="live">한 번 더 수집하면 그때부터 오른 검색어와 내린 검색어가
+          갈립니다.</span></p>
+        ${KW_cmd("gsc", KW_run("gsc"))}</div>`;
 });
 </script>

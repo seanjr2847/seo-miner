@@ -3,14 +3,18 @@
 </script>
 <!-- 목록·개수(.list/.cnt)는 dash.html 의 aiqLoad() 가 채운다. -->
 <section id="sm-aiq">
-  <p class="eyebrow">물어볼 질문</p><h2>고객이 실제로 묻는 말투로 고치기</h2>
-  <p class="sub">켜 둔 질문을 그대로 AI에 물어보고, 답변에 우리 도메인이 나오는지
-    셉니다. 모델이 지은 질문은 초안입니다. 업종과 안 맞는 것은 끄고, 나머지는 고객이
-    실제로 쓰는 말로 고치세요. 질문 하나마다 엔진 수만큼 확인 비용이 듭니다.</p>
+  <div class="sh">
+    <p class="eyebrow">AI 인용 확인</p><h2>물어볼 질문</h2>
+    <p class="sub">켜 둔 질문을 AI에 물어보고 우리 도메인이 나오는지 셉니다.<span
+      class="hint" tabindex="0"
+      data-tip="모델이 지은 질문은 초안입니다. 업종과 안 맞는 것은 끄고, 나머지는 고객이 실제로 쓰는 말로 고칩니다. 질문 하나마다 엔진 수만큼 확인 비용이 듭니다."
+      aria-label="모델이 지은 질문은 초안입니다. 업종과 안 맞는 것은 끄고, 나머지는 고객이 실제로 쓰는 말로 고칩니다. 질문 하나마다 엔진 수만큼 확인 비용이 듭니다."
+      >i</span></p>
+  </div>
   <div class="list"></div>
   <div class="bar2"><input class="new" maxlength="120"
     placeholder="질문을 직접 추가. 예: 이런 건 어디에 맡기는 게 제일 나아?">
-  <button class="go2 add">질문 추가</button>
-  <button class="go2 ghost gen">AI에게 만들게 하기</button>
+  <button class="go sm sec add">질문 추가</button>
+  <button class="go sm ghost gen">질문 만들기</button>
   <span class="cnt"></span></div>
 </section>

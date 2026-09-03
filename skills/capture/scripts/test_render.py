@@ -164,7 +164,12 @@ HOSTED_MUSTS = MUSTS + [
     # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
     (r"!data-web=", "호스팅인데 대체 문구가 안 입혀졌다 — SM_HOSTED 가 첫 렌더보다 늦게 섰다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
-    (r'id="nav"[^>]*>\s*<button', "레일 메뉴가 비었다 — 셸이 화면 목록을 못 세웠다"),
+    # 메뉴 첫 자식은 버튼이 아닐 수 있다 — 레일이 묶음 이름(.navgrp)을 먼저 세운다.
+    # 보는 것은 "메뉴 안에 화면 버튼이 있나" 하나다.
+    # `[\s\S]{0,200}?` 로는 안 된다: 메뉴가 비면 </nav> 를 넘어 레일 바닥의
+    # [새로고침] 버튼을 잡아 통과해 버린다(실제로 그렇게 통과했다).
+    (r'id="nav"[^>]*>(?:(?!</nav>)[\s\S])*?<button',
+     "레일 메뉴가 비었다 — 셸이 화면 목록을 못 세웠다"),
     (r'id="view-overview"', "화면 상자(개요)가 안 만들어졌다"),
     (r'id="view-backlinks"', "호스팅 전용 화면(백링크)이 안 붙었다"),
     (r'id="sm-set"', "호스팅 설정 섹션이 안 만들어졌다"),
@@ -175,7 +180,7 @@ HOSTED_MUSTS = MUSTS + [
     # runnable 인 키워드 단계다 — 그 칩(class="cmd", 화면 제목 옆 칩과는 클래스가
     # 다르다)이 실제로 host.run 을 부르는지를 본다. 로컬 기본값(SM.host.copy)이
     # 남아 있으면(=SM.host 가 늦게 섰거나 안 갈렸으면) 이 패턴이 없다.
-    (r'class="cmd" data-stage="[^"]+" onclick="SM\.host\.run\(',
+    (r'class="cmd[^"]*" data-stage="[^"]+" onclick="SM\.host\.run\(',
      "안내의 실행 칩이 host.run 을 안 부른다 — 복사 칩인 채로 남았다"),
 ]
 
@@ -198,7 +203,7 @@ def _axes(conn, pid: int) -> None:
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
         " VALUES(?,?,?,?,?,'new')",
-        [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 12.4위 · 노출 120 · 클릭 7. 1페이지까지 2.4칸 남았습니다"),
+        [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 9.0위 · 노출 120 · 클릭 8. 이미 1페이지이고 상단 3위권까지 6.0칸 남았습니다 (구글 실적 2026-06-01 기준)"),
          (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다")])
     conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
                  "referring_domains,broken_backlinks,dofollow,nofollow)"

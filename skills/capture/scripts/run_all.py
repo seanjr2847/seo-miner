@@ -36,6 +36,7 @@ from pathlib import Path
 
 # db import를 통해 CAPTURE_HOME/env 자동 로딩 및 콘솔 UTF-8 설정 적용
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import stage               # noqa: E402
 import collect_ai          # noqa: E402
 import collect_backlinks   # noqa: E402
 import collect_crawl       # noqa: E402
@@ -118,25 +119,27 @@ def _knobs(mod) -> dict:
     return out
 
 
-def _stage(name, desc, fn, is_paid, module=None) -> Stage:
-    return Stage(name, desc, fn, is_paid, module, _knobs(module))
+def _stage(name, detail, fn, is_paid, module=None) -> Stage:
+    # 단계 이름은 stage.STAGE_LABELS 한 벌이다 — 여기는 괄호 안 세부만 갖는다.
+    t = stage.STAGE_LABELS[name]["t"]
+    return Stage(name, f"{t} ({detail})" if detail else t, fn, is_paid, module, _knobs(module))
 
 
 STAGES = (
-    _stage("gsc",         "구글 실적 수집 (합계·일별·기기별)",       collect_gsc.collect,     False, collect_gsc),
-    _stage("ga4",         "GA4 실적 수집 (세션·전환·이탈, 페이지별)", collect_ga4.collect,    False, collect_ga4),
-    _stage("index",       "색인 상태 확인",                          collect_index.collect,   False, collect_index),
-    _stage("keywords",    "자동완성으로 키워드 찾기",                expand_keywords.collect, False, expand_keywords),
+    _stage("gsc",         "합계·일별·기기별",       collect_gsc.collect,     False, collect_gsc),
+    _stage("ga4",         "세션·전환·이탈, 페이지별", collect_ga4.collect,    False, collect_ga4),
+    _stage("index",       "",                          collect_index.collect,   False, collect_index),
+    _stage("keywords",    "자동완성",                expand_keywords.collect, False, expand_keywords),
     # 볼륨은 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 재료로 쓴다.
-    _stage("metrics",     "키워드 지표 조회 (검색량·난이도·CPC)",    collect_metrics.collect, True, collect_metrics),
-    _stage("rank",        "순위 확인",                               collect_serp.collect,    True, collect_serp),
-    _stage("crawl",       "사이트 크롤 (깨진 링크·리다이렉트·고아)", collect_crawl.collect,   False, collect_crawl),
-    _stage("ai",          "AI 인용 확인",                            collect_ai.collect,      True, collect_ai),
-    _stage("competitors", "경쟁사 역키워드·트래픽 몫 수집",          collect_gap.collect,     True, collect_gap),
-    _stage("backlinks",   "백링크 프로필·앵커·링크 교집합 수집",     collect_backlinks.collect, True, collect_backlinks),
-    _stage("gaps",        "손댈 것 뽑기 (외부 호출 없음)",           load_opportunities,      False),
-    _stage("pages",       "내 페이지 점검 (제목·설명·본문·구조화 데이터)", collect_page.collect, False, collect_page),
-    _stage("report",      "보고서 HTML 내보내기",                    export_report,           False),
+    _stage("metrics",     "검색량·난이도·CPC",    collect_metrics.collect, True, collect_metrics),
+    _stage("rank",        "",                               collect_serp.collect,    True, collect_serp),
+    _stage("crawl",       "깨진 링크·리다이렉트·고아", collect_crawl.collect,   False, collect_crawl),
+    _stage("ai",          "",                            collect_ai.collect,      True, collect_ai),
+    _stage("competitors", "경쟁사 검색어·트래픽 몫",          collect_gap.collect,     True, collect_gap),
+    _stage("backlinks",   "프로필·앵커·링크 교집합",     collect_backlinks.collect, True, collect_backlinks),
+    _stage("gaps",        "외부 호출 없음",           load_opportunities,      False),
+    _stage("pages",       "제목·설명·본문·구조화 데이터", collect_page.collect, False, collect_page),
+    _stage("report",      "HTML",                    export_report,           False),
 )
 
 VALID_STAGE_NAMES = tuple(s.name for s in STAGES)

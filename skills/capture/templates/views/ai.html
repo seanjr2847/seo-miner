@@ -2,6 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "ai", "title": "AI 인용",
+ "sub": "AI 답변에 우리 링크가 붙는지 확인합니다.",
  "sections": ["ai", "ai-vs-search", "ai-outranked"], "stages": ["ai", "gaps", "gsc"]}
 </script>
 
@@ -42,14 +43,22 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
   transform-origin:left; }
 .aieng .tr i.m { background:var(--slate); opacity:.34; }
 .aieng .tr i.c { background:var(--patina); }
-.aieng .n { font:400 11.5px/1.5 var(--mono); color:var(--slate);
+/* 「인용 1/2 · 언급 1/2」 — 한글이 섞인 줄이라 등폭이 아니다. 자리 맞춤만 물려받는다. */
+.aieng .n { font:400 12px/1.5 var(--sans); color:var(--slate);
   font-variant-numeric:tabular-nums; }
 @media (prefers-reduced-motion: no-preference) {
   .aieng .tr i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
+/* 두 색이 무슨 뜻인지는 산문이 아니라 범례가 말한다 — 막대와 같은 색 조각을 옆에 둔다.
+   공용 .chleg 의 문법 그대로이고, 이 화면 몫은 조각 색 두 개뿐이다. */
+.ailegend { margin-top:14px; }
+.ailegend i.c { background:var(--patina); }
+.ailegend i.m { background:var(--slate); opacity:.34; }
+/* 표·차트에 딸린 한 줄. .sub 의 아래 여백(20px)이 여기서는 너무 벌어진다. */
+.ainote { font-size:13.5px; line-height:1.6; color:var(--slate); margin:20px 0 10px; }
 
 /* ── 인용 점유: 우리 도메인을 남의 도메인과 같은 자에 올린다 ── */
-.aishare .r { display:grid; grid-template-columns:24px minmax(130px,1.1fr) 2fr 46px;
+.aishare .r { display:grid; grid-template-columns:24px minmax(130px,1.1fr) 2fr 52px 40px;
   gap:0 12px; align-items:center; padding:7px 0;
   border-bottom:1px solid var(--rule-soft); }
 .aishare .r:last-child { border-bottom:0; }
@@ -62,53 +71,46 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 .aishare .bar { height:8px; background:var(--bar); border-radius:2px; overflow:hidden; }
 .aishare .bar i { display:block; height:100%; background:var(--copper); opacity:.62;
   border-radius:2px; transform-origin:left; }
-.aishare .n { font:500 12.5px/1 var(--mono); font-variant-numeric:tabular-nums;
-  text-align:right; color:var(--slate); }
+/* 몫(%)과 건수를 같은 줄에서 읽는다 — 도넛을 따로 두면 같은 값을 두 번 그리게 된다. */
+.aishare .pc, .aishare .n { font:500 12.5px/1 var(--mono);
+  font-variant-numeric:tabular-nums; text-align:right; color:var(--slate); }
 .aishare .us .dm { color:var(--patina); font-weight:500; }
 .aishare .us .bar i { background:var(--patina); opacity:1; }
-.aishare .us .n { color:var(--ink); }
+.aishare .us .n, .aishare .us .pc { color:var(--ink); }
 @media (prefers-reduced-motion: no-preference) {
   .aishare .bar i { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; }
 }
+/* 좁은 화면에서는 도메인 이름이 한 줄을 통째로 갖는다 — 「← 우리」 가 잘리면
+   그 줄이 우리 줄이라는 사실 자체가 사라진다. 막대·몫·건수는 그 밑 한 줄로 내린다. */
 @media (max-width:560px) {
-  .aishare .r { grid-template-columns:24px 1fr 46px; }
-  .aishare .bar { grid-column:2 / -1; }
+  .aishare .r { grid-template-columns:24px 1fr 52px 40px; row-gap:6px; }
+  .aishare .dm { grid-column:2 / -1; }
+  .aishare .bar { grid-column:2 / 3; grid-row:2; }
+  .aishare .pc { grid-column:3; grid-row:2; }
+  .aishare .n { grid-column:4; grid-row:2; }
 }
-
-/* ── 점유 도넛: 표부터 보여주면 "우리 몫이 얼마인가"가 한눈에 안 들어온다 —
-      chDonut 이 우리 조각만 강조하고 나머지는 회색 명암이다. 상위 몇 + "그 밖"
-      으로 접어 9번째 계열에 새 색을 만들지 않는다. ── */
-.aidonutrow { display:grid; grid-template-columns:148px 1fr; gap:28px; align-items:center;
-  margin:0 0 6px; }
-.aidkeys { display:flex; flex-direction:column; }
-.aidk { display:grid; grid-template-columns:10px 1fr auto auto; gap:10px; align-items:baseline;
-  padding:7px 0; border-bottom:1px solid var(--rule-soft); font-size:13px; }
-.aidk:last-child { border-bottom:0; }
-.aidk i { width:10px; height:10px; border-radius:2px; display:block; transform:translateY(1px); }
-.aidk .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.aidk.us .nm { font-weight:600; color:var(--patina); }
-.aidk .pc, .aidk .ct { font-family:var(--mono); font-variant-numeric:tabular-nums;
-  font-size:12.5px; color:var(--slate); text-align:right; }
-.aidk .ct { min-width:4ch; }
-.aidk.us .pc { color:var(--ink); }
-.aidonut-cap { font:400 12.5px/1.5 var(--sans); color:var(--slate); margin:8px 0 18px; }
-@media (max-width:560px) { .aidonutrow { grid-template-columns:1fr; } }
 
 /* ── 질문별 결과: 줄을 펴면 그 질문에서 실제로 온 답변이 나온다.
       "왜 빠졌나"에 답할 수 있는 유일한 실물이 이것뿐이다. ── */
-.aiq-t { display:block; text-align:left; font:400 12.5px/1.5 var(--mono); color:var(--ink);
+/* 질문 줄은 문장이라 등폭이 아니다 — 등폭은 숫자·식별자 몫이다. 펼침 손잡이는
+   글자(▸)가 아니라 셰브론 하나로, 열리면 90도 돈다. */
+.aiq-t { display:flex; gap:7px; align-items:flex-start; text-align:left;
+  font:400 13px/1.5 var(--sans); color:var(--ink);
   background:transparent; border:0; padding:0; cursor:pointer; max-width:54ch; }
-.aiq-t::before { content:"▸ "; color:var(--slate); }
-.aiq-t[aria-expanded="true"]::before { content:"▾ "; color:var(--patina); }
-.aiq-t:hover { color:var(--patina); }
-.aiq-p { font:400 12.5px/1.5 var(--mono); max-width:54ch; }
+.aiq-t .chev { flex:none; width:14px; height:14px; margin-top:3px; color:var(--slate);
+  transition:transform .14s ease, color .14s ease; }
+.aiq-t[aria-expanded="true"] .chev { transform:rotate(90deg); color:var(--patina); }
+.aiq-t:hover, .aiq-t:hover .chev { color:var(--patina); }
+@media (prefers-reduced-motion: reduce) { .aiq-t .chev { transition:none; } }
+.aiq-p { font:400 13px/1.5 var(--sans); max-width:54ch; }
 .aiev { margin:9px 0 3px; padding:11px 13px; border-left:2px solid var(--copper);
   background:var(--wash-copper); max-width:74ch; }
 .aiev .lb { font:var(--micro);
   color:var(--slate); display:block; margin-bottom:8px; }
+.aiev .lb.n2 { margin-top:11px; }
 .aiev .q { font-size:12.5px; line-height:1.7; color:var(--ink); white-space:pre-wrap;
   margin:0; }
-.aiev .ft { font:400 11px/1.5 var(--mono); color:var(--slate); margin-top:9px; }
+.aiev .ft { font:400 11.5px/1.5 var(--sans); color:var(--slate); margin-top:9px; }
 .aidoms .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
 
 /* 펼침 안에는 발췌 아래로 "그래서 뭘 바꾸나"가 이어 붙는다.
@@ -116,7 +118,7 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 .aiq-d .det { padding-left:0; }
 .aiq-d .detw:first-child { margin-top:14px; }
 /* 그 질문의 자리를 계속 가져가는 도메인 — 한 줄이면 충분하다. */
-.aiq-note { font:400 11.5px/1.6 var(--mono); color:var(--copper); margin:9px 0 0; }
+.aiq-note { font:400 12px/1.6 var(--sans); color:var(--copper); margin:9px 0 0; }
 
 /* ── 검색 × AI 교차: 새로 필요한 규칙은 도메인 한 줄뿐이다. 나머지는 공용 표가
       그린다 — 질문은 문장이라 본문 서체 그대로 두고(등폭에 얹지 않는다),
@@ -138,31 +140,41 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 <div id="ai">
 <section id="ai-sec">
   <!-- 실제로 확인한 엔진·날짜는 아래 sub 가 말한다. -->
-  <div class="eyebrow lat">chatgpt · perplexity · gemini</div>
-  <h2 data-web="AI 인용 현황">AI가 누구를 인용하나</h2>
-  <p class="sub" id="ai-sub"></p>
+  <div class="sh">
+    <!-- eyebrow 는 범위·기간만 싣는다. 확인한 엔진과 모수는 아래 sub 가 말한다. -->
+    <p class="eyebrow" id="ai-eyebrow">최근 확인</p>
+    <h2>인용 현황</h2>
+    <p class="sub" id="ai-sub"></p>
+  </div>
   <div id="ai-empty"></div>
   <div class="band" id="ai-band" hidden></div>
   <div id="ai-trend"></div>
 </section>
 
 <section id="ai-eng-sec" hidden>
-  <div class="eyebrow">엔진별</div>
-  <h2>어느 AI에서 보이나</h2>
-  <p class="sub">굵은 녹청은 <b>인용</b>(답변에 우리 링크가 붙음), 흐린 회색은
-    <b>언급</b>(이름만 나옴)입니다. 둘의 차이가 클수록 링크로 이어질 자리를 놓치고
-    있다는 뜻입니다.</p>
+  <div class="sh">
+    <p class="eyebrow">엔진별</p>
+    <h2>엔진별 인용</h2>
+    <p class="sub">인용과 언급의 차이가 클수록 링크로 이어질 자리를 놓치고 있습니다.</p>
+  </div>
   <div class="aiengs" id="ai-engines"></div>
-  <p class="sub" style="margin:26px 0 10px">줄을 누르면 그 조합의 질문 목록으로
-    내려갑니다. 어느 엔진이 어느 주제에서 우리를 빼는지는 거기서 읽힙니다.</p>
-  <div id="ai-matrix"></div>
+  <div class="chleg ailegend">
+    <span><i class="c"></i>인용 — 답변에 우리 링크가 붙음</span>
+    <span><i class="m"></i>언급 — 이름만 나옴</span>
+  </div>
+  <p class="ainote" id="ai-matrix-note">줄을 누르면 그 조합의 질문 목록으로 내려갑니다.</p>
+  <div class="card" id="ai-matrix"></div>
 </section>
 
 <section id="ai-prompt-sec" hidden>
-  <div class="eyebrow" id="ai-prompt-eyebrow">질문별</div>
-  <h2>어느 질문에서 빠졌나</h2>
-  <p class="sub">먼저 손댈 질문이 위입니다. 질문을 누르면 <b>그 질문에서 실제로 온
-    답변</b>과 무엇을 고칠지가 펼쳐집니다. 우리가 왜 빠졌는지는 거기서만 읽힙니다.</p>
+  <div class="sh">
+    <p class="eyebrow">질문별</p>
+    <h2>질문별 인용</h2>
+    <p class="sub">먼저 손댈 질문이 위입니다.<span class="hint" tabindex="0"
+      data-tip="줄을 펴면 그 질문에서 실제로 온 답변과 무엇을 고칠지가 나옵니다. 우리가 왜 빠졌는지는 거기서만 읽힙니다."
+      aria-label="줄을 펴면 그 질문에서 실제로 온 답변과 무엇을 고칠지가 나옵니다. 우리가 왜 빠졌는지는 거기서만 읽힙니다."
+      >i</span></p>
+  </div>
   <details class="aichk">
     <summary>질문마다 다시 말하지 않는 것. AI가 인용해 가는 페이지의 공통 조건 다섯</summary>
     <ol>
@@ -177,33 +189,41 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 </section>
 
 <section id="ai-miss-sec" hidden>
-  <div class="eyebrow">공백</div>
-  <h2>어디에도 안 잡힌 질문</h2>
-  <p class="sub" id="ai-miss-sub"></p>
+  <div class="sh">
+    <p class="eyebrow">공백</p>
+    <h2>안 잡힌 질문</h2>
+    <p class="sub" id="ai-miss-sub"></p>
+  </div>
   <div id="ai-missed"></div>
 </section>
 
 <section id="ai-share-sec" hidden>
-  <div class="eyebrow">인용 점유 · 최근 확인</div>
-  <h2>우리 대신 인용되는 곳</h2>
-  <p class="sub" id="ai-share-sub"></p>
-  <div id="ai-donut"></div>
-  <div class="aishare" id="ai-share"></div>
+  <div class="sh">
+    <p class="eyebrow">인용 점유</p>
+    <h2>우리 대신 인용되는 곳</h2>
+    <p class="sub" id="ai-share-sub"></p>
+  </div>
+  <div class="card"><div class="aishare" id="ai-share"></div></div>
+  <p class="ainote" id="ai-share-cap"></p>
 </section>
 
 <!-- 두 축이 서로를 보는 자리. 위 섹션들은 AI 한 축만 보고, [순위]·[분석] 화면은
      검색 한 축만 본다 — 아래 둘만 두 축을 한 줄에 놓는다. -->
 <section id="ai-vs-search" hidden>
-  <div class="eyebrow">검색 × AI</div>
-  <h2>검색은 이기는데 AI는 지는 질문</h2>
-  <p class="sub" id="ai-vs-sub"></p>
+  <div class="sh">
+    <p class="eyebrow">검색 × AI</p>
+    <h2>검색만 이기는 질문</h2>
+    <p class="sub" id="ai-vs-sub"></p>
+  </div>
   <div id="ai-vs-body"></div>
 </section>
 
 <section id="ai-outranked" hidden>
-  <div class="eyebrow">검색 × AI</div>
-  <h2>AI는 쓰는데 검색에선 우리 아래인 곳</h2>
-  <p class="sub" id="ai-or-sub"></p>
+  <div class="sh">
+    <p class="eyebrow">검색 × AI</p>
+    <h2>AI만 인용하는 곳</h2>
+    <p class="sub" id="ai-or-sub"></p>
+  </div>
   <div id="ai-or-body"></div>
 </section>
 </div>
@@ -215,6 +235,11 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
       화면은 다시 판정하지 않고, 비율만 만들어 보인다. ── */
 const AI_PCT = v => (Math.round(v * 10) / 10) + "%";
 const AI_RATE = (n, t) => t ? Math.round(n / t * 1000) / 10 : 0;
+
+/* 재실행 버튼. 라벨의 정본은 stage.STAGE_LABELS 이고 셸이 window.stageRun 으로 준다 —
+   "인용 다시 확인"·"기회 다시 분석" 을 이 파일에 글자로 옮겨 적으면 두 벌이 된다. */
+const AI_act = (stage, primary = true) =>
+  window.act(stage, window.stageRun ? window.stageRun(stage) : "", primary);
 
 // 비율의 증감은 %가 아니라 %p 다 — delta()의 "몇 % 늘었다"와 섞이면 거짓말이 된다.
 function AI_pp(cur, prev) {
@@ -268,10 +293,10 @@ function AI_trendChart(rows) {
       stroke-linejoin="round" points="${pts("cite_rate")}"/>
     ${dots}${hov}${idx.map(tick).join("")}
   </svg></div>
-  <div class="legend"><b style="color:var(--patina)">■</b> 인용률 최근
-    ${AI_PCT(last.cite_rate)} (최고 ${AI_PCT(best)}) ·
-    <b style="color:var(--slate)">■</b> 언급률 ${AI_PCT(last.mention_rate)}. 확인 ${n}회.
-    세로축은 0~100% 고정이라 확인끼리 그대로 견줄 수 있습니다.</div>`;
+  <div class="chleg ailegend"><span><i class="c"></i>인용률 최근
+    ${AI_PCT(last.cite_rate)} · 최고 ${AI_PCT(best)}</span>
+    <span><i class="m"></i>언급률 ${AI_PCT(last.mention_rate)}</span>
+    <span>확인 ${n}회 · 세로축 0~100% 고정</span></div>`;
 }
 
 /* ── 엔진 로고 (simple-icons, CC0). 키는 collect_ai.DEFAULT_ENGINES 의 엔진 id 다 —
@@ -336,60 +361,23 @@ function AI_shareRows(share, ours, ourN) {
   return rows.sort((a, b) => b.n - a.n);
 }
 
+// 순위 막대 한 벌이 몫(%)과 건수를 같이 낸다 — 도넛과 막대가 같은 값을 두 번
+// 그리고 있었다. 남긴 것은 견줄 수 있는 쪽(같은 자에 올린 막대)이다.
 function AI_shareBars(rows) {
   const mx = rows[0] ? rows[0].n : 1;
-  return rows.map((r, i) => `<div class="r${r.us ? " us" : ""}">
-    <span class="rk">${i + 1}</span>
-    ${r.us ? `<span class="dm" title="우리 도메인">${esc(r.domain)} ← 우리</span>`
-           : `<a class="dm" href="https://${esc(r.domain)}" target="_blank"
-                rel="noopener noreferrer" title="${esc(r.domain)} 열기">${esc(r.domain)}</a>`}
-    <span class="bar"><i style="width:${Math.max(2, r.n / mx * 100).toFixed(1)}%"></i></span>
-    <span class="n" title="${esc(r.domain)} 이(가) 인용된 응답 ${r.n}건">${r.n}</span>
-  </div>`).join("");
-}
-
-// 상위 몇 + "그 밖" 으로 접는다 — 9번째 계열에 새 색을 만들지 않는다. 우리 줄은
-// 순위가 밖이어도 접지 않는다 — 도넛의 요점이 그 조각이다.
-const AI_DONUT_TOP = 5;
-function AI_donutFold(rows) {
-  const us = rows.find(r => r.us);
-  const rest = rows.filter(r => !r.us);
-  const shownN = Math.max(0, AI_DONUT_TOP - (us ? 1 : 0));
-  const shown = rest.slice(0, shownN);
-  const foldedN = rest.slice(shownN).reduce((s, r) => s + r.n, 0);
-  const out = [];
-  if (us) out.push({label: us.domain, value: us.n, on: true, us: true});
-  shown.forEach(r => out.push({label: r.domain, value: r.n}));
-  if (foldedN > 0) out.push({label: "그 밖", value: foldedN});
-  return out;
-}
-
-// chDonut 과 같은 명암 계산을 여기서도 써야 범례 색이 조각 색과 맞는다.
-function AI_donutLegend(rows) {
-  const total = rows.reduce((s, r) => s + Math.max(0, r.value || 0), 0);
+  const total = rows.reduce((s, r) => s + r.n, 0);
   return rows.map((r, i) => {
-    const op = r.on ? 1 : (.3 + (i % 3) * .12).toFixed(2);
-    const pct = total > 0 ? Math.round(r.value / total * 1000) / 10 : 0;
-    return `<div class="aidk${r.on ? " us" : ""}">
-      <i style="background:${r.on ? "var(--patina)" : "var(--slate)"};opacity:${op}"></i>
-      <span class="nm">${esc(r.label)}${r.us ? " ← 우리" : ""}</span>
-      <span class="pc">${pct}%</span>
-      <span class="ct">${num(r.value)}</span>
+    const pct = total > 0 ? Math.round(r.n / total * 1000) / 10 : 0;
+    return `<div class="r${r.us ? " us" : ""}">
+      <span class="rk">${i + 1}</span>
+      ${r.us ? `<span class="dm" title="우리 도메인">${esc(r.domain)} ← 우리</span>`
+             : `<a class="dm" href="https://${esc(r.domain)}" target="_blank"
+                  rel="noopener noreferrer" title="${esc(r.domain)} 열기">${esc(r.domain)}</a>`}
+      <span class="bar"><i style="width:${Math.max(2, r.n / mx * 100).toFixed(1)}%"></i></span>
+      <span class="pc" title="전체 인용 ${total}건 중 ${esc(r.domain)} 의 몫">${pct}%</span>
+      <span class="n" title="${esc(r.domain)} 이(가) 인용된 답변 ${r.n}건">${r.n}</span>
     </div>`;
   }).join("");
-}
-
-// "확인한 질문 N건 중 우리가 몇 건" — 표를 보기 전에 먼저 답한다. 옛 박제본처럼
-// 우리 인용 수를 같은 자로 잴 값이 없으면(sameScale=false) 호출하지 않는다.
-function AI_donut(rows) {
-  const folded = AI_donutFold(rows);
-  const total = folded.reduce((s, r) => s + Math.max(0, r.value || 0), 0);
-  if (!total) return "";
-  return `<div class="aidonutrow">
-      ${window.chDonut(folded, {width: 148})}
-      <div class="aidkeys">${AI_donutLegend(folded)}</div>
-    </div>
-    <p class="aidonut-cap">확인한 응답 ${num(total)}건 기준입니다.</p>`;
 }
 
 /* ── 질문별 결과: 이 화면의 주인공.
@@ -447,6 +435,10 @@ function AI_ev(btn) {
 function AI_doms(json) {
   try { return JSON.parse(json || "[]"); } catch (e) { return []; }
 }
+// 펼침 손잡이. 열리면 CSS 가 90도 돌린다 — 두 벌의 글리프를 쓰지 않는다.
+const AI_CHEV = `<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+  ><path d="M6 3.5 10.5 8 6 12.5"/></svg>`;
 
 /* ── 그래서 뭘 바꿔야 인용되나: 손댈 자리는 상태마다 다르다.
       판정(cited·mentioned)은 서버 것을 그대로 쓰고, 문구만 여기서 고른다. ── */
@@ -525,7 +517,7 @@ function AI_row(r) {
       ${doms.length ? `<span class="lb">이 답변이 인용한 곳</span>
         <div class="aidoms">${doms.map(x =>
           `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}
-      ${r.miss_answer ? `<span class="lb" style="margin-top:11px">받은 답변 발췌</span>
+      ${r.miss_answer ? `<span class="lb n2">받은 답변 발췌</span>
         <p class="q">${esc(r.miss_answer)}</p>` : ""}
       <div class="ft">우리가 인용되지 않은 응답 1건에서 가져온 발췌입니다. 답변은 매번
         달라지므로 한 건은 사실이 아니라 표본입니다.</div>
@@ -533,7 +525,7 @@ function AI_row(r) {
   // 접힌 줄에도 근거를 낸다 — 질문마다 다른 실물(엔진 N곳 답변 M건 중 인용 0, 대신 누가)
   // 이 여기서만 보인다. 상태마다 같은 문장 3종을 돌려 쓰던 자리를 이게 대신한다.
   const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-       >${esc(r.prompt)}</button>${o ? oppWhy(o) : ""}${body}`;
+       >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${o ? oppWhy(o) : ""}${body}`;
   // 부품 CSS(.kind·.why)가 .opp 아래에만 걸려 있다 — 줄에 그 조상만 빌린다.
   // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
   const c = AI_cnt(r);
@@ -560,38 +552,67 @@ function AI_row(r) {
 function AI_handoff() {
   const n = AI_ROWS.filter(r => oppOf(r.prompt)).length;
   if (!n) return "";
-  return `<p class="sub" style="margin:0 0 12px">한 번도 인용되지 않은 질문
-    <b>${n}개</b>가 그대로 다음 글의 주제입니다. ${W(
-      `아래를 채팅에 붙여넣으면 무엇부터 쓸지 계획을 세웁니다.
+  // 개수는 화면 머리의 띠가 이미 말한다 — 여기는 "그 다음에 어디로 가나"만 갖는다.
+  // 줄 전체가 누를 것을 전제로 하므로 통째로 .live 다(박제본에는 칠 채팅도 없다).
+  return `<p class="ainote live">${W(
+      `이 질문들로 무엇부터 쓸지 계획을 세웁니다.
       <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
         onkeydown="if(event.key==='Enter'||event.key===' ')
           {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`,
-      `${window.go("overview")} 화면의 기회 목록에 점수 순으로 올라와 있습니다.`)}</p>`;
+      `같은 질문들이 ${window.go("overview", "개요")} 화면의 기회 목록에 점수 순으로 있습니다.`)}</p>`;
 }
 
-/* ── 다음 한 걸음: 화면 머리 아래 띠 한 줄. 이 화면의 상태는 셋이고 문장도 셋이다 —
-      질문이 없다 / 질문은 있는데 아직 안 물어봤다 / 확인이 끝났다. 띠와 버튼은
-      셸이 갖는다(nextStep·act). 아직 안 선 배포에서는 그냥 건너뛴다.
-      질문 만들기만 배포가 갈린다: 로컬은 명령, 웹은 애드온이 핸들러를 거는 버튼이라
-      act() 로 뽑으면 서버에 없는 단계를 부른다. */
-function AI_nextStep(d, has, missN) {
+/* 안 잡힌 질문만 걸러 그 목록으로 내려간다 — 띠의 주요 행동이 가리키는 자리다.
+   눈금(AI_ST="none")은 화면이 이미 쓰는 것과 같은 것이라 새 상태를 만들지 않는다.
+   거르기만 하면 약속을 반만 지킨다: 띠가 "그 질문을 열면 무엇을 고칠지 나옵니다"
+   라고 말하므로 **첫 줄까지 펴 준다**. 다른 화면의 [기회 열기]와 같은 동작이다. */
+function AI_showMissed() {
+  AI_ENG = ""; AI_CAT = ""; AI_Q = ""; AI_ST = "none";
+  AI_render();
+  const t = $("ai-plist").querySelector("tbody tr .aiq-t");
+  if (t && t.getAttribute("aria-expanded") !== "true") AI_ev(t);
+  $("ai-prompt-sec").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+/* ── 다음 한 걸음: 화면 머리 아래 띠 한 줄. 이 화면의 상태는 다섯이다 —
+      질문이 없다 / 안 물어봤다 / 안 잡힌 질문이 있다 / 확인이 1회뿐이다 /
+      전부 인용된다. 띠와 버튼은 셸이 갖는다(nextStep·act). 아직 안 선 배포에서는
+      그냥 건너뛴다. 질문 만들기만 배포가 갈린다: 로컬은 명령, 웹은 애드온이
+      핸들러를 거는 버튼이라 act() 로 뽑으면 서버에 없는 단계를 부른다. */
+function AI_nextStep(d, has, missN, canFilter) {
   if (!window.nextStep || !window.act) return;
   const pr = d.progress || {};
+  const runs = (d.ai_trend || []).length;
   const put = (t, acts) =>
     window.nextStep("ai", `<p>${t}</p><div class="acts">${acts}</div>`);
+  // 누를 것이 있어야 참인 구절은 .live 로 싼다 — 박제본에서는 셸이 그것만 떼고,
+  // 남는 첫 문장만으로 "지금 상태"가 그대로 읽힌다.
+  const live = t => `<span class="live"> ${t}</span>`;
   if (!has && !pr.ai_prompts)
-    return put("AI에 물어볼 질문이 아직 없습니다. 질문을 만들어야 인용을 확인할 수 있습니다.",
+    return put("<b>물어볼 질문이 아직 없습니다.</b>" + live("질문을 만들면 인용을 확인할 수 있습니다."),
       W(window.act("add", "질문 만들기"),
         `<button class="go" data-sm-act="make-prompts">질문 만들기</button>`));
   if (!has)
-    return put(`질문 ${num(pr.ai_prompts)}개가 준비됐습니다. 한 번 확인하면 어느 질문에서
-      지고 있는지 보입니다.`, window.act("ai", "인용 확인"));
+    return put(`질문 <b>${num(pr.ai_prompts)}개</b>가 준비됐습니다.`
+      + live("한 번 확인하면 어느 질문에서 지고 있는지 보입니다."),
+      window.act("ai", "인용 확인"));
+  // 안 잡힌 질문이 있으면 다시 돌리는 것보다 그 질문을 여는 것이 먼저다 —
+  // 무엇을 고칠지는 그 줄을 펴야 나온다. 거를 목록이 없는 옛 박제본에서만 물러선다.
+  if (missN && canFilter)
+    return put(`한 번도 인용되지 않은 질문이 <b>${num(missN)}개</b> 있습니다.`
+      + live("그 질문을 열면 무엇을 고칠지 나옵니다."),
+      // 다시 확인하는 손잡이는 화면 머리가 이미 들고 있다 — 띠에 또 두면 같은 행동이
+      // 250px 안에 두 번 선다(dimHead 는 띠의 **주요** 버튼만 머리에서 뺀다).
+      `<button class="go" onclick="AI_showMissed()">질문 열기</button>`);
   if (missN)
-    return put(`한 번도 인용되지 않은 질문 ${num(missN)}개가 다음 글의 주제입니다.
-      답변은 매번 달라지므로 한 번 더 확인해 평균으로 읽으세요.`,
-      window.act("ai", "인용 다시 확인") + window.act("gaps", "기회 다시 계산", false));
-  return put("확인한 질문 전부에서 인용되고 있습니다. 지키는 자리라 주기적으로 다시 확인하세요.",
-    window.act("ai", "인용 다시 확인"));
+    return put(`한 번도 인용되지 않은 질문이 <b>${num(missN)}개</b> 있습니다.`
+      + live("답변은 매번 달라지므로 한 번 더 확인하면 평균으로 읽힙니다."),
+      AI_act("ai") + AI_act("gaps", false));
+  if (runs < 2)
+    return put("확인이 1회뿐이라 지금 값이 표본인지 흐름인지 아직 모릅니다."
+      + live("한 번 더 확인하면 갈립니다."), AI_act("ai"));
+  return put("확인한 질문 전부에서 인용되고 있습니다."
+    + live("주기적으로 다시 확인하면 지켜집니다."), AI_act("ai"));
 }
 
 function AI_render() {
@@ -614,8 +635,8 @@ function AI_render() {
         ).join("")}</select>` : ""}
       <span class="n" id="ai-n"></span>
       <span class="sp"></span>
-      <button class="go sec" onclick="AI_csv()"
-        title="지금 걸러 놓은 질문 그대로 내려받습니다">CSV 내보내기</button>
+      <button class="go sm sec" onclick="AI_csv()"
+        title="지금 걸러 놓은 질문 그대로 내려받습니다">CSV 내려받기</button>
     </div><div class="oppchips">${chips}</div>${AI_handoff()}
     <div id="ai-plist"></div>`;
   AI_list();
@@ -626,9 +647,9 @@ function AI_list() {
   $("ai-n").textContent = list.length === AI_ROWS.length
     ? `${AI_ROWS.length}개` : `${list.length}개 / 전체 ${AI_ROWS.length}개`;
   if (!list.length)
-    return $("ai-plist").innerHTML = `<div class="empty"><b>거른 조건에 맞는 질문이
-      없습니다.</b>
-      <div class="acts"><button onclick="AI_reset()">필터 지우기</button></div></div>`;
+    return $("ai-plist").innerHTML = `<div class="empty"><b>맞는 질문이 없습니다</b>
+      <p>조건을 지우면 질문 ${num(AI_ROWS.length)}개가 그대로 돌아옵니다.</p>
+      <div class="acts"><button onclick="AI_reset()">조건 지우기</button></div></div>`;
   $("ai-plist").innerHTML = table(
     [">점수?인용이 0인 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
      "질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
@@ -656,7 +677,7 @@ function AI_csv() {
       (scoring.search_wins_ai_loses 의 토큰 겹침) — 화면은 두 축을 한 줄에 놓기만
       한다. 새 수집은 없다: 재료가 위 표들과 GSC 스냅샷 그대로다. ── */
 const AI_gscCmd = () =>
-  `<div style="margin-top:9px"><button class="cmd" onclick="copyCmd(this)"
+  `<div class="acts"><button class="cmd" onclick="copyCmd(this)"
     >/capture gsc ${esc(AI_NM)}</button></div>`;
 
 // 한 줄 = "검색은 이 검색어로 이기는데, AI 는 이 질문에서 안 씀". 누르면 그 검색어로
@@ -685,7 +706,7 @@ function AI_vsRow(r) {
     : ""}${ask}</div></div>`;
   return `<tr>
     <td><button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-        >${esc(r.prompt)}</button>${body}</td>
+        >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${body}</td>
     <td class="kwcell">${esc(r.query)}</td>
     <td class="num up">${r.pos}</td>
     <td class="num muted">${num(r.imp)}</td>
@@ -696,29 +717,30 @@ function AI_vsRow(r) {
 
 function AI_vsSearch(x, gscDate) {
   const rows = x.rows || [];
-  const lead = "검색 순위와 AI 인용을 한 줄에 놓는 표입니다.";
+  const lead = "검색 순위와 AI 인용을 한 줄에 놓습니다.";
   if (!gscDate) return [lead,
-    `<div class="empty"><b>구글 실적을 아직 수집하지 않았습니다.</b>
-      <p>우리가 검색에서 몇 위인지를 모르면 AI와 견줄 왼쪽 축이 없습니다.</p>
+    `<div class="empty"><b>실적을 아직 수집하지 않았습니다</b>
+      <p>수집하면 검색에서 몇 위인지가 AI와 견줄 왼쪽 축이 됩니다.</p>
       ${READONLY ? "" : window.act
         ? `<div class="acts">${window.act("gsc", "실적 수집", false)}</div>`
-        : W(AI_gscCmd(), `<p class="detn">화면 머리의 [실적 다시 수집]을 누르면
+        : W(AI_gscCmd(), `<p class="detn">화면 머리의 재실행 버튼을 누르면
             채워집니다.</p>`)}</div>`];
   if (!x.top_queries) return [lead,
-    `<div class="empty"><b>평균순위 ${RULES.page1 || 10}위 안에 든 검색어가 아직
-      없습니다.</b>
-      <p>검색에서 이기는 자리가 하나라도 생기면 그 주제를 AI가 어떻게 다루는지
-        여기서 바로 견줍니다.</p></div>`];
+    `<div class="empty"><b>1페이지 안에 든 검색어가 없습니다</b>
+      <p>1페이지 문턱에 걸린 검색어부터 올리면 이 표에 견줄 왼쪽 축이 생깁니다.</p>
+      <div class="acts">${window.go("keywords", "키워드 열기")}</div></div>`];
   if (!rows.length) return [lead,
-    `<div class="empty"><b>상위 검색어 ${x.top_queries}개와 낱말이 겹치는 미인용 질문이
-      없습니다.</b>
-      <p>지금 검색에서 이기는 주제와 AI에 물어본 질문이 서로 다른 얘기를 하고 있다는
-        뜻입니다. 상위 검색어를 그대로 질문으로 만들어 물어보면 이 표가 채워집니다.</p>
+    `<div class="empty"><b>겹치는 질문이 없습니다</b>
+      <p>상위 검색어 ${x.top_queries}개를 그대로 질문으로 만들면 채워집니다.</p>
+      ${READONLY ? "" : `<div class="acts">${W(
+        window.act("add", "질문 만들기", false),
+        `<button class="go sec" data-sm-act="make-prompts">질문 만들기</button>`)}</div>`}
       </div>`];
-  const sub = `구글에서는 우리가 위인 주제인데 AI 답변에서는 한 번도 인용되지 않은
-    질문 <b>${rows.length}개</b>입니다. 순위가 모자란 게 아니라 <b>인용될 모양</b>이
-    아니라는 뜻입니다. 새 글을 쓰기 전에 그 검색어로 이미 걸린 페이지에 질문 문장
-    그대로의 H2와 숫자·출처·갱신일을 얹으세요. 이 화면에서 가장 싼 손질입니다.`;
+  const sub = `검색에서는 우리가 위인데 AI 답변에는 한 번도 안 나온 질문
+    <b>${rows.length}개</b>입니다.<span class="hint" tabindex="0"
+      data-tip="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
+      aria-label="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
+      >i</span>`;
   return [sub, table(
     ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
      "겹치는 내 검색어?이 질문과 낱말이 겹치는 검색어 중 우리가 상위인 것",
@@ -732,28 +754,28 @@ function AI_outranked(o) {
   const rows = o.rows || [];
   const sub = "AI가 인용해 가는 곳 중, 검색에서는 우리가 위인 경쟁사입니다.";
   if (!o.competitors) return [sub,
-    `<div class="empty"><b>경쟁사가 아직 등록돼 있지 않습니다.</b>
-      <p>누가 경쟁사인지를 알아야 "AI가 인용하는 저 도메인이 우리가 이미 이기는
-        상대"라고 말할 수 있습니다.</p>
-      <div class="acts">${window.go("competitors", "경쟁 분석 화면 열기")}</div></div>`];
+    `<div class="empty"><b>경쟁사가 아직 없습니다</b>
+      <p>등록하면 AI가 인용하는 도메인 중 우리가 이미 이기는 상대를 가려냅니다.</p>
+      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
   if (!o.gap_date) return [sub,
-    `<div class="empty"><b>경쟁사 ${o.competitors}곳은 등록됐는데 경쟁 검색어를 아직
-      수집하지 않았습니다.</b>
-      <p>검색에서 누가 위인지 견줄 데이터가 그것입니다.</p>
-      <div class="acts">${window.go("competitors", "경쟁 분석 화면 열기")}</div></div>`];
+    `<div class="empty"><b>경쟁 검색어를 아직 수집하지 않았습니다</b>
+      <p>경쟁사 ${o.competitors}곳과 검색에서 누가 위인지 견줄 자료가 그것입니다.</p>
+      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
+  // 등록한 경쟁사가 AI 답변에 하나도 안 나온 것은 "재 봤더니 문제 없음"이다 —
+  // 자료가 없는 것도, 실패한 것도 아니라 .empty.ok 다.
   if (!o.cited) return [sub,
-    `<div class="empty"><b>등록된 경쟁사 ${o.competitors}곳 중 이번 확인에서 AI가
-      인용한 곳은 없습니다.</b>
-      <p>우리 자리를 가져가는 것은 위 [우리 대신 인용되는 곳]의 도메인들입니다.
-        그중 경쟁사로 등록할 만한 곳이 있는지 보세요.</p></div>`];
+    `<div class="empty ok"><b>인용된 경쟁사가 없습니다</b>
+      <p>등록된 ${o.competitors}곳 대신 위 「우리 대신 인용되는 곳」의 도메인이 그 자리를
+        가져갔습니다.</p>
+      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
   if (!rows.length) return [sub,
-    `<div class="empty"><b>AI가 인용하는 경쟁사 ${o.cited}곳 중 검색에서 우리가 위인
-      검색어를 가진 곳은 없습니다.</b>
-      <p>지금은 AI만이 아니라 검색에서도 밀리고 있다는 뜻입니다. 순위부터 올릴
-        자리입니다.</p></div>`];
-  return [`${sub} 순위를 더 올릴 게 아니라 <b>그 페이지가 인용될 모양인지</b>를 봐야
-    하는 자리입니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·
-    비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다.`,
+    `<div class="empty"><b>검색에서도 앞선 곳이 없습니다</b>
+      <p>AI가 인용하는 경쟁사 ${o.cited}곳에 검색 순위부터 밀리고 있습니다.</p>
+      <div class="acts">${window.go("rank", "순위 추적 열기")}</div></div>`];
+  return [`${sub}<span class="hint" tabindex="0"
+      data-tip="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
+      aria-label="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
+      >i</span>`,
     table(["도메인?AI 답변에서 인용된 경쟁사",
       ">AI 인용?이번 확인에서 그 도메인이 인용된 답변 수",
       ">우리가 위인 검색어?경쟁 검색어 중 우리 순위가 더 높은 것의 수",
@@ -785,11 +807,11 @@ function AI_emptyState(d) {
   const pr = d.progress || {};
   // 비용은 결제 벽이 아니라 눈금이다 — 무엇이 얼마나 나가는지만 한 줄로 말한다.
   // 키가 누구 몫인지도 같은 줄에 붙인다: 상자를 문단으로 채우면 아무도 안 읽는다.
-  const cost = `<p class="detn">확인 1회는 질문마다 엔진 3곳에 요청이 나갑니다. ${W(
+  const cost = `<p class="detn">확인 1회는 질문마다 엔진 세 곳에 요청이 나갑니다. ${W(
     `<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
-       >openrouter.ai/keys</a>에서 받은 OpenRouter 키를 ${window.go("settings")}에
-     넣어 두셔야 합니다.`,
-    "키는 서버가 대므로 따로 넣으실 것은 없습니다.")}</p>`;
+       >openrouter.ai/keys</a>에서 받은 OpenRouter 키가 ${window.go("settings")}에
+     있어야 합니다.`,
+    "키는 서버가 대므로 따로 넣을 것이 없습니다.")}</p>`;
   // 행동은 화면 머리의 띠가 갖는다 — 같은 버튼을 250px 안에 두 번 두지 않는다.
   // 띠가 없는 배포(셸이 nextStep 을 안 세운 경우)에서만 여기로 물러선다.
   const act1 = (stage, chip) => READONLY || window.nextStep ? ""
@@ -798,15 +820,13 @@ function AI_emptyState(d) {
              {event.preventDefault();copyCmd(this)}">/capture ${stage} ${nm}</div></div>`,
         chip);
   return pr.ai_prompts === 0
-    ? `<div class="empty"><b>AI에 물어볼 질문이 아직 없습니다.</b>
-        <p>질문을 채우면 chatgpt·perplexity·gemini가 그 질문에 누구를 인용하는지
-          세어 보여 줍니다.</p>
+    ? `<div class="empty"><b>물어볼 질문이 없습니다</b>
+        <p>질문을 채우면 엔진 세 곳이 누구를 인용하는지 세어 줍니다.</p>
         ${act1("add",
           `<div class="acts"><button class="go sec"
              data-sm-act="make-prompts">질문 만들기</button></div>`)}</div>`
-    : `<div class="empty"><b>질문 ${num(pr.ai_prompts)}개를 아직 물어보지 않았습니다.</b>
-        <p>확인을 돌리면 질문마다 어느 엔진이 우리를 인용했는지, 안 했다면 우리 자리에
-          누가 인용됐는지가 남습니다.</p>
+    : `<div class="empty"><b>아직 물어보지 않았습니다</b>
+        <p>확인을 돌리면 질문 ${num(pr.ai_prompts)}개마다 누가 인용됐는지가 남습니다.</p>
         ${act1("ai", "")}${cost}</div>`;
 }
 
@@ -819,7 +839,7 @@ VIEW("ai", function (d) {
     $(id).hidden = true;
   $("ai-band").hidden = !has;
   // 띠가 먼저다 — 빈 상태는 띠가 섰는지를 보고 자기 행동을 낼지 정한다.
-  if (!has) AI_nextStep(d, false, 0);
+  if (!has) AI_nextStep(d, false, 0, false);
   $("ai-empty").innerHTML = has ? "" : AI_emptyState(d);
   $("ai-trend").innerHTML = "";
   if (!has) {
@@ -856,55 +876,72 @@ VIEW("ai", function (d) {
   const missN = byPrompt.length
     ? byPrompt.filter(r => !r.cited && !r.mentioned).length
     : (d.missed || []).length;
-  AI_nextStep(d, true, missN);
+  AI_nextStep(d, true, missN, byPrompt.length > 0);
 
-  $("ai-sub").innerHTML = `<b>${engines.map(AI_engLabel).join(" · ")}</b>${
-    when ? ` · ${esc(when)} 확인` : ""}. 받은 답변 <b>${num(tot.total)}건</b> 기준입니다.
-    답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 <b>표본</b>입니다.
-    같은 질문을 여러 번 물어 평균으로 읽으세요.`;
+  // eyebrow 는 기간만, 부제는 한 줄. "표본이라 여러 번 물어 평균으로 읽는다"는 툴팁으로.
+  $("ai-eyebrow").textContent = when ? `${when} 확인` : "최근 확인";
+  const SAMPLE = "답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 표본입니다. " +
+    "같은 질문을 여러 번 물어 평균으로 읽습니다.";
+  $("ai-sub").innerHTML = `<b>${engines.map(AI_engLabel).join(" · ")}</b>에서 받은
+    답변 <b>${num(tot.total)}건</b> 기준입니다.
+    <span class="hint" tabindex="0" data-tip="${esc(SAMPLE)}"
+      aria-label="${esc(SAMPLE)}">i</span>`;
 
   $("ai-band").innerHTML = [
     ["인용률", AI_PCT(cr), prev ? AI_pp(cr, prev.cite_rate) : "",
       `답변 ${num(tot.total)}건 중 ${num(tot.cited)}건에 우리 링크`],
     ["언급률", AI_PCT(mr), prev ? AI_pp(mr, prev.mention_rate) : "",
-      `이름은 나왔지만 링크는 없는 경우 포함 (${num(tot.mentioned)}건)`],
+      `이름만 나온 것 포함 ${num(tot.mentioned)}건`],
     ["받은 답변", num(tot.total), "",
       `질문 ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 × 엔진 ${engines.length}곳`],
-    ["인용 점유 순위", rankTxt, "", !sameScale ? "옛 기록이라 견줄 수 없습니다"
+    ["점유 순위", rankTxt, "", !sameScale ? "옛 기록이라 견줄 수 없습니다"
       : ours ? "인용된 도메인들과 견준 자리" : "우리 도메인이 등록돼 있지 않습니다"],
     ["안 잡힌 질문", num(missN), "", "인용도 언급도 없던 질문"],
   ].map(([l, v, dd, b], i) => `<div class="m"><div class="v${
     i === 4 && missN ? " down" : ""}">${v}${dd}</div>
     <div class="l">${esc(l)}</div><div class="b">${b}</div></div>`).join("");
 
+  // 빈 상태에도 누를 것이 있어야 한다. 다만 띠가 이미 [인용 다시 확인]을 주요 행동으로
+  // 들고 있는 상태(안 잡힌 질문이 없을 때)에서는 여기 또 두지 않는다 — 같은 행동이
+  // 한 화면에 두 번 서면 어느 쪽이 다음 걸음인지 흐려진다.
   if (at.length >= 2) $("ai-trend").innerHTML = AI_trendChart(at);
   else $("ai-trend").innerHTML = `<div class="empty"><b>확인이 아직 1회뿐이라 추이가
-    없습니다.</b><p>한 번 더 확인하면 인용률이 오르는지 내리는지 여기에 선으로
-    남습니다.</p></div>`;
+    없습니다</b><p>한 번 더 확인하면 인용률의 오르내림이 선으로 남습니다.</p>
+    ${missN && !READONLY && window.act
+      ? `<div class="acts">${AI_act("ai", false)}</div>` : ""}</div>`;
 
   // ── 인용 점유
   if (share.length || (sameScale && ours && tot.cited)) {
     $("ai-share-sec").hidden = false;
-    $("ai-share-sub").innerHTML = !sameScale
-      ? `<b>우리가 인용되지 않은 답변</b>에서 대신 인용된 도메인입니다. 이 기록에는
-         우리 인용 수를 같은 자로 잴 값이 없어 나란히 놓지 않았습니다.`
+    const SHARE_TIP = "값은 그 도메인이 인용된 답변 수입니다. " +
+      (sameScale ? "우리 도메인도 같은 자로 쟀습니다."
+                 : "이 기록에는 우리 인용 수를 같은 자로 잴 값이 없습니다.");
+    $("ai-share-sub").innerHTML = (!sameScale
+      ? "우리가 인용되지 않은 답변에서 대신 인용된 도메인입니다."
       : tot.cited
-      ? `한 도메인이 <b>인용된 답변 수</b>입니다. 우리 도메인도 같은 자로 쟀습니다.
-         우리 위에 있는 곳이 그 질문에서 우리가 차지했어야 할 자리입니다.`
-      : `한 도메인이 <b>인용된 답변 수</b>입니다. 우리 도메인은 아직 한 번도 인용되지
-         않아 이 목록에 없습니다. 아래 질문별 결과에서 어떤 답변이 오갔는지 보세요.`;
+      ? "우리 위에 있는 곳이 우리가 차지했어야 할 자리입니다."
+      : "우리 도메인은 아직 한 번도 인용되지 않아 이 목록에 없습니다.") +
+      ` <span class="hint" tabindex="0" data-tip="${esc(SHARE_TIP)}"
+        aria-label="${esc(SHARE_TIP)}">i</span>`;
     const shareRows = AI_shareRows(share, ours, tot.cited);
-    $("ai-donut").innerHTML = sameScale ? AI_donut(shareRows) : "";
     $("ai-share").innerHTML = AI_shareBars(shareRows);
+    // 모수가 둘이다: **답변 수**(위 KPI 의 분모)와 **인용 수**(여기 막대의 분모).
+    // 한 답변이 여러 곳을 인용하면 인용 수가 답변 수보다 크다 — 그래서 「6건인데
+    // 7건」이 나온다. 틀린 게 아니라 이름이 없던 것이라, 한 줄에 둘 다 이름을 준다.
+    $("ai-share-cap").textContent = `답변 ${num(tot.total)}건에서 나온 인용 `
+      + `${num(shareRows.reduce((s, r) => s + r.n, 0))}건 기준입니다.`;
   }
 
   // ── 엔진별
   $("ai-eng-sec").hidden = false;
   $("ai-engines").innerHTML = AI_engineCards(m);
+  $("ai-matrix-note").hidden = !AI_DRILL;
   $("ai-matrix").innerHTML = table(
-    ["엔진", "카테고리", ">인용?그 조합에서 우리 도메인이 인용된 답변 수",
+    ["엔진?이번 확인에서 물어본 AI 엔진", "카테고리?질문에 붙여 둔 주제 묶음",
+     ">인용?그 조합에서 우리 도메인이 인용된 답변 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 답변 수",
-     ">답변?질문 × 샘플. 그 조합에서 실제로 받은 답변 수", ">인용률"],
+     ">답변?질문 × 샘플. 그 조합에서 실제로 받은 답변 수",
+     ">조합 인용률?그 조합의 답변만 분모입니다. 위 KPI 의 인용률은 전체 답변이 분모라 값이 다릅니다"],
     m.map(r => `<tr class="aimx"${AI_drillAttrs(r.engine, r.category)}>
       <td class="kwcell">${AI_engLabel(r.engine)}</td>
       <td>${esc(r.category)}</td>
@@ -930,19 +967,16 @@ VIEW("ai", function (d) {
   // ── 질문별. 옛 박제본에는 ai_by_prompt 가 없다 — 그때만 예전 "안 잡힌 질문" 목록으로.
   if (byPrompt.length) {
     $("ai-prompt-sec").hidden = false;
-    $("ai-prompt-eyebrow").textContent = `질문 ${byPrompt.length}개 · 안 잡힘 ${missN}개`;
+    // 개수는 eyebrow 가 아니라 도구줄의 개수와 눈금 칩이 갖는다(eyebrow 는 범위만).
     AI_ROWS = byPrompt;
     AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_ENG = "";   // 사이트를 바꾸면 필터도 새로
     AI_render();
   } else if ((d.missed || []).length) {
     $("ai-miss-sec").hidden = false;
-    $("ai-miss-sub").innerHTML = W(
-      `인용도 언급도 없던 질문입니다. 여기가 다음 글의 재료입니다. 아래를 채팅에
-      붙여넣으면 이 질문들로 무엇부터 쓸지 계획을 세웁니다.
-      <span class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
+    $("ai-miss-sub").innerHTML = "인용도 언급도 없던 질문이 다음 글의 재료입니다."
+      + W(`<span class="cmd live" role="button" tabindex="0" onclick="copyCmd(this)"
         onkeydown="if(event.key==='Enter'||event.key===' ')
-          {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`,
-      "인용도 언급도 없던 질문입니다. 여기가 다음 글의 재료입니다.");
+          {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`, "");
     $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
       d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
         <td class="kwcell">${esc(r.category || "")}</td>

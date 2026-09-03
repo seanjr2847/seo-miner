@@ -1931,7 +1931,7 @@ _KIND_SPECS = {
             + f" 남았습니다 (구글 실적 {ctx['cur']} 기준)"),
         play=_SD_PLAY),
     "ctr_gap": dict(
-        label="CTR 미달", defensive=False,
+        label="클릭률 미달", defensive=False,
         detect=lambda ctx: ctr_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"], "position": r["position"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
@@ -1943,7 +1943,7 @@ _KIND_SPECS = {
             f"이 기간에 약 {r['lost_clicks']:,}클릭을 놓쳤습니다 "
             f"(구글 실적 {ctx['cur']} 기준)"),
         play=dict(
-            what="순위는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
+            what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
             acts=["title 앞 60자 안에 검색어를 넣고, 브랜드명은 뒤로 밉니다.",
                   "meta description 에 숫자·연도·구체적 이득을 적습니다.",
                   "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
@@ -2071,7 +2071,7 @@ _KIND_SPECS = {
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
-        label="AI 챗봇 인용 없음", defensive=False,
+        label="챗봇 인용 없음", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"])},
@@ -2517,7 +2517,7 @@ def _selfcheck() -> None:
     assert kind_label("striking_distance", band="page2") == "1페이지 진입 가능"
     assert kind_label("striking_distance", band=None) == "밀면 오를 검색어"
     assert kind_label("striking_distance", band="???") == "밀면 오를 검색어"
-    assert kind_label("ctr_gap", band="page1") == "CTR 미달"          # band 는 striking_distance 전용
+    assert kind_label("ctr_gap", band="page1") == "클릭률 미달"          # band 는 striking_distance 전용
     assert kind_play("striking_distance", band="page1")["what"].startswith("이미 1페이지 안입니다")
     assert kind_play("striking_distance", band="page2")["what"].startswith("1페이지 진입까지")
     assert kind_play("striking_distance")["what"].startswith("1페이지 진입까지")     # 모르면 page2
