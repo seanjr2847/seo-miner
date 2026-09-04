@@ -330,8 +330,11 @@ def create_project(f: dict) -> dict:
 
 # 호스팅(웹) 주소 — 로컬에서 만든 "웹에서 이어 하기" 링크가 가리키는 곳.
 # 배포 주소가 바뀌면 여기 한 줄만 고친다(env 로도 덮는다).
+# 2026-09-04: Railway 서비스의 실제 도메인은 `seo-miner-production.up.railway.app` 이다
+# (`railway domain` 실측). 예전 기본값 `seo-miner.up.railway.app` 은 붙어 있지 않아
+# "웹에서 이어 하기" 링크가 Railway 의 404("train has not arrived") 로 떨어졌다.
 HOSTED_URL = os.environ.get("SEOMINER_HOSTED_URL",
-                            "https://seo-miner.up.railway.app")
+                            "https://seo-miner-production.up.railway.app")
 
 
 def carry_pack(project: str) -> dict:
