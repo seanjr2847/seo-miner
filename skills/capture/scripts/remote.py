@@ -32,6 +32,7 @@ Usage:
   python remote.py status
   python remote.py sync                    # 사이트 목록 캐시 갱신
   python remote.py pull [project]          # 서버 보관함을 로컬 brain.db 에 사본으로
+  python remote.py push <local> [remote]   # 로컬 사이트의 측정치를 서버 사이트에 **더한다**
   python remote.py                         # 인자 없으면 자체점검
 """
 import json
@@ -354,6 +355,141 @@ def merge(remote_file, project: str) -> dict[str, int]:
         raise
     finally:
         con.close()
+
+
+def _uniques(con, table: str) -> list[list[str]]:
+    """표의 UNIQUE 제약 컬럼 묶음들 — 이미 있는 행을 id 로 되찾는 열쇠."""
+    out = []
+    for ix in con.execute(f'PRAGMA main.index_list("{table}")'):
+        if ix["unique"]:
+            out.append([r["name"] for r in con.execute(f'PRAGMA main.index_info("{ix["name"]}")')])
+    return out
+
+
+def graft(src_file, src_project: str, dst_project: str) -> dict[str, int]:
+    """src brain 의 src_project 행을 main 의 dst_project 에 **더한다** — merge 의 역방향.
+
+    merge 는 "서버 사본을 받는다" 라 목적지를 비우고 채우지만, 이쪽은 목적지가 이미
+    자기 측정치(GSC 등)를 가진 살아 있는 사이트라 **지우지 않는다**. 규칙 셋:
+    - projects 행은 만들지 않는다. dst 가 없으면 LookupError.
+    - UNIQUE 로 이미 있는 행(같은 키워드·같은 질문)은 새로 안 넣고 기존 id 로 잇는다 —
+      그 밑의 자식(순위 스냅샷)은 기존 키워드 밑에 붙는다.
+    - UNIQUE 가 없는 표는 **같은 값의 행이 이미 있으면 건너뛴다**. 그래서 두 번 밀어도
+      스냅샷이 두 배가 되지 않는다(멱등).
+    id 재배치·FK 갈아끼우기·한 트랜잭션은 merge 와 같다.
+    """
+    import db      # 늦은 import: doctor 가 pip 이전에 이 모듈을 읽는다
+
+    db.connect().close()
+    con = sqlite3.connect(db.db_path().resolve().as_uri(), uri=True)
+    con.row_factory = sqlite3.Row
+    con.isolation_level = None
+    con.execute("PRAGMA foreign_keys = ON")
+    con.execute("ATTACH DATABASE ? AS rem",
+                (Path(src_file).resolve().as_uri() + "?mode=ro",))
+    try:
+        order, par = _plan(con)
+        order = [t for t in order if t in _tables(con, "rem")]
+        assert order[:1] == ["projects"], "원본에 projects 표가 없다"
+        con.execute("CREATE TEMP TABLE _map(tbl TEXT, rid INT, lid INT)")
+        con.execute("BEGIN")
+
+        row = con.execute("SELECT id FROM rem.projects WHERE name=?", (src_project,)).fetchone()
+        if row is None:
+            raise LookupError(f"원본 보관함에 '{src_project}' 가 없습니다")
+        rpid = row["id"]
+        row = con.execute("SELECT id FROM main.projects WHERE name=?", (dst_project,)).fetchone()
+        if row is None:
+            raise LookupError(f"목적지 보관함에 '{dst_project}' 가 없습니다 — 먼저 등록하세요")
+        lpid = row["id"]
+
+        idmap: dict[tuple[str, int], int] = {("projects", rpid): lpid}
+        con.execute("INSERT INTO _map VALUES('projects', ?, ?)", (rpid, lpid))
+        is_parent = {p for t in order for p in par[t].values()}
+        counts: dict[str, int] = {}
+        for t in order[1:]:
+            shared = [c for c in _cols(con, "main", t)
+                      if c != "id" and c in _cols(con, "rem", t)]
+            pcols = {c: p for c, p in par[t].items() if c in shared}
+            if not shared or not pcols:
+                continue
+            q = ",".join(f'"{c}"' for c in shared)
+            uniq = [u for u in _uniques(con, t) if set(u) <= set(shared)]
+            rows = con.execute(f'SELECT id,{q} FROM rem."{t}" '
+                               f'WHERE {_pred(pcols, "_map", "rid")}')
+            ins = con.cursor()
+            n = 0
+            for r in rows:
+                vals = [idmap[(par[t][c], r[c])] if c in par[t] and r[c] is not None
+                        else r[c] for c in shared]
+                lid = None
+                for u in uniq:                       # 같은 키(키워드·질문)면 기존 행
+                    hit = con.execute(
+                        f'SELECT id FROM main."{t}" WHERE '
+                        + " AND ".join(f'"{c}" IS ?' for c in u),
+                        [vals[shared.index(c)] for c in u]).fetchone()
+                    if hit:
+                        lid = hit["id"]
+                        break
+                if lid is None:                      # 값 전체가 같은 행이 있으면 그것
+                    hit = con.execute(
+                        f'SELECT id FROM main."{t}" WHERE '
+                        + " AND ".join(f'"{c}" IS ?' for c in shared), vals).fetchone()
+                    if hit:
+                        lid = hit["id"]
+                if lid is None:
+                    try:
+                        ins.execute(f'INSERT INTO main."{t}" ({q}) '
+                                    f'VALUES ({",".join("?" * len(shared))})', vals)
+                    except sqlite3.IntegrityError:
+                        # 식(expression) UNIQUE — rank_snapshots 의 (keyword_id, date(checked_at))
+                        # 처럼 index_info 로 컬럼을 못 읽는 열쇠. 같은 날 스냅샷이 이미 있는
+                        # 것이니 건너뛴다. 부모 표라면 자식을 이을 id 가 없어 그대로 던진다.
+                        if t in is_parent:
+                            raise
+                        continue
+                    lid = ins.lastrowid
+                    n += 1
+                if t in is_parent:
+                    idmap[(t, r["id"])] = lid
+                    con.execute("INSERT INTO _map VALUES(?,?,?)", (t, r["id"], lid))
+            counts[t] = n
+        con.execute("COMMIT")
+        return counts
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    finally:
+        con.close()
+
+
+def push(project: str, remote_project: str | None = None) -> dict[str, int]:
+    """로컬 brain 의 project 행을 서버의 remote_project(기본 같은 이름)에 더한다.
+
+    파일은 backup() 으로 떠서 보낸다 — 열려 있는 brain.db 를 그대로 읽으면 찢어진다
+    (/api/brain 이 내려줄 때와 같은 이유). 서버가 graft 를 돌리고 표→행수를 돌려준다.
+    """
+    import db
+    dst = remote_project or project
+    fd, tmp = tempfile.mkstemp(prefix="seo-miner-push-", suffix=".db")
+    os.close(fd)
+    try:
+        s = sqlite3.connect(db.db_path().resolve().as_uri() + "?mode=ro", uri=True)
+        d = sqlite3.connect(tmp)
+        try:
+            s.backup(d)
+        finally:
+            d.close()
+            s.close()
+        r = api("POST", "/api/brain/import", params={"project": dst, "src": project},
+                data=Path(tmp).read_bytes(),
+                headers={"Content-Type": "application/octet-stream"})
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    counts = r.get("counts") or {}
+    added = ", ".join(f"{t} +{n}" for t, n in counts.items() if n) or "새로 더한 행 없음(이미 있음)"
+    print(f"서버 사이트 '{dst}' 에 더함 ({project} → {dst}): {added}")
+    return counts
 
 
 def _download() -> Path:
@@ -788,6 +924,7 @@ def _selfcheck() -> None:
         counts = merge(rem, "mysite")
         assert counts["keywords"] == 3 and counts["gsc_snapshots"] == 2, counts
         lc.close()
+
         lc = _db.connect()
 
         kw = {r["keyword"]: r["id"] for r in lc.execute("SELECT id,keyword FROM keywords")}
@@ -850,6 +987,35 @@ def _selfcheck() -> None:
             raise AssertionError("원격에 없는 사이트인데 병합이 통과했다")
         assert dump(lc) == snap, "없는 사이트 병합이 로컬을 건드렸다"
         lc.close()
+
+        # ── 11-b. graft(push 의 서버쪽) — 있는 사이트에 **더하고**, 두 번 해도 안 는다.
+        lc = _db.connect()
+        snap_g = dump(lc)
+        g = graft(rem, "mysite", "mysite")
+        assert not any(g.values()), f"같은 내용을 다시 얹었는데 행이 늘었다: {g}"
+        assert dump(lc) == snap_g, "멱등 graft 가 brain 을 바꿨다"
+        rem2 = d / "rem2.db"                 # 원본 픽스처(rem)는 아래 재병합 검사가 다시 쓴다
+        rem2.write_bytes(rem.read_bytes())
+        rc_ = sqlite3.connect(rem2)
+        rc_.executescript("""
+            INSERT INTO keywords(id,project_id,keyword) VALUES(5,1,'kw-new');
+            INSERT INTO rank_snapshots(id,keyword_id,position,checked_at)
+              VALUES(4,5,2,'2020-01-02T00:00:00Z'),(5,1,4,'2020-01-01T00:00:00Z');
+        """)
+        rc_.commit(); rc_.close()
+        g = graft(rem2, "mysite", "mysite")
+        assert g["keywords"] == 1 and g["rank_snapshots"] == 2, g
+        kid = lc.execute("SELECT id FROM keywords WHERE keyword='kw-a'").fetchone()[0]
+        assert lc.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?", (kid,)).fetchone()[0] == 2, \
+            "새 스냅샷이 기존 키워드(UNIQUE 로 되찾은 id) 밑에 안 붙었다"
+        assert other_rows(lc) == before_other, "graft 가 남의 사이트를 건드렸다"
+        try:
+            graft(rem, "mysite", "없는사이트")
+        except LookupError:
+            pass
+        else:
+            raise AssertionError("없는 목적지인데 graft 가 통과했다")
+        lc.close()
     finally:
         globals()["_request"] = saved_req
         globals()["POLL"] = 1.5
@@ -875,6 +1041,8 @@ def main() -> None:
         status()
     elif cmd == "sync":
         sync()
+    elif cmd == "push" and len(args) in (2, 3):
+        push(args[1], args[2] if len(args) == 3 else None)
     elif cmd == "pull" and len(args) == 2:
         pull(args[1])
     elif cmd == "pull":

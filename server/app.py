@@ -47,6 +47,7 @@ import gen_prompts
 import gh
 import identity
 import pages
+import remote      # graft — 로컬 플러그인이 올린 측정치를 테넌트 brain 에 더한다
 import serp_adapter   # 언어-지역 목록 정본 — 등록·설정 화면이 이걸 그린다
 import run_all
 import scheduler
@@ -856,6 +857,36 @@ def api_brain(request: Request):
             raise
     return FileResponse(tmp, media_type="application/octet-stream", filename="brain.db",
                         background=BackgroundTask(lambda: Path(tmp).unlink(missing_ok=True)))
+
+
+@app.post("/api/brain/import")
+async def api_brain_import(request: Request, project: str, src: str):
+    """로컬 플러그인이 잰 것을 서버 사이트에 **더한다** — `remote.py push` 의 서버쪽.
+
+    /api/brain(내려받기)의 역방향인데 대칭은 아니다: 받을 때는 로컬 사본을 비우고 채우지만
+    (remote.merge), 올릴 때는 서버 사이트가 이미 GSC 등 자기 측정치를 갖고 있으므로 지우지
+    않고 얹는다(remote.graft — UNIQUE 로 같은 키워드·질문은 잇고, 같은 값의 행은 건너뛴다).
+    본문은 sqlite 파일 그대로다. 소유 확인은 store.session 이 한다.
+    """
+    uid = _require_uid(request)
+    body = await request.body()
+    if len(body) > 200 * 2**20:
+        raise HTTPException(status_code=413, detail="보관함 파일이 200MB 를 넘습니다")
+    if body[:15] != b"SQLite format 3":
+        raise HTTPException(status_code=400, detail="sqlite 파일이 아닙니다")
+    fd, tmp = tempfile.mkstemp(prefix="brain-import-", suffix=".db")
+    os.close(fd)
+    Path(tmp).write_bytes(body)
+    try:
+        with store.session(uid, project, isolate=True):
+            counts = remote.graft(tmp, src, project)
+    except LookupError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=400, detail=f"병합하지 못했습니다: {e}")
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    return {"ok": True, "counts": counts}
 
 
 @app.get("/api/report")
