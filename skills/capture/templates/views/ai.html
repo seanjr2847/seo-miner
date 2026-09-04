@@ -492,6 +492,7 @@ function AI_detail(r, doms) {
     실적에 없습니다. AI 질문은 문장이라 검색어 목록에 그대로 잡히는 일이 드뭅니다.</p>`;
   // 프롬프트에는 "이 질문에 답하는 글을 써라"가 목적이라, 페이지가 없어도 낼 수 있다.
   const ask = askBlock({
+    shape: url ? "fix_page" : "new_content",   // 걸린 페이지가 있으면 고치고, 없으면 새로 쓴다
     url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts: p.acts, deliver: p.deliver,
     problem: `AI 인용 — ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
     queries: [{q: r.prompt, note: `AI 답변 ${r.checks}건 중 인용 ${r.cited}건`}],
@@ -694,6 +695,7 @@ function AI_vsRow(r) {
   const deliver = ["질문 그대로를 쓴 H2 와 그 아래 직답 문안",
                     "숫자·출처·갱신일이 들어간 근거 블록"];
   const ask = askBlock({
+    shape: url ? "fix_page" : "new_content",
     url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts, deliver,
     problem: `검색 ${r.pos}위로 이기는데 AI 질문에서는 인용되지 않음` +
       (r.rivals.length ? ` — 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),

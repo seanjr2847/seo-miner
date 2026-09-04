@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
+import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
@@ -858,8 +859,27 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
         gk = gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap" else None
         o["label"] = scoring.kind_label(o["kind"], band=band)
         o["play"] = scoring.kind_play(o["kind"], band=band, gap_kind=gk)
+        # 요청문(brief)이 꼴을 가를 때 다시 쓴다 — 여기서 한 번 판정한 것을 싣는다.
+        o["band"], o["gap_kind"] = band, gk
 
     return {"opps": opps, "opps_total": opps_total}
+
+
+def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]:
+    """coverage 기회의 근거 — 그 주제로 추적 중인 키워드와 검색량. 기회의 대상은
+    'cluster:이름' 한 줄뿐이라, 요청문이 "무슨 키워드들이냐"를 말하려면 이것이 필요하다."""
+    out: dict[str, list[dict]] = {}
+    for o in opps:
+        if o["kind"] != "coverage":
+            continue
+        cl = str(o["target"]).split(":", 1)[-1]
+        if cl in out:
+            continue
+        out[cl] = q(conn,
+            """SELECT keyword, volume FROM keywords
+                WHERE project_id=? AND is_active=1 AND COALESCE(cluster,'(미분류)')=?
+                ORDER BY volume IS NULL, volume DESC, keyword LIMIT 30""", (pid, cl))
+    return out
 
 
 def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
@@ -940,14 +960,19 @@ def gather(conn, p, at: str | None = None) -> dict:
             WHERE c.project_id=? ORDER BY c.id DESC LIMIT 50""", (pid,))
 
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
-    return {"schema": 1, "project": dict(p),
-            **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
-            "runs": runs, "creations": creations,
-            # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
-            # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
-            "kind_labels": {k.name: k.label for k in scoring.KINDS},
-            "progress": stage.progress(conn, pid),
-            "guide": stage.state(conn, p, p["domain"] or "")}
+    d = {"schema": 1, "project": dict(p),
+         **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
+         "runs": runs, "creations": creations,
+         # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
+         # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
+         "kind_labels": {k.name: k.label for k in scoring.KINDS},
+         "progress": stage.progress(conn, pid),
+         "guide": stage.state(conn, p, p["domain"] or ""),
+         "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])}
+    # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
+    # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
+    brief.attach(d, db.project_locale(p))
+    return d
 
 
 def payload(project: str, at: str | None = None) -> dict:

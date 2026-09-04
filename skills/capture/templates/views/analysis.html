@@ -471,7 +471,8 @@ function anQueryPanel(r, problem, note) {
     ${pages.length ? pageTable(pages) : `<p class="detn">이 검색어로 어느 페이지가 걸렸는지는
       아직 모릅니다. 실적을 한 번 더 수집하면 페이지별로 채워집니다.</p>`}
     ${url ? pageFix((window.PAGE_AUDITS || {})[url], url) : ""}
-    ${askBlock({url, audit: url ? (window.PAGE_AUDITS || {})[url] : null,
+    ${askBlock({shape: url ? "fix_page" : "new_content",
+      url, audit: url ? (window.PAGE_AUDITS || {})[url] : null,
       problem, queries: [{q: r.query, note}]})}
     <p class="detn">이 검색어는 아직 기회 목록에 없습니다. 기회를 다시 분석하면 올라옵니다.</p>
     <div class="acts">${act("gaps", "기회 분석", false)}</div>

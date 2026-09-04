@@ -637,7 +637,7 @@ function stIxDetail(url) {
     <p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>
     ${pageFix(ST_AUDITS[url], url)}
-    ${askBlock({url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
+    ${askBlock({shape: "technical", url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
                 deliver: ST_IX_DELIVER[r.bucket] || ST_IX_DELIVER._,
                 problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}
     <p class="detn">이 URL 은 기회 목록에 없어 확인·완료 표시를 못 답니다.
@@ -766,7 +766,7 @@ function stDevDetail(q) {
     ${playList(ST_DEV_PLAY.what, ST_DEV_PLAY.acts)}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
-    ${askBlock({url, audit: ST_AUDITS[url], acts: ST_DEV_PLAY.acts,
+    ${askBlock({shape: "technical", url, audit: ST_AUDITS[url], acts: ST_DEV_PLAY.acts,
                 deliver: ["모바일에서 고칠 것 목록 — 레이아웃·이미지 크기 지정·지연 로드·전면 팝업(코드/설정 수준)",
                           "첫 화면에 무엇이 보여야 하는지",
                           "가로로 넘치는 표·코드 블록 처리 방법"],
@@ -1243,7 +1243,7 @@ function pgStarvedDetail(page) {
     <p class="detw">고칠 페이지: <a href="${esc(r.page)}" target="_blank"
       rel="noopener">${esc(r.page)}</a></p>
     ${pageFix(ST_AUDITS[r.page], r.page)}
-    ${askBlock({url: r.page, audit: ST_AUDITS[r.page], acts: PG_ST_PLAY.acts,
+    ${askBlock({shape: "fix_page", url: r.page, audit: ST_AUDITS[r.page], acts: PG_ST_PLAY.acts,
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
                 deliver: ["이 페이지로 링크를 걸 글과 앵커 텍스트"],
                 problem: `내부링크 굶음 — 노출 ${num(r.impressions)}인데 내부링크 ${num(r.links_in)}개`})}
@@ -1282,7 +1282,7 @@ function pgNoConvDetail(page) {
     <p class="detw">확인할 페이지: <a href="${esc(r.page)}" target="_blank"
       rel="noopener">${esc(r.page)}</a></p>
     ${pageFix(ST_AUDITS[r.page], r.page)}
-    ${askBlock({url: r.page, audit: ST_AUDITS[r.page], acts: PG_NOCONV_PLAY.acts,
+    ${askBlock({shape: "fix_page", url: r.page, audit: ST_AUDITS[r.page], acts: PG_NOCONV_PLAY.acts,
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
                 deliver: ["이 페이지에 전환 동작(CTA)이 있는지와, 없다면 어디에 무엇을 넣을지 진단"],
                 problem: `클릭 ${num(r.clicks)}·세션 ${num(r.sessions)}인데 전환 0`})}

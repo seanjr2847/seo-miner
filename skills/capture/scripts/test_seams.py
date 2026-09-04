@@ -600,6 +600,40 @@ def test_seam_15_dataforseo_calls_go_through_pacer():
             f"{f.name} 이 DataForSEO 를 직접 부른다 — serp_adapter 를 지나야 간격이 지켜진다"
 
 
+def test_seam_16_brief_shapes_single_source():
+    """16) 요청문의 꼴(고치기·새 글·주소 정리·기술 점검·연락)은 brief.py 가 정본이다.
+    화면은 기회마다 실려 온 o.brief 를 그리고, 기회로 안 올라온 행(뷰의 폴백)만
+    askBlock 에 shape 이름을 직접 넘긴다 — 그 이름이 정본에 없으면 머리말도 꼬리도
+    빈 요청문이 조용히 나간다. 그리고 옛 틀(규칙 문장·진단별 산출물 사본)이 셸에
+    남아 있으면 두 벌이 된다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    shell, tpl = ctx["shell"], ctx["tpl"]
+    # 폴백이 넘기는 꼴 이름 전부 — 삼항 안의 것까지 — 이 정본 안에 있다
+    used = set()
+    for m in re.finditer(r"askBlock\(\{(.*?)\}\)", tpl, re.S):
+        body = m.group(1)
+        if "brief:" in body:
+            continue
+        sh = re.search(r"shape:\s*([^,\n]+)", body)
+        assert sh, f"askBlock 폴백이 shape 를 안 넘긴다:\n{body[:160]}"
+        used |= set(re.findall(r'"(\w+)"', sh.group(1)))
+    assert used, "폴백 askBlock 호출을 하나도 못 찾았다 — 정규식이 틀렸거나 호출이 사라졌다"
+    assert used <= set(brief.SHAPE_NAMES), \
+        f"화면이 넘기는 꼴 이름이 brief.SHAPE_NAMES 에 없다: {used - set(brief.SHAPE_NAMES)}"
+    # 셸이 꼬리·머리말을 페이로드(d.brief)에서 받는다 — 옛 틀의 사본이 남아 있지 않다
+    assert "window.BRIEF = d.brief" in shell, "셸이 d.brief 를 window.BRIEF 로 안 받는다"
+    for stale in ("const DELIVER = {", "확인되지 않은 수치", "위에 없는 것까지 알아서 손대지"):
+        assert stale not in shell, f"옛 요청문 틀이 셸에 남아 있다: {stale!r}"
+    # 폴백이 쓰는 키가 shapes_payload 에 다 있다 — 키 하나가 빠지면 undefined 가 글에 박힌다
+    keys = set(re.findall(r"\bB\.(\w+)", shell)) | set(re.findall(r"window\.BRIEF\.(\w+)", shell))
+    have = set(brief.shapes_payload("ko-KR"))
+    assert keys <= have, f"화면이 읽는 BRIEF 키가 페이로드에 없다: {keys - have}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

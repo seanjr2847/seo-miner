@@ -1948,8 +1948,8 @@ _KIND_SPECS = {
                   "meta description 에 숫자·연도·구체적 이득을 적습니다.",
                   "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
                   "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."],
-            deliver=["새 title 3안. 한글 30자 이내, 검색어를 앞에",
-                     "meta description 2안. 한글 80자 이내",
+            deliver=["새 title 3안. 길이 기준 안에서, 검색어를 앞에",
+                     "meta description 2안. 길이 기준 안에서",
                      "검색 결과 면적을 넓힐 FAQ·HowTo 구조화 데이터(JSON-LD)"])),
     "cannibalization": dict(
         label="내부 경쟁", defensive=True,

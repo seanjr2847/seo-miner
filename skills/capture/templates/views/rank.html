@@ -369,6 +369,7 @@ function RK_fallback(r) {
   const fix = r.url || (pages[0] && pages[0].page) || "";
   const [what, acts, deliver] = RK_playParts(r);
   const ask = askBlock({
+    shape: fix ? "fix_page" : "new_content",
     url: fix, audit: RK_AUDITS[fix], acts, deliver,
     problem: `순위 ${r.pos != null ? r.pos + "위" : "못 찾음"}. ${what}`,
     queries: [{q: r.keyword, note: r.pos != null ? `현재 ${r.pos}위` : "순위 미검출"}],
