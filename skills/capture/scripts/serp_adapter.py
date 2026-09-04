@@ -24,6 +24,7 @@ self-check:  python serp_adapter.py
 """
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -49,18 +50,96 @@ TIMEOUTS = {
 
 # 재시도해도 안 낫는 HTTP 상태 — 다음 항목에서도 같은 답이 온다.
 FATAL_STATUS = {401: "인증 실패", 402: "잔액 없음", 403: "접근 거부"}
+# 429 는 여기 없다. 한도는 제공자마다 뜻이 다르기 때문이다 — DataForSEO 는 계정
+# 전체가 분당 12회라 다음 키워드도 똑같이 막히지만(그래서 _dfs_call 이 기다렸다
+# 다시 치고 그래도 막히면 Fatal), OpenRouter 는 잠깐 쉬면 낫는 항목 단위 실패다.
+# 이걸 FATAL_STATUS 에 같이 넣었더니 AI 단계가 429 한 번에 통째로 멈췄다.
+RATE_LIMIT = 429
+_STATUS_NAME = {**FATAL_STATUS, RATE_LIMIT: "분당 호출 한도 초과"}
 # 사람이 지금 할 수 있는 일. 오류 문장은 코드가 아니라 이 한 줄로 끝나야 한다.
 FATAL_FIX = {
     "DataForSEO": "https://app.dataforseo.com 에서 잔액·키 확인",
     "OpenRouter": "https://openrouter.ai/settings/keys 에서 잔액·키 확인",
 }
+# 한도는 키를 봐도 안 낫는다 — 잔액 확인으로 보내면 엉뚱한 데를 뒤지게 된다.
+RATE_LIMIT_FIX = (f"계정 전체가 분당 {{rpm}}회입니다 — 잠시 뒤 다시 돌리거나 "
+                  "SEOMINER_DFS_RPM 로 간격을 조절하세요")
 
 
 def fatal(who: str, status: int, detail: str = "") -> Fatal:
     """`DataForSEO 잔액 없음(402) — https://... 에서 충전` 꼴의 사람 말."""
     tail = f" [{detail}]" if detail else ""
-    return Fatal(f"{who} {FATAL_STATUS.get(status, '호출 실패')}({status}) — "
-                 f"{FATAL_FIX.get(who, '키를 확인하세요')}{tail}")
+    fix = (RATE_LIMIT_FIX.format(rpm=_rpm() or DFS_RPM) if status == RATE_LIMIT
+           else FATAL_FIX.get(who, "키를 확인하세요"))
+    return Fatal(f"{who} {_STATUS_NAME.get(status, '호출 실패')}({status}) — {fix}{tail}")
+
+
+# ── DataForSEO 호출 간격 ────────────────────────────────────────────────────
+# DataForSEO 문서: "Live endpoints are subject to a rate limit of 12 requests per
+# minute per account." 흔히 인용되는 분당 2000회는 task 방식 얘기다 — 이 리포가
+# 부르는 DataForSEO 경로는 SERP·Labs·볼륨·백링크까지 **전부 /live** 라 12 가 걸린다.
+# 여태는 러너의 항목 간격(0.5초)만 있었고 그건 분당 120회다.
+DFS_RPM = 12
+RATE_LIMIT_RETRIES = 3          # 이 뒤로도 429 면 한도가 우리 것만이 아니다 → Fatal
+_last_call = 0.0
+
+
+def _rpm() -> float:
+    """분당 허용 호출 수. 0 이면 간격을 두지 않는다(테스트·직접 조절용)."""
+    try:
+        return float(os.environ.get("SEOMINER_DFS_RPM", DFS_RPM))
+    except ValueError:
+        return float(DFS_RPM)
+
+
+def pace_seconds() -> float:
+    """DataForSEO 호출 사이 최소 간격(초). 소요 시간 고지가 이 값을 쓴다 —
+    러너의 throttle 로 어림하면 실제보다 10배 짧게 말하게 된다."""
+    rpm = _rpm()
+    return 60.0 / rpm if rpm > 0 else 0.0
+
+
+def _pace() -> None:
+    """앞 호출과 최소 간격을 벌린다.
+
+    ponytail: 한 프로세스 안에서만 센다. 호스팅은 워커가 여럿이고 계정은 하나라
+    이것만으로 계정 한도를 보장하지 못한다 — 그때는 서버에 공유 버킷이 필요하다.
+    그래도 지금 실제로 터지던 것(한 런이 혼자 10배로 던지는 것)은 이걸로 막힌다.
+    """
+    global _last_call
+    gap = pace_seconds()
+    if gap <= 0:
+        return
+    wait = _last_call + gap - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_call = time.monotonic()
+
+
+def _dfs_call(fn, *a, **kw):
+    """DataForSEO 요청 하나 — 간격을 지키고, 429 면 기다렸다 다시 친다.
+
+    재시도는 여기 있어야 한다. 수집기의 이분 재시도(collect_metrics._ask)는 하위
+    요청 사이에 간격이 아예 없어서, 한도에 걸린 상태에서 한 묶음이 스무 번을 연달아
+    던졌다. 간격을 HTTP 계층에 두면 그 경로도 같이 지켜진다.
+    """
+    r = None
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        _pace()
+        r = fn(*a, **kw)
+        if r.status_code != RATE_LIMIT:
+            return r
+        if attempt == RATE_LIMIT_RETRIES:
+            raise fatal("DataForSEO", RATE_LIMIT)
+        gap = pace_seconds()
+        if gap <= 0:
+            continue                      # 간격을 껐으면 기다림도 없다
+        try:
+            wait = float((getattr(r, "headers", None) or {}).get("Retry-After"))
+        except (TypeError, ValueError):
+            wait = gap * (attempt + 1)    # 서버가 안 알려주면 점점 길게
+        time.sleep(max(wait, 1.0))
+    return r
 
 
 def raise_for(r, who: str = "DataForSEO") -> None:
@@ -107,7 +186,7 @@ def _check_dataforseo_task(data: dict) -> dict:
         # DataForSEO 의 task status_code 는 HTTP 코드 x100 꼴이다 (40501 = 405.01).
         # 결제·인증 계열이면 HTTP 200 으로 와도 Fatal 이다 — 엔드포인트에 따라
         # 잔액 부족이 본문으로 오기 때문. 이 짐작이 틀려도 손해는 없다(예전 동작).
-        if code // 100 in FATAL_STATUS:
+        if code // 100 in _STATUS_NAME:
             raise fatal("DataForSEO", code // 100, str(msg))
         raise RuntimeError(f"dataforseo task error: {msg}")
     return task
@@ -272,7 +351,8 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
     login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
     loc, lang, _ = location(locale)
-    r = requests.post(
+    r = _dfs_call(
+        requests.post,
         "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
         auth=(login, pw), timeout=TIMEOUTS["dataforseo"],
         json=[{"keyword": keyword, "location_name": loc, "language_code": lang,
@@ -376,7 +456,8 @@ def fetch_labs_ranked_keywords(target: str, locale: str, limit: int = 100) -> tu
         "limit": limit,
         "load_rank_absolute": False,
     }]
-    r = requests.post(
+    r = _dfs_call(
+        requests.post,
         "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live",
         auth=(login, pw), timeout=TIMEOUTS["dataforseo"], json=body)
     raise_for(r, "DataForSEO")
@@ -421,7 +502,8 @@ def post_dataforseo(path: str, body: list, timeout: int | None = None) -> tuple[
     """
     if not has_dataforseo():
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
-    r = requests.post(
+    r = _dfs_call(
+        requests.post,
         f"https://api.dataforseo.com/v3{path}",
         auth=(os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]),
         timeout=timeout or TIMEOUTS["dataforseo"], json=body)
@@ -441,7 +523,8 @@ def dataforseo_balance() -> float:
     """
     if not has_dataforseo():
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
-    r = requests.get(
+    r = _dfs_call(
+        requests.get,
         "https://api.dataforseo.com/v3/appendix/user_data",
         auth=(os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]),
         timeout=TIMEOUTS["canary"])
@@ -543,6 +626,7 @@ def _selfcheck() -> None:
 
     real_post, real_env = requests.post, dict(os.environ)
     try:
+        os.environ["SEOMINER_DFS_RPM"] = "0"   # 검사에서 5초씩 쉬지 않는다
         os.environ["DATAFORSEO_LOGIN"] = "u"
         os.environ["DATAFORSEO_PASSWORD"] = "p"
         requests.post = fake_post
@@ -581,6 +665,63 @@ def _selfcheck() -> None:
         except collector.Fatal as e:
             assert "402" in str(e) and "잔액" in str(e) and "http" in str(e), e
         requests.post = fake_post
+
+        # 429(분당 12회 한도)는 먼저 기다렸다 다시 치고, 그래도 막히면 Fatal 이다.
+        # 여태는 FATAL_STATUS 에 없어서 each 가 "오류 한 건"으로 세고 0.5초 뒤
+        # 다음 키워드를 쳤다 — 한도는 계정 전체라 나머지도 전부 429 였다.
+        tries = []
+
+        def post_429(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return _FakeResp({}, status_code=429)
+
+        requests.post = post_429
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("429 를 Fatal 로 안 올렸다")
+        except collector.Fatal as e:
+            assert "429" in str(e) and "한도" in str(e), e
+            assert "잔액" not in str(e), f"한도를 잔액 문제로 말한다: {e}"
+        assert len(tries) == RATE_LIMIT_RETRIES + 1, f"429 를 안 기다렸다 다시 쳤다: {tries}"
+        requests.post = fake_post
+
+        # 429 를 FATAL_STATUS 에 넣으면 안 된다 — raise_for 는 제공자를 안 가리므로
+        # OpenRouter(collect_ai)까지 429 한 번에 통째로 멈춘다. 거긴 쉬면 낫는다.
+        try:
+            raise_for(_FakeResp({}, status_code=429), "OpenRouter")
+            raise AssertionError("429 를 아무 오류도 없이 지나쳤다")
+        except collector.Fatal as e:
+            raise AssertionError(f"OpenRouter 429 를 Fatal 로 올렸다: {e}") from None
+        except requests.HTTPError:
+            pass
+
+        # 한 번 429 뒤 성공하면 그대로 값을 돌려준다 — 한 건 실패로 세지 않는다
+        seq = [_FakeResp({}, status_code=429),
+               _FakeResp({"tasks": [{"status_code": 20000, "cost": 0.1, "result": [1]}]})]
+
+        def post_flaky(url, auth=None, timeout=None, json=None):
+            return seq.pop(0)
+
+        requests.post = post_flaky
+        assert post_dataforseo("/x/live", [{}]) == ([1], 0.1), "429 뒤 재시도가 값을 못 살렸다"
+        requests.post = fake_post
+
+        # 간격 계산 — 분당 12회면 5초. 0 이면 안 쉰다(검사·직접 조절).
+        os.environ.pop("SEOMINER_DFS_RPM")
+        assert pace_seconds() == 5.0, pace_seconds()
+        os.environ["SEOMINER_DFS_RPM"] = "0"
+        assert pace_seconds() == 0.0
+        _t0 = time.monotonic()
+        _pace(), _pace()
+        assert time.monotonic() - _t0 < 0.5, "간격을 껐는데도 쉬었다"
+        # 켜면 진짜로 쉰다 — 이 줄이 없으면 위의 "안 쉰다"만 보는 검사가 된다.
+        # (분당 600 = 0.1초. 12 로 재면 검사가 5초를 쉰다.)
+        os.environ["SEOMINER_DFS_RPM"] = "600"
+        _pace()
+        _t0 = time.monotonic()
+        _pace()
+        assert time.monotonic() - _t0 >= 0.09, "간격을 켰는데 안 쉬었다"
+        os.environ["SEOMINER_DFS_RPM"] = "0"
 
         # HTTP 200 인데 task status_code 가 결제 계열이어도 Fatal (40200 = 402.00)
         fake_post.reply = {"tasks": [{"status_code": 40200,

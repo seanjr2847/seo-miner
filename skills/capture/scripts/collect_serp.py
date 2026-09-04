@@ -119,7 +119,8 @@ def collect(project: str, *,
         est = serp_adapter.cost_per_query(provider) * len(kws)
         print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "
               f"depth={depth} device={device} "
-              f"est_cost≈${est:.2f} (~{len(kws) * (throttle + 2) / 60:.0f} min)")
+              f"est_cost≈${est:.2f} "
+              f"(~{len(kws) * (max(throttle, serp_adapter.pace_seconds()) + 2) / 60:.0f} min)")
         if locales:
             print("       locales: " + ", ".join(f"{loc}×{n}" for loc, n in locales.most_common()))
             for loc in locales:   # 매핑 없는 로케일 경고는 여기서 떠야 한다 — 돈을 쓰기 전에

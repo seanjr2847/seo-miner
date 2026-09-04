@@ -27,5 +27,9 @@ defaults:
 
 serp:
   provider: auto           # auto(키 감지) | dataforseo | serper
+  # DataForSEO 는 Live 엔드포인트가 **계정당 분당 12회**다. 이 리포가 부르는
+  # DataForSEO 경로는 SERP·Labs·볼륨·백링크까지 전부 /live 라 전부 여기 걸린다.
+  # 간격은 serp_adapter 가 자동으로 지킨다(호출당 5초) — defaults.throttle 로는
+  # 못 막는다. 계정 한도를 올렸으면 SEOMINER_DFS_RPM 로 알려 준다(0 = 간격 없음).
   # dataforseo live advanced ~$0.002-0.003/query (실청구액은 응답에서 기록됨)
   # serper: 크레딧 과금, AI오버뷰 데이터 없음(aio 필드 null)

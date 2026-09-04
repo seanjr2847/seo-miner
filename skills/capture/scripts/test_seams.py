@@ -575,6 +575,31 @@ def test_seam_14_locale_list_single_source():
         "sm-set.html 의 언어 칸이 저장소·GA4 칸보다 앞에 있다 — repoSave 가 이 select 를 읽는다"
 
 
+def test_seam_15_dataforseo_calls_go_through_pacer():
+    """15) DataForSEO 로 나가는 요청은 전부 `_dfs_call` 을 지나야 한다.
+
+    Live 엔드포인트는 계정당 분당 12회다. 간격을 지키는 자리는 `_dfs_call` 하나뿐이라,
+    새 축이 `requests.post` 를 직접 쓰면 그 경로만 조용히 10배로 던지고 429 를 맞는다
+    (그게 ADR 0002 의 `errors=100` 이었다). 자체점검 안의 문자열은 제외한다.
+    """
+    src = (SCRIPTS / "serp_adapter.py").read_text("utf-8")
+    body = src.split("def _selfcheck(")[0]      # 검사 코드의 URL 문자열은 호출이 아니다
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        if "https://api.dataforseo.com" not in line:
+            continue
+        near = "\n".join(lines[max(0, i - 3):i + 1])
+        assert "_dfs_call(" in near, \
+            f"serp_adapter.py:{i + 1} 의 DataForSEO 호출이 _dfs_call 을 안 지난다 — " \
+            f"이 경로만 분당 12회 한도를 안 지킨다:\n{near}"
+    # 다른 파일이 DataForSEO 를 직접 부르면 어댑터를 지나지 않은 것이다
+    for f in sorted(SCRIPTS.glob("*.py")) + sorted((ROOT / "server").glob("*.py")):
+        if f.name in ("serp_adapter.py",) or f.name.startswith("test_"):
+            continue
+        assert "api.dataforseo.com" not in f.read_text("utf-8"), \
+            f"{f.name} 이 DataForSEO 를 직접 부른다 — serp_adapter 를 지나야 간격이 지켜진다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

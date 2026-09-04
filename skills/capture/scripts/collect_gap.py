@@ -390,7 +390,8 @@ def collect(project: str, *,
         est_calls = len(domains) + (2 if n_auto else 0) + n_gap_hosts * 2
         est_cost = est_calls * serp_adapter.LABS_COST_PER_CALL
         print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
-              f"est_cost≈${est_cost:.3f} (~{est_calls * (throttle + 2) / 60:.1f} min)")
+              f"est_cost≈${est_cost:.3f} "
+              f"(~{est_calls * (max(throttle, serp_adapter.pace_seconds()) + 2) / 60:.1f} min)")
         serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
 
         if st.dry_run:
