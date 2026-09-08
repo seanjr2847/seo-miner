@@ -62,8 +62,9 @@ conn.close()
 run("done", "t", str(oid), "--path", "src/app/[locale]/page.tsx",
     "--branch", "capture/striking-ko-title", "--note", "메타 정렬")
 conn = createdb.connect()
+# done 은 기록만 남기고 상태는 진행 중이다 — 완료는 대시보드에서 관찰 뒤 사람이 누른다
 assert conn.execute("SELECT status FROM opportunities WHERE id=?",
-                    (oid,)).fetchone()[0] == "done", "루프가 안 닫혔다"
+                    (oid,)).fetchone()[0] == "acked", "기록 뒤 상태가 진행 중이 아니다"
 c = conn.execute("SELECT opportunity_id, file_path, branch, merged FROM creations"
                  ).fetchone()
 assert tuple(c) == (oid, "src/app/[locale]/page.tsx", "capture/striking-ko-title", 0), c
@@ -94,15 +95,15 @@ subprocess.run(
     check=True, capture_output=True)
 
 out = run("sync", "t", "--repo", str(repo_dir))
-assert "1건 닫음" in out, out
+assert "1건 기록" in out, out
 
 conn = createdb.connect()
 assert conn.execute("SELECT status FROM opportunities WHERE id=?",
-                    (oid2,)).fetchone()[0] == "done", "sync로 루프가 안 닫혔다"
+                    (oid2,)).fetchone()[0] == "acked", "sync 가 기회를 진행 중으로 안 옮겼다"
 c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_id=?",
                   (oid2,)).fetchone()
 assert c2 is not None and "손으로 이미 실행:" in (c2["note"] or ""), c2
 conn.close()
 
-print(f"ok — pick·claim·done·list·merged·sync 정상, 루프 닫힘 확인 ({HOME})")
+print(f"ok — pick·claim·done·list·merged·sync 정상, 기록 뒤 진행 중 확인 ({HOME})")
 

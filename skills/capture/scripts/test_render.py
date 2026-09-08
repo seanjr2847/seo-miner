@@ -128,6 +128,8 @@ MUSTS = [
      + r'(?:(?!</tr>).)*\(\+1\)',
      "심사 화면이 검색어를 한 줄로 묶어 안 그렸다(변형 +1)"),
     (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>1</b>', "심사 화면 상단 카운트가 안 나왔다"),
+    # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
+    (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -218,6 +220,10 @@ def _axes(conn, pid: int) -> None:
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,status) VALUES(?,?,?,?,'new')",
         [(pid, "striking_distance", TRIAGE_KW, 77), (pid, "aio_exposure", TRIAGE_KW.replace("Z", " Z"), 40)])
+    # 완료 후 관찰 — 두 수집일(05-01: 14위, 06-01: 9위) 사이에 완료한 기회. 그때 14위 → 지금 9위.
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,status,status_at)"
+                 " VALUES(?,?,?,?,'done','2026-05-15 00:00:00')",
+                 (pid, "rank_decay", f"{SITES[1]} 검색어", 33))
     conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
                  "referring_domains,broken_backlinks,dofollow,nofollow)"
                  " VALUES(?,?,412,?,1840,0,1512,328)", (pid, d, BL_TOTAL))   # 끊긴 링크 0 — 아래 목록(is_broken=0)과 같은 말

@@ -517,7 +517,9 @@ def _create_content(t: store.Tenant, uid: int, project: str, opp_id: int, row) -
     try:
         db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
                            kind=opp["kind"], branch=br, note=pr["url"])
-        db.set_opportunity_status(c, opp_id, "done")
+        # 완료가 아니라 진행 중이다 — 글 하나로 묶음 기회(pSEO·콘텐츠 갭)가 닫히면 안 되고,
+        # 완료는 관찰(순위·클릭이 달라졌나)까지 보고 사람이 누른다(spec keyword-triage §3).
+        db.set_opportunity_status(c, opp_id, "acked")
     finally:
         c.close()
     return {"pr": pr["url"], "path": doc["path"]}

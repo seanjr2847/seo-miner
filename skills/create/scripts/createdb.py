@@ -69,7 +69,9 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
     if opp_id:
         row = db.get_opportunity(conn, opp_id, project_id=pid)
         kind = row["kind"] if row else None
-        db.set_opportunity_status(conn, opp_id, "done", project_id=pid)
+        # 기록은 남기되 상태는 진행 중(acked)이다 — 글 하나로 묶음 기회가 닫히면 안 되고,
+        # 완료는 대시보드의 완료 후 관찰을 보고 사람이 누른다(호스팅 /api/create 와 같다).
+        db.set_opportunity_status(conn, opp_id, "acked", project_id=pid)
     db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
                        branch=branch, note=note)
 
@@ -116,7 +118,7 @@ def sync(project: str, repo: str) -> None:
                 untouched += 1
 
     conn.close()
-    print(f"sync 완료: {closed}건 닫음, {untouched}건 건드리지 않음")
+    print(f"sync 완료: {closed}건 기록(진행 중), {untouched}건 건드리지 않음")
 
 
 def list_creations(project: str) -> None:

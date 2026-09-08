@@ -634,6 +634,36 @@ def test_seam_16_brief_shapes_single_source():
     assert keys <= have, f"화면이 읽는 BRIEF 키가 페이로드에 없다: {keys - have}"
 
 
+def test_seam_17_verdict_and_status_single_source():
+    """17) 심사·상태 이음매.
+    - 판정 값은 db.VERDICTS 한 벌: 화면(triage.html)의 TR_VERDICT 키와 같다.
+    - 정규화는 서버의 scoring.norm 하나: 뷰·셸 JS 에 norm 사본(낱자 정규식)이 없고,
+      화면은 서버가 준 key 를 그대로 돌려보낸다.
+    - 상태 값은 db.OPP_STATUSES 한 벌: 셸의 OPP_LABEL·OPP_NEXT·OPP_SET·OPP_DONE 키가
+      양방향으로 같다. 값이 하나 늘면 네 표가 같이 늘어야 한다.
+    - 심사 대상 종류는 scoring.KEYWORD_KINDS ⊂ ALL_KINDS.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    shell, views = ctx["shell"], ctx["views"]
+    tr = (views / "triage.html").read_text("utf-8")
+    m = re.search(r"const TR_VERDICT = \{(.*?)\}", tr, re.S)
+    assert m, "triage.html 의 TR_VERDICT 를 못 찾았다"
+    assert set(re.findall(r"(\w+):", m.group(1))) == set(db.VERDICTS), \
+        "화면의 판정 값이 db.VERDICTS 와 다르다"
+    for src, who in ((tr, "triage.html"), (shell, "dashboard.html")):
+        assert "0-9a-z가-힣" not in src, f"{who} 에 norm 사본이 있다 — 정규화는 scoring.norm 하나다"
+    for name in ("OPP_LABEL", "OPP_NEXT", "OPP_SET", "OPP_DONE"):
+        mm = re.search(name + r" = \{(.*?)\};", shell, re.S)
+        assert mm, f"셸의 {name} 을 못 찾았다"
+        keys = set(re.findall(r"(\w+):", mm.group(1)))
+        assert keys == set(db.OPP_STATUSES), \
+            f"{name} 의 키가 db.OPP_STATUSES 와 어긋났다: {keys ^ set(db.OPP_STATUSES)}"
+    assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

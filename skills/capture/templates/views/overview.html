@@ -3,7 +3,7 @@
 <script type="application/json" class="view-def">
 {"id": "overview", "title": "개요",
  "sub": "지금 상태와 다음에 손댈 것을 한자리에서 봅니다.",
- "sections": ["docban", "band", "opps", "daily"], "stages": ["gsc", "gaps"]}
+ "sections": ["docban", "band", "opps", "watch", "daily"], "stages": ["gsc", "gaps"]}
 </script>
 
 <style>
@@ -52,6 +52,17 @@
     <div class="tools" id="opp-tools"></div>
   </div>
   <div id="opps"></div>
+</section>
+
+<!-- 완료 후 관찰 — 상태를 늘리지 않는다. 완료 시각(status_at) 전·후의 GSC 스냅샷을
+     나란히 놓는다(서버 db.watch_rows). 두 번 이상 쟀는데 안 올랐으면 [다시 열기]. -->
+<section id="watch-sec">
+  <div class="sh">
+    <p class="eyebrow">완료 후 관찰</p>
+    <h2>고친 뒤 달라졌나</h2>
+    <p class="sub">완료로 옮긴 검색어의 그때와 지금입니다. 두 번 재도 안 오르면 다시 엽니다.</p>
+  </div>
+  <div id="watch"></div>
 </section>
 
 <script>
@@ -194,8 +205,8 @@ let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = 8;
 // 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
 const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
   closed:["done", "dismissed"]};
-const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "새 기회"],
-  ["acked", "확인함"], ["closed", "완료·제외"]];
+const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
+  ["acked", "진행 중"], ["closed", "완료·뺀 것"]];
 
 // 상태로 먼저 가른다 — 칩 개수도 이 묶음을 세야 "CTR 미달 12" 를 눌렀는데 8건이
 // 나오는 일이 없다.
@@ -317,6 +328,22 @@ function OV_openTop() {
   card.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
+function OV_watch(d) {
+  const rows = d.watch || [];
+  if (!rows.length)
+    return $("watch").innerHTML = `<div class="empty"><b>완료한 검색어가 아직 없습니다</b>
+      <p>기회를 완료로 옮기면 여기서 그때와 지금을 나란히 봅니다.</p></div>`;
+  const cell = m => m ? `${m.position}위 · 클릭 ${num(m.clicks)}` : "—";
+  $("watch").innerHTML = table(
+    ["검색어", "완료일", "그때?완료 직전 수집분의 순위·클릭", "지금?최근 수집분의 순위·클릭",
+     ">그 뒤 측정?완료 뒤 수집한 횟수", ""],
+    rows.map(w => `<tr><td>${esc(w.target)}</td>
+      <td class="num">${esc((w.done_at || "").slice(0, 10))}</td><td>${cell(w.before)}</td><td>${cell(w.after)}</td>
+      <td class="num">${w.runs_since}회</td>
+      <td>${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
+        : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`) : ""}</td></tr>`), "");
+}
+
 function OV_next(d) {
   if (!window.nextStep) return;
   // 박제본이라고 여기서 띠를 지우지 않는다 — 문장은 종이에서도 읽을 값이 있고,
@@ -415,6 +442,7 @@ VIEW("overview", function (d) {
   if (OPP_ST === null) OPP_ST = READONLY ? "" : "open";
   // 검색어별 페이지 표·밴드·기회 색인은 셸의 render() 가 화면 전부를 위해 먼저 세운다.
   renderOpps(8);
+  OV_watch(d);
   OV_next(d);
 });
 </script>
