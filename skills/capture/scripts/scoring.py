@@ -130,8 +130,11 @@ KEYWORD_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay"
 
 
 def norm(s: str) -> str:
-    """비교용 정규화 — 소문자 + 영숫자/한글만. 'Future Tools' 와 'futuretools.io' 를 같게 본다."""
-    return re.sub(r"[^0-9a-z가-힣]+", "", (s or "").lower())
+    """비교용 정규화 — 소문자 + 글자·숫자만(공백·기호 제거). 'Future Tools' 와
+    'futuretools.io' 를 같게 본다. 한글·영문만 남기던 시절엔 중국어·일본어 검색어가
+    통째로 빈 키가 되어 심사(verdicts)에서 한 행으로 뭉치고 판정도 안 걸렸다 —
+    글자면 어느 문자든 남긴다(\w 에서 밑줄만 뺀다)."""
+    return re.sub(r"[\W_]+", "", (s or "").lower())
 
 
 def tokens(s: str) -> list[str]:
@@ -2293,6 +2296,8 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
 
 def _selfcheck() -> None:
     assert norm("Future Tools") == "futuretools"
+    assert norm("丘疹性瘢痕 鼻") == "丘疹性瘢痕鼻" and norm("韓国 ジュベルック") == "韓国ジュベルック", "중국어·일본어가 빈 키가 된다"
+    assert norm("디아 더 피부과, 가격!") == "디아더피부과가격" and norm("a_b c") == "abc"
     assert host_of("https://www.Ecrett.com/pricing?a=1") == "ecrett.com"
     assert owns("blog.example.com", "example.com")
     assert owns("example.com", "https://example.com/")
