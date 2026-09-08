@@ -117,7 +117,7 @@ def test_fix_page_carries_h2_list_and_advice():
     assert "## 진단 — 고쳐야 할 것" in t and "[title]" in t
     assert "구글 실적 2026-08-25, 최근 28일 평균: 평균 12.4위 · 노출 1,204 · 클릭 8 · 1페이지까지 2.4칸" in t
     assert "기간 평균 게재순위" in t
-    assert "## 바꾼 것" in t
+    assert "'바꾼 것' 표: 진단 항목 | 전 | 후" in t
     assert "title 30자 이내, meta description 80자 이내" in t
 
 
@@ -205,6 +205,40 @@ def test_locale_sets_language_and_length_limits():
         for v in (k.play.values() if "acts" not in k.play else [k.play]):
             for s in v.get("deliver", []):
                 assert "한글" not in s, f"{k.name} 의 처방이 로케일을 박아 뒀다: {s}"
+
+
+def test_tails_ask_for_a_self_contained_html_report():
+    """답의 형식은 **자립형 HTML 한 장**이다 — 어디에 쓰고 어떻게 열고 무엇을 알려
+    주는지가 꼴마다 다 있어야 한다. 한 자리라도 빠지면 AI 는 채팅 본문에 마크다운을
+    늘어놓고 끝낸다(그게 옛 꼬리가 시키던 것이다).
+
+    Mermaid 는 **그래프로 그릴 관계가 있는 꼴에만** 실린다. 한 벌로 실으면 목차도
+    리다이렉트 지도도 없는 꼴(고치기·연락)이 억지 다이어그램을 그리고, 쓰지도 않을
+    라이브러리를 CDN 에서 받는다.
+    """
+    t = brief.tails("ko-KR")
+    for name in brief.SHAPE_NAMES:
+        x = t[name]
+        assert "%TEMP%" in x and f"seo-{name}-" in x and ".html" in x,             f"{name}: 꼬리가 파일을 어디에 무슨 이름으로 쓰는지 안 말한다"
+        assert "절대경로" in x, f"{name}: 파일을 쓰고 경로를 안 알려 주면 사용자가 못 연다"
+        assert "cdn.tailwindcss.com" in x, f"{name}: Tailwind CDN 을 안 짚는다"
+        assert ("mermaid" in x.lower()) == bool(brief.SHAPES[name]["graph"]),             f"{name}: Mermaid 가 graph 유무와 어긋난다"
+    assert brief.SHAPES["consolidate"]["graph"] and brief.SHAPES["technical"]["graph"]
+    assert not brief.SHAPES["fix_page"]["graph"] and not brief.SHAPES["outreach"]["graph"]
+
+
+def test_form_holds_deliverables_not_markdown_shape():
+    """산출물 계약(무엇을 만드나)은 SHAPES[*]["form"], 그리는 법(어디에 쓰나·무엇으로
+    그리나)은 HTML_FORM 한 벌이다. form 에 마크다운 형식 문장이 남으면 "`## 소제목`을
+    답니다"와 "카드 하나로 그립니다"가 같은 요청문에 나란히 실려 두 벌이 된다.
+    """
+    for name, s in brief.SHAPES.items():
+        joined = " ".join(s["form"])
+        for stale in ("소제목", "코드 블록"):
+            assert stale not in joined, f"{name} 의 form 에 옛 마크다운 형식 문장이 남았다: {stale!r}"
+    # 그래도 산출물 계약 자체는 살아 있어야 한다 — 형식을 빼다 내용까지 비우면 안 된다
+    assert "글자 수" in " ".join(brief.SHAPES["fix_page"]["form"])
+    assert "301" in " ".join(brief.SHAPES["consolidate"]["form"])
 
 
 def test_payload_shapes_are_one_set():
