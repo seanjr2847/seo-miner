@@ -459,6 +459,54 @@ def test_triage_payload_groups_variants_and_counts():
     conn.close()
 
 
+# ── 온보딩 0단계 ──────────────────────────────────────────────────────────
+def test_setup_payload_carries_usage_choices():
+    """쓰는 방식·도구·터미널의 정본은 doctor 의 표 셋이고, 그 선택이 설정 화면
+    페이로드까지 그대로 온다 — 화면은 여기 실린 것만 그린다(사본을 두지 않는다)."""
+    import doctor
+    ids = [t[0] for t in doctor.TOOLS]
+    assert ids == ["claude", "codex", "opencode", "pi"]
+    assert [m[0] for m in doctor.MODES] == ["hosted", "local"]
+    assert [t[0] for t in doctor.TERMINALS] == ["orca", "system"]
+    assert doctor.tool_of("codex")[1] == "Codex" and doctor.tool_of("nope") is None
+    os.environ["SEOMINER_TOOL"] = "codex"; os.environ["SEOMINER_MODE"] = "local"
+    try:
+        p = dashboard.setup_state("")
+    finally:
+        os.environ.pop("SEOMINER_TOOL"); os.environ.pop("SEOMINER_MODE")
+    assert p["tool"] == "codex" and p["mode"] == "local" and p["terminal"] in ("orca", "system")
+    assert {t["id"] for t in p["tools"]} == set(ids) and all("installed" in t for t in p["tools"])
+    assert isinstance(p["orca_ok"], bool)
+
+
+def test_setup_dirs_and_remote_line():
+    """사이트별 로컬 폴더는 ~/.capture/dirs.json 한 자리에 살고, 호스팅 연결은
+    웹 [설정]이 내는 한 줄에서 url·token 두 토큰만 뽑아 remote.link 로 넘긴다."""
+    import paths
+    home = Path(os.environ["CAPTURE_HOME"])
+    assert paths.site_dirs() == {}
+    d = tempfile.mkdtemp(prefix="seo-miner-dir-")
+    assert paths.set_site_dir("mysite", d) == {"mysite": d}
+    assert (home / "dirs.json").exists()
+    assert paths.set_site_dir("mysite", None) == {}
+    r = dashboard.setup_dir({"project": "mysite", "path": str(home / "없는폴더")})
+    assert r["ok"] is False
+    r = dashboard.setup_dir({"project": "mysite", "path": d})
+    assert r["ok"] and r["dirs"] == {"mysite": d}
+    got = dashboard.setup_dirs()
+    assert got["dirs"] == {"mysite": d} and isinstance(got["worktrees"], list)
+    called = {}
+    import remote
+    orig = remote.link
+    remote.link = lambda url, token: called.update(url=url, token=token)
+    try:
+        r = dashboard.setup_remote({"line": 'python "C:/x/remote.py" connect https://h.example/ abc123'})
+        assert r["ok"] and called == {"url": "https://h.example/", "token": "abc123"}, (r, called)
+        assert dashboard.setup_remote({"line": "아무 말"})["ok"] is False
+    finally:
+        remote.link = orig
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
