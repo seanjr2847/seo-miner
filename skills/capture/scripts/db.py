@@ -274,7 +274,8 @@ CREATE TABLE IF NOT EXISTS opportunities (
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
-  status TEXT DEFAULT 'new',                  -- new|acked|done|dismissed
+  status TEXT DEFAULT 'new',                  -- new|acked|done|dismissed  (정본은 db.OPP_STATUSES)
+  status_at TEXT,                             -- 상태가 마지막으로 바뀐 시각 — 완료 후 관찰(watch_rows)의 기준
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS runs (
@@ -473,6 +474,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cols:
             conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
             conn.commit()
+    opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
+    if "status_at" not in opp_cols:      # 완료 후 관찰의 기준 시각 (spec keyword-triage §3)
+        conn.execute("ALTER TABLE opportunities ADD COLUMN status_at TEXT")
+        conn.commit()
+
     # verdicts 는 처음 며칠 id 없이 나갔다 — remote.merge 가 id 를 요구한다. 빈 표에 가깝지만
     # 판정을 버리지 않고 옮긴다.
     v_cols = {r["name"] for r in conn.execute("PRAGMA table_info(verdicts)")}
@@ -1028,11 +1034,11 @@ def set_opportunity_status(conn: sqlite3.Connection, opp_id: int, status: str,
         raise ValueError(f"status must be one of {OPP_STATUSES}, got {status!r}")
     if project_id is not None:
         cur = conn.execute(
-            "UPDATE opportunities SET status=? WHERE id=? AND project_id=?",
+            "UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=?",
             (status, int(opp_id), int(project_id)))
     else:
         cur = conn.execute(
-            "UPDATE opportunities SET status=? WHERE id=?",
+            "UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP WHERE id=?",
             (status, int(opp_id)))
     conn.commit()
     return cur.rowcount
@@ -1242,6 +1248,55 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
     q += f" {order_clause} LIMIT ?"
     args.append(int(limit))
     return conn.execute(q, args).fetchall()
+
+
+def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """완료된 검색어 기회의 전·후 — 상태를 늘리지 않고 조회로 관찰을 만든다.
+
+    before 는 status_at 이전 마지막 스냅샷, after 는 그 뒤 최신 스냅샷의 그 검색어
+    행(최신 스냅샷과 같은 period_days 만 — 기간이 다른 것을 빼면 Δ가 거짓이다).
+    runs_since 는 완료 뒤 서로 다른 수집일 수. 두 번 이상 쟀는데 순위가 안 올랐으면
+    stalled — 화면이 [다시 열기]를 낸다."""
+    import scoring
+    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+    opps = conn.execute(
+        f"""SELECT id, kind, target, status_at FROM opportunities
+             WHERE project_id=? AND status='done' AND status_at IS NOT NULL AND kind IN ({ph})
+             ORDER BY status_at DESC LIMIT 100""",
+        (int(project_id), *scoring.KEYWORD_KINDS)).fetchall()
+    if not opps:
+        return []
+    latest = conn.execute(
+        "SELECT snapshot_date, period_days FROM gsc_snapshots WHERE project_id=?"
+        " ORDER BY snapshot_date DESC LIMIT 1", (int(project_id),)).fetchone()
+    per = latest["period_days"] if latest else None
+
+    def at(op: str, day: str, target: str) -> dict | None:
+        if per is None:
+            return None
+        r = conn.execute(
+            f"""SELECT SUM(clicks) c, AVG(position) p FROM gsc_snapshots
+                 WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?
+                   AND snapshot_date=(SELECT MAX(snapshot_date) FROM gsc_snapshots
+                        WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?)""",
+            (int(project_id), per, target, day, int(project_id), per, target, day)).fetchone()
+        if not r or r["p"] is None:
+            return None
+        return {"clicks": int(r["c"] or 0), "position": round(float(r["p"]), 1)}
+
+    out = []
+    for o in opps:
+        day = o["status_at"][:10]
+        before, after = at("<=", day, o["target"]), at(">", day, o["target"])
+        runs = conn.execute(
+            "SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots WHERE project_id=?"
+            " AND period_days=? AND snapshot_date>?", (int(project_id), per, day)).fetchone()[0] if per else 0
+        stalled = runs >= 2 and (after is None or before is None
+                                 or after["position"] >= before["position"])
+        out.append({"id": o["id"], "kind": o["kind"], "target": o["target"],
+                    "done_at": o["status_at"], "before": before, "after": after,
+                    "runs_since": int(runs), "stalled": bool(stalled)})
+    return out
 
 
 def gate_sql(conn: sqlite3.Connection, table: str = "opportunities") -> str:

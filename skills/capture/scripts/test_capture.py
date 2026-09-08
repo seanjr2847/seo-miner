@@ -987,6 +987,29 @@ def test_verdict_gates_load_and_open_list():
     conn.close()
 
 
+def test_status_at_and_watch_rows():
+    """완료 후 관찰 — 상태를 늘리지 않고 status_at 과 스냅샷 전·후로 만든다."""
+    conn = db.connect()
+    pid = _project(conn, "wt")["id"]
+    db.upsert_opportunities(conn, pid, None, [{"kind": "striking_distance", "target": "q1", "score": 30}])
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (pid,)).fetchone()[0]
+    _snap(conn, pid, "2026-01-01", 28, "q1", 12.0, 3)
+    db.set_opportunity_status(conn, oid, "done")
+    assert conn.execute("SELECT status_at FROM opportunities WHERE id=?", (oid,)).fetchone()[0], "status_at 이 안 찍혔다"
+    conn.execute("UPDATE opportunities SET status_at='2026-01-02 00:00:00' WHERE id=?", (oid,))
+    _snap(conn, pid, "2026-01-10", 28, "q1", 12.0, 3)
+    _snap(conn, pid, "2026-01-20", 28, "q1", 13.0, 2)
+    conn.commit()
+    [w] = db.watch_rows(conn, pid)
+    assert w["id"] == oid and w["done_at"].startswith("2026-01-02")
+    assert w["before"]["position"] == 12.0 and w["after"]["position"] == 13.0, w
+    assert w["runs_since"] == 2 and w["stalled"] is True, w
+    conn.execute("UPDATE gsc_snapshots SET position=8.0 WHERE project_id=? AND snapshot_date='2026-01-20'", (pid,))
+    conn.commit()
+    assert db.watch_rows(conn, pid)[0]["stalled"] is False
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
