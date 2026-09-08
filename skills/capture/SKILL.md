@@ -287,7 +287,9 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 
 `scoring.py load` 가 적재하는 기회는 **기계 판정분 8종**이다 — striking_distance ·
 ctr_gap · cannibalization · rank_decay · pseo_pattern · device_gap · index_blocked ·
-coverage.
+coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 적재에서 빠지고, 열린 기회
+조회(`db.open_opportunities`)는 작업 판정을 통과한 것만 낸다 — "기회가 안 나온다"면
+먼저 `SELECT * FROM verdicts` 로 판정을 본다.
 
 **풀런이 대신 해 주지 않는 것 셋** (기대하고 기다리면 안 나온다):
 
@@ -371,7 +373,11 @@ ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt
 ### /capture dash {P} — 로컬 대시보드
 `python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다
 (포그라운드로 돌리면 세션이 막힌다). 127.0.0.1 전용 웹 UI로 Brain을 실시간
-조회하고, 기회 상태(확인/완료/기각)를 표에서 바로 갱신한다.
+조회한다. 첫 화면 **[심사]**에서 측정이 물어온 검색어를 무관·보류·작업으로 가리고
+(정본 `db.VERDICTS`, 심사 대상 종류는 `scoring.KEYWORD_KINDS`), 작업으로 보낸 검색어만
+[개요]의 기회가 된다. 기회는 할 일 → 작업 시작(진행 중) → 완료 표시로 옮기고, 완료
+뒤에는 "완료 후 관찰"이 그때·지금 순위를 나란히 놓는다. 사용자가 "이 검색어 왜
+안 보이냐"고 하면 먼저 심사에서 무관·보류로 가렸는지 본다.
 **dash와 report는 같은 화면이다.** dash는 서버가 Brain을 실시간으로 읽는 모드,
 report는 그 화면을 그날 데이터째 파일로 박제한 모드(`--export`). 지금 상태를 보고
 손댈 때는 dash, 남겨 두거나 남한테 보낼 때는 report.
