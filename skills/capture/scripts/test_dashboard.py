@@ -174,6 +174,9 @@ def test_gather_resolves_striking_band_and_content_gap_kind():
          (pid, "content_gap", "  없는글  ", 50, "r", "new", D),   # 앞뒤 공백 — 정규화 확인
          (pid, "rank_decay", "아무거나", 40, "r", "new", D)])
     conn.commit()
+    # 화면 목록은 심사(작업 판정)를 통과한 것만 낸다
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in
+                    ("1페이지상단권", "2페이지권", "안잡히는검색어", "약한글", "없는글", "아무거나")], "work")
     d = dashboard.gather(conn, db.get_project(conn, "lp"))
     by_target = {o["target"]: o for o in d["opps"]}
 
@@ -325,6 +328,7 @@ def test_axis_opps_resolves_band_and_gap_kind_standalone():
          (pid, "rank_decay", "아무거나", 40, "r", "new", D),
          (pid, "content_gap", "먹은기회", 10, "r", "acked", D)])
     conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in ("1페이지권", "새글", "아무거나", "먹은기회")], "work")
     striking = [{"query": "1페이지권", "band": "page1"}]
     kw_gap = [{"keyword": "새글", "kind": "missing"}]
 

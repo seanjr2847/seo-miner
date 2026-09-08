@@ -843,9 +843,11 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                 o["ga4_mult"] = m
                 o["ga4_pre_score"] = round(o["score"] / m, 1)
 
+    # 개수도 목록과 같은 문(심사 통과)을 센다 — 목록은 비었는데 "새 기회 546건"이라
+    # 말하면 안 된다.
     opps_total = conn.execute(
-        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new'",
-        (pid,)).fetchone()[0]
+        "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new' AND "
+        + db.gate_sql(conn), (pid, *scoring.KEYWORD_KINDS)).fetchone()[0]
 
     # 라벨·처방·방어여부는 여기서 한 번 풀어 opps 에 싣는다 — 화면은 그리기만 한다.
     # striking_distance·content_gap 은 밴드/갈래로 처방이 갈리는데, 그 판정은 이미

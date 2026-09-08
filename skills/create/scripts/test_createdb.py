@@ -39,6 +39,8 @@ conn.execute(
     (pid, "striking_distance", "ai 티어표", 84.0,
      "평균 5.7위·노출 42·클릭 0 — 제목 미정렬"))   # em dash: cp949에서 죽던 그 문자
 conn.commit()
+import scoring  # noqa: E402
+db.set_verdicts(conn, pid, [scoring.norm("ai 티어표")], "work")   # pick 은 심사를 통과한 것만 본다
 oid = conn.execute("SELECT id FROM opportunities").fetchone()[0]
 conn.close()
 

@@ -2225,6 +2225,16 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
     return p
 
 
+def gate_rows(conn: sqlite3.Connection, project_id: int, rows: list[dict]) -> list[dict]:
+    """심사에서 무관·보류로 판정된 검색어의 기회는 적재하지 않는다. 검색어가 아닌
+    종류(KEYWORD_KINDS 밖)는 그대로 통과한다. 미판정은 적재한다 — 심사 화면이
+    그 행을 보고 판정한다."""
+    import db
+    vm = db.verdict_map(conn, project_id)
+    return [r for r in rows if r["kind"] not in KEYWORD_KINDS
+            or vm.get(norm(str(r["target"]))) not in ("irrelevant", "hold")]
+
+
 def load(project: str) -> None:
     """서브커맨드 load — KINDS 명부를 순회해 opportunities 에 적재.
 
@@ -2261,6 +2271,7 @@ def load(project: str) -> None:
             rows.append({"kind": k.name, "target": k.target(r, ctx),
                          "score": score(k.name, k.metrics(r, ctx), ptype),
                          "reasoning": k.reasoning(r, ctx)})
+    rows = gate_rows(conn, pid, rows)       # 심사에서 뺀 검색어는 기회가 안 된다
     with db.run(conn, pid, "gaps") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
         r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
@@ -2276,7 +2287,7 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
     """
     import db
     return [dict(r) for r in db.list_opportunities(
-        conn, project_id, limit=limit, order="screen", with_id=with_id)]
+        conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
 
 
 
@@ -2388,6 +2399,9 @@ def _selfcheck() -> None:
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at) "
         "VALUES(1,'striking_distance',?,?,'r',?,'2026-08-01')",
         [("old-done", 99, "done"), ("new-low", 10, "new"), ("new-high", 50, "new")])
+    # 화면 목록은 심사(작업 판정)를 통과한 검색어만 낸다
+    conn.executemany("INSERT INTO verdicts(project_id,key,verdict) VALUES(1,?,'work')",
+                     [(norm(t),) for t in ("old-done", "new-low", "new-high")])
     got = [o["target"] for o in opportunities(conn, 1, limit=10)]
     assert got == ["new-high", "new-low", "old-done"], got
     assert "id" in opportunities(conn, 1, limit=1, with_id=True)[0]

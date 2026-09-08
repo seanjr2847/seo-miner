@@ -772,6 +772,9 @@ def test_list_opportunities_orders_are_distinct():
          (p["id"], "rank_decay", "opp_done_top", 95.0, "done"),
         ])
     conn.commit()
+    # 열린 기회·화면 목록은 심사를 통과한 것만 낸다 — 넷 다 작업으로 판정해 둔다
+    db.set_verdicts(conn, p["id"], [scoring.norm(t) for t in
+                    ("opp_new_high", "opp_acked_mid", "opp_new_low", "opp_done_top")], "work")
 
     # screen 정렬: (status='new') DESC, score DESC, id DESC
     screen_rows = db.list_opportunities(conn, p["id"], order="screen", limit=10)
@@ -958,6 +961,29 @@ def test_verdicts_write_read_and_irrelevant_deactivates_keyword():
     # SQL 안에서도 같은 정규화를 쓴다 — 조회가 JS/파이썬 사본 없이 조인한다
     assert conn.execute("SELECT norm('디아 더 피부과 가격')").fetchone()[0] == k
     assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
+    conn.close()
+
+
+def test_verdict_gates_load_and_open_list():
+    """무관·보류 판정은 적재에서 빠지고, 열린 기회 조회는 작업 판정만 낸다.
+    검색어가 아닌 종류(index_blocked 등)는 판정 없이 통과한다."""
+    conn = db.connect()
+    pid = _project(conn, "vg")["id"]
+    rows = [{"kind": "striking_distance", "target": "jenni ai 후기", "score": 30},
+            {"kind": "pseo_pattern", "target": "jenni  ai 후기", "score": 20},   # 변형
+            {"kind": "striking_distance", "target": "ecrett", "score": 25},
+            {"kind": "index_blocked", "target": "https://e.com/x", "score": 10}]  # 통과 종류
+    db.set_verdicts(conn, pid, [scoring.norm("jenni ai 후기")], "hold")
+    db.set_verdicts(conn, pid, [scoring.norm("ecrett")], "work")
+    kept = scoring.gate_rows(conn, pid, rows)
+    assert {r["target"] for r in kept} == {"ecrett", "https://e.com/x"}, kept
+    db.upsert_opportunities(conn, pid, None, rows)          # 직접 넣어도 조회가 거른다
+    got = {r["target"] for r in db.open_opportunities(conn, pid, limit=50)}
+    assert got == {"ecrett", "https://e.com/x"}, got
+    allrows = {r["target"] for r in db.list_opportunities(conn, pid, order="screen", limit=50)}
+    assert len(allrows) == 4, "gated=False 기본은 그대로 전부다"
+    db.set_verdicts(conn, pid, [scoring.norm("ecrett")], None)   # 미판정 = 안 보인다
+    assert "ecrett" not in {r["target"] for r in db.open_opportunities(conn, pid, limit=50)}
     conn.close()
 
 

@@ -431,6 +431,7 @@ CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 
   merged INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS verdicts (        -- 검색어 심사 (docs/superpowers/specs/2026-09-08-keyword-triage-design.md)
+  id INTEGER PRIMARY KEY,                     -- remote.merge 가 표마다 id 로 사이트 소속을 옮긴다 — 판정도 pull/push 를 탄다
   project_id INTEGER NOT NULL REFERENCES projects(id),
   key        TEXT NOT NULL,                   -- scoring.norm(대상). 띄어쓰기·대소문자 변형은 여기서 같은 값이 된다
   verdict    TEXT NOT NULL,                   -- irrelevant | hold | work  (정본은 db.VERDICTS)
@@ -472,6 +473,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cols:
             conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
             conn.commit()
+    # verdicts 는 처음 며칠 id 없이 나갔다 — remote.merge 가 id 를 요구한다. 빈 표에 가깝지만
+    # 판정을 버리지 않고 옮긴다.
+    v_cols = {r["name"] for r in conn.execute("PRAGMA table_info(verdicts)")}
+    if v_cols and "id" not in v_cols:
+        conn.executescript("""
+            ALTER TABLE verdicts RENAME TO _verdicts_old;
+            CREATE TABLE verdicts (id INTEGER PRIMARY KEY,
+              project_id INTEGER NOT NULL REFERENCES projects(id), key TEXT NOT NULL,
+              verdict TEXT NOT NULL, decided_at TEXT DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(project_id, key));
+            INSERT INTO verdicts(project_id,key,verdict,decided_at)
+              SELECT project_id,key,verdict,decided_at FROM _verdicts_old;
+            DROP TABLE _verdicts_old;""")
+        conn.commit()
+
     if "locale" not in cols:
         conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
         # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
@@ -1030,6 +1046,7 @@ def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
     측정을 계속한다. 갱신한 행 수를 돌려준다."""
     if verdict is not None and verdict not in VERDICTS:
         raise ValueError(f"verdict must be one of {VERDICTS} or None, got {verdict!r}")
+    _register_norm(conn)
     keys = [str(k) for k in keys if str(k)]
     n = 0
     for k in keys:
@@ -1178,8 +1195,14 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
                        statuses: list[str] | tuple[str, ...] | None = None,
                        order: str,
                        limit: int = 10,
-                       with_id: bool = True) -> list[sqlite3.Row]:
+                       with_id: bool = True,
+                       gated: bool = False) -> list[sqlite3.Row]:
     """기회 목록 조회.
+
+    gated=True 면 심사를 거친 것만 낸다: 검색어 종류(scoring.KEYWORD_KINDS)는
+    verdicts 에 '작업' 판정이 있어야 하고, 그 밖의 종류는 그대로 통과한다. 미판정은
+    안 보인다 — 심사 화면이 그 행을 본다. 열린 기회(open_opportunities)와 화면
+    (scoring.opportunities)이 이걸 켠다.
 
     order:
       'triage': 작업 중(acked) 우선, 점수 내림차순 (status='acked' DESC, score DESC)
@@ -1211,9 +1234,26 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
             q += f" AND kind IN ({','.join('?' * len(k_list))})"
             args += k_list
 
+    if gated:
+        q += " AND " + gate_sql(conn)
+        import scoring
+        args += list(scoring.KEYWORD_KINDS)
+
     q += f" {order_clause} LIMIT ?"
     args.append(int(limit))
     return conn.execute(q, args).fetchall()
+
+
+def gate_sql(conn: sqlite3.Connection, table: str = "opportunities") -> str:
+    """심사 통과 조건 한 벌 — 검색어 종류는 verdicts 에 '작업'이 있어야 하고 나머지는
+    통과. 자리표(?)는 scoring.KEYWORD_KINDS 순서로 채운다. norm() 을 쓰므로 검사가
+    만드는 맨 sqlite3 연결에도 함수를 다시 걸어 둔다(create_function 은 멱등)."""
+    import scoring
+    _register_norm(conn)
+    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+    return (f"({table}.kind NOT IN ({ph}) OR EXISTS (SELECT 1 FROM verdicts v"
+            f" WHERE v.project_id={table}.project_id AND v.key=norm({table}.target)"
+            " AND v.verdict='work'))")
 
 
 def open_opportunities(conn: sqlite3.Connection, project_id: int,
@@ -1225,7 +1265,7 @@ def open_opportunities(conn: sqlite3.Connection, project_id: int,
     """
     return list_opportunities(conn, project_id, kinds=kinds,
                               statuses=["new", "acked"], order="triage",
-                              limit=limit, with_id=True)
+                              limit=limit, with_id=True, gated=True)
 
 
 def get_opportunity(conn: sqlite3.Connection, opp_id: int,
