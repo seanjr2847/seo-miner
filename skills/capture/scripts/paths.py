@@ -20,6 +20,7 @@ SQLite·SCHEMA·_migrate 를 통째로 끌고 들어와야 했다. 그 seam 을 
 server/store.py 의 tenant() 가 CAPTURE_HOME·GSC_TOKEN_FILE 을 갈아끼우는
 멀티테넌시가 조용히 깨진다.
 """
+import json
 import os
 import re
 import sys
@@ -206,6 +207,46 @@ def downloads_dir() -> Path:
     return Path(os.environ.get("DOWNLOADS_DIR", Path.home() / "Downloads")).expanduser()
 
 
+def dirs_file() -> Path:
+    """사이트별 로컬 폴더 장부. env 를 매번 다시 읽는 home() 위에 선다."""
+    return home() / "dirs.json"
+
+
+def site_dirs() -> dict[str, str]:
+    """{"<사이트>": "<절대경로>"} — 없거나 깨졌으면 빈 dict.
+
+    "이 사이트를 **어디서 여느냐**"의 정본이다(설정 화면의 폴더 표가 여기 쓴다).
+    repo_project() 와 방향이 반대인 물음이다: 저쪽은 폴더에서 사이트를 찾고
+    (`projects/*.repo.yaml` 의 repo_path), 이쪽은 사이트에서 폴더를 찾는다.
+    """
+    try:
+        d = json.loads(dirs_file().read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    return {str(k): str(v) for k, v in d.items() if k and v}
+
+
+def set_site_dir(name: str, path: str | None) -> dict[str, str]:
+    """폴더를 적거나(path) 지운다(None·빈 문자열). 저장한 뒤 **전체**를 돌려준다.
+
+    임시 파일에 쓰고 replace 한다 — 반쯤 쓰인 JSON 이 남으면 다음 읽기가 통째로
+    빈손이 되어(위 except) 등록해 둔 폴더가 전부 사라진 것처럼 보인다.
+    """
+    dirs = site_dirs()
+    if path:
+        dirs[str(name)] = str(path)
+    else:
+        dirs.pop(str(name), None)
+    f = dirs_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(dirs, ensure_ascii=False, indent=2), "utf-8")
+    tmp.replace(f)
+    return dirs
+
+
 _REPO_PATH_RE = re.compile(r"^repo_path:[ 	]*(.+?)[ 	]*$", re.M)
 
 
@@ -316,6 +357,14 @@ def _selfcheck() -> None:
             f"repo_path: {repo}\n", "utf-8")
         assert repo_project(repo / "src") == "alpha", "하위 폴더에서도 붙어야 한다"
         assert repo_project(Path(d)) is None, "무관한 폴더는 매치가 없어야 한다"
+
+        # ── 사이트별 로컬 폴더: 적고·지우고, 깨진 파일은 빈손
+        assert site_dirs() == {}, "없는 장부는 빈 dict"
+        assert set_site_dir("alpha", str(repo)) == {"alpha": str(repo)}
+        assert site_dirs() == {"alpha": str(repo)}, "다시 읽으면 그대로여야 한다"
+        assert set_site_dir("alpha", None) == {}, "빈 경로는 지우기다"
+        dirs_file().write_text("{ 반쯤", "utf-8")
+        assert site_dirs() == {}, "깨진 장부는 빈손이어야 한다 (예외를 올리지 않는다)"
 
     for k, v in saved.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)

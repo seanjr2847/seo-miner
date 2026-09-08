@@ -2729,7 +2729,110 @@ function renderGsc(d) {
   if (st === "none") $("own-client").open = true;
 }
 
+/* ── 설정 0단계: 쓰는 방식 ────────────────────────────────
+   선택지도 라벨도 서버가 실어 보낸 표(d.modes/d.tools/d.terminals)로만 그린다 —
+   화면이 이름 사본을 가지면 doctor 의 표가 늘어난 날 여기만 낡는다.
+   저장은 고르는 즉시 한다: [저장] 버튼을 따로 두면 고르고 나간 사람이 안 고른
+   것이 된다(이 화면의 다른 칸들과 달리 되돌릴 것이 없는 한 글자짜리 값이다). */
+function usageOpts(box, group, list, cur, key) {
+  const el = $(box);
+  if (!el) return;
+  el.innerHTML = list.map(o =>
+    `<label class="opt"><input type="radio" name="${group}" value="${esc(o.id)}"` +
+    `${o.id === cur ? " checked" : ""}><span>${esc(o.label)}</span>` +
+    (o.installed === undefined ? "" :
+      `<span class="badge ${o.installed ? "ok" : "warn"}">` +
+      `${o.installed ? "설치됨" : "없음"}</span>`) + `</label>`).join("");
+  for (const r of el.querySelectorAll("input"))
+    r.addEventListener("change", async () => {
+      if (!key) return;
+      const [ok, res] = await post("/api/setup/keys", {[key]: r.value});
+      if (!ok) return say("m-usage", res.error, false);
+      $("m-usage").textContent = "";
+      toast("저장했습니다.", "ok");
+      loadDoctor();
+    });
+}
+
+function renderUsage(d) {
+  if (!$("u-mode")) return;              // 박제본에는 이 화면 자체가 없다
+  const k = d.usage_keys || {};
+  usageOpts("u-mode", "u-mode-r", d.modes || [], d.mode, k.mode);
+  usageOpts("u-tool", "u-tool-r", d.tools || [], d.tool, k.tool);
+  usageOpts("u-terminal", "u-terminal-r", d.terminals || [], d.terminal, k.terminal);
+  // 아직 안 고른 사람에게 "완료"라고 하지 않는다 — 셋이 다 서야 열기가 돈다.
+  const picked = [d.mode, d.tool].filter(Boolean).length;
+  $("s-usage").outerHTML = picked === 2
+    ? `<span id="s-usage" class="badge ok">완료</span>`
+    : `<span id="s-usage" class="badge warn">고르기 전</span>`;
+  // 고른 도구가 안 깔려 있으면 열기 버튼이 그때 가서 실패한다 — 여기서 말한다.
+  const t = (d.tools || []).find(x => x.id === d.tool);
+  if (t && !t.installed)
+    say("m-usage", `${t.label} 을(를) 못 찾았습니다. 설치하시거나 다른 도구를 ` +
+                   `고르시면 됩니다.`, false);
+  else
+    $("m-usage").textContent = "";
+  // 호스팅이면 등록·구글·키는 웹이 맡는다 — 할 수 없는 일을 할 일로 남기지 않는다.
+  // 아직 안 골랐으면 전부 보인다(고르기 전에 화면을 접으면 무엇이 있었는지 모른다).
+  const hosted = d.mode === "hosted";
+  for (const id of ["st-project", "st-gsc", "st-keys"])
+    if ($(id)) $(id).hidden = hosted;
+  $("u-remote").hidden = !hosted;
+  renderDirs();
+}
+
+/* 사이트별 로컬 폴더 표 — 사이트 목록의 정본은 레일의 고르개($("proj"))다(로컬 +
+   원격). 적을 때 손이 덜 가라고 Orca 가 아는 작업 폴더를 후보로 단다.
+   loadDoctor 는 자주 도는데 그때마다 표를 다시 그리면 적던 글자가 사라진다 —
+   사이트 목록이 그대로면 손대지 않는다. */
+let DIRS_AT = null;
+async function renderDirs(force) {
+  const box = $("dirs");
+  if (!box) return;
+  const names = [...($("proj") ? $("proj").options : [])].map(o => o.value);
+  const at = names.join(" ");
+  if (!force && at === DIRS_AT) return;
+  DIRS_AT = at;
+  if (!names.length) {
+    box.innerHTML = `<p class="lh">사이트를 등록하면 여기서 폴더를 정합니다.</p>`;
+    return;
+  }
+  let r;
+  try { r = await (await fetch("/api/setup/dirs")).json(); }
+  catch (e) { DIRS_AT = null; return; }   // 다음 렌더에서 다시 해 본다
+  const saved = r.dirs || {};
+  box.innerHTML =
+    `<datalist id="dir-cands">${(r.worktrees || []).map(w =>
+      `<option value="${esc(w)}">`).join("")}</datalist>` +
+    table(["사이트", "폴더?그 사이트의 코드가 있는 자리입니다. 비우고 저장하면 지워집니다.", ""],
+      names.map(n => `<tr><td>${esc(n)}</td>` +
+        `<td><input list="dir-cands" value="${esc(saved[n] || "")}"></td>` +
+        `<td><button class="go sec">저장</button></td></tr>`), "");
+  for (const tr of box.querySelectorAll("tbody tr"))
+    tr.querySelector("button").addEventListener("click", async () => {
+      const name = tr.cells[0].textContent, v = tr.querySelector("input").value;
+      const [ok, res] = await post("/api/setup/dir", {project: name, path: v});
+      if (!ok) return say("m-dirs", res.error, false);
+      say("m-dirs", v ? `${name} 폴더를 적어 두었습니다.` : `${name} 폴더를 지웠습니다.`, true);
+    });
+}
+
+// 웹에 연결 — 붙여 넣은 한 줄에서 주소와 토큰만 읽는다(서버가 뽑는다).
+$("btn-remote").addEventListener("click", async () => {
+  const line = $("u-line").value;
+  if (!line.trim()) return say("m-remote", "붙여 넣은 줄이 비어 있습니다.", false);
+  busy("btn-remote", "m-remote", true);
+  const [ok, r] = await post("/api/setup/remote", {line});
+  busy("btn-remote", "m-remote", false);
+  if (!ok) return say("m-remote", r.error, false);
+  $("u-line").value = "";
+  say("m-remote", `연결됐습니다: ${r.url} · 사이트 ${r.projects.length}개`, true);
+  loadDoctor();
+  loadProjects().then(n => { renderDirs(true); if (n) load(); });
+});
+
 function renderSetup(d) {
+  renderUsage(d);
   mark("s-deps", d.core_ok, "설치 필요");
   // 「완료」는 이 칸에서 뜻이 얕다 — 사이트는 하나 등록하고 끝나는 것이 아니라
   // 늘어나는 것이다. 몇 개인지가 그 자리에서 알고 싶은 값이다.
@@ -2959,8 +3062,13 @@ $("btn-proj").addEventListener("click", async () => {
   // busy() 가 써 둔 "실행 중입니다"는 손으로 지운다 — say() 를 안 부르면 안 지워진다.
   $("m-proj").textContent = "";
   toast(`${r.name} 사이트를 등록했습니다.`, "ok");
+  // 폴더 칸을 채웠으면 등록과 같은 손짓으로 저장한다 — 0단계 표로 다시 내려가서
+  // 같은 값을 한 번 더 적게 만들지 않는다. 실패해도 등록은 이미 끝났다.
+  if ($("p-dir") && $("p-dir").value.trim())
+    await post("/api/setup/dir", {project: r.name, path: $("p-dir").value.trim()});
+  $("p-dir").value = "";
   loadDoctor();
-  loadProjects().then(n => { if (n) load(); });
+  loadProjects().then(n => { renderDirs(true); if (n) load(); });
   // 등록이 끝나면 방금 만든 사이트의 개요로 간다.
   setTimeout(() => SM.show("overview"), 900);
 });

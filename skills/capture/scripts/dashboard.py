@@ -34,6 +34,7 @@ import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
@@ -173,8 +174,12 @@ ACTIONS = {
     # 동의는 화면(또는 채팅)이 미리 받고, 스크립트는 빈 입력을 명령줄에 섞지 않는다.
     "skills": [sys.executable, str(SETUP_SCRIPTS / "install_skills.py")],
 }
+# 값이 아무 문자열이 아니라 **표의 id** 여야 하는 키 — 설정 0단계의 라디오 셋.
+# 선택지 사본을 여기 만들지 않는다: 표는 doctor 가 갖고 화면도 그걸 그린다.
+CHOICE_FIELDS = {doctor.MODE_ENV: doctor.MODES, doctor.TOOL_ENV: doctor.TOOLS,
+                 doctor.TERMINAL_ENV: doctor.TERMINALS}
 KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
-              "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
+              "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD") + tuple(CHOICE_FIELDS)
 PROJECT_TYPES = ("game", "local_clinic", "saas", "directory")
 ENV_FILE = db.CAPTURE_HOME / "env"
 
@@ -218,6 +223,14 @@ def run_action(name: str) -> dict:
 def save_keys(values: dict) -> dict:
     """셸 rc 편집 대신 ~/.capture/env 에 모은다 (모든 스크립트가 db.load_env로 읽는다).
     빈 값으로 보내면 그 키를 지운다."""
+    # 고르는 값은 표에 있는 것만 받는다 — 화면이 보내는 것은 늘 표의 id 이므로
+    # 여기 걸리는 건 손으로 만든 요청뿐이다. 모르는 값을 env 에 적어 두면 그 뒤로
+    # 화면이 "아직 안 고름"으로 보이는데 파일에는 값이 있는 상태가 된다.
+    for k, table in CHOICE_FIELDS.items():
+        v = str(values.get(k, "")).strip()
+        if v and not any(v == row[0] for row in table):
+            return {"ok": False, "error": "화면에 없는 값이 왔습니다 — 새로 고침한 뒤 "
+                                          "다시 골라 주세요."}
     cur = {}
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text("utf-8").splitlines():
@@ -454,6 +467,67 @@ def setup_state(project: str = "") -> dict:
     project: 화면이 보고 있는 사이트 — 안내(guide)가 그 사이트를 따라가게 한다.
     """
     return stage.setup_payload(project=project)
+
+
+# ── 설정 0단계: 사이트별 로컬 폴더 · 호스팅 연결 ─────────────────────────────
+# 실행 버튼이 "어느 폴더에서 도구를 여느냐"를 여기서 정한다. 장부의 정본은
+# paths.site_dirs() 한 자리이고, 화면은 이 셋만 부른다.
+
+def orca_worktrees() -> list[str]:
+    """Orca 가 아는 작업 폴더 경로들 — 폴더 입력 칸의 후보 목록(datalist).
+
+    Orca 가 없으면 빈 목록이다. 후보가 없다고 폴더를 못 적는 것은 아니다 —
+    손으로 적는 길이 정본이고 이건 거들기만 한다.
+    """
+    d = doctor.orca_json("worktree", "ps") or {}
+    rows = (d.get("result") or {}).get("worktrees") or []
+    return [w["path"] for w in rows if isinstance(w, dict) and w.get("path")]
+
+
+def setup_dirs() -> dict:
+    """폴더 표의 재료 — 지금 저장된 것과 Orca 가 아는 후보들."""
+    return {"dirs": paths.site_dirs(), "worktrees": orca_worktrees()}
+
+
+def setup_dir(body: dict) -> dict:
+    """폴더 한 줄 저장. 빈 경로는 지우기다.
+
+    폴더가 아니면 안 받는다 — 없는 자리를 저장해 두면 나중에 실행 버튼이 그때 가서야
+    알 수 없는 이유로 실패한다. 막을 수 있는 자리에서 막는다.
+    """
+    name = str(body.get("project") or "").strip()
+    raw = str(body.get("path") or "").strip()
+    if not name:
+        return {"ok": False, "error": "어느 사이트의 폴더인지 골라 주세요."}
+    if not raw:
+        return {"ok": True, "dirs": paths.set_site_dir(name, None)}
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return {"ok": False, "error": f"그런 폴더가 없습니다: {raw}"}
+    return {"ok": True, "dirs": paths.set_site_dir(name, str(p))}
+
+
+# 웹 [설정]이 내는 "명령어로 연결하기" 한 줄에서 필요한 것은 주소와 그 다음 토큰뿐이다.
+_REMOTE_LINE = re.compile(r"(https?://\S+)\s+(\S+)")
+
+
+def setup_remote(body: dict) -> dict:
+    """붙여 넣은 한 줄로 호스팅에 붙는다.
+
+    **그 줄을 명령으로 돌리지 않는다** — 사용자가 어디선가 복사해 오는 문자열이라
+    그대로 실행하면 거기 섞인 것이 같이 돈다. 두 토큰만 뽑아 remote.link 로 넘긴다.
+    """
+    m = _REMOTE_LINE.search(str(body.get("line") or ""))
+    if not m:
+        return {"ok": False, "error": "주소와 토큰을 못 찾았습니다. 웹 [설정]의 "
+                                      "'명령어로 연결하기' 한 줄을 그대로 붙여 주세요."}
+    try:
+        remote.link(m.group(1), m.group(2))
+    except Exception as e:          # 주소가 틀렸거나·토큰이 죽었거나·네트워크가 없거나
+        return {"ok": False, "error": str(e)}
+    c = remote.config() or {}
+    return {"ok": True, "url": c.get("url") or m.group(1).rstrip("/"),
+            "projects": list(c.get("projects") or [])}
 
 
 def q(conn, sql, args=()):
@@ -1116,10 +1190,14 @@ ROUTES = {
         lambda project, query, body: set_verdict(body),
 }
 
-# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용 여섯). 호스팅엔
+# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용). 호스팅엔
 # /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — test_seams 가 그 차이를 안다.
-LOCAL_ONLY_PATHS = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/run",
-                    "/api/setup/keys", "/api/setup/project", "/api/setup/gsc-client"}
+# 메서드로 갈라 둔다: do_POST 의 "이건 setup 경로다" 판정이 이 집합을 그대로 쓴다
+# (예전엔 같은 목록이 거기 한 벌 더 있어서 새 경로를 한쪽에만 적으면 404 였다).
+LOCAL_ONLY_GET = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/dirs"}
+LOCAL_ONLY_POST = {"/api/setup/run", "/api/setup/keys", "/api/setup/project",
+                   "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote"}
+LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
 
 
@@ -1143,6 +1221,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(repo_prefill())
         if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
             return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
+        if u.path == "/api/setup/dirs":      # 읽기 전용 — 사이트별 로컬 폴더 + 후보
+            return self._json(setup_dirs())
         call = ROUTES.get(("GET", u.path))
         if not call:
             return self._send(404, b"not found", "text/plain")
@@ -1155,8 +1235,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         call = ROUTES.get(("POST", path))
-        if path not in ("/api/setup/run", "/api/setup/keys",
-                        "/api/setup/project", "/api/setup/gsc-client") and not call:
+        if path not in LOCAL_ONLY_POST and not call:
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -1172,12 +1251,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "unknown action"}, 400)
             return self._json(run_action(body["action"]))
         if path == "/api/setup/keys":
-            return self._json(save_keys(body))
+            r = save_keys(body)
+            return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/gsc-client":
             r = save_gsc_client(body)
             return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/project":
             r = create_project(body)
+            return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/dir":
+            r = setup_dir(body)
+            return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/remote":
+            r = setup_remote(body)
             return self._json(r, 200 if r["ok"] else 400)
 
         try:

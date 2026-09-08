@@ -19,7 +19,9 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,6 +83,80 @@ GSC_PIP = "pip install google-api-python-client google-auth-oauthlib"
 # import 를 못 하므로 이름만 여기 적는다. 서 있으면 호스팅(서버가 유료 키·설치를
 # 이미 끝냈다), 없으면 로컬(전부 사용자 몫).
 HOSTED_ENV = "SEOMINER_HOSTED"
+
+# ── 쓰는 방식 (설정 0단계) ───────────────────────────────────────────────────
+# "이 사람은 무엇으로 일하는가" 세 가지의 정본. 값은 ~/.capture/env 에 API 키와 같은
+# 방식으로 저장되고(dashboard.save_keys), 설정 화면·채팅(/setup)·이 CLI 가 전부 이
+# 표를 읽어 묻는다 — 선택지 사본을 화면이나 SKILL.md 에 두지 않는다.
+MODES = (("hosted", "호스팅 — 웹이 주기 측정과 키를 맡습니다"),
+         ("local",  "이 PC — 측정·보관함·키 전부 여기서"))
+# id, 라벨, 실행 파일, 첫 프롬프트를 넘기는 argv 꼴 ({prompt} 자리에 요청문이 들어간다)
+TOOLS = (
+    ("claude",   "Claude Code", "claude",   ["claude", "{prompt}"]),
+    ("codex",    "Codex",       "codex",    ["codex", "{prompt}"]),
+    ("opencode", "OpenCode",    "opencode", ["opencode", "--prompt", "{prompt}"]),
+    ("pi",       "pi",          "pi",       ["pi", "{prompt}"]),
+)
+TERMINALS = (("orca", "Orca"), ("system", "시스템 터미널"))
+# 저장 자리 — dashboard.KEY_FIELDS 가 이 셋을 그대로 받고 값은 위 표의 id 만 받는다.
+MODE_ENV, TOOL_ENV, TERMINAL_ENV = "SEOMINER_MODE", "SEOMINER_TOOL", "SEOMINER_TERMINAL"
+
+
+def tool_of(tool_id: str):
+    """도구 id → TOOLS 의 그 줄. 모르는 id 면 None — 저장·실행이 이걸로 검증한다."""
+    return next((t for t in TOOLS if t[0] == tool_id), None)
+
+
+def orca_json(*args: str, timeout: int = 5) -> dict | None:
+    """orca 하위 명령 하나를 JSON 으로 읽는다 — 없거나 실패하면 None.
+
+    Orca 를 안 쓰는 사람이 대부분이라 **여기서 나는 어떤 예외도 위로 올리지 않는다**:
+    올리면 Orca 가 없다는 이유로 진단이나 설정 화면이 통째로 죽는다. 부르는 자리가
+    둘이라(터미널 감지·작업 폴더 목록) 부르는 법은 여기 한 벌만 둔다.
+    """
+    if not shutil.which("orca"):
+        return None
+    try:
+        p = subprocess.run(["orca", *args, "--json"], capture_output=True,
+                           timeout=timeout, encoding="utf-8", errors="replace")
+        if p.returncode != 0:
+            return None
+        d = json.loads(p.stdout or "{}")
+    except Exception:       # 실행 실패·타임아웃·JSON 아님 — 전부 "못 쓴다"로 접는다
+        return None
+    return d if isinstance(d, dict) and d.get("ok") else None
+
+
+def orca_ok() -> bool:
+    """Orca 터미널을 실제로 쓸 수 있나 — `orca status --json` 이 ok 로 답하나."""
+    return orca_json("status") is not None
+
+
+def usage() -> dict:
+    """지금 고른 쓰는 방식 한 벌 — 화면(setup_payload)과 CLI 가 같은 것을 본다.
+
+    표에 없는 값이 env 에 들어 있으면 안 고른 것으로 본다(화면이 모르는 id 를 그리지
+    않는다). terminal 만 폴백이 있다: 비어 있으면 Orca 가 감지될 때 Orca, 아니면 시스템.
+    """
+    ok = orca_ok()
+    def pick(env, table):
+        v = (os.environ.get(env) or "").strip()
+        return v if any(v == row[0] for row in table) else None
+    return {
+        "mode": pick(MODE_ENV, MODES),
+        "tool": pick(TOOL_ENV, TOOLS),
+        "terminal": pick(TERMINAL_ENV, TERMINALS) or ("orca" if ok else "system"),
+        # 선택지도 같이 싣는다 — 화면이 라벨 사본을 갖지 않게 한다(표가 늘면 화면이
+        # 저절로 따라간다). installed 는 도구에만 있는 축이다.
+        "modes": [{"id": i, "label": label} for i, label in MODES],
+        "tools": [{"id": i, "label": label, "installed": bool(shutil.which(exe))}
+                  for i, label, exe, _argv in TOOLS],
+        "terminals": [{"id": i, "label": label} for i, label in TERMINALS],
+        # 고른 값을 어디에 저장하나 — 화면이 이 이름으로 /api/setup/keys 를 부른다.
+        "usage_keys": {"mode": MODE_ENV, "tool": TOOL_ENV, "terminal": TERMINAL_ENV},
+        "orca_ok": ok,
+    }
+
 
 # ── 준비 상태 명부 ───────────────────────────────────────────────────────────
 # "무엇이 무엇을 여는가"의 정본. 항목마다:
@@ -617,6 +693,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
             "marketing_skills_msg": marketing_skills_msg,   # 결론으로 만든 메시지(없으면 None)
             "marketing_skills": marketing_skills,
             "marketing_optional": marketing_optional,
+            # 쓰는 방식(설정 0단계) — mode/tool/terminal/tools/orca_ok. 정본은 위 표 셋이다.
+            **usage(),
             "core_ok": core_ok, "brain_ok": brain_ok}
 
 
@@ -715,6 +793,13 @@ def render(d: dict) -> None:
         print(f"호스팅 연결: {r['url']} (웹에 등록된 사이트 {len(r['projects'])}개)")
     else:
         print("호스팅 연결: 없음 — 이 컴퓨터의 보관함만 씁니다")
+    # 쓰는 방식 — 화면 0단계와 같은 값을 터미널에서도 한 줄로 읽는다.
+    lab = lambda table, v: next((t[1] for t in table if t[0] == v), "아직 안 고름")
+    t = next((t for t in d.get("tools", []) if t["id"] == d.get("tool")), None)
+    print(f"쓰는 방식: {lab(MODES, d.get('mode'))}"
+          f" · 도구: {lab(TOOLS, d.get('tool'))}"
+          f"{'' if t is None else ('(설치됨)' if t['installed'] else '(없음)')}"
+          f" · 터미널: {lab(TERMINALS, d.get('terminal'))}")
 
 
 def _must_prose() -> list[str]:

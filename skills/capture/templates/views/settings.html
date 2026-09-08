@@ -1,6 +1,6 @@
 <script type="application/json" class="view-def">
 {"id": "settings", "title": "설정",
- "render": "shell", "sections": ["setup"], "stages": []}
+ "render": "shell", "sections": ["usage", "setup"], "stages": []}
 </script>
 <!-- 설정은 데이터보다 먼저 오지 않는다. 여태는 본문 맨 위에 얹혀서, 이미 다
      끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 호스팅은 이 화면을 통째로
@@ -38,9 +38,63 @@
 #setup .lh { display:block; font:var(--micro); color:var(--slate);
   margin:0 0 5px; max-width:52ch; }
 #setup .lh a { color:var(--patina); text-decoration:underline; text-underline-offset:2px; }
+
+/* 0단계의 고르개 — 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다).
+   선택지 이름은 서버가 실어 보낸 표에서 오므로 여기엔 모양만 있다. */
+#usage .opts { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin:0 0 var(--sp-4); }
+#usage .opt { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+  padding:6px var(--sp-3); border:1px solid var(--rule); border-radius:var(--r-sm);
+  color:var(--ink); margin:0; }
+#usage .opt:hover { border-color:var(--patina); }
+#usage .opt:has(input:checked) { border-color:var(--patina); background:var(--wash); }
+#usage .opt input { width:auto; margin:0; }
+/* 표 안의 폴더 칸은 한 줄짜리 경로다 — 등폭은 경로에만 걸고 사이트 이름엔 안 건다. */
+#dirs input { font-family:var(--mono); font-size:12px; }
+#dirs td { vertical-align:middle; }
 </style>
 
 <section id="setup">
+  <!-- 0단계는 "이 사람이 무엇으로 일하는가"다. 선택지(쓰는 방식·도구·터미널)와 그
+       라벨은 전부 서버 payload 에서 온다 — doctor 의 표가 정본이라 여기 이름을
+       박으면 표가 늘어난 날 화면만 낡는다. 그리는 것은 셸의 renderUsage 다. -->
+  <div class="step" id="usage">
+    <div class="sh">
+      <p class="eyebrow">0단계</p><h2>쓰는 방식</h2>
+      <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다.</p>
+      <div class="tools"><span class="stat" id="s-usage"></span></div>
+    </div>
+    <div class="card">
+      <label>측정을 맡는 곳</label>
+      <span class="lh">호스팅을 고르면 아래 2·3·4단계는 웹이 대신합니다.</span>
+      <div class="opts" id="u-mode"></div>
+
+      <label>기회를 열 도구</label>
+      <span class="lh">기회 카드의 열기 버튼이 이 도구를 그 사이트 폴더에서 띄웁니다.</span>
+      <div class="opts" id="u-tool"></div>
+
+      <label>터미널</label>
+      <span class="lh">고르지 않으면 Orca 가 있을 때 Orca, 없으면 시스템 터미널입니다.</span>
+      <div class="opts" id="u-terminal"></div>
+      <span class="msg" id="m-usage"></span>
+
+      <!-- 호스팅을 고른 사람에게만 선다 — 로컬에는 붙을 곳이 없다. -->
+      <div id="u-remote" hidden>
+        <label>웹에 연결</label>
+        <span class="lh">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 그대로 붙여
+          넣으시면 됩니다. 그 줄에서 주소와 토큰만 읽습니다.</span>
+        <div class="row"><input id="u-line" placeholder="붙여 넣기">
+          <button class="go" id="btn-remote">연결</button>
+          <span class="msg" id="m-remote"></span></div>
+      </div>
+
+      <label>사이트별 로컬 폴더</label>
+      <span class="lh">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
+        도구를 띄웁니다. 비운 채 저장하면 지워집니다.</span>
+      <div id="dirs"></div>
+      <span class="msg" id="m-dirs"></span>
+    </div>
+  </div>
+
   <div class="step">
     <div class="sh">
       <p class="eyebrow">1단계</p><h2>기본 부품</h2>
@@ -55,7 +109,7 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" id="st-project">
     <div class="sh">
       <p class="eyebrow">2단계</p><h2>사이트 등록</h2>
       <!-- 오른쪽 배지(완료/아직 없음)는 **등록된 사이트가 하나라도 있나**를 말하고,
@@ -101,6 +155,9 @@
         <div><label>브랜드 표기</label>
           <span class="lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
           <input id="p-alias" placeholder="마이사이트, MySite"></div>
+        <div><label>로컬 폴더</label>
+          <span class="lh">선택입니다. 적어 두면 위 0단계의 표에 그대로 실립니다.</span>
+          <input id="p-dir" list="dir-cands" placeholder="C:/code/mysite"></div>
       </div>
       <label>씨앗 키워드</label>
       <span class="lh">여기서 자동완성으로 후보를 넓힙니다. 3~10개, 쉼표나 줄바꿈으로.</span>
@@ -116,7 +173,7 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" id="st-gsc">
     <div class="sh">
       <p class="eyebrow">3단계</p><h2>서치콘솔 연결</h2>
       <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
@@ -150,7 +207,7 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step" id="st-keys">
     <div class="sh">
       <p class="eyebrow">4단계</p><h2>API 키</h2>
       <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>

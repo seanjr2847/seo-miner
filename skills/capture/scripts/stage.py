@@ -352,6 +352,15 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
         "show_skills_btn": show_skills_btn,         # 빠진 마케팅 스킬이 있을 때만 True
         "show_setup": show_setup,
         "guide": guide,
+        # 쓰는 방식(설정 0단계) — 정본은 doctor 의 MODES/TOOLS/TERMINALS 다.
+        # 화면은 여기 실린 것만 그린다: 도구 이름·설치 여부의 사본을 HTML 에 두지 않는다.
+        "mode": d.get("mode"), "tool": d.get("tool"),
+        "terminal": d.get("terminal") or "system",
+        "modes": d.get("modes") or [],
+        "tools": d.get("tools") or [],
+        "terminals": d.get("terminals") or [],
+        "usage_keys": d.get("usage_keys") or {},
+        "orca_ok": bool(d.get("orca_ok")),
     }
 
 
