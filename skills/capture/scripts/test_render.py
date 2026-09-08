@@ -164,6 +164,14 @@ REPORT_MUSTS = [
     (re.escape(CRAWL_NEW), "박제본이 크롤 이슈를 안 그렸다"),
 ]
 
+# 로컬에만 있는 것 — 기회 카드의 실행 자리(SM.host.oppBtn). 이 픽스처는 도구를 안
+# 고른 상태(SEOMINER_TOOL 미설정)라 버튼 대신 "도구 없음" 배지가 서야 한다.
+# 호스팅은 같은 자리에 다른 것(아래 HOSTED_MUSTS)이 서므로 MUSTS 에 넣지 않는다.
+LOCAL_MUSTS = [
+    (r'<span class="badge warn">도구 없음</span>',
+     "도구를 안 고른 상태의 기회 카드에 '도구 없음' 배지가 없다 — 실행 자리가 비었다"),
+]
+
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
 HOSTED_MUSTS = MUSTS + [
@@ -190,6 +198,9 @@ HOSTED_MUSTS = MUSTS + [
     # 남아 있으면(=SM.host 가 늦게 섰거나 안 갈렸으면) 이 패턴이 없다.
     (r'class="cmd[^"]*" data-stage="[^"]+" onclick="SM\.host\.run\(',
      "안내의 실행 칩이 host.run 을 안 부른다 — 복사 칩인 채로 남았다"),
+    # 기회 카드의 실행 자리 — 브라우저는 이 PC 의 프로세스를 못 띄우므로, 여기 설
+    # 것은 버튼이 아니라 "어디서 누르면 되는지"다(dash.html 의 SM.host.oppBtn).
+    (r"이 PC 에서 열기", "호스팅 기회 카드에 로컬 실행 안내가 없다"),
 ]
 
 
@@ -386,7 +397,7 @@ def run() -> None:
         shell = dashboard.HTML.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
         assert b"__probe__" in shell, "오류 수집기를 끼울 </head> 를 못 찾았다"
 
-        targets = [("로컬 대시보드", shell, MUSTS)]
+        targets = [("로컬 대시보드", shell, MUSTS + LOCAL_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다)
         if (ROOT / "server" / "assets" / "dash.html").exists():
             sys.path.insert(0, str(ROOT))
