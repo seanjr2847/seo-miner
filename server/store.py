@@ -39,12 +39,6 @@ CREATE TABLE IF NOT EXISTS google_tokens (
   token_enc BLOB NOT NULL,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS github_tokens (
-  user_id INTEGER PRIMARY KEY REFERENCES users(id),
-  token_enc BLOB NOT NULL,
-  login TEXT,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
 CREATE TABLE IF NOT EXISTS cli_tokens (
   user_id INTEGER PRIMARY KEY REFERENCES users(id),
   token_hash TEXT NOT NULL,         -- sha256 hex. 위 token_enc 들과 달리 복호화가 없다
@@ -60,9 +54,12 @@ CREATE TABLE IF NOT EXISTS sites (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   last_run_at TEXT,                   -- NULL = 아직 한 번도 안 잼 (등록 직후)
   running_since TEXT,                 -- NULL 이 아니면 지금 수집 중
-  repo TEXT,                          -- owner/name — /create 가 PR 을 낼 곳
-  repo_branch TEXT,                   -- 기본 브랜치
-  repo_profile TEXT,                  -- 리포 관례(JSON) — 발견 결과 캐시
+  -- repo* 셋은 떼어 낸 GitHub 연동의 잔재다. 아무도 읽고 쓰지 않지만 열은 남긴다 —
+  -- 지우려면 SQLite 에서 표를 새로 만들어 옮겨야 하고, 그 마이그레이션이 이득보다
+  -- 위험하다(spec 2026-09-08-run-tool-from-dashboard §4). 되살리지 마라.
+  repo TEXT,
+  repo_branch TEXT,
+  repo_profile TEXT,
   run_every_hours REAL,               -- 이 사이트의 재측정 주기(시간). NULL = 전역 기본값, 0 = 자동 끔
   stage TEXT,                         -- 지금 도는 단계 id (run_all.STAGES 의 이름)
   stage_pct INTEGER,                  -- 그 시점의 진행률 0~100 (끝난 단계 / 전체 단계)
@@ -140,7 +137,7 @@ def load_token(conn: sqlite3.Connection, user_id: int) -> str | None:
 
 # --- CLI 토큰 ---------------------------------------------------------------
 #
-# 위의 google_tokens / github_tokens 는 **암호화**다. 남의 API 를 다시 부르려면 원문이
+# 위의 google_tokens 는 **암호화**다. 남의 API 를 다시 부르려면 원문이
 # 필요하기 때문이다. 이건 성격이 다르다 — 서버가 스스로 발급한 값이라 원문을 되찾을
 # 일이 영영 없고 대조만 하면 된다. 그래서 sha256 해시로 둔다(복호화할 수 없는 쪽이
 # 더 안전하다). Fernet 을 여기 끌어오지 마라.
@@ -290,35 +287,6 @@ def load_run_log(conn: sqlite3.Connection, user_id: int, project: str) -> str:
     """user_id 로 범위를 좁혀 읽는다 — project 이름만으로 남의 런 로그가 열리면 안 된다."""
     row = site(conn, user_id, project)
     return (row["run_log"] or "") if row else ""
-
-
-def save_github(conn: sqlite3.Connection, user_id: int, token: str, login: str) -> None:
-    conn.execute(
-        "INSERT INTO github_tokens(user_id, token_enc, login) VALUES (?,?,?) "
-        "ON CONFLICT(user_id) DO UPDATE SET token_enc=excluded.token_enc, "
-        "login=excluded.login, updated_at=CURRENT_TIMESTAMP",
-        (user_id, _fernet().encrypt(token.encode("utf-8")), login))
-    conn.commit()
-
-
-def github(conn: sqlite3.Connection, user_id: int) -> tuple[str, str] | None:
-    """(token, login) 또는 None."""
-    row = conn.execute("SELECT token_enc, login FROM github_tokens WHERE user_id=?",
-                       (user_id,)).fetchone()
-    return (_fernet().decrypt(row["token_enc"]).decode("utf-8"), row["login"]) if row else None
-
-
-def set_repo(conn: sqlite3.Connection, user_id: int, project: str,
-             repo: str, branch: str) -> None:
-    conn.execute("UPDATE sites SET repo=?, repo_branch=?, repo_profile=NULL "
-                 "WHERE user_id=? AND project=?", (repo, branch, user_id, project))
-    conn.commit()
-
-
-def set_profile(conn: sqlite3.Connection, user_id: int, project: str, profile: str) -> None:
-    conn.execute("UPDATE sites SET repo_profile=? WHERE user_id=? AND project=?",
-                 (profile, user_id, project))
-    conn.commit()
 
 
 def site(conn: sqlite3.Connection, user_id: int, project: str) -> sqlite3.Row | None:
@@ -605,12 +573,6 @@ def demo() -> None:
 
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         assert due_sites(conn) == [], "휴면 계정이 스케줄에서 안 빠졌다"
-        save_github(conn, uid, "ghp_secret", "octocat")
-        assert github(conn, uid) == ("ghp_secret", "octocat")
-        raw = conn.execute("SELECT token_enc FROM github_tokens").fetchone()["token_enc"]
-        assert b"ghp_secret" not in raw, "GitHub 토큰이 평문으로 저장됐다"
-        set_repo(conn, uid, "myproj", "octocat/site", "main")
-        assert site(conn, uid, "myproj")["repo"] == "octocat/site"
 
         # CLI 토큰 — 해시만 남고, 재발급하면 앞 토큰이 그 자리에서 죽는다.
         t1 = issue_cli_token(conn, uid)
