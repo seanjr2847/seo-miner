@@ -669,12 +669,24 @@ def test_seam_17_verdict_and_status_single_source():
 
 
 def test_seam_18_run_tool_and_creation_single_source():
-    """18) 개발 도구 실행과 작업 기록은 양쪽 끝이 있다 — 한 벌인지 여기서 못 박는다.
+    """18) 실행·기록 이음매 — 개발 도구 실행과 작업 기록은 양쪽 끝이 있다.
 
+    [기록 창구]
     기록 창구(`/api/creation`)는 로컬 `dashboard.ROUTES` 와 호스팅 `app.py` 둘 다에
     있어야 한다. 요청문 꼬리의 기록 명령은 로컬·호스팅 구분 없이 같은 한 줄이라,
     `createdb.py` 가 `remote.owns` 로 갈라 그 창구를 부르지 않으면 호스팅 사이트의
     기록이 이 PC 의 빈 Brain 으로 떨어진다(아무 오류 없이).
+
+    [도구 실행]
+    - 도구 목록의 정본은 doctor.TOOLS 한 벌이다: 실행하는 쪽(dashboard.py)도 고르는
+      쪽(settings.html)도 말하는 쪽(dashboard.html)도 id·라벨을 직접 적지 않는다.
+      적는 순간 표가 두 벌이 되고, 도구가 하나 늘 때 한쪽만 늘어 "고를 수는 있는데
+      눌러도 안 열리는" 도구가 생긴다.
+    - 화면이 부르는 /api/setup/run-tool 이 로컬 서버에 실제로 있다(LOCAL_PATHS).
+      이 경로는 로컬 전용이다 — 호스팅에 두면 서버가 사용자 PC 에서 도구를 띄우는
+      척하게 된다.
+    - 호스팅 기회 카드는 그래서 안내다: "이 PC 에서 열기" 가 거기 있어야 하고,
+      떼어 낸 GitHub 글쓰기(SM.host.write)를 다시 부르지 않는다.
     """
     import dashboard
     ctx = _load()
@@ -692,6 +704,47 @@ def test_seam_18_run_tool_and_creation_single_source():
             "createdb.py 가 원격 판정을 안 한다 — 호스팅 사이트도 로컬 Brain 을 쓴다"
         assert '"/api/creation"' in src, \
             "createdb.py 가 기록 창구를 안 부른다 — done 이 서버에 안 남는다"
+
+    ctx = _load()
+    if ctx is None:
+        return
+    import dashboard
+    sys.path.insert(0, str(SETUP_SCRIPTS))
+    import doctor
+    shell, dash, local_f = ctx["shell"], ctx["dash"], ctx["local_f"]
+    local_src = local_f.read_text("utf-8")
+    settings = (ctx["views"] / "settings.html").read_text("utf-8")
+
+    # ── 도구 표는 한 벌 ──
+    assert "doctor.tool_of" in local_src or "doctor.TOOLS" in local_src, \
+        "dashboard.py 가 도구 표를 doctor 에서 안 읽는다 — 사본을 만들었을 것이다"
+    ids = "|".join(re.escape(t[0]) for t in doctor.TOOLS)
+    lit = re.compile(r"""["'](?:""" + ids + r""")["']""")
+    for who, src in (("dashboard.py", local_src), ("settings.html", settings),
+                     ("dashboard.html", shell)):
+        hit = lit.search(src)
+        assert not hit, \
+            f"{who} 에 도구 id 가 직접 적혀 있다({hit.group(0)}) — 정본은 doctor.TOOLS 다"
+    # 라벨도 마찬가지다: 고르는 칸은 빈 자리로 서고 payload(tools[].label)가 채운다.
+    # 여기 <label>·<option> 을 손으로 적어 두면 그게 두 번째 표가 된다.
+    for box in ("u-mode", "u-tool", "u-terminal"):
+        m = re.search(r'id="' + box + r'"[^>]*>(.*?)</div>', settings, re.S)
+        assert m and not m.group(1).strip(), \
+            f"settings.html 의 {box} 가 선택지를 직접 적고 있다 — 정본은 doctor 의 표다"
+
+    # ── 실행 경로는 로컬 전용이고 화면이 그걸 부른다 ──
+    assert "/api/setup/run-tool" in dashboard.LOCAL_PATHS, \
+        "실행 경로가 로컬 서버에 없다 — 화면 버튼이 404 로 죽는다"
+    assert "/api/setup/run-tool" in shell, "셸이 실행 경로를 안 부른다"
+    assert "/api/setup/run-tool" not in dash, \
+        "호스팅 화면이 실행 경로를 부른다 — 브라우저는 이 PC 의 프로세스를 못 띄운다"
+
+    # ── 호스팅 기회 카드는 안내다 ──
+    m = re.search(r"oppBtn\(id\) \{(.*?)\n    \},", dash, re.S)
+    assert m, "dash.html 의 SM.host.oppBtn 을 못 찾았다"
+    assert "이 PC 에서 열기" in m.group(1), "호스팅 기회 카드에 로컬 실행 안내가 없다"
+    assert "SM.host.write" not in m.group(1) and "/api/create" not in m.group(1), \
+        "호스팅 기회 카드가 떼어 낸 글쓰기 경로를 아직 부른다"
     # --- 도구 절반은 Task C 가 이어 쓴다 ---
 
 

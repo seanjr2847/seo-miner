@@ -1244,7 +1244,10 @@ ROUTES = {
 # (예전엔 같은 목록이 거기 한 벌 더 있어서 새 경로를 한쪽에만 적으면 404 였다).
 LOCAL_ONLY_GET = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/dirs"}
 LOCAL_ONLY_POST = {"/api/setup/run", "/api/setup/keys", "/api/setup/project",
-                   "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote"}
+                   "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote",
+                   # 기회를 개발 도구로 연다 — 브라우저는 이 PC 의 프로세스를 못
+                   # 띄우므로 호스팅에는 이 경로가 없다(그 화면은 안내만 그린다).
+                   "/api/setup/run-tool"}
 LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
 
@@ -1333,6 +1336,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/setup/remote":
             r = setup_remote(body)
             return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/run-tool":
+            r = run_tool(body)
+            return self._json(r, 200 if r["ok"] else 400)
 
         if path not in NEVER_PROXY and remote_project(str(body.get("project") or "")):
             return self._proxy("POST", path, json=body)
@@ -1415,6 +1421,159 @@ def _selfcheck() -> None:
     assert "String(c ?? \"\")" in combined, "CSV 가 빈 칸을 빈 칸으로 안 쓴다"
     print(f"dashboard self-check ok — 뷰 {len(defs)}개, 섹션 {len(secs)}개, "
           f"최상위 이름 {len(seen)}개")
+
+
+# ── 기회 카드에서 개발 도구 열기 ─────────────────────────────────────────────
+# 기회의 끝은 여태 "요청문 복사 → AI 에 붙여 넣기"였다. 사용자가 원하는 것은 그
+# 자리에서 자기 도구가 **그 사이트 폴더에서** 열리고 요청문이 이미 들어가 있는
+# 것이다. 그 일을 여기서 한다: 요청문을 파일로 남기고, 고른 도구의 명령을 조립하고,
+# 터미널 하나를 띄운다.
+#
+# 도구 목록·실행 파일·argv 꼴의 정본은 doctor.TOOLS 한 벌이다 — 이 파일에 도구
+# 이름을 적지 않는다(적는 순간 표가 두 벌이 되고 한쪽만 낡는다). 터미널을 무엇으로
+# 볼지도 doctor.usage() 가 이미 답한다(안 골랐으면 Orca 감지 → 없으면 시스템).
+#
+# 브라우저는 이 PC 의 프로세스를 못 띄운다 — 그래서 이 경로는 로컬 전용이고
+# (LOCAL_ONLY_POST), 호스팅 화면은 "이 PC 에서 열기" 안내만 그린다.
+
+def _work_dir(project: str) -> Path:
+    """도구를 열 폴더. 설정에 적어 둔 것([설정]의 사이트별 로컬 폴더)이 정본이고,
+    없으면 작업 자리(~/.capture/work/<사이트>/)를 만들어 거기서 연다.
+
+    적어 둔 값이 지금 폴더가 아니면 없는 것으로 친다 — 저장 시점에 한 번 막지만
+    그 사이에 지워질 수 있고, 없는 폴더로 열면 도구가 그때 가서 죽는다.
+    """
+    d = paths.site_dirs().get(project)
+    if d and Path(d).is_dir():
+        return Path(d)
+    w = paths.home() / "work" / project
+    w.mkdir(parents=True, exist_ok=True)
+    return w
+
+
+def _tool_argv(tool: tuple, prompt: str) -> list[str]:
+    """doctor.TOOLS 의 argv 꼴에서 {prompt} 자리를 채운다.
+
+    도구마다 다른 것은 이 한 줄뿐이다 — 스킬(`/create run`)을 부르지 않으므로
+    도구별 갈래가 코드에 생기지 않는다.
+    """
+    return [a.replace("{prompt}", prompt) for a in tool[3]]
+
+
+def _open_terminal(argv: list[str], cwd: Path, terminal: str, title: str) -> dict:
+    """창 하나를 띄운다. 돌려주는 것은 {"terminal": …} (물러났으면 fallback 도).
+
+    Orca 는 워크트리 안에서만 창을 만든다 — 폴더가 워크트리가 아니면 실패하는데,
+    그때 사용자에게 남길 것은 오류 메시지가 아니라 **열린 창**이다. 시스템
+    터미널로 물러나고 무엇으로 열었는지만 응답에 싣는다(화면이 그걸 말한다).
+    """
+    import shlex
+    line = (subprocess.list2cmdline(argv) if sys.platform == "win32"
+            else shlex.join(argv))
+    if terminal == "orca":
+        # orca 호출법은 doctor.orca_json 한 자리다 — 없거나 실패하면 None 이다.
+        if doctor.orca_json("terminal", "create", "--worktree", f"path:{cwd}",
+                            "--title", title, "--command", line, "--focus",
+                            timeout=15) is not None:
+            return {"terminal": "orca"}
+        _system_terminal(argv, line, cwd)
+        return {"terminal": "system", "fallback": "system"}
+    _system_terminal(argv, line, cwd)
+    return {"terminal": "system"}
+
+
+def _system_terminal(argv: list[str], line: str, cwd: Path) -> None:
+    """OS 가 기본으로 주는 터미널에서 argv 를 연다 — 창은 열린 채로 남는다."""
+    if sys.platform == "win32":
+        # 첫 "" 는 start 의 창 제목 자리다. 빼면 argv[0] 을 제목으로 먹고 아무것도
+        # 안 뜬다(경로에 공백이 있을 때 특히).
+        subprocess.Popen(["cmd", "/c", "start", "", *argv], cwd=str(cwd))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-a", "Terminal", str(cwd)])
+        script = line.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.Popen(["osascript", "-e",
+                          f'tell application "Terminal" to do script "{script}" in front window'])
+    else:
+        subprocess.Popen(["x-terminal-emulator", "-e", *argv], cwd=str(cwd))
+
+
+def run_tool(body: dict) -> dict:
+    """POST /api/setup/run-tool 본체 — 기회 하나를 도구로 연다.
+
+    dry_run 이면 창도 안 띄우고 상태도 안 바꾸고 조립한 것만 돌려준다(검사용).
+    실패는 전부 {"ok": False, "error": …} 이고 그때는 상태를 건드리지 않는다 —
+    "작업 시작"이라고 표시해 놓고 아무 창도 안 뜨는 것이 제일 나쁜 결과다.
+    """
+    import shutil
+    project = str(body.get("project") or "").strip()
+    try:
+        opp_id = int(body.get("id") or 0)
+    except (TypeError, ValueError):
+        opp_id = 0
+    if not project or not opp_id:
+        return {"ok": False, "error": "어느 사이트의 어느 기회인지 못 받았습니다."}
+
+    use = doctor.usage()
+    tool = doctor.tool_of(use.get("tool") or "")
+    if not tool:
+        return {"ok": False, "error": "쓸 도구를 아직 안 골랐습니다. [설정]의 "
+                                      "'쓰는 방식'에서 하나 고르면 여기에 열기 버튼이 섭니다."}
+    if not shutil.which(tool[2]):
+        return {"ok": False, "error": f"{tool[1]} 을(를) 이 PC 에서 못 찾았습니다. "
+                                      f"설치하시거나 [설정]에서 다른 도구를 고르면 됩니다."}
+
+    # 요청문은 서버가 이미 써 둔 것을 그대로 쓴다(brief.attach) — 여기서 다시 짓지
+    # 않는다. 원격 사이트의 기회는 호스팅이 갖고 있으므로 거기서 받아온다.
+    try:
+        data = (remote.api("GET", "/api/data", params={"project": project})
+                if remote.owns(project) else payload(project))
+    except db.ProjectNotFound as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:                      # 원격이 죽었거나 토큰이 끊겼거나
+        return {"ok": False, "error": f"기회를 불러오지 못했습니다: {e}"}
+    opp = next((o for o in (data.get("opps") or [])
+                if str(o.get("id")) == str(opp_id)), None)
+    if not opp:
+        return {"ok": False, "error": "그 기회를 못 찾았습니다. [새로고침] 뒤 다시 눌러 주세요."}
+    text = ((opp.get("brief") or {}).get("body") or opp.get("reasoning") or "").strip()
+    if not text:
+        return {"ok": False, "error": "이 기회의 요청문이 아직 없습니다."}
+
+    # 파일은 늘 작업 자리에 남긴다 — 사용자의 리포 안에 남의 파일을 떨구지 않는다.
+    box = paths.home() / "work" / project
+    box.mkdir(parents=True, exist_ok=True)
+    md = box / f"opp-{opp_id}.md"
+    createdb = Path(__file__).resolve().parents[2] / "create" / "scripts" / "createdb.py"
+    md.write_text(
+        text
+        + "\n\n---\n끝나면 이 명령으로 기록해 주세요(바꾼 파일·브랜치를 채워서):\n"
+        + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n',
+        "utf-8")
+
+    cwd = _work_dir(project)
+    argv = _tool_argv(tool, f"이 파일의 요청문대로 진행해 주세요: {md}")
+    terminal = use.get("terminal") or "system"
+    out = {"ok": True, "cwd": str(cwd), "file": str(md), "argv": argv,
+           "terminal": terminal}
+    if body.get("dry_run"):
+        return out
+
+    out.update(_open_terminal(argv, cwd, terminal, f"seo-miner · {project} #{opp_id}"))
+    # 창이 실제로 뜬 뒤에 '작업 시작'으로 바꾼다. 기록은 서버 한 곳에 남아 두 화면이
+    # 같은 표를 본다 — 원격 사이트면 호스팅의 /api/opp 로 보낸다.
+    try:
+        if remote.owns(project):
+            remote.api("POST", "/api/opp",
+                       json={"project": project, "id": opp_id, "status": "acked"})
+        else:
+            conn = db.connect()
+            try:
+                db.set_opportunity_status(conn, opp_id, "acked")
+            finally:
+                conn.close()
+    except Exception:       # 창은 이미 떴다 — 상태 하나 때문에 실패로 되돌리지 않는다
+        out["status_failed"] = True
+    return out
 
 
 def main() -> None:

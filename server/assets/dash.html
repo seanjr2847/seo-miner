@@ -785,11 +785,15 @@
       var o = document.getElementById("opps") || document.querySelector(".opp");
       if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
     },
-    // 기회 카드 접힌 줄의 실행 자리. 호스팅 화면은 이 PC 의 프로세스를 못 띄우므로
-    // 여기 설 것은 "이 PC 에서 열기" 안내다 — 그 안내는 Task C 가 채운다. 지금은
-    // 아무것도 안 그린다(빈 문자열이지, 함수를 지우면 원본이 undefined 를 붙인다).
+    // 기회 카드 접힌 줄의 실행 자리. 호스팅 화면은 브라우저라 이 PC 의 프로세스를
+    // 못 띄운다 — 그래서 여기 서는 것은 버튼이 아니라 **어디서 누르면 되는지**다.
+    // 로컬 대시보드를 띄우는 명령 한 줄이 그 답이라, 복사할 수 있게 칩으로 낸다
+    // (셸의 copyCmd 가 textContent 를 그대로 집는다 — 칩 안은 명령뿐이어야 한다).
     oppBtn(id) {
-      return "";
+      return '<span class="badge">이 PC 에서 열기</span>' +
+        '<button class="cmd" onclick="copyCmd(this)">/capture dash ' +
+        esc(proj()) + '</button>' +
+        '<span class="msg">로컬 대시보드를 띄우면 이 자리에 실행 버튼이 생깁니다.</span>';
     },
   };
 

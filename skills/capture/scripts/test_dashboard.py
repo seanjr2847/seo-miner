@@ -588,6 +588,106 @@ def test_creation_route_records_and_marks_acked():
         pass
 
 
+# ── 기회 카드에서 도구 열기 ────────────────────────────────────────────────
+def _opp_status(opp_id: int) -> str:
+    conn = db.connect()
+    try:
+        return conn.execute("SELECT status FROM opportunities WHERE id=?",
+                            (opp_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _opp_fixture(name: str, target: str) -> int:
+    """기회 하나짜리 사이트 — 심사를 통과시켜야 화면(payload)에 실린다."""
+    conn, pid = _brain(name)
+    db.upsert_opportunities(conn, pid, None,
+                            [{"kind": "striking_distance", "target": target, "score": 30}])
+    db.set_verdicts(conn, pid, [scoring.norm(target)], "work")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
+                 "clicks,impressions,ctr,position) VALUES(?,?,28,?,1,10,0.1,9.0)",
+                 (pid, D, target))
+    conn.commit()
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (pid,)).fetchone()[0]
+    conn.close()
+    return oid
+
+
+def test_run_tool_builds_command_and_writes_brief():
+    """실행 버튼의 몸 — 요청문을 파일로 쓰고, 고른 도구의 argv 를 조립하고, 어느
+    폴더에서 열지 정한다. dry_run 은 터미널도 안 띄우고 상태도 안 바꾼다.
+
+    도구 이름·실행 파일·argv 꼴의 정본은 doctor.TOOLS 다 — 여기서 사본을 안 만든다.
+    """
+    import shutil as _sh
+    import doctor
+    import paths
+    oid = _opp_fixture("rt", "q1")
+    os.environ.pop("SEOMINER_TOOL", None)
+    orig_which = _sh.which
+    try:
+        # 도구를 안 골랐다 — 상태를 안 바꾸고 왜 못 여는지 말한다
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"] is False and "도구" in r["error"], r
+
+        # 골랐는데 안 깔렸다 — 열기 전에 여기서 막는다(열고 나서 실패하지 않는다)
+        os.environ["SEOMINER_TOOL"] = "codex"
+        _sh.which = lambda c: None
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"] is False and doctor.tool_of("codex")[1] in r["error"], r
+
+        _sh.which = lambda c: "/bin/codex" if c == "codex" else None
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"], r
+        assert r["argv"][0] == doctor.tool_of("codex")[2], r["argv"]
+        assert r["file"].endswith(f"opp-{oid}.md") and r["file"] in r["argv"][-1], r
+        assert Path(r["cwd"]) == paths.home() / "work" / "rt", r["cwd"]  # 폴더 없는 사이트
+        body = Path(r["file"]).read_text("utf-8")
+        assert "createdb.py" in body and f"done rt {oid}" in body, body[-400:]
+        assert "## " in body, "요청문 본문이 안 들어갔다"
+
+        # 폴더를 적어 두면 거기서 연다
+        d = tempfile.mkdtemp(prefix="seo-miner-rt-")
+        paths.set_site_dir("rt", d)
+        try:
+            r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+            assert Path(r["cwd"]) == Path(d), r["cwd"]
+        finally:
+            paths.set_site_dir("rt", None)
+
+        # 없는 기회는 400 이고, dry_run 은 상태를 안 건드린다
+        assert dashboard.run_tool({"project": "rt", "id": oid + 9999,
+                                   "dry_run": True})["ok"] is False
+        assert _opp_status(oid) == "new", "dry_run 이 상태를 바꿨다"
+    finally:
+        _sh.which = orig_which
+        os.environ.pop("SEOMINER_TOOL", None)
+
+
+def test_run_tool_opens_terminal_and_acks():
+    """터미널을 띄우는 갈래 — Orca 가 안 되면 시스템으로 물러나고, 열렸으면 그 기회는
+    '작업 시작'(acked)이 된다. 검사에서 진짜 창을 띄우지 않는다(_open_terminal 을 흉내)."""
+    import shutil as _sh
+    oid = _opp_fixture("rt2", "q2")
+    orig_which, orig_open = _sh.which, dashboard._open_terminal
+    seen = {}
+    os.environ["SEOMINER_TOOL"] = "claude"
+    os.environ["SEOMINER_TERMINAL"] = "orca"
+    try:
+        _sh.which = lambda c: "/bin/" + c
+        dashboard._open_terminal = lambda argv, cwd, terminal, title: (
+            seen.update(argv=argv, cwd=str(cwd), terminal=terminal, title=title)
+            or {"terminal": "system", "fallback": "system"})
+        r = dashboard.run_tool({"project": "rt2", "id": oid})
+        assert r["ok"] and r["terminal"] == "system" and r["fallback"] == "system", r
+        assert seen["terminal"] == "orca" and str(oid) in seen["title"], seen
+        assert _opp_status(oid) == "acked", "열었는데 작업 시작으로 안 바뀌었다"
+    finally:
+        _sh.which, dashboard._open_terminal = orig_which, orig_open
+        os.environ.pop("SEOMINER_TOOL", None)
+        os.environ.pop("SEOMINER_TERMINAL", None)
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

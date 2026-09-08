@@ -1303,8 +1303,19 @@ SM.host = {
       title="이 화면을 채우는 단계입니다. 눌러서 복사한 뒤 채팅에 붙여 넣습니다."
       >/capture ${esc(st)}${siteArg()}</button>`,
   copy(btn) { copyCmd(btn); },
-  // 기회 카드의 '콘텐츠 작성' 버튼 — 로컬에는 없다(플러그인은 Claude 채팅으로 간다).
-  oppBtn: null,
+  /* 기회 카드 접힌 줄의 실행 자리. 로컬에는 이 PC 가 있으니 고른 개발 도구를 그
+     사이트 폴더에서 바로 연다(호스팅은 브라우저라 못 띄운다 — dash.html 이 안내로
+     갈아 끼운다). 도구 라벨·설치 여부는 window.SETUP(=/api/doctor 응답)에서 읽는다:
+     목록의 정본은 doctor.TOOLS 한 벌이고 화면은 사본을 안 갖는다.
+     아직 고르기 전이면 버튼 대신 무엇이 없는지와 어디서 고르는지를 말한다. */
+  oppBtn(id) {
+    const s = window.SETUP || {}, t = (s.tools || []).find(x => x.id === s.tool);
+    if (!t || !t.installed)
+      return `<span class="badge warn">도구 없음</span>` +
+        `<button class="go sm ghost" onclick="SM.touched=true;SM.show('settings')"` +
+        `>설정에서 고르기</button>`;
+    return `<button class="go sm" onclick="runTool(${id})">${esc(t.label)} 로 열기</button>`;
+  },
 };
 
 /* ── 화면 머리의 갱신 손잡이 ─────────────────────────────────────────────
@@ -1895,6 +1906,20 @@ const oppRest = o => {
 };
 
 window.oppPanel = o => o ? oppDetail(o) : "";
+
+/* 기회 하나를 이 PC 의 개발 도구로 연다. 여기서 하는 일은 누른 것을 서버에 넘기고
+   무엇으로 열렸는지 말하는 것뿐이다 — 어느 도구·어느 터미널·어느 폴더인지는 전부
+   서버(run_tool)가 정한다. 화면이 다시 판정하면 같은 규칙이 두 벌이 된다.
+   터미널 이름도 payload 에서 읽는다(정본은 doctor.TERMINALS). */
+async function runTool(id) {
+  const [ok, r] = await post("/api/setup/run-tool", {project: $("proj").value, id});
+  if (!ok || !r.ok) return toast((r && r.error) ||
+    "열지 못했습니다. [설정]에서 도구를 확인한 뒤 다시 눌러 주세요.", "bad");
+  const t = ((window.SETUP || {}).terminals || []).find(x => x.id === r.terminal);
+  toast((t ? t.label : r.terminal) + "에서 열었습니다." +
+        (r.fallback ? " Orca 워크트리가 아니어서 이쪽으로 열었습니다." : ""), "ok");
+  load();
+}
 
 // 글자로만 "[개요]에서" 라고 말하던 자리를 실제로 눌리게 한다. 화면 이름은
 // SM.views(=view-def)의 정본에서 읽는다 — 라벨을 두 벌로 만들지 않는다.
@@ -2617,6 +2642,7 @@ async function loadDoctor() {
     // 추론이 안 되면(사이트 여럿 + 리포 미등록) 안내가 비어 버린다.
     const cur = $("proj") ? $("proj").value : "";
     const d = await (await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""))).json();
+    window.SETUP = d; SM.repaint();   // 기회 카드의 실행 자리(SM.host.oppBtn)가 여기서 도구 상태를 읽는다 — 늦게 오면 다시 그린다
     // verdict·must·extra 는 이제 청중별로 갈려서 온다(doctor.py 가 SEOMINER_HOSTED
     // 로 가른다) — 호스팅 갈래에는 명령·파일 경로·"채팅에"가 안 들어가고,
     // doctor._selfcheck() 가 그걸 못 박는다. 그래서 화면이 다시 가릴 이유가 없다.
