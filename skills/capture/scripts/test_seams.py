@@ -668,6 +668,33 @@ def test_seam_17_verdict_and_status_single_source():
     assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
 
 
+def test_seam_18_run_tool_and_creation_single_source():
+    """18) 개발 도구 실행과 작업 기록은 양쪽 끝이 있다 — 한 벌인지 여기서 못 박는다.
+
+    기록 창구(`/api/creation`)는 로컬 `dashboard.ROUTES` 와 호스팅 `app.py` 둘 다에
+    있어야 한다. 요청문 꼬리의 기록 명령은 로컬·호스팅 구분 없이 같은 한 줄이라,
+    `createdb.py` 가 `remote.owns` 로 갈라 그 창구를 부르지 않으면 호스팅 사이트의
+    기록이 이 PC 의 빈 Brain 으로 떨어진다(아무 오류 없이).
+    """
+    import dashboard
+    ctx = _load()
+    if ctx is None:
+        return
+    assert ("POST", "/api/creation") in dashboard.ROUTES, \
+        "로컬 ROUTES 에 /api/creation 이 없다 — 기록 창구는 이 표가 정본이다"
+    app_src = ctx["app_f"].read_text("utf-8")
+    assert '@app.post("/api/creation")' in app_src, \
+        "호스팅 서버에 /api/creation 이 없다 — 웹 사이트의 기록이 갈 곳이 없다"
+    create_f = ROOT / "skills" / "create" / "scripts" / "createdb.py"
+    if create_f.exists():
+        src = create_f.read_text("utf-8")
+        assert "remote.owns" in src, \
+            "createdb.py 가 원격 판정을 안 한다 — 호스팅 사이트도 로컬 Brain 을 쓴다"
+        assert '"/api/creation"' in src, \
+            "createdb.py 가 기록 창구를 안 부른다 — done 이 서버에 안 남는다"
+    # --- 도구 절반은 Task C 가 이어 쓴다 ---
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

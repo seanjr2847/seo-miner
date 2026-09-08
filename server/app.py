@@ -1123,6 +1123,28 @@ async def api_opp(request: Request):
                                 detail="알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.")
 
 
+@app.post("/api/creation")
+async def api_creation(request: Request):
+    """작업 기록 창구 — 사용자 PC 의 개발 도구가 일을 끝내고 남긴다.
+
+    본체는 dashboard.ROUTES 것 하나(로컬 Handler 가 부르는 것과 같은 함수).
+    로컬 `createdb.py done` 이 호스팅 사이트면 이 경로로 온다 — 그래서 요청문
+    꼬리의 기록 명령은 로컬·원격 구분 없이 같은 한 줄이다.
+    """
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    try:
+        with store.session(uid, project, isolate=True):
+            return dashboard.ROUTES[("POST", "/api/creation")](project, {}, body)
+    except LookupError as e:   # 그 사이트의 기회가 아니다 — 번호로 남의 Brain 을 더듬는 것
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 def demo() -> None:
     import base64
     import tempfile
@@ -1177,6 +1199,8 @@ def demo() -> None:
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
+        assert c.post("/api/creation", json={"project": "x", "path": "a.md"}).status_code == 401, \
+            "/api/creation 이 로그인 없이 열렸다"
 
         r = c.get("/auth/login", follow_redirects=False)
         assert r.status_code == 302, (r.status_code, r.text)

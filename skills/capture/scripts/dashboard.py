@@ -1065,13 +1065,28 @@ def payload(project: str, at: str | None = None) -> dict:
         conn.close()
 
 
+def remote_project(project: str) -> bool:
+    """이 사이트는 호스팅이 갖고 있나 — 원격 판정은 이 함수 하나다.
+
+    로컬 Handler 의 디스패치가 이걸 보고 자기 Brain 대신 서버로 넘긴다(프록시).
+    판정 자체는 remote.owns 하나뿐이다 — 여기서 규칙을 다시 쓰지 않는다.
+    """
+    return bool(project) and remote.owns(project)
+
+
 def list_projects() -> list[str]:
-    """Brain 에 등록된 사이트 이름 — 로컬 대시보드의 사이트 선택지."""
+    """사이트 선택지 — 로컬 Brain 에 있는 이름 + 호스팅이 갖고 있는 이름.
+
+    호스팅 사이트도 이 목록에 있어야 로컬 화면에서 고를 수 있다(고르면 Handler 가
+    프록시로 넘긴다). 이름이 양쪽에 다 있으면 한 번만 나온다.
+    """
     conn = db.connect()
     try:
-        return [r[0] for r in conn.execute("SELECT name FROM projects ORDER BY name")]
+        names = {r[0] for r in conn.execute("SELECT name FROM projects")}
     finally:
         conn.close()
+    names |= {str(n) for n in ((remote.config() or {}).get("projects") or [])}
+    return sorted(names)
 
 
 def set_opp_status(body: dict) -> dict:
@@ -1081,6 +1096,36 @@ def set_opp_status(body: dict) -> dict:
     try:
         return {"updated": db.set_opportunity_status(
             conn, int(body.get("id") or 0), body.get("status"))}
+    finally:
+        conn.close()
+
+
+def record_creation_route(body: dict) -> dict:
+    """POST /api/creation 본체 — 로컬·호스팅이 이 함수 하나를 부른다.
+
+    개발 도구가 일을 끝내고 남기는 기록 창구다(요청문 꼬리의 `createdb.py done`
+    이 원격 사이트면 이 경로로 온다). 기록은 남기고 상태는 진행 중(acked)이다 —
+    완료는 대시보드의 완료 후 관찰을 보고 사람이 누른다.
+
+    기회 번호가 그 사이트 것이 아니면 LookupError — Handler 와 호스팅 래퍼가
+    404 로 옮긴다(남의 Brain 을 번호로 더듬는 일을 막는다).
+    """
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, str(body.get("project") or ""))["id"]
+        oid = int(body.get("opportunity_id") or 0)
+        kind = None
+        if oid:
+            row = db.get_opportunity(conn, oid, project_id=pid)
+            if row is None:
+                raise LookupError("기회를 찾을 수 없습니다")
+            kind = row["kind"]
+            db.set_opportunity_status(conn, oid, "acked", project_id=pid)
+        cid = db.record_creation(conn, pid, str(body.get("path") or ""),
+                                 opportunity_id=oid or None, kind=kind,
+                                 branch=body.get("branch") or None,
+                                 note=body.get("note") or None)
+        return {"creation_id": cid, "status": "acked"}
     finally:
         conn.close()
 
@@ -1188,6 +1233,9 @@ ROUTES = {
         lambda project, query, body: triage_payload(project),
     ("POST", "/api/verdict"):
         lambda project, query, body: set_verdict(body),
+    # 작업 기록 — 개발 도구가 일을 끝내고 남긴다(createdb.py done / sync).
+    ("POST", "/api/creation"):
+        lambda project, query, body: record_creation_route(body),
 }
 
 # 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용). 호스팅엔
@@ -1199,6 +1247,11 @@ LOCAL_ONLY_POST = {"/api/setup/run", "/api/setup/keys", "/api/setup/project",
                    "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote"}
 LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
+
+# 호스팅 사이트라도 이 PC 가 답하는 경로. /api/doctor 는 [설정] 화면이 보는 진단 —
+# "이 PC 에 무엇이 깔려 있나"를 묻는 것이라 서버에 물으면 남의 컴퓨터를 진단한다.
+# /api/projects 는 애초에 사이트 이름을 안 받는다(list_projects 가 둘을 합친다).
+NEVER_PROXY = {"/api/doctor", "/api/projects"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1212,6 +1265,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def _proxy(self, method: str, path: str, **kw) -> None:
+        """호스팅 사이트의 요청은 서버가 답한다 — 응답 JSON 을 그대로 옮긴다.
+
+        데이터가 서버 Brain 에 있어서 여기서 답하면 빈 화면이 된다. 예전엔
+        호스팅 주소로 브라우저를 보냈지만(리다이렉트), 그러면 로컬에만 있는
+        [설정]·실행 버튼이 사라진다 — 화면은 로컬 한 벌로 두고 데이터만 넘긴다.
+        """
+        try:
+            return self._json(remote.api(method, path, **kw))
+        except (Exception, SystemExit) as e:   # remote 는 거절을 SystemExit 로 낸다
+            return self._json({"error": str(e)}, 502)
 
     def do_GET(self) -> None:  # noqa: N802 (http.server 규약)
         u = urlparse(self.path)
@@ -1227,8 +1292,11 @@ class Handler(BaseHTTPRequestHandler):
         if not call:
             return self._send(404, b"not found", "text/plain")
         query = {k: v[0] for k, v in parse_qs(u.query).items()}
+        project = query.get("project", "")
+        if u.path not in NEVER_PROXY and remote_project(project):
+            return self._proxy("GET", u.path, params=query)
         try:
-            return self._json(call(query.get("project", ""), query, None))
+            return self._json(call(project, query, None))
         except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
             return self._json({"error": str(e)}, 404)
 
@@ -1266,9 +1334,13 @@ class Handler(BaseHTTPRequestHandler):
             r = setup_remote(body)
             return self._json(r, 200 if r["ok"] else 400)
 
+        if path not in NEVER_PROXY and remote_project(str(body.get("project") or "")):
+            return self._proxy("POST", path, json=body)
         try:
             return self._json(call("", {}, body))
         except db.ProjectNotFound as e:
+            return self._json({"error": str(e)}, 404)
+        except LookupError as e:   # record_creation_route: 그 사이트 기회가 아니다
             return self._json({"error": str(e)}, 404)
         except ValueError as e:
             return self._json({"error": str(e)}, 400)
@@ -1376,15 +1448,9 @@ def main() -> None:
             webbrowser.open(out.as_uri())
         return
 
-    # 원격 사이트는 로컬 서버를 띄우지 않는다 — 데이터가 서버 brain 에 있어서
-    # 여기서 띄우면 빈 화면을 보여 준다. 호스팅 화면의 그 사이트로 보낸다.
-    if a.project and remote.owns(a.project):
-        url = f"{remote.config()['url']}/d#{a.project}"
-        print(f"dashboard: {url}")
-        if a.open:
-            import webbrowser
-            webbrowser.open(url)
-        return
+    # 원격 사이트도 여기서 띄운다 — Handler 가 그 사이트의 API 를 서버로 넘긴다
+    # (remote_project → _proxy). 예전엔 호스팅 주소로 브라우저를 보냈는데, 그러면
+    # 로컬에만 있는 [설정]·개발 도구 실행 버튼이 통째로 사라졌다.
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.
     # allow_reuse_address 기본값(True)이면 Windows에서 같은 포트에 서버가 겹쳐

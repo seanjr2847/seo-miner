@@ -2220,7 +2220,9 @@ function oppDetail(o) {
    바뀐 것이 없는 채로 조용했다. 누른 사람에게는 버튼이 죽은 것으로 보인다.
    실패하면 말하고 배지는 그대로 둔다(거짓 성공을 그리지 않는다). */
 async function setOpp(id, status) {
-  const [ok, r] = await post("/api/opp", {id, status});
+  // 사이트 이름을 같이 싣는다 — 로컬 대시보드는 이 이름으로 "내 Brain 이냐 호스팅이냐"를
+  // 갈라 호스팅이면 서버로 넘긴다(프록시). 호스팅 서버는 로그인 세션으로 이미 안다.
+  const [ok, r] = await post("/api/opp", {project: $("proj").value, id, status});
   if (!ok) return toast((r && r.error) ||
     "상태를 바꾸지 못했습니다. [새로고침] 뒤 다시 하면 됩니다.", "bad");
   toast(OPP_DONE[status] || "바꿨습니다.", "ok");

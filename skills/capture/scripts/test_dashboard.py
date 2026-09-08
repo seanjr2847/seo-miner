@@ -30,6 +30,17 @@ D = "2026-08-28"
 PREV = "2026-08-14"
 
 
+def _serve():
+    """라이브 대시보드와 같은 Handler 를 임의 포트에 띄운다 — 프록시는 디스패치
+    자리에 있어서 함수 호출로는 안 지나간다(test_render.serve 와 같은 꼴)."""
+    import threading
+    from http.server import ThreadingHTTPServer
+    ThreadingHTTPServer.allow_reuse_address = True
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def _brain(name="t"):
     """빈 Brain + 사이트 하나. 테스트마다 새 프로젝트를 쓴다(행이 서로 안 섞이게)."""
     conn = db.connect()
@@ -505,6 +516,76 @@ def test_setup_dirs_and_remote_line():
         assert dashboard.setup_remote({"line": "아무 말"})["ok"] is False
     finally:
         remote.link = orig
+
+
+# ── 호스팅 사이트를 로컬 화면에 (프록시) ──────────────────────────────────
+def test_local_handler_proxies_remote_sites():
+    """사이트 이름이 호스팅 것이면 로컬 Handler 는 자기 Brain 을 안 읽고 서버에
+    그대로 넘긴다 — 화면은 한 벌이고 데이터가 있는 쪽이 답한다."""
+    import remote
+    calls = []
+    orig_owns, orig_api = remote.owns, remote.api
+    remote.owns = lambda p: p == "webonly"
+    remote.api = lambda method, path, **kw: calls.append((method, path, kw)) or {"proxied": True}
+    try:
+        assert dashboard.remote_project("webonly") and not dashboard.remote_project("t")
+        assert not dashboard.remote_project("")
+        srv = _serve()
+        try:
+            import json as _j
+            import urllib.request
+            base = f"http://127.0.0.1:{srv.server_address[1]}"
+            u = f"{base}/api/data?project=webonly&date=2026-01-01"
+            assert _j.loads(urllib.request.urlopen(u).read()) == {"proxied": True}
+            assert calls[-1][0] == "GET" and calls[-1][1] == "/api/data"
+            assert calls[-1][2]["params"]["project"] == "webonly"
+            assert calls[-1][2]["params"]["date"] == "2026-01-01"
+            req = urllib.request.Request(
+                f"{base}/api/opp",
+                data=_j.dumps({"project": "webonly", "id": 1, "status": "acked"}).encode(),
+                headers={"Content-Type": "application/json", "X-Token": dashboard.TOKEN},
+                method="POST")
+            assert _j.loads(urllib.request.urlopen(req).read()) == {"proxied": True}
+            assert calls[-1][0] == "POST" and calls[-1][2]["json"]["id"] == 1
+            names = _j.loads(urllib.request.urlopen(f"{base}/api/projects").read())
+            assert "webonly" not in names   # config() 를 안 흉내 냈으니 로컬 이름만
+            # [설정] 진단은 이 PC 를 묻는 것이다 — 원격 사이트를 보고 있어도 서버에
+            # 안 넘긴다(넘기면 남의 컴퓨터에 무엇이 깔렸는지를 답한다).
+            n = len(calls)
+            d = _j.loads(urllib.request.urlopen(f"{base}/api/doctor?project=webonly").read())
+            assert len(calls) == n and "proxied" not in d, (len(calls) - n, d)
+        finally:
+            srv.shutdown()
+    finally:
+        remote.owns, remote.api = orig_owns, orig_api
+
+
+# ── 기록 창구 ─────────────────────────────────────────────────────────────
+def test_creation_route_records_and_marks_acked():
+    """작업 기록은 /api/creation 한 창구다 — 로컬 ROUTES 본체가 기록하고 기회를
+    진행 중으로 옮긴다. 남의 사이트 기회 번호는 LookupError(=404)."""
+    conn, pid = _brain("cre")
+    db.upsert_opportunities(conn, pid, None,
+                            [{"kind": "striking_distance", "target": "q", "score": 10}])
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (pid,)).fetchone()[0]
+    conn.close()
+    r = dashboard.ROUTES[("POST", "/api/creation")](
+        "", {}, {"project": "cre", "opportunity_id": oid,
+                 "path": "content/a.md", "branch": "capture/x-a", "note": "n"})
+    assert r["status"] == "acked" and r["creation_id"]
+    conn = db.connect()
+    assert conn.execute("SELECT status FROM opportunities WHERE id=?",
+                        (oid,)).fetchone()[0] == "acked"
+    row = conn.execute("SELECT file_path, branch, kind FROM creations WHERE opportunity_id=?",
+                       (oid,)).fetchone()
+    assert tuple(row) == ("content/a.md", "capture/x-a", "striking_distance"), tuple(row)
+    conn.close()
+    try:
+        dashboard.ROUTES[("POST", "/api/creation")](
+            "", {}, {"project": "cre", "opportunity_id": 999999, "path": "x"})
+        assert False, "남의 기회 번호가 통과했다"
+    except LookupError:
+        pass
 
 
 if __name__ == "__main__":
