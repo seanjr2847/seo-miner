@@ -1187,6 +1187,33 @@ def api_data(project: str, request: Request, date: str = ""):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.get("/api/triage")
+def api_triage(project: str, request: Request):
+    """검색어 심사 목록 — 본체는 dashboard.ROUTES 것(로컬과 같은 함수)."""
+    uid = _require_uid(request)
+    try:
+        with store.session(uid, project, isolate=True):
+            return dashboard.ROUTES[("GET", "/api/triage")](project, {}, None)
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/verdict")
+async def api_verdict(request: Request):
+    """검색어 판정 저장(일괄). 값 검증은 db.set_verdicts(잘못되면 ValueError → 400)."""
+    uid = _require_uid(request)
+    body = await request.json()
+    project = str(body.get("project") or "")
+    try:
+        with store.session(uid, project, isolate=True):
+            return dashboard.ROUTES[("POST", "/api/verdict")](project, {}, body)
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="알아볼 수 없는 판정값입니다. 새로고침한 뒤 다시 시도하세요.")
+    except db.ProjectNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/api/doctor")
 def api_doctor(project: str, request: Request, full: bool = False):
     """화면은 평평한 요약(setup_state)을, 원격 CLI 는 진단 전문(diagnose)을 받는다.

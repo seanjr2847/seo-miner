@@ -968,6 +968,9 @@ def gather(conn, p, at: str | None = None) -> dict:
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
          "kind_labels": {k.name: k.label for k in scoring.KINDS},
+         # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
+         "watch": db.watch_rows(conn, pid),
+         "keyword_kinds": list(scoring.KEYWORD_KINDS),
          "progress": stage.progress(conn, pid),
          "guide": stage.state(conn, p, p["domain"] or ""),
          "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])}
@@ -1006,6 +1009,81 @@ def set_opp_status(body: dict) -> dict:
         conn.close()
 
 
+def _brand_keys(conn, p) -> set[str]:
+    """브랜드 힌트용 — 프로젝트 이름·별칭(brand_aliases)을 norm 한 것. yaml 이 없으면
+    사이트 이름만. 자동 판정에는 안 쓴다 — 심사 화면이 칩 하나로 힌트만 준다."""
+    cfg = {}
+    if p["config_path"]:
+        try:
+            cfg = db.load_project_yaml(p["config_path"])
+        except (db.ProjectConfigNotFound, ImportError):
+            pass
+    names = scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
+    return {k for k in (scoring.norm(a) for a in names) if k}
+
+
+def triage_payload(project: str) -> dict:
+    """GET /api/triage — 열린 기회를 정규화한 검색어(scoring.norm)로 묶는다. 행 하나가
+    판정 단위다: 변형 수·걸린 종류·최고 점수·최근 GSC 클릭/노출·브랜드 힌트·판정.
+    검색어가 아닌 종류(KEYWORD_KINDS 밖)는 심사에 안 오른다."""
+    conn = db.connect()
+    try:
+        p = db.get_project(conn, project)
+        pid = p["id"]
+        vm = db.verdict_map(conn, pid)
+        ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+        rows = conn.execute(
+            f"""SELECT norm(target) key, target, kind, score FROM opportunities
+                 WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
+                 ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
+        latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
+                              (pid,)).fetchone()[0]
+        perf: dict[str, tuple[int, int]] = {}
+        if latest:
+            for r in conn.execute(
+                    "SELECT norm(query) k, SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots"
+                    " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
+                perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
+        brands = _brand_keys(conn, p)
+        groups: dict[str, dict] = {}
+        for r in rows:
+            g = groups.get(r["key"])
+            if g is None:
+                c, i = perf.get(r["key"], (0, 0))
+                g = groups[r["key"]] = {
+                    "key": r["key"], "label": r["target"].strip(), "variants": set(),
+                    "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
+                    "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"])}
+            g["variants"].add(r["target"].strip())
+            if r["kind"] not in g["kinds"]:
+                g["kinds"].append(r["kind"])
+        out = []
+        for g in groups.values():
+            g["variants"] = len(g["variants"])
+            g["labels"] = [scoring.kind_label(k) for k in g["kinds"]]
+            g["score"] = round(g["score"], 1) if g["score"] is not None else None
+            out.append(g)
+        out.sort(key=lambda g: -(g["score"] or 0))
+        counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
+        for g in out:
+            counts[g["verdict"] or "none"] += 1
+        return {"rows": out, "counts": counts}
+    finally:
+        conn.close()
+
+
+def set_verdict(body: dict) -> dict:
+    """POST /api/verdict 본체 — 로컬·호스팅이 같은 함수를 부른다. 값 검증은
+    db.set_verdicts 가 한다(잘못되면 ValueError). verdict 가 비면 미판정으로 되돌린다."""
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, str(body.get("project") or ""))["id"]
+        return {"updated": db.set_verdicts(conn, pid, list(body.get("keys") or []),
+                                           body.get("verdict") or None)}
+    finally:
+        conn.close()
+
+
 # 전송 중립 route 표 — 원본 화면(shell+views)이 로컬·호스팅 둘 다에서 부르는 API 넷의
 # 본체. 예전엔 두 서버가 이 넷을 각자 손으로 등록해서, 이음매 검사(test_seams
 # #5)가 두 소스를 정규식으로 훑어 존재를 대조해야 했다. 이제 로컬 Handler 는 이 표를
@@ -1029,6 +1107,11 @@ ROUTES = {
         lambda project, query, body: set_opp_status(body),
     ("GET", "/api/projects"):
         lambda project, query, body: list_projects(),
+    # 검색어 심사 — 화면 [심사]가 부른다. 본체는 위 두 함수 하나씩.
+    ("GET", "/api/triage"):
+        lambda project, query, body: triage_payload(project),
+    ("POST", "/api/verdict"):
+        lambda project, query, body: set_verdict(body),
 }
 
 # 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용 여섯). 호스팅엔
@@ -1097,6 +1180,8 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             return self._json(call("", {}, body))
+        except db.ProjectNotFound as e:
+            return self._json({"error": str(e)}, 404)
         except ValueError as e:
             return self._json({"error": str(e)}, 400)
 

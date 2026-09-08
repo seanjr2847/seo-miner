@@ -422,6 +422,43 @@ def test_list_keywords_still_puts_impressions_first():
     conn.close()
 
 
+# ── 검색어 심사 ───────────────────────────────────────────────────────────
+def test_triage_payload_groups_variants_and_counts():
+    """/api/triage 는 열린 기회를 정규화한 검색어로 묶는다 — 행 하나가 판정 단위다.
+    검색어가 아닌 종류(index_blocked)는 심사에 안 오른다."""
+    conn, pid = _brain("tri")
+    db.upsert_opportunities(conn, pid, None, [
+        {"kind": "striking_distance", "target": "디아더피부과 가격", "score": 39.1},
+        {"kind": "cannibalization", "target": "디아 더 피부과 가격", "score": 20.0},
+        {"kind": "aio_exposure", "target": "레이저 토닝 후기", "score": 35.2},
+        {"kind": "index_blocked", "target": "https://tri.example/x", "score": 10}])
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,impressions,ctr,position)"
+                 " VALUES(?,?,28,'디아더피부과 가격',12,340,0.03,9.0)", (pid, D))
+    conn.commit()
+    conn.close()
+    t = dashboard.triage_payload("tri")
+    assert t["counts"] == {"none": 2, "irrelevant": 0, "hold": 0, "work": 0}, t["counts"]
+    a, b = t["rows"]
+    assert a["label"] == "디아더피부과 가격" and a["variants"] == 2, a
+    assert set(a["kinds"]) == {"striking_distance", "cannibalization"} and a["score"] == 39.1
+    assert a["labels"] and a["clicks"] == 12 and a["impressions"] == 340
+    assert b["verdict"] is None and b["clicks"] == 0 and a["brand"] is False
+    assert dashboard.set_verdict({"project": "tri", "keys": [a["key"]], "verdict": "hold"}) == {"updated": 1}
+    t = dashboard.triage_payload("tri")
+    assert t["counts"]["hold"] == 1
+    assert [r for r in t["rows"] if r["key"] == a["key"]][0]["verdict"] == "hold"
+    try:
+        dashboard.set_verdict({"project": "tri", "keys": [a["key"]], "verdict": "nope"})
+        assert False, "잘못된 판정을 받았다"
+    except ValueError:
+        pass
+    assert ("GET", "/api/triage") in dashboard.ROUTES and ("POST", "/api/verdict") in dashboard.ROUTES
+    conn = db.connect()
+    d = dashboard.gather(conn, db.get_project(conn, "tri"))
+    assert "watch" in d and d["keyword_kinds"] == list(scoring.KEYWORD_KINDS)
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
