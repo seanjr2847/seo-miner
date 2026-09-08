@@ -177,7 +177,7 @@ h2 { font:650 21px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 5px; }
 .props { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));
   gap:1px; background:var(--rule-soft); }
 /* 빈 상태·오류는 한 칸이 아니라 한 폭 */
-.props > .empty, #repo-body > .empty { grid-column:1/-1; }
+.props > .empty { grid-column:1/-1; }
 
 .prop { display:flex; flex-wrap:wrap; align-items:center; gap:9px 12px;
   padding:12px 15px; cursor:pointer; background:var(--card);
@@ -230,21 +230,6 @@ select:hover { border-color:var(--patina); }
 .msg { font-size:13px; color:var(--slate); }
 .msg.err { color:var(--copper); }
 .msg.ok { color:var(--patina); }
-
-/* ── 저장소 연결(선택 사항) ──────────────────────────────── */
-#repo-sec { margin-top:34px; border-top:1px solid var(--rule-soft); }
-/* 사이트마다 한 칸 — 이름 / 저장소 / 저장 상태를 쌓는다. 한 줄로 쭉 늘이면
-   1440 에서 이름과 <select> 사이가 손바닥만큼 벌어진다. */
-#repo-body { display:grid; gap:1px; background:var(--rule-soft);
-  grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); }
-#repo-body .prop { cursor:default; }
-#repo-body .prop:hover { background-image:none; }
-#repo-body .pname { flex:1 1 100%; font-family:var(--sans); font-weight:650;
-  white-space:normal; }
-#repo-body select { flex:1 1 100%; margin-left:0; max-width:520px; font-size:12px; }
-.save { flex:1 1 100%; font:400 11.5px/1.4 var(--sans); color:var(--slate); }
-.save.ok { color:var(--patina); }
-.save.err { color:var(--copper); }
 
 .skel { height:48px;
   background:linear-gradient(90deg,var(--rule-soft),var(--bar),var(--rule-soft));
@@ -319,13 +304,6 @@ footer a:hover { color:var(--patina); }
     </div>
   </section>
 
-  <section id="repo-sec" hidden>
-    <p class="eyebrow">선택 사항</p>
-    <h2>GitHub 저장소 연결</h2>
-    <p class="sub" id="repo-sub">연결하면 기회 하나를 골라 PR까지 만듭니다. 연결하지 않아도
-      측정과 보고서는 그대로 돕니다.</p>
-    <div class="panel" id="repo-body"></div>
-  </section>
 </main>
 
 <footer class="wrap">
@@ -547,65 +525,6 @@ load();
   // 부제는 목록이 실제로 떴을 때만 "회색으로 표시됩니다"를 말한다 — load() 가
   // 성공 경로에서 덧붙인다. 목록을 못 불러온 화면에서 회색 줄을 가리키면 거짓말이다.
   $("sub").textContent = "서치콘솔 사이트를 더 넣을 수 있습니다.";
-})();
-
-// ── 저장소 연결 (/create) ──────────────────────────────────────────────
-(async function () {
-  var sites = window.__SITES__ || [];
-  if (!sites.length) return;
-  var sec = $("repo-sec"), body = $("repo-body");
-  sec.hidden = false;
-
-  var repos = null;
-  try {
-    var r = await fetch("/api/repos");
-    if (r.status === 428) {
-      body.innerHTML = '<div class="empty info"><b>GitHub 계정이 아직 연결되지 않았습니다</b>' +
-        '<span>연결하면 기회 하나를 골라 새 브랜치와 PR까지 만듭니다.</span>' +
-        '<div class="acts"><a class="go sec" href="/auth/github">GitHub 연결</a></div></div>';
-      return;
-    }
-    repos = (await r.json()).repos || [];
-  } catch (e) {
-    body.innerHTML = '<div class="empty err"><b>GitHub 저장소 목록을 가져오지 못했습니다</b>' +
-      '<span>GitHub 연결이 만료된 것으로 보입니다.</span>' +
-      '<div class="acts"><a class="go sec" href="/auth/github">GitHub 다시 연결</a></div></div>';
-    return;
-  }
-  if (!repos.length) {
-    body.innerHTML = '<div class="empty err"><b>쓰기 권한이 있는 저장소가 없습니다</b>' +
-      '<span>허용할 저장소를 고르면 목록이 돌아옵니다.</span>' +
-      '<div class="acts"><a class="go sec" href="/auth/github">저장소 고르기</a></div></div>';
-    return;
-  }
-  body.innerHTML = sites.map(function (s) {
-    var opts = ['<option value="">연결 안 함</option>'].concat(repos.map(function (r) {
-      return '<option value="' + esc(r.full_name) + '" data-b="' + esc(r.default_branch) +
-             '"' + (s.repo === r.full_name ? " selected" : "") + '>' +
-             esc(r.full_name) + (r.private ? " (비공개)" : "") + "</option>";
-    })).join("");
-    return '<div class="prop"><span class="pname">' + esc(s.project) + '</span>' +
-           '<select data-site="' + esc(s.project) + '">' + opts + '</select>' +
-           '<span class="save"></span></div>';
-  }).join("");
-  body.addEventListener("change", async function (ev) {
-    var sel = ev.target;
-    if (!sel.dataset.site) return;
-    var opt = sel.selectedOptions[0];
-    var st = sel.closest(".prop").querySelector(".save");
-    st.className = "save"; st.textContent = "저장 중…";
-    try {
-      var res = await fetch("/api/repo", {method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({project: sel.dataset.site, repo: sel.value,
-                              branch: opt ? (opt.dataset.b || "main") : "main"})});
-      if (!res.ok) throw new Error(res.status);
-      st.className = "save ok";
-      st.textContent = sel.value ? "저장됨. 개선안이 이 저장소로 갑니다." : "연결 해제됨";
-    } catch (e) {
-      st.className = "save err"; st.textContent = "저장하지 못했습니다. 사이트를 다시 고르면 재시도합니다.";
-    }
-  });
 })();
 
 $("btn").addEventListener("click", async () => {

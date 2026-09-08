@@ -229,8 +229,8 @@
   @media(max-width:640px){#sm-cc li{flex-direction:column;align-items:flex-start;gap:8px}}
 
   /* 설정 — 고르면 곧바로 저장한다. 저장 버튼이 따로 없으니 결과는 옆에서 말해 준다. */
-  /* 칸 셋(주기·저장소·GA4)은 한 섹션 안의 형제다 — 섹션 제목(h2)과 같은 크기로
-     세우면 어느 것이 상위인지가 안 읽힌다. */
+  /* 칸 넷(주기·GA4·언어-지역·명령어 연결)은 한 섹션 안의 형제다 — 섹션
+     제목(h2)과 같은 크기로 세우면 어느 것이 상위인지가 안 읽힌다. */
   #sm-set .grp{padding-top:22px;margin-top:22px;border-top:1px solid var(--rule-soft)}
   /* 설정을 못 읽는 동안 — 빈 칸 셋 대신 상자 하나가 말한다. .cli 는 /api/settings
      와 무관하게 서므로 남는다. */
@@ -239,9 +239,8 @@
   #sm-set .grp h3{font:600 14.5px/1.35 var(--sans);color:var(--ink);margin:0}
   #sm-set .grp .sub{margin:5px 0 12px}
   #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  /* 버튼 라벨은 전부 한글이다("하루 한 번"·"저장소 고르기"·"연결 명령 만들기") —
-     등폭으로 찍으면 폴백 서체로 떨어져 자간이 벌어진다(CLAUDE.md). 아래 .repo input
-     은 브랜치 이름(식별자)이라 등폭 그대로 둔다. */
+  /* 버튼 라벨은 전부 한글이다("하루 한 번"·"속성 고르기"·"연결 명령 만들기") —
+     등폭으로 찍으면 폴백 서체로 떨어져 자간이 벌어진다(CLAUDE.md). */
   #sm-set .opts button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
     border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
   #sm-set .opts button:hover{color:var(--patina);border-color:var(--patina)}
@@ -253,22 +252,12 @@
     -webkit-mask:var(--sm-tick) center/12px 12px no-repeat;
             mask:var(--sm-tick) center/12px 12px no-repeat}
   :root{--sm-tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5 6.5 12 13 4.5'/%3E%3C/svg%3E")}
-  /* [GitHub 연결]은 링크(<a href="/auth/github">)지 버튼이 아니다 — OAuth 로
-     넘어가는 자리라 그렇다. 생김새만 옆의 보조 버튼과 맞춘다: 화면의 채운
-     버튼 하나는 다음 행동 띠가 갖는다. */
-  #sm-set .repo a.btn{display:inline-block;font:400 12.5px/1 var(--sans);
-    color:var(--slate);background:transparent;border:1px solid var(--rule);
-    border-radius:6px;padding:8px 13px;text-decoration:none}
-  #sm-set .repo a.btn:hover{color:var(--patina);border-color:var(--patina)}
-  #sm-set .repo a.btn:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
   /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
      자간이 벌어지고 획이 얇아진다(CLAUDE.md). 등폭은 숫자·명령·URL 에만. */
   #sm-set .msg{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-left:6px}
   #sm-set .repo select{font:400 12.5px/1 var(--sans);color:var(--ink);background:var(--card);
     border:1px solid var(--rule);border-radius:6px;padding:8px 10px;max-width:340px}
-  #sm-set .repo input{font:400 12.5px/1 var(--mono);color:var(--ink);background:var(--card);
-    border:1px solid var(--rule);border-radius:6px;padding:8px 10px;width:130px}
-  /* 상태 문장은 한글이라 --sans 다. 등폭은 그 안의 식별자(저장소·브랜치·속성 번호)에만. */
+  /* 상태 문장은 한글이라 --sans 다. 등폭은 그 안의 식별자(속성 번호)에만. */
   #sm-set .repo .now{font:500 13px/1.5 var(--sans);color:var(--patina)}
   #sm-set .repo .now code{font:500 12.5px/1.5 var(--mono)}
   #sm-set .repo .none{font:400 13px/1.5 var(--sans);color:var(--slate)}
@@ -303,7 +292,6 @@
   /* 기회 카드: 버튼 넷이 카드마다 반복돼 소음이 된다. 평소엔 물러나 있게. */
   .opp .acts button{opacity:.72;transition:opacity .12s}
   .opp:hover .acts button,.opp .acts button:focus-visible{opacity:1}
-  .opp [data-write]{color:var(--copper);border-color:var(--copper)}
 </style>
 <script>
 (function () {
@@ -584,42 +572,6 @@
   poll();
   setInterval(poll, 8000);    // 끝나면 버튼이 풀리고 화면이 스스로 채워진다
 
-  // 기회 카드마다 '글 쓰기' — /create run 의 자리다. 리포가 안 붙어 있으면 서버가
-  // 428 로 알려 주고, 그때 연결 링크를 보여 준다.
-  //
-  // **버튼 자신에 건다. document 위임으로 잡으면 안 된다** — 원본은 기회 카드의
-  // .acts 에서 event.stopPropagation() 을 한다(카드가 같이 펼쳐지지 않게). 위임
-  // 리스너에는 이 클릭이 영영 안 닿는다. 그래서 SM.host.oppBtn 이 만드는 버튼은
-  // 자기 onclick 을 인라인으로 직접 단다(아래 SM.host) — 나중에 걸지 않는다.
-  async function writeClick(b) {
-    var id = b.getAttribute("data-write");
-    b.disabled = true; b.textContent = "작성 중…";
-    try {
-      var r = await fetch("/api/create", {method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({project: proj(), opportunity_id: Number(id)})});
-      var d = await r.json().catch(noDetail);
-      if (r.ok && d.pr) {
-        banner("done", "초안을 PR 로 올렸습니다. 내용을 확인하고 머지하면 반영됩니다.");
-        say("초안을 올렸습니다", "ok");
-        b.outerHTML = '<a href="' + d.pr + '" target="_blank" rel="noopener">PR 열기</a>';
-        return;
-      }
-      if (r.status === 428) {            // SET_H 가 낡았다 — 설정을 다시 읽고 그 자리로
-        SET_DONE = ""; REPO_LIST = null; await setLoad();   // setLoad 가 SM.repaint 로 다시 그린다
-        SM.touched = true; SM.show("settings");
-        return;
-      }
-      banner("bad", "초안을 만들지 못했습니다. " + (d.detail || OFFLINE) +
-        " 잠시 뒤 다시 누르면 재시도합니다.");
-      say("초안을 만들지 못했습니다", "bad");
-    } catch (e) {
-      banner("bad", OFFLINE + " 잠시 뒤 다시 누르면 재시도합니다.");
-      say("초안을 만들지 못했습니다", "bad");
-    }
-    b.disabled = false; b.textContent = "콘텐츠 작성";
-  }
-
   document.title = "SEO 대시보드 — seo-miner";   // 원본 <title> 은 애드온보다 앞에 있다
 
   // ── 단계 용어 한 벌 ─────────────────────────────────────────
@@ -714,7 +666,7 @@
     if (what === "overview") { SM.touched = true; return SM.show("overview"); }
     var sec = document.getElementById("sm-set");
     if (!sec) return;
-    var box = sec.querySelector(what === "ga4" ? ".ga4" : ".repo");
+    var box = sec.querySelector("." + what);
     if (box) box.scrollIntoView({behavior: "smooth", block: "center"});
     if (what === "ga4") ga4Pick();       // 속성 목록을 바로 받아 온다
   }
@@ -833,28 +785,11 @@
       var o = document.getElementById("opps") || document.querySelector(".opp");
       if (o) o.scrollIntoView({behavior: "smooth", block: "start"});
     },
-    // 기회 카드의 '콘텐츠 작성' 버튼. 저장소가 없을 때 여기 서던 [저장소 연결
-    // 필요]는 **상태를 버튼 모양으로** 낸 것이었다 — 눌러도 초안이 안 나오는데
-    // 옆의 [작업 시작]과 같은 몸으로 서 있었다. 상태는 배지, 행동은 버튼으로
-    // 가른다: 무엇이 막혔는지는 .badge.warn 이, 푸는 길은 보조 버튼이 말한다.
+    // 기회 카드 접힌 줄의 실행 자리. 호스팅 화면은 이 PC 의 프로세스를 못 띄우므로
+    // 여기 설 것은 "이 PC 에서 열기" 안내다 — 그 안내는 Task C 가 채운다. 지금은
+    // 아무것도 안 그린다(빈 문자열이지, 함수를 지우면 원본이 undefined 를 붙인다).
     oppBtn(id) {
-      if (!SET_H || !SET_H.repo) {
-        var why = "이 사이트에 저장소가 연결되지 않았습니다. 연결하면 이 기회를 " +
-          "콘텐츠 초안으로 받습니다. 지금도 아래 [AI 에게 수정 요청]으로 프롬프트는 " +
-          "복사할 수 있습니다.";
-        return '<span class="badge warn" title="' + esc(why) + '" aria-label="' +
-          esc(why) + '">저장소 미연결</span>' +
-          '<button class="go sm ghost" onclick="SM.host.gotoRepo()">저장소 연결</button>';
-      }
-      return '<button data-write="' + id + '" onclick="SM.host.write(this)">' +
-        "콘텐츠 작성</button>";
-    },
-    write(btn) { writeClick(btn); },
-    // 저장소 칸으로 데려간다 — 못 하는 일을 서버까지 가서 확인할 이유가 없다.
-    gotoRepo() {
-      SM.touched = true; SM.show("settings");
-      var sec = document.getElementById("sm-set");
-      if (sec) sec.scrollIntoView({block: "start"});
+      return "";
     },
   };
 
@@ -902,8 +837,6 @@
     sec.addEventListener("click", function (ev) {
       var t = ev.target.closest ? ev.target.closest("[data-h]") : null;
       if (t) return setSave(Number(t.dataset.h));
-      if (ev.target.closest && ev.target.closest("[data-repo-pick]")) return repoPick();
-      if (ev.target.closest && ev.target.closest("[data-repo-save]")) return repoSave();
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
       if (ev.target.closest && ev.target.closest("[data-cli-new]")) return cliNew();
@@ -931,7 +864,6 @@
         (on ? ' class="on"' : "") + ">" + esc(p.label) + "</button>";
     }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
     langRender();
-    repoRender();
     ga4Render();
     setNext(true);
   }
@@ -969,10 +901,9 @@
     }
   }
 
-  // 안 끝난 첫 칸(저장소 다음 GA4). 다음 행동 띠가 이 판정으로 문장을 고른다.
+  // 안 끝난 첫 칸. 다음 행동 띠가 이 판정으로 문장을 고른다.
   function firstTodo() {
     if (!SET_H) return "";
-    if (SET_H.github_enabled && (!SET_H.github_connected || !SET_H.repo)) return "repo";
     if (!SET_H.ga4_property) return "ga4";
     return "";
   }
@@ -1001,7 +932,7 @@
       if (sh) sh.insertAdjacentElement("afterend", box); else sec.prepend(box);
     }
     box.innerHTML = errNote("설정을 못 읽었습니다",
-      OFFLINE + " 다시 시도하면 주기·저장소·GA4 상태를 함께 받아 옵니다.", "set");
+      OFFLINE + " 다시 시도하면 주기·GA4·언어-지역을 함께 받아 옵니다.", "set");
     setNext(false);
   }
 
@@ -1017,9 +948,6 @@
     fail: "<p>설정을 못 읽어 지금 상태를 알 수 없습니다. 다시 시도하면 이어서 " +
       "채워집니다.</p>" +
       '<div class="acts"><button class="go" data-sm-retry="set">다시 시도</button></div>',
-    repo: "<p><b>저장소</b>를 연결하면 개선 기회가 콘텐츠 초안으로 옵니다. " +
-      "연결 전에도 나머지 측정은 그대로 됩니다.</p>" +
-      '<div class="acts"><a class="go" href="/auth/github">GitHub 연결</a></div>',
     ga4: "<p><b>GA4</b>를 연결하면 클릭 다음에 일어난 일까지 보입니다. " +
       "연결 전에도 검색 실적은 그대로 쌓입니다.</p>" +
       '<div class="acts"><button class="go" data-sm-jump="ga4">GA4 연결</button></div>',
@@ -1043,79 +971,6 @@
     var cur = box.querySelector(".next");
     if (cur && cur.innerHTML === SET_NEXT[SET_STATE]) return;
     nextStep("settings", SET_NEXT[SET_STATE]);
-  }
-
-  // 저장소 칸. 세 상태뿐이다 — GitHub 계정이 없다 / 계정은 있고 저장소만 없다 /
-  // 붙어 있다. 셋을 한 문장으로 뭉치면 "무엇을 먼저 하라"를 말할 수 없다.
-  var REPO_LIST = null;
-  function repoRender(msg) {
-    var sec = document.getElementById("sm-set");
-    if (!sec || !SET_H) return;
-    var body = sec.querySelector(".repo .body");
-    if (!body) return;
-    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
-    if (!SET_H.github_enabled) {           // 이 배포 자체가 GitHub 연동을 안 갖고 있다
-      body.innerHTML = '<p class="none">이 서비스에서는 GitHub 연결을 쓰지 않습니다. ' +
-        "개선 기회는 그대로 보이니 글은 직접 옮기세요.</p>" + note;
-      return;
-    }
-    if (!SET_H.github_connected) {
-      body.innerHTML = '<p class="none">GitHub 계정이 아직 연결되지 않았습니다. ' +
-        '연결하면 개선 기회를 PR 로 바로 받습니다.</p>' +
-        '<a class="btn" href="/auth/github">GitHub 연결</a>' + note;
-      return;
-    }
-    if (REPO_LIST) {                       // [바꾸기] 를 눌러 목록을 받아 온 상태
-      body.innerHTML = '<div class="opts">' +
-        "<select>" + REPO_LIST.map(function (r) {
-          var n = r.full_name || r;
-          return '<option' + (n === SET_H.repo ? " selected" : "") + ">" + esc(n) + "</option>";
-        }).join("") + "</select>" +
-        '<input value="' + esc(SET_H.repo_branch || "main") + '" aria-label="브랜치">' +
-        '<button data-repo-save>저장</button></div>' + note;
-      return;
-    }
-    body.innerHTML = '<div class="opts">' +
-      (SET_H.repo ? '<span class="now"><code>' + esc(SET_H.repo) + "</code> · <code>" +
-                    esc(SET_H.repo_branch || "main") + "</code> 에 보냅니다</span>"
-                  : '<span class="none">아직 연결된 저장소가 없습니다</span>') +
-      "<button data-repo-pick>" +
-      (SET_H.repo ? "저장소 바꾸기" : "저장소 고르기") + "</button></div>" + note;
-  }
-
-  // 목록은 누를 때 받는다 — GitHub API 호출이라 화면을 열 때마다 부르지 않는다.
-  async function repoPick() {
-    repoRender("불러오는 중…");
-    try {
-      var r = await fetch("/api/repos");
-      var d = await r.json();
-      if (!r.ok) throw new Error(d.detail || "");
-      REPO_LIST = d.repos || [];
-      if (!REPO_LIST.length) return repoRender("이 계정에 쓸 수 있는 저장소가 없습니다. GitHub 에서 만든 뒤 다시 누르면 목록이 옵니다.");
-    } catch (e) {
-      return repoRender("저장소 목록을 못 읽었습니다. " + reason(e) + " 다시 누르면 재시도합니다.");
-    }
-    repoRender("");
-  }
-
-  async function repoSave() {
-    var sec = document.getElementById("sm-set");
-    var repo = sec.querySelector(".repo select").value;
-    var branch = sec.querySelector(".repo input").value.trim() || "main";
-    try {
-      var r = await fetch("/api/repo", {method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({project: proj(), repo: repo, branch: branch})});
-      var d = await r.json();
-      if (!r.ok) throw new Error(d.detail || "");
-      SET_H.repo = repo; SET_H.repo_branch = branch;
-      REPO_LIST = null;                    // 고른 것을 보여 주는 상태로 돌아간다
-      repoRender("저장했습니다.");
-      say("저장했습니다", "ok");
-      repaint();                           // [콘텐츠 작성] 이 이제 쓸 수 있게 된다
-    } catch (e) {
-      repoRender("저장하지 못했습니다. " + reason(e) + " 다시 누르면 재시도합니다.");
-    }
   }
 
   // GA4 칸. GSC 와 달리 속성 ID(숫자)는 도메인에서 유추가 안 돼 목록에서 사람이
@@ -1257,8 +1112,8 @@
       return setFail();
     }
     setRender("");
-    // 처음 도착한 SET_H(저장소 연결 여부)가 이미 그려진 기회 카드의 [콘텐츠 작성]
-    // 버튼에 반영되게 다시 그린다 — 그 버튼은 렌더 시점에만 SM.host.oppBtn 을 본다.
+    // 처음 도착한 SET_H 가 이미 그려진 기회 카드에 반영되게 다시 그린다 — 그 자리는
+    // 렌더 시점에만 SM.host.oppBtn 을 본다.
     repaint();
   }
 
@@ -1563,7 +1418,7 @@
   // 안 난다 — 그래서 백링크·설정·키워드가 각자 첫 로드에 비어 있었다(같은 함정에
   // 세 번 빠졌다). 계기를 한 자리로 모은다: 여기 안 걸린 것은 안 채워진다.
   document.addEventListener("sm:site", function () {
-    SET_DONE = ""; REPO_LIST = null; GA4_LIST = null; GA4_SUGGESTED = []; GA4_AUTH_ERR = "";
+    SET_DONE = ""; GA4_LIST = null; GA4_SUGGESTED = []; GA4_AUTH_ERR = "";
     SET_H = null; PERF = null;
     // 실행 상태도 여기서 다시 묻는다. 첫 폴링은 사이트가 정해지기 전에 나가므로
     // (hash 로 고르면 #proj 의 change 가 안 난다) 지난 런의 실패 알림이 다음
@@ -1937,7 +1792,7 @@
   // sm:views 를 다시 알려 실행 버튼으로 다시 그리게 한다.
   step("화면 배치", function () { SM.sync(); });
 
-  // 안내 단계 칩(SM.host.stepChip)과 기회 카드의 [콘텐츠 작성](SM.host.oppBtn)은
+  // 안내 단계 칩(SM.host.stepChip)과 기회 카드의 실행 자리(SM.host.oppBtn)는
   // 이제 원본 렌더 함수(renderGuide·oppActs)가 그릴 때 직접 부른다 — 다 그려진
   // 뒤에 이 파일이 DOM 을 되짚어 고치지 않는다. 그래서 여기 있던 wire()·wireSteps()·
   // MutationObserver 는 전부 없앴다: 값이 바뀌면(설정 저장 등) repaint() 가 같은

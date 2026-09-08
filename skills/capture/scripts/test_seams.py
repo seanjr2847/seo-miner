@@ -568,11 +568,15 @@ def test_seam_14_locale_list_single_source():
         "/api/settings 가 언어-지역 목록을 안 준다 — dash.html 의 선택지가 빈다"
     assert "SET_H.locales" in ctx["dash"] and "[data-lang]" in ctx["dash"], \
         "dash.html 이 /api/settings 의 locales 로 선택지를 안 그린다"
-    # 저장소 칸은 ".repo select" 로 **첫 번째** .repo 를 집는다 — 언어 칸이 그 앞에
-    # 서면 저장소 저장이 언어 select 를 읽는다(실제로 그렇게 됐다).
+    # 칸은 자기 이름으로 집는다 — ".ga4 select" / "[data-lang]". 예전에 저장소 칸이
+    # ".repo select" 로 **첫 번째** .repo 를 집어서, 언어 칸이 그 앞에 서면 저장소
+    # 저장이 언어 select 를 읽었다(실제로 그렇게 됐다). 저장소 칸은 없어졌고, 그
+    # 함정을 다시 파지 않도록 자리로 고르는 셀렉터가 없는 것을 못 박는다.
     sm = (SCRIPTS.parent / "templates" / "sections" / "sm-set.html").read_text("utf-8")
-    assert sm.index('class="repo lang') > sm.index('class="repo ga4'), \
-        "sm-set.html 의 언어 칸이 저장소·GA4 칸보다 앞에 있다 — repoSave 가 이 select 를 읽는다"
+    assert 'class="repo lang' in sm and 'class="repo ga4' in sm, \
+        "sm-set.html 의 언어·GA4 칸 이름이 바뀌었다 — dash.html 이 그 이름으로 집는다"
+    assert '".repo select"' not in ctx["dash"] and "'.repo select'" not in ctx["dash"], \
+        "dash.html 이 칸을 자리(.repo 의 첫째)로 고른다 — 칸 순서가 바뀌면 남의 값을 읽는다"
 
 
 def test_seam_15_dataforseo_calls_go_through_pacer():

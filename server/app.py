@@ -44,7 +44,6 @@ import db
 import doctor    # setup 스킬의 진단 — dashboard 가 이미 skills/setup/scripts 를 sys.path 에 얹는다
 import exports
 import gen_prompts
-import gh
 import identity
 import pages
 import remote      # graft — 로컬 플러그인이 올린 측정치를 테넌트 brain 에 더한다
@@ -54,7 +53,6 @@ import scheduler
 import settings
 import stage
 import store
-import writer
 
 
 def resume_dead_runs(dispatch=None) -> list[str]:
@@ -111,8 +109,8 @@ def _not_configured(request: Request, e: identity.NotConfigured):
     운영자도 뭐가 빠졌는지 모른다.
 
     상태코드는 빠진 설정이 required 냐로 가른다. 구글 로그인(GOOGLE_CLIENT_ID 등)은
-    required — 없으면 이 배포 자체가 고장난 것이니 500. GitHub 연동은 optional —
-    없어도 나머지는 다 돌아가는, 그냥 안 켠 기능이니 501(Not Implemented)이다."""
+    required — 없으면 이 배포 자체가 고장난 것이니 500. optional 인 설정이 빠진
+    것은 안 켠 기능이니 501(Not Implemented)이다 — 배포 고장과 구분이 돼야 한다."""
     required = settings.SETTINGS[e.name].required
     return JSONResponse({"detail": str(e)}, status_code=500 if required else 501)
 
@@ -253,7 +251,7 @@ def home(request: Request):
     doc = pages.fill(pages.page("app.html"), USER=user_bar, SITES=block)
     doc = pages.data(doc,
                      __TAKEN__=[r["gsc_property"] for r in rows],
-                     __SITES__=[{"project": r["project"], "repo": r["repo"]} for r in rows],
+                     __SITES__=[{"project": r["project"]} for r in rows],
                      __CARRY__=carry,
                      # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
                      # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
@@ -296,7 +294,7 @@ def auth_callback(request: Request, code: str, state: str):
 
 @app.post("/auth/logout")
 def logout(request: Request):
-    """세션만 끊는다. 저장된 구글·GitHub 토큰은 남겨 둔다 — 다시 로그인하면
+    """세션만 끊는다. 저장된 구글 토큰은 남겨 둔다 — 다시 로그인하면
     그대로 이어 쓴다(계정을 바꿔 가며 쓰라는 게 이 버튼의 목적이다).
 
     GET 이 아니라 POST 다 — 링크였다면 브라우저 prefetch 나 남이 심은 이미지 태그로
@@ -427,120 +425,6 @@ async def api_sites(request: Request, kick=Depends(_kick_dep)):
     if added:
         kick()
     return {"ok": bool(added), "added": added, "failed": failed}
-
-
-# --- GitHub (/create) ---------------------------------------------------------
-
-@app.get("/auth/github")
-def gh_login(request: Request):
-    _require_uid(request)
-    return _begin(request, "github")
-
-
-@app.get("/auth/github/callback")
-def gh_callback(request: Request, code: str, state: str):
-    uid = _require_uid(request)
-    acct = identity.finish("github", code, _carry(request, "github", state))
-    with store.session(uid) as conn:
-        identity.remember(conn, "github", acct, uid=uid)
-    return RedirectResponse("/", status_code=302)
-
-
-def _gh_token(conn, uid: int) -> str:
-    got = store.github(conn, uid)
-    if not got:
-        raise HTTPException(status_code=428, detail="GitHub 계정이 연결돼 있지 않습니다. 사이트 화면에서 먼저 연결하세요.")
-    return got[0]
-
-
-@app.get("/api/repos")
-def api_repos(request: Request):
-    uid = _require_uid(request)
-    try:
-        with store.session(uid) as conn:
-            return {"repos": gh.repos(_gh_token(conn, uid))}
-    except gh.GitHubError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-
-@app.post("/api/repo")
-async def api_repo(request: Request):
-    """사이트에 리포를 붙인다. 관례 발견은 첫 글쓰기 때 한 번 한다."""
-    uid = _require_uid(request)
-    b = await request.json()
-    project, repo, branch = str(b.get("project") or ""), str(b.get("repo") or ""),         str(b.get("branch") or "main")
-    with store.session(uid, project) as conn:
-        store.set_repo(conn, uid, project, repo, branch)
-    return {"ok": True}
-
-
-def _create_content(t: store.Tenant, uid: int, project: str, opp_id: int, row) -> dict:
-    """/api/create 워크플로: 기회 조회 → 리포 프로필 → 글 작성 → PR → 기록.
-
-    row 는 저장소가 연결된 store.site() 결과. t 는 isolate=True 세션의 Tenant —
-    t.brain() 은 Brain(tenant) 을, t.conn 은 서버 DB 를 함께 쓴다.
-    """
-    token = _gh_token(t.conn, uid)
-    repo, branch = row["repo"], row["repo_branch"] or "main"
-
-    c = t.brain()
-    try:
-        p = db.get_project(c, project)
-        opp = db.get_opportunity(c, opp_id, project_id=p["id"])
-        if not opp:
-            raise HTTPException(status_code=404, detail="고른 기회를 찾을 수 없습니다. 새로고침한 뒤 다시 고르세요.")
-        opp = dict(opp)
-        perf = db.query_performance(c, p["id"], opp["target"])
-    finally:
-        c.close()
-    evidence = ({"클릭": perf["clicks"], "노출": perf["impressions"],
-                 "평균 순위": perf["position"]} if perf else {})
-
-    profile = json.loads(row["repo_profile"]) if row["repo_profile"] else None
-    if not profile:                       # 철칙 1 — 프로필 없이 쓰지 않는다
-        profile = writer.discover_profile(token, repo, branch)
-        store.set_profile(t.conn, uid, project, json.dumps(profile, ensure_ascii=False))
-
-    doc = writer.write_for(opp, profile, dict(p), evidence)
-    br = f"capture/{opp['kind']}-{writer.slug(opp['target'])}"
-    body = (f"{doc.get('summary', '')}\n\n"
-            f"기회 #{opp_id} · {opp['kind']} · 대상: {opp['target']}\n\n"
-            f"— seo-miner")
-    pr = gh.open_pr(
-        token, repo, branch, br, doc["title"], body,
-        [{"path": doc["path"], "content": doc["content"]}],
-        # 커밋 메시지의 [opp #id] 는 create 스킬의 규약이다 — 나중에
-        # createdb.py sync 가 git log 에서 이걸 읽어 Brain 과 대조한다.
-        f"content: {doc['title']} [opp #{opp_id}]")
-
-    c = t.brain()
-    try:
-        db.record_creation(c, p["id"], doc["path"], opportunity_id=opp_id,
-                           kind=opp["kind"], branch=br, note=pr["url"])
-        # 완료가 아니라 진행 중이다 — 글 하나로 묶음 기회(pSEO·콘텐츠 갭)가 닫히면 안 되고,
-        # 완료는 관찰(순위·클릭이 달라졌나)까지 보고 사람이 누른다(spec keyword-triage §3).
-        db.set_opportunity_status(c, opp_id, "acked")
-    finally:
-        c.close()
-    return {"pr": pr["url"], "path": doc["path"]}
-
-
-@app.post("/api/create")
-async def api_create(request: Request):
-    """기회 하나 → 리포에 PR. /create run 의 웹 판이다."""
-    uid = _require_uid(request)
-    b = await request.json()
-    project = str(b.get("project") or "")
-    opp_id = int(b.get("opportunity_id") or 0)
-    try:
-        with store.session(uid, project, isolate=True) as t:
-            row = store.site(t.conn, uid, project)
-            if not row or not row["repo"]:
-                raise HTTPException(status_code=428, detail="이 사이트에 저장소가 연결돼 있지 않습니다. 사이트 화면에서 먼저 고르세요.")
-            result = _create_content(t, uid, project, opp_id, row)
-        return {"ok": True, **result}
-    except (gh.GitHubError, writer.WriterError) as e:
-        raise HTTPException(status_code=502, detail=str(e))
 
 
 # 단계 목록의 정본은 run_all 의 표 하나다. 여기에 사본을 두면 화면에는 있는
@@ -1003,15 +887,13 @@ RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72
 
 @app.get("/api/settings")
 def api_settings(project: str, request: Request):
-    """사이트별 설정 — 수집 주기와 연결된 저장소.
+    """사이트별 설정 — 수집 주기·언어-지역·GA4.
 
-    저장소를 여기 같이 싣는 이유: 대시보드가 [콘텐츠 작성]을 심을지 말지 판단해야
-    한다. 예전에는 저장소가 없어도 버튼이 그대로 떴고, **눌러야** 428 로 "저장소를
-    먼저 연결하세요"를 알았다. 못 쓰는 버튼을 눌러 보게 하지 않는다.
+    화면이 그리는 칸이 곧 이 응답의 키다. 화면에 없는 값을 여기 싣지 않는다 —
+    저장소(GitHub) 키가 그렇게 남아 화면이 없는 칸을 그리려 했다.
     """
     uid = _require_uid(request)
     with store.session(uid, project, isolate=True) as tn:
-        row = store.site(tn.conn, uid, project)
         try:
             c = tn.brain()
             try:
@@ -1024,14 +906,6 @@ def api_settings(project: str, request: Request):
         # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
         return {"run_every_hours": store.every_hours(tn.conn, uid, project),
                 "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
-                "repo": (row["repo"] if row else None) or "",
-                "repo_branch": (row["repo_branch"] if row else None) or "main",
-                # 계정 연결과 사이트-저장소 연결은 다른 단계다. 둘을 한 값으로 뭉치면
-                # 화면이 "무엇을 먼저 하라"를 말할 수 없다.
-                "github_connected": bool(store.github(tn.conn, uid)),
-                # "이 배포가 GitHub 연동을 지원하나" — 키가 없으면 화면은 버튼 대신
-                # 안내만 낸다. 존재 여부만 준다, 값은 절대 안 내보낸다.
-                "github_enabled": bool(settings.get("GITHUB_CLIENT_ID")),
                 "ga4_property": ga4,
                 # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
                 "locale": locale,
@@ -1078,7 +952,7 @@ async def api_settings_set(request: Request):
 @app.get("/api/ga4/properties")
 def api_ga4_properties(project: str, request: Request):
     """GA4 속성 후보 — [속성 고르기]를 누를 때만 부른다(관리자 API 호출이라 설정을
-    열 때마다 부르지 않는다, /api/repos 와 같은 자리). 도메인·이름이 겹치는 것을
+    열 때마다 부르지 않는다). 도메인·이름이 겹치는 것을
     제안으로 얹지만 확정은 사람이 한다 — 엉뚱한 속성이 붙으면 그 뒤 모든 숫자가
     조용히 거짓이 된다(collect_ga4.suggest_property 참고).
 
@@ -1291,15 +1165,15 @@ def demo() -> None:
         # assemble() 이 str 이 아니게 바뀌면 그 자리에서 500 이 난다.
         assert isinstance(dashboard.assemble("hosted"), str), "assemble() 이 str 이 아니다"
 
-        # 대시보드·GitHub 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain·리포가 열리면 안 된다.
+        # 대시보드 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain 이 열리면 안 된다.
         for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
-                     "/api/perf?project=x", "/api/repos", "/auth/github",
+                     "/api/perf?project=x",
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
                      "/api/report?project=x",
                      "/api/keywords?project=x", "/api/run/status", "/api/brain",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
-        for path in ("/api/repo", "/api/create", "/api/settings", "/api/ai/prompts",
+        for path in ("/api/settings", "/api/ai/prompts",
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
@@ -1319,11 +1193,7 @@ def demo() -> None:
         # --- 로그인 뒤 화면 --------------------------------------------------
         login_as(c, u2, "sched@example.com")
 
-        # NotConfigured 상태코드 — required(구글) 는 배포가 고장난 것=500,
-        # optional(GitHub) 은 그냥 안 켠 기능=501. GITHUB_CLIENT_ID 는 여기까지
-        # 한 번도 안 세웠다.
-        r = c.get("/auth/github", follow_redirects=False)
-        assert r.status_code == 501 and "GITHUB_CLIENT_ID" in r.json()["detail"],             "안 켠 기능인데 500 이다 — 배포 고장과 구분이 안 된다"
+        # NotConfigured 상태코드 — required(구글) 는 배포가 고장난 것=500.
         saved_gid = os.environ.pop("GOOGLE_CLIENT_ID")
         try:
             r = c.get("/auth/login", follow_redirects=False)
@@ -1341,6 +1211,13 @@ def demo() -> None:
         assert c.get("/api/projects").json() == ["p1"], c.get("/api/projects").text
         assert c.get("/d").status_code == 200
 
+        # GitHub 연동은 떼어 냈다 — 실행은 이 PC 의 개발 도구가 맡는다. 라우트가
+        # 남아 있으면(되살아나면) 화면에 없는 길이 서버에만 열려 있는 것이다.
+        for gone in ("/api/repos", "/auth/github", "/auth/github/callback"):
+            assert c.get(gone).status_code == 404, f"{gone} 가 아직 살아 있다"
+        for gone in ("/api/repo", "/api/create"):
+            assert c.post(gone, json={}).status_code == 404, f"{gone} 가 아직 살아 있다"
+
         # 설정 — 값이 없으면 전역 기본값이 실효값이고, 프리셋 밖 값은 서버가 막는다.
         r = c.get("/api/settings?project=p1")
         assert r.status_code == 200 and r.json()["run_every_hours"] == 168.0, r.text
@@ -1348,15 +1225,9 @@ def demo() -> None:
         # p1 은 아직 Brain 에 동기화되지 않았다(store.add_site 로만 등록) — GA4 는
         # 없는 것으로 답해야지, 설정 화면 전체가 깨지면 안 된다.
         assert r.json()["ga4_property"] == "", "Brain 없는 사이트에서 설정이 깨진다"
-        # GITHUB_CLIENT_ID 가 없는 배포다 — "이 배포가 지원하나"는 false, 값은 안 실린다.
-        assert r.json()["github_enabled"] is False, "키 없이도 지원한다고 답한다"
-        assert "GITHUB_CLIENT_ID" not in json.dumps(r.json()), "설정 값 자체가 새어 나간다"
-        os.environ["GITHUB_CLIENT_ID"] = "gh-dummy"
-        try:
-            assert c.get("/api/settings?project=p1").json()["github_enabled"] is True,                 "운영자가 키를 넣어도 안 켜진다"
-        finally:
-            os.environ.pop("GITHUB_CLIENT_ID", None)
-        assert c.get("/api/settings?project=p1").json()["github_enabled"] is False
+        # GitHub 연동은 떼어 냈다 — 설정 응답에 그 흔적이 남으면 화면이 없는 칸을 그린다.
+        for gone in ("repo", "repo_branch", "github_connected", "github_enabled"):
+            assert gone not in r.json(), f"/api/settings 에 {gone} 가 아직 실린다"
         assert c.get("/api/settings?project=없는사이트").status_code == 404
         for bad in (5, "매일", None):
             assert c.post("/api/settings", json={"project": "p1", "run_every_hours": bad}
