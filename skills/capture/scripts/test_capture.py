@@ -934,6 +934,33 @@ def test_dynamic_capture_home_resolution():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_verdicts_write_read_and_irrelevant_deactivates_keyword():
+    """검색어 심사(verdicts) — 변형이 같은 키로 접히고, 무관만 키워드 추적을 끈다."""
+    conn = db.connect()
+    pid = _project(conn, "vd")["id"]
+    conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)",
+                 (pid, "디아더피부과 가격"))
+    conn.commit()
+    k = scoring.norm("디아 더 피부과 가격")           # 변형도 같은 키
+    assert db.set_verdicts(conn, pid, [k], "hold") == 1
+    assert db.verdict_map(conn, pid) == {k: "hold"}
+    active = lambda: conn.execute("SELECT is_active FROM keywords WHERE project_id=?", (pid,)).fetchone()[0]  # noqa: E731
+    assert active() == 1, "보류는 측정을 계속한다"
+    db.set_verdicts(conn, pid, [k], "irrelevant")
+    assert active() == 0, "무관은 키워드 추적을 끈다"
+    assert db.set_verdicts(conn, pid, [k], None) == 1
+    assert db.verdict_map(conn, pid) == {}
+    try:
+        db.set_verdicts(conn, pid, [k], "maybe")
+        assert False, "잘못된 판정을 받았다"
+    except ValueError:
+        pass
+    # SQL 안에서도 같은 정규화를 쓴다 — 조회가 JS/파이썬 사본 없이 조인한다
+    assert conn.execute("SELECT norm('디아 더 피부과 가격')").fetchone()[0] == k
+    assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

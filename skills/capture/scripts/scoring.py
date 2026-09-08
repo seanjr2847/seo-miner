@@ -120,6 +120,12 @@ ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
              "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
              "crawl_issue", "backlink_broken", "backlink_prospect")
+# 심사(검색어 판정)를 거치는 종류 — 대상이 검색어·질문문인 것. 나머지(coverage 의
+# cluster:, index_blocked·crawl_issue 의 URL, backlink_* 의 도메인)는 판정 없이
+# 기회 목록에 바로 선다. 조회(db)·화면·검사가 이 한 벌을 가리킨다.
+KEYWORD_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
+                 "pseo_pattern", "device_gap", "ai_citation_gap", "aio_exposure",
+                 "content_gap")
 
 
 

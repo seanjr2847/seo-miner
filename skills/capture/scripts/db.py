@@ -430,6 +430,13 @@ CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   merged INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS verdicts (        -- 검색어 심사 (docs/superpowers/specs/2026-09-08-keyword-triage-design.md)
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  key        TEXT NOT NULL,                   -- scoring.norm(대상). 띄어쓰기·대소문자 변형은 여기서 같은 값이 된다
+  verdict    TEXT NOT NULL,                   -- irrelevant | hold | work  (정본은 db.VERDICTS)
+  decided_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(project_id, key)
+);
 """
 
 
@@ -524,6 +531,7 @@ def connect(home: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(dbp)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    _register_norm(conn)
     # ponytail: 스키마가 전부 IF NOT EXISTS라 매 연결마다 보장해도 공짜 —
     # 덕분에 사용자가 'db.py init'을 먼저 칠 일이 없다.
     conn.executescript(SCHEMA)
@@ -541,7 +549,16 @@ def connect_ro() -> sqlite3.Connection:
     connect().close()                      # 없으면 만들고 스키마를 맞춘 뒤 (mode=ro는 생성을 못 한다)
     conn = sqlite3.connect(db_path().resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    _register_norm(conn)
     return conn
+
+
+def _register_norm(conn: sqlite3.Connection) -> None:
+    """SQL 안에서 norm(text) 를 쓸 수 있게 한다 — 심사(verdicts.key)와 기회·키워드를
+    같은 정규화로 조인하려고. 정본은 scoring.norm 하나다(여기에 사본을 두지 않는다).
+    scoring 은 db 를 함수 안에서만 부르므로 늦게 import 해도 순환이 없다."""
+    import scoring
+    conn.create_function("norm", 1, scoring.norm, deterministic=True)
 
 
 def init_db() -> None:
@@ -660,6 +677,9 @@ def run(conn: sqlite3.Connection, project_id: int, kind: str):
 # 같은 수정이 한 호출부에만 들어가 locale 누락 같은 버그가 다른 경로에 남았다.
 
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
+# 검색어 심사의 판정 — 무관(자동완성 쓰레기) · 보류(우리 것이지만 지금 안 함) · 작업.
+# 화면(triage.html 의 TR_VERDICT)과 test_seams 17 이 이 한 벌을 대조한다.
+VERDICTS = ("irrelevant", "hold", "work")
 
 
 def write_gsc_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
@@ -1000,6 +1020,40 @@ def set_opportunity_status(conn: sqlite3.Connection, opp_id: int, status: str,
             (status, int(opp_id)))
     conn.commit()
     return cur.rowcount
+
+
+def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
+                 verdict: str | None) -> int:
+    """검색어 심사 저장. keys 는 이미 scoring.norm 을 거친 것(서버가 만든 key 를 화면이
+    그대로 돌려보낸다). None 이면 미판정으로 되돌린다(행 삭제).
+    irrelevant 는 같은 키의 키워드 추적(is_active)을 끈다 — hold 는 우리 검색어라
+    측정을 계속한다. 갱신한 행 수를 돌려준다."""
+    if verdict is not None and verdict not in VERDICTS:
+        raise ValueError(f"verdict must be one of {VERDICTS} or None, got {verdict!r}")
+    keys = [str(k) for k in keys if str(k)]
+    n = 0
+    for k in keys:
+        if verdict is None:
+            n += conn.execute("DELETE FROM verdicts WHERE project_id=? AND key=?",
+                              (int(project_id), k)).rowcount
+            continue
+        conn.execute(
+            """INSERT INTO verdicts(project_id, key, verdict) VALUES(?,?,?)
+               ON CONFLICT(project_id, key) DO UPDATE SET
+                 verdict=excluded.verdict, decided_at=CURRENT_TIMESTAMP""",
+            (int(project_id), k, verdict))
+        n += 1
+        if verdict == "irrelevant":
+            conn.execute("UPDATE keywords SET is_active=0 WHERE project_id=? AND norm(keyword)=?",
+                         (int(project_id), k))
+    conn.commit()
+    return n
+
+
+def verdict_map(conn: sqlite3.Connection, project_id: int) -> dict[str, str]:
+    """key → verdict. 미판정 키는 없다."""
+    return {r[0]: r[1] for r in conn.execute(
+        "SELECT key, verdict FROM verdicts WHERE project_id=?", (int(project_id),))}
 
 
 def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
