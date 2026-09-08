@@ -222,6 +222,9 @@ def test_tails_ask_for_a_self_contained_html_report():
         assert "%TEMP%" in x and f"seo-{name}-" in x and ".html" in x,             f"{name}: 꼬리가 파일을 어디에 무슨 이름으로 쓰는지 안 말한다"
         assert "절대경로" in x, f"{name}: 파일을 쓰고 경로를 안 알려 주면 사용자가 못 연다"
         assert "cdn.tailwindcss.com" in x, f"{name}: Tailwind CDN 을 안 짚는다"
+        # 자간·등폭을 한글에 걸면 "아 직 안 딴 기 회"처럼 낱자가 흩어져 스캔이 안 된다.
+        # 이 리포가 화면·랜딩·사이트 목록에서 세 번 저지른 실수라 꼴마다 못 박는다.
+        assert "letter-spacing" in x and "등폭" in x,             f"{name}: 자간·등폭을 라틴에만 걸라는 줄이 없다"
         assert ("mermaid" in x.lower()) == bool(brief.SHAPES[name]["graph"]),             f"{name}: Mermaid 가 graph 유무와 어긋난다"
     assert brief.SHAPES["consolidate"]["graph"] and brief.SHAPES["technical"]["graph"]
     assert not brief.SHAPES["fix_page"]["graph"] and not brief.SHAPES["outreach"]["graph"]
