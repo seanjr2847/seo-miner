@@ -1115,6 +1115,7 @@ function applyWording(root) {
    16px · 스트로크 1.5 · 색은 currentColor — 활성 줄에서 글자와 같이 선명해진다.
    외부 아이콘 묶음은 안 쓴다(오프라인·사내망에서 화면이 반쪽이 된다). */
 const NAV_ICON = {
+  triage: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h8M2.5 8h5.5M2.5 11.5h3"/><path d="M9.5 10.8l1.7 1.7L14.2 9"/></svg>`,
   overview: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`,
   analysis: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14h12"/><path d="M4.5 14V8.5"/><path d="M8 14V3"/><path d="M11.5 14V6"/></svg>`,
   keywords: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/></svg>`,
@@ -2992,6 +2993,7 @@ if (window.__SNAPSHOT__) {
   for (const id of ["refresh", "gscdate", "datelab"]) if ($(id)) $(id).hidden = true;
   SM.drop("settings");                   // 남한테 보낼 수도 있는 파일이다 — 입력칸을 남기지 않는다
   SM.drop("guide");
+  SM.drop("triage");                     // 판정은 서버가 저장한다 — 종이에서는 누를 수 없다
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
   if (s.actions.length) {
     $("acts").hidden = false;

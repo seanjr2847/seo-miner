@@ -100,6 +100,7 @@ GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — R
 #   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
+TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -122,11 +123,16 @@ MUSTS = [
     (r'<svg class="ailogo', "AI 인용 화면이 엔진 로고를 안 그렸다"),
     (r'<tr class="aimx"[^>]*data-e="chatgpt"[^>]*data-c="브랜드"[^>]*onclick="AI_drill',
      "엔진×카테고리 줄이 질문 목록으로 안 내려간다"),
+    # 심사 — 변형 둘이 한 줄(+1)로 묶여 그려지고, 상단 카운트가 미판정 1을 센다.
+    (r'<tr class="trrow[^"]*"[^>]*data-key="[^"]+"[^>]*>(?:(?!</tr>).)*' + re.escape(TRIAGE_KW)
+     + r'(?:(?!</tr>).)*\(\+1\)',
+     "심사 화면이 검색어를 한 줄로 묶어 안 그렸다(변형 +1)"),
+    (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>1</b>', "심사 화면 상단 카운트가 안 나왔다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
 # 화면 목록은 여기 옮겨 적지 않는다 — view-def 에서 읽되 박제본이 빼는 둘만 뺀다.
-REPORT_DROPPED = ("settings", "guide")
+REPORT_DROPPED = ("settings", "guide", "triage")   # 심사는 서버가 있어야 저장된다
 
 
 def view_defs_ids() -> list[str]:
@@ -208,6 +214,10 @@ def _axes(conn, pid: int) -> None:
     # 기회 목록은 심사(작업 판정)를 통과한 검색어만 낸다 — 둘 다 작업으로 둔다
     import db, scoring
     db.set_verdicts(conn, pid, [scoring.norm(f"{SITES[1]} 검색어"), scoring.norm(f"{SITES[1]} 두 번째")], "work")
+    # 심사에 남는 미판정 검색어 — 띄어쓰기 변형 둘이 한 줄이어야 한다
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,status) VALUES(?,?,?,?,'new')",
+        [(pid, "striking_distance", TRIAGE_KW, 77), (pid, "aio_exposure", TRIAGE_KW.replace("Z", " Z"), 40)])
     conn.execute("INSERT INTO backlink_summary(project_id,checked_date,rank,backlinks,"
                  "referring_domains,broken_backlinks,dofollow,nofollow)"
                  " VALUES(?,?,412,?,1840,0,1512,328)", (pid, d, BL_TOTAL))   # 끊긴 링크 0 — 아래 목록(is_broken=0)과 같은 말

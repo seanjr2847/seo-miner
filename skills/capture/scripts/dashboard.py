@@ -42,7 +42,9 @@ import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 TPL = Path(__file__).parent.parent / "templates"
 # 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
 # — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
-VIEW_ORDER = ["overview", "analysis", "keywords", "rank", "ai", "site",
+# [심사]가 맨 앞이다 — 측정이 물어온 검색어를 가리는 일이 기회를 보는 일보다 앞선다
+# (docs/superpowers/specs/2026-09-08-keyword-triage-design.md).
+VIEW_ORDER = ["triage", "overview", "analysis", "keywords", "rank", "ai", "site",
               "backlinks", "competitors", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
