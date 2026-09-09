@@ -23,6 +23,7 @@ Env:
 self-check:  python serp_adapter.py
 """
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -65,14 +66,25 @@ FATAL_FIX = {
 # 한도는 키를 봐도 안 낫는다 — 잔액 확인으로 보내면 엉뚱한 데를 뒤지게 된다.
 RATE_LIMIT_FIX = (f"계정 전체가 분당 {{rpm}}회입니다 — 잠시 뒤 다시 돌리거나 "
                   "SEOMINER_DFS_RPM 로 간격을 조절하세요")
+# 상태 코드가 402 여도 본문이 한도라고 말하면 한도다 — fatal() 이 이걸 먼저 본다.
+_RATE_LIMIT_SAYS = re.compile(r"rates?\s*limit|too\s*many\s*requests", re.I)
 
 
 def fatal(who: str, status: int, detail: str = "") -> Fatal:
-    """`DataForSEO 잔액 없음(402) — https://... 에서 충전` 꼴의 사람 말."""
+    """`DataForSEO 잔액 없음(402) — https://... 에서 충전` 꼴의 사람 말.
+
+    상태 코드보다 **응답이 한 말**을 믿는다: DataForSEO 는 분당 한도를 402 로도
+    돌려준다. 실제로 남은 기록이
+    `잔액 없음(402) — 잔액·키 확인 [The rates limit per minute has been exceeded: 12 >= 12.]`
+    였다 — 원인은 한도인데 사용자를 결제 화면으로 보냈다. 괄호 안 코드는 그대로 둔다
+    (사실을 숨기지 않는다). 바뀌는 것은 이름과 "지금 할 일" 한 줄이다.
+    """
     tail = f" [{detail}]" if detail else ""
-    fix = (RATE_LIMIT_FIX.format(rpm=_rpm() or DFS_RPM) if status == RATE_LIMIT
+    rate = status == RATE_LIMIT or bool(_RATE_LIMIT_SAYS.search(detail or ""))
+    fix = (RATE_LIMIT_FIX.format(rpm=_rpm() or DFS_RPM) if rate
            else FATAL_FIX.get(who, "키를 확인하세요"))
-    return Fatal(f"{who} {_STATUS_NAME.get(status, '호출 실패')}({status}) — {fix}{tail}")
+    name = _STATUS_NAME.get(RATE_LIMIT if rate else status, "호출 실패")
+    return Fatal(f"{who} {name}({status}) — {fix}{tail}")
 
 
 # ── DataForSEO 호출 간격 ────────────────────────────────────────────────────
@@ -82,6 +94,7 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
 # 여태는 러너의 항목 간격(0.5초)만 있었고 그건 분당 120회다.
 DFS_RPM = 12
 RATE_LIMIT_RETRIES = 3          # 이 뒤로도 429 면 한도가 우리 것만이 아니다 → Fatal
+SERVER_ERROR_RETRIES = 2        # 5xx 는 다시 쳐 봐야 일시적인지 알 수 있다 (Fatal 아님)
 _last_call = 0.0
 
 
@@ -118,29 +131,46 @@ def _pace() -> None:
 
 
 def _dfs_call(fn, *a, **kw):
-    """DataForSEO 요청 하나 — 간격을 지키고, 429 면 기다렸다 다시 친다.
+    """DataForSEO 요청 하나 — 간격을 지키고, 429·5xx 면 기다렸다 다시 친다.
 
     재시도는 여기 있어야 한다. 수집기의 이분 재시도(collect_metrics._ask)는 하위
     요청 사이에 간격이 아예 없어서, 한도에 걸린 상태에서 한 묶음이 스무 번을 연달아
     던졌다. 간격을 HTTP 계층에 두면 그 경로도 같이 지켜진다.
+
+    5xx 도 다시 치는 이유: DataForSEO 는 5xx 본문에 `Internal Error.` 말고는 아무
+    말도 안 한다(why 가 실제로 받아온 전부다). 한 번 쳐 보고 포기하면 그게 일시적인지
+    그 경로가 늘 죽는지 **구조적으로 알 수가 없다** — domain_intersection 이 9/6·9/8·9/9
+    사흘 연속 같은 자리에서 500 이었는데 셋 다 단 한 번의 시도였다.
+
+    5xx 는 Fatal 로 올리지 않는다. 429 는 계정 전체가 막힌 것이라 다음 항목도 똑같이
+    막히지만, 5xx 는 그 호출 하나가 죽은 것이다 — 단계를 통째로 죽일 이유가 없고
+    호출부가 항목 실패로 센다. 소진하면 응답을 그대로 돌려주고 raise_for 가 이유를
+    붙여 HTTPError 로 올린다.
     """
     r = None
-    for attempt in range(RATE_LIMIT_RETRIES + 1):
+    rate_left, server_left, waited = RATE_LIMIT_RETRIES, SERVER_ERROR_RETRIES, 0
+    while True:
         _pace()
         r = fn(*a, **kw)
-        if r.status_code != RATE_LIMIT:
+        if r.status_code == RATE_LIMIT:
+            if rate_left <= 0:
+                raise fatal("DataForSEO", RATE_LIMIT, why(r))
+            rate_left -= 1
+        elif r.status_code >= 500:
+            if server_left <= 0:
+                return r
+            server_left -= 1
+        else:
             return r
-        if attempt == RATE_LIMIT_RETRIES:
-            raise fatal("DataForSEO", RATE_LIMIT)
         gap = pace_seconds()
+        waited += 1
         if gap <= 0:
             continue                      # 간격을 껐으면 기다림도 없다
         try:
             wait = float((getattr(r, "headers", None) or {}).get("Retry-After"))
         except (TypeError, ValueError):
-            wait = gap * (attempt + 1)    # 서버가 안 알려주면 점점 길게
+            wait = gap * waited           # 서버가 안 알려주면 점점 길게
         time.sleep(max(wait, 1.0))
-    return r
 
 
 def why(r) -> str:
@@ -768,6 +798,58 @@ def _selfcheck() -> None:
         requests.post = post_flaky
         assert post_dataforseo("/x/live", [{}]) == ([1], 0.1), "429 뒤 재시도가 값을 못 살렸다"
         requests.post = fake_post
+
+        # 5xx 도 다시 친다. 이게 없으면 "그 경로가 늘 죽는지 한 번 튄 건지"를 영영
+        # 못 가른다 — domain_intersection 이 사흘 연속 500 이었는데 셋 다 한 번씩만
+        # 쳐 보고 포기한 결과였다.
+        seq5 = [_FakeResp({}, status_code=500), _FakeResp({}, status_code=500),
+                _FakeResp({"tasks": [{"status_code": 20000, "cost": 0.2, "result": [2]}]})]
+        tries: list[str] = []
+
+        def post_5xx(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return seq5.pop(0)
+
+        requests.post = post_5xx
+        try:
+            got = post_dataforseo("/x/live", [{}])
+        except requests.HTTPError as e:      # 재시도가 사라지면 여기로 떨어진다
+            raise AssertionError(
+                f"5xx 를 한 번 쳐 보고 포기했다 — _dfs_call 의 재시도가 없어졌다 ({e})"
+            ) from None
+        assert got == ([2], 0.2), f"500 뒤 재시도가 값을 못 살렸다: {got}"
+        assert len(tries) == 3, f"5xx 를 다시 안 쳤다 — {len(tries)}회로 끝냈다"
+
+        # 계속 500 이면 소진하고 HTTPError 다. Fatal 이 아니다 — 429 는 계정 전체가
+        # 막힌 것이라 다음 항목도 똑같이 막히지만, 5xx 는 그 호출 하나가 죽은 것이다.
+        tries.clear()
+
+        def post_always_500(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return _FakeResp({"status_message": "Ok.",
+                              "tasks": [{"status_message": "Internal Error."}]},
+                             status_code=500)
+
+        requests.post = post_always_500
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("계속 500 인데 그냥 지나쳤다")
+        except collector.Fatal as e:
+            raise AssertionError(f"5xx 를 Fatal 로 올렸다 — 단계가 통째로 죽는다: {e}") from None
+        except requests.HTTPError as e:
+            assert "Internal Error." in str(e), f"5xx 본문의 이유를 안 실었다: {e}"
+        assert len(tries) == SERVER_ERROR_RETRIES + 1, f"5xx 시도 횟수가 {len(tries)}회다"
+        requests.post = fake_post
+
+        # 402 여도 본문이 한도라고 말하면 한도로 안내한다. 결제 화면으로 보내면
+        # 엉뚱한 데를 뒤진다 — 실제로 그렇게 남은 기록이 있다.
+        e402 = fatal("DataForSEO", 402,
+                     "The rates limit per minute has been exceeded: 12 >= 12.")
+        assert "분당 호출 한도 초과(402)" in str(e402), e402
+        assert "SEOMINER_DFS_RPM" in str(e402), e402
+        assert "잔액" not in str(e402).split("[")[0], f"한도인데 잔액을 보라고 한다: {e402}"
+        # 진짜 잔액 부족은 그대로 잔액 안내다
+        assert "잔액 없음(402)" in str(fatal("DataForSEO", 402, "Payment Required"))
 
         # 간격 계산 — 분당 12회면 5초. 0 이면 안 쉰다(검사·직접 조절).
         os.environ.pop("SEOMINER_DFS_RPM")
