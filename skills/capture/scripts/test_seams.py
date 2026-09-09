@@ -447,8 +447,8 @@ def test_seam_10_gather_payload_keys_match():
     for p in sorted(views.glob("*.html")):
         read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
                                                 p.read_text("utf-8"))}
-    assert read <= served, \
-        f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}"
+    assert read <= served, (
+        f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}")
 
 
 def test_seam_11_carry_fields_match():
@@ -568,11 +568,15 @@ def test_seam_14_locale_list_single_source():
         "/api/settings 가 언어-지역 목록을 안 준다 — dash.html 의 선택지가 빈다"
     assert "SET_H.locales" in ctx["dash"] and "[data-lang]" in ctx["dash"], \
         "dash.html 이 /api/settings 의 locales 로 선택지를 안 그린다"
-    # 저장소 칸은 ".repo select" 로 **첫 번째** .repo 를 집는다 — 언어 칸이 그 앞에
-    # 서면 저장소 저장이 언어 select 를 읽는다(실제로 그렇게 됐다).
+    # 칸은 자기 이름으로 집는다 — ".ga4 select" / "[data-lang]". 예전에 저장소 칸이
+    # ".repo select" 로 **첫 번째** .repo 를 집어서, 언어 칸이 그 앞에 서면 저장소
+    # 저장이 언어 select 를 읽었다(실제로 그렇게 됐다). 저장소 칸은 없어졌고, 그
+    # 함정을 다시 파지 않도록 자리로 고르는 셀렉터가 없는 것을 못 박는다.
     sm = (SCRIPTS.parent / "templates" / "sections" / "sm-set.html").read_text("utf-8")
-    assert sm.index('class="repo lang') > sm.index('class="repo ga4'), \
-        "sm-set.html 의 언어 칸이 저장소·GA4 칸보다 앞에 있다 — repoSave 가 이 select 를 읽는다"
+    assert 'class="repo lang' in sm and 'class="repo ga4' in sm, \
+        "sm-set.html 의 언어·GA4 칸 이름이 바뀌었다 — dash.html 이 그 이름으로 집는다"
+    assert '".repo select"' not in ctx["dash"] and "'.repo select'" not in ctx["dash"], \
+        "dash.html 이 칸을 자리(.repo 의 첫째)로 고른다 — 칸 순서가 바뀌면 남의 값을 읽는다"
 
 
 def test_seam_15_dataforseo_calls_go_through_pacer():
@@ -673,6 +677,143 @@ def test_seam_17_verdict_and_status_single_source():
         assert keys == set(db.OPP_STATUSES), \
             f"{name} 의 키가 db.OPP_STATUSES 와 어긋났다: {keys ^ set(db.OPP_STATUSES)}"
     assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
+
+
+def test_seam_18_run_tool_and_creation_single_source():
+    """18) 실행·기록 이음매 — 개발 도구 실행과 작업 기록은 양쪽 끝이 있다.
+
+    [기록 창구]
+    기록 창구(`/api/creation`)는 로컬 `dashboard.ROUTES` 와 호스팅 `app.py` 둘 다에
+    있어야 한다. 요청문 꼬리의 기록 명령은 로컬·호스팅 구분 없이 같은 한 줄이라,
+    `createdb.py` 가 `remote.owns` 로 갈라 그 창구를 부르지 않으면 호스팅 사이트의
+    기록이 이 PC 의 빈 Brain 으로 떨어진다(아무 오류 없이).
+
+    [도구 실행]
+    - 도구 목록의 정본은 doctor.TOOLS 한 벌이다: 실행하는 쪽(dashboard.py)도 고르는
+      쪽(settings.html)도 말하는 쪽(dashboard.html)도 id·라벨을 직접 적지 않는다.
+      적는 순간 표가 두 벌이 되고, 도구가 하나 늘 때 한쪽만 늘어 "고를 수는 있는데
+      눌러도 안 열리는" 도구가 생긴다.
+    - 화면이 부르는 /api/setup/run-tool 이 로컬 서버에 실제로 있다(LOCAL_PATHS).
+      이 경로는 로컬 전용이다 — 호스팅에 두면 서버가 사용자 PC 에서 도구를 띄우는
+      척하게 된다.
+    - 호스팅 기회 카드는 그래서 안내다: "이 PC 에서 열기" 가 거기 있어야 하고,
+      떼어 낸 GitHub 글쓰기(SM.host.write)를 다시 부르지 않는다.
+    """
+    import dashboard
+    ctx = _load()
+    if ctx is None:
+        return
+    assert ("POST", "/api/creation") in dashboard.ROUTES, \
+        "로컬 ROUTES 에 /api/creation 이 없다 — 기록 창구는 이 표가 정본이다"
+    app_src = ctx["app_f"].read_text("utf-8")
+    assert '@app.post("/api/creation")' in app_src, \
+        "호스팅 서버에 /api/creation 이 없다 — 웹 사이트의 기록이 갈 곳이 없다"
+    create_f = ROOT / "skills" / "create" / "scripts" / "createdb.py"
+    if create_f.exists():
+        src = create_f.read_text("utf-8")
+        assert "remote.owns" in src, \
+            "createdb.py 가 원격 판정을 안 한다 — 호스팅 사이트도 로컬 Brain 을 쓴다"
+        assert '"/api/creation"' in src, \
+            "createdb.py 가 기록 창구를 안 부른다 — done 이 서버에 안 남는다"
+
+    ctx = _load()
+    if ctx is None:
+        return
+    import dashboard
+    sys.path.insert(0, str(SETUP_SCRIPTS))
+    import doctor
+    shell, dash, local_f = ctx["shell"], ctx["dash"], ctx["local_f"]
+    local_src = local_f.read_text("utf-8")
+    settings = (ctx["views"] / "settings.html").read_text("utf-8")
+
+    # ── 도구 표는 한 벌 ──
+    assert "doctor.tool_of" in local_src or "doctor.TOOLS" in local_src, \
+        "dashboard.py 가 도구 표를 doctor 에서 안 읽는다 — 사본을 만들었을 것이다"
+    ids = "|".join(re.escape(t[0]) for t in doctor.TOOLS)
+    lit = re.compile(r"""["'](?:""" + ids + r""")["']""")
+    for who, src in (("dashboard.py", local_src), ("settings.html", settings),
+                     ("dashboard.html", shell)):
+        hit = lit.search(src)
+        assert not hit, \
+            f"{who} 에 도구 id 가 직접 적혀 있다({hit.group(0)}) — 정본은 doctor.TOOLS 다"
+    # 라벨도 마찬가지다: 고르는 칸은 빈 자리로 서고 payload(tools[].label)가 채운다.
+    # 여기 <label>·<option> 을 손으로 적어 두면 그게 두 번째 표가 된다.
+    for box in ("u-mode", "u-tool", "u-terminal"):
+        m = re.search(r'id="' + box + r'"[^>]*>(.*?)</div>', settings, re.S)
+        assert m and not m.group(1).strip(), \
+            f"settings.html 의 {box} 가 선택지를 직접 적고 있다 — 정본은 doctor 의 표다"
+
+    # ── 실행 경로는 로컬 전용이고 화면이 그걸 부른다 ──
+    assert "/api/setup/run-tool" in dashboard.LOCAL_PATHS, \
+        "실행 경로가 로컬 서버에 없다 — 화면 버튼이 404 로 죽는다"
+    assert "/api/setup/run-tool" in shell, "셸이 실행 경로를 안 부른다"
+    assert "/api/setup/run-tool" not in dash, \
+        "호스팅 화면이 실행 경로를 부른다 — 브라우저는 이 PC 의 프로세스를 못 띄운다"
+
+    # ── 호스팅 기회 카드는 안내다 ──
+    m = re.search(r"oppBtn\(id\) \{(.*?)\n    \},", dash, re.S)
+    assert m, "dash.html 의 SM.host.oppBtn 을 못 찾았다"
+    assert "이 PC 에서 열기" in m.group(1), "호스팅 기회 카드에 로컬 실행 안내가 없다"
+    assert "SM.host.write" not in m.group(1) and "/api/create" not in m.group(1), \
+        "호스팅 기회 카드가 떼어 낸 글쓰기 경로를 아직 부른다"
+    # --- 도구 절반은 Task C 가 이어 쓴다 ---
+
+
+def test_seam_19_brief_context_keys_come_from_gather():
+    """19) 요청문이 읽는 페이로드 키는 gather() 가 실제로 싣는 것이어야 한다.
+
+    이 이음매도 양쪽 다 멀쩡해 보인다: brief.py 는 정상적인 dict 조회고 gather 는
+    정상적인 dict 다. 어긋나면 그 근거 블록이 **조용히 사라진다** — 표가 없는
+    요청문은 여전히 문법에 맞는 요청문이라, 검사에도 화면에도 아무것도 안 남고
+    AI 만 근거 없이 답하게 된다.
+
+    실제로 이 리포는 정반대 방향으로 같은 값을 치렀다: 검색결과 상위·중복 제목·
+    들어오는 내부 링크는 **수집본에 내내 있었는데** 요청문이 그 키를 안 읽어서,
+    요청문이 사람에게 "상위 페이지 제목을 붙여 넣으세요" 라고 시켰다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import dashboard
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    read = (set(re.findall(r'ctx\.get\("(\w+)"', src))
+            | set(re.findall(r'ctx\["(\w+)"\]', src)))
+    # attach() 가 자기가 심는 키(brief)는 gather 가 아니라 여기서 난다
+    read -= {"brief"}
+    assert read, "brief.py 에서 ctx 조회를 하나도 못 찾았다 — 정규식이 틀렸다"
+
+    _c = _sq.connect(":memory:")
+    _c.row_factory = _sq.Row
+    _c.executescript(db.SCHEMA)
+    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam19','saas','x.com')")
+    _null = _io.StringIO()
+    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
+        served = set(dashboard.gather(_c, db.get_project(_c, "_seam19")))
+    _c.close()
+    assert read <= served, (
+        f"요청문이 읽는데 gather() 가 안 싣는 키: {sorted(read - served)}")
+
+    # 크롤 갈래 이름표는 한 벌이다 — 화면 JS 안에 사본을 두면 요청문(서버가
+    # 만든다)이 그것을 못 읽어 같은 갈래를 영어 kind 로 사람에게 내보낸다.
+    import collect_crawl
+    site = (ctx["views"] / "site.html").read_text("utf-8")
+    assert "CR_KIND = d.crawl_kinds" in site, (
+        "site.html 이 갈래 이름표를 페이로드에서 안 받는다")
+    assert "열리지 않는 페이지" not in site, (
+        "site.html 에 갈래 이름표 사본이 남아 있다")
+    assert set(collect_crawl.ISSUE_KIND) == set(collect_crawl.SEVERITY), (
+        set(collect_crawl.ISSUE_KIND) ^ set(collect_crawl.SEVERITY))
+
+    # 근거를 만드는 쪽(수집)과 말하는 쪽(요청문)이 같은 표를 본다 — 이 넷은
+    # 값을 치르고 배운 자리라 이름으로 못 박는다.
+    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals"):
+        assert key in served, f"gather() 가 {key} 를 안 싣는다"
+        assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 
 
 if __name__ == "__main__":

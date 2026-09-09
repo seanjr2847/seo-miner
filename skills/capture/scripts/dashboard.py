@@ -31,9 +31,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
+import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
@@ -173,8 +175,12 @@ ACTIONS = {
     # 동의는 화면(또는 채팅)이 미리 받고, 스크립트는 빈 입력을 명령줄에 섞지 않는다.
     "skills": [sys.executable, str(SETUP_SCRIPTS / "install_skills.py")],
 }
+# 값이 아무 문자열이 아니라 **표의 id** 여야 하는 키 — 설정 0단계의 라디오 셋.
+# 선택지 사본을 여기 만들지 않는다: 표는 doctor 가 갖고 화면도 그걸 그린다.
+CHOICE_FIELDS = {doctor.MODE_ENV: doctor.MODES, doctor.TOOL_ENV: doctor.TOOLS,
+                 doctor.TERMINAL_ENV: doctor.TERMINALS}
 KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
-              "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
+              "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD") + tuple(CHOICE_FIELDS)
 PROJECT_TYPES = ("game", "local_clinic", "saas", "directory")
 ENV_FILE = db.CAPTURE_HOME / "env"
 
@@ -218,6 +224,14 @@ def run_action(name: str) -> dict:
 def save_keys(values: dict) -> dict:
     """셸 rc 편집 대신 ~/.capture/env 에 모은다 (모든 스크립트가 db.load_env로 읽는다).
     빈 값으로 보내면 그 키를 지운다."""
+    # 고르는 값은 표에 있는 것만 받는다 — 화면이 보내는 것은 늘 표의 id 이므로
+    # 여기 걸리는 건 손으로 만든 요청뿐이다. 모르는 값을 env 에 적어 두면 그 뒤로
+    # 화면이 "아직 안 고름"으로 보이는데 파일에는 값이 있는 상태가 된다.
+    for k, table in CHOICE_FIELDS.items():
+        v = str(values.get(k, "")).strip()
+        if v and not any(v == row[0] for row in table):
+            return {"ok": False, "error": "화면에 없는 값이 왔습니다 — 새로 고침한 뒤 "
+                                          "다시 골라 주세요."}
     cur = {}
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text("utf-8").splitlines():
@@ -456,6 +470,67 @@ def setup_state(project: str = "") -> dict:
     return stage.setup_payload(project=project)
 
 
+# ── 설정 0단계: 사이트별 로컬 폴더 · 호스팅 연결 ─────────────────────────────
+# 실행 버튼이 "어느 폴더에서 도구를 여느냐"를 여기서 정한다. 장부의 정본은
+# paths.site_dirs() 한 자리이고, 화면은 이 셋만 부른다.
+
+def orca_worktrees() -> list[str]:
+    """Orca 가 아는 작업 폴더 경로들 — 폴더 입력 칸의 후보 목록(datalist).
+
+    Orca 가 없으면 빈 목록이다. 후보가 없다고 폴더를 못 적는 것은 아니다 —
+    손으로 적는 길이 정본이고 이건 거들기만 한다.
+    """
+    d = doctor.orca_json("worktree", "ps") or {}
+    rows = (d.get("result") or {}).get("worktrees") or []
+    return [w["path"] for w in rows if isinstance(w, dict) and w.get("path")]
+
+
+def setup_dirs() -> dict:
+    """폴더 표의 재료 — 지금 저장된 것과 Orca 가 아는 후보들."""
+    return {"dirs": paths.site_dirs(), "worktrees": orca_worktrees()}
+
+
+def setup_dir(body: dict) -> dict:
+    """폴더 한 줄 저장. 빈 경로는 지우기다.
+
+    폴더가 아니면 안 받는다 — 없는 자리를 저장해 두면 나중에 실행 버튼이 그때 가서야
+    알 수 없는 이유로 실패한다. 막을 수 있는 자리에서 막는다.
+    """
+    name = str(body.get("project") or "").strip()
+    raw = str(body.get("path") or "").strip()
+    if not name:
+        return {"ok": False, "error": "어느 사이트의 폴더인지 골라 주세요."}
+    if not raw:
+        return {"ok": True, "dirs": paths.set_site_dir(name, None)}
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return {"ok": False, "error": f"그런 폴더가 없습니다: {raw}"}
+    return {"ok": True, "dirs": paths.set_site_dir(name, str(p))}
+
+
+# 웹 [설정]이 내는 "명령어로 연결하기" 한 줄에서 필요한 것은 주소와 그 다음 토큰뿐이다.
+_REMOTE_LINE = re.compile(r"(https?://\S+)\s+(\S+)")
+
+
+def setup_remote(body: dict) -> dict:
+    """붙여 넣은 한 줄로 호스팅에 붙는다.
+
+    **그 줄을 명령으로 돌리지 않는다** — 사용자가 어디선가 복사해 오는 문자열이라
+    그대로 실행하면 거기 섞인 것이 같이 돈다. 두 토큰만 뽑아 remote.link 로 넘긴다.
+    """
+    m = _REMOTE_LINE.search(str(body.get("line") or ""))
+    if not m:
+        return {"ok": False, "error": "주소와 토큰을 못 찾았습니다. 웹 [설정]의 "
+                                      "'명령어로 연결하기' 한 줄을 그대로 붙여 주세요."}
+    try:
+        remote.link(m.group(1), m.group(2))
+    except Exception as e:          # 주소가 틀렸거나·토큰이 죽었거나·네트워크가 없거나
+        return {"ok": False, "error": str(e)}
+    c = remote.config() or {}
+    return {"ok": True, "url": c.get("url") or m.group(1).rstrip("/"),
+            "projects": list(c.get("projects") or [])}
+
+
 def q(conn, sql, args=()):
     return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
@@ -587,6 +662,16 @@ def _axis_rank(conn, pid: int) -> dict:
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
                 WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
 
+    # 검색결과 상위 몇 줄 — 요청문이 "빠진 구간" 을 짐작이 아니라 비교로 찾는 재료.
+    # 순위 숫자와 같은 회차에서 나온다(같은 날짜 키로 읽는다).
+    serp_top: dict[str, list] = {}
+    if rank_dates:
+        for r in q(conn, """SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
+                              FROM serp_results s JOIN keywords k ON k.id = s.keyword_id
+                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=?
+                             ORDER BY k.keyword, s.position""", (pid, rank_dates[0])):
+            serp_top.setdefault(r["keyword"], []).append(r)
+
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
     r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
     ranks, aio_gap = [], []
@@ -610,7 +695,7 @@ def _axis_rank(conn, pid: int) -> dict:
     return {
         "rank_date": rank_dates[0] if rank_dates else None,
         "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
-        "ranks": ranks, "aio_gap": aio_gap,
+        "ranks": ranks, "aio_gap": aio_gap, "serp_top": serp_top,
         "kw_active": db.count_active_keywords(conn, pid),
     }
 
@@ -803,6 +888,24 @@ def _axis_competitors(conn, pid: int) -> dict:
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts}
 
 
+def _axis_vitals(conn, pid: int) -> dict:
+    """속도 축 (collect_vitals) — 최신 측정일의 페이지×기기 표.
+
+    {url: {strategy: 행}} 로 접어 둔다. 요청문이 묻는 것이 늘 "이 페이지의, 이
+    기기의" 값이라서다 — 모바일만 밀리는 검색어의 근거는 두 기기를 나란히 놓아야
+    나온다.
+    """
+    d = conn.execute("SELECT MAX(checked_date) d FROM page_vitals WHERE project_id=?",
+                     (pid,)).fetchone()["d"]
+    if not d:
+        return {"vitals_date": None, "vitals": {}}
+    out: dict[str, dict] = {}
+    for r in q(conn, "SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?",
+               (pid, d)):
+        out.setdefault(r["url"], {})[r["strategy"]] = r
+    return {"vitals_date": d, "vitals": out}
+
+
 def _axis_crawl(conn, pid: int) -> dict:
     """사이트 크롤 축 (collect_crawl). 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것."""
     crawl = {}
@@ -817,7 +920,65 @@ def _axis_crawl(conn, pid: int) -> dict:
                      conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
                      (cr["id"],))},
                  "compare": crawl_compare(conn, pid, cr["id"])}
-    return {"crawl": crawl}
+    # 갈래 이름표는 만드는 쪽(collect_crawl)이 갖는다 — 화면 JS 안에 사본을 두면
+    # 요청문은 그걸 못 읽어서 같은 갈래를 영어 kind 로 내보내게 된다.
+    return {"crawl": crawl, "crawl_kinds": collect_crawl.ISSUE_KIND}
+
+
+def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
+    """요청문이 손댈 페이지로 **들어오는** 내부 링크. 크롤 회차의 crawl_links 를 읽는다.
+
+    page_audits 가 세는 internal_links 는 그 페이지가 **내보내는** 링크 수라 반대편이다.
+    "어느 글에서 이 페이지로 링크를 걸지" 를 시키면서 지금 어디서 링크가 오는지를 안
+    주면, AI 는 이미 링크가 있는 글을 또 제안한다.
+
+    값이 없는 URL 은 키를 안 만든다 — 크롤이 안 본 주소를 "고아" 라고 부르지 않기
+    위해서다(빈 리스트는 "보고 링크가 없었다"는 뜻으로 남겨 둔다).
+    """
+    run = (crawl or {}).get("run")
+    want = {u for u in urls if u}
+    if not (run and want):
+        return {}
+    by_norm = {}
+    for u in want:
+        by_norm.setdefault(scoring.norm(u), u)
+    crawled = {scoring.norm(r["url"]) for r in conn.execute(
+        "SELECT url FROM crawl_pages WHERE run_id=?", (run["id"],))}
+    out = {by_norm[k]: [] for k in by_norm if k in crawled}
+    if not out:
+        return {}
+    for r in conn.execute(
+            "SELECT url_from, url_to, anchor FROM crawl_links"
+            " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT 20000",
+            (run["id"],)):
+        u = by_norm.get(scoring.norm(r["url_to"]))
+        if u in out and len(out[u]) < 20:
+            out[u].append({"from": r["url_from"], "anchor": r["anchor"]})
+    return out
+
+
+def _site_probe(conn, crawl: dict, urls) -> dict:
+    """이 주소가 robots.txt 에 막히나 · 사이트맵에 있나.
+
+    색인 막힘 요청문이 매번 묻는 두 가지인데, 지금까지 근거는 구글 URL 검사 응답
+    한 줄뿐이었다 — 원인 1순위 두 개를 안 주고 원인을 대라고 시킨 셈이다.
+
+    주소마다 미리 재서 넣는다: robots.txt 원문과 사이트맵 목록을 통째로 페이로드에
+    실으면 화면이 수천 줄을 짊어진다.
+    """
+    run = (crawl or {}).get("run")
+    want = [u for u in urls if u]
+    if not (run and want):
+        return {}
+    sm = {scoring.norm(r["url"]) for r in conn.execute(
+        "SELECT url FROM sitemap_urls WHERE run_id=?", (run["id"],))}
+    txt = run.get("robots_txt") or ""
+    out = {}
+    for u in want:
+        out[u] = {"robots": scoring.robots_blocks(txt, u) if txt else None,
+                  # None = 안 봤다(사이트맵이 시드가 아니었다), False = 보고 없었다
+                  "in_sitemap": (scoring.norm(u) in sm) if sm else None}
+    return out
 
 
 def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict]) -> dict:
@@ -952,6 +1113,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     ga4 = _axis_ga4(conn, pid, at)
     bl = _axis_backlinks(conn, pid)
     crawl = _axis_crawl(conn, pid)
+    vitals = _axis_vitals(conn, pid)
 
     runs = q(conn,
         """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
@@ -966,6 +1128,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     d = {"schema": 1, "project": dict(p),
          **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
+         **vitals,
          "runs": runs, "creations": creations,
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
@@ -978,6 +1141,12 @@ def gather(conn, p, at: str | None = None) -> dict:
          "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])}
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
+    # 들어오는 내부 링크만 여기서 한 번 더 읽는다: 어느 페이지가 필요한지는 기회와
+    # query_pages 가 정해져야 알 수 있고(brief.page_of 가 정본), 사이트 전체를 실으면
+    # 페이로드가 링크 수만 명으로 부푼다.
+    _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
+    d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
+    d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     brief.attach(d, db.project_locale(p))
     return d
 
@@ -991,13 +1160,28 @@ def payload(project: str, at: str | None = None) -> dict:
         conn.close()
 
 
+def remote_project(project: str) -> bool:
+    """이 사이트는 호스팅이 갖고 있나 — 원격 판정은 이 함수 하나다.
+
+    로컬 Handler 의 디스패치가 이걸 보고 자기 Brain 대신 서버로 넘긴다(프록시).
+    판정 자체는 remote.owns 하나뿐이다 — 여기서 규칙을 다시 쓰지 않는다.
+    """
+    return bool(project) and remote.owns(project)
+
+
 def list_projects() -> list[str]:
-    """Brain 에 등록된 사이트 이름 — 로컬 대시보드의 사이트 선택지."""
+    """사이트 선택지 — 로컬 Brain 에 있는 이름 + 호스팅이 갖고 있는 이름.
+
+    호스팅 사이트도 이 목록에 있어야 로컬 화면에서 고를 수 있다(고르면 Handler 가
+    프록시로 넘긴다). 이름이 양쪽에 다 있으면 한 번만 나온다.
+    """
     conn = db.connect()
     try:
-        return [r[0] for r in conn.execute("SELECT name FROM projects ORDER BY name")]
+        names = {r[0] for r in conn.execute("SELECT name FROM projects")}
     finally:
         conn.close()
+    names |= {str(n) for n in ((remote.config() or {}).get("projects") or [])}
+    return sorted(names)
 
 
 def set_opp_status(body: dict) -> dict:
@@ -1007,6 +1191,36 @@ def set_opp_status(body: dict) -> dict:
     try:
         return {"updated": db.set_opportunity_status(
             conn, int(body.get("id") or 0), body.get("status"))}
+    finally:
+        conn.close()
+
+
+def record_creation_route(body: dict) -> dict:
+    """POST /api/creation 본체 — 로컬·호스팅이 이 함수 하나를 부른다.
+
+    개발 도구가 일을 끝내고 남기는 기록 창구다(요청문 꼬리의 `createdb.py done`
+    이 원격 사이트면 이 경로로 온다). 기록은 남기고 상태는 진행 중(acked)이다 —
+    완료는 대시보드의 완료 후 관찰을 보고 사람이 누른다.
+
+    기회 번호가 그 사이트 것이 아니면 LookupError — Handler 와 호스팅 래퍼가
+    404 로 옮긴다(남의 Brain 을 번호로 더듬는 일을 막는다).
+    """
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, str(body.get("project") or ""))["id"]
+        oid = int(body.get("opportunity_id") or 0)
+        kind = None
+        if oid:
+            row = db.get_opportunity(conn, oid, project_id=pid)
+            if row is None:
+                raise LookupError("기회를 찾을 수 없습니다")
+            kind = row["kind"]
+            db.set_opportunity_status(conn, oid, "acked", project_id=pid)
+        cid = db.record_creation(conn, pid, str(body.get("path") or ""),
+                                 opportunity_id=oid or None, kind=kind,
+                                 branch=body.get("branch") or None,
+                                 note=body.get("note") or None)
+        return {"creation_id": cid, "status": "acked"}
     finally:
         conn.close()
 
@@ -1114,13 +1328,28 @@ ROUTES = {
         lambda project, query, body: triage_payload(project),
     ("POST", "/api/verdict"):
         lambda project, query, body: set_verdict(body),
+    # 작업 기록 — 개발 도구가 일을 끝내고 남긴다(createdb.py done / sync).
+    ("POST", "/api/creation"):
+        lambda project, query, body: record_creation_route(body),
 }
 
-# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용 여섯). 호스팅엔
+# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용). 호스팅엔
 # /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — test_seams 가 그 차이를 안다.
-LOCAL_ONLY_PATHS = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/run",
-                    "/api/setup/keys", "/api/setup/project", "/api/setup/gsc-client"}
+# 메서드로 갈라 둔다: do_POST 의 "이건 setup 경로다" 판정이 이 집합을 그대로 쓴다
+# (예전엔 같은 목록이 거기 한 벌 더 있어서 새 경로를 한쪽에만 적으면 404 였다).
+LOCAL_ONLY_GET = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/dirs"}
+LOCAL_ONLY_POST = {"/api/setup/run", "/api/setup/keys", "/api/setup/project",
+                   "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote",
+                   # 기회를 개발 도구로 연다 — 브라우저는 이 PC 의 프로세스를 못
+                   # 띄우므로 호스팅에는 이 경로가 없다(그 화면은 안내만 그린다).
+                   "/api/setup/run-tool"}
+LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
+
+# 호스팅 사이트라도 이 PC 가 답하는 경로. /api/doctor 는 [설정] 화면이 보는 진단 —
+# "이 PC 에 무엇이 깔려 있나"를 묻는 것이라 서버에 물으면 남의 컴퓨터를 진단한다.
+# /api/projects 는 애초에 사이트 이름을 안 받는다(list_projects 가 둘을 합친다).
+NEVER_PROXY = {"/api/doctor", "/api/projects"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1135,6 +1364,18 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
+    def _proxy(self, method: str, path: str, **kw) -> None:
+        """호스팅 사이트의 요청은 서버가 답한다 — 응답 JSON 을 그대로 옮긴다.
+
+        데이터가 서버 Brain 에 있어서 여기서 답하면 빈 화면이 된다. 예전엔
+        호스팅 주소로 브라우저를 보냈지만(리다이렉트), 그러면 로컬에만 있는
+        [설정]·실행 버튼이 사라진다 — 화면은 로컬 한 벌로 두고 데이터만 넘긴다.
+        """
+        try:
+            return self._json(remote.api(method, path, **kw))
+        except (Exception, SystemExit) as e:   # remote 는 거절을 SystemExit 로 낸다
+            return self._json({"error": str(e)}, 502)
+
     def do_GET(self) -> None:  # noqa: N802 (http.server 규약)
         u = urlparse(self.path)
         if u.path == "/":
@@ -1143,20 +1384,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(repo_prefill())
         if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
             return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
+        if u.path == "/api/setup/dirs":      # 읽기 전용 — 사이트별 로컬 폴더 + 후보
+            return self._json(setup_dirs())
         call = ROUTES.get(("GET", u.path))
         if not call:
             return self._send(404, b"not found", "text/plain")
         query = {k: v[0] for k, v in parse_qs(u.query).items()}
+        project = query.get("project", "")
+        if u.path not in NEVER_PROXY and remote_project(project):
+            return self._proxy("GET", u.path, params=query)
         try:
-            return self._json(call(query.get("project", ""), query, None))
+            return self._json(call(project, query, None))
         except db.ProjectNotFound as e:  # db.get_project는 미등록이면 ProjectNotFound
             return self._json({"error": str(e)}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         call = ROUTES.get(("POST", path))
-        if path not in ("/api/setup/run", "/api/setup/keys",
-                        "/api/setup/project", "/api/setup/gsc-client") and not call:
+        if path not in LOCAL_ONLY_POST and not call:
             return self._send(404, b"not found", "text/plain")
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
@@ -1172,17 +1417,31 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "unknown action"}, 400)
             return self._json(run_action(body["action"]))
         if path == "/api/setup/keys":
-            return self._json(save_keys(body))
+            r = save_keys(body)
+            return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/gsc-client":
             r = save_gsc_client(body)
             return self._json(r, 200 if r["ok"] else 400)
         if path == "/api/setup/project":
             r = create_project(body)
             return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/dir":
+            r = setup_dir(body)
+            return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/remote":
+            r = setup_remote(body)
+            return self._json(r, 200 if r["ok"] else 400)
+        if path == "/api/setup/run-tool":
+            r = run_tool(body)
+            return self._json(r, 200 if r["ok"] else 400)
 
+        if path not in NEVER_PROXY and remote_project(str(body.get("project") or "")):
+            return self._proxy("POST", path, json=body)
         try:
             return self._json(call("", {}, body))
         except db.ProjectNotFound as e:
+            return self._json({"error": str(e)}, 404)
+        except LookupError as e:   # record_creation_route: 그 사이트 기회가 아니다
             return self._json({"error": str(e)}, 404)
         except ValueError as e:
             return self._json({"error": str(e)}, 400)
@@ -1259,6 +1518,159 @@ def _selfcheck() -> None:
           f"최상위 이름 {len(seen)}개")
 
 
+# ── 기회 카드에서 개발 도구 열기 ─────────────────────────────────────────────
+# 기회의 끝은 여태 "요청문 복사 → AI 에 붙여 넣기"였다. 사용자가 원하는 것은 그
+# 자리에서 자기 도구가 **그 사이트 폴더에서** 열리고 요청문이 이미 들어가 있는
+# 것이다. 그 일을 여기서 한다: 요청문을 파일로 남기고, 고른 도구의 명령을 조립하고,
+# 터미널 하나를 띄운다.
+#
+# 도구 목록·실행 파일·argv 꼴의 정본은 doctor.TOOLS 한 벌이다 — 이 파일에 도구
+# 이름을 적지 않는다(적는 순간 표가 두 벌이 되고 한쪽만 낡는다). 터미널을 무엇으로
+# 볼지도 doctor.usage() 가 이미 답한다(안 골랐으면 Orca 감지 → 없으면 시스템).
+#
+# 브라우저는 이 PC 의 프로세스를 못 띄운다 — 그래서 이 경로는 로컬 전용이고
+# (LOCAL_ONLY_POST), 호스팅 화면은 "이 PC 에서 열기" 안내만 그린다.
+
+def _work_dir(project: str) -> Path:
+    """도구를 열 폴더. 설정에 적어 둔 것([설정]의 사이트별 로컬 폴더)이 정본이고,
+    없으면 작업 자리(~/.capture/work/<사이트>/)를 만들어 거기서 연다.
+
+    적어 둔 값이 지금 폴더가 아니면 없는 것으로 친다 — 저장 시점에 한 번 막지만
+    그 사이에 지워질 수 있고, 없는 폴더로 열면 도구가 그때 가서 죽는다.
+    """
+    d = paths.site_dirs().get(project)
+    if d and Path(d).is_dir():
+        return Path(d)
+    w = paths.home() / "work" / project
+    w.mkdir(parents=True, exist_ok=True)
+    return w
+
+
+def _tool_argv(tool: tuple, prompt: str) -> list[str]:
+    """doctor.TOOLS 의 argv 꼴에서 {prompt} 자리를 채운다.
+
+    도구마다 다른 것은 이 한 줄뿐이다 — 스킬(`/create run`)을 부르지 않으므로
+    도구별 갈래가 코드에 생기지 않는다.
+    """
+    return [a.replace("{prompt}", prompt) for a in tool[3]]
+
+
+def _open_terminal(argv: list[str], cwd: Path, terminal: str, title: str) -> dict:
+    """창 하나를 띄운다. 돌려주는 것은 {"terminal": …} (물러났으면 fallback 도).
+
+    Orca 는 워크트리 안에서만 창을 만든다 — 폴더가 워크트리가 아니면 실패하는데,
+    그때 사용자에게 남길 것은 오류 메시지가 아니라 **열린 창**이다. 시스템
+    터미널로 물러나고 무엇으로 열었는지만 응답에 싣는다(화면이 그걸 말한다).
+    """
+    import shlex
+    line = (subprocess.list2cmdline(argv) if sys.platform == "win32"
+            else shlex.join(argv))
+    if terminal == "orca":
+        # orca 호출법은 doctor.orca_json 한 자리다 — 없거나 실패하면 None 이다.
+        if doctor.orca_json("terminal", "create", "--worktree", f"path:{cwd}",
+                            "--title", title, "--command", line, "--focus",
+                            timeout=15) is not None:
+            return {"terminal": "orca"}
+        _system_terminal(argv, line, cwd)
+        return {"terminal": "system", "fallback": "system"}
+    _system_terminal(argv, line, cwd)
+    return {"terminal": "system"}
+
+
+def _system_terminal(argv: list[str], line: str, cwd: Path) -> None:
+    """OS 가 기본으로 주는 터미널에서 argv 를 연다 — 창은 열린 채로 남는다."""
+    if sys.platform == "win32":
+        # 첫 "" 는 start 의 창 제목 자리다. 빼면 argv[0] 을 제목으로 먹고 아무것도
+        # 안 뜬다(경로에 공백이 있을 때 특히).
+        subprocess.Popen(["cmd", "/c", "start", "", *argv], cwd=str(cwd))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-a", "Terminal", str(cwd)])
+        script = line.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.Popen(["osascript", "-e",
+                          f'tell application "Terminal" to do script "{script}" in front window'])
+    else:
+        subprocess.Popen(["x-terminal-emulator", "-e", *argv], cwd=str(cwd))
+
+
+def run_tool(body: dict) -> dict:
+    """POST /api/setup/run-tool 본체 — 기회 하나를 도구로 연다.
+
+    dry_run 이면 창도 안 띄우고 상태도 안 바꾸고 조립한 것만 돌려준다(검사용).
+    실패는 전부 {"ok": False, "error": …} 이고 그때는 상태를 건드리지 않는다 —
+    "작업 시작"이라고 표시해 놓고 아무 창도 안 뜨는 것이 제일 나쁜 결과다.
+    """
+    import shutil
+    project = str(body.get("project") or "").strip()
+    try:
+        opp_id = int(body.get("id") or 0)
+    except (TypeError, ValueError):
+        opp_id = 0
+    if not project or not opp_id:
+        return {"ok": False, "error": "어느 사이트의 어느 기회인지 못 받았습니다."}
+
+    use = doctor.usage()
+    tool = doctor.tool_of(use.get("tool") or "")
+    if not tool:
+        return {"ok": False, "error": "쓸 도구를 아직 안 골랐습니다. [설정]의 "
+                                      "'쓰는 방식'에서 하나 고르면 여기에 열기 버튼이 섭니다."}
+    if not shutil.which(tool[2]):
+        return {"ok": False, "error": f"{tool[1]} 을(를) 이 PC 에서 못 찾았습니다. "
+                                      f"설치하시거나 [설정]에서 다른 도구를 고르면 됩니다."}
+
+    # 요청문은 서버가 이미 써 둔 것을 그대로 쓴다(brief.attach) — 여기서 다시 짓지
+    # 않는다. 원격 사이트의 기회는 호스팅이 갖고 있으므로 거기서 받아온다.
+    try:
+        data = (remote.api("GET", "/api/data", params={"project": project})
+                if remote.owns(project) else payload(project))
+    except db.ProjectNotFound as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:                      # 원격이 죽었거나 토큰이 끊겼거나
+        return {"ok": False, "error": f"기회를 불러오지 못했습니다: {e}"}
+    opp = next((o for o in (data.get("opps") or [])
+                if str(o.get("id")) == str(opp_id)), None)
+    if not opp:
+        return {"ok": False, "error": "그 기회를 못 찾았습니다. [새로고침] 뒤 다시 눌러 주세요."}
+    text = ((opp.get("brief") or {}).get("body") or opp.get("reasoning") or "").strip()
+    if not text:
+        return {"ok": False, "error": "이 기회의 요청문이 아직 없습니다."}
+
+    # 파일은 늘 작업 자리에 남긴다 — 사용자의 리포 안에 남의 파일을 떨구지 않는다.
+    box = paths.home() / "work" / project
+    box.mkdir(parents=True, exist_ok=True)
+    md = box / f"opp-{opp_id}.md"
+    createdb = Path(__file__).resolve().parents[2] / "create" / "scripts" / "createdb.py"
+    md.write_text(
+        text
+        + "\n\n---\n끝나면 이 명령으로 기록해 주세요(바꾼 파일·브랜치를 채워서):\n"
+        + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n',
+        "utf-8")
+
+    cwd = _work_dir(project)
+    argv = _tool_argv(tool, f"이 파일의 요청문대로 진행해 주세요: {md}")
+    terminal = use.get("terminal") or "system"
+    out = {"ok": True, "cwd": str(cwd), "file": str(md), "argv": argv,
+           "terminal": terminal}
+    if body.get("dry_run"):
+        return out
+
+    out.update(_open_terminal(argv, cwd, terminal, f"seo-miner · {project} #{opp_id}"))
+    # 창이 실제로 뜬 뒤에 '작업 시작'으로 바꾼다. 기록은 서버 한 곳에 남아 두 화면이
+    # 같은 표를 본다 — 원격 사이트면 호스팅의 /api/opp 로 보낸다.
+    try:
+        if remote.owns(project):
+            remote.api("POST", "/api/opp",
+                       json={"project": project, "id": opp_id, "status": "acked"})
+        else:
+            conn = db.connect()
+            try:
+                db.set_opportunity_status(conn, opp_id, "acked")
+            finally:
+                conn.close()
+    except Exception:       # 창은 이미 떴다 — 상태 하나 때문에 실패로 되돌리지 않는다
+        out["status_failed"] = True
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", help="시작 시 선택할 사이트 (생략하면 첫 번째)")
@@ -1290,15 +1702,9 @@ def main() -> None:
             webbrowser.open(out.as_uri())
         return
 
-    # 원격 사이트는 로컬 서버를 띄우지 않는다 — 데이터가 서버 brain 에 있어서
-    # 여기서 띄우면 빈 화면을 보여 준다. 호스팅 화면의 그 사이트로 보낸다.
-    if a.project and remote.owns(a.project):
-        url = f"{remote.config()['url']}/d#{a.project}"
-        print(f"dashboard: {url}")
-        if a.open:
-            import webbrowser
-            webbrowser.open(url)
-        return
+    # 원격 사이트도 여기서 띄운다 — Handler 가 그 사이트의 API 를 서버로 넘긴다
+    # (remote_project → _proxy). 예전엔 호스팅 주소로 브라우저를 보냈는데, 그러면
+    # 로컬에만 있는 [설정]·개발 도구 실행 버튼이 통째로 사라졌다.
 
     # 외부 노출 금지 — 로컬 전용이라 인증이 없다. 바인딩으로 막는다.
     # allow_reuse_address 기본값(True)이면 Windows에서 같은 포트에 서버가 겹쳐

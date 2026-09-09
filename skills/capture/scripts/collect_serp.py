@@ -148,8 +148,15 @@ def collect(project: str, *,
             res = serp_adapter.fetch(provider, row["keyword"], kw_locale, depth, device=device)
             # 내 순위와 경쟁사 집계는 같은 한 바퀴에서 같은 규칙으로 갈린다.
             position = url = None
+            top_rows = []
             for t in res["top"]:
                 d = t.get("domain") or ""
+                # 상위 몇 줄은 그대로 남긴다. 예전엔 이 응답에서 내 순위만 빼고
+                # 나머지를 버렸고, 그래서 요청문이 "상위 페이지 제목을 붙여 넣으세요"
+                # 라고 사람에게 시켰다 — 방금 받아 온 것을 버린 채로.
+                top_rows.append({"position": t.get("pos"), "url": t.get("url"),
+                                 "title": t.get("title"), "domain": d or None,
+                                 "is_own": bool(d and scoring.owns(d, own))})
                 if not d:
                     continue
                 if scoring.owns(d, own):
@@ -162,6 +169,7 @@ def collect(project: str, *,
             db.write_rank_snapshot(
                 conn, row["id"], position, url,
                 res["serp_features"], res["aio_present"], aio_cited)
+            db.write_serp_results(conn, row["id"], top_rows)
             total_cost += res["cost"]
             if not no_harvest:
                 # 후보는 조회에 쓴 로케일을 물려받는다. 안 그러면 한국어 SERP에서

@@ -136,6 +136,9 @@ STAGE_LABELS: dict[str, dict] = {
     "pages": {"t": "내 페이지 점검", "run": "페이지 다시 점검",
         "gain": "기회에 걸린 내 페이지를 직접 열어 제목·설명·H1·본문 길이·구조화 데이터를 "
                 "확인합니다. 무료입니다."},
+    "vitals": {"t": "속도 측정", "run": "속도 다시 측정",
+        "gain": "같은 페이지를 모바일과 데스크톱에서 열어 LCP·INP·CLS 를 잽니다. "
+                "모바일에서만 순위가 밀릴 때 원인을 짐작 대신 숫자로 말합니다. 무료입니다."},
     "report": {"t": "보고서 생성"},
     "create": {"t": "콘텐츠 작성",
         "gain": "뽑은 기회를 저장소의 진짜 콘텐츠 변경으로 만듭니다. 브랜치와 PR 로 "
@@ -352,6 +355,15 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
         "show_skills_btn": show_skills_btn,         # 빠진 마케팅 스킬이 있을 때만 True
         "show_setup": show_setup,
         "guide": guide,
+        # 쓰는 방식(설정 0단계) — 정본은 doctor 의 MODES/TOOLS/TERMINALS 다.
+        # 화면은 여기 실린 것만 그린다: 도구 이름·설치 여부의 사본을 HTML 에 두지 않는다.
+        "mode": d.get("mode"), "tool": d.get("tool"),
+        "terminal": d.get("terminal") or "system",
+        "modes": d.get("modes") or [],
+        "tools": d.get("tools") or [],
+        "terminals": d.get("terminals") or [],
+        "usage_keys": d.get("usage_keys") or {},
+        "orca_ok": bool(d.get("orca_ok")),
     }
 
 

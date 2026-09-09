@@ -140,6 +140,16 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   aio_cited INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
+CREATE TABLE IF NOT EXISTS serp_results (     -- 검색결과 상위 — rank_snapshots 는 "내 자리"만 안다
+  id INTEGER PRIMARY KEY,
+  keyword_id INTEGER NOT NULL REFERENCES keywords(id),
+  checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  position INTEGER NOT NULL,                  -- 검색결과에서의 자리
+  url TEXT, title TEXT, domain TEXT,
+  is_own INTEGER DEFAULT 0,                   -- 1 = 내 도메인
+  UNIQUE(keyword_id, checked_at, position)
+);
+CREATE INDEX IF NOT EXISTS idx_serp_kw ON serp_results(keyword_id, checked_at);
 CREATE TABLE IF NOT EXISTS gsc_snapshots (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -234,8 +244,29 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   canonical TEXT, robots TEXT,                -- <link rel=canonical>, <meta name=robots>
   internal_links INTEGER, external_links INTEGER,
   images INTEGER, images_no_alt INTEGER,
+  viewport TEXT,                              -- <meta name=viewport> — 없으면 모바일에서 데스크톱 폭
+  html_lang TEXT,                             -- <html lang>
+  hreflang_json TEXT,                         -- [[코드, 주소], ...] 선언 순서 그대로
+  published TEXT, modified TEXT,              -- 글의 발행·수정일 (우리가 점검한 날이 아니다)
+  js_shell INTEGER,                           -- 1 = 정적 HTML 로는 본문이 안 보이는 페이지로 의심
   UNIQUE(project_id, checked_date, url)
 );
+CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  url TEXT NOT NULL,
+  strategy TEXT NOT NULL,                     -- mobile|desktop
+  error TEXT,                                 -- 못 잰 사유
+  -- 현장(CrUX, 실제 사용자 28일치) — 검색이 보는 값
+  origin_fallback INTEGER,                    -- 1 = 이 URL 이 아니라 사이트 전체(오리진) 값
+  field_verdict TEXT,                         -- FAST|AVERAGE|SLOW (구글 표현 그대로)
+  field_lcp_ms INTEGER, field_inp_ms INTEGER, field_cls REAL, field_ttfb_ms INTEGER,
+  -- 실험실(Lighthouse, 지금 한 번) — 고친 뒤 바로 확인할 수 있는 유일한 숫자
+  lab_score INTEGER, lab_lcp_ms INTEGER, lab_cls REAL, lab_tbt_ms INTEGER,
+  UNIQUE(project_id, checked_date, url, strategy)
+);
+CREATE INDEX IF NOT EXISTS idx_page_vitals ON page_vitals(project_id, checked_date);
 CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -381,8 +412,15 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
   finished_at TEXT,
   seed TEXT,                                  -- sitemap|home
   pages INTEGER DEFAULT 0,
-  issues INTEGER DEFAULT 0
+  issues INTEGER DEFAULT 0,
+  robots_txt TEXT                             -- robots.txt 원문 — 어느 줄에 걸리는지 말하려면 필요하다
 );
+CREATE TABLE IF NOT EXISTS sitemap_urls (     -- 사이트맵이 시드였을 때 그 목록 그대로
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
+  url TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sitemap_urls ON sitemap_urls(run_id);
 CREATE TABLE IF NOT EXISTS crawl_pages (
   id INTEGER PRIMARY KEY,
   run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
@@ -474,6 +512,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cols:
             conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
             conn.commit()
+    # 페이지 감사가 모바일(viewport)·언어(html lang·hreflang)·신선도(발행·수정일)와
+    # "정적 HTML 로는 안 보이는 페이지"(js_shell)를 새로 읽는다. 요청문이 이 값들을
+    # 사실로 싣기 때문에, 없으면 NULL 로 남아야지 0 이나 빈 문자열이면 안 된다.
+    cr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_runs)")}
+    if "robots_txt" not in cr_cols:
+        conn.execute("ALTER TABLE crawl_runs ADD COLUMN robots_txt TEXT")
+        conn.commit()
+
+    pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
+    for col, decl in (("viewport", "TEXT"), ("html_lang", "TEXT"),
+                      ("hreflang_json", "TEXT"), ("published", "TEXT"),
+                      ("modified", "TEXT"), ("js_shell", "INTEGER")):
+        if col not in pa_cols:
+            conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} {decl}")
+            conn.commit()
+
     opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
     if "status_at" not in opp_cols:      # 완료 후 관찰의 기준 시각 (spec keyword-triage §3)
         conn.execute("ALTER TABLE opportunities ADD COLUMN status_at TEXT")
@@ -978,7 +1032,8 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
     """
     cols = ("status", "error", "title", "meta_description", "h1_json", "h2_json",
             "words", "schema_json", "canonical", "robots",
-            "internal_links", "external_links", "images", "images_no_alt")
+            "internal_links", "external_links", "images", "images_no_alt",
+            "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})
@@ -989,6 +1044,64 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
          for r in rows])
     conn.commit()
     return len(rows)
+
+
+# 검색결과에서 몇 자리까지 남기나. 요청문이 "상위에 있는 페이지"를 보여주는 데
+# 쓰는 값이라 넉넉할 필요가 없다 — 사람이 실제로 비교하는 것은 위 몇 개다.
+SERP_KEEP = 5
+
+
+def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                      rows) -> int:
+    """속도 측정 결과 적재. write_page_audits 와 같은 규칙 — 같은 날 나눠 돌려도 앞
+    배치를 안 지우는 upsert 이고, 없는 키는 NULL 이다(안 잰 것과 0 은 다르다)."""
+    cols = ("error", "origin_fallback", "field_verdict",
+            "field_lcp_ms", "field_inp_ms", "field_cls", "field_ttfb_ms",
+            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms")
+    rows = list(rows)
+    conn.executemany(
+        f"""INSERT INTO page_vitals(project_id, checked_date, url, strategy, {', '.join(cols)})
+            VALUES(?,?,?,?,{','.join('?' * len(cols))})
+            ON CONFLICT(project_id, checked_date, url, strategy) DO UPDATE SET
+              {', '.join(f'{c}=excluded.{c}' for c in cols)}""",
+        [(project_id, checked_date, r["url"], r["strategy"]) + tuple(r.get(c) for c in cols)
+         for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_sitemap_urls(conn: sqlite3.Connection, run_id: int, urls) -> int:
+    """사이트맵 URL 목록을 크롤 회차에 매단다. 재실행은 덮어쓴다."""
+    urls = [u for u in urls if u]
+    conn.execute("DELETE FROM sitemap_urls WHERE run_id=?", (run_id,))
+    conn.executemany("INSERT INTO sitemap_urls(run_id, url) VALUES(?,?)",
+                     [(run_id, u) for u in urls])
+    conn.commit()
+    return len(urls)
+
+
+def write_serp_results(conn: sqlite3.Connection, keyword_id: int, rows,
+                       checked_at: str | None = None) -> int:
+    """검색결과 상위 몇 줄을 그대로 남긴다. 같은 키워드·같은 날은 덮어쓴다(하루 한 벌).
+
+    이 표가 없던 동안, 요청문은 상위 페이지의 제목을 **사람에게 붙여 넣으라고**
+    시켰다 — 방금 돈 주고 받아 온 응답 안에 그 제목이 들어 있는데도. rank_snapshots
+    는 "내가 몇 위인가" 만 남기느라 나머지를 버렸다.
+    """
+    rows = [r for r in rows if r.get("position") is not None]
+    if not rows:
+        return 0
+    ts = checked_at or now()
+    # write_rank_snapshot 과 같은 delete-then-insert — 재실행이 중복을 안 쌓는다.
+    conn.execute("DELETE FROM serp_results WHERE keyword_id=? AND date(checked_at)=date(?)",
+                 (keyword_id, ts))
+    conn.executemany(
+        """INSERT INTO serp_results(keyword_id, checked_at, position, url, title, domain, is_own)
+           VALUES(?,?,?,?,?,?,?)""",
+        [(keyword_id, ts, r["position"], r.get("url"), r.get("title"),
+          r.get("domain"), int(bool(r.get("is_own")))) for r in rows[:SERP_KEEP]])
+    conn.commit()
+    return min(len(rows), SERP_KEEP)
 
 
 def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,

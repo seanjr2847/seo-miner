@@ -100,8 +100,9 @@ pip install requests pyyaml
 됩니다 — API 키는 서버가 대므로 다시 넣지 않습니다.
 
 측정한 자료는 넘어가지 않습니다(웹이 자기 계정에서 처음부터 다시 잽니다). 로컬에
-있던 것은 그대로 남고, 두 곳을 같이 써도 됩니다 — 웹은 주기 측정과 PR 자동 생성을,
-플러그인은 해석과 판단이 필요한 작업을 맡습니다.
+있던 것은 그대로 남고, 두 곳을 같이 써도 됩니다 — 웹은 주기 측정을, 플러그인은
+해석과 판단이 필요한 작업을 맡습니다. 기회를 실제로 고치는 일은 이 PC 의 개발
+도구가 엽니다(웹 화면은 브라우저라 PC 의 프로세스를 못 띄웁니다).
 
 주소를 바꾸려면 `SEOMINER_HOSTED_URL` 환경 변수를 세우면 됩니다 (기본값의 정본은
 `skills/capture/scripts/dashboard.py` 의 `HOSTED_URL`).
@@ -112,7 +113,7 @@ pip install requests pyyaml
 |---|---|
 | `/setup [web]` | 환경 진단, 설치·키·구글 연결. `web`이면 대시보드 설정 화면 |
 | `/capture add` | 사이트 온보딩 — 3문항(타입·도메인·시드 키워드) + AI 질문 초안. 서치콘솔 속성은 로그인해 두면 목록에서 고릅니다 |
-| `/capture run` | **한 번에 끝까지** — `gsc → index → keywords → rank → ai → competitors → gaps → pages → report` 순서로 스크립트가 묶어서 돌고, 끝나면 리포트 파일을 알려 줍니다. `rank`·`ai`·`competitors` 같은 유료 축은 키가 없으면 알아서 빠집니다 |
+| `/capture run` | **한 번에 끝까지** — `gsc → ga4 → index → keywords → metrics → rank → crawl → ai → competitors → backlinks → gaps → pages → vitals → report` 순서로 스크립트가 묶어서 돌고, 끝나면 리포트 파일을 알려 줍니다. `rank`·`ai`·`competitors` 같은 유료 축은 키가 없으면 알아서 빠집니다 |
 | `/capture gsc` | Search Console 실적 자동 수집 — 합계·날짜별 추이·디바이스 분해 (구글 계정 연결 — 필수) |
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |

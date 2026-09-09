@@ -41,6 +41,50 @@ UA = {"User-Agent": "seo-miner/page-audit (+https://github.com/seanjr2847/seo-mi
 SKIP_TEXT = {"script", "style", "noscript", "template", "svg", "title"}
 MAX_HTML = 2_000_000        # 2MB 를 넘는 문서는 앞부분만 본다 (head 와 본문 초반이면 족하다)
 
+# 본문을 자바스크립트가 그리는 페이지의 껍데기 id — 이것만으로는 판정하지 않는다
+# (SSR 된 Next 페이지도 __next 를 쓴다). 본문이 얇을 때만 같이 본다.
+_APP_ROOTS = {"root", "__next", "app", "___gatsby", "svelte", "q-app"}
+# 본문이 이보다 얇으면서 껍데기 흔적이 있으면 "정적 HTML 로는 안 보이는 페이지" 로 본다.
+JS_SHELL_WORDS = 120
+JS_SHELL_SCRIPTS = 5
+
+
+def _date(raw: str) -> str | None:
+    """'2026-08-21T09:00:00+09:00' → '2026-08-21'. 못 읽으면 원문을 짧게 남긴다 —
+    지어내지 않고, 사람이 보면 아는 글자는 버리지 않는다."""
+    v = (raw or "").strip()
+    if not v:
+        return None
+    head = v[:10]
+    if len(head) == 10 and head[4] == head[7] == "-" and head.replace("-", "").isdigit():
+        return head
+    return v[:40]
+
+
+def _schema_dates(blob: str) -> tuple[str | None, str | None]:
+    """ld+json 의 datePublished/dateModified. 깨진 JSON 이어도 글자로 건진다 —
+    _schema_types 와 같은 규칙이다."""
+    try:
+        data = json.loads(blob)
+    except ValueError:
+        def grab(key):
+            m = re.search(r'"%s"\s*:\s*"([^"]+)"' % key, blob)
+            return _date(m.group(1)) if m else None
+        return grab("datePublished"), grab("dateModified")
+    pub = mod = None
+    stack = [data]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            pub = pub or (_date(cur["datePublished"])
+                          if isinstance(cur.get("datePublished"), str) else None)
+            mod = mod or (_date(cur["dateModified"])
+                          if isinstance(cur.get("dateModified"), str) else None)
+            stack += [v for v in cur.values() if isinstance(v, (dict, list))]
+        elif isinstance(cur, list):
+            stack += [v for v in cur if isinstance(v, (dict, list))]
+    return pub, mod
+
 
 class _Page(HTMLParser):
     """한 장에서 감사에 쓰는 것만 줍는다. 모르는 태그는 그냥 지나간다."""
@@ -58,6 +102,13 @@ class _Page(HTMLParser):
         self.schema: list[str] = []
         self.internal = self.external = 0
         self.images = self.images_no_alt = 0
+        self.viewport = None
+        self.html_lang = None
+        self.hreflang: list[list[str]] = []      # [[코드, 주소], ...] — 선언 순서 그대로
+        self.published = None
+        self.modified = None
+        self.scripts = 0                         # JS 껍데기 판정의 재료
+        self.app_root = False
         self._text: list[str] = []
         self._stack: list[str] = []
         self._grab = None          # 지금 글자를 모으는 자리: "title" | "h1" | "h2" | "ld"
@@ -66,20 +117,44 @@ class _Page(HTMLParser):
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
         self._stack.append(tag)
-        if tag == "title" and self.title is None:
+        # 태그 종류와 무관한 신호라 사슬 밖에서 본다 — 사슬 안에 두면 <a id="root">
+        # 하나가 링크 집계를 통째로 삼킨다.
+        if a.get("id", "").strip().lower() in _APP_ROOTS or "data-reactroot" in a:
+            self.app_root = True
+        if tag == "html":
+            # 페이지의 언어 선언. 없으면 구글·빙이 본문 글자로 추측한다 — 다국어
+            # 사이트에서 로케일 판정이 어긋나는 첫 자리다.
+            self.html_lang = a.get("lang", "").strip() or None
+        elif tag == "title" and self.title is None:
             self._grab, self._buf = "title", []
         elif tag in ("h1", "h2"):
             self._grab, self._buf = tag, []
         elif tag == "meta":
             name = (a.get("name") or a.get("property") or "").lower()
+            content = a.get("content", "").strip()
             if name == "description" and self.meta_description is None:
-                self.meta_description = a.get("content", "").strip()
+                self.meta_description = content
             elif name == "robots":
-                self.robots = a.get("content", "").strip()
-        elif tag == "link" and "canonical" in a.get("rel", "").lower():
-            self.canonical = urljoin(self.base, a.get("href", "").strip())
-        elif tag == "script" and a.get("type", "").lower() == "application/ld+json":
-            self._grab, self._buf = "ld", []
+                self.robots = content
+            elif name == "viewport" and self.viewport is None:
+                self.viewport = content
+            elif name in ("article:published_time", "datepublished") and not self.published:
+                self.published = _date(content)
+            elif name in ("article:modified_time", "og:updated_time", "datemodified")                     and not self.modified:
+                self.modified = _date(content)
+        elif tag == "link":
+            rel = a.get("rel", "").lower()
+            if "canonical" in rel:
+                self.canonical = urljoin(self.base, a.get("href", "").strip())
+            elif "alternate" in rel and a.get("hreflang"):
+                self.hreflang.append([a["hreflang"].strip(),
+                                      urljoin(self.base, a.get("href", "").strip())])
+        elif tag == "script":
+            self.scripts += 1
+            if a.get("type", "").lower() == "application/ld+json":
+                self._grab, self._buf = "ld", []
+        elif tag == "time" and a.get("datetime") and not self.published:
+            self.published = _date(a["datetime"])
         elif tag == "a":
             href = a.get("href", "").strip()
             if href and not href.startswith(("#", "mailto:", "tel:", "javascript:")):
@@ -106,6 +181,9 @@ class _Page(HTMLParser):
                 self.title = text
             elif self._grab == "ld":
                 self.schema += _schema_types(text)
+                pub, mod = _schema_dates(text)
+                self.published = self.published or pub
+                self.modified = self.modified or mod
             elif self._grab == "h1":
                 self.h1.append(text)
             elif self._grab == "h2":
@@ -157,15 +235,25 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
         p.feed(html[:MAX_HTML])
     except Exception as e:                       # 망가진 마크업에도 지금까지 읽은 것은 남긴다
         print(f"  ! {url}: 파싱 도중 중단 ({e})", file=sys.stderr)
+    words = p.words
+    # 정적 HTML 로는 본문이 안 보이는 페이지 — 여기서 재는 title 말고 본문·H2·
+    # 구조화 데이터는 전부 못 믿는 값이 된다. 판정이 아니라 **단서**라서 요청문이
+    # "없음" 을 사실처럼 말하지 않게 하는 데만 쓴다.
+    js_shell = int(words < JS_SHELL_WORDS
+                   and (p.app_root or p.scripts >= JS_SHELL_SCRIPTS))
     return {"url": url, "status": status, "error": None,
             "title": p.title, "meta_description": p.meta_description,
             "h1_json": json.dumps(p.h1, ensure_ascii=False),
             "h2_json": json.dumps(p.h2[:20], ensure_ascii=False),
-            "words": p.words,
+            "words": words,
             "schema_json": json.dumps(sorted(set(p.schema)), ensure_ascii=False),
             "canonical": p.canonical, "robots": p.robots,
             "internal_links": p.internal, "external_links": p.external,
-            "images": p.images, "images_no_alt": p.images_no_alt}
+            "images": p.images, "images_no_alt": p.images_no_alt,
+            "viewport": p.viewport, "html_lang": p.html_lang,
+            "hreflang_json": json.dumps(p.hreflang[:30], ensure_ascii=False),
+            "published": p.published, "modified": p.modified,
+            "js_shell": js_shell}
 
 
 def target_urls(conn, project_id: int, limit: int) -> list[str]:
@@ -291,11 +379,15 @@ def main() -> None:
 
 
 def _selfcheck() -> None:
-    html = """<html><head><title>  밀리아 제거 비용과 방법  </title>
+    html = """<html lang="ko"><head><title>  밀리아 제거 비용과 방법  </title>
       <meta name="description" content="밀리아 제거 가격과 회복 기간">
       <meta name="robots" content="index,follow">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
       <link rel="canonical" href="/milia">
-      <script type="application/ld+json">{"@type":"Article","author":{"@type":"Person"}}</script>
+      <link rel="alternate" hreflang="ko" href="/milia">
+      <link rel="alternate" hreflang="en-UK" href="/en/milia">
+      <script type="application/ld+json">{"@type":"Article","author":{"@type":"Person"},
+        "datePublished":"2024-03-02T10:00:00+09:00","dateModified":"2024-05-01"}</script>
       </head><body>
       <h1>밀리아 제거</h1><h2>비용</h2>
       <p>본문 단어 하나 둘 셋</p>
@@ -313,6 +405,32 @@ def _selfcheck() -> None:
     assert a["robots"] == "index,follow"
     assert (a["internal_links"], a["external_links"]) == (1, 1), a
     assert (a["images"], a["images_no_alt"]) == (2, 1), a
+    assert a["viewport"].startswith("width=device-width"), a["viewport"]
+    assert a["html_lang"] == "ko", a["html_lang"]
+    assert json.loads(a["hreflang_json"]) == [["ko", "https://clinic.kr/milia"],
+                                              ["en-UK", "https://clinic.kr/en/milia"]],         a["hreflang_json"]
+    # 글이 언제 쓰였는지는 우리가 점검한 날과 다른 사실이다 — 순위 하락의 원인
+    # 후보에서 "낡았다"를 가르는 유일한 재료다.
+    assert (a["published"], a["modified"]) == ("2024-03-02", "2024-05-01"), a
+    assert a["js_shell"] == 0, "본문이 있는 페이지를 JS 껍데기로 본다"
+
+    # 정적 HTML 로는 본문이 안 보이는 페이지 — "구조화 데이터 없음" 을 사실로
+    # 말하면 안 되는 자리다. 판정이 아니라 단서라서 얇을 때만 켜진다.
+    shell = audit_html("https://spa.kr/x", '<html><body><div id="root"></div>'
+                       '<script src="/a.js"></script></body></html>')
+    assert shell["js_shell"] == 1, shell
+    assert audit_html("https://ssr.kr/x",
+                      '<html><body><div id="__next">' + "글자 " * 200
+                      + "</div></body></html>")["js_shell"] == 0, "본문이 두꺼운 SSR 을 껍데기로 본다"
+    # <a id="root"> 하나가 링크 집계를 삼키지 않는다 (판정을 elif 사슬 밖에 둔 이유)
+    links = audit_html("https://s.kr/x", '<html><body><a id="root" href="/b">x</a></body></html>')
+    assert links["internal_links"] == 1, links
+
+    # 날짜는 meta·time·ld+json 어디서 와도 같은 꼴이 된다
+    assert _date("2026-08-21T09:00:00+09:00") == "2026-08-21"
+    assert _date("Aug 21, 2026") == "Aug 21, 2026"        # 못 읽으면 원문 — 지어내지 않는다
+    assert _date("") is None
+    assert _schema_dates('{"dateModified":"2026-01-02",,,}') == (None, "2026-01-02")
     # script·title 안 글자는 본문이 아니다 — 세면 얇은 페이지가 두꺼워 보인다
     assert a["words"] == 10, a["words"]       # h1 2 + h2 1 + p 5 + a 2
     assert audit_html("https://c.kr/x", "<html><body><script>가 나 다 라 마</script></body></html>"

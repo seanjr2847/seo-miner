@@ -36,10 +36,14 @@ def _opp(kind, target, **kw):
 
 
 def _audit(**over):
+    # 새 감사 행의 꼴 그대로 — js_shell 이 있어야 "이 행이 모바일·언어 칸을 읽고
+    # 왔다"가 된다(scoring._has_render_fields). 옛 행을 흉내 내려면 그 키들을 뺀다.
     a = {"url": URL, "checked_date": "2026-08-20", "title": "제목", "meta_description": "설명",
          "h1_json": '["제목"]', "h2_json": '["첫째", "둘째", "셋째"]', "words": 120,
          "schema_json": "[]", "canonical": None, "robots": None, "internal_links": 1,
-         "external_links": 2, "images": 3, "images_no_alt": 2, "error": None}
+         "external_links": 2, "images": 3, "images_no_alt": 2, "error": None,
+         "status": 200, "js_shell": 0, "viewport": "width=device-width, initial-scale=1",
+         "html_lang": "ko", "hreflang_json": "[]", "published": None, "modified": None}
     a.update(over)
     a["advice"] = scoring.page_advice(a, ["검색어"], domain="me.example")
     return a
@@ -278,6 +282,197 @@ def test_gather_attaches_brief_to_every_opportunity():
     assert f"| https://{test_render.SITES[1]}.example/a | 120 |" in sd["brief"]["body"]
     assert set(d["brief"]["tails"]) == set(brief.SHAPE_NAMES)
     assert d["brief"]["locale"] == "ko-KR"
+
+
+def test_static_html_caveat_when_page_is_a_js_shell():
+    """정적 HTML 로 가져온 값을 사실처럼 말하지 않는다.
+
+    Yoast·RankMath·AIOSEO 는 ld+json 을 자바스크립트로 넣는다. 그때 "구조화 데이터
+    없음" 을 그대로 실으면, 있는 것을 또 만들라고 시킨다 — 이 리포가 가진 감사는
+    requests 한 번이라 정확히 그 함정 위에 있다.
+    """
+    plain = brief.build(_opp("ctr_gap", "검색어"),
+                        {"query_pages": {"검색어": _pages(URL)},
+                         "page_audits": {URL: _audit(js_shell=0)}})["body"]
+    assert "구조화 데이터: (없음) — 정적 HTML 기준" in plain, plain
+    assert "자바스크립트로 그리는 것으로 보입니다" not in plain
+
+    spa = brief.build(_opp("ctr_gap", "검색어"),
+                      {"query_pages": {"검색어": _pages(URL)},
+                       "page_audits": {URL: _audit(js_shell=1, words=20)}})["body"]
+    assert "자바스크립트로 그리는 것으로 보입니다" in spa, spa
+    # 판정(scoring.page_advice)도 같이 바뀐다 — "없다" 가 아니라 "확인부터 하라"
+    assert "[구조화 데이터] 지금: 정적 HTML 에는 ld+json 이 없습니다" in spa, spa
+    assert "리치 결과 테스트" in spa, "확인할 방법을 안 알려준다"
+
+    # 옛 감사 행(칸이 통째로 NULL)에는 없는 문제를 만들지 않는다
+    old_row = _audit()
+    for k in ("js_shell", "viewport", "html_lang", "hreflang_json", "published", "modified"):
+        old_row.pop(k, None)
+    old_row["advice"] = scoring.page_advice(old_row, ["검색어"], domain="me.example")
+    body = brief.build(_opp("ctr_gap", "검색어"),
+                       {"query_pages": {"검색어": _pages(URL)},
+                        "page_audits": {URL: old_row}})["body"]
+    assert "뷰포트" not in body and "정적 HTML 기준" not in body, body
+
+
+def test_page_state_carries_status_viewport_language_and_dates():
+    """"지금 값 → 고칠 값" 을 시키려면 지금 값이 있어야 한다."""
+    a = _audit(status=200, viewport="width=device-width, initial-scale=1",
+               html_lang="ko", published="2024-03-02", modified="2024-05-01",
+               hreflang_json='[["ko", "https://me.example/a"], ["en", "https://me.example/en/a"]]')
+    body = brief.build(_opp("index_blocked", URL), {"page_audits": {URL: a}})["body"]
+    assert "- HTTP 상태: 200" in body, body
+    assert "뷰포트: width=device-width" in body, body
+    assert "html lang: ko · hreflang ko, en" in body, body
+    # 우리가 점검한 날과 글이 쓰인 날은 다른 사실이다
+    assert "글의 날짜: 발행 2024-03-02 · 수정 2024-05-01" in body, body
+
+
+def test_site_wide_facts_reach_the_page_brief():
+    """한 장만 봐서는 모르는 것 — 제목 중복, 들어오는 내부 링크, robots·사이트맵."""
+    ctx = {"query_pages": {"검색어": _pages(URL)},
+           "page_audits": {URL: _audit()},
+           "crawl": {"run": {"id": 1},
+                     "issues": [{"kind": "dup_title", "url": URL,
+                                 "detail": "같은 제목을 쓰는 페이지 3개: 제목"},
+                                {"kind": "thin_content", "url": URL, "detail": "본문 80단어"},
+                                {"kind": "dup_title", "url": URL2, "detail": "남의 행"}]},
+           "crawl_inlinks": {URL: [{"from": URL2, "anchor": "여기"}]},
+           "site_probe": {URL: {"robots": "Disallow: /a", "in_sitemap": False}}}
+    ctx["crawl_kinds"] = {"dup_title": ["제목 중복", "왜 문제인지"]}
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
+    assert "같은 제목을 쓰는 페이지 3개" in body, body
+    # 갈래 이름은 화면과 같은 한국어여야 한다 — 정본은 collect_crawl.ISSUE_KIND
+    assert "| 제목 중복 |" in body and "dup_title |" not in body, body
+    # 페이지 한 장 진단이 이미 말하는 것을 두 번 싣지 않는다
+    assert "thin_content" not in body, body
+    assert "남의 행" not in body, "다른 주소의 크롤 이슈가 새어 들어온다"
+    assert "들어오는** 내부 링크 1개" in body and "| 여기 |" in body, body
+    # 같은 요청문 안에 두 방향의 링크 수가 있다 — 방향을 안 적으면 한 값의 두 표현처럼 읽힌다
+    # 진단 문장이 아니라 상태 줄에서 본다 — 진단에도 같은 말이 있어 그것만 보면
+    # 늘 참인 검사가 된다
+    assert "- 내보내는 내부 링크 1개 · 외부 링크 2개" in body, body
+    assert "`Disallow: /a`" in body, body
+    assert "사이트맵에 이 주소가 없습니다" in body, body
+
+    # 크롤이 안 본 주소를 "고아" 라고 부르지 않는다 — None 과 [] 는 다르다
+    unseen = brief.build(_opp("ctr_gap", "검색어"),
+                         {**ctx, "crawl_inlinks": {}})["body"]
+    assert "고아 페이지" not in unseen, unseen
+    orphan = brief.build(_opp("ctr_gap", "검색어"),
+                         {**ctx, "crawl_inlinks": {URL: []}})["body"]
+    assert "고아 페이지" in orphan, orphan
+
+
+def test_serp_top_replaces_the_paste_by_hand_step():
+    """상위 페이지 제목은 우리가 이미 사 온 것이다 — 사람에게 붙여 넣으라고 안 시킨다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)},
+           "serp_top": {"검색어": [
+               {"position": 1, "url": "https://rival.example/x", "title": "경쟁 글", "is_own": 0},
+               {"position": 4, "url": URL, "title": "내 글", "is_own": 1}]}}
+    body = brief.build(_opp("striking_distance", "검색어"), ctx)["body"]
+    assert "## 지금 이 검색어의 검색결과 상위" in body, body
+    assert "| 1위 | 경쟁 글 | https://rival.example/x |" in body, body
+    assert "| 4위 (내 페이지) | 내 글 |" in body, body
+    # 상위와 비교할 일이 아닌 꼴(주소 정리)에는 안 붙는다
+    assert "검색결과 상위" not in brief.build(_opp("cannibalization", "검색어"), ctx)["body"]
+    # 수집이 안 됐으면 사람이 붙여 넣는 칸이 그대로 남는다
+    assert "## 지금 이 검색어의 검색결과 상위" not in brief.build(
+        _opp("striking_distance", "검색어"), {"query_pages": {"검색어": _pages(URL)}})["body"]
+
+
+def _vitals(**over):
+    r = {"strategy": "mobile", "error": None, "origin_fallback": 0, "field_verdict": "SLOW",
+         "field_lcp_ms": 4200, "field_inp_ms": 310, "field_cls": 0.24, "field_ttfb_ms": 900,
+         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640}
+    r.update(over)
+    return r
+
+
+def test_device_gap_gets_real_speed_numbers():
+    """기기 격차 요청문은 "위 근거에 없는 것은 짐작하지 않습니다" 라고 못 박는다.
+    그 근거가 순위 차이 한 줄뿐이면 답이 나올 수 없다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)},
+           "device_gap": [{"query": "검색어", "mobile_pos": 12.0, "desktop_pos": 4.0,
+                           "dpos": 8.0, "mobile_imp": 900, "mobile_ctr": 0.4,
+                           "desktop_ctr": 3.1}],
+           "vitals_date": "2026-09-09",
+           "vitals": {URL: {"mobile": _vitals(),
+                            "desktop": _vitals(strategy="desktop", field_lcp_ms=1800,
+                                               field_inp_ms=90, field_cls=0.02,
+                                               lab_score=93, lab_lcp_ms=1900,
+                                               lab_cls=0.02, lab_tbt_ms=40)}}}
+    body = brief.text(_opp("device_gap", "검색어"), ctx, "ko-KR")
+    assert "기기별 속도 (2026-09-09" in body, body
+    assert "| LCP (현장) | 4.2초 | 1.8초 | 2.5초 |" in body, body
+    assert "| INP (현장) | 310ms | 90ms | 200ms |" in body, body
+    # 페이지 상태에도 같은 값이 실리고, 판정은 scoring 한 곳에서 온다
+    assert "모바일 현장(이 페이지의 실제 사용자 28일치)" in body, body
+    assert "[속도] 지금: 모바일 LCP 4.2초" in body, body
+    # 속도를 안 쟀으면 아무 줄도 안 만든다 — 없는 것을 있는 척하지 않는다
+    assert "기기별 속도" not in brief.text(
+        _opp("device_gap", "검색어"), {k: v for k, v in ctx.items()
+                                       if k not in ("vitals", "vitals_date")}, "ko-KR")
+
+
+def test_origin_fallback_is_not_called_this_pages_speed():
+    """사이트 전체 값을 이 페이지의 값이라고 말하면, 멀쩡한 페이지에 없는 문제를 만든다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)},
+           "vitals_date": "2026-09-09",
+           "vitals": {URL: {"mobile": _vitals(origin_fallback=1)}}}
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
+    assert "모바일 현장(사이트 전체 값)" in body, body
+    assert "사이트 전체(이 페이지만의 실제 사용자 값은 표본이 모자랍니다)" in body, body
+
+
+def test_technical_findings_do_not_pad_a_content_todo_list():
+    """열세 개를 늘어놓고 세 개만 시키는 글이 되지 않게.
+
+    모바일·언어·hreflang·속도는 이 페이지의 진짜 문제지만 "있는 페이지 고치기" 의
+    일이 아니다. 같은 번호 목록에 섞으면, 요청문이 시키지도 않을 것을 할 일처럼
+    적어 두고 규칙으로는 "요청하지 않은 것은 손대지 않습니다" 라고 말하게 된다.
+    """
+    a = _audit(viewport=None, html_lang=None)
+    a["advice"] = scoring.page_advice(a, ["검색어"], domain="me.example")
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: a},
+           "vitals_date": "2026-09-09", "vitals": {URL: {"mobile": _vitals()}}}
+
+    fix = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
+    todo = fix.split("## 진단 — 고쳐야 할 것")[1].split("##")[0]
+    assert "[title]" in todo and "[모바일]" not in todo and "[속도]" not in todo, todo
+    aside = fix.split("## 이 페이지에서 같이 눈에 띈 것")[1].split("##")[0]
+    assert "[모바일]" in aside and "[속도]" in aside, aside
+    assert "이번 요청문에서는 손대지 않습니다" in aside, aside
+
+    # 기술 점검 요청문에서는 안 가른다 — 거기서는 그게 본업이다
+    tech = brief.build(_opp("index_blocked", URL), {**ctx, "page_audits": {URL: a}})["body"]
+    assert "같이 눈에 띈 것" not in tech, tech
+    assert "[모바일] 지금:" in tech, tech
+
+
+def test_serp_table_replaces_the_paste_ask_instead_of_doubling_it():
+    """상위 제목을 위에서 줘 놓고 아래에서 또 "제목을 붙여 넣으세요" 라고 하지 않는다."""
+    base = {"query_pages": {"검색어": _pages(URL)}}
+    plain = brief.build(_opp("striking_distance", "검색어"), base)["body"]
+    assert brief.SHAPES["fix_page"]["slot"] in plain, plain
+
+    withtop = brief.build(_opp("striking_distance", "검색어"), {**base, "serp_top": {"검색어": [
+        {"position": 1, "url": "https://rival.example/x", "title": "경쟁 글", "is_own": 0}]}})["body"]
+    assert brief.SHAPES["fix_page"]["slot"] not in withtop, withtop
+    assert "제목은 이미 위에 있습니다" in withtop, withtop
+
+
+def test_trust_signals_are_asked_for_but_never_invented():
+    """E-E-A-T — 저자·출처·갱신일은 요구하되, 이름·자격은 지어내지 않게 못 박는다."""
+    tails = brief.tails("ko-KR")
+    for shape in ("fix_page", "new_content"):
+        # 답이 HTML 카드가 된 뒤로 소제목 틀은 form 이 갖지 않는다 — 요구 자체만 본다
+        assert "신뢰 신호" in tails[shape], shape
+        assert "[저자]" in tails[shape], shape
+        assert "지어내지 않습니다" in tails[shape], shape
+    # 고칠 페이지가 없는 일(연락문)에는 안 붙는다
+    assert "신뢰 신호" not in tails["outreach"]
 
 
 if __name__ == "__main__":

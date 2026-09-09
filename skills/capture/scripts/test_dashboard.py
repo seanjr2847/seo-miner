@@ -30,6 +30,17 @@ D = "2026-08-28"
 PREV = "2026-08-14"
 
 
+def _serve():
+    """라이브 대시보드와 같은 Handler 를 임의 포트에 띄운다 — 프록시는 디스패치
+    자리에 있어서 함수 호출로는 안 지나간다(test_render.serve 와 같은 꼴)."""
+    import threading
+    from http.server import ThreadingHTTPServer
+    ThreadingHTTPServer.allow_reuse_address = True
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def _brain(name="t"):
     """빈 Brain + 사이트 하나. 테스트마다 새 프로젝트를 쓴다(행이 서로 안 섞이게)."""
     conn = db.connect()
@@ -457,6 +468,224 @@ def test_triage_payload_groups_variants_and_counts():
     d = dashboard.gather(conn, db.get_project(conn, "tri"))
     assert "watch" in d and d["keyword_kinds"] == list(scoring.KEYWORD_KINDS)
     conn.close()
+
+
+# ── 온보딩 0단계 ──────────────────────────────────────────────────────────
+def test_setup_payload_carries_usage_choices():
+    """쓰는 방식·도구·터미널의 정본은 doctor 의 표 셋이고, 그 선택이 설정 화면
+    페이로드까지 그대로 온다 — 화면은 여기 실린 것만 그린다(사본을 두지 않는다)."""
+    import doctor
+    ids = [t[0] for t in doctor.TOOLS]
+    assert ids == ["claude", "codex", "opencode", "pi"]
+    assert [m[0] for m in doctor.MODES] == ["hosted", "local"]
+    assert [t[0] for t in doctor.TERMINALS] == ["orca", "system"]
+    assert doctor.tool_of("codex")[1] == "Codex" and doctor.tool_of("nope") is None
+    os.environ["SEOMINER_TOOL"] = "codex"; os.environ["SEOMINER_MODE"] = "local"
+    try:
+        p = dashboard.setup_state("")
+    finally:
+        os.environ.pop("SEOMINER_TOOL"); os.environ.pop("SEOMINER_MODE")
+    assert p["tool"] == "codex" and p["mode"] == "local" and p["terminal"] in ("orca", "system")
+    assert {t["id"] for t in p["tools"]} == set(ids) and all("installed" in t for t in p["tools"])
+    assert isinstance(p["orca_ok"], bool)
+
+
+def test_setup_dirs_and_remote_line():
+    """사이트별 로컬 폴더는 ~/.capture/dirs.json 한 자리에 살고, 호스팅 연결은
+    웹 [설정]이 내는 한 줄에서 url·token 두 토큰만 뽑아 remote.link 로 넘긴다."""
+    import paths
+    home = Path(os.environ["CAPTURE_HOME"])
+    assert paths.site_dirs() == {}
+    d = tempfile.mkdtemp(prefix="seo-miner-dir-")
+    assert paths.set_site_dir("mysite", d) == {"mysite": d}
+    assert (home / "dirs.json").exists()
+    assert paths.set_site_dir("mysite", None) == {}
+    r = dashboard.setup_dir({"project": "mysite", "path": str(home / "없는폴더")})
+    assert r["ok"] is False
+    r = dashboard.setup_dir({"project": "mysite", "path": d})
+    assert r["ok"] and r["dirs"] == {"mysite": d}
+    got = dashboard.setup_dirs()
+    assert got["dirs"] == {"mysite": d} and isinstance(got["worktrees"], list)
+    called = {}
+    import remote
+    orig = remote.link
+    remote.link = lambda url, token: called.update(url=url, token=token)
+    try:
+        r = dashboard.setup_remote({"line": 'python "C:/x/remote.py" connect https://h.example/ abc123'})
+        assert r["ok"] and called == {"url": "https://h.example/", "token": "abc123"}, (r, called)
+        assert dashboard.setup_remote({"line": "아무 말"})["ok"] is False
+    finally:
+        remote.link = orig
+
+
+# ── 호스팅 사이트를 로컬 화면에 (프록시) ──────────────────────────────────
+def test_local_handler_proxies_remote_sites():
+    """사이트 이름이 호스팅 것이면 로컬 Handler 는 자기 Brain 을 안 읽고 서버에
+    그대로 넘긴다 — 화면은 한 벌이고 데이터가 있는 쪽이 답한다."""
+    import remote
+    calls = []
+    orig_owns, orig_api = remote.owns, remote.api
+    remote.owns = lambda p: p == "webonly"
+    remote.api = lambda method, path, **kw: calls.append((method, path, kw)) or {"proxied": True}
+    try:
+        assert dashboard.remote_project("webonly") and not dashboard.remote_project("t")
+        assert not dashboard.remote_project("")
+        srv = _serve()
+        try:
+            import json as _j
+            import urllib.request
+            base = f"http://127.0.0.1:{srv.server_address[1]}"
+            u = f"{base}/api/data?project=webonly&date=2026-01-01"
+            assert _j.loads(urllib.request.urlopen(u).read()) == {"proxied": True}
+            assert calls[-1][0] == "GET" and calls[-1][1] == "/api/data"
+            assert calls[-1][2]["params"]["project"] == "webonly"
+            assert calls[-1][2]["params"]["date"] == "2026-01-01"
+            req = urllib.request.Request(
+                f"{base}/api/opp",
+                data=_j.dumps({"project": "webonly", "id": 1, "status": "acked"}).encode(),
+                headers={"Content-Type": "application/json", "X-Token": dashboard.TOKEN},
+                method="POST")
+            assert _j.loads(urllib.request.urlopen(req).read()) == {"proxied": True}
+            assert calls[-1][0] == "POST" and calls[-1][2]["json"]["id"] == 1
+            names = _j.loads(urllib.request.urlopen(f"{base}/api/projects").read())
+            assert "webonly" not in names   # config() 를 안 흉내 냈으니 로컬 이름만
+            # [설정] 진단은 이 PC 를 묻는 것이다 — 원격 사이트를 보고 있어도 서버에
+            # 안 넘긴다(넘기면 남의 컴퓨터에 무엇이 깔렸는지를 답한다).
+            n = len(calls)
+            d = _j.loads(urllib.request.urlopen(f"{base}/api/doctor?project=webonly").read())
+            assert len(calls) == n and "proxied" not in d, (len(calls) - n, d)
+        finally:
+            srv.shutdown()
+    finally:
+        remote.owns, remote.api = orig_owns, orig_api
+
+
+# ── 기록 창구 ─────────────────────────────────────────────────────────────
+def test_creation_route_records_and_marks_acked():
+    """작업 기록은 /api/creation 한 창구다 — 로컬 ROUTES 본체가 기록하고 기회를
+    진행 중으로 옮긴다. 남의 사이트 기회 번호는 LookupError(=404)."""
+    conn, pid = _brain("cre")
+    db.upsert_opportunities(conn, pid, None,
+                            [{"kind": "striking_distance", "target": "q", "score": 10}])
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (pid,)).fetchone()[0]
+    conn.close()
+    r = dashboard.ROUTES[("POST", "/api/creation")](
+        "", {}, {"project": "cre", "opportunity_id": oid,
+                 "path": "content/a.md", "branch": "capture/x-a", "note": "n"})
+    assert r["status"] == "acked" and r["creation_id"]
+    conn = db.connect()
+    assert conn.execute("SELECT status FROM opportunities WHERE id=?",
+                        (oid,)).fetchone()[0] == "acked"
+    row = conn.execute("SELECT file_path, branch, kind FROM creations WHERE opportunity_id=?",
+                       (oid,)).fetchone()
+    assert tuple(row) == ("content/a.md", "capture/x-a", "striking_distance"), tuple(row)
+    conn.close()
+    try:
+        dashboard.ROUTES[("POST", "/api/creation")](
+            "", {}, {"project": "cre", "opportunity_id": 999999, "path": "x"})
+        assert False, "남의 기회 번호가 통과했다"
+    except LookupError:
+        pass
+
+
+# ── 기회 카드에서 도구 열기 ────────────────────────────────────────────────
+def _opp_status(opp_id: int) -> str:
+    conn = db.connect()
+    try:
+        return conn.execute("SELECT status FROM opportunities WHERE id=?",
+                            (opp_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _opp_fixture(name: str, target: str) -> int:
+    """기회 하나짜리 사이트 — 심사를 통과시켜야 화면(payload)에 실린다."""
+    conn, pid = _brain(name)
+    db.upsert_opportunities(conn, pid, None,
+                            [{"kind": "striking_distance", "target": target, "score": 30}])
+    db.set_verdicts(conn, pid, [scoring.norm(target)], "work")
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
+                 "clicks,impressions,ctr,position) VALUES(?,?,28,?,1,10,0.1,9.0)",
+                 (pid, D, target))
+    conn.commit()
+    oid = conn.execute("SELECT id FROM opportunities WHERE project_id=?", (pid,)).fetchone()[0]
+    conn.close()
+    return oid
+
+
+def test_run_tool_builds_command_and_writes_brief():
+    """실행 버튼의 몸 — 요청문을 파일로 쓰고, 고른 도구의 argv 를 조립하고, 어느
+    폴더에서 열지 정한다. dry_run 은 터미널도 안 띄우고 상태도 안 바꾼다.
+
+    도구 이름·실행 파일·argv 꼴의 정본은 doctor.TOOLS 다 — 여기서 사본을 안 만든다.
+    """
+    import shutil as _sh
+    import doctor
+    import paths
+    oid = _opp_fixture("rt", "q1")
+    os.environ.pop("SEOMINER_TOOL", None)
+    orig_which = _sh.which
+    try:
+        # 도구를 안 골랐다 — 상태를 안 바꾸고 왜 못 여는지 말한다
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"] is False and "도구" in r["error"], r
+
+        # 골랐는데 안 깔렸다 — 열기 전에 여기서 막는다(열고 나서 실패하지 않는다)
+        os.environ["SEOMINER_TOOL"] = "codex"
+        _sh.which = lambda c: None
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"] is False and doctor.tool_of("codex")[1] in r["error"], r
+
+        _sh.which = lambda c: "/bin/codex" if c == "codex" else None
+        r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+        assert r["ok"], r
+        assert r["argv"][0] == doctor.tool_of("codex")[2], r["argv"]
+        assert r["file"].endswith(f"opp-{oid}.md") and r["file"] in r["argv"][-1], r
+        assert Path(r["cwd"]) == paths.home() / "work" / "rt", r["cwd"]  # 폴더 없는 사이트
+        body = Path(r["file"]).read_text("utf-8")
+        assert "createdb.py" in body and f"done rt {oid}" in body, body[-400:]
+        assert "## " in body, "요청문 본문이 안 들어갔다"
+
+        # 폴더를 적어 두면 거기서 연다
+        d = tempfile.mkdtemp(prefix="seo-miner-rt-")
+        paths.set_site_dir("rt", d)
+        try:
+            r = dashboard.run_tool({"project": "rt", "id": oid, "dry_run": True})
+            assert Path(r["cwd"]) == Path(d), r["cwd"]
+        finally:
+            paths.set_site_dir("rt", None)
+
+        # 없는 기회는 400 이고, dry_run 은 상태를 안 건드린다
+        assert dashboard.run_tool({"project": "rt", "id": oid + 9999,
+                                   "dry_run": True})["ok"] is False
+        assert _opp_status(oid) == "new", "dry_run 이 상태를 바꿨다"
+    finally:
+        _sh.which = orig_which
+        os.environ.pop("SEOMINER_TOOL", None)
+
+
+def test_run_tool_opens_terminal_and_acks():
+    """터미널을 띄우는 갈래 — Orca 가 안 되면 시스템으로 물러나고, 열렸으면 그 기회는
+    '작업 시작'(acked)이 된다. 검사에서 진짜 창을 띄우지 않는다(_open_terminal 을 흉내)."""
+    import shutil as _sh
+    oid = _opp_fixture("rt2", "q2")
+    orig_which, orig_open = _sh.which, dashboard._open_terminal
+    seen = {}
+    os.environ["SEOMINER_TOOL"] = "claude"
+    os.environ["SEOMINER_TERMINAL"] = "orca"
+    try:
+        _sh.which = lambda c: "/bin/" + c
+        dashboard._open_terminal = lambda argv, cwd, terminal, title: (
+            seen.update(argv=argv, cwd=str(cwd), terminal=terminal, title=title)
+            or {"terminal": "system", "fallback": "system"})
+        r = dashboard.run_tool({"project": "rt2", "id": oid})
+        assert r["ok"] and r["terminal"] == "system" and r["fallback"] == "system", r
+        assert seen["terminal"] == "orca" and str(oid) in seen["title"], seen
+        assert _opp_status(oid) == "acked", "열었는데 작업 시작으로 안 바뀌었다"
+    finally:
+        _sh.which, dashboard._open_terminal = orig_which, orig_open
+        os.environ.pop("SEOMINER_TOOL", None)
+        os.environ.pop("SEOMINER_TERMINAL", None)
 
 
 if __name__ == "__main__":

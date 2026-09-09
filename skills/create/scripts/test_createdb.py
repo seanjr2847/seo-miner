@@ -5,6 +5,7 @@ pick → claim → done → list 한 바퀴가 실제로 도는지, 그리고 �
 done으로 닫히는지)를 본다. 이 경로가 깨지면 capture가 다음 런에서 "이미 처리한
 기회"를 계속 새 기회로 들고 온다.
 """
+import io
 import json
 import os
 import subprocess
@@ -105,5 +106,54 @@ c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_
 assert c2 is not None and "손으로 이미 실행:" in (c2["note"] or ""), c2
 conn.close()
 
-print(f"ok — pick·claim·done·list·merged·sync 정상, 기록 뒤 진행 중 확인 ({HOME})")
+# ── 원격 사이트: Brain 대신 서버 창구를 쓴다 ──────────────────────────────
+# run() 은 서브프로세스라 monkeypatch 가 안 닿는다 — 여기만 createdb 를 직접 부른다.
+import contextlib  # noqa: E402
+import remote  # noqa: E402  (capture/scripts 는 이미 sys.path 에 있다)
+
+calls = []
+_orig_owns, _orig_api = remote.owns, remote.api
+remote.owns = lambda p: p == "web"
+remote.api = lambda method, path, **kw: (calls.append((method, path, kw)) or
+    {"opps": [{"id": 7, "kind": "ctr_gap", "target": "k", "status": "new", "score": 1},
+              {"id": 8, "kind": "ctr_gap", "target": "닫힌 것", "status": "done", "score": 9}],
+     "creations": [{"id": 3, "file_path": "a.md"}],
+     "creation_id": 3, "status": "acked", "updated": 1})
+
+
+def _out(fn, *args, **kw) -> str:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*args, **kw)
+    return buf.getvalue()
+
+
+try:
+    o = _out(createdb.pick, "web", None, 10)
+    assert '"id": 7' in o and '"id": 8' not in o, o   # 열린 것만 (new|acked)
+    assert calls[-1][0] == "GET" and calls[-1][1] == "/api/data", calls[-1]
+    assert calls[-1][2]["params"]["project"] == "web", calls[-1]
+
+    _out(createdb.claim, "web", [7])
+    assert calls[-1][1] == "/api/opp" and calls[-1][2]["json"]["status"] == "acked", calls[-1]
+    assert calls[-1][2]["json"]["project"] == "web", calls[-1]
+
+    _out(createdb.done, "web", 7, "a.md", "capture/ctr_gap-k", None)
+    assert calls[-1][1] == "/api/creation", calls[-1]
+    assert calls[-1][2]["json"]["opportunity_id"] == 7, calls[-1]
+    assert calls[-1][2]["json"]["path"] == "a.md", calls[-1]
+
+    o = _out(createdb.list_creations, "web")
+    assert '"file_path": "a.md"' in o, o
+    assert calls[-1][1] == "/api/data", calls[-1]
+
+    try:
+        createdb.merged(3, "web")
+        raise AssertionError("원격 머지 표시가 그냥 통과했다")
+    except SystemExit:
+        pass
+finally:
+    remote.owns, remote.api = _orig_owns, _orig_api
+
+print(f"ok — pick·claim·done·list·merged·sync 정상, 원격 분기 확인 ({HOME})")
 

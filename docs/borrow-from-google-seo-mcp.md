@@ -20,7 +20,7 @@
 | 3 | provenance 읽기 동사 | `_meta` + `GUARDRAIL_SUFFIX` | 읽기 동사 1개 + SKILL.md 규약 | 중간. 리포트 숫자 날조 방지 |
 | 4 | LLM 프롬프트 경계 표시 | `<untrusted-third-party-content>` | ~8줄, 초크포인트 1곳 | 중간. 인젝션 표면 봉합 |
 | 5 | CSV 수식 주입 가드 | 저쪽 아님 — 분석 중 발견 | 2곳 × 3줄 | 작음. 실사용 위험 낮음 |
-| 6 | Lighthouse / CrUX 성능 축 | `lighthouse_*` · `crux_*` 8툴 | 신규 단계 1개 = **17곳 수정** | 중간. 축이 통째로 비어 있으나 비쌈 |
+| 6 | Lighthouse / CrUX 성능 축 | `lighthouse_*` · `crux_*` 8툴 | 신규 단계 1개 = **17곳 수정** | ~~중간~~ **했다** (2026-09-09, `vitals` 단계) |
 
 **안 가져오는 것**: GA4 20툴(진입장벽 붕괴), 마이그레이션 29툴(평시 0회),
 서버 로그 7툴(사용자가 로그 파일 직접 조달), 툴 100개 구조 자체.
@@ -35,7 +35,7 @@
 
 | 개념 | 정본 | 주의 |
 |---|---|---|
-| 8단계 순서·정의 | `run_all.py:121-130` `STAGES` 네임드튜플 | 같은 이름이 **8곳에 중복**됨 (아래) |
+| 단계 순서·정의 | `run_all.py` `STAGES` 네임드튜플 | 개수를 산문에 적지 않는다 — 이 표가 "8단계" 라고 쓰던 동안 실제로는 열넷이었다 |
 | 유료 키 판정 | `run_all.py:135-155` `check_paid_keys()` | 다른 곳에 적으면 두 벌이 된다 |
 | 키 존재 검사 | `serp_adapter.py:44-53` `has_dataforseo/serper/openrouter()` | |
 | Brain 스키마 | `db.py:104-262` `SCHEMA` 문자열 하나 | `server/backlinks.py:31` `SCHEMA=""`는 하위호환 잔재 |
@@ -45,7 +45,7 @@
 | 점수 임계값 | `scoring.py:18-100` 상단 상수 블록 | 명세는 `references/scoring.md` |
 | 화면 HTML·payload | `skills/capture/scripts/dashboard.py` | `server/app.py`는 빌려 쓰고 애드온만 붙인다 |
 
-### 8단계 이름이 박혀 있는 8곳
+### 단계 이름이 박혀 있는 곳
 
 새 단계를 추가하면 전부 갱신해야 한다. 이 저장소에서 가장 비싼 변경이다.
 
@@ -453,7 +453,11 @@ Claude가 SQL로 읽는 구조라, 모든 반환값을 래핑하면 SQL 결과 �
 **HTML 스크래핑 자체가 없다.** 모든 외부 데이터가 구조화된 JSON으로 들어온다.
 그래서 표면은 저쪽보다 작다. 하지만 두 곳이 열려 있다.
 
-**(a) `server/writer.py` — 실제 위험이 몰린 곳**
+**(a) `server/writer.py` — 실제 위험이 몰린 곳** — **없어졌다.** GitHub 연동을
+떼어 내면서 `writer.py`·`gh.py` 를 지웠다(v1.78.0). 서버가 남의 리포에 글을 써서
+PR 을 내는 경로 자체가 없으므로 아래 (a) 는 더 이상 할 일이 아니다 — 기록으로 남긴다.
+그 자리를 대신하는 것은 이 PC 의 개발 도구이고, 거기로 넘어가는 요청문은
+`brief.py` 가 만든다(외부 문자열을 프롬프트에 싣는다는 사실은 그대로다).
 
 `writer.py:118-119`가 `opportunity.target`과 `reasoning`을 프롬프트에 박는다.
 `target`의 출처를 역추적하면:
@@ -502,7 +506,7 @@ def _untrusted(label: str, text: str, limit: int = 8000) -> str:
 덮고 있고 예외가 한 줄뿐이다:
 
 - `server/assets/dash.html:369` — GitHub `html_url`을 `href`에 `esc()` 없이 삽입.
-  실사용 위험은 낮지만 규칙을 어기는 유일한 자리. 한 줄 고침.
+  **없어졌다** — GitHub 연동 제거(v1.78.0)로 그 줄이 사라졌다.
 - `server/app.html:253`의 `esc`는 `'`를 안 덮는다(4자). 속성이 전부 큰따옴표라
   현재 무해하나 같은 저장소에 커버리지가 다른 `esc`가 셋 있다. 통일이 낫다.
 
@@ -574,11 +578,31 @@ PageSpeed Insights API 키 하나로 PSI와 CrUX 둘 다 되고, 무료다.
 **함정**: `sm-perf`라는 요소 id가 호스팅 대시보드에 이미 쓰이고 있다
 (`server/assets/dash.html:494-495`). 겹치면 `stage.py:299`가 터진다. 다른 id를 쓴다.
 
-### 판단
+### 했다 — 2026-09-09, `vitals` 단계
 
-0~4번을 먼저 끝내고, 그 다음 별도 작업으로 잡는다.
-성능은 "AI 인용"과 달리 seo-miner의 차별점이 아니라 남들도 다 하는 축이다.
-급하지 않다.
+이름만 다르다: `collect_perf.py` 대신 **`collect_vitals.py`**, `perf_snapshots` 대신
+**`page_vitals`**. 실제로 손댄 곳은 17곳보다 적었다 — 이 문서를 쓴 뒤에 이음매 몇
+개가 이미 "사본" 에서 "가리키기" 로 바뀌어 있었기 때문이다:
+
+- `server/app.py:433` 은 이미 `STAGES = run_all.VALID_STAGE_NAMES` 다 (무수정)
+- `dash.html` 은 이미 `window.__STAGES__`(= `stage.STAGE_LABELS`)를 읽는다 (무수정)
+- 유료 키 분기·`has_pagespeed()` 는 **필요 없었다** — PSI 는 키 없이도 돌아서
+  "키가 없다" 를 건너뜀 사유로 쓰지 않는다. 키는 한도용 선택지로만 안내한다.
+- `view-def stages` 는 안 건드렸다 — 화면에서 돌리는 버튼을 아직 안 만들었다.
+  만들 때 이 문서의 함정(`sm-perf` id 충돌)을 다시 본다.
+
+실제로 손댄 곳: `collect_vitals.py`(신규) · `run_all.py`(import·STAGES·산문) ·
+`db.py`(`page_vitals` + `write_page_vitals`) · `stage.py`(STAGE_LABELS) ·
+`serp_adapter.py`(TIMEOUTS `psi`) · `scoring.py`(임계값 + `vitals_advice`) ·
+`dashboard.py`(`_axis_vitals`) · `brief.py`(페이지 상태·기기 격차 근거) ·
+`config.yaml` · `SKILL.md` · `README.md` · 검사 3벌.
+
+**성능이 차별점이 아니라던 판단은 반만 맞았다.** 남들도 다 재는 것은 맞지만, 이
+리포는 `device_gap`(모바일만 밀리는 검색어)이라는 기회 종류를 **이미 만들어 놓고**
+그 원인을 말할 재료가 없었다 — 요청문은 순위 차이 한 줄을 근거로 주면서 규칙으로는
+"위 근거에 없는 것은 짐작하지 않습니다" 라고 못 박았다. 그 요청문은 구조상 빈손으로
+끝난다. 값은 "성능 축이 있다" 가 아니라 **이미 있던 기회 종류가 답을 낼 수 있게 된
+것**이었다.
 
 ---
 

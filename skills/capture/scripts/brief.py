@@ -44,11 +44,16 @@ SHAPES: dict[str, dict] = {
               "들어간 자리 | 이 안을 고른 이유 한 줄.",
               "본문에 보탤 구간은 H2 제목마다 그 아래에서 답할 내용 한 줄과 근거로 쓸 "
               "출처(이 페이지 안의 문장, 또는 [확인 필요]).",
+              "신뢰 신호 — 저자(누가 썼는지·왜 이 사람인지), 근거 출처, 마지막 "
+              "수정일 중 이 페이지에 **없는 것**과 무엇을 넣을지. 있는 것은 '있음' 한 "
+              "줄로 끝냅니다.",
               "마지막은 '바꾼 것' 표: 진단 항목 | 전 | 후. 진단에 없는 것을 바꿨으면 "
               "왜 바꿨는지 한 줄."],
         graph="",
         rules=["사실은 위 '지금 이 페이지 상태'와 '근거'에 있는 것만 씁니다. 수치·후기·"
                "효능·수상 이력을 지어내지 않습니다. 모르는 것은 [확인 필요]로 남깁니다.",
+               "저자·자격·경력을 지어내지 않습니다. 신뢰 신호는 '무엇을 넣어야 하는지'까지만 "
+               "말하고, 이름·자격은 [저자] 자리로 비워 둡니다.",
                "이미 있는 문단은 지우지 않습니다. 보태거나 옮기는 것까지만.",
                "검색어를 억지로 반복하지 않습니다. title·H1·첫 문단에 한 번씩 자연스럽게 "
                "들어가면 충분합니다.",
@@ -65,11 +70,15 @@ SHAPES: dict[str, dict] = {
               "분량(단어 수) 눈대중.",
               "우리 제품·데이터로만 쓸 수 있는 구간은 제목 앞에 [내 데이터] 를 붙이고, "
               "무엇을 넣어야 하는지 적습니다.",
+              "신뢰 신호 — 이 글을 누가 쓰는 게 맞는지(어떤 경험·자격), 1차 자료로 "
+              "무엇을 쓸지, 어떤 주장에 출처가 필요한지. 이름·자격은 [저자] 자리로 둡니다.",
               "발행 뒤 내부 링크 표: 어느 글에서 | 앵커 텍스트 | 넣을 자리."],
         graph="목차는 Mermaid `flowchart TD` 트리 하나로 그립니다 — H1 아래 H2, H2 아래 "
               "H3. 질문 한 줄과 분량은 그 옆 표가 갖습니다.",
         rules=["경쟁 페이지의 문장·구성을 그대로 옮기지 않습니다. 같은 질문에 답하되 "
                "순서와 관점은 우리 것으로.",
+               "저자·자격·경력을 지어내지 않습니다. 무엇이 필요한지까지만 말하고 이름은 "
+               "[저자] 자리로 비워 둡니다.",
                "수치·후기·효능은 지어내지 않습니다. 근거가 필요한 자리는 [확인 필요]로 "
                "비워 둡니다.",
                "한 글이 한 검색 의도에 답합니다. 두 의도가 섞이면 글을 둘로 나누자고 "
@@ -226,6 +235,12 @@ DELIVER_BY_TAG = {
     "이미지": "alt 가 빠진 이미지에 넣을 문안",
     "내부 링크": "어느 글에서 이 페이지로 링크를 걸지 — 앵커 텍스트까지",
     "가져오기": "이 URL 이 안 열리는 원인 후보와 확인 순서 — 콘텐츠는 손대지 않습니다",
+    "모바일": "head 에 넣을 viewport 태그 한 줄과, 그 뒤 모바일에서 확인할 것",
+    "속도": "기준을 넘긴 지표마다 무엇을 고칠지 — 파일·태그 자리까지, 그리고 고친 뒤 "
+            "어느 값이 먼저 움직이는지",
+    "언어": "이 페이지에 맞는 <html lang> 값 한 줄",
+    "hreflang": "고칠 hreflang 목록 — 코드 | 주소 | 무엇을 바꿨나 (자기 참조·x-default 포함)",
+    "갱신": "이 글에서 지금도 맞는지 확인할 것 목록과, 고칠 문장 — 날짜만 바꾸지 않습니다",
 }
 DELIVER_DEFAULT = "지금 이 페이지에서 가장 먼저 고칠 것 세 가지와, 각각 무엇을 무엇으로 바꿀지"
 
@@ -353,10 +368,15 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     h1, h2 = scoring._as_list(a.get("h1_json")), scoring._as_list(a.get("h2_json"))
     sc = scoring._as_list(a.get("schema_json"))
     title, desc = a.get("title") or "", a.get("meta_description") or ""
-    L = [f"## 지금 이 페이지 상태 ({a.get('checked_date') or '점검일 미상'} 직접 확인)",
-         f"- title: {title or '(없음)'}" + (f" — {len(title)}자" if title else ""),
-         f"- meta description: {desc or '(없음)'}" + (f" — {len(desc)}자" if desc else ""),
-         f"- H1: {' / '.join(h1) if h1 else '(없음)'}"]
+    fresh = scoring._has_render_fields(a)
+    L = [f"## 지금 이 페이지 상태 ({a.get('checked_date') or '점검일 미상'} 직접 확인)"]
+    # 응답 코드부터. 200 인지 리다이렉트 끝인지 모른 채 "지금 값 → 고칠 값" 표를
+    # 시키면 첫 칸부터 빈다.
+    if a.get("status") is not None:
+        L.append(f"- HTTP 상태: {a['status']}")
+    L += [f"- title: {title or '(없음)'}" + (f" — {len(title)}자" if title else ""),
+          f"- meta description: {desc or '(없음)'}" + (f" — {len(desc)}자" if desc else ""),
+          f"- H1: {' / '.join(h1) if h1 else '(없음)'}"]
     if h2:
         shown = h2[:12]
         L.append(f"- H2 ({len(h2)}개): " + " / ".join(shown)
@@ -364,14 +384,36 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     else:
         L.append("- H2: (없음)")
     L.append(f"- 본문 길이: {_n(a.get('words'))}단어")
-    L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)'}")
+    # 이 줄이 "(없음)" 한 마디였을 때, 자바스크립트로 스키마를 넣는 사이트(Yoast·
+    # RankMath·AIOSEO)에서 있는 것을 없다고 말했다. 우리가 본 것이 정적 HTML 뿐임을
+    # 요청문이 먼저 밝힌다 — 그래야 AI 가 확인부터 시킬 수 있다.
+    L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)'}"
+             + ("" if sc or not fresh else " — 정적 HTML 기준"))
+    if fresh:
+        L.append(f"- 뷰포트: {a.get('viewport') or '(없음 — 모바일에서 데스크톱 폭으로 그립니다)'}")
+        hl = [x for x in scoring._as_list(a.get("hreflang_json")) if isinstance(x, list)]
+        lang_bits = [f"html lang: {a.get('html_lang') or '(없음)'}"]
+        if hl:
+            lang_bits.append("hreflang " + ", ".join(str(c) for c, _ in hl[:8])
+                             + (f" 외 {len(hl) - 8}개" if len(hl) > 8 else ""))
+        L.append("- " + " · ".join(lang_bits))
+        when = " · ".join(x for x in (f"발행 {a['published']}" if a.get("published") else "",
+                                      f"수정 {a['modified']}" if a.get("modified") else "") if x)
+        L.append(f"- 글의 날짜: {when or '(페이지에 안 적혀 있습니다)'}")
+    if a.get("js_shell"):
+        L.append("- **주의**: 이 페이지는 본문을 자바스크립트로 그리는 것으로 보입니다"
+                 "(정적 HTML 에 본문이 거의 없습니다). 위의 본문 길이·H2·구조화 데이터는 "
+                 "렌더 전 값이라 실제와 다를 수 있습니다 — 사실로 쓰기 전에 브라우저나 "
+                 "리치 결과 테스트로 한 번 확인해 주세요.")
     if a.get("canonical"):
         L.append(f"- canonical: {a['canonical']}")
     if a.get("robots"):
         L.append(f"- meta robots: {a['robots']}")
     links = []
     if isinstance(a.get("internal_links"), int):
-        links.append(f"내부 링크 {a['internal_links']}개")
+        # "들어오는 내부 링크" 를 같은 요청문 안에서 따로 말한다 — 방향을 안 적으면
+        # 두 숫자가 같은 것의 두 값처럼 읽힌다.
+        links.append(f"내보내는 내부 링크 {a['internal_links']}개")
     if isinstance(a.get("external_links"), int):
         links.append(f"외부 링크 {a['external_links']}개")
     if isinstance(a.get("images"), int):
@@ -383,13 +425,145 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     return L
 
 
-def _advice(a: dict | None) -> list[str]:
-    adv = (a or {}).get("advice") or []
+# 크롤이 이 주소에 대해 이미 아는 것 중, 페이지 한 장만 봐서는 절대 알 수 없는 것.
+# 나머지(thin_content·missing_h1 등)는 page_advice 가 같은 말을 이미 한다 — 두 벌로
+# 실으면 요청문 안에서 같은 지적이 두 번 나온다.
+SITE_ONLY_ISSUES = ("dup_title", "dup_description", "orphan", "redirect_chain",
+                    "broken_internal", "canonical_mismatch")
+
+
+def _ms(v) -> str:
+    return f"{v / 1000:.1f}초" if isinstance(v, (int, float)) else "—"
+
+
+def _vitals_rows(ctx: dict, url: str | None) -> dict:
+    return (ctx.get("vitals") or {}).get(url or "") or {}
+
+
+def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
+    """이 페이지의 속도 — 기기별로 나란히. 없으면 아무 줄도 안 만든다.
+
+    "지금 값 | 고칠 값" 표를 시키면서 지금 값을 안 주면 첫 칸이 늘 빈다. 이 줄들이
+    없던 동안 기술 점검·기기 격차 요청문은 속도를 고치라면서 속도를 한 번도
+    말하지 못했다.
+    """
+    rows = _vitals_rows(ctx, url)
+    if not rows:
+        return []
+    L = [f"- 속도 ({ctx.get('vitals_date') or '측정일 미상'} · PageSpeed Insights):"]
+    for dev in ("mobile", "desktop"):
+        r = rows.get(dev)
+        if not r:
+            continue
+        name = "모바일" if dev == "mobile" else "데스크톱"
+        if r.get("error"):
+            L.append(f"  - {name}: 못 쟀습니다 — {r['error']}")
+            continue
+        field = r.get("field_lcp_ms") is not None or r.get("field_cls") is not None
+        if field:
+            src = ("사이트 전체 값" if r.get("origin_fallback")
+                   else "이 페이지의 실제 사용자 28일치")
+            L.append(f"  - {name} 현장({src}): LCP {_ms(r.get('field_lcp_ms'))} · "
+                     f"INP {_n(r.get('field_inp_ms'))}ms · CLS {_n(r.get('field_cls'))}"
+                     + (f" · 구글 판정 {r['field_verdict']}" if r.get("field_verdict") else ""))
+        else:
+            L.append(f"  - {name} 현장: 실제 사용자 표본이 모자라 값이 없습니다"
+                     " (검색이 보는 값도 그래서 없습니다).")
+        L.append(f"  - {name} 실험실(지금 1회): 점수 {_n(r.get('lab_score'))}/100 · "
+                 f"LCP {_ms(r.get('lab_lcp_ms'))} · CLS {_n(r.get('lab_cls'))} · "
+                 f"TBT {_n(r.get('lab_tbt_ms'))}ms")
+    L.append(f"  - 기준: LCP {_ms(scoring.LCP_GOOD_MS)} 이내 · INP {scoring.INP_GOOD_MS}ms "
+             f"이내 · CLS {scoring.CLS_GOOD} 이내. 고친 뒤 바로 움직이는 것은 실험실 "
+             "값이고, 현장 값은 28일이 지나야 따라옵니다.")
+    return L
+
+
+def _serp_top(o: dict, ctx: dict) -> list[str]:
+    """이 검색어의 지금 검색결과 상위 — 우리가 방금 조회한 그 응답에서 나온다.
+
+    이 표가 없던 동안 요청문은 "상위 페이지 2~3개의 제목을 붙여 넣으세요" 라고
+    사람에게 시켰다. 제목은 수집본에 있었다 — collect_serp 가 내 순위만 빼고
+    버렸을 뿐이다(db.write_serp_results 가 그것을 남긴다).
+    """
+    rows = (ctx.get("serp_top") or {}).get(str(o.get("target") or "")) or []
+    if not rows:
+        return []
+    return [f"검색결과 상위 {len(rows)}자리 — 이 사람들과 같은 질문에 답해야 합니다:",
+            *_table(["자리", "제목", "주소"],
+                    [[f"{r['position']}위" + (" (내 페이지)" if r.get("is_own") else ""),
+                      r.get("title"), r.get("url")] for r in rows]),
+            "",
+            "위 제목이 이 검색어에 실제로 걸리는 글의 제목입니다. 제목만으로 부족하면 "
+            "아래 칸에 그 글들의 H2 목록을 붙여 넣어 주세요."]
+
+
+def _site_facts(ctx: dict, url: str | None) -> list[str]:
+    """사이트 전체를 봐야 아는 사실 — 제목 중복, 이 페이지로 들어오는 내부 링크.
+
+    "새 title 3안" 을 시키면서 같은 title 을 쓰는 다른 페이지가 있다는 것을 안 주면
+    새 안이 또 겹친다. "어느 글에서 이 페이지로 링크를 걸지" 를 시키면서 지금 어디서
+    링크가 오는지를 안 주면 이미 있는 링크를 또 제안한다 — H2 에서 한 번 배운 실수다.
+    """
+    if not url:
+        return []
+    L = []
+    rows = [r for r in ((ctx.get("crawl") or {}).get("issues") or [])
+            if r.get("url") == url and r.get("kind") in SITE_ONLY_ISSUES]
+    if rows:
+        # 갈래 이름표는 페이로드에서 온다(정본: collect_crawl.ISSUE_KIND) — 여기서
+        # 한국어 사본을 만들면 화면과 두 벌이 된다.
+        names = ctx.get("crawl_kinds") or {}
+        L += ["사이트 크롤이 이 주소에서 본 것 (한 장만 봐서는 모르는 것):"]
+        L += _table(["문제", "세부"],
+                    [[(names.get(r["kind"]) or [r["kind"]])[0], r.get("detail")]
+                     for r in rows[:6]])
+    # None = 크롤이 이 주소를 안 봤다, [] = 보고 링크가 없었다. 둘을 뭉치면
+    # 크롤 범위 밖의 멀쩡한 페이지를 "고아" 라고 부른다.
+    probe = (ctx.get("site_probe") or {}).get(url) or {}
+    if probe.get("robots"):
+        L.append(f"- robots.txt 가 이 주소를 막습니다 — `{probe['robots']}`. 색인 문제라면 "
+                 "여기부터입니다(막힌 주소는 noindex 도 못 읽힙니다).")
+    elif probe:
+        L.append("- robots.txt: 이 주소를 막는 줄은 없습니다.")
+    if probe.get("in_sitemap") is False:
+        L.append("- 사이트맵에 이 주소가 없습니다. 크롤 시드는 사이트맵이었습니다 — "
+                 "빠진 것이 의도인지 확인하세요.")
+    elif probe.get("in_sitemap"):
+        L.append("- 사이트맵에 이 주소가 있습니다.")
+    ins = (ctx.get("crawl_inlinks") or {}).get(url)
+    if ins:
+        L += ["", f"이 페이지로 **들어오는** 내부 링크 {len(ins)}개 "
+                  "(여기 있는 글에서 또 걸지 않습니다):"]
+        L += _table(["링크를 건 글", "앵커"], [[r.get("from"), r.get("anchor")] for r in ins[:10]])
+    elif ins is not None:
+        L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다"
+                 "(고아 페이지). 링크를 걸 자리를 찾는 것이 첫 일입니다.")
+    return L
+
+
+# 이 페이지의 문제이긴 하지만 "있는 페이지 고치기" 의 일이 아닌 것 — 색인·모바일·
+# 속도·언어는 기술 점검이 맡는다. 한 번호 목록에 섞으면 열세 개를 늘어놓고 세 개만
+# 시키는 글이 된다(실제로 그렇게 나갔다). 기술 점검 요청문에서는 안 가른다.
+TECH_TAGS = ("모바일", "언어", "hreflang", "속도", "robots", "canonical", "가져오기")
+
+
+def _advice(a: dict | None, extra=(), *, split: bool = False) -> list[str]:
+    adv = list((a or {}).get("advice") or []) + list(extra or [])
     if not adv:
         return []
-    return ["## 진단 — 고쳐야 할 것",
-            *(f"{i + 1}. [{x['tag']}] 지금: {x['now']} → {x['fix']}" for i, x in enumerate(adv)),
-            ""]
+    here = [x for x in adv if not (split and x["tag"] in TECH_TAGS)]
+    aside = [x for x in adv if split and x["tag"] in TECH_TAGS]
+    L = []
+    if here:
+        L += ["## 진단 — 고쳐야 할 것",
+              *(f"{i + 1}. [{x['tag']}] 지금: {x['now']} → {x['fix']}"
+                for i, x in enumerate(here)), ""]
+    if aside:
+        L += ["## 이 페이지에서 같이 눈에 띈 것 (이번 일은 아닙니다)",
+              *(f"- [{x['tag']}] {x['now']}" for x in aside),
+              "이것들은 글이 아니라 설정·속도 쪽이라 이번 요청문에서는 손대지 않습니다. "
+              "답 마지막에 한 줄로 '따로 볼 것' 이라고만 적어 주세요.", ""]
+    return L
 
 
 # ── 종류별 근거 ──────────────────────────────────────────────────────────────
@@ -497,6 +671,34 @@ def _ev_device(o, ctx, pages):
                  f"데스크톱 {r['desktop_ctr']}%")
         L.append("- 같은 페이지·같은 검색어에서 기기만 다릅니다. 글이 아니라 모바일 화면·"
                  "속도가 원인일 가능성이 큽니다.")
+    # 이 표가 없던 동안 이 요청문은 "모바일이 밀린다" 한 줄만 주고 원인을 대라고
+    # 시켰다 — 규칙은 "위 근거에 없는 것은 짐작하지 않습니다" 인데. 기기 격차의
+    # 원인 후보를 가르는 숫자가 바로 이것이다.
+    vit = _vitals_rows(ctx, page_of(o, ctx))
+    if vit.get("mobile") and vit.get("desktop"):
+        m, d = vit["mobile"], vit["desktop"]
+
+        def cell(row, col):
+            v = row.get(col)
+            if col.endswith("_ms"):
+                return _ms(v)
+            return _n(v)
+        rows = [["LCP (현장)", cell(m, "field_lcp_ms"), cell(d, "field_lcp_ms"),
+                 _ms(scoring.LCP_GOOD_MS)],
+                ["INP (현장)", f"{_n(m.get('field_inp_ms'))}ms", f"{_n(d.get('field_inp_ms'))}ms",
+                 f"{scoring.INP_GOOD_MS}ms"],
+                ["CLS (현장)", _n(m.get("field_cls")), _n(d.get("field_cls")),
+                 str(scoring.CLS_GOOD)],
+                ["점수 (실험실)", _n(m.get("lab_score")), _n(d.get("lab_score")), "90"],
+                ["LCP (실험실)", cell(m, "lab_lcp_ms"), cell(d, "lab_lcp_ms"),
+                 _ms(scoring.LCP_GOOD_MS)],
+                ["TBT (실험실)", f"{_n(m.get('lab_tbt_ms'))}ms", f"{_n(d.get('lab_tbt_ms'))}ms",
+                 "200ms"]]
+        L += ["", f"기기별 속도 ({ctx.get('vitals_date') or '측정일 미상'} · 같은 페이지):"]
+        L += _table(["지표", "모바일", "데스크톱", "기준"], rows)
+        if m.get("origin_fallback") or d.get("origin_fallback"):
+            L.append("- 현장 값 일부는 이 페이지가 아니라 사이트 전체(오리진) 값입니다 — "
+                     "이 페이지의 실제 사용자 표본이 모자랍니다.")
     return L + _pages_table(pages)
 
 
@@ -560,8 +762,10 @@ def _ev_content_gap(o, ctx, pages):
 def _ev_crawl(o, ctx, pages):
     issues = ((ctx.get("crawl") or {}).get("issues") or [])
     rows = [r for r in issues if r.get("url") == o["target"]]
+    names = ctx.get("crawl_kinds") or {}
     return _table(["문제", "심각도", "세부"],
-                  [[r["kind"], r.get("severity"), r.get("detail")] for r in rows[:8]])
+                  [[(names.get(r["kind"]) or [r["kind"]])[0], r.get("severity"),
+                    r.get("detail")] for r in rows[:8]])
 
 
 def _ev_bl_broken(o, ctx, pages):
@@ -658,23 +862,44 @@ def build(o: dict, ctx: dict) -> dict:
     ev = EVIDENCE[kind](o, ctx, pages)
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
+    had_top = False
+    if s["slot"]:                             # 상위와 비교해야 하는 일(고치기·새 글)만
+        top = _serp_top(o, ctx)
+        if top:
+            L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
+            had_top = True
     if _shows_page(shape) and url:
-        L += _page_state(audit, url)
+        ps = _page_state(audit, url)
+        vit = _vitals_lines(ctx, url)
+        if vit:
+            ps = ps[:-1] + vit + [""] if ps and ps[-1] == "" else ps + vit
+        L += ps
+        sf = _site_facts(ctx, url)
+        if sf:
+            L += ["## 사이트 전체에서 본 이 주소", *sf, ""]
         if shape != "consolidate":            # 정리는 페이지 안을 안 고친다
-            L += _advice(audit)
+            L += _advice(audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
+                         split=shape != "technical")
     if play.get("what"):
         L += ["## 상황", play["what"], ""]
     if play.get("acts"):
         L += ["## 이 상황에서 할 일", *(f"{i + 1}. {x}" for i, x in enumerate(play["acts"])), ""]
-    want = play.get("deliver") or _deliver_from(audit)
+    want = play.get("deliver") or _deliver_from(
+        audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()) if url else ())
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want)), ""]
     if s["slot"]:
-        L += ["## 있으면 붙여 넣을 것 (선택)", s["slot"], "[여기에 붙여 넣기]", ""]
+        # 상위 목록을 이미 위에 줬으면 여기서 또 "제목과 H2 를 붙여 넣으세요" 라고
+        # 하지 않는다 — 같은 부탁이 한 요청문에 두 벌이 된다.
+        ask = ("위 상위 목록의 글들을 열어 H2 목록을 붙이면, '빠진 구간'을 짐작이 "
+               "아니라 비교로 찾습니다. 제목은 이미 위에 있습니다."
+               if had_top else s["slot"])
+        L += ["## 있으면 붙여 넣을 것 (선택)", ask, "[여기에 붙여 넣기]", ""]
     return {"shape": shape, "body": "\n".join(L)}
 
 
-def _deliver_from(audit: dict | None) -> list[str]:
-    tags = list(dict.fromkeys(x["tag"] for x in ((audit or {}).get("advice") or [])))
+def _deliver_from(audit: dict | None, extra=()) -> list[str]:
+    tags = list(dict.fromkeys(
+        x["tag"] for x in (list((audit or {}).get("advice") or []) + list(extra or []))))
     out = [DELIVER_BY_TAG[t] for t in tags if t in DELIVER_BY_TAG]
     return out or [DELIVER_DEFAULT]
 

@@ -54,7 +54,7 @@ _KEYGEN = ('python -c "from cryptography.fernet import Fernet;'
 SETTINGS: dict[str, Setting] = {s.name: s for s in (
     # --- 필수 ---------------------------------------------------------------
     Setting("SEOMINER_SECRET_KEY", required=True,
-            desc="구글·GitHub 토큰 암호화 키(Fernet)",
+            desc="구글 토큰 암호화 키(Fernet)",
             hint=f"{_KEYGEN} 로 키를 생성해 환경 변수에 넣어 주세요"),
     Setting("GOOGLE_CLIENT_ID", required=True,
             desc="구글 로그인·서치콘솔 OAuth 클라이언트 ID"),
@@ -77,17 +77,11 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in (
             desc="백링크 재측정 주기(일). 0 이면 끈다"),
     Setting("SEOMINER_MAIL_FROM", default="seo-miner <onboarding@resend.dev>",
             desc="알림 메일 발신자"),
-    Setting("SEOMINER_WRITER_MODEL", default="anthropic/claude-sonnet-4.5",
-            desc="/create 글쓰기에 쓰는 OpenRouter 모델"),
 
     # --- 선택 (없으면 그 기능이 꺼진다) ----------------------------------------
     Setting("SESSION_SECRET",
             desc="세션 서명 키. 없으면 프로세스마다 랜덤 — 재시작에 세션이 끊긴다"),
     Setting("RESEND_API_KEY", desc="없으면 알림 메일을 보내지 않는다"),
-    Setting("GITHUB_CLIENT_ID", desc="없으면 /create 의 GitHub 연동이 꺼진다"),
-    Setting("GITHUB_CLIENT_SECRET", desc="없으면 /create 의 GitHub 연동이 꺼진다"),
-    Setting("GITHUB_REDIRECT_URI",
-            desc="없으면 OAUTH_REDIRECT_URI 에서 유도한다 (github_redirect())"),
     *(Setting(SERVER_PREFIX + k,
               desc=f"유료 키 — tenant 안에서만 {k} 라는 이름으로 엔진에 노출된다")
       for k in PAID_KEYS),
@@ -161,11 +155,6 @@ def paid_keys():
                 os.environ[k] = v
 
 
-def github_redirect() -> str:
-    return get("GITHUB_REDIRECT_URI") or \
-        get("OAUTH_REDIRECT_URI").replace("/auth/callback", "/auth/github/callback")
-
-
 def missing() -> list[str]:
     """비어 있는 required 설정 이름들. 부팅에서 한 번에 알려 줄 때 쓴다."""
     return [n for n, s in SETTINGS.items() if s.required and not os.environ.get(n)]
@@ -227,10 +216,6 @@ def demo() -> None:
         assert os.environ.pop("SERPER_API_KEY") == "잔여값", "바깥 env 를 복원하지 않았다"
         assert HOSTED_ENV not in os.environ, "표식을 복원하지 않았다"
         assert HOSTED_ENV not in SETTINGS, "표식은 설정이 아니다"
-
-        assert github_redirect() == "http://localhost:8000/auth/github/callback"
-        os.environ["GITHUB_REDIRECT_URI"] = "https://x/cb"
-        assert github_redirect() == "https://x/cb"
 
         print("settings: ok")
     finally:
