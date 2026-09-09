@@ -426,6 +426,39 @@ def test_serp_table_replaces_the_paste_ask_instead_of_doubling_it():
     assert "제목은 이미 위에 있습니다" in withtop, withtop
 
 
+def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
+    """막힌 크롤러는 콘텐츠 문제가 아니다.
+
+    ClaudeBot 이 robots.txt 로 막혀 있으면 그 엔진에서는 무엇을 써도 인용되지
+    않는다. 그 상태에서 인용 공백 요청문이 "이 내용을 채우세요" 라고만 하면 두
+    기회가 서로 모순되는 말을 한다.
+    """
+    ctx = {"ai_bots": [{"bot": "ClaudeBot", "rule": "Disallow: /"},
+                       {"bot": "GPTBot", "rule": None}]}
+    b = brief.build(_opp("ai_bot_blocked", "ClaudeBot"), ctx)
+    assert b["shape"] == "technical", b["shape"]
+    body = b["body"]
+    assert "막힌 AI 크롤러 (robots.txt 의 User-agent): ClaudeBot" in body, body
+    # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도 같은 표에 놓는다
+    assert "| ClaudeBot | 차단 | Disallow: / |" in body, body
+    assert "| GPTBot | 허용 |" in body, body
+    assert "여는 것이 늘 정답은 아닙니다" in body, "의도적 차단을 되돌리라고 시킨다"
+    # 글을 고치라고 하지 않는다
+    assert "막힌 채로는 고쳐도 안 읽힙니다" in body, body
+
+    # 인용 공백 요청문이 같은 사실을 먼저 말한다
+    gap = brief.build(_opp("ai_citation_gap", "질문"), {
+        **ctx, "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
+                                 "cited": 0, "mentioned": 1}]})["body"]
+    assert "robots.txt 가 ClaudeBot 를 막고 있습니다" in gap, gap
+    # 안 막혀 있으면 그 줄이 없다 — 없는 문제를 만들지 않는다
+    clean = brief.build(_opp("ai_citation_gap", "질문"), {
+        "ai_bots": [{"bot": "GPTBot", "rule": None}],
+        "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
+                          "cited": 0, "mentioned": 1}]})["body"]
+    assert "먼저 볼 것" not in clean, clean
+
+
 def test_trust_signals_are_asked_for_but_never_invented():
     """E-E-A-T — 저자·출처·갱신일은 요구하되, 이름·자격은 지어내지 않게 못 박는다."""
     tails = brief.tails("ko-KR")

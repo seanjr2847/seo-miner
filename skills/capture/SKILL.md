@@ -375,6 +375,19 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일.
 말한다. 판정 규칙의 정본은 `scoring.page_advice` 이고, 대시보드는 그 결과를 그리기만
 한다 — 화면이 같은 규칙을 다시 구현하지 않는다.
 
+### AI 크롤러 차단 — 인용 판정보다 **먼저** 본다
+`/capture crawl` 이 남긴 robots.txt 원문(`crawl_runs.robots_txt`)을 다시 읽어,
+`config.yaml` 의 `ai_bots` 가 막혔는지 본다(`scoring.ai_bot_blocks`). **새 수집도 새
+단계도 없다.**
+
+막혀 있으면 `ai_bot_blocked` 기회가 서고, 인용 공백(`ai_citation_gap`) 요청문 맨
+위에 "robots.txt 가 ClaudeBot 를 막고 있습니다" 가 붙는다. 이 줄이 없으면 두 기회가
+서로 모순되는 말을 한다 — 막힌 채로는 무엇을 써도 인용되지 않는데 "이 내용을
+채우세요" 라고만 시키는 것이다.
+
+**여는 것이 늘 정답은 아니다.** 학습에 쓰이는 것이 싫어 일부러 막아 둔 것일 수
+있다. 요청문이 그것부터 묻는다.
+
 ### /capture vitals {P} — 속도 측정 (PageSpeed Insights, 돈 안 듦)
 **풀런(`/capture run`)에 포함된다** — `pages` 다음이다. `pages` 와 **같은 URL 목록**을
 본다(`collect_page.target_urls` 가 정본) — 두 단계가 서로 다른 페이지를 보면 요청문
