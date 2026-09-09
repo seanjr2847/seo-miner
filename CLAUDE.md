@@ -28,12 +28,17 @@
 이 리포의 버그 상당수는 **파일 하나만 보면 어느 쪽도 멀쩡한** 종류다. 사이트 링크는
 정상적인 링크였고 대시보드는 정상적으로 hash 를 읽었다. 어긋난 건 둘 사이다.
 
-새 이음매를 만들면 `test_seams.py` 에 못 박는다. 지금 지키는 것:
+새 이음매를 만들면 `test_seams.py` 에 못 박는다. **정본은 그 파일이다** — 아래는
+그중 자주 걸리는 것만 추린 것이고, 전체 목록과 개수는 `test_seams.py` 를 본다.
+여기 번호는 그 파일의 검사 번호와 일대일이 아니다:
 
 1. 화면 id 는 페이로드에서 온다 (렌더된 글자를 정규식으로 되짚지 않는다)
 2. 화면 목록의 정본은 뷰의 `view-def` 다 (`dash.html` 은 사본을 안 갖는다)
-3. 셸은 한 벌이다 — 레일·화면 상자·전환은 원본(`dashboard.html` 의 `SM`)이 갖고,
-   `dash.html` 은 `SM.addView`/`addSection` 으로 덧붙이기만 한다 (`!important` 금지)
+3. 셸은 한 벌이다 — 레일·화면 상자·전환(`place(`·`show(`·`sm-nav`)은 원본
+   (`dashboard.html` 의 `SM`)이 갖고, `dash.html` 은 `SM.sync()` 로 덧붙이기만 한다.
+   붙일 섹션은 `templates/sections/*.html` 의 `section-def` 로 선언하고
+   `dashboard.py._assemble` 이 조립 시점에 끼운다 — `dash.html` 이 런타임에 짓지
+   않는다. `!important` 와 `--sans` 덮어쓰기 금지 (`--mono` 는 예외)
 4. 단계 용어표는 한 벌이다
 5. 사이트 목록 링크가 hash 를 싣고, 대시보드가 그 hash 를 읽는다
 6. 화면이 부르는 `/api/*` 가 그 화면이 뜨는 모든 서버에 있다
