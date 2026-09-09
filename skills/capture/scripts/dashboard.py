@@ -35,6 +35,8 @@ import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import gen_prompts  # noqa: E402  (AI 질문 갈래 정본 — 매니페스트가 이걸 실어 보낸다)
+import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 — 한 벌)
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
@@ -123,17 +125,23 @@ def _assemble(variant: str = "local") -> bytes:
                 pending.remove(s)
         if len(pending) == i0:
             raise ValueError(f"섹션을 끼울 자리를 못 찾았다: {[s['id'] for s in pending]}")
-    views_json = json.dumps(defs, ensure_ascii=False).replace("</", "<\\/")
+    views_json = htmlsafe.js(defs)
     # 호스팅은 유료 키 문장이 갈린다 — 서버가 키를 대므로 "키가 필요합니다"가
     # 거짓말이 된다. 갈래를 아는 것은 여기(variant)뿐이라 여기서 골라 싣는다.
-    stages_json = json.dumps(stage.stage_labels(variant), ensure_ascii=False).replace("</", "<\\/")
+    stages_json = htmlsafe.js(stage.stage_labels(variant))
     hosted_flag = "window.SM_HOSTED=true;" if variant == "hosted" else ""
-    # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES) — 설정 폼의 <select> 는 여기서
-    # 채우고, 호스팅 애드온(dash.html)은 window.__LOCALES__ 로 같은 표를 읽는다.
-    locales_json = json.dumps(serp_adapter.LOCALES, ensure_ascii=False).replace("</", "<\\/")
-    locale_opts = "".join(f'<option value="{c}">{c} — {t}</option>' for c, t in serp_adapter.LOCALES)
+    # AI 질문 갈래도 한 벌이다(gen_prompts.CATEGORY_CHOICES) — 고르는 자리는 호스팅
+    # 애드온의 [AI 질문 관리] 하나뿐인데 거기가 사본을 들고 있었고, 그 사본에만 있는
+    # "general" 을 사용자가 고를 수 있었다(만드는 쪽은 그 값을 모르던 시절이 있다).
+    cats_json = htmlsafe.js(gen_prompts.CATEGORY_CHOICES)
+    # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES) — 설정 폼의 <select> 를 여기서
+    # 채운다. 매니페스트에는 안 싣는다: 조립본 안에서 그 표를 읽는 자리가 없다.
+    # (등록 화면 app.html 의 window.__LOCALES__ 는 server/app.py 가 따로 실어 보낸다.)
+    locale_opts = "".join(f'<option value="{htmlsafe.attr(c)}">'
+                          f"{htmlsafe.attr(c)} — {htmlsafe.attr(t)}</option>"
+                          for c, t in serp_adapter.LOCALES)
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
-                f"window.__STAGES__={stages_json};window.__LOCALES__={locales_json};</script>")
+                f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
@@ -198,7 +206,7 @@ def export(project: str, actions_file: str | None = None) -> Path:
     if actions_file and Path(actions_file).exists():
         actions = json.loads(Path(actions_file).read_text(encoding="utf-8"))
     snap = {"data": data, "actions": actions, "exported": str(date.today())}
-    blob = json.dumps(snap, ensure_ascii=False).replace("</", "<\\/")  # </script> 차단
+    blob = htmlsafe.js(snap)          # </script> 차단 — 이스케이프는 htmlsafe 한 벌이다
     html = assemble("frozen").replace(
         "<!--SNAPSHOT-->", f"<script>window.__SNAPSHOT__={blob}</script>", 1)
     # 박제본은 남에게 보내는 파일이라 열 때 바깥을 부르지 않는다 — 웹폰트 <link> 를
@@ -629,7 +637,11 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
                   "striking_hi": scoring.STRIKING_HI,
                   "rank_noise": scoring.RANK_NOISE,
                   "device_gap_pos": scoring.DEVICE_GAP_POS,
-                  "device_min_imp": scoring.DEVICE_MIN_IMP},
+                  "device_min_imp": scoring.DEVICE_MIN_IMP,
+                  # 속도 기준 — 화면이 숫자를 적으면 판정과 두 벌이 된다
+                  "lcp_good_ms": scoring.LCP_GOOD_MS,
+                  "inp_good_ms": scoring.INP_GOOD_MS,
+                  "cls_good": scoring.CLS_GOOD},
         # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
         # 그래프·Δ가 전부 거짓이 된다. SQL이 이미 period_days로 걸렀으므로 p 필드는 뺀다.
         "trend": [dict(r) for r in conn.execute(
@@ -888,6 +900,21 @@ def _axis_competitors(conn, pid: int) -> dict:
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts}
 
 
+def _axis_ai_bots(p, crawl: dict) -> dict:
+    """AI 크롤러가 robots.txt 에 막혔나. 새로 가져오지 않는다 — 크롤 회차가 남긴
+    원문을 다시 읽을 뿐이다(판정의 정본은 scoring.robots_blocks).
+
+    막힌 것만 내지 않고 허용까지 같이 낸다: 한 줄만 보여 주면 "이것만 열면 되나"
+    로 읽히고, 같은 robots.txt 가 다른 봇에게 무엇을 하는지는 안 보인다.
+    """
+    txt = ((crawl or {}).get("run") or {}).get("robots_txt") or ""
+    if not txt.strip():
+        return {"ai_bots": []}
+    home = f"https://{p['domain']}/" if p["domain"] else "https://example.com/"
+    return {"ai_bots": [{"bot": b, "rule": scoring.robots_blocks(txt, home, agent=b)}
+                        for b in scoring.ai_bots()]}
+
+
 def _axis_vitals(conn, pid: int) -> dict:
     """속도 축 (collect_vitals) — 최신 측정일의 페이지×기기 표.
 
@@ -1114,6 +1141,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     bl = _axis_backlinks(conn, pid)
     crawl = _axis_crawl(conn, pid)
     vitals = _axis_vitals(conn, pid)
+    ai_bots = _axis_ai_bots(p, crawl)
 
     runs = q(conn,
         """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
@@ -1128,7 +1156,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     d = {"schema": 1, "project": dict(p),
          **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
-         **vitals,
+         **vitals, **ai_bots,
          "runs": runs, "creations": creations,
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.

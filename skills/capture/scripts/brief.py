@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""요청문 — 기회 한 건을 Claude·ChatGPT 에 붙여 넣을 브리프로 세운다.
+"""요청문 — 기회 한 건을 Claude Code 에 붙여 넣을 브리프로 세운다.
 
 옛 요청문(dashboard.html 의 fixPrompt)은 틀 한 벌이었다: "아래 페이지를 고쳐 주세요"
 로 시작해 그 페이지의 감사 결과를 적고, 종류마다 다른 건 가운데 할 일·산출물 두세
@@ -40,16 +40,16 @@ SHAPES: dict[str, dict] = {
         label="있는 페이지 고치기",
         intro="아래 페이지가 이 검색어에서 더 잘 보이게 고쳐 주세요. 새로 쓰는 일이 "
               "아닙니다 — 지금 있는 페이지의 제목·설명·본문 구조를 손보는 일입니다.",
-        form=["산출물마다 `## 산출물 이름` 소제목을 답니다. 요청한 순서대로.",
-              "안이 여럿인 것(title·meta description)은 표로: 안 | 글자 수 | 검색어가 "
+        form=["안이 여럿인 것(title·meta description)은 표: 안 | 글자 수 | 검색어가 "
               "들어간 자리 | 이 안을 고른 이유 한 줄.",
               "본문에 보탤 구간은 H2 제목마다 그 아래에서 답할 내용 한 줄과 근거로 쓸 "
               "출처(이 페이지 안의 문장, 또는 [확인 필요]).",
-              "`## 신뢰 신호` — 저자(누가 썼는지·왜 이 사람인지), 근거 출처, 마지막 "
+              "신뢰 신호 — 저자(누가 썼는지·왜 이 사람인지), 근거 출처, 마지막 "
               "수정일 중 이 페이지에 **없는 것**과 무엇을 넣을지. 있는 것은 '있음' 한 "
               "줄로 끝냅니다.",
-              "마지막에 `## 바꾼 것` 표: 진단 항목 | 전 | 후. 진단에 없는 것을 바꿨으면 "
+              "마지막은 '바꾼 것' 표: 진단 항목 | 전 | 후. 진단에 없는 것을 바꿨으면 "
               "왜 바꿨는지 한 줄."],
+        graph="",
         rules=["사실은 위 '지금 이 페이지 상태'와 '근거'에 있는 것만 씁니다. 수치·후기·"
                "효능·수상 이력을 지어내지 않습니다. 모르는 것은 [확인 필요]로 남깁니다.",
                "저자·자격·경력을 지어내지 않습니다. 신뢰 신호는 '무엇을 넣어야 하는지'까지만 "
@@ -70,9 +70,11 @@ SHAPES: dict[str, dict] = {
               "분량(단어 수) 눈대중.",
               "우리 제품·데이터로만 쓸 수 있는 구간은 제목 앞에 [내 데이터] 를 붙이고, "
               "무엇을 넣어야 하는지 적습니다.",
-              "`## 신뢰 신호` — 이 글을 누가 쓰는 게 맞는지(어떤 경험·자격), 1차 자료로 "
+              "신뢰 신호 — 이 글을 누가 쓰는 게 맞는지(어떤 경험·자격), 1차 자료로 "
               "무엇을 쓸지, 어떤 주장에 출처가 필요한지. 이름·자격은 [저자] 자리로 둡니다.",
               "발행 뒤 내부 링크 표: 어느 글에서 | 앵커 텍스트 | 넣을 자리."],
+        graph="목차는 Mermaid `flowchart TD` 트리 하나로 그립니다 — H1 아래 H2, H2 아래 "
+              "H3. 질문 한 줄과 분량은 그 옆 표가 갖습니다.",
         rules=["경쟁 페이지의 문장·구성을 그대로 옮기지 않습니다. 같은 질문에 답하되 "
                "순서와 관점은 우리 것으로.",
                "저자·자격·경력을 지어내지 않습니다. 무엇이 필요한지까지만 말하고 이름은 "
@@ -92,7 +94,7 @@ SHAPES: dict[str, dict] = {
         form=["결정 표: 주소 | 처분(정본으로 남김 / 301 → 어디로 / canonical → 어디로 / "
               "합침) | 근거(위 표의 노출·클릭·의도).",
               "합치는 경우에만: 합친 뒤의 H2 목록과, 어느 글의 어느 문단이 어디로 가는지.",
-              "리다이렉트·canonical 은 적용할 코드나 설정 예시를 코드 블록으로. 스택을 "
+              "리다이렉트·canonical 은 적용할 코드나 설정 예시를 `<pre>` 로. 스택을 "
               "모르면 [스택 확인] 이라 쓰고 가장 흔한 두 경우의 예시를 줍니다.",
               "적용 뒤 확인: 무엇을 어디서 보면 된 것인지 순서대로."],
         rules=["근거는 위 표의 숫자입니다. 감으로 정본을 고르지 않습니다. 숫자가 비슷하면 "
@@ -101,13 +103,15 @@ SHAPES: dict[str, dict] = {
                "리다이렉트 사슬(A→B→C)을 만들지 않습니다. 이미 리다이렉트인 주소는 최종 "
                "주소로 바로 보냅니다.",
                "홈으로 몰지 않습니다. 가장 가까운 주제의 페이지로 보냅니다."],
+        graph="주소 처분은 Mermaid `flowchart LR` 지도 하나로 그립니다 — 정본으로 남길 "
+              "주소는 굵은 상자, 화살표에 처분(301·canonical·합침)을 답니다.",
         slot="", limits=False),
     "technical": dict(
         label="기술 점검",
         intro="아래 주소의 기술 문제를 잡아 주세요. 글의 내용은 손대지 않습니다 — 색인·"
               "크롤·모바일 화면처럼 검색엔진이 페이지에 닿는 길을 고치는 일입니다.",
         form=["점검 표: 항목 | 확인하는 방법(어디서 무엇을 보나) | 지금 값 | 고칠 값.",
-              "고칠 값이 코드·설정이면 코드 블록으로. 파일 경로·태그 위치까지 적습니다.",
+              "고칠 값이 코드·설정이면 `<pre>` 로. 파일 경로·태그 위치까지 적습니다.",
               "손대는 순서: 무엇을 먼저 고쳐야 다음 것이 뜻이 있는지.",
               "고친 뒤 확인: 어디서(Search Console·브라우저·curl) 무엇을 보면 고쳐진 "
               "것인지."],
@@ -117,6 +121,8 @@ SHAPES: dict[str, dict] = {
                "경우의 예시를 줍니다.",
                "본문 문장을 고치자고 하지 않습니다. 구조·설정·자원 크기까지만.",
                "요청한 주소만 봅니다. 사이트 전체 재구성을 제안하지 않습니다."],
+        graph="손대는 순서는 Mermaid `flowchart TD` 하나로 그립니다 — 앞것이 뒤것의 "
+              "전제인 것만 화살표로 잇습니다. 나란히 해도 되는 것은 잇지 않습니다.",
         slot="", limits=False),
     "outreach": dict(
         label="외부 연락",
@@ -134,9 +140,51 @@ SHAPES: dict[str, dict] = {
                "지점을 짚습니다.",
                "우리 페이지에 없는 것을 있다고 하지 않습니다. 없으면 만들자고 합니다.",
                "한 통에 부탁 하나. 여러 페이지를 한꺼번에 밀지 않습니다."],
+        graph="",
         slot="", limits=False),
 }
 assert tuple(SHAPES) == SHAPE_NAMES
+
+# ── 답의 형식: 자립형 HTML 리포트 한 장 ──────────────────────────────────────
+# 꼴 5개가 여기서 전부 같은 글을 쓴다 — 그래서 한 벌만 둔다. tails() 가 꼴마다 세
+# 자리만 갈아 끼운다: 파일명 조각(slug)·부를 스크립트(scripts)·무엇을 그래프로
+# 그리나(graph).
+#
+# 산출물 계약(무엇을 만드나)은 SHAPES[*]["form"] 이 갖고, 여기는 그리는 법(어디에
+# 쓰나·무엇으로 그리나)만 갖는다. 둘을 섞으면 "`## 소제목`을 답니다"와 "카드 하나로
+# 그립니다"가 한 요청문에 나란히 실린다 — test_brief 가 그것을 막는다.
+#
+# 마크다운을 시키던 옛 꼬리는 답이 채팅 스크롤 안에서 끝났다. 표 셋과 H2 목록과
+# 코드 블록을 한 화면에서 견줘야 하는 일인데 위아래로 굴려야 했다.
+HTML_FORM = """답은 **자립형 HTML 파일 한 장**입니다. 채팅 본문에 산출물을 늘어놓지 않습니다.
+
+### 파일
+- 임시 폴더($TMPDIR, 없으면 %TEMP%)에 `seo-{slug}-<타임스탬프>.html` 로 씁니다.
+- 저장소 안에는 아무것도 남기지 않습니다.
+- 다 쓰면 엽니다 — Windows `start <경로>`, macOS `open <경로>`, Linux `xdg-open <경로>`.
+- 마지막 줄에 그 파일의 **절대경로**를 적어 줍니다.
+- {scripts} 그 밖의 앱 코드·상호작용은 넣지 않습니다.
+
+### 그림
+- {graph}
+- {graph2}
+- 고치는 산출물은 **지금 값 | 고친 값**을 나란히 놓습니다 — 고친 값만으로는 안 보입니다.
+- 자간(letter-spacing)·대문자화·등폭은 라틴 문자열에만 겁니다. 한글 라벨의 위계는
+  크기·굵기·색으로 만들고, 등폭은 숫자·URL·날짜·식별자에만 씁니다.
+- 여백을 넉넉히, 색은 아껴 씁니다 — 강조 하나, 경고에 amber, 빠진 것에 red.
+
+### 담을 것
+산출물마다 카드 하나, 아래 순서대로:"""
+
+# 그래프로 그릴 관계가 없는 꼴(고치기·연락)에는 다이어그램 라이브러리를 아예 안
+# 부른다. 한 벌로 실으면 목차도 리다이렉트 지도도 없는 답에 억지 그림이 하나 생긴다.
+_SCRIPTS_PLAIN = "`<script>` 는 Tailwind CDN(cdn.tailwindcss.com) 하나뿐입니다."
+_SCRIPTS_GRAPH = ("`<script>` 는 Tailwind CDN(cdn.tailwindcss.com)과 "
+                  "Mermaid ESM(cdn.jsdelivr.net) 둘뿐입니다.")
+_GRAPH_NONE = "이 꼴에는 그래프로 그릴 관계가 없습니다 — 다이어그램 라이브러리를 안 부릅니다."
+_GRAPH_NONE2 = "카드·표·inline SVG 로 그립니다."
+_GRAPH_TAIL = ("나머지는 카드·표·inline SVG 입니다 — 전부 다이어그램으로 그리면 어느 "
+               "산출물이 무엇인지 안 갈립니다.")
 
 # 종류 → 꼴. 값이 문자열이면 고정, 함수면 (gap_kind, has_page) 로 가른다 —
 # 콘텐츠 공백은 '밀린다'(고친다)와 '없다'(새로 쓴다)가 정반대의 일이고,
@@ -158,6 +206,7 @@ KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
     "crawl_issue": "consolidate",
     "backlink_broken": "consolidate",
     "backlink_prospect": "outreach",
+    "ai_bot_blocked": "technical",
 }
 assert set(KIND_SHAPE) == set(scoring.ALL_KINDS)
 
@@ -169,6 +218,9 @@ INTRO_BY_KIND = {
     "device_gap": "아래 페이지가 모바일에서만 밀리는 원인을 잡아 주세요. 글의 내용은 손대지 "
                   "않습니다 — 화면·속도·자원 크기처럼 모바일에서 다르게 보이는 것을 고치는 "
                   "일입니다.",
+    "ai_bot_blocked": "아래 AI 크롤러가 robots.txt 로 막혀 있습니다. 열지 말지 정하고, "
+                      "연다면 어느 줄을 어떻게 고칠지 알려 주세요. 글은 손대지 않습니다 — "
+                      "막힌 채로는 고쳐도 안 읽힙니다.",
     "backlink_broken": "아래 주소로 들어오던 링크를 되살려 주세요. 이미 번 링크라 새로 얻는 "
                        "것보다 늘 쌉니다 — 어디로 301 할지 정하고, 링크를 건 쪽에 보낼 짧은 "
                        "안내문까지입니다.",
@@ -222,13 +274,29 @@ def limits(locale: str) -> tuple[int, int]:
 
 
 def tails(locale: str) -> dict[str, str]:
-    """꼴별 꼬리(답의 형식 + 규칙) — 프로젝트마다 한 벌. 언어·길이 기준이 여기 들어간다."""
+    """꼴별 꼬리(답의 형식 + 규칙) — 프로젝트마다 한 벌. 언어·길이 기준이 여기 들어간다.
+
+    형식의 몸통은 HTML_FORM 한 벌이고 꼴이 대는 것은 세 자리뿐이다. 꼬리를 기회마다
+    싣지 않는 이유(같은 글을 200번 안 보낸다)는 그대로다 — text() 가 둘을 잇는다.
+    """
     lang = lang_label(locale)
     t_max, d_max = limits(locale)
     out = {}
     for name, s in SHAPES.items():
-        L = ["## 답의 형식"]
+        g = s["graph"]
+        L = ["## 답의 형식",
+             HTML_FORM.format(slug=name,
+                              scripts=_SCRIPTS_GRAPH if g else _SCRIPTS_PLAIN,
+                              graph=g or _GRAPH_NONE,
+                              graph2=_GRAPH_TAIL if g else _GRAPH_NONE2),
+             ""]
         L += [f"{i + 1}. {x}" for i, x in enumerate(s["form"])]
+        L += ["- 안이 여럿인 자리는 안마다 배지를 답니다: 강함 / 검토 / 추측. 배지 없이 "
+              "안만 늘어놓으면 무엇을 고를지 사용자가 다시 묻게 됩니다.",
+              "- 확인 못 한 자리는 [확인 필요] 배지로 **화면에 보이게** 남깁니다. "
+              "지어내서 채우지 않습니다.",
+              "- 맨 끝에 '먼저 할 것' 카드 하나: 어느 산출물부터 적용할지 | 이유 한 줄 | "
+              "그 카드로 가는 앵커 링크."]
         L.append(f"- 언어: 산출물(제목·본문·연락문)은 {lang}로 씁니다. 사이트 언어-지역 "
                  f"{locale}. 설명은 이 요청문과 같은 한국어로 해 주세요.")
         if s["limits"]:
@@ -669,6 +737,13 @@ def _ev_ai(o, ctx, pages):
         if ans:
             L += ["- AI 가 지금 하는 답변(발췌) — 여기 없는 것을 우리가 답해야 인용됩니다:",
                   *(f"  > {ln}" for ln in ans.splitlines() if ln.strip())]
+    # 크롤러가 막혀 있으면 글을 고쳐도 안 읽힌다. 이 줄이 없으면 이 요청문과
+    # AI 크롤러 차단 기회가 서로 모순되는 말을 한다.
+    blocked = [r["bot"] for r in (ctx.get("ai_bots") or []) if r.get("rule")]
+    if blocked:
+        L.append(f"- **먼저 볼 것**: robots.txt 가 {', '.join(blocked)} 를 막고 있습니다. "
+                 "그 크롤러를 쓰는 엔진에서는 무엇을 써도 인용되지 않습니다 — 글보다 "
+                 "그 설정이 먼저입니다.")
     return L + _pages_table(pages)
 
 
@@ -727,12 +802,33 @@ def _ev_bl_prospect(o, ctx, pages):
     return L
 
 
+def _ev_ai_bot(o, ctx, pages):
+    """어느 줄이 막는지 + 나머지 봇은 어떤 상태인지.
+
+    한 봇만 보여 주면 "이것만 열면 되나" 로 읽힌다. 같은 robots.txt 가 다른
+    봇에게 무엇을 하고 있는지 한 표에 놓아야 열고 닫는 결정을 한 번에 한다.
+    """
+    rows = ctx.get("ai_bots") or []
+    if not rows:
+        return []
+    L = [f"- robots.txt 판정: {len(rows)}개 크롤러 중 "
+         f"{sum(1 for r in rows if r.get('rule'))}개가 막혀 있습니다."]
+    L += _table(["크롤러", "지금", "막는 줄"],
+                [[r["bot"], "차단" if r.get("rule") else "허용", r.get("rule") or "—"]
+                 for r in rows])
+    L.append("- 학습과 인용은 다른 봇일 수 있습니다(예: Google-Extended 는 제미나이 "
+             "학습이고, 검색 색인의 Googlebot 과 별개입니다). 막는 것이 의도였다면 "
+             "그렇다고 답해 주세요 — 여는 것이 늘 정답은 아닙니다.")
+    return L
+
+
 EVIDENCE: dict[str, Callable] = {
     "striking_distance": _ev_striking, "ctr_gap": _ev_ctr, "cannibalization": _ev_cannibal,
     "rank_decay": _ev_decay, "pseo_pattern": _ev_pseo, "device_gap": _ev_device,
     "index_blocked": _ev_index, "coverage": _ev_coverage, "ai_citation_gap": _ev_ai,
     "aio_exposure": _ev_aio, "content_gap": _ev_content_gap, "crawl_issue": _ev_crawl,
     "backlink_broken": _ev_bl_broken, "backlink_prospect": _ev_bl_prospect,
+    "ai_bot_blocked": _ev_ai_bot,
 }
 assert set(EVIDENCE) == set(scoring.ALL_KINDS)
 
@@ -742,6 +838,7 @@ _TARGET_NOUN = {
     "ai_citation_gap": "질문 (챗봇에 실제로 물은 문장)",
     "index_blocked": "주소", "crawl_issue": "주소", "backlink_broken": "깨진 주소 (링크가 향하는 곳)",
     "backlink_prospect": "연락할 도메인", "coverage": "주제 (추적 키워드 묶음)",
+    "ai_bot_blocked": "막힌 AI 크롤러 (robots.txt 의 User-agent)",
 }
 
 

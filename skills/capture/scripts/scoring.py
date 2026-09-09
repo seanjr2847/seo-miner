@@ -112,16 +112,18 @@ INTENT_NAVIGATIONAL = {
     "로그인", "공식", "홈페이지", "login", "official", "homepage",
 }
 
-# 이 리포가 만드는 기회 종류 한 벌 — 화면의 KIND_LABEL·PLAY 와 짝이 맞아야 한다
-# (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). test_seams 가
-# 이 튜플을 정규식으로 읽는다 — 리터럴 문자열 나열 그대로 둬야 한다(파생시키지 않는다).
-# 이름·순서의 정본은 여기다. 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래
-# KINDS 명부(_KIND_SPECS)가 이 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도
-# 거기서 파생된다 (is_defensive() 는 그 결과를 읽는다).
+# 이 리포가 만드는 기회 종류 한 벌 — 이름·순서의 정본은 여기다. 라벨·처방은 화면이
+# 아니라 dashboard.gather() 가 KINDS 명부에서 실어 보낸다(짝이 어긋나면 라벨 없는
+# 영문 kind 가 화면에 그대로 떴었다). 읽는 쪽은 전부 `scoring.ALL_KINDS` 를 import
+# 한다 — brief·db·검사 어디도 이 파일 원문을 긁지 않으므로 표 모양은 자유다.
+# 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래 KINDS 명부(_KIND_SPECS)가 이
+# 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도 거기서 파생된다
+# (is_defensive() 는 그 결과를 읽는다).
 ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
              "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
-             "crawl_issue", "backlink_broken", "backlink_prospect")
+             "crawl_issue", "backlink_broken", "backlink_prospect",
+             "ai_bot_blocked")
 # 심사(검색어 판정)를 거치는 종류 — 대상이 검색어·질문문인 것. 나머지(coverage 의
 # cluster:, index_blocked·crawl_issue 의 URL, backlink_* 의 도메인)는 판정 없이
 # 기회 목록에 바로 선다. 조회(db)·화면·검사가 이 한 벌을 가리킨다.
@@ -468,6 +470,48 @@ def vitals_advice(rows) -> list[dict]:
         out.append({"tag": "속도", "level": "bad" if len(bad) > 1 else "warn",
                     "now": f"{dev} " + " · ".join(bad) + f" — {src}",
                     "fix": fix.get(first, "")})
+    return out
+
+
+# 목록의 정본은 config.yaml 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
+# 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(빈 목록).
+_AI_BOTS_FALLBACK = ("GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended")
+
+
+def ai_bots() -> tuple[str, ...]:
+    try:
+        import collector
+        got = collector.config().get("ai_bots")
+    except Exception:
+        got = None
+    if not isinstance(got, list) or not got:
+        return _AI_BOTS_FALLBACK
+    return tuple(str(x).strip() for x in got if str(x).strip())
+
+
+def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
+                  home: str = "") -> list[dict]:
+    """robots.txt 로 막힌 AI 크롤러.
+
+    새로 가져오지 않는다 — 크롤 회차가 남긴 원문(crawl_runs.robots_txt)을 다시
+    읽을 뿐이다. 그래서 이 판정에는 네트워크도 새 단계도 없다.
+
+    왜 이게 AI 인용 판정보다 **먼저**여야 하나: ClaudeBot 이 막혀 있으면 그
+    엔진에서는 인용될 수가 없다. 그 상태에서 "콘텐츠가 약해서 인용이 안 된다"
+    고 말하면 완전한 오진이고, 사용자는 엉뚱한 글을 쓰게 된다.
+    """
+    cr = conn.execute(
+        "SELECT robots_txt FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
+        " AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+    txt = (cr["robots_txt"] if cr else "") or ""
+    if not txt.strip():
+        return []
+    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    out = []
+    for bot in ai_bots():
+        rule = robots_blocks(txt, url, agent=bot)
+        if rule:
+            out.append({"bot": bot, "rule": rule})
     return out
 
 
@@ -1993,7 +2037,8 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     reach = 0.3 if pos is None else max(0.0, 1.0 - gap_to_page1(pos) / PAGE1)
     fit = float(metrics.get("fit", 0.5))
     ai = float(metrics.get("ai",
-                           1.0 if kind in ("ai_citation_gap", "aio_exposure") else 0.0))
+                           1.0 if kind in ("ai_citation_gap", "aio_exposure",
+                                           "ai_bot_blocked") else 0.0))
     raw = (w["w_demand"] * demand + w["w_reach"] * reach
            + w["w_fit"] * fit + w["w_ai"] * ai)
     raw *= value_mult(metrics)
@@ -2005,10 +2050,10 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
 # load() 는 이 명부를 순회할 뿐 kind 문자열을 직접 적지 않는다 — 명부에 없는 kind 는
 # 나올 수가 없다(구조적으로), 명부에 있는데 빠지는 kind 도 없다(전부 돈다).
 #
-# ALL_KINDS(위)가 이름·순서의 정본이다 — test_seams 가 그 튜플을 정규식으로
-# 읽는다. KINDS 는 ALL_KINDS 를 그대로 따라가며 _KIND_SPECS 에서 나머지를 채운
-# 파생값이다(반대 방향이 아니라 이 방향인 이유: ALL_KINDS 가 문자열 리터럴 나열
-# 그대로여야 그 정규식이 계속 읽을 수 있다). DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
+# ALL_KINDS(위)가 이름·순서의 정본이다. KINDS 는 그것을 그대로 따라가며
+# _KIND_SPECS 에서 나머지를 채운 파생값이고(반대 방향이 아니라 이 방향인 이유:
+# 이름만 읽으면 되는 쪽 — brief·db·검사 — 이 명부 전체를 짓지 않고도 import 로
+# 끝낼 수 있다), DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
 #
 # 검출기 시그니처가 저마다 달라(striking 은 brands=, pseo_pattern 은 limit=10,
 # backlink_* 는 backlink_gaps() 한 번의 앞/뒤 절반) 억지로 한 모양에 밀어 넣지
@@ -2357,6 +2402,29 @@ _KIND_SPECS = {
                   "옮길 곳이 없으면 그 주제로 페이지를 다시 세우는 쪽이 나을 수 있습니다.",
                   "링크를 건 쪽에 새 주소를 알려 링크 자체를 고치게 합니다."],
             deliver=["301 대상 주소와 그 근거", "링크를 건 쪽에 보낼 짧은 안내문 한 벌"])),
+    # robots.txt 원문은 크롤이 이미 남겼다 — 이 kind 에는 새 수집도 새 테이블도
+    # 없다. AI 인용 판정보다 먼저 봐야 하는 관문이라 종류로 세운다.
+    "ai_bot_blocked": dict(
+        label="AI 크롤러 차단", defensive=False,
+        detect=lambda ctx: ai_bot_blocks(ctx["conn"], ctx["pid"], home=ctx.get("domain") or ""),
+        metrics=lambda r, ctx: {"impressions": 0, "position": None, "ai": 1.0},
+        target=lambda r, ctx: r["bot"],
+        reasoning=lambda r, ctx: (
+            f"robots.txt 가 {r['bot']} 를 막습니다 ({r['rule']}). 이 크롤러를 쓰는 "
+            "엔진에서는 우리가 인용될 수 없습니다 — 글을 고쳐도 소용이 없습니다"),
+        play=dict(
+            what="robots.txt 가 이 AI 크롤러를 막고 있습니다. 막힌 채로는 그 엔진이 "
+                 "우리 글을 읽을 수 없어서, 인용이 안 되는 이유가 콘텐츠가 아닙니다.",
+            acts=["막는 것이 의도였는지 먼저 정합니다 — 학습에 쓰이는 것이 싫어서 "
+                  "막아 둔 것일 수 있습니다. 그렇다면 이 항목은 닫으면 됩니다.",
+                  "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다.",
+                  "학습은 막고 인용은 받고 싶으면 봇을 갈라 봅니다 — 예를 들어 "
+                  "Google-Extended(제미나이 학습)와 Googlebot(검색 색인)은 다른 봇입니다.",
+                  "고친 뒤 robots.txt 를 직접 열어 확인하고, 다음 크롤에서 이 항목이 "
+                  "사라지는지 봅니다."],
+            deliver=["고칠 robots.txt 줄 — 지금 값과 바꿀 값을 그대로",
+                     "이 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
+                     "(글은 손대지 않습니다. 막힌 채로는 고쳐도 안 읽힙니다)"])),
     "backlink_prospect": dict(
         label="경쟁사만 받는 링크", defensive=False,
         detect=lambda ctx: backlink_gaps(ctx["conn"], ctx["pid"])[1],
@@ -2458,7 +2526,9 @@ def load(project: str) -> None:
     ctx = {"conn": conn, "pid": pid, "cur": cur, "prev": prev, "brands": brands,
            "bd": _latest(conn, _LATEST_BD, (pid, "device")),
            "ix": _latest(conn, _LATEST_IX, (pid,)),
-           "ga4": ga4, "page_agg": page_agg}
+           "ga4": ga4, "page_agg": page_agg,
+           # robots.txt 판정은 "이 주소를 막나" 라서 사이트 주소가 필요하다
+           "domain": p["domain"] or ""}
     rows = []
     for k in KINDS:
         for r in k.detect(ctx):
@@ -3240,6 +3310,31 @@ def _selfcheck() -> None:
         score("striking_distance", {"impressions": 100, "position": 5.0}, "saas")
 
     print("scoring self-check ok")
+    # ── AI 크롤러 차단 — 새 수집 없이 robots.txt 원문만 다시 읽는다 ──
+    _bots_conn = sqlite3.connect(":memory:")
+    _bots_conn.row_factory = sqlite3.Row
+    import db as _db
+    _bots_conn.executescript(_db.SCHEMA)
+    _bots_conn.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'b','saas','x.kr')")
+    assert ai_bot_blocks(_bots_conn, 1) == [], "크롤 회차가 없는데 판정을 만든다"
+    _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: *", "Allow: /"))
+    _bots_conn.execute(
+        "INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
+        " VALUES(1,'2026-09-09','home',?)", (_robots,))
+    _bots_conn.commit()
+    _blocked = ai_bot_blocks(_bots_conn, 1, home="x.kr")
+    assert [r["bot"] for r in _blocked] == ["GPTBot"], _blocked
+    assert _blocked[0]["rule"] == "Disallow: /", _blocked[0]
+    # robots.txt 를 아예 못 읽은 회차는 "전부 허용" 이 아니라 "모른다" 다
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=NULL")
+    _bots_conn.commit()
+    assert ai_bot_blocks(_bots_conn, 1, home="x.kr") == [], "안 본 것을 허용으로 읽는다"
+    _bots_conn.close()
+    assert "ai_bot_blocked" in ALL_KINDS
+    # 점수에서 AI 축 가중을 받는다 — 안 그러면 목록 바닥에 깔린다
+    assert score("ai_bot_blocked", {"impressions": 0, "position": None, "ai": 1.0}, "saas") > 0
+
 
 
 if __name__ == "__main__":

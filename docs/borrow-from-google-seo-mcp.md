@@ -15,7 +15,7 @@
 | # | 항목 | 출처 | 비용 | 이득 |
 |---|---|---|---|---|
 | 0 | `aio_exposure` · `ai_citation_gap` 적재기 | 저쪽 아님 — **자체 발견** | 코드 ~25줄 | 큼. 배관·화면·점수 경로가 이미 다 뚫려 있고 펌프만 없다 |
-| 1 | AI 크롤러 robots.txt 검사 | `aeo_ai_bots_robots_audit` | 신규 파일 1개 + 테이블 1개 | 큼. ④의 전제조건 |
+| 1 | AI 크롤러 robots.txt 검사 | `aeo_ai_bots_robots_audit` | ~~신규 파일 1개 + 테이블 1개~~ **둘 다 필요 없었다** | ~~큼~~ **했다** (2026-09-09, `ai_bot_blocked`) |
 | 2 | 코어 업데이트 참조표 | `google-seo://algorithm-updates` | 문서 1장, 코드 0줄 | 중간. 하락 오진단 방지 |
 | 3 | provenance 읽기 동사 | `_meta` + `GUARDRAIL_SUFFIX` | 읽기 동사 1개 + SKILL.md 규약 | 중간. 리포트 숫자 날조 방지 |
 | 4 | LLM 프롬프트 경계 표시 | `<untrusted-third-party-content>` | ~8줄, 초크포인트 1곳 | 중간. 인젝션 표면 봉합 |
@@ -237,7 +237,22 @@ HTML 파서도 없다(BeautifulSoup/lxml 0건).
 `gsc_index_status.robots_txt_state`(`db.py:177`)는 GSC URL Inspection API가 준 값으로,
 "구글이 이 URL을 크롤할 수 있나"다. **AI 크롤러 차단은 다른 축이므로 컬럼 재사용은 의미 충돌.**
 
-### 어디에 얹나 — 새 단계를 만들지 않는다
+### 했다 — 2026-09-09, 새 파일도 새 테이블도 없이
+
+이 절이 계획한 것(새 파일 1개 + `ai_bot_access` 테이블 + `collect_index` 에 얹기)은
+**하나도 필요 없었다.** 그 사이에 속도·요청문 작업이 `crawl_runs.robots_txt` 에
+robots.txt 원문을 남겨 놨기 때문이다 — 색인 막힘 요청문이 "어느 Disallow 줄에
+걸리는지" 를 말해야 해서 남긴 것인데, AI 봇 판정이 그대로 그 위에 앉았다.
+
+실제로 한 것: `config.yaml` 의 `ai_bots` 목록 + `scoring.ai_bots()` ·
+`scoring.ai_bot_blocks()` (기존 `robots_blocks()` 를 봇 이름으로 부를 뿐) +
+`_KIND_SPECS` 한 덩이 + 요청문 근거 하나. 네트워크 호출 0회.
+
+아래 (a)~(f) 는 그때의 계획으로 남긴다 — 무엇을 안 해도 됐는지가 기록으로 남는
+편이 낫다. 특히 (f)(순서 의존)는 그대로 지켰다: 인용 공백 요청문이 막힌 봇을
+먼저 말한다.
+
+### 그때의 계획 — 어디에 얹나 (새 단계를 만들지 않는다)
 
 새 단계 = 위의 8곳 갱신. 이 기능 하나에는 과하다.
 

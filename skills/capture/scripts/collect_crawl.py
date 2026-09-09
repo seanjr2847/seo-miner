@@ -74,6 +74,9 @@ ISSUE_KIND = {
                            "canonical 이 자기 자신도, 크롤한 어느 URL 도 아닙니다."],
     "img_no_alt": ["alt 없는 이미지",
                    "이미지 설명이 비었습니다. 접근성이 먼저고, 이미지 검색은 덤입니다."],
+    "hreflang_no_return": ["hreflang 짝이 안 맞음",
+                           "이쪽은 저쪽을 가리키는데 저쪽은 이쪽을 안 가리킵니다. "
+                           "구글은 그 짝을 통째로 버립니다."],
 }
 
 SEVERITY = {
@@ -81,7 +84,7 @@ SEVERITY = {
     "orphan": "warn", "dup_title": "warn", "dup_description": "warn",
     "missing_title": "bad", "missing_description": "warn", "missing_h1": "warn",
     "thin_content": "warn", "noindex": "warn", "canonical_mismatch": "warn",
-    "img_no_alt": "info",
+    "img_no_alt": "info", "hreflang_no_return": "warn",
 }
 
 
@@ -166,7 +169,11 @@ def parse_page(url: str, html: str) -> dict:
             "h1": p.h1[0] if p.h1 else None,
             "canonical": p.canonical, "robots": p.robots, "words": p.words,
             "schema_types": ",".join(sorted(set(p.schema))) or None,
-            "images_no_alt": p.images_no_alt, "links": p.links}
+            "images_no_alt": p.images_no_alt, "links": p.links,
+            # 상호 참조(A→B 면 B→A)는 **여러 장을 같이 봐야** 안다. 페이지 감사는
+            # 한 장씩이라 자기 참조·코드·x-default 까지만 본다 — 전수 크롤만이
+            # "저쪽이 이쪽을 도로 안 가리킨다" 를 말할 수 있다.
+            "hreflang": p.hreflang}
 
 
 # ── 가져오기 ────────────────────────────────────────────────────────────────
@@ -319,6 +326,10 @@ def save(conn, run_id: int, pages, links) -> None:
         f"VALUES({','.join(['?'] * (len(_PAGE_COLS) + 1))})",
         [(run_id, *[p.get(c) for c in _PAGE_COLS]) for p in pages])
     conn.executemany(
+        "INSERT INTO crawl_hreflang(run_id,url,code,href) VALUES(?,?,?,?)",
+        [(run_id, p["url"], str(c)[:35], normalize(str(h), p["url"]) or str(h)[:500])
+         for p in pages for c, h in (p.get("hreflang") or [])[:40]])
+    conn.executemany(
         "INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,nofollow) "
         "VALUES(?,?,?,?,?,?)",
         [(run_id, x["url_from"], x["url_to"], x["anchor"], x["is_internal"], x["nofollow"])
@@ -386,6 +397,17 @@ _ISSUE_SQL = (
      "   AND TRIM(p.canonical) <> '' AND p.canonical <> p.url"
      "   AND NOT EXISTS (SELECT 1 FROM crawl_pages q"
      "                   WHERE q.run_id = p.run_id AND q.url = p.canonical)"),
+    # 상호 참조 — A 가 B 를 가리키면 B 도 A 를 가리켜야 한다. 아니면 구글은 그
+    # **짝을 통째로 버린다**. 한 장만 봐서는 못 잡는 것이라 여기가 유일한 자리다.
+    # 상대가 우리가 크롤한 페이지일 때만 본다 — 남의 도메인은 우리가 못 고친다.
+    ("hreflang_no_return",
+     "SELECT h.url, '이 페이지가 ' || h.href || ' (' || h.code || ') 를 가리키는데 "
+     "그쪽은 이 주소를 안 가리킵니다' FROM crawl_hreflang h"
+     " JOIN crawl_pages p ON p.run_id = h.run_id AND p.url = h.href"
+     " WHERE h.run_id=:run AND h.href <> h.url"
+     "   AND NOT EXISTS (SELECT 1 FROM crawl_hreflang b"
+     "                   WHERE b.run_id = h.run_id AND b.url = h.href AND b.href = h.url)"
+     " GROUP BY h.url, h.href"),
     ("img_no_alt",
      "SELECT url, 'alt 없는 이미지 ' || images_no_alt || '개' FROM crawl_pages"
      " WHERE run_id=:run AND images_no_alt > 0"),
@@ -557,8 +579,12 @@ def _site(*, sitemap: bool = True) -> dict:
         "https://site.kr/robots.txt": (200, robots, "text/plain"),
         "https://site.kr/sitemap.xml": (200, _SITEMAP, "application/xml"),
         "https://site.kr/": (200, _html("홈", tail=home_links), "text/html"),
+        # /a 는 /b 를 hreflang 짝으로 선언하는데 /b 는 되받지 않는다 — 한 장만
+        # 봐서는 /a 가 멀쩡해 보인다. 전수 크롤만 잡을 수 있는 종류다.
         "https://site.kr/a": (200, _html("같은 제목", h1="에이",
-                                         head='<link rel="canonical" href="/a">',
+                                         head='<link rel="canonical" href="/a">'
+                                              '<link rel="alternate" hreflang="ko" href="/a">'
+                                              '<link rel="alternate" hreflang="en" href="/b">',
                                          tail='<a href="/b">비로</a>'), "text/html"),
         "https://site.kr/b": (200, _html("같은 제목", h1="", desc="", body="짧다",
                                          tail="<img src='x.png'>"), "text/html"),
@@ -683,6 +709,14 @@ def _selfcheck() -> None:
         assert ("missing_description", "https://site.kr/b") in issues
         assert ("thin_content", "https://site.kr/b") in issues
         assert ("img_no_alt", "https://site.kr/b") in issues
+        # hreflang 상호 참조 — /a 가 /b 를 가리키는데 /b 는 안 되받는다.
+        # 자기 자신(ko → /a)은 짝이 맞으므로 안 걸려야 한다.
+        assert ("hreflang_no_return", "https://site.kr/a") in issues, sorted(issues)
+        _hl = issues[("hreflang_no_return", "https://site.kr/a")]["detail"]
+        assert "https://site.kr/b" in _hl and "(en)" in _hl, _hl
+        assert conn.execute(
+            "SELECT COUNT(*) FROM crawl_hreflang WHERE run_id=?",
+            (run1["id"],)).fetchone()[0] == 2, "선언 자체가 저장이 안 된다"
         assert ("redirect_chain", "https://site.kr/old") in issues, sorted(issues)
         assert "홉 2개" in issues[("redirect_chain", "https://site.kr/old")]["detail"]
         # /a 의 canonical 은 자기 자신이다 — 이건 이슈가 아니다

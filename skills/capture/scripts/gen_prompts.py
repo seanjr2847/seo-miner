@@ -36,18 +36,27 @@ import serp_adapter  # noqa: E402  (로케일 → 영어 언어·나라 이름)
 # 검색이 필요 없는 작업이다(:online 을 안 붙인다) — 질문을 짓는 것뿐이라 싸고 빠른
 # 모델로 충분하다. 인용 확인에 쓰는 엔진 표(collect_ai.DEFAULT_ENGINES)와는 별개다.
 MODEL = "openai/gpt-4o-mini"
+# 질문 갈래는 여기 한 벌이고, 만드는 쪽(이 파일)·고르는 쪽(화면의 <select>)·받는
+# 쪽(server/app.py)이 전부 이걸 가리킨다. 셋으로 갈라져 있던 시절 실제로 어긋났다:
+# 화면만 "general" 을 선택지에 넣고 있었고 이 파일은 그 값을 몰랐다.
+#   · CATEGORIES        — 모델이 짓는 넷. 프롬프트(SYSTEM)가 요구하는 것과 같다.
+#   · DEFAULT_CATEGORY  — 갈래를 못 정했을 때 떨어지는 자리(db 의 기본값과 같다).
+#     모델이 지어낸 이름은 여기로 접는다.
+#   · CATEGORY_CHOICES  — 사람이 화면에서 고를 수 있는 것. 위 둘을 합친 것이다.
 CATEGORIES = ("추천", "비교", "문제해결", "브랜드")
+DEFAULT_CATEGORY = "general"
+CATEGORY_CHOICES = CATEGORIES + (DEFAULT_CATEGORY,)
 MIN_LEN, MAX_LEN = 6, 120
 
 SYSTEM = (
     "You design the question set used to measure whether a site gets cited by AI "
     "assistants. Return ONLY a JSON array, no prose, no code fence. Each item: "
-    '{"prompt": "...", "category": "추천|비교|문제해결|브랜드"}. '
+    '{"prompt": "...", "category": "' + "|".join(CATEGORIES) + '"}. '
     "Write every prompt in the audience language named in the message (never in another "
     "language), phrased the way a real person there types into ChatGPT — full questions, "
     "not keywords, and never mention that this is a test. Keep the category values exactly "
     "as given even though they are Korean labels. "
-    "Cover all four categories: 추천 (asking for recommendations in this field), "
+    f"Cover all {len(CATEGORIES)} categories: 추천 (asking for recommendations in this field), "
     "비교 (comparing options), 문제해결 (solving the problem the site addresses), "
     "브랜드 (asking about this brand by name). Most prompts must NOT name the brand — "
     "the point is to find out who gets cited when the user does not already know us. "
@@ -179,7 +188,8 @@ def parse(text: str) -> list[dict]:
             continue
         seen.add(prompt.lower())
         cat = str(item.get("category") or "").strip()
-        out.append({"prompt": prompt, "category": cat if cat in CATEGORIES else "general"})
+        out.append({"prompt": prompt,
+                    "category": cat if cat in CATEGORIES else DEFAULT_CATEGORY})
     return out
 
 
@@ -253,6 +263,12 @@ def main() -> None:
 
 
 def _selfcheck() -> None:
+    # 갈래 한 벌 — 기본값은 선택지 안에 있고, 만드는 넷은 선택지의 진부분집합이다.
+    # (화면이 고를 수 있는데 여기가 모르는 값이 있으면 안 된다.)
+    assert DEFAULT_CATEGORY in CATEGORY_CHOICES and DEFAULT_CATEGORY not in CATEGORIES
+    assert set(CATEGORIES) < set(CATEGORY_CHOICES), (CATEGORIES, CATEGORY_CHOICES)
+    assert "|".join(CATEGORIES) in SYSTEM, "프롬프트가 갈래 사본을 들고 있다"
+
     # 파싱: 코드펜스·설명·중복·길이 밖·잘못된 카테고리를 전부 지나간다
     raw = ('설명 한 줄\n```json\n['
            '{"prompt":"밀리아 제거 잘하는 병원 어디야?","category":"추천"},'
@@ -265,7 +281,7 @@ def _selfcheck() -> None:
     assert [g["prompt"] for g in got] == [
         "밀리아 제거 잘하는 병원 어디야?", "점 빼기랑 밀리아 제거 뭐가 달라?",
         "문자열로 온 질문도 받는다 밀리아"], got
-    assert got[0]["category"] == "추천" and got[1]["category"] == "general", got
+    assert got[0]["category"] == "추천" and got[1]["category"] == DEFAULT_CATEGORY, got
     assert parse("배열이 없다") == [] and parse("[깨진 json") == []
 
     import sqlite3

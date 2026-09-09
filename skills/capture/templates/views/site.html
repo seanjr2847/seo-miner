@@ -2,8 +2,9 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "site", "title": "사이트 점검",
- "sections": ["st-sum", "index", "crawl", "devgap", "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
- "stages": ["index", "crawl", "gsc"]}
+ "sections": ["st-sum", "index", "crawl", "devgap", "vitals",
+              "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
+ "stages": ["index", "crawl", "gsc", "vitals"]}
 </script>
 
 <style>
@@ -165,6 +166,21 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
     <p>같은 검색어를 기기별로 갈라 평균 순위를 맞대 본 것입니다. 격차가 크면
       <b>고칠 곳은 글이 아니라 모바일 화면</b>입니다. GA4 가 연결돼 있으면 기기별
       전환율을 옆에 나란히 놓아 페이지 자체를 의심할 자리인지까지 봅니다.</p></details>
+</section>
+
+<section id="vit-sec">
+  <div class="sh">
+    <p class="eyebrow"><span class="lat">CORE WEB VITALS</span></p>
+    <h2>속도</h2>
+    <p class="sub" id="vit-sub"></p>
+    <div class="tools" id="vit-tools"></div>
+  </div>
+  <div id="vitals"><div class="skel box"></div></div>
+  <details class="why"><summary>현장과 실험실은 다른 숫자다</summary>
+    <p><b>현장</b>은 실제 크롬 사용자 28일치입니다 — 검색이 보는 값이 그것입니다.
+      트래픽이 적은 페이지에는 없고, 그때는 사이트 전체 값이 대신 옵니다(표에
+      그렇다고 적습니다). <b>실험실</b>은 지금 한 번 열어 잰 값이라, 고친 뒤 바로
+      움직이는 유일한 숫자입니다. 현장 값은 28일이 지나야 따라옵니다.</p></details>
 </section>
 
 <section id="pgp-sec">
@@ -848,6 +864,81 @@ function renderDevice(d) {
   stDevHead();
 }
 
+/* ── 속도 (Core Web Vitals) ────────────────────────────────
+   기준값은 서버가 준다(d.rules) — scoring.LCP_GOOD_MS 등이 정본이다. 여기 숫자를
+   적으면 판정과 화면이 두 벌이 되고, 구글이 기준을 옮길 때 한쪽만 낡는다. */
+const VIT_DEV = {mobile: "모바일", desktop: "데스크톱"};
+const vitSec = ms => (ms === null || ms === undefined) ? "—" : (ms / 1000).toFixed(1) + "초";
+// 기준을 넘긴 값만 빨갛게. 안 잰 값(null)은 통과도 실패도 아니다 — 회색으로 둔다.
+const vitCell = (v, good, fmt) => (v === null || v === undefined)
+  ? `<td class="num muted">—</td>`
+  : `<td class="num ${v > good ? "bad" : "ok"}">${fmt(v)}</td>`;
+
+function vitRows(d) {
+  const out = [];
+  Object.keys(d.vitals || {}).sort().forEach(url => {
+    ["mobile", "desktop"].forEach(dev => {
+      const r = (d.vitals[url] || {})[dev];
+      if (r) out.push([url, dev, r]);
+    });
+  });
+  return out;
+}
+
+function renderVitals(d) {
+  const rows = vitRows(d);
+  const R = (d.rules || {});
+  const lcp = R.lcp_good_ms, inp = R.inp_good_ms, cls = R.cls_good;
+  if (!d.vitals_date) {
+    stSec("vit-sec", null);
+    stTools("vit-tools", "");
+    $("vit-sub").textContent = "고칠 페이지가 폰에서 얼마나 느린지 잽니다.";
+    return $("vitals").innerHTML = `<div class="empty"><b>아직 속도를 안 쟀습니다</b>
+      <p>기회에 걸린 페이지를 모바일·데스크톱에서 열어 LCP·INP·CLS 를 잽니다.
+        비용은 없습니다.${live(" 한 번 돌리면 표가 생깁니다.")}</p>
+      ${stAct("vitals", "속도 측정")}</div>`;
+  }
+  // 기준을 넘긴 것만 센다 — 현장 값이 있으면 그것으로, 없으면 실험실 값으로.
+  const over = rows.filter(([, , r]) => {
+    const f = r.field_lcp_ms !== null && r.field_lcp_ms !== undefined;
+    const L = f ? r.field_lcp_ms : r.lab_lcp_ms;
+    const C = f ? r.field_cls : r.lab_cls;
+    return (L !== null && L !== undefined && L > lcp)
+        || (r.field_inp_ms !== null && r.field_inp_ms !== undefined && r.field_inp_ms > inp)
+        || (C !== null && C !== undefined && C > cls);
+  });
+  stSec("vit-sec", over.length);
+  const when = esc(d.vitals_date);
+  if (!rows.length) {
+    stTools("vit-tools", "");
+    $("vit-sub").textContent = `${when} 기준 · 잰 페이지가 없습니다.`;
+    return $("vitals").innerHTML = `<div class="empty"><b>잰 페이지가 없습니다</b>
+      <p>기회에 걸린 페이지가 있어야 잴 대상이 정해집니다.</p></div>`;
+  }
+  $("vit-sub").innerHTML = over.length
+    ? `${when} 기준 · <b>${over.length}개</b>가 기준을 넘겼습니다.`
+      + hint(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls} 이내가 기준입니다. `
+             + `현장 값이 있으면 그것으로, 없으면 실험실 값으로 셉니다.`)
+    : `${when} 기준 · 잰 ${rows.length}개가 전부 기준 안입니다.`;
+  if (!over.length)
+    return $("vitals").innerHTML = stOk(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls}`);
+  $("vitals").innerHTML = stCard(table(
+    ["페이지", "기기", ">LCP?가장 큰 것이 뜨는 시각. 현장 값이 있으면 현장.",
+     ">INP?누른 뒤 화면이 반응하기까지. 현장 값에만 있습니다.",
+     ">CLS?그리는 도중 화면이 밀린 정도.", ">점수?실험실 1회 측정(0~100).", "출처"],
+    rows.map(([url, dev, r]) => {
+      const f = r.field_lcp_ms !== null && r.field_lcp_ms !== undefined;
+      const src = r.error ? "못 쟀음"
+        : !f ? "실험실만 (사용자 표본 부족)"
+        : r.origin_fallback ? "사이트 전체 값" : "이 페이지의 실제 사용자";
+      return `<tr><td>${esc(url)}</td><td>${VIT_DEV[dev] || esc(dev)}</td>`
+        + vitCell(f ? r.field_lcp_ms : r.lab_lcp_ms, lcp, vitSec)
+        + vitCell(r.field_inp_ms, inp, v => v + "ms")
+        + vitCell(f ? r.field_cls : r.lab_cls, cls, v => v)
+        + `<td class="num">${r.lab_score ?? "—"}</td><td class="micro">${esc(src)}</td></tr>`;
+    }), ""));
+}
+
 // 펼침이 읽는 재료 — 표 행에는 없고 payload 에만 있다.
 let ST_AUDITS = {}, ST_QPAGES = {};
 
@@ -1335,6 +1426,7 @@ VIEW("site", function (d) {
   renderDevice(d);
   renderIndex(d);
   renderCrawl(d);
+  renderVitals(d);
   renderPageAxis(d);
   stNext(plan);
   stSummary(stBlocked(d));    // 섹션마다 센 뒤라야 한 줄로 요약할 수 있다
