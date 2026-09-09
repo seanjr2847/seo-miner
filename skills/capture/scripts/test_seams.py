@@ -630,8 +630,19 @@ def test_seam_16_brief_shapes_single_source():
         f"화면이 넘기는 꼴 이름이 brief.SHAPE_NAMES 에 없다: {used - set(brief.SHAPE_NAMES)}"
     # 셸이 꼬리·머리말을 페이로드(d.brief)에서 받는다 — 옛 틀의 사본이 남아 있지 않다
     assert "window.BRIEF = d.brief" in shell, "셸이 d.brief 를 window.BRIEF 로 안 받는다"
-    for stale in ("const DELIVER = {", "확인되지 않은 수치", "위에 없는 것까지 알아서 손대지"):
+    for stale in ("const DELIVER = {", "확인되지 않은 수치", "위에 없는 것까지 알아서 손대지",
+                  "소제목을 답니다"):
         assert stale not in shell, f"옛 요청문 틀이 셸에 남아 있다: {stale!r}"
+    # 꼬리가 "임시 폴더에 쓰고 열어라"를 시키면 화면 안내도 파일을 쓸 수 있는 곳을
+    # 가리켜야 한다 — 웹 챗은 사용자의 임시 폴더에 못 쓴다. 양쪽 끝이 어긋나면 어느
+    # 파일도 혼자서는 안 이상하고, 붙여 넣은 사람만 빈손이 된다. 한쪽만 보면 꼬리를
+    # 되돌렸을 때 검사가 조용히 사라지므로 양방향으로 맞춘다.
+    wants_file = "%TEMP%" in brief.tails("ko-KR")["fix_page"]
+    guides_to_code = "Claude Code 에 붙여 넣습니다" in shell
+    assert wants_file == guides_to_code, (
+        "꼬리는 파일을 쓰라는데 화면이 딴 데를 가리킨다" if wants_file else
+        "화면은 Claude Code 를 가리키는데 꼬리는 파일을 안 시킨다")
+    assert not (wants_file and "ChatGPT 에 붙여 넣습니다" in shell),         "꼬리는 파일을 쓰라는데 화면은 ChatGPT 에 붙여 넣으라고 안내한다"
     # 폴백이 쓰는 키가 shapes_payload 에 다 있다 — 키 하나가 빠지면 undefined 가 글에 박힌다
     keys = set(re.findall(r"\bB\.(\w+)", shell)) | set(re.findall(r"window\.BRIEF\.(\w+)", shell))
     have = set(brief.shapes_payload("ko-KR"))
