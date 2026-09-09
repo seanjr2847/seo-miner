@@ -10,7 +10,6 @@ run_checks.py 는 test_*.py 를 bare python 으로 돌린다(run_checks.discover
 
 self-check: python server/test_app.py
 """
-import gc
 import json
 import os
 import sqlite3
@@ -530,9 +529,6 @@ def demo() -> None:
         # 열려 있는 파일은 db.run_sql 의 읽기 전용 brain 커넥션이다: 조회 전용
         # 거절(`WITH … DELETE`)이 conn.close() 앞의 sys.exit 로 나가서 안 닫힌다
         # (db.py:1559-1566). 그 커넥션은 예외 트레이스백이 만든 순환에 걸려 있어
-        # 참조 계수로는 안 풀리고 gc 때에야 닫힌다. 원인은 db.py 쪽이다 —
-        # 여기 gc 는 그것이 고쳐질 때까지의 정리 순서 보장이다.
-        gc.collect()
         print("app: ok")
 
 
