@@ -206,6 +206,7 @@ KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
     "crawl_issue": "consolidate",
     "backlink_broken": "consolidate",
     "backlink_prospect": "outreach",
+    "ai_bot_blocked": "technical",
 }
 assert set(KIND_SHAPE) == set(scoring.ALL_KINDS)
 
@@ -217,6 +218,9 @@ INTRO_BY_KIND = {
     "device_gap": "아래 페이지가 모바일에서만 밀리는 원인을 잡아 주세요. 글의 내용은 손대지 "
                   "않습니다 — 화면·속도·자원 크기처럼 모바일에서 다르게 보이는 것을 고치는 "
                   "일입니다.",
+    "ai_bot_blocked": "아래 AI 크롤러가 robots.txt 로 막혀 있습니다. 열지 말지 정하고, "
+                      "연다면 어느 줄을 어떻게 고칠지 알려 주세요. 글은 손대지 않습니다 — "
+                      "막힌 채로는 고쳐도 안 읽힙니다.",
     "backlink_broken": "아래 주소로 들어오던 링크를 되살려 주세요. 이미 번 링크라 새로 얻는 "
                        "것보다 늘 쌉니다 — 어디로 301 할지 정하고, 링크를 건 쪽에 보낼 짧은 "
                        "안내문까지입니다.",
@@ -733,6 +737,13 @@ def _ev_ai(o, ctx, pages):
         if ans:
             L += ["- AI 가 지금 하는 답변(발췌) — 여기 없는 것을 우리가 답해야 인용됩니다:",
                   *(f"  > {ln}" for ln in ans.splitlines() if ln.strip())]
+    # 크롤러가 막혀 있으면 글을 고쳐도 안 읽힌다. 이 줄이 없으면 이 요청문과
+    # AI 크롤러 차단 기회가 서로 모순되는 말을 한다.
+    blocked = [r["bot"] for r in (ctx.get("ai_bots") or []) if r.get("rule")]
+    if blocked:
+        L.append(f"- **먼저 볼 것**: robots.txt 가 {', '.join(blocked)} 를 막고 있습니다. "
+                 "그 크롤러를 쓰는 엔진에서는 무엇을 써도 인용되지 않습니다 — 글보다 "
+                 "그 설정이 먼저입니다.")
     return L + _pages_table(pages)
 
 
@@ -791,12 +802,33 @@ def _ev_bl_prospect(o, ctx, pages):
     return L
 
 
+def _ev_ai_bot(o, ctx, pages):
+    """어느 줄이 막는지 + 나머지 봇은 어떤 상태인지.
+
+    한 봇만 보여 주면 "이것만 열면 되나" 로 읽힌다. 같은 robots.txt 가 다른
+    봇에게 무엇을 하고 있는지 한 표에 놓아야 열고 닫는 결정을 한 번에 한다.
+    """
+    rows = ctx.get("ai_bots") or []
+    if not rows:
+        return []
+    L = [f"- robots.txt 판정: {len(rows)}개 크롤러 중 "
+         f"{sum(1 for r in rows if r.get('rule'))}개가 막혀 있습니다."]
+    L += _table(["크롤러", "지금", "막는 줄"],
+                [[r["bot"], "차단" if r.get("rule") else "허용", r.get("rule") or "—"]
+                 for r in rows])
+    L.append("- 학습과 인용은 다른 봇일 수 있습니다(예: Google-Extended 는 제미나이 "
+             "학습이고, 검색 색인의 Googlebot 과 별개입니다). 막는 것이 의도였다면 "
+             "그렇다고 답해 주세요 — 여는 것이 늘 정답은 아닙니다.")
+    return L
+
+
 EVIDENCE: dict[str, Callable] = {
     "striking_distance": _ev_striking, "ctr_gap": _ev_ctr, "cannibalization": _ev_cannibal,
     "rank_decay": _ev_decay, "pseo_pattern": _ev_pseo, "device_gap": _ev_device,
     "index_blocked": _ev_index, "coverage": _ev_coverage, "ai_citation_gap": _ev_ai,
     "aio_exposure": _ev_aio, "content_gap": _ev_content_gap, "crawl_issue": _ev_crawl,
     "backlink_broken": _ev_bl_broken, "backlink_prospect": _ev_bl_prospect,
+    "ai_bot_blocked": _ev_ai_bot,
 }
 assert set(EVIDENCE) == set(scoring.ALL_KINDS)
 
@@ -806,6 +838,7 @@ _TARGET_NOUN = {
     "ai_citation_gap": "질문 (챗봇에 실제로 물은 문장)",
     "index_blocked": "주소", "crawl_issue": "주소", "backlink_broken": "깨진 주소 (링크가 향하는 곳)",
     "backlink_prospect": "연락할 도메인", "coverage": "주제 (추적 키워드 묶음)",
+    "ai_bot_blocked": "막힌 AI 크롤러 (robots.txt 의 User-agent)",
 }
 
 

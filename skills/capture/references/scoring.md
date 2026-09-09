@@ -27,6 +27,10 @@
 | pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
 | device_gap | 같은 쿼리인데 모바일 순위가 데스크톱보다 유의미하게 아래 → 모바일 쪽 문제 | `scoring.device_gap()` — `gsc_breakdown` 의 최신 snapshot_date, dim='device'. 같은 query 에서 `dpos`(모바일 pos − 데스크톱 pos) ≥ `DEVICE_GAP_POS`(=2.0)이고 모바일 노출 ≥ `DEVICE_MIN_IMP`(=50). 모바일 노출 내림차순. **`/capture gsc` 가 device 축을 분해해 뒀어야 한다** — `gsc_breakdown: ""` 로 껐거나 아직 안 돌렸으면 빈 결과가 정상(결함 아님, 데이터 부재) |
+| crawl_issue | 전수 크롤에서 심각(bad)으로 걸린 주소 (방어) | `scoring.crawl_gaps()` — 최신 크롤 회차의 `crawl_issues` 중 severity='bad' 만. warn·info 는 [사이트 점검] 화면의 표에 그대로 있다. 갈래 이름표의 정본은 `collect_crawl.ISSUE_KIND` |
+| backlink_broken | 남이 우리에게 건 링크가 없는 주소를 가리킴 (방어) | `scoring.backlink_gaps()[0]` — 이미 번 링크라 새로 얻는 것보다 싸다 |
+| backlink_prospect | 경쟁사는 링크를 받는데 우리는 못 받는 도메인 | `scoring.backlink_gaps()[1]` — `link_intersect` 의 we_have=0 |
+| ai_bot_blocked | robots.txt 가 AI 크롤러를 막음 → 그 엔진에서는 인용 자체가 불가 | `scoring.ai_bot_blocks()` — 크롤이 남긴 `crawl_runs.robots_txt` 를 `scoring.robots_blocks()` 로 다시 읽을 뿐, 새 수집이 없다. 봇 목록의 정본은 `config.yaml` 의 `ai_bots`. **`ai_citation_gap` 보다 먼저 본다** — 막힌 채로 "콘텐츠가 약하다" 고 말하면 오진이다 |
 | index_blocked | 색인 단계에서 죽은 URL — 순위 이전 문제 | `scoring.index_issues()` — `gsc_index_status` 의 최신 checked_date, verdict 가 'PASS' 가 아니거나 coverage_state 가 색인됨이 아닌 URL. 버킷 4종은 아래 1d절. 적재는 `/capture index`(URL 당 API 1콜) |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
@@ -176,7 +180,7 @@ score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  �
                                큰 쪽을 쓴다 — 노출만 보면 아직 안 뜨는 검색어가 늘 0점이다.
       + w_reach  · 달성가능성   1 - gap_to_page1(pos)/10. 순위 미확인이면 보수적 0.3
       + w_fit    · 관련성      metrics["fit"] 0~1, 기본은 _fit_of() 근사
-      + w_ai     · AI 노출     metrics["ai"], 미지정 시 ai_citation_gap·aio_exposure만 1.0
+      + w_ai     · AI 노출     metrics["ai"], 미지정 시 ai_citation_gap·aio_exposure·ai_bot_blocked만 1.0
 ```
 
 `w_fit`(관련성)의 기본값은 `scoring._fit_of()`의 결정적 근사다 — 0.5 중립이면

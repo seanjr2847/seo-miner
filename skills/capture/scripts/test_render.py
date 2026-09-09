@@ -116,6 +116,10 @@ MUSTS = [
     (re.escape(GAP_KW), "경쟁 분석 화면이 키워드 격차를 안 그렸다"),
     (re.escape(CRAWL_NEW), "사이트 점검이 크롤 이슈를 안 그렸다"),
     (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
+    # 속도는 표가 서는 것과 **판정이 맞는 것**이 다르다 — 픽스처는 모바일만
+    # 기준을 넘긴다. "1개"가 아니라 "2개"면 데스크톱까지 느리다고 말한 것이다.
+    (r"<b>1개</b>가 기준을 넘겼습니다", "속도 섹션이 기준 초과를 잘못 셌다"),
+    (r"이 페이지의 실제 사용자", "속도 표가 현장·실험실 출처를 안 밝혔다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
     (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
     # 엔진 이름 옆의 로고와, 엔진×카테고리 줄에서 질문 목록으로 내려가는 손잡이.
@@ -251,6 +255,19 @@ def _axes(conn, pid: int) -> None:
         "INSERT INTO competitor_metrics(project_id,checked_date,domain,is_self,keywords,etv,"
         "top10) VALUES(?,?,?,?,?,?,?)",
         [(pid, d, RIVAL, 0, 4120, 8800.0, 610), (pid, d, "me.example", 1, 380, 900.0, 41)])
+    # 속도 — 같은 페이지인데 모바일만 기준을 넘긴다(현장 값 있음). 화면이 그 하나만
+    # 세는지, 출처를 밝히는지를 본다.
+    import db as _db
+    _vurl = f"https://{SITES[1]}.example/a"
+    _db.write_page_vitals(conn, pid, d, [
+        {"url": _vurl, "strategy": "mobile", "error": None, "origin_fallback": 0,
+         "field_verdict": "SLOW", "field_lcp_ms": 4200, "field_inp_ms": 310,
+         "field_cls": 0.24, "field_ttfb_ms": 900,
+         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640},
+        {"url": _vurl, "strategy": "desktop", "error": None, "origin_fallback": 0,
+         "field_verdict": "FAST", "field_lcp_ms": 1800, "field_inp_ms": 90,
+         "field_cls": 0.02, "field_ttfb_ms": 210,
+         "lab_score": 93, "lab_lcp_ms": 1900, "lab_cls": 0.02, "lab_tbt_ms": 40}])
     conn.execute("INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
                  "our_position,volume,kind) VALUES(?,?,?,?,2,NULL,2400,'missing')",
                  (pid, d, GAP_KW, GAP_RIVAL))

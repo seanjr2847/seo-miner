@@ -816,6 +816,34 @@ def test_seam_19_brief_context_keys_come_from_gather():
         assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 
 
+def test_seam_20_speed_thresholds_single_source():
+    """20) 속도 기준(LCP·INP·CLS)은 scoring 한 벌이다.
+
+    화면이 숫자를 직접 적으면, 구글이 기준을 옮길 때 판정과 화면이 다른 말을 한다
+    — 표는 빨갛게 칠하는데 요청문은 "기준 안입니다" 라고 하는 식이다. 화면은
+    gather() 가 rules 로 실어 보낸 값만 읽는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    site = (ctx["views"] / "site.html").read_text("utf-8")
+    assert "R.lcp_good_ms" in site and "R.inp_good_ms" in site and "R.cls_good" in site, (
+        "site.html 이 속도 기준을 페이로드에서 안 받는다")
+    # 속도 섹션 안에 기준 숫자 리터럴이 없어야 한다
+    i = site.index("속도 (Core Web Vitals)")
+    j = site.index("let ST_AUDITS", i)
+    for lit in ("2500", "2.5", "200ms 이내", "0.1 이내"):
+        assert lit not in site[i:j], f"속도 기준 숫자가 화면에 박혀 있다: {lit}"
+    rules = (ctx["local_f"]).read_text("utf-8")
+    for key, const in (("lcp_good_ms", "LCP_GOOD_MS"), ("inp_good_ms", "INP_GOOD_MS"),
+                       ("cls_good", "CLS_GOOD")):
+        assert f'"{key}": scoring.{const}' in rules, (
+            f"gather() 의 rules 가 {key} 를 scoring 에서 안 가져온다")
+    assert (scoring.LCP_GOOD_MS, scoring.INP_GOOD_MS, scoring.CLS_GOOD) == (2500, 200, 0.1), (
+        "구글이 공개한 기준값과 다르다 — 바꿀 이유가 있으면 여기 주석에 적는다")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

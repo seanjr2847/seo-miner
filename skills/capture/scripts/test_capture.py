@@ -224,9 +224,14 @@ def test_load_covers_every_kind():
         "our_position, volume, kind) VALUES(?, '2026-08-14', '경쟁사만있는키워드', 'rival.com', "
         "3, NULL, 800, 'missing')", (pid,))
 
+    # robots.txt 원문까지 남긴다 — AI 크롤러 차단(ai_bot_blocked)은 새로 가져오지
+    # 않고 이 원문을 다시 읽는다. GPTBot 만 막고 나머지는 허용인 흔한 꼴.
+    _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: *", "Allow: /"))
     run_id = conn.execute(
-        "INSERT INTO crawl_runs(project_id, finished_at, seed) VALUES(?, '2026-08-18T00:00:00Z', "
-        "'sitemap') RETURNING id", (pid,)).fetchone()[0]
+        "INSERT INTO crawl_runs(project_id, finished_at, seed, robots_txt) "
+        "VALUES(?, '2026-08-18T00:00:00Z', 'sitemap', ?) RETURNING id",
+        (pid, _robots)).fetchone()[0]
     conn.execute("INSERT INTO crawl_issues(run_id, kind, severity, url, detail) "
                  "VALUES(?, 'http_error', 'bad', '/404', '404')", (run_id,))
 

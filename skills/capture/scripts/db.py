@@ -301,7 +301,8 @@ CREATE TABLE IF NOT EXISTS opportunities (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   run_id INTEGER REFERENCES runs(id),
-  kind TEXT NOT NULL,   -- striking_distance|ai_citation_gap|rank_decay|content_gap|coverage|pseo_pattern|aio_exposure|ctr_gap|cannibalization|device_gap|index_blocked
+  kind TEXT NOT NULL,                         -- 종류 목록의 정본은 scoring.ALL_KINDS 다
+                                              -- (여기 사본을 두던 동안 열넷 중 열하나만 적혀 있었다)
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
@@ -448,6 +449,14 @@ CREATE TABLE IF NOT EXISTS crawl_links (
   nofollow INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_crawl_links ON crawl_links(run_id, url_to);
+CREATE TABLE IF NOT EXISTS crawl_hreflang (   -- 페이지가 선언한 hreflang — 상호 참조는 전수를 봐야 안다
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
+  url TEXT NOT NULL,                          -- 선언한 쪽
+  code TEXT NOT NULL,                         -- ko, en-GB, x-default …
+  href TEXT NOT NULL                          -- 가리키는 쪽 (정규화된 주소)
+);
+CREATE INDEX IF NOT EXISTS idx_crawl_hreflang ON crawl_hreflang(run_id, href);
 CREATE TABLE IF NOT EXISTS crawl_issues (     -- 도출 결과를 저장한다 — 그래야 회차 비교가 된다
   id INTEGER PRIMARY KEY,
   run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
