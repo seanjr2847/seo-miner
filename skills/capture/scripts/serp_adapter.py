@@ -143,14 +143,48 @@ def _dfs_call(fn, *a, **kw):
     return r
 
 
+def why(r) -> str:
+    """실패 응답이 말하는 이유 한 줄. 못 읽으면 빈 문자열 — 여기서 새 예외를 만들지 않는다.
+
+    DataForSEO 는 5xx 에도 본문에 status_message 를 싣는다. 그걸 버리면 남는 것이
+    `500 Server Error ... for url:` 한 줄뿐이라, 유료 단계가 왜 죽었는지가 구조적으로
+    안 남는다 — domain_intersection 이 두 사이트에서 500 만 남기고 한 번도 성공하지
+    못한 채 넘어간 것이 그 때문이다(ADR 0002 가 잡으려던 눈멂).
+    """
+    try:
+        d = r.json()
+    except Exception:
+        try:
+            return " ".join((getattr(r, "text", "") or "").split())[:200]
+        except Exception:
+            return ""
+    if not isinstance(d, dict):
+        return str(d)[:200]
+    msg = d.get("status_message")
+    tasks = d.get("tasks")
+    if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+        # 과제별 메시지가 더 구체적이다 — 위쪽은 "Task Handed" 같은 총평일 때가 많다
+        tmsg = tasks[0].get("status_message")
+        if tmsg:
+            msg = f"{msg} / {tmsg}" if msg and tmsg != msg else tmsg
+    return str(msg)[:200] if msg else ""
+
+
 def raise_for(r, who: str = "DataForSEO") -> None:
     """raise_for_status 자리 — 결제·인증 계열만 Fatal 로 올린다.
 
     이 함수를 지나지 않는 요청이 하나라도 남으면 그 경로만 402 를 100번 맞는다.
+    실패면 응답이 말하는 이유를 예외 문구에 붙인다 — 그게 runs.notes 에 남는 전부다.
     """
     if r.status_code in FATAL_STATUS:
-        raise fatal(who, r.status_code)
-    r.raise_for_status()
+        raise fatal(who, r.status_code, why(r))
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        w = why(r)
+        if not w:
+            raise
+        raise requests.HTTPError(f"{e} — {w}") from e
 
 
 class _FakeResp:
@@ -685,6 +719,34 @@ def _selfcheck() -> None:
             assert "잔액" not in str(e), f"한도를 잔액 문제로 말한다: {e}"
         assert len(tries) == RATE_LIMIT_RETRIES + 1, f"429 를 안 기다렸다 다시 쳤다: {tries}"
         requests.post = fake_post
+
+        # 실패 응답이 말하는 이유가 예외 문구에 실린다. 이게 없으면 runs.notes 에
+        # `500 Server Error ... for url:` 한 줄만 남아 유료 단계가 왜 죽었는지 모른다.
+        try:
+            raise_for(_FakeResp(
+                {"status_message": "Internal Error",
+                 "tasks": [{"status_message": "Invalid Field: 'targets'"}]},
+                status_code=500))
+            raise AssertionError("500 을 그냥 지나쳤다")
+        except requests.HTTPError as e:
+            assert "targets" in str(e), f"응답이 말한 이유를 안 실었다: {e}"
+            assert "500" in str(e), f"원래 오류 문구를 잃었다: {e}"
+        # 본문을 못 읽어도 원래 예외는 그대로 나간다 — 진단하려다 오류를 삼키지 않는다
+        class _Broken(_FakeResp):
+            def json(self):
+                raise ValueError("not json")
+        try:
+            raise_for(_Broken({}, status_code=503))
+            raise AssertionError("503 을 그냥 지나쳤다")
+        except requests.HTTPError as e:
+            assert "503" in str(e), e
+        # 결제 계열도 이유를 달고 나간다 — 402 가 왜 402 인지 본문이 말할 때가 있다
+        try:
+            raise_for(_FakeResp({"status_message": "Payment Required: top up"},
+                                status_code=402))
+            raise AssertionError("402 를 Fatal 로 안 올렸다")
+        except collector.Fatal as e:
+            assert "top up" in str(e), f"402 본문의 이유를 안 실었다: {e}"
 
         # 429 를 FATAL_STATUS 에 넣으면 안 된다 — raise_for 는 제공자를 안 가리므로
         # OpenRouter(collect_ai)까지 429 한 번에 통째로 멈춘다. 거긴 쉬면 낫는다.

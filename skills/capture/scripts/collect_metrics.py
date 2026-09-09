@@ -56,7 +56,9 @@ KD_COST_PER_CALL = 0.01
 # 9/1 자동 런에서 500개 묶음 하나가 물음표 하나 때문에 통째로 날아가 updated=0
 # 이었는데 로그는 "볼륨이 채워졌으니…" 라고 말했다. 그래서 경계에서 한 번 씻는다.
 # 목록은 보수적으로 — 확실한 것(물음표)과 문장부호·따옴표·제어문자만.
-BAD_CHARS = "?!\"'"
+# 호스팅 런이 실제로 거절당한 글자만 넣는다 — 넓히면 멀쩡한 검색어까지 잘린다.
+# 괄호·대괄호·파이프·역슬래시·콜론은 2026-09 런에서 이름과 함께 남았다(아래 자기검사).
+BAD_CHARS = r'''?!"'()[]|\:'''
 # 묶음이 이 문구로 거절되면 반으로 쪼개 재시도한다. 타임아웃 같은 것까지 이분하면
 # 요청 수만 늘어나므로 "우리가 못 씻은 글자가 남았다" 류만 고른다.
 REJECT_HINTS = ("invalid field", "invalid characters")
@@ -441,6 +443,16 @@ def _selfcheck() -> None:
     assert clean("stem cell cost?") == "stem cell cost"
     assert clean('a "b" c!') == "a b c"
     assert clean("???") == ""
+    # 호스팅 런에서 DataForSEO 가 실제로 끝까지 거절한 것들(aitierlist 6, noti 1).
+    # 이분 재시도로 낱개까지 좁혀진 뒤 runs.notes 에 이름이 남았다 — 그 이름이 정본이다.
+    for kw in ("[humata ai alternative]", "brave search (free tier)",
+               "llm ranking (390 | 29)", "scispace (typeset)",
+               "scispace (typeset.io)", "scispace (typeset.io):", "noti\\"):
+        c = clean(kw)
+        assert not (set(c) & set(BAD_CHARS)), f"{kw!r} 를 씻고도 금지 글자가 남는다: {c!r}"
+        assert c, f"{kw!r} 가 통째로 지워졌다"
+    assert clean("brave search (free tier)") == "brave search free tier"
+    assert clean("noti\\") == "noti"
     conn.execute("DELETE FROM keywords")
     conn.execute(
         "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
