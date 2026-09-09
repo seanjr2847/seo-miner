@@ -351,13 +351,14 @@ coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 �
    적재 → Next Actions 3~5개를 JSON 파일로 저장.
 
 ### /capture pages {P} — 내 페이지 감사 (내 사이트 직접 조회, 돈 안 듦)
-**풀런(`/capture run`)에 포함된다** — 8단계(`pages`, gaps 다음).
+**풀런(`/capture run`)에 포함된다** — `gaps` 다음이다(순서의 정본은 `run_all.STAGES`).
 
 `python scripts/collect_page.py --project {P} --dry-run` → 가져올 URL 목록 확인 →
 실행. 남의 API 가 아니라 **내 페이지를 열어 보는 것**이라 키가 필요 없다.
 
 **무엇을 읽나:** title · meta description · H1/H2 · 본문 단어 수(script·style 제외) ·
-ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt 없는 이미지 수.
+ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt 없는 이미지 수 ·
+viewport · `<html lang>` · hreflang · 글의 발행·수정일.
 `page_audits` 에 `(프로젝트, 검사일, URL)` 로 적재된다 — 같은 날 두 번 돌아도 행이
 늘지 않는다.
 
@@ -365,10 +366,37 @@ ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt
 `page_urls`(기본 20)개. `--limit N` 으로 덮고, `page_urls: 0` 이면 끈다. 요청 간격은
 `throttle`(기본 0.5초) — 내 서버를 두드리는 속도다.
 
+**정적 HTML 한 번이다.** 자바스크립트가 그리는 본문·스키마는 안 보인다. 본문이 얇은데
+껍데기 흔적이 있으면 `js_shell=1` 로 적고, 요청문과 진단이 "없다"고 단정하는 대신
+리치 결과 테스트로 확인부터 시킨다 — Yoast·RankMath·AIOSEO 는 ld+json 을 JS 로 넣는다.
+
 **왜 필요한가:** 이것 없이는 처방이 일반론에서 멈춘다("제목을 고치세요"). 이 단계가
 돌고 나면 화면이 **"지금 title 이 X 인데 검색어 Y 가 없다 → 앞부분에 넣어라"** 라고
 말한다. 판정 규칙의 정본은 `scoring.page_advice` 이고, 대시보드는 그 결과를 그리기만
 한다 — 화면이 같은 규칙을 다시 구현하지 않는다.
+
+### /capture vitals {P} — 속도 측정 (PageSpeed Insights, 돈 안 듦)
+**풀런(`/capture run`)에 포함된다** — `pages` 다음이다. `pages` 와 **같은 URL 목록**을
+본다(`collect_page.target_urls` 가 정본) — 두 단계가 서로 다른 페이지를 보면 요청문
+안에서 "이 페이지" 가 두 곳을 가리킨다.
+
+`python scripts/collect_vitals.py --project {P} --dry-run` → 잴 목록 확인 → 실행.
+키는 없어도 돈다. 자주 돌려 한도(429)에 걸리면 `PAGESPEED_API_KEY`(무료)를 넣는다.
+
+**두 가지를 같이 남긴다.** 뜻이 다르다:
+- **현장(CrUX)** — 실제 크롬 사용자 28일치. **검색이 보는 값이 이것이다.** 트래픽이
+  적은 페이지에는 없고, 그때 구글은 사이트 전체(오리진) 값을 대신 준다 —
+  `origin_fallback=1` 로 갈라 적는다. 뭉뚱그리면 멀쩡한 페이지에 없는 문제를 만든다.
+- **실험실(Lighthouse)** — 지금 한 번 열어 잰 값. 고친 뒤 바로 움직이는 유일한 숫자다
+  (현장 값은 28일이 지나야 따라온다).
+
+**대상 URL:** `vitals_urls`(기본 5) × `strategy`(기본 `mobile,desktop`) = 10회 호출.
+`--limit N` / `--strategy mobile` 로 덮고, `vitals_urls: 0` 이면 끈다.
+
+**왜 필요한가:** `device_gap`(모바일만 밀리는 검색어) 요청문은 "위 근거에 없는 것은
+짐작하지 않습니다" 라고 못 박는데, 그 근거가 순위 차이 한 줄뿐이면 답이 나올 수 없다.
+이 단계가 그 자리를 채운다 — 기준(`scoring.LCP_GOOD_MS` 등)과 판정
+(`scoring.vitals_advice`)은 한 곳이고, 화면·요청문은 그것을 갖다 쓴다.
 
 ### /capture dash {P} — 로컬 대시보드
 `python scripts/dashboard.py --project {P} --open` 을 **백그라운드로** 띄운다

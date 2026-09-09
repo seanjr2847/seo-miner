@@ -48,6 +48,34 @@ MAX_SITEMAPS = 20         # sitemap index 에서 따라갈 하위 사이트맵 �
 MAX_SITEMAP_URLS = 5000   # 사이트맵에서 읽어 들일 URL 상한 (limit 이 다시 자른다)
 ANCHOR_MAX = 200          # 앵커 텍스트 저장 길이
 
+# 갈래 이름·왜 문제인지의 정본. 화면(site.html 의 CR_KIND)과 요청문(brief) 둘 다
+# 이것을 쓴다 — 한국어 라벨이 화면 JS 안에만 있던 동안, 요청문은 같은 갈래를
+# 'dup_title' 이라는 영어 kind 로 사람에게 내보냈다.
+ISSUE_KIND = {
+    "http_error": ["열리지 않는 페이지",
+                   "그 URL 이 4xx·5xx 를 돌려줍니다. 살리거나 지우고, 가리키던 링크를 고치세요."],
+    "broken_internal": ["깨진 내부 링크",
+                        "내 페이지가 내 페이지를 잘못 가리킵니다. 링크만 고치면 되는, 가장 싼 자리입니다."],
+    "redirect_chain": ["리다이렉트 사슬",
+                       "두 번 이상 넘어갑니다. 처음 링크를 최종 URL 로 바로 바꾸세요."],
+    "orphan": ["고아 페이지",
+               "사이트맵에는 있는데 어디서도 링크하지 않습니다. 링크가 없으면 크롤러도 사람도 못 옵니다."],
+    "dup_title": ["제목 중복",
+                  "여러 페이지가 같은 제목을 씁니다. 어느 쪽을 띄울지 구글이 못 고릅니다."],
+    "dup_description": ["설명 중복", "여러 페이지가 같은 meta description 을 씁니다."],
+    "missing_title": ["제목 없음",
+                      "title 이 비어 있습니다. 검색 결과에 나갈 한 줄이 없다는 뜻입니다."],
+    "missing_description": ["설명 없음",
+                            "meta description 이 없어 구글이 본문에서 임의로 잘라 씁니다."],
+    "missing_h1": ["H1 없음", "본문 제목이 없습니다. 무엇에 관한 페이지인지 첫 신호가 빠집니다."],
+    "thin_content": ["본문이 얇음", "본문이 너무 짧습니다. 답이 될 만큼 쓰였는지 보세요."],
+    "noindex": ["색인 제외 표시", "meta robots 가 noindex 입니다. 의도한 것이면 그대로 두세요."],
+    "canonical_mismatch": ["대표 URL 엇갈림",
+                           "canonical 이 자기 자신도, 크롤한 어느 URL 도 아닙니다."],
+    "img_no_alt": ["alt 없는 이미지",
+                   "이미지 설명이 비었습니다. 접근성이 먼저고, 이미지 검색은 덤입니다."],
+}
+
 SEVERITY = {
     "http_error": "bad", "broken_internal": "bad", "redirect_chain": "warn",
     "orphan": "warn", "dup_title": "warn", "dup_description": "warn",
@@ -182,18 +210,23 @@ def _sitemap_urls(url: str, *, follow: bool = True) -> list[str]:
     return out
 
 
-def discover_seeds(home: str) -> tuple[list[str], str, robotparser.RobotFileParser]:
-    """(시드 URL, seed 종류, robots 판정기).
+def discover_seeds(home: str) -> tuple[list[str], str, robotparser.RobotFileParser, str]:
+    """(시드 URL, seed 종류, robots 판정기, robots.txt 원문).
 
     robots.txt 의 Sitemap: 줄이 정본이다 — 직접 파싱하지 않고 robotparser 가
     읽은 것을 쓴다. 사이트맵이 없거나 비면 홈에서 BFS 로 시작한다.
+
+    원문까지 돌려주는 이유는 색인 막힘 요청문 때문이다: "구글이 이 주소를 색인
+    안 했다"는 응답 옆에 **어느 Disallow 줄에 걸리는지**가 없으면, AI 가 원인
+    후보를 짐작으로 세운다. 원문은 크롤 회차에 그대로 저장한다.
     """
     rp = robotparser.RobotFileParser()
     rp.set_url(urljoin(home, "/robots.txt"))
     r = fetch(urljoin(home, "/robots.txt"))
     # 못 읽으면 전부 허용 — robots.txt 가 없는 사이트가 흔하다. parse() 가
     # last_checked 를 세우므로 빈 목록이어도 can_fetch 가 True 를 돌려준다.
-    rp.parse(r["text"].splitlines() if r.get("status") == 200 and r.get("text") else [])
+    raw_txt = r["text"] if r.get("status") == 200 and r.get("text") else ""
+    rp.parse(raw_txt.splitlines() if raw_txt else [])
 
     seen, urls = set(), []
     for sm in (rp.site_maps() or []):
@@ -203,10 +236,10 @@ def discover_seeds(home: str) -> tuple[list[str], str, robotparser.RobotFilePars
                 seen.add(u)
                 urls.append(u)
             if len(urls) >= MAX_SITEMAP_URLS:
-                return urls, "sitemap", rp
+                return urls, "sitemap", rp, raw_txt
     if urls:
-        return urls, "sitemap", rp
-    return [normalize(home)], "home", rp
+        return urls, "sitemap", rp, raw_txt
+    return [normalize(home)], "home", rp, raw_txt
 
 
 # ── 크롤 ────────────────────────────────────────────────────────────────────
@@ -445,12 +478,16 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             print(f"  같은 호스트만 따라갑니다 (외부 링크는 기록만) · 최대 {limit}회 조회 예정")
             return st.noop(rows=0)
 
-        seeds, seed, rp = discover_seeds(home)
+        seeds, seed, rp, robots_txt = discover_seeds(home)
         print(f"  시드 {len(seeds)}개 ({seed})")
 
         run_id = conn.execute(
-            "INSERT INTO crawl_runs(project_id, seed, started_at) VALUES(?,?,?)",
-            (p["id"], seed, db.now())).lastrowid
+            "INSERT INTO crawl_runs(project_id, seed, started_at, robots_txt) VALUES(?,?,?,?)",
+            (p["id"], seed, db.now(), robots_txt or None)).lastrowid
+        # 사이트맵이 시드였으면 그 목록 자체가 사실이다 — "이 주소가 사이트맵에
+        # 있나" 는 색인 막힘 요청문이 매번 묻는 것인데 지금까지 아무 데도 안 남았다.
+        if seed == "sitemap":
+            db.write_sitemap_urls(conn, run_id, seeds)
         with st.record("crawl") as r:
             pages, links, chains = crawl(seeds, home, limit=limit, max_depth=depth,
                                          rp=rp, throttle=st.throttle)
@@ -651,6 +688,10 @@ def _selfcheck() -> None:
         # /a 의 canonical 은 자기 자신이다 — 이건 이슈가 아니다
         assert ("canonical_mismatch", "https://site.kr/a") not in issues
         assert kinds <= set(SEVERITY), kinds
+        # 이름표와 심각도는 같은 갈래 목록을 봐야 한다 — 한쪽에만 있는 갈래는
+        # 화면·요청문에서 영어 kind 로 새어 나간다
+        assert set(ISSUE_KIND) == set(SEVERITY), (
+            set(ISSUE_KIND) ^ set(SEVERITY))
         assert all(i["severity"] in ("bad", "warn", "info") for i in issues.values())
         assert run1["issues"] == len(issues) and run1["finished_at"], dict(run1)
 

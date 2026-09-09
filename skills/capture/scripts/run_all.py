@@ -4,17 +4,25 @@
 수집기와 스코어링·리포트를 정해진 순서로 호출하고, 각 단계가 돌려준
 StageResult 를 그대로 호출자에게 넘긴다.
 
-실행 순서 및 이유:
-  1. gsc         : 다른 모든 판정의 기본 재료. 실패 시 뒤가 빈손이므로 체인 중단.
-  2. ga4         : 클릭 뒤(세션·전환·이탈) — GSC 의 page 축과 잇는다. 속성 미연결이면 건너뜀.
-  3. index       : 색인은 순위 이전의 문제. GSC 최신 스냅샷 상위 페이지 대상.
-  4. keywords    : 자동완성 키워드 발굴 (expand_keywords.py --mode all).
-  5. rank        : 유료 SERP 순위 스냅샷. 키 없으면 건너뜀.
-  6. ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
-  7. competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
-  8. gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
-  9. pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
-  10. report     : dashboard.py --export --project <project> (리포트 HTML 박제).
+실행 순서의 정본은 아래 STAGES 표다 — 이 산문은 **왜 그 자리인지**만 적는다.
+번호를 여기 다시 매기면 표가 늘 때마다 한쪽만 낡는다(실제로 그렇게 낡아서,
+단계가 열넷인데 이 목록은 열이라고 말하고 있었다).
+
+  gsc         : 다른 모든 판정의 기본 재료. 실패 시 뒤가 빈손이므로 체인 중단.
+  ga4         : 클릭 뒤(세션·전환·이탈) — GSC 의 page 축과 잇는다. 속성 미연결이면 건너뜀.
+  index       : 색인은 순위 이전의 문제. GSC 최신 스냅샷 상위 페이지 대상.
+  keywords    : 자동완성 키워드 발굴 (expand_keywords.py --mode all).
+  metrics     : 검색량·난이도. 발굴 뒤·기회 적재 앞이어야 한다 — 점수가 볼륨을 쓴다.
+  rank        : 유료 SERP 순위 스냅샷. 키 없으면 건너뜀.
+  crawl       : 사이트 전수 크롤. 한 장만 봐서는 모르는 것(중복·고아·사슬)의 유일한 출처.
+  ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
+  competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
+  backlinks   : 유료 백링크 프로필·링크 교집합. 키 없으면 건너뜀.
+  gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
+  pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
+  vitals      : 그 페이지들의 속도(LCP·INP·CLS)를 기기별로. pages 와 같은 URL 목록을
+                본다 — 어느 페이지를 손댈지가 먼저 정해져야 같은 페이지를 잰다. 무료.
+  report      : dashboard.py --export --project <project> (리포트 HTML 박제).
 
 설계 원칙:
   - 표(STAGES)에는 디스패치가 한 종류뿐이다. 모든 단계가
@@ -47,6 +55,7 @@ import collect_index       # noqa: E402
 import collect_metrics     # noqa: E402
 import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
+import collect_vitals      # noqa: E402
 import collector           # noqa: E402
 import dashboard           # noqa: E402
 import db                  # noqa: E402
@@ -139,6 +148,9 @@ STAGES = (
     _stage("backlinks",   "프로필·앵커·링크 교집합",     collect_backlinks.collect, True, collect_backlinks),
     _stage("gaps",        "외부 호출 없음",           load_opportunities,      False),
     _stage("pages",       "제목·설명·본문·구조화 데이터", collect_page.collect, False, collect_page),
+    # 속도는 페이지 점검 뒤다 — 같은 URL 목록(collect_page.target_urls)을 보기 때문에,
+    # 어느 페이지를 손댈지가 먼저 정해져 있어야 같은 페이지를 잰다.
+    _stage("vitals",      "LCP·INP·CLS, 모바일·데스크톱", collect_vitals.collect, False, collect_vitals),
     _stage("report",      "HTML",                    export_report,           False),
 )
 
@@ -531,8 +543,9 @@ def main() -> None:
         _selfcheck()
         return
     ap = argparse.ArgumentParser(
-        description="전체 수집 체인 실행 — "
-                    "gsc → ga4 → index → keywords → rank → ai → competitors → gaps → pages → report"
+        # 순서를 문자열로 다시 적지 않는다 — 표에서 뽑는다. 사본을 두면 단계가
+        # 늘 때 도움말만 옛 순서를 말한다.
+        description="전체 수집 체인 실행 — " + " → ".join(VALID_STAGE_NAMES)
     )
     ap.add_argument("--project", required=True, help="프로젝트 이름")
     ap.add_argument("--dry-run", action="store_true", help="실제 실행 없이 호출 계획 및 비용만 확인")

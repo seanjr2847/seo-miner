@@ -447,8 +447,8 @@ def test_seam_10_gather_payload_keys_match():
     for p in sorted(views.glob("*.html")):
         read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
                                                 p.read_text("utf-8"))}
-    assert read <= served, \
-        f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}"
+    assert read <= served, (
+        f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}")
 
 
 def test_seam_11_carry_fields_match():
@@ -746,6 +746,63 @@ def test_seam_18_run_tool_and_creation_single_source():
     assert "SM.host.write" not in m.group(1) and "/api/create" not in m.group(1), \
         "호스팅 기회 카드가 떼어 낸 글쓰기 경로를 아직 부른다"
     # --- 도구 절반은 Task C 가 이어 쓴다 ---
+
+
+def test_seam_19_brief_context_keys_come_from_gather():
+    """19) 요청문이 읽는 페이로드 키는 gather() 가 실제로 싣는 것이어야 한다.
+
+    이 이음매도 양쪽 다 멀쩡해 보인다: brief.py 는 정상적인 dict 조회고 gather 는
+    정상적인 dict 다. 어긋나면 그 근거 블록이 **조용히 사라진다** — 표가 없는
+    요청문은 여전히 문법에 맞는 요청문이라, 검사에도 화면에도 아무것도 안 남고
+    AI 만 근거 없이 답하게 된다.
+
+    실제로 이 리포는 정반대 방향으로 같은 값을 치렀다: 검색결과 상위·중복 제목·
+    들어오는 내부 링크는 **수집본에 내내 있었는데** 요청문이 그 키를 안 읽어서,
+    요청문이 사람에게 "상위 페이지 제목을 붙여 넣으세요" 라고 시켰다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import dashboard
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    read = (set(re.findall(r'ctx\.get\("(\w+)"', src))
+            | set(re.findall(r'ctx\["(\w+)"\]', src)))
+    # attach() 가 자기가 심는 키(brief)는 gather 가 아니라 여기서 난다
+    read -= {"brief"}
+    assert read, "brief.py 에서 ctx 조회를 하나도 못 찾았다 — 정규식이 틀렸다"
+
+    _c = _sq.connect(":memory:")
+    _c.row_factory = _sq.Row
+    _c.executescript(db.SCHEMA)
+    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam19','saas','x.com')")
+    _null = _io.StringIO()
+    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
+        served = set(dashboard.gather(_c, db.get_project(_c, "_seam19")))
+    _c.close()
+    assert read <= served, (
+        f"요청문이 읽는데 gather() 가 안 싣는 키: {sorted(read - served)}")
+
+    # 크롤 갈래 이름표는 한 벌이다 — 화면 JS 안에 사본을 두면 요청문(서버가
+    # 만든다)이 그것을 못 읽어 같은 갈래를 영어 kind 로 사람에게 내보낸다.
+    import collect_crawl
+    site = (ctx["views"] / "site.html").read_text("utf-8")
+    assert "CR_KIND = d.crawl_kinds" in site, (
+        "site.html 이 갈래 이름표를 페이로드에서 안 받는다")
+    assert "열리지 않는 페이지" not in site, (
+        "site.html 에 갈래 이름표 사본이 남아 있다")
+    assert set(collect_crawl.ISSUE_KIND) == set(collect_crawl.SEVERITY), (
+        set(collect_crawl.ISSUE_KIND) ^ set(collect_crawl.SEVERITY))
+
+    # 근거를 만드는 쪽(수집)과 말하는 쪽(요청문)이 같은 표를 본다 — 이 넷은
+    # 값을 치르고 배운 자리라 이름으로 못 박는다.
+    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals"):
+        assert key in served, f"gather() 가 {key} 를 안 싣는다"
+        assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 
 
 if __name__ == "__main__":

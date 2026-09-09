@@ -4,14 +4,15 @@
 I/O 경계(네트워크 수집기, doctor, GSC 인증)를 네트워크 호출 없이 검증한다:
   · collect_ai: OpenRouter 응답 모킹, url_citation 파싱, cited 판정, 실패 집계
   · expand_keywords: Google Suggest 모킹, is_active=0 적재, locale 보존, 50% 초과 실패율 경고
-  · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot 적재, depth 밖 None, AIO 미측정 None
+  · collect_serp: serp_adapter.fetch 모킹, write_rank_snapshot·write_serp_results 적재,
+    depth 밖 None, AIO 미측정 None
   · collect_gsc/collect_index --dry-run: 인증도 네트워크도 안 타고 계획만 찍는지
   · doctor --json: subprocess 실행, exit code 0, JSON 구조(verdict, next_command) 검증
   · doctor marketing_skills: CLAUDE_SKILLS_DIR 기반 탐지, must 요구 문구 및 필수 7개
     (+ 선택 aso = 명부 ALL_SKILLS 8개) 완비 시 해제 검증
   · install_skills: 스킬 완비 시 실행 방지, 누락 시 marketplace/install 호출 검증
   · gsc_query: 창 계산·필터 파싱·노출 가중평균 (즉석 조회 — MCP 서버를 대신한다)
-  · run_all: 체인 순서(gsc→ga4→index→keywords→rank→ai→competitors→gaps→report), 유료 키 없을 시 건너뜀,
+  · run_all: 체인 순서(정본은 run_all.STAGES — 여기 사본을 적지 않는다), 유료 키 없을 시 건너뜀,
     gsc 실패 시 즉시 중단, 스테이지 옵션 전달, 결과 리스트(StageResult)의 행 수·비용 합산
 """
 import contextlib
@@ -312,6 +313,18 @@ def test_collect_serp_ranking_and_none_position_aio():
         assert h["locale"] == "ko-KR"
         assert h["source"] == "serp"
     assert {h["keyword"] for h in harvested} == {"연관 검색어 1", "자주 묻는 질문 1"}
+
+    # 4. 검색결과 상위를 그대로 남긴다 — 예전엔 내 순위만 빼고 버렸고, 그래서
+    #    요청문이 "상위 페이지 제목을 붙여 넣으세요" 라고 사람에게 시켰다.
+    top = conn.execute(
+        "SELECT position, url, title, domain, is_own FROM serp_results"
+        " WHERE keyword_id=? ORDER BY position", (kw_in_id,)).fetchall()
+    assert [r["position"] for r in top] == [1, 2], [tuple(r) for r in top]
+    assert top[0]["title"] == "O1" and top[0]["is_own"] == 0, tuple(top[0])
+    assert top[1]["is_own"] == 1 and top[1]["url"] == "https://e.com/ranked-page", tuple(top[1])
+    # 순위 밖 키워드도 상위는 남는다 — 내가 없다고 남의 자리까지 버릴 이유가 없다
+    assert conn.execute("SELECT COUNT(*) c FROM serp_results WHERE keyword_id=?",
+                        (kw_out_id,)).fetchone()["c"] == 2
     conn.close()
 
 
@@ -1285,7 +1298,8 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 1. 유료 키 없음 — rank/ai/competitors 는 건너뜀, 나머지는 순서대로
         results, out = run()
-        assert calls == ["gsc", "ga4", "index", "keywords", "crawl", "gaps", "pages", "report"], calls
+        assert calls == ["gsc", "ga4", "index", "keywords", "crawl", "gaps",
+                         "pages", "vitals", "report"], calls
         assert run_all.chain_rc(results) == 0, results
         assert [n for n, _ in results] == list(run_all.VALID_STAGE_NAMES), results
         for name in ("rank", "ai", "competitors"):
@@ -1342,7 +1356,8 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 7. skip / only
         run(skip="index,ai")
-        assert calls == ["gsc", "ga4", "keywords", "crawl", "gaps", "pages", "report"], calls
+        assert calls == ["gsc", "ga4", "keywords", "crawl", "gaps",
+                         "pages", "vitals", "report"], calls
         run(only="gsc,gaps")
         assert calls == ["gsc", "gaps"], calls
 
@@ -1584,6 +1599,7 @@ def test_serp_adapter_credentials_timeouts_and_labs():
         "suggest": 10,
         "page": 20,
         "canary": 15,
+        "psi": 90,
     }
     assert serp_adapter.LABS_COST_PER_CALL == 0.001
 

@@ -10,12 +10,14 @@ references/scoring.md 는 이제 명세이고, 실행은 전부 여기서 한다
 self-check:  python scoring.py
 기회 적재:   python scoring.py load <project>   (striking·ctr_gap·… 계산 → opportunities upsert)
 """
+import datetime
 import json
 import math
 import re
 import sqlite3
 import sys
 from collections import namedtuple
+from urllib import robotparser
 from urllib.parse import urlsplit
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
@@ -414,6 +416,153 @@ def _wide(text: str) -> bool:
     return bool(_CJK.search(text or ""))
 
 
+# Core Web Vitals 의 "좋음" 경계 — 구글이 공개한 값 그대로다. 여기 한 벌로 두고
+# 수집기·요청문·화면이 갖다 쓴다(collect_vitals 가 다시 세면 두 벌이 된다).
+LCP_GOOD_MS = 2500
+INP_GOOD_MS = 200
+CLS_GOOD = 0.1
+
+
+def _sec(ms) -> str:
+    return f"{ms / 1000:.1f}초" if isinstance(ms, (int, float)) else "—"
+
+
+def vitals_advice(rows) -> list[dict]:
+    """속도 행들 → "무엇을 고쳐야 하나" 한 줄. 기준 안이면 빈 리스트다.
+
+    현장(CrUX) 값을 먼저 본다 — 검색이 보는 것이 그것이다. 현장이 없으면 실험실
+    값으로 말하되 **어느 값인지 밝힌다**: 둘을 뭉치면 "실험실에서 느렸다" 를
+    "사용자가 느리다" 로 부풀리게 된다.
+
+    origin_fallback 인 행은 이 페이지의 값이 아니라 사이트 전체 값이라, 그렇게
+    말한다. 이걸 안 가르면 멀쩡한 페이지에 없는 문제를 만들어 낸다.
+    """
+    out = []
+    for r in rows or []:
+        if not r or r.get("error"):
+            continue
+        dev = "모바일" if r.get("strategy") == "mobile" else "데스크톱"
+        field = r.get("field_lcp_ms") is not None or r.get("field_inp_ms") is not None             or r.get("field_cls") is not None
+        src = ("실제 사용자 28일치" if field else "실험실 1회 측정")
+        if field and r.get("origin_fallback"):
+            src = "사이트 전체(이 페이지만의 실제 사용자 값은 표본이 모자랍니다)"
+        lcp = r.get("field_lcp_ms") if field else r.get("lab_lcp_ms")
+        inp = r.get("field_inp_ms") if field else None
+        cls = r.get("field_cls") if field else r.get("lab_cls")
+        bad = []
+        if isinstance(lcp, (int, float)) and lcp > LCP_GOOD_MS:
+            bad.append(f"LCP {_sec(lcp)} (기준 {_sec(LCP_GOOD_MS)})")
+        if isinstance(inp, (int, float)) and inp > INP_GOOD_MS:
+            bad.append(f"INP {inp}ms (기준 {INP_GOOD_MS}ms)")
+        if isinstance(cls, (int, float)) and cls > CLS_GOOD:
+            bad.append(f"CLS {cls} (기준 {CLS_GOOD})")
+        if not bad:
+            continue
+        fix = {"LCP": "가장 큰 이미지·글자 블록이 늦게 뜹니다. 그 자원을 먼저 받게 하고"
+                      "(preload·크기 지정), 서버 응답과 이미지 용량을 줄이세요.",
+               "INP": "누른 뒤 화면이 늦게 반응합니다. 메인 스레드를 오래 잡는 스크립트를"
+                      " 쪼개거나 뒤로 미루세요.",
+               "CLS": "그리는 도중 화면이 밀립니다. 이미지·광고·삽입물에 width/height 를"
+                      " 지정하고 나중에 끼어드는 요소의 자리를 미리 잡으세요."}
+        first = bad[0].split()[0]
+        out.append({"tag": "속도", "level": "bad" if len(bad) > 1 else "warn",
+                    "now": f"{dev} " + " · ".join(bad) + f" — {src}",
+                    "fix": fix.get(first, "")})
+    return out
+
+
+def robots_blocks(robots_txt: str, url: str, agent: str = "Googlebot") -> str | None:
+    """이 주소를 막는 robots.txt 줄. 안 막으면 None.
+
+    막히는지의 판정은 표준 파서(urllib.robotparser)에 맡기고, 막힐 때만 어느 줄인지
+    찾는다 — 매칭 규칙을 두 벌 만들면 "막힌다는데 줄은 못 찾는다" 같은 모순이 난다.
+    색인 막힘 요청문이 이 한 줄을 못 대서, 지금까지 원인 후보를 짐작으로 세웠다.
+    """
+    txt = robots_txt or ""
+    if not txt.strip():
+        return None
+    rp = robotparser.RobotFileParser()
+    rp.parse(txt.splitlines())
+    if rp.can_fetch(agent, url):
+        return None
+    path = urlsplit(url).path or "/"
+    best = ""
+    for line in txt.splitlines():
+        key, _, val = line.partition(":")
+        if key.strip().lower() != "disallow":
+            continue
+        rule = val.split("#")[0].strip()
+        if rule and path.startswith(rule.rstrip("*")) and len(rule) > len(best):
+            best = rule
+    return f"Disallow: {best}" if best else "robots.txt 가 이 주소를 막습니다(어느 줄인지는 못 짚었습니다)"
+
+
+# 이보다 오래 안 고친 글은 "낡았을 수 있다"고 말한다. 판정이 아니라 확인 지시라
+# 넉넉하게 잡는다 — 2년은 가격·화면·경쟁이 한 번은 바뀌는 시간이다.
+STALE_DAYS = 730
+
+
+def _stale_days(audit: dict) -> int | None:
+    """마지막 수정(없으면 발행)으로부터 며칠. 날짜로 안 읽히면 None — 지어내지 않는다."""
+    raw = (audit.get("modified") or audit.get("published") or "").strip()
+    try:
+        d = datetime.date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+    return (datetime.date.today() - d).days
+
+
+def _has_render_fields(audit: dict) -> bool:
+    """이 감사 행이 모바일·언어 칸을 읽고 온 것인가.
+
+    js_shell 은 새 감사면 늘 0/1 이라 "행의 나이"를 가르는 유일한 칸이다. 옛 행은
+    이 칸들이 통째로 NULL 인데, 그것을 "viewport 가 없다"로 읽으면 멀쩡한 페이지에
+    없는 문제를 만들어 낸다 — 안 본 것과 없는 것은 다르다.
+    """
+    return audit.get("js_shell") is not None
+
+
+# ISO 639-1 언어 + 선택적 ISO 3166-1 Alpha 2 지역. 'en-UK' 는 코드가 아니다(영국은 GB).
+_HREFLANG_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{4})?(-[A-Za-z]{2}|-\d{3})?$")
+
+
+def _hreflang_advice(audit: dict) -> list[dict]:
+    """한 장만 보고 확실히 말할 수 있는 hreflang 문제만.
+
+    상호 참조(A→B 면 B→A)는 두 장을 같이 봐야 알아서 여기서 판정하지 않는다 —
+    한 장에서 아는 것은 셋이다: 자기 자신이 목록에 있나, 코드가 코드인가,
+    x-default 가 있나. 판정을 넓히면 근거 없는 지적이 된다.
+    """
+    if not _has_render_fields(audit):
+        return []
+    pairs = _as_list(audit.get("hreflang_json"))
+    rows = [p for p in pairs if isinstance(p, list) and len(p) == 2]
+    if not rows:
+        return []
+    out = []
+    codes = [str(c).strip() for c, _ in rows]
+    url = norm(audit.get("url") or "")
+    canon = norm(audit.get("canonical") or "") or url
+    if canon and not any(norm(h) == canon for _, h in rows):
+        out.append({"tag": "hreflang", "level": "bad",
+                    "now": f"이 페이지가 자기 hreflang 목록에 없습니다 ({len(rows)}개 선언)",
+                    "fix": "자기 자신을 가리키는 항목을 넣으세요. 자기 참조가 빠지면 구글이 "
+                           "이 페이지의 hreflang 전부를 버립니다."})
+    bad = [c for c in codes if c.lower() != "x-default" and not _HREFLANG_RE.match(c)]
+    bad += [c for c in codes if "-" in c and c.split("-")[-1].lower() in ("uk",)]
+    if bad:
+        out.append({"tag": "hreflang", "level": "bad",
+                    "now": "코드가 아닌 값: " + ", ".join(sorted(set(bad))[:5]),
+                    "fix": "언어는 ISO 639-1, 지역은 ISO 3166-1 Alpha 2 입니다 — 영국은 "
+                           "en-UK 가 아니라 en-GB. 틀린 항목은 통째로 무시됩니다."})
+    if not any(c.lower() == "x-default" for c in codes):
+        out.append({"tag": "hreflang", "level": "warn",
+                    "now": f"x-default 가 없습니다 ({len(rows)}개 선언)",
+                    "fix": "어느 로케일에도 안 맞는 방문자가 갈 곳을 x-default 로 하나 "
+                           "지정하세요(언어 선택 화면 또는 기본 로케일)."})
+    return out
+
+
 def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:
     """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
 
@@ -476,16 +625,58 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         add("H1", "warn", h1[0],
             f"H1 에 '{kw}' 가 없습니다. title 과 H1 이 같은 말을 하게 맞추세요.")
 
+    # 신선도 — "언제 쓴 글인가" 는 우리가 점검한 날과 다른 사실이다. 이게 없으면
+    # 순위 하락의 원인 후보에서 노후화를 못 가른다(늘 "경쟁이 세졌다"로 끝났다).
+    stale = _stale_days(audit)
+    if stale is not None and stale >= STALE_DAYS:
+        seen = audit.get("modified") or audit.get("published")
+        add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
+            "숫자·연도·화면·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요. 안 고칠 "
+            "글이면 그렇다고 답해 주세요 — 날짜만 바꾸는 것은 안 됩니다.")
+
     words = audit.get("words")
     if isinstance(words, int) and words < THIN_WORDS:
         add("본문", "warn", f"{words}단어로 얇습니다",
             f"이 검색어를 다루는 하위 질문을 채워 {THIN_WORDS}단어 이상으로 늘리세요.")
 
+    # 정적 HTML 로 가져온 값이다 — Yoast·RankMath·AIOSEO 는 ld+json 을 자바스크립트로
+    # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
+    # 판정을 확인 지시로 바꾼다(없앨 수는 없다 — 정말 없는 사이트가 더 많다).
     schema = _as_list(audit.get("schema_json"))
     if not schema:
-        add("구조화 데이터", "warn", "ld+json 이 없습니다",
-            "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요. "
-            "AI 답변과 리치 결과가 읽는 자리입니다.")
+        if audit.get("js_shell"):
+            add("구조화 데이터", "warn", "정적 HTML 에는 ld+json 이 없습니다 "
+                "(본문도 자바스크립트로 그리는 페이지로 보입니다)",
+                "먼저 리치 결과 테스트(search.google.com/test/rich-results)로 렌더 후에도 "
+                "없는지 확인하세요. 정말 없으면 Article·FAQPage·LocalBusiness 중 하나를 넣습니다.")
+        else:
+            add("구조화 데이터", "warn", "ld+json 이 없습니다",
+                "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요. "
+                "AI 답변과 리치 결과가 읽는 자리입니다.")
+
+    # 모바일 — 뷰포트가 없으면 모바일 브라우저가 데스크톱 폭(980px)으로 그린 뒤
+    # 축소한다. 기기별 순위 차이의 원인 후보 1번인데 지금까지 아무도 안 봤다.
+    if _has_render_fields(audit):
+        vp = (audit.get("viewport") or "").lower()
+        if not vp:
+            add("모바일", "bad", "<meta name=viewport> 가 없습니다",
+                '<meta name="viewport" content="width=device-width, initial-scale=1"> 를 '
+                "head 에 넣으세요. 없으면 모바일에서 데스크톱 폭으로 그린 뒤 축소해 보여줍니다.")
+        elif "width=device-width" not in vp.replace(" ", ""):
+            add("모바일", "warn", f"viewport: {audit['viewport']}",
+                "width=device-width 를 넣으세요. 고정 폭 뷰포트는 기기마다 다르게 잘립니다.")
+        elif "user-scalable=no" in vp.replace(" ", "") or "maximum-scale=1" in vp.replace(" ", ""):
+            add("모바일", "warn", f"viewport: {audit['viewport']}",
+                "확대를 막고 있습니다. user-scalable=no·maximum-scale 을 빼세요 — 접근성 "
+                "문제이고 모바일 사용성 평가에 걸립니다.")
+
+    # 언어 선언 — 없으면 검색엔진이 본문 글자로 추측한다. 빙은 hreflang 보다
+    # <html lang> 을 더 세게 본다.
+    if _has_render_fields(audit) and not (audit.get("html_lang") or "").strip():
+        add("언어", "warn", "<html lang> 이 없습니다",
+            '<html lang="ko"> 처럼 이 페이지의 언어를 선언하세요.')
+
+    out += _hreflang_advice(audit)
 
     robots = (audit.get("robots") or "").lower()
     if "noindex" in robots:

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
+import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
@@ -661,6 +662,16 @@ def _axis_rank(conn, pid: int) -> dict:
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
                 WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
 
+    # 검색결과 상위 몇 줄 — 요청문이 "빠진 구간" 을 짐작이 아니라 비교로 찾는 재료.
+    # 순위 숫자와 같은 회차에서 나온다(같은 날짜 키로 읽는다).
+    serp_top: dict[str, list] = {}
+    if rank_dates:
+        for r in q(conn, """SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
+                              FROM serp_results s JOIN keywords k ON k.id = s.keyword_id
+                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=?
+                             ORDER BY k.keyword, s.position""", (pid, rank_dates[0])):
+            serp_top.setdefault(r["keyword"], []).append(r)
+
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
     r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
     ranks, aio_gap = [], []
@@ -684,7 +695,7 @@ def _axis_rank(conn, pid: int) -> dict:
     return {
         "rank_date": rank_dates[0] if rank_dates else None,
         "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
-        "ranks": ranks, "aio_gap": aio_gap,
+        "ranks": ranks, "aio_gap": aio_gap, "serp_top": serp_top,
         "kw_active": db.count_active_keywords(conn, pid),
     }
 
@@ -877,6 +888,24 @@ def _axis_competitors(conn, pid: int) -> dict:
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts}
 
 
+def _axis_vitals(conn, pid: int) -> dict:
+    """속도 축 (collect_vitals) — 최신 측정일의 페이지×기기 표.
+
+    {url: {strategy: 행}} 로 접어 둔다. 요청문이 묻는 것이 늘 "이 페이지의, 이
+    기기의" 값이라서다 — 모바일만 밀리는 검색어의 근거는 두 기기를 나란히 놓아야
+    나온다.
+    """
+    d = conn.execute("SELECT MAX(checked_date) d FROM page_vitals WHERE project_id=?",
+                     (pid,)).fetchone()["d"]
+    if not d:
+        return {"vitals_date": None, "vitals": {}}
+    out: dict[str, dict] = {}
+    for r in q(conn, "SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?",
+               (pid, d)):
+        out.setdefault(r["url"], {})[r["strategy"]] = r
+    return {"vitals_date": d, "vitals": out}
+
+
 def _axis_crawl(conn, pid: int) -> dict:
     """사이트 크롤 축 (collect_crawl). 회차로 남기는 이유가 여기서 쓰인다: 지난번 대비 새로 깨진 것."""
     crawl = {}
@@ -891,7 +920,65 @@ def _axis_crawl(conn, pid: int) -> dict:
                      conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
                      (cr["id"],))},
                  "compare": crawl_compare(conn, pid, cr["id"])}
-    return {"crawl": crawl}
+    # 갈래 이름표는 만드는 쪽(collect_crawl)이 갖는다 — 화면 JS 안에 사본을 두면
+    # 요청문은 그걸 못 읽어서 같은 갈래를 영어 kind 로 내보내게 된다.
+    return {"crawl": crawl, "crawl_kinds": collect_crawl.ISSUE_KIND}
+
+
+def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
+    """요청문이 손댈 페이지로 **들어오는** 내부 링크. 크롤 회차의 crawl_links 를 읽는다.
+
+    page_audits 가 세는 internal_links 는 그 페이지가 **내보내는** 링크 수라 반대편이다.
+    "어느 글에서 이 페이지로 링크를 걸지" 를 시키면서 지금 어디서 링크가 오는지를 안
+    주면, AI 는 이미 링크가 있는 글을 또 제안한다.
+
+    값이 없는 URL 은 키를 안 만든다 — 크롤이 안 본 주소를 "고아" 라고 부르지 않기
+    위해서다(빈 리스트는 "보고 링크가 없었다"는 뜻으로 남겨 둔다).
+    """
+    run = (crawl or {}).get("run")
+    want = {u for u in urls if u}
+    if not (run and want):
+        return {}
+    by_norm = {}
+    for u in want:
+        by_norm.setdefault(scoring.norm(u), u)
+    crawled = {scoring.norm(r["url"]) for r in conn.execute(
+        "SELECT url FROM crawl_pages WHERE run_id=?", (run["id"],))}
+    out = {by_norm[k]: [] for k in by_norm if k in crawled}
+    if not out:
+        return {}
+    for r in conn.execute(
+            "SELECT url_from, url_to, anchor FROM crawl_links"
+            " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT 20000",
+            (run["id"],)):
+        u = by_norm.get(scoring.norm(r["url_to"]))
+        if u in out and len(out[u]) < 20:
+            out[u].append({"from": r["url_from"], "anchor": r["anchor"]})
+    return out
+
+
+def _site_probe(conn, crawl: dict, urls) -> dict:
+    """이 주소가 robots.txt 에 막히나 · 사이트맵에 있나.
+
+    색인 막힘 요청문이 매번 묻는 두 가지인데, 지금까지 근거는 구글 URL 검사 응답
+    한 줄뿐이었다 — 원인 1순위 두 개를 안 주고 원인을 대라고 시킨 셈이다.
+
+    주소마다 미리 재서 넣는다: robots.txt 원문과 사이트맵 목록을 통째로 페이로드에
+    실으면 화면이 수천 줄을 짊어진다.
+    """
+    run = (crawl or {}).get("run")
+    want = [u for u in urls if u]
+    if not (run and want):
+        return {}
+    sm = {scoring.norm(r["url"]) for r in conn.execute(
+        "SELECT url FROM sitemap_urls WHERE run_id=?", (run["id"],))}
+    txt = run.get("robots_txt") or ""
+    out = {}
+    for u in want:
+        out[u] = {"robots": scoring.robots_blocks(txt, u) if txt else None,
+                  # None = 안 봤다(사이트맵이 시드가 아니었다), False = 보고 없었다
+                  "in_sitemap": (scoring.norm(u) in sm) if sm else None}
+    return out
 
 
 def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict]) -> dict:
@@ -1026,6 +1113,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     ga4 = _axis_ga4(conn, pid, at)
     bl = _axis_backlinks(conn, pid)
     crawl = _axis_crawl(conn, pid)
+    vitals = _axis_vitals(conn, pid)
 
     runs = q(conn,
         """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
@@ -1040,6 +1128,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     d = {"schema": 1, "project": dict(p),
          **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
+         **vitals,
          "runs": runs, "creations": creations,
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
@@ -1052,6 +1141,12 @@ def gather(conn, p, at: str | None = None) -> dict:
          "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])}
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
+    # 들어오는 내부 링크만 여기서 한 번 더 읽는다: 어느 페이지가 필요한지는 기회와
+    # query_pages 가 정해져야 알 수 있고(brief.page_of 가 정본), 사이트 전체를 실으면
+    # 페이로드가 링크 수만 명으로 부푼다.
+    _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
+    d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
+    d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     brief.attach(d, db.project_locale(p))
     return d
 
