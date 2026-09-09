@@ -516,7 +516,7 @@ def collect(project: str, *,
                 try:
                     auto_axis()
                 except Exception as e:      # 한 축이 죽어도 나머지 축은 산다
-                    st.fail(f"자동 경쟁사 탐지 실패: {e}", first=str(e))
+                    st.fail(str(e), item="자동 경쟁사 탐지", kind=type(e).__name__)
                 conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
                     domains = _cap(_resolve_domains(conn, p["id"], None))

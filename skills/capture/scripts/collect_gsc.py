@@ -146,6 +146,15 @@ def get_service():
                  cache_discovery=False)
 
 
+def _status(e) -> int | None:
+    """HttpError 의 상태 코드 — 없거나 숫자가 아니면 None (기록용이지 판정용이 아니다)."""
+    s = getattr(getattr(e, "resp", None), "status", None)
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
 def _query(service, prop: str, body: dict) -> dict:
     """Search Analytics 호출 한 번 + 403 안내.
 
@@ -253,9 +262,10 @@ def collect(project: str, *,
                 resp = _query(service, prop, body)
             except (HttpError, db.ProjectConfigNotFound) as e:
                 # 부수 호출의 실패도 본체를 죽이면 안 된다 — 이미 받아 둔 query×page 를
-                # 통째로 잃지 않게 여기서 잡아 건너뛴다.
-                print(f"[경고] {label} 수집을 건너뜁니다 ({e}) — "
-                      "본체 스냅샷은 그대로 저장됩니다.", file=sys.stderr)
+                # 통째로 잃지 않게 여기서 잡아 건너뛴다. 다만 **세기는 한다**: 여태
+                # stderr 한 줄이 전부라 축이 몇 주째 비어도 아무 기록이 없었다.
+                st.fail(f"수집을 건너뜁니다 ({e}) — 본체 스냅샷은 그대로 저장됩니다.",
+                        item=label, kind=type(e).__name__, status=_status(e))
                 return None
             calls += 1
             return resp.get("rows", [])
@@ -313,7 +323,7 @@ def collect(project: str, *,
                        f"daily={'skip' if drows is None else len(drows)} "
                        + "".join(f"{d}={len(br)} " for d, br in bd)
                        + "".join(f"{d}=skip " for d in dims if d not in dict(bd))
-                       + f"calls={calls} window={start}~{end}")
+                       + f"calls={calls} window={start}~{end} {st.err_note}")
 
         print(f"saved snapshot {snap}. striking-distance preview "
               "(pos 4~20, impressions desc):")
@@ -321,7 +331,10 @@ def collect(project: str, *,
                                   brands=scoring.foreign_brands(conn, p["id"], cfg)):
             print(f"  {s['pos']:>5}  imp={s['imp']:<6} clk={s['clk']:<4} "
                   f"gap={s['gap']:<5} {s['query']}")
-        return st.done(rows=len(rows))
+        # 성공한 호출 수로 판정한다 — 여기까지 왔다는 것은 본체(query×page)가 성공했다는
+        # 뜻이라 calls≥1 이고, 부수 축이 죽으면 완료 ⚠ 로만 표시된다. gsc 는 체인의
+        # 첫 단계라 ok=False 면 나머지가 통째로 안 돈다: 부수 축 때문에 그러면 안 된다.
+        return st.verdict(calls, rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:

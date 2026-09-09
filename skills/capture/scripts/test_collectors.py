@@ -1330,12 +1330,13 @@ def test_run_all_chain_order_and_paid_skips():
         assert run_all.chain_cost(results) == 0.15, results
         assert "$0.1500" in out and "120행" in out, out
 
-        # 4. gsc 실패 — 뒤 단계가 하나도 안 불리고, 사유가 요약표까지 그대로 올라온다
+        # 4. gsc 실패 — 뒤 단계가 하나도 안 불리고, 사유가 요약표까지 그대로 올라온다.
+        #    실패는 collector.failed 로 만든다: ok=False + skipped=True 는 이제 없는
+        #    상태다(건너뜀은 실패가 아니다 — A-1).
         for k in orig_env:
             os.environ.pop(k, None)
         gsc_reason = "구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다."
-        results, out = run(stages=table({
-            "gsc": _collector.StageResult(ok=False, skipped=True, reason=gsc_reason)}))
+        results, out = run(stages=table({"gsc": _collector.failed(gsc_reason)}))
         assert calls == ["gsc"], f"gsc 실패 시 후속 단계가 호출되지 않아야 함: {calls}"
         assert run_all.chain_rc(results) == 1, results
         assert gsc_reason in out, out
@@ -1767,6 +1768,77 @@ def test_expand_keywords_locale_of_by_script():
     assert lo("kaufen", "de-DE") == "de-DE" and lo("", "de-DE") == "de-DE"
     assert expand_keywords.modifiers("ja-JP", "ja")[0] == "あ"
     assert expand_keywords.modifiers("de-DE", "de") == expand_keywords._LATIN
+
+
+def test_skips_are_not_failures_and_item_errors_are():
+    """단계 계약의 두 축 — 건너뜀은 실패가 아니고, 항목 오류는 실패다.
+
+    실측으로 아팠던 두 자리다:
+      · Stage.skip() 이 ok=False 를 내는 바람에 GA4 미연결·활성 키워드 없음 같은
+        **정상 사이트**가 매 런 rc=1 로 끝났고, 워커가 그걸 읽어 실패 메일을 보냈다.
+      · 반대로 collect_page/collect_vitals 는 HTTP 실패를 오류 dict(**데이터 값**)로
+        바꿔서, URL 이 전부 죽어도 runs.notes 에 errors=0 을 적고 초록불로 나갔다.
+    """
+    import collect_page
+    import collector as _collector
+    import run_all
+
+    # ── 1. 건너뜀만 있는 체인의 chain_rc 는 0
+    conn = db.connect()
+    _project(conn, "skipctr")
+    conn.close()
+    with _collector.stage("skipctr") as st:
+        s = st.skip("GA4 속성이 연결되어 있지 않습니다")
+    assert (s.ok, s.skipped, s.failed) == (True, True, False), s
+
+    def only_skip(name):
+        def fn(project, *, dry_run=False, **opts):
+            return _collector.skipped(f"{name}: 아직 설정 안 됨")
+        return fn
+
+    stages = tuple(x._replace(fn=only_skip(x.name)) for x in run_all.STAGES)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+        results = run_all.run_chain("skipctr", stages=stages, preflight=lambda stgs: {})
+        run_all.print_summary("skipctr", results, dry_run=False)
+    out = buf.getvalue()
+    assert run_all.chain_rc(results) == 0, [(n, r) for n, r in results if r.failed]
+    assert all(r.skipped and not r.failed for _, r in results), results
+    assert "실패" not in out, f"요약표가 건너뜀을 실패로 찍는다: {out}"
+
+    # ── 2. 항목 오류가 있으면 그 단계는 ok=False
+    conn = db.connect()
+    _project(conn, "pagefail", domain="pf.com")
+    urls = ["https://pf.com/a", "https://pf.com/b"]
+    orig_targets, orig_fetch = collect_page.target_urls, collect_page.fetch
+    try:
+        collect_page.target_urls = lambda c, pid, limit: list(urls)
+        collect_page.fetch = lambda url, timeout=None: {
+            "url": url, "status": 503, "error": "HTTP 503 · text/plain"}
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            res = collect_page.collect("pagefail", conn=conn)
+        assert res.failed, f"URL 이 전부 죽었는데 완료로 끝났다: {res}"
+        # 실패가 구조를 유지한다 — 개수와 첫 문장으로 접히기 전의 값이 그대로 온다.
+        assert [e.item for e in res.errors] == urls, res.errors
+        assert res.errors[0].status == 503, res.errors[0]
+        notes = conn.execute("SELECT notes FROM runs WHERE kind='pages' "
+                             "ORDER BY id DESC LIMIT 1").fetchone()["notes"]
+        assert "errors=2" in notes, f"실패가 데이터로만 남고 기록에 안 갔다: {notes}"
+
+        # 한 개라도 해냈으면 부분 실패다 — 빨간불도, 초록불도 아니다.
+        def half(url, timeout=None):
+            if url.endswith("/a"):
+                return {"url": url, "status": 200, "title": "t", "words": 10, "h1_json": "[]"}
+            return {"url": url, "status": 503, "error": "HTTP 503"}
+
+        collect_page.fetch = half
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            res = collect_page.collect("pagefail", conn=conn)
+        assert (res.ok, res.partial, res.failed) == (True, True, False), res
+        assert len(res.errors) == 1, res.errors
+    finally:
+        collect_page.target_urls, collect_page.fetch = orig_targets, orig_fetch
+        conn.close()
 
 
 if __name__ == "__main__":

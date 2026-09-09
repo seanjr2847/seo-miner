@@ -14,6 +14,8 @@ conn.commit() / sleep(throttle) / conn.close() / StageResult 조립.
 
 self-check:  python collector.py
 """
+import logging
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -26,6 +28,34 @@ import remote  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 _cache: dict | None = None
+
+# 진단 로그 — 사용자 내레이션(print)과 **다른 통로**다.
+#
+# print 는 제품이다: 워커의 _Tee 가 그걸 모아 sites.run_log 에 담고 사용자가 읽는다.
+# 그런데 traceback 처럼 사용자가 읽을 것이 아닌·개발자가 읽어야 하는 것을 print 로
+# 내면 그 화면이 쓰레기가 되고, 안 내면(지금까지) 원인이 그냥 사라진다
+# (run_all._run_stage 의 `except Exception` 이 그 자리였다).
+# 그래서 표준 logging 을 한 벌 둔다. 핸들러는 stderr 하나 — _Tee 가 stderr 도 같은
+# 버퍼로 모으므로, 수준을 올려 켜면 traceback 이 그 런의 로그에 그대로 남는다.
+LOG = logging.getLogger("capture")
+
+
+def setup_logging() -> None:
+    """진단 로그를 한 번만 켠다. 수준은 SEOMINER_LOG_LEVEL (기본 WARNING).
+
+    전역 설정은 여기까지다 — logging.basicConfig 를 부르지 않는다. 라이브러리
+    (googleapiclient·urllib3)의 루트 로거까지 켜면 사용자 로그가 남의 말로 덮인다.
+    """
+    if LOG.handlers:
+        return
+    h = logging.StreamHandler(sys.stderr)
+    h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    LOG.addHandler(h)
+    LOG.propagate = False
+    try:
+        LOG.setLevel((os.environ.get("SEOMINER_LOG_LEVEL") or "WARNING").upper())
+    except ValueError:
+        LOG.setLevel(logging.WARNING)
 
 
 class Fatal(Exception):
@@ -41,6 +71,46 @@ class Fatal(Exception):
     """
 
 
+class ItemFailed(Exception):
+    """항목 하나의 실패 — **값이 아니라 예외로** 올린다.
+
+    HTTP 실패를 dict 의 error 키로만 남기면 그 실패는 데이터가 되어 st.errors 를
+    지나가지 못한다: collect_page·collect_vitals 는 URL 이 전부 죽어도 runs.notes 에
+    errors=0 을 적었다. 행은 그대로 저장하되(못 가져왔다는 것 자체가 진단이다)
+    실패는 이걸로 올려 each 의 오류 경로를 타게 한다.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+@dataclass
+class StageError:
+    """실패 한 건 — **문자열로 접기 전의 꼴**.
+
+    여태 실패는 나자마자 문장이 됐다: 첫 건만 first_error 에 남고 나머지는 개수로만
+    셌으며, 그마저 100자에서 잘렸다. 그래서 "errors=100" 은 있는데 무엇이 100번
+    실패했는지는 아무 데도 없었다. 절단은 표현이지 저장이 아니다 — 여기서는 온전히
+    갖고 있고, 접는 자리는 runs.notes 를 쓰는 err_note 한 곳이다.
+
+    필드:
+      item     무엇에서 났나 (키워드·URL·로케일). 축 하나가 통째로 죽은 것이면 빈 값
+      message  사유 원문 (보통 str(예외))
+      kind     예외 종류 이름 등 분류 (모르면 빈 값)
+      status   HTTP 상태 (모르면 None)
+    """
+    item: str = ""
+    message: str = ""
+    kind: str = ""
+    status: int | None = None
+
+    @property
+    def line(self) -> str:
+        """사람이 읽는 한 줄 — stderr·요약에 쓰는 표현이다."""
+        return f"{self.item}: {self.message}" if self.item else self.message
+
+
 @dataclass
 class StageResult:
     """수집기 한 단계의 결과를 run_chain 으로 들고 오기 위한 단일 형태.
@@ -48,6 +118,11 @@ class StageResult:
     in-process 호출로 바꾸면서 각 단계의 결과를 정수 exit code 하나로
     줄이던 자리에 들어갔다. sys.exit 로는 "건너뜀"과 "진짜 실패"가 구분이
     안 됐기 때문에 skipped / reason 으로 그 자리를 채운다.
+
+    **ok 와 skipped 는 직교한다.** 건너뜀은 실패가 아니다 — 그런데 Stage.skip() 만
+    ok=False 를 내는 바람에(run_all 의 건너뜀은 ok=True 였다) GA4 속성 미연결·활성
+    키워드 없음 같은 "아직 설정 안 됨" 이 체인 실패가 되어, 정상 사이트에 매 런
+    실패 메일이 나갔다. 실패인지 묻는 자리는 이제 failed 하나다.
 
     필드:
       ok       True 면 정상 완료 (rows·cost·artifact 가 의미를 가짐)
@@ -58,6 +133,7 @@ class StageResult:
       artifact 만든 파일 경로 (없으면 빈 문자열)
       partial  일부만 실패한 완료 — 요약표가 노란 표시를 붙인다. 문구에서
                "실패"를 되짚지 않으려고 축으로 둔다(reason 은 사람이 읽는 말이다)
+      errors   그 단계가 모은 StageError 들 — reason 은 이걸 접은 표현이다
     """
     ok: bool
     skipped: bool = False
@@ -66,6 +142,33 @@ class StageResult:
     cost: float = 0.0
     artifact: str = ""
     partial: bool = False
+    errors: tuple = ()
+
+    @property
+    def failed(self) -> bool:
+        """"이 단계가 실패했나" 를 묻는 유일한 자리 — chain_rc·요약표·워커가 같이 쓴다."""
+        return not self.ok and not self.skipped
+
+
+# ── 끝맺음 생성자 — StageResult 를 만드는 자리는 이 파일 하나다 ────────────────
+#
+# run_all 이 자기 건너뜀을 StageResult(ok=True, skipped=True) 로 직접 조립하고
+# Stage.skip() 은 ok=False 를 내던 것이 A-1 의 원인이었다. 같은 뜻을 두 곳에서
+# 조립하면 언젠가 한쪽만 바뀐다.
+
+def skipped(reason: str = "", **kw) -> StageResult:
+    """의도적으로 안 한 것 — 키 없음·설정 없음·--dry-run·할 일 0건. 실패가 아니다."""
+    return StageResult(ok=True, skipped=True, reason=reason, **kw)
+
+
+def succeeded(**kw) -> StageResult:
+    """정상 완료."""
+    return StageResult(ok=True, **kw)
+
+
+def failed(reason: str = "", **kw) -> StageResult:
+    """진짜 실패 — chain_rc 가 1 이 되고 실패 메일이 나가는 것은 이것뿐이다."""
+    return StageResult(ok=False, reason=reason, **kw)
 
 
 def config() -> dict:
@@ -216,16 +319,27 @@ class Stage:
         self.cfg = cfg
         self.dry_run = dry_run
         self.throttle = 0.0     # settings() 가 물고 온다
-        self.errors = 0
-        # 오류 줄은 stderr 로 나가는데 사용자 화면 로그는 stdout 만 잡는다 —
-        # 그래서 "402 가 100번" 이 사용자에게 한 글자도 안 보였다. 첫 문장 하나를
-        # 여기 남겨 두면 notes·요약표·StageResult.reason 이 그걸 실어 나른다.
-        self.first_error: str | None = None
+        # 실패는 **목록으로** 모은다 — 개수와 첫 문장은 여기서 나오는 파생값이다.
+        # 예전엔 그 둘만 들고 나머지를 버려서, errors=100 인 런의 99건이 어디에도
+        # 안 남았다(그중 하나만 원인이 달라도 알 길이 없었다).
+        self.failures: list[StageError] = []
         self._own = own
 
     @property
     def pid(self) -> int:
         return self.project["id"]
+
+    @property
+    def errors(self) -> int:
+        """실패 건수 — failures 의 길이다(따로 세지 않는다: 두 벌이 되면 어긋난다)."""
+        return len(self.failures)
+
+    @property
+    def first_error(self) -> str | None:
+        """첫 실패의 사유 원문. 오류 줄은 stderr 로 나가는데 사용자 화면 로그는
+        예전에 stdout 만 잡아서 "402 가 100번" 이 한 글자도 안 보이던 자리다 —
+        notes·요약표·StageResult.reason 이 이 문장을 실어 나른다."""
+        return self.failures[0].message if self.failures else None
 
     def __enter__(self) -> "Stage":
         return self
@@ -293,58 +407,77 @@ class Stage:
                 self.conn.commit()
                 raise
             except Exception as e:
-                self.fail(f"{label(item) if label else item}: {e}", first=str(e))
+                self.fail(str(e), item=str(label(item) if label else item),
+                          kind=type(e).__name__, status=getattr(e, "status", None))
             self.conn.commit()
             time.sleep(self.throttle)
         return done
 
-    def fail(self, msg: str, *, first: str | None = None) -> None:
+    def fail(self, message: str, *, item: str = "", kind: str = "",
+             status: int | None = None) -> None:
         """오류 한 건 — each 밖(축 하나가 통째로 죽는 자리)에서도 같은 자리에 센다.
 
-        first 는 first_error 에 남길 문장. 안 주면 msg 그대로.
+        문장 하나가 아니라 **값 하나**를 남긴다: item(무엇에서), message(사유),
+        kind/status(분류). stderr 한 줄은 그 값의 표현이지 저장이 아니다.
         """
-        self.errors += 1
-        if self.first_error is None:
-            self.first_error = first if first is not None else msg
-        print(f"  ! {msg}", file=sys.stderr)
+        err = StageError(item=item, message=message, kind=kind, status=status)
+        self.failures.append(err)
+        print(f"  ! {err.line}", file=sys.stderr)
+        LOG.debug("stage failure: %r", err)
 
     @property
     def err_note(self) -> str:
-        """runs.notes 에 붙는 오류 요약 — stderr 로만 흐르던 문장을 기록에 남긴다."""
+        """runs.notes 에 붙는 오류 요약 — **문자열로 접는 자리는 여기 한 곳이다.**
+
+        겉모양(`errors=N first_error=...`)은 화면·검사(test_remote 의 chain_fails)가
+        읽고 있으므로 바꾸지 않는다. 100자 절단도 여기 남는다 — notes 한 칸의 표현
+        규칙이지 실패 자체의 규칙이 아니다(원본은 self.failures 에 온전히 있다).
+        """
         if not self.errors:
             return "errors=0"
         return f"errors={self.errors} first_error={(self.first_error or '')[:100]}"
 
     # ── StageResult 조립 — 네 가지 끝맺음 ────────────────────────────
     def skip(self, reason: str) -> StageResult:
-        """사유 있는 비종료 (키 없음·구성 누락 등)."""
-        return StageResult(ok=False, skipped=True, reason=reason)
+        """사유 있는 비종료 (키 없음·구성 누락 등).
+
+        **ok=True 다.** GA4 속성 미연결·활성 키워드 없음·잴 페이지 없음은 "아직 설정
+        안 됨"이지 실패가 아니다 — 여기가 ok=False 를 내던 동안 정상 사이트가 매 런
+        실패로 끝나고 실패 메일이 나갔다.
+        """
+        return skipped(reason)
 
     def noop(self, **kw) -> StageResult:
         """의도적으로 아무것도 안 함 (--dry-run, 할 일 0건)."""
-        return StageResult(ok=True, skipped=True, **kw)
+        return skipped(**kw)
 
     def done(self, **kw) -> StageResult:
-        """정상 완료."""
-        return StageResult(ok=True, skipped=False, **kw)
+        """정상 완료. 모은 실패는 결과에 그대로 실어 보낸다(개수로 접지 않는다)."""
+        return succeeded(errors=tuple(self.failures), **kw)
 
     def verdict(self, done: int, **kw) -> StageResult:
-        """유료 단계의 끝맺음 — **한 건도 못 한 것은 완료가 아니다**.
+        """항목 오류가 의미 있는 단계의 끝맺음 — **한 건도 못 한 것은 완료가 아니다**.
 
         done 은 실제로 처리한 건수다(호출 횟수가 아니라 적재 건수). rank 는 저장한
         스냅샷, metrics 는 실제로 갱신한 키워드 — 500개를 물어 0개를 채우고도
         "볼륨이 채워졌으니…" 라고 말하던 자리가 그 차이다.
 
-        판정을 수집기 다섯이 각자 쓰지 않게 여기 한 벌로 둔다:
+        유료 단계만의 것이 아니다: 무료 단계(pages·vitals·index·keywords)도 항목이
+        전부 죽을 수 있고, 그때 st.done() 을 쓰면 errors>0 이 ok=False 가 못 된다.
+        오류가 구조적으로 안 나는 단계(crawl — 실패가 곧 crawl_issues 라는 산출물이다)
+        만 st.done() 을 그대로 쓴다.
+
+        판정을 수집기가 각자 쓰지 않게 여기 한 벌로 둔다:
           errors>0, done==0  →  실패 (사유 = 첫 오류 문장) → chain_rc 가 1 이 된다
           errors>0, done>0   →  완료지만 partial (요약표에 노란 표시)
           errors==0          →  그냥 완료
         """
         if self.errors and not done:
-            return StageResult(ok=False, reason=self.first_error or f"{self.errors}건 전부 실패",
-                               **kw)
+            return failed(self.first_error or f"{self.errors}건 전부 실패",
+                          errors=tuple(self.failures), **kw)
         if self.errors:
             tail = f": {self.first_error}" if self.first_error else ""
+            # 200자 절단은 요약표 한 줄의 표현이다 — 근거는 errors 로 온전히 간다.
             return self.done(reason=f"{self.errors}건 실패{tail}"[:200], partial=True, **kw)
         return self.done(**kw)
 
@@ -409,8 +542,13 @@ def cli(stage_name: str) -> None:
         sys.exit(str(e))
     except Fatal as e:
         sys.exit(str(e))    # 잔액·인증 — 트레이스백 대신 사람 말 한 줄로 끝낸다
-    if not r.ok and r.reason:
+    if r.failed and r.reason:
         sys.exit(r.reason)
+    if r.skipped and r.reason:
+        # 건너뜀은 이제 ok=True 다. 그래도 사유는 말해야 한다 — 여태 이 문장을
+        # 실어 나른 것이 sys.exit 뿐이라, 그냥 두면 "키 없어서 안 돌았다"가
+        # 한 글자도 안 보이는 조용한 성공이 된다.
+        print(r.reason, file=sys.stderr)
 
 
 def _selfcheck() -> None:
@@ -533,10 +671,13 @@ def _runner_check() -> None:
     borrowed.execute("SELECT 1")     # 안 닫혔다 — 닫혔으면 여기서 터진다
     borrowed.close()
 
-    # 5. 사유 있는 비종료.
+    # 5. 사유 있는 비종료 — **건너뜀은 실패가 아니다**(ok 와 skipped 는 직교한다).
+    #    여기가 ok=False 이던 동안, GA4 미연결 같은 "아직 설정 안 됨"이 체인 실패가
+    #    되어 정상 사이트에 매 런 실패 메일이 나갔다.
     with stage("rt") as st:
         res = st.skip("사유")
-    assert (res.ok, res.skipped, res.reason) == (False, True, "사유")
+    assert (res.ok, res.skipped, res.reason) == (True, True, "사유"), res
+    assert res.failed is False, res
 
     # 6. Fatal 은 안 삼킨다 — 잔액 0 이면 100번 더 물어도 잔액 0 이다.
     #    (이 except 를 지우고 돌리면 8/30 자동 런이 그대로 재현된다: 3건 전부
@@ -558,17 +699,25 @@ def _runner_check() -> None:
         assert tried == ["a"], f"Fatal 뒤로도 계속 갔다: {tried}"
 
     # 7. 판정 한 벌 (verdict) — 전부 실패는 완료가 아니다.
+    err = io.StringIO()
     with stage("rt") as st:
-        st.errors, st.first_error = 3, "402 Payment Required"
+        with contextlib.redirect_stderr(err):
+            for kw in ("a", "b", "c"):
+                st.fail("402 Payment Required", item=f"kw={kw}", kind="Fatal", status=402)
         r_all = st.verdict(0, rows=0)
         r_part = st.verdict(7, rows=7)
         assert st.err_note == "errors=3 first_error=402 Payment Required", st.err_note
-        st.errors, st.first_error = 0, None
+        # 실패는 구조를 유지한다 — 첫 건만 남기고 버리지 않는다.
+        assert [e.item for e in st.failures] == ["kw=a", "kw=b", "kw=c"], st.failures
+        assert st.failures[2].status == 402 and st.failures[2].kind == "Fatal", st.failures[2]
+        st.failures.clear()
         r_ok = st.verdict(7, rows=7)
         assert st.err_note == "errors=0", st.err_note
-    assert (r_all.ok, r_all.reason) == (False, "402 Payment Required"), r_all
+    assert (r_all.ok, r_all.failed, r_all.reason) == (False, True, "402 Payment Required"), r_all
+    assert len(r_all.errors) == 3, r_all
     assert (r_part.ok, r_part.partial) == (True, True) and "3건 실패" in r_part.reason, r_part
-    assert (r_ok.ok, r_ok.partial, r_ok.reason) == (True, False, ""), r_ok
+    assert len(r_part.errors) == 3, "부분 실패의 근거가 결과에서 사라졌다"
+    assert (r_ok.ok, r_ok.partial, r_ok.reason, r_ok.errors) == (True, False, "", ()), r_ok
 
     print("collector runner self-check ok")
 
