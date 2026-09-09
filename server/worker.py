@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
+import collector                              # noqa: E402
 import db                                     # noqa: E402
 import exports                                # noqa: E402
 import mailer                                 # noqa: E402
@@ -32,6 +33,10 @@ import store                                  # noqa: E402
 
 # 유료 키 주입은 settings.paid_keys() 가 한다 — 명명 규칙(PAID_KEYS/SERVER_PREFIX)의
 # 주인이 거기고, /api/doctor 도 같은 컨텍스트를 둘러야 판정이 런과 같아진다.
+
+# 진단 로그. 사용자 내레이션(print)은 _Tee 가 sites.run_log 로 가져가는 **제품**이라
+# 그대로 두고, traceback 처럼 개발자용인 것만 이 통로로 보낸다.
+LOG = collector.LOG.getChild("worker")
 
 
 def activate_from_gsc(project: str, limit: int | None = None) -> int:
@@ -216,8 +221,11 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
             rc = run_all.chain_rc(results)
             # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
             # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
+            # 건너뜀은 실패가 아니다 — 실패인지 묻는 자리는 StageResult.failed 하나다.
+            # (여기가 `not r.ok` 이던 동안 GA4 미연결 같은 정상 사이트가 매 런 실패
+            #  메일을 받았다: Stage.skip() 이 ok=False 를 냈기 때문이다.)
             failed = [(n, r.reason or "이유가 기록되지 않았습니다")
-                      for n, r in results if not r.ok]
+                      for n, r in results if r.failed]
             ok = rc == 0
             error = "; ".join(f"{n}: {why}" for n, why in failed)
 
@@ -257,7 +265,8 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                 "activated": n}
     except Exception as e:
         # 로그에도 남긴다 — 원격 CLI 는 이 텍스트가 전부라, 여기 없으면 사용자에게는
-        # 런이 조용히 끊긴 것으로 보인다.
+        # 런이 조용히 끊긴 것으로 보인다. 사용자에게는 한 문장, 진단에는 traceback.
+        LOG.exception("[%s/%s] 런이 예외로 끝났다", user_id, project)
         ok, error = False, f"수집이 중단됐습니다: {e}"
         buf.write(f"\n[오류] {error}\n")
         return {"user_id": user_id, "project": project, "ok": False, "error": str(e)}
@@ -499,6 +508,27 @@ def demo() -> None:
         assert (row["last_ok"], row["last_error"]) == (0, "rank: DataForSEO 잔액 없음(402)"), \
             tuple(row)
         assert sent and sent[0][2] == [("rank", "DataForSEO 잔액 없음(402)")], sent
+
+        # 반대쪽: **건너뜀만 있는 런은 실패가 아니다.** GA4 속성 미연결·활성 키워드
+        # 없음 같은 정상 사이트가 Stage.skip() 의 ok=False 때문에 매 런 실패로 끝나고
+        # 실패 메일을 받던 자리다.
+        # 두 번째 줄은 **옛 꼴**(ok=False + skipped=True)을 일부러 넣는다 — 판정이
+        # `not r.ok` 로 돌아가면 여기서 걸린다. 실패인지는 skipped 까지 같이 봐야 한다.
+        run_all.run_chain = lambda project, **kw: [
+            ("gsc", StageResult(ok=True)),
+            ("ga4", StageResult(ok=False, skipped=True,
+                                reason="GA4 속성이 연결되어 있지 않습니다")),
+            ("rank", collector.skipped("활성 키워드 없음"))]
+        sent.clear()
+        mailer.available, mailer.run_failed = (lambda: True), lambda *a, **kw: sent.append(a)
+        try:
+            r = run_site(conn, store.sites(conn, uid)[0])
+        finally:
+            mailer.available, mailer.run_failed = real_avail, real_failed
+        assert r["ok"] is True and r["rc"] == 0, f"건너뜀이 실패로 셌다: {r}"
+        row = conn.execute("SELECT last_ok, last_error FROM sites").fetchone()
+        assert (row["last_ok"], row["last_error"]) == (1, None), tuple(row)
+        assert not sent, f"건너뜀뿐인 런에 실패 메일이 나갔다: {sent}"
 
         # 예외로 죽은 런도 실패로 남아야 한다 — 조용히 '완료' 로 남으면 안 된다.
         def boom(project, **kw):

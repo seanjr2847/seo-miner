@@ -341,24 +341,28 @@ def collect(project: str, *,
 
         def one(url: str) -> None:
             row = fetch(url)
+            # 행은 남긴다 — page_audits.error 는 "못 가져왔다"를 적는 진짜 칸이다.
+            # 하지만 거기서 끝내면 실패가 **데이터**가 되어 st.errors 를 못 지나간다:
+            # URL 이 전부 죽어도 runs.notes 에 errors=0 이 적히던 자리다.
             rows.append(row)
             if row.get("error"):
-                print(f"  ✗ {url} — {row['error']}")
-            else:
-                print(f"  ✓ {url} — title {len(row['title'] or '')}자 · "
-                      f"본문 {row['words']}단어 · H1 {len(json.loads(row['h1_json']))}개")
+                raise collector.ItemFailed(row["error"], status=row.get("status"))
+            print(f"  ✓ {url} — title {len(row['title'] or '')}자 · "
+                  f"본문 {row['words']}단어 · H1 {len(json.loads(row['h1_json']))}개")
 
         with st.record("pages") as r:
             done = st.each(urls, one, label=lambda u: u)
             checked = str(date.today())
             db.write_page_audits(conn, p["id"], checked, rows)
             r.api_calls = done
-            r.notes = f"urls={len(rows)}/{len(urls)} checked={checked} errors={st.errors}"
+            r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} "
+                       f"{st.err_note}")
 
         bad = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} page audits (errors={st.errors})"
               + (f" · 못 가져온 URL {len(bad)}개" if bad else ""))
-        return st.done(rows=len(rows))
+        # 실제로 감사한 건수로 판정한다 — 전부 못 가져온 것은 완료가 아니다.
+        return st.verdict(done, rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:

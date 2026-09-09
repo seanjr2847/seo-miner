@@ -151,16 +151,43 @@ def run(project: str, stages, opts: dict) -> int:
 
     **pull 실패가 런을 실패로 만들지 않는다** — 측정은 이미 성공했고 결과는 서버에
     있다. 사유만 한 줄 찍고 종료코드는 런의 것을 그대로 준다.
+
+    런이 실패했어도 사본은 받는다 — 실패한 단계 하나 때문에 성공한 아홉 단계의
+    측정치를 로컬에 안 남기면 사용자만 손해다.
     """
     rc = _stream(project, stages, opts)
-    if rc == 0:
-        try:
-            pull(project)
-        except (Exception, SystemExit) as e:   # _raw 는 거절을 SystemExit 로 낸다
-            print(f"[알림] 로컬 사본을 갱신하지 못했습니다 ({e}) — 측정 결과는 "
-                  "서버에 있습니다. 나중에 python remote.py pull 로 다시 받으세요.",
-                  file=sys.stderr)
+    try:
+        pull(project)
+    except (Exception, SystemExit) as e:   # _raw 는 거절을 SystemExit 로 낸다
+        print(f"[알림] 로컬 사본을 갱신하지 못했습니다 ({e}) — 측정 결과는 "
+              "서버에 있습니다. 나중에 python remote.py pull 로 다시 받으세요.",
+              file=sys.stderr)
     return rc
+
+
+def _run_verdict(project: str) -> int:
+    """로그가 끝난 뒤 서버에 **성패**를 한 번 묻는다. 0 이면 성공.
+
+    /api/run/log 는 {text, next, running} 뿐이라 "끝났다"만 말하고 "잘 끝났다"는
+    말하지 않는다 — 그래서 _stream 은 런이 시작만 하면 늘 0 을 돌려줬고, 로컬
+    슬래시 명령은 호스팅에서 단계가 통째로 실패해도 성공으로 끝났다.
+    성패는 /api/run/status 가 이미 사이트별 last_ok/last_error 로 싣고 있다.
+
+    상태를 못 읽는 것은 실패가 아니다 — 런은 돌았고 못 읽은 건 이쪽 사정이다.
+    """
+    try:
+        st = (api("GET", "/api/run/status") or {}).get(project) or {}
+    except (Exception, SystemExit) as e:
+        print(f"[알림] 런 결과를 못 읽었습니다 ({e}) — 웹 화면에서 확인하세요.",
+              file=sys.stderr)
+        return 0
+    if st.get("last_ok") is None:      # 아직 결과가 안 굳었다 (기록 전)
+        return 0
+    if st.get("last_ok"):
+        return 0
+    print(f"[오류] 호스팅 런이 실패했습니다 — "
+          f"{st.get('last_error') or '이유가 기록되지 않았습니다'}", file=sys.stderr)
+    return 1
 
 
 def _stream(project: str, stages, opts: dict) -> int:
@@ -172,6 +199,9 @@ def _stream(project: str, stages, opts: dict) -> int:
     런이 실제로 시작한 표시(`running` 이거나 새 텍스트)를 볼 때까지는 조용히
     기다린다 — 워커가 뜨기까지 몇 초 걸리는데, 그 사이 "안 돌고 텍스트도 없음"을
     끝난 것으로 읽으면 런 전체를 놓친 채 0 으로 끝난다.
+
+    로그가 끝나면 성패는 _run_verdict 가 따로 묻는다 — 이 폴링만으로는 "끝났다"
+    까지밖에 알 수 없다.
     """
     api("POST", "/api/run",
         json={"project": project, "stages": ",".join(stages), "opts": opts})
@@ -194,7 +224,7 @@ def _stream(project: str, stages, opts: dict) -> int:
             print(text, end="", flush=True)
             since = int(d.get("next", since + len(text)))
         elif not running:
-            return 0
+            return _run_verdict(project)
         time.sleep(POLL)
 
 
@@ -750,6 +780,8 @@ def _selfcheck() -> None:
                {"text": "[gsc] ok\n", "next": 9, "running": True},
                {"text": "요약표\n", "next": 16, "running": True},
                {"text": "", "next": 16, "running": False}]
+        # 서버가 말하는 이 런의 성패. /api/run/log 는 running 만 말한다.
+        run_status = {"mysite": {"running": False, "last_ok": 1, "last_error": None}}
 
         def fake(method, url, **kw):
             calls.append((method, url, kw))
@@ -758,6 +790,8 @@ def _selfcheck() -> None:
                 return _Resp(200, {"ok": True, "started": True})
             if "/api/run/log" in url:
                 return _Resp(200, log.pop(0))
+            if url.endswith("/api/run/status"):
+                return _Resp(200, run_status)
             if url.endswith("/api/brain"):     # 사본 갱신이 실패해도 런은 성공이다
                 return _Resp(404, {"detail": "서버에 아직 보관함이 없습니다"})
             raise AssertionError(url)
@@ -784,6 +818,26 @@ def _selfcheck() -> None:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(errs):
             assert run("mysite", ["gsc"], {}) == 0, "사본 갱신 실패가 런을 실패로 만들었다"
         assert out.getvalue() == "짧은 런\n", repr(out.getvalue())
+
+        # ── 5c. 호스팅에서 단계가 실패했으면 로컬도 그것을 안다.
+        # /api/run/log 는 "끝났다"만 말한다 — 그것만 보고 0 을 주던 동안, 슬래시
+        # 명령은 서버에서 유료 단계가 통째로 죽어도 성공으로 끝났다.
+        run_status["mysite"] = {"running": False, "last_ok": 0,
+                                "last_error": "rank: DataForSEO 잔액 없음(402)"}
+        log[:] = [{"text": "요약표\n", "next": 7, "running": False},
+                  {"text": "", "next": 7, "running": False}]
+        out, errs = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(errs):
+            assert run("mysite", ["gsc"], {}) == 1, "호스팅 런이 실패했는데 0 을 줬다"
+        assert "402" in errs.getvalue(), errs.getvalue()
+
+        # 아직 결과가 안 굳었으면(기록 전) 실패로 몰지 않는다.
+        run_status["mysite"] = {"running": False, "last_ok": None, "last_error": None}
+        log[:] = [{"text": "요약표\n", "next": 7, "running": False},
+                  {"text": "", "next": 7, "running": False}]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            assert run("mysite", ["gsc"], {}) == 0, "last_ok 가 아직 없는데 실패로 봤다"
+        run_status["mysite"] = {"running": False, "last_ok": 1, "last_error": None}
 
         # ── 6. 이름 충돌: 원격이 이기고 stderr 에 한 줄 경고
         con = sqlite3.connect(d / "brain.db")

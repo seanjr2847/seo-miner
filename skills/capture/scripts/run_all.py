@@ -66,6 +66,10 @@ import serp_adapter        # noqa: E402
 
 StageResult = collector.StageResult
 
+# 진단 로그. 사용자 내레이션은 그대로 print 다 — 이건 traceback 처럼 사용자가
+# 읽을 것이 아닌 것을 버리지 않기 위한 통로다(collector.setup_logging 참조).
+log = collector.LOG.getChild("run_all")
+
 ABORT_REASON = "구글 실적 수집이 실패해 여기서 멈췄습니다"
 
 SEPARATOR = "=" * 62
@@ -77,9 +81,9 @@ def load_opportunities(project: str, *, dry_run: bool = False, **_opts) -> Stage
     if dry_run:
         reason = "외부 호출이 없습니다. 실제로 돌리면 기회를 뽑아 저장합니다"
         print(f"[gaps] {reason}")
-        return StageResult(ok=True, skipped=True, reason=reason)
+        return collector.skipped(reason)
     scoring.load(project)
-    return StageResult(ok=True)
+    return collector.succeeded()
 
 
 def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResult:
@@ -88,9 +92,9 @@ def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResul
     if dry_run:
         reason = "외부 호출이 없습니다. 실제로 돌리면 보고서 HTML 을 내보냅니다"
         print(f"[report] {reason}")
-        return StageResult(ok=True, skipped=True, reason=reason)
+        return collector.skipped(reason)
     out = dashboard.export(project)
-    return StageResult(ok=True, artifact=str(out))
+    return collector.succeeded(artifact=str(out))
 
 
 # 단계 정의. 표에는 디스패치가 한 종류뿐 — fn(project, *, dry_run, **opts) -> StageResult.
@@ -294,33 +298,36 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
                only_set: set[str], opts: dict, blocked: dict | None = None) -> StageResult:
     """단계 하나 — 건너뛸 이유를 먼저 보고, 아니면 fn 을 부른다."""
     blocked = blocked or {}
-    if stage.name in skip_set:
-        reason = "--skip 으로 지정해 건너뜁니다"
+
+    def _skip(reason: str) -> StageResult:
         print(f"[{stage.name}] {reason}")
-        return StageResult(ok=True, skipped=True, reason=reason)
+        return collector.skipped(reason)
+
+    if stage.name in skip_set:
+        return _skip("--skip 으로 지정해 건너뜁니다")
 
     if only_set and stage.name not in only_set:
-        reason = "--only 대상이 아니라 건너뜁니다"
-        print(f"[{stage.name}] {reason}")
-        return StageResult(ok=True, skipped=True, reason=reason)
+        return _skip("--only 대상이 아니라 건너뜁니다")
 
     if stage.is_paid:
         has_keys, paid_skip_msg = check_paid_keys(stage.name)
         if not has_keys:
-            print(f"[{stage.name}] {paid_skip_msg}")
-            return StageResult(ok=True, skipped=True, reason=paid_skip_msg)
+            return _skip(paid_skip_msg)
         if stage.name in blocked:
             # 카나리아가 이미 답을 알고 있다 — 402 를 100번 사러 가지 않는다.
-            print(f"[{stage.name}] {blocked[stage.name]}")
-            return StageResult(ok=True, skipped=True, reason=blocked[stage.name])
+            return _skip(blocked[stage.name])
 
     try:
         return stage.fn(project=project, dry_run=dry_run, **opts)
     except collector.Fatal as e:
         # 잔액·인증 — 사람 말 그대로 사유로 싣는다("예외 발생 (...)" 로 감싸지 않는다)
-        return StageResult(ok=False, reason=str(e))
+        log.warning("[%s] Fatal: %s", stage.name, e)
+        return collector.failed(str(e))
     except Exception as e:
-        return StageResult(ok=False, reason=f"이 단계에서 오류가 났습니다 ({e})")
+        # 사용자에게 가는 것은 아래 한 문장이지만, traceback 을 그냥 버리면 원인이
+        # 어디에도 안 남는다 — 여기가 이 저장소에서 진단이 사라지던 자리다.
+        log.exception("[%s] 단계에서 처리하지 못한 예외", stage.name)
+        return collector.failed(f"이 단계에서 오류가 났습니다 ({e})")
 
 
 def run_chain(
@@ -358,6 +365,10 @@ def run_chain(
     if skip and only:
         raise ValueError("--skip 과 --only 옵션은 동시에 사용할 수 없습니다.")
 
+    # 체인이 시작하는 자리는 여기 하나다(로컬 CLI 도, 워커도) — 진단 로그를 켜는
+    # 자리도 하나여야 한다.
+    collector.setup_logging()
+
     valid = tuple(s.name for s in stages)
     skip_set = _stage_names(skip, "skip", valid)
     only_set = _stage_names(only, "only", valid)
@@ -386,7 +397,7 @@ def run_chain(
     for idx, stage in enumerate(stages, start=1):
         # gsc 가 실패했을 때 나머지 단계는 실행하지 않고 중단 상태로 기록
         if gsc_aborted:
-            results.append((stage.name, StageResult(ok=True, skipped=True, reason=ABORT_REASON)))
+            results.append((stage.name, collector.skipped(ABORT_REASON)))
             continue
 
         if on_stage:
@@ -402,7 +413,7 @@ def run_chain(
                        only_set=only_set, opts=opts.get(stage.name) or {}, blocked=blocked)
         results.append((stage.name, r))
 
-        if not r.ok:
+        if r.failed:
             print(f"\n[오류] {stage.name} 단계가 실패했습니다 ({r.reason or '원인 불명'})",
                   file=sys.stderr)
             if stage.name == "gsc":
@@ -417,8 +428,13 @@ def run_chain(
 
 
 def chain_rc(results: list[tuple[str, StageResult]]) -> int:
-    """0: 모든 단계 성공(건너뜀 포함) / 1: 하나 이상 실패."""
-    return 1 if any(not r.ok for _, r in results) else 0
+    """0: 모든 단계 성공(건너뜀 포함) / 1: 하나 이상 실패.
+
+    산문이 "건너뜀 포함"이라고 말하는 동안 구현은 `not r.ok` 만 봤다 — 그리고
+    Stage.skip() 이 ok=False 를 냈으므로, GA4 미연결·활성 키워드 없음 같은 사이트는
+    매 런 rc=1 로 끝나 실패 메일을 받았다. 실패인지는 StageResult.failed 가 답한다.
+    """
+    return 1 if any(r.failed for _, r in results) else 0
 
 
 def chain_cost(results: list[tuple[str, StageResult]]) -> float:
@@ -427,7 +443,8 @@ def chain_cost(results: list[tuple[str, StageResult]]) -> float:
 
 
 def _label(r: StageResult, dry_run: bool) -> str:
-    if not r.ok:
+    # 건너뜀을 "실패"로 찍지 않는다 — 실패인지 묻는 자리는 failed 하나다.
+    if r.failed:
         return "실패"
     if r.reason == ABORT_REASON:
         return "안 돎"
