@@ -121,7 +121,7 @@ def test_fix_page_carries_h2_list_and_advice():
     assert "## 진단 — 고쳐야 할 것" in t and "[title]" in t
     assert "구글 실적 2026-08-25, 최근 28일 평균: 평균 12.4위 · 노출 1,204 · 클릭 8 · 1페이지까지 2.4칸" in t
     assert "기간 평균 게재순위" in t
-    assert "## 바꾼 것" in t
+    assert "'바꾼 것' 표: 진단 항목 | 전 | 후" in t
     assert "title 30자 이내, meta description 80자 이내" in t
 
 
@@ -209,6 +209,43 @@ def test_locale_sets_language_and_length_limits():
         for v in (k.play.values() if "acts" not in k.play else [k.play]):
             for s in v.get("deliver", []):
                 assert "한글" not in s, f"{k.name} 의 처방이 로케일을 박아 뒀다: {s}"
+
+
+def test_tails_ask_for_a_self_contained_html_report():
+    """답의 형식은 **자립형 HTML 한 장**이다 — 어디에 쓰고 어떻게 열고 무엇을 알려
+    주는지가 꼴마다 다 있어야 한다. 한 자리라도 빠지면 AI 는 채팅 본문에 마크다운을
+    늘어놓고 끝낸다(그게 옛 꼬리가 시키던 것이다).
+
+    Mermaid 는 **그래프로 그릴 관계가 있는 꼴에만** 실린다. 한 벌로 실으면 목차도
+    리다이렉트 지도도 없는 꼴(고치기·연락)이 억지 다이어그램을 그리고, 쓰지도 않을
+    라이브러리를 CDN 에서 받는다.
+    """
+    t = brief.tails("ko-KR")
+    for name in brief.SHAPE_NAMES:
+        x = t[name]
+        assert "%TEMP%" in x and f"seo-{name}-" in x and ".html" in x,             f"{name}: 꼬리가 파일을 어디에 무슨 이름으로 쓰는지 안 말한다"
+        assert "절대경로" in x, f"{name}: 파일을 쓰고 경로를 안 알려 주면 사용자가 못 연다"
+        assert "cdn.tailwindcss.com" in x, f"{name}: Tailwind CDN 을 안 짚는다"
+        # 자간·등폭을 한글에 걸면 "아 직 안 딴 기 회"처럼 낱자가 흩어져 스캔이 안 된다.
+        # 이 리포가 화면·랜딩·사이트 목록에서 세 번 저지른 실수라 꼴마다 못 박는다.
+        assert "letter-spacing" in x and "등폭" in x,             f"{name}: 자간·등폭을 라틴에만 걸라는 줄이 없다"
+        assert ("mermaid" in x.lower()) == bool(brief.SHAPES[name]["graph"]),             f"{name}: Mermaid 가 graph 유무와 어긋난다"
+    assert brief.SHAPES["consolidate"]["graph"] and brief.SHAPES["technical"]["graph"]
+    assert not brief.SHAPES["fix_page"]["graph"] and not brief.SHAPES["outreach"]["graph"]
+
+
+def test_form_holds_deliverables_not_markdown_shape():
+    """산출물 계약(무엇을 만드나)은 SHAPES[*]["form"], 그리는 법(어디에 쓰나·무엇으로
+    그리나)은 HTML_FORM 한 벌이다. form 에 마크다운 형식 문장이 남으면 "`## 소제목`을
+    답니다"와 "카드 하나로 그립니다"가 같은 요청문에 나란히 실려 두 벌이 된다.
+    """
+    for name, s in brief.SHAPES.items():
+        joined = " ".join(s["form"])
+        for stale in ("소제목", "코드 블록"):
+            assert stale not in joined, f"{name} 의 form 에 옛 마크다운 형식 문장이 남았다: {stale!r}"
+    # 그래도 산출물 계약 자체는 살아 있어야 한다 — 형식을 빼다 내용까지 비우면 안 된다
+    assert "글자 수" in " ".join(brief.SHAPES["fix_page"]["form"])
+    assert "301" in " ".join(brief.SHAPES["consolidate"]["form"])
 
 
 def test_payload_shapes_are_one_set():
@@ -463,7 +500,8 @@ def test_trust_signals_are_asked_for_but_never_invented():
     """E-E-A-T — 저자·출처·갱신일은 요구하되, 이름·자격은 지어내지 않게 못 박는다."""
     tails = brief.tails("ko-KR")
     for shape in ("fix_page", "new_content"):
-        assert "## 신뢰 신호" in tails[shape] or "`## 신뢰 신호`" in tails[shape], shape
+        # 답이 HTML 카드가 된 뒤로 소제목 틀은 form 이 갖지 않는다 — 요구 자체만 본다
+        assert "신뢰 신호" in tails[shape], shape
         assert "[저자]" in tails[shape], shape
         assert "지어내지 않습니다" in tails[shape], shape
     # 고칠 페이지가 없는 일(연락문)에는 안 붙는다

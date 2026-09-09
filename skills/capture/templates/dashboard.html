@@ -1776,7 +1776,7 @@ const askBlock = c => {
   return `<details class="ask"><summary>요청문 만들기
       <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span></summary>
     <div class="pbox">
-      <div class="pb-h"><span>그대로 복사해 Claude·ChatGPT 에 붙여 넣습니다</span>
+      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — 답은 HTML 리포트로 열립니다</span>
         <button type="button" onclick="copyPrompt(this)">복사</button></div>
       <textarea readonly rows="14" spellcheck="false">${esc(t)}</textarea>
     </div></details>`;
