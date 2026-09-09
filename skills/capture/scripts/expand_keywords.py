@@ -83,9 +83,19 @@ def suggest(query: str, hl: str, gl: str) -> list[str]:
     return [s for s in data[1] if isinstance(s, str)]
 
 
+def _stderr_fail(message: str, *, item: str = "", **_kw) -> None:
+    """fail 이 없을 때(모듈을 단독으로 부를 때)의 자리. 모양은 Stage.fail 과 같게."""
+    print(f"  ! {item}: {message}" if item else f"  ! {message}", file=sys.stderr)
+
+
 def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: str, gl: str,
                         throttle: float, per_seed_cap: int,
-                        dry_run: bool) -> list[tuple[str, str, str]]:
+                        dry_run: bool, fail=_stderr_fail) -> list[tuple[str, str, str]]:
+    """fail 은 Stage.fail — 실패를 여기 지역 카운터에만 세면 단계는 그것을 모른다.
+
+    Suggest 가 IP 차단으로 전부 막혀도 이 함수는 stderr 에 경고만 찍고 빈 목록을
+    돌려줬고, collect 는 st.done() 으로 초록불을 냈다.
+    """
     mods = modifiers(locale, hl)
     out: list[tuple[str, str, str]] = []
     reqs = fails = 0
@@ -112,7 +122,7 @@ def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: st
                         found.add(s)
             except Exception as e:  # endpoint is unofficial: degrade gracefully
                 fails += 1
-                print(f"  ! suggest failed for {q!r}: {e}", file=sys.stderr)
+                fail(str(e), item=f"suggest {q!r}", kind=type(e).__name__)
                 time.sleep(throttle * 4)
             time.sleep(throttle)
         print(f"  {seed!r} -> {len(found)} suggestions")
@@ -196,14 +206,18 @@ def collect(project: str, *,
         with st.record("keywords") as r:
             cands: list[tuple[str, str, str]] = []
             if mode in ("all", "autocomplete"):
-                cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, False)
+                cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap,
+                                             False, fail=st.fail)
             if mode in ("all", "gsc"):
                 cands += gsc_mine(conn, p["id"], locale)
             inserted = db.add_keyword_candidates(conn, p["id"], cands)
-            r.notes = f"mode={mode} candidates={len(cands)} inserted={inserted}"
+            r.notes = (f"mode={mode} candidates={len(cands)} inserted={inserted} "
+                       f"{st.err_note}")
         print(f"done: {inserted} new candidates (is_active=0). "
               f"Next: Claude curates & activates within limits.max_keywords.")
-        return st.done(rows=inserted)
+        # 후보를 한 개도 못 캤는데 Suggest 가 죽어 있었다면 그건 완료가 아니다
+        # (IP 차단이 초록불로 나가던 자리).
+        return st.verdict(len(cands), rows=inserted)
 
 
 def _parser() -> argparse.ArgumentParser:

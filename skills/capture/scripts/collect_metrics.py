@@ -248,7 +248,7 @@ def collect(project: str, *,
                     by_clean.setdefault(c, []).append(r)
             dropped = len(group) - sum(len(v) for v in by_clean.values())
             if dropped:
-                st.fail(f"{loc}: 정제 후 빈 문자열이 된 키워드 {dropped}개는 건너뜁니다")
+                st.fail(f"정제 후 빈 문자열이 된 키워드 {dropped}개는 건너뜁니다", item=loc)
             if not by_clean:
                 return
             words = sorted(by_clean)
@@ -281,12 +281,15 @@ def collect(project: str, *,
             except collector.Fatal:
                 raise
             except Exception as e:
-                print(f"  ! {loc} 난이도 조회 실패 (볼륨은 적재됨): {e}", file=sys.stderr)
+                # 부차적이라 본체를 안 죽이지만, 세지 않으면 난이도가 통째로 빈 런이
+                # 초록불로 나간다 — 같은 자리 한 벌(st.fail)로 센다.
+                st.fail(f"난이도 조회 실패 (볼륨은 적재됨): {e}", item=loc,
+                        kind=type(e).__name__)
 
             if bad:
                 # 끝까지 거절된 것들 — 이름을 적는다. 다음에 BAD_CHARS 를 넓힐 단서다.
-                st.fail(f"{loc}: DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개 — "
-                        + ", ".join(bad[:3]) + ("…" if len(bad) > 3 else ""))
+                st.fail(f"DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개 — "
+                        + ", ".join(bad[:3]) + ("…" if len(bad) > 3 else ""), item=loc)
 
             stamp = db.now()
             got = 0
@@ -551,10 +554,10 @@ def _selfcheck() -> None:
     res = collect("mt", conn=conn, post=boom)
     assert (res.ok, res.skipped) == (True, True) and res.reason, res
 
-    # 유료 키가 없으면 skip (ok=False) — run_all 이 "키 없어 건너뜀"으로 읽는 자리.
+    # 유료 키가 없으면 건너뜀 — **실패가 아니다**(ok 와 skipped 는 직교한다).
     del os.environ["DATAFORSEO_LOGIN"]
     res = collect("mt", conn=conn, post=boom)
-    assert (res.ok, res.skipped) == (False, True) and res.reason, res
+    assert (res.ok, res.skipped, res.failed) == (True, True, False) and res.reason, res
     os.environ["DATAFORSEO_LOGIN"] = "login"
 
     conn.close()

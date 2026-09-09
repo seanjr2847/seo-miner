@@ -271,7 +271,8 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   prompt TEXT NOT NULL,
-  category TEXT DEFAULT 'general',            -- 추천|비교|문제해결|브랜드|general
+  category TEXT DEFAULT 'general',            -- 갈래 정본은 gen_prompts.CATEGORY_CHOICES
+                                              -- (기본값은 gen_prompts.DEFAULT_CATEGORY)
   is_active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, prompt)
@@ -1557,15 +1558,20 @@ def run_sql(query: str) -> None:
     if not query.strip().lower().startswith(("select", "with")):
         sys.exit("read-only: only SELECT/WITH queries allowed here")
     conn = connect_ro()
+    # finally 로 닫는다 — 거절 경로의 sys.exit 과 re-raise 가 close 를 건너뛰었다.
+    # 그러면 커넥션이 예외 트레이스백의 순환에 걸려 gc 때까지 살아 있고, 윈도우는
+    # 열린 파일을 못 지워 임시 brain 을 쓰는 검사가 PermissionError 로 죽는다.
     try:
-        rows = conn.execute(query).fetchall()
-    except sqlite3.OperationalError as e:
-        if "readonly" not in str(e).lower():
-            raise
-        sys.exit("이 통로는 조회 전용입니다 — Brain을 바꾸려면 scoring.md 5절의 "
-                 "파이썬 원라이너(db.connect())를 쓰세요.")
-    print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2, default=str))
-    conn.close()
+        try:
+            rows = conn.execute(query).fetchall()
+        except sqlite3.OperationalError as e:
+            if "readonly" not in str(e).lower():
+                raise
+            sys.exit("이 통로는 조회 전용입니다 — Brain을 바꾸려면 scoring.md 5절의 "
+                     "파이썬 원라이너(db.connect())를 쓰세요.")
+        print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2, default=str))
+    finally:
+        conn.close()
 
 
 def _selfcheck() -> None:

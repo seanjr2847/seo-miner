@@ -35,6 +35,8 @@ import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
+import gen_prompts  # noqa: E402  (AI 질문 갈래 정본 — 매니페스트가 이걸 실어 보낸다)
+import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 — 한 벌)
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
@@ -123,17 +125,23 @@ def _assemble(variant: str = "local") -> bytes:
                 pending.remove(s)
         if len(pending) == i0:
             raise ValueError(f"섹션을 끼울 자리를 못 찾았다: {[s['id'] for s in pending]}")
-    views_json = json.dumps(defs, ensure_ascii=False).replace("</", "<\\/")
+    views_json = htmlsafe.js(defs)
     # 호스팅은 유료 키 문장이 갈린다 — 서버가 키를 대므로 "키가 필요합니다"가
     # 거짓말이 된다. 갈래를 아는 것은 여기(variant)뿐이라 여기서 골라 싣는다.
-    stages_json = json.dumps(stage.stage_labels(variant), ensure_ascii=False).replace("</", "<\\/")
+    stages_json = htmlsafe.js(stage.stage_labels(variant))
     hosted_flag = "window.SM_HOSTED=true;" if variant == "hosted" else ""
-    # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES) — 설정 폼의 <select> 는 여기서
-    # 채우고, 호스팅 애드온(dash.html)은 window.__LOCALES__ 로 같은 표를 읽는다.
-    locales_json = json.dumps(serp_adapter.LOCALES, ensure_ascii=False).replace("</", "<\\/")
-    locale_opts = "".join(f'<option value="{c}">{c} — {t}</option>' for c, t in serp_adapter.LOCALES)
+    # AI 질문 갈래도 한 벌이다(gen_prompts.CATEGORY_CHOICES) — 고르는 자리는 호스팅
+    # 애드온의 [AI 질문 관리] 하나뿐인데 거기가 사본을 들고 있었고, 그 사본에만 있는
+    # "general" 을 사용자가 고를 수 있었다(만드는 쪽은 그 값을 모르던 시절이 있다).
+    cats_json = htmlsafe.js(gen_prompts.CATEGORY_CHOICES)
+    # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES) — 설정 폼의 <select> 를 여기서
+    # 채운다. 매니페스트에는 안 싣는다: 조립본 안에서 그 표를 읽는 자리가 없다.
+    # (등록 화면 app.html 의 window.__LOCALES__ 는 server/app.py 가 따로 실어 보낸다.)
+    locale_opts = "".join(f'<option value="{htmlsafe.attr(c)}">'
+                          f"{htmlsafe.attr(c)} — {htmlsafe.attr(t)}</option>"
+                          for c, t in serp_adapter.LOCALES)
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
-                f"window.__STAGES__={stages_json};window.__LOCALES__={locales_json};</script>")
+                f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
@@ -198,7 +206,7 @@ def export(project: str, actions_file: str | None = None) -> Path:
     if actions_file and Path(actions_file).exists():
         actions = json.loads(Path(actions_file).read_text(encoding="utf-8"))
     snap = {"data": data, "actions": actions, "exported": str(date.today())}
-    blob = json.dumps(snap, ensure_ascii=False).replace("</", "<\\/")  # </script> 차단
+    blob = htmlsafe.js(snap)          # </script> 차단 — 이스케이프는 htmlsafe 한 벌이다
     html = assemble("frozen").replace(
         "<!--SNAPSHOT-->", f"<script>window.__SNAPSHOT__={blob}</script>", 1)
     # 박제본은 남에게 보내는 파일이라 열 때 바깥을 부르지 않는다 — 웹폰트 <link> 를

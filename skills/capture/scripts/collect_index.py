@@ -133,6 +133,8 @@ def collect(project: str, *,
         stop: str | None = None
         # 항목별 오류를 세고 넘어가는 st.each 를 쓰지 않는 유일한 수집기다 —
         # 여기서 오류는 쿼터·권한이라 다음 URL 도 똑같이 죽는다. 세지 말고 멈춘다.
+        # 다만 **멈춘 것은 오류다**: 첫 URL 에서 403 을 맞고도 st.done() 으로 ok=True
+        # 를 내던 자리라, 권한이 없는 사이트가 매 런 초록불로 끝났다.
         with st.record("index") as r:
             for i, url in enumerate(urls, 1):
                 try:
@@ -142,7 +144,10 @@ def collect(project: str, *,
                     # 쿼터(429)·권한(403) 어느 쪽이든 여기까지 모은 것은 살린다.
                     # 예전 방식(예외를 그대로 올림)은 19개 검사하고 20번째에서
                     # 죽으면 19개도 같이 날아갔다.
-                    stop = f"HTTP {getattr(e.resp, 'status', '?')} at {i}/{len(urls)}"
+                    status = getattr(e.resp, "status", None)
+                    stop = f"HTTP {status if status is not None else '?'} at {i}/{len(urls)}"
+                    st.fail(stop, item=url, kind=type(e).__name__,
+                            status=int(status) if str(status or "").isdigit() else None)
                     break
                 row = to_row(url, resp.get("inspectionResult") or {})
                 rows.append(row)
@@ -154,8 +159,8 @@ def collect(project: str, *,
 
             checked = str(date.today())
             db.write_index_status(conn, p["id"], checked, rows)
-            r.notes = f"urls={len(rows)}/{len(urls)} checked={checked}" + (
-                f" 중단: {stop}" if stop else "")
+            r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} {st.err_note}"
+                       + (f" 중단: {stop}" if stop else ""))
 
         if stop:
             print(f"\n[중단] {stop} — 여기까지 {len(rows)}개는 저장했습니다.", file=sys.stderr)
@@ -174,7 +179,8 @@ def collect(project: str, *,
             print(f"  {x['verdict'] or '?':<8} {x['coverage_state'] or '?':<28} {x['url']}")
         if not bad:
             print("  (없음 — 검사한 URL 전부 PASS)")
-        return st.done(rows=len(rows))
+        # 중단이 있었으면 부분 실패(완료 ⚠), 한 개도 못 봤으면 실패다.
+        return st.verdict(len(rows), rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -253,7 +259,10 @@ def _selfcheck() -> None:
     # 의존물은 인자로 준다 — 예전에는 globals()["get_service"] 를 갈아끼웠다.
     # conn 도 같이 넘겨 러너가 빌린 것을 닫지 않는지까지 본다.
     res = collect("it", limit=3, throttle=0, conn=conn, service=_Svc())
-    assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
+    # 429 에서 멈춘 것은 **부분 실패**다 — 여기서 st.done() 으로 초록불을 내던 동안
+    # 첫 URL 부터 403 을 맞는 사이트도 매 런 "완료"였다.
+    assert (res.ok, res.skipped, res.rows, res.partial) == (True, False, 2, True), res
+    assert len(res.errors) == 1 and res.errors[0].status == 429, res.errors
     conn.execute("SELECT 1")     # 빌린 conn 은 러너가 닫지 않는다
 
     saved = [dict(r) for r in conn.execute(

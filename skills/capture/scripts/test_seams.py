@@ -28,9 +28,41 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 ROOT = Path(__file__).resolve().parents[3]
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
+sys.path.insert(0, str(ROOT))   # server.app — 라우트 표의 정본을 import 로 읽는다
 
 import db     # noqa: E402
 import stage  # noqa: E402
+
+
+def _server():
+    """호스팅 서버 모듈(server/app.py) 자체 — 라우트 표도 carry 형식도 여기 산다.
+
+    예전에는 이 파일의 **원문**을 정규식으로 긁었다(`@app.get("...")`,
+    `CARRY_FIELDS = (...)`). 그러면 표 모양이 조금만 바뀌어도 — 데코레이터를 감싸거나
+    router 로 옮기거나 튜플을 여러 줄로 펴거나 — 검사가 조용히 0개를 읽는다. 그래서
+    "하나도 못 읽었다" 가드를 따로 세워야 했는데, 그 가드가 곧 정본을 안 보고 있다는
+    자백이었다. 모듈을 그대로 import 하면 서버가 실제로 등록·선언한 것을 본다.
+
+    리포 밖(server/ 없음)이거나 fastapi 가 없는 곳에서는 None — 부르는 쪽이 조용히
+    건너뛴다. _load() 와 같은 규칙이다.
+    """
+    if not (ROOT / "server" / "app.py").exists():
+        return None
+    try:
+        import server.app as srv
+    except ImportError:
+        return None
+    return srv
+
+
+def _server_paths():
+    """호스팅 서버가 **실제로 등록한** 경로 집합 — 라우트 표의 정본.
+
+    FastAPI 문서 경로(/docs·/openapi.json 등)가 함께 오지만 부르는 쪽은 전부
+    "이 경로가 있는가"만 물으므로 상관없다.
+    """
+    srv = _server()
+    return None if srv is None else {r.path for r in srv.app.routes if hasattr(r, "path")}
 
 
 def _load():
@@ -69,6 +101,36 @@ def _view_defs(views):
 
 def _stage_ids(defs):
     return {s for v in defs.values() for s in v["stages"]}
+
+
+def _gather(name, *, ga4=False):
+    """빈 Brain 하나로 gather() 를 한 번 돌려 페이로드를 받는다 — 화면·요청문이
+    실제로 받는 것과 같은 자료다. 소스를 긁는 대신 이걸 본다.
+
+    ga4=True 면 GA4 스냅샷도 심는다: gather() 의 GA4 다섯 키(ga4_funnel 등)는 연결된
+    사이트에만 조건부로 실려서, 안 심으면 그 키를 읽는 화면이 전부 여기서만 걸린다.
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import dashboard
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,?,'saas','x.com')", (name,))
+    if ga4:
+        c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
+                  "clicks,impressions,ctr,position) VALUES(1,'2026-01-01',28,?,1,1,1.0,1.0)",
+                  (name,))
+        c.execute("INSERT INTO ga4_snapshots(project_id,snapshot_date,period_days,"
+                  "landing_page,sessions,sessions_all,key_events)"
+                  " VALUES(1,'2026-01-01',28,'/',1,1,0)")
+    null = _io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        out = dashboard.gather(c, db.get_project(c, name))
+    c.close()
+    return out
 
 
 def test_seam_01_view_ids_from_payload():
@@ -197,41 +259,35 @@ def test_seam_05_api_calls_exist_on_servers():
     만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
     호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
     /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
-    로컬 쪽은 dashboard.ROUTES(+LOCAL_ONLY_PATHS)가 정본이라 소스 정규식 대신
-    그 경로 집합을 본다 — Handler 가 실제로 등록하는 것과 같은 자료다.
+    양쪽 서버 모두 소스가 아니라 **등록된 경로 집합**을 본다 — 호스팅은
+    app.routes(_server_paths), 로컬은 dashboard.ROUTES(+LOCAL_ONLY_PATHS)다.
     """
     import dashboard
     ctx = _load()
     if ctx is None:
         return
     views, shell, dash = ctx["views"], ctx["shell"], ctx["dash"]
-    app_f, local_f = ctx["app_f"], ctx["local_f"]
-    if app_f.exists() and local_f.exists():
-        app_src = app_f.read_text("utf-8")
-        app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', app_src))
-        assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
+    app_routes = _server_paths()
 
-        def api_calls(src):
-            # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다.
-            # 숫자를 받는다 — 안 받으면 /api/ga4/... 를 /api/ga 로 잘라 읽어서,
-            # 서버에 라우트를 제대로 만들어 놔도 이 검사가 영영 어긋난다.
-            return set(re.findall(r'"(/api/[a-z][a-z0-9/-]*)', src))
+    def api_calls(src):
+        # 끝따옴표를 요구하지 않는다 — "/api/data?project=" + name 형태가 흔하다.
+        # 숫자를 받는다 — 안 받으면 /api/ga4/... 를 /api/ga 로 잘라 읽어서,
+        # 서버에 라우트를 제대로 만들어 놔도 이 검사가 영영 어긋난다.
+        return set(re.findall(r'"(/api/[a-z][a-z0-9/-]*)', src))
 
-        for who, src, servers in (
-                ("원본 화면", shell + "".join(p.read_text("utf-8")
-                                            for p in sorted(views.glob("*.html"))),
-                 (("로컬", None), ("호스팅", None))),
-                ("dash.html", dash, (("호스팅", None),))):
-            for call in sorted(api_calls(src)):
-                for where, _ in servers:
-                    if where == "호스팅":
-                        if call.startswith("/api/setup/"):
-                            continue          # 호스팅은 설정 화면 자체가 없다
-                        assert call in app_routes, \
-                            f"{who} 가 부르는데 호스팅 서버에 없다: {call}"
-                    else:
-                        assert call in dashboard.LOCAL_PATHS, \
-                            f"{who} 가 부르는데 로컬 서버에 없다: {call}"
+    for who, src, servers in (
+            ("원본 화면", shell + "".join(p.read_text("utf-8")
+                                        for p in sorted(views.glob("*.html"))),
+             ("로컬", "호스팅")),
+            ("dash.html", dash, ("호스팅",))):
+        for call in sorted(api_calls(src)):
+            for where in servers:
+                if where == "로컬":
+                    assert call in dashboard.LOCAL_PATHS, \
+                        f"{who} 가 부르는데 로컬 서버에 없다: {call}"
+                elif app_routes is not None and not call.startswith("/api/setup/"):
+                    assert call in app_routes, \
+                        f"{who} 가 부르는데 호스팅 서버에 없다: {call}"   # setup 은 면제
 
 
 def test_seam_06_runnable_stages_known_to_server():
@@ -427,22 +483,7 @@ def test_seam_10_gather_payload_keys_match():
     if ctx is None:
         return
     views = ctx["views"]
-    import dashboard
-    import sqlite3 as _sq, io, contextlib
-    _c = _sq.connect(":memory:")
-    _c.row_factory = _sq.Row
-    _c.executescript(db.SCHEMA)
-    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
-    # GA4 다섯 키(ga4_funnel 등, dashboard.py gather())는 GA4 연결(ga4_snapshots 존재)일
-    # 때만 조건부로 실린다 — 안 심으면 그 키를 읽는 화면이 전부 이 검사에서만 걸린다.
-    _c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,impressions,ctr,position)"
-               " VALUES(1,'2026-01-01',28,'_seam',1,1,1.0,1.0)")
-    _c.execute("INSERT INTO ga4_snapshots(project_id,snapshot_date,period_days,landing_page,sessions,sessions_all,key_events)"
-               " VALUES(1,'2026-01-01',28,'/',1,1,0)")
-    _null = io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
-    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
-        served = set(dashboard.gather(_c, db.get_project(_c, "_seam")))
-    _c.close()
+    served = set(_gather("_seam", ga4=True))
     read = set()
     for p in sorted(views.glob("*.html")):
         read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
@@ -461,15 +502,13 @@ def test_seam_11_carry_fields_match():
     ctx = _load()
     if ctx is None:
         return
-    app_f = ctx["app_f"]
     import dashboard
-    if app_f.exists():
-        app_src = app_f.read_text("utf-8")
+    srv = _server()
+    if srv is not None:
+        app_src = ctx["app_f"].read_text("utf-8")
         assert "dashboard.carry_read" in app_src, \
             "호스팅이 carry 를 직접 푼다 — 형식의 정본은 dashboard 의 carry_pack/carry_read 다"
-        m = re.search(r"CARRY_FIELDS = \(([^)]*)\)", app_src)
-        assert m, "app.py 의 CARRY_FIELDS 를 못 찾았다 — 표 모양이 바뀌었다"
-        used = set(re.findall(r'"(\w+)"', m.group(1)))
+        used = set(srv.CARRY_FIELDS)      # 서버가 선언한 것 그대로 — 소스를 안 긁는다
         used |= set(re.findall(r"CARRY\.(\w+)",
                                (ROOT / "server" / "app.html").read_text("utf-8")))
         used.add("gsc_property")          # 어느 속성에 얹을지 — 아래에서 쓰는지 본다
@@ -491,7 +530,8 @@ def test_seam_11_carry_fields_match():
 def test_seam_12_remote_client_api_calls_exist():
     """12) 원격 클라이언트가 부르는 /api/* 는 호스팅 서버에 전부 있어야 한다.
     5) 와 같은 종류의 이음매인데 부르는 쪽만 다르다 — 화면 대신 로컬 CLI 다.
-    양쪽 다 소스에서 뽑는다(목록을 손으로 적으면 그게 곧 두 번째 사본이다).
+    받는 쪽은 app.routes(정본)를 읽고, 부르는 쪽은 목록을 손으로 적지 않고 소스에서
+    훑는다(적는 순간 그게 곧 두 번째 사본이다).
     경로가 하나 어긋나면 클라이언트도 서버도 따로 보면 멀쩡한데, 사용자는
     "원격 서버 오류 404" 한 줄만 보고 무엇이 없는지 영영 모른다.
     부르는 쪽은 remote.py 와 그 api()/fetch() 를 쓰는 진입점들(db sql,
@@ -500,11 +540,8 @@ def test_seam_12_remote_client_api_calls_exist():
     ctx = _load()
     if ctx is None:
         return
-    app_f = ctx["app_f"]
-    if app_f.exists():
-        app_routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"',
-                                    app_f.read_text("utf-8")))
-        assert app_routes, "server/app.py 의 라우트를 하나도 못 읽었다 — 표 모양이 바뀌었다"
+    app_routes = _server_paths()
+    if app_routes is not None:
         remote_call = re.compile(r'(?:remote\.)?\b(?:api|fetch)\('
                                  r'\s*(?:"(?:GET|POST)"\s*,\s*)?"(/api/[a-z0-9/_-]+)"')
         for p in sorted(SCRIPTS.glob("*.py")) + sorted(SETUP_SCRIPTS.glob("*.py")):
@@ -542,6 +579,11 @@ def test_seam_14_locale_list_single_source():
     의 locales 를 읽는다). 셋 중 하나라도 사본을 들면 새 언어를 한 곳에만 더하게
     되고, 고를 수 있는데 미국 SERP 로 떨어지는 항목이 생긴다 — 그래서 목록의 모든
     키가 LOCATION_MAP 에 닿는지까지 본다.
+
+    조립본 매니페스트에는 이 목록이 안 실린다. 예전에는 실렸고 여기서 그걸 못
+    박았는데, 조립본 안에서 window.__LOCALES__ 를 읽는 자리는 **없었다** — 설정 폼은
+    <option> 으로 이미 채워져 오고, 호스팅 설정은 /api/settings 로 받는다. 등록 화면
+    (app.html)의 window.__LOCALES__ 는 server/app.py 가 따로 싣는 다른 경로다.
     """
     import dashboard
     import serp_adapter
@@ -555,7 +597,8 @@ def test_seam_14_locale_list_single_source():
     html = dashboard._assemble("local").decode("utf-8")
     for c in codes:
         assert f'<option value="{c}">' in html, f"조립본 설정 폼에 {c} 가 없다"
-    assert "window.__LOCALES__=" in html, "조립이 언어-지역 목록을 안 실었다"
+    assert "window.__LOCALES__" not in html, \
+        "조립본에 읽는 곳 없는 언어-지역 페이로드가 되살아났다 — 실으면 읽는 자리를 만들어라"
     ctx = _load()
     if ctx is None:
         return
@@ -683,7 +726,7 @@ def test_seam_18_run_tool_and_creation_single_source():
     """18) 실행·기록 이음매 — 개발 도구 실행과 작업 기록은 양쪽 끝이 있다.
 
     [기록 창구]
-    기록 창구(`/api/creation`)는 로컬 `dashboard.ROUTES` 와 호스팅 `app.py` 둘 다에
+    기록 창구(`/api/creation`)는 로컬 `dashboard.ROUTES` 와 호스팅 `app.routes` 둘 다에
     있어야 한다. 요청문 꼬리의 기록 명령은 로컬·호스팅 구분 없이 같은 한 줄이라,
     `createdb.py` 가 `remote.owns` 로 갈라 그 창구를 부르지 않으면 호스팅 사이트의
     기록이 이 PC 의 빈 Brain 으로 떨어진다(아무 오류 없이).
@@ -705,8 +748,8 @@ def test_seam_18_run_tool_and_creation_single_source():
         return
     assert ("POST", "/api/creation") in dashboard.ROUTES, \
         "로컬 ROUTES 에 /api/creation 이 없다 — 기록 창구는 이 표가 정본이다"
-    app_src = ctx["app_f"].read_text("utf-8")
-    assert '@app.post("/api/creation")' in app_src, \
+    app_routes = _server_paths()
+    assert app_routes is None or "/api/creation" in app_routes, \
         "호스팅 서버에 /api/creation 이 없다 — 웹 사이트의 기록이 갈 곳이 없다"
     create_f = ROOT / "skills" / "create" / "scripts" / "createdb.py"
     if create_f.exists():
@@ -774,12 +817,6 @@ def test_seam_19_brief_context_keys_come_from_gather():
     ctx = _load()
     if ctx is None:
         return
-    import contextlib
-    import io as _io
-    import sqlite3 as _sq
-
-    import brief
-    import dashboard
     src = (SCRIPTS / "brief.py").read_text("utf-8")
     read = (set(re.findall(r'ctx\.get\("(\w+)"', src))
             | set(re.findall(r'ctx\["(\w+)"\]', src)))
@@ -787,14 +824,7 @@ def test_seam_19_brief_context_keys_come_from_gather():
     read -= {"brief"}
     assert read, "brief.py 에서 ctx 조회를 하나도 못 찾았다 — 정규식이 틀렸다"
 
-    _c = _sq.connect(":memory:")
-    _c.row_factory = _sq.Row
-    _c.executescript(db.SCHEMA)
-    _c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam19','saas','x.com')")
-    _null = _io.StringIO()
-    with contextlib.redirect_stdout(_null), contextlib.redirect_stderr(_null):
-        served = set(dashboard.gather(_c, db.get_project(_c, "_seam19")))
-    _c.close()
+    served = set(_gather("_seam19"))
     assert read <= served, (
         f"요청문이 읽는데 gather() 가 안 싣는 키: {sorted(read - served)}")
 
@@ -835,13 +865,107 @@ def test_seam_20_speed_thresholds_single_source():
     j = site.index("let ST_AUDITS", i)
     for lit in ("2500", "2.5", "200ms 이내", "0.1 이내"):
         assert lit not in site[i:j], f"속도 기준 숫자가 화면에 박혀 있다: {lit}"
-    rules = (ctx["local_f"]).read_text("utf-8")
+    # gather() 가 실제로 실어 보내는 값을 본다 — 소스에 그렇게 적혀 있는지가 아니라.
+    rules = _gather("_seam20").get("rules") or {}
     for key, const in (("lcp_good_ms", "LCP_GOOD_MS"), ("inp_good_ms", "INP_GOOD_MS"),
                        ("cls_good", "CLS_GOOD")):
-        assert f'"{key}": scoring.{const}' in rules, (
-            f"gather() 의 rules 가 {key} 를 scoring 에서 안 가져온다")
+        assert rules.get(key) == getattr(scoring, const), (
+            f"gather() 의 rules 가 {key} 를 scoring.{const} 로 안 싣는다: {rules.get(key)!r}")
     assert (scoring.LCP_GOOD_MS, scoring.INP_GOOD_MS, scoring.CLS_GOOD) == (2500, 200, 0.1), (
         "구글이 공개한 기준값과 다르다 — 바꿀 이유가 있으면 여기 주석에 적는다")
+
+
+def test_seam_21_prompt_categories_single_source():
+    """21) AI 질문 갈래(추천·비교·문제해결·브랜드·general)는 gen_prompts 한 벌이다.
+
+    세 벌이었고 이미 어긋나 있었다: 화면(dash.html)의 <select> 만 "general" 을
+    선택지에 갖고 있었고, 만드는 쪽(gen_prompts.CATEGORIES)은 그 값을 몰랐으며,
+    db.py 의 SQL 주석은 세 번째 사본이었다. 사용자는 고를 수 있는데 그 갈래로는
+    아무것도 안 만들어지는 값을 보고 있었던 셈이다 — 어느 파일도 혼자서는 안
+    이상하고, 화면에도 로그에도 아무것도 안 남는다.
+
+    지금은 조립(dashboard.py._assemble)이 window.__AIQ_CATS__ 로 실어 보내고 화면은
+    그걸 그린다 — 단계 용어표(3)·화면 목록(2)과 같은 방식이다. 양방향으로 본다:
+    화면이 고를 수 있는 값은 전부 정본이 아는 값이고, 정본의 값은 전부 화면에 뜬다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import dashboard
+    import gen_prompts
+    dash = ctx["dash"]
+
+    # 정본 안에서 앞뒤가 맞는다 — 기본값은 선택지 안에 있고, 만드는 넷은 그 부분집합이다.
+    assert gen_prompts.DEFAULT_CATEGORY in gen_prompts.CATEGORY_CHOICES
+    assert set(gen_prompts.CATEGORIES) < set(gen_prompts.CATEGORY_CHOICES), \
+        "만드는 갈래가 고를 수 있는 갈래의 부분집합이 아니다"
+
+    # 화면은 사본을 안 갖고 페이로드를 읽는다
+    assert "window.__AIQ_CATS__" in dash, \
+        "dash.html 이 조립이 실어 보낸 질문 갈래표를 안 읽는다"
+    assert "var AIQ_CATS = [" not in dash, \
+        "dash.html 에 질문 갈래 사본이 되살아났다 — gen_prompts 가 정본이다"
+
+    # 조립이 싣는 것이 정본 그대로다(호스팅 애드온이 뜨는 조립본에서 확인한다)
+    html = dashboard._assemble("hosted").decode("utf-8")
+    m = re.search(r"window\.__AIQ_CATS__=(\[[^;]*\]);", html)
+    assert m, "조립본 매니페스트에 질문 갈래표가 없다"
+    assert json.loads(m.group(1)) == list(gen_prompts.CATEGORY_CHOICES), \
+        f"조립이 싣는 갈래가 정본과 다르다: {m.group(1)}"
+
+    # db 주석은 사본을 다시 만들지 않는다 — 표는 파이썬 한 곳에만 적힌다
+    db_src = (SCRIPTS / "db.py").read_text("utf-8")
+    assert "|".join(gen_prompts.CATEGORIES) not in db_src, \
+        "db.py 주석에 갈래 사본이 되살아났다 — gen_prompts.CATEGORY_CHOICES 를 가리켜라"
+
+    # 받는 쪽(호스팅 서버)도 같은 표를 본다. 화면이 고를 수 있는 값을 서버가 모르면
+    # 저장이 조용히 기본값으로 접힌다 — 고른 사람에게는 아무 말도 안 나간다.
+    srv = _server()
+    if srv is not None:
+        app_src = ctx["app_f"].read_text("utf-8")
+        assert "gen_prompts.CATEGORIES" in app_src, \
+            "호스팅 서버가 갈래표를 손으로 적는다 — 정본은 gen_prompts 다"
+        assert f'"{gen_prompts.DEFAULT_CATEGORY}"' in app_src, \
+            "서버가 화면 선택지의 기본 갈래를 모른다 — 고를 수는 있는데 저장이 접힌다"
+
+
+def test_seam_22_document_escaping_single_source():
+    """22) 문서에 값을 박을 때의 이스케이프는 htmlsafe 한 벌이다.
+
+    같은 관용구가 다섯 자리에 손으로 적혀 있었고(`json.dumps(...)` + `.replace("</",
+    "<\\/")`), 그중 하나(`<option>` 을 짓는 자리)는 이스케이프가 **아예 없었다**.
+    한 자리만 빼먹으면 값에 든 `</script>` 가 거기서 태그를 닫고 그 뒤가 통째로
+    마크업이 된다 — 화면은 반쪽만 서고 콘솔에도 검사에도 아무것도 안 남는다.
+
+    소스에 그 관용구가 되살아났는지(사본)와, 조립본이 실제로 적대적인 값을 막는지
+    (동작) 둘 다 본다.
+    """
+    import htmlsafe
+    assert "</" not in htmlsafe.js({"a": "</script><script>evil()"})
+    assert htmlsafe.attr('"><b>') == "&quot;&gt;&lt;b&gt;"
+
+    # 관용구를 다시 손으로 적으면 그게 곧 여섯 번째 사본이다. 정본(htmlsafe.py)과
+    # 이 검사 자신만 그 글자를 갖는다 — 나머지는 전부 htmlsafe.js 를 부른다.
+    mine = {"htmlsafe.py", Path(__file__).name}
+    for f in sorted(SCRIPTS.glob("*.py")) + sorted((ROOT / "server").glob("*.py")):
+        if f.name in mine:
+            continue
+        assert '.replace("</"' not in f.read_text("utf-8"), \
+            f"{f.name} 에 손으로 적은 스크립트 이스케이프가 되살아났다 — 정본은 htmlsafe.js 다"
+
+    # <option> 을 짓는 자리가 값을 그대로 박지 않는다. 출처(LOCALES)를 잠깐 적대적인
+    # 것으로 바꿔 조립을 한 번 돌린다 — 지금 출처가 고정 상수라 이 길로만 확인된다.
+    import dashboard
+    import serp_adapter
+    orig = serp_adapter.LOCALES
+    try:
+        serp_adapter.LOCALES = list(orig) + [('x"><script>evil()</script>', "가</script>나")]
+        html = dashboard._assemble("local").decode("utf-8")
+    finally:
+        serp_adapter.LOCALES = orig
+    assert "<script>evil()" not in html and "가</script>나" not in html, \
+        "조립이 <option> 값을 이스케이프 없이 박는다 — 목록 출처가 사람 손을 타면 터진다"
+    assert "&lt;script&gt;evil()" in html, "적대적인 값이 아예 안 실렸다 — 검사가 헛돈다"
 
 
 if __name__ == "__main__":

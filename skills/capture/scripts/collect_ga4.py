@@ -298,8 +298,12 @@ def collect(project: str, *,
             try:
                 r = _run_report(data_svc, prop_id, body)
             except HttpError as e:
-                print(f"[경고] {label} 수집을 건너뜁니다 ({e}) — "
-                      "본체 스냅샷은 그대로 저장됩니다.", file=sys.stderr)
+                # GSC 와 같은 규칙 — 본체는 안 죽이되 세기는 한다(안 세면 축이 몇 주째
+                # 비어도 기록이 stderr 한 줄뿐이다).
+                status = getattr(getattr(e, "resp", None), "status", None)
+                st.fail(f"수집을 건너뜁니다 ({e}) — 본체 스냅샷은 그대로 저장됩니다.",
+                        item=label, kind=type(e).__name__,
+                        status=status if isinstance(status, int) else None)
                 return None
             calls += 1
             return r.get("rows", []) or []
@@ -347,10 +351,11 @@ def collect(project: str, *,
                        + "".join(f"{d}={len(m)} " for d, m in bd_results)
                        + "".join(f"{d}=skip " for d in BREAKDOWN_DIMS
                                  if d not in dict(bd_results))
-                       + f"calls={calls} window={start}~{end}")
+                       + f"calls={calls} window={start}~{end} {st.err_note}")
 
         print(f"saved ga4 snapshot {snap} ({len(main)} landing pages)")
-        return st.done(rows=len(main))
+        # GSC 와 같은 규칙 — 성공한 호출 수로 판정한다(여기까지 왔으면 본체는 성공).
+        return st.verdict(calls, rows=len(main))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -430,7 +435,8 @@ def _selfcheck() -> None:
             raise AssertionError("속성 미연결인데 API 를 건드렸다")
 
     res = collect("noga4", conn=conn, data_svc=_Boom())
-    assert (res.ok, res.skipped) == (False, True), res
+    # 건너뜀은 실패가 아니다 — 속성 미연결로 체인이 실패하고 실패 메일이 나가던 자리다.
+    assert (res.ok, res.skipped, res.failed) == (True, True, False), res
     assert "ga4_property" in res.reason or "연결" in res.reason, res.reason
 
     # 5. 정상 경로 — 유기 필터가 실제로 실리는지, 유기/전체가 따로 담기는지, 분해 세 축.

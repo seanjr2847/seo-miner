@@ -164,10 +164,12 @@ def collect(project: str, *,
         def one(job) -> None:
             url, dev = job
             row = fetch(url, dev)
+            # 행은 남긴다 — page_vitals.error 는 "못 쟀다"를 적는 진짜 칸이다.
+            # 그리고 실패는 예외로 올린다: 여기서 return 하면 실패가 데이터로만 남아
+            # 전부 못 재고도 runs.notes 에 errors=0 이 적힌다(collect_page 와 같은 규칙).
             rows.append(row)
             if row.get("error"):
-                print(f"  ✗ [{dev}] {url} — {row['error']}")
-                return
+                raise collector.ItemFailed(row["error"])
             lcp = row.get("field_lcp_ms") or row.get("lab_lcp_ms")
             score = row.get("lab_score")
             print(f"  ✓ [{dev}] {url} — 점수 {score if score is not None else '—'}"
@@ -179,12 +181,13 @@ def collect(project: str, *,
             db.write_page_vitals(conn, p["id"], checked, rows)
             r.api_calls = done
             r.notes = (f"urls={len(urls)} strategies={','.join(want)} "
-                       f"rows={len(rows)} checked={checked} errors={st.errors}")
+                       f"rows={len(rows)} checked={checked} {st.err_note}")
 
         bad_rows = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} vitals rows (errors={st.errors})"
               + (f" · 못 잰 것 {len(bad_rows)}개" if bad_rows else ""))
-        return st.done(rows=len(rows))
+        # 실제로 잰 건수로 판정한다 — 전부 못 잰 것은 완료가 아니다.
+        return st.verdict(done, rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:
