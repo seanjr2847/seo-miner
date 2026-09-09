@@ -112,12 +112,13 @@ INTENT_NAVIGATIONAL = {
     "로그인", "공식", "홈페이지", "login", "official", "homepage",
 }
 
-# 이 리포가 만드는 기회 종류 한 벌 — 화면의 KIND_LABEL·PLAY 와 짝이 맞아야 한다
-# (짝이 어긋나면 라벨 없는 영문 kind 가 화면에 그대로 뜬다). test_seams 가
-# 이 튜플을 정규식으로 읽는다 — 리터럴 문자열 나열 그대로 둬야 한다(파생시키지 않는다).
-# 이름·순서의 정본은 여기다. 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래
-# KINDS 명부(_KIND_SPECS)가 이 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도
-# 거기서 파생된다 (is_defensive() 는 그 결과를 읽는다).
+# 이 리포가 만드는 기회 종류 한 벌 — 이름·순서의 정본은 여기다. 라벨·처방은 화면이
+# 아니라 dashboard.gather() 가 KINDS 명부에서 실어 보낸다(짝이 어긋나면 라벨 없는
+# 영문 kind 가 화면에 그대로 떴었다). 읽는 쪽은 전부 `scoring.ALL_KINDS` 를 import
+# 한다 — brief·db·검사 어디도 이 파일 원문을 긁지 않으므로 표 모양은 자유다.
+# 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래 KINDS 명부(_KIND_SPECS)가 이
+# 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도 거기서 파생된다
+# (is_defensive() 는 그 결과를 읽는다).
 ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
              "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
@@ -2049,10 +2050,10 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
 # load() 는 이 명부를 순회할 뿐 kind 문자열을 직접 적지 않는다 — 명부에 없는 kind 는
 # 나올 수가 없다(구조적으로), 명부에 있는데 빠지는 kind 도 없다(전부 돈다).
 #
-# ALL_KINDS(위)가 이름·순서의 정본이다 — test_seams 가 그 튜플을 정규식으로
-# 읽는다. KINDS 는 ALL_KINDS 를 그대로 따라가며 _KIND_SPECS 에서 나머지를 채운
-# 파생값이다(반대 방향이 아니라 이 방향인 이유: ALL_KINDS 가 문자열 리터럴 나열
-# 그대로여야 그 정규식이 계속 읽을 수 있다). DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
+# ALL_KINDS(위)가 이름·순서의 정본이다. KINDS 는 그것을 그대로 따라가며
+# _KIND_SPECS 에서 나머지를 채운 파생값이고(반대 방향이 아니라 이 방향인 이유:
+# 이름만 읽으면 되는 쪽 — brief·db·검사 — 이 명부 전체를 짓지 않고도 import 로
+# 끝낼 수 있다), DEFENSIVE_KINDS 는 KINDS 에서 파생된다.
 #
 # 검출기 시그니처가 저마다 달라(striking 은 brands=, pseo_pattern 은 limit=10,
 # backlink_* 는 backlink_gaps() 한 번의 앞/뒤 절반) 억지로 한 모양에 밀어 넣지

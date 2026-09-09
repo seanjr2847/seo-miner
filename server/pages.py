@@ -13,11 +13,16 @@ server/assets/. 파이썬 문자열에 JS 를 1,000 줄 박아 두면 어느 쪽
 from __future__ import annotations
 
 import html
-import json
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# 이스케이프의 정본은 capture 스크립트에 있다 — 조립(dashboard.py)이 server/ 없이도
+# 같은 함수를 써야 하기 때문이다. uvicorn 으로 뜰 때는 app.py 가 이미 이 경로를
+# 얹지만, `python server/pages.py` 로 혼자 돌 때는 여기서 얹어야 한다.
+sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
+from htmlsafe import js  # noqa: E402  (data() 가 쓰고, 밖에서도 pages.js 로 부른다)
 
 # 두 마커 문법을 한 정규식으로 — 이름은 대문자·밑줄만 쓴다.
 SLOT = re.compile(r"<!--([A-Z_]+)-->|@@([A-Z_]+)@@")
@@ -53,11 +58,6 @@ def fill(doc: str, **slots: str) -> str:
     if unused:
         raise KeyError(f"문서에 없는 슬롯: {unused}")
     return out
-
-
-def js(value) -> str:
-    """`<script>` 안에 박아도 안전한 JSON. `</` 가 그대로 들어가면 거기서 태그가 닫힌다."""
-    return json.dumps(value, ensure_ascii=False).replace("</", r"<\/")
 
 
 def data(doc: str, **values) -> str:
@@ -99,10 +99,9 @@ def demo() -> None:
     except KeyError:
         pass
 
-    # </script> 를 값에 넣어도 태그가 안 닫힌다.
-    assert js({"a": "</script><script>evil()"}) == \
-        '{"a": "<\\/script><script>evil()"}', js({"a": "</script>"})
-    assert js(["가"]) == '["가"]', "한글이 이스케이프됐다 — 화면에 그대로 나와야 한다"
+    # 이스케이프 자체는 htmlsafe._selfcheck 이 본다 — 여기서는 data() 가 **그** 함수를
+    # 지나는지만 본다(그냥 json.dumps 로 되돌아가면 여기서 걸린다).
+    assert '<\\/script>' in data(doc, __X__="</script>"), "data() 가 이스케이프를 안 지난다"
 
     got = data(doc, __TAKEN__=["a"], __N__=3)
     assert got.index("window.__TAKEN__") < got.index("var x=1"), \

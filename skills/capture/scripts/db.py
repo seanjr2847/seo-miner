@@ -271,7 +271,8 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   prompt TEXT NOT NULL,
-  category TEXT DEFAULT 'general',            -- 추천|비교|문제해결|브랜드|general
+  category TEXT DEFAULT 'general',            -- 갈래 정본은 gen_prompts.CATEGORY_CHOICES
+                                              -- (기본값은 gen_prompts.DEFAULT_CATEGORY)
   is_active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, prompt)
