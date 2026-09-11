@@ -19,9 +19,23 @@ ROOT = Path(__file__).resolve().parent
 SKIP_DIRS = {".claude", ".git", "__pycache__", "node_modules", ".venv"}
 
 
+def nested_checkouts() -> set[Path]:
+    """리포 안에 들어앉은 다른 체크아웃(워크트리·클론) — 그 폴더의 `.git` 이 표식이다.
+
+    다른 세션의 워크트리가 리포 안에 생기면(capricorn/·flask/) 이 스크립트가 그 사본까지
+    훑어 총계가 82→125 로 튀고, 원래 실패가 사본 수만큼 곱해졌다. 그러면 "116/122,
+    실패는 다 원래 것" 이 기준선이 되고, 그 속에 진짜 실패가 섞여도 못 알아본다. 이
+    리포의 검사는 이 리포의 파일만 본다.
+    """
+    return {g.parent for g in ROOT.rglob(".git")
+            if g.parent != ROOT and not SKIP_DIRS & set(g.parent.relative_to(ROOT).parts)}
+
+
 def py_files() -> list[Path]:
+    nested = nested_checkouts()
     return sorted(p for p in ROOT.rglob("*.py")
-                  if not SKIP_DIRS & set(p.relative_to(ROOT).parts))
+                  if not SKIP_DIRS & set(p.relative_to(ROOT).parts)
+                  and not any(n in p.parents for n in nested))
 
 
 def discover() -> list[tuple[str, list[str]]]:

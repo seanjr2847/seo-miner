@@ -427,8 +427,15 @@ let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "", AI_ENG = "";
 // 명령 칩에 넣을 사이트 이름뿐이다(대신 인용된 곳의 수는 질문 행이 싣고 온다).
 let AI_NM = "";
 
-const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
-  ["none", "안 잡힘"]];
+const AI_ST_OPT = [["", "전체"], ["gap", "인용 드묾"], ["cited", "인용됨"],
+  ["mention", "언급만"], ["none", "안 잡힘"]];
+// 서버가 인용 공백으로 판정한 질문(d.ai_gap_rows — scoring.ai_is_gap 이 정본). 화면이
+// 인용 수로 다시 세면 판정이 두 벌이 된다: 6번 중 1번 인용된 질문은 "인용됨"이면서
+// 기회("챗봇 인용 드묾")이고, 예전 띠는 그런 질문만 남으면 "전부 인용된다"고 했다.
+// null = 판정 목록을 안 실은 옛 박제본 — 그때만 옛 눈금으로 물러선다.
+let AI_GAPS = null;
+const AI_stIs = (r, s) => s === "gap" ? !!(AI_GAPS && AI_GAPS.has(r.prompt))
+  : AI_stOf(r) === s;
 // 엔진을 골랐으면 그 엔진 몫(by_engine)으로 센다 — 상태·숫자·칩 수가 전부 이걸 따른다.
 const AI_cnt = r => AI_ENG && r.by_engine
   ? (r.by_engine[AI_ENG] || {cited: 0, mentioned: 0, checks: 0}) : r;
@@ -452,7 +459,7 @@ function AI_filtered() {
   return AI_ROWS.filter(r =>
     (!AI_ENG || (r.by_engine || {})[AI_ENG]) &&
     (!AI_CAT || r.category === AI_CAT) &&
-    (!AI_ST || AI_stOf(r) === AI_ST) &&
+    (!AI_ST || AI_stIs(r, AI_ST)) &&
     (!q || `${r.prompt} ${AI_exTxt(r)}`.toLowerCase().includes(q)))
     .sort((a, b) => AI_score(b) - AI_score(a));
 }
@@ -525,6 +532,13 @@ function AI_play(r) {
               "파생 질문 H2 목록"]};
 }
 
+// 이 화면의 진단표는 추출성(인용될 블록이 있나)까지 싣는다 — 판정은 서버가 감사 행에
+// 실어 온 것(scoring.extract_advice) 그대로다. 다른 화면의 진단표에는 안 붙는다.
+const AI_pageFix = url => {
+  const a = (window.PAGE_AUDITS || {})[url];
+  return pageFix(a, url, a && a.extract_advice);
+};
+
 // 이 질문에서 우리 대신 가장 자주 인용된 곳 — 그 자리를 계속 가져가는 쪽이다. 수는
 // 서버가 이 질문의 빠진 답변만으로 센 것이다(사이트 전체 점유가 아니다).
 function AI_rival(riv) {
@@ -555,7 +569,7 @@ function AI_detail(r, riv) {
   return `<div class="det">${playList(p.what, p.acts)}${AI_rival(riv)}
     ${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix((window.PAGE_AUDITS || {})[url], url)}`
+      rel="noopener">${esc(url)}</a></p>${AI_pageFix(url)}`
     : ""}${ask}</div>`;
 }
 
@@ -624,7 +638,7 @@ function AI_handoff() {
    거르기만 하면 약속을 반만 지킨다: 띠가 "그 질문을 열면 무엇을 고칠지 나옵니다"
    라고 말하므로 **첫 줄까지 펴 준다**. 다른 화면의 [기회 열기]와 같은 동작이다. */
 function AI_showMissed() {
-  AI_ENG = ""; AI_CAT = ""; AI_Q = ""; AI_ST = "none";
+  AI_ENG = ""; AI_CAT = ""; AI_Q = ""; AI_ST = AI_GAPS ? "gap" : "none";
   AI_render();
   const t = $("ai-plist").querySelector("tbody tr .aiq-t");
   if (t && t.getAttribute("aria-expanded") !== "true") AI_ev(t);
@@ -655,28 +669,32 @@ function AI_nextStep(d, has, missN, canFilter) {
       window.act("ai", "인용 확인"));
   // 안 잡힌 질문이 있으면 다시 돌리는 것보다 그 질문을 여는 것이 먼저다 —
   // 무엇을 고칠지는 그 줄을 펴야 나온다. 거를 목록이 없는 옛 박제본에서만 물러선다.
+  // 세는 말은 서버 판정을 따른다 — 판정 목록이 있으면 "인용이 드문", 없는 옛 박제본만
+  // 옛 눈금("한 번도 인용되지 않은")으로 말한다.
+  const missTxt = AI_GAPS ? "인용이 드문 질문이" : "한 번도 인용되지 않은 질문이";
   if (missN && canFilter)
-    return put(`한 번도 인용되지 않은 질문이 <b>${num(missN)}개</b> 있습니다.`
+    return put(`${missTxt} <b>${num(missN)}개</b> 있습니다.`
       + live("그 질문을 열면 무엇을 고칠지 나옵니다."),
       // 다시 확인하는 손잡이는 화면 머리가 이미 들고 있다 — 띠에 또 두면 같은 행동이
       // 250px 안에 두 번 선다(dimHead 는 띠의 **주요** 버튼만 머리에서 뺀다).
       `<button class="go" onclick="AI_showMissed()">질문 열기</button>`);
   if (missN)
-    return put(`한 번도 인용되지 않은 질문이 <b>${num(missN)}개</b> 있습니다.`
+    return put(`${missTxt} <b>${num(missN)}개</b> 있습니다.`
       + live("답변은 매번 달라지므로 한 번 더 확인하면 평균으로 읽힙니다."),
       AI_act("ai") + AI_act("gaps", false));
   if (runs < 2)
     return put("확인이 1회뿐이라 지금 값이 표본인지 흐름인지 아직 모릅니다."
       + live("한 번 더 확인하면 갈립니다."), AI_act("ai"));
-  return put("확인한 질문 전부에서 인용되고 있습니다."
+  return put(AI_GAPS ? "인용이 드문 질문이 없습니다." : "확인한 질문 전부에서 인용되고 있습니다."
     + live("주기적으로 다시 확인하면 지켜집니다."), AI_act("ai"));
 }
 
 function AI_render() {
   const cats = [...new Set(AI_ROWS.map(r => r.category).filter(Boolean))].sort();
   const engs = AI_engines();
-  const stn = s => AI_ROWS.filter(r => !s || AI_stOf(r) === s).length;
-  const chips = AI_ST_OPT.slice(1).map(([v, l]) => `<button class="chip${
+  const stn = s => AI_ROWS.filter(r => !s || AI_stIs(r, s)).length;
+  const chips = AI_ST_OPT.slice(1).filter(([v]) => v !== "gap" || AI_GAPS)
+    .map(([v, l]) => `<button class="chip${
     AI_ST === v ? " on" : ""}" data-s="${v}" onclick="AI_status(this)"
     aria-pressed="${AI_ST === v}">${l} <b>${stn(v)}</b></button>`).join("");
   $("ai-prompts").innerHTML = `<div class="tools">
@@ -753,14 +771,16 @@ function AI_vsRow(r) {
   const ask = askBlock({
     shape: url ? "fix_page" : "new_content",
     url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts, deliver,
-    problem: `검색 ${r.pos}위로 이기는데 AI 질문에서는 인용되지 않음` +
+    // 인용 0회만이 아니다 — 기회와 같은 판정(scoring.ai_is_gap)이라 1/6 도 여기 선다
+    problem: `검색 ${r.pos}위로 이기는데 AI 질문에서는 인용이 드묾` +
+      (r.checks ? ` (인용 ${r.cited || 0}/${r.checks})` : "") +
       (r.rivals.length ? ` — 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),
     queries: [{q: r.query, note: `평균 ${r.pos}위 · 노출 ${num(r.imp)}`}],
   });
   const body = `<div class="aiq-d" hidden><div class="det">${playList("", acts)}
     ${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix((window.PAGE_AUDITS || {})[url], url)}`
+      rel="noopener">${esc(url)}</a></p>${AI_pageFix(url)}`
     : ""}${ask}</div></div>`;
   return `<tr>
     <td><button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
@@ -794,7 +814,7 @@ function AI_vsSearch(x, gscDate) {
         window.act("add", "질문 만들기", false),
         `<button class="go sec" data-sm-act="make-prompts">질문 만들기</button>`)}</div>`}
       </div>`];
-  const sub = `검색에서는 우리가 위인데 AI 답변에는 한 번도 안 나온 질문
+  const sub = `검색에서는 우리가 위인데 AI 답변에서는 인용이 드문 질문
     <b>${rows.length}개</b>입니다.<span class="hint" tabindex="0"
       data-tip="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
       aria-label="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
@@ -1046,8 +1066,9 @@ VIEW("ai", function (d) {
     : capped ? "15위 밖" : `${above + 1}위`;
   const byPrompt = d.ai_by_prompt || [];
   AI_DRILL = byPrompt.length > 0;
+  AI_GAPS = Array.isArray(d.ai_gap_rows) ? new Set(d.ai_gap_rows.map(r => r.prompt)) : null;
   const missN = byPrompt.length
-    ? byPrompt.filter(r => !r.cited && !r.mentioned).length
+    ? byPrompt.filter(r => AI_GAPS ? AI_GAPS.has(r.prompt) : !r.cited && !r.mentioned).length
     : (d.missed || []).length;
   AI_nextStep(d, true, missN, byPrompt.length > 0);
 

@@ -64,34 +64,34 @@
       <div class="tools"><span class="stat" id="s-usage"></span></div>
     </div>
     <div class="card">
-      <label>측정을 맡는 곳</label>
+      <label id="l-u-mode">측정을 맡는 곳</label>
       <span class="lh">호스팅을 고르면 아래 2·3·4단계는 웹이 대신합니다.</span>
-      <div class="opts" id="u-mode"></div>
+      <div class="opts" id="u-mode" role="group" aria-labelledby="l-u-mode"></div>
 
-      <label>기회를 열 도구</label>
+      <label id="l-u-tool">기회를 열 도구</label>
       <span class="lh">기회 카드의 열기 버튼이 이 도구를 그 사이트 폴더에서 띄웁니다.</span>
-      <div class="opts" id="u-tool"></div>
+      <div class="opts" id="u-tool" role="group" aria-labelledby="l-u-tool"></div>
 
-      <label>터미널</label>
+      <label id="l-u-terminal">터미널</label>
       <span class="lh">고르지 않으면 Orca 가 있을 때 Orca, 없으면 시스템 터미널입니다.</span>
-      <div class="opts" id="u-terminal"></div>
-      <span class="msg" id="m-usage"></span>
+      <div class="opts" id="u-terminal" role="group" aria-labelledby="l-u-terminal"></div>
+      <span class="msg" role="status" id="m-usage"></span>
 
       <!-- 호스팅을 고른 사람에게만 선다 — 로컬에는 붙을 곳이 없다. -->
       <div id="u-remote" hidden>
-        <label>웹에 연결</label>
+        <label for="u-line">웹에 연결</label>
         <span class="lh">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 그대로 붙여
           넣으시면 됩니다. 그 줄에서 주소와 토큰만 읽습니다.</span>
-        <div class="row"><input id="u-line" placeholder="붙여 넣기">
+        <div class="row"><input id="u-line" autocomplete="off" spellcheck="false" placeholder="붙여 넣기">
           <button class="go" id="btn-remote">연결</button>
-          <span class="msg" id="m-remote"></span></div>
+          <span class="msg" role="status" id="m-remote"></span></div>
       </div>
 
-      <label>사이트별 로컬 폴더</label>
+      <label id="l-dirs">사이트별 로컬 폴더</label>
       <span class="lh">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
         도구를 띄웁니다. 비운 채 저장하면 지워집니다.</span>
-      <div id="dirs"></div>
-      <span class="msg" id="m-dirs"></span>
+      <div id="dirs" role="group" aria-labelledby="l-dirs"></div>
+      <span class="msg" role="status" id="m-dirs"></span>
     </div>
   </div>
 
@@ -105,7 +105,7 @@
     </div>
     <div class="card">
       <div class="row"><button class="go" id="btn-deps">설치</button>
-        <span class="msg" id="m-deps"></span></div>
+        <span class="msg" role="status" id="m-deps"></span></div>
     </div>
   </div>
 
@@ -132,44 +132,44 @@
           <code>~/.capture/projects/</code> 에서 고칠 수 있습니다.</p>
       </details>
       <div class="grid">
-        <div><label>이름</label>
+        <div><label for="p-name">이름</label>
           <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다.</span>
-          <input id="p-name" placeholder="mysite"></div>
-        <div><label>종류</label>
+          <input id="p-name" spellcheck="false" placeholder="mysite"></div>
+        <div><label for="p-type">종류</label>
           <span class="lh">기회를 뽑는 기준이 종류마다 다릅니다.</span><select id="p-type">
           <option value="saas">saas — 서비스·앱</option>
           <option value="game">game — 게임</option>
           <option value="local_clinic">local_clinic — 지역 매장·병원</option>
           <option value="directory">directory — 목록·디렉터리</option>
         </select></div>
-        <div><label>도메인</label>
+        <div><label for="p-domain">도메인</label>
           <span class="lh">순위 확인과 크롤이 이 주소를 봅니다.</span>
-          <input id="p-domain" placeholder="example.com"></div>
-        <div><label>언어-지역</label>
+          <input id="p-domain" spellcheck="false" placeholder="example.com"></div>
+        <div><label for="p-locale">언어-지역</label>
           <span class="lh">어느 언어·나라의 검색 결과에서 잴지 정합니다. 자동완성·AI 질문도 이 언어로 갑니다.</span>
           <!-- 목록은 조립(dashboard.py)이 serp_adapter.LOCALES 로 채운다 — 사본을 두지 않는다 -->
           <select id="p-locale"><!--LOCALE_OPTIONS--></select></div>
-        <div><label>서치콘솔 속성</label>
+        <div><label for="p-gsc">서치콘솔 속성</label>
           <span class="lh">실적을 읽어 올 자리입니다. 비우면 sc-domain:도메인 을 씁니다.</span>
-          <input id="p-gsc" placeholder="sc-domain:example.com"></div>
-        <div><label>브랜드 표기</label>
+          <input id="p-gsc" spellcheck="false" placeholder="sc-domain:example.com"></div>
+        <div><label for="p-alias">브랜드 표기</label>
           <span class="lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
           <input id="p-alias" placeholder="마이사이트, MySite"></div>
-        <div><label>로컬 폴더</label>
+        <div><label for="p-dir">로컬 폴더</label>
           <span class="lh">선택입니다. 적어 두면 위 0단계의 표에 그대로 실립니다.</span>
-          <input id="p-dir" list="dir-cands" placeholder="C:/code/mysite"></div>
+          <input id="p-dir" spellcheck="false" list="dir-cands" placeholder="C:/code/mysite"></div>
       </div>
-      <label>씨앗 키워드</label>
+      <label for="p-seeds">씨앗 키워드</label>
       <span class="lh">여기서 자동완성으로 후보를 넓힙니다. 3~10개, 쉼표나 줄바꿈으로.</span>
       <textarea id="p-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
-      <label>경쟁사 도메인</label>
+      <label for="p-comp">경쟁사 도메인</label>
       <span class="lh">경쟁사 검색어와 백링크를 견줄 상대입니다. 선택이고 쉼표로 여러 개.</span>
-      <input id="p-comp" placeholder="competitor.com, other.com">
-      <label>등재·경쟁 도구 이름</label>
+      <input id="p-comp" spellcheck="false" placeholder="competitor.com, other.com">
+      <label for="p-tools">등재·경쟁 도구 이름</label>
       <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
       <input id="p-tools" placeholder="ecrett, paperpal, future tools">
       <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
-        <span class="msg" id="m-proj"></span></div>
+        <span class="msg" role="status" id="m-proj"></span></div>
     </div>
   </div>
 
@@ -186,7 +186,7 @@
       <div class="row"><button class="go" id="btn-gsclogin" hidden>구글 로그인</button>
         <button class="go" id="btn-gsc">인증 파일 열기</button>
         <button class="go" id="btn-depsgsc" hidden>수집 부품 설치</button>
-        <span class="msg" id="m-gsc"></span></div>
+        <span class="msg" role="status" id="m-gsc"></span></div>
       <details id="own-client">
         <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
         <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
@@ -196,13 +196,13 @@
           대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 해야
           합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
         <div class="grid">
-          <div><label>client_id</label>
-            <input id="oc-id" placeholder="1234-abc.apps.googleusercontent.com"></div>
-          <div><label>client_secret</label>
-            <input id="oc-secret" type="password" placeholder="GOCSPX-..."></div>
+          <div><label for="oc-id">client_id</label>
+            <input id="oc-id" autocomplete="off" spellcheck="false" placeholder="1234-abc.apps.googleusercontent.com"></div>
+          <div><label for="oc-secret">client_secret</label>
+            <input id="oc-secret" autocomplete="off" spellcheck="false" type="password" placeholder="GOCSPX-…"></div>
         </div>
         <div class="row"><button class="go sec" id="btn-ocsave">클라이언트 저장</button>
-          <span class="msg" id="m-oc"></span></div>
+          <span class="msg" role="status" id="m-oc"></span></div>
       </details>
     </div>
   </div>
@@ -223,24 +223,24 @@
           비운 채 저장하면 지워집니다.</p>
       </details>
       <div class="grid">
-        <div><label>OpenRouter</label>
+        <div><label for="k-or">OpenRouter</label>
           <span class="lh">ChatGPT·Perplexity·Gemini에 질문 수십 개를 자동으로 던집니다.
             발급은 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a>.</span>
-          <input id="k-or" type="password" placeholder="sk-or-..."></div>
-        <div><label>DataForSEO 아이디</label>
+          <input id="k-or" autocomplete="off" spellcheck="false" type="password" placeholder="sk-or-…"></div>
+        <div><label for="k-dfsl">DataForSEO 아이디</label>
           <span class="lh">순위·AI 요약·경쟁사 검색어를 잽니다.
             발급은 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a>.</span>
-          <input id="k-dfsl" placeholder="가입 이메일"></div>
-        <div><label>DataForSEO 비밀번호</label>
+          <input id="k-dfsl" autocomplete="off" spellcheck="false" placeholder="가입 이메일"></div>
+        <div><label for="k-dfsp">DataForSEO 비밀번호</label>
           <span class="lh">계정 비밀번호가 아닙니다. API Settings 에서 확인합니다.</span>
-          <input id="k-dfsp" type="password" placeholder="API 비밀번호"></div>
-        <div><label>Serper</label>
+          <input id="k-dfsp" autocomplete="off" spellcheck="false" type="password" placeholder="API 비밀번호"></div>
+        <div><label for="k-serper">Serper</label>
           <span class="lh">DataForSEO 대체재입니다. AI 요약을 못 재서 보통은 필요 없습니다.
             발급은 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a>.</span>
-          <input id="k-serper" type="password" placeholder="선택 — 보통 필요 없음"></div>
+          <input id="k-serper" autocomplete="off" spellcheck="false" type="password" placeholder="선택 — 보통 필요 없음"></div>
       </div>
       <div class="row"><button class="go" id="btn-keys">키 저장</button>
-        <span class="msg" id="m-keys"></span></div>
+        <span class="msg" role="status" id="m-keys"></span></div>
     </div>
   </div>
 
@@ -256,7 +256,7 @@
            그 스킬을 모른다. 그래서 "재시작 필요"를 명시한다. -->
       <p class="why" id="why-skills"></p>
       <div class="row"><button class="go" id="btn-skills" hidden>스킬 설치</button>
-        <span class="msg" id="m-skills"></span></div>
+        <span class="msg" role="status" id="m-skills"></span></div>
     </div>
   </div>
 
@@ -276,7 +276,7 @@
       </details>
       <div class="row"><select id="c-proj" aria-label="넘길 사이트"></select>
         <button class="go sec" id="btn-carry">링크 만들기</button>
-        <span class="msg" id="m-carry"></span></div>
+        <span class="msg" role="status" id="m-carry"></span></div>
       <p class="why"><a id="c-url" target="_blank" rel="noopener noreferrer" hidden></a></p>
     </div>
   </div>
