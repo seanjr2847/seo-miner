@@ -249,6 +249,10 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   hreflang_json TEXT,                         -- [[코드, 주소], ...] 선언 순서 그대로
   published TEXT, modified TEXT,              -- 글의 발행·수정일 (우리가 점검한 날이 아니다)
   js_shell INTEGER,                           -- 1 = 정적 HTML 로는 본문이 안 보이는 페이지로 의심
+  tables INTEGER, lists INTEGER,              -- 추출성: 본문 틀 밖의 표·목록(ul/ol) 수
+  h2_questions INTEGER,                       -- 질문형 H2 수 (h2_json 과 같은 20개 안, 휴리스틱)
+  lead_words INTEGER,                         -- 첫 본문 문단 단어 수. 0 = <p> 문단을 못 찾음
+  author TEXT,                                -- meta author 또는 ld+json author.name. '' = 없음
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
@@ -538,6 +542,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col, decl in (("viewport", "TEXT"), ("html_lang", "TEXT"),
                       ("hreflang_json", "TEXT"), ("published", "TEXT"),
                       ("modified", "TEXT"), ("js_shell", "INTEGER")):
+        if col not in pa_cols:
+            conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} {decl}")
+            conn.commit()
+    # 추출성(표·목록·질문형 H2·첫 문단·저자) — "인용될 블록이 있는가". 옛 행은 NULL 로
+    # 남는다: 그것을 "표가 0개"로 읽으면 멀쩡한 페이지에 없는 문제를 만든다
+    # (scoring._has_extract_fields 가 그 칸 하나로 행의 나이를 가른다).
+    for col, decl in (("tables", "INTEGER"), ("lists", "INTEGER"),
+                      ("h2_questions", "INTEGER"), ("lead_words", "INTEGER"),
+                      ("author", "TEXT")):
         if col not in pa_cols:
             conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} {decl}")
             conn.commit()
@@ -1361,7 +1374,8 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
     cols = ("status", "error", "title", "meta_description", "h1_json", "h2_json",
             "words", "schema_json", "canonical", "robots",
             "internal_links", "external_links", "images", "images_no_alt",
-            "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell")
+            "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell",
+            "tables", "lists", "h2_questions", "lead_words", "author")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})

@@ -245,6 +245,21 @@ DELIVER_BY_TAG = {
     "언어": "이 페이지에 맞는 <html lang> 값 한 줄",
     "hreflang": "고칠 hreflang 목록 — 코드 | 주소 | 무엇을 바꿨나 (자기 참조·x-default 포함)",
     "갱신": "이 글에서 지금도 맞는지 확인할 것 목록과, 고칠 문장 — 날짜만 바꾸지 않습니다",
+    # 아래 셋은 AI 종류 요청문에만 선다(scoring.extract_advice). 정적 HTML 로 못 재는 것
+    # — 수치의 출처가 진짜인지 — 은 판정 대신 여기 산출물로 시킨다. 챗봇(추출성)과 구글
+    # AI 요약(읽기 구조)이 다른 일을 시키는 이유는 extract_advice 의 설명을 본다.
+    # "읽기 구조"가 직답을 본문 흐름 안에 두라고 굳이 말하는 이유: aio_exposure 처방
+    # (scoring PLAY)이 같은 요청문에서 "직답 블록"을 시킨다 — "AI 전용 블록 금지"만
+    # 적으면 한 요청문 안에서 서로 반대로 읽힌다(브라우저로 열어 보고 찾았다).
+    "추출성": "혼자 서는 답 블록 초안 — 질문형 H2 와 그 아래 40~60단어 직답, 비교는 표·"
+              "과정은 번호 목록으로. 본문의 수치마다 출처 표: 수치 | 출처 | 확인 여부"
+              "(모르면 [출처 확인])",
+    "읽기 구조": "사람이 훑어 읽기 좋게 고칠 구조 — 결론부터 쓴 첫 문단, 표로 바꿀 비교, "
+                "번호 목록으로 바꿀 순서, 질문 꼴 H2. 직답도 본문 흐름 안(첫 문단·H2 "
+                "바로 아래)에 둡니다 — 본문과 따로 노는 AI 전용 조각은 만들지 않습니다. "
+                "본문의 수치마다 출처 표: 수치 | 출처 | 확인 여부(모르면 [출처 확인])",
+    "저자": "저자 표시 자리 — 본문 바이라인과 ld+json author 에 넣을 틀. 이름·자격은 "
+            "[저자] 로 비워 둡니다",
 }
 DELIVER_DEFAULT = "지금 이 페이지에서 가장 먼저 고칠 것 세 가지와, 각각 무엇을 무엇으로 바꿀지"
 
@@ -393,6 +408,17 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     # 요청문이 먼저 밝힌다 — 그래야 AI 가 확인부터 시킬 수 있다.
     L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)'}"
              + ("" if sc or not fresh else " — 정적 HTML 기준"))
+    # 추출성 — "인용될 블록이 있는가"의 재료. 판정은 scoring.extract_advice(AI 종류만)가
+    # 하고, 여기는 사실만 싣는다. 옛 행(칸이 NULL)에는 이 줄이 없다 — "표 0" 을 지어낸다.
+    structured = scoring._has_extract_fields(a)
+    if structured:
+        lead, au = a.get("lead_words"), a.get("author")
+        L.append("- 본문 구조: " + " · ".join((
+            f"표 {_n(a.get('tables'))}", f"목록 {_n(a.get('lists'))}",
+            f"질문형 H2 {_n(a.get('h2_questions'))}/{len(h2)}",
+            f"첫 문단 {lead}단어" if lead else
+            ("첫 문단 (<p> 문단 못 찾음)" if lead == 0 else "첫 문단 —"),
+            f"저자 {au}" if au else ("저자 (없음)" if au == "" else "저자 —"))))
     if fresh:
         L.append(f"- 뷰포트: {a.get('viewport') or '(없음 — 모바일에서 데스크톱 폭으로 그립니다)'}")
         hl = [x for x in scoring._as_list(a.get("hreflang_json")) if isinstance(x, list)]
@@ -406,7 +432,8 @@ def _page_state(a: dict | None, url: str) -> list[str]:
         L.append(f"- 글의 날짜: {when or '(페이지에 안 적혀 있습니다)'}")
     if a.get("js_shell"):
         L.append("- **주의**: 이 페이지는 본문을 자바스크립트로 그리는 것으로 보입니다"
-                 "(정적 HTML 에 본문이 거의 없습니다). 위의 본문 길이·H2·구조화 데이터는 "
+                 "(정적 HTML 에 본문이 거의 없습니다). 위의 본문 길이·H2·구조화 데이터"
+                 + ("·본문 구조" if structured else "") + "는 "
                  "렌더 전 값이라 실제와 다를 수 있습니다 — 사실로 쓰기 전에 브라우저나 "
                  "리치 결과 테스트로 한 번 확인해 주세요.")
     if a.get("canonical"):
@@ -901,6 +928,11 @@ def build(o: dict, ctx: dict) -> dict:
         if top:
             L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
             had_top = True
+    # AI 종류(챗봇 인용·구글 AI 요약)에서만 붙는 추출성 진단 — 판정은 scoring 한 곳.
+    # 같은 tag(갱신)는 AI 기준으로 갈아 끼운다: 2년 기준과 6개월 기준이 한 요청문에
+    # 나란히 서면 어느 쪽을 따를지 모른다.
+    ex = scoring.extract_advice(audit, kind) if url else []
+    adv_audit = _with_extract(audit, ex)
     if _shows_page(shape) and url:
         ps = _page_state(audit, url)
         vit = _vitals_lines(ctx, url)
@@ -911,14 +943,19 @@ def build(o: dict, ctx: dict) -> dict:
         if sf:
             L += ["## 사이트 전체에서 본 이 주소", *sf, ""]
         if shape != "consolidate":            # 정리는 페이지 안을 안 고친다
-            L += _advice(audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
+            L += _advice(adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
                          split=shape != "technical")
     if play.get("what"):
         L += ["## 상황", play["what"], ""]
     if play.get("acts"):
         L += ["## 이 상황에서 할 일", *(f"{i + 1}. {x}" for i, x in enumerate(play["acts"])), ""]
     want = play.get("deliver") or _deliver_from(
-        audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()) if url else ())
+        adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()) if url else ())
+    if play.get("deliver") and ex and _shows_page(shape):
+        # 처방의 산출물은 종류 한 벌이라 이 페이지에 무엇이 빠졌는지 모른다 — 추출성
+        # 진단이 선 자리만 그 산출물을 보탠다(진단 없이 산출물만 늘리지 않는다).
+        want = list(want) + [d for d in dict.fromkeys(
+            DELIVER_BY_TAG.get(x["tag"]) for x in ex) if d and d not in want]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want)), ""]
     if s["slot"]:
         # 상위 목록을 이미 위에 줬으면 여기서 또 "제목과 H2 를 붙여 넣으세요" 라고
@@ -928,6 +965,16 @@ def build(o: dict, ctx: dict) -> dict:
                if had_top else s["slot"])
         L += ["## 있으면 붙여 넣을 것 (선택)", ask, "[여기에 붙여 넣기]", ""]
     return {"shape": shape, "body": "\n".join(L)}
+
+
+def _with_extract(audit: dict | None, ex: list[dict]) -> dict | None:
+    """감사의 진단(page_advice)에 추출성 진단을 합친 사본 — 같은 tag 는 ex 가 이긴다.
+    원본은 안 건드린다(화면이 같은 감사 행을 다른 기회에서도 그린다)."""
+    if not audit or not ex:
+        return audit
+    mine = {x["tag"] for x in ex}
+    return {**audit, "advice": [x for x in (audit.get("advice") or [])
+                                if x["tag"] not in mine] + ex}
 
 
 def _deliver_from(audit: dict | None, extra=()) -> list[str]:

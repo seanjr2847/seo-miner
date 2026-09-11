@@ -48,6 +48,46 @@ _APP_ROOTS = {"root", "__next", "app", "___gatsby", "svelte", "q-app"}
 JS_SHELL_WORDS = 120
 JS_SHELL_SCRIPTS = 5
 
+# ── 추출성 — "인용될 블록이 있는가" ──────────────────────────────────────────
+# AI 는 페이지가 아니라 문단·표·목록을 뽑는다. 정적 HTML 로 싸게 셀 수 있는 것만 센다
+# — 판정은 scoring.extract_advice 가 한다. 수치의 출처가 진짜인지 같은 것은 여기서 못
+# 잰다(요청문 산출물로 돌린다).
+#
+# 메뉴·꼬리말의 <ul> 까지 세면 거의 모든 페이지가 "목록 있음"이 된다. 본문 밖 틀로
+# 보는 자리다. <header> 는 <article>·<main> 안이면 글머리(H1·리드 문단)라 틀이 아니다.
+_CHROME = {"nav", "footer", "aside", "form"}
+# 이보다 짧은 <p> 는 문단이 아니라 줄 조각이다(바이라인·"공유하기"·빵부스러기) —
+# 첫 문단으로 세면 "첫 문단 3단어"라는 헛진단이 난다.
+LEAD_MIN_WORDS = 5
+# 열린 <p> 를 닫는 블록 — HTML 은 </p> 를 빼먹어도 되고, 브라우저는 다음 블록에서 닫는다.
+_P_BREAK = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table",
+            "section", "article", "blockquote", "pre", "figure"}
+# 질문형 H2 — **휴리스틱이다.** 물음표, 의문사, 한국어 의문 어미 셋 중 하나. 어미만
+# 보면 "평가"·"하나" 같은 명사가 걸리므로 어미 목록은 짧게 두고 의문사로 보탠다.
+# 틀려도 되는 쪽은 "질문으로 잘못 세기"다 — 판정(scoring.extract_advice)은 질문형이
+# **0개**일 때만 말하므로, 과하게 세면 지적 하나를 덜 할 뿐 없는 문제를 만들지 않는다.
+# 그래서 "왜곡"·"대중가요" 같은 드문 헛걸림은 감수하고, 놓치는 쪽을 줄인다.
+_Q_WORDS_KO = ("무엇", "뭐", "왜", "어떻게", "어떤", "언제", "어디", "누구", "누가", "얼마", "몇")
+_Q_ENDINGS_KO = ("까", "까요", "나요", "가요", "는지", "을지", "인가", "는가", "은가",
+                 "니까", "습니까", "일까", "할까", "될까")
+_Q_WORDS_EN = ("what", "why", "how", "when", "where", "who", "which", "can", "does", "do",
+               "is", "are", "should", "will")
+
+
+def _is_question(text: str) -> bool:
+    """H2 한 줄이 질문 꼴인가 — 휴리스틱(위 목록 참고). 판정이 아니라 셈의 재료다."""
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    if "?" in t or "？" in t:
+        return True
+    low = t.lower()
+    if low.split()[0] in _Q_WORDS_EN and len(low.split()) >= 3:
+        return True
+    if any(w in t for w in _Q_WORDS_KO):
+        return True
+    return t.rstrip(".!…·:").endswith(_Q_ENDINGS_KO)
+
 
 def _date(raw: str) -> str | None:
     """'2026-08-21T09:00:00+09:00' → '2026-08-21'. 못 읽으면 원문을 짧게 남긴다 —
@@ -86,6 +126,41 @@ def _schema_dates(blob: str) -> tuple[str | None, str | None]:
     return pub, mod
 
 
+def _author_name(v) -> str | None:
+    """ld+json 의 author 값 하나 → 이름. 글자·{name}·그 목록 셋 다 온다."""
+    if isinstance(v, str):
+        return v.strip() or None
+    if isinstance(v, dict):
+        n = v.get("name")
+        return (n.strip() or None) if isinstance(n, str) else None
+    if isinstance(v, list):
+        return next((n for n in map(_author_name, v) if n), None)
+    return None
+
+
+def _schema_author(blob: str) -> str | None:
+    """ld+json 의 author(.name). 깨진 JSON 이어도 글자로 건진다 — _schema_dates 와 같은
+    규칙이다. {"@type":"Person"} 처럼 이름 없는 author 는 저자 표시가 아니다."""
+    try:
+        data = json.loads(blob)
+    except ValueError:
+        m = (re.search(r'"author"\s*:\s*\{[^{}]*?"name"\s*:\s*"([^"]+)"', blob)
+             or re.search(r'"author"\s*:\s*"([^"]+)"', blob))
+        return (m.group(1).strip() or None) if m else None
+    stack = [data]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            if "author" in cur:
+                n = _author_name(cur["author"])
+                if n:
+                    return n
+            stack += [v for v in cur.values() if isinstance(v, (dict, list))]
+        elif isinstance(cur, list):
+            stack += [v for v in cur if isinstance(v, (dict, list))]
+    return None
+
+
 class _Page(HTMLParser):
     """한 장에서 감사에 쓰는 것만 줍는다. 모르는 태그는 그냥 지나간다."""
 
@@ -109,6 +184,12 @@ class _Page(HTMLParser):
         self.modified = None
         self.scripts = 0                         # JS 껍데기 판정의 재료
         self.app_root = False
+        # 추출성 — 본문 틀(_CHROME) 밖의 것만, 겹친 것은 바깥 하나로 센다
+        self.tables = self.lists = 0
+        self.author = None                       # meta author 또는 ld+json author.name
+        self._h1_done = False                    # 첫 H1 을 지났나 — 리드 문단은 그 뒤가 본자리
+        self._p: list[str] | None = None         # 지금 모으는 <p> 글자
+        self._lead_before = self._lead_after = None
         self._text: list[str] = []
         self._stack: list[str] = []
         self._grab = None          # 지금 글자를 모으는 자리: "title" | "h1" | "h2" | "ld"
@@ -121,6 +202,17 @@ class _Page(HTMLParser):
         # 하나가 링크 집계를 통째로 삼킨다.
         if a.get("id", "").strip().lower() in _APP_ROOTS or "data-reactroot" in a:
             self.app_root = True
+        # 추출성 — 이것도 사슬 밖이다(<p>·<table>·<ul> 은 아래 사슬의 어느 갈래와도
+        # 안 겹치지만, 사슬에 끼우면 순서 하나로 집계가 조용히 빠진다).
+        if self._p is not None and tag in _P_BREAK:
+            self._end_p()                        # </p> 는 빼먹어도 되는 태그다
+        if not self._in_chrome():
+            if tag == "table" and self._stack.count("table") == 1:
+                self.tables += 1
+            elif tag in ("ul", "ol") and not any(t in ("ul", "ol") for t in self._stack[:-1]):
+                self.lists += 1
+            elif tag == "p" and self._lead_after is None:
+                self._p = []
         if tag == "html":
             # 페이지의 언어 선언. 없으면 구글·빙이 본문 글자로 추측한다 — 다국어
             # 사이트에서 로케일 판정이 어긋나는 첫 자리다.
@@ -138,6 +230,8 @@ class _Page(HTMLParser):
                 self.robots = content
             elif name == "viewport" and self.viewport is None:
                 self.viewport = content
+            elif name == "author" and content and not self.author:
+                self.author = content
             elif name in ("article:published_time", "datepublished") and not self.published:
                 self.published = _date(content)
             elif name in ("article:modified_time", "og:updated_time", "datemodified")                     and not self.modified:
@@ -174,6 +268,8 @@ class _Page(HTMLParser):
             self._stack.pop()
 
     def handle_endtag(self, tag):
+        if tag == "p" and self._p is not None:
+            self._end_p()
         if self._grab == tag or (self._grab == "ld" and tag == "script") \
                 or (self._grab == "title" and tag == "title"):
             text = " ".join("".join(self._buf).split())
@@ -184,8 +280,10 @@ class _Page(HTMLParser):
                 pub, mod = _schema_dates(text)
                 self.published = self.published or pub
                 self.modified = self.modified or mod
+                self.author = self.author or _schema_author(text)
             elif self._grab == "h1":
                 self.h1.append(text)
+                self._h1_done = True
             elif self._grab == "h2":
                 self.h2.append(text)
             self._grab = None
@@ -198,6 +296,35 @@ class _Page(HTMLParser):
             self._buf.append(data)
         if not (set(self._stack) & SKIP_TEXT):
             self._text.append(data)
+            if self._p is not None:
+                self._p.append(data)
+
+    # ── 추출성 ──────────────────────────────────────────────
+    def _in_chrome(self) -> bool:
+        """지금 자리가 본문 밖 틀(메뉴·꼬리말·곁가지·폼)인가."""
+        s = self._stack
+        return (any(t in _CHROME for t in s)
+                or ("header" in s and "article" not in s and "main" not in s))
+
+    def _end_p(self) -> None:
+        n = len(" ".join(self._p or []).split())
+        self._p = None
+        if n < LEAD_MIN_WORDS:
+            return
+        if self._h1_done:
+            if self._lead_after is None:
+                self._lead_after = n
+        elif self._lead_before is None:
+            self._lead_before = n
+
+    def lead_words(self) -> int:
+        """첫 본문 문단의 단어 수. H1 뒤의 첫 문단이 본자리고, H1 이 없거나 그 뒤에
+        문단이 없으면 앞의 것을 쓴다. 0 = <p> 문단을 못 찾았다(본 결과다 — div 로만
+        짠 페이지일 수 있어서 판정 쪽이 그렇게 말한다)."""
+        if self._p is not None:                  # 문서 끝까지 안 닫힌 문단
+            self._end_p()
+        lead = self._lead_after if self._lead_after is not None else self._lead_before
+        return lead or 0
 
     # ── 결과 ────────────────────────────────────────────────
     @property
@@ -253,7 +380,12 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "viewport": p.viewport, "html_lang": p.html_lang,
             "hreflang_json": json.dumps(p.hreflang[:30], ensure_ascii=False),
             "published": p.published, "modified": p.modified,
-            "js_shell": js_shell}
+            "js_shell": js_shell,
+            # 추출성. 저자는 못 찾으면 "" 다 — NULL 은 이 칸이 생기기 전의 행(안 봤다)이다.
+            # 질문형 H2 는 h2_json 과 같은 20개 안에서 센다(요청문이 "n/전체"로 나란히 쓴다).
+            "tables": p.tables, "lists": p.lists,
+            "h2_questions": sum(map(_is_question, p.h2[:20])),
+            "lead_words": p.lead_words(), "author": p.author or ""}
 
 
 def target_urls(conn, project_id: int, limit: int) -> list[str]:
@@ -440,6 +572,38 @@ def _selfcheck() -> None:
     assert audit_html("https://c.kr/x", "<html><body><script>가 나 다 라 마</script></body></html>"
                       )["words"] == 0, "script 본문이 단어로 새어 들어간다"
 
+    # 추출성 — 표·목록·질문형 H2·첫 문단·저자. 메뉴·꼬리말·곁가지의 틀은 안 센다
+    # (안 빼면 거의 모든 페이지가 "목록 있음"이 된다). 겹친 표·목록은 바깥 하나로.
+    ext = audit_html("https://x.kr/a", """<html><head><meta name="author" content="김의사">
+      </head><body><nav><ul><li>메뉴</li></ul><p>메뉴 안의 긴 문단 하나 둘 셋 넷 다섯</p></nav>
+      <header><p>사이트 태그라인 한 줄 입니다 정말로</p></header>
+      <main><article><header><h1>밀리아란 무엇인가</h1></header>
+      <p>by 홍길동</p>
+      <p>밀리아는 피부 아래 생기는 작은 흰 알갱이로 각질이 갇혀 생깁니다 보통 저절로 없어집니다
+      <h2>비용은 얼마인가요?</h2><h2>회복 기간</h2><h2>시술은 아픈가요</h2>
+      <table><tr><td><table><tr><td>x</td></tr></table></td></tr></table>
+      <ol><li>하나<ul><li>안</li></ul></li></ol></article></main>
+      <aside><table><tr><td>곁</td></tr></table></aside>
+      <footer><ul><li>f</li></ul></footer></body></html>""")
+    assert (ext["tables"], ext["lists"]) == (1, 1), ext
+    assert ext["h2_questions"] == 2, ext               # 물음표 하나 + 의문 어미 하나
+    # H1 뒤 첫 문단 — 바이라인(5단어 미만)은 건너뛰고, </p> 를 빼먹어도 다음 블록에서 닫는다
+    assert ext["lead_words"] == 13, ext
+    assert ext["author"] == "김의사", ext
+    # ld+json 의 author — 목록·{name}·깨진 JSON 어디서 와도. 이름 없는 Person 은 저자가 아니다
+    assert audit_html("https://x.kr/b", '<script type="application/ld+json">{"@type":"Article",'
+                      '"author":[{"@type":"Person","name":"홍길동"}]}</script>')["author"] == "홍길동"
+    assert _schema_author('{"author":{"@type":"Person","name":"이몽룡"},,,}') == "이몽룡"
+    assert _schema_author('{"author":{"@type":"Person"}}') is None
+    # 저자·표를 못 찾은 것은 "봤고 없다" — 0 과 "" 로 적는다(NULL 은 옛 행의 몫이다)
+    assert (a["tables"], a["lists"], a["h2_questions"], a["lead_words"], a["author"]) \
+        == (0, 0, 0, 5, ""), a
+    assert audit_html("https://x.kr/c", "<html><body><h1>x</h1><div>글자만 있는 본문 하나 둘"
+                      " 셋</div></body></html>")["lead_words"] == 0, "문단 없음이 0 이 아니다"
+    # 질문형 H2 는 휴리스틱이다 — 명사 끝의 '가'·'하나' 에 안 걸리는지만 못 박는다
+    assert _is_question("비용은 얼마인가요") and _is_question("How does it work")
+    assert not _is_question("비용 평가") and not _is_question("관리 요령")
+
     # 깨진 ld+json 이어도 @type 은 건진다
     assert _schema_types('{"@type":"FAQPage",,,}') == ["FAQPage"]
     assert _schema_types('[{"@type":["Article","BlogPosting"]}]') == ["Article", "BlogPosting"]
@@ -467,6 +631,26 @@ def _selfcheck() -> None:
     assert db.write_page_audits(conn, 1, "2026-08-20", [a]) == 1, "같은 날 두 번이 늘어난다"
     got = conn.execute("SELECT title, words FROM page_audits").fetchall()
     assert len(got) == 1 and got[0]["title"] == a["title"], [tuple(r) for r in got]
+    # 추출성 칸이 실제로 적힌다 — "" 와 0 이 NULL 로 뭉개지지 않는다
+    row = conn.execute("SELECT tables, lead_words, author FROM page_audits").fetchone()
+    assert tuple(row) == (0, 5, ""), tuple(row)
+    # 옛 행 — 추출성 칸이 없는 dict 는 NULL 로 남는다(안 봤다 ≠ 없다)
+    old = {k: v for k, v in a.items()
+           if k not in ("tables", "lists", "h2_questions", "lead_words", "author")}
+    db.write_page_audits(conn, 1, "2026-08-19", [old])
+    row = conn.execute("SELECT tables, author FROM page_audits WHERE checked_date='2026-08-19'"
+                       ).fetchone()
+    assert tuple(row) == (None, None), tuple(row)
+
+    # 칸이 생기기 전의 Brain — _migrate 가 PRAGMA 로 보고 칸을 보탠다
+    old_db = sqlite3.connect(":memory:")
+    old_db.row_factory = sqlite3.Row
+    old_db.execute("CREATE TABLE page_audits (id INTEGER PRIMARY KEY, project_id INTEGER,"
+                   " checked_date TEXT, url TEXT, js_shell INTEGER)")
+    old_db.executescript(db.SCHEMA)
+    db._migrate(old_db)
+    cols = {r["name"] for r in old_db.execute("PRAGMA table_info(page_audits)")}
+    assert {"tables", "lists", "h2_questions", "lead_words", "author"} <= cols, cols
     print("collect_page self-check ok")
 
 

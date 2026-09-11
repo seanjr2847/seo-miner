@@ -358,7 +358,9 @@ coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 �
 
 **무엇을 읽나:** title · meta description · H1/H2 · 본문 단어 수(script·style 제외) ·
 ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt 없는 이미지 수 ·
-viewport · `<html lang>` · hreflang · 글의 발행·수정일.
+viewport · `<html lang>` · hreflang · 글의 발행·수정일 · 추출성 재료(본문의 표·목록 수,
+질문형 H2 수, 첫 문단 단어 수, 저자). 추출성 판정은 챗봇 인용·구글 AI 요약 기회의
+요청문에서만 선다(`scoring.extract_advice`) — 다른 요청문에는 사실 한 줄만 실린다.
 `page_audits` 에 `(프로젝트, 검사일, URL)` 로 적재된다 — 같은 날 두 번 돌아도 행이
 늘지 않는다.
 
