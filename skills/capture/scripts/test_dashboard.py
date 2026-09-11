@@ -688,6 +688,40 @@ def test_run_tool_opens_terminal_and_acks():
         os.environ.pop("SEOMINER_TERMINAL", None)
 
 
+def test_gather_ai_health_reaches_the_screen():
+    """AI 화면의 "측정 안 됨·구버전" 개수가 페이로드까지 온다.
+
+    화면 위 표들(matrix·ai_by_prompt)은 최신 확인 한 번만 본다. 그 확인이 끊겼으면
+    거기서 안 잰 질문은 표에도 기회에도 없다 — 그 수가 페이로드에 없으면 화면은
+    말할 수가 없다(09-02 #56 이 그랬다: 질문 17개가 한 번도 안 재졌는데 조용했다).
+    """
+    import collector
+    conn, pid = _brain("aihealth")
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt, gen_version) VALUES(?,?,?)",
+                     [(pid, "잰 질문", None), (pid, "안 잰 질문", 2), (pid, "손으로 적은 질문", 0)])
+    qa = conn.execute("SELECT id FROM ai_prompts WHERE prompt='잰 질문'").fetchone()[0]
+    qb = conn.execute("SELECT id FROM ai_prompts WHERE prompt='안 잰 질문'").fetchone()[0]
+    with db.run(conn, pid, "ai") as r:
+        conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine) VALUES(?,?,'chatgpt')",
+                     (qa, r.id))
+    try:
+        with db.run(conn, pid, "ai") as r:
+            conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine) VALUES(?,?,'chatgpt')",
+                         (qb, r.id))
+            raise collector.Fatal("OpenRouter 크레딧 소진")
+    except collector.Fatal:
+        pass
+    d = dashboard.gather(conn, db.get_project(conn, "aihealth"))
+    h = d["ai_health"]
+    assert (h["active"], h["measured"], h["unmeasured"]) == (3, 1, 2), h
+    assert h["outdated"] == 1 and h["outdated_eg"] == ["잰 질문"], h   # NULL 만 구버전
+    assert h["last_run"]["state"] == "aborted", h["last_run"]
+    assert "크레딧 소진" in h["last_run"]["note"], h["last_run"]
+    # 기회는 끝난 회차만 쓴다 — 끊긴 회차에서 잰 "안 잰 질문"은 인용 0 기회가 아니다
+    assert [g["prompt"] for g in scoring.ai_gaps(conn, pid)] == ["잰 질문"]
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
