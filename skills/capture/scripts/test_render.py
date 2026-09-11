@@ -140,6 +140,11 @@ GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 �
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
+    # 차트는 캔버스다(Chart.js) — 자리(<canvas data-ch>)만 서고 차트가 안 서면 화면은 빈
+    # 칸인데 JS 오류도 안 날 수 있다. 셸의 chMake 가 세우면 data-ch-ok 를 단다.
+    (r'<canvas data-ch="ch\d+"[^>]*data-ch-ok="1"', "차트가 하나도 안 섰다 — 캔버스 자리만 남았다"),
+    ("!" + r'<canvas data-ch="ch\d+"(?![^>]*data-ch-ok)[^>]*>',
+     "안 선 차트 자리가 있다 — Chart.js 가 그 캔버스를 못 세웠다"),
     (r"<option[^>]*selected[^>]*>" + SITES[1],
      "hash 가 지목한 사이트가 안 열렸다 — 링크가 실어 보낸 이름이 버려진다"),
     (r'id="content"(?![^>]*hidden)', "본문(#content)이 숨은 채로 남았다 — 데이터를 못 그렸다"),
@@ -192,6 +197,11 @@ def view_defs_ids() -> list[str]:
         out.append(json.loads(m.group(1))["id"])
     return out
 REPORT_MUSTS = [
+    # 차트는 캔버스다(Chart.js) — 자리(<canvas data-ch>)만 서고 차트가 안 서면 화면은 빈
+    # 칸인데 JS 오류도 안 날 수 있다. 셸의 chMake 가 세우면 data-ch-ok 를 단다.
+    (r'<canvas data-ch="ch\d+"[^>]*data-ch-ok="1"', "차트가 하나도 안 섰다 — 캔버스 자리만 남았다"),
+    ("!" + r'<canvas data-ch="ch\d+"(?![^>]*data-ch-ok)[^>]*>',
+     "안 선 차트 자리가 있다 — Chart.js 가 그 캔버스를 못 세웠다"),
     (r'id="content"(?![^>]*hidden)', "본문(#content)이 숨은 채로 남았다"),
     (r'id="meta"[^>]*>[^<]*\d{4}-\d{2}-\d{2}', "머리말이 기준 수집일을 안 적었다"),
     # 종이 표지 — 인쇄하면 레일이 빠지므로 여기 말고는 "누구의 무엇을 언제"가 없다.

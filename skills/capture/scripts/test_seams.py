@@ -1048,6 +1048,39 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     assert h["last_run"]["state"] == "aborted", h["last_run"]
 
 
+# 차트 라이브러리 — npm 이 준 chart.js 4.5.1 의 dist/chart.umd.min.js 그대로의 해시.
+# 판을 올릴 때는 npm 무결성(dist.integrity, sha512)을 대조한 뒤 이 값을 같이 고친다.
+CHARTJS_SHA256 = "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a"
+
+
+def test_seam_25_chart_library_single_source():
+    """25) 차트 라이브러리는 한 벌이다 — templates/vendor/chart.umd.min.js 하나를 조립이 한 번 박는다.
+    - 벤더 파일은 npm 이 준 그대로다(sha256). 누가 손대면 여기서 걸린다.
+    - 조립본마다(local·hosted·frozen) 라이브러리가 정확히 한 번 들어간다.
+    - new Chart( 는 셸의 chMake 한 곳뿐이다. 뷰·애드온이 차트를 따로 세우면 부수는 쪽
+      (관찰자)과 다크 전환이 그 차트를 모른다 — 화면을 다시 그릴 때마다 옛 차트가 샌다.
+    """
+    import hashlib
+    import dashboard
+    got = hashlib.sha256(dashboard.VENDOR_JS.read_bytes()).hexdigest()
+    assert got == CHARTJS_SHA256, f"vendor/chart.umd.min.js 가 npm 이 준 파일과 다르다: {got[:16]} — "
+        "줄끝이 바뀌었으면 .gitattributes 의 vendor -text 를 확인하라"
+    for v in ("local", "hosted", "frozen"):
+        n = dashboard._assemble(v).decode("utf-8").count("Chart.js v4.5.1")
+        assert n == 1, f"{v} 조립본에 라이브러리가 {n}번 들어갔다"
+    ctx = _load()
+    if ctx is None:
+        return
+
+    def code(s):
+        return re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", s)   # 주석이 "new Chart(" 를 말해도 세지 않는다
+    assert code(ctx["shell"]).count("new Chart(") == 1, "셸에서 차트를 세우는 자리가 chMake 하나가 아니다"
+    for p in sorted(ctx["views"].glob("*.html")):
+        assert "new Chart(" not in code(p.read_text("utf-8")), \
+            f"{p.name} 가 차트를 직접 세운다 — window.ch* 헬퍼를 거쳐라"
+    assert "new Chart(" not in code(ctx["dash"]), "dash.html 이 차트를 직접 세운다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
