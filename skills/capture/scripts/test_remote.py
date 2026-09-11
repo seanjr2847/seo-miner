@@ -89,8 +89,18 @@ def running_fails(status: dict) -> list[str]:
 
 
 def chain_fails(project: str, rows: list[dict], paid: set[str]) -> list[str]:
+    """체인 안에서 단계마다 **가장 최근 런** 만 본다.
+
+    같은 단계를 체인 중간에 다시 돌려 성공했으면 앞의 실패는 지난 일이다 — 그걸 계속
+    걸면 게이트가 늘 빨갛고, 늘 빨간 게이트는 아무것도 안 보는 게이트다(9/11 에 다시
+    돌려 성공한 백링크가 9/6·9/9 실패로 계속 걸렸다). 거꾸로 최근 런이 실패면 그대로
+    건다 — 앞에서 한 번 성공했다고 지금 실패를 덮지 않는다.
+    """
+    latest: dict[str, dict] = {}
+    for r in rows:                                   # CHAIN_SQL 이 started_at 순으로 준다
+        latest[r.get("kind")] = r
     out = []
-    for r in rows:
+    for r in latest.values():
         bad = why_bad(r, paid)
         if bad:
             out.append(f"'{project}' {r.get('kind')} ({r.get('started_at')}): {bad} — "
@@ -197,6 +207,20 @@ def _selfcheck() -> None:
         assert len(fails) == 1, fails
         assert ": errors=100 —" in fails[0] and "rank" in fails[0] \
             and "2026-09-02T01:05:00" in fails[0], fails[0]
+
+        # 같은 단계를 체인 중간에 다시 돌려 성공했으면 앞의 실패는 지난 일이다 —
+        # 단계마다 가장 최근 런만 본다(9/11 에 고쳐진 백링크가 9/6 실패로 계속 걸렸다).
+        retried = bad + [dict(ok_rows[1], started_at="2026-09-03T01:05:00",
+                              notes="provider=dataforseo errors=0")]
+        serve({"theotherskin": {"running": False}}, retried)
+        fails, _ = check()
+        assert not fails, fails
+        # 거꾸로 — 앞에서 성공했어도 최근 런이 실패면 그대로 건다
+        regressed = ok_rows[:2] + [dict(ok_rows[1], started_at="2026-09-03T01:05:00",
+                                        notes="provider=dataforseo errors=7")]
+        serve({"theotherskin": {"running": False}}, regressed)
+        fails, _ = check()
+        assert len(fails) == 1 and "errors=7" in fails[0], fails
 
         # 유료 단계인데 api_calls=0 이고 건너뜀 표식도 없으면 FAIL
         silent = ok_rows[:1] + [dict(ok_rows[2], notes="keywords=40 updated=0 errors=0")]
