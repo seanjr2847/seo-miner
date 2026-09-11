@@ -1887,6 +1887,7 @@ def _check_keyword_locale() -> None:
     old = os.environ.get("CAPTURE_HOME")
     with tempfile.TemporaryDirectory() as d:
         os.environ["CAPTURE_HOME"] = d
+        conn = None
         try:
             # 2. sync_project 가 언어 칸을 비워 두지 않는다
             y = Path(d) / "lp.yaml"
@@ -2000,8 +2001,9 @@ def _check_keyword_locale() -> None:
             # 7. 옮긴 표도 사이트에 딸린 표다 — 원격 병합이 함께 나른다
             import remote
             assert "offlocale_snapshots" in remote._plan(conn)[0]
-            conn.close()
         finally:
+            if conn is not None:
+                conn.close()        # 열린 채로 실패하면 윈도우가 임시 폴더를 못 지워 원래 오류를 가린다
             if old is None:
                 os.environ.pop("CAPTURE_HOME", None)
             else:
