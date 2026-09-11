@@ -1360,6 +1360,46 @@ def test_seam_29_run_tool_writes_whole_brief_and_acks_the_group():
         shutil.rmtree(home, ignore_errors=True)
 
 
+# "검색어를 title 에 그대로 박아라"는 지시의 꼴들. 처방·진단·산출물 어디에도 남으면 안 된다 —
+# 한 페이지에 검색어 여럿이 걸리면 그 말은 검색어마다 다른 title 을 시키는 말이 된다
+# (theotherskin 의 한 지면에 16건이 걸려 있었다). 판정은 scoring.page_advice 가 낱말로
+# 대조하고, 처방은 "묶음의 주 의도"를 말한다.
+VERBATIM_TITLE_PHRASES = ("검색어를 앞에", "앞쪽에 검색어", "검색어를 그대로 넣", "그대로 넣으세요",
+                          "이 검색어로 시작하게", "앞쪽으로 올립", "60자 안에 검색어를")
+
+
+def test_seam_30_no_prescription_asks_to_paste_the_query_into_title():
+    """30) title·H1 처방은 한 목소리다 — 어디서도 검색어를 글자 그대로 박으라고 하지 않는다.
+
+    진단(scoring.page_advice)·처방(scoring._KIND_SPECS 의 play)·산출물(brief.DELIVER_BY_TAG)·
+    기회로 안 올라온 행의 폴백(views/rank.html·keywords.html)이 title 을 말하는 네 자리다.
+    한쪽만 "낱말로 대조"로 바뀌면 같은 페이지의 요청문 안에서 진단은 "이미 맞다"고 하고
+    처방은 "앞에 박아라"고 한다. 여기서 네 자리를 한 번에 본다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    import scoring
+    texts = {"brief.DELIVER_BY_TAG": " ".join(brief.DELIVER_BY_TAG.values())}
+    for k in scoring.ALL_KINDS:
+        spec = scoring._KIND_BY_NAME[k].play
+        plays = spec.values() if isinstance(spec, dict) and "what" not in spec else [spec]
+        for p in plays:
+            texts[f"play:{k}"] = texts.get(f"play:{k}", "") + " ".join(
+                [p.get("what") or "", *(p.get("acts") or []), *(p.get("deliver") or [])])
+    for v in ("rank.html", "keywords.html"):
+        texts[f"views/{v}"] = (ctx["views"] / v).read_text("utf-8")
+    # 진단 — 실물 감사 한 장으로 낸 문장까지 본다(page_advice 는 문구를 f-string 으로 만든다)
+    adv = scoring.page_advice({"url": "https://x.com/a", "title": "전혀 다른 제목", "h1_json": '["딴 말"]',
+                               "meta_description": "설명", "words": 500, "js_shell": 0},
+                              ["밀리아 제거 비용"], domain="x.com")
+    texts["scoring.page_advice"] = " ".join(f"{a['now']} {a['fix']}" for a in adv)
+    bad = [(where, ph) for where, t in texts.items() for ph in VERBATIM_TITLE_PHRASES if ph in t]
+    assert not bad, f"검색어를 글자 그대로 박으라는 처방이 남아 있다: {bad}"
+    assert any("title" in a["tag"] for a in adv), "진단 픽스처가 title 을 안 잡는다 — 검사가 헛돈다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
