@@ -1170,6 +1170,7 @@
   async function kwLoad() {
     var box = document.getElementById("sm-kw");
     if (!box) return;
+    if (!proj()) return;                  // 사이트를 고르기 전이면 404 다 — 고르면 다시 불린다
     var list = box.querySelector(".list");
     box.classList.remove("dead");
     bare(list, true);
@@ -1332,6 +1333,7 @@
   async function aiqLoad() {
     var box = document.getElementById("sm-aiq");
     if (!box) return;
+    if (!proj()) return;                  // 사이트를 고르기 전이면 404 다 — 고르면 다시 불린다
     bare(box.querySelector(".list"), true);
     box.querySelector(".list").innerHTML = SKEL;
     try {

@@ -1574,7 +1574,7 @@ def _selfcheck() -> None:
 # 볼지도 doctor.usage() 가 이미 답한다(안 골랐으면 Orca 감지 → 없으면 시스템).
 #
 # 브라우저는 이 PC 의 프로세스를 못 띄운다 — 그래서 이 경로는 로컬 전용이고
-# (LOCAL_ONLY_POST), 호스팅 화면은 "이 PC 에서 열기" 안내만 그린다.
+# (LOCAL_ROUTES), 호스팅 화면은 "이 PC 에서 열기" 안내만 그린다.
 
 def _work_dir(project: str) -> Path:
     """도구를 열 폴더. 설정에 적어 둔 것([설정]의 사이트별 로컬 폴더)이 정본이고,

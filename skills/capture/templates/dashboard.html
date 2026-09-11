@@ -2635,6 +2635,7 @@ async function loadDoctor() {
     // 화면이 보고 있는 사이트를 같이 보낸다 — 안 보내면 서버가 폴더로 추론하고,
     // 추론이 안 되면(사이트 여럿 + 리포 미등록) 안내가 비어 버린다.
     const cur = $("proj") ? $("proj").value : "";
+    if (window.SM_HOSTED && !cur) return;    // 호스팅은 사이트 없이 물으면 404 다 — 고른 뒤에 다시 불린다
     const d = await (await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""))).json();
     window.SETUP = d; SM.repaint();   // 기회 카드의 실행 자리(SM.host.oppBtn)가 여기서 도구 상태를 읽는다 — 늦게 오면 다시 그린다
     // verdict·must·extra 는 이제 청중별로 갈려서 온다(doctor.py 가 SEOMINER_HOSTED
@@ -2809,6 +2810,7 @@ function renderUsage(d) {
    사이트 목록이 그대로면 손대지 않는다. */
 let DIRS_AT = null;
 async function renderDirs(force) {
+  if (window.SM_HOSTED) return;          // /api/setup/dirs 는 로컬 전용 — 호스팅엔 그 폴더가 없다
   const box = $("dirs");
   if (!box) return;
   const names = [...($("proj") ? $("proj").options : [])].map(o => o.value);
@@ -2949,6 +2951,7 @@ $("btn-carry").addEventListener("click", async () => {
 // 빈 칸만 채운다 — 사용자가 적던 값을 덮지 않는다.
 let PREFILLED = false;
 async function prefillProject() {
+  if (window.SM_HOSTED) return;          // /api/setup/prefill 은 로컬 전용 — 호스팅은 이 PC 의 레포를 못 읽는다
   if (PREFILLED || !$("p-name")) return;
   PREFILLED = true;
   try {
@@ -3144,8 +3147,13 @@ if (window.__SNAPSHOT__) {
   }
   render(s.data);
 } else {
-  loadDoctor();
-  loadProjects().then(load);
+  // 진단은 사이트를 고른 뒤에 묻는다. 먼저 물으면 빈 project 로 가는데, 로컬은 그걸
+  // 폴더로 추론하지만 호스팅은 사이트 소유를 확인하므로 404 이고 다시 안 불려서,
+  // 호스팅의 유일한 사용자 몫('구글 연결' 안내)이 첫 화면에 영영 안 떴다.
+  // 목록을 못 받아도 진단은 띄운다 — 로컬에선 그게 "무엇이 빠졌나"를 보는 창이다.
+  const listed = loadProjects();
+  listed.then(load);
+  listed.then(() => loadDoctor(), () => loadDoctor());
 }
 </script>
 </body>
