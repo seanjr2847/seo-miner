@@ -902,6 +902,34 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
     return out
 
 
+def _ai_referrals_in_play(conn, pid: int, urls) -> dict:
+    """요청문이 손댈 페이지의 AI 방문 — 경로 → 행. 화면 목록(ai_referral_pages)은 세션
+    순 상위 100 에서 자르는데, 요청문은 **그 페이지** 를 찾는다. 긴 꼬리의 페이지가 기회에
+    걸리면 방문이 있어도 그 줄이 안 섰다.
+
+    값이 없는 페이지는 키를 안 만든다 — 안 잰 것(None)과 0 은 _ai_referrals 가 이미
+    가른다(ai_referral_meta). 여기는 "잰 날에 이 페이지로 온 것" 만 싣는다.
+    """
+    from urllib.parse import urlsplit
+    paths = {(urlsplit(u).path or "/") for u in urls if u}
+    m = conn.execute("SELECT snapshot_date FROM ga4_ai_measured WHERE project_id=?"
+                     " ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    if not (m and paths):
+        return {}
+    out: dict[str, dict] = {}
+    ph = ",".join("?" * len(paths))
+    for r in conn.execute(
+            f"SELECT source, landing_page, sessions, key_events FROM ga4_ai_referrals"
+            f" WHERE project_id=? AND snapshot_date=? AND landing_page IN ({ph})",
+            (pid, m["snapshot_date"], *sorted(paths))):
+        row = out.setdefault(r["landing_page"], {"page": r["landing_page"], "sessions": 0,
+                                                 "key_events": 0.0, "sources": {}})
+        row["sessions"] += r["sessions"] or 0
+        row["key_events"] = round(row["key_events"] + (r["key_events"] or 0), 2)
+        row["sources"][r["source"]] = row["sources"].get(r["source"], 0) + (r["sessions"] or 0)
+    return out
+
+
 def _ai_referrals(conn, pid: int) -> dict:
     """AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회) — 최신으로 잰 날 한 벌.
 
@@ -1260,6 +1288,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
             a["queries"] = qs
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
+            # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
+            # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
+            # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.
+            a["extract_advice"] = scoring.extract_advice(a, "ai_citation_gap")
             page_audits[a["url"]] = a
 
     # 순위에 걸린 페이지가 없는 기회만 — 제목·H1 에 그 검색어가 있는 내 지면을 찾는다.
@@ -1338,6 +1370,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
     d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
     d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
+    d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
     brief.attach(d, db.project_locale(p))
     return d
 

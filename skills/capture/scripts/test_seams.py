@@ -1282,8 +1282,117 @@ def test_seam_28_ai_visits_fields_and_names():
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 
 
-def test_seam_29_run_tool_writes_whole_brief_and_acks_the_group():
-    """29) 실행 버튼의 두 이음매 — 파일에 쓰는 요청문과 '작업 시작'이 먹는 범위.
+def test_seam_29_ai_screen_gap_count_is_server_judgement():
+    """29) [AI 인용] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
+    scoring.ai_is_gap) 한 벌이다.
+
+    두 벌이었다: 기회는 인용률로 섰는데(6번 중 1번도 공백), 화면 머리 띠는 "인용도
+    언급도 없는 질문"만 세어서, 그런 질문만 남으면 기회 목록에 "챗봇 인용 드묾"이 여럿
+    떠 있는 채로 "확인한 질문 전부에서 인용되고 있습니다"라고 말했다. 어느 쪽도
+    혼자서는 멀쩡한 코드였다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "d.ai_gap_rows" in src, "ai.html 이 서버의 공백 판정을 안 읽는다"
+    # 띠의 수 = 서버 판정으로 거른 수. 화면이 인용 수로 다시 세지 않는다.
+    import re as _re
+    m = _re.search(r"const missN = byPrompt\.length\s*\?(.*?);", src, _re.S)
+    assert m and "AI_GAPS.has(r.prompt)" in m.group(1), "띠의 공백 수를 화면이 다시 센다"
+    # 거르기·칩 수가 같은 판정(AI_stIs)을 쓴다 — 목록과 칩이 다른 말을 하지 않게
+    assert "AI_stIs(r, AI_ST)" in src and "AI_stIs(r, s)" in src, "거르기와 칩이 다른 판정을 쓴다"
+    # "질문 열기"가 그 판정으로 거른다
+    assert 'AI_ST = AI_GAPS ? "gap"' in src, "질문 열기가 옛 눈금(안 잡힘)으로 거른다"
+    # 서버 쪽 — gather 가 그 판정 목록을 싣는다
+    import dashboard
+    assert '"ai_gap_rows": ai_gap_rows' in (SCRIPTS / "dashboard.py").read_text("utf-8")
+
+
+
+def test_seam_30_form_controls_have_names():
+    """30) 화면의 입력칸은 전부 이름이 있다 — 라벨(for·감싸기)이나 aria-label 로.
+
+    [설정]의 라벨 열일곱이 칸과 안 이어져 있었다(<label>이름</label> 뒤에 칸만 따로).
+    눈으로는 멀쩡해 보여서 아무도 몰랐다 — 화면낭독기는 칸 이름을 못 읽고, 라벨을
+    눌러도 칸으로 안 간다. 새 칸이 이름 없이 들어오면 여기서 걸린다. 저장·연결 결과를
+    적는 메시지 칸(.msg)은 비동기로 바뀌므로 role="status" 로 알린다.
+    """
+    import glob as _glob
+    tdir = ROOT / "skills" / "capture" / "templates"
+    files = [tdir / "dashboard.html", *sorted((tdir / "views").glob("*.html")),
+             *sorted((tdir / "sections").glob("*.html"))]
+    addon = ROOT / "server" / "assets" / "dash.html"
+    if addon.exists():
+        files.append(addon)
+    bad, msgs = [], []
+    for f in files:
+        src = f.read_text("utf-8")
+        # 주석 속 "<select>" 같은 글자는 칸이 아니다
+        body = re.sub(r"/\*.*?\*/|<!--.*?-->", "", src, flags=re.S)
+        body = re.sub(r"(?m)^\s*//.*$", "", body)
+        for m in re.finditer(r"<(input|select|textarea)\b([^<>]*?)>", body, re.S):
+            a = m.group(2)
+            if re.search(r'type="(hidden|submit|button)"', a):
+                continue
+            idm = re.search(r'\bid="([^"]+)"', a)
+            named = ("aria-label" in a or "aria-labelledby" in a
+                     or (idm and re.search(r'<label[^>]*for="%s"' % re.escape(idm.group(1)), body)))
+            pre = body[max(0, m.start() - 300):m.start()]
+            if not (named or pre.rfind("<label") > pre.rfind("</label>")):
+                bad.append(f"{f.name}: <{m.group(1)}{' '.join(a.split())[:60]}>")
+        for m in re.finditer(r"<span class=\"msg\"[^>]*>|'<span class=\"msg\"[^']*'", body):
+            if "role=" not in m.group(0):
+                msgs.append(f"{f.name}: {m.group(0)[:60]}")
+    assert not bad, "이름 없는 입력칸:\n  " + "\n  ".join(bad)
+    assert not msgs, "role 없는 메시지 칸(비동기 결과를 못 알린다):\n  " + "\n  ".join(msgs)
+
+
+
+def test_seam_31_skip_link_leaves_the_hash_alone():
+    """31) 본문으로 건너뛰기는 URL hash 를 안 건드린다.
+
+    이 앱은 hash 를 사이트 이름으로 읽는다(5번 — 사이트 목록 링크가 hash 를 싣는다).
+    흔한 건너뛰기 링크 모양(href="#content")을 그대로 쓰면 누르는 순간 "content 라는
+    사이트"를 열려 한다 — 5번과 같은 이음매를 반대쪽에서 깨는 셈이다. 그래서 포커스만
+    옮긴다. 착지점(main)은 포커스를 받을 수 있어야 한다(tabindex="-1").
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell = ctx["shell"]
+    m = re.search(r'<a class="skiplink"([^>]*)>', shell)
+    assert m, "건너뛰기 링크가 없다"
+    attrs = m.group(1)
+    assert not re.search(r'href="#', attrs), "건너뛰기 링크가 hash 를 바꾼다: " + attrs
+    assert "preventDefault" in attrs and "focus()" in attrs, attrs
+    assert '<main tabindex="-1">' in shell, "건너뛰기 착지점(main)이 포커스를 못 받는다"
+    # 첫 탭 순서 — <body> 바로 다음이다(레일보다 앞)
+    body = shell[shell.index("<body>"):]
+    assert body.index('class="skiplink"') < body.index("<header>"), "건너뛰기가 레일 뒤에 있다"
+
+
+
+def test_seam_32_screen_files_are_text():
+    """32) 화면 파일에는 NUL 글자가 없다 — git 이 텍스트로 봐야 한다.
+
+    셸(dashboard.html)의 JS 한 줄에 NUL 이 그대로 박혀 있었다(names.join 의 구분자).
+    그 한 글자 때문에 git 이 파일 전체를 바이너리로 보고 diff 도 줄끝 변환(autocrlf)도
+    껐다. 그래서 윈도에서 고쳐 쓴 셸이 CRLF 째 커밋됐고, 다음 병합에서 파일 **전체가**
+    충돌로 잡혔다. 구분자가 필요하면 이스케이프(\\u0000)로 쓴다 — 뜻은 같다.
+    벤더 파일은 받은 그대로 둔다(25번이 해시로 지킨다).
+    """
+    tdir = ROOT / "skills" / "capture" / "templates"
+    files = [f for f in tdir.rglob("*.html") if "vendor" not in f.parts]
+    addon = ROOT / "server" / "assets"
+    if addon.is_dir():
+        files += list(addon.glob("*.html")) + list(addon.glob("*.js"))
+    bad = [str(f.relative_to(ROOT)) for f in files if b"\x00" in f.read_bytes()]
+    assert not bad, f"NUL 이 든 화면 파일(git 이 바이너리로 본다): {bad}"
+
+
+def test_seam_33_run_tool_writes_whole_brief_and_acks_the_group():
+    """33) 실행 버튼의 두 이음매 — 파일에 쓰는 요청문과 '작업 시작'이 먹는 범위.
 
     (가) 화면의 복사 버튼(briefText)은 o.brief.body 뒤에 d.brief.tails[shape] 를 잇는다 —
     답의 형식·규칙이 그 꼬리에 있다. run_tool 이 body 만 파일로 쓰면 어느 쪽도 틀린
@@ -1368,8 +1477,8 @@ VERBATIM_TITLE_PHRASES = ("검색어를 앞에", "앞쪽에 검색어", "검색�
                           "이 검색어로 시작하게", "앞쪽으로 올립", "60자 안에 검색어를")
 
 
-def test_seam_30_no_prescription_asks_to_paste_the_query_into_title():
-    """30) title·H1 처방은 한 목소리다 — 어디서도 검색어를 글자 그대로 박으라고 하지 않는다.
+def test_seam_34_no_prescription_asks_to_paste_the_query_into_title():
+    """34) title·H1 처방은 한 목소리다 — 어디서도 검색어를 글자 그대로 박으라고 하지 않는다.
 
     진단(scoring.page_advice)·처방(scoring._KIND_SPECS 의 play)·산출물(brief.DELIVER_BY_TAG)·
     기회로 안 올라온 행의 폴백(views/rank.html·keywords.html)이 title 을 말하는 네 자리다.

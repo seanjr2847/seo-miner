@@ -69,6 +69,9 @@
      밑선이 흔들리지 않는다. 상태 배지는 이 높이를 안 쓴다(버튼처럼 보이면 안 된다). */
   --btn-h:32px; --btn-h-sm:28px;
 }
+/* 기본 컨트롤(드롭다운 목록·스크롤바·자동완성)도 OS 테마를 따르게 한다. 색 토큰만
+   바꾸고 이걸 안 적으면, 다크에서 <select> 의 펼친 목록과 스크롤바가 흰 채로 남는다. */
+:root { color-scheme:light dark; }
 @media (prefers-color-scheme: dark) {
   :root {
     --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
@@ -958,6 +961,12 @@ header select:focus-visible, header input:focus-visible { outline-color:var(--on
 input::placeholder, textarea::placeholder { color:var(--slate); opacity:.6; }
 textarea { min-height:48px; resize:vertical; }
 select { cursor:pointer; }
+.skiplink { position:absolute; left:-9999px; top:8px; z-index:1000; }
+.skiplink:focus { left:8px; padding:8px 12px; background:var(--card); color:var(--ink);
+  border-radius:6px; outline:2px solid var(--focus); outline-offset:2px; }
+main:focus { outline:none; }   /* 건너뛰기 착지점 — 본문 전체에 링을 두르지 않는다 */
+/* 윈도 다크에서 펼친 목록은 부모의 transparent 를 못 물려받는다 — 색을 박는다. */
+select option { background:var(--card); color:var(--ink); }
 option { background:var(--card); }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 22px; }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
@@ -1023,6 +1032,12 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 </style>
 </head>
 <body>
+<!-- 키보드로 들어오면 레일(사이트·기준일·메뉴 열여섯)을 다 지나야 본문이다 — 첫 칸에서
+     건너뛴다. href 로 "#content" 를 쓰지 않는다: 이 앱은 URL hash 를 사이트 이름으로
+     읽어서(location.hash), 누르는 순간 "content 라는 사이트"를 열려 한다. 포커스만
+     옮기고 hash 는 건드리지 않는다. -->
+<a class="skiplink" href="" onclick="event.preventDefault();
+  const m=document.querySelector('main');m.focus();m.scrollIntoView()">본문으로 건너뛰기</a>
 <header>
   <!-- 레일 머리 = "무엇을 보고 있나". 고른 것 위에 이름표를 세워 두 select 가
        서로 다른 것을 고른다는 사실이 한눈에 보이게 한다(사이트 / 기준일). -->
@@ -1044,7 +1059,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
   </div>
 </header>
 
-<main>
+<main tabindex="-1">
   <!-- 종이 표지. 화면에서는 레일이 이 말을 하고 있지만 인쇄하면 레일이 빠진다 —
        누구의 무엇을 언제 잰 것인지가 어디에도 안 남는다. -->
   <div class="printhead" id="printhead" hidden></div>
@@ -1657,7 +1672,9 @@ const pageTable = rows => !rows || !rows.length ? "" :
    </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
-const pageFix = (audit, url) => {
+// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용]의 추출성, audit.extract_advice).
+// 여기서 고르지 않는다: 셸은 어느 화면에서 불렸는지 모른다.
+const pageFix = (audit, url, extra) => {
   if (!audit)
     return `<p class="detn">${esc(url || "이 페이지")}는 아직 점검하지 않았습니다.
       <b>내 페이지 점검</b>이 돌면 제목·설명·본문을 직접 읽고 무엇을 바꿔야 하는지
@@ -1665,7 +1682,7 @@ const pageFix = (audit, url) => {
   const head = `<p class="detn">${esc(audit.checked_date || "")} 점검 ·
     제목 ${audit.title ? `<b>${esc(audit.title)}</b>` : "없음"} ·
     본문 ${num(audit.words)}단어</p>`;
-  const a = audit.advice || [];
+  const a = [...(audit.advice || []), ...(extra || [])];
   if (!a.length)
     return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다.
       제목·설명·H1·본문 길이·구조화 데이터가 모두 기준 안입니다.</p>`;
@@ -1773,7 +1790,7 @@ const askBlock = c => {
     <div class="pbox">
       <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — 답은 HTML 리포트로 열립니다</span>
         <button type="button" onclick="copyPrompt(this)">복사</button></div>
-      <textarea readonly rows="14" spellcheck="false">${esc(t)}</textarea>
+      <textarea readonly rows="14" spellcheck="false" aria-label="요청문 전문">${esc(t)}</textarea>
     </div></details>`;
 };
 
@@ -2978,7 +2995,7 @@ async function renderDirs(force) {
   const box = $("dirs");
   if (!box) return;
   const names = [...($("proj") ? $("proj").options : [])].map(o => o.value);
-  const at = names.join(" ");
+  const at = names.join("\u0000");
   if (!force && at === DIRS_AT) return;
   DIRS_AT = at;
   if (!names.length) {
@@ -2994,7 +3011,7 @@ async function renderDirs(force) {
       `<option value="${esc(w)}">`).join("")}</datalist>` +
     table(["사이트", "폴더?그 사이트의 코드가 있는 자리입니다. 비우고 저장하면 지워집니다.", ""],
       names.map(n => `<tr><td>${esc(n)}</td>` +
-        `<td><input list="dir-cands" value="${esc(saved[n] || "")}"></td>` +
+        `<td><input list="dir-cands" value="${esc(saved[n] || "")}" spellcheck="false" aria-label="${esc(n)} 로컬 폴더"></td>` +
         `<td><button class="go sec">저장</button></td></tr>`), "");
   for (const tr of box.querySelectorAll("tbody tr"))
     tr.querySelector("button").addEventListener("click", async () => {

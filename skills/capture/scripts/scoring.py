@@ -2682,14 +2682,17 @@ def search_wins_ai_loses(conn: sqlite3.Connection, project_id: int,
     tops = _xai_top_queries(conn, project_id)
     rows = []
     for r in ai_rows:
-        if r.get("cited"):
+        # "AI 는 지는" 의 기준은 기회와 같은 판정이다(ai_is_gap). 인용 0회로만 거르면
+        # 6번 중 1번 인용된 질문이 기회로는 서는데 이 표에서는 빠져, 두 자리가 같은
+        # 질문을 두고 다른 말을 한다.
+        if not ai_is_gap(r.get("cited"), r.get("checks")):
             continue
         m = _xai_match(r.get("prompt") or "", tops)
         if not m:
             continue
         rows.append({"prompt": r["prompt"], "category": r.get("category") or "",
                      "query": m["query"], "pos": m["pos"], "imp": m["imp"],
-                     "checks": r.get("checks") or 0,
+                     "checks": r.get("checks") or 0, "cited": r.get("cited") or 0,
                      # 대신 인용된 곳은 ai_tally 가 센 것 그대로(한 벌) — 횟수 순 상위 셋
                      "rivals": [x["domain"] for x in (r.get("rivals") or [])][:3]})
     rows.sort(key=lambda x: (x["pos"], -x["imp"]))
@@ -4849,12 +4852,17 @@ def _selfcheck() -> None:
          "rivals": []},                             # 한 낱말만 겹친다 — 짝을 안 짓는다
         {"prompt": "ecrett 어때", "category": "브랜드", "cited": 0, "checks": 6,
          "rivals": []},                             # 검색어가 한 낱말이라 임계 미달
-        {"prompt": "1페이지 키워드 정리법", "category": "추천", "cited": 2, "checks": 6,
-         "rivals": []},                             # 이미 인용된다 — 여기 올 자리가 아니다
+        {"prompt": "1페이지 키워드 정리법", "category": "추천", "cited": 4, "checks": 6,
+         "rivals": []},                             # 인용이 흔하다 — 여기 올 자리가 아니다
+        # 6번 중 1번 — 기회(ai_is_gap)로 서는 질문은 이 표에도 선다. 인용 0회로만
+        # 거르던 때는 기회 목록에는 있고 여기서는 빠졌다.
+        {"prompt": "1페이지 키워드 비교법", "category": "비교", "cited": 1, "checks": 6,
+         "rivals": []},
     ]
     xs = search_wins_ai_loses(conn, 1, ai_rows)
     assert xs["top_queries"] == 2, xs
-    assert [r["prompt"] for r in xs["rows"]] == ["1페이지 키워드 고르는 법"], xs
+    assert [r["prompt"] for r in xs["rows"]] == ["1페이지 키워드 고르는 법",
+                                                 "1페이지 키워드 비교법"], xs
     assert xs["rows"][0]["query"] == "1페이지 키워드" and xs["rows"][0]["pos"] == 3.0, xs
     assert xs["rows"][0]["rivals"] == ["ecrett.com", "b.com"], xs["rows"][0]
     assert search_wins_ai_loses(conn, 999, ai_rows) == {"rows": [], "top_queries": 0}
