@@ -1875,6 +1875,8 @@ def _check_keyword_locale() -> None:
     assert kl("kaufen", "de-DE") == "de-DE", "라틴 문자권 사이트의 라틴 키워드는 사이트 언어"
     assert kl("café 2024!", "ja-JP") == "en-US"
     assert kl("botox 강남", "en-US") == "ko-KR", "섞임 — 한글이 있으면 한국어"
+    assert kl("강남 botox", "ko-KR") == "ko-KR" and kl("botox 강남", "ja-JP") == "ko-KR", \
+        "섞임 — 라틴이 섞여도 한글이 있으면 한국어"
     assert kl("東京 ラーメン", "ko-KR") == "ja-JP"
     assert kl("2024", "ko-KR") == "ko-KR" and kl("", "ko-KR") == "ko-KR", "숫자만·빈 값은 기본값"
     assert kl("αβγ test", "ko-KR") == "ko-KR", "표 밖 글자가 섞이면 사이트 기본값"
