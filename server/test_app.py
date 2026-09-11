@@ -114,6 +114,15 @@ def demo() -> None:
             walled += 1
         assert walled >= 25, f"라우트 표를 못 읽었다(검사한 라우트 {walled}개)"
 
+        # 공유 라우트는 dashboard.ROUTES 가 정본이다 — 표의 항목이 전부 호스팅에 **그
+        # 메서드로** 서 있어야 한다. 경로만 보면 GET 으로 선 /api/opp 를 놓친다.
+        # 루프가 세운 것이든 손으로 남긴 것(app._HAND_ROUTES)이든 같은 질문이다 —
+        # 손으로 남긴 쪽이 지워지면 여기서 걸린다.
+        served = {(m, r.path) for r in app.routes if hasattr(r, "methods")
+                  for m in r.methods}
+        missing = sorted(set(dashboard.ROUTES) - served)
+        assert not missing, f"dashboard.ROUTES 에 있는데 호스팅에 없다: {missing}"
+
         r = c.get("/auth/login", follow_redirects=False)
         assert r.status_code == 302, (r.status_code, r.text)
         assert r.headers["location"].startswith("https://accounts.google.com"), r.headers
@@ -264,6 +273,42 @@ def demo() -> None:
                     {"name": "p1", "type": "local_clinic", "domain": "p1.com"})["ok"]
         finally:
             conn.close()
+        # 공유 라우트(dashboard.ROUTES 를 도는 루프가 세운 것) — 로그인 뒤 실제로
+        # 눌러 본다. 손으로 감싸던 시절의 상태 코드·문구가 그대로여야 한다.
+        r = c.get("/api/data?project=p1")
+        assert r.status_code == 200 and isinstance(r.json(), dict), r.text
+        r = c.get("/api/triage?project=p1")
+        assert r.status_code == 200 and r.json()["rows"] == [], r.text
+        for path in ("/api/data", "/api/triage"):
+            assert c.get(f"{path}?project=없는사이트").status_code == 404, \
+                f"{path} 로 남의 사이트가 열린다"
+        # call 에 넘어가는 모양이 로컬 Handler 와 같은가 — 표의 항목을 잠깐 갈아끼워
+        # 받은 인자를 본다(제네릭 핸들러가 요청 때 표를 조회하므로 된다).
+        seen, real_triage = [], dashboard.ROUTES[("GET", "/api/triage")]
+        dashboard.ROUTES[("GET", "/api/triage")] = lambda *a: seen.append(a) or {}
+        try:
+            assert c.get("/api/triage?project=p1&date=&date=d1&date=d2&x=").status_code == 200
+        finally:
+            dashboard.ROUTES[("GET", "/api/triage")] = real_triage
+        # project 는 빼서 따로, 빈 값은 버리고 첫 값(로컬 parse_qs 와 같다), body 는 None
+        assert seen == [("p1", {"date": "d1"}, None)], seen
+
+        r = c.post("/api/verdict", json={"project": "p1", "keys": ["a"], "verdict": "엉뚱"})
+        assert r.status_code == 400 and "판정값" in r.json()["detail"], r.text
+        r = c.post("/api/verdict", json={"project": "p1", "keys": ["a"], "verdict": "hold"})
+        assert r.status_code == 200 and "updated" in r.json(), r.text
+        r = c.post("/api/opp", json={"project": "p1", "id": 1, "status": "엉뚱"})
+        assert r.status_code == 400 and "상태값" in r.json()["detail"], r.text
+        r = c.post("/api/opp", json={"project": "p1", "id": 999, "status": "done"})
+        assert r.status_code == 200 and r.json() == {"updated": 0}, r.text
+        r = c.post("/api/creation", json={"project": "p1", "opportunity_id": 999,
+                                          "path": "a.md"})
+        assert r.status_code == 404, "남의 기회 번호로 기록이 남는다"
+        for path in ("/api/verdict", "/api/opp", "/api/creation"):
+            assert c.post(path, json={"project": "없는사이트", "id": 1, "status": "done",
+                                      "keys": [], "path": "a.md"}).status_code == 404, \
+                f"{path} 로 남의 사이트를 건드릴 수 있다"
+
         r = c.get("/api/ai/prompts?project=p1")
         assert r.status_code == 200 and r.json()["prompts"] == [], r.text
         # 상한은 사이트 yaml 의 limits.max_ai_prompts 다 — collect_ai 가 그 수만큼만 묻는다.
