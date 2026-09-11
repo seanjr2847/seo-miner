@@ -968,6 +968,33 @@ def test_seam_22_document_escaping_single_source():
     assert "&lt;script&gt;evil()" in html, "적대적인 값이 아예 안 실렸다 — 검사가 헛돈다"
 
 
+def test_seam_23_opportunity_groups_single_source():
+    """23) 기회 묶음 이음매 — 묶는 쪽(scoring.group_opportunities)과 그리는 쪽(셸·개요).
+    - 묶은 이유(via)는 scoring.GROUP_VIA 한 벌이다: 셸의 GROUP_WHY 키가 양방향으로 같다.
+      서버가 새 열쇠를 만들고 화면이 모르면 펼침 패널이 GROUP_WHY[via] 에서 터진다.
+    - 열린 기회는 scoring.OPEN_STATUSES 한 벌이다: 개요의 [아직 안 함](ST_GROUP.open)이
+      같은 값이다. 둘 다 "이 상태면"으로 거른다 — done·resolved 는 여기 없다.
+    - 개요는 서버가 접은 줄(d.opp_groups)을 그린다 — 화면이 다시 묶지 않는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    shell, views = ctx["shell"], ctx["views"]
+    m = re.search(r"const GROUP_WHY = \{(.*?)\n\};", shell, re.S)
+    assert m, "셸의 GROUP_WHY 를 못 찾았다"
+    keys = set(re.findall(r"^\s*(\w+):", m.group(1), re.M))
+    assert keys == set(scoring.GROUP_VIA), \
+        f"GROUP_WHY 의 키가 scoring.GROUP_VIA 와 어긋났다: {keys ^ set(scoring.GROUP_VIA)}"
+    ov = (views / "overview.html").read_text("utf-8")
+    mm = re.search(r"const ST_GROUP = \{open:\[(.*?)\]", ov)
+    assert mm, "overview.html 의 ST_GROUP.open 을 못 찾았다"
+    assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
+        "개요의 [아직 안 함] 이 scoring.OPEN_STATUSES 와 다르다"
+    assert not {"done", "dismissed", "resolved"} & set(scoring.OPEN_STATUSES)
+    assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

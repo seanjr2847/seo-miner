@@ -1054,7 +1054,11 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
         # 요청문(brief)이 꼴을 가를 때 다시 쓴다 — 여기서 한 번 판정한 것을 싣는다.
         o["band"], o["gap_kind"] = band, gk
 
-    return {"opps": opps, "opps_total": opps_total}
+    # 목록의 줄 — 같은 지면의 변형 검색어를 한 줄로 접은 것(scoring.group_opportunities).
+    # opps 는 그대로 둔다: 다른 화면(순위·키워드)은 검색어 하나로 기회를 찾고(oppOf),
+    # 요청문도 기회 하나마다 쓴다. 줄은 opps 의 id 를 가리키기만 한다.
+    return {"opps": opps, "opps_total": opps_total,
+            "opp_groups": scoring.group_opportunities(conn, pid, opps)}
 
 
 def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]:

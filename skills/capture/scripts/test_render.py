@@ -136,6 +136,7 @@ GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — R
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
+GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -167,6 +168,12 @@ MUSTS = [
      + r'(?:(?!</tr>).)*\(\+1\)',
      "심사 화면이 검색어를 한 줄로 묶어 안 그렸다(변형 +1)"),
     (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>1</b>', "심사 화면 상단 카운트가 안 나왔다"),
+    # 기회 묶음 — 같은 페이지의 AI 요약 기회 셋이 개요에서 카드 **하나**(id 셋)로 서고,
+    # 접힌 줄에 변형이, 펼침 패널에 묶은 이유가 그려진다.
+    (r'<details class="opp" data-opp="\d+" data-ids="\d+ \d+ \d+">(?:(?!</details>).)*'
+     r'검색어 3개(?:(?!</details>).)*' + re.escape(GROUP_KW) + r' 비교'
+     r'(?:(?!</details>).)*묶인 검색어 3개',
+     "개요가 같은 지면의 기회 셋을 한 줄로 안 그렸다(묶음 배지·변형·묶은 이유)"),
     # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
     (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
 ] + view_sections()
@@ -275,6 +282,17 @@ def _axes(conn, pid: int) -> None:
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,status) VALUES(?,?,?,?,'new')",
         [(pid, "striking_distance", TRIAGE_KW, 77), (pid, "aio_exposure", TRIAGE_KW.replace("Z", " Z"), 40)])
+    # 기회 묶음 — AI 요약 기회 셋이 GSC 에서 같은 페이지로 들어온다(최신 수집일 06-01).
+    grp = [GROUP_KW, f"{GROUP_KW} 비교", f"{GROUP_KW} 가격"]
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+        " VALUES(?,'aio_exposure',?,?,'구글이 AI 요약을 붙이는데 내 링크가 없습니다','new')",
+        [(pid, t, s) for t, s in zip(grp, (52.0, 47.0, 41.0))])
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,'2026-06-01',28,?,?,0,30,0,12)",
+        [(pid, t, f"https://{SITES[1]}.example/grp") for t in grp])
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in grp], "work")
     # 완료 후 관찰 — 두 수집일(05-01: 14위, 06-01: 9위) 사이에 완료한 기회. 그때 14위 → 지금 9위.
     conn.execute("INSERT INTO opportunities(project_id,kind,target,score,status,status_at)"
                  " VALUES(?,?,?,?,'done','2026-05-15 00:00:00')",
