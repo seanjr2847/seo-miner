@@ -355,6 +355,66 @@ def test_axis_opps_resolves_band_and_gap_kind_standalone():
     conn.close()
 
 
+def test_aio_opportunity_play_follows_our_rank_and_rows_carry_citations():
+    """구글 AI 요약 빠짐은 우리 순위로 처방이 갈린다 — 1페이지 안이면 사람을 위한 글,
+    밖이거나 순위가 없으면 "순위가 먼저". 순위 축은 누가 대신 인용됐는지와 함께 묻는
+    질문을 싣고, 요약 기회의 행은 화면용 30개 자르기 밖에서도 요청문에 닿는다."""
+    conn, pid = _brain("aio_band")
+    kws = {"안쪽": 4, "바깥": None}
+    kws.update({f"상위{i}": 1 + i % 3 for i in range(35)})     # 화면용 30개를 채우는 행들
+    kid = {}
+    for kw, pos in kws.items():
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
+                               " RETURNING id", (pid, kw)).fetchone()[0]
+        gap = kw in ("안쪽", "바깥")
+        db.write_rank_snapshot(conn, kid[kw], pos, None, aio_present=1 if gap else 0,
+                               aio_cited=0 if gap else None, checked_at=D + "T01:00:00Z",
+                               aio_domains=["rival.example", "wiki.example"] if kw == "바깥" else
+                               [] if kw == "안쪽" else None)
+    db.write_serp_questions(conn, kid["바깥"], [("paa", "질문 하나"), ("related", "연관 하나")],
+                            checked_at=D + "T01:00:00Z")
+    # 다른 날의 질문은 이 회차 상위 옆에 서지 않는다
+    db.write_serp_questions(conn, kid["안쪽"], [("paa", "옛 질문")], checked_at=PREV + "T01:00:00Z")
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "aio_exposure", "안쪽", 60, "r", "new", D),
+         (pid, "aio_exposure", "바깥", 50, "r", "new", D),
+         (pid, "aio_exposure", "옛기회", 40, "r", "new", D)])     # 최신 회차에 없는 대상
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in ("안쪽", "바깥", "옛기회")], "work")
+
+    by = {o["target"]: o for o in dashboard._axis_opps(conn, pid, None, [], [])["opps"]}
+    assert by["안쪽"]["band"] == "page1" and by["바깥"]["band"] == "beyond", \
+        {t: o["band"] for t, o in by.items()}
+    assert by["안쪽"]["play"] != by["바깥"]["play"], "1페이지 안과 밖이 같은 처방을 받는다"
+    assert by["안쪽"]["play"]["what"].startswith("이미 1페이지 안인데")
+    assert "순위가 먼저" in by["바깥"]["play"]["what"]
+    # 순위를 모르면 "이미 1페이지"라고 지어내지 않는다
+    assert by["옛기회"]["band"] is None and "순위가 먼저" in by["옛기회"]["play"]["what"]
+
+    rk = dashboard._axis_rank(conn, pid)
+    rows = {r["keyword"]: r for r in rk["ranks"]}
+    assert rows["바깥"]["aio_domains"] == ["rival.example", "wiki.example"]
+    # [] 는 "요약은 떴는데 인용을 못 뽑았다", None 은 "요약이 없었다" — 둘을 뭉치지 않는다
+    assert rows["안쪽"]["aio_domains"] == [] and rows["상위0"]["aio_domains"] is None
+    assert rows["바깥"]["aio_band"] == "beyond" and rows["안쪽"]["aio_band"] == "page1"
+    assert rows["상위0"]["aio_band"] is None
+    assert set(rk["aio_play"]) == set(scoring.AIO_BANDS)
+    assert rk["serp_fanout"] == {"바깥": [{"kind": "paa", "text": "질문 하나"},
+                                          {"kind": "related", "text": "연관 하나"}]}, rk["serp_fanout"]
+
+    # gather 는 ranks 를 순위 순 30개로 자른다 — 순위 없는 '바깥'은 그 밖이지만 요청문은
+    # 누가 대신 인용됐는지를 말해야 한다
+    p = db.get_project(conn, "aio_band")
+    d = dashboard.gather(conn, p)
+    assert "바깥" not in {r["keyword"] for r in d["ranks"]}, "픽스처가 30개를 못 채웠다"
+    body = next(o for o in d["opps"] if o["target"] == "바깥")["brief"]["body"]
+    assert "구글 AI 요약이 대신 인용한 곳: rival.example, wiki.example" in body, body
+    assert "## 함께 답해야 할 질문" in body and "질문 하나" in body, body
+    conn.close()
+
+
 # ── 검색량이 점수에 닿는가 ─────────────────────────────────────────────────
 def test_volume_feeds_demand():
     """노출만 보면 아직 안 뜨는 검색어는 영원히 0점이다 — 검색량이 그 자리를 채운다."""

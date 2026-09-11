@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   url TEXT,
   serp_features_json TEXT,
   aio_present INTEGER,
-  aio_cited INTEGER
+  aio_cited INTEGER,
+  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀다
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 CREATE TABLE IF NOT EXISTS serp_results (     -- 검색결과 상위 — rank_snapshots 는 "내 자리"만 안다
@@ -150,6 +151,16 @@ CREATE TABLE IF NOT EXISTS serp_results (     -- 검색결과 상위 — rank_sn
   UNIQUE(keyword_id, checked_at, position)
 );
 CREATE INDEX IF NOT EXISTS idx_serp_kw ON serp_results(keyword_id, checked_at);
+CREATE TABLE IF NOT EXISTS serp_questions (   -- 구글이 이 검색어에 같이 보여 준 질문·검색어 (팬아웃 재료)
+  id INTEGER PRIMARY KEY,
+  keyword_id INTEGER NOT NULL REFERENCES keywords(id),
+  checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  kind TEXT NOT NULL,                         -- paa (함께 묻는 질문) | related (연관 검색어)
+  position INTEGER NOT NULL,                  -- 응답 안에서의 순서 (kind 안에서)
+  text TEXT NOT NULL,
+  UNIQUE(keyword_id, checked_at, kind, position)
+);
+CREATE INDEX IF NOT EXISTS idx_serpq_kw ON serp_questions(keyword_id, checked_at);
 CREATE TABLE IF NOT EXISTS gsc_snapshots (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -600,6 +611,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
                      "ON rank_snapshots(keyword_id, date(checked_at))")
         conn.commit()
 
+    # AI 요약이 누구를 인용했나. 예전엔 수집기가 그 목록을 받아 "우리가 있나" 0/1 로만
+    # 접고 버려서, AI 요약 요청문이 "대신 인용된 곳"을 말하지 못했다. 옛 행은 NULL 로
+    # 둔다 — 그때 누가 인용됐는지는 이제 알 길이 없다(빈 목록 "[]" 으로 채우면 "봤는데
+    # 아무도 없었다"는 거짓이 된다).
+    if "aio_domains_json" not in {r["name"] for r in conn.execute(
+            "PRAGMA table_info(rank_snapshots)")}:
+        conn.execute("ALTER TABLE rank_snapshots ADD COLUMN aio_domains_json TEXT")
+        conn.commit()
+
     # runs.kind 는 단계 id 와 같은 말이어야 한다(run_all.STAGES 정본) — 화면
     # (history.html)이 단계 용어표 하나로 라벨을 달려면 그래야 한다. collect_gap.py 는
     # 'competitors' 단계인데 kind='gap' 으로, scoring.load() 는 'gaps' 단계인데
@@ -662,7 +682,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 OFFLOCALE_DDL = """CREATE TABLE offlocale_snapshots (
   id INTEGER PRIMARY KEY,
   keyword_id INTEGER NOT NULL REFERENCES keywords(id),
-  kind TEXT NOT NULL,                 -- rank (rank_snapshots) | serp (serp_results)
+  kind TEXT NOT NULL,                 -- rank (rank_snapshots) | serp (serp_results) | questions (serp_questions)
   locale TEXT NOT NULL,               -- 그 행을 잰 언어-지역 — 키워드의 지금 로케일과 다르다
   checked_at TEXT,
   row_json TEXT NOT NULL,             -- 원래 행(id 뺀 전부)
@@ -681,7 +701,7 @@ def fix_keyword_locales(conn: sqlite3.Connection) -> dict[str, int]:
     (project_id, keyword) 라 locale 을 바꿔도 부딪힐 행이 없다.
     멱등이다 — 두 번째 호출은 바꿀 것이 없다. 반환: 바뀐 수 {null, ko, rank, serp}.
     """
-    n = dict.fromkeys(("null", "ko", "rank", "serp"), 0)
+    n = dict.fromkeys(("null", "ko", "rank", "serp", "questions"), 0)
     for p in conn.execute("SELECT id, locale FROM projects").fetchall():
         site = project_locale(p)
         judge = keyword_judge(conn, p["id"])
@@ -708,7 +728,7 @@ def rejudge_script_locales(conn: sqlite3.Connection, project_id: int) -> dict[st
     """GSC 나라 데이터가 새로 들어온 뒤 — 글자로 정했던(locale_src='script') 키워드만
     나라로 다시 판정한다. 나라가 결정하지 못하면(데이터 없음·동률·LOCALES 밖) 그대로다.
     manual·gsc_country·옛 행(NULL)은 안 건드린다. 커밋은 호출자가 한다."""
-    n = dict.fromkeys(("changed", "rank", "serp"), 0)
+    n = dict.fromkeys(("changed", "rank", "serp", "questions"), 0)
     judge = keyword_judge(conn, project_id)
     for k in conn.execute(
             "SELECT id, keyword, locale FROM keywords WHERE project_id=? AND locale_src='script'",
@@ -725,10 +745,14 @@ def rejudge_script_locales(conn: sqlite3.Connection, project_id: int) -> dict[st
 
 
 def _park_offlocale(conn, keyword_id: int, measured: str, new: str, n: dict) -> None:
-    """measured 로 잰 순위·검색결과를 offlocale_snapshots 로 옮긴다(new 와 같으면 그대로)."""
+    """measured 로 잰 순위·검색결과를 offlocale_snapshots 로 옮긴다(new 와 같으면 그대로).
+
+    함께 묻는 질문(serp_questions)도 옮긴다 — 한국 구글이 준 질문이 영어 키워드의
+    요청문에 "함께 답해야 할 질문"으로 실리면 안 된다."""
     if not measured or measured == new:
         return                               # 같은 로케일로 쟀다 — 기록은 그대로 유효하다
-    for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results")):
+    for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results"),
+                        ("questions", "serp_questions")):
         rows = conn.execute(f"SELECT * FROM {table} WHERE keyword_id=?",
                             (keyword_id,)).fetchall()
         for r in rows:
@@ -1432,16 +1456,66 @@ def write_serp_results(conn: sqlite3.Connection, keyword_id: int, rows,
     return min(len(rows), SERP_KEEP)
 
 
+# 함께 묻는 질문·연관 검색어를 kind 마다 몇 개까지 남기나. 요청문의 "함께 답해야 할
+# 질문" 블록이 쓰는 값이다 — 구글이 처음 펼쳐 보이는 것은 질문 네댓·연관 여덟 안팎이고,
+# 그 뒤로 길게 붙는 것은 요청문을 목록으로 만든다.
+SERP_QUESTIONS_KEEP = 10
+SERP_QUESTION_KINDS = ("paa", "related")
+
+
+def write_serp_questions(conn: sqlite3.Connection, keyword_id: int, rows,
+                         checked_at: str | None = None) -> int:
+    """이 검색어에서 구글이 같이 보여 준 질문(paa)·연관 검색어(related)를 남긴다.
+
+    rows: (kind, text) 들 — 응답 순서 그대로. 같은 키워드·같은 날은 덮어쓴다(하루 한 벌,
+    write_serp_results 와 같은 규칙). kind 안에서 글자가 같은 것(대소문자·앞뒤 공백)은
+    한 번만 센다.
+
+    예전엔 이것들이 키워드 후보로만 들어가고 **어느 검색어에서 나왔는지**를 버렸다.
+    AI 는 사용자가 친 질문 하나가 아니라 관련 질문 묶음으로 찾는다 — 그 묶음을 덮어야
+    인용될 수 있는데, 요청문이 그 묶음을 말할 재료가 없었다.
+
+    같은 날 다시 쟀는데 질문이 하나도 없으면 그날 것을 지운다 — 앞 조회의 질문이 새
+    조회의 사실처럼 남으면 안 된다.
+    """
+    ts = checked_at or now()
+    out, seen = [], set()
+    for kind, text in rows:
+        t = (text or "").strip()
+        if kind not in SERP_QUESTION_KINDS or not t or (kind, t.casefold()) in seen:
+            continue
+        seen.add((kind, t.casefold()))
+        if sum(1 for k, _ in out if k == kind) < SERP_QUESTIONS_KEEP:
+            out.append((kind, t))
+    conn.execute("DELETE FROM serp_questions WHERE keyword_id=? AND date(checked_at)=date(?)",
+                 (keyword_id, ts))
+    pos: dict[str, int] = {}
+    ins = []
+    for kind, t in out:
+        pos[kind] = pos.get(kind, 0) + 1
+        ins.append((keyword_id, ts, kind, pos[kind], t))
+    conn.executemany("""INSERT INTO serp_questions(keyword_id, checked_at, kind, position, text)
+                        VALUES(?,?,?,?,?)""", ins)
+    conn.commit()
+    return len(ins)
+
+
 def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
                         position: int | None, url: str | None,
                         serp_features=None,
                         aio_present: int | None = None,
                         aio_cited: int | None = None,
-                        checked_at: str | None = None) -> int:
+                        checked_at: str | None = None,
+                        aio_domains: list[str] | None = None) -> int:
     """SERP 순위 스냅샷 적재. 같은 키워드를 같은 날 다시 확인하면 덮어쓴다(하루 1행).
 
     불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
     안 된다 (serper 경로는 AIO를 측정하지 않아 NULL로 남아야 한다).
+
+    aio_domains 도 같은 불변식이다: None 은 "요약이 없었거나 안 쟀다", [] 는 "요약은
+    떴는데 인용 도메인을 하나도 못 뽑았다". 요약이 뜨지 않은 조회(aio_present 가 1 이
+    아닌 것)에는 목록이 있을 수 없어 넘겨도 NULL 로 적는다 — serper 가 주는 빈 목록이
+    "봤는데 아무도 없었다"로 둔갑하지 않게.
     """
     if isinstance(serp_features, (list, dict)):
         feat_json = json.dumps(serp_features, ensure_ascii=False)
@@ -1455,15 +1529,19 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
     # UNIQUE 인덱스 (keyword_id, date(checked_at))가 이 불변식을 DB 수준에서도 지킨다.
     conn.execute("DELETE FROM rank_snapshots WHERE keyword_id=? AND date(checked_at)=date(?)",
                  (keyword_id, ts))
+    doms_json = (json.dumps(list(aio_domains), ensure_ascii=False)
+                 if aio_domains is not None and aio_present is not None and int(aio_present) == 1
+                 else None)
     cur = conn.execute(
         """INSERT INTO rank_snapshots(keyword_id, checked_at, position, url,
-             serp_features_json, aio_present, aio_cited)
-           VALUES(?,?,?,?,?,?,?)""",
+             serp_features_json, aio_present, aio_cited, aio_domains_json)
+           VALUES(?,?,?,?,?,?,?,?)""",
         (keyword_id, ts,
          int(position) if position is not None else None,
          url, feat_json,
          int(aio_present) if aio_present is not None else None,
-         int(aio_cited) if aio_cited is not None else None))
+         int(aio_cited) if aio_cited is not None else None,
+         doms_json))
     conn.commit()
     return cur.lastrowid
 
@@ -2226,6 +2304,9 @@ def _check_keyword_locale() -> None:
             write_serp_results(conn, kid["milia vs syringoma"],
                                [{"position": 1, "url": "https://kr.example/a", "domain": "kr.example"}],
                                checked_at="2026-09-08T00:00:00Z")
+            # 함께 묻는 질문도 그 로케일의 구글이 준 것이다 — 순위·상위와 함께 옮겨진다
+            write_serp_questions(conn, kid["milia vs syringoma"], [("paa", "밀리아란?")],
+                                 checked_at="2026-09-08T00:00:00Z")
             conn.commit()
             conn.close()
 
@@ -2254,12 +2335,14 @@ def _check_keyword_locale() -> None:
             ranks = {r["keyword_id"] for r in conn.execute("SELECT keyword_id FROM rank_snapshots")}
             assert ranks == {kid["밀리아"], kid["시드 키워드"], kid["papular acne scar"]}, ranks
             assert conn.execute("SELECT COUNT(*) FROM serp_results").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM serp_questions").fetchone()[0] == 0
             parked = [(r["keyword_id"], r["kind"], r["locale"]) for r in conn.execute(
                 "SELECT * FROM offlocale_snapshots ORDER BY id")]
             assert sorted(parked) == sorted([
                 (kid["milia vs syringoma"], "rank", "ko-KR"),
                 (kid["milia vs syringoma"], "rank", "ko-KR"),
                 (kid["milia vs syringoma"], "serp", "ko-KR"),
+                (kid["milia vs syringoma"], "questions", "ko-KR"),
                 (kid["seed keyword"], "rank", "ko-KR"),
                 (kid["juvelook korea"], "rank", "ko-KR")]), parked
             row = json.loads(conn.execute(
@@ -2272,7 +2355,8 @@ def _check_keyword_locale() -> None:
             conn.close()
             conn = connect()
             assert state(conn) == before, "두 번째 연결이 뭔가를 바꿨다"
-            assert fix_keyword_locales(conn) == {"null": 0, "ko": 0, "rank": 0, "serp": 0}
+            assert fix_keyword_locales(conn) == {"null": 0, "ko": 0, "rank": 0, "serp": 0,
+                                                 "questions": 0}
             conn.commit()
             assert state(conn) == before, "본체를 두 번 돌리니 달라졌다"
             #    한 번만 돈다 — 사람이 일부러 ko-KR 로 되돌린 영어 키워드를 다음 연결이
