@@ -73,25 +73,36 @@ def clean(kw: str) -> str:
     return " ".join(out.split())
 
 
-def _ask(post, path: str, words: list[str], body_of) -> tuple[list[dict], float, list[str]]:
+# 이분 재시도의 깊이 상한. 한 묶음이 부르는 요청은 많아야 2^(깊이+1)-1 = 63 번이다
+# (분당 10회 간격이면 6분). 상한이 없던 때는 금지 글자가 여럿 섞인 묶음이 낱개까지
+# 쪼개지며 수백 번을 던졌고, 3차 감사 때 결국 플러그인을 우회해 API 를 직접 불렀다.
+# 5 단이면 1000개 묶음이 ~31개, 500개 묶음이 ~16개 단위까지 좁혀진다 — 그 단위 하나를
+# 버리는 편이 분당 한도를 수백 번 두드리는 것보다 싸다.
+MAX_SPLIT_DEPTH = 5
+
+
+def _ask(post, path: str, words: list[str], body_of,
+         depth: int = 0) -> tuple[list[dict], float, list[str]]:
     """묶음 하나를 친다. 거절당하면 반으로 쪼개 재시도. 반환: (항목, 비용, 못 산 키워드).
 
     정제로 대부분 막히지만 우리가 모르는 금지 문자가 하나 남아도 500개가 같이
     날아가면 안 된다. 비용은 성공한 요청만 센다 — 거절된 요청은 청구되지 않는다.
+    MAX_SPLIT_DEPTH 에 닿으면 더 쪼개지 않고 그 묶음을 통째로 "못 산 키워드"로 돌려준다
+    — 호출부가 이름과 함께 거절로 적는다.
     """
     try:
         result, cost = post(path, body_of(words))
         return _rows(result), cost, []
     except collector.Fatal:
-        raise                       # 잔액·인증은 쪼개도 안 낫는다
+        raise                       # 잔액·인증·한도는 쪼개도 안 낫는다
     except Exception as e:
         if not any(h in str(e).lower() for h in REJECT_HINTS):
             raise
-        if len(words) <= 1:
+        if len(words) <= 1 or depth >= MAX_SPLIT_DEPTH:
             return [], 0.0, list(words)
         mid = len(words) // 2
-        a_items, a_cost, a_bad = _ask(post, path, words[:mid], body_of)
-        b_items, b_cost, b_bad = _ask(post, path, words[mid:], body_of)
+        a_items, a_cost, a_bad = _ask(post, path, words[:mid], body_of, depth + 1)
+        b_items, b_cost, b_bad = _ask(post, path, words[mid:], body_of, depth + 1)
         return a_items + b_items, a_cost + b_cost, a_bad + b_bad
 
 
@@ -496,6 +507,34 @@ def _selfcheck() -> None:
     assert res.ok and res.partial, res      # 일부 실패는 완료(노란 표시)
     # 거절된 요청은 청구되지 않는다 — 성공한 3+3 건만 (SV 0.05×3 + KD 0.01×3)
     assert round(res.cost, 4) == 0.18, res
+
+    # 7b. 이분 재시도에는 깊이 상한이 있다 — 금지 글자가 곳곳에 섞인 1000개 묶음이
+    #     낱개까지 쪼개지며 수백 번을 던지지 않는다. 상한에 닿은 묶음은 통째로 거절로.
+    many = [f"w{i}" for i in range(1000)]
+    poison = set(many[::7])                      # 143개 — 상한이 없으면 수백 번 친다
+    asked: list[int] = []
+
+    def rejecting(path, body):
+        ws = body[0]["keywords"]
+        if poison & set(ws):
+            raise RuntimeError("Invalid Field: 'keywords'. invalid characters")
+        return [{"keyword": w, "search_volume": 1} for w in ws], 0.01
+
+    def body_n(ws):
+        asked.append(len(ws))
+        return [{"keywords": ws}]
+
+    # 상한은 숫자로 못 박는다 — MAX_SPLIT_DEPTH 로 계산하면 상한을 풀어도 같이 풀린다
+    items, _, bad = _ask(rejecting, SV_PATH, many, body_n)
+    assert len(asked) <= 63, f"이분 재시도가 깊이 상한 없이 {len(asked)}번 쳤다"
+    assert poison <= set(bad), "상한에 닿은 묶음을 거절로 안 남겼다"
+    assert len(items) + len(bad) == len(many), "쪼개다 키워드를 잃었다"
+    # 하나만 나쁘면 상한 안에서 좁혀 가며 나머지 대부분을 산다
+    asked.clear()
+    poison = {"w500"}
+    items, _, bad = _ask(rejecting, SV_PATH, many, body_n)
+    assert len(asked) == 11, f"하나를 좁히는 데 {len(asked)}번 쳤다: {asked}"
+    assert "w500" in bad and len(bad) <= 32 and len(items) == 1000 - len(bad), len(bad)
 
     # 8. 전부 실패면 완료가 아니다 (errors>0, updated=0 → ok=False).
     conn.execute("DELETE FROM keywords")
