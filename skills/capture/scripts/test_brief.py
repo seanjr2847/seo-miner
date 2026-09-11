@@ -11,8 +11,11 @@
   · 감사의 H2 목록이 요청문에 실린다 (없으면 AI 가 이미 있는 H2 를 또 제안한다)
   · 언어·길이 기준이 사이트 로케일을 따른다 — 영어 사이트에 "30자 이내"가 안 나간다
   · gather() 가 기회마다 brief 를 싣고 꼴 꼬리 한 벌을 같이 보낸다
+  · 고치기 요청문은 페이지 단위다 — 걸린 검색어 전부·의도 비율·같은 페이지의 다른 기회를
+    싣고, 누른 검색어는 입구일 뿐이다 (한 페이지에 기회 16건이 title 을 16번 고치던 것)
 """
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -950,6 +953,144 @@ def test_extract_tags_have_a_deliverable_and_stay_out_of_the_tech_aside():
     assert {"추출성", "읽기 구조", "저자", "갱신"} <= tags, tags      # 갈래를 다 태웠나
     assert tags <= set(brief.DELIVER_BY_TAG), tags - set(brief.DELIVER_BY_TAG)
     assert not tags & set(brief.TECH_TAGS), tags & set(brief.TECH_TAGS)
+
+
+# 실제 데이터 그대로 — 한관종·비립종 페이지 하나에 검색어 10개, 기회 여러 종류.
+_SM = "https://theotherskin.com/en/special-clinic/syringoma-milia/"
+_SM_GSC = [("syringoma vs milia", 118, 9, 12.1), ("milia vs syringoma", 39, 4, 9.7),
+           ("milia removal seoul", 25, 2, 9.6), ("difference between milia and syringoma", 6, 1, 6.0),
+           ("syringoma or milia", 6, 0, 16.5), ("milia and syringoma", 5, 0, 10.2),
+           ("milia vs syringomas", 5, 0, 20.4), ("syringoma", 2, 1, 2.0),
+           ("milia and syringoma treatment", 1, 0, 8.0), ("syringoma and milia", 1, 0, 11.0)]
+
+
+def _sm_ctx():
+    qp = {q: [{"page": _SM, "impressions": imp, "clicks": clk, "ctr": 1.0, "position": pos}]
+          for q, imp, clk, pos in _SM_GSC}
+    qp["다른 페이지 검색어"] = _pages(URL2)
+    opps = [{**_opp("aio_exposure", q, band="beyond"), "id": i + 1, "status": "new"}
+            for i, q in enumerate(("syringoma vs milia", "milia vs syringoma", "milia and syringoma",
+                                   "syringoma or milia", "difference between milia and syringoma",
+                                   "milia removal seoul"))]
+    opps += [{**_opp("striking_distance", "syringoma vs milia", band="page2"), "id": 20, "status": "acked"},
+             {**_opp("pseo_pattern", "milia vs syringoma"), "id": 21, "status": "new"},
+             {**_opp("rank_decay", "milia vs syringomas"), "id": 22, "status": "new"},
+             # 닫힌 기회·다른 페이지·같은 주소의 다른 일(크롤 이슈)은 안 실린다
+             {**_opp("ctr_gap", "syringoma"), "id": 23, "status": "done"},
+             {**_opp("ctr_gap", "다른 페이지 검색어"), "id": 24, "status": "new"},
+             {**_opp("crawl_issue", _SM), "id": 25, "status": "new"}]
+    return {"query_pages": qp, "opps": opps, "page_audits": {_SM: _audit(url=_SM)},
+            "crawl": {"issues": [{"url": _SM, "kind": "broken_internal", "severity": "bad",
+                                  "detail": "404"}]}}
+
+
+def test_query_intent_is_a_word_table():
+    qi = brief.query_intent
+    assert qi("syringoma vs milia") == qi("difference between milia and syringoma") == "비교"
+    assert qi("syringoma or milia") == qi("milia and syringoma") == "비교"     # 두 명사 사이
+    assert qi("and syringoma") == "정보", "첫 자리의 and 는 잇는 말이 아니다"
+    assert qi("milia removal seoul") == qi("milia and syringoma treatment") == "치료·구매"
+    assert qi("how to remove milia") == "방법"                                  # 방법이 치료보다 먼저
+    assert qi("what causes milia") == "원인·증상"
+    assert qi("syringoma") == qi("") == brief.INTENT_DEFAULT == "정보"
+    assert qi("밀리아 한관종 차이점") == "비교" and qi("한관종 제거 비용") == "치료·구매"
+    assert qi("한관종 원인") == "원인·증상" and qi("한관종 없애는 방법") == "방법"
+    assert qi("Syringoma VS Milia") == "비교"                                   # 대소문자 무관
+
+
+def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
+    """한 페이지에 기회 16건 — 기회마다 자기 검색어만 알면 같은 title 을 16번 다르게
+    고치라는 요청문 16장이 된다. 요청문은 페이지 단위다: 걸린 검색어 전부, 의도 비율,
+    같은 페이지의 다른 기회, 그리고 누른 검색어는 입구일 뿐이라는 말."""
+    ctx = _sm_ctx()
+    o = next(x for x in ctx["opps"] if x["id"] == 2)            # milia vs syringoma (aio)
+    b = brief.build(o, ctx)
+    assert b["shape"] == "fix_page" and b["page"] == _SM
+    body = b["body"]
+    # 1. 걸린 검색어 전부 — 노출 순, 누른 것에 표시
+    assert brief.PAGE_QUERIES_HEAD in body, body
+    sec = body.split(brief.PAGE_QUERIES_HEAD)[1].split("\n## ")[0]
+    rows = [ln for ln in sec.splitlines() if re.search(r"\d위 \|", ln)]
+    assert len(rows) == len(_SM_GSC), rows
+    assert [r.split(" | ")[0][2:].replace(" ← 이 기회", "") for r in rows] == [q for q, *_ in _SM_GSC]
+    assert "| milia vs syringoma ← 이 기회 | 39 | 4 | 9.7위 | 비교 |" in sec, sec
+    assert "| syringoma vs milia | 118 | 9 | 12.1위 | 비교 |" in sec, sec
+    assert "| milia removal seoul | 25 | 2 | 9.6위 | 치료·구매 |" in sec, sec
+    assert sec.count("← 이 기회") == 1, sec
+    assert "다른 페이지 검색어" not in sec, "다른 페이지의 검색어가 새어 들어온다"
+    # 의도 비율은 계산한 것 — 180/208
+    assert "노출 208 중 비교 의도 180 (87%) · 치료·구매 26 · 정보 2" in sec, sec
+    # 2. 같은 페이지의 다른 기회 — 누른 것·닫힌 것·다른 페이지·다른 일은 빠진다
+    assert brief.PAGE_SIBLINGS_HEAD in body, body
+    sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
+    assert "열린 기회가 8건 더 있습니다" in sib, sib
+    assert "- [밀면 오를 검색어] syringoma vs milia — 근거 문장" in sib, sib
+    assert f"- [{scoring.kind_label('aio_exposure')}] syringoma vs milia" in sib, sib
+    assert f"[{scoring.kind_label('pseo_pattern')}] milia vs syringoma" in sib, sib
+    assert f"[{scoring.kind_label('rank_decay')}] milia vs syringomas" in sib, sib
+    assert f"[{scoring.kind_label('aio_exposure')}] milia vs syringoma\n" not in sib + "\n", \
+        "누른 기회가 자기 목록에 있다"
+    assert f"[{scoring.kind_label('ctr_gap')}] syringoma —" not in sib, "닫힌(done) 기회가 실렸다"
+    assert "다른 페이지 검색어" not in sib and _SM not in sib, sib
+    assert "같이 닫습니다" in sib and "묶음 버튼" in sib, sib
+    # 3. 대상의 틀 — 페이지가 단위, 검색어는 입구
+    target = body.split("## 대상")[1].split("\n## ")[0]
+    assert "일의 단위: 이 페이지입니다" in target and "(비교 87%)" in target, target
+    assert "검색어 하나에 페이지를 맞추지 않습니다" in target, target
+    # 산출물의 '검색어'는 묶음의 의도다 — 안 바꾸는 것도 답이다
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "위 묶음의 주된 의도입니다" in want and "안 바꾸는 게 답이면" in want, want
+    # 근거의 '이 검색어 → 내 페이지' 표는 그대로 있다 — 방향이 다른 두 표다
+    assert f"| {_SM} | 39 | 4 |" in body.split("## 근거")[1].split("\n## ")[0], body
+    # 순서: 대상 → 걸린 검색어 → 다른 기회 → 근거
+    assert body.index("## 대상") < body.index(brief.PAGE_QUERIES_HEAD) \
+        < body.index(brief.PAGE_SIBLINGS_HEAD) < body.index("## 근거")
+
+
+def test_page_scope_sections_only_where_a_page_is_the_job():
+    ctx = _sm_ctx()
+    # 대상이 주소인 종류(주소 정리 꼴) — 검색어 묶음이 일을 정하지 않는다
+    crawl = brief.build(next(x for x in ctx["opps"] if x["id"] == 25), ctx)["body"]
+    assert brief.PAGE_QUERIES_HEAD not in crawl and brief.PAGE_SIBLINGS_HEAD not in crawl, crawl
+    assert "일의 단위" not in crawl
+    # 걸린 페이지가 없는 종류 — 새 글 꼴
+    gap = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"opps": ctx["opps"]})
+    assert gap["shape"] == "new_content"
+    assert brief.PAGE_QUERIES_HEAD not in gap["body"] and brief.PAGE_SIBLINGS_HEAD not in gap["body"]
+    # 검색어 하나뿐인 페이지 — 표는 실리되 '묶음의 의도' 꼬리는 안 붙고, 다른 기회도 없다
+    solo = brief.build(_opp("ctr_gap", "검색어"), {"query_pages": {"검색어": _pages(URL)}})["body"]
+    assert brief.PAGE_QUERIES_HEAD in solo and "노출 100 중 정보 의도 100 (100%)" in solo, solo
+    assert brief.PAGE_SIBLINGS_HEAD not in solo and "위 묶음의 주된 의도입니다" not in solo, solo
+    # 표는 15행에서 자르고 비율은 전부로 센다
+    many = {"query_pages": {f"q{i:02d} vs x": _pages(URL) for i in range(20)}}
+    for i, prs in enumerate(many["query_pages"].values()):
+        prs[0]["impressions"] = 100 - i
+    big = brief.build(_opp("ctr_gap", "q00 vs x"), many)["body"]
+    sec = big.split(brief.PAGE_QUERIES_HEAD)[1].split("\n## ")[0]
+    assert sec.count("| 비교 |") == 15 and "외 5개" in sec, sec
+    assert f"노출 {sum(100 - i for i in range(20)):,} 중 비교 의도" in sec, sec
+
+
+def test_tail_rules_make_reading_the_page_a_rule():
+    """요청문의 숫자는 출발점이다 — 페이지와 상위 결과를 안 열고 제안하면 표만 보고
+    title 을 바꾼다. 검색어 여럿이 걸린 페이지에서 한 벌만 고친다는 것도 규칙이다."""
+    t = brief.tails("en-US")
+    rules = {name: t[name].split("## 규칙")[1] for name in brief.SHAPE_NAMES}
+    assert brief.RULE_READ_PAGE in rules["fix_page"] and brief.RULE_ONE_SET in rules["fix_page"]
+    assert brief.RULE_READ_TOP in rules["new_content"]
+    for name in ("consolidate", "technical", "outreach", "presence"):
+        for r in (brief.RULE_READ_PAGE, brief.RULE_ONE_SET, brief.RULE_READ_TOP):
+            assert r not in rules[name], (name, r)
+    assert brief.RULE_ONE_SET not in rules["new_content"]        # 새 글에는 걸린 검색어가 없다
+    # 산출물 표도 검색어 하나에 맞추라고 하지 않는다
+    for tag in ("title", "H1"):
+        assert "검색어를 앞에" not in brief.DELIVER_BY_TAG[tag]
+        assert "안 바꿈" in brief.DELIVER_BY_TAG[tag] or "안 바꾸는" in brief.DELIVER_BY_TAG[tag]
+    assert "검색어 묶음" in brief.DELIVER_BY_TAG["title"]
+    # page_advice 가 새로 낼 tag — 산출물 표가 먼저 받아 둔다
+    assert "H2" in brief.DELIVER_BY_TAG["H2"] and "나란히" in brief.DELIVER_BY_TAG["H2"]
+    assert "출처" in brief.DELIVER_BY_TAG["외부 링크"] and "앵커" in brief.DELIVER_BY_TAG["외부 링크"]
+    assert "표" in brief.DELIVER_BY_TAG["비교"] and "결론" in brief.DELIVER_BY_TAG["비교"]
 
 
 if __name__ == "__main__":
