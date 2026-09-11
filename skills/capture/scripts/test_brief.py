@@ -553,6 +553,114 @@ def test_trust_signals_are_asked_for_but_never_invented():
     assert "신뢰 신호" not in tails["outreach"]
 
 
+_FLAT = dict(tables=0, lists=0, h2_questions=0, lead_words=0, author="")   # 추출성 칸을 읽은 새 행
+
+
+def _diag(body: str) -> str:
+    """요청문의 '진단 — 고쳐야 할 것' 구간만. 산출물·상태 줄과 섞어 보면 늘 참인 검사가 된다."""
+    return body.split("## 진단 — 고쳐야 할 것")[1].split("\n## ")[0] \
+        if "## 진단 — 고쳐야 할 것" in body else ""
+
+
+def test_extract_diagnosis_rides_only_on_ai_kinds():
+    """"인용될 블록이 있는가" 는 AI 가 이 페이지를 뽑아 가느냐가 걸린 기회에서만 말한다.
+
+    page_advice 에 넣으면 클릭률·순위 요청문마다 표·질문형 H2 지적이 붙어 부풀어
+    오른다. 그리고 구글 AI 요약과 챗봇은 **다른 일**을 시킨다 — 구글은 "AI 용으로
+    조각내지 말고 사람을 위한 구조로" 라는 입장이라, 같은 문구를 쓰면 구글 쪽 요청문이
+    AI 전용 블록을 만들라고 시키게 된다.
+    """
+    qp = {"검색어": _pages(URL)}
+    ctx = {"query_pages": qp, "page_audits": {URL: _audit(**_FLAT)}}
+    bot = brief.build(_opp("ai_citation_gap", "검색어"), ctx)["body"]
+    aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
+    ctr = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
+
+    assert "[추출성]" in _diag(bot) and "[저자]" in _diag(bot), bot
+    assert "[읽기 구조]" in _diag(aio) and "[추출성]" not in _diag(aio), aio
+    for tag in ("[추출성]", "[읽기 구조]", "[저자]"):
+        assert tag not in ctr, f"일반 요청문에 {tag} 가 붙었다"
+    # 챗봇 = 추출 블록, 구글 = 사람용 구조 (AI 전용 블록을 시키지 않는다)
+    assert "챗봇은 문단보다 표·목록을 그대로 인용합니다" in _diag(bot), bot
+    assert "AI 용 블록을 따로 만들지 않습니다" in _diag(aio), aio
+    assert "AI 용 블록" not in _diag(bot) and "챗봇" not in _diag(aio)
+    # 진단이 선 자리는 산출물도 선다 — 못 재는 것(출처가 진짜인지)은 여기로 간다
+    want_bot = bot.split("## 만들어 줄 것")[1]
+    want_aio = aio.split("## 만들어 줄 것")[1]
+    assert brief.DELIVER_BY_TAG["추출성"] in want_bot and "[출처 확인]" in want_bot, want_bot
+    assert brief.DELIVER_BY_TAG["읽기 구조"] in want_aio, want_aio
+    assert brief.DELIVER_BY_TAG["추출성"] not in want_aio
+    # 사실 줄은 어느 요청문에나 — 판정만 AI 종류 전용이다
+    assert "- 본문 구조: 표 0 · 목록 0 · 질문형 H2 0/3 · 첫 문단 (<p> 문단 못 찾음) · " \
+           "저자 (없음)" in ctr, ctr
+
+    # 채워진 페이지에는 아무 말도 안 한다
+    full = {"query_pages": qp, "page_audits": {URL: _audit(
+        tables=1, lists=2, h2_questions=2, lead_words=48, author="홍길동")}}
+    good = brief.build(_opp("ai_citation_gap", "검색어"), full)["body"]
+    assert "[추출성]" not in good and "[저자]" not in good, good
+    assert "표 1 · 목록 2 · 질문형 H2 2/3 · 첫 문단 48단어 · 저자 홍길동" in good, good
+
+
+def test_extract_fields_absent_on_old_rows_and_doubtful_on_js_shells():
+    """옛 감사 행(칸 NULL)에 "표 0개·저자 없음" 을 지어내지 않는다. JS 로 그리는
+    페이지는 렌더 전 값이라 판정 대신 확인부터 시킨다 — 구조화 데이터와 같은 규칙."""
+    qp = {"검색어": _pages(URL)}
+    old = brief.build(_opp("ai_citation_gap", "검색어"),
+                      {"query_pages": qp, "page_audits": {URL: _audit()}})["body"]
+    assert "[추출성]" not in old and "[저자]" not in old and "- 본문 구조:" not in old, old
+
+    spa = brief.build(_opp("ai_citation_gap", "검색어"), {"query_pages": qp, "page_audits": {
+        URL: _audit(js_shell=1, words=20, **_FLAT)}})["body"]
+    d = _diag(spa)
+    assert "[추출성] 지금: 정적 HTML 로는 본문 구조" in d, d
+    assert "표도 목록" not in d and "[저자]" not in d, "렌더 전 값을 사실로 판정했다"
+    assert "구조화 데이터·본문 구조는 렌더 전 값" in spa, spa
+
+
+def test_ai_kinds_judge_freshness_at_six_months_general_at_two_years():
+    """AI 답변은 최근 글을 고른다(6개월). 일반 기준(2년)을 그대로 쓰면 AI 쪽이 늦고,
+    6개월로 내리면 클릭률 요청문마다 갱신 지적이 붙는다. 한 요청문에 두 기준이
+    나란히 서지도 않는다 — 같은 tag 는 AI 기준이 이긴다."""
+    import datetime
+    assert scoring.AI_CONTENT_STALE_DAYS == 180 and scoring.STALE_DAYS == 730
+    qp = {"검색어": _pages(URL)}
+
+    def bodies(days):
+        d = str(datetime.date.today() - datetime.timedelta(days=days))
+        ctx = {"query_pages": qp, "page_audits": {URL: _audit(modified=d)}}
+        return (brief.build(_opp("ai_citation_gap", "검색어"), ctx)["body"],
+                brief.build(_opp("ctr_gap", "검색어"), ctx)["body"])
+
+    ai, ctr = bodies(300)
+    assert "[갱신]" in _diag(ai) and "챗봇은 최근 글을 출처로 고릅니다" in ai, ai
+    assert "[갱신]" not in ctr, "일반 요청문이 6개월 기준으로 갱신을 지적한다"
+    ai, ctr = bodies(800)
+    assert _diag(ai).count("[갱신]") == 1, _diag(ai)
+    assert "챗봇은 최근 글을" in _diag(ai), "AI 요청문에 2년 기준 문구가 남았다"
+    assert _diag(ctr).count("[갱신]") == 1, ctr
+    ai, _ = bodies(100)
+    assert "[갱신]" not in ai, ai
+
+
+def test_extract_tags_have_a_deliverable_and_stay_out_of_the_tech_aside():
+    """이음매: scoring.extract_advice 가 낼 수 있는 tag(판정 쪽) ↔ brief 의
+    DELIVER_BY_TAG·TECH_TAGS(말하는 쪽). tag 가 산출물 표에 없으면 진단만 서고 '만들어
+    줄 것'이 빈손이 되고, TECH_TAGS 에 들어가면 글의 일이 "이번 일은 아닙니다" 칸으로
+    밀려난다. 가능한 갈래(문단 없음·긴 문단·JS 껍데기·오래된 글)를 다 태워 모은다."""
+    import datetime
+    old = str(datetime.date.today() - datetime.timedelta(days=1000))
+    tags = set()
+    for kind in scoring.EXTRACT_KINDS:
+        for over in (dict(lead_words=0), dict(lead_words=scoring.LEAD_MAX_WORDS + 1),
+                     dict(js_shell=1)):
+            a = _audit(**{**_FLAT, **over, "modified": old})
+            tags |= {x["tag"] for x in scoring.extract_advice(a, kind)}
+    assert {"추출성", "읽기 구조", "저자", "갱신"} <= tags, tags      # 갈래를 다 태웠나
+    assert tags <= set(brief.DELIVER_BY_TAG), tags - set(brief.DELIVER_BY_TAG)
+    assert not tags & set(brief.TECH_TAGS), tags & set(brief.TECH_TAGS)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -807,6 +807,116 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     return out
 
 
+# ── 추출성 — "인용될 블록이 있는가" (AI 종류 전용) ───────────────────────────
+# page_advice 에 넣지 않는다: 모든 요청문(클릭률·순위…)이 표·질문형 H2 지적으로
+# 부풀어 오른다. AI 가 이 페이지를 **뽑아 가느냐**가 걸린 기회에서만 말한다.
+EXTRACT_KINDS = ("ai_citation_gap", "aio_exposure")
+# AI 답변은 최근 글을 고른다 — ai-seo 점검표의 "6개월 안 갱신". 일반 기준(STALE_DAYS,
+# 2년)은 "낡았을 수 있다"는 확인 지시라 그대로 둔다. 둘을 한 값으로 합치면 한쪽이
+# 틀린다: 180일로 내리면 클릭률 요청문마다 갱신 지적이 붙고, 730일이면 AI 쪽이 늦다.
+AI_CONTENT_STALE_DAYS = 180
+# 첫 문단 — 스킬의 "핵심 답 문단 40~60단어". 단어는 공백 기준이라 한국어는 어절이고
+# 같은 내용이 영어보다 적게 세진다. 그래서 목표치(40~60)가 아니라 **분명히 넘친**
+# 값에서만 말한다 — 한 덩어리로 뽑히기엔 긴 문단.
+LEAD_MAX_WORDS = 80
+# 질문형 H2 를 따지려면 H2 가 이만큼은 있어야 한다. 하나뿐인 H2 가 질문이 아니라고
+# 구조를 탓하면 말이 안 된다.
+H2_FOR_QUESTIONS = 2
+
+
+def _has_extract_fields(audit: dict) -> bool:
+    """이 감사 행이 추출성 칸(표·목록·질문형 H2·첫 문단·저자)을 읽고 온 것인가.
+
+    _has_render_fields 와 같은 종류의 가드다: 옛 행은 이 칸들이 통째로 NULL 인데,
+    그것을 "표 0개·저자 없음"으로 읽으면 멀쩡한 페이지에 없는 문제를 만든다 — 안
+    본 것과 없는 것은 다르다. tables 는 새 감사면 늘 정수라 행의 나이를 가른다.
+    """
+    return audit.get("tables") is not None
+
+
+def extract_advice(audit: dict | None, kind: str) -> list[dict]:
+    """AI 종류 요청문에만 붙는 진단 — 정적 HTML 로 잴 수 있는 것만 판정한다.
+
+    반환은 page_advice 와 같은 꼴([{tag, level, now, fix}]). 못 재는 것(수치의 출처가
+    진짜인지, 문단이 정말 혼자 서는지)은 판정하지 않고 요청문 산출물(brief.
+    DELIVER_BY_TAG)로 돌린다.
+
+    **구글 AI 요약과 챗봇은 다른 말을 한다.** 구글은 "AI 용으로 조각내지 말고 사람을
+    위한 구조로 쓰라"는 입장이라(ai-seo 스킬도 같다), aio_exposure 쪽은 "사람이 훑어
+    읽기 좋은 구조"로 말하고 AI 전용 블록을 시키지 않는다(tag "읽기 구조"). 챗봇
+    (ai_citation_gap)은 문단을 그대로 뽑아 가므로 혼자 서는 답 블록을 시켜도 된다
+    (tag "추출성"). 갱신은 둘 다 AI_CONTENT_STALE_DAYS 로 본다(tag "갱신" — page_advice
+    의 같은 tag 를 요청문이 이것으로 갈아 끼운다). 저자는 tag "저자".
+    """
+    if not audit or audit.get("error") or kind not in EXTRACT_KINDS:
+        return []
+    bot = kind == "ai_citation_gap"
+    tag = "추출성" if bot else "읽기 구조"
+    out: list[dict] = []
+
+    def add(t, level, now, fix):
+        out.append({"tag": t, "level": level, "now": now, "fix": fix})
+
+    # 갱신 — 날짜 칸은 추출성 칸보다 먼저 생겼다. 날짜로 안 읽히면 말하지 않는다.
+    stale = _stale_days(audit)
+    if stale is not None and stale >= AI_CONTENT_STALE_DAYS:
+        seen = audit.get("modified") or audit.get("published")
+        add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
+            ("챗봇은 최근 글을 출처로 고릅니다. " if bot else
+             "AI 요약은 최근 정보를 앞세웁니다. ")
+            + "숫자·연도·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요 — 날짜만 "
+              "바꾸는 것은 안 됩니다.")
+
+    if not _has_extract_fields(audit):
+        return out
+    if audit.get("js_shell"):
+        # 렌더 전 HTML 에서 센 값이다 — "표가 없다"를 사실로 말하면 있는 표를 또
+        # 만들게 시킨다. 구조화 데이터와 같은 규칙: 판정을 확인 지시로 바꾼다.
+        add(tag, "warn", "정적 HTML 로는 본문 구조(표·목록·첫 문단)를 못 봤습니다 "
+                         "(자바스크립트로 그리는 페이지로 보입니다)",
+            "브라우저에서 렌더된 화면으로 첫 문단·표·목록이 있는지 먼저 확인하세요. "
+            "그 뒤에 아래 산출물 중 없는 것만 만듭니다.")
+        return out
+
+    lead = audit.get("lead_words")
+    if lead == 0:
+        add(tag, "warn", "본문에서 <p> 문단을 못 찾았습니다 (div 로만 짠 페이지일 수 있습니다)",
+            "H1 바로 아래에 이 질문에 바로 답하는 문단 하나를 두세요 — 정의나 결론부터."
+            if bot else
+            "H1 바로 아래 첫 문단에서 독자의 질문에 먼저 답하세요 — 결론부터, 설명은 그 뒤.")
+    elif isinstance(lead, int) and lead > LEAD_MAX_WORDS:
+        add(tag, "warn", f"첫 문단이 {lead}단어입니다",
+            "첫 문단을 40~60단어의 직답으로 줄이고 나머지는 다음 문단으로 넘기세요. "
+            "챗봇은 문단 단위로 뽑아서, 긴 문단은 통째로 버려집니다." if bot else
+            "첫 문단은 요점만 두세 문장으로. 사람이 첫 화면에서 답을 못 찾으면 요약도 "
+            "그 문단을 안 씁니다.")
+
+    tables, lists = audit.get("tables"), audit.get("lists")
+    if tables == 0 and lists == 0:
+        add(tag, "warn", "본문에 표도 목록(ul/ol)도 없습니다",
+            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 바꾸세요. 챗봇은 "
+            "문단보다 표·목록을 그대로 인용합니다." if bot else
+            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 — 사람이 훑어 읽기 "
+            "좋은 구조가 요약에도 잡힙니다. AI 용 블록을 따로 만들지 않습니다.")
+
+    h2 = _as_list(audit.get("h2_json"))
+    qn = audit.get("h2_questions")
+    if len(h2) >= H2_FOR_QUESTIONS and qn == 0:
+        add(tag, "warn", f"H2 {len(h2)}개 중 질문형이 없습니다",
+            "사람들이 챗봇에 실제로 묻는 문장을 H2 로 두고, 그 바로 아래 첫 문장에서 "
+            "답하세요 — 질문과 답이 한 덩어리로 뽑힙니다." if bot else
+            "독자가 묻는 순서대로 H2 를 질문 꼴로 바꾸세요 — 제목만 훑어도 답이 어디 "
+            "있는지 보이게.")
+
+    # 저자는 구조가 아니라 신뢰 신호라 tag 를 따로 둔다 — "[읽기 구조] 저자 없음"은
+    # 무엇을 고치라는지 흐린다. "" 만 본다: NULL 은 저자 칸을 안 읽은 행이다.
+    if audit.get("author") == "":
+        add("저자", "warn", "저자 표시가 없습니다 (meta author·ld+json author 둘 다 없음)",
+            "누가 썼는지(이름·자격)를 본문과 ld+json author 에 적으세요. 이름은 [저자] "
+            "자리로 비워 둡니다 — 지어내지 않습니다.")
+    return out
+
+
 def _as_list(blob) -> list:
     """JSON 배열 문자열 → list. 깨져 있으면 빈 목록(판정이 멈추지 않는다)."""
     if isinstance(blob, list):
@@ -3504,6 +3614,31 @@ def _selfcheck() -> None:
     other = page_advice(dict(ok_page, canonical="https://competitor.com/a"),
                         ["밀리아 제거"], domain="x.com")
     assert [a["tag"] for a in other] == ["canonical"] and other[0]["level"] == "bad", other
+
+    # 추출성 — AI 종류에서만, 새 칸을 읽은 행에서만. 옛 행(칸 NULL)에 "표 0" 을 지어내지
+    # 않고, 클릭률 같은 일반 종류에는 아무 말도 안 한다(page_advice 를 부풀리지 않는다).
+    flat = dict(ok_page, h2_json='["비용", "기간"]', tables=0, lists=0, h2_questions=0,
+                lead_words=0, author="", js_shell=0)
+    bot = extract_advice(flat, "ai_citation_gap")
+    aio = extract_advice(flat, "aio_exposure")
+    assert {x["tag"] for x in bot} == {"추출성", "저자"}, bot
+    assert {x["tag"] for x in aio} == {"읽기 구조", "저자"}, aio
+    assert [x["fix"] for x in bot if x["tag"] == "추출성"] != \
+        [x["fix"] for x in aio if x["tag"] == "읽기 구조"], "구글과 챗봇이 같은 말을 한다"
+    assert extract_advice(flat, "ctr_gap") == [], "일반 종류에 추출성 진단이 붙는다"
+    assert extract_advice(ok_page, "ai_citation_gap") == [], "옛 행에 없는 문제를 만든다"
+    # 옛 행이라도 js_shell 은 먼저 생긴 칸이라 1 일 수 있다 — 칸을 안 읽은 행에 "본문
+    # 구조를 못 봤다"를 붙이면 가드(_has_extract_fields)가 없는 것과 같다
+    assert extract_advice(dict(ok_page, js_shell=1), "ai_citation_gap") == [], \
+        "옛 행(추출성 칸 NULL)에 JS 껍데기 확인 지시를 붙인다"
+    assert extract_advice(dict(flat, tables=2, lists=1, h2_questions=1, lead_words=45,
+                               author="홍"), "ai_citation_gap") == []
+    # 갱신 — AI 종류는 180일, 일반(page_advice)은 730일. 둘 사이의 글이 가르는 자리다.
+    mid = str(datetime.date.today() - datetime.timedelta(days=300))
+    assert [x["tag"] for x in extract_advice(dict(ok_page, modified=mid),
+                                             "aio_exposure")] == ["갱신"]
+    assert "갱신" not in [x["tag"] for x in page_advice(dict(ok_page, modified=mid),
+                                                        ["밀리아 제거"], domain="x.com")]
 
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at) "
