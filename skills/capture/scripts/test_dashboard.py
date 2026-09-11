@@ -294,6 +294,33 @@ def test_gather_crawl_orders_by_severity():
     conn.close()
 
 
+def test_gather_ai_bots_carry_purpose_and_llms_three_states():
+    """크롤 회차 → 페이로드: 봇 행은 용도를 싣고, llms.txt 는 셋을 가른다.
+
+    llms_txt_found 가 NULL(옛 회차·못 받음)이면 None, 0 이면 {"found": False}.
+    둘을 뭉치면 요청문이 증거 없이 "llms.txt 없음" 이라고 말한다.
+    """
+    conn, pid = _brain("llms")
+    robots = "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /"
+    rid = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
+                       " VALUES(?,?,'home',?)", (pid, D, robots)).lastrowid
+    conn.commit()
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] is None, d["llms_txt"]                 # 안 받은 회차 = 모름
+    bots = {r["bot"]: r for r in d["ai_bots"]}
+    assert bots["GPTBot"]["purpose"] == "training" and bots["GPTBot"]["rule"], bots["GPTBot"]
+    assert bots["OAI-SearchBot"]["purpose"] == "search" and not bots["OAI-SearchBot"]["rule"]
+    db.write_llms_txt(conn, rid, {"found": 0, "bytes": 99, "head": "x"})
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] == {"found": False, "bytes": None, "head": None}, d["llms_txt"]
+    db.write_llms_txt(conn, rid, {"found": 1, "bytes": 12, "head": "# 사이트"})
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] == {"found": True, "bytes": 12, "head": "# 사이트"}, d["llms_txt"]
+    db.write_llms_txt(conn, rid, {"found": None})
+    assert dashboard.gather(conn, db.get_project(conn, "llms"))["llms_txt"] is None
+    conn.close()
+
+
 # ── 축 함수 단독 — gather() 를 통째로 안 돌리고 축 하나만 부른다 ─────────────
 def test_axis_gsc_pairs_same_period_snapshots_only():
     """gather() 가 아니라 _axis_gsc() 자체가 period_days 를 가려 짝짓는지.

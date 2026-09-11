@@ -419,7 +419,12 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
   seed TEXT,                                  -- sitemap|home
   pages INTEGER DEFAULT 0,
   issues INTEGER DEFAULT 0,
-  robots_txt TEXT                             -- robots.txt 원문 — 어느 줄에 걸리는지 말하려면 필요하다
+  robots_txt TEXT,                            -- robots.txt 원문 — 어느 줄에 걸리는지 말하려면 필요하다
+  -- /llms.txt — 1 있음 · 0 봤고 없음 · NULL 모름(못 받음·옛 회차). 셋을 뭉치면 "없다"를
+  -- 증거 없이 말하게 된다. 크기·앞부분은 있을 때만 (collect_crawl.probe_llms_txt)
+  llms_txt_found INTEGER,
+  llms_txt_bytes INTEGER,
+  llms_txt_head TEXT
 );
 CREATE TABLE IF NOT EXISTS sitemap_urls (     -- 사이트맵이 시드였을 때 그 목록 그대로
   id INTEGER PRIMARY KEY,
@@ -533,6 +538,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "robots_txt" not in cr_cols:
         conn.execute("ALTER TABLE crawl_runs ADD COLUMN robots_txt TEXT")
         conn.commit()
+    # /llms.txt 확인 — 옛 회차는 NULL(모름)로 남는다. 0 으로 채우면 안 본 것을 "없다" 로 읽는다
+    for col, decl in (("llms_txt_found", "INTEGER"), ("llms_txt_bytes", "INTEGER"),
+                      ("llms_txt_head", "TEXT")):
+        if col not in cr_cols:
+            conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {decl}")
+            conn.commit()
 
     pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
     for col, decl in (("viewport", "TEXT"), ("html_lang", "TEXT"),
@@ -1406,6 +1417,17 @@ def write_sitemap_urls(conn: sqlite3.Connection, run_id: int, urls) -> int:
                      [(run_id, u) for u in urls])
     conn.commit()
     return len(urls)
+
+
+def write_llms_txt(conn: sqlite3.Connection, run_id: int, probe: dict) -> None:
+    """크롤 회차에 /llms.txt 확인 결과를 단다. found 는 1·0·None 그대로 — None 을 0 으로
+    접지 않는다(못 받은 것과 없는 것은 다르다). 크기·앞부분은 있을 때만 남긴다."""
+    found = probe.get("found")
+    found = None if found is None else (1 if found else 0)
+    conn.execute("UPDATE crawl_runs SET llms_txt_found=?, llms_txt_bytes=?, llms_txt_head=?"
+                 " WHERE id=?", (found, probe.get("bytes") if found else None,
+                                 probe.get("head") if found else None, run_id))
+    conn.commit()
 
 
 def write_serp_results(conn: sqlite3.Connection, keyword_id: int, rows,

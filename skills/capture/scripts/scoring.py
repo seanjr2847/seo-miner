@@ -474,11 +474,45 @@ def vitals_advice(rows) -> list[dict]:
 
 
 # 목록의 정본은 config.yaml 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
-# 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(빈 목록).
-_AI_BOTS_FALLBACK = ("GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended")
+# 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(아래 폴백).
+#
+# 봇의 **용도**가 판정의 전부다. 학습 전용 봇(GPTBot·ClaudeBot·CCBot…)을 막는 것은
+# 인용과 무관하고, 오히려 권장되는 중간 지점이다 — 학습은 거부하고 검색·인용은
+# 받는다. 예전에는 막힌 봇을 전부 "인용 불가" 로 올려서, GPTBot 만 막은 흔한
+# 사이트에 ChatGPT 인용이 불가능하다고 오진했다(ChatGPT 검색은 OAI-SearchBot 이다).
+AI_BOT_PURPOSE = {"search": "검색·인용 색인", "user": "사용자 요청 페치",
+                  "training": "학습"}
+# 막히면 인용이 끊기는 용도 — 이 둘만 기회가 된다. training·모름(None)은 아니다.
+AI_BOT_CITING = ("search", "user")
+_AI_BOTS_FALLBACK = (
+    {"ua": "GPTBot", "vendor": "OpenAI", "purpose": "training", "engine": "OpenAI 모델 학습"},
+    {"ua": "OAI-SearchBot", "vendor": "OpenAI", "purpose": "search", "engine": "ChatGPT 검색"},
+    {"ua": "ClaudeBot", "vendor": "Anthropic", "purpose": "training", "engine": "Claude 모델 학습"},
+    {"ua": "PerplexityBot", "vendor": "Perplexity", "purpose": "search", "engine": "Perplexity"},
+    {"ua": "Google-Extended", "vendor": "Google", "purpose": "training", "engine": "Gemini 모델 학습"},
+)
 
 
-def ai_bots() -> tuple[str, ...]:
+def _ai_bot_entry(x) -> dict | None:
+    """config 한 줄 → {ua, vendor, purpose, engine}.
+
+    옛 꼴(UA 문자열만)도 읽는다 — 다만 용도는 None(모름)이다. 모르는 것을 "검색
+    봇" 으로 짐작하면 예전 오진이 그대로 돌아오고, "학습 봇" 으로 짐작하면 진짜
+    차단을 숨긴다. 모름은 기회로도, 무해로도 올리지 않고 표에 "모름" 으로 적는다.
+    """
+    if isinstance(x, dict):
+        ua = str(x.get("ua") or "").strip()
+        purpose = str(x.get("purpose") or "").strip().lower() or None
+        if purpose not in AI_BOT_PURPOSE:
+            purpose = None
+        vendor = str(x.get("vendor") or "").strip() or None
+        engine = str(x.get("engine") or "").strip() or None
+    else:
+        ua, purpose, vendor, engine = str(x or "").strip(), None, None, None
+    return {"ua": ua, "vendor": vendor, "purpose": purpose, "engine": engine} if ua else None
+
+
+def ai_bots() -> tuple[dict, ...]:
     try:
         import collector
         got = collector.config().get("ai_bots")
@@ -486,33 +520,59 @@ def ai_bots() -> tuple[str, ...]:
         got = None
     if not isinstance(got, list) or not got:
         return _AI_BOTS_FALLBACK
-    return tuple(str(x).strip() for x in got if str(x).strip())
+    return tuple(e for e in map(_ai_bot_entry, got) if e)
+
+
+def ai_bot_purpose(ua: str) -> str | None:
+    """UA 이름 → 용도. 목록에 없거나 옛 꼴이면 None(모름)."""
+    key = str(ua or "").strip().lower()
+    return next((b["purpose"] for b in ai_bots() if b["ua"].lower() == key), None)
+
+
+def ai_bot_status(robots_txt: str, home: str = "") -> list[dict]:
+    """robots.txt 원문 → 봇마다 {bot, vendor, purpose, engine, rule}. rule=None 이면 허용.
+
+    막힌 것만 내지 않고 전부 낸다 — 화면·요청문의 표도, 기회 판정(ai_bot_blocks)도
+    이 한 벌을 읽는다. 원문이 비면 [] 다: 못 읽은 robots.txt 를 "전부 허용" 으로
+    읽지 않는다(안 봤다 ≠ 봤고 안 막는다).
+    """
+    txt = robots_txt or ""
+    if not txt.strip():
+        return []
+    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    return [{"bot": b["ua"], "vendor": b["vendor"], "purpose": b["purpose"],
+             "engine": b["engine"], "rule": robots_blocks(txt, url, agent=b["ua"])}
+            for b in ai_bots()]
 
 
 def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
                   home: str = "") -> list[dict]:
-    """robots.txt 로 막힌 AI 크롤러.
+    """robots.txt 로 막힌 **검색·인용용** AI 크롤러 (용도 search·user).
 
     새로 가져오지 않는다 — 크롤 회차가 남긴 원문(crawl_runs.robots_txt)을 다시
     읽을 뿐이다. 그래서 이 판정에는 네트워크도 새 단계도 없다.
 
-    왜 이게 AI 인용 판정보다 **먼저**여야 하나: ClaudeBot 이 막혀 있으면 그
-    엔진에서는 인용될 수가 없다. 그 상태에서 "콘텐츠가 약해서 인용이 안 된다"
-    고 말하면 완전한 오진이고, 사용자는 엉뚱한 글을 쓰게 된다.
+    왜 이게 AI 인용 판정보다 **먼저**여야 하나: OAI-SearchBot 이 막혀 있으면
+    ChatGPT 검색 답변의 출처로 실리기 어렵다. 그 상태에서 "콘텐츠가 약해서 인용이
+    안 된다" 고 말하면 오진이고, 사용자는 엉뚱한 글을 쓰게 된다. 거꾸로 학습 봇만
+    막힌 것을 여기 올리면 그것도 오진이다 — 학습과 인용은 다른 봇이다.
     """
     cr = conn.execute(
         "SELECT robots_txt FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
         " AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
-    txt = (cr["robots_txt"] if cr else "") or ""
-    if not txt.strip():
-        return []
-    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
-    out = []
-    for bot in ai_bots():
-        rule = robots_blocks(txt, url, agent=bot)
-        if rule:
-            out.append({"bot": bot, "rule": rule})
-    return out
+    return [r for r in ai_bot_status((cr["robots_txt"] if cr else "") or "", home)
+            if r["rule"] and r["purpose"] in AI_BOT_CITING]
+
+
+def _reason_ai_bot(r: dict, ctx: dict) -> str:
+    eng = r.get("engine") or r["bot"]
+    s = (f"robots.txt 가 {r['bot']}({eng}, {AI_BOT_PURPOSE[r['purpose']]})를 막습니다 "
+         f"({r['rule']}). {eng} 답변에서 우리 페이지가 출처로 실리기 어렵습니다 — 글을 "
+         "고치기 전에 이 설정이 먼저입니다")
+    if r["bot"].lower() == "bingbot":
+        # 빙 색인은 Copilot 만의 것이 아니다 — AI 문제로만 부르면 규모를 줄여 말하게 된다
+        s += ". Bingbot 차단은 AI 만의 문제가 아니라 빙 검색 전체에서 빠진다는 뜻입니다"
+    return s
 
 
 def robots_blocks(robots_txt: str, url: str, agent: str = "Googlebot") -> str | None:
@@ -2663,22 +2723,22 @@ _KIND_SPECS = {
             deliver=["301 대상 주소와 그 근거", "링크를 건 쪽에 보낼 짧은 안내문 한 벌"])),
     # robots.txt 원문은 크롤이 이미 남겼다 — 이 kind 에는 새 수집도 새 테이블도
     # 없다. AI 인용 판정보다 먼저 봐야 하는 관문이라 종류로 세운다.
+    # 검색·인용용(search·user) 봇만 선다 — 학습 봇 차단은 기회가 아니다(ai_bot_blocks).
     "ai_bot_blocked": dict(
         label="AI 크롤러 차단", defensive=False,
         detect=lambda ctx: ai_bot_blocks(ctx["conn"], ctx["pid"], home=ctx.get("domain") or ""),
         metrics=lambda r, ctx: {"impressions": 0, "position": None, "ai": 1.0},
         target=lambda r, ctx: r["bot"],
-        reasoning=lambda r, ctx: (
-            f"robots.txt 가 {r['bot']} 를 막습니다 ({r['rule']}). 이 크롤러를 쓰는 "
-            "엔진에서는 우리가 인용될 수 없습니다 — 글을 고쳐도 소용이 없습니다"),
+        reasoning=_reason_ai_bot,
         play=dict(
-            what="robots.txt 가 이 AI 크롤러를 막고 있습니다. 막힌 채로는 그 엔진이 "
-                 "우리 글을 읽을 수 없어서, 인용이 안 되는 이유가 콘텐츠가 아닙니다.",
-            acts=["막는 것이 의도였는지 먼저 정합니다 — 학습에 쓰이는 것이 싫어서 "
-                  "막아 둔 것일 수 있습니다. 그렇다면 이 항목은 닫으면 됩니다.",
-                  "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다.",
-                  "학습은 막고 인용은 받고 싶으면 봇을 갈라 봅니다 — 예를 들어 "
-                  "Google-Extended(제미나이 학습)와 Googlebot(검색 색인)은 다른 봇입니다.",
+            what="robots.txt 가 AI 검색·인용용 크롤러를 막고 있습니다. 막힌 채로는 그 "
+                 "엔진이 답을 만들 때 우리 글을 읽어 가지 못해서, 인용이 안 되는 이유가 "
+                 "콘텐츠가 아닐 수 있습니다.",
+            acts=["막는 것이 의도였는지 먼저 정합니다. 학습을 거부하려던 것이라면 이 봇이 "
+                  "아니라 학습 전용 봇(GPTBot·ClaudeBot·Google-Extended·CCBot 등)만 막으면 "
+                  "됩니다 — 학습만 막는 것은 인용과 무관한 흔한 선택입니다.",
+                  "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다. "
+                  "User-agent: * 로 한꺼번에 막혀 있으면 그 봇 이름으로 묶음을 따로 둡니다.",
                   "고친 뒤 robots.txt 를 직접 열어 확인하고, 다음 크롤에서 이 항목이 "
                   "사라지는지 봅니다."],
             deliver=["고칠 robots.txt 줄 — 지금 값과 바꿀 값을 그대로",
@@ -2925,13 +2985,20 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
 def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """AI 크롤러 차단 → 그 뒤에 끝난 크롤이 가져온 robots.txt 가 그 봇을 안 막는다.
     원문에 User-agent 줄이 하나도 없으면 robots.txt 가 아니다(200 으로 온 오류 페이지)
-    — 규칙이 없어서 '안 막는다'로 읽히므로 판단하지 않는다."""
+    — 규칙이 없어서 '안 막는다'로 읽히므로 판단하지 않는다.
+
+    학습 전용 봇으로 확인된 대상도 닫는다: 용도를 가르기 전 판정이 GPTBot 같은 학습
+    봇을 이 종류로 올려 두었다. 그대로 두면 막힌 채라 영영 안 닫힌다. 용도 모름(옛
+    꼴 config)은 닫지 않는다 — 모르는 것을 무해라고 확인한 셈이 된다."""
     cr = conn.execute(
         "SELECT id, started_at, robots_txt FROM crawl_runs WHERE project_id=?"
         " AND finished_at IS NOT NULL AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1",
         (pid,)).fetchone()
     if not cr or not _after_ts(cr["started_at"], since):
         return None
+    if ai_bot_purpose(target) == "training":
+        return (f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다 — 기회가 아닙니다 "
+                f"(크롤 #{cr['id']})")
     txt = cr["robots_txt"] or ""
     if not re.search(r"(?im)^\s*user-agent\s*:", txt):
         return None
@@ -4094,15 +4161,41 @@ def _selfcheck() -> None:
     _bots_conn.executescript(_db.SCHEMA)
     _bots_conn.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'b','saas','x.kr')")
     assert ai_bot_blocks(_bots_conn, 1) == [], "크롤 회차가 없는데 판정을 만든다"
+    # 학습 봇만 막은 흔한 꼴 — 권장되는 중간 지점이지 인용 차단이 아니다
     _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: CCBot", "Disallow: /", "",
                             "User-agent: *", "Allow: /"))
     _bots_conn.execute(
         "INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
         " VALUES(1,'2026-09-09','home',?)", (_robots,))
     _bots_conn.commit()
+    assert ai_bot_blocks(_bots_conn, 1, home="x.kr") == [], "학습 봇 차단을 인용 차단으로 읽는다"
+    _st = {r["bot"]: r for r in ai_bot_status(_robots, "x.kr")}
+    assert _st["GPTBot"]["rule"] == "Disallow: /" and _st["GPTBot"]["purpose"] == "training", _st
+    assert _st["OAI-SearchBot"]["rule"] is None, _st      # 같은 벤더라도 검색 봇은 열려 있다
+    # 검색 봇이 막히면 선다
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (
+        "User-agent: OAI-SearchBot\nDisallow: /\n\n" + _robots,))
+    _bots_conn.commit()
     _blocked = ai_bot_blocks(_bots_conn, 1, home="x.kr")
-    assert [r["bot"] for r in _blocked] == ["GPTBot"], _blocked
-    assert _blocked[0]["rule"] == "Disallow: /", _blocked[0]
+    assert [r["bot"] for r in _blocked] == ["OAI-SearchBot"], _blocked
+    assert _blocked[0]["rule"] == "Disallow: /" and _blocked[0]["engine"], _blocked[0]
+    assert "ChatGPT" in _reason_ai_bot(_blocked[0], {}), _reason_ai_bot(_blocked[0], {})
+    # Bingbot 은 빙 검색 전체라고 말한다
+    _bing = {"bot": "Bingbot", "purpose": "search", "engine": "Bing 검색·Copilot",
+             "rule": "Disallow: /"}
+    assert "빙 검색 전체" in _reason_ai_bot(_bing, {})
+    # 옛 꼴(UA 문자열 목록) — 읽되 용도는 모름이고, 모름은 기회가 아니다
+    assert _ai_bot_entry("OAI-SearchBot") == {"ua": "OAI-SearchBot", "vendor": None,
+                                              "purpose": None, "engine": None}
+    assert _ai_bot_entry({"ua": "X", "purpose": "시험"})["purpose"] is None   # 모르는 용도도 모름
+    _real_ai_bots = globals()["ai_bots"]
+    globals()["ai_bots"] = lambda: tuple(map(_ai_bot_entry, ["GPTBot", "OAI-SearchBot"]))
+    try:
+        assert ai_bot_blocks(_bots_conn, 1, home="x.kr") == [], "용도 모름을 인용 차단으로 읽는다"
+        assert [r["purpose"] for r in ai_bot_status(_robots, "x.kr")] == [None, None]
+    finally:
+        globals()["ai_bots"] = _real_ai_bots
     # robots.txt 를 아예 못 읽은 회차는 "전부 허용" 이 아니라 "모른다" 다
     _bots_conn.execute("UPDATE crawl_runs SET robots_txt=NULL")
     _bots_conn.commit()

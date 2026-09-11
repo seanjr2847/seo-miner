@@ -30,7 +30,7 @@
 | crawl_issue | 전수 크롤에서 심각(bad)으로 걸린 주소 (방어) | `scoring.crawl_gaps()` — 최신 크롤 회차의 `crawl_issues` 중 severity='bad' 만. warn·info 는 [사이트 점검] 화면의 표에 그대로 있다. 갈래 이름표의 정본은 `collect_crawl.ISSUE_KIND` |
 | backlink_broken | 남이 우리에게 건 링크가 없는 주소를 가리킴 (방어) | `scoring.backlink_gaps()[0]` — 이미 번 링크라 새로 얻는 것보다 싸다 |
 | backlink_prospect | 경쟁사는 링크를 받는데 우리는 못 받는 도메인 | `scoring.backlink_gaps()[1]` — `link_intersect` 의 we_have=0 |
-| ai_bot_blocked | robots.txt 가 AI 크롤러를 막음 → 그 엔진에서는 인용 자체가 불가 | `scoring.ai_bot_blocks()` — 크롤이 남긴 `crawl_runs.robots_txt` 를 `scoring.robots_blocks()` 로 다시 읽을 뿐, 새 수집이 없다. 봇 목록의 정본은 `config.yaml` 의 `ai_bots`. **`ai_citation_gap` 보다 먼저 본다** — 막힌 채로 "콘텐츠가 약하다" 고 말하면 오진이다 |
+| ai_bot_blocked | robots.txt 가 AI **검색·인용용** 크롤러(용도 `search`·`user`)를 막음 → 그 엔진 답변의 출처로 실리기 어렵다 | `scoring.ai_bot_blocks()` — 크롤이 남긴 `crawl_runs.robots_txt` 를 `scoring.robots_blocks()` 로 다시 읽을 뿐, 새 수집이 없다. 봇 목록과 **용도**의 정본은 `config.yaml` 의 `ai_bots`(`ua`·`vendor`·`purpose`·`engine`). **학습 전용 봇(`training`: GPTBot·ClaudeBot·Google-Extended·CCBot…)만 막힌 것은 기회가 아니다** — 인용과 무관하고 권장되는 중간 지점이라 근거 표에만 적는다. 용도 모름(옛 꼴 문자열 목록)도 기회로 안 올린다. Bingbot 차단은 AI 만이 아니라 빙 검색 전체에서 빠진다는 뜻이라 그렇게 말한다. **`ai_citation_gap` 보다 먼저 본다** — 검색 봇이 막힌 채로 "콘텐츠가 약하다" 고 말하면 오진이다 |
 | index_blocked | 색인 단계에서 죽은 URL — 순위 이전 문제 | `scoring.index_issues()` — `gsc_index_status` 의 최신 checked_date, verdict 가 'PASS' 가 아니거나 coverage_state 가 색인됨이 아닌 URL. 버킷 4종은 아래 1d절. 적재는 `/capture index`(URL 당 API 1콜) |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다

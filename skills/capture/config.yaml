@@ -4,21 +4,38 @@
 surfaces_available: [gsc, chatgpt, perplexity, gemini, claude, google_serp, naver]
 default_ai_engines: [chatgpt, perplexity, gemini]
 
-# AI 크롤러 UA — robots.txt 로 막혔는지 본다 (scoring.ai_bot_blocks).
+# AI 크롤러 UA — robots.txt 로 막혔는지 본다 (scoring.ai_bot_status).
 # 데이터라서 코드가 아니라 여기 있다. 벤더가 봇을 새로 내면 이 목록에 한 줄 더한다.
-# 막혀 있으면 그 엔진에서는 인용될 수가 없다 — "콘텐츠가 약하다" 는 진단이
-# 오진이 되는 자리다.
+#
+# purpose 가 판정의 전부다 — 같은 벤더라도 봇마다 하는 일이 다르다:
+#   search   검색·인용 색인 — 막으면 그 엔진 답변의 출처로 실리기 어렵다 → 기회
+#   user     사용자가 시켜서 그 자리에서 페치 — 막으면 그 엔진이 우리 페이지를 못 연다 → 기회
+#   training 모델 학습 수집 — 막아도 인용과 무관하다. 학습만 막는 것은 오히려
+#            권장되는 중간 지점이라 기회로 올리지 않는다(근거 표에만 적는다)
+# purpose 를 빼거나 옛 꼴(UA 문자열만)로 적으면 "모름" 이다 — 모르는 것을 인용
+# 차단이라고 부르지 않는다.
+# engine 은 사람이 읽는 이름이다(요청문이 "어느 엔진에서" 를 말할 때 쓴다).
+# 기준: 각 벤더의 크롤러 문서. 확실하지 않은 줄은 끝에 '확인 필요' 를 적어 둔다.
 ai_bots:
-  - GPTBot            # OpenAI 학습
-  - OAI-SearchBot     # ChatGPT 검색 색인
-  - ChatGPT-User      # ChatGPT 가 사용자 요청으로 페치
-  - ClaudeBot         # Anthropic 학습·검색
-  - Claude-User       # Claude 가 사용자 요청으로 페치
-  - PerplexityBot     # Perplexity 색인
-  - Google-Extended   # Gemini 학습 (일반 Googlebot 과 별개다 — 이걸 막아도 검색 색인은 산다)
-  - Applebot-Extended
-  - Bytespider
-  - CCBot             # Common Crawl — 여러 LLM 의 학습 소스
+  - {ua: GPTBot,            vendor: OpenAI,       purpose: training, engine: "OpenAI 모델 학습"}
+  - {ua: OAI-SearchBot,     vendor: OpenAI,       purpose: search,   engine: "ChatGPT 검색"}
+  # user 봇 둘(ChatGPT-User·Perplexity-User)은 벤더 문서가 "사용자가 시킨 페치라 robots.txt
+  # 가 적용되지 않을 수 있다" 고 적는다 — 막아도 실제로 안 막힐 수 있다. 확인 필요.
+  # 그래도 기회로 두는 이유: 막는 줄이 있다는 것은 사이트 주인이 모르고 있을 일이다.
+  - {ua: ChatGPT-User,      vendor: OpenAI,       purpose: user,     engine: "ChatGPT"}
+  - {ua: ClaudeBot,         vendor: Anthropic,    purpose: training, engine: "Claude 모델 학습"}
+  - {ua: Claude-SearchBot,  vendor: Anthropic,    purpose: search,   engine: "Claude 검색"}
+  - {ua: Claude-User,       vendor: Anthropic,    purpose: user,     engine: "Claude"}
+  - {ua: anthropic-ai,      vendor: Anthropic,    purpose: training, engine: "Claude 모델 학습 (옛 UA)"}
+  - {ua: PerplexityBot,     vendor: Perplexity,   purpose: search,   engine: "Perplexity"}
+  - {ua: Perplexity-User,   vendor: Perplexity,   purpose: user,     engine: "Perplexity"}
+  # 제미나이 학습용 제어 토큰이다 — 구글 검색·AI 요약 노출은 Googlebot 이 정한다(색인 막힘 쪽)
+  - {ua: Google-Extended,   vendor: Google,       purpose: training, engine: "Gemini 모델 학습"}
+  # 빙 검색 그 자체이자 Copilot 이 인용하는 색인 — 막혔으면 AI 만의 문제가 아니다
+  - {ua: Bingbot,           vendor: Microsoft,    purpose: search,   engine: "Bing 검색·Copilot"}
+  - {ua: Applebot-Extended, vendor: Apple,        purpose: training, engine: "Apple 모델 학습"}
+  - {ua: Bytespider,        vendor: ByteDance,    purpose: training, engine: "ByteDance 모델 학습"}  # 확인 필요 — 벤더 공식 문서 없음
+  - {ua: CCBot,             vendor: Common Crawl, purpose: training, engine: "Common Crawl (여러 LLM 의 학습 소스)"}
 
 # OpenRouter model slugs drift over time. Update here, not in code.
 # ':online' engages OpenRouter's web plugin -> native provider search where supported.
