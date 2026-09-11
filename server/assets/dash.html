@@ -790,7 +790,8 @@
     // 못 띄운다 — 그래서 여기 서는 것은 버튼이 아니라 **어디서 누르면 되는지**다.
     // 로컬 대시보드를 띄우는 명령 한 줄이 그 답이라, 복사할 수 있게 칩으로 낸다
     // (셸의 copyCmd 가 textContent 를 그대로 집는다 — 칩 안은 명령뿐이어야 한다).
-    oppBtn(id) {
+    // 서명은 셸의 로컬 기본(oppBtn(o) — 기회 한 건)과 같다. 여기서는 안 읽는다.
+    oppBtn(o) {
       return '<span class="badge">이 PC 에서 열기</span>' +
         '<button class="cmd" onclick="copyCmd(this)">/capture dash ' +
         esc(proj()) + '</button>' +

@@ -808,9 +808,9 @@ def test_seam_18_run_tool_and_creation_single_source():
     assert "/api/setup/run-tool" not in dash, \
         "호스팅 화면이 실행 경로를 부른다 — 브라우저는 이 PC 의 프로세스를 못 띄운다"
 
-    # ── 호스팅 기회 카드는 안내다 ──
-    m = re.search(r"oppBtn\(id\) \{(.*?)\n    \},", dash, re.S)
-    assert m, "dash.html 의 SM.host.oppBtn 을 못 찾았다"
+    # ── 호스팅 기회 카드는 안내다 ── (서명은 셸의 로컬 기본과 같다: 기회 한 건 o — 29번)
+    m = re.search(r"oppBtn\(o\) \{(.*?)\n    \},", dash, re.S)
+    assert m, "dash.html 의 SM.host.oppBtn(o) 을 못 찾았다"
     assert "이 PC 에서 열기" in m.group(1), "호스팅 기회 카드에 로컬 실행 안내가 없다"
     assert "SM.host.write" not in m.group(1) and "/api/create" not in m.group(1), \
         "호스팅 기회 카드가 떼어 낸 글쓰기 경로를 아직 부른다"
@@ -1280,6 +1280,84 @@ def test_seam_28_ai_visits_fields_and_names():
     h2 = re.search(rf'<section id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)
     assert h2 and h2.group(1).strip() == stitle, \
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
+
+
+def test_seam_29_run_tool_writes_whole_brief_and_acks_the_group():
+    """29) 실행 버튼의 두 이음매 — 파일에 쓰는 요청문과 '작업 시작'이 먹는 범위.
+
+    (가) 화면의 복사 버튼(briefText)은 o.brief.body 뒤에 d.brief.tails[shape] 를 잇는다 —
+    답의 형식·규칙이 그 꼬리에 있다. run_tool 이 body 만 파일로 쓰면 어느 쪽도 틀린
+    데가 없는데 도구는 형식·규칙 없이 시작한다(실제로 그랬다). 파일의 요청문은
+    brief.text() 가 내는 글과 같아야 한다.
+    (나) [개요]의 묶인 줄은 상태 버튼이 묶인 id 전부에 먹는데(oppIdsTo→setOpps) 열기가
+    대표 하나만 바꾸면 새로고침 뒤 한 줄이 둘로 갈라진다. 셸의 SM.host.oppBtn 은 기회
+    한 건(o)을 받아 runTool 에 ids 를 싣고, runTool 은 그걸 본문에 싣고, run_tool 은
+    그걸 받는다. 호스팅 안내(dash.html)도 같은 서명이다(18번이 본다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import inspect
+    import os
+    import shutil
+    import tempfile
+
+    import brief
+    import dashboard
+    import remote
+    import scoring
+    sys.path.insert(0, str(SETUP_SCRIPTS))
+    import doctor
+    shell = ctx["shell"]
+
+    # (나) 화면 → 서버: 기회 한 건을 받고, ids 를 싣고, 서버가 그 키를 읽는다
+    assert re.search(r"\n  oppBtn\(o\) \{", shell), "셸의 SM.host.oppBtn 이 기회 한 건(o)을 안 받는다"
+    assert "SM.host.oppBtn(o)" in shell, "oppActs 가 SM.host.oppBtn 에 기회가 아니라 다른 것을 넘긴다"
+    assert "o.group.ids" in shell[shell.index("oppBtn(o) {"):shell.index("oppBtn(o) {") + 900], \
+        "SM.host.oppBtn 이 묶인 줄의 id 를 안 싣는다 — 대표 하나만 작업 시작이 된다"
+    m = re.search(r"async function runTool\(id, ids\) \{(.*?)\n\}", shell, re.S)
+    assert m and re.search(r"\bids\b", m.group(1)), "runTool 이 ids 를 본문에 안 싣는다"
+    src = inspect.getsource(dashboard.run_tool)
+    assert 'body.get("ids")' in src, "run_tool 이 ids 를 안 읽는다 — 화면이 보내도 버려진다"
+
+    # (가) 파일 = 본문 + 꼬리. 소스로 먼저: 꼬리(tails)를 안 읽으면 그것부터 틀렸다
+    assert '"tails"' in src, "run_tool 이 d.brief.tails 를 안 읽는다 — 파일에 답의 형식·규칙이 없다"
+
+    # 실물 — 페이로드 하나에 기회 한 건을 세우고 dry_run 으로 쓴 파일을 읽는다
+    d = _gather("_seam29")
+    o = {"id": 1, "kind": "striking_distance", "target": "_seam29", "score": 1.0,
+         "status": "new", "reasoning": "r", "band": "page2", "gap_kind": None,
+         "play": scoring.kind_play("striking_distance", band="page2")}
+    o["brief"] = brief.build(o, d)
+    d["opps"], d["brief"] = [o], brief.shapes_payload("ko-KR")
+    want = brief.text(o, d, "ko-KR")
+    assert "## 답의 형식" in want and "## 규칙" in want, "꼬리의 제목이 바뀌었다 — 검사가 헛돈다"
+
+    home = tempfile.mkdtemp(prefix="seo-miner-seam29-")
+    saved_env = {k: os.environ.get(k) for k in ("CAPTURE_HOME", doctor.TOOL_ENV, doctor.TERMINAL_ENV)}
+    orig = (shutil.which, remote.owns, dashboard.payload)
+    try:
+        os.environ["CAPTURE_HOME"] = home
+        os.environ[doctor.TOOL_ENV] = doctor.TOOLS[0][0]
+        os.environ[doctor.TERMINAL_ENV] = "system"
+        shutil.which = lambda c: "/bin/" + c
+        remote.owns = lambda project: False
+        dashboard.payload = lambda project, at=None: d
+        r = dashboard.run_tool({"project": "_seam29", "id": 1, "ids": [1, 999], "dry_run": True})
+        assert r["ok"], r
+        assert r["ids"] == [1], f"남의 id 가 살아남았다: {r['ids']}"
+        md = Path(r["file"]).read_text("utf-8")
+        assert md.startswith(want), \
+            "파일의 요청문이 brief.text() 와 다르다 — 화면 복사와 도구가 다른 글을 받는다"
+        assert "## 답의 형식" in md and "## 규칙" in md, "파일에 답의 형식·규칙 꼬리가 없다"
+    finally:
+        shutil.which, remote.owns, dashboard.payload = orig
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(home, ignore_errors=True)
 
 
 if __name__ == "__main__":
