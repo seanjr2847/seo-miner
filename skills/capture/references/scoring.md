@@ -20,7 +20,7 @@
 | striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 하한 `STRIKING_MIN_IMP`(=10), 노출 내림차순. 각 행에 `band`(pos ≤ 10 → `page1`, 아니면 `page2`)와 `gap`(`gap_to_page1()`, `PAGE1=10`)이 붙는다 |
 | ctr_gap | 1페이지(1~10위)인데 기대 CTR의 절반도 못 받음 → 제목·설명 문제 | `scoring.ctr_gaps()` — 기대치는 `EXPECTED_CTR`(1~20위, %, 업계 클릭 곡선 근사), 노출 하한 `CTR_GAP_MIN_IMP`(=100), 판정은 실제 CTR < 기대 × `CTR_GAP_FACTOR`(=0.5). 손실 클릭(노출×(기대-실제)) 내림차순 |
 | cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원이 필요하다** — page가 NULL인 구버전(CSV 시절) 스냅샷에서는 빈 결과가 정상(결함 아님, 데이터 부재) |
-| ai_citation_gap | 관련성 높은 프롬프트에서 타 도메인만 인용 | ai_checks: cited=0, cited_domains_json 빈도. 인용/언급 판정 자체는 `scoring.judge()` |
+| ai_citation_gap | 관련성 높은 프롬프트에서 우리 인용이 드묾 (비율·표본 수로 — "인용 1/6 (n=6)") | 판정 `scoring.ai_is_gap()`, 문턱·표본 하한은 scoring 상단 `AI_*` 상수. 대신 인용된 곳·엔진별 수·발췌는 `scoring.ai_tally()` 한 벌. 제3자 플랫폼(`config.yaml` `third_party_platforms`)이 대부분이면 요청문 꼴 `presence`. 인용/언급/추천 판정 자체는 `scoring.judge()` |
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |

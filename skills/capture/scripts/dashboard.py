@@ -775,29 +775,22 @@ def _axis_ai(conn, pid: int) -> dict:
         cite_share = sorted(({"domain": k, "n": v} for k, v in share.items()),
                             key=lambda x: -x["n"])[:15]
 
-        # 질문 하나 = 줄 하나. "왜 빠졌나"의 증거는 답변 원문뿐인데 여태 버려졌다.
-        # 발췌는 길다 — 박제본에도 들어가므로 화면이 접어 보여줄 만큼만 자른다.
+        # 질문 하나 = 줄 하나. 수(인용·이름·추천)·대신 인용된 곳(도메인별 횟수)·엔진별
+        # 내역(by_engine — 엔진×카테고리 표를 누르면 화면이 이걸로 거른다)·엔진별 발췌는
+        # 전부 scoring.ai_tally 한 벌이다. 예전에는 여기서 MAX(cited_domains_json) 로
+        # 표본 하나를 사실상 무작위로 골랐고, 기회(ai_gaps)는 전 표본을 셌다 — 요청문은
+        # 이쪽을 읽었으니 틀린 쪽을 읽은 셈이었다.
         ai_by_prompt = q(conn,
-            """SELECT p2.id, p2.prompt, p2.category,
-                      SUM(c.cited) cited, SUM(c.mentioned) mentioned, COUNT(*) checks,
-                      GROUP_CONCAT(DISTINCT c.engine) engines,
-                      MAX(CASE WHEN c.cited=0 THEN c.answer_excerpt END) miss_answer,
-                      MAX(CASE WHEN c.cited=0 THEN c.cited_domains_json END) miss_domains
+            """SELECT p2.id, p2.prompt, p2.category
                  FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
                 WHERE c.run_id=? GROUP BY p2.id
-                ORDER BY cited DESC, mentioned DESC""", (ai_run["id"],))
-        # 질문 × 엔진 — "chatgpt 가 어느 질문을 인용했나"는 이 내역에서만 읽힌다.
-        # 엔진×카테고리 표의 한 줄을 누르면 화면이 이걸로 질문 목록을 거른다.
-        by_eng: dict[int, dict] = {}
-        for r in q(conn,
-            """SELECT prompt_id, engine, SUM(cited) cited, SUM(mentioned) mentioned,
-                      COUNT(*) checks
-                 FROM ai_checks WHERE run_id=? GROUP BY 1,2""", (ai_run["id"],)):
-            by_eng.setdefault(r["prompt_id"], {})[r["engine"]] = {
-                "cited": r["cited"], "mentioned": r["mentioned"], "checks": r["checks"]}
+                ORDER BY SUM(c.cited) DESC, SUM(c.mentioned) DESC""", (ai_run["id"],))
+        tally = scoring.ai_tally(conn, ai_run["id"])
         for r in ai_by_prompt:
-            r["miss_answer"] = (r["miss_answer"] or "")[:600]
-            r["by_engine"] = by_eng.get(r["id"], {})
+            t = tally.get(r["id"]) or {}
+            r.update(t)
+            # 화면·교차표가 읽어 온 모양 그대로 — 엔진은 쉼표로 이은 이름
+            r["engines"] = ",".join(t.get("engines") or [])
         missed = q(conn,
             """SELECT p2.prompt, p2.category,
                       GROUP_CONCAT(DISTINCT c.engine) engines
@@ -822,9 +815,18 @@ def _axis_ai(conn, pid: int) -> dict:
     ai_vs_search = scoring.search_wins_ai_loses(conn, pid, ai_by_prompt)
     ai_outranked = scoring.ai_outranked(conn, pid, cite_share)
 
+    # 기회를 세운 바로 그 행 — 요청문의 근거표와 처방 갈래(lean)가 이것을 읽는다.
+    # ai_by_prompt 는 최신 회차 하나만 보는데 기회(scoring.ai_gaps)는 질문마다 **끝난**
+    # 회차의 최신 측정을 본다. 최신 회차가 도는 중이거나 끊겼으면 두 행이 다른 표본을
+    # 보고, 요청문이 기회 근거와 다른 수를 말한다. 모양은 ai_by_prompt 와 같게 맞춘다
+    # (engines = 쉼표로 이은 이름) — 요청문이 어느 쪽에서 왔는지 가르지 않게.
+    ai_gap_rows = [{**g, "engines": ",".join(g.get("engine_names") or [])}
+                   for g in scoring.ai_gaps(conn, pid)]
+
     return {
         "ai_date": ai_date, "matrix": matrix, "gap_domains": gap_domains,
         "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
+        "ai_gap_rows": ai_gap_rows,
         "missed": missed, "ai_trend": ai_trend,
         "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
         # 켜 둔 질문 중 끝난 확인에서 못 잰 것·오래된 것·옛 생성기가 지은 것의 개수와
@@ -1052,9 +1054,11 @@ def _site_probe(conn, crawl: dict, urls) -> dict:
     return out
 
 
-def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict]) -> dict:
-    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)이 낸 원본 행을 대상 문자열로
-    한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
+def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict],
+               ai_rows: list[dict] = ()) -> dict:
+    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)·ai_rows(AI 축의 질문 행)가 낸
+    원본 행을 대상 문자열로 한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다.
+    화면은 그리기만 한다.
     """
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
 
@@ -1094,11 +1098,16 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # kind_play 가 "1페이지 밖"으로 물러선다.
     aio_band = {r["keyword"]: scoring.aio_band(r["position"])
                 for r in scoring.aio_gaps(conn, pid)}
+    # 챗봇 인용 공백은 대신 인용된 곳의 갈래(scoring.ai_tally 의 lean)로 처방이 갈린다 —
+    # 요청문 근거표와 같은 행에서 읽어야 표와 처방이 같은 말을 한다. 기회를 세운 행
+    # (ai_gap_rows)이 먼저고, 거기 없는 질문만 최신 회차 행으로 물러선다(뒤가 이긴다).
+    ai_lean = {str(r.get("prompt") or ""): r.get("lean") for r in ai_rows}
     for o in opps:
         o["is_defensive"] = scoring.is_defensive(o["kind"])
         band = (sd_band.get(o["target"]) if o["kind"] == "striking_distance"
                 else aio_band.get(o["target"]) if o["kind"] == "aio_exposure" else None)
-        gk = gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap" else None
+        gk = (gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap"
+              else ai_lean.get(str(o["target"])) if o["kind"] == "ai_citation_gap" else None)
         o["label"] = scoring.kind_label(o["kind"], band=band)
         o["play"] = scoring.kind_play(o["kind"], band=band, gap_kind=gk)
         # 요청문(brief)이 꼴을 가를 때 다시 쓴다 — 여기서 한 번 판정한 것을 싣는다.
@@ -1187,7 +1196,8 @@ def gather(conn, p, at: str | None = None) -> dict:
 
     ai = _axis_ai(conn, pid)
     comp = _axis_competitors(conn, pid)
-    opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"])
+    opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
+                        ai["ai_by_prompt"] + ai["ai_gap_rows"])
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
     page_perf = _axis_page_perf(conn, pid)

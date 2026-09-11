@@ -74,6 +74,25 @@ SHIFT_MIN_IMP = 30
 # 화면은 펼침 UI라 클릭 상위 몇 개면 충분하고, 다 실으면 페이로드가 무거워진다.
 DETAIL_TOP_N = 15
 
+# ── 챗봇 인용(ai_citation_gap) ──
+# 답은 비결정적이다 — 한 번 빠진 것도 한 번 걸린 것도 사실이 아니라 표본이다. 그래서
+# "인용 0회"가 아니라 **비율과 표본 수**로 가른다(ai-seo 점검표: "cited 3/5, n=5").
+# 0회로만 가르던 동안 6번 중 1번 걸리는 질문 — 엔진이 이미 우리를 찾을 줄 알아서 가장
+# 싸게 끌어올릴 자리 — 이 기회 목록에서 통째로 빠졌다.
+AI_GAP_MAX_RATE = 1 / 3     # 인용률이 이 이하면 기회로 올린다(ai_is_gap)
+AI_MIN_SAMPLES = 3          # 답변이 이보다 적으면 "표본 부족" — 올리되 그렇다고 말하고 점수를
+                            # 깎는다. 표본 수를 늘리는 건 config ai_samples 몫이다(유료 호출
+                            # 비용이 늘어나는 결정이라 여기서 대신 하지 않는다)
+AI_THIN_MULT = 0.6          # 표본 부족 질문의 점수 승수(score)
+AI_PRESENCE_SHARE = 0.5     # 대신 인용된 횟수 중 제3자 플랫폼 몫이 이보다 크면 처방이
+                            # "내 페이지 고치기"가 아니라 "그 플랫폼에 등장하기"다
+AI_EXCERPT_CHARS = 280      # 엔진별 답변 발췌 — 요청문·화면이 엔진마다 한 토막씩 보인다
+AI_RIVALS_TOP = 8           # 질문 하나에 싣는 대신 인용된 도메인 수
+# 가시성 사다리(인용 → 이름 나옴 → 추천 목록)를 요청문에 싣는 질문 갈래. 갈래 이름의
+# 정본은 gen_prompts.CATEGORIES 다 — 여기는 그중 "추천·비교" 두 개를 고를 뿐이고,
+# 자체점검이 부분집합인지 대조한다(이름이 바뀌면 거기서 죽는다).
+AI_LADDER_CATEGORIES = ("추천", "비교")
+
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
 # local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
@@ -218,13 +237,37 @@ def aliases_of(cfg: dict) -> list[str]:
     return [a for a in [cfg.get("name", "")] + (cfg.get("brand_aliases") or []) if a]
 
 
+# 답변 본문의 "목록 줄" — 번호(1. 2) ① (3))·글머리(- * • ·)·번호 붙은 제목(### 1.)·
+# 표의 행(| … |). 추천·비교 답은 후보를 거의 이 꼴로 늘어놓는다. 글머리 기호 뒤에는
+# 공백을 요구한다 — 문단 첫머리의 **굵은 글씨**를 목록으로 세지 않으려고.
+_LIST_LINE = re.compile(r"^\s*(?:[-*+•·▪]\s+|\d{1,2}[.)]\s+|\(\d{1,2}\)\s*|[①-⑳]\s*"
+                        r"|#{1,6}\s*\d{1,2}[.)]\s*|\|)")
+
+
+def recommended_in(content: str, aliases: list[str]) -> int:
+    """브랜드가 답변의 **목록 줄 안에** 나오나 — 가시성 사다리의 마지막 칸(추천됨).
+
+    휴리스틱이다: 답이 "추천 목록"을 번호·글머리·표로 적는다는 관찰에 기댄다. 목록
+    밖 문단에서 이름만 지나가면 "이름 나옴"이지 추천이 아니고, 목록 안이라도 "피할
+    도구" 목록일 수 있다 — 그 뜻까지는 가르지 않는다. 요청문도 휴리스틱이라고 적는다.
+    """
+    names = [a.lower() for a in aliases if a]
+    for line in (content or "").splitlines():
+        if _LIST_LINE.match(line) and any(n in line.lower() for n in names):
+            return 1
+    return 0
+
+
 def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
-          own_domain: str) -> tuple[int, int, list[str]]:
-    """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들) 로 판정.
+          own_domain: str) -> tuple[int, int, list[str], int]:
+    """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들, 추천 목록에 들었나) 로 판정.
 
     인용 판정은 여기 하나뿐이어야 한다 — 부르는 쪽이 collect_ai 내부를
     가로질러 import 하던 것을 여기로 옮겼다. 인용 URL이 없으면 본문의 맨 URL을
     줍는 fallback까지 여기서 한다 — 호출부 두 곳이 각자 하던 일이다.
+
+    cited·mentioned 둘만으로는 사다리(검색됨 → 인용됨 → 이름 나옴 → 추천됨)의 끝을
+    못 본다. 추천 판정은 recommended_in 의 휴리스틱이다.
     """
     text = (content or "").lower()
     mentioned = int(any(a.lower() in text for a in aliases if a))
@@ -232,7 +275,7 @@ def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
     domains = sorted({d for d in (host_of(u) for u in urls) if d})
     cited = int(any(owns(d, own_domain) for d in domains))
     others = [d for d in domains if not owns(d, own_domain)]
-    return mentioned, cited, others
+    return mentioned, cited, others, recommended_in(content, aliases)
 
 
 def gap_to_page1(pos) -> float:
@@ -2200,47 +2243,184 @@ def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
             "outdated_eg": pick(lambda r: gen_prompts.outdated(r["gen_version"]))}
 
 
+# 제3자 플랫폼 — 브랜드는 자기 사이트보다 커뮤니티·위키·영상·리뷰 사이트로 훨씬 자주
+# 인용된다(ai-seo 세 번째 기둥). 대신 인용된 곳이 거기면 "내 페이지를 고쳐라"는 틀린
+# 처방이다. 목록의 정본은 config.yaml 의 third_party_platforms 다 — 플랫폼이 늘고
+# 주는 것은 데이터 변경이지 코드 변경이 아니다. 읽기 실패면 빈 목록: 그때는 전부
+# "경쟁사·일반 사이트"로 보고 예전 처방을 낸다(없는 갈래를 지어내지 않는다).
+def third_party_platforms() -> tuple[str, ...]:
+    try:
+        import collector
+        got = collector.config().get("third_party_platforms")
+    except Exception:
+        got = None
+    if not isinstance(got, list):
+        return ()
+    return tuple(h for h in (host_of(str(x)) for x in got) if h)
+
+
+def is_third_party(domain: str, platforms=None) -> bool:
+    """하위 도메인까지 — ko.wikipedia.org·m.blog.naver.com 도 그 플랫폼이다(owns 규칙)."""
+    plats = third_party_platforms() if platforms is None else platforms
+    return any(owns(domain, p) for p in plats)
+
+
+def _rival_key(host: str, platforms) -> str:
+    """대신 인용된 곳을 셀 이름 — 제3자 플랫폼이면 플랫폼 이름으로 접는다.
+
+    old.reddit.com·www.reddit.com 이 따로 세지면 "reddit 이 4/5"가 "3/5 + 1/5"로
+    쪼개져 가장 잦은 출처가 안 보인다. 둘 이상 걸리면 가장 긴 것(blog.naver.com 이
+    naver.com 보다 구체적이다). 플랫폼이 아닌 도메인은 host_of 규칙 그대로 둔다 —
+    경쟁사의 blog. 하위 도메인은 따로 선 사이트일 수 있다."""
+    hit = [p for p in platforms if owns(host, p)]
+    return max(hit, key=len) if hit else host
+
+
+def ai_is_gap(cited: int | None, checks: int | None) -> bool:
+    """이 질문이 인용 공백인가 — 기회를 세우는 쪽(ai_gaps)과 닫는 쪽(_resolve_ai_citation)이
+    같은 판정을 쓴다. 둘이 갈라지면 1/6 질문이 이번 load 에서 서고 같은 load 의 수명주기
+    판정에서 "인용됨"으로 닫혀, 매 회차 열렸다 닫혔다 한다."""
+    if not checks:
+        return False
+    return (cited or 0) / checks <= AI_GAP_MAX_RATE + 1e-9
+
+
+def ai_cite_label(cited: int | None, checks: int | None) -> str:
+    """"인용 1/6 (n=6)" — 기회 근거(reasoning)와 요청문이 같은 글로 말한다."""
+    n = checks or 0
+    s = f"인용 {cited or 0}/{n} (n={n})"
+    return s + (" · 표본 부족" if n < AI_MIN_SAMPLES else "")
+
+
+def _excerpt(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "")).strip()
+    return t if len(t) <= AI_EXCERPT_CHARS else t[:AI_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _rival_list(tally: dict[str, int], platforms, top: int) -> list[dict]:
+    return [{"domain": d, "n": n, "third_party": is_third_party(d, platforms)}
+            for d, n in sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:top]]
+
+
+def ai_tally(conn: sqlite3.Connection, run_id: int,
+             prompt_ids: list[int] | None = None, *, platforms=None) -> dict[int, dict]:
+    """한 회차의 질문별 집계 — "대신 인용된 곳"·엔진별 수·발췌의 **정본**.
+
+    예전에는 두 벌이었다: 화면(dashboard._axis_ai)은 `MAX(cited_domains_json)` 로 표본
+    하나(사전순 최대 JSON — 사실상 무작위)를 골랐고, 기회(ai_gaps)는 전 표본을 셌다.
+    요청문은 화면 쪽을 읽었으니 틀린 쪽을 읽은 셈이다. 이제 둘 다 이것을 부른다.
+
+    반환 {prompt_id: {...}}:
+      checks·cited·mentioned·named_only(이름은 나오고 링크는 없음)
+      recommended  추천 목록 줄에 든 답변 수 — 이 칸을 잰 답이 하나도 없으면 None(안 봤다).
+                   rec_checks 가 그 분모다(옛 행은 NULL 이라 분모에서 빠진다)
+      engines      엔진 이름 목록(정렬)
+      misses       우리가 인용되지 않은 답변 수 — rivals 의 분모
+      rivals       [{domain, n, third_party}] 우리가 빠진 답변에서 대신 인용된 곳, 횟수 순
+      third_share  rivals 횟수 중 제3자 플랫폼 몫(0~1). 대신 인용된 곳이 없으면 None
+      lean         third_party(제3자가 대부분) | sites(경쟁사·일반 사이트) | None
+      excerpts     {engine: 발췌} 엔진마다 우리가 빠진 답변 중 가장 먼저 받은 것(id 순) —
+                   무작위가 아니라 결정적이다. 빠진 답이 없는 엔진은 없다
+      by_engine    {engine: {checks, cited, mentioned, named_only, recommended,
+                             rec_checks, misses, rivals}}
+    """
+    plats = third_party_platforms() if platforms is None else platforms
+    sql = ("SELECT prompt_id, engine, cited, mentioned, recommended, cited_domains_json,"
+           " answer_excerpt FROM ai_checks WHERE run_id=?")
+    args: list = [run_id]
+    if prompt_ids is not None:
+        if not prompt_ids:
+            return {}
+        sql += f" AND prompt_id IN ({','.join('?' * len(prompt_ids))})"
+        args += list(prompt_ids)
+    acc: dict[int, dict] = {}
+    for c in conn.execute(sql + " ORDER BY id", args):
+        a = acc.setdefault(c["prompt_id"], {"eng": {}, "tally": {}, "excerpts": {}})
+        e = a["eng"].setdefault(c["engine"], {"checks": 0, "cited": 0, "mentioned": 0,
+                                              "named_only": 0, "recommended": 0,
+                                              "rec_checks": 0, "misses": 0, "tally": {}})
+        e["checks"] += 1
+        e["cited"] += int(bool(c["cited"]))
+        e["mentioned"] += int(bool(c["mentioned"]))
+        e["named_only"] += int(bool(c["mentioned"]) and not c["cited"])
+        if c["recommended"] is not None:            # NULL = 이 칸 이전의 옛 답 — 안 봤다
+            e["rec_checks"] += 1
+            e["recommended"] += int(bool(c["recommended"]))
+        if c["cited"]:
+            continue
+        e["misses"] += 1
+        try:
+            doms = {_rival_key(h, plats) for h in (host_of(str(d)) for d in
+                    json.loads(c["cited_domains_json"] or "[]")) if h}
+        except (TypeError, ValueError):
+            doms = set()
+        for h in doms:                              # 답변 하나에 한 번 — "4/5" 의 분자
+            e["tally"][h] = e["tally"].get(h, 0) + 1
+            a["tally"][h] = a["tally"].get(h, 0) + 1
+        if c["engine"] not in a["excerpts"] and (c["answer_excerpt"] or "").strip():
+            a["excerpts"][c["engine"]] = _excerpt(c["answer_excerpt"])
+    out = {}
+    for pid, a in acc.items():
+        by = {}
+        for name, e in sorted(a["eng"].items()):
+            t = e.pop("tally")
+            by[name] = {**e, "rivals": _rival_list(t, plats, 3),
+                        "recommended": e["recommended"] if e["rec_checks"] else None}
+        tot = lambda k: sum(e[k] or 0 for e in by.values())  # noqa: E731
+        rivals = _rival_list(a["tally"], plats, AI_RIVALS_TOP)
+        hits = sum(a["tally"].values())
+        third = sum(n for d, n in a["tally"].items() if is_third_party(d, plats))
+        share = round(third / hits, 3) if hits else None
+        rec_checks = tot("rec_checks")
+        out[pid] = {"checks": tot("checks"), "cited": tot("cited"),
+                    "mentioned": tot("mentioned"), "named_only": tot("named_only"),
+                    "recommended": tot("recommended") if rec_checks else None,
+                    "rec_checks": rec_checks, "misses": tot("misses"),
+                    "engines": list(by), "rivals": rivals, "third_share": share,
+                    "lean": (None if share is None else
+                             "third_party" if share > AI_PRESENCE_SHARE else "sites"),
+                    "excerpts": a["excerpts"], "by_engine": by}
+    return out
+
+
+def ai_rivals_text(rivals: list[dict] | None, misses: int | None, top: int = 3) -> str:
+    """"reddit.com 4/5, rival.com 2/5" — 기회 근거와 요청문·화면이 같은 모양으로 쓴다."""
+    return ", ".join(f"{r['domain']} {r['n']}/{misses or 0}" for r in (rivals or [])[:top])
+
+
 def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
             limit: int = 30) -> list[dict]:
-    """챗봇이 한 번도 나를 출처로 쓰지 않은 질문 — 질문마다 끝난 회차의 최신 측정 기준.
+    """챗봇이 나를 거의 출처로 쓰지 않는 질문 — 질문마다 끝난 회차의 최신 측정 기준.
 
-    ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 "인용 0"이 성립한다.
-    답이 비결정적이라 한 번 빠진 것은 신호가 아니다 — 그 회차 전부에서 빠진 것만 센다.
+    ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 판정이 성립한다. 판정은
+    ai_is_gap — 인용률이 AI_GAP_MAX_RATE 이하. 표본이 AI_MIN_SAMPLES 보다 적어도
+    올리되 thin 을 달아 점수를 깎고 근거에 "표본 부족"을 적는다.
 
     끝난 회차에서 한 번도 안 잰 질문은 여기 없다 — 그건 "인용 0"이 아니라 "모름"이다.
     대신 ai_prompt_state 가 그 개수를 세어 화면이 "측정 안 됨"으로 말한다(조용히 빼지
     않는다). 오래된 측정(stale)은 그대로 쓰되 measured_at 을 실어 근거에 날짜가 붙는다.
     """
+    measured = [p for p in ai_prompt_state(conn, project_id)["rows"] if p["run_id"]]
+    by_run: dict[int, list[int]] = {}
+    for p in measured:
+        by_run.setdefault(p["run_id"], []).append(p["id"])
+    plats = third_party_platforms()
+    tallies = {(rid, pid): t for rid, ids in by_run.items()
+               for pid, t in ai_tally(conn, rid, ids, platforms=plats).items()}
     rows = []
-    for p in ai_prompt_state(conn, project_id)["rows"]:
-        if not p["run_id"]:
+    for p in measured:
+        t = tallies.get((p["run_id"], p["id"]))
+        if not t or not ai_is_gap(t["cited"], t["checks"]):
             continue
-        r = conn.execute(
-            """SELECT COUNT(*) checks, SUM(cited) cited, SUM(mentioned) mentioned,
-                      COUNT(DISTINCT engine) engines
-                 FROM ai_checks WHERE run_id=? AND prompt_id=?""",
-            (p["run_id"], p["id"])).fetchone()
-        if not r["checks"] or r["cited"]:
-            continue
-        # 나 대신 누가 인용됐나 — "그래서 무엇을 이겨야 하나"가 근거의 나머지 절반이다
-        tally: dict[str, int] = {}
-        for c in conn.execute(
-                "SELECT cited_domains_json FROM ai_checks"
-                " WHERE run_id=? AND prompt_id=?", (p["run_id"], p["id"])):
-            try:
-                for dom in json.loads(c[0] or "[]"):
-                    h = host_of(str(dom))
-                    if h:
-                        tally[h] = tally.get(h, 0) + 1
-            except (TypeError, ValueError):
-                continue
-        rivals = sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:2]
-        rows.append({"id": p["id"], "prompt": p["prompt"], "category": p["category"],
-                     "checks": r["checks"], "mentioned": r["mentioned"] or 0,
-                     "engines": r["engines"], "rivals": [d for d, _ in rivals],
+        rows.append({**t, "id": p["id"], "prompt": p["prompt"], "category": p["category"],
+                     "engines": len(t["engines"]), "engine_names": t["engines"],
+                     "cite_rate": round(t["cited"] / t["checks"], 3),
+                     "thin": t["checks"] < AI_MIN_SAMPLES,
                      "run_id": p["run_id"], "measured_at": p["measured_at"],
                      "stale": p["state"] == "stale"})
-    rows.sort(key=lambda x: (-x["checks"], x["id"]))
+    # 상한(limit) 안에 무엇을 남기나 — 표본이 되는 것 먼저, 그다음 많이 물어본 것.
+    # 점수 순서는 load() 가 score() 로 따로 정한다.
+    rows.sort(key=lambda x: (x["thin"], -x["checks"], x["id"]))
     return rows[:limit]
 
 
@@ -2255,14 +2435,6 @@ XAI_LIMIT = 12         # 화면이 읽는 목록이지 전수 목록이 아니�
 
 def _xai_tokens(s: str) -> set[str]:
     return {t for t in tokens(s) if len(t) >= XAI_MIN_TOKEN}
-
-
-def _xai_doms(raw) -> list[str]:
-    """그 질문에서 대신 인용된 도메인 — 근거의 나머지 절반이다."""
-    try:
-        return [h for h in (host_of(str(d)) for d in json.loads(raw or "[]")) if h][:3]
-    except (TypeError, ValueError):
-        return []
 
 
 def _xai_match(prompt: str, queries: list[dict]) -> dict | None:
@@ -2307,7 +2479,8 @@ def search_wins_ai_loses(conn: sqlite3.Connection, project_id: int,
         rows.append({"prompt": r["prompt"], "category": r.get("category") or "",
                      "query": m["query"], "pos": m["pos"], "imp": m["imp"],
                      "checks": r.get("checks") or 0,
-                     "rivals": _xai_doms(r.get("miss_domains"))})
+                     # 대신 인용된 곳은 ai_tally 가 센 것 그대로(한 벌) — 횟수 순 상위 셋
+                     "rivals": [x["domain"] for x in (r.get("rivals") or [])][:3]})
     rows.sort(key=lambda x: (x["pos"], -x["imp"]))
     return {"rows": rows[:XAI_LIMIT], "top_queries": len(tops)}
 
@@ -2464,9 +2637,22 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     ai = float(metrics.get("ai",
                            1.0 if kind in ("ai_citation_gap", "aio_exposure",
                                            "ai_bot_blocked") else 0.0))
+    # 챗봇 인용률(ai_citation_gap 의 cite_rate). 이 kind 에는 순위가 없어 reach 가 늘
+    # 보수적 0.3 이었다 — 그런데 인용률이 바로 "닿는 거리"다: 한 번이라도 인용됐으면
+    # 엔진이 이미 우리 페이지를 찾아 출처로 쓸 줄 안다는 뜻이라 끌어올리기가 가장 싸다.
+    # 대신 남은 몫(1 - 인용률)만큼만 AI 노출 신호를 준다 — 이미 걸리는 몫은 기회가 아니다.
+    # 둘이 맞서서 1/6 과 0/6 이 비슷한 자리에 선다: 0/6 은 벌 게 크고, 1/6 은 싸다.
+    rate = metrics.get("cite_rate")
+    if rate is not None:
+        reach = 0.3 + 0.7 * min(1.0, float(rate) / AI_GAP_MAX_RATE)
+        ai *= 1.0 - float(rate)
     raw = (w["w_demand"] * demand + w["w_reach"] * reach
            + w["w_fit"] * fit + w["w_ai"] * ai)
     raw *= value_mult(metrics)
+    # 표본 부족(답변 AI_MIN_SAMPLES 미만) — 올리되 깎는다. 답이 매번 달라서 두어 번
+    # 빠진 것은 추세가 아니다.
+    if metrics.get("thin"):
+        raw *= AI_THIN_MULT
     return round(min(100.0, max(0.0, raw * 100)), 1)
 
 
@@ -2792,28 +2978,50 @@ _KIND_SPECS = {
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
-        label="챗봇 인용 없음", defensive=False,
+        # "인용 없음"이었다 — 판정이 비율(ai_is_gap)이 된 뒤로 1/6 질문도 여기 선다.
+        label="챗봇 인용 드묾", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
+        # cite_rate·thin 은 score() 가 읽는다 — 인용률이 reach 와 남은 몫이 되고,
+        # 표본 부족이면 깎인다(이유는 score() 주석).
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "cite_rate": r["cite_rate"], "thin": r["thin"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"],
                                                 question=True)},
         target=lambda r, ctx: r["prompt"],
         # 질문마다 잰 회차가 다를 수 있다(ai_gaps) — 날짜는 그 질문의 것을 적는다.
         reasoning=lambda r, ctx: (
-            f"AI {r['engines']}곳의 답변 {r['checks']}건에서 한 번도 인용되지 "
-            "않았습니다"
-            + (f". 이름만 나온 것은 {r['mentioned']}건입니다" if r["mentioned"] else "")
-            + (f". 대신 인용되는 곳: {', '.join(r['rivals'])}" if r["rivals"] else "")
+            f"AI {r['engines']}곳의 답변에서 {ai_cite_label(r['cited'], r['checks'])}"
+            + (f". 이름만 나온 것은 {r['named_only']}건입니다" if r["named_only"] else "")
+            + (f". 대신 인용되는 곳: {ai_rivals_text(r['rivals'], r['misses'])}"
+               if r["rivals"] else "")
+            + (" — 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else "")
             + (f" (AI 확인 {str(r['measured_at'])[:10]} 기준)"
                if r.get("measured_at") else "")),
-        play=dict(
-            what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
-            acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
-                  "숫자·출처·갱신 날짜를 본문에 적습니다. 인용은 검증 가능한 문장에 붙습니다.",
-                  "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
-            deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
-                     "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
-                     "Article·FAQPage 구조화 데이터(JSON-LD)"])),
+        # 처방이 대신 인용된 곳의 갈래로 갈린다(ai_tally 의 lean) — 제3자 플랫폼이
+        # 대부분이면 내 페이지를 고쳐서는 그 자리에 못 들어간다. 모르면 own.
+        play={
+            "own": dict(
+                what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
+                acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
+                      "숫자·출처·갱신 날짜를 본문에 적습니다. 인용은 검증 가능한 문장에 붙습니다.",
+                      "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
+                deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
+                         "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
+                         "Article·FAQPage 구조화 데이터(JSON-LD)"]),
+            "third_party": dict(
+                what="챗봇이 이 질문에서 내 사이트 대신 커뮤니티·위키·영상·리뷰 사이트 같은 "
+                     "제3자 플랫폼을 출처로 씁니다. 브랜드는 자기 사이트보다 이런 곳에서 "
+                     "훨씬 자주 인용됩니다.",
+                acts=["대신 인용된 곳 중 가장 잦은 플랫폼 한두 곳을 고릅니다.",
+                      "그 플랫폼에서 이 질문이 어떻게 다뤄지는지, 어떤 글이 인용되는지 봅니다.",
+                      "실제 사람이 소속을 밝히고 질문에 실제로 답하는 식으로만 참여합니다. "
+                      "스팸·가짜 후기·대량 게시는 하지 않습니다.",
+                      "그 플랫폼에서 링크할 만한 근거 페이지가 우리 사이트에 있는지 보고, "
+                      "없으면 그것부터 만듭니다."],
+                deliver=["플랫폼별 참여 계획 표: 어디에 · 누가 · 무엇으로 · 그 플랫폼 규칙상 "
+                         "허용되는지",
+                         "그 플랫폼에서 인용·링크할 만한 우리 페이지(없으면 먼저 만들 것)",
+                         "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
         label="구글 AI 요약 빠짐", defensive=False,
         detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
@@ -2962,6 +3170,8 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
         return p.get(band) or p["beyond"]
     if kind == "content_gap":
         return p.get(gap_kind) or p["missing"]
+    if kind == "ai_citation_gap":
+        return p.get(gap_kind) or p["own"]
     return p
 
 
@@ -3026,9 +3236,11 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
 
 
 def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
-    """챗봇 인용 없음 → 그 질문의 가장 최근 측정이 **끝난 회차**에 속하고, 그 회차에서
-    인용이 한 번이라도 있다. 가장 최근 측정이 도는 중이거나 예외로 끊긴 회차면 판단하지
-    않는다 — 끊긴 회차에서 이 질문을 잰 몇 건만으로 말하지 않는다."""
+    """챗봇 인용 드묾 → 그 질문의 가장 최근 측정이 **끝난 회차**에 속하고, 그 회차에서
+    인용률이 기회 문턱을 넘었다(ai_is_gap 이 거짓 — 세우는 쪽과 같은 판정). 6번 중 1번
+    걸린 것은 풀림이 아니다: 그 자체가 기회로 선다. 가장 최근 측정이 도는 중이거나
+    예외로 끊긴 회차면 판단하지 않는다 — 끊긴 회차에서 이 질문을 잰 몇 건만으로 말하지
+    않는다."""
     p = conn.execute("SELECT id FROM ai_prompts WHERE project_id=? AND prompt=?",
                      (pid, target)).fetchone()
     if not p:
@@ -3045,7 +3257,7 @@ def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> 
             WHERE run_id=? AND prompt_id=?""", (last[0], p[0])).fetchone()
     if not a["n"] or not _after_ts(a["first"], since):
         return None
-    if (a["cited"] or 0) > 0:
+    if not ai_is_gap(a["cited"], a["n"]):
         return f"AI 답변 {a['n']}건 중 {a['cited']}건이 우리를 인용합니다 (AI 회차 #{last[0]})"
     return None
 
@@ -3580,11 +3792,34 @@ def _selfcheck() -> None:
     assert not is_foreign_brand("", brands)
     assert not is_foreign_brand("ecrett", set())                  # 카탈로그 없으면 아무것도 안 뺀다
 
-    m, c, others = judge("Try Ecrett and MySite today.",
-                         ["https://www.ecrett.com/a", "https://blog.mysite.com/b"],
-                         ["MySite"], "mysite.com")
-    assert (m, c, others) == (1, 1, ["ecrett.com"]), (m, c, others)
-    assert judge("nothing here", [], ["MySite"], "mysite.com") == (0, 0, [])
+    m, c, others, rec = judge("Try Ecrett and MySite today.",
+                              ["https://www.ecrett.com/a", "https://blog.mysite.com/b"],
+                              ["MySite"], "mysite.com")
+    assert (m, c, others, rec) == (1, 1, ["ecrett.com"], 0), (m, c, others, rec)
+    assert judge("nothing here", [], ["MySite"], "mysite.com") == (0, 0, [], 0)
+    # 추천 목록 — 이름이 목록 줄 **안에** 있어야 추천이다. 문단에서 지나가면 이름 나옴뿐
+    listed = "좋은 도구들:\n1. Ecrett — 빠름\n2. MySite — 무료\n\n그 밖에 Other 도 있습니다."
+    assert judge(listed, [], ["MySite"], "mysite.com")[3] == 1
+    assert recommended_in("- **MySite**: 가볍다", ["mysite"]) == 1          # 글머리
+    assert recommended_in("| MySite | 무료 |", ["MySite"]) == 1              # 비교표 행
+    assert recommended_in("### 2) MySite", ["MySite"]) == 1                 # 번호 제목
+    prose = "1. Ecrett 이 낫습니다.\n2. Other 도 있습니다.\nMySite 는 목록 밖에서만 나옵니다."
+    assert judge(prose, [], ["MySite"], "mysite.com")[::3] == (1, 0), "목록 밖 언급을 추천으로 셌다"
+    assert recommended_in("**MySite** 는 굵게 쓴 문단", ["MySite"]) == 0     # 굵은 글씨는 목록이 아니다
+    assert set(AI_LADDER_CATEGORIES) <= set(__import__("gen_prompts").CATEGORIES), \
+        "사다리 갈래가 gen_prompts.CATEGORIES 에 없는 이름이다"
+    # 인용 공백 판정 — 비율과 표본 수
+    assert ai_is_gap(0, 6) and ai_is_gap(1, 6) and ai_is_gap(2, 6)       # 1/3 까지
+    assert not ai_is_gap(3, 6) and not ai_is_gap(0, 0)
+    assert ai_cite_label(1, 6) == "인용 1/6 (n=6)"
+    assert ai_cite_label(0, 2) == "인용 0/2 (n=2) · 표본 부족"
+    assert is_third_party("ko.wikipedia.org", ("wikipedia.org",))
+    assert not is_third_party("notwikipedia.org", ("wikipedia.org",))
+    # 1/6 은 0/6 보다 벌 몫은 작지만 닿기 쉽다 — 둘 다 기회 점수를 받고, 표본 부족은 깎인다
+    g0 = score("ai_citation_gap", {"cite_rate": 0.0}, "saas")
+    g1 = score("ai_citation_gap", {"cite_rate": 1 / 6}, "saas")
+    assert g1 > 0 and abs(g0 - g1) < 5, (g0, g1)
+    assert score("ai_citation_gap", {"cite_rate": 0.0, "thin": True}, "saas") < g0
     # 인용 메타데이터가 없으면 본문의 맨 URL을 줍는다 — collect_ai·record_check 공통
     assert judge("see https://blog.mysite.com/x", [], ["MySite"],
                  "mysite.com")[1] == 1
@@ -4305,13 +4540,13 @@ def _selfcheck() -> None:
     assert _xai_tokens("AI 툴 고르는 법") == {"ai", "고르는"}, _xai_tokens("AI 툴 고르는 법")
     ai_rows = [
         {"prompt": "1페이지 키워드 고르는 법", "category": "추천", "cited": 0, "checks": 6,
-         "miss_domains": '["https://www.ecrett.com/a", "b.com"]'},
+         "rivals": [{"domain": "ecrett.com", "n": 4}, {"domain": "b.com", "n": 1}]},
         {"prompt": "키워드 뭐가 좋아", "category": "추천", "cited": 0, "checks": 6,
-         "miss_domains": None},                     # 한 낱말만 겹친다 — 짝을 안 짓는다
+         "rivals": []},                             # 한 낱말만 겹친다 — 짝을 안 짓는다
         {"prompt": "ecrett 어때", "category": "브랜드", "cited": 0, "checks": 6,
-         "miss_domains": None},                     # 검색어가 한 낱말이라 임계 미달
+         "rivals": []},                             # 검색어가 한 낱말이라 임계 미달
         {"prompt": "1페이지 키워드 정리법", "category": "추천", "cited": 2, "checks": 6,
-         "miss_domains": None},                     # 이미 인용된다 — 여기 올 자리가 아니다
+         "rivals": []},                             # 이미 인용된다 — 여기 올 자리가 아니다
     ]
     xs = search_wins_ai_loses(conn, 1, ai_rows)
     assert xs["top_queries"] == 2, xs

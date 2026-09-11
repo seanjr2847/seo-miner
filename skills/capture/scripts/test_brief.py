@@ -131,19 +131,107 @@ def test_fix_page_without_known_page_leaves_url_slot():
     assert "## 지금 이 페이지 상태" not in t  # 모르는 페이지의 상태를 지어내지 않는다
 
 
+# scoring.ai_tally 가 내는 질문 행의 모양 그대로 — 요청문은 여기서 다시 세지 않는다
+def _ai_row(**over):
+    r = {"prompt": "무슨 도구가 좋아?", "category": "문제해결", "checks": 6, "cited": 0,
+         "mentioned": 1, "named_only": 1, "recommended": None, "rec_checks": 0, "misses": 6,
+         "engines": "chatgpt,perplexity",
+         "rivals": [{"domain": "rival.example", "n": 4, "third_party": False},
+                    {"domain": "reddit.com", "n": 1, "third_party": True}],
+         "third_share": 0.2, "lean": "sites",
+         "excerpts": {"chatgpt": "첫 줄 둘째 줄"},
+         "by_engine": {"chatgpt": {"checks": 3, "cited": 0, "mentioned": 1, "named_only": 1,
+                                   "misses": 3, "rivals": [{"domain": "rival.example", "n": 3}]},
+                       "perplexity": {"checks": 3, "cited": 0, "mentioned": 0, "named_only": 0,
+                                      "misses": 3, "rivals": [{"domain": "reddit.com", "n": 1}]}}}
+    r.update(over)
+    return r
+
+
 def test_ai_gap_quotes_rival_answer_and_switches_shape_by_page():
-    row = {"prompt": "무슨 도구가 좋아?", "checks": 6, "cited": 0, "mentioned": 1,
-           "engines": "chatgpt,perplexity", "miss_domains": '["rival.example"]',
-           "miss_answer": "첫 줄\n둘째 줄"}
+    row = _ai_row()
     t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [row]}, "ko-KR")
     assert t.startswith(brief.SHAPES["new_content"]["intro"])     # 걸린 페이지 없음 → 새 글
     assert "질문 (챗봇에 실제로 물은 문장): 무슨 도구가 좋아?" in t
-    assert "AI chatgpt,perplexity · 답변 6건 중 인용 0건, 이름만 1건" in t
-    assert "대신 인용된 곳: rival.example" in t
-    assert "  > 첫 줄\n  > 둘째 줄" in t
+    assert "AI chatgpt,perplexity · 답변 6건 중 인용 0/6 (n=6), 이름만 1건" in t, t
+    # 대신 인용된 곳은 도메인별 횟수와 갈래 — 표본 하나에서 고른 도메인 목록이 아니다
+    assert "| rival.example | 4/6 | 경쟁사·일반 사이트 |" in t, t
+    assert "| reddit.com | 1/6 | 제3자 플랫폼 |" in t, t
+    assert "- chatgpt:\n  > 첫 줄 둘째 줄" in t, t
+    assert "여기 없는 것을 우리가 답해야 인용됩니다" in t
     ctx = {"ai_by_prompt": [row], "query_pages": {"무슨 도구가 좋아?": _pages(URL)}}
     t2 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), ctx, "ko-KR")
     assert t2.startswith(brief.SHAPES["fix_page"]["intro"])       # 걸린 페이지 있음 → 고친다
+
+
+def test_ai_gap_near_miss_and_thin_sample_are_said_as_rate():
+    """판정이 "인용 0회"에서 비율·표본 수로 바뀌었다 — 요청문도 그 글로 말한다."""
+    near = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"),
+                      {"ai_by_prompt": [_ai_row(cited=1, misses=5)]}, "ko-KR")
+    assert "인용 1/6 (n=6)" in near and "표본 부족" not in near, near
+    thin = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"),
+                      {"ai_by_prompt": [_ai_row(checks=2, misses=2, by_engine={})]}, "ko-KR")
+    assert "인용 0/2 (n=2) · 표본 부족" in thin, thin
+    assert "- 표본 부족: 답변이 2건뿐입니다" in thin, thin
+
+
+def test_ai_gap_splits_by_engine():
+    """엔진을 뭉치면 "chatgpt 는 이름을 내는데 perplexity 는 모른다"가 안 보인다."""
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row()]},
+                   "ko-KR")
+    assert "| 엔진 | 인용 | 이름만 | 표본 | 대신 인용된 곳 |" in t, t
+    assert "| chatgpt | 0/3 | 1 | 3 | rival.example 3/3 |" in t, t
+    assert "| perplexity | 0/3 | 0 | 3 | reddit.com 1/3 |" in t, t
+    # 출처를 고르는 경향 한 줄 — 경향이라고 말한다(규칙이라고 과장하지 않는다)
+    assert "Perplexity 는 최신이고 권위 있는 출처" in t and "규칙은 아닙니다" in t, t
+    # 모르는 엔진에는 아무 말도 안 붙인다
+    solo = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row(
+        by_engine={"claude": {"checks": 3, "cited": 0, "mentioned": 0, "misses": 3}})]}, "ko-KR")
+    assert "| claude | 0/3 |" in solo and "출처를 고르는 방식" not in solo, solo
+
+
+def test_ai_gap_third_party_goes_to_presence_and_forbids_spam():
+    """대신 인용된 곳이 대부분 제3자 플랫폼이면 '내 페이지 고치기'가 아니다."""
+    row = _ai_row(lean="third_party", third_share=0.8,
+                  rivals=[{"domain": "reddit.com", "n": 5, "third_party": True}])
+    ctx = {"ai_by_prompt": [row], "query_pages": {"무슨 도구가 좋아?": _pages(URL)}}
+    b = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="third_party"), ctx)
+    assert b["shape"] == "presence", b["shape"]                  # 페이지가 있어도
+    assert "지금 이 페이지 상태" not in b["body"]
+    assert "80% 가 제3자 플랫폼입니다" in b["body"], b["body"]
+    assert "여기 없는 것을 우리가 답해야" not in b["body"]      # 페이지로 푸는 말이 아니다
+    tail = brief.tails("ko-KR")["presence"]
+    assert "스팸·가짜 후기·대량 게시" in tail and "진정성" in tail, tail
+    assert "seo-presence-" in tail                               # 산출물 파일명 조각
+    # 경쟁사·일반 사이트가 대부분이면 예전 꼴 그대로
+    assert brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="sites"),
+                       ctx)["shape"] == "fix_page"
+
+
+def test_ai_gap_ladder_on_recommendation_questions_only():
+    """인용 ≠ 추천. 추천·비교 질문에서만 사다리를 싣고, 안 잰 추천은 0 이라 하지 않는다."""
+    rec = _ai_row(category="추천", mentioned=4, recommended=0, rec_checks=6)
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [rec]}, "ko-KR")
+    assert "인용 0/6 · 이름 나옴 4/6 · 추천 목록 0/6" in t, t
+    assert "휴리스틱" in t
+    assert "추천은 내 글보다 웹 전반의 평판" in t, t
+    old = _ai_row(category="비교", recommended=None, rec_checks=0)
+    t2 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [old]}, "ko-KR")
+    assert "추천 목록 — (이 판정이 생기기 전에 받은 답이라 안 봤습니다)" in t2, t2
+    assert "추천 목록 0/" not in t2 and "웹 전반의 평판" not in t2
+    t3 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row()]},
+                    "ko-KR")
+    assert "가시성 사다리" not in t3                             # 문제해결 질문에는 없다
+
+
+def test_ai_gap_reads_the_row_that_raised_the_opportunity():
+    """기회를 세운 행(ai_gap_rows — 끝난 회차)이 최신 회차 행(ai_by_prompt)보다 먼저다.
+    최신 회차가 끊겼으면 둘이 다른 표본을 봐서, 요청문이 기회 근거와 다른 수를 말한다."""
+    ctx = {"ai_gap_rows": [_ai_row(cited=1, measured_at="2026-09-01T00:00:00Z")],
+           "ai_by_prompt": [_ai_row(checks=1, cited=0)]}
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), ctx, "ko-KR")
+    assert "인용 1/6 (n=6)" in t and "(AI 확인 2026-09-01)" in t, t
+    assert "n=1" not in t, t
 
 
 def test_technical_kinds_carry_google_verdict_and_device_numbers():

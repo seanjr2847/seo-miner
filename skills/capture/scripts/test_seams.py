@@ -648,7 +648,7 @@ def test_seam_15_dataforseo_calls_go_through_pacer():
 
 
 def test_seam_16_brief_shapes_single_source():
-    """16) 요청문의 꼴(고치기·새 글·주소 정리·기술 점검·연락)은 brief.py 가 정본이다.
+    """16) 요청문의 꼴은 brief.py 가 정본이다(이름·개수는 brief.SHAPE_NAMES — 여기 안 적는다).
     화면은 기회마다 실려 온 o.brief 를 그리고, 기회로 안 올라온 행(뷰의 폴백)만
     askBlock 에 shape 이름을 직접 넘긴다 — 그 이름이 정본에 없으면 머리말도 꼬리도
     빈 요청문이 조용히 나간다. 그리고 옛 틀(규칙 문장·진단별 산출물 사본)이 셸에
@@ -1099,6 +1099,90 @@ def test_seam_25_rank_aio_fields_and_play_come_from_server():
     lits = [s for s in re.findall(r'"([^"]*)"|`([^`]*)`', body) for s in s
             if re.search(r"[가-힣]", s)]
     assert not lits, f"rank.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
+
+
+
+def test_seam_26_ai_rivals_single_count():
+    """26) "대신 인용된 곳"·엔진별 수·발췌는 scoring.ai_tally 한 벌이다.
+
+    두 벌이었다: 화면·요청문이 읽는 질문 행(dashboard._axis_ai)은
+    `MAX(CASE WHEN cited=0 THEN cited_domains_json END)` 로 표본 **하나**(사전순으로 가장
+    큰 JSON — 사실상 무작위)를 골랐고, 기회(scoring.ai_gaps)는 전 표본을 셌다. 요청문은
+    앞쪽을 읽었다. 어느 쪽도 혼자서는 멀쩡한 SQL 이었다.
+
+    세 끝을 본다 — 만드는 쪽(gather 가 싣는 두 행이 ai_tally 와 같다), 말하는 쪽(요청문이
+    그 수를 그대로 쓴다·다시 세지 않는다), 그리는 쪽(화면이 읽는 칸이 행에 있다·옛 칸을
+    안 읽는다). 표본은 MAX 로 고르면 틀리는 꼴로 깐다: 빠진 답 셋 중 사전순 최대 JSON 이
+    가장 드문 도메인 하나뿐인 답이다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import dashboard
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam25','saas','x.com')")
+    c.execute("INSERT INTO ai_prompts(id,project_id,prompt,category) VALUES(1,1,'도구 추천','추천')")
+    with db.run(c, 1, "ai") as r:
+        for i, (eng, doms, ans) in enumerate((
+                ("chatgpt", ["reddit.com", "a.com"], "가 먼저 받은 답"),
+                ("chatgpt", ["reddit.com"], "나 둘째 답"),
+                ("perplexity", ["zzz.com"], "하 셋째 답"))):
+            c.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,sample_idx,mentioned,cited,"
+                      "cited_domains_json,answer_excerpt,recommended) VALUES(1,?,?,?,0,0,?,?,0)",
+                      (r.id, eng, i, json.dumps(doms), ans))
+    c.execute("INSERT INTO opportunities(project_id,kind,target,score,status) "
+              "VALUES(1,'ai_citation_gap','도구 추천',50,'new')")
+    db.set_verdicts(c, 1, [scoring.norm("도구 추천")], "work")
+    null = _io.StringIO()
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        d = dashboard.gather(c, db.get_project(c, "_seam25"))
+    want = scoring.ai_tally(c, r.id)[1]
+    c.close()
+
+    # ── 만드는 쪽: 두 행 다 ai_tally 그대로 ──
+    row = d["ai_by_prompt"][0]
+    gap = (d.get("ai_gap_rows") or [None])[0]
+    assert gap, "gather() 가 기회를 세운 행(ai_gap_rows)을 안 싣는다"
+    for who, got in (("ai_by_prompt", row), ("ai_gap_rows", gap)):
+        for k in ("rivals", "misses", "excerpts", "by_engine", "recommended", "lean"):
+            assert got.get(k) == want[k], f"{who}.{k} 가 scoring.ai_tally 와 다르다: {got.get(k)!r}"
+    assert want["rivals"][0] == {"domain": "reddit.com", "n": 2, "third_party": True}, want
+    assert "miss_domains" not in row and "miss_answer" not in row, "옛 표본 칸이 되살아났다"
+
+    # ── 말하는 쪽: 요청문이 그 수를 그대로 말하고, 다시 세지 않는다 ──
+    o = next(x for x in d["opps"] if x["kind"] == "ai_citation_gap")
+    body = o["brief"]["body"]
+    for x in want["rivals"]:
+        assert f"| {x['domain']} | {x['n']}/{want['misses']} |" in body, \
+            f"요청문의 대신 인용된 곳이 집계와 다르다:\n{body}"
+    assert "가 먼저 받은 답" in body and "나 둘째 답" not in body, "발췌가 결정적이지 않다"
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    ev = src[src.index("def _ev_ai("):src.index("def _ev_aio(")]
+    assert "cited_domains" not in ev and "json.loads" not in ev and "miss_" not in ev, \
+        "요청문이 대신 인용된 곳을 다시 센다 — 정본은 scoring.ai_tally 다"
+
+    # ── 그리는 쪽: 질문 표가 읽는 칸이 행에 있고, 옛 칸을 안 읽는다 ──
+    view = (ctx["views"] / "ai.html").read_text("utf-8")
+    i = view.index("let AI_ROWS")
+    j = view.index("/* ── 검색 × AI 교차", i)
+    part = view[i:j]
+    assert "miss_domains" not in view and "miss_answer" not in view, \
+        "화면이 옛 표본 칸(miss_*)을 읽는다 — 서버는 더 안 싣는다"
+    read = set(re.findall(r"\br\.(\w+)", part))
+    assert {"rivals", "excerpts"} <= read, f"화면이 새 칸을 안 읽는다: {sorted(read)}"
+    assert read <= set(row), f"화면이 읽는데 질문 행에 없는 칸: {sorted(read - set(row))}"
+    eng = next(iter(row["by_engine"].values()))
+    assert set(re.findall(r"\bs\.(\w+)", part)) <= set(eng) | set(row), "엔진 몫에 없는 칸을 읽는다"
+    riv = set(re.findall(r"\bx\.(\w+)", part))
+    assert riv and riv <= set(want["rivals"][0]), f"대신 인용된 곳 칸이 어긋났다: {sorted(riv)}"
 
 
 if __name__ == "__main__":
