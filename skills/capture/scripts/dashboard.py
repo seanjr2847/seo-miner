@@ -100,6 +100,23 @@ def section_defs() -> list[dict]:
     return out
 
 
+# 차트 라이브러리 — templates/vendor/chart.umd.min.js(Chart.js 4.5.1, MIT)를 <head> 에
+# <script> 로 박는다. CDN 을 안 쓰는 까닭: 박제본(/capture report)은 파일 하나로
+# 오프라인에서 열려야 한다. 파일은 npm 이 준 그대로 둔다(test_seams 가 해시로 대조한다) —
+# 끝의 sourceMappingURL 한 줄만 박을 때 뗀다(없는 .map 을 개발자 도구가 찾으러 간다).
+VENDOR_JS = TPL / "vendor" / "chart.umd.min.js"
+_VENDOR: list[str] = []
+
+
+def _vendor_script() -> str:
+    if not _VENDOR:
+        js = re.sub(r"\n//# sourceMappingURL=\S+\s*$", "\n", VENDOR_JS.read_text("utf-8"))
+        if "</script" in js.lower():
+            raise ValueError("vendor 스크립트에 </script 가 있다 — 인라인으로 박으면 문서가 잘린다")
+        _VENDOR.append(f"<script>{js}</script>")
+    return _VENDOR[0]
+
+
 def _assemble(variant: str = "local") -> bytes:
     """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다.
 
@@ -144,6 +161,7 @@ def _assemble(variant: str = "local") -> bytes:
                 f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
+            .replace("<!--VENDOR-->", _vendor_script(), 1)
             .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
             .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
             .encode("utf-8"))
@@ -670,7 +688,7 @@ def _axis_rank(conn, pid: int) -> dict:
         # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
         return {r["keyword"]: r for r in q(conn,
             """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
-                      rs.aio_present, rs.aio_cited
+                      rs.aio_present, rs.aio_cited, rs.aio_domains_json
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
                 WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
 
@@ -684,6 +702,19 @@ def _axis_rank(conn, pid: int) -> dict:
                              ORDER BY k.keyword, s.position""", (pid, rank_dates[0])):
             serp_top.setdefault(r["keyword"], []).append(r)
 
+    # 구글이 이 검색어에 같이 보여 준 질문·연관 검색어(팬아웃 재료) — 요청문이 "함께
+    # 답해야 할 질문"으로 싣는다. serp_top 과 같은 회차·같은 날짜 키로 읽는다: 다른 날의
+    # 질문이 이 날의 상위 목록 옆에 서면 서로 다른 검색결과를 한 장처럼 말하게 된다.
+    # 키가 없는 검색어는 "안 쟀거나 구글이 아무것도 안 보여 줬다"이다 — 요청문은 둘 다
+    # 블록을 안 단다(없다고 단정하지 않는다).
+    serp_fanout: dict[str, list] = {}
+    if rank_dates:
+        for r in q(conn, """SELECT k.keyword, s.kind, s.text
+                              FROM serp_questions s JOIN keywords k ON k.id = s.keyword_id
+                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=?
+                             ORDER BY k.keyword, s.kind, s.position""", (pid, rank_dates[0])):
+            serp_fanout.setdefault(r["keyword"], []).append({"kind": r["kind"], "text": r["text"]})
+
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
     r_prev = rank_agg(rank_dates[1] if len(rank_dates) > 1 else None)
     ranks, aio_gap = [], []
@@ -696,18 +727,36 @@ def _axis_rank(conn, pid: int) -> dict:
             feats = json.loads(r["serp_features_json"] or "[]")
         except (TypeError, ValueError):
             feats = []
+        # None = 요약이 없었거나 안 쟀다, [] = 요약은 떴는데 인용 도메인을 못 뽑았다
+        # (db.write_rank_snapshot 의 불변식). 둘을 뭉치지 않는다.
+        try:
+            aio_doms = (json.loads(r["aio_domains_json"])
+                        if r["aio_domains_json"] is not None else None)
+        except (TypeError, ValueError):
+            aio_doms = None
         ranks.append({"keyword": kw, "pos": cur_pos, "dpos": rd["delta"],
                       "delta": rd, "url": r["url"], "features": feats,
                       "prev_pos": prev_pos,
-                      "aio": r["aio_present"], "aio_cited": r["aio_cited"]})
+                      "aio": r["aio_present"], "aio_cited": r["aio_cited"],
+                      "aio_domains": aio_doms,
+                      # AI 요약 처방의 갈래 — 요약이 뜬 행에만. 판정은 scoring 한 곳.
+                      "aio_band": scoring.aio_band(cur_pos) if r["aio_present"] == 1 else None})
         if r["aio_present"] == 1 and r["aio_cited"] == 0:
             aio_gap.append(kw)
     ranks.sort(key=lambda x: (x["pos"] is None, x["pos"] or 999))
+    gap_set = set(aio_gap)
 
     return {
         "rank_date": rank_dates[0] if rank_dates else None,
         "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
         "ranks": ranks, "aio_gap": aio_gap, "serp_top": serp_top,
+        "serp_fanout": serp_fanout,
+        # AI 요약 빠짐 검색어의 순위 행 전부 — gather() 가 ranks 를 화면용으로 30개까지
+        # 자르는데(순위 순), AI 요약 기회는 대개 순위가 낮거나 없어서 그 30 밖에 선다.
+        # 요청문(_ev_aio)이 "몇 위·누가 대신 인용됐나"를 말하려면 잘리기 전 행이 필요하다.
+        "aio_gap_ranks": {r["keyword"]: r for r in ranks if r["keyword"] in gap_set},
+        # 기회로 아직 안 올라온 행의 폴백 처방이 쓴다(rank.html) — 문구는 기회와 같은 한 벌.
+        "aio_play": {b: scoring.kind_play("aio_exposure", band=b) for b in scoring.AIO_BANDS},
         "kw_active": db.count_active_keywords(conn, pid),
     }
 
@@ -744,29 +793,22 @@ def _axis_ai(conn, pid: int) -> dict:
         cite_share = sorted(({"domain": k, "n": v} for k, v in share.items()),
                             key=lambda x: -x["n"])[:15]
 
-        # 질문 하나 = 줄 하나. "왜 빠졌나"의 증거는 답변 원문뿐인데 여태 버려졌다.
-        # 발췌는 길다 — 박제본에도 들어가므로 화면이 접어 보여줄 만큼만 자른다.
+        # 질문 하나 = 줄 하나. 수(인용·이름·추천)·대신 인용된 곳(도메인별 횟수)·엔진별
+        # 내역(by_engine — 엔진×카테고리 표를 누르면 화면이 이걸로 거른다)·엔진별 발췌는
+        # 전부 scoring.ai_tally 한 벌이다. 예전에는 여기서 MAX(cited_domains_json) 로
+        # 표본 하나를 사실상 무작위로 골랐고, 기회(ai_gaps)는 전 표본을 셌다 — 요청문은
+        # 이쪽을 읽었으니 틀린 쪽을 읽은 셈이었다.
         ai_by_prompt = q(conn,
-            """SELECT p2.id, p2.prompt, p2.category,
-                      SUM(c.cited) cited, SUM(c.mentioned) mentioned, COUNT(*) checks,
-                      GROUP_CONCAT(DISTINCT c.engine) engines,
-                      MAX(CASE WHEN c.cited=0 THEN c.answer_excerpt END) miss_answer,
-                      MAX(CASE WHEN c.cited=0 THEN c.cited_domains_json END) miss_domains
+            """SELECT p2.id, p2.prompt, p2.category
                  FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
                 WHERE c.run_id=? GROUP BY p2.id
-                ORDER BY cited DESC, mentioned DESC""", (ai_run["id"],))
-        # 질문 × 엔진 — "chatgpt 가 어느 질문을 인용했나"는 이 내역에서만 읽힌다.
-        # 엔진×카테고리 표의 한 줄을 누르면 화면이 이걸로 질문 목록을 거른다.
-        by_eng: dict[int, dict] = {}
-        for r in q(conn,
-            """SELECT prompt_id, engine, SUM(cited) cited, SUM(mentioned) mentioned,
-                      COUNT(*) checks
-                 FROM ai_checks WHERE run_id=? GROUP BY 1,2""", (ai_run["id"],)):
-            by_eng.setdefault(r["prompt_id"], {})[r["engine"]] = {
-                "cited": r["cited"], "mentioned": r["mentioned"], "checks": r["checks"]}
+                ORDER BY SUM(c.cited) DESC, SUM(c.mentioned) DESC""", (ai_run["id"],))
+        tally = scoring.ai_tally(conn, ai_run["id"])
         for r in ai_by_prompt:
-            r["miss_answer"] = (r["miss_answer"] or "")[:600]
-            r["by_engine"] = by_eng.get(r["id"], {})
+            t = tally.get(r["id"]) or {}
+            r.update(t)
+            # 화면·교차표가 읽어 온 모양 그대로 — 엔진은 쉼표로 이은 이름
+            r["engines"] = ",".join(t.get("engines") or [])
         missed = q(conn,
             """SELECT p2.prompt, p2.category,
                       GROUP_CONCAT(DISTINCT c.engine) engines
@@ -791,9 +833,18 @@ def _axis_ai(conn, pid: int) -> dict:
     ai_vs_search = scoring.search_wins_ai_loses(conn, pid, ai_by_prompt)
     ai_outranked = scoring.ai_outranked(conn, pid, cite_share)
 
+    # 기회를 세운 바로 그 행 — 요청문의 근거표와 처방 갈래(lean)가 이것을 읽는다.
+    # ai_by_prompt 는 최신 회차 하나만 보는데 기회(scoring.ai_gaps)는 질문마다 **끝난**
+    # 회차의 최신 측정을 본다. 최신 회차가 도는 중이거나 끊겼으면 두 행이 다른 표본을
+    # 보고, 요청문이 기회 근거와 다른 수를 말한다. 모양은 ai_by_prompt 와 같게 맞춘다
+    # (engines = 쉼표로 이은 이름) — 요청문이 어느 쪽에서 왔는지 가르지 않게.
+    ai_gap_rows = [{**g, "engines": ",".join(g.get("engine_names") or [])}
+                   for g in scoring.ai_gaps(conn, pid)]
+
     return {
         "ai_date": ai_date, "matrix": matrix, "gap_domains": gap_domains,
         "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
+        "ai_gap_rows": ai_gap_rows,
         "missed": missed, "ai_trend": ai_trend,
         "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
         # 켜 둔 질문 중 끝난 확인에서 못 잰 것·오래된 것·옛 생성기가 지은 것의 개수와
@@ -840,7 +891,8 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
     ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
     ga4_funnel, ga4_channels = scoring.ga4_funnel(conn, pid, cur, period)
 
-    out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent}
+    out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent,
+           **_ai_referrals(conn, pid)}
     if ga4_funnel:
         out.update({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
                     "ga4_by_device": scoring.ga4_breakdown(conn, pid, "device"),
@@ -848,6 +900,48 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
                                                             top=scoring.GA4_BD_COUNTRY_TOP),
                     "ga4_by_newret": scoring.ga4_breakdown(conn, pid, "newvsreturning")})
     return out
+
+
+def _ai_referrals(conn, pid: int) -> dict:
+    """AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회) — 최신으로 잰 날 한 벌.
+
+    세 키는 늘 같이 움직인다:
+      ai_referrals      출처(호스트)별 합계, 세션 내림차순
+      ai_referral_pages 페이지(경로)별 합계와 그 페이지의 출처별 세션
+      ai_referral_meta  잰 날·기간·그때 센 호스트 목록
+    **None = 안 쟀다**(GA4 미연결이거나 이 조회가 생기기 전 수집, 또는 매번 실패),
+    **[] = 쟀고 0**. 둘을 뭉치면 화면이 "GA4 를 연결하세요"와 "아직 아무도 안 왔다"를
+    가를 수 없다. 기준은 ga4_ai_measured(쟀다는 표시)다 — 행이 없는 날도 거기엔 남는다.
+    """
+    m = conn.execute("SELECT snapshot_date, period_days, hosts_json FROM ga4_ai_measured"
+                     " WHERE project_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    if not m:
+        return {"ai_referrals": None, "ai_referral_pages": None, "ai_referral_meta": None}
+    rows = q(conn, "SELECT source, landing_page, sessions, key_events FROM ga4_ai_referrals"
+                   " WHERE project_id=? AND snapshot_date=?", (pid, m["snapshot_date"]))
+    by_src: dict[str, dict] = {}
+    by_page: dict[str, dict] = {}
+    for r in rows:
+        s = by_src.setdefault(r["source"], {"source": r["source"], "sessions": 0, "key_events": 0.0})
+        p = by_page.setdefault(r["landing_page"], {"page": r["landing_page"], "sessions": 0,
+                                                   "key_events": 0.0, "sources": {}})
+        for acc in (s, p):
+            acc["sessions"] += r["sessions"] or 0
+            acc["key_events"] += r["key_events"] or 0
+        p["sources"][r["source"]] = p["sources"].get(r["source"], 0) + (r["sessions"] or 0)
+    order = lambda xs: sorted(xs, key=lambda x: (-x["sessions"], -x["key_events"],
+                                                 x.get("source") or x.get("page")))
+    for x in (*by_src.values(), *by_page.values()):
+        x["key_events"] = round(x["key_events"], 2)
+    try:
+        hosts = json.loads(m["hosts_json"] or "[]")
+    except ValueError:
+        hosts = []
+    return {"ai_referrals": order(by_src.values()),
+            # 페이지는 화면·요청문이 쓸 만큼만 — 긴 꼬리는 세션 1짜리가 수백 줄이다.
+            "ai_referral_pages": order(by_page.values())[:100],
+            "ai_referral_meta": {"date": m["snapshot_date"], "period_days": m["period_days"],
+                                 "hosts": hosts}}
 
 
 def _axis_backlinks(conn, pid: int) -> dict:
@@ -909,14 +1003,23 @@ def _axis_ai_bots(p, crawl: dict) -> dict:
     원문을 다시 읽을 뿐이다(판정의 정본은 scoring.robots_blocks).
 
     막힌 것만 내지 않고 허용까지 같이 낸다: 한 줄만 보여 주면 "이것만 열면 되나"
-    로 읽히고, 같은 robots.txt 가 다른 봇에게 무엇을 하는지는 안 보인다.
+    로 읽히고, 같은 robots.txt 가 다른 봇에게 무엇을 하는지는 안 보인다. 행마다
+    용도(purpose)를 싣는다 — 학습 봇 차단과 검색 봇 차단은 뜻이 반대라서.
+
+    llms_txt: 같은 회차가 받은 /llms.txt. None = 모름(크롤이 안 받았거나 못 받음),
+    {"found": False} = 봤고 없음. 둘을 뭉치면 요청문이 증거 없이 "없다" 고 말한다.
+
+    crawl 은 _axis_crawl() 의 반환값 그대로다 — {"crawl": {"run": …}, "crawl_kinds": …}.
+    예전에는 여기서 바로 .get("run") 을 해서 늘 빈 행이었다: 봇 표도, 인용 공백
+    요청문의 '먼저 볼 것' 줄도 한 번도 실린 적이 없었다(test_dashboard 가 못 박는다).
     """
-    txt = ((crawl or {}).get("run") or {}).get("robots_txt") or ""
-    if not txt.strip():
-        return {"ai_bots": []}
+    run = ((crawl or {}).get("crawl") or {}).get("run") or {}
+    found = run.get("llms_txt_found")
+    llms = None if found is None else {"found": bool(found), "bytes": run.get("llms_txt_bytes"),
+                                       "head": run.get("llms_txt_head")}
     home = f"https://{p['domain']}/" if p["domain"] else "https://example.com/"
-    return {"ai_bots": [{"bot": b, "rule": scoring.robots_blocks(txt, home, agent=b)}
-                        for b in scoring.ai_bots()]}
+    return {"ai_bots": scoring.ai_bot_status(run.get("robots_txt") or "", home),
+            "llms_txt": llms}
 
 
 def _axis_vitals(conn, pid: int) -> dict:
@@ -1012,9 +1115,11 @@ def _site_probe(conn, crawl: dict, urls) -> dict:
     return out
 
 
-def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict]) -> dict:
-    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)이 낸 원본 행을 대상 문자열로
-    한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
+def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict],
+               ai_rows: list[dict] = ()) -> dict:
+    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)·ai_rows(AI 축의 질문 행)가 낸
+    원본 행을 대상 문자열로 한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다.
+    화면은 그리기만 한다.
     """
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
 
@@ -1049,10 +1154,21 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 문자열로 한 번만 짝짓는다(대상 문자열 자체가 판정하지 않는다).
     sd_band = {r["query"]: r["band"] for r in striking}
     gap_kind = {r["keyword"].strip().lower(): r["kind"] for r in kw_gap}
+    # 구글 AI 요약 빠짐도 우리 순위로 처방이 갈린다(scoring._AIO_PLAY) — 원본 행은 그
+    # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 band None 이고,
+    # kind_play 가 "1페이지 밖"으로 물러선다.
+    aio_band = {r["keyword"]: scoring.aio_band(r["position"])
+                for r in scoring.aio_gaps(conn, pid)}
+    # 챗봇 인용 공백은 대신 인용된 곳의 갈래(scoring.ai_tally 의 lean)로 처방이 갈린다 —
+    # 요청문 근거표와 같은 행에서 읽어야 표와 처방이 같은 말을 한다. 기회를 세운 행
+    # (ai_gap_rows)이 먼저고, 거기 없는 질문만 최신 회차 행으로 물러선다(뒤가 이긴다).
+    ai_lean = {str(r.get("prompt") or ""): r.get("lean") for r in ai_rows}
     for o in opps:
         o["is_defensive"] = scoring.is_defensive(o["kind"])
-        band = sd_band.get(o["target"]) if o["kind"] == "striking_distance" else None
-        gk = gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap" else None
+        band = (sd_band.get(o["target"]) if o["kind"] == "striking_distance"
+                else aio_band.get(o["target"]) if o["kind"] == "aio_exposure" else None)
+        gk = (gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap"
+              else ai_lean.get(str(o["target"])) if o["kind"] == "ai_citation_gap" else None)
         o["label"] = scoring.kind_label(o["kind"], band=band)
         o["play"] = scoring.kind_play(o["kind"], band=band, gap_kind=gk)
         # 요청문(brief)이 꼴을 가를 때 다시 쓴다 — 여기서 한 번 판정한 것을 싣는다.
@@ -1147,7 +1263,8 @@ def gather(conn, p, at: str | None = None) -> dict:
 
     ai = _axis_ai(conn, pid)
     comp = _axis_competitors(conn, pid)
-    opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"])
+    opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
+                        ai["ai_by_prompt"] + ai["ai_gap_rows"])
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
     page_perf = _axis_page_perf(conn, pid)
@@ -1517,7 +1634,7 @@ def _selfcheck() -> None:
     assert [d["id"] for d in defs] == VIEW_ORDER, "선언 순서가 조립 순서와 다르다"
     assert "window.__VIEWS__=" in html, "매니페스트가 안 실렸다"
     assert "window.__STAGES__=" in html, "단계 용어표가 안 실렸다"
-    for left in ("<!--MANIFEST-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
+    for left in ("<!--MANIFEST-->", "<!--VENDOR-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
         # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 셸이 직접 그리는 화면

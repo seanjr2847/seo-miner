@@ -13,6 +13,7 @@
   · 일별·분해·색인 3종 쓰기의 재수집 규칙(덮어쓰기/지우고 다시/upsert)
   · device_gap 임계 경계와 index_issues 버킷 우선순위 — 경계는 버그가 사는 곳이다
 """
+import json
 import os
 import sys
 import tempfile
@@ -225,8 +226,10 @@ def test_load_covers_every_kind():
         "3, NULL, 800, 'missing')", (pid,))
 
     # robots.txt 원문까지 남긴다 — AI 크롤러 차단(ai_bot_blocked)은 새로 가져오지
-    # 않고 이 원문을 다시 읽는다. GPTBot 만 막고 나머지는 허용인 흔한 꼴.
+    # 않고 이 원문을 다시 읽는다. 학습 봇(GPTBot)과 검색 봇(OAI-SearchBot)을 둘 다
+    # 막은 꼴 — 기회는 검색 봇 쪽 하나만 서야 한다(학습만 막는 것은 인용과 무관).
     _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: OAI-SearchBot", "Disallow: /", "",
                             "User-agent: *", "Allow: /"))
     run_id = conn.execute(
         "INSERT INTO crawl_runs(project_id, finished_at, seed, robots_txt) "
@@ -250,7 +253,10 @@ def test_load_covers_every_kind():
     conn = db.connect()
     kinds = {r[0] for r in conn.execute(
         "SELECT DISTINCT kind FROM opportunities WHERE project_id=?", (pid,))}
+    bots = {r[0] for r in conn.execute(
+        "SELECT target FROM opportunities WHERE project_id=? AND kind='ai_bot_blocked'", (pid,))}
     conn.close()
+    assert bots == {"OAI-SearchBot"}, f"학습 봇 차단을 인용 차단으로 올렸거나 검색 봇을 놓쳤다: {bots}"
     missing = set(scoring.ALL_KINDS) - kinds
     assert not missing, f"명부엔 있는데 load() 가 안 낸 kind: {missing}"
     extra = kinds - set(scoring.ALL_KINDS)
@@ -726,6 +732,51 @@ def test_rank_snapshot_keeps_aio_none():
     assert row["position"] == 3
     assert row["aio_present"] is None, f"expected None, got {row['aio_present']}"
     assert row["aio_cited"] is None, f"expected None, got {row['aio_cited']}"
+
+    # 인용 도메인도 같은 불변식 — 요약이 떴을 때만 목록이 있고, 떴는데 못 뽑은 것([])과
+    # 안 떴거나 안 잰 것(NULL)은 다르다. serper 는 늘 [] 를 주므로 여기가 그 둔갑을 막는다.
+    def doms(present, given):
+        db.write_rank_snapshot(conn, kw_id, 3, None, aio_present=present,
+                               aio_cited=0 if present else None, aio_domains=given)
+        return conn.execute("SELECT aio_domains_json FROM rank_snapshots WHERE keyword_id=?",
+                            (kw_id,)).fetchone()[0]
+    assert doms(1, ["a.com", "b.com"]) == '["a.com", "b.com"]'
+    assert doms(1, []) == "[]"
+    assert doms(None, []) is None, "안 잰 조회가 '봤는데 아무도 없었다'가 됐다"
+    assert doms(0, ["a.com"]) is None, "요약이 안 뜬 조회에 인용 목록이 적혔다"
+    assert doms(1, None) is None
+    conn.close()
+
+
+def test_serp_questions_keep_the_keyword_and_overwrite_the_day():
+    """함께 묻는 질문·연관 검색어는 어느 검색어에서 나왔는지와 함께, 하루 한 벌로 남는다."""
+    conn = db.connect()
+    p = _project(conn, "serp_q")
+    kid = conn.execute("INSERT INTO keywords(project_id, keyword) VALUES(?, 'kw_q') RETURNING id",
+                       (p["id"],)).fetchone()[0]
+    conn.commit()
+    got = lambda: [(r["kind"], r["position"], r["text"]) for r in conn.execute(
+        "SELECT kind, position, text FROM serp_questions WHERE keyword_id=? ORDER BY kind, position",
+        (kid,))]
+    n = db.write_serp_questions(conn, kid, [("paa", " 질문 A "), ("paa", "질문 a"), ("paa", "질문 B"),
+                                            ("related", "연관 1"), ("bogus", "x"), ("paa", "")],
+                                checked_at="2026-09-01T01:00:00Z")
+    assert n == 3 and got() == [("paa", 1, "질문 A"), ("paa", 2, "질문 B"),
+                                ("related", 1, "연관 1")], got()
+    # 같은 날 다시 재면 덮어쓴다 — 앞 조회의 질문이 새 조회의 사실처럼 남지 않는다
+    db.write_serp_questions(conn, kid, [("related", "연관 2")], checked_at="2026-09-01T09:00:00Z")
+    assert got() == [("related", 1, "연관 2")], got()
+    db.write_serp_questions(conn, kid, [], checked_at="2026-09-01T10:00:00Z")
+    assert got() == [], "같은 날 질문이 없는 조회가 앞 조회의 질문을 남겼다"
+    # 다른 날은 따로 쌓인다
+    db.write_serp_questions(conn, kid, [("paa", "질문 C")], checked_at="2026-09-02T01:00:00Z")
+    db.write_serp_questions(conn, kid, [("paa", "질문 D")], checked_at="2026-09-03T01:00:00Z")
+    assert len(got()) == 2, got()
+    # kind 마다 상한 — 요청문을 목록으로 만들지 않는다
+    db.write_serp_questions(conn, kid, [("paa", f"q{i}") for i in range(30)],
+                            checked_at="2026-09-03T02:00:00Z")
+    assert conn.execute("SELECT COUNT(*) FROM serp_questions WHERE keyword_id=? AND "
+                        "date(checked_at)='2026-09-03'", (kid,)).fetchone()[0] == db.SERP_QUESTIONS_KEEP
     conn.close()
 
 
@@ -1222,7 +1273,7 @@ def test_resolve_stale_leaves_open_without_confirming_data():
                               k("rank_decay", "되찾은 검색어"), k("ctr_gap", "1페이지 밖 클릭"),
                               k("device_gap", "모바일만"), k("backlink_prospect", "old.com"),
                               k("content_gap", "경쟁사 수집 실패"),
-                              k("index_blocked", "/still"), k("ai_bot_blocked", "GPTBot")])
+                              k("index_blocked", "/still"), k("ai_bot_blocked", "OAI-SearchBot")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE project_id=? AND target='끊긴 질문'", (pid,))
     conn.commit()
     before = _states(conn, pid)
@@ -1272,14 +1323,17 @@ def test_resolve_stale_closes_on_positive_confirmation():
                  " VALUES(?, '2026-08-20', 'got.com', 2, 1)", (pid,))
     conn.execute("INSERT INTO crawl_runs(project_id, started_at, finished_at, seed, robots_txt)"
                  " VALUES(?, '2026-08-20T00:00:00Z', '2026-08-20T01:00:00Z', 'home', ?)",
-                 (pid, "User-agent: *\nAllow: /"))
+                 (pid, "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /"))
     conn.commit()
     k = lambda kind, t: {"kind": kind, "target": t, "score": 10}
+    # GPTBot 은 용도를 가르기 전 판정이 올려 둔 옛 기회다 — 여전히 막혀 있지만 학습
+    # 전용이라 닫혀야 한다(안 그러면 막힌 채라 영영 안 닫힌다)
     ids = _opps_at_base(conn, pid, [
         k("aio_exposure", "aio인용"), k("ai_citation_gap", "인용된 질문"),
         k("striking_distance", "올라간 검색어"), k("ctr_gap", "클릭 회복"),
         k("device_gap", "모바일 회복"), k("index_blocked", "/fixed"),
-        k("backlink_prospect", "got.com"), k("ai_bot_blocked", "GPTBot")])
+        k("backlink_prospect", "got.com"), k("ai_bot_blocked", "OAI-SearchBot"),
+        k("ai_bot_blocked", "GPTBot")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE id=?", (ids["인용된 질문"],))
     cid = db.record_creation(conn, pid, "a.md", opportunity_id=ids["올라간 검색어"])
     work_at = conn.execute("SELECT created_at FROM creations WHERE id=?", (cid,)).fetchone()[0]
@@ -1294,8 +1348,10 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert set(st) == set(ids), set(ids) ^ set(st)
     resolved = {t for t, r in st.items() if r["status"] == db.OPP_RESOLVED}
     assert resolved == {"aio인용", "인용된 질문", "클릭 회복", "모바일 회복", "/fixed",
-                        "got.com", "GPTBot"}, st
+                        "got.com", "OAI-SearchBot", "GPTBot"}, st
     assert all(st[t]["status_reason"] and st[t]["status_at"] for t in resolved), st
+    assert "더는" in st["OAI-SearchBot"]["status_reason"], st["OAI-SearchBot"]
+    assert "학습 전용" in st["GPTBot"]["status_reason"], st["GPTBot"]
     assert "인용" in st["aio인용"]["status_reason"], st["aio인용"]
     assert st["인용된 질문"]["status_prev"] == "acked" and st["aio인용"]["status_prev"] == "new", st
     done = st["올라간 검색어"]
@@ -1322,6 +1378,135 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert again["인용된 질문"] == ("acked", None), again["인용된 질문"]     # 진행 중이던 것은 진행 중으로
     assert again["올라간 검색어"][0] == "done", "사람 쪽 완료(done)를 되열었다"
     assert again["/fixed"][0] == db.OPP_RESOLVED
+
+
+def _ai_row(conn, pid_, run_id, engine, cited, doms, answer, rec=None, mentioned=0):
+    conn.execute("INSERT INTO ai_checks(prompt_id, run_id, engine, mentioned, cited,"
+                 " cited_domains_json, answer_excerpt, recommended) VALUES(?,?,?,?,?,?,?,?)",
+                 (pid_, run_id, engine, mentioned, cited, json.dumps(doms), answer, rec))
+
+
+def test_ai_citation_rate_rivals_and_prescription_split():
+    """챗봇 인용 — 비율·표본 수로 가르고, 대신 인용된 곳은 전 표본으로 한 번만 센다.
+
+    · 1/6 근접 질문도 기회로 서고 근거에 `인용 1/6 (n=6)` 이 적힌다(예전엔 0회만 섰다)
+    · n<3 은 서되 "표본 부족"이라고 말한다. 3/6 은 기회가 아니다
+    · 대신 인용된 곳은 도메인별 횟수(reddit.com 4/5)고, 발췌는 엔진마다 빠진 답 중
+      먼저 받은 것 — 예전 화면은 MAX(문자열)로 표본 하나를 사실상 무작위로 골랐다
+    · 요청문(gather 의 ai_gap_rows)과 기회 근거가 같은 집계를 읽는다
+    · 제3자 플랫폼이 대부분이면 presence, 경쟁사가 대부분이면 예전 꼴
+    """
+    import brief
+    conn = db.connect()
+    p = _project(conn, "ai_rate")
+    pid = p["id"]
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt, category) VALUES(?,?,?)",
+                     [(pid, "근접 추천 질문", "추천"), (pid, "경쟁사 질문", "문제해결"),
+                      (pid, "잘 걸리는 질문", "브랜드"), (pid, "표본 적은 질문", "추천")])
+    qa, qb, qc, qd = [r[0] for r in conn.execute(
+        "SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id", (pid,))]
+    with db.run(conn, pid, "ai") as r:
+        # 근접: 6건 중 1건 인용. 빠진 5건 중 reddit 4, rival 2. chatgpt 의 빠진 답은
+        # "b…"가 먼저, "z…"가 나중 — 문자열 MAX 면 z 를, 결정적 발췌면 b 를 고른다.
+        _ai_row(conn, qa, r.id, "chatgpt", 1, ["e.com"], "a 인용된 답", rec=1, mentioned=1)
+        _ai_row(conn, qa, r.id, "chatgpt", 0, ["reddit.com", "rival.com"], "b 첫 빠진 답", rec=0,
+                mentioned=1)
+        _ai_row(conn, qa, r.id, "chatgpt", 0, ["www.reddit.com"], "z 나중 빠진 답", rec=None)
+        _ai_row(conn, qa, r.id, "perplexity", 0, ["reddit.com"], "p 첫 답", rec=0)
+        _ai_row(conn, qa, r.id, "perplexity", 0, ["old.reddit.com", "rival.com"], "p 둘째", rec=0)
+        _ai_row(conn, qa, r.id, "perplexity", 0, [], "p 셋째", rec=0)
+        for i in range(3):
+            _ai_row(conn, qb, r.id, "chatgpt", 0, ["rival.com"], f"경쟁 {i}")
+        for i in range(6):
+            _ai_row(conn, qc, r.id, "chatgpt", int(i < 3), ["x.com"], f"잘 {i}")
+        for i in range(2):
+            _ai_row(conn, qd, r.id, "chatgpt", 0, ["ko.wikipedia.org"], f"적은 {i}")
+    conn.commit()
+
+    t = scoring.ai_tally(conn, r.id)[qa]
+    assert (t["checks"], t["cited"], t["misses"]) == (6, 1, 5), t
+    # 하위 도메인(www.·old.)은 reddit.com 으로 접힌다 — 답변 하나에 한 번씩
+    assert t["rivals"][0] == {"domain": "reddit.com", "n": 4, "third_party": True}, t["rivals"]
+    assert {"domain": "rival.com", "n": 2, "third_party": False} in t["rivals"], t["rivals"]
+    assert t["lean"] == "third_party" and t["third_share"] > scoring.AI_PRESENCE_SHARE, t
+    assert t["excerpts"] == {"chatgpt": "b 첫 빠진 답", "perplexity": "p 첫 답"}, t["excerpts"]
+    # 추천 목록 — NULL(안 봤다)은 분모에서 빠진다. 0 과 뭉치지 않는다
+    assert (t["recommended"], t["rec_checks"]) == (1, 5), t
+    assert t["by_engine"]["chatgpt"]["rec_checks"] == 2, t["by_engine"]
+    assert scoring.ai_tally(conn, r.id)[qb]["recommended"] is None       # 한 건도 안 잰 질문
+    assert scoring.ai_rivals_text(t["rivals"], t["misses"]) == "reddit.com 4/5, rival.com 2/5"
+
+    gaps = {g["prompt"]: g for g in scoring.ai_gaps(conn, pid)}
+    assert set(gaps) == {"근접 추천 질문", "경쟁사 질문", "표본 적은 질문"}, set(gaps)   # 3/6 은 아님
+    assert gaps["근접 추천 질문"]["rivals"] == t["rivals"], "기회와 집계가 다른 표를 봤다"
+    assert gaps["표본 적은 질문"]["thin"] and not gaps["근접 추천 질문"]["thin"]
+    conn.close()
+
+    scoring.load("ai_rate")
+    conn = db.connect()
+    why = {row[0]: row[1] for row in conn.execute(
+        "SELECT target, reasoning FROM opportunities WHERE project_id=? AND kind='ai_citation_gap'",
+        (pid,))}
+    assert "인용 1/6 (n=6)" in why["근접 추천 질문"], why
+    assert "reddit.com 4/5" in why["근접 추천 질문"], why
+    assert "제3자 플랫폼" in why["근접 추천 질문"], why
+    assert "표본 부족" in why["표본 적은 질문"], why
+    assert "잘 걸리는 질문" not in why
+
+    # 질문도 검색어 종류라 심사('작업')를 거쳐야 화면·요청문에 오른다(db.gate_sql)
+    db.set_verdicts(conn, pid, [scoring.norm(q) for q in why], "work")
+    d = dashboard.gather(conn, db.get_project(conn, "ai_rate"))
+    conn.close()
+    opps = {o["target"]: o for o in d["opps"] if o["kind"] == "ai_citation_gap"}
+    # 요청문이 읽는 행은 기회를 세운 집계 그대로다(두 벌 아님)
+    gr = {g["prompt"]: g for g in d["ai_gap_rows"]}
+    assert gr["근접 추천 질문"]["rivals"] == t["rivals"]
+    near = opps["근접 추천 질문"]
+    assert near["gap_kind"] == "third_party" and near["brief"]["shape"] == "presence", near
+    body = near["brief"]["body"]
+    assert "인용 1/6 (n=6)" in body and "| reddit.com | 4/5 | 제3자 플랫폼 |" in body, body
+    assert "| 엔진 | 인용 | 이름만 | 표본 | 대신 인용된 곳 |" in body, body
+    assert "| chatgpt | 1/3 |" in body, body
+    assert "추천 목록 1/5" in body and "휴리스틱" in body, body
+    assert "- chatgpt:\n  > b 첫 빠진 답" in body and "z 나중" not in body, body
+    rival = opps["경쟁사 질문"]
+    assert rival["gap_kind"] == "sites" and rival["brief"]["shape"] == "new_content", rival
+    assert "가시성 사다리" not in rival["brief"]["body"]          # 추천·비교 질문만
+    thin = opps["표본 적은 질문"]
+    assert thin["gap_kind"] == "third_party"                     # ko.wikipedia.org → wikipedia.org
+    assert "표본 부족" in thin["brief"]["body"], thin["brief"]["body"]
+    assert "presence" in brief.SHAPE_NAMES
+
+
+def test_ai_recommended_column_migrates_as_null():
+    """옛 Brain 의 ai_checks 에 recommended 칸이 생기고, 옛 행은 NULL(안 봤다)이다 — 0 이 아니다."""
+    import sqlite3
+    # 따로 선 메모리 Brain — 공용 임시 Brain 의 표를 갈아 끼우면 뒤 검사가 옛 표를 본다
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    # 옛 Brain 흉내: recommended 칸이 없던 때의 ai_checks
+    conn.executescript("""DROP TABLE ai_checks;
+        CREATE TABLE ai_checks (id INTEGER PRIMARY KEY, prompt_id INTEGER, run_id INTEGER,
+          engine TEXT, sample_idx INTEGER, mentioned INTEGER DEFAULT 0,
+          cited INTEGER DEFAULT 0, cited_domains_json TEXT, answer_excerpt TEXT);""")
+    conn.execute("INSERT INTO projects(id, name, domain) VALUES(1, 'ai_mig', 'e.com')")
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(1, 'q')")
+    qid = conn.execute("SELECT id FROM ai_prompts").fetchone()[0]
+    conn.execute("INSERT INTO ai_checks(prompt_id, engine, mentioned, cited) VALUES(?, 'chatgpt', 1, 0)",
+                 (qid,))
+    conn.commit()
+    db._migrate(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}
+    assert "recommended" in cols
+    assert conn.execute("SELECT recommended FROM ai_checks WHERE prompt_id=?",
+                        (qid,)).fetchone()[0] is None
+    db.record_ai_check(conn, qid, None, "chatgpt", 1, 1, 0, [], "1. q 추천", recommended=1)
+    db.record_ai_check(conn, qid, None, "chatgpt", 2, 1, 0, [], "문단")          # 안 넘기면 NULL
+    got = [r[0] for r in conn.execute(
+        "SELECT recommended FROM ai_checks WHERE prompt_id=? ORDER BY id", (qid,))]
+    assert got == [None, 1, None], got
+    conn.close()
 
 
 if __name__ == "__main__":

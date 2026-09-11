@@ -294,6 +294,33 @@ def test_gather_crawl_orders_by_severity():
     conn.close()
 
 
+def test_gather_ai_bots_carry_purpose_and_llms_three_states():
+    """크롤 회차 → 페이로드: 봇 행은 용도를 싣고, llms.txt 는 셋을 가른다.
+
+    llms_txt_found 가 NULL(옛 회차·못 받음)이면 None, 0 이면 {"found": False}.
+    둘을 뭉치면 요청문이 증거 없이 "llms.txt 없음" 이라고 말한다.
+    """
+    conn, pid = _brain("llms")
+    robots = "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /"
+    rid = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
+                       " VALUES(?,?,'home',?)", (pid, D, robots)).lastrowid
+    conn.commit()
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] is None, d["llms_txt"]                 # 안 받은 회차 = 모름
+    bots = {r["bot"]: r for r in d["ai_bots"]}
+    assert bots["GPTBot"]["purpose"] == "training" and bots["GPTBot"]["rule"], bots["GPTBot"]
+    assert bots["OAI-SearchBot"]["purpose"] == "search" and not bots["OAI-SearchBot"]["rule"]
+    db.write_llms_txt(conn, rid, {"found": 0, "bytes": 99, "head": "x"})
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] == {"found": False, "bytes": None, "head": None}, d["llms_txt"]
+    db.write_llms_txt(conn, rid, {"found": 1, "bytes": 12, "head": "# 사이트"})
+    d = dashboard.gather(conn, db.get_project(conn, "llms"))
+    assert d["llms_txt"] == {"found": True, "bytes": 12, "head": "# 사이트"}, d["llms_txt"]
+    db.write_llms_txt(conn, rid, {"found": None})
+    assert dashboard.gather(conn, db.get_project(conn, "llms"))["llms_txt"] is None
+    conn.close()
+
+
 # ── 축 함수 단독 — gather() 를 통째로 안 돌리고 축 하나만 부른다 ─────────────
 def test_axis_gsc_pairs_same_period_snapshots_only():
     """gather() 가 아니라 _axis_gsc() 자체가 period_days 를 가려 짝짓는지.
@@ -352,6 +379,66 @@ def test_axis_opps_resolves_band_and_gap_kind_standalone():
     assert decay["label"] == "순위 하락" and decay["is_defensive"] is True
     # opps_total 은 status='new' 만 — 'acked' 는 새 기회 개수에서 빠진다
     assert d["opps_total"] == 3, d["opps_total"]
+    conn.close()
+
+
+def test_aio_opportunity_play_follows_our_rank_and_rows_carry_citations():
+    """구글 AI 요약 빠짐은 우리 순위로 처방이 갈린다 — 1페이지 안이면 사람을 위한 글,
+    밖이거나 순위가 없으면 "순위가 먼저". 순위 축은 누가 대신 인용됐는지와 함께 묻는
+    질문을 싣고, 요약 기회의 행은 화면용 30개 자르기 밖에서도 요청문에 닿는다."""
+    conn, pid = _brain("aio_band")
+    kws = {"안쪽": 4, "바깥": None}
+    kws.update({f"상위{i}": 1 + i % 3 for i in range(35)})     # 화면용 30개를 채우는 행들
+    kid = {}
+    for kw, pos in kws.items():
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
+                               " RETURNING id", (pid, kw)).fetchone()[0]
+        gap = kw in ("안쪽", "바깥")
+        db.write_rank_snapshot(conn, kid[kw], pos, None, aio_present=1 if gap else 0,
+                               aio_cited=0 if gap else None, checked_at=D + "T01:00:00Z",
+                               aio_domains=["rival.example", "wiki.example"] if kw == "바깥" else
+                               [] if kw == "안쪽" else None)
+    db.write_serp_questions(conn, kid["바깥"], [("paa", "질문 하나"), ("related", "연관 하나")],
+                            checked_at=D + "T01:00:00Z")
+    # 다른 날의 질문은 이 회차 상위 옆에 서지 않는다
+    db.write_serp_questions(conn, kid["안쪽"], [("paa", "옛 질문")], checked_at=PREV + "T01:00:00Z")
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "aio_exposure", "안쪽", 60, "r", "new", D),
+         (pid, "aio_exposure", "바깥", 50, "r", "new", D),
+         (pid, "aio_exposure", "옛기회", 40, "r", "new", D)])     # 최신 회차에 없는 대상
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in ("안쪽", "바깥", "옛기회")], "work")
+
+    by = {o["target"]: o for o in dashboard._axis_opps(conn, pid, None, [], [])["opps"]}
+    assert by["안쪽"]["band"] == "page1" and by["바깥"]["band"] == "beyond", \
+        {t: o["band"] for t, o in by.items()}
+    assert by["안쪽"]["play"] != by["바깥"]["play"], "1페이지 안과 밖이 같은 처방을 받는다"
+    assert by["안쪽"]["play"]["what"].startswith("이미 1페이지 안인데")
+    assert "순위가 먼저" in by["바깥"]["play"]["what"]
+    # 순위를 모르면 "이미 1페이지"라고 지어내지 않는다
+    assert by["옛기회"]["band"] is None and "순위가 먼저" in by["옛기회"]["play"]["what"]
+
+    rk = dashboard._axis_rank(conn, pid)
+    rows = {r["keyword"]: r for r in rk["ranks"]}
+    assert rows["바깥"]["aio_domains"] == ["rival.example", "wiki.example"]
+    # [] 는 "요약은 떴는데 인용을 못 뽑았다", None 은 "요약이 없었다" — 둘을 뭉치지 않는다
+    assert rows["안쪽"]["aio_domains"] == [] and rows["상위0"]["aio_domains"] is None
+    assert rows["바깥"]["aio_band"] == "beyond" and rows["안쪽"]["aio_band"] == "page1"
+    assert rows["상위0"]["aio_band"] is None
+    assert set(rk["aio_play"]) == set(scoring.AIO_BANDS)
+    assert rk["serp_fanout"] == {"바깥": [{"kind": "paa", "text": "질문 하나"},
+                                          {"kind": "related", "text": "연관 하나"}]}, rk["serp_fanout"]
+
+    # gather 는 ranks 를 순위 순 30개로 자른다 — 순위 없는 '바깥'은 그 밖이지만 요청문은
+    # 누가 대신 인용됐는지를 말해야 한다
+    p = db.get_project(conn, "aio_band")
+    d = dashboard.gather(conn, p)
+    assert "바깥" not in {r["keyword"] for r in d["ranks"]}, "픽스처가 30개를 못 채웠다"
+    body = next(o for o in d["opps"] if o["target"] == "바깥")["brief"]["body"]
+    assert "구글 AI 요약이 대신 인용한 곳: rival.example, wiki.example" in body, body
+    assert "## 함께 답해야 할 질문" in body and "질문 하나" in body, body
     conn.close()
 
 
@@ -835,6 +922,36 @@ def test_gather_ai_health_reaches_the_screen():
     assert "크레딧 소진" in h["last_run"]["note"], h["last_run"]
     # 기회는 끝난 회차만 쓴다 — 끊긴 회차에서 잰 "안 잰 질문"은 인용 0 기회가 아니다
     assert [g["prompt"] for g in scoring.ai_gaps(conn, pid)] == ["잰 질문"]
+    conn.close()
+
+
+def test_gather_ai_referrals_none_is_not_zero():
+    """AI 에서 온 방문 — "안 쟀다"(None)와 "쟀고 0"([])이 페이로드에서 갈린다.
+
+    갈리지 않으면 화면이 GA4 를 연결한 사이트에 "연결하세요"라고 하거나, 안 잰 사이트에
+    "아무도 안 왔다"라고 한다. 세 키는 늘 같이 움직인다(ai_referrals·_pages·_meta).
+    """
+    conn, pid = _brain("airef")
+    p = db.get_project(conn, "airef")
+    d = dashboard.gather(conn, p)
+    assert (d["ai_referrals"], d["ai_referral_pages"], d["ai_referral_meta"]) == (None, None, None), d["ai_referrals"]
+
+    db.write_ga4_ai_referrals(conn, pid, PREV, 28, ["chatgpt.com"], [])
+    d = dashboard.gather(conn, p)
+    assert d["ai_referrals"] == [] and d["ai_referral_pages"] == [], d["ai_referrals"]
+    assert d["ai_referral_meta"] == {"date": PREV, "period_days": 28, "hosts": ["chatgpt.com"]}
+
+    # 최신 잰 날 한 벌만 — 출처별 합계와 페이지별(출처별 세션 포함)이 세션 내림차순.
+    db.write_ga4_ai_referrals(conn, pid, D, 28, ["chatgpt.com", "perplexity.ai"],
+                              [("chatgpt.com", "/a", 5, 1), ("perplexity.ai", "/a", 2, 0),
+                               ("perplexity.ai", "/b", 9, 0.5)])
+    d = dashboard.gather(conn, p)
+    assert [(r["source"], r["sessions"]) for r in d["ai_referrals"]] == \
+        [("perplexity.ai", 11), ("chatgpt.com", 5)], d["ai_referrals"]
+    assert [(r["page"], r["sessions"], r["key_events"]) for r in d["ai_referral_pages"]] == \
+        [("/b", 9, 0.5), ("/a", 7, 1.0)], d["ai_referral_pages"]
+    assert d["ai_referral_pages"][1]["sources"] == {"chatgpt.com": 5, "perplexity.ai": 2}
+    assert d["ai_referral_meta"]["date"] == D
     conn.close()
 
 

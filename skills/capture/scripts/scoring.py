@@ -74,6 +74,25 @@ SHIFT_MIN_IMP = 30
 # 화면은 펼침 UI라 클릭 상위 몇 개면 충분하고, 다 실으면 페이로드가 무거워진다.
 DETAIL_TOP_N = 15
 
+# ── 챗봇 인용(ai_citation_gap) ──
+# 답은 비결정적이다 — 한 번 빠진 것도 한 번 걸린 것도 사실이 아니라 표본이다. 그래서
+# "인용 0회"가 아니라 **비율과 표본 수**로 가른다(ai-seo 점검표: "cited 3/5, n=5").
+# 0회로만 가르던 동안 6번 중 1번 걸리는 질문 — 엔진이 이미 우리를 찾을 줄 알아서 가장
+# 싸게 끌어올릴 자리 — 이 기회 목록에서 통째로 빠졌다.
+AI_GAP_MAX_RATE = 1 / 3     # 인용률이 이 이하면 기회로 올린다(ai_is_gap)
+AI_MIN_SAMPLES = 3          # 답변이 이보다 적으면 "표본 부족" — 올리되 그렇다고 말하고 점수를
+                            # 깎는다. 표본 수를 늘리는 건 config ai_samples 몫이다(유료 호출
+                            # 비용이 늘어나는 결정이라 여기서 대신 하지 않는다)
+AI_THIN_MULT = 0.6          # 표본 부족 질문의 점수 승수(score)
+AI_PRESENCE_SHARE = 0.5     # 대신 인용된 횟수 중 제3자 플랫폼 몫이 이보다 크면 처방이
+                            # "내 페이지 고치기"가 아니라 "그 플랫폼에 등장하기"다
+AI_EXCERPT_CHARS = 280      # 엔진별 답변 발췌 — 요청문·화면이 엔진마다 한 토막씩 보인다
+AI_RIVALS_TOP = 8           # 질문 하나에 싣는 대신 인용된 도메인 수
+# 가시성 사다리(인용 → 이름 나옴 → 추천 목록)를 요청문에 싣는 질문 갈래. 갈래 이름의
+# 정본은 gen_prompts.CATEGORIES 다 — 여기는 그중 "추천·비교" 두 개를 고를 뿐이고,
+# 자체점검이 부분집합인지 대조한다(이름이 바뀌면 거기서 죽는다).
+AI_LADDER_CATEGORIES = ("추천", "비교")
+
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
 # local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
@@ -218,13 +237,37 @@ def aliases_of(cfg: dict) -> list[str]:
     return [a for a in [cfg.get("name", "")] + (cfg.get("brand_aliases") or []) if a]
 
 
+# 답변 본문의 "목록 줄" — 번호(1. 2) ① (3))·글머리(- * • ·)·번호 붙은 제목(### 1.)·
+# 표의 행(| … |). 추천·비교 답은 후보를 거의 이 꼴로 늘어놓는다. 글머리 기호 뒤에는
+# 공백을 요구한다 — 문단 첫머리의 **굵은 글씨**를 목록으로 세지 않으려고.
+_LIST_LINE = re.compile(r"^\s*(?:[-*+•·▪]\s+|\d{1,2}[.)]\s+|\(\d{1,2}\)\s*|[①-⑳]\s*"
+                        r"|#{1,6}\s*\d{1,2}[.)]\s*|\|)")
+
+
+def recommended_in(content: str, aliases: list[str]) -> int:
+    """브랜드가 답변의 **목록 줄 안에** 나오나 — 가시성 사다리의 마지막 칸(추천됨).
+
+    휴리스틱이다: 답이 "추천 목록"을 번호·글머리·표로 적는다는 관찰에 기댄다. 목록
+    밖 문단에서 이름만 지나가면 "이름 나옴"이지 추천이 아니고, 목록 안이라도 "피할
+    도구" 목록일 수 있다 — 그 뜻까지는 가르지 않는다. 요청문도 휴리스틱이라고 적는다.
+    """
+    names = [a.lower() for a in aliases if a]
+    for line in (content or "").splitlines():
+        if _LIST_LINE.match(line) and any(n in line.lower() for n in names):
+            return 1
+    return 0
+
+
 def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
-          own_domain: str) -> tuple[int, int, list[str]]:
-    """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들) 로 판정.
+          own_domain: str) -> tuple[int, int, list[str], int]:
+    """AI 답변 하나를 (언급됐나, 인용됐나, 대신 인용된 도메인들, 추천 목록에 들었나) 로 판정.
 
     인용 판정은 여기 하나뿐이어야 한다 — 부르는 쪽이 collect_ai 내부를
     가로질러 import 하던 것을 여기로 옮겼다. 인용 URL이 없으면 본문의 맨 URL을
     줍는 fallback까지 여기서 한다 — 호출부 두 곳이 각자 하던 일이다.
+
+    cited·mentioned 둘만으로는 사다리(검색됨 → 인용됨 → 이름 나옴 → 추천됨)의 끝을
+    못 본다. 추천 판정은 recommended_in 의 휴리스틱이다.
     """
     text = (content or "").lower()
     mentioned = int(any(a.lower() in text for a in aliases if a))
@@ -232,7 +275,7 @@ def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
     domains = sorted({d for d in (host_of(u) for u in urls) if d})
     cited = int(any(owns(d, own_domain) for d in domains))
     others = [d for d in domains if not owns(d, own_domain)]
-    return mentioned, cited, others
+    return mentioned, cited, others, recommended_in(content, aliases)
 
 
 def gap_to_page1(pos) -> float:
@@ -474,11 +517,45 @@ def vitals_advice(rows) -> list[dict]:
 
 
 # 목록의 정본은 config.yaml 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
-# 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(빈 목록).
-_AI_BOTS_FALLBACK = ("GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended")
+# 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(아래 폴백).
+#
+# 봇의 **용도**가 판정의 전부다. 학습 전용 봇(GPTBot·ClaudeBot·CCBot…)을 막는 것은
+# 인용과 무관하고, 오히려 권장되는 중간 지점이다 — 학습은 거부하고 검색·인용은
+# 받는다. 예전에는 막힌 봇을 전부 "인용 불가" 로 올려서, GPTBot 만 막은 흔한
+# 사이트에 ChatGPT 인용이 불가능하다고 오진했다(ChatGPT 검색은 OAI-SearchBot 이다).
+AI_BOT_PURPOSE = {"search": "검색·인용 색인", "user": "사용자 요청 페치",
+                  "training": "학습"}
+# 막히면 인용이 끊기는 용도 — 이 둘만 기회가 된다. training·모름(None)은 아니다.
+AI_BOT_CITING = ("search", "user")
+_AI_BOTS_FALLBACK = (
+    {"ua": "GPTBot", "vendor": "OpenAI", "purpose": "training", "engine": "OpenAI 모델 학습"},
+    {"ua": "OAI-SearchBot", "vendor": "OpenAI", "purpose": "search", "engine": "ChatGPT 검색"},
+    {"ua": "ClaudeBot", "vendor": "Anthropic", "purpose": "training", "engine": "Claude 모델 학습"},
+    {"ua": "PerplexityBot", "vendor": "Perplexity", "purpose": "search", "engine": "Perplexity"},
+    {"ua": "Google-Extended", "vendor": "Google", "purpose": "training", "engine": "Gemini 모델 학습"},
+)
 
 
-def ai_bots() -> tuple[str, ...]:
+def _ai_bot_entry(x) -> dict | None:
+    """config 한 줄 → {ua, vendor, purpose, engine}.
+
+    옛 꼴(UA 문자열만)도 읽는다 — 다만 용도는 None(모름)이다. 모르는 것을 "검색
+    봇" 으로 짐작하면 예전 오진이 그대로 돌아오고, "학습 봇" 으로 짐작하면 진짜
+    차단을 숨긴다. 모름은 기회로도, 무해로도 올리지 않고 표에 "모름" 으로 적는다.
+    """
+    if isinstance(x, dict):
+        ua = str(x.get("ua") or "").strip()
+        purpose = str(x.get("purpose") or "").strip().lower() or None
+        if purpose not in AI_BOT_PURPOSE:
+            purpose = None
+        vendor = str(x.get("vendor") or "").strip() or None
+        engine = str(x.get("engine") or "").strip() or None
+    else:
+        ua, purpose, vendor, engine = str(x or "").strip(), None, None, None
+    return {"ua": ua, "vendor": vendor, "purpose": purpose, "engine": engine} if ua else None
+
+
+def ai_bots() -> tuple[dict, ...]:
     try:
         import collector
         got = collector.config().get("ai_bots")
@@ -486,33 +563,104 @@ def ai_bots() -> tuple[str, ...]:
         got = None
     if not isinstance(got, list) or not got:
         return _AI_BOTS_FALLBACK
-    return tuple(str(x).strip() for x in got if str(x).strip())
+    return tuple(e for e in map(_ai_bot_entry, got) if e)
+
+
+def ai_bot_purpose(ua: str) -> str | None:
+    """UA 이름 → 용도. 목록에 없거나 옛 꼴이면 None(모름)."""
+    key = str(ua or "").strip().lower()
+    return next((b["purpose"] for b in ai_bots() if b["ua"].lower() == key), None)
+
+
+def ai_bot_status(robots_txt: str, home: str = "") -> list[dict]:
+    """robots.txt 원문 → 봇마다 {bot, vendor, purpose, engine, rule}. rule=None 이면 허용.
+
+    막힌 것만 내지 않고 전부 낸다 — 화면·요청문의 표도, 기회 판정(ai_bot_blocks)도
+    이 한 벌을 읽는다. 원문이 비면 [] 다: 못 읽은 robots.txt 를 "전부 허용" 으로
+    읽지 않는다(안 봤다 ≠ 봤고 안 막는다).
+    """
+    txt = robots_txt or ""
+    if not txt.strip():
+        return []
+    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    return [{"bot": b["ua"], "vendor": b["vendor"], "purpose": b["purpose"],
+             "engine": b["engine"], "rule": robots_blocks(txt, url, agent=b["ua"])}
+            for b in ai_bots()]
+
+
+# robots.txt 의 `User-agent: *` 한 줄이 AI 검색 크롤러를 통째로 막으면 원인은 그 줄
+# 하나다. 봇마다 기회를 세우면 줄 하나를 고칠 일이 기회 목록 일곱 줄로 불어난다 —
+# 그래서 그 경우엔 이 대상 하나로 묶는다. 대상 문자열이 곧 고칠 자리다.
+AI_BOT_WILDCARD = "User-agent: *"
+# 이름으로 된 묶음에 절대 안 걸리는 가짜 UA — "와일드카드 묶음이 막나"를 물을 때 쓴다.
+_WILDCARD_PROBE = "SeoMinerWildcardProbe"
+
+
+def _named_in_robots(robots_txt: str, ua: str) -> bool:
+    """이 봇 이름으로 된 User-agent 묶음이 있나. 묶음 고르는 규칙은 urllib.robotparser
+    와 같다(UA 줄의 값이 봇 이름 안에 부분 문자열로 들어가면 그 묶음) — 판정을 두 벌로
+    만들면 "와일드카드로 막혔다"와 파서의 실제 판정이 어긋난다."""
+    name = ua.split("/")[0].lower()
+    for line in (robots_txt or "").splitlines():
+        key, _, val = line.partition(":")
+        if key.strip().lower() == "user-agent":
+            v = val.split("#")[0].strip().lower()
+            if v and v != "*" and v in name:
+                return True
+    return False
 
 
 def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
                   home: str = "") -> list[dict]:
-    """robots.txt 로 막힌 AI 크롤러.
+    """robots.txt 로 막힌 **검색·인용용** AI 크롤러 (용도 search·user).
 
     새로 가져오지 않는다 — 크롤 회차가 남긴 원문(crawl_runs.robots_txt)을 다시
     읽을 뿐이다. 그래서 이 판정에는 네트워크도 새 단계도 없다.
 
-    왜 이게 AI 인용 판정보다 **먼저**여야 하나: ClaudeBot 이 막혀 있으면 그
-    엔진에서는 인용될 수가 없다. 그 상태에서 "콘텐츠가 약해서 인용이 안 된다"
-    고 말하면 완전한 오진이고, 사용자는 엉뚱한 글을 쓰게 된다.
+    왜 이게 AI 인용 판정보다 **먼저**여야 하나: OAI-SearchBot 이 막혀 있으면
+    ChatGPT 검색 답변의 출처로 실리기 어렵다. 그 상태에서 "콘텐츠가 약해서 인용이
+    안 된다" 고 말하면 오진이고, 사용자는 엉뚱한 글을 쓰게 된다. 거꾸로 학습 봇만
+    막힌 것을 여기 올리면 그것도 오진이다 — 학습과 인용은 다른 봇이다.
     """
     cr = conn.execute(
         "SELECT robots_txt FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
         " AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
     txt = (cr["robots_txt"] if cr else "") or ""
-    if not txt.strip():
-        return []
+    rows = [r for r in ai_bot_status(txt, home)
+            if r["rule"] and r["purpose"] in AI_BOT_CITING]
+    # 자기 이름 묶음 없이 `User-agent: *` 로 막힌 봇들 — 원인이 한 줄이면 기회도 한 줄
+    wild = [r for r in rows if not _named_in_robots(txt, r["bot"])]
+    if len(wild) < 2:
+        return rows
     url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
-    out = []
-    for bot in ai_bots():
-        rule = robots_blocks(txt, url, agent=bot)
-        if rule:
-            out.append({"bot": bot, "rule": rule})
-    return out
+    engines = list(dict.fromkeys(r.get("engine") or r["bot"] for r in wild))
+    grouped = {"bot": AI_BOT_WILDCARD, "vendor": None, "purpose": "search",
+               "engine": ", ".join(engines), "rule": wild[0]["rule"],
+               "bots": [r["bot"] for r in wild],
+               # 같은 줄이 구글 검색 색인도 막는가 — 그러면 AI 는 작은 쪽 문제다
+               "google_blocked": robots_blocks(txt, url, agent="Googlebot") is not None}
+    return [grouped] + [r for r in rows if r not in wild]
+
+
+def _reason_ai_bot(r: dict, ctx: dict) -> str:
+    if r["bot"] == AI_BOT_WILDCARD:
+        # 봇 이름으로 센다 — 엔진 이름은 겹쳐서(Perplexity 봇 둘) 개수와 나열이 어긋난다
+        bots = r.get("bots") or []
+        s = (f"robots.txt 의 `User-agent: *` 묶음({r['rule']})이 AI 검색·인용 크롤러 "
+             f"{len(bots)}개({'·'.join(bots)})를 한꺼번에 막습니다. 원인은 이 줄 하나입니다")
+        if r.get("google_blocked"):
+            # 이 줄은 AI 전용이 아니다 — 구글 검색 전체에서 빠진다는 게 먼저다
+            s += (". 같은 줄이 구글 검색(Googlebot)도 막습니다 — AI 이전에 검색 전체에서 "
+                  "빠지는 문제입니다")
+        return s
+    eng = r.get("engine") or r["bot"]
+    s = (f"robots.txt 가 {r['bot']}({eng}, {AI_BOT_PURPOSE[r['purpose']]})를 막습니다 "
+         f"({r['rule']}). {eng} 답변에서 우리 페이지가 출처로 실리기 어렵습니다 — 글을 "
+         "고치기 전에 이 설정이 먼저입니다")
+    if r["bot"].lower() == "bingbot":
+        # 빙 색인은 Copilot 만의 것이 아니다 — AI 문제로만 부르면 규모를 줄여 말하게 된다
+        s += ". Bingbot 차단은 AI 만의 문제가 아니라 빙 검색 전체에서 빠진다는 뜻입니다"
+    return s
 
 
 def robots_blocks(robots_txt: str, url: str, agent: str = "Googlebot") -> str | None:
@@ -744,6 +892,116 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     if isinstance(internal, int) and internal < 3:
         add("내부 링크", "warn", f"이 페이지가 내보내는 내부 링크 {internal}개",
             "관련 글로 3개 이상 연결하세요. 링크가 없는 페이지는 크롤러도 사람도 덜 봅니다.")
+    return out
+
+
+# ── 추출성 — "인용될 블록이 있는가" (AI 종류 전용) ───────────────────────────
+# page_advice 에 넣지 않는다: 모든 요청문(클릭률·순위…)이 표·질문형 H2 지적으로
+# 부풀어 오른다. AI 가 이 페이지를 **뽑아 가느냐**가 걸린 기회에서만 말한다.
+EXTRACT_KINDS = ("ai_citation_gap", "aio_exposure")
+# AI 답변은 최근 글을 고른다 — ai-seo 점검표의 "6개월 안 갱신". 일반 기준(STALE_DAYS,
+# 2년)은 "낡았을 수 있다"는 확인 지시라 그대로 둔다. 둘을 한 값으로 합치면 한쪽이
+# 틀린다: 180일로 내리면 클릭률 요청문마다 갱신 지적이 붙고, 730일이면 AI 쪽이 늦다.
+AI_CONTENT_STALE_DAYS = 180
+# 첫 문단 — 스킬의 "핵심 답 문단 40~60단어". 단어는 공백 기준이라 한국어는 어절이고
+# 같은 내용이 영어보다 적게 세진다. 그래서 목표치(40~60)가 아니라 **분명히 넘친**
+# 값에서만 말한다 — 한 덩어리로 뽑히기엔 긴 문단.
+LEAD_MAX_WORDS = 80
+# 질문형 H2 를 따지려면 H2 가 이만큼은 있어야 한다. 하나뿐인 H2 가 질문이 아니라고
+# 구조를 탓하면 말이 안 된다.
+H2_FOR_QUESTIONS = 2
+
+
+def _has_extract_fields(audit: dict) -> bool:
+    """이 감사 행이 추출성 칸(표·목록·질문형 H2·첫 문단·저자)을 읽고 온 것인가.
+
+    _has_render_fields 와 같은 종류의 가드다: 옛 행은 이 칸들이 통째로 NULL 인데,
+    그것을 "표 0개·저자 없음"으로 읽으면 멀쩡한 페이지에 없는 문제를 만든다 — 안
+    본 것과 없는 것은 다르다. tables 는 새 감사면 늘 정수라 행의 나이를 가른다.
+    """
+    return audit.get("tables") is not None
+
+
+def extract_advice(audit: dict | None, kind: str) -> list[dict]:
+    """AI 종류 요청문에만 붙는 진단 — 정적 HTML 로 잴 수 있는 것만 판정한다.
+
+    반환은 page_advice 와 같은 꼴([{tag, level, now, fix}]). 못 재는 것(수치의 출처가
+    진짜인지, 문단이 정말 혼자 서는지)은 판정하지 않고 요청문 산출물(brief.
+    DELIVER_BY_TAG)로 돌린다.
+
+    **구글 AI 요약과 챗봇은 다른 말을 한다.** 구글은 "AI 용으로 조각내지 말고 사람을
+    위한 구조로 쓰라"는 입장이라(ai-seo 스킬도 같다), aio_exposure 쪽은 "사람이 훑어
+    읽기 좋은 구조"로 말하고 AI 전용 블록을 시키지 않는다(tag "읽기 구조"). 챗봇
+    (ai_citation_gap)은 문단을 그대로 뽑아 가므로 혼자 서는 답 블록을 시켜도 된다
+    (tag "추출성"). 갱신은 둘 다 AI_CONTENT_STALE_DAYS 로 본다(tag "갱신" — page_advice
+    의 같은 tag 를 요청문이 이것으로 갈아 끼운다). 저자는 tag "저자".
+    """
+    if not audit or audit.get("error") or kind not in EXTRACT_KINDS:
+        return []
+    bot = kind == "ai_citation_gap"
+    tag = "추출성" if bot else "읽기 구조"
+    out: list[dict] = []
+
+    def add(t, level, now, fix):
+        out.append({"tag": t, "level": level, "now": now, "fix": fix})
+
+    # 갱신 — 날짜 칸은 추출성 칸보다 먼저 생겼다. 날짜로 안 읽히면 말하지 않는다.
+    stale = _stale_days(audit)
+    if stale is not None and stale >= AI_CONTENT_STALE_DAYS:
+        seen = audit.get("modified") or audit.get("published")
+        add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
+            ("챗봇은 최근 글을 출처로 고릅니다. " if bot else
+             "AI 요약은 최근 정보를 앞세웁니다. ")
+            + "숫자·연도·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요 — 날짜만 "
+              "바꾸는 것은 안 됩니다.")
+
+    if not _has_extract_fields(audit):
+        return out
+    if audit.get("js_shell"):
+        # 렌더 전 HTML 에서 센 값이다 — "표가 없다"를 사실로 말하면 있는 표를 또
+        # 만들게 시킨다. 구조화 데이터와 같은 규칙: 판정을 확인 지시로 바꾼다.
+        add(tag, "warn", "정적 HTML 로는 본문 구조(표·목록·첫 문단)를 못 봤습니다 "
+                         "(자바스크립트로 그리는 페이지로 보입니다)",
+            "브라우저에서 렌더된 화면으로 첫 문단·표·목록이 있는지 먼저 확인하세요. "
+            "그 뒤에 아래 산출물 중 없는 것만 만듭니다.")
+        return out
+
+    lead = audit.get("lead_words")
+    if lead == 0:
+        add(tag, "warn", "본문에서 <p> 문단을 못 찾았습니다 (div 로만 짠 페이지일 수 있습니다)",
+            "H1 바로 아래에 이 질문에 바로 답하는 문단 하나를 두세요 — 정의나 결론부터."
+            if bot else
+            "H1 바로 아래 첫 문단에서 독자의 질문에 먼저 답하세요 — 결론부터, 설명은 그 뒤.")
+    elif isinstance(lead, int) and lead > LEAD_MAX_WORDS:
+        add(tag, "warn", f"첫 문단이 {lead}단어입니다",
+            "첫 문단을 40~60단어의 직답으로 줄이고 나머지는 다음 문단으로 넘기세요. "
+            "챗봇은 문단 단위로 뽑아서, 긴 문단은 통째로 버려집니다." if bot else
+            "첫 문단은 요점만 두세 문장으로. 사람이 첫 화면에서 답을 못 찾으면 요약도 "
+            "그 문단을 안 씁니다.")
+
+    tables, lists = audit.get("tables"), audit.get("lists")
+    if tables == 0 and lists == 0:
+        add(tag, "warn", "본문에 표도 목록(ul/ol)도 없습니다",
+            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 바꾸세요. 챗봇은 "
+            "문단보다 표·목록을 그대로 인용합니다." if bot else
+            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 — 사람이 훑어 읽기 "
+            "좋은 구조가 요약에도 잡힙니다. AI 용 블록을 따로 만들지 않습니다.")
+
+    h2 = _as_list(audit.get("h2_json"))
+    qn = audit.get("h2_questions")
+    if len(h2) >= H2_FOR_QUESTIONS and qn == 0:
+        add(tag, "warn", f"H2 {len(h2)}개 중 질문형이 없습니다",
+            "사람들이 챗봇에 실제로 묻는 문장을 H2 로 두고, 그 바로 아래 첫 문장에서 "
+            "답하세요 — 질문과 답이 한 덩어리로 뽑힙니다." if bot else
+            "독자가 묻는 순서대로 H2 를 질문 꼴로 바꾸세요 — 제목만 훑어도 답이 어디 "
+            "있는지 보이게.")
+
+    # 저자는 구조가 아니라 신뢰 신호라 tag 를 따로 둔다 — "[읽기 구조] 저자 없음"은
+    # 무엇을 고치라는지 흐린다. "" 만 본다: NULL 은 저자 칸을 안 읽은 행이다.
+    if audit.get("author") == "":
+        add("저자", "warn", "저자 표시가 없습니다 (meta author·ld+json author 둘 다 없음)",
+            "누가 썼는지(이름·자격)를 본문과 ld+json author 에 적으세요. 이름은 [저자] "
+            "자리로 비워 둡니다 — 지어내지 않습니다.")
     return out
 
 
@@ -2080,47 +2338,184 @@ def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
             "outdated_eg": pick(lambda r: gen_prompts.outdated(r["gen_version"]))}
 
 
+# 제3자 플랫폼 — 브랜드는 자기 사이트보다 커뮤니티·위키·영상·리뷰 사이트로 훨씬 자주
+# 인용된다(ai-seo 세 번째 기둥). 대신 인용된 곳이 거기면 "내 페이지를 고쳐라"는 틀린
+# 처방이다. 목록의 정본은 config.yaml 의 third_party_platforms 다 — 플랫폼이 늘고
+# 주는 것은 데이터 변경이지 코드 변경이 아니다. 읽기 실패면 빈 목록: 그때는 전부
+# "경쟁사·일반 사이트"로 보고 예전 처방을 낸다(없는 갈래를 지어내지 않는다).
+def third_party_platforms() -> tuple[str, ...]:
+    try:
+        import collector
+        got = collector.config().get("third_party_platforms")
+    except Exception:
+        got = None
+    if not isinstance(got, list):
+        return ()
+    return tuple(h for h in (host_of(str(x)) for x in got) if h)
+
+
+def is_third_party(domain: str, platforms=None) -> bool:
+    """하위 도메인까지 — ko.wikipedia.org·m.blog.naver.com 도 그 플랫폼이다(owns 규칙)."""
+    plats = third_party_platforms() if platforms is None else platforms
+    return any(owns(domain, p) for p in plats)
+
+
+def _rival_key(host: str, platforms) -> str:
+    """대신 인용된 곳을 셀 이름 — 제3자 플랫폼이면 플랫폼 이름으로 접는다.
+
+    old.reddit.com·www.reddit.com 이 따로 세지면 "reddit 이 4/5"가 "3/5 + 1/5"로
+    쪼개져 가장 잦은 출처가 안 보인다. 둘 이상 걸리면 가장 긴 것(blog.naver.com 이
+    naver.com 보다 구체적이다). 플랫폼이 아닌 도메인은 host_of 규칙 그대로 둔다 —
+    경쟁사의 blog. 하위 도메인은 따로 선 사이트일 수 있다."""
+    hit = [p for p in platforms if owns(host, p)]
+    return max(hit, key=len) if hit else host
+
+
+def ai_is_gap(cited: int | None, checks: int | None) -> bool:
+    """이 질문이 인용 공백인가 — 기회를 세우는 쪽(ai_gaps)과 닫는 쪽(_resolve_ai_citation)이
+    같은 판정을 쓴다. 둘이 갈라지면 1/6 질문이 이번 load 에서 서고 같은 load 의 수명주기
+    판정에서 "인용됨"으로 닫혀, 매 회차 열렸다 닫혔다 한다."""
+    if not checks:
+        return False
+    return (cited or 0) / checks <= AI_GAP_MAX_RATE + 1e-9
+
+
+def ai_cite_label(cited: int | None, checks: int | None) -> str:
+    """"인용 1/6 (n=6)" — 기회 근거(reasoning)와 요청문이 같은 글로 말한다."""
+    n = checks or 0
+    s = f"인용 {cited or 0}/{n} (n={n})"
+    return s + (" · 표본 부족" if n < AI_MIN_SAMPLES else "")
+
+
+def _excerpt(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "")).strip()
+    return t if len(t) <= AI_EXCERPT_CHARS else t[:AI_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _rival_list(tally: dict[str, int], platforms, top: int) -> list[dict]:
+    return [{"domain": d, "n": n, "third_party": is_third_party(d, platforms)}
+            for d, n in sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:top]]
+
+
+def ai_tally(conn: sqlite3.Connection, run_id: int,
+             prompt_ids: list[int] | None = None, *, platforms=None) -> dict[int, dict]:
+    """한 회차의 질문별 집계 — "대신 인용된 곳"·엔진별 수·발췌의 **정본**.
+
+    예전에는 두 벌이었다: 화면(dashboard._axis_ai)은 `MAX(cited_domains_json)` 로 표본
+    하나(사전순 최대 JSON — 사실상 무작위)를 골랐고, 기회(ai_gaps)는 전 표본을 셌다.
+    요청문은 화면 쪽을 읽었으니 틀린 쪽을 읽은 셈이다. 이제 둘 다 이것을 부른다.
+
+    반환 {prompt_id: {...}}:
+      checks·cited·mentioned·named_only(이름은 나오고 링크는 없음)
+      recommended  추천 목록 줄에 든 답변 수 — 이 칸을 잰 답이 하나도 없으면 None(안 봤다).
+                   rec_checks 가 그 분모다(옛 행은 NULL 이라 분모에서 빠진다)
+      engines      엔진 이름 목록(정렬)
+      misses       우리가 인용되지 않은 답변 수 — rivals 의 분모
+      rivals       [{domain, n, third_party}] 우리가 빠진 답변에서 대신 인용된 곳, 횟수 순
+      third_share  rivals 횟수 중 제3자 플랫폼 몫(0~1). 대신 인용된 곳이 없으면 None
+      lean         third_party(제3자가 대부분) | sites(경쟁사·일반 사이트) | None
+      excerpts     {engine: 발췌} 엔진마다 우리가 빠진 답변 중 가장 먼저 받은 것(id 순) —
+                   무작위가 아니라 결정적이다. 빠진 답이 없는 엔진은 없다
+      by_engine    {engine: {checks, cited, mentioned, named_only, recommended,
+                             rec_checks, misses, rivals}}
+    """
+    plats = third_party_platforms() if platforms is None else platforms
+    sql = ("SELECT prompt_id, engine, cited, mentioned, recommended, cited_domains_json,"
+           " answer_excerpt FROM ai_checks WHERE run_id=?")
+    args: list = [run_id]
+    if prompt_ids is not None:
+        if not prompt_ids:
+            return {}
+        sql += f" AND prompt_id IN ({','.join('?' * len(prompt_ids))})"
+        args += list(prompt_ids)
+    acc: dict[int, dict] = {}
+    for c in conn.execute(sql + " ORDER BY id", args):
+        a = acc.setdefault(c["prompt_id"], {"eng": {}, "tally": {}, "excerpts": {}})
+        e = a["eng"].setdefault(c["engine"], {"checks": 0, "cited": 0, "mentioned": 0,
+                                              "named_only": 0, "recommended": 0,
+                                              "rec_checks": 0, "misses": 0, "tally": {}})
+        e["checks"] += 1
+        e["cited"] += int(bool(c["cited"]))
+        e["mentioned"] += int(bool(c["mentioned"]))
+        e["named_only"] += int(bool(c["mentioned"]) and not c["cited"])
+        if c["recommended"] is not None:            # NULL = 이 칸 이전의 옛 답 — 안 봤다
+            e["rec_checks"] += 1
+            e["recommended"] += int(bool(c["recommended"]))
+        if c["cited"]:
+            continue
+        e["misses"] += 1
+        try:
+            doms = {_rival_key(h, plats) for h in (host_of(str(d)) for d in
+                    json.loads(c["cited_domains_json"] or "[]")) if h}
+        except (TypeError, ValueError):
+            doms = set()
+        for h in doms:                              # 답변 하나에 한 번 — "4/5" 의 분자
+            e["tally"][h] = e["tally"].get(h, 0) + 1
+            a["tally"][h] = a["tally"].get(h, 0) + 1
+        if c["engine"] not in a["excerpts"] and (c["answer_excerpt"] or "").strip():
+            a["excerpts"][c["engine"]] = _excerpt(c["answer_excerpt"])
+    out = {}
+    for pid, a in acc.items():
+        by = {}
+        for name, e in sorted(a["eng"].items()):
+            t = e.pop("tally")
+            by[name] = {**e, "rivals": _rival_list(t, plats, 3),
+                        "recommended": e["recommended"] if e["rec_checks"] else None}
+        tot = lambda k: sum(e[k] or 0 for e in by.values())  # noqa: E731
+        rivals = _rival_list(a["tally"], plats, AI_RIVALS_TOP)
+        hits = sum(a["tally"].values())
+        third = sum(n for d, n in a["tally"].items() if is_third_party(d, plats))
+        share = round(third / hits, 3) if hits else None
+        rec_checks = tot("rec_checks")
+        out[pid] = {"checks": tot("checks"), "cited": tot("cited"),
+                    "mentioned": tot("mentioned"), "named_only": tot("named_only"),
+                    "recommended": tot("recommended") if rec_checks else None,
+                    "rec_checks": rec_checks, "misses": tot("misses"),
+                    "engines": list(by), "rivals": rivals, "third_share": share,
+                    "lean": (None if share is None else
+                             "third_party" if share > AI_PRESENCE_SHARE else "sites"),
+                    "excerpts": a["excerpts"], "by_engine": by}
+    return out
+
+
+def ai_rivals_text(rivals: list[dict] | None, misses: int | None, top: int = 3) -> str:
+    """"reddit.com 4/5, rival.com 2/5" — 기회 근거와 요청문·화면이 같은 모양으로 쓴다."""
+    return ", ".join(f"{r['domain']} {r['n']}/{misses or 0}" for r in (rivals or [])[:top])
+
+
 def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
             limit: int = 30) -> list[dict]:
-    """챗봇이 한 번도 나를 출처로 쓰지 않은 질문 — 질문마다 끝난 회차의 최신 측정 기준.
+    """챗봇이 나를 거의 출처로 쓰지 않는 질문 — 질문마다 끝난 회차의 최신 측정 기준.
 
-    ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 "인용 0"이 성립한다.
-    답이 비결정적이라 한 번 빠진 것은 신호가 아니다 — 그 회차 전부에서 빠진 것만 센다.
+    ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 판정이 성립한다. 판정은
+    ai_is_gap — 인용률이 AI_GAP_MAX_RATE 이하. 표본이 AI_MIN_SAMPLES 보다 적어도
+    올리되 thin 을 달아 점수를 깎고 근거에 "표본 부족"을 적는다.
 
     끝난 회차에서 한 번도 안 잰 질문은 여기 없다 — 그건 "인용 0"이 아니라 "모름"이다.
     대신 ai_prompt_state 가 그 개수를 세어 화면이 "측정 안 됨"으로 말한다(조용히 빼지
     않는다). 오래된 측정(stale)은 그대로 쓰되 measured_at 을 실어 근거에 날짜가 붙는다.
     """
+    measured = [p for p in ai_prompt_state(conn, project_id)["rows"] if p["run_id"]]
+    by_run: dict[int, list[int]] = {}
+    for p in measured:
+        by_run.setdefault(p["run_id"], []).append(p["id"])
+    plats = third_party_platforms()
+    tallies = {(rid, pid): t for rid, ids in by_run.items()
+               for pid, t in ai_tally(conn, rid, ids, platforms=plats).items()}
     rows = []
-    for p in ai_prompt_state(conn, project_id)["rows"]:
-        if not p["run_id"]:
+    for p in measured:
+        t = tallies.get((p["run_id"], p["id"]))
+        if not t or not ai_is_gap(t["cited"], t["checks"]):
             continue
-        r = conn.execute(
-            """SELECT COUNT(*) checks, SUM(cited) cited, SUM(mentioned) mentioned,
-                      COUNT(DISTINCT engine) engines
-                 FROM ai_checks WHERE run_id=? AND prompt_id=?""",
-            (p["run_id"], p["id"])).fetchone()
-        if not r["checks"] or r["cited"]:
-            continue
-        # 나 대신 누가 인용됐나 — "그래서 무엇을 이겨야 하나"가 근거의 나머지 절반이다
-        tally: dict[str, int] = {}
-        for c in conn.execute(
-                "SELECT cited_domains_json FROM ai_checks"
-                " WHERE run_id=? AND prompt_id=?", (p["run_id"], p["id"])):
-            try:
-                for dom in json.loads(c[0] or "[]"):
-                    h = host_of(str(dom))
-                    if h:
-                        tally[h] = tally.get(h, 0) + 1
-            except (TypeError, ValueError):
-                continue
-        rivals = sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:2]
-        rows.append({"id": p["id"], "prompt": p["prompt"], "category": p["category"],
-                     "checks": r["checks"], "mentioned": r["mentioned"] or 0,
-                     "engines": r["engines"], "rivals": [d for d, _ in rivals],
+        rows.append({**t, "id": p["id"], "prompt": p["prompt"], "category": p["category"],
+                     "engines": len(t["engines"]), "engine_names": t["engines"],
+                     "cite_rate": round(t["cited"] / t["checks"], 3),
+                     "thin": t["checks"] < AI_MIN_SAMPLES,
                      "run_id": p["run_id"], "measured_at": p["measured_at"],
                      "stale": p["state"] == "stale"})
-    rows.sort(key=lambda x: (-x["checks"], x["id"]))
+    # 상한(limit) 안에 무엇을 남기나 — 표본이 되는 것 먼저, 그다음 많이 물어본 것.
+    # 점수 순서는 load() 가 score() 로 따로 정한다.
+    rows.sort(key=lambda x: (x["thin"], -x["checks"], x["id"]))
     return rows[:limit]
 
 
@@ -2135,14 +2530,6 @@ XAI_LIMIT = 12         # 화면이 읽는 목록이지 전수 목록이 아니�
 
 def _xai_tokens(s: str) -> set[str]:
     return {t for t in tokens(s) if len(t) >= XAI_MIN_TOKEN}
-
-
-def _xai_doms(raw) -> list[str]:
-    """그 질문에서 대신 인용된 도메인 — 근거의 나머지 절반이다."""
-    try:
-        return [h for h in (host_of(str(d)) for d in json.loads(raw or "[]")) if h][:3]
-    except (TypeError, ValueError):
-        return []
 
 
 def _xai_match(prompt: str, queries: list[dict]) -> dict | None:
@@ -2187,7 +2574,8 @@ def search_wins_ai_loses(conn: sqlite3.Connection, project_id: int,
         rows.append({"prompt": r["prompt"], "category": r.get("category") or "",
                      "query": m["query"], "pos": m["pos"], "imp": m["imp"],
                      "checks": r.get("checks") or 0,
-                     "rivals": _xai_doms(r.get("miss_domains"))})
+                     # 대신 인용된 곳은 ai_tally 가 센 것 그대로(한 벌) — 횟수 순 상위 셋
+                     "rivals": [x["domain"] for x in (r.get("rivals") or [])][:3]})
     rows.sort(key=lambda x: (x["pos"], -x["imp"]))
     return {"rows": rows[:XAI_LIMIT], "top_queries": len(tops)}
 
@@ -2344,9 +2732,22 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     ai = float(metrics.get("ai",
                            1.0 if kind in ("ai_citation_gap", "aio_exposure",
                                            "ai_bot_blocked") else 0.0))
+    # 챗봇 인용률(ai_citation_gap 의 cite_rate). 이 kind 에는 순위가 없어 reach 가 늘
+    # 보수적 0.3 이었다 — 그런데 인용률이 바로 "닿는 거리"다: 한 번이라도 인용됐으면
+    # 엔진이 이미 우리 페이지를 찾아 출처로 쓸 줄 안다는 뜻이라 끌어올리기가 가장 싸다.
+    # 대신 남은 몫(1 - 인용률)만큼만 AI 노출 신호를 준다 — 이미 걸리는 몫은 기회가 아니다.
+    # 둘이 맞서서 1/6 과 0/6 이 비슷한 자리에 선다: 0/6 은 벌 게 크고, 1/6 은 싸다.
+    rate = metrics.get("cite_rate")
+    if rate is not None:
+        reach = 0.3 + 0.7 * min(1.0, float(rate) / AI_GAP_MAX_RATE)
+        ai *= 1.0 - float(rate)
     raw = (w["w_demand"] * demand + w["w_reach"] * reach
            + w["w_fit"] * fit + w["w_ai"] * ai)
     raw *= value_mult(metrics)
+    # 표본 부족(답변 AI_MIN_SAMPLES 미만) — 올리되 깎는다. 답이 매번 달라서 두어 번
+    # 빠진 것은 추세가 아니다.
+    if metrics.get("thin"):
+        raw *= AI_THIN_MULT
     return round(min(100.0, max(0.0, raw * 100)), 1)
 
 
@@ -2460,6 +2861,57 @@ _CG_PLAY = {
               "발행 후 관련 글에서 내부 링크를 겁니다."],
         deliver=["이 검색어를 정면으로 다루는 새 글의 제목·목차", "내 제품·데이터로만 쓸 수 있는 구간 하나"]),
 }
+
+# aio_exposure(구글 AI 요약에 내 링크 없음)는 우리 순위로 처방이 갈린다 — band 는
+# aio_band() 가 정한다. 예전 처방은 "직답 블록 + Article·FAQ 구조화 데이터"였는데
+# 구글 공식 입장과 반대였다: 구글 AI 요약(AI Overviews)은 AI 전용 마크업·파일이
+# 필요 없고, AI 용으로 콘텐츠를 조각낼 필요도 없으며, 출처를 핵심 순위 시스템에서
+# 고른다(Search Central "AI features and your website"). 그래서 40위인 검색어에
+# 필요한 것은 직답 블록이 아니라 순위다. FAQ 구조화 데이터를 뺀 근거가 하나 더
+# 있다 — 구글은 2023년 8월부터 FAQ 리치 결과를 잘 알려진 정부·보건 권위 사이트로
+# 제한했다. 대부분의 사이트에서 그 마크업은 검색 결과에 아무것도 더하지 않는다.
+# 챗봇 인용(ai_citation_gap)은 다른 엔진이라 이 판단을 따르지 않는다.
+_AIO_PLAY = {
+    "page1": dict(
+        what="이미 1페이지 안인데 구글 AI 요약이 우리 대신 다른 곳을 인용합니다. 구글 AI "
+             "요약은 순위 시스템이 고른 상위 페이지에서 출처를 뽑고, AI 전용 마크업이나 "
+             "파일이 필요 없습니다. 남은 것은 사람이 읽기에 더 나은 글입니다.",
+        acts=["요약이 대신 인용한 곳이 답하는데 우리 글에는 없는 답을 찾아, 사람이 읽는 "
+              "문단으로 채웁니다.",
+              "제목과 H2 가 질문과 답의 흐름을 따르게 구조를 분명히 합니다. 한 문단에는 "
+              "한 가지만 말합니다.",
+              "누가 썼는지, 직접 해 보거나 겪은 것, 근거 출처, 마지막 수정일을 드러냅니다(E-E-A-T).",
+              "AI 용으로 글을 조각내거나 따로 페이지를 만들지 않습니다. AI 전용 마크업·파일도 "
+              "구글 AI 요약에는 필요 없습니다.",
+              "스니펫을 막고 있지 않은지 봅니다. nosnippet·max-snippet 은 AI 요약에 인용되는 "
+              "것도 막습니다."],
+        deliver=["요약이 대신 인용한 곳이 답하는데 우리 글에 없는 답 목록과, 그걸 채울 H2·문단 계획",
+                 "제목·H2 구조 수정안. 지금 것과 고친 것을 나란히",
+                 "이 글에 빠진 신뢰 신호(저자·직접 경험·출처·수정일)와 넣을 자리"]),
+    "beyond": dict(
+        what="구글이 이 검색어에 AI 요약을 붙이는데 우리는 1페이지 밖이거나 순위가 없습니다. "
+             "구글 AI 요약은 상위 페이지에서 출처를 뽑습니다 — 순위가 먼저입니다. 직답 "
+             "블록이나 구조화 데이터로 요약에 끼어드는 길은 없습니다.",
+        acts=["이 검색어로 1페이지에 드는 것을 목표로 잡습니다. 걸린 페이지가 있으면 그 "
+              "페이지를, 없으면 이 검색어를 정면으로 다루는 글을 씁니다.",
+              "상위 페이지가 답하는데 우리에게 없는 질문을 채웁니다. 검색결과 상위와 구글이 "
+              "함께 보여 준 질문이 그 재료입니다.",
+              "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
+              "AI 용 조각 글이나 AI 전용 마크업을 따로 만들지 않습니다. 순위를 올리는 일이 "
+              "곧 AI 요약에 드는 길입니다."],
+        deliver=["1페이지에 들기 위해 채울 H2 목록. 상위 페이지가 답하는데 우리에게 없는 질문",
+                 "새 title 과 H1 문안. 검색어를 앞에 두고",
+                 "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]),
+}
+AIO_BANDS = tuple(_AIO_PLAY)
+
+
+def aio_band(position) -> str:
+    """구글 AI 요약 기회의 처방 갈래 — 우리 순위가 1페이지(PAGE1) 안이면 page1.
+
+    순위 없음(None: 조회 깊이 안에 우리가 없다)은 beyond 다 — 모르는 게 아니라
+    "안 보였다"는 측정이다."""
+    return "page1" if position is not None and position <= PAGE1 else "beyond"
 
 
 _KIND_SPECS = {
@@ -2621,28 +3073,50 @@ _KIND_SPECS = {
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
-        label="챗봇 인용 없음", defensive=False,
+        # "인용 없음"이었다 — 판정이 비율(ai_is_gap)이 된 뒤로 1/6 질문도 여기 선다.
+        label="챗봇 인용 드묾", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
+        # cite_rate·thin 은 score() 가 읽는다 — 인용률이 reach 와 남은 몫이 되고,
+        # 표본 부족이면 깎인다(이유는 score() 주석).
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
+                                 "cite_rate": r["cite_rate"], "thin": r["thin"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"],
                                                 question=True)},
         target=lambda r, ctx: r["prompt"],
         # 질문마다 잰 회차가 다를 수 있다(ai_gaps) — 날짜는 그 질문의 것을 적는다.
         reasoning=lambda r, ctx: (
-            f"AI {r['engines']}곳의 답변 {r['checks']}건에서 한 번도 인용되지 "
-            "않았습니다"
-            + (f". 이름만 나온 것은 {r['mentioned']}건입니다" if r["mentioned"] else "")
-            + (f". 대신 인용되는 곳: {', '.join(r['rivals'])}" if r["rivals"] else "")
+            f"AI {r['engines']}곳의 답변에서 {ai_cite_label(r['cited'], r['checks'])}"
+            + (f". 이름만 나온 것은 {r['named_only']}건입니다" if r["named_only"] else "")
+            + (f". 대신 인용되는 곳: {ai_rivals_text(r['rivals'], r['misses'])}"
+               if r["rivals"] else "")
+            + (" — 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else "")
             + (f" (AI 확인 {str(r['measured_at'])[:10]} 기준)"
                if r.get("measured_at") else "")),
-        play=dict(
-            what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
-            acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
-                  "숫자·출처·갱신 날짜를 본문에 적습니다. 인용은 검증 가능한 문장에 붙습니다.",
-                  "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
-            deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
-                     "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
-                     "Article·FAQPage 구조화 데이터(JSON-LD)"])),
+        # 처방이 대신 인용된 곳의 갈래로 갈린다(ai_tally 의 lean) — 제3자 플랫폼이
+        # 대부분이면 내 페이지를 고쳐서는 그 자리에 못 들어간다. 모르면 own.
+        play={
+            "own": dict(
+                what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
+                acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
+                      "숫자·출처·갱신 날짜를 본문에 적습니다. 인용은 검증 가능한 문장에 붙습니다.",
+                      "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
+                deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
+                         "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
+                         "Article·FAQPage 구조화 데이터(JSON-LD)"]),
+            "third_party": dict(
+                what="챗봇이 이 질문에서 내 사이트 대신 커뮤니티·위키·영상·리뷰 사이트 같은 "
+                     "제3자 플랫폼을 출처로 씁니다. 브랜드는 자기 사이트보다 이런 곳에서 "
+                     "훨씬 자주 인용됩니다.",
+                acts=["대신 인용된 곳 중 가장 잦은 플랫폼 한두 곳을 고릅니다.",
+                      "그 플랫폼에서 이 질문이 어떻게 다뤄지는지, 어떤 글이 인용되는지 봅니다.",
+                      "실제 사람이 소속을 밝히고 질문에 실제로 답하는 식으로만 참여합니다. "
+                      "스팸·가짜 후기·대량 게시는 하지 않습니다.",
+                      "그 플랫폼에서 링크할 만한 근거 페이지가 우리 사이트에 있는지 보고, "
+                      "없으면 그것부터 만듭니다."],
+                deliver=["플랫폼별 참여 계획 표: 어디에 · 누가 · 무엇으로 · 그 플랫폼 규칙상 "
+                         "허용되는지",
+                         "그 플랫폼에서 인용·링크할 만한 우리 페이지(없으면 먼저 만들 것)",
+                         "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
         label="구글 AI 요약 빠짐", defensive=False,
         detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
@@ -2656,12 +3130,7 @@ _KIND_SPECS = {
             + (f"{' · ' if r['position'] else ' ('}월 검색량 {r['volume']:,}"
                if r["volume"] else "")
             + (")" if r["position"] or r["volume"] else "")),
-        play=dict(
-            what="구글이 이 검색어에 AI 요약을 붙이는데 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.",
-            acts=["요약이 답하는 질문에 직답 블록을 만듭니다.",
-                  "Article·FAQ 구조화 데이터를 붙입니다."],
-            deliver=["구글 AI 요약이 답하는 질문에 대한 직답 블록",
-                     "Article·FAQ 구조화 데이터(JSON-LD)"])),
+        play=_AIO_PLAY),
     "content_gap": dict(
         label="콘텐츠 공백", defensive=False,
         detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"]),
@@ -2713,26 +3182,26 @@ _KIND_SPECS = {
             deliver=["301 대상 주소와 그 근거", "링크를 건 쪽에 보낼 짧은 안내문 한 벌"])),
     # robots.txt 원문은 크롤이 이미 남겼다 — 이 kind 에는 새 수집도 새 테이블도
     # 없다. AI 인용 판정보다 먼저 봐야 하는 관문이라 종류로 세운다.
+    # 검색·인용용(search·user) 봇만 선다 — 학습 봇 차단은 기회가 아니다(ai_bot_blocks).
     "ai_bot_blocked": dict(
         label="AI 크롤러 차단", defensive=False,
         detect=lambda ctx: ai_bot_blocks(ctx["conn"], ctx["pid"], home=ctx.get("domain") or ""),
         metrics=lambda r, ctx: {"impressions": 0, "position": None, "ai": 1.0},
         target=lambda r, ctx: r["bot"],
-        reasoning=lambda r, ctx: (
-            f"robots.txt 가 {r['bot']} 를 막습니다 ({r['rule']}). 이 크롤러를 쓰는 "
-            "엔진에서는 우리가 인용될 수 없습니다 — 글을 고쳐도 소용이 없습니다"),
+        reasoning=_reason_ai_bot,
         play=dict(
-            what="robots.txt 가 이 AI 크롤러를 막고 있습니다. 막힌 채로는 그 엔진이 "
-                 "우리 글을 읽을 수 없어서, 인용이 안 되는 이유가 콘텐츠가 아닙니다.",
-            acts=["막는 것이 의도였는지 먼저 정합니다 — 학습에 쓰이는 것이 싫어서 "
-                  "막아 둔 것일 수 있습니다. 그렇다면 이 항목은 닫으면 됩니다.",
-                  "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다.",
-                  "학습은 막고 인용은 받고 싶으면 봇을 갈라 봅니다 — 예를 들어 "
-                  "Google-Extended(제미나이 학습)와 Googlebot(검색 색인)은 다른 봇입니다.",
+            what="robots.txt 가 AI 검색·인용용 크롤러를 막고 있습니다. 막힌 채로는 그 "
+                 "엔진이 답을 만들 때 우리 글을 읽어 가지 못해서, 인용이 안 되는 이유가 "
+                 "콘텐츠가 아닐 수 있습니다.",
+            acts=["막는 것이 의도였는지 먼저 정합니다. 학습을 거부하려던 것이라면 이 봇이 "
+                  "아니라 학습 전용 봇(GPTBot·ClaudeBot·Google-Extended·CCBot 등)만 막으면 "
+                  "됩니다 — 학습만 막는 것은 인용과 무관한 흔한 선택입니다.",
+                  "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다. "
+                  "User-agent: * 로 한꺼번에 막혀 있으면 그 봇 이름으로 묶음을 따로 둡니다.",
                   "고친 뒤 robots.txt 를 직접 열어 확인하고, 다음 크롤에서 이 항목이 "
                   "사라지는지 봅니다."],
             deliver=["고칠 robots.txt 줄 — 지금 값과 바꿀 값을 그대로",
-                     "이 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
+                     "막힌 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
                      "(글은 손대지 않습니다. 막힌 채로는 고쳐도 안 읽힙니다)"])),
     "backlink_prospect": dict(
         label="경쟁사만 받는 링크", defensive=False,
@@ -2780,9 +3249,10 @@ def kind_label(kind: str, *, band: str | None = None) -> str:
 def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None) -> dict:
     """이 kind 의 처방(what/acts/deliver) — dashboard.html 의 옛 window.PLAY 산문이 여기로 옮겨왔다.
 
-    striking_distance·content_gap 은 한 kind 가 처방 둘을 갖는다(밴드/갈래로 갈린다).
-    band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
-    기본값과 같은 쪽(page2/missing)으로 물러선다. 모르는 kind 면 빈 dict —
+    striking_distance·content_gap·aio_exposure 는 한 kind 가 처방 둘을 갖는다(밴드/갈래로
+    갈린다). band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
+    기본값과 같은 쪽(page2/missing)으로 물러선다. aio_exposure 는 beyond 로 물러선다 —
+    순위를 모르는 채로 "이미 1페이지 안"이라고 말하지 않는다. 모르는 kind 면 빈 dict —
     화면의 playList() 는 빈 처방을 아무것도 안 그리는 것으로 받아들인다.
     """
     k = _KIND_BY_NAME.get(kind)
@@ -2791,8 +3261,12 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
     p = k.play
     if kind == "striking_distance":
         return p.get(band) or p["page2"]
+    if kind == "aio_exposure":
+        return p.get(band) or p["beyond"]
     if kind == "content_gap":
         return p.get(gap_kind) or p["missing"]
+    if kind == "ai_citation_gap":
+        return p.get(gap_kind) or p["own"]
     return p
 
 
@@ -2857,9 +3331,11 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
 
 
 def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
-    """챗봇 인용 없음 → 그 질문의 가장 최근 측정이 **끝난 회차**에 속하고, 그 회차에서
-    인용이 한 번이라도 있다. 가장 최근 측정이 도는 중이거나 예외로 끊긴 회차면 판단하지
-    않는다 — 끊긴 회차에서 이 질문을 잰 몇 건만으로 말하지 않는다."""
+    """챗봇 인용 드묾 → 그 질문의 가장 최근 측정이 **끝난 회차**에 속하고, 그 회차에서
+    인용률이 기회 문턱을 넘었다(ai_is_gap 이 거짓 — 세우는 쪽과 같은 판정). 6번 중 1번
+    걸린 것은 풀림이 아니다: 그 자체가 기회로 선다. 가장 최근 측정이 도는 중이거나
+    예외로 끊긴 회차면 판단하지 않는다 — 끊긴 회차에서 이 질문을 잰 몇 건만으로 말하지
+    않는다."""
     p = conn.execute("SELECT id FROM ai_prompts WHERE project_id=? AND prompt=?",
                      (pid, target)).fetchone()
     if not p:
@@ -2876,7 +3352,7 @@ def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> 
             WHERE run_id=? AND prompt_id=?""", (last[0], p[0])).fetchone()
     if not a["n"] or not _after_ts(a["first"], since):
         return None
-    if (a["cited"] or 0) > 0:
+    if not ai_is_gap(a["cited"], a["n"]):
         return f"AI 답변 {a['n']}건 중 {a['cited']}건이 우리를 인용합니다 (AI 회차 #{last[0]})"
     return None
 
@@ -2975,20 +3451,38 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
 def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """AI 크롤러 차단 → 그 뒤에 끝난 크롤이 가져온 robots.txt 가 그 봇을 안 막는다.
     원문에 User-agent 줄이 하나도 없으면 robots.txt 가 아니다(200 으로 온 오류 페이지)
-    — 규칙이 없어서 '안 막는다'로 읽히므로 판단하지 않는다."""
+    — 규칙이 없어서 '안 막는다'로 읽히므로 판단하지 않는다.
+
+    학습 전용 봇으로 확인된 대상도 닫는다: 용도를 가르기 전 판정이 GPTBot 같은 학습
+    봇을 이 종류로 올려 두었다. 그대로 두면 막힌 채라 영영 안 닫힌다. 용도 모름(옛
+    꼴 config)은 닫지 않는다 — 모르는 것을 무해라고 확인한 셈이 된다."""
     cr = conn.execute(
         "SELECT id, started_at, robots_txt FROM crawl_runs WHERE project_id=?"
         " AND finished_at IS NOT NULL AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1",
         (pid,)).fetchone()
     if not cr or not _after_ts(cr["started_at"], since):
         return None
+    if ai_bot_purpose(target) == "training":
+        return (f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다 — 기회가 아닙니다 "
+                f"(크롤 #{cr['id']})")
     txt = cr["robots_txt"] or ""
     if not re.search(r"(?im)^\s*user-agent\s*:", txt):
         return None
     home = ctx.get("domain") or ""
     url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    if target == AI_BOT_WILDCARD:
+        # 묶음 기회 — 와일드카드 묶음이 더는 홈을 안 막으면 닫는다
+        if robots_blocks(txt, url, agent=_WILDCARD_PROBE) is None:
+            return f"robots.txt 의 User-agent: * 묶음이 더는 막지 않습니다 (크롤 #{cr['id']})"
+        return None
     if robots_blocks(txt, url, agent=target) is None:
         return f"robots.txt 가 더는 {target} 를 막지 않습니다 (크롤 #{cr['id']})"
+    # 봇마다 세우던 옛 기회: 이제 User-agent: * 묶음 한 줄로 선다. 여전히 막혀 있다고
+    # 분명히 적는다 — "고쳐졌다"로 읽히면 안 된다.
+    if (ai_bot_purpose(target) in AI_BOT_CITING and not _named_in_robots(txt, target)
+            and robots_blocks(txt, url, agent=_WILDCARD_PROBE) is not None):
+        return (f"{target} 는 여전히 막혀 있지만, 원인이 User-agent: * 한 줄이라 "
+                f"그 묶음 기회로 합쳤습니다 (크롤 #{cr['id']})")
     return None
 
 
@@ -3119,10 +3613,10 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
 # DB 에는 여전히 검색어마다 기회 하나다(사실). 묶음은 **읽을 때만** 한다(표시·우선순위).
 # 기회를 저절로 닫는 쪽(검색어 단위)과 부딪히지 않고, 틀리면 이 함수만 되돌리면 된다.
 #
-# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(직답 블록 + 구조화 데이터)은
-# 페이지에 한 번 하는 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가
-# 따로 줄을 차지할 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지
-# 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
+# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(그 페이지의 순위를 올리거나, 이미
+# 1페이지면 사람이 읽기에 더 나은 글로 다듬기 — _AIO_PLAY)은 페이지에 한 번 하는
+# 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가 따로 줄을 차지할
+# 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
 # device_gap 은 근거 문장이 **그 검색어의** 순위·CTR·Δ 를 말해서 합치면 어느 변형이
 # 처지는지가 사라지고, cannibalization 은 정의상 한 검색어에 페이지가 여럿이라 "같은
 # 페이지"라는 열쇠가 성립하지 않으며, 대상이 문장(ai_citation_gap)·URL·도메인·클러스터인
@@ -3159,8 +3653,8 @@ def _surface_facts(conn: sqlite3.Connection, project_id: int,
     page·page_src : 우리 페이지 열쇠(url_key). GSC 에서 그 검색어로 노출이 가장 큰
                     페이지를 먼저 보고, 없으면 순위 조회(rank_snapshots.url)가 잡은 우리 주소.
     serp          : 최신 조회의 상위 주소(url_key) 집합 — 수집기가 남긴 만큼(db.SERP_KEEP).
-                    AI 요약 안의 인용 도메인은 수집기가 우리 인용 여부(aio_cited)만 남기고
-                    버려서 여기 없다.
+                    AI 요약 안의 인용 도메인(rank_snapshots.aio_domains_json)은 열쇠로 쓰지
+                    않는다 — 요약은 조회마다 붙었다 떨어졌다 하고 옛 행에는 없다.
     cluster·volume: keywords 표. 검색어와 norm 으로 짝짓는다.
     """
     out = {t: {"page": None, "page_url": None, "page_src": None, "serp": frozenset(),
@@ -3404,11 +3898,34 @@ def _selfcheck() -> None:
     assert not is_foreign_brand("", brands)
     assert not is_foreign_brand("ecrett", set())                  # 카탈로그 없으면 아무것도 안 뺀다
 
-    m, c, others = judge("Try Ecrett and MySite today.",
-                         ["https://www.ecrett.com/a", "https://blog.mysite.com/b"],
-                         ["MySite"], "mysite.com")
-    assert (m, c, others) == (1, 1, ["ecrett.com"]), (m, c, others)
-    assert judge("nothing here", [], ["MySite"], "mysite.com") == (0, 0, [])
+    m, c, others, rec = judge("Try Ecrett and MySite today.",
+                              ["https://www.ecrett.com/a", "https://blog.mysite.com/b"],
+                              ["MySite"], "mysite.com")
+    assert (m, c, others, rec) == (1, 1, ["ecrett.com"], 0), (m, c, others, rec)
+    assert judge("nothing here", [], ["MySite"], "mysite.com") == (0, 0, [], 0)
+    # 추천 목록 — 이름이 목록 줄 **안에** 있어야 추천이다. 문단에서 지나가면 이름 나옴뿐
+    listed = "좋은 도구들:\n1. Ecrett — 빠름\n2. MySite — 무료\n\n그 밖에 Other 도 있습니다."
+    assert judge(listed, [], ["MySite"], "mysite.com")[3] == 1
+    assert recommended_in("- **MySite**: 가볍다", ["mysite"]) == 1          # 글머리
+    assert recommended_in("| MySite | 무료 |", ["MySite"]) == 1              # 비교표 행
+    assert recommended_in("### 2) MySite", ["MySite"]) == 1                 # 번호 제목
+    prose = "1. Ecrett 이 낫습니다.\n2. Other 도 있습니다.\nMySite 는 목록 밖에서만 나옵니다."
+    assert judge(prose, [], ["MySite"], "mysite.com")[::3] == (1, 0), "목록 밖 언급을 추천으로 셌다"
+    assert recommended_in("**MySite** 는 굵게 쓴 문단", ["MySite"]) == 0     # 굵은 글씨는 목록이 아니다
+    assert set(AI_LADDER_CATEGORIES) <= set(__import__("gen_prompts").CATEGORIES), \
+        "사다리 갈래가 gen_prompts.CATEGORIES 에 없는 이름이다"
+    # 인용 공백 판정 — 비율과 표본 수
+    assert ai_is_gap(0, 6) and ai_is_gap(1, 6) and ai_is_gap(2, 6)       # 1/3 까지
+    assert not ai_is_gap(3, 6) and not ai_is_gap(0, 0)
+    assert ai_cite_label(1, 6) == "인용 1/6 (n=6)"
+    assert ai_cite_label(0, 2) == "인용 0/2 (n=2) · 표본 부족"
+    assert is_third_party("ko.wikipedia.org", ("wikipedia.org",))
+    assert not is_third_party("notwikipedia.org", ("wikipedia.org",))
+    # 1/6 은 0/6 보다 벌 몫은 작지만 닿기 쉽다 — 둘 다 기회 점수를 받고, 표본 부족은 깎인다
+    g0 = score("ai_citation_gap", {"cite_rate": 0.0}, "saas")
+    g1 = score("ai_citation_gap", {"cite_rate": 1 / 6}, "saas")
+    assert g1 > 0 and abs(g0 - g1) < 5, (g0, g1)
+    assert score("ai_citation_gap", {"cite_rate": 0.0, "thin": True}, "saas") < g0
     # 인용 메타데이터가 없으면 본문의 맨 URL을 줍는다 — collect_ai·record_check 공통
     assert judge("see https://blog.mysite.com/x", [], ["MySite"],
                  "mysite.com")[1] == 1
@@ -3487,6 +4004,31 @@ def _selfcheck() -> None:
     other = page_advice(dict(ok_page, canonical="https://competitor.com/a"),
                         ["밀리아 제거"], domain="x.com")
     assert [a["tag"] for a in other] == ["canonical"] and other[0]["level"] == "bad", other
+
+    # 추출성 — AI 종류에서만, 새 칸을 읽은 행에서만. 옛 행(칸 NULL)에 "표 0" 을 지어내지
+    # 않고, 클릭률 같은 일반 종류에는 아무 말도 안 한다(page_advice 를 부풀리지 않는다).
+    flat = dict(ok_page, h2_json='["비용", "기간"]', tables=0, lists=0, h2_questions=0,
+                lead_words=0, author="", js_shell=0)
+    bot = extract_advice(flat, "ai_citation_gap")
+    aio = extract_advice(flat, "aio_exposure")
+    assert {x["tag"] for x in bot} == {"추출성", "저자"}, bot
+    assert {x["tag"] for x in aio} == {"읽기 구조", "저자"}, aio
+    assert [x["fix"] for x in bot if x["tag"] == "추출성"] != \
+        [x["fix"] for x in aio if x["tag"] == "읽기 구조"], "구글과 챗봇이 같은 말을 한다"
+    assert extract_advice(flat, "ctr_gap") == [], "일반 종류에 추출성 진단이 붙는다"
+    assert extract_advice(ok_page, "ai_citation_gap") == [], "옛 행에 없는 문제를 만든다"
+    # 옛 행이라도 js_shell 은 먼저 생긴 칸이라 1 일 수 있다 — 칸을 안 읽은 행에 "본문
+    # 구조를 못 봤다"를 붙이면 가드(_has_extract_fields)가 없는 것과 같다
+    assert extract_advice(dict(ok_page, js_shell=1), "ai_citation_gap") == [], \
+        "옛 행(추출성 칸 NULL)에 JS 껍데기 확인 지시를 붙인다"
+    assert extract_advice(dict(flat, tables=2, lists=1, h2_questions=1, lead_words=45,
+                               author="홍"), "ai_citation_gap") == []
+    # 갱신 — AI 종류는 180일, 일반(page_advice)은 730일. 둘 사이의 글이 가르는 자리다.
+    mid = str(datetime.date.today() - datetime.timedelta(days=300))
+    assert [x["tag"] for x in extract_advice(dict(ok_page, modified=mid),
+                                             "aio_exposure")] == ["갱신"]
+    assert "갱신" not in [x["tag"] for x in page_advice(dict(ok_page, modified=mid),
+                                                        ["밀리아 제거"], domain="x.com")]
 
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at) "
@@ -3639,6 +4181,14 @@ def _selfcheck() -> None:
     assert kind_play("content_gap")["what"].startswith("경쟁 도메인은 잡고 있는데")   # 모르면 missing
     assert kind_play("ctr_gap")["acts"], "정적 kind 의 처방이 비었다"
     assert kind_play("없는kind") == {}
+    # 구글 AI 요약은 순위로 갈린다. 모르면 beyond — "이미 1페이지"라고 지어내지 않는다.
+    # 어느 쪽이든 FAQ 구조화 데이터를 시키지 않는다(test_brief 가 요청문까지 본다).
+    assert aio_band(4) == "page1" and aio_band(PAGE1) == "page1"
+    assert aio_band(PAGE1 + 1) == "beyond" and aio_band(None) == "beyond"
+    assert kind_play("aio_exposure", band="page1")["what"].startswith("이미 1페이지 안인데")
+    assert kind_play("aio_exposure", band="beyond")["what"].startswith("구글이 이 검색어에")
+    assert kind_play("aio_exposure") is _AIO_PLAY["beyond"]
+    assert set(AIO_BANDS) == {"page1", "beyond"}
     assert set(INDEX_BUCKETS) == {"robots_blocked", "fetch_error",
                                   "canonical_mismatch", "not_indexed"}, INDEX_BUCKETS
     assert gap_to_page1(10.0) == 0.0                                 # 1페이지 안이면 0 클램프
@@ -4096,13 +4646,13 @@ def _selfcheck() -> None:
     assert _xai_tokens("AI 툴 고르는 법") == {"ai", "고르는"}, _xai_tokens("AI 툴 고르는 법")
     ai_rows = [
         {"prompt": "1페이지 키워드 고르는 법", "category": "추천", "cited": 0, "checks": 6,
-         "miss_domains": '["https://www.ecrett.com/a", "b.com"]'},
+         "rivals": [{"domain": "ecrett.com", "n": 4}, {"domain": "b.com", "n": 1}]},
         {"prompt": "키워드 뭐가 좋아", "category": "추천", "cited": 0, "checks": 6,
-         "miss_domains": None},                     # 한 낱말만 겹친다 — 짝을 안 짓는다
+         "rivals": []},                             # 한 낱말만 겹친다 — 짝을 안 짓는다
         {"prompt": "ecrett 어때", "category": "브랜드", "cited": 0, "checks": 6,
-         "miss_domains": None},                     # 검색어가 한 낱말이라 임계 미달
+         "rivals": []},                             # 검색어가 한 낱말이라 임계 미달
         {"prompt": "1페이지 키워드 정리법", "category": "추천", "cited": 2, "checks": 6,
-         "miss_domains": None},                     # 이미 인용된다 — 여기 올 자리가 아니다
+         "rivals": []},                             # 이미 인용된다 — 여기 올 자리가 아니다
     ]
     xs = search_wins_ai_loses(conn, 1, ai_rows)
     assert xs["top_queries"] == 2, xs
@@ -4144,15 +4694,84 @@ def _selfcheck() -> None:
     _bots_conn.executescript(_db.SCHEMA)
     _bots_conn.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'b','saas','x.kr')")
     assert ai_bot_blocks(_bots_conn, 1) == [], "크롤 회차가 없는데 판정을 만든다"
+    # 학습 봇만 막은 흔한 꼴 — 권장되는 중간 지점이지 인용 차단이 아니다
     _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: CCBot", "Disallow: /", "",
                             "User-agent: *", "Allow: /"))
     _bots_conn.execute(
         "INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
         " VALUES(1,'2026-09-09','home',?)", (_robots,))
     _bots_conn.commit()
+    assert ai_bot_blocks(_bots_conn, 1, home="x.kr") == [], "학습 봇 차단을 인용 차단으로 읽는다"
+    _st = {r["bot"]: r for r in ai_bot_status(_robots, "x.kr")}
+    assert _st["GPTBot"]["rule"] == "Disallow: /" and _st["GPTBot"]["purpose"] == "training", _st
+    assert _st["OAI-SearchBot"]["rule"] is None, _st      # 같은 벤더라도 검색 봇은 열려 있다
+    # 검색 봇이 막히면 선다
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (
+        "User-agent: OAI-SearchBot\nDisallow: /\n\n" + _robots,))
+    _bots_conn.commit()
     _blocked = ai_bot_blocks(_bots_conn, 1, home="x.kr")
-    assert [r["bot"] for r in _blocked] == ["GPTBot"], _blocked
-    assert _blocked[0]["rule"] == "Disallow: /", _blocked[0]
+    assert [r["bot"] for r in _blocked] == ["OAI-SearchBot"], _blocked
+    assert _blocked[0]["rule"] == "Disallow: /" and _blocked[0]["engine"], _blocked[0]
+    assert "ChatGPT" in _reason_ai_bot(_blocked[0], {}), _reason_ai_bot(_blocked[0], {})
+    # Bingbot 은 빙 검색 전체라고 말한다
+    _bing = {"bot": "Bingbot", "purpose": "search", "engine": "Bing 검색·Copilot",
+             "rule": "Disallow: /"}
+    assert "빙 검색 전체" in _reason_ai_bot(_bing, {})
+    # 옛 꼴(UA 문자열 목록) — 읽되 용도는 모름이고, 모름은 기회가 아니다
+    assert _ai_bot_entry("OAI-SearchBot") == {"ua": "OAI-SearchBot", "vendor": None,
+                                              "purpose": None, "engine": None}
+    assert _ai_bot_entry({"ua": "X", "purpose": "시험"})["purpose"] is None   # 모르는 용도도 모름
+    _real_ai_bots = globals()["ai_bots"]
+    globals()["ai_bots"] = lambda: tuple(map(_ai_bot_entry, ["GPTBot", "OAI-SearchBot"]))
+    try:
+        assert ai_bot_blocks(_bots_conn, 1, home="x.kr") == [], "용도 모름을 인용 차단으로 읽는다"
+        assert [r["purpose"] for r in ai_bot_status(_robots, "x.kr")] == [None, None]
+    finally:
+        globals()["ai_bots"] = _real_ai_bots
+    # User-agent: * 한 줄이 통째로 막으면 기회도 한 줄 — 봇마다 세우면 같은 줄 하나가
+    # 기회 목록 일곱 줄로 불어난다. 이름 묶음으로 따로 막힌 봇은 따로 선다.
+    _NL = chr(10)
+    _wild = _NL.join(("User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_wild,))
+    _bots_conn.commit()
+    _g = ai_bot_blocks(_bots_conn, 1, home="x.kr")
+    assert [r["bot"] for r in _g] == [AI_BOT_WILDCARD], [r["bot"] for r in _g]
+    _citing = [b["ua"] for b in ai_bots() if b["purpose"] in AI_BOT_CITING]
+    assert sorted(_g[0]["bots"]) == sorted(_citing), _g[0]["bots"]
+    assert _g[0]["google_blocked"] is True, _g[0]
+    _why = _reason_ai_bot(_g[0], {})
+    assert "이 줄 하나" in _why and "구글 검색(Googlebot)도" in _why, _why
+    # 개수와 나열이 같은 것을 센다(엔진 이름으로 나열하면 Perplexity 둘이 하나로 준다)
+    assert f"{len(_citing)}개(" + "·".join(_g[0]["bots"]) + ")" in _why, _why
+    # 이름 묶음으로 따로 막힌 봇 + 와일드카드 — 묶음 하나와 그 봇 하나
+    _mixed = _NL.join(("User-agent: PerplexityBot", "Disallow: /", "",
+                       "User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_mixed,))
+    _bots_conn.commit()
+    _m = [r["bot"] for r in ai_bot_blocks(_bots_conn, 1, home="x.kr")]
+    assert _m == [AI_BOT_WILDCARD, "PerplexityBot"], _m
+    # 구글은 열어 두고 AI 만 와일드카드로 막을 수는 없다 — Googlebot 묶음이 따로 있으면
+    # 구글 문구가 빠진다
+    _gopen = _NL.join(("User-agent: Googlebot", "Allow: /", "", "User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_gopen,))
+    _bots_conn.commit()
+    _go = ai_bot_blocks(_bots_conn, 1, home="x.kr")[0]
+    assert _go["google_blocked"] is False and "Googlebot" not in _reason_ai_bot(_go, {}), _go
+    # 해소: 묶음 기회는 와일드카드가 풀려야 닫힌다. 봇마다 세우던 옛 기회는 묶음으로
+    # 옮겨 닫되 "여전히 막혀 있다"고 적는다 — 고쳐진 것으로 읽히면 안 된다.
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?, started_at='2030-01-01 00:00:00'",
+                       (_wild,))
+    _bots_conn.commit()
+    _rc = {"domain": "x.kr"}
+    assert _resolve_ai_bot(_bots_conn, 1, AI_BOT_WILDCARD, "2029-01-01", _rc) is None
+    _legacy = _resolve_ai_bot(_bots_conn, 1, "OAI-SearchBot", "2029-01-01", _rc)
+    assert _legacy and "여전히 막혀" in _legacy, _legacy
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?",
+                       (_NL.join(("User-agent: *", "Disallow: /private")),))
+    _bots_conn.commit()
+    assert "더는 막지 않습니다" in (_resolve_ai_bot(_bots_conn, 1, AI_BOT_WILDCARD,
+                                                   "2029-01-01", _rc) or "")
     # robots.txt 를 아예 못 읽은 회차는 "전부 허용" 이 아니라 "모른다" 다
     _bots_conn.execute("UPDATE crawl_runs SET robots_txt=NULL")
     _bots_conn.commit()

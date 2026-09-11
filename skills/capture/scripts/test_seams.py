@@ -648,7 +648,7 @@ def test_seam_15_dataforseo_calls_go_through_pacer():
 
 
 def test_seam_16_brief_shapes_single_source():
-    """16) 요청문의 꼴(고치기·새 글·주소 정리·기술 점검·연락)은 brief.py 가 정본이다.
+    """16) 요청문의 꼴은 brief.py 가 정본이다(이름·개수는 brief.SHAPE_NAMES — 여기 안 적는다).
     화면은 기회마다 실려 온 o.brief 를 그리고, 기회로 안 올라온 행(뷰의 폴백)만
     askBlock 에 shape 이름을 직접 넘긴다 — 그 이름이 정본에 없으면 머리말도 꼬리도
     빈 요청문이 조용히 나간다. 그리고 옛 틀(규칙 문장·진단별 산출물 사본)이 셸에
@@ -852,7 +852,10 @@ def test_seam_19_brief_context_keys_come_from_gather():
 
     # 근거를 만드는 쪽(수집)과 말하는 쪽(요청문)이 같은 표를 본다 — 이 넷은
     # 값을 치르고 배운 자리라 이름으로 못 박는다.
-    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals"):
+    # serp_fanout·aio_gap_ranks: 함께 묻는 질문과 AI 요약이 대신 인용한 곳 — 수집기가
+    # 받아 놓고 버리던 것을 남기게 된 자리다.
+    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals",
+                "serp_fanout", "aio_gap_ranks"):
         assert key in served, f"gather() 가 {key} 를 안 싣는다"
         assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 
@@ -1054,6 +1057,225 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     said = set(re.findall(r'lr\.state\s*[!=]==\s*"(\w+)"', body))
     assert said and said <= made, f"화면이 모르는 런 상태를 견준다: {sorted(said - made)}"
     assert h["last_run"]["state"] == "aborted", h["last_run"]
+
+
+# 차트 라이브러리 — npm 이 준 chart.js 4.5.1 의 dist/chart.umd.min.js 그대로의 해시.
+# 판을 올릴 때는 npm 무결성(dist.integrity, sha512)을 대조한 뒤 이 값을 같이 고친다.
+CHARTJS_SHA256 = "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a"
+
+
+def test_seam_25_chart_library_single_source():
+    """25) 차트 라이브러리는 한 벌이다 — templates/vendor/chart.umd.min.js 하나를 조립이 한 번 박는다.
+    - 벤더 파일은 npm 이 준 그대로다(sha256). 누가 손대면 여기서 걸린다.
+    - 조립본마다(local·hosted·frozen) 라이브러리가 정확히 한 번 들어간다.
+    - new Chart( 는 셸의 chMake 한 곳뿐이다. 뷰·애드온이 차트를 따로 세우면 부수는 쪽
+      (관찰자)과 다크 전환이 그 차트를 모른다 — 화면을 다시 그릴 때마다 옛 차트가 샌다.
+    """
+    import hashlib
+    import dashboard
+    got = hashlib.sha256(dashboard.VENDOR_JS.read_bytes()).hexdigest()
+    assert got == CHARTJS_SHA256, (
+        f"vendor/chart.umd.min.js 가 npm 이 준 파일과 다르다: {got[:16]} — "
+        "줄끝이 바뀌었으면 .gitattributes 의 vendor -text 를 확인하라")
+    for v in ("local", "hosted", "frozen"):
+        n = dashboard._assemble(v).decode("utf-8").count("Chart.js v4.5.1")
+        assert n == 1, f"{v} 조립본에 라이브러리가 {n}번 들어갔다"
+    ctx = _load()
+    if ctx is None:
+        return
+
+    def code(s):
+        return re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", s)   # 주석이 "new Chart(" 를 말해도 세지 않는다
+    assert code(ctx["shell"]).count("new Chart(") == 1, "셸에서 차트를 세우는 자리가 chMake 하나가 아니다"
+    for p in sorted(ctx["views"].glob("*.html")):
+        assert "new Chart(" not in code(p.read_text("utf-8")), \
+            f"{p.name} 가 차트를 직접 세운다 — window.ch* 헬퍼를 거쳐라"
+    assert "new Chart(" not in code(ctx["dash"]), "dash.html 이 차트를 직접 세운다"
+
+
+def test_seam_26_rank_aio_fields_and_play_come_from_server():
+    """26) [순위] 화면의 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다.
+
+    화면(views/rank.html)은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
+    읽고, 처방 문구는 d.aio_play[갈래] 로 찾는다. 10번은 최상위 키(d.*)만 본다 — 행 칸
+    이름이 어긋나거나 갈래 이름이 d.aio_play 의 열쇠와 다르면 화면은 undefined 를 받아
+    인용처도 처방도 조용히 안 그린다. 그리고 예전처럼 화면이 AI 요약 처방을 따로 적으면
+    (옛 "H2 + 직답") 기회 패널과 두 벌이 된다 — 그 가지에는 한국어 문구가 없어야 한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import sqlite3 as _sq
+
+    import dashboard
+    import scoring
+    src = (ctx["views"] / "rank.html").read_text("utf-8")
+    read_r = set(re.findall(r"\br\.(aio_\w+)", src))
+    assert {"aio_domains", "aio_band"} <= read_r, \
+        f"rank.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
+    assert "RK_AIO_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
+        "rank.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
+
+    # 실물 — AI 요약에 빠진 검색어 둘(1페이지 안·순위 없음)을 둔 Brain
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    for i, pos in ((1, 4), (2, None)):
+        c.execute("INSERT INTO keywords(id,project_id,keyword,is_active) VALUES(?,1,?,1)",
+                  (i, f"kw{i}"))
+        db.write_rank_snapshot(c, i, pos, None, aio_present=1, aio_cited=0,
+                               aio_domains=["rival.example"])
+    rk = dashboard._axis_rank(c, 1)
+    c.close()
+    row = rk["ranks"][0]
+    assert read_r <= set(row), f"화면이 읽는데 순위 행에 없는 칸: {sorted(read_r - set(row))}"
+    bands = {r["aio_band"] for r in rk["ranks"]}
+    assert bands == set(scoring.AIO_BANDS), bands
+    assert bands <= set(rk["aio_play"]), \
+        f"행의 갈래가 d.aio_play 의 열쇠에 없다: {sorted(bands - set(rk['aio_play']))}"
+
+    # 화면의 AI 요약 가지는 서버 문구를 붙이기만 한다 — 자기 문구(한국어 글자)가 없다
+    body = src[src.index("function RK_playParts("):]
+    body = body[body.index("if (r.aio === 1 && !r.aio_cited)"):body.index("return [what")]
+    lits = [s for s in re.findall(r'"([^"]*)"|`([^`]*)`', body) for s in s
+            if re.search(r"[가-힣]", s)]
+    assert not lits, f"rank.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
+
+
+
+def test_seam_27_ai_rivals_single_count():
+    """27) "대신 인용된 곳"·엔진별 수·발췌는 scoring.ai_tally 한 벌이다.
+
+    두 벌이었다: 화면·요청문이 읽는 질문 행(dashboard._axis_ai)은
+    `MAX(CASE WHEN cited=0 THEN cited_domains_json END)` 로 표본 **하나**(사전순으로 가장
+    큰 JSON — 사실상 무작위)를 골랐고, 기회(scoring.ai_gaps)는 전 표본을 셌다. 요청문은
+    앞쪽을 읽었다. 어느 쪽도 혼자서는 멀쩡한 SQL 이었다.
+
+    세 끝을 본다 — 만드는 쪽(gather 가 싣는 두 행이 ai_tally 와 같다), 말하는 쪽(요청문이
+    그 수를 그대로 쓴다·다시 세지 않는다), 그리는 쪽(화면이 읽는 칸이 행에 있다·옛 칸을
+    안 읽는다). 표본은 MAX 로 고르면 틀리는 꼴로 깐다: 빠진 답 셋 중 사전순 최대 JSON 이
+    가장 드문 도메인 하나뿐인 답이다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import dashboard
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam25','saas','x.com')")
+    c.execute("INSERT INTO ai_prompts(id,project_id,prompt,category) VALUES(1,1,'도구 추천','추천')")
+    with db.run(c, 1, "ai") as r:
+        for i, (eng, doms, ans) in enumerate((
+                ("chatgpt", ["reddit.com", "a.com"], "가 먼저 받은 답"),
+                ("chatgpt", ["reddit.com"], "나 둘째 답"),
+                ("perplexity", ["zzz.com"], "하 셋째 답"))):
+            c.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,sample_idx,mentioned,cited,"
+                      "cited_domains_json,answer_excerpt,recommended) VALUES(1,?,?,?,0,0,?,?,0)",
+                      (r.id, eng, i, json.dumps(doms), ans))
+    c.execute("INSERT INTO opportunities(project_id,kind,target,score,status) "
+              "VALUES(1,'ai_citation_gap','도구 추천',50,'new')")
+    db.set_verdicts(c, 1, [scoring.norm("도구 추천")], "work")
+    null = _io.StringIO()
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        d = dashboard.gather(c, db.get_project(c, "_seam25"))
+    want = scoring.ai_tally(c, r.id)[1]
+    c.close()
+
+    # ── 만드는 쪽: 두 행 다 ai_tally 그대로 ──
+    row = d["ai_by_prompt"][0]
+    gap = (d.get("ai_gap_rows") or [None])[0]
+    assert gap, "gather() 가 기회를 세운 행(ai_gap_rows)을 안 싣는다"
+    for who, got in (("ai_by_prompt", row), ("ai_gap_rows", gap)):
+        for k in ("rivals", "misses", "excerpts", "by_engine", "recommended", "lean"):
+            assert got.get(k) == want[k], f"{who}.{k} 가 scoring.ai_tally 와 다르다: {got.get(k)!r}"
+    assert want["rivals"][0] == {"domain": "reddit.com", "n": 2, "third_party": True}, want
+    assert "miss_domains" not in row and "miss_answer" not in row, "옛 표본 칸이 되살아났다"
+
+    # ── 말하는 쪽: 요청문이 그 수를 그대로 말하고, 다시 세지 않는다 ──
+    o = next(x for x in d["opps"] if x["kind"] == "ai_citation_gap")
+    body = o["brief"]["body"]
+    for x in want["rivals"]:
+        assert f"| {x['domain']} | {x['n']}/{want['misses']} |" in body, \
+            f"요청문의 대신 인용된 곳이 집계와 다르다:\n{body}"
+    assert "가 먼저 받은 답" in body and "나 둘째 답" not in body, "발췌가 결정적이지 않다"
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    ev = src[src.index("def _ev_ai("):src.index("def _ev_aio(")]
+    assert "cited_domains" not in ev and "json.loads" not in ev and "miss_" not in ev, \
+        "요청문이 대신 인용된 곳을 다시 센다 — 정본은 scoring.ai_tally 다"
+
+    # ── 그리는 쪽: 질문 표가 읽는 칸이 행에 있고, 옛 칸을 안 읽는다 ──
+    view = (ctx["views"] / "ai.html").read_text("utf-8")
+    i = view.index("let AI_ROWS")
+    j = view.index("/* ── 검색 × AI 교차", i)
+    part = view[i:j]
+    assert "miss_domains" not in view and "miss_answer" not in view, \
+        "화면이 옛 표본 칸(miss_*)을 읽는다 — 서버는 더 안 싣는다"
+    read = set(re.findall(r"\br\.(\w+)", part))
+    assert {"rivals", "excerpts"} <= read, f"화면이 새 칸을 안 읽는다: {sorted(read)}"
+    assert read <= set(row), f"화면이 읽는데 질문 행에 없는 칸: {sorted(read - set(row))}"
+    eng = next(iter(row["by_engine"].values()))
+    assert set(re.findall(r"\bs\.(\w+)", part)) <= set(eng) | set(row), "엔진 몫에 없는 칸을 읽는다"
+    riv = set(re.findall(r"\bx\.(\w+)", part))
+    assert riv and riv <= set(want["rivals"][0]), f"대신 인용된 곳 칸이 어긋났다: {sorted(riv)}"
+
+
+
+def test_seam_28_ai_visits_fields_and_names():
+    """28) "AI 에서 온 방문" — 서버가 접은 칸을 화면이 읽고, 요청문이 그 자리를 이름으로 부른다.
+
+    이음매가 둘이다. (가) 화면(views/ai.html 의 AI_visits)은 d.ai_referrals 의 하위 칸
+    (r.source·p.sources·m.hosts …)을 읽는다. 최상위 키는 10번이 보지만 안의 칸은 아무도
+    안 본다 — dashboard._ai_referrals 가 칸 이름을 바꾸면 화면은 undefined 를 0 으로
+    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용] 화면의 'AI 에서 온 방문'" 처럼 화면·
+    섹션 이름을 적는다. 정본은 뷰 쪽(view-def title, 섹션 h2)이라 대조한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    import dashboard
+
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "function AI_visits(" in src, "ai.html 에 AI_visits 가 없다 — 이 검사가 헛돈다"
+    body = src[src.index("function AI_visits("):]
+    body = body[:body.index("\n}\n")]
+    read = {v: set(re.findall(rf"\b{v}\.([a-zA-Z_]\w*)", body)) for v in ("r", "p", "m")}
+    assert all(read.values()), f"AI_visits 가 읽는 칸을 못 찾았다 — 검사가 헛돈다: {read}"
+
+    # 실물 — 행 하나를 둔 Brain 에서 dashboard._ai_referrals 를 돌린다
+    import sqlite3 as _sq
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    db.write_ga4_ai_referrals(c, 1, "2026-01-01", 28, ["chatgpt.com"],
+                              [("chatgpt.com", "/a", 3, 1)])
+    got = dashboard._ai_referrals(c, 1)
+    c.close()
+    made = {"r": set(got["ai_referrals"][0]), "p": set(got["ai_referral_pages"][0]),
+            "m": set(got["ai_referral_meta"])}
+    for v, names in read.items():
+        assert names <= made[v], f"화면이 {v}. 로 읽는데 서버가 안 싣는 칸: {sorted(names - made[v])}"
+
+    # (나) 요청문이 부르는 이름 — 화면 제목과 섹션 h2
+    defs = _view_defs(ctx["views"])
+    for vid, title in brief.SCREEN_TITLES.items():
+        assert vid in defs, f"요청문이 없는 화면을 가리킨다: {vid}"
+        assert defs[vid]["title"] == title, \
+            f"요청문은 [{title}] 라는데 화면 제목은 {defs[vid]['title']!r}"
+    sid, stitle = brief.AI_VISITS_SECTION
+    assert sid in defs["ai"]["sections"], f"요청문이 가리키는 섹션 {sid} 가 ai view-def 에 없다"
+    h2 = re.search(rf'<section id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)
+    assert h2 and h2.group(1).strip() == stitle, \
+        f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 
 
 if __name__ == "__main__":

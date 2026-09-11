@@ -249,6 +249,33 @@ def discover_seeds(home: str) -> tuple[list[str], str, robotparser.RobotFilePars
     return [normalize(home)], "home", rp, raw_txt
 
 
+LLMS_HEAD = 400      # 앞부분만 남긴다 — 무엇을 소개하는 파일인지 알아볼 만큼
+
+
+def probe_llms_txt(home: str) -> dict:
+    """/llms.txt 한 번. {"found": 1|0|None, "bytes", "head"}.
+
+    세 상태를 가른다 — found=None 은 "모른다"(연결 실패·5xx·401/403: 막혔거나 서버가
+    아팠을 뿐 파일이 없다는 증거가 아니다), 0 은 "봤고 없다"(404/410, 또는 200 인데
+    HTML 이 온 소프트 404 — 없는 주소를 홈으로 돌려보내는 사이트가 흔하다), 1 은 있다.
+
+    구글은 이 파일을 쓰지 않는다. 그래서 기회 종류로 만들지 않고, 요청문과 봇 근거에
+    "있다/없다" 한 줄로만 싣는다 — 없는 것을 인용 공백의 원인으로 부르면 오진이다.
+    """
+    r = fetch(urljoin(home, "/llms.txt"))
+    st = r.get("status")
+    if st in (404, 410):
+        return {"found": 0, "bytes": None, "head": None}
+    if st != 200:
+        return {"found": None, "bytes": None, "head": None}
+    text = r.get("text") or ""
+    head = text.lstrip()[:200].lower()
+    if "html" in (r.get("content_type") or "").lower() or head.startswith(("<!doctype", "<html")):
+        return {"found": 0, "bytes": None, "head": None}
+    return {"found": 1, "bytes": r.get("bytes") or len(text.encode()),
+            "head": text.strip()[:LLMS_HEAD] or None}
+
+
 # ── 크롤 ────────────────────────────────────────────────────────────────────
 def crawl(seeds, home: str, *, limit: int, max_depth: int,
           rp=None, throttle: float = 0.0) -> tuple[list[dict], list[dict], list[list[str]]]:
@@ -514,6 +541,9 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             pages, links, chains = crawl(seeds, home, limit=limit, max_depth=depth,
                                          rp=rp, throttle=st.throttle)
             save(conn, run_id, pages, links)
+            # robots.txt 를 받은 김에 /llms.txt 도 한 번 — 크롤 뒤에 받는 이유는 순서다:
+            # 시드가 홈일 때 robots.txt 다음 요청은 홈이어야 한다(자체점검이 못 박는다).
+            db.write_llms_txt(conn, run_id, probe_llms_txt(home))
             n_issues = derive_issues(conn, run_id, home=home, chains=chains)
             fetched = sum(1 for x in pages if x["redirect_to"] is None)
             conn.execute("UPDATE crawl_runs SET finished_at=?, pages=?, issues=? WHERE id=?",
@@ -735,11 +765,18 @@ def _selfcheck() -> None:
         # ── 2회차: /dead 가 살아나고, /orphan 에 noindex 가 붙는다 ────
         site2 = _site()
         site2["https://site.kr/dead"] = (200, _html("살아남"), "text/html")
+        site2["https://site.kr/llms.txt"] = (200, "# 사이트\n> 소개 한 줄\n", "text/plain")
         site2["https://site.kr/orphan"] = (
             200, _html("고아", h1="고아", head='<meta name="robots" content="noindex">'),
             "text/html")
         r, log = run(site=site2)
         run2 = conn.execute("SELECT id FROM crawl_runs ORDER BY id DESC LIMIT 1").fetchone()["id"]
+        # llms.txt — 1회차는 404(봤고 없음), 2회차는 있음. 회차에 그대로 남는다
+        l1, l2 = (conn.execute("SELECT llms_txt_found f, llms_txt_bytes b, llms_txt_head h"
+                               " FROM crawl_runs WHERE id=?", (i,)).fetchone()
+                  for i in (run1["id"], run2))
+        assert (l1["f"], l1["b"], l1["h"]) == (0, None, None), dict(l1)
+        assert l2["f"] == 1 and l2["b"] > 0 and l2["h"].startswith("# 사이트"), dict(l2)
         diff = compare(conn, pid)
         assert diff["prev_run_id"] == run1["id"], diff
         new = {(i["kind"], i["url"]) for i in diff["new"]}
@@ -763,6 +800,25 @@ def _selfcheck() -> None:
     finally:
         globals()["fetch"] = orig_fetch
         conn.close()
+
+    # llms.txt 세 상태 — 있음(1)·봤고 없음(0)·모름(None). 뭉치면 못 받은 것을 "없다" 로 말한다
+    def probe(status, text="", ctype="text/plain", error=None):
+        globals()["fetch"] = lambda url: {"final_url": url, "status": status, "chain": [],
+                                          "text": text, "bytes": len(text.encode()),
+                                          "content_type": ctype, "error": error}
+        try:
+            return probe_llms_txt("https://s.kr/")
+        finally:
+            globals()["fetch"] = orig_fetch
+    assert probe(200, "# 이름\n" + "가" * 500)["found"] == 1
+    assert len(probe(200, "# 이름\n" + "가" * 500)["head"]) == LLMS_HEAD
+    assert probe(404) == {"found": 0, "bytes": None, "head": None}
+    assert probe(410)["found"] == 0
+    # 없는 주소를 홈으로 돌려보내는 사이트 — 200 이지만 llms.txt 가 아니다
+    assert probe(200, "<!doctype html><title>홈</title>", "text/html")["found"] == 0
+    assert probe(200, "<html>홈</html>", "")["found"] == 0
+    for st in (None, 403, 500, 503):      # 연결 실패·거부·서버 오류는 파일 유무의 증거가 아니다
+        assert probe(st, error="x" if st is None else None)["found"] is None, st
 
     # 파서: 앵커·nofollow·외부/내부 판정 재료
     p = parse_page("https://s.kr/x", '<html><head><title>T</title></head><body>'

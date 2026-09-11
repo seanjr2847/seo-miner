@@ -133,19 +133,114 @@ def test_fix_page_without_known_page_leaves_url_slot():
     assert "## 지금 이 페이지 상태" not in t  # 모르는 페이지의 상태를 지어내지 않는다
 
 
+# scoring.ai_tally 가 내는 질문 행의 모양 그대로 — 요청문은 여기서 다시 세지 않는다
+def _ai_row(**over):
+    r = {"prompt": "무슨 도구가 좋아?", "category": "문제해결", "checks": 6, "cited": 0,
+         "mentioned": 1, "named_only": 1, "recommended": None, "rec_checks": 0, "misses": 6,
+         "engines": "chatgpt,perplexity",
+         "rivals": [{"domain": "rival.example", "n": 4, "third_party": False},
+                    {"domain": "reddit.com", "n": 1, "third_party": True}],
+         "third_share": 0.2, "lean": "sites",
+         "excerpts": {"chatgpt": "첫 줄 둘째 줄"},
+         "by_engine": {"chatgpt": {"checks": 3, "cited": 0, "mentioned": 1, "named_only": 1,
+                                   "misses": 3, "rivals": [{"domain": "rival.example", "n": 3}]},
+                       "perplexity": {"checks": 3, "cited": 0, "mentioned": 0, "named_only": 0,
+                                      "misses": 3, "rivals": [{"domain": "reddit.com", "n": 1}]}}}
+    r.update(over)
+    return r
+
+
 def test_ai_gap_quotes_rival_answer_and_switches_shape_by_page():
-    row = {"prompt": "무슨 도구가 좋아?", "checks": 6, "cited": 0, "mentioned": 1,
-           "engines": "chatgpt,perplexity", "miss_domains": '["rival.example"]',
-           "miss_answer": "첫 줄\n둘째 줄"}
+    row = _ai_row()
     t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [row]}, "ko-KR")
     assert t.startswith(brief.SHAPES["new_content"]["intro"])     # 걸린 페이지 없음 → 새 글
     assert "질문 (챗봇에 실제로 물은 문장): 무슨 도구가 좋아?" in t
-    assert "AI chatgpt,perplexity · 답변 6건 중 인용 0건, 이름만 1건" in t
-    assert "대신 인용된 곳: rival.example" in t
-    assert "  > 첫 줄\n  > 둘째 줄" in t
+    assert "AI chatgpt,perplexity · 답변 6건 중 인용 0/6 (n=6), 이름만 1건" in t, t
+    # 대신 인용된 곳은 도메인별 횟수와 갈래 — 표본 하나에서 고른 도메인 목록이 아니다
+    assert "| rival.example | 4/6 | 경쟁사·일반 사이트 |" in t, t
+    assert "| reddit.com | 1/6 | 제3자 플랫폼 |" in t, t
+    assert "- chatgpt:\n  > 첫 줄 둘째 줄" in t, t
+    assert "여기 없는 것을 우리가 답해야 인용됩니다" in t
     ctx = {"ai_by_prompt": [row], "query_pages": {"무슨 도구가 좋아?": _pages(URL)}}
     t2 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), ctx, "ko-KR")
     assert t2.startswith(brief.SHAPES["fix_page"]["intro"])       # 걸린 페이지 있음 → 고친다
+
+
+def test_ai_gap_near_miss_and_thin_sample_are_said_as_rate():
+    """판정이 "인용 0회"에서 비율·표본 수로 바뀌었다 — 요청문도 그 글로 말한다."""
+    near = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"),
+                      {"ai_by_prompt": [_ai_row(cited=1, misses=5)]}, "ko-KR")
+    assert "인용 1/6 (n=6)" in near and "표본 부족" not in near, near
+    thin = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"),
+                      {"ai_by_prompt": [_ai_row(checks=2, misses=2, by_engine={})]}, "ko-KR")
+    assert "인용 0/2 (n=2) · 표본 부족" in thin, thin
+    assert "- 표본 부족: 답변이 2건뿐입니다" in thin, thin
+
+
+def test_ai_gap_splits_by_engine():
+    """엔진을 뭉치면 "chatgpt 는 이름을 내는데 perplexity 는 모른다"가 안 보인다."""
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row()]},
+                   "ko-KR")
+    assert "| 엔진 | 인용 | 이름만 | 표본 | 대신 인용된 곳 |" in t, t
+    assert "| chatgpt | 0/3 | 1 | 3 | rival.example 3/3 |" in t, t
+    assert "| perplexity | 0/3 | 0 | 3 | reddit.com 1/3 |" in t, t
+    # 출처를 고르는 경향 한 줄 — 경향이라고 말한다(규칙이라고 과장하지 않는다)
+    assert "Perplexity 는 최신이고 권위 있는 출처" in t and "규칙은 아닙니다" in t, t
+    # 모르는 엔진에는 아무 말도 안 붙인다
+    solo = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row(
+        by_engine={"claude": {"checks": 3, "cited": 0, "mentioned": 0, "misses": 3}})]}, "ko-KR")
+    assert "| claude | 0/3 |" in solo and "출처를 고르는 방식" not in solo, solo
+
+
+def test_ai_gap_third_party_goes_to_presence_and_forbids_spam():
+    """대신 인용된 곳이 대부분 제3자 플랫폼이면 '내 페이지 고치기'가 아니다."""
+    row = _ai_row(lean="third_party", third_share=0.8,
+                  rivals=[{"domain": "reddit.com", "n": 5, "third_party": True}])
+    ctx = {"ai_by_prompt": [row], "query_pages": {"무슨 도구가 좋아?": _pages(URL)}}
+    b = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="third_party"), ctx)
+    assert b["shape"] == "presence", b["shape"]                  # 페이지가 있어도
+    assert "지금 이 페이지 상태" not in b["body"]
+    assert "80% 가 제3자 플랫폼입니다" in b["body"], b["body"]
+    assert "여기 없는 것을 우리가 답해야" not in b["body"]      # 페이지로 푸는 말이 아니다
+    # 고친 뒤 볼 것 — 플랫폼을 거쳐 온 방문은 'AI 에서 온 방문'에 안 잡힌다. 그 수를
+    # 보라고 하면 일이 됐는데도 실패로 읽힌다(GA4 가 연결돼 있어도 마찬가지다).
+    b2 = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="third_party"),
+                     {**ctx, "ai_referral_meta": {"date": "2026-06-01", "period_days": 28},
+                      "ai_referral_pages": []})["body"]
+    assert "그 플랫폼 유입으로 잡혀" in b2, b2
+    assert "새로 올린 페이지의 세션이 느는지" not in b2, b2
+    tail = brief.tails("ko-KR")["presence"]
+    assert "스팸·가짜 후기·대량 게시" in tail and "진정성" in tail, tail
+    assert "seo-presence-" in tail                               # 산출물 파일명 조각
+    # 경쟁사·일반 사이트가 대부분이면 예전 꼴 그대로
+    assert brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="sites"),
+                       ctx)["shape"] == "fix_page"
+
+
+def test_ai_gap_ladder_on_recommendation_questions_only():
+    """인용 ≠ 추천. 추천·비교 질문에서만 사다리를 싣고, 안 잰 추천은 0 이라 하지 않는다."""
+    rec = _ai_row(category="추천", mentioned=4, recommended=0, rec_checks=6)
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [rec]}, "ko-KR")
+    assert "인용 0/6 · 이름 나옴 4/6 · 추천 목록 0/6" in t, t
+    assert "휴리스틱" in t
+    assert "추천은 내 글보다 웹 전반의 평판" in t, t
+    old = _ai_row(category="비교", recommended=None, rec_checks=0)
+    t2 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [old]}, "ko-KR")
+    assert "추천 목록 — (이 판정이 생기기 전에 받은 답이라 안 봤습니다)" in t2, t2
+    assert "추천 목록 0/" not in t2 and "웹 전반의 평판" not in t2
+    t3 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row()]},
+                    "ko-KR")
+    assert "가시성 사다리" not in t3                             # 문제해결 질문에는 없다
+
+
+def test_ai_gap_reads_the_row_that_raised_the_opportunity():
+    """기회를 세운 행(ai_gap_rows — 끝난 회차)이 최신 회차 행(ai_by_prompt)보다 먼저다.
+    최신 회차가 끊겼으면 둘이 다른 표본을 봐서, 요청문이 기회 근거와 다른 수를 말한다."""
+    ctx = {"ai_gap_rows": [_ai_row(cited=1, measured_at="2026-09-01T00:00:00Z")],
+           "ai_by_prompt": [_ai_row(checks=1, cited=0)]}
+    t = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), ctx, "ko-KR")
+    assert "인용 1/6 (n=6)" in t and "(AI 확인 2026-09-01)" in t, t
+    assert "n=1" not in t, t
 
 
 def test_technical_kinds_carry_google_verdict_and_device_numbers():
@@ -466,36 +561,187 @@ def test_serp_table_replaces_the_paste_ask_instead_of_doubling_it():
 
 
 def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
-    """막힌 크롤러는 콘텐츠 문제가 아니다.
+    """막힌 검색·인용 크롤러는 콘텐츠 문제가 아니다 — 학습 크롤러 차단은 문제가 아니다.
 
-    ClaudeBot 이 robots.txt 로 막혀 있으면 그 엔진에서는 무엇을 써도 인용되지
-    않는다. 그 상태에서 인용 공백 요청문이 "이 내용을 채우세요" 라고만 하면 두
-    기회가 서로 모순되는 말을 한다.
+    OAI-SearchBot 이 robots.txt 로 막혀 있으면 ChatGPT 검색 답변의 출처로 실리기
+    어렵다. 그 상태에서 인용 공백 요청문이 "이 내용을 채우세요" 라고만 하면 두
+    기회가 서로 모순되는 말을 한다. 거꾸로 GPTBot(학습)만 막힌 사이트에 "먼저 볼
+    것" 을 달면 오진이다 — 학습만 막는 것은 권장되는 중간 지점이다.
     """
-    ctx = {"ai_bots": [{"bot": "ClaudeBot", "rule": "Disallow: /"},
-                       {"bot": "GPTBot", "rule": None}]}
-    b = brief.build(_opp("ai_bot_blocked", "ClaudeBot"), ctx)
+    def bot(ua, purpose, engine, rule):
+        return {"bot": ua, "purpose": purpose, "engine": engine, "vendor": None, "rule": rule}
+    ask = {"ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
+                             "cited": 0, "mentioned": 1}]}
+    ctx = {"ai_bots": [bot("OAI-SearchBot", "search", "ChatGPT 검색", "Disallow: /"),
+                       bot("GPTBot", "training", "OpenAI 모델 학습", "Disallow: /"),
+                       bot("ClaudeBot", "training", "Claude 모델 학습", None)]}
+    b = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), ctx)
     assert b["shape"] == "technical", b["shape"]
     body = b["body"]
-    assert "막힌 AI 크롤러 (robots.txt 의 User-agent): ClaudeBot" in body, body
-    # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도 같은 표에 놓는다
-    assert "| ClaudeBot | 차단 | Disallow: / |" in body, body
-    assert "| GPTBot | 허용 |" in body, body
+    assert "막힌 AI 크롤러 (robots.txt 의 User-agent): OAI-SearchBot" in body, body
+    # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도, 용도도 같은 표에 놓는다
+    assert "| OAI-SearchBot | 검색·인용 색인 | ChatGPT 검색 | 차단 — 인용 막힘 | Disallow: / |" in body, body
+    assert "| GPTBot | 학습 | OpenAI 모델 학습 | 학습만 막음 — 인용과 무관(권장되는 중간 지점) |" in body, body
+    assert "| ClaudeBot | 학습 | Claude 모델 학습 | 허용 |" in body, body
+    assert "검색·인용용 1개가 막혀 있습니다 (학습용 1개 차단은 인용과 무관)" in body, body
     assert "여는 것이 늘 정답은 아닙니다" in body, "의도적 차단을 되돌리라고 시킨다"
     # 글을 고치라고 하지 않는다
     assert "막힌 채로는 고쳐도 안 읽힙니다" in body, body
+    # 사이트 전체 설정의 일이다 — 대상이 봇인데 "고칠 페이지를 적어 달라"고 하지 않는다
+    assert "- 고칠 자리: robots.txt" in body, body
+    assert "고칠 페이지를 직접 적어" not in body, body
+    assert "빙 검색 전체" not in body, body
 
-    # 인용 공백 요청문이 같은 사실을 먼저 말한다
-    gap = brief.build(_opp("ai_citation_gap", "질문"), {
-        **ctx, "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
-                                 "cited": 0, "mentioned": 1}]})["body"]
-    assert "robots.txt 가 ClaudeBot 를 막고 있습니다" in gap, gap
-    # 안 막혀 있으면 그 줄이 없다 — 없는 문제를 만들지 않는다
-    clean = brief.build(_opp("ai_citation_gap", "질문"), {
-        "ai_bots": [{"bot": "GPTBot", "rule": None}],
-        "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
-                          "cited": 0, "mentioned": 1}]})["body"]
-    assert "먼저 볼 것" not in clean, clean
+    # 인용 공백 요청문이 같은 사실을, 엔진 이름으로 먼저 말한다 — 학습 봇은 거기 없다
+    gap = brief.build(_opp("ai_citation_gap", "질문"), {**ctx, **ask})["body"]
+    assert "robots.txt 가 OAI-SearchBot(ChatGPT 검색) 를 막고 있습니다" in gap, gap
+    assert "GPTBot" not in gap, gap
+    assert "무엇을 써도 인용되지 않습니다" not in gap, "과장 — 학습·검색을 안 가르던 옛 단정"
+    # 학습 봇만 막혀 있으면 그 줄이 없다 — 없는 문제를 만들지 않는다
+    training_only = brief.build(_opp("ai_citation_gap", "질문"), {
+        "ai_bots": [bot("GPTBot", "training", "OpenAI 모델 학습", "Disallow: /"),
+                    bot("CCBot", "training", "Common Crawl", "Disallow: /")], **ask})["body"]
+    assert "먼저 볼 것" not in training_only, training_only
+    # 용도 모름(옛 꼴 config)도 단정하지 않는다
+    legacy = brief.build(_opp("ai_citation_gap", "질문"), {
+        "ai_bots": [bot("GPTBot", None, None, "Disallow: /")], **ask})["body"]
+    assert "먼저 볼 것" not in legacy, legacy
+    assert "| GPTBot | 모름 | — | 차단 — 용도 모름 |" in brief.build(
+        _opp("ai_bot_blocked", "GPTBot"), {"ai_bots": [bot("GPTBot", None, None, "Disallow: /")]})["body"]
+
+    # Bingbot 은 AI 만의 문제가 아니다
+    bing = brief.build(_opp("ai_bot_blocked", "Bingbot"), {"ai_bots": [
+        bot("Bingbot", "search", "Bing 검색·Copilot", "Disallow: /")]})["body"]
+    assert "빙 검색 전체에서" in bing, bing
+
+
+def test_llms_txt_three_states_and_google_caveat():
+    """llms.txt — 있음·봤고 없음·모름을 가른다. 모르면 아무 말도 안 한다.
+
+    있다/없다를 말할 때는 **구글은 이 파일을 안 쓴다**를 같은 줄에 붙인다. 안 붙이면
+    "만들면 AI 요약에 뜬다" 로 읽히고, 없는 것이 인용 공백의 원인처럼 보인다.
+    """
+    ask = {"ai_bots": [], "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt",
+                                             "checks": 4, "cited": 0, "mentioned": 1}]}
+    has = brief.build(_opp("ai_citation_gap", "질문"),
+                      {**ask, "llms_txt": {"found": True, "bytes": 1234, "head": "# x"}})["body"]
+    assert "- llms.txt: 있음 (1,234바이트)." in has, has
+    assert "구글은 이 파일을 쓰지 않습니다" in has and "ChatGPT·Claude·Perplexity" in has, has
+    none = brief.build(_opp("ai_citation_gap", "질문"),
+                       {**ask, "llms_txt": {"found": False, "bytes": None, "head": None}})["body"]
+    assert "- llms.txt: 없음." in none and "원인으로 보지는 않습니다" in none, none
+    assert "구글은 이 파일을 쓰지 않습니다" in none, none
+    unknown = brief.build(_opp("ai_citation_gap", "질문"), {**ask, "llms_txt": None})["body"]
+    assert "llms.txt" not in unknown, "못 받은 것을 있다/없다로 말한다"
+    # 봇 근거에도 같은 줄
+    botb = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), {
+        "ai_bots": [{"bot": "OAI-SearchBot", "purpose": "search", "engine": "ChatGPT 검색",
+                     "rule": "Disallow: /"}],
+        "llms_txt": {"found": False}})["body"]
+    assert "- llms.txt: 없음." in botb, botb
+
+
+def test_aio_brief_follows_rank_and_never_asks_for_faq_markup():
+    """구글 AI 요약은 AI 전용 마크업이 필요 없고 출처를 순위 시스템에서 고른다.
+
+    예전 처방은 순위와 무관하게 "직답 블록 + Article·FAQ 구조화 데이터"였다 — 40위인
+    검색어에 필요한 건 직답 블록이 아니라 순위다. 1페이지 안/밖으로 처방이 갈리고,
+    어느 쪽도 FAQ 구조화 데이터를 산출물로 시키지 않는다.
+    """
+    ctx = {"query_pages": {"검색어": _pages(URL)}}
+    inside = brief.build(_opp("aio_exposure", "검색어", band="page1"), ctx)["body"]
+    outside = brief.build(_opp("aio_exposure", "검색어", band="beyond"), ctx)["body"]
+    assert "이미 1페이지 안인데" in inside and "E-E-A-T" in inside, inside
+    assert "순위가 먼저입니다" in outside and "1페이지에 들기 위해" in outside, outside
+    assert "순위가 먼저입니다" not in inside and "E-E-A-T" not in outside
+    for body in (inside, outside):
+        want = body.split("## 만들어 줄 것")[1].split("##")[0]
+        assert "FAQ" not in want and "구조화 데이터" not in want, want
+        assert "직답 블록" not in want, want
+        # 조각내기·AI 전용 마크업을 하지 말라고 말한다 — 안 하던 걸 시키지 않는 것만으론
+        # 모자라다(직답 블록을 만들라던 요청문이 이미 나가 있다)
+        assert "AI 전용" in body, body
+    for b in scoring.AIO_BANDS:
+        p = scoring.kind_play("aio_exposure", band=b)
+        assert not any("FAQ" in x for x in p["acts"] + p["deliver"]), (b, p)
+
+
+def test_aio_brief_names_who_google_cited_instead():
+    """챗봇 인용 공백 요청문은 "누가 대신 인용됐나"를 말하는데 구글 AI 요약은 못 했다 —
+    수집기가 인용 도메인을 0/1 로 접고 버렸기 때문이다. 이제 그 목록을 싣는다."""
+    row = {"keyword": "검색어", "pos": None, "url": None, "features": ["ai_overview"],
+           "aio": 1, "aio_cited": 0, "aio_domains": ["rival.example", "wiki.example"]}
+    # 화면용 ranks(30개로 잘림)에 없어도 aio_gap_ranks 에서 찾는다
+    body = brief.build(_opp("aio_exposure", "검색어"),
+                       {"ranks": [], "aio_gap_ranks": {"검색어": row}})["body"]
+    assert "구글 AI 요약이 대신 인용한 곳: rival.example, wiki.example" in body, body
+    assert "순위 없음" in body, body
+    # 옛 조회(목록을 안 남기던 때)는 아무 말도 안 한다 — "없다"고 지어내지 않는다
+    old = brief.build(_opp("aio_exposure", "검색어"),
+                      {"aio_gap_ranks": {"검색어": {**row, "aio_domains": None}}})["body"]
+    assert "대신 인용한 곳" not in old and "뽑지 못했습니다" not in old, old
+    # 요약은 떴는데 인용을 못 뽑았다([])는 그렇다고 말한다
+    empty = brief.build(_opp("aio_exposure", "검색어"),
+                        {"aio_gap_ranks": {"검색어": {**row, "aio_domains": []}}})["body"]
+    assert "뽑지 못했습니다" in empty and "대신 인용한 곳:" not in empty, empty
+
+
+def test_fanout_questions_reach_fix_new_and_aio_briefs():
+    """AI 는 사용자가 친 질문 하나가 아니라 관련 질문 묶음으로 찾는다 — 그 묶음이 구글이
+    같이 보여 준 질문·연관 검색어다. 수집기는 내내 받아 왔는데 키워드 후보로만 넣고
+    어느 검색어에서 나왔는지를 버렸다."""
+    fan = {"검색어": [{"kind": "paa", "text": "비용은 얼마인가요"},
+                      {"kind": "paa", "text": "부작용이 있나요"},
+                      {"kind": "related", "text": "검색어 후기"}]}
+    head = "## 함께 답해야 할 질문 (구글이 같이 보여 준 것)"
+    fix = brief.build(_opp("striking_distance", "검색어"),
+                      {"query_pages": {"검색어": _pages(URL)}, "serp_fanout": fan})["body"]
+    assert head in fix and "  - 비용은 얼마인가요" in fix, fix
+    assert "- 연관 검색어: 검색어 후기" in fix, fix
+    new = brief.build(_opp("content_gap", "검색어", gap_kind="missing"), {"serp_fanout": fan})
+    assert new["shape"] == "new_content" and head in new["body"], new["body"]
+    aio = brief.build(_opp("aio_exposure", "검색어"), {"serp_fanout": fan})["body"]
+    assert head in aio and "부작용이 있나요" in aio, aio
+    # 상위와 견줄 일이 아닌 꼴에는 안 붙는다
+    assert head not in brief.build(_opp("cannibalization", "검색어"), {"serp_fanout": fan})["body"]
+    # 수집이 안 됐으면(키 없음·빈 목록) 블록이 없다 — 없는 것을 있는 척하지 않는다
+    for ctx in ({}, {"serp_fanout": {}}, {"serp_fanout": {"검색어": []}},
+                {"serp_fanout": {"다른 검색어": fan["검색어"]}}):
+        assert head not in brief.build(_opp("striking_distance", "검색어"), ctx)["body"], ctx
+
+
+def test_ai_visits_line_only_on_ai_kinds():
+    """AI 종류 요청문에만 'AI 에서 온 방문' 줄과 '고친 뒤 볼 것' 이 붙는다.
+
+    인용을 고치고 끝나면 측정 → 수정 → 재측정이 AI 쪽에서만 안 닫힌다. 반대로 검색어
+    요청문에 AI 방문을 붙이면 상관없는 숫자가 근거 행세를 한다. 방문 줄은 그 페이지로
+    **들어온 것이 있을 때만** — GA4 매칭 규칙대로 경로로 짝짓는다.
+    """
+    meta = {"date": "2026-09-01", "period_days": 28, "hosts": ["chatgpt.com"]}
+    ctx = {"query_pages": {"검색어": _pages(URL), "질문": _pages(URL)},
+           "ai_referral_meta": meta,
+           "ai_referral_pages": [{"page": "/a", "sessions": 12, "key_events": 1.0,
+                                  "sources": {"chatgpt.com": 9, "perplexity.ai": 3}}]}
+    line = "AI 답변의 링크를 타고 이 페이지로 들어온 방문: 세션 12 · 키 이벤트 1"
+    gap = brief.build(_opp("ai_citation_gap", "질문"), ctx)["body"]
+    assert line in gap and "(chatgpt.com 9, perplexity.ai 3)" in gap, gap
+    assert "GA4 2026-09-01 기준 최근 28일" in gap, gap
+    assert "## 고친 뒤 볼 것" in gap and "'AI 에서 온 방문'에 이 페이지의 세션이" in gap, gap
+    aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
+    assert line in aio, aio
+    # 구글 AI 요약의 클릭은 GA4 AI 유입에 안 잡힌다 — 거기서 늘기를 기다리게 하지 않는다
+    assert "구글 유기 검색으로 잡혀" in aio and "'AI 에서 온 방문'에" not in aio, aio
+    for k in ("striking_distance", "ctr_gap", "content_gap"):
+        b = brief.build(_opp(k, "검색어"), ctx)["body"]
+        assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" not in b, (k, b)
+    # 쟀는데 그 페이지로는 0 — 방문 줄은 없고, 볼 자리는 그대로 말한다
+    none_here = {**ctx, "ai_referral_pages": [{"page": "/other", "sessions": 5,
+                                               "key_events": 0, "sources": {}}]}
+    b = brief.build(_opp("ai_citation_gap", "질문"), none_here)["body"]
+    assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" in b, b
+    # 안 쟀으면(GA4 미연결) 연결하면 잰다고 말한다 — "0" 이라고 하지 않는다
+    b = brief.build(_opp("ai_citation_gap", "질문"), {"query_pages": ctx["query_pages"]})["body"]
+    assert "GA4 를 연결하면" in b and "AI 답변의 링크를 타고" not in b, b
 
 
 def test_trust_signals_are_asked_for_but_never_invented():
@@ -593,6 +839,114 @@ def test_new_content_stops_at_blueprint_and_asks_for_approval():
     t = brief.tails("ko-KR")["new_content"]
     assert "멈춥니다" in t and "승인하면" in t and "번호로 묻고" in t
     assert "본문 단계에서" in t          # '만들어 줄 것'은 구간 배정까지만
+
+
+_FLAT = dict(tables=0, lists=0, h2_questions=0, lead_words=0, author="")   # 추출성 칸을 읽은 새 행
+
+
+def _diag(body: str) -> str:
+    """요청문의 '진단 — 고쳐야 할 것' 구간만. 산출물·상태 줄과 섞어 보면 늘 참인 검사가 된다."""
+    return body.split("## 진단 — 고쳐야 할 것")[1].split("\n## ")[0] \
+        if "## 진단 — 고쳐야 할 것" in body else ""
+
+
+def test_extract_diagnosis_rides_only_on_ai_kinds():
+    """"인용될 블록이 있는가" 는 AI 가 이 페이지를 뽑아 가느냐가 걸린 기회에서만 말한다.
+
+    page_advice 에 넣으면 클릭률·순위 요청문마다 표·질문형 H2 지적이 붙어 부풀어
+    오른다. 그리고 구글 AI 요약과 챗봇은 **다른 일**을 시킨다 — 구글은 "AI 용으로
+    조각내지 말고 사람을 위한 구조로" 라는 입장이라, 같은 문구를 쓰면 구글 쪽 요청문이
+    AI 전용 블록을 만들라고 시키게 된다.
+    """
+    qp = {"검색어": _pages(URL)}
+    ctx = {"query_pages": qp, "page_audits": {URL: _audit(**_FLAT)}}
+    bot = brief.build(_opp("ai_citation_gap", "검색어"), ctx)["body"]
+    aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
+    ctr = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
+
+    assert "[추출성]" in _diag(bot) and "[저자]" in _diag(bot), bot
+    assert "[읽기 구조]" in _diag(aio) and "[추출성]" not in _diag(aio), aio
+    for tag in ("[추출성]", "[읽기 구조]", "[저자]"):
+        assert tag not in ctr, f"일반 요청문에 {tag} 가 붙었다"
+    # 챗봇 = 추출 블록, 구글 = 사람용 구조 (AI 전용 블록을 시키지 않는다)
+    assert "챗봇은 문단보다 표·목록을 그대로 인용합니다" in _diag(bot), bot
+    assert "AI 용 블록을 따로 만들지 않습니다" in _diag(aio), aio
+    assert "AI 용 블록" not in _diag(bot) and "챗봇" not in _diag(aio)
+    # 진단이 선 자리는 산출물도 선다 — 못 재는 것(출처가 진짜인지)은 여기로 간다
+    want_bot = bot.split("## 만들어 줄 것")[1]
+    want_aio = aio.split("## 만들어 줄 것")[1]
+    assert brief.DELIVER_BY_TAG["추출성"] in want_bot and "[출처 확인]" in want_bot, want_bot
+    assert brief.DELIVER_BY_TAG["읽기 구조"] in want_aio, want_aio
+    assert brief.DELIVER_BY_TAG["추출성"] not in want_aio
+    # 사실 줄은 어느 요청문에나 — 판정만 AI 종류 전용이다
+    assert "- 본문 구조: 표 0 · 목록 0 · 질문형 H2 0/3 · 첫 문단 (<p> 문단 못 찾음) · " \
+           "저자 (없음)" in ctr, ctr
+
+    # 채워진 페이지에는 아무 말도 안 한다
+    full = {"query_pages": qp, "page_audits": {URL: _audit(
+        tables=1, lists=2, h2_questions=2, lead_words=48, author="홍길동")}}
+    good = brief.build(_opp("ai_citation_gap", "검색어"), full)["body"]
+    assert "[추출성]" not in good and "[저자]" not in good, good
+    assert "표 1 · 목록 2 · 질문형 H2 2/3 · 첫 문단 48단어 · 저자 홍길동" in good, good
+
+
+def test_extract_fields_absent_on_old_rows_and_doubtful_on_js_shells():
+    """옛 감사 행(칸 NULL)에 "표 0개·저자 없음" 을 지어내지 않는다. JS 로 그리는
+    페이지는 렌더 전 값이라 판정 대신 확인부터 시킨다 — 구조화 데이터와 같은 규칙."""
+    qp = {"검색어": _pages(URL)}
+    old = brief.build(_opp("ai_citation_gap", "검색어"),
+                      {"query_pages": qp, "page_audits": {URL: _audit()}})["body"]
+    assert "[추출성]" not in old and "[저자]" not in old and "- 본문 구조:" not in old, old
+
+    spa = brief.build(_opp("ai_citation_gap", "검색어"), {"query_pages": qp, "page_audits": {
+        URL: _audit(js_shell=1, words=20, **_FLAT)}})["body"]
+    d = _diag(spa)
+    assert "[추출성] 지금: 정적 HTML 로는 본문 구조" in d, d
+    assert "표도 목록" not in d and "[저자]" not in d, "렌더 전 값을 사실로 판정했다"
+    assert "구조화 데이터·본문 구조는 렌더 전 값" in spa, spa
+
+
+def test_ai_kinds_judge_freshness_at_six_months_general_at_two_years():
+    """AI 답변은 최근 글을 고른다(6개월). 일반 기준(2년)을 그대로 쓰면 AI 쪽이 늦고,
+    6개월로 내리면 클릭률 요청문마다 갱신 지적이 붙는다. 한 요청문에 두 기준이
+    나란히 서지도 않는다 — 같은 tag 는 AI 기준이 이긴다."""
+    import datetime
+    assert scoring.AI_CONTENT_STALE_DAYS == 180 and scoring.STALE_DAYS == 730
+    qp = {"검색어": _pages(URL)}
+
+    def bodies(days):
+        d = str(datetime.date.today() - datetime.timedelta(days=days))
+        ctx = {"query_pages": qp, "page_audits": {URL: _audit(modified=d)}}
+        return (brief.build(_opp("ai_citation_gap", "검색어"), ctx)["body"],
+                brief.build(_opp("ctr_gap", "검색어"), ctx)["body"])
+
+    ai, ctr = bodies(300)
+    assert "[갱신]" in _diag(ai) and "챗봇은 최근 글을 출처로 고릅니다" in ai, ai
+    assert "[갱신]" not in ctr, "일반 요청문이 6개월 기준으로 갱신을 지적한다"
+    ai, ctr = bodies(800)
+    assert _diag(ai).count("[갱신]") == 1, _diag(ai)
+    assert "챗봇은 최근 글을" in _diag(ai), "AI 요청문에 2년 기준 문구가 남았다"
+    assert _diag(ctr).count("[갱신]") == 1, ctr
+    ai, _ = bodies(100)
+    assert "[갱신]" not in ai, ai
+
+
+def test_extract_tags_have_a_deliverable_and_stay_out_of_the_tech_aside():
+    """이음매: scoring.extract_advice 가 낼 수 있는 tag(판정 쪽) ↔ brief 의
+    DELIVER_BY_TAG·TECH_TAGS(말하는 쪽). tag 가 산출물 표에 없으면 진단만 서고 '만들어
+    줄 것'이 빈손이 되고, TECH_TAGS 에 들어가면 글의 일이 "이번 일은 아닙니다" 칸으로
+    밀려난다. 가능한 갈래(문단 없음·긴 문단·JS 껍데기·오래된 글)를 다 태워 모은다."""
+    import datetime
+    old = str(datetime.date.today() - datetime.timedelta(days=1000))
+    tags = set()
+    for kind in scoring.EXTRACT_KINDS:
+        for over in (dict(lead_words=0), dict(lead_words=scoring.LEAD_MAX_WORDS + 1),
+                     dict(js_shell=1)):
+            a = _audit(**{**_FLAT, **over, "modified": old})
+            tags |= {x["tag"] for x in scoring.extract_advice(a, kind)}
+    assert {"추출성", "읽기 구조", "저자", "갱신"} <= tags, tags      # 갈래를 다 태웠나
+    assert tags <= set(brief.DELIVER_BY_TAG), tags - set(brief.DELIVER_BY_TAG)
+    assert not tags & set(brief.TECH_TAGS), tags & set(brief.TECH_TAGS)
 
 
 if __name__ == "__main__":

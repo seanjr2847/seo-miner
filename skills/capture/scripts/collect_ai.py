@@ -6,6 +6,8 @@ search enabled and records:
   mentioned       brand alias appears in the answer text
   cited           own domain appears in url_citation annotations
   cited_domains   who IS cited (fuel for the citation-gap analysis)
+  recommended     brand alias sits on a list line (numbered/bulleted/table) —
+                  a heuristic for "made the recommendation list" (scoring.recommended_in)
 
 Notes on measurement honesty (see references/scoring.md):
   * Answers are non-deterministic -> one check is a sample, not a fact.
@@ -238,10 +240,11 @@ def collect(project: str, *,
                 """질문 하나 × 엔진 × 샘플 — 실패는 러너가 세고 다음으로 넘어간다."""
                 engine, sample = task
                 res = ask(engines_d[engine], row["prompt"], api_key, p["locale"])
-                mentioned, cited, others = scoring.judge(
+                mentioned, cited, others, recommended = scoring.judge(
                     res["content"], res["citation_urls"], aliases, own_domain)
                 db.record_ai_check(conn, row["id"], run_id, engine, sample,
-                                   mentioned, cited, others, res["content"])
+                                   mentioned, cited, others, res["content"],
+                                   recommended=recommended)
 
             for row, tasks in todo:
                 n = st.each(tasks, lambda t, row=row: one(row, t),

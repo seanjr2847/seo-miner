@@ -282,26 +282,26 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 (`scoring.md` 1절 content_gap 행).
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
-**풀런(`/capture run`)에 포함된다** — 7단계(`gaps`). 그 단계가 실제로 하는 일은
-`scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로 부를 때만 직접 실행한다.
+**풀런(`/capture run`)에 포함된다** — `gaps` 단계다(순서의 정본은 `run_all.STAGES`).
+그 단계가 실제로 하는 일은 `scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로
+부를 때만 직접 실행한다.
 
-`scoring.py load` 가 적재하는 기회는 **기계 판정분 8종**이다 — striking_distance ·
-ctr_gap · cannibalization · rank_decay · pseo_pattern · device_gap · index_blocked ·
-coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 적재에서 빠지고, 열린 기회
-조회(`db.open_opportunities`)는 작업 판정을 통과한 것만 낸다 — "기회가 안 나온다"면
-먼저 `SELECT * FROM verdicts` 로 판정을 본다.
+`scoring.py load` 는 **`scoring.ALL_KINDS` 의 종류 전부**를 기계 판정으로 적재한다 —
+종류 이름·개수는 거기서 본다(여기 나열하면 그게 사본이 되고, 실제로 "8종"이라고
+적어 둔 채 열다섯이 됐다). 챗봇 인용 공백(`ai_citation_gap`)·구글 AI 요약 빠짐
+(`aio_exposure`)·콘텐츠 공백(`content_gap`)도 이제 여기서 선다. 대시보드 [심사]에서
+무관·보류로 판정한 검색어는 적재에서 빠지고, 열린 기회 조회(`db.open_opportunities`)는
+작업 판정을 통과한 것만 낸다 — "기회가 안 나온다"면 먼저 `SELECT * FROM verdicts` 로
+판정을 본다.
 
-**풀런이 대신 해 주지 않는 것 셋** (기대하고 기다리면 안 나온다):
+**재료가 없으면 그 종류는 조용히 빈다** (기다려도 안 나온다):
 
-- `ai_citation_gap` — sql 로 cited=0 체크의 `cited_domains_json` 빈도와 미노출
-  프롬프트를 내가 직접 뽑는다.
-- `aio_exposure` — rank 데이터가 있을 때 `aio_present=1 AND aio_cited=0` 키워드.
-  역시 sql.
-- `content_gap` — **적재는 풀런의 `competitors` 단계가 한다**(DataForSEO 키가
-  있을 때). 다만 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는
-  조용히 건너뛰므로 후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저
-  적재한다(`--domain` 으로 도메인을 직접 줄 수도 있다). 어느 쪽으로 들어왔든
-  후보를 정리하고 기회로 판정하는 것은 `scoring.py load` 가 아니라 내 몫이다.
+- 챗봇 인용 공백은 `ai` 단계(OpenRouter 키), 구글 AI 요약 빠짐은 `rank` 단계
+  (DataForSEO — Serper 는 AI 요약을 못 잰다)가 돌아야 생긴다.
+- `content_gap` 의 재료는 풀런의 `competitors` 단계가 적재한다(DataForSEO 키가 있을
+  때). 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는 조용히 건너뛰므로
+  후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저 적재한다(`--domain` 으로
+  도메인을 직접 줄 수도 있다).
 
 `pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯
 ({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은
@@ -358,7 +358,9 @@ coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 �
 
 **무엇을 읽나:** title · meta description · H1/H2 · 본문 단어 수(script·style 제외) ·
 ld+json 의 @type · canonical · meta robots · 내부/외부 링크 수 · alt 없는 이미지 수 ·
-viewport · `<html lang>` · hreflang · 글의 발행·수정일.
+viewport · `<html lang>` · hreflang · 글의 발행·수정일 · 추출성 재료(본문의 표·목록 수,
+질문형 H2 수, 첫 문단 단어 수, 저자). 추출성 판정은 챗봇 인용·구글 AI 요약 기회의
+요청문에서만 선다(`scoring.extract_advice`) — 다른 요청문에는 사실 한 줄만 실린다.
 `page_audits` 에 `(프로젝트, 검사일, URL)` 로 적재된다 — 같은 날 두 번 돌아도 행이
 늘지 않는다.
 
@@ -380,13 +382,28 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일.
 `config.yaml` 의 `ai_bots` 가 막혔는지 본다(`scoring.ai_bot_blocks`). **새 수집도 새
 단계도 없다.**
 
-막혀 있으면 `ai_bot_blocked` 기회가 서고, 인용 공백(`ai_citation_gap`) 요청문 맨
-위에 "robots.txt 가 ClaudeBot 를 막고 있습니다" 가 붙는다. 이 줄이 없으면 두 기회가
-서로 모순되는 말을 한다 — 막힌 채로는 무엇을 써도 인용되지 않는데 "이 내용을
-채우세요" 라고만 시키는 것이다.
+**봇은 용도로 가른다** — `ai_bots` 의 각 줄이 `purpose` 를 갖는다(`search` 검색·인용
+색인, `user` 사용자 요청 페치, `training` 모델 학습). 같은 벤더라도 봇마다 하는 일이
+다르다: OpenAI 는 GPTBot(학습)과 OAI-SearchBot(ChatGPT 검색)을 따로 둔다.
 
-**여는 것이 늘 정답은 아니다.** 학습에 쓰이는 것이 싫어 일부러 막아 둔 것일 수
-있다. 요청문이 그것부터 묻는다.
+- `search`·`user` 봇이 막혔을 때만 `ai_bot_blocked` 기회가 서고, 인용 공백
+  (`ai_citation_gap`) 요청문 맨 위에 "robots.txt 가 OAI-SearchBot(ChatGPT 검색) 를
+  막고 있습니다" 처럼 **엔진 이름으로** 붙는다. 이 줄이 없으면 두 기회가 서로 모순되는
+  말을 한다.
+- `training` 봇만 막힌 것(GPTBot·ClaudeBot·Google-Extended·CCBot 등)은 기회가 아니다.
+  인용과 무관하고, 학습은 거부하고 인용은 받는 **권장되는 중간 지점**이다. 근거 표에
+  "학습만 막음" 으로만 적는다. Google-Extended 는 제미나이 학습용이라 구글 검색·AI 요약
+  노출과도 무관하다.
+- Bingbot 은 빙 검색 그 자체이자 Copilot 인용 경로라, 막혔으면 AI 만의 문제가 아니라고
+  말한다.
+- 옛 꼴(UA 문자열만 적은 목록)도 읽지만 용도는 "모름" — 기회로 안 올린다.
+
+**여는 것이 늘 정답은 아니다.** 일부러 막아 둔 것일 수 있다. 요청문이 그것부터 묻는다.
+
+**llms.txt** — 같은 크롤이 robots.txt 받는 김에 `/llms.txt` 도 한 번 받아
+`crawl_runs.llms_txt_*` 에 남긴다(있음·봤고 없음·못 받음 세 상태). 인용 공백·봇 차단
+요청문에 한 줄로만 싣고 **기회 종류로 만들지 않는다** — 구글은 이 파일을 쓰지 않는다
+(검색·AI 요약 모두). ChatGPT·Claude·Perplexity 쪽에만 도움이 될 수 있다.
 
 ### /capture vitals {P} — 속도 측정 (PageSpeed Insights, 돈 안 듦)
 **풀런(`/capture run`)에 포함된다** — `pages` 다음이다. `pages` 와 **같은 URL 목록**을

@@ -66,7 +66,7 @@
 
 <script>
 "use strict";
-/* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev / d.aio_gap 뿐이다.
+/* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev / d.aio_gap / d.aio_play 뿐이다.
    직전 순위는 지어낸 값이 아니라 역산이다 — 서버(scoring.rank_delta)가 보낸
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
    추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
@@ -256,7 +256,7 @@ function RK_aioCell(r) {
    이미 기회로 채굴된 검색어는 셸의 oppPanel 이 그대로 그린다. 아직 안 잡힌 것만
    이 화면의 순위 구간별 처방(pageTable·playList·pageFix)으로 물러선다. */
 let RK_VIEW = [];                  // 지금 그려진 순서 — 행의 data-i 가 이 배열을 가리킨다
-let RK_PAGES = {}, RK_AUDITS = {};
+let RK_PAGES = {}, RK_AUDITS = {}, RK_AIO_PLAY = {};
 
 // SERP 피처는 제공자가 영문 키로 준다. 아는 것만 옮기고 모르는 값은 원문 그대로 —
 // 여기서 못 알아본 피처를 감추면 화면이 거짓말을 한다.
@@ -268,10 +268,13 @@ const RK_FEAT = {
   related_searches: "연관 검색어", discussions_and_forums: "커뮤니티 글",
 };
 
+// 요약이 누구를 인용했는지는 서버가 행에 싣는다(aio_domains). null 은 안 쟀다(옛 조회)
+// — 그때는 아무 말도 안 붙인다. 이 글자는 HTML 로 들어가므로 도메인은 esc 한다.
 const RK_aioText = r => r.aio == null ? "AI 요약은 이번에 재지 않음"
   : !r.aio ? "AI 요약 안 뜸"
-  : r.aio_cited ? "AI 요약에 내 페이지가 실림"
-  : "AI 요약에 남의 링크만 실림";
+  : (r.aio_cited ? "AI 요약에 내 페이지가 실림" : "AI 요약에 남의 링크만 실림")
+    + (r.aio_domains && r.aio_domains.length
+      ? ` (인용: <span class="num">${r.aio_domains.map(esc).join(", ")}</span>)` : "");
 
 // 순위 구간마다 손댈 자리가 다르다 — 3위와 30위에 같은 할 일을 적으면 둘 다 안 한다.
 // 경계값은 RULES(서버)만 쓴다. 문구는 [개선 기회]의 PLAY 와 같은 어투다.
@@ -325,16 +328,20 @@ function RK_playParts(r) {
                "맞다면 이 검색어 하나만 다루도록 다시 쓴 제목·목차",
                "안 맞다면 새 페이지 제안과 기존 글에서 걸 링크"];
   }
-  // AI 오버뷰가 자리를 차지했는데 우리만 빠진 경우 — 순위 구간과 무관하게 더 붙는다.
-  if (r.aio === 1 && !r.aio_cited)
-    acts = acts.concat([
-      "검색어(질문) 그대로를 H2 로 두고 바로 아래에 2~3문장으로 직답합니다.",
-      "숫자·출처·갱신 날짜를 본문에 남깁니다. 인용은 검증 가능한 문장에서 나옵니다."]);
-  if (r.aio === 1 && !r.aio_cited)
-    deliver = deliver.concat(["검색어 그대로를 쓴 H2 와 그 아래 2~3문장 직답"]);
+  // AI 요약이 자리를 차지했는데 우리만 빠진 경우 — 그 상황 설명을 덧붙인다. 문구는
+  // 서버의 aio_exposure 처방 한 벌(scoring._AIO_PLAY, d.aio_play)이다. 예전엔 여기서
+  // "H2 + 직답"을 따로 시켰는데, 구글 AI 요약은 순위 시스템에서 출처를 골라 그 처방이
+  // 구글 공식 입장과 반대였고, 기회 패널과도 다른 말을 했다.
+  // 갈래(aio_band)도 서버가 행에 싣는다(scoring.aio_band) — 여기서 다시 가르지 않는다.
+  if (r.aio === 1 && !r.aio_cited) {
+    const ap = RK_AIO_PLAY[r.aio_band];
+    if (ap && ap.what) what = `${what} ${ap.what}`;
+  }
   return [what, acts, deliver];
 }
-const RK_play = r => playList(...RK_playParts(r));
+// 산출물(deliver)은 요청문(askBlock)만 쓴다. playList 의 셋째 인자는 상황 문단 끝에
+// 붙일 HTML 이라 여기에 펼쳐 넣으면 산출물 배열이 쉼표로 이어 붙어 문단에 샌다.
+const RK_play = r => { const [what, acts] = RK_playParts(r); return playList(what, acts); };
 
 function RK_detail(r) {
   const prev = r.prev_pos ?? RK_prevPos(r);
@@ -499,6 +506,7 @@ VIEW("rank", function (d) {
   // 기대면 조립 순서가 바뀔 때 조용히 빈다).
   RK_PAGES = d.query_pages || {};
   RK_AUDITS = d.page_audits || {};
+  RK_AIO_PLAY = d.aio_play || {};
   RK_HAS_PREV = !!d.rank_prev && RK_ROWS.some(r => RK_d(r) != null);
   RK_Q = ""; RK_AIO = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
 
