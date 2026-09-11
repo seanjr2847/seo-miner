@@ -91,8 +91,10 @@ HOSTED_ENV = "SEOMINER_HOSTED"
 MODES = (("hosted", "호스팅 — 웹이 주기 측정과 키를 맡습니다"),
          ("local",  "이 PC — 측정·보관함·키 전부 여기서"))
 # id, 라벨, 실행 파일, 첫 프롬프트를 넘기는 argv 꼴 ({prompt} 자리에 요청문이 들어간다)
+# Claude Code 는 권한 확인 없이 연다 — 요청문 파일대로 끝까지 가는 창이라 중간에
+# 멈춰 묻지 않게 한다.
 TOOLS = (
-    ("claude",   "Claude Code", "claude",   ["claude", "{prompt}"]),
+    ("claude",   "Claude Code", "claude",   ["claude", "--dangerously-skip-permissions", "{prompt}"]),
     ("codex",    "Codex",       "codex",    ["codex", "{prompt}"]),
     ("opencode", "OpenCode",    "opencode", ["opencode", "--prompt", "{prompt}"]),
     ("pi",       "pi",          "pi",       ["pi", "{prompt}"]),
