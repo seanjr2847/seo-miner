@@ -484,6 +484,16 @@ def demo() -> None:
         assert st["last_ok"] == 0 and "402" in st["last_error"], st
         # 죽은 런 회수 — 컨테이너 교체로 워커가 통째로 죽은 자리. 회수하고 그 사이트만
         # 다시 띄운다(--all 은 due 판정에 걸려 방금 잰 사이트를 빼 버린다).
+        # 죽은 워커가 사이트 brain 에 남긴 끝나지 않은 runs 행 — 09-02 호스팅 #49 가 그랬다.
+        bconn = db.connect(home=store.home(u2))
+        try:
+            pid_b = bconn.execute("SELECT id FROM projects WHERE name='p1'").fetchone()[0]
+            dead_rid = bconn.execute(
+                "INSERT INTO runs(project_id,kind,started_at) VALUES(?,'rank','2026-09-02T03:00:00Z')",
+                (pid_b,)).lastrowid
+            bconn.commit()
+        finally:
+            bconn.close()
         cs = store.connect()
         try:
             store.mark_run(cs, sid_st)
@@ -496,10 +506,34 @@ def demo() -> None:
         assert st["running"] is False and st["last_ok"] == 0, st
         assert "서버 재시작" in c.get("/api/run/log?project=p1").json()["text"], \
             "왜 끊겼는지 사용자에게 한 줄도 안 간다"
+        bconn = db.connect(home=store.home(u2))
+        try:
+            fin, notes = bconn.execute("SELECT finished_at, notes FROM runs WHERE id=?",
+                                       (dead_rid,)).fetchone()
+        finally:
+            bconn.close()
+        assert fin and store.ORPHAN_RUN_NOTE in (notes or ""), \
+            f"회수했는데 brain 의 런이 끝나지 않은 채 남았다: {(fin, notes)}"
         assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == [], "도는 런이 없는데 또 띄운다"
         cs = store.connect()
         try:
             store.mark_run(cs, sid_st)     # 아래 런 로그 검사가 보던 '도는 중' 으로 되돌린다
+            # 도는 사이트의 런은 닫지 않는다 — 서버가 running 이라 말하는 동안은 살아 있는 워커의 것이다.
+            bconn = db.connect(home=store.home(u2))
+            try:
+                live_rid = bconn.execute(
+                    "INSERT INTO runs(project_id,kind,started_at) VALUES(?,'rank','2026-09-02T03:00:00Z')",
+                    (pid_b,)).lastrowid
+                bconn.commit()
+                store.close_orphan_runs(cs)
+                assert bconn.execute("SELECT finished_at FROM runs WHERE id=?",
+                                     (live_rid,)).fetchone()[0] is None, \
+                    "도는 사이트의 런을 닫았다 — 살아 있는 워커의 이력을 끊었다"
+                # 아래 검사가 보는 이력을 흔들지 않게 이 두 행은 치운다
+                bconn.execute("DELETE FROM runs WHERE id IN (?,?)", (dead_rid, live_rid))
+                bconn.commit()
+            finally:
+                bconn.close()
         finally:
             cs.close()
 
