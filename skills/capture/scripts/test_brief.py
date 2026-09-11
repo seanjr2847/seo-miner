@@ -96,11 +96,13 @@ def test_new_content_says_no_page_and_offers_slot():
                        "our_position": None, "volume": 2400, "kind": "missing"}]}
     t = brief.text(_opp("content_gap", "없는 검색어", gap_kind="missing"), ctx, "ko-KR")
     assert t.startswith(brief.SHAPES["new_content"]["intro"])
-    assert "- 페이지: 없음" in t
+    assert brief.NO_PAGE["new_content"] in t
+    # "없음"이라고 단정하지 않는다 — 10위 밖 지면은 있어도 수집본에 안 걸린다
+    assert "- 페이지: 없음" not in t and "지면부터 찾고" in t
     assert "| rival.example | 2위 | 없음 | 2,400 | missing |" in t
     assert "## 있으면 붙여 넣을 것" in t and "[여기에 붙여 넣기]" in t
     assert "지금 이 페이지 상태" not in t
-    assert "본문 전체를 쓰지 않습니다" in t
+    assert "본문을 쓰지 않습니다" in t
     # 같은 종류라도 '밀린다'(weak)는 있는 페이지를 고친다
     ctx2 = {"query_pages": {"밀린 검색어": _pages(URL)}, "page_audits": {URL: _audit()},
             "kw_gap": [{"keyword": "밀린 검색어", "domain": "rival.example", "position": 3,
@@ -783,6 +785,94 @@ def test_trust_signals_are_asked_for_but_never_invented():
         assert "지어내지 않습니다" in tails[shape], shape
     # 고칠 페이지가 없는 일(연락문)에는 안 붙는다
     assert "신뢰 신호" not in tails["outreach"]
+
+
+def test_unranked_page_found_by_title_is_fixed_not_rewritten():
+    """순위에 안 걸린 지면도 제목·H1 에 검색어가 있으면 그 지면을 고친다 — 새 글 설계도가
+    이미 있는 지면(온다 리프팅·써마지)과 같은 주제의 두 번째 지면을 만들 뻔했다."""
+    T = "https://me.example/lifting/thermage-flx/"
+    BLOG = "https://me.example/blog/ultherapy-vs/"
+    one = {"topic_pages": {"써마지": [
+        {"page": T, "title": "써마지 FLX - 병원", "h1": "써마지 FLX", "primary": True},
+        {"page": BLOG, "title": "울쎄라, 써마지와 뭐가 다른가요?", "h1": "", "primary": False}]}}
+    b = brief.build(_opp("aio_exposure", "써마지"), one)
+    assert b["shape"] == "fix_page", b["shape"]
+    assert f"- 페이지: {T} (title: 써마지 FLX - 병원 · H1: 써마지 FLX)" in b["body"]
+    assert "순위에 걸린 페이지는 없고" in b["body"]
+    assert f"다른 지면(내부 링크·겹침 확인용): {BLOG}" in b["body"]
+    assert brief.page_of(_opp("aio_exposure", "써마지"), one) == T
+    # 주제를 스치는 글 하나뿐이면 고르지 않는다 — 그 블로그를 "써마지 지면"으로 고치면 안 된다
+    grazing = {"topic_pages": {"써마지": one["topic_pages"]["써마지"][1:]}}
+    assert brief.page_of(_opp("aio_exposure", "써마지"), grazing) is None
+    assert brief.build(_opp("aio_exposure", "써마지"), grazing)["shape"] == "new_content"
+    # 순위에 걸린 페이지가 있으면 그게 먼저다 — 제목 매칭은 폴백일 뿐
+    both = {**one, "query_pages": {"써마지": _pages(URL)}}
+    assert brief.page_of(_opp("aio_exposure", "써마지"), both) == URL
+    assert "순위에 걸린 페이지는 없고" not in brief.build(_opp("aio_exposure", "써마지"), both)["body"]
+    # 후보가 둘이면 고르지 않는다 — 새 글로 두되 후보를 싣고 멈추게 한다
+    two = {"topic_pages": {"써마지": [{"page": T, "title": "써마지 FLX", "h1": "", "primary": True},
+                                     {"page": URL2, "title": "써마지 가격", "h1": "", "primary": True}]}}
+    b2 = brief.build(_opp("aio_exposure", "써마지"), two)
+    assert b2["shape"] == "new_content"
+    assert f"  - {T} (title: 써마지 FLX)" in b2["body"] and f"  - {URL2}" in b2["body"]
+    assert "지면이 2개 있습니다" in b2["body"] and brief.NO_PAGE["new_content"] not in b2["body"]
+    # 화면이 같은 후보를 그린다(o.brief.candidates) — 고른 지면이 있으면 후보는 비운다
+    assert [c["page"] for c in b2["candidates"]] == [T, URL2], b2["candidates"]
+    assert b["candidates"] == [] and b["page"] == T
+
+
+def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
+    import db
+    conn = db.connect()                       # CAPTURE_HOME 은 위에서 임시 폴더로 돌렸다
+    conn.execute("INSERT INTO projects(name, domain) VALUES('topic-t', 'me.example')")
+    pid = conn.execute("SELECT id FROM projects WHERE name='topic-t'").fetchone()[0]
+    run = conn.execute("INSERT INTO crawl_runs(project_id, finished_at, seed) "
+                       "VALUES(?, '2026-09-01', 'sitemap') RETURNING id", (pid,)).fetchone()[0]
+    rows = [("https://me.example/b/", 200, "울쎄라, 써마지와 뭐가 다른가요? - 병원", "울쎄라 비교"),
+            ("https://me.example/t/", 200, "써마지 FLX - 병원", "써마지 FLX"),
+            ("https://me.example/u/", 200, "울쎄라 | 병원", "Ultherapy"),     # H1 은 라틴
+            ("https://me.example/old/", 301, "써마지 옛 주소", None),          # 리다이렉트 — 고칠 지면 아님
+            ("https://me.example/m/", 200, "기미 | 병원", "기미"),
+            ("https://me.example/mb/", 200, "기미인가요, 오타모반인가요? - 병원", None),
+            ("https://me.example/r/", 200, "홍조•주사 | 병원", None),
+            *((f"https://me.example/p{i}/", 200, f"모공 {i}", None) for i in range(6))]
+    conn.executemany("INSERT INTO crawl_pages(run_id, url, status, depth, title, h1) "
+                     "VALUES(?,?,?,1,?,?)", [(run, *r) for r in rows])
+    got = scoring.pages_by_topic(conn, pid, ["써마지", "ultherapy", "기미", "홍조", "모공",
+                                             "없는말", "x"])
+    lead = lambda t: [p["page"] for p in got[t] if p["primary"]]   # noqa: E731
+    # 전용 지면이 앞, 스치는 비교 글은 뒤(후보로만)
+    assert [p["page"] for p in got["써마지"]] == ["https://me.example/t/", "https://me.example/b/"], got
+    assert lead("써마지") == ["https://me.example/t/"]
+    assert lead("ultherapy") == ["https://me.example/u/"]
+    assert lead("기미") == ["https://me.example/m/"], "'기미인가요'는 다른 낱말이다"
+    assert lead("홍조") == ["https://me.example/r/"], "'홍조•주사' — 기호 앞에서 끝나면 그 말이다"
+    assert "모공" not in got, "후보 6개 — 간판말은 싣지 않는다"
+    assert "없는말" not in got and "x" not in got
+    # 페이지 감사도 요청문이 고치라고 할 그 지면을 본다 — 안 보면 "아직 점검하지 않았습니다"
+    import collect_page
+    conn.executemany("INSERT INTO opportunities(project_id, kind, target, score) VALUES(?,?,?,?)",
+                     [(pid, "aio_exposure", "써마지", 9), (pid, "aio_exposure", "없는말", 8)])
+    urls = collect_page.target_urls(conn, pid, 20)
+    assert urls[:1] == ["https://me.example/t/"], urls
+    assert "https://me.example/b/" not in urls[:1], "스치는 비교 글을 써마지 지면으로 감사했다"
+    conn.close()
+
+
+def test_before_after_only_where_a_page_is_changed():
+    """'지금 값 | 고친 값'은 손댈 페이지가 있는 꼴에만 — 새 글에 실리면 설계도 요청이
+    '어떻게 고칠지 알려 주는 HTML'로 읽힌다."""
+    tails = brief.tails("ko-KR")
+    for name in brief.SHAPE_NAMES:
+        assert ("지금 값 | 고친 값" in tails[name]) == brief._shows_page(name), name
+
+
+def test_new_content_stops_at_blueprint_and_asks_for_approval():
+    """새 글은 두 단계다: 설계도 → 사용자가 안을 고르고 승인 → 본문. 설계도 요청이
+    '만들어 줄 것'의 완성품(직답 블록·JSON-LD)까지 시키면 승인할 게 없어진다."""
+    t = brief.tails("ko-KR")["new_content"]
+    assert "멈춥니다" in t and "승인하면" in t and "번호로 묻고" in t
+    assert "본문 단계에서" in t          # '만들어 줄 것'은 구간 배정까지만
 
 
 _FLAT = dict(tables=0, lists=0, h2_questions=0, lead_words=0, author="")   # 추출성 칸을 읽은 새 행

@@ -71,6 +71,8 @@ third_party_platforms:
   - velog.io
   - dcinside.com
   - clien.net
+  - play.google.com          # 앱 스토어 등록 페이지 — 앱은 거기서 등장한다. 백링크
+  - apps.apple.com           #   교집합(collect_backlinks)도 이 목록으로 플랫폼을 뺀다
 
 # AI 답변의 링크를 타고 들어온 방문 — GA4 sessionSource 로 가른다(collect_ga4).
 # 정규식이 아니라 호스트 목록이다: 이 호스트이거나 그 하위 도메인(www.perplexity.ai)
