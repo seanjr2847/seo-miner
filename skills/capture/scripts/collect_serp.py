@@ -6,7 +6,8 @@ AI-Overview flags + the domains the AI Overview cited, and the PAA/related
 questions of *that* keyword (serp_questions — 요청문의 "함께 답해야 할 질문").
 Free byproducts are harvested by default:
   * related searches + PAA  -> keyword candidates (source='serp', is_active=0)
-  * domains in top-10 of >=3 keywords -> competitors (source='auto_serp')
+  * domains in the top-N of many checked keywords -> competitors (source='auto_rank');
+    the rule (share threshold, platforms excluded, cap) is scoring.serp_rivals
 
 "내 도메인인가"는 여기 한 곳에서만 판정한다(scoring.owns). 어댑터와 호출부가
 같은 규칙을 각자 들고 있던 시절엔 서브도메인 취급이 조용히 갈렸다.
@@ -151,6 +152,7 @@ def collect(project: str, *,
             # 내 순위와 경쟁사 집계는 같은 한 바퀴에서 같은 규칙으로 갈린다.
             position = url = None
             top_rows = []
+            seen = set()        # 한 검색결과에 두 번 선 도메인도 그 검색어 하나로 센다
             for t in res["top"]:
                 d = t.get("domain") or ""
                 # 상위 몇 줄은 그대로 남긴다. 예전엔 이 응답에서 내 순위만 빼고
@@ -164,7 +166,8 @@ def collect(project: str, *,
                 if scoring.owns(d, own):
                     if position is None:
                         position, url = t.get("pos"), t.get("url")
-                else:
+                elif d not in seen:
+                    seen.add(d)
                     domain_hits[d] += 1
             aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
                          if res["aio_present"] else None)
@@ -200,7 +203,7 @@ def collect(project: str, *,
                 new_kw = db.add_keyword_candidates(
                     conn, p["id"], [(kw, loc, "serp") for kw, loc in harvested_kw])
                 new_comp = db.add_competitors(
-                    conn, p["id"], [d for d, n in domain_hits.items() if n >= 3], "auto_serp")
+                    conn, p["id"], scoring.serp_rivals(domain_hits, done, own), "auto_rank")
 
             r.api_calls, r.cost = done, total_cost
             r.notes = (f"provider={provider} device={device} {st.err_note} skipped={skipped} "

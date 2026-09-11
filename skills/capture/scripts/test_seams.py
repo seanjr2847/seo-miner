@@ -1391,8 +1391,37 @@ def test_seam_32_screen_files_are_text():
     assert not bad, f"NUL 이 든 화면 파일(git 이 바이너리로 본다): {bad}"
 
 
-def test_seam_33_run_tool_writes_whole_brief_and_acks_the_group():
-    """33) 실행 버튼의 두 이음매 — 파일에 쓰는 요청문과 '작업 시작'이 먹는 범위.
+def test_seam_33_competitor_label_and_reader_single_source():
+    """33) 경쟁사 표의 쓰는 쪽과 읽는 쪽.
+
+    2026-09 호스팅: 순위 수집이 검색결과 플랫폼을 'auto_serp' 로 넣었고(291개), 갭 분석은
+    그 표를 id 순 앞 5개로, 백링크 교집합은 id 순 20개로 **각자** 읽었다. 백링크 쪽만
+    플랫폼을 빼도록 고친 날에도 갭 분석은 계속 m.blog.naver.com 의 키워드를 샀다.
+
+    (가) 'auto_serp' 는 은퇴한 표시이고 db.retire_auto_serp 가 "이 표시가 있으면 걷는다"
+        로 한 번만 돈다. 누가 이 표시로 다시 쓰면 매 연결마다 경쟁사가 지워진다 — db.py
+        밖에서 이 글자가 나오면 안 된다.
+    (나) 돈을 쓰는 두 수집기는 표를 scoring.rivals 로만 읽는다(자체점검 픽스처는 뺀다).
+    """
+    assert callable(getattr(db, "retire_auto_serp", None)), "은퇴 정리가 없다 — 이 검사가 헛돈다"
+    hits = []
+    for f in [*SCRIPTS.glob("*.py"), *(ROOT / "server").glob("*.py")]:
+        if f.name == "db.py" or f.name.startswith("test_"):
+            continue
+        if "auto_serp" in f.read_text("utf-8"):
+            hits.append(f.name)
+    assert not hits, f"은퇴한 경쟁사 표시 'auto_serp' 를 쓰는 곳: {hits} — auto_rank·auto_labs 를 쓴다"
+
+    for name in ("collect_gap.py", "collect_backlinks.py"):
+        src = (SCRIPTS / name).read_text("utf-8")
+        body = src[:src.index("def _selfcheck(")]
+        assert "scoring.rivals(" in body, f"{name} 가 경쟁사를 scoring.rivals 로 안 읽는다"
+        raw = re.findall(r"FROM competitors\b[^\"]*", body)
+        assert not raw, f"{name} 가 경쟁사 표를 직접 읽는다: {raw} — scoring.rivals 한 벌이다"
+
+
+def test_seam_34_run_tool_writes_whole_brief_and_acks_the_group():
+    """34) 실행 버튼의 두 이음매 — 파일에 쓰는 요청문과 '작업 시작'이 먹는 범위.
 
     (가) 화면의 복사 버튼(briefText)은 o.brief.body 뒤에 d.brief.tails[shape] 를 잇는다 —
     답의 형식·규칙이 그 꼬리에 있다. run_tool 이 body 만 파일로 쓰면 어느 쪽도 틀린
@@ -1477,8 +1506,8 @@ VERBATIM_TITLE_PHRASES = ("검색어를 앞에", "앞쪽에 검색어", "검색�
                           "이 검색어로 시작하게", "앞쪽으로 올립", "60자 안에 검색어를")
 
 
-def test_seam_34_no_prescription_asks_to_paste_the_query_into_title():
-    """34) title·H1 처방은 한 목소리다 — 어디서도 검색어를 글자 그대로 박으라고 하지 않는다.
+def test_seam_35_no_prescription_asks_to_paste_the_query_into_title():
+    """35) title·H1 처방은 한 목소리다 — 어디서도 검색어를 글자 그대로 박으라고 하지 않는다.
 
     진단(scoring.page_advice)·처방(scoring._KIND_SPECS 의 play)·산출물(brief.DELIVER_BY_TAG)·
     기회로 안 올라온 행의 폴백(views/rank.html·keywords.html)이 title 을 말하는 네 자리다.

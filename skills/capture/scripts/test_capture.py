@@ -1509,6 +1509,72 @@ def test_ai_recommended_column_migrates_as_null():
     conn.close()
 
 
+def test_retire_auto_serp_cleans_only_what_it_made():
+    """옛 'auto_serp' 경쟁사를 한 번 걷는다 — 그 경쟁사에서 나온 것만, 사람 손이 닿은 것은 남긴다.
+
+    2026-09 호스팅: 순위 수집이 "검색어 3개 이상에서 상위 10위" 로 네이버 블로그·유튜브
+    ·앱스토어를 경쟁사로 넣었고(291개, manual 0), 갭 분석이 그 앞 5개로 돈을 썼다.
+    """
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    db._register_norm(conn)
+    x = conn.execute
+    x("INSERT INTO projects(id, name, domain) VALUES(1, 'all_auto', 'a.com'), (2, 'mixed', 'b.com')")
+    x("""INSERT INTO competitors(project_id, domain, source) VALUES
+         (1, 'm.blog.naver.com', 'auto_serp'), (1, 'play.google.com', 'auto_serp'),
+         (2, 'youtube.com', 'auto_serp'), (2, 'hand.com', 'manual'), (2, 'lab.com', 'auto_labs')""")
+    gap = "INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, kind) VALUES(?,?,?,?,?)"
+    for row in ((1, "2026-09-08", "플랫폼만", "m.blog.naver.com", "missing"),
+                (2, "2026-09-08", "플랫폼만2", "youtube.com", "weak"),
+                (2, "2026-09-08", "섞임", "youtube.com", "missing"),
+                (2, "2026-09-08", "섞임", "hand.com", "missing")):
+        x(gap, row)
+    opp = "INSERT INTO opportunities(project_id, kind, target, score, status) VALUES(?,?,?,50,?)"
+    for row in ((1, "content_gap", "플랫폼만", "new"), (2, "content_gap", "플랫폼만2", "acked"),
+                (2, "content_gap", "섞임", "new")):        # 사람이 고른 경쟁사 근거도 있다 — 남는다
+        x(opp, row)
+    met = "INSERT INTO competitor_metrics(project_id, checked_date, domain, is_self, etv) VALUES(?,?,?,?,1)"
+    for row in ((1, "2026-09-08", "a.com", 1), (1, "2026-09-08", "play.google.com", 0),
+                (2, "2026-09-08", "b.com", 1), (2, "2026-09-08", "youtube.com", 0),
+                (2, "2026-09-08", "hand.com", 0)):
+        x(met, row)
+    cand = "INSERT INTO keywords(project_id, keyword, source, is_active) VALUES(?,?,?,?)"
+    for row in ((1, "갭 후보", "competitor_gap", 0), (1, "심사한 후보", "competitor_gap", 0),
+                (1, "켠 후보", "competitor_gap", 1), (1, "시드", "seed", 0),
+                (2, "섞인 사이트 후보", "competitor_gap", 0)):
+        x(cand, row)
+    db.set_verdicts(conn, 1, [scoring.norm("심사한 후보")], "hold")
+    conn.commit()
+
+    db._migrate(conn)
+
+    comp = {(r[0], r[1]): r[2] for r in x("SELECT project_id, domain, source FROM competitors")}
+    assert comp == {(2, "hand.com"): "manual", (2, "lab.com"): "auto_labs"}, comp
+    st = {(r[0], r[1]): (r[2], r[3], r[4]) for r in x(
+        "SELECT project_id, target, status, status_prev, status_reason FROM opportunities")}
+    assert st[(1, "플랫폼만")][:2] == ("resolved", "new") and "경쟁사가 아니었습니다" in st[(1, "플랫폼만")][2], st
+    assert st[(2, "플랫폼만2")][:2] == ("resolved", "acked"), st
+    assert st[(2, "섞임")][0] == "new", st
+    assert [tuple(r) for r in x("SELECT project_id, keyword, domain FROM keyword_gap")] \
+        == [(2, "섞임", "hand.com")]
+    assert sorted(tuple(r) for r in x("SELECT project_id, domain FROM competitor_metrics")) \
+        == [(2, "b.com"), (2, "hand.com")], "상대가 다 빠진 날의 우리 줄은 같이 빠진다"
+    kws = {(r[0], r[1]) for r in x("SELECT project_id, keyword FROM keywords")}
+    assert kws == {(1, "심사한 후보"), (1, "켠 후보"), (1, "시드"), (2, "섞인 사이트 후보")}, kws
+
+    # 한 번만 — 새 규칙이 'auto_rank' 로 다시 채운 것은 다음 연결이 건드리지 않는다
+    x("INSERT INTO competitors(project_id, domain, source) VALUES(1, 'rival.com', 'auto_rank')")
+    x("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, kind)"
+      " VALUES(1, '2026-09-12', '새 갭', 'rival.com', 'missing')")
+    conn.commit()
+    db._migrate(conn)
+    assert x("SELECT COUNT(*) FROM competitors WHERE project_id=1").fetchone()[0] == 1
+    assert x("SELECT COUNT(*) FROM keyword_gap WHERE project_id=1").fetchone()[0] == 1
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -8,7 +8,7 @@
 
 축이 셋이고, 셋 다 끌 수 있다 (0 = 끔):
   A. 역키워드     ranked_keywords/live      → keywords (source='competitor_gap')
-  B. 자동 탐지·몫 competitors_domain/live   → competitors(auto_serp) + competitor_metrics
+  B. 자동 탐지·몫 competitors_domain/live   → competitors(auto_labs) + competitor_metrics
   C. Content Gap  domain_intersection/live  → keyword_gap (missing|weak|shared)
 
 B 는 "누가 우리와 키워드가 겹치나"를 사람 등록 없이 찾고(Ahrefs 의 Organic
@@ -25,7 +25,8 @@ C 는 A 가 못 주는 것을 준다. A 는 "경쟁사가 잡은 키워드" 목�
 로 가른다. 경쟁사당 2콜이라 `limits.gap_rivals` 로 상한을 둔다.
 
 흐름:
-  1) 도메인 결정 — --domain 반복 지정, 생략 시 competitors 테이블 전부.
+  1) 도메인 결정 — --domain 반복 지정, 생략 시 competitors 테이블을 경쟁사로 읽은 것
+     (scoring.rivals — manual 먼저, 제3자 플랫폼 제외).
      상한 5개. 5개 초과는 안내 후 상위 5개만 사용 (사용자가 명시적으로 좁혔을
      가능성을 남겨두려고 잘라낸다).
   2) Labs POST /v3/dataforseo_labs/google/ranked_keywords/live 로 도메인당
@@ -261,7 +262,7 @@ def _cap(domains: list[str]) -> list[str]:
     return domains[:DOMAIN_CAP]
 
 
-def _resolve_domains(conn, project_id: int, args_domains: list[str]) -> list[str]:
+def _resolve_domains(conn, project_id: int, args_domains: list[str], own: str = "") -> list[str]:
     if args_domains:
         # 사용자가 명시한 도메인은 그대로 (소문자·공백 정리만).
         out = []
@@ -270,10 +271,9 @@ def _resolve_domains(conn, project_id: int, args_domains: list[str]) -> list[str
             if d:
                 out.append(d)
         return out
-    rows = conn.execute(
-        "SELECT domain FROM competitors WHERE project_id=? ORDER BY id", (project_id,)
-    ).fetchall()
-    return [r["domain"] for r in rows]
+    # 표를 id 순으로 잘라 쓰던 때는 앞자리가 순위 수집이 넣은 플랫폼이었다 — 돈을 내고
+    # m.blog.naver.com·brunch.co.kr·play.google.com 의 키워드를 캤다(2026-09 호스팅).
+    return scoring.rivals(conn, project_id, own)[0]
 
 
 def _existing_norms(conn, project_id: int) -> set[str]:
@@ -370,7 +370,7 @@ def collect(project: str, *,
         throttle = st.throttle
         ours = scoring.host_of(p["domain"] or "")
 
-        domains = _cap(_resolve_domains(conn, p["id"], domain))
+        domains = _cap(_resolve_domains(conn, p["id"], domain, ours))
         if not domains and not n_auto:
             # 경쟁사 부재는 실패가 아니라 아직 적재를 안 한 정상 상태다 (첫 바퀴,
             # 또는 rank harvest 가 3회 이상 잡힌 도메인을 못 찾은 사이트).
@@ -399,7 +399,7 @@ def collect(project: str, *,
                 print(f"  - {d}")
             print("  자동 경쟁사 탐지: " + (
                 f"켜짐 — competitors_domain/live 1콜(limit={n_auto}) + 우리 지표 1콜 "
-                f"→ competitors(source='auto_serp') · competitor_metrics"
+                f"→ competitors(source='auto_labs') · competitor_metrics"
                 if n_auto else "꺼짐 (--rivals 0 또는 --domain 지정)"))
             print("  Content Gap: " + (
                 f"켜짐 — domain_intersection/live {n_gap_hosts}×2콜 (교집합 + 우리 부재) "
@@ -453,6 +453,7 @@ def collect(project: str, *,
             # 제외 필터는 새로 만들지 않는다 — scoring.foreign_brands 가 yaml 의
             # tools/foreign_brands 와 기존 competitors 를 이미 정규화해 갖고 있다.
             brands = scoring.foreign_brands(conn, p["id"], st.cfg)
+            plats = scoring.third_party_platforms()
             mine, cand = None, []
             for row in rows:
                 d = row["domain"]
@@ -461,17 +462,18 @@ def collect(project: str, *,
                     continue
                 if scoring._stem(d) in brands:      # 등재·경쟁 도구 이름
                     continue
+                if scoring.is_third_party(d, plats):   # 키워드가 겹쳐도 플랫폼은 경쟁사가 아니다
+                    continue
                 cand.append(d)
             for d in cand[:n_auto]:
                 # manual 로 등록된 행은 절대 덮지 않는다 — 사람이 고른 것이 이긴다.
                 auto_new += conn.execute(
-                    "INSERT INTO competitors(project_id, domain, source) VALUES(?,?, 'auto_serp') "
+                    "INSERT INTO competitors(project_id, domain, source) VALUES(?,?, 'auto_labs') "
                     "ON CONFLICT(project_id, domain) DO NOTHING", (p["id"], d)).rowcount
             print(f"  auto: found={len(rows)} kept={len(cand)} new={auto_new}")
 
-            # 몫의 분모 — 등록된 경쟁사 중 지표를 받은 것만.
-            regs = {r0["domain"] for r0 in conn.execute(
-                "SELECT domain FROM competitors WHERE project_id=?", (p["id"],))}
+            # 몫의 분모 — 경쟁사로 읽힌 것(플랫폼 제외) 중 지표를 받은 것만.
+            regs = set(scoring.rivals(conn, p["id"], ours)[0])
             for row in rows:
                 if row["domain"] in regs and row["metrics"]:
                     _put_metric(conn, p["id"], today, row["domain"], 0, row["metrics"])
@@ -519,7 +521,7 @@ def collect(project: str, *,
                     st.fail(str(e), item="자동 경쟁사 탐지", kind=type(e).__name__)
                 conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
-                    domains = _cap(_resolve_domains(conn, p["id"], None))
+                    domains = _cap(_resolve_domains(conn, p["id"], None, ours))
             r.api_calls = st.each(domains, one)
             if n_gap and ours:
                 st.each(domains[:n_gap], gap_axis)
@@ -645,7 +647,7 @@ def _selfcheck() -> None:
     assert conn.execute("SELECT COUNT(*) FROM competitor_metrics").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM keyword_gap").fetchone()[0] == 0
     assert conn.execute(
-        "SELECT COUNT(*) FROM competitors WHERE source='auto_serp'").fetchone()[0] == 0
+        "SELECT COUNT(*) FROM competitors WHERE source='auto_labs'").fetchone()[0] == 0
     conn.execute("SELECT 1")     # 빌린 conn 은 러너가 닫지 않는다
 
     added = [dict(r) for r in conn.execute(
@@ -687,6 +689,9 @@ def _selfcheck() -> None:
                 # 이미 manual 로 등록됨 — source 를 덮으면 안 된다
                 {"domain": "rival.com", "metrics": {"organic": {
                     "count": 30, "etv": 300.0, "pos_2_3": 4}}},
+                # 키워드가 겹쳐도 플랫폼은 경쟁사가 아니다 — 안 빼면 cand[:3] 이 밀려
+                # second.co 가 빠진다(아래 1) 이 잡는다)
+                {"domain": "m.blog.naver.com", "metrics": {"organic": {"count": 99, "etv": 9.0}}},
                 # www 는 host_of 가 벗긴다
                 {"domain": "www.newrival.com", "metrics": {"organic": {
                     "count": 20, "etv": 200.0, "pos_4_10": 5}}},
@@ -720,15 +725,20 @@ def _selfcheck() -> None:
     def fake_fetch2(domain, locale, limit):
         return [{"keyword": f"{domain} 키워드", "search_volume": 5}], 0.0001
 
+    # 순위 수집이 예전 규칙으로 넣어 둔 플랫폼 — 역키워드·Gap 대상이 되면 안 된다
+    # (되면 역키워드가 5곳이 되어 아래 4) 의 콜 수가 8 이 된다)
+    conn.execute("INSERT INTO competitors(project_id, domain, source)"
+                 " VALUES(?, 'youtube.com', 'auto_rank')", (pid,))
+    conn.commit()
     res = collect("gt", throttle=0, conn=conn, fetch=fake_fetch2, post=fake_post,
                   rivals=3, intersect=1)
     assert res.ok and res.cost > 0, res
 
-    # 1) auto_serp 로 들어가고 manual 은 그대로 — 우리 자신·도구 이름은 빠진다
+    # 1) auto_labs 로 들어가고 manual 은 그대로 — 우리 자신·도구 이름·플랫폼은 빠진다
     comp = dict(conn.execute(
         "SELECT domain, source FROM competitors WHERE project_id=?", (pid,)).fetchall())
-    assert comp == {"rival.com": "manual", "hq.io": "manual",
-                    "newrival.com": "auto_serp", "second.co": "auto_serp"}, comp
+    assert comp == {"rival.com": "manual", "hq.io": "manual", "youtube.com": "auto_rank",
+                    "newrival.com": "auto_labs", "second.co": "auto_labs"}, comp
 
     # 2) 우리(is_self=1)와 경쟁사가 같은 표에 — 등록 안 한 toolco.io 는 몫에도 없다
     met = {r0["domain"]: dict(r0) for r0 in conn.execute(

@@ -41,6 +41,8 @@ ai_bots:
 # 고치기"가 아니라 "그 플랫폼에 진짜로 등장하기"(요청문 꼴 presence)로 바뀐다
 # (scoring.third_party_platforms · ai_tally). 하위 도메인은 자동으로 포함된다
 # (ko.wikipedia.org·m.blog.naver.com). 데이터라서 여기 있다 — 플랫폼은 한 줄로 더한다.
+# 경쟁사 자동 적재(scoring.serp_rivals·collect_gap)와 경쟁사 읽기(scoring.rivals)도
+# 이 목록으로 플랫폼을 뺀다 — 검색결과에 늘 서는 곳이라 "경쟁사"로 잡히기 쉽다.
 third_party_platforms:
   - reddit.com
   - wikipedia.org
@@ -62,6 +64,12 @@ third_party_platforms:
   - facebook.com
   - instagram.com
   - tiktok.com
+  - threads.com
+  - threads.net
+  - pinterest.com
+  - naver.com                # 포털 전체 — 아래 네이버 하위 줄은 인용 집계가 더 구체적인
+  - daum.net                 #   이름(blog.naver.com)으로 접으려고 남긴다(_rival_key)
+  - kakao.com                # pf.kakao.com(카카오톡 채널) 등
   - blog.naver.com
   - cafe.naver.com
   - kin.naver.com
