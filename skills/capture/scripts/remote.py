@@ -31,7 +31,8 @@ Usage:
   python remote.py disconnect
   python remote.py status
   python remote.py sync                    # 사이트 목록 캐시 갱신
-  python remote.py pull [project]          # 서버 보관함을 로컬 brain.db 에 사본으로
+  python remote.py pull <project>          # 서버 보관함의 그 사이트를 로컬 brain.db 에 사본으로
+  python remote.py pull [--all]            # 목록 갱신 후 연결된 사이트 전부 (하나 실패해도 나머지는 받는다)
   python remote.py push <local> [remote]   # 로컬 사이트의 측정치를 서버 사이트에 **더한다**
   python remote.py                         # 인자 없으면 자체점검
 """
@@ -556,6 +557,45 @@ def pull(project: str, src: Path | None = None) -> dict[str, int]:
     return counts
 
 
+def pull_all(src: Path | None = None) -> tuple[list[str], list[tuple[str, str]]]:
+    """연결된 사이트 전부를 로컬 사본으로 — 반환: (받은 사이트, [(실패한 사이트, 사유)]).
+
+    1) 사이트 목록부터 서버에 다시 묻는다(sync 와 같은 갱신). 캐시만 믿으면 웹에서
+       새로 붙인 사이트가 빠진다 — 서버에만 있고 로컬엔 한 줄도 없는 사이트가 그렇게
+       생긴다. 2) 보관함은 **한 번만** 내려받는다(/api/brain 은 유저 brain 통째라
+       사이트 수만큼 받을 이유가 없다). 3) 사이트마다 병합하되 **한 사이트가 실패해도
+       나머지는 받는다** — 등록만 하고 아직 한 번도 안 잰 사이트(원격 보관함에 없음)
+       하나 때문에 나머지 사본까지 낡으면 안 된다. 끝에 성공·실패를 요약한다.
+    """
+    c = config()
+    if not c:
+        sys.exit("원격 연결이 없습니다 — python remote.py connect <url> <token>")
+    c["projects"] = list(api("GET", "/api/projects"))
+    _save(c)
+    own = src is None
+    if own:
+        src = _download()
+    ok: list[str] = []
+    bad: list[tuple[str, str]] = []
+    try:
+        for p in c["projects"]:
+            try:
+                pull(p, src)
+                ok.append(p)
+            except Exception as e:      # 이 사이트만 실패 — 병합은 한 트랜잭션이라 반쯤 남지 않는다
+                why = str(e) or type(e).__name__
+                print(f"[실패] {p}: {why}", file=sys.stderr)
+                bad.append((p, why))
+    finally:
+        if own:
+            src.unlink(missing_ok=True)
+    line = f"원격 사이트 {len(c['projects'])}개 중 받음 {len(ok)} · 실패 {len(bad)}"
+    if bad:
+        line += " — 실패: " + ", ".join(p for p, _ in bad)
+    print(line)
+    return ok, bad
+
+
 # ── dispatch ────────────────────────────────────────────────────────────────
 
 def _shadow_warn(project: str) -> None:
@@ -712,7 +752,7 @@ class _Resp:
 
     @property
     def content(self):
-        return self.text.encode("utf-8")
+        return self.text if isinstance(self.text, bytes) else self.text.encode("utf-8")
 
 
 def _selfcheck() -> None:
@@ -1070,6 +1110,48 @@ def _selfcheck() -> None:
         else:
             raise AssertionError("없는 목적지인데 graft 가 통과했다")
         lc.close()
+
+        # ── 12. pull --all — 목록을 새로 묻고, 한 번 받고, 한 사이트가 실패해도 나머지는 받는다.
+        # 'ghost' 는 웹에 등록만 하고 아직 한 번도 안 잰 사이트다(원격 보관함에 없다).
+        # 가운데 둔다 — 앞에서 실패하면 뒤를 안 받던 옛 동작을 잡으려고.
+        _save({"url": "https://h.example", "token": "smt_secret", "projects": ["mysite"]})
+        hits: list[str] = []
+
+        def fake_all(method, url, **kw):
+            hits.append(url)
+            if url.endswith("/api/projects"):
+                return _Resp(200, ["mysite", "ghost", "x"])
+            if url.endswith("/api/brain"):
+                return _Resp(200, None, rem.read_bytes())
+            raise AssertionError(url)
+
+        globals()["_request"] = fake_all
+        out, errs = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(errs):
+            ok_, bad_ = pull_all()
+        assert config()["projects"] == ["mysite", "ghost", "x"], \
+            "사이트 목록을 갱신 안 했다(웹에서 새로 붙인 사이트가 빠진다)"
+        assert ok_ == ["mysite", "x"], f"한 사이트 실패에 나머지가 막혔다: ok={ok_} bad={bad_}"
+        assert [p for p, _ in bad_] == ["ghost"] and "ghost" in errs.getvalue(), (bad_, errs.getvalue())
+        assert "받음 2 · 실패 1" in out.getvalue() and "ghost" in out.getvalue(), out.getvalue()
+        assert sum(u.endswith("/api/brain") for u in hits) == 1, f"보관함을 사이트마다 받았다: {hits}"
+        lc = _db.connect()
+        names = {r[0] for r in lc.execute("SELECT name FROM projects")}
+        lc.close()
+        assert {"mysite", "x"} <= names and "ghost" not in names, names
+        # 명령 진입점 — 실패가 하나라도 있으면 종료코드 1, 없는 이름 인자는 --all 로 안 읽는다
+        saved_argv = sys.argv
+        try:
+            sys.argv = ["remote.py", "pull", "--all"]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    main()
+                except SystemExit as e:
+                    assert e.code == 1, e.code
+                else:
+                    raise AssertionError("실패한 사이트가 있는데 pull --all 이 0 으로 끝났다")
+        finally:
+            sys.argv = saved_argv
     finally:
         globals()["_request"] = saved_req
         globals()["POLL"] = 1.5
@@ -1097,17 +1179,13 @@ def main() -> None:
         sync()
     elif cmd == "push" and len(args) in (2, 3):
         push(args[1], args[2] if len(args) == 3 else None)
-    elif cmd == "pull" and len(args) == 2:
+    elif cmd == "pull" and len(args) == 2 and args[1] != "--all":
         pull(args[1])
-    elif cmd == "pull":
-        # 이름을 안 주면 캐시에 있는 사이트 전부. 내려받기는 **한 번만** 한다 —
-        # 같은 파일을 사이트 수만큼 받을 이유가 없다.
-        src = _download()
-        try:
-            for p in (config() or {}).get("projects") or []:
-                pull(p, src)
-        finally:
-            src.unlink(missing_ok=True)
+    elif cmd == "pull" and (len(args) == 1 or args[1:] == ["--all"]):
+        # 이름을 안 주면(= --all) 연결된 사이트 전부. 하나라도 실패하면 종료코드 1.
+        _, bad = pull_all()
+        if bad:
+            sys.exit(1)
     else:
         sys.exit(__doc__)
 

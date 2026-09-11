@@ -32,6 +32,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
+import paths  # noqa: E402
 import scoring  # noqa: E402
 
 # 단계를 그 자리에서 끝내는 예외. 정의는 collector 에 있다 — Stage.each 가 이걸
@@ -64,8 +65,9 @@ FATAL_FIX = {
     "OpenRouter": "https://openrouter.ai/settings/keys 에서 잔액·키 확인",
 }
 # 한도는 키를 봐도 안 낫는다 — 잔액 확인으로 보내면 엉뚱한 데를 뒤지게 된다.
-RATE_LIMIT_FIX = (f"계정 전체가 분당 {{rpm}}회입니다 — 잠시 뒤 다시 돌리거나 "
-                  "SEOMINER_DFS_RPM 로 간격을 조절하세요")
+# {rpm} 은 계정 한도가 아니라 **우리가 부르는 빠르기**다(기본 10, 한도는 12).
+RATE_LIMIT_FIX = (f"계정 전체의 분당 한도에 걸렸습니다(지금 분당 {{rpm:g}}회로 부름) — "
+                  "잠시 뒤 다시 돌리거나 SEOMINER_DFS_RPM 로 간격을 조절하세요")
 # 상태 코드가 402 여도 본문이 한도라고 말하면 한도다 — fatal() 이 이걸 먼저 본다.
 _RATE_LIMIT_SAYS = re.compile(r"rates?\s*limit|too\s*many\s*requests", re.I)
 
@@ -92,10 +94,16 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
 # minute per account." 흔히 인용되는 분당 2000회는 task 방식 얘기다 — 이 리포가
 # 부르는 DataForSEO 경로는 SERP·Labs·볼륨·백링크까지 **전부 /live** 라 12 가 걸린다.
 # 여태는 러너의 항목 간격(0.5초)만 있었고 그건 분당 120회다.
-DFS_RPM = 12
-RATE_LIMIT_RETRIES = 3          # 이 뒤로도 429 면 한도가 우리 것만이 아니다 → Fatal
+# 기본값은 한도(12)가 아니라 10 이다 — 12 로 맞추면 여유가 0 이라, 시계 오차나 다른
+# 워커의 호출 하나만 겹쳐도 `12 >= 12` 로 막혔다(호스팅 기록 #53·63·65·67·68).
+DFS_RPM = 10
+RATE_LIMIT_RETRIES = 3          # 이 뒤로도 한도면 한도가 우리 것만이 아니다 → Fatal
 SERVER_ERROR_RETRIES = 2        # 5xx 는 다시 쳐 봐야 일시적인지 알 수 있다 (Fatal 아님)
 _last_call = 0.0
+# 프로세스끼리 나눠 쓰는 "다음 호출 자리" 파일 — _shared_slot 이 쓴다.
+PACE_FILE = "dfs_pace"
+_LOCK_WAIT = 2.0                # 잠금을 이만큼 못 잡으면 프로세스 지역 간격으로 물러난다
+_STALE_AHEAD = 300.0            # 파일이 이보다 먼 미래를 말하면 시계가 튄 것 — 무시한다
 
 
 def _rpm() -> float:
@@ -113,25 +121,121 @@ def pace_seconds() -> float:
     return 60.0 / rpm if rpm > 0 else 0.0
 
 
-def _pace() -> None:
-    """앞 호출과 최소 간격을 벌린다.
+def _pace_path() -> Path:
+    """공유 간격 파일 자리. 서버 데이터 루트(SEOMINER_DATA)가 있으면 거기 — 호스팅은
+    유저마다 CAPTURE_HOME 이 따로지만 DataForSEO 계정은 하나라, 유저 home 에 두면
+    유저끼리 못 나눈다. 없으면(로컬 플러그인) CAPTURE_HOME."""
+    root = os.environ.get("SEOMINER_DATA")
+    return (Path(root) if root else paths.home()) / PACE_FILE
 
-    ponytail: 한 프로세스 안에서만 센다. 호스팅은 워커가 여럿이고 계정은 하나라
-    이것만으로 계정 한도를 보장하지 못한다 — 그때는 서버에 공유 버킷이 필요하다.
-    그래도 지금 실제로 터지던 것(한 런이 혼자 10배로 던지는 것)은 이걸로 막힌다.
+
+def _lock(f) -> bool:
+    """파일 첫 바이트를 **기다리지 않고** 잠가 본다. 잡았으면 True.
+
+    막히는(blocking) 잠금은 쓰지 않는다 — 누가 잠금을 쥔 채 멈추면 우리도 같이 멈춘다.
+    잠금은 핸들이 닫히면(프로세스가 죽어도) OS 가 푼다 — 남은 잠금 때문에 굳지 않는다.
+    """
+    f.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(f) -> None:
+    f.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _shared_slot(earliest: float, gap: float) -> float | None:
+    """프로세스끼리 "다음 호출 자리"를 하나씩 받아 간다. 반환: 내 호출 시각(time.time()).
+
+    파일에는 마지막으로 나간 자리 하나만 적힌다. 잠금 안에서 하는 일은 읽고·더하고·
+    쓰는 것뿐이고 **자는 것은 잠금 밖에서** 한다 — 그래서 잠금은 마이크로초만 쥐고,
+    워커가 여럿이면 번호표처럼 gap 씩 뒤로 줄을 선다.
+
+    어디서든 실패하면(폴더 없음·권한·잠금 경합·깨진 내용) None — 호출부가 프로세스
+    지역 간격으로 조용히 물러난다. 잠금을 _LOCK_WAIT 안에 못 잡아도 None 이다.
+    """
+    try:
+        p = _pace_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a+b") as f:
+            give_up = time.monotonic() + _LOCK_WAIT
+            while not _lock(f):
+                if time.monotonic() >= give_up:
+                    return None
+                time.sleep(0.01)
+            try:
+                f.seek(0)
+                try:
+                    last = float(f.read(64).decode("ascii").strip() or 0)
+                except (ValueError, UnicodeDecodeError):
+                    last = 0.0            # 깨졌으면 없던 셈 친다
+                if last - time.time() > _STALE_AHEAD:
+                    last = 0.0            # 시계가 뒤로 튀었다 — 5분 넘게 줄 서지 않는다
+                slot = max(earliest, last + gap)
+                f.seek(0)
+                f.truncate()
+                f.write(f"{slot:.3f}".encode("ascii"))
+                f.flush()
+                return slot
+            finally:
+                _unlock(f)
+    except Exception:
+        return None
+
+
+def _pace() -> None:
+    """앞 호출과 최소 간격을 벌린다 — 이 프로세스의 앞 호출과, 같은 데이터 폴더를 쓰는
+    다른 프로세스의 앞 호출 둘 다와.
+
+    호스팅은 scheduler.dispatch·resume_dead_runs 가 워커를 따로 띄우고 계정은 하나라,
+    프로세스 안에서만 세면 워커 둘이 각자 분당 10회씩 던져 계정 한도를 넘는다. 그래서
+    _shared_slot 이 파일 하나로 자리를 나눈다. 그게 실패하면 예전처럼 프로세스 안에서만
+    센다 — 한 런이 혼자 10배로 던지는 것(실제로 터지던 것)은 그것만으로도 막힌다.
+    ponytail: 컨테이너(레플리카)가 둘이면 파일을 못 나눈다. 그때는 서버 공유 버킷이다.
     """
     global _last_call
     gap = pace_seconds()
     if gap <= 0:
         return
-    wait = _last_call + gap - time.monotonic()
+    local = max(0.0, _last_call + gap - time.monotonic())
+    now = time.time()
+    slot = _shared_slot(now + local, gap)
+    wait = local if slot is None else slot - now
     if wait > 0:
         time.sleep(wait)
     _last_call = time.monotonic()
 
 
+def _rate_limited(r) -> bool:
+    """이 응답이 분당 한도에 걸린 것인가. 429 거나, **402 인데 본문이 한도라고 말할 때**.
+
+    DataForSEO 는 분당 한도를 402 로도 돌려준다(`The rates limit per minute has been
+    exceeded: 12 >= 12.`). 상태 코드만 보면 잔액 부족과 똑같이 Fatal 로 단계를 통째로
+    멈춘다 — 호스팅 기록 #53·63·65·67·68 이 그 자리다. 판정 문구는 fatal() 과 같은
+    _RATE_LIMIT_SAYS 한 벌이다. 진짜 잔액 부족 402 는 False — raise_for 가 멈춘다.
+    """
+    if r.status_code == RATE_LIMIT:
+        return True
+    return r.status_code == 402 and bool(_RATE_LIMIT_SAYS.search(why(r)))
+
+
 def _dfs_call(fn, *a, **kw):
-    """DataForSEO 요청 하나 — 간격을 지키고, 429·5xx 면 기다렸다 다시 친다.
+    """DataForSEO 요청 하나 — 간격을 지키고, 한도(429·한도라고 말하는 402)·5xx 면
+    기다렸다 다시 친다.
 
     재시도는 여기 있어야 한다. 수집기의 이분 재시도(collect_metrics._ask)는 하위
     요청 사이에 간격이 아예 없어서, 한도에 걸린 상태에서 한 묶음이 스무 번을 연달아
@@ -152,9 +256,9 @@ def _dfs_call(fn, *a, **kw):
     while True:
         _pace()
         r = fn(*a, **kw)
-        if r.status_code == RATE_LIMIT:
+        if _rate_limited(r):
             if rate_left <= 0:
-                raise fatal("DataForSEO", RATE_LIMIT, why(r))
+                raise fatal("DataForSEO", r.status_code, why(r))
             rate_left -= 1
         elif r.status_code >= 500:
             if server_left <= 0:
@@ -644,6 +748,10 @@ def fetch(provider: str, keyword: str, locale: str, depth: int = 10, device: str
 
 
 def _selfcheck() -> None:
+    import subprocess
+    import tempfile
+    import threading
+
     assert location("ko-KR")[0] == "South Korea"
     assert location("de-DE")[0] == "Germany"
     assert location("pt-BR")[0] == "Brazil"
@@ -691,7 +799,9 @@ def _selfcheck() -> None:
 
     real_post, real_env = requests.post, dict(os.environ)
     try:
-        os.environ["SEOMINER_DFS_RPM"] = "0"   # 검사에서 5초씩 쉬지 않는다
+        os.environ["SEOMINER_DFS_RPM"] = "0"   # 검사에서 6초씩 쉬지 않는다
+        # 공유 간격 파일이 진짜 데이터 폴더에 생기지 않게
+        os.environ["SEOMINER_DATA"] = tempfile.mkdtemp(prefix="seo-miner-pace-selftest-")
         os.environ["DATAFORSEO_LOGIN"] = "u"
         os.environ["DATAFORSEO_PASSWORD"] = "p"
         requests.post = fake_post
@@ -851,9 +961,66 @@ def _selfcheck() -> None:
         # 진짜 잔액 부족은 그대로 잔액 안내다
         assert "잔액 없음(402)" in str(fatal("DataForSEO", 402, "Payment Required"))
 
-        # 간격 계산 — 분당 12회면 5초. 0 이면 안 쉰다(검사·직접 조절).
+        # 한도라고 말하는 402 는 문구만이 아니라 **동작**도 429 와 같다 — 기다렸다 다시
+        # 친다. 여태는 raise_for 가 FATAL_STATUS 로 보고 첫 번에 단계를 통째로 멈췄다.
+        limit_body = {"status_message":
+                      "The rates limit per minute has been exceeded: 12 >= 12."}
+        ok_body = {"tasks": [{"status_code": 20000, "cost": 0.3, "result": [3]}]}
+        seq402 = [_FakeResp(limit_body, status_code=402), _FakeResp(ok_body)]
+        tries.clear()
+
+        def post_402_then_ok(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return seq402.pop(0)
+
+        requests.post = post_402_then_ok
+        try:
+            got = post_dataforseo("/x/live", [{}])
+        except collector.Fatal as e:
+            raise AssertionError(f"한도 402 를 다시 안 치고 멈췄다: {e}") from None
+        assert got == ([3], 0.3), f"한도 402 뒤 재시도가 값을 못 살렸다: {got}"
+        assert len(tries) == 2, f"한도 402 시도 횟수가 {len(tries)}회다"
+
+        # 계속 한도면 429 와 같은 예산을 다 쓰고 한도 Fatal — 잔액 안내가 아니다
+        tries.clear()
+
+        def post_402_limit(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return _FakeResp(limit_body, status_code=402)
+
+        requests.post = post_402_limit
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("계속 한도 402 인데 그냥 지나쳤다")
+        except collector.Fatal as e:
+            assert "분당 호출 한도 초과(402)" in str(e), e
+            assert "잔액" not in str(e).split("[")[0], f"한도를 잔액 문제로 말한다: {e}"
+        assert len(tries) == RATE_LIMIT_RETRIES + 1, \
+            f"한도 402 를 429 만큼 기다렸다 다시 치지 않았다: {len(tries)}회"
+
+        # 진짜 잔액 부족 402 는 한 번에 멈춘다 — 다시 쳐 봐야 돈이 안 생긴다
+        tries.clear()
+
+        def post_402_broke(url, auth=None, timeout=None, json=None):
+            tries.append(url)
+            return _FakeResp({"status_message": "Payment Required. Insufficient funds."},
+                             status_code=402)
+
+        requests.post = post_402_broke
+        try:
+            post_dataforseo("/x/live", [{}])
+            raise AssertionError("잔액 402 를 Fatal 로 안 올렸다")
+        except collector.Fatal as e:
+            assert "잔액 없음(402)" in str(e), e
+        assert len(tries) == 1, f"잔액 402 를 {len(tries)}회 쳤다 — 재시도하면 안 된다"
+        requests.post = fake_post
+
+        # 간격 계산 — 분당 10회면 6초. 0 이면 안 쉰다(검사·직접 조절).
+        # 12(=DataForSEO 계정 한도)로 되돌리면 여유가 0 이라 `12 >= 12` 로 다시 막힌다.
         os.environ.pop("SEOMINER_DFS_RPM")
-        assert pace_seconds() == 5.0, pace_seconds()
+        assert DFS_RPM == 10 and pace_seconds() == 6.0, (DFS_RPM, pace_seconds())
+        os.environ["SEOMINER_DFS_RPM"] = "20"            # 덮어쓰기는 그대로 산다
+        assert pace_seconds() == 3.0, pace_seconds()
         os.environ["SEOMINER_DFS_RPM"] = "0"
         assert pace_seconds() == 0.0
         _t0 = time.monotonic()
@@ -866,6 +1033,66 @@ def _selfcheck() -> None:
         _t0 = time.monotonic()
         _pace()
         assert time.monotonic() - _t0 >= 0.09, "간격을 켰는데 안 쉬었다"
+
+        # ── 프로세스를 넘는 간격 ──
+        # 자리는 파일 하나로 받아 간다 — 두 번째 자리는 첫 자리 + gap 이다.
+        pace_file = _pace_path()
+        assert pace_file.parent == Path(os.environ["SEOMINER_DATA"]), pace_file
+        now = time.time()
+        s1, s2 = _shared_slot(now, 1.0), _shared_slot(now, 1.0)
+        assert s1 is not None and s2 is not None, "공유 자리를 못 받았다"
+        assert abs((s2 - s1) - 1.0) < 1e-3, f"두 번째 자리가 gap 만큼 뒤가 아니다: {s2 - s1}"
+        # 깨진 내용은 없던 셈, 너무 먼 미래(시계가 튄 것)도 없던 셈 — 5분씩 줄 서지 않는다
+        pace_file.write_bytes(b"garbage")
+        assert _shared_slot(now, 1.0) == now
+        pace_file.write_bytes(f"{now + 10 * _STALE_AHEAD:.3f}".encode("ascii"))
+        assert _shared_slot(now, 1.0) == now
+        # 누가 잠금을 쥔 채 멈춰도 교착되지 않는다 — _LOCK_WAIT 안에 물러나 None
+        global _LOCK_WAIT
+        keep_wait, _LOCK_WAIT = _LOCK_WAIT, 0.2
+        try:
+            with open(pace_file, "a+b") as holder:
+                assert _lock(holder), "검사용 잠금을 못 잡았다"
+                # 굳으면 검사도 같이 굳는다 — 딴 스레드에서 돌리고 시간을 재서 FAIL 로 만든다
+                box: list = []
+                th = threading.Thread(target=lambda: box.append(_shared_slot(time.time(), 1.0)),
+                                      daemon=True)
+                th.start()
+                th.join(timeout=2.0)
+                assert not th.is_alive(), "잠금을 기다리다 굳었다 — _LOCK_WAIT 를 안 지킨다"
+                assert box == [None], f"잠긴 파일에서 자리를 받았다: {box}"
+                _t0 = time.monotonic()
+                _pace()                      # 물러나서 프로세스 지역 간격으로 돈다
+                assert time.monotonic() - _t0 < 1.0, "잠금 경합에서 _pace 가 굳었다"
+                _unlock(holder)
+        finally:
+            _LOCK_WAIT = keep_wait
+        # 폴더를 못 만들어도(여기선 파일 자리에 폴더를 요구) 조용히 None
+        os.environ["SEOMINER_DATA"] = str(pace_file)
+        assert _shared_slot(time.time(), 1.0) is None
+        _pace()                              # 예외 없이 지역 간격으로
+        os.environ["SEOMINER_DATA"] = str(pace_file.parent)
+
+        # 진짜 프로세스 둘 — 각자 세 번씩 부르면 여섯 번이 전부 gap 이상 벌어진다.
+        # 프로세스 지역 간격만이면 둘이 같은 순간에 던져 간격이 ~0 이 된다.
+        # 두 자식이 import 를 끝낸 뒤 동시에 출발하도록 stdin 으로 신호를 준다.
+        child = ("import sys, time; sys.path.insert(0, sys.argv[1]); import serp_adapter;"
+                 "print('ready', flush=True); sys.stdin.readline();"
+                 "[(serp_adapter._pace(), print(repr(time.time()), flush=True))"
+                 " for _ in range(3)]")
+        env = {**os.environ, "SEOMINER_DFS_RPM": "300"}      # gap 0.2초
+        procs = [subprocess.Popen([sys.executable, "-c", child, str(Path(__file__).parent)],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  text=True, env=env) for _ in range(2)]
+        for pr in procs:
+            assert pr.stdout.readline().strip() == "ready", "자식이 안 떴다"
+        for pr in procs:
+            pr.stdin.write("go\n")
+            pr.stdin.flush()
+        stamps = sorted(float(x) for pr in procs for x in pr.communicate(timeout=30)[0].split())
+        assert len(stamps) == 6, stamps
+        gaps = [round(b - a, 3) for a, b in zip(stamps, stamps[1:])]
+        assert min(gaps) >= 0.18, f"프로세스끼리 간격을 안 나눴다 — 간격 {gaps}"
         os.environ["SEOMINER_DFS_RPM"] = "0"
 
         # HTTP 200 인데 task status_code 가 결제 계열이어도 Fatal (40200 = 402.00)

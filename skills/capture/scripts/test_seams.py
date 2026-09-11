@@ -697,8 +697,10 @@ def test_seam_17_verdict_and_status_single_source():
     - 판정 값은 db.VERDICTS 한 벌: 화면(triage.html)의 TR_VERDICT 키와 같다.
     - 정규화는 서버의 scoring.norm 하나: 뷰·셸 JS 에 norm 사본(낱자 정규식)이 없고,
       화면은 서버가 준 key 를 그대로 돌려보낸다.
-    - 상태 값은 db.OPP_STATUSES 한 벌: 셸의 OPP_LABEL·OPP_NEXT·OPP_SET·OPP_DONE 키가
-      양방향으로 같다. 값이 하나 늘면 네 표가 같이 늘어야 한다.
+    - 상태 값은 db.OPP_STATUSES 한 벌: 셸의 OPP_SET·OPP_DONE(사람이 누르는 것) 키는
+      그것과, OPP_LABEL·OPP_NEXT(그리는 것) 키는 거기에 db.OPP_RESOLVED 를 더한 것과
+      양방향으로 같다. resolved 는 서버가 닫는 값이라 누르는 표엔 없고, 그리는 표에
+      없으면 화면에 영문 "resolved" 가 날것으로 뜬다.
     - 심사 대상 종류는 scoring.KEYWORD_KINDS ⊂ ALL_KINDS.
     """
     ctx = _load()
@@ -713,12 +715,13 @@ def test_seam_17_verdict_and_status_single_source():
         "화면의 판정 값이 db.VERDICTS 와 다르다"
     for src, who in ((tr, "triage.html"), (shell, "dashboard.html")):
         assert "0-9a-z가-힣" not in src, f"{who} 에 norm 사본이 있다 — 정규화는 scoring.norm 하나다"
-    for name in ("OPP_LABEL", "OPP_NEXT", "OPP_SET", "OPP_DONE"):
+    drawn = set(db.OPP_STATUSES) | {db.OPP_RESOLVED}
+    for name, want in (("OPP_LABEL", drawn), ("OPP_NEXT", drawn),
+                       ("OPP_SET", set(db.OPP_STATUSES)), ("OPP_DONE", set(db.OPP_STATUSES))):
         mm = re.search(name + r" = \{(.*?)\};", shell, re.S)
         assert mm, f"셸의 {name} 을 못 찾았다"
         keys = set(re.findall(r"(\w+):", mm.group(1)))
-        assert keys == set(db.OPP_STATUSES), \
-            f"{name} 의 키가 db.OPP_STATUSES 와 어긋났다: {keys ^ set(db.OPP_STATUSES)}"
+        assert keys == want, f"{name} 의 키가 어긋났다: {sorted(keys ^ want)}"
     assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
 
 
@@ -966,6 +969,83 @@ def test_seam_22_document_escaping_single_source():
     assert "<script>evil()" not in html and "가</script>나" not in html, \
         "조립이 <option> 값을 이스케이프 없이 박는다 — 목록 출처가 사람 손을 타면 터진다"
     assert "&lt;script&gt;evil()" in html, "적대적인 값이 아예 안 실렸다 — 검사가 헛돈다"
+
+
+def test_seam_23_opportunity_groups_single_source():
+    """23) 기회 묶음 이음매 — 묶는 쪽(scoring.group_opportunities)과 그리는 쪽(셸·개요).
+    - 묶은 이유(via)는 scoring.GROUP_VIA 한 벌이다: 셸의 GROUP_WHY 키가 양방향으로 같다.
+      서버가 새 열쇠를 만들고 화면이 모르면 펼침 패널이 GROUP_WHY[via] 에서 터진다.
+    - 열린 기회는 scoring.OPEN_STATUSES 한 벌이다: 개요의 [아직 안 함](ST_GROUP.open)이
+      같은 값이다. 둘 다 "이 상태면"으로 거른다 — done·resolved 는 여기 없다.
+    - 개요는 서버가 접은 줄(d.opp_groups)을 그린다 — 화면이 다시 묶지 않는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    shell, views = ctx["shell"], ctx["views"]
+    m = re.search(r"const GROUP_WHY = \{(.*?)\n\};", shell, re.S)
+    assert m, "셸의 GROUP_WHY 를 못 찾았다"
+    keys = set(re.findall(r"^\s*(\w+):", m.group(1), re.M))
+    assert keys == set(scoring.GROUP_VIA), \
+        f"GROUP_WHY 의 키가 scoring.GROUP_VIA 와 어긋났다: {keys ^ set(scoring.GROUP_VIA)}"
+    ov = (views / "overview.html").read_text("utf-8")
+    mm = re.search(r"const ST_GROUP = \{open:\[(.*?)\]", ov)
+    assert mm, "overview.html 의 ST_GROUP.open 을 못 찾았다"
+    assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
+        "개요의 [아직 안 함] 이 scoring.OPEN_STATUSES 와 다르다"
+    assert not {"done", "dismissed", "resolved"} & set(scoring.OPEN_STATUSES)
+    assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
+
+
+def test_seam_24_ai_health_fields_come_from_scoring():
+    """24) [AI 인용] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
+
+    화면(views/ai.html 의 AI_health)은 d.ai_health 의 하위 칸(h.unmeasured,
+    lr.state …)을 읽는다. 최상위 키는 10번이 보지만 그 안의 칸은 아무도 안 본다 —
+    scoring.ai_health 가 칸 이름을 바꾸면 화면은 undefined 를 "0개"로 읽어 아무 줄도
+    안 그리고, 끊긴 확인이 다시 조용해진다. 그래서 칸 이름과 상태 값을 실물과 대조한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import sqlite3 as _sq
+
+    import collector
+    import scoring
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "function AI_health(" in src, "ai.html 에 AI_health 가 없다 — 이 검사가 헛돈다"
+    body = src[src.index("function AI_health("):]
+    body = body[:body.index("\n}\n")]
+    read_h = set(re.findall(r"\bh\.([a-zA-Z_]\w*)", body))
+    read_lr = set(re.findall(r"\blr\.([a-zA-Z_]\w*)", body))
+    assert read_h and read_lr, "AI_health 가 읽는 칸을 하나도 못 찾았다 — 검사가 헛돈다"
+    assert "d.ai_health" in src, "화면이 페이로드의 ai_health 를 안 읽는다"
+
+    # 실물 — 끊긴 회차 하나를 둔 Brain 에서 scoring.ai_health 를 돌린다
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    c.execute("INSERT INTO ai_prompts(project_id,prompt) VALUES(1,'질문 하나')")
+    try:
+        with db.run(c, 1, "ai"):
+            raise collector.Fatal("402")
+    except collector.Fatal:
+        pass
+    h = scoring.ai_health(c, 1)
+    c.close()
+    assert read_h <= set(h), f"화면이 읽는데 ai_health 에 없는 칸: {sorted(read_h - set(h))}"
+    assert read_lr <= set(h["last_run"]), \
+        f"화면이 읽는데 last_run 에 없는 칸: {sorted(read_lr - set(h['last_run']))}"
+    # 상태 값도 한 벌 — 화면이 견주는 글자는 scoring 이 실제로 내는 값이어야 한다
+    made = {scoring._ai_run_state(r) for r in (
+        {"finished_at": None, "notes": None},
+        {"finished_at": "t", "notes": f"x {scoring.AI_RUN_ABORTED} y"},
+        {"finished_at": "t", "notes": "errors=0"})}
+    said = set(re.findall(r'lr\.state\s*[!=]==\s*"(\w+)"', body))
+    assert said and said <= made, f"화면이 모르는 런 상태를 견준다: {sorted(said - made)}"
+    assert h["last_run"]["state"] == "aborted", h["last_run"]
 
 
 if __name__ == "__main__":

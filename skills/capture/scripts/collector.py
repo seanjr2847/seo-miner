@@ -640,7 +640,7 @@ def _runner_check() -> None:
             seen.append(kw)
             st.conn.execute(
                 "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,?)",
-                (st.pid, kw, "ko-KR", "seed"))
+                (st.pid, kw, db.keyword_locale(kw, "ko-KR"), "seed"))
 
         with st.record("rank") as r:
             with contextlib.redirect_stderr(err):

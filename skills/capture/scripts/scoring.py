@@ -1699,12 +1699,16 @@ def _backfill_intents(conn: sqlite3.Connection, project_id: int) -> int:
     return len(pairs)
 
 
-def _fit_of(conn: sqlite3.Connection, project_id: int, target: str) -> float:
+def _fit_of(conn: sqlite3.Connection, project_id: int, target: str, *,
+            question: bool = False) -> float:
     """기회 row 의 fit 근사 — 데이터로 답할 수 있는 만큼만 결정적으로.
 
     fit 의 진짜 판정은 Claude 가 하지만, 0.5 중립으로 두면 w_fit 가 큰 프리셋
     (local_clinic 0.45) 에서 모든 기회가 점수 면적 한가운데만 차지한다.
     활성 키워드와 일치하면 0.8, cluster 매칭이면 0.65, 그 외 0.5.
+
+    question=True(대상이 AI 에 물은 질문 문장)면 "그 외"를 한 번 더 가른다 —
+    _fit_of_question. 키워드 대상의 동작은 그대로다.
     """
     t = norm(target)
 
@@ -1729,13 +1733,153 @@ def _fit_of(conn: sqlite3.Connection, project_id: int, target: str) -> float:
             return 0.8
     # tier 2: 정확 일치가 없을 때 — cluster 소속 active keyword 와 norm 같거나
     #          target 문자열이 cluster 명을 포함 (topic 만 겹친 경우)
+    if question and _names_us(conn, project_id, t):
+        return FIT_Q_BRAND
     for r in rows:
         if r["cluster"] and norm(r["keyword"]) == t:
             return 0.65
     for r in rows:
         if r["cluster"] and norm(r["cluster"]) in t:
             return 0.65
+    if question:
+        return _fit_of_question(conn, project_id, target, rows)
     return 0.5
+
+
+# ── 질문(AI 프롬프트) 대상의 fit ─────────────────────────────────────────────
+# 키워드 대상은 "추적 중인 검색어인가"로 충분하다 — 검색어는 사이트가 이미 쓰는 말의
+# 조각이다. 질문은 문장이라 활성 키워드와 글자째 같을 일이 거의 없어서 거의 전부 0.5
+# 중립에 떨어졌고, 일반 질문 15건이 38.5점 동점이 됐다. "제주도 피부과 추천" 같은
+# 사이트가 다루지도 않는 질문과 실제 격차를 점수가 못 갈랐다. 그래서 질문일 때만
+# 사이트가 **실제로 가진 말**(크롤·감사한 페이지의 경로·제목, GSC 가 본 페이지 경로,
+# 활성 키워드·클러스터)과 겹치는지를 본다:
+FIT_Q_BRAND = 0.8     # 우리 이름을 부른 질문 — 추적 키워드 정확 일치와 같은 급. 브랜드
+                      # 질문에서 빠지는 것은 남의 자리가 아니라 우리 자리를 잃는 것이다
+FIT_Q_KEYWORD = 0.65  # 활성 키워드 하나가 문장 안에 통째로 들어 있다 — cluster 명 포함과
+                      # 같은 급(주제가 겹친다). 단 그 키워드에 주제 낱말이 있어야 한다
+FIT_Q_PAGE = 0.5      # 사이트의 페이지·키워드와 주제 낱말이 겹친다 — 다룰 자리는 있다.
+                      # 판단할 근거가 이 이상은 없으므로 예전 중립값을 그대로 둔다
+FIT_Q_NONE = 0.2      # 아무것과도 안 겹친다 — 사이트가 안 다루는 질문일 공산이 크다.
+                      # 0 이 아닌 이유: 겹침은 낱말 수준이라 동의어·다른 표기를 못 잡는다.
+                      # 틀렸을 때 목록에서 사라지지 않고 뒤로만 밀리게 둔다.
+                      # local_clinic(w_fit 0.45)에서 0.5→0.2 는 13.5점이다
+FIT_GENERIC_SHARE = 0.5   # 사이트 문서 절반 이상에 들어 있는 낱말은 간판말("OO피부과"의
+                          # 피부과)이다 — 그것 하나 겹쳤다고 같은 주제로 치지 않는다
+FIT_GENERIC_MIN_DOCS = 4  # 문서가 이보다 적으면 간판말을 가를 표본이 안 된다 — 안 거른다
+FIT_PAGE_LIMIT = 300      # GSC 페이지는 노출 많은 순으로 이만큼만 — 사이트의 말은 거기서 다 나온다
+# 주제가 아닌 낱말 — 의도어(INTENT_*)와 URL 부스러기. 이게 겹쳐도 같은 주제가 아니다.
+_FIT_NOISE = (INTENT_TRANSACTIONAL | INTENT_COMMERCIAL | INTENT_NAVIGATIONAL
+              | {"www", "http", "https", "html", "htm", "php", "asp", "aspx", "index",
+                 "category", "tag", "tags", "page", "post", "posts", "notice", "amp",
+                 "com", "net", "org", "co", "kr", "ko", "en", "ja", "zh"})
+
+
+def _fit_word(t: str) -> bool:
+    """사이트 어휘로 쓸 낱말인가 — 한글이면 두 글자, 라틴·숫자면 세 글자 이상, 소음 아님."""
+    if t in _FIT_NOISE or t.isdigit():
+        return False
+    return len(t) >= (2 if re.search(r"[가-힣]", t) else 3)
+
+
+def _fit_hits(word: str, q_norm: str, q_toks: set[str]) -> bool:
+    """질문이 이 낱말을 품었나. 한글은 조사가 붙어 토큰이 안 맞으므로("피부과는")
+    정규화한 문장에서 부분 문자열로, 라틴은 부분 문자열이면 'art' 가 'start' 에
+    걸리므로 토큰으로 본다."""
+    return word in q_norm if re.search(r"[가-힣]", word) else word in q_toks
+
+
+def _brand_names(conn: sqlite3.Connection, project_id: int) -> set[str]:
+    """우리 이름들(정규화) — 사이트 이름·도메인 앞부분·yaml 의 brand_aliases."""
+    p = conn.execute("SELECT name, domain, config_path FROM projects WHERE id=?",
+                     (project_id,)).fetchone()
+    if not p:
+        return set()
+    names = [p["name"], _stem(p["domain"] or "")]
+    if p["config_path"]:
+        try:
+            import db
+            names += aliases_of(db.load_project_yaml(p["config_path"]))
+        except Exception:     # yaml 은 부가 정보다 — 없어도 이름·도메인으로 판정한다
+            pass
+    return {n for n in (norm(x) for x in names if x) if len(n) >= 2}
+
+
+def _names_us(conn: sqlite3.Connection, project_id: int, q_norm: str) -> bool:
+    return any(b in q_norm for b in _brand_names(conn, project_id))
+
+
+def _site_docs(conn: sqlite3.Connection, project_id: int) -> list[str]:
+    """사이트가 실제로 가진 말 — 문서 하나 = 페이지 하나(경로+제목) 또는 키워드 하나.
+
+    페이지는 세 출처를 합친다(gen_prompts.offers 처럼 하나만 고르지 않는다 — 여기는
+    재료가 아니라 어휘라 많을수록 덜 틀린다): 최신 크롤 회차, 최신 페이지 감사,
+    최신 GSC 스냅샷의 페이지. 같은 경로는 한 문서다.
+    """
+    import urllib.parse
+    pages: dict[str, str] = {}
+
+    def add(url, title):
+        path = urllib.parse.unquote(re.sub(r"^https?://[^/]+", "", str(url or "")))
+        path = path.split("?")[0].split("#")[0]
+        if path.strip("/") or title:
+            pages[path] = (pages.get(path, "") + " " + str(title or "")).strip()
+
+    for r in conn.execute(
+            """SELECT url, title, h1 FROM crawl_pages WHERE run_id=(
+                 SELECT MAX(id) FROM crawl_runs WHERE project_id=?)""", (project_id,)):
+        add(r["url"], f"{r['title'] or ''} {r['h1'] or ''}")
+    for r in conn.execute(
+            """SELECT url, title FROM page_audits WHERE project_id=? AND checked_date=(
+                 SELECT MAX(checked_date) FROM page_audits WHERE project_id=?)""",
+            (project_id, project_id)):
+        add(r["url"], r["title"])
+    cur, _prev, period, _mm = snapshot_pair(conn, project_id)
+    if cur:
+        for r in conn.execute(
+                """SELECT page FROM gsc_snapshots
+                    WHERE project_id=? AND snapshot_date=? AND period_days=?
+                      AND page IS NOT NULL
+                 GROUP BY page ORDER BY SUM(impressions) DESC LIMIT ?""",
+                (project_id, cur, period, FIT_PAGE_LIMIT)):
+            add(r["page"], None)
+    docs = [f"{path} {title}" for path, title in pages.items()]
+    docs += [f"{r['keyword']} {r['cluster'] or ''}" for r in conn.execute(
+        "SELECT keyword, cluster FROM keywords WHERE project_id=? AND is_active=1",
+        (project_id,))]
+    return docs
+
+
+def _fit_of_question(conn: sqlite3.Connection, project_id: int, prompt: str,
+                     kw_rows) -> float:
+    """질문 문장이 사이트가 가진 말과 겹치나 — FIT_Q_* 의 판정.
+
+    사이트 어휘가 아예 없으면(페이지도 키워드도 안 모았다) 0.5 다: 겹칠 재료가
+    없는 것을 "안 겹친다"로 읽으면 수집 전의 모든 질문이 무관 판정을 받는다.
+    """
+    docs = _site_docs(conn, project_id)
+    if not docs:
+        return FIT_Q_PAGE
+    q_norm, q_toks = norm(prompt), set(tokens(prompt))
+    doc_norms = [norm(d) for d in docs]
+
+    def specific(word: str) -> bool:
+        """간판말이 아닌가 — 사이트 문서 절반 이상에 있으면 그 사이트 전체의 말이다."""
+        if len(doc_norms) < FIT_GENERIC_MIN_DOCS:
+            return True
+        share = sum(1 for d in doc_norms if word in d) / len(doc_norms)
+        return share < FIT_GENERIC_SHARE
+
+    # 활성 키워드가 문장 안에 통째로 — 단 그 키워드가 주제 낱말을 하나는 가져야 한다
+    # ("피부과 추천" 이 "제주도 피부과 추천" 안에 있다고 같은 주제가 아니다).
+    for r in kw_rows:
+        kn = norm(r["keyword"])
+        if len(kn) >= 2 and kn in q_norm and any(
+                _fit_word(w) and specific(w) for w in tokens(r["keyword"])):
+            return FIT_Q_KEYWORD
+    vocab = {w for d in docs for w in tokens(d) if _fit_word(w)}
+    if any(_fit_hits(w, q_norm, q_toks) and specific(w) for w in vocab):
+        return FIT_Q_PAGE
+    return FIT_Q_NONE
 
 
 def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
@@ -1780,31 +1924,139 @@ _LATEST_BL = "SELECT MAX(checked_date) FROM backlinks WHERE project_id=?"
 _LATEST_LI = "SELECT MAX(checked_date) FROM link_intersect WHERE project_id=?"
 
 
+# ── AI 질문의 측정 상태 ─────────────────────────────────────────────────────
+# "끝난 회차" — collect_ai 가 runs 에 남기는 흔적으로 가른다 (db.run·collector.Stage):
+#   · 정상 종료       finished_at 있음, notes="engines=[..] samples=N errors=K … skipped=S".
+#                     항목 실패(errors>0)가 있어도 끝난 회차다 — 실패한 (질문·엔진)은
+#                     ai_checks 에 행이 없을 뿐이고, 남은 행은 온전히 받은 답이다
+#   · 도중에 끊김     finished_at 있음, notes 에 "중단: <예외>" — db.run 이 예외로 닫을 때
+#                     붙인다. 402 잔액·401 키(collector.Fatal)가 여기다. 09-02 의 #56 이
+#                     이것이었다: 끊긴 자리의 질문은 엔진 일부만 물었고, 거기까지 못 간
+#                     질문은 행이 아예 없다
+#   · 프로세스째 죽음 finished_at NULL — 재배포 SIGKILL. store.reclaim_dead_runs 는 sites
+#     · 도는 중       표만 고치고 이 행은 그대로 둔다. 도는 중인 것과 겉으로 같다
+# 끝난 회차 = finished_at 있음 AND notes 에 AI_RUN_ABORTED 없음. 이것만 측정으로 쓴다.
+# 예전엔 "ai_checks 가 가진 가장 큰 run_id"를 최신 회차로 골라, 끊긴 #56 이 최신이 되고
+# 거기서 안 닿은 질문 17개가 기회 목록에서 조용히 빠졌다.
+AI_RUN_ABORTED = "중단:"   # db.run 이 예외로 닫은 런의 notes 표식 — test_capture 가 실물 db.run 으로 대조
+AI_STALE_DAYS = 30         # 질문의 마지막 측정이 이보다 오래되면 "오래됨". 자동 런은 며칠
+                           # 간격이라, 한 달 동안 한 번도 안 잰 질문은 상한(max_ai_prompts)
+                           # 밖으로 밀렸거나 확인이 계속 끊긴 것이다 — 그 인용 0 은 옛 사실이다
+
+
+def ai_run_done(r: str = "r") -> str:
+    """"이 ai 런은 끝났나"의 SQL 조각 — 측정(ai_prompt_state)과 오늘 건너뛰기
+    (collect_ai 의 seen_today)가 같은 판정을 쓴다. 둘이 갈라지면, 끊긴 회차가 오늘
+    물은 질문을 재수집이 "이미 확인"으로 건너뛰는데 측정은 그걸 안 쳐서 "측정 안 됨"
+    이 다시 눌러도 안 풀린다."""
+    return (f"{r}.kind='ai' AND {r}.finished_at IS NOT NULL "
+            f"AND instr(COALESCE({r}.notes,''), '{AI_RUN_ABORTED}')=0")
+
+
+def _ai_run_state(row) -> str:
+    """runs 한 줄 → done | aborted | open (open 은 도는 중이거나 프로세스째 죽은 것)."""
+    if not row["finished_at"]:
+        return "open"
+    return "aborted" if AI_RUN_ABORTED in (row["notes"] or "") else "done"
+
+
+def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
+                    now: str | None = None) -> dict:
+    """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용] 화면이 같이 쓴다.
+
+    반환:
+      rows      [{id, prompt, category, gen_version, aim, run_id, measured_at, state}]
+                state: measured | stale(AI_STALE_DAYS 넘음) | unmeasured(끝난 회차에 행 없음)
+      active·measured·stale·unmeasured·outdated   개수. outdated 는 gen_prompts.outdated
+      last_run  가장 최근 ai 런 {id, state(done|aborted|open), at, errors, note} | None
+    now 는 검사용 기준 시각(없으면 지금).
+    """
+    import gen_prompts            # 판 판정의 정본 — 여기 사본을 두지 않는다
+    rows = [dict(r) for r in conn.execute(
+        f"""WITH last AS (
+              SELECT c.prompt_id, MAX(c.run_id) run_id
+                FROM ai_checks c JOIN runs r ON r.id=c.run_id
+               WHERE r.project_id=? AND {ai_run_done("r")}
+            GROUP BY c.prompt_id)
+            SELECT p.id, p.prompt, p.category, p.gen_version, p.aim,
+                   l.run_id, r.finished_at measured_at,
+                   julianday(COALESCE(?, 'now')) - julianday(r.finished_at) age
+              FROM ai_prompts p
+              LEFT JOIN last l ON l.prompt_id=p.id
+              LEFT JOIN runs r ON r.id=l.run_id
+             WHERE p.project_id=? AND p.is_active=1
+          ORDER BY p.id""", (project_id, now, project_id))]
+    for r in rows:
+        age = r.pop("age")
+        r["state"] = ("unmeasured" if not r["run_id"]
+                      else "stale" if (age or 0) > AI_STALE_DAYS else "measured")
+    last = conn.execute(
+        "SELECT id, started_at, finished_at, notes FROM runs"
+        " WHERE project_id=? AND kind='ai' ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+    last_run = None
+    if last:
+        m = re.search(r"errors=(\d+)", last["notes"] or "")
+        note = (last["notes"] or "")
+        cut = note.find(AI_RUN_ABORTED)
+        last_run = {"id": last["id"], "state": _ai_run_state(last),
+                    "at": last["finished_at"] or last["started_at"],
+                    "errors": int(m.group(1)) if m else 0,
+                    # 끊긴 이유만 — 앞의 engines=… 와 예외 이름(Fatal:)은 사람이 읽을 말이 아니다
+                    "note": re.sub(r"^\w+:\s*", "",
+                                   note[cut + len(AI_RUN_ABORTED):].strip())[:200]
+                            if cut >= 0 else ""}
+    count = lambda s: sum(1 for r in rows if r["state"] == s)   # noqa: E731
+    return {"rows": rows, "active": len(rows),
+            "measured": count("measured"), "stale": count("stale"),
+            "unmeasured": count("unmeasured"),
+            "outdated": sum(1 for r in rows if gen_prompts.outdated(r["gen_version"])),
+            "last_run": last_run}
+
+
+def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
+    """[AI 인용] 화면의 "측정 안 됨·오래됨·구버전" 한 벌 — 페이로드용으로 접은 꼴.
+
+    질문 문장은 앞 몇 개만 싣는다(화면이 "예:"로 보여 줄 만큼). 개수는 전부 센다.
+    """
+    import gen_prompts
+    st = ai_prompt_state(conn, project_id)
+    pick = lambda pred: [r["prompt"] for r in st["rows"] if pred(r)][:5]   # noqa: E731
+    return {"active": st["active"], "measured": st["measured"], "stale": st["stale"],
+            "unmeasured": st["unmeasured"], "outdated": st["outdated"],
+            "stale_days": AI_STALE_DAYS, "gen_version": gen_prompts.GEN_VERSION,
+            "last_run": st["last_run"],
+            "unmeasured_eg": pick(lambda r: r["state"] == "unmeasured"),
+            "stale_eg": pick(lambda r: r["state"] == "stale"),
+            "outdated_eg": pick(lambda r: gen_prompts.outdated(r["gen_version"]))}
+
+
 def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
             limit: int = 30) -> list[dict]:
-    """챗봇이 한 번도 나를 출처로 쓰지 않은 질문 — 최신 ai 회차 기준.
+    """챗봇이 한 번도 나를 출처로 쓰지 않은 질문 — 질문마다 끝난 회차의 최신 측정 기준.
 
     ai_checks 는 엔진×표본마다 한 줄이라 질문 단위로 접어야 "인용 0"이 성립한다.
     답이 비결정적이라 한 번 빠진 것은 신호가 아니다 — 그 회차 전부에서 빠진 것만 센다.
+
+    끝난 회차에서 한 번도 안 잰 질문은 여기 없다 — 그건 "인용 0"이 아니라 "모름"이다.
+    대신 ai_prompt_state 가 그 개수를 세어 화면이 "측정 안 됨"으로 말한다(조용히 빼지
+    않는다). 오래된 측정(stale)은 그대로 쓰되 measured_at 을 실어 근거에 날짜가 붙는다.
     """
-    run = conn.execute(
-        "SELECT MAX(c.run_id) FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id"
-        " WHERE p.project_id=?", (project_id,)).fetchone()[0]
-    if not run:
-        return []
     rows = []
-    for r in conn.execute(
-            """SELECT p.id, p.prompt, p.category, COUNT(*) checks,
-                      SUM(c.mentioned) mentioned, COUNT(DISTINCT c.engine) engines
-                 FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id
-                WHERE c.run_id=? AND p.is_active=1
-             GROUP BY p.id HAVING SUM(c.cited)=0
-             ORDER BY COUNT(*) DESC, p.id LIMIT ?""", (run, limit)):
+    for p in ai_prompt_state(conn, project_id)["rows"]:
+        if not p["run_id"]:
+            continue
+        r = conn.execute(
+            """SELECT COUNT(*) checks, SUM(cited) cited, SUM(mentioned) mentioned,
+                      COUNT(DISTINCT engine) engines
+                 FROM ai_checks WHERE run_id=? AND prompt_id=?""",
+            (p["run_id"], p["id"])).fetchone()
+        if not r["checks"] or r["cited"]:
+            continue
         # 나 대신 누가 인용됐나 — "그래서 무엇을 이겨야 하나"가 근거의 나머지 절반이다
         tally: dict[str, int] = {}
         for c in conn.execute(
                 "SELECT cited_domains_json FROM ai_checks"
-                " WHERE run_id=? AND prompt_id=?", (run, r["id"])):
+                " WHERE run_id=? AND prompt_id=?", (p["run_id"], p["id"])):
             try:
                 for dom in json.loads(c[0] or "[]"):
                     h = host_of(str(dom))
@@ -1813,10 +2065,13 @@ def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
             except (TypeError, ValueError):
                 continue
         rivals = sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:2]
-        rows.append({"prompt": r["prompt"], "category": r["category"],
+        rows.append({"id": p["id"], "prompt": p["prompt"], "category": p["category"],
                      "checks": r["checks"], "mentioned": r["mentioned"] or 0,
-                     "engines": r["engines"], "rivals": [d for d, _ in rivals]})
-    return rows
+                     "engines": r["engines"], "rivals": [d for d, _ in rivals],
+                     "run_id": p["run_id"], "measured_at": p["measured_at"],
+                     "stale": p["state"] == "stale"})
+    rows.sort(key=lambda x: (-x["checks"], x["id"]))
+    return rows[:limit]
 
 
 # ── 검색 × AI 교차 ───────────────────────────────────────────────────────────
@@ -2319,13 +2574,17 @@ _KIND_SPECS = {
         label="챗봇 인용 없음", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
-                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"])},
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["prompt"],
+                                                question=True)},
         target=lambda r, ctx: r["prompt"],
+        # 질문마다 잰 회차가 다를 수 있다(ai_gaps) — 날짜는 그 질문의 것을 적는다.
         reasoning=lambda r, ctx: (
             f"AI {r['engines']}곳의 답변 {r['checks']}건에서 한 번도 인용되지 "
             "않았습니다"
             + (f". 이름만 나온 것은 {r['mentioned']}건입니다" if r["mentioned"] else "")
-            + (f". 대신 인용되는 곳: {', '.join(r['rivals'])}" if r["rivals"] else "")),
+            + (f". 대신 인용되는 곳: {', '.join(r['rivals'])}" if r["rivals"] else "")
+            + (f" (AI 확인 {str(r['measured_at'])[:10]} 기준)"
+               if r.get("measured_at") else "")),
         play=dict(
             what="ChatGPT·Perplexity 같은 챗봇이 이 주제에서 남을 출처로 쓰고 나를 빼놓습니다.",
             acts=["질문 그대로를 H2 로 두고 바로 아래에 2~3문장 정답을 둡니다.",
@@ -2497,12 +2756,258 @@ def gate_rows(conn: sqlite3.Connection, project_id: int, rows: list[dict]) -> li
             or vm.get(norm(str(r["target"]))) not in ("irrelevant", "hold")]
 
 
+# ── 기회 수명주기: 저절로 풀림 ─────────────────────────────────────────────────
+# 기회는 사람이 누르기 전에는 영영 열려 있었다 — AI 요약이 이미 우리를 인용하는데
+# "내 링크 없음"으로 남은 기회가 목록에 서 있었다. 그렇다고 "이번 회차에 다시 안
+# 나왔다"로 닫으면 반대로 틀린다. 안 나오는 이유가 풀려서만이 아니기 때문이다:
+#   · 원천 회차가 불완전하다 — AI 체크가 중간에 멈추면 못 잰 질문의 기회가 안 나온다
+#   · 상위 N개만 내는 검출기(ai_gaps·ctr_gaps·content_gaps 의 LIMIT)는 순위에서
+#     밀리기만 해도 안 나온다
+#   · 수집 대상에서 빠졌다 — 키워드·질문을 끄거나, 크롤 상한에 안 들었다
+# 그래서 규칙은 하나다: **기회가 만들어진(또는 사람이 마지막으로 만진) 뒤에 잰
+# 새 데이터가, 그 대상 하나를 두고, 조건이 풀렸다고 긍정할 때만** 닫는다. 데이터가
+# 없거나 옛것이거나 애매하면 그대로 둔다 — 열린 채 남는 쪽의 비용은 사람이 한 번
+# 누르는 것이고, 잘못 닫는 쪽의 비용은 살아 있는 기회를 잃는 것이다.
+#
+# 종류마다 "무엇이 긍정 확인인가"를 아래 _RESOLVERS 가 갖는다. 없는 종류는 자동으로
+# 닫지 않는다(이유는 _NO_RESOLVE). 판정만 여기서 하고 쓰기는 db.resolve_opportunities.
+
+
+def _after_day(day, since: str) -> bool:
+    """하루 단위 데이터(스냅샷 수집일·점검일)가 기준 시각보다 **다음 날 이후**인가.
+    같은 날은 안 된다 — 그날 기준 시각보다 먼저 잰 것일 수 있다."""
+    return bool(day) and str(day)[:10] > since[:10]
+
+
+def _after_ts(ts, since: str) -> bool:
+    """시각이 찍힌 데이터가 기준 시각보다 뒤인가 (꼴은 db.sql_ts 로 맞춘다)."""
+    import db
+    t = db.sql_ts(ts)
+    return bool(t) and len(t) > 10 and t > since
+
+
+def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """구글 AI 요약에 내 링크 없음 → 그 키워드의 최신 순위 기록에서 AI 요약이 우리를
+    인용한다(aio_cited=1). AI 요약이 사라진 것(aio_present=0)은 풀림이 아니다 — 요약은
+    붙었다 떨어졌다 한다. 미측정(NULL, serper 경로)도 아무 말도 안 한다."""
+    kw = conn.execute("SELECT id FROM keywords WHERE project_id=? AND keyword=?",
+                      (pid, target)).fetchone()
+    if not kw:
+        return None
+    r = conn.execute(
+        """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
+            WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
+        (kw[0],)).fetchone()
+    if not r or not _after_ts(r["checked_at"], since):
+        return None
+    if r["aio_present"] == 1 and r["aio_cited"] == 1:
+        pos = f", 순위 {r['position']}위" if r["position"] else ""
+        return f"구글 AI 요약이 우리 링크를 인용합니다 ({str(r['checked_at'])[:10]} 순위 확인{pos})"
+    return None
+
+
+def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """챗봇 인용 없음 → 그 질문의 가장 최근 측정이 **끝난 회차**에 속하고, 그 회차에서
+    인용이 한 번이라도 있다. 가장 최근 측정이 도는 중이거나 예외로 끊긴 회차면 판단하지
+    않는다 — 끊긴 회차에서 이 질문을 잰 몇 건만으로 말하지 않는다."""
+    p = conn.execute("SELECT id FROM ai_prompts WHERE project_id=? AND prompt=?",
+                     (pid, target)).fetchone()
+    if not p:
+        return None
+    last = conn.execute("SELECT run_id FROM ai_checks WHERE prompt_id=? ORDER BY id DESC LIMIT 1",
+                        (p[0],)).fetchone()
+    if not last or last[0] is None:
+        return None
+    run = conn.execute("SELECT finished_at, notes FROM runs WHERE id=?", (last[0],)).fetchone()
+    if not run or _ai_run_state(run) != "done":     # 끝난 회차의 판정은 한 벌(갈래 2)
+        return None
+    a = conn.execute(
+        """SELECT COUNT(*) n, SUM(cited) cited, MIN(checked_at) first FROM ai_checks
+            WHERE run_id=? AND prompt_id=?""", (last[0], p[0])).fetchone()
+    if not a["n"] or not _after_ts(a["first"], since):
+        return None
+    if (a["cited"] or 0) > 0:
+        return f"AI 답변 {a['n']}건 중 {a['cited']}건이 우리를 인용합니다 (AI 회차 #{last[0]})"
+    return None
+
+
+def _gsc_now(conn, pid: int, target: str, since: str, ctx: dict):
+    """최신 GSC 스냅샷에서 그 검색어 한 줄 — 스냅샷이 기준 이후일 때만."""
+    if "gsc" not in ctx:
+        cur, _prev, period, _mm = snapshot_pair(conn, pid)
+        ctx["gsc"] = (cur, period)
+    cur, period = ctx["gsc"]
+    if not cur or not _after_day(cur, since):
+        return None, cur
+    r = conn.execute(
+        """SELECT AVG(position) pos, SUM(impressions) imp, SUM(clicks) clk FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND query=?""",
+        (pid, cur, period, target)).fetchone()
+    return (r if r and r["imp"] is not None and r["pos"] is not None else None), cur
+
+
+def _resolve_striking(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """밀면 오를 검색어(4~20위) → 새 스냅샷에서 노출 하한을 넘기며 3위 안.
+    20위 밖으로 떨어진 것·노출이 줄어 하한 아래로 간 것은 풀림이 아니다."""
+    r, cur = _gsc_now(conn, pid, target, since, ctx)
+    if not r:
+        return None
+    pos = round(r["pos"], 1)
+    if r["imp"] >= STRIKING_MIN_IMP and pos < STRIKING_LO:
+        return f"평균 {pos}위 · 노출 {r['imp']:,}로 상단 3위권에 들었습니다 (구글 실적 {cur} 기준)"
+    return None
+
+
+def _resolve_ctr(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """클릭률 미달 → 새 스냅샷에서 여전히 1페이지·노출 하한 이상이고, 클릭률이 그 순위
+    기대치의 CTR_GAP_FACTOR 배를 넘는다. 1페이지 밖으로 밀린 것은 풀림이 아니다."""
+    r, cur = _gsc_now(conn, pid, target, since, ctx)
+    if not r:
+        return None
+    pos = round(r["pos"], 1)
+    if r["imp"] < CTR_GAP_MIN_IMP or not (1 <= pos <= PAGE1):
+        return None
+    expected = EXPECTED_CTR[min(max(round(pos), 1), STRIKING_HI)]
+    actual = (r["clk"] or 0) * 100.0 / r["imp"]
+    if actual >= expected * CTR_GAP_FACTOR:
+        return (f"{pos}위에서 클릭률 {round(actual, 2)}% — 이 순위 기대치 {expected}%의 "
+                f"절반을 넘었습니다 (구글 실적 {cur} 기준)")
+    return None
+
+
+def _resolve_device(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """모바일 격차 → 새 기기별 분해에서 모바일·데스크톱이 둘 다 잡히고 모바일 노출이
+    하한 이상인데 격차가 DEVICE_GAP_POS 아래. 한쪽만 잡히면 비교가 안 되니 말하지 않는다."""
+    if "bd" not in ctx:
+        ctx["bd"] = _latest(conn, _LATEST_BD, (pid, "device"))
+    bd = ctx["bd"]
+    if not bd or not _after_day(bd, since):
+        return None
+    d = {(r["dim_value"] or "").upper(): r for r in conn.execute(
+        """SELECT dim_value, SUM(impressions) imp, AVG(position) pos FROM gsc_breakdown
+            WHERE project_id=? AND snapshot_date=? AND dim='device' AND query=?
+            GROUP BY dim_value""", (pid, bd, target))}
+    m, k = d.get("MOBILE"), d.get("DESKTOP")
+    if not (m and k) or m["pos"] is None or k["pos"] is None or (m["imp"] or 0) < DEVICE_MIN_IMP:
+        return None
+    dpos = round(m["pos"] - k["pos"], 1)
+    if dpos < DEVICE_GAP_POS:
+        return (f"모바일 {round(m['pos'], 1)}위 · 데스크톱 {round(k['pos'], 1)}위로 격차가 "
+                f"{dpos}칸입니다 (구글 실적 {bd} 기준)")
+    return None
+
+
+def _resolve_index(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """색인 막힘 → 그 주소의 가장 최근 색인 점검이 PASS 이고 색인됨."""
+    r = conn.execute(
+        """SELECT checked_date, verdict, coverage_state FROM gsc_index_status
+            WHERE project_id=? AND url=? ORDER BY checked_date DESC LIMIT 1""",
+        (pid, target)).fetchone()
+    if not r or not _after_day(r["checked_date"], since):
+        return None
+    if (r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"]):
+        return f"색인됐습니다: {r['coverage_state']} (색인 확인 {r['checked_date']})"
+    return None
+
+
+def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """경쟁사만 받는 링크 → 그 도메인의 가장 최근 교집합 기록에서 우리도 받는다(we_have=1).
+    we_have 는 우리 참조 도메인과 겹칠 때만 1 이라 수집이 비면 0 쪽으로만 틀린다."""
+    r = conn.execute(
+        """SELECT checked_date, we_have FROM link_intersect
+            WHERE project_id=? AND domain=? ORDER BY checked_date DESC LIMIT 1""",
+        (pid, target)).fetchone()
+    if r and _after_day(r["checked_date"], since) and r["we_have"] == 1:
+        return f"이제 {target} 에서 우리도 링크를 받습니다 (백링크 {r['checked_date']} 기준)"
+    return None
+
+
+def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """AI 크롤러 차단 → 그 뒤에 끝난 크롤이 가져온 robots.txt 가 그 봇을 안 막는다.
+    원문에 User-agent 줄이 하나도 없으면 robots.txt 가 아니다(200 으로 온 오류 페이지)
+    — 규칙이 없어서 '안 막는다'로 읽히므로 판단하지 않는다."""
+    cr = conn.execute(
+        "SELECT id, started_at, robots_txt FROM crawl_runs WHERE project_id=?"
+        " AND finished_at IS NOT NULL AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (pid,)).fetchone()
+    if not cr or not _after_ts(cr["started_at"], since):
+        return None
+    txt = cr["robots_txt"] or ""
+    if not re.search(r"(?im)^\s*user-agent\s*:", txt):
+        return None
+    home = ctx.get("domain") or ""
+    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    if robots_blocks(txt, url, agent=target) is None:
+        return f"robots.txt 가 더는 {target} 를 막지 않습니다 (크롤 #{cr['id']})"
+    return None
+
+
+# 종류 → 긍정 확인 규칙. 여기 없는 종류는 저절로 닫히지 않는다.
+_RESOLVERS = {
+    "striking_distance": _resolve_striking,
+    "ctr_gap": _resolve_ctr,
+    "device_gap": _resolve_device,
+    "index_blocked": _resolve_index,
+    "ai_citation_gap": _resolve_ai_citation,
+    "aio_exposure": _resolve_aio,
+    "backlink_prospect": _resolve_prospect,
+    "ai_bot_blocked": _resolve_ai_bot,
+}
+# 자동 해소에서 뺀 종류와 그 이유 — 규칙을 세울 수 없거나, 세우면 살아 있는 것을 닫는다.
+_NO_RESOLVE = {
+    "rank_decay": "연속한 두 스냅샷 사이의 하락이라 다음 스냅샷에서 저절로 사라진다 — "
+                  "'더 안 떨어졌다'는 '되찾았다'가 아니고, 떨어지기 전 순위는 근거 문장에만 있다",
+    "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다 — 301 로 합친 것과 "
+                       "GSC 행 상한에 잘린 것을 가르지 못한다",
+    "pseo_pattern": "대상은 템플릿으로 찍을 무리의 씨앗 검색어다 — 그 검색어 하나의 클릭률이 "
+                    "올랐다고 템플릿을 찍은 것이 아니다",
+    "coverage": "대상이 클러스터이고 그 구성은 키워드 큐레이션(켜기·끄기·재분류)으로 바뀐다 — "
+                "비었다는 것이 다룬 것인지 뺀 것인지 모른다",
+    "content_gap": "경쟁사별로 따로 받는 기록이라 한 경쟁사 수집이 실패하면 그 줄이 빠진다 — "
+                   "남은 줄이 전부 shared 여도 우리를 이기는 경쟁사가 빠진 것일 수 있다",
+    "crawl_issue": "크롤 상한에 안 든 주소는 안 보이고, 관계형 문제(중복·상호 참조)는 짝이 "
+                   "크롤돼야 잡힌다 — 이번 크롤에 문제가 없다는 것이 고쳐졌다는 뜻이 아니다",
+    "backlink_broken": "is_broken=0 은 '살아 있음'과 '필드가 안 왔음'(API 기본값)을 가르지 "
+                       "못한다 — 응답 모양이 바뀌면 깨진 링크 전부가 한꺼번에 닫힌다",
+}
+
+
+def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None, *,
+                  domain: str = "") -> dict:
+    """이번 적재(run_id)에 다시 안 나온 열린 기회(new|acked) 중 새 데이터가 조건이
+    풀렸다고 긍정 확인한 것만 닫는다 — 위 머리 주석이 규칙의 전부다.
+
+    기준 시각은 기회가 만들어진 때와 사람이 마지막으로 상태를 바꾼 때 중 늦은 쪽이다.
+    사람이 [다시 열기]를 눌렀으면 그 전에 잰 데이터로는 다시 닫지 않는다.
+    반환: {"resolved": n, "done": n, "checked": 후보 중 규칙이 있는 것의 수}."""
+    import db
+    ctx: dict = {"domain": domain}
+    decisions, checked = [], 0
+    for o in conn.execute(
+            """SELECT id, kind, target, created_at, status_at FROM opportunities
+                WHERE project_id=? AND status IN ('new','acked') AND run_id IS NOT ?""",
+            (int(project_id), run_id)).fetchall():
+        rule = _RESOLVERS.get(o["kind"])
+        marks = [t for t in (db.sql_ts(o["created_at"]), db.sql_ts(o["status_at"])) if t]
+        if not rule or not marks:
+            continue
+        checked += 1
+        reason = rule(conn, int(project_id), o["target"], max(marks), ctx)
+        if reason:
+            decisions.append((o["id"], reason))
+    out = db.resolve_opportunities(conn, int(project_id), decisions)
+    out["checked"] = checked
+    return out
+
+
 def load(project: str) -> None:
     """서브커맨드 load — KINDS 명부를 순회해 opportunities 에 적재.
 
     projects.type 을 읽어 프리셋 계수(WEIGHTS)를 적용한다 — 분석 코드가 type 을
     안 읽던 결함의 수정. 트리아지 상태(acked·done·dismissed) 보존은
     db.upsert_opportunities 가 보장한다 (ON CONFLICT에서 status 미변경).
+    적재 뒤 resolve_stale 이 이번에 다시 안 나온 열린 기회 중 조건이 풀렸음을 새
+    데이터로 확인한 것만 닫는다(저절로 풀림·작업 후 완료).
     """
     import db  # lazy — 모듈을 불러도 진짜 Brain 은 안 건드린다 (self-check 는 SCHEMA 문자열만 읽는다)
     conn = db.connect()
@@ -2538,9 +3043,15 @@ def load(project: str) -> None:
     rows = gate_rows(conn, pid, rows)       # 심사에서 뺀 검색어는 기회가 안 된다
     with db.run(conn, pid, "gaps") as r:
         n = db.upsert_opportunities(conn, pid, r.id, rows)
-        r.notes = f"scoring load: opps={n}, intents_filled={n_intent}"
+        # 다시 안 나온 열린 기회 중 새 데이터가 풀렸다고 **긍정 확인**한 것만 닫는다.
+        # upsert 뒤여야 한다 — 이번 회차에 다시 나온 것은 run_id 가 r.id 로 바뀌어
+        # 후보에서 빠지고, 풀렸다 다시 나빠진 것은 upsert 가 이미 되열었다.
+        closed = resolve_stale(conn, pid, r.id, domain=p["domain"] or "")
+        r.notes = (f"scoring load: opps={n}, intents_filled={n_intent}, "
+                   f"resolved={closed['resolved']}, done={closed['done']}")
     print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur}; "
-          f"intents_filled={n_intent})")
+          f"intents_filled={n_intent}; 저절로 풀림 {closed['resolved']} · "
+          f"작업 후 풀림(완료) {closed['done']})")
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,
@@ -2552,6 +3063,272 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
     import db
     return [dict(r) for r in db.list_opportunities(
         conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
+
+
+# ── 기회 묶음 — 같은 답을 내야 하는 지면끼리 목록 한 줄로 ─────────────────────
+# DB 에는 여전히 검색어마다 기회 하나다(사실). 묶음은 **읽을 때만** 한다(표시·우선순위).
+# 기회를 저절로 닫는 쪽(검색어 단위)과 부딪히지 않고, 틀리면 이 함수만 되돌리면 된다.
+#
+# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(직답 블록 + 구조화 데이터)은
+# 페이지에 한 번 하는 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가
+# 따로 줄을 차지할 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지
+# 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
+# device_gap 은 근거 문장이 **그 검색어의** 순위·CTR·Δ 를 말해서 합치면 어느 변형이
+# 처지는지가 사라지고, cannibalization 은 정의상 한 검색어에 페이지가 여럿이라 "같은
+# 페이지"라는 열쇠가 성립하지 않으며, 대상이 문장(ai_citation_gap)·URL·도메인·클러스터인
+# 종류는 변형이라는 개념이 없다. 늘리려면 이 튜플에 넣는다 — 규칙은 종류를 안 가린다.
+GROUP_KINDS = ("aio_exposure",)
+# 열린 기회 — 이 둘만 묶는다. 닫힌 것(done·dismissed, 그리고 저절로 풀린 resolved 처럼
+# 뒤에 생기는 상태)은 기록이라 한 줄씩 남는다. 거르는 쪽이 "done 이 아니면"이 아니라
+# "이 둘이면"이라서 새 상태가 생겨도 열린 목록으로 새지 않는다. 화면의 [아직 안 함]
+# 거르개(overview.html ST_GROUP.open)가 같은 한 벌이다(test_seams 23).
+OPEN_STATUSES = ("new", "acked")
+# 검색 결과 겹침(열쇠 ②): 몇 개가 같아야 같은 지면으로 보나. 보는 것은 수집기가
+# 남긴 상위 전부다 — serp_results 는 상위 db.SERP_KEEP(=5)개만 남긴다. 그 다섯 중
+# 셋 이상이 같은 주소면 구글이 같은 문서들로 답하는 질문으로 읽는다. 둘로 내리면
+# 주제만 비슷한 검색어(같은 대형 사이트 두어 곳이 늘 끼는 분야)가 딸려 온다.
+SERP_MIN_SHARED = 3
+# 열쇠가 무엇이었나 — 화면이 "왜 한 줄이냐"를 말할 때 이 값을 읽는다.
+#   page    : 우리 페이지가 같다 (GSC 로 그 검색어에 노출된 페이지, 없으면 검색 순위에서 잡힌 우리 주소)
+#   serp    : 우리 페이지는 없지만 검색 결과 상위가 크게 겹친다
+#   cluster : 둘 다 모르고, 키워드 클러스터가 같다
+#   norm    : 띄어쓰기·대소문자만 다른 같은 검색어뿐이다
+#   alone   : 묶을 짝이 없다
+GROUP_VIA = ("page", "serp", "cluster", "norm", "alone")
+
+
+def _chunks(xs: list, n: int = 400):
+    for i in range(0, len(xs), n):
+        yield xs[i:i + n]
+
+
+def _surface_facts(conn: sqlite3.Connection, project_id: int,
+                   targets: list[str]) -> dict[str, dict]:
+    """검색어 → 지면을 가늠할 사실들. 없는 사실은 None/빈 집합이다(추정하지 않는다).
+
+    page·page_src : 우리 페이지 열쇠(url_key). GSC 에서 그 검색어로 노출이 가장 큰
+                    페이지를 먼저 보고, 없으면 순위 조회(rank_snapshots.url)가 잡은 우리 주소.
+    serp          : 최신 조회의 상위 주소(url_key) 집합 — 수집기가 남긴 만큼(db.SERP_KEEP).
+                    AI 요약 안의 인용 도메인은 수집기가 우리 인용 여부(aio_cited)만 남기고
+                    버려서 여기 없다.
+    cluster·volume: keywords 표. 검색어와 norm 으로 짝짓는다.
+    """
+    out = {t: {"page": None, "page_url": None, "page_src": None, "serp": frozenset(),
+               "cluster": None, "volume": 0} for t in targets}
+    by_norm: dict[str, list[str]] = {}
+    for t in targets:
+        by_norm.setdefault(norm(t), []).append(t)
+    # 검색어 → keywords 행. 글자가 똑같은 행이 있으면 그것, 없으면 norm 이 같은 첫 행.
+    chosen: dict[str, tuple[bool, sqlite3.Row]] = {}
+    for r in conn.execute("SELECT id, keyword, cluster, volume FROM keywords"
+                          " WHERE project_id=? ORDER BY id", (project_id,)):
+        for t in by_norm.get(norm(r["keyword"]), ()):
+            exact = r["keyword"].strip() == t
+            if t not in chosen or (exact and not chosen[t][0]):
+                chosen[t] = (exact, r)
+    kid_of: dict[int, list[str]] = {}
+    for t, (_exact, r) in chosen.items():
+        out[t]["cluster"] = (r["cluster"] or "").strip() or None
+        out[t]["volume"] = int(r["volume"] or 0)
+        kid_of.setdefault(r["id"], []).append(t)
+
+    for q, rows in pages_by_query(conn, project_id, targets, top=1).items():
+        if q in out and rows:
+            out[q].update(page=url_key(rows[0]["page"]), page_url=rows[0]["page"], page_src="gsc")
+
+    for ch in _chunks(list(kid_of)):
+        ph = ",".join("?" * len(ch))
+        # 키워드마다 최신 조회 한 벌. url 이 NULL 이면 그 조회에서 우리가 안 잡힌 것이다 —
+        # 그 전 조회의 주소로 물러서지 않는다(지금 없는 페이지를 열쇠로 쓰게 된다).
+        latest: dict[int, str | None] = {}
+        for r in conn.execute(
+                f"""SELECT keyword_id, url FROM rank_snapshots
+                     WHERE keyword_id IN ({ph}) ORDER BY checked_at DESC, id DESC""", ch):
+            latest.setdefault(r["keyword_id"], r["url"])
+        top: dict[int, list[str]] = {}
+        for r in conn.execute(
+                f"""SELECT s.keyword_id, s.url FROM serp_results s
+                     WHERE s.keyword_id IN ({ph}) AND s.checked_at=(
+                           SELECT MAX(checked_at) FROM serp_results x
+                            WHERE x.keyword_id=s.keyword_id)
+                     ORDER BY s.keyword_id, s.position""", ch):
+            if r["url"]:
+                top.setdefault(r["keyword_id"], []).append(url_key(r["url"]))
+        for kid in ch:
+            for t in kid_of[kid]:
+                f = out[t]
+                if f["page_src"] is None and latest.get(kid):
+                    f.update(page=url_key(latest[kid]), page_url=latest[kid], page_src="rank")
+                if top.get(kid):
+                    f["serp"] = frozenset(top[kid])
+    return out
+
+
+def _group_members(members: list[dict], facts: dict[str, dict]) -> list[dict]:
+    """한 종류의 열린 기회들을 지면으로 접는다. members 는 점수 내림차순이다.
+
+    열쇠 우선순위: ① 우리 페이지 ② 검색 결과 겹침 ③ 클러스터 ④ 혼자.
+    센 증거가 약한 증거를 이긴다 — 검색 결과를 재 봤는데 아무와도 안 겹친 검색어는
+    클러스터가 같아도 안 붙인다(재 본 결과가 "다른 지면"이라고 말했다).
+    ②는 짝을 **묶음의 씨앗**(첫 검색어)과만 잰다. 서로서로 재면 A~B, B~C 가 겹친다는
+    이유로 안 겹치는 A 와 C 가 한 줄이 된다(사슬).
+    """
+    # 띄어쓰기·대소문자만 다른 것은 같은 검색어다 — 먼저 한 덩어리로 만든다(심사가
+    # 판정을 norm 단위로 하는 것과 같은 열쇠).
+    units: dict[str, list[dict]] = {}
+    for o in members:
+        units.setdefault(norm(o["target"]), []).append(o)
+
+    def fact(unit: list[dict], k: str):
+        for o in unit:
+            v = facts.get(o["target"], {}).get(k)
+            if v:
+                return v
+        return None
+
+    groups: list[dict] = []
+    by_page: dict[str, dict] = {}
+    pending: list[list[dict]] = []
+    for unit in units.values():
+        page = fact(unit, "page")
+        if page:
+            g = by_page.get(page)
+            if g is None:
+                src = next(facts[o["target"]]["page_src"] for o in unit
+                           if facts.get(o["target"], {}).get("page"))
+                url = next(facts[o["target"]]["page_url"] for o in unit
+                           if facts.get(o["target"], {}).get("page"))
+                g = by_page[page] = {"via": "page", "key": url, "key_src": src,
+                                     "seed": fact(unit, "serp"), "units": []}
+                groups.append(g)
+            g["seed"] = g["seed"] or fact(unit, "serp")
+            g["units"].append((unit, "page"))
+        else:
+            pending.append(unit)
+
+    loose: list[list[dict]] = []
+    for unit in pending:
+        s = fact(unit, "serp")
+        if not s:
+            loose.append(unit)
+            continue
+        best, hit = None, 0
+        for g in groups:
+            n = len(s & g["seed"]) if g["seed"] else 0
+            if n >= SERP_MIN_SHARED and n > hit:
+                best, hit = g, n
+        if best is None:
+            best = {"via": "serp", "key": unit[0]["target"], "key_src": None,
+                    "seed": s, "units": []}
+            groups.append(best)
+        best["units"].append((unit, "serp"))
+
+    by_cluster: dict[str, dict] = {}
+    for unit in loose:
+        cl = fact(unit, "cluster")
+        if not cl:
+            groups.append({"via": "alone", "key": None, "key_src": None, "seed": None,
+                           "units": [(unit, "alone")]})
+            continue
+        g = by_cluster.get(cl)
+        if g is None:
+            g = by_cluster[cl] = {"via": "cluster", "key": cl, "key_src": None,
+                                  "seed": None, "units": []}
+            groups.append(g)
+        g["units"].append((unit, "cluster"))
+
+    for g in groups:
+        if len(g["units"]) == 1:
+            g["via"] = "norm" if len(g["units"][0][0]) > 1 else "alone"
+            if g["via"] == "alone":
+                g["key"] = g["key_src"] = None
+    return groups
+
+
+def _group_score(kind: str, lead: dict, units: list[list[dict]],
+                 facts: dict[str, dict], project_type: str) -> float:
+    """묶음 점수 — 대표(최고 점수) 검색어의 점수에, 변형들이 보탠 **수요만큼** 더한다.
+
+    최댓값만 쓰면 변형 여덟 개짜리 지면과 하나짜리 지면이 같은 줄에 선다 — 무엇부터
+    할지 고르려고 묶었는데 묶음이 순서에 아무 말도 안 한다. 점수를 그냥 더하면
+    100점 만점 막대가 넘치고, 서로 무관한 축(순위·적합도·AI 가중)까지 변형 수만큼
+    곱절이 된다. 그래서 score() 가 이미 쓰는 수요 축 하나만 다시 잰다: 대표의 검색량
+    대신 지면 전체의 검색량 합을 넣었을 때 score() 가 얼마나 달라지나. 수요는
+    log10 이라 변형이 늘수록 보탬이 줄고(검색량 10배에 +0.2 수요), 결과는 늘 0~100 이라
+    안 묶인 종류의 줄과 같은 막대에서 견줄 수 있다. score() 는 수요에 선형이라 그
+    차이는 순위·적합도와 무관하다 — 그래서 여기서 그 둘을 다시 구하지 않는다.
+    띄어쓰기 변형(같은 norm)은 같은 검색이라 검색량을 한 번만 센다(큰 쪽).
+    """
+    vol = lambda unit: max((facts.get(o["target"], {}).get("volume") or 0) for o in unit)
+    lead_unit = next(u for u in units if lead in u)
+    total = sum(vol(u) for u in units)
+    base = {"impressions": 0, "position": None, "fit": 0.5}
+    bonus = (score(kind, {**base, "volume": total}, project_type)
+             - score(kind, {**base, "volume": vol(lead_unit)}, project_type))
+    return round(min(100.0, (lead.get("score") or 0.0) + max(0.0, bonus)), 1)
+
+
+def group_opportunities(conn: sqlite3.Connection, project_id: int,
+                        opps: list[dict], *, kinds=GROUP_KINDS) -> list[dict]:
+    """기회 목록을 줄로 접는다 — 줄 하나가 판정·실행 단위다. opps 는 opportunities() 의 결과.
+
+    돌려주는 줄 하나: {lead, ids, kind, score, status, via, key, key_src, variants}
+      lead     : 대표 기회 id(점수 최고). 화면은 그 기회의 라벨·처방·요청문으로 줄을 그린다.
+      ids      : 묶인 기회 id 전부. 판정 버튼은 이 전부에 먹는다 — id 는 하나도 안 잃는다.
+      variants : [{id, target, score, status, volume, via}] 점수 순. 대표도 첫째로 들어 있다.
+      score    : _group_score. 혼자인 줄은 그 기회의 점수 그대로.
+      status   : 묶음 안에 진행 중(acked)이 하나라도 있으면 acked, 아니면 new.
+    묶는 것은 kinds 의 **열린**(OPEN_STATUSES) 기회뿐이다. 그 밖(다른 종류·닫힌 기회)은
+    전부 한 줄씩 그대로 나온다 — via None.
+
+    opps 는 화면에 싣는 몫이라 개수 상한이 있다. 상한 밖으로 밀린 변형도 묶음의 id 에는
+    들어가야 한다(아니면 [완료 표시]가 그것만 남기고, 다음 적재에 혼자 다시 선다) —
+    그래서 묶는 종류의 열린 기회는 DB 에서 한 번 더 전부 읽는다. 대표가 상한 밖이면
+    (묶음 전체가 밀린 것이다) 그 줄은 싣지 않는다 — 예전에도 안 보이던 것이다.
+    """
+    import db
+    kinds = tuple(kinds)
+    ptype = (conn.execute("SELECT type FROM projects WHERE id=?", (project_id,)).fetchone()
+             or ["saas"])[0] or "saas"
+    shown = {o["id"]: o for o in opps if o.get("id") is not None}
+    pool = [dict(r) for r in db.list_opportunities(
+        conn, project_id, kinds=list(kinds), statuses=list(OPEN_STATUSES), order="screen",
+        limit=1_000_000, with_id=True, gated=True)] if kinds else []
+    facts = _surface_facts(conn, project_id, list(dict.fromkeys(o["target"] for o in pool)))
+
+    lines: list[dict] = []
+    grouped: set[int] = set()
+    for kind in kinds:
+        members = sorted((o for o in pool if o["kind"] == kind),
+                         key=lambda o: (-(o["score"] or 0), -o["id"]))
+        for g in _group_members(members, facts):
+            units = [u for u, _via in g["units"]]
+            flat = sorted(((o, via) for u, via in g["units"] for o in u),
+                          key=lambda x: (-(x[0]["score"] or 0), -x[0]["id"]))
+            grouped.update(o["id"] for o, _ in flat)
+            lead = next((o for o, _ in flat if o["id"] in shown), None)
+            if lead is None:
+                continue
+            lines.append({
+                "lead": lead["id"], "ids": [o["id"] for o, _ in flat], "kind": kind,
+                "score": _group_score(kind, lead, units, facts, ptype) if len(units) > 1
+                         else lead["score"],
+                "status": "acked" if any(o["status"] == "acked" for o, _ in flat) else "new",
+                "via": g["via"], "key": g["key"], "key_src": g["key_src"],
+                "variants": [{"id": o["id"], "target": o["target"], "score": o["score"],
+                              "status": o["status"],
+                              "volume": facts.get(o["target"], {}).get("volume") or None,
+                              "via": via} for o, via in flat]})
+    for o in opps:
+        if o.get("id") is None or o["id"] in grouped:
+            continue
+        lines.append({"lead": o["id"], "ids": [o["id"]], "kind": o["kind"], "score": o["score"],
+                      "status": o["status"], "via": None, "key": None, "key_src": None,
+                      "variants": [{"id": o["id"], "target": o["target"], "score": o["score"],
+                                    "status": o["status"], "volume": None, "via": None}]})
+    # 화면 정렬과 같다(db.list_opportunities 의 'screen'): 새 것 먼저, 점수, 최근 id.
+    lines.sort(key=lambda x: (x["status"] != "new", -(x["score"] or 0), -x["lead"]))
+    return lines
 
 
 

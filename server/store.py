@@ -270,13 +270,77 @@ def reclaim_dead_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     (3) 사용자에게는 아무 말도 안 간다. 서버가 뜨는 자리에서 그 셋을 한 번에 푼다.
 
     재개는 호출자(app.lifespan)가 한다 — 저장소는 무엇이 죽었는지만 말한다.
+
+    사이트 brain 의 끝나지 않은 runs 행도 여기서 닫는다(close_orphan_runs). 서버 행만
+    풀고 brain 을 두면 "수집 이력"이 영영 "도는 중"이고, 호스팅 런 검사
+    (test_remote 의 체인 검사)가 finished_at IS NULL 을 실패로 본다 — 09-02 순위
+    수집 #49 가 그렇게 남았다.
     """
     rows = conn.execute("SELECT * FROM sites WHERE running_since IS NOT NULL").fetchall()
     for r in rows:
         conn.execute("UPDATE sites SET run_log = COALESCE(run_log,'') || ? WHERE id=?",
                      (DEAD_RUN_NOTE, r["id"]))
         mark_done(conn, r["id"], ok=False, error=DEAD_RUN_ERROR)
+    for c in close_orphan_runs(conn):
+        print(f"[reclaim] 끝나지 않은 런 {c['closed']}건 닫음: "
+              f"{c['user_id']}/{c['project']}", flush=True)
     return rows
+
+
+# 워커가 죽어 끝나지 않은 채 남은 brain runs 행에 붙이는 표식. db.run() 이 예외로
+# 끝난 런에 붙이는 "중단: …" 과 같은 꼴이다 — 화면과 검사가 같은 말로 읽는다.
+ORPHAN_RUN_NOTE = "중단: 워커가 죽었다(서버가 회수)"
+
+
+def close_orphan_runs(conn: sqlite3.Connection) -> list[dict]:
+    """서버가 '안 돈다'고 판정한 사이트의 끝나지 않은 brain runs 행을 닫는다.
+
+    반환: [{user_id, project, closed}] — 한 건이라도 닫은 사이트만.
+
+    **도는 런은 절대 닫지 않는다.** 판정은 두 겹이다:
+    (1) 서버 DB 의 sites.running_since IS NULL 인 사이트만 본다. brain 에 runs 행을
+        쓰는 것은 워커뿐이고 워커는 체인을 시작하기 **전에** mark_run 으로
+        running_since 를 켠다 — 그래서 NULL 이면 그 사이트에 살아 있는 작성자가 없다.
+        (라우트는 runs 행을 쓰지 않는다.)
+    (2) 사이트 목록을 읽기 **전에** 찍은 시각(cutoff)보다 먼저 시작한 행만 닫는다.
+        목록을 읽은 직후 워커가 떠서 mark_run → start_run 을 했다면 그 행은 cutoff
+        이후에 시작했으므로 안 걸린다. (1) 과 (2) 사이의 틈을 막는 것이 이 줄이다.
+
+    회수된 사이트(방금 reclaim)뿐 아니라 오래전에 남은 고아(#49)도 같은 규칙으로
+    한 번에 정리된다 — 둘 다 "안 도는 사이트의 끝나지 않은 행"이다. 재실행에
+    안전하다(이미 닫힌 행은 다시 안 걸린다).
+
+    brain 을 새로 만들지 않는다 — 파일이 없거나 표가 없으면 그 사이트는 건너뛴다.
+    """
+    import paths    # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 세워 뒀다
+    from datetime import datetime, timezone
+    # db.now() 와 같은 꼴(UTC, 초 단위). 비교는 julianday 로 한다 — 옛 행이
+    # CURRENT_TIMESTAMP 꼴('YYYY-MM-DD HH:MM:SS')이어도 문자열 비교처럼 틀리지 않는다.
+    cutoff = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    idle = conn.execute("SELECT user_id, project FROM sites "
+                        "WHERE running_since IS NULL ORDER BY id").fetchall()
+    out: list[dict] = []
+    for s in idle:
+        f = paths.db_file(home(s["user_id"]))
+        if not f.exists():
+            continue
+        b = sqlite3.connect(f)
+        try:
+            cur = b.execute(
+                "UPDATE runs SET finished_at=?, notes=CASE WHEN COALESCE(notes,'')='' THEN ? "
+                "  ELSE notes || ' | ' || ? END "
+                "WHERE finished_at IS NULL AND julianday(started_at) < julianday(?) "
+                "  AND project_id IN (SELECT id FROM projects WHERE name=?)",
+                (cutoff, ORPHAN_RUN_NOTE, ORPHAN_RUN_NOTE, cutoff, s["project"]))
+            b.commit()
+            if cur.rowcount > 0:
+                out.append({"user_id": s["user_id"], "project": s["project"],
+                            "closed": cur.rowcount})
+        except sqlite3.OperationalError:       # runs/projects 표가 아직 없는 brain
+            pass
+        finally:
+            b.close()
+    return out
 
 
 def save_run_log(conn: sqlite3.Connection, site_id: int, text: str) -> None:
@@ -443,7 +507,10 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
 
 
 def demo() -> None:
+    import sys
     import tempfile
+    # close_orphan_runs 가 paths 를 늦게 부른다 — app.py/worker.py 가 세우는 경로를 여기서도.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "capture" / "scripts"))
     with tempfile.TemporaryDirectory() as d:
         os.environ["SEOMINER_DATA"] = d
         # 필수 설정이 없으면 조용히 굴러가지 않고 RuntimeError 다 (settings.Missing).
@@ -612,10 +679,60 @@ def demo() -> None:
         r = site(conn, uid, "myproj")
         assert (r["last_ok"], r["last_error"]) == (1, None), tuple(r)
 
+        # 끝나지 않은 brain runs 행 — 서버가 '안 돈다'고 본 사이트 것만 닫는다.
+        # brain 은 유저 하나에 사이트 여럿이다(projects.name 으로 가른다).
+        busy = add_site(conn, uid, "busy", "sc-domain:busy.com", "busy.com")
+        mark_run(conn, busy)                     # 지금 도는 사이트
+        bf = home(uid) / "brain.db"
+        bc = sqlite3.connect(bf)
+        bc.executescript("""
+            CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+            CREATE TABLE runs (id INTEGER PRIMARY KEY, project_id INTEGER, kind TEXT,
+              started_at TEXT, finished_at TEXT, notes TEXT);
+            INSERT INTO projects VALUES (1,'myproj'),(2,'busy');
+            -- #49: 오래전에 워커가 죽어 남은 고아 (사이트는 이미 안 돈다)
+            INSERT INTO runs VALUES (49,1,'rank','2026-09-02T03:00:00Z',NULL,'');
+            -- 옛 CURRENT_TIMESTAMP 꼴의 고아도 같은 규칙으로
+            INSERT INTO runs VALUES (50,1,'gsc','2026-09-01 03:00:00',NULL,'n=3');
+            -- 도는 사이트의 런: 서버가 running 이라 말한다 → 절대 안 닫힌다
+            INSERT INTO runs VALUES (60,2,'rank','2026-09-02T03:00:00Z',NULL,'');
+            -- 목록을 읽은 뒤 막 시작한 런(cutoff 이후) → 안 닫힌다
+            INSERT INTO runs VALUES (70,1,'gsc','2999-01-01T00:00:00Z',NULL,'');
+            -- 이미 끝난 런 → 손대지 않는다
+            INSERT INTO runs VALUES (80,1,'gsc','2026-09-02T03:00:00Z','2026-09-02T03:05:00Z','ok');
+        """)
+        bc.commit()
+
+        def run_row(rid):
+            return bc.execute("SELECT finished_at, notes FROM runs WHERE id=?", (rid,)).fetchone()
+
+        got = close_orphan_runs(conn)
+        assert run_row(60)[0] is None, "도는 사이트의 런을 닫았다 — 살아 있는 워커의 이력을 끊었다"
+        assert run_row(70)[0] is None, "목록을 읽은 뒤 시작한 런까지 닫았다(cutoff 가 안 듣는다)"
+        assert got == [{"user_id": uid, "project": "myproj", "closed": 2}], got
+        assert run_row(49)[0] and ORPHAN_RUN_NOTE in run_row(49)[1], run_row(49)
+        assert run_row(50)[0] and run_row(50)[1] == f"n=3 | {ORPHAN_RUN_NOTE}", run_row(50)
+        assert run_row(80) == ("2026-09-02T03:05:00Z", "ok"), "이미 끝난 런을 고쳤다"
+        assert close_orphan_runs(conn) == [], "이미 닫은 고아를 또 닫는다"
+        mark_done(conn, busy, ok=True)           # 이제 안 돈다 → 그 런은 고아다
+        assert close_orphan_runs(conn) == [{"user_id": uid, "project": "busy", "closed": 1}]
+        conn.execute("UPDATE sites SET active=0 WHERE id=?", (busy,))
+        conn.commit()
+
         # 죽은 런 회수 — 컨테이너가 교체되면 워커의 finally 는 안 돈다.
         mark_run(conn, sid)
         save_run_log(conn, sid, "[1/13] gsc\n")
+        import time
+        from datetime import datetime, timezone
+        bc.execute("INSERT INTO runs VALUES (90,1,'rank',?,NULL,'')",
+                   (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),))
+        bc.commit()
+        time.sleep(1.1)                        # cutoff 는 초 단위다 — 같은 초면 '막 시작한 런'이다
         got = reclaim_dead_runs(conn)
+        assert run_row(90)[0] and ORPHAN_RUN_NOTE in run_row(90)[1], \
+            f"회수했는데 brain 의 런이 끝나지 않은 채 남았다: {run_row(90)}"
+        assert run_row(70)[0] is None, "회수가 cutoff 이후의 런까지 닫았다"
+        bc.close()
         assert [r["id"] for r in got] == [sid], f"죽은 런을 못 찾았다: {[dict(r) for r in got]}"
         r = site(conn, uid, "myproj")
         assert not r["running_since"], "회수했는데 '수집 중' 표시가 남았다"

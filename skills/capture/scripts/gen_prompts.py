@@ -48,10 +48,36 @@ DEFAULT_CATEGORY = "general"
 CATEGORY_CHOICES = CATEGORIES + (DEFAULT_CATEGORY,)
 MIN_LEN, MAX_LEN = 6, 120
 
+# 생성기 판 — 새 질문마다 ai_prompts.gen_version 으로 찍힌다(save). 판이 없던 동안,
+# 사이트를 모르고 지은 옛 질문 1~20번이 생성기를 고친 뒤에도 똑같이 활성으로 남아
+# 그 질문들의 "인용 0"이 실제 격차처럼 기회 목록에 올랐고, 아무도 그걸 가를 수 없었다.
+#   NULL — 판을 찍기 전에 들어온 질문. 1판이 섞여 있어 구버전으로 센다(outdated)
+#   0    — 생성기가 아니라 사람이 직접 적은 질문(db.add_ai_prompts 의 기본값). 구버전 아님
+#   1    — (기록 없음) 업종·GSC 검색어만 보고 짓던 판
+#   2    — 사이트 페이지 목록(offers)을 재료로 받고, 질문마다 겨냥(aim)을 적는 판
+# 짓는 방식을 바꾸면 이 수를 올린다 — 그 전 판 질문이 전부 "다시 만들기 권함"으로 뜬다.
+GEN_VERSION = 2
+# 겨냥(ai_prompts.aim)의 꼴. 모델이 준 겨냥은 재료 목록에 **글자 그대로** 있어야만
+# 받는다(parse) — 없는 페이지를 겨냥했다고 적지 않는다.
+AIM_KINDS = ("page", "keyword", "cluster", "brand")
+
+
+def outdated(gen_version) -> bool:
+    """이 판의 질문을 다시 만들기를 권하나 — 판 표시 전(NULL)이거나 지금보다 옛 판.
+
+    사람이 적은 질문(0)은 아니다: 생성기가 좋아져도 사람이 고른 질문은 낡지 않는다.
+    끄거나 지우는 판정이 아니다 — 인용 이력이 붙어 있으므로 권하기만 한다.
+    """
+    return gen_version is None or 0 < int(gen_version) < GEN_VERSION
+
+
 SYSTEM = (
     "You design the question set used to measure whether a site gets cited by AI "
     "assistants. Return ONLY a JSON array, no prose, no code fence. Each item: "
-    '{"prompt": "...", "category": "' + "|".join(CATEGORIES) + '"}. '
+    '{"prompt": "...", "category": "' + "|".join(CATEGORIES) + '", "aim": "..."}. '
+    'For "aim", copy character for character the ONE page path, keyword or topic from the '
+    "lists in the message that the prompt is about; use \"brand\" for a prompt about the "
+    'brand itself, and "" if nothing in the lists fits. Never make up an aim. '
     "Write every prompt in the audience language named in the message (never in another "
     "language), phrased the way a real person there types into ChatGPT — full questions, "
     "not keywords, and never mention that this is a test. Keep the category values exactly "
@@ -144,13 +170,38 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
             # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
             # 알고 짓게 되고, 그러면 어느 병원에 물어도 같은 질문이 나온다.
             "offers": offers(conn, p["id"]),
-            "seeds": (cfg.get("seed_keywords") or [])[:20]}
+            "seeds": (cfg.get("seed_keywords") or [])[:20],
+            # 추적 중인 주제 묶음 — 질문이 무엇을 겨냥했는지(aim) 적을 세 번째 재료다.
+            "clusters": [r[0] for r in conn.execute(
+                """SELECT DISTINCT cluster FROM keywords
+                    WHERE project_id=? AND is_active=1 AND cluster IS NOT NULL
+                      AND TRIM(cluster)<>'' ORDER BY cluster LIMIT 15""", (p["id"],))]}
+
+
+def targets(b: dict) -> dict[str, str]:
+    """재료 목록 → 겨냥 이름. {모델이 베껴 올 글자: 'page:/경로' 같은 저장 꼴}.
+
+    모델에게 준 목록이 곧 받을 수 있는 겨냥의 전부다 — 여기 없는 글자는 버린다.
+    페이지는 offers() 가 준 "경로 — 제목" 에서 경로만 쓴다(모델은 경로를 베낀다).
+    """
+    out: dict[str, str] = {}
+    for c in b.get("clusters") or []:
+        out[str(c).strip()] = f"cluster:{str(c).strip()}"
+    for k in b.get("seeds") or []:
+        out[str(k).strip()] = f"keyword:{str(k).strip()}"
+    for o in b.get("offers") or []:
+        path = str(o).split(" — ", 1)[0].strip()
+        if path.startswith("/"):
+            out[path] = f"page:{path}"
+    out.pop("", None)
+    return out
 
 
 def user_msg(b: dict, n: int) -> str:
     q = ", ".join(b["queries"][:15]) or "(none yet)"
     alias = ", ".join(x for x in [b["name"], *b["aliases"]] if x)
     seeds = ", ".join(b.get("seeds") or []) or "(none)"
+    topics = ", ".join(b.get("clusters") or []) or "(none)"
     # 페이지 목록은 줄바꿈으로 준다 — 쉼표로 이으면 경로끼리 붙어 한 줄로 읽힌다.
     pages = "\n".join(f"  {x}" for x in (b.get("offers") or [])) or "  (none yet)"
     lang, country = serp_adapter.describe(b["locale"])
@@ -160,16 +211,39 @@ def user_msg(b: dict, n: int) -> str:
             f"Brand names: {alias}\n"
             f"Search queries this site already gets impressions for: {q}\n"
             f"Keywords this site targets: {seeds}\n"
+            f"Topics this site tracks: {topics}\n"
             f"Pages this site actually has (its services, in its own words):\n{pages}\n\n"
             f"Write exactly {n} prompts.")
 
 
-def parse(text: str) -> list[dict]:
-    """모델 응답 → [{prompt, category}]. 코드펜스·설명이 붙어 와도 배열만 건진다.
+def _aim_of(raw, allowed: dict[str, str]) -> str | None:
+    """모델이 적은 겨냥 → 저장 꼴. 재료 목록에 글자 그대로 있을 때만 받는다.
+
+    'page:/x' 처럼 머리말을 붙여 오거나 경로 끝 / 가 달라도 같은 것으로 본다.
+    못 알아보면 None — 없는 페이지를 겨냥했다고 적는 것보다 모른다가 낫다.
+    """
+    s = " ".join(str(raw or "").split())
+    if not s:
+        return None
+    if s.lower() == "brand":
+        return "brand"
+    head, _, rest = s.partition(":")
+    if head in AIM_KINDS and rest:
+        s = rest.strip()
+    for cand in (s, s.rstrip("/"), s.rstrip("/") + "/"):
+        if cand in allowed:
+            return allowed[cand]
+    return None
+
+
+def parse(text: str, allowed: dict[str, str] | None = None) -> list[dict]:
+    """모델 응답 → [{prompt, category, aim}]. 코드펜스·설명이 붙어 와도 배열만 건진다.
 
     형식이 틀렸다고 통째로 버리지 않는다 — 배열 하나만 건지면 나머지 잡소리는
     무해하다. 다만 항목 단위로는 엄격하다: 질문이 아니면 안 쓴다.
+    allowed 는 targets() — 모델에게 준 재료 목록이다. 거기 없는 겨냥은 None.
     """
+    allowed = allowed or {}
     m = re.search(r"\[.*\]", text or "", re.S)
     if not m:
         return []
@@ -189,7 +263,8 @@ def parse(text: str) -> list[dict]:
         seen.add(prompt.lower())
         cat = str(item.get("category") or "").strip()
         out.append({"prompt": prompt,
-                    "category": cat if cat in CATEGORIES else DEFAULT_CATEGORY})
+                    "category": cat if cat in CATEGORIES else DEFAULT_CATEGORY,
+                    "aim": _aim_of(item.get("aim"), allowed)})
     return out
 
 
@@ -227,13 +302,18 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
     # SYSTEM 을 프롬프트 앞에 붙여 보낸다 — collect_ai.ask 의 system 자리는 "실제
     # 사용자처럼 답하라"라서 그대로 쓰면 질문이 아니라 답이 온다.
     res = ask(model, SYSTEM + "\n\n" + user_msg(b, n), key, b["locale"])
-    return parse(res.get("content", ""))[:n]
+    return parse(res.get("content", ""), targets(b))[:n]
 
 
 def save(conn, project: str, rows: list[dict]) -> int:
-    """만든 질문을 ai_prompts 에 넣는다. 이미 있는 질문은 건드리지 않는다."""
+    """만든 질문을 ai_prompts 에 넣는다. 이미 있는 질문은 건드리지 않는다.
+
+    판(GEN_VERSION)을 여기서 찍는다 — 로컬(main)·웹(server/app.py) 둘 다 이 문으로
+    들어온다. 이미 있던 질문에는 새 판을 덮어 찍지 않는다: 그 질문은 옛 판이 지었다.
+    """
     pid = db.get_project(conn, project)["id"]
-    return db.add_ai_prompts(conn, pid, rows)
+    return db.add_ai_prompts(conn, pid, [
+        {**r, "gen_version": GEN_VERSION, "aim": r.get("aim")} for r in rows])
 
 
 def main() -> None:
@@ -249,7 +329,8 @@ def main() -> None:
     if not rows:
         sys.exit("질문을 만들지 못했습니다 — 모델 응답이 비었거나 형식이 달랐습니다.")
     for r in rows:
-        print(f"  [{r['category']}] {r['prompt']}")
+        print(f"  [{r['category']}] {r['prompt']}"
+              + (f"   ← {r['aim']}" if r.get("aim") else ""))
     if a.dry_run:
         print(f"\n{len(rows)}개 (dry-run — 저장하지 않았습니다)")
         return
@@ -335,19 +416,37 @@ def _selfcheck() -> None:
 
     def fake_ask(model, prompt, api_key, locale):
         seen.update(model=model, prompt=prompt, key=api_key, locale=locale)
-        return {"content": '[{"prompt":"밀리아 제거 어디가 잘해?","category":"추천"},'
-                           '{"prompt":"점 빼기 비용 얼마야?","category":"문제해결"}]'}
+        return {"content": '[{"prompt":"밀리아 제거 어디가 잘해?","category":"추천",'
+                           '"aim":"/signature/clinic-ptt/"},'
+                           '{"prompt":"점 빼기 비용 얼마야?","category":"문제해결",'
+                           '"aim":"/지어낸-페이지"},'
+                           '{"prompt":"clinic 피부과 어때?","category":"브랜드","aim":"brand"}]'}
 
-    rows = suggest("clinic", n=2, conn=conn, ask=fake_ask)
-    assert len(rows) == 2 and seen["locale"] == "ko-KR" and seen["key"] == "test-key"
+    # 판 표시가 없던 시절의 질문 하나 — 생성기를 고친 뒤에도 똑같이 활성으로 남던 그것
+    conn.execute("INSERT INTO ai_prompts(project_id,prompt,category) "
+                 "VALUES(1,'판 표시 전에 들어온 옛 질문','추천')")
+    conn.commit()
+    rows = suggest("clinic", n=3, conn=conn, ask=fake_ask)
+    assert len(rows) == 3 and seen["locale"] == "ko-KR" and seen["key"] == "test-key"
     assert "밀리아 제거" in seen["prompt"], "GSC 검색어가 재료로 안 실렸다"
-    assert save(conn, "clinic", rows) == 2
+    # 겨냥은 준 재료에 글자 그대로 있을 때만 받는다 — 지어낸 페이지는 None
+    assert [r["aim"] for r in rows] == ["page:/signature/clinic-ptt", None, "brand"], rows
+    assert save(conn, "clinic", rows) == 3
     assert save(conn, "clinic", rows) == 0, "같은 질문이 두 벌 들어간다"
-    got = conn.execute("SELECT prompt, category, is_active FROM ai_prompts "
+    got = conn.execute("SELECT prompt, category, is_active, gen_version, aim FROM ai_prompts "
                        "ORDER BY id").fetchall()
-    assert [(r["prompt"], r["category"], r["is_active"]) for r in got] == [
-        ("밀리아 제거 어디가 잘해?", "추천", 1),
-        ("점 빼기 비용 얼마야?", "문제해결", 1)], [tuple(r) for r in got]
+    assert [tuple(r) for r in got] == [
+        ("판 표시 전에 들어온 옛 질문", "추천", 1, None, None),   # 옛 행은 건드리지 않는다
+        ("밀리아 제거 어디가 잘해?", "추천", 1, GEN_VERSION, "page:/signature/clinic-ptt"),
+        ("점 빼기 비용 얼마야?", "문제해결", 1, GEN_VERSION, None),
+        ("clinic 피부과 어때?", "브랜드", 1, GEN_VERSION, "brand")], [tuple(r) for r in got]
+    # 사람이 직접 적은 질문은 0 — 구버전(NULL)과 섞이면 방금 넣은 질문이 "다시 만들라"에 뜬다
+    assert db.add_ai_prompts(conn, 1, [{"prompt": "사람이 적은 질문입니다"}]) == 1
+    hand = conn.execute("SELECT gen_version FROM ai_prompts WHERE prompt='사람이 적은 질문입니다'"
+                        ).fetchone()[0]
+    assert hand == 0 and not outdated(hand), hand
+    assert outdated(None) and not outdated(GEN_VERSION), "판 판정이 뒤집혔다"
+    assert GEN_VERSION < 2 or outdated(GEN_VERSION - 1), "옛 판을 구버전으로 안 센다"
     os.environ.pop("OPENROUTER_API_KEY", None)
     print("gen_prompts self-check ok")
 

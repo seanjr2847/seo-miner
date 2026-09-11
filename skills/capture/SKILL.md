@@ -88,7 +88,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
      떨어진다 — 그 언어가 필요하면 `LOCATION_MAP`·`LOCALES` 에 한 줄 더한다.
      이 값이 SERP 나라, 자동완성 언어, AI 질문 언어를 전부 정한다. 시드 키워드는
      그 언어로 받는다 — 문자권이 다른 시드(영어 사이트에 한글 시드)는 글자로
-     판별해 제 언어 로케일을 받는다(`expand_keywords.locale_of`).
+     판별해 제 언어 로케일을 받는다(`db.keyword_locale`).
    - `tools` — directory·saas 타입에서만 묻는다. 이 두 타입은 비면 남의 브랜드
      카탈로그가 비어서 striking_distance에 노이즈가 흘러든다 (`scoring.md` 1a).
      game·local_clinic은 해당 없음.

@@ -470,6 +470,122 @@ def test_triage_payload_groups_variants_and_counts():
     conn.close()
 
 
+# ── 기회 묶음 — 같은 지면의 변형 검색어는 목록 한 줄 ─────────────────────────
+def _surface_fixture(name: str):
+    """AI 요약 기회 여럿과 그 지면 사실(GSC 페이지·SERP 상위·클러스터).
+
+      A·B·C  : GSC 에서 같은 우리 페이지(/syringoma)로 들어온다        → 한 줄(page)
+      E      : 우리 페이지 없음, SERP 상위 5개 중 3개가 A 와 같다        → A 줄에 붙음(serp)
+      D·D2   : 다른 페이지(/milia). D2 는 D 의 띄어쓰기 변형              → 한 줄, A 와 안 섞임
+      F      : 페이지 없음, SERP 가 누구와도 2개 이하로만 겹친다          → 혼자
+      G·H    : 페이지·SERP 없음, 같은 클러스터                           → 한 줄(cluster)
+      J·K    : A 와 같은 페이지지만 done·resolved                       → 열린 줄에 안 낀다
+      S      : A 와 같은 검색어의 다른 종류(striking_distance)            → 안 묶이는 종류, 따로
+    """
+    conn, pid = _brain(name)
+    t = {"A": "syringoma", "B": "syringomas", "C": "syringoma treatment",
+         "E": "milia vs syringoma", "D": "milia", "D2": "mil ia", "F": "eye bumps",
+         "G": "stye home remedy", "H": "stye remedy", "J": "syringoma cost", "K": "syringoma price"}
+    score = {"A": 60, "B": 55, "C": 40, "E": 50, "D": 58, "D2": 20, "F": 45, "G": 30,
+             "H": 25, "J": 70, "K": 65}
+    status = {"J": "done", "K": "resolved"}
+    vol = {"A": 1000, "B": 300, "C": 90, "E": 200, "D": 800}
+    for k, kw in t.items():
+        conn.execute("INSERT INTO keywords(project_id,keyword,cluster,volume,is_active)"
+                     " VALUES(?,?,?,?,1)", (pid, kw, "stye" if k in "GH" else None, vol.get(k)))
+    page = {"A": "/syringoma", "B": "/syringoma/", "C": "/syringoma", "J": "/syringoma",
+            "K": "/syringoma", "D": "/milia", "D2": "/milia"}
+    for k, path in page.items():
+        conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                     "clicks,impressions,ctr,position) VALUES(?,?,28,?,?,1,50,0.02,8)",
+                     (pid, D, t[k], f"https://{name}.example{path}"))
+    # SERP 상위 5개(수집기가 남기는 만큼, db.SERP_KEEP): A 는 r0~r4, E 는 r0~r2 + 딴 곳
+    # 둘(3개 겹침 — 붙는다), F 는 r3·r4 + 딴 곳 셋(2개 겹침 — 안 붙는다)
+    serp = {"A": [f"r{i}" for i in range(5)],
+            "E": ["r0", "r1", "r2", "e0", "e1"],
+            "F": ["r3", "r4", "f0", "f1", "f2"]}
+    for k, hosts in serp.items():
+        kid = conn.execute("SELECT id FROM keywords WHERE project_id=? AND keyword=?",
+                           (pid, t[k])).fetchone()[0]
+        db.write_serp_results(conn, kid, [{"position": i + 1, "url": f"https://{h}.example/x",
+                                           "domain": f"{h}.example"}
+                                          for i, h in enumerate(hosts)], checked_at=D)
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "aio_exposure", t[k], score[k], "r", status.get(k, "new"), D) for k in t]
+        + [(pid, "striking_distance", t["A"], 75, "r", "new", D)])
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(v) for v in t.values()], "work")
+    ids = {k: conn.execute("SELECT id FROM opportunities WHERE project_id=? AND kind="
+                           "'aio_exposure' AND target=?", (pid, t[k])).fetchone()[0] for k in t}
+    ids["S"] = conn.execute("SELECT id FROM opportunities WHERE project_id=? AND kind="
+                            "'striking_distance'", (pid,)).fetchone()[0]
+    return conn, pid, ids
+
+
+def test_opp_groups_fold_same_surface_into_one_line():
+    """같은 지면의 변형 셋(A·B·C)과 SERP 로 붙는 E 가 **한 줄**이고, id 는 넷 다 남는다.
+    다른 지면(D)·혼자(F)·클러스터(G·H)는 안 섞인다. 묶는 종류가 아닌 기회(S)는 따로 선다."""
+    conn, pid, ids = _surface_fixture("grp")
+    d = dashboard._axis_opps(conn, pid, None, [], [])
+    lines = d["opp_groups"]
+    of = {i: ln for ln in lines for i in ln["ids"]}
+    a = of[ids["A"]]
+    assert set(a["ids"]) == {ids["A"], ids["B"], ids["C"], ids["E"]}, a
+    assert a["lead"] == ids["A"] and a["via"] == "page" and a["key_src"] == "gsc", a
+    assert a["key"].endswith("/syringoma"), a["key"]
+    assert [v["id"] for v in a["variants"]] == [ids["A"], ids["B"], ids["E"], ids["C"]], a
+    assert {v["id"]: v["via"] for v in a["variants"]}[ids["E"]] == "serp", a["variants"]
+    assert sum(1 for ln in lines if ids["A"] in ln["ids"]) == 1, "대표가 두 줄에 선다"
+    dd = of[ids["D"]]
+    # 띄어쓰기 변형뿐인 줄은 "같은 검색어"라고 말한다(같은 페이지인 것은 key 가 남긴다)
+    assert set(dd["ids"]) == {ids["D"], ids["D2"]} and dd["via"] == "norm", dd
+    assert dd["key"].endswith("/milia") and not set(dd["ids"]) & set(a["ids"]), dd
+    assert of[ids["F"]]["ids"] == [ids["F"]] and of[ids["F"]]["via"] == "alone"
+    gh = of[ids["G"]]
+    assert set(gh["ids"]) == {ids["G"], ids["H"]} and gh["via"] == "cluster" and gh["key"] == "stye"
+    s = of[ids["S"]]
+    assert s["ids"] == [ids["S"]] and s["via"] is None and s["kind"] == "striking_distance"
+    # 묶음 점수: 대표 점수 + (지면 전체 검색량으로 다시 잰 수요 - 대표 검색량의 수요)
+    base = {"impressions": 0, "position": None, "fit": 0.5}
+    want = round(60 + scoring.score("aio_exposure", {**base, "volume": 1000 + 300 + 90 + 200}, "saas")
+                 - scoring.score("aio_exposure", {**base, "volume": 1000}, "saas"), 1)
+    assert a["score"] == want and 60 < a["score"] <= 100, (a["score"], want)
+    # 줄 순서 = 화면 순서(새 것 먼저, 점수 내림차순)
+    news = [ln["score"] for ln in lines if ln["status"] == "new"]
+    assert news == sorted(news, reverse=True), news
+    conn.close()
+
+
+def test_opp_groups_keep_closed_out_of_open_lines():
+    """열린 줄에는 done·resolved 가 없다 — 같은 페이지여도 안 묶이고, 기록으로 한 줄씩 남는다.
+    거르는 쪽이 "done 이 아니면"이었다면 resolved(저절로 풀린 기회)가 새어 들어온다."""
+    conn, pid, ids = _surface_fixture("grp_closed")
+    lines = dashboard._axis_opps(conn, pid, None, [], [])["opp_groups"]
+    for ln in lines:
+        if ln["status"] in scoring.OPEN_STATUSES:
+            assert all(v["status"] in scoring.OPEN_STATUSES for v in ln["variants"]), ln
+            assert ids["J"] not in ln["ids"] and ids["K"] not in ln["ids"], ln
+    closed = {ln["lead"]: ln for ln in lines if ln["status"] not in scoring.OPEN_STATUSES}
+    assert closed[ids["J"]]["ids"] == [ids["J"]] and closed[ids["J"]]["status"] == "done"
+    assert closed[ids["K"]]["ids"] == [ids["K"]] and closed[ids["K"]]["status"] == "resolved"
+    assert "resolved" not in scoring.OPEN_STATUSES and "done" not in scoring.OPEN_STATUSES
+    conn.close()
+
+
+def test_opp_groups_keep_ids_beyond_the_cap():
+    """화면에 싣는 기회는 상한이 있다. 상한 밖으로 밀린 변형도 묶음 id 에 남아야 한다 —
+    아니면 [완료 표시]가 그것만 남기고, 다음 적재에 혼자 다시 선다."""
+    conn, pid, ids = _surface_fixture("grp_cap")
+    opps = [o for o in scoring.opportunities(conn, pid, limit=200, with_id=True)
+            if o["id"] == ids["A"]]                     # 대표 하나만 실린 상태
+    lines = scoring.group_opportunities(conn, pid, opps)
+    assert len(lines) == 1, lines                        # 대표가 없는 묶음은 줄로 안 선다
+    assert set(lines[0]["ids"]) == {ids["A"], ids["B"], ids["C"], ids["E"]}, lines[0]
+    conn.close()
+
+
 # ── 온보딩 0단계 ──────────────────────────────────────────────────────────
 def test_setup_payload_carries_usage_choices():
     """쓰는 방식·도구·터미널의 정본은 doctor 의 표 셋이고, 그 선택이 설정 화면
@@ -686,6 +802,40 @@ def test_run_tool_opens_terminal_and_acks():
         _sh.which, dashboard._open_terminal = orig_which, orig_open
         os.environ.pop("SEOMINER_TOOL", None)
         os.environ.pop("SEOMINER_TERMINAL", None)
+
+
+def test_gather_ai_health_reaches_the_screen():
+    """AI 화면의 "측정 안 됨·구버전" 개수가 페이로드까지 온다.
+
+    화면 위 표들(matrix·ai_by_prompt)은 최신 확인 한 번만 본다. 그 확인이 끊겼으면
+    거기서 안 잰 질문은 표에도 기회에도 없다 — 그 수가 페이로드에 없으면 화면은
+    말할 수가 없다(09-02 #56 이 그랬다: 질문 17개가 한 번도 안 재졌는데 조용했다).
+    """
+    import collector
+    conn, pid = _brain("aihealth")
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt, gen_version) VALUES(?,?,?)",
+                     [(pid, "잰 질문", None), (pid, "안 잰 질문", 2), (pid, "손으로 적은 질문", 0)])
+    qa = conn.execute("SELECT id FROM ai_prompts WHERE prompt='잰 질문'").fetchone()[0]
+    qb = conn.execute("SELECT id FROM ai_prompts WHERE prompt='안 잰 질문'").fetchone()[0]
+    with db.run(conn, pid, "ai") as r:
+        conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine) VALUES(?,?,'chatgpt')",
+                     (qa, r.id))
+    try:
+        with db.run(conn, pid, "ai") as r:
+            conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine) VALUES(?,?,'chatgpt')",
+                         (qb, r.id))
+            raise collector.Fatal("OpenRouter 크레딧 소진")
+    except collector.Fatal:
+        pass
+    d = dashboard.gather(conn, db.get_project(conn, "aihealth"))
+    h = d["ai_health"]
+    assert (h["active"], h["measured"], h["unmeasured"]) == (3, 1, 2), h
+    assert h["outdated"] == 1 and h["outdated_eg"] == ["잰 질문"], h   # NULL 만 구버전
+    assert h["last_run"]["state"] == "aborted", h["last_run"]
+    assert "크레딧 소진" in h["last_run"]["note"], h["last_run"]
+    # 기회는 끝난 회차만 쓴다 — 끊긴 회차에서 잰 "안 잰 질문"은 인용 0 기회가 아니다
+    assert [g["prompt"] for g in scoring.ai_gaps(conn, pid)] == ["잰 질문"]
+    conn.close()
 
 
 if __name__ == "__main__":
