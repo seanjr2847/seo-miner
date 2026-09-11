@@ -468,6 +468,52 @@ def test_collect_ai_today_skip_and_force():
             os.environ.pop("OPENROUTER_API_KEY", None)
 
 
+def test_collect_ai_rechecks_what_an_aborted_run_asked_today():
+    """이음매: 오늘 건너뛰기(collect_ai)와 측정(scoring.ai_prompt_state)이 같은 "끝난 회차"를 본다.
+
+    측정은 끊긴 회차의 행을 안 쓴다. 그런데 건너뛰기가 끊긴 회차의 행을 "오늘 이미
+    확인"으로 치면, 402 로 끊긴 뒤 충전하고 다시 눌러도 그 질문은 끝난 회차에 행이 안
+    생겨 화면의 "측정 안 됨"이 영영 안 풀린다.
+    """
+    import collector
+    import scoring
+    conn = db.connect()
+    p = _project(conn, "ai_abort_proj", domain="e.com")
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt, category, is_active) "
+                 "VALUES(?, '끊긴_회차에서_물은_질문', '추천', 1)", (p["id"],))
+    conn.commit()
+    qid = conn.execute("SELECT id FROM ai_prompts WHERE project_id=?", (p["id"],)).fetchone()[0]
+    try:
+        with db.run(conn, p["id"], "ai") as r:
+            db.record_ai_check(conn, qid, r.id, "chatgpt", 0, 0, 0, [], "답변")
+            raise collector.Fatal("OpenRouter 402 Payment Required")
+    except collector.Fatal:
+        pass
+    assert scoring.ai_prompt_state(conn, p["id"])["unmeasured"] == 1
+    conn.close()
+
+    calls = []
+    orig_post = collect_ai.requests.post
+    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "fake-key"
+    collect_ai.requests.post = lambda url, *a, **kw: (
+        calls.append(1),
+        FakeResponse({"choices": [{"message": {"content": "답", "annotations": []}}],
+                      "usage": {}}))[1]
+    try:
+        collect_ai.collect("ai_abort_proj", engines="chatgpt", samples=1, throttle=0)
+    finally:
+        collect_ai.requests.post = orig_post
+        if orig_env_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = orig_env_key
+        else:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+    assert len(calls) == 1, "끊긴 회차가 오늘 물은 질문을 '이미 확인'으로 건너뛰었다"
+    conn = db.connect()
+    assert scoring.ai_prompt_state(conn, p["id"])["unmeasured"] == 0
+    conn.close()
+
+
 def test_serp_device_in_body_and_validation():
     """(c) device 값이 DataForSEO 요청 body에 실림 + 허용값 외 에러 검증."""
     # 1. DataForSEO 요청 body에 device 값이 실리는지 확인

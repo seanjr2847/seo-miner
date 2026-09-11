@@ -995,6 +995,56 @@ def test_seam_23_opportunity_groups_single_source():
     assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
 
 
+def test_seam_24_ai_health_fields_come_from_scoring():
+    """24) [AI 인용] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
+
+    화면(views/ai.html 의 AI_health)은 d.ai_health 의 하위 칸(h.unmeasured,
+    lr.state …)을 읽는다. 최상위 키는 10번이 보지만 그 안의 칸은 아무도 안 본다 —
+    scoring.ai_health 가 칸 이름을 바꾸면 화면은 undefined 를 "0개"로 읽어 아무 줄도
+    안 그리고, 끊긴 확인이 다시 조용해진다. 그래서 칸 이름과 상태 값을 실물과 대조한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import sqlite3 as _sq
+
+    import collector
+    import scoring
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "function AI_health(" in src, "ai.html 에 AI_health 가 없다 — 이 검사가 헛돈다"
+    body = src[src.index("function AI_health("):]
+    body = body[:body.index("\n}\n")]
+    read_h = set(re.findall(r"\bh\.([a-zA-Z_]\w*)", body))
+    read_lr = set(re.findall(r"\blr\.([a-zA-Z_]\w*)", body))
+    assert read_h and read_lr, "AI_health 가 읽는 칸을 하나도 못 찾았다 — 검사가 헛돈다"
+    assert "d.ai_health" in src, "화면이 페이로드의 ai_health 를 안 읽는다"
+
+    # 실물 — 끊긴 회차 하나를 둔 Brain 에서 scoring.ai_health 를 돌린다
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    c.execute("INSERT INTO ai_prompts(project_id,prompt) VALUES(1,'질문 하나')")
+    try:
+        with db.run(c, 1, "ai"):
+            raise collector.Fatal("402")
+    except collector.Fatal:
+        pass
+    h = scoring.ai_health(c, 1)
+    c.close()
+    assert read_h <= set(h), f"화면이 읽는데 ai_health 에 없는 칸: {sorted(read_h - set(h))}"
+    assert read_lr <= set(h["last_run"]), \
+        f"화면이 읽는데 last_run 에 없는 칸: {sorted(read_lr - set(h['last_run']))}"
+    # 상태 값도 한 벌 — 화면이 견주는 글자는 scoring 이 실제로 내는 값이어야 한다
+    made = {scoring._ai_run_state(r) for r in (
+        {"finished_at": None, "notes": None},
+        {"finished_at": "t", "notes": f"x {scoring.AI_RUN_ABORTED} y"},
+        {"finished_at": "t", "notes": "errors=0"})}
+    said = set(re.findall(r'lr\.state\s*[!=]==\s*"(\w+)"', body))
+    assert said and said <= made, f"화면이 모르는 런 상태를 견준다: {sorted(said - made)}"
+    assert h["last_run"]["state"] == "aborted", h["last_run"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

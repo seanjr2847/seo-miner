@@ -178,12 +178,15 @@ def collect(project: str, *,
 
         # 오늘(started_at이 오늘인 kind='ai' 런) 이미 기록된 (prompt_id, engine, sample_idx)는
         # 건너뛴다. '오늘'을 만드는 자리와 --force 의 뜻은 러너가 갖는다 (Stage.seen_today).
+        # **끝난 회차의 것만** 친다(scoring.ai_run_done) — 측정도 끝난 회차만 쓰기 때문이다.
+        # 402 로 끊긴 회차가 물은 질문을 여기서 "이미 확인"으로 건너뛰면, 충전 후 다시
+        # 눌러도 그 질문들은 끝난 회차에 행이 안 생겨 화면의 "측정 안 됨"이 안 풀린다.
         checked_today = st.seen_today(
             """SELECT c.prompt_id, c.engine, c.sample_idx
                  FROM ai_checks c
                  JOIN runs r ON r.id = c.run_id
                 WHERE r.project_id = ?
-                  AND r.kind = 'ai'
+                  AND """ + scoring.ai_run_done("r") + """
                   AND """ + collector.today_clause("r.started_at"),
             (p["id"],), force=force)
 

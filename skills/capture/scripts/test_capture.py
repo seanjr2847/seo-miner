@@ -410,6 +410,118 @@ def test_fit_of_three_tiers():
     conn.close()
 
 
+def _ai_check(conn, prompt_id, run_id, engine="chatgpt", cited=0, doms='["rival.com"]'):
+    conn.execute("INSERT INTO ai_checks(prompt_id, run_id, engine, cited, cited_domains_json)"
+                 " VALUES(?,?,?,?,?)", (prompt_id, run_id, engine, cited, doms))
+
+
+def test_ai_gaps_skips_unfinished_runs_and_counts_unmeasured():
+    """끊긴 회차가 최신이어도 그 회차에서 안 잰 질문이 빠지지 않는다 — 09-02 #56.
+
+    예전 ai_gaps 는 "ai_checks 의 가장 큰 run_id" 를 최신 회차로 골랐다. 402 로 끊긴
+    #56 이 그 자리를 차지하자 거기서 안 닿은 질문이 기회 목록에서 조용히 사라졌고,
+    그 뒤 등록된 질문은 한 번도 안 재졌는데 화면 어디에도 안 나왔다. 이제:
+      · 질문마다 **끝난 회차**의 최신 측정을 쓴다 (끊긴 회차의 행은 측정이 아니다)
+      · 끝난 회차에서 한 번도 안 잰 질문은 "측정 안 됨"으로 센다(인용 0 이 아니다)
+      · 끊겼는지는 실물 db.run 이 notes 에 남기는 표식으로 가린다 (사본 금지)
+    """
+    conn = db.connect()
+    p = _project(conn, "ai_unfinished")
+    pid = p["id"]
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, ?)",
+                     [(pid, "옛 질문 가"), (pid, "옛 질문 나"), (pid, "새로 넣은 질문 다")])
+    qa, qb, qc = [r[0] for r in conn.execute(
+        "SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id", (pid,))]
+    with db.run(conn, pid, "ai") as r1:                       # 끝난 회차: 가·나
+        for q in (qa, qb):
+            _ai_check(conn, q, r1.id)
+            _ai_check(conn, q, r1.id, engine="gemini")
+    try:                                                      # 끊긴 회차: 가만 묻고 402
+        with db.run(conn, pid, "ai") as r2:
+            _ai_check(conn, qa, r2.id)
+            _ai_check(conn, qc, r2.id)                        # 다는 끊긴 회차에서만 잼
+            raise collector.Fatal("OpenRouter 402 Payment Required")
+    except collector.Fatal:
+        pass
+    # 프로세스째 죽은 회차 — finished_at 이 NULL 로 남는다(재배포 SIGKILL)
+    r3 = db.start_run(conn, pid, "ai")
+    _ai_check(conn, qc, r3, cited=1)
+    conn.commit()
+
+    gaps = scoring.ai_gaps(conn, pid)
+    assert [g["prompt"] for g in gaps] == ["옛 질문 가", "옛 질문 나"], \
+        f"끊긴 회차가 최신이 되어 질문이 빠졌다: {gaps}"
+    assert all(g["run_id"] == r1.id and g["checks"] == 2 for g in gaps), gaps
+    st = scoring.ai_prompt_state(conn, pid)
+    assert (st["active"], st["measured"], st["unmeasured"]) == (3, 2, 1), st
+    assert [r["prompt"] for r in st["rows"] if r["state"] == "unmeasured"] == ["새로 넣은 질문 다"]
+    assert st["last_run"]["state"] == "open" and st["last_run"]["id"] == r3, st["last_run"]
+    db.finish_run(conn, r3, notes=" | 중단: 서버 재시작".strip(" |"))   # 표식이 붙은 채 닫힘
+    assert scoring.ai_prompt_state(conn, pid)["last_run"]["state"] == "aborted"
+    # 끊긴 회차의 표식은 실물 db.run 이 쓴 그대로여야 한다 — 문자열 사본이 갈라지면 여기서 샌다
+    note = conn.execute("SELECT notes FROM runs WHERE id=?", (r2.id,)).fetchone()[0]
+    assert scoring.AI_RUN_ABORTED in note, note
+    h = scoring.ai_health(conn, pid)
+    assert h["unmeasured"] == 1 and h["unmeasured_eg"] == ["새로 넣은 질문 다"], h
+    assert h["last_run"]["note"] == "서버 재시작", h["last_run"]
+
+    # 오래됨 — 마지막 측정이 AI_STALE_DAYS 를 넘으면 세되, 기회에서는 빼지 않는다(날짜를 싣는다)
+    st2 = scoring.ai_prompt_state(conn, pid, now="2099-01-01T00:00:00Z")
+    assert (st2["stale"], st2["measured"], st2["unmeasured"]) == (2, 0, 1), st2
+    assert gaps[0]["measured_at"], "근거에 날짜를 붙일 측정 시각이 없다"
+
+    # 판(gen_version) — 표시 전(NULL) 질문 셋 전부 구버전, 사람이 적은 질문(0)은 아니다
+    assert st["outdated"] == 3, st
+    db.add_ai_prompts(conn, pid, [{"prompt": "사람이 적은 질문"}])
+    assert scoring.ai_prompt_state(conn, pid)["outdated"] == 3
+    conn.close()
+
+
+def test_fit_of_question_is_low_when_nothing_on_the_site_overlaps():
+    """질문 대상 fit — 사이트의 페이지·키워드와 아무것도 안 겹치면 중립 0.5 가 아니라 낮다.
+
+    자연어 질문은 활성 키워드와 글자째 같을 일이 없어 전부 0.5 에 떨어졌고, 일반 질문
+    15건이 38.5점 동점이었다. 겹치는 질문 > 무관한 질문이어야 하고, 간판말("피부과")
+    하나 겹친 것은 겹친 것으로 치지 않는다. 키워드 대상의 동작은 그대로다.
+    """
+    conn = db.connect()
+    conn.execute("INSERT INTO projects(name, domain) VALUES('디아더피부과', 'theother.kr')")
+    pid = conn.execute("SELECT id FROM projects WHERE name='디아더피부과'").fetchone()[0]
+    run = conn.execute("INSERT INTO crawl_runs(project_id, finished_at, seed) "
+                       "VALUES(?, '2026-09-01', 'sitemap') RETURNING id", (pid,)).fetchone()[0]
+    conn.executemany(
+        "INSERT INTO crawl_pages(run_id, url, status, depth, title) VALUES(?,?,200,1,?)",
+        [(run, "https://theother.kr/special-clinic/syringoma/", "한관종 치료 | 디아더피부과"),
+         (run, "https://theother.kr/special-clinic/milia/", "비립종 제거 | 디아더피부과"),
+         (run, "https://theother.kr/signature/ptt/", "PTT 리프팅 | 디아더피부과"),
+         (run, "https://theother.kr/acne/", "여드름 흉터 피부과 | 디아더피부과"),
+         (run, "https://theother.kr/about/", "강남 피부과 의료진 | 디아더피부과")])
+    conn.executemany("INSERT INTO keywords(project_id, keyword, cluster, is_active) "
+                     "VALUES(?, ?, ?, 1)",
+                     [(pid, "여드름 흉터 치료", "여드름"), (pid, "비립종 제거 비용", None)])
+    conn.commit()
+    fit = lambda q: scoring._fit_of(conn, pid, q, question=True)   # noqa: E731
+
+    related = fit("한관종 없애려면 어디로 가야 해?")
+    unrelated = fit("제주도 맛집 추천해줘")
+    generic = fit("제주도 피부과 추천해줘")          # 겹치는 건 간판말 "피부과" 하나뿐
+    assert related > unrelated, (related, unrelated)
+    assert related == scoring.FIT_Q_PAGE, related
+    assert unrelated == scoring.FIT_Q_NONE < 0.5, unrelated
+    assert generic == scoring.FIT_Q_NONE, f"간판말 하나로 같은 주제라 쳤다: {generic}"
+    assert fit("여드름 흉터 치료 잘하는 곳") == 0.65, "클러스터 이름을 품은 질문"
+    assert fit("비립종 제거 비용 보통 얼마야?") == scoring.FIT_Q_KEYWORD, "키워드를 통째로 품은 질문"
+    assert fit("PTT 리프팅 효과 있어?") == scoring.FIT_Q_PAGE          # 라틴 낱말 겹침
+    assert fit("디아더피부과 후기 어때?") == scoring.FIT_Q_BRAND        # 우리 이름을 부름
+    # 키워드 대상은 예전 그대로 — 무관해도 0.5 중립
+    assert scoring._fit_of(conn, pid, "제주도 맛집 추천해줘") == 0.5
+    # 사이트 어휘가 아예 없으면 판단 근거가 없다 — 무관(0.2)이 아니라 중립
+    conn.execute("INSERT INTO projects(name, domain) VALUES('빈사이트', 'empty.kr')")
+    eid = conn.execute("SELECT id FROM projects WHERE name='빈사이트'").fetchone()[0]
+    assert scoring._fit_of(conn, eid, "제주도 맛집 추천해줘", question=True) == 0.5
+    conn.close()
+
+
 def test_run_is_closed_even_on_crash():
     """수집 도중 예외가 나도 runs.finished_at 이 채워져야 한다.
     try/finally 없이 손으로 finish_run 하던 시절엔 '수집 이력'이 거짓말을 했다."""

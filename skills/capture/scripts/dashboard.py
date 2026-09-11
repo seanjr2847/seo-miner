@@ -796,6 +796,10 @@ def _axis_ai(conn, pid: int) -> dict:
         "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
         "missed": missed, "ai_trend": ai_trend,
         "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
+        # 켜 둔 질문 중 끝난 확인에서 못 잰 것·오래된 것·옛 생성기가 지은 것의 개수와
+        # 마지막 확인이 끊겼는지. 위 표들은 최신 런 하나만 보므로 거기 안 나오는 질문이
+        # 있다 — 그 수를 화면이 "측정 안 됨"으로 말한다(scoring.ai_health 가 정본).
+        "ai_health": scoring.ai_health(conn, pid),
     }
 
 
