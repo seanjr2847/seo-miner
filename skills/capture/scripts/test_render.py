@@ -11,7 +11,13 @@
   · 화면이 실제로 그려졌는가 (필수 요소가 DOM 에 있는가)
   · 데이터를 준 화면이 그 값을 **그렸는가** (백링크·경쟁 분석·크롤 회차 비교)
   · 사이트가 URL 이 시킨 대로 열렸는가 (hash 회귀)
+  · 화면이 부른 /api/* 가 그 서버에서 실패하지 않았는가 (4xx/5xx — 화면은 대개 삼킨다)
 정렬·대비·문구가 읽히는지는 여기서 안 나온다 — 그건 사람이 봐야 한다.
+
+대상은 셋이고 **각자 운영에서 그걸 서빙하는 서버**로 띄운다: 로컬 대시보드와
+박제본은 stdlib(dashboard.Handler), 호스팅 조립본은 FastAPI(server.app 의 /d —
+serve_hosted). 호스팅을 stdlib 로 띄우면 인증·타입 검증·호스팅 전용 라우트가 전부
+빠진 서버를 보고 초록을 낸다(실제로 그랬다).
 
 "있어야 한다"는 검사는 <script> 를 뺀 DOM 에서만 찾는다. 소스까지 뒤지면 렌더러가
 만들 수 있는 문자열은 **그 코드가 한 번도 안 돌아도** 통과한다 — 실제로 그랬다.
@@ -22,16 +28,22 @@
 """
 from __future__ import annotations
 
+import gc
+import html as htmlmod
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,8 +63,13 @@ BROWSERS = (
 
 # 페이지 맨 앞에 세우는 오류 수집기. 화면 스크립트보다 **먼저** 실행돼야 그 뒤에
 # 터지는 것을 잡는다. --dump-dom 은 최종 DOM 만 주므로 콘솔을 DOM 으로 옮겨 적는다.
+#
+# fetch 도 감시한다(__NET__). 화면이 부른 /api/* 가 4xx/5xx 로 돌아와도 JS 오류가
+# 아니다 — 화면은 대개 그걸 catch 로 삼키고 빈 칸이나 배너로 넘어간다. 그래서 여태
+# 호스팅 조립본이 부르는 /api/settings·/api/run/status 가 검사 서버에서 전부 404 였는데
+# 아무 검사도 그걸 못 봤다. 여기 적힌 것은 check() 가 실패로 친다.
 PROBE = """<script>
-window.__ERR__ = [];
+window.__ERR__ = []; window.__NET__ = [];
 addEventListener("error", function (e) { window.__ERR__.push("onerror: " + (e.message || e)); });
 addEventListener("unhandledrejection", function (e) {
   window.__ERR__.push("unhandled: " + ((e.reason && e.reason.message) || e.reason));
@@ -62,11 +79,29 @@ console.error = function () {
   window.__ERR__.push("console.error: " + [].slice.call(arguments).join(" "));
   _ce.apply(console, arguments);
 };
+var _fetch = window.fetch;
+window.fetch = function (input, init) {
+  var p = _fetch.apply(this, arguments);
+  var u = new URL(typeof input === "string" ? input : (input && input.url) || String(input),
+                  location.href);
+  if (u.origin !== location.origin || u.pathname.indexOf("/api/") !== 0) return p;
+  var what = String((init && init.method) || (input && input.method) || "GET").toUpperCase() +
+             " " + u.pathname + u.search;
+  return p.then(function (r) {
+    if (!r.ok) window.__NET__.push(what + " -> " + r.status);
+    return r;
+  }, function (e) {
+    window.__NET__.push(what + " -> 연결 실패: " + ((e && e.message) || e));
+    throw e;
+  });
+};
 addEventListener("DOMContentLoaded", function () {
   var d = document.createElement("div");
   d.id = "__probe__"; d.hidden = true;
   document.body.appendChild(d);
-  setInterval(function () { d.textContent = JSON.stringify(window.__ERR__); }, 120);
+  setInterval(function () {
+    d.textContent = JSON.stringify({err: window.__ERR__, net: window.__NET__});
+  }, 120);
 });
 </script>"""
 
@@ -184,6 +219,11 @@ HOSTED_MUSTS = MUSTS + [
     # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
     (r"!data-web=", "호스팅인데 대체 문구가 안 입혀졌다 — SM_HOSTED 가 첫 렌더보다 늦게 섰다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
+    # 애드온이 서버 응답을 못 받았을 때 하는 단 한 가지 말(dash.html 의 OFFLINE).
+    # stdlib 로 띄우던 시절엔 호스팅 전용 라우트가 없어 폴링이 세 번 404 를 먹고 이
+    # 배너가 늘 떠 있었다 — 실제 앱으로 띄우는 지금은 서 있으면 그게 고장이다.
+    (r"!서버가 응답하지 않았습니다", "'서버가 응답하지 않았습니다' 배너가 떴다 — 애드온이 "
+                                 "부르는 라우트가 호스팅 앱에 없거나 실패했다"),
     # 메뉴 첫 자식은 버튼이 아닐 수 있다 — 레일이 묶음 이름(.navgrp)을 먼저 세운다.
     # 보는 것은 "메뉴 안에 화면 버튼이 있나" 하나다.
     # `[\s\S]{0,200}?` 로는 안 된다: 메뉴가 비면 </nav> 를 넘어 레일 바닥의
@@ -343,6 +383,185 @@ def serve(page: bytes) -> ThreadingHTTPServer:
     return srv
 
 
+@contextmanager
+def _stdlib(page: bytes):
+    """로컬 대시보드·박제본 대상 — 로컬이 실제로 쓰는 것이 stdlib Handler 다."""
+    srv = serve(page)
+    try:
+        yield SimpleNamespace(base=f"http://127.0.0.1:{srv.server_address[1]}",
+                              failures=lambda: [], after=lambda: None)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# 호스팅 대상의 테스트 유저. 사이트 둘(SITES)을 이 유저가 소유한다.
+HOSTED_EMAIL = "render-check@example.com"
+
+
+@contextmanager
+def serve_hosted(data: Path):
+    """호스팅 조립본 대상 — 운영과 같은 **FastAPI 앱**(server.app.app)을 띄운다.
+
+    예전엔 이것도 stdlib serve() 가 서빙했다. 그러면 화면이 부르는 /api/* 가
+    dashboard.Handler 의 query.get() 으로 너그럽게 받아지고(운영은 인증·테넌트 격리·
+    타입 검증을 한다 — 파라미터가 빠지면 운영은 422, 검사는 통과), 호스팅 전용 라우트
+    (/api/settings·/api/run/status …)는 아예 없어서 404 였다. 검사는 그걸 참았고,
+    화면에는 "서버가 응답하지 않았습니다" 배너가 떠 있었다.
+
+    stdlib 과 다른 것 네 가지:
+      · 로그인 — /d 와 모든 라우트가 `Depends(_require_uid)` 로 인증한다(한 곳). 그
+        의존자만 테스트 유저로 갈아 끼운다. 구글 OAuth 는 못 왕복하므로 이게 유일한 길이다.
+      · 저장소 — 서버 DB(SEOMINER_DATA)에 유저·사이트를 만들고, 픽스처는 그 유저의
+        home(store.home(uid) — tenant() 가 CAPTURE_HOME 으로 세우는 곳)의 brain 에 심는다.
+      · 수집기(PROBE) — /d 는 서버가 스스로 조립해 내보낸다. 앱은 안 고치고, 앞에 얇은
+        ASGI 층을 세워 /d 응답의 </head> 앞에 끼운다. 못 끼우면 여기서 멈춘다 —
+        수집기 없이 도는 호스팅 대상은 JS 가 터져도 초록이 된다.
+      · 서버 쪽 기록 — 같은 층이 /api/* 의 4xx/5xx 를 상태·경로·detail 로 적는다.
+    lifespan 은 끈다 — 켜면 죽은 런 회수와 스케줄러가 돌고, 등록 직후 사이트는
+    due 라서 실제 수집 subprocess 가 뜬다.
+    """
+    # 요청이 두른 env(CAPTURE_HOME·GSC_TOKEN_FILE·유료 키·SEOMINER_HOSTED)는
+    # 스레드풀에서 겹치면 복원 순서가 꼬일 수 있다 — 나갈 때 통째로 되돌린다.
+    saved_env = dict(os.environ)
+    try:
+        with _hosted_app(data) as site:
+            yield site
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+        # 윈도우는 열린 sqlite 파일을 못 지운다. 라우트가 닫은 커넥션도 순환 참조에
+        # 걸려 있으면 GC 전까지 파일을 쥐고 있다 — 임시 폴더를 지우기 전에 거둔다.
+        gc.collect()
+
+
+@contextmanager
+def _hosted_app(data: Path):
+    import uvicorn
+    from cryptography.fernet import Fernet
+
+    os.environ["SEOMINER_DATA"] = str(data)
+    os.environ["SEOMINER_SECRET_KEY"] = Fernet.generate_key().decode()
+    sys.path.insert(0, str(ROOT))
+    from server import app as hosted                  # server/ 를 sys.path 에 얹는다
+    import store                                      # app.py 가 쓰는 바로 그 모듈
+
+    conn = store.connect()
+    try:
+        uid = store.upsert_user(conn, HOSTED_EMAIL)
+        for name in SITES:
+            sid = store.add_site(conn, uid, name, f"sc-domain:{name}.example",
+                                 f"{name}.example")
+            # 한 바퀴 돈 사이트로 둔다 — 등록 직후(last_run_at NULL)면 화면이
+            # "첫 분석 진행 중"으로 서서 이 파일이 보려는 화면이 아니다.
+            store.mark_run(conn, sid)
+            store.mark_done(conn, sid, ok=True)
+    finally:
+        conn.close()
+    # tenant() 가 요청마다 CAPTURE_HOME 을 이 값으로 세웠다 되돌린다. 미리 같은 값으로
+    # 두면 스레드풀에서 겹친 요청이 서로의 복원을 덮어도 엉뚱한 home 이 안 선다.
+    fixture(store.home(uid))
+
+    calls: list[str] = []               # 서버가 본 /api/* 실패
+    state = {"probed": None}            # /d 에 수집기를 끼웠나(상태코드와 함께)
+    spawned: list = []                  # 화면을 열기만 했는데 수집이 떴나
+
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            return await hosted.app(scope, receive, send)
+        path, method = scope["path"], scope["method"]
+        head: dict = {}
+        chunks: list[bytes] = []
+        mine: list[int] = []            # 이 요청이 calls 에 남긴 줄의 자리
+
+        async def tap(msg):
+            if msg["type"] == "http.response.start":
+                head.update(msg)
+                # 손댈 것(/d)과 적을 것(/api/* 실패)만 붙잡는다 — 나머지는 그대로 흘린다
+                head["hold"] = path == "/d" or (path.startswith("/api/")
+                                                and msg["status"] >= 400)
+                if not head["hold"]:
+                    await send(msg)
+                return
+            if not head["hold"]:
+                return await send(msg)
+            chunks.append(msg.get("body", b""))
+            if msg.get("more_body"):
+                return
+            body = b"".join(chunks)
+            if path == "/d":
+                if head["status"] == 200 and b"</head>" in body:
+                    body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+                    state["probed"] = 200
+                elif head["status"] == 200:
+                    state["probed"] = "200 인데 </head> 가 없다"
+                else:
+                    state["probed"] = (f"{head['status']} "
+                                       f"{body[:200].decode('utf-8', 'replace')}")
+            else:
+                q = scope.get("query_string", b"").decode("latin-1")
+                calls.append(f"{method} {path}{'?' + q if q else ''} -> {head['status']} "
+                             f"{body[:300].decode('utf-8', 'replace')}")
+                mine.append(len(calls) - 1)
+            hdrs = [(k, v) for k, v in head["headers"] if k.lower() != b"content-length"]
+            hdrs.append((b"content-length", str(len(body)).encode()))
+            await send({"type": "http.response.start", "status": head["status"],
+                        "headers": hdrs})
+            await send({"type": "http.response.body", "body": body})
+
+        try:
+            await hosted.app(scope, receive, tap)
+        except Exception as e:
+            # 500 의 원인. 트레이스백은 uvicorn 이 stderr 에 남기지만 run_checks 는 꼬리
+            # 몇 줄만 보여 준다 — 실패 줄에 원인을 같이 적어야 거기서 읽힌다.
+            why = f"{type(e).__name__}: {str(e)[:160]}"
+            if mine:
+                calls[mine[-1]] += f" <- {why}"
+            else:
+                calls.append(f"{method} {path} -> 예외 {why}")
+            raise
+
+    ov =hosted.app.dependency_overrides
+    saved_ov = dict(ov)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="warning",
+                                           access_log=False))
+    th = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    try:
+        ov[hosted._require_uid] = lambda: uid
+        # 수집 실행 진입점 — 화면을 여는 것만으로는 안 불려야 한다. 불리면 가짜로 받아
+        # 적고 실패로 친다(진짜로 띄우면 이 PC 에서 워커가 돈다). 이름이 바뀌어 없으면
+        # 건너뛴다 — 위 lifespan off 만으로도 자동 수집은 안 뜬다.
+        for dep_name in ("_dispatch_dep", "_kick_dep"):
+            dep = getattr(hosted, dep_name, None)
+            if dep is not None:
+                ov[dep] = (lambda n=dep_name: (lambda *a: spawned.append((n, a))))
+
+        sock.bind(("127.0.0.1", 0))
+        th.start()
+        t0 = time.monotonic()
+        while not server.started:
+            if not th.is_alive() or time.monotonic() - t0 > 30:
+                raise AssertionError("호스팅 앱(uvicorn)이 안 떴다")
+            time.sleep(0.05)
+
+        def after():
+            assert state["probed"] == 200, (
+                f"/d 응답에 오류 수집기를 못 끼웠다 — {state['probed'] or '/d 가 안 불렸다'}. "
+                "수집기 없이 도는 호스팅 검사는 JS 가 터져도 초록이다")
+            assert not spawned, f"화면을 열기만 했는데 수집이 떴다: {spawned}"
+
+        yield SimpleNamespace(base=f"http://127.0.0.1:{sock.getsockname()[1]}",
+                              failures=lambda: list(calls), after=after)
+    finally:
+        server.should_exit = True
+        if th.is_alive():
+            th.join(15)
+        sock.close()
+        ov.clear()
+        ov.update(saved_ov)
+
+
 def dom(browser: str, url: str, profile: Path) -> str:
     r = subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--no-sandbox",
@@ -353,20 +572,30 @@ def dom(browser: str, url: str, profile: Path) -> str:
     return r.stdout
 
 
-def js_errors(html: str) -> list[str]:
+def probe(html: str) -> dict:
+    """수집기가 DOM 에 옮겨 적은 것 — {"err": JS 오류들, "net": 실패한 /api/* 호출들}."""
     m = re.search(r'id="__probe__"[^>]*>(.*?)</div>', html, re.S)
     if not m or not m.group(1).strip():
         # 수집기 자체가 안 붙었으면 검사가 헛돈 것이다 — 통과로 오해하면 안 된다.
         raise AssertionError("오류 수집기(#__probe__)가 DOM 에 없다 — 페이지가 안 떴다")
+    raw = htmlmod.unescape(m.group(1))       # 텍스트 노드라 > & 가 엔티티로 나온다
     try:
-        return json.loads(m.group(1))
+        got = json.loads(raw)
     except ValueError:
-        return [m.group(1)[:300]]
+        return {"err": [raw[:300]], "net": []}
+    return {"err": list(got.get("err") or []), "net": list(got.get("net") or [])}
 
 
-def check(label: str, html: str, musts) -> None:
-    errs = js_errors(html)
-    assert not errs, f"{label} 에서 JS 가 터졌다:\n  " + "\n  ".join(errs[:6])
+def check(label: str, html: str, musts, server_failures=()) -> None:
+    """server_failures: 서버 쪽에서 본 4xx/5xx(호스팅 대상만 준다). 화면 쪽 fetch
+    감시(__NET__)와 따로 받는 이유 — 화면이 fetch 가 아닌 길로 부르거나 수집기가 늦게
+    서도 서버는 받은 것을 전부 보고, 422 면 무엇이 빠졌는지(detail)까지 준다."""
+    p = probe(html)
+    assert not p["err"], f"{label} 에서 JS 가 터졌다:\n  " + "\n  ".join(p["err"][:6])
+    bad = ([f"서버: {s}" for s in server_failures] +
+           [f"화면: {n}" for n in p["net"]])
+    assert not bad, (f"{label}: 화면이 부른 /api/* 가 실패했다 — 운영에서도 이 칸은 "
+                     "빈 채로 선다:\n  " + "\n  ".join(bad[:10]))
     # --dump-dom 은 <script>·<style> 안의 소스까지 준다. 양쪽 다 그걸 빼고 본다.
     #
     # "없어야 한다"는 당연하고("화면에 안 보이는 코드 조각"), **"있어야 한다"도 그렇다**:
@@ -414,43 +643,39 @@ def run() -> None:
         shell = dashboard.HTML.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
         assert b"__probe__" in shell, "오류 수집기를 끼울 </head> 를 못 찾았다"
 
-        targets = [("로컬 대시보드", shell, MUSTS + LOCAL_MUSTS)]
-        # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다)
+        # 대상마다 (이름, 서버를 세우는 것, 있어야 할 것). 서버는 대상을 볼 때만 선다 —
+        # 호스팅 대상은 env 를 갈아 끼우므로 다른 대상과 겹치면 안 된다.
+        targets = [("로컬 대시보드", lambda: _stdlib(shell), MUSTS + LOCAL_MUSTS)]
+        # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
+        # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
+        # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
+        # + 애드온). 사본을 만들어 먹이면 운영과 조립이 갈라져도 검사가 모른다.
         if (ROOT / "server" / "assets" / "dash.html").exists():
-            sys.path.insert(0, str(ROOT))
-            from server import pages
-            # /d 와 똑같이 만든다: assemble("hosted") 가 호스팅 전용 섹션(성과·키워드
-            # 관리·AI 질문·고급 분석·설정)을 원본 뷰 순서 안에 끼우고 SM_HOSTED 를 첫
-            # <script> 로 세운 뒤, 애드온을 뒤에 붙인다. local 조립(dashboard.HTML)으로
-            # 대신 만들면 그 섹션들이 없어서 검사가 실제로 나가는 화면을 안 보게 된다.
-            hosted = dashboard.assemble("hosted").encode("utf-8").replace(
-                b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
-            assert b"__probe__" in hosted, "오류 수집기를 끼울 </head> 를 못 찾았다"
-            hosted += pages.addon("dash.html")
-            targets.append(("호스팅 조립본", hosted, HOSTED_MUSTS))
+            targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
+                            HOSTED_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(
             b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
-        targets.append(("박제본", report,
+        targets.append(("박제본", lambda: _stdlib(report),
                         REPORT_MUSTS + [m for m in view_sections()
                                         if not any(f'[{v}]' in m[1] for v in REPORT_DROPPED)]))
 
-        for label, page, musts in targets:
-            srv = serve(page)
-            try:
+        for label, up, musts in targets:
+            with up() as site:
                 # 두 번째 사이트를 hash 로 지목한다 — 첫 사이트가 열리면 그게 버그다
-                url = f"http://127.0.0.1:{srv.server_address[1]}/d#{SITES[1]}"
-                check(label, dom(browser, url, home / "chrome-profile"), musts)
+                url = f"{site.base}/d#{SITES[1]}"
+                page = dom(browser, url, home / "chrome-profile")
+                site.after()
+                check(label, page, musts, site.failures())
                 if label == "박제본":
                     # 화면 상자는 런타임에 생긴다 — 소스에서 세면 0 이라 단언이 늘 참이다.
                     # 선언(view-def)에서 세고 박제본이 빼는 둘을 뺀다.
                     print_all(browser, url, home,
                               len(view_defs_ids()) - len(REPORT_DROPPED))
                 print(f"  {label}: ok")
-            finally:
-                srv.shutdown()
     finally:
+        gc.collect()
         shutil.rmtree(home, ignore_errors=True)
 
 
