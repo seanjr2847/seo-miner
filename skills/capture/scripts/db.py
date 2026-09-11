@@ -614,7 +614,12 @@ def connect(home: Path | None = None) -> sqlite3.Connection:
     (server/store.py 의 Tenant.brain() 이 쓴다). 안 주면 예전처럼 env 를 읽는다."""
     dbp = db_path(home)
     dbp.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(dbp)
+    # check_same_thread=False — FastAPI 는 sync 의존자(yield)와 sync 라우트를 스레드풀의
+    # 서로 다른 스레드에서 돌린다. 의존자가 연 커넥션을 라우트가 다른 스레드에서 쓰면
+    # ProgrammingError → 500 이다(동시 요청에서만 난다 — 순차면 같은 스레드를 재사용해
+    # 우연히 맞는다). 커넥션은 호출마다 새로 열고 한 요청만 쓰므로 스레드를 순서대로
+    # 넘겨받을 뿐 동시에 쓰이지 않는다 — 그래서 이 검사를 풀어도 안전하다.
+    conn = sqlite3.connect(dbp, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     _register_norm(conn)
@@ -633,7 +638,8 @@ def connect_ro() -> sqlite3.Connection:
     startswith(('select','with')) 가드를 그대로 통과한다. DB가 거부하게 만든다.
     """
     connect().close()                      # 없으면 만들고 스키마를 맞춘 뒤 (mode=ro는 생성을 못 한다)
-    conn = sqlite3.connect(db_path().resolve().as_uri() + "?mode=ro", uri=True)
+    conn = sqlite3.connect(db_path().resolve().as_uri() + "?mode=ro", uri=True,
+                           check_same_thread=False)   # connect() 의 주석과 같은 이유
     conn.row_factory = sqlite3.Row
     _register_norm(conn)
     return conn

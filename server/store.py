@@ -102,7 +102,12 @@ def _fernet() -> Fernet:
 def connect() -> sqlite3.Connection:
     d = data_dir()
     d.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(d / "server.db")
+    # check_same_thread=False — FastAPI 는 sync 의존자(yield)와 sync 라우트를 스레드풀의
+    # 서로 다른 스레드에서 돌린다. 의존자가 연 커넥션을 라우트가 다른 스레드에서 쓰면
+    # ProgrammingError → 500 이다(동시 요청에서만 난다 — 순차면 같은 스레드를 재사용해
+    # 우연히 맞는다). 커넥션은 호출마다 새로 열고 한 요청만 쓰므로 스레드를 순서대로
+    # 넘겨받을 뿐 동시에 쓰이지 않는다 — 그래서 이 검사를 풀어도 안전하다.
+    conn = sqlite3.connect(d / "server.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     _migrate(conn)
