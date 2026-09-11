@@ -1283,7 +1283,12 @@ def build(o: dict, ctx: dict) -> dict:
         L += ["## 있으면 붙여 넣을 것 (선택)", ask, "[여기에 붙여 넣기]", ""]
     # page 는 화면(oppDetail)의 '고칠 페이지' 줄이 그대로 그린다 — 화면이 query_pages 로
     # 따로 고르면 요청문은 "이 지면을 고쳐라", 화면은 "걸린 페이지 없음"이 된다.
-    return {"shape": shape, "body": "\n".join(L), "page": url}
+    # candidates 는 고르지 못했을 때(page 없음)의 후보 지면 — 요청문 '대상'이 싣는 것과
+    # 같은 목록이다. 화면이 이걸 안 받으면 요청문은 "지면이 3개 있다", 화면은 "걸린 페이지를
+    # 아직 모으지 않았다"가 된다(모공에서 실제로 그랬다).
+    cands = [{"page": p["page"], "title": p.get("title") or ""}
+             for p in _topic_of(o, ctx)] if not url and shape == "new_content" else []
+    return {"shape": shape, "body": "\n".join(L), "page": url, "candidates": cands}
 
 
 def _with_extract(audit: dict | None, ex: list[dict]) -> dict | None:

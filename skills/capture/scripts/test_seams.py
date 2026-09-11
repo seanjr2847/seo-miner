@@ -691,7 +691,11 @@ def test_seam_16_brief_shapes_single_source():
     # "걸린 페이지 없음"이라고 한다(써마지에서 실제로 그랬다).
     m = re.search(r"function oppDetail\(o\) \{(.*?)\n\}", shell, re.S)
     assert m, "셸의 oppDetail 을 못 찾았다"
-    assert "o.brief.page" in m.group(1), "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
+    code = re.sub(r"//[^\n]*", "", m.group(1))     # 주석 속 낱말로 통과하지 않게
+    assert "o.brief.page" in code, "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
+    # 고르지 못했을 때의 후보도 요청문과 같은 목록(o.brief.candidates)을 그린다
+    assert "o.brief.candidates" in code, \
+        "oppDetail 이 후보 지면을 안 그린다 — 요청문은 후보 N개, 화면은 '걸린 페이지 없음'"
     assert "page" in brief.build({"kind": "aio_exposure", "target": "x"}, {}), \
         "brief.build 가 page 를 안 싣는다 — 화면이 고칠 페이지를 못 받는다"
     # 폴백이 쓰는 키가 shapes_payload 에 다 있다 — 키 하나가 빠지면 undefined 가 글에 박힌다

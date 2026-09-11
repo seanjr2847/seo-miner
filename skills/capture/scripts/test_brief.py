@@ -785,6 +785,9 @@ def test_unranked_page_found_by_title_is_fixed_not_rewritten():
     assert b2["shape"] == "new_content"
     assert f"  - {T} (title: 써마지 FLX)" in b2["body"] and f"  - {URL2}" in b2["body"]
     assert "지면이 2개 있습니다" in b2["body"] and brief.NO_PAGE["new_content"] not in b2["body"]
+    # 화면이 같은 후보를 그린다(o.brief.candidates) — 고른 지면이 있으면 후보는 비운다
+    assert [c["page"] for c in b2["candidates"]] == [T, URL2], b2["candidates"]
+    assert b["candidates"] == [] and b["page"] == T
 
 
 def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
