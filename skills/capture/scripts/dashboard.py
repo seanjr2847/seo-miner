@@ -100,6 +100,23 @@ def section_defs() -> list[dict]:
     return out
 
 
+# 차트 라이브러리 — templates/vendor/chart.umd.min.js(Chart.js 4.5.1, MIT)를 <head> 에
+# <script> 로 박는다. CDN 을 안 쓰는 까닭: 박제본(/capture report)은 파일 하나로
+# 오프라인에서 열려야 한다. 파일은 npm 이 준 그대로 둔다(test_seams 가 해시로 대조한다) —
+# 끝의 sourceMappingURL 한 줄만 박을 때 뗀다(없는 .map 을 개발자 도구가 찾으러 간다).
+VENDOR_JS = TPL / "vendor" / "chart.umd.min.js"
+_VENDOR: list[str] = []
+
+
+def _vendor_script() -> str:
+    if not _VENDOR:
+        js = re.sub(r"\n//# sourceMappingURL=\S+\s*$", "\n", VENDOR_JS.read_text("utf-8"))
+        if "</script" in js.lower():
+            raise ValueError("vendor 스크립트에 </script 가 있다 — 인라인으로 박으면 문서가 잘린다")
+        _VENDOR.append(f"<script>{js}</script>")
+    return _VENDOR[0]
+
+
 def _assemble(variant: str = "local") -> bytes:
     """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다.
 
@@ -144,6 +161,7 @@ def _assemble(variant: str = "local") -> bytes:
                 f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
+            .replace("<!--VENDOR-->", _vendor_script(), 1)
             .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
             .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
             .encode("utf-8"))
@@ -1610,7 +1628,7 @@ def _selfcheck() -> None:
     assert [d["id"] for d in defs] == VIEW_ORDER, "선언 순서가 조립 순서와 다르다"
     assert "window.__VIEWS__=" in html, "매니페스트가 안 실렸다"
     assert "window.__STAGES__=" in html, "단계 용어표가 안 실렸다"
-    for left in ("<!--MANIFEST-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
+    for left in ("<!--MANIFEST-->", "<!--VENDOR-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
         # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 셸이 직접 그리는 화면

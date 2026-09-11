@@ -1,0 +1,3 @@
+# 벤더 파일은 받은 그대로 둔다 — 줄끝을 바꾸면(core.autocrlf) npm 이 준 파일과 해시가
+# 어긋나 test_seams 25 가 떨어진다. 이 폴더만 변환을 끈다(리포 전체를 흔들지 않는다).
+skills/capture/templates/vendor/** -text
