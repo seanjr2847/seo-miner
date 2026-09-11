@@ -873,7 +873,8 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
     ga4_intent = scoring.ga4_intent_approx(conn, pid, cur, period)
     ga4_funnel, ga4_channels = scoring.ga4_funnel(conn, pid, cur, period)
 
-    out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent}
+    out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent,
+           **_ai_referrals(conn, pid)}
     if ga4_funnel:
         out.update({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
                     "ga4_by_device": scoring.ga4_breakdown(conn, pid, "device"),
@@ -881,6 +882,48 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
                                                             top=scoring.GA4_BD_COUNTRY_TOP),
                     "ga4_by_newret": scoring.ga4_breakdown(conn, pid, "newvsreturning")})
     return out
+
+
+def _ai_referrals(conn, pid: int) -> dict:
+    """AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회) — 최신으로 잰 날 한 벌.
+
+    세 키는 늘 같이 움직인다:
+      ai_referrals      출처(호스트)별 합계, 세션 내림차순
+      ai_referral_pages 페이지(경로)별 합계와 그 페이지의 출처별 세션
+      ai_referral_meta  잰 날·기간·그때 센 호스트 목록
+    **None = 안 쟀다**(GA4 미연결이거나 이 조회가 생기기 전 수집, 또는 매번 실패),
+    **[] = 쟀고 0**. 둘을 뭉치면 화면이 "GA4 를 연결하세요"와 "아직 아무도 안 왔다"를
+    가를 수 없다. 기준은 ga4_ai_measured(쟀다는 표시)다 — 행이 없는 날도 거기엔 남는다.
+    """
+    m = conn.execute("SELECT snapshot_date, period_days, hosts_json FROM ga4_ai_measured"
+                     " WHERE project_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    if not m:
+        return {"ai_referrals": None, "ai_referral_pages": None, "ai_referral_meta": None}
+    rows = q(conn, "SELECT source, landing_page, sessions, key_events FROM ga4_ai_referrals"
+                   " WHERE project_id=? AND snapshot_date=?", (pid, m["snapshot_date"]))
+    by_src: dict[str, dict] = {}
+    by_page: dict[str, dict] = {}
+    for r in rows:
+        s = by_src.setdefault(r["source"], {"source": r["source"], "sessions": 0, "key_events": 0.0})
+        p = by_page.setdefault(r["landing_page"], {"page": r["landing_page"], "sessions": 0,
+                                                   "key_events": 0.0, "sources": {}})
+        for acc in (s, p):
+            acc["sessions"] += r["sessions"] or 0
+            acc["key_events"] += r["key_events"] or 0
+        p["sources"][r["source"]] = p["sources"].get(r["source"], 0) + (r["sessions"] or 0)
+    order = lambda xs: sorted(xs, key=lambda x: (-x["sessions"], -x["key_events"],
+                                                 x.get("source") or x.get("page")))
+    for x in (*by_src.values(), *by_page.values()):
+        x["key_events"] = round(x["key_events"], 2)
+    try:
+        hosts = json.loads(m["hosts_json"] or "[]")
+    except ValueError:
+        hosts = []
+    return {"ai_referrals": order(by_src.values()),
+            # 페이지는 화면·요청문이 쓸 만큼만 — 긴 꼬리는 세션 1짜리가 수백 줄이다.
+            "ai_referral_pages": order(by_page.values())[:100],
+            "ai_referral_meta": {"date": m["snapshot_date"], "period_days": m["period_days"],
+                                 "hosts": hosts}}
 
 
 def _axis_backlinks(conn, pid: int) -> dict:

@@ -25,7 +25,14 @@ Search' 인 세션. 구글뿐 아니라 네이버·빙도 여기 잡힌다 — �
 **행 수 폭발 방지**: 차원을 한 요청에 다 넣지 않는다(페이지 × 채널 × 기기 ×
 국가 × 신규 는 조합 폭발). 대신 GSC 의 gsc_breakdown 과 같은 문법으로 요청을
 나눈다 — 메인 스냅샷(landingPage, 유기 필터) 1회 + 전체 세션 보조 1회 + 분해
-(device/country/newvsreturning) 각 1회, 총 최대 5회.
+(device/country/newvsreturning) 각 1회 + AI 유입 1회, 총 최대 6회.
+
+**AI 유입(부가 조회)**: 위 조회는 전부 유기 검색 필터라 chatgpt.com·perplexity.ai
+처럼 AI 답변의 링크를 타고 온 세션(대개 Referral 채널)이 통째로 빠진다 — 인용을
+고친 뒤 실제 방문이 늘었는지 볼 길이 없었다. 그래서 sessionSource × landingPage
+(세션·key events)를 따로 한 번 받는다. 출처 목록의 정본은 config.yaml 의
+ai_referrers(호스트 목록)이고, 거르는 규칙은 ai_host() 한 곳이다. 이 조회도 부수
+호출이라 실패해도 본체 스냅샷은 그대로 저장된다.
 
 랜딩페이지 ↔ GSC page 매칭 규칙 (이 연동에서 제일 조용히 틀리기 쉬운 자리):
   GA4 의 landingPage 차원은 호스트 없는 **경로**로 온다(가끔 쿼리스트링이 붙는다:
@@ -94,6 +101,54 @@ ORGANIC_FILTER = {"filter": {"fieldName": "sessionDefaultChannelGroup",
 # 분해 축 키 → GA4 차원 API 이름 (exploration-api-schema/api-schema 로 확인).
 BREAKDOWN_DIMS = {"device": "deviceCategory", "country": "countryId",
                   "newvsreturning": "newVsReturning"}
+
+# AI 유입 부가 조회 — sessionSource(세션을 시작시킨 출처, 보통 참조 호스트)×landingPage.
+# 두 지표 다 합산 가능한 카운트류라 _merge_landing 의 n_additive 는 전부다.
+AI_REFERRAL_METRICS = ("sessions", "keyEvents")
+AI_REFERRAL_LIMIT = 10000     # 분해와 같은 선택 — AI 유입은 페이지 수가 적다, 페이지네이션 안 함
+# config.yaml 을 못 읽을 때의 최소 목록. 정본은 config.yaml 의 ai_referrers 다.
+_AI_REFERRERS_FALLBACK = ("chatgpt.com", "chat.openai.com", "perplexity.ai",
+                          "gemini.google.com", "copilot.microsoft.com", "claude.ai")
+
+
+def ai_referrers() -> tuple[str, ...]:
+    """AI 출처 호스트 목록 — config.yaml 의 ai_referrers(데이터). 읽기 실패는 수집을
+    막지 않는다(최소 목록으로 간다 — scoring.ai_bots 와 같은 약속)."""
+    try:
+        got = collector.config().get("ai_referrers")
+    except Exception:
+        got = None
+    if not isinstance(got, list) or not got:
+        return _AI_REFERRERS_FALLBACK
+    return tuple(dict.fromkeys(str(x).strip().lower() for x in got if str(x).strip()))
+
+
+def ai_host(source: str, hosts) -> str | None:
+    """GA4 sessionSource 값 → 그것이 걸린 AI 호스트(없으면 None). 거르는 규칙의 정본.
+
+    이 호스트 그대로이거나 그 하위 도메인이어야 한다(www.perplexity.ai → perplexity.ai).
+    끝 글자만 맞는 것(bayou.com 은 you.com 이 아니다)은 버린다. 둘 이상 걸리면 긴 쪽
+    — chat.openai.com 목록이 있을 때 openai.com 보다 그쪽으로 센다.
+    """
+    s = (source or "").strip().lower()
+    hit = [h for h in hosts if s == h or s.endswith("." + h)]
+    return max(hit, key=len) if hit else None
+
+
+def _ai_filter(hosts) -> dict:
+    """AI 유입 조회의 GA4 필터 — 호스트마다 ENDS_WITH 한 줄을 orGroup 으로 묶는다.
+
+    inListFilter 는 정확히 같은 값만 받아 www.perplexity.ai 같은 하위 도메인 표기를
+    놓친다. 필터 없이 받아 파이썬에서만 거르면 행이 전 채널 출처 × 페이지로 불어나
+    AI_REFERRAL_LIMIT 에서 잘리고, 잘린 쪽에 AI 행이 섞이면 조용히 사라진다. 그래서
+    서버에서 ENDS_WITH 로 넉넉히 좁혀 한도를 지키고, 경계(bayou.com)는 ai_host() 가
+    파이썬에서 다시 가른다 — 좁히기는 서버, 정확도는 여기.
+    """
+    return {"orGroup": {"expressions": [
+        {"filter": {"fieldName": "sessionSource",
+                    "stringFilter": {"matchType": "ENDS_WITH", "value": h,
+                                     "caseSensitive": False}}}
+        for h in hosts]}}
 
 # ISO 3166-1 alpha-2(GA4 countryId) → alpha-3 소문자(GSC 표기). 표준 ISO 목록 그대로.
 _ALPHA2_ALPHA3 = dict(
@@ -252,7 +307,7 @@ def collect(project: str, *,
         n_bd = len(BREAKDOWN_DIMS)
         print(f"[ga4] properties/{prop_id}  window {start} ~ {end} (period={days}d)")
         print(f"[ga4] API 호출 계획: 유기 스냅샷 1회 + 전체 세션 1회 + "
-              f"분해 {n_bd}회({', '.join(BREAKDOWN_DIMS)}) = 최대 {2 + n_bd}회")
+              f"분해 {n_bd}회({', '.join(BREAKDOWN_DIMS)}) + AI 유입 1회 = 최대 {3 + n_bd}회")
         if st.dry_run:
             return st.noop(rows=0)
 
@@ -335,6 +390,25 @@ def collect(project: str, *,
                 print(f"[주의] {dim} 분해가 {BREAKDOWN_LIMIT:,}행에서 잘렸습니다 — "
                       "노출 상위 분포만 담겼습니다.")
 
+        # AI 유입 — 채널 필터 없이 출처로만 거른다(모듈 docstring 'AI 유입' 절).
+        # None = 조회 실패(적재 안 함, 지난 값이 산다), {} = 쟀고 0(그래도 적재한다).
+        hosts = ai_referrers()
+        ai_raw = _optional("AI 유입", {
+            "dateRanges": [date_range],
+            "dimensions": [{"name": "sessionSource"}, {"name": "landingPage"}],
+            "metrics": [{"name": m} for m in AI_REFERRAL_METRICS],
+            "dimensionFilter": _ai_filter(hosts), "limit": AI_REFERRAL_LIMIT})
+        ai_merged = None
+        if ai_raw is not None:
+            kept = [r for r in ai_raw if ai_host(r["dimensionValues"][0]["value"], hosts)]
+            ai_merged = _merge_landing(kept, [lambda v: ai_host(v, hosts), _landing_path],
+                                       AI_REFERRAL_METRICS, len(AI_REFERRAL_METRICS))
+            print(f"[ga4] fetched {len(ai_raw)} source x landingPage rows "
+                  f"(AI 출처 {len(kept)})")
+            if len(ai_raw) >= AI_REFERRAL_LIMIT:
+                print(f"[주의] AI 유입이 {AI_REFERRAL_LIMIT:,}행에서 잘렸습니다 — "
+                      "세션 상위만 담겼습니다.")
+
         snap = str(date.today())
         with st.record("ga4") as r:
             db.write_ga4_snapshot(conn, p["id"], snap, days,
@@ -345,12 +419,17 @@ def collect(project: str, *,
                 db.write_ga4_breakdown(conn, p["id"], snap, days, dim,
                                        ((dv, lp, vals[0], vals[1], vals[2], vals[3])
                                         for (dv, lp), vals in merged.items()))
+            if ai_merged is not None:
+                db.write_ga4_ai_referrals(conn, p["id"], snap, days, hosts,
+                                          ((src, lp, vals[0], vals[1])
+                                           for (src, lp), vals in ai_merged.items()))
             r.api_calls = calls
             r.notes = (f"rows={len(main)} "
                        f"sessions_all={'skip' if not sessions_all else 'ok'} "
                        + "".join(f"{d}={len(m)} " for d, m in bd_results)
                        + "".join(f"{d}=skip " for d in BREAKDOWN_DIMS
                                  if d not in dict(bd_results))
+                       + f"ai_ref={'skip' if ai_merged is None else len(ai_merged)} "
                        + f"calls={calls} window={start}~{end} {st.err_note}")
 
         print(f"saved ga4 snapshot {snap} ({len(main)} landing pages)")
@@ -394,6 +473,18 @@ def _selfcheck() -> None:
     assert _country_code("KR") == "kor", _country_code("KR")
     assert _country_code("US") == "usa", _country_code("US")
     assert _country_code("zz") == "zz", "모르는 코드는 보존해야 하는데 사라졌다"
+
+    # 1c. AI 출처 거르기 — 하위 도메인은 그 호스트로, 끝 글자만 맞는 남의 도메인은 버린다.
+    H = ("chatgpt.com", "chat.openai.com", "perplexity.ai", "you.com", "openai.com")
+    assert ai_host("chatgpt.com", H) == "chatgpt.com"
+    assert ai_host("WWW.Perplexity.AI", H) == "perplexity.ai", "하위 도메인·대소문자를 못 묶었다"
+    assert ai_host("bayou.com", H) is None, "끝 글자만 같은 도메인을 AI 로 셌다"
+    assert ai_host("google", H) is None and ai_host("", H) is None
+    assert ai_host("chat.openai.com", H) == "chat.openai.com", "짧은 호스트가 긴 쪽을 삼켰다"
+    assert "chatgpt.com" in ai_referrers(), "config.yaml 의 ai_referrers 를 못 읽었다"
+    f = _ai_filter(("a.com", "b.ai"))["orGroup"]["expressions"]
+    assert [e["filter"]["stringFilter"]["value"] for e in f] == ["a.com", "b.ai"], f
+    assert {e["filter"]["fieldName"] for e in f} == {"sessionSource"}, f
 
     # 2. 속성 제안 — 도메인과 겹치는 것만, 확정은 하지 않는다.
     props = [{"account": "A", "id": "111", "name": "example.com - GA4"},
@@ -473,15 +564,32 @@ def _selfcheck() -> None:
         {"dimensionValues": [{"value": "new"}, {"value": "/a"}],
          "metricValues": [{"value": "7"}, {"value": "1"}, {"value": "4"}, {"value": "0.5"}]},
     ]
+    # 서버 필터(ENDS_WITH)가 넉넉히 좁혀 온 행 — bayou.com 은 파이썬에서 떨어져야 하고,
+    # www. 표기와 쿼리스트링은 같은 (호스트, 경로) 로 합쳐져야 한다.
+    AI_ROWS = [
+        {"dimensionValues": [{"value": "chatgpt.com"}, {"value": "/a?utm_source=chatgpt.com"}],
+         "metricValues": [{"value": "5"}, {"value": "1"}]},
+        {"dimensionValues": [{"value": "chatgpt.com"}, {"value": "/a"}],
+         "metricValues": [{"value": "2"}, {"value": "0"}]},
+        {"dimensionValues": [{"value": "www.perplexity.ai"}, {"value": "/b"}],
+         "metricValues": [{"value": "3"}, {"value": "0"}]},
+        {"dimensionValues": [{"value": "bayou.com"}, {"value": "/a"}],
+         "metricValues": [{"value": "99"}, {"value": "9"}]},
+    ]
 
     class _Props:
-        def __init__(self):
+        def __init__(self, ai_rows=None):
             self.seen: list[dict] = []
+            self.ai_rows = AI_ROWS if ai_rows is None else ai_rows
 
         def runReport(self, property, body):
             assert property == "properties/999", property
             self.seen.append(body)
             dims = [d["name"] for d in body["dimensions"]]
+            if dims == ["sessionSource", "landingPage"]:       # AI 유입 — 채널 필터가 없어야 한다
+                assert body["dimensionFilter"] == _ai_filter(ai_referrers()), body
+                assert "Organic Search" not in str(body), "AI 유입 조회에 유기 필터가 섞였다"
+                return _Req(self.ai_rows)
             if dims == ["landingPage"] and "dimensionFilter" in body:
                 assert body["dimensionFilter"] == ORGANIC_FILTER, body
                 assert [m["name"] for m in body["metrics"]] == list(METRICS), body
@@ -496,8 +604,8 @@ def _selfcheck() -> None:
                         "newVsReturning": NEWVR_ROWS}[dims[0]])
 
     class _Svc:
-        def __init__(self):
-            self.props = _Props()
+        def __init__(self, ai_rows=None):
+            self.props = _Props(ai_rows)
 
         def properties(self):
             return self.props
@@ -505,7 +613,7 @@ def _selfcheck() -> None:
     svc = _Svc()
     res = collect("g4", days=14, conn=conn, data_svc=svc)
     assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
-    assert len(svc.props.seen) == 5, "유기 1 + 전체 1 + 분해 3 = 5회가 아니다"
+    assert len(svc.props.seen) == 6, "유기 1 + 전체 1 + 분해 3 + AI 유입 1 = 6회가 아니다"
 
     pid = conn.execute("SELECT id FROM projects WHERE name='g4'").fetchone()["id"]
     saved = {r["landing_page"]: dict(r) for r in
@@ -528,11 +636,21 @@ def _selfcheck() -> None:
     assert bd[("device", "MOBILE")]["sessions"] == 6, bd[("device", "MOBILE")]
     assert bd[("country", "kor")]["sessions"] == 9, bd[("country", "kor")]
 
+    ai = {(r["source"], r["landing_page"]): dict(r) for r in
+          conn.execute("SELECT * FROM ga4_ai_referrals WHERE project_id=?", (pid,))}
+    assert set(ai) == {("chatgpt.com", "/a"), ("perplexity.ai", "/b")}, ai   # bayou.com 은 버렸다
+    assert ai[("chatgpt.com", "/a")]["sessions"] == 7, ai                     # 쿼리스트링 행 합산
+    assert ai[("chatgpt.com", "/a")]["key_events"] == 1.0, ai
+    assert ai[("perplexity.ai", "/b")]["period_days"] == 14, ai
+    meas = conn.execute("SELECT * FROM ga4_ai_measured WHERE project_id=?", (pid,)).fetchall()
+    assert len(meas) == 1 and "chatgpt.com" in meas[0]["hosts_json"], [dict(m) for m in meas]
+
     run_row = conn.execute("SELECT api_calls, notes FROM runs WHERE project_id=? AND kind='ga4'",
                            (pid,)).fetchone()
-    assert run_row["api_calls"] == 5, dict(run_row)
+    assert run_row["api_calls"] == 6, dict(run_row)
     assert "device=" in run_row["notes"] and "country=" in run_row["notes"] \
         and "newvsreturning=" in run_row["notes"], run_row["notes"]
+    assert "ai_ref=2" in run_row["notes"], run_row["notes"]
 
     # 6. 같은 날 재수집은 델리트 후 인서트 — 중복이 쌓이지 않는다.
     res2 = collect("g4", conn=conn, data_svc=svc)
@@ -567,6 +685,40 @@ def _selfcheck() -> None:
     bd3 = {r["dim"] for r in conn.execute(
         "SELECT DISTINCT dim FROM ga4_breakdown WHERE project_id=?", (pid5,))}
     assert bd3 == {"country", "newvsreturning"}, "device 분해 실패가 나머지까지 지웠다"
+
+    # 7b. AI 유입 조회가 실패해도 본체는 산다 — 그리고 지난 AI 값을 "0" 으로 덮지 않는다.
+    # g4 에는 위(5)에서 잰 AI 행 둘이 있다. 실패한 날 빈 값으로 덮으면 화면이 "쟀고 0"
+    # 이라고 거짓말한다.
+    class _AIDownProps(_Props):
+        def runReport(self, property, body):
+            if [d["name"] for d in body["dimensions"]] == ["sessionSource", "landingPage"]:
+                raise HttpError(type("R", (), {"status": 429, "reason": "quota"})(), b"quota")
+            return super().runReport(property, body)
+
+    class _AIDownSvc(_Svc):
+        def __init__(self):
+            self.props = _AIDownProps()
+
+    res5 = collect("g4", conn=conn, data_svc=_AIDownSvc())
+    assert res5.ok and res5.rows == 2, "AI 유입 실패가 본체 스냅샷을 죽였다"
+    assert conn.execute("SELECT COUNT(*) c FROM ga4_ai_referrals WHERE project_id=?",
+                        (pid,)).fetchone()["c"] == 2, "실패한 AI 조회가 지난 값을 지웠다"
+    notes5 = conn.execute("SELECT notes FROM runs WHERE project_id=? AND kind='ga4' "
+                          "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()["notes"]
+    assert "ai_ref=skip" in notes5, notes5
+
+    # 7c. 쟀고 0 — 행은 없어도 "쟀다" 는 남는다(안 잰 것과 갈라야 화면이 두 말을 한다).
+    conn.execute("INSERT INTO projects(name, domain, locale, ga4_property) "
+                 "VALUES('g6', 'g6.com', 'ko-KR', '999')")
+    conn.commit()
+    collect("g6", conn=conn, data_svc=_Svc(ai_rows=[]))
+    pid6 = conn.execute("SELECT id FROM projects WHERE name='g6'").fetchone()["id"]
+    assert conn.execute("SELECT COUNT(*) c FROM ga4_ai_referrals WHERE project_id=?",
+                        (pid6,)).fetchone()["c"] == 0
+    assert conn.execute("SELECT COUNT(*) c FROM ga4_ai_measured WHERE project_id=?",
+                        (pid6,)).fetchone()["c"] == 1, "0 을 잰 날이 '안 잰 날'과 뭉쳤다"
+    assert conn.execute("SELECT COUNT(*) c FROM ga4_ai_measured WHERE project_id=?",
+                        (pid5,)).fetchone()["c"] == 1, "g5 는 AI 조회가 성공했는데 표시가 없다"
 
     # 8. dry-run 은 호출도 저장도 없다.
     conn.execute("DELETE FROM runs")

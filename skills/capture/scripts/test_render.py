@@ -137,6 +137,20 @@ BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
 GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
+AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
+AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321" 로 서야 한다
+# AI 에서 온 방문의 빈 상태 둘 — 로컬 대상에서만 사이트를 바꿔 한 번씩 더 연다(ZERO_SITE 는
+# 로컬 Brain 에만 있다). 문구는 <b> 제목만 본다: 소스(<script>)는 check() 가 떼고 보므로
+# 렌더러가 그 분기를 실제로 탔을 때만 걸린다.
+ZERO_SITE = "gamma-site"             # GA4 연결됨 + 쟀고 0
+AI_VISITS_NOGA4 = "GA4 를 연결하면 여기서 잽니다"
+AI_VISITS_ZERO = "AI 에서 온 방문이 아직 없습니다"
+EMPTY_LOADS = [
+    (SITES[0], [(re.escape(AI_VISITS_NOGA4), "GA4 미연결 사이트에 'AI 에서 온 방문' 빈 상태가 안 섰다"),
+                ("!" + re.escape(AI_VISITS_ZERO), "GA4 미연결인데 '쟀고 0' 이라고 말한다")]),
+    (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
+                 ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다")]),
+]
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
@@ -176,6 +190,10 @@ MUSTS = [
      "개요가 같은 지면의 기회 셋을 한 줄로 안 그렸다(묶음 배지·변형·묶은 이유)"),
     # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
     (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
+    # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
+    (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
+     + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
+     "AI 인용 화면이 'AI 에서 온 방문' 을 안 그렸다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -351,6 +369,10 @@ def _axes(conn, pid: int) -> None:
                 conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned,"
                              "cited_domains_json,answer_excerpt) VALUES(?,?,?,?,?,?,?)",
                              (qid, r.id, eng, cited, cited, '["rival.example"]', "답변"))
+    # AI 에서 온 방문(GA4 부가 조회) — 두 출처가 같은 페이지로 들어왔다.
+    db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],
+                              [("chatgpt.com", AI_VISIT_PAGE, AI_VISIT_N - 21, 3),
+                               ("perplexity.ai", AI_VISIT_PAGE, 21, 0)])
 
 
 def fixture(home: Path) -> None:
@@ -378,6 +400,24 @@ def fixture(home: Path) -> None:
             if name == SITES[1]:            # 테스트가 여는 사이트
                 _axes(conn, pid)
         conn.commit()
+    finally:
+        conn.close()
+
+
+def zero_site(home: Path) -> None:
+    """로컬 Brain 에만 세 번째 사이트 — GA4 가 연결돼 AI 유입을 쟀고 0 이었다.
+
+    fixture() 에 안 넣는 이유: 호스팅 대상은 사이트를 서버 저장소(store)에도 등록해야
+    열리는데, 거기 SITES 밖의 사이트를 늘리면 hash·목록 검사가 보는 판이 바뀐다."""
+    os.environ["CAPTURE_HOME"] = str(home)
+    import db
+    conn = db.connect()
+    try:
+        conn.execute("INSERT OR IGNORE INTO projects(name,domain,gsc_property,type,ga4_property)"
+                     " VALUES(?,?,?,'saas','123')",
+                     (ZERO_SITE, f"{ZERO_SITE}.example", f"sc-domain:{ZERO_SITE}.example"))
+        pid = conn.execute("SELECT id FROM projects WHERE name=?", (ZERO_SITE,)).fetchone()[0]
+        db.write_ga4_ai_referrals(conn, pid, "2026-06-01", 28, ["chatgpt.com"], [])
     finally:
         conn.close()
 
@@ -656,6 +696,7 @@ def run() -> None:
     home = Path(tempfile.mkdtemp(prefix="seo-miner-render-"))
     try:
         fixture(home)
+        zero_site(home)
         import dashboard
         # 오류 수집기를 화면 스크립트보다 앞에 세운다
         shell = dashboard.HTML.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
@@ -686,6 +727,18 @@ def run() -> None:
                 page = dom(browser, url, home / "chrome-profile")
                 site.after()
                 check(label, page, musts, site.failures())
+                if label in ("로컬 대시보드", "호스팅 조립본"):
+                    # 빈 상태 둘은 사이트가 달라야 선다 — 같은 서버로 hash 만 바꿔 연다.
+                    # 호스팅은 저장소에 등록된 SITES 만 열린다(ZERO_SITE 는 로컬 몫). 거기서도
+                    # 미연결 문구는 따로 본다: 호스팅은 W() 가 설정 화면 버튼을 끼우는 갈래다.
+                    for other, extra in EMPTY_LOADS:
+                        if label == "호스팅 조립본" and other not in SITES:
+                            continue
+                        pg = dom(browser, f"{site.base}/d#{other}", home / "chrome-profile")
+                        check(f"{label} #{other}", pg,
+                              [(r"<option[^>]*selected[^>]*>" + other,
+                                f"hash 가 지목한 {other} 가 안 열렸다")] + extra,
+                              site.failures())
                 if label == "박제본":
                     # 화면 상자는 런타임에 생긴다 — 소스에서 세면 0 이라 단언이 늘 참이다.
                     # 선언(view-def)에서 세고 박제본이 빼는 둘을 뺀다.

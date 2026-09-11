@@ -797,6 +797,78 @@ def test_side_calls_cannot_kill_the_main_snapshot():
     conn.close()
 
 
+def test_ga4_ai_referrals_side_call():
+    """GA4 AI 유입(부가 조회) — AI 출처만 걸러 저장하고, 실패해도 본체 스냅샷은 산다.
+
+    위 GSC 규칙과 같은 약속이다. 거기에 하나가 더 붙는다: 실패한 날 빈 값으로 덮으면
+    화면이 "쟀고 0" 이라고 거짓말한다 — 실패한 날은 표시(ga4_ai_measured)도 안 남긴다.
+    """
+    import collect_ga4
+    from googleapiclient.errors import HttpError
+
+    conn = db.connect()
+    conn.execute("INSERT OR IGNORE INTO projects(name, domain, locale, ga4_property) "
+                 "VALUES('ga4ai', 'g.com', 'ko-KR', '777')")
+    conn.commit()
+    pid = conn.execute("SELECT id FROM projects WHERE name='ga4ai'").fetchone()["id"]
+    MAIN = [{"dimensionValues": [{"value": "/a"}],
+             "metricValues": [{"value": v} for v in ("10", "1", "0", "0.5", "30", "1.2")]}]
+    AI = [{"dimensionValues": [{"value": s}, {"value": lp}],
+           "metricValues": [{"value": n}, {"value": k}]}
+          for s, lp, n, k in (("chatgpt.com", "/a?utm_source=chatgpt.com", "4", "1"),
+                              ("m.perplexity.ai", "/a", "2", "0"),
+                              ("bayou.com", "/a", "50", "5"),      # you.com 이 아니다
+                              ("google", "/a", "80", "3"))]         # 서버 필터를 새어 온 행
+
+    class _Req:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def execute(self):
+            return {"rows": self.rows}
+
+    class _Props:
+        def __init__(self, ai_down):
+            self.ai_down = ai_down
+
+        def runReport(self, property, body):
+            dims = [d["name"] for d in body["dimensions"]]
+            if dims == ["sessionSource", "landingPage"]:
+                if self.ai_down:
+                    raise HttpError(type("R", (), {"status": 500, "reason": "x"})(), b"down")
+                return _Req(AI)
+            if dims == ["landingPage"] and "dimensionFilter" in body:
+                return _Req(MAIN)
+            return _Req([])
+
+    class _Svc:
+        def __init__(self, ai_down=False):
+            self.p = _Props(ai_down)
+
+        def properties(self):
+            return self.p
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        res = collect_ga4.collect("ga4ai", conn=conn, data_svc=_Svc())
+    assert res.ok and res.rows == 1, res
+    got = {(r["source"], r["landing_page"]): r["sessions"] for r in conn.execute(
+        "SELECT source, landing_page, sessions FROM ga4_ai_referrals WHERE project_id=?", (pid,))}
+    assert got == {("chatgpt.com", "/a"): 4, ("perplexity.ai", "/a"): 2}, \
+        f"AI 출처만 걸러 호스트로 묶어야 한다: {got}"
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        res = collect_ga4.collect("ga4ai", conn=conn, data_svc=_Svc(ai_down=True))
+    assert res.ok and res.rows == 1, "AI 유입 조회가 죽자 본체 스냅샷까지 날아갔다"
+    assert conn.execute("SELECT COUNT(*) FROM ga4_snapshots WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM ga4_ai_referrals WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 2, "실패한 AI 조회가 지난 값을 지웠다"
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                         (pid,)).fetchone()["notes"]
+    assert "ai_ref=skip" in notes, f"건너뛴 AI 유입이 실행 기록에 안 남았다: {notes}"
+    conn.close()
+
+
 def test_doctor_json_subprocess():
     """doctor.py --json: 임시 CAPTURE_HOME 환경에서 실행 -> exit code 0,
     stdout이 JSON으로 정상 파싱되고 verdict, next_command 키가 존재하는지 assert."""

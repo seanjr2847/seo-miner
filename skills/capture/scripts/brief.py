@@ -1034,6 +1034,57 @@ def _ev_ai_bot(o, ctx, pages):
     return L + _llms_lines(ctx)
 
 
+# AI 쪽 기회 — 고친 뒤 "AI 에서 온 방문"(collect_ga4 의 부가 조회)으로 루프가 닫히는 것.
+_AI_VISIT_KINDS = ("ai_citation_gap", "aio_exposure")
+assert set(_AI_VISIT_KINDS) <= set(scoring.ALL_KINDS)
+# 요청문이 "어디를 보라"고 가리키는 화면·섹션 이름. 정본은 뷰 쪽이다(view-def 의 title,
+# ai.html #ai-visits 의 h2) — 여기는 가리키기만 하고, test_seams 가 둘을 대조한다.
+# 화면 이름을 바꾸고 이쪽을 안 고치면 요청문이 없는 화면을 보라고 한다.
+SCREEN_TITLES = {"ai": "AI 인용", "rank": "순위 추적"}
+AI_VISITS_SECTION = ("ai-visits", "AI 에서 온 방문")
+
+
+def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str]]:
+    """AI 종류 요청문에만 붙는 두 조각 — (근거에 더할 줄, '고친 뒤 볼 것' 줄).
+
+    근거 줄은 그 페이지로 AI 답변을 타고 들어온 방문이 **있을 때만** 낸다(0 을 근거로
+    늘어놓지 않는다). 뒤 조각은 늘 낸다: 인용을 고치고 끝나면 측정 → 수정 → 재측정
+    루프가 AI 쪽에서만 안 닫힌다. 페이지 짝은 GA4 매칭 규칙 그대로(경로만 —
+    collect_ga4 모듈 docstring)다.
+    """
+    if o.get("kind") not in _AI_VISIT_KINDS:
+        return [], []
+    from urllib.parse import urlsplit
+
+    meta = ctx.get("ai_referral_meta")
+    pages = ctx.get("ai_referral_pages") or []
+    ev: list[str] = []
+    path = (urlsplit(url).path or "/") if url else None
+    row = next((p for p in pages if path and p.get("page") == path), None)
+    if meta and row and row.get("sessions"):
+        srcs = ", ".join(f"{h} {_n(n)}" for h, n in
+                         sorted((row.get("sources") or {}).items(), key=lambda x: -x[1]))
+        ev.append(f"- AI 답변의 링크를 타고 이 페이지로 들어온 방문: 세션 {_n(row['sessions'])}"
+                  f" · 키 이벤트 {_n(row.get('key_events'))}"
+                  + (f" ({srcs})" if srcs else "")
+                  + f" — GA4 {meta.get('date')} 기준 최근 {meta.get('period_days')}일")
+    where = "이 페이지" if url else "새로 올린 페이지"
+    if o["kind"] == "aio_exposure":
+        # 구글 AI 요약에서 온 클릭은 GA4 에서 google / organic 이라 AI 유입으로 안 갈린다 —
+        # 여기서 "AI 방문이 느는지 보라" 고 하면 영영 안 느는 수를 보게 한다.
+        after = ["구글 AI 요약에서 온 클릭은 GA4 에서 구글 유기 검색으로 잡혀 따로 갈리지 "
+                 f"않습니다. 고친 뒤에는 [{SCREEN_TITLES['rank']}] 화면에서 이 검색어의 AI 요약에 "
+                 "내 링크가 붙는지와 구글 실적의 클릭을 봅니다."]
+    elif meta:
+        after = [f"다음 GA4 수집에서 [{SCREEN_TITLES['ai']}] 화면의 '{AI_VISITS_SECTION[1]}'에 "
+                 f"{where}의 세션이 느는지 봅니다. 인용이 붙어도 이 수가 그대로면 답변이 "
+                 "링크를 누를 이유를 주지 못한 것입니다."]
+    else:
+        after = ["다음 인용 확인에서 이 질문에 우리 링크가 붙는지 봅니다. GA4 를 연결하면 "
+                 "그 링크를 타고 실제로 들어온 방문까지 잽니다."]
+    return ev, after
+
+
 EVIDENCE: dict[str, Callable] = {
     "striking_distance": _ev_striking, "ctr_gap": _ev_ctr, "cannibalization": _ev_cannibal,
     "rank_decay": _ev_decay, "pseo_pattern": _ev_pseo, "device_gap": _ev_device,
@@ -1104,7 +1155,8 @@ def build(o: dict, ctx: dict) -> dict:
 
     L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
     L += _target_lines(o, url, shape)
-    ev = EVIDENCE[kind](o, ctx, pages)
+    visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘
+    ev = EVIDENCE[kind](o, ctx, pages) + visits
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = False
@@ -1146,6 +1198,8 @@ def build(o: dict, ctx: dict) -> dict:
         want = list(want) + [d for d in dict.fromkeys(
             DELIVER_BY_TAG.get(x["tag"]) for x in ex) if d and d not in want]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want)), ""]
+    if after:
+        L += ["## 고친 뒤 볼 것", *after, ""]
     if s["slot"]:
         # 상위 목록을 이미 위에 줬으면 여기서 또 "제목과 H2 를 붙여 넣으세요" 라고
         # 하지 않는다 — 같은 부탁이 한 요청문에 두 벌이 된다.

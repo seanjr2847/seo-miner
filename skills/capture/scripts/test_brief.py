@@ -698,6 +698,40 @@ def test_fanout_questions_reach_fix_new_and_aio_briefs():
         assert head not in brief.build(_opp("striking_distance", "검색어"), ctx)["body"], ctx
 
 
+def test_ai_visits_line_only_on_ai_kinds():
+    """AI 종류 요청문에만 'AI 에서 온 방문' 줄과 '고친 뒤 볼 것' 이 붙는다.
+
+    인용을 고치고 끝나면 측정 → 수정 → 재측정이 AI 쪽에서만 안 닫힌다. 반대로 검색어
+    요청문에 AI 방문을 붙이면 상관없는 숫자가 근거 행세를 한다. 방문 줄은 그 페이지로
+    **들어온 것이 있을 때만** — GA4 매칭 규칙대로 경로로 짝짓는다.
+    """
+    meta = {"date": "2026-09-01", "period_days": 28, "hosts": ["chatgpt.com"]}
+    ctx = {"query_pages": {"검색어": _pages(URL), "질문": _pages(URL)},
+           "ai_referral_meta": meta,
+           "ai_referral_pages": [{"page": "/a", "sessions": 12, "key_events": 1.0,
+                                  "sources": {"chatgpt.com": 9, "perplexity.ai": 3}}]}
+    line = "AI 답변의 링크를 타고 이 페이지로 들어온 방문: 세션 12 · 키 이벤트 1"
+    gap = brief.build(_opp("ai_citation_gap", "질문"), ctx)["body"]
+    assert line in gap and "(chatgpt.com 9, perplexity.ai 3)" in gap, gap
+    assert "GA4 2026-09-01 기준 최근 28일" in gap, gap
+    assert "## 고친 뒤 볼 것" in gap and "'AI 에서 온 방문'에 이 페이지의 세션이" in gap, gap
+    aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
+    assert line in aio, aio
+    # 구글 AI 요약의 클릭은 GA4 AI 유입에 안 잡힌다 — 거기서 늘기를 기다리게 하지 않는다
+    assert "구글 유기 검색으로 잡혀" in aio and "'AI 에서 온 방문'에" not in aio, aio
+    for k in ("striking_distance", "ctr_gap", "content_gap"):
+        b = brief.build(_opp(k, "검색어"), ctx)["body"]
+        assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" not in b, (k, b)
+    # 쟀는데 그 페이지로는 0 — 방문 줄은 없고, 볼 자리는 그대로 말한다
+    none_here = {**ctx, "ai_referral_pages": [{"page": "/other", "sessions": 5,
+                                               "key_events": 0, "sources": {}}]}
+    b = brief.build(_opp("ai_citation_gap", "질문"), none_here)["body"]
+    assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" in b, b
+    # 안 쟀으면(GA4 미연결) 연결하면 잰다고 말한다 — "0" 이라고 하지 않는다
+    b = brief.build(_opp("ai_citation_gap", "질문"), {"query_pages": ctx["query_pages"]})["body"]
+    assert "GA4 를 연결하면" in b and "AI 답변의 링크를 타고" not in b, b
+
+
 def test_trust_signals_are_asked_for_but_never_invented():
     """E-E-A-T — 저자·출처·갱신일은 요구하되, 이름·자격은 지어내지 않게 못 박는다."""
     tails = brief.tails("ko-KR")

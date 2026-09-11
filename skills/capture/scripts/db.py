@@ -230,6 +230,35 @@ CREATE TABLE IF NOT EXISTS ga4_breakdown (
   engagement_rate REAL
 );
 CREATE INDEX IF NOT EXISTS idx_ga4_bd ON ga4_breakdown(project_id, snapshot_date, dim);
+-- AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회). 채널 필터가 없다 —
+-- chatgpt.com 같은 출처는 대개 Referral 로 잡혀 위 두 표(유기 검색만)에서 통째로 빠진다.
+-- source 는 GA4 원문이 아니라 그것이 걸린 config.yaml ai_referrers 의 호스트다
+-- (www.perplexity.ai → perplexity.ai) — 출처별 합계가 표기 흔들림에 안 갈라지게.
+-- 쟀는데 0 인 날은 행이 없다. 그래서 "쟀다"는 사실은 ga4_ai_measured 가 따로 갖는다 —
+-- 둘을 한 표에 두면 "안 쟀다"와 "쟀고 0"이 같은 빈 결과로 뭉친다.
+CREATE TABLE IF NOT EXISTS ga4_ai_referrals (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,
+  period_days INTEGER NOT NULL,
+  source TEXT NOT NULL,                       -- ai_referrers 의 호스트 (정규화 규칙은 collect_ga4.ai_host)
+  landing_page TEXT NOT NULL,                 -- ga4_snapshots 와 같은 정규형(경로만)
+  sessions INTEGER,
+  key_events REAL
+);
+CREATE INDEX IF NOT EXISTS idx_ga4_ai_ref ON ga4_ai_referrals(project_id, snapshot_date);
+-- 그날 AI 유입을 실제로 쟀다는 표시 — 부가 조회가 실패한 날은 이 행이 없다(지난 값이 산다).
+-- hosts_json 은 그때 센 호스트 목록이다: 목록이 늘면 예전 수와 지금 수의 분모가 다르다.
+-- 열쇠가 (project_id, snapshot_date) 인데도 id 칸을 따로 둔다: remote.merge·graft 가
+-- 사이트 행을 옮길 때 모든 표의 id 로 지울 범위와 idmap 을 잡는다(없으면 병합이 터진다).
+CREATE TABLE IF NOT EXISTS ga4_ai_measured (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,
+  period_days INTEGER NOT NULL,
+  hosts_json TEXT NOT NULL,
+  UNIQUE(project_id, snapshot_date)
+);
 CREATE TABLE IF NOT EXISTS gsc_index_status (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -1280,6 +1309,32 @@ def write_ga4_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date
           int(sessions or 0), round(float(ke or 0), 2),
           round(float(rev or 0), 2), round(float(er or 0), 4))
          for dv, lp, sessions, ke, rev, er in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_ga4_ai_referrals(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                           period_days: int, hosts, rows) -> int:
+    """AI 유입(GA4 부가 조회) 적재 — 같은 날 다시 넣으면 덮어쓴다.
+
+    rows: (source, landing_page, sessions, key_events). 비어 있어도 부른다 — 그래야
+    ga4_ai_measured 에 "쟀고 0" 이 남는다. 부가 조회가 **실패한** 날은 부르지 않는다:
+    빈 값으로 덮으면 지난 수집분을 지우고 "0" 이라고 거짓말하게 된다.
+    source·landing_page 는 이미 collect_ga4 가 정규화한 값이어야 한다.
+    """
+    rows = list(rows)
+    conn.execute("DELETE FROM ga4_ai_referrals WHERE project_id=? AND snapshot_date=?",
+                 (project_id, snapshot_date))
+    conn.execute(
+        "INSERT OR REPLACE INTO ga4_ai_measured(project_id, snapshot_date, period_days,"
+        " hosts_json) VALUES(?,?,?,?)",
+        (project_id, snapshot_date, period_days, json.dumps(list(hosts), ensure_ascii=False)))
+    conn.executemany(
+        """INSERT INTO ga4_ai_referrals(project_id, snapshot_date, period_days,
+             source, landing_page, sessions, key_events) VALUES(?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, src, lp,
+          int(sessions or 0), round(float(ke or 0), 2))
+         for src, lp, sessions, ke in rows])
     conn.commit()
     return len(rows)
 

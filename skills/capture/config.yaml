@@ -72,6 +72,23 @@ third_party_platforms:
   - dcinside.com
   - clien.net
 
+# AI 답변의 링크를 타고 들어온 방문 — GA4 sessionSource 로 가른다(collect_ga4).
+# 정규식이 아니라 호스트 목록이다: 이 호스트이거나 그 하위 도메인(www.perplexity.ai)
+# 이면 그 호스트로 센다. 서비스가 도메인을 옮기거나 새 챗봇이 생기면 한 줄 더한다 —
+# 코드 변경이 아니라 데이터 변경이다. 구글 AI 요약(AI Overviews)은 여기 없다: 그
+# 클릭은 GA4 에서 google / organic 으로 잡혀 유기 검색과 안 갈린다.
+ai_referrers:
+  - chatgpt.com
+  - chat.openai.com          # ChatGPT 옛 주소 — 아직 이 출처로 들어오는 세션이 있다
+  - perplexity.ai
+  - gemini.google.com
+  - copilot.microsoft.com
+  - claude.ai
+  - you.com
+  - poe.com
+  - chat.deepseek.com
+  - chat.mistral.ai
+
 # OpenRouter model slugs drift over time. Update here, not in code.
 # ':online' engages OpenRouter's web plugin -> native provider search where supported.
 ai_engines:
