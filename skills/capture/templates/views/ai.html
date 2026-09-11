@@ -112,6 +112,10 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
   margin:0; }
 .aiev .ft { font:400 11.5px/1.5 var(--sans); color:var(--slate); margin-top:9px; }
 .aidoms .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
+/* 횟수(4/6)는 숫자라 등폭, 도메인보다 한 단 흐리게. 제3자 플랫폼은 점선 테두리 —
+   "내 페이지로는 못 들어가는 자리"라는 갈래가 칩 모양에서 먼저 읽힌다(말은 title). */
+.aidoms .chip b { font:500 10.5px/1 var(--mono); color:var(--slate); margin-left:2px; }
+.aidoms .chip.tp { border-style:dashed; }
 
 /* 펼침 안에는 발췌 아래로 "그래서 뭘 바꾸나"가 이어 붙는다.
    표 칸 안이라 공용 .det 의 58px 들여쓰기는 여기서 죽인다. */
@@ -398,8 +402,8 @@ function AI_shareBars(rows) {
 let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "", AI_ENG = "";
 // 펼침이 쓰는 재료. 페이지·감사(query_pages·page_audits)는 셸이 화면을 그리기 전에
 // window 에 한 벌 세운다 — 여기 사본을 두면 같은 목록이 두 벌이 된다. 이 화면 몫은
-// 도메인 집계와 명령 칩에 넣을 사이트 이름뿐이다.
-let AI_SHARE_N = {}, AI_NM = "";
+// 명령 칩에 넣을 사이트 이름뿐이다(대신 인용된 곳의 수는 질문 행이 싣고 온다).
+let AI_NM = "";
 
 const AI_ST_OPT = [["", "전체"], ["cited", "인용됨"], ["mention", "언급만"],
   ["none", "안 잡힘"]];
@@ -414,7 +418,8 @@ const AI_engines = () => [...new Set(AI_ROWS.flatMap(r => Object.keys(r.by_engin
 
 /* 서버는 인용 많은 순으로 준다(dashboard.py 의 ORDER BY cited DESC) — 이미 인용되는
    질문이 맨 위라 할 일 목록으로는 거꾸로다. 화면에서 기회 점수 내림차순으로 뒤집는다:
-   기회(ai_citation_gap)는 인용 0인 질문에만 붙으므로, 손댈 질문이 먼저 온다. */
+   기회(ai_citation_gap)는 인용이 드문 질문에만 붙으므로(scoring.ai_is_gap), 손댈
+   질문이 먼저 온다. */
 const AI_score = r => {
   const o = oppOf(r.prompt);
   return Number.isFinite(o && o.score) ? o.score : -1;
@@ -426,7 +431,7 @@ function AI_filtered() {
     (!AI_ENG || (r.by_engine || {})[AI_ENG]) &&
     (!AI_CAT || r.category === AI_CAT) &&
     (!AI_ST || AI_stOf(r) === AI_ST) &&
-    (!q || `${r.prompt} ${r.miss_answer || ""}`.toLowerCase().includes(q)))
+    (!q || `${r.prompt} ${AI_exTxt(r)}`.toLowerCase().includes(q)))
     .sort((a, b) => AI_score(b) - AI_score(a));
 }
 function AI_find(v) { AI_Q = v; AI_list(); }
@@ -444,8 +449,23 @@ function AI_ev(btn) {
   // 사이에 근거(oppWhy)를 끼우자 화살표만 뒤집히고 아무것도 안 열렸다.
   btn.closest("td").querySelector(".aiq-d").hidden = on;
 }
-function AI_doms(json) {
-  try { return JSON.parse(json || "[]"); } catch (e) { return []; }
+/* 대신 인용된 곳·발췌는 서버(scoring.ai_tally)가 전 표본으로 센 것 그대로다 — 화면이
+   다시 세지 않는다. 예전에는 서버가 표본 하나(사전순 최대 JSON)를 골라 보냈고 화면은
+   그 한 건을 "이 답변이 인용한 곳"으로 그렸다. 엔진을 고르면 그 엔진 몫으로 바꿔 든다. */
+function AI_riv(r) {
+  const e = AI_ENG && r.by_engine ? r.by_engine[AI_ENG] : null;
+  const s = e || r;
+  return {list: s.rivals || [], misses: s.misses || 0};
+}
+const AI_rivTxt = (x, misses) => `${x.domain} ${x.n}/${misses}`;
+// 엔진별 발췌 — 엔진마다 우리가 빠진 답변 중 먼저 받은 한 토막(결정적이다)
+const AI_exTxt = r => Object.entries(r.excerpts || {})
+  .map(([k, v]) => `${AI_engName(k)}: ${v}`).join(" / ");
+function AI_rivChip(x, misses) {
+  const tip = `우리가 빠진 답변 ${misses}건 중 ${x.n}건에서 인용` +
+    (x.third_party ? " · 제3자 플랫폼" : "");
+  return `<span class="chip${x.third_party ? " tp" : ""}" title="${esc(tip)}"
+    >${esc(x.domain)} <b>${x.n}/${misses}</b></span>`;
 }
 // 펼침 손잡이. 열리면 CSS 가 90도 돌린다 — 두 벌의 글리프를 쓰지 않는다.
 const AI_CHEV = `<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -483,17 +503,18 @@ function AI_play(r) {
               "파생 질문 H2 목록"]};
 }
 
-// 이 답변이 인용한 곳 중 전체 인용이 가장 잦은 도메인 — 그 자리를 계속 가져가는 쪽이다.
-function AI_rival(doms) {
-  let top = "", n = 0;
-  for (const dm of doms) if ((AI_SHARE_N[dm] || 0) > n) { n = AI_SHARE_N[dm]; top = dm; }
-  return n >= 2 ? `<p class="aiq-note">${esc(top)} 이(가) 이 질문에서 계속 인용됩니다.
-    확인한 답변 중 ${n}건에서 인용됐습니다.</p>` : "";
+// 이 질문에서 우리 대신 가장 자주 인용된 곳 — 그 자리를 계속 가져가는 쪽이다. 수는
+// 서버가 이 질문의 빠진 답변만으로 센 것이다(사이트 전체 점유가 아니다).
+function AI_rival(riv) {
+  const top = riv.list[0];
+  return top && top.n >= 2 ? `<p class="aiq-note">${esc(top.domain)} 이(가) 이 질문에서
+    계속 인용됩니다. 우리가 빠진 답변 ${riv.misses}건 중 ${top.n}건입니다.</p>` : "";
 }
 
 /* 기회가 없는 질문(이미 인용되는 쪽)의 펼침. 기회가 있으면 셸의 oppPanel 이 이 자리를
    통째로 대신한다 — 같은 말을 두 벌 쓰지 않으려고 여기는 그때 부르지 않는다. */
-function AI_detail(r, doms) {
+function AI_detail(r, riv) {
+  const doms = riv.list.map(x => AI_rivTxt(x, riv.misses));
   const p = AI_play(r);
   // 질문 문장이 그대로 검색어인 경우에만 페이지를 붙인다 — 비슷해 보인다고 갖다 대지 않는다.
   const pages = (window.QUERY_PAGES || {})[r.prompt] || [];
@@ -509,7 +530,7 @@ function AI_detail(r, doms) {
     problem: `AI 인용 — ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
     queries: [{q: r.prompt, note: `AI 답변 ${r.checks}건 중 인용 ${r.cited}건`}],
   });
-  return `<div class="det">${playList(p.what, p.acts)}${AI_rival(doms)}
+  return `<div class="det">${playList(p.what, p.acts)}${AI_rival(riv)}
     ${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix((window.PAGE_AUDITS || {})[url], url)}`
@@ -517,24 +538,25 @@ function AI_detail(r, doms) {
 }
 
 function AI_row(r) {
-  // 이 질문에 걸린 기회 — 인용 0인 질문마다 하나씩 있다(scoring.ai_gaps).
+  // 이 질문에 걸린 기회 — 인용이 드문 질문마다 하나씩 있다(scoring.ai_gaps).
   const o = oppOf(r.prompt);
-  const doms = AI_doms(r.miss_domains);
-  const chips = doms.slice(0, 3).map(x => `<span class="chip">${esc(x)}</span>`).join("") +
-    (doms.length > 3 ? `<span class="chip" title="${esc(doms.slice(3).join(", "))}"
-      >+${doms.length - 3}</span>` : "");
+  const riv = AI_riv(r);
+  const chips = riv.list.slice(0, 3).map(x => AI_rivChip(x, riv.misses)).join("") +
+    (riv.list.length > 3 ? `<span class="chip" title="${esc(riv.list.slice(3)
+      .map(x => AI_rivTxt(x, riv.misses)).join(", "))}">+${riv.list.length - 3}</span>` : "");
+  // 엔진을 골랐으면 그 엔진의 발췌만 — 표의 숫자가 그 엔진 몫이라 글도 맞춘다
+  const ex = Object.entries(r.excerpts || {}).filter(([k]) => !AI_ENG || k === AI_ENG);
   // 발췌가 없어도 펼칠 게 있다 — 상태마다 다른 할 일이 늘 붙는다. 손잡이는 항상 만든다.
-  const ev = r.miss_answer || doms.length;
+  const ev = ex.length || riv.list.length;
   const body = `<div class="aiq-d" hidden>
     ${ev ? `<div class="aiev">
-      ${doms.length ? `<span class="lb">이 답변이 인용한 곳</span>
-        <div class="aidoms">${doms.map(x =>
-          `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}
-      ${r.miss_answer ? `<span class="lb n2">받은 답변 발췌</span>
-        <p class="q">${esc(r.miss_answer)}</p>` : ""}
-      <div class="ft">우리가 인용되지 않은 응답 1건에서 가져온 발췌입니다. 답변은 매번
-        달라지므로 한 건은 사실이 아니라 표본입니다.</div>
-    </div>` : ""}${o ? oppActs(o) + oppPanel(o) : AI_detail(r, doms)}</div>`;
+      ${riv.list.length ? `<span class="lb">우리 대신 인용된 곳 · 빠진 답변 ${riv.misses}건 기준</span>
+        <div class="aidoms">${riv.list.map(x => AI_rivChip(x, riv.misses)).join("")}</div>` : ""}
+      ${ex.map(([k, v]) => `<span class="lb n2">${esc(AI_engName(k))} 답변 발췌</span>
+        <p class="q">${esc(v)}</p>`).join("")}
+      <div class="ft">발췌는 엔진마다 우리가 인용되지 않은 답변 중 먼저 받은 한 건입니다.
+        답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다 — 수는 위 칩이 셉니다.</div>
+    </div>` : ""}${o ? oppActs(o) + oppPanel(o) : AI_detail(r, riv)}</div>`;
   // 접힌 줄에도 근거를 낸다 — 질문마다 다른 실물(엔진 N곳 답변 M건 중 인용 0, 대신 누가)
   // 이 여기서만 보인다. 상태마다 같은 문장 3종을 돌려 쓰던 자리를 이게 대신한다.
   const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
@@ -664,23 +686,23 @@ function AI_list() {
       <p>조건을 지우면 질문 ${num(AI_ROWS.length)}개가 그대로 돌아옵니다.</p>
       <div class="acts"><button onclick="AI_reset()">조건 지우기</button></div></div>`;
   $("ai-plist").innerHTML = table(
-    [">점수?인용이 0인 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
-     "질문?누르면 그 질문에서 받은 답변 발췌가 펼쳐집니다", "카테고리",
+    [">점수?인용이 드문 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
+     "질문?누르면 그 질문에서 받은 답변 발췌가 엔진별로 펼쳐집니다", "카테고리",
      "엔진?진한 녹청은 인용, 회색은 언급, 흐린 것은 둘 다 없음. 로고 위에 올리면 수가 보입니다",
      ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
      ">응답?질문 × 엔진 × 샘플. 이 질문에 실제로 받은 답변 수",
-     "대신 인용된 곳?우리가 인용되지 않은 응답에서 대신 인용된 도메인"],
+     "대신 인용된 곳?우리가 인용되지 않은 응답에서 대신 인용된 도메인. 4/6 은 빠진 응답 6건 중 4건에서 인용됐다는 뜻입니다"],
     list.map(AI_row));
 }
 
 // 질문 목록은 화면 밖에서 콘텐츠 기획서가 된다 — 지금 거른 그대로 표로 내보낸다.
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다(기회 목록과 같은 자리).
 function AI_csv() {
-  const rows = [["질문", "카테고리", "인용", "언급", "응답", "대신 인용된 곳", "답변 발췌"]]
+  const rows = [["질문", "카테고리", "인용", "언급", "응답", "대신 인용된 곳", "답변 발췌(엔진별)"]]
     .concat(AI_filtered().map(r => [r.prompt, r.category || "", r.cited, r.mentioned,
-      r.checks, AI_doms(r.miss_domains).join(" "),
-      (r.miss_answer || "").replace(/\s+/g, " ")]));
+      r.checks, (r.rivals || []).map(x => AI_rivTxt(x, r.misses || 0)).join(", "),
+      AI_exTxt(r)]));
   csv("ai인용", rows);
 }
 
@@ -927,10 +949,6 @@ VIEW("ai", function (d) {
   const capped = share.length >= 15 && tot.cited < share[share.length - 1].n;
   const rankTxt = !sameScale || tot.cited === 0 ? "—"
     : capped ? "15위 밖" : `${above + 1}위`;
-  // 펼침이 쓸 재료 — 질문 행은 VIEW 밖에서 다시 그려지므로 여기서 받아 둔다.
-  AI_SHARE_N = {};
-  for (const s of (d.cite_share || [])) AI_SHARE_N[s.domain] = s.n;
-
   const byPrompt = d.ai_by_prompt || [];
   AI_DRILL = byPrompt.length > 0;
   const missN = byPrompt.length

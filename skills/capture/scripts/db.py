@@ -289,7 +289,9 @@ CREATE TABLE IF NOT EXISTS ai_checks (
   mentioned INTEGER DEFAULT 0,                -- brand alias appears in answer text
   cited INTEGER DEFAULT 0,                    -- own domain appears in citations
   cited_domains_json TEXT,                    -- who got cited instead/alongside
-  answer_excerpt TEXT                         -- 답변 전문 (상한 8000자, record_ai_check)
+  answer_excerpt TEXT,                        -- 답변 전문 (상한 8000자, record_ai_check)
+  recommended INTEGER                         -- 목록 줄 안에 브랜드가 있나 (scoring.recommended_in
+                                              -- 휴리스틱). NULL = 이 칸 이전의 답 — 안 봤다
 );
 CREATE INDEX IF NOT EXISTS idx_ai_checks_run ON ai_checks(run_id);
 CREATE TABLE IF NOT EXISTS competitors (
@@ -629,6 +631,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in aip_cols:
             conn.execute(f"ALTER TABLE ai_prompts ADD COLUMN {col} {decl}")
             conn.commit()
+
+    # ── 갈래 B: 챗봇 추천 목록 ──
+    # 가시성 사다리의 끝(추천됨)을 잰다 — cited·mentioned 둘로는 "이름은 나오는데 추천
+    # 목록엔 없다"를 못 가른다. 옛 행은 NULL 로 둔다: 답변 전문이 남아 있어도 다시
+    # 판정하지 않는다(그 답을 받은 때의 별칭 설정을 모른다). NULL 은 "안 봤다"다.
+    if "recommended" not in {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}:
+        conn.execute("ALTER TABLE ai_checks ADD COLUMN recommended INTEGER")
+        conn.commit()
 
     # ── 갈래 5: 키워드 언어 ──
     # locale_src — 그 로케일을 누가 정했나: gsc_country(검색한 사람의 나라) | script
@@ -1664,16 +1674,18 @@ def add_competitors(conn: sqlite3.Connection, project_id: int, domains, source: 
 
 def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None,
                     engine: str, sample_idx: int, mentioned: int, cited: int,
-                    cited_domains: list, excerpt: str) -> int:
-    """AI 인용 체크 1건 (collect_ai)."""
+                    cited_domains: list, excerpt: str,
+                    recommended: int | None = None) -> int:
+    """AI 인용 체크 1건 (collect_ai). recommended 를 안 넘기면 NULL(안 봤다) — 0 이 아니다."""
     cur = conn.execute(
         """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
-             mentioned, cited, cited_domains_json, answer_excerpt)
-           VALUES(?,?,?,?,?,?,?,?)""",
+             mentioned, cited, cited_domains_json, answer_excerpt, recommended)
+           VALUES(?,?,?,?,?,?,?,?,?)""",
         (prompt_id, run_id, engine, sample_idx, int(mentioned), int(cited),
          # 전문 저장 — 280자 절단 시절엔 답변 맥락(왜 인용됐/안 됐는지)을 검증할 수
          # 없었다. 8000자 상한은 비정상 폭주(무한 스트림 캡처 등) 방지 안전핀일 뿐.
-         json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:8000]))
+         json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:8000],
+         None if recommended is None else int(recommended)))
     conn.commit()
     return cur.lastrowid
 

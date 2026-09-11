@@ -129,10 +129,13 @@ def test_collect_ai_cycle_and_failure_summary():
     conn = db.connect()
     # 1. 성공 프롬프트에 대해 ai_checks 가 기록되고 cited=1 판정되었는지 확인
     check_row = conn.execute(
-        "SELECT prompt_id, engine, mentioned, cited, answer_excerpt FROM ai_checks WHERE prompt_id=?",
+        "SELECT prompt_id, engine, mentioned, cited, answer_excerpt, recommended"
+        " FROM ai_checks WHERE prompt_id=?",
         (p_succ_id,),
     ).fetchone()
     assert check_row is not None, "성공 프롬프트의 ai_checks 행이 기록되지 않음"
+    # 추천 목록 판정도 같이 남는다 — 목록 줄이 없는 답이라 0(봤고 없다). NULL(안 봤다)이 아니다
+    assert check_row["recommended"] == 0, dict(check_row)
     assert check_row["engine"] == "chatgpt"
     assert check_row["cited"] == 1, f"cited가 1이어야 함 (e.com 인용): {dict(check_row)}"
     assert "ecrett 서비스는 매우 훌륭합니다" in check_row["answer_excerpt"]

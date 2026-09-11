@@ -8,9 +8,9 @@
 
 여기서는 세 가지를 갈라 세운다.
 
-1. **일의 꼴(SHAPES)이 먼저다.** 종류 14개는 실제로 다섯 가지 일이다 — 있는 페이지
-   고치기 / 새 글 설계 / 주소 정리(301·canonical) / 기술 점검 / 외부 연락. 머리말·
-   답의 형식·규칙은 꼴이 갖고, 종류는 그 안에 근거와 세부만 채운다.
+1. **일의 꼴(SHAPES)이 먼저다.** 기회 종류(scoring.ALL_KINDS)는 실제로 그보다 훨씬
+   적은 가짓수의 일이다 — 이름과 개수는 SHAPE_NAMES 가 정본이다. 머리말·답의 형식·
+   규칙은 꼴이 갖고, 종류는 그 안에 근거와 세부만 채운다.
 2. **근거는 문장이 아니라 표다.** 종류마다 판정에 쓴 숫자(나눠 갖는 두 페이지,
    경쟁 도메인의 순위, 챗봇이 대신 인용한 곳과 그 답변 발췌, 모바일 vs 데스크톱)를
    그대로 낸다. `reasoning` 한 줄로 뭉개지 않는다.
@@ -33,7 +33,7 @@ import serp_adapter
 # ── 일의 꼴 ──────────────────────────────────────────────────────────────────
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
 # test_seams 가 대조한다.
-SHAPE_NAMES = ("fix_page", "new_content", "consolidate", "technical", "outreach")
+SHAPE_NAMES = ("fix_page", "new_content", "consolidate", "technical", "outreach", "presence")
 
 SHAPES: dict[str, dict] = {
     "fix_page": dict(
@@ -142,11 +142,39 @@ SHAPES: dict[str, dict] = {
                "한 통에 부탁 하나. 여러 페이지를 한꺼번에 밀지 않습니다."],
         graph="",
         slot="", limits=False),
+    # 챗봇이 내 사이트 대신 제3자 플랫폼(커뮤니티·위키·영상·리뷰)을 인용할 때. 그때
+    # "내 페이지를 고쳐라"는 틀린 처방이다 — 인용되는 자리가 내 사이트 밖에 있다.
+    # 연락(outreach)과도 다르다: 남에게 링크를 부탁하는 게 아니라 우리가 그 자리에
+    # 직접, 진짜로 참여하는 일이다. 가르는 판정은 scoring.ai_tally 의 lean.
+    "presence": dict(
+        label="제3자 플랫폼에 등장하기",
+        intro="챗봇이 이 질문에서 내 사이트 대신 제3자 플랫폼(커뮤니티·위키·영상·리뷰 "
+              "사이트)을 출처로 씁니다. 내 페이지를 고치는 일이 아니라, 그 플랫폼에 진짜로 "
+              "등장할 계획을 세워 주세요 — 어디에, 누가, 무엇으로 참여하는지까지입니다.",
+        form=["플랫폼 표: 플랫폼 | 위 근거에서 인용된 횟수 | 거기서 이 질문이 어떻게 "
+              "다뤄지는지(모르면 [확인 필요]) | 우리가 정당하게 보탤 수 있는 것.",
+              "플랫폼마다 참여 방법 하나: 누가(실명·공식 계정, 소속을 밝힌 사람) · 어떤 "
+              "형식(질문에 답하기·문서 출처 제안·영상·실사용자 리뷰 요청) · 그 플랫폼 "
+              "규칙에서 허용되는지.",
+              "우리 사이트에 먼저 있어야 할 것: 그 플랫폼에서 인용·링크할 만한 우리 "
+              "페이지. 없으면 무엇을 먼저 만들지 한 줄.",
+              "4주 순서표: 주 | 할 일 | 다음 AI 확인에서 무엇이 바뀌면 된 것인지."],
+        graph="",
+        rules=["스팸·가짜 후기·대량 게시·여러 계정 돌려쓰기·돈 주고 받는 후기를 제안하지 "
+               "않습니다. 진정성 있는 참여만 — 실제 사람이 소속을 밝히고 질문에 실제로 "
+               "답합니다.",
+               "플랫폼마다 자기 홍보 제한과 이해관계 편집 규정이 있습니다. 먼저 확인하고, "
+               "어기는 계획은 세우지 않습니다. 모르면 [규칙 확인] 이라 씁니다.",
+               "위키 문서는 우리가 직접 고쳐 쓰지 않습니다. 토론 페이지 제안과 검증 가능한 "
+               "출처 제공까지만.",
+               "숫자·후기·사례를 지어내지 않습니다. 없는 것은 [확인 필요]로 둡니다.",
+               "모든 플랫폼을 한꺼번에 밀지 않습니다. 인용이 가장 잦은 한두 곳부터."],
+        slot="", limits=False),
 }
 assert tuple(SHAPES) == SHAPE_NAMES
 
 # ── 답의 형식: 자립형 HTML 리포트 한 장 ──────────────────────────────────────
-# 꼴 5개가 여기서 전부 같은 글을 쓴다 — 그래서 한 벌만 둔다. tails() 가 꼴마다 세
+# 꼴(SHAPE_NAMES)이 여기서 전부 같은 글을 쓴다 — 그래서 한 벌만 둔다. tails() 가 꼴마다 세
 # 자리만 갈아 끼운다: 파일명 조각(slug)·부를 스크립트(scripts)·무엇을 그래프로
 # 그리나(graph).
 #
@@ -191,6 +219,10 @@ _GRAPH_TAIL = ("나머지는 카드·표·inline SVG 입니다 — 전부 다이
 # 챗봇·AI 요약은 이미 걸린 페이지가 있으면 고치고 없으면 새로 쓴다.
 _by_page: Callable[[str | None, bool], str] = \
     lambda gk, has_page: "fix_page" if has_page else "new_content"
+# 챗봇 인용 공백은 대신 인용된 곳이 대부분 제3자 플랫폼이면(gap_kind=third_party —
+# scoring.ai_tally 의 lean 을 gather 가 싣는다) 페이지가 있든 없든 '등장하기'다.
+_ai_shape: Callable[[str | None, bool], str] = \
+    lambda gk, has_page: "presence" if gk == "third_party" else _by_page(gk, has_page)
 KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
     "striking_distance": "fix_page",
     "ctr_gap": "fix_page",
@@ -200,7 +232,7 @@ KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
     "device_gap": "technical",
     "index_blocked": "technical",
     "coverage": "new_content",
-    "ai_citation_gap": _by_page,
+    "ai_citation_gap": _ai_shape,
     "aio_exposure": _by_page,
     "content_gap": lambda gk, has_page: "fix_page" if gk == "weak" else "new_content",
     "crawl_issue": "consolidate",
@@ -724,19 +756,99 @@ def _ev_coverage(o, ctx, pages):
             *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]])]
 
 
+# 엔진마다 출처를 고르는 경향 — ai-seo 스킬의 관찰이다. 경향이지 규칙이 아니라서 요청문도
+# 그렇게 말한다. 여기 없는 엔진(claude 등)은 아무 말도 안 한다 — 모르는 것을 지어내지 않는다.
+AI_ENGINE_SOURCING = {
+    "perplexity": "Perplexity 는 최신이고 권위 있는 출처를 더 고르는 편",
+    "gemini": "Gemini(구글 계열)는 기존 검색 순위와 많이 겹치는 출처를 쓰는 편",
+    "chatgpt": "ChatGPT 는 더 넓은 범위에서 출처를 고르는 편",
+}
+
+
+def _ai_ladder(r: dict) -> list[str]:
+    """가시성 사다리 — 추천·비교 질문에서만. 인용 → 이름 나옴 → 추천 목록.
+
+    추천을 안 잰 답(칸 이전의 옛 행)은 "0"이 아니라 "안 봤다"로 적는다."""
+    if r.get("category") not in scoring.AI_LADDER_CATEGORIES:
+        return []
+    n = r.get("checks") or 0
+    rec, rn = r.get("recommended"), r.get("rec_checks") or 0
+    rung = (f"추천 목록 {rec}/{rn}" if rec is not None
+            else "추천 목록 — (이 판정이 생기기 전에 받은 답이라 안 봤습니다)")
+    L = [f"- 가시성 사다리(추천·비교 질문): 인용 {r.get('cited') or 0}/{n} · "
+         f"이름 나옴 {r.get('mentioned') or 0}/{n} · {rung}",
+         "  - 추천 목록은 휴리스틱입니다: 답변의 번호·글머리·표 줄 안에 우리 이름이 있으면 "
+         "추천으로 셉니다. 목록의 뜻(추천인지 비추천인지)까지는 가르지 않습니다."]
+    if rec == 0 and r.get("mentioned"):
+        L.append("- 이름은 나오는데 추천 목록에는 안 듭니다. 추천은 내 글보다 웹 전반의 평판"
+                 "(리뷰·포럼·비교 기사)이 정합니다 — 페이지 손질만으로는 목록에 안 들어갑니다. "
+                 "그런 곳에서 우리가 어떻게 말해지는지부터 봐 주세요.")
+    return L
+
+
+def _ai_engines(r: dict) -> list[str]:
+    """엔진별 표 — 뭉쳐 두면 "chatgpt 는 인용하는데 perplexity 는 안 한다"가 안 보인다."""
+    by = r.get("by_engine") or {}
+    if not by:
+        return []
+    L = ["", "엔진별:"]
+    L += _table(["엔진", "인용", "이름만", "표본", "대신 인용된 곳"],
+                [[eng, f"{e.get('cited') or 0}/{e.get('checks') or 0}", e.get("named_only"),
+                  e.get("checks"),
+                  scoring.ai_rivals_text(e.get("rivals"), e.get("misses")) or "—"]
+                 for eng, e in by.items()])
+    said = [AI_ENGINE_SOURCING[e] for e in by if e in AI_ENGINE_SOURCING]
+    if said:
+        L.append("- 엔진마다 출처를 고르는 방식이 다릅니다: " + " · ".join(said)
+                 + ". 관찰된 경향이지 규칙은 아닙니다 — 위 표의 실제 수가 먼저입니다.")
+    return L
+
+
+def _ai_rivals(r: dict) -> list[str]:
+    """대신 인용된 곳 — scoring.ai_tally 가 센 것 그대로(도메인별 횟수·갈래). 여기서
+    다시 세지 않는다: 셌던 두 벌이 서로 다른 표본을 봤던 것이 고친 이유다."""
+    rivals, misses = r.get("rivals") or [], r.get("misses") or 0
+    if not rivals:
+        return []
+    L = ["", f"대신 인용된 곳 (우리가 빠진 답변 {misses}건 기준, 한 답변에 한 번씩 셉니다):"]
+    L += _table(["도메인", "횟수", "갈래"],
+                [[x["domain"], f"{x['n']}/{misses}",
+                  "제3자 플랫폼" if x.get("third_party") else "경쟁사·일반 사이트"]
+                 for x in rivals])
+    if r.get("lean") == "third_party":
+        L.append(f"- 대신 인용된 횟수의 {round((r.get('third_share') or 0) * 100)}% 가 제3자 "
+                 "플랫폼입니다. 이 자리는 내 페이지를 고쳐서는 못 들어갑니다 — 그 플랫폼에 "
+                 "진짜로 등장하는 것이 일입니다.")
+    return L
+
+
 def _ev_ai(o, ctx, pages):
-    r = _find(ctx.get("ai_by_prompt"), "prompt", o["target"])
+    # 기회를 세운 행(ai_gap_rows — 그 질문의 끝난 회차)이 먼저다. 최신 회차 행
+    # (ai_by_prompt)은 그 회차가 끊겼으면 다른 표본이라, 근거가 기회와 다른 수를 말한다.
+    r = (_find(ctx.get("ai_gap_rows"), "prompt", o["target"])
+         or _find(ctx.get("ai_by_prompt"), "prompt", o["target"]))
     L = []
     if r:
-        L.append(f"- AI {r.get('engines') or '—'} · 답변 {r['checks']}건 중 인용 {r['cited']}건, "
-                 f"이름만 {r['mentioned']}건")
-        doms = scoring._xai_doms(r.get("miss_domains"))
-        if doms:
-            L.append(f"- 대신 인용된 곳: {', '.join(doms)}")
-        ans = (r.get("miss_answer") or "").strip()
-        if ans:
-            L += ["- AI 가 지금 하는 답변(발췌) — 여기 없는 것을 우리가 답해야 인용됩니다:",
-                  *(f"  > {ln}" for ln in ans.splitlines() if ln.strip())]
+        n = r.get("checks") or 0
+        L.append(f"- AI {r.get('engines') or '—'} · 답변 {n}건 중 "
+                 f"{scoring.ai_cite_label(r.get('cited'), n)}"
+                 + (f", 이름만 {r['named_only']}건" if r.get("named_only") else "")
+                 + (f" (AI 확인 {str(r['measured_at'])[:10]})" if r.get("measured_at") else ""))
+        if n < scoring.AI_MIN_SAMPLES:
+            L.append(f"- 표본 부족: 답변이 {n}건뿐입니다. 답은 매번 달라서 이 수는 추세가 "
+                     "아니라 표본입니다 — 다음 확인 뒤에 다시 봐 주세요.")
+        L += _ai_ladder(r)
+        L += _ai_engines(r)
+        L += _ai_rivals(r)
+        ex = r.get("excerpts") or {}
+        if ex:
+            # "여기 없는 것을 우리가 답해야"는 내 페이지로 푸는 일(고치기·새 글)에서만
+            # 맞는 말이다 — 제3자 플랫폼 쪽이면 답의 빈자리가 아니라 출처의 자리가 문제다.
+            L += ["", "AI 가 지금 하는 답변 (엔진별 발췌 — 우리가 빠진 답 중 먼저 받은 것)"
+                  + (":" if o.get("gap_kind") == "third_party"
+                     else ". 여기 없는 것을 우리가 답해야 인용됩니다:")]
+            for eng, t in ex.items():
+                L += [f"- {eng}:", f"  > {t}"]
     # 크롤러가 막혀 있으면 글을 고쳐도 안 읽힌다. 이 줄이 없으면 이 요청문과
     # AI 크롤러 차단 기회가 서로 모순되는 말을 한다.
     blocked = [r["bot"] for r in (ctx.get("ai_bots") or []) if r.get("rule")]
@@ -958,6 +1070,8 @@ def _selfcheck() -> None:
     assert shape_of("content_gap", gap_kind="missing") == "new_content"
     assert shape_of("ai_citation_gap", has_page=True) == "fix_page"
     assert shape_of("ai_citation_gap") == "new_content"
+    assert shape_of("ai_citation_gap", gap_kind="third_party", has_page=True) == "presence"
+    assert shape_of("ai_citation_gap", gap_kind="sites", has_page=True) == "fix_page"
     assert shape_of("backlink_prospect") == "outreach"
     for k in scoring.ALL_KINDS:
         assert shape_of(k) in SHAPES
