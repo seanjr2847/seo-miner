@@ -368,6 +368,8 @@ def _selfcheck() -> None:
 
     fresh = db.now()
     stale = "2000-01-01T00:00:00Z"
+    # locale NULL 은 일부러다 — 글자 판정(db.keyword_locale) 이전의 옛 행이 사이트
+    # 로케일로 떨어지는지 본다. 새 행은 판정을 거쳐 NULL 로 들어오지 않는다.
     conn.executemany(
         """INSERT INTO keywords(project_id, keyword, locale, source, volume, difficulty,
                                 cpc, metrics_at) VALUES(?,?,?,'seed',?,?,?,?)""",
@@ -457,9 +459,10 @@ def _selfcheck() -> None:
     assert clean("brave search (free tier)") == "brave search free tier"
     assert clean("noti\\") == "noti"
     conn.execute("DELETE FROM keywords")
+    kw = "how much does therapy cost?"
     conn.execute(
         "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
-        (pid, "how much does therapy cost?", "ko-KR"))
+        (pid, kw, db.keyword_locale(kw, "ko-KR")))
     conn.commit()
     calls.clear()
     res = collect("mt", conn=conn, post=fake_post)
@@ -472,9 +475,11 @@ def _selfcheck() -> None:
     #    잃지 않는다. 끝까지 거절되는 것은 이름과 함께 오류로 남고, 비용은
     #    성공한 요청만 센다.
     conn.execute("DELETE FROM keywords")
+    # 한 로케일 묶음이어야 이분 재시도를 본다 — 라틴 이름이면 글자 판정상 영어 묶음으로
+    # 갈라진다(db.keyword_locale). 그래서 전부 한글이다.
     conn.executemany(
         "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','seed')",
-        [(pid, f"kw{i}") for i in range(4)] + [(pid, "독약")])
+        [(pid, f"낱말{i}") for i in range(4)] + [(pid, "독약")])
     conn.commit()
 
     def picky_post(path, body):
@@ -511,7 +516,7 @@ def _selfcheck() -> None:
     conn.execute("DELETE FROM keywords")
     conn.executemany(
         "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','seed')",
-        [(pid, f"z{i}") for i in range(3)])
+        [(pid, f"잔액{i}") for i in range(3)])
     conn.commit()
     hits = []
 
@@ -530,7 +535,7 @@ def _selfcheck() -> None:
     conn.execute("DELETE FROM keywords")
     conn.executemany(
         """INSERT INTO keywords(project_id, keyword, locale, source, metrics_at)
-           VALUES(?,?,'ko-KR','seed',?)""", [(pid, f"q{i}", db.now()) for i in range(3)])
+           VALUES(?,?,'ko-KR','seed',?)""", [(pid, f"질문{i}", db.now()) for i in range(3)])
     conn.commit()
 
     # dry-run 은 호출도 적재도 안 한다 — 지뢰 post 로 확인.

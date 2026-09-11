@@ -562,12 +562,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE keywords ADD COLUMN locale TEXT")
         # 한글이 든 키워드는 프로젝트 로케일이 무엇이든 en-US로 조회하면 안 된다.
         # aitierlist 실사용에서 프로젝트 로케일(en-US)이 한국어 키워드에도 적용돼
-        # 실제 3~6위인 6개가 전부 "순위 없음"으로 적재됐다. 한글 포함 여부는
-        # 모호하지 않은 신호라 최초 1회만 자동으로 채운다. 나머지는 NULL로 두고
-        # 호출부가 프로젝트 로케일로 폴백한다.
-        conn.execute(r"""UPDATE keywords SET locale='ko-KR'
-                          WHERE locale IS NULL
-                            AND keyword GLOB '*[가-힣]*'""")
+        # 실제 3~6위인 6개가 전부 "순위 없음"으로 적재됐다. 비어 있는 칸은 이 함수
+        # 끝의 '갈래 5' 블록이 글자 판정(keyword_locale)으로 채운다 — 한글 판정을
+        # 여기 GLOB 로 한 벌 더 두지 않는다.
         conn.commit()
 
     # 같은 (kind, target)을 런마다 다시 INSERT하면 목록이 같은 키워드로 채워지고,
@@ -607,6 +604,82 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE runs SET kind='competitors' WHERE kind='gap'")
     conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
     conn.commit()
+
+    # ── 갈래 5: 키워드 언어 ──
+    # 옛 행의 언어 표시를 글자 판정으로 한 번 바로잡는다(fix_keyword_locales). 표
+    # offlocale_snapshots 가 있으면 이미 한 것이다 — 한 번만 도는 까닭은 그 뒤로는
+    # 모든 INSERT 가 판정을 거치고, 사람이 일부러 고친 로케일을 매 연결마다 되돌리면
+    # 안 되기 때문이다. 표 생성과 고치기를 한 트랜잭션에 넣는다: 중간에 죽으면 표도
+    # 없어져 다음 연결이 처음부터 다시 한다.
+    if "offlocale_snapshots" not in {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN")
+        try:
+            conn.execute(OFFLOCALE_DDL)
+            fix_keyword_locales(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+# 키워드의 언어 표시를 고칠 때, 그 전 로케일로 잰 순위·검색결과 행을 지우지 않고 여기로
+# 옮긴다 — 한국 구글에서 잰 'milia vs syringoma' 순위가 영어 키워드의 순위 이력에 남으면
+# 다음 수집(영어 구글)과 비교돼 가짜 등락이 된다. 원래 행은 row_json 에 그대로 있다.
+OFFLOCALE_DDL = """CREATE TABLE offlocale_snapshots (
+  id INTEGER PRIMARY KEY,
+  keyword_id INTEGER NOT NULL REFERENCES keywords(id),
+  kind TEXT NOT NULL,                 -- rank (rank_snapshots) | serp (serp_results)
+  locale TEXT NOT NULL,               -- 그 행을 잰 언어-지역 — 키워드의 지금 로케일과 다르다
+  checked_at TEXT,
+  row_json TEXT NOT NULL,             -- 원래 행(id 뺀 전부)
+  moved_at TEXT DEFAULT CURRENT_TIMESTAMP
+)"""
+
+
+def fix_keyword_locales(conn: sqlite3.Connection) -> dict[str, int]:
+    """언어 표시를 keyword_locale 판정값으로 바로잡는다 — 커밋은 호출자가 한다.
+
+    고치는 행: locale 이 NULL 인 행, ko-* 인데 판정이 한국어가 아닌 행(한글이 없다).
+    바뀐 키워드가 그 전 로케일(NULL 이면 사이트 로케일)로 잰 rank_snapshots·
+    serp_results 는 offlocale_snapshots 로 옮긴다. keywords 의 유일 키는
+    (project_id, keyword) 라 locale 을 바꿔도 부딪힐 행이 없다.
+    멱등이다 — 두 번째 호출은 바꿀 것이 없다. 반환: 바뀐 수 {null, ko, rank, serp}.
+    """
+    n = dict.fromkeys(("null", "ko", "rank", "serp"), 0)
+    for p in conn.execute("SELECT id, locale FROM projects").fetchall():
+        site = project_locale(p)
+        judge = keyword_judge(conn, p["id"])
+        for k in conn.execute(
+                """SELECT id, keyword, locale FROM keywords
+                    WHERE project_id=? AND (locale IS NULL OR lower(locale) LIKE 'ko%')""",
+                (p["id"],)).fetchall():
+            new = judge(k["keyword"])
+            if k["locale"] is None:
+                n["null"] += 1
+            elif new.lower().startswith("ko"):
+                continue                     # 한국어 판정 — 그대로가 맞다
+            else:
+                n["ko"] += 1
+            conn.execute("UPDATE keywords SET locale=? WHERE id=?", (new, k["id"]))
+            measured = k["locale"] or site
+            if measured == new:
+                continue                     # 같은 로케일로 쟀다 — 기록은 그대로 유효하다
+            for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results")):
+                rows = conn.execute(f"SELECT * FROM {table} WHERE keyword_id=?",
+                                    (k["id"],)).fetchall()
+                for r in rows:
+                    d = {c: r[c] for c in r.keys() if c != "id"}
+                    conn.execute(
+                        """INSERT INTO offlocale_snapshots(keyword_id, kind, locale,
+                             checked_at, row_json) VALUES(?,?,?,?,?)""",
+                        (k["id"], kind, measured, d.get("checked_at"),
+                         json.dumps(d, ensure_ascii=False)))
+                conn.execute(f"DELETE FROM {table} WHERE keyword_id=?", (k["id"],))
+                n[kind] += len(rows)
+    return n
 
 
 def connect(home: Path | None = None) -> sqlite3.Connection:
@@ -675,6 +748,91 @@ def project_locale(p) -> str:
     return p["locale"] or DEFAULT_LOCALE
 
 
+# ── 키워드 언어 판정 — 정본은 keyword_locale 하나다 (사본 금지) ──────────
+# keywords 에 들어가는 행은 전부 이 판정을 거친다(sync_project·add_keyword_candidates,
+# 그리고 옛 행을 한 번 고치는 fix_keyword_locales). 넣을 때 사이트 로케일을 그대로
+# 붙이던 동안 GSC 에서 들어온 영어 검색어가 ko-KR 로 표시돼 한국 구글에서 쟀고
+# ('milia vs syringoma'), 시드는 아예 언어 칸 없이 들어갔다.
+# (유니코드 구간, 언어) 순서가 곧 우선순위다: 한글이 있으면 한국어, 가나가 섞이면
+# 한자가 있어도 일본어. 한글은 조합형(NFD 자모)으로 오는 GSC 검색어가 실제로 있다 —
+# 완성형 구간만 보면 '"reminder" korean 알림' 이 한글 없는 키워드로 읽힌다.
+_SCRIPTS = [
+    (("가", "힣"), "ko"),      # 한글 완성형
+    (("ᄀ", "ᇿ"), "ko"),      # 한글 자모(조합형)
+    (("㄰", "㆏"), "ko"),      # 한글 호환 자모 (ㅋㅋ)
+    (("぀", "ヿ"), "ja"),      # 히라가나·가타카나
+    (("一", "鿿"), "zh"),      # 한자
+    (("Ѐ", "ӿ"), "ru"),      # 키릴
+    (("؀", "ۿ"), "ar"),      # 아랍
+    (("฀", "๿"), "th"),      # 타이
+    (("ऀ", "ॿ"), "hi"),      # 데바나가리
+]
+_ENGLISH_FALLBACK = "en-US"
+
+
+def _latin_only(text: str) -> bool:
+    """글자가 라틴 글자뿐인가(숫자·기호·공백은 상관없다). 라틴 글자가 하나도 없으면 False."""
+    import unicodedata
+    seen = False
+    for ch in text:
+        if unicodedata.category(ch)[0] != "L":
+            continue
+        if not unicodedata.name(ch, "").startswith("LATIN"):
+            return False
+        seen = True
+    return seen
+
+
+def keyword_locale(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK) -> str:
+    """키워드 글자만 보고 그 키워드를 잴 언어-지역을 정한다.
+
+    - 제 문자권이 있는 글자(_SCRIPTS)가 있으면 그 언어. 사이트 언어와 같으면 사이트
+      로케일(zh-CN 보존), 다르면 그 언어의 대표 로케일(ko-KR·ja-JP…).
+    - 라틴 글자(+숫자·기호)만 있으면: 사이트가 제 문자권이 있는 언어(한국어·일본어…)면
+      영어로 본다 — `english`. 사이트가 라틴 문자권(영어·독일어·베트남어…)이면 사이트
+      로케일 — 라틴 글자로는 영어와 독일어를 못 가른다.
+    - 그 밖(숫자만·빈 값·그리스 문자 같은 표 밖 글자)은 사이트 로케일.
+    """
+    import serp_adapter          # 늦은 import: serp_adapter → collector → db
+    text = text or ""
+    lang = next((lg for (lo, hi), lg in _SCRIPTS
+                 if any(lo <= c <= hi for c in text)), None)
+    site_lang = serp_adapter.lang_of(site_locale)
+    if lang is not None:
+        if lang == site_lang:
+            return site_locale
+        return f"{lang}-{serp_adapter.location(lang)[2][0].upper()}"
+    if _latin_only(text) and site_lang in {lg for _, lg in _SCRIPTS}:
+        return english
+    return site_locale
+
+
+def english_locale(conn: sqlite3.Connection, project_id: int) -> str:
+    """이 사이트가 영어 키워드를 잴 로케일. 사이트 로케일이 en 계열이면 그것, 아니면
+    이 사이트 키워드가 이미 쓰는 en 계열 중 가장 많은 것, 둘 다 없으면 en-US.
+    고를 수 있는 목록 정본(serp_adapter.LOCALES) 밖의 값은 고르지 않는다."""
+    import serp_adapter
+    en = [c for c, _ in serp_adapter.LOCALES if serp_adapter.lang_of(c) == "en"]
+    row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
+    if row and row["locale"] in en:
+        return row["locale"]
+    for r in conn.execute(
+            """SELECT locale FROM keywords WHERE project_id=? AND locale IS NOT NULL
+               GROUP BY locale ORDER BY COUNT(*) DESC, locale""", (project_id,)):
+        if r["locale"] in en:
+            return r["locale"]
+    return _ENGLISH_FALLBACK
+
+
+def keyword_judge(conn: sqlite3.Connection, project_id: int):
+    """(키워드, 기본값=None) → 로케일. 사이트 로케일과 영어 로케일을 한 번만 읽는다.
+    기본값은 그 키워드를 캔 로케일(시드·조회 로케일)이고, 없으면 사이트 로케일이다."""
+    row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
+    site = project_locale(row) if row else DEFAULT_LOCALE
+    en = english_locale(conn, project_id)
+    return lambda kw, default=None: keyword_locale(kw, default or site, en)
+
+
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
@@ -710,10 +868,12 @@ def sync_project(yaml_path: str) -> None:
          cfg.get("gsc_property"), cfg.get("ga4_property"), cfg["_path"]),
     )
     pid = conn.execute("SELECT id FROM projects WHERE name=?", (cfg["name"],)).fetchone()[0]
+    judge = keyword_judge(conn, pid)     # 시드도 글자로 언어를 받는다 — NULL 로 두지 않는다
     for kw in cfg.get("seed_keywords", []) or []:
+        kw = kw.strip()
         conn.execute(
-            """INSERT OR IGNORE INTO keywords(project_id,keyword,source,is_active)
-               VALUES(?,?, 'seed', 1)""", (pid, kw.strip()))
+            """INSERT OR IGNORE INTO keywords(project_id,keyword,locale,source,is_active)
+               VALUES(?,?,?, 'seed', 1)""", (pid, kw, judge(kw)))
     for dom in cfg.get("competitors_manual", []) or []:
         conn.execute(
             "INSERT OR IGNORE INTO competitors(project_id,domain,source) VALUES(?,?, 'manual')",
@@ -1244,7 +1404,10 @@ def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> 
     items: (keyword, locale, source). locale은 필수 인자다 — 선택 컬럼이던 시절
     자동완성 경로가 이걸 빼먹어 후보가 NULL locale로 쌓였고, 프로젝트 로케일로
     다시 조회돼 한국어 키워드가 전부 "순위 없음"이 됐다. 모르면 명시적으로 None.
+    넘긴 locale 은 **기본값**이다 — 저장되는 값은 keyword_locale 이 글자로 정한다
+    (사이트 로케일을 그대로 붙이던 동안 영어 GSC 검색어 557개가 ko-KR 이었다).
     """
+    judge = keyword_judge(conn, project_id)
     n = 0
     for kw, locale, source in items:
         kw = (kw or "").strip()
@@ -1252,7 +1415,7 @@ def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> 
             continue
         cur = conn.execute(
             """INSERT OR IGNORE INTO keywords(project_id, keyword, locale, source, is_active)
-               VALUES(?,?,?,?,0)""", (project_id, kw, locale, source))
+               VALUES(?,?,?,?,0)""", (project_id, kw, judge(kw, locale), source))
         n += cur.rowcount
     conn.commit()
     return n
@@ -1687,7 +1850,186 @@ def _selfcheck() -> None:
         os.environ.pop("CAPTURE_HOME", None)
     else:
         os.environ["CAPTURE_HOME"] = old
+    _check_keyword_locale()
     print("db: ok")
+
+
+def _check_keyword_locale() -> None:
+    """갈래 5 — 키워드 언어 판정 / 시드가 NULL 을 안 남긴다 / 한 번 도는 마이그레이션이
+    멱등이다 / 유일 제약과 부딪히지 않는다. 임시 CAPTURE_HOME 에서만 돈다."""
+    import os
+    import tempfile
+
+    import serp_adapter
+
+    kl = keyword_locale
+    # 1. 판정 — 한글 / 영어 / 섞임
+    assert kl("밀리아 제거", "ko-KR") == "ko-KR"
+    assert kl("밀리아 제거", "en-US") == "ko-KR", "영어 사이트의 한글 키워드는 한국어"
+    assert kl("알림", "en-US") == "ko-KR", \
+        "조합형(NFD) '알림' 을 한글로 못 읽는다 — GSC 가 실제로 이렇게 준다"
+    assert kl("ㅋㅋ", "en-US") == "ko-KR"
+    assert kl("milia vs syringoma", "ko-KR") == "en-US", "한국어 사이트의 영어 키워드는 영어"
+    assert kl("milia vs syringoma", "ko-KR", english="en-GB") == "en-GB"
+    assert kl("milia vs syringoma", "en-GB") == "en-GB", "사이트가 쓰는 en 로케일을 따른다"
+    assert kl("kaufen", "de-DE") == "de-DE", "라틴 문자권 사이트의 라틴 키워드는 사이트 언어"
+    assert kl("café 2024!", "ja-JP") == "en-US"
+    assert kl("botox 강남", "en-US") == "ko-KR", "섞임 — 한글이 있으면 한국어"
+    assert kl("東京 ラーメン", "ko-KR") == "ja-JP"
+    assert kl("2024", "ko-KR") == "ko-KR" and kl("", "ko-KR") == "ko-KR", "숫자만·빈 값은 기본값"
+    assert kl("αβγ test", "ko-KR") == "ko-KR", "표 밖 글자가 섞이면 사이트 기본값"
+    codes = {c for c, _ in serp_adapter.LOCALES}
+    for s in ("milia", "밀리아", "東京", "купить", "ราคา"):
+        assert kl(s, "ko-KR") in codes, f"{s!r} 의 판정 {kl(s, 'ko-KR')} 이 고를 수 있는 목록 밖"
+
+    old = os.environ.get("CAPTURE_HOME")
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["CAPTURE_HOME"] = d
+        try:
+            # 2. sync_project 가 언어 칸을 비워 두지 않는다
+            y = Path(d) / "lp.yaml"
+            y.write_text("name: lp\ndomain: lp.com\nlocale: ko-KR\n"
+                         "seed_keywords: ['밀리아 제거', 'milia removal', '2024']\n", "utf-8")
+            sync_project(str(y))
+            conn = connect()
+            pid = get_project(conn, "lp")["id"]
+            got = {r["keyword"]: r["locale"] for r in conn.execute(
+                "SELECT keyword, locale FROM keywords WHERE project_id=?", (pid,))}
+            assert got == {"밀리아 제거": "ko-KR", "milia removal": "en-US", "2024": "ko-KR"}, got
+
+            # 3. 후보 적재는 넘겨받은 로케일을 기본값으로만 쓴다 — 이 사이트가 en-US 를
+            #    이미 쓰니 그걸 고른다
+            conn.execute("UPDATE keywords SET locale='en-GB' WHERE keyword='milia removal'")
+            add_keyword_candidates(conn, pid, [("milia vs syringoma", "ko-KR", "gsc"),
+                                               ("밀리아 원인", None, "gsc")])
+            got = {r["keyword"]: r["locale"] for r in conn.execute(
+                "SELECT keyword, locale FROM keywords WHERE project_id=?", (pid,))}
+            assert got["milia vs syringoma"] == "en-GB", got
+            assert got["밀리아 원인"] == "ko-KR", got
+
+            # 4. 옛 brain 을 흉내 낸다 — 판정 전 행 + 그 로케일로 잰 순위·검색결과
+            conn.execute("DROP TABLE offlocale_snapshots")
+            conn.execute("DELETE FROM keywords")
+            conn.execute("INSERT INTO projects(name,domain,locale) VALUES('en','en.com','en-US')")
+            epid = get_project(conn, "en")["id"]
+            rows = [(pid, "milia vs syringoma", "ko-KR"),   # 영어인데 ko — 고친다
+                    (pid, "밀리아", "ko-KR"),                # 한글 ko — 그대로
+                    (pid, "2024", "ko-KR"),                  # 판정도 ko — 그대로
+                    (pid, "시드 키워드", None),              # NULL → ko-KR (잰 로케일과 같다)
+                    (pid, "seed keyword", None),             # NULL → en-US (ko 로 쟀다)
+                    (epid, "milia", "ko-KR")]                # 영어 사이트 — en-US
+            conn.executemany("INSERT INTO keywords(project_id,keyword,locale) VALUES(?,?,?)", rows)
+            kid = {r["keyword"]: r["id"] for r in conn.execute("SELECT id, keyword FROM keywords")}
+            for kw in ("milia vs syringoma", "밀리아", "시드 키워드", "seed keyword"):
+                write_rank_snapshot(conn, kid[kw], 7, "https://lp.com/x",
+                                    checked_at="2026-09-01T00:00:00Z")
+            write_rank_snapshot(conn, kid["milia vs syringoma"], 5, None,
+                                checked_at="2026-09-08T00:00:00Z")
+            write_serp_results(conn, kid["milia vs syringoma"],
+                               [{"position": 1, "url": "https://kr.example/a", "domain": "kr.example"}],
+                               checked_at="2026-09-08T00:00:00Z")
+            conn.commit()
+            conn.close()
+
+            def state(c):
+                return ([tuple(r) for r in c.execute(
+                            "SELECT id, project_id, keyword, locale FROM keywords ORDER BY id")],
+                        [tuple(r) for r in c.execute("SELECT * FROM rank_snapshots ORDER BY id")],
+                        [tuple(r) for r in c.execute("SELECT * FROM serp_results ORDER BY id")],
+                        [tuple(r) for r in c.execute(
+                            "SELECT id, keyword_id, kind, locale, checked_at, row_json"
+                            " FROM offlocale_snapshots ORDER BY id")])
+
+            conn = connect()                          # 여기서 마이그레이션이 돈다
+            loc = {r["keyword"]: r["locale"] for r in conn.execute(
+                "SELECT keyword, locale FROM keywords")}
+            assert loc == {"milia vs syringoma": "en-US", "밀리아": "ko-KR", "2024": "ko-KR",
+                           "시드 키워드": "ko-KR", "seed keyword": "en-US", "milia": "en-US"}, loc
+            assert conn.execute("SELECT COUNT(*) FROM keywords WHERE locale IS NULL"
+                                ).fetchone()[0] == 0, "NULL 이 남았다"
+            # 잘못된 로케일로 잰 기록은 지우지 않고 옮긴다 — 비교(순위 등락·최신 순위)에서 빠진다
+            ranks = {r["keyword_id"] for r in conn.execute("SELECT keyword_id FROM rank_snapshots")}
+            assert ranks == {kid["밀리아"], kid["시드 키워드"]}, ranks
+            assert conn.execute("SELECT COUNT(*) FROM serp_results").fetchone()[0] == 0
+            parked = [(r["keyword_id"], r["kind"], r["locale"]) for r in conn.execute(
+                "SELECT * FROM offlocale_snapshots ORDER BY id")]
+            assert sorted(parked) == sorted([
+                (kid["milia vs syringoma"], "rank", "ko-KR"),
+                (kid["milia vs syringoma"], "rank", "ko-KR"),
+                (kid["milia vs syringoma"], "serp", "ko-KR"),
+                (kid["seed keyword"], "rank", "ko-KR")]), parked
+            row = json.loads(conn.execute(
+                "SELECT row_json FROM offlocale_snapshots WHERE kind='rank' ORDER BY checked_at DESC"
+                ).fetchone()[0])
+            assert row["position"] == 5 and row["checked_at"] == "2026-09-08T00:00:00Z", row
+
+            # 5. 멱등 — 다시 연결해도(한 번만 돈다), 본체를 직접 다시 돌려도 같다
+            before = state(conn)
+            conn.close()
+            conn = connect()
+            assert state(conn) == before, "두 번째 연결이 뭔가를 바꿨다"
+            assert fix_keyword_locales(conn) == {"null": 0, "ko": 0, "rank": 0, "serp": 0}
+            conn.commit()
+            assert state(conn) == before, "본체를 두 번 돌리니 달라졌다"
+            #    한 번만 돈다 — 사람이 일부러 ko-KR 로 되돌린 영어 키워드를 다음 연결이
+            #    다시 뒤집지 않는다
+            conn.execute("UPDATE keywords SET locale='ko-KR' WHERE keyword='milia'")
+            conn.commit()
+            conn.close()
+            conn = connect()
+            assert conn.execute("SELECT locale FROM keywords WHERE keyword='milia'"
+                                ).fetchone()[0] == "ko-KR", "손으로 고친 로케일을 연결이 되돌렸다"
+
+            # 6. 유일 제약 — keywords 의 유일 키에 locale 이 없어야 locale 을 바꿔도 안
+            #    부딪힌다. 누가 (project_id, keyword, locale) 로 넓히면 같은 글자의
+            #    ko/en 두 행이 생길 수 있고 fix_keyword_locales 가 합치기를 해야 한다.
+            uniq = [[c["name"] for c in conn.execute(f"PRAGMA index_info('{ix['name']}')")]
+                    for ix in conn.execute("PRAGMA index_list(keywords)") if ix["unique"]]
+            assert uniq == [["project_id", "keyword"]], \
+                f"keywords 유일 키가 바뀌었다 {uniq} — fix_keyword_locales 의 충돌 처리를 다시 봐라"
+            #    옮긴 날과 같은 날 새 로케일로 다시 재도 (keyword_id, date) 유일 인덱스와
+            #    부딪히지 않는다 — 옛 행은 이미 비교 표에 없다
+            write_rank_snapshot(conn, kid["milia vs syringoma"], 2, None,
+                                checked_at="2026-09-08T12:00:00Z")
+            assert [tuple(r) for r in conn.execute(
+                "SELECT position FROM rank_snapshots WHERE keyword_id=?",
+                (kid["milia vs syringoma"],))] == [(2,)]
+
+            # 7. 옮긴 표도 사이트에 딸린 표다 — 원격 병합이 함께 나른다
+            import remote
+            assert "offlocale_snapshots" in remote._plan(conn)[0]
+            conn.close()
+        finally:
+            if old is None:
+                os.environ.pop("CAPTURE_HOME", None)
+            else:
+                os.environ["CAPTURE_HOME"] = old
+
+    # 8. keywords 에 넣는 **제품 코드**는 전부 판정을 거친다 — 검사·데모 픽스처는 뺀다.
+    #    판정 없이 넣는 경로가 하나라도 생기면 언어 칸이 다시 비거나 사이트 로케일로 찬다.
+    import ast
+    import re
+    ins = re.compile(r"INTO\s+keywords\s*\(", re.I)
+    fixture = re.compile(r"^(test_|_selfcheck|_runner_check|_check|demo$)")
+    root = Path(__file__).resolve().parents[3]
+    bare = []
+    for f in [*(root / "skills").rglob("*.py"), *(root / "server").rglob("*.py")]:
+        if f.name.startswith("test_"):
+            continue
+        tree = ast.parse(f.read_text("utf-8"))
+        fns = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n in tree.body + [m for c in tree.body if isinstance(c, ast.ClassDef)
+                                     for m in c.body]]
+        for fn in fns:
+            if fixture.match(fn.name):
+                continue
+            names = {n.id if isinstance(n, ast.Name) else getattr(n, "attr", None)
+                     for n in ast.walk(fn)}
+            if (any(isinstance(n, ast.Constant) and isinstance(n.value, str)
+                    and ins.search(n.value) for n in ast.walk(fn))
+                    and not names & {"keyword_judge", "keyword_locale"}):
+                bare.append(f"{f.relative_to(root)}:{fn.name}")
+    assert not bare, f"판정(db.keyword_locale) 없이 keywords 에 넣는 경로: {bare}"
 
 
 if __name__ == "__main__":
