@@ -794,7 +794,7 @@
       return '<span class="badge">이 PC 에서 열기</span>' +
         '<button class="cmd" onclick="copyCmd(this)">/capture dash ' +
         esc(proj()) + '</button>' +
-        '<span class="msg">로컬 대시보드를 띄우면 이 자리에 실행 버튼이 생깁니다.</span>';
+        '<span class="msg" role="status">로컬 대시보드를 띄우면 이 자리에 실행 버튼이 생깁니다.</span>';
     },
   };
 
@@ -867,7 +867,7 @@
       var on = p.h === SET_H.run_every_hours;
       return '<button data-h="' + p.h + '" aria-pressed="' + on + '"' +
         (on ? ' class="on"' : "") + ">" + esc(p.label) + "</button>";
-    }).join("") + '<span class="msg">' + esc(msg || "") + "</span>";
+    }).join("") + '<span class="msg" role="status">' + esc(msg || "") + "</span>";
     langRender();
     ga4Render();
     setNext(true);
@@ -885,10 +885,10 @@
       body.innerHTML = '<p class="none">첫 측정이 끝나면 여기서 바꿀 수 있습니다.</p>';
       return;
     }
-    body.innerHTML = '<div class="opts"><select data-lang>' + list.map(function (l) {
+    body.innerHTML = '<div class="opts"><select data-lang aria-label="언어-지역">' + list.map(function (l) {
       return '<option value="' + esc(l.code) + '"' + (l.code === SET_H.locale ? " selected" : "") +
         ">" + esc(l.label) + "</option>";
-    }).join("") + "</select>" + (msg ? '<span class="msg">' + esc(msg) + "</span>" : "") + "</div>";
+    }).join("") + "</select>" + (msg ? '<span class="msg" role="status">' + esc(msg) + "</span>" : "") + "</div>";
   }
 
   async function langSave(code) {
@@ -992,9 +992,9 @@
         '<a href="/auth/login">다시 로그인</a>';
       return;
     }
-    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    var note = msg ? '<span class="msg" role="status">' + esc(msg) + "</span>" : "";
     if (GA4_LIST) {                       // [연결하기]/[바꾸기] 를 눌러 목록을 받아 온 상태
-      body.innerHTML = '<div class="opts"><select>' + GA4_LIST.map(function (p) {
+      body.innerHTML = '<div class="opts"><select aria-label="GA4 속성">' + GA4_LIST.map(function (p) {
         var sel = p.id === (SET_H.ga4_property || GA4_SUGGESTED[0] || "");
         return '<option value="' + esc(p.id) + '"' + (sel ? " selected" : "") + ">" +
           esc(p.account) + " · " + esc(p.name) + " (" + esc(p.id) + ")</option>";
@@ -1063,10 +1063,10 @@
     if (!sec) return;
     var body = sec.querySelector(".cli .body");
     if (!body) return;
-    var note = msg ? '<span class="msg">' + esc(msg) + "</span>" : "";
+    var note = msg ? '<span class="msg" role="status">' + esc(msg) + "</span>" : "";
     if (!CLI_TOKEN) {
       body.innerHTML = '<div class="opts"><button data-cli-new>명령 만들기</button>' +
-        '<span class="msg">다시 만들면 전에 받은 토큰은 그 자리에서 끊깁니다.</span>' +
+        '<span class="msg" role="status">다시 만들면 전에 받은 토큰은 그 자리에서 끊깁니다.</span>' +
         "</div>" + note;
       return;
     }
@@ -1302,9 +1302,9 @@
     list.innerHTML = d.prompts.map(function (q) {
       return '<div class="q' + (q.is_active ? "" : " off") + '" data-id="' + q.id + '">' +
         '<input type="checkbox" class="on"' + (q.is_active ? " checked" : "") +
-          ' title="켜 두면 다음 확인에 이 질문을 물어봅니다">' +
-        '<input class="t" value="' + esc(q.prompt) + '">' +
-        '<select class="c">' + AIQ_CATS.map(function (c) {
+          ' title="켜 두면 다음 확인에 이 질문을 물어봅니다" aria-label="이 질문 켜기">' +
+        '<input class="t" value="' + esc(q.prompt) + '" aria-label="질문 문장">' +
+        '<select class="c" aria-label="질문 갈래">' + AIQ_CATS.map(function (c) {
           return '<option' + (c === q.category ? " selected" : "") + ">" + esc(c) + "</option>";
         }).join("") + "</select>" +
         '<span class="n">' + (q.is_active ? "" : '<span class="badge muted">꺼짐</span> ') +

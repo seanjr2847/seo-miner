@@ -1298,6 +1298,69 @@ def test_seam_29_ai_screen_gap_count_is_server_judgement():
 
 
 
+def test_seam_30_form_controls_have_names():
+    """30) 화면의 입력칸은 전부 이름이 있다 — 라벨(for·감싸기)이나 aria-label 로.
+
+    [설정]의 라벨 열일곱이 칸과 안 이어져 있었다(<label>이름</label> 뒤에 칸만 따로).
+    눈으로는 멀쩡해 보여서 아무도 몰랐다 — 화면낭독기는 칸 이름을 못 읽고, 라벨을
+    눌러도 칸으로 안 간다. 새 칸이 이름 없이 들어오면 여기서 걸린다. 저장·연결 결과를
+    적는 메시지 칸(.msg)은 비동기로 바뀌므로 role="status" 로 알린다.
+    """
+    import glob as _glob
+    tdir = ROOT / "skills" / "capture" / "templates"
+    files = [tdir / "dashboard.html", *sorted((tdir / "views").glob("*.html")),
+             *sorted((tdir / "sections").glob("*.html"))]
+    addon = ROOT / "server" / "assets" / "dash.html"
+    if addon.exists():
+        files.append(addon)
+    bad, msgs = [], []
+    for f in files:
+        src = f.read_text("utf-8")
+        # 주석 속 "<select>" 같은 글자는 칸이 아니다
+        body = re.sub(r"/\*.*?\*/|<!--.*?-->", "", src, flags=re.S)
+        body = re.sub(r"(?m)^\s*//.*$", "", body)
+        for m in re.finditer(r"<(input|select|textarea)\b([^<>]*?)>", body, re.S):
+            a = m.group(2)
+            if re.search(r'type="(hidden|submit|button)"', a):
+                continue
+            idm = re.search(r'\bid="([^"]+)"', a)
+            named = ("aria-label" in a or "aria-labelledby" in a
+                     or (idm and re.search(r'<label[^>]*for="%s"' % re.escape(idm.group(1)), body)))
+            pre = body[max(0, m.start() - 300):m.start()]
+            if not (named or pre.rfind("<label") > pre.rfind("</label>")):
+                bad.append(f"{f.name}: <{m.group(1)}{' '.join(a.split())[:60]}>")
+        for m in re.finditer(r"<span class=\"msg\"[^>]*>|'<span class=\"msg\"[^']*'", body):
+            if "role=" not in m.group(0):
+                msgs.append(f"{f.name}: {m.group(0)[:60]}")
+    assert not bad, "이름 없는 입력칸:\n  " + "\n  ".join(bad)
+    assert not msgs, "role 없는 메시지 칸(비동기 결과를 못 알린다):\n  " + "\n  ".join(msgs)
+
+
+
+def test_seam_31_skip_link_leaves_the_hash_alone():
+    """31) 본문으로 건너뛰기는 URL hash 를 안 건드린다.
+
+    이 앱은 hash 를 사이트 이름으로 읽는다(5번 — 사이트 목록 링크가 hash 를 싣는다).
+    흔한 건너뛰기 링크 모양(href="#content")을 그대로 쓰면 누르는 순간 "content 라는
+    사이트"를 열려 한다 — 5번과 같은 이음매를 반대쪽에서 깨는 셈이다. 그래서 포커스만
+    옮긴다. 착지점(main)은 포커스를 받을 수 있어야 한다(tabindex="-1").
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell = ctx["shell"]
+    m = re.search(r'<a class="skiplink"([^>]*)>', shell)
+    assert m, "건너뛰기 링크가 없다"
+    attrs = m.group(1)
+    assert not re.search(r'href="#', attrs), "건너뛰기 링크가 hash 를 바꾼다: " + attrs
+    assert "preventDefault" in attrs and "focus()" in attrs, attrs
+    assert '<main tabindex="-1">' in shell, "건너뛰기 착지점(main)이 포커스를 못 받는다"
+    # 첫 탭 순서 — <body> 바로 다음이다(레일보다 앞)
+    body = shell[shell.index("<body>"):]
+    assert body.index('class="skiplink"') < body.index("<header>"), "건너뛰기가 레일 뒤에 있다"
+
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
