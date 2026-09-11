@@ -315,4 +315,56 @@ assert snap["data"]["project"]["name"] == "demo" and snap["actions"] == [], snap
 assert "progress" in snap["data"], "안내 자료가 박제본에 빠졌다"
 assert snap["data"]["guide"]["here"] == 1, "서버 판정(guide)이 payload에 없다"
 
-print(f"ok — 설정 API · 안내 판정 · 박제본 정상 ({HOME})")
+# ── 로컬 전용 경로의 정본은 LOCAL_ROUTES 한 벌이다 ──────────────────────
+# 예전엔 do_GET/do_POST 의 if 사슬과 LOCAL_ONLY_* 집합이 같은 목록을 두 벌 가져서
+# 한쪽에만 적은 경로가 404 였다. 여기서 셋을 못 박는다:
+#   (1) LOCAL_ONLY_* 는 표에서 뽑은 것과 같다 — 손으로 쓴 목록이 돌아오면 어긋난다
+#   (2) 표의 모든 (메서드, 경로)가 실제로 표를 거쳐 디스패치된다 — 본체를 가짜로
+#       바꿔 치고 HTTP 로 두드려서, 그 가짜가 불렸는지 본다(pip·터미널은 안 띄운다)
+#   (3) Handler 소스에 /api/setup/ 경로 글자가 없다 — if 사슬이 돌아오면 두 벌이다
+import inspect  # noqa: E402
+
+LR = dashboard.LOCAL_ROUTES
+assert dashboard.LOCAL_ONLY_GET == {p for m, p in LR if m == "GET"}, dashboard.LOCAL_ONLY_GET
+assert dashboard.LOCAL_ONLY_POST == {p for m, p in LR if m == "POST"}, dashboard.LOCAL_ONLY_POST
+assert dashboard.LOCAL_ONLY_PATHS == {p for _, p in LR}, dashboard.LOCAL_ONLY_PATHS
+assert not {p for _, p in LR} & {p for _, p in dashboard.ROUTES}, \
+    "로컬 전용 경로가 공통 ROUTES 에도 있다 — 어느 쪽이 답하는지 모호하다"
+assert not re.search(r"/api/setup/", inspect.getsource(dashboard.Handler)), \
+    "Handler 가 /api/setup/ 경로를 손으로 가른다 — 목록이 LOCAL_ROUTES 와 두 벌이다"
+
+_orig_routes = dict(LR)
+hits: list = []
+try:
+    for key in _orig_routes:
+        LR[key] = (lambda k: lambda project, query, body:
+                   (hits.append((k, project, body)) or {"hit": k[1]}, 207))(key)
+    for (method, path) in _orig_routes:
+        if method == "GET":
+            with urllib.request.urlopen(BASE + path + "?project=demo") as r:
+                code, got = r.status, json.loads(r.read())
+            assert hits[-1] == ((method, path), "demo", None), hits[-1]
+        else:
+            # 토큰 없으면 본체까지 가지 않는다 — 로컬 전용 경로도 예외가 아니다
+            n = len(hits)
+            code, got = post(path, {"project": "demo"}, token="wrong")
+            assert code == 403 and len(hits) == n, (path, code, got)
+            code, got = post(path, {"project": "demo"})
+            assert hits[-1] == ((method, path), "", {"project": "demo"}), hits[-1]
+        # 207 은 가짜 본체만 내는 코드다 — 받았으면 그 경로는 표를 거쳐 나갔다
+        assert code == 207 and got == {"hit": path}, (method, path, code, got)
+    # 표에 없는 조합은 404 — GET 으로 POST 경로를 부르는 것도(메서드까지 키다)
+    for method, path in (("GET", "/api/setup/run"), ("POST", "/api/setup/prefill"),
+                         ("GET", "/api/setup/nope"), ("POST", "/api/setup/nope")):
+        req = urllib.request.Request(BASE + path, b"{}" if method == "POST" else None,
+                                     {"X-Token": dashboard.TOKEN}, method=method)
+        try:
+            urllib.request.urlopen(req)
+            raise AssertionError(f"{method} {path} 가 404 가 아니다")
+        except urllib.error.HTTPError as e:
+            assert e.code == 404, (method, path, e.code)
+finally:
+    LR.clear()
+    LR.update(_orig_routes)
+
+print(f"ok — 설정 API · 안내 판정 · 박제본 · 로컬 route 표 {len(LR)}개 정상 ({HOME})")

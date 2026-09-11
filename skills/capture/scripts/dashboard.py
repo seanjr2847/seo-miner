@@ -1361,17 +1361,56 @@ ROUTES = {
         lambda project, query, body: record_creation_route(body),
 }
 
-# 로컬 Handler 가 받는 API 경로 전부(공통 넷 + [설정] 화면 전용). 호스팅엔
-# /api/setup/* 가 없다(설정 화면 자체를 숨긴다) — test_seams 가 그 차이를 안다.
-# 메서드로 갈라 둔다: do_POST 의 "이건 setup 경로다" 판정이 이 집합을 그대로 쓴다
-# (예전엔 같은 목록이 거기 한 벌 더 있어서 새 경로를 한쪽에만 적으면 404 였다).
-LOCAL_ONLY_GET = {"/api/setup/prefill", "/api/setup/carry", "/api/setup/dirs"}
-LOCAL_ONLY_POST = {"/api/setup/run", "/api/setup/keys", "/api/setup/project",
-                   "/api/setup/gsc-client", "/api/setup/dir", "/api/setup/remote",
-                   # 기회를 개발 도구로 연다 — 브라우저는 이 PC 의 프로세스를 못
-                   # 띄우므로 호스팅에는 이 경로가 없다(그 화면은 안내만 그린다).
-                   "/api/setup/run-tool"}
+def _by_ok(r: dict) -> tuple[dict, int]:
+    """[설정] 쓰기의 공통 꼴 — 본체가 {"ok": …} 로 답하고, 거절이면 400."""
+    return r, (200 if r["ok"] else 400)
+
+
+def _run_route(body: dict) -> tuple[dict, int]:
+    """POST /api/setup/run — 이름이 ACTIONS 에 있어야 돈다(명령줄은 표가 갖는다).
+    돌린 결과는 실패여도 200 이다: 실패 로그를 화면이 그대로 보여 준다."""
+    if body.get("action") not in ACTIONS:
+        return {"error": "unknown action"}, 400
+    return run_action(body["action"]), 200
+
+
+# 로컬 전용 route 표 — [설정] 화면(과 기회 카드의 도구 열기)이 부르는 /api/setup/*.
+# 호스팅엔 이 경로가 없다(설정 화면 자체를 숨긴다) — test_seams 가 그 차이를 안다.
+# ROUTES 와 같은 결이되 둘이 다르다: 원격 사이트여도 프록시하지 않고(이 PC 에 묻는
+# 것이다), 상태 코드를 본체가 정한다 — call(project, query, body) -> (값, 코드).
+#
+# 경로 목록의 정본은 이 표 하나다. 예전엔 do_GET/do_POST 의 if 사슬과 LOCAL_ONLY_*
+# 집합이 같은 목록을 두 벌 가져서, 새 경로를 한쪽에만 적으면 404 였다 — 이제
+# LOCAL_ONLY_* 는 아래서 이 표로부터 뽑고, Handler 는 이 표만 조회한다.
+LOCAL_ROUTES = {
+    # 읽기 전용 — 레포 추론값 / 호스팅으로 넘길 링크 / 사이트별 로컬 폴더 + 후보
+    ("GET", "/api/setup/prefill"):
+        lambda project, query, body: (repo_prefill(), 200),
+    ("GET", "/api/setup/carry"):
+        lambda project, query, body: (carry_pack(project), 200),
+    ("GET", "/api/setup/dirs"):
+        lambda project, query, body: (setup_dirs(), 200),
+    ("POST", "/api/setup/run"):
+        lambda project, query, body: _run_route(body),
+    ("POST", "/api/setup/keys"):
+        lambda project, query, body: _by_ok(save_keys(body)),
+    ("POST", "/api/setup/gsc-client"):
+        lambda project, query, body: _by_ok(save_gsc_client(body)),
+    ("POST", "/api/setup/project"):
+        lambda project, query, body: _by_ok(create_project(body)),
+    ("POST", "/api/setup/dir"):
+        lambda project, query, body: _by_ok(setup_dir(body)),
+    ("POST", "/api/setup/remote"):
+        lambda project, query, body: _by_ok(setup_remote(body)),
+    # 기회를 개발 도구로 연다 — 브라우저는 이 PC 의 프로세스를 못 띄우므로 호스팅에는
+    # 이 경로가 없다(그 화면은 안내만 그린다).
+    ("POST", "/api/setup/run-tool"):
+        lambda project, query, body: _by_ok(run_tool(body)),
+}
+LOCAL_ONLY_GET = {path for method, path in LOCAL_ROUTES if method == "GET"}
+LOCAL_ONLY_POST = {path for method, path in LOCAL_ROUTES if method == "POST"}
 LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
+# 로컬 Handler 가 받는 API 경로 전부(공통 표 + 로컬 전용 표).
 LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
 
 # 호스팅 사이트라도 이 PC 가 답하는 경로. /api/doctor 는 [설정] 화면이 보는 진단 —
@@ -1408,17 +1447,14 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
-        if u.path == "/api/setup/prefill":   # 읽기 전용 — 레포 추론값
-            return self._json(repo_prefill())
-        if u.path == "/api/setup/carry":     # 읽기 전용 — 호스팅으로 넘길 링크
-            return self._json(carry_pack(parse_qs(u.query).get("project", [""])[0]))
-        if u.path == "/api/setup/dirs":      # 읽기 전용 — 사이트별 로컬 폴더 + 후보
-            return self._json(setup_dirs())
+        query = {k: v[0] for k, v in parse_qs(u.query).items()}
+        project = query.get("project", "")
+        local = LOCAL_ROUTES.get(("GET", u.path))
+        if local:   # 이 PC 가 답한다 — 프록시하지 않는다
+            return self._json(*local(project, query, None))
         call = ROUTES.get(("GET", u.path))
         if not call:
             return self._send(404, b"not found", "text/plain")
-        query = {k: v[0] for k, v in parse_qs(u.query).items()}
-        project = query.get("project", "")
         if u.path not in NEVER_PROXY and remote_project(project):
             return self._proxy("GET", u.path, params=query)
         try:
@@ -1428,9 +1464,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        local = LOCAL_ROUTES.get(("POST", path))
         call = ROUTES.get(("POST", path))
-        if path not in LOCAL_ONLY_POST and not call:
+        if not (local or call):
             return self._send(404, b"not found", "text/plain")
+        # 토큰은 로컬 전용 경로에도 똑같이 건다 — pip 실행·파일 쓰기가 여기 있다.
         if self.headers.get("X-Token") != TOKEN:
             return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
                               403)
@@ -1440,29 +1478,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._json({"error": "bad json"}, 400)
 
-        if path == "/api/setup/run":
-            if body.get("action") not in ACTIONS:
-                return self._json({"error": "unknown action"}, 400)
-            return self._json(run_action(body["action"]))
-        if path == "/api/setup/keys":
-            r = save_keys(body)
-            return self._json(r, 200 if r["ok"] else 400)
-        if path == "/api/setup/gsc-client":
-            r = save_gsc_client(body)
-            return self._json(r, 200 if r["ok"] else 400)
-        if path == "/api/setup/project":
-            r = create_project(body)
-            return self._json(r, 200 if r["ok"] else 400)
-        if path == "/api/setup/dir":
-            r = setup_dir(body)
-            return self._json(r, 200 if r["ok"] else 400)
-        if path == "/api/setup/remote":
-            r = setup_remote(body)
-            return self._json(r, 200 if r["ok"] else 400)
-        if path == "/api/setup/run-tool":
-            r = run_tool(body)
-            return self._json(r, 200 if r["ok"] else 400)
-
+        if local:
+            return self._json(*local("", {}, body))
         if path not in NEVER_PROXY and remote_project(str(body.get("project") or "")):
             return self._proxy("POST", path, json=body)
         try:
