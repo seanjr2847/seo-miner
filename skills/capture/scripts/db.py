@@ -852,12 +852,18 @@ def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALL
                        countries: dict[str, int] | None = None) -> tuple[str, str]:
     """키워드를 잴 언어-지역과 그 출처('gsc_country' | 'script'). 판정 규칙의 정본.
 
-    ① 검색한 사람의 나라 — countries({alpha-3: 노출}, 그 사이트 GSC 나라 분해에서 이
-       검색어의 합)에서 노출이 가장 많은 나라의 로케일. 노출 문턱은 없다(2~7회짜리가
-       추적 핵심인 사이트가 있다). 동률·노출 0·그 나라 로케일이 LOCALES 에 없음이면 ②.
-       한 지역에 로케일이 여럿이면(인도 en/hi, 캐나다 en/fr) 글자 판정의 언어로 고른다.
-       한국 환자가 영어 의학용어로 친 'papular acne scar' 는 글자로는 영어지만 한국
-       구글에서 재야 맞다 — 글자가 아니라 검색한 사람의 나라가 정답이다.
+    로케일은 두 축이다 — **언어는 글자에서, 지역은 검색한 사람의 나라에서** 온다.
+    GSC 나라는 지역만 말한다: 베트남 사람이 친 'ai tier list' 는 영어 검색이지
+    베트남어 검색이 아니다(나라에서 언어까지 가져오면 vi-VN 이 된다).
+    ① 나라 — countries({alpha-3: 노출}, 그 사이트 GSC 나라 분해에서 이 검색어의 합)의
+       최다 노출 나라. 노출 문턱은 없다(2~7회짜리가 추적 핵심인 사이트가 있다).
+       동률·노출 0·LOCALES 에 없는 나라면 ②.
+       a. 그 나라의 로케일 중 언어가 ②의 언어와 같은 것 → 그것(영어+영국 → en-GB).
+       b. 없는데 그 나라가 사이트 로케일의 나라이고 키워드가 제 문자권 없는 글자(라틴
+          등)면 → 사이트 로케일. 한국 환자가 영어 의학용어로 친 'papular acne scar',
+          한국 사용자가 친 'noti' 가 이것이다. 한글·가나처럼 언어가 분명한 글자는
+          여기로 오지 않는다 — 영어 사이트의 한글 검색어가 미국 과반이어도 ko 다.
+       c. 그 밖(언어가 안 맞는 제3국) → ②.
     ② 글자 —
        - 제 문자권이 있는 글자(_SCRIPTS)가 있으면 그 언어. 사이트 언어와 같으면 사이트
          로케일(zh-CN 보존), 다르면 그 언어의 대표 로케일(ko-KR·ja-JP…).
@@ -880,11 +886,13 @@ def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALL
     if countries:
         imps = sorted(countries.values(), reverse=True)
         if imps[0] > 0 and (len(imps) == 1 or imps[1] < imps[0]):
-            cands = _country_locales(max(countries, key=countries.get))
-            if cands:
-                want = serp_adapter.lang_of(by_script)
-                return (next((c for c in cands if serp_adapter.lang_of(c) == want), cands[0]),
-                        "gsc_country")
+            top = max(countries, key=countries.get)
+            want = serp_adapter.lang_of(by_script)          # 언어는 글자에서
+            same = [c for c in _country_locales(top) if serp_adapter.lang_of(c) == want]
+            if same:                                         # 지역은 나라에서
+                return same[0], "gsc_country"
+            if lang is None and _ALPHA3.get(_region(site_locale)) == top:
+                return site_locale, "gsc_country"            # 사이트 나라 사람이 라틴 글자로 친 것
     return by_script, "script"
 
 
@@ -2009,6 +2017,15 @@ def _check_keyword_locale() -> None:
     assert ks("milia", "ko-KR", countries={"sgp": 9, "kor": 2}) == ("en-US", "script"), \
         "그 나라 로케일이 LOCALES 에 없으면 글자"
     assert ks("milia", "ko-KR", countries={"kor": 0}) == ("en-US", "script"), "노출 0 은 근거가 아니다"
+    #     언어는 글자에서, 지역은 나라에서 — 나라에서 언어까지 가져오지 않는다
+    assert ks("ai tier list", "ko-KR", countries={"vnm": 9, "kor": 1}) == ("en-US", "script"), \
+        "베트남 사람이 친 영어 검색어는 영어 검색이다 — vi-VN 이 아니다"
+    assert ks("lovable alternative", "ko-KR", countries={"gbr": 5, "usa": 2}) == \
+        ("en-GB", "gsc_country"), "영어 + 영국 과반 → en-GB"
+    for a3 in _ALPHA3.values():
+        for site in ("ko-KR", "en-US", "ja-JP"):
+            got = kl("밀리아 제거", site, countries={a3: 5})
+            assert got == "ko-KR", f"한글 검색어가 {a3} 과반({site} 사이트)에서 {got} 가 됐다"
     #     한 지역에 로케일이 여럿이면 글자로 고른다
     assert kl("botox", "ko-KR", countries={"ind": 5}) == "en-IN"
     assert kl("बोटॉक्स", "ko-KR", countries={"ind": 5}) == "hi-IN"
