@@ -282,26 +282,26 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 (`scoring.md` 1절 content_gap 행).
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
-**풀런(`/capture run`)에 포함된다** — 7단계(`gaps`). 그 단계가 실제로 하는 일은
-`scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로 부를 때만 직접 실행한다.
+**풀런(`/capture run`)에 포함된다** — `gaps` 단계다(순서의 정본은 `run_all.STAGES`).
+그 단계가 실제로 하는 일은 `scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로
+부를 때만 직접 실행한다.
 
-`scoring.py load` 가 적재하는 기회는 **기계 판정분 8종**이다 — striking_distance ·
-ctr_gap · cannibalization · rank_decay · pseo_pattern · device_gap · index_blocked ·
-coverage. 대시보드 [심사]에서 무관·보류로 판정한 검색어는 적재에서 빠지고, 열린 기회
-조회(`db.open_opportunities`)는 작업 판정을 통과한 것만 낸다 — "기회가 안 나온다"면
-먼저 `SELECT * FROM verdicts` 로 판정을 본다.
+`scoring.py load` 는 **`scoring.ALL_KINDS` 의 종류 전부**를 기계 판정으로 적재한다 —
+종류 이름·개수는 거기서 본다(여기 나열하면 그게 사본이 되고, 실제로 "8종"이라고
+적어 둔 채 열다섯이 됐다). 챗봇 인용 공백(`ai_citation_gap`)·구글 AI 요약 빠짐
+(`aio_exposure`)·콘텐츠 공백(`content_gap`)도 이제 여기서 선다. 대시보드 [심사]에서
+무관·보류로 판정한 검색어는 적재에서 빠지고, 열린 기회 조회(`db.open_opportunities`)는
+작업 판정을 통과한 것만 낸다 — "기회가 안 나온다"면 먼저 `SELECT * FROM verdicts` 로
+판정을 본다.
 
-**풀런이 대신 해 주지 않는 것 셋** (기대하고 기다리면 안 나온다):
+**재료가 없으면 그 종류는 조용히 빈다** (기다려도 안 나온다):
 
-- `ai_citation_gap` — sql 로 cited=0 체크의 `cited_domains_json` 빈도와 미노출
-  프롬프트를 내가 직접 뽑는다.
-- `aio_exposure` — rank 데이터가 있을 때 `aio_present=1 AND aio_cited=0` 키워드.
-  역시 sql.
-- `content_gap` — **적재는 풀런의 `competitors` 단계가 한다**(DataForSEO 키가
-  있을 때). 다만 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는
-  조용히 건너뛰므로 후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저
-  적재한다(`--domain` 으로 도메인을 직접 줄 수도 있다). 어느 쪽으로 들어왔든
-  후보를 정리하고 기회로 판정하는 것은 `scoring.py load` 가 아니라 내 몫이다.
+- 챗봇 인용 공백은 `ai` 단계(OpenRouter 키), 구글 AI 요약 빠짐은 `rank` 단계
+  (DataForSEO — Serper 는 AI 요약을 못 잰다)가 돌아야 생긴다.
+- `content_gap` 의 재료는 풀런의 `competitors` 단계가 적재한다(DataForSEO 키가 있을
+  때). 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는 조용히 건너뛰므로
+  후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저 적재한다(`--domain` 으로
+  도메인을 직접 줄 수도 있다).
 
 `pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯
 ({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은

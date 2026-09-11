@@ -200,6 +200,13 @@ def test_ai_gap_third_party_goes_to_presence_and_forbids_spam():
     assert "지금 이 페이지 상태" not in b["body"]
     assert "80% 가 제3자 플랫폼입니다" in b["body"], b["body"]
     assert "여기 없는 것을 우리가 답해야" not in b["body"]      # 페이지로 푸는 말이 아니다
+    # 고친 뒤 볼 것 — 플랫폼을 거쳐 온 방문은 'AI 에서 온 방문'에 안 잡힌다. 그 수를
+    # 보라고 하면 일이 됐는데도 실패로 읽힌다(GA4 가 연결돼 있어도 마찬가지다).
+    b2 = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="third_party"),
+                     {**ctx, "ai_referral_meta": {"date": "2026-06-01", "period_days": 28},
+                      "ai_referral_pages": []})["body"]
+    assert "그 플랫폼 유입으로 잡혀" in b2, b2
+    assert "새로 올린 페이지의 세션이 느는지" not in b2, b2
     tail = brief.tails("ko-KR")["presence"]
     assert "스팸·가짜 후기·대량 게시" in tail and "진정성" in tail, tail
     assert "seo-presence-" in tail                               # 산출물 파일명 조각
@@ -578,6 +585,9 @@ def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
     assert "여는 것이 늘 정답은 아닙니다" in body, "의도적 차단을 되돌리라고 시킨다"
     # 글을 고치라고 하지 않는다
     assert "막힌 채로는 고쳐도 안 읽힙니다" in body, body
+    # 사이트 전체 설정의 일이다 — 대상이 봇인데 "고칠 페이지를 적어 달라"고 하지 않는다
+    assert "- 고칠 자리: robots.txt" in body, body
+    assert "고칠 페이지를 직접 적어" not in body, body
     assert "빙 검색 전체" not in body, body
 
     # 인용 공백 요청문이 같은 사실을, 엔진 이름으로 먼저 말한다 — 학습 봇은 거기 없다

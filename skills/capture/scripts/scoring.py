@@ -588,6 +588,28 @@ def ai_bot_status(robots_txt: str, home: str = "") -> list[dict]:
             for b in ai_bots()]
 
 
+# robots.txt 의 `User-agent: *` 한 줄이 AI 검색 크롤러를 통째로 막으면 원인은 그 줄
+# 하나다. 봇마다 기회를 세우면 줄 하나를 고칠 일이 기회 목록 일곱 줄로 불어난다 —
+# 그래서 그 경우엔 이 대상 하나로 묶는다. 대상 문자열이 곧 고칠 자리다.
+AI_BOT_WILDCARD = "User-agent: *"
+# 이름으로 된 묶음에 절대 안 걸리는 가짜 UA — "와일드카드 묶음이 막나"를 물을 때 쓴다.
+_WILDCARD_PROBE = "SeoMinerWildcardProbe"
+
+
+def _named_in_robots(robots_txt: str, ua: str) -> bool:
+    """이 봇 이름으로 된 User-agent 묶음이 있나. 묶음 고르는 규칙은 urllib.robotparser
+    와 같다(UA 줄의 값이 봇 이름 안에 부분 문자열로 들어가면 그 묶음) — 판정을 두 벌로
+    만들면 "와일드카드로 막혔다"와 파서의 실제 판정이 어긋난다."""
+    name = ua.split("/")[0].lower()
+    for line in (robots_txt or "").splitlines():
+        key, _, val = line.partition(":")
+        if key.strip().lower() == "user-agent":
+            v = val.split("#")[0].strip().lower()
+            if v and v != "*" and v in name:
+                return True
+    return False
+
+
 def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
                   home: str = "") -> list[dict]:
     """robots.txt 로 막힌 **검색·인용용** AI 크롤러 (용도 search·user).
@@ -603,11 +625,34 @@ def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
     cr = conn.execute(
         "SELECT robots_txt FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
         " AND robots_txt IS NOT NULL ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
-    return [r for r in ai_bot_status((cr["robots_txt"] if cr else "") or "", home)
+    txt = (cr["robots_txt"] if cr else "") or ""
+    rows = [r for r in ai_bot_status(txt, home)
             if r["rule"] and r["purpose"] in AI_BOT_CITING]
+    # 자기 이름 묶음 없이 `User-agent: *` 로 막힌 봇들 — 원인이 한 줄이면 기회도 한 줄
+    wild = [r for r in rows if not _named_in_robots(txt, r["bot"])]
+    if len(wild) < 2:
+        return rows
+    url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    engines = list(dict.fromkeys(r.get("engine") or r["bot"] for r in wild))
+    grouped = {"bot": AI_BOT_WILDCARD, "vendor": None, "purpose": "search",
+               "engine": ", ".join(engines), "rule": wild[0]["rule"],
+               "bots": [r["bot"] for r in wild],
+               # 같은 줄이 구글 검색 색인도 막는가 — 그러면 AI 는 작은 쪽 문제다
+               "google_blocked": robots_blocks(txt, url, agent="Googlebot") is not None}
+    return [grouped] + [r for r in rows if r not in wild]
 
 
 def _reason_ai_bot(r: dict, ctx: dict) -> str:
+    if r["bot"] == AI_BOT_WILDCARD:
+        # 봇 이름으로 센다 — 엔진 이름은 겹쳐서(Perplexity 봇 둘) 개수와 나열이 어긋난다
+        bots = r.get("bots") or []
+        s = (f"robots.txt 의 `User-agent: *` 묶음({r['rule']})이 AI 검색·인용 크롤러 "
+             f"{len(bots)}개({'·'.join(bots)})를 한꺼번에 막습니다. 원인은 이 줄 하나입니다")
+        if r.get("google_blocked"):
+            # 이 줄은 AI 전용이 아니다 — 구글 검색 전체에서 빠진다는 게 먼저다
+            s += (". 같은 줄이 구글 검색(Googlebot)도 막습니다 — AI 이전에 검색 전체에서 "
+                  "빠지는 문제입니다")
+        return s
     eng = r.get("engine") or r["bot"]
     s = (f"robots.txt 가 {r['bot']}({eng}, {AI_BOT_PURPOSE[r['purpose']]})를 막습니다 "
          f"({r['rule']}). {eng} 답변에서 우리 페이지가 출처로 실리기 어렵습니다 — 글을 "
@@ -3106,7 +3151,7 @@ _KIND_SPECS = {
                   "고친 뒤 robots.txt 를 직접 열어 확인하고, 다음 크롤에서 이 항목이 "
                   "사라지는지 봅니다."],
             deliver=["고칠 robots.txt 줄 — 지금 값과 바꿀 값을 그대로",
-                     "이 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
+                     "막힌 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
                      "(글은 손대지 않습니다. 막힌 채로는 고쳐도 안 읽힙니다)"])),
     "backlink_prospect": dict(
         label="경쟁사만 받는 링크", defensive=False,
@@ -3375,8 +3420,19 @@ def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str |
         return None
     home = ctx.get("domain") or ""
     url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    if target == AI_BOT_WILDCARD:
+        # 묶음 기회 — 와일드카드 묶음이 더는 홈을 안 막으면 닫는다
+        if robots_blocks(txt, url, agent=_WILDCARD_PROBE) is None:
+            return f"robots.txt 의 User-agent: * 묶음이 더는 막지 않습니다 (크롤 #{cr['id']})"
+        return None
     if robots_blocks(txt, url, agent=target) is None:
         return f"robots.txt 가 더는 {target} 를 막지 않습니다 (크롤 #{cr['id']})"
+    # 봇마다 세우던 옛 기회: 이제 User-agent: * 묶음 한 줄로 선다. 여전히 막혀 있다고
+    # 분명히 적는다 — "고쳐졌다"로 읽히면 안 된다.
+    if (ai_bot_purpose(target) in AI_BOT_CITING and not _named_in_robots(txt, target)
+            and robots_blocks(txt, url, agent=_WILDCARD_PROBE) is not None):
+        return (f"{target} 는 여전히 막혀 있지만, 원인이 User-agent: * 한 줄이라 "
+                f"그 묶음 기회로 합쳤습니다 (크롤 #{cr['id']})")
     return None
 
 
@@ -4623,6 +4679,49 @@ def _selfcheck() -> None:
         assert [r["purpose"] for r in ai_bot_status(_robots, "x.kr")] == [None, None]
     finally:
         globals()["ai_bots"] = _real_ai_bots
+    # User-agent: * 한 줄이 통째로 막으면 기회도 한 줄 — 봇마다 세우면 같은 줄 하나가
+    # 기회 목록 일곱 줄로 불어난다. 이름 묶음으로 따로 막힌 봇은 따로 선다.
+    _NL = chr(10)
+    _wild = _NL.join(("User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_wild,))
+    _bots_conn.commit()
+    _g = ai_bot_blocks(_bots_conn, 1, home="x.kr")
+    assert [r["bot"] for r in _g] == [AI_BOT_WILDCARD], [r["bot"] for r in _g]
+    _citing = [b["ua"] for b in ai_bots() if b["purpose"] in AI_BOT_CITING]
+    assert sorted(_g[0]["bots"]) == sorted(_citing), _g[0]["bots"]
+    assert _g[0]["google_blocked"] is True, _g[0]
+    _why = _reason_ai_bot(_g[0], {})
+    assert "이 줄 하나" in _why and "구글 검색(Googlebot)도" in _why, _why
+    # 개수와 나열이 같은 것을 센다(엔진 이름으로 나열하면 Perplexity 둘이 하나로 준다)
+    assert f"{len(_citing)}개(" + "·".join(_g[0]["bots"]) + ")" in _why, _why
+    # 이름 묶음으로 따로 막힌 봇 + 와일드카드 — 묶음 하나와 그 봇 하나
+    _mixed = _NL.join(("User-agent: PerplexityBot", "Disallow: /", "",
+                       "User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_mixed,))
+    _bots_conn.commit()
+    _m = [r["bot"] for r in ai_bot_blocks(_bots_conn, 1, home="x.kr")]
+    assert _m == [AI_BOT_WILDCARD, "PerplexityBot"], _m
+    # 구글은 열어 두고 AI 만 와일드카드로 막을 수는 없다 — Googlebot 묶음이 따로 있으면
+    # 구글 문구가 빠진다
+    _gopen = _NL.join(("User-agent: Googlebot", "Allow: /", "", "User-agent: *", "Disallow: /"))
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?", (_gopen,))
+    _bots_conn.commit()
+    _go = ai_bot_blocks(_bots_conn, 1, home="x.kr")[0]
+    assert _go["google_blocked"] is False and "Googlebot" not in _reason_ai_bot(_go, {}), _go
+    # 해소: 묶음 기회는 와일드카드가 풀려야 닫힌다. 봇마다 세우던 옛 기회는 묶음으로
+    # 옮겨 닫되 "여전히 막혀 있다"고 적는다 — 고쳐진 것으로 읽히면 안 된다.
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?, started_at='2030-01-01 00:00:00'",
+                       (_wild,))
+    _bots_conn.commit()
+    _rc = {"domain": "x.kr"}
+    assert _resolve_ai_bot(_bots_conn, 1, AI_BOT_WILDCARD, "2029-01-01", _rc) is None
+    _legacy = _resolve_ai_bot(_bots_conn, 1, "OAI-SearchBot", "2029-01-01", _rc)
+    assert _legacy and "여전히 막혀" in _legacy, _legacy
+    _bots_conn.execute("UPDATE crawl_runs SET robots_txt=?",
+                       (_NL.join(("User-agent: *", "Disallow: /private")),))
+    _bots_conn.commit()
+    assert "더는 막지 않습니다" in (_resolve_ai_bot(_bots_conn, 1, AI_BOT_WILDCARD,
+                                                   "2029-01-01", _rc) or "")
     # robots.txt 를 아예 못 읽은 회차는 "전부 허용" 이 아니라 "모른다" 다
     _bots_conn.execute("UPDATE crawl_runs SET robots_txt=NULL")
     _bots_conn.commit()

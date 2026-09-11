@@ -1075,6 +1075,13 @@ def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str
         after = ["구글 AI 요약에서 온 클릭은 GA4 에서 구글 유기 검색으로 잡혀 따로 갈리지 "
                  f"않습니다. 고친 뒤에는 [{SCREEN_TITLES['rank']}] 화면에서 이 검색어의 AI 요약에 "
                  "내 링크가 붙는지와 구글 실적의 클릭을 봅니다."]
+    elif o.get("gap_kind") == "third_party":
+        # 제3자 플랫폼에 등장하는 일(presence)이다 — 그 플랫폼을 거쳐 오는 방문은 GA4 에서
+        # 그 플랫폼 유입으로 잡혀 'AI 에서 온 방문'이 안 는다. 그 수를 보라고 하면 일이
+        # 됐는데도 실패로 읽힌다.
+        after = ["다음 인용 확인에서 이 질문의 답변에 그 플랫폼의 우리 글이나 우리 링크가 "
+                 "붙는지 봅니다. 플랫폼을 거쳐 온 방문은 GA4 에서 그 플랫폼 유입으로 잡혀 "
+                 f"'{AI_VISITS_SECTION[1]}'에는 안 늘 수 있습니다."]
     elif meta:
         after = [f"다음 GA4 수집에서 [{SCREEN_TITLES['ai']}] 화면의 '{AI_VISITS_SECTION[1]}'에 "
                  f"{where}의 세션이 느는지 봅니다. 인용이 붙어도 이 수가 그대로면 답변이 "
@@ -1115,6 +1122,10 @@ def _target_lines(o: dict, url: str | None, shape: str) -> list[str]:
         L.append(f"- {'정본 후보 페이지' if shape == 'consolidate' else '페이지'}: {url}")
     elif not url and shape == "new_content":
         L.append("- 페이지: 없음 — 이 검색어로 걸린 내 페이지가 아직 없어서 새로 씁니다.")
+    elif kind in SITE_KINDS:
+        # 사이트 전체 설정의 일이다 — 페이지를 모른다고 "고칠 페이지를 적어 달라"고
+        # 하면 없는 일을 시킨다(대상이 봇 이름인데 그 문장이 나갔다).
+        L.append(f"- 고칠 자리: {SITE_KINDS[kind]}")
     elif not url and _shows_page(shape):
         # 고칠 페이지를 모르는 채로 고치라고 할 수는 없다 — 사람이 채울 자리를 둔다.
         L.append("- 페이지: 아직 모릅니다 — 이 검색어로 걸린 내 페이지가 수집본에 없습니다. "
@@ -1123,6 +1134,10 @@ def _target_lines(o: dict, url: str | None, shape: str) -> list[str]:
     if why:
         L.append(f"- 왜 걸렸나: {why}")
     return L + [""]
+
+
+# 페이지 하나가 아니라 사이트 전체 설정을 고치는 종류 → 그 설정 자리.
+SITE_KINDS = {"ai_bot_blocked": "robots.txt (사이트 전체 — 페이지 하나의 일이 아닙니다)"}
 
 
 # 대상 자체가 주소인 종류 — 크롤 이슈는 '/path' 처럼 상대 경로로도 온다. "http" 로
