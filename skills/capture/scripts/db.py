@@ -606,8 +606,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
     # ── 갈래 5: 키워드 언어 ──
-    # 옛 행의 언어 표시를 글자 판정으로 한 번 바로잡는다(fix_keyword_locales). 표
-    # offlocale_snapshots 가 있으면 이미 한 것이다 — 한 번만 도는 까닭은 그 뒤로는
+    # locale_src — 그 로케일을 누가 정했나: gsc_country(검색한 사람의 나라) | script
+    # (글자) | manual(사람). NULL 은 이 칸 이전의 옛 행이다. GSC 나라 데이터가 새로
+    # 들어오면 script 인 것만 다시 판정한다(rejudge_script_locales) — manual 은 안 덮는다.
+    if "locale_src" not in {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}:
+        conn.execute("ALTER TABLE keywords ADD COLUMN locale_src TEXT")
+        conn.commit()
+    # 옛 행의 언어 표시를 keyword_locale 판정으로 한 번 바로잡는다(fix_keyword_locales).
+    # 표 offlocale_snapshots 가 있으면 이미 한 것이다 — 한 번만 도는 까닭은 그 뒤로는
     # 모든 INSERT 가 판정을 거치고, 사람이 일부러 고친 로케일을 매 연결마다 되돌리면
     # 안 되기 때문이다. 표 생성과 고치기를 한 트랜잭션에 넣는다: 중간에 죽으면 표도
     # 없어져 다음 연결이 처음부터 다시 한다.
@@ -642,7 +648,9 @@ OFFLOCALE_DDL = """CREATE TABLE offlocale_snapshots (
 def fix_keyword_locales(conn: sqlite3.Connection) -> dict[str, int]:
     """언어 표시를 keyword_locale 판정값으로 바로잡는다 — 커밋은 호출자가 한다.
 
-    고치는 행: locale 이 NULL 인 행, ko-* 인데 판정이 한국어가 아닌 행(한글이 없다).
+    고치는 행: locale 이 NULL 인 행, ko-* 인데 한글이 하나도 없는 행. 이 둘은 판정
+    출처(locale_src)도 적는다 — 판정이 여전히 ko 여도(한국 과반 영어 검색어) 적는다.
+    그 밖의 옛 행은 건드리지 않고 locale_src 도 NULL 로 둔다.
     바뀐 키워드가 그 전 로케일(NULL 이면 사이트 로케일)로 잰 rank_snapshots·
     serp_results 는 offlocale_snapshots 로 옮긴다. keywords 의 유일 키는
     (project_id, keyword) 라 locale 을 바꿔도 부딪힐 행이 없다.
@@ -653,33 +661,60 @@ def fix_keyword_locales(conn: sqlite3.Connection) -> dict[str, int]:
         site = project_locale(p)
         judge = keyword_judge(conn, p["id"])
         for k in conn.execute(
-                """SELECT id, keyword, locale FROM keywords
+                """SELECT id, keyword, locale, locale_src FROM keywords
                     WHERE project_id=? AND (locale IS NULL OR lower(locale) LIKE 'ko%')""",
                 (p["id"],)).fetchall():
-            new = judge(k["keyword"])
+            if k["locale"] is not None and _script_lang(k["keyword"]) == "ko":
+                continue                     # 한글이 있는 ko 행 — 범위 밖이다
+            new, src = judge(k["keyword"])
+            if new == k["locale"] and src == k["locale_src"]:
+                continue
             if k["locale"] is None:
                 n["null"] += 1
-            elif new.lower().startswith("ko"):
-                continue                     # 한국어 판정 — 그대로가 맞다
-            else:
+            elif new != k["locale"]:
                 n["ko"] += 1
-            conn.execute("UPDATE keywords SET locale=? WHERE id=?", (new, k["id"]))
-            measured = k["locale"] or site
-            if measured == new:
-                continue                     # 같은 로케일로 쟀다 — 기록은 그대로 유효하다
-            for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results")):
-                rows = conn.execute(f"SELECT * FROM {table} WHERE keyword_id=?",
-                                    (k["id"],)).fetchall()
-                for r in rows:
-                    d = {c: r[c] for c in r.keys() if c != "id"}
-                    conn.execute(
-                        """INSERT INTO offlocale_snapshots(keyword_id, kind, locale,
-                             checked_at, row_json) VALUES(?,?,?,?,?)""",
-                        (k["id"], kind, measured, d.get("checked_at"),
-                         json.dumps(d, ensure_ascii=False)))
-                conn.execute(f"DELETE FROM {table} WHERE keyword_id=?", (k["id"],))
-                n[kind] += len(rows)
+            conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?",
+                         (new, src, k["id"]))
+            _park_offlocale(conn, k["id"], k["locale"] or site, new, n)
     return n
+
+
+def rejudge_script_locales(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
+    """GSC 나라 데이터가 새로 들어온 뒤 — 글자로 정했던(locale_src='script') 키워드만
+    나라로 다시 판정한다. 나라가 결정하지 못하면(데이터 없음·동률·LOCALES 밖) 그대로다.
+    manual·gsc_country·옛 행(NULL)은 안 건드린다. 커밋은 호출자가 한다."""
+    n = dict.fromkeys(("changed", "rank", "serp"), 0)
+    judge = keyword_judge(conn, project_id)
+    for k in conn.execute(
+            "SELECT id, keyword, locale FROM keywords WHERE project_id=? AND locale_src='script'",
+            (project_id,)).fetchall():
+        new, src = judge(k["keyword"])
+        if src != "gsc_country":
+            continue
+        conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?",
+                     (new, src, k["id"]))
+        if new != k["locale"]:
+            n["changed"] += 1
+            _park_offlocale(conn, k["id"], k["locale"], new, n)
+    return n
+
+
+def _park_offlocale(conn, keyword_id: int, measured: str, new: str, n: dict) -> None:
+    """measured 로 잰 순위·검색결과를 offlocale_snapshots 로 옮긴다(new 와 같으면 그대로)."""
+    if not measured or measured == new:
+        return                               # 같은 로케일로 쟀다 — 기록은 그대로 유효하다
+    for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results")):
+        rows = conn.execute(f"SELECT * FROM {table} WHERE keyword_id=?",
+                            (keyword_id,)).fetchall()
+        for r in rows:
+            d = {c: r[c] for c in r.keys() if c != "id"}
+            conn.execute(
+                """INSERT INTO offlocale_snapshots(keyword_id, kind, locale,
+                     checked_at, row_json) VALUES(?,?,?,?,?)""",
+                (keyword_id, kind, measured, d.get("checked_at"),
+                 json.dumps(d, ensure_ascii=False)))
+        conn.execute(f"DELETE FROM {table} WHERE keyword_id=?", (keyword_id,))
+        n[kind] += len(rows)
 
 
 def connect(home: Path | None = None) -> sqlite3.Connection:
@@ -748,9 +783,10 @@ def project_locale(p) -> str:
     return p["locale"] or DEFAULT_LOCALE
 
 
-# ── 키워드 언어 판정 — 정본은 keyword_locale 하나다 (사본 금지) ──────────
+# ── 키워드 언어 판정 — 정본은 keyword_locale_src 하나다 (사본 금지) ──────────
 # keywords 에 들어가는 행은 전부 이 판정을 거친다(sync_project·add_keyword_candidates,
-# 그리고 옛 행을 한 번 고치는 fix_keyword_locales). 넣을 때 사이트 로케일을 그대로
+# 옛 행을 한 번 고치는 fix_keyword_locales, GSC 나라 분해가 들어온 뒤의
+# rejudge_script_locales). 넣을 때 사이트 로케일을 그대로
 # 붙이던 동안 GSC 에서 들어온 영어 검색어가 ko-KR 로 표시돼 한국 구글에서 쟀고
 # ('milia vs syringoma'), 시드는 아예 언어 칸 없이 들어갔다.
 # (유니코드 구간, 언어) 순서가 곧 우선순위다: 한글이 있으면 한국어, 가나가 섞이면
@@ -783,28 +819,91 @@ def _latin_only(text: str) -> bool:
     return seen
 
 
-def keyword_locale(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK) -> str:
-    """키워드 글자만 보고 그 키워드를 잴 언어-지역을 정한다.
+# GSC 나라 코드(ISO alpha-3 소문자) — serp_adapter.LOCALES 에 있는 지역만 적는다.
+# 나라→로케일은 LOCALES 의 지역에서 파생한다(_country_locales) — 로케일 사본을 두지
+# 않는다. 셀프체크가 "LOCALES 의 모든 지역에 여기 alpha-3 가 있고, 여기 지역은 전부
+# LOCALES 에 있다"를 양방향으로 대조한다.
+_ALPHA3 = {"KR": "kor", "US": "usa", "GB": "gbr", "AU": "aus", "CA": "can", "IN": "ind",
+           "JP": "jpn", "TW": "twn", "DE": "deu", "AT": "aut", "CH": "che", "FR": "fra",
+           "ES": "esp", "MX": "mex", "IT": "ita", "BR": "bra", "PT": "prt", "NL": "nld",
+           "PL": "pol", "RU": "rus", "TR": "tur", "VN": "vnm", "TH": "tha", "ID": "idn",
+           "AE": "are"}
 
-    - 제 문자권이 있는 글자(_SCRIPTS)가 있으면 그 언어. 사이트 언어와 같으면 사이트
-      로케일(zh-CN 보존), 다르면 그 언어의 대표 로케일(ko-KR·ja-JP…).
-    - 라틴 글자(+숫자·기호)만 있으면: 사이트가 제 문자권이 있는 언어(한국어·일본어…)면
-      영어로 본다 — `english`. 사이트가 라틴 문자권(영어·독일어·베트남어…)이면 사이트
-      로케일 — 라틴 글자로는 영어와 독일어를 못 가른다.
-    - 그 밖(숫자만·빈 값·그리스 문자 같은 표 밖 글자)은 사이트 로케일.
+
+def _region(locale: str) -> str:
+    """'en-GB' → 'GB'. 지역이 없는 로케일은 ''."""
+    return locale.split("-")[1].upper() if "-" in (locale or "") else ""
+
+
+def _country_locales(country: str) -> list[str]:
+    """GSC 나라(alpha-3) → 그 지역의 LOCALES 로케일들(LOCALES 순서). 모르는 나라는 []."""
+    import serp_adapter
+    region = next((r for r, a3 in _ALPHA3.items() if a3 == (country or "").lower()), None)
+    return [c for c, _ in serp_adapter.LOCALES if _region(c) == region] if region else []
+
+
+def _script_lang(text: str) -> str | None:
+    """제 문자권이 있는 글자(_SCRIPTS)의 언어 — 없으면 None."""
+    return next((lg for (lo, hi), lg in _SCRIPTS
+                 if any(lo <= c <= hi for c in (text or ""))), None)
+
+
+def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
+                       countries: dict[str, int] | None = None) -> tuple[str, str]:
+    """키워드를 잴 언어-지역과 그 출처('gsc_country' | 'script'). 판정 규칙의 정본.
+
+    ① 검색한 사람의 나라 — countries({alpha-3: 노출}, 그 사이트 GSC 나라 분해에서 이
+       검색어의 합)에서 노출이 가장 많은 나라의 로케일. 노출 문턱은 없다(2~7회짜리가
+       추적 핵심인 사이트가 있다). 동률·노출 0·그 나라 로케일이 LOCALES 에 없음이면 ②.
+       한 지역에 로케일이 여럿이면(인도 en/hi, 캐나다 en/fr) 글자 판정의 언어로 고른다.
+       한국 환자가 영어 의학용어로 친 'papular acne scar' 는 글자로는 영어지만 한국
+       구글에서 재야 맞다 — 글자가 아니라 검색한 사람의 나라가 정답이다.
+    ② 글자 —
+       - 제 문자권이 있는 글자(_SCRIPTS)가 있으면 그 언어. 사이트 언어와 같으면 사이트
+         로케일(zh-CN 보존), 다르면 그 언어의 대표 로케일(ko-KR·ja-JP…).
+       - 라틴 글자(+숫자·기호)만 있으면: 사이트가 제 문자권이 있는 언어(한국어·일본어…)면
+         영어로 본다 — `english`. 사이트가 라틴 문자권(영어·독일어·베트남어…)이면 사이트
+         로케일 — 라틴 글자로는 영어와 독일어를 못 가른다.
+       - 그 밖(숫자만·빈 값·그리스 문자 같은 표 밖 글자)은 사이트 로케일.
     """
     import serp_adapter          # 늦은 import: serp_adapter → collector → db
     text = text or ""
-    lang = next((lg for (lo, hi), lg in _SCRIPTS
-                 if any(lo <= c <= hi for c in text)), None)
+    lang = _script_lang(text)
     site_lang = serp_adapter.lang_of(site_locale)
     if lang is not None:
-        if lang == site_lang:
-            return site_locale
-        return f"{lang}-{serp_adapter.location(lang)[2][0].upper()}"
-    if _latin_only(text) and site_lang in {lg for _, lg in _SCRIPTS}:
-        return english
-    return site_locale
+        by_script = (site_locale if lang == site_lang
+                     else f"{lang}-{serp_adapter.location(lang)[2][0].upper()}")
+    elif _latin_only(text) and site_lang in {lg for _, lg in _SCRIPTS}:
+        by_script = english
+    else:
+        by_script = site_locale
+    if countries:
+        imps = sorted(countries.values(), reverse=True)
+        if imps[0] > 0 and (len(imps) == 1 or imps[1] < imps[0]):
+            cands = _country_locales(max(countries, key=countries.get))
+            if cands:
+                want = serp_adapter.lang_of(by_script)
+                return (next((c for c in cands if serp_adapter.lang_of(c) == want), cands[0]),
+                        "gsc_country")
+    return by_script, "script"
+
+
+def keyword_locale(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
+                   countries: dict[str, int] | None = None) -> str:
+    """keyword_locale_src 의 로케일만. 규칙은 거기 하나다."""
+    return keyword_locale_src(text, site_locale, english, countries)[0]
+
+
+def gsc_countries(conn: sqlite3.Connection, project_id: int) -> dict[str, dict[str, int]]:
+    """{검색어(소문자): {나라 alpha-3: 노출 합}} — 그 사이트 GSC 나라 분해 전 회차의 합."""
+    out: dict[str, dict[str, int]] = {}
+    for r in conn.execute(
+            """SELECT query, lower(dim_value) c, SUM(impressions) imp FROM gsc_breakdown
+                WHERE project_id=? AND dim='country' GROUP BY query, lower(dim_value)""",
+            (project_id,)):
+        d = out.setdefault(r["query"].lower(), {})
+        d[r["c"]] = d.get(r["c"], 0) + (r["imp"] or 0)
+    return out
 
 
 def english_locale(conn: sqlite3.Connection, project_id: int) -> str:
@@ -825,12 +924,15 @@ def english_locale(conn: sqlite3.Connection, project_id: int) -> str:
 
 
 def keyword_judge(conn: sqlite3.Connection, project_id: int):
-    """(키워드, 기본값=None) → 로케일. 사이트 로케일과 영어 로케일을 한 번만 읽는다.
-    기본값은 그 키워드를 캔 로케일(시드·조회 로케일)이고, 없으면 사이트 로케일이다."""
+    """(키워드, 기본값=None) → (로케일, 출처). 사이트 로케일·영어 로케일·GSC 나라 분해를
+    한 번만 읽는다. 기본값은 그 키워드를 캔 로케일(시드·조회 로케일)이고, 없으면 사이트
+    로케일이다 — 글자 판정(②)의 사이트 자리에만 쓰인다."""
     row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
     site = project_locale(row) if row else DEFAULT_LOCALE
     en = english_locale(conn, project_id)
-    return lambda kw, default=None: keyword_locale(kw, default or site, en)
+    geo = gsc_countries(conn, project_id)
+    return lambda kw, default=None: keyword_locale_src(
+        kw, default or site, en, geo.get((kw or "").lower()))
 
 
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
@@ -872,8 +974,8 @@ def sync_project(yaml_path: str) -> None:
     for kw in cfg.get("seed_keywords", []) or []:
         kw = kw.strip()
         conn.execute(
-            """INSERT OR IGNORE INTO keywords(project_id,keyword,locale,source,is_active)
-               VALUES(?,?,?, 'seed', 1)""", (pid, kw, judge(kw)))
+            """INSERT OR IGNORE INTO keywords(project_id,keyword,locale,locale_src,source,is_active)
+               VALUES(?,?,?,?, 'seed', 1)""", (pid, kw, *judge(kw)))
     for dom in cfg.get("competitors_manual", []) or []:
         conn.execute(
             "INSERT OR IGNORE INTO competitors(project_id,domain,source) VALUES(?,?, 'manual')",
@@ -997,6 +1099,11 @@ def write_gsc_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date
           round(float(pos or 0), 1))
          for dv, q, clk, imp, ctr, pos in rows])
     conn.commit()
+    if dim == "country":
+        # 검색한 사람의 나라가 새로 들어왔다 — 글자로 정했던 키워드만 다시 판정한다.
+        # 이게 없으면 나라 데이터가 없던 날 들어온 후보는 영영 글자 판정으로 남는다.
+        rejudge_script_locales(conn, project_id)
+        conn.commit()
     return len(rows)
 
 
@@ -1404,8 +1511,9 @@ def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> 
     items: (keyword, locale, source). locale은 필수 인자다 — 선택 컬럼이던 시절
     자동완성 경로가 이걸 빼먹어 후보가 NULL locale로 쌓였고, 프로젝트 로케일로
     다시 조회돼 한국어 키워드가 전부 "순위 없음"이 됐다. 모르면 명시적으로 None.
-    넘긴 locale 은 **기본값**이다 — 저장되는 값은 keyword_locale 이 글자로 정한다
-    (사이트 로케일을 그대로 붙이던 동안 영어 GSC 검색어 557개가 ko-KR 이었다).
+    넘긴 locale 은 **기본값**이다 — 저장되는 값은 keyword_locale_src 가 검색한 사람의
+    나라(GSC), 없으면 글자로 정한다(사이트 로케일을 그대로 붙이던 동안 영어 GSC
+    검색어가 ko-KR 이었고, 거꾸로 글자만 보면 한국 사람이 친 영어 검색어가 영어가 된다).
     """
     judge = keyword_judge(conn, project_id)
     n = 0
@@ -1414,8 +1522,9 @@ def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> 
         if not kw:
             continue
         cur = conn.execute(
-            """INSERT OR IGNORE INTO keywords(project_id, keyword, locale, source, is_active)
-               VALUES(?,?,?,?,0)""", (project_id, kw, judge(kw, locale), source))
+            """INSERT OR IGNORE INTO keywords(project_id, keyword, locale, locale_src,
+                 source, is_active) VALUES(?,?,?,?,?,0)""",
+            (project_id, kw, *judge(kw, locale), source))
         n += cur.rowcount
     conn.commit()
     return n
@@ -1884,6 +1993,36 @@ def _check_keyword_locale() -> None:
     for s in ("milia", "밀리아", "東京", "купить", "ราคา"):
         assert kl(s, "ko-KR") in codes, f"{s!r} 의 판정 {kl(s, 'ko-KR')} 이 고를 수 있는 목록 밖"
 
+    # 1b. 검색한 사람의 나라가 먼저다 — GSC 나라 분해(노출)가 있으면 그 나라
+    ks = keyword_locale_src
+    assert ks("papular acne scar", "ko-KR", countries={"kor": 12, "usa": 8}) == \
+        ("ko-KR", "gsc_country"), "한국 과반 노출 영어 검색어는 한국 구글에서 잰다"
+    assert ks("dermatologist", "ko-KR", countries={"kor": 2}) == ("ko-KR", "gsc_country"), \
+        "노출 문턱은 없다 — 2회짜리도 나라가 정한다"
+    assert ks("juvelook korea", "ko-KR", countries={"kor": 0, "usa": 40, "jpn": 30}) == \
+        ("en-US", "gsc_country"), "해외 과반은 그 나라"
+    assert ks("milia", "ko-KR", countries=None) == ("en-US", "script"), "나라 데이터 없음 → 글자"
+    assert ks("milia", "ko-KR", countries={}) == ("en-US", "script")
+    assert ks("milia", "ko-KR", countries={"kor": 5, "usa": 5}) == ("en-US", "script"), \
+        "동률 → 글자"
+    assert ks("밀리아", "en-US", countries={"kor": 3, "usa": 3}) == ("ko-KR", "script")
+    assert ks("milia", "ko-KR", countries={"sgp": 9, "kor": 2}) == ("en-US", "script"), \
+        "그 나라 로케일이 LOCALES 에 없으면 글자"
+    assert ks("milia", "ko-KR", countries={"kor": 0}) == ("en-US", "script"), "노출 0 은 근거가 아니다"
+    #     한 지역에 로케일이 여럿이면 글자로 고른다
+    assert kl("botox", "ko-KR", countries={"ind": 5}) == "en-IN"
+    assert kl("बोटॉक्स", "ko-KR", countries={"ind": 5}) == "hi-IN"
+    assert kl("botox", "fr-FR", countries={"can": 3}) == "fr-CA"
+    assert kl("botox", "ko-KR", countries={"can": 3}) == "en-CA"
+    #     나라→로케일 대응은 LOCALES 의 지역에서 파생한다 — alpha-3 표는 그 지역만,
+    #     빠짐없이(두 벌 금지). 새 로케일을 LOCALES 에 넣으면 여기 alpha-3 도 넣어야 한다.
+    regions = {_region(c) for c in codes}
+    assert regions == set(_ALPHA3), \
+        f"LOCALES 지역과 _ALPHA3 가 어긋난다: 빠짐 {regions - set(_ALPHA3)}, 남음 {set(_ALPHA3) - regions}"
+    assert len(set(_ALPHA3.values())) == len(_ALPHA3), "alpha-3 가 겹친다"
+    for r, a3 in _ALPHA3.items():
+        assert all(_region(c) == r for c in _country_locales(a3)) and _country_locales(a3), a3
+
     old = os.environ.get("CAPTURE_HOME")
     with tempfile.TemporaryDirectory() as d:
         os.environ["CAPTURE_HOME"] = d
@@ -1896,19 +2035,30 @@ def _check_keyword_locale() -> None:
             sync_project(str(y))
             conn = connect()
             pid = get_project(conn, "lp")["id"]
-            got = {r["keyword"]: r["locale"] for r in conn.execute(
-                "SELECT keyword, locale FROM keywords WHERE project_id=?", (pid,))}
-            assert got == {"밀리아 제거": "ko-KR", "milia removal": "en-US", "2024": "ko-KR"}, got
+            got = {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
+                "SELECT keyword, locale, locale_src FROM keywords WHERE project_id=?", (pid,))}
+            assert got == {"밀리아 제거": ("ko-KR", "script"), "milia removal": ("en-US", "script"),
+                           "2024": ("ko-KR", "script")}, got
 
-            # 3. 후보 적재는 넘겨받은 로케일을 기본값으로만 쓴다 — 이 사이트가 en-US 를
-            #    이미 쓰니 그걸 고른다
+            # 3. 후보 적재는 넘겨받은 로케일을 기본값으로만 쓴다 — 나라 데이터가 있으면
+            #    나라(대소문자 무시), 없으면 글자. 이 사이트가 en-GB 를 이미 쓰니 그걸 고른다
             conn.execute("UPDATE keywords SET locale='en-GB' WHERE keyword='milia removal'")
+            conn.executemany(
+                "INSERT INTO gsc_breakdown(project_id,snapshot_date,period_days,dim,dim_value,"
+                "query,impressions) VALUES(?,'2026-09-01',28,'country',?,?,?)",
+                [(pid, "kor", "Papular Acne Scar", 12), (pid, "usa", "Papular Acne Scar", 8),
+                 (pid, "kor", "juvelook korea", 0), (pid, "usa", "juvelook korea", 40),
+                 (pid, "jpn", "juvelook korea", 30)])
             add_keyword_candidates(conn, pid, [("milia vs syringoma", "ko-KR", "gsc"),
-                                               ("밀리아 원인", None, "gsc")])
-            got = {r["keyword"]: r["locale"] for r in conn.execute(
-                "SELECT keyword, locale FROM keywords WHERE project_id=?", (pid,))}
-            assert got["milia vs syringoma"] == "en-GB", got
-            assert got["밀리아 원인"] == "ko-KR", got
+                                               ("밀리아 원인", None, "gsc"),
+                                               ("papular acne scar", "ko-KR", "gsc"),
+                                               ("juvelook korea", "ko-KR", "gsc")])
+            got = {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
+                "SELECT keyword, locale, locale_src FROM keywords WHERE project_id=?", (pid,))}
+            assert got["milia vs syringoma"] == ("en-GB", "script"), got
+            assert got["밀리아 원인"] == ("ko-KR", "script"), got
+            assert got["papular acne scar"] == ("ko-KR", "gsc_country"), got
+            assert got["juvelook korea"] == ("en-US", "gsc_country"), got
 
             # 4. 옛 brain 을 흉내 낸다 — 판정 전 행 + 그 로케일로 잰 순위·검색결과
             conn.execute("DROP TABLE offlocale_snapshots")
@@ -1920,10 +2070,13 @@ def _check_keyword_locale() -> None:
                     (pid, "2024", "ko-KR"),                  # 판정도 ko — 그대로
                     (pid, "시드 키워드", None),              # NULL → ko-KR (잰 로케일과 같다)
                     (pid, "seed keyword", None),             # NULL → en-US (ko 로 쟀다)
+                    (pid, "papular acne scar", "ko-KR"),     # 영어지만 한국 과반 — 그대로
+                    (pid, "juvelook korea", "ko-KR"),        # 해외 과반 — en-US (나라)
                     (epid, "milia", "ko-KR")]                # 영어 사이트 — en-US
             conn.executemany("INSERT INTO keywords(project_id,keyword,locale) VALUES(?,?,?)", rows)
             kid = {r["keyword"]: r["id"] for r in conn.execute("SELECT id, keyword FROM keywords")}
-            for kw in ("milia vs syringoma", "밀리아", "시드 키워드", "seed keyword"):
+            for kw in ("milia vs syringoma", "밀리아", "시드 키워드", "seed keyword",
+                       "papular acne scar", "juvelook korea"):
                 write_rank_snapshot(conn, kid[kw], 7, "https://lp.com/x",
                                     checked_at="2026-09-01T00:00:00Z")
             write_rank_snapshot(conn, kid["milia vs syringoma"], 5, None,
@@ -1936,7 +2089,8 @@ def _check_keyword_locale() -> None:
 
             def state(c):
                 return ([tuple(r) for r in c.execute(
-                            "SELECT id, project_id, keyword, locale FROM keywords ORDER BY id")],
+                            "SELECT id, project_id, keyword, locale, locale_src FROM keywords"
+                            " ORDER BY id")],
                         [tuple(r) for r in c.execute("SELECT * FROM rank_snapshots ORDER BY id")],
                         [tuple(r) for r in c.execute("SELECT * FROM serp_results ORDER BY id")],
                         [tuple(r) for r in c.execute(
@@ -1944,15 +2098,19 @@ def _check_keyword_locale() -> None:
                             " FROM offlocale_snapshots ORDER BY id")])
 
             conn = connect()                          # 여기서 마이그레이션이 돈다
-            loc = {r["keyword"]: r["locale"] for r in conn.execute(
-                "SELECT keyword, locale FROM keywords")}
-            assert loc == {"milia vs syringoma": "en-US", "밀리아": "ko-KR", "2024": "ko-KR",
-                           "시드 키워드": "ko-KR", "seed keyword": "en-US", "milia": "en-US"}, loc
+            loc = {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
+                "SELECT keyword, locale, locale_src FROM keywords")}
+            assert loc == {"milia vs syringoma": ("en-US", "script"), "밀리아": ("ko-KR", None),
+                           "2024": ("ko-KR", "script"), "시드 키워드": ("ko-KR", "script"),
+                           "seed keyword": ("en-US", "script"),
+                           "papular acne scar": ("ko-KR", "gsc_country"),
+                           "juvelook korea": ("en-US", "gsc_country"),
+                           "milia": ("en-US", "script")}, loc
             assert conn.execute("SELECT COUNT(*) FROM keywords WHERE locale IS NULL"
                                 ).fetchone()[0] == 0, "NULL 이 남았다"
             # 잘못된 로케일로 잰 기록은 지우지 않고 옮긴다 — 비교(순위 등락·최신 순위)에서 빠진다
             ranks = {r["keyword_id"] for r in conn.execute("SELECT keyword_id FROM rank_snapshots")}
-            assert ranks == {kid["밀리아"], kid["시드 키워드"]}, ranks
+            assert ranks == {kid["밀리아"], kid["시드 키워드"], kid["papular acne scar"]}, ranks
             assert conn.execute("SELECT COUNT(*) FROM serp_results").fetchone()[0] == 0
             parked = [(r["keyword_id"], r["kind"], r["locale"]) for r in conn.execute(
                 "SELECT * FROM offlocale_snapshots ORDER BY id")]
@@ -1960,7 +2118,8 @@ def _check_keyword_locale() -> None:
                 (kid["milia vs syringoma"], "rank", "ko-KR"),
                 (kid["milia vs syringoma"], "rank", "ko-KR"),
                 (kid["milia vs syringoma"], "serp", "ko-KR"),
-                (kid["seed keyword"], "rank", "ko-KR")]), parked
+                (kid["seed keyword"], "rank", "ko-KR"),
+                (kid["juvelook korea"], "rank", "ko-KR")]), parked
             row = json.loads(conn.execute(
                 "SELECT row_json FROM offlocale_snapshots WHERE kind='rank' ORDER BY checked_at DESC"
                 ).fetchone()[0])
@@ -2001,6 +2160,36 @@ def _check_keyword_locale() -> None:
             # 7. 옮긴 표도 사이트에 딸린 표다 — 원격 병합이 함께 나른다
             import remote
             assert "offlocale_snapshots" in remote._plan(conn)[0]
+
+            # 9. 나중에 나라 데이터가 생기면 — 글자로 정했던(script) 것만 다시 판정한다.
+            #    manual 은 안 덮고, 동률은 글자 그대로, 이미 나라로 정한 것도 안 건드린다.
+            conn.execute("INSERT INTO projects(name,domain,locale) VALUES('nt','nt.com','ko-KR')")
+            npid = get_project(conn, "nt")["id"]
+            add_keyword_candidates(conn, npid, [("nootio", None, "gsc"), ("i noti", None, "gsc"),
+                                                ("noti blog", None, "gsc")])
+
+            def nt():
+                return {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
+                    "SELECT keyword, locale, locale_src FROM keywords WHERE project_id=?", (npid,))}
+            assert set(nt().values()) == {("en-US", "script")}, nt()
+            conn.execute("UPDATE keywords SET locale='en-GB', locale_src='manual' "
+                         "WHERE project_id=? AND keyword='i noti'", (npid,))
+            nk = {r["keyword"]: r["id"] for r in conn.execute(
+                "SELECT id, keyword FROM keywords WHERE project_id=?", (npid,))}
+            write_rank_snapshot(conn, nk["nootio"], 4, None, checked_at="2026-09-02T00:00:00Z")
+            write_gsc_breakdown(conn, npid, "2026-09-10", 28, "country", [
+                ("kor", "nootio", 0, 5, 0, 3.0), ("usa", "nootio", 0, 2, 0, 9.0),
+                ("kor", "i noti", 0, 7, 0, 2.0),
+                ("kor", "noti blog", 0, 3, 0, 5.0), ("usa", "noti blog", 0, 3, 0, 5.0)])
+            assert nt() == {"nootio": ("ko-KR", "gsc_country"), "i noti": ("en-GB", "manual"),
+                            "noti blog": ("en-US", "script")}, nt()
+            assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                                (nk["nootio"],)).fetchone()[0] == 0, "영어로 잰 순위가 비교에 남았다"
+            assert conn.execute("SELECT locale FROM offlocale_snapshots WHERE keyword_id=?",
+                                (nk["nootio"],)).fetchone()[0] == "en-US"
+            write_gsc_breakdown(conn, npid, "2026-09-11", 28, "country",
+                                [("usa", "nootio", 0, 50, 0, 3.0)])
+            assert nt()["nootio"] == ("ko-KR", "gsc_country"), "script 가 아닌 것을 다시 판정했다"
         finally:
             if conn is not None:
                 conn.close()        # 열린 채로 실패하면 윈도우가 임시 폴더를 못 지워 원래 오류를 가린다
