@@ -1299,14 +1299,20 @@ SM.host = {
      사이트 폴더에서 바로 연다(호스팅은 브라우저라 못 띄운다 — dash.html 이 안내로
      갈아 끼운다). 도구 라벨·설치 여부는 window.SETUP(=/api/doctor 응답)에서 읽는다:
      목록의 정본은 doctor.TOOLS 한 벌이고 화면은 사본을 안 갖는다.
-     아직 고르기 전이면 버튼 대신 무엇이 없는지와 어디서 고르는지를 말한다. */
-  oppBtn(id) {
+     아직 고르기 전이면 버튼 대신 무엇이 없는지와 어디서 고르는지를 말한다.
+     받는 것은 기회 한 건(o)이다 — [개요]의 묶인 줄(o.group, 서버 scoring.group_opportunities)
+     이면 창은 대표 하나로 열고 '작업 시작'은 묶인 id 전부에 찍어야 한다(상태 버튼
+     oppIdsTo→setOpps 와 같은 범위). 대표 id 만 넘기면 새로고침 뒤 그 줄이 둘로 갈라진다. */
+  oppBtn(o) {
     const s = window.SETUP || {}, t = (s.tools || []).find(x => x.id === s.tool);
     if (!t || !t.installed)
       return `<span class="badge warn">도구 없음</span>` +
         `<button class="go sm ghost" onclick="SM.touched=true;SM.show('settings')"` +
         `>설정에서 고르기</button>`;
-    return `<button class="go sm" onclick="runTool(${id})">${esc(t.label)} 로 열기</button>`;
+    const ids = o.group ? o.group.ids : [o.id];
+    return `<button class="go sm" onclick="runTool(${o.id}, [${ids.join(",")}])"` +
+      (ids.length > 1 ? ` title="묶인 검색어 ${ids.length}개를 함께 작업 시작으로 둡니다"` : "") +
+      `>${esc(t.label)} 로 열기</button>`;
   },
 };
 
@@ -1891,7 +1897,7 @@ window.oppActs = o => {
   // 접힌 줄에는 상태를 바꾸는 다음 하나 + 콘텐츠 작성(호스팅 전용)뿐이다.
   // 작성은 상태 바꾸기와 다른 축이라 여기 남는다 — 이 기회로 실제로 할 일이다.
   const n = OPP_NEXT[o.status];
-  const write = SM.host.oppBtn ? SM.host.oppBtn(o.id) : "";
+  const write = SM.host.oppBtn ? SM.host.oppBtn(o) : "";
   if (!n && !write) return "";
   return `<div class="acts" onclick="event.stopPropagation()"` +
     `>${n ? oppBtn(o, n[0]) : ""}${write}</div>`;
@@ -1911,9 +1917,12 @@ window.oppPanel = o => o ? oppDetail(o) : "";
 /* 기회 하나를 이 PC 의 개발 도구로 연다. 여기서 하는 일은 누른 것을 서버에 넘기고
    무엇으로 열렸는지 말하는 것뿐이다 — 어느 도구·어느 터미널·어느 폴더인지는 전부
    서버(run_tool)가 정한다. 화면이 다시 판정하면 같은 규칙이 두 벌이 된다.
-   터미널 이름도 payload 에서 읽는다(정본은 doctor.TERMINALS). */
-async function runTool(id) {
-  const [ok, r] = await post("/api/setup/run-tool", {project: $("proj").value, id});
+   터미널 이름도 payload 에서 읽는다(정본은 doctor.TERMINALS).
+   ids 는 묶인 줄의 id 전부(SM.host.oppBtn 이 싣는다) — 서버가 그 사이트 것만 골라
+   '작업 시작'으로 둔다. 본문 꼴 {project, id, ids} 은 run_tool 이 정본이다. */
+async function runTool(id, ids) {
+  const [ok, r] = await post("/api/setup/run-tool",
+                             {project: $("proj").value, id, ids: ids || [id]});
   if (!ok || !r.ok) return toast((r && r.error) ||
     "열지 못했습니다. [설정]에서 도구를 확인한 뒤 다시 눌러 주세요.", "bad");
   const t = ((window.SETUP || {}).terminals || []).find(x => x.id === r.terminal);

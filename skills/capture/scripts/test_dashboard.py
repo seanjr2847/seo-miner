@@ -442,6 +442,54 @@ def test_aio_opportunity_play_follows_our_rank_and_rows_carry_citations():
     conn.close()
 
 
+def test_aio_band_falls_back_to_rank_row_then_gsc():
+    """최신 AI 요약 회차에 없는 옛 기회의 갈래 — 요청문 근거(brief._ev_aio)가 순위를
+    읽는 순서대로 물러선다: 순위 행(실측 5위 → page1, 안 보임 → beyond) → GSC 평균
+    순위(노출 가중 11위 → beyond) → 아무것도 없으면 None. 실제로 theotherskin #173 이
+    실측 5위(근거표)인데 처방은 "1페이지 밖"이었다 — 갈래와 근거가 다른 자리를 읽었다."""
+    conn, pid = _brain("aio_fb")
+    kid = {}
+    for kw, pos in (("순위만", 5), ("안보임", None)):
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
+                               " RETURNING id", (pid, kw)).fetchone()[0]
+        # aio_present=0: 최신 회차의 AI 요약 빠짐(aio_gaps)에는 없고 순위 행에만 있다
+        db.write_rank_snapshot(conn, kid[kw], pos, "https://aio_fb.example/p" if pos else None,
+                               aio_present=0, checked_at=D + "T01:00:00Z")
+    # GSC 만 있는 검색어 — 지면 둘, 노출 가중이면 11위(beyond), 단순 평균이면 7위(page1)
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+        "clicks,impressions,ctr,position) VALUES(?,?,28,?,?,1,?,0.02,?)",
+        [(pid, D, "GSC만", "https://aio_fb.example/g1", 90, 12.0),
+         (pid, D, "GSC만", "https://aio_fb.example/g2", 10, 2.0)])
+    targets = ("순위만", "안보임", "GSC만", "모름")
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "aio_exposure", t, 50, "r", "new", D) for t in targets])
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in targets], "work")
+
+    ranks = dashboard._axis_rank(conn, pid)["ranks"]
+    by = {o["target"]: o for o in dashboard._axis_opps(conn, pid, None, [], [], ranks=ranks)["opps"]}
+    assert by["순위만"]["band"] == "page1", by["순위만"]["band"]
+    assert by["순위만"]["play"]["what"].startswith("이미 1페이지 안인데"), by["순위만"]["play"]["what"]
+    assert by["안보임"]["band"] == "beyond", by["안보임"]["band"]
+    assert by["GSC만"]["band"] == "beyond", by["GSC만"]["band"]
+    assert by["GSC만"]["play"]["what"].startswith("구글이 이 검색어에")
+    assert by["모름"]["band"] is None and "순위가 먼저" in by["모름"]["play"]["what"]
+    # 순위 행을 안 넘기면 그 갈래는 못 난다(GSC 도 없다) — gather 가 ranks_all 을 넘겨야 한다
+    no_ranks = {o["target"]: o["band"] for o in dashboard._axis_opps(conn, pid, None, [], [])["opps"]}
+    assert no_ranks["순위만"] is None, no_ranks
+
+    # gather 는 자르기 전 순위 행(ranks_all)을 넘긴다 — 갈래와 요청문 근거가 같은 5위를 말한다
+    d = dashboard.gather(conn, db.get_project(conn, "aio_fb"))
+    o = next(o for o in d["opps"] if o["target"] == "순위만")
+    assert o["band"] == "page1", o["band"]
+    assert "5위" in o["brief"]["body"], o["brief"]["body"]
+    assert next(o for o in d["opps"] if o["target"] == "GSC만")["band"] == "beyond"
+    conn.close()
+
+
 # ── 검색량이 점수에 닿는가 ─────────────────────────────────────────────────
 def test_volume_feeds_demand():
     """노출만 보면 아직 안 뜨는 검색어는 영원히 0점이다 — 검색량이 그 자리를 채운다."""
@@ -848,6 +896,13 @@ def test_run_tool_builds_command_and_writes_brief():
         body = Path(r["file"]).read_text("utf-8")
         assert "createdb.py" in body and f"done rt {oid}" in body, body[-400:]
         assert "## " in body, "요청문 본문이 안 들어갔다"
+        # 파일은 화면의 복사 버튼(briefText)과 같은 전문이다 — 본문 뒤에 꼴 꼬리(답의
+        # 형식·규칙, d.brief.tails[shape])까지. 본문만 쓰면 도구가 형식 없이 시작한다.
+        d = dashboard.payload("rt")
+        o = next(o for o in d["opps"] if o["id"] == oid)
+        assert d["brief"]["tails"][o["brief"]["shape"]] in body, "꼴 꼬리가 파일에 없다"
+        assert "## 답의 형식" in body and "## 규칙" in body, body[-600:]
+        assert r["ids"] == [oid], r["ids"]      # ids 를 안 보내면 대표 하나뿐
 
         # 폴더를 적어 두면 거기서 연다
         d = tempfile.mkdtemp(prefix="seo-miner-rt-")
@@ -885,6 +940,40 @@ def test_run_tool_opens_terminal_and_acks():
         assert r["ok"] and r["terminal"] == "system" and r["fallback"] == "system", r
         assert seen["terminal"] == "orca" and str(oid) in seen["title"], seen
         assert _opp_status(oid) == "acked", "열었는데 작업 시작으로 안 바뀌었다"
+    finally:
+        _sh.which, dashboard._open_terminal = orig_which, orig_open
+        os.environ.pop("SEOMINER_TOOL", None)
+        os.environ.pop("SEOMINER_TERMINAL", None)
+
+
+def test_run_tool_acks_the_whole_group():
+    """[개요]의 묶인 줄(opp_groups)에서 열면 창·파일은 대표 하나지만 '작업 시작'은 묶인
+    id 전부다 — 상태 버튼(setOpps)과 같은 범위. 아니면 새로고침 뒤 한 줄이 둘로 갈라진다.
+    그 사이트 것이 아닌 id·못 읽는 값은 조용히 버리고 열기는 성공한다."""
+    import shutil as _sh
+    a = _opp_fixture("rt3", "q3")
+    conn = db.connect()
+    pid = db.get_project(conn, "rt3")["id"]
+    db.upsert_opportunities(conn, pid, None,
+                            [{"kind": "striking_distance", "target": "q3 변형", "score": 20}])
+    db.set_verdicts(conn, pid, [scoring.norm("q3 변형")], "work")
+    b = conn.execute("SELECT id FROM opportunities WHERE project_id=? AND target='q3 변형'",
+                     (pid,)).fetchone()[0]
+    conn.close()
+    other = _opp_fixture("rt3b", "q3b")          # 남의 사이트 기회 — 건드리면 안 된다
+    orig_which, orig_open = _sh.which, dashboard._open_terminal
+    os.environ["SEOMINER_TOOL"] = "claude"
+    os.environ["SEOMINER_TERMINAL"] = "system"
+    try:
+        _sh.which = lambda c: "/bin/" + c
+        dashboard._open_terminal = lambda argv, cwd, terminal, title: {"terminal": terminal}
+        r = dashboard.run_tool({"project": "rt3", "id": a, "ids": [b, a, other, "x", None]})
+        assert r["ok"] and not r.get("status_failed"), r
+        assert r["ids"] == [a, b], r["ids"]
+        assert r["file"].endswith(f"opp-{a}.md"), r["file"]
+        assert _opp_status(a) == "acked" and _opp_status(b) == "acked", \
+            "묶인 id 가 전부 작업 시작으로 안 바뀌었다"
+        assert _opp_status(other) == "new", "남의 사이트 기회를 바꿨다"
     finally:
         _sh.which, dashboard._open_terminal = orig_which, orig_open
         os.environ.pop("SEOMINER_TOOL", None)

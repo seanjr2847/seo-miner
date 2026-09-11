@@ -1115,11 +1115,29 @@ def _site_probe(conn, crawl: dict, urls) -> dict:
     return out
 
 
+def _aio_band_of(target: str, gap_band: dict, rank_pos: dict, gsc_pos: dict) -> str | None:
+    """구글 AI 요약 기회의 갈래 — 요청문 근거(brief._ev_aio)가 순위를 읽는 순서 그대로.
+
+    (1) 최신 회차의 AI 요약 빠짐 행(aio_gaps) → (2) 그 검색어의 최신 순위 행(ranks —
+    순위 없음(None)도 "안 보였다"는 측정이라 beyond) → (3) GSC 평균 순위(query_pages).
+    셋 다 없을 때만 None — kind_play 가 beyond 로 물러선다. 판정은 scoring.aio_band
+    하나다. 예전엔 (1)뿐이라 최신 회차에 없는 옛 기회가 전부 "1페이지 밖"이 됐다 —
+    근거표는 실측 5위라는데 처방은 순위가 먼저라고 말했다.
+    """
+    if target in gap_band:
+        return gap_band[target]
+    if target in rank_pos:
+        return scoring.aio_band(rank_pos[target])
+    if target in gsc_pos:
+        return scoring.aio_band(gsc_pos[target])
+    return None
+
+
 def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict],
-               ai_rows: list[dict] = ()) -> dict:
-    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)·ai_rows(AI 축의 질문 행)가 낸
-    원본 행을 대상 문자열로 한 번만 짝지어 라벨·처방·방어여부·GA4 보정을 입힌다.
-    화면은 그리기만 한다.
+               ai_rows: list[dict] = (), ranks: list[dict] = ()) -> dict:
+    """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)·ai_rows(AI 축의 질문 행)·ranks
+    (순위 축의 행, 화면용 30개로 자르기 전)가 낸 원본 행을 대상 문자열로 한 번만
+    짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
     """
     opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
 
@@ -1155,10 +1173,23 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     sd_band = {r["query"]: r["band"] for r in striking}
     gap_kind = {r["keyword"].strip().lower(): r["kind"] for r in kw_gap}
     # 구글 AI 요약 빠짐도 우리 순위로 처방이 갈린다(scoring._AIO_PLAY) — 원본 행은 그
-    # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 band None 이고,
-    # kind_play 가 "1페이지 밖"으로 물러선다.
+    # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 순위 행·GSC 순위로
+    # 물러선다(_aio_band_of) — 요청문 근거가 읽는 자리와 같다.
     aio_band = {r["keyword"]: scoring.aio_band(r["position"])
                 for r in scoring.aio_gaps(conn, pid)}
+    rank_pos = {r["keyword"]: r.get("pos") for r in ranks}
+    # GSC 는 최신 회차에도 순위 행에도 없는 대상만 묻는다 — query_pages 와 같은
+    # 함수·같은 스냅샷(at)이라 근거표의 페이지 순위와 어긋나지 않는다.
+    asked = [o["target"] for o in opps if o["kind"] == "aio_exposure"
+             and o["target"] not in aio_band and o["target"] not in rank_pos]
+    gsc_pos: dict[str, float] = {}
+    if asked:
+        for qq, prows in scoring.pages_by_query(conn, pid, asked, at=at).items():
+            rows = [p for p in prows if p.get("position") is not None]
+            imp = sum(p.get("impressions") or 0 for p in rows)
+            if rows:            # 노출 가중 평균 — GSC 가 검색어 순위를 내는 방식과 같다
+                gsc_pos[qq] = (sum(p["position"] * (p.get("impressions") or 0) for p in rows) / imp
+                               if imp else sum(p["position"] for p in rows) / len(rows))
     # 챗봇 인용 공백은 대신 인용된 곳의 갈래(scoring.ai_tally 의 lean)로 처방이 갈린다 —
     # 요청문 근거표와 같은 행에서 읽어야 표와 처방이 같은 말을 한다. 기회를 세운 행
     # (ai_gap_rows)이 먼저고, 거기 없는 질문만 최신 회차 행으로 물러선다(뒤가 이긴다).
@@ -1166,7 +1197,8 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     for o in opps:
         o["is_defensive"] = scoring.is_defensive(o["kind"])
         band = (sd_band.get(o["target"]) if o["kind"] == "striking_distance"
-                else aio_band.get(o["target"]) if o["kind"] == "aio_exposure" else None)
+                else _aio_band_of(o["target"], aio_band, rank_pos, gsc_pos)
+                if o["kind"] == "aio_exposure" else None)
         gk = (gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap"
               else ai_lean.get(str(o["target"])) if o["kind"] == "ai_citation_gap" else None)
         o["label"] = scoring.kind_label(o["kind"], band=band)
@@ -1264,7 +1296,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     ai = _axis_ai(conn, pid)
     comp = _axis_competitors(conn, pid)
     opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
-                        ai["ai_by_prompt"] + ai["ai_gap_rows"])
+                        ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all)
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
     page_perf = _axis_page_perf(conn, pid)
@@ -1771,6 +1803,12 @@ def _system_terminal(argv: list[str], line: str, cwd: Path) -> None:
 def run_tool(body: dict) -> dict:
     """POST /api/setup/run-tool 본체 — 기회 하나를 도구로 연다.
 
+    본문은 {project, id, ids?, dry_run?}. ids 는 [개요]의 묶인 줄(opp_groups)이 싣는
+    묶음 전체다 — 창과 파일은 대표(id) 하나로 열고, '작업 시작'은 묶인 id 전부에
+    찍는다. 상태 버튼(setOpps)은 이미 그렇게 하는데 열기만 대표 하나를 바꾸면 그
+    줄이 새로고침 뒤 두 줄로 갈라진다. 그 사이트 것이 아닌 id 는 조용히 버린다 —
+    열기를 그것 때문에 실패시키지 않는다.
+
     dry_run 이면 창도 안 띄우고 상태도 안 바꾸고 조립한 것만 돌려준다(검사용).
     실패는 전부 {"ok": False, "error": …} 이고 그때는 상태를 건드리지 않는다 —
     "작업 시작"이라고 표시해 놓고 아무 창도 안 뜨는 것이 제일 나쁜 결과다.
@@ -1783,6 +1821,12 @@ def run_tool(body: dict) -> dict:
         opp_id = 0
     if not project or not opp_id:
         return {"ok": False, "error": "어느 사이트의 어느 기회인지 못 받았습니다."}
+    extra: list[int] = []
+    for x in (body.get("ids") if isinstance(body.get("ids"), (list, tuple)) else ()):
+        try:
+            extra.append(int(x))
+        except (TypeError, ValueError):
+            pass
 
     use = doctor.usage()
     tool = doctor.tool_of(use.get("tool") or "")
@@ -1802,11 +1846,24 @@ def run_tool(body: dict) -> dict:
         return {"ok": False, "error": str(e)}
     except Exception as e:                      # 원격이 죽었거나 토큰이 끊겼거나
         return {"ok": False, "error": f"기회를 불러오지 못했습니다: {e}"}
-    opp = next((o for o in (data.get("opps") or [])
-                if str(o.get("id")) == str(opp_id)), None)
+    opps = data.get("opps") or []
+    opp = next((o for o in opps if str(o.get("id")) == str(opp_id)), None)
     if not opp:
         return {"ok": False, "error": "그 기회를 못 찾았습니다. [새로고침] 뒤 다시 눌러 주세요."}
-    text = ((opp.get("brief") or {}).get("body") or opp.get("reasoning") or "").strip()
+    # 묶인 id 는 이 사이트의 기회 목록에 있는 것만 — 남의 번호·낡은 번호는 버린다.
+    known = {str(o.get("id")) for o in opps}
+    ids = [opp_id] + [i for i in dict.fromkeys(extra) if i != opp_id and str(i) in known]
+
+    # 요청문 전문 = 본문 + 꼴 꼬리(답의 형식·규칙). 화면의 복사 버튼(briefText)과
+    # brief.text() 가 같은 글을 만든다 — 꼬리는 사이트마다 한 벌(data.brief.tails)이라
+    # 기회 안(o.brief)에는 없다. 본문만 쓰면 도구가 형식·규칙 없이 시작한다(그랬다).
+    b = opp.get("brief") or {}
+    if b.get("body"):
+        tails = (data.get("brief") or {}).get("tails") or {}
+        text = b["body"] + "\n" + (tails.get(b.get("shape")) or "")
+    else:
+        text = opp.get("reasoning") or ""
+    text = text.strip()
     if not text:
         return {"ok": False, "error": "이 기회의 요청문이 아직 없습니다."}
 
@@ -1825,25 +1882,28 @@ def run_tool(body: dict) -> dict:
     argv = _tool_argv(tool, f"이 파일의 요청문대로 진행해 주세요: {md}")
     terminal = use.get("terminal") or "system"
     out = {"ok": True, "cwd": str(cwd), "file": str(md), "argv": argv,
-           "terminal": terminal}
+           "terminal": terminal, "ids": ids}
     if body.get("dry_run"):
         return out
 
     out.update(_open_terminal(argv, cwd, terminal, f"seo-miner · {project} #{opp_id}"))
-    # 창이 실제로 뜬 뒤에 '작업 시작'으로 바꾼다. 기록은 서버 한 곳에 남아 두 화면이
-    # 같은 표를 본다 — 원격 사이트면 호스팅의 /api/opp 로 보낸다.
+    # 창이 실제로 뜬 뒤에 '작업 시작'으로 바꾼다 — 묶인 id 전부. 기록은 서버 한 곳에
+    # 남아 두 화면이 같은 표를 본다 — 원격 사이트면 호스팅의 /api/opp 로 보낸다
+    # (그 창구는 id 하나씩 받는다 — setOpps 와 같이 하나씩 보낸다).
+    conn = None if remote.owns(project) else db.connect()
     try:
-        if remote.owns(project):
-            remote.api("POST", "/api/opp",
-                       json={"project": project, "id": opp_id, "status": "acked"})
-        else:
-            conn = db.connect()
+        for oid in ids:
             try:
-                db.set_opportunity_status(conn, opp_id, "acked")
-            finally:
-                conn.close()
-    except Exception:       # 창은 이미 떴다 — 상태 하나 때문에 실패로 되돌리지 않는다
-        out["status_failed"] = True
+                if conn is None:
+                    remote.api("POST", "/api/opp",
+                               json={"project": project, "id": oid, "status": "acked"})
+                else:
+                    db.set_opportunity_status(conn, oid, "acked")
+            except Exception:   # 창은 이미 떴다 — 상태 하나 때문에 실패로 되돌리지 않는다
+                out["status_failed"] = True
+    finally:
+        if conn is not None:
+            conn.close()
     return out
 
 
