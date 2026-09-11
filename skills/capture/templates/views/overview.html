@@ -18,6 +18,10 @@
 .legend .sw-clk { color:var(--patina); }
 .legend .sw-imp { color:var(--slate); }
 .opp-more { margin-top:14px; }
+/* 묶인 줄의 나머지 검색어 — 표제 밑 한 줄. 접힌 카드에서는 넘치면 자른다. */
+.opp .vars { font-size:12.5px; color:var(--slate); margin:-2px 0 4px; }
+.opp:not([open]) .vars { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.opp > summary > div { min-width:0; }     /* 안 그러면 잘라야 할 한 줄이 격자 칸을 민다 */
 /* 도구줄이 섹션 머리 오른쪽에 설 때는 한 줄로 선다 — 두 줄이 되면 격자가
    그만큼 키를 키워서 왼쪽의 제목이 도구줄보다 아래로 내려앉는다. 좁아지면
    찾기 칸이 먼저 줄고, 640px 밑에서는 셸이 도구줄을 제목 아래로 내린다. */
@@ -176,18 +180,35 @@ function kpiSpark(vals, dates, color) {
 // 그래서 셸에 부품이 늘면 여기도 손대야 한다 — GA4 배지가 실제로 그랬다.
 // id 는 페이로드에 이미 있다 — data- 로 내보낸다(호스팅 애드온이 onclick 문자열을
 // 정규식으로 되짚던 자리다).
+//
+// 묶인 줄(o.group — 같은 지면의 변형 검색어)은 대표 검색어를 표제로 세우고 나머지를
+// 그 밑에 한 줄로 흘린다. 전부와 "왜 한 줄인지"는 펼침 패널(셸 oppGroup)이 말한다.
+// data-ids 는 묶인 id 전부다 — [기록]이 변형 쪽 id 로 이 카드를 찾아온다.
+const OV_VARS_SHOWN = 4;
+function OV_vars(o) {
+  const g = o.group;
+  if (!g || g.ids.length < 2) return "";
+  const rest = g.variants.slice(1).map(v => v.target);
+  const more = rest.length - OV_VARS_SHOWN;
+  return `<div class="vars">함께: ${rest.slice(0, OV_VARS_SHOWN).map(esc).join(" · ")}${
+    more > 0 ? ` 외 ${more}개` : ""}</div>`;
+}
 function oppRow(o) {
-  return `<details class="opp" data-opp="${o.id}">
+  const n = o.group ? o.group.ids.length : 1;
+  return `<details class="opp" data-opp="${o.id}" data-ids="${(o.group ? o.group.ids : [o.id]).join(" ")}">
     <summary>
       ${oppScore(o)}
       <div>
         <div class="oh">
           <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
             >${esc(o.label || o.kind)}</span>
+          ${n > 1 ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다. 펼치면 전부와 묶은 이유가 나옵니다."
+            >검색어 ${n}개</span>` : ""}
           ${window.gaBadge(o)}
           <span class="dt">${esc(o.created || "")}</span>
         </div>
         <div class="target">${esc(o.target)}</div>
+        ${OV_vars(o)}
         ${oppMeter(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
         ${oppActs(o)}
@@ -203,6 +224,9 @@ function oppRow(o) {
 // 읽는다(뷰는 셸 스크립트보다 위에 꽂혀서 아직 선언 전이다).
 let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = 8;
 // 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
+// open 은 "이 둘이면"이다("done 이 아니면"이 아니다) — 저절로 풀린 기회처럼 새 상태가
+// 생겨도 [아직 안 함]으로 새지 않는다. 서버의 scoring.OPEN_STATUSES 와 같은 한 벌이다
+// (test_seams 23).
 const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
   closed:["done", "dismissed"]};
 const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
@@ -218,7 +242,22 @@ function oppFiltered() {
   const q = OPP_Q.trim().toLowerCase();
   return oppByStatus().filter(o =>
     (!KIND_FILTER || o.kind === KIND_FILTER) &&
-    (!q || `${o.target} ${o.reasoning || ""}`.toLowerCase().includes(q)));
+    (!q || `${o.target} ${o.reasoning || ""} ${OV_varText(o)}`.toLowerCase().includes(q)));
+}
+// 묶인 줄은 변형 검색어로도 찾힌다 — 대표가 아닌 검색어를 쳤는데 안 나오면 없는 줄 안다.
+const OV_varText = o => o.group ? o.group.variants.map(v => v.target).join(" ") : "";
+
+// 서버가 접어 보낸 줄(d.opp_groups)을 카드 객체로 편다. 줄 하나 = 대표 기회 + 묶음.
+// 대표 객체는 복사해서 점수·상태만 묶음 것으로 갈아 끼운다 — 원본(d.opps)은 다른
+// 화면이 검색어 하나로 찾아 쓰는 것(oppOf)이라 건드리지 않는다.
+// 옛 박제본에는 opp_groups 가 없다 — 그때처럼 기회 하나가 한 줄이다.
+function OV_lines(d) {
+  const byId = {};
+  for (const o of d.opps || []) byId[o.id] = o;
+  if (!d.opp_groups) return d.opps || [];
+  return d.opp_groups.filter(g => byId[g.lead]).map(g => g.ids.length > 1
+    ? Object.assign({}, byId[g.lead], {score: g.score, status: g.status, group: g})
+    : byId[g.lead]);
 }
 function oppFind(v) { OPP_Q = v; OPP_N = 8; oppList(); }
 function oppStatus(v) { OPP_ST = v; OPP_N = 8; oppList(); }
@@ -310,9 +349,10 @@ function oppList() {
 // 트리아지는 화면 밖에서도 이어진다 — 지금 거른 목록 그대로 표로 내보낸다.
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다 — 여기는 무엇을 담을지만 정한다.
 function oppCsv() {
-  csv("기회", [["점수", "종류", "상태", "대상", "근거", "생성일"]].concat(
+  csv("기회", [["점수", "종류", "상태", "대상", "함께 묶인 검색어", "근거", "생성일"]].concat(
     oppFiltered().map(o => [o.score ?? "", o.label || o.kind,
       window.OPP_LABEL[o.status] || o.status, o.target,
+      o.group ? o.group.variants.slice(1).map(v => v.target).join(" · ") : "",
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }
 
@@ -363,7 +403,9 @@ function OV_next(d) {
   // 한 화면에 둘이다. 띠의 주요 행동은 [기회 열기] 하나다.
   else if (top) {
     const sc = Number.isFinite(top.score) ? `, ${Math.round(top.score)}점` : "";
-    html = `<p>가장 큰 기회는 <b>${esc(top.target)}</b>입니다.
+    const bunch = top.group && top.group.ids.length > 1
+      ? ` (같은 지면의 검색어 ${top.group.ids.length}개를 묶은 줄)` : "";
+    html = `<p>가장 큰 기회는 <b>${esc(top.target)}</b>${bunch}입니다.
       ${esc(top.label || top.kind)}${sc}으로 맨 위입니다.</p>
       <div class="acts"><button class="go" onclick="OV_openTop()">기회 열기</button></div>`;
   } else if (filtered)
@@ -404,7 +446,12 @@ VIEW("overview", function (d) {
     ["추적 검색어", num(d.kw_active), "", "", kwHint],
     // 이 화면에서 이 낱말이 처음 나오는 자리다 — 여기만 「개선 기회」로 쓰고
     // 아래 섹션 제목은 「기회」로 받는다(용어표: 처음 한 번만 「개선 기회」).
-    ["개선 기회", num(d.opps_total), "", "", "아직 처리 안 한 것만"],
+    // 이 수는 기회(검색어) 개수다. 목록은 같은 지면을 한 줄로 접으므로 줄 수가 더
+    // 적다 — 그 차이를 여기서 말하지 않으면 "240건인데 목록은 60줄"이 고장으로 읽힌다.
+    // 호스팅은 이 띠에 칸이 둘 더 붙어 칸이 좁다 — 한 구절로 끝낸다.
+    ["개선 기회", num(d.opps_total), "", "", "아직 처리 안 한 것만" + ((gs, n) =>
+      gs.some(g => g.ids.length > 1) ? ` · 목록에서는 ${num(n)}줄` : "")(
+      d.opp_groups || [], (d.opp_groups || []).filter(g => g.status === "new").length)],
   ].map(([l, v, dd, sp, b]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${b ? `<div class="b">${b}</div>` : ""}${sp}</div>`).join("");
 
@@ -435,7 +482,8 @@ VIEW("overview", function (d) {
     + `<span class="hint" tabindex="0" data-tip="${esc(tip)}" title="${esc(tip)}"
         aria-label="${esc(tip)}">i</span>`;
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
-  OPPS = d.opps || [];
+  // 같은 지면의 변형 검색어는 서버가 한 줄로 접어 보낸다(d.opp_groups).
+  OPPS = OV_lines(d);
   // 첫 적재에서만 기본값을 정한다 — 사람이 고른 필터를 재적재로 되돌리지 않는다.
   // 완료·제외는 끝난 일이라 목록에 안 낀다(윗줄 "아직 안 한 기회 N건"과 같은 몫).
   // 박제본은 그때의 트리아지 기록 자체가 볼거리라 전부 남긴다.

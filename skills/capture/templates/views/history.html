@@ -431,7 +431,8 @@ function HS_toOpp(el) {
   const t = el.dataset.t || "";
   const box = document.querySelector("#opps input[type=search]");
   if (box && window.oppFind) { box.value = t; oppFind(t); }
-  const card = document.querySelector(`#opplist [data-opp="${+el.dataset.o}"]`);
+  // 같은 지면의 변형은 대표 줄 하나에 묶여 있다 — 카드의 data-ids 가 묶인 id 전부다.
+  const card = document.querySelector(`#opplist [data-ids~="${+el.dataset.o}"]`);
   if (!card) return;                    // 지운 기회·옛 박제본이면 카드가 없다 — 개요까지만
   card.open = true;
   card.scrollIntoView({behavior: "smooth", block: "center"});

@@ -2554,6 +2554,272 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
         conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
 
 
+# ── 기회 묶음 — 같은 답을 내야 하는 지면끼리 목록 한 줄로 ─────────────────────
+# DB 에는 여전히 검색어마다 기회 하나다(사실). 묶음은 **읽을 때만** 한다(표시·우선순위).
+# 기회를 저절로 닫는 쪽(검색어 단위)과 부딪히지 않고, 틀리면 이 함수만 되돌리면 된다.
+#
+# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(직답 블록 + 구조화 데이터)은
+# 페이지에 한 번 하는 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가
+# 따로 줄을 차지할 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지
+# 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
+# device_gap 은 근거 문장이 **그 검색어의** 순위·CTR·Δ 를 말해서 합치면 어느 변형이
+# 처지는지가 사라지고, cannibalization 은 정의상 한 검색어에 페이지가 여럿이라 "같은
+# 페이지"라는 열쇠가 성립하지 않으며, 대상이 문장(ai_citation_gap)·URL·도메인·클러스터인
+# 종류는 변형이라는 개념이 없다. 늘리려면 이 튜플에 넣는다 — 규칙은 종류를 안 가린다.
+GROUP_KINDS = ("aio_exposure",)
+# 열린 기회 — 이 둘만 묶는다. 닫힌 것(done·dismissed, 그리고 저절로 풀린 resolved 처럼
+# 뒤에 생기는 상태)은 기록이라 한 줄씩 남는다. 거르는 쪽이 "done 이 아니면"이 아니라
+# "이 둘이면"이라서 새 상태가 생겨도 열린 목록으로 새지 않는다. 화면의 [아직 안 함]
+# 거르개(overview.html ST_GROUP.open)가 같은 한 벌이다(test_seams 23).
+OPEN_STATUSES = ("new", "acked")
+# 검색 결과 겹침(열쇠 ②): 몇 개가 같아야 같은 지면으로 보나. 보는 것은 수집기가
+# 남긴 상위 전부다 — serp_results 는 상위 db.SERP_KEEP(=5)개만 남긴다. 그 다섯 중
+# 셋 이상이 같은 주소면 구글이 같은 문서들로 답하는 질문으로 읽는다. 둘로 내리면
+# 주제만 비슷한 검색어(같은 대형 사이트 두어 곳이 늘 끼는 분야)가 딸려 온다.
+SERP_MIN_SHARED = 3
+# 열쇠가 무엇이었나 — 화면이 "왜 한 줄이냐"를 말할 때 이 값을 읽는다.
+#   page    : 우리 페이지가 같다 (GSC 로 그 검색어에 노출된 페이지, 없으면 검색 순위에서 잡힌 우리 주소)
+#   serp    : 우리 페이지는 없지만 검색 결과 상위가 크게 겹친다
+#   cluster : 둘 다 모르고, 키워드 클러스터가 같다
+#   norm    : 띄어쓰기·대소문자만 다른 같은 검색어뿐이다
+#   alone   : 묶을 짝이 없다
+GROUP_VIA = ("page", "serp", "cluster", "norm", "alone")
+
+
+def _chunks(xs: list, n: int = 400):
+    for i in range(0, len(xs), n):
+        yield xs[i:i + n]
+
+
+def _surface_facts(conn: sqlite3.Connection, project_id: int,
+                   targets: list[str]) -> dict[str, dict]:
+    """검색어 → 지면을 가늠할 사실들. 없는 사실은 None/빈 집합이다(추정하지 않는다).
+
+    page·page_src : 우리 페이지 열쇠(url_key). GSC 에서 그 검색어로 노출이 가장 큰
+                    페이지를 먼저 보고, 없으면 순위 조회(rank_snapshots.url)가 잡은 우리 주소.
+    serp          : 최신 조회의 상위 주소(url_key) 집합 — 수집기가 남긴 만큼(db.SERP_KEEP).
+                    AI 요약 안의 인용 도메인은 수집기가 우리 인용 여부(aio_cited)만 남기고
+                    버려서 여기 없다.
+    cluster·volume: keywords 표. 검색어와 norm 으로 짝짓는다.
+    """
+    out = {t: {"page": None, "page_url": None, "page_src": None, "serp": frozenset(),
+               "cluster": None, "volume": 0} for t in targets}
+    by_norm: dict[str, list[str]] = {}
+    for t in targets:
+        by_norm.setdefault(norm(t), []).append(t)
+    # 검색어 → keywords 행. 글자가 똑같은 행이 있으면 그것, 없으면 norm 이 같은 첫 행.
+    chosen: dict[str, tuple[bool, sqlite3.Row]] = {}
+    for r in conn.execute("SELECT id, keyword, cluster, volume FROM keywords"
+                          " WHERE project_id=? ORDER BY id", (project_id,)):
+        for t in by_norm.get(norm(r["keyword"]), ()):
+            exact = r["keyword"].strip() == t
+            if t not in chosen or (exact and not chosen[t][0]):
+                chosen[t] = (exact, r)
+    kid_of: dict[int, list[str]] = {}
+    for t, (_exact, r) in chosen.items():
+        out[t]["cluster"] = (r["cluster"] or "").strip() or None
+        out[t]["volume"] = int(r["volume"] or 0)
+        kid_of.setdefault(r["id"], []).append(t)
+
+    for q, rows in pages_by_query(conn, project_id, targets, top=1).items():
+        if q in out and rows:
+            out[q].update(page=url_key(rows[0]["page"]), page_url=rows[0]["page"], page_src="gsc")
+
+    for ch in _chunks(list(kid_of)):
+        ph = ",".join("?" * len(ch))
+        # 키워드마다 최신 조회 한 벌. url 이 NULL 이면 그 조회에서 우리가 안 잡힌 것이다 —
+        # 그 전 조회의 주소로 물러서지 않는다(지금 없는 페이지를 열쇠로 쓰게 된다).
+        latest: dict[int, str | None] = {}
+        for r in conn.execute(
+                f"""SELECT keyword_id, url FROM rank_snapshots
+                     WHERE keyword_id IN ({ph}) ORDER BY checked_at DESC, id DESC""", ch):
+            latest.setdefault(r["keyword_id"], r["url"])
+        top: dict[int, list[str]] = {}
+        for r in conn.execute(
+                f"""SELECT s.keyword_id, s.url FROM serp_results s
+                     WHERE s.keyword_id IN ({ph}) AND s.checked_at=(
+                           SELECT MAX(checked_at) FROM serp_results x
+                            WHERE x.keyword_id=s.keyword_id)
+                     ORDER BY s.keyword_id, s.position""", ch):
+            if r["url"]:
+                top.setdefault(r["keyword_id"], []).append(url_key(r["url"]))
+        for kid in ch:
+            for t in kid_of[kid]:
+                f = out[t]
+                if f["page_src"] is None and latest.get(kid):
+                    f.update(page=url_key(latest[kid]), page_url=latest[kid], page_src="rank")
+                if top.get(kid):
+                    f["serp"] = frozenset(top[kid])
+    return out
+
+
+def _group_members(members: list[dict], facts: dict[str, dict]) -> list[dict]:
+    """한 종류의 열린 기회들을 지면으로 접는다. members 는 점수 내림차순이다.
+
+    열쇠 우선순위: ① 우리 페이지 ② 검색 결과 겹침 ③ 클러스터 ④ 혼자.
+    센 증거가 약한 증거를 이긴다 — 검색 결과를 재 봤는데 아무와도 안 겹친 검색어는
+    클러스터가 같아도 안 붙인다(재 본 결과가 "다른 지면"이라고 말했다).
+    ②는 짝을 **묶음의 씨앗**(첫 검색어)과만 잰다. 서로서로 재면 A~B, B~C 가 겹친다는
+    이유로 안 겹치는 A 와 C 가 한 줄이 된다(사슬).
+    """
+    # 띄어쓰기·대소문자만 다른 것은 같은 검색어다 — 먼저 한 덩어리로 만든다(심사가
+    # 판정을 norm 단위로 하는 것과 같은 열쇠).
+    units: dict[str, list[dict]] = {}
+    for o in members:
+        units.setdefault(norm(o["target"]), []).append(o)
+
+    def fact(unit: list[dict], k: str):
+        for o in unit:
+            v = facts.get(o["target"], {}).get(k)
+            if v:
+                return v
+        return None
+
+    groups: list[dict] = []
+    by_page: dict[str, dict] = {}
+    pending: list[list[dict]] = []
+    for unit in units.values():
+        page = fact(unit, "page")
+        if page:
+            g = by_page.get(page)
+            if g is None:
+                src = next(facts[o["target"]]["page_src"] for o in unit
+                           if facts.get(o["target"], {}).get("page"))
+                url = next(facts[o["target"]]["page_url"] for o in unit
+                           if facts.get(o["target"], {}).get("page"))
+                g = by_page[page] = {"via": "page", "key": url, "key_src": src,
+                                     "seed": fact(unit, "serp"), "units": []}
+                groups.append(g)
+            g["seed"] = g["seed"] or fact(unit, "serp")
+            g["units"].append((unit, "page"))
+        else:
+            pending.append(unit)
+
+    loose: list[list[dict]] = []
+    for unit in pending:
+        s = fact(unit, "serp")
+        if not s:
+            loose.append(unit)
+            continue
+        best, hit = None, 0
+        for g in groups:
+            n = len(s & g["seed"]) if g["seed"] else 0
+            if n >= SERP_MIN_SHARED and n > hit:
+                best, hit = g, n
+        if best is None:
+            best = {"via": "serp", "key": unit[0]["target"], "key_src": None,
+                    "seed": s, "units": []}
+            groups.append(best)
+        best["units"].append((unit, "serp"))
+
+    by_cluster: dict[str, dict] = {}
+    for unit in loose:
+        cl = fact(unit, "cluster")
+        if not cl:
+            groups.append({"via": "alone", "key": None, "key_src": None, "seed": None,
+                           "units": [(unit, "alone")]})
+            continue
+        g = by_cluster.get(cl)
+        if g is None:
+            g = by_cluster[cl] = {"via": "cluster", "key": cl, "key_src": None,
+                                  "seed": None, "units": []}
+            groups.append(g)
+        g["units"].append((unit, "cluster"))
+
+    for g in groups:
+        if len(g["units"]) == 1:
+            g["via"] = "norm" if len(g["units"][0][0]) > 1 else "alone"
+            if g["via"] == "alone":
+                g["key"] = g["key_src"] = None
+    return groups
+
+
+def _group_score(kind: str, lead: dict, units: list[list[dict]],
+                 facts: dict[str, dict], project_type: str) -> float:
+    """묶음 점수 — 대표(최고 점수) 검색어의 점수에, 변형들이 보탠 **수요만큼** 더한다.
+
+    최댓값만 쓰면 변형 여덟 개짜리 지면과 하나짜리 지면이 같은 줄에 선다 — 무엇부터
+    할지 고르려고 묶었는데 묶음이 순서에 아무 말도 안 한다. 점수를 그냥 더하면
+    100점 만점 막대가 넘치고, 서로 무관한 축(순위·적합도·AI 가중)까지 변형 수만큼
+    곱절이 된다. 그래서 score() 가 이미 쓰는 수요 축 하나만 다시 잰다: 대표의 검색량
+    대신 지면 전체의 검색량 합을 넣었을 때 score() 가 얼마나 달라지나. 수요는
+    log10 이라 변형이 늘수록 보탬이 줄고(검색량 10배에 +0.2 수요), 결과는 늘 0~100 이라
+    안 묶인 종류의 줄과 같은 막대에서 견줄 수 있다. score() 는 수요에 선형이라 그
+    차이는 순위·적합도와 무관하다 — 그래서 여기서 그 둘을 다시 구하지 않는다.
+    띄어쓰기 변형(같은 norm)은 같은 검색이라 검색량을 한 번만 센다(큰 쪽).
+    """
+    vol = lambda unit: max((facts.get(o["target"], {}).get("volume") or 0) for o in unit)
+    lead_unit = next(u for u in units if lead in u)
+    total = sum(vol(u) for u in units)
+    base = {"impressions": 0, "position": None, "fit": 0.5}
+    bonus = (score(kind, {**base, "volume": total}, project_type)
+             - score(kind, {**base, "volume": vol(lead_unit)}, project_type))
+    return round(min(100.0, (lead.get("score") or 0.0) + max(0.0, bonus)), 1)
+
+
+def group_opportunities(conn: sqlite3.Connection, project_id: int,
+                        opps: list[dict], *, kinds=GROUP_KINDS) -> list[dict]:
+    """기회 목록을 줄로 접는다 — 줄 하나가 판정·실행 단위다. opps 는 opportunities() 의 결과.
+
+    돌려주는 줄 하나: {lead, ids, kind, score, status, via, key, key_src, variants}
+      lead     : 대표 기회 id(점수 최고). 화면은 그 기회의 라벨·처방·요청문으로 줄을 그린다.
+      ids      : 묶인 기회 id 전부. 판정 버튼은 이 전부에 먹는다 — id 는 하나도 안 잃는다.
+      variants : [{id, target, score, status, volume, via}] 점수 순. 대표도 첫째로 들어 있다.
+      score    : _group_score. 혼자인 줄은 그 기회의 점수 그대로.
+      status   : 묶음 안에 진행 중(acked)이 하나라도 있으면 acked, 아니면 new.
+    묶는 것은 kinds 의 **열린**(OPEN_STATUSES) 기회뿐이다. 그 밖(다른 종류·닫힌 기회)은
+    전부 한 줄씩 그대로 나온다 — via None.
+
+    opps 는 화면에 싣는 몫이라 개수 상한이 있다. 상한 밖으로 밀린 변형도 묶음의 id 에는
+    들어가야 한다(아니면 [완료 표시]가 그것만 남기고, 다음 적재에 혼자 다시 선다) —
+    그래서 묶는 종류의 열린 기회는 DB 에서 한 번 더 전부 읽는다. 대표가 상한 밖이면
+    (묶음 전체가 밀린 것이다) 그 줄은 싣지 않는다 — 예전에도 안 보이던 것이다.
+    """
+    import db
+    kinds = tuple(kinds)
+    ptype = (conn.execute("SELECT type FROM projects WHERE id=?", (project_id,)).fetchone()
+             or ["saas"])[0] or "saas"
+    shown = {o["id"]: o for o in opps if o.get("id") is not None}
+    pool = [dict(r) for r in db.list_opportunities(
+        conn, project_id, kinds=list(kinds), statuses=list(OPEN_STATUSES), order="screen",
+        limit=1_000_000, with_id=True, gated=True)] if kinds else []
+    facts = _surface_facts(conn, project_id, list(dict.fromkeys(o["target"] for o in pool)))
+
+    lines: list[dict] = []
+    grouped: set[int] = set()
+    for kind in kinds:
+        members = sorted((o for o in pool if o["kind"] == kind),
+                         key=lambda o: (-(o["score"] or 0), -o["id"]))
+        for g in _group_members(members, facts):
+            units = [u for u, _via in g["units"]]
+            flat = sorted(((o, via) for u, via in g["units"] for o in u),
+                          key=lambda x: (-(x[0]["score"] or 0), -x[0]["id"]))
+            grouped.update(o["id"] for o, _ in flat)
+            lead = next((o for o, _ in flat if o["id"] in shown), None)
+            if lead is None:
+                continue
+            lines.append({
+                "lead": lead["id"], "ids": [o["id"] for o, _ in flat], "kind": kind,
+                "score": _group_score(kind, lead, units, facts, ptype) if len(units) > 1
+                         else lead["score"],
+                "status": "acked" if any(o["status"] == "acked" for o, _ in flat) else "new",
+                "via": g["via"], "key": g["key"], "key_src": g["key_src"],
+                "variants": [{"id": o["id"], "target": o["target"], "score": o["score"],
+                              "status": o["status"],
+                              "volume": facts.get(o["target"], {}).get("volume") or None,
+                              "via": via} for o, via in flat]})
+    for o in opps:
+        if o.get("id") is None or o["id"] in grouped:
+            continue
+        lines.append({"lead": o["id"], "ids": [o["id"]], "kind": o["kind"], "score": o["score"],
+                      "status": o["status"], "via": None, "key": None, "key_src": None,
+                      "variants": [{"id": o["id"], "target": o["target"], "score": o["score"],
+                                    "status": o["status"], "volume": None, "via": None}]})
+    # 화면 정렬과 같다(db.list_opportunities 의 'screen'): 새 것 먼저, 점수, 최근 id.
+    lines.sort(key=lambda x: (x["status"] != "new", -(x["score"] or 0), -x["lead"]))
+    return lines
+
+
 
 def _selfcheck() -> None:
     assert norm("Future Tools") == "futuretools"

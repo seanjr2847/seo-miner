@@ -1875,7 +1875,14 @@ const OPP_NEXT = {new: ["acked", "작업 시작"], acked: ["done", "완료 표�
 // 틀렸을 때 쓰는 자리다. 검색어째 빼는 일은 [심사]가 한다.
 const OPP_SET = {acked: "작업 시작", done: "완료 표시",
                  dismissed: "이 기회만 빼기", new: "다시 열기"};
-const oppBtn = (o, st) => `<button onclick="setOpp(${o.id},'${st}')">${OPP_SET[st]}</button>`;
+// 묶인 줄([개요]의 목록 — o.group 은 서버 scoring.group_opportunities 가 준 것)은
+// 대표 하나가 아니라 묶인 id 전부에 먹는다. 이미 그 상태인 것은 다시 안 보낸다.
+const oppIdsTo = (o, st) => o.group
+  ? o.group.variants.filter(v => v.status !== st).map(v => v.id) : [o.id];
+const oppBtn = (o, st) => o.group && o.group.ids.length > 1
+  ? `<button onclick="setOpps([${oppIdsTo(o, st).join(",")}],'${st}')"
+      title="묶인 검색어 ${o.group.ids.length}개에 모두 적용합니다">${OPP_SET[st]}</button>`
+  : `<button onclick="setOpp(${o.id},'${st}')">${OPP_SET[st]}</button>`;
 
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
 // 콘텐츠 작성 버튼은 호스팅에만 있다(SM.host.oppBtn) — 플러그인은 Claude 채팅으로 간다.
@@ -2230,9 +2237,55 @@ function oppDetail(o) {
       `${c.branch ? ` · ${esc(c.branch)}` : ""} · ${c.merged ? "머지됨" : "PR 열림"}` +
       `${c.note && /^https?:/.test(c.note) ? ` · <a href="${esc(c.note)}" target="_blank" rel="noopener">보기</a>` : ""}</li>`).join("")}</ul></div>` : "";
   // 패널 맨 밑이 이 기회의 다음 행동이다: 요청문 만들기가 주요고, 상태 바꾸기는 보조.
-  return `<div class="det">${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
+  return `<div class="det">${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${works}${ask}${oppRest(o)}</div>`;
+}
+
+/* 묶인 줄의 변형 목록 — 어느 검색어가 한 줄이 됐고 **왜** 한 줄인지. 열쇠(via)는
+   서버가 정한다(scoring.GROUP_VIA 가 정본, 여기 키가 그것과 같은지는 test_seams 23).
+   화면은 그 열쇠를 말로 옮기기만 한다 — 다시 판정하지 않는다. */
+const GROUP_WHY = {
+  page: g => g.key_src === "rank"
+    ? "검색 순위에서 같은 우리 페이지로 잡힌 검색어입니다."
+    : "구글 실적에서 같은 우리 페이지로 들어오는 검색어입니다.",
+  serp: () => "우리 페이지는 아직 없지만 검색 결과 상위가 크게 겹칩니다. 구글이 같은 문서들로 답하는 질문입니다.",
+  cluster: g => `같은 주제 묶음(${esc(g.key)})입니다. 페이지·검색 결과로는 아직 가르지 못했습니다.`,
+  norm: () => "띄어쓰기·대소문자만 다른 같은 검색어입니다.",
+  alone: () => "",
+};
+function oppGroup(o) {
+  const g = o.group;
+  if (!g || g.ids.length < 2) return "";
+  const url = g.via === "page" || (g.via === "norm" && /^https?:/.test(g.key || "")) ? g.key : "";
+  const rows = g.variants.map((v, i) => `<tr><td>${esc(v.target)}${i === 0
+      ? ` <span class="muted">대표</span>` : v.via === "serp" && g.via === "page"
+      ? ` <span class="muted" title="우리 페이지는 없고, 검색 결과가 대표 검색어와 크게 겹쳐 붙었습니다">검색 결과 겹침</span>` : ""}</td>
+    <td class="n">${v.volume ? num(v.volume) : "—"}</td>
+    <td class="n">${Number.isFinite(v.score) ? Math.round(v.score) : "—"}</td>
+    <td>${window.OPP_LABEL[v.status] || esc(v.status)}</td></tr>`).join("");
+  const lead = g.variants[0] || {};
+  return `<p class="detw"><b>묶인 검색어 ${g.ids.length}개</b> · ${GROUP_WHY[g.via](g)}${url
+      ? ` <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>` : ""}</p>
+    <table class="dett"><thead><tr><th>검색어</th><th class="n">월 검색량</th><th class="n">점수</th>
+      <th>상태</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="detn">${Number.isFinite(g.score) && g.score !== lead.score
+      ? `이 줄의 ${Math.round(g.score)}점은 대표 검색어 ${Math.round(lead.score)}점에 나머지 검색어의 검색량을 더해 다시 잰 값입니다. `
+      : ""}작업 시작·완료·빼기는 묶인 ${g.ids.length}개에 함께 적용됩니다. 할 일과 요청문은 대표 검색어 기준입니다.</p>`;
+}
+
+// 묶인 줄의 상태 바꾸기 — 기회 창구(/api/opp)는 한 번에 하나를 받는다. 새 창구를
+// 만들지 않고 하나씩 보낸다(두 서버에 같은 라우트를 또 세우면 이음매가 하나 는다).
+// 하나라도 못 바꾸면 그렇다고 말한다 — 반쯤 바뀐 줄은 새로고침 뒤 두 줄로 갈라져 보인다.
+async function setOpps(ids, status) {
+  let failed = 0, why = "";
+  for (const id of ids) {
+    const [ok, r] = await post("/api/opp", {project: $("proj").value, id, status});
+    if (!ok) { failed++; why = why || (r && r.error) || ""; }
+  }
+  if (failed) toast(why || `${ids.length}개 중 ${failed}개를 못 바꿨습니다. [새로고침] 뒤 다시 하면 됩니다.`, "bad");
+  else toast(`묶인 검색어 ${ids.length}개에 적용했습니다. ` + (OPP_DONE[status] || ""), "ok");
+  load();
 }
 
 /* 상태 바꾸기. 여태 응답을 안 봤다 — 403(토큰 만료)이 와도 load() 가 돌고 화면은
