@@ -106,6 +106,97 @@ c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_
 assert c2 is not None and "손으로 이미 실행:" in (c2["note"] or ""), c2
 conn.close()
 
+# ── 머지 반영: gh 가 머지를 말하면 기록은 merged, 기회는 done(완료 시각 = 머지 시각) ──
+# 진짜 gh 를 부르지 않는다 — createdb._gh 를 갈아끼운다.
+import contextlib  # noqa: E402
+
+conn = createdb.connect()
+m_opp = {}
+for t, st in (("머지된 기회", "acked"), ("안 머지된 기회", "acked"), ("뺀 기회", "dismissed"),
+              ("저절로 풀린 기회", "resolved")):
+    m_opp[t] = conn.execute(
+        "INSERT INTO opportunities(project_id, kind, target, score, status) "
+        "VALUES(?, 'ctr_gap', ?, 1, ?) RETURNING id", (pid, t, st)).fetchone()[0]
+conn.commit()
+m_cre = {t: db.record_creation(conn, pid, "x.md", opportunity_id=m_opp[t],
+                               branch=f"capture/ctr_gap-{i}")
+         for i, t in enumerate(m_opp)}
+conn.close()
+MERGED = {"capture/ctr_gap-0": 41, "capture/ctr_gap-2": 42, "capture/ctr_gap-3": 43}
+gh_calls = []
+
+
+def _fake_gh(args, cwd):
+    gh_calls.append((args, cwd))
+    br = args[args.index("--head") + 1]
+    rows = ([{"number": MERGED[br], "mergedAt": "2026-09-05T03:04:05Z"}]
+            if br in MERGED else [])
+    return subprocess.CompletedProcess(["gh", *args], 0, json.dumps(rows), "")
+
+
+def _quiet(fn, *a, **kw):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        r = fn(*a, **kw)
+    return r, buf.getvalue()
+
+
+_orig_gh = createdb._gh
+try:
+    createdb._gh = _fake_gh
+    res, _ = _quiet(createdb.sync_merged, "t", str(repo_dir))
+    assert res["checked"] == 4 and res["merged"] == 3 and res["closed"] == 2, res
+    assert gh_calls[0][1] == str(repo_dir), "gh 를 사이트 리포에서 부르지 않았다"
+    conn = createdb.connect()
+    st = {t: tuple(conn.execute("SELECT status, status_at FROM opportunities WHERE id=?",
+                                (m_opp[t],)).fetchone()) for t in m_opp}
+    mg = {t: conn.execute("SELECT merged FROM creations WHERE id=?", (m_cre[t],)).fetchone()[0]
+          for t in m_cre}
+    conn.close()
+    assert st["머지된 기회"] == ("done", "2026-09-05 03:04:05"), st      # 완료 시각 = 머지 시각
+    assert st["저절로 풀린 기회"][0] == "done", "머지가 있는데 저절로 풀림으로 남았다"
+    assert st["안 머지된 기회"][0] == "acked", st
+    assert st["뺀 기회"][0] == "dismissed", "사람이 뺀 기회를 머지로 되살렸다"
+    assert mg == {"머지된 기회": 1, "안 머지된 기회": 0, "뺀 기회": 1, "저절로 풀린 기회": 1}, mg
+    # 완료 후 관찰(우리 효과)은 done 만 본다 — 머지로 닫힌 것이 여기 잡혀야 한다
+    conn = createdb.connect()
+    wt = {w["target"] for w in db.watch_rows(conn, pid)}
+    conn.close()
+    assert "머지된 기회" in wt, wt
+
+    # 거는 자리: /create plan 첫머리의 `createdb.py sync {P} --repo .` 가 머지 반영까지 한다
+    conn = createdb.connect()
+    c_late = db.record_creation(conn, pid, "y.md", opportunity_id=m_opp["안 머지된 기회"],
+                                branch="capture/ctr_gap-2")        # MERGED 에 있는 브랜치
+    conn.close()
+    n_calls = len(gh_calls)
+    _quiet(createdb.sync, "t", str(repo_dir))
+    assert len(gh_calls) > n_calls, "sync 가 머지 반영을 부르지 않는다"
+    conn = createdb.connect()
+    assert conn.execute("SELECT merged FROM creations WHERE id=?", (c_late,)).fetchone()[0] == 1
+    assert conn.execute("SELECT status FROM opportunities WHERE id=?",
+                        (m_opp["안 머지된 기회"],)).fetchone()[0] == "done"
+    conn.close()
+
+    # gh 가 없거나 로그인이 안 됐으면 한 줄 알리고 건너뛴다 — 실패가 아니고 아무것도 안 바꾼다
+    def _no_gh(args, cwd):
+        raise FileNotFoundError("gh")
+
+    def _no_login(args, cwd):
+        return subprocess.CompletedProcess(["gh"], 4, "", "To get started with GitHub CLI, "
+                                           "please run:  gh auth login\n")
+    for fake in (_no_gh, _no_login):
+        createdb._gh = fake
+        res, out = _quiet(createdb.sync_merged, "t", str(repo_dir))
+        assert res["skipped"] and res["merged"] == 0 and res["checked"] == 1, res
+        assert out.count("\n") == 1 and "건너뜀" in out, out
+    conn = createdb.connect()
+    assert conn.execute("SELECT merged FROM creations WHERE id=?",
+                        (m_cre["안 머지된 기회"],)).fetchone()[0] == 0, "gh 없이 머지로 적었다"
+    conn.close()
+finally:
+    createdb._gh = _orig_gh
+
 # ── 원격 사이트: Brain 대신 서버 창구를 쓴다 ──────────────────────────────
 # run() 은 서브프로세스라 monkeypatch 가 안 닿는다 — 여기만 createdb 를 직접 부른다.
 import contextlib  # noqa: E402
@@ -152,8 +243,24 @@ try:
         raise AssertionError("원격 머지 표시가 그냥 통과했다")
     except SystemExit:
         pass
+
+    # 원격 머지 반영: 기록은 서버에 있다 — 머지면 기회를 /api/opp 로 done 으로 옮긴다.
+    # 화면 목록에 없는 기회(상태 모름)는 덮지 않는다.
+    remote.api = lambda method, path, **kw: (calls.append((method, path, kw)) or
+        {"opps": [{"id": 7, "kind": "ctr_gap", "target": "k", "status": "acked"}],
+         "creations": [{"id": 3, "branch": "capture/ctr_gap-k", "merged": 0, "opportunity_id": 7},
+                       {"id": 4, "branch": "capture/ctr_gap-z", "merged": 0, "opportunity_id": 99},
+                       {"id": 5, "branch": "", "merged": 0, "opportunity_id": 7}]})
+    createdb._gh = lambda args, cwd: subprocess.CompletedProcess(
+        ["gh"], 0, json.dumps([{"number": 5, "mergedAt": "2026-09-05T00:00:00Z"}]), "")
+    calls.clear()
+    res, _ = _quiet(createdb.sync_merged, "web", None)
+    posts = [c for c in calls if c[0] == "POST"]
+    assert res["checked"] == 2 and res["closed"] == 1, res
+    assert [p[2]["json"] for p in posts] == [{"project": "web", "id": 7, "status": "done"}], posts
 finally:
     remote.owns, remote.api = _orig_owns, _orig_api
+    createdb._gh = _orig_gh
 
 print(f"ok — pick·claim·done·list·merged·sync 정상, 원격 분기 확인 ({HOME})")
 
