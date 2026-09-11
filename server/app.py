@@ -66,6 +66,10 @@ def resume_dead_runs(dispatch=None) -> list[str]:
     (mark_run 이 last_run_at 을 남겼다) 사이트가 통째로 빠진다. 죽은 사이트만
     직접 띄운다. 처음부터 다시 도는 것으로 충분하다 — 수집기들이 seen_today 로
     오늘 이미 한 항목을 건너뛰므로 싸다.
+
+    회수(store.reclaim_dead_runs)는 사이트 brain 의 끝나지 않은 runs 행도 닫는다 —
+    죽은 워커가 남긴 것과 오래전 고아까지. 새 워커는 그 **뒤에** 띄운다: 먼저 띄우면
+    새 런의 행이 회수 시각 이후에 생기므로 닫히지는 않지만, 순서로도 못 박아 둔다.
     """
     dispatch = dispatch or scheduler.dispatch
     conn = store.connect()
