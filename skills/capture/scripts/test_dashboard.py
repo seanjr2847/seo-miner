@@ -955,6 +955,32 @@ def test_gather_ai_referrals_none_is_not_zero():
     conn.close()
 
 
+def test_ai_visits_reach_the_brief_past_the_top_100():
+    """요청문은 **그 페이지** 의 AI 방문을 찾는다 — 화면 목록의 상위 100 밖이어도.
+
+    화면 목록(ai_referral_pages)은 세션 순 상위 100 에서 자른다. 요청문이 그 목록에서만
+    찾으면, 긴 꼬리의 페이지가 기회에 걸렸을 때 방문이 있어도 그 줄이 안 선다.
+    """
+    import brief
+    conn, pid = _brain("airef_tail")
+    rows = [("chatgpt.com", f"/p{i:03d}", 200 - i, 0) for i in range(150)]
+    rows.append(("perplexity.ai", "/tail", 1, 0))
+    db.write_ga4_ai_referrals(conn, pid, D, 28, ["chatgpt.com", "perplexity.ai"], rows)
+    d = dashboard.gather(conn, db.get_project(conn, "airef_tail"))
+    assert len(d["ai_referral_pages"]) == 100
+    assert not any(r["page"] == "/tail" for r in d["ai_referral_pages"])
+    got = dashboard._ai_referrals_in_play(conn, pid, ["https://airef.example/tail"])
+    assert got["/tail"]["sessions"] == 1 and got["/tail"]["sources"] == {"perplexity.ai": 1}, got
+    # 안 쟀으면 아무 키도 없다 — 0 이라고 지어내지 않는다
+    assert dashboard._ai_referrals_in_play(conn, pid, ["https://airef.example/none"]) == {}
+    conn.close()
+    # 요청문은 그 몫을 먼저 본다
+    ctx = {"ai_referral_meta": d["ai_referral_meta"], "ai_referral_pages": d["ai_referral_pages"],
+           "ai_referrals_in_play": got}
+    ev, _after = brief._ai_visits({"kind": "ai_citation_gap"}, ctx, "https://airef.example/tail")
+    assert ev and "세션 1" in ev[0] and "perplexity.ai 1" in ev[0], ev
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

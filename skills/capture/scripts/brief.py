@@ -1086,7 +1086,9 @@ def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str
     pages = ctx.get("ai_referral_pages") or []
     ev: list[str] = []
     path = (urlsplit(url).path or "/") if url else None
-    row = next((p for p in pages if path and p.get("page") == path), None)
+    # 기회에 걸린 페이지 몫이 먼저다 — 화면 목록(pages)은 상위 100 에서 잘린다
+    row = ((ctx.get("ai_referrals_in_play") or {}).get(path) if path else None) \
+        or next((p for p in pages if path and p.get("page") == path), None)
     if meta and row and row.get("sessions"):
         srcs = ", ".join(f"{h} {_n(n)}" for h, n in
                          sorted((row.get("sources") or {}).items(), key=lambda x: -x[1]))

@@ -1270,6 +1270,34 @@ def test_seam_28_ai_visits_fields_and_names():
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 
 
+def test_seam_29_ai_screen_gap_count_is_server_judgement():
+    """29) [AI 인용] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
+    scoring.ai_is_gap) 한 벌이다.
+
+    두 벌이었다: 기회는 인용률로 섰는데(6번 중 1번도 공백), 화면 머리 띠는 "인용도
+    언급도 없는 질문"만 세어서, 그런 질문만 남으면 기회 목록에 "챗봇 인용 드묾"이 여럿
+    떠 있는 채로 "확인한 질문 전부에서 인용되고 있습니다"라고 말했다. 어느 쪽도
+    혼자서는 멀쩡한 코드였다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "d.ai_gap_rows" in src, "ai.html 이 서버의 공백 판정을 안 읽는다"
+    # 띠의 수 = 서버 판정으로 거른 수. 화면이 인용 수로 다시 세지 않는다.
+    import re as _re
+    m = _re.search(r"const missN = byPrompt\.length\s*\?(.*?);", src, _re.S)
+    assert m and "AI_GAPS.has(r.prompt)" in m.group(1), "띠의 공백 수를 화면이 다시 센다"
+    # 거르기·칩 수가 같은 판정(AI_stIs)을 쓴다 — 목록과 칩이 다른 말을 하지 않게
+    assert "AI_stIs(r, AI_ST)" in src and "AI_stIs(r, s)" in src, "거르기와 칩이 다른 판정을 쓴다"
+    # "질문 열기"가 그 판정으로 거른다
+    assert 'AI_ST = AI_GAPS ? "gap"' in src, "질문 열기가 옛 눈금(안 잡힘)으로 거른다"
+    # 서버 쪽 — gather 가 그 판정 목록을 싣는다
+    import dashboard
+    assert '"ai_gap_rows": ai_gap_rows' in (SCRIPTS / "dashboard.py").read_text("utf-8")
+
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

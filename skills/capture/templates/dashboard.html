@@ -1651,7 +1651,9 @@ const pageTable = rows => !rows || !rows.length ? "" :
    </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
-const pageFix = (audit, url) => {
+// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용]의 추출성, audit.extract_advice).
+// 여기서 고르지 않는다: 셸은 어느 화면에서 불렸는지 모른다.
+const pageFix = (audit, url, extra) => {
   if (!audit)
     return `<p class="detn">${esc(url || "이 페이지")}는 아직 점검하지 않았습니다.
       <b>내 페이지 점검</b>이 돌면 제목·설명·본문을 직접 읽고 무엇을 바꿔야 하는지
@@ -1659,7 +1661,7 @@ const pageFix = (audit, url) => {
   const head = `<p class="detn">${esc(audit.checked_date || "")} 점검 ·
     제목 ${audit.title ? `<b>${esc(audit.title)}</b>` : "없음"} ·
     본문 ${num(audit.words)}단어</p>`;
-  const a = audit.advice || [];
+  const a = [...(audit.advice || []), ...(extra || [])];
   if (!a.length)
     return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다.
       제목·설명·H1·본문 길이·구조화 데이터가 모두 기준 안입니다.</p>`;
