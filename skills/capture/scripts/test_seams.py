@@ -1063,8 +1063,9 @@ def test_seam_25_chart_library_single_source():
     import hashlib
     import dashboard
     got = hashlib.sha256(dashboard.VENDOR_JS.read_bytes()).hexdigest()
-    assert got == CHARTJS_SHA256, f"vendor/chart.umd.min.js 가 npm 이 준 파일과 다르다: {got[:16]} — "
-        "줄끝이 바뀌었으면 .gitattributes 의 vendor -text 를 확인하라"
+    assert got == CHARTJS_SHA256, (
+        f"vendor/chart.umd.min.js 가 npm 이 준 파일과 다르다: {got[:16]} — "
+        "줄끝이 바뀌었으면 .gitattributes 의 vendor -text 를 확인하라")
     for v in ("local", "hosted", "frozen"):
         n = dashboard._assemble(v).decode("utf-8").count("Chart.js v4.5.1")
         assert n == 1, f"{v} 조립본에 라이브러리가 {n}번 들어갔다"
