@@ -40,13 +40,6 @@ MODIFIERS = {
     # 라틴 문자권 — 특수 문자(ä·ç·ñ…)는 자동완성이 a~z 만으로도 돌려준다
     **{k: _LATIN for k in ("de", "fr", "es", "it", "pt", "nl", "pl", "tr", "vi", "id")},
 }
-# 글자만 보고 언어를 가른다 — 시드가 없는 실검색어(GSC)와 시드 로케일이 빈 후보용.
-# (유니코드 블록, 언어) 순서가 곧 우선순위다: 가나가 섞이면 한자가 있어도 일본어.
-_SCRIPTS = [
-    (("가", "힣"), "ko"), (("぀", "ヿ"), "ja"), (("一", "鿿"), "zh"),
-    (("Ѐ", "ӿ"), "ru"), (("؀", "ۿ"), "ar"), (("฀", "๿"), "th"),
-    (("ऀ", "ॿ"), "hi"),
-]
 _WARNED: set[str] = set()
 
 
@@ -64,15 +57,10 @@ def modifiers(locale: str, hl: str) -> list[str]:
 
 
 def locale_of(text: str, default: str) -> str:
-    """글자의 문자권이 프로젝트 언어와 다르면 그 언어의 대표 로케일로 본다.
-    en-US 프로젝트의 한국어 후보가 다음 런에서 미국 SERP로 조회돼 전부 '순위 없음'이
-    되던 것을 막는 규칙(원래 한글 전용)을 다른 문자권으로 넓혔다. 라틴 문자는
-    언어를 못 가르므로(영어·독일어·베트남어…) 프로젝트 로케일을 따른다."""
-    lang = next((lg for (lo, hi), lg in _SCRIPTS
-                 if any(lo <= c <= hi for c in (text or ""))), None)
-    if lang is None or lang == serp_adapter.lang_of(default):
-        return default
-    return f"{lang}-{serp_adapter.location(lang)[2][0].upper()}"
+    """글자로 언어를 가른다 — 규칙의 정본은 db.keyword_locale 하나다(여기 사본을 두지
+    않는다). 적재(db.add_keyword_candidates)가 같은 판정을 한 번 더 거치므로 여기
+    값은 시드 로케일이 빈 후보의 기본값일 뿐이다."""
+    return db.keyword_locale(text, default)
 
 
 def suggest(query: str, hl: str, gl: str) -> list[str]:
