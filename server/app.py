@@ -1051,30 +1051,6 @@ def api_projects(uid: int = Depends(_require_uid), conn=Depends(CONN)):
     return [r["project"] for r in store.sites(conn, uid)]
 
 
-@app.get("/api/data")
-def api_data(project: str, date: str = "", t=Depends(TENANT_Q)):
-    """date: 화면이 고정한 GSC 기준 수집일 (없으면 최신). 로컬판과 같은 계약이다.
-    본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다."""
-    return dashboard.ROUTES[("GET", "/api/data")](project, {"date": date}, None)
-
-
-@app.get("/api/triage")
-def api_triage(project: str, t=Depends(TENANT_Q)):
-    """검색어 심사 목록 — 본체는 dashboard.ROUTES 것(로컬과 같은 함수)."""
-    return dashboard.ROUTES[("GET", "/api/triage")](project, {}, None)
-
-
-@app.post("/api/verdict")
-def api_verdict(body: dict = Depends(_body), project: str = Depends(_project_b),
-                t=Depends(TENANT_B)):
-    """검색어 판정 저장(일괄). 값 검증은 db.set_verdicts(잘못되면 ValueError → 400)."""
-    try:
-        return dashboard.ROUTES[("POST", "/api/verdict")](project, {}, body)
-    except ValueError:
-        raise HTTPException(status_code=400,
-                            detail="알아볼 수 없는 판정값입니다. 새로고침한 뒤 다시 시도하세요.")
-
-
 @app.get("/api/doctor")
 def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     """화면은 평평한 요약(setup_state)을, 원격 CLI 는 진단 전문(diagnose)을 받는다.
@@ -1083,8 +1059,10 @@ def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     setup_state 를 먹이면 KeyError 로 죽는다. 화면 쪽 기본값은 건드리지 않는다.
     화면 쪽 본체는 dashboard.ROUTES 것 — 로컬 Handler 가 부르는 것과 같은 함수다.
 
-    TENANT_Q_PAID 로 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는 유료
-    키가 여기서도 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다.
+    아래 공유 라우트 루프에 못 넣는 이유가 이 둘이다. ?full= 은 호스팅에만 있는
+    갈래다(로컬은 /api/doctor 를 프록시하지 않고 늘 요약만 준다 — NEVER_PROXY).
+    그리고 TENANT_Q_PAID 로 수집 런과 **같은 env** 를 두르고 진단한다 — 서버가 대는
+    유료 키가 여기서도 보여야 doctor 가 "키 없음"이라고 거짓 판정하지 않는다.
     paid_keys() 가 세우는 표식(SEOMINER_HOSTED)이 준비물의 owner 도 서버로 뒤집는다.
     """
     if full:
@@ -1092,30 +1070,79 @@ def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     return dashboard.ROUTES[("GET", "/api/doctor")](project, {}, None)
 
 
-@app.post("/api/opp")
-def api_opp(body: dict = Depends(_body), t=Depends(TENANT)):
-    # 로컬 대시보드는 X-Token 으로 CSRF 를 막았다. 여기서는 세션 로그인이 그 역할을 하므로
-    # 화면이 보내는 헤더는 무시한다. 본체는 dashboard.ROUTES 것 하나 — 상태값 검증도
-    # 거기서 부르는 db.set_opportunity_status 가 한다(잘못되면 ValueError).
-    try:
-        return dashboard.ROUTES[("POST", "/api/opp")]("", {}, body)
-    except ValueError:
-        raise HTTPException(status_code=400,
-                            detail="알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.")
+# --- 공유 라우트 -----------------------------------------------------------------
+# 두 서버가 함께 서빙하는 라우트는 dashboard.ROUTES 가 정본이다(ADR 0003). 예전엔
+# 여기서 다섯 개를 손으로 감쌌다 — 새 공유 라우트를 표에 넣으면 로컬에만 서고,
+# 호스팅은 누가 여기 한 벌 더 적을 때까지 404 였다. 이제 표를 돌며 등록한다:
+# 표에 한 줄 넣으면 호스팅에도 저절로 선다.
+#
+# 제네릭 핸들러가 call 에 넘기는 모양은 로컬 Handler(do_GET/do_POST)와 같다 —
+#   GET  : query 는 쿼리스트링을 첫 값으로 편 dict(project 는 빼서 따로), body 는 None
+#   POST : query 는 {}, body 는 본문 JSON(_body — 한 요청에 한 번만 푼다)
+# POST 의 project 자리에는 본문 project 를 넣는다(로컬은 "" 를 넘긴다). 표의 POST
+# call 은 어차피 본문에서 읽으므로 값은 안 쓰이지만, 넘긴다면 방금 소유를 확인한
+# 이름이 맞다.
+#
+# 인증·테넌트는 손으로 쓰던 것과 같은 의존자다: GET 은 TENANT_Q(?project= 의 소유
+# 확인), POST 는 TENANT_B(본문 project 의 소유 확인). 둘 다 _require_uid 를 거친다 —
+# test_app.py 가 라우트 표를 훑어 그걸 본다.
+#
+# /api/opp 도 이제 TENANT_B 다. 예전엔 혼자 TENANT(사이트를 안 가림)였는데, 그 자리
+# 주석이 말하던 이유는 X-Token 헤더를 무시한다는 것뿐이었다 — 그건 호스팅 POST 전부가
+# 그렇다(세션 로그인이 CSRF 를 막는다). 부르는 쪽(화면·createdb claim·run_tool)은
+# 전부 본문에 project 를 싣는다. 달라지는 건 **자기 사이트가 아닌 project** 로 부른
+# 요청뿐이다 — 전엔 그 유저 brain 의 아무 기회나 바꿨고, 이제 다른 POST 처럼 404 다.
+#
+# 손으로 남긴 것 — 호스팅 동작이 실제로 다른 둘뿐이다:
+#   /api/projects — 소유를 store.sites 로 판정한다(표의 call 은 Brain 을 본다)
+#   /api/doctor   — ?full= 갈래와 유료 키 env(TENANT_Q_PAID)
+_HAND_ROUTES = {("GET", "/api/projects"), ("GET", "/api/doctor")}
+
+# 값 검증 실패(ValueError → 400)의 문구. 엔진 문구(`status must be one of ...`)는
+# 개발자 말이라 화면에 그대로 내보내지 않는다. 여기 없는 경로는 str(e) 그대로 간다
+# (/api/creation — 로컬 Handler 도 그렇게 낸다).
+_BAD_VALUE = {
+    "/api/opp": "알아볼 수 없는 상태값입니다. 새로고침한 뒤 다시 시도하세요.",
+    "/api/verdict": "알아볼 수 없는 판정값입니다. 새로고침한 뒤 다시 시도하세요.",
+}
 
 
-@app.post("/api/creation")
-def api_creation(body: dict = Depends(_body), project: str = Depends(_project_b),
-                 t=Depends(TENANT_B)):
-    """작업 기록 창구 — 사용자 PC 의 개발 도구가 일을 끝내고 남긴다.
+def _shared_route(method: str, path: str) -> None:
+    """dashboard.ROUTES 항목 하나를 호스팅에 세운다.
 
-    본체는 dashboard.ROUTES 것 하나(로컬 Handler 가 부르는 것과 같은 함수).
-    로컬 `createdb.py done` 이 호스팅 사이트면 이 경로로 온다 — 그래서 요청문
-    꼬리의 기록 명령은 로컬·원격 구분 없이 같은 한 줄이다.
+    call 은 요청 때 표에서 꺼낸다(등록 때 붙잡지 않는다) — 로컬 Handler 도 요청마다
+    표를 조회하고, 검사가 표의 항목을 갈아끼워 넘어가는 모양을 볼 수 있다.
+
+    예외는 로컬 Handler 와 같은 규칙으로 옮긴다: 없는 사이트는 전역 핸들러(404),
+    POST 에서 LookupError 는 404(record_creation_route — 번호로 남의 Brain 을 더듬는
+    것), ValueError 는 400. GET 은 로컬도 ProjectNotFound 만 잡는다.
     """
-    try:
-        return dashboard.ROUTES[("POST", "/api/creation")](project, {}, body)
-    except LookupError as e:   # 그 사이트의 기회가 아니다 — 번호로 남의 Brain 을 더듬는 것
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    key = (method, path)
+    if method == "GET":
+        def endpoint(request: Request, project: str = Depends(_project_q),
+                     t=Depends(TENANT_Q)):
+            # 로컬의 parse_qs 와 같게 편다 — 빈 값은 버리고 첫 값을 쓴다
+            # (dict(request.query_params) 는 빈 값을 남기고 마지막 값을 준다)
+            q = request.query_params
+            query = {k: vs[0] for k in q if k != "project"
+                     if (vs := [v for v in q.getlist(k) if v])}
+            return dashboard.ROUTES[key](project, query, None)
+    elif method == "POST":
+        def endpoint(body: dict = Depends(_body), project: str = Depends(_project_b),
+                     t=Depends(TENANT_B)):
+            try:
+                return dashboard.ROUTES[key](project, {}, body)
+            except LookupError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=_BAD_VALUE.get(path, str(e)))
+    else:   # 로컬 Handler 는 do_GET/do_POST 뿐이다 — 다른 메서드는 표에 있을 수 없다
+        raise ValueError(f"dashboard.ROUTES 에 모르는 메서드: {key}")
+    # 이름은 손으로 쓰던 함수 이름 그대로(api_data …) — OpenAPI operationId 가 안 바뀐다
+    app.add_api_route(path, endpoint, methods=[method],
+                      name="api_" + path.rsplit("/", 1)[-1])
+
+
+for _key in dashboard.ROUTES:
+    if _key not in _HAND_ROUTES:
+        _shared_route(*_key)
