@@ -838,6 +838,36 @@ def test_gather_ai_health_reaches_the_screen():
     conn.close()
 
 
+def test_gather_ai_referrals_none_is_not_zero():
+    """AI 에서 온 방문 — "안 쟀다"(None)와 "쟀고 0"([])이 페이로드에서 갈린다.
+
+    갈리지 않으면 화면이 GA4 를 연결한 사이트에 "연결하세요"라고 하거나, 안 잰 사이트에
+    "아무도 안 왔다"라고 한다. 세 키는 늘 같이 움직인다(ai_referrals·_pages·_meta).
+    """
+    conn, pid = _brain("airef")
+    p = db.get_project(conn, "airef")
+    d = dashboard.gather(conn, p)
+    assert (d["ai_referrals"], d["ai_referral_pages"], d["ai_referral_meta"]) == (None, None, None), d["ai_referrals"]
+
+    db.write_ga4_ai_referrals(conn, pid, PREV, 28, ["chatgpt.com"], [])
+    d = dashboard.gather(conn, p)
+    assert d["ai_referrals"] == [] and d["ai_referral_pages"] == [], d["ai_referrals"]
+    assert d["ai_referral_meta"] == {"date": PREV, "period_days": 28, "hosts": ["chatgpt.com"]}
+
+    # 최신 잰 날 한 벌만 — 출처별 합계와 페이지별(출처별 세션 포함)이 세션 내림차순.
+    db.write_ga4_ai_referrals(conn, pid, D, 28, ["chatgpt.com", "perplexity.ai"],
+                              [("chatgpt.com", "/a", 5, 1), ("perplexity.ai", "/a", 2, 0),
+                               ("perplexity.ai", "/b", 9, 0.5)])
+    d = dashboard.gather(conn, p)
+    assert [(r["source"], r["sessions"]) for r in d["ai_referrals"]] == \
+        [("perplexity.ai", 11), ("chatgpt.com", 5)], d["ai_referrals"]
+    assert [(r["page"], r["sessions"], r["key_events"]) for r in d["ai_referral_pages"]] == \
+        [("/b", 9, 0.5), ("/a", 7, 1.0)], d["ai_referral_pages"]
+    assert d["ai_referral_pages"][1]["sources"] == {"chatgpt.com": 5, "perplexity.ai": 2}
+    assert d["ai_referral_meta"]["date"] == D
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

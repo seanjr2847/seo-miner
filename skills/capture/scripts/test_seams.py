@@ -1048,6 +1048,56 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     assert h["last_run"]["state"] == "aborted", h["last_run"]
 
 
+def test_seam_25_ai_visits_fields_and_names():
+    """25) "AI 에서 온 방문" — 서버가 접은 칸을 화면이 읽고, 요청문이 그 자리를 이름으로 부른다.
+
+    이음매가 둘이다. (가) 화면(views/ai.html 의 AI_visits)은 d.ai_referrals 의 하위 칸
+    (r.source·p.sources·m.hosts …)을 읽는다. 최상위 키는 10번이 보지만 안의 칸은 아무도
+    안 본다 — dashboard._ai_referrals 가 칸 이름을 바꾸면 화면은 undefined 를 0 으로
+    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용] 화면의 'AI 에서 온 방문'" 처럼 화면·
+    섹션 이름을 적는다. 정본은 뷰 쪽(view-def title, 섹션 h2)이라 대조한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    import dashboard
+
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    assert "function AI_visits(" in src, "ai.html 에 AI_visits 가 없다 — 이 검사가 헛돈다"
+    body = src[src.index("function AI_visits("):]
+    body = body[:body.index("\n}\n")]
+    read = {v: set(re.findall(rf"\b{v}\.([a-zA-Z_]\w*)", body)) for v in ("r", "p", "m")}
+    assert all(read.values()), f"AI_visits 가 읽는 칸을 못 찾았다 — 검사가 헛돈다: {read}"
+
+    # 실물 — 행 하나를 둔 Brain 에서 dashboard._ai_referrals 를 돌린다
+    import sqlite3 as _sq
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    db.write_ga4_ai_referrals(c, 1, "2026-01-01", 28, ["chatgpt.com"],
+                              [("chatgpt.com", "/a", 3, 1)])
+    got = dashboard._ai_referrals(c, 1)
+    c.close()
+    made = {"r": set(got["ai_referrals"][0]), "p": set(got["ai_referral_pages"][0]),
+            "m": set(got["ai_referral_meta"])}
+    for v, names in read.items():
+        assert names <= made[v], f"화면이 {v}. 로 읽는데 서버가 안 싣는 칸: {sorted(names - made[v])}"
+
+    # (나) 요청문이 부르는 이름 — 화면 제목과 섹션 h2
+    defs = _view_defs(ctx["views"])
+    for vid, title in brief.SCREEN_TITLES.items():
+        assert vid in defs, f"요청문이 없는 화면을 가리킨다: {vid}"
+        assert defs[vid]["title"] == title, \
+            f"요청문은 [{title}] 라는데 화면 제목은 {defs[vid]['title']!r}"
+    sid, stitle = brief.AI_VISITS_SECTION
+    assert sid in defs["ai"]["sections"], f"요청문이 가리키는 섹션 {sid} 가 ai view-def 에 없다"
+    h2 = re.search(rf'<section id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)
+    assert h2 and h2.group(1).strip() == stitle, \
+        f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
