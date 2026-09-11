@@ -514,6 +514,58 @@ def test_collect_ai_rechecks_what_an_aborted_run_asked_today():
     conn.close()
 
 
+def test_collect_ai_asks_unmeasured_and_stale_first():
+    """상한보다 켜 둔 질문이 많으면 **안 잰 것 → 오래된 것 → id 순**으로 묻는다.
+
+    ORDER BY id 였을 때 새로 만든 질문(큰 id)이 옛 질문에 밀려 영영 안 재졌다 —
+    3차 감사의 "뒤에 등록된 시술 질문 17개가 한 번도 측정 안 됨". 상한 2, 질문 넷:
+    q1·q2 는 이틀 전 잼(최근), q3 는 한 번도 안 잼, q4 는 60일 전 잼(오래됨).
+    옛 순서는 q1·q2 를 묻고, 새 순서는 q3·q4 를 묻는다.
+    """
+    conn = db.connect()
+    p = _project(conn, "ai_pick_proj", domain="e.com")
+    ids = []
+    for q in ("질문1_최근", "질문2_최근", "질문3_안잰것", "질문4_오래된것"):
+        conn.execute("INSERT INTO ai_prompts(project_id, prompt, category, is_active) "
+                     "VALUES(?, ?, '추천', 1)", (p["id"], q))
+        ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+    def measured(qid, days_ago):
+        rid = conn.execute(
+            "INSERT INTO runs(project_id, kind, started_at, finished_at, notes) "
+            "VALUES(?, 'ai', datetime('now', ?), datetime('now', ?), 'errors=0')",
+            (p["id"], f"-{days_ago} days", f"-{days_ago} days")).lastrowid
+        db.record_ai_check(conn, qid, rid, "chatgpt", 0, 0, 0, [], "답변")
+    measured(ids[0], 2)
+    measured(ids[1], 2)
+    measured(ids[3], 60)
+    conn.commit()
+    conn.close()
+
+    asked = []
+    orig_post = collect_ai.requests.post
+    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "fake-key"
+
+    def post(url, *a, **kw):
+        asked.append(kw["json"]["messages"][-1]["content"])
+        return FakeResponse({"choices": [{"message": {"content": "답", "annotations": []}}],
+                             "usage": {}})
+    collect_ai.requests.post = post
+    try:
+        collect_ai.collect("ai_pick_proj", engines="chatgpt", samples=1, throttle=0,
+                           max_prompts=2)
+    finally:
+        collect_ai.requests.post = orig_post
+        if orig_env_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = orig_env_key
+        else:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+    got = {q for q in ("질문1_최근", "질문2_최근", "질문3_안잰것", "질문4_오래된것")
+           if any(q in a for a in asked)}
+    assert got == {"질문3_안잰것", "질문4_오래된것"},         f"상한 2 에서 안 잰 것·오래된 것을 먼저 묻지 않았다: {sorted(got)}"
+
+
 def test_serp_device_in_body_and_validation():
     """(c) device 값이 DataForSEO 요청 body에 실림 + 허용값 외 에러 검증."""
     # 1. DataForSEO 요청 body에 device 값이 실리는지 확인

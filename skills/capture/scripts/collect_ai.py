@@ -155,6 +155,21 @@ def collect(project: str, *,
         # 부분 실행. 이게 없으면 "새로 넣은 8개만 돌려보자"에도 is_active를 손으로
         # 토글해야 하고, 되돌릴 때 통째로 UPDATE 해서 큐레이션한 활성 집합을 날린다.
         limit = max_ai_prompts
+        # 상한보다 켜 둔 질문이 많을 때 **무엇을 먼저** 묻나. 예전엔 ORDER BY id 라 새로
+        # 만든 질문(큰 id)이 옛 질문에 밀려 상한 밖으로 나갔고, 끄지 않는 한 영영 안
+        # 재졌다 — 3차 감사가 본 "뒤에 등록된 시술 질문 17개가 한 번도 측정 안 됨"이
+        # 이것이다. 순서: ① 끝난 회차에서 한 번도 안 잰 것 ② 마지막 측정이
+        # AI_STALE_DAYS 를 넘은 것 ③ 나머지는 id 순. 매번 가장 오래된 것부터 돌리면
+        # 회차마다 묻는 묶음이 바뀌어 회차 사이 인용률 추세를 못 견준다 — 그래서 ③ 은
+        # 고정 순서다. "잰 것"은 측정과 같은 판정(scoring.ai_run_done)을 쓴다.
+        pick = ("WITH last AS (SELECT c.prompt_id, MAX(r.finished_at) at FROM ai_checks c "
+                "JOIN runs r ON r.id=c.run_id WHERE " + scoring.ai_run_done("r") +
+                " GROUP BY c.prompt_id) "
+                "SELECT p.id, p.prompt, p.category FROM ai_prompts p "
+                "LEFT JOIN last l ON l.prompt_id=p.id "
+                "WHERE p.project_id=? AND p.is_active=1 {cat}"
+                "ORDER BY l.at IS NOT NULL, "
+                "COALESCE(julianday('now') - julianday(l.at) <= ?, 1), p.id LIMIT ?")
         if ids:
             ids_list = [int(x) for x in ids.split(",") if x.strip()]
             prompts = conn.execute(
@@ -162,15 +177,11 @@ def collect(project: str, *,
                      WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
                 (p["id"], *ids_list)).fetchall()
         elif category:
-            prompts = conn.execute(
-                """SELECT id, prompt, category FROM ai_prompts
-                    WHERE project_id=? AND is_active=1 AND category=? ORDER BY id LIMIT ?""",
-                (p["id"], category, limit)).fetchall()
+            prompts = conn.execute(pick.format(cat="AND p.category=? "),
+                                   (p["id"], category, scoring.AI_STALE_DAYS, limit)).fetchall()
         else:
-            prompts = conn.execute(
-                """SELECT id, prompt, category FROM ai_prompts
-                    WHERE project_id=? AND is_active=1 ORDER BY id LIMIT ?""",
-                (p["id"], limit)).fetchall()
+            prompts = conn.execute(pick.format(cat=""),
+                                   (p["id"], scoring.AI_STALE_DAYS, limit)).fetchall()
         if not prompts:
             return st.skip(f"AI에 물어볼 질문이 아직 없습니다 ({p['name']}). 채팅에 "
                            f"`/capture add {p['name']}` 이라고 하시면 프로젝트에 맞는 질문 10~30개를 "
