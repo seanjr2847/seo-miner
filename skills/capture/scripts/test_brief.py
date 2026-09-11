@@ -541,6 +541,75 @@ def test_llms_txt_three_states_and_google_caveat():
     assert "- llms.txt: 없음." in botb, botb
 
 
+def test_aio_brief_follows_rank_and_never_asks_for_faq_markup():
+    """구글 AI 요약은 AI 전용 마크업이 필요 없고 출처를 순위 시스템에서 고른다.
+
+    예전 처방은 순위와 무관하게 "직답 블록 + Article·FAQ 구조화 데이터"였다 — 40위인
+    검색어에 필요한 건 직답 블록이 아니라 순위다. 1페이지 안/밖으로 처방이 갈리고,
+    어느 쪽도 FAQ 구조화 데이터를 산출물로 시키지 않는다.
+    """
+    ctx = {"query_pages": {"검색어": _pages(URL)}}
+    inside = brief.build(_opp("aio_exposure", "검색어", band="page1"), ctx)["body"]
+    outside = brief.build(_opp("aio_exposure", "검색어", band="beyond"), ctx)["body"]
+    assert "이미 1페이지 안인데" in inside and "E-E-A-T" in inside, inside
+    assert "순위가 먼저입니다" in outside and "1페이지에 들기 위해" in outside, outside
+    assert "순위가 먼저입니다" not in inside and "E-E-A-T" not in outside
+    for body in (inside, outside):
+        want = body.split("## 만들어 줄 것")[1].split("##")[0]
+        assert "FAQ" not in want and "구조화 데이터" not in want, want
+        assert "직답 블록" not in want, want
+        # 조각내기·AI 전용 마크업을 하지 말라고 말한다 — 안 하던 걸 시키지 않는 것만으론
+        # 모자라다(직답 블록을 만들라던 요청문이 이미 나가 있다)
+        assert "AI 전용" in body, body
+    for b in scoring.AIO_BANDS:
+        p = scoring.kind_play("aio_exposure", band=b)
+        assert not any("FAQ" in x for x in p["acts"] + p["deliver"]), (b, p)
+
+
+def test_aio_brief_names_who_google_cited_instead():
+    """챗봇 인용 공백 요청문은 "누가 대신 인용됐나"를 말하는데 구글 AI 요약은 못 했다 —
+    수집기가 인용 도메인을 0/1 로 접고 버렸기 때문이다. 이제 그 목록을 싣는다."""
+    row = {"keyword": "검색어", "pos": None, "url": None, "features": ["ai_overview"],
+           "aio": 1, "aio_cited": 0, "aio_domains": ["rival.example", "wiki.example"]}
+    # 화면용 ranks(30개로 잘림)에 없어도 aio_gap_ranks 에서 찾는다
+    body = brief.build(_opp("aio_exposure", "검색어"),
+                       {"ranks": [], "aio_gap_ranks": {"검색어": row}})["body"]
+    assert "구글 AI 요약이 대신 인용한 곳: rival.example, wiki.example" in body, body
+    assert "순위 없음" in body, body
+    # 옛 조회(목록을 안 남기던 때)는 아무 말도 안 한다 — "없다"고 지어내지 않는다
+    old = brief.build(_opp("aio_exposure", "검색어"),
+                      {"aio_gap_ranks": {"검색어": {**row, "aio_domains": None}}})["body"]
+    assert "대신 인용한 곳" not in old and "뽑지 못했습니다" not in old, old
+    # 요약은 떴는데 인용을 못 뽑았다([])는 그렇다고 말한다
+    empty = brief.build(_opp("aio_exposure", "검색어"),
+                        {"aio_gap_ranks": {"검색어": {**row, "aio_domains": []}}})["body"]
+    assert "뽑지 못했습니다" in empty and "대신 인용한 곳:" not in empty, empty
+
+
+def test_fanout_questions_reach_fix_new_and_aio_briefs():
+    """AI 는 사용자가 친 질문 하나가 아니라 관련 질문 묶음으로 찾는다 — 그 묶음이 구글이
+    같이 보여 준 질문·연관 검색어다. 수집기는 내내 받아 왔는데 키워드 후보로만 넣고
+    어느 검색어에서 나왔는지를 버렸다."""
+    fan = {"검색어": [{"kind": "paa", "text": "비용은 얼마인가요"},
+                      {"kind": "paa", "text": "부작용이 있나요"},
+                      {"kind": "related", "text": "검색어 후기"}]}
+    head = "## 함께 답해야 할 질문 (구글이 같이 보여 준 것)"
+    fix = brief.build(_opp("striking_distance", "검색어"),
+                      {"query_pages": {"검색어": _pages(URL)}, "serp_fanout": fan})["body"]
+    assert head in fix and "  - 비용은 얼마인가요" in fix, fix
+    assert "- 연관 검색어: 검색어 후기" in fix, fix
+    new = brief.build(_opp("content_gap", "검색어", gap_kind="missing"), {"serp_fanout": fan})
+    assert new["shape"] == "new_content" and head in new["body"], new["body"]
+    aio = brief.build(_opp("aio_exposure", "검색어"), {"serp_fanout": fan})["body"]
+    assert head in aio and "부작용이 있나요" in aio, aio
+    # 상위와 견줄 일이 아닌 꼴에는 안 붙는다
+    assert head not in brief.build(_opp("cannibalization", "검색어"), {"serp_fanout": fan})["body"]
+    # 수집이 안 됐으면(키 없음·빈 목록) 블록이 없다 — 없는 것을 있는 척하지 않는다
+    for ctx in ({}, {"serp_fanout": {}}, {"serp_fanout": {"검색어": []}},
+                {"serp_fanout": {"다른 검색어": fan["검색어"]}}):
+        assert head not in brief.build(_opp("striking_distance", "검색어"), ctx)["body"], ctx
+
+
 def test_trust_signals_are_asked_for_but_never_invented():
     """E-E-A-T — 저자·출처·갱신일은 요구하되, 이름·자격은 지어내지 않게 못 박는다."""
     tails = brief.tails("ko-KR")

@@ -2,7 +2,9 @@
 """Rank snapshot collection via SERP adapter (F3).
 
 Per active keyword: fetch SERP -> record own position, top-10, features,
-AI-Overview flags. Free byproducts are harvested by default:
+AI-Overview flags + the domains the AI Overview cited, and the PAA/related
+questions of *that* keyword (serp_questions — 요청문의 "함께 답해야 할 질문").
+Free byproducts are harvested by default:
   * related searches + PAA  -> keyword candidates (source='serp', is_active=0)
   * domains in top-10 of >=3 keywords -> competitors (source='auto_serp')
 
@@ -166,10 +168,20 @@ def collect(project: str, *,
                     domain_hits[d] += 1
             aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
                          if res["aio_present"] else None)
+            # 인용 도메인은 0/1 로 접고 끝내지 않는다 — "누가 대신 인용됐나"가 AI 요약
+            # 요청문의 근거다. 요약이 없었거나(0) 안 쟀으면(None, serper) 목록도 None 이다.
             db.write_rank_snapshot(
                 conn, row["id"], position, url,
-                res["serp_features"], res["aio_present"], aio_cited)
+                res["serp_features"], res["aio_present"], aio_cited,
+                aio_domains=res["aio_domains"] if res["aio_present"] == 1 else None)
             db.write_serp_results(conn, row["id"], top_rows)
+            # 함께 묻는 질문·연관 검색어를 **어느 검색어에서 나왔는지와 함께** 남긴다 —
+            # 아래 키워드 후보 적재와 별개다(그쪽은 --no-harvest 로 끌 수 있는 부산물이고,
+            # 이쪽은 이 검색어의 요청문이 쓰는 사실이다).
+            db.write_serp_questions(
+                conn, row["id"],
+                [("paa", q) for q in res.get("paa") or []]
+                + [("related", q) for q in res.get("related") or []])
             total_cost += res["cost"]
             if not no_harvest:
                 # 후보는 조회에 쓴 로케일을 물려받는다. 안 그러면 한국어 SERP에서

@@ -325,6 +325,23 @@ def test_collect_serp_ranking_and_none_position_aio():
     # 순위 밖 키워드도 상위는 남는다 — 내가 없다고 남의 자리까지 버릴 이유가 없다
     assert conn.execute("SELECT COUNT(*) c FROM serp_results WHERE keyword_id=?",
                         (kw_out_id,)).fetchone()["c"] == 2
+
+    # 5. AI 요약이 인용한 도메인을 0/1 로 접고 버리지 않는다 — "누가 대신 인용됐나"가
+    #    AI 요약 요청문의 근거다. 안 쟀으면(serper) 목록도 NULL — "봤는데 아무도 없었다"([])와
+    #    다르다(db.write_rank_snapshot 의 불변식).
+    doms = {r["keyword_id"]: r["aio_domains_json"] for r in conn.execute(
+        "SELECT keyword_id, aio_domains_json FROM rank_snapshots WHERE keyword_id IN (?,?)",
+        (kw_in_id, kw_out_id))}
+    assert json.loads(doms[kw_in_id]) == ["e.com", "other1.com"], doms
+    assert doms[kw_out_id] is None, f"AIO 미측정인데 인용 목록이 적혔다: {doms[kw_out_id]!r}"
+
+    # 6. 함께 묻는 질문·연관 검색어를 **어느 검색어에서 나왔는지와 함께** 남긴다
+    #    (키워드 후보 적재 — 위 3 — 는 그대로 둔 채로)
+    qs = [(r["keyword_id"], r["kind"], r["position"], r["text"]) for r in conn.execute(
+        "SELECT keyword_id, kind, position, text FROM serp_questions WHERE keyword_id IN (?,?)"
+        " ORDER BY keyword_id, kind, position", (kw_in_id, kw_out_id))]
+    assert qs == [(kw_in_id, "paa", 1, "자주 묻는 질문 1"),
+                  (kw_in_id, "related", 1, "연관 검색어 1")], qs
     conn.close()
 
 

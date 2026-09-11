@@ -731,6 +731,51 @@ def test_rank_snapshot_keeps_aio_none():
     assert row["position"] == 3
     assert row["aio_present"] is None, f"expected None, got {row['aio_present']}"
     assert row["aio_cited"] is None, f"expected None, got {row['aio_cited']}"
+
+    # 인용 도메인도 같은 불변식 — 요약이 떴을 때만 목록이 있고, 떴는데 못 뽑은 것([])과
+    # 안 떴거나 안 잰 것(NULL)은 다르다. serper 는 늘 [] 를 주므로 여기가 그 둔갑을 막는다.
+    def doms(present, given):
+        db.write_rank_snapshot(conn, kw_id, 3, None, aio_present=present,
+                               aio_cited=0 if present else None, aio_domains=given)
+        return conn.execute("SELECT aio_domains_json FROM rank_snapshots WHERE keyword_id=?",
+                            (kw_id,)).fetchone()[0]
+    assert doms(1, ["a.com", "b.com"]) == '["a.com", "b.com"]'
+    assert doms(1, []) == "[]"
+    assert doms(None, []) is None, "안 잰 조회가 '봤는데 아무도 없었다'가 됐다"
+    assert doms(0, ["a.com"]) is None, "요약이 안 뜬 조회에 인용 목록이 적혔다"
+    assert doms(1, None) is None
+    conn.close()
+
+
+def test_serp_questions_keep_the_keyword_and_overwrite_the_day():
+    """함께 묻는 질문·연관 검색어는 어느 검색어에서 나왔는지와 함께, 하루 한 벌로 남는다."""
+    conn = db.connect()
+    p = _project(conn, "serp_q")
+    kid = conn.execute("INSERT INTO keywords(project_id, keyword) VALUES(?, 'kw_q') RETURNING id",
+                       (p["id"],)).fetchone()[0]
+    conn.commit()
+    got = lambda: [(r["kind"], r["position"], r["text"]) for r in conn.execute(
+        "SELECT kind, position, text FROM serp_questions WHERE keyword_id=? ORDER BY kind, position",
+        (kid,))]
+    n = db.write_serp_questions(conn, kid, [("paa", " 질문 A "), ("paa", "질문 a"), ("paa", "질문 B"),
+                                            ("related", "연관 1"), ("bogus", "x"), ("paa", "")],
+                                checked_at="2026-09-01T01:00:00Z")
+    assert n == 3 and got() == [("paa", 1, "질문 A"), ("paa", 2, "질문 B"),
+                                ("related", 1, "연관 1")], got()
+    # 같은 날 다시 재면 덮어쓴다 — 앞 조회의 질문이 새 조회의 사실처럼 남지 않는다
+    db.write_serp_questions(conn, kid, [("related", "연관 2")], checked_at="2026-09-01T09:00:00Z")
+    assert got() == [("related", 1, "연관 2")], got()
+    db.write_serp_questions(conn, kid, [], checked_at="2026-09-01T10:00:00Z")
+    assert got() == [], "같은 날 질문이 없는 조회가 앞 조회의 질문을 남겼다"
+    # 다른 날은 따로 쌓인다
+    db.write_serp_questions(conn, kid, [("paa", "질문 C")], checked_at="2026-09-02T01:00:00Z")
+    db.write_serp_questions(conn, kid, [("paa", "질문 D")], checked_at="2026-09-03T01:00:00Z")
+    assert len(got()) == 2, got()
+    # kind 마다 상한 — 요청문을 목록으로 만들지 않는다
+    db.write_serp_questions(conn, kid, [("paa", f"q{i}") for i in range(30)],
+                            checked_at="2026-09-03T02:00:00Z")
+    assert conn.execute("SELECT COUNT(*) FROM serp_questions WHERE keyword_id=? AND "
+                        "date(checked_at)='2026-09-03'", (kid,)).fetchone()[0] == db.SERP_QUESTIONS_KEEP
     conn.close()
 
 

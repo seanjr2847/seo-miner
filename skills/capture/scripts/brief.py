@@ -528,6 +528,30 @@ def _serp_top(o: dict, ctx: dict) -> list[str]:
             "아래 칸에 그 글들의 H2 목록을 붙여 넣어 주세요."]
 
 
+def _fanout(o: dict, ctx: dict) -> list[str]:
+    """구글이 이 검색어에 같이 보여 준 질문(함께 묻는 질문)·연관 검색어 — serp_top 과 같은 조회.
+
+    AI 요약·AI 검색은 사용자가 친 한 줄이 아니라 관련 질문 묶음으로 찾아 답을 짓는다
+    (쿼리 팬아웃). 묶음을 덮은 글이 출처로 뽑힌다. 이 재료는 수집기가 내내 받아 왔는데
+    키워드 후보로만 넣고 어느 검색어에서 나왔는지를 버려서, 요청문이 말하지 못했다.
+    안 쟀거나 구글이 아무것도 안 보여 줬으면 아무 줄도 안 만든다.
+    """
+    rows = (ctx.get("serp_fanout") or {}).get(str(o.get("target") or "")) or []
+    paa = [r["text"] for r in rows if r.get("kind") == "paa"]
+    rel = [r["text"] for r in rows if r.get("kind") == "related"]
+    if not (paa or rel):
+        return []
+    L = ["구글은 이 검색어를 아래 질문 묶음과 함께 봅니다. AI 요약도 한 줄이 아니라 이런 "
+         "관련 질문을 같이 찾아 답을 짓습니다 — 묶음을 덮은 글이 출처로 뽑힙니다."]
+    if paa:
+        L += ["- 함께 묻는 질문:", *(f"  - {q}" for q in paa)]
+    if rel:
+        L.append(f"- 연관 검색어: {' · '.join(rel)}")
+    L.append("- 전부를 H2 로 만들 필요는 없습니다. 이 글의 검색 의도에 맞는 것만 답하고, "
+             "의도가 다른 것은 따로 쓸 글로 적어 주세요.")
+    return L
+
+
 def _site_facts(ctx: dict, url: str | None) -> list[str]:
     """사이트 전체를 봐야 아는 사실 — 제목 중복, 이 페이지로 들어오는 내부 링크.
 
@@ -779,12 +803,21 @@ def _ev_ai(o, ctx, pages):
 
 
 def _ev_aio(o, ctx, pages):
-    r = _find(ctx.get("ranks"), "keyword", o["target"])
+    # 화면용 ranks 는 순위 순 30개로 잘린다 — AI 요약 기회는 대개 그 밖이라 잘리기 전
+    # 행(aio_gap_ranks)을 먼저 본다.
+    r = ((ctx.get("aio_gap_ranks") or {}).get(str(o.get("target") or ""))
+         or _find(ctx.get("ranks"), "keyword", o["target"]))
     L = []
     if r:
         pos = f"{r['pos']}위" if r.get("pos") is not None else "순위 없음"
         L.append(f"- 실제 검색 결과: {pos}" + (f" (그 자리의 내 페이지: {r['url']})" if r.get("url") else "")
                  + " · 구글 AI 요약 있음, 내 링크 없음")
+        # None = 안 쟀다(옛 조회) — 아무 말도 안 한다. [] = 쟀는데 도메인을 못 뽑았다.
+        doms = r.get("aio_domains")
+        if doms:
+            L.append(f"- 구글 AI 요약이 대신 인용한 곳: {', '.join(map(str, doms))}")
+        elif doms is not None:
+            L.append("- 구글 AI 요약이 인용한 곳은 이번 조회 응답에서 뽑지 못했습니다.")
         if r.get("features"):
             L.append(f"- 검색결과 기능: {', '.join(map(str, r['features']))}")
     return L + _pages_table(pages)
@@ -968,6 +1001,10 @@ def build(o: dict, ctx: dict) -> dict:
         if top:
             L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
             had_top = True
+        # 같은 조회에서 구글이 같이 보여 준 질문 — AI 요약 기회도 고치기·새 글로 간다
+        fan = _fanout(o, ctx)
+        if fan:
+            L += ["## 함께 답해야 할 질문 (구글이 같이 보여 준 것)", *fan, ""]
     # AI 종류(챗봇 인용·구글 AI 요약)에서만 붙는 추출성 진단 — 판정은 scoring 한 곳.
     # 같은 tag(갱신)는 AI 기준으로 갈아 끼운다: 2년 기준과 6개월 기준이 한 요청문에
     # 나란히 서면 어느 쪽을 따를지 모른다.

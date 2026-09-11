@@ -844,7 +844,10 @@ def test_seam_19_brief_context_keys_come_from_gather():
 
     # 근거를 만드는 쪽(수집)과 말하는 쪽(요청문)이 같은 표를 본다 — 이 넷은
     # 값을 치르고 배운 자리라 이름으로 못 박는다.
-    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals"):
+    # serp_fanout·aio_gap_ranks: 함께 묻는 질문과 AI 요약이 대신 인용한 곳 — 수집기가
+    # 받아 놓고 버리던 것을 남기게 된 자리다.
+    for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals",
+                "serp_fanout", "aio_gap_ranks"):
         assert key in served, f"gather() 가 {key} 를 안 싣는다"
         assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 
@@ -1046,6 +1049,56 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     said = set(re.findall(r'lr\.state\s*[!=]==\s*"(\w+)"', body))
     assert said and said <= made, f"화면이 모르는 런 상태를 견준다: {sorted(said - made)}"
     assert h["last_run"]["state"] == "aborted", h["last_run"]
+
+
+def test_seam_25_rank_aio_fields_and_play_come_from_server():
+    """25) [순위] 화면의 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다.
+
+    화면(views/rank.html)은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
+    읽고, 처방 문구는 d.aio_play[갈래] 로 찾는다. 10번은 최상위 키(d.*)만 본다 — 행 칸
+    이름이 어긋나거나 갈래 이름이 d.aio_play 의 열쇠와 다르면 화면은 undefined 를 받아
+    인용처도 처방도 조용히 안 그린다. 그리고 예전처럼 화면이 AI 요약 처방을 따로 적으면
+    (옛 "H2 + 직답") 기회 패널과 두 벌이 된다 — 그 가지에는 한국어 문구가 없어야 한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import sqlite3 as _sq
+
+    import dashboard
+    import scoring
+    src = (ctx["views"] / "rank.html").read_text("utf-8")
+    read_r = set(re.findall(r"\br\.(aio_\w+)", src))
+    assert {"aio_domains", "aio_band"} <= read_r, \
+        f"rank.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
+    assert "RK_AIO_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
+        "rank.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
+
+    # 실물 — AI 요약에 빠진 검색어 둘(1페이지 안·순위 없음)을 둔 Brain
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    for i, pos in ((1, 4), (2, None)):
+        c.execute("INSERT INTO keywords(id,project_id,keyword,is_active) VALUES(?,1,?,1)",
+                  (i, f"kw{i}"))
+        db.write_rank_snapshot(c, i, pos, None, aio_present=1, aio_cited=0,
+                               aio_domains=["rival.example"])
+    rk = dashboard._axis_rank(c, 1)
+    c.close()
+    row = rk["ranks"][0]
+    assert read_r <= set(row), f"화면이 읽는데 순위 행에 없는 칸: {sorted(read_r - set(row))}"
+    bands = {r["aio_band"] for r in rk["ranks"]}
+    assert bands == set(scoring.AIO_BANDS), bands
+    assert bands <= set(rk["aio_play"]), \
+        f"행의 갈래가 d.aio_play 의 열쇠에 없다: {sorted(bands - set(rk['aio_play']))}"
+
+    # 화면의 AI 요약 가지는 서버 문구를 붙이기만 한다 — 자기 문구(한국어 글자)가 없다
+    body = src[src.index("function RK_playParts("):]
+    body = body[body.index("if (r.aio === 1 && !r.aio_cited)"):body.index("return [what")]
+    lits = [s for s in re.findall(r'"([^"]*)"|`([^`]*)`', body) for s in s
+            if re.search(r"[가-힣]", s)]
+    assert not lits, f"rank.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
 
 
 if __name__ == "__main__":

@@ -2581,6 +2581,57 @@ _CG_PLAY = {
         deliver=["이 검색어를 정면으로 다루는 새 글의 제목·목차", "내 제품·데이터로만 쓸 수 있는 구간 하나"]),
 }
 
+# aio_exposure(구글 AI 요약에 내 링크 없음)는 우리 순위로 처방이 갈린다 — band 는
+# aio_band() 가 정한다. 예전 처방은 "직답 블록 + Article·FAQ 구조화 데이터"였는데
+# 구글 공식 입장과 반대였다: 구글 AI 요약(AI Overviews)은 AI 전용 마크업·파일이
+# 필요 없고, AI 용으로 콘텐츠를 조각낼 필요도 없으며, 출처를 핵심 순위 시스템에서
+# 고른다(Search Central "AI features and your website"). 그래서 40위인 검색어에
+# 필요한 것은 직답 블록이 아니라 순위다. FAQ 구조화 데이터를 뺀 근거가 하나 더
+# 있다 — 구글은 2023년 8월부터 FAQ 리치 결과를 잘 알려진 정부·보건 권위 사이트로
+# 제한했다. 대부분의 사이트에서 그 마크업은 검색 결과에 아무것도 더하지 않는다.
+# 챗봇 인용(ai_citation_gap)은 다른 엔진이라 이 판단을 따르지 않는다.
+_AIO_PLAY = {
+    "page1": dict(
+        what="이미 1페이지 안인데 구글 AI 요약이 우리 대신 다른 곳을 인용합니다. 구글 AI "
+             "요약은 순위 시스템이 고른 상위 페이지에서 출처를 뽑고, AI 전용 마크업이나 "
+             "파일이 필요 없습니다. 남은 것은 사람이 읽기에 더 나은 글입니다.",
+        acts=["요약이 대신 인용한 곳이 답하는데 우리 글에는 없는 답을 찾아, 사람이 읽는 "
+              "문단으로 채웁니다.",
+              "제목과 H2 가 질문과 답의 흐름을 따르게 구조를 분명히 합니다. 한 문단에는 "
+              "한 가지만 말합니다.",
+              "누가 썼는지, 직접 해 보거나 겪은 것, 근거 출처, 마지막 수정일을 드러냅니다(E-E-A-T).",
+              "AI 용으로 글을 조각내거나 따로 페이지를 만들지 않습니다. AI 전용 마크업·파일도 "
+              "구글 AI 요약에는 필요 없습니다.",
+              "스니펫을 막고 있지 않은지 봅니다. nosnippet·max-snippet 은 AI 요약에 인용되는 "
+              "것도 막습니다."],
+        deliver=["요약이 대신 인용한 곳이 답하는데 우리 글에 없는 답 목록과, 그걸 채울 H2·문단 계획",
+                 "제목·H2 구조 수정안. 지금 것과 고친 것을 나란히",
+                 "이 글에 빠진 신뢰 신호(저자·직접 경험·출처·수정일)와 넣을 자리"]),
+    "beyond": dict(
+        what="구글이 이 검색어에 AI 요약을 붙이는데 우리는 1페이지 밖이거나 순위가 없습니다. "
+             "구글 AI 요약은 상위 페이지에서 출처를 뽑습니다 — 순위가 먼저입니다. 직답 "
+             "블록이나 구조화 데이터로 요약에 끼어드는 길은 없습니다.",
+        acts=["이 검색어로 1페이지에 드는 것을 목표로 잡습니다. 걸린 페이지가 있으면 그 "
+              "페이지를, 없으면 이 검색어를 정면으로 다루는 글을 씁니다.",
+              "상위 페이지가 답하는데 우리에게 없는 질문을 채웁니다. 검색결과 상위와 구글이 "
+              "함께 보여 준 질문이 그 재료입니다.",
+              "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
+              "AI 용 조각 글이나 AI 전용 마크업을 따로 만들지 않습니다. 순위를 올리는 일이 "
+              "곧 AI 요약에 드는 길입니다."],
+        deliver=["1페이지에 들기 위해 채울 H2 목록. 상위 페이지가 답하는데 우리에게 없는 질문",
+                 "새 title 과 H1 문안. 검색어를 앞에 두고",
+                 "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"]),
+}
+AIO_BANDS = tuple(_AIO_PLAY)
+
+
+def aio_band(position) -> str:
+    """구글 AI 요약 기회의 처방 갈래 — 우리 순위가 1페이지(PAGE1) 안이면 page1.
+
+    순위 없음(None: 조회 깊이 안에 우리가 없다)은 beyond 다 — 모르는 게 아니라
+    "안 보였다"는 측정이다."""
+    return "page1" if position is not None and position <= PAGE1 else "beyond"
+
 
 _KIND_SPECS = {
     "striking_distance": dict(
@@ -2776,12 +2827,7 @@ _KIND_SPECS = {
             + (f"{' · ' if r['position'] else ' ('}월 검색량 {r['volume']:,}"
                if r["volume"] else "")
             + (")" if r["position"] or r["volume"] else "")),
-        play=dict(
-            what="구글이 이 검색어에 AI 요약을 붙이는데 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.",
-            acts=["요약이 답하는 질문에 직답 블록을 만듭니다.",
-                  "Article·FAQ 구조화 데이터를 붙입니다."],
-            deliver=["구글 AI 요약이 답하는 질문에 대한 직답 블록",
-                     "Article·FAQ 구조화 데이터(JSON-LD)"])),
+        play=_AIO_PLAY),
     "content_gap": dict(
         label="콘텐츠 공백", defensive=False,
         detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"]),
@@ -2900,9 +2946,10 @@ def kind_label(kind: str, *, band: str | None = None) -> str:
 def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None) -> dict:
     """이 kind 의 처방(what/acts/deliver) — dashboard.html 의 옛 window.PLAY 산문이 여기로 옮겨왔다.
 
-    striking_distance·content_gap 은 한 kind 가 처방 둘을 갖는다(밴드/갈래로 갈린다).
-    band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
-    기본값과 같은 쪽(page2/missing)으로 물러선다. 모르는 kind 면 빈 dict —
+    striking_distance·content_gap·aio_exposure 는 한 kind 가 처방 둘을 갖는다(밴드/갈래로
+    갈린다). band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
+    기본값과 같은 쪽(page2/missing)으로 물러선다. aio_exposure 는 beyond 로 물러선다 —
+    순위를 모르는 채로 "이미 1페이지 안"이라고 말하지 않는다. 모르는 kind 면 빈 dict —
     화면의 playList() 는 빈 처방을 아무것도 안 그리는 것으로 받아들인다.
     """
     k = _KIND_BY_NAME.get(kind)
@@ -2911,6 +2958,8 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
     p = k.play
     if kind == "striking_distance":
         return p.get(band) or p["page2"]
+    if kind == "aio_exposure":
+        return p.get(band) or p["beyond"]
     if kind == "content_gap":
         return p.get(gap_kind) or p["missing"]
     return p
@@ -3246,10 +3295,10 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
 # DB 에는 여전히 검색어마다 기회 하나다(사실). 묶음은 **읽을 때만** 한다(표시·우선순위).
 # 기회를 저절로 닫는 쪽(검색어 단위)과 부딪히지 않고, 틀리면 이 함수만 되돌리면 된다.
 #
-# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(직답 블록 + 구조화 데이터)은
-# 페이지에 한 번 하는 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가
-# 따로 줄을 차지할 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지
-# 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
+# 묶는 종류는 aio_exposure 하나다. 그 종류의 할 일(그 페이지의 순위를 올리거나, 이미
+# 1페이지면 사람이 읽기에 더 나은 글로 다듬기 — _AIO_PLAY)은 페이지에 한 번 하는
+# 일이라 변형 검색어(`milia vs syringoma` / `syringomas` …)가 따로 줄을 차지할
+# 이유가 없고, 실제로 한 사이트에 190건이 쌓여 무엇부터 할지 안 보였다. 나머지 검색어 종류는 안 묶는다: striking_distance·ctr_gap·rank_decay·
 # device_gap 은 근거 문장이 **그 검색어의** 순위·CTR·Δ 를 말해서 합치면 어느 변형이
 # 처지는지가 사라지고, cannibalization 은 정의상 한 검색어에 페이지가 여럿이라 "같은
 # 페이지"라는 열쇠가 성립하지 않으며, 대상이 문장(ai_citation_gap)·URL·도메인·클러스터인
@@ -3286,8 +3335,8 @@ def _surface_facts(conn: sqlite3.Connection, project_id: int,
     page·page_src : 우리 페이지 열쇠(url_key). GSC 에서 그 검색어로 노출이 가장 큰
                     페이지를 먼저 보고, 없으면 순위 조회(rank_snapshots.url)가 잡은 우리 주소.
     serp          : 최신 조회의 상위 주소(url_key) 집합 — 수집기가 남긴 만큼(db.SERP_KEEP).
-                    AI 요약 안의 인용 도메인은 수집기가 우리 인용 여부(aio_cited)만 남기고
-                    버려서 여기 없다.
+                    AI 요약 안의 인용 도메인(rank_snapshots.aio_domains_json)은 열쇠로 쓰지
+                    않는다 — 요약은 조회마다 붙었다 떨어졌다 하고 옛 행에는 없다.
     cluster·volume: keywords 표. 검색어와 norm 으로 짝짓는다.
     """
     out = {t: {"page": None, "page_url": None, "page_src": None, "serp": frozenset(),
@@ -3791,6 +3840,14 @@ def _selfcheck() -> None:
     assert kind_play("content_gap")["what"].startswith("경쟁 도메인은 잡고 있는데")   # 모르면 missing
     assert kind_play("ctr_gap")["acts"], "정적 kind 의 처방이 비었다"
     assert kind_play("없는kind") == {}
+    # 구글 AI 요약은 순위로 갈린다. 모르면 beyond — "이미 1페이지"라고 지어내지 않는다.
+    # 어느 쪽이든 FAQ 구조화 데이터를 시키지 않는다(test_brief 가 요청문까지 본다).
+    assert aio_band(4) == "page1" and aio_band(PAGE1) == "page1"
+    assert aio_band(PAGE1 + 1) == "beyond" and aio_band(None) == "beyond"
+    assert kind_play("aio_exposure", band="page1")["what"].startswith("이미 1페이지 안인데")
+    assert kind_play("aio_exposure", band="beyond")["what"].startswith("구글이 이 검색어에")
+    assert kind_play("aio_exposure") is _AIO_PLAY["beyond"]
+    assert set(AIO_BANDS) == {"page1", "beyond"}
     assert set(INDEX_BUCKETS) == {"robots_blocked", "fetch_error",
                                   "canonical_mismatch", "not_indexed"}, INDEX_BUCKETS
     assert gap_to_page1(10.0) == 0.0                                 # 1페이지 안이면 0 클램프
