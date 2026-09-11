@@ -88,9 +88,21 @@ def running_fails(status: dict) -> list[str]:
     return out
 
 
+def latest_per_stage(rows: list[dict]) -> list[dict]:
+    """단계마다 가장 늦은 행만 — 같은 단계를 체인 뒤에 다시 돌려 성공했으면 앞선 실패는
+    이미 지나간 일이다. 안 그러면 한 단계만 고쳐 다시 돈 런(--only backlinks)이 게이트를
+    못 푼다: 체인의 경계가 gsc 런이라, 다음 전체 런 전까지 옛 실패가 계속 FAIL 로 남았다
+    (9/11 backlinks 재수집 뒤에도 9/6·9/8·9/9 의 500 이 그대로 떴다). 거꾸로 뒤 런이
+    실패면 그게 남는다. rows 는 started_at 순이다(CHAIN_SQL)."""
+    last: dict = {}
+    for r in rows:
+        last[r.get("kind")] = r
+    return sorted(last.values(), key=lambda r: str(r.get("started_at") or ""))
+
+
 def chain_fails(project: str, rows: list[dict], paid: set[str]) -> list[str]:
     out = []
-    for r in rows:
+    for r in latest_per_stage(rows):
         bad = why_bad(r, paid)
         if bad:
             out.append(f"'{project}' {r.get('kind')} ({r.get('started_at')}): {bad} — "
@@ -197,6 +209,18 @@ def _selfcheck() -> None:
         assert len(fails) == 1, fails
         assert ": errors=100 —" in fails[0] and "rank" in fails[0] \
             and "2026-09-02T01:05:00" in fails[0], fails[0]
+
+        # 같은 단계를 뒤에 다시 돌려 성공했으면 앞선 실패는 지나간 일 → PASS.
+        # 거꾸로 성공 뒤의 실패는 남는다 → FAIL.
+        redone = bad + [dict(ok_rows[1], started_at="2026-09-03T02:00:00")]
+        serve({"theotherskin": {"running": False}}, redone)
+        fails, _ = check()
+        assert not fails, fails
+        broke = ok_rows[:2] + [dict(ok_rows[1], started_at="2026-09-03T02:00:00",
+                                    notes="provider=dataforseo errors=3")]
+        serve({"theotherskin": {"running": False}}, broke)
+        fails, _ = check()
+        assert len(fails) == 1 and "2026-09-03T02:00:00" in fails[0], fails
 
         # 유료 단계인데 api_calls=0 이고 건너뜀 표식도 없으면 FAIL
         silent = ok_rows[:1] + [dict(ok_rows[2], notes="keywords=40 updated=0 errors=0")]
