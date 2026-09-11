@@ -221,6 +221,48 @@ def test_expand_keywords_success_and_failure_rate_warning():
     conn.close()
 
 
+def test_collect_serp_rivals_skip_platforms_and_rare_hosts():
+    """순위 수집이 붙이는 경쟁사 — 플랫폼·우리 자신·드물게 선 곳은 안 들어가고, 한 검색결과에
+    두 번 선 도메인은 한 번으로 센다. 새 표시는 'auto_rank' 다('auto_serp' 은 은퇴).
+
+    2026-09 호스팅: "검색어 3개 이상에서 상위 10위" 규칙이 m.blog.naver·youtube·play.google
+    을 경쟁사로 넣었고(세 사이트 291개), 갭 분석이 그 앞 5개로 돈을 썼다."""
+    conn = db.connect()
+    p = _project(conn, "serp_rival_proj", domain="e.com", locale="ko-KR")
+    kws = [f"검색어 {i}" for i in range(10)]
+    conn.executemany("INSERT INTO keywords(project_id, keyword, locale, is_active) VALUES(?,?, 'ko-KR', 1)",
+                     [(p["id"], k) for k in kws])
+    conn.commit()
+    conn.close()
+
+    def top(*doms):
+        return [{"pos": i + 1, "domain": d, "url": f"https://{d}/{i}", "title": d}
+                for i, d in enumerate(doms)]
+
+    def fake_fetch(provider, keyword, locale, depth=10, device="desktop"):
+        i = kws.index(keyword)
+        doms = ["m.blog.naver.com", "rival.com", "shop.e.com"]   # 열 개 모두
+        if i < 3:
+            doms.append("often.com")                               # 3/10 — 문턱(10%·바닥 3) 위
+        if i == 0:
+            doms += ["once.com", "once.com", "once.com"]           # 한 검색결과에 셋 = 검색어 하나
+        return {"top": top(*doms), "serp_features": [], "aio_present": 0, "aio_domains": [],
+                "related": [], "paa": [], "cost": 0.0}
+
+    orig = serp_adapter.fetch
+    serp_adapter.fetch = fake_fetch
+    try:
+        collect_serp.collect("serp_rival_proj", provider="dataforseo", throttle=0)
+    finally:
+        serp_adapter.fetch = orig
+
+    conn = db.connect()
+    got = {r["domain"]: r["source"] for r in conn.execute(
+        "SELECT domain, source FROM competitors WHERE project_id=?", (p["id"],))}
+    conn.close()
+    assert got == {"rival.com": "auto_rank", "often.com": "auto_rank"}, got
+
+
 def test_collect_serp_ranking_and_none_position_aio():
     """collect_serp: serp_adapter.fetch 결과를 고정 데이터로 교체 ->
     1) 순위권 내 키워드는 write_rank_snapshot으로 position/url/aio 적재

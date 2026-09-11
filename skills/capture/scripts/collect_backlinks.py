@@ -52,27 +52,17 @@ INTERSECT_MAX_RIVALS = 5    # 그 이상은 교집합이 좁아지기만 하고 
 def intersect_rivals(conn, pid: int, target: str) -> tuple[list[str], list[str]]:
     """Link Intersect 에 넣을 경쟁사 → (쓸 것, 뺀 플랫폼).
 
-    competitors 는 순위 수집이 검색결과 상위 도메인으로 자동 채운다 — 그래서 앞자리에
-    youtube.com·facebook.com·reddit.com·play.google.com 같은 플랫폼이 선다. 예전엔
-    그 표를 id 순으로 20개 잘라 넣었고, 거대 플랫폼 스무 개의 교집합을 요청한 셈이라
-    DataForSEO 가 aitierlist·noti 에서 세 번 연속 같은 자리에서 500 을 냈다(9/6·9/8·9/9
-    — 5xx 재시도로는 안 낫는 종류다). 뜻으로도 그 교집합은 '경쟁사는 받는데 우리는 못
+    예전엔 competitors 표를 id 순으로 20개 잘라 넣었다. 그 표의 앞자리는 순위 수집이
+    예전 규칙으로 넣은 youtube.com·reddit.com·play.google.com 같은 플랫폼이었고, 거대
+    플랫폼 스무 개의 교집합을 요청한 셈이라 DataForSEO 가 aitierlist·noti 에서 세 번
+    연속 500 을 냈다(9/6·9/8·9/9). 뜻으로도 그 교집합은 '경쟁사는 받는데 우리는 못
     받는 링크'가 아니다.
 
-    사람이 고른 것(manual)이 먼저, 제3자 플랫폼(config.yaml third_party_platforms —
-    scoring.is_third_party 가 정본)은 빼고, INTERSECT_MAX_RIVALS 개까지.
+    읽는 규칙(manual 먼저, 플랫폼 제외)은 scoring.rivals 한 벌이다 — 갭 분석도 같은 걸
+    쓴다. 여기서는 INTERSECT_MAX_RIVALS 개로 자르기만 한다.
     """
     import scoring
-    rows = conn.execute(
-        "SELECT domain FROM competitors WHERE project_id=?"
-        " ORDER BY (source = 'manual') DESC, id", (pid,)).fetchall()
-    seen, keep, dropped = set(), [], []
-    for r in rows:
-        d = str(r["domain"] or "").strip().lower()
-        if not d or d == target or d in seen:
-            continue
-        seen.add(d)
-        (dropped if scoring.is_third_party(d) else keep).append(d)
+    keep, dropped = scoring.rivals(conn, pid, target)
     return keep[:INTERSECT_MAX_RIVALS], dropped
 
 
@@ -539,11 +529,11 @@ def _selfcheck() -> None:
                         " ORDER BY id DESC LIMIT 1").fetchone()["notes"]
     assert "errors=0" in note, note
 
-    # 7. 교집합 대상은 진짜 경쟁사다 — 순위 수집이 자동으로 채운 플랫폼(youtube·
+    # 7. 교집합 대상은 진짜 경쟁사다 — 순위 수집이 예전 규칙으로 채운 플랫폼(youtube·
     #    reddit·blog.naver 하위 도메인)은 빠지고, manual 이 앞, 상한까지만.
     #    (9/6·9/8·9/9: id 순 20개 = 거대 플랫폼 교집합 → DataForSEO 500 세 번)
     conn.executemany(
-        "INSERT INTO competitors(project_id, domain, source) VALUES(?,?,'auto_serp')",
+        "INSERT INTO competitors(project_id, domain, source) VALUES(?,?,'auto_rank')",
         [(pid, d) for d in ("youtube.com", "m.blog.naver.com", "reddit.com", "a1.com",
                             "a2.com", "a3.com", "a4.com", "a5.com")])
     keep, dropped = intersect_rivals(conn, pid, "bt.com")
@@ -556,7 +546,7 @@ def _selfcheck() -> None:
     note = conn.execute("SELECT notes FROM runs WHERE kind='backlinks'"
                         " ORDER BY id DESC LIMIT 1").fetchone()["notes"]
     assert "교집합에서 뺀 플랫폼 3개" in note, note
-    conn.execute("DELETE FROM competitors WHERE source='auto_serp'")
+    conn.execute("DELETE FROM competitors WHERE source='auto_rank'")
     conn.commit()
 
     # 6. 신선도 안이면 재구매하지 않는다 — 지뢰 post 로 확인.

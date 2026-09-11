@@ -342,7 +342,7 @@ CREATE TABLE IF NOT EXISTS competitors (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   domain TEXT NOT NULL,
-  source TEXT DEFAULT 'manual',               -- manual|auto_ai|auto_serp
+  source TEXT DEFAULT 'manual',               -- manual|auto_rank|auto_labs (auto_serp 은 은퇴 — retire_auto_serp)
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, domain)
 );
@@ -737,6 +737,95 @@ def _migrate(conn: sqlite3.Connection) -> None:
         except BaseException:
             conn.rollback()
             raise
+
+    # 옛 규칙이 자동으로 넣은 경쟁사를 한 번 걷어낸다(retire_auto_serp). 'auto_serp' 는
+    # 이제 아무도 쓰지 않는 표시라(test_seams 가 못 박는다) 이 조건이 곧 "한 번만"이다.
+    if conn.execute("SELECT 1 FROM competitors WHERE source='auto_serp' LIMIT 1").fetchone():
+        retire_auto_serp(conn)
+
+
+# 'auto_serp' 는 두 경로가 함께 쓰던 자동 적재 표시였다. 순위 수집 쪽 규칙이 "검색어 3개
+# 이상에서 상위 10위" 라서 추적 검색어 100개 기준 3% 였고, 네이버 블로그·유튜브·레딧·
+# 앱스토어 같은 검색결과 플랫폼이 전부 경쟁사가 됐다(2026-09 호스팅: 77·54·160개,
+# manual 은 0개). 그 표를 갭 분석(유료)이 앞 5개로 잘라 썼다. 두 경로는 이제 'auto_rank'
+# (scoring.serp_rivals)·'auto_labs'(collect_gap) 로 쓴다. 옛 표시가 붙은 행은 어느 규칙이
+# 넣었는지 가를 수 없어 전부 걷고, 다음 순위·경쟁 분석 바퀴가 새 규칙으로 다시 채운다.
+RETIRED_REASON = ("근거가 된 경쟁사가 경쟁사가 아니었습니다 — 옛 자동 적재 규칙이 검색결과의 "
+                  "플랫폼·포털을 경쟁사로 넣었고, 그 규칙으로 넣은 경쟁사를 걷어냈습니다")
+
+
+def retire_auto_serp(conn: sqlite3.Connection) -> dict[str, int]:
+    """옛 'auto_serp' 경쟁사와 그 경쟁사에서 나온 것만 걷는다.
+
+      · content_gap 기회 — 근거(keyword_gap)가 전부 걷는 경쟁사에서 나온 열린 것만
+        닫는다(resolved, 사유 남김 — 지우지 않는다). 이 종류는 자동 해소가 없어서
+        (scoring._NO_RESOLVE) 여기서 안 닫으면 영영 할 일로 선다.
+      · keyword_gap · competitor_metrics 의 그 경쟁사 줄. 우리 자신 줄은 견줄 상대가
+        남은 날의 것만 남긴다.
+      · 승인 전 갭 후보 키워드(source='competitor_gap', is_active=0) — 어느 경쟁사에서
+        캤는지 안 남아서, 그 사이트의 경쟁사가 전부 걷히는 경우에만 지운다. 사람이
+        심사(verdicts)했거나 순위 기록이 붙은 것은 남긴다.
+    """
+    _register_norm(conn)
+    out = {"competitors": 0, "opportunities": 0, "keyword_gap": 0,
+           "competitor_metrics": 0, "keywords": 0}
+    by_pid: dict[int, list[str]] = {}
+    for r in conn.execute("SELECT project_id, domain FROM competitors WHERE source='auto_serp'"):
+        by_pid.setdefault(r[0], []).append(r[1])
+    # 기회 먼저 — resolve_opportunities 가 스스로 commit 한다. 도중에 죽어도 다음 연결이
+    # 처음부터 다시 하고, 이미 닫은 기회는 UPDATE 조건(new|acked)에 다시 안 걸린다.
+    for pid, doms in by_pid.items():
+        marks = ",".join("?" * len(doms))
+        opps = conn.execute(
+            f"""SELECT o.id FROM opportunities o
+                 WHERE o.project_id=? AND o.kind='content_gap' AND o.status IN ('new','acked')
+                   AND EXISTS (SELECT 1 FROM keyword_gap g WHERE g.project_id=o.project_id
+                                  AND g.keyword=o.target AND g.domain IN ({marks}))
+                   AND NOT EXISTS (SELECT 1 FROM keyword_gap g WHERE g.project_id=o.project_id
+                                  AND g.keyword=o.target AND g.domain NOT IN ({marks}))""",
+            (pid, *doms, *doms)).fetchall()
+        got = resolve_opportunities(conn, pid, [(r[0], RETIRED_REASON) for r in opps])
+        out["opportunities"] += got["resolved"] + got["done"]
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN")
+    try:
+        for pid, doms in by_pid.items():
+            marks = ",".join("?" * len(doms))
+            out["keyword_gap"] += conn.execute(
+                f"DELETE FROM keyword_gap WHERE project_id=? AND domain IN ({marks})",
+                (pid, *doms)).rowcount
+            out["competitor_metrics"] += conn.execute(
+                f"DELETE FROM competitor_metrics WHERE project_id=? AND is_self=0"
+                f" AND domain IN ({marks})", (pid, *doms)).rowcount
+            # 견줄 상대가 다 빠진 날의 우리 줄 — 혼자 남으면 화면이 "우리 몫 100%" 를
+            # 그린다. 그날은 "아직 안 쟀다" 로 돌아가는 게 맞다(다음 바퀴가 다시 잰다).
+            out["competitor_metrics"] += conn.execute(
+                """DELETE FROM competitor_metrics
+                    WHERE project_id=? AND is_self=1 AND checked_date NOT IN (
+                          SELECT checked_date FROM competitor_metrics
+                           WHERE project_id=? AND is_self=0)""", (pid, pid)).rowcount
+            others = conn.execute(
+                "SELECT COUNT(*) FROM competitors WHERE project_id=? AND source!='auto_serp'",
+                (pid,)).fetchone()[0]
+            if not others:
+                out["keywords"] += conn.execute(
+                    """DELETE FROM keywords
+                        WHERE project_id=? AND source='competitor_gap' AND is_active=0
+                          AND norm(keyword) NOT IN (SELECT key FROM verdicts WHERE project_id=?)
+                          AND id NOT IN (SELECT keyword_id FROM rank_snapshots)
+                          AND id NOT IN (SELECT keyword_id FROM serp_results)
+                          AND id NOT IN (SELECT keyword_id FROM serp_questions)
+                          AND id NOT IN (SELECT keyword_id FROM offlocale_snapshots)""",
+                    (pid, pid)).rowcount
+            out["competitors"] += conn.execute(
+                "DELETE FROM competitors WHERE project_id=? AND source='auto_serp'",
+                (pid,)).rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return out
 
 
 # 키워드의 언어 표시를 고칠 때, 그 전 로케일로 잰 순위·검색결과 행을 지우지 않고 여기로

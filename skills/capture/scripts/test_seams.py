@@ -1282,6 +1282,35 @@ def test_seam_28_ai_visits_fields_and_names():
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 
 
+def test_seam_29_competitor_label_and_reader_single_source():
+    """29) 경쟁사 표의 쓰는 쪽과 읽는 쪽.
+
+    2026-09 호스팅: 순위 수집이 검색결과 플랫폼을 'auto_serp' 로 넣었고(291개), 갭 분석은
+    그 표를 id 순 앞 5개로, 백링크 교집합은 id 순 20개로 **각자** 읽었다. 백링크 쪽만
+    플랫폼을 빼도록 고친 날에도 갭 분석은 계속 m.blog.naver.com 의 키워드를 샀다.
+
+    (가) 'auto_serp' 는 은퇴한 표시이고 db.retire_auto_serp 가 "이 표시가 있으면 걷는다"
+        로 한 번만 돈다. 누가 이 표시로 다시 쓰면 매 연결마다 경쟁사가 지워진다 — db.py
+        밖에서 이 글자가 나오면 안 된다.
+    (나) 돈을 쓰는 두 수집기는 표를 scoring.rivals 로만 읽는다(자체점검 픽스처는 뺀다).
+    """
+    assert callable(getattr(db, "retire_auto_serp", None)), "은퇴 정리가 없다 — 이 검사가 헛돈다"
+    hits = []
+    for f in [*SCRIPTS.glob("*.py"), *(ROOT / "server").glob("*.py")]:
+        if f.name == "db.py" or f.name.startswith("test_"):
+            continue
+        if "auto_serp" in f.read_text("utf-8"):
+            hits.append(f.name)
+    assert not hits, f"은퇴한 경쟁사 표시 'auto_serp' 를 쓰는 곳: {hits} — auto_rank·auto_labs 를 쓴다"
+
+    for name in ("collect_gap.py", "collect_backlinks.py"):
+        src = (SCRIPTS / name).read_text("utf-8")
+        body = src[:src.index("def _selfcheck(")]
+        assert "scoring.rivals(" in body, f"{name} 가 경쟁사를 scoring.rivals 로 안 읽는다"
+        raw = re.findall(r"FROM competitors\b[^\"]*", body)
+        assert not raw, f"{name} 가 경쟁사 표를 직접 읽는다: {raw} — scoring.rivals 한 벌이다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

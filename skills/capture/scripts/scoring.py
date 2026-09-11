@@ -177,9 +177,26 @@ def owns(domain: str, own: str) -> bool:
     return bool(d and o) and (d == o or d.endswith("." + o))
 
 
+# 나라 도메인 아래 2단 접미사의 둘째 칸 — 'co.kr'·'or.kr'·'com.au'. 이 칸 앞이 이름이다.
+_SLD = frozenset({"co", "or", "ac", "go", "ne", "re", "pe", "com", "net", "org", "gov", "edu"})
+
+
 def _stem(domain: str) -> str:
-    """도메인에서 브랜드 이름 후보 — 'ecrett.com' -> 'ecrett'."""
-    return norm(host_of(domain).split(".")[0])
+    """도메인에서 브랜드 이름 후보 — 'ecrett.com' -> 'ecrett'.
+
+    등록 도메인의 이름 칸을 쓴다. 예전엔 호스트의 **첫** 칸을 써서 하위 도메인이
+    이름이 됐다 — 'gangnam.museclinic.co.kr' 가 'gangnam', 'blog.naver.com' 이 'blog'
+    였고, theotherskin 의 'gangnam dermatology clinic' 검색어가 남의 브랜드로 걸려
+    기회에서 빠졌다(2026-09-11 호스팅 실데이터).
+    """
+    labels = [x for x in host_of(domain).split(".") if x]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SLD:
+        core = labels[-3]
+    elif len(labels) >= 2:
+        core = labels[-2]
+    else:
+        core = labels[0] if labels else ""
+    return norm(core)
 
 
 def foreign_brands(conn: sqlite3.Connection, project_id: int, cfg: dict | None = None) -> set[str]:
@@ -202,6 +219,51 @@ def foreign_brands(conn: sqlite3.Connection, project_id: int, cfg: dict | None =
                 names.add(s)
     own = {norm(cfg.get("name", ""))} | {norm(a) for a in (cfg.get("brand_aliases") or [])}
     return {n for n in names if n and n not in own}
+
+
+# 순위 수집이 경쟁사를 스스로 붙이는 문턱 — serp_rivals 가 쓴다.
+# 예전 규칙은 "검색어 3개 이상에서 상위 10위"였다. 추적 검색어가 100개면 3% 라서
+# 검색결과에 늘 서는 플랫폼·포털이 전부 넘었고(2026-09 호스팅: 77·54·160개, 앞자리가
+# m.blog.naver·youtube·reddit·play.google), 그 표를 갭 분석(유료)·트래픽 몫·백링크
+# 교집합·남의 브랜드 거름망이 그대로 썼다.
+SERP_RIVAL_MIN_SHARE = 0.10     # 이번에 잰 검색어의 10% 이상에서 상위에 섰다
+SERP_RIVAL_MIN_HITS = 3         # 잰 검색어가 적을 때의 바닥
+SERP_RIVAL_MAX = 10             # 한 바퀴에 붙이는 수 — 많이 겹친 순
+
+
+def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]:
+    """순위 수집 한 바퀴가 경쟁사로 붙일 도메인. hits = {도메인: 상위에 선 검색어 수}.
+
+    우리 자신·제3자 플랫폼(config.yaml third_party_platforms)은 빼고, 문턱을 넘은 것 중
+    많이 겹친 순으로 SERP_RIVAL_MAX 개까지.
+    """
+    plats = third_party_platforms() if platforms is None else platforms
+    need = max(SERP_RIVAL_MIN_HITS, math.ceil(checked * SERP_RIVAL_MIN_SHARE))
+    ok = [(d, n) for d, n in hits.items()
+          if d and n >= need and not owns(d, own) and not is_third_party(d, plats)]
+    ok.sort(key=lambda x: (-x[1], x[0]))
+    return [d for d, _ in ok[:SERP_RIVAL_MAX]]
+
+
+def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
+           platforms=None) -> tuple[list[str], list[str]]:
+    """경쟁사 표를 **경쟁사로** 읽는다 → (쓸 것, 뺀 플랫폼). 돈을 쓰는 단계(갭 분석·
+    백링크 교집합)는 이걸로 읽는다.
+
+    사람이 고른 것(manual)이 먼저, 그다음 들어온 순. 우리 자신과 제3자 플랫폼은 뺀다 —
+    표에 옛 규칙이 넣은 행이 남아 있어도 대상이 되지 않게(쓰는 쪽도 이미 거른다).
+    """
+    plats = third_party_platforms() if platforms is None else platforms
+    seen, keep, dropped = set(), [], []
+    for r in conn.execute(
+            "SELECT domain FROM competitors WHERE project_id=?"
+            " ORDER BY (source = 'manual') DESC, id", (project_id,)):
+        d = host_of(str(r[0] or ""))
+        if not d or d in seen or (own and owns(d, own)):
+            continue
+        seen.add(d)
+        (dropped if is_third_party(d, plats) else keep).append(d)
+    return keep, dropped
 
 
 def is_foreign_brand(query: str, brands: set[str]) -> bool:
@@ -3885,6 +3947,22 @@ def _selfcheck() -> None:
     assert owns("example.com", "https://example.com/")
     assert not owns("notexample.com", "example.com")
     assert _stem("futuretools.io") == "futuretools"
+    # 이름은 등록 도메인에서 — 하위 도메인 첫 칸('gangnam'·'blog')이 브랜드가 되면
+    # 'gangnam dermatology clinic' 같은 일반 검색어가 남의 브랜드로 걸러진다.
+    assert _stem("gangnam.museclinic.co.kr") == "museclinic"
+    assert _stem("m.blog.naver.com") == "naver"
+    assert _stem("www.daeskin.com.au") == "daeskin"
+    assert _stem("k-health.com") == "khealth"
+
+    # 순위 수집이 붙이는 경쟁사 — 우리·플랫폼은 빼고, 잰 검색어의 10% 문턱, 겹친 순.
+    plats = ("blog.naver.com", "youtube.com")
+    hits = {"m.blog.naver.com": 60, "youtube.com": 40, "rival.com": 12, "sub.me.com": 50,
+            "two.com": 30, "rare.com": 9}
+    assert serp_rivals(hits, 100, "me.com", plats) == ["two.com", "rival.com"]
+    assert serp_rivals({"a.com": 3, "b.com": 2}, 5, "me.com", plats) == ["a.com"]   # 바닥 3
+    many = {f"r{i:02d}.com": 20 + i for i in range(15)}
+    assert serp_rivals(many, 100, "me.com", plats)[:2] == ["r14.com", "r13.com"]
+    assert len(serp_rivals(many, 100, "me.com", plats)) == SERP_RIVAL_MAX
 
     brands = {"ecrett", "futuretools", "paperpal"}
     assert is_foreign_brand("ecrett", brands)
@@ -3964,6 +4042,13 @@ def _selfcheck() -> None:
         [("ecrett", 0, 48, 8.6), ("내 키워드", 2, 400, 12.0), ("1페이지 키워드", 9, 300, 3.0)])
     brands = foreign_brands(conn, 1, {"name": "aitierlist"})
     assert brands == {"ecrett"}, brands
+    # 경쟁사로 읽기 — manual 이 앞, 우리·플랫폼은 빠지고 뺀 것은 따로 돌려준다
+    conn.executemany("INSERT INTO competitors(project_id, domain, source) VALUES(1,?,?)",
+                     [("m.blog.naver.com", "auto_rank"), ("shop.selfcheck.com", "auto_rank"),
+                      ("auto.com", "auto_labs"), ("hand.com", "manual")])
+    assert rivals(conn, 1, "selfcheck.com", ("blog.naver.com",)) == (
+        ["ecrett.com", "hand.com", "auto.com"], ["m.blog.naver.com"])
+    conn.execute("DELETE FROM competitors WHERE domain != 'ecrett.com'")
     rows = striking(conn, 1, "2026-08-14", brands=brands)
     assert [r["query"] for r in rows] == ["내 키워드"], rows   # 3.0위는 구간 밖, ecrett는 남의 브랜드
     assert rows[0]["gap"] == 2.0
