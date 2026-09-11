@@ -433,14 +433,16 @@ function anShift(s, mismatch) {
         <p>클릭이 왜 그렇게 됐는지는 두 시점을 맞대야 갈립니다. 한 번 더 수집하면
         이전과 현재가 생깁니다.</p>
         <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
-  const chart = window.chWaterfall([
-    {label: "이전", value: s.prev_clicks, kind: "base"},
-    {label: "노출 효과", value: s.imp_effect, kind: "delta"},
-    {label: "클릭률 효과", value: s.ctr_effect, kind: "delta"},
-    {label: "새 검색어", value: s.new, kind: "delta"},
-    {label: "빠진 검색어", value: s.lost, kind: "delta"},
-    {label: "현재", value: s.clicks, kind: "total"},
-  ], {width: 760, height: 220});
+  // 합계(이전 → 현재)는 그리지 않는다 — 바로 위 KPI 가 "클릭 변화 · 이전 → 현재"로 이미
+  // 말한다. 예전 워터폴은 그걸 막대로 한 번 더 세웠고, 0 부터 서야 해서 원인이 눌렸다.
+  // 원인 순서는 고정이다: 기간을 바꿔도 줄 자리가 안 흔들려야 눈이 같은 자리를 본다.
+  // 폭은 카드 안쪽 폭에 맞춘다 — 좁게 그리면 viewBox 가 늘어나 글자가 커진다.
+  const chart = window.chDiverge([
+    {label: "노출 효과", value: s.imp_effect},
+    {label: "클릭률 효과", value: s.ctr_effect},
+    {label: "새 검색어", value: s.new},
+    {label: "빠진 검색어", value: s.lost},
+  ], {width: 900, fmt: anNum});
   const thin = s.thin
     ? anNote(`목록에 없는 검색어 ${num(s.thin)}개`,
         "노출 30 미만이라 아래 목록에 이름을 안 올렸습니다. 위 합계에는 들어 있습니다. "
