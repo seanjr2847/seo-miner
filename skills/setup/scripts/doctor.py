@@ -975,7 +975,12 @@ def _selfcheck() -> None:
         payload = stage.setup_payload({**h, "brain": {**h["brain"], "projects": []}})
         for c in h["locked"]:
             if c["owner"] == "server":
-                assert not any(e.startswith(c["name"]) for e in payload["extra"]), c["name"]
+                # 잠금 문장의 꼴은 stage.setup_payload 가 짓는 "이름: 설명. 켜는 법" 이다.
+                # 이름으로 시작하는지만 보면 같은 이름으로 시작하는 정당한 안내("AI 인용
+                # 확인에 쓸 질문이 없는 사이트: …" — later)까지 잠금으로 오인해, 이 검사가
+                # 그 PC 의 실제 사이트 상태에 따라 몇 주째 빨갛게 서 있었다.
+                assert not any(e.startswith(c["name"] + ":") for e in payload["extra"]), (
+                    c["name"], payload["extra"])
         # 웹 사용자에게는 채팅도 셸도 파일 시스템도 없다. 이 문장들이 그대로
         # 호스팅 배너에 찍히므로, 명령·경로가 섞이면 할 수 없는 일을 시키는
         # 안내가 된다 — 그 자리를 여기서 못 박는다 (로컬 갈래는 그대로 둔다).
