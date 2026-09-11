@@ -307,8 +307,10 @@ CREATE TABLE IF NOT EXISTS opportunities (
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
-  status TEXT DEFAULT 'new',                  -- new|acked|done|dismissed  (정본은 db.OPP_STATUSES)
+  status TEXT DEFAULT 'new',                  -- 사람이 누르는 값은 db.OPP_STATUSES, 저절로 풀림은 db.OPP_RESOLVED
   status_at TEXT,                             -- 상태가 마지막으로 바뀐 시각 — 완료 후 관찰(watch_rows)의 기준
+  status_reason TEXT,                         -- 저절로 닫힌 사유 (resolve_opportunities 가 쓴다)
+  status_prev TEXT,                           -- 저절로 닫히기 전 상태 — 조건이 돌아오면 이리로 연다
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS runs (
@@ -608,6 +610,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
     conn.commit()
 
+    # ── 갈래 3: 기회 수명주기 ──
+    # 저절로 풀린 기회(resolved)는 왜 닫혔는지와 닫히기 전 상태를 들고 있어야 한다 —
+    # 사유가 없으면 사람이 그 판정을 검증할 수 없고, 이전 상태가 없으면 조건이 돌아왔을
+    # 때 '진행 중'이던 것을 '할 일'로 떨어뜨린다(resolve_opportunities·upsert_opportunities).
+    opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
+    for col in ("status_reason", "status_prev"):
+        if col not in opp_cols:
+            conn.execute(f"ALTER TABLE opportunities ADD COLUMN {col} TEXT")
+            conn.commit()
+
 
 def connect(home: Path | None = None) -> sqlite3.Connection:
     """home 을 주면 env(CAPTURE_HOME/CAPTURE_DB) 를 안 보고 그 유저의 brain 을 연다
@@ -769,6 +781,13 @@ def run(conn: sqlite3.Connection, project_id: int, kind: str):
 # 같은 수정이 한 호출부에만 들어가 locale 누락 같은 버그가 다른 경로에 남았다.
 
 OPP_STATUSES = ("new", "acked", "done", "dismissed")
+# 저절로 풀림 — 새 데이터가 조건이 풀렸음을 긍정 확인했고 우리 작업 기록은 없다.
+# 사람이 누르는 값이 아니라서 OPP_STATUSES(화면 버튼 표와 test_seams 17 이 대조하는
+# 한 벌)에 넣지 않는다 — set_opportunity_status 도 이 값을 받지 않는다. 쓰는 곳은
+# resolve_opportunities 하나, 되여는 곳은 upsert_opportunities 하나다.
+# done(우리가 작업해서 끝남)과 갈라 두는 이유: 완료 후 관찰(watch_rows)은 "우리 효과"를
+# 재는 자리라 저절로 풀린 것이 섞이면 효과가 부풀려진다.
+OPP_RESOLVED = "resolved"
 # 검색어 심사의 판정 — 무관(자동완성 쓰레기) · 보류(우리 것이지만 지금 안 함) · 작업.
 # 화면(triage.html 의 TR_VERDICT)과 test_seams 17 이 이 한 벌을 대조한다.
 VERDICTS = ("irrelevant", "hold", "work")
@@ -1158,19 +1177,84 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
 
 def set_opportunity_status(conn: sqlite3.Connection, opp_id: int, status: str,
                            project_id: int | None = None) -> int:
-    """기회 상태 갱신 (new|acked|done|dismissed). 갱신된 rowcount 반환."""
+    """기회 상태 갱신 (new|acked|done|dismissed). 갱신된 rowcount 반환.
+
+    사람이 상태를 바꾸면 자동 판정의 흔적(status_reason·status_prev)을 지운다 —
+    그 사유는 저절로 닫힌 상태를 설명하는 말이라, 사람이 다시 연 뒤에 남아 있으면
+    거짓이 된다."""
     if status not in OPP_STATUSES:
         raise ValueError(f"status must be one of {OPP_STATUSES}, got {status!r}")
+    sql = ("UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP,"
+           " status_reason=NULL, status_prev=NULL WHERE id=?")
     if project_id is not None:
-        cur = conn.execute(
-            "UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=?",
-            (status, int(opp_id), int(project_id)))
+        cur = conn.execute(sql + " AND project_id=?", (status, int(opp_id), int(project_id)))
     else:
-        cur = conn.execute(
-            "UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP WHERE id=?",
-            (status, int(opp_id)))
+        cur = conn.execute(sql, (status, int(opp_id)))
     conn.commit()
     return cur.rowcount
+
+
+def sql_ts(s: str | None) -> str | None:
+    """시각 문자열을 CURRENT_TIMESTAMP 꼴('YYYY-MM-DD HH:MM:SS', UTC)로 맞춘다.
+
+    이 Brain 에는 두 꼴이 섞여 있다 — SQL 기본값(CURRENT_TIMESTAMP)은 공백, db.now()
+    와 gh 는 'T…Z'. 문자열로 그대로 비교하면 'T'(0x54) > ' '(0x20) 라서 같은 날의
+    어느 시각이든 'T' 쪽이 늘 나중으로 읽힌다."""
+    if not s:
+        return None
+    s = str(s).strip().replace("T", " ").rstrip("Z")
+    return s[:19] if len(s) >= 19 else s[:10]
+
+
+def close_opportunity_by_work(conn: sqlite3.Connection, opp_id: int, project_id: int,
+                              at: str | None, reason: str) -> int:
+    """우리 작업이 실제로 들어갔다(PR 머지)는 확인으로 기회를 done 으로 닫는다.
+
+    new·acked·resolved 만 닫는다 — dismissed 는 사람이 "이 기회는 아니다"라고 한
+    것이고 done 은 이미 끝났다. resolved 도 닫는 이유: 저절로 풀렸다고 본 것에 우리
+    머지가 있었다면 그건 우리 효과다. at 은 머지 시각(없으면 지금) — 완료 후 관찰의
+    '전·후'가 머지를 기준으로 갈려야 한다. 갱신된 rowcount 반환."""
+    cur = conn.execute(
+        """UPDATE opportunities SET status='done',
+                  status_at=COALESCE(?, CURRENT_TIMESTAMP), status_reason=?, status_prev=NULL
+            WHERE id=? AND project_id=? AND status IN ('new','acked',?)""",
+        (sql_ts(at), reason, int(opp_id), int(project_id), OPP_RESOLVED))
+    conn.commit()
+    return cur.rowcount
+
+
+def resolve_opportunities(conn: sqlite3.Connection, project_id: int, decisions) -> dict:
+    """열린 기회(new|acked)를 조건 해소로 닫는다. decisions: [(opp_id, 사유), ...].
+
+    판정(무엇이 풀렸나)은 scoring.resolve_stale 이 한다 — 여기는 쓰기만 한다.
+      · 그 기회에 작업 기록(creations)이 있으면 done — 우리가 작업해서 끝났다. status_at
+        은 **작업을 기록한 시각**(그 기회의 마지막 작업 기록)이다: 완료 후 관찰의
+        '전'이 작업 전 스냅샷이어야 한다. 알아챈 시각을 쓰면 '전'이 이미 좋아진
+        스냅샷이 되어 효과가 0으로 보이고 화면이 [다시 열기]를 권한다.
+      · 없으면 resolved — 저절로 풀렸다. 닫히기 전 상태를 status_prev 에 둔다.
+    UPDATE 에 status IN ('new','acked') 를 다시 건다 — 판정과 쓰기 사이에 사람이 누른
+    상태를 덮지 않는다. 반환: {"resolved": n, "done": n}.
+    """
+    out = {"resolved": 0, "done": 0}
+    for oid, reason in decisions:
+        work = conn.execute("SELECT MAX(created_at) FROM creations WHERE opportunity_id=?",
+                            (int(oid),)).fetchone()[0]
+        if work:
+            n = conn.execute(
+                """UPDATE opportunities SET status='done', status_at=?, status_reason=?,
+                          status_prev=status
+                    WHERE id=? AND project_id=? AND status IN ('new','acked')""",
+                (sql_ts(work), f"{reason} · 작업 기록 있음", int(oid), int(project_id))).rowcount
+            out["done"] += n
+        else:
+            n = conn.execute(
+                """UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP,
+                          status_reason=?, status_prev=status
+                    WHERE id=? AND project_id=? AND status IN ('new','acked')""",
+                (OPP_RESOLVED, reason, int(oid), int(project_id))).rowcount
+            out["resolved"] += n
+    conn.commit()
+    return out
 
 
 def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
@@ -1212,7 +1296,12 @@ def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
                          run_id: int | None, rows) -> int:
     """기회 목록 upsert (scoring.md §5).
 
-    불변식: ON CONFLICT에서 기존 status는 절대 건드리지 않는다 (트리아지 보존).
+    불변식: ON CONFLICT에서 **사람이 정한** status(new·acked·done·dismissed)는 절대
+    건드리지 않는다 (트리아지 보존).
+    예외는 저절로 풀림(OPP_RESOLVED) 하나다 — 기계가 닫은 것이라, 이번 회차에 조건이
+    다시 잡혔으면 닫히기 전 상태(status_prev, 없으면 new)로 되연다. 이게 없으면 한 번
+    풀렸다 다시 나빠진 기회가 영영 '풀림'에 묻힌다 — 자동 해소가 살아 있는 기회를
+    닫는 쪽으로 틀리는 길을 여기서 막는다.
     """
     n = 0
     for r in rows:
@@ -1226,13 +1315,18 @@ def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
             reason = r[3] if len(r) > 3 else None
         conn.execute(
             """INSERT INTO opportunities(project_id, run_id, kind, target, score, reasoning)
-               VALUES(?,?,?,?,?,?)
+               VALUES(:pid, :run, :kind, :target, :score, :reason)
                ON CONFLICT(project_id, kind, target) DO UPDATE SET
                  run_id=excluded.run_id, score=excluded.score,
-                 reasoning=excluded.reasoning""",
-            (project_id, run_id, k, str(t).strip(),
-             float(s) if s is not None else None,
-             str(reason) if reason is not None else None))
+                 reasoning=excluded.reasoning,
+                 status=CASE WHEN status=:r THEN COALESCE(status_prev,'new') ELSE status END,
+                 status_at=CASE WHEN status=:r THEN CURRENT_TIMESTAMP ELSE status_at END,
+                 status_reason=CASE WHEN status=:r THEN NULL ELSE status_reason END,
+                 status_prev=CASE WHEN status=:r THEN NULL ELSE status_prev END""",
+            {"pid": project_id, "run": run_id, "kind": k, "target": str(t).strip(),
+             "score": float(s) if s is not None else None,
+             "reason": str(reason) if reason is not None else None,
+             "r": OPP_RESOLVED})
         n += 1
     conn.commit()
     return n
@@ -1302,6 +1396,15 @@ def mark_creation_merged(conn: sqlite3.Connection, creation_id: int) -> int:
     cur = conn.execute("UPDATE creations SET merged=1 WHERE id=?", (int(creation_id),))
     conn.commit()
     return cur.rowcount
+
+
+def unmerged_creations(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    """머지를 아직 확인 못 한 작업 기록 중 브랜치가 있는 것 — 머지 동기화의 대상.
+    브랜치가 없으면(손으로 고친 커밋을 sync 가 기록한 것) 물어볼 PR 이 없다."""
+    return conn.execute(
+        """SELECT id, opportunity_id, branch FROM creations
+            WHERE project_id=? AND merged=0 AND branch IS NOT NULL AND TRIM(branch)!=''
+            ORDER BY id""", (int(project_id),)).fetchall()
 
 
 def set_keyword_intent(conn: sqlite3.Connection, keyword_id: int, intent: str | None) -> int:
@@ -1385,7 +1488,11 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     before 는 status_at 이전 마지막 스냅샷, after 는 그 뒤 최신 스냅샷의 그 검색어
     행(최신 스냅샷과 같은 period_days 만 — 기간이 다른 것을 빼면 Δ가 거짓이다).
     runs_since 는 완료 뒤 서로 다른 수집일 수. 두 번 이상 쟀는데 순위가 안 올랐으면
-    stalled — 화면이 [다시 열기]를 낸다."""
+    stalled — 화면이 [다시 열기]를 낸다.
+
+    이 목록은 "우리 효과"다 — done 만 본다. 사람이 누른 완료, 머지 동기화
+    (createdb.sync_merged), 작업 기록이 있는 기회의 조건 해소(resolve_opportunities)가
+    여기 들어오고, 저절로 풀림(OPP_RESOLVED)은 **일부러** 빠진다."""
     import scoring
     ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
     opps = conn.execute(

@@ -18,7 +18,7 @@ CLI:
   python createdb.py done   <project> <id> --path PATH [--branch BR] [--note N]
   python createdb.py list   <project>
   python createdb.py merged <creation_id> [--project P]
-  python createdb.py sync   <project> --repo PATH
+  python createdb.py sync   <project> --repo PATH   # [opp #id] 커밋 기록 + PR 머지 반영
 """
 import argparse
 import json
@@ -176,6 +176,102 @@ def sync(project: str, repo: str) -> None:
                 untouched += 1
         conn.close()
     print(f"sync 완료: {closed}건 기록(진행 중), {untouched}건 건드리지 않음")
+    sync_merged(project, repo)
+
+
+# ── 머지 반영 ──────────────────────────────────────────────────────────────
+# 작업 기록(creations)의 merged 는 `createdb.py merged <id>` 를 손으로 쳐야만 1 이 됐다.
+# SKILL.md 가 권하기만 해서 아무도 안 쳤고, PR 이 머지된 작업이 '진행 중'에 머물러
+# 완료 후 관찰(db.watch_rows — done 만 본다)에 한 건도 안 잡혔다. 머지는 사람이 한
+# 일이고(발행 게이트), 그 사실은 gh 가 안다 — 여기서 그걸 읽어 기록과 기회를 닫는다.
+
+def _gh(args: list[str], cwd: str | None) -> subprocess.CompletedProcess:
+    """gh 한 번. 검사가 이 함수를 갈아끼운다 — 진짜 gh·네트워크를 부르지 않게."""
+    return subprocess.run(["gh", *args], cwd=cwd, capture_output=True,
+                          encoding="utf-8", errors="replace")
+
+
+class _GhUnavailable(Exception):
+    """gh 가 없거나 로그인이 안 됐다 — 실패가 아니라 건너뛸 사유다."""
+
+
+def _merged_pr(branch: str, cwd: str | None) -> dict | None:
+    """그 브랜치의 머지된 PR {number, mergedAt}. 없으면 None."""
+    try:
+        p = _gh(["pr", "list", "--head", branch, "--state", "merged",
+                 "--json", "number,mergedAt", "--limit", "1"], cwd)
+    except FileNotFoundError:
+        raise _GhUnavailable("gh 가 설치돼 있지 않습니다")
+    if p.returncode != 0:
+        first = ((p.stderr or p.stdout or "").strip().splitlines() or ["gh 실행 오류"])[0]
+        raise _GhUnavailable(first[:160])
+    try:
+        rows = json.loads(p.stdout or "[]")
+    except ValueError:
+        raise _GhUnavailable("gh 출력이 JSON 이 아닙니다")
+    return rows[0] if rows else None
+
+
+def sync_merged(project: str, repo: str | None) -> dict:
+    """머지를 아직 모르는 작업 기록마다 PR 머지를 확인해, 머지됐으면 기록을 merged 로,
+    그 기회를 done 으로 닫는다(status_at = 머지 시각). gh 가 없거나 로그인이 안
+    됐으면 한 줄 알리고 건너뛴다 — 실패로 치지 않는다(sync 의 나머지는 이미 끝났다).
+
+    호스팅 사이트는 기록이 서버에 있다. 기회 상태는 /api/opp 로 닫지만, 기록의
+    merged 를 켜는 창구는 서버에 아직 없다 — 그래서 호스팅 기록은 '병합 전'으로
+    남고 다음 sync 가 같은 PR 을 다시 묻는다(기회는 이미 done 이라 다시 안 닫는다).
+    """
+    out = {"checked": 0, "merged": 0, "closed": 0, "skipped": ""}
+    cwd = str(repo) if repo else None
+    remote_site = _remote(project)
+    if remote_site:
+        d = _payload(project)
+        status = {int(o["id"]): o.get("status")
+                  for o in (d.get("opps") or []) if o.get("id") is not None}
+        todo = [(c.get("id"), c.get("opportunity_id"), c.get("branch"))
+                for c in (d.get("creations") or [])
+                if not c.get("merged") and (c.get("branch") or "").strip()]
+        conn = pid = None
+    else:
+        conn = connect()
+        pid = db.get_project(conn, project)["id"]
+        todo = [(r["id"], r["opportunity_id"], r["branch"])
+                for r in db.unmerged_creations(conn, pid)]
+    unknown = 0
+    try:
+        for cid, oid, branch in todo:
+            out["checked"] += 1
+            pr = _merged_pr(branch.strip(), cwd)
+            if not pr:
+                continue
+            out["merged"] += 1
+            reason = f"PR #{pr.get('number')} 머지됨 ({branch.strip()})"
+            if remote_site:
+                if not oid:
+                    continue
+                if status.get(int(oid)) in ("new", "acked", db.OPP_RESOLVED):
+                    remote.api("POST", "/api/opp",
+                               json={"project": project, "id": int(oid), "status": "done"})
+                    status[int(oid)] = "done"
+                    out["closed"] += 1
+                elif int(oid) not in status:
+                    unknown += 1     # 화면 목록에 없는 기회 — 상태를 모르면 덮지 않는다
+            else:
+                db.mark_creation_merged(conn, cid)
+                if oid:
+                    out["closed"] += db.close_opportunity_by_work(
+                        conn, oid, pid, pr.get("mergedAt"), reason)
+    except _GhUnavailable as e:
+        out["skipped"] = str(e)
+        print(f"머지 확인 건너뜀: {e} — `gh auth login` 뒤 다시 sync 하면 반영됩니다")
+        return out
+    finally:
+        if conn is not None:
+            conn.close()
+    tail = f", 상태를 몰라 건너뜀 {unknown}건" if unknown else ""
+    print(f"머지 확인: {out['checked']}건 중 {out['merged']}건 머지됨 → "
+          f"기회 {out['closed']}건 완료{tail}")
+    return out
 
 
 def list_creations(project: str) -> None:
