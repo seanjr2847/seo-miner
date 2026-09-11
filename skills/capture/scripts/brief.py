@@ -68,6 +68,9 @@ SHAPES: dict[str, dict] = {
         form=["제목 3안 표: 안 | 글자 수 | 검색어 자리 | 어떤 검색 의도에 답하는지.",
               "목차는 H1 하나 아래 H2/H3 트리로. H2 마다 그 구간이 답하는 질문 한 줄과 "
               "분량(단어 수) 눈대중.",
+              "위 '만들어 줄 것'의 산출물(직답 블록·구조화 데이터 등)은 본문 단계에서 "
+              "완성합니다 — 여기서는 목차의 어느 구간이 각각을 맡는지와 그 구간이 답할 "
+              "질문 한 줄까지만.",
               "우리 제품·데이터로만 쓸 수 있는 구간은 제목 앞에 [내 데이터] 를 붙이고, "
               "무엇을 넣어야 하는지 적습니다.",
               "신뢰 신호 — 이 글을 누가 쓰는 게 맞는지(어떤 경험·자격), 1차 자료로 "
@@ -83,7 +86,9 @@ SHAPES: dict[str, dict] = {
                "비워 둡니다.",
                "한 글이 한 검색 의도에 답합니다. 두 의도가 섞이면 글을 둘로 나누자고 "
                "말해 주세요.",
-               "본문 전체를 쓰지 않습니다. 설계도까지만."],
+               "이 답에서는 본문을 쓰지 않습니다 — 설계도까지 쓰고 멈춥니다. 절대경로 "
+               "앞에 고를 자리(배지를 단 안)를 번호로 묻고, 사용자가 고르고 승인하면 같은 "
+               "대화에서 그 설계도대로 본문을 씁니다."],
         slot="이 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, "
              "다뤄야 할 구간을 짐작이 아니라 비교로 정합니다.",
         limits=True),
@@ -168,8 +173,7 @@ HTML_FORM = """답은 **자립형 HTML 파일 한 장**입니다. 채팅 본문�
 ### 그림
 - {graph}
 - {graph2}
-- 고치는 산출물은 **지금 값 | 고친 값**을 나란히 놓습니다 — 고친 값만으로는 안 보입니다.
-- 자간(letter-spacing)·대문자화·등폭은 라틴 문자열에만 겁니다. 한글 라벨의 위계는
+{before_after}- 자간(letter-spacing)·대문자화·등폭은 라틴 문자열에만 겁니다. 한글 라벨의 위계는
   크기·굵기·색으로 만들고, 등폭은 숫자·URL·날짜·식별자에만 씁니다.
 - 여백을 넉넉히, 색은 아껴 씁니다 — 강조 하나, 경고에 amber, 빠진 것에 red.
 
@@ -185,10 +189,29 @@ _GRAPH_NONE = "이 꼴에는 그래프로 그릴 관계가 없습니다 — 다�
 _GRAPH_NONE2 = "카드·표·inline SVG 로 그립니다."
 _GRAPH_TAIL = ("나머지는 카드·표·inline SVG 입니다 — 전부 다이어그램으로 그리면 어느 "
                "산출물이 무엇인지 안 갈립니다.")
+# 손댈 페이지가 있는 꼴(_shows_page)에만 싣는다. 새 글·연락문에는 '지금 값'이 없다 —
+# 한 벌로 실으면 새 글 설계도 요청이 "어떻게 고칠지 알려 주는 HTML"로 읽힌다.
+_BEFORE_AFTER = ("- 고치는 산출물은 **지금 값 | 고친 값**을 나란히 놓습니다 — 고친 값만으로는 "
+                 "안 보입니다.\n")
+
+# '대상'의 페이지 줄 — 페이지를 못 찾았을 때. 화면의 폴백(fallbackBrief)도 이 문장을
+# 받아 쓴다(BRIEF.no_page). 새 글 쪽이 "없음"이라고 단정하면 안 된다: has_page 는
+# 수집본(검색어→페이지)에 걸렸느냐일 뿐이라, 10위 밖인 지면은 있어도 "없음"이 됐고
+# 그 설계도가 같은 주제의 두 번째 지면을 만들 뻔했다(온다 리프팅·써마지).
+NO_PAGE = {
+    "new_content": "- 페이지: 수집본에 없음 — 이 검색어로 순위에 걸린 내 페이지가 없다는 "
+                   "뜻이지, 이 주제의 지면이 사이트에 없다는 뜻은 아닙니다. 설계 전에 사이트"
+                   "(저장소·사이트맵)에서 이 주제를 다루는 지면부터 찾고, 있으면 설계도 대신 그 "
+                   "지면을 고치자고 말하고 멈춥니다 — 같은 주제로 새 글을 내면 두 지면이 한 "
+                   "검색어를 나눠 갖습니다.",
+    "unknown": "- 페이지: 아직 모릅니다 — 이 검색어로 걸린 내 페이지가 수집본에 없습니다. "
+               "고칠 페이지를 직접 적어 주세요: [URL]",
+}
 
 # 종류 → 꼴. 값이 문자열이면 고정, 함수면 (gap_kind, has_page) 로 가른다 —
 # 콘텐츠 공백은 '밀린다'(고친다)와 '없다'(새로 쓴다)가 정반대의 일이고,
-# 챗봇·AI 요약은 이미 걸린 페이지가 있으면 고치고 없으면 새로 쓴다.
+# 챗봇·AI 요약은 이미 걸린 페이지가 있으면 고치고 없으면 새로 쓴다. '걸린 페이지'는
+# page_of 가 정한다 — 순위에 걸린 페이지, 없으면 제목·H1 이 그 검색어로 시작하는 지면.
 _by_page: Callable[[str | None, bool], str] = \
     lambda gk, has_page: "fix_page" if has_page else "new_content"
 KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
@@ -288,7 +311,8 @@ def tails(locale: str) -> dict[str, str]:
              HTML_FORM.format(slug=name,
                               scripts=_SCRIPTS_GRAPH if g else _SCRIPTS_PLAIN,
                               graph=g or _GRAPH_NONE,
-                              graph2=_GRAPH_TAIL if g else _GRAPH_NONE2),
+                              graph2=_GRAPH_TAIL if g else _GRAPH_NONE2,
+                              before_after=_BEFORE_AFTER if _shows_page(name) else ""),
              ""]
         L += [f"{i + 1}. {x}" for i, x in enumerate(s["form"])]
         L += ["- 안이 여럿인 자리는 안마다 배지를 답니다: 강함 / 검토 / 추측. 배지 없이 "
@@ -315,6 +339,7 @@ def shapes_payload(locale: str) -> dict:
             "intro": {k: s["intro"] for k, s in SHAPES.items()},
             "slot": {k: s["slot"] for k, s in SHAPES.items()},
             "page_state": [k for k, s in SHAPES.items() if _shows_page(k)],
+            "no_page": NO_PAGE,
             "by_tag": DELIVER_BY_TAG, "deliver_default": DELIVER_DEFAULT,
             "locale": locale, "lang": lang_label(locale)}
 
@@ -842,20 +867,43 @@ _TARGET_NOUN = {
 }
 
 
-def _target_lines(o: dict, url: str | None, shape: str) -> list[str]:
+def _head(p: dict) -> str:
+    """지면 후보 한 줄의 꼬리 — 크롤이 본 title·H1."""
+    return " · ".join(f"{k}: {v}" for k, v in (("title", p.get("title")), ("H1", p.get("h1"))) if v)
+
+
+def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None) -> list[str]:
     kind = o["kind"]
     t = str(o["target"])
     if kind == "coverage":
         t = t.split(":", 1)[-1]
     L = ["## 대상", f"- {_TARGET_NOUN.get(kind, '검색어')}: {t}"]
-    if url and url != t:
+    ranked = bool(((ctx or {}).get("query_pages") or {}).get(str(o["target"])))
+    topic = _topic_of(o, ctx or {})
+    mine = next((p for p in topic if p["page"] == url), None) if url and not ranked else None
+    if url and url != t and mine:
+        # 순위가 아니라 제목·H1 로 찾은 지면 — 그렇다고 밝혀야 사람이 틀린 짝을 잡는다
+        L.append(f"- 페이지: {url} ({_head(mine)})")
+        L.append("  이 검색어로 순위에 걸린 페이지는 없고, 제목·H1 이 이 검색어로 시작하는 "
+                 "내 지면이 이것 하나입니다 — 새 글 대신 이 지면을 고칩니다. 다른 지면이 이 "
+                 "검색어를 맡아야 한다면 고치기 전에 말해 주세요.")
+        rest = [p for p in topic if p is not mine]
+        if rest:
+            L.append("  제목·H1 에 이 검색어가 드는 다른 지면(내부 링크·겹침 확인용): "
+                     + ", ".join(p["page"] for p in rest))
+    elif url and url != t:
         L.append(f"- {'정본 후보 페이지' if shape == 'consolidate' else '페이지'}: {url}")
+    elif not url and shape == "new_content" and topic:
+        L.append(f"- 페이지: 수집본에 없음 — 순위에 걸린 페이지는 없지만, 제목·H1 에 이 "
+                 f"검색어가 있는 내 지면이 {len(topic)}개 있습니다:")
+        L += [f"  - {p['page']} ({_head(p)})" for p in topic]
+        L.append("  이 중 하나가 이 검색어를 맡는 지면이면 설계도 대신 그 지면을 고치자고 "
+                 "말하고 멈춥니다 — 같은 주제로 새 글을 내면 두 지면이 한 검색어를 나눠 갖습니다.")
     elif not url and shape == "new_content":
-        L.append("- 페이지: 없음 — 이 검색어로 걸린 내 페이지가 아직 없어서 새로 씁니다.")
+        L.append(NO_PAGE["new_content"])
     elif not url and _shows_page(shape):
         # 고칠 페이지를 모르는 채로 고치라고 할 수는 없다 — 사람이 채울 자리를 둔다.
-        L.append("- 페이지: 아직 모릅니다 — 이 검색어로 걸린 내 페이지가 수집본에 없습니다. "
-                 "고칠 페이지를 직접 적어 주세요: [URL]")
+        L.append(NO_PAGE["unknown"])
     why = " — ".join(x for x in (o.get("label"), o.get("reasoning")) if x)
     if why:
         L.append(f"- 왜 걸렸나: {why}")
@@ -868,16 +916,27 @@ URL_KINDS = frozenset({"index_blocked", "crawl_issue", "backlink_broken"})
 
 
 def page_of(o: dict, ctx: dict) -> str | None:
-    """이 기회에서 손댈 페이지 — 대상이 주소면 그것, 검색어면 노출이 가장 큰 페이지."""
+    """이 기회에서 손댈 페이지 — 대상이 주소면 그것, 검색어면 노출이 가장 큰 페이지.
+
+    순위에 걸린 페이지가 없으면 제목·H1 이 그 검색어로 시작하는 전용 지면(topic_pages
+    의 primary)으로 내려간다 — 단 그런 지면이 하나일 때만. 둘 이상이거나 스치는 글뿐이면
+    어느 지면이 맡을지는 사람이 고른다(_target_lines 가 후보를 싣는다)."""
     t = str(o.get("target") or "")
     if o.get("kind") in URL_KINDS or t.startswith("http"):
         return t
     pages = (ctx.get("query_pages") or {}).get(t) or []
-    return pages[0].get("page") if pages else None
+    if pages:
+        return pages[0].get("page")
+    return scoring.topic_page(_topic_of(o, ctx))
+
+
+def _topic_of(o: dict, ctx: dict) -> list[dict]:
+    """순위와 무관하게 제목·H1 에 이 검색어가 있는 내 지면 (dashboard 가 scoring.pages_by_topic 로 싣는다)."""
+    return (ctx.get("topic_pages") or {}).get(str(o.get("target") or "")) or []
 
 
 def build(o: dict, ctx: dict) -> dict:
-    """기회 한 건 → {"shape", "body"}. body 는 '만들어 줄 것'까지, 꼬리는 tails() 가 댄다.
+    """기회 한 건 → {"shape", "body", "page"}. body 는 '만들어 줄 것'까지, 꼬리는 tails() 가 댄다.
 
     ctx 는 dashboard.gather() 가 모은 페이로드 그대로다(query_pages·page_audits·각 축의
     행). 여기서 DB 를 읽지 않는다 — 화면이 보는 것과 요청문이 말하는 것이 같아야 한다.
@@ -891,7 +950,7 @@ def build(o: dict, ctx: dict) -> dict:
     play = o.get("play") or {}
 
     L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
-    L += _target_lines(o, url, shape)
+    L += _target_lines(o, url, shape, ctx)
     ev = EVIDENCE[kind](o, ctx, pages)
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
@@ -927,7 +986,9 @@ def build(o: dict, ctx: dict) -> dict:
                "아니라 비교로 찾습니다. 제목은 이미 위에 있습니다."
                if had_top else s["slot"])
         L += ["## 있으면 붙여 넣을 것 (선택)", ask, "[여기에 붙여 넣기]", ""]
-    return {"shape": shape, "body": "\n".join(L)}
+    # page 는 화면(oppDetail)의 '고칠 페이지' 줄이 그대로 그린다 — 화면이 query_pages 로
+    # 따로 고르면 요청문은 "이 지면을 고쳐라", 화면은 "걸린 페이지 없음"이 된다.
+    return {"shape": shape, "body": "\n".join(L), "page": url}
 
 
 def _deliver_from(audit: dict | None, extra=()) -> list[str]:

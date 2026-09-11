@@ -674,7 +674,7 @@ def test_seam_16_brief_shapes_single_source():
     # 셸이 꼬리·머리말을 페이로드(d.brief)에서 받는다 — 옛 틀의 사본이 남아 있지 않다
     assert "window.BRIEF = d.brief" in shell, "셸이 d.brief 를 window.BRIEF 로 안 받는다"
     for stale in ("const DELIVER = {", "확인되지 않은 수치", "위에 없는 것까지 알아서 손대지",
-                  "소제목을 답니다"):
+                  "소제목을 답니다", "새로 씁니다.", "수집본에 없습니다."):
         assert stale not in shell, f"옛 요청문 틀이 셸에 남아 있다: {stale!r}"
     # 꼬리가 "임시 폴더에 쓰고 열어라"를 시키면 화면 안내도 파일을 쓸 수 있는 곳을
     # 가리켜야 한다 — 웹 챗은 사용자의 임시 폴더에 못 쓴다. 양쪽 끝이 어긋나면 어느
@@ -686,6 +686,14 @@ def test_seam_16_brief_shapes_single_source():
         "꼬리는 파일을 쓰라는데 화면이 딴 데를 가리킨다" if wants_file else
         "화면은 Claude Code 를 가리키는데 꼬리는 파일을 안 시킨다")
     assert not (wants_file and "ChatGPT 에 붙여 넣습니다" in shell),         "꼬리는 파일을 쓰라는데 화면은 ChatGPT 에 붙여 넣으라고 안내한다"
+    # 기회 패널의 '고칠 페이지'는 요청문이 고른 페이지(o.brief.page = brief.page_of)다.
+    # 화면이 query_pages 로 따로 고르면 순위 밖 지면을 요청문은 "고쳐라", 화면은
+    # "걸린 페이지 없음"이라고 한다(써마지에서 실제로 그랬다).
+    m = re.search(r"function oppDetail\(o\) \{(.*?)\n\}", shell, re.S)
+    assert m, "셸의 oppDetail 을 못 찾았다"
+    assert "o.brief.page" in m.group(1), "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
+    assert "page" in brief.build({"kind": "aio_exposure", "target": "x"}, {}), \
+        "brief.build 가 page 를 안 싣는다 — 화면이 고칠 페이지를 못 받는다"
     # 폴백이 쓰는 키가 shapes_payload 에 다 있다 — 키 하나가 빠지면 undefined 가 글에 박힌다
     keys = set(re.findall(r"\bB\.(\w+)", shell)) | set(re.findall(r"window\.BRIEF\.(\w+)", shell))
     have = set(brief.shapes_payload("ko-KR"))

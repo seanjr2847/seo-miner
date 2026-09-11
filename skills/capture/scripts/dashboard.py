@@ -1114,7 +1114,13 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
             page_audits[a["url"]] = a
 
-    return {"query_pages": query_pages, "page_audits": page_audits, "page_audit_date": audit_date}
+    # 순위에 걸린 페이지가 없는 기회만 — 제목·H1 에 그 검색어가 있는 내 지면을 찾는다.
+    # 이게 없으면 10위 밖 지면이 "페이지 없음 → 새 글"로 떨어진다(brief.page_of 가 읽는다).
+    topic_pages = scoring.pages_by_topic(
+        conn, pid, [o["target"] for o in opps if o["kind"] in scoring.KEYWORD_KINDS
+                    and not query_pages.get(str(o["target"]))])
+    return {"query_pages": query_pages, "page_audits": page_audits,
+            "page_audit_date": audit_date, "topic_pages": topic_pages}
 
 
 def gather(conn, p, at: str | None = None) -> dict:

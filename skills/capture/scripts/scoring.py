@@ -1808,6 +1808,58 @@ def _names_us(conn: sqlite3.Connection, project_id: int, q_norm: str) -> bool:
     return any(b in q_norm for b in _brand_names(conn, project_id))
 
 
+def _crawl_heads(conn: sqlite3.Connection, project_id: int):
+    """최신 크롤 회차의 페이지 머리(url·status·title·h1)."""
+    return conn.execute(
+        """SELECT url, status, title, h1 FROM crawl_pages WHERE run_id=(
+             SELECT MAX(id) FROM crawl_runs WHERE project_id=?)""", (project_id,)).fetchall()
+
+
+TOPIC_PAGE_LIMIT = 5    # 검색어 하나에 싣는 후보 지면 — 그보다 많으면 주제가 아니라 간판말이다
+
+
+def pages_by_topic(conn: sqlite3.Connection, project_id: int,
+                   targets) -> dict[str, list[dict]]:
+    """검색어 → 제목·H1 에 그 검색어가 통째로 들어간 내 지면(최신 크롤 회차).
+
+    pages_by_query 는 "그 검색어로 순위에 걸린 페이지"다 — 10위 밖이면 비고, 그러면
+    요청문이 "페이지 없음 → 새로 쓴다"가 된다. 그렇게 이미 있는 온다 리프팅·써마지
+    지면을 두고 같은 주제의 새 글 설계도가 두 번 나갔다. 여기는 순위가 아니라 사이트가
+    가진 지면에서 찾는다. 200 이 아닌 주소(리다이렉트·오류)는 고칠 지면이 아니다.
+    후보가 TOPIC_PAGE_LIMIT 를 넘으면 그 말은 사이트 전체의 간판말이라 싣지 않는다.
+
+    primary — 제목 첫 토막(구분자 앞)이나 H1 이 그 검색어로 **시작하는** 지면. 그
+    주제의 전용 지면이다. 제목 한가운데 검색어가 든 것(비교 블로그 "울쎄라피 프라임,
+    써마지와 뭐가 다른가요?")은 주제를 스치는 글이라 후보로만 싣는다. "기미인가요"
+    처럼 검색어 뒤에 글자가 바로 붙으면 다른 낱말이라 primary 가 아니다.
+    """
+    want = {t: norm(t) for t in dict.fromkeys(str(x) for x in targets if x)}
+    want = {t: n for t, n in want.items() if len(n) >= 2}
+    if not want:
+        return {}
+    heads = [(r["url"], r["title"] or "", r["h1"] or "",
+              norm(f"{r['title'] or ''} {r['h1'] or ''}"))
+             for r in _crawl_heads(conn, project_id) if r["status"] == 200]
+    out: dict[str, list[dict]] = {}
+    for t, n in want.items():
+        lead = re.compile(re.escape(t.strip().lower()) + r"(?![^\W_])")
+        hit = [{"page": u, "title": ti, "h1": h1,
+                "primary": any(lead.match(s.strip().lower())
+                               for s in (re.split(r"\s[|\-–—]\s", ti)[0], h1))}
+               for u, ti, h1, hn in heads if n in hn]
+        if 0 < len(hit) <= TOPIC_PAGE_LIMIT:
+            out[t] = sorted(hit, key=lambda h: not h["primary"])
+    return out
+
+
+def topic_page(hits) -> str | None:
+    """pages_by_topic 후보 → 손댈 지면 하나. 전용 지면(primary)이 딱 하나일 때만 고른다 —
+    둘이면 어느 쪽이 맡을지 사람이 정하고, 스치는 글뿐이면 그 글은 주제 지면이 아니다.
+    요청문(brief.page_of)과 페이지 감사(collect_page.target_urls)가 같은 규칙을 쓴다."""
+    lead = [h for h in hits or [] if h.get("primary")]
+    return lead[0]["page"] if len(lead) == 1 else None
+
+
 def _site_docs(conn: sqlite3.Connection, project_id: int) -> list[str]:
     """사이트가 실제로 가진 말 — 문서 하나 = 페이지 하나(경로+제목) 또는 키워드 하나.
 
@@ -1824,9 +1876,7 @@ def _site_docs(conn: sqlite3.Connection, project_id: int) -> list[str]:
         if path.strip("/") or title:
             pages[path] = (pages.get(path, "") + " " + str(title or "")).strip()
 
-    for r in conn.execute(
-            """SELECT url, title, h1 FROM crawl_pages WHERE run_id=(
-                 SELECT MAX(id) FROM crawl_runs WHERE project_id=?)""", (project_id,)):
+    for r in _crawl_heads(conn, project_id):
         add(r["url"], f"{r['title'] or ''} {r['h1'] or ''}")
     for r in conn.execute(
             """SELECT url, title FROM page_audits WHERE project_id=? AND checked_date=(

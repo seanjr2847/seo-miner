@@ -260,20 +260,25 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     """감사할 URL — 고칠 자리부터. 기회에 걸린 페이지 → 노출 상위 페이지 순.
 
     기회 대상이 URL 이면(색인 막힘 등) 그 자체가 대상이고, 검색어면 그 검색어로
-    실제 걸린 페이지가 대상이다(scoring.pages_by_query 가 정본).
+    실제 걸린 페이지가 대상이다(scoring.pages_by_query 가 정본). 걸린 페이지가 없으면
+    요청문이 고치라고 할 지면(scoring.topic_page)을 본다 — 안 보면 그 요청문은 늘
+    "아직 점검하지 않았습니다"로 나간다.
     """
     rows = conn.execute(
-        "SELECT target FROM opportunities WHERE project_id=? AND status IN ('new','acked')"
+        "SELECT kind, target FROM opportunities WHERE project_id=? AND status IN ('new','acked')"
         " ORDER BY score DESC LIMIT 100", (project_id,)).fetchall()
     targets = [r["target"] for r in rows]
     by_q = scoring.pages_by_query(
         conn, project_id, [t for t in targets if not t.startswith("http")], top=2)
+    by_t = scoring.pages_by_topic(
+        conn, project_id, [r["target"] for r in rows if r["kind"] in scoring.KEYWORD_KINDS
+                           and not r["target"].startswith("http") and not by_q.get(r["target"])])
     out: list[str] = []
     for t in targets:
         if t.startswith("http"):
             out.append(t)
         else:
-            out += [pg["page"] for pg in by_q.get(t, [])]
+            out += [pg["page"] for pg in by_q.get(t, [])] or [scoring.topic_page(by_t.get(t))]
     out += scoring.top_pages(conn, project_id, limit)
     seen, uniq = set(), []
     for u in out:
