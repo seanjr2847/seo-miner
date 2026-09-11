@@ -464,36 +464,81 @@ def test_serp_table_replaces_the_paste_ask_instead_of_doubling_it():
 
 
 def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
-    """막힌 크롤러는 콘텐츠 문제가 아니다.
+    """막힌 검색·인용 크롤러는 콘텐츠 문제가 아니다 — 학습 크롤러 차단은 문제가 아니다.
 
-    ClaudeBot 이 robots.txt 로 막혀 있으면 그 엔진에서는 무엇을 써도 인용되지
-    않는다. 그 상태에서 인용 공백 요청문이 "이 내용을 채우세요" 라고만 하면 두
-    기회가 서로 모순되는 말을 한다.
+    OAI-SearchBot 이 robots.txt 로 막혀 있으면 ChatGPT 검색 답변의 출처로 실리기
+    어렵다. 그 상태에서 인용 공백 요청문이 "이 내용을 채우세요" 라고만 하면 두
+    기회가 서로 모순되는 말을 한다. 거꾸로 GPTBot(학습)만 막힌 사이트에 "먼저 볼
+    것" 을 달면 오진이다 — 학습만 막는 것은 권장되는 중간 지점이다.
     """
-    ctx = {"ai_bots": [{"bot": "ClaudeBot", "rule": "Disallow: /"},
-                       {"bot": "GPTBot", "rule": None}]}
-    b = brief.build(_opp("ai_bot_blocked", "ClaudeBot"), ctx)
+    def bot(ua, purpose, engine, rule):
+        return {"bot": ua, "purpose": purpose, "engine": engine, "vendor": None, "rule": rule}
+    ask = {"ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
+                             "cited": 0, "mentioned": 1}]}
+    ctx = {"ai_bots": [bot("OAI-SearchBot", "search", "ChatGPT 검색", "Disallow: /"),
+                       bot("GPTBot", "training", "OpenAI 모델 학습", "Disallow: /"),
+                       bot("ClaudeBot", "training", "Claude 모델 학습", None)]}
+    b = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), ctx)
     assert b["shape"] == "technical", b["shape"]
     body = b["body"]
-    assert "막힌 AI 크롤러 (robots.txt 의 User-agent): ClaudeBot" in body, body
-    # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도 같은 표에 놓는다
-    assert "| ClaudeBot | 차단 | Disallow: / |" in body, body
-    assert "| GPTBot | 허용 |" in body, body
+    assert "막힌 AI 크롤러 (robots.txt 의 User-agent): OAI-SearchBot" in body, body
+    # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도, 용도도 같은 표에 놓는다
+    assert "| OAI-SearchBot | 검색·인용 색인 | ChatGPT 검색 | 차단 — 인용 막힘 | Disallow: / |" in body, body
+    assert "| GPTBot | 학습 | OpenAI 모델 학습 | 학습만 막음 — 인용과 무관(권장되는 중간 지점) |" in body, body
+    assert "| ClaudeBot | 학습 | Claude 모델 학습 | 허용 |" in body, body
+    assert "검색·인용용 1개가 막혀 있습니다 (학습용 1개 차단은 인용과 무관)" in body, body
     assert "여는 것이 늘 정답은 아닙니다" in body, "의도적 차단을 되돌리라고 시킨다"
     # 글을 고치라고 하지 않는다
     assert "막힌 채로는 고쳐도 안 읽힙니다" in body, body
+    assert "빙 검색 전체" not in body, body
 
-    # 인용 공백 요청문이 같은 사실을 먼저 말한다
-    gap = brief.build(_opp("ai_citation_gap", "질문"), {
-        **ctx, "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
-                                 "cited": 0, "mentioned": 1}]})["body"]
-    assert "robots.txt 가 ClaudeBot 를 막고 있습니다" in gap, gap
-    # 안 막혀 있으면 그 줄이 없다 — 없는 문제를 만들지 않는다
-    clean = brief.build(_opp("ai_citation_gap", "질문"), {
-        "ai_bots": [{"bot": "GPTBot", "rule": None}],
-        "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt", "checks": 4,
-                          "cited": 0, "mentioned": 1}]})["body"]
-    assert "먼저 볼 것" not in clean, clean
+    # 인용 공백 요청문이 같은 사실을, 엔진 이름으로 먼저 말한다 — 학습 봇은 거기 없다
+    gap = brief.build(_opp("ai_citation_gap", "질문"), {**ctx, **ask})["body"]
+    assert "robots.txt 가 OAI-SearchBot(ChatGPT 검색) 를 막고 있습니다" in gap, gap
+    assert "GPTBot" not in gap, gap
+    assert "무엇을 써도 인용되지 않습니다" not in gap, "과장 — 학습·검색을 안 가르던 옛 단정"
+    # 학습 봇만 막혀 있으면 그 줄이 없다 — 없는 문제를 만들지 않는다
+    training_only = brief.build(_opp("ai_citation_gap", "질문"), {
+        "ai_bots": [bot("GPTBot", "training", "OpenAI 모델 학습", "Disallow: /"),
+                    bot("CCBot", "training", "Common Crawl", "Disallow: /")], **ask})["body"]
+    assert "먼저 볼 것" not in training_only, training_only
+    # 용도 모름(옛 꼴 config)도 단정하지 않는다
+    legacy = brief.build(_opp("ai_citation_gap", "질문"), {
+        "ai_bots": [bot("GPTBot", None, None, "Disallow: /")], **ask})["body"]
+    assert "먼저 볼 것" not in legacy, legacy
+    assert "| GPTBot | 모름 | — | 차단 — 용도 모름 |" in brief.build(
+        _opp("ai_bot_blocked", "GPTBot"), {"ai_bots": [bot("GPTBot", None, None, "Disallow: /")]})["body"]
+
+    # Bingbot 은 AI 만의 문제가 아니다
+    bing = brief.build(_opp("ai_bot_blocked", "Bingbot"), {"ai_bots": [
+        bot("Bingbot", "search", "Bing 검색·Copilot", "Disallow: /")]})["body"]
+    assert "빙 검색 전체에서" in bing, bing
+
+
+def test_llms_txt_three_states_and_google_caveat():
+    """llms.txt — 있음·봤고 없음·모름을 가른다. 모르면 아무 말도 안 한다.
+
+    있다/없다를 말할 때는 **구글은 이 파일을 안 쓴다**를 같은 줄에 붙인다. 안 붙이면
+    "만들면 AI 요약에 뜬다" 로 읽히고, 없는 것이 인용 공백의 원인처럼 보인다.
+    """
+    ask = {"ai_bots": [], "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt",
+                                             "checks": 4, "cited": 0, "mentioned": 1}]}
+    has = brief.build(_opp("ai_citation_gap", "질문"),
+                      {**ask, "llms_txt": {"found": True, "bytes": 1234, "head": "# x"}})["body"]
+    assert "- llms.txt: 있음 (1,234바이트)." in has, has
+    assert "구글은 이 파일을 쓰지 않습니다" in has and "ChatGPT·Claude·Perplexity" in has, has
+    none = brief.build(_opp("ai_citation_gap", "질문"),
+                       {**ask, "llms_txt": {"found": False, "bytes": None, "head": None}})["body"]
+    assert "- llms.txt: 없음." in none and "원인으로 보지는 않습니다" in none, none
+    assert "구글은 이 파일을 쓰지 않습니다" in none, none
+    unknown = brief.build(_opp("ai_citation_gap", "질문"), {**ask, "llms_txt": None})["body"]
+    assert "llms.txt" not in unknown, "못 받은 것을 있다/없다로 말한다"
+    # 봇 근거에도 같은 줄
+    botb = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), {
+        "ai_bots": [{"bot": "OAI-SearchBot", "purpose": "search", "engine": "ChatGPT 검색",
+                     "rule": "Disallow: /"}],
+        "llms_txt": {"found": False}})["body"]
+    assert "- llms.txt: 없음." in botb, botb
 
 
 def test_trust_signals_are_asked_for_but_never_invented():

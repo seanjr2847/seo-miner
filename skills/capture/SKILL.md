@@ -380,13 +380,28 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일.
 `config.yaml` 의 `ai_bots` 가 막혔는지 본다(`scoring.ai_bot_blocks`). **새 수집도 새
 단계도 없다.**
 
-막혀 있으면 `ai_bot_blocked` 기회가 서고, 인용 공백(`ai_citation_gap`) 요청문 맨
-위에 "robots.txt 가 ClaudeBot 를 막고 있습니다" 가 붙는다. 이 줄이 없으면 두 기회가
-서로 모순되는 말을 한다 — 막힌 채로는 무엇을 써도 인용되지 않는데 "이 내용을
-채우세요" 라고만 시키는 것이다.
+**봇은 용도로 가른다** — `ai_bots` 의 각 줄이 `purpose` 를 갖는다(`search` 검색·인용
+색인, `user` 사용자 요청 페치, `training` 모델 학습). 같은 벤더라도 봇마다 하는 일이
+다르다: OpenAI 는 GPTBot(학습)과 OAI-SearchBot(ChatGPT 검색)을 따로 둔다.
 
-**여는 것이 늘 정답은 아니다.** 학습에 쓰이는 것이 싫어 일부러 막아 둔 것일 수
-있다. 요청문이 그것부터 묻는다.
+- `search`·`user` 봇이 막혔을 때만 `ai_bot_blocked` 기회가 서고, 인용 공백
+  (`ai_citation_gap`) 요청문 맨 위에 "robots.txt 가 OAI-SearchBot(ChatGPT 검색) 를
+  막고 있습니다" 처럼 **엔진 이름으로** 붙는다. 이 줄이 없으면 두 기회가 서로 모순되는
+  말을 한다.
+- `training` 봇만 막힌 것(GPTBot·ClaudeBot·Google-Extended·CCBot 등)은 기회가 아니다.
+  인용과 무관하고, 학습은 거부하고 인용은 받는 **권장되는 중간 지점**이다. 근거 표에
+  "학습만 막음" 으로만 적는다. Google-Extended 는 제미나이 학습용이라 구글 검색·AI 요약
+  노출과도 무관하다.
+- Bingbot 은 빙 검색 그 자체이자 Copilot 인용 경로라, 막혔으면 AI 만의 문제가 아니라고
+  말한다.
+- 옛 꼴(UA 문자열만 적은 목록)도 읽지만 용도는 "모름" — 기회로 안 올린다.
+
+**여는 것이 늘 정답은 아니다.** 일부러 막아 둔 것일 수 있다. 요청문이 그것부터 묻는다.
+
+**llms.txt** — 같은 크롤이 robots.txt 받는 김에 `/llms.txt` 도 한 번 받아
+`crawl_runs.llms_txt_*` 에 남긴다(있음·봤고 없음·못 받음 세 상태). 인용 공백·봇 차단
+요청문에 한 줄로만 싣고 **기회 종류로 만들지 않는다** — 구글은 이 파일을 쓰지 않는다
+(검색·AI 요약 모두). ChatGPT·Claude·Perplexity 쪽에만 도움이 될 수 있다.
 
 ### /capture vitals {P} — 속도 측정 (PageSpeed Insights, 돈 안 듦)
 **풀런(`/capture run`)에 포함된다** — `pages` 다음이다. `pages` 와 **같은 URL 목록**을

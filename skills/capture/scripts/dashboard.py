@@ -909,14 +909,23 @@ def _axis_ai_bots(p, crawl: dict) -> dict:
     원문을 다시 읽을 뿐이다(판정의 정본은 scoring.robots_blocks).
 
     막힌 것만 내지 않고 허용까지 같이 낸다: 한 줄만 보여 주면 "이것만 열면 되나"
-    로 읽히고, 같은 robots.txt 가 다른 봇에게 무엇을 하는지는 안 보인다.
+    로 읽히고, 같은 robots.txt 가 다른 봇에게 무엇을 하는지는 안 보인다. 행마다
+    용도(purpose)를 싣는다 — 학습 봇 차단과 검색 봇 차단은 뜻이 반대라서.
+
+    llms_txt: 같은 회차가 받은 /llms.txt. None = 모름(크롤이 안 받았거나 못 받음),
+    {"found": False} = 봤고 없음. 둘을 뭉치면 요청문이 증거 없이 "없다" 고 말한다.
+
+    crawl 은 _axis_crawl() 의 반환값 그대로다 — {"crawl": {"run": …}, "crawl_kinds": …}.
+    예전에는 여기서 바로 .get("run") 을 해서 늘 빈 행이었다: 봇 표도, 인용 공백
+    요청문의 '먼저 볼 것' 줄도 한 번도 실린 적이 없었다(test_dashboard 가 못 박는다).
     """
-    txt = ((crawl or {}).get("run") or {}).get("robots_txt") or ""
-    if not txt.strip():
-        return {"ai_bots": []}
+    run = ((crawl or {}).get("crawl") or {}).get("run") or {}
+    found = run.get("llms_txt_found")
+    llms = None if found is None else {"found": bool(found), "bytes": run.get("llms_txt_bytes"),
+                                       "head": run.get("llms_txt_head")}
     home = f"https://{p['domain']}/" if p["domain"] else "https://example.com/"
-    return {"ai_bots": [{"bot": b, "rule": scoring.robots_blocks(txt, home, agent=b)}
-                        for b in scoring.ai_bots()]}
+    return {"ai_bots": scoring.ai_bot_status(run.get("robots_txt") or "", home),
+            "llms_txt": llms}
 
 
 def _axis_vitals(conn, pid: int) -> dict:

@@ -225,8 +225,10 @@ def test_load_covers_every_kind():
         "3, NULL, 800, 'missing')", (pid,))
 
     # robots.txt 원문까지 남긴다 — AI 크롤러 차단(ai_bot_blocked)은 새로 가져오지
-    # 않고 이 원문을 다시 읽는다. GPTBot 만 막고 나머지는 허용인 흔한 꼴.
+    # 않고 이 원문을 다시 읽는다. 학습 봇(GPTBot)과 검색 봇(OAI-SearchBot)을 둘 다
+    # 막은 꼴 — 기회는 검색 봇 쪽 하나만 서야 한다(학습만 막는 것은 인용과 무관).
     _robots = chr(10).join(("User-agent: GPTBot", "Disallow: /", "",
+                            "User-agent: OAI-SearchBot", "Disallow: /", "",
                             "User-agent: *", "Allow: /"))
     run_id = conn.execute(
         "INSERT INTO crawl_runs(project_id, finished_at, seed, robots_txt) "
@@ -250,7 +252,10 @@ def test_load_covers_every_kind():
     conn = db.connect()
     kinds = {r[0] for r in conn.execute(
         "SELECT DISTINCT kind FROM opportunities WHERE project_id=?", (pid,))}
+    bots = {r[0] for r in conn.execute(
+        "SELECT target FROM opportunities WHERE project_id=? AND kind='ai_bot_blocked'", (pid,))}
     conn.close()
+    assert bots == {"OAI-SearchBot"}, f"학습 봇 차단을 인용 차단으로 올렸거나 검색 봇을 놓쳤다: {bots}"
     missing = set(scoring.ALL_KINDS) - kinds
     assert not missing, f"명부엔 있는데 load() 가 안 낸 kind: {missing}"
     extra = kinds - set(scoring.ALL_KINDS)
@@ -1222,7 +1227,7 @@ def test_resolve_stale_leaves_open_without_confirming_data():
                               k("rank_decay", "되찾은 검색어"), k("ctr_gap", "1페이지 밖 클릭"),
                               k("device_gap", "모바일만"), k("backlink_prospect", "old.com"),
                               k("content_gap", "경쟁사 수집 실패"),
-                              k("index_blocked", "/still"), k("ai_bot_blocked", "GPTBot")])
+                              k("index_blocked", "/still"), k("ai_bot_blocked", "OAI-SearchBot")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE project_id=? AND target='끊긴 질문'", (pid,))
     conn.commit()
     before = _states(conn, pid)
@@ -1272,14 +1277,17 @@ def test_resolve_stale_closes_on_positive_confirmation():
                  " VALUES(?, '2026-08-20', 'got.com', 2, 1)", (pid,))
     conn.execute("INSERT INTO crawl_runs(project_id, started_at, finished_at, seed, robots_txt)"
                  " VALUES(?, '2026-08-20T00:00:00Z', '2026-08-20T01:00:00Z', 'home', ?)",
-                 (pid, "User-agent: *\nAllow: /"))
+                 (pid, "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /"))
     conn.commit()
     k = lambda kind, t: {"kind": kind, "target": t, "score": 10}
+    # GPTBot 은 용도를 가르기 전 판정이 올려 둔 옛 기회다 — 여전히 막혀 있지만 학습
+    # 전용이라 닫혀야 한다(안 그러면 막힌 채라 영영 안 닫힌다)
     ids = _opps_at_base(conn, pid, [
         k("aio_exposure", "aio인용"), k("ai_citation_gap", "인용된 질문"),
         k("striking_distance", "올라간 검색어"), k("ctr_gap", "클릭 회복"),
         k("device_gap", "모바일 회복"), k("index_blocked", "/fixed"),
-        k("backlink_prospect", "got.com"), k("ai_bot_blocked", "GPTBot")])
+        k("backlink_prospect", "got.com"), k("ai_bot_blocked", "OAI-SearchBot"),
+        k("ai_bot_blocked", "GPTBot")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE id=?", (ids["인용된 질문"],))
     cid = db.record_creation(conn, pid, "a.md", opportunity_id=ids["올라간 검색어"])
     work_at = conn.execute("SELECT created_at FROM creations WHERE id=?", (cid,)).fetchone()[0]
@@ -1294,8 +1302,10 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert set(st) == set(ids), set(ids) ^ set(st)
     resolved = {t for t, r in st.items() if r["status"] == db.OPP_RESOLVED}
     assert resolved == {"aio인용", "인용된 질문", "클릭 회복", "모바일 회복", "/fixed",
-                        "got.com", "GPTBot"}, st
+                        "got.com", "OAI-SearchBot", "GPTBot"}, st
     assert all(st[t]["status_reason"] and st[t]["status_at"] for t in resolved), st
+    assert "더는" in st["OAI-SearchBot"]["status_reason"], st["OAI-SearchBot"]
+    assert "학습 전용" in st["GPTBot"]["status_reason"], st["GPTBot"]
     assert "인용" in st["aio인용"]["status_reason"], st["aio인용"]
     assert st["인용된 질문"]["status_prev"] == "acked" and st["aio인용"]["status_prev"] == "new", st
     done = st["올라간 검색어"]

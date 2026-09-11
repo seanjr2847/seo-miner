@@ -218,7 +218,7 @@ INTRO_BY_KIND = {
     "device_gap": "아래 페이지가 모바일에서만 밀리는 원인을 잡아 주세요. 글의 내용은 손대지 "
                   "않습니다 — 화면·속도·자원 크기처럼 모바일에서 다르게 보이는 것을 고치는 "
                   "일입니다.",
-    "ai_bot_blocked": "아래 AI 크롤러가 robots.txt 로 막혀 있습니다. 열지 말지 정하고, "
+    "ai_bot_blocked": "아래 AI 검색·인용용 크롤러가 robots.txt 로 막혀 있습니다. 열지 말지 정하고, "
                       "연다면 어느 줄을 어떻게 고칠지 알려 주세요. 글은 손대지 않습니다 — "
                       "막힌 채로는 고쳐도 안 읽힙니다.",
     "backlink_broken": "아래 주소로 들어오던 링크를 되살려 주세요. 이미 번 링크라 새로 얻는 "
@@ -737,13 +737,17 @@ def _ev_ai(o, ctx, pages):
         if ans:
             L += ["- AI 가 지금 하는 답변(발췌) — 여기 없는 것을 우리가 답해야 인용됩니다:",
                   *(f"  > {ln}" for ln in ans.splitlines() if ln.strip())]
-    # 크롤러가 막혀 있으면 글을 고쳐도 안 읽힌다. 이 줄이 없으면 이 요청문과
-    # AI 크롤러 차단 기회가 서로 모순되는 말을 한다.
-    blocked = [r["bot"] for r in (ctx.get("ai_bots") or []) if r.get("rule")]
+    # 검색·인용용 크롤러가 막혀 있으면 글을 고쳐도 그 엔진이 못 읽어 간다. 이 줄이
+    # 없으면 이 요청문과 AI 크롤러 차단 기회가 서로 모순되는 말을 한다. 학습 봇만
+    # 막힌 것은 여기 안 싣는다 — 인용과 무관한데 "먼저 볼 것" 이라고 하면 오진이다.
+    blocked = [r for r in (ctx.get("ai_bots") or [])
+               if r.get("rule") and r.get("purpose") in scoring.AI_BOT_CITING]
     if blocked:
-        L.append(f"- **먼저 볼 것**: robots.txt 가 {', '.join(blocked)} 를 막고 있습니다. "
-                 "그 크롤러를 쓰는 엔진에서는 무엇을 써도 인용되지 않습니다 — 글보다 "
-                 "그 설정이 먼저입니다.")
+        names = ", ".join(f"{r['bot']}({r.get('engine') or r['bot']})" for r in blocked)
+        L.append(f"- **먼저 볼 것**: robots.txt 가 {names} 를 막고 있습니다. 그 엔진의 "
+                 "답변에서는 우리 페이지가 출처로 실리기 어렵습니다 — 글보다 그 설정이 "
+                 "먼저입니다.")
+    L += _llms_lines(ctx)
     return L + _pages_table(pages)
 
 
@@ -802,24 +806,60 @@ def _ev_bl_prospect(o, ctx, pages):
     return L
 
 
+def _llms_lines(ctx) -> list[str]:
+    """/llms.txt 한 줄 — 모르면(None) 아무 말도 안 한다. 없다고 짐작하지 않는다.
+
+    구글은 이 파일을 쓰지 않는다. 그 사실을 같은 줄에 붙이지 않으면 "llms.txt 를
+    만들면 AI 요약에 뜬다" 로 읽히고, 없는 것이 인용 공백의 원인처럼 보인다.
+    """
+    lt = ctx.get("llms_txt")
+    if not lt:
+        return []
+    tail = ("구글은 이 파일을 쓰지 않습니다(검색·AI 요약 모두). ChatGPT·Claude·"
+            "Perplexity 쪽에만 도움이 될 수 있습니다.")
+    if lt.get("found"):
+        size = f" ({_n(lt.get('bytes'))}바이트)" if lt.get("bytes") else ""
+        return [f"- llms.txt: 있음{size}. {tail}"]
+    return [f"- llms.txt: 없음. 인용 공백의 원인으로 보지는 않습니다. {tail}"]
+
+
 def _ev_ai_bot(o, ctx, pages):
     """어느 줄이 막는지 + 나머지 봇은 어떤 상태인지.
 
     한 봇만 보여 주면 "이것만 열면 되나" 로 읽힌다. 같은 robots.txt 가 다른
     봇에게 무엇을 하고 있는지 한 표에 놓아야 열고 닫는 결정을 한 번에 한다.
+    용도를 같이 적는다 — 학습 봇 차단은 인용과 무관한 흔한 선택이라, 표에서
+    "차단" 이 똑같이 보이면 사람이 그것까지 열려고 든다.
     """
     rows = ctx.get("ai_bots") or []
     if not rows:
-        return []
-    L = [f"- robots.txt 판정: {len(rows)}개 크롤러 중 "
-         f"{sum(1 for r in rows if r.get('rule'))}개가 막혀 있습니다."]
-    L += _table(["크롤러", "지금", "막는 줄"],
-                [[r["bot"], "차단" if r.get("rule") else "허용", r.get("rule") or "—"]
-                 for r in rows])
-    L.append("- 학습과 인용은 다른 봇일 수 있습니다(예: Google-Extended 는 제미나이 "
-             "학습이고, 검색 색인의 Googlebot 과 별개입니다). 막는 것이 의도였다면 "
-             "그렇다고 답해 주세요 — 여는 것이 늘 정답은 아닙니다.")
-    return L
+        return _llms_lines(ctx)
+    citing = [r for r in rows if r.get("rule") and r.get("purpose") in scoring.AI_BOT_CITING]
+    training = [r for r in rows if r.get("rule") and r.get("purpose") == "training"]
+
+    def now(r):
+        if not r.get("rule"):
+            return "허용"
+        if r.get("purpose") in scoring.AI_BOT_CITING:
+            return "차단 — 인용 막힘"
+        if r.get("purpose") == "training":
+            return "학습만 막음 — 인용과 무관(권장되는 중간 지점)"
+        return "차단 — 용도 모름"
+
+    L = [f"- robots.txt 판정: {len(rows)}개 크롤러 중 검색·인용용 {len(citing)}개가 "
+         f"막혀 있습니다" + (f" (학습용 {len(training)}개 차단은 인용과 무관)" if training else "")
+         + "."]
+    L += _table(["크롤러", "용도", "엔진", "지금", "막는 줄"],
+                [[r["bot"], scoring.AI_BOT_PURPOSE.get(r.get("purpose"), "모름"),
+                  r.get("engine") or "—", now(r), r.get("rule") or "—"] for r in rows])
+    if any(r["bot"].lower() == "bingbot" for r in citing):
+        L.append("- Bingbot 이 막혀 있습니다 — Copilot 인용만의 문제가 아니라 빙 검색 전체에서 "
+                 "빠진다는 뜻입니다.")
+    L.append("- 학습과 인용은 다른 봇입니다. 학습 봇(GPTBot·ClaudeBot·Google-Extended·CCBot "
+             "등)만 막는 것은 인용과 무관하고, Google-Extended 는 제미나이 학습용이라 구글 "
+             "검색·AI 요약 노출과도 무관합니다. 막는 것이 의도였다면 그렇다고 답해 주세요 "
+             "— 여는 것이 늘 정답은 아닙니다.")
+    return L + _llms_lines(ctx)
 
 
 EVIDENCE: dict[str, Callable] = {
