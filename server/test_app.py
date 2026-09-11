@@ -58,6 +58,39 @@ def demo() -> None:
         r = c.get("/healthz")
         assert r.status_code == 200 and r.json() == {"ok": True}, r.text
 
+        # 한 스레드에서 연 커넥션을 다른 스레드에서 쓸 수 있어야 한다. FastAPI 는 sync
+        # 의존자(yield)와 sync 라우트를 스레드풀의 서로 다른 스레드에 올린다 — 의존자가
+        # 연 커넥션을 라우트가 다른 스레드에서 쓰면 ProgrammingError → 500 이다. 이
+        # 파일의 요청은 전부 순차라 같은 스레드를 재사용해 우연히 맞았고, 그래서 한 번도
+        # 못 잡았다. 운영에서는 동시 요청 20개 중 3~4개가 500 이었다(09-09 배포 ~ 09-11).
+        # 네트워크·타이밍 없이 원인만 찌른다 — 흔들리지 않는다.
+        import threading
+        old_home = os.environ.get("CAPTURE_HOME")
+        os.environ["CAPTURE_HOME"] = str(Path(d) / "xthread")     # 진짜 brain 은 안 건드린다
+        try:
+            for name, opener in (("store.connect", store.connect),
+                                 ("db.connect", db.connect),
+                                 ("db.connect_ro", db.connect_ro)):
+                conn, err = opener(), []
+
+                def use(conn=conn, err=err):
+                    try:
+                        conn.execute("SELECT 1").fetchone()
+                        conn.close()       # 닫는 것도 다른 스레드에서 돼야 한다 — 안 되면 샌다
+                    except Exception as e:
+                        err.append(e)
+
+                t = threading.Thread(target=use)
+                t.start()
+                t.join()
+                assert not err, (f"{name} 커넥션을 다른 스레드에서 못 쓴다 — "
+                                 f"동시 요청이 500 이 된다: {err[0]}")
+        finally:
+            if old_home is None:
+                os.environ.pop("CAPTURE_HOME", None)
+            else:
+                os.environ["CAPTURE_HOME"] = old_home
+
         r = c.get("/api/properties")
         assert r.status_code == 401, r.text
 
