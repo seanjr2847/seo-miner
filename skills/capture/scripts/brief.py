@@ -17,6 +17,12 @@
 3. **산출물에 형식 계약이 붙는다.** "title 3안"이 아니라 "표: 안 | 글자 수 | 검색어
    자리 | 이유". 길이 기준과 언어는 사이트의 언어-지역에서 온다.
 
+4. **일의 단위는 페이지다.** 한 페이지에 검색어 16개가 걸리면 기회도 16건이 서는데,
+   기회마다 자기 검색어만 아는 요청문을 쓰면 같은 title 을 16번 다르게 고치라는 글이
+   16장 나온다(한관종·비립종 페이지에서 실제로 그랬다). 고치기(fix_page) 요청문은
+   그 페이지에 걸린 검색어 전부와 같은 페이지의 다른 기회를 싣고, 누른 검색어는
+   들어온 입구로만 둔다 — _page_queries·_page_siblings.
+
 처방(what/acts/deliver)의 정본은 그대로 scoring.KINDS 다 — 여기서 새로 판정하지
 않는다. 화면(dashboard.html 의 askBlock)은 build() 가 낸 body 와 tails() 가 낸
 꼴별 꼬리를 이어 붙여 그리기만 한다. 꼬리를 따로 실어 보내는 이유는 기회 200건이
@@ -35,13 +41,24 @@ import serp_adapter
 # test_seams 가 대조한다.
 SHAPE_NAMES = ("fix_page", "new_content", "consolidate", "technical", "outreach", "presence")
 
+# 숫자만 보고 제안하는 것을 막는 규칙 — 상수로 두는 이유는 검사가 어느 꼴에 실렸는지
+# 대조하기 때문이다. 요청문의 표는 출발점이지 페이지를 읽은 것이 아니다.
+RULE_READ_PAGE = ("제안하기 전에 그 페이지와 검색결과 상위 2~3개를 실제로 엽니다. 이 요청문의 "
+                  "숫자는 출발점이지, 페이지를 읽는 일을 대신하지 않습니다.")
+RULE_READ_TOP = ("설계하기 전에 검색결과 상위 2~3개를 실제로 엽니다. 이 요청문의 숫자·제목 표는 "
+                 "출발점이지, 그 글들을 읽는 일을 대신하지 않습니다.")
+# 한 페이지에 검색어 여럿 — 검색어마다 한 번씩 고치면 같은 title 을 16번 다르게 고친다.
+RULE_ONE_SET = ("검색어 여럿이 한 페이지에 걸려 있으면 title·H1·H2 한 벌이 그 전부를 맡습니다 "
+                "— 검색어마다 한 번씩 고치지 않습니다.")
+
 SHAPES: dict[str, dict] = {
     "fix_page": dict(
         label="있는 페이지 고치기",
         intro="아래 페이지가 이 검색어에서 더 잘 보이게 고쳐 주세요. 새로 쓰는 일이 "
               "아닙니다 — 지금 있는 페이지의 제목·설명·본문 구조를 손보는 일입니다.",
-        form=["안이 여럿인 것(title·meta description)은 표: 안 | 글자 수 | 검색어가 "
-              "들어간 자리 | 이 안을 고른 이유 한 줄.",
+        form=["안이 여럿인 것(title·meta description)은 표: 안 | 글자 수 | 어느 검색어 묶음에 "
+              "답하는지 | 이 안을 고른 이유 한 줄. 안 바꾸는 게 답이면 표 대신 '안 바꿈'과 "
+              "그 이유 한 줄.",
               "본문에 보탤 구간은 H2 제목마다 그 아래에서 답할 내용 한 줄과 근거로 쓸 "
               "출처(이 페이지 안의 문장, 또는 [확인 필요]).",
               "신뢰 신호 — 저자(누가 썼는지·왜 이 사람인지), 근거 출처, 마지막 "
@@ -55,9 +72,10 @@ SHAPES: dict[str, dict] = {
                "저자·자격·경력을 지어내지 않습니다. 신뢰 신호는 '무엇을 넣어야 하는지'까지만 "
                "말하고, 이름·자격은 [저자] 자리로 비워 둡니다.",
                "이미 있는 문단은 지우지 않습니다. 보태거나 옮기는 것까지만.",
-               "검색어를 억지로 반복하지 않습니다. title·H1·첫 문단에 한 번씩 자연스럽게 "
-               "들어가면 충분합니다.",
-               "요청하지 않은 것(디자인·URL 변경·다른 페이지)은 손대지 않습니다."],
+               "검색어를 억지로 반복하지 않습니다. 묶음을 대표하는 말이 title·H1·첫 문단에 "
+               "한 번씩 자연스럽게 들어가면 충분합니다.",
+               "요청하지 않은 것(디자인·URL 변경·다른 페이지)은 손대지 않습니다.",
+               RULE_READ_PAGE, RULE_ONE_SET],
         slot="이 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, "
              "'빠진 구간'을 짐작이 아니라 비교로 찾습니다.",
         limits=True),
@@ -88,7 +106,8 @@ SHAPES: dict[str, dict] = {
                "말해 주세요.",
                "이 답에서는 본문을 쓰지 않습니다 — 설계도까지 쓰고 멈춥니다. 절대경로 "
                "앞에 고를 자리(배지를 단 안)를 번호로 묻고, 사용자가 고르고 승인하면 같은 "
-               "대화에서 그 설계도대로 본문을 씁니다."],
+               "대화에서 그 설계도대로 본문을 씁니다.",
+               RULE_READ_TOP],
         slot="이 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, "
              "다뤄야 할 구간을 짐작이 아니라 비교로 정합니다.",
         limits=True),
@@ -284,10 +303,16 @@ INTRO_BY_KIND = {
 # 진단 tag → 그 항목을 고치는 데 실제로 필요한 산출물. 처방(play.deliver)이 없는
 # 폴백(기회로 아직 안 올라온 행)에서만 쓴다 — 화면이 window.BRIEF.by_tag 로 받는다.
 DELIVER_BY_TAG = {
-    "title": "새 title 3안 — 검색어를 앞에 두고, 길이 기준 안에서",
+    # "검색어를 앞에 두고"가 아니다 — 한 페이지에 검색어 여럿이 걸리면 그 말은 검색어마다
+    # 다른 title 을 낳는다. 묶음의 주된 의도를 대표하는 안이고, 안 바꾸는 것도 답이다.
+    "title": "title 3안 — 이 페이지에 걸린 검색어 묶음이 주로 묻는 것을 대표하게, 본문이 실제로 "
+             "답하는 말로만, 길이 기준 안에서. 지금 것이 이미 그렇다면 '안 바꿈'과 그 이유 한 줄",
     "meta description": "meta description 2안 — 길이 기준 안에서, 클릭할 이유를 담아서",
-    "H1": "H1 문안 하나 — title 과 같은 말을 하도록",
+    "H1": "H1 문안 하나 — title 과 같은 말을 하도록. 안 바꾸는 게 답이면 그렇게 쓰고 이유 한 줄",
     "본문": "본문에 추가할 H2 목록과 각 항목에서 답할 내용 — 이미 있는 문단은 그대로 둡니다",
+    "H2": "H2 목록 — 검색어 묶음이 묻는 질문 순서대로, 지금 것과 나란히",
+    "외부 링크": "근거로 걸 출처 1~3개와 그 앵커 문장 — 본문의 주장 중 어느 것에 다는지까지",
+    "비교": "둘을 나란히 견주는 표(항목 | 하나 | 다른 하나) + 결론 한 문단",
     "구조화 데이터": "이 페이지에 맞는 구조화 데이터(JSON-LD) 한 벌",
     "robots": "고칠 meta robots 값과 그 태그가 들어갈 위치",
     "canonical": "canonical 을 어느 URL 로 바꿀지와 그 근거",
@@ -1213,6 +1238,152 @@ def _topic_of(o: dict, ctx: dict) -> list[dict]:
     return (ctx.get("topic_pages") or {}).get(str(o.get("target") or "")) or []
 
 
+# ── 페이지 단위 ──────────────────────────────────────────────────────────────
+# 검색어의 의도 — 낱말 표로 가르는 결정적 분류다. 도시명·브랜드는 안 본다(그건 의도가
+# 아니라 자리다). 순서가 판정이다: 명시적 비교(vs·차이)가 먼저, 그다음 방법·원인·치료,
+# 두 명사 사이의 or/and 는 가장 약한 비교 신호라 맨 뒤. "milia and syringoma treatment"
+# 는 그래서 치료·구매다 — and 가 있어도 treatment 가 답의 꼴을 정한다.
+# 라틴 낱말은 토큰 일치, 한글은 조사가 붙어 부분 일치, 띄어쓴 구는 구 일치.
+INTENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("비교", ("vs", "versus", "difference", "differences", "compare", "comparison",
+            "차이", "비교", "다른점")),
+    ("방법", ("how to", "how do", "how can", "방법", "하는법", "하는 법")),
+    ("원인·증상", ("cause", "causes", "symptom", "symptoms", "why", "원인", "증상")),
+    ("치료·구매", ("removal", "remove", "treatment", "treat", "clinic", "price", "cost",
+               "buy", "제거", "치료", "시술", "가격", "비용", "병원", "구매")),
+)
+INTENT_LINK = ("or", "and")        # 두 명사 사이에 서면 비교 — 첫·끝 자리는 아니다
+INTENT_DEFAULT = "정보"
+
+
+def query_intent(q: str) -> str:
+    """검색어 하나 → 의도 이름(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT)."""
+    low = str(q or "").lower()
+    toks = scoring.tokens(low)
+    joined = " ".join(toks)
+    for name, words in INTENT_WORDS:
+        for w in words:
+            if " " in w:
+                hit = w in joined
+            elif w.isascii():
+                hit = w in toks
+            else:
+                hit = w in low
+            if hit:
+                return name
+    if any(t in INTENT_LINK for t in toks[1:-1]):
+        return "비교"
+    return INTENT_DEFAULT
+
+
+def _page_queries(url: str, ctx: dict) -> list[dict]:
+    """이 페이지가 첫째(노출 최대)로 걸린 검색어 전부 — page_of 와 같은 규칙, 노출 순."""
+    rows = []
+    for q, prs in (ctx.get("query_pages") or {}).items():
+        if not prs or prs[0].get("page") != url:
+            continue
+        p = prs[0]
+        rows.append({"query": q, "impressions": p.get("impressions") or 0,
+                     "clicks": p.get("clicks") or 0, "position": p.get("position"),
+                     "intent": query_intent(q)})
+    return sorted(rows, key=lambda r: (-r["impressions"], r["query"]))
+
+
+def _intent_share(rows: list[dict]) -> list[tuple[str, int]]:
+    """의도별 노출 합, 큰 순. 표에서 잘린 행도 센다 — 비율은 전부의 것이어야 한다."""
+    acc: dict[str, int] = {}
+    for r in rows:
+        acc[r["intent"]] = acc.get(r["intent"], 0) + int(r["impressions"] or 0)
+    return sorted(acc.items(), key=lambda x: (-x[1], x[0]))
+
+
+_PAGE_QUERY_ROWS = 15
+PAGE_QUERIES_HEAD = "## 이 페이지에 걸린 검색어 (전부)"
+PAGE_SIBLINGS_HEAD = "## 이 페이지에 걸린 다른 기회"
+
+
+def _page_query_lines(o: dict, rows: list[dict]) -> list[str]:
+    """검색어 → 이 페이지 표. 근거의 _pages_table(이 검색어 → 내 페이지들)과 반대 방향이다."""
+    if not rows:
+        return []
+    mine = str(o.get("target") or "")
+    shown = rows[:_PAGE_QUERY_ROWS]
+    L = [PAGE_QUERIES_HEAD,
+         "이 페이지는 아래 검색어 전부에서 첫째로 걸립니다. 누른 검색어는 그중 하나일 뿐이라, "
+         "title·H1·본문은 이 묶음이 주로 묻는 것에 답해야 합니다."]
+    L += _table(["검색어", "노출", "클릭", "평균 순위", "의도"],
+                [[r["query"] + (" ← 이 기회" if r["query"] == mine else ""),
+                  _n(r["impressions"]), _n(r["clicks"]),
+                  f"{r['position']}위" if r.get("position") is not None else "—",
+                  r["intent"]] for r in shown])
+    if len(rows) > len(shown):
+        L.append(f"외 {len(rows) - len(shown)}개 (노출 순으로 잘랐습니다 — 아래 비율은 전부의 것입니다)")
+    share = _intent_share(rows)
+    total = sum(v for _, v in share)
+    if total > 0:
+        top, top_imp = share[0]
+        L.append(f"노출 {_n(total)} 중 {top} 의도 {_n(top_imp)} ({round(top_imp * 100 / total)}%)"
+                 + "".join(f" · {k} {_n(v)}" for k, v in share[1:]))
+    return L + [""]
+
+
+def _is_same_opp(a: dict, b: dict) -> bool:
+    if a is b:
+        return True
+    if a.get("id") is not None and b.get("id") is not None:
+        return a["id"] == b["id"]
+    return a.get("kind") == b.get("kind") and str(a.get("target")) == str(b.get("target"))
+
+
+def _page_siblings(o: dict, ctx: dict, url: str) -> list[dict]:
+    """같은 페이지로 푸는 다른 열린 기회 — 페이지 본문의 일(고치기·새 글 꼴)만.
+
+    주소 정리·기술 점검·플랫폼 등장은 같은 주소여도 다른 일이라 이 요청문이 못 덮는다 —
+    "이 페이지를 끝내면 같이 닫힌다"고 말할 수 있는 것만 싣는다."""
+    out = []
+    for x in ctx.get("opps") or []:
+        if _is_same_opp(x, o) or (x.get("status") or "new") not in scoring.OPEN_STATUSES:
+            continue
+        if page_of(x, ctx) != url:
+            continue
+        if shape_of(x["kind"], gap_kind=x.get("gap_kind"), has_page=True) not in (
+                "fix_page", "new_content"):
+            continue
+        out.append(x)
+    return out
+
+
+_PAGE_SIBLING_ROWS = 12
+
+
+def _page_sibling_lines(sibs: list[dict]) -> list[str]:
+    if not sibs:
+        return []
+    shown = sibs[:_PAGE_SIBLING_ROWS]
+    L = [PAGE_SIBLINGS_HEAD,
+         f"같은 페이지로 푸는 열린 기회가 {len(sibs)}건 더 있습니다. 이 요청문 하나가 그 전부를 "
+         "덮습니다 — 기회마다 따로 고치지 않고, 이 페이지를 끝내면 같이 닫습니다(화면의 묶음 "
+         "버튼이 묶음 전체에 상태를 먹입니다)."]
+    L += [f"- [{x.get('label') or scoring.kind_label(x['kind'])}] {x.get('target')}"
+          + (f" — {x['reasoning']}" if x.get("reasoning") else "") for x in shown]
+    if len(sibs) > len(shown):
+        L.append(f"외 {len(sibs) - len(shown)}개")
+    return L + [""]
+
+
+def _unit_lines(rows: list[dict]) -> list[str]:
+    """'대상'의 마지막 줄 — 일의 단위는 페이지고 누른 검색어는 입구다."""
+    if not rows:
+        return []
+    share = _intent_share(rows)
+    total = sum(v for _, v in share)
+    top = (f"{share[0][0]} {round(share[0][1] * 100 / total)}%" if total > 0 and share
+           else share[0][0] if share else INTENT_DEFAULT)
+    return [f"- 일의 단위: 이 페이지입니다. 위 검색어는 들어온 입구일 뿐입니다 — 아래 "
+            f"'{PAGE_QUERIES_HEAD[3:]}' 묶음이 주로 묻는 것({top})에 title·H1·본문이 답해야 "
+            "합니다. 검색어 하나에 페이지를 맞추지 않습니다."]
+
+
 def build(o: dict, ctx: dict) -> dict:
     """기회 한 건 → {"shape", "body", "page"}. body 는 '만들어 줄 것'까지, 꼬리는 tails() 가 댄다.
 
@@ -1227,8 +1398,15 @@ def build(o: dict, ctx: dict) -> dict:
     audit = (ctx.get("page_audits") or {}).get(url) if url else None
     play = o.get("play") or {}
 
+    # 페이지 단위 — 고치기 꼴에서만. 주소 정리·기술 점검은 페이지가 대상이어도 검색어
+    # 묶음이 일을 정하지 않고, 새 글·연락문에는 걸린 페이지가 없다.
+    pq = _page_queries(url, ctx) if url and shape == "fix_page" else []
+    sibs = _page_siblings(o, ctx, url) if url and shape == "fix_page" else []
+
     L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
-    L += _target_lines(o, url, shape, ctx)
+    L += _target_lines(o, url, shape, ctx)[:-1] + _unit_lines(pq) + [""]
+    L += _page_query_lines(o, pq)
+    L += _page_sibling_lines(sibs)
     visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘
     ev = EVIDENCE[kind](o, ctx, pages) + visits
     if ev:
@@ -1271,7 +1449,13 @@ def build(o: dict, ctx: dict) -> dict:
         # 진단이 선 자리만 그 산출물을 보탠다(진단 없이 산출물만 늘리지 않는다).
         want = list(want) + [d for d in dict.fromkeys(
             DELIVER_BY_TAG.get(x["tag"]) for x in ex) if d and d not in want]
-    L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want)), ""]
+    L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
+    if len(pq) > 1:
+        # 처방의 산출물(scoring PLAY)은 종류 한 벌이라 "검색어"를 단수로 말한다. 검색어
+        # 여럿이 걸린 페이지에서는 그 자리가 묶음의 주된 의도라고 여기서 못 박는다.
+        L.append("- 위에서 '검색어'라고 한 자리는 누른 검색어 하나가 아니라 위 묶음의 주된 "
+                 "의도입니다. title·H1 은 안 바꾸는 게 답이면 그렇게 쓰고 이유를 적습니다.")
+    L.append("")
     if after:
         L += ["## 고친 뒤 볼 것", *after, ""]
     if s["slot"]:
@@ -1337,6 +1521,12 @@ def _selfcheck() -> None:
     for name, t in tails("ko-KR").items():
         assert "## 답의 형식" in t and "## 규칙" in t, name
     assert json.dumps(shapes_payload("ko-KR"), ensure_ascii=False)
+    assert query_intent("syringoma vs milia") == "비교"
+    assert query_intent("milia and syringoma treatment") == "치료·구매"
+    assert query_intent("how to remove milia") == "방법"
+    assert query_intent("syringoma") == INTENT_DEFAULT
+    assert {"H2", "외부 링크", "비교"} <= set(DELIVER_BY_TAG)
+    assert RULE_ONE_SET in SHAPES["fix_page"]["rules"]
 
 
 if __name__ == "__main__":
