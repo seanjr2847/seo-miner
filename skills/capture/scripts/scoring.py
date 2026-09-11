@@ -755,14 +755,90 @@ def _hreflang_advice(audit: dict) -> list[dict]:
     return out
 
 
+# ── 검색어 ↔ title/H1 대조 — 글자가 아니라 말로 ───────────────────────────
+# 'syringoma vs milia' 는 title 'Syringoma & Milia' 에 **있다**. 부분 문자열로 보면
+# 없다고 나와서 "앞부분에 그대로 넣으세요"라고 시켰다 — 구글은 'vs'·'&'·어순을
+# 안 본다. 그래서 내용어(조사·접속사·의문사를 뺀 것)가 들어 있는지로 본다.
+QUERY_STOPWORDS = frozenset(
+    "vs versus or and the a an of in for to with on is are what how "
+    "차이 비교 과 와 및".split())
+# 비교 의도 — 이 말이 검색어에 있으면 "둘을 나란히 놓고 골라 달라"는 뜻이다.
+COMPARE_WORDS = frozenset(("vs", "versus", "difference", "or", "차이", "비교"))
+# 판정에 보는 검색어 수 — 한 페이지에 걸린 검색어는 보통 같은 의도의 변주라 상위
+# 몇 개면 충분하고, 꼬리까지 보면 지나가는 검색어 하나가 비교 의도를 지어낸다.
+TOP_QUERIES = 5
+# 이만큼 긴 글에 H2 가 없으면 구조가 없는 것이고, 외부 근거 하나 없으면 신뢰가 없는
+# 것이다. 짧은 글(THIN_WORDS 미만)은 이미 "얇다"가 붙어서 두 번 말하지 않는다.
+H2_MIN_WORDS = 300
+_WORD_RE = re.compile(r"\w+")
+
+
+def _tokens(text: str) -> list[str]:
+    """소문자 낱말 — 비단어 글자(&·/·쉼표)에서 자른다. CJK 는 \\w 라 살아남는다."""
+    return _WORD_RE.findall((text or "").lower())
+
+
+def _content_tokens(text: str) -> list[str]:
+    """검색어의 내용어 — 불용어를 뺀 나머지, 순서 유지·중복 제거."""
+    return list(dict.fromkeys(t for t in _tokens(text) if t not in QUERY_STOPWORDS))
+
+
+def _has_token(tok: str, have: set[str]) -> bool:
+    """단순 복수 접기 — 'syringomas' 는 'syringoma' 와 같은 말이다(반대 방향도)."""
+    return tok in have or (tok.endswith("s") and tok[:-1] in have) or (tok + "s") in have
+
+
+def _missing_tokens(query: str, text: str) -> list[str]:
+    """검색어의 내용어 중 text 에 없는 것. 어순·연결어는 안 본다."""
+    have = set(_tokens(text))
+    return [t for t in _content_tokens(query) if not _has_token(t, have)]
+
+
+def _is_comparative(query: str) -> bool:
+    return any(t in COMPARE_WORDS for t in _tokens(query))
+
+
+_SENT_PUNCT = re.compile(r"[.!?。,:;—–]")
+
+
+def _desc_scraped(desc: str, title: str, h1: str) -> bool:
+    """meta description 이 손으로 쓴 문장이 아니라 본문 첫 줄을 긁어 온 것인가.
+
+    두 단서다: 말줄임(…/...)으로 끝난다 — 문장을 자른 흔적. 또는 H1(없으면 title
+    의 브랜드 앞부분)으로 시작하면서 그 길이 안에 문장 부호가 하나도 없다 — 제목
+    다음에 부제가 그대로 이어진 꼴. 'Syringoma and Milia Similar-looking bumps, …'
+    가 그것이다. 손으로 쓴 설명은 첫 마디에서 마침표나 쉼표가 온다.
+    """
+    d = (desc or "").strip()
+    if not d:
+        return False
+    if d.endswith("…") or d.endswith("..."):
+        return True
+    head = (h1 or "").strip() or re.split(r"\s*[|—–-]\s*", title or "", 1)[0].strip()
+    want = _content_tokens(head)
+    if not want or len(d) <= len(head):
+        return False
+    got = _content_tokens(" ".join(_tokens(d)[:len(_tokens(head)) + 1]))
+    if not all(_has_token(t, set(got)) for t in want):
+        return False
+    return not _SENT_PUNCT.search(d[:len(head) + 6])
+
+
+# 어느 페이지든 같은 문장이다 — 검색어를 박으라는 지시가 아니라 판단을 시킨다.
+TITLE_JUDGE = ("이 페이지에 걸린 검색어 묶음의 주 의도를 title 이 대표하는지 보고, 본문이 "
+               "실제로 다루는 말로만 고치세요. 검색어를 글자 그대로 박지 않습니다 — 지금 "
+               "title 이 이미 그 의도를 말하면 그대로 두는 것도 답입니다.")
+
+
 def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:
     """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
 
     반환: [{"tag": 손댈 자리, "level": "bad"|"warn", "now": 지금 상태, "fix": 할 일}]
     빈 리스트면 "규칙으로 잡히는 문제 없음"이지 "완벽함"이 아니다.
 
-    queries 는 이 URL 이 실제로 걸린 검색어들(노출 많은 순). 첫 번째를 대표
-    검색어로 본다 — 제목에 넣으라고 말하려면 어느 말을 넣으라는 것인지 있어야 한다.
+    queries 는 이 URL 이 실제로 걸린 검색어들(노출 많은 순). title·H1 판정은 첫
+    검색어의 **내용어**로 하고(글자 그대로가 아니다 — _content_tokens), 비교 의도는
+    상위 TOP_QUERIES 개 중 하나라도 물으면 있는 것으로 본다.
     판정은 여기 한 곳이다: 화면이 같은 규칙을 다시 구현하면 두 벌이 되고,
     사람은 그중 어느 쪽이 맞는지 알 수 없게 된다.
     """
@@ -778,15 +854,24 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
             "이 주소를 브라우저로 직접 열어 보세요. 사람에게도 안 열리면 순위·색인 이전의 문제입니다.")
         return out
 
-    kw = next((q for q in queries if q), "")
+    top = [q for q in queries if q][:TOP_QUERIES]
+    kw = top[0] if top else ""
+    kw_tokens = _content_tokens(kw)
     title = (audit.get("title") or "").strip()
     if not title:
         add("title", "bad", "title 태그가 없습니다",
-            f"<title>{kw or '대표 검색어'} — 페이지 요지</title> 를 넣으세요.")
+            "걸린 검색어 묶음의 주 의도를 말하는 <title> 하나를 넣으세요"
+            + (f" — 예: <title>{kw} — 페이지 요지</title>." if kw else "."))
     else:
-        if kw and kw.lower() not in title.lower():
-            add("title", "bad", title,
-                f"검색어 '{kw}' 가 title 에 없습니다. 앞부분에 그대로 넣으세요.")
+        missing = _missing_tokens(kw, title)
+        if kw_tokens and len(missing) == len(kw_tokens):
+            add("title", "bad",
+                f"{title} — 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
+                TITLE_JUDGE)
+        elif len(kw_tokens) >= 2 and len(missing) > len(kw_tokens) / 2:
+            add("title", "warn",
+                f"{title} — 검색어 '{kw}' 의 말 중 {', '.join(missing)} 이 없습니다",
+                TITLE_JUDGE)
         t_max = TITLE_MAX_KO if _wide(title) else TITLE_MAX
         t_min = TITLE_MIN_KO if _wide(title) else TITLE_MIN
         if len(title) > t_max:
@@ -796,10 +881,17 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
             add("title", "warn", f"{len(title)}자라 너무 짧습니다",
                 "무엇에 대한 페이지인지 title 만 읽고 알 수 있게 늘리세요.")
 
+    h1 = _as_list(audit.get("h1_json"))
     desc = (audit.get("meta_description") or "").strip()
+    # 긁어 온 설명은 길이가 맞아도 설명이 아니다 — 길이 지적보다 이것을 앞세우고,
+    # 한 페이지에 description 지적은 하나만 둔다(둘이면 어느 쪽을 고치라는지 흐려진다).
     if not desc:
         add("meta description", "bad", "설명이 없습니다",
             "검색결과에 뜰 2~3문장을 직접 쓰세요. 안 쓰면 구글이 본문에서 아무 데나 뽑습니다.")
+    elif _desc_scraped(desc, title, h1[0] if len(h1) == 1 else ""):
+        add("meta description", "warn", f"본문 첫 줄을 긁어 온 것으로 보입니다: {desc[:60]}…",
+            "이 페이지가 무엇에 답하고 누구를 위한 것인지 2~3문장으로 직접 쓰세요. 지금은 "
+            "본문 첫 줄을 붙여 넣은 것이 검색결과에 그대로 뜹니다.")
     elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
         add("meta description", "warn", f"{len(desc)}자라 뒤가 잘립니다",
             f"{DESC_MAX_KO if _wide(desc) else DESC_MAX}자 이내로. 중요한 말을 앞에 두세요.")
@@ -807,15 +899,44 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         add("meta description", "warn", f"{len(desc)}자라 너무 짧습니다",
             "숫자·연도·구체적 이득을 넣어 클릭할 이유를 적으세요.")
 
-    h1 = _as_list(audit.get("h1_json"))
     if not h1:
         add("H1", "bad", "H1 이 없습니다", "페이지 주제를 그대로 담은 H1 하나를 두세요.")
     elif len(h1) > 1:
         add("H1", "warn", f"H1 이 {len(h1)}개입니다 ({' / '.join(h1[:3])})",
             "H1 은 하나만 두고 나머지는 H2 로 내리세요.")
-    elif kw and kw.lower() not in h1[0].lower():
-        add("H1", "warn", h1[0],
-            f"H1 에 '{kw}' 가 없습니다. title 과 H1 이 같은 말을 하게 맞추세요.")
+    elif kw_tokens and len(_missing_tokens(kw, h1[0])) == len(kw_tokens):
+        add("H1", "warn",
+            f"{h1[0]} — 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
+            "H1 은 이 페이지의 주제 — 걸린 검색어 묶음이 공통으로 묻는 것 — 를 말하고 "
+            "title 과 같은 말을 해야 합니다. 검색어를 그대로 박지 말고 본문이 다루는 "
+            "말로 쓰세요.")
+
+    words = audit.get("words")
+    long_body = isinstance(words, int) and words >= H2_MIN_WORDS
+    if long_body and not _as_list(audit.get("h2_json")):
+        add("H2", "warn", f"{words}단어인데 H2 가 하나도 없습니다",
+            "걸린 검색어 묶음이 묻는 질문들로 본문을 나누세요 — 그 질문이 H2 후보이고, "
+            "한 구간에는 한 가지 생각만 둡니다.")
+
+    if isinstance(words, int) and words < THIN_WORDS:
+        add("본문", "warn", f"{words}단어로 얇습니다",
+            f"이 검색어를 다루는 하위 질문을 채워 {THIN_WORDS}단어 이상으로 늘리세요.")
+
+    # 외부 링크 0 — 근거 없이 주장만 있는 글. 신뢰가 순위를 가르는 주제(건강·돈·법,
+    # YMYL)에서 제일 약한 자리인데, 지금까지 내부 링크만 세고 이건 안 봤다.
+    if long_body and audit.get("external_links") == 0:
+        add("외부 링크", "warn", f"{words}단어에 외부 링크 0개",
+            "본문의 주장을 받쳐 주는 출처 1~3개(학회·논문·공식 문서)로 링크하세요. 신뢰가 "
+            "순위를 가르는 주제(건강·돈·법 — YMYL)에서는 이 자리가 제일 약한 곳입니다.")
+
+    # 비교 의도인데 비교 구간이 없다 — 'A vs B' 로 온 방문자는 둘을 나란히 놓은 표를
+    # 찾는다. 표 수는 정적 HTML 에서 센 것이라 JS 껍데기면 안 믿는다(extract_advice 와 같다).
+    cmp_q = next((q for q in top if _is_comparative(q)), "")
+    if cmp_q and _has_extract_fields(audit) and not audit.get("js_shell") \
+            and audit.get("tables") == 0:
+        add("비교", "warn", f"'{cmp_q}' 로 오는 비교 의도인데 본문에 표가 없습니다",
+            "둘을 항목별(생김새·원인·위치·치료·재발)로 나란히 놓는 표 하나와, 그 아래 "
+            "한 문단의 결론을 두세요 — 'X vs Y' 로 검색한 방문자 대부분이 그것을 보러 옵니다.")
 
     # 신선도 — "언제 쓴 글인가" 는 우리가 점검한 날과 다른 사실이다. 이게 없으면
     # 순위 하락의 원인 후보에서 노후화를 못 가른다(늘 "경쟁이 세졌다"로 끝났다).
@@ -825,11 +946,6 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
             "숫자·연도·화면·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요. 안 고칠 "
             "글이면 그렇다고 답해 주세요 — 날짜만 바꾸는 것은 안 됩니다.")
-
-    words = audit.get("words")
-    if isinstance(words, int) and words < THIN_WORDS:
-        add("본문", "warn", f"{words}단어로 얇습니다",
-            f"이 검색어를 다루는 하위 질문을 채워 {THIN_WORDS}단어 이상으로 늘리세요.")
 
     # 정적 HTML 로 가져온 값이다 — Yoast·RankMath·AIOSEO 는 ld+json 을 자바스크립트로
     # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
@@ -3988,9 +4104,10 @@ def _selfcheck() -> None:
     ok_page = {"url": "https://x.com/a", "title": "밀리아 제거 비용과 회복 기간 총정리",
                "meta_description": "밀리아 제거 가격, 시술 방법, 회복 기간을 실제 사례와 "
                                    "함께 정리했습니다. 2026년 기준 서울 평균가 포함.",
-               "h1_json": '["밀리아 제거 비용"]', "words": 900,
+               "h1_json": '["밀리아 제거 비용"]', "h2_json": '["가격", "회복"]', "words": 900,
                "schema_json": '["Article"]', "canonical": "https://x.com/a",
-               "robots": "index,follow", "images_no_alt": 0, "internal_links": 8}
+               "robots": "index,follow", "images_no_alt": 0, "internal_links": 8,
+               "external_links": 2}
     assert page_advice(ok_page, ["밀리아 제거"], domain="x.com") == [],         page_advice(ok_page, ["밀리아 제거"], domain="x.com")
     bad = dict(ok_page, title="가격표", meta_description="", h1_json='["A","B"]',
                words=80, schema_json="[]", robots="noindex", images_no_alt=3,
@@ -4000,6 +4117,84 @@ def _selfcheck() -> None:
                     "구조화 데이터", "robots", "이미지", "내부 링크"], tags
     assert page_advice({"error": "HTTP 404 · text/html"})[0]["level"] == "bad"
     assert page_advice(None) == []
+
+    # ── title/H1 은 글자가 아니라 말로 대조한다 ──
+    # 실제 사례(theotherskin.com 한관종·비립종): title 'Syringoma & Milia | …' 에 검색어
+    # 'syringoma vs milia' 가 "없다"며 그대로 박으라고 시켰다. 'vs'·'&'·어순은 구글이
+    # 안 보는 것이고, 내용어 둘은 이미 title 에 있다.
+    def _tags(a, qs):
+        return [x["tag"] for x in page_advice(a, qs, domain="theotherskin.com")]
+    skin_q = ["syringoma vs milia", "milia vs syringoma", "milia removal seoul",
+              "difference between milia and syringoma", "syringoma or milia",
+              "milia and syringoma", "milia vs syringomas", "syringoma"]
+    skin_url = "https://theotherskin.com/en/special-clinic/syringoma-milia/"
+    skin = {"url": skin_url, "canonical": skin_url,
+            "title": "Syringoma & Milia | The Other Dermatology, Seoul",
+            "h1_json": '["Syringoma & Milia"]', "h2_json": "[]", "words": 766,
+            "meta_description": "Syringoma and Milia Similar-looking bumps, completely "
+                                "different anatomical answers The small bumps that appear "
+                                "around the eyes may look similar, but their…",
+            "schema_json": '["MedicalWebPage"]', "robots": "", "images_no_alt": 0, "internal_links": 12,
+            "external_links": 0, "js_shell": 0, "viewport": "width=device-width",
+            "html_lang": "en", "hreflang_json": "[]", "tables": 0, "lists": 1,
+            "h2_questions": 0, "lead_words": 30, "author": "x"}
+    skin_adv = page_advice(skin, skin_q, domain="theotherskin.com")
+    skin_tags = [x["tag"] for x in skin_adv]
+    assert "title" not in skin_tags and "H1" not in skin_tags, skin_adv
+    # 놓치던 큰 것 넷이 이제 잡히고, 순서는 위에서 아래로(설명 → H2 → 외부 링크 → 비교)
+    assert skin_tags == ["meta description", "H2", "외부 링크", "비교"], skin_tags
+    assert "긁어 온" in skin_adv[0]["now"], skin_adv[0]
+    # 복수 접기 — 'syringomas' 는 'syringoma' 가 있는 title 에 있는 말이다(반대 방향도)
+    assert _missing_tokens("milia vs syringomas", skin["title"]) == []
+    assert "title" not in _tags(dict(skin, title="Syringomas: what they are | The Other"),
+                                ["syringoma"])
+    # 아주 딴 title → bad. 내용어 셋 중 하나만 있으면 → warn(절반 미만). 둘 중 하나면 아무 말 없음
+    assert [x["level"] for x in page_advice(dict(skin, title="Book a Visit | The Other"),
+                                            skin_q) if x["tag"] == "title"] == ["bad"]
+    assert [x["level"] for x in page_advice(dict(skin, title="Milia Treatment Guide for Eyelids"),
+                                            ["milia removal seoul"]) if x["tag"] == "title"] == ["warn"]
+    assert "title" not in _tags(dict(skin, title="Milia Treatment Guide for Eyelids"),
+                                ["milia removal"])
+    assert "그대로 넣으세요" not in " ".join(x["fix"] for x in page_advice(
+        dict(skin, title="Book a Visit | The Other"), skin_q)), "검색어를 글자 그대로 박으라고 시킨다"
+    # H1 — 내용어가 하나도 없을 때만, 주제를 말하라는 지시로
+    h1_adv = [x for x in page_advice(dict(skin, h1_json='["Special Clinic"]'), skin_q)
+              if x["tag"] == "H1"]
+    assert len(h1_adv) == 1 and h1_adv[0]["level"] == "warn" and "주제" in h1_adv[0]["fix"], h1_adv
+    assert "H1" not in _tags(dict(skin, h1_json='["Milia"]'), skin_q)
+    # 검색어가 없으면 title/H1 대조 자체를 안 한다 (전과 같다) — 아주 딴 title 이어도
+    assert not {"title", "H1"} & set(_tags(dict(skin, title="Book a Visit | The Other",
+                                                h1_json='["Special Clinic"]'), []))
+    # H2 없음 — 긴 글에서만. 짧은 글은 이미 "얇다"가 붙는다
+    assert "H2" not in _tags(dict(skin, words=120), skin_q)
+    assert "H2" in _tags(dict(skin, words=H2_MIN_WORDS), skin_q)
+    # 긁어 온 설명 — 두 단서 각각: H1 로 시작하며 부호 없음 / H1 없이 말줄임으로 끝남
+    assert _desc_scraped("Syringoma and Milia Similar-looking bumps, completely different",
+                         skin["title"], "Syringoma & Milia")
+    assert _desc_scraped("The small bumps around the eyes may look similar, but their…",
+                         skin["title"], "Syringoma & Milia")
+    # 손으로 쓴 것은 안 잡는다
+    assert not _desc_scraped("Syringoma & Milia: two look-alike bumps with different causes. "
+                             "How our Seoul clinic tells them apart and treats each.",
+                             skin["title"], "Syringoma & Milia")
+    assert not _desc_scraped(ok_page["meta_description"], ok_page["title"], "밀리아 제거 비용")
+    hand = dict(skin, meta_description="Syringoma & Milia: two look-alike bumps with different "
+                                       "causes. How our Seoul clinic tells them apart.")
+    assert "meta description" not in _tags(hand, skin_q), _tags(hand, skin_q)
+    # description 지적은 한 페이지에 하나 — 긁어 온 것이 길이보다 앞선다
+    assert _tags(dict(skin, meta_description="Syringoma and Milia Similar bumps…"), skin_q) \
+        .count("meta description") == 1
+    # 외부 링크 0 — 긴 글에서만; 옛 행(칸 NULL)에는 아무 말 없음
+    assert "외부 링크" not in _tags(dict(skin, words=100), skin_q)
+    assert "외부 링크" not in _tags(dict(skin, external_links=None), skin_q)
+    assert "YMYL" in next(x["fix"] for x in skin_adv if x["tag"] == "외부 링크")
+    # 비교 의도 + 표 0 → 경고, 표가 있으면 없음, 비교 검색어가 아니면 없음, 옛 행·JS 껍데기면 없음
+    assert "비교" not in _tags(dict(skin, tables=1), skin_q)
+    assert "비교" not in _tags(skin, ["milia removal seoul", "syringoma"])
+    assert "비교" in _tags(skin, ["milia removal seoul", "syringoma or milia"])   # 상위 묶음 중 하나면 된다
+    assert "비교" not in _tags(dict(skin, tables=None), skin_q)
+    assert "비교" not in _tags(dict(skin, js_shell=1), skin_q)
+    assert _is_comparative("한관종 비립종 차이") and not _is_comparative("한관종 제거 비용")
     # canonical 이 남을 가리키면 경고가 아니라 결함이다
     other = page_advice(dict(ok_page, canonical="https://competitor.com/a"),
                         ["밀리아 제거"], domain="x.com")
