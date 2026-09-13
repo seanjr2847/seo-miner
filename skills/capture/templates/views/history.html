@@ -349,7 +349,7 @@ function HS_runList() {
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
         <span class="muted">${HS_ago(r.started_at)}</span></td>
-      <td class="kwcell" title="${esc(r.kind)}">${esc(HS_kind(r.kind))}</td>
+      <td class="kwcell">${esc(HS_kind(r.kind))}</td>
       <td>${HS_badge(v)}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
