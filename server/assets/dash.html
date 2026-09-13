@@ -483,12 +483,19 @@
     // 단계 이름을 먼저 세우고 이유를 뒤에 붙인다 — 이유를 앞에 두면 문장이
     // "…질문이 없습니다 가 실패했습니다" 처럼 읽힌다. 나머지 사정(그 단계의
     // 숫자가 지난 값이라는 것)은 툴팁으로 접는다.
+    // serp_adapter.fatal() 이 붙이는 "— https://…/settings 에서 잔액·키 확인" 꼬리는
+    // 로컬 사용자의 계정 얘기다 — 이 조각(dash.html)은 호스팅 전용이라 그 계정을 열
+    // 사람이 없다. 상태 이름은 남기고 그 꼬리만 걷어낸다.
+    function hostedSafe(why) {
+      return why.replace(/— https?:\/\/\S+ 에서 잔액·키 확인(\s*\[[^\]]*\])?/,
+        "— 서비스 쪽 문제로 확인이 막혔습니다. 다음 수집에서 다시 시도합니다");
+    }
     var fails = [];
     String(r.last_error || "").split("; ").forEach(function (part) {
       var i = part.indexOf(": ");
       var id = i < 0 ? "" : part.slice(0, i), g = (STAGE || {})[id];
       fails.push({id: g ? id : "", nm: (g && g.t) || id || "일부 단계",
-                  why: i < 0 ? part : part.slice(i + 2)});
+                  why: hostedSafe(i < 0 ? part : part.slice(i + 2))});
     });
     // 실패한 단계마다 다시 실행할 자리를 준다 — 둘이 실패했는데 버튼이 하나면
     // 나머지 하나는 복구 경로가 화면에 없다.

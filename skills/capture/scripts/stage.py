@@ -220,8 +220,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
         gsc_state_str = "구글 인증 없음"
         gsc_cmd = "GSC 연동해줘"
 
-    # 안내 단계의 설명도 같은 규칙을 탄다 — 호스팅에서는 dash.html 의 restage() 가
-    # 실어 보낸 표로 다시 덮지만, 페이로드 자체가 맞아야 박제본·API 응답도 맞는다.
+    # 안내 단계의 설명도 같은 규칙을 탄다 — 화면은 이 페이로드를 그대로 그린다. 호스팅
+    # 표식은 app.py 의 공유 GET 이 TENANT_Q_PAID 로 두른다(밖에서 돌면 로컬 문구가 샌다).
     L = stage_labels("hosted" if _hosted() else "local")
     cmd_register = None if domain else "/capture add"
     cmd_keywords = f"/capture keywords {name}"
@@ -438,6 +438,16 @@ def _selfcheck() -> None:
             f"{k} 의 gain 이 막히지 않는다는 말 없이 키를 요구한다: {g}"
         assert g.index(NOT_BLOCKING) < g.index("키를 넣으면"), \
             f"{k} 의 gain 이 키 요구를 먼저 한다 — 없어도 된다는 말이 앞에 와야 한다: {g}"
+
+    # 호스팅(안내 화면 4단계 등)은 서버가 키를 대므로 "키를 넣으면/키가 필요/충전/
+    # settings/keys" 같은 말이 나오면 안 된다 — 낼 곳도 낼 필요도 없는 일을 시키는
+    # 것이다(블랙박스 UX 평가 P1). 일부러 GAIN_WEB 에 그 말을 넣어서 FAIL 나는 것도
+    # 확인했다.
+    forbidden = ("키를 넣으면", "키가 필요", "충전", "settings/keys")
+    for k, g in stage_labels("hosted").items():
+        gain = g.get("gain", "")
+        assert not any(f in gain for f in forbidden), \
+            f"{k} 의 호스팅 gain 이 유료 키를 요구한다: {gain}"
 
     print("stage self-check ok")
 

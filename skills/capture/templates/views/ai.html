@@ -953,10 +953,14 @@ function AI_health(h, has) {
   };
   const lr = h.last_run, lines = [];
   const when = lr && lr.at ? `${esc(String(lr.at).slice(0, 10))} 확인` : "그 확인";
-  if (lr && lr.state === "aborted")
-    lines.push(`<b>마지막 확인이 중간에 끊겼습니다.</b> ${when}${lr.note
-      ? `, 사유: ${esc(lr.note.replace(/[.\s]+$/, ""))}` : ""}. ${has ? "위 숫자는 그때 받은 일부 답이고, " : ""}기회
+  if (lr && lr.state === "aborted") {
+    // 사유 원문(serp_adapter.fatal)은 로컬 사용자의 키·충전 URL 을 가리킨다 — 호스팅은
+    // 키를 서버가 대므로 그 URL 을 열 수도 없다. 호스팅에서는 뜻만 옮긴다.
+    const why = lr.note ? W(`, 사유: ${esc(lr.note.replace(/[.\s]+$/, ""))}`,
+      ", 서비스 쪽 AI 호출이 막혀 일부 질문에 답을 못 받았습니다. 다음 확인에서 다시 잽니다") : "";
+    lines.push(`<b>마지막 확인이 중간에 끊겼습니다.</b> ${when}${why}. ${has ? "위 숫자는 그때 받은 일부 답이고, " : ""}기회
       점수는 끝까지 간 확인만 씁니다.`);
+  }
   else if (lr && lr.state === "open")
     lines.push(`<b>마지막 확인이 아직 안 끝났습니다.</b> 도는 중이거나 서버가 다시 뜨며 멈춘
       확인입니다. 기회 점수는 끝까지 간 확인만 씁니다.`);
