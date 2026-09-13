@@ -406,6 +406,11 @@ def logout(request: Request):
     return RedirectResponse("/", status_code=302)
 
 
+@app.get("/privacy")
+def privacy():
+    return _html(pages.page("privacy.html"), "개인정보처리방침 — seo-miner")
+
+
 def _require_google() -> None:
     """구글 API 를 부르기 전 두 가지를 본다 — 연결됐나, **그 토큰이 지금 스코프를 덮나**.
 

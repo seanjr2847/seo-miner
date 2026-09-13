@@ -146,6 +146,18 @@ def demo() -> None:
         r = c.get("/d", follow_redirects=False)
         assert r.status_code == 302 and r.headers["location"] == "/?login=expired", \
             f"/d 가 로그인 없이 302 /?login=expired 로 안 간다: {r.status_code} {r.headers.get('location')}"
+
+        # 랜딩 푸터가 부르는 방침 문서가 로그인 없이 열리고, 거기와 FAQ 가 말하는 권한이
+        # 실제로 받는 스코프(identity.SCOPES)와 같다 — FAQ 가 "서치콘솔 하나"라고 말하는
+        # 동안 GA4 스코프를 받고 있었다.
+        landing = c.get("/").text
+        assert 'href="/privacy"' in landing, "랜딩 푸터에 개인정보처리방침 링크가 없다"
+        r = c.get("/privacy")
+        assert r.status_code == 200 and "받는 권한" in r.text, f"/privacy 가 안 열린다: {r.status_code}"
+        import identity
+        ga4 = "https://www.googleapis.com/auth/analytics.readonly" in identity.SCOPES
+        for name, doc in (("랜딩 FAQ", landing), ("/privacy", r.text)):
+            assert ("애널리틱스" in doc) == ga4, f"{name} 가 GA4 권한을 받는 사실과 다르게 말한다"
         for path in ("/api/settings", "/api/ai/prompts",
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
@@ -159,6 +171,7 @@ def demo() -> None:
         open_on_purpose = {
             "/healthz",                                     # 상태 확인 — 로그인 이전
             "/", "/auth/login", "/auth/callback", "/auth/logout",   # 로그인 자체
+            "/privacy",                                     # 로그인 전에 읽는 방침 문서
             "/api/cli/token",   # 세션 전용이라 _uid 를 직접 본다(그 라우트 주석 참고)
         }
 
