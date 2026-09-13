@@ -105,6 +105,20 @@ addEventListener("DOMContentLoaded", function () {
 });
 </script>"""
 
+# 새로고침해도 보던 화면이 남는지 — 사용자가 [순위]를 직접 연 것처럼 메뉴 버튼을
+# 스크립트로 눌러 SM.touched·sessionStorage 를 세우고, 딱 한 번 새로고침한다
+# (sessionStorage 표식으로 두 번째 로드에서는 다시 안 누른다 — 안 그러면 무한 새로고침).
+# 셸의 본 스크립트(SM.sync() 호출)보다 뒤(</body> 앞)에 심어야 #nav 버튼이 이미 서 있다.
+RELOAD_TOUCH = """<script>
+if (!sessionStorage.getItem("__reload_touch__")) {
+  sessionStorage.setItem("__reload_touch__", "1");
+  var b = document.querySelector('#nav button[data-v="rank"]');
+  if (b) b.click();
+  location.reload();
+}
+</script>"""
+
+
 def view_sections() -> list[tuple[str, str]]:
     """각 뷰가 자기 view-def 에 선언한 섹션 id — 그게 DOM 에 실제로 있어야 한다.
 
@@ -560,6 +574,11 @@ def _hosted_app(data: Path):
             if path == "/d":
                 if head["status"] == 200 and b"</head>" in body:
                     body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+                    # 새로고침 복원 검사 하나만 켠다(쿼리 표식) — 모든 /d 응답에 걸면
+                    # 이 자리의 다른 검사(기본 화면이 무엇인가)가 클릭·새로고침에 덮인다.
+                    if b"reload_probe=1" in scope.get("query_string", b""):
+                        body = body.replace(b"</body>", RELOAD_TOUCH.encode("utf-8")
+                                            + b"</body>", 1)
                     state["probed"] = 200
                 elif head["status"] == 200:
                     state["probed"] = "200 인데 </head> 가 없다"
@@ -749,6 +768,34 @@ def run() -> None:
                               [(r"<option[^>]*selected[^>]*>" + other,
                                 f"hash 가 지목한 {other} 가 안 열렸다")] + extra,
                               site.failures())
+                if label == "호스팅 조립본":
+                    # 첫 화면 — 미판정 검색어가 있으면 심사, 없으면 개요(SM.land 순위).
+                    # beta-site 는 위 EMPTY_LOADS 루프의 마지막 pg 가 alpha-site 것이다
+                    # (호스팅은 SITES 밖 ZERO_SITE 를 건너뛰므로 alpha-site 하나뿐이다).
+                    check(f"{label} 기본 화면 #{SITES[1]}(미판정 있음)", page,
+                          [(r'id="view-triage"(?![^>]*hidden)',
+                            "미판정 검색어가 있는데 기본 화면이 [심사]가 아니다"),
+                           (r'id="view-overview"[^>]*hidden',
+                            "미판정 검색어가 있는데 [개요]가 기본으로 앞에 섰다")],
+                          site.failures())
+                    check(f"{label} 기본 화면 #{SITES[0]}(미판정 없음)", pg,
+                          [(r'id="view-overview"(?![^>]*hidden)',
+                            "미판정 검색어가 없는데 기본 화면이 [개요]가 아니다"),
+                           (r'id="view-triage"[^>]*hidden',
+                            "미판정 검색어가 없는데 [심사]가 기본으로 앞에 섰다")],
+                          site.failures())
+                    # 새로고침 복원 — [순위]를 직접 연 뒤 새로고침해도 그 화면이 남아야
+                    # 한다(sessionStorage). 표식(reload_probe=1)이 있는 요청에만
+                    # RELOAD_TOUCH 를 끼운다(serve_hosted 의 tap()) — 다른 검사까지
+                    # 덮으면 위 기본 화면 검사가 클릭·새로고침에 흔들린다.
+                    rl = dom(browser, f"{site.base}/d?reload_probe=1#{SITES[1]}",
+                            home / "chrome-profile")
+                    check(f"{label} 새로고침 복원", rl,
+                          [(r'id="view-rank"(?![^>]*hidden)',
+                            "새로고침 후 사용자가 연 [순위] 화면이 안 남았다 — 첫 화면으로 돌아갔다"),
+                           (r'id="view-triage"[^>]*hidden',
+                            "새로고침 후 기본 화면([심사])이 되돌아온 화면을 덮었다")],
+                          site.failures())
                 if label == "박제본":
                     # 화면 상자는 런타임에 생긴다 — 소스에서 세면 0 이라 단언이 늘 참이다.
                     # 선언(view-def)에서 세고 박제본이 빼는 둘을 뺀다.

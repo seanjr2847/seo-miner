@@ -43,9 +43,12 @@
   --patina:#22705F; --copper:#A9491F; --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
-  /* 레일(헤더) 위의 글자. --slate 는 #121714 바탕에서 2.6:1 밖에 안 나온다 —
-     읽으라고 적어 둔 글자가 안 읽혔다. 배경이 --ink 이므로 이 셋은 --stone 쪽,
-     즉 다크에서 같이 뒤집힌다(안 뒤집으면 밝은 바탕에 밝은 글자가 된다). */
+  /* 레일(헤더)만의 바탕. 본문(--ink)과 갈라 둔다 — 본문은 다크에서 밝아지지만
+     레일은 다크에서도 어두운 판이어야 한다(안 가르면 레일이 반쪽만 다크가 된다). */
+  --rail:#121714;
+  /* 레일 위의 글자. --slate 는 #121714 바탕에서 2.6:1 밖에 안 나온다 —
+     읽으라고 적어 둔 글자가 안 읽혔다. 바탕이 --rail(항상 어둡다)이므로 이 넷은
+     다크에서도 계속 밝은 값을 쓴다(아래 다크 블록에서 안 덮는다). */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
   --on-ink-rule:rgba(230,233,228,.26); --on-ink-wash:rgba(230,233,228,.10);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
@@ -78,8 +81,10 @@
     --patina:#57B49C; --copper:#DE8351; --rule:rgba(228,235,231,.16);
     --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
-    --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
-    --on-ink-rule:rgba(16,21,19,.28); --on-ink-wash:rgba(16,21,19,.12);
+    /* 레일은 본문과 같이 안 뒤집는다 — 라이트보다 더 어두운 판을 쓴다. --on-ink*
+       넷은 여기서 안 덮는다: :root 의 밝은 값을 다크에서도 그대로 쓴다(안 그러면
+       어두워진 --ink 바탕에 어두운 글자가 서서 다시 안 읽힌다). */
+    --rail:#0B0F0D;
     /* 밝은 그림자는 어두운 바탕에서 안 보인다 — 검정을 더 진하게 깔아 같은 깊이를 낸다. */
     --shadow-1:0 1px 2px rgba(0,0,0,.32), 0 1px 3px rgba(0,0,0,.24);
     --shadow-2:0 6px 18px rgba(0,0,0,.42), 0 1px 3px rgba(0,0,0,.28);
@@ -112,8 +117,9 @@ html { scroll-behavior:smooth; }
 body { margin:0; background:var(--stone); color:var(--ink); font:15px/1.6 var(--sans);
   word-break:keep-all; overflow-wrap:break-word; }
 /* 포커스 링은 한 벌이다 — 부품마다 자기 링을 그리면 두께와 색이 제각각이 된다.
-   레일은 바탕이 --ink 라 녹청 링이 3:1 을 못 넘긴다(#22705F/#121714 = 3.07:1 로 겨우
-   걸친다) — 거기서만 --on-ink 로 뒤집는다(13:1). */
+   레일은 바탕이 --rail 라 녹청 링이 3:1 을 못 넘긴다(라이트 #22705F/#121714 = 3.07:1
+   로 겨우 걸친다. 다크는 #57B49C/#0B0F0D = 약 7.7:1 로 이미 넘지만, 뒤집는 규칙은
+   테마를 안 가리므로 그대로 둔다) — 거기서만 --on-ink 로 뒤집는다(13:1). */
 :focus-visible { outline:2px solid var(--focus); outline-offset:2px; border-radius:2px; }
 header :focus-visible { outline-color:var(--on-ink); }
 /* 움직임에 민감한 사람에게 화면이 흔들리지 않는다 — 뜻은 색과 글자가 이미 말한다. */
@@ -133,8 +139,8 @@ header :focus-visible { outline-color:var(--on-ink); }
    레일은 세 통이다: 머리(무엇을 보고 있나) · 메뉴(어디를 보고 있나) ·
    바닥(무엇을 하나). 셋이 한 줄기로 흐르면 이동하는 것과 실행하는 것이 같은
    모양이 된다. */
-header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-index:9;
-  border-bottom:1px solid var(--ink); }
+header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-index:9;
+  border-bottom:1px solid var(--rail); }
 .hbar { max-width:1180px; margin:0 auto; padding:12px 24px;
   display:flex; align-items:baseline; gap:16px; }
 @media (max-width:860px) { .hbar { flex-wrap:wrap; gap:8px 16px; } }
@@ -174,7 +180,7 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 #nav button.on svg { opacity:1; }
 /* 활성 표시는 통짜 채움이 아니라 인디케이터다 — 채우면 메뉴 한 줄이 버튼으로
    읽혀 "누를 것"과 "지금 있는 곳"이 같은 모양이 된다.
-   막대는 --on-ink 로 긋는다: 녹청은 --ink 바탕에서 3.07:1 이라 비텍스트 최소(3:1)에
+   막대는 --on-ink 로 긋는다: 녹청은 --rail 바탕에서 3.07:1 이라 비텍스트 최소(3:1)에
    겨우 걸치고, --on-ink 는 13:1 이다. */
 #nav button.on::before { content:""; position:absolute; background:var(--on-ink);
   border-radius:2px; left:8px; right:8px; bottom:-4px; height:2px; }
@@ -286,7 +292,7 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 @media (min-width:1000px) {
   body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
   header { grid-column:1; top:0; height:100vh; overflow-y:auto; display:flex;
-    flex-direction:column; border-bottom:0; border-right:1px solid var(--ink); }
+    flex-direction:column; border-bottom:0; border-right:1px solid var(--rail); }
   .hbar { flex-direction:column; align-items:stretch; gap:4px; padding:20px 16px 8px;
     max-width:none; margin:0; }
   .hbar .sp { display:none; }
@@ -331,7 +337,7 @@ header { background:var(--ink); color:var(--on-ink); position:sticky; top:0; z-i
 #proj option, #gscdate option { color:var(--ink); background:var(--card); }
 /* 과거 시점을 보고 있으면 눈에 띄어야 한다 — 최신인 줄 알고 읽으면 오독이다 */
 #gscdate.past { color:var(--copper); border-bottom-color:var(--copper); }
-/* 레일 바닥의 보조 손잡이. 녹청은 --ink 바탕에서 3.07:1 이라 글자로는 못 쓴다 —
+/* 레일 바닥의 보조 손잡이. 녹청은 --rail 바탕에서 3.07:1 이라 글자로는 못 쓴다 —
    호버는 색을 바꾸지 않고 바탕만 밝힌다(--on-ink 는 13:1). */
 .hbtn { display:inline-flex; align-items:center; justify-content:center;
   font:500 12.5px/1 var(--sans); color:var(--on-ink-dim); background:transparent;
@@ -1147,6 +1153,13 @@ const NAV_ICON = {
 const NAV_MANAGE = new Set(["history", "guide", "settings"]);
 const NAV_GROUP = id => NAV_MANAGE.has(id) ? "관리" : "측정";
 
+// 새로고침해도 보던 화면을 잃지 않는다 — 탭 하나가 쓰는 sessionStorage 에 마지막으로
+// **직접 연** 화면만 적는다(SM.show 가 touched 일 때만 적는다 — land() 가 고른 것은
+// 사용자 선택이 아니다). 사이트는 이미 hash 로 남으니 여기서는 화면 id 하나만.
+// 사생활 모드·저장소 차단이면 조용히 무시한다 — 복원이 안 되는 것뿐 화면은 그대로 선다.
+function saveLastView(id) { try { sessionStorage.setItem("sm:lastView", id); } catch (e) {} }
+function lastView() { try { return sessionStorage.getItem("sm:lastView") || ""; } catch (e) { return ""; } }
+
 // ── 셸: 화면 목록 · 메뉴 · 전환 ───────────────────────────────
 // 목록의 정본은 뷰 파일의 view-def 다 — 조립(dashboard.py)이 window.__VIEWS__ 로
 // 실어 보낸다. 여기서 이름을 다시 나열하지 않는다: 말없이 어긋난 두 표가 예전에
@@ -1176,7 +1189,8 @@ const SM = {
 
   touched: false,
   landed: 0,
-  // rank 가 큰 쪽이 이긴다: 설정(2) > 안내(1). 사용자가 메뉴를 누르면 끝.
+  restored: false,     // sync() 가 sessionStorage 로 첫 화면을 되살렸으면 true
+  // rank 가 큰 쪽이 이긴다: 설정(3) > 안내(2) > 미판정 심사(1). 사용자가 메뉴를 누르면 끝.
   land(id, rank) {
     if (this.touched || rank <= this.landed || this.at(id) < 0) return;
     this.landed = rank;
@@ -1195,6 +1209,8 @@ const SM = {
       return;
     }
     this.cur = id;
+    // 사용자가 직접 연 화면만 적는다(touched — land() 가 고른 것은 사용자 선택이 아니다).
+    if (this.touched) saveLastView(id);
     for (const v of this.views) {
       const box = $("view-" + v.id);
       if (box) box.hidden = v.id !== id;
@@ -1224,7 +1240,14 @@ const SM = {
   sync() {
     const c = $("content");
     if (!c) return;
-    if (!this.cur && this.views.length) this.cur = this.views[0].id;
+    // 첫 화면: 복원한 화면 > 개요 > 뷰 목록 첫째(view-def 순서는 안 바꾼다 — 메뉴
+    // 순서일 뿐 여기 기본값과는 다른 이야기다). 미판정 검색어가 있으면 심사로
+    // 보내는 것은 land("triage",1) 이 데이터가 온 뒤에 한다(checkTriageLand).
+    if (!this.cur && this.views.length) {
+      const back = lastView();
+      if (this.at(back) >= 0) { this.cur = back; this.restored = true; }
+      else this.cur = this.at("overview") >= 0 ? "overview" : this.views[0].id;
+    }
     for (const v of this.views) {
       let box = $("view-" + v.id);
       if (!box) {
@@ -2579,7 +2602,7 @@ function renderGuide(d) {
   }
   // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
   // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
-  if (here !== -1 && !(d.progress || {}).gsc_days) SM.land("guide", 1);
+  if (here !== -1 && !(d.progress || {}).gsc_days) SM.land("guide", 2);
   // 이 함수가 방금 새로 그린 자리에도 대체 문구를 입힌다. render() 끝에서도 한 번
   // 돌지만 순서에 기대지 않는다 — applyWording 은 속성을 지우므로 두 번 돌아도 공짜다.
   applyWording($("guide"));
@@ -2735,6 +2758,17 @@ async function loadProjects() {
 
 let PINNED = "";                    // [기준 수집일]로 고정한 GSC 수집일 ("" = 최신)
 
+// 미판정 검색어가 남아 있으면 첫 화면을 개요 대신 심사로 보낸다(land 순위 1 — 안내(2)·
+// 설정(3) 보다 낮다, 온보딩이 먼저다). 복원한 화면이 있으면 이미 이겼으니 안 본다.
+// 판정 여부는 /api/data 에 없다 — [심사] 화면이 쓰는 것과 같은 /api/triage 가 정본이다.
+async function checkTriageLand() {
+  if (SM.restored || READONLY) return;
+  const res = await fetch("/api/triage?project=" + encodeURIComponent($("proj").value));
+  if (!res.ok) return;
+  const t = await res.json();
+  if ((t.counts || {}).none) SM.land("triage", 1);
+}
+
 async function load() {
   const name = $("proj").value;
   // 사이트가 없어도 본문은 세워 둔다 — 첫 등록을 하는 곳이 [설정] 화면이고,
@@ -2756,6 +2790,7 @@ async function load() {
   $("err").hidden = true;
   $("content").hidden = false;
   render(d);
+  checkTriageLand();
   // 사이트가 확정됐다고 한 번 알린다. 뒤에 얹히는 계층(호스팅 애드온)은 자기 데이터를
   // 사이트 이름이 정해진 뒤에야 부를 수 있는데, 여태 그걸 아는 방법이 #proj 의
   // change 이벤트뿐이었다 — 그리고 hash 로 자동 선택될 때는 change 가 안 난다.
@@ -3070,7 +3105,7 @@ function renderSetup(d) {
   // 준비물이 덜 됐으면 거기서부터 — 측정 자체가 안 도는 상태다.
   // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
   // 할 수 있는 게 없는 화면에 떨어진다.
-  if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 2);
+  if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 3);
   prefillProject();
   renderCarry(d);
 }
