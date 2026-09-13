@@ -29,8 +29,11 @@
   --rule:rgba(18,23,20,.13); --rule-soft:rgba(18,23,20,.07);
   --wash:rgba(34,112,95,.10); --wash-copper:rgba(169,73,31,.10);
   --bar:rgba(18,23,20,.05);
-  /* 헤더 배경(--ink) 위의 글자 — --slate 는 거기서 2.6:1 이라 안 읽힌다.
-     다크에서 --ink 가 밝아지므로 이 셋도 같이 뒤집는다. */
+  /* 헤더는 항상 어두운 판이다(라이트·다크 공통) — --ink 처럼 다크에서 뒤집히면
+     본문만 어둡고 헤더가 밝아 "반쪽 다크"가 된다. */
+  --rail:#121714;
+  /* 레일(헤더) 위의 글자. --slate 는 거기서 2.6:1 이라 안 읽힌다. 헤더가 다크에서도
+     어두우므로 이 셋은 뒤집지 않는다(다크 블록에 없음). */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.68);
   --on-ink-rule:rgba(230,233,228,.26);
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
@@ -47,8 +50,7 @@
     --rule:rgba(228,235,231,.16); --rule-soft:rgba(228,235,231,.08);
     --wash:rgba(87,180,156,.14); --wash-copper:rgba(222,131,81,.14);
     --bar:rgba(228,235,231,.06);
-    --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.70);
-    --on-ink-rule:rgba(16,21,19,.28);
+    --rail:#0B0F0D;
   }
 }
 * { box-sizing:border-box; }
@@ -90,7 +92,7 @@ body { margin:0; background:var(--stone); color:var(--ink);
 .badge.muted::before { display:none; }
 
 /* ── 헤더: 시추공 상단 케이싱 ─────────────────────────────── */
-header { background:var(--ink); color:var(--on-ink); }
+header { background:var(--rail); color:var(--on-ink); }
 .hbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:13px 26px; }
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
 .mark b { color:var(--patina); font-weight:600; }
@@ -388,7 +390,7 @@ async function load() {
       (TAKEN.has(a.property) ? 1 : 0) - (TAKEN.has(b.property) ? 1 : 0));
     const pickable = rows.filter(p => !TAKEN.has(p.property) && LEVELS[p.level]);
     if (!pickable.length && rows.every(p => TAKEN.has(p.property))) {
-      note(box, "info", "서치콘솔 사이트를 모두 분석 중입니다",
+      note(box, "info", "서치콘솔 사이트를 모두 등록했습니다",
         "서치콘솔에 새 사이트를 추가하면 이 목록에 나타납니다.",
         '<a class="go sec" href="https://search.google.com/search-console" ' +
         'target="_blank" rel="noopener">서치콘솔 열기</a>');
@@ -399,7 +401,7 @@ async function load() {
       if (TAKEN.has(p.property))
         return '<div class="prop off"><span class="tick">✓</span>' +
                '<span class="pname">' + pname(p.property) + '</span>' +
-               '<span class="lv">분석 중</span></div>';
+               '<span class="lv">등록됨</span></div>';
       if (!LEVELS[p.level])
         return '<div class="prop off"><input type="checkbox" disabled>' +
                '<span class="pname">' + pname(p.property) + '</span>' +
@@ -419,7 +421,7 @@ async function load() {
     document.querySelector(".act").hidden = false;
     // 목록이 실제로 떴을 때만 회색 줄을 가리킨다(B33).
     if (TAKEN.size)
-      $("sub").textContent = "서치콘솔 사이트를 더 넣을 수 있습니다. 분석 중인 것은 회색입니다.";
+      $("sub").textContent = "서치콘솔 사이트를 더 넣을 수 있습니다. 이미 등록한 것은 회색입니다.";
     const boxes = box.querySelectorAll("input:not(:disabled)");
     if (boxes.length === 1) boxes[0].checked = true;   // 하나뿐이면 클릭 한 번을 아낀다
     if (CARRY.gsc_property) {
@@ -432,7 +434,7 @@ async function load() {
         $("sub").textContent = "플러그인에서 넘어온 설정으로 미리 골라 뒀습니다. " +
           "다른 사이트를 고르셔도 됩니다.";
       } else if (TAKEN.has(CARRY.gsc_property)) {
-        $("sub").textContent = "플러그인에서 넘어온 사이트는 이미 분석 중입니다.";
+        $("sub").textContent = "플러그인에서 넘어온 사이트는 이미 등록돼 있습니다.";
       }
     }
     sync();

@@ -108,13 +108,20 @@ def demo() -> None:
         assert isinstance(dashboard.assemble("hosted"), str), "assemble() 이 str 이 아니다"
 
         # 대시보드 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain 이 열리면 안 된다.
-        for path in ("/d", "/api/projects", "/api/data?project=x", "/api/doctor?project=x",
+        for path in ("/api/projects", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x",
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
                      "/api/report?project=x",
                      "/api/keywords?project=x", "/api/run/status", "/api/brain",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
+
+        # /d 는 HTML 화면이라 JSON 401 이 아니라 처음 화면으로 302 다 — 스타일 없는
+        # {"detail":...} 를 그대로 보여 주면 안 된다. hash(#사이트)는 서버로 안 오므로
+        # 리다이렉트로 잃는 것이 없다.
+        r = c.get("/d", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/", \
+            f"/d 가 로그인 없이 302 /  로 안 간다: {r.status_code} {r.headers.get('location')}"
         for path in ("/api/settings", "/api/ai/prompts",
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"

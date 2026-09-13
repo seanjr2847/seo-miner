@@ -32,6 +32,7 @@ from typing import Optional
 from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from starlette.background import BackgroundTask
@@ -1037,6 +1038,17 @@ _REPORT_ADDON = pages.addon("report.html")
 
 
 _DASH_ADDON = pages.addon("dash.html")
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception(request: Request, e: HTTPException):
+    """/d 는 화면(HTML)이다 — _require_uid 가 던지는 401 을 그대로 흘리면 스타일 없는
+    JSON {"detail":...} 만 뜬다. _require_uid 자체는 /api/* 가 계속 JSON 401 을 써야
+    하므로 안 바꾸고, 여기서 /d 하나만 처음 화면(/)으로 302 돌린다. hash(#사이트)는
+    서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
+    if request.url.path == "/d" and e.status_code == 401:
+        return RedirectResponse("/", status_code=302)
+    return await http_exception_handler(request, e)
 
 
 @app.get("/d")

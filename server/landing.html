@@ -36,6 +36,9 @@
   --rule:rgba(18,23,20,.13);
   --rule-soft:rgba(18,23,20,.07); --wash:rgba(34,112,95,.10);
   --wash-copper:rgba(169,73,31,.10); --bar:rgba(18,23,20,.05);
+  /* 헤더는 항상 어두운 판이다(라이트·다크 공통) — --ink 처럼 다크에서 뒤집히면
+     본문만 어둡고 헤더가 밝아 "반쪽 다크"가 된다. */
+  --rail:#121714;
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
   --on-ink-rule:rgba(230,233,228,.26);
   --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
@@ -53,8 +56,7 @@
     --rule:rgba(228,235,231,.16);
     --rule-soft:rgba(228,235,231,.08); --wash:rgba(87,180,156,.14);
     --wash-copper:rgba(222,131,81,.14); --bar:rgba(228,235,231,.06);
-    --on-ink:#101513; --on-ink-dim:rgba(16,21,19,.68);
-    --on-ink-rule:rgba(16,21,19,.28);
+    --rail:#0B0F0D;
   }
 }
 *{box-sizing:border-box}
@@ -84,7 +86,7 @@ a{color:inherit}
 .go.sm{font-size:13px;padding:9px 14px}
 
 /* ── 케이싱 헤더 ─────────────────────────────────────────── */
-header{background:var(--ink);position:sticky;top:0;z-index:9;
+header{background:var(--rail);position:sticky;top:0;z-index:9;
   border-bottom:1px solid transparent;transition:border-color .18s}
 header.sc{border-bottom-color:var(--on-ink-rule)}
 .hbar{display:flex;align-items:center;gap:26px;padding:12px 24px;
@@ -256,7 +258,7 @@ h1 em{font-style:normal;color:var(--patina)}
 .faq p b{font-weight:600;color:var(--ink)}
 
 /* ── 마감 CTA ────────────────────────────────────────────── */
-.close{background:var(--ink);color:#E6E9E4;padding:var(--pad) 0}
+.close{background:var(--rail);color:#E6E9E4;padding:var(--pad) 0}
 .close h2{color:#E6E9E4;max-width:18ch}
 .close .sub{color:#A7B2AC;margin-bottom:28px}
 .close .eyebrow{color:#8B9791}
@@ -295,7 +297,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <div>
   <p class="eyebrow lat">Search Console · measured, not estimated</p>
   <h1>서치콘솔 숫자로 <em>다음에 고칠 검색어</em>를 정합니다.</h1>
-  <p class="lede">구글 계정을 연결하면 내 사이트의 노출·클릭·평균 순위를 그대로 읽습니다.
+  <p class="lede">구글 계정을 연결하면 내 사이트의 노출·클릭·평균 순위를 그대로 읽고,
+    ChatGPT·Perplexity·Gemini가 누구를 인용하는지도 함께 봅니다.
     1페이지까지 몇 칸 남았는지로 줄을 세워 맨 위부터 손댑니다.</p>
 
   <div class="actions">
