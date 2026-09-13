@@ -118,10 +118,11 @@ def demo() -> None:
 
         # /d 는 HTML 화면이라 JSON 401 이 아니라 처음 화면으로 302 다 — 스타일 없는
         # {"detail":...} 를 그대로 보여 주면 안 된다. hash(#사이트)는 서버로 안 오므로
-        # 리다이렉트로 잃는 것이 없다.
+        # 리다이렉트로 잃는 것이 없다. 표시(?login=expired)가 없으면 재방문자는 왜
+        # 처음 화면으로 왔는지 몰라 데이터가 날아갔다고 읽는다 — 표시가 실려야 한다.
         r = c.get("/d", follow_redirects=False)
-        assert r.status_code == 302 and r.headers["location"] == "/", \
-            f"/d 가 로그인 없이 302 /  로 안 간다: {r.status_code} {r.headers.get('location')}"
+        assert r.status_code == 302 and r.headers["location"] == "/?login=expired", \
+            f"/d 가 로그인 없이 302 /?login=expired 로 안 간다: {r.status_code} {r.headers.get('location')}"
         for path in ("/api/settings", "/api/ai/prompts",
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"
@@ -317,6 +318,11 @@ def demo() -> None:
         # 눌러 본다. 손으로 감싸던 시절의 상태 코드·문구가 그대로여야 한다.
         r = c.get("/api/data?project=p1")
         assert r.status_code == 200 and isinstance(r.json(), dict), r.text
+        # 호스팅은 서버가 키를 댄다 — 안내가 로컬 갈래("OpenRouter 키를 넣으면")를
+        # 실어 보내면 호스팅 사용자에게 할 수 없는 일을 시킨다(블랙박스 UX 평가 2회차).
+        gains = [s["gain"] for s in r.json()["guide"]["steps"]]
+        assert not any("키를 넣으면" in g for g in gains), \
+            f"/api/data 가 호스팅 표식 밖에서 돌아 로컬 안내를 싣는다: {gains}"
         r = c.get("/api/triage?project=p1")
         assert r.status_code == 200 and r.json()["rows"] == [], r.text
         for path in ("/api/data", "/api/triage"):

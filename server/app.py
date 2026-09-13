@@ -1047,7 +1047,7 @@ async def _http_exception(request: Request, e: HTTPException):
     하므로 안 바꾸고, 여기서 /d 하나만 처음 화면(/)으로 302 돌린다. hash(#사이트)는
     서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
     if request.url.path == "/d" and e.status_code == 401:
-        return RedirectResponse("/", status_code=302)
+        return RedirectResponse("/?login=expired", status_code=302)
     return await http_exception_handler(request, e)
 
 
@@ -1099,8 +1099,8 @@ def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
 # call 은 어차피 본문에서 읽으므로 값은 안 쓰이지만, 넘긴다면 방금 소유를 확인한
 # 이름이 맞다.
 #
-# 인증·테넌트는 손으로 쓰던 것과 같은 의존자다: GET 은 TENANT_Q(?project= 의 소유
-# 확인), POST 는 TENANT_B(본문 project 의 소유 확인). 둘 다 _require_uid 를 거친다 —
+# 인증·테넌트는 손으로 쓰던 것과 같은 의존자다: GET 은 TENANT_Q_PAID(?project= 의 소유
+# 확인 + 호스팅 표식), POST 는 TENANT_B(본문 project 의 소유 확인). 둘 다 _require_uid 를 거친다 —
 # test_app.py 가 라우트 표를 훑어 그걸 본다.
 #
 # /api/opp 도 이제 TENANT_B 다. 예전엔 혼자 TENANT(사이트를 안 가림)였는데, 그 자리
@@ -1135,8 +1135,11 @@ def _shared_route(method: str, path: str) -> None:
     """
     key = (method, path)
     if method == "GET":
+        # GET 은 읽기뿐이지만 PAID 로 두른다 — 페이로드의 안내(stage.from_progress)가
+        # 호스팅 표식(SEOMINER_HOSTED)으로 갈래를 고르는데, 표식 밖에서 돌면 호스팅
+        # 사용자에게 "OpenRouter 키를 넣으면 켜집니다"라고 말했다. /api/doctor 와 같은 env.
         def endpoint(request: Request, project: str = Depends(_project_q),
-                     t=Depends(TENANT_Q)):
+                     t=Depends(TENANT_Q_PAID)):
             # 로컬의 parse_qs 와 같게 편다 — 빈 값은 버리고 첫 값을 쓴다
             # (dict(request.query_params) 는 빈 값을 남기고 마지막 값을 준다)
             q = request.query_params
