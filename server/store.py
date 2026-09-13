@@ -471,6 +471,9 @@ def tenant(conn: sqlite3.Connection, user_id: int):
         tok.unlink(missing_ok=True)           # 평문 토큰을 디스크에 남기지 않는다
 
 
+_TENANT_LOCK = threading.Lock()
+
+
 @contextmanager
 def session(uid: int, project: str | None = None, *, own: bool = True,
             isolate: bool = False, paid: bool = False):
@@ -494,12 +497,22 @@ def session(uid: int, project: str | None = None, *, own: bool = True,
             raise HTTPException(
                 status_code=404, detail="찾을 수 없는 사이트입니다. 사이트 목록에서 다시 선택해 주세요.")
         if isolate:
-            with tenant(conn, uid) as t:
-                if paid:
-                    with settings.paid_keys():
+            # ponytail: 프로세스 전역 락 — 테넌트 요청을 한 줄로 세운다. 화면은 /api/data·
+            # /api/triage·/api/doctor 를 동시에 부르는데, tenant() 가 갈아끼우는 env
+            # (GSC_TOKEN_FILE)는 전역이라 겹치면 먼저 나간 요청이 남의 토큰 파일을 지워
+            # 호스팅 안내가 "구글 로그인 대기"로 틀렸다(병렬 12건 중 3건). threading.Lock
+            # 인 이유: FastAPI 는 yield 의존자의 들어가기·나가기를 다른 스레드에서 돌릴 수
+            # 있다(RLock 은 거기서 못 푼다). 느려지면 유저별 subprocess 로(tenant() 주석).
+            _TENANT_LOCK.acquire()
+            try:
+                with tenant(conn, uid) as t:
+                    if paid:
+                        with settings.paid_keys():
+                            yield t
+                    else:
                         yield t
-                else:
-                    yield t
+            finally:
+                _TENANT_LOCK.release()
         else:
             yield conn
     finally:

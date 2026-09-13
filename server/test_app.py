@@ -91,6 +91,29 @@ def demo() -> None:
             else:
                 os.environ["CAPTURE_HOME"] = old_home
 
+        # 테넌트 구간은 겹치면 안 된다 — tenant() 가 갈아끼우는 GSC_TOKEN_FILE 은 전역이라
+        # 겹친 요청이 먼저 나가며 남의 토큰 파일을 지웠고, 호스팅 안내가 병렬 12건 중
+        # 3건 "구글 로그인 대기"였다. 들어가기와 나가기가 다른 스레드여도 풀려야 한다.
+        env0 = {k: os.environ.get(k) for k in ("CAPTURE_HOME", "GSC_TOKEN_FILE")}
+        first = store.session(1, isolate=True)
+        next(first.gen)
+        entered = threading.Event()
+
+        def second():
+            with store.session(2, isolate=True):
+                entered.set()
+
+        t2 = threading.Thread(target=second)
+        t2.start()
+        assert not entered.wait(0.5), "테넌트 요청 둘이 겹쳐 들어갔다 — 전역 env 가 섞인다"
+        closer = threading.Thread(target=lambda: next(first.gen, None))
+        closer.start()
+        closer.join()
+        assert entered.wait(5), "앞 요청이 다른 스레드에서 나갔는데 뒤 요청이 못 들어간다"
+        t2.join()
+        for k, v in env0.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
         r = c.get("/api/properties")
         assert r.status_code == 401, r.text
 
