@@ -207,6 +207,10 @@ MUSTS = [
      r'검색어 3개(?:(?!</details>).)*' + re.escape(GROUP_KW) + r' 비교'
      r'(?:(?!</details>).)*묶인 검색어 3개',
      "개요가 같은 지면의 기회 셋을 한 줄로 안 그렸다(묶음 배지·변형·묶은 이유)"),
+    # coverage 기회의 대상은 내부 꼴('cluster:(미분류)')이 아니라 사람이 읽는 이름으로
+    # 그려져야 한다 — 카드 제목이 'cluster:(미분류)' 그대로 보이던 것이 실제 발견이었다.
+    (r'<div class="target">미분류</div>', "coverage 기회의 대상이 사람이 읽는 이름으로 안 보인다"),
+    ("!cluster:\\(미분류\\)", "기회 대상이 내부 식별자(cluster:) 그대로 화면에 보인다"),
     # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
     (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
     # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
@@ -282,6 +286,9 @@ HOSTED_MUSTS = MUSTS + [
     (r'id="view-overview"', "화면 상자(개요)가 안 만들어졌다"),
     (r'id="view-backlinks"', "호스팅 전용 화면(백링크)이 안 붙었다"),
     (r'id="sm-set"', "호스팅 설정 섹션이 안 만들어졌다"),
+    # 호스팅은 서버가 키를 댄다. 안내가 요청마다 오는 guide.steps[].gain(로컬 갈래)을
+    # 그리면 "OpenRouter 키를 넣으면 켜집니다"가 샌다 — 조립 시점 표(gainOf)를 써야 한다.
+    (r"!키를 넣으면", "호스팅 안내가 유료 키를 넣으라고 한다 — 조립 시점 용어표를 안 읽었다"),
     (r'id="sm-run"', "레일 바닥의 [전체 분석 실행]이 안 붙었다"),
     # 안내의 실행 칩은 SM.host 를 렌더 시점에 부른다(dashboard.html 의 renderGuide) —
     # 호스팅판은 그 훅을 실행 버튼으로 갈아 낀다(dash.html 의 SM.host.stepChip).
@@ -316,7 +323,11 @@ def _axes(conn, pid: int) -> None:
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
         " VALUES(?,?,?,?,?,'new')",
         [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 9.0위 · 노출 120 · 클릭 8. 이미 1페이지이고 상단 3위권까지 6.0칸 남았습니다 (구글 실적 2026-06-01 기준)"),
-         (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다")])
+         (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다"),
+         # coverage 기회는 target 이 scoring 이 적재한 내부 꼴('cluster:{이름}', 미분류는
+         # 'cluster:(미분류)')이다 — 화면은 그걸 사람이 읽을 이름으로 바꿔 그려야 한다.
+         # 검색어 종류가 아니라 심사(verdict) 없이도 그대로 나온다.
+         (pid, "coverage", "cluster:(미분류)", 65.0, "이 주제를 다루는 페이지가 아직 없습니다")])
     # 기회 목록은 심사(작업 판정)를 통과한 검색어만 낸다 — 둘 다 작업으로 둔다
     import db, scoring
     db.set_verdicts(conn, pid, [scoring.norm(f"{SITES[1]} 검색어"), scoring.norm(f"{SITES[1]} 두 번째")], "work")

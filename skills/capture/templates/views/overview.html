@@ -207,7 +207,7 @@ function oppRow(o) {
           ${window.gaBadge(o)}
           <span class="dt">${esc(o.created || "")}</span>
         </div>
-        <div class="target">${esc(o.target)}</div>
+        <div class="target">${esc(targetLabel(o.target))}</div>
         ${OV_vars(o)}
         ${oppMeter(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
@@ -405,7 +405,7 @@ function OV_next(d) {
     const sc = Number.isFinite(top.score) ? `, ${Math.round(top.score)}점` : "";
     const bunch = top.group && top.group.ids.length > 1
       ? ` (같은 지면의 검색어 ${top.group.ids.length}개를 묶은 줄)` : "";
-    html = `<p>가장 큰 기회는 <b>${esc(top.target)}</b>${bunch}입니다.
+    html = `<p>가장 큰 기회는 <b>${esc(targetLabel(top.target))}</b>${bunch}입니다.
       ${esc(top.label || top.kind)}${sc}으로 맨 위입니다.</p>
       <div class="acts"><button class="go" onclick="OV_openTop()">기회 열기</button></div>`;
   } else if (filtered)

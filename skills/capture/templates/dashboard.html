@@ -150,14 +150,16 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 @media (max-width:999px) {
   .rl { display:none; }
   /* 메뉴가 열한 개인데 좁은 화면에는 여섯 개만 들어간다. 잘렸다는 표시가 없으면
-     나머지 다섯은 없는 것이 된다 — 오른쪽 끝을 흐려 더 있다고 말한다.
+     나머지 다섯은 없는 것이 된다 — 양 끝을 흐려 더 있다고 말한다(왼쪽은 뒤쪽 탭에서
+     새로고침으로 열렸을 때 앞쪽 탭이 있다는 힌트다).
      배경 그라데이션으로는 안 된다: 배경은 글자 **아래**에 깔려서 글자를 못 흐린다.
-     마스크는 글자까지 걸린다. 끝까지 밀었거나 넘칠 게 없으면 navFade 가 .end 를
-     달아 페이드를 끈다 — 더 볼 게 없을 때 더 있다고 말하지 않는다. */
-  #nav { --fade:34px;
-    -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
-            mask-image:linear-gradient(to right, #000 calc(100% - var(--fade)), transparent); }
+     마스크는 글자까지 걸린다. 끝까지 밀었거나 넘칠 게 없으면 navFade 가 .end/.begin 을
+     달아 그쪽 페이드를 끈다 — 더 볼 게 없을 때 더 있다고 말하지 않는다. */
+  #nav { --fade:34px; --fadeL:34px;
+    -webkit-mask-image:linear-gradient(to right, transparent, #000 var(--fadeL), #000 calc(100% - var(--fade)), transparent);
+            mask-image:linear-gradient(to right, transparent, #000 var(--fadeL), #000 calc(100% - var(--fade)), transparent); }
   #nav.end { --fade:0px; }
+  #nav.begin { --fadeL:0px; }
 }
 
 /* 화면 메뉴 — 좁은 화면에서는 가로 스크롤러, 레일에서는 세로 목록.
@@ -1219,6 +1221,9 @@ const SM = {
       const on = b.dataset.v === id;
       b.classList.toggle("on", on);
       b.setAttribute("aria-current", on ? "page" : "false");
+      // 새로고침 복원·바로가기로 뒤쪽 탭이 열리면 가로 스크롤러가 그 탭 자리로
+      // 시작해, 앞쪽 탭이 스크롤 밖에 있는 채로 열린다 — 보이는 자리로 당긴다.
+      if (on) b.scrollIntoView({inline: "nearest", block: "nearest"});
     });
     // 실행 배너는 화면에 매인 것이 아니라 **런에 매인 것**이다 — 화면을 바꿔도
     // 따라온다. 고르는 것은 id 가 아니라 표식(data-vban)이다: id 를 여기 적으면
@@ -1385,7 +1390,9 @@ function viewCmds() {
 // 밀었거나 애초에 안 넘치면 꺼야 한다 — 안 그러면 없는 것을 있다고 말한다.
 function navFade() {
   const n = $("nav");
-  if (n) n.classList.toggle("end", n.scrollLeft + n.clientWidth >= n.scrollWidth - 1);
+  if (!n) return;
+  n.classList.toggle("end", n.scrollLeft + n.clientWidth >= n.scrollWidth - 1);
+  n.classList.toggle("begin", n.scrollLeft <= 1);
 }
 $("nav").addEventListener("scroll", navFade, {passive: true});
 addEventListener("resize", navFade);
@@ -1811,7 +1818,7 @@ const askBlock = c => {
   return `<details class="ask"><summary>요청문 만들기
       <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span></summary>
     <div class="pbox">
-      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — 답은 HTML 리포트로 열립니다</span>
+      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span>
         <button type="button" onclick="copyPrompt(this)">복사</button></div>
       <textarea readonly rows="14" spellcheck="false" aria-label="요청문 전문">${esc(t)}</textarea>
     </div></details>`;
@@ -1857,6 +1864,14 @@ window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:
 window.SD_PERIOD = "";        // "28일" — 평균 게재순위라는 주석에 쓰는 기간
 
 const oppKey = t => String(t ?? "").trim().toLowerCase();
+// 기회 대상을 사람에게 보여줄 이름 — coverage 기회의 target 은 scoring 이
+// 'cluster:{이름}' 으로 적재한다(미분류는 'cluster:(미분류)'). API·복사 텍스트는
+// 원문을 그대로 쓰고, 사람이 읽는 자리(개요 띠·카드 제목 등)만 이걸 거친다.
+const targetLabel = t => {
+  if (typeof t !== "string" || !t.startsWith("cluster:")) return t;
+  const name = t.slice(8);
+  return name === "(미분류)" ? "미분류" : `주제 묶음 · ${name}`;
+};
 let OPP_INDEX = {};
 // render() 가 매 적재마다 다시 세운다. 같은 대상에 기회가 둘 이상 붙는다
 // (검색어 하나가 striking_distance 이면서 ctr_gap 일 수 있다) — 배열로 둔다.
