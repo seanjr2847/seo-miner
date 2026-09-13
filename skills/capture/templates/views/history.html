@@ -277,7 +277,7 @@ function HS_runSummary() {
   // 갖고, 여기서는 어느 종류가 묵었는지를 배지로만 짚는다.
   $("lastby").innerHTML = `<div class="card">
     <p class="lbh">종류별 마지막 실행</p><div class="lb">${HS_lastBy().map(({k, r, stale}) =>
-    `<div><div class="k" title="${esc(k)}">${esc(HS_kind(k))}</div>
+    `<div><div class="k">${esc(HS_kind(k))}</div>
       <div class="v">${esc((r.started_at || "").slice(0, 10))}
         <span class="ago" title="마지막으로 이 종류를 돌린 때입니다.">${HS_ago(r.started_at)}</span>
         ${stale ? `<span class="badge warn" title="${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다."
@@ -310,7 +310,7 @@ function HS_runTools() {
   const chips = kinds.length > 1
     ? `<div class="oppchips">${kinds.map(k =>
         `<button class="chip${HS_RKIND === k ? " on" : ""}" data-k="${esc(k)}"
-           onclick="HS_runKind(this)" title="${esc(k)}"
+           onclick="HS_runKind(this)"
            aria-pressed="${HS_RKIND === k}">${esc(HS_kind(k))}
            <b>${counts[k]}</b></button>`).join("")}</div>`
     : "";

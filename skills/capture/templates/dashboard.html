@@ -172,6 +172,8 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
   background:transparent; border:0; border-radius:var(--r-sm); padding:0 11px;
   min-height:var(--btn-h); cursor:pointer;
   white-space:nowrap; transition:color .12s, background .12s; }
+/* 좁은 화면(=터치)의 메뉴는 손가락 크기로 — 32px 이면 옆 탭을 누르기 쉽다. 레일은 마우스라 그대로. */
+@media (max-width:999px) { #nav button { min-height:44px; } }
 /* 아이콘은 이름 옆의 눈금이다 — 줄을 훑을 때 글자를 읽기 전에 자리를 잡아 준다.
    색은 글자를 따라간다(currentColor): 활성 줄에서만 같이 선명해진다. */
 #nav button svg { flex:0 0 16px; width:16px; height:16px; stroke:currentColor;

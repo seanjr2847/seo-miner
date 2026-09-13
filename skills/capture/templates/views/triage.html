@@ -36,6 +36,9 @@
   border-radius:3px; padding:2px 4px; margin-left:4px; background:var(--card); }
 #triage .go kbd { color:inherit; border-color:currentColor; background:transparent; opacity:.7; }
 #tr-counts b { color:var(--ink); font-weight:600; }
+/* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
+#triage .trtouch { display:none; }
+@media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; } }
 </style>
 
 <section id="triage-sec">
@@ -122,7 +125,7 @@ function TR_row(r, i) {
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
       ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}</td>
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
-      `<span class="kind" title="${esc(kd)}">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
+      `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td class="num">${r.score == null ? "—" : Math.round(r.score)}</td>
     <td class="num">${num(r.clicks)} / ${num(r.impressions)}</td>
     <td>${TR_FILTER && !READONLY
@@ -148,7 +151,7 @@ function TR_draw() {
       <label><input type="checkbox" onchange="TR_all(this.checked)"${n && n === list.length ? " checked" : ""}
         aria-label="보이는 줄 전부 고르기"> 전부</label>
       <span class="n">${n ? `선택 ${n}건 →`
-        : `줄을 고르거나 <kbd>j</kbd><kbd>k</kbd>로 옮겨 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>으로 판정`}</span>
+        : `<span class="trkey">줄을 고르거나 <kbd>j</kbd><kbd>k</kbd>로 옮겨 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>으로 판정</span><span class="trtouch">줄을 고르면 판정 버튼이 켜집니다</span>`}</span>
       <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
         title="자동완성이 물어온 남의 검색어. 다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관<kbd>1</kbd></button>
       <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('hold')"
