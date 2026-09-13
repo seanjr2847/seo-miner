@@ -17,6 +17,20 @@
 .blk-dom { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:18ch; }
 .blk-url { font-family:var(--mono); font-size:12px; word-break:break-all; }
 .blk-anchor { font-size:12.5px; word-break:break-word; }
+/* 390px 에서 네 칸(개별 링크 표)이 칸마다 서너 줄로 쪼개져 스캔이 안 됐다.
+   머리글을 접고 줄을 카드처럼 쌓는다 — 링크 건 페이지는 이미 첫 칸이라
+   그대로 제목 줄이 되고, 나머지 칸은 라벨을 붙인다. */
+@media (max-width:560px) {
+  #blk-links .tw thead { display:none; }
+  #blk-links .tw table, #blk-links .tw tbody, #blk-links .tw tr, #blk-links .tw td { display:block; }
+  #blk-links .tw tr { padding:10px 0; border-bottom:1px solid var(--rule-soft); }
+  #blk-links .tw tr:last-child { border-bottom:0; }
+  #blk-links .tw td { padding:2px 0; border-bottom:0; }
+  #blk-links .tw td:first-child { margin-bottom:4px; }
+  #blk-links .tw td:nth-child(2)::before { content:"앵커 "; color:var(--slate); }
+  #blk-links .tw td:nth-child(3)::before { content:"우리 페이지 "; color:var(--slate); }
+  #blk-links .tw td:nth-child(4)::before { content:"순위 반영 "; color:var(--slate); }
+}
 /* 깨진 링크는 잃은 게 아니라 **되찾을 수 있는 것**이다 — 눈에 띄어야 손을 댄다. */
 .blk-broken { color:var(--copper); }
 .blk-nofollow { color:var(--slate); }

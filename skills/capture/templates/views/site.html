@@ -79,6 +79,23 @@ section.sec-quiet details.why { display:none; }
 .dgap { display:block; height:3px; margin:5px 0 0 auto; border-radius:2px;
   background:var(--copper); opacity:.5; }
 
+/* 이 표는 여덟 칸이라 크롤 표(다섯 칸)보다 더 심하게 쪼개진다 — 같은 방식으로 쌓는다. */
+@media (max-width:560px) {
+  #devgap .tw thead { display:none; }
+  #devgap .tw table, #devgap .tw tbody, #devgap .tw tr, #devgap .tw td { display:block; }
+  #devgap .tw tr { padding:10px 0; border-bottom:1px solid var(--rule-soft); }
+  #devgap .tw tr:last-child { border-bottom:0; }
+  #devgap .tw td { padding:2px 0; border-bottom:0; text-align:left; }
+  #devgap .tw td:first-child { margin-bottom:4px; }
+  #devgap .tw td:nth-child(2)::before { content:"모바일 "; color:var(--slate); }
+  #devgap .tw td:nth-child(3)::before { content:"데스크톱 "; color:var(--slate); }
+  #devgap .tw td:nth-child(4)::before { content:"순위차 "; color:var(--slate); }
+  #devgap .tw td:nth-child(5)::before { content:"모바일 노출 "; color:var(--slate); }
+  #devgap .tw td:nth-child(6)::before { content:"모바일 CTR "; color:var(--slate); }
+  #devgap .tw td:nth-child(7)::before { content:"데스크톱 CTR "; color:var(--slate); }
+  #devgap .tw td:nth-child(8)::before { content:"기회 "; color:var(--slate); }
+}
+
 /* 순위 격차 옆에 GA4 기기별 전환율을 나란히 놓는다 — 단위가 달라 작은 배수로 각자
    축을 준다(chDumbbell). GA4 미연결이면 stDevChart() 가 빈 문자열을 내 이 자리
    자체가 안 생긴다. */
@@ -108,6 +125,21 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
 .cr-diff .ok { color:var(--patina); }
 .cr-url { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:20ch; }
 .cr-new { color:var(--copper); font:var(--micro); margin-left:7px; }
+/* 390px 에서 다섯 칸이 한 줄에 못 들어가 칸마다 서너 줄로 쪼개지고 URL 도 끊겼다
+   (사이트 크롤 표). 머리글을 접고 줄을 카드처럼 쌓는다 — URL 은 이미 첫 칸이라
+   그대로 제목 줄이 되고(첫 칸 셰브론도 남는다), 나머지 칸은 라벨을 붙인다. */
+@media (max-width:560px) {
+  #crawl .tw thead { display:none; }
+  #crawl .tw table, #crawl .tw tbody, #crawl .tw tr, #crawl .tw td { display:block; }
+  #crawl .tw tr { padding:10px 0; border-bottom:1px solid var(--rule-soft); }
+  #crawl .tw tr:last-child { border-bottom:0; }
+  #crawl .tw td { padding:2px 0; border-bottom:0; text-align:left; }
+  #crawl .tw td:first-child { margin-bottom:4px; }
+  #crawl .tw td:nth-child(2)::before { content:"갈래 "; color:var(--slate); }
+  #crawl .tw td:nth-child(3)::before { content:"심각도 "; color:var(--slate); }
+  #crawl .tw td:nth-child(4)::before { content:"무엇이 "; color:var(--slate); }
+  #crawl .tw td.num::before { content:"기회 "; color:var(--slate); }
+}
 
 /* ── 페이지 축 ──────────────────────────────────────────────
    위 세 표는 전부 검색어 단위다. 검색어 하나하나의 순위는 흔들려서, "어디가

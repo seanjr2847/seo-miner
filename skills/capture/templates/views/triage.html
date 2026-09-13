@@ -11,7 +11,14 @@
 <style>
 /* 심사 표 — 행 하나가 판정 단위(정규화한 검색어)다. 체크 열은 좁게, 검색어 열이 넓게.
    커서 행(키보드 j/k)은 배경으로만 표시하고, 고른 행은 체크박스가 말한다. */
-#triage .trtable td:first-child, #triage .trtable th:first-child { width:24px; padding-right:4px; }
+#triage .trtable td:first-child, #triage .trtable th:first-child { width:24px; padding:0; }
+/* 체크박스 자체(13×13)만 눌려서 모바일 탭이 자주 빗나갔다 — label 이 셀 전체
+   (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(24px)를 넘지 않는다 —
+   넓히려면 검색어 열이 줄어든다. 행 클릭은 따로 없어 충돌이 없다. */
+#triage .trtable td:first-child .trchk { display:flex; align-items:flex-start;
+  justify-content:center; min-height:44px; padding-top:11px; cursor:pointer; }
+/* ↑ 가운데 정렬이면 검색어가 두 줄인 행에서 체크박스가 첫 줄 아래로 처진다 —
+   다른 칸처럼 윗줄에 맞춘다(td 윗 여백 8px + 첫 줄 가운데). */
 #triage .trtable td { vertical-align:top; }
 #triage .trrow.cur td { background:var(--wash); }
 #triage .trrow:hover td { background:var(--bar); }
@@ -109,8 +116,8 @@ function TR_row(r, i) {
   const on = TR_SEL.has(r.key);
   const k = esc(r.key);
   return `<tr class="trrow${i === TR_CUR ? " cur" : ""}" data-key="${k}" data-i="${i}">
-    <td><input type="checkbox"${on ? " checked" : ""} onchange="TR_toggle(this.closest('tr').dataset.key, this.checked)"
-      aria-label="${esc(r.label)} 고르기"></td>
+    <td><label class="trchk"><input type="checkbox"${on ? " checked" : ""} onchange="TR_toggle(this.closest('tr').dataset.key, this.checked)"
+      aria-label="${esc(r.label)} 고르기"></label></td>
     <td><span class="trkw">${esc(r.label)}</span>${r.variants > 1
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
       ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}</td>
