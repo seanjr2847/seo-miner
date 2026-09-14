@@ -102,6 +102,8 @@ header.sc{border-bottom-color:var(--on-ink-rule)}
   text-decoration:none;border:1px solid #57B49C;border-radius:3px;padding:9px 15px;
   white-space:nowrap}
 .hcta:hover{filter:brightness(1.08)}
+/* 스크롤 내내 붙어 다니는 CTA 라 가장 많이 눌린다 — 터치 화면에서는 손가락 크기로. */
+@media (hover:none){.hcta{display:inline-flex;align-items:center;min-height:44px}}
 /* 좁은 화면에서 메뉴를 통째로 감추면 절 이동 수단이 스크롤밖에 안 남는다 — 감추는
    대신 둘째 줄로 내려 가로 스크롤러로 세운다(대시보드 레일의 #nav 와 같은 처리). */
 @media (max-width:760px){
@@ -536,7 +538,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
   <span>주 1회 자동으로 다시 재고, 무엇을 고칠지는 사람이 정합니다.</span>
   <span class="sp"></span>
   <a href="/privacy">개인정보처리방침</a>
-  <a href="https://github.com/seanjr2847/seo-miner">GitHub</a>
+  <a href="https://github.com/seanjr2847/seo-miner" target="_blank" rel="noopener">GitHub</a>
 </div></footer>
 
 <script>

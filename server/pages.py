@@ -79,7 +79,19 @@ def data(doc: str, **values) -> str:
 def document(body: str, title: str = "seo-miner") -> str:
     return ('<!doctype html><html lang="ko"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f"<meta name=\"description\" content=\"{DESCRIPTION}\">{ICON}"
             f"<title>{html.escape(title)}</title></head><body>{body}</body></html>")
+
+
+# 검색 결과 스니펫과 탭 아이콘 — 없으면 구글이 본문을 임의로 발췌하고 브라우저가
+# /favicon.ico 를 찾다 404 를 낸다. 아이콘은 파일을 새로 두지 않고 데이터 URI 한 줄.
+DESCRIPTION = ("구글 서치콘솔 실측 숫자로 다음에 고칠 검색어를 고르고, "
+               "ChatGPT·Perplexity·Gemini가 누구를 인용하는지 함께 봅니다.")
+ICON = ('<link rel="icon" href="data:image/svg+xml,'
+        "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+        "%3Crect width='32' height='32' rx='6' fill='%23121714'/%3E"
+        "%3Cpath d='M8 10h16M8 16h11M8 22h6' stroke='%2357B49C' stroke-width='3' stroke-linecap='round'/%3E"
+        '%3C/svg%3E">')
 
 
 def addon(name: str) -> bytes:

@@ -155,6 +155,11 @@ def demo() -> None:
         r = c.get("/privacy")
         assert r.status_code == 200 and "받는 권한" in r.text, f"/privacy 가 안 열린다: {r.status_code}"
         assert "처음으로" in r.text, "/privacy 본문에 랜딩으로 돌아가는 링크가 없다"
+        nf = c.get("/없는-주소")
+        assert nf.status_code == 404 and "처음으로" in nf.text, "사람이 연 없는 주소가 JSON 한 줄로 끝난다"
+        nf = c.get("/api/없는-주소")
+        assert nf.status_code == 404 and nf.json().get("detail"), "/api 404 가 JSON 이 아니다(클라이언트가 detail 을 읽는다)"
+        assert 'name="description"' in landing and 'rel="icon"' in landing, "랜딩 머리에 설명·아이콘이 없다"
         import identity
         ga4 = "https://www.googleapis.com/auth/analytics.readonly" in identity.SCOPES
         for name, doc in (("랜딩 FAQ", landing), ("/privacy", r.text)):

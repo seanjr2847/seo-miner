@@ -32,6 +32,7 @@ from typing import Optional
 from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
@@ -1045,15 +1046,31 @@ _REPORT_ADDON = pages.addon("report.html")
 _DASH_ADDON = pages.addon("dash.html")
 
 
-@app.exception_handler(HTTPException)
-async def _http_exception(request: Request, e: HTTPException):
+# 등록은 Starlette 의 HTTPException 으로 한다 — 없는 경로의 404 는 라우터가 그걸
+# 던지고, FastAPI 의 HTTPException(그 하위 클래스)으로 걸면 안 잡힌다.
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception(request: Request, e: StarletteHTTPException):
     """/d 는 화면(HTML)이다 — _require_uid 가 던지는 401 을 그대로 흘리면 스타일 없는
     JSON {"detail":...} 만 뜬다. _require_uid 자체는 /api/* 가 계속 JSON 401 을 써야
     하므로 안 바꾸고, 여기서 /d 하나만 처음 화면(/)으로 302 돌린다. hash(#사이트)는
     서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
     if request.url.path == "/d" and e.status_code == 401:
         return RedirectResponse("/?login=expired", status_code=302)
+    # 사람이 연 주소(오타·옛 링크)가 없으면 JSON 한 줄 대신 돌아갈 길이 있는 화면을 준다.
+    # /api/* 는 클라이언트가 detail 을 읽으므로 JSON 그대로.
+    if e.status_code == 404 and not request.url.path.startswith("/api/"):
+        return HTMLResponse(pages.document(_NOT_FOUND, "페이지를 찾을 수 없습니다 — seo-miner"),
+                            status_code=404)
     return await http_exception_handler(request, e)
+
+
+_NOT_FOUND = (
+    '<main style="font:15px/1.7 -apple-system,BlinkMacSystemFont,\'Malgun Gothic\',sans-serif;'
+    'color:#121714;max-width:36rem;margin:0 auto;padding:18vh 20px 0">'
+    '<p style="font:600 15px/1 ui-monospace,monospace">seo·miner</p>'
+    '<h1 style="font-size:23px;margin:24px 0 8px">페이지를 찾을 수 없습니다</h1>'
+    "<p>주소가 바뀌었거나 잘못 적혔습니다.</p>"
+    '<p><a href="/" style="color:#22705F">← 처음으로</a></p></main>')
 
 
 @app.get("/d")
