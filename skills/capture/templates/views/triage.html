@@ -22,6 +22,7 @@
 #triage .trtable td { vertical-align:top; }
 #triage .trrow.cur td { background:var(--wash); }
 #triage .trrow:hover td { background:var(--bar); }
+#triage .trrow { cursor:pointer; }
 #triage .trkw { font-weight:500; }
 #triage .trvar { color:var(--slate); font-size:12px; margin-left:6px; }
 #triage .trkinds { display:flex; flex-wrap:wrap; gap:4px; }
@@ -38,7 +39,9 @@
 #tr-counts b { color:var(--ink); font-weight:600; }
 /* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
 #triage .trtouch { display:none; }
-@media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; } }
+@media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
+  /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수(「미판정 110」)와 같은 숫자로 읽혔다. */
+  #triage .go kbd { display:none; } }
 /* 390px 에서 표가 63px 넘쳐 「8 / 90」이 「8 /」로 잘렸다. 폭을 정하는 건 줄을 안
    바꾸는 머리글(「클릭 / 노출 (i)」)이다 — 좁은 화면에서는 머리글도 줄을 바꾼다. */
 @media (max-width:560px) { #triage .trtable th { white-space:normal; } }
@@ -238,5 +241,14 @@ document.addEventListener("keydown", e => {
   } else return;
   const row = $("triage").querySelector(`.trrow[data-i="${TR_CUR}"]`);
   if (row) row.scrollIntoView({block: "nearest"});
+});
+
+/* 줄을 누르면 고른다 — 줄은 손을 얹으면 밝아지는데 누르면 아무 일도 없었다(체크박스만
+   받았다). 띠도 "줄을 고르고"라고 말한다. 줄 안의 컨트롤·머리글 (i)는 제 일을 한다. */
+document.addEventListener("click", e => {
+  const tr = e.target.closest("#triage .trrow");
+  if (!tr || READONLY || e.target.closest("input,label,button,a,.hint")) return;
+  TR_CUR = +tr.dataset.i;
+  TR_toggle(tr.dataset.key, !TR_SEL.has(tr.dataset.key));   // 다시 그리며 .cur 도 옮긴다
 });
 </script>

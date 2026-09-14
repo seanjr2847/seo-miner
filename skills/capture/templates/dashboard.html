@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>seo-miner 대시보드</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23121714'/%3E%3Cpath d='M8 10h16M8 16h11M8 22h6' stroke='%2357B49C' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <!--SNAPSHOT-->
 <!-- 뷰 선언표 — dashboard.py 가 뷰 파일들의 view-def 를 모아 여기 박는다.
      화면 위에 얹히는 층(호스팅판)이 화면 이름 여섯과 요소 id 열몇을 다시 나열하는
@@ -72,6 +73,9 @@
      밑선이 흔들리지 않는다. 상태 배지는 이 높이를 안 쓴다(버튼처럼 보이면 안 된다). */
   --btn-h:32px; --btn-h-sm:28px;
 }
+/* 손가락으로 누르는 기기에서는 같은 규칙을 손가락 크기로 — 가장 자주 누르는 심사 판정
+   버튼이 28px 로 가장 작았다. 버튼마다 덮지 않고 높이 토큰 한 벌을 바꾼다. */
+@media (hover:none) { :root { --btn-h:44px; --btn-h-sm:40px; } }
 /* 기본 컨트롤(드롭다운 목록·스크롤바·자동완성)도 OS 테마를 따르게 한다. 색 토큰만
    바꾸고 이걸 안 적으면, 다크에서 <select> 의 펼친 목록과 스크롤바가 흰 채로 남는다. */
 :root { color-scheme:light dark; }
@@ -451,7 +455,8 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
    이름은 눈금이 아니라 지표 이름이라 마이크로보다 한 단 크게 세운다. */
 .band .v { font:600 28px/1 var(--mono); letter-spacing:-.022em; font-variant-numeric:tabular-nums; }
 .band .l { font:500 12.5px/1.35 var(--sans); color:var(--slate); margin-top:10px; }
-.band .d { font:600 12px/1 var(--mono); margin-left:8px; letter-spacing:0; }
+/* 증감은 한 덩어리다 — 칸이 좁으면 「−700 −24」 뒤에서 「%」만 다음 줄로 떨어졌다. */
+.band .d { font:600 12px/1 var(--mono); margin-left:8px; letter-spacing:0; white-space:nowrap; }
 /* 값만 있는 숫자는 못 읽는다 — 무엇에 대한 얼마인지(기간·직전값)를 한 줄로 붙인다.
    한글이 섞이므로 등폭이 아니라 본문 서체에 숫자만 표 자리를 맞춘다. */
 .band .b { font:400 11.5px/1.5 var(--sans); color:var(--slate); margin-top:6px;
@@ -1495,7 +1500,9 @@ function tableFade(root) {
     w.classList.toggle("over", over);
     w.classList.toggle("end", !over || w.scrollLeft + w.clientWidth >= w.scrollWidth - 1);
     const c0 = w.querySelector("tbody td:first-child");
-    w.classList.toggle("pin", over && !!c0 && c0.offsetWidth <= w.clientWidth * 2 / 3);
+    // 첫 칸이 숫자(점수 등)면 붙박아 봐야 어느 줄인지 안 알려 준다 — 이름 칸일 때만.
+    w.classList.toggle("pin", over && !!c0 && !c0.classList.contains("num")
+      && c0.offsetWidth <= w.clientWidth * 2 / 3);
     if (over && !w.dataset.fade) {
       w.dataset.fade = "1";
       w.addEventListener("scroll", () => w.classList.toggle("end",
