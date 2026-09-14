@@ -94,7 +94,6 @@ VIEW("guide", function (d) {
   const g = d.guide;
   if (!g || !g.steps || !g.steps.length) return nextStep("guide", "");
   const steps = g.steps, here = g.here;
-  const done = steps.filter(x => x.done).length;
   // 한 바퀴를 다 돌았으면 되돌아갈 자리는 2번 단계다 — 이름을 여기 적지 않는다.
   if (here === -1) {
     const back = steps[1];
@@ -111,7 +110,10 @@ VIEW("guide", function (d) {
     : (window.SM && SM.host && SM.host.stepChip) ? SM.host.stepChip(s) : "";
   // 「4단계가 끝났습니다」는 4번이 끝났다고 읽힌다 — 단계는 건너뛰어 끝나기도 해서
   // (4번 대기·5번 끝) 개수와 순번이 갈린다. 개수로 적고, 지금 할 순번을 따로 말한다.
-  nextStep("guide", `<p>${steps.length}단계 중 ${done}개가 끝났고, 지금 할 것은
+  // 「4개가 끝났고 지금 4번」도 평가자 둘이 "완료는 3개"로 읽었다 — 개수 대신 끝난
+  // 번호를 적는다. 번호는 아래 스테퍼의 원 숫자와 같은 말이라 대조가 된다.
+  const doneNo = steps.map((x, i) => x.done ? i + 1 : 0).filter(Boolean);
+  nextStep("guide", `<p>${doneNo.length ? `${doneNo.join("·")}번이 끝났고, ` : ""}지금 할 것은
     ${here + 1}번 ${esc(s.t)}입니다.
     <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
     + (btn ? `<div class="acts">${btn}</div>` : ""));

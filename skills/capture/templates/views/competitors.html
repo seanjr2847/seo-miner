@@ -337,7 +337,8 @@ VIEW("competitors", function (d) {
       ? `<div class="empty err"><b>${esc(CP_name("competitors"))}에서 멈췄습니다</b>
           <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
             이어서 채워집니다.</p>${CP_do("competitors", "", false)}</div>`
-      : CP_empty("경쟁사를 아직 찾지 않았습니다", CP_gain("competitors"),
+      // 제목은 띠(「경쟁사를 아직 찾지 않았습니다」)를 되풀이하지 않고 이 섹션이 무엇이 비었는지를 말한다.
+      : CP_empty("유기 검색 몫이 아직 비었습니다", CP_gain("competitors"),
           // 띠가 이미 [경쟁사 찾기]를 주요 행동으로 든다(CP_nextStep) — 같은 버튼을
           // 250px 안에 두 번 두지 않는다. 띠가 없는 배포에서만 여기로 물러선다.
           CP_acts(READONLY || window.nextStep ? ""

@@ -491,8 +491,13 @@ VIEW("overview", function (d) {
   // 서버는 점수 상위 N 건만 싣는다(dashboard._axis_opps 의 limit). 위 띠의 「개선
   // 기회」는 전수(opps_total)라 말이 안 맞는다 — 283 인데 목록·칩·거르개는 전부
   // 200 이고 [더 보기] 를 끝까지 눌러도 200 에서 끝난다. 잘렸으면 잘렸다고 적는다.
+  // 그 200 은 같은 지면끼리 한 줄로 접혀 칩에서는 99 로 선다 — 218·200·99 가 한 화면에
+  // 설명 없이 섰다(6회차). 접혔으면 몇 줄이 됐는지까지 이어 말한다.
+  const gs = d.opp_groups || [];
   const capped = (d.opps || []).length < (d.opps_total || 0)
-    ? ` 기회 ${num(d.opps_total)}건 중 점수 높은 ${num(d.opps.length)}개까지 이 화면에 옵니다.` : "";
+    ? ` 기회 ${num(d.opps_total)}건 중 점수 높은 ${num(d.opps.length)}개까지 이 화면에 ` +
+      (gs.some(g => g.ids.length > 1) ? `오고, 같은 지면끼리 묶어 ${num(gs.length)}줄입니다.` : "옵니다.")
+    : "";
   $("opp-sub").innerHTML = (READONLY
       ? "이 기록을 남긴 시점의 기회입니다."
       : "점수가 높은 것부터 봅니다.")

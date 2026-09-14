@@ -17,6 +17,10 @@
 .blk-dom { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:18ch; }
 .blk-url { font-family:var(--mono); font-size:12px; word-break:break-all; }
 .blk-anchor { font-size:12.5px; word-break:break-word; }
+/* 스팸 앵커는 150자씩 줄마다 되풀이돼 진짜 봐야 할 링크를 밀어낸다 — 두 줄로 접고
+   전문은 title 로 둔다. */
+.blk-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+  overflow:hidden; }
 /* 390px 에서 네 칸(개별 링크 표)이 칸마다 서너 줄로 쪼개져 스캔이 안 됐다.
    머리글을 접고 줄을 카드처럼 쌓는다 — 링크 건 페이지는 이미 첫 칸이라
    그대로 제목 줄이 되고, 나머지 칸은 라벨을 붙인다. */
@@ -359,7 +363,7 @@ function BLK_anchors(d) {
   const over = (top.backlinks || 0) / total > BLK_ANCHOR_MAX;
   // 어느 줄이 문제인지를 **색으로만** 말하지 않는다 — 그 줄에 배지를 단다.
   const rows = a.map(r =>
-    `<tr${over && r === top ? ' class="blk-broken"' : ""}><td class="blk-anchor">${esc(r.anchor || "(빈 앵커)")}` +
+    `<tr${over && r === top ? ' class="blk-broken"' : ""}><td class="blk-anchor"><span class="blk-clamp" title="${esc(r.anchor || "")}">${esc(r.anchor || "(빈 앵커)")}</span>` +
     (over && r === top ? ' <span class="badge warn">과최적화</span>' : "") +
     `<span class="blk-bar"><i style="width:${Math.round((r.backlinks || 0) / max * 100)}%"></i></span></td>` +
     `<td class="num">${num(r.backlinks)}</td>` +
@@ -386,7 +390,7 @@ function BLK_links(d) {
   const rows = (d.bl_links || []).map(r =>
     `<tr class="${r.is_broken ? "blk-broken" : ""}">` +
     `<td class="blk-url">${BLK_a(r.url_from || "")}</td>` +
-    `<td class="blk-anchor">${esc(r.anchor || "")}</td>` +
+    `<td class="blk-anchor"><span class="blk-clamp" title="${esc(r.anchor || "")}">${esc(r.anchor || "")}</span></td>` +
     `<td class="blk-url">${BLK_a(r.url_to || "")}${r.is_broken ? " ⚠" : ""}</td>` +
     `<td class="${r.dofollow ? "" : "blk-nofollow"}">${r.dofollow ? "반영" : "안 됨"}</td>` +
     `</tr>`);
