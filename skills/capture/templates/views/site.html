@@ -139,6 +139,10 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   #crawl .tw td:nth-child(3)::before { content:"심각도 "; color:var(--slate); }
   #crawl .tw td:nth-child(4)::before { content:"무엇이 "; color:var(--slate); }
   #crawl .tw td.num::before { content:"기회 "; color:var(--slate); }
+  /* 점수 칸은 표에서 오른쪽 정렬 44px 블록이다 — 카드 줄에서는 라벨 옆에 붙인다
+     (그대로 두면 「기회」 다음 줄 오른쪽 끝에 「—」가 떨어져 들여쓴 것처럼 보였다). */
+  #crawl .tw td.num .score, #devgap .tw td.num .score { display:inline; width:auto; font-size:13.5px; }
+  #crawl .tw td.num .score .u, #devgap .tw td.num .score .u { display:inline; margin-left:1px; }
 }
 
 /* ── 페이지 축 ──────────────────────────────────────────────
@@ -992,6 +996,9 @@ const CR_sev = sev => `<span class="badge ${CR_SEV_CLS[sev] || "muted"}">`
 
 let CR_D = null;
 let CR_PICK = "";                 // "" = 전체
+// 한 번에 그리는 줄 수. 290건을 다 펴면 좁은 화면(카드로 접힌 줄)에서 페이지가 64,000px 가
+// 되어 아래 섹션(모바일 격차·속도)에 못 닿는다 — 개요 기회·기록 실행과 같은 [더 보기] 문법.
+let CR_N = 20;
 
 function CR_label(k) { return (CR_KIND[k] || [k])[0]; }
 // 이슈의 정체성은 (kind, url) 이다 — dashboard.crawl_compare 가 그렇게 짝을 짓는다.
@@ -1019,10 +1026,13 @@ function CR_rows(d) {
   stTools("cr-tools", `<span class="n">${rows.length}개</span>
     <button class="go sec sm" onclick="CR_csv()"
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
-  return stCard(table(["URL", "갈래", "심각도", "무엇이", ST_OPP_H], rows,
+  const rest = rows.length - CR_N;
+  return stCard(table(["URL", "갈래", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
     CR_PICK ? "<b>이 갈래에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
-            : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>"));
+            : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>")
+    + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${num(rest)}건 더 보기</button></div>` : ""));
 }
+function CR_more() { CR_N += 50; $("crawl").innerHTML = CR_rows(CR_D); }
 
 /* ── 크롤 행 펼침 ────────────────────────────────────────────
    500줄짜리 표가 눌러도 아무 일이 없었다 — 갈래마다 "왜 문제고 어떻게 고치나"가
@@ -1061,7 +1071,7 @@ function CR_chips(d) {
 }
 
 function CR_pick(kind) {
-  CR_PICK = (CR_PICK === kind) ? "" : kind;
+  CR_PICK = (CR_PICK === kind) ? "" : kind; CR_N = 20;
   $("cr-chips").innerHTML = CR_chips(CR_D);
   $("crawl").innerHTML = CR_rows(CR_D);
 }
@@ -1096,7 +1106,7 @@ function CR_diff(d) {
 }
 
 function renderCrawl(d) {
-  CR_D = d;
+  CR_D = d; CR_N = 20;
   CR_KIND = d.crawl_kinds || {};   // 이름표의 정본은 서버(collect_crawl.ISSUE_KIND)다
   const c = d.crawl || {};
   const has = !!c.run;
