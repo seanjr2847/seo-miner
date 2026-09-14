@@ -1024,9 +1024,12 @@
         "<button data-ga4-pick>속성 바꾸기</button></div>" + note;
       return;
     }
+    // 화면 머리 띠(SET_NEXT.ga4)가 이미 같은 라벨의 채운 버튼을 든다 — 여기 또
+    // 두면 "GA4 연결"이 한 화면에 두 번 선다. 띠는 jump("ga4")로 이 칸까지
+    // 스크롤하고 ga4Pick() 도 직접 부르므로, 버튼을 지워도 연결 동작은 그대로다.
     body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다. ' +
       "연결하면 클릭 다음에 일어난 일(세션·매출)까지 봅니다.</span>" +
-      "<button data-ga4-pick>GA4 연결</button></div>" + note;
+      (window.nextStep ? "" : "<button data-ga4-pick>GA4 연결</button>") + "</div>" + note;
   }
 
   async function ga4Pick() {
@@ -1303,13 +1306,19 @@
 
   function aiqPaint(box, d) {
     var list = box.querySelector(".list");
+    var empty = !(d.prompts || []).length;
+    // 비었으면 화면 머리 띠(AI_nextStep)가 이미 [질문 만들기]를 주요 행동으로
+    // 든다 — 이 빈 상자 버튼과 아래 입력줄의 고스트 버튼까지 두면 한 화면에
+    // 같은 라벨이 셋이 된다. 질문이 하나라도 있으면(비어 있지 않으면) 띠는 다른
+    // 행동으로 넘어가므로 그때는 고스트 버튼을 다시 켠다.
+    var gen = box.querySelector(".gen");
+    if (gen) gen.hidden = empty;
     box.querySelector(".cnt").innerHTML =
       "켠 질문 " + d.active_total + " / " + d.limit +
       "개" + (d.active_total >= d.limit ? ' <b class="warn">· 상한에 닿았습니다</b>' : "");
-    if (!(d.prompts || []).length) {
+    if (empty) {
       list.innerHTML = emptyNote("아직 질문이 없습니다",
-        "만들면 업종과 검색어에 맞는 스무 개가 목록에 채워집니다.",
-        '<button class="go sm sec" data-sm-act="make-prompts">질문 만들기</button>');
+        "화면 머리의 [질문 만들기]를 누르면 업종과 검색어에 맞는 스무 개가 채워집니다.");
       return;
     }
     bare(list, false);

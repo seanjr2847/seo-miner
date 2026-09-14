@@ -204,8 +204,10 @@ function CP_csv() {
 /* 빈 화면이 갈리는 자리 — 아직 안 돌렸다 / 돌렸는데 경쟁사를 못 찾았다.
    둘을 같은 "데이터 없음"으로 뭉치면 무엇을 하면 채워지는지가 화면 밖에 남는다.
    셸이 act() 를 세운 배포에서는 배포에 맞는 버튼 하나로 끝난다. 라벨을 비우면
-   셸이 STAGE_LABELS 의 재실행 라벨(run)로 채운다 — 여기서 다시 대지 않는다. */
-const CP_do = (stage, label, primary = false) => READONLY ? ""
+   셸이 STAGE_LABELS 의 재실행 라벨(run)로 채운다 — 여기서 다시 대지 않는다.
+   띠(CP_nextStep)가 이미 서는 배포(window.nextStep 이 있는 배포)에서는 여기 또
+   버튼을 두지 않는다 — 같은 행동이 한 화면에 두 번 서면 다음 걸음이 흐려진다. */
+const CP_do = (stage, label, primary = false) => READONLY || window.nextStep ? ""
   : window.act
   ? `<div class="acts">${window.act(stage, label, primary)}</div>`
   : W(`<div class="cmd" role="button" tabindex="0" onclick="copyCmd(this)"
@@ -328,13 +330,18 @@ VIEW("competitors", function (d) {
     ? (CP_shares(d) || CP_empty("겹치는 경쟁 도메인이 없습니다",
         "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
         "적어 두면 그것부터 맞댑니다.",
-        CP_acts(READONLY ? "" : window.act("competitors", "", false), CP_toSettings())))
+        // 띠가 이미 같은 행동(재실행)을 들고 있다 — 여기 또 두지 않는다.
+        CP_acts(READONLY || window.nextStep ? "" : window.act("competitors", "", false),
+                CP_toSettings())))
     : window.runFailed("competitors", d)
       ? `<div class="empty err"><b>${esc(CP_name("competitors"))}에서 멈췄습니다</b>
           <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
             이어서 채워집니다.</p>${CP_do("competitors", "", false)}</div>`
       : CP_empty("경쟁사를 아직 찾지 않았습니다", CP_gain("competitors"),
-          CP_acts(READONLY ? "" : window.act("competitors", CP_name("competitors"), false),
+          // 띠가 이미 [경쟁사 찾기]를 주요 행동으로 든다(CP_nextStep) — 같은 버튼을
+          // 250px 안에 두 번 두지 않는다. 띠가 없는 배포에서만 여기로 물러선다.
+          CP_acts(READONLY || window.nextStep ? ""
+                  : window.act("competitors", CP_name("competitors"), false),
                   CP_toSettings()),
           "선택 단계입니다. 안 돌려도 다른 화면과 기회 목록은 그대로 채워집니다.");
 
