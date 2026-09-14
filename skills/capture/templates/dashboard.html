@@ -321,6 +321,19 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
   .rail-foot { max-width:1180px; margin:0 auto; padding:0 24px 12px;
     display:flex; gap:8px 12px; flex-wrap:wrap; align-items:center; }
 }
+/* 좁은 화면에서 머리 세 통을 다 붙박으면 213px — 390×844 의 1/4 이 늘 가려졌다.
+   붙박는 것은 메뉴(어디를 보고 있나)뿐이고, 머리·바닥은 스크롤과 함께 올라간다.
+   붙박이는 부모 상자 안에서만 붙어 있으므로 header 를 풀어 .navbar 의 부모를 body 로
+   올리고, 바탕은 통마다 칠한다. 바탕을 #nav 에 직접 칠하지 않는 이유: #nav 에는 양끝
+   페이드 마스크가 걸려 있어 바탕까지 흐려지고 그 틈으로 본문이 비친다.
+   screen 한정 — 인쇄는 header 를 통째로 지우는데 .hbar 는 그 목록에 없다. */
+@media (min-width:1000px) { .navbar { display:contents; } }
+@media screen and (max-width:999px) {
+  header { display:contents; }
+  .hbar, .navbar, .rail-foot { background:var(--rail); }
+  .navbar { position:sticky; top:0; z-index:9; }
+  html { scroll-padding-top:64px; }   /* 절로 옮기는 scrollIntoView 가 메뉴 밑에 깔리지 않게 */
+}
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
 .mark b { color:var(--patina); font-weight:600; }
 .tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; }
@@ -550,6 +563,9 @@ tr:last-child td { border-bottom:0; }
    낱자가 벌어진다. 머리글은 정렬만 물려받고 서체는 본문 것을 쓴다. */
 .num, td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
 td.num, td .num { font-family:var(--mono); }
+/* 좁은 화면에서 줄을 카드로 접는 뷰는 칸 이름을 ::before 로 붙인다 — 숫자 칸의
+   등폭을 물려받으면 한글 이름이 폴백 서체로 떨어져 혼자 크게 찍힌다. */
+td.num::before { font-family:var(--sans); }
 /* 오른쪽 여백을 지우는 건 숫자 열이 **마지막일 때만**이다. 가운데 있는 숫자 열에서
    지우면 다음 칸 글자와 맞붙어 `12` 와 `2026-03-02` 가 `122026-03-02` 로 읽힌다. */
 td.num:last-child, th.num:last-child { padding-right:0; }
@@ -593,6 +609,11 @@ td.num:last-child, th.num:last-child { padding-right:0; }
           mask-image:linear-gradient(to right, #000 calc(100% - var(--tfade)), transparent); }
 .tw.over.end { --tfade:0px; }
 .tw.long { max-height:min(62vh,560px); }
+/* 좁은 화면에서는 세로로 재우지 않는다 — 상자가 화면 대부분을 차지해 손가락이 늘 그
+   위에 있고, 그러면 페이지가 안 내려간다(사이트 점검 290건이 55,000px 상자에 갇혀
+   아래 섹션에 못 닿았다). 세로는 페이지가, 가로 넘침만 상자가 맡는다.
+   붙박이 머리글은 상자가 세로로 스크롤할 때만 붙으므로 여기서는 같이 사라진다. */
+@media (max-width:999px) { .tw.long { max-height:none; } }
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
   padding-top:9px; }
@@ -1063,7 +1084,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
   </div>
   <!-- 메뉴 항목은 여기 적지 않는다 — 정본은 뷰 파일의 view-def 이고, 조립이 그걸
        window.__VIEWS__ 로 실어 보낸다(문서 머리의 MANIFEST 자리). -->
-  <nav id="nav" aria-label="화면"></nav>
+  <div class="navbar"><nav id="nav" aria-label="화면"></nav></div>
   <div class="rail-foot">
     <button class="hbtn" id="refresh">새로고침</button>
   </div>

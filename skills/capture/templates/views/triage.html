@@ -39,6 +39,9 @@
 /* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
 #triage .trtouch { display:none; }
 @media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; } }
+/* 390px 에서 표가 63px 넘쳐 「8 / 90」이 「8 /」로 잘렸다. 폭을 정하는 건 줄을 안
+   바꾸는 머리글(「클릭 / 노출 (i)」)이다 — 좁은 화면에서는 머리글도 줄을 바꾼다. */
+@media (max-width:560px) { #triage .trtable th { white-space:normal; } }
 </style>
 
 <section id="triage-sec">
@@ -115,6 +118,7 @@ function TR_setFilter(v) { TR_FILTER = v; TR_KIND = ""; TR_SEL = new Set(); TR_C
 function TR_setKind(v) { TR_KIND = v; TR_CUR = 0; TR_draw(); }
 function TR_find(v) { TR_Q = v; TR_CUR = 0; TR_draw(); }
 
+const TR_UNDO = () => TR_FILTER && !READONLY;
 function TR_row(r, i) {
   const on = TR_SEL.has(r.key);
   const k = esc(r.key);
@@ -127,9 +131,8 @@ function TR_row(r, i) {
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
       `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td class="num">${r.score == null ? "—" : Math.round(r.score)}</td>
-    <td class="num">${num(r.clicks)} / ${num(r.impressions)}</td>
-    <td>${TR_FILTER && !READONLY
-      ? `<button class="go sm sec" onclick="TR_set([this.closest('tr').dataset.key], '')">미판정으로 되돌리기</button>` : ""}</td>
+    <td class="num">${num(r.clicks)} /&nbsp;${num(r.impressions)}</td>
+    ${TR_UNDO() ? `<td><button class="go sm sec" onclick="TR_set([this.closest('tr').dataset.key], '')">미판정으로 되돌리기</button></td>` : ""}
   </tr>`;
 }
 
@@ -161,7 +164,8 @@ function TR_draw() {
     </div>`;
   $("triage").innerHTML = bar + table(
     ["", "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", "종류?이 검색어에 걸린 진단",
-     ">점수?걸린 기회 중 가장 높은 점수", ">클릭 / 노출?최근 수집분의 서치콘솔 실적", ""],
+     ">점수?걸린 기회 중 가장 높은 점수", ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
+      .concat(TR_UNDO() ? [""] : []),   // 되돌리기 칸은 판정을 거를 때만 — 빈 칸도 폭을 먹는다
     list.map(TR_row), "");
   const tbl = $("triage").querySelector("table");
   if (tbl) tbl.classList.add("trtable");
