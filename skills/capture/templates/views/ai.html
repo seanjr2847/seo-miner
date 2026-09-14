@@ -1090,8 +1090,11 @@ VIEW("ai", function (d) {
       `답변 ${num(tot.total)}건 중 ${num(tot.cited)}건에 우리 링크`],
     ["언급률", AI_PCT(mr), prev ? AI_pp(mr, prev.mention_rate) : "",
       `이름만 나온 것 포함 ${num(tot.mentioned)}건`],
+    // 「×」로 적으면 곱이 위 숫자와 맞아야 한다 — 안 맞는다. 답변은 질문 × 엔진 ×
+    // **샘플**이고(같은 질문을 여러 번 묻는다), 샘플은 질문마다 다르다: 19 × 3 = 57
+    // 인데 실제 답변은 109 였다. 곱하지 말고 축만 센다.
     ["받은 답변", num(tot.total), "",
-      `질문 ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 × 엔진 ${engines.length}곳`],
+      `질문 ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 · 엔진 ${engines.length}곳 · 샘플 여러 번`],
     ["점유 순위", rankTxt, "", !sameScale ? "옛 기록이라 견줄 수 없습니다"
       : ours ? "인용된 도메인들과 견준 자리" : "우리 도메인이 등록돼 있지 않습니다"],
     ["안 잡힌 질문", num(missN), "", "인용도 언급도 없던 질문"],
@@ -1102,9 +1105,12 @@ VIEW("ai", function (d) {
   // 빈 상태에도 누를 것이 있어야 한다. 다만 띠가 이미 [인용 다시 확인]을 주요 행동으로
   // 들고 있는 상태(안 잡힌 질문이 없을 때)에서는 여기 또 두지 않는다 — 같은 행동이
   // 한 화면에 두 번 서면 어느 쪽이 다음 걸음인지 흐려진다.
-  if (at.length >= 2) $("ai-trend").innerHTML = AI_trendChart(at);
-  else $("ai-trend").innerHTML = `<div class="empty"><b>확인이 아직 1회뿐이라 추이가
-    없습니다</b><p>한 번 더 확인하면 인용률의 오르내림이 선으로 남습니다.</p>
+  // 문턱은 순위 추적과 한 벌이다(rank.html: "2점을 잇는 선은 추세가 아니다").
+  // 2회로 그리면 0~100% 고정축 바닥에 평평한 선 하나가 200px 를 쓰고 아무 말도
+  // 안 한다 — 실제로 그러고 있었다(08-28·09-02 둘 다 18.3%).
+  if (at.length >= 3) $("ai-trend").innerHTML = AI_trendChart(at);
+  else $("ai-trend").innerHTML = `<div class="empty"><b>확인이 ${at.length}회라 아직
+    추이가 없습니다</b><p>확인일이 3회 쌓이면 인용률의 오르내림이 선으로 남습니다.</p>
     ${missN && !READONLY && window.act
       ? `<div class="acts">${AI_act("ai", false)}</div>` : ""}</div>`;
 

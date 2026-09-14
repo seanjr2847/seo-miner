@@ -1538,6 +1538,27 @@ def test_seam_35_no_prescription_asks_to_paste_the_query_into_title():
     assert any("title" in a["tag"] for a in adv), "진단 픽스처가 title 을 안 잡는다 — 검사가 헛돈다"
 
 
+def test_seam_36_trend_charts_share_one_threshold():
+    """36) 추이선을 몇 회부터 그리는지는 한 벌이다.
+
+    rank.html 은 "2점을 잇는 선은 추세가 아니다"라며 3회를 문턱으로 삼는데,
+    ai.html 은 2회부터 그리고 있었다 — 그래서 AI 인용 화면이 0~100% 고정축
+    바닥에 평평한 선 하나를 200px 로 그리고 있었다(두 확인일 모두 18.3%).
+    한쪽만 고치면 다시 갈린다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    views = ctx["views"]
+    rank = (views / "rank.html").read_text("utf-8")
+    ai = (views / "ai.html").read_text("utf-8")
+    assert "확인일이 3회 쌓이면" in rank, "rank.html 이 문턱을 더는 말하지 않는다"
+    assert "확인일이 3회 쌓이면" in ai, "ai.html 이 rank 와 다른 문턱을 말한다"
+    m = re.search(r"if \(at\.length >= (\d+)\) \$\(\"ai-trend\"\)", ai)
+    assert m, "ai.html 의 추이 문턱 분기를 못 찾았다"
+    assert m.group(1) == "3", f"ai.html 이 {m.group(1)}회부터 그린다 — rank 는 3회다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

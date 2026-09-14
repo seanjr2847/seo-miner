@@ -83,6 +83,9 @@ const OV_acts = html => html ? `<div class="acts">${html}</div>` : "";
       클릭과 노출은 자릿수가 달라 각자 축을 쓴다 — 여기서 읽는 건 모양이고,
       값은 점 위에 올리면 나온다. 깊이 로그와 같은 .log/.logwrap 을 그대로 쓴다
       (좁은 화면에선 축소 대신 가로 스크롤). ── */
+const LEG_TIP = "클릭과 노출은 자릿수가 달라 세로축을 따로 씁니다. 왼쪽이 클릭, 오른쪽이 노출입니다. "
+  + "위 띠의 합계는 검색어별로 더한 값이라 구글이 가린 검색어가 빠지고, 기준일도 달라 여기보다 작습니다.";
+
 function dailyChart(rows, stats) {
   if (rows.length < 2)
     // 여기에 명령 칩을 또 놓지 않는다 — 같은 `/capture gsc` 가 화면 머리에 이미
@@ -128,6 +131,11 @@ function dailyChart(rows, stats) {
     >${esc(String(rows[i].date).slice(5))}</text>`;
   const sumC = stats?.clicks_sum ?? rows.reduce((a, r) => a + (r.clicks || 0), 0);
   const sumI = stats?.impressions_sum ?? rows.reduce((a, r) => a + (r.impressions || 0), 0);
+  // 이 합계는 위 띠의 합계와 **같은 28일이 아니다** — 여기는 성과일(gsc_daily,
+  // 08-03~08-30), 띠는 기준일 스냅샷(gsc_snapshots, 08-06~09-02)이고 출처도 다르다
+  // (날짜별 vs 검색어별). 둘 다 "28일 합계"라고만 적어 두면 한 화면에서 736 과 980
+  // 이 나란히 서서 무엇이 고장 났나 싶어진다. 이 자리는 자기 날짜를 말한다.
+  const span = `${String(rows[0].date).slice(5)}~${String(rows[n - 1].date).slice(5)}`;
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${VW} ${H}" role="img"
       aria-label="최근 ${n}일 클릭·노출 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}">
     <text class="axis" x="${L - 9}" y="${T - 12}" text-anchor="end"
@@ -142,12 +150,10 @@ function dailyChart(rows, stats) {
       stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
     ${hov}${idx.map(tick).join("")}
   </svg></div>
-  <div class="legend"><b class="sw-clk">■</b> 클릭 ${n}일 합계 ${num(sumC)}
+  <div class="legend"><b class="sw-clk">■</b> 클릭 ${esc(span)} 합계 ${num(sumC)}
     (하루 최고 ${num(mxC)}) · <b class="sw-imp">■</b> 노출 ${num(sumI)}
     (하루 최고 ${num(mxI)})<span class="hint" tabindex="0"
-      data-tip="클릭과 노출은 자릿수가 달라 세로축을 따로 씁니다. 왼쪽이 클릭, 오른쪽이 노출입니다."
-      title="클릭과 노출은 자릿수가 달라 세로축을 따로 씁니다. 왼쪽이 클릭, 오른쪽이 노출입니다."
-      aria-label="클릭과 노출은 자릿수가 달라 세로축을 따로 씁니다. 왼쪽이 클릭, 오른쪽이 노출입니다."
+      data-tip="${esc(LEG_TIP)}" title="${esc(LEG_TIP)}" aria-label="${esc(LEG_TIP)}"
       >i</span></div>`;
 }
 
@@ -430,9 +436,15 @@ VIEW("overview", function (d) {
   const per = d.gsc_period ? `${d.gsc_period}일` : "";
   const cmp = d.gsc_prev && d.gsc_date
     ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
-  const was = k => Number.isFinite(prev[k])
-    ? [per && `${per} 합계`, `직전 ${per || "기간"} ${num(prev[k])}`].filter(Boolean).join(" · ")
-    : [per && `${per} 합계`, "견줄 직전 기록 없음"].filter(Boolean).join(" · ");
+  // 띠의 합은 검색어별 행을 더한 것이다(gsc_snapshots) — 구글이 가린 검색어는 빠진다.
+  // 아래 일별 차트(날짜별 합)보다 작게 나오는 게 정상이라, 출처를 라벨에 싣는다.
+  // 안 실으면 한 화면에 "28일 합계 6"과 "합계 19"가 나란히 서서 고장으로 읽혔다.
+  // 「노출된 검색어」는 합이 아니라 개수다 — 거기엔 기간만 붙인다.
+  const was = k => {
+    const base = per && (k === "q" ? `${per} 동안` : `검색어별 ${per} 합계`);
+    return [base, Number.isFinite(prev[k]) ? `직전 ${num(prev[k])}` : "견줄 직전 기록 없음"]
+      .filter(Boolean).join(" · ");
+  };
   // 비어 있는 KPI 는 숫자만 두면 막다른 길이다 — 그 자리에서 채우러 갈 곳을 준다.
   const kwHint = d.kw_active ? "순위와 AI 인용을 확인하는 대상"
     : window.go ? go("keywords", "추적에 넣기") : "아직 고른 대상이 없습니다";
@@ -476,11 +488,16 @@ VIEW("overview", function (d) {
       "확인·완료·제외 표시는 이 기록을 남긴 시점의 상태라 여기서는 바꿀 수 없습니다."
     : "카드를 펼치면 어느 페이지가 걸렸는지와 할 일이 나옵니다. 막대는 점수(100점 만점)이고, " +
       "길수록 먼저 손댑니다.";
+  // 서버는 점수 상위 N 건만 싣는다(dashboard._axis_opps 의 limit). 위 띠의 「개선
+  // 기회」는 전수(opps_total)라 말이 안 맞는다 — 283 인데 목록·칩·거르개는 전부
+  // 200 이고 [더 보기] 를 끝까지 눌러도 200 에서 끝난다. 잘렸으면 잘렸다고 적는다.
+  const capped = (d.opps || []).length < (d.opps_total || 0)
+    ? ` 기회 ${num(d.opps_total)}건 중 점수 높은 ${num(d.opps.length)}개까지 이 화면에 옵니다.` : "";
   $("opp-sub").innerHTML = (READONLY
       ? "이 기록을 남긴 시점의 기회입니다."
       : "점수가 높은 것부터 봅니다.")
     + `<span class="hint" tabindex="0" data-tip="${esc(tip)}" title="${esc(tip)}"
-        aria-label="${esc(tip)}">i</span>`;
+        aria-label="${esc(tip)}">i</span>` + esc(capped);
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   // 같은 지면의 변형 검색어는 서버가 한 줄로 접어 보낸다(d.opp_groups).
   OPPS = OV_lines(d);
