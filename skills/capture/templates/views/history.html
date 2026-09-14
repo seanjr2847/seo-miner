@@ -21,6 +21,8 @@
 .hs-nt .p b { color:var(--ink); font-weight:500; }
 .hs-nt .p.bad b { color:var(--copper); }
 .hs-nt .p.free { white-space:normal; color:var(--slate); }
+/* 첫 오류는 문장이다 — 한 줄로 묶으면 칸 오른쪽에서 잘린다. */
+.hs-nt .p.err { white-space:normal; }
 
 /* ── 요약: 아래 목록이 통째로 답하는 네 가지. 숫자 KPI 는 셸의 .band 한 벌이다 ──
    (칩 줄로 그렸더니 버튼처럼 읽혔다 — 상태·수치를 누를 수 있는 것과 같은 모양으로
@@ -217,8 +219,8 @@ const HS_badge = v =>
 function HS_errHost(v) {
   const m = /https?:\/\/([^/\s]+)/.exec(v);
   if (!m) return "";
-  const parts = m[1].split(":")[0].split(".");
-  return parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+  // 도메인 그대로(dataforseo.com) — 라벨만 떼면 소문자 상호처럼 읽힌다.
+  return m[1].split(":")[0].split(".").slice(-2).join(".");
 }
 function HS_errMsg(v) {
   const m = /^(\d)\d\d\b/.exec(v.trim());
@@ -241,7 +243,7 @@ function HS_notes(n) {
     if (!v.trim()) return "";   // first_error= 처럼 빈 값은 이름만 덩그러니 남는다
     const val = v.trim().replace(/[,;]$/, "");
     if (k === "first_error") {
-      parts.push(`<span class="p bad" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
+      parts.push(`<span class="p bad err" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }

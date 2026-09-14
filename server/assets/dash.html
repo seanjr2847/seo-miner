@@ -69,6 +69,7 @@
      바깥 테두리를 지우고(.bare), 안쪽 여백을 준다. */
   .sm-note{margin:14px}
   #sm-kw .list.bare,#sm-aiq .list.bare{border:0;background:none;box-shadow:none}
+  #view-ai:has(.next [data-sm-act="make-prompts"]) #sm-aiq .gen{display:none}
   /* 불러오는 동안 세우는 스켈레톤 — 셸의 .skel 을 그대로 쓴다. */
   .sm-note > .skel{margin:10px 0}
 
@@ -1307,18 +1308,16 @@
   function aiqPaint(box, d) {
     var list = box.querySelector(".list");
     var empty = !(d.prompts || []).length;
-    // 비었으면 화면 머리 띠(AI_nextStep)가 이미 [질문 만들기]를 주요 행동으로
-    // 든다 — 이 빈 상자 버튼과 아래 입력줄의 고스트 버튼까지 두면 한 화면에
-    // 같은 라벨이 셋이 된다. 질문이 하나라도 있으면(비어 있지 않으면) 띠는 다른
-    // 행동으로 넘어가므로 그때는 고스트 버튼을 다시 켠다.
-    var gen = box.querySelector(".gen");
-    if (gen) gen.hidden = empty;
+    // 빈 상자에는 버튼을 또 두지 않는다 — 띠나 아래 입력줄의 [질문 만들기]가 선다.
+    // 입력줄 버튼을 띠와 겹칠 때만 감추는 건 CSS(:has)가 한다: 여기서 "비었다"로
+    // 감추면 확인 기록은 있는데 질문을 다 지운 사이트에서 띠가 다른 행동을 들어
+    // 화면에 [질문 만들기]가 하나도 안 남는다. 띠와 이 상자는 그리는 순서도 갈린다.
     box.querySelector(".cnt").innerHTML =
       "켠 질문 " + d.active_total + " / " + d.limit +
       "개" + (d.active_total >= d.limit ? ' <b class="warn">· 상한에 닿았습니다</b>' : "");
     if (empty) {
       list.innerHTML = emptyNote("아직 질문이 없습니다",
-        "화면 머리의 [질문 만들기]를 누르면 업종과 검색어에 맞는 스무 개가 채워집니다.");
+        "[질문 만들기]를 누르면 업종과 검색어에 맞는 스무 개가 채워집니다.");
       return;
     }
     bare(list, false);
