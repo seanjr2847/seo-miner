@@ -266,8 +266,10 @@ function BLK_domains(d) {
   // "고장인가"로 읽히므로 아예 세우지 않는다. 한 줄이라도 값이 있으면 남긴다.
   const hasSeen = doms.some(r => r.first_seen), hasLost = doms.some(r => r.lost_date);
   const rows = doms.map((r, i) => {
+    // 지수 0(또는 없음)은 흐리게 찍는다 — 정렬은 이미 지수 DESC 라 위쪽에 몰리는
+    // 실제 값과, 대다수인 0 이 같은 굵기로 서면 어느 줄이 중요한지 안 갈린다.
     const cells = `<td class="blk-dom">${esc(r.domain)}</td>` +
-      `<td class="num">${r.rank == null ? "—" : r.rank}</td>` +
+      `<td class="num">${!r.rank ? `<span class="muted">${r.rank == null ? "—" : 0}</span>` : r.rank}</td>` +
       `<td class="num">${num(r.backlinks)}</td>` +
       `<td class="num">${num(r.dofollow)}</td>` +
       (hasSeen ? `<td>${esc(BLK_day(r.first_seen))}</td>` : "") +

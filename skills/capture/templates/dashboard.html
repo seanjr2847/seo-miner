@@ -959,8 +959,8 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 /* 준비물 줄의 복사 칩 — .cmd 의 위 여백은 문단용이라 목록 안에서는 줄인다. */
 #docban .must .cmd { margin:7px 0 3px; }
 #docban details { margin-top:12px; }
-#docban summary { font:500 12.5px/1.4 var(--sans); color:var(--slate); cursor:pointer; }
-#docban summary:hover { color:var(--patina); }
+#docban summary { font:500 12.5px/1.4 var(--sans); color:var(--patina); cursor:pointer; text-decoration:none; }
+#docban summary:hover { text-decoration:underline; }
 
 /* ── 설정 패널 ─────────────────────────────────────────── */
 #setup { padding:18px 0 22px; }
@@ -2950,7 +2950,7 @@ async function loadDoctor() {
           `</li>`;
       }).join("")}</ul>`;
     if (d.extra && d.extra.length)
-      h += `<details><summary>더 켤 수 있는 기능 ${d.extra.length}개. 모두 선택입니다.</summary>
+      h += `<details><summary>더 켤 수 있는 기능 ${d.extra.length}개 보기</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     // 사이트가 없으면 render() 가 아예 안 돈다(부를 /api/data 가 없다) — 그래서
     // 여태 [안내] 화면이 **첫 사용자에게만** 통째로 비어 있었다. 제목만 있고 6단계가

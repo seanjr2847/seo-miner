@@ -194,14 +194,15 @@ function depthLog(rows, brandCatalogEmpty, period) {
     : "";
   // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
   // 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
+  const hasScore = KW_hasScore(rows);
   const tbl = table([
     "검색어",
-    KW_SCORE_TH,
+    ...(hasScore ? [KW_SCORE_TH] : []),
     `>평균 순위?서치콘솔이 보고한 ${period || "기간"} 평균 순위입니다`,
     `>1페이지까지?${RULES.page1}위 경계까지 올려야 할 칸 수입니다. 이미 1페이지면 빈 칸입니다`,
     `>${impLabel}?${period || "기간"} 합계 노출입니다. 순위를 올리면 클릭으로 바뀔 몫입니다`,
     `>클릭?${period || "기간"} 합계 클릭입니다`],
-    rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}>${KW_qcell(r.query)}
+    rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}>${KW_qcell(r.query, hasScore)}
       <td class="num">${r.pos}</td>
       <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
       <td class="num">${num(r.imp)}</td>
@@ -307,15 +308,15 @@ function KW_mvList() {
     return $("mv-list").innerHTML = `<div class="empty"><b>이 조건에 맞는 검색어가 없습니다</b>
       <p>움직인 검색어는 모두 ${KW_MV.length}개입니다.</p>
       <div class="acts"><button onclick="KW_mvReset()">전체 보기</button></div></div>`;
-  const per = KW_PERIOD || "기간";
+  const per = KW_PERIOD || "기간", hasScore = KW_hasScore(list);
   $("mv-list").innerHTML = `<div class="card">` + table([
     "검색어",
-    KW_SCORE_TH,
+    ...(hasScore ? [KW_SCORE_TH] : []),
     `>평균 순위?서치콘솔이 보고한 ${per} 평균 순위입니다`,
     ">Δ순위?직전 기록 대비 움직인 칸수입니다. 양수면 위로 올라온 것입니다",
     `>클릭?${per} 합계 클릭입니다. 옆 숫자는 직전 기록 대비 증감입니다`,
     `>노출?${per} 합계 노출입니다. 노출이 적으면 순위도 크게 흔들립니다`],
-    list.map(m => `<tr ${KW_rowAttr(m.query, "mv")}>${KW_qcell(m.query)}
+    list.map(m => `<tr ${KW_rowAttr(m.query, "mv")}>${KW_qcell(m.query, hasScore)}
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
@@ -339,12 +340,15 @@ const KW_rowAttr = (q, src) =>
 // 열 이름은 그 칸에 든 값의 이름이다 — 「먼저」는 정렬 의도였지 값의 이름이 아니었다.
 const KW_SCORE_TH = ">점수?기회 점수 100점 만점입니다. 높을수록 먼저 손댈 자리입니다."
   + " 빈 칸은 아직 기회 목록에 없는 검색어입니다";
-function KW_qcell(q) {
+function KW_qcell(q, showScore = true) {
   const o = oppOf(q);
   return `<td class="kwcell"><span class="kwq">${esc(q)}</span>${
-    o ? oppMeter(o) + oppWhy(o) : ""}</td>
-    <td class="num">${o ? oppScore(o) : '<span class="muted">—</span>'}</td>`;
+    o ? oppMeter(o) + oppWhy(o) : ""}</td>` +
+    (showScore ? `<td class="num">${o ? oppScore(o) : '<span class="muted">—</span>'}</td>` : "");
 }
+// 점수 열은 보이는 줄 전부에 점수가 없으면 뺀다 — "—"만 줄줄이 선 열은 읽어도
+// 뜻이 없다(정렬 th[data-s] 인덱스가 셀과 어긋나지 않게 헤더·행 양쪽에서 같이 뺀다).
+const KW_hasScore = rows => rows.some(r => oppOf(r.query));
 const KW_find = tr => (tr.dataset.kwsrc === "mv" ? KW_MV : KW_ROWS)
   .find(r => r.query === tr.dataset.kwq);
 const KW_pos = p => Number.isFinite(p) ? String(+p.toFixed(1)) : "—";
