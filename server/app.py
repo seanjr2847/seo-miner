@@ -1055,7 +1055,7 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     하므로 안 바꾸고, 여기서 /d 하나만 처음 화면(/)으로 302 돌린다. hash(#사이트)는
     서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
     if request.url.path == "/d" and e.status_code == 401:
-        return RedirectResponse("/?login=expired", status_code=302)
+        return RedirectResponse("/?login=required", status_code=302)
     # 사람이 연 주소(오타·옛 링크)가 없으면 JSON 한 줄 대신 돌아갈 길이 있는 화면을 준다.
     # /api/* 는 클라이언트가 detail 을 읽으므로 JSON 그대로.
     if e.status_code == 404 and not request.url.path.startswith("/api/"):
@@ -1064,17 +1064,28 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     return await http_exception_handler(request, e)
 
 
+# 머리 줄은 랜딩 헤더(.hbar·.mark)와 같은 판·같은 서체다 — 서체를 안 불러 로고가
+# 폴백 등폭으로 벌어지고 머리가 없어 다른 사이트처럼 보였다(8회차).
 _NOT_FOUND = (
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@600&display=swap">'
+    '<body style="margin:0;background:#E6E9E4">'
+    '<header style="background:#121714"><div style="max-width:1120px;margin:0 auto;padding:12px 24px;'
+    'display:flex;align-items:center;gap:16px">'
+    '<a href="/" style="font:600 15px/1 \'IBM Plex Mono\',ui-monospace,monospace;letter-spacing:.06em;'
+    'color:#E6E9E4;text-decoration:none">seo<b style="color:#57B49C;font-weight:600">·</b>miner</a>'
+    '<span style="flex:1"></span>'
+    '<a href="/auth/login" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
+    'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
+    'text-decoration:none">Google로 시작</a></div></header>'
     '<main style="font:15px/1.7 -apple-system,BlinkMacSystemFont,\'Malgun Gothic\',sans-serif;'
-    'color:#121714;max-width:36rem;margin:0 auto;padding:18vh 20px 0">'
-    '<p style="font:600 15px/1 ui-monospace,monospace">seo·miner</p>'
-    '<h1 style="font-size:23px;margin:24px 0 8px">페이지를 찾을 수 없습니다</h1>'
+    'color:#121714;max-width:36rem;margin:0 auto;padding:12vh 24px 0;word-break:keep-all">'
+    '<h1 style="font-size:23px;margin:0 0 8px">페이지를 찾을 수 없습니다</h1>'
     "<p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner 는 서치콘솔 숫자로 다음에 고칠 "
     "검색어를 고르는 도구입니다.</p>"
     '<p style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:20px">'
     '<a href="/" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;'
     'border-radius:4px;background:#22705F;color:#fff;text-decoration:none;font-weight:600">처음으로</a>'
-    '<a href="/auth/login" style="color:#22705F">Google로 시작</a></p></main>')
+    '</p></main>')
 
 
 @app.get("/d")

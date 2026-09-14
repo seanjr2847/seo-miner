@@ -141,11 +141,11 @@ def demo() -> None:
 
         # /d 는 HTML 화면이라 JSON 401 이 아니라 처음 화면으로 302 다 — 스타일 없는
         # {"detail":...} 를 그대로 보여 주면 안 된다. hash(#사이트)는 서버로 안 오므로
-        # 리다이렉트로 잃는 것이 없다. 표시(?login=expired)가 없으면 재방문자는 왜
+        # 리다이렉트로 잃는 것이 없다. 표시(?login=required)가 없으면 재방문자는 왜
         # 처음 화면으로 왔는지 몰라 데이터가 날아갔다고 읽는다 — 표시가 실려야 한다.
         r = c.get("/d", follow_redirects=False)
-        assert r.status_code == 302 and r.headers["location"] == "/?login=expired", \
-            f"/d 가 로그인 없이 302 /?login=expired 로 안 간다: {r.status_code} {r.headers.get('location')}"
+        assert r.status_code == 302 and r.headers["location"] == "/?login=required", \
+            f"/d 가 로그인 없이 302 /?login=required 로 안 간다: {r.status_code} {r.headers.get('location')}"
 
         # 랜딩 푸터가 부르는 방침 문서가 로그인 없이 열리고, 거기와 FAQ 가 말하는 권한이
         # 실제로 받는 스코프(identity.SCOPES)와 같다 — FAQ 가 "서치콘솔 하나"라고 말하는
