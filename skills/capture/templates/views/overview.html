@@ -200,7 +200,7 @@ function oppRow(o) {
       ${oppScore(o)}
       <div>
         <div class="oh">
-          <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(o.kind)}"
+          <span class="kind${isDefensive(o) ? " k-def" : ""}"
             >${esc(o.label || o.kind)}</span>
           ${n > 1 ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다. 펼치면 전부와 묶은 이유가 나옵니다."
             >검색어 ${n}개</span>` : ""}
@@ -315,7 +315,7 @@ function oppChips() {
   const kinds = Object.keys(counts);
   el.innerHTML = kinds.length > 1 ? kinds.map(k =>
     `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
-       onclick="filterKind(this)" title="${esc(k)}"
+       onclick="filterKind(this)"
        aria-pressed="${KIND_FILTER === k}">${esc((window.KIND_LABELS || {})[k] || k)}
        <b>${counts[k]}</b></button>`).join("") : "";
 }

@@ -139,7 +139,13 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   device:"기기", errors:"오류", skipped:"건너뜀", harvest_kw:"수확 키워드",
   harvest_comp:"수확 경쟁사", engines:"엔진", samples:"샘플", opps:"기회",
   domains:"도메인", inserted:"신규", candidates:"후보", mode:"방식", urls:"주소",
-  checked:"검사", striking:"밀면 오를 검색어", pseo:"pSEO"};
+  checked:"검사", striking:"밀면 오를 검색어", pseo:"pSEO",
+  // 운영 기록에 실제로 남아 있던 키(2026-09-14 전수) — 없으면 영문 필드명이 그대로 보였다.
+  anchors:"앵커", backlinks:"백링크", intersect:"겹친 도메인", referring_domains:"참조 도메인",
+  summary:"요약", intents_filled:"의도 채움", first_error:"첫 오류", volumes_filled:"검색량 채움",
+  auto_new:"새 경쟁사", metrics:"지표", gap_rows:"빈틈 행", seed:"시드", links:"링크",
+  issues:"문제", keywords:"키워드", chunks:"묶음", updated:"갱신", calls:"호출",
+  daily:"일별", country:"나라"};
 // 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
 const HS_STALE_DAYS = 14;
 
@@ -202,14 +208,16 @@ const HS_badge = v =>
 function HS_notes(n) {
   if (!n) return "";
   const s = String(n), i = s.indexOf("중단:");
-  const head = (i < 0 ? s : s.slice(0, i)).replace(/[|\s]+$/, "");
+  // "scoring load: opps=…" — 앞의 모듈 이름표는 사람에게 할 말이 아니다.
+  const head = (i < 0 ? s : s.slice(0, i)).replace(/^scoring load:\s*/, "").replace(/[|\s]+$/, "");
   const stop = i < 0 ? "" : s.slice(i + 3).trim();
   const parts = [];
   // 값에 공백이 든 것이 있다(engines=['a', 'b']) — 다음 key= 직전까지가 한 값이다.
   const rest = head.replace(/([A-Za-z_]+)=(.*?)(?=\s+[A-Za-z_]+=|$)/g, (_, k, v) => {
-    const bad = (k === "errors" || k === "skipped") && +v > 0;
+    if (!v.trim()) return "";   // first_error= 처럼 빈 값은 이름만 덩그러니 남는다
+    const bad = ((k === "errors" || k === "skipped") && +v > 0) || (k === "first_error" && v.trim());
     parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k] || k)} ` +
-               `<b>${esc(v.trim())}</b></span>`);
+               `<b>${esc(v.trim().replace(/[,;]$/, ""))}</b></span>`);
     return "";
   }).trim();
   if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
