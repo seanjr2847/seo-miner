@@ -154,6 +154,7 @@ def demo() -> None:
         assert 'href="/privacy"' in landing, "랜딩 푸터에 개인정보처리방침 링크가 없다"
         r = c.get("/privacy")
         assert r.status_code == 200 and "받는 권한" in r.text, f"/privacy 가 안 열린다: {r.status_code}"
+        assert "처음으로" in r.text, "/privacy 본문에 랜딩으로 돌아가는 링크가 없다"
         import identity
         ga4 = "https://www.googleapis.com/auth/analytics.readonly" in identity.SCOPES
         for name, doc in (("랜딩 FAQ", landing), ("/privacy", r.text)):
