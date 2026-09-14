@@ -195,6 +195,10 @@ function HS_secs(r) {
   return Number.isFinite(s) && s >= 0 ? Math.round(s) : null;
 }
 const HS_mmss = s => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`;
+// 비용은 늘 소수 둘째 자리까지만 — 합계 "$2.922"(셋째 자리)와 행 "$0.1222"(넷째 자리)가
+// 섞이면 천 단위 구분처럼 읽힌다(30-desk-10-기록-1440.png). 0보다 크고 1센트 미만이면
+// "<$0.01"로 뭉뚱그린다. 합계·행이 이 한 함수를 같이 쓴다.
+const HS_usd = v => v > 0 && v < 0.01 ? "<$0.01" : `$${(v || 0).toFixed(2)}`;
 
 /* ── 결과 판정 ─────────────────────────────────────────────
       판정은 셸의 window.runVerdict 한 벌이다 — 이 화면이 정본이었는데 [개요]·애드온이
@@ -204,6 +208,26 @@ const HS_verdict = r => window.runVerdict(r);
 const HS_BADGE = {ok:"ok", bad:"bad", skip:"muted"};
 const HS_badge = v =>
   `<span class="badge ${HS_BADGE[v.cls]}" title="${esc(v.why)}">${esc(v.label)}</span>`;
+
+// 첫 오류(first_error)는 수집기가 남긴 HTTP 상태줄 원문이다
+// ("500 Server Error: Internal Server Error for url: https://api.dataforseo.com/…") —
+// 등폭 빨간 글자로 그대로 나오면 무섭게 읽힌다(10_aitierlist_기록_desktop.png).
+// 상태 앞자리(5xx/4xx)로만 사람 말로 옮기고, 원문은 title 로 남긴다. 서비스 이름은
+// 새 목록을 두지 않고 URL 호스트명에서 도메인 라벨을 뽑아 쓴다.
+function HS_errHost(v) {
+  const m = /https?:\/\/([^/\s]+)/.exec(v);
+  if (!m) return "";
+  const parts = m[1].split(":")[0].split(".");
+  return parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+}
+function HS_errMsg(v) {
+  const m = /^(\d)\d\d\b/.exec(v.trim());
+  const svc = HS_errHost(v);
+  const who = `외부 서비스${svc ? `(${svc})` : ""}`;
+  if (m && m[1] === "5") return `${who} 서버 오류 — 잠시 뒤 다시 수집하면 됩니다`;
+  if (m && m[1] === "4") return `${who} 요청이 거절됐습니다 — 키·권한·잔액을 확인하세요`;
+  return v;
+}
 
 function HS_notes(n) {
   if (!n) return "";
@@ -215,9 +239,15 @@ function HS_notes(n) {
   // 값에 공백이 든 것이 있다(engines=['a', 'b']) — 다음 key= 직전까지가 한 값이다.
   const rest = head.replace(/([A-Za-z_]+)=(.*?)(?=\s+[A-Za-z_]+=|$)/g, (_, k, v) => {
     if (!v.trim()) return "";   // first_error= 처럼 빈 값은 이름만 덩그러니 남는다
-    const bad = ((k === "errors" || k === "skipped") && +v > 0) || (k === "first_error" && v.trim());
+    const val = v.trim().replace(/[,;]$/, "");
+    if (k === "first_error") {
+      parts.push(`<span class="p bad" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
+                 `<b>${esc(HS_errMsg(val))}</b></span>`);
+      return "";
+    }
+    const bad = (k === "errors" || k === "skipped") && +v > 0;
     parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k] || k)} ` +
-               `<b>${esc(v.trim().replace(/[,;]$/, ""))}</b></span>`);
+               `<b>${esc(val)}</b></span>`);
     return "";
   }).trim();
   if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
@@ -275,7 +305,7 @@ function HS_runSummary() {
                [bad, "문제", "중단·미완·오류"]];
   if (skip) met.push([skip, "건너뜀", "보통 한도·키 없음"]);
   met.push([num(calls), "외부 호출", "이 목록의 합계"],
-           [`$${cost.toFixed(3)}`, "비용", "수집기가 적어 둔 추정치"]);
+           [HS_usd(cost), "비용", "수집기가 적어 둔 추정치"]);
   $("runsum").className = "band";
   $("runsum").innerHTML = met.map(([v, l, b]) =>
     `<div class="m"><div class="v">${v}</div><div class="l">${l}</div>
@@ -362,7 +392,7 @@ function HS_runList() {
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
       <td class="num">${num(r.api_calls || 0)}</td>
-      <td class="num">${(r.cost_estimate_usd || 0) ? "$" + r.cost_estimate_usd : "—"}</td>
+      <td class="num">${r.cost_estimate_usd ? HS_usd(r.cost_estimate_usd) : "—"}</td>
       <td>${HS_notes(r.notes)}${
         v.cls === "bad" ? `<div class="why">${esc(v.why)}</div>` : ""}${
         fix ? `<div class="acts">${fix}</div>` : ""}</td>

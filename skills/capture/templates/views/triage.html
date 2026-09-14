@@ -88,11 +88,33 @@ async function TR_fetch() {
   TR_counts(t.counts || {});
   TR_tools();
   TR_draw();
+  TR_nextStep(t.counts || {});
 }
 
-function TR_counts(c) {
+// 다른 11 화면은 전부 머리에 [다음 행동] 띠가 선다 — 이 화면만 없었다
+// (20-view-01-심사-mobile.png). 셸의 nextStep 은 이 화면을 특별히 빼지 않는다
+// (dashboard.html 은 박제본에서 화면째로 SM.drop 할 뿐 — 판정은 종이에서 못 누르니까다)
+// — 그냥 부른 적이 없었다. 판정 바가 행동 그 자체라 버튼은 안 두고 개수만 짧게 말한다.
+function TR_nextStep(c) {
+  if (!window.nextStep) return;
+  const none = c.none || 0;
+  nextStep("triage", none
+    // 키 안내(1·2·3)는 판정 바가 기기에 맞춰 따로 말한다 — 여기선 터치에도 참인 말만.
+    ? `<p>미판정 <b>${none}</b>건이 남았습니다. 줄을 고르고 판정 버튼을 누릅니다.</p>`
+    : "");
+}
+
+let TR_COUNTS = {};
+function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); }
+// 판정별 전체 수는 거르기와 무관하게 그대로 둔다(요약이 거짓말하면 안 된다) — 검색·종류
+// 필터가 걸려 있을 때만 뒤에 보이는 줄 수를 덧붙인다. 검색창에 찾는 말을 넣어도
+// 머리글이 안 바뀌었다(72_review_search_ai.png).
+function TR_renderCounts() {
+  const c = TR_COUNTS;
+  const narrowed = TR_Q.trim() || TR_KIND;
   $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업 <b>${c.work || 0}</b>` +
-    ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>`;
+    ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
+    (narrowed ? ` · 보이는 줄 <b>${TR_filtered().length}</b>` : "");
 }
 
 function TR_filtered() {
@@ -137,6 +159,7 @@ function TR_row(r, i) {
 }
 
 function TR_draw() {
+  TR_renderCounts();
   const list = TR_filtered();
   if (!TR_ROWS.length)
     return $("triage").innerHTML = `<div class="empty"><b>심사할 검색어가 없습니다</b>
@@ -166,11 +189,21 @@ function TR_draw() {
     ["", "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", "종류?이 검색어에 걸린 진단",
      ">점수?걸린 기회 중 가장 높은 점수", ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
       .concat(TR_UNDO() ? [""] : []),   // 되돌리기 칸은 판정을 거를 때만 — 빈 칸도 폭을 먹는다
-    list.map(TR_row), "");
+    list.map(TR_row), "")
+    // 표가 길면(모바일에서 20줄 넘게 스크롤하면) 필터·판정 바로 돌아갈 길이 없었다
+    // (54_mobile_review_bottom.png) — 검색창까지 스크롤만 하고 포커스는 주지 않는다.
+    + (list.length > 20
+      ? `<div class="acts"><button class="go sec sm" onclick="TR_toTop()">맨 위로</button></div>`
+      : "");
   const tbl = $("triage").querySelector("table");
   if (tbl) tbl.classList.add("trtable");
 }
 
+// 검색창으로만 스크롤한다(포커스는 안 준다) — 포커스까지 주면 모바일에서 자판이 뜬다.
+function TR_toTop() {
+  const el = document.querySelector("#tr-tools input[type=search]");
+  if (el) el.scrollIntoView({block: "center"});   // 부드럽게는 셸의 scroll-behavior 가 정한다
+}
 function TR_reset() { TR_FILTER = ""; TR_KIND = ""; TR_Q = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tools(); TR_draw(); }
 function TR_toggle(key, on) { if (on) TR_SEL.add(key); else TR_SEL.delete(key); TR_draw(); }
 function TR_all(on) { TR_SEL = new Set(on ? TR_filtered().map(r => r.key) : []); TR_draw(); }
