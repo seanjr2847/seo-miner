@@ -107,7 +107,10 @@ VIEW("guide", function (d) {
   // 명령이 다른 일을 하는 자리) 이 화면이 원래 쓰던 손잡이를 그대로 쓴다.
   const btn = (s.runnable && window.act) ? act(s.id, s.t)
     : (window.SM && SM.host && SM.host.stepChip) ? SM.host.stepChip(s) : "";
-  nextStep("guide", `<p>${steps.length}단계 중 ${done}단계가 끝났습니다.
+  // 「4단계가 끝났습니다」는 4번이 끝났다고 읽힌다 — 단계는 건너뛰어 끝나기도 해서
+  // (4번 대기·5번 끝) 개수와 순번이 갈린다. 개수로 적고, 지금 할 순번을 따로 말한다.
+  nextStep("guide", `<p>${steps.length}단계 중 ${done}개가 끝났고, 지금 할 것은
+    ${here + 1}번 ${esc(s.t)}입니다.
     <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
     + (btn ? `<div class="acts">${btn}</div>` : ""));
 });
