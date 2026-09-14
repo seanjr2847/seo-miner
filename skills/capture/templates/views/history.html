@@ -17,13 +17,12 @@
 /* ── 한 실행이 남긴 key=value: 원문 대신 사람 말 + 등폭 값 ── */
 .hs-nt { display:block; font:400 11.5px/1.7 var(--mono); color:var(--slate);
   font-variant-numeric:tabular-nums; }
-.hs-nt .p { display:inline-block; margin-right:11px; white-space:nowrap; }
-.hs-nt .p b { color:var(--ink); font-weight:500; }
+/* 값은 줄을 바꾼다 — 한 줄로 묶었더니 긴 값(중단 사유·교집합 도메인 목록)이 표를
+   1,484px 로 밀어 기본 화면에서 오류 결론이 칸 밖으로 잘렸다. */
+.hs-nt .p { display:inline; margin-right:11px; }
+.hs-nt .p b { color:var(--ink); font-weight:500; overflow-wrap:anywhere; }
 .hs-nt .p.bad b { color:var(--copper); }
 .hs-nt .p.free { white-space:normal; color:var(--slate); }
-/* 첫 오류는 문장이다 — 한 줄로 묶으면 칸 오른쪽에서 잘린다. */
-.hs-nt .p.err { white-space:normal; }
-
 /* ── 요약: 아래 목록이 통째로 답하는 네 가지. 숫자 KPI 는 셸의 .band 한 벌이다 ──
    (칩 줄로 그렸더니 버튼처럼 읽혔다 — 상태·수치를 누를 수 있는 것과 같은 모양으로
    그리지 않는다.) */
@@ -50,6 +49,12 @@
    다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. 이유 아래에 그 종류를 다시 돌리는
    손잡이를 같이 둔다 — 실패한 줄에서 다음 걸음까지 한 자리에서 끝난다. */
 #runs .why { font-size:12.5px; color:var(--copper); margin-top:4px; }
+/* 좁은 화면에서 기록 칸은 표를 옆으로 여섯 칸 밀어야 나온다 — 실패 이유는 배지 밑으로
+   당겨 온다(넓은 화면은 기록 칸 그대로). */
+#runs .why-m { display:none; min-width:16ch; }
+@media (max-width:760px) { #runs .why-m { display:block; } #runs td .why:not(.why-m) { display:none; }
+  /* 기록 칸이 줄을 바꾸게 되자 좁은 폭에 눌려 한 줄이 300px 로 길어졌다 — 칸 폭을 잡아 둔다. */
+  #runs td:last-child { min-width:260px; } }
 #runs .why + .acts { margin-top:8px; }
 
 /* ── 고친 것: 표가 아니라 줄이다. 경로·근거가 산문이라 칸에 안 들어간다. ── */
@@ -231,6 +236,15 @@ function HS_errMsg(v) {
   return v;
 }
 
+// 배지 밑(좁은 화면)에 올릴 실패 원인 한 줄 — 판정 이유("도중에 예외로 멈췄습니다")는
+// 무엇을 하면 되는지 안 말한다. 수집기가 남긴 중단 사유·첫 오류가 그 답이다.
+function HS_cause(n) {
+  const s = String(n || ""), i = s.indexOf("중단:");
+  if (i >= 0) return s.slice(i + 3).trim();
+  const m = /first_error=(.*?)(?=\s+[A-Za-z_]+=|$)/.exec(s);
+  return m && m[1].trim() ? HS_errMsg(m[1].trim()) : "";
+}
+
 function HS_notes(n) {
   if (!n) return "";
   const s = String(n), i = s.indexOf("중단:");
@@ -243,7 +257,7 @@ function HS_notes(n) {
     if (!v.trim()) return "";   // first_error= 처럼 빈 값은 이름만 덩그러니 남는다
     const val = v.trim().replace(/[,;]$/, "");
     if (k === "first_error") {
-      parts.push(`<span class="p bad err" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
+      parts.push(`<span class="p bad" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }
@@ -390,7 +404,7 @@ function HS_runList() {
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
         <span class="muted">${HS_ago(r.started_at)}</span></td>
       <td class="kwcell">${esc(HS_kind(r.kind))}</td>
-      <td>${HS_badge(v)}</td>
+      <td>${HS_badge(v)}${v.cls === "bad" ? `<div class="why why-m">${esc(HS_cause(r.notes) || v.why)}</div>` : ""}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
       <td class="num">${num(r.api_calls || 0)}</td>
