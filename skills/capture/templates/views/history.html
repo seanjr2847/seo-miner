@@ -240,15 +240,22 @@ function HS_errMsg(v) {
 // 배지 밑(좁은 화면)에 올릴 실패 원인 한 줄 — 판정 이유("도중에 예외로 멈췄습니다")는
 // 무엇을 하면 되는지 안 말한다. 수집기가 남긴 중단 사유·첫 오류가 그 답이다.
 function HS_cause(n) {
-  const s = String(n || ""), i = s.indexOf("중단:");
+  const s = HS_legacy(n), i = s.indexOf("중단:");
   if (i >= 0) return s.slice(i + 3).trim();
   const m = /first_error=(.*?)(?=\s+[A-Za-z_]+=|$)/.exec(s);
   return m && m[1].trim() ? HS_errMsg(m[1].trim()) : "";
 }
 
+// 옛 기록 되읽기 — 분당 한도(402)를 「잔액 없음」으로 적던 때가 있다(serp_adapter.fatal 은
+// 이제 응답 문장을 믿어 「분당 호출 한도 초과」로 적는다). 남은 기록은 그대로라 결제
+// 페이지로 헛걸음시키지 않게 화면에서만 같은 판정으로 읽는다.
+const HS_legacy = n => String(n || "").replace(
+  /잔액 없음\(402\)([^[]*)\[([^\]]*rates? limit[^\]]*)\]/i,
+  "분당 호출 한도 초과(402) — 잠시 뒤 다시 조회하면 됩니다 [$2]");
+
 function HS_notes(n) {
   if (!n) return "";
-  const s = String(n), i = s.indexOf("중단:");
+  const s = HS_legacy(n), i = s.indexOf("중단:");
   // "scoring load: opps=…" — 앞의 모듈 이름표는 사람에게 할 말이 아니다.
   const head = (i < 0 ? s : s.slice(0, i)).replace(/^scoring load:\s*/, "").replace(/[|\s]+$/, "");
   const stop = i < 0 ? "" : s.slice(i + 3).trim();

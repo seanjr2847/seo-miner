@@ -609,7 +609,8 @@ td.num:last-child, th.num:last-child { padding-right:0; }
    스크롤 끝에 닿으면 페이드가 꺼져야 하지만, 그건 스크롤을 지켜봐야 알 수 있다 —
    여기서는 넘칠 때만 켜지는 마스크로 두고 끝 판정은 tableFade() 가 한다. */
 .tw { overflow:auto; }
-.tw.over { --tfade:28px;
+/* 28px 로는 평가자 셋이 "넘친다는 단서가 없다"고 읽었다 — 한 글자 반쯤 흐려야 보인다. */
+.tw.over { --tfade:48px;
   -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--tfade)), transparent);
           mask-image:linear-gradient(to right, #000 calc(100% - var(--tfade)), transparent); }
 .tw.over.end { --tfade:0px; }
