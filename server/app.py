@@ -1069,8 +1069,12 @@ _NOT_FOUND = (
     'color:#121714;max-width:36rem;margin:0 auto;padding:18vh 20px 0">'
     '<p style="font:600 15px/1 ui-monospace,monospace">seo·miner</p>'
     '<h1 style="font-size:23px;margin:24px 0 8px">페이지를 찾을 수 없습니다</h1>'
-    "<p>주소가 바뀌었거나 잘못 적혔습니다.</p>"
-    '<p><a href="/" style="color:#22705F">← 처음으로</a></p></main>')
+    "<p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner 는 서치콘솔 숫자로 다음에 고칠 "
+    "검색어를 고르는 도구입니다.</p>"
+    '<p style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:20px">'
+    '<a href="/" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;'
+    'border-radius:4px;background:#22705F;color:#fff;text-decoration:none;font-weight:600">처음으로</a>'
+    '<a href="/auth/login" style="color:#22705F">Google로 시작</a></p></main>')
 
 
 @app.get("/d")
