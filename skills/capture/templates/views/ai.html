@@ -660,7 +660,11 @@ function AI_nextStep(d, has, missN, canFilter) {
   // 남는 첫 문장만으로 "지금 상태"가 그대로 읽힌다.
   const live = t => `<span class="live"> ${t}</span>`;
   if (!has && !pr.ai_prompts)
-    return put("<b>물어볼 질문이 아직 없습니다.</b>" + live("질문을 만들면 인용을 확인할 수 있습니다."),
+    // 누르기 전에 무엇이 일어나는지 말한다 — 동사 버튼 하나뿐이라 처음 온 사람은 눌러도
+    // 되는지(비용이 드는지) 판단할 근거가 없었다(8회차). 사실: POST /api/ai/prompts 는
+    // 초안 20개만 심고 인용 확인(엔진 호출)은 하지 않는다(dash.html makePrompts).
+    return put("<b>물어볼 질문이 아직 없습니다.</b>" + live("[질문 만들기]는 이 사이트에 맞는 " +
+        "질문 초안을 최대 20개 만들 뿐이고, AI에 묻는 인용 확인은 따로 누를 때 합니다. 만든 질문은 끄거나 지울 수 있습니다."),
       W(window.act("add", "질문 만들기"),
         `<button class="go" data-sm-act="make-prompts">질문 만들기</button>`));
   if (!has)
