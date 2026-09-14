@@ -496,7 +496,9 @@ VIEW("overview", function (d) {
   const gs = d.opp_groups || [];
   const capped = (d.opps || []).length < (d.opps_total || 0)
     ? ` 기회 ${num(d.opps_total)}건 중 점수 높은 ${num(d.opps.length)}개까지 이 화면에 ` +
-      (gs.some(g => g.ids.length > 1) ? `오고, 같은 지면끼리 묶어 ${num(gs.length)}줄입니다.` : "옵니다.")
+      // 줄 수는 적지 않는다 — 띠는 처리 안 한 줄만(98), 칩은 상태별로 세서 여기 전체(99)를
+      // 또 적으면 300px 안에 세 번째 수가 선다(8회차). 묶인다는 사실만 말한다.
+      (gs.some(g => g.ids.length > 1) ? "오고, 같은 지면끼리는 한 줄로 묶입니다." : "옵니다.")
     : "";
   $("opp-sub").innerHTML = (READONLY
       ? "이 기록을 남긴 시점의 기회입니다."

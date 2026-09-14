@@ -31,7 +31,8 @@
 #triage .trbar { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; margin:0 0 12px;
   min-height:var(--btn-h); }
 #triage .trbar .n { color:var(--slate); font-size:13px; }
-#triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:13px; }
+#triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:13px;
+  min-height:var(--btn-h); }   /* 「전부」 체크는 줄이 아니라 이 라벨로 누른다 — 버튼과 같은 높이 */
 #triage .trbar input[type=checkbox], #triage .trtable input[type=checkbox] { width:auto; margin:0; }
 #triage kbd { font:400 11px/1 var(--mono); color:var(--slate); border:1px solid var(--rule);
   border-radius:3px; padding:2px 4px; margin-left:4px; background:var(--card); }

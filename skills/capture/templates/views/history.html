@@ -234,7 +234,8 @@ function HS_errMsg(v) {
   const who = `외부 서비스${svc ? `(${svc})` : ""}`;
   if (m && m[1] === "5") return `${who} 서버 오류 — 잠시 뒤 다시 수집하면 됩니다`;
   if (m && m[1] === "4") return `${who} 요청이 거절됐습니다 — 키·권한·잔액을 확인하세요`;
-  return v;
+  // 옛 기록은 표시 없이 100자에서 끊겼다(collector._clip 이전) — 딱 그 길이면 잘린 것이다.
+  return v.length >= 99 && !v.endsWith("…") ? v + "…" : v;
 }
 
 // 배지 밑(좁은 화면)에 올릴 실패 원인 한 줄 — 판정 이유("도중에 예외로 멈췄습니다")는
