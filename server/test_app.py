@@ -158,6 +158,12 @@ def demo() -> None:
         ga4 = "https://www.googleapis.com/auth/analytics.readonly" in identity.SCOPES
         for name, doc in (("랜딩 FAQ", landing), ("/privacy", r.text)):
             assert ("애널리틱스" in doc) == ga4, f"{name} 가 GA4 권한을 받는 사실과 다르게 말한다"
+        # 랜딩 전체에서 찾으면 FAQ 한 곳이 나머지를 덮는다 — CTA 밑 안심 줄이 "서치콘솔
+        # 읽기 전용"이라고만 말하는 동안 이 검사는 초록이었다. 안심 줄은 따로 본다.
+        import re
+        assure = re.search(r'<ul class="assure">([\s\S]*?)</ul>', landing)
+        assert assure, "랜딩 안심 줄(ul.assure)을 못 찾았다 — 검사가 헛돈다"
+        assert ("GA4" in assure.group(1)) == ga4, "랜딩 안심 줄이 받는 권한을 실제 스코프와 다르게 말한다"
         for path in ("/api/settings", "/api/ai/prompts",
                      "/api/ai/prompts/edit", "/api/sites", "/api/keywords", "/api/ga4/property"):
             assert c.post(path, json={}).status_code == 401, f"{path} 가 로그인 없이 열렸다"

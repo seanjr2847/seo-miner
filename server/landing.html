@@ -115,6 +115,9 @@ header.sc{border-bottom-color:var(--on-ink-rule)}
 
 /* ── 공통 조판 ───────────────────────────────────────────── */
 section{scroll-margin-top:64px}
+/* 760px 이하에서는 메뉴가 둘째 줄로 내려가 머리가 두 줄이다 — 한 줄 기준 64px 로는
+   메뉴로 옮긴 절의 제목이 머리 밑에 깔린다. */
+@media (max-width:760px){section{scroll-margin-top:104px}}
 /* .lat 이 font-family 를 갈아 끼우므로 여기서 font 단축을 쓰면 안 된다 —
    --micro 와 같은 크기·굵기·행간을 낱개로 적는다. */
 .eyebrow{font-size:11px;font-weight:500;line-height:1.35;color:var(--slate);margin:0 0 14px}
@@ -318,7 +321,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 
   <ul class="assure">
     <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>서치콘솔 읽기 전용</li>
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>서치콘솔·GA4 읽기 전용</li>
     <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.5"/></svg>카드 등록 없음</li>
     <li><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
