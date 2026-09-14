@@ -254,7 +254,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "cmd": cmd_ai, "runnable": _runnable("ai", cmd_ai)},
         {"id": "gaps", "t": L["gaps"]["t"], "gain": L["gaps"]["gain"],
          "done": p.get("opps", 0) > 0,
-         "state": f"{p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
+         # 「누적」 — 개요의 개선 기회는 아직 처리 안 한 것만 세서(1) 같은 말이 164 와 1 로 갈렸다.
+         "state": f"누적 {p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
          "cmd": cmd_gaps, "runnable": _runnable("gaps", cmd_gaps)},
         {"id": "create", "t": L["create"]["t"], "gain": L["create"]["gain"],
          "done": p.get("creations", 0) > 0,

@@ -156,6 +156,12 @@ class StageResult:
 # Stage.skip() 은 ok=False 를 내던 것이 A-1 의 원인이었다. 같은 뜻을 두 곳에서
 # 조립하면 언젠가 한쪽만 바뀐다.
 
+def _clip(s: str, n: int) -> str:
+    """요약 한 칸에 넣으려고 자를 때 잘렸다는 표시를 남긴다 — 표시 없이 [:n] 으로 끊으니
+    `scispace (typ` 처럼 단어 중간에서 끝나 문장이 끝난 건지 잘린 건지 몰랐다."""
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
 def skipped(reason: str = "", **kw) -> StageResult:
     """의도적으로 안 한 것 — 키 없음·설정 없음·--dry-run·할 일 0건. 실패가 아니다."""
     return StageResult(ok=True, skipped=True, reason=reason, **kw)
@@ -435,7 +441,7 @@ class Stage:
         """
         if not self.errors:
             return "errors=0"
-        return f"errors={self.errors} first_error={(self.first_error or '')[:100]}"
+        return f"errors={self.errors} first_error={_clip(self.first_error or '', 100)}"
 
     # ── StageResult 조립 — 네 가지 끝맺음 ────────────────────────────
     def skip(self, reason: str) -> StageResult:
@@ -478,7 +484,7 @@ class Stage:
         if self.errors:
             tail = f": {self.first_error}" if self.first_error else ""
             # 200자 절단은 요약표 한 줄의 표현이다 — 근거는 errors 로 온전히 간다.
-            return self.done(reason=f"{self.errors}건 실패{tail}"[:200], partial=True, **kw)
+            return self.done(reason=_clip(f"{self.errors}건 실패{tail}", 200), partial=True, **kw)
         return self.done(**kw)
 
 
