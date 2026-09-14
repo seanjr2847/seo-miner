@@ -614,6 +614,17 @@ td.num:last-child, th.num:last-child { padding-right:0; }
    아래 섹션에 못 닿았다). 세로는 페이지가, 가로 넘침만 상자가 맡는다.
    붙박이 머리글은 상자가 세로로 스크롤할 때만 붙으므로 여기서는 같이 사라진다. */
 @media (max-width:999px) { .tw.long { max-height:none; } }
+/* 옆으로 밀면 첫 열(검색어·페이지)이 같이 밀려 나가 숫자만 남는다 — 어느 줄의 숫자인지
+   모르게 된다. 좁은 화면에서 넘치는 표만 첫 열을 붙박는다. 줄 강조는 tr 이 칠하므로
+   붙박은 칸은 담는 상자의 바탕을 직접 갖는다(투명하면 밑으로 숫자가 비친다).
+   첫 열이 상자 대부분을 차지하면(긴 검색어) 붙박을수록 숫자 자리가 사라진다 —
+   붙박을지는 tableFade() 가 재서 .pin 으로 정한다. */
+@media (max-width:999px) {
+  .tw.pin tbody td:first-child, .tw.pin thead th:first-child {
+    position:sticky; left:0; z-index:1; background:var(--stone); }
+  .tw.pin thead th:first-child { z-index:2; }
+  .card .tw.pin tbody td:first-child, .card .tw.pin thead th:first-child { background:var(--card); }
+}
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
   padding-top:9px; }
@@ -687,7 +698,10 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
    평문으로 떨어진다 — 스코프를 푼다. 카드 전용 배치(.target·접힘 두 줄)만 남긴다. */
 /* 종류는 배지와 같은 높이로 서되 테두리가 없다 — 상태(테 두른 것)와 한눈에 갈린다. */
 .kind { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
-  color:var(--patina); background:var(--wash); border:1px solid transparent;
+  /* 11px 글자라 AA 4.5:1 이 필요한데, 제 색 --wash 를 --stone 위에 깔면 녹청 4.24·
+     산화동 4.10 이었다. 글자를 --ink 쪽으로 조금 당긴다 — 다크에서는 --ink 가 밝으니
+     같은 식이 거기서도 대비를 올린다. */
+  color:color-mix(in srgb, var(--patina) 82%, var(--ink)); background:var(--wash); border:1px solid transparent;
   border-radius:var(--r-sm); padding:2px var(--sp-2); white-space:nowrap; }
 .dt { font:400 11.5px/1 var(--mono); color:var(--slate);
   font-variant-numeric:tabular-nums; }
@@ -703,7 +717,7 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 @media (prefers-reduced-motion: no-preference) {
   .meter i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
-.kind.k-def { color:var(--copper); background:var(--wash-copper); }
+.kind.k-def { color:color-mix(in srgb, var(--copper) 82%, var(--ink)); background:var(--wash-copper); }
 /* GA4 매출 잠재력 보정 배지 — scoring.value_mult() 가 1.0이 아닐 때만 나온다.
    오르면 .kind 와 같은 녹청, 내리면 .k-def 와 같은 산화동 — 같은 문법을 그대로 쓴다. */
 .gm { display:inline-flex; align-items:center; min-height:22px; font:var(--micro);
@@ -1480,6 +1494,8 @@ function tableFade(root) {
     const over = w.scrollWidth > w.clientWidth + 1;
     w.classList.toggle("over", over);
     w.classList.toggle("end", !over || w.scrollLeft + w.clientWidth >= w.scrollWidth - 1);
+    const c0 = w.querySelector("tbody td:first-child");
+    w.classList.toggle("pin", over && !!c0 && c0.offsetWidth <= w.clientWidth * 2 / 3);
     if (over && !w.dataset.fade) {
       w.dataset.fade = "1";
       w.addEventListener("scroll", () => w.classList.toggle("end",
@@ -1489,6 +1505,9 @@ function tableFade(root) {
 }
 window.tableFade = tableFade;
 addEventListener("resize", () => tableFade());
+// 그리는 순간 감춰진 화면의 표는 폭이 0 이라 "안 넘친다"로 판정된다 — 모바일 개요 표가
+// 옆으로 넘치는데도 페이드·붙박이 첫 열이 꺼져 있었다. 화면이 보일 때 다시 잰다.
+document.addEventListener("sm:view", () => tableFade());
 
 /* 화면 머리의 한 줄 부제 — "여기가 어디고 무엇을 보여주나"의 나머지 절반.
    설명 산문을 본문에 풀어 놓는 대신 한 문장으로 여기 세운다. 빈 글이면 감춘다. */
@@ -2550,7 +2569,8 @@ const csv = (name, rows) => {
 // 정렬은 위임 한 곳에서. 표를 그리는 쪽은 아무것도 안 해도 된다.
 document.addEventListener("click", e => {
   const th = e.target.closest("th[data-s]");
-  if (!th) return;
+  // 머리글 안의 (i) 는 근거를 보려고 누르는 것이다 — 표 순서를 바꾸면 안 된다.
+  if (!th || e.target.closest(".hint")) return;
   const i = +th.dataset.s, tbl = th.closest("table");
   const desc = !th.classList.contains("desc");
   tbl.querySelectorAll("th[data-s]").forEach(o => o.classList.remove("asc", "desc"));
