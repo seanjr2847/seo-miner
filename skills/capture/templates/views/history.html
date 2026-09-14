@@ -49,9 +49,10 @@
    다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. 이유 아래에 그 종류를 다시 돌리는
    손잡이를 같이 둔다 — 실패한 줄에서 다음 걸음까지 한 자리에서 끝난다. */
 #runs .why { font-size:12.5px; color:var(--copper); margin-top:4px; }
-/* 좁은 화면에서 기록 칸은 표를 옆으로 여섯 칸 밀어야 나온다 — 실패 이유는 배지 밑으로
-   당겨 온다(넓은 화면은 기록 칸 그대로). */
-#runs .why-m { display:none; min-width:16ch; }
+/* 좁은 화면에서 기록 칸은 표를 옆으로 여섯 칸 밀어야 나온다 — 실패 원인은 늘 보이는 첫
+   칸(시각, 붙박이)으로 당겨 온다. 셋째 칸(결과)에 뒀더니 화면 오른쪽 끝에서 잘렸다.
+   넓은 화면은 기록 칸 그대로. .when 의 nowrap 을 풀어야 문장이 칸 안에서 접힌다. */
+#runs .why-m { display:none; white-space:normal; font-family:var(--sans); }
 @media (max-width:760px) { #runs .why-m { display:block; } #runs td .why:not(.why-m) { display:none; }
   /* 기록 칸이 줄을 바꾸게 되자 좁은 폭에 눌려 한 줄이 300px 로 길어졌다 — 칸 폭을 잡아 둔다. */
   #runs td:last-child { min-width:260px; } }
@@ -402,9 +403,10 @@ function HS_runList() {
     return `<tr>
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
-        <span class="muted">${HS_ago(r.started_at)}</span></td>
+        <span class="muted">${HS_ago(r.started_at)}</span>${v.cls === "bad"
+          ? `<div class="why why-m">${esc(HS_cause(r.notes) || v.why)}</div>` : ""}</td>
       <td class="kwcell">${esc(HS_kind(r.kind))}</td>
-      <td>${HS_badge(v)}${v.cls === "bad" ? `<div class="why why-m">${esc(HS_cause(r.notes) || v.why)}</div>` : ""}</td>
+      <td>${HS_badge(v)}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
         s === null ? "—" : s}</td>
       <td class="num">${num(r.api_calls || 0)}</td>
