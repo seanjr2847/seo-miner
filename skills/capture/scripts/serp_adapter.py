@@ -378,7 +378,10 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "id": ("Indonesia", "id", ("id", "id")),
     "ar": ("United Arab Emirates", "ar", ("ae", "ar")),
     "hi": ("India", "hi", ("in", "hi")),
-    "zh": ("Taiwan", "zh", ("tw", "zh")),  # Taiwan — 구글 접근 가능 지역
+    # Taiwan — 구글 접근 가능 지역. DataForSEO 의 언어 코드는 접두 "zh" 가 아니라 "zh-TW"
+    # 다(Chinese (Traditional)) — "zh" 로 보내면 키워드 지표 묶음이 통째로 거절됐다
+    # (2026-09-15 theotherskin 13개). serper 의 hl 은 그대로 둔다.
+    "zh": ("Taiwan", "zh-TW", ("tw", "zh")),
     # 전체 로케일 키 — 같은 언어라도 나라가 다르면 SERP 가 다르다. location() 은
     # 전체 키를 먼저 보고, 없으면 언어 접두로 떨어진다.
     "en-gb": ("United Kingdom", "en", ("gb", "en")),
@@ -391,6 +394,17 @@ LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, s
     "de-at": ("Austria", "de", ("at", "de")),
     "de-ch": ("Switzerland", "de", ("ch", "de")),
 }
+
+# DataForSEO 가 받지 않는 지역 — 2022-03-07 부터 모든 API 에서 뺐다(Google Ads 가 광고를
+# 멈춰 볼륨도 없다). https://dataforseo.com/update/russia-and-belarus-api-locations
+# 여기로 보내면 거절이 오류로 남는다 — 부르는 쪽이 먼저 dfs_supported() 로 거른다.
+DFS_BLOCKED = {"Russia", "Belarus"}
+
+
+def dfs_supported(locale: str) -> bool:
+    """이 로케일의 DataForSEO 지역이 조회 가능한가."""
+    return location(locale)[0] not in DFS_BLOCKED
+
 
 # 사용자가 고르는 언어-지역 목록 — 설정 폼·호스팅 등록 화면·호스팅 설정이 전부
 # 이 한 벌을 그린다(사본 금지, test_seams 가 대조한다). 키는 전부 LOCATION_MAP 에
@@ -756,6 +770,8 @@ def _selfcheck() -> None:
     assert location("de-DE")[0] == "Germany"
     assert location("pt-BR")[0] == "Brazil"
     assert location("zh-TW")[0] == "Taiwan"
+    assert location("zh-TW")[1] == "zh-TW", "DataForSEO 의 대만 언어 코드는 zh-TW 다"
+    assert not dfs_supported("ru-RU") and dfs_supported("ko-KR")
     assert location("en-GB")[0] == "United Kingdom" and location("en-NZ")[0] == "United States"
     for code, _ in LOCALES:     # 고를 수 있는 것은 전부 제 나라로 간다
         assert location(code) is not LOCATION_MAP["en"] or code == "en-US", code

@@ -71,7 +71,11 @@ MAX_KW_CHARS = 80
 MAX_KW_WORDS = 10
 # 묶음이 이 문구로 거절되면 반으로 쪼개 재시도한다. 타임아웃 같은 것까지 이분하면
 # 요청 수만 늘어나므로 "우리가 못 씻은 글자가 남았다" 류만 고른다.
-REJECT_HINTS = ("invalid field", "invalid characters")
+# 'invalid field' 만으로는 안 된다 — 언어·지역 필드가 틀려도 같은 머리말로 온다
+# ("Invalid Field: 'language_code'"). 그걸 키워드 탓으로 읽고 쪼개면 묶음 전체가
+# 낱개까지 갈라진 뒤 "끝까지 거절한 키워드 13개"로 남고, 진짜 사유는 사라졌다
+# (2026-09-15 zh-TW). 키워드 필드를 말할 때만 쪼갠다.
+REJECT_HINTS = ("'keywords'", "invalid characters")
 
 
 def clean(kw: str) -> str:
@@ -274,6 +278,13 @@ def collect(project: str, *,
             nonlocal total_cost, calls, updated, unsendable
             loc, group = job
             loc_name, lang, _ = serp_adapter.location(loc)
+            if not serp_adapter.dfs_supported(loc):
+                # 지역 자체를 안 받는다 — 보내면 거절이 오류로 남고 다음 런에 또 난다.
+                # 키워드 탓이 아니므로 보낼 수 없는 것으로 센다.
+                unsendable += len(group)
+                _tried(group)
+                print(f"  {loc}: DataForSEO 가 {loc_name} 지역을 받지 않아 {len(group)}개를 건너뜁니다")
+                return
 
             # 보내는 모양(정제본) ↔ Brain 의 행. 정제하면 글자가 달라지므로
             # 응답을 원문 keyword 로 되찾을 수 없다 — 그 다리를 여기서 놓는다.
@@ -597,6 +608,48 @@ def _selfcheck() -> None:
     items, _, bad = _ask(rejecting, SV_PATH, many, body_n)
     assert len(asked) == 11, f"하나를 좁히는 데 {len(asked)}번 쳤다: {asked}"
     assert "w500" in bad and len(bad) <= 32 and len(items) == 1000 - len(bad), len(bad)
+
+    # 7d. 언어·지역 필드 거절은 키워드 탓이 아니다 — 쪼개지 않고(요청 1번), 사유 원문을
+    #     오류로 남기고, 행에 시각을 안 찍는다(매핑을 고치면 다음 런이 다시 산다).
+    #     지역을 아예 안 받는 곳(러시아)은 보내지도 않고 건너뜀으로 센다.
+    conn.execute("DELETE FROM keywords")
+    conn.execute("DELETE FROM runs")
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
+        [(pid, "索夫波", "zh-TW"), (pid, "丘疹性瘢痕", "zh-TW"), (pid, "тирлист ии", "ru-RU")])
+    conn.commit()
+    seen: list[tuple[str, str, list]] = []
+
+    def lang_post(path, body):
+        seen.append((path, body[0]["language_code"], body[0]["keywords"]))
+        if body[0]["language_code"] != "zh-TW":
+            raise RuntimeError("dataforseo task error: Invalid Field: 'language_code'.")
+        return picky_post(path, body)
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        res = collect("mt", conn=conn, post=lang_post)
+    assert not [s for s in seen if s[1] == "ru"], f"받지 않는 지역을 보냈다: {seen}"
+    assert res.ok and res.rows == 2 and not res.partial, res
+    note = conn.execute("SELECT notes FROM runs WHERE kind='metrics'").fetchone()["notes"]
+    assert "unsendable=1" in note and "errors=0" in note, note
+    real = serp_adapter.location
+    serp_adapter.location = (lambda loc: ("Taiwan", "zh", ("tw", "zh"))    # 옛 매핑
+                             if loc.startswith("zh") else real(loc))
+    conn.execute("UPDATE keywords SET metrics_at=NULL, volume=NULL")
+    conn.execute("DELETE FROM runs")
+    conn.commit()
+    seen.clear()
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            res = collect("mt", conn=conn, post=lang_post)
+    finally:
+        serp_adapter.location = real
+    sv = [s for s in seen if s[0] == SV_PATH]
+    assert len(sv) == 1, f"언어 필드 거절을 키워드 탓으로 읽고 쪼갰다: {len(sv)}번 쳤다"
+    assert "language_code" in (res.reason or ""), f"거절 사유 원문이 안 남았다: {res}"
+    assert conn.execute("SELECT COUNT(*) c FROM keywords WHERE keyword='索夫波' "
+                        "AND metrics_at IS NULL").fetchone()["c"] == 1, \
+        "매핑 탓 거절인데 행에 시도 시각을 찍었다 — 고쳐도 30일 동안 다시 안 산다"
 
     # 7c. 보낼 수 없는 것(빈 문자열·길이 초과)은 오류가 아니다 — 수만 notes 에 남고,
     #     시각이 찍혀 다시 안 골라지며, 보내지도 않고, 나머지는 그대로 산다.
