@@ -19,7 +19,7 @@
 .legend .sw-imp { color:var(--slate); }
 .opp-more { margin-top:14px; }
 /* 묶인 줄의 나머지 검색어 — 표제 밑 한 줄. 접힌 카드에서는 넘치면 자른다. */
-.opp .vars { font-size:12.5px; color:var(--slate); margin:-2px 0 4px; }
+.opp .vars { font-size:12.5px; color:var(--slate); margin:2px 0 0; }
 .opp:not([open]) .vars { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .opp > summary > div { min-width:0; }     /* 안 그러면 잘라야 할 한 줄이 격자 칸을 민다 */
 /* 도구줄이 섹션 머리 오른쪽에 설 때는 한 줄로 선다 — 두 줄이 되면 격자가
@@ -28,6 +28,38 @@
 .sh > .tools { flex-wrap:nowrap; }
 .sh > .tools input { flex:1 1 160px; min-width:0; }
 @media (max-width:640px) { .sh > .tools { flex-wrap:wrap; } }
+
+/* 기회 목록은 카드 더미가 아니라 한 상자 안의 줄이다. 카드 한 장이 150px 이면 여덟 건을
+   보는 데 1200px 을 내려야 했고, 줄마다 같은 날짜·같은 「할 일」·점수를 또 그린 막대·
+   버튼 둘이 되풀이됐다. 접힌 줄은 "무엇이, 왜" 두 줄만 — 점수·표제·종류·근거 한 줄.
+   손잡이·날짜·자세한 근거는 펼치면 나온다. 셸의 .opp 규칙은 다른 화면(백링크·경쟁)도
+   쓰므로 여기서는 #opplist 아래만 덮는다. */
+.ovrows { border:1px solid var(--rule); border-radius:var(--r-md); background:var(--card);
+  overflow:hidden; }
+#opplist .opp { margin:0; padding:11px var(--sp-4); border:0; border-radius:0;
+  border-bottom:1px solid var(--rule-soft); background:transparent; box-shadow:none; }
+#opplist .opp:last-child { border-bottom:0; }
+#opplist .opp:hover { background:var(--bar); }
+#opplist .opp[open] { background:var(--card); border-left:3px solid var(--patina);
+  padding-left:calc(var(--sp-4) - 3px); }
+#opplist .opp > summary { align-items:center; }
+#opplist .opp > summary::before { align-self:center; margin:0; }
+#opplist .score { font-size:16px; width:34px; }
+#opplist .score .u { display:none; }
+.opp .ovt { display:flex; align-items:baseline; gap:4px 10px; flex-wrap:wrap; min-width:0; }
+#opplist .opp .target { margin:0; }
+#opplist .opp .why { margin-top:2px; }
+#opplist .opp:not([open]) .why { -webkit-line-clamp:1; }
+#opplist .det { padding-left:48px; }
+/* 펼친 패널의 상태 손잡이(oppRest) 바로 밑에 붙는다 — 상태 버튼이 한 자리에 모인다. */
+#opplist .det-acts { padding-top:0; margin-top:-6px; }
+#opplist .det-acts .acts { margin-top:0; }
+@media (max-width:560px) {
+  #opplist .opp > summary { grid-template-columns:auto 1fr auto; }
+  #opplist .opp > summary::before { display:none; }
+  #opplist .opp > summary > * { grid-column:auto; grid-row:auto; }
+  #opplist .det { padding-left:0; }
+}
 </style>
 
 <div class="band" id="band"></div>
@@ -198,36 +230,39 @@ function OV_vars(o) {
   return `<div class="vars">함께: ${rest.slice(0, OV_VARS_SHOWN).map(esc).join(" · ")}${
     more > 0 ? ` 외 ${more}개` : ""}</div>`;
 }
+// 접힌 줄에는 「할 일」 배지를 안 단다 — 기본 거르개(아직 안 함)에서는 거의 모든 줄이
+// 같은 말이라 읽을 것만 늘린다. 다른 상태일 때만 선다. 상태를 바꾸는 손잡이와 실행
+// 자리(oppActs)는 펼친 패널 맨 밑, 나머지 상태 버튼 옆으로 옮겼다 — 스무 줄에 버튼 마흔 개가 서지 않게.
 function oppRow(o) {
   const n = o.group ? o.group.ids.length : 1;
   return `<details class="opp" data-opp="${o.id}" data-ids="${(o.group ? o.group.ids : [o.id]).join(" ")}">
     <summary>
       ${oppScore(o)}
       <div>
-        <div class="oh">
+        <div class="ovt">
+          <div class="target">${esc(targetLabel(o.target))}</div>
           <span class="kind${isDefensive(o) ? " k-def" : ""}"
             >${esc(o.label || o.kind)}</span>
           ${n > 1 ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다. 펼치면 전부와 묶은 이유가 나옵니다."
             >검색어 ${n}개</span>` : ""}
           ${window.gaBadge(o)}
-          <span class="dt">${esc(o.created || "")}</span>
         </div>
-        <div class="target">${esc(targetLabel(o.target))}</div>
         ${OV_vars(o)}
-        ${oppMeter(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
-        ${oppActs(o)}
       </div>
-      <div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>
+      ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
     </summary>
     ${oppPanel(o)}
+    ${READONLY ? "" : `<div class="det det-acts">${oppActs(o)}</div>`}
   </details>`;
 }
 
 
 // OPP_ST 가 null 이면 아직 안 정한 것 — 첫 적재 때 정한다. 여기서 READONLY 를 못
 // 읽는다(뷰는 셸 스크립트보다 위에 꽂혀서 아직 선언 전이다).
-let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = 8;
+// 처음 펼쳐 두는 줄 수 — 줄이 얇아져(카드 → 목록) 한 화면에 열 줄이 들어간다.
+const OV_PAGE = 10;
+let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = OV_PAGE;
 // 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
 // open 은 "이 둘이면"이다("done 이 아니면"이 아니다) — 저절로 풀린 기회처럼 새 상태가
 // 생겨도 [아직 안 함]으로 새지 않는다. 서버의 scoring.OPEN_STATUSES 와 같은 한 벌이다
@@ -264,17 +299,17 @@ function OV_lines(d) {
     ? Object.assign({}, byId[g.lead], {score: g.score, status: g.status, group: g})
     : byId[g.lead]);
 }
-function oppFind(v) { OPP_Q = v; OPP_N = 8; oppList(); }
-function oppStatus(v) { OPP_ST = v; OPP_N = 8; oppList(); }
+function oppFind(v) { OPP_Q = v; OPP_N = OV_PAGE; oppList(); }
+function oppStatus(v) { OPP_ST = v; OPP_N = OV_PAGE; oppList(); }
 function oppMore(n) { OPP_N = n; oppList(); }
 // [필터 지우기]는 말 그대로 전부 보여 준다 — 첫 화면의 기본값(아직 안 함)이 아니다.
-function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(8); }
+function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(OV_PAGE); }
 // 거르개까지 다시 그린다 — oppStatus 는 목록만 그려서 <select> 의 선택이 안 따라온다.
-function oppClosed() { OPP_ST = "closed"; KIND_FILTER = null; renderOpps(8); }
+function oppClosed() { OPP_ST = "closed"; KIND_FILTER = null; renderOpps(OV_PAGE); }
 function filterKind(el) {
   const k = el.dataset.k;
   KIND_FILTER = KIND_FILTER === k ? null : k;
-  renderOpps(8);
+  renderOpps(OV_PAGE);
 }
 
 // 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
@@ -293,10 +328,10 @@ function renderOpps(n) {
   const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
   // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
-  // 한 번에 다 보이는 목록(첫 8줄 이하)에는 찾기 칸과 종류 칩을 안 세운다 — 네 줄을
+  // 한 번에 다 보이는 목록(첫 화면에 다 들어가는)에는 찾기 칸과 종류 칩을 안 세운다 — 네 줄을
   // 거르려고 손잡이 다섯 개를 먼저 읽게 된다. 상태 거르개는 남긴다: 끝낸 것을 보는
   // 길이 그것뿐이다.
-  const few = OPPS.length <= 8;
+  const few = OPPS.length <= OV_PAGE;
   // 손잡이가 없는데 거른 조건이 남으면 풀 길이 없다(많던 사이트에서 옮겨 온 경우).
   if (few && !READONLY) { OPP_Q = ""; KIND_FILTER = null; }
   if (tbox) tbox.innerHTML = READONLY
@@ -351,7 +386,7 @@ function oppList() {
         <p>쌓인 것을 전부 처리했습니다. 처리한 것은 [완료·제외]에 그대로 있습니다.</p>
         <div class="acts"><button class="go sec" onclick="oppClosed()">완료·제외 보기</button></div></div>`;
   const rest = list.length - OPP_N;
-  $("opplist").innerHTML = list.slice(0, OPP_N).map(oppRow).join("") + (rest > 0
+  $("opplist").innerHTML = `<div class="ovrows">${list.slice(0, OPP_N).map(oppRow).join("")}</div>` + (rest > 0
     ? `<div class="acts opp-more">
          <button onclick="oppMore(${OPP_N + 12})">${rest}건 더 보기</button></div>`
     : "");
@@ -510,7 +545,7 @@ VIEW("overview", function (d) {
   // 박제본은 그때의 트리아지 기록 자체가 볼거리라 전부 남긴다.
   if (OPP_ST === null) OPP_ST = READONLY ? "" : "open";
   // 검색어별 페이지 표·밴드·기회 색인은 셸의 render() 가 화면 전부를 위해 먼저 세운다.
-  renderOpps(8);
+  renderOpps(OV_PAGE);
   OV_watch(d);
   OV_next(d);
 });
