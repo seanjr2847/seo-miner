@@ -360,11 +360,15 @@ function HS_staleMsg() {
 // 도구줄·칩은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
 function HS_runTools() {
+  // 버튼을 여기 또 두지 않는다 — 실행할 게 없을 때 HS_acts()가 세우는 머리의
+  // [다음 행동] 띠가 이미 같은 전체 분석 실행을 주요 버튼으로 든다. 같은 화면
+  // 위아래에 같은 이름의 버튼이 둘 서면(하나는 채운 녹청, 하나는 여기) 어느
+  // 쪽을 눌러야 하는지보다 "왜 두 개인지"부터 눈에 든다 — 문구만 남긴다.
   if (!HS_RUNS.length)
     return $("runs").innerHTML = `<div class="empty">
       <b>아직 실행한 적이 없습니다</b>
-      <p>한 번 실행하면 무엇을 언제 얼마에 수집했는지가 여기 줄로 남습니다.</p>
-      ${READONLY ? "" : `<div class="acts">${HS_runAll(false)}</div>`}</div>`;
+      <p>위에서 전체 분석 실행을 누르면 무엇을 언제 얼마에 수집했는지가 여기
+        줄로 남습니다.</p></div>`;
   const counts = {};
   HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   if (HS_RKIND && !counts[HS_RKIND]) HS_RKIND = null;   // 사이트 전환 시 잔존 필터
@@ -445,6 +449,10 @@ function HS_runCsv() {
 
 /* ── 고친 것 ──────────────────────────────────────────────── */
 let HS_MADE = [], HS_MQ = "", HS_MM = "", HS_DAILY = [];
+// 빈 상태의 [기회 열기]가 뜰 조건 — 남은 기회가 있을 때만이다(payload d.opps_total,
+// HS_todo 가 [다음 행동]에 쓰는 것과 같은 수). 0건인데 "기회 열기"를 누르면 [개요]에
+// 아무것도 없어 방금 누른 버튼이 거짓말을 한 게 된다.
+let HS_OPPS = 0;
 
 /* ── 좋아졌나 ──────────────────────────────────────────────
       이 화면은 회고인데 결론이 없었다: 고친 목록을 늘어놓고 "숫자로 돌아왔는지는
@@ -550,15 +558,20 @@ function HS_madeRow(c) {
 }
 
 function HS_madeTools() {
-  if (!HS_MADE.length)
-    // 화면 이동은 대괄호 글자가 아니라 버튼이다 — 아래 [기회 열기]가 그 손잡이다.
+  if (!HS_MADE.length) {
+    // 화면 이동은 대괄호 글자가 아니라 버튼이다 — 아래 기회 열기가 그 손잡이다.
+    // 다만 그 손잡이는 열 기회가 있을 때만 선다 — 0건에서 누르면 [개요]에 아무것도
+    // 없어 방금 누른 버튼이 거짓말을 한 셈이 된다(HS_OPPS, VIEW 가 채운다).
+    const plan = W(HS_cmd("/create plan", false), "");
+    const opp = HS_OPPS
+      ? `<button class="go sm sec" onclick="SM.touched=true;SM.show('overview')"
+          >기회 열기</button>` : "";
+    const acts = !READONLY && (plan || opp) ? `<div class="acts">${plan}${opp}</div>` : "";
     return $("made").innerHTML = `<div class="empty">
       <b>아직 고친 기록이 없습니다</b>
       <p>고른 기회를 콘텐츠로 옮기면 여기 쌓이고, 고친 뒤 클릭이 어떻게 됐는지가
-        줄마다 붙습니다.</p>
-      ${READONLY ? "" : `<div class="acts">${W(HS_cmd("/create plan", false), "")}
-        <button class="go sm sec" onclick="SM.touched=true;SM.show('overview')"
-          >기회 열기</button></div>`}</div>`;
+        줄마다 붙습니다.</p>${acts}</div>`;
+  }
   const mn = v => HS_MADE.filter(c => !v || (v === "y") === !!c.merged).length;
   // 병합 전 건수는 거르개 옵션 라벨 안에만 있었다 — 이 화면에서 지금 당장 할 수 있는
   // 유일한 일인데 드롭다운을 열어야 보였다. 머리로 올린다.
@@ -733,6 +746,7 @@ VIEW("history", function (d) {
   // 둘 다 "여기 쌓입니다"가 맞는 다음 걸음이다.
   HS_MADE = d.creations || [];
   HS_MQ = ""; HS_MM = "";
+  HS_OPPS = d.opps_total || 0;
   // 전후 델타의 재료. 옛 박제본에는 없을 수 있다 — 그때는 못 잰다고 말한다.
   HS_DAILY = d.daily || [];
   HS_eyebrow("made-eb", HS_MADE, "created_at");

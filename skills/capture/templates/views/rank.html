@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "rank", "title": "순위 추적",
- "sections": ["ranks"], "stages": ["rank", "gaps"]}
+ "sections": ["ranks"], "stages": ["rank", "gaps"], "head": ["rank"]}
 </script>
 
 <style>
@@ -27,12 +27,9 @@
 .rk-part { border-top:1px solid var(--rule-soft); margin-top:26px; padding-top:20px; }
 .rk-note { font-size:12.5px; color:var(--slate); margin:10px 0 0; }
 .rk-note b { color:var(--ink); font-weight:500; }
-/* 빈 상태의 셋째 문장은 접는다 — 비용은 눌러 보기 전에 알아야 하지만, 두 문장을
-   읽고 나서 알아도 늦지 않다. */
-.rk-more { margin:10px 0 0; }
-.rk-more > summary { font:500 12.5px/1.6 var(--sans); color:var(--slate); cursor:pointer; }
-.rk-more > summary:hover { color:var(--patina); }
-.rk-more p { margin:6px 0 0; }
+/* 조회 비용은 눌러 보기 전에 알아야 한다 — 여기 있던 <details class="rk-more"> 접이식
+   비용 안내는 결제 벽처럼 읽혔다(초록 [순위 확인]은 바로 보이는데 비용은 한 번 더
+   눌러야 나왔다). 이제 비용은 그 버튼과 같은 문장(.rk-note)에 바로 선다. */
 .rk-gap { margin-top:8px; }
 /* .score 는 폭 44px 블록이라 오른쪽 정렬 칸에서도 왼쪽에 붙는다 — 머리글과 40px
    어긋나 보였다. 셸 CSS 를 건드리는 대신 이 칸에서만 상자를 오른쪽으로 민다.
@@ -91,10 +88,12 @@ const RK_setup = (primary = true) => RK_hasSetup()
   ? `<button class="go${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('settings')"
       >순위 제공자 연결</button>`
   : "";
-// 다른 화면으로 보내는 보조 버튼 — 대괄호 링크(`[키워드]`)는 눌러도 되는 것처럼
-// 안 보였다. 그 화면이 없는 배포(박제본)에서는 아무것도 안 낸다.
-const RK_goKw = () => window.SM && SM.at("keywords") >= 0
-  ? `<button class="go sm sec" onclick="SM.touched=true;SM.show('keywords')"
+// 다른 화면으로 보내는 버튼 — 대괄호 링크(`[키워드]`)는 눌러도 되는 것처럼
+// 안 보였다. 그 화면이 없는 배포(박제본)에서는 아무것도 안 낸다. 추적 검색어가
+// 0개면 이 버튼이 이 화면의 주요 행동이다(primary) — 조회할 대상이 없는데
+// [순위 확인]을 초록으로 세우면 눌러도 되는 게 없다.
+const RK_goKw = (primary = false) => window.SM && SM.at("keywords") >= 0
+  ? `<button class="go sm${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('keywords')"
       >키워드 열기</button>` : "";
 // 단계 이름·재실행 라벨의 정본은 조립이 실어 보낸 window.__STAGES__ 다.
 const RK_run = id => window.stageRun ? stageRun(id)
@@ -535,6 +534,20 @@ VIEW("rank", function (d) {
 
   if (!RK_ROWS.length) {
     $("rk-sub").textContent = cond;
+    // 추적 중인 키워드가 0개면 확인할 대상 자체가 없다 — 그런데도 초록 [순위 확인]을
+    // 앞세우면 눌러도 조회할 것이 없다. 그때는 키워드를 추가하는 것이 유일한 다음
+    // 걸음이고, 그 버튼이 이 화면의 주요 행동이 된다.
+    if (!d.kw_active) {
+      RK_next("추적 중인 키워드가 없습니다. " +
+        live("키워드 화면에서 추적할 검색어를 추가하면 순위를 확인할 수 있습니다."),
+        RK_goKw(true));
+      $("ranks").innerHTML = errBox + `<div class="empty">
+        <b>추적 중인 키워드가 없습니다</b>
+        <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다. 순위 확인은
+          추적할 검색어를 정한 뒤의 일입니다.</p>
+        <div class="acts">${RK_goKw()}</div></div>`;
+      return;
+    }
     // 빈 화면도 다음 걸음을 말한다. 다만 한 번도 조회한 적이 없으면 순위 제공자가
     // 아직 없다는 뜻이라, 조회부터 권하면 눌러도 실패한다 — 그때는 연결을 가리킨다.
     // 조회 기록(runs)이 이 화면이 연결 여부를 알 수 있는 유일한 자리다.
@@ -542,23 +555,23 @@ VIEW("rank", function (d) {
     /* 다음 걸음을 말하는 자리는 띠 하나다. 여태 띠와 빈 상태가 같은 문장("연결하면
        … 채워집니다")과 같은 버튼([순위 제공자 연결])을 각각 들고 있어서, 한 화면에
        같은 말이 세 번 섰다. 빈 상태는 이제 **지금 상태**만 말한다. */
+    // 비용은 버튼을 누르기 전에, 같은 문장 안에서 말한다 — <details> 뒤에 접어
+    // 두면 초록 버튼만 먼저 보이고 비용은 한 번 더 눌러야 나와 결제 벽처럼 읽힌다.
+    const costLine = `추적 중인 검색어 ${num(d.kw_active)}개만큼 제공자 조회 비용이 붙습니다.`;
     if (run)
       RK_next("지난 조회에서 잡힌 순위가 없습니다. " +
-        live("다시 확인하면 검색어마다 지금 몇 위인지, AI 요약에 내 링크가 실렸는지 잡힙니다."),
+        live("다시 확인하면 검색어마다 지금 몇 위인지, AI 요약에 내 링크가 실렸는지 잡힙니다. "
+          + costLine),
         RK_act("rank", RK_run("rank")));
     else
       RK_next("구글 결과의 실제 순위는 아직 재지 않았습니다. " +
         live(RK_hasSetup()
           ? "순위 제공자를 연결하면 추적 검색어마다 지금 몇 위인지 채워집니다."
-          : "한 번 확인하면 추적 검색어마다 지금 몇 위인지 채워집니다."),
+          : `한 번 확인하면 추적 검색어마다 지금 몇 위인지 채워집니다. ${costLine}`),
         RK_setup() || RK_act("rank", "순위 확인"));
     $("ranks").innerHTML = errBox + `<div class="empty">
       <b>${run ? "이번 조회에서 잡힌 순위가 없습니다" : "순위를 아직 확인하지 않았습니다"}</b>
       <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다.</p>
-      <details class="rk-more"><summary>조회 비용은 어떻게 되나</summary>
-        <p>조회는 추적 검색어 수만큼 제공자 요금이 붙습니다${
-          d.kw_active ? `. 지금 추적 중인 검색어는 ${num(d.kw_active)}개입니다` : ""}.
-          재지 않아도 기회 목록까지는 그대로 채워집니다.</p></details>
       <div class="acts">${RK_goKw()}</div></div>`;
     return;
   }

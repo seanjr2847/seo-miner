@@ -205,7 +205,7 @@ def test_ai_gap_third_party_goes_to_presence_and_forbids_spam():
     assert "지금 이 페이지 상태" not in b["body"]
     assert "80% 가 제3자 플랫폼입니다" in b["body"], b["body"]
     assert "여기 없는 것을 우리가 답해야" not in b["body"]      # 페이지로 푸는 말이 아니다
-    # 고친 뒤 볼 것 — 플랫폼을 거쳐 온 방문은 'AI 에서 온 방문'에 안 잡힌다. 그 수를
+    # 고친 뒤 볼 것 — 플랫폼을 거쳐 온 방문은 'AI에서 온 방문'에 안 잡힌다. 그 수를
     # 보라고 하면 일이 됐는데도 실패로 읽힌다(GA4 가 연결돼 있어도 마찬가지다).
     b2 = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="third_party"),
                      {**ctx, "ai_referral_meta": {"date": "2026-06-01", "period_days": 28},
@@ -714,7 +714,7 @@ def test_fanout_questions_reach_fix_new_and_aio_briefs():
 
 
 def test_ai_visits_line_only_on_ai_kinds():
-    """AI 종류 요청문에만 'AI 에서 온 방문' 줄과 '고친 뒤 볼 것' 이 붙는다.
+    """AI 종류 요청문에만 'AI에서 온 방문' 줄과 '고친 뒤 볼 것' 이 붙는다.
 
     인용을 고치고 끝나면 측정 → 수정 → 재측정이 AI 쪽에서만 안 닫힌다. 반대로 검색어
     요청문에 AI 방문을 붙이면 상관없는 숫자가 근거 행세를 한다. 방문 줄은 그 페이지로
@@ -729,11 +729,11 @@ def test_ai_visits_line_only_on_ai_kinds():
     gap = brief.build(_opp("ai_citation_gap", "질문"), ctx)["body"]
     assert line in gap and "(chatgpt.com 9, perplexity.ai 3)" in gap, gap
     assert "GA4 2026-09-01 기준 최근 28일" in gap, gap
-    assert "## 고친 뒤 볼 것" in gap and "'AI 에서 온 방문'에 이 페이지의 세션이" in gap, gap
+    assert "## 고친 뒤 볼 것" in gap and "'AI에서 온 방문'에 이 페이지의 세션이" in gap, gap
     aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
     assert line in aio, aio
     # 구글 AI 요약의 클릭은 GA4 AI 유입에 안 잡힌다 — 거기서 늘기를 기다리게 하지 않는다
-    assert "구글 유기 검색으로 잡혀" in aio and "'AI 에서 온 방문'에" not in aio, aio
+    assert "구글 유기 검색으로 잡혀" in aio and "'AI에서 온 방문'에" not in aio, aio
     for k in ("striking_distance", "ctr_gap", "content_gap"):
         b = brief.build(_opp(k, "검색어"), ctx)["body"]
         assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" not in b, (k, b)

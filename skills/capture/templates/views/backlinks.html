@@ -7,7 +7,8 @@
      여기 한 벌이면 로컬·호스팅·박제본이 전부 같은 것을 본다. -->
 <script type="application/json" class="view-def">
 {"id": "backlinks", "title": "백링크",
- "sections": ["bl-profile", "bl-broken", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"]}
+ "sections": ["bl-profile", "bl-broken", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"],
+ "head": ["backlinks"]}
 </script>
 
 <style>
@@ -536,11 +537,24 @@ VIEW("backlinks", function (d) {
       ? `<div class="empty err"><b>${esc(BLK_name("backlinks"))}에서 멈췄습니다</b>
           <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 수집하면
             이어서 채워집니다.</p>${BLK_do("backlinks", "", false)}</div>`
+      // 수집 전 5칸(프로필·되찾을 링크·교집합·앵커·개별 링크)이 저마다
+      // "백링크를 한 번 수집하면 채워집니다"를 되풀이했다 — 아직 하나도 없는데
+      // 같은 카드와 같은 버튼이 다섯 번 섰다. 여기 카드 하나가 넷을 미리 말하고
+      // (BLK_gain 이 정본, 두 번째 문구를 새로 짓지 않는다) CTA 도 하나만 둔다.
+      // 아래 section 셋은 채울 것이 없으므로 아예 감춘다.
       : BLK_empty("백링크를 아직 수집하지 않았습니다", BLK_gain("backlinks"),
           BLK_do("backlinks", BLK_name("backlinks"), false),
           "선택 단계입니다. 안 돌려도 다른 화면과 기회 목록은 그대로 채워집니다.");
   $("blk-dom-tools").innerHTML = has && (d.bl_domains || []).length
     ? BLK_tools((d.bl_domains || []).length, "BLK_csvDomains") : "";
+
+  // 되찾을 링크·교집합·앵커/개별 링크는 위 카드가 이미 예고했다 — 수집 전에는
+  // 빈 카드를 다시 세우지 않고 section 째로 숨긴다. 실패도 다시 돌리기 전까지는
+  // "아직 없음"과 같다.
+  $("bl-broken").hidden = !has;
+  $("bl-intersect").hidden = !has;
+  $("bl-links").hidden = !has;
+  if (!has) return;
 
   // 되찾을 링크 — 이미 번 링크라 새로 얻는 것보다 늘 싸다. 잃은 것을 먼저 세고
   // (끊긴 링크 · 링크를 뗀 도메인) 그다음에 방법을 말한다.
@@ -553,43 +567,29 @@ VIEW("backlinks", function (d) {
     ? BLK_tip(`요약의 깨진 백링크 ${num(summaryBroken)}건은 이번에 받은 링크 목록 안에 ` +
               "없습니다. 목록은 지수가 높은 것부터 일부만 받아 옵니다.") : "";
   // 되찾을 것이 0이면 되찾는 방법을 설명할 이유가 없다 — 셀 것이 없다고만 말한다.
-  $("blk-recover-sub").innerHTML = !has
-    ? "남이 걸어 준 링크 중 지금 안 열리는 주소를 모으는 자리입니다."
-    : broken || lost
-      ? `끊긴 링크 <b>${num(broken)}개</b>, 링크를 뗀 도메인 <b>${num(lost)}곳</b>입니다.` +
-        BLK_tip("이미 번 링크라 그 주소를 되살리거나 살아 있는 페이지로 301 리다이렉트하면 " +
-                "그대로 돌아옵니다. 새로 얻는 것보다 늘 쌉니다.")
-      : `끊긴 링크도 링크를 뗀 도메인도 없습니다.${capped}`;
-  $("blk-recover").innerHTML = has ? BLK_broken(d)
-    : BLK_empty("아직 셀 링크가 없습니다",
-        "백링크를 한 번 수집하면 끊긴 링크와 링크를 뗀 도메인이 여기 모입니다.");
+  $("blk-recover-sub").innerHTML = broken || lost
+    ? `끊긴 링크 <b>${num(broken)}개</b>, 링크를 뗀 도메인 <b>${num(lost)}곳</b>입니다.` +
+      BLK_tip("이미 번 링크라 그 주소를 되살리거나 살아 있는 페이지로 301 리다이렉트하면 " +
+              "그대로 돌아옵니다. 새로 얻는 것보다 늘 쌉니다.")
+    : `끊긴 링크도 링크를 뗀 도메인도 없습니다.${capped}`;
+  $("blk-recover").innerHTML = BLK_broken(d);
 
   // 교집합은 경쟁사가 둘 이상이어야 성립한다 — 비어 있는 이유가 그것일 수 있다.
   const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
   const ix = (d.bl_intersect || []).length;
-  $("blk-ix-sub").innerHTML = !has
-    ? "여러 경쟁사가 받는 곳 중 우리만 빠진 도메인을 모으는 자리입니다."
-    : ix
-      ? `우리만 빠진 링크처가 <b>${num(ix)}곳</b>입니다.` +
-        BLK_tip("우리가 이미 받고 있는 도메인은 뺐으므로 남은 것이 곧 할 일 목록입니다. " +
-                "지수가 높은 곳부터 우리 자료를 근거로 링크를 요청합니다.")
-      : rivals >= 2
-        ? "경쟁사가 공통으로 받는 곳 중 우리만 빠진 도메인은 없습니다."
-        : "경쟁사가 둘 이상이어야 교집합이 나옵니다.";
-  $("blk-intersect").innerHTML = has ? BLK_intersect(d, rivals)
-    : BLK_empty("아직 맞댈 목록이 없습니다",
-        "백링크를 한 번 수집하면 경쟁사만 받은 링크처가 여기 모입니다.");
+  $("blk-ix-sub").innerHTML = ix
+    ? `우리만 빠진 링크처가 <b>${num(ix)}곳</b>입니다.` +
+      BLK_tip("우리가 이미 받고 있는 도메인은 뺐으므로 남은 것이 곧 할 일 목록입니다. " +
+              "지수가 높은 곳부터 우리 자료를 근거로 링크를 요청합니다.")
+    : rivals >= 2
+      ? "경쟁사가 공통으로 받는 곳 중 우리만 빠진 도메인은 없습니다."
+      : "경쟁사가 둘 이상이어야 교집합이 나옵니다.";
+  $("blk-intersect").innerHTML = BLK_intersect(d, rivals);
 
-  $("blk-links-sub").innerHTML = has
-    ? `앵커 하나가 전체 링크의 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 과최적화
-       신호입니다.` +
-      BLK_tip("여기는 수집한 링크 전부입니다. 끊긴 것은 위 되찾을 링크에 따로 모았습니다.")
-    : "어떤 문구로 어느 페이지에 링크가 걸렸는지 모으는 자리입니다.";
-  $("blk-anchors").innerHTML = has ? BLK_anchors(d)
-    : BLK_colh("앵커 텍스트") +
-      BLK_empty("아직 셀 앵커가 없습니다", "백링크를 한 번 수집하면 채워집니다.");
-  $("blk-links").innerHTML = has ? BLK_links(d)
-    : BLK_colh("개별 링크") +
-      BLK_empty("아직 셀 링크가 없습니다", "백링크를 한 번 수집하면 채워집니다.");
+  $("blk-links-sub").innerHTML = `앵커 하나가 전체 링크의 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 과최적화
+     신호입니다.` +
+    BLK_tip("여기는 수집한 링크 전부입니다. 끊긴 것은 위 되찾을 링크에 따로 모았습니다.");
+  $("blk-anchors").innerHTML = BLK_anchors(d);
+  $("blk-links").innerHTML = BLK_links(d);
 });
 </script>

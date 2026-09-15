@@ -2,15 +2,49 @@
 {"id": "sm-set", "view": "settings", "after": "setup", "only": "hosted"}
 </script>
 <!-- 껍데기만 정적이다 — .opts/.body 는 dash.html 의 setRender()/langRender()/
-     ga4Render()/cliRender() 가 채운다. 원본 [설정] 화면(#setup)은 호스팅에서 CSS 로
-     숨는다 — 이 섹션은 그 뒤(view-def 의 "setup" 다음)에 붙는, 호스팅에서 유일하게
-     보이는 설정 칸이다.
-     칸 넷은 h3 다: 섹션 제목(h2)과 같은 크기로 세우면 위계가 사라진다.
+     ga4Render()/cliRender() 가 채운다(브랜드·경쟁사 칸은 예외 — 아래 두 번째 주석).
+     원본 [설정] 화면(#setup)은 호스팅에서 CSS 로 숨는다 — 이 섹션은 그 뒤(view-def 의
+     "setup" 다음)에 붙는, 호스팅에서 유일하게 보이는 설정 칸이다.
+     칸들은 전부 h3 다: 섹션 제목(h2)과 같은 크기로 세우면 위계가 사라진다.
      부제는 한 문장이다 — 나머지 설명은 제목 옆 ⓘ 툴팁으로 접는다(copy-guide 5장). -->
+<!-- 브랜드·경쟁사 칸은 dash.html 의 setLoad/setRender 와 다른 배선을 쓴다: 저 넷(주기·
+     GA4·언어-지역·명령어)은 값마다 모양이 달라(고르개·목록·상태 문장) innerHTML 을
+     통째로 다시 그리지만, 이 넷은 전부 "쉼표로 쪼개는 글자 칸"이라 정적 input 하나로
+     충분하다. 그래서 이 칸의 배선(불러오기·저장)은 이 파일 끝의 스크립트가 직접
+     진다 — dash.html 의 SET_H 캐시와는 별개로 자기 몫만 fetch 한다(값은 같은
+     /api/settings 라 어긋나지 않는다). 계기는 dash.html 과 같은 "sm:site" 다. -->
+<style>
+#sm-set .profile .lh { display:block; font:var(--micro); color:var(--slate);
+  margin:0 0 5px; max-width:56ch; }
+#sm-set .profile label:not(:first-child) { margin-top:16px; }
+#sm-set .profile .msg { display:block; min-height:1.6em; margin-top:2px; }
+</style>
 <section id="sm-set">
   <div class="sh">
     <p class="eyebrow">이 사이트 설정</p><h2>측정 주기와 연결</h2>
     <p class="sub">얼마나 자주 다시 잴지, 결과를 어디로 보낼지 정합니다.</p>
+  </div>
+  <div class="profile grp"><h3>브랜드·경쟁사<span class="hint" tabindex="0"
+      data-tip="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
+      aria-label="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
+      >i</span></h3>
+    <p class="sub">벗어나면(포커스를 잃으면) 그 자리에서 저장되고 다음 실행부터 적용됩니다.</p>
+    <label for="pf-alias">브랜드 표기</label>
+    <span class="lh" id="pf-alias-lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
+    <input id="pf-alias" spellcheck="false">
+    <span class="msg" role="status" id="pf-alias-m"></span>
+    <label for="pf-comp">경쟁사 도메인</label>
+    <span class="lh">경쟁사 검색어와 백링크를 견줄 상대입니다. 선택이고 쉼표로 여러 개.</span>
+    <input id="pf-comp" spellcheck="false" placeholder="competitor.com, other.com">
+    <span class="msg" role="status" id="pf-comp-m"></span>
+    <label for="pf-tools">등재·경쟁 도구 이름</label>
+    <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
+    <input id="pf-tools" placeholder="ecrett, paperpal, future tools">
+    <span class="msg" role="status" id="pf-tools-m"></span>
+    <label for="pf-seeds">씨앗 키워드</label>
+    <span class="lh">자동완성으로 후보를 넓히는 출발점입니다. 3~10개, 쉼표나 줄바꿈으로.</span>
+    <textarea id="pf-seeds" placeholder="ai 티어리스트&#10;캐릭터 순위표"></textarea>
+    <span class="msg" role="status" id="pf-seeds-m"></span>
   </div>
   <div class="grp"><h3>자동 수집 주기<span class="hint" tabindex="0"
       data-tip="꺼도 [전체 분석 실행]과 첫 측정은 그대로 됩니다. 멈추는 것은 자동 재측정뿐입니다."
@@ -46,3 +80,75 @@
     <div class="body"></div>
   </div>
 </section>
+<script>
+"use strict";
+// 브랜드·경쟁사 칸의 불러오기·저장. dash.html 의 IIFE 안이 아니라서 SET_H·proj()
+// 를 못 본다 — 셸이 진 전역(getElementById 인 $, esc)만 빌리고 나머지는 이 파일
+// 안에서 닫는다. 같은 /api/settings 를 한 번 더 부르는 대가로 그 경계를 지킨다
+// (dash.html 을 고치는 다른 작업과 겹치지 않는다).
+(function () {
+  var FIELDS = ["alias", "comp", "tools", "seeds"];
+  var KEY = {alias: "brand_aliases", comp: "competitors_manual",
+             tools: "tools", seeds: "seed_keywords"};
+  var DONE = "";     // setLoad() 의 SET_DONE 과 같은 구실 — 사이트당 한 번만 받는다
+
+  function proj() {
+    var p = document.getElementById("proj");
+    return p ? p.value : "";
+  }
+  function field(k) { return document.getElementById("pf-" + k); }
+  function msg(k) { return document.getElementById("pf-" + k + "-m"); }
+
+  async function pfLoad() {
+    var pj = proj();
+    if (!pj || DONE === pj || !field("alias")) return;
+    DONE = pj;
+    var d;
+    try {
+      d = await (await fetch("/api/settings?project=" + encodeURIComponent(pj))).json();
+    } catch (e) {
+      DONE = "";     // 못 받았으면 다음 sm:site 에서 다시 시도한다
+      return;
+    }
+    FIELDS.forEach(function (k) { field(k).value = d[KEY[k]] || ""; });
+    // 브랜드 표기가 비어 있을 때만 도메인 초안을 얹는다 — placeholder 는 저장되지
+    // 않는 글자다: 검색어 화면이 켜는 "비었습니다" 경고를 여기서 조용히 지우지
+    // 않는다. 사람이 실제로 적어야(또는 이 값을 그대로 옮겨 적어야) 저장된다.
+    if (!d.brand_aliases && d.brand_suggestion) {
+      field("alias").placeholder = d.brand_suggestion;
+      document.getElementById("pf-alias-lh").textContent =
+        "AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개 — 비어 있으면 " +
+        "검색어 화면에서 남의 브랜드를 못 거릅니다. 예: " + d.brand_suggestion;
+    }
+  }
+
+  async function pfSave(k) {
+    var pj = proj();
+    if (!pj) return;
+    var el = field(k), m = msg(k), val = el.value;
+    var body = {project: pj, profile: {}};
+    body.profile[KEY[k]] = val;
+    m.textContent = "저장하는 중…";
+    try {
+      var r = await fetch("/api/settings", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      m.textContent = "저장했습니다.";
+      if (k === "alias" && val) { el.placeholder = ""; }   // 채웠으면 초안 문구를 뗀다
+    } catch (e) {
+      m.textContent = "저장하지 못했습니다. 다시 벗어나면 재시도합니다.";
+    }
+  }
+
+  var sec = document.getElementById("sm-set");
+  if (sec) {
+    FIELDS.forEach(function (k) {
+      var el = field(k);
+      if (el) el.addEventListener("change", function () { pfSave(k); });
+    });
+  }
+  document.addEventListener("sm:site", pfLoad);
+  pfLoad();   // 이미 사이트가 골라진 채로 이 스크립트가 늦게 실행됐을 때 대비
+})();
+</script>

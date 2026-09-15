@@ -200,7 +200,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   <div id="devgap"><div class="skel box"></div></div>
   <details class="why"><summary>고칠 곳이 글이 아닌 이유</summary>
     <p>같은 검색어를 기기별로 갈라 평균 순위를 맞대 본 것입니다. 격차가 크면
-      <b>고칠 곳은 글이 아니라 모바일 화면</b>입니다. GA4 가 연결돼 있으면 기기별
+      <b>고칠 곳은 글이 아니라 모바일 화면</b>입니다. GA4가 연결돼 있으면 기기별
       전환율을 옆에 나란히 놓아 페이지 자체를 의심할 자리인지까지 봅니다.</p></details>
 </section>
 
@@ -1129,7 +1129,7 @@ function renderCrawl(d) {
   // 빈 상태의 행동은 보조 톤이다 — 주요는 위 다음 걸음 띠 하나가 든다.
   $("crawl").innerHTML = has ? (crn ? CR_rows(d) : stOk(`크롤한 ${num(c.run.pages)}쪽 전부`))
     : `<div class="empty"><b>아직 크롤하지 않았습니다</b>
-        <p>내 사이트만 두드리므로 비용이 없습니다.${live(" 한 바퀴 돌면 깨진 내부 링크와 고아 페이지가 나오고, 아래 두 섹션도 함께 채워집니다.")}</p>
+        <p>내 사이트만 두드리므로 비용이 없습니다.${live(" 한 바퀴 돌면 깨진 내부 링크와 고아 페이지가 나오고, 아래 [노출 없는 페이지]·[내부 링크 부족]도 함께 채워집니다.")}</p>
         ${stAct("crawl", stageName("crawl"))}</div>`;
 }
 
@@ -1145,22 +1145,21 @@ const PG_OLD_SNAP = () => `<div class="empty"><b>페이지 정보가 없습니�
   <p>검색어만 담던 시절의 수집본입니다.${live(" 실적을 다시 수집하면 페이지 축이 생깁니다.")}</p>
   ${stAct("gsc", stageRun("gsc"))}</div>`;
 // 크롤 전에는 이 셋(크롤·아무도 안 오는 페이지·굶은 페이지)이 다 같은 말을 한다.
-// 예전엔 셋이 각자 빈 상자와 명령 칩을 들어 한 화면에 같은 문장이 세 번, 같은 칩이
-// 네 번 떴다. 빈 상자는 크롤 섹션 하나만 갖고, 나머지는 머리 한 줄로 접는다.
-// 행동은 위 다음 걸음 띠 하나가 든다.
-const PG_WAIT_CRAWL = "사이트 크롤이 먼저입니다. 크롤한 URL 목록이 있어야 실적과 맞대 볼 수 있습니다.";
+// 예전엔 셋이 각자 머리·"왜"·"사이트 크롤이 먼저입니다" 빈 상자를 들어 한 화면에
+// 같은 문장이 세 번 섰다. 이제 그 문장은 크롤 섹션의 빈 상태 하나만 말하고
+// (renderCrawl), 아래 두 섹션(renderPageDead·renderPageStarved)은 크롤 전에는
+// section 째 hidden 으로 접는다. 행동은 위 다음 걸음 띠 하나가 든다.
 
 let PG_PERF = [], PG_DEAD = [], PG_STARVED = [], PG_NOCONV = [], PG_RULES = {}, PG_GA4 = false;
 
 /* ── 페이지별 성과 ─────────────────────────────────────── */
 const PG_PERF_HEAD = ["페이지",
   ">Δ클릭?직전 수집 대비. 이 표는 이 열의 내림차순입니다. 비교할 직전 수집이 없으면 빈칸",
-  ">클릭", ">노출", ">CTR",
-  ">평균 순위?이 페이지로 걸린 검색어들의 평균 순위",
+  ">클릭", ">노출", ">CTR", ">평균 순위",
   ">검색어 수?이 페이지 하나가 몇 개의 검색어로 걸렸는지. 많을수록 한 장이 넓게 먹고 있다"];
 // GA4 가 연결된 프로젝트에서만 붙는 두 열 — d.ga4_date 가 없으면 아예 안 만든다
 // (빈 열을 보여주면 고장으로 읽힌다).
-const PG_PERF_HEAD_GA4 = [">세션?GA4 에서 읽은 세션 수. 클릭과 수집 시점이 다를 수 있습니다",
+const PG_PERF_HEAD_GA4 = [">세션?GA4에서 읽은 세션 수. 클릭과 수집 시점이 다를 수 있습니다",
   ">전환?GA4 key_events(전환으로 설정한 이벤트) 합"];
 
 function pgPerfCsv() {
@@ -1239,15 +1238,13 @@ function pgDeadCsv() {
 }
 
 function renderPageDead(d) {
-  $("pgd-sec").hidden = false;
   PG_DEAD = d.dead_pages || [];
   const crawled = !!((d.crawl || {}).run);
-  if (!crawled) {
-    stSec("pgd-sec", null);
-    stTools("pgd-tools", "");
-    $("pgd-sub").textContent = PG_WAIT_CRAWL;
-    return $("pg-dead").innerHTML = "";
-  }
+  // 크롤 전에는 섹션째로 접는다 — 머리글·"왜"만 남고 본문에 PG_WAIT_CRAWL 만
+  // 있는 상자가 셋(이 섹션·아래 링크 부족)이나 서 있었다. 위 크롤 섹션의 빈
+  // 상태가 이미 이 둘을 함께 채운다고 말하므로, 그 문장을 여기서 되풀이하지 않는다.
+  $("pgd-sec").hidden = !crawled;
+  if (!crawled) return;
   if (!(d.page_perf || []).length) {
     stSec("pgd-sec", null);
     stTools("pgd-tools", "");
@@ -1292,16 +1289,14 @@ function pgStarvedCsv() {
 }
 
 function renderPageStarved(d) {
-  $("pgs-sec").hidden = false;
   PG_STARVED = d.starved_pages || [];
   const lim = PG_RULES.starved_links_in, topn = PG_RULES.starved_top_n;
   const pgsAim = "노출은 버는데 사이트가 안 밀어 주는 페이지를 찾습니다.";
-  if (!((d.crawl || {}).run)) {
-    stSec("pgs-sec", null);
-    stTools("pgs-tools", "");
-    $("pgs-sub").textContent = PG_WAIT_CRAWL;
-    return $("pg-starved").innerHTML = "";
-  }
+  const crawled = !!((d.crawl || {}).run);
+  // 위 renderPageDead 와 같은 이유로 섹션째 접는다 — PG_WAIT_CRAWL 문구는
+  // 이제 크롤 섹션의 빈 상태 한 곳만 말한다.
+  $("pgs-sec").hidden = !crawled;
+  if (!crawled) return;
   if (!(d.page_perf || []).length) {
     stSec("pgs-sec", null);
     stTools("pgs-tools", "");
@@ -1380,7 +1375,7 @@ function pgStarvedDetail(page) {
    "GA4 를 연결하세요"를 띄우지 않는다: 이 화면의 다른 섹션(색인·크롤 등)은 전부
    GSC 하나로 도는데, 여기만 별도 연동을 재촉하면 화면이 결제 벽처럼 읽힌다. ── */
 const PG_NOCONV_HEAD = ["페이지", ">클릭", ">노출",
-  ">세션?GA4 에서 읽은 세션 수", ">검색어 수"];
+  ">세션?GA4에서 읽은 세션 수", ">검색어 수"];
 
 function pgNoConvCsv() {
   csv("전환없는페이지", [["페이지", "클릭", "노출", "세션", "검색어 수"]].concat(

@@ -921,28 +921,64 @@ RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72
                (168, "주 1회"))
 
 
+# 사이트 설정 화면(#sm-set)의 "이 사이트 설정" 칸이 다루는 프로필 필드 — 전부
+# 프로젝트 yaml 에만 있고 Brain(sqlite) 스키마에는 컬럼이 없다(db.py SCHEMA 참고).
+# 정본은 db.py 의 CARRY_FIELDS/PREFILL_KEYS 와 같은 이름이어야 한다 — 여기서
+# 새 이름을 짓지 않는다.
+PROFILE_FIELDS = ("brand_aliases", "seed_keywords", "competitors_manual", "tools")
+
+
+def _project_cfg(pr) -> dict:
+    """프로젝트 yaml — 없으면(등록 직후 sync 전, 또는 손상) 빈 값."""
+    path = pr["config_path"] if pr else None
+    if not path:
+        return {}
+    try:
+        return db.load_project_yaml(path)
+    except (db.ProjectConfigNotFound, OSError):
+        return {}
+
+
+def _joined(cfg: dict, key: str) -> str:
+    v = cfg.get(key) or []
+    return ", ".join(v) if isinstance(v, list) else str(v)
+
+
 @app.get("/api/settings")
 def api_settings(project: str, uid: int = Depends(_require_uid),
                  tn=Depends(TENANT_Q), c=Depends(BRAIN_Q)):
-    """사이트별 설정 — 수집 주기·언어-지역·GA4.
+    """사이트별 설정 — 수집 주기·언어-지역·GA4·이 사이트 프로필(브랜드·경쟁사·도구·씨앗).
 
     화면이 그리는 칸이 곧 이 응답의 키다. 화면에 없는 값을 여기 싣지 않는다 —
     저장소(GitHub) 키가 그렇게 남아 화면이 없는 칸을 그리려 했다.
     """
+    domain = ""
     try:
         pr = db.get_project(c, project)
-        ga4, locale = pr["ga4_property"] or "", db.project_locale(pr)
+        ga4, locale, domain = pr["ga4_property"] or "", db.project_locale(pr), pr["domain"]
+        cfg = _project_cfg(pr)
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale = "", ""
+        ga4, locale, cfg = "", "", {}
+    brand_aliases = _joined(cfg, "brand_aliases")
+    # 브랜드 표기가 비어 있으면 도메인 앞부분을 초안으로 얹는다 — 검색어 화면이
+    # "브랜드 표기가 비었습니다"라고 말해도 여기 채울 칸이 없던 것이 원인이다.
+    # 초안은 골라 둔 값이 아니다: 화면이 이걸 입력칸 값이 아니라 placeholder/제안으로
+    # 보여 주고, 사람이 [저장]을 눌러야 실제로 저장된다 — 조용히 저장하지 않는다.
+    brand_suggestion = "" if brand_aliases else domain.split(".")[0] if domain else ""
     # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
     return {"run_every_hours": store.every_hours(tn.conn, uid, project),
             "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
             "ga4_property": ga4,
             # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
             "locale": locale,
-            "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES]}
+            "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
+            "brand_aliases": brand_aliases,
+            "brand_suggestion": brand_suggestion,
+            "seed_keywords": _joined(cfg, "seed_keywords"),
+            "competitors_manual": _joined(cfg, "competitors_manual"),
+            "tools": _joined(cfg, "tools")}
 
 
 @app.post("/api/settings")
@@ -963,6 +999,8 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
                                 detail="고를 수 없는 언어-지역입니다. 새로고침한 뒤 다시 고르세요.")
         db.set_locale(c, db.get_project(c, project)["id"], loc)
         return {"ok": True, "locale": loc}
+    if "profile" in body:     # 브랜드 표기·경쟁사 도메인·도구·씨앗 — yaml 에만 있는 값
+        return _api_settings_profile(body.get("profile"), project, c)
     try:
         hours = float(body.get("run_every_hours"))
     except (TypeError, ValueError):
@@ -972,6 +1010,33 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
                             detail="고를 수 없는 수집 주기입니다. 새로고침한 뒤 다시 고르세요.")
     store.set_every_hours(t.conn, uid, project, hours)
     return {"ok": True, "run_every_hours": hours}
+
+
+def _api_settings_profile(profile, project: str, c) -> dict:
+    """PROFILE_FIELDS 중 보낸 것만 프로젝트 yaml 에 쓰고 Brain 을 다시 맞춘다.
+
+    스키마를 아는 곳은 db.py 뿐이라 여기서 SQL 을 새로 짜지 않는다 — yaml 을
+    고친 뒤 db.sync_project 를 다시 돌리는 것은 사이트 등록(dashboard.create_project)이
+    이미 하는 것과 같은 절차다(씨앗 키워드·경쟁사 도메인을 새로 얹는다).
+    sync_project 는 INSERT OR IGNORE 라 뺀 값은 Brain 에서 지워지지 않는다 — 로컬
+    마법사에서 재등록해도 마찬가지다(그 화면 주석 참고). 새 동작이 아니다.
+    """
+    if not isinstance(profile, dict):
+        raise HTTPException(status_code=400, detail="profile 은 {필드: 값} 모양이어야 합니다.")
+    pr = db.get_project(c, project)
+    path = pr["config_path"]
+    if not path or not Path(path).exists():
+        raise HTTPException(status_code=500,
+                            detail="이 사이트의 설정 파일을 찾을 수 없습니다 — 다시 등록해 주세요.")
+    import yaml  # lazy — dashboard.create_project 와 같은 이유
+    cfg = yaml.safe_load(Path(path).read_text("utf-8")) or {}
+    for key in PROFILE_FIELDS:
+        if key not in profile:
+            continue
+        cfg[key] = [s.strip() for s in re.split(r"[,\n]", str(profile.get(key) or "")) if s.strip()]
+    Path(path).write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), "utf-8")
+    db.sync_project(path)
+    return {"ok": True, **{k: _joined(cfg, k) for k in PROFILE_FIELDS}}
 
 
 # --- GA4 ------------------------------------------------------------------
@@ -1059,14 +1124,26 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     # 사람이 연 주소(오타·옛 링크)가 없으면 JSON 한 줄 대신 돌아갈 길이 있는 화면을 준다.
     # /api/* 는 클라이언트가 detail 을 읽으므로 JSON 그대로.
     if e.status_code == 404 and not request.url.path.startswith("/api/"):
-        return HTMLResponse(pages.document(_NOT_FOUND, "페이지를 찾을 수 없습니다 — seo-miner"),
-                            status_code=404)
+        return HTMLResponse(
+            pages.document(_not_found(_uid(request) is not None),
+                           "페이지를 찾을 수 없습니다 — seo-miner"),
+            status_code=404)
     return await http_exception_handler(request, e)
 
 
 # 머리 줄은 랜딩 헤더(.hbar·.mark)와 같은 판·같은 서체다 — 서체를 안 불러 로고가
 # 폴백 등폭으로 벌어지고 머리가 없어 다른 사이트처럼 보였다(8회차).
-_NOT_FOUND = (
+# 오른쪽 버튼은 로그인 상태를 본다 — 세션에 uid 가 있는 사람에게 "Google로
+# 시작"을 또 보여 주면 이미 로그인했다는 걸 의심하게 만든다(9회차). 로그인
+# 이면 "/" 의 "내 사이트" 목록으로 보낸다 — 다시 로그인을 거치지 않는다.
+def _not_found(logged_in: bool) -> str:
+    action = ('<a href="/" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
+              'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
+              'text-decoration:none">내 사이트</a>') if logged_in else (
+              '<a href="/auth/login" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
+              'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
+              'text-decoration:none">Google로 시작</a>')
+    return (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@600&display=swap">'
     '<body style="margin:0;background:#E6E9E4">'
     '<header style="background:#121714"><div style="max-width:1120px;margin:0 auto;padding:12px 24px;'
@@ -1074,9 +1151,7 @@ _NOT_FOUND = (
     '<a href="/" style="font:600 15px/1 \'IBM Plex Mono\',ui-monospace,monospace;letter-spacing:.06em;'
     'color:#E6E9E4;text-decoration:none">seo<b style="color:#57B49C;font-weight:600">·</b>miner</a>'
     '<span style="flex:1"></span>'
-    '<a href="/auth/login" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
-    'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
-    'text-decoration:none">Google로 시작</a></div></header>'
+    + action + '</div></header>'
     '<main style="font:15px/1.7 -apple-system,BlinkMacSystemFont,\'Malgun Gothic\',sans-serif;'
     'color:#121714;max-width:36rem;margin:0 auto;padding:12vh 24px 0;word-break:keep-all">'
     '<h1 style="font-size:23px;margin:0 0 8px">페이지를 찾을 수 없습니다</h1>'

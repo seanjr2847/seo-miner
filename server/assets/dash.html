@@ -23,6 +23,10 @@
     background:var(--patina);color:var(--stone);border-radius:4px;padding:9px 14px}
   #sm-run:hover:not(:disabled){filter:brightness(1.12)}
   #sm-run:disabled{opacity:.5;cursor:default}
+  /* 지금 화면의 다음 행동 띠가 이미 주요(채운) 버튼을 들고 있으면 이 버튼은
+     물러난다 — 화면마다 채운 초록 버튼은 최대 하나다(syncRunTone 이 토글). */
+  #sm-run.sec{background:transparent;color:var(--patina)}
+  #sm-run.sec:hover:not(:disabled){filter:none;background:var(--wash)}
   .rail-foot .cmd{font:400 12.5px/1 var(--sans);color:var(--on-ink-dim);
     cursor:pointer;text-decoration:none;border:0;background:none;padding:2px 0;margin:0}
   .rail-foot .cmd:hover{opacity:1}
@@ -787,9 +791,12 @@
       // 버튼으로 든 단계"의 머리줄 버튼을 뺀다(.taken) — 같은 일을 한 화면에 두 번
       // 놓지 않는다. 도는 동안 잠그는 runLock 도 같은 표식을 본다. 누르는 것은
       // 인라인 onclick 이라 아래 [data-run] 위임과 겹치지 않는다(두 번 안 돈다).
+      // 라벨은 window.stageRun(원본 dashboard.html)에서 받는다 — STAGE[st].run 을
+      // 직접 읽으면 이 사이트가 그 단계를 한 번도 안 돌았어도 항상 "다시" 문구를
+      // 낸다. stageRun 은 LAST_D.runs 로 첫 실행 여부를 가려 s.t/s.run 을 고른다.
       return '<button class="sm-refresh vh-cmd" data-run="' + esc(st) +
         '" title="' + esc(STAGE[st].t) +
-        '" onclick="SM.host.run(\'' + esc(st) + '\', this)">' + esc(STAGE[st].run) + '</button>';
+        '" onclick="SM.host.run(\'' + esc(st) + '\', this)">' + esc(window.stageRun(st)) + '</button>';
     },
     run(st, btn) { runStage(st, btn); },
     gotoOpps() {
@@ -828,10 +835,35 @@
   // 사이드바·배치·전환까지 통째로 다시 구현해 !important 로 원본을 덮어써서, 같은
   // 조립본이 배포마다 다른 몸으로 섰다). 셸도 섹션도 원본 하나뿐이다.
 
+  // 지금 보는 화면의 다음 행동 띠(.next)가 이미 주요(비-.sec) [data-run] 버튼을
+  // 들고 있으면 이 레일 버튼은 채운 초록에서 물러난다 — 그래야 화면마다 채운
+  // 버튼이 하나만 선다(눌러도 결과는 같다, runAll 그대로 걸린다). dimHead 가
+  // 이미 같은 신호(현재 뷰의 .next [data-run]:not(.sec))로 머리줄 칩을 죽이므로
+  // 여기서도 같은 신호를 읽는다 — 새 사실을 만들지 않는다.
+  function syncRunTone() {
+    var id = window.SM && SM.cur;
+    var box2 = id && document.getElementById("view-" + id);
+    var band = box2 && box2.querySelector(":scope > .next");
+    var primary = !!(band && band.querySelector("[data-run]:not(.sec), button.go:not(.sec)"));
+    b.classList.toggle("sec", primary);
+  }
+  document.addEventListener("sm:view", syncRunTone);
+  document.addEventListener("sm:site", syncRunTone);
+  document.addEventListener("sm:views", syncRunTone);
+  // 화면을 안 바꿔도 띠 내용이 바뀔 수 있다(render() 가 같은 화면을 다시 그림) —
+  // dimHead 를 부르는 HEAD_WATCH 와 같은 자리를 관찰해 같이 다시 잰다.
+  step("레일 버튼 톤", function () {
+    var c = document.getElementById("content");
+    if (!c) return;
+    new MutationObserver(syncRunTone).observe(c, {childList: true, subtree: true});
+    syncRunTone();
+  });
+
   step("레일 바닥", function foot() {
     var box = document.querySelector(".rail-foot");
     if (!box || document.getElementById("sm-run")) return;
     box.prepend(b);                           // 위에서 만든 '전체 분석 실행'
+    syncRunTone();
     var rep = document.createElement("a");
     rep.className = "cmd"; rep.textContent = "보고서 내려받기";
     rep.addEventListener("click", function () {
@@ -968,9 +1000,12 @@
     fail: "<p>설정을 못 읽어 지금 상태를 알 수 없습니다. 다시 시도하면 이어서 " +
       "채워집니다.</p>" +
       '<div class="acts"><button class="go" data-sm-retry="set">다시 시도</button></div>',
+    // 버튼은 아래 GA4 칸(ga4Render)에 하나만 선다 — 여기는 글자만 말하고 jump 로
+    // 그 칸까지 스크롤만 시킨다. 예전엔 이 칩도 채운 버튼이라 "GA4 연결"이 화면에
+    // 두 번(머리 띠 + GA4 칸) 섰다.
     ga4: "<p><b>GA4</b>를 연결하면 클릭 다음에 일어난 일까지 보입니다. " +
-      "연결 전에도 검색 실적은 그대로 쌓입니다.</p>" +
-      '<div class="acts"><button class="go" data-sm-jump="ga4">GA4 연결</button></div>',
+      "연결 전에도 검색 실적은 그대로 쌓입니다. 아래 GA4 칸에서 연결합니다.</p>" +
+      '<div class="acts"><button data-sm-jump="ga4">GA4 칸으로</button></div>',
     done: "<p>연결은 다 됐습니다. 여기서 바꾼 값은 다음 실행부터 적용됩니다.</p>" +
       '<div class="acts"><button class="go" data-sm-jump="overview">개요 열기</button></div>'
   };
@@ -1025,12 +1060,11 @@
         "<button data-ga4-pick>속성 바꾸기</button></div>" + note;
       return;
     }
-    // 화면 머리 띠(SET_NEXT.ga4)가 이미 같은 라벨의 채운 버튼을 든다 — 여기 또
-    // 두면 "GA4 연결"이 한 화면에 두 번 선다. 띠는 jump("ga4")로 이 칸까지
-    // 스크롤하고 ga4Pick() 도 직접 부르므로, 버튼을 지워도 연결 동작은 그대로다.
+    // 버튼은 이 칸에만 선다 — 화면 머리 띠(SET_NEXT.ga4)는 이제 글자와 jump 손잡이만
+    // 들고 채운 버튼은 안 든다(그래서 "GA4 연결"이 화면에 두 번 안 선다).
     body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다. ' +
       "연결하면 클릭 다음에 일어난 일(세션·매출)까지 봅니다.</span>" +
-      (window.nextStep ? "" : "<button data-ga4-pick>GA4 연결</button>") + "</div>" + note;
+      "<button data-ga4-pick>GA4 연결</button></div>" + note;
   }
 
   async function ga4Pick() {

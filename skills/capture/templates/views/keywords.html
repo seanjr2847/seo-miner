@@ -70,7 +70,7 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 <section>
   <div class="sh">
     <p class="eyebrow" id="log-eb"></p>
-    <h2>순위 상승 기회</h2>
+    <h2 id="log-h2">순위 상승 기회</h2>
     <p class="sub" id="log-sub"></p>
   </div>
   <div class="tools" id="log-tools"></div>
@@ -195,13 +195,16 @@ function depthLog(rows, brandCatalogEmpty, period) {
   // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
   // 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
   const hasScore = KW_hasScore(rows);
+  // "평균 순위"·"클릭"은 열 이름 그대로라 ⓘ가 없어도 읽힌다 — 정말 처음 보면
+  // 모를 것("1페이지까지"의 계산 기준, 노출이 왜 기회인지)만 남긴다(QA 8회차 —
+  // 표 열마다 ⓘ가 서서 어느 게 정말 볼 것인지 안 도드라졌다).
   const tbl = table([
     "검색어",
     ...(hasScore ? [KW_SCORE_TH] : []),
-    `>평균 순위?서치콘솔이 보고한 ${period || "기간"} 평균 순위입니다`,
+    ">평균 순위",
     `>1페이지까지?${RULES.page1}위 경계까지 올려야 할 칸 수입니다. 이미 1페이지면 빈 칸입니다`,
     `>${impLabel}?${period || "기간"} 합계 노출입니다. 순위를 올리면 클릭으로 바뀔 몫입니다`,
-    `>클릭?${period || "기간"} 합계 클릭입니다`],
+    ">클릭"],
     rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}>${KW_qcell(r.query, hasScore)}
       <td class="num">${r.pos}</td>
       <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
@@ -309,12 +312,14 @@ function KW_mvList() {
       <p>움직인 검색어는 모두 ${KW_MV.length}개입니다.</p>
       <div class="acts"><button onclick="KW_mvReset()">전체 보기</button></div></div>`;
   const per = KW_PERIOD || "기간", hasScore = KW_hasScore(list);
+  // "평균 순위"·"클릭"은 옆 위 표와 같은 이유로 ⓘ를 뗐다 — "Δ순위"(부호가 무슨
+  // 뜻인지)와 "노출"(적으면 순위가 왜 흔들리는지)만 처음 보면 모를 내용이라 남긴다.
   $("mv-list").innerHTML = `<div class="card">` + table([
     "검색어",
     ...(hasScore ? [KW_SCORE_TH] : []),
-    `>평균 순위?서치콘솔이 보고한 ${per} 평균 순위입니다`,
+    ">평균 순위",
     ">Δ순위?직전 기록 대비 움직인 칸수입니다. 양수면 위로 올라온 것입니다",
-    `>클릭?${per} 합계 클릭입니다. 옆 숫자는 직전 기록 대비 증감입니다`,
+    ">클릭",
     `>노출?${per} 합계 노출입니다. 노출이 적으면 순위도 크게 흔들립니다`],
     list.map(m => `<tr ${KW_rowAttr(m.query, "mv")}>${KW_qcell(m.query, hasScore)}
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
@@ -557,12 +562,22 @@ VIEW("keywords", function (d) {
   const poss = KW_ROWS.map(r => r.pos).filter(Number.isFinite);
   const lo = poss.length && Math.floor(Math.min(...poss));
   const hi = poss.length && Math.ceil(Math.max(...poss));
-  $("log-eb").textContent = !poss.length ? ""
-    : lo === hi ? `${lo}위` : `${lo}~${hi}위 구간`;
+  // 검색어가 하나뿐이거나 전부 같은 순위면 "9위" 한 낱말은 위로 뭘 말하는지
+  // 안 읽힌다(무슨 목록의 9등인지로 착각한다) — 그때는 눈썹을 비운다. 범위가
+  // 실제로 있을 때만 말한다.
+  $("log-eb").textContent = poss.length && lo !== hi ? `${lo}~${hi}위 구간` : "";
+  // 제목은 상태를 따라간다 — 문턱(11~20위)에 하나도 안 걸렸으면 "순위 상승
+  // 기회"라는 제목 자체가 띠의 "남은 문제는 순위가 아니라 클릭입니다"와
+  // 부딪힌다(QA 8회차). 그때는 지금 이 표가 실제로 보여주는 것("1페이지 안
+  // 검색어")으로 제목을 바꾼다.
+  $("log-h2").textContent = KW_ROWS.length && !p2 ? "1페이지 안 검색어" : "순위 상승 기회";
   // 섹션 부제는 한 문장, 지금 상태만. 무엇을 하라는 말은 띠가 한다.
+  // "1개가 전부 1페이지 안입니다"는 단수에 "전부"가 붙어 어색하다 — 한 개일
+  // 때는 그 검색어를 그대로 가리키는 문장으로 가른다.
   $("log-sub").textContent = !KW_ROWS.length ? ""
     : p2 ? `${KW_ROWS.length}개 중 ${p2}개가 1페이지 문턱입니다.`
-         : `${KW_ROWS.length}개가 전부 1페이지 안입니다.`;
+    : KW_ROWS.length === 1 ? "이 검색어는 이미 1페이지 안입니다."
+    : `${KW_ROWS.length}개 모두 1페이지 안입니다.`;
   if (!KW_ROWS.length) {
     // 빈 이유가 둘이다 — 아직 안 수집했다 / 수집했는데 이 구간에 걸린 게 없다.
     $("log-tools").innerHTML = "";

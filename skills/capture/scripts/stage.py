@@ -222,7 +222,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
 
     # 안내 단계의 설명도 같은 규칙을 탄다 — 화면은 이 페이로드를 그대로 그린다. 호스팅
     # 표식은 app.py 의 공유 GET 이 TENANT_Q_PAID 로 두른다(밖에서 돌면 로컬 문구가 샌다).
-    L = stage_labels("hosted" if _hosted() else "local")
+    hosted = _hosted()
+    L = stage_labels("hosted" if hosted else "local")
     cmd_register = None if domain else "/capture add"
     cmd_keywords = f"/capture keywords {name}"
     cmd_ai = f"/capture ai {name}" if p.get("ai_prompts", 0) else f"/capture add {name}"
@@ -246,7 +247,15 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
          "skip": ai_skip,
-         "state": ("건너뜀 · OpenRouter 를 연동하면 켜집니다" if ai_skip else
+         # ai_skip 의 로컬 문구("OpenRouter 를 연동하면 켜집니다")는 호스팅에서 못
+         # 지키는 약속이다 — 호스팅은 키를 서버가 대므로(GAIN_WEB: "키는 서버가
+         # 댑니다") 사용자가 연동할 곳이 없다. 호스팅에서 이 단계가 안 도는 진짜
+         # 이유는 거의 언제나 질문이 아직 없어서다(질문 만들기도 그 키로 서버가
+         # 돌린다) — 그 사실을 말하고, 질문이 있는데도 못 도는 드문 경우엔 서버
+         # 쪽 사정이라고만 말한다(사용자가 할 수 있는 일이 없다).
+         "state": (("건너뜀 · 물어볼 질문부터 필요" if not p.get("ai_prompts", 0)
+                    else "건너뜀 · 서버 쪽 준비가 안 끝났습니다") if ai_skip and hosted else
+                   "건너뜀 · OpenRouter 를 연동하면 켜집니다" if ai_skip else
                    (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
                     if p.get("ai_checks", 0)
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
@@ -403,8 +412,33 @@ def _selfcheck() -> None:
         st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
                             "keywords_found": 5, "ai_prompts": 10}, "demo", "demo.com")
         assert st["steps"][3]["skip"] and "건너뜀" in st["steps"][3]["state"]
+        assert "OpenRouter" in st["steps"][3]["state"], \
+            "로컬은 OpenRouter 연동을 안내해야 한다"
         assert st["here"] == 4 and st["steps"][4]["id"] == "gaps", st["here"]
         assert len(st["steps"]) == 6, "단계를 목록에서 빼 버렸다"
+
+        # 같은 키 없음 상태를 호스팅 표식 아래서 보면: 로컬 문구("OpenRouter 를
+        # 연동하면 켜집니다")는 호스팅에서 지킬 수 없는 약속이다 — 키는 서버가
+        # 댄다. 질문이 없다는 진짜 이유를 말해야 한다(블랙박스에서 실제로 이
+        # 모순이 잡혔다: 바로 옆 gain 은 "키는 서버가 댑니다"라면서 state 는
+        # 사용자에게 연동하라고 했다).
+        import doctor
+        os.environ[doctor.HOSTED_ENV] = "1"
+        try:
+            st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
+                                "keywords_found": 5, "ai_prompts": 0}, "demo", "demo.com")
+            assert st["steps"][3]["skip"]
+            assert "OpenRouter" not in st["steps"][3]["state"], \
+                f"호스팅인데 OpenRouter 연동을 시킨다: {st['steps'][3]['state']}"
+            assert "질문" in st["steps"][3]["state"], st["steps"][3]["state"]
+
+            # 질문이 이미 있는데도 못 도는 드문 경우엔 여전히 사용자에게 뭘
+            # 시키면 안 된다(연동할 곳이 없다) — 그런데도 OpenRouter 를 말하면 안 된다.
+            st2 = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
+                                 "keywords_found": 5, "ai_prompts": 5}, "demo", "demo.com")
+            assert "OpenRouter" not in st2["steps"][3]["state"], st2["steps"][3]["state"]
+        finally:
+            os.environ.pop(doctor.HOSTED_ENV, None)
         os.environ["OPENROUTER_API_KEY"] = "k"
         st = from_progress({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
                     "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")

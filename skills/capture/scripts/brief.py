@@ -1117,7 +1117,7 @@ assert set(_AI_VISIT_KINDS) <= set(scoring.ALL_KINDS)
 # ai.html #ai-visits 의 h2) — 여기는 가리키기만 하고, test_seams 가 둘을 대조한다.
 # 화면 이름을 바꾸고 이쪽을 안 고치면 요청문이 없는 화면을 보라고 한다.
 SCREEN_TITLES = {"ai": "AI 인용", "rank": "순위 추적"}
-AI_VISITS_SECTION = ("ai-visits", "AI 에서 온 방문")
+AI_VISITS_SECTION = ("ai-visits", "AI에서 온 방문")
 
 
 def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str]]:

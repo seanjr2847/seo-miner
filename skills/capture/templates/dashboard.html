@@ -518,6 +518,14 @@ h2 { font:650 19px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 4px; }
 @media (prefers-reduced-motion: no-preference) {
   .skel { animation:shimmer 1.4s linear infinite; }
 }
+/* 첫 로드 전체 자리 — [개요]가 첫 응답(/api/data)을 받기까지 화면 상자·section 이
+   전부 미리 조립돼 있어(정적 HTML), 예전에는 그 사이 "제목은 있는데 본문은 빈"
+   section 이 그대로 보였다(~3초, 그동안 머리줄 버튼도 나중에 바뀌었다). 여기서
+   중립적인 자리표 하나로 덮는다 — #content 는 첫 render() 가 부를 때까지 감춘다. */
+#sm-boot { display:flex; flex-direction:column; gap:var(--sp-3); padding-top:var(--sp-5); }
+#sm-boot .skel.box { margin:0; }
+/* 위 display:flex 가 id 특이도로 UA 의 [hidden] 을 이긴다 — 안 적으면 bootDone() 뒤에도 자리표가 본문을 민다 */
+#sm-boot[hidden] { display:none; }
 
 /* ── 토스트 ──────────────────────────────────────────────
    행동의 결과(복사됨·실행 시작·실패)를 그 자리에서 말한다. 우하단에 쌓이고
@@ -1121,7 +1129,15 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
 
   <div id="err" hidden></div>
 
-  <div id="content">
+  <!-- 첫 payload 전까지의 중립 자리표. render() 가 처음 불리면 스스로 숨는다
+       (아래 render 첫 줄). 제목 있는 빈 section 대신 이 셋만 보인다. -->
+  <div id="sm-boot" aria-hidden="true">
+    <span class="skel box"></span>
+    <span class="skel box"></span>
+    <span class="skel box"></span>
+  </div>
+
+  <div id="content" hidden>
     <!-- 화면별 렌더러는 자기 파일에서 VIEW(id, render) 로 등록한다 — 이 함수는 뷰
          파일들보다 먼저 있어야 한다. 조립 순서가 곧 화면 순서다.
          같은 뷰가 자기 파일에서 선언한 나머지(제목·담는 요소·채우는 단계)는
@@ -1218,7 +1234,11 @@ function lastView() { try { return sessionStorage.getItem("sm:lastView") || ""; 
 const SM = {
   views: (window.__VIEWS__ || []).map(v => ({
     id: v.id, title: v.title, sub: v.sub || "",
-    sections: (v.sections || []).slice(), stages: (v.stages || []).slice()})),
+    sections: (v.sections || []).slice(), stages: (v.stages || []).slice(),
+    // head: 화면 제목 옆에 세울 칩. 안 쓰면 stages 그대로(예전 그대로 전부 세운다) —
+    // stages 는 seam #9(이 화면에서 부를 수 있는 /capture)의 정본이라 그대로 두고,
+    // head 는 그중 "이 화면의 주 단계"만 추린 부분집합이다(view-def 에 없으면 폴백).
+    head: (v.head || v.stages || []).slice()})),
   cur: "",
 
   at(id) { return this.views.findIndex(v => v.id === id); },
@@ -1418,7 +1438,7 @@ function viewCmds() {
   if (window.__SNAPSHOT__) return;      // 박제본은 손댈 수 없는 기록이다 — 칩이 없다
   for (const v of SM.views) {
     const box = $("view-" + v.id);
-    if (!box || !v.stages.length) continue;
+    if (!box || !v.head.length) continue;
     const vh = box.querySelector(".vh");
     if (!vh) continue;
     // 지우고 다시 그린다 — "이미 있으면 건너뛴다"로는 안 된다: 이 함수는 SM.sync() 가
@@ -1428,7 +1448,7 @@ function viewCmds() {
     // 사이트가 바뀔 때 sm:site 가 다시 부르는 것도 같은 길을 탄다 — 로컬 칩이 실은
     // 사이트 이름(siteArg)이 그때 비로소 정해진다.
     vh.querySelectorAll(".vh-cmd").forEach(el => el.remove());
-    vh.insertAdjacentHTML("beforeend", v.stages.map(SM.host.viewChip).join(""));
+    vh.insertAdjacentHTML("beforeend", v.head.map(SM.host.viewChip).join(""));
   }
 }
 // 좁은 화면의 메뉴는 가로 스크롤러다. 오른쪽 페이드는 "더 있다"는 말이라, 끝까지
@@ -1630,10 +1650,19 @@ const siteArg = () => { const p = $("proj"); return p && p.value ? ` ${esc(p.val
    실어 보낸다(dashboard.py·app.py 둘 다). 뷰가 그 라벨을 글자로 옮겨 적으면
    파이썬이 이름을 바꿀 때 화면만 낡는다 — 실제로 index 가 "색인 다시 검사"에서
    "색인 다시 확인"으로 바뀌었을 때 뷰 두 곳이 옛 이름으로 남았다.
-   run 은 실행 버튼용(화면 제목과 안 겹치게 다르게 부른다), t 는 단계 이름이다. */
+   run 은 실행 버튼용(화면 제목과 안 겹치게 다르게 부른다), t 는 단계 이름이다.
+
+   "다시"는 정말 다시 할 때만 쓴다 — 이 사이트에서 이 단계가 한 번도 안 돈
+   흔적(LAST_D.runs 에 그 kind 가 없음)이면 s.run("색인 다시 검사")이 아니라
+   s.t("색인 검사")로 물러선다. 예전엔 늘 s.run 이라, 빈 화면 문구가 "아직
+   검사하지 않았습니다"라고 말하는 바로 위에서 버튼은 "색인 다시 검사"라고
+   말했다(블랙박스 8회차) — 하지도 않은 걸 "다시" 하라고 시킨 것이다.
+   runs 는 gather() 가 담는 최근 40건뿐이지만(runVerdict·runFailed 와 같은
+   한계) "한 번도 안 했는데 다시 하라"는 확실한 거짓말은 없어진다. */
 window.stageRun = id => {
   const s = (window.__STAGES__ || {})[id] || {};
-  return s.run || s.t || id;
+  const everRan = ((LAST_D || {}).runs || []).some(r => r.kind === id);
+  return (everRan && s.run) || s.t || id;
 };
 // 짝: 단계 **이름**. stageRun 이 "돌리는 버튼에 쓸 말"이라면 이쪽은 그 단계를
 // 문장 안에서 부르는 이름이다("색인 다시 확인" ↔ "내 페이지 색인"). run 으로
@@ -1705,15 +1734,24 @@ function dimHead(only) {
     // 한 단계를 띠가 주요로도 보조로도 들고 있으면 주요가 이긴다 — 뺀 것을 다시
     // 흐리게 칠할 일이 없게 faded 에서 taken 을 덜어 낸다.
     const taken = at(false), faded = at(true);
-    // 호스팅의 머리줄 버튼(.sm-refresh)은 애드온이 같은 규칙으로 직접 칠한다 —
-    // 두 곳이 같은 요소를 서로 끄고 켜지 않게 여기서는 로컬 칩만 본다.
-    // [안내]의 단계 목록도 같은 화면이라 같은 규칙을 받는다. 표식은 한 벌이다:
-    // data-run 은 "이 버튼을 누르면 이 단계가 돈다"는 뜻이고, 안내 칩에는 서버가
-    // runnable 이라고 한 줄에만 붙는다(질문 0건이면 ai 단계의 명령이 /capture add 다).
-    box.querySelectorAll(".vh .vh-cmd[data-run], .stp [data-run]").forEach(b => {
+    // [안내]의 단계 목록(.stp)은 6단계 전부를 보여주는 표다 — 항목을 지우면 "그
+    // 단계가 없어졌다"로 읽힌다(목록에서 빼지 않는다는 약속). 그래서 거기는
+    // 예전 그대로 흐리게만 한다: 주요 중복은 뺀다, 보조 중복은 흐린다.
+    box.querySelectorAll(".stp [data-run]").forEach(b => {
       const on = taken.has(b.dataset.run);
       b.classList.toggle("taken", on);
       b.classList.toggle("faded", !on && faded.has(b.dataset.run));
+    });
+    // 화면 제목 옆 칩(.vh-cmd, 호스팅의 .sm-refresh 도 이 클래스를 함께 단다)은
+    // 그 화면에 하나뿐이고, 바로 아래 띠가 이미 같은 단계를 들고 있으면(주요든
+    // 보조든) 손 닿는 자리가 코앞에 있으니 머리에 또 세우지 않는다 — 흐리게 두면
+    // "머리에도 있고 띠에도 있다"로 읽힌다(블랙박스: [키워드] 화면에서 "기회 다시
+    // 분석"이 머리와 띠에 같이 떴다). 표식은 같다: data-run 이 "이 버튼을 누르면
+    // 이 단계가 돈다"는 뜻이고, 안내 칩에는 서버가 runnable 이라고 한 줄에만 붙는다
+    // (질문 0건이면 ai 단계의 명령이 /capture add 다).
+    box.querySelectorAll(".vh .vh-cmd[data-run]").forEach(b => {
+      b.classList.toggle("taken", taken.has(b.dataset.run) || faded.has(b.dataset.run));
+      b.classList.remove("faded");
     });
   }
 }
@@ -2710,9 +2748,14 @@ function renderDates(d) {
   const past = !!(dates.length && d.gsc_date && d.gsc_date !== dates[0].date);
   sel.classList.toggle("past", past);
 
-  $("meta").textContent = (d.project.gsc_property || d.project.domain || "") +
-    ` · 구글 실적 ${d.gsc_date || "아직 없음"}` +
-    (d.gsc_period ? ` (${d.gsc_period}일치)` : "");
+  // 셀렉트가 떠 있으면(고를 게 2개 이상) 그 옵션 글자가 이미 "날짜 · N일치"를
+  // 말하고 있다 — 바로 아래 이 줄이 같은 날짜를 또 적으면 "2026-06-01 · 28일치"
+  // 다음 줄에 "구글 실적 2026-06-01 (28일치)"가 되풀이된다. 셀렉트가 없을
+  // 때만(수집이 하나뿐이거나 없음·박제본) 이 줄이 그 정보를 대신 말한다.
+  const dateInfo = sel.hidden
+    ? ` · 구글 실적 ${d.gsc_date || "아직 없음"}${d.gsc_period ? ` (${d.gsc_period}일치)` : ""}`
+    : "";
+  $("meta").textContent = (d.project.gsc_property || d.project.domain || "") + dateInfo;
   // 종이 표지 — 화면에서는 안 보이고 인쇄에만 선다. 값은 위 머리말과 같은 것이다.
   const ph = $("printhead");
   if (ph) {
@@ -2733,9 +2776,18 @@ function renderDates(d) {
   $("axes").hidden = !ax.length && !past;
 }
 
+// 첫 render() 가 자리표를 내리고 본문을 연다 — 이후 재렌더(SM.repaint 등)는
+// 이미 열려 있으니 조용한 no-op 이다.
+function bootDone() {
+  const b = $("sm-boot");
+  if (b) b.hidden = true;
+  $("content").hidden = false;
+}
+
 let LAST_D = null;          // 마지막으로 그린 페이로드 — SM.repaint() 가 다시 쓴다
 function render(d) {
   LAST_D = d;
+  bootDone();
   if (d.schema == null) {
     // schema 필드가 없는 옛 박제본 호환 분기: 박제본 호환 분기는 schema 번호 하나로 한다.
     // 옛 박제본에 없는 규칙·필드를 여기서 한 번만 채워 하위 렌더러의 임시 분기들을 대체한다.
@@ -2840,13 +2892,20 @@ async function checkTriageLand() {
 async function load() {
   const name = $("proj").value;
   // 사이트가 없어도 본문은 세워 둔다 — 첫 등록을 하는 곳이 [설정] 화면이고,
-  // 통째로 감추면 거기 갈 길이 없다(배너만 남아 막다른 길이 된다).
-  if (!name) { SM.show(SM.at("settings") >= 0 ? "settings" : "guide"); return; }
+  // 통째로 감추면 거기 갈 길이 없다(배너만 남아 막다른 길이 된다). render() 를
+  // 안 부르는 갈래라 자리표를 직접 내린다(bootDone) — 안 그러면 사이트 없는
+  // 첫 방문자는 자리표만 보고 [설정]에 닿지 못한다.
+  if (!name) { bootDone(); SM.show(SM.at("settings") >= 0 ? "settings" : "guide"); return; }
   location.hash = encodeURIComponent(name);
   const res = await fetch("/api/data?project=" + encodeURIComponent(name) +
                           (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
   const d = await res.json();
   if (!res.ok) {
+    // 실패해도 자리표(#sm-boot)는 내린다 — 안 내리면 오류를 말하면서 동시에
+    // "아직 불러오는 중"처럼 반짝인다. 본문(#content)은 채울 자료가 없으니 그대로
+    // 감춰 둔다(첫 로드가 실패한 경우) — 이미 열려 있던 뒤 새로고침이면 no-op.
+    const b = $("sm-boot");
+    if (b) b.hidden = true;
     $("err").hidden = false;
     $("err").textContent = (d.error || "이 사이트의 자료를 불러오지 못했습니다.") +
       " [새로고침]을 누르면 다시 시도합니다.";
@@ -2929,7 +2988,14 @@ async function loadDoctor() {
     // 그건 서버가 대신 로그인해 줄 수 없어 owner 가 user 이고 blocking 이다.
     // 여기서 배포로 가르는 것은 복사할 것(cmd) 하나뿐이다: 웹에는 칠 곳이 없다.
     const local = !window.SM_HOSTED;
-    let h = d.verdict ? `<div class="verdict">${esc(d.verdict)}</div>` : "";
+    // verdict 는 "한 줄 요약", must 는 "다음 할 일 목록"이다(doctor.py 의 설계).
+    // 할 일이 하나뿐이면 그 항목 자신의 글(+자세히+버튼)이 이미 요약과 같은
+    // 사실을 다른 말로 되풀이한다 — 구글 미연결일 때 실제로 그랬다: 제목이
+    // "구글 계정 연결 한 번만 남았습니다. 그래야 실적이 쌓입니다"라고 하고,
+    // 바로 아래 유일한 항목이 "구글 계정을 연결하면 실적이 자동으로 쌓입니다"라고
+    // 다시 말했다. 할 일이 둘 이상이면 verdict 가 진짜 종합이니 그대로 둔다.
+    const soleMustSaysIt = (d.must || []).length === 1;
+    let h = (d.verdict && !soleMustSaysIt) ? `<div class="verdict">${esc(d.verdict)}</div>` : "";
     let nxHtml = "";
     if (d.no_project) {
       nxHtml = `<span class="nxk">지금 할 것</span>` +

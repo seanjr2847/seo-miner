@@ -271,6 +271,8 @@ h1 em{font-style:normal;color:var(--patina)}
 .close .eyebrow{color:#8B9791}
 .close .go{background:#57B49C;border-color:#57B49C;color:#101513}
 .close .go:hover{filter:brightness(1.08)}
+/* 히어로의 신뢰 문구를 결정 지점에서 한 번 더 — 새 주장은 아니고 반복이다. */
+.close .recap{margin:16px 0 0;font-size:13px;color:#A7B2AC}
 
 footer{border-top:1px solid var(--rule-soft);padding:26px 0 44px;font-size:13px;
   color:var(--slate)}
@@ -308,7 +310,9 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 <section class="hero wrap">
  <div class="hgrid">
   <div>
-  <p class="eyebrow lat">Search Console · measured, not estimated</p>
+  <!-- 영문 눈썹 줄은 한글 헤드라인 위에서 읽는 속도만 늦춘다 — 어차피 아래
+       "실측과 추정" 절에서 다시 쓰는 낱말을 여기서 짧게 미리 보여준다. -->
+  <p class="eyebrow">실측 · 추정 아님</p>
   <h1>서치콘솔 숫자로 <em>다음에 고칠 검색어</em>를 정합니다.</h1>
   <p class="lede">구글 계정을 연결하면 내 사이트의 노출·클릭·평균 순위를 그대로 읽고,
     ChatGPT·Perplexity·Gemini가 누구를 인용하는지도 함께 봅니다.
@@ -389,8 +393,9 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 
 <section id="how" class="band-sec wrap">
   <!-- 소제목은 헤더 메뉴가 부르는 이름 그대로다 — 눌러서 도착한 곳에 그 낱말이
-       없으면 어디에 왔는지 확인이 안 된다. 문장은 부제로 내린다. -->
-  <p class="eyebrow lat">How it works</p>
+       없으면 어디에 왔는지 확인이 안 된다. 문장은 부제로 내린다.
+       영문 눈썹 줄("How it works")은 지웠다 — 소제목이 이미 그 말이라 한 번 더
+       영어로 읽게 할 이유가 없다. -->
   <h2>작동 방식</h2>
   <p class="sub">연결하면 측정은 자동으로 돌고, 무엇을 고칠지는 사람이 고릅니다.</p>
   <div class="steps">
@@ -416,7 +421,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 </section>
 
 <section id="what" class="band-sec wrap">
-  <p class="eyebrow lat">What we look at</p>
+  <!-- 눈썹 줄("What we look at")은 지웠다 — 소제목 "분석 영역"이 이미 같은 말이다. -->
   <h2>분석 영역</h2>
   <p class="sub">여섯 갈래를 훑고, 전부 서치콘솔 실적과 실제 검색 결과에서 나옵니다.</p>
   <!-- 카드 제목은 가입 후 화면에서 그대로 만나는 이름이다 — 기회 종류는
@@ -439,7 +444,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 </section>
 
 <section id="diff" class="band-sec wrap">
-  <p class="eyebrow lat">Measured vs estimated</p>
+  <!-- 눈썹 줄("Measured vs estimated")은 지웠다 — 소제목 "실측과 추정"이 이미 같은 말이다. -->
   <h2>실측과 추정</h2>
   <p class="sub">추정값 대신 구글이 기록한 값을 그대로 씁니다.</p>
   <div class="cmpbox"><table class="cmp">
@@ -458,7 +463,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 </section>
 
 <section class="band-sec wrap">
-  <p class="eyebrow lat">Ground rules</p>
+  <p class="eyebrow">원칙</p>
   <h2>안 하는 것부터 말씀드립니다.</h2>
   <p class="sub">권한과 결과물의 경계를 먼저 정해 두었습니다.</p>
   <ul class="pledge">
@@ -524,13 +529,17 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 
 <section class="close">
   <div class="wrap">
-    <p class="eyebrow lat">Start measuring</p>
+    <p class="eyebrow">지금 시작</p>
     <h2>1분이면 첫 순위를 봅니다.</h2>
     <p class="sub">로그인하고 사이트 하나만 고르면 첫 측정이 바로 시작합니다.</p>
     <a class="go" href="/auth/login">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 11v2.8h6.5c-.3 1.7-2 5-6.5 5-3.9 0-7.1-3.2-7.1-7.2S8.1 4.4 12 4.4c2.2 0 3.7.9 4.6 1.8l3.1-3C17.7 1.4 15.1.4 12 .4 5.7.4.6 5.5.6 11.8s5.1 11.4 11.4 11.4c6.6 0 11-4.6 11-11.1 0-.7-.1-1.3-.2-1.9H12z"/></svg>
       Google로 시작
     </a>
+    <!-- 여기가 실제로 누르는 지점(commit point)이다 — 히어로에서 본 같은 안심 문구를
+         그대로 반복한다. 새 주장을 만들지 않고 이미 한 말(읽기 전용 · 카드 없음)을
+         결정 직전에 다시 놓아 둘 뿐이다. -->
+    <p class="recap">서치콘솔·GA4 읽기 전용 · 카드 등록 없음</p>
   </div>
 </section>
 </main>
