@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -55,22 +56,38 @@ KD_COST_PER_CALL = 0.01
 #   'How much does stem cell exosome therapy cost?'
 # 9/1 자동 런에서 500개 묶음 하나가 물음표 하나 때문에 통째로 날아가 updated=0
 # 이었는데 로그는 "볼륨이 채워졌으니…" 라고 말했다. 그래서 경계에서 한 번 씻는다.
-# 목록은 보수적으로 — 확실한 것(물음표)과 문장부호·따옴표·제어문자만.
-# 호스팅 런이 실제로 거절당한 글자만 넣는다 — 넓히면 멀쩡한 검색어까지 잘린다.
-# 괄호·대괄호·파이프·역슬래시·콜론은 2026-09 런에서 이름과 함께 남았다(아래 자기검사).
-BAD_CHARS = r'''?!"'()[]|\:'''
+#
+# 목록의 정본은 DataForSEO 문서다 — 거절당할 때마다 한 글자씩 넓히던 방식은 늘 한
+# 런 늦었다(9/9 에 괄호·파이프를 넣었지만 쉼표·% 는 빠져 호스팅 키워드 표에 그대로
+# 남아 있었다). https://dataforseo.com/help-center/using-symbols-in-keywords-when-setting-a-google-ads-task
+#   invalid: , ! @ % ^ () = {} ; ~ ` <> ? \ | ―   · 4바이트 유니코드(이모지 등)
+# 거기에 호스팅 런이 실제로 거절당한 따옴표·대괄호·콜론을 더한다(아래 자기검사).
+# 전각(？ （ ｜)은 NFKC 로 반각이 된 뒤 이 목록에 걸린다 — theotherskin 에 ？ 가 12개였다.
+BAD_CHARS = r''',!@%^()={};~`<>?\|―"'[]:'''
+# 같은 문서의 길이 상한(search_volume 의 keywords 필드). 넘는 것은 잘라 보내지 않는다 —
+# 자르면 다른 검색어의 볼륨을 원문 행에 적게 된다. 구글 연산자를 친 검색어
+# ('"tier.xyz" -site:reddit.com -site:x.com …')가 GSC 에서 이렇게 들어온다.
+MAX_KW_CHARS = 80
+MAX_KW_WORDS = 10
 # 묶음이 이 문구로 거절되면 반으로 쪼개 재시도한다. 타임아웃 같은 것까지 이분하면
 # 요청 수만 늘어나므로 "우리가 못 씻은 글자가 남았다" 류만 고른다.
 REJECT_HINTS = ("invalid field", "invalid characters")
 
 
 def clean(kw: str) -> str:
-    """DataForSEO 로 보낼 모양. 금지 문자·제어문자를 공백으로 바꾸고 공백 정리.
+    """DataForSEO 로 보낼 모양. 전각을 반각으로 편 뒤 금지 문자·제어문자·4바이트
+    문자를 공백으로 바꾸고 공백 정리.
 
-    빈 문자열이 나오면 보낼 것이 없다는 뜻이다 — 호출부가 뺀다.
+    빈 문자열이 나오면 보낼 것이 없다는 뜻이다 — 호출부가 뺀다(sendable).
     """
-    out = "".join(" " if (ch in BAD_CHARS or ord(ch) < 32) else ch for ch in kw)
+    out = "".join(" " if (ch in BAD_CHARS or ord(ch) < 32 or ord(ch) > 0xFFFF) else ch
+                  for ch in unicodedata.normalize("NFKC", kw))
     return " ".join(out.split())
+
+
+def sendable(c: str) -> bool:
+    """정제본을 보낼 수 있나 — 비지 않았고 문서의 길이 상한 안쪽인가."""
+    return bool(c) and len(c) <= MAX_KW_CHARS and len(c.split()) <= MAX_KW_WORDS
 
 
 # 이분 재시도의 깊이 상한. 한 묶음이 부르는 요청은 많아야 2^(깊이+1)-1 = 63 번이다
@@ -243,23 +260,36 @@ def collect(project: str, *,
         total_cost = 0.0
         calls = 0
         updated = 0
+        unsendable = 0
+
+        def _tried(rows_) -> None:
+            """못 산 행에도 시도한 시각을 찍는다 — 값은 건드리지 않는다(창작 금지).
+            metrics_at 은 "마지막으로 사러 간 때"다. 이 파일 밖에서 읽는 곳은 없다."""
+            if rows_:
+                conn.executemany("UPDATE keywords SET metrics_at=? WHERE id=?",
+                                 [(db.now(), r["id"]) for r in rows_])
 
         def one(job: tuple[str, list]) -> None:
             """청크 하나 — 죽으면 st.each 가 세고 다음 청크로 간다."""
-            nonlocal total_cost, calls, updated
+            nonlocal total_cost, calls, updated, unsendable
             loc, group = job
             loc_name, lang, _ = serp_adapter.location(loc)
 
             # 보내는 모양(정제본) ↔ Brain 의 행. 정제하면 글자가 달라지므로
             # 응답을 원문 keyword 로 되찾을 수 없다 — 그 다리를 여기서 놓는다.
             by_clean: dict[str, list] = {}
+            unsent: list = []
             for r in group:
                 c = clean(r["keyword"])
-                if c:
+                if sendable(c):
                     by_clean.setdefault(c, []).append(r)
-            dropped = len(group) - sum(len(v) for v in by_clean.values())
-            if dropped:
-                st.fail(f"정제 후 빈 문자열이 된 키워드 {dropped}개는 건너뜁니다", item=loc)
+                else:
+                    unsent.append(r)
+            # 보낼 수 없는 것(빈 문자열·80자/10단어 초과)은 실패가 아니라 이 API 가 못
+            # 재는 검색어다 — 오류로 세면 같은 행이 런마다 게이트를 붉힌다. 수만 남기고,
+            # 시도한 시각을 찍어 다음 런이 다시 고르지 않게 한다(_tried).
+            unsendable += len(unsent)
+            _tried(unsent)
             if not by_clean:
                 return
             words = sorted(by_clean)
@@ -301,6 +331,10 @@ def collect(project: str, *,
                 # 끝까지 거절된 것들 — 이름을 적는다. 다음에 BAD_CHARS 를 넓힐 단서다.
                 st.fail(f"DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개 — "
                         + ", ".join(bad[:3]) + ("…" if len(bad) > 3 else ""), item=loc)
+                # 한 번 이름을 남긴 뒤에는 max-age 동안 다시 안 고른다. 안 찍으면
+                # _targets 가 NULL 을 맨 앞에 세우므로 같은 행이 런마다 맨 앞에서 또
+                # 거절당하고 상한(limit) 자리를 먹는다.
+                _tried([r for c in bad for r in by_clean.get(c, [])])
 
             stamp = db.now()
             got = 0
@@ -326,7 +360,8 @@ def collect(project: str, *,
             r.api_calls = calls
             r.cost = total_cost
             r.notes = (f"keywords={len(rows)} chunks={len(jobs)} updated={updated} "
-                       f"{st.err_note}")
+                       + (f"unsendable={unsendable} " if unsendable else "")
+                       + st.err_note)
 
         print(f"\ncollected {len(rows)} keywords in {len(jobs)} chunks, "
               f"actual_cost=${total_cost:.3f} (updated={updated})\n"
@@ -469,6 +504,21 @@ def _selfcheck() -> None:
         assert c, f"{kw!r} 가 통째로 지워졌다"
     assert clean("brave search (free tier)") == "brave search free tier"
     assert clean("noti\\") == "noti"
+    # 6b. 문서 목록 전부 — 쉼표·% 는 9/9 목록에 없어서 호스팅 키워드 표에 남아 있었다.
+    #     전각은 반각으로 편 뒤 걸린다. 4바이트(이모지)도 뺀다.
+    for ch in ",!@%^()={};~`<>?\\|―":
+        assert clean(f"a{ch}b") == "a b", (ch, clean(f"a{ch}b"))
+    assert clean("피부과 추천？") == "피부과 추천"
+    assert clean("노트（앱）｜비교") == "노트 앱 비교"
+    assert clean("노트앱 \U0001F525 추천") == "노트앱 추천"
+    assert clean("c++ vs c#") == "c++ vs c#"          # 문서가 허용하는 것은 남긴다
+    # 6c. 길이 상한 — 연산자 검색어는 잘라 보내지 않고 못 보내는 것으로 친다.
+    op = clean('"tier.xyz" -site:reddit.com -site:twitter.com -site:x.com -site:wykop.pl '
+               '-site:tripadvisor.com -site:youtube.com -site:yelp.com')
+    assert not sendable(op), op
+    assert not sendable("") and not sendable("가" * 81)
+    assert sendable("가" * 80) and sendable(" ".join(["a"] * 10))
+    assert not sendable(" ".join(["a"] * 11))
     conn.execute("DELETE FROM keywords")
     kw = "how much does therapy cost?"
     conn.execute(
@@ -510,6 +560,13 @@ def _selfcheck() -> None:
     assert filled == 4, f"이분 재시도로 나머지 4개가 들어와야 한다: {filled}"
     assert "독약" in err.getvalue(), err.getvalue()
     assert res.ok and res.partial, res      # 일부 실패는 완료(노란 표시)
+    # 끝까지 거절된 행에도 시도 시각이 찍혀 다음 런이 다시 안 고른다 — 값은 비운 채.
+    poison_row = conn.execute("SELECT volume, metrics_at FROM keywords WHERE keyword='독약'"
+                              ).fetchone()
+    assert poison_row["metrics_at"] and poison_row["volume"] is None, dict(poison_row)
+    with contextlib.redirect_stderr(io.StringIO()):
+        again = collect("mt", conn=conn, post=picky_post)
+    assert again.skipped and not again.failed, f"거절된 행을 다음 런이 또 골랐다: {again}"
     # 거절된 요청은 청구되지 않는다 — 성공한 3+3 건만 (SV 0.05×3 + KD 0.01×3)
     assert round(res.cost, 4) == 0.18, res
 
@@ -540,6 +597,29 @@ def _selfcheck() -> None:
     items, _, bad = _ask(rejecting, SV_PATH, many, body_n)
     assert len(asked) == 11, f"하나를 좁히는 데 {len(asked)}번 쳤다: {asked}"
     assert "w500" in bad and len(bad) <= 32 and len(items) == 1000 - len(bad), len(bad)
+
+    # 7c. 보낼 수 없는 것(빈 문자열·길이 초과)은 오류가 아니다 — 수만 notes 에 남고,
+    #     시각이 찍혀 다시 안 골라지며, 보내지도 않고, 나머지는 그대로 산다.
+    conn.execute("DELETE FROM keywords")
+    conn.execute("DELETE FROM runs")
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','seed')",
+        [(pid, "멀쩡한 낱말"), (pid, "???"), (pid, " ".join(["긴"] * 11))])
+    conn.commit()
+    sent: list[str] = []
+
+    def spy_post(path, body):
+        sent.extend(body[0]["keywords"])
+        return picky_post(path, body)
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        res = collect("mt", conn=conn, post=spy_post)
+    assert res.ok and not res.partial and res.rows == 1, res
+    assert set(sent) == {"멀쩡한 낱말"}, f"보낼 수 없는 것을 보냈다: {sent}"
+    note = conn.execute("SELECT notes FROM runs WHERE kind='metrics'").fetchone()["notes"]
+    assert "unsendable=2" in note and "errors=0" in note, note
+    assert conn.execute("SELECT COUNT(*) c FROM keywords WHERE metrics_at IS NULL"
+                        ).fetchone()["c"] == 0, "못 보낸 행에 시도 시각이 안 찍혔다"
 
     # 8. 전부 실패면 완료가 아니다 (errors>0, updated=0 → ok=False).
     conn.execute("DELETE FROM keywords")
