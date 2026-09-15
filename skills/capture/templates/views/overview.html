@@ -50,7 +50,7 @@
      renderOpps 다(상태에 따라 달라진다). -->
 <section>
   <div class="sh">
-    <h2>기회</h2>
+    <h2>개선 기회</h2>
     <p class="sub" id="opp-sub"></p>
     <div class="tools" id="opp-tools"></div>
   </div>
@@ -293,18 +293,24 @@ function renderOpps(n) {
   const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
   // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
+  // 한 번에 다 보이는 목록(첫 8줄 이하)에는 찾기 칸과 종류 칩을 안 세운다 — 네 줄을
+  // 거르려고 손잡이 다섯 개를 먼저 읽게 된다. 상태 거르개는 남긴다: 끝낸 것을 보는
+  // 길이 그것뿐이다.
+  const few = OPPS.length <= 8;
+  // 손잡이가 없는데 거른 조건이 남으면 풀 길이 없다(많던 사이트에서 옮겨 온 경우).
+  if (few && !READONLY) { OPP_Q = ""; KIND_FILTER = null; }
   if (tbox) tbox.innerHTML = READONLY
     ? `<span class="n" id="oppn"></span>
        <button class="go sm sec" onclick="oppCsv()">CSV 내려받기</button>`
-    : `<input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
-        placeholder="검색어·주소로 찾기" aria-label="기회 찾기">
+    : (few ? "" : `<input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
+        placeholder="검색어·주소로 찾기" aria-label="기회 찾기">`) + `
       <select onchange="oppStatus(this.value)" aria-label="상태로 거르기">${ST_OPT.map(
         ([v, l]) => `<option value="${v}"${v === OPP_ST ? " selected" : ""}>${l} ` +
           `(${stn(v)})</option>`).join("")}</select>
       <span class="n" id="oppn"></span>
       <button class="go sm sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
-  $("opps").innerHTML = (READONLY ? "" : `<div class="oppchips" id="oppchips"></div>`)
+  $("opps").innerHTML = (READONLY || few ? "" : `<div class="oppchips" id="oppchips"></div>`)
     + `<div id="opplist"></div>`;
   oppList();
 }
@@ -380,7 +386,7 @@ function OV_watch(d) {
       <p>기회를 완료로 옮기면 여기서 그때와 지금을 나란히 봅니다.</p></div>`;
   const cell = m => m ? `${m.position}위 · 클릭 ${num(m.clicks)}` : "—";
   $("watch").innerHTML = table(
-    ["검색어", "완료일", "그때?완료 직전 수집분의 순위·클릭", "지금?최근 수집분의 순위·클릭",
+    ["검색어", ">완료일", "그때?완료 직전 수집분의 순위·클릭", "지금?최근 수집분의 순위·클릭",
      ">그 뒤 측정?완료 뒤 수집한 횟수", ""],
     rows.map(w => `<tr><td>${esc(w.target)}</td>
       <td class="num">${esc((w.done_at || "").slice(0, 10))}</td><td>${cell(w.before)}</td><td>${cell(w.after)}</td>
@@ -444,9 +450,6 @@ VIEW("overview", function (d) {
     return [base, Number.isFinite(prev[k]) ? `직전 ${num(prev[k])}` : "견줄 직전 기록 없음"]
       .filter(Boolean).join(" · ");
   };
-  // 비어 있는 KPI 는 숫자만 두면 막다른 길이다 — 그 자리에서 채우러 갈 곳을 준다.
-  const kwHint = d.kw_active ? "순위와 AI 인용을 확인하는 대상"
-    : window.go ? go("keywords", "추적에 넣기") : "아직 고른 대상이 없습니다";
   $("band").innerHTML = [
     ["클릭", num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),
       kpiSpark(t.map(x => x.clk), dates, "var(--patina)"), was("clk")],
@@ -454,15 +457,11 @@ VIEW("overview", function (d) {
       kpiSpark(t.map(x => x.imp), dates, "var(--slate)"), was("imp")],
     ["노출된 검색어", num(last.q),
       delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
-    ["추적 검색어", num(d.kw_active), "", "", kwHint],
-    // 이 화면에서 이 낱말이 처음 나오는 자리다 — 여기만 「개선 기회」로 쓰고
-    // 아래 섹션 제목은 「기회」로 받는다(용어표: 처음 한 번만 「개선 기회」).
-    // 이 수는 기회(검색어) 개수다. 목록은 같은 지면을 한 줄로 접으므로 줄 수가 더
-    // 적다 — 그 차이를 여기서 말하지 않으면 "240건인데 목록은 60줄"이 고장으로 읽힌다.
-    // 호스팅은 이 띠에 칸이 둘 더 붙어 칸이 좁다 — 한 구절로 끝낸다.
-    ["개선 기회", num(d.opps_total), "", "", "아직 처리 안 한 것만" + ((gs, n) =>
-      gs.some(g => g.ids.length > 1) ? ` · 목록에서는 ${num(n)}줄` : "")(
-      d.opp_groups || [], (d.opp_groups || []).filter(g => g.status === "new").length)],
+    // 「추적 검색어」와 「개선 기회」 칸은 두지 않는다. 앞의 것은 [순위 추적]의 숫자이고
+    // 칸 안의 [추적에 넣기]가 위 띠의 행동과 겨뤘다. 뒤의 것은 검색어 수라 바로 아래
+    // 목록의 줄 수와 달라 "목록에서는 4줄"이라는 설명을 달아야 읽혔다 — 개수는 목록의
+    // 상태 거르개가 목록과 같은 단위로 이미 말한다. 호스팅은 여기에 클릭률·평균 순위
+    // 두 칸을 붙인다(dash.html kpi) — 칸이 일곱이면 증감이 값 밑으로 떨어졌다.
   ].map(([l, v, dd, sp, b]) => `<div class="m"><div class="v">${v}${dd}</div>
     <div class="l">${l}</div>${b ? `<div class="b">${b}</div>` : ""}${sp}</div>`).join("");
 

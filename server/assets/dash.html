@@ -1631,17 +1631,13 @@
   function perfRender() {
     var sec = document.getElementById("sm-perf");
     if (!sec || !PERF) return;
-    sec.hidden = false;
-    var t = PERF.totals;
-    if (!t) {
-      sec.innerHTML = '<div class="sh"><p class="eyebrow">검색 실적</p>' +
-        "<h2>클릭률과 순위</h2></div>" +
-        emptyNote("실적을 아직 수집하지 않았습니다",
-          "수집하면 평균 클릭률과 평균 순위가 채워집니다.",
-          '<button class="go sm sec" data-run="gsc">실적 수집</button>');
-      return;
-    }
-    var dl = PERF.daily || [], pv = PERF.prev || {};
+    var t = PERF.totals, dl = PERF.daily || [], pv = PERF.prev || {};
+    // 이 섹션이 띠에 더하는 것은 추이 선뿐이다 — 지금 값과 증감은 위 띠의 클릭률·
+    // 평균 순위 칸(kpi)이 이미 말한다. 선을 못 그리면(수집 전·일별 이틀 미만) 같은
+    // 숫자 둘에 "데이터가 필요합니다" 두 줄만 남고, 수집 전이면 [실적 수집]이 화면
+    // 머리·행동 띠에 이어 세 번째로 섰다. 그때는 섹션을 세우지 않는다.
+    sec.hidden = !t || dl.length < 2;
+    if (sec.hidden) { sec.innerHTML = ""; return; }
     var span = dl.length
       ? dl[0].d + " → " + String(dl[dl.length - 1].d).slice(5)   // 끝은 월·일만
       : PERF.snapshot;
