@@ -1,6 +1,6 @@
 # $CAPTURE_HOME/projects/{name}.repo.yaml — /create profile 이 생성·갱신
 name: myproject
-repo_path: /path/to/repo
+# 리포 경로는 여기 적지 않는다 — 사이트별 로컬 폴더 장부(dirs.json) 한 벌이다.
 stack: astro                # astro|next|hugo|jekyll|gatsby|nuxt|static|custom
 publish_mode: files         # files(리포=발행물) | drafts(외부 CMS 핸드오프)
 git: true

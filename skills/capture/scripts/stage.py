@@ -297,7 +297,9 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
     """
     if d is None:
         import doctor
-        d = doctor.diagnose()
+        # 고른 사이트를 doctor 에도 넘긴다 — 안 넘기면 요약·할 일(verdict·must)은 폴더로
+        # 추론해서, 화면에서 사이트를 골라 놓고도 "이 폴더가 어느 사이트인지 모릅니다"가 떴다.
+        d = doctor.diagnose(project)
     projects = d.get("brain", {}).get("projects", [])
     no_project = not bool(projects)
 

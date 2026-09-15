@@ -2951,7 +2951,12 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
 # load() 가 원본 행(r)을 도는 동안 쓰이는 게 아니라, gather() 가 이미 적재된 기회를
 # 화면에 낼 때(kind_play()를 통해) 쓰인다. dashboard.html 의 window.PLAY 산문이
 # 그대로 옮겨왔다 — 문구는 한 글자도 새로 쓰지 않았다.
-_Kind = namedtuple("_Kind", "name label defensive detect metrics target reasoning play")
+# see=(화면 id, 섹션 id) — 이 종류의 검색어를 자세히 보는 자리. [개요]의 기회 줄이
+# 거기로 가는 링크를 단다(개요는 여러 화면을 모아 보는 곳이라, 모은 줄마다 원래 자리가
+# 있어야 한다). 따로 보는 화면이 없는 종류는 None — 링크를 안 단다. 화면·섹션 id 가
+# 뷰 파일에 실제로 있는지는 test_seams 가 본다.
+_Kind = namedtuple("_Kind", "name label defensive detect metrics target reasoning play see",
+                   defaults=(None,))
 
 
 def _ga4_metrics(ctx: dict, *, query: str | None = None, page: str | None = None) -> dict:
@@ -3100,6 +3105,7 @@ def aio_band(position) -> str:
 
 _KIND_SPECS = {
     "striking_distance": dict(
+        see=("keywords", "log"),
         label="밀면 오를 검색어", defensive=False,
         detect=lambda ctx: striking(ctx["conn"], ctx["pid"], ctx["cur"], brands=ctx["brands"]),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
@@ -3117,6 +3123,7 @@ _KIND_SPECS = {
             + f" 남았습니다 (구글 실적 {ctx['cur']} 기준)"),
         play=_SD_PLAY),
     "ctr_gap": dict(
+        see=("analysis", "an-ctr"),
         label="클릭률 미달", defensive=False,
         detect=lambda ctx: ctr_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"], "position": r["position"],
@@ -3159,6 +3166,7 @@ _KIND_SPECS = {
                      "나머지 페이지 처리 계획: 301 리다이렉트 대상과 canonical 지정",
                      "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다"])),
     "rank_decay": dict(
+        see=("keywords", "movers"),
         label="순위 하락", defensive=True,
         detect=lambda ctx: rank_decay(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
@@ -3198,6 +3206,7 @@ _KIND_SPECS = {
     # 분해 수집은 gsc_snapshots 와 수집일이 어긋날 수 있다(분해 수집을 끄면 뒤처진다)
     # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 ctx['bd']로 따로 읽는다.
     "device_gap": dict(
+        see=("site", "dev-sec"),
         label="모바일 격차", defensive=False,
         detect=lambda ctx: device_gap(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["mobile_imp"], "position": r["mobile_pos"],
@@ -3218,6 +3227,7 @@ _KIND_SPECS = {
             deliver=["모바일에서 고칠 것 목록. 레이아웃·이미지 크기·지연 로드·팝업",
                      "첫 화면에 무엇이 보여야 하는지"])),
     "index_blocked": dict(
+        see=("site", "ix-sec"),
         label="색인 막힘", defensive=False,
         detect=lambda ctx: index_issues(ctx["conn"], ctx["pid"]),
         # 색인 안 된 URL 은 순위가 없다 — position None 을 score() 가 보수적 0.3 으로 본다
@@ -3257,6 +3267,7 @@ _KIND_SPECS = {
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
+        see=("ai", "ai-miss-sec"),
         # "인용 없음"이었다 — 판정이 비율(ai_is_gap)이 된 뒤로 1/6 질문도 여기 선다.
         label="챗봇 인용 드묾", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
@@ -3302,6 +3313,7 @@ _KIND_SPECS = {
                          "그 플랫폼에서 인용·링크할 만한 우리 페이지(없으면 먼저 만들 것)",
                          "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
+        see=("rank", "ranks"),
         label="구글 AI 요약 빠짐", defensive=False,
         detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,
@@ -3316,6 +3328,7 @@ _KIND_SPECS = {
             + (")" if r["position"] or r["volume"] else "")),
         play=_AIO_PLAY),
     "content_gap": dict(
+        see=("competitors", "cp-gap"),
         label="콘텐츠 공백", defensive=False,
         detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"]),
         # missing 은 our_position 이 NULL — score() 가 보수적 0.3 으로 본다(맞다: 아직 없다)
@@ -3330,6 +3343,7 @@ _KIND_SPECS = {
             + (f" (월 검색량 {r['volume']:,})" if r["volume"] else "")),
         play=_CG_PLAY),
     "crawl_issue": dict(
+        see=("site", "crawl-sec"),
         label="크롤에서 걸림", defensive=True,
         detect=lambda ctx: crawl_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
@@ -3348,6 +3362,7 @@ _KIND_SPECS = {
     # 튜플을 같이 준다 — detect 가 그중 자기 절반만 골라 쓴다(호출은 두 번 하지만
     # 쿼리가 가벼워 굳이 ctx 로 캐싱하지 않는다. 억지로 공유하면 오히려 순서 의존이 생긴다).
     "backlink_broken": dict(
+        see=("backlinks", "bl-broken"),
         label="깨진 백링크", defensive=True,
         detect=lambda ctx: backlink_gaps(ctx["conn"], ctx["pid"])[0],
         metrics=lambda r, ctx: {"impressions": 0, "position": None,
@@ -3388,6 +3403,7 @@ _KIND_SPECS = {
                      "막힌 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
                      "(글은 손대지 않습니다. 막힌 채로는 고쳐도 안 읽힙니다)"])),
     "backlink_prospect": dict(
+        see=("backlinks", "bl-intersect"),
         label="경쟁사만 받는 링크", defensive=False,
         detect=lambda ctx: backlink_gaps(ctx["conn"], ctx["pid"])[1],
         metrics=lambda r, ctx: {"impressions": 0, "position": None,

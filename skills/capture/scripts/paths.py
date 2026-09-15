@@ -22,7 +22,6 @@ server/store.py 의 tenant() 가 CAPTURE_HOME·GSC_TOKEN_FILE 을 갈아끼우�
 """
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -215,9 +214,10 @@ def dirs_file() -> Path:
 def site_dirs() -> dict[str, str]:
     """{"<사이트>": "<절대경로>"} — 없거나 깨졌으면 빈 dict.
 
-    "이 사이트를 **어디서 여느냐**"의 정본이다(설정 화면의 폴더 표가 여기 쓴다).
-    repo_project() 와 방향이 반대인 물음이다: 저쪽은 폴더에서 사이트를 찾고
-    (`projects/*.repo.yaml` 의 repo_path), 이쪽은 사이트에서 폴더를 찾는다.
+    "사이트 ↔ 폴더"의 **유일한 장부**다. 두 방향 물음이 모두 여기서 답한다:
+    사이트에서 폴더(설정 화면의 폴더 표·열기 버튼), 폴더에서 사이트(repo_project).
+    예전에는 뒤쪽이 `/create profile` 이 남기는 `projects/*.repo.yaml` 의 repo_path 를
+    따로 읽어서, 설정에 폴더를 적어 둔 사이트에서도 "이 폴더가 어느 사이트냐"를 되물었다.
     """
     try:
         d = json.loads(dirs_file().read_text("utf-8"))
@@ -247,37 +247,36 @@ def set_site_dir(name: str, path: str | None) -> dict[str, str]:
     return dirs
 
 
-_REPO_PATH_RE = re.compile(r"^repo_path:[ 	]*(.+?)[ 	]*$", re.M)
+def bind_site_dir(name, raw) -> dict:
+    """사람이 준 폴더 한 줄을 검사하고 적는다 — 설정 화면과 채팅(`paths.py dir`)의 공용 입구.
+
+    빈 경로는 지우기다. 폴더가 아니면 안 받는다 — 없는 자리를 저장해 두면 나중에
+    실행 버튼이 그때 가서야 알 수 없는 이유로 실패한다. 막을 수 있는 자리에서 막는다.
+    """
+    name = str(name or "").strip()
+    raw = str(raw or "").strip()
+    if not name:
+        return {"ok": False, "error": "어느 사이트의 폴더인지 골라 주세요."}
+    if not raw:
+        return {"ok": True, "dirs": set_site_dir(name, None)}
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return {"ok": False, "error": f"그런 폴더가 없습니다: {raw}"}
+    return {"ok": True, "dirs": set_site_dir(name, str(p))}
 
 
 def repo_project(cwd=None) -> str | None:
-    """지금 이 폴더가 어느 사이트의 리포인가 — `projects/{P}.repo.yaml` 의 repo_path 로 판정.
+    """지금 이 폴더가 어느 사이트의 것인가 — site_dirs() 장부를 거꾸로 읽는다.
 
     Brain 은 컴퓨터 전역(`~/.capture/brain.db`)이라 사이트가 여럿이면 "지금 이 폴더가
-    어느 사이트냐"에 아무도 답하지 못했다. 그 답은 `/create profile` 이 이미
-    `repo.yaml` 에 적어 두고 있었는데 읽는 코드가 없었다.
-
-    ponytail: yaml 파서 대신 한 줄 정규식으로 읽는다 — doctor 가 pip 이전에도 돌아야 해서
-    stdlib 밖으로 못 나간다. repo_path 를 블록 스칼라(`|`)로 적으면 못 읽는다.
+    어느 사이트냐"를 따로 정해야 한다. 이 폴더가 적어 둔 폴더이거나 그 하위면 그 사이트.
     """
     try:
         here = Path(cwd or Path.cwd()).resolve()
     except OSError:
         return None
-    d = home() / "projects"
-    if not d.exists():
-        return None
     best = None
-    for f in sorted(d.glob("*.repo.yaml")):
-        try:
-            m = _REPO_PATH_RE.search(f.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        if not m:
-            continue
-        raw = m.group(1).strip().strip('"').strip("'")
-        if not raw or raw.startswith("/path/to/"):   # 템플릿 그대로면 무시
-            continue
+    for name, raw in sorted(site_dirs().items()):
         try:
             root = Path(raw).expanduser().resolve()
         except OSError:
@@ -285,7 +284,7 @@ def repo_project(cwd=None) -> str | None:
         if root == here or root in here.parents:
             # 가장 깊은 매치가 이긴다 — 리포 안에 리포가 있을 때 안쪽이 답이다.
             if best is None or len(root.parts) > len(best[1].parts):
-                best = (f.name[: -len(".repo.yaml")], root)
+                best = (name, root)
     return best[0] if best else None
 
 
@@ -349,22 +348,26 @@ def _selfcheck() -> None:
         load_env()
         assert os.environ.pop("SEO_MINER_SELFCHECK") == "from-file"
 
-        # ── repo_project: 등록된 리포 안이면 그 사이트, 밖이면 None
-        (h2 / "projects").mkdir()
+        # ── 사이트별 로컬 폴더: 적고·지우고, 깨진 파일은 빈손
         repo = Path(d) / "repo"
         (repo / "src").mkdir(parents=True)
-        (h2 / "projects" / "alpha.repo.yaml").write_text(
-            f"repo_path: {repo}\n", "utf-8")
-        assert repo_project(repo / "src") == "alpha", "하위 폴더에서도 붙어야 한다"
-        assert repo_project(Path(d)) is None, "무관한 폴더는 매치가 없어야 한다"
-
-        # ── 사이트별 로컬 폴더: 적고·지우고, 깨진 파일은 빈손
         assert site_dirs() == {}, "없는 장부는 빈 dict"
         assert set_site_dir("alpha", str(repo)) == {"alpha": str(repo)}
         assert site_dirs() == {"alpha": str(repo)}, "다시 읽으면 그대로여야 한다"
         assert set_site_dir("alpha", None) == {}, "빈 경로는 지우기다"
+        assert bind_site_dir("alpha", str(repo / "없음"))["ok"] is False, "없는 폴더는 안 받는다"
+        assert bind_site_dir("", str(repo))["ok"] is False, "사이트 이름 없이는 안 받는다"
+
+        # ── repo_project: 장부에 적은 폴더 안이면 그 사이트, 밖이면 None
+        assert bind_site_dir("alpha", str(repo))["ok"]
+        (repo / "inner").mkdir()
+        bind_site_dir("beta", str(repo / "inner"))
+        assert repo_project(repo / "src") == "alpha", "하위 폴더에서도 붙어야 한다"
+        assert repo_project(repo / "inner") == "beta", "가장 깊은 매치가 이겨야 한다"
+        assert repo_project(Path(d)) is None, "무관한 폴더는 매치가 없어야 한다"
         dirs_file().write_text("{ 반쯤", "utf-8")
         assert site_dirs() == {}, "깨진 장부는 빈손이어야 한다 (예외를 올리지 않는다)"
+        assert repo_project(repo) is None, "깨진 장부면 폴더로 못 고른다"
 
     for k, v in saved.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
@@ -372,4 +375,10 @@ def _selfcheck() -> None:
 
 
 if __name__ == "__main__":
+    # `paths.py dir <사이트> <폴더>` — 채팅에서 "이 폴더를 X 사이트로 정해줘"를 받는 입구.
+    # 폴더를 비우면 지운다. 설정 화면의 폴더 표와 같은 장부·같은 검사를 쓴다.
+    if len(sys.argv) >= 3 and sys.argv[1] == "dir":
+        r = bind_site_dir(sys.argv[2], " ".join(sys.argv[3:]))
+        print(json.dumps(r, ensure_ascii=False))
+        sys.exit(0 if r["ok"] else 1)
     _selfcheck()

@@ -1559,6 +1559,81 @@ def test_seam_36_trend_charts_share_one_threshold():
     assert m.group(1) == "3", f"ai.html 이 {m.group(1)}회부터 그린다 — rank 는 3회다"
 
 
+
+def test_seam_37_site_folder_ledger_single_source():
+    """37) "사이트 ↔ 폴더"는 장부 한 벌(paths.site_dirs = dirs.json)이다.
+
+    설정 화면의 사이트별 로컬 폴더는 dirs.json 에 쓰는데, "이 폴더가 어느 사이트냐"
+    (repo_project)는 `/create profile` 이 남기는 repo.yaml 의 repo_path 를 따로 읽었다.
+    그래서 설정에 폴더를 적어 둔 사이트의 리포에서도 doctor 가 "어느 사이트인지
+    모릅니다 — /create profile 하세요"를 띄웠다. 쓰는 쪽(설정 화면)과 읽는 쪽(판정)이
+    같은 장부를 보는지, 실제로 적고 읽어서 본다.
+    """
+    import inspect
+    import os
+    import tempfile
+    import dashboard
+    import doctor
+    import paths
+    saved = os.environ.get("CAPTURE_HOME")
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["CAPTURE_HOME"] = str(Path(d) / "home")
+        try:
+            repo = Path(d) / "repo"
+            (repo / "src").mkdir(parents=True)
+            # 쓰는 쪽: 설정 화면의 폴더 표가 부르는 그 함수
+            assert dashboard.setup_dir({"project": "alpha", "path": str(repo)})["ok"]
+            # 읽는 쪽: 폴더 → 사이트 판정, 사이트 → 폴더(열기 버튼)
+            assert stage.pick_project(["alpha", "beta"], cwd=repo / "src") == "alpha", \
+                "설정에 적은 폴더를 사이트 판정이 안 읽는다 — 장부가 두 벌이다"
+            assert dashboard._work_dir("alpha") == repo, "열기 버튼이 다른 장부를 본다"
+        finally:
+            os.environ.pop("CAPTURE_HOME", None) if saved is None \
+                else os.environ.__setitem__("CAPTURE_HOME", saved)
+    # 판정 코드가 옛 장부(repo.yaml 의 repo_path)를 다시 읽기 시작하면 두 벌이다
+    src = inspect.getsource(paths.repo_project)
+    assert "repo.yaml" not in src and "repo_path" not in src, \
+        "repo_project 가 repo.yaml 을 다시 읽는다 — 장부는 dirs.json 한 벌이다"
+    # 못 고를 때 시키는 일도 같은 장부로 간다 — 리포 분석(/create profile)이 아니다
+    assert "/create profile" not in doctor.PICK_DIR_CMD, doctor.PICK_DIR_CMD
+    assert "/create profile" not in inspect.getsource(doctor), \
+        "doctor 가 폴더를 붙이는 길로 /create profile 을 안내한다"
+
+
+def test_seam_38_overview_kind_links_point_at_real_sections():
+    """38) [개요] 기회 줄의 "자세히 보기" 링크는 실제로 있는 화면·섹션을 가리킨다.
+
+    개요는 여러 화면을 모아 보는 곳인데, 줄마다 원래 자리로 가는 길이 없어서 사용자가
+    "개요의 키워드를 어느 화면에서 보냐"를 따로 물어야 했다. 링크 표의 정본은
+    scoring.KINDS 의 see 한 벌이고, 페이로드(kind_views)가 그걸 그대로 싣고, 개요는
+    그 표만 읽는다. 뷰 파일에서 섹션 id 가 바뀌거나 화면이 없어지면 링크가 조용히
+    화면 맨 위로 떨어진다 — 여기서 잡는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    defs = _view_defs(ctx["views"])
+    seen = 0
+    for k in scoring.KINDS:
+        if not k.see:
+            continue
+        view, sec = k.see
+        assert view in defs, f"{k.name}: see 가 없는 화면 {view!r} 을 가리킨다 — 있는 것: {sorted(defs)}"
+        body = (ctx["views"] / f"{view}.html").read_text("utf-8")
+        assert re.search(r'\bid="' + re.escape(sec) + '"', body), \
+            f"{k.name}: {view}.html 에 섹션 id {sec!r} 가 없다 — 링크가 화면 맨 위로 떨어진다"
+        seen += 1
+    assert seen >= 5, f"see 가 달린 종류가 {seen}개뿐이다 — 검사가 헛돈다"
+    d = _gather("seam38")
+    assert d["kind_views"] == {k.name: list(k.see) for k in scoring.KINDS if k.see}, \
+        "페이로드 kind_views 가 scoring.KINDS 의 see 와 다르다"
+    ov = (ctx["views"] / "overview.html").read_text("utf-8")
+    assert "window.KIND_VIEWS" in ov, "개요가 서버의 kind_views 표를 안 읽는다"
+    # 개요가 화면 id 를 글자로 옮겨 적으면 두 벌이다 — SM.show 는 표에서 온 값으로만 부른다.
+    assert not re.search(r"OV_goSee\('[a-z]", ov), "개요가 링크 화면 id 를 손으로 적었다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

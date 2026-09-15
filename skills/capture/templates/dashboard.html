@@ -2840,6 +2840,7 @@ function render(d) {
   window.CREATIONS = d.creations || [];      // 기회 펼침 패널이 "이 기회로 만든 것"을 센다
   window.KIND_LABELS = d.kind_labels || {};  // kind → 통칭 라벨. [기록]·필터 칩처럼
                                               // 대상 없이 kind 만 아는 자리가 쓴다.
+  window.KIND_VIEWS = d.kind_views || {};    // kind → [화면 id, 섹션 id] (정본 scoring.KINDS 의 see)
 
   // 화면 하나가 던져도 나머지는 그려져야 한다 — 예전에는 조립 순서상 뒤에 오는
   // 화면이 통째로 비었고, 왜 비었는지는 아무 데도 안 남았다.
@@ -3017,7 +3018,7 @@ async function loadDoctor() {
     if (d.must && d.must.length)
       // 명령 칩은 칠 곳이 있는 배포에서만 낸다. 서버가 이미 청중별로 갈라 보내지만
       // (doctor.py 의 SEOMINER_HOSTED), 화면도 같은 선을 긋는다 — 이 한 줄이
-      // 없으면 서버 쪽 분기가 한 번 새는 날 호스팅 화면에 `/create profile` 이 뜬다.
+      // 없으면 서버 쪽 분기가 한 번 새는 날 호스팅 화면에 로컬 전용 명령 칩이 뜬다.
       h += `<ul class="must">${d.must.map(s => {
         const [lead, detail] = banSplit(s);
         // 행동은 접힌 곳 **밖**이다 — 접은 자리에 누를 것을 숨기지 않는다.

@@ -213,6 +213,10 @@ code, d_demo = get("/api/data?project=demo")
 assert code == 200, d_demo
 assert doc["guide"] is not None, "doctor에 guide가 없음"
 assert doc["project"] == "demo", doc["project"]
+# 고른 사이트는 요약·할 일에도 먹어야 한다 — 안내(guide)만 따라가고 must 는 폴더로
+# 추론해서, 사이트를 골라 둔 화면에 "이 폴더의 사이트를 정하세요"가 떠 있었다.
+assert "어느 것인지 모릅니다" not in doc["verdict"], doc["verdict"]
+assert not any("등록된 사이트:" in m["msg"] for m in doc["must"]), doc["must"]
 
 # 사이트가 여럿인데 어느 것인지 안 알려주면 **아무거나 집지 않는다**.
 # 예전에는 projects[0](먼저 등록한 것)을 집어서, 무관한 리포에서 /setup 을 돌려도
@@ -226,7 +230,8 @@ assert "어느 것인지 모릅니다" in doc_amb["verdict"], doc_amb["verdict"]
 assert any("등록된 사이트:" in m["msg"] for m in doc_amb["must"]), doc_amb["must"]
 # 복사할 것은 cmd 로 따로 실린다 — 산문에 도로 섞이면 호스팅 배너까지 따라간다.
 amb = next(m for m in doc_amb["must"] if "등록된 사이트:" in m["msg"])
-assert amb["cmd"] == "/create profile <이름>", amb
+# 폴더를 붙이는 길은 설정 화면의 폴더 표와 같은 장부 하나다 — /create profile(리포 분석)이 아니다.
+assert amb["cmd"] == "이 폴더를 <이름> 사이트로 정해줘", amb
 assert doc["guide"]["here"] == d_demo["guide"]["here"], (doc["guide"]["here"], d_demo["guide"]["here"])
 assert doc["guide"]["steps"][doc["guide"]["here"]]["cmd"] == d_demo["guide"]["steps"][d_demo["guide"]["here"]]["cmd"]
 

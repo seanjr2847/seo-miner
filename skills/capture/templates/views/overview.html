@@ -253,8 +253,34 @@ function oppRow(o) {
       ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
     </summary>
     ${oppPanel(o)}
-    ${READONLY ? "" : `<div class="det det-acts">${oppActs(o)}</div>`}
+    ${READONLY ? (OV_see(o) ? `<div class="det det-acts"><div class="acts">${OV_see(o)}</div></div>` : "")
+               : `<div class="det det-acts">${oppActs(o)}${OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""}</div>`}
   </details>`;
+}
+
+/* 개요는 여러 화면을 모아 보는 곳이다 — 모은 줄마다 그 검색어를 자세히 보는 원래 자리로
+   가는 길이 있어야 한다. 어느 화면·어느 섹션인지는 서버가 준 표(kind_views, 정본은
+   scoring.KINDS 의 see)를 그대로 읽는다. 여기 옮겨 적으면 화면 목록이 두 벌이 된다.
+   따로 볼 화면이 없는 종류이거나, 이 배포(박제본·호스팅)에 그 화면이 없으면 링크를 안 단다. */
+function OV_see(o) {
+  const see = (window.KIND_VIEWS || {})[o.kind];
+  if (!see || SM.at(see[0]) < 0) return "";
+  const v = SM.views[SM.at(see[0])];
+  return `<button class="go sm ghost" onclick="OV_goSee('${esc(see[0])}','${esc(see[1] || "")}')"
+    >${esc(v.title)} 화면에서 자세히 보기 →</button>`;
+}
+function OV_goSee(view, sec) {
+  SM.touched = true;
+  // show() 는 화면 맨 위로 올리는데, 문서가 scroll-behavior:smooth 라 그 애니메이션이
+  // 뒤이은 섹션 이동을 덮어쓴다(실측: 다음 프레임에 옮겨도 섹션 위 300~1,200px 에서
+  // 제각각 섰다). 이 한 번만 부드러운 스크롤을 끄고 옮긴다.
+  // 섹션이 비어 숨었으면 show() 가 올려 둔 화면 맨 위가 답이다.
+  const root = document.documentElement.style, prev = root.scrollBehavior;
+  root.scrollBehavior = "auto";
+  SM.show(view);
+  const el = sec && $(sec);
+  if (el && el.offsetParent !== null) el.scrollIntoView({block: "start"});
+  root.scrollBehavior = prev;
 }
 
 

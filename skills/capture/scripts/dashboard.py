@@ -517,21 +517,9 @@ def setup_dirs() -> dict:
 
 
 def setup_dir(body: dict) -> dict:
-    """폴더 한 줄 저장. 빈 경로는 지우기다.
-
-    폴더가 아니면 안 받는다 — 없는 자리를 저장해 두면 나중에 실행 버튼이 그때 가서야
-    알 수 없는 이유로 실패한다. 막을 수 있는 자리에서 막는다.
-    """
-    name = str(body.get("project") or "").strip()
-    raw = str(body.get("path") or "").strip()
-    if not name:
-        return {"ok": False, "error": "어느 사이트의 폴더인지 골라 주세요."}
-    if not raw:
-        return {"ok": True, "dirs": paths.set_site_dir(name, None)}
-    p = Path(raw).expanduser()
-    if not p.is_dir():
-        return {"ok": False, "error": f"그런 폴더가 없습니다: {raw}"}
-    return {"ok": True, "dirs": paths.set_site_dir(name, str(p))}
+    """폴더 한 줄 저장. 검사·저장은 paths.bind_site_dir 한 자리다 — 채팅 입구
+    (`paths.py dir`)와 같은 검사를 거쳐야 두 길로 적힌 장부가 갈리지 않는다."""
+    return paths.bind_site_dir(body.get("project"), body.get("path"))
 
 
 # 웹 [설정]이 내는 "명령어로 연결하기" 한 줄에서 필요한 것은 주소와 그 다음 토큰뿐이다.
@@ -1356,6 +1344,9 @@ def gather(conn, p, at: str | None = None) -> dict:
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
          "kind_labels": {k.name: k.label for k in scoring.KINDS},
+         # kind → [화면 id, 섹션 id] — [개요] 기회 줄의 "자세히 보는 화면" 링크.
+         # 따로 볼 화면이 없는 종류는 안 싣는다.
+         "kind_views": {k.name: list(k.see) for k in scoring.KINDS if k.see},
          # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
          "watch": db.watch_rows(conn, pid),
          "keyword_kinds": list(scoring.KEYWORD_KINDS),

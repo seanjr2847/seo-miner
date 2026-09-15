@@ -62,6 +62,10 @@ SKILLS_REPO = "https://github.com/coreyhaines31/marketingskills"
 # 이미 고른 사람에게도 "고르세요"가 영영 떠 있는다.
 LOCAL_ONLY_MUST = {"pick_project"}
 
+# 이 폴더를 사이트에 붙이는 한 줄. 받는 쪽은 `paths.py dir` 이고 장부는 설정 화면의
+# 사이트별 로컬 폴더와 같은 dirs.json 한 벌이다(setup 스킬 3-c).
+PICK_DIR_CMD = "이 폴더를 <이름> 사이트로 정해줘"
+
 # 할 일이 하나도 없을 때만 쓰는 요약. 위 분기 구조가 그것을 보장한다 —
 # 목록과 어긋나는 요약("다 준비됐는데 GA4 가 막혔다")이 나올 길을 구조로 막는다.
 # 「다」라고 하지 않는다 — 선택 기능(AI 인용 질문 등)이 꺼져 있어도 이 말이 나오는데,
@@ -489,9 +493,10 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
             # 요약(verdict)이 이미 상황을 말했으므로 여기서는 할 일만 적는다.
             "msg": ("등록된 사이트: " + ", ".join(brain["projects"]) +
                     ". 이 폴더의 사이트를 한 번 정해 두면 다음부터 자동으로 붙습니다."),
-            "detail": "정해 두면 폴더 경로가 함께 기록됩니다.",
+            "detail": "대시보드 [설정]의 사이트별 로컬 폴더에 이 폴더를 적어 두는 것과 "
+                      "같습니다. 거기서 직접 적으셔도 됩니다.",
             "go": None,
-            "cmd": "/create profile <이름>",
+            "cmd": PICK_DIR_CMD,
         })
     if core_ok and brain_ok and not brain["projects"]:
         # 보관함이 비었는데 호스팅에도 안 붙었다 — 웹을 먼저 쓰던 사람이면 등록을

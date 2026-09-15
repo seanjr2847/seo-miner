@@ -1958,34 +1958,43 @@ def test_repo_binds_project_and_ambiguity_is_not_guessed():
     """다른 리포에서 /setup 을 돌려도 늘 먼저 등록한 사이트가 뜨던 버그.
 
     Brain 은 컴퓨터 전역이라 프로젝트가 여럿이면 "이 폴더가 어느 사이트냐"를 따로
-    정해야 한다. 답은 `/create profile` 이 남기는 repo.yaml 의 repo_path 다.
-    못 고르는 경우에 아무거나 집으면 사용자는 그게 이 폴더의 사이트인 줄 안다.
+    정해야 한다. 답은 설정 화면의 사이트별 로컬 폴더(dirs.json) 한 벌이다 —
+    예전에는 `/create profile` 의 repo.yaml 을 따로 읽어서, 설정에 폴더를 적어 둔
+    사이트에서도 되물었다. 못 고르는 경우에 아무거나 집으면 사용자는 그게 이 폴더의
+    사이트인 줄 안다.
     """
+    import paths
     import stage
 
-    proj_dir = HOME / "projects"
-    proj_dir.mkdir(parents=True, exist_ok=True)
     repo_a = HOME / "repos" / "alpha"
     (repo_a / "src").mkdir(parents=True, exist_ok=True)
-    (proj_dir / "alpha.repo.yaml").write_text(
-        f"repo_path: {repo_a}\nstack: astro\n", encoding="utf-8")
-    # 템플릿 그대로인 파일은 무시돼야 한다 — 안 그러면 모든 폴더가 여기 걸린다.
-    (proj_dir / "zeta.repo.yaml").write_text(
-        "repo_path: /path/to/repo\n", encoding="utf-8")
+    saved = paths.site_dirs()
+    try:
+        assert paths.bind_site_dir("alpha", str(repo_a))["ok"]
+        # repo.yaml 에 적힌 옛 repo_path 는 더는 판정에 안 쓴다 — 장부가 두 벌이 되지 않게.
+        proj_dir = HOME / "projects"
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        (proj_dir / "zeta.repo.yaml").write_text(
+            f"repo_path: {HOME / 'repos'}\n", encoding="utf-8")
 
-    both = ["alpha", "zeta"]
-    assert db.repo_project(repo_a) == "alpha"
-    assert db.repo_project(repo_a / "src") == "alpha", "하위 폴더에서도 붙어야 함"
-    assert db.repo_project(HOME) is None, "무관한 폴더는 매치가 없어야 함"
+        both = ["alpha", "zeta"]
+        assert db.repo_project(repo_a) == "alpha"
+        assert db.repo_project(repo_a / "src") == "alpha", "하위 폴더에서도 붙어야 함"
+        assert db.repo_project(HOME / "repos") is None, "repo.yaml 은 판정에 안 쓴다"
+        assert db.repo_project(HOME) is None, "무관한 폴더는 매치가 없어야 함"
 
-    assert stage.pick_project(both, cwd=repo_a) == "alpha"
-    assert stage.pick_project(both, cwd=HOME) is None, "모르면 아무거나 집지 않는다"
-    assert stage.pick_project(["solo"], cwd=HOME) == "solo", "하나뿐이면 그것"
-    assert stage.pick_project([], cwd=repo_a) is None
+        assert stage.pick_project(both, cwd=repo_a) == "alpha"
+        assert stage.pick_project(both, cwd=HOME) is None, "모르면 아무거나 집지 않는다"
+        assert stage.pick_project(["solo"], cwd=HOME) == "solo", "하나뿐이면 그것"
+        assert stage.pick_project([], cwd=repo_a) is None
 
-    # 등록 안 된 이름이 repo.yaml 에 남아 있어도 Brain 목록 밖이면 안 고른다
-    assert stage.pick_project(["zeta"], cwd=repo_a) == "zeta"   # 하나뿐이라 그것
-    assert stage.pick_project(["zeta", "other"], cwd=repo_a) is None
+        # 장부에 남은 이름이 Brain 목록 밖이면 안 고른다
+        assert stage.pick_project(["zeta"], cwd=repo_a) == "zeta"   # 하나뿐이라 그것
+        assert stage.pick_project(["zeta", "other"], cwd=repo_a) is None
+    finally:
+        for name in list(paths.site_dirs()):
+            paths.set_site_dir(name, saved.get(name))
+        (HOME / "projects" / "zeta.repo.yaml").unlink(missing_ok=True)
 
 
 def test_expand_keywords_locale_of_by_script():
