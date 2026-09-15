@@ -709,6 +709,46 @@ def test_opp_groups_keep_closed_out_of_open_lines():
     conn.close()
 
 
+def test_striking_band_survives_falling_off_the_latest_list():
+    """최신 striking() 은 노출 순 15개로 잘린다. 거기서 빠진 열린 기회가 밴드를 몰라
+    page2 처방("1페이지 진입까지 몇 칸")으로 떨어졌다 — 평균 3.6위 검색어에. 최신 GSC
+    순위로 다시 가른다. 목록에 있는 기회는 근거 문장을 최신 행으로 다시 쓴다."""
+    conn, pid = _brain("sd_band")
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "striking_distance", "빠진검색어", 60, "평균 4.8위 · 1페이지까지 0.0칸 (08-25)", "new", D),
+         (pid, "striking_distance", "남은검색어", 70, "평균 6.3위 · 노출 39 (옛 값)", "new", D)])
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+                 "impressions,ctr,position) VALUES(?,?,28,'빠진검색어','https://x/a',0,12,0,3.6)",
+                 (pid, D[:10]))
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm("빠진검색어"), scoring.norm("남은검색어")], "work")
+    striking = [{"query": "남은검색어", "pos": 5.8, "imp": 32, "clk": 0, "gap": 0.0, "band": "page1"}]
+    by = {o["target"]: o for o in dashboard._axis_opps(conn, pid, None, striking, [])["opps"]}
+    gone = by["빠진검색어"]
+    assert gone["band"] == "page1" and gone["label"] == "1페이지 상단 가능", gone
+    assert gone["play"]["what"].startswith("이미 1페이지 안"), gone["play"]["what"]
+    # 옛 문장(0.0칸)이 새 라벨 옆에 남지 않는다 — 최신 수와 조건 밖이라는 말로 바뀐다
+    assert "0.0칸" not in gone["reasoning"] and "평균 3.6위 · 노출 12 · 클릭 0" in gone["reasoning"], \
+        gone["reasoning"]
+    assert "조건(4~20위" in gone["reasoning"] and "남은 일은 클릭" in gone["reasoning"], gone["reasoning"]
+    assert "평균 5.8위 · 노출 32" in by["남은검색어"]["reasoning"], by["남은검색어"]["reasoning"]
+
+
+def test_inlink_rows_keep_the_count_from_before_the_cut():
+    """들어오는 링크를 20개에서 조용히 자르면 요청문이 '20개'라고 말하고 나머지 글에 또
+    걸자고 한다. 글 하나에 한 줄로 접고, 잘리기 전 수·앵커 분포는 첫 행에 싣는다."""
+    rows = [{"from": f"/p{i % 50}", "anchor": "Juvelook" if i % 4 else " 쥬베룩  안내 "}
+            for i in range(120)]
+    out = dashboard._inlink_rows(rows)
+    assert len(out) == dashboard.INLINK_ROWS == 40, len(out)
+    assert out[0]["total"] == 120 and out[0]["pages"] == 50, out[0]
+    assert out[0]["anchors"][:2] == [["Juvelook", 90], ["쥬베룩 안내", 30]], out[0]["anchors"]
+    assert "total" not in out[1], "같은 값을 행마다 싣는다"
+    assert dashboard._inlink_rows([]) == []
+
+
 def test_opp_groups_keep_ids_beyond_the_cap():
     """화면에 싣는 기회는 상한이 있다. 상한 밖으로 밀린 변형도 묶음 id 에 남아야 한다 —
     아니면 [완료 표시]가 그것만 남기고, 다음 적재에 혼자 다시 선다."""

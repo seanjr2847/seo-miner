@@ -124,7 +124,8 @@ def test_fix_page_carries_h2_list_and_advice():
     assert "H2 (3개): 첫째 / 둘째 / 셋째" in t
     assert "내부 링크 1개 · 외부 링크 2개 · 이미지 3개 (alt 없음 2개)" in t
     assert "## 진단 — 고쳐야 할 것" in t and "[title]" in t
-    assert "구글 실적 2026-08-25, 최근 28일 평균: 평균 12.4위 · 노출 1,204 · 클릭 8 · 1페이지까지 2.4칸" in t
+    assert ("구글 실적 2026-08-25, 최근 28일 평균 (검색어 전체): 평균 12.4위 · 노출 1,204 · 클릭 8 · "
+            "1페이지까지 2.4칸") in t, t
     assert "기간 평균 게재순위" in t
     assert "'바꾼 것' 표: 진단 항목 | 전 | 후" in t
     assert "title 30자 이내, meta description 80자 이내" in t
@@ -325,7 +326,11 @@ def test_tails_ask_for_a_self_contained_html_report():
         x = t[name]
         assert "%TEMP%" in x and f"seo-{name}-" in x and ".html" in x,             f"{name}: 꼬리가 파일을 어디에 무슨 이름으로 쓰는지 안 말한다"
         assert "절대경로" in x, f"{name}: 파일을 쓰고 경로를 안 알려 주면 사용자가 못 연다"
-        assert "cdn.tailwindcss.com" in x, f"{name}: Tailwind CDN 을 안 짚는다"
+        # 자립형이다 — 스타일을 CDN 에 기대면 네트워크 없이 열 때 모양이 통째로 깨진다
+        assert "tailwind" not in x.lower(), f"{name}: 스타일을 CDN(Tailwind)에 기댄다"
+        assert "`<style>`" in x and "인라인 CSS" in x, f"{name}: 스타일을 인라인으로 쓰라는 줄이 없다"
+        # 클라우드에서 도는 에이전트는 임시 폴더 경로를 사용자에게 못 건넨다
+        assert "첨부" in x and "연결된 폴더" in x, f"{name}: 로컬이 아닐 때 파일을 건네는 길이 없다"
         # 자간·등폭을 한글에 걸면 "아 직 안 딴 기 회"처럼 낱자가 흩어져 스캔이 안 된다.
         # 이 리포가 화면·랜딩·사이트 목록에서 세 번 저지른 실수라 꼴마다 못 박는다.
         assert "letter-spacing" in x and "등폭" in x,             f"{name}: 자간·등폭을 라틴에만 걸라는 줄이 없다"
@@ -1054,10 +1059,15 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     # 2. 같은 페이지의 다른 기회 — 누른 것·닫힌 것·다른 페이지·다른 일은 빠진다
     assert brief.PAGE_SIBLINGS_HEAD in body, body
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
-    assert "열린 기회가 8건 더 있습니다" in sib, sib
-    assert "- [밀면 오를 검색어] syringoma vs milia — 근거 문장" in sib, sib
+    # 누른 검색어와 같은 검색어의 다른 종류는 '다른 기회'로 세지 않고 한 줄로 따로 말한다
+    assert f"같은 검색어로 선 기회도 이 요청문이 덮습니다: [{scoring.kind_label('pseo_pattern')}]" in sib, sib
+    assert "다른 검색어의 열린 기회가 7건 있습니다" in sib, sib
+    assert f"] milia vs syringoma —" not in sib, "누른 검색어가 다른 기회로 또 세어진다"
+    # 저장된 근거 문장(적재한 날의 수) 대신 위 검색어 표의 최신 값을 쓴다
+    assert ("- [밀면 오를 검색어] syringoma vs milia — 이 페이지 12.1위 · 노출 118 · 클릭 9 "
+            "(위 검색어 표와 같은 최신 값)") in sib, sib
+    assert "근거 문장" not in sib, sib
     assert f"- [{scoring.kind_label('aio_exposure')}] syringoma vs milia" in sib, sib
-    assert f"[{scoring.kind_label('pseo_pattern')}] milia vs syringoma" in sib, sib
     assert f"[{scoring.kind_label('rank_decay')}] milia vs syringomas" in sib, sib
     assert f"[{scoring.kind_label('aio_exposure')}] milia vs syringoma\n" not in sib + "\n", \
         "누른 기회가 자기 목록에 있다"
@@ -1090,7 +1100,8 @@ def test_page_scope_sections_only_where_a_page_is_the_job():
     assert brief.PAGE_QUERIES_HEAD not in gap["body"] and brief.PAGE_SIBLINGS_HEAD not in gap["body"]
     # 검색어 하나뿐인 페이지 — 표는 실리되 '묶음의 의도' 꼬리는 안 붙고, 다른 기회도 없다
     solo = brief.build(_opp("ctr_gap", "검색어"), {"query_pages": {"검색어": _pages(URL)}})["body"]
-    assert brief.PAGE_QUERIES_HEAD in solo and "노출 100 중 정보 의도 100 (100%)" in solo, solo
+    assert brief.PAGE_QUERIES_HEAD in solo and "노출이 100뿐이라 의도 비율로 단정하지 않습니다" in solo, solo
+    assert "(100%)" not in solo, "노출 100 에서 의도 비율을 단정한다"
     assert brief.PAGE_SIBLINGS_HEAD not in solo and "위 묶음의 주된 의도입니다" not in solo, solo
     # 표는 15행에서 자르고 비율은 전부로 센다
     many = {"query_pages": {f"q{i:02d} vs x": _pages(URL) for i in range(20)}}
@@ -1122,6 +1133,188 @@ def test_tail_rules_make_reading_the_page_a_rule():
     assert "H2" in brief.DELIVER_BY_TAG["H2"] and "나란히" in brief.DELIVER_BY_TAG["H2"]
     assert "출처" in brief.DELIVER_BY_TAG["외부 링크"] and "앵커" in brief.DELIVER_BY_TAG["외부 링크"]
     assert "표" in brief.DELIVER_BY_TAG["비교"] and "결론" in brief.DELIVER_BY_TAG["비교"]
+
+
+_JV = "https://clinic.example/en/juvelook"
+
+
+def _jv_ctx(**over):
+    """쥬베룩 /en/ 페이지 — 한국어 사이트의 영문 페이지, 영어 검색어 셋(브랜드 ± 지역어),
+    노출 61, 평균 48~73위. 요청문이 "한국어로 title 30자"를 시키던 실제 사례의 꼴."""
+    qp = {q: [{"page": _JV, "impressions": imp, "clicks": 0, "ctr": 0.0, "position": pos}]
+          for q, imp, pos in (("seoul juvelook", 22, 48.2), ("juvelook korea", 21, 61.0),
+                              ("juvelook", 18, 73.4))}
+    ctx = {"query_pages": qp,
+           "page_audits": {_JV: _audit(url=_JV, html_lang="en", title="Juvelook")},
+           "crawl": {"run": {"id": 1}, "issues": []},
+           "crawl_inlinks": {_JV: [{"from": f"https://clinic.example/en/p{i}", "anchor": "Juvelook",
+                                    **({"total": 20, "pages": 20, "anchors": [["Juvelook", 20]]}
+                                       if i == 0 else {})} for i in range(20)]},
+           "aio_gap_ranks": {"seoul juvelook": {"pos": 48, "url": _JV, "aio_domains": []}}}
+    ctx.update(over)
+    return ctx
+
+
+def test_output_language_follows_the_page_not_the_site():
+    ctx = _jv_ctx()
+    o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    target = body.split("## 대상")[1].split("\n## ")[0]
+    assert "- 페이지 언어: 영어 (html lang=en) — 사이트 기본(한국어)과 다릅니다" in target, target
+    assert "산출물은 영어로 쓰고, 길이 기준은 title 60자 이내, meta description 160자 이내" in target
+    # html lang 이 없으면 주소의 /en/ 로 안다
+    no_lang = _jv_ctx(page_audits={_JV: _audit(url=_JV, html_lang="")})
+    assert "- 페이지 언어: 영어 (주소의 /en/)" in brief.build(o, no_lang, "ko-KR")["body"]
+    # 사이트와 같은 언어면 꼬리가 이미 말한다 — 두 번 싣지 않는다
+    assert "페이지 언어" not in brief.build(o, ctx, "en-US")["body"]
+    # 모르는 조각(/blog/)을 언어로 지어내지 않는다
+    assert brief.page_locale(None, "https://x.example/blog/a") is None
+    assert brief.page_locale(None, "https://x.example/ja/a") == ("ja", "주소의 /ja/")
+    # 꼬리는 '대상'의 언어 줄이 이긴다고 말하고, 다른 언어의 길이 기준도 준다
+    tail = brief.tails("ko-KR")["fix_page"]
+    assert "'페이지 언어' 줄이 있으면 그 언어가 이깁니다" in tail, tail
+    assert "영어: title 60자 이내" in tail, tail
+    # '연락문'은 연락 꼴에만 — 고치기 요청문에 없는 산출물을 말하지 않는다
+    t = brief.tails("ko-KR")
+    assert "연락문" not in t["fix_page"] and "연락문" in t["outreach"]
+
+
+def test_reading_the_page_counts_as_evidence():
+    """'표에 있는 것만'과 '페이지를 열어라'가 같이 서면 읽은 것을 못 쓴다."""
+    t = brief.tails("ko-KR")
+    assert "직접 열어 읽은 내용은 근거로 씁니다" in brief.RULE_READ_PAGE
+    rules = t["fix_page"].split("## 규칙")[1]
+    assert "직접 열어 확인한 이 페이지" in rules and "'지금 이 페이지 상태'와 '근거'에 있는 것만" not in rules
+    # 남의 글: 지시는 안 따르되 구조 비교에는 쓴다(상위 H2 비교를 시키니까)
+    assert "구조 비교" in brief.UNTRUSTED_RULE and "근거로만 씁니다" not in brief.UNTRUSTED_RULE
+    # 구조 손질의 경계가 있다
+    assert "순서 바꾸기" in rules and "URL 변경은 하지 않고" in rules, rules
+    # 담을 것은 '만들어 줄 것'을 따른다 — title·meta 를 못 박지 않는다
+    assert brief.SHAPES["fix_page"]["form"][0].startswith("위 '만들어 줄 것'에 든 산출물만")
+
+
+def test_far_aio_rank_asks_for_a_root_cause_and_a_date():
+    ctx = _jv_ctx()
+    o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    assert "가장 나은 순위도 48위입니다(20위 밖)" in ev and "어렵다는 결론도 답입니다" in ev, ev
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert want.startswith("\n1. 왜 밀리는지 원인 진단 표") and "이 페이지로는 어렵다" in want, want
+    after = body.split("## 고친 뒤 볼 것")[1].split("\n## ")[0]
+    assert "4주 뒤" in after and "8주 뒤에도 20위 밖이면" in after and "1페이지(10위 안)" in after, after
+    # 1페이지 문턱(15위)에는 '멀다'고 하지 않는다
+    near = _jv_ctx(aio_gap_ranks={"seoul juvelook": {"pos": 15, "url": _JV}},
+                   query_pages={"seoul juvelook": [{"page": _JV, "impressions": 22, "position": 15.0}]})
+    assert "가장 나은 순위도" not in brief.build(o, near, "ko-KR")["body"]
+    # 근거 표의 값은 검색어 하나의 것이라고 열 이름이 말한다
+    assert "| 이 검색어 하나의 내 페이지 | 노출 |" in ev, ev
+
+
+def test_thin_brand_bundle_does_not_pretend_to_have_intents():
+    body = brief.build({**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"},
+                       _jv_ctx(), "ko-KR")["body"]
+    sec = body.split(brief.PAGE_QUERIES_HEAD)[1].split("\n## ")[0]
+    assert "노출이 61뿐이라 의도 비율로 단정하지 않습니다" in sec and "%)" not in sec, sec
+    assert "모두 'juvelook' 에 말을 붙인 변형입니다" in sec, sec
+    assert "| seoul juvelook ← 이 기회 | 22 | 0 | 48.2위 | 지역 |" in sec, sec
+    assert "| juvelook | 18 | 0 | 73.4위 | 정보 |" in sec, sec
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "'juvelook' 가 든 검색어 전부입니다" in want and "주된 의도입니다" not in want, want
+    assert brief.query_intent("juvelook near me") == "지역"
+    assert brief.query_intent("milia removal seoul") == "치료·구매"     # 치료가 지역보다 먼저
+
+
+def test_inlinks_say_the_real_count_and_anchor_crowding():
+    ctx = _jv_ctx()
+    ctx["crawl_inlinks"][_JV][0].update(total=45, pages=45)
+    ctx["query_pages"]["other"] = [{"page": "https://clinic.example/en/acne", "impressions": 90}]
+    o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "들어오는** 내부 링크 45개 · 글 45곳" in body, body
+    assert "표는 20곳까지입니다. 나머지 25곳도 이미 링크를" in body, body
+    assert "앵커가 'Juvelook' 에 몰려 있습니다(20/45)" not in body     # 20/45 는 몰림 기준 미만
+    # 표가 잘렸으면 '아직 안 건 글'을 모른다 — 후보를 지어내지 않는다
+    assert "링크를 걸 후보" not in body, body
+    full = brief.build(o, _jv_ctx(query_pages={**_jv_ctx()["query_pages"], "other": [
+        {"page": "https://clinic.example/en/acne", "impressions": 90},
+        {"page": "https://clinic.example/en/p3", "impressions": 50}]}), "ko-KR")["body"]
+    assert "앵커가 'Juvelook' 에 몰려 있습니다(20/20)" in full, full
+    assert "링크를 걸 후보" in full, full
+    cand = full.split("링크를 걸 후보")[1].split("\n## ")[0]
+    assert "| https://clinic.example/en/acne | 90 |" in cand, cand
+    assert "/en/p3 |" not in cand, "이미 링크를 건 글이 후보로 나온다"
+    assert _JV + " |" not in cand, "자기 자신이 후보로 나온다"
+
+
+_PTT = "https://clinic.example/en/ptt"
+_PTT_OTHER = "https://clinic.example/en/blog/ptt-faq"
+
+
+def _ptt_ctx():
+    """korean ptt / ptt korea — /en/ 페이지, 1페이지 안(5.8·3.6위), 노출 44·클릭 0, 내보내는
+    링크 64·본문 697단어·이미지 12, Person 스키마, 들어오는 앵커 전부 브랜드명."""
+    qp = {"korean ptt": [{"page": _PTT, "impressions": 32, "clicks": 0, "ctr": 0.0, "position": 5.8},
+                         {"page": _PTT_OTHER, "impressions": 7, "clicks": 0, "ctr": 0.0, "position": 8.6}],
+          "ptt korea": [{"page": _PTT, "impressions": 12, "clicks": 0, "ctr": 0.0, "position": 3.6}]}
+    audit = _audit(url=_PTT, html_lang="en", title="The Other PTT | Korean PTT Treatment in Seoul",
+                   words=697, internal_links=64, images=12, images_no_alt=0,
+                   schema_json='["MedicalClinic", "Person"]')
+    opps = [{**_opp("striking_distance", "korean ptt", band="page1"), "id": 1, "status": "new",
+             "band": "page1", "reasoning": "평균 6.3위 · 노출 39 · 클릭 0. 이미 1페이지이고 상단 3위권까지 3.3칸"},
+            {**_opp("aio_exposure", "korean ptt", band="page1"), "id": 2, "status": "new"},
+            {**_opp("striking_distance", "ptt korea", band="page1"), "id": 3, "status": "new",
+             "reasoning": "평균 4.8위 · 노출 23 · 클릭 0. 1페이지까지 0.0칸 남았습니다 (구글 실적 2026-08-25 기준)"}]
+    return {"query_pages": qp, "opps": opps, "page_audits": {_PTT: audit},
+            "gsc_date": "2026-09-02", "gsc_period": 28,
+            "striking": [{"query": "korean ptt", "pos": 6.3, "imp": 39, "clk": 0, "gap": 0.0, "band": "page1"}],
+            "crawl": {"run": {"id": 1}, "issues": []},
+            "crawl_inlinks": {_PTT: [{"from": f"https://clinic.example/en/p{i}", "anchor": "The Other PTT",
+                                      **({"total": 20, "pages": 20, "anchors": [["The Other PTT", 20]]}
+                                         if i == 0 else {})} for i in range(20)]}}
+
+
+def test_striking_brief_on_page_one_with_zero_clicks():
+    ctx = _ptt_ctx()
+    body = brief.build(ctx["opps"][0], ctx, "ko-KR")["body"]
+    # 1. 숫자의 범위를 밝힌다 — 검색어 전체(페이지 2개 합) vs 이 페이지, 그리고 페이지 합계
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    assert "(검색어 전체 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
+    assert "| 이 검색어 하나의 내 페이지 |" in ev, ev
+    assert "이 페이지 합계: 검색어 2개 · 노출 44 · 클릭 0" in body, body
+    # '다른 기회'에 자기 검색어가 또 세어지지 않고, 옛 근거 문장(08-25·0.0칸) 대신 최신 값
+    sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
+    assert "같은 검색어로 선 기회도" in sib and "다른 검색어의 열린 기회가 1건" in sib, sib
+    assert "ptt korea — 이 페이지 3.6위 · 노출 12 · 클릭 0" in sib and "0.0칸" not in sib, sib
+    # 3. 1페이지 안 클릭 0 — 순위가 아니라 스니펫·의도라고 먼저 말한다
+    assert "1페이지 안(5.8위)인데 노출 39에 클릭 0입니다" in ev, ev
+    assert "순위를 더 올려도 이대로면 클릭은 늘지 않습니다" in ev, ev
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "1. 클릭이 안 나는 이유 가설 표" in want and "meta description 2안" in want, want
+    # 5. 진단에만 있는 항목을 말없이 두지 않는다
+    assert "위 진단에 있는데 여기 없는 것:" in want and "[이미지]" in want and "[내부 링크]" in want, want
+    assert "'안 바꿈'과 이유" in brief.SHAPES["fix_page"]["form"][-1]
+    # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
+    diag = body.split("## 진단")[1].split("\n## ")[0]
+    assert "내보내는 내부 링크 64개 — 본문 11단어당 1개" in diag, diag
+    assert "이미지 12개에 본문 697단어 — 그림 위주입니다" in diag, diag
+    assert "노리는 검색어('korean ptt')를 담은 것이 하나도 없습니다" in body, body
+    assert "Person 이 있습니다" in body, body
+    # 4. 영문 페이지 — 영어 산출물·영문 길이 기준
+    assert "- 페이지 언어: 영어 (html lang=en)" in body, body
+    # 앵커에 검색어의 말이 있으면 그 줄은 안 선다
+    ctx2 = _ptt_ctx()
+    ctx2["crawl_inlinks"][_PTT][3]["anchor"] = "Korean PTT guide"
+    assert "를 담은 것이 하나도 없습니다" not in brief.build(ctx2["opps"][0], ctx2, "ko-KR")["body"]
+
+
+def test_striking_above_top3_says_the_job_is_clicks():
+    ctx = _ptt_ctx()
+    ptt_korea = ctx["opps"][2]
+    body = brief.build({**ptt_korea, "band": "page1", "play": scoring.kind_play("striking_distance",
+                                                                                 band="page1")},
+                       ctx, "ko-KR")["body"]
+    assert "이미 상단 3위권(3.6위)입니다" in body and "이 요청문의 일은 클릭입니다" in body, body
 
 
 if __name__ == "__main__":

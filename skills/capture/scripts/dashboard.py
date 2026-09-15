@@ -1102,8 +1102,35 @@ def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
             " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT 20000",
             (run["id"],)):
         u = by_norm.get(scoring.norm(r["url_to"]))
-        if u in out and len(out[u]) < 20:
+        if u in out:
             out[u].append({"from": r["url_from"], "anchor": r["anchor"]})
+    return {u: _inlink_rows(rows) for u, rows in out.items()}
+
+
+# 들어오는 링크를 요청문에 싣는 상한(글 수). 여기서 20개로 자르고 요청문이 10개만 그리자
+# "들어오는 내부 링크 20개"라는 제목 아래 표가 10줄이었고, 나머지 글에 또 걸자는 제안이
+# 나왔다. 자르더라도 전체 수·앵커 분포는 잘리기 전 값으로 싣는다(_inlink_rows 의 첫 행).
+INLINK_ROWS = 40
+
+
+def _inlink_rows(rows: list[dict]) -> list[dict]:
+    """글 하나에 한 줄로 접는다(메뉴·본문이 같은 글에서 두 번 걸어도 한 곳이다).
+
+    잘리기 전의 total(링크 수)·pages(글 수)·anchors(앵커별 링크 수 상위 5)는 **첫 행에만**
+    싣는다 — 페이로드 모양(url → 행 목록)을 안 바꾸고, 같은 값을 40번 싣지도 않는다.
+    brief._site_facts 가 첫 행에서 읽는다."""
+    if not rows:
+        return []
+    by_from: dict[str, dict] = {}
+    anchors: dict[str, int] = {}
+    for r in rows:
+        a = " ".join(str(r.get("anchor") or "").split())
+        anchors[a] = anchors.get(a, 0) + 1
+        by_from.setdefault(r["from"], {"from": r["from"], "anchor": a})
+    top = sorted(anchors.items(), key=lambda x: (-x[1], x[0]))[:5]
+    meta = {"total": len(rows), "pages": len(by_from), "anchors": [list(x) for x in top]}
+    out = list(by_from.values())[:INLINK_ROWS]
+    out[0] = {**out[0], **meta}
     return out
 
 
@@ -1198,7 +1225,13 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 함수·같은 스냅샷(at)이라 근거표의 페이지 순위와 어긋나지 않는다.
     asked = [o["target"] for o in opps if o["kind"] == "aio_exposure"
              and o["target"] not in aio_band and o["target"] not in rank_pos]
+    # 밀면 오를 검색어도 같다: 최신 striking() 은 노출 순 15개로 잘려서, 거기서 빠진 열린
+    # 기회는 밴드를 몰라 page2 처방("1페이지 진입까지 몇 칸")으로 떨어졌다 — 평균 3.6위인
+    # 검색어에. 최신 GSC 순위로 밴드를 다시 가른다.
+    asked += [o["target"] for o in opps if o["kind"] == "striking_distance"
+              and o["target"] not in sd_band]
     gsc_pos: dict[str, float] = {}
+    gsc_sum: dict[str, tuple[int, int]] = {}
     if asked:
         for qq, prows in scoring.pages_by_query(conn, pid, asked, at=at).items():
             rows = [p for p in prows if p.get("position") is not None]
@@ -1206,15 +1239,38 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
             if rows:            # 노출 가중 평균 — GSC 가 검색어 순위를 내는 방식과 같다
                 gsc_pos[qq] = (sum(p["position"] * (p.get("impressions") or 0) for p in rows) / imp
                                if imp else sum(p["position"] for p in rows) / len(rows))
+                gsc_sum[qq] = (imp, sum(p.get("clicks") or 0 for p in rows))
     # 챗봇 인용 공백은 대신 인용된 곳의 갈래(scoring.ai_tally 의 lean)로 처방이 갈린다 —
     # 요청문 근거표와 같은 행에서 읽어야 표와 처방이 같은 말을 한다. 기회를 세운 행
     # (ai_gap_rows)이 먼저고, 거기 없는 질문만 최신 회차 행으로 물러선다(뒤가 이긴다).
     ai_lean = {str(r.get("prompt") or ""): r.get("lean") for r in ai_rows}
+    sd_rows = {r["query"]: r for r in striking}
+    sd_reason = scoring._KIND_BY_NAME["striking_distance"].reasoning
     for o in opps:
         o["is_defensive"] = scoring.is_defensive(o["kind"])
-        band = (sd_band.get(o["target"]) if o["kind"] == "striking_distance"
-                else _aio_band_of(o["target"], aio_band, rank_pos, gsc_pos)
-                if o["kind"] == "aio_exposure" else None)
+        if o["kind"] == "striking_distance":
+            band = sd_band.get(o["target"]) or (
+                ("page1" if gsc_pos[o["target"]] <= scoring.PAGE1 else "page2")
+                if o["target"] in gsc_pos else None)
+            # 적재 때 쓴 근거 문장은 그날의 수(6.3위·노출 39)라, 같은 요청문의 최신 표와
+            # 어긋난다. 최신 행이 있으면 같은 문장 틀로 다시 쓴다 — 없으면 그날 날짜가
+            # 박힌 옛 문장을 그대로 둔다(날짜가 이미 그렇다고 말한다).
+            if "pos" in sd_rows.get(o["target"], {}):
+                o["reasoning"] = sd_reason(sd_rows[o["target"]], {"cur": cur})
+            elif o["target"] in gsc_pos and cur:
+                # 최신 목록 밖(4~20위·노출 하한을 벗어났다) — 옛 문장("1페이지까지 0.0칸")이
+                # 새 라벨("1페이지 상단 가능") 옆에 서지 않게 최신 수로 쓰고, 조건 밖이라고 밝힌다.
+                p = round(gsc_pos[o["target"]], 1)
+                imp, clk = gsc_sum[o["target"]]
+                o["reasoning"] = (
+                    f"평균 {p}위 · 노출 {imp:,} · 클릭 {clk:,}. 이번 구글 실적에서는 밀면 오를 "
+                    f"검색어 조건({scoring.STRIKING_LO}~{scoring.STRIKING_HI}위 · 노출 "
+                    f"{scoring.STRIKING_MIN_IMP} 이상) 밖입니다"
+                    + (" — 이미 상단 3위권이라 남은 일은 클릭입니다" if p < scoring.STRIKING_LO else "")
+                    + f" (구글 실적 {cur} 기준)")
+        else:
+            band = (_aio_band_of(o["target"], aio_band, rank_pos, gsc_pos)
+                    if o["kind"] == "aio_exposure" else None)
         gk = (gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap"
               else ai_lean.get(str(o["target"])) if o["kind"] == "ai_citation_gap" else None)
         o["label"] = scoring.kind_label(o["kind"], band=band)
@@ -1896,10 +1952,16 @@ def run_tool(body: dict) -> dict:
     box.mkdir(parents=True, exist_ok=True)
     md = box / f"opp-{opp_id}.md"
     createdb = Path(__file__).resolve().parents[2] / "create" / "scripts" / "createdb.py"
+    # 요청문의 답은 제안서 HTML 한 장이다 — 그것만 만들었으면 채울 '바꾼 파일'이 없다.
+    # 기록은 제안을 실제로 적용해 파일이 바뀐 뒤의 일이라고 조건을 먼저 말한다. 명령의
+    # 경로는 이 PC 의 것이라 다른 곳(클라우드)에서 도는 도구는 건너뛴다.
     md.write_text(
         text
-        + "\n\n---\n끝나면 이 명령으로 기록해 주세요(바꾼 파일·브랜치를 채워서):\n"
-        + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n',
+        + "\n\n---\n기록 (이 PC 에서 도는 도구만):\n"
+        + "- 제안서만 만들었으면 기록하지 않습니다 — 채울 '바꾼 파일'이 없습니다.\n"
+        + "- 제안을 적용해 파일을 바꿨으면 이 명령으로 기록합니다(바꾼 파일·브랜치를 채워서):\n"
+        + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n'
+        + "- 이 명령이 없는 곳(원격·클라우드)에서 돌고 있으면 건너뜁니다.\n",
         "utf-8")
 
     cwd = _work_dir(project)
