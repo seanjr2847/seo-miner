@@ -743,6 +743,12 @@ def _axis_rank(conn, pid: int) -> dict:
         # 자르는데(순위 순), AI 요약 기회는 대개 순위가 낮거나 없어서 그 30 밖에 선다.
         # 요청문(_ev_aio)이 "몇 위·누가 대신 인용됐나"를 말하려면 잘리기 전 행이 필요하다.
         "aio_gap_ranks": {r["keyword"]: r for r in ranks if r["keyword"] in gap_set},
+        # 검색어 → 최신 순위 조회 행 전부(자르기 전). aio_gap_ranks 는 "최신 회차에
+        # AI 요약이 떴고 우리가 인용 안 된" 검색어만 담는데, 기회는 그보다 옛 회차에서도
+        # 선다 — 그러면 판정은 "실측 6위"라고 쓴 채 요청문은 그 숫자를 못 찾아 GSC
+        # 평균만 보고 "가장 나은 순위도 22.4위"라고 단정했다. 한 요청문 안에 순위가
+        # 세 개 적히고 어느 것이 무엇인지는 아무 데도 없었다.
+        "rank_by_kw": {r["keyword"]: r for r in ranks},
         # 기회로 아직 안 올라온 행의 폴백 처방이 쓴다(rank.html) — 문구는 기회와 같은 한 벌.
         "aio_play": {b: scoring.kind_play("aio_exposure", band=b) for b in scoring.AIO_BANDS},
         "kw_active": db.count_active_keywords(conn, pid),

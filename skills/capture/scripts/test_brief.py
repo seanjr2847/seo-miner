@@ -683,7 +683,7 @@ def test_aio_brief_names_who_google_cited_instead():
     body = brief.build(_opp("aio_exposure", "검색어"),
                        {"ranks": [], "aio_gap_ranks": {"검색어": row}})["body"]
     assert "구글 AI 요약이 대신 인용한 곳: rival.example, wiki.example" in body, body
-    assert "순위 없음" in body, body
+    assert "조회에서 우리 순위는 안 잡혔습니다" in body, body
     # 옛 조회(목록을 안 남기던 때)는 아무 말도 안 한다 — "없다"고 지어내지 않는다
     old = brief.build(_opp("aio_exposure", "검색어"),
                       {"aio_gap_ranks": {"검색어": {**row, "aio_domains": None}}})["body"]
@@ -1063,11 +1063,16 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     assert f"같은 검색어로 선 기회도 이 요청문이 덮습니다: [{scoring.kind_label('pseo_pattern')}]" in sib, sib
     assert "다른 검색어의 열린 기회가 7건 있습니다" in sib, sib
     assert f"] milia vs syringoma —" not in sib, "누른 검색어가 다른 기회로 또 세어진다"
-    # 저장된 근거 문장(적재한 날의 수) 대신 위 검색어 표의 최신 값을 쓴다
-    assert ("- [밀면 오를 검색어] syringoma vs milia — 이 페이지 12.1위 · 노출 118 · 클릭 9 "
-            "(위 검색어 표와 같은 최신 값)") in sib, sib
-    assert "근거 문장" not in sib, sib
-    assert f"- [{scoring.kind_label('aio_exposure')}] syringoma vs milia" in sib, sib
+    # 검색어 하나에 종류가 여럿이면 **한 줄**이다 — 종류마다 줄을 세우면 같은 검색어·같은
+    # 수치가 두 줄로 나와 "다른 기회 2건"이 사실상 하나가 된다.
+    sv = [ln for ln in sib.splitlines() if ln.startswith("- ") and "syringoma vs milia" in ln]
+    assert len(sv) == 1, sv
+    assert "이 페이지 12.1위 · 노출 118 · 클릭 9 (위 검색어 표와 같은 최신 값)" in sv[0], sv
+    for k in ("striking_distance", "aio_exposure"):
+        assert f"[{scoring.kind_label(k)}]" in sv[0], sv
+    # 최신 값이 판정 근거를 **덮지 않는다** — 덮으면 '순위 하락'의 이전 값이 사라진다
+    assert "[순위 하락] milia vs syringomas" in sib and "판정 근거: 근거 문장" in sib, sib
+    assert "기회가 선 시점의 값입니다" in sib, sib
     assert f"[{scoring.kind_label('rank_decay')}] milia vs syringomas" in sib, sib
     assert f"[{scoring.kind_label('aio_exposure')}] milia vs syringoma\n" not in sib + "\n", \
         "누른 기회가 자기 목록에 있다"
@@ -1198,7 +1203,11 @@ def test_far_aio_rank_asks_for_a_root_cause_and_a_date():
     o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
     body = brief.build(o, ctx, "ko-KR")["body"]
     ev = body.split("## 근거")[1].split("\n## ")[0]
-    assert "가장 나은 순위도 48위입니다(20위 밖)" in ev and "어렵다는 결론도 답입니다" in ev, ev
+    assert "아는 순위가 모두 48위 밖입니다(20위 기준)" in ev and "어렵다는 결론도 답입니다" in ev, ev
+    # 숫자마다 잰 방법이 붙는다 — 6위(조회)와 22.4위(평균)가 한 요청문에 이름 없이 서면
+    # 읽는 쪽이 둘 중 하나를 골라 진단 방향을 정한다(실제로 그랬다).
+    assert "순위 조회: 48위" in ev and "구글 실적 평균: 48.2위" in ev, ev
+    assert ev.count("48위") >= 2 and "실제 검색 결과: 48위" not in ev, "같은 순위를 두 이름으로 두 번 말한다"
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert want.startswith("\n1. 왜 밀리는지 원인 진단 표") and "이 페이지로는 어렵다" in want, want
     after = body.split("## 고친 뒤 볼 것")[1].split("\n## ")[0]
@@ -1206,7 +1215,13 @@ def test_far_aio_rank_asks_for_a_root_cause_and_a_date():
     # 1페이지 문턱(15위)에는 '멀다'고 하지 않는다
     near = _jv_ctx(aio_gap_ranks={"seoul juvelook": {"pos": 15, "url": _JV}},
                    query_pages={"seoul juvelook": [{"page": _JV, "impressions": 22, "position": 15.0}]})
-    assert "가장 나은 순위도" not in brief.build(o, near, "ko-KR")["body"]
+    assert "아는 순위가 모두" not in brief.build(o, near, "ko-KR")["body"]
+    # 조회는 1페이지 안인데 평균은 한참 밖 — 단정하지 않고 어느 쪽이 실제인지 먼저 정하게 한다
+    split = _jv_ctx(aio_gap_ranks={"seoul juvelook": {"pos": 6, "url": _JV}},
+                    query_pages={"seoul juvelook": [{"page": _JV, "impressions": 22, "position": 48.2}]})
+    sb = brief.build(o, split, "ko-KR")["body"]
+    assert brief.RANK_SPLIT_HEAD in sb, sb
+    assert "아는 순위가 모두" not in sb, "두 측정이 갈렸는데 한쪽으로 단정한다"
     # 근거 표의 값은 검색어 하나의 것이라고 열 이름이 말한다
     assert "| 이 검색어 하나의 내 페이지 | 노출 |" in ev, ev
 
@@ -1216,7 +1231,13 @@ def test_thin_brand_bundle_does_not_pretend_to_have_intents():
                        _jv_ctx(), "ko-KR")["body"]
     sec = body.split(brief.PAGE_QUERIES_HEAD)[1].split("\n## ")[0]
     assert "노출이 61뿐이라 의도 비율로 단정하지 않습니다" in sec and "%)" not in sec, sec
-    assert "모두 'juvelook' 에 말을 붙인 변형입니다" in sec, sec
+    # 갈리는 말을 **실제로** 적는다 — "붙은 말(지역·목적)" 이라고 박아 두었더니 지역도
+    # 목적도 없는 묶음에 그 문구가 그대로 나갔다. 그리고 낱말이 겹친다고 같은 것을
+    # 묻는다고 단정하지 않는다: 엑소좀과 세포는 다른 것이고 의료에서 그 차이가 크다.
+    assert "모두 'juvelook' 를 품고 있습니다" in sec, sec
+    assert "갈리는 말은 'seoul', 'korea' 입니다" in sec, sec
+    assert "낱말이 겹친다고 같은 것을 묻는다는 뜻은 아닙니다" in sec, sec
+    assert "지역·목적" not in body, "묶음에 없는 말을 예시로 박아 둔다"
     assert "| seoul juvelook ← 이 기회 | 22 | 0 | 48.2위 | 지역 |" in sec, sec
     assert "| juvelook | 18 | 0 | 73.4위 | 정보 |" in sec, sec
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
@@ -1234,14 +1255,20 @@ def test_inlinks_say_the_real_count_and_anchor_crowding():
     assert "들어오는** 내부 링크 45개 · 글 45곳" in body, body
     assert "표는 20곳까지입니다. 나머지 25곳도 이미 링크를" in body, body
     assert "앵커가 'Juvelook' 에 몰려 있습니다(20/45)" not in body     # 20/45 는 몰림 기준 미만
-    # 표가 잘렸으면 '아직 안 건 글'을 모른다 — 후보를 지어내지 않는다
-    assert "링크를 걸 후보" not in body, body
+    # 표가 잘렸으면 '아직 안 건 글'을 모른다 — 후보를 지어내지 않되, 조용히 빠지지도
+    # 않는다. "후보가 없다"와 "잘려서 모른다"는 다른 말이다.
+    assert brief.LINK_CANDIDATES_HEAD not in body, body
+    assert brief.LINK_CANDIDATES_TRUNCATED in body, body
+    assert brief.NO_LINK_CANDIDATES not in body, "잘린 것을 '후보 없음'이라고 말한다"
     full = brief.build(o, _jv_ctx(query_pages={**_jv_ctx()["query_pages"], "other": [
         {"page": "https://clinic.example/en/acne", "impressions": 90},
         {"page": "https://clinic.example/en/p3", "impressions": 50}]}), "ko-KR")["body"]
     assert "앵커가 'Juvelook' 에 몰려 있습니다(20/20)" in full, full
-    assert "링크를 걸 후보" in full, full
-    cand = full.split("링크를 걸 후보")[1].split("\n## ")[0]
+    assert brief.LINK_CANDIDATES_HEAD in full, full
+    cand = full.split(brief.LINK_CANDIDATES_HEAD)[1].split("\n## ")[0]
+    # 순위 칸이 있다 — "이미 순위가 있는 글에서 걸어라"가 처방인데 후보의 순위를 안 주면
+    # 모델은 주제 근접성으로만 고른다(실제로 그랬다).
+    assert "평균 순위" in cand, cand
     assert "| https://clinic.example/en/acne | 90 |" in cand, cand
     assert "/en/p3 |" not in cand, "이미 링크를 건 글이 후보로 나온다"
     assert _JV + " |" not in cand, "자기 자신이 후보로 나온다"
@@ -1404,6 +1431,76 @@ def test_fix_page_warns_when_a_split_decision_is_still_open():
     # 가르기 요청문 자신에게는 안 붙는다 — 자기가 그 일이다
     assert brief.SPLIT_PENDING_HEAD not in brief.build(
         next(x for x in ctx["opps"] if x["kind"] == "intent_split"), ctx)["body"]
+
+
+# ── 내부 링크 과업은 순위를 보고, 공통 메뉴를 본문 링크로 여기지 않는다 ──
+
+_LK = "https://me.example/target"
+
+
+def _nav_ctx(n=40, anchor="Autologous Exosome Therapy"):
+    """링크를 건 글 n 곳이 전부 같은 앵커 — 홈·목록까지 들어 있다. 사이트 공통 메뉴의 꼴."""
+    froms = ["https://me.example/", "https://me.example/blog/"] + [
+        f"https://me.example/p{i}/" for i in range(n - 2)]
+    ins = [{"from": f, "anchor": anchor} for f in froms]
+    ins[0] = {**ins[0], "total": n, "pages": n, "anchors": [[anchor, n]]}
+    return {"crawl_inlinks": {_LK: ins}}
+
+
+def test_inbound_links_that_are_site_nav_are_called_that():
+    """한 앵커로 홈·목록까지 전부 걸리면 본문 링크가 아니라 공통 메뉴다. 그걸 본문
+    링크처럼 다루면 "링크 없는 글에서 새로 걸어라"가 성립하지 않고(없는 글이 거의 없다),
+    "앵커를 다른 말로 써라"는 메뉴 라벨을 고치라는 뜻이 돼 범위 규칙과 부딪힌다."""
+    ctx = _nav_ctx()
+    L = brief._site_facts(ctx, _LK, link_candidates=True, query="autologous cell regeneration")
+    body = chr(10).join(L)
+    assert brief.NAV_LINKS_HEAD in body, body
+    assert "메뉴" in body and "본문" in body, body
+    # 공통 메뉴면 "앵커를 다른 말로" 라는 본문-링크용 지시는 안 나간다
+    assert "새 링크의 앵커는 이 말을 되풀이하지 않고" not in body, body
+    # 본문 링크가 섞인 꼴이면 공통 메뉴라고 단정하지 않는다
+    mixed = _nav_ctx()
+    rows = mixed["crawl_inlinks"][_LK]
+    for i in range(5, 15):
+        rows[i] = {**rows[i], "anchor": f"설명형 앵커 {i}"}
+    rows[0] = {**rows[0], "anchors": [["Autologous Exosome Therapy", 30]]}
+    assert brief.NAV_LINKS_HEAD not in chr(10).join(
+        brief._site_facts(mixed, _LK, link_candidates=True))
+
+
+def test_link_candidates_carry_rank_not_just_impressions():
+    """"이미 순위가 있는 글에서 걸어라" 라고 시키면서 후보의 순위를 안 주면
+    모델은 주제 근접성으로만 고른다. 순위는 page_perf 에 내내 있었다."""
+    ctx = {
+        "crawl_inlinks": {_LK: [{"from": "https://me.example/linked/", "anchor": "a",
+                                 "total": 1, "pages": 1, "anchors": [["a", 1]]}]},
+        "query_pages": {"q1": [{"page": "https://me.example/rank9/", "impressions": 300,
+                                "clicks": 5, "position": 9.0}],
+                        "q2": [{"page": "https://me.example/rank40/", "impressions": 900,
+                                "clicks": 0, "position": 40.0}]},
+        "page_perf": [{"page": "https://me.example/rank9/", "impressions": 300, "clicks": 5,
+                       "position": 9.0, "queries": 3},
+                      {"page": "https://me.example/rank40/", "impressions": 900, "clicks": 0,
+                       "position": 40.0, "queries": 1}],
+    }
+    body = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True))
+    assert brief.LINK_CANDIDATES_HEAD in body, body
+    sec = body.split(brief.LINK_CANDIDATES_HEAD)[1]
+    assert "평균 순위" in sec, sec
+    assert "9.0위" in sec and "40.0위" in sec, sec
+    # 이미 링크를 건 글은 후보가 아니다
+    assert "/linked/" not in sec, sec
+    # 순위가 좋은 글이 먼저 온다 — 노출만 보면 40위가 위로 간다
+    assert sec.index("/rank9/") < sec.index("/rank40/"), sec
+
+
+def test_no_link_candidates_says_why():
+    """후보가 없으면 조용히 빼지 않는다 — 사라지면 모델이 짐작으로 글을 고른다."""
+    ctx = _nav_ctx()
+    ctx["query_pages"] = {"q": [{"page": "https://me.example/p1/", "impressions": 50,
+                                 "clicks": 0, "position": 12.0}]}
+    body = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True))
+    assert brief.NO_LINK_CANDIDATES in body, body
 
 
 if __name__ == "__main__":

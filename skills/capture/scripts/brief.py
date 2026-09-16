@@ -614,6 +614,7 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     title, desc = a.get("title") or "", a.get("meta_description") or ""
     fresh = scoring._has_render_fields(a)
     L = [f"## 지금 이 페이지 상태 ({a.get('checked_date') or '점검일 미상'} 직접 확인)"]
+    L += _stale_audit_lines(a.get("checked_date"))
     # 응답 코드부터. 200 인지 리다이렉트 끝인지 모른 채 "지금 값 → 고칠 값" 표를
     # 시키면 첫 칸부터 빈다.
     if a.get("status") is not None:
@@ -787,6 +788,27 @@ _LINK_CANDIDATES = 8
 # 앵커 하나가 이 몫을 넘으면 몰렸다고 말한다 — 새 링크가 같은 말을 또 달지 않게.
 ANCHOR_CROWDED = 0.5
 
+# ── 들어오는 링크가 본문 링크인가, 사이트 공통 메뉴인가 ──────────────────────
+# 이걸 안 가르면 "링크가 없는 글에서 새로 걸어라"가 성립하지 않는다: 메뉴는 모든 글에
+# 붙어 있어 안 걸린 글이 거의 없고, "앵커를 다른 말로 써라"는 메뉴 라벨을 고치라는
+# 뜻이 되어 "다른 페이지·디자인은 손대지 않는다"와 부딪힌다. 실제로 그 요청문이 나갔다.
+NAV_LINKS_HEAD = "- 이 링크들은 본문 링크가 아니라 **사이트 공통 메뉴**로 보입니다"
+# 같은 앵커가 이 몫을 넘고, 링크를 건 글이 충분히 많고, 홈·목록 같은 뼈대 페이지가
+# 끼어 있으면 메뉴다. 셋을 다 봐야 한다 — 앵커 몰림만으로는 주제가 좁아 같은 말로
+# 링크한 본문 묶음과 못 가른다.
+NAV_ANCHOR_SHARE = 0.9
+NAV_MIN_PAGES = 10
+LINK_CANDIDATES_HEAD = ("링크를 걸 후보 — 검색 노출이 있는 내 글 중 아직 이 페이지로 링크를 "
+                        "안 건 것. 새 링크는 이 안에서 고릅니다:")
+NO_LINK_CANDIDATES = ("- 링크를 걸 후보가 없습니다 — 노출이 잡힌 내 글이 이미 전부 이 페이지로 "
+                      "링크를 걸었거나, 수집본에 노출이 있는 다른 글이 없습니다. 후보를 짐작으로 "
+                      "고르지 말고, 새 내부 링크가 필요하다면 무엇을 먼저 만들어야 하는지로 답합니다.")
+# 위와 갈라야 한다: 표가 잘린 것은 "후보가 없다"가 아니라 "아직 안 건 글이 어느 것인지
+# 모른다"다. 둘을 같은 문장으로 말하면 있는 후보를 없다고 하는 셈이다.
+LINK_CANDIDATES_TRUNCATED = ("- 링크를 걸 후보를 내지 않습니다 — 들어오는 링크 표가 잘려서 "
+                             "어느 글이 아직 이 페이지로 링크를 안 걸었는지 모릅니다. 후보를 "
+                             "고르려면 그 글을 열어 링크가 이미 있는지 직접 확인합니다.")
+
 
 def _inlink_lines(ins: list[dict], query: str | None = None) -> list[str]:
     """들어오는 링크 — 전체 수는 잘리기 전 값(dashboard._inlink_rows 의 첫 행)으로 말한다.
@@ -803,12 +825,27 @@ def _inlink_lines(ins: list[dict], query: str | None = None) -> list[str]:
                  "걸었습니다 — 후보 글을 제안하기 전에 그 글을 열어 이 페이지로 가는 링크가 "
                  "이미 있는지 확인합니다.")
     anchors = head.get("anchors") or []
-    if anchors and total >= 3:
+    nav = _looks_like_nav(ins, anchors, total, pages)
+    if nav:
+        a, n = anchors[0]
+        L.append(f"{NAV_LINKS_HEAD}: 글 {_n(pages)}곳이 모두 같은 앵커('{_ext(a, 60) or '(빈 앵커)'}', "
+                 f"{_n(n)}/{_n(total)})로 걸었고 홈·목록 같은 뼈대 페이지까지 들어 있습니다.")
+        L.append("  그러면 이 페이지로 '링크가 없는 글'은 거의 없고, 앵커를 바꾸는 일은 메뉴 라벨을 "
+                 "고치는 일입니다 — 이 요청문의 범위 밖입니다(다른 페이지·디자인은 손대지 않습니다). "
+                 "새 내부 링크는 **본문 안에서** 문맥에 맞게 거는 것만 제안하고, 메뉴 쪽 제안은 "
+                 "'따로 볼 것'에 적습니다.")
+        L.append("  본문 링크가 몇 개인지는 이 표로 못 가릅니다 — 후보 글을 열어 메뉴 말고 "
+                 "본문에서 이 페이지를 가리키는지 확인하고 [확인 필요]로 남깁니다.")
+    elif anchors and total >= 3:
         a, n = anchors[0]
         if n / total >= ANCHOR_CROWDED:
             L.append(f"- 앵커가 '{_ext(a, 60) or '(빈 앵커)'}' 에 몰려 있습니다({_n(n)}/{_n(total)}). "
                      "새 링크의 앵커는 이 말을 되풀이하지 않고, 이 페이지가 답하는 내용을 "
                      "설명하는 다른 표현으로 씁니다(서로도 겹치지 않게).")
+    if anchors and total > sum(int(n) for _, n in anchors):
+        rest = total - sum(int(n) for _, n in anchors)
+        L.append(f"- 나머지 앵커 {_n(rest)}개는 위 목록에 없습니다(상위 {len(anchors)}개만 셌습니다) — "
+                 "'앵커가 전부 같다'고 단정하기 전에 표의 앵커 칸을 훑습니다.")
     # 앵커가 브랜드명뿐이고 노리는 검색어를 담은 것이 하나도 없으면 — 그것도 순위 정체의
     # 후보다. 낱말 하나 겹침으로는 못 가른다: 'The Other PTT' 는 'korean ptt' 와 ptt 를
     # 나눠 갖지만 일반명 앵커가 아니다. 검색어의 낱말을 **전부** 담은 앵커가 있는지 본다.
@@ -821,21 +858,56 @@ def _inlink_lines(ins: list[dict], query: str | None = None) -> list[str]:
     return L
 
 
-def _link_candidates(ctx: dict, url: str, ins: list[dict]) -> list[tuple[str, int]]:
-    """이 페이지로 아직 링크를 안 건, 검색 노출이 있는 내 글. 표가 잘렸으면(글 수 > 받은 행)
-    '안 걸었다'를 모르므로 후보를 내지 않는다 — 추측을 후보로 만들지 않는다."""
+def _looks_like_nav(ins: list[dict], anchors: list, total: int, pages: int) -> bool:
+    """들어오는 링크가 사이트 공통 메뉴인가 — 같은 앵커·많은 글·뼈대 페이지 셋을 같이 본다."""
+    if not anchors or total < 3 or pages < NAV_MIN_PAGES:
+        return False
+    if int(anchors[0][1]) / total < NAV_ANCHOR_SHARE:
+        return False
+    # 홈이나 언어 루트가 링크를 걸었으면 본문 링크로 보기 어렵다 — 홈 본문이 특정
+    # 시술을 가리키는 일은 있어도, 그게 글 40곳과 같은 앵커일 수는 없다.
+    return any(scoring.is_site_root(r.get("from") or "") for r in ins)
+
+
+def _link_candidates(ctx: dict, url: str, ins: list[dict]) -> list[dict]:
+    """이 페이지로 아직 링크를 안 건, 검색 노출이 있는 내 글 — 순위까지.
+
+    "이미 순위가 있는 다른 글에서 링크를 걸어라"가 처방인데 후보의 순위를 안 주면
+    모델은 주제 근접성으로만 고른다(실제로 그랬다). 순위는 page_perf 에 내내 있었고
+    요청문이 그 키를 안 읽었을 뿐이다 — 없으면 query_pages 에서 모은 값으로 내려간다.
+
+    표가 잘렸으면(글 수 > 받은 행) '안 걸었다'를 모르므로 후보를 내지 않는다 —
+    추측을 후보로 만들지 않는다.
+    """
     head = ins[0] if ins else {}
     if (head.get("pages") or len(ins)) > len(ins):
         return []
     linked = {scoring.norm(r.get("from") or "") for r in ins} | {scoring.norm(url)}
-    imp: dict[str, int] = {}
+    perf = {scoring.norm(r.get("page") or ""): r for r in (ctx.get("page_perf") or [])
+            if r.get("page")}
+    acc: dict[str, dict] = {}
     for prs in (ctx.get("query_pages") or {}).values():
         for p in prs or []:
             pg = p.get("page")
-            if pg and scoring.norm(pg) not in linked:
-                imp[pg] = imp.get(pg, 0) + int(p.get("impressions") or 0)
-    return sorted(((p, v) for p, v in imp.items() if v > 0),
-                  key=lambda x: (-x[1], x[0]))[:_LINK_CANDIDATES]
+            if not pg or scoring.norm(pg) in linked:
+                continue
+            row = acc.setdefault(pg, {"page": pg, "impressions": 0, "clicks": 0,
+                                      "position": None})
+            row["impressions"] += int(p.get("impressions") or 0)
+            row["clicks"] += int(p.get("clicks") or 0)
+    out = []
+    for pg, row in acc.items():
+        pf = perf.get(scoring.norm(pg))
+        if pf:                      # 페이지 축이 아는 값이 정본 — 검색어 몇 개의 합이 아니다
+            row = {**row, "impressions": pf.get("impressions") or row["impressions"],
+                   "clicks": pf.get("clicks") or row["clicks"],
+                   "position": pf.get("position")}
+        if row["impressions"] > 0:
+            out.append(row)
+    # 순위가 있는 글이 먼저다 — 노출만 보면 900노출 40위가 300노출 9위 위로 간다.
+    return sorted(out, key=lambda r: (r["position"] is None,
+                                      r["position"] if r["position"] is not None else 0,
+                                      -r["impressions"], r["page"]))[:_LINK_CANDIDATES]
 
 
 def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
@@ -879,11 +951,22 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
         L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다"
                  "(고아 페이지). 링크를 걸 자리를 찾는 것이 첫 일입니다.")
     # 크롤이 이 주소를 봤을 때만(None 이 아닐 때) — 안 봤으면 '아직 안 걸었다'를 모른다
-    cands = _link_candidates(ctx, url, ins) if link_candidates and ins is not None else []
-    if cands:
-        L += ["", "링크를 걸 후보 — 검색 노출이 있는 내 글 중 아직 이 페이지로 링크를 안 건 것"
-                  "(노출 순). 새 링크는 이 안에서 고릅니다:"]
-        L += _table(["글", "노출"], [[p, _n(v)] for p, v in cands])
+    if link_candidates and ins is not None:
+        head0 = ins[0] if ins else {}
+        truncated = (head0.get("pages") or len(ins)) > len(ins)
+        cands = [] if truncated else _link_candidates(ctx, url, ins)
+        if truncated:
+            L += ["", LINK_CANDIDATES_TRUNCATED]
+        elif cands:
+            L += ["", LINK_CANDIDATES_HEAD]
+            L += _table(["글", "노출", "클릭", "평균 순위"],
+                        [[r["page"], _n(r["impressions"]), _n(r["clicks"]),
+                          f"{r['position']}위" if r.get("position") is not None else "—"]
+                         for r in cands])
+            L.append("- 순위가 있는 글이 위입니다. 순위가 '—' 인 글은 이 수집본에 페이지 단위 "
+                     "순위가 없다는 뜻이지 순위가 없다는 뜻이 아닙니다 — 고르면 [확인 필요]로 둡니다.")
+        else:
+            L += ["", NO_LINK_CANDIDATES]
     return L
 
 
@@ -1246,13 +1329,19 @@ def _ev_ai(o, ctx, pages):
 def _ev_aio(o, ctx, pages):
     # 화면용 ranks 는 순위 순 30개로 잘린다 — AI 요약 기회는 대개 그 밖이라 잘리기 전
     # 행(aio_gap_ranks)을 먼저 본다.
-    r = ((ctx.get("aio_gap_ranks") or {}).get(str(o.get("target") or ""))
+    # 최신 회차의 AI 요약 빠짐 행 > 그 검색어의 최신 순위 행(회차가 옛것이어도) > 잘린 화면용
+    # 목록. 가운데를 안 보면 판정이 쓴 실측 순위를 요청문이 못 찾는다 — 그러면 GSC 평균만
+    # 보고 "가장 나은 순위도 22.4위"라고 쓴다(조회는 6위였다).
+    t = str(o.get("target") or "")
+    r = ((ctx.get("aio_gap_ranks") or {}).get(t)
+         or (ctx.get("rank_by_kw") or {}).get(t)
          or _find(ctx.get("ranks"), "keyword", o["target"]))
     L = []
     if r:
-        pos = f"{r['pos']}위" if r.get("pos") is not None else "순위 없음"
-        L.append(f"- 실제 검색 결과: {pos}" + (f" (그 자리의 내 페이지: {r['url']})" if r.get("url") else "")
-                 + " · 구글 AI 요약 있음, 내 링크 없음")
+        # 순위 숫자는 _rank_sources 한 곳에서만 말한다 — 여기서 또 적으면 같은 값이
+        # 두 줄이 되고, 그게 "순위가 세 가지로 적혀 있다"의 절반이었다.
+        L.append("- 구글 AI 요약 있음, 내 링크 없음"
+                 + ("" if r.get("pos") is not None else " (조회에서 우리 순위는 안 잡혔습니다)"))
         # None = 안 쟀다(옛 조회) — 아무 말도 안 한다. [] = 쟀는데 도메인을 못 뽑았다.
         doms = r.get("aio_domains")
         if doms:
@@ -1261,7 +1350,7 @@ def _ev_aio(o, ctx, pages):
             L.append("- 구글 AI 요약이 인용한 곳은 이번 조회 응답에서 뽑지 못했습니다.")
         if r.get("features"):
             L.append(f"- 검색결과 기능: {', '.join(map(str, r['features']))}")
-    L += _far_rank_lines(r, pages)
+    L += _rank_sources(r, pages, ctx) + _far_rank_lines(r, pages, ctx)
     return L + _pages_table(pages)
 
 
@@ -1272,18 +1361,74 @@ FAR_RANK = 2 * scoring.PAGE1
 RECHECK_WEEKS = (4, 8)
 
 
-def _far_rank_lines(r: dict | None, pages: list[dict]) -> list[str]:
+RANK_SPLIT_HEAD = "- 순위가 두 가지로 잽니다 — 어느 쪽도 틀린 값이 아닙니다"
+# 페이지를 확인한 지 이만큼 지나면 "지금 상태"라고 부를 수 없다. 규칙에 "페이지를 열어라"가
+# 있지만, 표가 오래됐다는 말이 없으면 읽는 쪽은 표를 현재로 믿고 그 위에서 진단한다.
+AUDIT_STALE_DAYS = 7
+
+
+def _stale_audit_lines(checked: str | None) -> list[str]:
+    """점검일이 오래됐으면 그 자리에서 말한다 — 규칙에 묻어 두지 않는다."""
+    from datetime import date
+    try:
+        d = date.fromisoformat(str(checked)[:10])
+    except (TypeError, ValueError):
+        return []
+    days = (date.today() - d).days
+    if days < AUDIT_STALE_DAYS:
+        return []
+    return [f"- 이 표는 {days}일 전 값입니다. 아래 title·H1·H2·본문 길이는 그 사이 바뀌었을 수 "
+            "있으니, 제안하기 전에 페이지를 열어 이 표와 다른 칸이 있는지 먼저 봅니다 — "
+            "다르면 '바꾼 것' 표의 '전' 칸은 표가 아니라 **직접 본 값**으로 적습니다."]
+
+
+def _rank_sources(r: dict | None, pages: list[dict], ctx: dict | None = None) -> list[str]:
+    """이 검색어의 순위를 **잰 방법마다** 한 줄 — 숫자만 늘어놓지 않는다.
+
+    순위 조회(특정 날·기기·지역에서 한 번 본 값)와 GSC 평균(28일·모든 기기·모든 지역의
+    평균)은 다른 것을 잰다. 한 요청문에 6위와 22.4위가 함께 실리고 어느 쪽이 무엇인지
+    아무 데도 없으면, 읽는 쪽은 둘 중 하나를 골라 진단 방향을 정한다(실제로 그랬다).
+    """
+    ctx = ctx or {}
+    L = []
+    if r and r.get("pos") is not None:
+        d = ctx.get("rank_date")
+        L.append(f"- 순위 조회: {r['pos']:g}위 — "
+                 + (f"{d} 에 " if d else "")
+                 + "한 번 본 값입니다(그날·그 기기·그 지역 기준)."
+                 + (f" 그 자리의 내 페이지: {r['url']}" if r.get("url") else ""))
+    gsc = [p.get("position") for p in pages if isinstance(p.get("position"), (int, float))]
+    if gsc:
+        L.append(f"- 구글 실적 평균: {min(gsc):g}위 — {_gsc_src(ctx)}. 기기·지역이 뒤섞인 평균이라 "
+                 "조회 순위보다 대개 뒤로 나옵니다.")
+    return L
+
+
+def _far_rank_lines(r: dict | None, pages: list[dict], ctx: dict | None = None) -> list[str]:
     """AI 요약 기회인데 우리가 한참 뒤일 때 — 처방(title·H1·H2 손질 + 내부 링크)이 닿는
     거리가 아닐 수 있다고 먼저 말한다. 48위 페이지의 요청문이 손질안 셋만 시켰고, "이
-    페이지로는 안 된다"는 결론을 낼 자리가 없었다. 아는 순위가 하나도 없으면 말하지 않는다."""
-    known = [x for x in ([(r or {}).get("pos")] + [p.get("position") for p in pages])
-             if isinstance(x, (int, float))]
+    페이지로는 안 된다"는 결론을 낼 자리가 없었다. 아는 순위가 하나도 없으면 말하지 않는다.
+
+    두 측정이 갈리면(조회는 1페이지 안, 평균은 한참 밖) **단정하지 않는다** — 예전엔
+    둘을 한 통에 넣고 최솟값으로 "가장 나은 순위도 22.4위"라고 썼는데, 조회가 6위인
+    검색어에서 그 문장은 그냥 틀렸고 진단 방향까지 바꿨다.
+    """
+    checked = (r or {}).get("pos")
+    gsc = [p.get("position") for p in pages if isinstance(p.get("position"), (int, float))]
+    best_gsc = min(gsc) if gsc else None
+    if isinstance(checked, (int, float)) and best_gsc is not None \
+            and (checked <= FAR_RANK) != (best_gsc <= FAR_RANK):
+        return [f"{RANK_SPLIT_HEAD}: 조회는 {checked:g}위, 구글 실적 평균은 {best_gsc:g}위입니다. "
+                "먼저 어느 쪽이 이 검색어의 실제 자리인지 정하고(직접 검색해 확인) 그다음에 "
+                "진단합니다 — 1페이지 안이면 남은 일은 순위가 아니라 클릭·인용이고, 밖이면 "
+                "순위가 먼저입니다. 둘이 갈린 채로 손질안부터 쓰지 않습니다."]
+    known = [x for x in ([checked] + gsc) if isinstance(x, (int, float))]
     if not known or min(known) <= FAR_RANK:
         return []
     best = min(known)
-    return [f"- 가장 나은 순위도 {best:g}위입니다({FAR_RANK}위 밖). 여기서 막힌 것은 AI 요약이 아니라 "
-            "순위이고, title·H1·H2 손질만으로 1페이지에 닿는 거리가 아닐 수 있습니다 — '만들어 줄 "
-            "것'의 원인 진단부터 하고, 이 페이지로는 어렵다는 결론도 답입니다."]
+    return [f"- 아는 순위가 모두 {best:g}위 밖입니다({FAR_RANK}위 기준). 여기서 막힌 것은 AI 요약이 "
+            "아니라 순위이고, title·H1·H2 손질만으로 1페이지에 닿는 거리가 아닐 수 있습니다 — "
+            "'만들어 줄 것'의 원인 진단부터 하고, 이 페이지로는 어렵다는 결론도 답입니다."]
 
 
 def _ev_content_gap(o, ctx, pages):
@@ -1520,7 +1665,14 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None)
         L.append(NO_PAGE["unknown"])
     why = " — ".join(x for x in (o.get("label"), o.get("reasoning")) if x)
     if why:
+        # 근거 문장은 **기회가 선 그때의 판정**이다. 그 사실을 안 적었더니 한 요청문에
+        # 순위가 셋(여기의 실측 6위 · 표의 평균 22.4위 · 근거의 결론)이 이름 없이 서고,
+        # 읽는 쪽이 아무거나 골라 진단 방향을 정했다. 무엇을 언제 잰 값인지는
+        # '근거' 절이 잰 방법마다 말한다 — 여기는 그때의 값이라고만 밝힌다.
         L.append(f"- 왜 걸렸나: {_ext(why, 1000)}")
+        L.append("  이 줄은 **기회가 선 시점의 판정**입니다. 아래 '근거'의 최신 값과 다르면 "
+                 "근거 쪽이 새것입니다 — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 "
+                 "먼저 정합니다.")
     return L + [""]
 
 
@@ -1617,9 +1769,28 @@ def _page_query_lines(o: dict, rows: list[dict]) -> list[str]:
                  "걸리는지로 정합니다.")
     same = _shared_word(rows)
     if same:
-        L.append(f"검색어 {len(rows)}개가 모두 '{_ext(same, 40)}' 에 말을 붙인 변형입니다. 따로 가를 "
-                 "묶음이 없으니, 이 말과 붙은 말(지역·목적)이 묻는 것에 한 벌로 답하면 됩니다.")
+        # 붙은 말을 실제로 적는다 — "지역·목적"이라고 적어 두었더니 지역도 목적도 없는
+        # 묶음('autologous cell regeneration' vs 'autologous exosome therapy')에 그 문구가
+        # 그대로 나갔다. 그리고 낱말이 겹친다고 같은 것을 묻는다는 뜻이 아니다: 엑소좀과
+        # 세포는 다른 것이고, 의료 주제에서 그 차이는 title 방향을 바꾼다.
+        rest = _differing_words(rows, same)
+        tail = (f"갈리는 말은 {', '.join(chr(39) + w + chr(39) for w in rest[:6])} 입니다. "
+                if rest else "")
+        L.append(f"검색어 {len(rows)}개가 모두 '{_ext(same, 40)}' 를 품고 있습니다. {tail}"
+                 "낱말이 겹친다고 같은 것을 묻는다는 뜻은 아닙니다 — 갈리는 말이 서로 다른 "
+                 "대상·시술·질환이면 한 벌로 답하면 안 됩니다. 상위 글을 열어 같은 답을 원하는지 "
+                 "먼저 확인하고, 다르면 그렇다고 말해 주세요.")
     return L + [""]
+
+
+def _differing_words(rows: list[dict], same: str) -> list[str]:
+    """검색어들이 공유하는 말(same)을 뺀 나머지 낱말 — 무엇이 이 검색어들을 가르나."""
+    out: list[str] = []
+    for r in rows:
+        for t in scoring.tokens(str(r.get("query") or "")):
+            if t != same and len(t) >= 2 and t not in out:
+                out.append(t)
+    return out
 
 
 def _shared_word(rows: list[dict]) -> str | None:
@@ -1689,17 +1860,45 @@ def _page_sibling_lines(sibs: list[dict], o: dict | None = None,
              "그 전부를 덮습니다 — 기회마다 따로 고치지 않고, 이 페이지를 끝내면 같이 닫습니다"
              "(화면의 묶음 버튼이 묶음 전체에 상태를 먹입니다).")
 
-    def line(x):
-        q = now.get(str(x.get("target")))
-        tail = (f" — 이 페이지 {q['position']}위 · 노출 {_n(q['impressions'])} · 클릭 "
-                f"{_n(q['clicks'])} (위 검색어 표와 같은 최신 값)" if q and q.get("position") is not None
-                else f" — {x['reasoning']}" if x.get("reasoning") else "")
-        return f"- [{x.get('label') or scoring.kind_label(x['kind'])}] {x.get('target')}{tail}"
-    L += [line(x) for x in shown]
+    # 검색어 하나에 종류가 여럿이면 한 줄이다 — 종류마다 줄을 세우면 같은 검색어·같은
+    # 수치가 두 줄로 나와 "다른 기회 2건"이 사실상 하나가 된다(실제로 그랬다).
+    by_target: dict[str, list[dict]] = {}
+    for x in shown:
+        by_target.setdefault(str(x.get("target")), []).append(x)
+    for t, xs in by_target.items():
+        kinds = ", ".join(f"[{x.get('label') or scoring.kind_label(x['kind'])}]" for x in xs)
+        q = now.get(t)
+        head = (f" — 이 페이지 {q['position']}위 · 노출 {_n(q['impressions'])} · 클릭 "
+                f"{_n(q['clicks'])} (위 검색어 표와 같은 최신 값)"
+                if q and q.get("position") is not None else "")
+        # 최신 값이 있으면 적재 시점의 근거 문장은 **버린다** — 같은 줄에 08-25 의 4.8위와
+        # 오늘의 3.6위가 나란히 서면 어느 쪽을 믿을지 모른다. 단 하나 예외가 HISTORY_KINDS:
+        # 판정 자체가 '전 → 후' 라서 최신 값 한 줄로는 그 비교를 못 보인다. 그걸 버렸더니
+        # '순위 하락'에 34.6위만 남아 떨어졌다는 근거가 통째로 없어졌다.
+        def why_of(x):
+            if not x.get("reasoning"):
+                return ""
+            if head and x.get("kind") not in HISTORY_KINDS:
+                return ""
+            return x["reasoning"] + (" (기회가 선 시점의 값입니다)" if head else "")
+        if len(xs) == 1:
+            w = why_of(xs[0])
+            L.append(f"- {kinds} {t}{head}" + (f" — 판정 근거: {w}" if w else ""))
+            continue
+        L.append(f"- {kinds} {t}{head}")
+        for x in xs:
+            w = why_of(x)
+            if w:
+                L.append(f"  · {x.get('label') or scoring.kind_label(x['kind'])}: {w}")
     if len(rest) > len(shown):
         L.append(f"외 {len(rest) - len(shown)}개")
     return L + [""]
 
+
+# 판정이 '전 → 후' 인 종류 — 최신 값 한 줄로는 그 비교를 못 보이므로 적재 시점의 근거
+# 문장을 살려 둔다. 나머지 종류는 최신 값이 있으면 옛 수치를 버린다(두 수가 부딪힌다).
+HISTORY_KINDS = ("rank_decay",)
+assert set(HISTORY_KINDS) <= set(scoring.ALL_KINDS)
 
 SPLIT_PENDING_HEAD = "## 먼저 걸린 결정: 이 페이지를 나눌지"
 
