@@ -818,6 +818,9 @@ td.expcell { padding:0 !important; }
 /* 막힌 것 — 경고보다 한 단 세다. 채워서 눈이 먼저 가게 하되 높이는 배지 그대로다. */
 .badge.bad { color:var(--card); border-color:var(--copper); background:var(--copper); }
 .badge.muted, .st-done { color:var(--slate); border-color:var(--rule); }
+/* 실제로 고친 기록이 있는 기회 — '작업 시작'(구리)보다 한 걸음 나아간 상태라
+   완료(patina)와 같은 계열로 두되 채우지 않는다. 완료는 아직 사람이 누른다. */
+.badge.made { color:var(--patina); border-color:var(--patina); background:var(--wash); }
 .st-dismissed { color:var(--slate); text-decoration:line-through; }
 /* 도는 중 — 점 하나가 깜빡인다. 글자("수집 중")가 정본이고 점은 거들 뿐이라
    움직임을 끄면 점은 그대로 켜져 있다. */
@@ -2001,6 +2004,29 @@ window.gaBadge = o => o && o.ga4_mult != null
        title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "—"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
        >GA4 ${o.ga4_mult > 1 ? "▲" : "▼"} ×${o.ga4_mult}</span>` : "";
 
+// 이 기회로 실제로 고친 것이 있나 — 접힌 줄에서 "열어만 놓음"과 "적용까지 함"을 가른다.
+// 열기(run_tool)는 창이 뜨면 묶인 기회 전부를 '작업 시작'으로 찍으므로, 그 상태만으로는
+// 도구가 파일을 고쳤는지 알 수 없었다(기록은 펼쳐야만 보였다). 완료는 여전히 사람이
+// 누른다 — 완료 후 관찰의 기준 시각이 '실제로 끝난 그때' 여야 하기 때문이다.
+// 세는 범위는 묶인 id 전부 — 상태 버튼(setOpps)·열기(run_tool)와 같아야 한 줄이
+// 새로고침 뒤 둘로 갈라지지 않는다.
+window.madeFor = o => {
+  if (!o) return [];
+  const ids = new Set((o.group ? o.group.ids : [o.id]).map(String));
+  return (window.CREATIONS || []).filter(c => ids.has(String(c.opportunity_id)));
+};
+window.madeBadge = o => {
+  const made = window.madeFor(o);
+  if (!made.length) return "";
+  const merged = made.filter(c => c.merged).length;
+  const label = merged === made.length ? `머지됨 ${merged}건`
+              : merged ? `적용 ${made.length}건 · 머지 ${merged}`
+              : `적용 ${made.length}건`;
+  return `<span class="badge made" title="이 기회로 고친 파일이 ${made.length}건 기록돼 있습니다${
+    merged ? ` (그중 ${merged}건 머지됨)` : " — 아직 머지된 것은 없습니다"
+  }. 완료 표시는 '완료 후 관찰'을 보고 직접 누르세요.">${label}</span>`;
+};
+
 // 칩에 손을 얹으면 여태 `striking_distance` 같은 **내부 id** 가 떴다 — 사용자가
 // 본 적 없는 말이고, 라벨이 이미 한글인데 그 옆에 영문 id 를 들이미는 셈이었다.
 // 통칭표(kind_labels, 정본은 scoring.KINDS)의 한글 말로 답한다.
@@ -2486,8 +2512,10 @@ function oppDetail(o) {
   // 꼬리만 잇는다. 옛 박제본(o.brief 없음)은 askBlock 이 그렇다고 말한다.
   const ask = askBlock({brief: o.brief});
   // 이 기회로 만든 것(creations) — pSEO·콘텐츠 갭처럼 글 여러 편이 필요한 기회는
-  // 진행 중에 머물며 여기 쌓이고, 완료는 사람이 누른다.
-  const made = (window.CREATIONS || []).filter(c => c.opportunity_id === o.id);
+  // 진행 중에 머물며 여기 쌓이고, 완료는 사람이 누른다. 세는 규칙은 madeFor 한 벌이다
+  // (접힌 줄의 배지와 같은 것을 세야 한다 — 여기만 대표 id 를 보면 묶인 줄에서
+  // 배지는 '적용 3건'인데 펼치면 1건만 나온다).
+  const made = window.madeFor(o);
   const works = made.length ? `<div class="detw"><b>이 기회로 만든 것 ${made.length}건</b>
     <ul class="detl">${made.map(c => `<li><span class="num">${esc(c.file_path)}</span>` +
       `${c.branch ? ` · ${esc(c.branch)}` : ""} · ${c.merged ? "머지됨" : "PR 열림"}` +

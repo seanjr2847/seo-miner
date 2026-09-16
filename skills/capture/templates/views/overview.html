@@ -246,6 +246,7 @@ function oppRow(o) {
           ${n > 1 ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다. 펼치면 전부와 묶은 이유가 나옵니다."
             >검색어 ${n}개</span>` : ""}
           ${window.gaBadge(o)}
+          ${window.madeBadge(o)}
         </div>
         ${OV_vars(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}

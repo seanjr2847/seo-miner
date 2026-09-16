@@ -1727,6 +1727,36 @@ def test_seam_40_remote_site_opens_the_same_local_dashboard():
         assert re.search(guard, src), f"프록시 분기가 remote_project 로 안 갈린다: {guard}"
 
 
+def test_seam_41_applied_work_shows_on_the_collapsed_row():
+    """41) "열어만 놓음"과 "적용까지 함"이 접힌 목록에서 갈린다.
+
+    열기(run_tool)는 창이 뜨면 묶인 기회 전부를 '작업 시작'으로 찍는다. 도구가 실제로
+    파일을 고치고 createdb done 을 부르면 creations 에 기록이 남지만 상태는 그대로
+    '작업 시작'이다(완료는 완료 후 관찰을 보고 사람이 누른다 — 그건 맞는 결정이다).
+    그래서 접힌 줄에서는 열어만 놓은 기회와 적용까지 끝낸 기회가 **똑같이** 보였다.
+    기록은 페이로드(d.creations)에 내내 있었는데 펼쳐야만 보였다.
+
+    배지는 셸이 갖는다(SM 한 벌 — 뷰가 사본을 안 만든다), 개수는 페이로드에서 오고,
+    묶인 줄은 묶인 id 전부의 기록을 센다 — 상태 버튼·열기와 같은 범위여야 한 줄이
+    새로고침 뒤 둘로 갈라지지 않는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, ov = ctx["shell"], (ctx["views"] / "overview.html").read_text("utf-8")
+    assert "window.madeBadge" in shell, "셸에 madeBadge 가 없다 — 뷰마다 사본을 만들게 된다"
+    assert "window.madeFor" in shell, "기록을 세는 규칙(madeFor)이 셸에 없다"
+    body = shell[shell.index("window.madeFor"):shell.index("window.kindTip")]
+    assert "window.CREATIONS" in body, "배지가 기록을 페이로드에서 안 받는다"
+    assert "group" in body, "배지가 묶인 줄의 id 를 안 센다 — 대표 하나의 기록만 보인다"
+    assert "merged" in body, "배지가 머지된 것과 PR 만 열린 것을 안 가른다"
+    assert "window.madeBadge(o)" in ov, "개요의 접힌 줄이 배지를 안 그린다"
+    # 뷰가 제 손으로 세면 두 벌이다
+    assert "CREATIONS" not in ov, "개요가 기록을 직접 센다 — 셸의 배지와 두 벌이 된다"
+    # 페이로드가 실제로 그 키를 싣는다(이름만 맞고 비어 있으면 배지가 영영 안 뜬다)
+    assert "creations" in _gather("seam41"), "gather() 가 creations 를 안 싣는다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
