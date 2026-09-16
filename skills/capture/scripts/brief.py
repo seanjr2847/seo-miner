@@ -1459,7 +1459,7 @@ def _stale_audit_lines(checked: str | None) -> list[str]:
         return []
     return [f"- 이 표는 {days}일 전 값입니다. 아래 title·H1·H2·본문 길이는 그 사이 바뀌었을 수 "
             "있으니, 제안하기 전에 페이지를 열어 이 표와 다른 칸이 있는지 먼저 봅니다 — "
-            "다르면 '바꾼 것' 표의 '전' 칸은 표가 아니라 **직접 본 값**으로 적습니다."]
+            "다르면 '고칠 것' 표의 '지금 값' 칸은 이 표가 아니라 **직접 본 값**으로 적습니다."]
 
 
 def _rank_sources(r: dict | None, pages: list[dict], ctx: dict | None = None) -> list[str]:
@@ -2107,7 +2107,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
             DELIVER_BY_TAG.get(x["tag"]) for x in ex) if d and d not in want]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     # 처방의 산출물은 종류 한 벌이고 진단은 이 페이지의 것이라 둘이 어긋난다 — 진단에만
-    # 있는 항목(외부 링크·이미지…)을 말없이 두면 '바꾼 것' 표가 만들지 않은 것을 요구한다.
+    # 있는 항목(외부 링크·이미지…)을 말없이 두면 '고칠 것' 표가 만들지 않은 것을 요구한다.
     if play.get("deliver") and _shows_page(shape) and shape != "consolidate":
         left = _uncovered_tags(adv_audit, want, split=shape != "technical")
         if left:
