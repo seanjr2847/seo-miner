@@ -1687,6 +1687,46 @@ def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
     assert split_kinds <= brief.URL_KINDS,         f"가르기 꼴인데 대상이 주소가 아니다 — brief.page_of 가 엉뚱한 페이지를 고른다: {split_kinds - brief.URL_KINDS}"
 
 
+def test_seam_40_remote_site_opens_the_same_local_dashboard():
+    """40) 원격 사이트의 대시보드를 어떻게 띄우는지, 스킬과 코드가 같은 말을 한다.
+
+    이 이음매는 값을 두 번 치렀다. 한 번은 코드에서 — 호스팅 사이트라고 브라우저를
+    호스팅 주소로 보냈고, 로컬에만 있는 [설정]·개발 도구 실행 버튼이 통째로 사라졌다.
+    한 번은 문서에서 — 고친 뒤 그 사실이 dashboard.py 주석에만 남고 SKILL.md 에는
+    안 들어가서, 스킬을 읽은 쪽이 "원격은 띄우는 법이 다른가" 하고 소스를 뒤졌다.
+    (SKILL.md 의 원격 절은 "달라지는 것만" 을 세는데, dash 가 그 목록에 없다는 것을
+    읽는 쪽은 확언으로 못 읽는다 — 부재는 말이 아니다.)
+
+    그래서 양쪽 끝을 같이 본다: 스킬의 dash 절이 원격을 말하는가, 그리고 로컬
+    대시보드가 실제로 원격 사이트의 /api/* 를 서버로 넘기는가.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    skill = (ROOT / "skills" / "capture" / "SKILL.md").read_text("utf-8")
+    assert "### /capture dash" in skill, "스킬에서 dash 절을 못 찾았다 — 검사가 헛돈다"
+    sec = skill.split("### /capture dash")[1].split(chr(10) + "### ")[0]
+    assert "원격" in sec,         "스킬의 dash 절이 원격 사이트를 한 마디도 안 한다 — 읽는 쪽이 소스를 뒤지러 간다"
+    assert "remote_project" in sec,         "dash 절이 원격을 말하면서 어디서 갈리는지(remote_project)를 안 가리킨다"
+    # 원격 절도 그 자리를 가리킨다 — 사본을 두라는 게 아니라 길을 내라는 것
+    rem = skill.split("**원격(호스팅) 사이트**")[1].split(chr(10) + "#")[0]
+    assert "/capture dash" in rem,         "원격 절이 dash 를 한 마디도 안 한다 — '달라지는 것만' 목록의 부재를 확언으로 읽게 된다"
+
+    # 코드 쪽 — 스킬이 한 말이 실제로 참인가
+    src = ctx["local_f"].read_text("utf-8")
+    assert re.search(r"def remote_project\(", src), "dashboard.py 에 remote_project 가 없다"
+    assert "remote.owns(project)" in src,         "remote_project 가 remote.owns 로 안 가른다 — 판정이 두 벌이 된다"
+    # 읽기(GET)와 쓰기(POST) 둘 다 넘어가야 한다 — 하나만 넘기면 화면이 반만 원격을 보고,
+    # 상태를 눌러도 로컬 brain 에 쓴다(그 사이트는 로컬에 없다). 분기가 둘이라 하나만
+    # 보면 나머지 하나를 없애도 검사가 통과한다 — 실제로 그렇게 헛돌았다.
+    proxied = set(re.findall(r'self\._proxy\("(GET|POST)"', src))
+    assert proxied == {"GET", "POST"}, \
+        f"원격 사이트의 /api/* 를 다 안 넘긴다({sorted(proxied)}) — 스킬이 거짓말을 한다"
+    for guard in (r"u\.path not in NEVER_PROXY and remote_project\(project\)",
+                  r"path not in NEVER_PROXY and remote_project\(str\(body"):
+        assert re.search(guard, src), f"프록시 분기가 remote_project 로 안 갈린다: {guard}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
