@@ -171,7 +171,7 @@ def test_scoring_rules():
 
 
 def test_load_covers_every_kind():
-    """scoring.load() 가 KINDS 명부 14종을 전부 실제로 낸다 — end-to-end.
+    """scoring.load() 가 KINDS 명부의 종류를 전부 실제로 낸다 — end-to-end.
 
     scoring._selfcheck() 는 ALL_KINDS·KINDS·라벨이 서로 어긋나지 않는지만 본다
     (정적 대조). 이 테스트는 그걸 넘어 진짜 데이터를 깔고 load() 를 돌려서
@@ -193,7 +193,11 @@ def test_load_covers_every_kind():
          (pid, "2026-08-14", 28, "하락키워드", None, 1, 100, 9.0),
          (pid, "2026-08-14", 28, "pseo후보", None, 0, 60, 6.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/a", 3, 60, 4.0),
-         (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0)])
+         (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0),
+         # 의도 갈린 페이지 — 비교 200 · 치료·구매 35(검색어 2)
+         (pid, "2026-08-14", 28, "한관종 비립종 차이", "https://e.com/split/", 4, 200, 5.0),
+         (pid, "2026-08-14", 28, "한관종 제거 비용", "https://e.com/split/", 1, 20, 9.0),
+         (pid, "2026-08-14", 28, "비립종 제거", "https://e.com/split/", 0, 15, 11.0)])
 
     conn.execute("INSERT INTO keywords(project_id, keyword, cluster, is_active) "
                  "VALUES(?, '미커버키워드', 'c1', 1)", (pid,))
@@ -1572,6 +1576,83 @@ def test_retire_auto_serp_cleans_only_what_it_made():
     db._migrate(conn)
     assert x("SELECT COUNT(*) FROM competitors WHERE project_id=1").fetchone()[0] == 1
     assert x("SELECT COUNT(*) FROM keyword_gap WHERE project_id=1").fetchone()[0] == 1
+    conn.close()
+
+
+# ── 한 페이지에 두 의도 (intent_split) ──────────────────────────────────────
+# 실측(brain.db 3사이트·292페이지)에서 나온 규칙이다: 2위 의도가 기본값(정보)인 경우는
+# 거의 다 "같은 의도인데 분류기가 못 가른 것"이었다 — `papular scar` 와 `papular scar
+# treatment` 는 한 페이지가 맞다. 1·2위가 **둘 다 명시 의도**일 때만 진짜 갈림이었고,
+# 그 규칙이 292페이지에서 정확히 한 건(syringoma-milia: 비교 202 · 치료·구매 30)을
+# 남겼다. 그 한 건이 이 검사의 픽스처다.
+
+def test_intent_split_needs_two_named_intents():
+    """1·2위가 둘 다 명시 의도일 때만 선다 — 2위가 기본값(정보)이면 같은 페이지다."""
+    conn = db.connect()
+    p = _project(conn, "isplit1")
+    d = "2026-04-01"
+    # 진짜 갈림: 비교 202 · 치료·구매 30
+    _gsc(conn, p["id"], d, 28, "syringoma vs milia", "/x/a", 5, 118, 3.0)
+    _gsc(conn, p["id"], d, 28, "milia vs syringoma", "/x/a", 2, 84, 4.0)
+    _gsc(conn, p["id"], d, 28, "milia removal seoul", "/x/a", 1, 25, 8.0)
+    _gsc(conn, p["id"], d, 28, "syringoma removal", "/x/a", 0, 5, 9.0)
+    # 가짜 갈림: 치료·구매 160 · 정보 150 — 분류 실패일 뿐 같은 주제의 머리말이다.
+    # 두 묶음 다 검색어 2개·노출 하한을 넘겨 둔다 — 다른 하한이 먼저 걸러내면
+    # 이 검사는 "명시 의도 둘" 규칙을 안 보게 된다(실제로 그래서 헛돌았다).
+    _gsc(conn, p["id"], d, 28, "papular scar treatment", "/x/b", 3, 120, 5.0)
+    _gsc(conn, p["id"], d, 28, "papular acne scar treatment", "/x/b", 1, 40, 5.0)
+    _gsc(conn, p["id"], d, 28, "papular scar", "/x/b", 2, 100, 6.0)
+    _gsc(conn, p["id"], d, 28, "papular scars", "/x/b", 1, 50, 6.0)
+    out = scoring.intent_split(conn, p["id"])
+    assert [r["page"] for r in out] == ["/x/a"], out
+    r = out[0]
+    assert (r["primary"], r["primary_impressions"]) == (scoring.INTENT_WORDS[0][0], 202), r
+    assert (r["secondary"], r["secondary_impressions"]) == (scoring.INTENT_WORDS[3][0], 30), r
+    assert [q["query"] for q in r["secondary_queries"]] == ["milia removal seoul", "syringoma removal"]
+    assert r["impressions"] == 232, r
+    conn.close()
+
+
+def test_intent_split_floors_and_home_exclusion():
+    """하한 미달·홈(루트·언어 루트)은 안 선다 — 홈은 원래 의도가 섞인다."""
+    conn = db.connect()
+    p = _project(conn, "isplit2")
+    d = "2026-04-01"
+    # 홈·언어 루트 — 하한은 전부 넘지만 홈이라서 안 선다(홈은 원래 의도가 섞인다)
+    for home in ("https://e.com/", "https://e.com/en/"):
+        _gsc(conn, p["id"], d, 28, f"a vs b {home}", home, 5, 200, 3.0)
+        _gsc(conn, p["id"], d, 28, f"c removal {home}", home, 1, 40, 8.0)
+        _gsc(conn, p["id"], d, 28, f"c price {home}", home, 1, 40, 9.0)
+    # 2위 의도 노출 미달
+    _gsc(conn, p["id"], d, 28, "low vs x", "/y/low", 5, 200, 3.0)
+    _gsc(conn, p["id"], d, 28, "low removal", "/y/low", 0, scoring.SPLIT_MIN_SECOND_IMP - 2, 9.0)
+    _gsc(conn, p["id"], d, 28, "low price", "/y/low", 0, 1, 9.0)
+    # 2위 의도 검색어 1개뿐 — 오분류 한 건과 구분이 안 된다
+    _gsc(conn, p["id"], d, 28, "one vs x", "/y/one", 5, 200, 3.0)
+    _gsc(conn, p["id"], d, 28, "one removal", "/y/one", 0, 90, 9.0)
+    # 페이지 전체 노출 미달 — 2위 의도는 하한을 넘는다(가르는 것이 전체 하한뿐이게)
+    _gsc(conn, p["id"], d, 28, "tiny vs x", "/y/tiny", 0, 25, 3.0)
+    _gsc(conn, p["id"], d, 28, "tiny removal", "/y/tiny", 0, scoring.SPLIT_MIN_SECOND_IMP - 10, 9.0)
+    _gsc(conn, p["id"], d, 28, "tiny cost", "/y/tiny", 0, 10, 9.0)
+    assert scoring.intent_split(conn, p["id"]) == []
+    conn.close()
+
+
+def test_intent_split_page_is_the_one_that_ranks_first():
+    """검색어가 여러 페이지에 걸리면 노출 1등 페이지 몫으로만 센다 — _page_queries 와 같은 규칙."""
+    conn = db.connect()
+    p = _project(conn, "isplit3")
+    d = "2026-04-01"
+    _gsc(conn, p["id"], d, 28, "k vs j", "/z/main", 5, 200, 3.0)
+    _gsc(conn, p["id"], d, 28, "k removal", "/z/main", 1, 40, 8.0)
+    _gsc(conn, p["id"], d, 28, "k price", "/z/main", 1, 40, 8.0)
+    # 같은 검색어가 딴 페이지에도 걸리지만 노출이 적다 — 그 페이지 몫으로 세면 안 된다
+    _gsc(conn, p["id"], d, 28, "k removal", "/z/other", 0, 3, 30.0)
+    _gsc(conn, p["id"], d, 28, "k price", "/z/other", 0, 3, 30.0)
+    _gsc(conn, p["id"], d, 28, "k vs j", "/z/other", 0, 3, 30.0)
+    out = scoring.intent_split(conn, p["id"])
+    assert [r["page"] for r in out] == ["/z/main"], out
+    assert out[0]["secondary_impressions"] == 80, out[0]
     conn.close()
 
 

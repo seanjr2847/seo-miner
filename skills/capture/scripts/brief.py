@@ -23,6 +23,13 @@
    그 페이지에 걸린 검색어 전부와 같은 페이지의 다른 기회를 싣고, 누른 검색어는
    들어온 입구로만 둔다 — _page_queries·_page_siblings.
 
+5. **그 페이지가 한 벌로 답할 수 없을 때가 있다.** 검색어 묶음의 의도가 갈리면
+   (한관종 "vs" 비립종 202 노출 옆에 "제거 비용" 30 노출) title 한 벌을 시키는 것이
+   틀린 처방이다 — 그건 고치는 일이 아니라 지면을 가르는 일이다. 판정은
+   scoring.intent_split 이 하고 여기서는 split_page 꼴이 받는다. 두 꼴이 같은
+   페이지에 동시에 열릴 수 있으므로, 고치기 요청문은 가르기 결정이 먼저라고 말한다
+   (_split_pending_lines) — 안 그러면 방금 쓴 title 을 다시 쓰게 된다.
+
 처방(what/acts/deliver)의 정본은 그대로 scoring.KINDS 다 — 여기서 새로 판정하지
 않는다. 화면(dashboard.html 의 askBlock)은 build() 가 낸 body 와 tails() 가 낸
 꼴별 꼬리를 이어 붙여 그리기만 한다. 꼬리를 따로 실어 보내는 이유는 기회 200건이
@@ -40,7 +47,8 @@ import serp_adapter
 # ── 일의 꼴 ──────────────────────────────────────────────────────────────────
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
 # test_seams 가 대조한다.
-SHAPE_NAMES = ("fix_page", "new_content", "consolidate", "technical", "outreach", "presence")
+SHAPE_NAMES = ("fix_page", "split_page", "new_content", "consolidate", "technical",
+               "outreach", "presence")
 
 # 숫자만 보고 제안하는 것을 막는 규칙 — 상수로 두는 이유는 검사가 어느 꼴에 실렸는지
 # 대조하기 때문이다. 요청문의 표는 출발점이지 페이지를 읽은 것이 아니다.
@@ -91,6 +99,41 @@ SHAPES: dict[str, dict] = {
                RULE_READ_PAGE, RULE_ONE_SET],
         slot="이 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, "
              "'빠진 구간'을 짐작이 아니라 비교로 찾습니다.",
+        limits=True),
+    # 고치기의 거울이다. fix_page 는 "검색어가 몇이든 title 한 벌이 전부를 맡는다"
+    # (RULE_ONE_SET)고 시키는데, 의도가 갈린 페이지에서 그 말은 틀렸다 — 그래서 이 꼴에는
+    # 그 규칙을 싣지 않는다. 대신 나누는 것이 기본값이 아님을 규칙으로 못 박는다:
+    # 멀쩡한 페이지를 쪼개는 것이 안 나누는 것보다 훨씬 비싸다.
+    "split_page": dict(
+        label="의도 갈라 내기",
+        intro="아래 페이지가 서로 다른 검색 의도 둘을 한꺼번에 떠안고 있습니다. 글을 "
+              "고치는 일도 새로 쓰는 일도 아닙니다 — 어느 묶음을 이 페이지에 남기고 어느 "
+              "묶음을 새 지면으로 떼어낼지, 떼어낸다면 두 지면이 서로를 잡아먹지 않게 "
+              "어떻게 잇는지를 정하는 일입니다.",
+        form=["결정 한 줄: 나눈다 / 안 나눈다. 안 나누는 게 답이면 그 이유와, 이 페이지가 "
+              "두 의도를 어떻게 함께 답할지 한 줄.",
+              "나눈다면 분배 표: 검색어 | 노출 | 남김(이 페이지) / 떼어냄(새 지면) | 이유 한 줄. "
+              "위 근거의 두 표에 있는 검색어가 빠짐없이 한 줄씩 있어야 합니다.",
+              "떼어낼 지면의 제목 3안 표: 안 | 글자 수 | 어느 검색어 묶음에 답하는지 | 이유 "
+              "한 줄. 그리고 그 지면의 H2 목록 — 본문은 안 씁니다.",
+              "남는 페이지에서 옮길 것: 어느 문단·구간이 떼어낸 지면으로 가는지. 지울 것이 "
+              "아니라 옮길 것입니다. 남는 페이지의 title·H1 을 바꿔야 하면 그 안까지.",
+              "두 지면을 잇는 법: 서로 거는 내부 링크의 앵커 문장과 넣을 자리.",
+              "발행 뒤 확인: 몇 주 뒤 어느 숫자가 어떻게 움직이면 잘 나눈 것인지."],
+        graph="분배는 Mermaid `flowchart LR` 하나로 그립니다 — 지금 페이지 상자에서 남는 "
+              "묶음과 떼어낼 묶음으로 갈라지고, 두 지면 사이 화살표에 내부 링크 방향을 답니다.",
+        rules=["나누는 것이 기본값이 아닙니다. 두 묶음이 같은 답을 원하면 한 페이지가 "
+               "맞습니다 — 그때는 '안 나눔'이라고 쓰고 이유를 적고 멈춥니다.",
+               "이 페이지를 지우거나 주소를 바꾸지 않습니다. 남는 쪽은 지금 주소 그대로입니다.",
+               "떼어낸 지면이 남는 페이지의 검색어를 다시 노리지 않게 합니다. 두 지면이 한 "
+               "검색어를 나눠 가지면 나누기 전보다 나빠집니다.",
+               "본문을 새로 쓰지 않습니다 — 옮길 문단을 가리키는 것까지입니다.",
+               "남는 페이지의 title·H1 은 남는 묶음 한 벌이 맡습니다. 검색어마다 하나씩 "
+               "만들지 않습니다.",
+               "수치·후기·효능을 지어내지 않습니다. 모르는 것은 [확인 필요]로 남깁니다.",
+               RULE_READ_PAGE],
+        slot="떼어낼 묶음의 검색어로 상위에 있는 페이지 2~3개의 제목을 여기에 붙이면, "
+             "그 의도를 경쟁사는 따로 된 지면으로 받는지 짐작이 아니라 비교로 봅니다.",
         limits=True),
     "new_content": dict(
         label="새 글 설계",
@@ -289,6 +332,7 @@ KIND_SHAPE: dict[str, str | Callable[[str | None, bool], str]] = {
     "striking_distance": "fix_page",
     "ctr_gap": "fix_page",
     "cannibalization": "consolidate",
+    "intent_split": "split_page",
     "rank_decay": "fix_page",
     "pseo_pattern": "new_content",
     "device_gap": "technical",
@@ -494,7 +538,7 @@ def shape_of(kind: str, *, gap_kind: str | None = None, has_page: bool = False) 
 def _shows_page(shape: str) -> bool:
     """'지금 이 페이지 상태' 섹션을 갖는 꼴 — 페이지를 손대거나(fix) 점검하거나(technical)
     정리(consolidate)하는 일. 새 글과 연락문에는 고칠 페이지가 없다."""
-    return shape in ("fix_page", "technical", "consolidate")
+    return shape in ("fix_page", "split_page", "technical", "consolidate")
 
 
 def _n(v) -> str:
@@ -960,6 +1004,42 @@ def _ev_cannibal(o, ctx, pages):
     return L
 
 
+def _split_group(head: str, rows: list[dict], limit: int = 12) -> list[str]:
+    """의도 한 묶음의 검색어 표. 잘라도 머리말의 노출 합은 전부의 것이다."""
+    shown = rows[:limit]
+    L = [head] + _table(["검색어", "노출", "클릭", "평균 순위"],
+                        [[r["query"], _n(r.get("impressions")), _n(r.get("clicks")),
+                          f"{r['position']}위" if r.get("position") is not None else "—"]
+                         for r in shown])
+    if len(rows) > len(shown):
+        L.append(f"외 {len(rows) - len(shown)}개")
+    return L
+
+
+def _ev_intent_split(o, ctx, pages):
+    """두 묶음을 나란히 — 남길 것과 떼어낼 후보. 판정한 축(intent_splits)에서 그대로 온다.
+
+    여기서 다시 세지 않는다: 검출기는 '노출 1등 페이지' 규칙으로 묶었는데 요청문이
+    ctx.query_pages 로 따로 세면 같은 페이지가 판정과 표에서 다른 숫자를 갖는다.
+    """
+    r = _find(ctx.get("intent_splits"), "page", o["target"])
+    if not r:
+        return []
+    total = r.get("impressions") or 0
+    L = [f"- 이 페이지에 걸린 검색어 {r.get('queries', 0)}개, 노출 {_n(total)} ({_gsc_src(ctx)}).",
+         f"- 주로 걸리는 의도는 '{r['primary']}' 입니다 — 노출 {_n(r['primary_impressions'])}"
+         + (f" ({round(r['primary_impressions'] * 100 / total)}%)" if total else "") + ".",
+         f"- 그런데 '{r['secondary']}' 검색어 {len(r.get('secondary_queries') or [])}개가 노출 "
+         f"{_n(r['secondary_impressions'])}"
+         + (f" ({round(r['secondary_impressions'] * 100 / total)}%)" if total else "")
+         + "으로 같은 페이지에 걸려 있습니다. 두 묶음이 같은 답을 원하는지가 이 일의 물음입니다.",
+         ""]
+    L += _split_group(f"떼어낼 후보 — '{r['secondary']}' 검색어:", r.get("secondary_queries") or [])
+    L += [""]
+    L += _split_group(f"남길 묶음 — '{r['primary']}' 검색어:", r.get("primary_queries") or [])
+    return L
+
+
 def _ev_decay(o, ctx, pages):
     r = _find(ctx.get("downs"), "query", o["target"])
     L = []
@@ -1378,6 +1458,7 @@ def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str
 
 EVIDENCE: dict[str, Callable] = {
     "striking_distance": _ev_striking, "ctr_gap": _ev_ctr, "cannibalization": _ev_cannibal,
+    "intent_split": _ev_intent_split,
     "rank_decay": _ev_decay, "pseo_pattern": _ev_pseo, "device_gap": _ev_device,
     "index_blocked": _ev_index, "coverage": _ev_coverage, "ai_citation_gap": _ev_ai,
     "aio_exposure": _ev_aio, "content_gap": _ev_content_gap, "crawl_issue": _ev_crawl,
@@ -1390,7 +1471,7 @@ assert set(EVIDENCE) == set(scoring.ALL_KINDS)
 # 부르면 연락문 요청문이 남의 도메인을 "고칠 페이지"라고 부른다(실제로 그랬다).
 _TARGET_NOUN = {
     "ai_citation_gap": "질문 (챗봇에 실제로 물은 문장)",
-    "index_blocked": "주소", "crawl_issue": "주소", "backlink_broken": "깨진 주소 (링크가 향하는 곳)",
+    "index_blocked": "주소", "crawl_issue": "주소", "intent_split": "페이지 (두 의도를 떠안은 곳)", "backlink_broken": "깨진 주소 (링크가 향하는 곳)",
     "backlink_prospect": "연락할 도메인", "coverage": "주제 (추적 키워드 묶음)",
     "ai_bot_blocked": "막힌 AI 크롤러 (robots.txt 의 User-agent)",
 }
@@ -1449,7 +1530,7 @@ SITE_KINDS = {"ai_bot_blocked": "robots.txt (사이트 전체 — 페이지 하�
 
 # 대상 자체가 주소인 종류 — 크롤 이슈는 '/path' 처럼 상대 경로로도 온다. "http" 로
 # 시작하느냐로 가르면 그 주소를 "아직 모르는 페이지"라고 부른다(실제로 그랬다).
-URL_KINDS = frozenset({"index_blocked", "crawl_issue", "backlink_broken"})
+URL_KINDS = frozenset({"index_blocked", "crawl_issue", "backlink_broken", "intent_split"})
 
 
 def page_of(o: dict, ctx: dict) -> str | None:
@@ -1473,48 +1554,15 @@ def _topic_of(o: dict, ctx: dict) -> list[dict]:
 
 
 # ── 페이지 단위 ──────────────────────────────────────────────────────────────
-# 검색어의 의도 — 낱말 표로 가르는 결정적 분류다. 도시명·브랜드는 안 본다(그건 의도가
-# 아니라 자리다). 순서가 판정이다: 명시적 비교(vs·차이)가 먼저, 그다음 방법·원인·치료,
-# 두 명사 사이의 or/and 는 가장 약한 비교 신호라 맨 뒤. "milia and syringoma treatment"
-# 는 그래서 치료·구매다 — and 가 있어도 treatment 가 답의 꼴을 정한다.
-# 라틴 낱말은 토큰 일치, 한글은 조사가 붙어 부분 일치, 띄어쓴 구는 구 일치.
-INTENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("비교", ("vs", "versus", "difference", "differences", "compare", "comparison",
-            "차이", "비교", "다른점")),
-    ("방법", ("how to", "how do", "how can", "방법", "하는법", "하는 법")),
-    ("원인·증상", ("cause", "causes", "symptom", "symptoms", "why", "원인", "증상")),
-    ("치료·구매", ("removal", "remove", "treatment", "treat", "clinic", "price", "cost",
-               "buy", "제거", "치료", "시술", "가격", "비용", "병원", "구매")),
-    # 나라·도시 이름 자체는 의도가 아니지만, 브랜드·시술명에 붙으면 "거기서 어디서 받나"
-    # 라는 지역·상업 의도다. "seoul juvelook"·"juvelook korea"를 정보로 못 박았더니
-    # title 방향이 설명 글 쪽으로 틀어졌다. 목록은 이 제품의 사이트가 실제로 도는 곳만.
-    ("지역", ("near me", "nearby", "korea", "korean", "seoul", "gangnam", "busan", "japan",
-            "tokyo", "osaka", "근처", "한국", "서울", "강남", "부산", "잘하는곳", "잘하는 곳")),
-)
-# 의도 비율을 말해도 되는 노출 합 하한 — 노출 61 에서 "정보 100%"는 비율이 아니라 우연이다.
-INTENT_MIN_IMPRESSIONS = 200
-INTENT_LINK = ("or", "and")        # 두 명사 사이에 서면 비교 — 첫·끝 자리는 아니다
-INTENT_DEFAULT = "정보"
-
-
-def query_intent(q: str) -> str:
-    """검색어 하나 → 의도 이름(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT)."""
-    low = str(q or "").lower()
-    toks = scoring.tokens(low)
-    joined = " ".join(toks)
-    for name, words in INTENT_WORDS:
-        for w in words:
-            if " " in w:
-                hit = w in joined
-            elif w.isascii():
-                hit = w in toks
-            else:
-                hit = w in low
-            if hit:
-                return name
-    if any(t in INTENT_LINK for t in toks[1:-1]):
-        return "비교"
-    return INTENT_DEFAULT
+# 검색어의 의도(낱말 표·분류)는 scoring 이 정본이다 — intent_split 검출기가 판정에
+# 쓰기 시작하면서 아래 층으로 내려갔다. 여기서는 이름만 다시 내보낸다(호출자가
+# brief.query_intent 로 부르던 것을 그대로 두려는 것이지, 두 벌을 두려는 게 아니다).
+INTENT_WORDS = scoring.INTENT_WORDS
+INTENT_LINK = scoring.INTENT_LINK
+INTENT_DEFAULT = scoring.INTENT_DEFAULT
+INTENT_MIN_IMPRESSIONS = scoring.INTENT_MIN_IMPRESSIONS
+query_intent = scoring.query_intent
+_intent_share = scoring.intent_share
 
 
 def _page_queries(url: str, ctx: dict) -> list[dict]:
@@ -1528,14 +1576,6 @@ def _page_queries(url: str, ctx: dict) -> list[dict]:
                      "clicks": p.get("clicks") or 0, "position": p.get("position"),
                      "intent": query_intent(q)})
     return sorted(rows, key=lambda r: (-r["impressions"], r["query"]))
-
-
-def _intent_share(rows: list[dict]) -> list[tuple[str, int]]:
-    """의도별 노출 합, 큰 순. 표에서 잘린 행도 센다 — 비율은 전부의 것이어야 한다."""
-    acc: dict[str, int] = {}
-    for r in rows:
-        acc[r["intent"]] = acc.get(r["intent"], 0) + int(r["impressions"] or 0)
-    return sorted(acc.items(), key=lambda x: (-x[1], x[0]))
 
 
 _PAGE_QUERY_ROWS = 15
@@ -1661,6 +1701,33 @@ def _page_sibling_lines(sibs: list[dict], o: dict | None = None,
     return L + [""]
 
 
+SPLIT_PENDING_HEAD = "## 먼저 걸린 결정: 이 페이지를 나눌지"
+
+
+def _split_pending_lines(o: dict, ctx: dict, url: str) -> list[str]:
+    """고치기 요청문에 붙는 경고 — 같은 페이지에 가르기 기회가 아직 열려 있다.
+
+    두 요청문이 정반대를 시킨다: 이쪽은 "title 한 벌이 검색어 전부를 맡아라",
+    저쪽은 "묶음을 갈라 내라". 순서가 있다 — 갈라 낸 뒤 남는 묶음으로 title 을 쓴다.
+    그 순서를 말 안 하면 사람이 먼저 보이는 쪽부터 손대고 방금 쓴 title 을 다시 쓴다.
+    """
+    open_ = [x for x in (ctx.get("opps") or [])
+             if x.get("kind") == "intent_split" and not _is_same_opp(x, o)
+             and (x.get("status") or "new") in scoring.OPEN_STATUSES
+             and str(x.get("target") or "") == url]
+    if not open_:
+        return []
+    r = _find(ctx.get("intent_splits"), "page", url) or {}
+    both = (f"'{r['primary']}' 와 '{r['secondary']}'" if r.get("primary") and r.get("secondary")
+            else "서로 다른 두 의도")
+    return [SPLIT_PENDING_HEAD,
+            f"이 페이지에는 [{scoring.kind_label('intent_split')}] 기회가 아직 열려 있습니다 — "
+            f"{both} 묶음이 한 페이지에 걸려 있어 지면을 가를지 정하는 일입니다.",
+            "**그 결정이 먼저입니다.** 가르기로 정하면 이 페이지에 남는 검색어가 달라지고, "
+            "아래에서 쓰는 title·H1 은 남는 묶음이 맡아야 합니다. 나누지 않기로 정했다면 "
+            "아래대로 한 벌을 씁니다.", ""]
+
+
 def _unit_lines(rows: list[dict]) -> list[str]:
     """'대상'의 마지막 줄 — 일의 단위는 페이지고 누른 검색어는 입구다."""
     if not rows:
@@ -1698,6 +1765,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
     lang_line = _page_lang_lines(audit, url, locale) if shape != "outreach" else []
     L += _target_lines(o, url, shape, ctx)[:-1] + lang_line + _unit_lines(pq) + [""]
+    L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
     L += _page_query_lines(o, pq)
     L += _page_sibling_lines(sibs, o, pq)
     visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘

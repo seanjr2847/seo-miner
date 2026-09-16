@@ -142,8 +142,8 @@ INTENT_NAVIGATIONAL = {
 # 각 kind 의 나머지(검출기·라벨·방어 여부 등)는 아래 KINDS 명부(_KIND_SPECS)가 이
 # 순서를 그대로 따라가며 채운다 — DEFENSIVE_KINDS 도 거기서 파생된다
 # (is_defensive() 는 그 결과를 읽는다).
-ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
-             "pseo_pattern", "device_gap", "index_blocked", "coverage",
+ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "intent_split",
+             "rank_decay", "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
              "crawl_issue", "backlink_broken", "backlink_prospect",
              "ai_bot_blocked")
@@ -1304,6 +1304,144 @@ GA4_MULT_SATURATE_RATE = 0.05
 GA4_VALUE_KINDS = frozenset({
     "striking_distance", "ctr_gap", "cannibalization", "rank_decay", "device_gap",
 })
+
+
+# ── 검색어의 의도 — 낱말 표로 가르는 결정적 분류 ─────────────────────────────
+# brief.py 에 있던 것을 여기로 내렸다: 요청문이 표를 그리는 데만 쓰던 분류를
+# intent_split 검출기가 판정에 쓰게 되면서, 아래 층(scoring)이 위 층(brief)을
+# import 할 수 없으니 정본이 여기여야 한다. brief 는 이 이름들을 그대로 다시 내보낸다.
+#
+# 도시명·브랜드는 안 본다(그건 의도가 아니라 자리다). 순서가 판정이다: 명시적
+# 비교(vs·차이)가 먼저, 그다음 방법·원인·치료, 두 명사 사이의 or/and 는 가장 약한
+# 비교 신호라 맨 뒤. "milia and syringoma treatment" 는 그래서 치료·구매다 — and 가
+# 있어도 treatment 가 답의 꼴을 정한다.
+# 라틴 낱말은 토큰 일치, 한글은 조사가 붙어 부분 일치, 띄어쓴 구는 구 일치.
+INTENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("비교", ("vs", "versus", "difference", "differences", "compare", "comparison",
+            "차이", "비교", "다른점")),
+    ("방법", ("how to", "how do", "how can", "방법", "하는법", "하는 법")),
+    ("원인·증상", ("cause", "causes", "symptom", "symptoms", "why", "원인", "증상")),
+    ("치료·구매", ("removal", "remove", "treatment", "treat", "clinic", "price", "cost",
+               "buy", "제거", "치료", "시술", "가격", "비용", "병원", "구매")),
+    # 나라·도시 이름 자체는 의도가 아니지만, 브랜드·시술명에 붙으면 "거기서 어디서 받나"
+    # 라는 지역·상업 의도다. "seoul juvelook"·"juvelook korea"를 정보로 못 박았더니
+    # title 방향이 설명 글 쪽으로 틀어졌다. 목록은 이 제품의 사이트가 실제로 도는 곳만.
+    ("지역", ("near me", "nearby", "korea", "korean", "seoul", "gangnam", "busan", "japan",
+            "tokyo", "osaka", "근처", "한국", "서울", "강남", "부산", "잘하는곳", "잘하는 곳")),
+)
+# 의도 비율을 말해도 되는 노출 합 하한 — 노출 61 에서 "정보 100%"는 비율이 아니라 우연이다.
+# intent_split 의 SPLIT_MIN_IMP 과는 다른 물음이다: 저쪽은 "가를 만큼 큰가", 여기는
+# "비율이라고 말할 만큼 표본이 있나".
+INTENT_MIN_IMPRESSIONS = 200
+INTENT_LINK = ("or", "and")        # 두 명사 사이에 서면 비교 — 첫·끝 자리는 아니다
+# 기본값은 "못 가른 것"이지 다섯째 의도가 아니다. intent_split 이 이걸 1·2위에서
+# 빼는 이유 — 실측에서 `papular scar`(정보) 와 `papular scar treatment`(치료·구매)는
+# 한 페이지가 맞았다. 분류 실패를 의도 갈림으로 읽으면 멀쩡한 페이지를 쪼갠다.
+INTENT_DEFAULT = "정보"
+
+
+def query_intent(q: str) -> str:
+    """검색어 하나 → 의도 이름(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT)."""
+    low = str(q or "").lower()
+    toks = tokens(low)
+    joined = " ".join(toks)
+    for name, words in INTENT_WORDS:
+        for w in words:
+            if " " in w:
+                hit = w in joined
+            elif w.isascii():
+                hit = w in toks
+            else:
+                hit = w in low
+            if hit:
+                return name
+    if any(t in INTENT_LINK for t in toks[1:-1]):
+        return INTENT_WORDS[0][0]
+    return INTENT_DEFAULT
+
+
+def intent_share(rows: list[dict]) -> list[tuple[str, int]]:
+    """의도별 노출 합, 큰 순. 표에서 잘린 행도 센다 — 비율은 전부의 것이어야 한다."""
+    acc: dict[str, int] = {}
+    for r in rows:
+        acc[r["intent"]] = acc.get(r["intent"], 0) + int(r["impressions"] or 0)
+    return sorted(acc.items(), key=lambda x: (-x[1], x[0]))
+
+
+# ── 한 페이지에 두 의도 (intent_split) ───────────────────────────────────────
+# cannibalization 의 반대쪽이다. 저쪽은 "한 검색어를 여러 페이지가 나눠 갖는다"이고
+# 이쪽은 "한 페이지가 여러 의도를 떠안는다"다. 둘 다 페이지와 검색어의 짝이 어긋난
+# 것인데, 만드는 쪽이 저쪽만 있어서 "합쳐라"는 말할 수 있고 "갈라라"는 못 했다.
+#
+# 하한은 실측에서 나왔다(brain.db 3사이트 292페이지, 2026-09-16):
+#   · 1·2위가 둘 다 명시 의도  — 이 한 줄이 292개에서 정확히 1개를 남겼다. 2위가
+#     기본값(정보)인 건은 거의 다 분류 실패였지 의도 갈림이 아니었다.
+#   · 2위 의도 노출 ≥ 20 · 검색어 ≥ 2 — 검색어 하나짜리는 오분류와 구분이 안 된다.
+#   · 페이지 전체 노출 ≥ 50 — 노출 2짜리 50:50 이 상위를 채우던 것을 막는다.
+#   · 홈·언어 루트 제외 — 홈은 사이트 전체를 대표하므로 의도가 섞이는 게 정상이다.
+SPLIT_MIN_SECOND_IMP = 20
+SPLIT_MIN_SECOND_QUERIES = 2
+SPLIT_MIN_IMP = 50
+_LANG_SEG = re.compile(r"^[a-z]{2}(-[A-Za-z]{2,4})?$")
+
+
+def is_site_root(url: str) -> bool:
+    """홈이거나 언어 루트(/en/·/zh-TW/)인가 — 의도가 섞여도 나눌 수 없는 자리."""
+    segs = [x for x in (urlsplit(url or "").path or "/").split("/") if x]
+    return not segs or (len(segs) == 1 and bool(_LANG_SEG.match(segs[0])))
+
+
+def intent_split(conn: sqlite3.Connection, project_id: int, *,
+                 limit: int = 15, at: str | None = None) -> list[dict]:
+    """한 페이지가 두 의도를 떠안은 곳 — 2위 의도 노출이 큰 순.
+
+    페이지는 그 검색어로 노출이 가장 큰 것 하나로만 센다 — brief._page_queries 와
+    같은 규칙이다. 두 곳이 다른 규칙을 쓰면 요청문의 표와 판정이 어긋난다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id, at)
+    if not cur:
+        return []
+    first: dict[str, dict] = {}                 # query → 노출 1등 페이지 행
+    for r in conn.execute(
+        """SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
+                  ROUND(AVG(position),1) pos
+             FROM gsc_snapshots
+            WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+            GROUP BY query, page ORDER BY imp DESC""",
+            (project_id, cur, period)):
+        first.setdefault(r["query"], {"page": r["page"], "query": r["query"],
+                                      "impressions": r["imp"] or 0, "clicks": r["clk"] or 0,
+                                      "position": r["pos"],
+                                      "intent": query_intent(r["query"])})
+    pages: dict[str, list[dict]] = {}
+    for row in first.values():
+        pages.setdefault(row["page"], []).append(row)
+    out = []
+    for url, rows in pages.items():
+        if is_site_root(url):
+            continue
+        total = sum(int(r["impressions"] or 0) for r in rows)
+        if total < SPLIT_MIN_IMP:
+            continue
+        share = intent_share(rows)
+        if len(share) < 2 or INTENT_DEFAULT in (share[0][0], share[1][0]):
+            continue
+        (p_name, p_imp), (s_name, s_imp) = share[0], share[1]
+        if s_imp < SPLIT_MIN_SECOND_IMP:
+            continue
+        sq = sorted((r for r in rows if r["intent"] == s_name),
+                    key=lambda r: (-int(r["impressions"] or 0), r["query"]))
+        if len(sq) < SPLIT_MIN_SECOND_QUERIES:
+            continue
+        out.append({"page": url, "impressions": total, "queries": len(rows),
+                    "primary": p_name, "primary_impressions": p_imp,
+                    "secondary": s_name, "secondary_impressions": s_imp,
+                    "secondary_queries": sq,
+                    "primary_queries": sorted(
+                        (r for r in rows if r["intent"] == p_name),
+                        key=lambda r: (-int(r["impressions"] or 0), r["query"]))})
+    out.sort(key=lambda r: (-r["secondary_impressions"], r["page"]))
+    return out[:limit]
 
 
 def url_key(url: str) -> str:
@@ -3200,6 +3338,36 @@ _KIND_SPECS = {
             deliver=["어느 페이지를 정본으로 할지와 그 근거(노출·클릭·의도 기준)",
                      "나머지 페이지 처리 계획: 301 리다이렉트 대상과 canonical 지정",
                      "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다"])),
+    # 내부 경쟁의 거울이다: 저쪽은 "한 검색어를 여러 페이지가 나눠 갖는다"고
+    # 이쪽은 "한 페이지가 여러 의도를 떠안는다"다. 만드는 쪽이 저쪽만 있어서 이 리포는
+    # "합쳐라"는 말할 수 있고 "갈라라"는 못 했다 — 요청문의 fix_page 는 검색어가 몇
+    # 개든 title 한 벌이 전부를 맡으라고만 시킨다. 의도가 갈린 페이지에서 그 말은 틀렸다.
+    "intent_split": dict(
+        label="한 페이지에 두 의도", defensive=False,
+        detect=lambda ctx: intent_split(ctx["conn"], ctx["pid"], at=ctx["cur"]),
+        # 되찾을 몫은 2위 의도의 노출이다 — 페이지 전체 노출을 쓰면 이미 잘 걸리는
+        # 주된 묶음까지 기회 점수에 얹혀 내부 경쟁보다 늘 위로 선다.
+        metrics=lambda r, ctx: {"impressions": r["secondary_impressions"], "position": None,
+                                 "fit": _fit_of(ctx["conn"], ctx["pid"], r["page"]),
+                                 **_ga4_metrics(ctx, page=r["page"])},
+        target=lambda r, ctx: r["page"],
+        reasoning=lambda r, ctx: (
+            f"'{r['primary']}' 검색어로 주로 걸리는 페이지인데(노출 {r['primary_impressions']:,}), "
+            f"'{r['secondary']}' 검색어 {len(r['secondary_queries'])}개가 노출 "
+            f"{r['secondary_impressions']:,}으로 같이 걸려 있습니다 "
+            f"(구글 실적 {ctx['cur']} 기준)"),
+        play=dict(
+            what="한 페이지가 검색 의도 둘을 떠안고 있습니다. 적은 쪽 묶음은 이 페이지가 "
+                 "답하려던 것이 아닌데도 여기로 들어옵니다.",
+            acts=["두 묶음이 정말 다른 답을 원하는지 먼저 봅니다 — 같은 답이면 나누지 않습니다.",
+                  "나눈다면 적은 쪽 묶음을 맡을 지면을 새로 세우고, 지금 페이지는 주된 묶음만 맡습니다.",
+                  "두 지면이 서로를 가리키는 내부 링크를 걸어 넘어갈 길을 냅니다.",
+                  "떼어낸 지면이 남는 페이지의 검색어를 다시 노리지 않게 제목·H1 을 갈라 둡니다.",
+                  "몇 주 뒤 떼어낸 검색어가 새 지면으로 옮겨 갔는지, 남은 쪽 순위가 안 떨어졌는지 봅니다."],
+            deliver=["나눌지 말지의 결정과 그 근거 한 줄 — 안 나누는 것도 답입니다",
+                     "나눈다면 검색어 분배 표: 남길 것 / 떼어낼 것, 줄마다 이유 한 줄",
+                     "떼어낼 지면의 제목 3안과 목차(H2 목록). 본문은 안 씁니다",
+                     "두 지면을 잇는 내부 링크: 앵커 문장과 넣을 자리"])),
     "rank_decay": dict(
         see=("keywords", "movers"),
         label="순위 하락", defensive=True,
@@ -3738,6 +3906,9 @@ _NO_RESOLVE = {
                   "'더 안 떨어졌다'는 '되찾았다'가 아니고, 떨어지기 전 순위는 근거 문장에만 있다",
     "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다 — 301 로 합친 것과 "
                        "GSC 행 상한에 잘린 것을 가르지 못한다",
+    "intent_split": "풀렸다는 증거가 '2위 의도 줄이 없다'는 부재다 — 지면을 갈라 옮겨 간 것과, "
+                    "그 묶음의 노출이 계절적으로 하한 밑으로 내려간 것을 가르지 못한다. 가르기는 "
+                    "몇 주가 걸리는 일이라 그 사이의 부재를 완료로 읽으면 안 된다",
     "pseo_pattern": "대상은 템플릿으로 찍을 무리의 씨앗 검색어다 — 그 검색어 하나의 클릭률이 "
                     "올랐다고 템플릿을 찍은 것이 아니다",
     "coverage": "대상이 클러스터이고 그 구성은 키워드 큐레이션(켜기·끄기·재분류)으로 바뀐다 — "

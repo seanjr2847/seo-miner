@@ -1343,8 +1343,16 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     topic_pages = scoring.pages_by_topic(
         conn, pid, [o["target"] for o in opps if o["kind"] in scoring.KEYWORD_KINDS
                     and not query_pages.get(str(o["target"]))])
+
+    # 한 페이지에 두 의도 — 판정을 여기서 다시 돌린다. query_pages 는 기회·순위의
+    # 검색어만 싣기 때문에 그 페이지에 걸린 검색어 전부를 갖지 못한다: 요청문이 그걸로
+    # 다시 세면 판정("치료·구매 30")과 표(검색어 한 줄)가 어긋난다. 검출기가 낸 행을
+    # 그대로 실어 양쪽이 같은 숫자를 말하게 한다.
+    intent_splits = scoring.intent_split(conn, pid, at=at) if any(
+        o["kind"] == "intent_split" for o in opps) else []
     return {"query_pages": query_pages, "page_audits": page_audits,
-            "page_audit_date": audit_date, "topic_pages": topic_pages}
+            "page_audit_date": audit_date, "topic_pages": topic_pages,
+            "intent_splits": intent_splits}
 
 
 def gather(conn, p, at: str | None = None) -> dict:

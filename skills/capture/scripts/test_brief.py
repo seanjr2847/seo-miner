@@ -357,7 +357,7 @@ def test_payload_shapes_are_one_set():
     p = brief.shapes_payload("ko-KR")
     assert set(p["tails"]) == set(p["intro"]) == set(p["slot"]) == set(p["labels"]) \
         == set(brief.SHAPE_NAMES)
-    assert set(p["page_state"]) == {"fix_page", "technical", "consolidate"}
+    assert set(p["page_state"]) == {"fix_page", "split_page", "technical", "consolidate"}
     assert p["by_tag"] == brief.DELIVER_BY_TAG and p["lang"] == "한국어"
     # 진단 tag 마다 산출물이 있어야 폴백 요청문이 빈손이 안 된다
     tags = {"title", "meta description", "H1", "본문", "구조화 데이터", "robots", "canonical",
@@ -1315,6 +1315,95 @@ def test_striking_above_top3_says_the_job_is_clicks():
                                                                                  band="page1")},
                        ctx, "ko-KR")["body"]
     assert "이미 상단 3위권(3.6위)입니다" in body and "이 요청문의 일은 클릭입니다" in body, body
+
+
+def _sec(body, head):
+    """요청문 본문에서 그 섹션 하나만 — 다음 "## " 앞까지."""
+    return body.split(head)[1].split(chr(10) + "## ")[0]
+
+# ── 의도 갈라 내기 (split_page) ──────────────────────────────────────────────
+
+def _sm_split_ctx():
+    """_sm_ctx 에 intent_split 축을 얹는다 — 실제 syringoma-milia 페이지의 숫자 그대로."""
+    ctx = _sm_ctx()
+    rows = [{"query": q, "impressions": imp, "clicks": clk, "position": pos,
+             "intent": scoring.query_intent(q)} for q, imp, clk, pos in _SM_GSC]
+    ctx["intent_splits"] = [{
+        "page": _SM, "impressions": sum(r["impressions"] for r in rows), "queries": len(rows),
+        "primary": "비교", "primary_impressions": 180,
+        "secondary": "치료·구매", "secondary_impressions": 26,
+        "secondary_queries": [r for r in rows if r["intent"] == "치료·구매"],
+        "primary_queries": [r for r in rows if r["intent"] == "비교"]}]
+    ctx["opps"] = ctx["opps"] + [{**_opp("intent_split", _SM), "id": 30, "status": "new"}]
+    return ctx
+
+
+def test_intent_split_asks_what_to_spin_off_not_how_to_fix_one_page():
+    """한 페이지가 두 의도를 떠안았을 때의 일은 고치기가 아니라 가르기다. 요청문은 두
+    묶음을 나란히 내고 무엇을 떼어낼지 묻는다 — "title 한 벌이 전부를 맡는다"(고치기의
+    규칙)를 여기서 그대로 시키면 정반대의 일이 된다."""
+    ctx = _sm_split_ctx()
+    o = next(x for x in ctx["opps"] if x["kind"] == "intent_split")
+    b = brief.build(o, ctx)
+    assert b["shape"] == "split_page", b["shape"]
+    assert b["page"] == _SM, b["page"]
+    body = b["body"]
+    ev = _sec(body, "## 근거")
+    # 두 묶음이 나란히 — 남길 것과 떼어낼 후보
+    assert "비교" in ev and "치료·구매" in ev, ev
+    assert "| milia removal seoul | 25 |" in ev, ev
+    assert "| syringoma vs milia | 118 |" in ev, ev
+    # 떼어낼 묶음의 검색어가 빠짐없이 — 노출 1짜리도 센다
+    assert "milia and syringoma treatment" in ev, ev
+    # 고치기의 규칙이 새어 들어오면 안 된다
+    tail = brief.tails("ko-KR")["split_page"]
+    assert brief.RULE_ONE_SET not in tail, "가르기에 '한 벌이 전부를 맡는다'가 실렸다"
+    assert brief.RULE_ONE_SET not in body, body
+    # 가르기만의 안전장치
+    assert "안 나눔" in tail, "'안 나누는 것도 답'이 규칙에 없다"
+    assert "나눠 가지" in tail or "잡아먹" in tail, "두 지면의 자기잠식 경고가 없다"
+    # 페이지를 손대는 일이므로 지금 상태는 실린다
+    assert "## 지금 이 페이지 상태" in body, body
+    assert brief._shows_page("split_page")
+
+
+def test_intent_split_target_is_the_page_and_the_axis_feeds_the_evidence():
+    """대상은 주소다(검색어가 아니다). 근거는 축(intent_splits)에서 오고, 축이 없으면
+    근거 블록이 통째로 빠진다 — 빈 표를 지어내지 않는다."""
+    ctx = _sm_split_ctx()
+    o = next(x for x in ctx["opps"] if x["kind"] == "intent_split")
+    target = _sec(brief.build(o, ctx)["body"], "## 대상")
+    assert _SM in target, target
+    assert "검색어:" not in target, "주소를 '검색어'라고 부른다"
+    # 축이 비면 근거가 없다 — 꼴·페이지는 그대로다
+    bare = brief.build(o, {"query_pages": ctx["query_pages"]})
+    assert bare["shape"] == "split_page" and bare["page"] == _SM
+    assert "## 근거" not in bare["body"], bare["body"]
+
+
+def test_fix_page_warns_when_a_split_decision_is_still_open():
+    """같은 페이지에 고치기와 가르기가 같이 열려 있으면 두 요청문이 정반대를 시킨다 —
+    한쪽은 "title 한 벌이 검색어 전부를 맡아라", 다른 쪽은 "묶음을 갈라 내라". 고치기
+    요청문이 그 결정이 걸려 있다고 먼저 말해야 순서가 뒤집히지 않는다(갈라 낸 뒤에
+    남는 묶음으로 title 을 쓰는 것이 맞는 순서다)."""
+    ctx = _sm_split_ctx()
+    fix = brief.build(next(x for x in ctx["opps"] if x["id"] == 2), ctx)
+    assert fix["shape"] == "fix_page" and fix["page"] == _SM
+    body = fix["body"]
+    assert brief.SPLIT_PENDING_HEAD in body, body
+    note = _sec(body, brief.SPLIT_PENDING_HEAD)
+    assert "치료·구매" in note and "비교" in note, note
+    assert scoring.kind_label("intent_split") in note, note
+    # 가르기 기회가 닫혀 있으면 경고도 없다
+    ctx2 = _sm_split_ctx()
+    for x in ctx2["opps"]:
+        if x["kind"] == "intent_split":
+            x["status"] = "done"
+    assert brief.SPLIT_PENDING_HEAD not in brief.build(
+        next(x for x in ctx2["opps"] if x["id"] == 2), ctx2)["body"]
+    # 가르기 요청문 자신에게는 안 붙는다 — 자기가 그 일이다
+    assert brief.SPLIT_PENDING_HEAD not in brief.build(
+        next(x for x in ctx["opps"] if x["kind"] == "intent_split"), ctx)["body"]
 
 
 if __name__ == "__main__":

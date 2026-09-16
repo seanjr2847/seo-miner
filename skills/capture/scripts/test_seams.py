@@ -1634,6 +1634,59 @@ def test_seam_38_overview_kind_links_point_at_real_sections():
     assert not re.search(r"OV_goSee\('[a-z]", ov), "개요가 링크 화면 id 를 손으로 적었다"
 
 
+def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
+    """39) "이 페이지에 걸린 검색어"를 묶는 규칙은 한 벌이다.
+
+    판정(scoring.intent_split)은 DB 에서, 요청문의 표(brief._page_queries)는 페이로드에서
+    같은 물음에 답한다 — "이 검색어의 노출 1등 페이지가 이 페이지인가". 한쪽만 바뀌면
+    어느 파일도 혼자서는 안 이상하다: 판정은 "치료·구매 30" 이라 말하는데 요청문 표에는
+    그 검색어가 한 줄도 없는 요청문이 나간다.
+
+    그리고 가르기(split_page)와 고치기(fix_page)는 같은 페이지에 정반대를 시킨다.
+    "검색어가 몇이든 title 한 벌이 전부를 맡는다"(RULE_ONE_SET)가 가르기 꼬리에 실리면
+    요청문 하나가 나누라고 하면서 나누지 말라고 한다.
+    """
+    import sqlite3 as _sq
+
+    import brief
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'seam39','saas','e.com')")
+    rows = [("syringoma vs milia", "/p/a", 118), ("milia vs syringoma", "/p/a", 39),
+            ("milia removal seoul", "/p/a", 25), ("syringoma removal", "/p/a", 5),
+            # 같은 검색어가 딴 페이지에도 걸리지만 노출이 적다 — 양쪽 다 /p/a 몫으로 세야 한다
+            ("milia removal seoul", "/p/b", 2), ("딴 페이지 검색어", "/p/b", 80)]
+    for q, pg, imp in rows:
+        c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                  "clicks,impressions,ctr,position) VALUES(1,'2026-01-01',28,?,?,0,?,0.0,5.0)",
+                  (q, pg, imp))
+    c.commit()
+    out = scoring.intent_split(c, 1)
+    assert [r["page"] for r in out] == ["/p/a"], out
+
+    # 요청문이 보는 쪽 — gather 가 싣는 것과 같은 모양의 query_pages
+    ctx = {"query_pages": scoring.pages_by_query(c, 1, [q for q, *_ in rows])}
+    judged = {q["query"] for q in out[0]["secondary_queries"] + out[0]["primary_queries"]}
+    in_brief = {r["query"] for r in brief._page_queries("/p/a", ctx)}
+    assert judged == in_brief, (
+        f"판정과 요청문이 같은 페이지에 다른 검색어를 묶는다: {judged ^ in_brief}")
+    # 의도 이름도 한 벌 — brief 는 scoring 의 것을 다시 내보내기만 한다
+    assert brief.query_intent is scoring.query_intent, "의도 분류가 두 벌이다"
+    assert brief.INTENT_DEFAULT is scoring.INTENT_DEFAULT
+
+    # 정반대의 처방이 한 요청문에 같이 실리지 않는다
+    tails = brief.tails("ko-KR")
+    assert brief.RULE_ONE_SET in tails["fix_page"], "고치기에서 '한 벌이 맡는다'가 사라졌다"
+    assert brief.RULE_ONE_SET not in tails["split_page"],         "가르기 꼬리에 '한 벌이 전부를 맡는다'가 실렸다 — 나누라면서 나누지 말라고 한다"
+    # 가르기는 종류 한 벌짜리 꼴이다 — 딴 종류가 몰래 여기로 오면 대상이 주소가 아닐 수 있다
+    split_kinds = {k for k in scoring.ALL_KINDS
+                   if brief.shape_of(k, has_page=True) == "split_page"}
+    assert split_kinds == {"intent_split"}, split_kinds
+    assert split_kinds <= brief.URL_KINDS,         f"가르기 꼴인데 대상이 주소가 아니다 — brief.page_of 가 엉뚱한 페이지를 고른다: {split_kinds - brief.URL_KINDS}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
