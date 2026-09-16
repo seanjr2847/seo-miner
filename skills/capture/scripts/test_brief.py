@@ -1537,6 +1537,39 @@ def test_no_link_candidates_says_why():
     assert brief.NO_LINK_CANDIDATES in body, body
 
 
+def test_top_pages_outline_replaces_the_paste_ask():
+    """상위 글의 H2 목록을 서버가 담아 준다 — 담았으면 붙여 넣으라고 하지 않는다.
+
+    제목은 이미 수집본에 있었는데(serp_results) H2 를 아무도 안 모아서, 요청문은 "상위
+    2~3개의 제목과 H2 목록을 여기에 붙이면" 이라며 사람에게 시켰다. 다 주고 나서
+    붙여 넣으라고 하면 이미 있는 것을 다시 찾아 오게 된다.
+    """
+    q = "seoul juvelook"
+    top = [{"position": 1, "url": "https://rival.example/a", "title": "Rival A", "is_own": 0},
+           {"position": 2, "url": "https://rival.example/b", "title": "Rival B", "is_own": 0}]
+    o = {**_opp("aio_exposure", q, band="beyond"), "band": "beyond"}
+
+    # 1) 개요가 없으면 지금처럼 붙여 넣기를 청한다
+    bare = brief.build(o, _jv_ctx(serp_top={q: top}), "ko-KR")["body"]
+    assert "## 있으면 붙여 넣을 것 (선택)" in bare, bare
+    assert brief.SERP_OUTLINE_HEAD not in bare, bare
+
+    # 2) 개요를 담아 주면 그걸 실고, 붙여 넣기 칸은 사라진다
+    outlines = {"https://rival.example/a": {"url": "https://rival.example/a", "status": 200,
+                                            "title": "Rival A", "h2": ["비용", "후기"],
+                                            "words": 900, "checked_at": "2026-09-10"},
+                "https://rival.example/b": {"url": "https://rival.example/b", "status": 403,
+                                            "title": None, "h2": [], "words": None,
+                                            "checked_at": "2026-09-10"}}
+    full = brief.build(o, _jv_ctx(serp_top={q: top}, serp_outlines=outlines), "ko-KR")["body"]
+    assert brief.SERP_OUTLINE_HEAD in full, full
+    assert "  - 비용" in full and "  - 후기" in full, full
+    assert "## 있으면 붙여 넣을 것 (선택)" not in full, "다 주고 또 붙여 넣으라고 한다"
+    assert "[여기에 붙여 넣기]" not in full, full
+    # 못 열은 곳은 그렇다고 말한다 — "H2 0개"로 지어내지 않는다
+    assert "1곳은 열지 못했습니다" in full, full
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

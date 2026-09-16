@@ -738,6 +738,11 @@ def _axis_rank(conn, pid: int) -> dict:
         "rank_date": rank_dates[0] if rank_dates else None,
         "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
         "ranks": ranks, "aio_gap": aio_gap, "serp_top": serp_top,
+        # 상위 글의 제목·H2 — 주소 단위로 한 벌(db.serp_outlines). 요청문이 "빠진 구간"을
+        # 짐작이 아니라 비교로 찾는 재료다. 없으면 빈 dict 이고 요청문은 붙여 넣기 칸으로
+        # 물러선다 — 여기서 "H2 0개"를 지어내지 않는다.
+        "serp_outlines": db.serp_outlines(
+            conn, [r["url"] for rows in serp_top.values() for r in rows if r.get("url")]),
         "serp_fanout": serp_fanout,
         # AI 요약 빠짐 검색어의 순위 행 전부 — gather() 가 ranks 를 화면용으로 30개까지
         # 자르는데(순위 순), AI 요약 기회는 대개 순위가 낮거나 없어서 그 30 밖에 선다.

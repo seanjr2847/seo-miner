@@ -1688,6 +1688,39 @@ def test_page_advice_catches_a_split_page_name():
     assert scoring.NAME_SPLIT_TAG not in {y["tag"] for y in scoring.page_advice(thin, [], domain="e.com")}
 
 
+def test_serp_outlines_are_stored_per_url_and_reused():
+    """상위 글의 H2 목록은 주소 단위로 한 벌 남긴다.
+
+    요청문은 "상위 2~3개의 제목과 H2 목록을 여기에 붙이면" 이라며 사람에게 붙여 넣기를
+    시켰다 — 제목은 이미 serp_results 에 있는데도, H2 는 아무도 안 모았기 때문이다.
+    검색어 단위로 모으면 같은 경쟁 페이지를 검색어 수만큼 다시 가져온다(한 도메인이
+    여러 검색어에서 상위에 선다) — 그래서 주소 단위다.
+    """
+    conn = db.connect()
+    p = _project(conn, "outline")
+    db.write_serp_outline(conn, "https://rival.com/a", status=200,
+                          title="Rival A", h2=["비용", "과정"], words=900)
+    db.write_serp_outline(conn, "https://rival.com/b", status=403, title=None, h2=[], words=None)
+    got = db.serp_outlines(conn, ["https://rival.com/a", "https://rival.com/b",
+                                   "https://rival.com/none"])
+    assert set(got) == {"https://rival.com/a", "https://rival.com/b"}, sorted(got)
+    assert got["https://rival.com/a"]["h2"] == ["비용", "과정"], got
+    assert got["https://rival.com/a"]["title"] == "Rival A"
+    # 가져오기 실패도 남긴다 — 남기지 않으면 다음 런이 또 두드린다
+    assert got["https://rival.com/b"]["status"] == 403 and got["https://rival.com/b"]["h2"] == []
+    # 다시 쓰면 덮어쓴다(주소 하나에 한 줄)
+    db.write_serp_outline(conn, "https://rival.com/a", status=200, title="Rival A2",
+                          h2=["비용"], words=950)
+    again = db.serp_outlines(conn, ["https://rival.com/a"])
+    assert again["https://rival.com/a"]["title"] == "Rival A2"
+    assert len(conn.execute("SELECT * FROM serp_outlines").fetchall()) == 2
+    # 오래된 것만 다시 가져온다
+    stale = db.serp_outlines_stale(conn, ["https://rival.com/a", "https://rival.com/new"],
+                                    days=30)
+    assert stale == ["https://rival.com/new"], stale
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

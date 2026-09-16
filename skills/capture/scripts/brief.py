@@ -783,6 +783,9 @@ def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
     return L
 
 
+SERP_OUTLINE_HEAD = "위 글들의 H2 목록"
+
+
 def _serp_top(o: dict, ctx: dict) -> list[str]:
     """이 검색어의 지금 검색결과 상위 — 우리가 방금 조회한 그 응답에서 나온다.
 
@@ -793,13 +796,34 @@ def _serp_top(o: dict, ctx: dict) -> list[str]:
     rows = (ctx.get("serp_top") or {}).get(str(o.get("target") or "")) or []
     if not rows:
         return []
-    return [f"검색결과 상위 {len(rows)}자리 — 이 사람들과 같은 질문에 답해야 합니다:",
-            *_table(["자리", "제목", "주소"],
-                    [[f"{r['position']}위" + (" (내 페이지)" if r.get("is_own") else ""),
-                      r.get("title"), r.get("url")] for r in rows]),
-            "",
-            "위 제목이 이 검색어에 실제로 걸리는 글의 제목입니다. 제목만으로 부족하면 "
-            "아래 칸에 그 글들의 H2 목록을 붙여 넣어 주세요."]
+    L = [f"검색결과 상위 {len(rows)}자리 — 이 사람들과 같은 질문에 답해야 합니다:",
+         *_table(["자리", "제목", "주소"],
+                 [[f"{r['position']}위" + (" (내 페이지)" if r.get("is_own") else ""),
+                   r.get("title"), r.get("url")] for r in rows]),
+         ""]
+    # 그 글들의 H2 목록 — 수집이 열어 둔 것이 있으면 여기 싣는다. 여태 이걸 안 모아서
+    # 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 수집본에 있었는데도).
+    outlines = ctx.get("serp_outlines") or {}
+    got = [(r, outlines.get(str(r.get("url") or ""))) for r in rows]
+    shown = [(r, x) for r, x in got if x and x.get("h2")]
+    if shown:
+        L.append(SERP_OUTLINE_HEAD + " — 우리가 열어 본 것입니다. '빠진 구간'은 여기와 "
+                 "'지금 이 페이지 상태'의 H2 를 견주어 찾습니다:")
+        for r, x in shown[:3]:
+            head = f"- {r['position']}위 {x.get('title') or r.get('title') or ''} ({r.get('url')})"
+            L.append(head)
+            L += [f"  - {_ext(h, 120)}" for h in (x.get("h2") or [])[:12]]
+            if len(x.get("h2") or []) > 12:
+                L.append(f"  - 외 {len(x['h2']) - 12}개")
+        L.append("")
+    failed = [r for r, x in got if x and not x.get("h2") and not r.get("is_own")]
+    if failed:
+        L.append(f"- 상위 글 {len(failed)}곳은 열지 못했습니다(막혔거나 H2 가 없습니다) — "
+                 "그 자리는 제목까지만 알고 [확인 필요]로 둡니다.")
+    if not shown:
+        L.append("위 제목이 이 검색어에 실제로 걸리는 글의 제목입니다. 제목만으로 부족하면 "
+                 "아래 칸에 그 글들의 H2 목록을 붙여 넣어 주세요.")
+    return L
 
 
 def _fanout(o: dict, ctx: dict) -> list[str]:
@@ -2031,12 +2055,13 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     ev = EVIDENCE[kind](o, ctx, pages) + visits
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
-    had_top = False
+    had_top = had_outlines = False
     if s["slot"]:                             # 상위와 비교해야 하는 일(고치기·새 글)만
         top = _serp_top(o, ctx)
         if top:
             L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
             had_top = True
+            had_outlines = any(x.startswith(SERP_OUTLINE_HEAD) for x in top)
         # 같은 조회에서 구글이 같이 보여 준 질문 — AI 요약 기회도 고치기·새 글로 간다
         fan = _fanout(o, ctx)
         if fan:
@@ -2107,9 +2132,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     L.append("")
     if after:
         L += ["## 고친 뒤 볼 것", *after, ""]
-    if s["slot"]:
-        # 상위 목록을 이미 위에 줬으면 여기서 또 "제목과 H2 를 붙여 넣으세요" 라고
-        # 하지 않는다 — 같은 부탁이 한 요청문에 두 벌이 된다.
+    # H2 까지 이미 실었으면 붙여 넣기 칸을 아예 내지 않는다 — 다 준 뒤에 "붙여 넣으세요"
+    # 라고 하면 사용자가 이미 있는 것을 다시 찾아 온다. 제목만 있으면 H2 만 청하고,
+    # 아무것도 없으면 꼴이 정한 부탁 그대로다.
+    if s["slot"] and not had_outlines:
         ask = ("위 상위 목록의 글들을 열어 H2 목록을 붙이면, '빠진 구간'을 짐작이 "
                "아니라 비교로 찾습니다. 제목은 이미 위에 있습니다."
                if had_top else s["slot"])
