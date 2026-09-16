@@ -726,6 +726,71 @@ def test_location_mapping_expansion():
     assert serp_adapter.warn_unmapped("xx-XX") is True
 
 
+def test_metrics_asks_search_volume_by_region_only():
+    """검색량(Google Ads)과 난이도(Labs)는 **언어 목록이 다르다** — 검색량엔 언어를 안 싣는다.
+
+    호스팅 런 103·104(2026-09-15)가 여기서 죽었다. `serp_adapter.location()` 이 주는
+    언어 코드는 SERP·Labs 것인데 그걸 Google Ads 검색량 요청에 그대로 실었고, 그 목록에
+    없는 값이라 키워드가 멀쩡한데도 대만 묶음이 통째로 `Invalid Field: 'language_code'`
+    로 거절됐다 — `zh` 로 한 번, 고쳐 보낸 `zh-TW` 로 또 한 번. 값이 아니라 필드가
+    문제였다(그 필드는 이 엔드포인트에서 선택이고 DataForSEO 가 빼라고 말한다).
+
+    그래서 못 박는 것 셋:
+      1. 검색량 요청에 language_code 가 없다 (지역만 싣는다)
+      2. 난이도 요청에는 그대로 있다 (Labs 는 제 목록이 있고 언어를 받는다)
+      3. 그 덕에 로케일 하나가 묶음 전체를 죽이지 않는다 — 대만 키워드도 볼륨을 받는다
+    """
+    import collect_metrics
+
+    conn = db.connect()
+    p = _project(conn, "metrics_lang", domain="ml.com", locale="ko-KR")
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
+        [(p["id"], "索夫波", "zh-TW"), (p["id"], "모공 각화증", "ko-KR")])
+    conn.commit()
+
+    seen: list[tuple[str, dict]] = []
+
+    def fake_post(path, body):
+        seen.append((path, body[0]))
+        words = body[0]["keywords"]
+        if path == collect_metrics.SV_PATH:
+            # 실제로 오던 거절 그대로 — 언어를 실으면 묶음 전체가 날아간다.
+            if "language_code" in body[0]:
+                raise RuntimeError("dataforseo task error: Invalid Field: 'language_code'.")
+            return [{"keyword": w, "search_volume": 10, "cpc": 0.2} for w in words], 0.05
+        return [{"items": [{"keyword": w, "keyword_difficulty": 30} for w in words]}], 0.01
+
+    saved = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"] = "u"
+    os.environ["DATAFORSEO_PASSWORD"] = "p"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            res = collect_metrics.collect("metrics_lang", conn=conn, post=fake_post)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    sv = [b for path, b in seen if path == collect_metrics.SV_PATH]
+    kd = [b for path, b in seen if path == collect_metrics.KD_PATH]
+    assert sv and all("language_code" not in b for b in sv), \
+        f"검색량에 언어를 실었다 — 목록에 없는 로케일이면 묶음이 통째로 거절된다: {sv}"
+    assert len(sv) == 2 and len(kd) == 2, f"로케일마다 한 번씩이 아니다: {seen}"
+    assert {b["location_name"] for b in sv} == {"Taiwan", "South Korea"}, sv
+    assert {b.get("language_code") for b in kd} == {"zh-TW", "ko"}, \
+        f"난이도(Labs)의 언어까지 빼 버렸다: {kd}"
+
+    got = {r["keyword"]: r["volume"] for r in conn.execute(
+        "SELECT keyword, volume FROM keywords WHERE project_id=?", (p["id"],))}
+    assert got == {"索夫波": 10, "모공 각화증": 10}, \
+        f"로케일 하나가 묶음을 죽였다 — 볼륨이 안 들어갔다: {got}"
+    assert res.ok and not res.partial and res.rows == 2, res
+    conn.close()
+
+
 def test_dry_run_never_touches_auth():
     """--dry-run 은 비용 고지다 — 인증이 하나도 없는 컴퓨터에서도 끝까지 가야 한다.
 

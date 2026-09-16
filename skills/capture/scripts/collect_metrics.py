@@ -50,6 +50,26 @@ KD_PATH = "/dataforseo_labs/google/bulk_keyword_difficulty/live"
 SV_COST_PER_CALL = 0.05     # dry-run 고지용 상한. 실청구액은 응답 cost.
 KD_COST_PER_CALL = 0.01
 
+# 검색량 요청에는 **언어를 싣지 않는다** — 지역만 싣는다.
+#
+# 두 엔드포인트는 언어 목록이 서로 다르다. `serp_adapter.location()` 이 주는 언어
+# 코드는 SERP·Labs 것이고(LOCATION_MAP 주석: 대만은 "zh-TW"), Google Ads 쪽은
+# `/keywords_data/google_ads/languages` 라는 제 목록을 따로 갖는다. 그 목록에 없는
+# 값을 실으면 키워드가 멀쩡해도 **묶음 전체**가 `Invalid Field: 'language_code'` 로
+# 거절된다. 2026-09-15 대만 묶음이 그렇게 두 번 죽었다 — `zh`(04:33, 런 102·13개)
+# 로 한 번, 고쳐 보낸 `zh-TW`(04:56, 런 103·104)로 또 한 번. 값이 아니라 **필드**가
+# 문제다. 여기서 값을 한 번 더 바꿔 보는 것은 세 번째 "한 런 늦은" 수정일 뿐이다.
+#
+# 정본이 말하는 것: 이 엔드포인트에서 language_name/language_code 는 **선택**이고,
+# DataForSEO 자신이 빼라고 말한다 — 구글이 검색량에서 언어 필터를 더는 지원하지
+# 않아 넣으면 값이 null 로 온다.
+#   https://dataforseo.com/blog/stop-using-language-settings-in-keyword_data_api
+#   https://docs.dataforseo.com/v3/keywords_data-google_ads-search_volume-live/
+# 그래서 검색량은 지역만으로 묻는다 — 어느 로케일이 목록에 있는지 우리가 표로 복사해
+# 들고 있을 필요가 없어진다(목록 두 벌 금지). 난이도(Labs)는 언어 목록이 따로 있고
+# 그쪽은 language_code 를 받으므로 거기까지 빼지 않는다.
+SV_SENDS_LANGUAGE = False
+
 
 # DataForSEO 는 키워드 하나에 금지 문자가 있으면 **묶음 전체**를 거절한다:
 #   Invalid Field: 'keywords'. Keyword text has invalid characters or symbols:
@@ -305,14 +325,25 @@ def collect(project: str, *,
                 return
             words = sorted(by_clean)
 
-            def body_of(ws):
+            def body_of(ws, language: bool):
                 # 요청 수를 여기서 센다 — 이분 재시도로 한 청크가 여러 번 나갈 수
                 # 있어서, 바깥에서 +1 하면 실제 호출 수와 어긋난다.
                 nonlocal calls
                 calls += 1
-                return [{"keywords": ws, "location_name": loc_name, "language_code": lang}]
+                body = {"keywords": ws, "location_name": loc_name}
+                if language:
+                    body["language_code"] = lang
+                return [body]
 
-            items, cost, bad = _ask(post, SV_PATH, words, body_of)
+            def sv_body(ws):
+                """검색량(Google Ads) — 지역만. 이유는 SV_SENDS_LANGUAGE 주석."""
+                return body_of(ws, SV_SENDS_LANGUAGE)
+
+            def kd_body(ws):
+                """난이도(Labs) — 언어 목록이 따로다. location() 의 코드를 그대로."""
+                return body_of(ws, True)
+
+            items, cost, bad = _ask(post, SV_PATH, words, sv_body)
             total_cost += cost
             metrics: dict[str, dict] = {}
             for it in items:
@@ -323,7 +354,7 @@ def collect(project: str, *,
 
             # 난이도는 부차적이다 — 여기서 죽어도 이미 사 온 볼륨은 적재한다.
             try:
-                items, cost, _ = _ask(post, KD_PATH, words, body_of)
+                items, cost, _ = _ask(post, KD_PATH, words, kd_body)
                 total_cost += cost
                 for it in items:
                     kw = _kw(it)
@@ -609,29 +640,45 @@ def _selfcheck() -> None:
     assert len(asked) == 11, f"하나를 좁히는 데 {len(asked)}번 쳤다: {asked}"
     assert "w500" in bad and len(bad) <= 32 and len(items) == 1000 - len(bad), len(bad)
 
-    # 7d. 언어·지역 필드 거절은 키워드 탓이 아니다 — 쪼개지 않고(요청 1번), 사유 원문을
-    #     오류로 남기고, 행에 시각을 안 찍는다(매핑을 고치면 다음 런이 다시 산다).
-    #     지역을 아예 안 받는 곳(러시아)은 보내지도 않고 건너뜀으로 센다.
+    # 7d. 검색량은 **지역만** 묻는다 — Google Ads 의 언어 목록은 SERP·Labs 것과 달라서,
+    #     로케일 하나 때문에 묶음이 통째로 죽던 자리다(2026-09-15 대만: `zh` 도 `zh-TW` 도
+    #     같은 `Invalid Field: 'language_code'`). 난이도(Labs)는 제 목록이 있으니 그대로
+    #     싣는다. 언어·지역 필드 거절은 키워드 탓이 아니므로 쪼개지 않고(요청 1번), 사유
+    #     원문을 오류로 남기고, 값을 하나도 못 샀으면 행에 시각을 안 찍는다(매핑을 고치면
+    #     다음 런이 다시 산다). 지역을 아예 안 받는 곳(러시아)은 보내지도 않는다.
     conn.execute("DELETE FROM keywords")
     conn.execute("DELETE FROM runs")
     conn.executemany(
         "INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,?,'seed')",
         [(pid, "索夫波", "zh-TW"), (pid, "丘疹性瘢痕", "zh-TW"), (pid, "тирлист ии", "ru-RU")])
     conn.commit()
-    seen: list[tuple[str, str, list]] = []
+    seen: list[tuple[str, dict]] = []
 
     def lang_post(path, body):
-        seen.append((path, body[0]["language_code"], body[0]["keywords"]))
-        if body[0]["language_code"] != "zh-TW":
+        seen.append((path, body[0]))
+        # Labs 만 언어를 받는다. Google Ads 가 언어를 받으면 그 값이 제 목록에 없다는
+        # 뜻이므로 실제로 오던 그 문구로 거절한다 — 이 검사가 보는 것이 그 자리다.
+        if path == SV_PATH and "language_code" in body[0]:
             raise RuntimeError("dataforseo task error: Invalid Field: 'language_code'.")
         return picky_post(path, body)
 
     with contextlib.redirect_stderr(io.StringIO()):
         res = collect("mt", conn=conn, post=lang_post)
-    assert not [s for s in seen if s[1] == "ru"], f"받지 않는 지역을 보냈다: {seen}"
+    assert not [s for s in seen if s[1].get("language_code") == "ru"
+                or s[1]["location_name"] == "Russia"], f"받지 않는 지역을 보냈다: {seen}"
+    sv = [b for p, b in seen if p == SV_PATH]
+    kd = [b for p, b in seen if p == KD_PATH]
+    assert sv and all("language_code" not in b for b in sv), \
+        f"검색량에 언어를 실었다 — 목록에 없는 로케일이면 묶음이 통째로 거절된다: {sv}"
+    assert all(b["location_name"] == "Taiwan" for b in sv), sv
+    assert kd and all(b.get("language_code") == "zh-TW" for b in kd), \
+        f"난이도(Labs)의 언어까지 빼 버렸다: {kd}"
     assert res.ok and res.rows == 2 and not res.partial, res
     note = conn.execute("SELECT notes FROM runs WHERE kind='metrics'").fetchone()["notes"]
     assert "unsendable=1" in note and "errors=0" in note, note
+
+    # 옛 매핑(zh)으로 되돌려도 검색량은 그대로 나간다 — 언어를 안 싣기 때문이다.
+    # 난이도만 그 값으로 거절당하고, 이미 산 볼륨은 적재된 채 남는다(쪼개기도 없다).
     real = serp_adapter.location
     serp_adapter.location = (lambda loc: ("Taiwan", "zh", ("tw", "zh"))    # 옛 매핑
                              if loc.startswith("zh") else real(loc))
@@ -639,14 +686,42 @@ def _selfcheck() -> None:
     conn.execute("DELETE FROM runs")
     conn.commit()
     seen.clear()
+
+    def kd_picky(path, body):
+        seen.append((path, body[0]))
+        if path == KD_PATH and body[0].get("language_code") != "zh-TW":
+            raise RuntimeError("dataforseo task error: Invalid Field: 'language_code'.")
+        return picky_post(path, body)
+
     try:
         with contextlib.redirect_stderr(io.StringIO()):
-            res = collect("mt", conn=conn, post=lang_post)
+            res = collect("mt", conn=conn, post=kd_picky)
     finally:
         serp_adapter.location = real
-    sv = [s for s in seen if s[0] == SV_PATH]
-    assert len(sv) == 1, f"언어 필드 거절을 키워드 탓으로 읽고 쪼갰다: {len(sv)}번 쳤다"
+    assert len([1 for p, _ in seen if p == SV_PATH]) == 1, \
+        f"로케일 매핑이 틀리자 검색량 묶음이 또 갈라졌다: {seen}"
+    assert len([1 for p, _ in seen if p == KD_PATH]) == 1, \
+        f"언어 필드 거절을 키워드 탓으로 읽고 쪼갰다: {seen}"
+    assert res.ok and res.partial and res.rows == 2, \
+        f"난이도 하나가 죽었다고 볼륨까지 잃었다: {res}"
     assert "language_code" in (res.reason or ""), f"거절 사유 원문이 안 남았다: {res}"
+
+    # 검색량 쪽이 통째로 거절되면(지역 이름이 틀린 경우) 여전히 쪼개지 않고, 값이 없으니
+    # 행에 시각도 안 찍는다 — 고쳐도 30일 동안 다시 안 사는 일이 없어야 한다.
+    conn.execute("UPDATE keywords SET metrics_at=NULL, volume=NULL")
+    conn.execute("DELETE FROM runs")
+    conn.commit()
+    seen.clear()
+
+    def loc_picky(path, body):
+        seen.append((path, body[0]))
+        raise RuntimeError("dataforseo task error: Invalid Field: 'location_name'.")
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        res = collect("mt", conn=conn, post=loc_picky)
+    assert len([1 for p, _ in seen if p == SV_PATH]) == 1, \
+        f"지역 필드 거절을 키워드 탓으로 읽고 쪼갰다: {seen}"
+    assert "location_name" in (res.reason or ""), f"거절 사유 원문이 안 남았다: {res}"
     assert conn.execute("SELECT COUNT(*) c FROM keywords WHERE keyword='索夫波' "
                         "AND metrics_at IS NULL").fetchone()["c"] == 1, \
         "매핑 탓 거절인데 행에 시도 시각을 찍었다 — 고쳐도 30일 동안 다시 안 산다"
