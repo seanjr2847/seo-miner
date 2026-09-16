@@ -853,7 +853,8 @@ LINK_CANDIDATES_TRUNCATED = ("- 링크를 걸 후보를 내지 않습니다 — 
                              "고르려면 그 글을 열어 링크가 이미 있는지 직접 확인합니다.")
 
 
-def _inlink_lines(ins: list[dict], query: str | None = None) -> list[str]:
+def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
+                  audit_title: str | None = None) -> list[str]:
     """들어오는 링크 — 전체 수는 잘리기 전 값(dashboard._inlink_rows 의 첫 행)으로 말한다.
     옛 행(total 없음)은 받은 행 수가 곧 전체다."""
     head = ins[0]
@@ -885,6 +886,17 @@ def _inlink_lines(ins: list[dict], query: str | None = None) -> list[str]:
             L.append(f"- 앵커가 '{_ext(a, 60) or '(빈 앵커)'}' 에 몰려 있습니다({_n(n)}/{_n(total)}). "
                      "새 링크의 앵커는 이 말을 되풀이하지 않고, 이 페이지가 답하는 내용을 "
                      "설명하는 다른 표현으로 씁니다(서로도 겹치지 않게).")
+    # 진단이 "주소와 title 중 무엇이 이 페이지의 이름이냐"를 묻는다(scoring 의 페이지 이름).
+    # 앵커는 그 물음의 근거다 — 남들이 이 페이지를 무엇이라 부르며 링크하는지.
+    if anchors and audit_title is not None:
+        a0 = str(anchors[0][0] or "")
+        at = set(scoring.tokens(a0))
+        in_slug = [t for t in scoring._slug_tokens(url) if t in at]
+        in_title = [t for t in scoring.tokens(audit_title) if len(t) >= 2 and t in at]
+        if in_slug and len(in_slug) > len(in_title):
+            L.append(f"- 남들은 이 페이지를 '{_ext(a0, 60)}' 라고 부르며 링크합니다 — 주소 쪽 "
+                     "말이지 지금 title 쪽 말이 아닙니다. '페이지 이름' 진단의 근거로 씁니다: "
+                     "앵커와 주소가 한편이면 title·H1 을 그쪽으로 맞추는 것이 대개 맞습니다.")
     if anchors and total > sum(int(n) for _, n in anchors):
         rest = total - sum(int(n) for _, n in anchors)
         L.append(f"- 나머지 앵커 {_n(rest)}개는 위 목록에 없습니다(상위 {len(anchors)}개만 셌습니다) — "
@@ -989,7 +1001,8 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
         L.append("- 사이트맵에 이 주소가 있습니다.")
     ins = (ctx.get("crawl_inlinks") or {}).get(url)
     if ins:
-        L += [""] + _inlink_lines(ins, query)
+        L += [""] + _inlink_lines(ins, query, url,
+                                  ((ctx.get("page_audits") or {}).get(url) or {}).get("title"))
     elif ins is not None:
         L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다"
                  "(고아 페이지). 링크를 걸 자리를 찾는 것이 첫 일입니다.")

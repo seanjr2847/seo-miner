@@ -896,6 +896,46 @@ TITLE_JUDGE = ("이 페이지에 걸린 검색어 묶음의 주 의도를 title 
                "title 이 이미 그 의도를 말하면 그대로 두는 것도 답입니다.")
 
 
+NAME_SPLIT_TAG = "페이지 이름"
+# 슬러그가 이보다 적은 낱말이면 근거가 약하다 — /exosome/ 하나로 "제목이 틀렸다"고
+# 말할 수 없다. 그리고 겹치는 낱말이 하나도 없으면 갈린 것이 아니라 아예 다른 얘기라
+# (주소가 옛 주제인 경우) 이 진단이 아니다.
+NAME_SPLIT_MIN_SLUG_TOKENS = 2
+
+
+def _slug_tokens(url: str) -> list[str]:
+    """주소의 마지막 뜻 있는 칸을 낱말로 — /en/special-clinic/autologous-exosome-therapy/
+    → [autologous, exosome, therapy]. 언어 칸·숫자 칸은 이름이 아니다."""
+    segs = [s for s in (urlsplit(url or "").path or "").split("/") if s]
+    while segs and (_LANG_SEG.match(segs[-1]) or segs[-1].isdigit()):
+        segs.pop()
+    return _content_tokens(segs[-1].replace("-", " ").replace("_", " ")) if segs else []
+
+
+def _name_split_advice(audit: dict, title: str, h1: list) -> list[dict]:
+    """주소가 말하는 이름과 title·H1 이 말하는 이름이 갈렸나."""
+    slug = _slug_tokens(audit.get("url") or "")
+    if len(slug) < NAME_SPLIT_MIN_SLUG_TOKENS or not (title or h1):
+        return []
+    have = set(_tokens(title)) | {t for x in h1 for t in _tokens(str(x))}
+    shared = [t for t in slug if _has_token(t, have)]
+    missing = [t for t in slug if not _has_token(t, have)]
+    # 겹치는 말이 있어야 "같은 주제인데 이름이 갈렸다"이고, 빠진 말이 있어야 갈린 것이다.
+    if not shared or not missing:
+        return []
+    segs = [s for s in (urlsplit(audit.get("url") or "").path or "").split("/") if s]
+    seg = next((s for s in reversed(segs) if not _LANG_SEG.match(s) and not s.isdigit()), "")
+    return [{"tag": NAME_SPLIT_TAG, "level": "warn",
+             "now": (f"주소는 '{seg}' 인데 title·H1 에 {', '.join(missing)} 가 없습니다"
+                     f" (title: {title or '(없음)'} · H1: {' / '.join(map(str, h1)) or '(없음)'})"),
+             "fix": ("이 페이지가 무엇인지에 대한 신호가 서로 부딪힙니다 — URL 은 한 가지를, "
+                     "title·H1 은 다른 것을 말합니다. 둘 중 무엇이 이 페이지의 이름인지 먼저 "
+                     "정하세요. 걸린 검색어와 들어오는 앵커가 어느 쪽 말을 쓰는지가 근거입니다. "
+                     "title·H1 을 주소 쪽으로 맞추는 것이 대개 싸고 안전합니다 — URL 을 바꾸면 "
+                     "리다이렉트와 링크를 전부 손봐야 합니다. 둘 다 맞는 이름이면 하나를 주된 "
+                     "이름으로 두고 다른 하나는 본문에서 설명합니다.")}]
+
+
 def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:
     """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
 
@@ -966,6 +1006,14 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     elif len(desc) < (DESC_MIN_KO if _wide(desc) else DESC_MIN):
         add("meta description", "warn", f"{len(desc)}자라 너무 짧습니다",
             "숫자·연도·구체적 이득을 넣어 클릭할 이유를 적으세요.")
+
+    # 주소가 말하는 것과 제목이 말하는 것이 다른가 — 페이지의 이름이 둘로 갈렸다.
+    # 실물에서 /autologous-exosome-therapy/ 인데 title·H1 은 Autologous Cell
+    # Regeneration 이었고, 들어오는 앵커 70/71 도 주소 쪽 말이었다. 구글에 "이 페이지가
+    # 무엇이냐"를 말하는 신호 셋 중 둘이 한쪽, 하나가 다른 쪽을 가리킨 셈이다. 순위가
+    # 낮은 유력한 원인인데 진단표에는 그 줄이 없었다.
+    for x in _name_split_advice(audit, title, h1):
+        out.append(x)
 
     if not h1:
         add("H1", "bad", "H1 이 없습니다", "페이지 주제를 그대로 담은 H1 하나를 두세요.")
