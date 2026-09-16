@@ -1687,8 +1687,77 @@ def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
     assert split_kinds <= brief.URL_KINDS,         f"가르기 꼴인데 대상이 주소가 아니다 — brief.page_of 가 엉뚱한 페이지를 고른다: {split_kinds - brief.URL_KINDS}"
 
 
-def test_seam_40_project_types_are_one_list():
-    """40) 사이트 종류는 id 도 라벨도 한 벌이다 — 정본은 dashboard.PROJECT_TYPES.
+def test_seam_40_remote_site_opens_the_same_local_dashboard():
+    """40) 원격 사이트의 대시보드를 어떻게 띄우는지, 스킬과 코드가 같은 말을 한다.
+
+    이 이음매는 값을 두 번 치렀다. 한 번은 코드에서 — 호스팅 사이트라고 브라우저를
+    호스팅 주소로 보냈고, 로컬에만 있는 [설정]·개발 도구 실행 버튼이 통째로 사라졌다.
+    한 번은 문서에서 — 고친 뒤 그 사실이 dashboard.py 주석에만 남고 SKILL.md 에는
+    안 들어가서, 스킬을 읽은 쪽이 "원격은 띄우는 법이 다른가" 하고 소스를 뒤졌다.
+    (SKILL.md 의 원격 절은 "달라지는 것만" 을 세는데, dash 가 그 목록에 없다는 것을
+    읽는 쪽은 확언으로 못 읽는다 — 부재는 말이 아니다.)
+
+    그래서 양쪽 끝을 같이 본다: 스킬의 dash 절이 원격을 말하는가, 그리고 로컬
+    대시보드가 실제로 원격 사이트의 /api/* 를 서버로 넘기는가.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    skill = (ROOT / "skills" / "capture" / "SKILL.md").read_text("utf-8")
+    assert "### /capture dash" in skill, "스킬에서 dash 절을 못 찾았다 — 검사가 헛돈다"
+    sec = skill.split("### /capture dash")[1].split(chr(10) + "### ")[0]
+    assert "원격" in sec,         "스킬의 dash 절이 원격 사이트를 한 마디도 안 한다 — 읽는 쪽이 소스를 뒤지러 간다"
+    assert "remote_project" in sec,         "dash 절이 원격을 말하면서 어디서 갈리는지(remote_project)를 안 가리킨다"
+    # 원격 절도 그 자리를 가리킨다 — 사본을 두라는 게 아니라 길을 내라는 것
+    rem = skill.split("**원격(호스팅) 사이트**")[1].split(chr(10) + "#")[0]
+    assert "/capture dash" in rem,         "원격 절이 dash 를 한 마디도 안 한다 — '달라지는 것만' 목록의 부재를 확언으로 읽게 된다"
+
+    # 코드 쪽 — 스킬이 한 말이 실제로 참인가
+    src = ctx["local_f"].read_text("utf-8")
+    assert re.search(r"def remote_project\(", src), "dashboard.py 에 remote_project 가 없다"
+    assert "remote.owns(project)" in src,         "remote_project 가 remote.owns 로 안 가른다 — 판정이 두 벌이 된다"
+    # 읽기(GET)와 쓰기(POST) 둘 다 넘어가야 한다 — 하나만 넘기면 화면이 반만 원격을 보고,
+    # 상태를 눌러도 로컬 brain 에 쓴다(그 사이트는 로컬에 없다). 분기가 둘이라 하나만
+    # 보면 나머지 하나를 없애도 검사가 통과한다 — 실제로 그렇게 헛돌았다.
+    proxied = set(re.findall(r'self\._proxy\("(GET|POST)"', src))
+    assert proxied == {"GET", "POST"}, \
+        f"원격 사이트의 /api/* 를 다 안 넘긴다({sorted(proxied)}) — 스킬이 거짓말을 한다"
+    for guard in (r"u\.path not in NEVER_PROXY and remote_project\(project\)",
+                  r"path not in NEVER_PROXY and remote_project\(str\(body"):
+        assert re.search(guard, src), f"프록시 분기가 remote_project 로 안 갈린다: {guard}"
+
+
+def test_seam_41_applied_work_shows_on_the_collapsed_row():
+    """41) "열어만 놓음"과 "적용까지 함"이 접힌 목록에서 갈린다.
+
+    열기(run_tool)는 창이 뜨면 묶인 기회 전부를 '작업 시작'으로 찍는다. 도구가 실제로
+    파일을 고치고 createdb done 을 부르면 creations 에 기록이 남지만 상태는 그대로
+    '작업 시작'이다(완료는 완료 후 관찰을 보고 사람이 누른다 — 그건 맞는 결정이다).
+    그래서 접힌 줄에서는 열어만 놓은 기회와 적용까지 끝낸 기회가 **똑같이** 보였다.
+    기록은 페이로드(d.creations)에 내내 있었는데 펼쳐야만 보였다.
+
+    배지는 셸이 갖는다(SM 한 벌 — 뷰가 사본을 안 만든다), 개수는 페이로드에서 오고,
+    묶인 줄은 묶인 id 전부의 기록을 센다 — 상태 버튼·열기와 같은 범위여야 한 줄이
+    새로고침 뒤 둘로 갈라지지 않는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, ov = ctx["shell"], (ctx["views"] / "overview.html").read_text("utf-8")
+    assert "window.madeBadge" in shell, "셸에 madeBadge 가 없다 — 뷰마다 사본을 만들게 된다"
+    assert "window.madeFor" in shell, "기록을 세는 규칙(madeFor)이 셸에 없다"
+    body = shell[shell.index("window.madeFor"):shell.index("window.kindTip")]
+    assert "window.CREATIONS" in body, "배지가 기록을 페이로드에서 안 받는다"
+    assert "group" in body, "배지가 묶인 줄의 id 를 안 센다 — 대표 하나의 기록만 보인다"
+    assert "merged" in body, "배지가 머지된 것과 PR 만 열린 것을 안 가른다"
+    assert "window.madeBadge(o)" in ov, "개요의 접힌 줄이 배지를 안 그린다"
+    # 뷰가 제 손으로 세면 두 벌이다
+    assert "CREATIONS" not in ov, "개요가 기록을 직접 센다 — 셸의 배지와 두 벌이 된다"
+    # 페이로드가 실제로 그 키를 싣는다(이름만 맞고 비어 있으면 배지가 영영 안 뜬다)
+    assert "creations" in _gather("seam41"), "gather() 가 creations 를 안 싣는다"
+
+def test_seam_42_project_types_are_one_list():
+    """42) 사이트 종류는 id 도 라벨도 한 벌이다 — 정본은 dashboard.PROJECT_TYPES.
 
     id 는 다섯 곳에 흩어져 산다: 받는 쪽 검증(dashboard.PROJECT_TYPE_IDS), 점수
     계수(scoring.WEIGHTS), 온보딩 few-shot(_presets.yaml), 그리고 화면 둘 — 로컬

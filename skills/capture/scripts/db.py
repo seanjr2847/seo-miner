@@ -25,7 +25,7 @@ import json
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import paths
@@ -151,6 +151,19 @@ CREATE TABLE IF NOT EXISTS serp_results (     -- 검색결과 상위 — rank_sn
   UNIQUE(keyword_id, checked_at, position)
 );
 CREATE INDEX IF NOT EXISTS idx_serp_kw ON serp_results(keyword_id, checked_at);
+-- 상위 글의 겉모습(제목·H2 목록) — serp_results 는 "무엇이 상위에 있나" 까지만 안다.
+-- 요청문이 "빠진 구간"을 짐작이 아니라 비교로 찾으려면 그 글의 H2 가 필요한데, 여태
+-- 사람에게 붙여 넣으라고 시켰다. **주소 단위**다: 한 경쟁 페이지가 검색어 여럿에서
+-- 상위에 서므로 검색어 단위로 모으면 같은 글을 그 수만큼 다시 가져온다.
+CREATE TABLE IF NOT EXISTS serp_outlines (
+  id INTEGER PRIMARY KEY,                     -- remote.dump 가 모든 표를 id 순으로 읽는다
+  url TEXT NOT NULL UNIQUE,
+  checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  status INTEGER,                             -- 가져오기 결과 (실패도 남긴다 — 다음 런이 또 두드리지 않게)
+  title TEXT,
+  h2_json TEXT,                               -- [] = 열었는데 H2 가 없었다
+  words INTEGER
+);
 CREATE TABLE IF NOT EXISTS serp_questions (   -- 구글이 이 검색어에 같이 보여 준 질문·검색어 (팬아웃 재료)
   id INTEGER PRIMARY KEY,
   keyword_id INTEGER NOT NULL REFERENCES keywords(id),
@@ -1628,6 +1641,57 @@ def write_llms_txt(conn: sqlite3.Connection, run_id: int, probe: dict) -> None:
                  " WHERE id=?", (found, probe.get("bytes") if found else None,
                                  probe.get("head") if found else None, run_id))
     conn.commit()
+
+
+# 상위 글 개요를 다시 가져오는 간격 — 남의 페이지는 자주 안 바뀌고, 가져오기는 공짜가
+# 아니다(네트워크·상대 서버 부담). 이 안이면 있는 것을 그대로 쓴다.
+SERP_OUTLINE_DAYS = 30
+
+
+def write_serp_outline(conn: sqlite3.Connection, url: str, *, status: int | None,
+                       title: str | None, h2, words: int | None) -> None:
+    """상위 글 한 장의 겉모습 — 주소 하나에 한 줄. 실패(status 403·타임아웃)도 남긴다:
+    안 남기면 다음 런이 같은 주소를 또 두드린다."""
+    conn.execute(
+        """INSERT INTO serp_outlines(url, checked_at, status, title, h2_json, words)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(url) DO UPDATE SET checked_at=excluded.checked_at,
+             status=excluded.status, title=excluded.title,
+             h2_json=excluded.h2_json, words=excluded.words""",
+        (url, now(), status, title, json.dumps(list(h2 or []), ensure_ascii=False), words))
+    conn.commit()
+
+
+def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
+    """주소 → {title, h2, words, status, checked_at}. 없는 주소는 키가 없다."""
+    out: dict[str, dict] = {}
+    urls = [u for u in dict.fromkeys(urls) if u]
+    for i in range(0, len(urls), 200):
+        chunk = urls[i:i + 200]
+        for r in conn.execute(
+            f"""SELECT url, checked_at, status, title, h2_json, words FROM serp_outlines
+                 WHERE url IN ({','.join('?' * len(chunk))})""", chunk):
+            try:
+                h2 = json.loads(r["h2_json"] or "[]")
+            except (TypeError, ValueError):
+                h2 = []
+            out[r["url"]] = {"url": r["url"], "checked_at": r["checked_at"],
+                             "status": r["status"], "title": r["title"],
+                             "h2": h2 if isinstance(h2, list) else [], "words": r["words"]}
+    return out
+
+
+def serp_outlines_stale(conn: sqlite3.Connection, urls, *,
+                        days: int = SERP_OUTLINE_DAYS) -> list[str]:
+    """이 주소들 중 아직 안 봤거나 너무 오래된 것 — 가져올 것만 추린다."""
+    have = serp_outlines(conn, urls)
+    cut = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    out = []
+    for u in dict.fromkeys(x for x in urls if x):
+        r = have.get(u)
+        if not r or str(r.get("checked_at") or "")[:10] < cut:
+            out.append(u)
+    return out
 
 
 def write_serp_results(conn: sqlite3.Connection, keyword_id: int, rows,

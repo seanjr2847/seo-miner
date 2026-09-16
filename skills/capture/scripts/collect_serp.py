@@ -142,6 +142,7 @@ def collect(project: str, *,
         total_cost = 0.0
         domain_hits: Counter = Counter()
         harvested_kw = set()
+        outline_urls: list[str] = []
         new_kw = new_comp = 0
 
         def one(row) -> None:
@@ -178,6 +179,10 @@ def collect(project: str, *,
                 res["serp_features"], res["aio_present"], aio_cited,
                 aio_domains=res["aio_domains"] if res["aio_present"] == 1 else None)
             db.write_serp_results(conn, row["id"], top_rows)
+            # 상위 글 몇 개의 주소만 모아 둔다 — 여는 것은 런 끝에 한 번, 주소 단위로.
+            outline_urls.extend(
+                t["url"] for t in top_rows[:OUTLINE_PER_KEYWORD]
+                if t.get("url") and not t.get("is_own"))
             # 함께 묻는 질문·연관 검색어를 **어느 검색어에서 나왔는지와 함께** 남긴다 —
             # 아래 키워드 후보 적재와 별개다(그쪽은 --no-harvest 로 끌 수 있는 부산물이고,
             # 이쪽은 이 검색어의 요청문이 쓰는 사실이다).
@@ -205,14 +210,55 @@ def collect(project: str, *,
                 new_comp = db.add_competitors(
                     conn, p["id"], scoring.serp_rivals(domain_hits, done, own), "auto_rank")
 
+            # 상위 글의 제목·H2 — 요청문이 "빠진 구간"을 짐작이 아니라 비교로 찾는 재료다.
+            # 여태 이걸 안 모아서 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 있었다).
+            out_ok, out_bad = _collect_outlines(conn, outline_urls, throttle=throttle)
             r.api_calls, r.cost = done, total_cost
             r.notes = (f"provider={provider} device={device} {st.err_note} skipped={skipped} "
-                       f"harvest_kw={new_kw} harvest_comp={new_comp}")
+                       f"harvest_kw={new_kw} harvest_comp={new_comp} "
+                       f"outlines={out_ok} outline_errors={out_bad}")
 
         print(f"\nsaved {done} snapshots{st.skip_note(skipped)} (errors={st.errors}) "
               f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
               f"경쟁사 +{new_comp}\nrun_id={r.id}")
         return st.verdict(done, rows=done, cost=total_cost)
+
+
+# 상위 글 몇 개까지 열어 H2 를 볼 것인가 — 요청문이 "상위 2~3개와 비교하라"고 시키므로
+# 그 수다. 한 런에서 여는 주소 전체 상한도 둔다: 검색어 200개면 남의 서버를 수백 번
+# 두드리게 되고, 그건 수집이 아니라 민폐다.
+OUTLINE_PER_KEYWORD = 3
+OUTLINE_MAX_PER_RUN = 40
+
+
+def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -> tuple[int, int]:
+    """상위 글의 제목·H2 를 가져와 남긴다 (가져온 수, 실패 수).
+
+    검색어가 아니라 **주소** 단위다 — 한 경쟁 페이지가 여러 검색어에서 상위에 서므로
+    검색어마다 가져오면 같은 글을 그 수만큼 다시 연다. 실패도 남긴다: 안 남기면 다음
+    런이 같은 주소를 또 두드린다.
+    """
+    import time
+
+    import collect_page
+    todo = db.serp_outlines_stale(conn, urls)[:OUTLINE_MAX_PER_RUN]
+    ok = bad = 0
+    for i, u in enumerate(todo):
+        a = collect_page.fetch(u)
+        if a.get("error"):
+            db.write_serp_outline(conn, u, status=a.get("status"), title=None, h2=[], words=None)
+            bad += 1
+        else:
+            try:
+                h2 = json.loads(a.get("h2_json") or "[]")
+            except (TypeError, ValueError):
+                h2 = []
+            db.write_serp_outline(conn, u, status=a.get("status"), title=a.get("title"),
+                                  h2=h2, words=a.get("words"))
+            ok += 1
+        if throttle and i + 1 < len(todo):
+            time.sleep(throttle)
+    return ok, bad
 
 
 def _parser() -> argparse.ArgumentParser:

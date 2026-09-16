@@ -1782,6 +1782,71 @@ def test_intent_split_page_is_the_one_that_ranks_first():
     conn.close()
 
 
+def test_page_advice_catches_a_split_page_name():
+    """URL 이 말하는 것과 title·H1 이 말하는 것이 다르면 짚는다.
+
+    실물: /autologous-exosome-therapy/ 인데 title·H1 은 Autologous Cell Regeneration
+    (NOVASTEM) 이었다. 들어오는 앵커 70/71 도 'Autologous Exosome Therapy' 였다.
+    페이지가 무엇인지에 대한 신호가 서로 부딪히는데 — 순위가 낮은 유력한 원인인데 —
+    진단표에 그 줄이 없었다(meta description·외부 링크·이미지 넷만 있었다).
+    """
+    a = {"url": "https://e.com/en/special-clinic/autologous-exosome-therapy/",
+         "title": "Autologous Cell Regeneration | The Other Dermatology, Seoul",
+         "h1_json": '["Autologous Cell Regeneration (NOVASTEM)"]',
+         "meta_description": "설명 문장을 직접 쓴 것입니다. 무엇에 답하는지 적었습니다.",
+         "words": 1303, "js_shell": 0, "status": 200}
+    adv = {x["tag"]: x for x in scoring.page_advice(a, ["autologous cell regeneration"],
+                                                    domain="e.com")}
+    assert scoring.NAME_SPLIT_TAG in adv, sorted(adv)
+    x = adv[scoring.NAME_SPLIT_TAG]
+    assert "exosome" in x["now"] and "autologous-exosome-therapy" in x["now"], x
+    assert "title" in x["fix"] and "URL" in x["fix"], x
+
+    # 주소와 제목이 같은 것을 말하면 안 짚는다
+    ok = {**a, "title": "Autologous Exosome Therapy | The Other Dermatology, Seoul",
+          "h1_json": '["Autologous Exosome Therapy"]'}
+    assert scoring.NAME_SPLIT_TAG not in {y["tag"] for y in scoring.page_advice(ok, [], domain="e.com")}
+    # 겹치는 낱말이 하나도 없으면 '갈렸다'가 아니라 다른 얘기다 — 짚지 않는다
+    far = {**a, "title": "Thermage FLX | The Other Dermatology", "h1_json": '["Thermage FLX"]'}
+    assert scoring.NAME_SPLIT_TAG not in {y["tag"] for y in scoring.page_advice(far, [], domain="e.com")}
+    # 슬러그가 한 낱말이면 근거가 약하다 — 짚지 않는다
+    thin = {**a, "url": "https://e.com/en/exosome/"}
+    assert scoring.NAME_SPLIT_TAG not in {y["tag"] for y in scoring.page_advice(thin, [], domain="e.com")}
+
+
+def test_serp_outlines_are_stored_per_url_and_reused():
+    """상위 글의 H2 목록은 주소 단위로 한 벌 남긴다.
+
+    요청문은 "상위 2~3개의 제목과 H2 목록을 여기에 붙이면" 이라며 사람에게 붙여 넣기를
+    시켰다 — 제목은 이미 serp_results 에 있는데도, H2 는 아무도 안 모았기 때문이다.
+    검색어 단위로 모으면 같은 경쟁 페이지를 검색어 수만큼 다시 가져온다(한 도메인이
+    여러 검색어에서 상위에 선다) — 그래서 주소 단위다.
+    """
+    conn = db.connect()
+    p = _project(conn, "outline")
+    db.write_serp_outline(conn, "https://rival.com/a", status=200,
+                          title="Rival A", h2=["비용", "과정"], words=900)
+    db.write_serp_outline(conn, "https://rival.com/b", status=403, title=None, h2=[], words=None)
+    got = db.serp_outlines(conn, ["https://rival.com/a", "https://rival.com/b",
+                                   "https://rival.com/none"])
+    assert set(got) == {"https://rival.com/a", "https://rival.com/b"}, sorted(got)
+    assert got["https://rival.com/a"]["h2"] == ["비용", "과정"], got
+    assert got["https://rival.com/a"]["title"] == "Rival A"
+    # 가져오기 실패도 남긴다 — 남기지 않으면 다음 런이 또 두드린다
+    assert got["https://rival.com/b"]["status"] == 403 and got["https://rival.com/b"]["h2"] == []
+    # 다시 쓰면 덮어쓴다(주소 하나에 한 줄)
+    db.write_serp_outline(conn, "https://rival.com/a", status=200, title="Rival A2",
+                          h2=["비용"], words=950)
+    again = db.serp_outlines(conn, ["https://rival.com/a"])
+    assert again["https://rival.com/a"]["title"] == "Rival A2"
+    assert len(conn.execute("SELECT * FROM serp_outlines").fetchall()) == 2
+    # 오래된 것만 다시 가져온다
+    stale = db.serp_outlines_stale(conn, ["https://rival.com/a", "https://rival.com/new"],
+                                    days=30)
+    assert stale == ["https://rival.com/new"], stale
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

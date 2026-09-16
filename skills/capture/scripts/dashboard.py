@@ -759,11 +759,22 @@ def _axis_rank(conn, pid: int) -> dict:
         "rank_date": rank_dates[0] if rank_dates else None,
         "rank_prev": rank_dates[1] if len(rank_dates) > 1 else None,
         "ranks": ranks, "aio_gap": aio_gap, "serp_top": serp_top,
+        # 상위 글의 제목·H2 — 주소 단위로 한 벌(db.serp_outlines). 요청문이 "빠진 구간"을
+        # 짐작이 아니라 비교로 찾는 재료다. 없으면 빈 dict 이고 요청문은 붙여 넣기 칸으로
+        # 물러선다 — 여기서 "H2 0개"를 지어내지 않는다.
+        "serp_outlines": db.serp_outlines(
+            conn, [r["url"] for rows in serp_top.values() for r in rows if r.get("url")]),
         "serp_fanout": serp_fanout,
         # AI 요약 빠짐 검색어의 순위 행 전부 — gather() 가 ranks 를 화면용으로 30개까지
         # 자르는데(순위 순), AI 요약 기회는 대개 순위가 낮거나 없어서 그 30 밖에 선다.
         # 요청문(_ev_aio)이 "몇 위·누가 대신 인용됐나"를 말하려면 잘리기 전 행이 필요하다.
         "aio_gap_ranks": {r["keyword"]: r for r in ranks if r["keyword"] in gap_set},
+        # 검색어 → 최신 순위 조회 행 전부(자르기 전). aio_gap_ranks 는 "최신 회차에
+        # AI 요약이 떴고 우리가 인용 안 된" 검색어만 담는데, 기회는 그보다 옛 회차에서도
+        # 선다 — 그러면 판정은 "실측 6위"라고 쓴 채 요청문은 그 숫자를 못 찾아 GSC
+        # 평균만 보고 "가장 나은 순위도 22.4위"라고 단정했다. 한 요청문 안에 순위가
+        # 세 개 적히고 어느 것이 무엇인지는 아무 데도 없었다.
+        "rank_by_kw": {r["keyword"]: r for r in ranks},
         # 기회로 아직 안 올라온 행의 폴백 처방이 쓴다(rank.html) — 문구는 기회와 같은 한 벌.
         "aio_play": {b: scoring.kind_play("aio_exposure", band=b) for b in scoring.AIO_BANDS},
         "kw_active": db.count_active_keywords(conn, pid),
@@ -1989,7 +2000,12 @@ def run_tool(body: dict) -> dict:
         + "\n\n---\n기록 (이 PC 에서 도는 도구만):\n"
         + "- 제안서만 만들었으면 기록하지 않습니다 — 채울 '바꾼 파일'이 없습니다.\n"
         + "- 제안을 적용해 파일을 바꿨으면 이 명령으로 기록합니다(바꾼 파일·브랜치를 채워서):\n"
+        # 숫자만 있으면 그게 무엇인지 알 수 없고(실제로 "156이 뭐냐"는 물음이 왔다),
+        # 경로는 플러그인 버전이 박혀 있어 다음 릴리스에 깨진다. 둘 다 그렇다고 적는다.
         + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n'
+        + f"  · {opp_id} 는 이 기회의 번호입니다(요청문 파일 이름 opp-{opp_id}.md 와 같은 번호).\n"
+        + "  · 위 경로에는 지금 설치된 플러그인 버전이 박혀 있습니다 — 안 맞으면 그 자리에\n"
+        + "    설치된 seo-miner 의 skills/create/scripts/createdb.py 를 쓰세요.\n"
         + "- 이 명령이 없는 곳(원격·클라우드)에서 돌고 있으면 건너뜁니다.\n",
         "utf-8")
 
