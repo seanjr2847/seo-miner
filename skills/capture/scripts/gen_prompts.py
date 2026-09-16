@@ -9,7 +9,7 @@
 
 여기서는 사이트가 이미 가진 사실(이름·도메인·업종·로케일·GSC 상위 검색어)로
 **사람이 실제로 AI에 물어볼 법한 질문**을 만든다. 키워드가 아니라 질문이다 —
-"밀리아 제거"가 아니라 "밀리아 제거 잘하는 병원 어디야?" 쪽이다.
+"ai 티어리스트"가 아니라 "ai 티어리스트 만들 수 있는 사이트 있어?" 쪽이다.
 
 비용: 생성 1회당 OpenRouter 호출 한 번(수백 토큰). 만들기만 하고 인용 확인은
 돌리지 않는다 — 그쪽이 진짜 돈이 나가는 단계라 사용자가 눌러서 시작해야 한다.
@@ -87,8 +87,8 @@ SYSTEM = (
     "브랜드 (asking about this brand by name). Most prompts must NOT name the brand — "
     "the point is to find out who gets cited when the user does not already know us. "
     "Ground every prompt in the page list you are given — that is what this site actually "
-    "offers. Prefer what is specific to this site (its own named services, the niche "
-    "conditions it treats, its practitioners) over generic industry terms that every "
+    "offers. Prefer what is specific to this site (its own named offerings, the specific "
+    "problems it solves, the people behind it) over generic industry terms that every "
     "competitor also targets. Never invent a service the page list does not show. "
     "For 브랜드, ask about the site's own named services and people too, not just its name."
 )
@@ -103,12 +103,13 @@ _NOISE = re.compile(r"^/(?:category|notice|page|tag|author|search|wp-)", re.I)
 def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
     """사이트가 **무엇을 하는 곳인지** — 질문을 지을 때 이게 없으면 업종 일반형만 나온다.
 
-    이 함수가 없던 시절의 결과가 그 증거다: 어느 피부과에 물어도 "강남 써마지 잘하는
-    피부과 추천해줘"가 나왔다. 병원이 자기 이름을 붙여 파는 시술(디아더 PTT)도,
-    특수클리닉(한관종·비립종)도 재료에 없었으니 모델이 알 길이 없었다.
+    이 함수가 없던 시절의 결과가 그 증거다: 어느 사이트에 물어도 "무료 영상 편집
+    사이트 추천해줘"가 나왔다. 사이트가 자기 이름을 붙여 파는 기능(ecrett 의 장면별
+    BGM 생성)도, 좁은 쓰임(paperpal 의 논문 교정)도 재료에 없었으니 모델이 알 길이
+    없었다.
 
     제목이 있으면 제목을 쓴다(사람 말이다). 없으면 URL 경로가 대신 말해 준다 —
-    /signature/theother-ptt/ 는 경로 자체가 그 병원만의 시술 이름을 담는다.
+    /signature/scene-bgm/ 은 경로 자체가 그 사이트만의 기능 이름을 담는다.
     셋 다 없으면 빈 목록이다: 없는 것을 지어내지 않는다.
     """
     rows = []
@@ -168,7 +169,7 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
             "aliases": cfg.get("brand_aliases") or [],
             "queries": queries,
             # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
-            # 알고 짓게 되고, 그러면 어느 병원에 물어도 같은 질문이 나온다.
+            # 알고 짓게 되고, 그러면 어느 사이트에 물어도 같은 질문이 나온다.
             "offers": offers(conn, p["id"]),
             "seeds": (cfg.get("seed_keywords") or [])[:20],
             # 추적 중인 주제 묶음 — 질문이 무엇을 겨냥했는지(aim) 적을 세 번째 재료다.
@@ -352,16 +353,16 @@ def _selfcheck() -> None:
 
     # 파싱: 코드펜스·설명·중복·길이 밖·잘못된 카테고리를 전부 지나간다
     raw = ('설명 한 줄\n```json\n['
-           '{"prompt":"밀리아 제거 잘하는 병원 어디야?","category":"추천"},'
-           '{"prompt":"밀리아 제거 잘하는 병원 어디야?","category":"추천"},'
+           '{"prompt":"브이로그 배경음악 어디서 받아?","category":"추천"},'
+           '{"prompt":"브이로그 배경음악 어디서 받아?","category":"추천"},'
            '{"prompt":"짧음","category":"추천"},'
-           '{"prompt":"점 빼기랑 밀리아 제거 뭐가 달라?","category":"엉뚱"},'
-           '"문자열로 온 질문도 받는다 밀리아"'
+           '{"prompt":"무료 bgm 이랑 유료 bgm 뭐가 달라?","category":"엉뚱"},'
+           '"문자열로 온 질문도 받는다 bgm"'
            ']\n```\n뒷말')
     got = parse(raw)
     assert [g["prompt"] for g in got] == [
-        "밀리아 제거 잘하는 병원 어디야?", "점 빼기랑 밀리아 제거 뭐가 달라?",
-        "문자열로 온 질문도 받는다 밀리아"], got
+        "브이로그 배경음악 어디서 받아?", "무료 bgm 이랑 유료 bgm 뭐가 달라?",
+        "문자열로 온 질문도 받는다 bgm"], got
     assert got[0]["category"] == "추천" and got[1]["category"] == DEFAULT_CATEGORY, got
     assert parse("배열이 없다") == [] and parse("[깨진 json") == []
 
@@ -370,40 +371,40 @@ def _selfcheck() -> None:
     conn.row_factory = sqlite3.Row
     conn.executescript(db.SCHEMA)
     conn.execute("INSERT INTO projects(id,name,type,domain,locale) "
-                 "VALUES(1,'clinic','local_clinic','clinic.kr','ko-KR')")
+                 "VALUES(1,'ecrett','local_business','ecrett.kr','ko-KR')")
     conn.executemany(
         "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,clicks,"
         "impressions,ctr,position) VALUES(1,'2026-08-20',28,?,1,?,0.1,9.0)",
-        [("밀리아 제거", 900), ("점 빼기", 100)])
+        [("무료 배경음악", 900), ("브이로그 bgm", 100)])
     conn.commit()
-    b = brief(conn, "clinic")
-    assert b["queries"] == ["밀리아 제거", "점 빼기"], b        # 노출 많은 순
-    assert "clinic.kr" in user_msg(b, 5) and "exactly 5" in user_msg(b, 5)
+    b = brief(conn, "ecrett")
+    assert b["queries"] == ["무료 배경음악", "브이로그 bgm"], b   # 노출 많은 순
+    assert "ecrett.kr" in user_msg(b, 5) and "exactly 5" in user_msg(b, 5)
 
-    # 사이트가 **무엇을 파는지**가 재료에 실리는가. 이게 빠져 있어서 어느 병원에
-    # 물어도 업종 일반형("강남 써마지 잘하는 피부과")만 나왔다 — 자기 이름을 붙인
-    # 시술도 특수클리닉도 모델이 알 길이 없었다.
+    # 사이트가 **무엇을 파는지**가 재료에 실리는가. 이게 빠져 있어서 어느 사이트에
+    # 물어도 업종 일반형("무료 영상 편집 사이트 추천해줘")만 나왔다 — 자기 이름을
+    # 붙인 기능도 좁은 쓰임도 모델이 알 길이 없었다.
     conn.executemany(
         "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
         "impressions,ctr,position) VALUES(1,'2026-08-20',28,?,?,1,?,0.1,9.0)",
-        [("밀리아 제거", "https://clinic.kr/signature/clinic-ptt/", 500),
-         ("밀리아 제거", "https://clinic.kr/en/signature/clinic-ptt/", 400),   # 다국어 사본
-         ("점 빼기", "https://clinic.kr/category/notice/", 300),               # 목록 자리
-         ("점 빼기", "https://clinic.kr/special-clinic/syringoma-milia/", 200)])
+        [("무료 배경음악", "https://ecrett.kr/signature/scene-bgm/", 500),
+         ("무료 배경음악", "https://ecrett.kr/en/signature/scene-bgm/", 400),  # 다국어 사본
+         ("브이로그 bgm", "https://ecrett.kr/category/notice/", 300),          # 목록 자리
+         ("브이로그 bgm", "https://ecrett.kr/niche/short-loop-bgm/", 200)])
     conn.commit()
     o = offers(conn, 1)
-    assert "/signature/clinic-ptt" in o, o                  # 노출 많은 순으로 먼저
-    assert "/special-clinic/syringoma-milia" in o, o
+    assert "/signature/scene-bgm" in o, o                   # 노출 많은 순으로 먼저
+    assert "/niche/short-loop-bgm" in o, o
     assert not [x for x in o if x.startswith("/en/")], f"다국어 사본을 안 접었다: {o}"
     assert not [x for x in o if "/category/" in x], f"목록 자리를 안 걸렀다: {o}"
-    msg = user_msg(brief(conn, "clinic"), 5)
-    assert "/signature/clinic-ptt" in msg, "페이지 목록이 재료에 안 실렸다"
+    msg = user_msg(brief(conn, "ecrett"), 5)
+    assert "/signature/scene-bgm" in msg, "페이지 목록이 재료에 안 실렸다"
     assert "Pages this site actually has" in msg, msg
 
     # 키가 없으면 조용히 빈 목록이 아니라 RuntimeError — 화면이 이유를 말해야 한다
     saved = os.environ.pop("OPENROUTER_API_KEY", None)
     try:
-        suggest("clinic", conn=conn)
+        suggest("ecrett", conn=conn)
         raise AssertionError("키가 없는데 그냥 진행했다")
     except RuntimeError as e:
         assert "OPENROUTER_API_KEY" in str(e), e
@@ -416,30 +417,30 @@ def _selfcheck() -> None:
 
     def fake_ask(model, prompt, api_key, locale):
         seen.update(model=model, prompt=prompt, key=api_key, locale=locale)
-        return {"content": '[{"prompt":"밀리아 제거 어디가 잘해?","category":"추천",'
-                           '"aim":"/signature/clinic-ptt/"},'
-                           '{"prompt":"점 빼기 비용 얼마야?","category":"문제해결",'
+        return {"content": '[{"prompt":"무료 배경음악 어디가 잘해?","category":"추천",'
+                           '"aim":"/signature/scene-bgm/"},'
+                           '{"prompt":"브이로그 bgm 비용 얼마야?","category":"문제해결",'
                            '"aim":"/지어낸-페이지"},'
-                           '{"prompt":"clinic 피부과 어때?","category":"브랜드","aim":"brand"}]'}
+                           '{"prompt":"ecrett 써본 사람 있어?","category":"브랜드","aim":"brand"}]'}
 
     # 판 표시가 없던 시절의 질문 하나 — 생성기를 고친 뒤에도 똑같이 활성으로 남던 그것
     conn.execute("INSERT INTO ai_prompts(project_id,prompt,category) "
                  "VALUES(1,'판 표시 전에 들어온 옛 질문','추천')")
     conn.commit()
-    rows = suggest("clinic", n=3, conn=conn, ask=fake_ask)
+    rows = suggest("ecrett", n=3, conn=conn, ask=fake_ask)
     assert len(rows) == 3 and seen["locale"] == "ko-KR" and seen["key"] == "test-key"
-    assert "밀리아 제거" in seen["prompt"], "GSC 검색어가 재료로 안 실렸다"
+    assert "무료 배경음악" in seen["prompt"], "GSC 검색어가 재료로 안 실렸다"
     # 겨냥은 준 재료에 글자 그대로 있을 때만 받는다 — 지어낸 페이지는 None
-    assert [r["aim"] for r in rows] == ["page:/signature/clinic-ptt", None, "brand"], rows
-    assert save(conn, "clinic", rows) == 3
-    assert save(conn, "clinic", rows) == 0, "같은 질문이 두 벌 들어간다"
+    assert [r["aim"] for r in rows] == ["page:/signature/scene-bgm", None, "brand"], rows
+    assert save(conn, "ecrett", rows) == 3
+    assert save(conn, "ecrett", rows) == 0, "같은 질문이 두 벌 들어간다"
     got = conn.execute("SELECT prompt, category, is_active, gen_version, aim FROM ai_prompts "
                        "ORDER BY id").fetchall()
     assert [tuple(r) for r in got] == [
         ("판 표시 전에 들어온 옛 질문", "추천", 1, None, None),   # 옛 행은 건드리지 않는다
-        ("밀리아 제거 어디가 잘해?", "추천", 1, GEN_VERSION, "page:/signature/clinic-ptt"),
-        ("점 빼기 비용 얼마야?", "문제해결", 1, GEN_VERSION, None),
-        ("clinic 피부과 어때?", "브랜드", 1, GEN_VERSION, "brand")], [tuple(r) for r in got]
+        ("무료 배경음악 어디가 잘해?", "추천", 1, GEN_VERSION, "page:/signature/scene-bgm"),
+        ("브이로그 bgm 비용 얼마야?", "문제해결", 1, GEN_VERSION, None),
+        ("ecrett 써본 사람 있어?", "브랜드", 1, GEN_VERSION, "brand")], [tuple(r) for r in got]
     # 사람이 직접 적은 질문은 0 — 구버전(NULL)과 섞이면 방금 넣은 질문이 "다시 만들라"에 뜬다
     assert db.add_ai_prompts(conn, 1, [{"prompt": "사람이 적은 질문입니다"}]) == 1
     hand = conn.execute("SELECT gen_version FROM ai_prompts WHERE prompt='사람이 적은 질문입니다'"

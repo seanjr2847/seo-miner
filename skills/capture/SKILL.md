@@ -1,6 +1,6 @@
 ---
 name: capture
-description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Capture 전용) — GSC 실적, 순위, 키워드/롱테일 발굴, AI 인용 체크(ChatGPT·Perplexity·Gemini가 누굴 인용하는지), 인용 갭, SEO 기회, 가시성 리포트. 사용 시점 — "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘" 같은 요청 전부, 그리고 새 사이트(game/local_clinic/saas/directory) 추적 온보딩.
+description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Capture 전용) — GSC 실적, 순위, 키워드/롱테일 발굴, AI 인용 체크(ChatGPT·Perplexity·Gemini가 누굴 인용하는지), 인용 갭, SEO 기회, 가시성 리포트. 사용 시점 — "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘" 같은 요청 전부, 그리고 새 사이트(game/local_business/saas/directory) 추적 온보딩.
 ---
 
 # capture — 개인용 검색·AI 가시성 Capture 엔진
@@ -78,7 +78,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
 `gsc_property` 를 도메인에서 추정하므로 **2번의 대조는 한 번 해 준다**.
 
-1. **인터뷰는 4문항이다** — 타입(game|local_clinic|saas|directory), 도메인,
+1. **인터뷰는 4문항이다** — 타입(game|local_business|saas|directory), 도메인,
    **언어-지역**, 시드 키워드 3~10개. `projects/_presets.yaml`에서 타입 프리셋을
    읽고 그 각도에 맞춰 질문을 구체화한다. 나머지는 **묻지 않는다**:
    - `locale` — **사용자가 고른다.** 도메인·사용자가 쓰는 언어에서 추정한 값을
@@ -92,7 +92,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
      판별해 제 언어 로케일을 받는다(`db.keyword_locale`).
    - `tools` — directory·saas 타입에서만 묻는다. 이 두 타입은 비면 남의 브랜드
      카탈로그가 비어서 striking_distance에 노이즈가 흘러든다 (`scoring.md` 1a).
-     game·local_clinic은 해당 없음.
+     game·local_business은 해당 없음.
    - `brand_aliases`·`competitors_manual` — 여기서 묻지 않는다. `/capture keywords`
      단계에서 실제 후보 목록을 보면서 채운다. 빈 화면에 대고 답하는 것보다
      그때 답이 정확하고, 값을 보기 전에 물으면 그냥 마찰이다.
@@ -305,7 +305,7 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
   도메인을 직접 줄 수도 있다).
 
 `pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯
-({지역}·{기온}·{시술} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은
+({지역}·{기온}·{서비스} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은
 `references/scoring.md` 1b절.
 
 ### /capture run {P} — 풀런

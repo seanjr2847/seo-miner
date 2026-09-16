@@ -84,7 +84,7 @@ SHAPES: dict[str, dict] = {
               "마지막은 '바꾼 것' 표: 진단 항목 | 전 | 후. 진단 항목은 **전부** 한 줄씩 — "
               "안 바꿨으면 후 칸에 '안 바꿈'과 이유. 진단에 없는 것을 바꿨으면 왜 바꿨는지 한 줄."],
         graph="",
-        rules=["사실(수치·가격·효능·이력)은 세 곳에서만 가져옵니다: 이 요청문의 표, 직접 열어 "
+        rules=["사실(수치·가격·사례·이력)은 세 곳에서만 가져옵니다: 이 요청문의 표, 직접 열어 "
                "확인한 이 페이지, 직접 열어 본 상위 글(남의 주장이면 그 주소를 달아서). "
                "'지금 이 페이지 상태'가 비어 있으면 페이지를 열어 확인한 값으로 채웁니다. "
                "어디에도 없는 것은 지어내지 않고 [확인 필요]로 남깁니다.",
@@ -130,7 +130,7 @@ SHAPES: dict[str, dict] = {
                "본문을 새로 쓰지 않습니다 — 옮길 문단을 가리키는 것까지입니다.",
                "남는 페이지의 title·H1 은 남는 묶음 한 벌이 맡습니다. 검색어마다 하나씩 "
                "만들지 않습니다.",
-               "수치·후기·효능을 지어내지 않습니다. 모르는 것은 [확인 필요]로 남깁니다.",
+               "수치·후기·사례를 지어내지 않습니다. 모르는 것은 [확인 필요]로 남깁니다.",
                RULE_READ_PAGE],
         slot="떼어낼 묶음의 검색어로 상위에 있는 페이지 2~3개의 제목을 여기에 붙이면, "
              "그 의도를 경쟁사는 따로 된 지면으로 받는지 짐작이 아니라 비교로 봅니다.",
@@ -156,7 +156,7 @@ SHAPES: dict[str, dict] = {
                "순서와 관점은 우리 것으로.",
                "저자·자격·경력을 지어내지 않습니다. 무엇이 필요한지까지만 말하고 이름은 "
                "[저자] 자리로 비워 둡니다.",
-               "수치·후기·효능은 지어내지 않습니다. 근거가 필요한 자리는 [확인 필요]로 "
+               "수치·후기·사례는 지어내지 않습니다. 근거가 필요한 자리는 [확인 필요]로 "
                "비워 둡니다.",
                "한 글이 한 검색 의도에 답합니다. 두 의도가 섞이면 글을 둘로 나누자고 "
                "말해 주세요.",
@@ -634,10 +634,10 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)'}"
              + ("" if sc or not fresh else " — 정적 HTML 기준"))
     # Person 이 있으면 신뢰 신호(저자)가 "없다"는 전제가 틀릴 수 있다 — 그게 글쓴이인지
-    # 소개 대상(원장·모델)인지는 스키마 이름만으로 모른다.
+    # 글이 소개하는 인물(구성원·전문가 프로필)인지는 스키마 이름만으로 모른다.
     if any(str(x).lower() == "person" for x in sc):
-        L.append("  - Person 이 있습니다. 이 글의 저자(author)인지, 소개하는 사람(원장·의료진)인지 "
-                 "열어서 확인합니다 — 저자면 신뢰 신호의 저자는 '있음'입니다.")
+        L.append("  - Person 이 있습니다. 이 글의 저자(author)인지, 글이 소개하는 인물(인물 "
+                 "프로필)인지 열어서 확인합니다 — 저자면 신뢰 신호의 저자는 '있음'입니다.")
     # 추출성 — "인용될 블록이 있는가"의 재료. 판정은 scoring.extract_advice(AI 종류만)가
     # 하고, 여기는 사실만 싣는다. 옛 행(칸이 NULL)에는 이 줄이 없다 — "표 0" 을 지어낸다.
     structured = scoring._has_extract_fields(a)
@@ -969,7 +969,7 @@ def _ctr_lines(r: dict | None, pages: list[dict]) -> list[str]:
          + (f" — 클릭률 {actual:.1f}%, 이 순위 기대치 {expected}%" if imp >= scoring.CTR_GAP_MIN_IMP
             else f" (노출이 {scoring.CTR_GAP_MIN_IMP} 미만이라 클릭률 비율은 흔들립니다)")
          + ". 순위를 더 올려도 이대로면 클릭은 늘지 않습니다 — 검색결과에 보이는 title·설명, "
-           "검색 의도(상위 결과가 설명 글인지 업체·가격인지)부터 봅니다."]
+           "검색 의도(상위 결과가 설명 글인지 제품·서비스 소개인지)부터 봅니다."]
     if pos < scoring.STRIKING_LO:
         L.append(f"- 이미 상단 3위권({pos:g}위)입니다. 순위로 더 할 일은 없고, 다음 적재에서 이 "
                  "기회는 닫힐 수 있습니다 — 이 요청문의 일은 클릭입니다.")
@@ -1565,8 +1565,22 @@ query_intent = scoring.query_intent
 _intent_share = scoring.intent_share
 
 
+def site_of(ctx: dict) -> scoring.SiteWords:
+    """이 페이로드가 말하는 사이트 — 검색어의 '지역' 판정에 넘긴다.
+
+    지명은 사이트마다 다르게 읽힌다(미국 사이트에 서울은 제 자리가 아니고, 이름에
+    지명이 든 사이트의 제 이름 검색어는 자리가 아니다). 정본은 dashboard.gather 가
+    싣는 payload 의 project 한 줄이다 — 여기서 DB 를 다시 읽지 않는다.
+    """
+    p = ctx.get("project") or {}
+    return scoring.site_words(locale=str(p.get("locale") or ""),
+                              domain=str(p.get("domain") or ""),
+                              aliases=[str(p.get("name") or "")])
+
+
 def _page_queries(url: str, ctx: dict) -> list[dict]:
     """이 페이지가 첫째(노출 최대)로 걸린 검색어 전부 — page_of 와 같은 규칙, 노출 순."""
+    site = site_of(ctx)
     rows = []
     for q, prs in (ctx.get("query_pages") or {}).items():
         if not prs or prs[0].get("page") != url:
@@ -1574,7 +1588,7 @@ def _page_queries(url: str, ctx: dict) -> list[dict]:
         p = prs[0]
         rows.append({"query": q, "impressions": p.get("impressions") or 0,
                      "clicks": p.get("clicks") or 0, "position": p.get("position"),
-                     "intent": query_intent(q)})
+                     "intent": query_intent(q, site)})
     return sorted(rows, key=lambda r: (-r["impressions"], r["query"]))
 
 
@@ -1613,7 +1627,7 @@ def _page_query_lines(o: dict, rows: list[dict]) -> list[str]:
                  + " — 의도는 낱말로 가른 추정입니다. 상위 글을 열어 실제로 무엇이 걸리는지로 확인합니다.")
     elif total > 0:
         L.append(f"노출이 {_n(total)}뿐이라 의도 비율로 단정하지 않습니다. 의도 칸은 낱말로 가른 "
-                 "추정입니다 — 상위 글을 열어 이 검색어에 실제로 어떤 글(설명·업체·가격)이 "
+                 "추정입니다 — 상위 글을 열어 이 검색어에 실제로 어떤 글(설명·제품·서비스)이 "
                  "걸리는지로 정합니다.")
     same = _shared_word(rows)
     if same:
@@ -1915,7 +1929,8 @@ def _selfcheck() -> None:
         assert "## 답의 형식" in t and "## 규칙" in t, name
     assert json.dumps(shapes_payload("ko-KR"), ensure_ascii=False)
     assert query_intent("syringoma vs milia") == "비교"
-    assert query_intent("milia and syringoma treatment") == "치료·구매"
+    assert query_intent("milia and syringoma treatment") == "해결"
+    assert query_intent("milia removal price") == "구매"   # 값이 붙으면 '산다' 칸이다
     assert query_intent("how to remove milia") == "방법"
     assert query_intent("syringoma") == INTENT_DEFAULT
     assert {"H2", "외부 링크", "비교"} <= set(DELIVER_BY_TAG)

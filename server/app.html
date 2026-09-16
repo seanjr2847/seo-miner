@@ -314,8 +314,10 @@ footer a:hover { color:var(--patina); }
 
 <script>
 const $ = id => document.getElementById(id);
-const TYPES = [["saas","SaaS / 웹 서비스"],["directory","디렉터리 / 목록형"],["game","게임"],
-               ["local_clinic","지역 비즈니스"]];
+// 사이트 종류도 서버가 실어 보낸다(dashboard.PROJECT_TYPES) — 사본을 여기 두지 않는다.
+// 이 화면은 라벨만 그린다: 등록하는 사람이 id 를 쓸 일이 없다(로컬 설정 화면은 반대다 —
+// 거기선 사용자가 그 id 를 파일에 적으므로 `id — 라벨` 로 그린다).
+const TYPES = window.__TYPES__ || [["saas", "웹 서비스 · 앱"]];
 // 언어-지역 목록은 서버가 실어 보낸다(serp_adapter.LOCALES) — 사본을 여기 두지 않는다.
 const LOCALES = window.__LOCALES__ || [["ko-KR", "한국어 · 한국"]];
 // 서치콘솔 권한 등급. 미확인 계정은 실적 API 가 막혀 있어 분석이 반드시 실패한다.
@@ -406,7 +408,7 @@ async function load() {
         return '<div class="prop off"><input type="checkbox" disabled>' +
                '<span class="pname">' + pname(p.property) + '</span>' +
                '<span class="lv bad">소유 확인 필요</span></div>';
-      const opts = TYPES.map(t => '<option value="' + t[0] + '">' + t[1] + '</option>').join("");
+      const opts = TYPES.map(t => '<option value="' + esc(t[0]) + '">' + esc(t[1]) + '</option>').join("");
       // 언어-지역은 사이트마다 고른다 — 어느 나라 검색 결과에서 잴지가 여기서 정해진다.
       const lopts = LOCALES.map(l => '<option value="' + esc(l[0]) + '"' +
         (l[0] === (CARRY.locale || "ko-KR") ? " selected" : "") + '>' + esc(l[1]) + '</option>').join("");

@@ -117,6 +117,22 @@ def _vendor_script() -> str:
     return _VENDOR[0]
 
 
+# 사이트 종류 — id 와 라벨이 한 벌이다. 고르는 자리는 둘(로컬 설정 폼 settings.html,
+# 호스팅 등록 화면 server/app.html)이고 둘 다 이 표에서 받는다: 설정 폼은 조립이
+# <option> 으로 채우고, 등록 화면은 server/app.py 가 window.__TYPES__ 로 싣는다
+# (serp_adapter.LOCALES 와 같은 길이다). 라벨은 **혼자 서야** 한다 — 등록 화면은
+# id 를 안 보여 준다 — 그러면서 id 를 되풀이하지 않는다: 설정 폼은 `id — 라벨` 로
+# 그리고(사용자가 ~/.capture/projects/*.yaml 에 그 id 를 직접 적는다), 그 자리에서
+# `directory — 디렉터리…` 처럼 겹치면 읽히지 않는다. 표기 규칙은 화면마다 다르되
+# **문구는 한 벌**이다. 순서도 여기가 정본이다(흔한 것부터).
+PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
+                 ("game", "게임"),
+                 ("local_business", "지역 비즈니스"),
+                 ("directory", "목록 · 디렉터리"))
+# 받는 쪽 검증이 쓰는 id 만 — 사본이 아니라 위 표에서 뽑은 것이다.
+PROJECT_TYPE_IDS = tuple(i for i, _ in PROJECT_TYPES)
+
+
 def _assemble(variant: str = "local") -> bytes:
     """화면 조각을 한 장으로 잇는다 — 박제본(/capture report)은 서버 없이 열려야 한다.
 
@@ -157,12 +173,18 @@ def _assemble(variant: str = "local") -> bytes:
     locale_opts = "".join(f'<option value="{htmlsafe.attr(c)}">'
                           f"{htmlsafe.attr(c)} — {htmlsafe.attr(t)}</option>"
                           for c, t in serp_adapter.LOCALES)
+    # 사이트 종류도 같은 길이다(PROJECT_TYPES). 이 화면은 id 를 보여 준다 — 언어-지역
+    # 과 같은 `id — 라벨` 꼴이다. 사용자가 ~/.capture/projects/*.yaml 에 적는 게 그 id 다.
+    type_opts = "".join(f'<option value="{htmlsafe.attr(i)}">'
+                        f"{htmlsafe.attr(i)} — {htmlsafe.attr(t)}</option>"
+                        for i, t in PROJECT_TYPES)
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
                 f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VENDOR-->", _vendor_script(), 1)
-            .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1))
+            .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1)
+                                          .replace("<!--TYPE_OPTIONS-->", type_opts, 1))
             .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
             .encode("utf-8"))
 
@@ -207,7 +229,6 @@ CHOICE_FIELDS = {doctor.MODE_ENV: doctor.MODES, doctor.TOOL_ENV: doctor.TOOLS,
                  doctor.TERMINAL_ENV: doctor.TERMINALS}
 KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
               "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD") + tuple(CHOICE_FIELDS)
-PROJECT_TYPES = ("game", "local_clinic", "saas", "directory")
 ENV_FILE = db.CAPTURE_HOME / "env"
 
 # 로컬 전용이라 인증이 없다. 그런데 브라우저는 아무 웹페이지에서나 127.0.0.1로 POST를
@@ -315,8 +336,8 @@ def create_project(f: dict) -> dict:
     name = str(f.get("name", "")).strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", name):
         return {"ok": False, "error": "이름은 영문·숫자·-·_ 로 40자까지 (파일명이 됩니다)"}
-    if f.get("type") not in PROJECT_TYPES:
-        return {"ok": False, "error": f"종류는 {'/'.join(PROJECT_TYPES)} 중 하나"}
+    if f.get("type") not in PROJECT_TYPE_IDS:
+        return {"ok": False, "error": f"종류는 {'/'.join(PROJECT_TYPE_IDS)} 중 하나"}
     domain = str(f.get("domain", "")).strip()
     if not domain:
         return {"ok": False, "error": "도메인을 입력해 주세요 (예: example.com)"}
@@ -1346,7 +1367,7 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
 
     # 한 페이지에 두 의도 — 판정을 여기서 다시 돌린다. query_pages 는 기회·순위의
     # 검색어만 싣기 때문에 그 페이지에 걸린 검색어 전부를 갖지 못한다: 요청문이 그걸로
-    # 다시 세면 판정("치료·구매 30")과 표(검색어 한 줄)가 어긋난다. 검출기가 낸 행을
+    # 다시 세면 판정("해결 30")과 표(검색어 한 줄)가 어긋난다. 검출기가 낸 행을
     # 그대로 실어 양쪽이 같은 숫자를 말하게 한다.
     intent_splits = scoring.intent_split(conn, pid, at=at) if any(
         o["kind"] == "intent_split" for o in opps) else []

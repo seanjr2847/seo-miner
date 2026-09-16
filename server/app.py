@@ -360,7 +360,10 @@ def home(request: Request):
                      # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
                      __STAGES__=stage.STAGE_LABELS,
                      # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES)
-                     __LOCALES__=serp_adapter.LOCALES)
+                     __LOCALES__=serp_adapter.LOCALES,
+                     # 사이트 종류(id·라벨)도 한 벌이다(dashboard.PROJECT_TYPES) —
+                     # 받는 쪽 검증이 보는 표를 화면이 그대로 그린다.
+                     __TYPES__=dashboard.PROJECT_TYPES)
     return _html(doc, "사이트 관리 — seo-miner")
 
 

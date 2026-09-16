@@ -89,7 +89,7 @@
 **2단계 — 패턴 클러스터링 (코드 아님, Claude 판단):**
 후보들을 "변수 슬롯 하나만 다른 템플릿"으로 묶는다.
 예: `20도 옷차림 / 15도 옷차림 / 기온별 옷차림` → 템플릿 `{기온}도 옷차림`.
-전형적 슬롯: {지역} {기온} {시술} {장르} {경쟁제품} {카테고리} {날짜·시즌}.
+전형적 슬롯: {지역} {기온} {서비스} {장르} {경쟁제품} {카테고리} {날짜·시즌}.
 같은 템플릿에 **3개 이상** 쿼리가 모이면 군집 성립. GSC는 저노출 롱테일을
 익명화하므로 보이는 군집은 빙산의 일각 — 슬롯의 전체 값 공간(기온 전 구간,
 전 지역 등)이 실제 캠페인 크기다.
@@ -106,27 +106,54 @@
 (a) 페이지마다 실데이터로 속을 채울 것(data-rich), (b) 일괄이 아니라 단계적
 롤아웃 + 색인·성과 확인 후 확장, (c) 성과 없는 페이지 정리 QA를 전제로 제안한다.
 
-**프리셋 편향:** directory 최우선(존재 이유 그 자체), saas·local_clinic 유효
-({경쟁제품} alternative, {지역}×{시술}), game은 {장르}·{유사작} 축으로 제한적.
+**프리셋 편향:** directory 최우선(존재 이유 그 자체), saas·local_business 유효
+({경쟁제품} alternative, {지역}×{서비스}), game은 {장르}·{유사작} 축으로 제한적.
 
 ### 1c. 인텐트 분류 — 코드 기본값, Claude는 보정만
 
 키워드의 인텐트(`keywords.intent`)는 `scoring.classify_intent()`가
 결정적으로 분류한다 — 한·영 토큰을 그대로 매칭하고 우선순위는
-**transactional > commercial > navigational > info**다. 토큰 사전은
-`INTENT_TRANSACTIONAL` / `INTENT_COMMERCIAL` / `INTENT_NAVIGATIONAL`
-(`scoring.py` 상단):
+**transactional > commercial > navigational > info**다.
 
-- transactional: 구매·가격·다운로드·할인·쿠폰 + buy·price·pricing·download·
-  discount·coupon
-- commercial: 후기·리뷰·비교·추천·순위·랭킹 + vs·best·review·reviews·
-  alternative·alternatives·top·compare
-- navigational: 로그인·공식·홈페이지 + login·official·homepage
-- info: 위 어디에도 안 걸리는 나머지 (기본값)
+**토큰 사전의 정본은 `scoring.INTENT_WORDS` 한 표다** — 낱말을 여기 옮겨 적지
+않는다(그러면 그게 두 벌째고, 늘 한쪽만 낡는다). 표는 `(한국어 라벨, 4분법 축,
+낱말)` 세 칸이고 `INTENT_TRANSACTIONAL` / `INTENT_COMMERCIAL` /
+`INTENT_NAVIGATIONAL` 은 거기서 `_axis_words()` 로 **파생**한다. info 는 어디에도
+안 걸리는 나머지다(기본값).
 
-같은 토큰이 여러 사전에 있어도 우선순위가 이긴다 — `best pricing`은
-`pricing`이 transactional에 속하므로 transactional이 commercial(best)을 이긴다.
-`buy reviews`는 `buy`(transactional)가 `reviews`(commercial)를 이긴다.
+같은 표를 **두 물음으로** 읽는다:
+
+- `query_intent(q, site)` → 한국어 라벨. 물음은 "이 묶음에 무슨 글을 쓸까"라
+  **표에 적힌 순서**가 이긴다 — `how to remove milia`는 방법 글이므로 `방법`이다.
+  요청문 근거표의 「의도」 칸에 이 라벨이 찍힌다.
+- `classify_intent(q)` → 4분법 축. 물음은 "돈에 얼마나 가까운가"라 **축
+  우선순위**가 이긴다 — `best pricing`은 `pricing`(transactional)이
+  `best`(commercial)를 이기고, `buy reviews`는 `buy`가 `reviews`를 이긴다.
+
+물음이 둘이라 순서는 갈릴 수 있지만 **낱말은 어긋날 수 없다**. 한 칸에만 걸리는
+검색어는 두 함수가 반드시 같은 갈래로 읽는다(`test_capture.py`가 양방향 대조).
+
+`KEEP_INTENTS`(남의 브랜드여도 기회로 두는 자리)는 `비교` 칸의 **부분집합**이어야
+한다 — 검사가 못 박는다. 일부러 좁다: `{브랜드} 후기`는 걸러야 하고
+`{브랜드} alternative`는 남겨야 한다.
+
+**'고친다'와 '산다'는 다른 칸이다.** 제거·치료·수리·해결(그리고 그걸 맡길
+곳 — 병원·업체·agency)은 **거래가 아니라 정보성**이다. `can you remove milia
+under eyes`도 `fotor remove background`도 사려는 말이 아니라 묻는 말이고, 답은
+결제창이 아니라 글이다. **transactional 축은 값을 묻고 사는 칸 하나뿐이다**
+(가격·구독·결제·다운로드). 한때 둘을 한 칸에 묶었더니 활성 키워드 432개 중
+64개가 뒤집혔고, 화면(`analysis.html`의 `AN_INTENT`)이 transactional을
+"사려는 중"이라고 읽어 주는 만큼 그 오분류는 그대로 눈에 나갔다.
+표에서는 **사는 칸이 고치는 칸보다 위**다(첫 일치가 이긴다) — `밀리아 제거
+가격`은 가격 글, `밀리아 제거`는 시술 글이다. 두 칸의 이름·낱말·순서는 표에서
+본다.
+
+**지역은 축이 없다.** 의도가 아니라 자리를 좁히는 말이라 정보성으로 접는다.
+`지역` 칸에는 **지명 없이도 서는 꼴**(`near me`·`근처`)만 적는다 — 지명 자체는
+`site_words()`가 그 사이트의 자리(`REGION_PLACE[지역코드]`)로만 읽는다. 세상의
+지명을 늘어놓지 않는 이유는 그게 곧 두 벌째 목록이고 늘려도 언제나 모자라기
+때문이다. 그래서 `korean ptt`는 지역이 아니고(언어 형용사), 미국 사이트에
+`서울`은 제 자리가 아니다.
 
 `scoring.py load`(5절)가 시작 시 `_backfill_intents`를 한 번 부른다 —
 **`intent`가 NULL인 활성 키워드만 채우고**, 이미 적힌 값은 절대 덮지 않는다.
@@ -184,7 +211,7 @@ score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  �
 ```
 
 `w_fit`(관련성)의 기본값은 `scoring._fit_of()`의 결정적 근사다 — 0.5 중립이면
-`local_clinic`(w_fit=0.45) 같은 프리셋에서 모든 기회가 점수 면적 한가운데만
+`local_business`(w_fit=0.45) 같은 프리셋에서 모든 기회가 점수 면적 한가운데만
 차지해서 순위가 안 갈라지므로, 활성 키워드·클러스터 매칭 정도로 단계값을
 준다:
 
@@ -200,12 +227,12 @@ score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  �
 | type | w_demand | w_reach | w_fit | w_ai |
 |------|---------|---------|-------|------|
 | game | .30 | .25 | .25 | .20 |
-| local_clinic | .25 | .20 | .45 | .10 |
+| local_business | .25 | .20 | .45 | .10 |
 | saas | .20 | .20 | .15 | .45 |
 | directory | .40 | .25 | .20 | .15 |
 
 미등록 type은 saas 계수로 폴백. 프리셋별 방향(saas는 w_ai 최상향 — best-of
-리스트 인용이 전장, local_clinic은 w_fit 상향 — 네이버 미측정 한계는 reasoning에
+리스트 인용이 전장, local_business은 w_fit 상향 — 네이버 미측정 한계는 reasoning에
 명시, directory는 수요·coverage 우선)은 이 표에 굳어 있다.
 
 **Claude 재량으로 남은 것:** (a) 관련성 보정 — `metrics["fit"]`를 직접

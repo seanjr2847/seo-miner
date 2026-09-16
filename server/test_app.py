@@ -359,7 +359,7 @@ def demo() -> None:
                 finally:
                     os.environ.pop("CAPTURE_DB", None)
                 assert dashboard.create_project(
-                    {"name": "p1", "type": "local_clinic", "domain": "p1.com"})["ok"]
+                    {"name": "p1", "type": "local_business", "domain": "p1.com"})["ok"]
         finally:
             conn.close()
         # 공유 라우트(dashboard.ROUTES 를 도는 루프가 세운 것) — 로그인 뒤 실제로

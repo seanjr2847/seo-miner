@@ -1639,7 +1639,7 @@ def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
 
     판정(scoring.intent_split)은 DB 에서, 요청문의 표(brief._page_queries)는 페이로드에서
     같은 물음에 답한다 — "이 검색어의 노출 1등 페이지가 이 페이지인가". 한쪽만 바뀌면
-    어느 파일도 혼자서는 안 이상하다: 판정은 "치료·구매 30" 이라 말하는데 요청문 표에는
+    어느 파일도 혼자서는 안 이상하다: 판정은 "해결 30" 이라 말하는데 요청문 표에는
     그 검색어가 한 줄도 없는 요청문이 나간다.
 
     그리고 가르기(split_page)와 고치기(fix_page)는 같은 페이지에 정반대를 시킨다.
@@ -1685,6 +1685,73 @@ def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
                    if brief.shape_of(k, has_page=True) == "split_page"}
     assert split_kinds == {"intent_split"}, split_kinds
     assert split_kinds <= brief.URL_KINDS,         f"가르기 꼴인데 대상이 주소가 아니다 — brief.page_of 가 엉뚱한 페이지를 고른다: {split_kinds - brief.URL_KINDS}"
+
+
+def test_seam_40_project_types_are_one_list():
+    """40) 사이트 종류는 id 도 라벨도 한 벌이다 — 정본은 dashboard.PROJECT_TYPES.
+
+    id 는 다섯 곳에 흩어져 산다: 받는 쪽 검증(dashboard.PROJECT_TYPE_IDS), 점수
+    계수(scoring.WEIGHTS), 온보딩 few-shot(_presets.yaml), 그리고 화면 둘 — 로컬
+    settings.html 과 호스팅 app.html. 한 곳만 고치면 나머지가 조용히 모른 척한다:
+    화면에만 넣은 종류는 서버가 "종류는 …중 하나"로 거부하고, WEIGHTS 에만 빠진
+    종류는 거부당하는 대신 saas 계수로 **조용히** 떨어진다(scoring.score 의 폴백
+    `WEIGHTS.get(t) or WEIGHTS["saas"]`) — w_fit 0.45 짜리 프리셋이 0.15 로 바뀌어도
+    화면 어디에도 안 나온다. local_clinic→local_business 리네임이 딱 그 자리였다.
+
+    라벨도 한 벌이다. 예전엔 두 벌이었고(app.html "SaaS / 웹 서비스" ↔ settings.html
+    "saas — 서비스·앱") 같은 값에 두 이름이었다. 이제 둘 다 PROJECT_TYPES 에서 받는다 —
+    settings.html 은 조립이 채우는 <!--TYPE_OPTIONS--> 로, app.html 은 server/app.py 가
+    싣는 window.__TYPES__ 로(언어-지역이 LOCALES 를 받는 것과 같은 길이다).
+    **표기 규칙만 화면마다 다르다**: 설정 폼은 `id — 라벨`(사용자가 그 id 를
+    ~/.capture/projects/*.yaml 에 직접 적는다), 등록 화면은 라벨만(id 를 쓸 일이 없다).
+    그래서 아래는 두 화면에서 **라벨 문구**가 같은지를 본다 — id 접두는 벗겨 내고 본다.
+    """
+    import dashboard
+    import scoring
+    canon = set(dashboard.PROJECT_TYPE_IDS)
+    assert len(canon) == len(dashboard.PROJECT_TYPE_IDS), "PROJECT_TYPES 에 같은 종류가 두 번"
+    labels = dict(dashboard.PROJECT_TYPES)
+    assert set(labels) == canon and all(labels.values()), "PROJECT_TYPES 에 라벨 없는 종류가 있다"
+
+    assert set(scoring.WEIGHTS) == canon, (
+        f"점수 계수와 종류 목록이 어긋난다 — 모자란 쪽은 saas 계수로 조용히 떨어진다: "
+        f"{set(scoring.WEIGHTS) ^ canon}")
+
+    presets = ROOT / "skills" / "capture" / "projects" / "_presets.yaml"
+    keys = set(re.findall(r"^([a-z_]+):", presets.read_text("utf-8"), re.M))
+    assert keys == canon, f"온보딩 프리셋과 종류 목록이 어긋난다: {keys ^ canon}"
+
+    # 로컬 설정 폼 — 템플릿은 사본을 안 갖고, 조립본에서 `id — 라벨` 로 채워져 나온다
+    sett = ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"
+    assert '<select id="p-type"><!--TYPE_OPTIONS--></select>' in sett.read_text("utf-8"), \
+        "설정 폼의 종류가 조립이 채우는 <select> 가 아니다 — 사본이거나 자유 입력이다"
+    html = dashboard._assemble("local").decode("utf-8")
+    form = html.split('<select id="p-type">')[1].split("</select>")[0]
+    opts = dict(re.findall(r'<option value="([a-z_]+)">([^<]+)</option>', form))
+    assert set(opts) == canon, f"설정 화면 고르개와 종류 목록이 어긋난다: {set(opts) ^ canon}"
+    for i, t in opts.items():
+        assert t == f"{i} — {labels[i]}", f"설정 화면 라벨이 정본과 다르다: {t!r}"
+
+    # 호스팅 화면 — 리포 밖(플러그인 설치본)에는 server/ 가 없다
+    app_html = ROOT / "server" / "app.html"
+    if app_html.exists():
+        src = app_html.read_text("utf-8")
+        assert "window.__TYPES__" in src, \
+            "app.html 이 서버가 실어 보낸 종류 목록을 안 읽는다 — 사본이 되살아났다"
+        # 폴백 한 줄(서버가 안 실었을 때)까지 정본이어야 한다 — 거기 옛 문구가 남으면
+        # 그 화면만 조용히 두 벌로 돌아간다.
+        m = re.search(r"window\.__TYPES__ \|\| (\[\[.*?\]\]);", src, re.S)
+        assert m, "app.html 의 TYPES 폴백을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
+        for i, t in re.findall(r'\["([a-z_]+)", "([^"]+)"\]', m.group(1)):
+            assert i in canon and t == labels[i], f"호스팅 화면 폴백 라벨이 정본과 다르다: {t!r}"
+        app_src = (ROOT / "server" / "app.py").read_text("utf-8")
+        assert "__TYPES__=dashboard.PROJECT_TYPES" in app_src, \
+            "app.py 가 app.html 에 종류 목록을 안 싣는다 — 화면 고르개가 빈다"
+
+    # 옛 이름이 어디에도 안 남았다 — 남으면 그 자리만 saas 계수로 떨어진다
+    for p in (presets, sett, app_html):
+        if p.exists():
+            assert "local_clinic" not in p.read_text("utf-8"), f"{p.name} 에 옛 종류 이름이 남았다"
 
 
 if __name__ == "__main__":

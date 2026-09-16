@@ -107,7 +107,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  type TEXT NOT NULL DEFAULT 'saas',          -- game|local_clinic|saas|directory
+  type TEXT NOT NULL DEFAULT 'saas',          -- game|local_business|saas|directory
   domain TEXT NOT NULL,
   locale TEXT DEFAULT 'ko-KR',
   gsc_property TEXT,                          -- e.g. sc-domain:example.com
@@ -742,6 +742,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 이제 아무도 쓰지 않는 표시라(test_seams 가 못 박는다) 이 조건이 곧 "한 번만"이다.
     if conn.execute("SELECT 1 FROM competitors WHERE source='auto_serp' LIMIT 1").fetchone():
         retire_auto_serp(conn)
+
+    # 타입 이름에서 업종을 뺐다(local_clinic → local_business). 나머지 셋(game·saas·
+    # directory)은 제품 유형인데 하나만 업종명이라 분류 축이 섞여 있었고, 그 이름이
+    # 프리셋·프롬프트를 병원 쪽으로 물들였다. 이름만 갈고 값을 두면 조용히 틀린다:
+    # scoring.WEIGHTS 조회가 못 찾고 saas 로 떨어져 w_fit 이 0.45→0.15 가 된다.
+    if conn.execute("SELECT 1 FROM projects WHERE type='local_clinic' LIMIT 1").fetchone():
+        conn.execute("UPDATE projects SET type='local_business' WHERE type='local_clinic'")
+        conn.commit()
 
 
 # 'auto_serp' 는 두 경로가 함께 쓰던 자동 적재 표시였다. 순위 수집 쪽 규칙이 "검색어 3개

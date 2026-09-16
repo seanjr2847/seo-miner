@@ -194,10 +194,10 @@ def test_load_covers_every_kind():
          (pid, "2026-08-14", 28, "pseo후보", None, 0, 60, 6.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/a", 3, 60, 4.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0),
-         # 의도 갈린 페이지 — 비교 200 · 치료·구매 35(검색어 2)
+         # 의도 갈린 페이지 — 비교 200 · 구매 35(검색어 2)
          (pid, "2026-08-14", 28, "한관종 비립종 차이", "https://e.com/split/", 4, 200, 5.0),
          (pid, "2026-08-14", 28, "한관종 제거 비용", "https://e.com/split/", 1, 20, 9.0),
-         (pid, "2026-08-14", 28, "비립종 제거", "https://e.com/split/", 0, 15, 11.0)])
+         (pid, "2026-08-14", 28, "비립종 제거 가격", "https://e.com/split/", 0, 15, 11.0)])
 
     conn.execute("INSERT INTO keywords(project_id, keyword, cluster, is_active) "
                  "VALUES(?, '미커버키워드', 'c1', 1)", (pid,))
@@ -358,6 +358,132 @@ def test_classify_intent_4_intents_and_priority():
     assert scoring.classify_intent("login 후기 가격") == "transactional"  # 셋 다 있어도 transactional
 
 
+def test_intent_dictionary_is_one_table():
+    """낱말 사전은 한 벌이다 — 4분법 축(classify_intent)과 한국어 라벨(query_intent)이
+    같은 표를 본다.
+
+    두 벌이던 시절: INTENT_COMMERCIAL 에는 alternative·vs·best·추천 가 있는데
+    INTENT_WORDS 의 '비교' 칸에는 없어서, 같은 `hubspot alternative` 를 요청문
+    근거표는 '정보'로, 키워드 인텐트는 'commercial' 로 읽었다.
+    """
+    labels = {label: set(words) for label, _axis, words in scoring.INTENT_WORDS}
+    axes = {label: axis for label, axis, _ in scoring.INTENT_WORDS}
+    # ① 축 집합은 표에서 나온다 — 어느 칸의 낱말도 제 축 집합 안에 있다
+    sets = {"transactional": scoring.INTENT_TRANSACTIONAL,
+            "commercial": scoring.INTENT_COMMERCIAL,
+            "navigational": scoring.INTENT_NAVIGATIONAL}
+    for label, axis, words in scoring.INTENT_WORDS:
+        if axis in sets:
+            assert set(words) <= sets[axis], (label, set(words) - sets[axis])
+    for axis, s in sets.items():
+        got = {w for label, a, ws in scoring.INTENT_WORDS if a == axis for w in ws}
+        assert s == got, (axis, s ^ got)
+    # ② 같은 검색어를 두 분류기가 같은 갈래로 읽는다
+    for q, label in (("hubspot alternative", "비교"), ("best seo tool", "비교"),
+                     ("notion vs obsidian", "비교"), ("디아더피부과 리뷰", "비교"),
+                     ("seo tool 추천", "비교"), ("ecrett pricing", "구매"),
+                     ("milia removal", "해결"), ("chatgpt login", "탐색")):
+        assert scoring.query_intent(q) == label, (q, scoring.query_intent(q))
+        assert scoring.INTENT_AXIS[label] == scoring.classify_intent(q), q
+    # ③ 세 벌째를 못 만든다 — 남의 브랜드를 살려 두는 낱말(KEEP_INTENTS)은 '비교' 칸의
+    #    부분집합이다. 거기에만 적고 표에 안 적으면 또 어긋난다.
+    assert scoring.KEEP_INTENTS <= labels["비교"], scoring.KEEP_INTENTS - labels["비교"]
+    # ④ 라벨↔축은 전단사가 아니다(정보성 칸이 둘) — 그래도 모든 라벨에 축이 있다
+    assert set(axes) | {scoring.INTENT_DEFAULT} == set(scoring.INTENT_AXIS)
+    assert scoring.INTENT_AXIS[scoring.INTENT_DEFAULT] == "info"
+
+
+def test_solving_is_not_buying():
+    """'고친다'(제거·치료·수리·해결)는 '산다'(가격·구매)와 다른 칸이고 축도 다르다.
+
+    둘을 한 칸에 묶었더니 `can you remove milia under eyes`(정보성 질문)와
+    `fotor remove background`(도구 사용법)가 'transactional' 로 찍혔다 — 실측에서
+    활성 키워드 432개 중 64개가 그렇게 뒤집혔다. 화면(analysis 의 AN_INTENT)은
+    transactional 을 "사려는 중"이라고 읽어 주므로 그 오분류는 그대로 눈에 나간다.
+
+    '산다' 쪽만 transactional 이다. 고치는 말은 어느 축 집합에도 안 들어간다(info).
+    """
+    ci, qi = scoring.classify_intent, scoring.query_intent
+    # ① 고치는 쪽은 사는 쪽이 아니다
+    for q in ("can you remove milia under eyes", "fotor remove background",
+              "milia removal", "syringoma treatment", "how to fix 500 error",
+              "밀리아 제거", "여드름 흉터 치료", "보일러 수리"):
+        assert ci(q) != "transactional", (q, ci(q))
+    # ② 사는 쪽은 transactional 그대로다
+    for q in ("밀리아 제거 가격", "notion pricing", "juvelook 비용", "buy ecrett",
+              "free trial", "구독 요금", "앱 다운로드"):
+        assert ci(q) == "transactional", (q, ci(q))
+    # ③ 라벨도 갈린다 — 표 순서가 '산다'를 먼저 읽는다(제거+가격은 가격 글이다)
+    assert qi("밀리아 제거 가격") != qi("can you remove milia under eyes")
+    assert scoring.INTENT_AXIS[qi("밀리아 제거 가격")] == "transactional"
+    assert scoring.INTENT_AXIS[qi("can you remove milia under eyes")] == "info"
+    # ④ 공급자 찾기(clinic·병원·업체·agency)는 아직 거래가 아니다 — 원래 어느 축
+    #    집합에도 없던 낱말이라, 사는 쪽에 넣으면 없던 회귀를 새로 만든다.
+    for q in ("milia removal clinic", "강남 여드름 병원", "seo agency", "이사 업체"):
+        assert ci(q) != "transactional", (q, ci(q))
+
+
+def test_place_intent_is_scoped_to_the_site_not_a_world_list():
+    """'지역'은 세상의 지명 목록이 아니라 **그 사이트의 자리**로 판정한다.
+
+    실물(theotherskin, ko-KR): `korean ptt` 는 그 사이트가 파는 제품인데 'korean'
+    때문에 지역으로 찍혔다. 반대로 noti(ko-KR·saas)의 `7pm in korean`·`korean
+    translation weekly reminder` 11건도 전부 지역이었다 — 'korean' 은 자리가 아니라
+    **언어**를 가리키는 말이다. 그리고 목록에 없는 지명(대구·Austin)은 아예 못 잡았다.
+    """
+    qi = scoring.query_intent
+    kr = scoring.site_words(locale="ko-KR", domain="theotherskin.com", aliases=("디아더피부과",))
+    us = scoring.site_words(locale="en-US", domain="hubspot.com", aliases=("HubSpot",))
+    # ① 언어 형용사는 자리가 아니다 — 제품명·번역 검색어가 지역으로 안 찍힌다
+    assert qi("korean ptt", kr) != "지역", qi("korean ptt", kr)
+    assert qi("korean translation weekly reminder", kr) != "지역"
+    # ② 지명 없이 서는 꼴은 지명 목록과 무관하다 — 목록에 없는 지명이어도 잡힌다
+    assert qi("대구 근처 피부과", kr) == "지역"
+    assert qi("fukuoka dermatologist near me", kr) == "지역"
+    assert qi("austin dermatology nearby") == "지역"          # 사이트를 몰라도 선다
+    # ③ 사이트의 자리만 본다 — 같은 검색어가 사이트에 따라 다르게 읽힌다
+    assert qi("dermatology seoul", kr) == "지역"
+    assert qi("juvelook korea", kr) == "지역"
+    assert qi("dermatology seoul", us) != "지역", "미국 사이트에 서울이 제 자리일 리 없다"
+    assert qi("dermatology seoul") != "지역", "사이트를 모르면 지명은 안 본다"
+    # ④ 자기 이름에 든 지명은 자리가 아니다
+    own = scoring.site_words(locale="ko-KR", domain="seoulbeauty.com", aliases=("Seoul Beauty",))
+    assert qi("seoul beauty lab", own) != "지역"
+    assert qi("seoul beauty lab", kr) == "지역", "남의 사이트에는 그냥 지명이다"
+    # ⑤ 치료·비교가 지역보다 먼저다 (표 순서)
+    assert qi("milia removal seoul", kr) == "해결"
+    assert qi("best dermatology clinics in korea", kr) == "비교"
+    # ⑥ 나라 칸의 열쇠는 고를 수 있는 언어-지역(serp_adapter.LOCALES)의 지역이어야
+    #    한다 — 아무도 못 고르는 지역에 자리를 적어 두면 그 줄은 영영 안 돈다.
+    regions = {c.split("-")[1].upper() for c, _ in serp_adapter.LOCALES if "-" in c}
+    assert set(scoring.REGION_PLACE) <= regions, set(scoring.REGION_PLACE) - regions
+    # 지명은 '지역' 칸에 리터럴로 안 남는다 — 남으면 모든 사이트가 그걸 제 자리로 읽는다
+    placeless = dict((l, w) for l, _a, w in scoring.INTENT_WORDS)["지역"]
+    for words in scoring.REGION_PLACE.values():
+        assert not (set(words) & set(placeless)), (words, placeless)
+
+
+def test_intent_split_reads_the_place_of_its_own_site():
+    """intent_split 은 그 프로젝트의 locale 로 자리를 읽는다 — 판정이 사이트마다 다르다."""
+    conn = db.connect()
+    p = _project(conn, "isplit_place")
+    conn.execute("UPDATE projects SET locale='ko-KR' WHERE id=?", (p["id"],))
+    conn.commit()
+    d = "2026-04-01"
+    _gsc(conn, p["id"], d, 28, "seoul dermatology", "/p/loc", 5, 120, 3.0)
+    _gsc(conn, p["id"], d, 28, "dermatology gangnam", "/p/loc", 2, 90, 4.0)
+    _gsc(conn, p["id"], d, 28, "milia removal", "/p/loc", 1, 40, 8.0)
+    _gsc(conn, p["id"], d, 28, "syringoma treatment", "/p/loc", 1, 30, 9.0)
+    out = scoring.intent_split(conn, p["id"])
+    assert [r["page"] for r in out] == ["/p/loc"], out
+    assert (out[0]["primary"], out[0]["secondary"]) == ("지역", "해결"), out[0]
+    # 같은 데이터라도 미국 사이트면 서울·강남은 제 자리가 아니라 '정보'다 → 갈림이 아니다
+    conn.execute("UPDATE projects SET locale='en-US' WHERE id=?", (p["id"],))
+    conn.commit()
+    assert scoring.intent_split(conn, p["id"]) == []
+    conn.close()
+
+
 def test_backfill_intents_preserves_manual_corrections():
     """_backfill_intents - intent IS NULL 인 활성 키워드만 채움. 보존 확인 핵심.
 
@@ -398,7 +524,7 @@ def test_fit_of_three_tiers():
     """_fit_of - 0.8 active keyword 정확 일치 / 0.65 cluster 매칭 / 0.5 무관.
 
     fit 은 Claude 가 보정하지만, 데이터로 답할 수 있는 건 코드에서 결정적으로
-    박아야 한다 — 0.5 중립만 두면 w_fit 가 큰 local_clinic 같은 프리셋에서
+    박아야 한다 — 0.5 중립만 두면 w_fit 가 큰 local_business 같은 프리셋에서
     모든 기회가 점수 면적 한가운데만 차지한다. coverage 행의 0.65 도 확인.
     """
     conn = db.connect()
@@ -890,7 +1016,7 @@ def test_score_is_deterministic():
         scoring.score("striking_distance", m, "saas")
     # saas 는 w_ai 최상향 (scoring.md 2절 방향)
     assert scoring.score("ai_citation_gap", {"impressions": 100}, "saas") > \
-        scoring.score("ai_citation_gap", {"impressions": 100}, "local_clinic")
+        scoring.score("ai_citation_gap", {"impressions": 100}, "local_business")
 
 
 def test_rank_snapshot_same_day_rerun_is_idempotent():
@@ -1583,7 +1709,7 @@ def test_retire_auto_serp_cleans_only_what_it_made():
 # 실측(brain.db 3사이트·292페이지)에서 나온 규칙이다: 2위 의도가 기본값(정보)인 경우는
 # 거의 다 "같은 의도인데 분류기가 못 가른 것"이었다 — `papular scar` 와 `papular scar
 # treatment` 는 한 페이지가 맞다. 1·2위가 **둘 다 명시 의도**일 때만 진짜 갈림이었고,
-# 그 규칙이 292페이지에서 정확히 한 건(syringoma-milia: 비교 202 · 치료·구매 30)을
+# 그 규칙이 292페이지에서 정확히 한 건(syringoma-milia: 비교 202 · 해결 30)을
 # 남겼다. 그 한 건이 이 검사의 픽스처다.
 
 def test_intent_split_needs_two_named_intents():
@@ -1591,12 +1717,12 @@ def test_intent_split_needs_two_named_intents():
     conn = db.connect()
     p = _project(conn, "isplit1")
     d = "2026-04-01"
-    # 진짜 갈림: 비교 202 · 치료·구매 30
+    # 진짜 갈림: 비교 202 · 해결 30
     _gsc(conn, p["id"], d, 28, "syringoma vs milia", "/x/a", 5, 118, 3.0)
     _gsc(conn, p["id"], d, 28, "milia vs syringoma", "/x/a", 2, 84, 4.0)
     _gsc(conn, p["id"], d, 28, "milia removal seoul", "/x/a", 1, 25, 8.0)
     _gsc(conn, p["id"], d, 28, "syringoma removal", "/x/a", 0, 5, 9.0)
-    # 가짜 갈림: 치료·구매 160 · 정보 150 — 분류 실패일 뿐 같은 주제의 머리말이다.
+    # 가짜 갈림: 해결 160 · 정보 150 — 분류 실패일 뿐 같은 주제의 머리말이다.
     # 두 묶음 다 검색어 2개·노출 하한을 넘겨 둔다 — 다른 하한이 먼저 걸러내면
     # 이 검사는 "명시 의도 둘" 규칙을 안 보게 된다(실제로 그래서 헛돌았다).
     _gsc(conn, p["id"], d, 28, "papular scar treatment", "/x/b", 3, 120, 5.0)
@@ -1606,8 +1732,8 @@ def test_intent_split_needs_two_named_intents():
     out = scoring.intent_split(conn, p["id"])
     assert [r["page"] for r in out] == ["/x/a"], out
     r = out[0]
-    assert (r["primary"], r["primary_impressions"]) == (scoring.INTENT_WORDS[0][0], 202), r
-    assert (r["secondary"], r["secondary_impressions"]) == (scoring.INTENT_WORDS[3][0], 30), r
+    assert (r["primary"], r["primary_impressions"]) == (scoring.query_intent("syringoma vs milia"), 202), r
+    assert (r["secondary"], r["secondary_impressions"]) == (scoring.query_intent("syringoma removal"), 30), r
     assert [q["query"] for q in r["secondary_queries"]] == ["milia removal seoul", "syringoma removal"]
     assert r["impressions"] == 232, r
     conn.close()
@@ -1644,10 +1770,10 @@ def test_intent_split_page_is_the_one_that_ranks_first():
     p = _project(conn, "isplit3")
     d = "2026-04-01"
     _gsc(conn, p["id"], d, 28, "k vs j", "/z/main", 5, 200, 3.0)
-    _gsc(conn, p["id"], d, 28, "k removal", "/z/main", 1, 40, 8.0)
+    _gsc(conn, p["id"], d, 28, "k cost", "/z/main", 1, 40, 8.0)
     _gsc(conn, p["id"], d, 28, "k price", "/z/main", 1, 40, 8.0)
     # 같은 검색어가 딴 페이지에도 걸리지만 노출이 적다 — 그 페이지 몫으로 세면 안 된다
-    _gsc(conn, p["id"], d, 28, "k removal", "/z/other", 0, 3, 30.0)
+    _gsc(conn, p["id"], d, 28, "k cost", "/z/other", 0, 3, 30.0)
     _gsc(conn, p["id"], d, 28, "k price", "/z/other", 0, 3, 30.0)
     _gsc(conn, p["id"], d, 28, "k vs j", "/z/other", 0, 3, 30.0)
     out = scoring.intent_split(conn, p["id"])

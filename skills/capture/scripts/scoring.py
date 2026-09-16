@@ -98,11 +98,11 @@ AI_RIVALS_TOP = 8           # 질문 하나에 싣는 대신 인용된 도메인
 AI_LADDER_CATEGORIES = ("추천", "비교")
 
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
-# local_clinic은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
+# local_business은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
 WEIGHTS = {
     "game":         {"w_demand": 0.30, "w_reach": 0.25, "w_fit": 0.25, "w_ai": 0.20},
-    "local_clinic": {"w_demand": 0.25, "w_reach": 0.20, "w_fit": 0.45, "w_ai": 0.10},
+    "local_business": {"w_demand": 0.25, "w_reach": 0.20, "w_fit": 0.45, "w_ai": 0.10},
     "saas":         {"w_demand": 0.20, "w_reach": 0.20, "w_fit": 0.15, "w_ai": 0.45},
     "directory":    {"w_demand": 0.40, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.15},
 }
@@ -119,21 +119,10 @@ KEEP_INTENTS = {
     "competitor", "competitors", "best", "추천",
 }
 
-# 의도 토큰 사전 (classify_intent). 우선순위는 위에서부터 — transactional 이
-# commercial 을 이기고, commercial 이 navigational 을, 마지막에 info.
-# 기본값은 코드, 보정은 Claude/사람 — NULL 인 활성 키워드만 load() 시작 시 채운다.
-INTENT_TRANSACTIONAL = {
-    "구매", "가격", "다운로드", "할인", "쿠폰",
-    "buy", "price", "pricing", "download", "discount", "coupon",
-}
-INTENT_COMMERCIAL = {
-    "후기", "리뷰", "비교", "추천", "순위", "랭킹",
-    "vs", "best", "review", "reviews", "alternative", "alternatives",
-    "top", "compare",
-}
-INTENT_NAVIGATIONAL = {
-    "로그인", "공식", "홈페이지", "login", "official", "homepage",
-}
+# 의도 토큰 사전(INTENT_TRANSACTIONAL·COMMERCIAL·NAVIGATIONAL)은 여기 있었다.
+# 지금은 INTENT_WORDS 한 표에서 파생한다 — 정의는 그 표 바로 아래다. 두 벌이던
+# 시절엔 같은 `hubspot alternative` 를 요청문 근거표는 '정보'로, 키워드 인텐트는
+# 'commercial' 로 읽었다(alternative 가 한쪽 사전에만 있었다).
 
 # 이 리포가 만드는 기회 종류 한 벌 — 이름·순서의 정본은 여기다. 라벨·처방은 화면이
 # 아니라 dashboard.gather() 가 KINDS 명부에서 실어 보낸다(짝이 어긋나면 라벨 없는
@@ -1311,50 +1300,205 @@ GA4_VALUE_KINDS = frozenset({
 # intent_split 검출기가 판정에 쓰게 되면서, 아래 층(scoring)이 위 층(brief)을
 # import 할 수 없으니 정본이 여기여야 한다. brief 는 이 이름들을 그대로 다시 내보낸다.
 #
-# 도시명·브랜드는 안 본다(그건 의도가 아니라 자리다). 순서가 판정이다: 명시적
-# 비교(vs·차이)가 먼저, 그다음 방법·원인·치료, 두 명사 사이의 or/and 는 가장 약한
-# 비교 신호라 맨 뒤. "milia and syringoma treatment" 는 그래서 치료·구매다 — and 가
-# 있어도 treatment 가 답의 꼴을 정한다.
+# 브랜드는 안 본다(그건 의도가 아니라 이름이다). 지명은 보되 **그 사이트의 자리만**
+# 본다 — 아래 REGION_PLACE·site_words 가 그 일을 한다.
+#
+# 표는 한 벌이다: 한 행이 (요청문에 찍는 한국어 라벨, 4분법 축, 낱말)이다.
+#  · 라벨은 query_intent 가 낸다 — 요청문 근거표의 '의도' 칸.
+#  · 축은 classify_intent 가 낸다 — keywords.intent 에 쓰는 정본 축이고 화면
+#    (analysis.html 의 AN_INTENT: 정보성·비교성·거래성·탐색성)과 같은 축이다.
+# 낱말 사전이 두 벌이던 시절엔 INTENT_COMMERCIAL 에만 alternative·best 가 있어서
+# 같은 `hubspot alternative` 를 근거표는 '정보', 키워드 인텐트는 'commercial' 로
+# 읽었다. 이제 INTENT_TRANSACTIONAL·COMMERCIAL·NAVIGATIONAL 은 이 표에서 파생한다.
+#
+# **우선순위는 둘이 다르고, 그건 일부러다.** 표 순서(query_intent)는 "이 묶음에 무슨
+# 글을 쓸까"를 답한다 — `how to remove milia` 는 방법 글이지 구매 글이 아니라 방법이
+# 먼저다. 축 순서(classify_intent: transactional > commercial > navigational > info)는
+# "이 검색어가 돈에 얼마나 가까운가"를 답한다 — `best pricing` 은 transactional 이다.
+# 같은 표를 다른 물음으로 읽는 것이라 낱말은 어긋날 수 없고, 한 칸만 걸리는 검색어는
+# 반드시 같은 갈래로 읽힌다(test_capture 가 양방향으로 대조한다).
+#
 # 라틴 낱말은 토큰 일치, 한글은 조사가 붙어 부분 일치, 띄어쓴 구는 구 일치.
-INTENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("비교", ("vs", "versus", "difference", "differences", "compare", "comparison",
-            "차이", "비교", "다른점")),
-    ("방법", ("how to", "how do", "how can", "방법", "하는법", "하는 법")),
-    ("원인·증상", ("cause", "causes", "symptom", "symptoms", "why", "원인", "증상")),
-    ("치료·구매", ("removal", "remove", "treatment", "treat", "clinic", "price", "cost",
-               "buy", "제거", "치료", "시술", "가격", "비용", "병원", "구매")),
-    # 나라·도시 이름 자체는 의도가 아니지만, 브랜드·시술명에 붙으면 "거기서 어디서 받나"
-    # 라는 지역·상업 의도다. "seoul juvelook"·"juvelook korea"를 정보로 못 박았더니
-    # title 방향이 설명 글 쪽으로 틀어졌다. 목록은 이 제품의 사이트가 실제로 도는 곳만.
-    ("지역", ("near me", "nearby", "korea", "korean", "seoul", "gangnam", "busan", "japan",
-            "tokyo", "osaka", "근처", "한국", "서울", "강남", "부산", "잘하는곳", "잘하는 곳")),
+# 이름은 업종 중립이어야 한다 — SaaS 사이트의 `pricing` 이 눈앞에 "치료·구매"로
+# 나가면 그게 곧 오작동이다. 낱말은 업종을 안 가리므로 지우지 않고 보탠다.
+#
+# **'고친다'와 '산다'는 다른 칸이다.** 한때 한 칸("해결·구매")이었고, 그 한 칸이
+# transactional 이라 `can you remove milia under eyes` 와 `fotor remove background`
+# 까지 "사려는 중"으로 찍혔다 — 활성 키워드 432개 중 64개가 그렇게 뒤집혔다.
+# 답의 꼴이 같다고 의도가 같은 건 아니다: 제거·치료를 묻는 사람에게 필요한 건 글이고,
+# 가격·구독을 묻는 사람에게 필요한 건 살 수 있는 페이지다.
+INTENT_WORDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    # 재고 조사 — 고르기 전에 견주는 자리. 남의 브랜드를 살려 두는 KEEP_INTENTS 는
+    # 이 칸의 부분집합이다(세 벌째를 못 만들게 검사가 대조한다).
+    ("비교", "commercial",
+     ("vs", "versus", "difference", "differences", "compare", "comparison",
+      "alternative", "alternatives", "competitor", "competitors",
+      "best", "top", "review", "reviews",
+      "차이", "비교", "다른점", "대안", "후기", "리뷰", "추천", "순위", "랭킹")),
+    ("방법", "info", ("how to", "how do", "how can", "방법", "하는법", "하는 법")),
+    # 문제를 겪고 그 까닭을 찾는 자리 — 병의 증상이든 제품의 오류든 묻는 꼴이 같다.
+    ("원인·문제", "info",
+     ("cause", "causes", "symptom", "symptoms", "why", "reason",
+      "error", "errors", "issue", "issues", "problem", "problems",
+      "not working", "원인", "증상", "이유", "문제", "오류", "에러", "안되")),
+    # 값을 묻고 사는 자리 — **이 칸만 transactional 이다.** 돈이 오가는 말만 적는다.
+    # '해결' 칸보다 **위**에 있어야 한다(표는 첫 일치가 이긴다): `밀리아 제거 가격` 은
+    # 가격 글이지 시술 설명 글이 아니다. `can you remove milia` 는 가격이 없으니
+    # 아래 '해결' 로 떨어진다 — 그 갈림이 이 순서의 전부다.
+    ("구매", "transactional",
+     ("price", "cost", "buy", "pricing", "purchase", "checkout",
+      "subscription", "trial", "demo", "download", "discount", "coupon",
+      "가격", "비용", "구매", "구입", "결제", "구독", "요금", "견적", "신청",
+      "다운로드", "할인", "쿠폰")),
+    # 고치는 자리 — "이걸 어떻게 없애나"에 답하는 글이다. 제거·치료·수리도, 그걸
+    # 맡길 곳(clinic·병원·업체·agency)도 여기다. **거래가 아니다**: `can you remove
+    # milia under eyes` 도 `fotor remove background` 도 사려는 말이 아니라 묻는 말이고,
+    # 답은 결제창이 아니라 글이다. 그래서 축은 info — '방법'·'원인·문제'와 같은 자리다.
+    # 공급자 찾기(clinic·service·agency·vendor·병원·업체)를 여기 둔 것도 같은 이유다.
+    # 원래 어느 축 집합에도 없던 낱말이라 transactional 에 넣으면 없던 회귀를 새로
+    # 만든다 — `강남 여드름 병원` 은 아직 고를 곳을 찾는 중이지 결제하는 중이 아니다.
+    # 제품 범주 이름(tool·software·app)은 일부러 안 넣었다: 그건 의도가 아니라 주제라
+    # "what is an seo tool" 같은 정보성 검색어까지 여기로 끌어온다.
+    ("해결", "info",
+     ("removal", "remove", "treatment", "treat", "fix", "repair",
+      "solve", "solution", "solutions", "clinic", "service", "agency", "vendor",
+      "제거", "치료", "시술", "해결", "수리", "고치", "병원", "업체")),
+    # 이미 아는 곳을 찾아가는 자리 — 여기 걸리면 필요한 건 새 글이 아니라 그 페이지다.
+    ("탐색", "navigational", ("login", "official", "homepage", "로그인", "공식", "홈페이지")),
+    # 지역은 4분법의 어느 축도 아니라 정보성으로 접는다 — 의도가 아니라 자리를 좁히는
+    # 말이라서다(그래서 이 칸의 낱말은 어느 축 집합에도 안 들어간다).
+    # 여기 적는 것은 **지명 없이도 서는 꼴**뿐이다. 이건 나라·업종을 안 가려서 목록에
+    # 없는 지명(대구·후쿠오카·Austin)과 붙어도 그대로 선다.
+    # 지명 자체는 여기 적지 않는다 — 세상의 지명을 늘어놓으면 그게 곧 두 벌째 목록이고
+    # (CLAUDE.md "목록·문구를 두 벌 만들지 않는다") 늘려도 언제나 모자란다.
+    # 지명은 site_words 가 그 사이트의 자리로만 읽는다 — query_intent(q, site).
+    ("지역", "info", ("near me", "nearby", "closest", "근처", "주변", "가까운", "동네",
+                    "어디서", "잘하는곳", "잘하는 곳")),
 )
+PLACE_INTENT = "지역"                       # 사이트의 자리(site.place)가 붙는 칸
+INTENT_AXIS = {label: axis for label, axis, _ in INTENT_WORDS}
+INTENT_AXIS["정보"] = "info"                # INTENT_DEFAULT — 아래에서 이름을 준다
+
+
+def _axis_words(axis: str) -> frozenset[str]:
+    """이 축의 낱말 전부 — 축 집합은 표에서 파생한다(사전을 두 벌 두지 않는다)."""
+    return frozenset(w for _, a, ws in INTENT_WORDS if a == axis for w in ws)
+
+
+# 의도 토큰 사전 (classify_intent). 우선순위는 transactional > commercial >
+# navigational > info — 순서는 classify_intent 가 갖고, 낱말은 위 표가 갖는다.
+# info 축(방법·원인·문제·지역)은 집합을 안 만든다: info 는 "아무 데도 안 걸림"이다.
+# 기본값은 코드, 보정은 Claude/사람 — NULL 인 활성 키워드만 load() 시작 시 채운다.
+INTENT_TRANSACTIONAL = _axis_words("transactional")
+INTENT_COMMERCIAL = _axis_words("commercial")
+INTENT_NAVIGATIONAL = _axis_words("navigational")
+
+
+# ── 그 사이트의 자리 (site_words) ────────────────────────────────────────────
+# 지명 판정을 사전으로 풀지 않기 위한 장치다. GSC 가 이미 아는 값(사이트의 언어-지역)
+# 에서 **그 사이트의 나라 칸 하나만** 꺼내 본다 — 세상의 지명 목록이 아니다.
+#
+# 여기 적힌 낱말은 예전 '지역' 칸에 리터럴로 박혀 있던 것 그대로이고, 늘리지 않았다.
+# 바뀐 것은 둘이다:
+#   ① 제 나라 칸에 들어갔다 — 미국 사이트가 '서울'을, 한국 사이트가 'tokyo' 를
+#      제 자리로 읽지 않는다. 예전엔 모든 사이트가 이 열둘을 통째로 봤다.
+#   ② 'korean' 을 뺐다. 그건 자리가 아니라 **언어**를 가리키는 형용사다 — 이 리포의
+#      brain 에 있는 'korean' 검색어 12건이 전부 자리가 아니었다(noti 의 `7pm in
+#      korean`·`korean translation weekly reminder` 11건, theotherskin 이 제 이름으로
+#      파는 제품 `korean ptt` 1건). 나라 이름(korea·한국)은 그대로 둔다.
+# 칸이 없는 지역(en-US·ja-JP 밖)은 지명 없이 서는 꼴만 본다. 늘려야 할 일이 생기면
+# 그 사이트의 지역 한 줄만 보탠다 — 세상을 채우는 표가 아니다.
+# 키는 serp_adapter.LOCALES 의 지역이어야 한다(test_capture 가 대조한다).
+REGION_PLACE: dict[str, tuple[str, ...]] = {
+    "KR": ("korea", "seoul", "gangnam", "busan", "한국", "서울", "강남", "부산"),
+    "JP": ("japan", "tokyo", "osaka"),
+}
+
+# 사이트가 아는 말 두 벌 — place(이 사이트의 자리) · own(이 사이트가 제 이름으로 쓰는 말).
+# own 은 자리 판정의 거름망이다: 이름에 지명이 든 사이트('Seoul Beauty')의 제 이름
+# 검색어를 지역으로 읽으면 안 된다.
+SiteWords = namedtuple("SiteWords", "place own")
+NO_SITE = SiteWords(frozenset(), frozenset())
+
+
+def region_of(locale: str) -> str:
+    """'en-GB' → 'GB'. 지역이 없는 로케일은 ''. (db._region 과 같은 규칙)"""
+    return locale.split("-")[1].upper() if "-" in (locale or "") else ""
+
+
+def site_words(locale: str = "", domain: str = "", aliases=(), places=()) -> SiteWords:
+    """이 사이트가 아는 말 → query_intent 에 넘길 값.
+
+    locale 은 자리를, domain·aliases 는 이름을 준다. places 는 사이트가 스스로 밝힌
+    자리(프로젝트 yaml)가 있으면 그것 — 지금은 비어 있고, 지명을 코드가 아니라
+    사이트가 말하게 하는 자리다.
+    """
+    place = set(REGION_PLACE.get(region_of(locale), ()))
+    place |= {str(p).strip().lower() for p in places if str(p).strip()}
+    own: set[str] = set()
+    for a in list(aliases) + [_stem(domain)]:
+        s = str(a or "").strip().lower()
+        if not s:
+            continue
+        own.add(norm(s))
+        own |= set(tokens(s))
+    # 한 글자 이름 조각은 안 쓴다 — 'e.com' 의 'e' 가 'seoul' 을 덮는다
+    return SiteWords(frozenset(place), frozenset(w for w in own if len(w) > 1))
+
+
+def site_words_of(conn: sqlite3.Connection, project_id: int,
+                  cfg: dict | None = None) -> SiteWords:
+    """프로젝트 한 줄(locale·domain·name)에서 — intent_split 이 쓰는 입구."""
+    r = conn.execute("SELECT name, domain, locale FROM projects WHERE id=?",
+                     (project_id,)).fetchone()
+    if not r:
+        return NO_SITE
+    cfg = cfg or {}
+    return site_words(locale=str(r[2] or ""), domain=str(r[1] or ""),
+                      aliases=[str(r[0] or "")] + list(cfg.get("brand_aliases") or []),
+                      places=cfg.get("place_aliases") or ())
+
+
 # 의도 비율을 말해도 되는 노출 합 하한 — 노출 61 에서 "정보 100%"는 비율이 아니라 우연이다.
 # intent_split 의 SPLIT_MIN_IMP 과는 다른 물음이다: 저쪽은 "가를 만큼 큰가", 여기는
 # "비율이라고 말할 만큼 표본이 있나".
 INTENT_MIN_IMPRESSIONS = 200
 INTENT_LINK = ("or", "and")        # 두 명사 사이에 서면 비교 — 첫·끝 자리는 아니다
-# 기본값은 "못 가른 것"이지 다섯째 의도가 아니다. intent_split 이 이걸 1·2위에서
-# 빼는 이유 — 실측에서 `papular scar`(정보) 와 `papular scar treatment`(치료·구매)는
+# 기본값은 "못 가른 것"이지 또 하나의 의도가 아니다. intent_split 이 이걸 1·2위에서
+# 빼는 이유 — 실측에서 `papular scar`(정보) 와 `papular scar treatment`(해결)은
 # 한 페이지가 맞았다. 분류 실패를 의도 갈림으로 읽으면 멀쩡한 페이지를 쪼갠다.
 INTENT_DEFAULT = "정보"
+assert INTENT_AXIS.get(INTENT_DEFAULT) == "info"    # 위 표 옆에서 미리 준 이름과 같다
 
 
-def query_intent(q: str) -> str:
-    """검색어 하나 → 의도 이름(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT)."""
+def _word_hit(w: str, low: str, toks: list[str], joined: str) -> bool:
+    """낱말 하나가 이 검색어에 걸리나 — 구는 구 일치, 라틴은 토큰, 한글은 부분 일치."""
+    if " " in w:
+        return w in joined
+    return w in toks if w.isascii() else w in low
+
+
+def query_intent(q: str, site: SiteWords | None = None) -> str:
+    """검색어 하나 → 의도 라벨(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT).
+
+    site 를 주면 '지역' 칸이 **그 사이트의 자리**(site.place)까지 본다. 안 주면
+    지명 없이 서는 꼴(near me·근처)만 본다 — 지명은 사이트를 모르고는 못 가른다.
+    """
     low = str(q or "").lower()
     toks = tokens(low)
     joined = " ".join(toks)
-    for name, words in INTENT_WORDS:
+    for name, _axis, words in INTENT_WORDS:
+        if name == PLACE_INTENT and site and site.place:
+            words = words + tuple(sorted(site.place))
         for w in words:
-            if " " in w:
-                hit = w in joined
-            elif w.isascii():
-                hit = w in toks
-            else:
-                hit = w in low
-            if hit:
-                return name
+            if not _word_hit(w, low, toks, joined):
+                continue
+            # 제 이름에 든 지명은 자리가 아니라 이름이다 — 'Seoul Beauty' 의 'seoul'.
+            # 이름 조각이 지명보다 짧으면 안 본다(짧은 조각은 아무 지명에나 걸린다).
+            if name == PLACE_INTENT and site and any(
+                    w in o for o in site.own if len(o) >= len(w)):
+                continue
+            return name
     if any(t in INTENT_LINK for t in toks[1:-1]):
         return INTENT_WORDS[0][0]
     return INTENT_DEFAULT
@@ -1401,6 +1545,7 @@ def intent_split(conn: sqlite3.Connection, project_id: int, *,
     cur, _, period, _ = snapshot_pair(conn, project_id, at)
     if not cur:
         return []
+    site = site_words_of(conn, project_id)      # 자리 판정은 사이트마다 다르다
     first: dict[str, dict] = {}                 # query → 노출 1등 페이지 행
     for r in conn.execute(
         """SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
@@ -1412,7 +1557,7 @@ def intent_split(conn: sqlite3.Connection, project_id: int, *,
         first.setdefault(r["query"], {"page": r["page"], "query": r["query"],
                                       "impressions": r["imp"] or 0, "clicks": r["clk"] or 0,
                                       "position": r["pos"],
-                                      "intent": query_intent(r["query"])})
+                                      "intent": query_intent(r["query"], site)})
     pages: dict[str, list[dict]] = {}
     for row in first.values():
         pages.setdefault(row["page"], []).append(row)
@@ -2299,7 +2444,7 @@ def _fit_of(conn: sqlite3.Connection, project_id: int, target: str, *,
     """기회 row 의 fit 근사 — 데이터로 답할 수 있는 만큼만 결정적으로.
 
     fit 의 진짜 판정은 Claude 가 하지만, 0.5 중립으로 두면 w_fit 가 큰 프리셋
-    (local_clinic 0.45) 에서 모든 기회가 점수 면적 한가운데만 차지한다.
+    (local_business 0.45) 에서 모든 기회가 점수 면적 한가운데만 차지한다.
     활성 키워드와 일치하면 0.8, cluster 매칭이면 0.65, 그 외 0.5.
 
     question=True(대상이 AI 에 물은 질문 문장)면 "그 외"를 한 번 더 가른다 —
@@ -2357,7 +2502,7 @@ FIT_Q_PAGE = 0.5      # 사이트의 페이지·키워드와 주제 낱말이 �
 FIT_Q_NONE = 0.2      # 아무것과도 안 겹친다 — 사이트가 안 다루는 질문일 공산이 크다.
                       # 0 이 아닌 이유: 겹침은 낱말 수준이라 동의어·다른 표기를 못 잡는다.
                       # 틀렸을 때 목록에서 사라지지 않고 뒤로만 밀리게 둔다.
-                      # local_clinic(w_fit 0.45)에서 0.5→0.2 는 13.5점이다
+                      # local_business(w_fit 0.45)에서 0.5→0.2 는 13.5점이다
 FIT_GENERIC_SHARE = 0.5   # 사이트 문서 절반 이상에 들어 있는 낱말은 간판말("OO피부과"의
                           # 피부과)이다 — 그것 하나 겹쳤다고 같은 주제로 치지 않는다
 FIT_GENERIC_MIN_DOCS = 4  # 문서가 이보다 적으면 간판말을 가를 표본이 안 된다 — 안 거른다
@@ -4829,6 +4974,18 @@ def _selfcheck() -> None:
     # 사전 자체: 우선순위대로 정확히 매칭되는지 (한 토큰씩 확인)
     assert "가격" in INTENT_TRANSACTIONAL and "후기" in INTENT_COMMERCIAL \
         and "공식" in INTENT_NAVIGATIONAL
+    # 낱말 사전은 한 벌 — 축 집합은 INTENT_WORDS 에서 파생하고, 한 칸만 걸리는
+    # 검색어는 두 분류기가 같은 갈래로 읽는다 (양방향 대조는 test_capture)
+    for q in ("hubspot alternative", "best seo tool", "notion vs obsidian"):
+        assert query_intent(q) == "비교" and classify_intent(q) == "commercial", q
+        assert INTENT_AXIS[query_intent(q)] == classify_intent(q), q
+    # 지명은 사이트의 자리로만 본다 — 사이트를 모르면 지명은 안 보고, 언어 형용사는
+    # 아예 자리가 아니다 (korean ptt 는 제품명이었다)
+    _kr = site_words(locale="ko-KR", domain="theotherskin.com")
+    assert query_intent("dermatology seoul") == INTENT_DEFAULT
+    assert query_intent("dermatology seoul", _kr) == PLACE_INTENT
+    assert query_intent("korean ptt", _kr) == INTENT_DEFAULT
+    assert query_intent("대구 근처 피부과") == PLACE_INTENT
 
     # ── 수요 구성 축 (프로젝트 9): 브랜드·intent·cluster·국가 ──
     conn.executemany(
@@ -5195,7 +5352,7 @@ def _selfcheck() -> None:
     assert s == score("striking_distance", {"impressions": 4200, "position": 3.0}, "saas")
     assert 0.0 <= s <= 100.0
     assert score("ai_citation_gap", {"impressions": 100}, "saas") > \
-        score("ai_citation_gap", {"impressions": 100}, "local_clinic")  # saas 는 w_ai 최상향
+        score("ai_citation_gap", {"impressions": 100}, "local_business")  # saas 는 w_ai 최상향
     assert score("striking_distance", {"impressions": 100, "position": 5.0}, "없는타입") == \
         score("striking_distance", {"impressions": 100, "position": 5.0}, "saas")
 

@@ -1,6 +1,6 @@
 # Copy to $CAPTURE_HOME/projects/{name}.yaml, then: python scripts/db.py sync-project <path>
 name: myproject
-type: saas                 # game | local_clinic | saas | directory  (see _presets.yaml)
+type: saas                 # game | local_business | saas | directory  (see _presets.yaml)
 domain: example.com
 locale: ko-KR              # 언어-지역: SERP 나라·자동완성 언어·AI 질문 언어. 고를 수 있는 값은 serp_adapter.LOCALES
 gsc_property: sc-domain:example.com   # or "https://example.com/"

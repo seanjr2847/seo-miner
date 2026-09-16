@@ -14,6 +14,7 @@
   · 고치기 요청문은 페이지 단위다 — 걸린 검색어 전부·의도 비율·같은 페이지의 다른 기회를
     싣고, 누른 검색어는 입구일 뿐이다 (한 페이지에 기회 16건이 title 을 16번 고치던 것)
 """
+import ast
 import os
 import re
 import sys
@@ -1025,12 +1026,14 @@ def test_query_intent_is_a_word_table():
     assert qi("syringoma vs milia") == qi("difference between milia and syringoma") == "비교"
     assert qi("syringoma or milia") == qi("milia and syringoma") == "비교"     # 두 명사 사이
     assert qi("and syringoma") == "정보", "첫 자리의 and 는 잇는 말이 아니다"
-    assert qi("milia removal seoul") == qi("milia and syringoma treatment") == "치료·구매"
+    assert qi("milia removal seoul") == qi("milia and syringoma treatment") == "해결"
     assert qi("how to remove milia") == "방법"                                  # 방법이 치료보다 먼저
-    assert qi("what causes milia") == "원인·증상"
+    assert qi("what causes milia") == "원인·문제"
     assert qi("syringoma") == qi("") == brief.INTENT_DEFAULT == "정보"
-    assert qi("밀리아 한관종 차이점") == "비교" and qi("한관종 제거 비용") == "치료·구매"
-    assert qi("한관종 원인") == "원인·증상" and qi("한관종 없애는 방법") == "방법"
+    # 제거는 '해결', 거기 값이 붙으면 '구매' — 값을 묻는 칸이 표에서 위다
+    assert qi("한관종 제거") == "해결" and qi("한관종 제거 비용") == "구매"
+    assert qi("밀리아 한관종 차이점") == "비교"
+    assert qi("한관종 원인") == "원인·문제" and qi("한관종 없애는 방법") == "방법"
     assert qi("Syringoma VS Milia") == "비교"                                   # 대소문자 무관
 
 
@@ -1051,11 +1054,11 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     assert [r.split(" | ")[0][2:].replace(" ← 이 기회", "") for r in rows] == [q for q, *_ in _SM_GSC]
     assert "| milia vs syringoma ← 이 기회 | 39 | 4 | 9.7위 | 비교 |" in sec, sec
     assert "| syringoma vs milia | 118 | 9 | 12.1위 | 비교 |" in sec, sec
-    assert "| milia removal seoul | 25 | 2 | 9.6위 | 치료·구매 |" in sec, sec
+    assert "| milia removal seoul | 25 | 2 | 9.6위 | 해결 |" in sec, sec
     assert sec.count("← 이 기회") == 1, sec
     assert "다른 페이지 검색어" not in sec, "다른 페이지의 검색어가 새어 들어온다"
     # 의도 비율은 계산한 것 — 180/208
-    assert "노출 208 중 비교 의도 180 (87%) · 치료·구매 26 · 정보 2" in sec, sec
+    assert "노출 208 중 비교 의도 180 (87%) · 해결 26 · 정보 2" in sec, sec
     # 2. 같은 페이지의 다른 기회 — 누른 것·닫힌 것·다른 페이지·다른 일은 빠진다
     assert brief.PAGE_SIBLINGS_HEAD in body, body
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
@@ -1145,6 +1148,8 @@ def _jv_ctx(**over):
           for q, imp, pos in (("seoul juvelook", 22, 48.2), ("juvelook korea", 21, 61.0),
                               ("juvelook", 18, 73.4))}
     ctx = {"query_pages": qp,
+           # 검색어의 '지역' 판정은 사이트마다 다르다 — 페이로드의 project 가 정본이다
+           "project": {"name": "juvelook", "domain": "clinic.example", "locale": "ko-KR"},
            "page_audits": {_JV: _audit(url=_JV, html_lang="en", title="Juvelook")},
            "crawl": {"run": {"id": 1}, "issues": []},
            "crawl_inlinks": {_JV: [{"from": f"https://clinic.example/en/p{i}", "anchor": "Juvelook",
@@ -1222,7 +1227,25 @@ def test_thin_brand_bundle_does_not_pretend_to_have_intents():
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert "'juvelook' 가 든 검색어 전부입니다" in want and "주된 의도입니다" not in want, want
     assert brief.query_intent("juvelook near me") == "지역"
-    assert brief.query_intent("milia removal seoul") == "치료·구매"     # 치료가 지역보다 먼저
+    assert brief.query_intent("milia removal seoul") == "해결"     # 치료가 지역보다 먼저
+
+
+def test_intent_column_reads_the_place_of_this_site():
+    """근거표의 '의도' 칸은 **이 사이트의 자리**로 읽는다. 지명은 세상의 목록이 아니라
+    페이로드의 project(locale·domain·name)가 정한다 — 미국 사이트에 서울은 제 자리가
+    아니고, 사이트 이름에 든 지명은 자리가 아니라 이름이다."""
+    o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
+    ko = _sec(brief.build(o, _jv_ctx(), "ko-KR")["body"], brief.PAGE_QUERIES_HEAD)
+    assert "| seoul juvelook ← 이 기회 | 22 | 0 | 48.2위 | 지역 |" in ko, ko
+    assert "| juvelook korea | 21 | 0 | 61.0위 | 지역 |" in ko, ko
+    en = _jv_ctx(project={"name": "juvelook", "domain": "clinic.example", "locale": "en-US"})
+    us = _sec(brief.build(o, en, "en-US")["body"], brief.PAGE_QUERIES_HEAD)
+    assert "| seoul juvelook ← 이 기회 | 22 | 0 | 48.2위 | 정보 |" in us, us
+    # 사이트 이름이 곧 지명이면 그건 자리가 아니다
+    named = _jv_ctx(project={"name": "Seoul Juvelook", "domain": "clinic.example",
+                             "locale": "ko-KR"})
+    mine = _sec(brief.build(o, named, "ko-KR")["body"], brief.PAGE_QUERIES_HEAD)
+    assert "| seoul juvelook ← 이 기회 | 22 | 0 | 48.2위 | 정보 |" in mine, mine
 
 
 def test_inlinks_say_the_real_count_and_anchor_crowding():
@@ -1331,8 +1354,8 @@ def _sm_split_ctx():
     ctx["intent_splits"] = [{
         "page": _SM, "impressions": sum(r["impressions"] for r in rows), "queries": len(rows),
         "primary": "비교", "primary_impressions": 180,
-        "secondary": "치료·구매", "secondary_impressions": 26,
-        "secondary_queries": [r for r in rows if r["intent"] == "치료·구매"],
+        "secondary": "해결", "secondary_impressions": 26,
+        "secondary_queries": [r for r in rows if r["intent"] == "해결"],
         "primary_queries": [r for r in rows if r["intent"] == "비교"]}]
     ctx["opps"] = ctx["opps"] + [{**_opp("intent_split", _SM), "id": 30, "status": "new"}]
     return ctx
@@ -1350,7 +1373,7 @@ def test_intent_split_asks_what_to_spin_off_not_how_to_fix_one_page():
     body = b["body"]
     ev = _sec(body, "## 근거")
     # 두 묶음이 나란히 — 남길 것과 떼어낼 후보
-    assert "비교" in ev and "치료·구매" in ev, ev
+    assert "비교" in ev and "해결" in ev, ev
     assert "| milia removal seoul | 25 |" in ev, ev
     assert "| syringoma vs milia | 118 |" in ev, ev
     # 떼어낼 묶음의 검색어가 빠짐없이 — 노출 1짜리도 센다
@@ -1392,7 +1415,7 @@ def test_fix_page_warns_when_a_split_decision_is_still_open():
     body = fix["body"]
     assert brief.SPLIT_PENDING_HEAD in body, body
     note = _sec(body, brief.SPLIT_PENDING_HEAD)
-    assert "치료·구매" in note and "비교" in note, note
+    assert "해결" in note and "비교" in note, note
     assert scoring.kind_label("intent_split") in note, note
     # 가르기 기회가 닫혀 있으면 경고도 없다
     ctx2 = _sm_split_ctx()
@@ -1404,6 +1427,32 @@ def test_fix_page_warns_when_a_split_decision_is_still_open():
     # 가르기 요청문 자신에게는 안 붙는다 — 자기가 그 일이다
     assert brief.SPLIT_PENDING_HEAD not in brief.build(
         next(x for x in ctx["opps"] if x["kind"] == "intent_split"), ctx)["body"]
+
+
+# 요청문은 업종을 안 가린다. 이 낱말이 문구에 박히면 SaaS·게임·쇼핑몰 사이트에서
+# 틀린 안내가 그대로 AI 에게 간다 (Person 스키마를 보고 "원장·의료진인지 확인하라"고
+# 시키던 줄, "효능을 지어내지 않습니다" 규칙 3곳이 실제로 그랬다).
+INDUSTRY_WORDS = ("원장", "의료진", "효능", "시술", "병원", "환자", "클리닉")
+
+
+def test_brief_copy_has_no_industry_words():
+    """문구의 정본은 brief.py 의 문자열이라 **소스를 ast 로 읽어** 대조한다.
+    렌더된 요청문만 훑으면 페이로드(페이지 제목·스키마 이름)에서 온 글자와 섞여
+    아무것도 안 보는 검사가 된다 — 제목에 '병원'이 든 사이트는 정상이다."""
+    src = Path(brief.__file__).read_text(encoding="utf-8")
+    bad = [(n.lineno, w, n.value[:50]) for n in ast.walk(ast.parse(src))
+           if isinstance(n, ast.Constant) and isinstance(n.value, str)
+           for w in INDUSTRY_WORDS if w in n.value]
+    assert not bad, f"요청문 문구에 업종어가 있습니다: {bad}"
+    # 렌더까지 한 번 — Person 줄은 스키마가 있어야 서고, 거기가 업종어가 살던 자리다
+    a = _audit(schema_json='["Organization", "Person"]')
+    body = brief.build(_opp("content_gap", "검색어", gap_kind="weak"),
+                       {"page_audits": {URL: a}, "query_pages": {"검색어": _pages(URL)}},
+                       "ko-KR")["body"]
+    assert "Person 이 있습니다" in body, body
+    assert "글이 소개하는 인물(인물 프로필)인지" in body, body
+    for w in INDUSTRY_WORDS:
+        assert w not in body, f"{w}: {body}"
 
 
 if __name__ == "__main__":
