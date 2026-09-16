@@ -127,7 +127,9 @@ def test_fix_page_carries_h2_list_and_advice():
     assert ("구글 실적 2026-08-25, 최근 28일 평균 (검색어 전체): 평균 12.4위 · 노출 1,204 · 클릭 8 · "
             "1페이지까지 2.4칸") in t, t
     assert "기간 평균 게재순위" in t
-    assert "'바꾼 것' 표: 진단 항목 | 전 | 후" in t
+    # 이 답은 파일을 안 고친다 — '전/후'가 아니라 '지금/고칠'이다(제안 표라고 말한다)
+    assert "'고칠 것' 표: 진단 항목 | 지금 값 | 고칠 값" in t, t
+    assert "이 표는 **제안**입니다" in t, t
     assert "title 30자 이내, meta description 80자 이내" in t
 
 
@@ -299,9 +301,21 @@ def test_backlink_and_crawl_rows_become_tables():
 
 def test_locale_sets_language_and_length_limits():
     ko, en, ja = (brief.tails(loc) for loc in ("ko-KR", "en-US", "ja-JP"))
-    assert "한국어로 씁니다" in ko["fix_page"] and "title 30자 이내" in ko["fix_page"]
-    assert "영어로 씁니다" in en["fix_page"] and "title 60자 이내, meta description 160자" in en["fix_page"]
-    assert "일본어로 씁니다" in ja["new_content"] and "title 30자 이내" in ja["new_content"]
+    assert "사이트 언어(한국어, ko-KR)로 씁니다" in ko["fix_page"] and "title 30자 이내" in ko["fix_page"]
+    assert "사이트 언어(영어, en-US)로 씁니다" in en["fix_page"], en["fix_page"]
+    assert "title 60자 이내, meta description 160자" in en["fix_page"]
+    assert "사이트 언어(일본어, ja-JP)로 씁니다" in ja["new_content"] and "title 30자 이내" in ja["new_content"]
+    # 길이 기준은 **한 벌만** 실린다 — 예전엔 사이트 언어 기준과 "다른 언어로 쓰면"
+    # 기준을 같이 실어, 한 요청문에 한국어 30/80 과 영어 60/160 이 나란히 섰다.
+    for loc, tails in (("ko-KR", ko), ("en-US", en)):
+        body = tails["fix_page"]
+        assert "자 이내" in body
+        other = "60자 이내" if loc == "ko-KR" else "30자 이내"
+        assert other not in body, f"{loc} 꼬리에 길이 기준이 두 벌이다"
+    # 페이지 언어 줄이 정본이고 꼬리는 그 자리에 양보한다
+    assert "위 '대상'의 '페이지 언어' 줄이 정본입니다" in ko["fix_page"]
+    # 산출물(다른 언어)과 설명(한국어)의 경계를 보이게 한다
+    assert "`<code>`" in ko["fix_page"] and "설명·이유" in ko["fix_page"]
     for name in brief.SHAPE_NAMES:
         assert "## 답의 형식" in en[name] and "## 규칙" in en[name]
         assert ("길이 기준" in en[name]) == brief.SHAPES[name]["limits"], name
@@ -384,7 +398,9 @@ def test_gather_attaches_brief_to_every_opportunity():
         assert "## 만들어 줄 것" in b["body"]
     sd = next(o for o in d["opps"] if o["kind"] == "striking_distance")
     assert sd["band"] == "page1" and sd["brief"]["shape"] == "fix_page"
-    assert f"| https://{test_render.SITES[1]}.example/a | 120 |" in sd["brief"]["body"]
+    # 그 검색어의 수는 '이 페이지에 걸린 검색어' 표가 이미 말한다 — 근거에서 되풀이하지
+    # 않는다(걸린 페이지가 하나뿐일 때). 어느 쪽이든 수는 요청문에 한 번 실린다.
+    assert "| 120 |" in sd["brief"]["body"], sd["brief"]["body"]
     assert set(d["brief"]["tails"]) == set(brief.SHAPE_NAMES)
     assert d["brief"]["locale"] == "ko-KR"
 
@@ -1060,7 +1076,10 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     assert brief.PAGE_SIBLINGS_HEAD in body, body
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
     # 누른 검색어와 같은 검색어의 다른 종류는 '다른 기회'로 세지 않고 한 줄로 따로 말한다
-    assert f"같은 검색어로 선 기회도 이 요청문이 덮습니다: [{scoring.kind_label('pseo_pattern')}]" in sib, sib
+    # 대괄호만 두면 "[템플릿 패턴]" 이 채우다 만 자리처럼 읽힌다 — 종류 이름이라고 밝힌다
+    assert ("같은 검색어로 선 기회도 이 요청문이 덮습니다 — 기회 종류: "
+            + scoring.kind_label("pseo_pattern")) in sib, sib
+    assert "덮습니다: [" not in sib, "종류 이름이 빈칸처럼 읽히는 대괄호로 남아 있다"
     assert "다른 검색어의 열린 기회가 7건 있습니다" in sib, sib
     assert f"] milia vs syringoma —" not in sib, "누른 검색어가 다른 기회로 또 세어진다"
     # 검색어 하나에 종류가 여럿이면 **한 줄**이다 — 종류마다 줄을 세우면 같은 검색어·같은
@@ -1078,7 +1097,10 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
         "누른 기회가 자기 목록에 있다"
     assert f"[{scoring.kind_label('ctr_gap')}] syringoma —" not in sib, "닫힌(done) 기회가 실렸다"
     assert "다른 페이지 검색어" not in sib and _SM not in sib, sib
-    assert "같이 닫습니다" in sib and "묶음 버튼" in sib, sib
+    # 화면 버튼이 어떻게 도는지는 요청문을 받는 쪽이 쓸 데가 없다 — 모델에게 필요 없는
+    # UI 설명이 섞여 있었다. 결과("같이 닫힌다")만 말한다.
+    assert "같이 닫힙니다" in sib, sib
+    assert "묶음 버튼" not in body and "화면의" not in sib, "요청문에 화면 조작 설명이 남아 있다"
     # 3. 대상의 틀 — 페이지가 단위, 검색어는 입구
     target = body.split("## 대상")[1].split("\n## ")[0]
     assert "일의 단위: 이 페이지입니다" in target and "(비교 87%)" in target, target
@@ -1086,8 +1108,11 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     # 산출물의 '검색어'는 묶음의 의도다 — 안 바꾸는 것도 답이다
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert "위 묶음의 주된 의도입니다" in want and "안 바꾸는 게 답이면" in want, want
-    # 근거의 '이 검색어 → 내 페이지' 표는 그대로 있다 — 방향이 다른 두 표다
-    assert f"| {_SM} | 39 | 4 |" in body.split("## 근거")[1].split("\n## ")[0], body
+    # 걸린 페이지가 하나뿐이라 근거의 '이 검색어 하나의 내 페이지' 표는 위 검색어 표와
+    # 같은 수(39·4)를 되풀이하게 된다 — 그럴 때는 안 그린다.
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    assert f"| {_SM} | 39 | 4 |" not in ev, "같은 수치 표가 두 번 나온다"
+    assert "| milia vs syringoma ← 이 기회 | 39 | 4 |" in body, body
     # 순서: 대상 → 걸린 검색어 → 다른 기회 → 근거
     assert body.index("## 대상") < body.index(brief.PAGE_QUERIES_HEAD) \
         < body.index(brief.PAGE_SIBLINGS_HEAD) < body.index("## 근거")
@@ -1175,10 +1200,13 @@ def test_output_language_follows_the_page_not_the_site():
     # 모르는 조각(/blog/)을 언어로 지어내지 않는다
     assert brief.page_locale(None, "https://x.example/blog/a") is None
     assert brief.page_locale(None, "https://x.example/ja/a") == ("ja", "주소의 /ja/")
-    # 꼬리는 '대상'의 언어 줄이 이긴다고 말하고, 다른 언어의 길이 기준도 준다
+    # 꼬리는 '대상'의 언어 줄에 **양보만** 한다 — 다른 언어의 길이 기준을 같이 실으면
+    # 한 요청문에 규칙이 두 벌이 되고, 어느 쪽을 지킬지 읽는 쪽이 정하게 된다.
     tail = brief.tails("ko-KR")["fix_page"]
-    assert "'페이지 언어' 줄이 있으면 그 언어가 이깁니다" in tail, tail
-    assert "영어: title 60자 이내" in tail, tail
+    assert "위 '대상'의 '페이지 언어' 줄이 정본입니다" in tail, tail
+    assert "영어: title 60자 이내" not in tail, "꼬리에 다른 언어 길이 기준이 또 실렸다"
+    # 그 언어의 기준은 '대상'의 페이지 언어 줄이 댄다
+    assert "길이 기준은 title 60자 이내" in brief.build(o, ctx, "ko-KR")["body"]
     # '연락문'은 연락 꼴에만 — 고치기 요청문에 없는 산출물을 말하지 않는다
     t = brief.tails("ko-KR")
     assert "연락문" not in t["fix_page"] and "연락문" in t["outreach"]
@@ -1223,7 +1251,10 @@ def test_far_aio_rank_asks_for_a_root_cause_and_a_date():
     assert brief.RANK_SPLIT_HEAD in sb, sb
     assert "아는 순위가 모두" not in sb, "두 측정이 갈렸는데 한쪽으로 단정한다"
     # 근거 표의 값은 검색어 하나의 것이라고 열 이름이 말한다
-    assert "| 이 검색어 하나의 내 페이지 | 노출 |" in ev, ev
+    # 걸린 페이지가 하나뿐이고 위 검색어 표가 이미 그 줄을 그렸으면 같은 수를 두 번
+    # 적지 않는다 — 노출 76 · 22.4위 가 한 요청문에 두 번 나왔다.
+    assert "| 이 검색어 하나의 내 페이지 |" not in ev, "같은 수치 표가 두 번 나온다"
+    assert "| seoul juvelook ← 이 기회 |" in body, body
 
 
 def test_thin_brand_bundle_does_not_pretend_to_have_intents():
@@ -1307,6 +1338,7 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     # 1. 숫자의 범위를 밝힌다 — 검색어 전체(페이지 2개 합) vs 이 페이지, 그리고 페이지 합계
     ev = body.split("## 근거")[1].split("\n## ")[0]
     assert "(검색어 전체 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
+    # 페이지가 둘 이상이면 어느 페이지끼리 나눠 갖는지가 새 정보라 그대로 그린다
     assert "| 이 검색어 하나의 내 페이지 |" in ev, ev
     assert "이 페이지 합계: 검색어 2개 · 노출 44 · 클릭 0" in body, body
     # '다른 기회'에 자기 검색어가 또 세어지지 않고, 옛 근거 문장(08-25·0.0칸) 대신 최신 값
@@ -1320,7 +1352,9 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "1. 클릭이 안 나는 이유 가설 표" in want and "meta description 2안" in want, want
     # 5. 진단에만 있는 항목을 말없이 두지 않는다
     assert "위 진단에 있는데 여기 없는 것:" in want and "[이미지]" in want and "[내부 링크]" in want, want
-    assert "'안 바꿈'과 이유" in brief.SHAPES["fix_page"]["form"][-1]
+    # 줄지 말지를 한 번에 정한다 — "한두 줄이면 같이 주고"가 결국 아무것도 안 정했다
+    assert "**이것들은 문안을 만들지 않습니다**" in want, want
+    assert "'이번 아님'과 이유" in brief.SHAPES["fix_page"]["form"][-1]
     # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
     diag = body.split("## 진단")[1].split("\n## ")[0]
     assert "내보내는 내부 링크 64개 — 본문 11단어당 1개" in diag, diag

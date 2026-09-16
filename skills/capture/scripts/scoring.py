@@ -957,7 +957,9 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     elif _desc_scraped(desc, title, h1[0] if len(h1) == 1 else ""):
         add("meta description", "warn", f"본문 첫 줄을 긁어 온 것으로 보입니다: {desc[:60]}…",
             "이 페이지가 무엇에 답하고 누구를 위한 것인지 2~3문장으로 직접 쓰세요. 지금은 "
-            "본문 첫 줄을 붙여 넣은 것이 검색결과에 그대로 뜹니다.")
+            "본문 첫 줄을 붙여 넣은 것이 검색결과에 그대로 뜹니다. "
+            "(이 '…' 는 표를 줄이며 여기서 자른 표시입니다 — 실제 태그가 저기서 끝난다는 "
+            "뜻이 아닙니다. 판정도 추정이니 페이지를 열어 태그 원문을 보고 확인하세요.)")
     elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
         add("meta description", "warn", f"{len(desc)}자라 뒤가 잘립니다",
             f"{DESC_MAX_KO if _wide(desc) else DESC_MAX}자 이내로. 중요한 말을 앞에 두세요.")
