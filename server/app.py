@@ -1201,6 +1201,41 @@ def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     return dashboard.ROUTES[("GET", "/api/doctor")](project, {}, None)
 
 
+@app.post("/api/creation/merged")
+def api_creation_merged(b: dict = Depends(_body), project: str = Depends(_project_b),
+                        c=Depends(BRAIN_B)):
+    """작업 기록(creations)의 병합 표시를 켠다 — 로컬 `createdb.py merged` 의 호스팅 짝.
+
+    이 창구가 없던 동안 호스팅 사이트의 기록은 영영 '병합 전'이었다: `createdb.py
+    sync` 가 머지된 PR 을 찾아 기회는 /api/opp 로 닫았지만, 기록을 닫을 데가 없어
+    다음 sync 가 같은 PR 을 gh 에 다시 물었다. 로컬은 db.mark_creation_merged 를
+    바로 부르므로 로컬 경로에는 이 라우트가 필요 없다 — 그래서 dashboard.ROUTES
+    (로컬·호스팅 공용 표)가 아니라 여기 호스팅 전용으로 선다.
+
+    **가리키는 것은 기록 번호(id)** 다. 브랜치로 가리키면 같은 브랜치에 기록이 여럿일
+    때 어느 것을 켠 건지 부르는 쪽이 모른다 — 기록 번호는 /api/data 페이로드의
+    creations[].id 로 이미 부르는 쪽 손에 있다(로컬이 mark_creation_merged 에 넘기는
+    것과 같은 번호다).
+
+    남의 기록은 못 켠다. 번호만으로 UPDATE 하면 같은 테넌트의 **다른 사이트** 기록이
+    번호 하나로 켜진다(사이트 소유 확인은 이 유저가 project 를 갖고 있다까지만 본다).
+    그래서 켤 수 있는 것의 정본을 db.unmerged_creations(project_id) — 머지 확인의
+    대상 목록 그 자체 — 로 두고, 그 안에 없는 번호는 404 다. 이미 켜진 기록도 여기
+    안 들어오므로 404 이고, 그게 맞다: 부르는 쪽은 페이로드에서 merged=0 인 것만
+    보내므로 정상 경로에서는 두 번 오지 않는다.
+    """
+    try:
+        cid = int(b.get("id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
+    pid = db.get_project(c, project)["id"]
+    if cid not in {r["id"] for r in db.unmerged_creations(c, pid)}:
+        raise HTTPException(status_code=404,
+                            detail="이 사이트의 병합 전 작업 기록이 아닙니다.")
+    db.mark_creation_merged(c, cid)
+    return {"creation_id": cid, "merged": True}
+
+
 # --- 공유 라우트 -----------------------------------------------------------------
 # 두 서버가 함께 서빙하는 라우트는 dashboard.ROUTES 가 정본이다(ADR 0003). 예전엔
 # 여기서 다섯 개를 손으로 감쌌다 — 새 공유 라우트를 표에 넣으면 로컬에만 서고,

@@ -196,7 +196,7 @@ function CP_tools(d) {
 
 function CP_csv() {
   const all = CP_D.kw_gap || [];
-  csv("keyword-gap", [["검색어", "갈래", "잡고 있는 곳", "경쟁사 순위", "우리 순위", "월 검색량"],
+  csv("키워드격차", [["검색어", "갈래", "잡고 있는 곳", "경쟁사 순위", "우리 순위", "월 검색량"],
     ...(CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).map(r =>
       [r.keyword, r.kind, r.domain, r.position, r.our_position, r.volume])]);
 }

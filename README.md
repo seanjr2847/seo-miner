@@ -121,13 +121,15 @@ flowchart LR
     F2["/capture keywords"]
     F3["/capture pages"]
     F4["/capture vitals"]
-    F5["명령 없는 단계<br/>--only 로만"]
+    F5["/capture crawl"]
+    F6["명령 없는 단계<br/>--only 로만"]
   end
 
   subgraph G2 ["잰다 · 유료 키"]
     Y1["/capture rank"]
     Y2["/capture ai"]
-    Y3["/capture gap"]
+    Y3["/capture competitors"]
+    Y4["/capture backlinks"]
   end
 
   subgraph G3 ["판정 · 외부 호출 0"]
@@ -245,8 +247,9 @@ flowchart TD
 - **심사를 거치는 것은 검색어가 대상인 종류뿐**입니다. 주소·도메인·주제가 대상인
   종류는 심사 없이 바로 섭니다 — 종류 목록의 정본은 `scoring.py` 의 `ALL_KINDS` 와
   `KEYWORD_KINDS` 입니다.
-- **`무관` 은 키워드 추적까지 끕니다**(`보류` 는 안 끕니다). 되돌리기는 판정만 지우고
-  추적은 다시 켜지 않습니다.
+- **`무관` 은 키워드 추적까지 끕니다**(`보류` 는 안 끕니다). 되돌리거나 다른 판정으로
+  갈아타면 **그때 꺼진 추적만** 다시 켜집니다 — 애초에 후보였던 줄이나 사람이 직접 끈
+  줄은 안 건드립니다.
 - 심사는 **정규화한 검색어**에 붙습니다 — 기회 하나가 아니라 그 말 전체입니다.
 
 ### 그림 5 — 화면 지도
@@ -396,8 +399,10 @@ flowchart TD
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
 | `/capture rank` | SERP 순위 스냅샷 + 연관검색어·경쟁사 자동 수확 (유료 키) |
+| `/capture crawl` | 사이트를 넓게 한 바퀴 — 깨진 내부 링크·리다이렉트 사슬·고아 페이지처럼 **한 장만 봐서는 안 나오는 것**. 회차로 남아 직전 대비 신규·해결을 셉니다 (내 사이트라 돈 안 듦) |
 | `/capture ai` | AI 엔진 인용 체크 (OpenRouter) |
-| `/capture gap` | 경쟁사 역키워드 — 그쪽은 잡았는데 나는 없는 검색어 (DataForSEO Labs, 유료 키) |
+| `/capture competitors` | 경쟁사 탐지·역키워드·트래픽 몫 — 그쪽은 잡았는데 나는 없는 검색어 (DataForSEO Labs, 유료 키). 옛 이름은 `/capture gap` |
+| `/capture backlinks` | 백링크 프로필·참조 도메인·앵커 + 링크 교집합(경쟁사는 받는데 우리는 못 받는 곳) (DataForSEO, 유료 키) |
 | `/capture gaps` | 모아 둔 자료만으로 기회를 세웁니다 (API 호출 없음). 종류의 정본은 `skills/capture/scripts/scoring.py` 의 `ALL_KINDS` — 대시보드 [개요]의 칩이 그 한 벌을 그대로 그립니다 |
 | `/capture pages` | 내 페이지를 직접 열어 감사 — title·설명·H1/H2·본문 길이·구조화 데이터·링크·alt. **이게 없으면 요청문의 '진단' 절이 통째로 빕니다** (내 사이트라 돈 안 듦) |
 | `/capture vitals` | 속도 측정 (PageSpeed Insights, 돈 안 듦) — 모바일이 밀리는 검색어의 근거 |

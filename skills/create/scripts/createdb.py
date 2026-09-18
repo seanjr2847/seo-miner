@@ -9,7 +9,7 @@ Standalone-safe: if brain.db doesn't exist, commands explain and exit cleanly
 (create then runs in manual-brief mode without Brain).
 
 호스팅에 등록한 사이트(`remote.owns`)는 Brain 이 서버에 있다. 그때는 같은 명령이
-로컬 sqlite 대신 서버 창구(`/api/data`·`/api/opp`·`/api/creation`)를 쓴다 — 그래서
+로컬 sqlite 대신 서버 창구(`/api/data`·`/api/opp`·`/api/creation[/merged]`)를 쓴다 — 그래서
 요청문 꼬리의 기록 명령 한 줄은 로컬·호스팅 구분 없이 똑같다.
 
 CLI:
@@ -217,9 +217,10 @@ def sync_merged(project: str, repo: str | None) -> dict:
     그 기회를 done 으로 닫는다(status_at = 머지 시각). gh 가 없거나 로그인이 안
     됐으면 한 줄 알리고 건너뛴다 — 실패로 치지 않는다(sync 의 나머지는 이미 끝났다).
 
-    호스팅 사이트는 기록이 서버에 있다. 기회 상태는 /api/opp 로 닫지만, 기록의
-    merged 를 켜는 창구는 서버에 아직 없다 — 그래서 호스팅 기록은 '병합 전'으로
-    남고 다음 sync 가 같은 PR 을 다시 묻는다(기회는 이미 done 이라 다시 안 닫는다).
+    호스팅 사이트는 기록이 서버에 있다 — 기회 상태는 /api/opp 로, 기록의 merged 는
+    /api/creation/merged 로 닫는다(로컬이 db.mark_creation_merged 를 부르는 자리다).
+    기록을 닫아야 다음 sync 의 목록(merged=0 인 것)에서 빠진다 — 안 그러면 같은 PR 을
+    gh 에 영영 다시 묻고, 화면의 「고친 것」은 계속 '병합 전'으로 남는다.
     """
     out = {"checked": 0, "merged": 0, "closed": 0, "skipped": ""}
     cwd = str(repo) if repo else None
@@ -247,6 +248,9 @@ def sync_merged(project: str, repo: str | None) -> dict:
             out["merged"] += 1
             reason = f"PR #{pr.get('number')} 머지됨 ({branch.strip()})"
             if remote_site:
+                if cid is not None:   # 번호가 있어야 닫는다 — 없으면 기회만 닫고 넘어간다
+                    remote.api("POST", "/api/creation/merged",
+                               json={"project": project, "id": int(cid)})
                 if not oid:
                     continue
                 if status.get(int(oid)) in ("new", "acked", db.OPP_RESOLVED):

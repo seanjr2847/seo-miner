@@ -14,7 +14,7 @@
    더 늘리는 대신 진하기로 말한다. ── */
 /* ── 설명 산문은 접는다 ─────────────────────────────────────
    부제 한 줄이 정본이고, 표를 읽는 근거는 그 나머지다. 펴는 사람만 읽으면 된다 —
-   여태 이 글이 표보다 먼저 와서 일곱 섹션이 전부 글부터 시작했다. */
+   여태 이 글이 표보다 먼저 와서 섹션이 전부 글부터 시작했다. */
 #view-site details.why { margin:14px 0 0; max-width:74ch; }
 /* 마커는 셸이 한 벌로 그린다(summary::before 셰브론) — 여기서 또 정하지 않는다.
    여태 이 화면만 `+` 를 써서 "펼칠 수 있다"는 신호가 화면마다 달랐다. */
@@ -24,9 +24,10 @@
   margin:10px 0 0; }
 #view-site details.why b { color:var(--ink); font-weight:500; }
 
-/* ── 일곱 섹션의 상태를 머리 밑 한 줄로 ──────────────────────
+/* ── 섹션 상태를 머리 밑 한 줄로 ────────────────────────────
    어디를 봐야 하는지가 스크롤 전에 보여야 한다. 상태는 배지고, 누르면 그 섹션으로
-   갈 뿐 값을 바꾸지 않는다 — 행동은 위 띠의 버튼 하나가 든다. */
+   갈 뿐 값을 바꾸지 않는다 — 행동은 위 띠의 버튼 하나가 든다.
+   어느 섹션이 이 줄에 서는지의 정본은 아래 ST_SUM 이다(개수는 거기서 센다). */
 #view-site .stsum { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2);
   margin:var(--sp-4) 0 0; }
 #view-site .stsum-t { font:var(--micro); color:var(--slate); margin-right:var(--sp-1); }
@@ -36,7 +37,7 @@
 /* 390px 에서 카드 안쪽 여백이 표가 쓸 폭을 먹는다 — 좁을수록 표에 넘긴다. */
 @media (max-width:560px) { #view-site .card { padding:var(--sp-3); } }
 
-/* ── 섹션 일곱을 스캔하게 만드는 것 ──────────────────────────
+/* ── 섹션을 스캔하게 만드는 것 ──────────────────────────────
    괜찮은 섹션도 문제 있는 섹션과 같은 높이를 먹으면 어디를 봐야 하는지가 안 보인다.
    개수는 머리 밑 배지 줄이 말하고(눈썹은 기간·구간만 적는다), 문제가 없으면 섹션
    본문을 `.empty.ok` 한 줄로 접는다. */
@@ -156,7 +157,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
 .pglow { color:var(--copper); font-weight:600; }   /* 굶은 링크 수 — 이 표의 눈금 */
 </style>
 
-<!-- 일곱 섹션 중 어디를 봐야 하는지. 상태 배지 한 줄이 스크롤 전에 답한다. -->
+<!-- 어느 섹션을 봐야 하는지. 상태 배지 한 줄이 스크롤 전에 답한다(정본은 ST_SUM). -->
 <div class="stsum" id="st-sum" hidden></div>
 
 <section id="ix-sec">
@@ -286,7 +287,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       이 기능 이전의 박제본이므로 섹션을 통째로 감춘다. ── */
 
 /* ── 섹션 머리 한 벌 ────────────────────────────────────────
-   섹션이 일곱이라 "어디를 봐야 하나"가 화면에서 안 보였다 — 괜찮은 섹션도 문제
+   섹션이 여럿이라 "어디를 봐야 하나"가 화면에서 안 보였다 — 괜찮은 섹션도 문제
    있는 섹션과 같은 높이를 먹었다. 눈썹에 개수를 달고, 0 이면 섹션을 머리 한 줄로
    접는다(.sec-ok). n 이 null 이면 아직 안 잰 것이라 개수도 접기도 하지 않는다. */
 /* "검사했고 문제 없음"은 "자료가 없음"과 다른 일이다 — 셸의 세 부품으로 가른다:
@@ -330,15 +331,19 @@ function stSec(secId, n) {
   return n;
 }
 
-/* ── 일곱 섹션의 상태 한 줄 ─────────────────────────────────
-   이 화면은 세로로 길다 — 어느 섹션에 문제가 있는지 알려면 일곱 번 스크롤해야 했다.
+/* ── 섹션 상태 한 줄 ────────────────────────────────────────
+   이 화면은 세로로 길다 — 어느 섹션에 문제가 있는지 알려면 끝까지 스크롤해야 했다.
    머리 밑 배지 줄이 그걸 대신 답하고, 누르면 그 자리로만 간다. 상태는 배지고
    행동이 아니다 — 누를 것 하나는 위 띠가 든다. */
+/* 배지 줄에 서는 섹션의 정본은 이 표 하나다 — 개수는 여기서 센다(주석·문서에 숫자로
+   적으면 섹션이 늘 때 한쪽만 낡는다). 섹션을 더할 때 stSec() 만 부르면 개수는
+   ST_N 에 담기지만 배지는 안 선다 — 속도(vit-sec)가 그렇게 한 벌 빠져 있었다.
+   차례는 화면에 선 순서 그대로다 — 누르면 그 자리로 가므로 순서가 곧 스크롤 순서다. */
 // 라벨은 그 섹션이 세는 **문제**의 이름이다 — 섹션 제목을 옮겨 적으면 "페이지 실적
-// 0" 처럼 실적이 0 이라는 말로 읽힌다.
+// 0" 처럼 실적이 0 이라는 말로 읽힌다(속도도 마찬가지라 「느림」으로 센다).
 const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["dev-sec", "모바일"],
-  ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"], ["pgs-sec", "링크 부족"],
-  ["pgc-sec", "무전환"]];
+  ["vit-sec", "느림"], ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"],
+  ["pgs-sec", "링크 부족"], ["pgc-sec", "무전환"]];
 
 function stJump(secId) {
   const e = $(secId);
@@ -368,7 +373,7 @@ function stSummary(blocked) {
 }
 
 /* ── 이 화면의 다음 한 수 ───────────────────────────────────
-   일곱 섹션이 각자 "이걸 하세요"라고 말하면 무엇부터인지가 없어진다. 데이터
+   섹션마다 각자 "이걸 하세요"라고 말하면 무엇부터인지가 없어진다. 데이터
    상태로 갈라 문장 하나와 버튼 하나만 머리 밑에 세운다. 셸이 아직 이 부품을
    안 세운 조립본에서는 아무것도 안 한다. */
 // 구글이 아예 못 들어간 URL 수 — 이 화면에서 가장 센 상태다.
@@ -481,10 +486,10 @@ const stOppCell = t => {
 const stOppVal = t => { const o = oppOf(t); return Number.isFinite(o && o.score) ? o.score : -1; };
 // 정렬은 안정적이다(JS 명세) — 점수가 같으면 서버가 준 순서(심각도)가 그대로 남는다.
 const stByOpp = (rows, key) => rows.slice().sort((a, b) => stOppVal(key(b)) - stOppVal(key(a)));
-// 행동 기록 버튼. 박제본·READONLY 에서는 셸이 빈 문자열을 준다 — 빈 상자를 안 만든다.
-const stActs = o => { const a = oppActs(o); return a ? `<div class="det">${a}</div>` : ""; };
 // 기회로 올라온 줄은 셸의 패널 한 벌이 답한다 — 화면이 같은 처방을 두 벌 쓰지 않는다.
-const stOppDet = (head, o) => `<div class="det">${head}${oppWhy(o)}</div>${oppPanel(o)}${stActs(o)}`;
+// 행동 기록 버튼(oppActs)은 패널 맨 위 행동 줄에 넘긴다 — 박제본·READONLY 에서는
+// 셸이 빈 문자열을 주고, 그 줄은 비면 스스로 사라진다(.det-top:empty).
+const stOppDet = (head, o) => `<div class="det">${head}${oppWhy(o)}</div>${oppPanel(o, oppActs(o))}`;
 // 표 머리글 한 벌 — 세 표가 같은 칸을 같은 말로 부른다.
 const ST_OPP_H = "기회?100점 만점으로 매긴 점수입니다. 세 표를 가로지르는 하나뿐인 축입니다." +
   " 표는 이 순서로 서 있고, 눌러서 펼치면 왜 걸렸고 뭘 하면 되는지가 나옵니다.";
@@ -569,7 +574,7 @@ function stIxReset() {
 
 // 화면과 같은 순서·같은 칸으로 내보낸다 — "지금 걸러 놓은 목록 그대로"가 참이어야 한다.
 function stIxCsv() {
-  csv("색인문제", [["점수", "갈래", "URL", "구글 판정", "verdict", "진단·처방"]].concat(
+  csv("색인문제", [["점수", "갈래", "URL", "구글 판정", "검사 결과", "진단·처방"]].concat(
     stIxSorted().map(r => [stOppVal(r.url) < 0 ? "" : stOppVal(r.url),
       (ST_IX[r.bucket] || {}).label || r.bucket, r.url,
       r.coverage_state || "", r.verdict || "", r.detail || ""])));
@@ -943,14 +948,17 @@ function renderVitals(d) {
         || (r.field_inp_ms !== null && r.field_inp_ms !== undefined && r.field_inp_ms > inp)
         || (C !== null && C !== undefined && C > cls);
   });
-  stSec("vit-sec", over.length);
   const when = esc(d.vitals_date);
   if (!rows.length) {
+    // 잰 페이지가 없으면 「재 봤더니 0」이 아니라 아직 잰 것이 없는 것이다 — 0 으로
+    // 세면 배지가 「검사했고 문제가 없습니다」라고 이 섹션 본문과 반대로 말한다.
+    stSec("vit-sec", null);
     stTools("vit-tools", "");
     $("vit-sub").textContent = `${when} 기준 · 잰 페이지가 없습니다.`;
     return $("vitals").innerHTML = `<div class="empty"><b>잰 페이지가 없습니다</b>
       <p>기회에 걸린 페이지가 있어야 잴 대상이 정해집니다.</p></div>`;
   }
+  stSec("vit-sec", over.length);
   $("vit-sub").innerHTML = over.length
     ? `${when} 기준 · <b>${over.length}개</b>가 기준을 넘겼습니다.`
       + hint(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls} 이내가 기준입니다. `
@@ -1078,7 +1086,7 @@ function CR_pick(kind) {
 
 // 화면과 같은 순서·같은 칸으로 내보낸다 — "지금 걸러 놓은 목록 그대로"가 참이어야 한다.
 function CR_csv() {
-  csv("crawl-issues", [["점수", "URL", "갈래", "심각도", "무엇이"],
+  csv("크롤문제", [["점수", "URL", "갈래", "심각도", "무엇이"],
     ...CR_sorted().map(r => [stOppVal(r.url || "") < 0 ? "" : stOppVal(r.url || ""),
       r.url, CR_label(r.kind), CR_SEV[r.severity] || r.severity, r.detail])]);
 }

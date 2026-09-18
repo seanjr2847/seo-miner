@@ -176,6 +176,8 @@ def demo() -> None:
         assert c.post("/api/opp", json={"id": 1, "status": "done"}).status_code == 401,             "/api/opp 가 로그인 없이 열렸다"
         assert c.post("/api/creation", json={"project": "x", "path": "a.md"}).status_code == 401, \
             "/api/creation 이 로그인 없이 열렸다"
+        assert c.post("/api/creation/merged", json={"project": "x", "id": 1}).status_code == 401, \
+            "/api/creation/merged 가 로그인 없이 열렸다"
 
         # 위 목록은 손으로 적은 것이라 **새 라우트는 영영 안 걸린다**. 인증이 정말
         # 한 곳(_require_uid)이라는 것은 라우트 표에서 본다 — 의존자 나무 어딘가에
@@ -398,10 +400,62 @@ def demo() -> None:
         r = c.post("/api/creation", json={"project": "p1", "opportunity_id": 999,
                                           "path": "a.md"})
         assert r.status_code == 404, "남의 기회 번호로 기록이 남는다"
-        for path in ("/api/verdict", "/api/opp", "/api/creation"):
+        for path in ("/api/verdict", "/api/opp", "/api/creation",
+                     "/api/creation/merged"):
             assert c.post(path, json={"project": "없는사이트", "id": 1, "status": "done",
                                       "keys": [], "path": "a.md"}).status_code == 404, \
                 f"{path} 로 남의 사이트를 건드릴 수 있다"
+
+        # --- 기록의 병합 표시(/api/creation/merged) ---------------------------
+        # 로컬 `createdb.py merged` 의 호스팅 짝이다. 이 창구가 없던 동안 호스팅 기록은
+        # 영영 '병합 전'이었고, sync 는 같은 PR 을 gh 에 매번 다시 물었다.
+        # 번호만으로 UPDATE 하면 **같은 테넌트의 다른 사이트** 기록이 번호 하나로
+        # 켜진다(소유 확인은 "이 유저가 p1 을 갖고 있다"까지만 본다) — 그래서 여기서
+        # 두 사이트를 만들어 놓고 남의 것이 안 켜지는지를 본다.
+        bc = db.connect(home=store.home(u2))
+        try:
+            pid_p1 = db.get_project(bc, "p1")["id"]
+            pid_p2 = bc.execute("INSERT INTO projects(name, type, domain) "
+                                "VALUES('p2','saas','p2.com') RETURNING id").fetchone()[0]
+            bc.commit()
+            cid_mine = db.record_creation(bc, pid_p1, "mine.md",
+                                          branch="capture/ctr_gap-mine")
+            cid_other = db.record_creation(bc, pid_p2, "other.md",
+                                           branch="capture/ctr_gap-other")
+        finally:
+            bc.close()
+
+        def merged_of(cid: int) -> int:
+            bc = db.connect(home=store.home(u2))
+            try:
+                return bc.execute("SELECT merged FROM creations WHERE id=?", (cid,)).fetchone()[0]
+            finally:
+                bc.close()
+
+        r = c.post("/api/creation/merged", json={"project": "p1", "id": cid_mine})
+        assert r.status_code == 200 and r.json() == {"creation_id": cid_mine, "merged": True}, r.text
+        assert merged_of(cid_mine) == 1, "창구가 200 을 줬는데 기록은 '병합 전'이다"
+        # 남의 사이트 기록 — 번호를 알아도 못 켠다
+        r = c.post("/api/creation/merged", json={"project": "p1", "id": cid_other})
+        assert r.status_code == 404, "다른 사이트의 기록이 번호 하나로 켜진다"
+        assert merged_of(cid_other) == 0, "404 를 주고도 남의 기록을 켰다"
+        # 없는 번호·이미 켠 번호는 '병합 전 목록'에 없다 → 404 (조용히 성공하지 않는다)
+        assert c.post("/api/creation/merged",
+                      json={"project": "p1", "id": 99999}).status_code == 404, \
+            "없는 기록 번호가 통과한다"
+        assert c.post("/api/creation/merged",
+                      json={"project": "p1", "id": cid_mine}).status_code == 404, \
+            "이미 켠 기록이 또 켜진다 — 병합 전 목록이 정본이 아니다"
+        assert c.post("/api/creation/merged",
+                      json={"project": "p1", "id": "1; DROP TABLE"}).status_code == 400, \
+            "숫자가 아닌 id 가 500 을 낸다"
+        bc = db.connect(home=store.home(u2))
+        try:      # 뒤 검사들이 보는 목록을 흔들지 않게 치운다
+            bc.execute("DELETE FROM creations WHERE id IN (?,?)", (cid_mine, cid_other))
+            bc.execute("DELETE FROM projects WHERE id=?", (pid_p2,))
+            bc.commit()
+        finally:
+            bc.close()
 
         r = c.get("/api/ai/prompts?project=p1")
         assert r.status_code == 200 and r.json()["prompts"] == [], r.text

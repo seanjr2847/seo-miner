@@ -103,6 +103,17 @@ def _stage_ids(defs):
     return {s for v in defs.values() for s in v["stages"]}
 
 
+def _chip_stage_ids(defs):
+    """화면이 **칩으로 내놓는** 단계 — stages ∪ head.
+
+    셸(dashboard.html)이 그렇게 읽는다: `head: (v.head || v.stages || [])`.
+    head 를 안 적은 뷰는 stages 전부가 머리 칩이 되고, 적은 뷰는 그 부분집합만
+    머리에 서지만 stages 쪽은 여전히 띠·빈 상태의 명령으로 나간다. 둘 중 하나만
+    보면 칩이 새 나간다.
+    """
+    return {s for v in defs.values() for s in (list(v["stages"]) + list(v.get("head") or []))}
+
+
 def _gather(name, *, ga4=False):
     """빈 Brain 하나로 gather() 를 한 번 돌려 페이로드를 받는다 — 화면·요청문이
     실제로 받는 것과 같은 자료다. 소스를 긁는 대신 이걸 본다.
@@ -1877,6 +1888,57 @@ def test_seam_42_readme_lists_every_command_the_skills_have():
     named = [x.strip() for x in chain.group(1).split("→")]
     assert named == order, (
         f"README 의 단계 목록이 run_all.STAGES 와 다르다\n  README: {named}\n  정본  : {order}")
+
+
+def test_seam_43_chip_stages_have_skill_commands():
+    """43) 화면이 칩으로 내놓는 단계는 스킬에 **그 이름의 명령 절**이 있어야 한다.
+
+    칩의 근거는 뷰의 view-def(stages·head)이고 글자는 단계 이름 그대로다
+    (`/capture ${st}` — dashboard.html 의 viewChip·act). 그래서 화면 쪽만 보면
+    늘 멀쩡하다. 어긋난 건 스킬과의 사이였다:
+
+    [경쟁 분석]의 「경쟁사 찾기」 칩은 `/capture competitors` 를 복사해 줬는데
+    SKILL.md 가 정의한 명령은 `/capture gap`(단수)뿐이었다. 붙여 넣으면 안 먹고,
+    "오타인가" 하고 `s` 를 붙이면 `/capture gaps` 가 돈다 — 그건 기회를 세우는
+    **다른 단계**라 경쟁사 수집은 하나도 안 됐는데 성공한 것처럼 보였다. 조용히
+    틀린 답이 나오는 쪽이라 화면 검사로도, 단계 검사로도 안 잡혔다.
+    `crawl`·`backlinks` 는 아예 절이 없었다 — 칩은 있는데 그 명령의 설명이
+    리포 어디에도 없었다는 뜻이다.
+
+    고치는 방향은 정해져 있다: **명령 이름을 단계 이름에 맞춘다.** 화면에 특례
+    표(칩 이름 → 명령 이름)를 두면 그게 곧 세 번째 사본이 된다.
+
+    정본은 양쪽 다 하나씩이다 — 칩 쪽은 view-def, 명령 쪽은 SKILL.md 의 `### /명령`
+    절(seam 42 가 README 표를 그 절에 맞춘다). 단계 이름 목록을 여기 옮겨 적지
+    않는 이유도 같다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    defs = _view_defs(ctx["views"])
+    chips = _chip_stage_ids(defs)
+    assert chips, "화면이 칩으로 내놓는 단계를 하나도 못 읽었다 — view-def 를 잘못 읽고 있다"
+
+    skill_f = ROOT / "skills" / "capture" / "SKILL.md"
+    have = set(re.findall(r"^### /capture ([a-z0-9]+)", skill_f.read_text("utf-8"), re.M))
+    # 절의 꼴이 바뀌어 하나도 못 읽으면 아래 단언은 "전부 없다"로 요란하게 터진다 —
+    # 조용히 통과하지는 않는다. 그때 원인을 단계 탓으로 오해하지 않게 먼저 말해 둔다.
+    assert len(have) >= 10, \
+        f"SKILL.md 에서 명령 절을 {len(have)}개밖에 못 찾았다 — 정규식이 틀렸다"
+
+    # 어느 화면이 그 칩을 내놓는지까지 말해 준다 — 이름만으로는 고칠 자리를 못 찾는다.
+    missing = {}
+    for vid, v in sorted(defs.items()):
+        for st in sorted(set(list(v["stages"]) + list(v.get("head") or []))):
+            if st not in have:
+                missing.setdefault(st, []).append(vid)
+    assert not missing, (
+        "화면이 칩으로 내놓는데 SKILL.md 에 그 명령 절(`### /capture <단계>`)이 없다 "
+        "— 사용자가 복사해 붙여도 안 돈다: "
+        + " · ".join(f"/capture {st} ([{']·['.join(v)}] 화면)"
+                     for st, v in sorted(missing.items()))
+        + f". 스킬에 있는 명령: {sorted(have)}. 절 이름을 단계 이름에 맞춰 쓰고"
+          " (README 표는 seam 42 가 같이 본다), 화면에 특례 표를 만들지 마라")
 
 
 if __name__ == "__main__":

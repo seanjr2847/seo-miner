@@ -38,6 +38,9 @@
 #setup .lh { display:block; font:var(--micro); color:var(--slate);
   margin:0 0 5px; max-width:52ch; }
 #setup .lh a { color:var(--patina); text-decoration:underline; text-underline-offset:2px; }
+/* 칸 밑 한 줄에도 경로·명령이 실린다 — 등폭은 그 조각에만 건다(한글엔 안 건다).
+   치수는 셸의 `.step .why code` 와 같은 값이다 — 그 규칙은 .why 안만 잡는다. */
+#setup .lh code { font-family:var(--mono); font-size:11.5px; }
 
 /* 0단계의 고르개 — 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다).
    선택지 이름은 서버가 실어 보낸 표에서 오므로 여기엔 모양만 있다. */
@@ -117,9 +120,9 @@
            둘이 다른 것을 가리키는 바람에 "완료인데 도메인 칸이 비었다"로 읽혔다. -->
       <p class="sub">이 칸에 적은 값이 그 사이트 수집의 기준이 됩니다.<span
         class="hint" tabindex="0"
-        data-tip="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 이미 등록한 이름을 그대로 쓰면 그 설정을 덮어씁니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
-        title="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 이미 등록한 이름을 그대로 쓰면 그 설정을 덮어씁니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
-        aria-label="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 이미 등록한 이름을 그대로 쓰면 그 설정을 덮어씁니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다.">i</span></p>
+        data-tip="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
+        title="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
+        aria-label="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다.">i</span></p>
       <div class="tools"><span class="stat" id="s-proj"></span></div>
     </div>
     <div class="card">
@@ -127,13 +130,17 @@
            웹에서 쓰던 사이트를 여기 또 등록하면 두 벌이 된다는 것(origin/main). -->
       <details>
         <summary>웹에서 쓰던 사이트라면 여기 등록하지 않습니다</summary>
+        <!-- "등록한 값을 나중에 어떻게 고치나"는 아래 [이름] 칸 밑에 한 벌로 적는다 —
+             거절 문구가 뜨는 자리가 거기다. 여기 또 적으면 두 벌이 된다. -->
         <p class="why">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 채팅에 붙이면 그
-          사이트가 그대로 붙습니다. 여기 적은 값은 나중에
-          <code>~/.capture/projects/</code> 에서 고칠 수 있습니다.</p>
+          사이트가 그대로 붙습니다.</p>
       </details>
       <div class="grid">
         <div><label for="p-name">이름</label>
-          <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다.</span>
+          <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다. 이미 등록한
+            이름은 거절합니다 — 등록해 둔 값은 <code>~/.capture/projects/</code> 의 그
+            yaml 을 고치고 파일 맨 위 줄이 시키는 <code>db.py sync-project</code> 를 한
+            번 돌려 바꿉니다.</span>
           <input id="p-name" spellcheck="false" placeholder="mysite"></div>
         <div><label for="p-type">종류</label>
           <span class="lh">기회를 뽑는 기준이 종류마다 다릅니다.</span>
@@ -216,8 +223,9 @@
         <p class="why">측정을 막는 것은 위 <b>3단계 구글 연결 하나뿐</b>이고 그건
           무료입니다. 아래 키는 새 기능이 아니라 <b>자동화를 삽니다</b>. 없으면 그
           단계만 건너뛰고 나머지는 그대로 돕니다. 저장하면
-          <code>~/.capture/env</code> 에만 들어가고 화면에 다시 표시되지 않습니다.
-          비운 채 저장하면 지워집니다.</p>
+          <code>~/.capture/env</code> 에만 들어갑니다. 저장한 값은 화면에 다시 표시되지
+          않습니다 — 칸이 비어 보여도 저장된 키는 그대로 있고, 몇 개가 저장돼 있는지는
+          오른쪽 배지가 말합니다.</p>
       </details>
       <div class="grid">
         <div><label for="k-or">OpenRouter</label>
@@ -266,9 +274,9 @@
     <div class="card">
       <details>
         <summary>무엇이 넘어가고 무엇이 안 넘어가나</summary>
-        <p class="why">도메인·종류·씨앗 키워드·브랜드 표기·경쟁사가 넘어갑니다. API
-          키는 서버가 대므로 다시 넣지 않습니다. <b>측정한 자료는 넘어가지
-          않습니다</b> — 웹이 자기 계정에서 처음부터 다시 잽니다. 여기서 쓰던 것은
+        <p class="why">위 2단계 등록 폼에 적은 값이 그대로 넘어갑니다 — 로컬 폴더만
+          빼고(웹에는 그 폴더가 없습니다). API 키는 서버가 대므로 다시 넣지 않습니다.
+          <b>측정한 자료는 넘어가지 않습니다</b> — 웹이 자기 계정에서 처음부터 다시 잽니다. 여기서 쓰던 것은
           그대로 남습니다.</p>
       </details>
       <div class="row"><select id="c-proj" aria-label="넘길 사이트"></select>

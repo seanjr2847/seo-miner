@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS keywords (
   difficulty REAL,
   source TEXT DEFAULT 'seed',                 -- seed|autocomplete|gsc|competitor|claude
   is_active INTEGER DEFAULT 0,                -- 1 = tracked set (curated by Claude+user)
+  verdict_off INTEGER DEFAULT 0,              -- 1 = '무관' 판정이 is_active 를 껐다(되돌리기가 되켤 줄). 사람이 손대면 0
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, keyword)
 );
@@ -590,6 +591,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cols:
             conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
             conn.commit()
+    # '무관' 판정이 추적을 껐다는 사실. 되돌리기(판정 삭제)가 되켤 줄을 가리는 유일한 근거다
+    # — is_active=0 만 보면 애초에 후보였던 줄·사람이 손수 끈 줄과 구별이 안 된다.
+    # 옛 Brain 의 기존 줄은 0(= 판정이 끈 적 없음)으로 채워진다: 그 편이 안전하다.
+    # 되돌리기가 남의 키워드를 켜는 것보다 안 켜는 쪽으로 틀리는 게 낫다.
+    if "verdict_off" not in cols:
+        conn.execute("ALTER TABLE keywords ADD COLUMN verdict_off INTEGER DEFAULT 0")
+        conn.commit()
     # 페이지 감사가 모바일(viewport)·언어(html lang·hreflang)·신선도(발행·수정일)와
     # "정적 HTML 로는 안 보이는 페이지"(js_shell)를 새로 읽는다. 요청문이 이 값들을
     # 사실로 싣기 때문에, 없으면 NULL 로 남아야지 0 이나 빈 문자열이면 안 된다.
@@ -1895,7 +1903,14 @@ def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
     """검색어 심사 저장. keys 는 이미 scoring.norm 을 거친 것(서버가 만든 key 를 화면이
     그대로 돌려보낸다). None 이면 미판정으로 되돌린다(행 삭제).
     irrelevant 는 같은 키의 키워드 추적(is_active)을 끈다 — hold 는 우리 검색어라
-    측정을 계속한다. 갱신한 행 수를 돌려준다."""
+    측정을 계속한다. 갱신한 행 수를 돌려준다.
+
+    **끈 것은 되돌릴 수 있어야 한다.** 무관을 거두면(되돌리기·다른 판정으로 갈아타기)
+    무관이 껐던 추적은 되살아난다. 되살릴 줄은 `keywords.verdict_off` 로 가린다 —
+    is_active=0 만으로는 애초에 후보였던 줄(적재 기본값이 0 이다)과 사람이 다른
+    이유로 끈 줄까지 켜 버린다. 표식은 실제로 1→0 으로 바꾼 줄에만 찍고
+    (`AND is_active=1`), 사람이 추적을 손대면 지운다(`set_keywords_active`).
+    """
     if verdict is not None and verdict not in VERDICTS:
         raise ValueError(f"verdict must be one of {VERDICTS} or None, got {verdict!r}")
     _register_norm(conn)
@@ -1905,6 +1920,7 @@ def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
         if verdict is None:
             n += conn.execute("DELETE FROM verdicts WHERE project_id=? AND key=?",
                               (int(project_id), k)).rowcount
+            _restore_verdict_off(conn, project_id, k)
             continue
         conn.execute(
             """INSERT INTO verdicts(project_id, key, verdict) VALUES(?,?,?)
@@ -1913,10 +1929,22 @@ def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
             (int(project_id), k, verdict))
         n += 1
         if verdict == "irrelevant":
-            conn.execute("UPDATE keywords SET is_active=0 WHERE project_id=? AND norm(keyword)=?",
-                         (int(project_id), k))
+            conn.execute(
+                """UPDATE keywords SET is_active=0, verdict_off=1
+                    WHERE project_id=? AND norm(keyword)=? AND is_active=1""",
+                (int(project_id), k))
+        else:                      # 무관 → 보류/작업 으로 갈아타도 껐던 추적을 되돌린다
+            _restore_verdict_off(conn, project_id, k)
     conn.commit()
     return n
+
+
+def _restore_verdict_off(conn: sqlite3.Connection, project_id: int, key: str) -> None:
+    """무관 판정이 껐던 추적을 되켠다(표식이 있는 줄만). 호출부는 commit 을 맡는다."""
+    conn.execute(
+        """UPDATE keywords SET is_active=1, verdict_off=0
+            WHERE project_id=? AND norm(keyword)=? AND verdict_off=1""",
+        (int(project_id), key))
 
 
 def verdict_map(conn: sqlite3.Connection, project_id: int) -> dict[str, str]:
@@ -2256,12 +2284,17 @@ def set_keywords_active(conn: sqlite3.Connection, project_id: int, ids,
     """키워드 추적 토글. 반환: 실제로 손댄 행 수(남의 사이트 id 는 안 세어진다).
 
     상한(몇 개까지 켤 수 있나)은 여기 없다 — 값을 아는 호출부가 ids 를 잘라서 넘긴다.
+
+    사람이 손대면 '무관이 껐다'는 표식(verdict_off)은 지운다 — 켰든 껐든, 이 줄의
+    현재 상태를 정한 건 이제 사람이다. 안 지우면 나중에 판정을 되돌릴 때 사람이
+    끈 것을 다시 켠다.
     """
     ids = [int(x) for x in ids]
     if not ids:
         return 0
     cur = conn.execute(
-        f"UPDATE keywords SET is_active=? WHERE project_id=? AND id IN ({','.join('?' * len(ids))})",
+        f"UPDATE keywords SET is_active=?, verdict_off=0"
+        f" WHERE project_id=? AND id IN ({','.join('?' * len(ids))})",
         [1 if active else 0, int(project_id), *ids])
     conn.commit()
     return cur.rowcount

@@ -264,7 +264,47 @@ sql로 읽어 직접 재판정 후 결과를 설명한다 — 답변 전문이 �
 OPENROUTER_API_KEY 미설정이면 이 명령은 돌지 않는다 — 키가 필요하다고 말하고
 (`setup.md` 5절) 나머지 기능은 그대로 됨을 알린다.
 
-### /capture gap {P} — 경쟁사 역키워드 (DataForSEO Labs, 유료 키 필요)
+### /capture crawl {P} — 사이트 전수 크롤 (내 사이트 직접 조회, 돈 안 듦)
+**풀런(`/capture run`)에 포함된다** — `crawl` 단계다(순서의 정본은 `run_all.STAGES`).
+
+`python scripts/collect_crawl.py --project {P} --dry-run` → 어디서 시드를 얻고 몇 개를
+돌 예정인지 확인 → 실행. 남의 API 가 아니라 **내 사이트를 넓게 도는 것**이라 키가
+필요 없다. 선행 단계도 없다 — 프로젝트 yaml 의 `domain` 하나면 돈다.
+
+**`/capture pages` 와 무엇이 다른가:** `pages` 는 기회가 걸린 페이지 20장을 **깊게**
+읽는다. 이쪽은 반대로 사이트맵·내부 링크를 따라 **넓게** 돌아, 한 장만 봐서는 절대
+안 나오는 것(깨진 내부 링크·리다이렉트 사슬·고아 페이지·제목 중복)을 잡는다.
+HTML 을 읽는 법은 `collect_page._Page` 를 그대로 상속한다 — 파서가 두 벌이 아니다.
+
+**어디서 시작하나:** robots.txt 의 `Sitemap:` 줄 → 그 사이트맵의 URL 목록. 없으면
+홈에서 내부 링크 BFS. **같은 호스트만 따라간다**(외부 링크는 기록만).
+
+**얼마나 도나:** `crawl_urls`(기본 300) × 깊이 `crawl_depth`(기본 5), 요청 간격은
+`throttle`(기본 0.5초) — 내 서버를 두드리는 속도다. `--limit` / `--max-depth` /
+`--throttle` 로 덮고, `crawl_urls: 0` 이면 이 단계를 끈다.
+
+**결과:** `crawl_pages`·`crawl_links` 에 페이지와 링크가 적재되고, 끝난 뒤 SQL 로
+이슈를 뽑아 `crawl_issues` 에 **저장한다**. 화면에서 다시 계산하지 않는 이유는
+하나다 — 저장돼 있어야 회차 비교가 된다. 갈래 이름·왜 문제인지의 정본은
+`collect_crawl.ISSUE_KIND` 한 벌이고(화면 `site.html` 의 `CR_KIND` 와 요청문이
+같은 것을 쓴다), 여기 옮겨 적지 않는다.
+
+**이 단계의 진짜 효용은 회차 비교다** — `crawl_runs` 로 남아 직전 회차 대비
+`신규 N건 · 해결 N건` 을 찍는다. 첫 바퀴는 기준선이라 비교가 비어 있다.
+
+robots.txt 원문과 `/llms.txt` 도 이때 함께 받아 `crawl_runs` 에 남는다 — 아래
+"AI 크롤러 차단" 절이 읽는 재료가 이것이다. **그 절에는 새 수집도 새 단계도 없다.**
+
+### /capture competitors {P} — 경쟁사 탐지·역키워드·트래픽 몫 (DataForSEO Labs, 유료 키 필요)
+**옛 이름은 `/capture gap`(단수) 이었다.** 단계 이름은 `competitors` 인데 명령만
+`gap` 이라, 화면이 단계 이름으로 만든 「경쟁사 찾기」 칩은 **없는 명령**을 복사해
+줬고 복수형 `/capture gaps` 로 고쳐 치면 전혀 다른 단계가 돌았다. 이름을 단계에
+맞췄다 — 특례는 두지 않는다.
+
+**풀런(`/capture run`)에 포함된다** — `competitors` 단계다(순서의 정본은
+`run_all.STAGES`). 키가 없거나 등록·탐지된 경쟁사가 없으면 풀런은 이 단계를
+조용히 건너뛴다(에러 아님).
+
 `python scripts/collect_gap.py --project {P} --dry-run` 으로 도메인 수·요청
 수·비용 어림을 먼저 고지하고 확인을 받은 뒤 실행. **dry-run 선행·비용 고지는
 이 작업의 철칙** — Labs 는 도메인당 ~$0.001 청구(`references/setup.md` 7절
@@ -274,16 +314,61 @@ DataForSEO 가격표 링크)이고 적재량에 따라 비용이 빠르게 늘�
 `DATAFORSEO_PASSWORD`)을 그대로 쓴다. 같은 키로 SERP 와 Labs 가 모두 청구된다.
 키가 없으면 다른 수집기와 같은 톤으로 정중히 종료한다(에러 아님).
 
-흐름: 경쟁사 도메인(생략 시 `competitors` 테이블, 상한 5개)에 대해 DataForSEO
-Labs `ranked_keywords/live` 를 호출해 랭킹 키워드를 받아, (a) 내 키워드와
-(b) 최신 GSC 스냅샷 노출>0 쿼리에 이미 있는 것은 제외 — **남는 것이 "경쟁사는
-잡는데 나는 부재"** 후보다.
+**축이 셋이고 셋 다 끌 수 있다**(0 = 끔). 세부·상한 이름의 정본은
+`collect_gap._parser()` 다:
+
+- **역키워드** (`ranked_keywords/live`, `--limit` = `limits.gap_limit`) — 경쟁사
+  도메인(생략 시 `competitors` 테이블, 읽는 규칙은 `scoring.rivals` — 수동 등록
+  먼저, 제3자 플랫폼 제외, 상한 5개)의 랭킹 키워드를 받아, (a) 내 키워드와
+  (b) 최신 GSC 스냅샷 노출>0 쿼리에 이미 있는 것은 제외 — **남는 것이 "경쟁사는
+  잡는데 나는 부재"** 후보다.
+- **자동 탐지·트래픽 몫** (`competitors_domain/live`, `--rivals` =
+  `limits.auto_competitors`) — 누가 우리와 키워드가 겹치는지를 사람 등록 없이
+  찾고, 같은 응답으로 도메인별 유기 규모까지 한 번에 받는다(`competitors` +
+  `competitor_metrics`). 몫은 저장하지 않고 조회할 때 계산한다 — 저장하면 경쟁사가
+  하나 늘어 분모가 바뀔 때 어제 적은 몫이 조용히 거짓말이 된다.
+- **Content Gap** (`domain_intersection/live`, `--intersect` = `limits.gap_rivals`) —
+  두 도메인의 위치를 같이 받아 `missing`(우리는 순위 없음)·`weak`(둘 다 있는데 우리가
+  아래)·`shared` 로 갈라 `keyword_gap` 에 적재한다. 경쟁사당 2콜이라 상한이 따로 있다.
 
 결과는 `keywords` 후보(`source='competitor_gap'`, `is_active=0`)로 적재된다 —
 즉 **`/capture keywords` 의 큐레이션 단계(승인분만 활성화)** 를 그대로 탄다.
 Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 추정치라
 '볼륨 창작 금지' 규칙 위반 아님). 기회 판정·군집화는 큐레이션 후 Claude
 (`scoring.md` 1절 content_gap 행).
+
+### /capture backlinks {P} — 백링크 프로필·앵커·링크 교집합 (DataForSEO, 유료 키 필요)
+**풀런(`/capture run`)에 포함된다** — `backlinks` 단계다(순서의 정본은
+`run_all.STAGES`). 키가 없으면 풀런은 이 단계를 조용히 건너뛴다(에러 아님).
+
+`python scripts/collect_backlinks.py --project {P} --dry-run` → 요청 수·비용 어림
+고지 → 확인 → 실행.
+
+**키는 `/capture rank`·`/capture competitors` 와 같은 DataForSEO 자격이다**
+(`DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD`). 백링크는 코드가 아니라 인프라라
+(링크 그래프를 만드는 일) 사서 쓴다. 키가 없으면 정중히 종료한다.
+
+**다섯 축을 함께 캔다** — 요약만으로는 "무엇을 할지"가 안 나오기 때문이다:
+프로필 한 줄(`backlink_summary`) · 누가 링크를 주나(`referring_domains`) ·
+어느 페이지가 어떤 앵커로(`backlinks`) · 앵커 분포(`backlink_anchors`) ·
+**경쟁사는 받는데 우리는 못 받는 곳**(`link_intersect`). 호출 하나가 죽어도
+나머지는 간다.
+
+**선행 단계:** 링크 교집합만 경쟁사를 재료로 쓴다 — 대상은 `scoring.rivals`
+(수동 등록 먼저, 제3자 플랫폼 제외)가 고른다. 그래서 `/capture competitors` 가
+먼저 돌아 있거나 경쟁사를 손으로 등록해 둬야 그 축이 뜻을 가진다. 둘 이상이어야
+'교집합'이라 경쟁사가 하나뿐이면 그 축은 빈다. 나머지 네 축은 내 도메인만 있으면
+돈다.
+
+**얼마나 사나:** `limits.backlink_limit`(기본 200, `--limit`)이 참조 도메인·개별
+링크·앵커의 공통 상한이다. `0` 이면 요약만 산다.
+
+재실행 안전망: **백링크는 하루 단위로 안 움직인다** — `backlink_max_age_days`
+(기본 7, `--max-age`) 안에 이미 샀으면 다시 사지 않는다. `--max-age 0` 이면 항상
+산다.
+
+**비용:** 요청당 ~$0.024 + 행당 ~$0.000036(2026-08 가격표). 실청구액은 응답의
+`cost` 를 그대로 합산해 적는다 — dry-run 숫자는 고지용 어림이다.
 
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
 **풀런(`/capture run`)에 포함된다** — `gaps` 단계다(순서의 정본은 `run_all.STAGES`).
@@ -304,7 +389,7 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
   (DataForSEO — Serper 는 AI 요약을 못 잰다)가 돌아야 생긴다.
 - `content_gap` 의 재료는 풀런의 `competitors` 단계가 적재한다(DataForSEO 키가 있을
   때). 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는 조용히 건너뛰므로
-  후보가 하나도 안 생긴다 — 그때는 `/capture gap {P}` 로 먼저 적재한다(`--domain` 으로
+  후보가 하나도 안 생긴다 — 그때는 `/capture competitors {P}` 로 먼저 적재한다(`--domain` 으로
   도메인을 직접 줄 수도 있다).
 
 `pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯

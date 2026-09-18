@@ -51,9 +51,6 @@
 #opplist .opp .why { margin-top:2px; }
 #opplist .opp:not([open]) .why { -webkit-line-clamp:1; }
 #opplist .det { padding-left:48px; }
-/* 펼친 패널의 상태 손잡이(oppRest) 바로 밑에 붙는다 — 상태 버튼이 한 자리에 모인다. */
-#opplist .det-acts { padding-top:0; margin-top:-6px; }
-#opplist .det-acts .acts { margin-top:0; }
 @media (max-width:560px) {
   #opplist .opp > summary { grid-template-columns:auto 1fr auto; }
   #opplist .opp > summary::before { display:none; }
@@ -232,7 +229,8 @@ function OV_vars(o) {
 }
 // 접힌 줄에는 「할 일」 배지를 안 단다 — 기본 거르개(아직 안 함)에서는 거의 모든 줄이
 // 같은 말이라 읽을 것만 늘린다. 다른 상태일 때만 선다. 상태를 바꾸는 손잡이와 실행
-// 자리(oppActs)는 펼친 패널 맨 밑, 나머지 상태 버튼 옆으로 옮겼다 — 스무 줄에 버튼 마흔 개가 서지 않게.
+// 자리(oppActs), 원래 화면으로 가는 길(OV_see)은 셸 패널의 행동 줄(맨 위)에 넘긴다 —
+// 스무 줄에 버튼 마흔 개가 서지 않게, 그러면서 펼치면 맨 먼저 손에 닿게.
 function oppRow(o) {
   const n = o.group ? o.group.ids.length : 1;
   return `<details class="opp" data-opp="${o.id}" data-ids="${(o.group ? o.group.ids : [o.id]).join(" ")}">
@@ -253,9 +251,7 @@ function oppRow(o) {
       </div>
       ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
     </summary>
-    ${oppPanel(o)}
-    ${READONLY ? (OV_see(o) ? `<div class="det det-acts"><div class="acts">${OV_see(o)}</div></div>` : "")
-               : `<div class="det det-acts">${oppActs(o)}${OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""}</div>`}
+    ${oppPanel(o, oppActs(o) + (OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""))}
   </details>`;
 }
 

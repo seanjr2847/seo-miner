@@ -4,7 +4,7 @@
 
 ## 이 화면의 섹션
 
-머리 밑에 **[섹션별 문제]** 배지 줄이 먼저 섭니다 — 색인 · 크롤 · 모바일 · 클릭 감소 · 무노출 · 링크 부족 · 무전환 일곱 개이고, 배지를 누르면 그 섹션으로 갑니다(값은 안 바뀝니다). **[속도]는 이 배지 줄에 없습니다.** 아직 안 잰 섹션은 숫자 대신 `미검사` 라고 적힙니다.
+머리 밑에 **[섹션별 문제]** 배지 줄이 먼저 섭니다 — 색인 · 크롤 · 모바일 · **느림** · 클릭 감소 · 무노출 · 링크 부족 · 무전환, 화면에 선 순서 그대로 여덟 개이고, 배지를 누르면 그 섹션으로 갑니다(값은 안 바뀝니다). 배지 이름은 섹션 제목이 아니라 **그 섹션이 세는 문제의 이름**입니다 — [속도] 섹션이 배지 줄에서는 「느림」으로 서는 것도 그래서입니다(「속도 0」은 속도가 0이라는 말로 읽힙니다). 아직 안 잰 섹션은 숫자 대신 `미검사` 라고 적히고, 잰 페이지가 한 장도 없는 [속도]도 0이 아니라 `미검사` 입니다. GA4 가 없어 섹션 자체가 안 서면 그 배지도 안 섭니다.
 
 | 섹션 | 무엇을 보는 자리인가 | 어느 수집에서 오나 |
 | --- | --- | --- |
@@ -64,8 +64,8 @@
 
 | 섹션 | 파일명 꼴 | 열 |
 | --- | --- | --- |
-| 색인 상태 | `seo-miner-색인문제-<날짜>.csv` | 점수, 갈래, URL, 구글 판정, verdict, 진단·처방 |
-| 사이트 크롤 | `seo-miner-crawl-issues-<날짜>.csv` (이 파일만 이름이 영어입니다) | 점수, URL, 갈래, 심각도, 무엇이 |
+| 색인 상태 | `seo-miner-색인문제-<날짜>.csv` | 점수, 갈래, URL, 구글 판정, 검사 결과, 진단·처방 |
+| 사이트 크롤 | `seo-miner-크롤문제-<날짜>.csv` | 점수, URL, 갈래, 심각도, 무엇이 |
 | 모바일 격차 | `seo-miner-모바일격차-<날짜>.csv` | 점수, 검색어, 모바일 순위, 데스크톱 순위, 순위차, 모바일 노출, 모바일 CTR(%), 데스크톱 CTR(%) |
 | 페이지별 실적 | `seo-miner-페이지성과-<날짜>.csv` | 페이지, Δ클릭, 클릭, 노출, CTR(%), 평균 순위, 검색어 수 (GA4 가 연결돼 있으면 세션, 전환이 더 붙음) |
 | 노출 없는 페이지 | `seo-miner-무노출페이지-<날짜>.csv` | URL, 깊이, 본문 단어, 내부링크, 제목 |
@@ -135,11 +135,14 @@ flowchart TD
 
 <!-- 근거:
   skills/capture/templates/views/site.html — view-def(id·title·sections·stages), 여덟 섹션 마크업과 렌더 함수
-    (renderIndex·renderCrawl·renderDevice·renderVitals·renderPageAxis), 배지 줄 ST_SUM·stSummary·stJump,
+    (renderIndex·renderCrawl·renderDevice·renderVitals·renderPageAxis),
+    배지 줄에 서는 섹션과 그 이름·차례의 정본은 ST_SUM 한 벌(vit-sec = 「느림」 포함) — stSummary·stJump,
+    renderVitals 의 stSec("vit-sec", null)(잰 페이지가 없으면 0 이 아니라 미검사),
     다음 걸음 stPlan/stNext/ST_LEAD/stAct, 갈래표 ST_IX·ST_IX_ORDER 와 처방 ST_IX_PLAY,
     칩 stIxChip/CR_pick, 검색칸 stIxFind/stDevFind, 행 펼침 stExpBind(index·devgap·crawl·pg-starved·pg-noconv),
     CR_N=20·CR_more(+50), CR_diff/CR_fixed, 섹션 접힘 stSec(.sec-ok/.sec-quiet)와 stOk,
-    CSV 함수 stIxCsv·CR_csv·stDevCsv·pgPerfCsv·pgDeadCsv·pgStarvedCsv·pgNoConvCsv 의 이름·열,
+    CSV 함수 stIxCsv(「색인문제」·열 이름 「검사 결과」)·CR_csv(「크롤문제」)·stDevCsv·pgPerfCsv·
+    pgDeadCsv·pgStarvedCsv·pgNoConvCsv 의 이름·열,
     표 머리글 상수 PG_PERF_HEAD(+PG_PERF_HEAD_GA4)·PG_DEAD_HEAD·PG_ST_HEAD·PG_NOCONV_HEAD,
     빈 상태 PG_NO_GSC·PG_OLD_SNAP, stDevChart(GA4 미연결이면 빈 문자열),
     섹션 숨김 조건(renderPageDead/renderPageStarved 의 crawled, renderPageNoConv 의 ga4_date,

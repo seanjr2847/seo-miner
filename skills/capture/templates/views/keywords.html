@@ -438,10 +438,7 @@ function KW_det(r, src) {
       위 [순위 상승 기회]에 있습니다.
       <button class="go sm sec" onclick="KW_jump(this)">그 줄 열기</button></p></div>`;
   const o = oppOf(r.query);
-  if (o) {
-    const acts = oppActs(o);
-    return oppPanel(o) + (acts ? `<div class="det">${acts}</div>` : "");
-  }
+  if (o) return oppPanel(o, oppActs(o));
   const pages = KW_PAGES[r.query] || [];
   const url = pages.length ? pages[0].page : "";
   const [what, acts, deliver] = KW_plan(r);

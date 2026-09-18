@@ -436,7 +436,7 @@ main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-wid
    펼침 패널의 설명·할 일도 같은 폭이다: 1400px 화면에서 한 줄이 130자를 넘으면
    눈이 다음 줄 머리를 못 찾는다. */
 .sub, .empty, #docban .verdict, #docban .nx, #docban ul, #guide .lead,
-.donebar, .loopback, .detw, .deta, .detn { max-width:74ch; }
+.loopback, .detw, .deta, .detn { max-width:74ch; }
 
 /* ── 측정 요약: 카드가 아니라 한 줄 계기판 ────────────────── */
 .band { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
@@ -784,12 +784,20 @@ td.expcell { padding:0 !important; }
 .ask[open] > summary { color:var(--patina); border-color:var(--patina); }
 /* 펼침 패널 안에서는 이게 그 기회의 다음 행동이다 — 상태 바꾸기(보조)보다 앞에
    서게 주요 버튼 무게를 준다. 펴고 나면 할 일은 복사라 테두리로 물러난다. */
-.det > .ask:not([open]) > summary { background:var(--patina); border-color:var(--patina);
+.det-top > .ask:not([open]) > summary { background:var(--patina); border-color:var(--patina);
   color:var(--card); font-weight:600; }
-.det > .ask:not([open]) > summary:hover { background:var(--ink); border-color:var(--ink);
+.det-top > .ask:not([open]) > summary:hover { background:var(--ink); border-color:var(--ink);
   color:var(--stone); }
-/* 상태 바꾸기 묶음 — 패널 맨 밑, 괘선 위로 갈라 둔다. */
-.det > .oppset { margin-top:16px; padding-top:14px; border-top:1px solid var(--rule-soft); }
+/* 행동 줄 — 패널 **맨 위**, 괘선 아래로 갈라 둔다. 요청문·상태 바꾸기·화면이 넘긴
+   것(실행 버튼·다른 화면으로)이 한 줄에 선다. 예전엔 셋이 패널 맨 밑에 세 줄로
+   흩어져 있었다: 할 일 목록이 길수록 손이 멀어져, 다 읽고 스크롤을 더 내려야
+   누를 것이 나왔다. 무엇을 할지는 위에서 정하고 근거는 아래에서 읽는다. */
+.det-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+  margin:2px 0 14px; padding-bottom:12px; border-bottom:1px solid var(--rule-soft); }
+.det-top:empty { display:none; }
+.det-top > .ask, .det-top > .acts { margin:0; }
+/* 펴면 본문 상자가 한 줄을 통째로 쓴다 — 버튼 옆에 끼면 textarea 가 한 뼘이 된다. */
+.det-top > .ask[open] { flex:1 1 100%; }
 .pbox { margin-top:8px; }
 .pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
   font-size:11.5px; color:var(--slate); margin-bottom:5px; }
@@ -869,14 +877,6 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 #guide .lead { font-size:14px; color:var(--slate); margin:6px 0 26px; max-width:68ch; }
 #guide .lead b { color:var(--ink); font-weight:600; }
 .shaft { display:grid; grid-template-columns:26px 1fr; gap:0 18px; }
-/* 완주 표시. 배너(#nx)는 이미 같은 말을 하지만, [안내]를 열면 모든 단계가 done 이고
-   "지금 할 것"이 없어 화면이 애매해진다 — 여기서 한 번 더 못박는다. */
-.donebar { border:1px solid var(--rule); border-left:3px solid var(--patina);
-  background:var(--wash); border-radius:6px; padding:14px 16px; margin:0 0 24px;
-  font-size:13px; line-height:1.7; color:var(--ink); }
-.donebar > b:first-child { display:block; font:650 14px/1.45 var(--sans);
-  margin-bottom:3px; }
-.donebar b { font-weight:650; }
 .stp { display:contents; }
 .stp .rail { position:relative; }
 /* 갱도 벽: 위·아래로 이어지는 선. 판 데는 녹청, 안 판 데는 회색. */
@@ -1006,6 +1006,12 @@ button.chip.on { color:var(--ink); border-color:var(--patina); background:var(--
 label { display:block; font:var(--micro); color:var(--slate); margin:12px 0 5px; }
 label b, label a { color:var(--patina); font-weight:500; }
 label a { text-decoration:underline; text-underline-offset:2px; }
+/* 저장된 키 지우기 — 셸이 API 키 칸마다 단다. 위 label 은 칸의 이름이라 칸 위에
+   서지만 이건 그 칸에 딸린 조작이라 아래에 붙는다. 되돌릴 수 없는 것이므로
+   구릿빛(.go.danger 와 같은 축)으로 세워 값 입력과 섞이지 않게 한다. */
+.delkey { display:flex; align-items:center; gap:6px; width:fit-content;
+  margin:7px 0 0; color:var(--copper); cursor:pointer; }
+.delkey input { width:auto; margin:0; accent-color:var(--copper); cursor:pointer; }
 /* 화면끼리 잇는 손잡이. 여태 [개요]·[순위 추적] 은 글자였을 뿐이라 눌러도 아무 일이
    없었다 — 화면 사이를 잇는 링크가 뷰 파일에 한 개도 없었다. 문장 안에 앉으므로
    버튼 모양이 아니라 밑줄 링크처럼 보이게 한다(버튼인 이유는 라우터를 부르기 때문). */
@@ -1943,7 +1949,7 @@ window.copyPrompt = function (btn) {
         oppOf(대상)    한 건 (점수 높은 순 첫째)      oppsOf(대상)  전부
         oppScore(o)    점수 칸        oppMeter(o)    막대
         oppWhy(o)      종류 라벨 + 근거               oppActs(o)    확인·완료·제외
-        oppPanel(o)    펼침 내용 (할 일·페이지·고칠 곳·프롬프트)
+        oppPanel(o, 손잡이)  펼침 내용 (행동 줄·할 일·페이지·고칠 곳·프롬프트)
 
       대상 문자열은 화면마다 출처가 다르다(GSC 검색어·추적 키워드·URL·도메인).
       대소문자와 앞뒤 공백만 맞춰 찾는다 — 그 이상은 맞히려 들지 않는다.  ── */
@@ -2074,6 +2080,19 @@ window.oppActs = o => {
     `>${n ? oppBtn(o, n[0]) : ""}${write}</div>`;
 };
 
+/* 지금 상태 칩 — 상태 버튼 바로 앞에 선다.
+
+   버튼은 **무엇으로 바꾸나**만 말한다("완료 표시"). 지금이 무엇인지는 접힌 줄이
+   말해 왔는데, [개요]는 '할 일'일 때 그 배지를 일부러 안 단다(기본 거르개가 이미
+   그 말이라 스무 줄이 같은 배지를 단다). 그래서 기본 상태의 카드를 펼치면
+   지금이 어디인지 말해 주는 것이 하나도 없이 버튼 셋만 서 있었다.
+
+   READONLY·박제본에서도 낸다 — 거기선 버튼이 아예 없어서 이게 유일한 상태 표시다.
+   말은 OPP_LABEL 한 벌에서 온다(정본은 db.OPP_STATUSES). */
+const oppNow = o => !o || !o.status ? "" :
+  `<span class="st st-${esc(o.status)}" title="이 기회의 지금 상태입니다. 옆 버튼으로 바꿉니다."
+    >${window.OPP_LABEL[o.status] || esc(o.status)}</span>`;
+
 // 펼침 패널이 갖는 나머지 상태 — 지금 상태와 접힌 줄이 이미 낸 것은 뺀다.
 const oppRest = o => {
   if (!o || READONLY || o.id == null) return "";
@@ -2083,7 +2102,9 @@ const oppRest = o => {
     ? `<div class="acts oppset">${rest.map(st => oppBtn(o, st)).join("")}</div>` : "";
 };
 
-window.oppPanel = o => o ? oppDetail(o) : "";
+// extra 는 이 화면만 아는 손잡이(oppActs·다른 화면으로 가기)를 패널 맨 위 행동 줄에
+// 함께 세우는 자리다. 안 넘기면 요청문 + 나머지 상태 버튼만 선다.
+window.oppPanel = (o, extra) => o ? oppDetail(o, extra) : "";
 
 /* 기회 하나를 이 PC 의 개발 도구로 연다. 여기서 하는 일은 누른 것을 서버에 넘기고
    무엇으로 열렸는지 말하는 것뿐이다 — 어느 도구·어느 터미널·어느 폴더인지는 전부
@@ -2472,7 +2493,7 @@ window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD |
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
       할 일은 o.play 가 댄다. ── */
-function oppDetail(o) {
+function oppDetail(o, extra) {
   const pages = (window.QUERY_PAGES || {})[o.target] || [];
   const p = o.play || {};
   // striking_distance 의 "무엇을" 뒤에는 평균 게재순위 안내 + [순위] 화면 버튼이
@@ -2520,10 +2541,15 @@ function oppDetail(o) {
     <ul class="detl">${made.map(c => `<li><span class="num">${esc(c.file_path)}</span>` +
       `${c.branch ? ` · ${esc(c.branch)}` : ""} · ${c.merged ? "머지됨" : "PR 열림"}` +
       `${c.note && /^https?:/.test(c.note) ? ` · <a href="${esc(c.note)}" target="_blank" rel="noopener">보기</a>` : ""}</li>`).join("")}</ul></div>` : "";
-  // 패널 맨 밑이 이 기회의 다음 행동이다: 요청문 만들기가 주요고, 상태 바꾸기는 보조.
-  return `<div class="det">${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
+  // 패널 **맨 위**가 이 기회의 다음 행동이다: 요청문 만들기가 주요고, 상태 바꾸기는
+  // 보조다. 그 사이에 지금 상태 칩(oppNow)이 서서 "무엇으로 바꾸나"만 말하는 버튼들
+  // 앞에 "지금 무엇인가"를 댄다. extra 는 그 화면만 아는 손잡이(실행 버튼·다른 화면
+  // 으로)를 같은 줄에 세우는 자리다 — 화면이 패널 뒤에 제 상자를 또 달면 버튼 줄이
+  // 둘로 갈라진다.
+  return `<div class="det"><div class="det-top">${ask}${oppNow(o)}${oppRest(o)}${extra || ""}</div>
+    ${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${works}${ask}${oppRest(o)}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${works}</div>`;
 }
 
 /* 묶인 줄의 변형 목록 — 어느 검색어가 한 줄이 됐고 **왜** 한 줄인지. 열쇠(via)는
@@ -2724,15 +2750,6 @@ function renderGuide(d) {
         (!window.SM_HOSTED && steps[here].cmd
           ? ` <code>${esc(steps[here].cmd)}</code>` : "");
     banSync();          // 이제 배너에 할 말이 생겼다
-  }
-  const db_ = $("donebar");
-  if (db_) {
-    db_.hidden = here !== -1;
-    // 단계 수는 여기서 세지 않는다 — stage.py 가 실어 보낸 목록 길이가 정본이다.
-    if (here === -1) db_.innerHTML =
-      `<b>한 바퀴를 다 돌았습니다</b> ${steps.length}단계를 모두 마쳤습니다.
-       다음은 ${back}부터입니다. 고친 것이 순위와 인용에 반영됐는지는 다시 잴 때
-       숫자로 나옵니다.`;
   }
   // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
   // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
@@ -3248,6 +3265,12 @@ function renderSetup(d) {
   $("s-keys").outerHTML = d.nkeys
     ? `<span id="s-keys" class="badge ok">${d.nkeys}개 저장됨</span>`
     : `<span id="s-keys" class="badge muted">없어도 됨</span>`;
+  // 저장된 키가 있을 때만 [저장된 키 지우기]를 낸다 — 키를 한 번도 안 넣은 사람
+  // 화면에 지울 것 없는 조작 네 개를 세우지 않는다.
+  for (const [id] of KEYF) {
+    const del = keyDel(id);
+    if (del) del.parentNode.hidden = !d.nkeys;
+  }
   // 마케팅 스킬 칸 — doctor가 빠진 게 있으면 보일 버튼만 켠다. show_setup 과 따로
   // 놀기 때문에 패널이 접혀 있어도 doctor 진단 결과로 표시가 결정된다.
   $("s-skills").outerHTML = d.show_skills_btn
@@ -3436,19 +3459,70 @@ $("btn-ocsave").addEventListener("click", async () => {
   loadDoctor();
 });
 
+/* API 키 — 저장과 지우기가 한 버튼이지만 손짓은 둘이다.
+   서버(dashboard.save_keys)는 빈 값을 "그 키를 지워라"로 읽는다. 그런데 이 네 칸은
+   **늘 비어서** 뜬다: 저장된 값을 서버가 되돌려주지 않기 때문이다. 그래서 빈 칸을
+   그냥 같이 보내면 안 만진 칸과 비운 칸이 화면에서 구별되지 않아, 한 칸만 채우고
+   저장한 사람이 나머지 셋을 잃는다. 지움은 칸마다 [저장된 키 지우기]를 찍어야만
+   생기고, 보내기 직전에 무엇이 지워지는지 이름을 대고 한 번 더 묻는다. */
+const KEYF = [["k-or","OPENROUTER_API_KEY"], ["k-serper","SERPER_API_KEY"],
+              ["k-dfsl","DATAFORSEO_LOGIN"], ["k-dfsp","DATAFORSEO_PASSWORD"]];
+// 칸 이름의 정본은 뷰의 <label> 이다 — 여기 한국어 이름을 적으면 두 벌이 된다.
+const keyName = id =>
+  (((document.querySelector(`label[for="${id}"]`) || {}).textContent) || id).trim();
+const keyDel = id => $(id + "-del");
+
+// [저장된 키 지우기]는 셸이 단다. 뷰에는 지울 것이 있는지(키가 저장돼 있는지) 알
+// 자료가 없다 — 그건 doctor 가 실어 보내는 nkeys 이고 그 값을 읽는 쪽이 셸이다.
+for (const [id] of KEYF) {
+  const inp = $(id);
+  if (!inp) continue;
+  const lab = document.createElement("label");
+  lab.className = "delkey";
+  lab.hidden = true;             // 저장된 키가 하나도 없으면 지울 것도 없다
+  lab.innerHTML = `<input type="checkbox" id="${esc(id)}-del"
+    aria-label="${esc(keyName(id))} 저장된 키 지우기">저장된 키 지우기`;
+  inp.insertAdjacentElement("afterend", lab);
+  // 찍은 칸에는 값을 적을 수 없게 막는다 — 한 칸이 "이 값으로 바꿔라"와 "지워라"를
+  // 동시에 뜻하면 무엇이 저장될지 화면만 보고는 모른다.
+  lab.querySelector("input").addEventListener("change", e => {
+    inp.disabled = e.target.checked;
+    if (e.target.checked) inp.value = "";
+  });
+}
+
 $("btn-keys").addEventListener("click", async () => {
-  const f = [["k-or","OPENROUTER_API_KEY"], ["k-serper","SERPER_API_KEY"],
-             ["k-dfsl","DATAFORSEO_LOGIN"], ["k-dfsp","DATAFORSEO_PASSWORD"]];
-  const vals = {};
-  for (const [id, key] of f) if ($(id).value !== "") vals[key] = $(id).value;
-  if (!Object.keys(vals).length) return say("m-keys", "입력한 칸이 없습니다.", false);
+  const vals = {}, drop = [];
+  let nset = 0;
+  for (const [id, key] of KEYF) {
+    const del = keyDel(id);
+    if (del && del.checked) { vals[key] = ""; drop.push(keyName(id)); }
+    else if ($(id).value !== "") { vals[key] = $(id).value; nset++; }
+  }
+  if (!Object.keys(vals).length)
+    return say("m-keys", "입력한 칸도, 지우기로 찍은 칸도 없습니다.", false);
+  // 지우기는 되돌릴 수 없다 — 값은 화면에도 서버에도 안 남아 발급처에서 다시 받아야
+  // 한다. 무엇이 지워지는지 이름을 대고 묻는다.
+  if (drop.length && !window.confirm(
+      `${drop.join(" · ")} 키를 지웁니다.\n` +
+      `지운 값은 되돌릴 수 없고, 다시 쓰려면 발급처에서 받아 다시 넣어야 합니다.`))
+    return;
   busy("btn-keys", "m-keys", true);
-  const [, r] = await post("/api/setup/keys", vals);
+  // 결과를 봐야 한다 — 안 보면 403·오류에도 "저장했습니다"가 뜬다(실제로 그랬다).
+  // 키는 화면에 다시 안 뜨므로 사용자가 저장됐는지 확인할 길이 토스트뿐이다.
+  const [ok, res] = await post("/api/setup/keys", vals);
   busy("btn-keys", "m-keys", false);
-  for (const [id] of f) $(id).value = "";
+  if (!ok) return say("m-keys", (res && res.error) || "저장하지 못했습니다.", false);
+  for (const [id] of KEYF) {
+    $(id).value = "";
+    $(id).disabled = false;
+    const del = keyDel(id);
+    if (del) del.checked = false;
+  }
   // 남은 일이 없다 — 칸을 비우고 토스트만 낸다(배지가 몇 개 저장됐는지 다시 말한다).
   $("m-keys").textContent = "";
-  toast("저장했습니다.", "ok");
+  toast(!nset ? `키 ${drop.length}개를 지웠습니다.`
+        : drop.length ? `저장하고 키 ${drop.length}개를 지웠습니다.` : "저장했습니다.", "ok");
   loadDoctor();
 });
 

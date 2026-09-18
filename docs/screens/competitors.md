@@ -8,14 +8,18 @@
 
 | 화면이 부르는 단계 이름 | 채우는 곳 | 돈 | 채팅에 치는 명령 |
 |---|---|---|---|
-| 「경쟁사 찾기」(「경쟁사 다시 찾기」) | 「유기 검색 몫」 + 「경쟁사만 잡은 검색어」의 재료 | 유료 — DataForSEO Labs 키 필요 | `/capture gap {사이트}` |
+| 「경쟁사 찾기」(「경쟁사 다시 찾기」) | 「유기 검색 몫」 + 「경쟁사만 잡은 검색어」의 재료 | 유료 — DataForSEO Labs 키 필요 | `/capture competitors {사이트}` |
 | 「기회 분석」(「기회 다시 분석」) | 갭 줄에 붙는 점수·근거·할 일 | 무료 — 외부 호출 0건 | `/capture gaps {사이트}` |
 
-**명령 이름이 단계 이름과 어긋나는 자리입니다.** 화면 제목 옆 칩(로컬)은 단계 이름을
-그대로 인자로 실어 `/capture competitors {사이트}` 를 복사해 주지만, 스킬 문서가 실제로
-정의한 명령 이름은 **`/capture gap` — 단수** 입니다. 게다가 복수형 `/capture gaps` 는
-같은 단계가 아니라 **「기회 분석」** 이라, 한 글자 차이로 다른 일이 돕니다. 화면 칩을
-붙여 넣었는데 못 알아듣는 것 같으면 `/capture gap {사이트}` 로 바꿔 치면 됩니다.
+**명령 이름은 단계 이름과 같습니다.** 화면 제목 옆 칩(로컬)은 단계 이름을 그대로 인자로
+실어 `/capture competitors {사이트}` 를 복사해 주고, 스킬이 정의한 명령 절의 이름도 같은
+`competitors` 입니다 — 복사해 붙여 넣으면 그대로 돕니다. (예전에는 명령만 단수
+`/capture gap` 이라 칩이 없는 명령을 복사해 줬습니다. 이름을 단계에 맞춰 고쳤고, 화면에
+「칩 이름 → 명령 이름」 특례표를 두지 않습니다 — 그게 곧 또 한 벌이 되기 때문입니다.)
+
+**복수형 `/capture gaps` 는 같은 단계가 아닙니다.** 한 글자 차이지만 그쪽은 위 표의
+둘째 줄 —「기회 분석」, 이미 모아 둔 자료로 점수만 매기는 무료 단계입니다. 잘못 치면
+경쟁사 수집은 하나도 안 된 채 성공한 것처럼 끝납니다.
 
 유료 키(`DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`)가 없으면 「경쟁사 찾기」는 **조용히
 건너뜁니다** — 에러가 아니고, 이 단계를 안 돌려도 다른 화면과 기회 목록은 그대로 찹니다.
@@ -119,7 +123,7 @@ BOM 이 붙습니다.
 ```mermaid
 flowchart TD
   A["경쟁 분석 화면을 연다"] --> B{"유기 검색 몫이 차 있나"}
-  B -->|아니오| C["경쟁사 찾기<br/>/capture gap 사이트이름<br/>유료 키 필요"]
+  B -->|아니오| C["경쟁사 찾기<br/>/capture competitors 사이트이름<br/>유료 키 필요"]
   C --> B
   B -->|예| D{"키워드 격차를 쟀나"}
   D -->|아니오| E["기회 분석<br/>/capture gaps 사이트이름<br/>무료"]
@@ -212,8 +216,11 @@ flowchart TD
     「기회 분석」·「기회 다시 분석」과 gain 문장, GAIN_WEB(호스팅은 「조회 비용은 서버가 냅니다」)
   skills/capture/scripts/run_all.py — STAGES 표의 competitors/gaps 자리와 설명,
     check_paid_keys("competitors")(DATAFORSEO 키 없으면 건너뜀), DFS_STAGES, MIN_BALANCE
-  skills/capture/SKILL.md — `### /capture gap {P}`(단수 = 이 화면의 유료 단계)와
-    `### /capture gaps {P}`(복수 = 기회 분석), 도메인 상한·비용 고지·건너뜀 톤
+  skills/capture/SKILL.md — `### /capture competitors {P}`(이 화면의 유료 단계, 옛 이름
+    `/capture gap`)와 `### /capture gaps {P}`(복수 = 기회 분석), 축 셋·도메인 상한·
+    비용 고지·건너뜀 톤
+  skills/capture/scripts/test_seams.py — test_seam_43_chip_stages_have_skill_commands
+    (화면 칩의 단계 이름 ↔ SKILL.md 의 `### /capture <단계>` 절을 못 박는 검사)
   skills/capture/scripts/collect_gap.py — 모듈 docstring(축 A/B/C, missing|weak|shared),
     _kind(), DOMAIN_CAP=5, _resolve_domains/_cap, limits.gap_limit=100 · auto_competitors=5 ·
     gap_rivals=3, 경쟁사 부재 시 noop 사유 문구
