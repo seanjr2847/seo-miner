@@ -4222,10 +4222,21 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
     """기회 목록 — 화면과 박제본이 같은 정렬을 본다.
 
     정렬이 두 벌이던 시절엔 대시보드와 리포트가 같은 데이터로 다른 순서를 보여줬다.
+
+    닫힌 기회(완료·뺀 것·저절로 풀림)는 따로 담아 뒤에 붙인다. 정렬이 '새 것 먼저'라
+    새 기회가 limit 을 다 채우면 닫힌 것이 한 건도 안 실렸고, 그래서 화면의 상태
+    거르개가 `저절로 풀림 (0)` 이라고 말하는데 표에는 18건이 있었다. 앞쪽 200개의
+    정렬은 그대로 두고 — 화면의 첫 줄부터 바뀌면 안 된다 — 꼬리에만 더한다.
     """
     import db
-    return [dict(r) for r in db.list_opportunities(
+    rows = [dict(r) for r in db.list_opportunities(
         conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
+    key = (lambda r: r["id"]) if with_id else (lambda r: (r["kind"], r["target"]))
+    have = {key(r) for r in rows}
+    rows += [d for d in (dict(r) for r in db.list_opportunities(
+        conn, project_id, statuses=list(closed_statuses()), limit=CLOSED_LIMIT,
+        order="screen", with_id=with_id, gated=True)) if key(d) not in have]
+    return rows
 
 
 # ── 기회 묶음 — 같은 답을 내야 하는 지면끼리 목록 한 줄로 ─────────────────────
@@ -4244,8 +4255,22 @@ GROUP_KINDS = ("aio_exposure",)
 # 열린 기회 — 이 둘만 묶는다. 닫힌 것(done·dismissed, 그리고 저절로 풀린 resolved 처럼
 # 뒤에 생기는 상태)은 기록이라 한 줄씩 남는다. 거르는 쪽이 "done 이 아니면"이 아니라
 # "이 둘이면"이라서 새 상태가 생겨도 열린 목록으로 새지 않는다. 화면의 [아직 안 함]
-# 거르개(overview.html ST_GROUP.open)가 같은 한 벌이다(test_seams 23).
+# 거르개(셸의 OPP_ST_GROUP.open)가 같은 한 벌이다(test_seams 23).
 OPEN_STATUSES = ("new", "acked")
+# 목록 꼬리에 붙이는 닫힌 기회 수의 상한. 기록이라 전부 실을 이유는 없고, 한 회차에
+# 사람이 닫는 수 + 저절로 풀리는 수보다 넉넉하다.
+CLOSED_LIMIT = 300
+
+
+def closed_statuses() -> tuple[str, ...]:
+    """닫힌 기회의 상태 — 열린 것의 여집합이다(목록을 손으로 또 적지 않는다).
+
+    db 는 함수 안에서 늦게 부른다 — 이 모듈은 db 가 import 하는 쪽이라 위에서 부르면
+    돈다. db.OPP_STATUSES 에 없는 resolved 는 뒤에 생긴 상태라 따로 더한다.
+    """
+    import db
+    return tuple(s for s in (*db.OPP_STATUSES, db.OPP_RESOLVED)
+                 if s not in OPEN_STATUSES)
 # 검색 결과 겹침(열쇠 ②): 몇 개가 같아야 같은 지면으로 보나. 보는 것은 수집기가
 # 남긴 상위 전부다 — serp_results 는 상위 db.SERP_KEEP(=5)개만 남긴다. 그 다섯 중
 # 셋 이상이 같은 주소면 구글이 같은 문서들로 답하는 질문으로 읽는다. 둘로 내리면

@@ -68,6 +68,9 @@
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
    추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
 let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_AIO = "", RK_HAS_PREV = false;
+// 기회 상태 거르개 — 기본은 "전체"다. 이 목록은 기회 목록이 아니라 검색어 목록이라,
+// 걸지 않으면 기회가 안 붙은 줄까지 여태처럼 다 보인다(정본은 셸의 OPP_ST_OPT).
+let RK_ST = "";
 // AI 요약에 내 링크가 빠진 검색어(d.aio_gap). 칩이 이 배열을 색인으로 가리킨다 —
 // 검색어 글자를 onclick 속성에 박으면 따옴표 든 검색어에서 깨진다.
 let RK_GAP = [];
@@ -235,10 +238,12 @@ function RK_filtered() {
   // 그대로 둔다 — Array.sort 가 안정적이라 따로 2차 키를 둘 필요가 없다.
   return RK_ROWS.filter(r =>
     (!b || b.hit(r)) && RK_aioHit(r, RK_AIO) &&
+    window.oppStMatch(oppOf(r.keyword), RK_ST) &&
     (!q || String(r.keyword).toLowerCase().includes(q)))
     .sort((a, b2) => RK_score(b2) - RK_score(a));
 }
 function RK_find(v) { RK_Q = v; RK_list(); }
+function RK_setSt(v) { RK_ST = v; RK_list(); }
 function RK_setAio(v) {
   RK_AIO = v;
   // 칩에서 불릴 때도 도구줄의 고르개가 같은 값을 가리켜야 한다 — 화면이 두 말을 하면
@@ -509,6 +514,8 @@ function RK_paint() {
     <select onchange="RK_setAio(this.value)" aria-label="AI 요약으로 거르기">${
       RK_AIO_OPT.map(([v, l]) => `<option value="${v}"${v === RK_AIO ? " selected" : ""}>${l}
         (${RK_ROWS.filter(r => RK_aioHit(r, v)).length})</option>`).join("")}</select>
+    ${window.oppStSelect(RK_ST, "RK_setSt",
+      s2 => RK_ROWS.filter(r => window.oppStMatch(oppOf(r.keyword), s2)).length)}
     <span class="n" id="rk-n"></span>
     <span class="sp"></span>
     <button class="go sm sec" onclick="RK_csv()"

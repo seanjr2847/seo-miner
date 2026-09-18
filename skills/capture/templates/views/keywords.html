@@ -90,6 +90,9 @@ tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patin
 "use strict";
 /* 이 파일의 전역은 전부 KW_ — 조립하면 형제 화면들과 한 문서가 된다. */
 let KW_ROWS = [], KW_SORT = "imp", KW_BAND = "", KW_PERIOD = "", KW_BRAND_EMPTY = false;
+// 기회 상태 거르개 — 기본은 "전체"다(정본은 셸의 OPP_ST_OPT). 이 목록은 검색어
+// 목록이라, 걸지 않으면 기회가 안 붙은 줄까지 여태처럼 다 보인다.
+let KW_ST = "";
 let KW_MV = [], KW_MQ = "", KW_MDIR = "";
 let KW_PAGES = {}, KW_AUDITS = {};      // 검색어 → 걸린 내 페이지들, url → 점검 결과
 /* 첫째가 기본값이다 — 노출이 많은 순은 "큰 것"을 말할 뿐 "먼저 할 것"을 못 말한다.
@@ -236,14 +239,16 @@ function depthLog(rows, brandCatalogEmpty, period) {
 
 // 거르기·정렬은 화면에서 한다 — 서버가 준 15개가 이 화면이 가진 전부다.
 function KW_filtered() {
-  const rows = KW_BAND ? KW_ROWS.filter(r => r.band === KW_BAND) : KW_ROWS.slice();
+  const rows = KW_ROWS.filter(r =>
+    (!KW_BAND || r.band === KW_BAND) && window.oppStMatch(oppOf(r.query), KW_ST));
   const key = {opp: r => KW_score(r.query), imp: r => -(r.imp || 0),
                pos: r => r.pos, clk: r => -(r.clk || 0)}[KW_SORT];
   return rows.sort((a, b) => key(a) - key(b));
 }
 function KW_setSort(v) { KW_SORT = v; KW_drawLog(); }
 function KW_setBand(v) { KW_BAND = v; KW_drawLog(); }
-function KW_reset() { KW_BAND = ""; KW_tools(); KW_drawLog(); }
+function KW_setSt(v) { KW_ST = v; KW_drawLog(); }
+function KW_reset() { KW_BAND = ""; KW_ST = ""; KW_tools(); KW_drawLog(); }
 
 // 도구줄은 데이터가 바뀔 때만 그린다 — 거르기는 아래 그림만 다시 그린다(KW_drawLog).
 function KW_tools() {
@@ -259,6 +264,8 @@ function KW_tools() {
     <select onchange="KW_setBand(this.value)" aria-label="구간으로 거르기">${bands.map(
       ([v, l]) => `<option value="${v}"${v === KW_BAND ? " selected" : ""}>${l} ` +
         `(${cnt(v)})</option>`).join("")}</select>
+    ${window.oppStSelect(KW_ST, "KW_setSt",
+      s2 => KW_ROWS.filter(r => window.oppStMatch(oppOf(r.query), s2)).length)}
     <span class="n" id="logn"></span>
     <span class="sp"></span>
     <button class="go sm sec" onclick="KW_csvLog()"
@@ -271,8 +278,8 @@ function KW_drawLog() {
     ? `${rows.length}개` : `${rows.length}개 / 전체 ${KW_ROWS.length}개`;
   $("log").innerHTML = rows.length
     ? depthLog(rows, KW_BRAND_EMPTY, KW_PERIOD)
-    : `<div class="empty"><b>이 구간에는 검색어가 없습니다</b>
-        <p>다른 구간에는 ${KW_ROWS.length}개가 있습니다.</p>
+    : `<div class="empty"><b>거른 조건에 맞는 검색어가 없습니다</b>
+        <p>조건을 풀면 ${KW_ROWS.length}개가 있습니다.</p>
         <div class="acts"><button onclick="KW_reset()">전체 보기</button></div></div>`;
 }
 

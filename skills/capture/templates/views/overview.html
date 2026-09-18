@@ -248,6 +248,7 @@ function oppRow(o) {
         </div>
         ${OV_vars(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
+        ${window.oppClosedWhy(o)}
       </div>
       ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
     </summary>
@@ -286,20 +287,15 @@ function OV_goSee(view, sec) {
 // 처음 펼쳐 두는 줄 수 — 줄이 얇아져(카드 → 목록) 한 화면에 열 줄이 들어간다.
 const OV_PAGE = 10;
 let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = OV_PAGE;
-// 상태 묶음 — 트리아지는 "아직 안 한 것"과 "닫은 것"으로 갈라 보는 일이 대부분이다.
+// 상태 묶음의 정본은 셸의 OPP_ST_GROUP·OPP_ST_OPT 한 벌이다 — 기회를 보여 주는 화면이
+// 여덟이라 여기 베껴 두면 새 상태가 생길 때 몇 벌만 늙는다(test_seams 44).
 // open 은 "이 둘이면"이다("done 이 아니면"이 아니다) — 저절로 풀린 기회처럼 새 상태가
-// 생겨도 [아직 안 함]으로 새지 않는다. 서버의 scoring.OPEN_STATUSES 와 같은 한 벌이다
-// (test_seams 23).
-const ST_GROUP = {open:["new", "acked"], new:["new"], acked:["acked"],
-  closed:["done", "dismissed"]};
-const ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
-  ["acked", "진행 중"], ["closed", "완료·뺀 것"]];
+// 생겨도 [아직 안 함]으로 새지 않는다(test_seams 23).
 
 // 상태로 먼저 가른다 — 칩 개수도 이 묶음을 세야 "CTR 미달 12" 를 눌렀는데 8건이
 // 나오는 일이 없다.
 function oppByStatus() {
-  const st = ST_GROUP[OPP_ST];
-  return OPPS.filter(o => !st || st.indexOf(o.status) >= 0);
+  return OPPS.filter(o => window.oppStMatch(o, OPP_ST));
 }
 function oppFiltered() {
   const q = OPP_Q.trim().toLowerCase();
@@ -348,7 +344,7 @@ function renderOpps(n) {
       `<div class="empty"><b>아직 기회가 없습니다</b>
         <p>수집한 숫자에서 손댈 곳을 점수 순으로 찾습니다.</p></div>`;
   }
-  const stn = s => OPPS.filter(o => !ST_GROUP[s] || ST_GROUP[s].indexOf(o.status) >= 0).length;
+  const stn = s => OPPS.filter(o => window.oppStMatch(o, s)).length;
   // 박제본은 손댈 수 없는 기록이다 — 찾기·거르기는 그때 그 사람이 쓰던 손잡이고,
   // 종이로 나가면 뜻이 없다. CSV 는 남긴다(브라우저 안에서 끝나는 일이다).
   // 한 번에 다 보이는 목록(첫 화면에 다 들어가는)에는 찾기 칸과 종류 칩을 안 세운다 — 네 줄을
@@ -362,9 +358,7 @@ function renderOpps(n) {
        <button class="go sm sec" onclick="oppCsv()">CSV 내려받기</button>`
     : (few ? "" : `<input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
         placeholder="검색어·주소로 찾기" aria-label="기회 찾기">`) + `
-      <select onchange="oppStatus(this.value)" aria-label="상태로 거르기">${ST_OPT.map(
-        ([v, l]) => `<option value="${v}"${v === OPP_ST ? " selected" : ""}>${l} ` +
-          `(${stn(v)})</option>`).join("")}</select>
+      ${window.oppStSelect(OPP_ST, "oppStatus", stn)}
       <span class="n" id="oppn"></span>
       <button class="go sm sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;

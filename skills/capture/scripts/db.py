@@ -2121,7 +2121,9 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
     else:
         raise ValueError(f"unknown order: {order!r} (expected 'triage' or 'screen')")
 
-    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, "
+    # status_reason 도 같이 낸다 — 도구가 혼자 닫은 기회는 "왜 닫혔나"가 없으면
+    # 화면에서 판정 오류와 구분이 안 된다(표에만 있고 아무도 안 읽던 칸이었다).
+    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, status_reason, "
             "substr(created_at,1,10) created") if with_id else \
            "kind, target, ROUND(score,1) score, reasoning, status"
 
@@ -2206,11 +2208,20 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
 def gate_sql(conn: sqlite3.Connection, table: str = "opportunities") -> str:
     """심사 통과 조건 한 벌 — 검색어 종류는 verdicts 에 '작업'이 있어야 하고 나머지는
     통과. 자리표(?)는 scoring.KEYWORD_KINDS 순서로 채운다. norm() 을 쓰므로 검사가
-    만드는 맨 sqlite3 연결에도 함수를 다시 걸어 둔다(create_function 은 멱등)."""
+    만드는 맨 sqlite3 연결에도 함수를 다시 걸어 둔다(create_function 은 멱등).
+
+    **닫힌 기회에는 이 문을 안 건다.** 심사는 "이걸 할 일로 세울까"를 묻는 문이고,
+    이미 닫힌 행(완료·뺀 것·저절로 풀림)은 할 일이 아니라 기록이다. 문을 똑같이
+    걸었더니 사람이 직접 뺀 기회 16건이 어느 화면에서도 안 보였다 — 뺄 때 보통
+    '작업' 판정을 안 남기기 때문이다. 열린 기회(OPEN_STATUSES)에만 건다."""
     import scoring
     _register_norm(conn)
     ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
-    return (f"({table}.kind NOT IN ({ph}) OR EXISTS (SELECT 1 FROM verdicts v"
+    # 상태 이름은 정본(scoring.OPEN_STATUSES)에서 그대로 굳힌다 — 값이 우리 것이라
+    # 자리표를 쓰면 KEYWORD_KINDS 자리표 순서 약속이 깨진다.
+    open_st = ",".join("'" + s + "'" for s in scoring.OPEN_STATUSES)
+    return (f"({table}.status NOT IN ({open_st})"
+            f" OR {table}.kind NOT IN ({ph}) OR EXISTS (SELECT 1 FROM verdicts v"
             f" WHERE v.project_id={table}.project_id AND v.key=norm({table}.target)"
             " AND v.verdict='work'))")
 

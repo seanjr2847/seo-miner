@@ -1001,8 +1001,9 @@ def test_seam_23_opportunity_groups_single_source():
     """23) 기회 묶음 이음매 — 묶는 쪽(scoring.group_opportunities)과 그리는 쪽(셸·개요).
     - 묶은 이유(via)는 scoring.GROUP_VIA 한 벌이다: 셸의 GROUP_WHY 키가 양방향으로 같다.
       서버가 새 열쇠를 만들고 화면이 모르면 펼침 패널이 GROUP_WHY[via] 에서 터진다.
-    - 열린 기회는 scoring.OPEN_STATUSES 한 벌이다: 개요의 [아직 안 함](ST_GROUP.open)이
-      같은 값이다. 둘 다 "이 상태면"으로 거른다 — done·resolved 는 여기 없다.
+    - 열린 기회는 scoring.OPEN_STATUSES 한 벌이다: 거르개의 [아직 안 함]
+      (셸의 OPP_ST_GROUP.open)이 같은 값이다. 둘 다 "이 상태면"으로 거른다 —
+      done·resolved 는 여기 없다.
     - 개요는 서버가 접은 줄(d.opp_groups)을 그린다 — 화면이 다시 묶지 않는다.
     """
     ctx = _load()
@@ -1016,12 +1017,105 @@ def test_seam_23_opportunity_groups_single_source():
     assert keys == set(scoring.GROUP_VIA), \
         f"GROUP_WHY 의 키가 scoring.GROUP_VIA 와 어긋났다: {keys ^ set(scoring.GROUP_VIA)}"
     ov = (views / "overview.html").read_text("utf-8")
-    mm = re.search(r"const ST_GROUP = \{open:\[(.*?)\]", ov)
-    assert mm, "overview.html 의 ST_GROUP.open 을 못 찾았다"
+    mm = re.search(r"open: \[(.*?)\]", shell)
+    assert mm, "셸의 OPP_ST_GROUP.open 을 못 찾았다"
     assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
-        "개요의 [아직 안 함] 이 scoring.OPEN_STATUSES 와 다르다"
+        "거르개의 [아직 안 함] 이 scoring.OPEN_STATUSES 와 다르다"
     assert not {"done", "dismissed", "resolved"} & set(scoring.OPEN_STATUSES)
     assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
+
+
+def test_seam_44_status_filter_is_one_set_and_covers_every_status():
+    """44) 상태 거르개는 한 벌이고, 다섯 상태를 하나도 빠뜨리지 않는다.
+
+    거르개가 [개요]에만 있고 그 목록에 `저절로 풀림` 이 없었다. 그래서 도구가 혼자 닫은
+    기회를 **어느 화면에서도 모아 볼 수 없었고**, 왜 닫혔는지(status_reason)는 표에
+    저장돼 있는데 읽는 화면이 없었다. 그게 "판정이 틀려서 닫힌 것"을 발견할 길을
+    통째로 막았다.
+
+    그래서 정본을 셸 한 곳(OPP_ST_OPT·OPP_ST_GROUP)에 두고 화면들이 갖다 쓴다 —
+    화면마다 목록을 베끼면 새 상태가 생길 때 여덟 벌 중 몇 벌만 늙는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import db
+    import scoring
+    shell, views = ctx["shell"], ctx["views"]
+
+    m = re.search(r"window\.OPP_ST_GROUP = \{(.*?)\n\};", shell, re.S)
+    assert m, "셸에 OPP_ST_GROUP 이 없다 — 거르개 정본이 화면마다 흩어져 있다"
+    grouped = set(re.findall(r'"(\w+)"', m.group(1)))
+    every = set(db.OPP_STATUSES) | {db.OPP_RESOLVED}
+    assert every <= grouped, \
+        f"거르개가 못 보여 주는 상태가 있다: {sorted(every - grouped)}"
+
+    o = re.search(r"window\.OPP_ST_OPT = \[(.*?)\];", shell, re.S)
+    assert o, "셸에 OPP_ST_OPT 이 없다"
+    keys = set(re.findall(r'\["(\w*)"', o.group(1)))
+    assert keys <= set(re.findall(r"(\w+):\s*\[", m.group(1))) | {""}, \
+        "거르개 선택지가 OPP_ST_GROUP 에 없는 묶음을 가리킨다"
+
+    # 화면들이 사본을 안 만든다 — 자기 ST_OPT/ST_GROUP 을 다시 선언하면 두 벌이다.
+    # 그리고 기회를 보여 주는 화면은 전부 거르개를 세운다 — 한 화면만 빠지면
+    # 거기서 닫힌 기회는 또 어디서도 못 본다(그게 이 검사가 생긴 이유다).
+    seen = 0
+    for p in sorted(views.glob("*.html")):
+        body = p.read_text("utf-8")
+        assert not re.search(r"^const ST_(OPT|GROUP) = ", body, re.M), \
+            f"{p.name} 이 상태 거르개 목록을 따로 갖고 있다 — 정본은 셸이다"
+        # 기회를 보여 주는 화면 둘 중 하나다: 대상으로 찾아 쓰거나(oppOf), 기회
+        # 목록 자체를 그리거나(d.opps — 개요). d.opps_total 은 개수일 뿐이라 뺀다
+        # (기록 화면이 그걸로 "남은 기회 N건"만 적는다) — \\b 가 그걸 가른다.
+        if "oppOf(" not in body and not re.search(r"d\.opps\b", body):
+            continue
+        seen += 1
+        assert "oppStSelect(" in body, \
+            f"{p.name} 이 기회를 보여 주면서 상태 거르개가 없다"
+    assert seen >= 8, f"기회를 보여 주는 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
+
+    # 닫힌 사유를 그리는 자리가 있다 — 표에만 있고 아무도 안 읽으면 없는 것과 같다
+    assert "status_reason" in shell, \
+        "셸이 status_reason 을 안 그린다 — 왜 닫혔는지 볼 자리가 없다"
+
+    # 그리고 그 칸이 실제로 화면까지 온다 — 그릴 자리만 있고 값이 안 실리면 늘 빈칸이다
+    import sqlite3 as _sq
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    c.execute(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,status_reason)"
+        " VALUES(1,?,'/a',9,'r',?,'검사용 사유')",
+        (sorted(set(scoring.ALL_KINDS) - set(scoring.KEYWORD_KINDS))[0], db.OPP_RESOLVED))
+    c.commit()
+    got = scoring.opportunities(c, 1, limit=5, with_id=True)
+    assert got, "검사 붙박이가 기회를 하나도 못 냈다 — 이 검사가 헛돈다"
+    assert got[0].get("status_reason") == "검사용 사유", \
+        "페이로드에 status_reason 이 없다 — 화면이 그릴 값이 애초에 안 온다"
+
+    # 사람이 뺀 기회(dismissed)도 보인다 — 검색어 종류는 심사('작업' 판정)를 거쳐야
+    # 목록에 오르는데, 뺀 기회는 보통 판정이 없어 통째로 가려졌다. 열린 기회에는
+    # 그 문이 맞지만 **닫힌 기회는 할 일이 아니라 기록**이다 — 가리면 "뺀 것"을
+    # 볼 자리가 어디에도 없다.
+    c.execute(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+        " VALUES(1,?,'뺀 검색어',8,'r','dismissed')", (scoring.KEYWORD_KINDS[0],))
+    # 닫힌 기회가 목록 꼬리에서 잘리지 않는다 — 정렬이 '새 것 먼저'라, 새 기회가
+    # limit 을 다 채우면 완료·뺀 것·저절로 풀림이 한 건도 안 실린다. 그러면 거르개가
+    # "저절로 풀림 (0)" 이라고 말하는데 표에는 18건이 있다(실제로 그랬다).
+    other = sorted(set(scoring.ALL_KINDS) - set(scoring.KEYWORD_KINDS))[0]
+    for i in range(20):
+        c.execute(
+            "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+            " VALUES(1,?,?,99,'r','new')", (other, f"/new{i}"))
+    c.commit()
+    small = scoring.opportunities(c, 1, limit=5, with_id=True)
+    c.close()
+    st = {r["status"] for r in small}
+    assert db.OPP_RESOLVED in st, \
+        "새 기회가 자리를 다 차지하면 닫힌 기회가 목록에서 통째로 사라진다"
+    assert "dismissed" in st, "사람이 뺀 기회를 심사 문이 가린다 — 볼 자리가 없어진다"
 
 
 def test_seam_24_ai_health_fields_come_from_scoring():
