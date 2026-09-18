@@ -1025,8 +1025,8 @@ def test_seam_23_opportunity_groups_single_source():
     assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
 
 
-def test_seam_44_status_filter_is_one_set_and_covers_every_status():
-    """44) 상태 거르개는 한 벌이고, 다섯 상태를 하나도 빠뜨리지 않는다.
+def test_seam_50_status_filter_is_one_set_and_covers_every_status():
+    """50) 상태 거르개는 한 벌이고, 다섯 상태를 하나도 빠뜨리지 않는다.
 
     거르개가 [개요]에만 있고 그 목록에 `저절로 풀림` 이 없었다. 그래서 도구가 혼자 닫은
     기회를 **어느 화면에서도 모아 볼 수 없었고**, 왜 닫혔는지(status_reason)는 표에
@@ -2161,6 +2161,24 @@ def test_seam_47_brief_never_points_at_a_section_it_does_not_have():
                             bad.append(f"{kind}/{shape}/gk={gk}/band={band}/page={has_page}: "
                                        f"'{name}' 을 가리키는데 그 절이 없다")
     assert not bad, "요청문이 없는 절을 가리킨다:\n  " + "\n  ".join(sorted(set(bad))[:12])
+
+
+def test_seam_00_seam_numbers_are_unique():
+    """0) 이음매 번호는 한 벌이다 — 같은 번호가 둘이면 "seam 42" 가 어디를 가리키는지 모른다.
+
+    CLAUDE.md 는 "정본은 test_seams.py 다" 라고 말한다. 그 말이 성립하려면 번호가
+    주소여야 하는데, 두 갈래가 각자 다음 번호를 집으면서 실제로 두 번 겹쳤다
+    (42 는 README 검사와 사이트 종류 검사가, 44 는 상태 거르개와 칩 단계 검사가).
+    둘 다 병렬 작업이 main 에서 만나 생긴 것이라 사람 눈으로는 안 걸렸다.
+
+    번호에 붙는 접미사(09a·09b)는 **같은 이음매를 쪼갠 것**이라 정상이다 —
+    이름 전체(`09a`)로 세므로 그대로 통과한다.
+    """
+    nums = re.findall(r"^def test_seam_([0-9a-z]+)_", Path(__file__).read_text("utf-8"), re.M)
+    assert len(nums) >= 20, f"이음매 검사를 {len(nums)}개밖에 못 찾았다 — 이름 꼴이 바뀌었다"
+    dup = sorted({n for n in nums if nums.count(n) > 1})
+    assert not dup, (f"이음매 번호가 겹친다: {dup} — 새 검사는 남는 번호를 집는다"
+                     " (main 과 갈라진 채 각자 다음 번호를 집으면 여기서 만난다)")
 
 
 def test_seam_49_docs_do_not_copy_the_stage_table():
