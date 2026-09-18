@@ -2023,6 +2023,52 @@ def test_seam_46_new_content_form_names_no_artifact_of_its_own():
             f"금지한 산출물({w})을 같은 요청문이 만들라고 시킨다"
 
 
+def test_seam_47_brief_never_points_at_a_section_it_does_not_have():
+    """47) 요청문이 `위 '…'`·`아래 '…'` 로 가리키는 절은 **그 요청문 안에** 있어야 한다.
+
+    절은 조건부로 선다: '근거'는 EVIDENCE 가 빈 종류·빈 페이로드에서 안 그려지고,
+    '검색결과 기능' 줄은 종류마다 다른 EVIDENCE 가 그린다. 가리키는 쪽은 그 조건을
+    안 보고 늘 말했다 — theotherskin 한 사이트에서만 없는 절을 가리키는 요청문이
+    25건 나갔고("아래 '근거'의 최신 값과 다르면"), 새로 넣은 '이 회차에 없는 것'
+    절도 rank_decay 에서 같은 실수를 한 번 더 저질렀다.
+
+    한 파일만 보면 양쪽 다 멀쩡하다: 가리키는 문장도 맞는 말이고 그 절도 제대로
+    그려진다. 어긋난 건 **조건**이다 — 그래서 이음매로 세운다.
+    """
+    import brief
+    import scoring
+    ref = re.compile(r"(?:위|아래)\s*'([^']{2,30})'")
+    bands = {"aio_exposure": tuple(scoring._AIO_PLAY),
+             "striking_distance": tuple(scoring._SD_PLAY)}
+    tails = brief.tails("ko-KR")
+    seen, bad = set(), []
+    for kind in scoring.ALL_KINDS:
+        for gk in (None, "missing", "weak", "own", "sites", "third_party"):
+            for band in (None,) + bands.get(kind, ()):
+                for has_page in (False, True):
+                    shape = brief.shape_of(kind, gap_kind=gk, has_page=has_page, band=band)
+                    key = (kind, shape, gk, band, has_page)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    o = {"kind": kind, "target": "검색어", "gap_kind": gk, "band": band,
+                         "label": scoring.kind_label(kind), "reasoning": "근거 40위",
+                         "play": scoring.kind_play(kind, band=band, gap_kind=gk)}
+                    # 페이지가 있는 쪽·없는 쪽 둘 다 — 조건부 절은 그 사이에서 갈린다
+                    ctx = {"query_pages": {"검색어": [
+                        {"page": "https://me.example/a", "impressions": 9, "clicks": 1,
+                         "ctr": 1.0, "position": 8.0}]}} if has_page else {}
+                    full = brief.build(o, ctx, "ko-KR")["body"] + "\n" + tails[shape]
+                    heads = " ".join(re.findall(r"^#+ (.+)$", full, re.M))
+                    labels = " ".join(re.findall(r"^-\s*([^:]{2,30}):", full, re.M))
+                    for m in ref.finditer(full):
+                        name = m.group(1)
+                        if name not in heads and name not in labels:
+                            bad.append(f"{kind}/{shape}/gk={gk}/band={band}/page={has_page}: "
+                                       f"'{name}' 을 가리키는데 그 절이 없다")
+    assert not bad, "요청문이 없는 절을 가리킨다:\n  " + "\n  ".join(sorted(set(bad))[:12])
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

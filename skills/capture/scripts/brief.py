@@ -936,6 +936,11 @@ def _serp_stale_lines(o: dict, ctx: dict, *, had_top: bool, had_fan: bool) -> li
     생기기 전 회차였다. 없는 이유와 채우는 법을 같은 자리에서 말한다.
 
     '기능' 목록조차 없으면 아무 줄도 안 만든다 — 안 쟀는지 없었는지 우리가 모른다.
+
+    사실을 **직접** 말하고 다른 절을 가리키지 않는다: '검색결과 기능' 줄은 종류마다
+    다른 EVIDENCE 가 그리므로 어떤 요청문(rank_decay 등)에는 아예 없다. 거기서
+    "위 '검색결과 기능'은…"이라고 하면 없는 절을 가리킨다 — 이 요청문이 고친 바로
+    그 버릇이다.
     """
     if had_top and had_fan:
         return []
@@ -945,8 +950,8 @@ def _serp_stale_lines(o: dict, ctx: dict, *, had_top: bool, had_fan: bool) -> li
     miss = ([] if had_top else ["상위 목록"]) + ([] if had_fan else ["함께 묻는 질문"])
     when = (ctx.get("rank_date") or "").strip()
     return [f"## 이 회차에 없는 것: {' · '.join(miss)}",
-            f"위 '검색결과 기능'은 이 검색어의 조회에서 {', '.join(f'`{x}`' for x in feats)}"
-            f"를 봤다고 말하는데, {'과 '.join(miss)}은 수집본에 없습니다"
+            f"마지막 순위 조회는 이 검색어에서 {', '.join(f'`{x}`' for x in feats)}"
+            f"를 봤다고 기록했는데, {'과 '.join(miss)}은 수집본에 없습니다"
             + (f" (마지막 순위 조회 {when} 회차)." if when else ".")
             + " 구글이 안 보여 준 것이 아니라 **그 회차가 이 표들을 남기기 전**입니다 — "
             "순위 조회(`rank` 단계)를 한 번 더 돌리면 다음 요청문부터 붙습니다.",
@@ -1818,7 +1823,8 @@ def _head(p: dict) -> str:
     return " · ".join(f"{k}: {v}" for k, v in (("title", p.get("title")), ("H1", p.get("h1"))) if v)
 
 
-def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None) -> list[str]:
+def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
+                  *, has_evidence: bool = True) -> list[str]:
     kind = o["kind"]
     t = str(o["target"])
     if kind == "coverage":
@@ -1863,10 +1869,18 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None)
         L.append(f"- 왜 걸렸나: {_ext(why, 1000)}")
         # 뒷절("두 숫자가 갈리면")은 이 줄에 숫자가 있을 때만 뜻이 있다. 순위도 검색량도
         # 없는 판정(AI 요약 빠짐 · 순위 없음)에 그대로 붙어, 없는 두 수를 견주라고 시켰다.
-        L.append("  이 줄은 **기회가 선 시점의 판정**입니다. 아래 '근거'의 최신 값과 다르면 "
-                 "근거 쪽이 새것입니다"
-                 + (" — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 먼저 정합니다."
-                    if re.search(r"\d", why) else "."))
+        # '근거' 절은 종류·페이로드에 따라 아예 안 선다(EVIDENCE 가 빈 목록을 주면
+        # build 가 그 절을 안 그린다). 그런데도 여기서 "아래 '근거'를 보라"고 가리켜,
+        # 없는 절을 가리키는 요청문이 25건 나갔다. 절이 설 때만 가리킨다.
+        # 뒷말은 두 조건이 만나야 뜻이 있다: 견줄 '근거' 절이 서고, 견줄 숫자가 있을 것.
+        num = bool(re.search(r"\d", why))
+        if has_evidence:
+            tail = (" 아래 '근거'의 최신 값과 다르면 근거 쪽이 새것입니다"
+                    + (" — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 먼저 "
+                       "정합니다." if num else "."))
+        else:
+            tail = " 이 값이 지금도 그런지는 직접 검색해 확인합니다." if num else ""
+        L.append("  이 줄은 **기회가 선 시점의 판정**입니다." + tail)
     return L + [""]
 
 
@@ -2170,21 +2184,26 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     pq = _page_queries(url, ctx) if url and shape == "fix_page" else []
     sibs = _page_siblings(o, ctx, url) if url and shape == "fix_page" else []
 
-    L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
-    lang_line = _page_lang_lines(audit, url, locale) if shape != "outreach" else []
-    # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
-    if not lang_line and not url and shape != "outreach":
-        lang_line = _target_lang_lines(o, ctx, locale)
-    L += _target_lines(o, url, shape, ctx)[:-1] + lang_line + _unit_lines(pq) + [""]
-    L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
-    L += _page_query_lines(o, pq)
-    L += _page_sibling_lines(sibs, o, pq)
     # 위 검색어 표가 이 검색어를 이미 그렸으면, 근거의 '이 검색어 하나의 내 페이지' 표는
     # 같은 수를 두 번 적는 것이다(노출 76 · 22.4위가 한 요청문에 두 번 나왔다).
     if len(pages) == 1 and any(r["query"] == str(o.get("target") or "") for r in pq):
         pages = [{**pages[0], "_in_query_table": True}]
     visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘
+    # 근거를 **먼저** 센다. '왜 걸렸나' 줄이 "아래 '근거'를 보라"고 가리키는데, 근거가
+    # 빈 종류·빈 페이로드에서는 그 절이 아예 안 선다 — 없는 절을 가리키는 요청문이
+    # 25건 나갔다(theotherskin). 그리는 순서는 그대로 두고 유무만 미리 안다.
     ev = EVIDENCE[kind](o, ctx, pages) + visits
+
+    L = [INTRO_BY_KIND.get(kind) or s["intro"], ""]
+    lang_line = _page_lang_lines(audit, url, locale) if shape != "outreach" else []
+    # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
+    if not lang_line and not url and shape != "outreach":
+        lang_line = _target_lang_lines(o, ctx, locale)
+    L += (_target_lines(o, url, shape, ctx, has_evidence=bool(ev))[:-1]
+          + lang_line + _unit_lines(pq) + [""])
+    L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
+    L += _page_query_lines(o, pq)
+    L += _page_sibling_lines(sibs, o, pq)
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False
