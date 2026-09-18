@@ -69,6 +69,10 @@
 let CP_D = null;
 let CP_KIND = "";                 // "" = 전체. 칩이 거른다.
 let CP_TOP = "";                  // 격차가 가장 큰 검색어 — 띠의 주요 행동이 여는 줄
+// 기회 상태 거르개 — 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고 기본은 "전체"다.
+// 이 목록은 기회 목록이 아니라 검색어 격차 목록이라, 점수가 안 붙은 줄도 있다.
+let CP_ST = "";
+const CP_stOk = (r, st) => window.oppStMatch(oppOf(r.keyword), st);
 
 const CP_KINDS = [
   ["missing", "우리는 없음", "그 검색어에서 우리는 순위가 아예 없습니다. 새로 써야 하는 것"],
@@ -149,9 +153,13 @@ function CP_card(r) {
 
 function CP_gapRows(d) {
   const all = d.kw_gap || [];
-  const rows = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all.slice())
+  const rows = all.filter(r => (!CP_KIND || r.kind === CP_KIND) && CP_stOk(r, CP_ST))
     .sort((a, b) => CP_rank(b) - CP_rank(a));
   if (rows.length) return rows.map(CP_card).join("");
+  // 상태로 걸러 빈 것은 갈래로 걸러 빈 것과 또 다르다 — 무엇을 풀면 되는지가 다르다.
+  if (CP_ST && all.length)
+    return `<div class="empty"><b>거른 상태에 맞는 검색어가 없습니다</b>
+        <p>거르개를 「전체」로 되돌리면 ${all.length}개가 있습니다.</p></div>`;
   // 거르고 나서 빈 것과 애초에 없는 것은 다른 일이다 — 전자는 칩을 풀면 되고,
   // 후자는 지금이 지킬 자리라는 결론이다.
   return CP_KIND
@@ -177,6 +185,12 @@ function CP_chips(d) {
     CP_KINDS.filter(([k]) => c[k]).map(([k, l, w]) => chip(k, l, w, c[k])).join("");
 }
 
+function CP_setSt(v) {
+  CP_ST = v;
+  $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+  CP_tools(CP_D);
+}
+
 function CP_pick(kind) {
   CP_KIND = (CP_KIND === kind) ? "" : kind;
   $("cp-chips").innerHTML = CP_chips(CP_D);
@@ -188,16 +202,17 @@ function CP_pick(kind) {
 // 서 있던 것을 셸이 한 벌로 잡았다. 개수는 지금 걸러 놓은 것을 센다.
 function CP_tools(d) {
   const all = (d && d.kw_gap) || [];
-  const n = (CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).length;
-  $("cp-gap-tools").innerHTML = n
-    ? `<span class="n">${num(n)}개</span>` +
+  const n = all.filter(r => (!CP_KIND || r.kind === CP_KIND) && CP_stOk(r, CP_ST)).length;
+  $("cp-gap-tools").innerHTML = all.length
+    ? window.oppStSelect(CP_ST, "CP_setSt", v => all.filter(r => CP_stOk(r, v)).length) +
+      `<span class="n">${num(n)}개</span>` +
       `<button class="go sm sec" onclick="CP_csv()">CSV 내려받기</button>` : "";
 }
 
 function CP_csv() {
   const all = CP_D.kw_gap || [];
   csv("키워드격차", [["검색어", "갈래", "잡고 있는 곳", "경쟁사 순위", "우리 순위", "월 검색량"],
-    ...(CP_KIND ? all.filter(r => r.kind === CP_KIND) : all).map(r =>
+    ...all.filter(r => (!CP_KIND || r.kind === CP_KIND) && CP_stOk(r, CP_ST)).map(r =>
       [r.keyword, r.kind, r.domain, r.position, r.our_position, r.volume])]);
 }
 

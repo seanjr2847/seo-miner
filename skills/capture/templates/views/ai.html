@@ -422,6 +422,10 @@ function AI_shareBars(rows) {
       줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
       "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
 let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "", AI_ENG = "";
+// AI_ST 는 인용 상태(인용됨·언급만·안 잡힘)다. 이건 다른 것 — 기회의 상태
+// (할 일·진행 중·완료·저절로 풀림)다. 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고
+// 기본은 "전체"다(이 목록은 기회 목록이 아니라 질문 목록이다).
+let AI_OST = "";
 // 펼침이 쓰는 재료. 페이지·감사(query_pages·page_audits)는 셸이 화면을 그리기 전에
 // window 에 한 벌 세운다 — 여기 사본을 두면 같은 목록이 두 벌이 된다. 이 화면 몫은
 // 명령 칩에 넣을 사이트 이름뿐이다(대신 인용된 곳의 수는 질문 행이 싣고 온다).
@@ -468,17 +472,19 @@ function AI_filtered() {
     (!AI_ENG || (r.by_engine || {})[AI_ENG]) &&
     (!AI_CAT || r.category === AI_CAT) &&
     (!AI_ST || AI_stIs(r, AI_ST)) &&
+    window.oppStMatch(oppOf(r.prompt), AI_OST) &&
     (!q || `${r.prompt} ${AI_exTxt(r)}`.toLowerCase().includes(q)))
     .sort((a, b) => AI_score(b) - AI_score(a));
 }
 function AI_find(v) { AI_Q = v; AI_list(); }
 function AI_cat(v) { AI_CAT = v; AI_list(); }
+function AI_oppSt(v) { AI_OST = v; AI_list(); }
 function AI_engine(v) { AI_ENG = v; AI_render(); }   // 칩 수도 바뀌므로 통째로
 function AI_status(el) {
   AI_ST = AI_ST === el.dataset.s ? "" : el.dataset.s;
   AI_render();
 }
-function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_ENG = ""; AI_render(); }
+function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = ""; AI_render(); }
 function AI_ev(btn) {
   const on = btn.getAttribute("aria-expanded") === "true";
   btn.setAttribute("aria-expanded", String(!on));
@@ -719,6 +725,8 @@ function AI_render() {
         <option value="">엔진 전체</option>${engs.map(e =>
           `<option value="${esc(e)}"${e === AI_ENG ? " selected" : ""}>${esc(AI_engName(e))}</option>`
         ).join("")}</select>` : ""}
+      ${window.oppStSelect(AI_OST, "AI_oppSt",
+        v => AI_ROWS.filter(r => window.oppStMatch(oppOf(r.prompt), v)).length)}
       <span class="n" id="ai-n"></span>
       <span class="sp"></span>
       <button class="go sm sec" onclick="AI_csv()"
@@ -1187,7 +1195,7 @@ VIEW("ai", function (d) {
     $("ai-prompt-sec").hidden = false;
     // 개수는 eyebrow 가 아니라 도구줄의 개수와 눈금 칩이 갖는다(eyebrow 는 범위만).
     AI_ROWS = byPrompt;
-    AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_ENG = "";   // 사이트를 바꾸면 필터도 새로
+    AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = "";   // 사이트를 바꾸면 필터도 새로
     AI_render();
   } else if ((d.missed || []).length) {
     $("ai-miss-sec").hidden = false;

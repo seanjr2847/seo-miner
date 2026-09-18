@@ -604,6 +604,23 @@ const AN_HEAD = ["검색어", "원인?그 검색어에서 무엇이 움직였는
   ">Δ클릭", ">노출", ">CTR", ">평균 순위"];
 
 let AN_SHIFT = null;
+// 기회 상태 거르개 — [움직인 검색어]와 [CTR 손실] 두 표가 같은 값을 쓴다. 기본은
+// "전체"다(정본은 셸의 OPP_ST_OPT): 이 표들은 검색어 목록이라 기회가 안 붙은 줄도 있다.
+let AN_ST = "", AN_MM = false, AN_CTR_ALL = null;
+const anStKeep = rows => (rows || []).filter(r => window.oppStMatch(oppOf(r.query), AN_ST));
+// 박제본에서는 셸이 빈 문자열을 준다 — 그때 빈 .tools 상자를 남기지 않는다.
+const anStBar = rows => {
+  const sel = window.oppStSelect(AN_ST, "anSetSt",
+    v => (rows || []).filter(r => window.oppStMatch(oppOf(r.query), v)).length);
+  return sel ? `<div class="tools">${sel}</div>` : "";
+};
+// 한쪽을 바꾸면 다른 쪽도 같이 따라간다 — 두 표가 한 거르개를 쓰는데 하나만 바뀌면
+// 두 <select> 가 서로 다른 값을 가리킨다.
+function anSetSt(v) {
+  AN_ST = v;
+  if ($("an-movers-body")) $("an-movers-body").innerHTML = anMovers(AN_SHIFT, AN_MM);
+  if ($("an-ctr-body") && AN_CTR_ALL) $("an-ctr-body").innerHTML = anCtr(AN_CTR_ALL);
+}
 
 function anMovers(s, mismatch) {
   AN_MV_VIEW = [];
@@ -615,7 +632,12 @@ function anMovers(s, mismatch) {
         <div class="acts">${act("gsc", "실적 다시 수집", false)}</div></div>`
       : `<div class="empty"><b>움직인 검색어가 없습니다</b>
         <p>노출 30 이상인 검색어만 셉니다. 그보다 적으면 표본이 아니라 잡음입니다.</p></div>`;
-  AN_MV_VIEW = s.down.concat(s.up);          // 행의 data-i 는 이 배열을 가리킨다
+  const down = anStKeep(s.down), up = anStKeep(s.up);
+  AN_MV_VIEW = down.concat(up);              // 행의 data-i 는 이 배열을 가리킨다
+  const bar = anStBar(s.down.concat(s.up));
+  if (!AN_MV_VIEW.length)
+    return bar + `<div class="empty"><b>거른 상태에 맞는 검색어가 없습니다</b>
+      <p>거르개를 「전체」로 되돌리면 ${s.down.length + s.up.length}개가 있습니다.</p></div>`;
   // 한쪽이 비면 표를 안 그린다 — 빈 표는 좋은 소식인데 상자로 그리면 나쁜 소식처럼 읽힌다.
   // 한쪽이 비었을 때 무엇으로 그리는지가 갈린다: 잃은 쪽이 비면 **검사했고 문제가
   // 없다**(.empty.ok), 얻은 쪽이 비면 그냥 **자료가 없다**(.empty). 둘을 같은 상자로
@@ -623,9 +645,9 @@ function anMovers(s, mismatch) {
   const block = (title, rows, ok, off, good) => `<p class="eyebrow anblock">${title}</p>` +
     (rows.length ? table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)))
                  : `<div class="empty${good ? " ok" : ""}"><b>${ok}</b></div>`);
-  return anCard(
-    block("잃은 쪽", s.down, "클릭이 줄어든 검색어가 없습니다", 0, true)
-    + block("얻은 쪽", s.up, "클릭이 늘어난 검색어가 없습니다", s.down.length, false));
+  return bar + anCard(
+    block("잃은 쪽", down, "클릭이 줄어든 검색어가 없습니다", 0, true)
+    + block("얻은 쪽", up, "클릭이 늘어난 검색어가 없습니다", down.length, false));
 }
 
 function anCsv() {
@@ -663,13 +685,18 @@ function anCtrChart(rows) {
   return window.chDumbbell(groups, {width: 640, unit: "%"});
 }
 
-function anCtr(rows) {
-  if (!rows || !rows.length)
+function anCtr(all) {
+  if (!all || !all.length)
     return `<div class="empty ok"><b>되찾을 클릭이 없습니다</b>
       <p>1페이지에 있으면서 기대 클릭률의 절반도 못 받는 검색어가 없습니다.</p></div>`;
+  const bar = anStBar(all);
+  const rows = anStKeep(all);
   AN_CTR_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
+  if (!rows.length)
+    return bar + `<div class="empty"><b>거른 상태에 맞는 검색어가 없습니다</b>
+      <p>거르개를 「전체」로 되돌리면 ${all.length}개가 있습니다.</p></div>`;
   const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
-  return `<p class="anverdict">아래를 다 고치면 같은 순위에서
+  return bar + `<p class="anverdict">아래를 다 고치면 같은 순위에서
     <b>${num(total)}클릭</b>쯤을 되찾습니다. 순위를 올리는 일이 아니라 제목·설명을
     고치는 일입니다.</p>` + anCard(anCtrChart(rows) +
     // "실제 CTR"은 이름 그대로라 ⓘ가 없어도 읽힌다 — "기대 CTR"과 "되찾을 클릭"만
@@ -1062,9 +1089,13 @@ VIEW("analysis", function (d) {
       data-tip="${esc(t)}" title="${esc(t)}" aria-label="${esc(t)}">i</span>`;
   }
   AN_SHIFT = d.shift || null;
+  AN_MM = mismatch;
+  AN_CTR_ALL = d.ctr_gaps || null;
   $("an-shift-body").innerHTML = anShift(d.shift, mismatch);
   $("an-movers-body").innerHTML = anMovers(d.shift, mismatch);
-  $("an-movers-csv").hidden = !AN_MV_VIEW.length;
+  // CSV 는 거른 것이 아니라 회차 전부를 내보낸다(anCsv 가 AN_SHIFT 를 읽는다) —
+  // 그러니 거르개로 화면이 비어도 단추는 남는다.
+  $("an-movers-csv").hidden = !(AN_SHIFT && (AN_SHIFT.down.length || AN_SHIFT.up.length));
   // 실적을 아직 한 번도 안 모았으면(!d.gsc_date) 아래 여섯 절이 전부 "아직
   // 없습니다 + [실적 수집]"뿐이다 — 한 카드로 접는다(anEmptyFill). 수집한
   // 뒤에는(gsc_date 가 생기면) 각 절이 원래대로 선다 — 절마다 조건이 다르므로

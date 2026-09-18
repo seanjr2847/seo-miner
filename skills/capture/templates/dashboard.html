@@ -1964,6 +1964,33 @@ window.copyPrompt = function (btn) {
 // 풀린 것을 우리 효과로 센다. 그래서 라벨·다음 버튼 표에만 있고 OPP_SET 에는 없다.
 window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:"이 기회만 뺌",
                     resolved:"저절로 풀림"};
+
+// 상태 거르개의 정본 — 여덟 화면이 이것을 갖다 쓴다. 화면마다 목록을 베끼면 새 상태가
+// 생길 때 몇 벌만 늙는다(개요에만 있던 시절, 그 한 벌에 `저절로 풀림` 이 빠져 있어
+// 도구가 혼자 닫은 기회를 어느 화면에서도 모아 볼 수 없었다).
+// 묶음 이름은 사람의 말이다: '아직 안 함' = 손 안 댄 것 + 하는 중, '끝낸 것' = 우리가
+// 끝낸 것 + 뺀 것. `저절로 풀림` 은 따로 둔다 — 우리가 한 일이 아니라서 섞으면
+// "고쳤다" 로 읽힌다.
+window.OPP_ST_GROUP = {
+  open: ["new", "acked"], new: ["new"], acked: ["acked"],
+  closed: ["done", "dismissed"], resolved: ["resolved"]
+};
+window.OPP_ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
+                     ["acked", "진행 중"], ["closed", "완료·뺀 것"],
+                     ["resolved", "저절로 풀림"]];
+// 기회 하나가 고른 묶음에 드나. 기회가 안 붙은 줄(o 가 null)은 거르개를 걸면 빠진다 —
+// 개요 말고 다른 화면은 목록이 기회 목록이 아니라 검색어·주소 목록이라, "전체" 가
+// 기본값이어야 한다(거르개를 안 건드리면 지금까지와 똑같이 보인다).
+window.oppStMatch = (o, st) => !st || (o && (window.OPP_ST_GROUP[st] || []).includes(o.status));
+// 거르개 한 벌 — 화면은 이걸 부르고 자기 상태 변수만 갖는다.
+// 박제본에는 안 세운다 — 손댈 수 없는 기록이라 그때 그 사람이 쓰던 손잡이는 뜻이
+// 없고, 종이로 나가면 <select> 가 글자 하나로 굳는다. 화면마다 READONLY 를 묻지
+// 않고 여기 한 곳에서 막는다(test_render 의 박제본 규칙).
+window.oppStSelect = (cur, fn, count) => READONLY ? "" : `<select onchange="${fn}(this.value)"
+    aria-label="상태로 거르기">${window.OPP_ST_OPT.map(([v, l]) =>
+    `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}`
+    + (count ? ` (${count(v)})` : "") + `</option>`).join("")}</select>`;
+
 window.SD_PERIOD = "";        // "28일" — 평균 게재순위라는 주석에 쓰는 기간
 
 const oppKey = t => String(t ?? "").trim().toLowerCase();
@@ -2046,7 +2073,14 @@ window.oppWhy = o => !o ? "" : `<div class="oh">
       >${esc(o.label || o.kind)}</span>
     <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
     ${window.gaBadge(o)}
-  </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}`;
+  </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}${window.oppClosedWhy(o)}`;
+
+// 왜 닫혔나 — 도구가 혼자 닫은 것(저절로 풀림)과 작업 기록을 보고 닫은 것에만 사유가
+// 붙는다(db 의 status_reason, scoring.resolve_stale·close_opportunity_by_work 가 쓴다).
+// 표에는 내내 있었는데 읽는 화면이 없어서, "판정이 틀려서 닫혔나"를 볼 길이 없었다.
+// 사람이 누른 상태에는 사유가 없다 — 그때는 이 줄이 안 뜬다.
+window.oppClosedWhy = o => o && o.status_reason
+  ? `<div class="why closed-why">닫힌 이유: ${esc(o.status_reason)}</div>` : "";
 
 /* 상태 바꾸기. 라벨은 누른 뒤에 무엇이 보이는지로 짓는다 — "확인"은 무엇이
    달라지는지를 말하지 않는다. 누르면 카드의 상태 배지가 그 말로 바뀐다.

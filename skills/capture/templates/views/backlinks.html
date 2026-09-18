@@ -118,6 +118,23 @@
 let BLK_D = null;                 // 마지막 payload — CSV 버튼이 지금 보이는 것을 그대로 낸다
 let BLK_DOMS = [];                // 마지막으로 그린 참조 도메인 목록 — 펼침이 data-i 로 찾는다
 let BLK_TOP = "";                 // 가장 많이 겹치는 링크처 — 띠의 주요 행동이 여는 줄
+// 기회 상태 거르개 — [되찾을 링크]와 [교집합] 두 목록이 각자 하나씩 갖는다.
+// 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고, 기본은 "전체"다(기회가 안 붙은 줄도 있다).
+let BLK_BR_ST = "", BLK_IX_ST = "";
+const BLK_stOk = (t, st) => window.oppStMatch(oppOf(t), st);
+// 박제본에서는 셸이 빈 문자열을 준다 — 그때 빈 .tools 상자를 남기지 않는다.
+const BLK_stBar = (rows, key, cur, fn) => {
+  const sel = window.oppStSelect(cur, fn, v => rows.filter(r => BLK_stOk(key(r), v)).length);
+  return sel ? `<div class="tools">${sel}</div>` : "";
+};
+// 거르개는 자기 목록만 다시 그린다 — VIEW 를 다시 돌리면 화면 전체가 깜빡인다.
+function BLK_brSt(v) { BLK_BR_ST = v; if (BLK_D) $("blk-recover").innerHTML = BLK_broken(BLK_D); }
+function BLK_ixSt(v) {
+  BLK_IX_ST = v;
+  if (!BLK_D) return;
+  const rivals = (BLK_D.comp_metrics || []).filter(r => !r.is_self).length;
+  $("blk-intersect").innerHTML = BLK_intersect(BLK_D, rivals);
+}
 
 const BLK_pct = v => (v == null ? "—" : Math.round(v * 100) + "%");
 const BLK_day = v => (v ? String(v).slice(0, 10) : "");
@@ -318,7 +335,9 @@ const BLK_colh = (label, tools) =>
    행동인데 가장 안 보였다. 여기로 꺼낸다. rank(링크를 건 페이지 지수)는 여태
    정렬에만 쓰고 보여 주지 않았다 — 어느 것부터 되살릴지는 그 숫자가 정한다. */
 function BLK_broken(d) {
-  const rows = (d.bl_links || []).filter(r => r.is_broken)
+  const all = (d.bl_links || []).filter(r => r.is_broken);
+  const bar = all.length ? BLK_stBar(all, r => r.url_to, BLK_BR_ST, "BLK_brSt") : "";
+  const rows = all.filter(r => BLK_stOk(r.url_to, BLK_BR_ST))
     .sort((a, b) => BLK_sc(b.url_to) - BLK_sc(a.url_to) || (b.rank || 0) - (a.rank || 0))
     .map(r => BLK_row(r.url_to, BLK_a(r.url_to),
       `<span class="blk-url">${BLK_a(r.url_from)}</span> · 지수 ` +
@@ -326,14 +345,19 @@ function BLK_broken(d) {
       (r.anchor ? ` · 앵커 <span class="blk-anchor">${esc(r.anchor)}</span>` : ""),
       "기회 목록에는 지수가 높은 것부터 일부만 올립니다. 이 링크는 그 아래라 " +
       "점수와 행동 기록이 없습니다. 되살리는 방법은 위 설명과 같습니다."));
-  return BLK_cards(rows, BLK_ok("끊긴 링크가 없습니다",
-    "받아 온 링크는 전부 살아 있습니다. 백링크는 주 단위로 움직입니다."));
+  return bar + BLK_cards(rows, all.length
+    ? BLK_empty("거른 상태에 맞는 링크가 없습니다",
+        `거르개를 「전체」로 되돌리면 ${all.length}개가 있습니다.`)
+    : BLK_ok("끊긴 링크가 없습니다",
+        "받아 온 링크는 전부 살아 있습니다. 백링크는 주 단위로 움직입니다."));
 }
 
 // 교집합은 "남은 것이 곧 할 일 목록"이라고 말해 놓고 도메인 이름만 줬다 —
 // 그 할 일을 행마다 붙인다(펼치면 무엇을 어떻게 할지가 나온다).
 function BLK_intersect(d, rivals) {
-  const rows = (d.bl_intersect || []).slice()
+  const all = (d.bl_intersect || []).slice();
+  const bar = all.length ? BLK_stBar(all, r => r.domain, BLK_IX_ST, "BLK_ixSt") : "";
+  const rows = all.filter(r => BLK_stOk(r.domain, BLK_IX_ST))
     .sort((a, b) => BLK_sc(b.domain) - BLK_sc(a.domain) || (b.hits || 0) - (a.hits || 0))
     .map(r => BLK_row(r.domain, `<span class="blk-dom">${esc(r.domain)}</span>`,
       `지수 ${r.rank == null ? "—" : r.rank} · 경쟁사 ${num(r.hits)}곳` +
@@ -344,7 +368,10 @@ function BLK_intersect(d, rivals) {
       // 요청하려면 그 사이트를 먼저 열어야 한다 — 그 한 걸음을 여기 둔다.
       BLK_site(r.domain)));
   // 비는 이유가 둘이다: 견줄 경쟁사가 모자라거나, 다 견줬는데 우리만 빠진 곳이 없거나.
-  return BLK_cards(rows, rivals >= 2
+  if (all.length && !rows.length)
+    return bar + BLK_empty("거른 상태에 맞는 링크처가 없습니다",
+      `거르개를 「전체」로 되돌리면 ${all.length}곳이 있습니다.`);
+  return bar + BLK_cards(rows, rivals >= 2
     ? BLK_ok("우리만 빠진 링크처가 없습니다",
         "경쟁사들이 공통으로 받는 곳은 우리도 이미 받고 있습니다. 지킬 자리입니다.")
     : BLK_empty("견줄 경쟁사가 모자랍니다",

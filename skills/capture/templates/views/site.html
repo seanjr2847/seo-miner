@@ -509,6 +509,13 @@ const ST_IX = {
 const ST_IX_ORDER = ["robots_blocked", "fetch_error", "canonical_mismatch", "not_indexed"];
 
 let ST_IX_ROWS = [], ST_IX_B = "", ST_IX_Q = "", ST_IX_TOTAL = null;
+// 기회 상태 거르개 — 목록은 셸의 OPP_ST_OPT 한 벌이고, 표마다 고른 값만 따로 갖는다.
+// 기본은 "전체"다: 세 표는 기회 목록이 아니라 URL·검색어 목록이라 기회가 안 붙은 줄도 있다.
+let ST_IX_ST = "", ST_DEV_ST = "", CR_ST = "";
+// 대상 문자열로 기회를 찾아 상태를 견준다 — 대상이 URL(색인·크롤)이든 검색어(모바일)든 같다.
+const stStOk = (t, st) => window.oppStMatch(oppOf(t), st);
+const stStBar = (rows, key, cur, fn) => window.oppStSelect(cur, fn,
+  v => rows.filter(r => stStOk(key(r), v)).length);
 
 // 검사한 URL 총수 — 판정 payload 에는 '문제 있는 URL' 만 온다. 분모가 없으면
 // "7건"이 나쁜 건지 알 수가 없다. 색인 수집기가 runs.notes 에 남긴
@@ -552,7 +559,7 @@ function stIxBar(counts, ok) {
 function stIxFiltered() {
   const q = ST_IX_Q.trim().toLowerCase();
   return ST_IX_ROWS.filter(r =>
-    (!ST_IX_B || r.bucket === ST_IX_B) &&
+    (!ST_IX_B || r.bucket === ST_IX_B) && stStOk(r.url, ST_IX_ST) &&
     (!q || `${r.url} ${r.coverage_state || ""} ${r.detail || ""}`.toLowerCase().includes(q)));
 }
 // 표·CSV 가 같은 줄 세우기를 본다. 갈래(심각도) 순은 위 막대·칩이 그대로 지킨다.
@@ -569,8 +576,9 @@ function stIxChip(el) {
   stIxList();
 }
 function stIxFind(v) { ST_IX_Q = v; stIxList(); }
+function stIxSt(v) { ST_IX_ST = v; stIxList(); }
 function stIxReset() {
-  ST_IX_B = ""; ST_IX_Q = "";
+  ST_IX_B = ""; ST_IX_Q = ""; ST_IX_ST = "";
   stIxHead();
 }
 
@@ -596,6 +604,7 @@ function stIxHead() {
     `${ST_IX_ROWS.length >= SORT_MIN ? `<input type="search" value="${esc(ST_IX_Q)}"
        oninput="stIxFind(this.value)" placeholder="주소·판정으로 찾기"
        aria-label="색인 문제 찾기">` : ""}
+     ${stStBar(ST_IX_ROWS, r => r.url, ST_IX_ST, "stIxSt")}
      <span class="n" id="ixn"></span>
      <button class="go sec sm" onclick="stIxCsv()"
        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
@@ -744,12 +753,14 @@ const stP1 = v => Number(v).toFixed(1);
 
 function stDevFiltered() {
   const q = ST_DEV_Q.trim().toLowerCase();
-  return ST_DEV_ROWS.filter(r => !q || r.query.toLowerCase().includes(q));
+  return ST_DEV_ROWS.filter(r =>
+    stStOk(r.query, ST_DEV_ST) && (!q || r.query.toLowerCase().includes(q)));
 }
 // 여기 대상은 URL 이 아니라 검색어다 — scoring 의 device_gap 이 그렇게 담는다.
 const stDevSorted = () => stByOpp(stDevFiltered(), r => r.query);
 function stDevFind(v) { ST_DEV_Q = v; stDevList(); }
-function stDevReset() { ST_DEV_Q = ""; stDevHead(); }
+function stDevSt(v) { ST_DEV_ST = v; stDevList(); }
+function stDevReset() { ST_DEV_Q = ""; ST_DEV_ST = ""; stDevHead(); }
 function stDevCsv() {
   csv("모바일격차", [["점수", "검색어", "모바일 순위", "데스크톱 순위", "순위차",
     "모바일 노출", "모바일 CTR(%)", "데스크톱 CTR(%)"]].concat(
@@ -763,6 +774,7 @@ function stDevHead() {
     `${ST_DEV_ROWS.length >= SORT_MIN ? `<input type="search" value="${esc(ST_DEV_Q)}"
        oninput="stDevFind(this.value)" placeholder="검색어로 찾기"
        aria-label="검색어 찾기">` : ""}
+     ${stStBar(ST_DEV_ROWS, r => r.query, ST_DEV_ST, "stDevSt")}
      <span class="n" id="devn"></span>
      <button class="go sec sm" onclick="stDevCsv()"
        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
@@ -1008,7 +1020,8 @@ let CR_D = null;
 let CR_PICK = "";                 // "" = 전체
 // 한 번에 그리는 줄 수. 290건을 다 펴면 좁은 화면(카드로 접힌 줄)에서 페이지가 64,000px 가
 // 되어 아래 섹션(모바일 격차·속도)에 못 닿는다 — 개요 기회·기록 실행과 같은 [더 보기] 문법.
-let CR_N = 20;
+const CR_PAGE = 20;
+let CR_N = CR_PAGE;
 
 function CR_label(k) { return (CR_KIND[k] || [k])[0]; }
 // 이슈의 정체성은 (kind, url) 이다 — dashboard.crawl_compare 가 그렇게 짝을 짓는다.
@@ -1017,7 +1030,7 @@ const CR_key = r => r.kind + " " + (r.url || "");
 const CR_all = () => (((CR_D || {}).crawl || {}).issues) || [];
 const CR_picked = () => {
   const a = CR_all();
-  return CR_PICK ? a.filter(r => r.kind === CR_PICK) : a;
+  return a.filter(r => (!CR_PICK || r.kind === CR_PICK) && stStOk(r.url || "", CR_ST));
 };
 // 서버는 심각도 순으로 준다. 점수 순으로 다시 세운다 — 크롤만 다른 잣대로 줄을
 // 세우면 "세 표 중 무엇부터"에 또 답이 없어진다. 점수가 같으면 심각도 순이 남는다.
@@ -1033,7 +1046,8 @@ function CR_rows(d) {
     `<td>${esc(CR_label(r.kind))}</td>` +
     `<td>${CR_sev(r.severity)}</td>` +
     `<td>${esc(r.detail || "")}</td>${stOppCell(r.url || "")}</tr>`);
-  stTools("cr-tools", `<span class="n">${rows.length}개</span>
+  stTools("cr-tools", `${stStBar(CR_all(), r => r.url || "", CR_ST, "CR_setSt")}
+    <span class="n">${rows.length}개</span>
     <button class="go sec sm" onclick="CR_csv()"
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
   const rest = rows.length - CR_N;
@@ -1043,6 +1057,7 @@ function CR_rows(d) {
     + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${num(rest)}건 더 보기</button></div>` : ""));
 }
 function CR_more() { CR_N += 50; $("crawl").innerHTML = CR_rows(CR_D); }
+function CR_setSt(v) { CR_ST = v; CR_N = CR_PAGE; $("crawl").innerHTML = CR_rows(CR_D); }
 
 /* ── 크롤 행 펼침 ────────────────────────────────────────────
    500줄짜리 표가 눌러도 아무 일이 없었다 — 갈래마다 "왜 문제고 어떻게 고치나"가
@@ -1081,7 +1096,7 @@ function CR_chips(d) {
 }
 
 function CR_pick(kind) {
-  CR_PICK = (CR_PICK === kind) ? "" : kind; CR_N = 20;
+  CR_PICK = (CR_PICK === kind) ? "" : kind; CR_N = CR_PAGE;
   $("cr-chips").innerHTML = CR_chips(CR_D);
   $("crawl").innerHTML = CR_rows(CR_D);
 }
@@ -1116,7 +1131,7 @@ function CR_diff(d) {
 }
 
 function renderCrawl(d) {
-  CR_D = d; CR_N = 20;
+  CR_D = d; CR_N = CR_PAGE;
   CR_KIND = d.crawl_kinds || {};   // 이름표의 정본은 서버(collect_crawl.ISSUE_KIND)다
   const c = d.crawl || {};
   const has = !!c.run;
