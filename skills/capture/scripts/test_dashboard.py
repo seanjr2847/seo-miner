@@ -935,6 +935,16 @@ def test_run_tool_builds_command_and_writes_brief():
         assert Path(r["cwd"]) == paths.home() / "work" / "rt", r["cwd"]  # 폴더 없는 사이트
         body = Path(r["file"]).read_text("utf-8")
         assert "createdb.py" in body and f"done rt {oid}" in body, body[-400:]
+        # 명령은 코드 울타리 안에 있어야 한다. 맨줄로 두면 이 파일이 마크다운으로
+        # 렌더될 때 윈도우 경로의 역슬래시가 먹혀 `C:\Users\user\.claude\…` 가
+        # `C:\Users\userclaude\…` 로 깨진 채 복사된다 — 그대로는 안 돈다.
+        cmd = next(l for l in body.splitlines() if l.startswith('python "'))
+        fenced = [i for i, l in enumerate(body.splitlines()) if l.strip() == "```"]
+        at = body.splitlines().index(cmd)
+        assert any(a < at < b for a, b in zip(fenced, fenced[1:])), \
+            f"기록 명령이 코드 블록 밖에 있다 — 역슬래시가 먹힌다:\n{cmd}"
+        # 설계도만 낸 답과, 같은 대화가 이어서 파일을 바꾼 답의 경계를 말한다
+        assert "같은 대화에서 이어서 파일을 바꿨으면" in body, body[-600:]
         assert "## " in body, "요청문 본문이 안 들어갔다"
         # 파일은 화면의 복사 버튼(briefText)과 같은 전문이다 — 본문 뒤에 꼴 꼬리(답의
         # 형식·규칙, d.brief.tails[shape])까지. 본문만 쓰면 도구가 형식 없이 시작한다.

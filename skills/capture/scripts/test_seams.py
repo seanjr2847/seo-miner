@@ -1823,6 +1823,89 @@ def test_seam_42_project_types_are_one_list():
             assert "local_clinic" not in p.read_text("utf-8"), f"{p.name} 에 옛 종류 이름이 남았다"
 
 
+# 새 글 꼴의 산출물이 "이미 있는 페이지"를 가리키면 그 요청문은 없는 것을 고치라고 시킨다.
+# 아래 두 검사가 그 이음매(꼴 ↔ 처방, 꼴 ↔ 형식)를 양쪽에서 잡는다.
+PAGE_PRESUPPOSING = (
+    "우리 페이지", "이 페이지로", "이 페이지를 고쳐", "지금 들어오는 링크", "지금 앵커",
+    "안 바꾸는 게 답이면", "이 글에 빠진", "우리 글에는 없는", "우리 글에 없는",
+)
+
+
+def _new_content_kinds() -> list[tuple[str, str | None, str | None]]:
+    """(kind, gap_kind, band) — 걸린 페이지가 없을 때 '새 글'로 가는 조합 전부.
+
+    정본은 brief.KIND_SHAPE 다. 여기에 목록을 손으로 적으면 그게 사본이 되고, 종류가
+    늘 때 이 검사만 옛 목록을 본다.
+    """
+    import brief
+    import scoring
+    out = []
+    for kind in scoring.ALL_KINDS:
+        for gk in (None, "missing", "weak", "own", "sites", "third_party"):
+            for band in ((None,) + scoring.AIO_BANDS if kind == "aio_exposure" else (None,)):
+                if brief.shape_of(kind, gap_kind=gk, has_page=False,
+                                  band=band) == "new_content":
+                    out.append((kind, gk, band))
+    return out
+
+
+def test_seam_43_new_content_prescription_never_points_at_a_page():
+    """43) 꼴이 '새 글'이면 그 종류의 산출물은 **있는 페이지를 가리키지 않는다**.
+
+    band 와 꼴은 다른 물음이다: band(page1/beyond)는 우리 **순위**를 말하고, 꼴
+    (fix_page/new_content)은 손댈 **지면의 유무**를 말한다. aio_exposure 의 beyond
+    처방은 band 로만 갈려서, 순위에 걸린 페이지가 없는 요청문에도 "우리 페이지 | 상위
+    2~3개 | 차이" 표와 "안 바꾸는 게 답이면"과 "지금 들어오는 링크가 없는 글에서"가
+    그대로 나갔다 — 네 산출물 중 셋이 없는 페이지를 가리켰다(theotherskin
+    `do papular scars go away`, opp-361). 이제 그 갈래는 deliver_new 가 받는다.
+
+    검사는 **brief 가 실제로 고른 산출물**을 본다(scoring 의 dict 를 직접 읽지 않는다)
+    — 고르는 자리가 brief.build 라서, 거기서 안 고르면 scoring 만 고쳐도 소용없다.
+    """
+    import brief
+    import scoring
+    combos = _new_content_kinds()
+    assert combos, "새 글로 가는 종류가 하나도 없다 — KIND_SHAPE 를 잘못 읽었다"
+    for kind, gk, band in combos:
+        o = {"kind": kind, "target": "검색어", "gap_kind": gk, "band": band,
+             "label": scoring.kind_label(kind), "reasoning": "근거",
+             "play": scoring.kind_play(kind, band=band, gap_kind=gk)}
+        body = brief.build(o, {}, "ko-KR")["body"]
+        want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+        bad = [w for w in PAGE_PRESUPPOSING if w in want]
+        assert not bad, (
+            f"{kind}/{gk}/{band}: 새 글 요청문의 산출물이 있는 페이지를 가리킨다 {bad}\n{want}")
+
+
+def test_seam_44_new_content_form_names_no_artifact_of_its_own():
+    """44) 새 글 꼴의 **형식**은 산출물 이름을 새로 부르지 않는다 — 정본은 '만들어 줄 것'이다.
+
+    형식(SHAPES[...]['form'])에 "(직답 블록·구조화 데이터 등)"이라고 예가 박혀 있었다.
+    그건 사본이었고, 게다가 **틀린 사본**이었다: 구글 AI 요약 처방은 바로 그 둘을 하지
+    말라고 말한다(_AIO_PLAY 의 주석 — 순위가 먼저다). 그래서 한 요청문이 같은 산출물을
+    금지하면서 목차에 배정하라고 시켰고, 그 이름은 그 요청문의 '만들어 줄 것'에 있지도
+    않았다. 이름을 부르는 곳은 처방 한 곳이다.
+    """
+    import brief
+    import scoring
+    # 처방이 하지 말라고 못 박은 것들 — 형식이 이 이름을 부르면 두 말이 된다
+    forbidden = ("직답 블록", "구조화 데이터", "JSON-LD", "FAQ 스키마")
+    form = " ".join(brief.SHAPES["new_content"]["form"])
+    bad = [w for w in forbidden if w in form]
+    assert not bad, f"새 글 형식이 산출물 이름을 스스로 부른다(정본은 '만들어 줄 것'): {bad}"
+
+    # 렌더까지 — AI 요약 요청문 안에서 '금지'와 '만들라'가 같이 서지 않는다
+    o = {"kind": "aio_exposure", "target": "검색어", "band": "beyond",
+         "label": scoring.kind_label("aio_exposure"), "reasoning": "근거",
+         "play": scoring.kind_play("aio_exposure", band="beyond")}
+    body = brief.build(o, {}, "ko-KR")["body"] + "\n" + brief.tails("ko-KR")["new_content"]
+    assert "구조화 데이터로 요약에 끼어드는 길은 없습니다" in body, \
+        "AI 요약 처방의 금지 문장이 사라졌다 — 이 검사가 볼 것이 없어졌다"
+    for w in forbidden:
+        assert w not in body.split("## 만들어 줄 것")[1], \
+            f"금지한 산출물({w})을 같은 요청문이 만들라고 시킨다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -894,10 +894,15 @@ def test_before_after_only_where_a_page_is_changed():
 
 def test_new_content_stops_at_blueprint_and_asks_for_approval():
     """새 글은 두 단계다: 설계도 → 사용자가 안을 고르고 승인 → 본문. 설계도 요청이
-    '만들어 줄 것'의 완성품(직답 블록·JSON-LD)까지 시키면 승인할 게 없어진다."""
+    '만들어 줄 것'의 완성품까지 시키면 승인할 게 없어진다.
+
+    그 완성품의 **이름을 여기서 부르지는 않는다**: 예전엔 "(직답 블록·구조화 데이터 등)"
+    이라고 예를 박아 뒀는데, AI 요약 처방은 바로 그 둘을 하지 말라고 하는 종류라
+    같은 요청문이 스스로와 부딪혔다(test_new_content_form_names_no_artifact_of_its_own).
+    """
     t = brief.tails("ko-KR")["new_content"]
     assert "멈춥니다" in t and "승인하면" in t and "번호로 묻고" in t
-    assert "본문 단계에서" in t          # '만들어 줄 것'은 구간 배정까지만
+    assert "본문 단계로" in t            # '만들어 줄 것'은 구간 배정까지만
 
 
 _FLAT = dict(tables=0, lists=0, h2_questions=0, lead_words=0, author="")   # 추출성 칸을 읽은 새 행
@@ -1628,6 +1633,108 @@ def test_brief_copy_has_no_industry_words():
     assert "글이 소개하는 인물(인물 프로필)인지" in body, body
     for w in INDUSTRY_WORDS:
         assert w not in body, f"{w}: {body}"
+
+
+def test_tail_never_names_an_artifact_the_shape_does_not_produce():
+    """꼬리가 예로 드는 산출물은 그 꼴이 실제로 내놓는 것이어야 한다.
+
+    '두 언어 경계' 줄이 한 벌이라, robots.txt 를 고치는 요청문과 주소를 정리하는
+    요청문에도 "title·H1·meta description 을 <code> 로 감싸라"가 나갔다 — 그 꼴엔
+    그 산출물이 없어서 읽는 쪽이 없는 것을 찾는다. PRODUCT_NOUN 이 바로 옆 줄에서
+    같은 실수('고치기 요청문에 연락문')를 이미 막고 있었다.
+    """
+    tails = brief.tails("ko-KR")
+    for name, s in brief.SHAPES.items():
+        t = tails[name]
+        if s["limits"]:                      # 문안을 만드는 꼴 — title·meta 가 진짜 산출물
+            assert brief.PRODUCT_EXAMPLES_DEFAULT in t, name
+        else:
+            assert "title·H1·meta description" not in t, \
+                f"{name}: 이 꼴에 없는 산출물을 꼬리가 부른다"
+            assert brief.PRODUCT_EXAMPLES[name] in t, f"{name}: 이 꼴의 산출물 예가 없다"
+
+
+def test_aio_without_a_page_designs_an_article_instead_of_fixing_a_ghost():
+    """AI 요약 빠짐 + 순위에 걸린 페이지 없음 → 산출물이 '앞으로 쓸 글'을 가리킨다.
+
+    예전엔 band 하나로만 갈려서, 없는 페이지를 놓고 "우리 페이지 | 상위 2~3개 | 차이"
+    표와 "안 바꾸는 게 답이면"을 시켰다 — 네 산출물 중 셋이 [확인 필요]로만 채워진다.
+    """
+    o = _opp("aio_exposure", "검색어", band="beyond")
+    o["band"] = "beyond"
+    body = brief.build(o, {}, "ko-KR")["body"]
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "우리 페이지" not in want and "안 바꾸는 게 답이면" not in want, want
+    assert "이미 다루는 우리 지면이 있는지" in want, want      # 두 지면을 안 만들게
+    assert "새 글이 맞춰야 할 수준" in want, want
+    # 처방의 두 갈래 중 어느 쪽인지 못 박는다 — '이 페이지'가 무엇인지 안 말하면 떠돈다
+    assert "그 갈래가 아닙니다" in body and "앞으로 쓸 새 글" in body, body
+
+    # 1페이지 안인데 주소만 모르는 것은 "지면이 없다"가 아니다 — 새 글로 보내지 않는다
+    o1 = _opp("aio_exposure", "검색어", band="page1")
+    o1["band"] = "page1"
+    r1 = brief.build(o1, {}, "ko-KR")
+    assert r1["shape"] == "fix_page", r1["shape"]
+    assert "고칠 페이지를 직접 적어 주세요" in r1["body"], r1["body"]
+
+
+def test_new_article_language_comes_from_the_keyword_not_the_site():
+    """새 글 꼴에는 페이지가 없어 '페이지 언어' 줄이 구조적으로 못 선다 — 그러면 꼬리가
+    사이트 언어로 물러서서, 영어 검색어 설계도에 "한국어로 쓰고 title 30자"가 실린다."""
+    o = _opp("aio_exposure", "do papular scars go away", band="beyond")
+    o["band"] = "beyond"
+    ctx = {"kw_locales": {"do papular scars go away": "en-US"}}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "- 페이지 언어: 영어" in body, body
+    assert f"길이 기준은 {brief._limits_line('en-US')}" in body, body
+
+    # 같은 언어면 두 번 싣지 않는다 — 꼬리가 이미 같은 말을 한다
+    same = brief.build(_opp("coverage", "검색어"), {"kw_locales": {"검색어": "ko-KR"}},
+                       "ko-KR")["body"]
+    assert "페이지 언어" not in same, same
+    # 로케일을 모르는 검색어는 아무 줄도 안 만든다(지어내지 않는다)
+    assert "페이지 언어" not in brief.build(_opp("coverage", "검색어"), {}, "ko-KR")["body"]
+
+
+def test_ymyl_rule_names_the_market_it_means():
+    """"그 나라에서 어떻게 불려야 하는지 확인하라"고만 하면 확인할 규정을 못 고른다."""
+    assert "한국(ko-KR)" in brief.tails("ko-KR")["new_content"]
+    assert "미국(en-US)" in brief.tails("en-US")["new_content"]
+    # 검색어 자체가 효능을 묻는 말일 때 제목 표가 빈 칸으로 남지 않게
+    assert "'검색어 자리' 칸에 '안 넣음'" in brief.tails("ko-KR")["new_content"]
+
+
+def test_missing_serp_tables_say_why_instead_of_going_quiet():
+    """'검색결과 기능'은 PAA 를 봤다는데 질문 본문이 없으면, 왜 없는지 같은 자리에서 말한다.
+
+    예전엔 조용히 "붙여 넣어 주세요"로 물러섰다 — 읽는 쪽은 구글이 아무것도 안 보여 준
+    줄로 읽는다. 실제로는 마지막 순위 조회가 그 표들이 생기기 전 회차였다.
+    """
+    o = _opp("aio_exposure", "검색어", band="beyond")
+    o["band"] = "beyond"
+    ctx = {"rank_date": "2026-09-04",
+           "rank_by_kw": {"검색어": {"features": ["ai_overview", "people_also_ask"]}}}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "## 이 회차에 없는 것" in body, body
+    assert "2026-09-04" in body and "`rank` 단계" in body, body
+    assert "'상위가 다루지 않는다'고 적지 않습니다" in body, body
+
+    # 표가 실제로 실렸으면 이 절은 안 붙는다 — 두 말이 되지 않게
+    full = dict(ctx, serp_top={"검색어": [{"position": 1, "title": "제목", "url": "https://x/1"}]},
+                serp_fanout={"검색어": [{"kind": "paa", "text": "질문"}]})
+    assert "## 이 회차에 없는 것" not in brief.build(o, full, "ko-KR")["body"]
+    # 기능 목록조차 없으면 아무 말도 안 한다(안 쟀는지 없었는지 우리가 모른다)
+    assert "## 이 회차에 없는 것" not in brief.build(o, {}, "ko-KR")["body"]
+
+
+def test_verdict_line_only_offers_to_compare_numbers_when_there_are_numbers():
+    """"두 숫자가 갈리면 직접 검색해" 는 이 줄에 숫자가 있을 때만 뜻이 있다."""
+    o = _opp("aio_exposure", "검색어", band="beyond")
+    o["band"] = "beyond"
+    o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다"
+    assert "두 숫자가 갈리면" not in brief.build(o, {}, "ko-KR")["body"]
+    o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다 (실제 순위 40위)"
+    assert "두 숫자가 갈리면" in brief.build(o, {}, "ko-KR")["body"]
 
 
 if __name__ == "__main__":

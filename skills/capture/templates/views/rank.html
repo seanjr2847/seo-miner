@@ -374,8 +374,12 @@ function RK_fallback(r) {
   // 점검 대상은 순위에 걸린 페이지가 우선, 없으면 이 검색어로 노출이 가장 큰 페이지.
   const fix = r.url || (pages[0] && pages[0].page) || "";
   const [what, acts, deliver] = RK_playParts(r);
+  // 꼴은 서버(brief._aio_shape)와 같은 규칙으로 정한다. 손댈 지면을 모를 때도 1페이지
+  // 안이면 그 지면은 **있다** — 주소만 모른다. 새 글로 보내면 이미 순위가 있는 우리
+  // 지면과 한 검색어를 나눠 갖는다. 그때는 고치기 꼴로 두고 주소를 물어본다.
+  const ranked1 = r.pos != null && r.pos <= (RULES.page1 || 10);
   const ask = askBlock({
-    shape: fix ? "fix_page" : "new_content",
+    shape: (fix || ranked1) ? "fix_page" : "new_content",
     url: fix, audit: RK_AUDITS[fix], acts, deliver,
     problem: `순위 ${r.pos != null ? r.pos + "위" : "못 찾음"}. ${what}`,
     queries: [{q: r.keyword, note: r.pos != null ? `현재 ${r.pos}위` : "순위 미검출"}],

@@ -775,6 +775,13 @@ def _axis_rank(conn, pid: int) -> dict:
         # 평균만 보고 "가장 나은 순위도 22.4위"라고 단정했다. 한 요청문 안에 순위가
         # 세 개 적히고 어느 것이 무엇인지는 아무 데도 없었다.
         "rank_by_kw": {r["keyword"]: r for r in ranks},
+        # 검색어 → 그 검색어를 조회한 언어-지역. 페이지가 없는 꼴(새 글)에는 '페이지 언어'가
+        # 설 수 없어 요청문이 늘 사이트 기본으로 떨어졌다 — 영어 검색어에 "한국어로 쓰고
+        # title 30자"가 나갔다(theotherskin `do papular scars go away`). 언어를 아는 것은
+        # 이 열뿐이다: collect_serp 가 조회에 쓴 값도 keywords.locale 이다.
+        "kw_locales": {r["keyword"]: r["locale"] for r in q(
+            conn, "SELECT keyword, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
+            (pid,))},
         # 기회로 아직 안 올라온 행의 폴백 처방이 쓴다(rank.html) — 문구는 기회와 같은 한 벌.
         "aio_play": {b: scoring.kind_play("aio_exposure", band=b) for b in scoring.AIO_BANDS},
         "kw_active": db.count_active_keywords(conn, pid),
@@ -1998,11 +2005,19 @@ def run_tool(body: dict) -> dict:
     md.write_text(
         text
         + "\n\n---\n기록 (이 PC 에서 도는 도구만):\n"
-        + "- 제안서만 만들었으면 기록하지 않습니다 — 채울 '바꾼 파일'이 없습니다.\n"
-        + "- 제안을 적용해 파일을 바꿨으면 이 명령으로 기록합니다(바꾼 파일·브랜치를 채워서):\n"
+        # 설계도·제안서만 낸 답에는 채울 '바꾼 파일'이 없다. 다만 같은 대화가 이어서
+        # 본문·패치까지 쓰는 요청문이 있어(새 글 설계 → 승인 → 본문) "제안서만"이 언제
+        # 끝나는지를 같이 적는다 — 안 적으면 파일을 바꾸고도 기록이 안 남는다.
+        + "- 설계도·제안서까지만 냈으면 기록하지 않습니다 — 채울 '바꾼 파일'이 없습니다.\n"
+        + "- 같은 대화에서 이어서 파일을 바꿨으면(승인 뒤 본문·패치를 넣은 경우 포함)\n"
+        + "  그 시점에 기록합니다(바꾼 파일·브랜치를 채워서):\n"
         # 숫자만 있으면 그게 무엇인지 알 수 없고(실제로 "156이 뭐냐"는 물음이 왔다),
         # 경로는 플러그인 버전이 박혀 있어 다음 릴리스에 깨진다. 둘 다 그렇다고 적는다.
+        # 코드 울타리가 없으면 마크다운으로 렌더될 때 `\.claude` 의 역슬래시가 먹혀
+        # 경로가 `C:\Users\user.claude\…` 로 깨진 채 복사된다 — 실제로 그렇게 나갔다.
+        + "```\n"
         + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n'
+        + "```\n"
         + f"  · {opp_id} 는 이 기회의 번호입니다(요청문 파일 이름 opp-{opp_id}.md 와 같은 번호).\n"
         + "  · 위 경로에는 지금 설치된 플러그인 버전이 박혀 있습니다 — 안 맞으면 그 자리에\n"
         + "    설치된 seo-miner 의 skills/create/scripts/createdb.py 를 쓰세요.\n"
