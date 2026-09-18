@@ -219,7 +219,7 @@ flowchart TD
   skills/capture/SKILL.md — `### /capture competitors {P}`(이 화면의 유료 단계, 옛 이름
     `/capture gap`)와 `### /capture gaps {P}`(복수 = 기회 분석), 축 셋·도메인 상한·
     비용 고지·건너뜀 톤
-  skills/capture/scripts/test_seams.py — test_seam_43_chip_stages_have_skill_commands
+  skills/capture/scripts/test_seams.py — test_seam_44_chip_stages_have_skill_commands
     (화면 칩의 단계 이름 ↔ SKILL.md 의 `### /capture <단계>` 절을 못 박는 검사)
   skills/capture/scripts/collect_gap.py — 모듈 docstring(축 A/B/C, missing|weak|shared),
     _kind(), DOMAIN_CAP=5, _resolve_domains/_cap, limits.gap_limit=100 · auto_competitors=5 ·

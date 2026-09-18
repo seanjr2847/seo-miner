@@ -1834,8 +1834,8 @@ def test_seam_42_project_types_are_one_list():
             assert "local_clinic" not in p.read_text("utf-8"), f"{p.name} 에 옛 종류 이름이 남았다"
 
 
-def test_seam_42_readme_lists_every_command_the_skills_have():
-    """42) README 의 명령 표가 스킬에 실제로 있는 명령과 같은 한 벌이어야 한다.
+def test_seam_43_readme_lists_every_command_the_skills_have():
+    """43) README 의 명령 표가 스킬에 실제로 있는 명령과 같은 한 벌이어야 한다.
 
     양쪽 다 혼자서는 멀쩡하다: 스킬에는 절이 있고 README 에는 표가 있다. 어긋나면
     **있는 기능이 없는 것이 된다** — `/capture pages` 가 표에 없어서, 요청문의 '진단'
@@ -1890,8 +1890,8 @@ def test_seam_42_readme_lists_every_command_the_skills_have():
         f"README 의 단계 목록이 run_all.STAGES 와 다르다\n  README: {named}\n  정본  : {order}")
 
 
-def test_seam_43_chip_stages_have_skill_commands():
-    """43) 화면이 칩으로 내놓는 단계는 스킬에 **그 이름의 명령 절**이 있어야 한다.
+def test_seam_44_chip_stages_have_skill_commands():
+    """44) 화면이 칩으로 내놓는 단계는 스킬에 **그 이름의 명령 절**이 있어야 한다.
 
     칩의 근거는 뷰의 view-def(stages·head)이고 글자는 단계 이름 그대로다
     (`/capture ${st}` — dashboard.html 의 viewChip·act). 그래서 화면 쪽만 보면
@@ -1909,7 +1909,7 @@ def test_seam_43_chip_stages_have_skill_commands():
     표(칩 이름 → 명령 이름)를 두면 그게 곧 세 번째 사본이 된다.
 
     정본은 양쪽 다 하나씩이다 — 칩 쪽은 view-def, 명령 쪽은 SKILL.md 의 `### /명령`
-    절(seam 42 가 README 표를 그 절에 맞춘다). 단계 이름 목록을 여기 옮겨 적지
+    절(seam 43 이 README 표를 그 절에 맞춘다). 단계 이름 목록을 여기 옮겨 적지
     않는 이유도 같다.
     """
     ctx = _load()
@@ -1938,7 +1938,7 @@ def test_seam_43_chip_stages_have_skill_commands():
         + " · ".join(f"/capture {st} ([{']·['.join(v)}] 화면)"
                      for st, v in sorted(missing.items()))
         + f". 스킬에 있는 명령: {sorted(have)}. 절 이름을 단계 이름에 맞춰 쓰고"
-          " (README 표는 seam 42 가 같이 본다), 화면에 특례 표를 만들지 마라")
+          " (README 표는 seam 43 이 같이 본다), 화면에 특례 표를 만들지 마라")
 
 # 새 글 꼴의 산출물이 "이미 있는 페이지"를 가리키면 그 요청문은 없는 것을 고치라고 시킨다.
 # 아래 두 검사가 그 이음매(꼴 ↔ 처방, 꼴 ↔ 형식)를 양쪽에서 잡는다.
@@ -1966,8 +1966,8 @@ def _new_content_kinds() -> list[tuple[str, str | None, str | None]]:
     return out
 
 
-def test_seam_44_new_content_prescription_never_points_at_a_page():
-    """44) 꼴이 '새 글'이면 그 종류의 산출물은 **있는 페이지를 가리키지 않는다**.
+def test_seam_45_new_content_prescription_never_points_at_a_page():
+    """45) 꼴이 '새 글'이면 그 종류의 산출물은 **있는 페이지를 가리키지 않는다**.
 
     band 와 꼴은 다른 물음이다: band(page1/beyond)는 우리 **순위**를 말하고, 꼴
     (fix_page/new_content)은 손댈 **지면의 유무**를 말한다. aio_exposure 의 beyond
@@ -1994,8 +1994,8 @@ def test_seam_44_new_content_prescription_never_points_at_a_page():
             f"{kind}/{gk}/{band}: 새 글 요청문의 산출물이 있는 페이지를 가리킨다 {bad}\n{want}")
 
 
-def test_seam_45_new_content_form_names_no_artifact_of_its_own():
-    """45) 새 글 꼴의 **형식**은 산출물 이름을 새로 부르지 않는다 — 정본은 '만들어 줄 것'이다.
+def test_seam_46_new_content_form_names_no_artifact_of_its_own():
+    """46) 새 글 꼴의 **형식**은 산출물 이름을 새로 부르지 않는다 — 정본은 '만들어 줄 것'이다.
 
     형식(SHAPES[...]['form'])에 "(직답 블록·구조화 데이터 등)"이라고 예가 박혀 있었다.
     그건 사본이었고, 게다가 **틀린 사본**이었다: 구글 AI 요약 처방은 바로 그 둘을 하지
