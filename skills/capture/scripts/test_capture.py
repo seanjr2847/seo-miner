@@ -1262,6 +1262,64 @@ def test_verdicts_write_read_and_irrelevant_deactivates_keyword():
     conn.close()
 
 
+def test_verdict_revert_restores_only_tracking_it_turned_off():
+    """'미판정으로 되돌리기'는 무관이 끈 추적을 되켠다 — 그리고 그것만 되켠다.
+
+    되돌리기가 verdicts 행만 지우면 판정은 사라지는데 검색어는 영영 추적 밖에 남는다
+    (되돌린 사람은 되돌아간 줄 안다). 반대로 "무관이면 되켠다"로 뭉뚱그리면 애초에
+    후보였던 줄·사람이 손수 끈 줄까지 켜진다 — 그래서 **껐다는 사실**(verdict_off)을
+    남기고 그 줄만 되켠다."""
+    conn = db.connect()
+    pid = _project(conn, "vdrev")["id"]
+    add = lambda kw, act: conn.execute(  # noqa: E731
+        "INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,?) RETURNING id",
+        (pid, kw, act)).fetchone()[0]
+    act = lambda kw: conn.execute(  # noqa: E731
+        "SELECT is_active FROM keywords WHERE project_id=? AND keyword=?", (pid, kw)).fetchone()[0]
+    tracked, cand, byhand = add("추적 중", 1), add("후보일 뿐", 0), add("사람이 끈 것", 1)
+    conn.commit()
+    assert db.set_keywords_active(conn, pid, [byhand], False) == 1   # 사람이 직접 껐다
+    keys = {kw: scoring.norm(kw) for kw in ("추적 중", "후보일 뿐", "사람이 끈 것")}
+
+    # 1) 무관 → 되돌리기: 무관이 끈 것만 되살아난다
+    db.set_verdicts(conn, pid, list(keys.values()), "irrelevant")
+    assert (act("추적 중"), act("후보일 뿐"), act("사람이 끈 것")) == (0, 0, 0)
+    db.set_verdicts(conn, pid, list(keys.values()), None)
+    assert act("추적 중") == 1, "무관이 끈 추적이 되돌리기로 되살아나지 않았다"
+    assert act("후보일 뿐") == 0, "애초에 후보였던 줄을 되돌리기가 켰다"
+    assert act("사람이 끈 것") == 0, "사람이 다른 이유로 끈 줄을 되돌리기가 켰다"
+
+    # 2) 보류 → 무관 → 보류: 판정 갈아타기도 되살린다(무관이 아닌 판정은 추적을 안 끈다)
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "hold")
+    assert act("추적 중") == 1
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "irrelevant")
+    assert act("추적 중") == 0
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "hold")
+    assert act("추적 중") == 1, "무관 → 보류 로 갈아탔는데 추적이 꺼진 채 남았다"
+
+    # 3) 무관 두 번은 흔적을 덧쓰지 않는다 — 두 번째 무관이 "내가 껐다"를 새로 주장하면
+    #    사이에 사람이 켠 것을 되돌리기가 다시 켜 버린다
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "irrelevant")
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "irrelevant")
+    assert db.set_keywords_active(conn, pid, [tracked], True) == 1   # 사람이 손수 되켰다
+    db.set_verdicts(conn, pid, [keys["추적 중"]], "irrelevant")      # 무관을 다시 누른다
+    assert act("추적 중") == 0
+    db.set_verdicts(conn, pid, [keys["추적 중"]], None)
+    assert act("추적 중") == 1
+
+    # 4) 사람이 추적을 손대면 '무관이 껐다'는 표식은 지워진다 — 무관이 껐던 줄이라도
+    #    사람이 되켰다가 제 뜻으로 다시 끈 뒤라면, 되돌리기는 그 줄을 건드리지 않는다
+    db.set_verdicts(conn, pid, [keys["후보일 뿐"]], None)      # 앞선 판정을 치우고 시작
+    assert db.set_keywords_active(conn, pid, [cand], True) == 1
+    db.set_verdicts(conn, pid, [keys["후보일 뿐"]], "irrelevant")
+    assert act("후보일 뿐") == 0
+    assert db.set_keywords_active(conn, pid, [cand], True) == 1    # 사람이 손수 켰다
+    assert db.set_keywords_active(conn, pid, [cand], False) == 1   # 그리고 제 뜻으로 껐다
+    db.set_verdicts(conn, pid, [keys["후보일 뿐"]], None)
+    assert act("후보일 뿐") == 0, "사람이 제 뜻으로 끈 줄을 되돌리기가 켰다"
+    conn.close()
+
+
 def test_verdict_gates_load_and_open_list():
     """무관·보류 판정은 적재에서 빠지고, 열린 기회 조회는 작업 판정만 낸다.
     검색어가 아닌 종류(index_blocked 등)는 판정 없이 통과한다."""

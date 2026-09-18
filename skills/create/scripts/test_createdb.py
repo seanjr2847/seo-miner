@@ -257,7 +257,14 @@ try:
     res, _ = _quiet(createdb.sync_merged, "web", None)
     posts = [c for c in calls if c[0] == "POST"]
     assert res["checked"] == 2 and res["closed"] == 1, res
-    assert [p[2]["json"] for p in posts] == [{"project": "web", "id": 7, "status": "done"}], posts
+    # 기록의 merged 도 서버에서 켠다(/api/creation/merged) — 안 켜면 그 기록이 다음
+    # sync 의 목록에 그대로 남아 같은 PR 을 gh 에 영영 다시 묻고, 화면의 「고친 것」은
+    # '병합 전'에 굳는다. 기회(/api/opp)까지 둘 다 부르는지 순서대로 본다.
+    assert [(p[1], p[2]["json"]) for p in posts] == [
+        ("/api/creation/merged", {"project": "web", "id": 3}),
+        ("/api/opp", {"project": "web", "id": 7, "status": "done"}),
+        ("/api/creation/merged", {"project": "web", "id": 4}),
+    ], posts
 finally:
     remote.owns, remote.api = _orig_owns, _orig_api
     createdb._gh = _orig_gh

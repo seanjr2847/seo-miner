@@ -481,7 +481,7 @@ const anQueryLink = q => {
 
 function anQueryPanel(r, problem, note) {
   const o = oppOf(r.query);
-  if (o) return oppPanel(o) + (oppActs(o) ? `<div class="det">${oppActs(o)}</div>` : "");
+  if (o) return oppPanel(o, oppActs(o));
   const pages = (window.QUERY_PAGES || {})[r.query] || [];
   const url = pages.length ? pages[0].page : "";
   return `<div class="det">

@@ -409,14 +409,14 @@ function BLK_links(d) {
 }
 
 function BLK_csvDomains() {
-  csv("referring-domains", [["도메인", "지수", "링크 수", "순위 반영", "최초 발견", "잃은 날"],
+  csv("참조도메인", [["도메인", "지수", "링크 수", "순위 반영", "최초 발견", "잃은 날"],
     ...(BLK_D.bl_domains || []).map(r =>
       [r.domain, r.rank, r.backlinks, r.dofollow, BLK_day(r.first_seen),
        BLK_day(r.lost_date)])]);
 }
 
 function BLK_csvLinks() {
-  csv("backlinks", [["링크 건 페이지", "앵커", "우리 페이지", "순위 반영", "깨짐"],
+  csv("백링크", [["링크 건 페이지", "앵커", "우리 페이지", "순위 반영", "깨짐"],
     ...(BLK_D.bl_links || []).map(r =>
       [r.url_from, r.anchor, r.url_to, r.dofollow ? "반영" : "안 됨",
        r.is_broken ? "Y" : ""])]);
