@@ -689,7 +689,7 @@ def test_seam_16_brief_shapes_single_source():
     # 기회 패널의 '고칠 페이지'는 요청문이 고른 페이지(o.brief.page = brief.page_of)다.
     # 화면이 query_pages 로 따로 고르면 순위 밖 지면을 요청문은 "고쳐라", 화면은
     # "걸린 페이지 없음"이라고 한다(써마지에서 실제로 그랬다).
-    m = re.search(r"function oppDetail\(o\) \{(.*?)\n\}", shell, re.S)
+    m = re.search(r"function oppDetail\(o(?:, \w+)?\) \{(.*?)\n\}", shell, re.S)
     assert m, "셸의 oppDetail 을 못 찾았다"
     code = re.sub(r"//[^\n]*", "", m.group(1))     # 주석 속 낱말로 통과하지 않게
     assert "o.brief.page" in code, "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
@@ -1821,6 +1821,62 @@ def test_seam_42_project_types_are_one_list():
     for p in (presets, sett, app_html):
         if p.exists():
             assert "local_clinic" not in p.read_text("utf-8"), f"{p.name} 에 옛 종류 이름이 남았다"
+
+
+def test_seam_42_readme_lists_every_command_the_skills_have():
+    """42) README 의 명령 표가 스킬에 실제로 있는 명령과 같은 한 벌이어야 한다.
+
+    양쪽 다 혼자서는 멀쩡하다: 스킬에는 절이 있고 README 에는 표가 있다. 어긋나면
+    **있는 기능이 없는 것이 된다** — `/capture pages` 가 표에 없어서, 요청문의 '진단'
+    절이 비어 나가는데도 사용자가 그걸 채우는 명령을 찾을 길이 없었다(pages·vitals·
+    gap 셋이 그렇게 빠져 있었다). 반대로 README 에만 있는 명령은 쳐도 안 도는 명령이다.
+
+    정본은 스킬의 `### /명령` 절이다. README 는 그것을 가리키기만 한다.
+    """
+    readme = (ROOT / "README.md").read_text("utf-8")
+    have = set()
+    for f in sorted((ROOT / "skills").glob("*/SKILL.md")):
+        body = f.read_text("utf-8")
+        have |= {m.group(1) for m in re.finditer(
+            r"^### (/(?:capture|create|setup) [a-z]+)", body, re.M)}
+        # setup 스킬은 명령마다 절을 두지 않고 본문에서 백틱으로 부른다 — 그 자리가 정본이다.
+        have |= set(re.findall(r"`(/setup [a-z]+)`", body))
+    assert len(have) >= 15, f"스킬에서 명령을 {len(have)}개밖에 못 찾았다 — 정규식이 틀렸다"
+    listed = set(re.findall(r"\| `(/(?:capture|create|setup) [a-z]+)`", readme))
+    assert not (have - listed), f"스킬에 있는데 README 표에 없는 명령: {sorted(have - listed)}"
+    assert not (listed - have), f"README 표에만 있는 명령: {sorted(listed - have)}"
+
+    # 그림도 실제 명령만 가리킨다 — 그림이 틀린 명령을 치게 만들면 표보다 나쁘다.
+    # 첫 블록만 보면 나머지 그림이 마음대로 틀릴 수 있다(실제로 그렇게 헛돌았다).
+    blocks = re.findall(r"```mermaid\n(.*?)```", readme, re.S)
+    assert len(blocks) >= 3, f"README 의 시작하기 그림이 {len(blocks)}개뿐이다"
+    import run_all
+    stages = {s.name if hasattr(s, "name") else str(s) for s in run_all.STAGES}
+    seen = set()
+    for i, b in enumerate(blocks, 1):
+        drawn = set(re.findall(r"(/(?:capture|create|setup) [a-z]+)", b))
+        assert not (drawn - have), f"그림 {i} 이 스킬에 없는 명령을 가리킨다: {sorted(drawn - have)}"
+        seen |= drawn
+        # 그림이 단계 이름을 적으면 run_all.STAGES 의 사본이 하나 더 는다. 단계 목록은
+        # 아래 명령 표 한 곳에만 적고, 그림은 명령 이름으로만 말한다.
+        # (report·index·rank 처럼 명령 이름과 겹치는 낱말은 `/capture ` 뒤에 붙은 것만 빼고 센다)
+        bare = re.sub(r"/(?:capture|create|setup) [a-z]+", " ", b)
+        drawn_stages = {s for s in stages if re.search(rf"\b{re.escape(s)}\b", bare)}
+        assert not drawn_stages, \
+            f"그림 {i} 이 단계 이름을 적었다 — 정본은 run_all.STAGES 다: {sorted(drawn_stages)}"
+    assert seen, "그림에서 명령을 하나도 못 찾았다 — 정규식이 틀렸다"
+
+    # 단계 이름을 적는 자리는 README 에 딱 하나(`/capture run` 설명)여야 하고,
+    # 그 한 벌이 run_all.STAGES 와 같아야 한다. 사본이 낡으면 없는 단계를 안내한다.
+    row = re.search(r"\| `/capture run` \|([^|]*)\|", readme)
+    assert row, "README 명령 표에서 /capture run 줄을 못 찾았다"
+    # 화살표로 이은 한 덩어리만 본다 — 같은 칸의 산문에도 단계 이름이 섞여 있다
+    chain = re.search(r"`([^`]*→[^`]*)`", row.group(1))
+    assert chain, "/capture run 줄에서 단계 사슬(a → b → …)을 못 찾았다"
+    order = [s.name if hasattr(s, "name") else str(s) for s in run_all.STAGES]
+    named = [x.strip() for x in chain.group(1).split("→")]
+    assert named == order, (
+        f"README 의 단계 목록이 run_all.STAGES 와 다르다\n  README: {named}\n  정본  : {order}")
 
 
 if __name__ == "__main__":
