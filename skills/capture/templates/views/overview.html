@@ -51,6 +51,9 @@
 #opplist .opp .why { margin-top:2px; }
 #opplist .opp:not([open]) .why { -webkit-line-clamp:1; }
 #opplist .det { padding-left:48px; }
+/* 숫자 칸의 등폭은 숫자에만 건다 — 뒤에 붙는 단위("회")는 한글이라 등폭으로 찍으면
+   폴백 서체로 떨어져 한 글자만 혼자 커진다(셸의 td.num::before 와 같은 이유). */
+#watch td.num .u { font-family:var(--sans); }
 @media (max-width:560px) {
   #opplist .opp > summary { grid-template-columns:auto 1fr auto; }
   #opplist .opp > summary::before { display:none; }
@@ -448,7 +451,7 @@ function OV_watch(d) {
      ">그 뒤 측정?완료 뒤 수집한 횟수", ""],
     rows.map(w => `<tr><td>${esc(w.target)}</td>
       <td class="num">${esc((w.done_at || "").slice(0, 10))}</td><td>${cell(w.before)}</td><td>${cell(w.after)}</td>
-      <td class="num">${w.runs_since}회</td>
+      <td class="num">${w.runs_since}<span class="u">회</span></td>
       <td>${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
         : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`) : ""}</td></tr>`), "");
 }

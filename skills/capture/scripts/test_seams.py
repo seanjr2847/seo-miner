@@ -2069,6 +2069,86 @@ def test_seam_47_brief_never_points_at_a_section_it_does_not_have():
     assert not bad, "요청문이 없는 절을 가리킨다:\n  " + "\n  ".join(sorted(set(bad))[:12])
 
 
+def test_seam_49_docs_do_not_copy_the_stage_table():
+    """49) 문서가 단계의 **순서**나 **유료 여부**를 사본으로 적지 않는다.
+
+    정본은 `run_all.STAGES` 하나다. 사본은 조용히 낡는다 — 실제로 `capture/SKILL.md`
+    가 `keywords` 를 3단계, `index` 를 2단계, `rank` 를 4단계, `ai` 를 5단계라고
+    적고 있었다. `ga4`·`metrics` 가 표에 들어오기 **전**의 번호다. 같은 파일이
+    "유료 축은 셋" 이라며 `rank`·`ai`·`competitors` 만 셌는데 실제로는 다섯이고,
+    빠진 둘(`metrics`·`backlinks`)이 바로 DataForSEO 과금 축이다 — 비용 고지 절이라
+    사용자가 예상 못 한 청구를 본다.
+
+    그래서 숫자·목록을 **고쳐 적는** 대신 사본 자체를 금지한다. 문서는 이름으로
+    말하고 순서·과금은 정본을 가리킨다.
+    """
+    import run_all
+    names = {s.name for s in run_all.STAGES}
+    paid = {s.name for s in run_all.STAGES if s.is_paid}
+    assert names and paid, "run_all.STAGES 를 못 읽었다"
+
+    docs = [p for p in list(ROOT.glob("*.md")) + list(ROOT.glob("docs/**/*.md"))
+            + list(ROOT.glob("skills/**/*.md")) if p.is_file()]
+    assert len(docs) >= 10, f"문서를 {len(docs)}개밖에 못 찾았다 — 경로가 바뀌었다"
+
+    # (1) `N단계(`이름`)` 꼴 — 번호가 곧 사본이다
+    num = re.compile(r"(\d+)\s*단계\s*\(\s*`([a-z_]+)`\s*\)")
+    # (2) '유료' 를 말하면서 단계 이름을 두 개 이상 나열하는 줄. 정본을 가리키면 통과.
+    POINTS_AT_CANON = ("run_all.STAGES", "is_paid", "STAGES")
+    bad = []
+    for p in docs:
+        for i, line in enumerate(p.read_text("utf-8").splitlines(), 1):
+            for n, st in num.findall(line):
+                if st in names:
+                    bad.append(f"{p.relative_to(ROOT)}:{i} — `{st}` 를 {n}단계라고 "
+                               "적었다(번호는 사본이다. 이름만 쓰고 순서는 "
+                               "run_all.STAGES 를 가리켜라)")
+            if "유료" in line and not any(k in line for k in POINTS_AT_CANON):
+                named = {s for s in paid | names if f"`{s}`" in line}
+                if len(named) >= 2:
+                    bad.append(f"{p.relative_to(ROOT)}:{i} — 유료 축을 이름으로 "
+                               f"나열했다({sorted(named)}). 정본(run_all.STAGES 의 "
+                               "is_paid)을 가리켜라 — 축이 늘면 이 줄만 낡는다")
+    assert not bad, "문서가 단계표를 베꼈다:\n  " + "\n  ".join(bad[:10])
+
+
+def _mono_stack(css: str) -> list[str]:
+    """`--mono: …;` 의 서체 목록. 없으면 빈 목록."""
+    m = re.search(r"--mono\s*:\s*([^;]+);", css, re.S)
+    if not m:
+        return []
+    return [x.strip().strip('"\'') for x in m.group(1).split(",") if x.strip()]
+
+
+def test_seam_48_hosted_addon_keeps_the_mono_fallback_tail():
+    """48) 호스팅 애드온이 `--mono` 를 갈아끼울 때 원본이 둔 **폴백 꼬리**를 지키는가.
+
+    `--mono` 덮어쓰기는 CLAUDE.md 가 허용한 유일한 예외다(`--sans` 는 금지). 그래서
+    애드온은 앞쪽 등폭 서체를 제 것으로 바꾼다 — 원본의 Cascadia/Consolas 가 윈도우
+    기준이라 다른 OS 에서 폴백이 제각각이기 때문이다. 문제는 그때 **꼬리까지 같이
+    날아간 것**이다: 원본 스택은 끝에 한글 폴백을 일부러 끼워 뒀는데(등폭 자리에
+    한글이 섞여 들어온다 — 수집 기록의 이름표, GSC 가 한글로 주는 색인 상태),
+    애드온이 그걸 빠뜨려 같은 글자가 호스팅에서만 더 나쁜 서체로 떨어졌다.
+
+    한 파일만 보면 양쪽 다 멀쩡하다. 어긋난 건 둘 사이다 — 그래서 이음매다.
+    서체 이름을 여기 적지 않는다(적으면 그게 세 번째 사본이다): **원본의 꼬리
+    두 칸과 애드온의 꼬리 두 칸이 같은지**만 본다.
+    """
+    addon_f = ROOT / "server" / "assets" / "dash.html"
+    if not addon_f.exists():
+        return                      # 플러그인 설치본에는 server/ 가 없다
+    orig = _mono_stack((ROOT / "skills" / "capture" / "templates"
+                        / "dashboard.html").read_text("utf-8"))
+    addon = _mono_stack(addon_f.read_text("utf-8"))
+    assert len(orig) >= 2, f"원본의 --mono 를 못 읽었다: {orig}"
+    if not addon:
+        return                      # 애드온이 안 덮으면 원본 그대로라 볼 것이 없다
+    assert addon[-2:] == orig[-2:], (
+        "호스팅 애드온이 원본 --mono 의 폴백 꼬리를 떨어뜨렸다 — 등폭 자리의 한글이 "
+        f"호스팅에서만 다른 서체로 떨어진다.\n  원본  꼬리: {orig[-2:]}\n"
+        f"  애드온 꼬리: {addon[-2:]}")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

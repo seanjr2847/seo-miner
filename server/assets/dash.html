@@ -1,9 +1,13 @@
 
 <style>
   /* 본문 서체는 원본이 Pretendard 로 간다 — 여기서 덮지 않는다. 등폭만 갈아끼운다:
-     원본의 Cascadia/Consolas 는 윈도우 기준이라 다른 OS 에서 폴백이 제각각이다. */
+     원본의 Cascadia/Consolas 는 윈도우 기준이라 다른 OS 에서 폴백이 제각각이다.
+     **꼬리의 한글 폴백은 지우지 않는다** — 원본 스택(dashboard.html)이 "Malgun Gothic"
+     을 일부러 끼워 뒀다. 등폭 자리에 한글이 섞여 들어오면(수집 기록의 이름표, GSC 가
+     한글로 주는 색인 상태) 그 폴백이 받아 준다. 여기서 앞쪽만 갈아끼우고 꼬리를
+     빠뜨리면 같은 글자가 호스팅에서만 더 나쁜 서체로 떨어진다. */
   :root{
-    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"Malgun Gothic",monospace;
   }
   /* 원본 셸(dashboard.html)이 레일·화면 전환·괘선 체계를 다 갖는다. 여기서는
      호스팅에만 있는 것만 칠한다 — 예전에는 이 애드온이 body 격자부터 카드까지
@@ -866,8 +870,18 @@
     syncRunTone();
     var rep = document.createElement("a");
     rep.className = "cmd"; rep.textContent = "보고서 내려받기";
-    rep.addEventListener("click", function () {
+    // href 를 클릭 때만 채우면 **키보드로는 못 간다**: href 없는 <a> 는 Tab 순서에
+    // 들지 않고 focus() 도 안 먹는다(마우스로는 눌린다 — 크롬이 리스너가 끝난 뒤
+    // 활성화를 정해서, 그 클릭에 채운 href 가 그대로 쓰인다). 그래서 만들 때 한 번
+    // 채워 링크로 세우고, 사이트를 바꿨을 때를 위해 누를 때 다시 맞춘다.
+    var repHref = function () {
       rep.href = "/api/report?project=" + encodeURIComponent(proj());
+    };
+    repHref();
+    // 누를 때만이 아니라 **닿을 때마다** 맞춘다 — 사이트를 바꾼 뒤 누르지 않고
+    // '링크 주소 복사'를 하면 앞 사이트의 주소가 복사된다.
+    ["click", "focus", "pointerenter"].forEach(function (ev) {
+      rep.addEventListener(ev, repHref);
     });
     box.appendChild(rep);
   });
