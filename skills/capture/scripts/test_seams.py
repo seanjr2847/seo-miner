@@ -2117,8 +2117,136 @@ def test_seam_46_new_content_form_names_no_artifact_of_its_own():
             f"금지한 산출물({w})을 같은 요청문이 만들라고 시킨다"
 
 
-def test_seam_47_brief_never_points_at_a_section_it_does_not_have():
-    """47) 요청문이 `위 '…'`·`아래 '…'` 로 가리키는 절은 **그 요청문 안에** 있어야 한다.
+def test_seam_47_panel_stats_and_relations_come_from_gather():
+    """47) 펼침 패널의 통계·순위 추이·연관 키워드는 서버가 센 것을 그린다.
+
+    패널은 오래 `query_pages` 하나로 버텼다. 그건 **기회로 걸린 검색어**만 담은
+    표라, 화면이 그걸 역색인해서 "이 페이지로 들어오는 검색어"를 세면 마흔 개 중
+    셋만 말한다 — 틀린 수를 자신 있게 말하는 쪽이 빈칸보다 나쁘다. 추이도
+    마찬가지다: `trend` 는 사이트 전체 합계라 대상 하나의 순위 추이가 아니다.
+
+    그래서 축이 키 둘을 낸다. 이 검사는 양쪽 끝을 본다 — gather() 가 싣는가,
+    셸이 그 키를 읽는가, 그리고 **같은 스냅샷**을 보는가. 마지막 것이 진짜
+    이음매다: `query_pages` 와 다른 날짜를 보면 같은 패널 안에서 표는 9.4위,
+    차트는 12위를 말한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    served = _gather("_seam47")
+    for key in ("target_trend", "page_queries"):
+        assert key in served, f"gather() 가 {key} 를 안 싣는다"
+
+    shell = ctx["shell"]
+    for key in ("target_trend", "page_queries"):
+        assert f"d.{key}" in shell, f"셸이 {key} 를 페이로드에서 안 읽는다"
+
+    # 같은 스냅샷을 보나 — 축이 pages_by_query 와 같은 인자(at)로 부르는지를
+    # 소스가 아니라 **결과**로 본다: 두 날짜를 심고, 옛 날짜로 고정했을 때
+    # 추이의 마지막 점이 그 날이어야 한다(최신을 보면 고정이 새는 것이다).
+    import sqlite3 as _sq
+
+    import dashboard
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_s47','saas','x.com')")
+    url = "https://x.com/a"
+    for d, pos in (("2026-01-01", 12.0), ("2026-02-01", 9.0)):
+        c.executemany(
+            "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+            "clicks,impressions,ctr,position) VALUES(1,?,28,?,?,0,30,0,?)",
+            [(d, "검색어", url, pos), (d, "다른 검색어", url, pos + 3)])
+    c.execute("INSERT INTO opportunities(project_id,kind,target,score,status)"
+              " VALUES(1,'striking_distance','검색어',70,'new')")
+    db.set_verdicts(c, 1, [scoring.norm("검색어")], "work")
+    c.commit()
+    p1 = c.execute("SELECT * FROM projects WHERE id=1").fetchone()
+    opps = [{"target": "검색어", "kind": "striking_distance"}]
+
+    live = dashboard._axis_query_pages(c, 1, p1, None, opps=opps,
+                                       striking=[], ranks_all=[], ups=[], downs=[])
+    trend = live["target_trend"]["검색어"]
+    assert [r["d"] for r in trend] == ["2026-01-01", "2026-02-01"], trend
+    assert trend[-1]["pos"] == 9.0 and trend[-1]["imp"] == 30, trend[-1]
+
+    pinned = dashboard._axis_query_pages(c, 1, p1, "2026-01-01", opps=opps,
+                                         striking=[], ranks_all=[], ups=[], downs=[])
+    assert [r["d"] for r in pinned["target_trend"]["검색어"]] == ["2026-01-01"], (
+        "기준 수집일을 고정했는데 추이가 그 뒤의 날까지 말한다 — 표와 차트가 다른 날을 본다")
+
+    # 연관 키워드는 그 페이지로 들어오는 검색어 전부다 — 기회에 걸린 것만이 아니다.
+    qs = live["page_queries"][url]
+    assert {x["q"] for x in qs["top"]} == {"검색어", "다른 검색어"}, qs
+    assert qs["total"] == 2, qs
+    assert "다른 검색어" not in live["query_pages"], (
+        "기회가 아닌 검색어가 query_pages 에 들어왔다 — 이 검사가 볼 차이가 없어졌다")
+
+
+def test_seam_48_copy_button_stands_before_the_panel_opens():
+    """48) 요청문 복사 버튼은 접힌 줄에 있다 — 패널 안에 두지 않는다.
+
+    복사는 이 상자의 **유일한** 목적이다. 그런데 버튼이 textarea 위에 있어서,
+    누르려면 먼저 펴야 했다 — 펴 봤자 읽을 것은 AI 에게 줄 글이고 사람이 읽을
+    글이 아니다. 두 벌이 되는 것도 막는다: 버튼이 양쪽에 있으면 하나는 언젠가
+    다른 textarea 를 집는다(copyPrompt 가 DOM 을 거슬러 찾기 때문이다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell = ctx["shell"]
+    m = re.search(r"const askBlock = c => \{(.*?)\n\};", shell, re.S)
+    assert m, "askBlock 을 못 찾았다 — 정규식이 틀렸다"
+    body = m.group(1)
+    summary = re.search(r"<summary>(.*?)</summary>", body, re.S)
+    assert summary, "askBlock 에 summary 가 없다"
+    assert "copyPrompt" in summary.group(1), "복사 버튼이 접힌 줄(summary)에 없다"
+    head = re.search(r'<div class="pb-h">(.*?)</div>', body, re.S)
+    assert head, "askBlock 의 안내 줄(pb-h)이 없다"
+    assert "copyPrompt" not in head.group(1), "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"
+    assert body.count("copyPrompt") == 1, f"복사 버튼이 {body.count('copyPrompt')}개다"
+    # summary 안의 버튼은 details 를 토글한다 — 그걸 막지 않으면 복사가 패널을 연다
+    assert "stopPropagation" in summary.group(1) and "preventDefault" in summary.group(1), \
+        "접힌 줄의 복사 버튼이 details 토글을 안 막는다 — 누르면 패널이 열린다"
+    # copyPrompt 는 이제 .pbox 밖에서 불린다
+    fn = re.search(r"window\.copyPrompt = function \(btn\) \{(.*?)\n\};", shell, re.S)
+    assert fn, "copyPrompt 를 못 찾았다"
+    assert 'closest(".pbox")' not in fn.group(1), \
+        "copyPrompt 가 여전히 .pbox 를 거슬러 찾는다 — 접힌 줄의 버튼은 그 밖에 있다"
+
+
+def test_seam_49_page_fix_summarizes_before_it_tables():
+    """49) 페이지 진단은 한 줄로 말하고, 표는 접어 둔다.
+
+    진단 일곱 줄의 '바꿀 값'은 한 칸이 세 문장짜리 산문이다(요청문에 쓸 글이라
+    그렇게 길다). 그걸 패널에 그대로 펴면 기회 하나가 화면 두 장을 먹고, 정작
+    다음 행동(요청문 만들기)은 저 위로 밀려난다. 전문은 이미 요청문 안에 있다.
+
+    한 줄은 셸이 **새로 쓰지 않는다** — tag 를 세어 이어 붙인다. 판정 산문의
+    정본은 scoring.page_advice 다(목록·문구를 두 벌 만들지 않는다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell = ctx["shell"]
+    m = re.search(r"const pageFix = \(audit, url, extra\) => \{(.*?)\n\};", shell, re.S)
+    assert m, "pageFix 를 못 찾았다 — 정규식이 틀렸다"
+    body = m.group(1)
+    assert "손댈 곳" in body, "pageFix 에 한 줄 요약이 없다"
+    assert 'details class="fixmore"' in body, "진단표가 접힘 상자 안에 없다"
+    assert body.index("손댈 곳") < body.index('class="fixmore"'), \
+        "한 줄 요약이 접힘 상자보다 뒤에 있다"
+    # 요약은 tag 만 쓴다 — now/fix 산문을 셸이 잘라 쓰면 판정을 다시 쓰는 것이다
+    lead = re.search(r"const lead = ([^;]*);", body, re.S)
+    assert lead, "한 줄 요약을 `const lead` 로 안 만든다 — 이 검사가 볼 자리가 없다"
+    assert "tag" in lead.group(1), "요약이 tag 를 안 쓴다"
+    for w in ("x.now", "x.fix"):
+        assert w not in lead.group(1), \
+            f"요약이 판정 산문({w})을 건드린다 — 정본은 scoring.page_advice 다"
+
+def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
+    """51) 요청문이 `위 '…'`·`아래 '…'` 로 가리키는 절은 **그 요청문 안에** 있어야 한다.
 
     절은 조건부로 선다: '근거'는 EVIDENCE 가 빈 종류·빈 페이로드에서 안 그려지고,
     '검색결과 기능' 줄은 종류마다 다른 EVIDENCE 가 그린다. 가리키는 쪽은 그 조건을
@@ -2181,8 +2309,8 @@ def test_seam_00_seam_numbers_are_unique():
                      " (main 과 갈라진 채 각자 다음 번호를 집으면 여기서 만난다)")
 
 
-def test_seam_49_docs_do_not_copy_the_stage_table():
-    """49) 문서가 단계의 **순서**나 **유료 여부**를 사본으로 적지 않는다.
+def test_seam_53_docs_do_not_copy_the_stage_table():
+    """53) 문서가 단계의 **순서**나 **유료 여부**를 사본으로 적지 않는다.
 
     정본은 `run_all.STAGES` 하나다. 사본은 조용히 낡는다 — 실제로 `capture/SKILL.md`
     가 `keywords` 를 3단계, `index` 를 2단계, `rank` 를 4단계, `ai` 를 5단계라고
@@ -2232,8 +2360,8 @@ def _mono_stack(css: str) -> list[str]:
     return [x.strip().strip('"\'') for x in m.group(1).split(",") if x.strip()]
 
 
-def test_seam_48_hosted_addon_keeps_the_mono_fallback_tail():
-    """48) 호스팅 애드온이 `--mono` 를 갈아끼울 때 원본이 둔 **폴백 꼬리**를 지키는가.
+def test_seam_52_hosted_addon_keeps_the_mono_fallback_tail():
+    """52) 호스팅 애드온이 `--mono` 를 갈아끼울 때 원본이 둔 **폴백 꼬리**를 지키는가.
 
     `--mono` 덮어쓰기는 CLAUDE.md 가 허용한 유일한 예외다(`--sans` 는 금지). 그래서
     애드온은 앞쪽 등폭 서체를 제 것으로 바꾼다 — 원본의 Cascadia/Consolas 가 윈도우
