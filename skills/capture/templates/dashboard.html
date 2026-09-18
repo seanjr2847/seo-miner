@@ -798,6 +798,23 @@ td.expcell { padding:0 !important; }
 .det-top > .ask, .det-top > .acts { margin:0; }
 /* 펴면 본문 상자가 한 줄을 통째로 쓴다 — 버튼 옆에 끼면 textarea 가 한 뼘이 된다. */
 .det-top > .ask[open] { flex:1 1 100%; }
+/* 접힌 줄의 복사 버튼 — 손잡이가 칠해져 있을 때(패널 맨 위)와 아닐 때 둘 다
+   읽혀야 해서 색을 스스로 안 정한다. currentColor 를 빌려 쓴다. */
+.ask > summary .askcopy { margin-left:10px; font:500 11.5px/1 var(--sans);
+  color:inherit; background:transparent; border:1px solid currentColor; opacity:.72;
+  border-radius:var(--r-sm); padding:0 8px; min-height:20px; cursor:pointer; }
+.ask > summary .askcopy:hover { opacity:1; }
+/* 페이지 진단 — 한 줄이 손잡이고, 표는 그 안에 접혀 있다. */
+.fixmore { margin:2px 0 10px; }
+.fixmore > summary { cursor:pointer; list-style:none; font-size:12.5px; color:var(--ink);
+  padding:4px 0; }
+.fixmore > summary::-webkit-details-marker { display:none; }
+.fixmore > summary::after { content:"자세히"; margin-left:8px; font:var(--micro);
+  color:var(--slate); }
+.fixmore[open] > summary::after { content:"접기"; }
+.fixmore > summary:hover { color:var(--patina); }
+/* 대상 하나의 지금 수 — 차트 바로 위에 선다. 단위는 한글이라 등폭을 안 씌운다. */
+.detk { font-size:13px; color:var(--ink); margin:0 0 6px; }
 .pbox { margin-top:8px; }
 .pb-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
   font-size:11.5px; color:var(--slate); margin-bottom:5px; }
@@ -1815,10 +1832,18 @@ const pageFix = (audit, url, extra) => {
   if (!a.length)
     return head + `<p class="detn">규칙으로 잡히는 문제가 없습니다.
       제목·설명·H1·본문 길이·구조화 데이터가 모두 기준 안입니다.</p>`;
-  return head + `<div class="tw"><table class="dett fix"><thead><tr><th>손댈 자리</th>
+  // 한 줄로 말하고 표는 접어 둔다. '바꿀 값' 한 칸이 세 문장짜리 산문이라(요청문에
+  // 쓸 글이라 그렇게 길다) 일곱 줄이면 기회 하나가 화면 두 장을 먹었고, 정작 다음
+  // 행동(요청문 만들기)은 저 위로 밀려났다. 전문은 요청문 안에 그대로 있다.
+  // 요약은 여기서 판정을 다시 쓰지 않는다 — tag 만 세어 잇는다(정본 scoring.page_advice).
+  const tags = [...new Set(a.map(x => x.tag))];
+  const lead = `손댈 곳 ${a.length}군데 — ${tags.slice(0, 4).map(esc).join(", ")}`
+    + (tags.length > 4 ? ` 외 ${tags.length - 4}종` : "");
+  return head + `<details class="fixmore"><summary>${lead}</summary>
+    <div class="tw"><table class="dett fix"><thead><tr><th>손댈 자리</th>
       <th>지금 값</th><th>바꿀 값</th></tr></thead><tbody>${a.map(x =>
       `<tr class="lv-${esc(x.level)}"><td>${esc(x.tag)}</td><td>${esc(x.now)}</td>
-        <td>${esc(x.fix)}</td></tr>`).join("")}</tbody></table></div>`;
+        <td>${esc(x.fix)}</td></tr>`).join("")}</tbody></table></div></details>`;
 };
 
 // 할 일 목록 — kind 마다 손대는 자리가 다르다. 표는 각 화면이 갖는다.
@@ -1909,16 +1934,20 @@ const briefText = b => b.body + "\n" + ((window.BRIEF || {tails: {}}).tails[b.sh
 // 프롬프트 상자 — 접혀 있다가 펴면 본문이 보이고, 버튼 하나로 복사한다.
 // c.brief(서버가 만든 것)가 있으면 그것, 없으면 폴백. BRIEF 자체가 없는 것은
 // 요청문이 생기기 전의 옛 박제본이다 — 없는 글을 만들지 않고 그렇다고 말한다.
+// 복사 버튼은 **접힌 줄**에 선다. 이 상자의 유일한 목적이 복사인데 버튼이 안에
+// 있어서, 누르려면 먼저 펴야 했다 — 펴 봤자 읽을 것은 AI 에게 줄 글이지 사람이
+// 읽을 글이 아니다. summary 안의 클릭은 details 를 토글하므로 그걸 막는다.
 const askBlock = c => {
   if (!window.BRIEF)
     return `<p class="detn">요청문은 이 보고서를 다시 만들면 생깁니다.</p>`;
   const b = c.brief || fallbackBrief(c);
   const t = briefText(b);
   return `<details class="ask"><summary>요청문 만들기
-      <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span></summary>
+      <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span>
+      <button type="button" class="askcopy" aria-label="요청문 복사"
+        onclick="event.preventDefault();event.stopPropagation();copyPrompt(this)">복사</button></summary>
     <div class="pbox">
-      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span>
-        <button type="button" onclick="copyPrompt(this)">복사</button></div>
+      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span></div>
       <textarea readonly rows="14" spellcheck="false" aria-label="요청문 전문">${esc(t)}</textarea>
     </div></details>`;
 };
@@ -1926,17 +1955,23 @@ const askBlock = c => {
 // 박제 보고서는 file:// 로도 열린다 — 거기서는 clipboard API 가 막히므로
 // execCommand 로 물러선다(둘 다 실패하면 사용자가 직접 고르게 안내한다).
 window.copyPrompt = function (btn) {
-  const ta = btn.closest(".pbox").querySelector("textarea");
+  const box = btn.closest("details.ask");
+  const ta = box.querySelector("textarea");
   const done = ok => {
     btn.textContent = ok ? "복사함" : "직접 선택";
     setTimeout(() => { btn.textContent = "복사"; }, 2000);
   };
-  ta.select();
-  ta.setSelectionRange(0, ta.value.length);
   if (navigator.clipboard && window.isSecureContext)
     return navigator.clipboard.writeText(ta.value).then(() => done(true), () => done(false));
+  // 접혀 있으면 textarea 가 display:none 이라 select() 가 아무것도 안 고른다 —
+  // 폴백 경로에서만 잠깐 펴고 복사한 뒤 있던 자리로 되돌린다.
+  const was = box.open;
+  box.open = true;
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
   let ok = false;
   try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  box.open = was;
   done(ok);
 };
 
@@ -2503,7 +2538,10 @@ window.chLine = (series, opt = {}) => {
         x: {grid: {display: false}, border: {display: false},
           ticks: {color: T.slate, font: {family: T.mono, size: 10.5}, maxTicksLimit: 6,
             maxRotation: 0, autoSkipPadding: 12}},
-        y: {min: mn, grid: {color: T.soft, lineWidth: 1}, border: {display: false},
+        // reverse — 순위처럼 **작을수록 좋은** 값. 안 뒤집으면 12위→9위로 올라간
+        // 선이 아래로 꺾여서 떨어진 것처럼 읽힌다.
+        y: {min: mn, reverse: !!opt.reverse,
+          grid: {color: T.soft, lineWidth: 1}, border: {display: false},
           ticks: {color: T.slate, font: {family: T.mono, size: 10.5}, maxTicksLimit: 3,
             callback: v => chVal(Math.round(v), unit)}}},
       plugins: {legend: {display: false},
@@ -2519,6 +2557,52 @@ window.chLine = (series, opt = {}) => {
 // 보낸다 — 화면은 그리기만 한다. striking_distance(밴드)·content_gap(갈래)도
 // 서버가 이미 갈라 낸 것을 받는다. 예전에는 이 산문이 여기 KIND_LABEL·SD_LABEL·
 // PLAY 세 벌로 있었고, SD_BAND·GAP_KIND 곁표를 매 렌더마다 되짚었다.
+
+/* ── 대상 하나의 지금 수와 추이 ─────────────────────────────────────
+   "몇 위인가"와 "올라가는 중인가"는 다른 질문인데, 패널은 오래 첫째에만
+   답했다. 둘 다 서버가 같은 스냅샷에서 센 것(d.target_trend)을 그린다 —
+   화면이 표를 다시 더하면 표와 차트가 다른 수를 말한다. */
+window.targetStat = t => {
+  const rows = (window.TARGET_TREND || {})[t] || [];
+  if (!rows.length) return "";
+  const r = rows[rows.length - 1];                    // 마지막 = 기준 수집일
+  const ctr = r.imp ? (r.clk / r.imp * 100) : 0;
+  const nums = `<p class="detk"><span class="num">${num(r.imp)}</span> 노출 ·
+    <span class="num">${num(r.clk)}</span> 클릭 ·
+    <span class="num">${ctr.toFixed(1)}%</span> CTR`
+    + (r.pos == null ? "" : ` · <span class="num">${r.pos}</span>위`) + `</p>`;
+  // 순위는 작을수록 좋다 — 축을 뒤집지 않으면 9위로 올라간 선이 아래로 꺾여
+  // "떨어졌다"로 읽힌다. 회차가 하나뿐이면 chLine 이 빈 문자열을 준다(점 하나를
+  // 선이라고 부르지 않는다) — 그때는 숫자 석 장만 남는다.
+  const pts = rows.filter(x => x.pos != null).map(x => ({x: x.d.slice(5), y: x.pos}));
+  return `<div class="detw">${nums}${pts.length > 1
+    ? `<p class="detn">순위 추이 — 위로 갈수록 좋은 순위입니다.</p>`
+      + window.chLine(pts, {unit: "위", height: 132, reverse: true})
+    : ""}</div>`;
+};
+
+// 이 검색어로 걸린 내 지면 — 다섯 열 표는 390px 에서 넘쳐 상자 밖으로 샜다.
+window.relPages = (pages, cur) => !pages || !pages.length ? "" :
+  `<div class="detw"><b>연관 페이지 ${pages.length}</b>
+   <span class="detn">이 검색어로 순위에 걸린 내 지면입니다.</span>
+   <ul class="detl">${pages.map(r => `<li><a href="${esc(r.page)}" target="_blank"
+     rel="noopener">${esc(r.page)}</a> <span class="num">${num(r.impressions)}</span> 노출
+     · <span class="num">${r.position ?? "—"}</span>위${r.page === cur
+       ? ` <span class="micro lat">·</span> 고칠 페이지` : ""}</li>`).join("")}</ul></div>`;
+
+// 이 페이지로 들어오는 검색어 — 정본은 서버가 센 d.page_queries 다. query_pages 를
+// 뒤집어 세면 기회에 걸린 것만 세고 "연관 검색어 3개"라고 자신 있게 말한다.
+window.relQueries = url => {
+  const g = url ? (window.PAGE_QUERIES || {})[url] : null;
+  if (!g || !g.total) return "";
+  const more = g.total - g.top.length;
+  return `<div class="detw"><b>연관 키워드 ${num(g.total)}</b>
+    <span class="detn">이 페이지로 들어오는 검색어입니다.</span>
+    <ul class="detl">${g.top.map(x => `<li>${esc(x.q)}
+      <span class="num">${num(x.imp)}</span> 노출
+      · <span class="num">${x.pos ?? "—"}</span>위</li>`).join("")}</ul>${more > 0
+    ? `<p class="detn">외 ${num(more)}개</p>` : ""}</div>`;
+};
 
 window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다.`
   + ` 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있습니다.`
@@ -2580,10 +2664,13 @@ function oppDetail(o, extra) {
   // 앞에 "지금 무엇인가"를 댄다. extra 는 그 화면만 아는 손잡이(실행 버튼·다른 화면
   // 으로)를 같은 줄에 세우는 자리다 — 화면이 패널 뒤에 제 상자를 또 달면 버튼 줄이
   // 둘로 갈라진다.
+  // 수(지금 몇 위고 어디로 가고 있나)가 맨 위다 — 처방과 페이지보다 먼저 온다.
+  // 연관 페이지·연관 키워드는 맨 아래다: 이 기회를 끝낸 다음에 가 볼 곳이다.
   return `<div class="det"><div class="det-top">${ask}${oppNow(o)}${oppRest(o)}${extra || ""}</div>
-    ${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${pageTable(pages)}${note}
+    ${window.targetStat(o.target)}${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}${works}</div>`;
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}
+    ${window.relPages(pages, url)}${window.relQueries(url)}${works}</div>`;
 }
 
 /* 묶인 줄의 변형 목록 — 어느 검색어가 한 줄이 됐고 **왜** 한 줄인지. 열쇠(via)는
@@ -2914,6 +3001,8 @@ function render(d) {
   oppIndex(d.opps);
   window.SD_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   window.QUERY_PAGES = d.query_pages || {};
+  window.TARGET_TREND = d.target_trend || {};  // 대상별 회차 추이 (펼침 패널의 숫자·차트)
+  window.PAGE_QUERIES = d.page_queries || {};  // 페이지별 들어오는 검색어 (연관 키워드)
   window.BRIEF = d.brief || null;            // 요청문 꼬리·머리말 한 벌 (brief.py)
   window.PAGE_AUDITS = d.page_audits || {};
   window.CREATIONS = d.creations || [];      // 기회 펼침 패널이 "이 기회로 만든 것"을 센다

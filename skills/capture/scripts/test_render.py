@@ -226,11 +226,43 @@ MUSTS = [
     # 줄 안에 지금 상태 칩도 있어야 한다 — 버튼은 "무엇으로 바꾸나"만 말해서
     # ('완료 표시'), 칩이 없으면 지금이 어디인지 아무도 안 말한다. [개요]는 기본
     # 상태('할 일')일 때 접힌 줄의 배지도 일부러 안 달기 때문에 특히 그렇다.
+    # 요청문 복사 버튼은 **접기 전에** 보인다 — 손잡이 줄 안, </summary> 앞이다.
+    (r'<details class="ask"><summary>요청문 만들기(?:(?!</summary>).)*'
+     r'class="askcopy"(?:(?!</summary>).)*</summary>',
+     "요청문 복사 버튼이 접힌 줄에 없다 — 펴야만 보인다"),
+    (r'!<div class="pb-h">(?:(?!</div>).)*copyPrompt',
+     "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"),
     (r'<div class="det"><div class="det-top"><details class="ask">'
      r'(?:(?!<div class="det").)*<span class="st st-\w+"[^>]*>[^<]+</span>'
      r'(?:(?!<div class="det").)*<div class="acts oppset">'
      r'(?:(?!<div class="det").)*<b>묶인 검색어',
      "펼침 패널의 행동 줄(요청문·지금 상태·상태 바꾸기)이 할 일보다 위에 안 섰다"),
+    # 펼침 패널의 수 — 서버가 센 것(target_trend)의 마지막 회차가 그대로 선다.
+    # 노출 120 · 클릭 8 · CTR 6.7% · 9위(픽스처의 06-01). 상자가 서는 것과 **맞는
+    # 수가 서는 것**이 다르다: 화면이 표를 다시 더하면 여기서 다른 수가 나온다.
+    (r'class="detk"(?:(?!</p>).)*>120<(?:(?!</p>).)*>8<(?:(?!</p>).)*>6\.7%<'
+     r'(?:(?!</p>).)*>9</span>위',
+     "펼침 패널이 대상의 노출·클릭·CTR·순위를 안 그렸다"),
+    # 순위 추이 — 두 회차(14위 → 9위)가 있으니 선이 선다. 캔버스만 보면 빈 차트도
+    # 통과하므로, 축을 뒤집었다고 말하는 안내 줄과 같이 본다.
+    (r'순위 추이 — 위로 갈수록 좋은 순위입니다\.</p>\s*<div class="chwrap"[^>]*>\s*<canvas data-ch=',
+     "펼침 패널이 순위 추이 차트를 안 세웠다"),
+    # 진단은 한 줄이고 표는 접혀 있다 — 한 줄에 tag 가 서고, 표는 그 details 안이다.
+    # 일곱 줄(같은 tag 둘 포함)이 '손댈 곳 7군데 — title, meta description, H1, 본문
+    # 외 2종' 한 줄이 된다. 수는 줄 수(7)고 이름은 **중복 없는** tag 다 — 둘을 같이
+    # 보는 이유: 한쪽만 보면 tag 를 세는 실수(6군데)가 그대로 지나간다.
+    (r'<details class="fixmore"><summary>손댈 곳 7군데 — '
+     r'title, meta description, H1, 본문 외 2종</summary>\s*'
+     # tableFade() 가 그린 뒤 넘침 표식(tw over/end)을 덧붙인다 — 클래스를 통째로
+     # 못 박으면 그 표식이 붙는 순간 이 검사가 어긋난다.
+     r'<div class="tw[^"]*"><table class="dett fix"',
+     "페이지 진단이 한 줄 요약 + 접힘으로 안 나왔다"),
+    # 연관 페이지·연관 키워드. 키워드는 **기회에 안 걸린 검색어까지** 세야 한다 —
+    # 픽스처의 그 지면에는 둘이 들어오는데 기회는 하나뿐이다. '1' 이 나오면 화면이
+    # 기회 표(query_pages)를 뒤집어 센 것이다.
+    (r'<b>연관 페이지 1</b>', "펼침 패널이 연관 페이지를 안 그렸다"),
+    (r'<b>연관 키워드 2</b>(?:(?!</div>).)*곁 검색어',
+     "연관 키워드가 그 지면으로 들어오는 검색어 전부를 안 셌다"),
     # coverage 기회의 대상은 내부 꼴('cluster:(미분류)')이 아니라 사람이 읽는 이름으로
     # 그려져야 한다 — 카드 제목이 'cluster:(미분류)' 그대로 보이던 것이 실제 발견이었다.
     (r'<div class="target">미분류</div>', "coverage 기회의 대상이 사람이 읽는 이름으로 안 보인다"),
@@ -428,6 +460,13 @@ def _axes(conn, pid: int) -> None:
                 conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned,"
                              "cited_domains_json,answer_excerpt) VALUES(?,?,?,?,?,?,?)",
                              (qid, r.id, eng, cited, cited, '["rival.example"]', "답변"))
+    # 내 페이지 감사 — 진단이 여러 줄 나와야 패널의 '손댈 곳 N군데 / 자세히'가 선다.
+    # (설명 없음·H1 없음·본문 짧음처럼 규칙에 걸리는 값을 일부러 넣는다.)
+    db.write_page_audits(conn, pid, d, [
+        {"url": f"https://{SITES[1]}.example/a", "status": 200, "title": "제목",
+         "meta_description": None, "h1_json": "[]", "h2_json": "[]", "words": 120,
+         "schema_json": "[]", "internal_links": 3, "external_links": 0,
+         "images": 2, "images_no_alt": 2, "viewport": 1, "html_lang": "ko"}])
     # AI 에서 온 방문(GA4 부가 조회) — 두 출처가 같은 페이지로 들어왔다.
     db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],
                               [("chatgpt.com", AI_VISIT_PAGE, AI_VISIT_N - 21, 3),
@@ -456,6 +495,15 @@ def fixture(home: Path) -> None:
                          query,page,clicks,impressions,ctr,position)
                        VALUES(?,?,28,?,?,?,120,0.1,?)""",
                     (pid, d, f"{name} 검색어", f"https://{name}.example/a", clk, pos))
+                # 같은 지면으로 들어오는 **다른** 검색어 — 기회로 안 걸린 것. 이게
+                # 없으면 '연관 키워드'가 자기 자신 하나만 세어, 그 검사가 기회 표를
+                # 뒤집어 세는 옛 방식과 구별을 못 한다(두 회차 같은 수라 움직인
+                # 검색어에도 안 오르고, 3위·20% CTR 이라 기회 판정에도 안 걸린다).
+                conn.execute(
+                    """INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,
+                         query,page,clicks,impressions,ctr,position)
+                       VALUES(?,?,28,?,?,8,40,0.2,3.0)""",
+                    (pid, d, f"{name} 곁 검색어", f"https://{name}.example/a"))
             if name == SITES[1]:            # 테스트가 여는 사이트
                 _axes(conn, pid)
         conn.commit()

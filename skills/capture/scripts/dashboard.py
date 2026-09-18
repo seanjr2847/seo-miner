@@ -1389,9 +1389,25 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     # 그대로 실어 양쪽이 같은 숫자를 말하게 한다.
     intent_splits = scoring.intent_split(conn, pid, at=at) if any(
         o["kind"] == "intent_split" for o in opps) else []
+    # 펼침 패널이 대상 하나를 두고 말하는 수 — 지금 노출·클릭·CTR·순위와 그 추이.
+    # query_pages 와 **같은 at** 으로 부른다(test_seams 47): 기준 수집일을 과거로
+    # 고정했는데 여기만 최신을 보면, 한 패널 안에서 표와 차트가 다른 날을 말한다.
+    target_trend = scoring.trend_by_target(conn, pid, [o["target"] for o in opps], at=at)
+
+    # 이 페이지로 들어오는 검색어 — query_pages 를 뒤집어서는 못 센다. 그 표에는
+    # 기회·순위에 걸린 검색어만 있어서 한 지면에 마흔 개가 들어와도 셋만 세고,
+    # 화면은 그 셋을 "연관 검색어 전부"라고 말하게 된다.
+    # 손댈 페이지는 brief.page_of 가 고르고(순위 → 주제 지면 순), 그 후보가 모두
+    # 이 둘 안에 있다 — 여기서 따로 고르지 않고 둘을 합쳐 넘긴다.
+    in_play = {*q_of_url, *(str(o["target"]) for o in opps
+                            if str(o["target"]).startswith("http"))}
+    in_play |= {r["page"] for rows in topic_pages.values() for r in rows if r.get("page")}
+    page_queries = scoring.queries_by_page(conn, pid, in_play, at=at)
+
     return {"query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date, "topic_pages": topic_pages,
-            "intent_splits": intent_splits}
+            "intent_splits": intent_splits, "target_trend": target_trend,
+            "page_queries": page_queries}
 
 
 def gather(conn, p, at: str | None = None) -> dict:

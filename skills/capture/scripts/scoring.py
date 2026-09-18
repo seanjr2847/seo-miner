@@ -1306,6 +1306,80 @@ def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
     return out
 
 
+def trend_by_target(conn: sqlite3.Connection, project_id: int, targets,
+                    *, points: int = 12, at: str | None = None) -> dict[str, list[dict]]:
+    """대상 → 회차별 {d, imp, clk, pos} (오래된 것부터, 마지막이 기준 수집일).
+
+    기회 하나를 펼쳤을 때 "지금 몇 위인가"와 "올라가는 중인가 내려가는 중인가"는
+    다른 질문이다. 페이로드의 trend 는 사이트 전체 합계라 둘째에 답하지 못했고,
+    pages_by_query 는 기준일 한 날뿐이라 첫째에만 답했다.
+
+    대상이 주소면 page 로, 검색어면 query 로 묶는다 — 기회 대상은 둘이 섞여 있다.
+    pages_by_query 와 **같은 period_days** 를 보고 기준 수집일보다 뒤는 안 싣는다:
+    한 패널 안에서 표는 9.4위, 차트는 12위를 말하면 어느 쪽도 못 믿는다.
+
+    순위는 노출로 가중한 평균이다. 검색어 하나가 여러 지면으로 걸릴 때 맨평균을
+    내면 노출 1회짜리 65위가 노출 500회짜리 9위와 같은 무게가 된다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id, at)
+    ts = [str(t) for t in dict.fromkeys(targets) if t]
+    if not cur or not ts:
+        return {}
+    out: dict[str, list[dict]] = {}
+    for col, chunk_of in (("query", lambda x: not x.startswith("http")),
+                          ("page", lambda x: x.startswith("http"))):
+        want = [t for t in ts if chunk_of(t)]
+        for i in range(0, len(want), 200):     # SQLite 바인딩 상한(999) 안에서 끊는다
+            chunk = want[i:i + 200]
+            for r in conn.execute(
+                f"""SELECT {col} t, snapshot_date d, SUM(impressions) imp, SUM(clicks) clk,
+                           CASE WHEN SUM(impressions) > 0
+                                THEN ROUND(SUM(position * impressions) * 1.0
+                                           / SUM(impressions), 1)
+                                ELSE ROUND(AVG(position), 1) END pos
+                      FROM gsc_snapshots
+                     WHERE project_id=? AND period_days=? AND snapshot_date<=?
+                       AND {col} IN ({','.join('?' * len(chunk))})
+                     GROUP BY 1, 2 ORDER BY 1, 2""",
+                    (project_id, period, cur, *chunk)):
+                out.setdefault(r["t"], []).append(
+                    {"d": r["d"], "imp": r["imp"] or 0, "clk": r["clk"] or 0, "pos": r["pos"]})
+    # 최근 points 회차만 — 기회 200건 × 전 회차를 실으면 박제본이 그만큼 무거워진다
+    return {t: rows[-points:] for t, rows in out.items()}
+
+
+def queries_by_page(conn: sqlite3.Connection, project_id: int, pages,
+                    *, top: int = 10, at: str | None = None) -> dict[str, dict]:
+    """페이지 → {top: [{q, imp, clk, pos}], total: 그 페이지로 들어온 검색어 수}.
+
+    pages_by_query 의 반대 방향이다. 그 표로 역색인을 만들면 안 된다 — 거기에는
+    **기회·순위에 걸린 검색어만** 들어 있어서, 한 지면에 마흔 개가 들어와도 셋만
+    세고 "연관 검색어 3개"라고 자신 있게 말한다. 여기는 그 회차 전부를 센다.
+
+    total 은 top 으로 자르기 **전**의 수다 — 잘린 목록의 길이를 세면 언제나 top 이다.
+    """
+    cur, _, period, _ = snapshot_pair(conn, project_id, at)
+    ps = [str(p) for p in dict.fromkeys(pages) if p]
+    if not cur or not ps:
+        return {}
+    out: dict[str, dict] = {}
+    for i in range(0, len(ps), 200):
+        chunk = ps[i:i + 200]
+        for r in conn.execute(
+            f"""SELECT page, query, SUM(impressions) imp, SUM(clicks) clk,
+                       ROUND(AVG(position),1) pos
+                  FROM gsc_snapshots
+                 WHERE project_id=? AND snapshot_date=? AND period_days=?
+                   AND query IS NOT NULL AND page IN ({','.join('?' * len(chunk))})
+                 GROUP BY 1, 2 ORDER BY imp DESC""",
+                (project_id, cur, period, *chunk)):
+            g = out.setdefault(r["page"], {"top": [], "total": 0})
+            g["total"] += 1
+            if len(g["top"]) < top:
+                g["top"].append({"q": r["query"], "imp": r["imp"] or 0,
+                                 "clk": r["clk"] or 0, "pos": r["pos"]})
+    return out
+
 # ── 페이지 축 ──────────────────────────────────────────────────────────
 # 이 리포의 판정은 내내 검색어 단위였다. gsc_snapshots.page 는 내내 있었는데
 # pages_by_query 룩업으로만 쓰였다. 검색어 하나하나의 순위는 흔들려도 페이지는 안
