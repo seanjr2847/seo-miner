@@ -24,6 +24,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib import robotparser
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -33,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collect_page  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -292,11 +294,21 @@ def probe_llms_txt(home: str) -> dict:
 
 # ── 크롤 ────────────────────────────────────────────────────────────────────
 def crawl(seeds, home: str, *, limit: int, max_depth: int,
-          rp=None, throttle: float = 0.0) -> tuple[list[dict], list[dict], list[list[str]]]:
+          rp=None, throttle: float = 0.0,
+          workers: int | None = None) -> tuple[list[dict], list[dict], list[list[str]]]:
     """BFS. (crawl_pages 행, crawl_links 행, 리다이렉트 사슬) 을 돌려준다.
 
     같은 호스트만 따라간다 — 외부 링크는 crawl_links 에 is_internal=0 으로
     기록만 하고 **가져오지 않는다**. robots.txt 의 Disallow 도 여기서 존중한다.
+
+    가져오기는 동시에(workers 개, 기본 fanout.LIMITS["own_site"]), 처리는 순차다:
+    큐 **앞쪽**에서 이번에 가져올 차례인 URL 을 workers 개까지 미리 띄워 두고, 처리는
+    지금처럼 큐 순서대로 한 장씩 한다. 큐는 뒤에만 붙으므로 앞쪽 URL 은 순차 BFS 가
+    어차피 다음에 가져올 바로 그것들이다 — 그래서 결과(행·순서·어느 URL 을 가져오나)
+    가 순차일 때와 같다. 미리 띄우는 개수도 남은 limit 을 안 넘겨, 순차보다 한 장도
+    더 가져오지 않는다. throttle 은 일꾼마다 제 요청 뒤에 쉰다 — 한 호스트에 동시
+    workers 개를 넘지 않는 것이 예의의 상한이다. 이 함수는 conn 을 안 만진다(적재는
+    끝나고 save 가 한 번에 한다).
     """
     host = scoring.host_of(home)
     q = deque((u, 0) for u in seeds if u)
@@ -307,46 +319,77 @@ def crawl(seeds, home: str, *, limit: int, max_depth: int,
     parsed: set[str] = set()
     fetched = 0
 
-    while q and fetched < limit:
-        url, depth = q.popleft()
-        if rp is not None and not rp.can_fetch(UA_NAME, url):
-            continue
-        r = fetch(url)
-        fetched += 1
-        final = normalize(r.get("final_url") or url) or url
+    def allowed(u: str) -> bool:
+        return rp is None or rp.can_fetch(UA_NAME, u)
 
-        # 리다이렉트 홉을 그대로 남긴다 — 사슬 판정이 SQL 로 되게.
-        hop_urls = [normalize(u) or u for u, _ in (r.get("chain") or [])] + [final]
-        for i, (_, hop_status) in enumerate(r.get("chain") or []):
-            pages.append(_row(hop_urls[i], depth, status=hop_status,
-                              redirect_to=hop_urls[i + 1]))
-            seen.add(hop_urls[i])
-        if len(hop_urls) > MAX_HOPS:
-            chains.append(hop_urls)
-        seen.add(final)
-        if final in parsed:
-            continue        # 이미 본 곳으로 리다이렉트됐다 — 홉만 남기고 두 번 세지 않는다
-        parsed.add(final)
+    def get(u: str) -> dict:
+        try:
+            return fetch(u)
+        finally:
+            if throttle:
+                time.sleep(throttle)
 
-        row = _row(final, depth, status=r.get("status"), nbytes=r.get("bytes") or 0)
-        ctype = (r.get("content_type") or "").lower()
-        if r.get("status") == 200 and (not ctype or "html" in ctype):
-            got = parse_page(final, r.get("text") or "")
-            out = got.pop("links")
-            row.update(got)
-            row["links_out"] = len(out)
-            for to, anchor, nofollow, chrome in out:
-                internal = scoring.owns(scoring.host_of(to), host)
-                links.append({"url_from": final, "url_to": to, "anchor": anchor,
-                              "is_internal": int(internal), "nofollow": int(nofollow),
-                              "in_chrome": int(chrome)})
-                if internal and to not in seen and depth + 1 <= max_depth:
-                    seen.add(to)
-                    q.append((to, depth + 1))
-        pages.append(row)
-        if throttle:
-            time.sleep(throttle)
+    width = max(1, workers or fanout.LIMITS["own_site"])
+    pool = ThreadPoolExecutor(max_workers=width, thread_name_prefix="seo-miner-crawl")
+    pending: dict = {}
+    try:
+        while q and fetched < limit:
+            # 큐 앞쪽에서 가져올 차례인 것을 width 개(남은 limit 안)까지 띄워 둔다
+            ahead = 0
+            for u, _ in q:
+                if ahead >= min(width, limit - fetched):
+                    break
+                if not allowed(u):
+                    continue
+                if u not in pending:
+                    pending[u] = pool.submit(get, u)
+                ahead += 1
+            url, depth = q.popleft()
+            if not allowed(url):
+                continue
+            r = pending.pop(url).result()
+            fetched += 1
+            _visit(r, url, depth, host=host, max_depth=max_depth, q=q, seen=seen,
+                   pages=pages, links=links, chains=chains, parsed=parsed)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
     return pages, links, chains
+
+
+def _visit(r: dict, url: str, depth: int, *, host, max_depth, q, seen, pages, links,
+           chains, parsed) -> None:
+    """가져온 한 장을 BFS 상태에 반영한다 — 순서대로 한 번에 하나씩만 불린다."""
+    final = normalize(r.get("final_url") or url) or url
+
+    # 리다이렉트 홉을 그대로 남긴다 — 사슬 판정이 SQL 로 되게.
+    hop_urls = [normalize(u) or u for u, _ in (r.get("chain") or [])] + [final]
+    for i, (_, hop_status) in enumerate(r.get("chain") or []):
+        pages.append(_row(hop_urls[i], depth, status=hop_status,
+                          redirect_to=hop_urls[i + 1]))
+        seen.add(hop_urls[i])
+    if len(hop_urls) > MAX_HOPS:
+        chains.append(hop_urls)
+    seen.add(final)
+    if final in parsed:
+        return          # 이미 본 곳으로 리다이렉트됐다 — 홉만 남기고 두 번 세지 않는다
+    parsed.add(final)
+
+    row = _row(final, depth, status=r.get("status"), nbytes=r.get("bytes") or 0)
+    ctype = (r.get("content_type") or "").lower()
+    if r.get("status") == 200 and (not ctype or "html" in ctype):
+        got = parse_page(final, r.get("text") or "")
+        out = got.pop("links")
+        row.update(got)
+        row["links_out"] = len(out)
+        for to, anchor, nofollow, chrome in out:
+            internal = scoring.owns(scoring.host_of(to), host)
+            links.append({"url_from": final, "url_to": to, "anchor": anchor,
+                          "is_internal": int(internal), "nofollow": int(nofollow),
+                          "in_chrome": int(chrome)})
+            if internal and to not in seen and depth + 1 <= max_depth:
+                seen.add(to)
+                q.append((to, depth + 1))
+    pages.append(row)
 
 
 def _row(url: str, depth: int, *, status=None, redirect_to=None, nbytes=0) -> dict:
@@ -848,7 +891,82 @@ def _selfcheck() -> None:
                    '<footer><a href="/f">꼬리</a></footer></body>')
     assert {to.rsplit("/", 1)[-1]: chrome for to, _, _, chrome in p["links"]} == \
         {"m": True, "r": True, "b": False, "f": True}, p["links"]
+
+    _concurrency_check(orig_fetch)
     print("collect_crawl self-check ok")
+
+
+def _concurrency_check(orig_fetch) -> None:
+    """동시 가져오기가 순차 BFS 와 **같은 결과**를 내나 — 행·링크·사슬·가져온 URL 집합.
+
+    가짜 사이트는 페이지마다 응답 시간이 다르다(앞 번호일수록 느리다). 끝난 순서대로
+    처리하면 큐 순서가 바뀌어 depth·행 순서가 달라지고, 미리 띄우는 개수가 limit 을
+    넘으면 순차보다 더 가져온다 — 둘 다 여기서 걸린다.
+    """
+    import threading
+
+    n = 14
+    site = {"https://site.kr/": (200, _html("홈", body="".join(
+        f'<a href="/p{i}">{i}</a>' for i in range(n)) + '<a href="/old">옛</a>'), "text/html")}
+    for i in range(n):
+        site[f"https://site.kr/p{i}"] = (200, _html(f"p{i}", body=(
+            f'<a href="/p{(i * 5 + 3) % n}">x</a><a href="/q{i}">q</a>'
+            '<a href="/private/z">비밀</a>')), "text/html")
+        site[f"https://site.kr/q{i}"] = (200, _html(f"q{i}"), "text/html")
+    site["https://site.kr/a"] = (200, _html("a"), "text/html")
+    rp = robotparser.RobotFileParser()
+    rp.parse(["User-agent: *", "Disallow: /private"])
+
+    lock = threading.Lock()
+    live = {"now": 0, "peak": 0}
+    queued: list[str] = []
+
+    def run(workers: int, limit: int):
+        log: list[str] = []
+        sent: list[str] = []
+        base = _fake_fetch(site, log)
+
+        def slow(url: str) -> dict:
+            with lock:
+                sent.append(url)      # 요청이 **떠난** 순간 — 끝나기 전에 취소돼도 보낸 것이다
+                live["now"] += 1
+                live["peak"] = max(live["peak"], live["now"])
+            tail = url.rstrip("/").rsplit("/", 1)[-1]
+            num = int(tail[1:]) if tail[1:].isdigit() else 0
+            time.sleep(0.002 * (n - num))
+            with lock:
+                live["now"] -= 1
+            return base(url)
+
+        class Spy(ThreadPoolExecutor):
+            """띄운 것을 센다 — 끝의 cancel_futures 가 안 떠난 것을 치워 주면 보낸 목록만으로는
+            미리 띄우기가 limit 을 넘는 것을 못 본다(타이밍에 따라 가려진다)."""
+            def submit(self, fn, *a, **kw):
+                with lock:
+                    queued.append(a[0])
+                return super().submit(fn, *a, **kw)
+
+        queued.clear()
+        globals()["fetch"], globals()["ThreadPoolExecutor"] = slow, Spy
+        try:
+            got = crawl(["https://site.kr/"], "https://site.kr/", limit=limit, max_depth=3,
+                        rp=rp, workers=workers)
+        finally:
+            globals()["fetch"], globals()["ThreadPoolExecutor"] = orig_fetch, Spy.__bases__[0]
+        return got, sent
+
+    for limit in (9, 40):
+        live["peak"] = 0
+        (p1, l1, c1), log1 = run(1, limit)
+        assert live["peak"] == 1
+        live["peak"] = 0
+        (p4, l4, c4), log4 = run(4, limit)
+        assert sorted(queued) == sorted(log1),             f"순차보다 더 띄웠다 (limit={limit}): +{set(queued) - set(log1)}"
+        assert (p4, l4, c4) == (p1, l1, c1), f"동시 크롤이 순차와 다른 결과를 냈다 (limit={limit})"
+        assert sorted(log4) == sorted(log1),             f"가져온 URL 이 순차와 다르다 (limit={limit}): +{set(log4) - set(log1)} -{set(log1) - set(log4)}"
+        assert not any("/private" in u for u in log4), "robots Disallow 를 미리 띄웠다"
+        assert 1 < live["peak"] <= 4, f"동시 상한: peak={live['peak']}"
+    assert c1, "리다이렉트 사슬 재료가 검사에 없다"
 
 
 if __name__ == "__main__":

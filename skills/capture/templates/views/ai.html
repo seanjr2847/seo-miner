@@ -1,9 +1,9 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
-{"id": "ai", "title": "AI 인용",
+{"id": "ai", "group": "ai", "title": "AI 인용",
  "sub": "AI 답변에 우리 링크가 붙는지 확인합니다.",
- "sections": ["ai", "ai-vs-search", "ai-outranked", "ai-visits"], "stages": ["ai", "gaps", "gsc"]}
+ "sections": ["ai", "ai-aio", "ai-vs-search", "ai-outranked", "ai-visits"], "stages": ["ai", "gaps", "gsc"]}
 </script>
 
 <style>
@@ -160,6 +160,18 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 #ai-visits a.aivp:hover { color:var(--patina); text-decoration:underline;
   text-underline-offset:2px; }
 #ai-visits .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
+
+/* ── 구글 AI 요약: 순위 조회가 같이 걷어 온 값이라 예전엔 [순위 추적]에 살았다. 묶음이
+      [AI 노출]이 되면서 이리 왔다 — 사용자가 "AI 에 우리가 나오나"를 묻는 자리가 여기다.
+      줄 하나가 검색어 하나이고, 누르면 그 기회(aio_exposure)의 펼침이 선다(표 안이라
+      <details> 를 못 쓴다 — 순위 화면과 같은 tr 펼침 문법). 도메인은 식별자라 등폭. ── */
+#ai-aio tbody tr[role="button"] { cursor:pointer; }
+#ai-aio tbody tr[role="button"]:hover { background:var(--bar); }
+#ai-aio tbody tr[role="button"]:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
+#ai-aio .kwq { white-space:nowrap; }
+#ai-aio tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--slate); }
+#ai-aio tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
+#ai-aio .dm { font:400 12px/1.5 var(--mono); color:var(--slate); overflow-wrap:anywhere; }
 </style>
 
 <!-- 이 화면 전체의 자리표 — 뼈대(nav·앵커)가 화면 하나를 이 id 로 잡는다. -->
@@ -232,6 +244,18 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
   </div>
   <div class="card"><div class="aishare" id="ai-share"></div></div>
   <p class="ainote" id="ai-share-cap"></p>
+</section>
+
+<!-- 구글 AI 요약 — 챗봇 인용(위)과 같은 질문을 검색 결과 맨 위에서 묻는다. 재료는 순위
+     조회(rank)라 챗봇 확인이 없어도 선다. 요약이 떴는데 내 링크만 빠진 검색어가
+     aio_exposure 기회다(scoring). -->
+<section id="ai-aio">
+  <div class="sh">
+    <p class="eyebrow">구글 AI 요약</p>
+    <h2>AI 요약에 빠진 검색어</h2>
+    <p class="sub" id="ai-aio-sub"></p>
+  </div>
+  <div id="ai-aio-body"></div>
 </section>
 
 <!-- 두 축이 서로를 보는 자리. 위 섹션들은 AI 한 축만 보고, [순위]·[분석] 화면은
@@ -1041,6 +1065,90 @@ function AI_emptyState(d) {
         ${act1("ai", "")}${cost}</div>`;
 }
 
+
+/* ── 구글 AI 요약 ────────────────────────────────────────────────────────
+   숫자는 순위 조회 행 전부(d.rank_by_kw — 화면용 d.ranks 는 30개로 잘려 있다)에서
+   센다. 빠진 검색어 목록은 서버가 고른 한 벌(d.aio_gap)이고 행은 d.aio_gap_ranks 다 —
+   여기서 "빠짐"을 다시 판정하지 않는다. 펼침은 그 검색어의 기회가 있으면 셸의
+   oppPanel(기회 한 벌), 없으면 서버 처방(d.aio_play — scoring 의 aio_exposure 처방)을
+   그린다. 옛 박제본(rank_by_kw 가 없던 때)은 d.ranks 로 물러선다. */
+let AI_AIO_ROWS = [], AI_AIO_PLAY = {};
+const AI_aioOpp = k => (window.oppsOf ? oppsOf(k) : []).find(o => o.kind === "aio_exposure")
+  || (window.oppOf ? oppOf(k) : null);
+function AI_aioDetail(r) {
+  // 인용 도메인이 비었으면(요약은 떴는데 인용을 못 읽었다) 제목 없이 그 사실만 한 마디로
+  // 선다 — "요약이 대신 인용한 곳 인용 도메인을 못 읽었습니다"처럼 제목에 문장을 잇지 않는다.
+  const cites = r.aio_domains && r.aio_domains.length
+    ? `요약이 대신 인용한 곳 <span class="dm">${r.aio_domains.map(esc).join(", ")}</span>`
+    : "요약이 인용한 곳은 못 읽었습니다";
+  const line = `<p class="detn">${r.pos != null ? `지금 순위 <b>${r.pos}위</b>`
+    : "이번 조회에서 순위에 <b>안 잡혔습니다</b>"} · ${cites}</p>`;
+  const o = AI_aioOpp(r.keyword);
+  const ap = AI_AIO_PLAY[r.aio_band] || {};
+  return `<div class="det">${line}</div>` + (o ? oppPanel(o, oppActs(o))
+    : `<div class="det">${playList(ap.what || "", ap.acts || [])}</div>`);
+}
+function AI_aioToggle(tr) {
+  const nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains("exp")) {
+    nx.remove();
+    return tr.setAttribute("aria-expanded", "false");
+  }
+  const r = AI_AIO_ROWS[+tr.dataset.i];
+  if (!r) return;
+  const row = document.createElement("tr");
+  row.className = "exp";
+  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${AI_aioDetail(r)}</td>`;
+  tr.after(row);
+  tr.setAttribute("aria-expanded", "true");
+}
+function AI_aioKey(e, tr) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  AI_aioToggle(tr);
+}
+function AI_aio(d) {
+  AI_AIO_PLAY = d.aio_play || {};
+  const all = d.rank_by_kw ? Object.values(d.rank_by_kw) : (d.ranks || []);
+  const known = all.filter(r => r.aio != null), on = known.filter(r => r.aio === 1);
+  const cited = on.filter(r => r.aio_cited).length;
+  const gapRanks = d.aio_gap_ranks || {};
+  AI_AIO_ROWS = (d.aio_gap || []).map(k => gapRanks[k] || {keyword: k});
+  if (!all.length)
+    return ["", `<div class="empty"><b>구글 AI 요약은 아직 모릅니다</b>
+      <p>AI 요약은 순위 확인이 같이 걷어 옵니다. <span class="live">순위를 한 번 확인하면
+      검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지가 여기 섭니다.</span></p></div>`];
+  if (!known.length)
+    return ["", `<div class="empty"><b>이번 순위 조회는 AI 요약을 재지 않았습니다</b>
+      <p>지금 쓰는 순위 제공자가 이 값을 주지 않거나, 요약을 재기 전의 옛 조회입니다.
+      AI 요약을 주는 제공자로 조회하면 채워집니다.</p></div>`];
+  if (!on.length)
+    return ["", `<div class="empty ok"><b>AI 요약에 자리를 뺏긴 검색어가 없습니다</b>
+      <p>확인한 ${num(known.length)}개 어디에도 요약이 뜨지 않았습니다.</p></div>`];
+  const sub = `AI 요약이 뜬 ${num(on.length)}개 중 ${num(cited)}개에 내 페이지가 출처로 실렸습니다.`;
+  if (!AI_AIO_ROWS.length)
+    return [sub, `<div class="empty ok"><b>요약이 뜬 검색어에 전부 내 링크가 실렸습니다</b>
+      <p>순위가 떨어지면 요약에서도 빠지기 쉽습니다. 다음 확인 때 다시 봅니다.</p></div>`];
+  const body = `<p class="ainote">${num(AI_AIO_ROWS.length)}개는 요약이 맨 위 자리를 차지하는데
+    거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다. 줄을 누르면 할 일이 펼쳐집니다.</p>
+    <div class="card">${table(
+      ["검색어", ">순위?같은 조회에서 우리 페이지가 있던 자리입니다",
+       "대신 인용된 곳?요약이 출처로 실은 도메인입니다",
+       ">점수?기회 점수입니다. 높을수록 먼저 손댈 자리입니다"],
+      AI_AIO_ROWS.map((r, i) => {
+        const o = AI_aioOpp(r.keyword);
+        return `<tr class="opp" tabindex="0" role="button" aria-expanded="false" data-i="${i}"
+          onclick="AI_aioToggle(this)" onkeydown="AI_aioKey(event,this)"
+          title="누르면 이 검색어의 할 일이 펼쳐집니다">
+          <td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${oppWhy(o)}</td>
+          <td class="num">${r.pos != null ? r.pos
+            : `<span class="muted" title="이번 조회에서 못 찾았습니다">밖</span>`}</td>
+          <td><span class="dm">${(r.aio_domains || []).slice(0, 3).map(esc).join(", ") || "—"}</span></td>
+          <td class="num">${o ? oppScore(o) : `<span class="muted">—</span>`}</td></tr>`;
+      }))}</div>`;
+  return [sub, body];
+}
+
 VIEW("ai", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
@@ -1054,6 +1162,10 @@ VIEW("ai", function (d) {
   $("ai-empty").innerHTML = has ? "" : AI_emptyState(d);
   $("ai-trend").innerHTML = "";
   $("ai-health").innerHTML = AI_health(d.ai_health, has);
+  // 구글 AI 요약 — 재료가 순위 조회라 챗봇 확인이 없어도 그린다(아래 조기 반환보다 먼저).
+  const [aioSub, aioBody] = AI_aio(d);
+  $("ai-aio-sub").textContent = aioSub;
+  $("ai-aio-body").innerHTML = aioBody;
   // AI 에서 온 방문 — GA4 축이라 인용 확인이 없어도 그린다(아래 조기 반환보다 먼저).
   // 옛 박제본에는 세 키가 아예 없다(undefined) — 그때는 섹션째 접는다.
   $("ai-visits").hidden = d.ai_referral_meta === undefined;

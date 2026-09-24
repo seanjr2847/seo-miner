@@ -1,5 +1,5 @@
 <script type="application/json" class="view-def">
-{"id": "guide", "title": "안내",
+{"id": "guide", "group": "admin", "title": "안내",
  "sub": "한 바퀴를 도는 순서와 지금 어디까지 왔는지를 봅니다.",
  "render": "shell", "sections": ["guide"], "stages": []}
 </script>
@@ -64,14 +64,22 @@
   </div>
   <div class="shaft" id="shaft"></div>
   <!-- 설명 산문은 접는다. 갈래(data-web)는 남긴다 — 로컬은 채팅에 명령을 치고
-       호스팅은 레일의 버튼을 누른다. 할 수 있는 일이 실제로 다른 자리다. -->
+       호스팅은 이 화면 머리줄의 [전체 다시 재기]를 누른다(셸의 groupHead — 전체
+       재기 버튼은 이 화면 한 곳에만 선다). 할 수 있는 일이 실제로 다른 자리다. -->
   <details class="loopback">
     <!-- data-web 은 textContent 로만 갈아 끼운다(applyWording) — 태그를 못 실어
          로컬의 <code> 대신 대괄호로 명령 이름을 표시해 왔다. 이 화면 다른 자리엔
          대괄호 표기가 없어서 여기만 다른 말투로 읽혔다 — 그냥 뺀다. -->
-    <summary data-web="가운데 단계들은 전체 분석 실행 하나로 이어서 돌릴 수 있습니다"
+    <summary data-web="가운데 단계들은 위 전체 다시 재기 하나로 이어서 돌릴 수 있습니다"
       >가운데 단계들은 <code>/capture run</code> 하나로 이어서 돌릴 수 있습니다</summary>
-    <p>비용이 드는 단계는 돌리기 전에 물어봅니다. 마지막 단계가 끝나면
+    <!-- 비용 문장은 배포마다 참인 말이 다르다: 로컬의 /capture run 은 유료 호출 전에
+         묻지만(capture SKILL.md 철칙 2), 화면의 다시 재기 버튼은 두 배포 다 묻지 않고
+         바로 돈다(dashboard.run_route · 호스팅 워커). "물어봅니다"만 두면 버튼 바로 밑에서
+         거짓말이 된다. -->
+    <p><span data-web="위 전체 다시 재기와 화면마다의 이 묶음 다시 재기는 누르면 바로 실행됩니다 — 비용이 드는 단계도 따로 묻지 않습니다."
+      ><code>/capture run</code> 은 비용이 드는 단계를 돌리기 전에 물어봅니다. 위 전체 다시
+      재기와 화면마다의 이 묶음 다시 재기는 누르면 바로 실행됩니다 — 비용이 드는
+      단계도 따로 묻지 않습니다.</span> 마지막 단계가 끝나면
       <b>다시 실적을 수집하는 단계로 돌아옵니다</b>. 고친 것이 순위와 인용에
       반영됐는지는 그때 숫자로 나옵니다.</p>
   </details>

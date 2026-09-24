@@ -128,7 +128,8 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 둘 중 하나만 있으면 됨. 둘 다 있으면 `scripts/skill_config.py` 의 serp.provider로 선택.
 
 **DataForSEO (추천 — AI오버뷰 데이터 포함)**
-1. https://dataforseo.com 가입 → $1 무료 크레딧 (Live Advanced 기준 수백 회 분량)
+1. https://dataforseo.com 가입 → $1 무료 크레딧 (순위는 우선 대기열 과제로 사고, 건당 단가의 정본은
+   `scripts/serp_adapter.py` 의 `PROVIDERS` — 수백 회 분량)
 2. 대시보드 API Settings에서 API 비밀번호 확인 (계정 비번과 다름)
 3. `~/.capture/env` 에 `DATAFORSEO_LOGIN=가입이메일` / `DATAFORSEO_PASSWORD=API비밀번호`
    (5-2절과 같은 파일 — 대시보드 [설정] 패널이 여기 쓴다)
@@ -143,3 +144,10 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 2. `~/.capture/env` 에 `SERPER_API_KEY=...`
 
 동작 확인: `python scripts/collect_serp.py --project NAME --dry-run`
+
+## 8. PageSpeed 키 (선택 — 무료, 없어도 된다)
+
+`/capture vitals` 는 키 없이 돈다. 자주 돌려 하루 한도(429)에 걸리면 그날은 그 단계만
+건너뛴다(실패가 아니다). 한도를 키우려면 구글 클라우드에서 무료 PageSpeed Insights API
+키를 만들어 `~/.capture/env` 에 `PAGESPEED_API_KEY=...` (호스팅은 Railway 변수 같은 이름).
+준비 상태 명부의 자리는 `skills/setup/scripts/doctor.py` 의 `CAPABILITIES` 중 `vitals`.

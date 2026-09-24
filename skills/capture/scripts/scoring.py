@@ -3887,7 +3887,7 @@ _KIND_SPECS = {
                          "기사가 링크할 만한 우리 근거 페이지(없으면 먼저 만들 것)",
                          "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
-        see=("rank", "ranks"),
+        see=("ai", "ai-aio"),
         label="구글 AI 요약 빠짐", defensive=False,
         detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,

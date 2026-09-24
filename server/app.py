@@ -72,16 +72,28 @@ def resume_dead_runs(dispatch=None) -> list[str]:
     회수(store.reclaim_dead_runs)는 사이트 brain 의 끝나지 않은 runs 행도 닫는다 —
     죽은 워커가 남긴 것과 오래전 고아까지. 새 워커는 그 **뒤에** 띄운다: 먼저 띄우면
     새 런의 행이 회수 시각 이후에 생기므로 닫히지는 않지만, 순서로도 못 박아 둔다.
+
+    묶음 런이었으면 회수가 그 묶음들을 대기열로 되돌려 둔다 — 그 대기열을 가져가는 워커
+    (--queue)로 띄워, 죽은 런이 맡았던 묶음만 다시 돈다. 띄우기 전에 '대기 중'으로 잡는다:
+    안 잡으면 워커가 뜨는 몇 초 사이에 스케줄러 틱이 같은 대기열을 가져가 두 벌이 돈다.
+
+    **대기열이 없으면 띄우지 않는다.** 그건 죽은 부분 실행(/capture gsc 같은 --only)이다 —
+    무엇을 돌던지 안 남는다(run_groups=''). 인자 없이 띄우면 워커는 그걸 전체 재기로 읽어
+    아무도 안 누른 유료 단계 전부(57분)를 사고 모든 묶음 시계를 민다. 회수가 "필요하면
+    다시 실행하세요"라고 남긴다(store.DEAD_PARTIAL_ERROR).
     """
     dispatch = dispatch or scheduler.dispatch
     conn = store.connect()
     try:
         rows = store.reclaim_dead_runs(conn)
+        plans = [r for r in rows
+                 if store.queued(conn, r["id"]) and store.mark_pending(conn, r["id"])]
     finally:
         conn.close()
     for r in rows:
         print(f"[resume] 죽은 런 회수: {r['user_id']}/{r['project']}", flush=True)
-        dispatch("--user", str(r["user_id"]), "--project", r["project"])
+    for r in plans:
+        dispatch("--user", str(r["user_id"]), "--project", r["project"], "--queue")
     return [r["project"] for r in rows]
 
 
@@ -705,47 +717,73 @@ def api_ai_prompts_edit(b: dict = Depends(_body), project: str = Depends(_projec
 @app.post("/api/run")
 def api_run(body: dict = Depends(_body), project: str = Depends(_project_b),
             uid: int = Depends(_require_uid), conn=Depends(CONN_B),
-            dispatch=Depends(_dispatch_dep), kick=Depends(_kick_dep)):
-    """'지금 다시 재기' — /capture run 에 해당한다. stages 를 주면 그 단계만
-    돈다(/capture gsc, /capture ai …). 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다.
+            dispatch=Depends(_dispatch_dep)):
+    """'지금 다시 재기' — /capture run 에 해당한다. 웹에는 명령을 칠 곳이 없으므로 버튼이 그 자리다.
+
+    두 갈래다:
+      groups  묶음 id (쉼표) — 화면의 [이 묶음 다시 재기]. 대기열에 올린다: 안 돌고 있으면
+              워커를 띄우고(started), 도는 중이면 지금 런이 끝나는 대로 이어서 돈다(queued).
+              워커가 대기열을 가져가기 전(몇 초)에 또 누른 것은 같은 런으로 합쳐진다.
+              stages 도 groups 도 없으면 전체 재기(모든 묶음)다.
+      stages  단계 몇 개만(/capture gsc, /capture ai …) — 부분 실행이라 주기 시계를 안
+              건드리고, 도는 중이면 받지 않는다(예전 그대로).
 
     opts 는 원격 CLI 가 실어 보내는 단계별 노브다(`--opt rank.device=mobile`).
+    응답: {"ok", "started", "queued"}.
     """
     stages = [x for x in str(body.get("stages") or "").split(",") if x]
     bad = [x for x in stages if x not in STAGES]
     if bad:
         raise HTTPException(status_code=400, detail=f"이 화면에서 돌릴 수 없는 단계입니다: {', '.join(bad)}. 새로고침한 뒤 다시 눌러 보세요.")
+    if stages and body.get("groups"):
+        raise HTTPException(status_code=400, detail="단계와 묶음을 한 번에 고를 수 없습니다.")
+    try:
+        # 묶음 이름의 정본은 run_all.GROUPS — 여기 사본을 두지 않는다.
+        groups = [] if stages else run_all.group_names(body.get("groups") or "")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="이 화면에서 다시 잴 수 없는 묶음입니다. "
+                                                    "새로고침한 뒤 다시 눌러 보세요.")
     opts = _stage_opts(body.get("opts"))
-
     row = store.site(conn, uid, project)
-    if row and row["running_since"]:
-        return {"ok": True, "started": False}      # 이미 도는 중
-    if not stages:
-        started = store.request_run(conn, uid, project)
-    else:
+
+    if stages:
+        if row["running_since"]:
+            return {"ok": True, "started": False, "queued": False}      # 이미 도는 중
         # 부분 실행은 주기 판정을 건드리지 않는다 — gsc 만 다시 읽었다고
         # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다(mark_busy).
         store.mark_busy(conn, row["id"])
-        started = True
-    if started:
         # 새 런의 로그는 여기서부터다. 워커가 뜨기까지 몇 초가 걸리는데, 그 사이
         # 폴링이 지난 런 텍스트를 읽으면 사용자는 끝난 런을 지금 도는 런으로 읽는다.
         store.save_run_log(conn, row["id"], "")
+        argv = ["--user", str(uid), "--project", project, "--only", ",".join(stages)]
+        for k, v in opts.items():
+            for one in (v if isinstance(v, list) else [v]):
+                argv += ["--opt", f"{k}={one}"]
+        dispatch(*argv)
+        return {"ok": True, "started": True, "queued": False}
 
-    if started:
-        # opts 가 있으면 kick(--all) 로 못 보낸다 — 스윕은 사이트를 안 가리므로
-        # 옵션이 갈 곳이 없다. 그 사이트를 직접 띄운다.
-        if stages or opts:
-            argv = ["--user", str(uid), "--project", project]
-            if stages:
-                argv += ["--only", ",".join(stages)]
-            for k, v in opts.items():
-                for one in (v if isinstance(v, list) else [v]):
-                    argv += ["--opt", f"{k}={one}"]
-            dispatch(*argv)
-        else:
-            kick()
-    return {"ok": True, "started": started}
+    phase = store.run_phase(row)
+    if opts and phase != "idle":
+        # 대기열에 합쳐지면 옵션이 갈 곳이 없다(그 런은 다른 요청이 띄웠다). 조용히 버리면
+        # --device mobile 을 준 사용자가 데스크톱 결과를 모바일 결과로 읽는다.
+        raise HTTPException(status_code=409, detail="지금 도는 수집이 있어 옵션을 실을 수 "
+                                                    "없습니다. 끝난 뒤 다시 실행하세요.")
+    store.queue_groups(conn, row["id"], groups)
+    if phase == "running":
+        # 지금 도는 런이 끝나면 워커가 대기열을 다시 보고 이어서 돈다(worker.run_site).
+        return {"ok": True, "started": False, "queued": True}
+    if not store.mark_pending(conn, row["id"]):
+        # 대기 중(pending) — 워커가 아직 대기열을 안 가져갔다. 같은 런으로 합쳐진다: 새
+        # 워커를 띄우지 않는다. 대기열에는 이미 올렸다.
+        return {"ok": True, "started": True, "queued": False}
+    store.save_run_log(conn, row["id"], "")
+    argv = ["--user", str(uid), "--project", project, "--queue"]
+    for k, v in opts.items():
+        for one in (v if isinstance(v, list) else [v]):
+            argv += ["--opt", f"{k}={one}"]
+    # kick(--all) 로 보내지 않는다 — 스윕은 due 판정을 거치고 합치기 대기가 없다.
+    dispatch(*argv)
+    return {"ok": True, "started": True, "queued": False}
 
 
 @app.get("/api/run/log")
@@ -905,18 +943,28 @@ def api_run_status(uid: int = Depends(_require_uid), conn=Depends(CONN)):
     """사이트별 수집 상태 — 화면이 폴링한다."""
     # last_ok/last_error 를 같이 싣는다 — 실패한 단계가 있어도 화면이 아무 말도
     # 안 하던 자리다. 폴링이 이미 도는 곳이라 새 라우트를 만들지 않는다.
-    return {r["project"]: {"running": bool(r["running_since"]),
-                           "last_run_at": r["last_run_at"],
-                           "stage": r["stage"],
-                           "pct": r["stage_pct"],
-                           "last_ok": r["last_ok"],
-                           "last_error": r["last_error"]}
-            for r in store.sites(conn, uid)}
+    #
+    # 묶음 런은 단계 여럿이 동시에 돈다 — stage 는 그중 첫째(옛 화면이 읽는 칸), stages 는
+    # 전부다. groups 는 묶음별 {running, queued, last_run_at, due} — 화면이 메뉴의 점과
+    # 묶음 머리의 [다시 재기] 상태를 그린다(묶음 표의 정본은 run_all.GROUPS).
+    every = scheduler.every_hours()
+    out = {}
+    for r in store.sites(conn, uid):
+        running = [x for x in (r["stage"] or "").split(",") if x]
+        out[r["project"]] = {"running": bool(r["running_since"]),
+                             "last_run_at": r["last_run_at"],
+                             "stage": running[0] if running else None,
+                             "stages": running,
+                             "pct": r["stage_pct"],
+                             "last_ok": r["last_ok"],
+                             "last_error": r["last_error"],
+                             "groups": store.group_status(conn, r, every)}
+    return out
 
 
 # 자동 수집 주기 프리셋 — 값(시간)과 화면에 쓸 이름. 목록의 정본은 여기다:
 # 화면은 이걸 받아 그대로 그리고, 저장은 이 안의 값만 받는다(화면이 보낸 값을 안 믿는다).
-# 0 은 '자동 재측정만 끔' — 첫 측정과 [전체 분석 실행]은 그대로 돈다(store.due_sites).
+# 0 은 '자동 재측정만 끔' — 첫 측정과 [전체 다시 재기]는 그대로 돈다(store.due_sites).
 RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72, "3일"),
                (168, "주 1회"))
 
@@ -1259,7 +1307,8 @@ def api_creation_merged(b: dict = Depends(_body), project: str = Depends(_projec
 # 손으로 남긴 것 — 호스팅 동작이 실제로 다른 둘뿐이다:
 #   /api/projects — 소유를 store.sites 로 판정한다(표의 call 은 Brain 을 본다)
 #   /api/doctor   — ?full= 갈래와 유료 키 env(TENANT_Q_PAID)
-_HAND_ROUTES = {("GET", "/api/projects"), ("GET", "/api/doctor")}
+_HAND_ROUTES = {("GET", "/api/projects"), ("GET", "/api/doctor"),
+                ("POST", "/api/run"), ("GET", "/api/run/status")}   # 묶음 런·대기열은 호스팅 몫
 
 # 값 검증 실패(ValueError → 400)의 문구. 엔진 문구(`status must be one of ...`)는
 # 개발자 말이라 화면에 그대로 내보내지 않는다. 여기 없는 경로는 str(e) 그대로 간다

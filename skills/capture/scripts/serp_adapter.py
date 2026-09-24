@@ -90,43 +90,69 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
 
 
 # ── DataForSEO 호출 간격 ────────────────────────────────────────────────────
-# DataForSEO 문서: "Live endpoints are subject to a rate limit of 12 requests per
-# minute per account." 흔히 인용되는 분당 2000회는 task 방식 얘기다 — 이 리포가
-# 부르는 DataForSEO 경로는 SERP·Labs·볼륨·백링크까지 **전부 /live** 라 12 가 걸린다.
-# 여태는 러너의 항목 간격(0.5초)만 있었고 그건 분당 120회다.
+# 간격이 필요한 경로는 **둘뿐이다** (https://dataforseo.com/help-center/rate-limits-and-request-limits):
+#   · Google Ads Live (keywords_data/google_ads/*) — 계정당 분당 12회
+#   · tasks_ready — 분당 20회
+# 나머지(SERP·Labs·백링크)는 계정 전체 분당 2000회다. 예전엔 "Live 는 전부 12회" 로 읽어
+# 모든 호출에 6초 간격을 걸었고, 그래서 순위 232개가 한 런에 15분을 먹었다(2026-09-24
+# theotherskin). Labs·백링크의 "동시 30" 은 간격이 아니라 동시 수 제한이라 여기서 안
+# 다룬다(수집기가 동시 수를 정한다).
 # 기본값은 한도(12)가 아니라 10 이다 — 12 로 맞추면 여유가 0 이라, 시계 오차나 다른
 # 워커의 호출 하나만 겹쳐도 `12 >= 12` 로 막혔다(호스팅 기록 #53·63·65·67·68).
 DFS_RPM = 10
+READY_RPM = 18                  # tasks_ready 한도 20 — 같은 까닭으로 여유를 둔다(3.3초 간격)
+ADS_PATH = "/keywords_data/google_ads/"
+READY_PATH = "/tasks_ready"
+# 경로 조각 → 공유 간격 파일 이름. 조각이 URL 에 들어 있으면 그 칸의 간격을 지킨다.
+# 칸마다 파일이 따로다 — Google Ads 호출이 tasks_ready 자리를 먹으면 안 된다.
+PACED = {ADS_PATH: "dfs_pace", READY_PATH: "dfs_pace_ready"}
 RATE_LIMIT_RETRIES = 3          # 이 뒤로도 한도면 한도가 우리 것만이 아니다 → Fatal
 SERVER_ERROR_RETRIES = 2        # 5xx 는 다시 쳐 봐야 일시적인지 알 수 있다 (Fatal 아님)
-_last_call = 0.0
-# 프로세스끼리 나눠 쓰는 "다음 호출 자리" 파일 — _shared_slot 이 쓴다.
-PACE_FILE = "dfs_pace"
+_last_call: dict[str, float] = {}
+# 프로세스끼리 나눠 쓰는 "다음 호출 자리" 파일 — _shared_slot 이 쓴다 (Google Ads 칸).
+PACE_FILE = PACED[ADS_PATH]
 _LOCK_WAIT = 2.0                # 잠금을 이만큼 못 잡으면 프로세스 지역 간격으로 물러난다
 _STALE_AHEAD = 300.0            # 파일이 이보다 먼 미래를 말하면 시계가 튄 것 — 무시한다
 
 
 def _rpm() -> float:
-    """분당 허용 호출 수. 0 이면 간격을 두지 않는다(테스트·직접 조절용)."""
+    """Google Ads 분당 허용 호출 수. 0 이면 **모든 칸**의 간격을 두지 않는다(테스트·직접 조절용)."""
     try:
         return float(os.environ.get("SEOMINER_DFS_RPM", DFS_RPM))
     except ValueError:
         return float(DFS_RPM)
 
 
-def pace_seconds() -> float:
-    """DataForSEO 호출 사이 최소 간격(초). 소요 시간 고지가 이 값을 쓴다 —
-    러너의 throttle 로 어림하면 실제보다 10배 짧게 말하게 된다."""
+def _bucket(url: str | None) -> str | None:
+    """이 URL 이 간격을 지켜야 하는 칸이면 그 경로 조각, 아니면 None."""
+    for frag in PACED:
+        if frag in (url or ""):
+            return frag
+    return None
+
+
+def pace_seconds(url: str | None = None) -> float:
+    """DataForSEO 호출 사이 최소 간격(초). 소요 시간 고지가 이 값을 쓴다.
+
+    url 을 안 주면 Google Ads 칸(예전 호출부·재시도 대기의 기준). url 을 주면 그 경로의
+    간격 — 간격 없는 경로(SERP·Labs·백링크)는 0 이다. 고지가 경로를 안 주면 6초씩
+    어림해 실제보다 몇 배 길게 말한다.
+    """
     rpm = _rpm()
-    return 60.0 / rpm if rpm > 0 else 0.0
+    if rpm <= 0:
+        return 0.0
+    frag = ADS_PATH if url is None else _bucket(url)
+    if frag is None:
+        return 0.0
+    return 60.0 / (rpm if frag == ADS_PATH else READY_RPM)
 
 
-def _pace_path() -> Path:
+def _pace_path(name: str = PACE_FILE) -> Path:
     """공유 간격 파일 자리. 서버 데이터 루트(SEOMINER_DATA)가 있으면 거기 — 호스팅은
     유저마다 CAPTURE_HOME 이 따로지만 DataForSEO 계정은 하나라, 유저 home 에 두면
     유저끼리 못 나눈다. 없으면(로컬 플러그인) CAPTURE_HOME."""
     root = os.environ.get("SEOMINER_DATA")
-    return (Path(root) if root else paths.home()) / PACE_FILE
+    return (Path(root) if root else paths.home()) / name
 
 
 def _lock(f) -> bool:
@@ -158,7 +184,7 @@ def _unlock(f) -> None:
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-def _shared_slot(earliest: float, gap: float) -> float | None:
+def _shared_slot(earliest: float, gap: float, name: str = PACE_FILE) -> float | None:
     """프로세스끼리 "다음 호출 자리"를 하나씩 받아 간다. 반환: 내 호출 시각(time.time()).
 
     파일에는 마지막으로 나간 자리 하나만 적힌다. 잠금 안에서 하는 일은 읽고·더하고·
@@ -169,7 +195,7 @@ def _shared_slot(earliest: float, gap: float) -> float | None:
     지역 간격으로 조용히 물러난다. 잠금을 _LOCK_WAIT 안에 못 잡아도 None 이다.
     """
     try:
-        p = _pace_path()
+        p = _pace_path(name)
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a+b") as f:
             give_up = time.monotonic() + _LOCK_WAIT
@@ -197,9 +223,9 @@ def _shared_slot(earliest: float, gap: float) -> float | None:
         return None
 
 
-def _pace() -> None:
+def _pace(frag: str = ADS_PATH) -> None:
     """앞 호출과 최소 간격을 벌린다 — 이 프로세스의 앞 호출과, 같은 데이터 폴더를 쓰는
-    다른 프로세스의 앞 호출 둘 다와.
+    다른 프로세스의 앞 호출 둘 다와. frag 는 PACED 의 칸(기본 Google Ads).
 
     호스팅은 scheduler.dispatch·resume_dead_runs 가 워커를 따로 띄우고 계정은 하나라,
     프로세스 안에서만 세면 워커 둘이 각자 분당 10회씩 던져 계정 한도를 넘는다. 그래서
@@ -207,17 +233,16 @@ def _pace() -> None:
     센다 — 한 런이 혼자 10배로 던지는 것(실제로 터지던 것)은 그것만으로도 막힌다.
     ponytail: 컨테이너(레플리카)가 둘이면 파일을 못 나눈다. 그때는 서버 공유 버킷이다.
     """
-    global _last_call
-    gap = pace_seconds()
+    gap = pace_seconds(frag)
     if gap <= 0:
         return
-    local = max(0.0, _last_call + gap - time.monotonic())
+    local = max(0.0, _last_call.get(frag, -1e9) + gap - time.monotonic())
     now = time.time()
-    slot = _shared_slot(now + local, gap)
+    slot = _shared_slot(now + local, gap, PACED[frag])
     wait = local if slot is None else slot - now
     if wait > 0:
         time.sleep(wait)
-    _last_call = time.monotonic()
+    _last_call[frag] = time.monotonic()
 
 
 def _rate_limited(r) -> bool:
@@ -253,8 +278,12 @@ def _dfs_call(fn, *a, **kw):
     """
     r = None
     rate_left, server_left, waited = RATE_LIMIT_RETRIES, SERVER_ERROR_RETRIES, 0
+    # 간격은 경로가 정한다(PACED) — SERP·Labs·백링크는 안 쉰다. 한도·5xx 재시도는
+    # 경로와 무관하게 여기 한 벌이다: 분당 2000회 칸도 429 는 올 수 있다.
+    frag = _bucket(a[0] if a else kw.get("url"))
     while True:
-        _pace()
+        if frag:
+            _pace(frag)
         r = fn(*a, **kw)
         if _rate_limited(r):
             if rate_left <= 0:
@@ -527,26 +556,31 @@ def _domains_in(obj) -> list[str]:
     return sorted(set(out))
 
 
-def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
+def _serp_task(keyword: str, locale: str, depth: int, device: str) -> dict:
+    """SERP 과제 하나의 본문 — Live 와 대기열이 같은 한 벌을 보낸다(지역·언어·기기·깊이)."""
     if device not in ("desktop", "mobile"):
         raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
+    loc, lang, _ = location(locale)
+    return {"keyword": keyword, "location_name": loc, "language_code": lang,
+            "device": device, "depth": depth}
+
+
+def _dfs_auth() -> tuple[str, str]:
     if not has_dataforseo():
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
-    login, pw = os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
-    loc, lang, _ = location(locale)
-    r = _dfs_call(
-        requests.post,
-        "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
-        auth=(login, pw), timeout=TIMEOUTS["dataforseo"],
-        json=[{"keyword": keyword, "location_name": loc, "language_code": lang,
-               "device": device, "depth": depth}])
-    raise_for(r, "DataForSEO")
-    data = r.json()
-    task = _check_dataforseo_task(data)
-    items = ((task.get("result") or [{}])[0].get("items")) or []
+    return os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"]
+
+
+def _parse_serp(items, depth: int) -> dict:
+    """DataForSEO SERP advanced 의 items → 정규화 dict (cost 빼고 fetch 와 같은 모양).
+
+    **파서는 이것 한 벌이다.** Live(fetch_dataforseo)와 대기열(get_serp_task)이 같은
+    응답 모양(result[0].items)을 받는다 — 둘이 각자 풀면 AI 요약 인용·질문 뽑기 같은
+    규칙이 한쪽에만 고쳐진다.
+    """
     top, features, aio_present, aio_domains = [], set(), 0, []
     related, paa = [], []
-    for it in items:
+    for it in items or []:
         t = it.get("type")
         if t == "organic":
             # url이 비면 domain 필드로. 둘 다 같은 정규화를 거쳐야 경쟁사 집계에
@@ -569,7 +603,182 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
             features.add(t)
     return {"top": top[:depth], "serp_features": sorted(features),
             "aio_present": aio_present, "aio_domains": sorted(set(aio_domains)),
-            "related": related, "paa": paa, "cost": float(data.get("cost") or 0)}
+            "related": related, "paa": paa}
+
+
+def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
+    body = _serp_task(keyword, locale, depth, device)
+    auth = _dfs_auth()
+    r = _dfs_call(
+        requests.post,
+        "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
+        auth=auth, timeout=TIMEOUTS["dataforseo"], json=[body])
+    raise_for(r, "DataForSEO")
+    data = r.json()
+    task = _check_dataforseo_task(data)
+    out = _parse_serp(((task.get("result") or [{}])[0].get("items")) or [], depth)
+    out["cost"] = float(data.get("cost") or 0)
+    return out
+
+
+# ── DataForSEO Standard 대기열 (순위 조회) ──────────────────────────────────
+# Live 는 과제 하나에 요청 하나고 $0.002 다. 대기열은 한 번에 100개를 맡기고(task_post),
+# 다 된 것을 묻고(tasks_ready), 하나씩 받는다(task_get/advanced — 받기는 무료).
+# 근거(2026-09-24 문서 확인):
+#   task_post   https://docs.dataforseo.com/v3/serp/google/organic/task_post/
+#               — 요청당 최대 100과제(넘으면 40006), priority 1=보통 2=높음(추가 요금)
+#   tasks_ready https://docs.dataforseo.com/v3/serp/google/organic/tasks_ready/
+#               — 분당 20회, 한 번에 최대 1000개, 받아 간 과제는 목록에서 빠진다
+#   task_get    https://docs.dataforseo.com/v3/serp/google/organic/task_get/advanced/
+#               — 맡긴 뒤 **30일** 동안 무료로 다시 받을 수 있다
+#   가격(깊이 10) 보통 $0.0006(평균 5분) · 높음 $0.0012(평균 1분 이내) · Live $0.002
+# 높음(2)을 쓰는 까닭: 보통은 평균 5분이라 10분 상한 안에 다 온다고 못 믿는다.
+QUEUE_MAX_POST = 100
+QUEUE_PRIORITY = 2
+QUEUE_COST = 0.0012             # 높음, 깊이 10. 실청구액은 task_post 응답에서 읽는다
+QUEUE_POLL = 3.0                # tasks_ready 분당 20회 — 그보다 자주 묻지 않는다
+QUEUE_KEEP_DAYS = 30            # task_get 이 결과를 주는 기간
+READY_LIST_MAX = 1000           # tasks_ready 한 번의 최대 개수
+_TASK_WAITING = {40601, 40602}  # Task Handed · Task In Queue — 아직 안 끝났다
+_TASK_GONE = {40401, 40403}     # Task Not Found · Results Expired — 다시 못 받는다
+
+
+def post_serp_tasks(jobs: list[dict]) -> tuple[list[dict], float]:
+    """순위 과제를 대기열에 맡긴다. jobs: [{tag, keyword, locale, depth, device}].
+
+    반환: ([{tag, id, error}], 실청구액). id 가 None 이면 그 과제는 안 맡겨졌다(error 에
+    사유). 결제·인증 계열은 Fatal — 한 묶음이 402 면 나머지 묶음도 402 다.
+    과제와 응답은 tag 로 짝짓는다(응답의 data.tag). 순서에 기대지 않는다.
+    """
+    auth = _dfs_auth()
+    out, cost = [], 0.0
+    for i in range(0, len(jobs), QUEUE_MAX_POST):
+        chunk = jobs[i:i + QUEUE_MAX_POST]
+        body = [{**_serp_task(j["keyword"], j["locale"], j["depth"], j["device"]),
+                 "priority": QUEUE_PRIORITY, "tag": str(j["tag"])} for j in chunk]
+        r = _dfs_call(
+            requests.post,
+            "https://api.dataforseo.com/v3/serp/google/organic/task_post",
+            auth=auth, timeout=TIMEOUTS["dataforseo"], json=body)
+        raise_for(r, "DataForSEO")
+        data = r.json()
+        tasks = [t for t in (data.get("tasks") or []) if isinstance(t, dict)]
+        by_tag = {str((t.get("data") or {}).get("tag")): t for t in tasks}
+        for n, j in enumerate(chunk):
+            t = by_tag.get(str(j["tag"])) or (tasks[n] if n < len(tasks) else {})
+            code = int(t.get("status_code") or 0)
+            if code >= 40000 and code // 100 in _STATUS_NAME:
+                raise fatal("DataForSEO", code // 100, str(t.get("status_message") or ""))
+            if code == 20100 and t.get("id"):
+                cost += float(t.get("cost") or 0)
+                out.append({"tag": j["tag"], "id": t["id"], "error": None})
+            else:
+                msg = t.get("status_message") or data.get("status_message") or "과제가 안 맡겨졌다"
+                out.append({"tag": j["tag"], "id": None, "error": f"{msg} ({code})"})
+    return out, cost
+
+
+def serp_tasks_ready() -> tuple[set[str], bool]:
+    """다 된(아직 안 받아 간) 과제 id 들, 그리고 목록이 꽉 찼는지.
+
+    계정 전체의 목록이다 — 다른 사이트·다른 워커의 과제도 섞여 온다. 부르는 쪽은 자기
+    id 만 골라 받는다(남의 것을 받아 가면 그쪽 목록에서 사라진다). 꽉 찼으면(1000)
+    내 과제가 남의 것에 가려 안 보일 수 있다 — wait_serp_tasks 가 직접 두드린다.
+    """
+    r = _dfs_call(
+        requests.get,
+        "https://api.dataforseo.com/v3/serp/google/organic/tasks_ready",
+        auth=_dfs_auth(), timeout=TIMEOUTS["dataforseo"])
+    raise_for(r, "DataForSEO")
+    data = r.json()
+    ids: set[str] = set()
+    for t in data.get("tasks") or []:
+        _check_dataforseo_task({"tasks": [t]})
+        ids |= {x["id"] for x in (t.get("result") or []) if isinstance(x, dict) and x.get("id")}
+    return ids, len(ids) >= READY_LIST_MAX
+
+
+def _serp_time(s) -> str | None:
+    """결과의 datetime('2026-09-24 03:01:02 +00:00') → db.now() 꼴(UTC 'T…Z'). 못 읽으면 None."""
+    from datetime import datetime, timezone
+    try:
+        d = datetime.strptime(str(s).strip(), "%Y-%m-%d %H:%M:%S %z")
+    except (TypeError, ValueError):
+        return None
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def get_serp_task(task_id: str, depth: int) -> tuple[str, dict | str | None]:
+    """맡긴 과제 하나를 받는다. 반환 (상태, 값):
+      ("done", 정규화 dict — fetch 와 같은 모양 + checked_at(구글을 실제로 본 시각))
+      ("waiting", None)   아직 안 끝났다
+      ("gone", 사유)      다시 못 받는다(없음·만료) — 그 키워드는 새로 맡겨야 한다
+      ("error", 사유)     과제는 끝났는데 실패했다(검색결과 없음 등) — 항목 오류
+    결제·인증 계열은 Fatal 로 올린다.
+    """
+    r = _dfs_call(
+        requests.get,
+        "https://api.dataforseo.com/v3/serp/google/organic/task_get/advanced/" + task_id,
+        auth=_dfs_auth(), timeout=TIMEOUTS["dataforseo"])
+    if r.status_code == 404:
+        return "gone", why(r) or "Task Not Found"
+    raise_for(r, "DataForSEO")
+    data = r.json()
+    task = (data.get("tasks") or [{}])[0]
+    code = int(task.get("status_code") or 0)
+    if code in _TASK_WAITING:
+        return "waiting", None
+    if code in _TASK_GONE:
+        return "gone", str(task.get("status_message") or code)
+    try:
+        task = _check_dataforseo_task(data)
+    except Fatal:
+        raise
+    except RuntimeError as e:
+        return "error", str(e)
+    res0 = (task.get("result") or [{}])[0] or {}
+    out = _parse_serp(res0.get("items") or [], depth)
+    out["cost"] = 0.0             # 받기는 무료 — 돈은 맡길 때(post_serp_tasks) 센다
+    out["checked_at"] = _serp_time(res0.get("datetime"))
+    return "done", out
+
+
+def wait_serp_tasks(ids, *, depth: int, timeout_s: float, probe=(),
+                    clock=time.monotonic, sleep=time.sleep) -> tuple[dict, dict, set]:
+    """맡긴 과제가 **전부** 올 때까지 기다린다(상한 timeout_s). 반환 (결과, 오류, 남은 것):
+      결과 {id: 정규화 dict} · 오류 {id: ("gone"|"error", 사유)} · 남은 것 {id} (상한에 걸림)
+
+    probe 는 tasks_ready 를 안 거치고 곧장 받아 볼 id 들 — 앞 런이 맡겨 두고 적재 못 한
+    과제다. 앞 런이 이미 받아 갔다면(task_get) tasks_ready 목록에서 빠져 있어서, 목록만
+    보면 영영 안 온다. 받기는 무료라 곧장 두드려도 돈이 안 든다.
+    """
+    left = set(ids)
+    got: dict = {}
+    bad: dict = {}
+    deadline = clock() + timeout_s
+
+    def take(batch) -> None:
+        for tid in sorted(batch):
+            if tid not in left:
+                continue
+            state, val = get_serp_task(tid, depth)
+            if state == "done":
+                got[tid] = val
+                left.discard(tid)
+            elif state in ("gone", "error"):
+                bad[tid] = (state, val)
+                left.discard(tid)
+
+    take(set(probe) & left)
+    while left and clock() < deadline:
+        ready, full = serp_tasks_ready()
+        now_ = ready & left
+        if full:
+            now_ |= set(sorted(left - now_)[:QUEUE_MAX_POST])
+        take(now_)
+        if left and clock() < deadline:
+            sleep(QUEUE_POLL)
+    return got, bad, left
 
 
 def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
@@ -603,10 +812,14 @@ def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desk
 PROVIDERS = {
     "dataforseo": {
         "fetch": fetch_dataforseo,
-        "cost": 0.003,   # live advanced 상한. 실청구액은 응답에서 덮어쓴다.
+        # 순위는 대기열로 잰다(post_serp_tasks·wait_serp_tasks) — 단가도 대기열 것이다.
+        # Live(fetch)는 한 건 즉석 조회용으로 남는다($0.002). 실청구액은 응답에서 읽는다.
+        "queue": True,
+        "cost": QUEUE_COST,
         "caveats": [],
     },
     "serper": {
+        "queue": False,
         "fetch": fetch_serper,
         "cost": 0.001,   # ~1 credit; actual $/credit depends on your pack
         "caveats": [
@@ -720,6 +933,11 @@ def dataforseo_balance() -> float:
 def cost_per_query(provider: str) -> float:
     """제공자 단가($/쿼리) — 예산 고지용. 가격표는 이 모듈에만 있다."""
     return PROVIDERS[provider]["cost"]
+
+
+def queued(provider: str) -> bool:
+    """이 제공자는 순위를 대기열(맡기고·기다리고·받기)로 재는가. 호출부가 이름으로 안 가른다."""
+    return bool(PROVIDERS[provider].get("queue"))
 
 
 def caveats(provider: str) -> list[str]:

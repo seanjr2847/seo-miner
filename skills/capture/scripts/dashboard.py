@@ -48,8 +48,11 @@ TPL = Path(__file__).parent.parent / "templates"
 # — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
 # [심사]가 맨 앞이다 — 측정이 물어온 검색어를 가리는 일이 기회를 보는 일보다 앞선다
 # (docs/superpowers/specs/2026-09-08-keyword-triage-design.md).
+# 순서는 묶음(run_all.GROUPS) 순서를 따른다 — 할 일 · 검색 성과 · AI 노출 · 사이트 건강 ·
+# 경쟁·링크 · 관리. 메뉴가 묶음 이름을 화면이 바뀌는 자리에만 세우므로, 한 묶음의
+# 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
 VIEW_ORDER = ["triage", "overview", "analysis", "keywords", "rank", "ai", "site",
-              "backlinks", "competitors", "history", "guide", "settings"]
+              "competitors", "backlinks", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
 _SECTION_DEF = re.compile(
@@ -359,7 +362,7 @@ def create_project(f: dict) -> dict:
            "competitors_manual": items("competitors_manual"),
            "tools": items("tools"),
            "surfaces_ai": ["chatgpt", "perplexity", "gemini"],
-           "limits": {"max_keywords": 100, "max_ai_prompts": 30}}
+           "limits": {"max_keywords": db.RANK_KEYWORDS_CAP, "max_ai_prompts": 30}}
     conn = db.connect()
     try:
         if conn.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone():
@@ -1438,6 +1441,82 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             "page_queries": page_queries, "page_first_queries": page_first}
 
 
+# ── 묶음(메뉴 = 사용자의 질문 = 재기 단위) ─────────────────────────────────
+# 묶음의 정본은 run_all.GROUPS 한 벌이다(id·이름·단계·주기·화면). 화면은 view-def 에
+# "group" 만 적고, 이름·단계·주기와 그 묶음을 마지막으로 잰 날은 여기서 받는다.
+# run_all 은 **부를 때** 들인다: run_all 이 맨 위에서 이 모듈을 먼저 들이므로(report
+# 단계 = export), 여기서 맨 위에 들이면 반쯤 선 run_all 을 보고 GROUPS 가 없다.
+#
+# 한 런이 "성공"인지는 셸의 runVerdict 와 같은 규칙으로 가른다 — 끝났고, 중단 표식이
+# 없고, 항목 오류(errors=N)가 0 이다. 건너뜀은 실패가 아니다. 판정의 원본은 수집기가
+# runs.notes 에 남긴 글자다(collector.err_note / db.run 의 "중단:") — 구조화된 칸이
+# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다.
+_RE_RUN_ERRORS = re.compile(r"\berrors=(\d+)")
+
+
+def _run_ok(notes: str | None) -> bool:
+    n = notes or ""
+    m = _RE_RUN_ERRORS.search(n)
+    return "중단:" not in n and not (m and int(m.group(1)))
+
+
+def _ts(s: str) -> "datetime | None":
+    """runs 의 시각(db.now — UTC ISO, 옛 행은 'YYYY-MM-DD HH:MM:SS')을 aware UTC 로."""
+    from datetime import datetime, timezone
+    try:
+        return datetime.strptime(str(s)[:19].replace("T", " "),
+                                 "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _axis_groups(conn, pid, now=None) -> dict:
+    """묶음마다 단계별 마지막 성공일과 "주기를 넘겼나".
+
+    last: {단계: "YYYY-MM-DD" | None} — 그 단계의 가장 최근 성공 런(runs)의 날. 칸은
+          그 묶음의 **시계 단계**(run_all.group_stages)다 — 다시 잴 단계가 없는 할 일도
+          매일 런(gsc·ga4)의 날을 싣는다. 화면 머리가 이 칸을 그대로 그린다.
+    due : 주기(every_hours)가 있는 묶음에서, 한 번이라도 잰 단계 중 하나가 주기보다
+          오래됐거나, 묶음 전체를 한 번도 못 쟀으면 True. 한 번도 성공 기록이 없는
+          단계(GA4 미연결처럼 늘 건너뛰는 것)는 그 판정에서 빠진다 — 안 빼면 그 묶음의
+          점이 영영 안 꺼진다.
+    """
+    import run_all
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    # todo(할 일)는 버튼이 없지만 시계는 매일 런이 찍는다 — 판정은 group_stages 로 본다.
+    of = {g["id"]: tuple(run_all.group_stages(g["id"])) for g in run_all.GROUPS}
+    kinds = {s for st in of.values() for s in st}
+    last_ts: dict[str, str] = {}
+    for r in conn.execute("SELECT kind, finished_at, notes, api_calls FROM runs"
+                          " WHERE project_id=? AND finished_at IS NOT NULL ORDER BY id DESC",
+                          (pid,)):
+        k = r["kind"]
+        # 한도에 걸려 한 건도 못 잰 런(속도 측정의 429 — collect_vitals 가 notes 에
+        # "quota=" 를 남기고 건너뛴다)은 실패는 아니지만 **잰 날**도 아니다. 이걸 날로 치면
+        # 머리줄이 "오늘 잼"이라 말하고 주기 점이 꺼진다.
+        unmeasured = "quota=" in (r["notes"] or "") and not r["api_calls"]
+        if k in kinds and k not in last_ts and _run_ok(r["notes"]) and not unmeasured:
+            last_ts[k] = r["finished_at"]
+            if len(last_ts) == len(kinds):
+                break
+    out = []
+    for g in run_all.GROUPS:
+        stages = list(g["stages"])
+        clock = of[g["id"]]
+        seen = [_ts(last_ts[s]) for s in clock if s in last_ts]
+        seen = [t for t in seen if t]
+        every = g.get("every_hours")
+        due = bool(every and clock) and (
+            not seen or any((now - t).total_seconds() > every * 3600 for t in seen))
+        out.append({"id": g["id"], "name": g["name"], "stages": stages,
+                    "every_hours": every, "views": list(g.get("views") or ()),
+                    "last": {s: (str(last_ts[s])[:10] if s in last_ts else None)
+                             for s in clock},
+                    "due": due})
+    return {"groups": out}
+
+
 def gather(conn, p, at: str | None = None) -> dict:
     """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
 
@@ -1486,7 +1565,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
     d = {"schema": 1, "project": dict(p),
          **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
-         **vitals, **ai_bots,
+         **vitals, **ai_bots, **_axis_groups(conn, pid),
          "runs": runs, "creations": creations,
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
@@ -1658,6 +1737,180 @@ def set_verdict(body: dict) -> dict:
         conn.close()
 
 
+# ── 로컬 재기: POST /api/run · GET /api/run/status ────────────────────────
+# 호스팅과 같은 계약을 받는다 — 본문 {project, groups:"search,ai"}(없으면 전체),
+# 응답 {ok, started, queued}; 상태는 {사이트: {running, groups:{id:{running, queued,
+# last_run_at, due}}}}. 화면(셸)은 두 배포에서 같은 fetch 를 쓴다. 몸은 다르다:
+# 호스팅은 워커·스케줄러(server/app.py·store)가, 여기는 이 프로세스가 run_all.py 를
+# 띄운다. 그래서 두 경로는 ROUTES 에 있되 호스팅은 자기 구현을 쓴다(/api/projects 와
+# 같은 자리 — app.py 의 _HAND_ROUTES).
+#
+# 규칙(설계서 결정 2):
+#   · 도는 중에 다른 묶음을 누르면 대기열 — 지금 런이 끝나면 이어서 돈다. 방금 런에서
+#     돈 공유 단계(rank 등)는 건너뛴다. 꼬리(gaps·pages·report)는 다시 돈다 — 새로 잰
+#     것으로 기회를 다시 세워야 하기 때문이다.
+#   · 시작 전(RUN_DEBOUNCE_S 안)에 연달아 누르면 한 런으로 합친다.
+RUN_DEBOUNCE_S = 3.0
+RUN_ALL_PY = Path(__file__).parent / "run_all.py"
+
+
+def _run_all():
+    import run_all          # 부를 때 들인다 — _axis_groups 주석(순환 import)
+    return run_all
+
+
+class _LocalRuns:
+    """사이트별 한 줄: 도는 런(proc·cur) · 시작 전 모음(pending) · 대기열(queue)."""
+
+    def __init__(self, spawn=None) -> None:
+        import threading
+        self.lock = threading.Lock()
+        self.sites: dict[str, dict] = {}
+        self.spawn = spawn or self._popen
+
+    @staticmethod
+    def _popen(argv: list[str], project: str):
+        log = db.CAPTURE_HOME / "logs" / f"run-{project}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        f = open(log, "a", encoding="utf-8")      # noqa: SIM115 — 자식이 끝날 때까지 쥔다
+        return subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT)
+
+    def _site(self, project: str) -> dict:
+        return self.sites.setdefault(project, {"proc": None, "cur": set(), "pending": set(),
+                                               "queue": set(), "timer": None, "since": None})
+
+    @staticmethod
+    def _alive(s: dict) -> bool:
+        return s["proc"] is not None and s["proc"].poll() is None
+
+    def request(self, project: str, groups: str | None) -> dict:
+        import threading
+        # 묶음 이름 검증·"없으면 전체"는 run_all.group_names 한 벌이다(모르면 ValueError → 400).
+        want = set(_run_all().group_names(groups or ""))
+        with self.lock:
+            s = self._site(project)
+            if self._alive(s):
+                s["queue"] |= want
+                return {"ok": True, "started": False, "queued": True}
+            s["pending"] |= want
+            if s["timer"] is None:
+                s["timer"] = threading.Timer(RUN_DEBOUNCE_S, self._launch, (project,))
+                s["timer"].daemon = True
+                s["timer"].start()
+            return {"ok": True, "started": True, "queued": False}
+
+    def argv(self, project: str, groups: set[str], skip: set[str]) -> list[str]:
+        """run_all 명령줄 — 묶음이 전부면 --groups 를 안 싣는다(인자 없음 = 전체)."""
+        ra = _run_all()
+        argv = [sys.executable, str(RUN_ALL_PY), "--project", project]
+        if set(ra.RUNNABLE_GROUPS) - groups:
+            argv += ["--groups", ",".join(i for i in ra.RUNNABLE_GROUPS if i in groups)]
+        if skip:
+            argv += ["--skip", ",".join(n for n in ra.VALID_STAGE_NAMES if n in skip)]
+        return argv
+
+    def _launch(self, project: str, skip: set[str] | None = None) -> None:
+        import threading
+        with self.lock:
+            s = self._site(project)
+            s["timer"] = None
+            groups, s["pending"] = s["pending"], set()
+            if not groups:
+                return
+            since = db.now()          # 이 런이 남기는 runs 행은 이 뒤에 시작한다(_succeeded)
+            try:
+                proc = self.spawn(self.argv(project, groups, skip or set()), project)
+            except OSError as e:     # 못 띄웠다 — 도는 중으로 남기면 버튼이 영영 잠긴다
+                print(f"[dashboard] 재기를 못 띄웠습니다: {e}", file=sys.stderr)
+                return
+            s["cur"], s["proc"], s["since"] = groups, proc, since
+        threading.Thread(target=self._wait, args=(project, proc), daemon=True).start()
+
+    def _wait(self, project: str, proc) -> None:
+        proc.wait()
+        self._next(project)
+
+    def _next(self, project: str) -> None:
+        """런이 끝났다 — 대기열이 있으면 이어서 띄운다. 방금 **잘 돈** 공유 단계는 뺀다."""
+        ra = _run_all()
+        with self.lock:
+            s = self._site(project)
+            cur, since = s["cur"], s["since"]
+            s["cur"], s["proc"], s["since"] = set(), None, None
+            if not s["queue"]:
+                return
+            s["pending"], s["queue"] = s["queue"], set()
+            nxt = {x for gid in s["pending"] for x in ra.group_stages(gid)}
+        ran = {x for gid in cur for x in ra.group_stages(gid)}
+        skip = (self._succeeded(project, since, ran) & nxt) - set(ra.TAIL)
+        self._launch(project, skip)
+
+    @staticmethod
+    def _succeeded(project: str, since: str | None, stages: set[str]) -> set[str]:
+        """이번 런(since 이후 시작)에서 **성공으로 끝난** 단계 — 다음 라운드가 안 다시 살 것.
+
+        묶음에 들었다는 것만으로 빼면(예전) 실패한 공유 단계가 다시 안 돈다: [검색 성과]
+        런에서 rank 가 402·대기열 상한으로 실패했는데 그 사이 누른 [AI 노출]이 --skip rank
+        로 떠서, AI 요약이 낡은 채로 '방금 잰 묶음'이 된다. 호스팅 워커는 잘 돈 단계만
+        뺀다(worker.run_site 의 r.ok and not r.skipped) — 같은 버튼이 두 배포에서 다르게
+        돌면 안 된다. 성공 판정은 _run_ok 한 벌(= 셸 runVerdict)이다. 끝나지 않은 행
+        (프로세스가 죽었다)은 성공이 아니다 — 아무것도 안 뺀다.
+        """
+        if not since or not stages:
+            return set()
+        conn = db.connect()
+        try:
+            pid = db.get_project(conn, project)["id"]
+            last: dict[str, bool] = {}
+            for r in conn.execute(
+                    "SELECT kind, finished_at, notes FROM runs WHERE project_id=? "
+                    "AND julianday(started_at) >= julianday(?) ORDER BY id", (pid, since)):
+                last[r["kind"]] = bool(r["finished_at"]) and _run_ok(r["notes"])
+        except Exception:                       # 못 읽으면 안 뺀다 — 두 번 사는 쪽이 낫다
+            return set()
+        finally:
+            conn.close()
+        return {k for k, ok in last.items() if ok and k in stages}
+
+    def status(self, project: str) -> dict:
+        with self.lock:
+            s = self._site(project)
+            alive = self._alive(s)
+            cur = set(s["cur"]) if alive else set()
+            cur |= s["pending"]                      # 곧 선다(합치는 몇 초) — 도는 중으로 본다
+            queue = set(s["queue"])
+        conn = db.connect()
+        try:
+            rows = _axis_groups(conn, db.get_project(conn, project)["id"])["groups"]
+        finally:
+            conn.close()
+        groups = {}
+        for g in rows:
+            last = [v for v in g["last"].values() if v]
+            groups[g["id"]] = {"running": g["id"] in cur, "queued": g["id"] in queue,
+                               "last_run_at": max(last) if last else None, "due": g["due"]}
+        return {project: {"running": bool(cur), "groups": groups}}
+
+
+LOCAL_RUNS = _LocalRuns()
+
+
+def run_route(body: dict) -> dict:
+    """POST /api/run 본체(로컬). groups 는 쉼표 문자열 — 호스팅 본문과 같은 꼴이다."""
+    project = str(body.get("project") or "")
+    conn = db.connect()
+    try:
+        db.get_project(conn, project)                # 없는 사이트면 ProjectNotFound → 404
+    finally:
+        conn.close()
+    return LOCAL_RUNS.request(project, str(body.get("groups") or ""))
+
+
+def run_status(project: str) -> dict:
+    """GET /api/run/status 본체(로컬) — 물은 사이트 하나만 답한다(호스팅은 유저의 전부)."""
+    return LOCAL_RUNS.status(project) if project else {}
+
+
 # 전송 중립 route 표 — 원본 화면(shell+views)이 로컬·호스팅 둘 다에서 부르는 API 넷의
 # 본체. 예전엔 두 서버가 이 넷을 각자 손으로 등록해서, 이음매 검사(test_seams
 # #5)가 두 소스를 정규식으로 훑어 존재를 대조해야 했다. 이제 로컬 Handler 는 이 표를
@@ -1689,6 +1942,13 @@ ROUTES = {
     # 작업 기록 — 개발 도구가 일을 끝내고 남긴다(createdb.py done / sync).
     ("POST", "/api/creation"):
         lambda project, query, body: record_creation_route(body),
+    # 묶음 다시 재기 — 화면이 두 배포에서 같은 본문으로 부른다. 몸은 배포마다 다르다:
+    # 호스팅은 워커를 쓰는 자기 구현을 갖고(app.py 의 _HAND_ROUTES), 여기 것은 로컬
+    # Handler 만 부른다. 원격 사이트면 로컬 Handler 가 서버로 넘긴다(다른 ROUTES 와 같다).
+    ("POST", "/api/run"):
+        lambda project, query, body: run_route(body),
+    ("GET", "/api/run/status"):
+        lambda project, query, body: run_status(project),
 }
 
 def _by_ok(r: dict) -> tuple[dict, int]:
@@ -1844,6 +2104,25 @@ def _selfcheck() -> None:
         assert d["title"] and isinstance(d["stages"], list)
         for i in d["sections"]:                  # 담는다고 선언한 요소는 실제로 있어야
             assert f'id="{i}"' in html, f'{d["id"]} 가 없는 요소 id 를 담는다: {i}'
+
+    # 묶음 — 정본은 run_all.GROUPS(id·이름·단계·주기·화면)다. 뷰는 자기 묶음 id 하나만
+    # 적는다. 두 쪽이 같은 짝을 말해야 한다(GROUPS 의 views ↔ view-def 의 group):
+    # 한쪽만 고치면 메뉴에는 [AI 노출] 밑에 서는데 재기 버튼은 다른 묶음을 부른다.
+    # 메뉴 순서도 묶음 순서와 같아야 한다 — 묶음 이름은 화면이 바뀌는 자리에만 서서,
+    # 흩어지면 같은 이름이 두 번 선다.
+    import run_all
+    gids = [g["id"] for g in run_all.GROUPS]
+    for d in defs:
+        assert d.get("group") in gids, f'{d["id"]} 의 view-def group 이 묶음표에 없다: {d.get("group")!r}'
+    order = [d["group"] for d in defs]
+    runs_of = [g for i, g in enumerate(order) if i == 0 or order[i - 1] != g]
+    assert len(runs_of) == len(set(runs_of)), f"한 묶음의 화면이 메뉴에서 흩어졌다: {order}"
+    assert runs_of == [g for g in gids if g in runs_of], \
+        f"메뉴의 묶음 순서가 run_all.GROUPS 와 다르다: {runs_of} ↔ {gids}"
+    for g in run_all.GROUPS:
+        mine = [d["id"] for d in defs if d["group"] == g["id"]]
+        assert list(g.get("views") or ()) == mine, \
+            f'묶음 {g["id"]} 의 views 가 view-def 와 다르다: {list(g.get("views") or ())} ↔ {mine}'
 
     # 배포 전용 섹션 — 선언한 view/after 가 실제로 있어야 하고(after 는 원본 뷰의
     # 섹션이거나, 같은 화면을 가리키는 다른 섹션의 id 여도 된다 — sm-dim 은

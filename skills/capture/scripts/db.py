@@ -176,6 +176,22 @@ CREATE TABLE IF NOT EXISTS serp_questions (   -- 구글이 이 검색어에 같�
   UNIQUE(keyword_id, checked_at, kind, position)
 );
 CREATE INDEX IF NOT EXISTS idx_serpq_kw ON serp_questions(keyword_id, checked_at);
+-- DataForSEO 대기열에 맡겨 두고 아직 적재하지 않은 순위 조회 (collect_serp 가 쓴다).
+-- 돈은 맡길 때 나간다 — 10분 안에 다 안 와서 단계가 실패해도 이 id 로 다음 런이 결과를
+-- 받아 온다(새로 맡기지 않는다). **이 기계 것이다**: 과제 id 는 맡긴 계정·기계의 것이라
+-- 동기화(remote._plan — projects 에서 FK·`<단수>_id` 로 닿는 표만 나른다)를 타면 안 된다.
+-- 그래서 project_id·keyword_id 대신 이름·글자로 적는다. 동기화가 키워드 id 를 새로
+-- 매기므로(merge) id 로 적으면 어차피 엉뚱한 키워드를 가리킨다.
+CREATE TABLE IF NOT EXISTS serp_tasks (
+  id INTEGER PRIMARY KEY,
+  project TEXT NOT NULL,                      -- projects.name
+  keyword TEXT NOT NULL,
+  locale TEXT NOT NULL,                       -- 조회에 쓴 로케일 (keywords.locale 폴백 뒤의 값)
+  device TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  task_id TEXT NOT NULL UNIQUE,               -- DataForSEO 과제 id
+  posted_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS gsc_snapshots (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -725,9 +741,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 'competitors' 단계인데 kind='gap' 으로, scoring.load() 는 'gaps' 단계인데
     # kind='analysis' 로 적었었다. WHERE 조건 자체가 재실행에 안전하다(이미 바뀐
     # 행은 다시 안 걸린다).
-    conn.execute("UPDATE runs SET kind='competitors' WHERE kind='gap'")
-    conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
-    conn.commit()
+    # 걸리는 행이 있을 때만 쓴다 — 맞는 행이 없어도 UPDATE 는 쓰기 잠금을 잡는다. 묶음 런은
+    # 단계마다 연결을 여는데, 여는 것만으로 잠금을 다투면 'database is locked' 가 난다.
+    if conn.execute("SELECT 1 FROM runs WHERE kind IN ('gap','analysis') LIMIT 1").fetchone():
+        conn.execute("UPDATE runs SET kind='competitors' WHERE kind='gap'")
+        conn.execute("UPDATE runs SET kind='gaps' WHERE kind='analysis'")
+        conn.commit()
 
     # ── 갈래 3: 기회 수명주기 ──
     # 저절로 풀린 기회(resolved)는 왜 닫혔는지와 닫히기 전 상태를 들고 있어야 한다 —
@@ -795,6 +814,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if conn.execute("SELECT 1 FROM projects WHERE type='local_clinic' LIMIT 1").fetchone():
         conn.execute("UPDATE projects SET type='local_business' WHERE type='local_clinic'")
         conn.commit()
+
+    # 순위는 이제 추적 키워드 **전부**를 잰다(상한 limits.max_keywords 는 안전장치, 기본
+    # RANK_KEYWORDS_CAP). 그런데 사이트 등록 폼이 limits 를 {"max_keywords": 100, ...} 로
+    # 박아 두어, 그대로 두면 옛 상한 100 이 새 기본을 이긴다 — 232개 중 132개를 한 번도
+    # 안 잰 바로 그 원인이다. 등록 기본값 그대로(손댄 적 없음)인 줄만 새 상한으로 올린다.
+    # 올리고 나면 모양이 달라져 다시 안 걸린다(= 한 번만). 사람이 고친 값은 안 건드린다.
+    for r in conn.execute("SELECT id, value FROM project_settings WHERE key='limits'").fetchall():
+        try:
+            lim = json.loads(r["value"])
+        except (TypeError, ValueError):
+            continue
+        if lim == LEGACY_LIMITS:
+            conn.execute("UPDATE project_settings SET value=? WHERE id=?",
+                         (json.dumps({**lim, "max_keywords": RANK_KEYWORDS_CAP}), r["id"]))
+            conn.commit()
 
     _import_legacy_yaml(conn)
 
@@ -1024,7 +1058,10 @@ def connect(home: Path | None = None) -> sqlite3.Connection:
     # ProgrammingError → 500 이다(동시 요청에서만 난다 — 순차면 같은 스레드를 재사용해
     # 우연히 맞는다). 커넥션은 호출마다 새로 열고 한 요청만 쓰므로 스레드를 순서대로
     # 넘겨받을 뿐 동시에 쓰이지 않는다 — 그래서 이 검사를 풀어도 안전하다.
-    conn = sqlite3.connect(dbp, check_same_thread=False)
+    # timeout=60 — 묶음 런은 여러 단계가 한 Brain 을 동시에 쓴다(run_all.run_chain). 여는
+    # 순간 _migrate 가 쓰기를 하므로, 다른 단계가 쓰기 잠금을 쥔 동안 열면 기본 5초로는
+    # 'database is locked' 가 난다(재현함). collector.BUSY_TIMEOUT_MS 와 같은 값.
+    conn = sqlite3.connect(dbp, check_same_thread=False, timeout=60)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     _register_norm(conn)
@@ -1255,6 +1292,12 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
 # name·domain·type·locale·gsc_property·ga4_property 도 없다 — projects 컬럼이 정본이다.
 SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
                 "surfaces_ai", "serp_depth", "limits")
+# 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
+# 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
+# collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).
+RANK_KEYWORDS_CAP = 500
+# 사이트 등록 폼이 박아 두던 limits 그대로의 모양 — _migrate 가 이것만 새 상한으로 올린다.
+LEGACY_LIMITS = {"max_keywords": 100, "max_ai_prompts": 30}
 # project_cfg 가 얹어 주는 projects 행의 값 — 부르는 쪽은 예전 yaml dict 과 같은 모양을
 # 받는다(cfg["name"]·cfg.get("domain") … 을 그대로 쓴다).
 _CFG_ROW_KEYS = ("name", "type", "domain", "locale", "gsc_property", "ga4_property")
@@ -1893,6 +1936,45 @@ def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
                              "tables": r["tables"], "lists": r["lists"],
                              "images": r["images"], "videos": r["videos"]}
     return out
+
+
+def serp_tasks_pending(conn: sqlite3.Connection, project: str, keep_days: float) -> list:
+    """이 사이트가 맡겨 두고 아직 적재 안 한 순위 과제들 (새것부터).
+
+    keep_days 보다 오래된 것은 먼저 지운다 — 제공자가 그 결과를 더는 안 준다
+    (보관 기간의 정본은 serp_adapter.QUEUE_KEEP_DAYS). 못 받을 id 를 쥐고 있으면
+    다음 런이 그 키워드를 새로 맡기지 않고 없는 결과를 기다린다.
+    """
+    conn.execute("DELETE FROM serp_tasks WHERE julianday(posted_at) < julianday('now') - ?",
+                 (float(keep_days),))
+    conn.commit()
+    return conn.execute("SELECT * FROM serp_tasks WHERE project=? ORDER BY id DESC",
+                        (project,)).fetchall()
+
+
+def add_serp_tasks(conn: sqlite3.Connection, project: str, rows) -> int:
+    """맡긴 과제 id 를 남긴다 — rows: (keyword, locale, device, depth, task_id).
+
+    맡긴 **직후** 부른다(결과를 기다리기 전에). 기다리다 죽거나 10분을 넘겨도 돈 낸
+    과제가 남아 있어야 다음 런이 받아 온다.
+    """
+    rows = list(rows)
+    conn.executemany("""INSERT OR IGNORE INTO serp_tasks(project, keyword, locale, device, depth,
+                                                         task_id, posted_at)
+                        VALUES(?,?,?,?,?,?,?)""",
+                     [(project, *r, sql_ts(now())) for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def drop_serp_tasks(conn: sqlite3.Connection, task_ids) -> None:
+    """적재를 마쳤거나 다시 받을 수 없는 과제 id 를 지운다."""
+    ids = list(task_ids)
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        conn.execute(f"DELETE FROM serp_tasks WHERE task_id IN ({','.join('?' * len(part))})",
+                     part)
+    conn.commit()
 
 
 def serp_outlines_stale(conn: sqlite3.Connection, urls, *,

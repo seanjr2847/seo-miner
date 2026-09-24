@@ -10,7 +10,8 @@
 대상 URL: 기회에 걸린 검색어의 페이지 → 노출 상위 페이지 순. 고칠 자리부터 본다.
 
 비용: 없다. 남의 API 가 아니라 내 사이트를 여는 것뿐이다. 대신 내 서버에 요청이
-가므로 throttle 을 기본 0.5초로 두고, 상한(page_urls, 기본 40)을 넘지 않는다.
+가므로 동시 개수를 fanout.LIMITS["own_site"] 로 묶고 일꾼마다 throttle(기본 0.5초)을 두며, 상한
+(page_urls, 기본 40)을 넘지 않는다.
 
 의존성: requests + stdlib html.parser. HTML 파서를 새로 들이지 않는다 —
 여기서 필요한 것은 head 몇 줄과 태그 개수라 정규 파서 하나면 충분하다.
@@ -31,6 +32,7 @@ from urllib.parse import urljoin
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -434,6 +436,10 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     return uniq[:limit]
 
 
+# 없는 페이지 — 오류가 아니라 사실(collect 의 one 이 가른다)
+GONE_STATUS = (404, 410)
+
+
 def fetch(url: str, timeout: int | None = None) -> dict:
     """URL 한 장. 실패도 한 줄로 남긴다 — "못 가져왔다"는 것 자체가 진단이다."""
     import requests
@@ -490,19 +496,30 @@ def collect(project: str, *,
 
         rows: list[dict] = []
 
-        def one(url: str) -> None:
-            row = fetch(url)
+        def one(url: str, row: dict) -> None:
+            # 가져오기(fetch)는 일꾼이 동시에 하고, 여기는 이 스레드가 urls 순서대로
+            # 받는다(fanout) — rows 순서·오류 목록이 순차일 때와 같다.
             # 행은 남긴다 — page_audits.error 는 "못 가져왔다"를 적는 진짜 칸이다.
             # 하지만 거기서 끝내면 실패가 **데이터**가 되어 st.errors 를 못 지나간다:
             # URL 이 전부 죽어도 runs.notes 에 errors=0 이 적히던 자리다.
             rows.append(row)
+            # 404·410 은 못 가져온 게 아니라 "가져왔고 페이지가 없다"는 사실이다 — 깨진 백링크·
+            # 크롤 이슈 기회는 대상이 원래 없는 주소다. 이걸 오류로 세면 그런 기회가 열려
+            # 있는 동안 매 런이 errors>0 이 되고, 릴리스 게이트(test_remote)가 영영 빨갛다.
+            # 5xx·403·429·네트워크 실패는 그대로 오류다(진짜로 못 본 것).
+            if row.get("status") in GONE_STATUS:
+                print(f"  · {url} — 없는 페이지({row['status']}), 사실로 적습니다")
+                return
             if row.get("error"):
                 raise collector.ItemFailed(row["error"], status=row.get("status"))
             print(f"  ✓ {url} — title {len(row['title'] or '')}자 · "
                   f"본문 {row['words']}단어 · H1 {len(json.loads(row['h1_json']))}개")
 
         with st.record("pages") as r:
-            done = st.each(urls, one, label=lambda u: u)
+            # 내 사이트다 — 한 호스트에 동시 4개까지(fanout.LIMITS["own_site"]).
+            # throttle 은 일꾼마다 제 요청 뒤에 쉰다.
+            done = fanout.each(st, urls, lambda u: fetch(u), one,
+                               workers=fanout.LIMITS["own_site"], label=lambda u: u)
             checked = str(date.today())
             db.write_page_audits(conn, p["id"], checked, rows)
             r.api_calls = done
@@ -670,7 +687,56 @@ def _selfcheck() -> None:
     db._migrate(old_db)
     cols = {r["name"] for r in old_db.execute("PRAGMA table_info(page_audits)")}
     assert {"tables", "lists", "h2_questions", "lead_words", "author"} <= cols, cols
+
+    _concurrency_check(conn)
     print("collect_page self-check ok")
+
+
+def _concurrency_check(conn) -> None:
+    """동시에 가져오되 적재는 한 스레드·urls 순서 — 가짜 fetch 로 돈다(네트워크 0).
+
+    앞 URL 일수록 늦게 끝나게 해서, 끝난 순서대로 적으면 page_audits 순서가 뒤집히게
+    만든다. conn 은 fanout.MainThreadOnly 로 싸서 일꾼이 만지면 바로 터진다.
+    """
+    import contextlib
+    import io
+    import threading
+    import time
+
+    import fanout
+    urls = [f"https://c.kr/p{i}" for i in range(8)]
+    lock = threading.Lock()
+    live = {"now": 0, "peak": 0}
+    on: set[int] = set()
+
+    def slow(url, timeout=None):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+            on.add(threading.get_ident())
+        time.sleep(0.01 * (8 - int(url.rsplit("p", 1)[1])))
+        with lock:
+            live["now"] -= 1
+        if url.endswith("p3"):
+            return {"url": url, "status": 503, "error": "HTTP 503"}
+        if url.endswith("p5"):              # 없는 페이지는 사실이지 오류가 아니다
+            return {"url": url, "status": 404, "error": "HTTP 404 · text/html"}
+        return audit_html(url, "<html><head><title>t</title></head><body><h1>h</h1></body></html>")
+
+    g = globals()
+    orig = g["target_urls"], g["fetch"]
+    g["target_urls"], g["fetch"] = (lambda c, pid, limit: list(urls)), slow
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            res = collect("p", conn=fanout.MainThreadOnly(conn), throttle=0)
+    finally:
+        g["target_urls"], g["fetch"] = orig
+    assert (res.ok, res.partial, [e.item for e in res.errors]) == (True, True, [urls[3]]), res
+    got = [r["url"] for r in conn.execute(
+        "SELECT url FROM page_audits WHERE url LIKE 'https://c.kr/p%' ORDER BY id")]
+    assert got == urls, f"적재 순서가 urls 순서가 아니다: {got}"
+    assert 1 < live["peak"] <= fanout.LIMITS["own_site"], f"동시 상한: peak={live['peak']}"
+    assert threading.get_ident() not in on, "fetch 가 메인 스레드에서 돌았다"
 
 
 if __name__ == "__main__":

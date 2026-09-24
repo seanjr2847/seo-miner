@@ -479,6 +479,9 @@ class Stage:
         return self.done(**kw)
 
 
+BUSY_TIMEOUT_MS = 60_000
+
+
 def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
     """수집기 한 단계를 연다 — with 에 넣으면 conn 수명이 러너 것이 된다.
 
@@ -492,6 +495,10 @@ def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
     own = conn is None
     if own:
         conn = db.connect()
+        # 묶음 런은 단계 여럿이 같은 Brain 에 동시에 쓴다(run_all._run_groups). SQLite 는
+        # 쓰기를 한 번에 하나로 줄 세우고, 기다리다 기본 5초가 넘으면 "database is
+        # locked" 로 그 항목을 버린다 — 넉넉히 기다리게 한다. 빌린 conn 은 빌려준 쪽 것이다.
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     try:
         p = db.get_project(conn, name)
     except BaseException:

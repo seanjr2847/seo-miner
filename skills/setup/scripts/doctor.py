@@ -237,6 +237,14 @@ CAPABILITIES = (
             "따로 봅니다. 더 싸게 쓰시려면 https://serper.dev 도 됩니다 — 무료 "
             "2,500콜에 카드가 필요 없고, 대신 구글 AI 요약은 못 봅니다.",
      "owner": "server", "blocking": False},
+    {"id": "vitals", "name": "속도 측정",
+     "desc": "PageSpeed Insights 로 LCP·INP·CLS 측정 (무료, 키 없이도 돎)",
+     # 키 없이 도는 무료 항목이라 keys 는 비운다(keys 가 있으면 '유료·발급처 필수' 축이다).
+     # 선택 키 PAGESPEED_API_KEY 는 하루 한도만 키운다 — 한도에 걸린 날은 실패가 아니라
+     # 그 단계만 건너뛴다(사유 문구의 정본은 collect_vitals.QUOTA_REASON). 넣었는지는
+     # diagnose 의 keys["pagespeed"] 가 말한다.
+     "cost": "무료", "keys": (), "url": "", "fix": None,
+     "owner": "server", "blocking": False},
 )
 
 # 구글 연결이 잠겼을 때 **웹 사용자**에게 할 말. 키는 위 gsc fix 와 같은 3-상태다
@@ -405,6 +413,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "dataforseo": bool(os.environ.get("DATAFORSEO_LOGIN")
                            and os.environ.get("DATAFORSEO_PASSWORD")),
         "serper": bool(os.environ.get("SERPER_API_KEY")),
+        # 선택 키 — 없어도 속도 측정은 돈다. 있으면 PageSpeed 하루 한도가 커진다.
+        "pagespeed": bool(os.environ.get("PAGESPEED_API_KEY")),
         # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
         # 붙었나"다 — 인증 파일이 놓였나가 아니다.
         "gsc_service_account": gsc_conn,
@@ -424,6 +434,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "ai": core_ok and keys["openrouter"],
         "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
         "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
+        "vitals": core_ok,
     }
     gsc_fix_state = ("deps" if gsc_mode and not all(deps_gsc.values())
                      else "pending" if gsc_pending else "none")

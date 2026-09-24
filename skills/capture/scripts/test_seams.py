@@ -636,9 +636,10 @@ def test_seam_14_locale_list_single_source():
 def test_seam_15_dataforseo_calls_go_through_pacer():
     """15) DataForSEO 로 나가는 요청은 전부 `_dfs_call` 을 지나야 한다.
 
-    Live 엔드포인트는 계정당 분당 12회다. 간격을 지키는 자리는 `_dfs_call` 하나뿐이라,
-    새 축이 `requests.post` 를 직접 쓰면 그 경로만 조용히 10배로 던지고 429 를 맞는다
-    (그게 ADR 0002 의 `errors=100` 이었다). 자체점검 안의 문자열은 제외한다.
+    간격(경로별 — 정본은 `serp_adapter.PACED`: Google Ads 와 tasks_ready 만 쉰다)과
+    429·402·5xx 재시도를 지키는 자리는 `_dfs_call` 하나뿐이라, 새 축이 `requests.post` 를
+    직접 쓰면 그 경로만 한도를 모른 채 던지고 429 를 맞는다(그게 ADR 0002 의
+    `errors=100` 이었다). 자체점검 안의 문자열은 제외한다.
     """
     src = (SCRIPTS / "serp_adapter.py").read_text("utf-8")
     body = src.split("def _selfcheck(")[0]      # 검사 코드의 URL 문자열은 호출이 아니다
@@ -649,7 +650,7 @@ def test_seam_15_dataforseo_calls_go_through_pacer():
         near = "\n".join(lines[max(0, i - 3):i + 1])
         assert "_dfs_call(" in near, \
             f"serp_adapter.py:{i + 1} 의 DataForSEO 호출이 _dfs_call 을 안 지난다 — " \
-            f"이 경로만 분당 12회 한도를 안 지킨다:\n{near}"
+            f"이 경로만 간격·재시도를 안 지킨다:\n{near}"
     # 다른 파일이 DataForSEO 를 직접 부르면 어댑터를 지나지 않은 것이다
     for f in sorted(SCRIPTS.glob("*.py")) + sorted((ROOT / "server").glob("*.py")):
         if f.name in ("serp_adapter.py",) or f.name.startswith("test_"):
@@ -1202,14 +1203,18 @@ def test_seam_25_chart_library_single_source():
     assert "new Chart(" not in code(ctx["dash"]), "dash.html 이 차트를 직접 세운다"
 
 
-def test_seam_26_rank_aio_fields_and_play_come_from_server():
-    """26) [순위] 화면의 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다.
+def test_seam_26_aio_fields_and_play_come_from_server():
+    """26) 구글 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다 — 그리고 한 화면에만 있다.
 
-    화면(views/rank.html)은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
+    AI 요약은 [AI 인용] 화면(views/ai.html 의 #ai-aio)이 그린다(메뉴의 [AI 노출] 묶음 —
+    run_all.GROUPS). 화면은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
     읽고, 처방 문구는 d.aio_play[갈래] 로 찾는다. 10번은 최상위 키(d.*)만 본다 — 행 칸
     이름이 어긋나거나 갈래 이름이 d.aio_play 의 열쇠와 다르면 화면은 undefined 를 받아
-    인용처도 처방도 조용히 안 그린다. 그리고 예전처럼 화면이 AI 요약 처방을 따로 적으면
-    (옛 "H2 + 직답") 기회 패널과 두 벌이 된다 — 그 가지에는 한국어 문구가 없어야 한다.
+    인용처도 처방도 조용히 안 그린다. 화면이 AI 요약 처방을 따로 적으면(옛 "H2 + 직답")
+    기회 패널과 두 벌이 된다 — 폴백 가지에는 한국어 문구가 없어야 한다.
+
+    반대쪽: 재료가 순위 조회라도 [순위 추적](rank.html)은 AI 요약을 **안** 그린다. 두
+    화면이 같은 칸을 각자 그리면 문구·처방이 두 벌이 되고 한쪽만 낡는다.
     """
     ctx = _load()
     if ctx is None:
@@ -1218,12 +1223,23 @@ def test_seam_26_rank_aio_fields_and_play_come_from_server():
 
     import dashboard
     import scoring
-    src = (ctx["views"] / "rank.html").read_text("utf-8")
+    src = (ctx["views"] / "ai.html").read_text("utf-8")
     read_r = set(re.findall(r"\br\.(aio_\w+)", src))
     assert {"aio_domains", "aio_band"} <= read_r, \
-        f"rank.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
-    assert "RK_AIO_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
-        "rank.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
+        f"ai.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
+    assert "AI_AIO_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
+        "ai.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
+    assert "d.aio_gap" in src, "ai.html 이 서버의 빠진 검색어 목록(d.aio_gap)을 안 읽는다"
+    defs = _view_defs(ctx["views"])
+    assert "ai-aio" in defs["ai"]["sections"], "ai view-def sections 에 ai-aio 가 없다"
+
+    # 반대쪽 — 순위 화면의 코드(주석 제외)가 AI 요약 칸을 읽으면 두 벌이다
+    rank = (ctx["views"] / "rank.html").read_text("utf-8")
+    code = re.sub(r"/\*.*?\*/|<!--.*?-->", "", rank, flags=re.S)
+    code = re.sub(r"(^|[^:])//[^\n]*", r"\1", code)
+    left = sorted(set(re.findall(r"\b(?:r|d)\.(aio\w*)", code)))
+    assert not left, f"rank.html 이 아직 AI 요약을 그린다(두 벌 — 자리는 ai.html #ai-aio): {left}"
+    assert "ai-aio" not in (defs["rank"].get("sections") or ()), "rank view-def 에 ai-aio 가 남았다"
 
     # 실물 — AI 요약에 빠진 검색어 둘(1페이지 안·순위 없음)을 둔 Brain
     c = _sq.connect(":memory:")
@@ -1237,20 +1253,22 @@ def test_seam_26_rank_aio_fields_and_play_come_from_server():
                                aio_domains=["rival.example"])
     rk = dashboard._axis_rank(c, 1)
     c.close()
-    row = rk["ranks"][0]
-    assert read_r <= set(row), f"화면이 읽는데 순위 행에 없는 칸: {sorted(read_r - set(row))}"
-    bands = {r["aio_band"] for r in rk["ranks"]}
+    # 화면이 읽는 행은 aio_gap_ranks(빠진 검색어) — 그 행에 칸이 다 있어야 한다
+    rows = list(rk["aio_gap_ranks"].values())
+    assert rows, "aio_gap_ranks 가 비었다 — 검사가 헛돈다"
+    for row in rows:
+        assert read_r <= set(row), f"화면이 읽는데 행에 없는 칸: {sorted(read_r - set(row))}"
+    bands = {r["aio_band"] for r in rows}
     assert bands == set(scoring.AIO_BANDS), bands
     assert bands <= set(rk["aio_play"]), \
         f"행의 갈래가 d.aio_play 의 열쇠에 없다: {sorted(bands - set(rk['aio_play']))}"
 
-    # 화면의 AI 요약 가지는 서버 문구를 붙이기만 한다 — 자기 문구(한국어 글자)가 없다
-    body = src[src.index("function RK_playParts("):]
-    body = body[body.index("if (r.aio === 1 && !r.aio_cited)"):body.index("return [what")]
+    # 화면의 AI 요약 폴백 가지는 서버 문구를 붙이기만 한다 — 자기 문구(한국어 글자)가 없다
+    body = src[src.index("function AI_aioDetail("):]
+    body = body[body.index("const ap = AI_AIO_PLAY"):body.index("function AI_aioToggle(")]
     lits = [s for s in re.findall(r'"([^"]*)"|`([^`]*)`', body) for s in s
             if re.search(r"[가-힣]", s)]
-    assert not lits, f"rank.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
-
+    assert not lits, f"ai.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
 
 
 def test_seam_27_ai_rivals_single_count():
@@ -2506,6 +2524,184 @@ def test_seam_57_skill_settings_are_code_not_a_file():
     assert not stray.exists(), f"{stray} 가 되살아났다 — 읽는 곳이 없는 설정 파일이다"
     src = (SCRIPTS / "collector.py").read_text("utf-8")
     assert "yaml.safe_load" not in src, "collector 가 또 설정 파일을 읽는다 — 두 벌이다"
+
+
+def test_seam_58_groups_have_one_source():
+    """58) 묶음(메뉴 = 사용자의 질문 = 다시 재는 단위)의 정본은 run_all.GROUPS 한 벌이다.
+
+    화면은 view-def 에 "group": "<id>" 만 적고 이름·단계·주기는 페이로드(d.groups)로
+    받는다. 양쪽 끝을 같이 본다 — 뷰가 없는 묶음을 가리키면 레일에서 그 화면이 제목 없이
+    떨어지고, 묶음이 없는 화면을 가리키면 메뉴가 빈 제목을 세운다. 셸·애드온이 묶음
+    이름을 글자로 적으면 두 벌이다(예전 NAV_MANAGE·"측정/관리" 사본이 그랬다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import run_all
+    ids = [g["id"] for g in run_all.GROUPS]
+    assert len(ids) == len(set(ids)), f"묶음 id 가 겹친다: {ids}"
+    defs = _view_defs(ctx["views"])
+    for vid, v in defs.items():
+        assert v.get("group") in ids, \
+            f"views/{vid}.html 의 view-def group {v.get('group')!r} 가 run_all.GROUPS 에 없다 — 있는 것: {ids}"
+    for g in run_all.GROUPS:
+        for vid in g["views"]:
+            assert vid in defs, f"묶음 {g['id']} 의 화면 {vid!r} 가 뷰에 없다"
+            assert defs[vid]["group"] == g["id"], \
+                f"묶음 {g['id']} 가 {vid} 를 갖는다는데 view-def 는 {defs[vid]['group']!r} 라고 한다"
+    listed = [v for g in run_all.GROUPS for v in g["views"]]
+    assert sorted(listed) == sorted(defs), \
+        f"묶음에 안 든 화면·두 번 든 화면: {sorted(set(defs) ^ set(listed))} / 중복 {sorted({x for x in listed if listed.count(x) > 1})}"
+    # 이름은 페이로드에서만 온다 — 셸·애드온에 묶음 이름 글자가 있으면 두 벌이다
+    code = {"dashboard.html": ctx["shell"], "dash.html": ctx["dash"]}
+    for name, src in code.items():
+        bare = re.sub(r"/\*[\s\S]*?\*/|<!--[\s\S]*?-->", "", src)
+        bare = re.sub(r"(^|[^:])//[^\n]*", r"\1", bare)
+        # 기회 상태 라벨 '할 일'(OPP_LABEL·OPP_ST_OPT)은 묶음 이름과 글자만 같은 다른 말이다
+        bare = "\n".join(ln for ln in bare.splitlines()
+                         if "OPP_LABEL" not in ln and "OPP_ST_OPT" not in ln)
+        for g in run_all.GROUPS:
+            assert not re.search(r"[\"'`]" + re.escape(g["name"]) + r"[\"'`]", bare), \
+                f"{name} 이 묶음 이름 {g['name']!r} 를 글자로 적는다 — 정본은 run_all.GROUPS(d.groups)"
+    d = _gather("seam58")
+    assert [g["id"] for g in d["groups"]] == ids, "페이로드 d.groups 가 run_all.GROUPS 와 다르다"
+    for g, src in zip(d["groups"], run_all.GROUPS):
+        assert g["name"] == src["name"] and g["stages"] == list(src["stages"]) \
+            and g["views"] == list(src["views"]), f"페이로드 묶음 {g['id']} 가 정본과 다르다: {g}"
+
+
+def test_seam_59_every_stage_has_a_group():
+    """59) run_all.STAGES 의 단계는 전부 어느 묶음이나 꼬리(TAIL)에 든다.
+
+    어디에도 안 든 단계는 묶음 재기로도 전체 재기로도 안 돈다(plan 이 합집합이라 빠진
+    단계는 조용히 사라진다) — 화면에 버튼이 없으니 아무도 모른다. 꼬리는 모든 재기에
+    붙으므로 묶음에 또 적지 않는다. 두 묶음이 나눠 갖는 단계는 rank 하나다(검색 성과와
+    AI 노출이 같은 순위 조회를 쓴다 — 한 런에서 한 번만 돈다). 다른 단계가 겹치면 그
+    단계는 누른 적 없는 묶음의 시계까지 흔든다.
+    """
+    import run_all
+    names = set(run_all.VALID_STAGE_NAMES)
+    tail = set(run_all.TAIL)
+    assert tail <= names and set(run_all.DAILY) <= names, "TAIL·DAILY 에 없는 단계 이름"
+    owners = {n: [g["id"] for g in run_all.GROUPS if n in g["stages"]] for n in names}
+    lost = sorted(n for n in names if not owners[n] and n not in tail)
+    assert not lost, f"어느 묶음에도 꼬리에도 안 든 단계(재기에서 안 돈다): {lost}"
+    both = sorted(n for n in tail if owners[n])
+    assert not both, f"꼬리 단계를 묶음에 또 적었다(두 벌): {both}"
+    shared = sorted(n for n in names if len(owners[n]) > 1)
+    assert shared == ["rank"], f"두 묶음이 나눠 갖는 단계는 rank 하나여야 한다: {shared}"
+    stray = sorted(set(s for g in run_all.GROUPS for s in g["stages"]) - names)
+    assert not stray, f"묶음이 없는 단계를 가리킨다: {stray}"
+    assert set(run_all.plan(None)) == names, \
+        f"전체 재기가 안 도는 단계: {sorted(names - set(run_all.plan(None)))}"
+    # 매일 런(DAILY)은 버튼 없는 [할 일]의 시계다 — 검색 성과를 다시 재면 같이 돈다
+    assert set(run_all.DAILY) <= set(run_all.GROUP_BY_ID["search"]["stages"]), \
+        "매일 런 단계가 검색 성과 묶음에 없다"
+
+
+def test_seam_60_screens_run_only_groups_that_exist():
+    """60) 화면이 POST /api/run 에 싣는 groups 는 run_all 이 받는 묶음뿐이다.
+
+    버튼의 묶음 id 는 페이로드(d.groups[].id)에서 온다 — 셸이 글자로 적으면 이름이 바뀐
+    날 400 이 되고, 사용자는 "다시 재기"를 눌렀는데 아무것도 안 돈다. 셸은 잴 단계가 있는
+    묶음에만 버튼을 단다([관리]는 run_all.group_names 가 거절한다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import run_all
+    runnable = set(run_all.RUNNABLE_GROUPS)
+    # 글자로 적힌 groups 값(본문·명령)은 전부 받는 묶음이어야 한다
+    srcs = {"dashboard.html": ctx["shell"], "dash.html": ctx["dash"]}
+    srcs.update({p.name: p.read_text("utf-8") for p in sorted(ctx["views"].glob("*.html"))})
+    for name, src in srcs.items():
+        for m in re.finditer(r"groups\s*:\s*[\"'`]([a-z][a-z_,]*)[\"'`]|--groups[ =]([a-z][a-z_,]*)",
+                             src):
+            got = [x for x in (m.group(1) or m.group(2)).split(",") if x]
+            bad = [x for x in got if x not in runnable]
+            assert not bad, f"{name} 이 없는 묶음으로 재기를 부른다: {bad}"
+    # 버튼 → 본문: data-grp 는 페이로드 묶음의 id, 본문은 그 값
+    sh = ctx["shell"]
+    assert 'data-grp="${esc(g.id)}"' in sh, "묶음 버튼의 id 가 페이로드 묶음(g.id)에서 오지 않는다"
+    assert "g.stages && g.stages.length" in sh, "잴 단계 없는 묶음에도 버튼을 단다"
+    assert re.search(r'post\("/api/run",\s*gid \? \{project, groups: gid\}', sh), \
+        "[이 묶음 다시 재기]가 POST /api/run {project, groups} 를 안 보낸다"
+    d = _gather("seam60")
+    with_btn = [g["id"] for g in d["groups"] if g["stages"]]
+    assert with_btn and set(with_btn) <= runnable, \
+        f"버튼이 서는 묶음 중 run_all 이 안 받는 것: {sorted(set(with_btn) - runnable)}"
+    for gid in with_btn:
+        assert run_all.group_names(gid) == [gid], gid
+
+
+def test_seam_61_server_and_local_accept_the_same_groups():
+    """61) 호스팅(server/app.py)과 로컬 대시보드(dashboard.py)의 /api/run 이 같은 묶음을 받는다.
+
+    화면은 두 배포에서 같은 본문을 보낸다. 판정이 두 벌이면 한쪽만 새 묶음을 모르고 400
+    이다(6번이 경로의 존재만 보듯, 이건 받는 값을 본다). 둘 다 run_all.group_names 한 벌을
+    거친다 — 로컬은 실제로 요청을 흘려 보고(띄우는 자리만 갈아 끼운다), 호스팅은 라우트가
+    같은 함수를 부르는지와 상태 칸(/api/run/status 의 groups)이 같은 묶음을 싣는지 본다.
+    호스팅의 대기열·합치기 동작은 server/test_app.py 의 _groups_demo 가 실물로 본다.
+    """
+    import inspect
+
+    import dashboard
+    import run_all
+    srv = _server()
+    if srv is None:
+        return
+    host = inspect.getsource(srv.api_run)
+    assert "run_all.group_names(" in host and 'body.get("groups")' in host, \
+        "호스팅 /api/run 이 묶음을 run_all.group_names 로 판정하지 않는다 — 두 벌이다"
+    local = inspect.getsource(dashboard._LocalRuns.request) + inspect.getsource(dashboard.run_route)
+    assert "group_names(" in local and 'body.get("groups")' in local, \
+        "로컬 /api/run 이 묶음을 run_all.group_names 로 판정하지 않는다 — 두 벌이다"
+    runs = dashboard._LocalRuns(spawn=lambda argv, project: None)
+    try:
+        for gid in run_all.RUNNABLE_GROUPS:
+            assert runs.request("_seam61", gid)["ok"], gid
+        for bad in ("admin", "없는묶음"):
+            try:
+                runs.request("_seam61", bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"로컬이 {bad!r} 묶음을 받았다 — 호스팅은 400 이다")
+    finally:
+        t = runs.sites.get("_seam61", {}).get("timer")
+        if t is not None:
+            t.cancel()
+    import server.store as store
+    assert "_groups().RUNNABLE_GROUPS" in inspect.getsource(store.group_clocks), \
+        "호스팅 상태 칸(groups)이 run_all.RUNNABLE_GROUPS 를 안 싣는다"
+    assert '"groups": store.group_status(' in inspect.getsource(srv.api_run_status), \
+        "호스팅 /api/run/status 가 사이트별 groups 칸을 안 싣는다 — 셸 grpStatus 가 읽는다"
+
+
+def test_seam_62_google_ai_overview_lives_on_the_ai_screen():
+    """62) 구글 AI 요약은 [AI 노출] 묶음의 [AI 인용] 화면에 산다 — 순위 화면에는 없다.
+
+    재료는 순위 조회(rank)라서, 옮겨 간 뒤로도 세 끝이 맞아야 한다: AI 노출 묶음을 다시
+    재면 rank 가 돈다(안 돌면 버튼을 눌러도 요약 칸이 안 바뀐다), '구글 AI 요약 빠짐'
+    기회의 [자세히 보는 화면]이 ai 화면의 #ai-aio 를 가리킨다(순위 화면을 가리키면 없는
+    칸으로 떨어진다), 그리고 순위 화면에는 AI 요약 문구가 남지 않는다(두 벌). 칸·처방이
+    서버 것 그대로인지는 26번이 본다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import run_all
+    import scoring
+    defs = _view_defs(ctx["views"])
+    assert defs["ai"]["group"] == "ai" and "ai-aio" in defs["ai"]["sections"], defs["ai"]
+    assert "rank" in run_all.group_stages(defs["ai"]["group"]), \
+        "AI 노출 묶음이 rank 를 안 돌린다 — AI 요약 칸의 재료다"
+    k = next(k for k in scoring.KINDS if k.name == "aio_exposure")
+    assert tuple(k.see) == ("ai", "ai-aio"), f"aio_exposure 의 see 가 {k.see} — ai 화면 #ai-aio 여야 한다"
+    rank = (ctx["views"] / "rank.html").read_text("utf-8")
+    code = re.sub(r"/\*.*?\*/|<!--.*?-->", "", rank, flags=re.S)
+    code = re.sub(r"(^|[^:])//[^\n]*", r"\1", code)
+    assert "AI 요약" not in code, "rank.html 코드에 'AI 요약' 문구가 남았다 — 자리는 ai.html #ai-aio"
+    assert 'id="rk-aio' not in code and "ai-aio" not in code, "rank.html 에 AI 요약 섹션이 남았다"
 
 
 if __name__ == "__main__":

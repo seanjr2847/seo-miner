@@ -147,7 +147,7 @@ def fetch(path: str, **kw) -> bytes:
 
 # ── 런 ──────────────────────────────────────────────────────────────────────
 
-def run(project: str, stages, opts: dict) -> int:
+def run(project: str, stages, opts: dict, groups: str | None = None) -> int:
     """POST /api/run → 로그를 흘려받아 print → 끝나면 로컬 사본을 갱신한다.
 
     **pull 실패가 런을 실패로 만들지 않는다** — 측정은 이미 성공했고 결과는 서버에
@@ -156,7 +156,7 @@ def run(project: str, stages, opts: dict) -> int:
     런이 실패했어도 사본은 받는다 — 실패한 단계 하나 때문에 성공한 아홉 단계의
     측정치를 로컬에 안 남기면 사용자만 손해다.
     """
-    rc = _stream(project, stages, opts)
+    rc = _stream(project, stages, opts, groups)
     try:
         pull(project)
     except (Exception, SystemExit) as e:   # _raw 는 거절을 SystemExit 로 낸다
@@ -191,7 +191,7 @@ def _run_verdict(project: str) -> int:
     return 1
 
 
-def _stream(project: str, stages, opts: dict) -> int:
+def _stream(project: str, stages, opts: dict, groups: str | None = None) -> int:
     """POST /api/run → /api/run/log 폴링 → 받은 텍스트를 그대로 print.
 
     서버가 이미 print_summary 까지 찍어 놓은 것을 흘려받는 것이라, 여기서는
@@ -203,9 +203,17 @@ def _stream(project: str, stages, opts: dict) -> int:
 
     로그가 끝나면 성패는 _run_verdict 가 따로 묻는다 — 이 폴링만으로는 "끝났다"
     까지밖에 알 수 없다.
+
+    groups(묶음 id, 쉼표)를 주면 그 묶음만 다시 잰다 — 서버가 대기열로 받는다. 이미 도는
+    런이 있으면 그게 끝난 뒤 이어서 돌고, 로그도 이어 붙으므로 여기서는 그대로 흘려받는다.
     """
-    api("POST", "/api/run",
-        json={"project": project, "stages": ",".join(stages), "opts": opts})
+    body = {"project": project, "stages": ",".join(stages), "opts": opts}
+    if groups:
+        body["groups"] = groups
+    resp = api("POST", "/api/run", json=body) or {}
+    if resp.get("queued"):
+        print("지금 도는 수집이 있어 대기열에 올렸습니다 — 그게 끝나면 이어서 돕니다.",
+              file=sys.stderr)
 
     since, started, deadline = 0, False, time.time() + START_WAIT
     while True:
@@ -664,7 +672,8 @@ def opts_of(args, stage: str) -> dict:
 def _chain_plan(args) -> tuple[list, dict]:
     """run_all 용 — 전체 런이지만 --only/--skip/--opt 는 살려서 보낸다.
 
-    비워 보내면 서버가 주기 판정까지 갱신하는 '정규 런'이 된다(store.request_run).
+    비워 보내면 서버가 전체 재기(모든 묶음, 묶음 시계까지 찍는 '정규 런')로 받는다.
+    묶음만 고른 것(--groups)은 여기가 아니라 dispatch 가 따로 싣는다.
     --only 를 준 사용자가 전체 런 비용을 무는 것보다 그 단계만 도는 게 맞다.
     """
     import run_all
@@ -696,7 +705,12 @@ def dispatch(args, stage: str | None) -> bool:
         return True
 
     stages, opts = _chain_plan(args) if stage is None else ([stage], opts_of(args, stage))
-    rc = run(project, stages, opts)
+    # run_all --groups search,ai — 서버가 같은 묶음 표(run_all.GROUPS)로 받는다.
+    groups = getattr(args, "groups", None) if stage is None else None
+    if groups and stages:
+        # 서버도 400 으로 막지만, 돈 드는 쪽에 가기 전에 여기서 사람 말로 멈춘다.
+        sys.exit("--groups 는 --only/--skip 과 같이 쓸 수 없습니다.")
+    rc = run(project, stages, opts, groups)
     if rc:
         sys.exit(rc)
     return True
@@ -932,6 +946,47 @@ def _selfcheck() -> None:
         with contextlib.redirect_stdout(io.StringIO()):
             unlink()
         assert config() is None and owns("a") is False, "끊었는데 원격이 남았다"
+
+        # ── 9b. run_all --groups — 묶음이 본문에 실려 가고, 도는 중이면 대기열이라고 말한다
+        calls.clear()
+        posted = []
+
+        def fake_g(method, url, **kw):
+            calls.append((method, url, kw))
+            if url.endswith("/api/projects"):
+                return _Resp(200, ["mysite"])
+            if url.endswith("/api/run"):
+                posted.append(kw["json"])
+                return _Resp(200, {"ok": True, "started": False, "queued": True})
+            if "/api/run/log" in url:
+                since = kw["params"]["since"]
+                return _Resp(200, {"text": "x\n"[since:], "next": 2, "running": False})
+            if url.endswith("/api/run/status"):
+                return _Resp(200, {"mysite": {"running": False, "last_ok": 1}})
+            if url.endswith("/api/brain"):
+                return _Resp(404, {"detail": "없음"})
+            raise AssertionError(url)
+
+        globals()["_request"] = fake_g
+        with contextlib.redirect_stdout(io.StringIO()):
+            link("https://h.example/", "smt_secret")
+        errs = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errs):
+            assert dispatch(argparse.Namespace(project="mysite", dry_run=False, skip=None,
+                                               only=None, opt=None, groups="search,ai"),
+                            None) is True
+        assert posted[0] == {"project": "mysite", "stages": "", "opts": {},
+                             "groups": "search,ai"}, posted
+        assert "대기열" in errs.getvalue(), errs.getvalue()
+        try:
+            dispatch(argparse.Namespace(project="mysite", dry_run=False, skip="ai",
+                                        only=None, opt=None, groups="search"), None)
+            raise AssertionError("--groups 와 --skip 을 같이 받았다")
+        except SystemExit as e:
+            assert "--groups" in str(e), e
+        assert len(posted) == 1, "막아야 할 요청이 서버로 갔다"
+        with contextlib.redirect_stdout(io.StringIO()):
+            unlink()
 
         # ── 10. run_all(전체 체인) — --only 는 살리고 --opt 는 편다
         import run_all

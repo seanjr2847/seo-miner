@@ -7,7 +7,7 @@ process-global os.environ 을 잠깐 갈아끼우는 것으로 끝난다.
 CLI:
   python server/worker.py                              # demo — API 호출 없음
   python server/worker.py --all [--idle-days 30] ...   # 스케줄 대상 직렬 실행
-  python server/worker.py --user <id> --project <p> .. # 단일 사이트
+  python server/worker.py --user <id> --project <p> .. # 단일 사이트 (--groups / --only / --queue)
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import contextlib
 import io
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -28,6 +29,7 @@ import db                                     # noqa: E402
 import exports                                # noqa: E402
 import mailer                                 # noqa: E402
 import run_all                                # noqa: E402
+import scheduler                              # noqa: E402
 import settings                                # noqa: E402
 import store                                  # noqa: E402
 
@@ -169,29 +171,86 @@ class _Tee(io.StringIO):
         return n
 
 
+# 눌린 뒤 대기열을 가져가기까지 기다리는 시간(초). 이 안에 연달아 누른 묶음은 한 런으로
+# 합쳐진다 — [검색 성과] 누르고 곧바로 [AI 노출] 을 누른 사람에게 런 두 벌(= rank 두 번)을
+# 사게 하지 않는다. 길면 첫 버튼의 반응이 굼뜨다.
+MERGE_SECONDS = 5.0
+
+
+def _hand_off(conn, site) -> bool:
+    """런을 끝낸 **뒤** 대기열에 남은 묶음을 새 워커(--queue)에 넘긴다 — 반환: 넘겼나.
+
+    마지막 claim_queue 와 mark_done 사이에 누른 묶음은 대기열에 남는다(화면은 '대기 중').
+    다음 스케줄러 틱이 잡을 거라 믿으면 안 된다: scheduler.loop 는 스윕(최대 3시간)을
+    기다리는 동안 틱을 안 돈다 — 그동안 그 묶음은 아무도 안 도는 '대기 중'이다.
+    잡는 것은 mark_pending 하나다: 같은 순간 api_run 이 사이트를 idle 로 보고 워커를
+    띄우려 해도 둘 중 하나만 잡는다(두 벌 안 뜬다).
+    """
+    if not store.queued(conn, site["id"]) or not store.mark_pending(conn, site["id"]):
+        return False
+    store.save_run_log(conn, site["id"], "")
+    scheduler.dispatch("--user", str(site["user_id"]), "--project", site["project"], "--queue")
+    return True
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
-             only: str | None = None, opts: dict[str, dict] | None = None) -> dict:
+             only: str | None = None, opts: dict[str, dict] | None = None,
+             groups=None, queue: bool = False, merge_wait: float = MERGE_SECONDS) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
 
-    only 를 주면 그 단계만 돈다 — 웹에서 '구글 실적만 다시 읽기' 같은 부분 실행에 쓴다.
+    세 갈래다:
+      only   단계 몇 개만(부분 실행) — 순서대로, 주기 시계는 안 건드린다(mark_busy).
+      groups 묶음 런 — 묶음을 동시에 돌리고 그 묶음들의 시계를 찍는다(mark_groups).
+             둘 다 없으면 전체 재기(모든 묶음)다 — 예전 '인자 없는 단일 실행'의 뜻 그대로.
+      queue  화면·원격이 누른 대기열을 가져가 돈다(app.api_run 이 띄운다). 가져가기 전에
+             merge_wait 초 기다린다 — 그 사이 누른 묶음이 같은 런으로 합쳐진다.
+
+    한 런이 끝나면 **대기열을 다시 본다**: 도는 동안 누른 묶음이 있으면 이어서 돈다
+    (라운드). 다음 라운드는 앞 라운드에서 잘 돈 공유 단계(rank 등)를 다시 사지 않는다 —
+    run_chain(ran=…). 꼬리(gaps·pages·report)는 매 라운드 다시 돈다: 새로 잰 것으로
+    기회를 다시 세워야 한다.
+
     opts 는 `--opt STAGE.KEY=VALUE` 로 들어온 단계별 노브다(원격 CLI 가 쓴다).
 
     체인이 뱉는 내레이션은 그대로 잡아 sites.run_log 에 둔다 — 원격 CLI 는 자기가
-    요약표를 다시 만들지 않고 이걸 받아 그대로 print 한다(문구는 한 벌이다).
+    요약표를 다시 만들지 않고 이걸 받아 그대로 print 한다(문구는 한 벌이다). 라운드가
+    이어지면 로그도 이어 붙는다(원격은 문자 오프셋으로 폴링한다 — 지우면 오프셋이 깨진다).
     ponytail: 런당 1벌만 보관. 이력이 필요해지면 runs 테이블로.
     """
     user_id = site["user_id"]
     project = site["project"]
-    # 시작 전에 찍는다. 끝나고 찍으면 (1) 등록 직후 트리거와 60초 스케줄러 틱이 겹쳐
-    # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
-    # 부분 실행(only)은 주기 시계를 안 건드린다 — 찍으면 주 1회 전체 런이 매번 밀린다.
-    if not dry_run:
-        (store.mark_busy if only else store.mark_run)(conn, site["id"])
-        store.save_run_log(conn, site["id"], "")     # 지난 런의 로그를 남기지 않는다
+    sid = site["id"]
+
+    if queue:
+        time.sleep(merge_wait)
+        groups = store.claim_queue(conn, sid)
+        if not groups:
+            # 남이 이미 가져갔거나(그 런이 돈다) 누른 것이 없다 — 대기 표시만 푼다.
+            store.clear_pending(conn, sid)
+            return {"user_id": user_id, "project": project, "ok": True, "rc": 0, "idle": True}
+    elif not only and not groups:
+        groups = list(run_all.RUNNABLE_GROUPS)
+
+    # 서버 DB 연결 하나를 조정 스레드(진행률)와 단계 스레드(로그 흘리기)가 같이 쓴다 —
+    # 한 연결을 두 스레드가 겹쳐 쓰지 않게 줄 세운다(run_all._run_groups 주석).
+    db_lock = threading.Lock()
 
     def save_log(text: str) -> None:
         if not dry_run:
-            store.save_run_log(conn, site["id"], text)
+            with db_lock:
+                store.save_run_log(conn, sid, text)
+
+    # 시작 전에 찍는다. 끝나고 찍으면 (1) 등록 직후 트리거와 60초 스케줄러 틱이 겹쳐
+    # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
+    # 부분 실행(only)은 주기 시계를 안 건드린다 — 찍으면 주 1회 전체 런이 매번 밀린다.
+    def start(groups_now, only_now) -> None:
+        if dry_run:
+            return
+        with db_lock:
+            if only_now:
+                store.mark_busy(conn, sid)
+            else:
+                store.mark_groups(conn, sid, run_all.covered(run_all.plan(groups_now)))
 
     # 로그는 단계 경계뿐 아니라 **단계 도중에도** 흘려 보낸다(_Tee 의 시간 스로틀) —
     # rank 한 단계가 14분이라 경계에서만 쓰면 그동안 화면이 멈춰 보인다.
@@ -199,10 +258,11 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     err = _Tee(sys.stderr, into=buf)          # 오류 줄도 같은 버퍼에, 순서대로
 
     # 화면이 폴링으로 읽는 값. 단계가 끝난 만큼만 센다 — 3단계를 시작한 시점의
-    # 진행률은 2/8 이지, 3/8 이 아니다.
+    # 진행률은 2/8 이지, 3/8 이 아니다. 묶음 런은 name 에 도는 단계들이 쉼표로 온다.
     def on_stage(idx, total, name):
         if not dry_run:
-            store.mark_stage(conn, site["id"], name, round((idx - 1) * 100 / total))
+            with db_lock:
+                store.mark_stage(conn, sid, name, round((idx - 1) * 100 / total))
             save_log(buf.getvalue())
 
     # 백링크는 하루 단위로 안 움직인다 — 자체 주기(기본 30일)로만 잰다.
@@ -212,21 +272,41 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     for name, kv in (opts or {}).items():
         chain_opts.setdefault(name, {}).update(kv)
 
-    ok, error, failed = False, "", []
+    if not dry_run:
+        store.save_run_log(conn, sid, "")     # 지난 런의 로그를 남기지 않는다
+    start(groups, only)
+
+    ok, error, failed, rc = False, "", [], 0
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
-            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
-                results = run_all.run_chain(project, dry_run=dry_run, skip=skip, only=only,
-                                            opts=chain_opts, on_stage=on_stage)
-                run_all.print_summary(project, results, dry_run=dry_run)
-            rc = run_all.chain_rc(results)
-            # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
-            # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
-            # 건너뜀은 실패가 아니다 — 실패인지 묻는 자리는 StageResult.failed 하나다.
-            # (여기가 `not r.ok` 이던 동안 GA4 미연결 같은 정상 사이트가 매 런 실패
-            #  메일을 받았다: Stage.skip() 이 ok=False 를 냈기 때문이다.)
-            failed = [(n, r.reason or "이유가 기록되지 않았습니다")
-                      for n, r in results if r.failed]
+            ran: set[str] = set()
+            rounds = 0
+            while True:
+                rounds += 1
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                    results = run_all.run_chain(
+                        project, dry_run=dry_run, skip=skip, only=only, opts=chain_opts,
+                        on_stage=on_stage, groups=None if only else groups, ran=ran)
+                    run_all.print_summary(project, results, dry_run=dry_run)
+                rc = max(rc, run_all.chain_rc(results))
+                # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
+                # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
+                # 건너뜀은 실패가 아니다 — 실패인지 묻는 자리는 StageResult.failed 하나다.
+                # (여기가 `not r.ok` 이던 동안 GA4 미연결 같은 정상 사이트가 매 런 실패
+                #  메일을 받았다: Stage.skip() 이 ok=False 를 냈기 때문이다.)
+                failed += [(n, r.reason or "이유가 기록되지 않았습니다")
+                           for n, r in results if r.failed]
+                # 다음 라운드가 다시 안 살 것 — 잘 돈 공유 단계. 꼬리는 늘 다시 돈다.
+                ran |= {n for n, r in results
+                        if r.ok and not r.skipped and n not in run_all.TAIL}
+                if dry_run:
+                    break
+                with db_lock:
+                    nxt = store.claim_queue(conn, sid)
+                if not nxt:
+                    break
+                groups, only = nxt, None
+                start(groups, only)
             ok = rc == 0
             error = "; ".join(f"{n}: {why}" for n, why in failed)
 
@@ -263,7 +343,7 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
             except Exception as e:
                 print(f"[{project}] 실패 알림 메일 건너뜀: {e}")
         return {"user_id": user_id, "project": project, "rc": rc, "ok": rc == 0,
-                "activated": n}
+                "activated": n, "rounds": rounds}
     except Exception as e:
         # 로그에도 남긴다 — 원격 CLI 는 이 텍스트가 전부라, 여기 없으면 사용자에게는
         # 런이 조용히 끊긴 것으로 보인다. 사용자에게는 한 문장, 진단에는 traceback.
@@ -273,20 +353,46 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
         return {"user_id": user_id, "project": project, "ok": False, "error": str(e)}
     finally:
         if not dry_run:
-            store.save_run_log(conn, site["id"], buf.getvalue())
+            store.save_run_log(conn, sid, buf.getvalue())
             # 마지막에 끈다 — 로그를 먼저 굳힌다. 결과도 여기서 같이 굳혀야
             # 예외로 죽은 런까지 화면에 실패로 남는다.
-            store.mark_done(conn, site["id"], ok=ok, error=error)
+            store.mark_done(conn, sid, ok=ok, error=error)
+            # 마지막 claim_queue 와 방금 mark_done 사이에 누른 묶음 — 새 워커에 넘긴다.
+            _hand_off(conn, site)
 
 
 def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
                 dry_run: bool = False, skip: str | None = None) -> list[dict]:
     """store.due_sites() 를 직렬로 돌린다 — tenant() 가 process-global env 를
-    갈아끼우므로 병렬은 안전하지 않다(스레드/프로세스 모두)."""
+    갈아끼우므로 사이트끼리 병렬은 안전하지 않다(스레드/프로세스 모두). 한 사이트
+    **안의** 묶음은 run_chain 이 동시에 돌린다(env 는 그 사이트 것 하나다).
+
+    사이트마다 주기를 넘긴 묶음(store.due_groups)과 대기열에 걸린 묶음을 한 런으로 돈다.
+
+    목록은 스윕을 시작할 때 한 번 읽는다 — 앞 사이트를 몇 분 도는 사이에 사람이 이
+    사이트의 버튼을 눌러 워커가 떴을 수 있다. 그래서 돌기 전에 사이트를 **원자적으로
+    잡는다**(store.claim_site). 못 잡으면 남이 도는 중이다 — 건너뛴다. 판정도 잡은 뒤
+    새로 읽은 행으로 한다.
+    """
     results: list[dict] = []
     for site in store.due_sites(conn, idle_days=idle_days, every_hours=every_hours):
-        print(f"[{site['user_id']}/{site['project']}] 시작")
-        r = run_site(conn, site, dry_run=dry_run, skip=skip)
+        fresh = site
+        if not dry_run:
+            fresh = store.claim_site(conn, site["id"])
+            if fresh is None:
+                print(f"[{site['user_id']}/{site['project']}] 건너뜀 — 다른 워커가 도는 중")
+                continue
+        want = set(store.due_groups(conn, fresh, every_hours))
+        if not dry_run:
+            want |= set(store.claim_queue(conn, site["id"]))
+        groups = [g for g in run_all.RUNNABLE_GROUPS if g in want]
+        if not groups:
+            if not dry_run:                   # 잡았는데 잴 것이 없다 — 잡은 것을 푼다
+                store.mark_done(conn, site["id"])
+                _hand_off(conn, site)
+            continue
+        print(f"[{site['user_id']}/{site['project']}] 시작 — {','.join(groups)}")
+        r = run_site(conn, site, dry_run=dry_run, skip=skip, groups=groups)
         results.append(r)
         print(f"[{site['user_id']}/{site['project']}] {'ok' if r.get('ok') else '실패'}")
     return results
@@ -305,6 +411,9 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
     ap.add_argument("--only", help="이 단계만 (쉼표 구분, 예: gsc)")
+    ap.add_argument("--groups", help="이 묶음만 (쉼표 구분, 없으면 전체) — run_all.GROUPS 의 id")
+    ap.add_argument("--queue", action="store_true",
+                    help="--user/--project 와 함께 — 화면이 누른 대기열을 가져가 돈다")
     # 형식·타입 추정의 정본은 run_all.parse_opts 다 — 여기서 다시 파싱하지 않는다.
     ap.add_argument("--opt", action="append", metavar="STAGE.KEY=VALUE",
                     help="단계별 옵션 (반복 지정). 예: --opt rank.device=mobile")
@@ -312,6 +421,8 @@ def main() -> int:
 
     if args.user is not None and not args.project:
         ap.error("--user 는 --project 와 함께 써야 합니다")
+    if args.only and args.groups:
+        ap.error("--only 와 --groups 는 같이 쓸 수 없습니다")
     if args.opt and args.all:
         # 조용히 무시하면 옵션을 줬다고 믿는 쪽이 틀린 결과를 맞는 결과로 읽는다.
         ap.error("--opt 는 --user/--project 단일 실행에만 쓸 수 있습니다")
@@ -328,8 +439,10 @@ def main() -> int:
             if site is None:
                 print(f"프로젝트 '{args.project}' 없음 (user={args.user})", file=sys.stderr)
                 return 1
+            groups = run_all.group_names(args.groups) if args.groups else None
             results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip,
-                                only=args.only, opts=run_all.parse_opts(args.opt))]
+                                only=args.only, opts=run_all.parse_opts(args.opt),
+                                groups=groups, queue=args.queue)]
     finally:
         conn.close()
 
@@ -363,7 +476,7 @@ def demo() -> None:
         called: list[dict] = []
 
         def fake_chain(project, *, dry_run=False, skip=None, only=None, opts=None,
-                       on_stage=None):
+                       on_stage=None, groups=None, ran=()):
             print("[가짜체인] 내레이션 한 줄")     # run_log 에 잡혀야 한다
             # 수집기의 오류 문장은 전부 stderr 다(collector.Stage.each) — 여태 화면
             # 로그에 한 줄도 안 실렸다. stdout 줄과 순서대로 섞여야 한다.
@@ -377,6 +490,9 @@ def demo() -> None:
                 "project": project,
                 "skip": skip,
                 "opts": opts,
+                "groups": groups,
+                "only": only,
+                "ran": set(ran or ()),
                 "capture_home": os.environ["CAPTURE_HOME"],
                 "openrouter": os.environ.get("OPENROUTER_API_KEY"),
                 "serper": os.environ.get("SERPER_API_KEY"),
@@ -385,6 +501,9 @@ def demo() -> None:
             })
             return []                       # run_chain 은 [(단계, StageResult)] 를 돌려준다
 
+        _real_chain[:] = [run_all.run_chain]      # 묶음 검사(_group_demo)가 진짜를 한 번 쓴다
+        # 워커가 워커를 띄우는 자리(_hand_off) — 검사에서 진짜 프로세스를 띄우면 안 된다.
+        scheduler.dispatch = lambda *a, **kw: _handed.append(a)
         run_all.run_chain = fake_chain
 
         results = run_all_due(conn)
@@ -541,6 +660,8 @@ def demo() -> None:
         assert row["last_ok"] == 0 and "체인이 터졌다" in (row["last_error"] or ""), tuple(row)
         run_all.run_chain = fake_chain
 
+        _group_demo(conn, uid, called)
+
         conn.execute("UPDATE users SET last_seen_at=datetime('now','-60 days')")
         conn.commit()
         before = len(called)
@@ -550,6 +671,167 @@ def demo() -> None:
 
         conn.close()                            # 윈도우: 열린 파일이 있으면 임시 디렉토리 삭제 실패
         print("worker: ok")
+
+
+def _group_demo(conn, uid, called) -> None:
+    """묶음 런 — 누른 묶음만 돌고 그 시계만 찍힌다, 몇 초 안에 누른 것은 한 런, 도는 중에
+    누른 것은 다음 라운드(공유 단계는 안 산다), 부분 실행은 시계를 안 건드린다,
+    동시 단계가 한 런 로그에 줄 단위로 온전히 모인다."""
+    import threading as _th
+    from collector import StageResult
+    site = lambda: store.sites(conn, uid)[0]           # noqa: E731
+    sid = site()["id"]
+    ALL = list(run_all.RUNNABLE_GROUPS)
+
+    def age(hours):
+        conn.execute("UPDATE site_groups SET last_run_at=datetime('now', ?) WHERE site_id=?",
+                     (f"-{hours} hours", sid))
+        conn.commit()
+
+    # 1. 누른 묶음만 돈다 — 시계도 그 묶음만(검색 성과는 매일 런까지 한 셈이다)
+    age(1000)
+    run_site(conn, site(), groups=["search"])
+    assert called[-1]["groups"] == ["search"] and called[-1]["only"] is None, called[-1]
+    due = store.due_groups(conn, site(), 168.0)
+    assert "search" not in due and "todo" not in due and "ai" in due, \
+        f"누른 묶음 말고 다른 시계까지 찍혔다: {due}"
+    # 2. 부분 실행(only)은 묶음 시계를 안 건드린다
+    before = store.group_clocks(conn, site())
+    run_site(conn, site(), only="gsc")
+    assert called[-1]["only"] == "gsc" and called[-1]["groups"] is None, called[-1]
+    assert store.group_clocks(conn, site()) == before, "부분 실행이 묶음 시계를 찍었다"
+
+    # 3. 몇 초 안에 연달아 누른 것은 한 런으로 — 워커가 기다렸다가 가져간다
+    n0 = len(called)
+    assert store.mark_pending(conn, sid)
+    store.queue_groups(conn, sid, ["ai"])
+    t = _th.Thread(target=lambda: run_site(conn, site(), queue=True, merge_wait=0.4))
+    t.start()
+    time.sleep(0.1)
+    c2 = store.connect()                                 # 화면의 두 번째 누름(다른 요청)
+    store.queue_groups(c2, sid, ["site"])
+    c2.close()
+    t.join()
+    assert len(called) == n0 + 1, f"연달아 누른 것이 런 {len(called) - n0}벌로 갈렸다"
+    assert called[-1]["groups"] == ["ai", "site"], called[-1]["groups"]
+    assert store.run_phase(site()) == "idle" and store.queued(conn, sid) == []
+
+    # 4. 가져갈 대기열이 없으면(남이 가져갔다) 대기 표시만 푼다 — 체인을 안 부른다
+    assert store.mark_pending(conn, sid)
+    r = run_site(conn, site(), queue=True, merge_wait=0)
+    assert r.get("idle") and len(called) == n0 + 1, r
+    assert store.run_phase(site()) == "idle", "빈 대기열인데 '대기 중'이 남았다"
+
+    # 5. 도는 중에 누른 것은 다음 라운드 — 앞 라운드에서 잘 돈 공유 단계는 안 산다
+    rounds = []
+
+    def chain(project, **kw):
+        rounds.append({"groups": kw.get("groups"), "ran": set(kw.get("ran") or ())})
+        if len(rounds) == 1:                            # 도는 동안 [AI 노출] 을 누른다
+            c3 = store.connect()
+            assert store.run_phase(store.site(c3, uid, project)) == "running"
+            store.queue_groups(c3, sid, ["ai"])
+            c3.close()
+        print(f"라운드 {len(rounds)}")
+        return [("rank", StageResult(ok=True)), ("gsc", StageResult(ok=False, reason="x")),
+                ("gaps", StageResult(ok=True))]
+
+    prev = run_all.run_chain
+    run_all.run_chain = chain
+    try:
+        r = run_site(conn, site(), groups=["search"])
+    finally:
+        run_all.run_chain = prev
+    assert [x["groups"] for x in rounds] == [["search"], ["ai"]], rounds
+    assert rounds[1]["ran"] == {"rank"}, \
+        f"다음 라운드가 공유 단계를 또 산다(또는 실패·꼬리까지 건너뛴다): {rounds[1]['ran']}"
+    assert r["rounds"] == 2 and r["ok"] is False, r
+    log = conn.execute("SELECT run_log FROM sites WHERE id=?", (sid,)).fetchone()[0]
+    assert log.index("라운드 1") < log.index("라운드 2"), "라운드 로그가 이어 붙지 않았다"
+
+    # 6. 진짜 run_chain(가짜 단계표)으로 — 동시 단계의 줄이 런 로그에 온전히, 진행률이 찍힌다
+    real = _real_chain[0]
+    seen_stage = []
+
+    def fake_stage(name):
+        def fn(project, *, dry_run=False, **opts):
+            for i in range(30):
+                print(name, "줄", i)                     # print 는 write 를 여러 번 부른다
+            # 자기 연결로 읽는다 — 워커의 conn 을 단계 스레드들이 겹쳐 쓰면 sqlite3 가
+            # InterfaceError 를 낸다(이 검사가 처음에 그렇게 흔들렸다: 워커가 db_lock 을
+            # 두는 이유와 같다).
+            c4 = store.connect()
+            try:
+                seen_stage.append(c4.execute("SELECT stage FROM sites WHERE id=?",
+                                             (sid,)).fetchone()[0])
+            finally:
+                c4.close()
+            return StageResult(ok=True)
+        return fn
+
+    table = tuple(s._replace(fn=fake_stage(s.name), is_paid=False) for s in run_all.STAGES)
+    run_all.run_chain = lambda project, **kw: real(project, stages=table,
+                                                   preflight=lambda s: {}, **kw)
+    try:
+        with store.tenant(conn, uid):                 # 가짜 단계도 Brain(WAL 전환)을 연다
+            pass
+        r = run_site(conn, site(), groups=["ai", "site"])
+    finally:
+        run_all.run_chain = prev
+    assert r["ok"], r
+    log = conn.execute("SELECT run_log FROM sites WHERE id=?", (sid,)).fetchone()[0]
+    for n in run_all.plan(["ai", "site"]):
+        for i in range(30):
+            assert f"[{n}] {n} 줄 {i}\n" in log, f"줄이 섞이거나 빠졌다: [{n}] {n} 줄 {i}"
+    assert any(s_ and "," in s_ for s_ in seen_stage), \
+        f"동시에 도는 단계가 진행 상태에 안 실렸다: {seen_stage}"
+
+    # 7. 스윕은 목록을 읽은 뒤 남이 잡은 사이트를 안 돈다 — 두 워커가 한 사이트를 같이 돈다
+    age(1000)
+    listed = store.due_sites(conn)
+    assert [r["id"] for r in listed] == [sid], "검사 전제: 이 사이트가 밀려 있어야 한다"
+    store.mark_busy(conn, sid)                        # 그 사이 [구글 실적만 다시 읽기]
+    real_due, n0 = store.due_sites, len(called)
+    store.due_sites = lambda *a, **kw: listed          # 스윕이 시작할 때 읽은 목록
+    try:
+        assert run_all_due(conn) == [], "남이 도는 사이트를 스윕이 또 돌았다"
+    finally:
+        store.due_sites = real_due
+    assert len(called) == n0, "남이 도는 사이트에서 체인이 또 불렸다 — 유료 단계가 겹친다"
+    assert store.run_phase(site()) == "running", "남이 도는 런의 표시를 스윕이 껐다"
+    store.mark_done(conn, sid)
+
+    # 8. 마지막 claim_queue 와 mark_done 사이에 누른 묶음 — 새 워커에 넘긴다
+    real_done = store.mark_done
+    pressed = []
+
+    def done_after_press(c, site_id, **kw):
+        if not pressed:
+            pressed.append(1)
+            c5 = store.connect()                       # 화면의 누름(다른 요청)
+            store.queue_groups(c5, sid, ["compete"])
+            c5.close()
+        return real_done(c, site_id, **kw)
+
+    _handed.clear()
+    store.mark_done = done_after_press
+    try:
+        run_site(conn, site(), groups=["search"])
+    finally:
+        store.mark_done = real_done
+    assert _handed and _handed[-1][-1] == "--queue" and str(uid) in _handed[-1], \
+        f"끝나는 순간 누른 묶음을 아무도 안 돈다(스윕 중이면 몇 시간): {_handed}"
+    assert store.run_phase(site()) == "pending", "넘기기 전에 '대기 중'으로 안 잡았다"
+    assert store.claim_queue(conn, sid) == ["compete"]
+    store.mark_done(conn, sid)
+    # 대기열이 비었으면 아무도 안 띄운다
+    _handed.clear()
+    run_site(conn, site(), groups=["search"])
+    assert not _handed, f"넘길 것이 없는데 워커를 띄웠다: {_handed}"
+
+
+_real_chain: list = []
+_handed: list = []
 
 
 if __name__ == "__main__":

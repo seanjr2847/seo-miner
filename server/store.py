@@ -66,7 +66,21 @@ CREATE TABLE IF NOT EXISTS sites (
   run_log TEXT,                       -- 이번 런의 화면 출력 (워커 stdout+stderr). 런당 1벌
   last_ok INTEGER,                    -- 마지막 런의 결과. 1=전부 성공, 0=실패한 단계 있음, NULL=아직
   last_error TEXT,                    -- 그 실패의 사람 말 (단계명: 이유; …)
+  run_groups TEXT,                    -- 지금 도는 런이 맡은 묶음 id (쉼표). run_phase() 참조
   UNIQUE(user_id, project)
+);
+-- 묶음별 시계와 대기열. 묶음의 정본은 run_all.GROUPS 다 — 여기는 id 만 적는다.
+-- 행이 없으면 시계는 sites.last_run_at 을 쓴다(group_clocks): 묶음 시계가 생기기 전에
+-- 이미 잰 사이트가 배포 직후 다섯 묶음을 한꺼번에 '밀렸다'로 보고 유료 런을 사지 않게.
+-- 그 빌려 쓰기는 **한 번뿐**이다 — 묶음 하나라도 찍기 전에 전 묶음의 행을 그 값으로
+-- 심는다(_seed_clocks). 안 심으면 sites.last_run_at 이 매일 런마다 새로 찍혀 행 없는
+-- 묶음이 그 시계를 빌려 영영 안 밀린다.
+CREATE TABLE IF NOT EXISTS site_groups (
+  site_id INTEGER NOT NULL REFERENCES sites(id),
+  grp TEXT NOT NULL,                  -- run_all.GROUPS 의 id
+  last_run_at TEXT,                   -- 이 묶음을 마지막으로 재기 시작한 시각 (UTC)
+  queued_at TEXT,                     -- 대기열에 오른 시각. NULL = 대기 없음
+  PRIMARY KEY (site_id, grp)
 );
 """
 
@@ -74,6 +88,13 @@ CREATE TABLE IF NOT EXISTS sites (
 # 한 벌로 둔다 — 두 벌이면 한쪽만 낡는다.
 DEAD_RUN_NOTE = "\n[오류] 서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다.\n"
 DEAD_RUN_ERROR = "서버 재시작으로 수집이 중단됐습니다 — 자동으로 다시 시작합니다."
+# 부분 실행(단계 몇 개만)이 죽었을 때 — 무엇을 돌던 중이었는지 남지 않으므로(run_groups='')
+# 자동으로 다시 띄우지 않는다. 띄우면 인자 없는 워커 = 전체 재기(유료 단계 전부)가 된다.
+DEAD_PARTIAL_NOTE = "\n[오류] 서버 재시작으로 수집이 중단됐습니다 — 필요하면 다시 실행하세요.\n"
+DEAD_PARTIAL_ERROR = "서버 재시작으로 수집이 중단됐습니다 — 필요하면 다시 실행하세요."
+# 도는 중(running_since)이 이만큼 지나면 죽은 런으로 본다 — due_sites 와 claim_site 가
+# 같은 값을 쓴다. 살아 있는 런은 라운드마다 mark_groups 가 시각을 새로 찍는다.
+DEAD_AFTER_HOURS = 3
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -82,7 +103,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if not cols:
         return
     for col in ("last_run_at", "running_since", "repo", "repo_branch", "repo_profile",
-                "stage", "run_log", "last_error"):
+                "stage", "run_log", "last_error", "run_groups"):
         if col not in cols:
             conn.execute(f"ALTER TABLE sites ADD COLUMN {col} TEXT")
     # 숫자로 비교한다 — TEXT 로 두면 SQLite 가 '0' > 0 을 참으로 봐서 '끔'이 안 먹는다.
@@ -192,46 +213,295 @@ def sites(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
                         (user_id,)).fetchall()
 
 
+def _groups():
+    """묶음 표의 정본 — run_all.GROUPS. 늦게 읽는다: capture 스크립트 경로는 부르는 쪽
+    (app.py/worker.py)이 세우고, 이 모듈은 그 전에도 import 된다. 혼자 불리는 자리
+    (scheduler.py 의 demo 처럼 경로를 안 세운 쪽)를 위해 없으면 여기서 세운다."""
+    import sys
+    scripts = str(Path(__file__).resolve().parent.parent / "skills" / "capture" / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import run_all
+    return run_all
+
+
+def _utc(ts: str | None):
+    """저장된 시각(CURRENT_TIMESTAMP 꼴이든 ISO 'T…Z' 꼴이든) → naive UTC datetime."""
+    from datetime import datetime
+    if not ts:
+        return None
+    return datetime.strptime(str(ts)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+
+
+def group_period(row, gid: str, every_hours: float) -> float | None:
+    """이 사이트에서 이 묶음의 자동 주기(시간). None = 시계 없는 묶음, 0 = 자동 끔.
+
+    run_every_hours(사이트 설정, 없으면 전역)는 **주간 묶음 주기**다 — 묶음 표에서
+    every_hours 가 WEEKLY_HOURS 인 묶음(검색 성과·AI 노출·사이트 건강)이 이걸 따르고,
+    매일 런(24h)과 경쟁·링크(720h)는 제 주기 그대로다. 0 은 예전 뜻 그대로 **자동 재기
+    전부 끔**이다. 전역 0 은 비상 브레이크라 사이트별 값을 이긴다(due_sites 주석).
+    """
+    ra = _groups()
+    base = ra.GROUP_BY_ID[gid]["every_hours"]
+    if base is None:
+        return None
+    if every_hours <= 0:
+        return 0.0
+    w = row["run_every_hours"]
+    w = float(w) if w is not None else float(every_hours)
+    if w <= 0:
+        return 0.0
+    return w if base == ra.WEEKLY_HOURS else float(base)
+
+
+def _seed_clocks(conn: sqlite3.Connection, site_id: int) -> None:
+    """행이 없는 묶음에 sites.last_run_at 을 **한 번** 심는다 — 커밋은 부르는 쪽이 한다.
+
+    mark_groups 가 sites.last_run_at 을 매 런 새로 찍기 **전에** 불러야 한다. 안 그러면
+    행 없는 묶음(배포 전에 잰 옛 사이트, 또는 첫 런이 묶음 하나였던 새 사이트)이 매일
+    런이 찍은 시계를 빌려 영영 안 밀린다 — 순위·AI·크롤·백링크가 다시는 스스로 안 돈다.
+    새 사이트(last_run_at NULL)면 NULL 이 심긴다 = 한 번도 안 잰 묶음.
+    """
+    for g in _groups().RUNNABLE_GROUPS:
+        conn.execute("INSERT OR IGNORE INTO site_groups(site_id, grp, last_run_at) "
+                     "SELECT id, ?, last_run_at FROM sites WHERE id=?", (g, site_id))
+
+
+def group_clocks(conn: sqlite3.Connection, site_row) -> dict[str, str | None]:
+    """{묶음: 마지막으로 재기 시작한 시각}. 행이 없는 묶음은 sites.last_run_at 을 쓴다 —
+    묶음 시계가 생기기 전에 잰 사이트(표 주석). 첫 묶음 런이 그 값을 행으로 심으므로
+    (_seed_clocks) 빌려 쓰는 값은 배포 전 마지막 전체 런의 시각 그대로다."""
+    rows = {r["grp"]: r["last_run_at"] for r in conn.execute(
+        "SELECT grp, last_run_at FROM site_groups WHERE site_id=?", (site_row["id"],))}
+    return {g: (rows[g] if g in rows else site_row["last_run_at"])
+            for g in _groups().RUNNABLE_GROUPS}
+
+
+def due_groups(conn: sqlite3.Connection, site_row, every_hours: float = 168.0) -> list[str]:
+    """이 사이트에서 주기를 넘긴 묶음들(GROUPS 순서).
+
+    한 번도 안 잰 사이트(시계가 전부 비었다)는 자동이 꺼져 있어도 전부다 — 등록 직후의
+    첫 측정은 끄는 대상이 아니다(예전 0 의 뜻 그대로). 그 밖에 자동이 꺼졌으면(0) 없다.
+    """
+    from datetime import datetime, timezone
+    clocks = group_clocks(conn, site_row)
+    if all(v is None for v in clocks.values()):
+        return list(clocks)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    out = []
+    for g, last in clocks.items():
+        per = group_period(site_row, g, every_hours)
+        if not per:
+            continue
+        # 나이(시간)로 비교한다 — now - timedelta(hours=per) 는 주기가 아주 크면(1e9) 넘친다.
+        if last is None or (now - _utc(last)).total_seconds() / 3600 >= per:
+            out.append(g)
+    return out
+
+
 def due_sites(conn: sqlite3.Connection, idle_days: int = 30,
               every_hours: float = 168.0) -> list[sqlite3.Row]:
-    """지금 잴 사이트 — 휴면 계정과 '아직 주기가 안 된 사이트'를 뺀다.
+    """지금 잴 사이트 — 휴면 계정·도는 중인 사이트를 빼고, 주기를 넘긴 묶음이 있거나
+    대기열에 묶음이 걸린 사이트.
 
     주기는 반드시 사이트별로 본다. 전역 스탬프 하나로 판정하면 먼저 등록한 사이트가
     도장을 찍어 버려서, 방금 가입한 사람의 첫 측정이 다음 주기까지 통째로 밀린다 —
-    그 사람은 빈 대시보드만 보고 떠난다.
+    그 사람은 빈 대시보드만 보고 떠난다. 이제는 묶음마다 본다(due_groups): 매일 런은
+    하루, 주간 묶음은 run_every_hours, 경쟁·링크는 한 달.
 
-    last_run_at 이 NULL 이면(= 등록 직후) 즉시 대상이다.
-
-    주기는 행마다 다르다: sites.run_every_hours 가 있으면 그 값, 없으면(NULL) 인자로
-    받은 전역 기본값이다. 0 = '자동 재측정 끔'. 아직 한 번도 안 잰 사이트와 수동
-    요청(request_run 이 last_run_at 을 NULL 로 만든다)까지 막으면 등록도 '지금 재기'도
-    죽으므로, 0 은 last_run_at IS NULL 만 통과시킨다.
+    0 = '자동 재측정 끔'. 아직 한 번도 안 잰 사이트와 대기열(사람이 누른 것)까지 막으면
+    등록도 '지금 재기'도 죽으므로, 0 이어도 그 둘은 통과한다.
 
     전역 0 과 사이트별 0 은 뜻이 다르다. 사이트별 0 은 그 사이트만 끄지만, **전역 0 은
     배포 전체의 비상 브레이크라 사이트별 값을 이긴다** — SERP·AI 는 실행당 과금이라
     운영자가 비용을 멈추려고 0 을 넣었는데 주기를 지정해 둔 사이트가 계속 돌면
     브레이크가 아니다. 설정 설명("0 이면 자동 수집을 끈다")도 그 뜻이다.
+
+    도는 중(running_since)이 3시간을 넘으면 죽은 런으로 보고 다시 잡는다.
     """
-    # 전역이 꺼져 있으면 주기 판정 자체를 건너뛴다 — 첫 측정과 수동 요청만 남는다.
-    period = ("s.last_run_at IS NULL" if every_hours <= 0 else
-              "(s.last_run_at IS NULL OR (COALESCE(s.run_every_hours, :every) > 0 AND "
-              " s.last_run_at <= datetime('now', '-' || COALESCE(s.run_every_hours, :every) || ' hours')))")
-    return conn.execute(
+    rows = conn.execute(
         "SELECT s.*, u.email FROM sites s JOIN users u ON u.id = s.user_id "
         "WHERE s.active=1 AND u.last_seen_at > datetime('now', :idle) "
-        f"  AND {period} "
-        "  AND (s.running_since IS NULL OR s.running_since <= datetime('now','-3 hours')) "
+        "  AND (s.running_since IS NULL OR s.running_since <= datetime('now', :dead)) "
         "ORDER BY s.last_run_at IS NOT NULL, s.id",   # 첫 측정 대기자를 먼저
-        {"idle": f"-{idle_days} days", "every": every_hours}).fetchall()
+        {"idle": f"-{idle_days} days", "dead": f"-{DEAD_AFTER_HOURS} hours"}).fetchall()
+    return [r for r in rows if queued(conn, r["id"]) or due_groups(conn, r, every_hours)]
+
+
+# --- 묶음 대기열 -----------------------------------------------------------
+#
+# 도는 중에 다른 묶음을 누르면 대기열에 오르고, 지금 런이 끝나면 워커가 이어서 돈다
+# (worker.run_site 의 라운드). 아직 워커가 대기열을 가져가기 전(pending, 몇 초)에 연달아
+# 누른 것은 한 런으로 합쳐진다 — 워커가 뜨자마자 가져가지 않고 MERGE_SECONDS 를 기다린다.
+#
+#   idle     running_since IS NULL
+#   pending  running_since 가 있고 run_groups IS NULL — 눌렀고 워커가 아직 안 가져감
+#   running  run_groups 가 있다 (부분 실행은 빈 문자열 '')
+
+def run_phase(row) -> str:
+    """'idle' | 'pending' | 'running' — 위 표. 판정 자리는 여기 하나다."""
+    if not row["running_since"]:
+        return "idle"
+    return "pending" if row["run_groups"] is None else "running"
+
+
+def queue_groups(conn: sqlite3.Connection, site_id: int, groups) -> None:
+    """묶음을 대기열에 올린다. 이미 올라 있으면 그대로(먼저 누른 시각을 지킨다).
+    행을 새로 만들기 전에 시계를 심는다 — 대기열 행이 시계 없는(NULL) 행으로 먼저 서면
+    옛 사이트의 그 묶음이 '한 번도 안 잰 것'이 된다."""
+    _seed_clocks(conn, site_id)
+    for g in groups:
+        conn.execute(
+            "INSERT INTO site_groups(site_id, grp, queued_at) VALUES (?,?,CURRENT_TIMESTAMP) "
+            "ON CONFLICT(site_id, grp) DO UPDATE SET "
+            "queued_at=COALESCE(site_groups.queued_at, CURRENT_TIMESTAMP)", (site_id, g))
+    conn.commit()
+
+
+def queued(conn: sqlite3.Connection, site_id: int) -> list[str]:
+    q = {r["grp"] for r in conn.execute(
+        "SELECT grp FROM site_groups WHERE site_id=? AND queued_at IS NOT NULL", (site_id,))}
+    return [g for g in _groups().RUNNABLE_GROUPS if g in q]
+
+
+def claim_queue(conn: sqlite3.Connection, site_id: int) -> list[str]:
+    """대기열을 비우며 가져간다 — 가져간 쪽이 그 런의 주인이 된다(phase → running).
+
+    읽기와 비우기를 한 트랜잭션에 묶는다(BEGIN IMMEDIATE): 두 워커가 같은 대기열을
+    읽으면 같은 묶음을 두 번 산다.
+    """
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        got = queued(conn, site_id)
+        if got:
+            conn.execute("UPDATE site_groups SET queued_at=NULL WHERE site_id=?", (site_id,))
+            conn.execute("UPDATE sites SET run_groups=?, "
+                         "running_since=COALESCE(running_since, CURRENT_TIMESTAMP) WHERE id=?",
+                         (",".join(got), site_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return got
+
+
+def claim_site(conn: sqlite3.Connection, site_id: int) -> sqlite3.Row | None:
+    """스윕(run_all_due)이 사이트를 **원자적으로** 잡는다 — 반환: 새로 읽은 행, 못 잡으면 None.
+
+    due_sites 는 스윕을 시작할 때 한 번 읽은 목록이다. 앞 사이트를 몇 분 도는 사이에
+    사람이 이 사이트의 버튼을 눌러 워커(--queue)가 떴거나 부분 실행(mark_busy)이 돌기
+    시작했으면, 그 목록만 믿고 돌면 한 사이트를 두 워커가 같이 돈다 — 유료 단계가 겹치고,
+    먼저 끝난 쪽의 mark_done 이 남이 도는 런을 '끝남'으로 지운다.
+
+    잡는 조건은 due_sites 와 같다: 안 돌거나, 도는 중이 DEAD_AFTER_HOURS 를 넘긴 죽은 런.
+    죽은 런을 넘겨받으면 (1) 그 런이 맡았던 묶음을 대기열로 되돌리고(reclaim_dead_runs 와
+    같은 이유 — 시계는 시작할 때 찍혔다), (2) running_since 를 지금으로 새로 찍는다 —
+    옛 시각을 물려받으면 새 런이 처음부터 '죽은 런'으로 보여 또 넘겨받힌다.
+    run_groups 는 '' — 도는 중(running)이다. 맡은 묶음은 곧 mark_groups 가 적는다.
+    """
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT *, (running_since IS NOT NULL AND running_since > datetime('now', ?)) AS live "
+            "FROM sites WHERE id=?", (f"-{DEAD_AFTER_HOURS} hours", site_id)).fetchone()
+        if row is None or row["live"]:
+            conn.commit()
+            return None
+        if row["running_since"]:
+            _seed_clocks(conn, site_id)
+            for g in [x for x in (row["run_groups"] or "").split(",") if x]:
+                conn.execute(
+                    "INSERT INTO site_groups(site_id, grp, queued_at) VALUES (?,?,CURRENT_TIMESTAMP) "
+                    "ON CONFLICT(site_id, grp) DO UPDATE SET "
+                    "queued_at=COALESCE(site_groups.queued_at, CURRENT_TIMESTAMP)", (site_id, g))
+        conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP, run_groups='', "
+                     "stage=NULL, stage_pct=0 WHERE id=?", (site_id,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return conn.execute("SELECT * FROM sites WHERE id=?", (site_id,)).fetchone()
+
+
+def mark_pending(conn: sqlite3.Connection, site_id: int) -> bool:
+    """눌렀다 — 워커를 띄우기 전에 '도는 중'으로 잡는다. 이미 돌거나 대기 중이면 False.
+
+    여기서 잡아야 몇 초 안에 또 누른 것이 워커를 하나 더 띄우지 않고 대기열에 합쳐진다.
+    스케줄러(due_sites)도 도는 중인 사이트는 안 잡는다.
+    """
+    cur = conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP, run_groups=NULL, "
+                       "stage=NULL, stage_pct=NULL WHERE id=? AND running_since IS NULL",
+                       (site_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def mark_groups(conn: sqlite3.Connection, site_id: int, groups) -> None:
+    """묶음 런 시작 — 도는 중을 켜고 **그 묶음들의 시계만** 찍는다.
+
+    시작할 때 찍는다(끝나고가 아니라): 실패한 묶음이 매 틱마다 재시도하면 비용이 샌다
+    (mark_run 과 같은 이유). 런이 프로세스째 죽으면 run_groups 가 남아 있어 회수가 그
+    묶음들을 대기열로 되돌린다(reclaim_dead_runs) — 시계를 찍었다고 안 잰 채로 넘어가지
+    않는다. sites.last_run_at 도 같이 찍는다: '마지막으로 뭔가 잰 때'라 화면과 첫 측정
+    판정이 읽는다.
+
+    running_since 도 **새로** 찍는다 — 이 함수를 부르는 것은 그 런의 주인(워커의 start)
+    뿐이고, 라운드마다 불린다. 옛 시각을 물려받으면(COALESCE) 라운드가 이어진 런이나
+    죽은 런을 넘겨받은 런이 DEAD_AFTER_HOURS 를 넘겨 '죽은 런'으로 보이고, 스윕이 같은
+    사이트를 또 잡는다.
+    """
+    groups = list(groups)
+    _seed_clocks(conn, site_id)          # sites.last_run_at 을 새로 찍기 전에
+    for g in groups:
+        conn.execute(
+            "INSERT INTO site_groups(site_id, grp, last_run_at) VALUES (?,?,CURRENT_TIMESTAMP) "
+            "ON CONFLICT(site_id, grp) DO UPDATE SET last_run_at=CURRENT_TIMESTAMP",
+            (site_id, g))
+    conn.execute("UPDATE sites SET last_run_at=CURRENT_TIMESTAMP, "
+                 "running_since=CURRENT_TIMESTAMP, "
+                 "run_groups=?, stage=NULL, stage_pct=0 WHERE id=?",
+                 (",".join(groups), site_id))
+    conn.commit()
+
+
+def clear_pending(conn: sqlite3.Connection, site_id: int) -> None:
+    """가져갈 대기열이 없는데 pending 으로 남은 자리를 푼다. 남이 이미 가져가 도는 중이면
+    (running) 건드리지 않는다 — 그 런의 표시를 끄면 화면이 거짓말한다."""
+    conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
+                 "WHERE id=? AND running_since IS NOT NULL AND run_groups IS NULL", (site_id,))
+    conn.commit()
+
+
+def group_status(conn: sqlite3.Connection, site_row, every_hours: float) -> dict:
+    """/api/run/status 의 "groups" — {묶음: {running, queued, last_run_at, due}}.
+    시계 없는 묶음(관리)은 싣지 않는다.
+
+    대기 중(pending — 눌렀고 워커가 합치는 몇 초를 기다린다)에 올라 있는 묶음은 **도는
+    중**이다: 앞에 도는 런이 없으니 곧 선다. 그걸 queued 로 내면 화면이 방금 시작한
+    묶음을 "지금 도는 재기가 끝나면 잽니다"라고 말한다 — 기다릴 런이 없는데. 로컬
+    (dashboard._LocalRuns.status)도 같은 규칙이다. queued 는 running 인 런 뒤에 선 것만.
+    """
+    clocks = group_clocks(conn, site_row)
+    due = set(due_groups(conn, site_row, every_hours))
+    q = set(queued(conn, site_row["id"]))
+    phase = run_phase(site_row)
+    if phase == "pending":
+        busy, q = q, set()
+    elif phase == "running":
+        busy = set((site_row["run_groups"] or "").split(","))
+    else:
+        busy = set()
+    return {g: {"running": g in busy, "queued": g in q,
+                "last_run_at": clocks[g], "due": g in due}
+            for g in clocks}
 
 
 def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
-    """수집 시작 표시. 성공·실패 무관하게 찍는다 — 실패한 사이트가 매 틱마다
-    재시도하면 비용이 샌다."""
-    conn.execute("UPDATE sites SET last_run_at=CURRENT_TIMESTAMP, "
-                 "running_since=CURRENT_TIMESTAMP, stage=NULL, stage_pct=0 WHERE id=?",
-                 (site_id,))
-    conn.commit()
+    """수집 시작 표시(전체 재기). 성공·실패 무관하게 찍는다 — 실패한 사이트가 매 틱마다
+    재시도하면 비용이 샌다. 묶음 시계까지 전부 찍는다 — 전체 재기는 모든 묶음을 잰다."""
+    mark_groups(conn, site_id, _groups().RUNNABLE_GROUPS)
 
 
 def mark_busy(conn: sqlite3.Connection, site_id: int) -> None:
@@ -240,14 +510,16 @@ def mark_busy(conn: sqlite3.Connection, site_id: int) -> None:
     예전엔 부분 실행도 mark_run 을 불러 last_run_at 을 찍었다. 그러면 gsc 만 다시 읽어도
     "전체 재측정을 방금 했다"가 되어 주 1회 전체 런이 매번 뒤로 밀렸다 — theotherskin 은
     9/11·9/15·9/18 부분 실행만 돌고 순위 조회·페이지 감사가 3주 동안 한 번도 안 돌았다
-    (요청문 237장이 경쟁 상위 글 없이 나갔다). 바로 위 주석은 내내 반대를 말하고 있었다."""
-    conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP, stage=NULL, stage_pct=0 "
-                 "WHERE id=?", (site_id,))
+    (요청문 237장이 경쟁 상위 글 없이 나갔다). 바로 위 주석은 내내 반대를 말하고 있었다.
+    묶음 시계도 안 찍는다. run_groups 는 빈 문자열 — 대기 중이 아니라 도는 중이다."""
+    conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP, stage=NULL, stage_pct=0, "
+                 "run_groups='' WHERE id=?", (site_id,))
     conn.commit()
 
 
 def mark_stage(conn: sqlite3.Connection, site_id: int, stage: str, pct: int) -> None:
-    """지금 도는 단계와 진행률. 화면이 '분석 중…' 대신 몇 %인지 말할 수 있게 하는 값이다."""
+    """지금 도는 단계와 진행률. 화면이 '분석 중…' 대신 몇 %인지 말할 수 있게 하는 값이다.
+    묶음 런은 단계 여럿이 동시에 돈다 — stage 에 쉼표로 이어 싣는다(status 가 편다)."""
     conn.execute("UPDATE sites SET stage=?, stage_pct=? WHERE id=?",
                  (stage, max(0, min(100, int(pct))), site_id))
     conn.commit()
@@ -263,11 +535,11 @@ def mark_done(conn: sqlite3.Connection, site_id: int, *,
     옛 호출부(진행률만 끄는 자리)가 마지막 런의 성패를 지우면 안 된다.
     """
     if ok is None:
-        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL "
-                     "WHERE id=?", (site_id,))
+        conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL, "
+                     "run_groups=NULL WHERE id=?", (site_id,))
     else:
         conn.execute("UPDATE sites SET running_since=NULL, stage=NULL, stage_pct=NULL, "
-                     "last_ok=?, last_error=? WHERE id=?",
+                     "run_groups=NULL, last_ok=?, last_error=? WHERE id=?",
                      (1 if ok else 0, (error or "")[:2000] or None, site_id))
     conn.commit()
 
@@ -287,12 +559,23 @@ def reclaim_dead_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     풀고 brain 을 두면 "수집 이력"이 영영 "도는 중"이고, 호스팅 런 검사
     (test_remote 의 체인 검사)가 finished_at IS NULL 을 실패로 본다 — 09-02 순위
     수집 #49 가 그렇게 남았다.
+
+    죽은 묶음 런이 맡았던 묶음(run_groups)은 대기열로 되돌린다 — 그 묶음들의 시계는
+    시작할 때 이미 찍혔으므로(mark_groups), 되돌리지 않으면 안 잰 채로 한 주를 넘긴다.
+    워커가 아직 안 가져간 대기열(pending)은 site_groups 에 그대로 남아 있다.
     """
     rows = conn.execute("SELECT * FROM sites WHERE running_since IS NOT NULL").fetchall()
     for r in rows:
+        lost = [g for g in (r["run_groups"] or "").split(",") if g]
+        if lost:
+            queue_groups(conn, r["id"], lost)
+        # 다시 띄울 것(대기열)이 있을 때만 "자동으로 다시 시작합니다"라고 말한다 — 부분
+        # 실행은 무엇을 돌던지 안 남아 다시 안 띄운다(app.resume_dead_runs).
+        again = bool(queued(conn, r["id"]))
         conn.execute("UPDATE sites SET run_log = COALESCE(run_log,'') || ? WHERE id=?",
-                     (DEAD_RUN_NOTE, r["id"]))
-        mark_done(conn, r["id"], ok=False, error=DEAD_RUN_ERROR)
+                     (DEAD_RUN_NOTE if again else DEAD_PARTIAL_NOTE, r["id"]))
+        mark_done(conn, r["id"], ok=False,
+                  error=DEAD_RUN_ERROR if again else DEAD_PARTIAL_ERROR)
     for c in close_orphan_runs(conn):
         print(f"[reclaim] 끝나지 않은 런 {c['closed']}건 닫음: "
               f"{c['user_id']}/{c['project']}", flush=True)
@@ -394,12 +677,16 @@ def set_every_hours(conn: sqlite3.Connection, user_id: int, project: str,
 
 
 def request_run(conn: sqlite3.Connection, user_id: int, project: str) -> bool:
-    """'지금 다시 재기' — 주기를 무시하고 다음 대상으로 만든다. 이미 도는 중이면 무시."""
-    cur = conn.execute(
-        "UPDATE sites SET last_run_at=NULL WHERE user_id=? AND project=? "
-        "AND active=1 AND running_since IS NULL", (user_id, project))
-    conn.commit()
-    return cur.rowcount > 0
+    """'지금 다시 재기'(전체) — 모든 묶음을 대기열에 올린다. 이미 도는 중이면 무시.
+
+    예전엔 last_run_at 을 NULL 로 지워 '첫 측정'인 척 다음 스윕에 걸리게 했다. 묶음 시계가
+    생긴 뒤로는 그 흉내가 안 먹는다(묶음 시계는 그대로다) — 누른 것은 대기열이 정본이다.
+    """
+    row = site(conn, user_id, project)
+    if not row or row["running_since"]:
+        return False
+    queue_groups(conn, row["id"], _groups().RUNNABLE_GROUPS)
+    return True
 
 
 # --- 테넌트 -----------------------------------------------------------------
@@ -589,6 +876,21 @@ def demo() -> None:
         sid = add_site(conn, uid, "myproj", "sc-domain:example.com", "example.com")
         assert len(sites(conn, uid)) == 1
         assert len(due_sites(conn)) == 1, "등록 직후에는 즉시 대상이어야 한다"
+        import run_all
+        ALL = list(run_all.RUNNABLE_GROUPS)
+        assert due_groups(conn, site(conn, uid, "myproj")) == ALL, "첫 측정은 전체 재기다"
+        assert due_groups(conn, site(conn, uid, "myproj"), 0) == ALL,             "자동을 끈(0) 배포에서 등록 직후 첫 측정까지 막혔다"
+
+        def age(site_id, hours, groups=None):
+            """묶음 시계를 직접 민다 — every_hours 를 아주 작게 주는 방식은
+            CURRENT_TIMESTAMP 가 초 단위라 같은 초 안에서만 우연히 통과한다."""
+            for g in (groups or ALL):
+                conn.execute("UPDATE site_groups SET last_run_at=datetime('now', ?) "
+                             "WHERE site_id=? AND grp=?", (f"-{hours} hours", site_id, g))
+            conn.commit()
+
+        def due_of(project, u=None, every=168.0):
+            return due_groups(conn, site(conn, u or uid, project), every)
 
         mark_run(conn, sid)
         assert due_sites(conn) == [], "방금 쟀는데 또 잰다"
@@ -602,22 +904,145 @@ def demo() -> None:
                             (sid,)).fetchone()[0] is None, "끝났는데 진행률이 남았다"
         assert not conn.execute("SELECT running_since FROM sites WHERE id=?",
                                 (sid,)).fetchone()[0], "수집 중 표시가 안 꺼졌다"
-        assert request_run(conn, uid, "myproj"), "지금 재기 요청이 안 먹는다"
-        assert len(due_sites(conn)) == 1, "요청했는데 대상이 아니다"
-        mark_run(conn, sid)
-        assert not request_run(conn, uid, "myproj"), "도는 중인데 또 요청이 먹는다"
+        assert due_of("myproj") == [], "방금 전체를 쟀는데 밀린 묶음이 있다"
+
+        # ── 묶음별 주기 — 매일 런(할 일)은 하루, 주간 묶음은 run_every_hours, 경쟁·링크는 한 달
+        age(sid, 25)
+        assert due_of("myproj") == ["todo"], f"하루 지났으면 매일 런만: {due_of('myproj')}"
+        age(sid, 169)
+        assert due_of("myproj") == ["todo", "search", "ai", "site"], due_of("myproj")
+        age(sid, 721)
+        assert due_of("myproj") == ALL, "한 달이 지났는데 경쟁·링크가 안 밀렸다"
+        # 한 묶음을 재면 그 묶음 시계만 찍힌다 — 다른 묶음의 밀림은 그대로
+        mark_groups(conn, sid, ["compete"])
         mark_done(conn, sid)
-        # 시간을 직접 민다 — every_hours 를 아주 작게 주는 방식은 CURRENT_TIMESTAMP 가
-        # 초 단위라 같은 초 안에서만 우연히 통과한다.
-        conn.execute("UPDATE sites SET last_run_at=datetime('now','-200 hours') WHERE id=?",
+        assert "compete" not in due_of("myproj") and "search" in due_of("myproj"), \
+            f"한 묶음을 쟀는데 다른 묶음 시계까지 찍혔다: {due_of('myproj')}"
+        # 사이트 주기(주간 묶음 주기)를 바꾸면 주간 묶음만 따라간다
+        age(sid, 30)
+        set_every_hours(conn, uid, "myproj", 24)
+        assert due_of("myproj") == ["todo", "search", "ai", "site"], due_of("myproj")
+        set_every_hours(conn, uid, "myproj", 168)
+        assert due_of("myproj") == ["todo"], due_of("myproj")
+        # 0 = 자동 재기 전부 끔 — 매일 런까지
+        set_every_hours(conn, uid, "myproj", 0)
+        age(sid, 999)
+        assert due_of("myproj") == [], f"0 인데 자동이 돈다: {due_of('myproj')}"
+        assert due_of("myproj", every=0) == [], "전역 0(브레이크)인데 돈다"
+        conn.execute("UPDATE sites SET run_every_hours=NULL WHERE id=?", (sid,))
+        conn.commit()
+        assert due_of("myproj") == ALL
+        assert due_of("myproj", every=0) == [], "전역 0 이 비상 브레이크가 아니다"
+
+        # 묶음 시계가 생기기 전에 잰 사이트 — 행이 없으면 sites.last_run_at 이 시계다.
+        # 이걸 안 하면 배포 직후 모든 사이트가 다섯 묶음을 한꺼번에 '밀렸다'로 본다.
+        conn.execute("DELETE FROM site_groups WHERE site_id=?", (sid,))
+        conn.execute("UPDATE sites SET last_run_at=datetime('now','-2 hours') WHERE id=?", (sid,))
+        conn.commit()
+        assert due_of("myproj") == [], f"옛 사이트가 배포 직후 전부 밀렸다: {due_of('myproj')}"
+        # 빌려 쓰기는 한 번뿐이다 — 매일 런(할 일)이 sites.last_run_at 을 새로 찍어도 다른
+        # 묶음은 배포 전 시계로 늙어 가야 한다. 안 그러면 순위·AI·크롤이 영영 안 밀린다.
+        conn.execute("UPDATE sites SET last_run_at=datetime('now','-100 hours') WHERE id=?",
                      (sid,))
         conn.commit()
-        assert len(due_sites(conn)) == 1, "주기가 지났는데 안 잰다"
+        assert due_of("myproj") == ["todo"], due_of("myproj")
+        mark_groups(conn, sid, ["todo"])
+        mark_done(conn, sid)
+        conn.execute("UPDATE site_groups SET last_run_at=datetime(last_run_at, '-70 hours') "
+                     "WHERE site_id=?", (sid,))
+        conn.commit()
+        assert due_of("myproj") == ["todo", "search", "ai", "site"], \
+            f"옛 사이트가 매일 런의 시계를 빌려 주간 묶음이 영영 안 밀린다: {due_of('myproj')}"
+        # 새 사이트의 첫 런이 묶음 하나(누른 것)여도 나머지는 '한 번도 안 잰 것'이다
+        uid_n = upsert_user(conn, "n@example.com")
+        sid_n = add_site(conn, uid_n, "newbie", "sc-domain:n.com", "n.com")
+        queue_groups(conn, sid_n, ["ai"])
+        mark_groups(conn, sid_n, ["ai"])
+        mark_done(conn, sid_n)
+        assert due_of("newbie", uid_n) == [g for g in ALL if g != "ai"], \
+            f"첫 런이 묶음 하나였더니 나머지 묶음이 그 시계를 빌렸다: {due_of('newbie', uid_n)}"
+        conn.execute("UPDATE sites SET active=0 WHERE id=?", (sid_n,))
+        conn.commit()
+        mark_run(conn, sid)
+        mark_done(conn, sid)
+
+        # ── 대기열 — 누른 것은 주기와 상관없이 잡히고, 도는 중이면 쌓인다
+        assert request_run(conn, uid, "myproj"), "지금 재기 요청이 안 먹는다"
+        assert len(due_sites(conn)) == 1, "요청했는데 대상이 아니다"
+        assert len(due_sites(conn, every_hours=0)) == 1, "0 이면 수동 재측정까지 막힌다"
+        assert claim_queue(conn, sid) == ALL, "대기열을 못 가져간다"
+        assert claim_queue(conn, sid) == [], "같은 대기열을 두 번 가져간다 — 같은 묶음을 두 번 산다"
+        assert run_phase(site(conn, uid, "myproj")) == "running"
+        assert not request_run(conn, uid, "myproj"), "도는 중인데 또 요청이 먹는다"
+        mark_done(conn, sid)
+        # pending → 몇 초 안에 누른 것은 한 런으로 합쳐진다
+        assert mark_pending(conn, sid) and not mark_pending(conn, sid), "두 번 잡혔다"
+        assert run_phase(site(conn, uid, "myproj")) == "pending"
+        queue_groups(conn, sid, ["ai"])
+        queue_groups(conn, sid, ["search", "ai"])
+        assert queued(conn, sid) == ["search", "ai"], queued(conn, sid)
+        # 대기 중에 올라 있는 묶음은 '도는 중'이다 — 앞에 기다릴 런이 없다(로컬도 같다)
+        st = group_status(conn, site(conn, uid, "myproj"), 168.0)
+        assert st["search"]["running"] and not st["search"]["queued"], \
+            f"방금 누른 묶음이 없는 런 뒤에서 기다리는 것으로 보인다: {st['search']}"
+        assert not st["compete"]["running"], st["compete"]
+        assert due_sites(conn) == [], "대기 중(pending)인 사이트를 스윕이 또 잡는다"
+        assert claim_queue(conn, sid) == ["search", "ai"], "합쳐진 대기열이 아니다"
+        clear_pending(conn, sid)
+        assert run_phase(site(conn, uid, "myproj")) == "running", \
+            "남이 가져가 도는 런의 표시를 껐다"
+        # 상태 — 화면이 읽는 모양
+        mark_groups(conn, sid, ["search", "todo"])
+        queue_groups(conn, sid, ["compete"])
+        st = group_status(conn, site(conn, uid, "myproj"), 168.0)
+        assert set(st) == set(ALL), st
+        assert all(set(v) == {"running", "queued", "last_run_at", "due"} for v in st.values()), st
+        assert st["search"]["running"] and not st["ai"]["running"], st
+        assert st["compete"]["queued"] and not st["search"]["queued"], st
+        assert st["search"]["last_run_at"] and st["search"]["due"] is False, st
+        mark_done(conn, sid)
+        claim_queue(conn, sid)
+        mark_done(conn, sid)
+        clear_pending(conn, sid)
+        assert run_phase(site(conn, uid, "myproj")) == "idle"
+
+        # ── 스윕이 사이트를 잡는 자리(claim_site) — 목록을 읽은 뒤 남이 잡았으면 못 잡는다
+        got = claim_site(conn, sid)
+        assert got is not None and run_phase(got) == "running", got and dict(got)
+        assert claim_site(conn, sid) is None, "도는 사이트를 스윕이 또 잡았다 — 두 워커가 같이 돈다"
+        mark_done(conn, sid)
+        mark_busy(conn, sid)                       # 부분 실행이 도는 중
+        assert claim_site(conn, sid) is None, "부분 실행이 도는 사이트를 스윕이 잡았다"
+        mark_done(conn, sid)
+        assert mark_pending(conn, sid)              # 버튼이 눌려 워커가 뜨는 중
+        assert claim_site(conn, sid) is None, "대기 중인 사이트를 스윕이 잡았다"
+        mark_done(conn, sid)
+        # 죽은 런(3시간 초과)은 넘겨받는다 — 맡았던 묶음을 대기열로 되돌리고, 시각을 새로 찍는다
+        mark_groups(conn, sid, ["search"])
+        conn.execute("UPDATE sites SET running_since=datetime('now','-5 hours') WHERE id=?",
+                     (sid,))
+        conn.commit()
+        got = claim_site(conn, sid)
+        assert got is not None, "죽은 런을 못 넘겨받는다"
+        assert queued(conn, sid) == ["search"], \
+            f"죽은 런이 맡았던 묶음을 버렸다 — 시계는 찍혔으니 한 주를 안 잰 채 넘긴다: {queued(conn, sid)}"
+        fresh = "SELECT running_since > datetime('now','-1 minutes') FROM sites WHERE id=?"
+        assert conn.execute(fresh, (sid,)).fetchone()[0], \
+            "죽은 런을 넘겨받고도 옛 시각을 물려받았다 — 새 런이 처음부터 죽은 런으로 보인다"
+        # 라운드가 이어지면 시각을 새로 찍는다(COALESCE 로 물려받으면 긴 런이 죽은 런이 된다)
+        conn.execute("UPDATE sites SET running_since=datetime('now','-5 hours') WHERE id=?",
+                     (sid,))
+        conn.commit()
+        mark_groups(conn, sid, claim_queue(conn, sid))
+        assert conn.execute(fresh, (sid,)).fetchone()[0], "다음 라운드가 첫 라운드의 시각을 물려받았다"
+        mark_done(conn, sid)
+
         # 부분 실행은 주기 시계를 안 건드린다 — 찍으면 전체 런이 매번 밀린다(3주 동안 그랬다)
-        before = conn.execute("SELECT last_run_at FROM sites WHERE id=?", (sid,)).fetchone()[0]
+        age(sid, 200)
+        before = group_clocks(conn, site(conn, uid, "myproj"))
         mark_busy(conn, sid)
-        assert conn.execute("SELECT last_run_at FROM sites WHERE id=?",
-                            (sid,)).fetchone()[0] == before, "부분 실행이 주기 시계를 찍었다"
+        assert group_clocks(conn, site(conn, uid, "myproj")) == before, "부분 실행이 주기 시계를 찍었다"
+        assert run_phase(site(conn, uid, "myproj")) == "running", "부분 실행이 '대기 중'으로 보인다"
         assert due_sites(conn) == [], "부분 실행이 도는 중인데 전체 런을 또 잡는다"
         mark_done(conn, sid)
         assert len(due_sites(conn)) == 1, "부분 실행 뒤 밀린 전체 런이 안 잡힌다"
@@ -630,7 +1055,6 @@ def demo() -> None:
         assert len(due_sites(conn)) == 1, "죽은 실행(3시간 초과)이 영영 안 풀린다"
         mark_done(conn, sid)
         assert due_sites(conn, every_hours=0) == [], "0 인데 자동 재측정이 안 꺼진다"
-        assert request_run(conn, uid, "myproj") and             len(due_sites(conn, every_hours=0)) == 1, "0 이면 수동 재측정까지 막힌다"
         mark_run(conn, sid); mark_done(conn, sid)
 
         # 사이트별 판정이어야 한다 — 남이 방금 쟀다고 내 첫 측정이 밀리면 안 된다.
@@ -644,32 +1068,30 @@ def demo() -> None:
         os.environ.pop("SEOMINER_RUN_EVERY_HOURS", None)
         sid2 = site(conn, uid2, "fresh")["id"]
         mark_run(conn, sid2); mark_done(conn, sid2)
-        conn.execute("UPDATE sites SET last_run_at=datetime('now','-10 hours')")
-        conn.commit()
-        assert due_sites(conn, every_hours=1e9) == [], "전역 주기가 아직인데 잰다"
+        # 매일 런(24h)은 전역·사이트 값과 상관없이 돈다 — 아래는 주간 묶음만 본다.
+        age(sid, 10)
+        age(sid2, 10)
+        weekly = lambda every: [r["project"] for r in due_sites(conn, every_hours=every)]  # noqa: E731
+        assert weekly(1e9) == [], "전역 주기가 아직인데 잰다"
         assert set_every_hours(conn, uid, "myproj", 6), "사이트 주기를 못 바꾼다"
         assert every_hours(conn, uid, "myproj") == 6.0
-        assert [r["project"] for r in due_sites(conn, every_hours=1e9)] == ["myproj"], \
-            "사이트별 값이 전역을 못 이긴다"
+        assert weekly(1e9) == ["myproj"], "사이트별 값이 전역을 못 이긴다"
         assert every_hours(conn, uid2, "fresh") == 168.0, "NULL 인데 전역 기본값이 아니다"
-        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["myproj", "fresh"], \
-            "NULL 인 사이트가 전역 주기를 안 쓴다"
-        # 0 = 자동만 끔. 첫 측정(last_run_at IS NULL)과 수동 요청은 그대로 통과한다.
+        assert weekly(1) == ["myproj", "fresh"], "NULL 인 사이트가 전역 주기를 안 쓴다"
+        # 0 = 자동만 끔. 대기열(수동 요청)은 그대로 통과한다.
         set_every_hours(conn, uid, "myproj", 0)
-        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["fresh"], \
-            "사이트 주기가 0 인데 자동 재측정이 안 꺼진다"
+        assert weekly(1) == ["fresh"], "사이트 주기가 0 인데 자동 재측정이 안 꺼진다"
         assert request_run(conn, uid, "myproj")
-        assert "myproj" in [r["project"] for r in due_sites(conn, every_hours=1)], \
-            "0 이면 첫 측정·수동 재측정까지 막힌다"
+        assert "myproj" in weekly(1), "0 이면 수동 재측정까지 막힌다"
+        claim_queue(conn, sid)
+        mark_done(conn, sid)
         # 전역 0 은 비상 브레이크다 — 주기를 지정해 둔 사이트까지 멈춘다. 이걸 안 잡으면
         # 운영자가 비용을 멈추려고 0 을 넣어도 설정된 사이트가 계속 유료 수집을 돈다.
         set_every_hours(conn, uid, "myproj", 6)
-        conn.execute("UPDATE sites SET last_run_at = datetime('now','-999 hours')")
-        conn.commit()
-        assert [r["project"] for r in due_sites(conn, every_hours=1)] == ["myproj", "fresh"], \
-            "주기가 한참 지났는데 안 잰다"
-        assert due_sites(conn, every_hours=0) == [], \
-            "전역 0 인데 사이트별 주기가 있는 사이트가 계속 돈다 — 브레이크가 안 듣는다"
+        age(sid, 999)
+        age(sid2, 999)
+        assert weekly(1) == ["myproj", "fresh"], "주기가 한참 지났는데 안 잰다"
+        assert weekly(0) == [], "전역 0 인데 사이트별 주기가 있는 사이트가 계속 돈다 — 브레이크가 안 듣는다"
         set_every_hours(conn, uid, "myproj", 0)      # 아래 단언이 보는 상태로 되돌린다
         # 남의 사이트는 못 고친다 — project 이름만 알면 되는 게 아니다.
         assert not set_every_hours(conn, uid2, "myproj", 24), "남의 사이트 주기를 고쳤다"
@@ -774,7 +1196,18 @@ def demo() -> None:
             "회수가 지금까지의 로그를 날렸다"
         assert "서버 재시작" in load_run_log(conn, uid, "myproj"), \
             "런이 왜 끊겼는지 로그에 안 남았다"
+        # 죽은 런이 맡았던 묶음은 대기열로 돌아간다 — 시계는 시작할 때 찍혔으니, 안
+        # 되돌리면 안 잰 채로 다음 주기까지 넘어간다.
+        assert queued(conn, sid) == ALL, f"죽은 런의 묶음이 대기열로 안 돌아왔다: {queued(conn, sid)}"
         assert reclaim_dead_runs(conn) == [], "도는 런이 없는데 또 회수한다"
+        claim_queue(conn, sid)
+        mark_done(conn, sid, ok=True)
+        # 죽은 부분 실행 — 다시 띄울 것이 없으니 "자동으로 다시 시작합니다"라고 하면 거짓말이다
+        mark_busy(conn, sid)
+        assert [r["id"] for r in reclaim_dead_runs(conn)] == [sid]
+        r = site(conn, uid, "myproj")
+        assert queued(conn, sid) == [] and r["last_error"] == DEAD_PARTIAL_ERROR, \
+            (queued(conn, sid), r["last_error"])
         mark_done(conn, sid, ok=True)
 
         # session() — 라우트가 conn 열기·소유 확인·tenant·유료 키를 한 번에 쓰는 자리.

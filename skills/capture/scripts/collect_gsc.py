@@ -19,7 +19,9 @@ Usage:
 """
 import argparse
 import json
+import os
 import sys
+import threading
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -50,7 +52,20 @@ def _can_open_browser() -> bool:
         return False
 
 
+# 토큰 읽기·갱신·쓰기를 한 줄로 세운다. 묶음 런은 gsc 와 ga4 를 한 프로세스의 두
+# 스레드로 동시에 돌리고(run_all._run_groups), 둘 다 여기로 온다. 줄을 안 세우면 한쪽이
+# 토큰 파일을 비우고 다시 쓰는 순간 다른 쪽이 반쯤 쓴 파일을 읽어 ValueError → creds=None
+# → "로그인이 필요하다"로 그 런의 GA4(또는 GSC)가 통째로 빠진다. RLock 인 이유: 같은
+# 스레드가 다시 들어와도(get_credentials 를 겹쳐 부르는 자리) 스스로 막히지 않게.
+_CRED_LOCK = threading.RLock()
+
+
 def _oauth_credentials():
+    with _CRED_LOCK:
+        return _oauth_credentials_locked()
+
+
+def _oauth_credentials_locked():
     """내 구글 계정으로 로그인해서 Credentials 를 만든다 — 토큰은 우리가 보관한다.
 
     예전에는 이 자리를 gsc MCP 서버(mcp-search-console)의 인증 해석기가 대신 했다.
@@ -97,9 +112,13 @@ def _oauth_credentials():
         creds = InstalledAppFlow.from_client_secrets_file(
             str(client), SCOPES).run_local_server(port=0)
     # 갱신된 access token 도 남긴다 — 매번 refresh 왕복을 하지 않기 위해서다.
+    # 통째로 갈아 끼운다(임시 파일 → os.replace) — 비우고 쓰는 사이에 다른 프로세스
+    # (호스팅 라우트·워커)가 읽어도 옛 토큰이든 새 토큰이든 온전한 한 벌을 본다.
     tok = db.gsc_token()
     tok.parent.mkdir(parents=True, exist_ok=True)
-    tok.write_text(creds.to_json(), encoding="utf-8")
+    tmp = tok.with_name(f"{tok.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(creds.to_json(), encoding="utf-8")
+    os.replace(tmp, tok)
     return creds
 
 

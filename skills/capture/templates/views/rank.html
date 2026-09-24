@@ -1,7 +1,7 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
-{"id": "rank", "title": "순위 추적",
+{"id": "rank", "group": "search", "title": "순위 추적",
  "sections": ["ranks"], "stages": ["rank", "gaps"], "head": ["rank"]}
 </script>
 
@@ -63,17 +63,16 @@
 
 <script>
 "use strict";
-/* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev / d.aio_gap / d.aio_play 뿐이다.
+/* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev 뿐이다. 순위만 본다 — 같은 조회가
+   걷어 오는 구글 AI 요약(aio·aio_gap·aio_play)은 [AI 인용] 화면(ai.html 의 #ai-aio)이
+   그린다: 메뉴의 묶음이 [AI 노출]이고, 사용자가 AI 요약을 찾는 자리가 거기다.
    직전 순위는 지어낸 값이 아니라 역산이다 — 서버(scoring.rank_delta)가 보낸
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
    추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
-let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_AIO = "", RK_HAS_PREV = false;
+let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_HAS_PREV = false;
 // 기회 상태 거르개 — 기본은 "전체"다. 이 목록은 기회 목록이 아니라 검색어 목록이라,
 // 걸지 않으면 기회가 안 붙은 줄까지 여태처럼 다 보인다(정본은 셸의 OPP_ST_OPT).
 let RK_ST = "";
-// AI 요약에 내 링크가 빠진 검색어(d.aio_gap). 칩이 이 배열을 색인으로 가리킨다 —
-// 검색어 글자를 onclick 속성에 박으면 따옴표 든 검색어에서 깨진다.
-let RK_GAP = [];
 
 /* ── 다음 행동 띠 ────────────────────────────────────────────────
    문장은 화면 머리 아래 한 자리(.next)에만 선다 — 셸이 심는다(window.nextStep).
@@ -208,24 +207,6 @@ function RK_chips(bs) {
        <b>${b.n}</b></button>`).join("")}</div>`;
 }
 
-// AI 요약 공백 칩. 지층 칩과 같은 부품이고, 눌린 것은 같은 모양(.on·aria-pressed)으로
-// 선다 — 목록이 그 검색어로 걸려 있는데 칩이 안 눌린 얼굴이면 화면이 두 말을 한다.
-function RK_gapChips() {
-  return `<div class="oppchips rk-gap" id="rk-gapchips">${RK_GAP.map((k, i) => {
-    const on = RK_Q === k;
-    return `<button class="chip${on ? " on" : ""}" onclick="RK_gapOnly(${i})"
-      aria-pressed="${on}" title="${on ? "다시 누르면 조건이 풀립니다"
-        : "위 목록에서 이 검색어를 찾아 남깁니다"}">${esc(k)}</button>`;
-  }).join("")}</div>`;
-}
-
-// 고르개 이름은 표의 칸 글자와 같은 말을 쓴다 — 다르면 무엇을 걸렀는지 되짚어야 한다.
-const RK_AIO_OPT = [["", "전체"], ["on", "AI 요약 뜸"], ["gap", "남의 링크만"],
-                    ["off", "요약 없음"]];
-const RK_aioHit = (r, v) => v === "on" ? r.aio === 1
-  : v === "gap" ? (r.aio === 1 && !r.aio_cited)
-  : v === "off" ? r.aio === 0 : true;
-
 // 기회 점수 — 없는 행은 −1 로 뒤로 민다. 색인은 셸의 render() 가 이미 세워 뒀다.
 const RK_score = r => { const o = oppOf(r.keyword); return o ? (o.score ?? 0) : -1; };
 
@@ -237,63 +218,22 @@ function RK_filtered() {
   // 필요하면 열 이름을 눌러 되돌린다. 같은 점수끼리는 받은 순서(순위 오름차순)를
   // 그대로 둔다 — Array.sort 가 안정적이라 따로 2차 키를 둘 필요가 없다.
   return RK_ROWS.filter(r =>
-    (!b || b.hit(r)) && RK_aioHit(r, RK_AIO) &&
+    (!b || b.hit(r)) &&
     window.oppStMatch(oppOf(r.keyword), RK_ST) &&
     (!q || String(r.keyword).toLowerCase().includes(q)))
     .sort((a, b2) => RK_score(b2) - RK_score(a));
 }
 function RK_find(v) { RK_Q = v; RK_list(); }
 function RK_setSt(v) { RK_ST = v; RK_list(); }
-function RK_setAio(v) {
-  RK_AIO = v;
-  // 칩에서 불릴 때도 도구줄의 고르개가 같은 값을 가리켜야 한다 — 화면이 두 말을 하면
-  // 무엇이 걸러졌는지 알 수 없다. 도구줄을 통째로 다시 그리면 찾기 칸의 포커스를 잃는다.
-  const sel = $("rk-tools") && $("rk-tools").querySelector("select");
-  if (sel) sel.value = v;
-  RK_list();
-}
-// 아래 [AI 요약] 칸의 [남의 링크만 N개 보기]가 부른다 — 거르는 목록이 화면 위쪽이라,
-// 눌렀는데 눈앞이 그대로면 안 눌린 것으로 읽힌다. 목록까지 데려간다.
-function RK_gapAll() {
-  // 찾기·구간도 함께 푼다 — 칩으로 검색어 하나만 보던 중에 누르면 그 조건이 남아
-  // "N개 보기"라고 해 놓고 한 줄만 나온다. RK_paint 가 도구줄까지 다시 그린다.
-  RK_Q = ""; RK_BAND = null; RK_AIO = "gap";
-  RK_paint();
-  $("rk-list").scrollIntoView({behavior: "smooth", block: "center"});
-}
-/* 검색어 글자가 곧 칩이다 — 그러면 누른 사람은 "그 검색어만 남는다"로 읽는다. 여태
-   어느 칩을 눌러도 AI 요약 고르개를 「남의 링크만」으로 걸 뿐이라 칩 글자가 거짓말을
-   했다. 이제 칩은 제 글자대로 그 검색어를 찾아 남긴다. 찾기 칸(RK_Q)을 그대로 쓴다 —
-   새 상태를 만들면 걸린 조건이 도구줄에 안 보여서 푸는 법을 알 수 없다.
-   묶음으로 보는 길은 위 [남의 링크만 N개 보기]와 도구줄 고르개가 그대로 갖는다. */
-function RK_gapOnly(i) {
-  const k = RK_GAP[i];
-  if (k == null) return;
-  const on = RK_Q === k;
-  RK_Q = on ? "" : k;
-  // 다른 거르개는 함께 지운다 — 구간이나 AI 요약에 걸려 있으면 "그 검색어를 찾아
-  // 남긴다"고 해 놓고 빈 목록이 나온다.
-  RK_BAND = null; RK_AIO = "";
-  RK_paint();
-  $("rk-list").scrollIntoView({behavior: "smooth", block: "center"});
-}
 function RK_setBand(k) { RK_BAND = RK_BAND === k ? null : k; RK_paint(); }
-function RK_reset() { RK_Q = ""; RK_AIO = ""; RK_BAND = null; RK_paint(); }
-
-function RK_aioCell(r) {
-  if (r.aio == null)
-    return `<span class="muted" title="이번 조회는 AI 요약이 떴는지 재지 않았습니다">—</span>`;
-  if (!r.aio) return `<span class="muted">요약 없음</span>`;
-  return r.aio_cited ? `<span class="up" title="AI 요약이 내 페이지를 출처로 실었습니다">내 링크 실림</span>`
-                     : `<span class="down" title="AI 요약이 떴는데 출처는 전부 남의 사이트입니다">남의 링크만</span>`;
-}
+function RK_reset() { RK_Q = ""; RK_BAND = null; RK_paint(); }
 
 /* ── 행 펼침: "몇 위"에서 "그래서 뭘 고치나"까지 한 자리에서 ─────────────
    표 안이라 <details> 를 못 쓴다 — tr 을 버튼으로 만들고 바로 밑에 tr.exp 를 끼운다.
    이미 기회로 채굴된 검색어는 셸의 oppPanel 이 그대로 그린다. 아직 안 잡힌 것만
    이 화면의 순위 구간별 처방(pageTable·playList·pageFix)으로 물러선다. */
 let RK_VIEW = [];                  // 지금 그려진 순서 — 행의 data-i 가 이 배열을 가리킨다
-let RK_PAGES = {}, RK_AUDITS = {}, RK_AIO_PLAY = {};
+let RK_PAGES = {}, RK_AUDITS = {};
 
 // SERP 피처는 제공자가 영문 키로 준다. 아는 것만 옮기고 모르는 값은 원문 그대로 —
 // 여기서 못 알아본 피처를 감추면 화면이 거짓말을 한다.
@@ -304,14 +244,6 @@ const RK_FEAT = {
   sitelinks: "사이트링크", reviews: "리뷰", faq: "FAQ", twitter: "소셜",
   related_searches: "연관 검색어", discussions_and_forums: "커뮤니티 글",
 };
-
-// 요약이 누구를 인용했는지는 서버가 행에 싣는다(aio_domains). null 은 안 쟀다(옛 조회)
-// — 그때는 아무 말도 안 붙인다. 이 글자는 HTML 로 들어가므로 도메인은 esc 한다.
-const RK_aioText = r => r.aio == null ? "AI 요약은 이번에 재지 않음"
-  : !r.aio ? "AI 요약 안 뜸"
-  : (r.aio_cited ? "AI 요약에 내 페이지가 실림" : "AI 요약에 남의 링크만 실림")
-    + (r.aio_domains && r.aio_domains.length
-      ? ` (인용: <span class="num">${r.aio_domains.map(esc).join(", ")}</span>)` : "");
 
 // 순위 구간마다 손댈 자리가 다르다 — 3위와 30위에 같은 할 일을 적으면 둘 다 안 한다.
 // 경계값은 RULES(서버)만 쓴다. 문구는 [개선 기회]의 PLAY 와 같은 어투다.
@@ -365,15 +297,6 @@ function RK_playParts(r) {
                "맞다면 이 검색어 하나만 다루도록 다시 쓴 제목·목차",
                "안 맞다면 새 페이지 제안과 기존 글에서 걸 링크"];
   }
-  // AI 요약이 자리를 차지했는데 우리만 빠진 경우 — 그 상황 설명을 덧붙인다. 문구는
-  // 서버의 aio_exposure 처방 한 벌(scoring._AIO_PLAY, d.aio_play)이다. 예전엔 여기서
-  // "H2 + 직답"을 따로 시켰는데, 구글 AI 요약은 순위 시스템에서 출처를 골라 그 처방이
-  // 구글 공식 입장과 반대였고, 기회 패널과도 다른 말을 했다.
-  // 갈래(aio_band)도 서버가 행에 싣는다(scoring.aio_band) — 여기서 다시 가르지 않는다.
-  if (r.aio === 1 && !r.aio_cited) {
-    const ap = RK_AIO_PLAY[r.aio_band];
-    if (ap && ap.what) what = `${what} ${ap.what}`;
-  }
   return [what, acts, deliver];
 }
 // 산출물(deliver)은 요청문(askBlock)만 쓴다. playList 의 셋째 인자는 상황 문단 끝에
@@ -387,7 +310,6 @@ function RK_detail(r) {
   const line = [
     r.pos != null ? `지금 <b>${r.pos}위</b>` : "이번 조회에서 <b>못 찾았습니다</b>",
     prev != null ? `직전 ${prev}위${d ? " " + d : ""}` : "직전 확인 없음",
-    RK_aioText(r),
     feats.length ? `SERP 피처 ${feats.join(" · ")}` : "SERP 피처 없음",
   ].join(" · ");
   const urlp = r.url
@@ -476,7 +398,6 @@ function RK_row(r, i) {
   // 규모 — 같은 12위라도 노출 3만과 30은 다른 일이다. 펼침에서만 쓰던 값을 앞으로 낸다.
   cells.push(`<td class="num">${top && top.impressions != null ? num(top.impressions)
     : `<span class="muted" title="이 검색어로 걸린 페이지가 스냅샷에 없습니다">—</span>`}</td>`);
-  cells.push(`<td>${RK_aioCell(r)}</td>`);
   // class="opp" 는 장식이 아니라 스코프다 — 셸의 .kind/.why 는 .opp 아래에서만 산다.
   // tr 에는 padding·margin 이 안 먹고 border 는 td 것과 같아서 겹쳐도 달라지는 게 없다.
   return `<tr class="opp" tabindex="0" role="button" aria-expanded="false" data-i="${i}"
@@ -499,7 +420,6 @@ function RK_list() {
     heads.push(">이전?직전 확인일의 순위입니다. 지금 순위에 Δ를 되돌린 값입니다",
       `>Δ?올라간 칸수입니다. ±${(RULES.rank_noise || 3) - 1}칸까지는 노이즈로 보고 보합으로 적습니다`);
   heads.push(">노출?이 검색어로 노출이 가장 큰 페이지의 노출 수입니다. 같은 순위라도 규모는 다릅니다");
-  heads.push("AI 요약?구글이 검색 결과 맨 위에 붙이는 AI 답변입니다. 떴는지, 거기 내 페이지가 출처로 실렸는지를 적습니다");
   $("rk-list").innerHTML = `<div class="card">${table(heads, list.map(RK_row))}</div>`;
 }
 
@@ -511,9 +431,6 @@ function RK_paint() {
   $("rk-tools").innerHTML = `
     <input type="search" value="${esc(RK_Q)}" oninput="RK_find(this.value)"
       placeholder="검색어로 찾기" aria-label="검색어 찾기">
-    <select onchange="RK_setAio(this.value)" aria-label="AI 요약으로 거르기">${
-      RK_AIO_OPT.map(([v, l]) => `<option value="${v}"${v === RK_AIO ? " selected" : ""}>${l}
-        (${RK_ROWS.filter(r => RK_aioHit(r, v)).length})</option>`).join("")}</select>
     ${window.oppStSelect(RK_ST, "RK_setSt",
       s2 => RK_ROWS.filter(r => window.oppStMatch(oppOf(r.keyword), s2)).length)}
     <span class="n" id="rk-n"></span>
@@ -521,9 +438,6 @@ function RK_paint() {
     <button class="go sm sec" onclick="RK_csv()"
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
   RK_list();
-  // 아래 [AI 요약] 칩도 지금 걸린 조건을 따라간다 — 그 칸은 이 함수가 안 그리므로
-  // 여기서 손으로 맞춘다(조건 지우기·구간 칩으로 풀렸을 때도 같이 풀려야 한다).
-  if ($("rk-gapchips")) $("rk-gapchips").outerHTML = RK_gapChips();
 }
 
 // 순위 회의는 화면 밖에서도 이어진다 — 지금 거른 목록 그대로 표로 내보낸다.
@@ -532,7 +446,7 @@ function RK_csv() {
   const bs = RK_bands();
   // 화면이 점수 순으로 놓였으니 점수·노출도 같이 나간다 — 없으면 파일 속 줄 순서가
   // 아무 근거 없어 보인다.
-  const head = ["검색어", "점수", "종류", "순위", "이전", "Δ", "노출", "구간", "AI 요약"];
+  const head = ["검색어", "점수", "종류", "순위", "이전", "Δ", "노출", "구간"];
   const rows = [head].concat(RK_filtered().map(r => {
     const b = bs.find(x => x.hit(r));
     const o = oppOf(r.keyword);
@@ -540,8 +454,7 @@ function RK_csv() {
     return [r.keyword, o && o.score != null ? o.score : "", o ? (o.label || o.kind) : "",
       r.pos ?? "밖", RK_prevPos(r) ?? "", RK_d(r) ?? "",
       top && top.impressions != null ? top.impressions : "",
-      b ? b.t : "", r.aio == null ? "" : !r.aio ? "요약 없음"
-        : r.aio_cited ? "내 링크 실림" : "남의 링크만"];
+      b ? b.t : ""];
   }));
   csv("순위", rows);
 }
@@ -552,10 +465,8 @@ VIEW("rank", function (d) {
   // 기대면 조립 순서가 바뀔 때 조용히 빈다).
   RK_PAGES = d.query_pages || {};
   RK_AUDITS = d.page_audits || {};
-  RK_AIO_PLAY = d.aio_play || {};
-  RK_GAP = d.aio_gap || [];               // AI 요약 공백 칩이 가리키는 한 벌
   RK_HAS_PREV = !!d.rank_prev && RK_ROWS.some(r => RK_d(r) != null);
-  RK_Q = ""; RK_AIO = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
+  RK_Q = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
 
   // 조회 조건은 숫자만큼 중요하다 — 어느 기기로, 어느 제공자로 잰 값인지 말한다.
   // 실행 기록(runs.notes)에 적혀 있는 것만 읽는다.
@@ -608,7 +519,7 @@ VIEW("rank", function (d) {
     const costLine = `추적 중인 검색어 ${num(d.kw_active)}개만큼 제공자 조회 비용이 붙습니다.`;
     if (run)
       RK_next("지난 조회에서 잡힌 순위가 없습니다. " +
-        live("다시 확인하면 검색어마다 지금 몇 위인지, AI 요약에 내 링크가 실렸는지 잡힙니다. "
+        live("다시 확인하면 검색어마다 지금 몇 위인지 잡힙니다. "
           + costLine),
         RK_act("rank", RK_run("rank")));
     else
@@ -647,13 +558,6 @@ VIEW("rank", function (d) {
       </div>
       <div class="tools" id="rk-tools"></div>
       <div id="rk-list"></div>
-    </div>
-    <div class="rk-part" id="rk-aio-part">
-      <div class="sh">
-        <p class="eyebrow">AI 요약</p>
-        <p class="sub" id="rk-aio-sub"></p>
-      </div>
-      <div id="rk-aio"></div>
     </div>`;
 
   const ranked = RANKED;
@@ -717,41 +621,5 @@ VIEW("rank", function (d) {
     + (d.page_audit_date ? (tip => `<span class="hint" tabindex="0" data-tip="${tip}"
         title="${tip}" aria-label="${tip}">i</span>`)(
         `펼친 줄의 페이지 점검은 ${esc(d.page_audit_date)} 기준입니다.`) : "");
-
-  // AI 요약(구글 AI Overview): 순위와 같은 조회에서 같이 걷어 온 값이라 이 화면에 산다.
-  // 요약이 떴는데 내 링크만 빠진 검색어는 aio_exposure 기회로 적재된다(scoring) —
-  // 묶음으로 보는 것은 [남의 링크만 N개 보기], 하나만 보는 것은 아래 검색어 칩이다.
-  // 점수·할 일은 위 표에서 바로 보인다.
-  const known = RK_ROWS.filter(r => r.aio != null);
-  const on = known.filter(r => r.aio === 1);
-  const cited = on.filter(r => r.aio_cited).length;
-  // 부제가 "지금 상태 한 줄"을 맡고, 본문은 누를 것만 남긴다.
-  if (!known.length) {
-    $("rk-aio-sub").textContent = "";
-    $("rk-aio").innerHTML = `<div class="empty">
-      <b>이번 조회는 AI 요약을 재지 않았습니다</b>
-      <p>${grab("provider") === "serper"
-        ? "지금 쓰는 제공자가 이 값을 주지 않습니다. 다른 제공자로 조회하면 채워집니다."
-        : "다음 조회부터 검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지 붙습니다."}</p>
-      </div>`;
-  } else if (!on.length) {
-    // 재 봤는데 문제가 없는 상태다 — 자료가 없는 것(.empty)과 갈라 세운다.
-    $("rk-aio-sub").textContent = "";
-    $("rk-aio").innerHTML = `<div class="empty ok">
-      <b>AI 요약에 자리를 뺏긴 검색어가 없습니다</b>
-      <p>확인한 ${known.length}개 어디에도 요약이 뜨지 않았습니다.</p></div>`;
-  } else {
-    $("rk-aio-sub").textContent =
-      `AI 요약이 뜬 ${on.length}개 중 ${cited}개에 내 페이지가 출처로 실렸습니다.`;
-    $("rk-aio").innerHTML = (on.length - cited
-      ? `<p class="rk-note">나머지 <b>${on.length - cited}개</b>는 요약이 맨 위 자리를
-          차지하는데 거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.</p>
-        <div class="rk-gap"><button class="go sm sec" onclick="RK_gapAll()"
-          title="위 목록을 AI 요약에 내 링크가 빠진 행만 남깁니다"
-          >남의 링크만 ${on.length - cited}개 보기</button></div>`
-      : "") +
-      (RK_GAP.length ? `<p class="rk-note">내 링크가 빠진 검색어입니다. 누르면 위 목록에서
-        그 검색어를 찾아 남깁니다. 다시 누르면 풀립니다.</p>` + RK_gapChips() : "");
-  }
 });
 </script>

@@ -52,6 +52,11 @@
      다크에서도 계속 밝은 값을 쓴다(아래 다크 블록에서 안 덮는다). */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
   --on-ink-rule:rgba(230,233,228,.26); --on-ink-wash:rgba(230,233,228,.10);
+  /* 레일 위의 "때가 지났다" 점(주기를 넘긴 묶음). 레일 바탕은 늘 어두워서 이 값도
+     다크에서 안 덮는다. #E0A83A/#121714 ≈ 8.9:1 — 비텍스트 최소(3:1)를 넉넉히 넘는다.
+     산화동(--copper)을 안 쓰는 이유: 레일 위에서 3:1 을 못 넘기고, 본문에서 그 색은
+     "실패·빠짐"이다 — 이 점은 실패가 아니라 "다시 잴 때"라는 말이다. */
+  --on-ink-amber:#E0A83A;
   --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
          "Malgun Gothic",monospace;
   --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
@@ -197,6 +202,8 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 /* 메뉴 묶음 이름 — 측정하는 화면과 관리하는 화면을 갈라 놓는다. 자리가 있는 것은
    세로 레일뿐이라 좁은 화면(가로 스크롤러)에서는 아예 안 그린다. */
 .navgrp { display:none; }
+.navgrp .navdue { display:inline-block; width:6px; height:6px; border-radius:50%;
+  background:var(--on-ink-amber); margin-left:7px; vertical-align:1px; }
 
 /* 화면 상자 — 한 번에 하나만 선다 */
 .view[hidden] { display:none; }
@@ -382,14 +389,24 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 .hax { max-width:1180px; margin:0 auto; padding:18px 0 0; display:flex; flex-wrap:wrap;
   gap:6px var(--sp-2); align-items:center; }
 .hax[hidden] { display:none; }
-.hax .k { font:var(--micro); color:var(--slate); }
-.hax .ax { display:inline-flex; align-items:center; gap:6px; min-height:22px;
+.hax .k, .vgrp .k { font:var(--micro); color:var(--slate); }
+.hax .ax, .vgrp .ax { display:inline-flex; align-items:center; gap:6px; min-height:22px;
   padding:2px var(--sp-2); border:1px solid var(--rule); border-radius:var(--r-sm);
   background:var(--card); font:var(--micro); color:var(--slate); white-space:nowrap; }
-.hax .ax em { font:500 11px/1.35 var(--mono); font-style:normal; color:var(--ink);
+.hax .ax em, .vgrp .ax em { font:500 11px/1.35 var(--mono); font-style:normal; color:var(--ink);
   font-variant-numeric:tabular-nums; }
 .hax b { color:var(--copper); font-weight:600; flex:0 0 100%;
   font:500 12px/1.6 var(--sans); }
+/* 묶음 머리줄 — 화면 제목 아래 한 줄: "마지막으로 잰 날" + 단계별 날짜 배지 + 이 묶음
+   다시 재기. 단계 이름은 본문 서체, 날짜만 등폭이다. 아직 안 잰 단계의 "아직"은
+   한글이라 등폭에 얹지 않는다(.none). 부제(.sub1, order:1) 밑에 선다. */
+.vh .vgrp { order:2; flex:0 0 100%; display:flex; flex-wrap:wrap; align-items:center;
+  gap:6px var(--sp-2); margin:var(--sp-2) 0 0; }
+.vgrp .ax.none em { font-family:var(--sans); color:var(--slate); }
+/* 도는 중·대기 중은 실패가 아니다 — copper(본문의 실패·빠짐 색)를 쓰지 않는다. */
+.vgrp .gst { font:var(--micro); color:var(--patina); }
+.vgrp .gst:empty { display:none; }
+.vgrp .go { margin-left:var(--sp-2); }
 
 main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-width:0; }
 
@@ -1241,10 +1258,10 @@ const NAV_ICON = {
   guide: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M10.6 5.4 9.2 9.2 5.4 10.6 6.8 6.8z"/></svg>`,
   settings: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4M11 4.5h2.5"/><circle cx="8.8" cy="4.5" r="1.8"/><path d="M2.5 11.5h2.2M9 11.5h4.5"/><circle cx="6.9" cy="11.5" r="1.8"/></svg>`,
 };
-// 재는 화면과 살림하는 화면은 하는 일이 다르다 — 열한 줄을 한 덩어리로 두면
-// [기록]·[안내]·[설정]이 지표 화면과 같은 무게로 읽힌다.
-const NAV_MANAGE = new Set(["history", "guide", "settings"]);
-const NAV_GROUP = id => NAV_MANAGE.has(id) ? "관리" : "측정";
+// 메뉴 묶음 = 사용자의 질문 = 다시 재는 단위(할 일 · 검색 성과 · AI 노출 · …).
+// 정본은 run_all.GROUPS 한 벌이다. 화면은 자기 view-def 에 묶음 id("group")만 적고,
+// 묶음 이름·단계·주기·마지막으로 잰 날은 페이로드(d.groups)로 받는다 — 여기서 이름을
+// 다시 적지 않는다(적는 순간 두 벌이 되고 한쪽만 낡는다).
 
 // 새로고침해도 보던 화면을 잃지 않는다 — 탭 하나가 쓰는 sessionStorage 에 마지막으로
 // **직접 연** 화면만 적는다(SM.show 가 touched 일 때만 적는다 — land() 가 고른 것은
@@ -1263,13 +1280,26 @@ function lastView() { try { return sessionStorage.getItem("sm:lastView") || ""; 
 // 끼운다. 런타임 삽입(SM.addSection)은 그래서 호출자가 없어져 걷어냈다.
 const SM = {
   views: (window.__VIEWS__ || []).map(v => ({
-    id: v.id, title: v.title, sub: v.sub || "",
+    id: v.id, title: v.title, sub: v.sub || "", group: v.group || "",
     sections: (v.sections || []).slice(), stages: (v.stages || []).slice(),
     // head: 화면 제목 옆에 세울 칩. 안 쓰면 stages 그대로(예전 그대로 전부 세운다) —
     // stages 는 seam #9(이 화면에서 부를 수 있는 /capture)의 정본이라 그대로 두고,
     // head 는 그중 "이 화면의 주 단계"만 추린 부분집합이다(view-def 에 없으면 폴백).
     head: (v.head || v.stages || []).slice()})),
   cur: "",
+  // 페이로드의 묶음(d.groups) — render() 가 setGroups 로 넣는다. 첫 페이로드 전에는
+  // 비어 있어 메뉴에 묶음 이름이 안 선다(이름을 여기 적어 두지 않는다 — 위 주석).
+  groups: [],
+  groupOf(id) { return this.groups.find(g => g.id === id) || null; },
+  setGroups(gs) {
+    gs = gs || [];
+    // 이름·점이 바뀔 때만 메뉴를 다시 그린다 — render() 는 자주 불린다.
+    const key = JSON.stringify(gs.map(g => [g.id, g.name, !!g.due]));
+    if (key === this._gkey) { this.groups = gs; return; }
+    this._gkey = key;
+    this.groups = gs;
+    this.navDraw();
+  },
 
   at(id) { return this.views.findIndex(v => v.id === id); },
 
@@ -1335,6 +1365,51 @@ const SM = {
     document.dispatchEvent(new CustomEvent("sm:view", {detail: {view: id}}));
   },
 
+  // 메뉴. 묶음 이름은 화면의 묶음이 바뀌는 자리에만 한 번 선다. 그 배포에 없는
+  // 화면은 SM.drop 이 이미 뺐으므로 빈 묶음의 이름이 남을 일이 없다.
+  // 이름은 작은 제목(.rl — --micro, 자간 없음)이고, 주기를 넘긴 묶음(g.due — 출처는
+  // grpDue 한 벌)에만 점 하나를 단다. 날짜는 메뉴에 안 쓴다 — 그건 각 화면 머리
+  // (groupHead)의 몫이다. 다시 잴 단계가 없는 묶음(할 일 — 매일 런의 꼬리로 돈다)에는
+  // 점을 안 단다: 눌러서 할 수 있는 것이 없는 경고는 소음이다.
+  navDraw() {
+    const nav = $("nav");
+    if (!nav) return;
+    nav.innerHTML = "";
+    let grp = null;
+    for (const v of this.views) {
+      if (v.group !== grp) {
+        grp = v.group;
+        const g = this.groupOf(grp);
+        if (g && g.name) {
+          const lab = document.createElement("span");
+          lab.className = "rl navgrp";
+          lab.textContent = g.name;
+          if (g.due && g.stages && g.stages.length) {
+            const dot = document.createElement("i");
+            dot.className = "navdue";
+            dot.setAttribute("role", "img");
+            dot.setAttribute("aria-label", "다시 잴 때가 지났습니다");
+            dot.title = "다시 잴 때가 지났습니다";
+            lab.appendChild(dot);
+          }
+          nav.appendChild(lab);
+        }
+      }
+      const b = document.createElement("button");
+      b.dataset.v = v.id;
+      // 아이콘은 화면 id 로 고른다 — 뷰 파일이 자기 아이콘을 적지 않는다(적으면
+      // 열한 벌이 되고 그중 몇은 언젠가 낡는다). 모르는 id 면 글자만 선다.
+      b.innerHTML = (NAV_ICON[v.id] || "") + "<span></span>";
+      b.lastChild.textContent = v.title;
+      b.onclick = () => { SM.touched = true; SM.show(v.id); };
+      const on = v.id === this.cur;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-current", on ? "page" : "false");
+      nav.appendChild(b);
+    }
+    if (typeof navFade === "function") navFade();
+  },
+
   // 상자를 만들고 섹션을 제자리로 옮긴다. 여러 번 불려도 공짜다 — 애드온이
   // 만드는 섹션은 늦게 생기므로 실제로 여러 번 불린다.
   sync() {
@@ -1373,31 +1448,7 @@ const SM = {
         if (sec.parentNode !== box) box.appendChild(sec);
       }
     }
-    const nav = $("nav");
-    if (nav) {
-      nav.innerHTML = "";
-      let grp = "";
-      for (const v of this.views) {
-        // 묶음 이름은 화면이 바뀌는 자리에만 한 번 선다. 그 배포에 없는 화면은
-        // SM.drop 이 이미 뺐으므로 빈 묶음의 이름이 남을 일이 없다.
-        const g = NAV_GROUP(v.id);
-        if (g !== grp) {
-          grp = g;
-          const lab = document.createElement("span");
-          lab.className = "rl navgrp";
-          lab.textContent = g;
-          nav.appendChild(lab);
-        }
-        const b = document.createElement("button");
-        b.dataset.v = v.id;
-        // 아이콘은 화면 id 로 고른다 — 뷰 파일이 자기 아이콘을 적지 않는다(적으면
-        // 열한 벌이 되고 그중 몇은 언젠가 낡는다). 모르는 id 면 글자만 선다.
-        b.innerHTML = (NAV_ICON[v.id] || "") + "<span></span>";
-        b.lastChild.textContent = v.title;
-        b.onclick = () => { SM.touched = true; SM.show(v.id); };
-        nav.appendChild(b);
-      }
-    }
+    this.navDraw();
     this.show(this.at(this.cur) >= 0 ? this.cur
               : (this.views[0] ? this.views[0].id : ""));
     // 상자가 (다시) 섰다고 알린다 — 뒤에 얹히는 층이 화면 머리에 자기 버튼을 단다.
@@ -3004,6 +3055,9 @@ function render(d) {
   if (d.rules) RULES = {...d.rules};  // 서버가 준 경계값이 이 화면의 유일한 기준
   renderGuide(d);
   renderDates(d);
+  // 묶음 — 메뉴의 제목·점과 각 화면 머리줄. 정본은 run_all.GROUPS(서버가 싣는다).
+  SM.setGroups(grpDue(d.groups));
+  groupHead(d);
   applyWording();          // 정적 문구는 여기서 한 번 (동적 문구는 각자 W() 로 고른다)
 
   // 기회 한 벌은 화면 전부가 같이 본다 — 화면을 그리기 전에 대상 색인을 세운다.
@@ -3038,6 +3092,144 @@ function render(d) {
 // 카드를 갱신해야 할 때 쓴다. **DOM 을 되짚어 고치는 대신** 같은 페이로드로 render()
 // 를 다시 부른다 — oppActs() 등 렌더 함수가 SM.host 를 다시 물어 새로 그린다.
 SM.repaint = () => { if (LAST_D) render(LAST_D); };
+
+/* ── 묶음 머리줄 · 이 묶음 다시 재기 ─────────────────────────────────────
+   묶음(run_all.GROUPS)은 메뉴의 제목이자 다시 재는 단위다. 잴 단계가 있는 묶음의
+   화면마다 제목 아래 한 줄을 세운다: 단계별 마지막으로 잰 날(d.groups[].last — 서버가
+   runs 에서 성공한 런만 골라 준다) + [이 묶음 다시 재기]. 전체 재기는 [안내] 화면
+   한 곳에만 선다(묶음 다섯을 한 번에 부른다 — 본문에 groups 를 안 싣는다).
+
+   누르는 것은 두 배포에서 같은 요청이다: POST /api/run {project, groups}. 로컬은 이
+   대시보드가 run_all.py --groups 를 띄우고(dashboard.run_route), 호스팅은 워커가
+   돈다. 도는 중에 다른 묶음을 누르면 서버가 대기열에 올린다(응답 queued) — 화면은
+   그 사실만 옮긴다. 상태는 GET /api/run/status 의 사이트별 groups 칸이 정본이다:
+   로컬은 여기서 폴링하고, 호스팅은 애드온(dash.html)이 이미 도는 폴링 결과를
+   window.grpStatus 로 넘겨준다(한 화면에 폴러가 둘이면 같은 것을 두 번 묻는다). */
+let GRP_ST = {};                  // {묶음 id: {running, queued, last_run_at, due}}
+
+/* "주기를 넘겼나"(메뉴의 점)의 출처는 한 벌이다: 상태(GET /api/run/status 의 groups[].due)
+   를 받았으면 그게 이긴다. 호스팅에서 그 값은 스케줄러가 실제로 쓰는 판정
+   (store.due_groups — 사이트의 자동 주기, 0 이면 끔)이라, 페이로드의 고정 주기
+   (run_all.GROUPS.every_hours)로 따로 세면 자동을 끈 사이트에 영영 안 꺼지는 점이
+   서고, 6시간 주기 사이트는 스케줄러가 이미 재는데도 점이 일주일을 기다린다.
+   로컬 상태의 due 는 페이로드와 같은 판정(_axis_groups)이라 어느 쪽을 써도 같다.
+   상태를 아직 못 받았으면(첫 그림) 페이로드 값을 쓴다. */
+function grpDue(gs) {
+  return (gs || []).map(g => {
+    const s = GRP_ST[g.id];
+    return s && typeof s.due === "boolean" ? {...g, due: s.due} : g;
+  });
+}
+const GRP_LABEL = "이 묶음 다시 재기", GRP_ALL = "전체 다시 재기";
+
+function groupHead(d) {
+  const gs = d.groups || [];
+  for (const v of SM.views) {
+    const box = $("view-" + v.id), vh = box && box.querySelector(":scope > .vh");
+    if (!vh) continue;
+    const g = gs.find(x => x.id === v.group);
+    // 날짜 칸은 서버가 준 last 의 칸 그대로다(서버가 묶음의 시계 단계로 채운다 — 할 일은
+    // 매일 런의 단계). 버튼은 다시 잴 단계가 있는 묶음에만 선다.
+    const clock = Object.keys((g && g.last) || {});
+    let html = "";
+    if (g && clock.length) {
+      const ax = clock.map(st => {
+        const at = g.last[st];
+        return `<span class="ax${at ? "" : " none"}">${esc(stageName(st))}<em>${
+          at ? esc(at) : "아직"}</em></span>`;
+      }).join("");
+      html = `<span class="k">마지막으로 잰 날</span>${ax}` +
+        (READONLY || !(g.stages && g.stages.length) ? "" :
+        `<button class="go sm sec" data-grp="${esc(g.id)}"
+           onclick="groupRun(this)">${GRP_LABEL}</button><span class="gst"></span>`);
+    } else if (v.id === "guide" && !READONLY && gs.some(x => x.stages && x.stages.length)) {
+      // 전체 재기는 여기 하나다 — 이름은 페이로드의 묶음에서 읽는다(사본을 안 둔다).
+      const names = gs.filter(x => x.stages && x.stages.length).map(x => x.name);
+      html = `<span class="k">${esc(names.join(" · "))}</span>
+        <button class="go sm" data-grp="" onclick="groupRun(this)">${GRP_ALL}</button>
+        <span class="gst"></span>`;
+    }
+    let el = vh.querySelector(":scope > .vgrp");
+    if (!html) { if (el) el.remove(); continue; }
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "vgrp";
+      vh.appendChild(el);
+    }
+    el.innerHTML = html;
+  }
+  grpPaint();
+}
+
+// 버튼의 얼굴은 상태에서 온다 — 누른 직후에도, 새로고침한 뒤에도 같은 말을 한다.
+function grpPaint() {
+  // 전체 버튼이 보는 묶음은 잴 단계가 있는 것뿐이다([관리]는 늘 쉬고 있다).
+  const ids = SM.groups.filter(g => g.stages && g.stages.length && GRP_ST[g.id]).map(g => g.id);
+  document.querySelectorAll(".vgrp [data-grp]").forEach(b => {
+    const gid = b.dataset.grp, st = b.nextElementSibling;
+    // 전체 버튼(gid "")은 잴 묶음이 전부 돌거나 줄 서 있으면 누를 게 없다.
+    const s = gid ? (GRP_ST[gid] || {})
+      : {running: ids.length > 0 && ids.every(i => GRP_ST[i].running || GRP_ST[i].queued),
+         queued: false};
+    const busy = !!(s.running || s.queued);
+    if (b.dataset.wait !== "1") b.disabled = busy;
+    if (st) st.textContent = s.running ? "재는 중입니다" : s.queued ? "지금 도는 재기가 끝나면 잽니다" : "";
+  });
+}
+
+async function groupRun(btn) {
+  const project = $("proj") && $("proj").value;
+  if (!project || btn.disabled) return;
+  const gid = btn.dataset.grp;
+  btn.disabled = true; btn.dataset.wait = "1";
+  let ok = false, r = {};
+  try {
+    [ok, r] = await post("/api/run", gid ? {project, groups: gid} : {project});
+  } catch (e) { r = {}; }
+  delete btn.dataset.wait;
+  if (!ok) {
+    btn.disabled = false;
+    // 원인 + 다음 행동. 서버 문구(detail·error)가 있으면 그게 원인이다.
+    return toast(`${(r && (r.detail || r.error)) || "서버가 응답하지 않았습니다."} 잠시 뒤 다시 누르면 재시도합니다.`, "bad");
+  }
+  const who = gid ? ((SM.groupOf(gid) || {}).name || "이 묶음") : "전체";
+  toast(r.queued ? `지금 도는 재기가 끝나면 ${who}도 이어서 잽니다.`
+                 : `${who} 다시 재기를 시작했습니다. 끝나면 숫자가 저절로 바뀝니다.`, "ok");
+  if (gid) GRP_ST[gid] = {...(GRP_ST[gid] || {}), [r.queued ? "queued" : "running"]: true};
+  grpPaint();
+  // 뒤에 얹히는 층(호스팅 애드온)이 자기 진행 배너를 바로 세우게 알린다 — 안 알리면
+  // 그 층의 다음 폴링(최대 8초)까지 화면이 조용하다.
+  document.dispatchEvent(new CustomEvent("sm:run", {detail: {groups: gid, queued: !!r.queued}}));
+  if (!window.SM_HOSTED) grpPoll(1500);
+}
+
+// 상태 한 벌을 받는다 — 로컬은 grpPoll, 호스팅은 애드온의 폴링이 부른다.
+// 돌던 것이 다 끝났으면 화면을 다시 읽는다(호스팅은 애드온이 이미 load() 한다).
+window.grpStatus = st => {
+  const p = $("proj") && $("proj").value;
+  const was = Object.values(GRP_ST).some(s => s.running);
+  GRP_ST = ((st && st[p]) || {}).groups || {};
+  SM.setGroups(grpDue(SM.groups));          // 점의 출처 — grpDue 주석
+  grpPaint();
+  const now = Object.values(GRP_ST).some(s => s.running || s.queued);
+  if (was && !now && !window.SM_HOSTED) load();
+  return now;
+};
+
+let GRP_TIMER = 0;
+function grpPoll(wait) {
+  if (window.SM_HOSTED || READONLY) return;
+  clearTimeout(GRP_TIMER);
+  GRP_TIMER = setTimeout(async () => {
+    const p = $("proj") && $("proj").value;
+    if (!p) return;
+    try {
+      const res = await fetch("/api/run/status?project=" + encodeURIComponent(p));
+      if (res.ok && window.grpStatus(await res.json())) grpPoll(5000);
+    } catch (e) { /* 다음 새로고침에 다시 묻는다 — 폴링 실패는 버튼을 안 잠근다 */ }
+  }, wait || 0);
+}
+document.addEventListener("sm:site", () => { GRP_ST = {}; grpPoll(0); });
 
 async function loadProjects() {
   const names = await (await fetch("/api/projects")).json();

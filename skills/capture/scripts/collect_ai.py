@@ -29,6 +29,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -235,23 +236,33 @@ def collect(project: str, *,
         # r.api_calls를 직접 센다 — 도중에 죽어도 그때까지 부른 횟수가 남는다.
         with st.record("ai") as r:
             run_id = r.id
+            # 질문×엔진×표본을 한 줄로 펴서 동시에 묻는다(fanout.LIMITS["openrouter"]).
+            # 순차일 때 1회 ~8초 × 222회가 이 단계의 25분이었다. 묻기(ask)만 일꾼이
+            # 하고, 판정·적재는 이 스레드가 입력 순서대로 한다 — conn 을 일꾼과 나눠
+            # 쓰지 않는다. 429 는 여전히 **그 항목 하나의 실패**다: 세고 넘어가고,
+            # 끝난 회차에 행이 없으니 다음 런이 그 항목만 다시 묻는다(checked_today).
+            flat = [(row, engine, sample) for row, tasks in todo for engine, sample in tasks]
+            last_of = {row["id"]: (row, *tasks[-1]) for row, tasks in todo if tasks}
 
-            def one(row, task) -> None:
+            def ask_one(item) -> dict:
+                row, engine, _ = item
+                return ask(engines_d[engine], row["prompt"], api_key, p["locale"])
+
+            def write_one(item, res) -> None:
                 """질문 하나 × 엔진 × 샘플 — 실패는 러너가 세고 다음으로 넘어간다."""
-                engine, sample = task
-                res = ask(engines_d[engine], row["prompt"], api_key, p["locale"])
+                row, engine, sample = item
                 mentioned, cited, others, recommended = scoring.judge(
                     res["content"], res["citation_urls"], aliases, own_domain)
                 db.record_ai_check(conn, row["id"], run_id, engine, sample,
                                    mentioned, cited, others, res["content"],
                                    recommended=recommended)
-
-            for row, tasks in todo:
-                n = st.each(tasks, lambda t, row=row: one(row, t),
-                            label=lambda t, row=row: f"{t[0]} failed on prompt#{row['id']}")
-                r.api_calls += n
-                if n:
+                # 도중에 Fatal 로 끊겨도 그때까지 부른 횟수가 runs 에 남게 여기서 센다
+                r.api_calls += 1
+                if last_of.get(row["id"]) == item:
                     print(f"  prompt#{row['id']} [{row['category']}] done")
+
+            fanout.each(st, flat, ask_one, write_one, workers=fanout.LIMITS["openrouter"],
+                        label=lambda t: f"{t[1]} failed on prompt#{t[0]['id']}")
             r.notes = (f"engines={list(engines_d)} samples={samples} "
                        f"{st.err_note} skipped={skipped_calls}")
 
@@ -291,7 +302,100 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    if len(sys.argv) == 1:
+        _selfcheck()
+        return
     collector.cli("ai")
+
+
+def _selfcheck() -> None:
+    """동시에 묻되, 적재는 한 스레드·입력 순서 — 가짜 ask 로 돈다(유료 호출 0).
+
+    ask 를 통째로 갈아 끼운다: 앞 항목일수록 늦게 끝나게 해서, 끝난 순서대로 적으면
+    ai_checks 의 id 순서가 뒤집히게 만든다. conn 은 fanout.MainThreadOnly 로 싸서
+    일꾼이 만지면 바로 터지게 한다(db.connect 는 check_same_thread=False 라 sqlite3 가
+    안 막는다).
+    """
+    import contextlib
+    import io
+    import os
+    import tempfile
+    import threading
+    import time
+
+    os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-ai-selftest-")))
+    os.environ["OPENROUTER_API_KEY"] = "fake-selftest-key"
+    boot = db.connect()
+    boot.execute("INSERT INTO projects(name, domain, locale) VALUES('ai','ai.kr','ko-KR')")
+    pid = boot.execute("SELECT id FROM projects WHERE name='ai'").fetchone()["id"]
+    boot.executemany("INSERT INTO ai_prompts(project_id, prompt, category, is_active) "
+                     "VALUES(?,?,'추천',1)", [(pid, f"질문{i}") for i in range(6)])
+    boot.commit()
+    boot.close()
+
+    lock = threading.Lock()
+    live = {"now": 0, "peak": 0}
+    main_id = threading.get_ident()
+    asked_on: set[int] = set()
+    orig_ask = globals()["ask"]
+
+    def fake_ask(model, prompt, api_key, locale):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+            asked_on.add(threading.get_ident())
+        n = int(prompt.removeprefix("질문"))
+        time.sleep(0.01 * (6 - n))
+        with lock:
+            live["now"] -= 1
+        if prompt == "질문2" and model == DEFAULT_ENGINES["gemini"]:
+            # 429 는 그 항목 하나의 실패다 — 단계를 멈추지 않는다(serp_adapter.raise_for)
+            raise requests.HTTPError("429 Client Error: Too Many Requests")
+        return {"content": f"{prompt} 답 — ai.kr 추천", "citation_urls": ["https://ai.kr/x"],
+                "usage": {}}
+
+    conn = fanout.MainThreadOnly(db.connect())
+    globals()["ask"] = fake_ask
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            res = collect("ai", engines="chatgpt,perplexity,gemini", samples=2, throttle=0,
+                          conn=conn)
+    finally:
+        globals()["ask"] = orig_ask
+    # 6질문 × 3엔진 × 2표본 = 36, 그중 질문2×gemini 두 표본이 429
+    assert (res.ok, res.partial, len(res.errors)) == (True, True, 2), res
+    assert all("prompt#" in e.item and e.item.startswith("gemini") for e in res.errors), res.errors
+    rows = conn.execute("SELECT p.prompt, c.engine, c.sample_idx FROM ai_checks c "
+                        "JOIN ai_prompts p ON p.id=c.prompt_id ORDER BY c.id").fetchall()
+    want = [(f"질문{i}", e, s) for i in range(6) for e in ("chatgpt", "perplexity", "gemini")
+            for s in range(2) if not (i == 2 and e == "gemini")]
+    assert [tuple(r) for r in rows] == want, "적재 순서가 입력 순서가 아니다(끝난 순서로 적혔다)"
+    assert 1 < live["peak"] <= fanout.LIMITS["openrouter"], f"동시 상한: peak={live['peak']}"
+    assert main_id not in asked_on, "ask 가 메인 스레드에서 돌았다 — 동시에 안 묻는다"
+    run = conn.execute("SELECT api_calls, notes FROM runs WHERE kind='ai'").fetchone()
+    assert run["api_calls"] == 34 and "errors=2" in run["notes"], dict(run)
+
+    # 402(Fatal) — 아직 안 보낸 질문은 보내지 않고 단계를 끝낸다
+    sent: list[str] = []
+
+    def broke(model, prompt, api_key, locale):
+        with lock:
+            sent.append(prompt)
+        raise collector.Fatal("OpenRouter 잔액 없음(402)")
+
+    globals()["ask"] = broke
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            collect("ai", engines="chatgpt,perplexity,gemini", samples=2, throttle=0,
+                    force=True, conn=conn)
+        raise AssertionError("402 를 삼켰다")
+    except collector.Fatal:
+        pass
+    finally:
+        globals()["ask"] = orig_ask
+    assert len(sent) <= fanout.LIMITS["openrouter"], f"402 뒤로도 계속 물었다: {len(sent)}회"
+    conn.close()
+    print("collect_ai self-check ok")
 
 
 if __name__ == "__main__":

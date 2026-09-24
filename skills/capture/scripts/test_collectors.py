@@ -249,10 +249,13 @@ def test_collect_serp_rivals_skip_platforms_and_rare_hosts():
         return {"top": top(*doms), "serp_features": [], "aio_present": 0, "aio_domains": [],
                 "related": [], "paa": [], "cost": 0.0}
 
+    # serp_adapter.fetch 를 갈아 끼우는 검사들은 한 건씩 재는 제공자(serper)로 돈다 —
+    # dataforseo 는 이제 대기열이라 fetch 를 안 부른다. 응답을 쓰는 쪽(collect_serp 의
+    # write)은 두 경로가 한 벌이라 여기서 같이 지켜진다. 대기열은 test_rank_queue_* 가 본다.
     orig = serp_adapter.fetch
     serp_adapter.fetch = fake_fetch
     try:
-        collect_serp.collect("serp_rival_proj", provider="dataforseo", throttle=0)
+        collect_serp.collect("serp_rival_proj", provider="serper", throttle=0)
     finally:
         serp_adapter.fetch = orig
 
@@ -319,7 +322,7 @@ def test_collect_serp_ranking_and_none_position_aio():
 
     serp_adapter.fetch = fake_fetch
     try:
-        collect_serp.collect("serp_test_proj", provider="dataforseo",
+        collect_serp.collect("serp_test_proj", provider="serper",
                              throttle=0)
     finally:
         serp_adapter.fetch = orig_fetch
@@ -434,26 +437,26 @@ def test_collect_serp_today_skip_and_force():
     try:
         # 1. 기본 실행: kw_done_id 는 skip -> kw_new_id 만 1회 호출
         fetch_calls.clear()
-        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+        collect_serp.collect("serp_skip_proj", provider="serper",
                              throttle=0)
         assert len(fetch_calls) == 1, f"오늘 이미 확인된 키워드는 skip되어야 함 (호출수={len(fetch_calls)})"
         assert fetch_calls[0][0] == "오늘_미확인"
 
         # 2. --force 실행: 2개 모두 재확인
         fetch_calls.clear()
-        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+        collect_serp.collect("serp_skip_proj", provider="serper",
                              throttle=0, force=True)
         assert len(fetch_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(fetch_calls)})"
         assert {call[0] for call in fetch_calls} == {"오늘_이미_확인", "오늘_미확인"}
 
         # 3. --ids 지정 + skip / force 검증
         fetch_calls.clear()
-        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+        collect_serp.collect("serp_skip_proj", provider="serper",
                              throttle=0, ids=str(kw_done_id))
         assert len(fetch_calls) == 0, f"--ids 로 이미 확인된 것만 지정 시 0건이어야 함: {fetch_calls}"
 
         fetch_calls.clear()
-        collect_serp.collect("serp_skip_proj", provider="dataforseo",
+        collect_serp.collect("serp_skip_proj", provider="serper",
                              throttle=0, ids=str(kw_done_id), force=True)
         assert len(fetch_calls) == 1, f"--ids + --force 시 1건 호출되어야 함: {fetch_calls}"
         assert fetch_calls[0][0] == "오늘_이미_확인"
@@ -1532,6 +1535,72 @@ def test_oauth_credentials_skips_browser_when_none_available():
         token.unlink(missing_ok=True)
 
 
+def test_oauth_credentials_serialised_across_threads():
+    """묶음 런은 gsc·ga4 를 한 프로세스의 두 스레드로 동시에 돌리고 둘 다 토큰을 읽고
+    갱신하고 되쓴다. 줄을 안 세우면 한쪽이 파일을 비우고 쓰는 순간 다른 쪽이 반쯤 쓴
+    파일을 읽어 creds=None("로그인 필요")이 되고 그 런의 GA4 가 통째로 빠진다.
+    읽기~쓰기 구간에 두 스레드가 동시에 있으면 안 된다."""
+    import threading
+    import time as _time
+    import collect_gsc
+    from google.oauth2.credentials import Credentials
+
+    token = db.gsc_token()
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text('{"token":"old"}', encoding="utf-8")
+    inside, peak, errs = [0], [0], []
+    lock = threading.Lock()
+
+    class _Creds:
+        valid, expired, refresh_token = False, True, "r"
+
+        def refresh(self, req):
+            _time.sleep(0.05)                     # 갱신 왕복 — 이 사이에 다른 스레드가 들어온다
+            self.valid = True
+
+        def to_json(self):
+            return '{"token":"new"}'
+
+    def _load(cls, path, scopes=None):
+        with lock:
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+        json.loads(Path(path).read_text("utf-8"))  # 반쯤 쓴 파일이면 여기서 터진다
+        return _Creds()
+
+    real_load = Credentials.from_authorized_user_file
+    real_write = collect_gsc._oauth_credentials_locked
+
+    def _counted():
+        try:
+            return real_write()
+        finally:
+            with lock:
+                inside[0] -= 1
+
+    Credentials.from_authorized_user_file = classmethod(_load)
+    collect_gsc._oauth_credentials_locked = _counted
+    try:
+        def worker():
+            try:
+                assert collect_gsc._oauth_credentials() is not None
+            except BaseException as e:            # noqa: BLE001 — 스레드 밖으로 넘긴다
+                errs.append(e)
+        ts = [threading.Thread(target=worker) for _ in range(3)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        Credentials.from_authorized_user_file = real_load
+        collect_gsc._oauth_credentials_locked = real_write
+    assert not errs, errs
+    assert peak[0] == 1, f"토큰 읽기~되쓰기에 스레드 {peak[0]}개가 동시에 들어왔다"
+    assert json.loads(token.read_text("utf-8")) == {"token": "new"}
+    assert not list(token.parent.glob(token.name + ".*.tmp")), "임시 토큰 파일이 남았다"
+    token.unlink(missing_ok=True)
+
+
 def test_gsc_query_selfcheck():
     """gsc_query: 창 계산·필터 파싱·노출 가중평균 — 즉석 조회가 MCP 서버를 대신한다.
 
@@ -2145,6 +2214,347 @@ def test_skips_are_not_failures_and_item_errors_are():
     finally:
         collect_page.target_urls, collect_page.fetch = orig_targets, orig_fetch
         conn.close()
+
+
+
+# ── 순위 대기열 (DataForSEO Standard, priority=2) ────────────────────────────
+# 가짜 DataForSEO — task_post·tasks_ready·task_get/advanced 세 경로를 HTTP 층에서 흉내
+# 낸다. 진짜 요청은 한 번도 안 나간다. ready_at 은 "몇 번째 tasks_ready 부터 다 됐나".
+
+class _FakeDFS:
+    def __init__(self, own="q.com", ready_at=1):
+        self.own, self.ready_at = own, ready_at
+        self.tasks: dict[str, dict] = {}
+        self.posts: list[list[dict]] = []
+        self.ready_calls = 0
+        self.gets: list[str] = []
+        self.urls: list[str] = []
+
+    def post(self, url, auth=None, timeout=None, json=None, **kw):
+        self.urls.append(url)
+        assert url.endswith("/v3/serp/google/organic/task_post"), url
+        self.posts.append(json)
+        out = []
+        for body in json:
+            tid = f"task-{len(self.tasks) + 1}"
+            self.tasks[tid] = {"body": body, "ready_at": self.ready_at, "taken": False}
+            out.append({"id": tid, "status_code": 20100, "status_message": "Task Created.",
+                        "cost": 0.0012, "data": dict(body)})
+        return FakeResponse({"status_code": 20000, "cost": 0.0012 * len(out), "tasks": out})
+
+    def get(self, url, auth=None, timeout=None, **kw):
+        self.urls.append(url)
+        if url.endswith("/tasks_ready"):
+            self.ready_calls += 1
+            ids = [{"id": t} for t, v in self.tasks.items()
+                   if not v["taken"] and self.ready_calls >= v["ready_at"]]
+            return FakeResponse({"status_code": 20000,
+                                 "tasks": [{"status_code": 20000, "result": ids}]})
+        assert "/task_get/advanced/" in url, url
+        tid = url.rsplit("/", 1)[1]
+        self.gets.append(tid)
+        v = self.tasks.get(tid)
+        if v is None:
+            return FakeResponse({"status_code": 20000,
+                                 "tasks": [{"id": tid, "status_code": 40401,
+                                            "status_message": "Task Not Found."}]})
+        if self.ready_calls < v["ready_at"]:
+            return FakeResponse({"status_code": 20000,
+                                 "tasks": [{"id": tid, "status_code": 40602,
+                                            "status_message": "Task In Queue."}]})
+        v["taken"] = True
+        kw_ = v["body"]["keyword"]
+        items = [{"type": "organic", "rank_group": 1, "url": f"https://rival.com/{kw_}",
+                  "title": "R"},
+                 {"type": "organic", "rank_group": 2, "url": f"https://{self.own}/{kw_}",
+                  "title": "Mine"}]
+        return FakeResponse({"status_code": 20000, "tasks": [{
+            "id": tid, "status_code": 20000, "status_message": "Ok.",
+            "data": dict(v["body"]),
+            "result": [{"keyword": kw_, "datetime": "2026-09-24 01:02:03 +00:00",
+                        "items": items}]}]})
+
+
+class _Clock:
+    """가짜 시계 — sleep 이 시간을 민다. 10분 상한을 진짜로 기다리지 않는다."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += max(s, 0.001)
+
+
+@contextlib.contextmanager
+def _dfs_env(fake: "_FakeDFS"):
+    """가짜 HTTP·시계·키를 끼우고 빼 준다. 상위 글 열기(collect_page.fetch)도 막는다."""
+    import collect_page
+    clock = _Clock()
+    saved = (requests.post, requests.get, collect_serp._clock, collect_serp._sleep,
+             collect_page.fetch, dict(os.environ))
+    requests.post, requests.get = fake.post, fake.get
+    collect_serp._clock, collect_serp._sleep = clock, clock.sleep
+    collect_page.fetch = lambda url, timeout=None: {"url": url, "status": 0, "error": "test"}
+    os.environ.update({"DATAFORSEO_LOGIN": "u", "DATAFORSEO_PASSWORD": "p",
+                       "SEOMINER_DFS_RPM": "0", "SEOMINER_DATA": str(HOME / "dfs-pace")})
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            yield clock
+    finally:
+        (requests.post, requests.get, collect_serp._clock, collect_serp._sleep,
+         collect_page.fetch, env) = saved
+        os.environ.clear()
+        os.environ.update(env)
+
+
+def _rank_project(name, n, *, domain="q.com"):
+    conn = db.connect()
+    p = _project(conn, name, domain=domain)
+    conn.executemany("INSERT INTO keywords(project_id, keyword, locale, is_active) "
+                     "VALUES(?,?, 'ko-KR', 1)", [(p["id"], f"{name} 검색어 {i:03d}")
+                                                  for i in range(n)])
+    conn.commit()
+    return conn, p
+
+
+def test_rank_targets_all_active_in_order_and_capped():
+    """순위는 추적 키워드 **전부**를 잰다 — 순서: 열린 기회의 대상 → 한 번도 안 잰 것 →
+    가장 오래전에 잰 것. 상한(limits.max_keywords)은 뒤를 자른다.
+
+    여태는 `ORDER BY id LIMIT 100` 이라 늘 같은 100개만 쟀고 232개 중 132개는 한 번도
+    안 쟀다(2026-09-24 theotherskin)."""
+    conn = db.connect()
+    p = _project(conn, "rank_order", domain="o.com")
+    for kw, active in (("old", 1), ("never", 1), ("recent", 1), ("opp", 1), ("off", 0),
+                       ("never2", 1)):
+        conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active) "
+                     "VALUES(?,?, 'ko-KR', ?)", (p["id"], kw, active))
+    kid = {r["keyword"]: r["id"] for r in conn.execute(
+        "SELECT id, keyword FROM keywords WHERE project_id=?", (p["id"],))}
+    # 시각 꼴이 섞여 있어도('T…Z' 와 공백) 오래된 순이 맞아야 한다
+    db.write_rank_snapshot(conn, kid["old"], 5, None, checked_at="2026-08-01T00:00:00Z")
+    db.write_rank_snapshot(conn, kid["recent"], 5, None, checked_at="2026-09-20 00:00:00")
+    db.write_rank_snapshot(conn, kid["opp"], 5, None, checked_at="2026-09-21T00:00:00Z")
+    conn.execute("INSERT INTO opportunities(project_id, kind, target, status) "
+                 "VALUES(?, 'striking', 'OPP', 'acked')", (p["id"],))       # 대소문자 무관
+    conn.execute("INSERT INTO opportunities(project_id, kind, target, status) "
+                 "VALUES(?, 'striking', 'recent', 'done')", (p["id"],))     # 닫힌 기회는 앞으로 안 온다
+    conn.commit()
+
+    got = [r["keyword"] for r in collect_serp.targets(conn, p["id"], 100)]
+    assert got == ["opp", "never", "never2", "old", "recent"], got
+    # 상한은 뒤를 자른다 — 가장 최근에 잰 것이 먼저 빠진다
+    got = [r["keyword"] for r in collect_serp.targets(conn, p["id"], 3)]
+    assert got == ["opp", "never", "never2"], got
+    conn.close()
+
+    # 기본 상한은 db.RANK_KEYWORDS_CAP (한 벌) — 옛 100 이 아니다
+    ap = collect_serp._parser()
+    spec = next(x for x in ap._collector_settings if x.key == "limits.max_keywords")
+    assert spec.fallback == db.RANK_KEYWORDS_CAP == 500, spec.fallback
+
+
+def test_rank_legacy_limits_default_is_lifted_once():
+    """등록 폼이 박아 둔 limits({"max_keywords": 100, "max_ai_prompts": 30}) 그대로면 새
+    상한으로 올린다 — 안 올리면 옛 100 이 "전부 잰다"를 이긴다. 사람이 고친 값은 둔다."""
+    conn = db.connect()
+    a = _project(conn, "lim_legacy")
+    b = _project(conn, "lim_custom")
+    db.set_project_settings(conn, a["id"], {"limits": dict(db.LEGACY_LIMITS)})
+    db.set_project_settings(conn, b["id"], {"limits": {"max_keywords": 100, "max_ai_prompts": 12}})
+    conn.commit()
+    conn.close()
+    conn = db.connect()                      # 연결마다 _migrate 가 돈다
+    la = db.project_settings(conn, a["id"])["limits"]
+    lb = db.project_settings(conn, b["id"])["limits"]
+    conn.close()
+    assert la == {"max_keywords": db.RANK_KEYWORDS_CAP, "max_ai_prompts": 30}, la
+    assert lb == {"max_keywords": 100, "max_ai_prompts": 12}, lb
+
+
+def test_rank_queue_full_success_writes_all():
+    """대기열: 100개씩 priority=2 로 맡기고, 다 올 때까지 기다렸다가 **전부** 적는다.
+    적고 나면 맡긴 id 는 지운다. 적는 시각은 구글을 실제로 본 시각(결과의 datetime)."""
+    conn, p = _rank_project("rq_ok", 150)
+    conn.close()
+    fake = _FakeDFS(ready_at=3)
+    with _dfs_env(fake) as clock:
+        res = collect_serp.collect("rq_ok", provider="dataforseo", no_harvest=True)
+    assert res.ok and not res.failed and not res.skipped, res
+    assert [len(b) for b in fake.posts] == [100, 50], [len(b) for b in fake.posts]
+    assert all(b["priority"] == 2 for batch in fake.posts for b in batch)
+    assert fake.ready_calls >= 3, fake.ready_calls
+    assert clock.t >= serp_adapter.QUEUE_POLL * 2, f"tasks_ready 를 3초 간격 없이 두드렸다: {clock.t}"
+    conn = db.connect()
+    n = conn.execute("SELECT COUNT(*) c FROM rank_snapshots s JOIN keywords k ON k.id=s.keyword_id "
+                     "WHERE k.project_id=?", (p["id"],)).fetchone()["c"]
+    pos = {r["position"] for r in conn.execute(
+        "SELECT position FROM rank_snapshots s JOIN keywords k ON k.id=s.keyword_id "
+        "WHERE k.project_id=?", (p["id"],))}
+    at = conn.execute("SELECT checked_at FROM rank_snapshots s JOIN keywords k "
+                      "ON k.id=s.keyword_id WHERE k.project_id=? LIMIT 1",
+                      (p["id"],)).fetchone()["checked_at"]
+    left = conn.execute("SELECT COUNT(*) c FROM serp_tasks WHERE project='rq_ok'").fetchone()["c"]
+    notes = conn.execute("SELECT notes, cost_estimate_usd FROM runs WHERE project_id=? "
+                         "AND kind='rank' ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()
+    conn.close()
+    assert n == 150, f"다 왔는데 {n}개만 적었다"
+    assert pos == {2}, pos
+    assert at == "2026-09-24T01:02:03Z", f"구글을 본 시각이 아니라 {at} 로 적었다"
+    assert left == 0, f"적은 뒤에도 맡긴 id 가 {left}개 남았다 — 다음 런이 또 받는다"
+    assert abs(notes["cost_estimate_usd"] - 0.0012 * 150) < 1e-9, notes["cost_estimate_usd"]
+
+
+def test_rank_queue_timeout_writes_nothing_and_next_run_reuses_ids():
+    """10분 안에 다 안 오면 단계는 **실패**이고, 이미 온 것도 적지 않는다(이전 측정 유지).
+    맡긴 id 는 남아서, 다음 런은 새로 맡기지 않고 그 결과를 받아 온다(돈을 두 번 안 낸다)."""
+    conn, p = _rank_project("rq_to", 5)
+    before = conn.execute("SELECT id FROM keywords WHERE project_id=? ORDER BY id LIMIT 1",
+                          (p["id"],)).fetchone()["id"]
+    db.write_rank_snapshot(conn, before, 7, None, checked_at="2026-09-01T00:00:00Z")
+    conn.close()
+
+    fake = _FakeDFS(ready_at=10 ** 9)          # 끝내 안 된다
+    # 하나는 금방 된다 — "온 것도 안 적는다" 를 보려면 온 것이 있어야 한다
+    orig_post = fake.post
+
+    def post_one_fast(url, **kw):
+        r = orig_post(url, **kw)
+        first = next(iter(fake.tasks))
+        fake.tasks[first]["ready_at"] = 1
+        return r
+
+    fake.post = post_one_fast
+    with _dfs_env(fake) as clock:
+        res = collect_serp.collect("rq_to", provider="dataforseo", no_harvest=True)
+    assert res.failed, f"상한을 넘겼는데 실패가 아니다: {res}"
+    assert "다음 런" in (res.reason or ""), res.reason
+    assert clock.t >= collect_serp.WAIT_LIMIT_S, clock.t
+    assert clock.t < collect_serp.WAIT_LIMIT_S + 60, f"상한을 넘겨서도 기다렸다: {clock.t}"
+    assert fake.gets, "먼저 된 과제를 한 번도 안 받아 봤다 — 이 검사가 아무것도 안 본다"
+    posted = set(fake.tasks)
+    conn = db.connect()
+    snaps = [(r["keyword_id"], r["position"]) for r in conn.execute(
+        "SELECT s.keyword_id, s.position FROM rank_snapshots s JOIN keywords k "
+        "ON k.id=s.keyword_id WHERE k.project_id=?", (p["id"],))]
+    kept = {r["task_id"] for r in conn.execute(
+        "SELECT task_id FROM serp_tasks WHERE project='rq_to'")}
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? AND kind='rank' "
+                         "ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()["notes"]
+    conn.close()
+    assert snaps == [(before, 7)], f"상한에 걸렸는데 적었다(또는 이전 측정을 지웠다): {snaps}"
+    assert kept == posted, f"맡긴 id 를 안 남겼다: {kept} != {posted}"
+    assert "timeout=1" in notes, notes
+    # 판정 규칙 한 벌(dashboard._run_ok = 셸 runVerdict)이 이 런을 실패로 읽어야 한다 —
+    # 성공으로 읽으면 묶음 머리가 "순위 오늘 잼"이라 말하고 다시 재기를 안 권한다.
+    import dashboard
+    assert not dashboard._run_ok(notes), f"상한에 걸린 순위 런이 성공으로 읽힌다: {notes}"
+
+    # 다음 런 — 이제 다 됐다. 새로 맡기지 않고 남긴 id 로 받아 온다.
+    for v in fake.tasks.values():
+        v["ready_at"] = 0
+    fake.post = orig_post
+    n_posts = len(fake.posts)
+    with _dfs_env(fake):
+        res = collect_serp.collect("rq_to", provider="dataforseo", no_harvest=True)
+    assert res.ok and not res.failed, res
+    assert len(fake.posts) == n_posts, "남긴 id 가 있는데 새로 맡겼다 — 돈을 두 번 냈다"
+    conn = db.connect()
+    n = conn.execute("SELECT COUNT(*) c FROM rank_snapshots s JOIN keywords k ON k.id=s.keyword_id "
+                     "WHERE k.project_id=? AND s.position=2", (p["id"],)).fetchone()["c"]
+    left = conn.execute("SELECT COUNT(*) c FROM serp_tasks WHERE project='rq_to'").fetchone()["c"]
+    cost = conn.execute("SELECT cost_estimate_usd c FROM runs WHERE project_id=? AND kind='rank' "
+                        "ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()["c"]
+    conn.close()
+    assert n == 5, f"남긴 id 의 결과를 {n}개만 적었다"
+    assert left == 0, left
+    assert cost == 0, f"이미 낸 돈을 다시 셌다: {cost}"
+
+
+def test_rank_queue_gone_ids_are_reposted_and_old_ids_expire():
+    """다시 못 받는 id(없음·만료)는 버리고 그 키워드는 새로 맡긴다. 보관 기간(30일)을
+    넘긴 id 는 기다리지도 않는다."""
+    conn, p = _rank_project("rq_gone", 2)
+    kws = [r["keyword"] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? ORDER BY id", (p["id"],))]
+    db.add_serp_tasks(conn, "rq_gone", [(kws[0], "ko-KR", "desktop", 10, "lost-1")])
+    conn.execute("INSERT INTO serp_tasks(project, keyword, locale, device, depth, task_id, posted_at) "
+                 "VALUES('rq_gone', ?, 'ko-KR', 'desktop', 10, 'ancient', "
+                 "datetime('now', '-40 days'))", (kws[1],))
+    conn.commit()
+    conn.close()
+    fake = _FakeDFS(ready_at=1)
+    with _dfs_env(fake):
+        res = collect_serp.collect("rq_gone", provider="dataforseo", no_harvest=True)
+    assert res.ok and not res.failed, res
+    assert "lost-1" in fake.gets, "남긴 id 를 먼저 받아 보지 않았다"
+    assert "ancient" not in fake.gets, "보관 기간을 넘긴 id 를 두드렸다"
+    assert sorted(b["keyword"] for batch in fake.posts for b in batch) == sorted(kws), fake.posts
+    conn = db.connect()
+    left = [r["task_id"] for r in conn.execute("SELECT task_id FROM serp_tasks WHERE project='rq_gone'")]
+    conn.close()
+    assert left == [], left
+
+
+def test_rank_queue_parser_is_the_live_parser():
+    """대기열과 Live 는 같은 파서(serp_adapter._parse_serp)를 지난다 — 같은 items 면 같은 답."""
+    fake = _FakeDFS(ready_at=0)
+    with _dfs_env(fake):
+        posted, _ = serp_adapter.post_serp_tasks(
+            [{"tag": 1, "keyword": "x", "locale": "ko-KR", "depth": 10, "device": "desktop"}])
+        state, queued = serp_adapter.get_serp_task(posted[0]["id"], 10)
+    assert state == "done", state
+    items = fake.get("…/task_get/advanced/" + posted[0]["id"])._data["tasks"][0]["result"][0]["items"]
+    live = serp_adapter._parse_serp(items, 10)
+    assert {k: queued[k] for k in live} == live, (queued, live)
+
+
+def test_dfs_spacing_only_on_google_ads_paths():
+    """분당 12회 간격은 Google Ads(keywords_data/google_ads/*)만 — SERP·Labs·백링크는 분당
+    2000회라 쉬지 않는다. tasks_ready(분당 20회)는 제 칸의 간격을 지킨다.
+
+    예전엔 모든 DataForSEO 호출에 6초를 걸어 순위 232개가 15분을 먹었다."""
+    paced: list[str] = []
+    orig = serp_adapter._pace
+    serp_adapter._pace = lambda frag=serp_adapter.ADS_PATH: paced.append(frag)
+    try:
+        base = "https://api.dataforseo.com/v3"
+        for path in ("/keywords_data/google_ads/search_volume/live",
+                     "/serp/google/organic/live/advanced",
+                     "/serp/google/organic/task_post",
+                     "/serp/google/organic/task_get/advanced/abc",
+                     "/dataforseo_labs/google/ranked_keywords/live",
+                     "/backlinks/summary/live",
+                     "/serp/google/organic/tasks_ready"):
+            serp_adapter._dfs_call(lambda url, **kw: FakeResponse({}), base + path)
+    finally:
+        serp_adapter._pace = orig
+    assert paced == [serp_adapter.ADS_PATH, serp_adapter.READY_PATH], paced
+    # 소요 시간 고지도 경로를 본다 — 간격 없는 경로를 6초로 어림하지 않는다
+    saved = os.environ.pop("SEOMINER_DFS_RPM", None)
+    try:
+        assert serp_adapter.pace_seconds(base + "/keywords_data/google_ads/x/live") == 6.0
+        assert serp_adapter.pace_seconds(base + "/dataforseo_labs/google/x/live") == 0.0
+        assert serp_adapter.pace_seconds(base + "/serp/google/organic/tasks_ready") >= 3.0
+    finally:
+        if saved is not None:
+            os.environ["SEOMINER_DFS_RPM"] = saved
+
+
+def test_serp_tasks_stay_on_this_machine():
+    """맡긴 과제 id 는 이 기계 것이다 — 동기화(remote._plan)가 나르면 안 된다.
+    이름을 project_id·keyword_id 로 바꾸면 _plan 이 FK 로 여겨 실어 나른다."""
+    import remote
+    conn = db.connect()
+    try:
+        order, _ = remote._plan(conn)
+    finally:
+        conn.close()
+    assert "serp_tasks" not in order, order
+    assert "rank_snapshots" in order, "검사가 아무것도 안 본다 — _plan 이 표를 못 찾는다"
 
 
 if __name__ == "__main__":

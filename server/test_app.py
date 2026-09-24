@@ -617,10 +617,28 @@ def demo() -> None:
         spawned = []
         assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == ["p1"], "죽은 런을 못 찾았다"
         assert spawned and spawned[0][:1] == ("--user",) and "p1" in spawned[0], spawned
+        # 죽은 런이 맡았던 묶음은 대기열로 돌아가고, 그걸 가져가는 워커(--queue)로 뜬다.
+        # 띄우기 전에 '대기 중'으로 잡는다 — 안 잡으면 워커가 뜨는 사이 스케줄러가 같은
+        # 대기열을 또 가져간다.
+        assert "--queue" in spawned[0], f"죽은 묶음 런을 대기열 워커로 안 띄웠다: {spawned}"
         st = c.get("/api/run/status").json()["p1"]
-        assert st["running"] is False and st["last_ok"] == 0, st
+        assert st["running"] is True and st["last_ok"] == 0, st
+        # 대기열에 되돌아가 '대기 중'(워커가 뜨는 중)이다 — 앞에 도는 런이 없으니 도는 중으로 보인다
+        cs = store.connect()
+        try:
+            assert store.queued(cs, sid_st) == list(store._groups().RUNNABLE_GROUPS), \
+                "죽은 런의 묶음이 대기열로 안 돌아왔다"
+        finally:
+            cs.close()
+        assert all(g["running"] and not g["queued"] for g in st["groups"].values()), st["groups"]
         assert "서버 재시작" in c.get("/api/run/log?project=p1").json()["text"], \
             "왜 끊겼는지 사용자에게 한 줄도 안 간다"
+        cs = store.connect()
+        try:                                   # 띄운 워커가 가져가서 끝냈다고 친다
+            store.claim_queue(cs, sid_st)
+            store.mark_done(cs, sid_st, ok=False, error=store.DEAD_RUN_ERROR)
+        finally:
+            cs.close()
         bconn = db.connect(home=store.home(u2))
         try:
             fin, notes = bconn.execute("SELECT finished_at, notes FROM runs WHERE id=?",
@@ -630,6 +648,19 @@ def demo() -> None:
         assert fin and store.ORPHAN_RUN_NOTE in (notes or ""), \
             f"회수했는데 brain 의 런이 끝나지 않은 채 남았다: {(fin, notes)}"
         assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == [], "도는 런이 없는데 또 띄운다"
+        # 죽은 부분 실행(/capture gsc) — 무엇을 돌던지 안 남는다. 인자 없이 띄우면 워커가
+        # 전체 재기(유료 단계 전부)로 읽는다. 회수만 하고 띄우지 않는다.
+        cs = store.connect()
+        try:
+            store.mark_busy(cs, sid_st)
+        finally:
+            cs.close()
+        spawned.clear()
+        assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == ["p1"], "죽은 부분 실행을 못 찾았다"
+        assert spawned == [], f"죽은 부분 실행을 전체 재기로 다시 띄웠다: {spawned}"
+        st = c.get("/api/run/status").json()["p1"]
+        assert st["running"] is False and st["last_error"] == store.DEAD_PARTIAL_ERROR, st
+        assert not any(g["queued"] for g in st["groups"].values()), st["groups"]
         cs = store.connect()
         try:
             store.mark_run(cs, sid_st)     # 아래 런 로그 검사가 보던 '도는 중' 으로 되돌린다
@@ -711,6 +742,8 @@ def demo() -> None:
         finally:
             app.dependency_overrides.pop(_dispatch_dep, None)
 
+        _groups_demo(c, u2)
+
         # /api/sql — 가드는 db.run_sql 것을 그대로 쓴다. 여기서 재구현하지 않는다.
         r = c.post("/api/sql", json={"project": "p1", "sql": "DELETE FROM keywords"})
         assert r.status_code == 400 and "read-only" in r.json()["detail"], r.text
@@ -757,6 +790,85 @@ def demo() -> None:
         # 거절(`WITH … DELETE`)이 conn.close() 앞의 sys.exit 로 나가서 안 닫힌다
         # (db.py:1559-1566). 그 커넥션은 예외 트레이스백이 만든 순환에 걸려 있어
         print("app: ok")
+
+
+def _groups_demo(c, uid: int) -> None:
+    """묶음 다시 재기 — POST /api/run 의 groups, 대기열·합치기, /api/run/status 의 groups.
+
+    new1 은 위 /api/sites 로 등록만 된(안 도는) 사이트다. 워커는 가짜다 — 띄운 argv 만 본다.
+    """
+    import run_all
+    ALL = list(run_all.RUNNABLE_GROUPS)
+    spawned = []
+    app.dependency_overrides[_dispatch_dep] = lambda: (lambda *a: spawned.append(a))
+    cs = store.connect()
+    try:
+        sid = store.site(cs, uid, "new1")["id"]
+        # 모르는 묶음·시계 없는 묶음·단계와 묶음 동시 지정은 400 — 조용히 버리면 누른
+        # 묶음이 안 돈 채 '완료'다
+        for bad in ({"groups": "없는묶음"}, {"groups": "admin"},
+                    {"groups": "search", "stages": "gsc"}):
+            r = c.post("/api/run", json={"project": "new1", **bad})
+            assert r.status_code == 400, (bad, r.status_code, r.text)
+        assert not spawned
+
+        # 안 돌 때 누르면 워커(대기열을 가져가는 쪽)가 뜬다
+        r = c.post("/api/run", json={"project": "new1", "groups": "search"})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"ok": True, "started": True, "queued": False}, r.text
+        assert len(spawned) == 1 and "--queue" in spawned[0] and "new1" in spawned[0], spawned
+        # 워커가 아직 안 가져갔을 때(몇 초) 또 누르면 같은 런으로 합쳐진다 — 워커를 또 안 띄운다
+        r = c.post("/api/run", json={"project": "new1", "groups": "ai"})
+        assert r.json()["started"] and not r.json()["queued"], r.text
+        assert len(spawned) == 1, f"합쳐야 할 누름이 워커를 또 띄웠다: {spawned}"
+        st = c.get("/api/run/status").json()["new1"]
+        assert st["running"] is True, st
+        assert set(st["groups"]) == set(ALL), st["groups"]
+        for v in st["groups"].values():
+            assert set(v) == {"running", "queued", "last_run_at", "due"}, v
+        # 대기 중(워커가 합치는 몇 초)에 올라 있는 묶음은 '도는 중'이다 — 앞에 도는 런이 없다.
+        # queued 로 내면 화면이 방금 시작한 묶음을 "지금 도는 재기가 끝나면 잽니다"라고 한다.
+        g = st["groups"]
+        assert g["search"]["running"] and g["ai"]["running"], g
+        assert not g["search"]["queued"] and not g["ai"]["queued"], \
+            f"기다릴 런이 없는데 '대기 중'으로 낸다: {g}"
+        assert not g["site"]["queued"] and not g["site"]["running"], g
+        assert st["groups"]["search"]["due"] is True, "한 번도 안 잰 사이트인데 밀림이 아니다"
+        assert isinstance(st["stages"], list), st
+
+        # 워커가 가져가 도는 중 — 이제 누른 것은 대기열(다음 라운드)
+        assert store.claim_queue(cs, sid) == ["search", "ai"]
+        store.mark_groups(cs, sid, ["todo", "search", "ai"])
+        store.mark_stage(cs, sid, "rank,ai", 40)
+        r = c.post("/api/run", json={"project": "new1", "groups": "compete"})
+        assert r.json() == {"ok": True, "started": False, "queued": True}, r.text
+        assert len(spawned) == 1, "도는 중인데 워커를 또 띄웠다 — 같은 사이트가 두 벌 돈다"
+        st = c.get("/api/run/status").json()["new1"]
+        assert st["stages"] == ["rank", "ai"] and st["stage"] == "rank", st
+        g = st["groups"]
+        assert g["search"]["running"] and g["ai"]["running"] and not g["compete"]["running"], g
+        assert g["compete"]["queued"] and not g["search"]["queued"], g
+        assert g["search"]["last_run_at"] and g["search"]["due"] is False, g
+        # 도는 중에 옵션을 실으면 갈 곳이 없다 — 조용히 버리지 않고 409
+        r = c.post("/api/run", json={"project": "new1", "groups": "site",
+                                     "opts": {"rank.device": "mobile"}})
+        assert r.status_code == 409, r.text
+        # 부분 실행(stages)은 도는 중이면 예전처럼 안 받는다
+        r = c.post("/api/run", json={"project": "new1", "stages": "gsc"})
+        assert r.json() == {"ok": True, "started": False, "queued": False}, r.text
+        store.claim_queue(cs, sid)
+        store.mark_done(cs, sid, ok=True)
+
+        # 아무것도 안 고르면 전체 재기 — 모든 묶음이 대기열에 오른다
+        spawned.clear()
+        r = c.post("/api/run", json={"project": "new1"})
+        assert r.json()["started"] and len(spawned) == 1, (r.text, spawned)
+        assert store.queued(cs, sid) == ALL, store.queued(cs, sid)
+        store.claim_queue(cs, sid)
+        store.mark_done(cs, sid, ok=True)
+    finally:
+        cs.close()
+        app.dependency_overrides.pop(_dispatch_dep, None)
 
 
 if __name__ == "__main__":

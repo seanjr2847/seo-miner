@@ -69,11 +69,13 @@ Usage:
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -389,9 +391,12 @@ def collect(project: str, *,
         n_gap_hosts = min(n_gap, max(len(domains), n_auto)) if n_gap and ours else 0
         est_calls = len(domains) + (2 if n_auto else 0) + n_gap_hosts * 2
         est_cost = est_calls * serp_adapter.LABS_COST_PER_CALL
+        # 소요 시간: Labs 는 간격이 없고(serp_adapter.pace_seconds 가 경로로 가른다 — 경로 없이
+        # 물으면 Google Ads 6초로 어림해 몇 배 길게 말한다) 동시에 fanout.LIMITS 개씩 간다.
+        per_call = max(throttle, serp_adapter.pace_seconds(LABS_INTERSECT)) + 2
         print(f"[gap] project={p['name']} domains={len(domains)} limit={limit} "
               f"est_cost≈${est_cost:.3f} "
-              f"(~{est_calls * (max(throttle, serp_adapter.pace_seconds()) + 2) / 60:.1f} min)")
+              f"(~{est_calls * per_call / fanout.LIMITS['dataforseo'] / 60:.1f} min)")
         serp_adapter.warn_unmapped(locale)   # 매핑 없는 로케일 경고는 돈을 쓰기 전에 — collect_serp 와 같은 자리
 
         if st.dry_run:
@@ -417,18 +422,23 @@ def collect(project: str, *,
         total_cost = 0.0
         inserted_total = 0
         volumes_total = 0
-        auto_new = metric_rows = gap_rows = extra_calls = 0
+        auto_new = metric_rows = gap_rows = extra_calls = kw_done = 0
+
+        calls_lock = threading.Lock()
 
         def _post(path, body):
-            """콜 수를 세는 자리 하나 — runs.api_calls 가 새 축까지 센다."""
+            """콜 수를 세는 자리 하나 — runs.api_calls 가 새 축까지 센다.
+            Gap 축은 일꾼 스레드에서 부르므로 += 를 잠가 센다(안 잠그면 개수가 샌다)."""
             nonlocal extra_calls
-            extra_calls += 1
+            with calls_lock:
+                extra_calls += 1
             return post(path, body)
 
-        def one(d: str) -> None:
-            """도메인 하나 — 실패는 러너가 세고 다음 도메인으로 넘어간다."""
-            nonlocal total_cost, inserted_total, volumes_total
-            items, cost = fetch(d, locale, limit)
+        def one(d: str, got) -> None:
+            """도메인 하나 — 가져온 역키워드를 거르고 적재한다(이 스레드에서만).
+            실패는 러너가 세고 다음 도메인으로 넘어간다."""
+            nonlocal total_cost, inserted_total, volumes_total, kw_done
+            items, cost = got
             total_cost += cost
             # 필터 — norm 비교로 케이스·공백 차이 흡수.
             kept: list[tuple[str, int | None]] = []
@@ -443,6 +453,7 @@ def collect(project: str, *,
                 [(kw, locale, "competitor_gap") for kw, _ in kept])
             inserted_total += inserted
             volumes_total += _backfill_volumes(conn, p["id"], kept)
+            kw_done += 1
             print(f"  {d}: fetched={len(items)} kept={len(kept)} inserted={inserted}")
 
         def auto_axis() -> None:
@@ -500,12 +511,15 @@ def collect(project: str, *,
                 _put_metric(conn, p["id"], today, ours, 1, mine)
                 metric_rows += 1
 
-        def gap_axis(rival: str) -> None:
-            """경쟁사 하나 — 교집합(weak/shared) 1콜 + 우리 부재(missing) 1콜."""
+        def gap_fetch(rival: str) -> list:
+            """경쟁사 하나 — 교집합(weak/shared) 1콜 + 우리 부재(missing) 1콜. 네트워크만."""
+            return [_fetch_intersection(_post, ours, rival, locale, limit, inter)
+                    for inter in (True, False)]
+
+        def gap_axis(rival: str, got: list) -> None:
             nonlocal total_cost, gap_rows
             n = 0
-            for inter in (True, False):
-                rows, cost = _fetch_intersection(_post, ours, rival, locale, limit, inter)
+            for rows, cost in got:
                 total_cost += cost
                 for row in rows:
                     _put_gap(conn, p["id"], today, rival, row)
@@ -522,10 +536,19 @@ def collect(project: str, *,
                 conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
                     domains = _cap(_resolve_domains(conn, p["id"], None, ours))
-            r.api_calls = st.each(domains, one)
+            # 역키워드(도메인마다)와 Content Gap(경쟁사마다)은 서로 독립이다 — 한 줄로 펴서
+            # 동시에 산다(fanout.LIMITS["dataforseo"]). 자동 탐지는 위에서 먼저 끝냈다:
+            # 새로 붙은 경쟁사가 이 목록을 바꾸기 때문이다. 적재는 이 스레드가 목록
+            # 순서대로 한다(역키워드 전부 → Gap) — 순차일 때와 같은 순서다.
+            jobs = [("kw", d) for d in domains]
             if n_gap and ours:
-                st.each(domains[:n_gap], gap_axis)
-            r.api_calls += extra_calls
+                jobs += [("gap", d) for d in domains[:n_gap]]
+            fanout.each(
+                st, jobs,
+                lambda j: fetch(j[1], locale, limit) if j[0] == "kw" else gap_fetch(j[1]),
+                lambda j, got: one(j[1], got) if j[0] == "kw" else gap_axis(j[1], got),
+                workers=fanout.LIMITS["dataforseo"], label=lambda j: j[1])
+            r.api_calls = kw_done + extra_calls
             r.notes = (f"domains={len(domains)} inserted={inserted_total} "
                        f"volumes_filled={volumes_total} auto_new={auto_new} "
                        f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}")
@@ -844,6 +867,46 @@ def _selfcheck() -> None:
     assert (res.ok, res.skipped) == (True, True), res
     assert res.reason, "왜 건너뛰었는지·다음에 뭘 할지 말해야 한다"
     assert off_calls == [], off_calls
+
+    # 동시에 사되 적재는 한 스레드·목록 순서 — 앞 도메인일수록 늦게 오게 해도
+    # 후보 키워드는 도메인 순서대로 쌓이고, 일꾼에서 센 콜 수가 새지 않는다.
+    import threading
+    import time
+    rivals4 = ["c1.com", "c2.com", "c3.com", "c4.com"]
+    conn.executemany("INSERT INTO competitors(project_id, domain, source) VALUES(?,?,'manual')",
+                     [(pid, d) for d in rivals4])
+    conn.commit()
+    lock, live, on = threading.Lock(), {"now": 0, "peak": 0}, set()
+
+    def busy(wait):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+            on.add(threading.get_ident())
+        time.sleep(wait)
+        with lock:
+            live["now"] -= 1
+
+    def slow_fetch(domain, locale, limit):
+        busy(0.02 * (5 - int(domain[1])))
+        return [{"keyword": f"{domain} 동시 후보", "search_volume": 3}], 0.0001
+
+    def slow_post(path, body):
+        busy(0.01)
+        return fake_post(path, body)
+
+    res = collect("gt", throttle=0, conn=fanout.MainThreadOnly(conn), fetch=slow_fetch,
+                  post=slow_post, rivals=0, intersect=2)
+    assert (res.ok, res.partial) == (True, False), res
+    got = [r0["keyword"] for r0 in conn.execute(
+        "SELECT keyword FROM keywords WHERE keyword LIKE '%동시 후보' ORDER BY id")]
+    assert got == [f"{d} 동시 후보" for d in rivals4], f"적재 순서가 도메인 순서가 아니다: {got}"
+    assert conn.execute("SELECT COUNT(*) FROM keyword_gap WHERE domain IN ('c1.com','c2.com')"
+                        ).fetchone()[0] == 6, "Gap 두 경쟁사 × 3행"
+    calls = conn.execute("SELECT api_calls FROM runs ORDER BY id DESC LIMIT 1").fetchone()[0]
+    assert calls == 8, f"역키워드 4 + 교집합 2×2 = 8: {calls}"
+    assert 1 < live["peak"] <= fanout.LIMITS["dataforseo"], f"동시 상한: peak={live['peak']}"
+    assert threading.get_ident() not in on, "Labs 호출이 메인 스레드에서 돌았다"
 
     conn.close()
     print("collect_gap self-check ok")

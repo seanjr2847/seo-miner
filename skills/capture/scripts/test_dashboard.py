@@ -12,7 +12,9 @@
   · scoring.coverage(): 클러스터별 검색량 합이 나오는가
   · db.list_keywords(): 지표 컬럼이 실리고, 노출이 같으면 검색량 큰 순인가
 """
+import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -1145,6 +1147,313 @@ def test_serp_top_reads_each_keywords_own_latest_check():
     assert rk["serp_fanout"].get("옛날") == [{"kind": "paa", "text": "옛날 질문"}], rk["serp_fanout"]
     assert "오늘" not in rk["serp_fanout"], "그날 조회에 없던 질문을 옛날 것으로 채웠다"
     conn.close()
+
+
+# ── 묶음(메뉴 = 재기 단위) ─────────────────────────────────────────────────
+def _runs(conn, pid, rows):
+    """runs 한 줄씩 — (kind, finished_at | None, notes)."""
+    for kind, fin, notes in rows:
+        conn.execute("INSERT INTO runs(project_id,kind,started_at,finished_at,notes)"
+                     " VALUES(?,?,?,?,?)", (pid, kind, fin or "2026-09-01T00:00:00Z", fin, notes))
+    conn.commit()
+
+
+def test_groups_payload_follows_run_all_and_reads_last_success():
+    """d.groups 는 run_all.GROUPS 한 벌을 그대로 싣고(이름·단계·주기·화면), 단계별 마지막
+    **성공** 날짜를 runs 에서 읽는다. 실패(errors>0)·중단·미완은 성공이 아니다 — 그걸 날짜로
+    세우면 잔액이 떨어져 3주째 실패하는 순위가 "어제 쟀다"로 읽힌다."""
+    import run_all
+    from datetime import datetime, timezone
+    conn, pid = _brain("grp_last")
+    _runs(conn, pid, [
+        ("rank", "2026-09-10T03:00:00Z", "errors=0"),          # 성공
+        ("rank", "2026-09-20T03:00:00Z", "errors=4 first_error=402"),   # 실패 — 안 센다
+        ("rank", None, ""),                                    # 미완 — 안 센다
+        ("ai", "2026-09-21T03:00:00Z", "skipped=2"),           # 건너뜀은 실패가 아니다
+        ("crawl", "2026-09-22T03:00:00Z", "x | 중단: RuntimeError: boom"),   # 중단 — 안 센다
+        ("gsc", "2026-09-23T03:00:00Z", ""),
+    ])
+    now = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    d = dashboard._axis_groups(conn, pid, now=now)["groups"]
+    assert [g["id"] for g in d] == [g["id"] for g in run_all.GROUPS], "묶음 순서가 정본과 다르다"
+    by = {g["id"]: g for g in d}
+    for g in run_all.GROUPS:
+        mine = by[g["id"]]
+        assert mine["name"] == g["name"] and mine["stages"] == list(g["stages"]), mine
+        assert mine["every_hours"] == g["every_hours"] and mine["views"] == list(g["views"])
+        assert list(mine["last"]) == list(run_all.group_stages(g["id"])), \
+            "last 는 그 묶음의 시계 단계마다 한 칸이다(할 일은 매일 런의 단계)"
+    assert by["search"]["last"]["rank"] == "2026-09-10", by["search"]["last"]
+    assert by["search"]["last"]["gsc"] == "2026-09-23"
+    # 할 일은 버튼이 없어도 매일 런이 언제 돌았는지는 말한다 — 심사·개요 머리가 그린다
+    assert by["todo"]["last"] == {"gsc": "2026-09-23", "ga4": None}, by["todo"]["last"]
+    assert by["ai"]["last"] == {"ai": "2026-09-21", "rank": "2026-09-10"}, by["ai"]["last"]
+    assert by["site"]["last"]["crawl"] is None, "중단된 런을 성공 날짜로 세웠다"
+    # 주기: ai 묶음은 rank 가 14일 전 → 주 1회를 넘겼다. 경쟁·링크는 한 번도 안 쟀다 → 넘겼다.
+    assert by["ai"]["due"] is True and by["compete"]["due"] is True
+    # 관리는 시계가 없다. 할 일은 매일 런(gsc)이 시계다 — 하루 안에 쟀으면 안 넘겼다.
+    assert by["admin"]["due"] is False and by["todo"]["due"] is False, by["todo"]
+    later = datetime(2026, 9, 25, 4, tzinfo=timezone.utc)
+    assert dashboard._axis_groups(conn, pid, now=later)["groups"][0]["due"] is True, \
+        "하루가 지났는데 [할 일] 이 안 넘겼다고 한다"
+    # 페이로드에 그대로 실린다
+    assert dashboard.gather(conn, db.get_project(conn, "grp_last"))["groups"] == \
+        dashboard._axis_groups(conn, pid)["groups"]
+    conn.close()
+
+
+def test_groups_due_ignores_stage_that_never_succeeded():
+    """한 번도 성공 기록이 없는 단계(GA4 미연결처럼 늘 건너뛰는 것)는 주기 판정에서 빠진다 —
+    안 빼면 그 묶음의 점이 영영 안 꺼진다. 묶음 전체를 한 번도 못 쟀으면 넘긴 것이다."""
+    from datetime import datetime, timezone
+    conn, pid = _brain("grp_due")
+    now = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    by = {g["id"]: g for g in dashboard._axis_groups(conn, pid, now=now)["groups"]}
+    assert by["site"]["due"] is True, "한 번도 안 잰 묶음이 주기를 안 넘겼다고 한다"
+    _runs(conn, pid, [(s, "2026-09-23T00:00:00Z", "") for s in ("index", "crawl")])
+    by = {g["id"]: g for g in dashboard._axis_groups(conn, pid, now=now)["groups"]}
+    assert by["site"]["due"] is False, "vitals 를 한 번도 못 쟀다고 묶음 점이 안 꺼진다"
+    conn.close()
+
+
+def test_groups_quota_skip_is_not_a_measured_day():
+    """속도 측정이 한도(429)에 걸려 한 건도 못 잰 날은 실패가 아니지만 **잰 날**도 아니다 —
+    collect_vitals 가 notes 에 quota= 를 남기고 건너뛴다. 그걸 날로 치면 머리줄이 "오늘
+    잼"이라 말하고 주기 점이 꺼진다. 한도 전에 몇 건이라도 쟀으면(api_calls>0) 잰 날이다."""
+    import collect_vitals
+    conn, pid = _brain("grp_quota")
+    q = f"urls=5 rows=0 | quota={collect_vitals.QUOTA_STATUS} — {collect_vitals.QUOTA_REASON}"
+    _runs(conn, pid, [("vitals", "2026-09-20T00:00:00Z", "rows=10"),
+                      ("vitals", "2026-09-23T00:00:00Z", q)])
+    conn.execute("UPDATE runs SET api_calls=10 WHERE finished_at LIKE '2026-09-20%'")
+    conn.commit()
+    last = {g["id"]: g for g in dashboard._axis_groups(conn, pid)["groups"]}["site"]["last"]
+    assert last["vitals"] == "2026-09-20", f"한도로 못 잰 날을 잰 날로 세웠다: {last}"
+    conn.execute("UPDATE runs SET api_calls=3 WHERE finished_at LIKE '2026-09-23%'")
+    conn.commit()
+    last = {g["id"]: g for g in dashboard._axis_groups(conn, pid)["groups"]}["site"]["last"]
+    assert last["vitals"] == "2026-09-23", "한도 전에 잰 몫이 있는데 잰 날로 안 셌다"
+    conn.close()
+
+
+class _FakeProc:
+    def __init__(self, argv):
+        import threading
+        self.argv, self.rc = argv, None
+        self.done = threading.Event()
+
+    def poll(self):
+        return self.rc
+
+    def wait(self):
+        self.done.wait(10)
+        return self.rc
+
+    def finish(self):
+        self.rc = 0
+        self.done.set()
+
+
+def _local_runs(spawned):
+    def spawn(argv, project):
+        p = _FakeProc(argv)
+        spawned.append(p)
+        return p
+    return dashboard._LocalRuns(spawn=spawn)
+
+
+def _until(cond, what):
+    import time
+    t0 = time.monotonic()
+    while not cond():
+        assert time.monotonic() - t0 < 5, what
+        time.sleep(0.02)
+
+
+def test_local_run_merges_presses_and_queues_while_running():
+    """로컬 /api/run — (1) 시작 전(몇 초 안)에 연달아 누른 묶음은 한 런으로 합친다
+    (2) 도는 중에 누르면 대기열이고, 끝나면 이어서 돈다 (3) 이어서 돌 때 방금 돈 공유
+    단계(rank)는 빼되 꼬리(gaps·pages·report)는 뺄 수 없다 (4) 모르는 묶음은 거절."""
+    import run_all
+    conn, pid = _brain("lr")
+    conn.close()
+    saved = dashboard.RUN_DEBOUNCE_S
+    dashboard.RUN_DEBOUNCE_S = 0.3
+    try:
+        spawned = []
+        lr = _local_runs(spawned)
+        assert lr.request("lr", "search") == {"ok": True, "started": True, "queued": False}
+        assert lr.request("lr", "site")["started"] is True, "시작 전 두 번째 누름이 한 런에 안 붙었다"
+        st = lr.status("lr")["lr"]
+        assert st["running"] and st["groups"]["search"]["running"] and st["groups"]["site"]["running"]
+        _until(lambda: spawned, "합친 런이 안 떴다")
+        a = spawned[0].argv
+        assert a[a.index("--groups") + 1] == "search,site", a
+        assert "--skip" not in a
+        # 도는 중 — 대기열
+        r = lr.request("lr", "ai")
+        assert r == {"ok": True, "started": False, "queued": True}, r
+        st = lr.status("lr")["lr"]["groups"]
+        assert st["ai"]["queued"] and not st["ai"]["running"] and st["search"]["running"]
+        _lr_ran("lr", [("rank", "errors=0"), ("gsc", "errors=0")])   # 이번 런이 남긴 기록
+        spawned[0].finish()
+        _until(lambda: len(spawned) == 2, "대기열이 이어서 안 돌았다")
+        b = spawned[1].argv
+        assert b[b.index("--groups") + 1] == "ai", b
+        skip = set(b[b.index("--skip") + 1].split(","))
+        assert skip == {"rank"}, f"방금 돈 공유 단계만 빼야 한다: {skip}"
+        assert not skip & set(run_all.TAIL)
+        spawned[1].finish()
+        _until(lambda: not lr.status("lr")["lr"]["running"], "끝났는데 도는 중이라고 한다")
+        # 전체 = 인자 없음
+        lr.request("lr", "")
+        _until(lambda: len(spawned) == 3, "전체 재기가 안 떴다")
+        assert "--groups" not in spawned[2].argv, spawned[2].argv
+        spawned[2].finish()
+        try:
+            lr.request("lr", "nope")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("모르는 묶음을 받았다 — 누른 게 안 돈 채로 '시작했다'가 된다")
+    finally:
+        dashboard.RUN_DEBOUNCE_S = saved
+
+
+def test_group_status_line_is_not_failure_colour():
+    """묶음 머리의 "재는 중입니다"·"지금 도는 재기가 끝나면 잽니다"는 실패가 아니다 —
+    copper 는 본문에서 실패·빠짐의 색이라, 누르자마자 정상 진행이 오류처럼 읽힌다."""
+    src = (Path(dashboard.__file__).parent.parent / "templates" / "dashboard.html"
+           ).read_text("utf-8")
+    rule = re.search(r"\.vgrp \.gst \{([^}]*)\}", src)
+    assert rule, "묶음 머리의 상태 줄(.vgrp .gst) 규칙을 못 찾았다 — 이 검사가 아무것도 안 본다"
+    assert "--copper" not in rule.group(1), f"진행 상태가 실패색이다: {rule.group(0)}"
+
+
+def test_aio_detail_reads_when_cited_domains_are_missing():
+    """[AI 인용]의 구글 AI 요약 줄을 펼쳤을 때 — 인용 도메인이 비면(요약은 떴는데 못 읽었다,
+    db.write_rank_snapshot 의 불변식) "요약이 대신 인용한 곳 인용 도메인을 못 읽었습니다"처럼
+    제목에 문장이 이어 붙으면 안 된다. 함수를 node 로 그대로 돌려 본다."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        print("  (node 가 없어 건너뜀)")
+        return
+    src = (Path(dashboard.__file__).parent.parent / "templates" / "views" / "ai.html"
+           ).read_text("utf-8")
+    m = re.search(r"^function AI_aioDetail\(r\) \{.*?^\}", src, re.S | re.M)
+    assert m, "AI_aioDetail 을 못 찾았다 — 이 검사가 아무것도 안 본다"
+    js = ("const esc = s => String(s); const AI_aioOpp = () => null; let AI_AIO_PLAY = {};"
+          "const playList = () => ''; const oppPanel = () => ''; const oppActs = () => '';\n"
+          + m.group(0) + "\nconsole.log(JSON.stringify(["
+          "AI_aioDetail({pos: 12, aio_domains: []}),"
+          "AI_aioDetail({pos: null, aio_domains: null}),"
+          "AI_aioDetail({pos: 3, aio_domains: ['a.com', 'b.com']})]));")
+    out = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr
+    empty, none, two = json.loads(out.stdout)
+    for h in (empty, none):
+        assert "대신 인용한 곳" not in h, f"인용 도메인이 없는데 제목만 섰다: {h}"
+        assert "요약이 인용한 곳은 못 읽었습니다" in h, h
+    assert "요약이 대신 인용한 곳 <span class=\"dm\">a.com, b.com</span>" in two, two
+
+
+def _lr_ran(project, rows):
+    """떠 있는 런이 남긴 runs 행 — (kind, notes). 지금 시각에 시작하고 끝났다."""
+    conn = db.connect()
+    pid = db.get_project(conn, project)["id"]
+    for kind, notes in rows:
+        conn.execute("INSERT INTO runs(project_id,kind,started_at,finished_at,notes)"
+                     " VALUES(?,?,?,?,?)", (pid, kind, db.now(), db.now(), notes))
+    conn.commit()
+    conn.close()
+
+
+def test_local_run_retries_shared_stage_that_failed():
+    """이어서 도는 라운드는 앞 런에서 **잘 돈** 공유 단계만 뺀다 — 묶음에 들었다는 것만으로
+    빼면 실패한 rank(402·대기열 상한)가 다시 안 돌고, 그 사이 누른 [AI 노출]이 낡은 AI
+    요약으로 '방금 잰 묶음'이 된다. 호스팅 워커(r.ok and not r.skipped)와 같은 규칙이다.
+    끝나지 않은 행(프로세스가 죽었다)도 성공이 아니다."""
+    conn, pid = _brain("lr_fail")
+    conn.close()
+    saved = dashboard.RUN_DEBOUNCE_S
+    dashboard.RUN_DEBOUNCE_S = 0.1
+    try:
+        spawned = []
+        lr = _local_runs(spawned)
+        lr.request("lr_fail", "search")
+        _until(lambda: spawned, "런이 안 떴다")
+        lr.request("lr_fail", "ai")                        # 도는 중 — 대기열
+        _lr_ran("lr_fail", [("rank", "errors=0 timeout=1 | 중단: 순위 대기열 10분 상한"),
+                            ("gsc", "errors=0")])
+        spawned[0].finish()
+        _until(lambda: len(spawned) == 2, "대기열이 이어서 안 돌았다")
+        b = spawned[1].argv
+        assert "--skip" not in b, f"실패한 공유 단계를 다음 라운드가 건너뛴다: {b}"
+        # 이번엔 rank 가 잘 돌았다 — 그러면 뺀다
+        lr.request("lr_fail", "ai")
+        _lr_ran("lr_fail", [("rank", "errors=0")])
+        spawned[1].finish()
+        _until(lambda: len(spawned) == 3, "대기열이 이어서 안 돌았다")
+        c = spawned[2].argv
+        assert c[c.index("--skip") + 1] == "rank", c
+        # 끝나지 않은 행 — 성공이 아니다
+        lr.request("lr_fail", "ai")
+        conn = db.connect()
+        conn.execute("INSERT INTO runs(project_id,kind,started_at) VALUES(?,?,?)",
+                     (db.get_project(conn, "lr_fail")["id"], "rank", db.now()))
+        conn.commit()
+        conn.close()
+        spawned[2].finish()
+        _until(lambda: len(spawned) == 4, "대기열이 이어서 안 돌았다")
+        assert "--skip" not in spawned[3].argv, spawned[3].argv
+        spawned[3].finish()
+    finally:
+        dashboard.RUN_DEBOUNCE_S = saved
+
+
+def test_local_run_routes_through_handler():
+    """화면은 두 배포에서 같은 요청을 한다 — 로컬 Handler 가 /api/run·/api/run/status 를
+    받고(토큰 필요), 없는 사이트는 404, 모르는 묶음은 400 이다. 실제 수집은 안 띄운다."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+    conn, pid = _brain("lr_http")
+    conn.close()
+    spawned = []
+    saved_runs, saved_deb = dashboard.LOCAL_RUNS, dashboard.RUN_DEBOUNCE_S
+    dashboard.LOCAL_RUNS, dashboard.RUN_DEBOUNCE_S = _local_runs(spawned), 60
+    srv = _serve()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def post(body, token=dashboard.TOKEN):
+        req = urllib.request.Request(base + "/api/run", _json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", "X-Token": token})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, _json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, _json.loads(e.read() or b"{}")
+    try:
+        assert post({"project": "lr_http", "groups": "compete"}) == \
+            (200, {"ok": True, "started": True, "queued": False})
+        assert post({"project": "lr_http", "groups": "compete"}, token="x")[0] == 403
+        assert post({"project": "없는사이트"})[0] == 404
+        assert post({"project": "lr_http", "groups": "nope"})[0] == 400
+        with urllib.request.urlopen(base + "/api/run/status?project=lr_http") as r:
+            st = _json.loads(r.read())
+        g = st["lr_http"]["groups"]["compete"]
+        assert g["running"] is True and g["queued"] is False and "due" in g and "last_run_at" in g, g
+        assert ("POST", "/api/run") in dashboard.ROUTES and ("GET", "/api/run/status") in dashboard.ROUTES
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        t = dashboard.LOCAL_RUNS.sites.get("lr_http", {}).get("timer")
+        if t:
+            t.cancel()
+        dashboard.LOCAL_RUNS, dashboard.RUN_DEBOUNCE_S = saved_runs, saved_deb
+    assert not spawned, "검사가 실제로 런을 띄웠다"
 
 
 if __name__ == "__main__":

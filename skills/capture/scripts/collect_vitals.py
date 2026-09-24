@@ -18,6 +18,12 @@
 비용: 없다. PageSpeed Insights API 는 무료다. 키(PAGESPEED_API_KEY)는 없어도 돌고
 넣으면 한도가 넉넉해진다 — 그래서 키가 없다고 단계를 건너뛰지 않는다.
 
+한도(429)는 **실패가 아니라 건너뜀**이다. 키 없이 돌면 여러 사용자와 나눠 쓰는 하루
+한도에 걸리는데, 그건 내 사이트가 느리다는 뜻도 수집이 고장났다는 뜻도 아니다. 여태는
+429 가 항목 실패로 세어져 속도 단계가 "전부 실패" 가 되고, 그 하나 때문에 런 전체가
+last_ok=0 으로 남았다(9/24 theotherskin). 한 번 429 면 나머지도 같은 한도에 걸리므로
+거기서 멈추고, 그때까지 잰 것은 남긴다.
+
 Usage:
   python collect_vitals.py --project NAME [--limit N] [--strategy mobile,desktop]
   python collect_vitals.py                                  # self-check
@@ -44,6 +50,16 @@ _FIELD = {"field_lcp_ms": "LARGEST_CONTENTFUL_PAINT_MS",
           "field_ttfb_ms": "EXPERIMENTAL_TIME_TO_FIRST_BYTE"}
 _LAB = {"lab_lcp_ms": "largest-contentful-paint",
         "lab_tbt_ms": "total-blocking-time"}
+
+QUOTA_STATUS = 429
+QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
+                "(PAGESPEED_API_KEY 를 넣으면 한도가 커집니다)")
+
+
+class _QuotaHit(collector.Fatal):
+    """PageSpeed 한도(429) — 남은 URL 도 같은 한도에 걸린다. Stage.each 는 Fatal 만
+    삼키지 않고 올리므로 그 통로로 멈추되, collect 가 받아서 **건너뜀**으로 바꾼다
+    (Fatal 이 그대로 러너까지 가면 단계 실패가 된다)."""
 
 
 def parse(url: str, strategy: str, data: dict) -> dict:
@@ -98,7 +114,7 @@ def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
             detail = ((r.json().get("error") or {}).get("message") or "")[:120]
         except Exception:
             pass
-        return {"url": url, "strategy": strategy,
+        return {"url": url, "strategy": strategy, "status": r.status_code,
                 "error": f"HTTP {r.status_code}" + (f" · {detail}" if detail else "")}
     try:
         return parse(url, strategy, r.json())
@@ -164,6 +180,9 @@ def collect(project: str, *,
         def one(job) -> None:
             url, dev = job
             row = fetch(url, dev)
+            if row.get("status") == QUOTA_STATUS:
+                # 이 행은 안 남긴다 — "이 페이지를 못 쟀다" 가 아니라 "오늘은 더 못 잰다" 다
+                raise _QuotaHit(row["error"])
             # 행은 남긴다 — page_vitals.error 는 "못 쟀다"를 적는 진짜 칸이다.
             # 그리고 실패는 예외로 올린다: 여기서 return 하면 실패가 데이터로만 남아
             # 전부 못 재고도 runs.notes 에 errors=0 이 적힌다(collect_page 와 같은 규칙).
@@ -175,18 +194,30 @@ def collect(project: str, *,
             print(f"  ✓ [{dev}] {url} — 점수 {score if score is not None else '—'}"
                   + (f" · LCP {lcp}ms" if lcp else ""))
 
+        quota = ""
         with st.record("vitals") as r:
-            done = st.each(jobs, one, label=lambda j: f"[{j[1]}] {j[0]}")
+            try:
+                done = st.each(jobs, one, label=lambda j: f"[{j[1]}] {j[0]}")
+            except _QuotaHit as e:
+                quota = str(e)
+                done = sum(1 for x in rows if not x.get("error"))
+                print(f"  ! {QUOTA_REASON} ({quota})", file=sys.stderr)
             checked = str(date.today())
             db.write_page_vitals(conn, p["id"], checked, rows)
             r.api_calls = done
             r.notes = (f"urls={len(urls)} strategies={','.join(want)} "
-                       f"rows={len(rows)} checked={checked} {st.err_note}")
+                       f"rows={len(rows)} checked={checked} {st.err_note}"
+                       + (f" | quota={QUOTA_STATUS} — {QUOTA_REASON}" if quota else ""))
 
         bad_rows = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} vitals rows (errors={st.errors})"
               + (f" · 못 잰 것 {len(bad_rows)}개" if bad_rows else ""))
-        # 실제로 잰 건수로 판정한다 — 전부 못 잰 것은 완료가 아니다.
+        if quota and not done:
+            # 한 건도 못 잰 채 한도 — 건너뜀이다. 앞 URL 에 다른 실패가 있었어도 오늘 이
+            # 단계가 말할 수 있는 것은 "한도라서 못 쟀다" 하나다.
+            return st.skip(QUOTA_REASON)
+        # 실제로 잰 건수로 판정한다 — 전부 못 잰 것은 완료가 아니다. 한도 전까지 잰 것이
+        # 있으면 그만큼으로 완료다(한도는 실패로 안 센다 — each 가 세기 전에 멈췄다).
         return st.verdict(done, rows=len(rows))
 
 
@@ -267,7 +298,92 @@ def _selfcheck() -> None:
     assert db.write_page_vitals(conn, 1, "2026-09-09", [r, thin]) == 2, "같은 날 두 번이 늘어난다"
     got = conn.execute("SELECT COUNT(*) c FROM page_vitals").fetchone()["c"]
     assert got == 2, got
+    _quota_and_key_check(sample)
     print("collect_vitals self-check ok")
+
+
+def _quota_and_key_check(sample: dict) -> None:
+    """키를 실어 보내나 · 429(한도)가 실패가 아니라 건너뜀인가 — 가짜 requests.get 으로(네트워크 0)."""
+    import contextlib
+    import io
+    import tempfile
+
+    import requests
+
+    class Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body = status, body
+
+        def json(self):
+            return self._body
+
+    quota_body = {"error": {"code": 429, "message": "Quota exceeded for quota metric "
+                            "'Queries' and limit 'Queries per day'"}}
+    sent: list[dict] = []
+    script: list = []
+
+    def fake_get(url, params=None, timeout=None):
+        sent.append(dict(params or {}))
+        return script.pop(0) if script else Resp(QUOTA_STATUS, quota_body)
+
+    orig_get, orig_key = requests.get, os.environ.pop("PAGESPEED_API_KEY", None)
+    orig_targets = collect_page.target_urls
+    os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-vitals-selftest-")))
+    boot = db.connect()
+    boot.execute("INSERT INTO projects(name, domain, locale) VALUES('vt','vt.kr','ko-KR')")
+    boot.commit()
+    boot.close()
+    requests.get = fake_get
+    collect_page.target_urls = lambda c, pid, limit: ["https://vt.kr/a", "https://vt.kr/b"]
+
+    def run():
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return collect("vt", strategy="mobile", throttle=0)
+
+    try:
+        # 1. 키 — 환경변수가 있으면 key= 로 싣고, 없으면 안 싣는다(빈 key= 는 400 이다)
+        sent.clear()
+        fetch("https://vt.kr/a", "mobile")
+        assert "key" not in sent[-1], sent[-1]
+        os.environ["PAGESPEED_API_KEY"] = "selftest-key"
+        fetch("https://vt.kr/a", "mobile")
+        assert sent[-1].get("key") == "selftest-key", f"키를 요청에 안 실었다: {sent[-1]}"
+        del os.environ["PAGESPEED_API_KEY"]
+
+        # 2. 처음부터 한도 — 실패가 아니라 건너뜀, 사유는 사람 말, 첫 429 에서 멈춘다
+        sent.clear()
+        res = run()
+        assert (res.ok, res.skipped, res.failed) == (True, True, False), res
+        assert res.reason == QUOTA_REASON, res.reason
+        assert len(sent) == 1, f"한도에 걸린 뒤로도 계속 불렀다: {len(sent)}회"
+        conn = db.connect()
+        assert conn.execute("SELECT COUNT(*) c FROM page_vitals").fetchone()["c"] == 0, \
+            "한도를 '이 페이지를 못 쟀다' 행으로 남겼다"
+        notes = conn.execute("SELECT notes FROM runs WHERE kind='vitals' ORDER BY id DESC"
+                             ).fetchone()["notes"]
+        assert "quota=429" in notes, notes
+        conn.close()
+
+        # 3. 한 장 잰 뒤 한도 — 잰 것은 남기고 완료(실패·부분 실패 아님)
+        script[:] = [Resp(200, sample)]
+        res = run()
+        assert (res.ok, res.skipped, res.partial, res.rows) == (True, False, False, 1), res
+        conn = db.connect()
+        assert conn.execute("SELECT COUNT(*) c FROM page_vitals WHERE error IS NULL"
+                            ).fetchone()["c"] == 1
+        conn.close()
+
+        # 4. 한도가 아닌 실패(500)는 여전히 실패다 — 429 만 건너뜀으로 바꾼다
+        script[:] = [Resp(500, {}), Resp(500, {})]
+        res = run()
+        assert res.failed, f"500 을 건너뜀으로 삼켰다: {res}"
+    finally:
+        requests.get = orig_get
+        collect_page.target_urls = orig_targets
+        if orig_key is not None:
+            os.environ["PAGESPEED_API_KEY"] = orig_key
+        else:
+            os.environ.pop("PAGESPEED_API_KEY", None)
 
 
 if __name__ == "__main__":

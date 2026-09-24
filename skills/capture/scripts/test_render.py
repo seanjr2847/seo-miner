@@ -153,6 +153,10 @@ TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변�
 GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
 AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
 AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321" 로 서야 한다
+# 구글 AI 요약 — 요약이 떴는데 내 링크가 빠진 검색어와 대신 인용된 도메인. 이 칸은
+# [순위 추적]에서 [AI 인용]으로 옮겼다 — 옮긴 자리(#ai-aio)에 서는지를 본다.
+AIO_KW = "요약검색어Z9"
+AIO_DOM = "aioZ9.example"
 # AI 에서 온 방문의 빈 상태 둘 — 로컬 대상에서만 사이트를 바꿔 한 번씩 더 연다(ZERO_SITE 는
 # 로컬 Brain 에만 있다). 문구는 <b> 제목만 본다: 소스(<script>)는 check() 가 떼고 보므로
 # 렌더러가 그 분기를 실제로 탔을 때만 걸린다.
@@ -273,6 +277,26 @@ MUSTS = [
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
      + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
      "AI 인용 화면이 'AI 에서 온 방문' 을 안 그렸다"),
+    # 구글 AI 요약은 [AI 인용] 화면의 몫이다 — 빠진 검색어 줄에 대신 인용된 도메인이 선다.
+    # 순위 화면에는 AI 요약 칸이 없어야 한다(옮겼다 — 두 자리에 있으면 두 벌이다).
+    (r'id="ai-aio"(?:(?!</section>).)*' + re.escape(AIO_KW)
+     + r'(?:(?!</tr>).)*' + re.escape(AIO_DOM),
+     "AI 인용 화면이 구글 AI 요약에 빠진 검색어를 안 그렸다"),
+    # 표 머리글로 본다 — 기회 줄의 종류 이름표("구글 AI 요약 빠짐")는 순위 화면에 서도 된다.
+    (r'!id="view-rank"(?:(?!id="view-).)*<th[^>]*>(?:<[^>]+>)*AI 요약',
+     "순위 화면에 AI 요약 칸이 남아 있다 — [AI 인용]으로 옮긴 것이 두 벌이 됐다"),
+    # 메뉴 = 묶음. 이름은 페이로드(d.groups ← run_all.GROUPS)에서 온다. 주기 점은 배포마다
+    # 출처가 같은 한 벌(셸의 grpDue — 상태가 이긴다)이라 로컬·호스팅 검사가 따로 있다
+    # (LOCAL_MUSTS · HOSTED_MUSTS). 다시 잴 단계가 없는 [할 일]에는 점이 안 선다.
+    (r'class="rl navgrp">할 일</span>', "버튼 없는 [할 일]에 주기 점이 섰다 — 눌러서 할 것이 없다"),
+    # [할 일]도 매일 런이 언제 돌았는지는 말한다(버튼 없이) — 심사·개요 머리줄.
+    (r'id="view-triage"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날',
+     "[심사] 머리줄이 매일 런의 마지막으로 잰 날을 안 그렸다"),
+    # 묶음 화면 머리줄 — 단계별 마지막으로 잰 날. 방금 잰 AI 인용은 날짜가, 안 잰 순위
+    # 조회는 "아직"이 선다(둘 다 한 줄 안).
+    (r'id="view-ai"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
+     r'(?:(?!</div>).)*<em>\d{4}-\d{2}-\d{2}</em>(?:(?!</div>).)*<em>아직</em>',
+     "[AI 인용] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -306,6 +330,9 @@ REPORT_MUSTS = [
     (r"여기서는 바꿀 수 없습니다", "박제본이 트리아지가 되는 것처럼 말한다"),
     (r"!id=\"view-settings\"", "박제본에 [설정] 화면이 남았다 — 남한테 보내는 파일이다"),
     (r"!id=\"view-guide\"", "박제본에 [안내] 화면이 남았다"),
+    # 묶음 머리줄의 날짜는 기록이라 남고, 다시 재기 버튼은 누를 서버가 없어 빠진다.
+    (r'class="vgrp"(?:(?!</div>).)*마지막으로 잰 날', "박제본에 묶음별 마지막으로 잰 날이 없다"),
+    (r"!data-grp=", "박제본에 [이 묶음 다시 재기]가 남았다 — 누를 서버가 없다"),
     # 값이 실제로 그려졌는가 — 라이브와 같은 표식을 쓴다
     (re.escape(BL_DOMAIN), "박제본이 링크 교집합을 안 그렸다"),
     (re.escape(RIVAL), "박제본이 경쟁사를 안 그렸다"),
@@ -318,11 +345,30 @@ REPORT_MUSTS = [
 LOCAL_MUSTS = [
     (r'<span class="badge warn">도구 없음</span>',
      "도구를 안 고른 상태의 기회 카드에 '도구 없음' 배지가 없다 — 실행 자리가 비었다"),
+    # 로컬의 주기 점 — 픽스처는 AI 인용만 방금 쟀고(runs 'ai') 나머지 묶음은 한 번도 안
+    # 쟀다. 그래서 [AI 노출]에는 점이 없고 [검색 성과]에는 있어야 한다. 점을 늘 달거나
+    # 늘 안 다는 렌더러는 둘 중 하나에서 걸린다.
+    (r'class="rl navgrp">검색 성과<i class="navdue"', "주기를 넘긴 묶음([검색 성과])에 점이 없다"),
+    (r'class="rl navgrp">AI 노출</span>', "방금 잰 묶음([AI 노출])에 점이 섰거나 묶음 이름이 없다"),
+] + [
+    # 두 배포 공통이지만 박제본에는 없는 것 — 재기 버튼. 묶음 버튼은 잴 단계가 있는 묶음
+    # 화면에, 전체 재기는 [안내] 한 곳에만 선다(레일 바닥의 [전체 분석 실행]은 없앴다).
+    (r'id="view-rank"(?:(?!id="view-).)*<button[^>]*data-grp="search"',
+     "[순위 추적]에 [이 묶음 다시 재기](검색 성과)가 없다"),
+    (r'id="view-guide"(?:(?!id="view-).)*<button[^>]*data-grp=""',
+     "[안내]에 전체 다시 재기가 없다"),
+    # 그 버튼 바로 밑 산문이 "비용이 드는 단계는 돌리기 전에 물어봅니다"라고만 하면 거짓말이다 —
+    # 버튼은 두 배포 다 묻지 않고 바로 돈다. 버튼 쪽 사실을 말해야 한다.
+    (r'id="view-guide"(?:(?!id="view-).)*다시 재기는 누르면 바로 실행됩니다',
+     "[안내]가 다시 재기 버튼이 비용을 묻지 않고 바로 돈다는 것을 안 말한다"),
+    (r'!id="view-overview"(?:(?!id="view-).)*data-grp=',
+     "버튼이 없어야 할 [할 일] 묶음 화면에 다시 재기가 섰다"),
 ]
+RUN_MUSTS = LOCAL_MUSTS[3:]           # 앞 셋(도구 없음 배지·로컬 주기 점)은 로컬 몫
 
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
-HOSTED_MUSTS = MUSTS + [
+HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     # 배포마다 다른 문구는 화면이 data-web / W() 로 직접 고른다(dashboard.html).
     # 하나라도 남아 있으면 표식(SM_HOSTED)이 첫 렌더보다 늦게 선 것이다 — 응답이
     # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
@@ -345,7 +391,8 @@ HOSTED_MUSTS = MUSTS + [
     # 호스팅은 서버가 키를 댄다. 안내가 요청마다 오는 guide.steps[].gain(로컬 갈래)을
     # 그리면 "OpenRouter 키를 넣으면 켜집니다"가 샌다 — 조립 시점 표(gainOf)를 써야 한다.
     (r"!키를 넣으면", "호스팅 안내가 유료 키를 넣으라고 한다 — 조립 시점 용어표를 안 읽었다"),
-    (r'id="sm-run"', "레일 바닥의 [전체 분석 실행]이 안 붙었다"),
+    # 전체 재기는 [안내] 화면의 묶음 머리줄로 옮겼다 — 레일 바닥에 다시 붙으면 두 벌이다.
+    (r'!id="sm-run"', "레일 바닥에 [전체 분석 실행]이 다시 붙었다 — 전체 재기는 [안내] 한 곳이다"),
     # 안내의 실행 칩은 SM.host 를 렌더 시점에 부른다(dashboard.html 의 renderGuide) —
     # 호스팅판은 그 훅을 실행 버튼으로 갈아 낀다(dash.html 의 SM.host.stepChip).
     # 이 픽스처(beta-site)는 GSC 는 읽었지만 키워드를 아직 안 캤으므로 "지금 할 것"이
@@ -357,6 +404,14 @@ HOSTED_MUSTS = MUSTS + [
     # 기회 카드의 실행 자리 — 브라우저는 이 PC 의 프로세스를 못 띄우므로, 여기 설
     # 것은 버튼이 아니라 "어디서 누르면 되는지"다(dash.html 의 SM.host.oppBtn).
     (r"이 PC 에서 열기", "호스팅 기회 카드에 로컬 실행 안내가 없다"),
+    # 호스팅의 주기 점은 스케줄러가 실제로 쓰는 판정(/api/run/status 의 groups[].due —
+    # store.due_groups)을 따른다. 픽스처는 둘을 일부러 **엇갈리게** 둔다(serve_hosted):
+    # 서버 시계로는 [AI 노출]이 밀렸고 [검색 성과]는 방금 쟀다 — 페이로드(runs)는 반대다.
+    # 페이로드 값으로 점을 달면 둘 다 여기서 걸린다.
+    (r'class="rl navgrp">AI 노출<i class="navdue"',
+     "서버 시계로 밀린 [AI 노출]에 점이 없다 — 스케줄러와 다른 판정으로 점을 달았다"),
+    (r'class="rl navgrp">검색 성과</span>',
+     "서버가 방금 잰 [검색 성과]에 점이 섰다 — 스케줄러와 다른 판정으로 점을 달았다"),
 ]
 
 
@@ -467,6 +522,12 @@ def _axes(conn, pid: int) -> None:
          "meta_description": None, "h1_json": "[]", "h2_json": "[]", "words": 120,
          "schema_json": "[]", "internal_links": 3, "external_links": 0,
          "images": 2, "images_no_alt": 2, "viewport": 1, "html_lang": "ko"}])
+    # 구글 AI 요약 — 추적 검색어 하나가 요약이 떴는데 내 링크가 빠졌다(순위 조회 행).
+    kid = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)",
+                       (pid, AIO_KW)).lastrowid
+    db.write_rank_snapshot(conn, kid, 14, f"https://{SITES[1]}.example/a",
+                           aio_present=1, aio_cited=0, checked_at=f"{d}T00:00:00Z",
+                           aio_domains=[AIO_DOM])
     # AI 에서 온 방문(GA4 부가 조회) — 두 출처가 같은 페이지로 들어왔다.
     db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],
                               [("chatgpt.com", AI_VISIT_PAGE, AI_VISIT_N - 21, 3),
@@ -621,6 +682,10 @@ def _hosted_app(data: Path):
             # "첫 분석 진행 중"으로 서서 이 파일이 보려는 화면이 아니다.
             store.mark_run(conn, sid)
             store.mark_done(conn, sid, ok=True)
+            # 서버 시계를 페이로드와 엇갈리게 — AI 노출만 밀렸다(HOSTED_MUSTS 의 주기 점)
+            conn.execute("UPDATE site_groups SET last_run_at=datetime('now','-1000 hours') "
+                         "WHERE site_id=? AND grp='ai'", (sid,))
+            conn.commit()
     finally:
         conn.close()
     # tenant() 가 요청마다 CAPTURE_HOME 을 이 값으로 세웠다 되돌린다. 미리 같은 값으로

@@ -1,7 +1,7 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
-{"id": "history", "title": "기록",
+{"id": "history", "group": "admin", "title": "기록",
  "sections": ["acts", "runs", "made-sec"], "stages": []}
 </script>
 
@@ -182,7 +182,7 @@ const HS_cmd = (c, primary = true) =>
    "전부 다시 돌리기" 하나다. 그 손잡이는 셸의 act() 가 배포에 맞춰 만든다:
    로컬은 /capture run 칩, 호스팅은 data-run="run" 버튼이고 애드온이 그걸
    runAll() 에 잇는다(stages 를 안 보내는 것이 곧 전체 실행이다). */
-const HS_runAll = (primary = true) => act("run", "전체 분석 실행", primary);
+const HS_runAll = (primary = true) => act("run", "전체 다시 재기", primary);
 
 /* 한 종류를 다시 돌리는 손잡이. 라벨은 단계 용어표(stageRun)에서 오고 이름을 글자로
    옮겨 적지 않는다. full 은 단계가 아니라 일괄 실행이라 그쪽으로 보낸다. */
@@ -375,13 +375,13 @@ function HS_staleMsg() {
 // 사라져 포커스를 잃는다. 거르기는 아래 목록만 다시 그린다(HS_runList).
 function HS_runTools() {
   // 버튼을 여기 또 두지 않는다 — 실행할 게 없을 때 HS_acts()가 세우는 머리의
-  // [다음 행동] 띠가 이미 같은 전체 분석 실행을 주요 버튼으로 든다. 같은 화면
+  // [다음 행동] 띠가 이미 같은 전체 다시 재기를 주요 버튼으로 든다. 같은 화면
   // 위아래에 같은 이름의 버튼이 둘 서면(하나는 채운 녹청, 하나는 여기) 어느
   // 쪽을 눌러야 하는지보다 "왜 두 개인지"부터 눈에 든다 — 문구만 남긴다.
   if (!HS_RUNS.length)
     return $("runs").innerHTML = `<div class="empty">
       <b>아직 실행한 적이 없습니다</b>
-      <p>위에서 전체 분석 실행을 누르면 무엇을 언제 얼마에 수집했는지가 여기
+      <p>위에서 전체 다시 재기를 누르면 무엇을 언제 얼마에 수집했는지가 여기
         줄로 남습니다.</p></div>`;
   const counts = {};
   HS_RUNS.forEach(r => { counts[r.kind] = (counts[r.kind] || 0) + 1; });

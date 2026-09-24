@@ -160,7 +160,9 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 
 ### /capture gsc {P}
 **풀런(`/capture run`)에 포함된다** — `gsc` 단계다(순서의 정본은 `run_all.STAGES`).
-체인의 **첫 단계**라, 실패하면 풀런은 거기서 멈춘다(나머지가 그 데이터를 재료로 쓴다).
+색인·키워드 발굴이 이 데이터를 재료로 쓰므로 같은 런에서는 그 둘이 이 단계를 기다린다
+(순서의 정본은 `run_all.AFTER`). 여기서 실패해도 묶음 런은 멈추지 않고 뒤 단계가 지난
+데이터로 돈다 — 순차로 고른 실행(`--only`)만 예전처럼 여기서 멈춘다.
 
 경로는 하나다 — **구글 계정 연결(필수)**: `python scripts/collect_gsc.py --project {P}`.
 연결 한 벌로 모든 사이트를 자동 수집한다(행 제한 사실상 없음). 한 번 돌면 세 벌이
@@ -235,7 +237,14 @@ python scripts/gsc_query.py sitemaps --project {P}
 키가 없으면 풀런은 이 단계를 조용히 건너뛴다(에러 아님).
 
 `python scripts/collect_serp.py --project {P} --dry-run` → 호출 수·비용 고지 → 확인 → 실행.
-결과: 키워드별 순위·SERP 피처·AI오버뷰 인용 여부 + 부산물로 연관검색어/PAA가 키워드
+**추적 키워드 전부**를 잰다 — 고르는 순서(열린 기회의 대상 → 한 번도 안 잰 것 → 가장
+오래 안 잰 것)와 상한은 `collect_serp.targets`(`_TARGETS_SQL`)·`db.RANK_KEYWORDS_CAP`
+(`limits.max_keywords` 의 기본)이 정본이다. DataForSEO 는 우선 대기열(task_post →
+tasks_ready → task_get)로 맡기고 **다 올 때까지 기다린다** — 기다리는 상한은
+`collect_serp.WAIT_LIMIT_S` 이고, 넘으면 이 단계는 **실패로 끝나고 아무것도 적지 않는다**
+(이전 측정 유지). 맡긴 과제 id 는 Brain(`serp_tasks`)에 남아 다음 런이 새로 사지 않고
+먼저 받아 온다. 대기열 규칙·단가는 `serp_adapter`(대기열 도우미 주석·`PROVIDERS`)가 정본.
+결과: 키워드별 순위·SERP 피처·AI오버뷰 인용 여부(화면은 [AI 인용]의 구글 AI 요약 칸) + 부산물로 연관검색어/PAA가 키워드
 후보에, 상위 빈출 도메인이 경쟁사에 자동 수확된다. 키 미설정이면 GSC 중심 모드로
 동작함을 안내한다 (setup.md 7절).
 
@@ -410,8 +419,13 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 `references/scoring.md` 1b절.
 
 ### /capture run {P} — 풀런
-수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계 순서는 고정이다 —
-`scripts/run_all.py` 의 `STAGES` 표가 정본이고, 거기 적힌 순서대로 전 단계를 부른다.
+수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계는 **묶음**으로 돈다 — 묶음(메뉴의
+제목 = 사용자의 질문 = 한 번에 다시 재는 단위)의 id·이름·단계·주기는
+`scripts/run_all.py` 의 `GROUPS` 가 정본이고, 모든 재기에 붙는 꼬리는 `TAIL` 이다.
+인자 없이 부르면 묶음 전부(전체 재기), `--groups <id,...>` 면 그 묶음만 돈다(여기 id 를
+적지 않는다 — `GROUPS` 를 본다). 묶음끼리는 **동시에** 돌고, 같은 런에서 순서가 필요한
+단계만 앞 단계를 기다린다(순서의 정본은 `run_all.AFTER`). 두 묶음이 나눠 갖는 단계는 한
+런에서 한 번만 돈다. 단계 이름과 표 순서의 정본은 여전히 `run_all.STAGES` 다.
 
 1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
    호출 수·비용 계획을 모아 보여주고 사용자 확인을 받는다 (철칙 2 — 비용 고지).
@@ -437,9 +451,10 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 2. 확인되면 `python scripts/run_all.py --project {P}` 를 **백그라운드로** 돌린다.
    수집이 길어질 수 있어 포그라운드로 잡으면 세션이 막힌다 — `/capture dash` 가
    같은 이유로 백그라운드인 것과 같은 톤이다.
-3. **`gsc` 가 실패하면 거기서 멈춘다** — 나머지 전부(gaps, report, 의사결정)가
-   그 데이터를 재료로 쓰기 때문이다. 다른 단계는 하나 실패해도 나머지가 계속
-   간다.
+3. **한 단계·한 묶음이 실패해도 나머지는 끝까지 간다** — 기다리던 뒤 단계는 앞 단계의
+   지난 데이터로 돌고, `gaps` 는 끝난 데이터로 선다. 런 결과는 실패가 하나라도 있으면
+   실패이고 건너뜀은 실패가 아니다. (`--only` 로 고른 순차 실행만 예전처럼 `gsc`
+   실패에서 멈춘다.)
 4. 끝나면 단계별 `완료 / 건너뜀(이유) / 실패(이유)` 표와 리포트 파일 경로를
    찍는다. exit 0 = 전부 성공(건너뜀 포함), 1 = 하나라도 실패.
 5. 체인이 끝난 뒤 Claude가 하는 일은 그대로다 — 아래 "분석 단계"의 2·3번
@@ -447,7 +462,14 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
    스크립트가 못 한다.
 
 `--only gsc,gaps` · `--skip index,ai` 처럼 한 축만 빼거나 골라 돌릴 수도 있다.
-축 이름은 아래 개별 명령과 같다.
+축 이름은 아래 개별 명령과 같다. `--only` 는 순차로 돈다(묶음 런이 아니다) —
+`--groups` 와 같이 줄 수 없다.
+
+대시보드에서는 묶음마다 화면 맨 위의 [이 묶음 다시 재기], 전체는 [안내] 화면의
+[전체 다시 재기]가 같은 일을 한다(로컬은 대시보드가 `run_all.py --groups` 를 띄우고,
+호스팅은 워커가 돈다). 도는 중에 다른 묶음을 누르면 대기열에 올라 지금 런이 끝나는
+대로 이어서 돈다. 호스팅의 자동 주기도 묶음마다 따로다(`GROUPS` 의 `every_hours`, 주간
+묶음은 사이트 설정 `run_every_hours` — 판정은 `server/store.due_groups`).
 
 ### 분석 단계 (gaps 이후 자동)
 1. `python scripts/scoring.py load {P}` — 기계 판정분 8종(위 `/capture gaps` 절의
@@ -521,7 +543,10 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일 · 추출성 �
 안에서 "이 페이지" 가 두 곳을 가리킨다.
 
 `python scripts/collect_vitals.py --project {P} --dry-run` → 잴 목록 확인 → 실행.
-키는 없어도 돈다. 자주 돌려 한도(429)에 걸리면 `PAGESPEED_API_KEY`(무료)를 넣는다.
+키는 없어도 돈다. 자주 돌려 한도(429)에 걸리면 `PAGESPEED_API_KEY`(무료)를 넣는다
+(호스팅은 Railway 변수 같은 이름). 한도에 걸린 날은 **실패가 아니라 건너뜀**이다 — 그 전에
+잰 것은 남기고, 한 건도 못 쟀으면 단계를 건너뜀으로 끝낸다(사유 문구의 정본은
+`collect_vitals.QUOTA_REASON`). 준비 상태 명부의 자리는 `doctor.CAPABILITIES` 의 `vitals`.
 
 **두 가지를 같이 남긴다.** 뜻이 다르다:
 - **현장(CrUX)** — 실제 크롬 사용자 28일치. **검색이 보는 값이 이것이다.** 트래픽이

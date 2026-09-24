@@ -20,6 +20,7 @@
   · 응답 필드명은 DataForSEO 가 엔드포인트마다 조금씩 다르게 준다. 읽는 자리는
     전부 _g() 로 여러 이름을 받아 보고, 못 읽는 항목은 건너뛰고 나머지는 살린다.
   · 호출 하나가 죽어도 나머지는 간다 — st.each 가 항목별로 세고 넘어간다.
+  · 다섯 축은 서로 독립이라 동시에 산다(fanout.LIMITS["dataforseo"]). 적재만 순서대로.
   · 백링크는 하루 단위로 안 움직인다. --max-age(기본 7일) 안이면 다시 사지 않는다.
 
 비용 (2026-08 가격표, https://dataforseo.com/pricing):
@@ -41,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import serp_adapter  # noqa: E402
 
 REQUEST_COST = 0.024        # 요청 1건 (dry-run 고지용 추정)
@@ -295,41 +297,32 @@ def collect(project: str, *,
             rows[name] = rows.get(name, 0) + n
             cost += float(c or 0)
 
-        def _summary(_):
-            res, c = post("/backlinks/summary/live",
-                          [{"target": target, "internal_list_limit": 1}])
-            _bump("summary", _put_summary(conn, pid, today, res), c)
+        # 축 하나 = (이름, 경로, 본문, 적재 함수). 사는 것(post)은 일꾼이 동시에 하고
+        # 적재는 이 스레드가 이 순서대로 한다(fanout) — 순서가 뜻이 있다: 교집합의
+        # we_have 는 먼저 적힌 referring_domains 를 보고 정한다.
+        summary = ("summary", "/backlinks/summary/live",
+                   [{"target": target, "internal_list_limit": 1}], _put_summary)
+        refdomains = ("referring_domains", "/backlinks/referring_domains/live",
+                      [{"target": target, "limit": limit, "order_by": ["rank,desc"]}],
+                      _put_refdomains)
+        links = ("backlinks", "/backlinks/backlinks/live",
+                 [{"target": target, "limit": limit, "mode": "one_per_domain",
+                   "order_by": ["rank,desc"]}], _put_backlinks)
+        anchors = ("anchors", "/backlinks/anchors/live",
+                   [{"target": target, "limit": limit, "order_by": ["backlinks,desc"]}],
+                   _put_anchors)
+        intersect = ("intersect", "/backlinks/domain_intersection/live",
+                     [{"targets": pos, "limit": limit, "exclude_targets": [target]}],
+                     lambda conn, pid, today, res: _put_intersect(conn, pid, today, res, pos))
 
-        def _refdomains(_):
-            res, c = post("/backlinks/referring_domains/live",
-                          [{"target": target, "limit": limit, "order_by": ["rank,desc"]}])
-            _bump("referring_domains", _put_refdomains(conn, pid, today, res), c)
-
-        def _links(_):
-            res, c = post("/backlinks/backlinks/live",
-                          [{"target": target, "limit": limit, "mode": "one_per_domain",
-                            "order_by": ["rank,desc"]}])
-            _bump("backlinks", _put_backlinks(conn, pid, today, res), c)
-
-        def _anchors(_):
-            res, c = post("/backlinks/anchors/live",
-                          [{"target": target, "limit": limit, "order_by": ["backlinks,desc"]}])
-            _bump("anchors", _put_anchors(conn, pid, today, res), c)
-
-        def _intersect(_):
-            res, c = post("/backlinks/domain_intersection/live",
-                          [{"targets": pos, "limit": limit, "exclude_targets": [target]}])
-            _bump("intersect", _put_intersect(conn, pid, today, res, pos), c)
-
-        tasks = [("summary", _summary)]
+        tasks = [summary]
         if limit > 0:
-            tasks += [("referring_domains", _refdomains), ("backlinks", _links),
-                      ("anchors", _anchors)]
+            tasks += [refdomains, links, anchors]
         else:
             notes.append("limit=0 — 요약만 삽니다 (참조 도메인·개별 링크·앵커 생략)")
         # 교집합은 경쟁사가 둘 이상일 때만 뜻이 있다. 없다고 단계를 죽이지는 않는다.
         if limit > 0 and len(rivals) >= INTERSECT_MIN_RIVALS:
-            tasks.append(("intersect", _intersect))
+            tasks.append(intersect)
         elif limit > 0:
             notes.append(f"Link Intersect 생략 — 경쟁사가 {len(rivals)}개뿐입니다"
                          f"(교집합은 {INTERSECT_MIN_RIVALS}개부터). "
@@ -342,14 +335,17 @@ def collect(project: str, *,
             print(f"  · {n}")
 
         if st.dry_run:
-            for name, _ in tasks:
-                print(f"  - {name}")
+            for t in tasks:
+                print(f"  - {t[0]}")
             print(f"단가 출처: DataForSEO Backlinks — 요청당 ${REQUEST_COST} + "
                   f"행당 ${ROW_COST} (모듈 docstring). 실제 청구액은 응답 cost 로 기록.")
             return st.noop(cost=est)
 
         with st.record("backlinks") as r:
-            r.api_calls = st.each(tasks, lambda t: t[1](t), label=lambda t: t[0])
+            r.api_calls = fanout.each(
+                st, tasks, lambda t: post(t[1], t[2]),
+                lambda t, got: _bump(t[0], t[3](conn, pid, today, got[0]), got[1]),
+                workers=fanout.LIMITS["dataforseo"], label=lambda t: t[0])
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
                        + f" {st.err_note}"
@@ -478,10 +474,11 @@ def _selfcheck() -> None:
     calls: list = []
     res = collect("bt", conn=conn, post=_fake_post(calls), max_age=0)
     assert (res.ok, res.skipped) == (True, False), res
-    assert [c[0] for c in calls] == [
+    # 보내는 순서는 이제 동시라 정해지지 않는다 — 무엇을 샀는지만 본다(적재 순서는 아래 8)
+    assert sorted(c[0] for c in calls) == sorted([
         "/backlinks/summary/live", "/backlinks/referring_domains/live",
         "/backlinks/backlinks/live", "/backlinks/anchors/live",
-        "/backlinks/domain_intersection/live"], calls
+        "/backlinks/domain_intersection/live"]), calls
     assert abs(res.cost - 0.204) < 1e-9, res.cost         # 응답 cost 합산
 
     smry = rows("backlink_summary")
@@ -584,6 +581,38 @@ def _selfcheck() -> None:
     assert len(calls) == 1 and calls[0][0].endswith("/summary/live"), calls
 
     conn.execute("SELECT 1")            # 빌린 conn 은 러너가 닫지 않는다
+
+    # 8. 다섯 축을 동시에 사되 적재는 한 스레드·축 순서다. 교집합이 제일 먼저 오고
+    #    참조 도메인이 제일 늦게 오게 해도 we_have 가 맞아야 한다(끝난 순서로 적으면
+    #    교집합이 빈 referring_domains 를 보고 shared.com 을 we_have=0 으로 적는다).
+    import threading
+    import time
+    conn.execute("INSERT INTO competitors(project_id, domain, source) VALUES(?,?,'manual')",
+                 (pid, "r2.com"))
+    for t in ("backlink_summary", "referring_domains", "backlinks", "backlink_anchors",
+              "link_intersect"):
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+    base, lock, live, on = _fake_post([]), threading.Lock(), {"now": 0, "peak": 0}, set()
+    delay = {"summary": 0.04, "referring_domains": 0.08, "backlinks": 0.03,
+             "anchors": 0.02, "domain_intersection": 0.0}
+
+    def slow(path, body):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+            on.add(threading.get_ident())
+        time.sleep(next(v for k, v in delay.items() if f"/{k}/" in path))
+        with lock:
+            live["now"] -= 1
+        return base(path, body)
+
+    res = collect("bt", conn=fanout.MainThreadOnly(conn), post=slow, max_age=0)
+    assert (res.ok, res.partial) == (True, False), res
+    li = {r["domain"]: r for r in rows("link_intersect")}
+    assert li["shared.com"]["we_have"] == 1, "교집합이 참조 도메인보다 먼저 적혔다"
+    assert 1 < live["peak"] <= fanout.LIMITS["dataforseo"], f"동시 상한: peak={live['peak']}"
+    assert threading.get_ident() not in on, "post 가 메인 스레드에서 돌았다"
     conn.close()
     print("collect_backlinks self-check ok")
 
