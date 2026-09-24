@@ -1025,8 +1025,8 @@ def test_seam_23_opportunity_groups_single_source():
     assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
 
 
-def test_seam_44_status_filter_is_one_set_and_covers_every_status():
-    """44) 상태 거르개는 한 벌이고, 다섯 상태를 하나도 빠뜨리지 않는다.
+def test_seam_50_status_filter_is_one_set_and_covers_every_status():
+    """50) 상태 거르개는 한 벌이고, 다섯 상태를 하나도 빠뜨리지 않는다.
 
     거르개가 [개요]에만 있고 그 목록에 `저절로 풀림` 이 없었다. 그래서 도구가 혼자 닫은
     기회를 **어느 화면에서도 모아 볼 수 없었고**, 왜 닫혔는지(status_reason)는 표에
@@ -2257,9 +2257,152 @@ def test_seam_49_page_fix_summarizes_before_it_tables():
         assert w not in lead.group(1), \
             f"요약이 판정 산문({w})을 건드린다 — 정본은 scoring.page_advice 다"
 
+def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
+    """51) 요청문이 `위 '…'`·`아래 '…'` 로 가리키는 절은 **그 요청문 안에** 있어야 한다.
 
-def test_seam_50_site_settings_live_only_in_the_brain():
-    """50) 사이트별 설정을 읽는 길은 db.project_cfg 하나다 — 파일을 다시 읽지 않는다.
+    절은 조건부로 선다: '근거'는 EVIDENCE 가 빈 종류·빈 페이로드에서 안 그려지고,
+    '검색결과 기능' 줄은 종류마다 다른 EVIDENCE 가 그린다. 가리키는 쪽은 그 조건을
+    안 보고 늘 말했다 — theotherskin 한 사이트에서만 없는 절을 가리키는 요청문이
+    25건 나갔고("아래 '근거'의 최신 값과 다르면"), 새로 넣은 '이 회차에 없는 것'
+    절도 rank_decay 에서 같은 실수를 한 번 더 저질렀다.
+
+    한 파일만 보면 양쪽 다 멀쩡하다: 가리키는 문장도 맞는 말이고 그 절도 제대로
+    그려진다. 어긋난 건 **조건**이다 — 그래서 이음매로 세운다.
+    """
+    import brief
+    import scoring
+    ref = re.compile(r"(?:위|아래)\s*'([^']{2,30})'")
+    bands = {"aio_exposure": tuple(scoring._AIO_PLAY),
+             "striking_distance": tuple(scoring._SD_PLAY)}
+    tails = brief.tails("ko-KR")
+    seen, bad = set(), []
+    for kind in scoring.ALL_KINDS:
+        for gk in (None, "missing", "weak", "own", "sites", "third_party"):
+            for band in (None,) + bands.get(kind, ()):
+                for has_page in (False, True):
+                    shape = brief.shape_of(kind, gap_kind=gk, has_page=has_page, band=band)
+                    key = (kind, shape, gk, band, has_page)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    o = {"kind": kind, "target": "검색어", "gap_kind": gk, "band": band,
+                         "label": scoring.kind_label(kind), "reasoning": "근거 40위",
+                         "play": scoring.kind_play(kind, band=band, gap_kind=gk)}
+                    # 페이지가 있는 쪽·없는 쪽 둘 다 — 조건부 절은 그 사이에서 갈린다
+                    ctx = {"query_pages": {"검색어": [
+                        {"page": "https://me.example/a", "impressions": 9, "clicks": 1,
+                         "ctr": 1.0, "position": 8.0}]}} if has_page else {}
+                    full = brief.build(o, ctx, "ko-KR")["body"] + "\n" + tails[shape]
+                    heads = " ".join(re.findall(r"^#+ (.+)$", full, re.M))
+                    labels = " ".join(re.findall(r"^-\s*([^:]{2,30}):", full, re.M))
+                    for m in ref.finditer(full):
+                        name = m.group(1)
+                        if name not in heads and name not in labels:
+                            bad.append(f"{kind}/{shape}/gk={gk}/band={band}/page={has_page}: "
+                                       f"'{name}' 을 가리키는데 그 절이 없다")
+    assert not bad, "요청문이 없는 절을 가리킨다:\n  " + "\n  ".join(sorted(set(bad))[:12])
+
+
+def test_seam_00_seam_numbers_are_unique():
+    """0) 이음매 번호는 한 벌이다 — 같은 번호가 둘이면 "seam 42" 가 어디를 가리키는지 모른다.
+
+    CLAUDE.md 는 "정본은 test_seams.py 다" 라고 말한다. 그 말이 성립하려면 번호가
+    주소여야 하는데, 두 갈래가 각자 다음 번호를 집으면서 실제로 두 번 겹쳤다
+    (42 는 README 검사와 사이트 종류 검사가, 44 는 상태 거르개와 칩 단계 검사가).
+    둘 다 병렬 작업이 main 에서 만나 생긴 것이라 사람 눈으로는 안 걸렸다.
+
+    번호에 붙는 접미사(09a·09b)는 **같은 이음매를 쪼갠 것**이라 정상이다 —
+    이름 전체(`09a`)로 세므로 그대로 통과한다.
+    """
+    nums = re.findall(r"^def test_seam_([0-9a-z]+)_", Path(__file__).read_text("utf-8"), re.M)
+    assert len(nums) >= 20, f"이음매 검사를 {len(nums)}개밖에 못 찾았다 — 이름 꼴이 바뀌었다"
+    dup = sorted({n for n in nums if nums.count(n) > 1})
+    assert not dup, (f"이음매 번호가 겹친다: {dup} — 새 검사는 남는 번호를 집는다"
+                     " (main 과 갈라진 채 각자 다음 번호를 집으면 여기서 만난다)")
+
+
+def test_seam_53_docs_do_not_copy_the_stage_table():
+    """53) 문서가 단계의 **순서**나 **유료 여부**를 사본으로 적지 않는다.
+
+    정본은 `run_all.STAGES` 하나다. 사본은 조용히 낡는다 — 실제로 `capture/SKILL.md`
+    가 `keywords` 를 3단계, `index` 를 2단계, `rank` 를 4단계, `ai` 를 5단계라고
+    적고 있었다. `ga4`·`metrics` 가 표에 들어오기 **전**의 번호다. 같은 파일이
+    "유료 축은 셋" 이라며 `rank`·`ai`·`competitors` 만 셌는데 실제로는 다섯이고,
+    빠진 둘(`metrics`·`backlinks`)이 바로 DataForSEO 과금 축이다 — 비용 고지 절이라
+    사용자가 예상 못 한 청구를 본다.
+
+    그래서 숫자·목록을 **고쳐 적는** 대신 사본 자체를 금지한다. 문서는 이름으로
+    말하고 순서·과금은 정본을 가리킨다.
+    """
+    import run_all
+    names = {s.name for s in run_all.STAGES}
+    paid = {s.name for s in run_all.STAGES if s.is_paid}
+    assert names and paid, "run_all.STAGES 를 못 읽었다"
+
+    docs = [p for p in list(ROOT.glob("*.md")) + list(ROOT.glob("docs/**/*.md"))
+            + list(ROOT.glob("skills/**/*.md")) if p.is_file()]
+    assert len(docs) >= 10, f"문서를 {len(docs)}개밖에 못 찾았다 — 경로가 바뀌었다"
+
+    # (1) `N단계(`이름`)` 꼴 — 번호가 곧 사본이다
+    num = re.compile(r"(\d+)\s*단계\s*\(\s*`([a-z_]+)`\s*\)")
+    # (2) '유료' 를 말하면서 단계 이름을 두 개 이상 나열하는 줄. 정본을 가리키면 통과.
+    POINTS_AT_CANON = ("run_all.STAGES", "is_paid", "STAGES")
+    bad = []
+    for p in docs:
+        for i, line in enumerate(p.read_text("utf-8").splitlines(), 1):
+            for n, st in num.findall(line):
+                if st in names:
+                    bad.append(f"{p.relative_to(ROOT)}:{i} — `{st}` 를 {n}단계라고 "
+                               "적었다(번호는 사본이다. 이름만 쓰고 순서는 "
+                               "run_all.STAGES 를 가리켜라)")
+            if "유료" in line and not any(k in line for k in POINTS_AT_CANON):
+                named = {s for s in paid | names if f"`{s}`" in line}
+                if len(named) >= 2:
+                    bad.append(f"{p.relative_to(ROOT)}:{i} — 유료 축을 이름으로 "
+                               f"나열했다({sorted(named)}). 정본(run_all.STAGES 의 "
+                               "is_paid)을 가리켜라 — 축이 늘면 이 줄만 낡는다")
+    assert not bad, "문서가 단계표를 베꼈다:\n  " + "\n  ".join(bad[:10])
+
+
+def _mono_stack(css: str) -> list[str]:
+    """`--mono: …;` 의 서체 목록. 없으면 빈 목록."""
+    m = re.search(r"--mono\s*:\s*([^;]+);", css, re.S)
+    if not m:
+        return []
+    return [x.strip().strip('"\'') for x in m.group(1).split(",") if x.strip()]
+
+
+def test_seam_52_hosted_addon_keeps_the_mono_fallback_tail():
+    """52) 호스팅 애드온이 `--mono` 를 갈아끼울 때 원본이 둔 **폴백 꼬리**를 지키는가.
+
+    `--mono` 덮어쓰기는 CLAUDE.md 가 허용한 유일한 예외다(`--sans` 는 금지). 그래서
+    애드온은 앞쪽 등폭 서체를 제 것으로 바꾼다 — 원본의 Cascadia/Consolas 가 윈도우
+    기준이라 다른 OS 에서 폴백이 제각각이기 때문이다. 문제는 그때 **꼬리까지 같이
+    날아간 것**이다: 원본 스택은 끝에 한글 폴백을 일부러 끼워 뒀는데(등폭 자리에
+    한글이 섞여 들어온다 — 수집 기록의 이름표, GSC 가 한글로 주는 색인 상태),
+    애드온이 그걸 빠뜨려 같은 글자가 호스팅에서만 더 나쁜 서체로 떨어졌다.
+
+    한 파일만 보면 양쪽 다 멀쩡하다. 어긋난 건 둘 사이다 — 그래서 이음매다.
+    서체 이름을 여기 적지 않는다(적으면 그게 세 번째 사본이다): **원본의 꼬리
+    두 칸과 애드온의 꼬리 두 칸이 같은지**만 본다.
+    """
+    addon_f = ROOT / "server" / "assets" / "dash.html"
+    if not addon_f.exists():
+        return                      # 플러그인 설치본에는 server/ 가 없다
+    orig = _mono_stack((ROOT / "skills" / "capture" / "templates"
+                        / "dashboard.html").read_text("utf-8"))
+    addon = _mono_stack(addon_f.read_text("utf-8"))
+    assert len(orig) >= 2, f"원본의 --mono 를 못 읽었다: {orig}"
+    if not addon:
+        return                      # 애드온이 안 덮으면 원본 그대로라 볼 것이 없다
+    assert addon[-2:] == orig[-2:], (
+        "호스팅 애드온이 원본 --mono 의 폴백 꼬리를 떨어뜨렸다 — 등폭 자리의 한글이 "
+        f"호스팅에서만 다른 서체로 떨어진다.\n  원본  꼬리: {orig[-2:]}\n"
+        f"  애드온 꼬리: {addon[-2:]}")
+
+
+def test_seam_54_site_settings_live_only_in_the_brain():
+    """54) 사이트별 설정을 읽는 길은 db.project_cfg 하나다 — 파일을 다시 읽지 않는다.
 
     양쪽 다 혼자서는 멀쩡했다: yaml 은 정상적인 설정 파일이었고 동기화는 정상적으로
     brain.db 를 날랐다. 어긋난 건 둘 사이다 — 호스팅에서 그 파일은 컨테이너 디스크
@@ -2305,8 +2448,8 @@ def test_seam_50_site_settings_live_only_in_the_brain():
     assert hasattr(db, "seed_keywords") and hasattr(db, "manual_competitors"),         "행에서 되읽는 통로가 없다 — 화면이 사본을 들게 된다"
 
 
-def test_seam_51_sync_carries_site_settings():
-    """51) 동기화가 project_settings 를 실어 나른다 — 사이트별로 갈라서.
+def test_seam_55_sync_carries_site_settings():
+    """55) 동기화가 project_settings 를 실어 나른다 — 사이트별로 갈라서.
 
     설정을 Brain 으로 옮긴 이유가 이것이다. remote._plan 은 projects 에서 아래로
     따라 내려가며 표를 스스로 찾으므로, 제대로 매달아 두기만 하면 나르는 코드는
@@ -2328,8 +2471,8 @@ def test_seam_51_sync_carries_site_settings():
     con.close()
 
 
-def test_seam_52_brief_language_line_is_one_set():
-    """52) 요청문의 언어·길이 기준은 '대상'의 줄 **하나**다 — 서버 요청문과 화면 폴백 양쪽.
+def test_seam_56_brief_language_line_is_one_set():
+    """56) 요청문의 언어·길이 기준은 '대상'의 줄 **하나**다 — 서버 요청문과 화면 폴백 양쪽.
 
     예전엔 꼬리(사이트마다 한 벌)가 사이트 언어의 길이 기준을 말하고, 영어 페이지의 '대상'
     줄이 또 말해서 한 요청문에 30자와 60자가 나란히 섰다. 이제 꼬리는 숫자를 안 갖고,
@@ -2349,8 +2492,8 @@ def test_seam_52_brief_language_line_is_one_set():
     assert "B.lang_line" in m.group(1), "폴백 요청문이 서버의 언어 줄(BRIEF.lang_line)을 안 넣는다"
 
 
-def test_seam_53_skill_settings_are_code_not_a_file():
-    """53) 스킬 설정은 코드 한 벌(skill_config.CONFIG)이다 — 파일이 되살아나지 않는다.
+def test_seam_57_skill_settings_are_code_not_a_file():
+    """57) 스킬 설정은 코드 한 벌(skill_config.CONFIG)이다 — 파일이 되살아나지 않는다.
 
     config.yaml 이었을 때 호스팅(Railway)과 로컬(플러그인 캐시)이 각자 한 벌을 들고
     어긋났다. 파일이 다시 생기면 읽는 곳이 없어 조용히 무시되고, 사람은 그걸 고치며

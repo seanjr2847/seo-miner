@@ -1734,14 +1734,49 @@ def test_missing_serp_tables_say_why_instead_of_going_quiet():
     assert "## 이 회차에 없는 것" not in brief.build(o, {}, "ko-KR")["body"]
 
 
-def test_verdict_line_only_offers_to_compare_numbers_when_there_are_numbers():
-    """"두 숫자가 갈리면 직접 검색해" 는 이 줄에 숫자가 있을 때만 뜻이 있다."""
+def test_verdict_line_points_at_evidence_only_when_there_is_evidence():
+    """'왜 걸렸나' 뒤의 안내는 두 조건이 만나야 뜻이 있다.
+
+    "아래 '근거'를 보라"는 그 절이 **설 때만**이다 — EVIDENCE 가 빈 종류·빈 페이로드
+    에서는 그 절이 아예 안 그려지는데도 가리켰고, theotherskin 에서만 25건이 없는
+    절을 가리킨 채 나갔다. "두 숫자가 갈리면"은 거기에 더해 **숫자가 있을 때만**이다.
+    """
     o = _opp("aio_exposure", "검색어", band="beyond")
     o["band"] = "beyond"
-    o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다"
-    assert "두 숫자가 갈리면" not in brief.build(o, {}, "ko-KR")["body"]
+    with_ev = {"rank_by_kw": {"검색어": {"pos": None, "aio_domains": ["x.example"]}}}
+
+    # 근거도 숫자도 있다 — 둘 다 말한다
     o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다 (실제 순위 40위)"
-    assert "두 숫자가 갈리면" in brief.build(o, {}, "ko-KR")["body"]
+    b = brief.build(o, with_ev, "ko-KR")["body"]
+    assert "## 근거" in b and "아래 '근거'" in b and "두 숫자가 갈리면" in b, b
+
+    # 근거는 있는데 숫자가 없다 — 견줄 수가 없으니 뒷절은 뺀다
+    o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다"
+    b = brief.build(o, with_ev, "ko-KR")["body"]
+    assert "아래 '근거'" in b and "두 숫자가 갈리면" not in b, b
+
+    # 근거 절이 아예 없다 — 없는 절을 가리키지 않는다
+    o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다 (실제 순위 40위)"
+    b = brief.build(o, {}, "ko-KR")["body"]
+    assert "## 근거" not in b, b
+    assert "아래 '근거'" not in b and "두 숫자가 갈리면" not in b, b
+    assert "직접 검색해 확인합니다" in b, b      # 대신 할 일은 남긴다
+
+
+def test_stale_serp_note_states_the_fact_instead_of_citing_a_section():
+    """'검색결과 기능' 줄은 종류마다 다른 EVIDENCE 가 그린다 — 없는 요청문이 있다.
+
+    거기서 "위 '검색결과 기능'은…"이라고 하면 이 요청문이 고친 바로 그 버릇
+    (없는 절 가리키기)을 새로 저지른다. rank_decay 에서 실제로 그랬다.
+    """
+    o = _opp("rank_decay", "검색어")
+    ctx = {"rank_date": "2026-09-04",
+           "rank_by_kw": {"검색어": {"features": ["ai_overview", "people_also_ask"]}},
+           "query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()}}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "## 이 회차에 없는 것" in body, body
+    assert "위 '검색결과 기능'" not in body, "없는 절을 가리킨다"
+    assert "마지막 순위 조회는 이 검색어에서" in body, body
 
 
 # ── 목표·끝나는 조건 — 무엇을 이루면 이 일이 끝났나 ─────────────────────────

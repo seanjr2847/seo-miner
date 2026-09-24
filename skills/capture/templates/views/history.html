@@ -15,13 +15,17 @@
 #acts li::marker { font-family:var(--mono); color:var(--slate); }
 
 /* ── 한 실행이 남긴 key=value: 원문 대신 사람 말 + 등폭 값 ── */
-.hs-nt { display:block; font:400 11.5px/1.7 var(--mono); color:var(--slate);
-  font-variant-numeric:tabular-nums; }
+/* 등폭을 뺀 이유: 이 줄의 절반은 한글 이름표다("밀면 오를 검색어"·"겹친 도메인"·
+   "오류"). 등폭은 아래 값(<b>)에만 건다 — 숫자·URL·날짜·식별자만. */
+.hs-nt { display:block; font:400 11.5px/1.7 var(--sans); color:var(--slate); }
 /* 값은 줄을 바꾼다 — 한 줄로 묶었더니 긴 값(중단 사유·교집합 도메인 목록)이 표를
    1,484px 로 밀어 기본 화면에서 오류 결론이 칸 밖으로 잘렸다. */
 .hs-nt .p { display:inline; margin-right:11px; }
-.hs-nt .p b { color:var(--ink); font-weight:500; overflow-wrap:anywhere; }
+.hs-nt .p b { color:var(--ink); font-weight:500; overflow-wrap:anywhere;
+  font-family:var(--mono); font-variant-numeric:tabular-nums; }
 .hs-nt .p.bad b { color:var(--copper); }
+/* 값 자리에 숫자가 아니라 문장이 오는 둘(첫 오류·중단 사유)은 한글이라 등폭을 뺀다. */
+.hs-nt .p.msg b { font-family:var(--sans); font-variant-numeric:normal; }
 .hs-nt .p.free { white-space:normal; color:var(--slate); }
 /* ── 요약: 아래 목록이 통째로 답하는 네 가지. 숫자 KPI 는 셸의 .band 한 벌이다 ──
    (칩 줄로 그렸더니 버튼처럼 읽혔다 — 상태·수치를 누를 수 있는 것과 같은 모양으로
@@ -40,10 +44,15 @@
 #lastby .k { font:var(--micro); color:var(--slate); }
 #lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
   margin-top:6px; display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
-#lastby .ago { color:var(--slate); }
+/* 날짜는 등폭(칸마다 줄이 맞아야 한다), 그 옆 HS_ago 는 "방금"·"3일 전" 한글이라
+   본문 서체다 — 등폭으로 찍으면 폴백 서체로 떨어져 낱자가 벌어진다. */
+#lastby .ago { color:var(--slate); font-family:var(--sans);
+  font-variant-numeric:normal; }
 
 #runs .when { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
   white-space:nowrap; }
+/* 같은 이유 — 이 칸의 등폭은 앞의 "2026-09-14 09:31" 것이고 뒤의 한글은 아니다. */
+#runs .when .muted { font-family:var(--sans); font-variant-numeric:normal; }
 /* 판정 이유(HS_verdict.why)가 title 속성에만 들어 있었다 — 배지는 "오류 3"이라고만
    보이고 무슨 일이 났는지는 손을 얹어야 나왔다. 실패·중단만 항상 편다: 성공한 40줄까지
    다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. 이유 아래에 그 종류를 다시 돌리는
@@ -153,7 +162,11 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   summary:"요약", intents_filled:"의도 채움", first_error:"첫 오류", volumes_filled:"검색량 채움",
   auto_new:"새 경쟁사", metrics:"지표", gap_rows:"빈틈 행", seed:"시드", links:"링크",
   issues:"문제", keywords:"키워드", chunks:"묶음", updated:"갱신", calls:"호출",
-  daily:"일별", country:"나라"};
+  daily:"일별", country:"나라",
+  // 검색량 API 가 못 재는 검색어(빈 문자열·길이 초과·안 받는 지역). 실패가 아니라
+  // "안 보냈다"라서 errors 와 따로 센다(collect_metrics 의 unsendable). 브라우저로
+  // 기록 화면을 열었을 때 이 키만 영문 그대로 서 있었다.
+  unsendable:"못 잰 검색어"};
 // 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
 const HS_STALE_DAYS = 14;
 
@@ -266,7 +279,8 @@ function HS_notes(n) {
     if (!v.trim()) return "";   // first_error= 처럼 빈 값은 이름만 덩그러니 남는다
     const val = v.trim().replace(/[,;]$/, "");
     if (k === "first_error") {
-      parts.push(`<span class="p bad" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
+      // msg = 값이 숫자가 아니라 사람 말인 자리(등폭을 뺀다).
+      parts.push(`<span class="p bad msg" title="${esc(val)}">${esc(HS_NOTE_LABEL[k])} ` +
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }
@@ -276,7 +290,7 @@ function HS_notes(n) {
     return "";
   }).trim();
   if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
-  if (stop) parts.push(`<span class="p bad">중단 <b>${esc(stop)}</b></span>`);
+  if (stop) parts.push(`<span class="p bad msg">중단 <b>${esc(stop)}</b></span>`);
   return `<span class="hs-nt">${parts.join("")}</span>`;
 }
 

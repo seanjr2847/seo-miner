@@ -81,8 +81,8 @@ SHAPES: dict[str, dict] = {
               "위 '만들어 줄 것'에 본문 구간(H2) 산출물이 있으면: H2 제목마다 **넣을 자리**(지금 "
               "어느 H2·문단 뒤인지 — 지금 H2 가 없으면 몇 번째 문단 뒤인지), 그 아래에서 답할 "
               "내용 한 줄, 근거로 쓸 출처(이 페이지 안의 문장, 직접 연 1차 출처의 주소, 또는 "
-              "[확인 필요]), 그 구간에 맞는 형식(문단·표·번호 목록·이미지 중 — 위 '지금 이 "
-              "검색어의 검색결과 상위'의 형식과 견줘서). 없으면 이 카드는 만들지 않습니다.",
+              "[확인 필요]), 그 구간에 맞는 형식(문단·표·번호 목록·이미지 중 — 검색결과 상위 "
+              "글이 쓰는 형식과 견줘서). 없으면 이 카드는 만들지 않습니다.",
               "위 '만들어 줄 것'이나 진단에 신뢰 신호(저자·출처·수정일)가 있으면: 셋 중 이 "
               "페이지에 **없는 것**과 무엇을 어디에 넣을지. 있는 것은 '있음' 한 줄로 끝냅니다. "
               "둘 다에 없으면 이 카드는 만들지 않습니다.",
@@ -1026,6 +1026,11 @@ def _serp_stale_lines(o: dict, ctx: dict, *, had_top: bool, had_fan: bool) -> li
     생기기 전 회차였다. 없는 이유와 채우는 법을 같은 자리에서 말한다.
 
     '기능' 목록조차 없으면 아무 줄도 안 만든다 — 안 쟀는지 없었는지 우리가 모른다.
+
+    사실을 **직접** 말하고 다른 절을 가리키지 않는다: '검색결과 기능' 줄은 종류마다
+    다른 EVIDENCE 가 그리므로 어떤 요청문(rank_decay 등)에는 아예 없다. 거기서
+    "위 '검색결과 기능'은…"이라고 하면 없는 절을 가리킨다 — 이 요청문이 고친 바로
+    그 버릇이다.
     """
     if had_top and had_fan:
         return []
@@ -1035,8 +1040,8 @@ def _serp_stale_lines(o: dict, ctx: dict, *, had_top: bool, had_fan: bool) -> li
     miss = ([] if had_top else ["상위 목록"]) + ([] if had_fan else ["함께 묻는 질문"])
     when = (ctx.get("rank_date") or "").strip()
     return [f"## 이 회차에 없는 것: {' · '.join(miss)}",
-            f"위 '검색결과 기능'은 이 검색어의 조회에서 {', '.join(f'`{x}`' for x in feats)}"
-            f"를 봤다고 말하는데, {'과 '.join(miss)}은 수집본에 없습니다"
+            f"마지막 순위 조회는 이 검색어에서 {', '.join(f'`{x}`' for x in feats)}"
+            f"를 봤다고 기록했는데, {'과 '.join(miss)}은 수집본에 없습니다"
             + (f" (마지막 순위 조회 {when} 회차)." if when else ".")
             + " 구글이 안 보여 준 것이 아니라 **그 회차가 이 표들을 남기기 전**입니다 — "
             "순위 조회(`rank` 단계)를 한 번 더 돌리면 다음 요청문부터 붙습니다.",
@@ -1957,7 +1962,8 @@ def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str
             # 되돌아갈 자리와 다음 갈래는 손댈 지면이 있느냐로 갈린다. 예전엔 한 벌이라
             # 새 글 요청문이 "원인 진단의 결론으로 돌아가 이 페이지로 계속할지"라고 했다 —
             # 그 요청문에는 원인 진단 표도, 그 '이 페이지'도 없다.
-            back = "원인 진단의 결론" if url else "위 '만들어 줄 것'의 비교 표 결론"
+            # 이 줄은 '목표와 확인' 절(대상 바로 뒤)에 선다 — 산출물 절은 그 **아래**다.
+            back = "원인 진단의 결론" if url else "아래 '만들어 줄 것'의 비교 표 결론"
             nxt = ("이 페이지로 계속할지(새 글·외부 링크로 갈지)" if url
                    else "이 글로 계속할지(외부 링크·다른 검색어로 갈지)")
             after.append(f"언제·목표: 목표는 1페이지({scoring.PAGE1}위 안)입니다. 적용 뒤 구글이 다시 "
@@ -2007,7 +2013,8 @@ def _head(p: dict) -> str:
     return " · ".join(f"{k}: {v}" for k, v in (("title", p.get("title")), ("H1", p.get("h1"))) if v)
 
 
-def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None) -> list[str]:
+def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
+                  *, has_evidence: bool = True) -> list[str]:
     kind = o["kind"]
     t = str(o["target"])
     if kind == "coverage":
@@ -2052,10 +2059,18 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None)
         L.append(f"- 왜 걸렸나: {_ext(why, 1000)}")
         # 뒷절("두 숫자가 갈리면")은 이 줄에 숫자가 있을 때만 뜻이 있다. 순위도 검색량도
         # 없는 판정(AI 요약 빠짐 · 순위 없음)에 그대로 붙어, 없는 두 수를 견주라고 시켰다.
-        L.append("  이 줄은 **기회가 선 시점의 판정**입니다. 아래 '근거'의 최신 값과 다르면 "
-                 "근거 쪽이 새것입니다"
-                 + (" — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 먼저 정합니다."
-                    if re.search(r"\d", why) else "."))
+        # '근거' 절은 종류·페이로드에 따라 아예 안 선다(EVIDENCE 가 빈 목록을 주면
+        # build 가 그 절을 안 그린다). 그런데도 여기서 "아래 '근거'를 보라"고 가리켜,
+        # 없는 절을 가리키는 요청문이 25건 나갔다. 절이 설 때만 가리킨다.
+        # 뒷말은 두 조건이 만나야 뜻이 있다: 견줄 '근거' 절이 서고, 견줄 숫자가 있을 것.
+        num = bool(re.search(r"\d", why))
+        if has_evidence:
+            tail = (" 아래 '근거'의 최신 값과 다르면 근거 쪽이 새것입니다"
+                    + (" — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 먼저 "
+                       "정합니다." if num else "."))
+        else:
+            tail = " 이 값이 지금도 그런지는 직접 검색해 확인합니다." if num else ""
+        L.append("  이 줄은 **기회가 선 시점의 판정**입니다." + tail)
     return L + [""]
 
 
@@ -2496,7 +2511,7 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
             L.append(f"- 언제 볼지: 연락 뒤 {first}주 — 답이 없으면 한 번만 다시 묻고 접습니다.")
         else:
             L.append(f"- 언제 볼지: 적용 뒤 구글이 다시 읽어 가고 실적(기간 평균)이 따라와야 "
-                     f"움직입니다. {first}주 뒤 첫 확인, {last}주 뒤 다시 — 그때도 제자리면 위 진단으로 "
+                     f"움직입니다. {first}주 뒤 첫 확인, {last}주 뒤 다시 — 그때도 제자리면 진단으로 "
                      "돌아가 방향을 다시 정합니다. 고친 다음 날의 순위로 판단하지 않습니다.")
     return L + [""]
 
@@ -2544,6 +2559,16 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     pq = _page_queries(url, ctx) if url and shape == "fix_page" else []
     sibs = _page_siblings(o, ctx, url) if url and shape == "fix_page" else []
 
+    # 위 검색어 표가 이 검색어를 이미 그렸으면, 근거의 '이 검색어 하나의 내 페이지' 표는
+    # 같은 수를 두 번 적는 것이다(노출 76 · 22.4위가 한 요청문에 두 번 나왔다).
+    if len(pages) == 1 and any(r["query"] == str(o.get("target") or "") for r in pq):
+        pages = [{**pages[0], "_in_query_table": True}]
+    visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘
+    # 근거를 **먼저** 센다. '왜 걸렸나' 줄이 "아래 '근거'를 보라"고 가리키는데, 근거가
+    # 빈 종류·빈 페이로드에서는 그 절이 아예 안 선다 — 없는 절을 가리키는 요청문이
+    # 25건 나갔다(theotherskin). 그리는 순서는 그대로 두고 유무만 미리 안다.
+    ev = EVIDENCE[kind](o, ctx, pages) + visits
+
     intro = ((INTRO_BY_LEAN.get(str(o.get("gap_kind"))) if shape == "presence" else None)
              or INTRO_BY_KIND.get(kind) or s["intro"])
     L = [intro, ""]
@@ -2553,17 +2578,12 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         lang_line = _target_lang_lines(o, ctx, locale)
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
         lang_line = [site_lang_line(shape, locale)]
-    L += _target_lines(o, url, shape, ctx)[:-1] + lang_line + _unit_lines(pq) + [""]
+    L += (_target_lines(o, url, shape, ctx, has_evidence=bool(ev))[:-1]
+          + lang_line + _unit_lines(pq) + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
     L += _page_query_lines(o, pq)
     L += _page_sibling_lines(sibs, o, pq)
-    # 위 검색어 표가 이 검색어를 이미 그렸으면, 근거의 '이 검색어 하나의 내 페이지' 표는
-    # 같은 수를 두 번 적는 것이다(노출 76 · 22.4위가 한 요청문에 두 번 나왔다).
-    if len(pages) == 1 and any(r["query"] == str(o.get("target") or "") for r in pq):
-        pages = [{**pages[0], "_in_query_table": True}]
-    visits, after = _ai_visits(o, ctx, url)   # AI 종류만 — 나머지는 빈 둘
-    ev = EVIDENCE[kind](o, ctx, pages) + visits
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False

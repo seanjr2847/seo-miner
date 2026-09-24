@@ -144,7 +144,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 (등록 인터뷰 자체는 사람이 답해야 하므로 자동화 대상이 아니다.)
 
 ### /capture keywords {P} — 키워드 유니버스 (무료 파이프라인)
-**풀런(`/capture run`)에 포함된다** — 3단계(`keywords`).
+**풀런(`/capture run`)에 포함된다** — `keywords` 단계다(순서의 정본은 `run_all.STAGES`).
 
 1. `python scripts/expand_keywords.py --project {P} --dry-run` 로 계획 고지 → 확인 → 실행.
    (자동완성은 비공식 엔드포인트 — 실패 시 우아하게 건너뛰고 계속한다.)
@@ -159,8 +159,8 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 3. 수요 근거는 "자동완성 등장 = 수요 존재, GSC 노출 = 실측"으로만 말한다 (볼륨 창작 금지).
 
 ### /capture gsc {P}
-**풀런(`/capture run`)에 포함된다** — 1단계(`gsc`). `gsc` 가 실패하면 풀런은
-거기서 멈춘다(나머지가 그 데이터를 재료로 쓰기 때문).
+**풀런(`/capture run`)에 포함된다** — `gsc` 단계다(순서의 정본은 `run_all.STAGES`).
+체인의 **첫 단계**라, 실패하면 풀런은 거기서 멈춘다(나머지가 그 데이터를 재료로 쓴다).
 
 경로는 하나다 — **구글 계정 연결(필수)**: `python scripts/collect_gsc.py --project {P}`.
 연결 한 벌로 모든 사이트를 자동 수집한다(행 제한 사실상 없음). 한 번 돌면 세 벌이
@@ -206,7 +206,7 @@ python scripts/gsc_query.py sitemaps --project {P}
 완료 후 striking-distance 프리뷰를 요약해준다.
 
 ### /capture index {P} — 색인 상태 적재 (구글 URL Inspection, 돈 안 듦)
-**풀런(`/capture run`)에 포함된다** — 2단계(`index`).
+**풀런(`/capture run`)에 포함된다** — `index` 단계다(순서의 정본은 `run_all.STAGES`).
 
 `python scripts/collect_index.py --project {P} --dry-run` → 검사할 URL 수 고지 → 확인 →
 실행. 인증은 `/capture gsc` 와 **같은 구글 연결을 그대로 쓴다** — 따로 붙일 것이 없다.
@@ -231,8 +231,8 @@ python scripts/gsc_query.py sitemaps --project {P}
 먼저 처리하라고 안내한다.
 
 ### /capture rank {P} — 순위 스냅샷 (SERP, 키 있을 때)
-**풀런(`/capture run`)에 포함된다** — 4단계(`rank`). 키가 없으면 풀런은 이 단계를
-조용히 건너뛴다(에러 아님).
+**풀런(`/capture run`)에 포함된다** — `rank` 단계다(순서의 정본은 `run_all.STAGES`).
+키가 없으면 풀런은 이 단계를 조용히 건너뛴다(에러 아님).
 
 `python scripts/collect_serp.py --project {P} --dry-run` → 호출 수·비용 고지 → 확인 → 실행.
 결과: 키워드별 순위·SERP 피처·AI오버뷰 인용 여부 + 부산물로 연관검색어/PAA가 키워드
@@ -259,8 +259,8 @@ NULL엔 적용되지 않는다).
   본 결과를 근거로 삼을 땐 Brain 이 아니라 즉석 조회임을 밝힌다(철칙 1).
 
 ### /capture ai {P}
-**풀런(`/capture run`)에 포함된다** — 5단계(`ai`). 키가 없으면 풀런은 이 단계를
-조용히 건너뛴다(에러 아님).
+**풀런(`/capture run`)에 포함된다** — `ai` 단계다(순서의 정본은 `run_all.STAGES`).
+키가 없으면 풀런은 이 단계를 조용히 건너뛴다(에러 아님).
 
 `python scripts/collect_ai.py --project {P} --dry-run` → 호출 수·비용 어림 고지 → 확인 →
 실행(기본 2샘플 — config `ai_samples`, 비용 2배 트레이드오프. 중요 프롬프트는
@@ -415,7 +415,12 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 
 1. 먼저 `python scripts/run_all.py --project {P} --dry-run` 으로 각 수집기의
    호출 수·비용 계획을 모아 보여주고 사용자 확인을 받는다 (철칙 2 — 비용 고지).
-   유료 축은 **셋**이고, 각각 무엇에 돈이 나가는지가 다르다:
+   돈이 나가는 축은 `run_all.STAGES` 의 `is_paid=True` 가 정본이다(개수를 여기
+   적지 않는다 — 유료 축이 하나 늘면 이 문장만 낡는다). 그 축들이 각각 무엇에
+   돈을 쓰는지는 다르다:
+   - `metrics` — DataForSEO 검색량·난이도·CPC. 키워드 묶음(최대 1000개)마다
+     Google Ads `search_volume` ≈$0.05/요청 + Labs `bulk_keyword_difficulty`
+     ≈$0.01/요청. 키는 `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`.
    - `rank` — SERP 조회 1건당 과금(`SERPER_API_KEY` 또는 `DATAFORSEO_LOGIN`/
      `DATAFORSEO_PASSWORD`). 추적 키워드 수에 비례한다.
    - `ai` — AI 엔진 답변 1건당 과금(`OPENROUTER_API_KEY`). 프롬프트 × 엔진 ×
@@ -423,7 +428,10 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
    - `competitors` — DataForSEO Labs `ranked_keywords/live`, 경쟁사 **도메인
      한 곳당** 과금(~$0.001). 도메인은 상한 5개라 한 바퀴에 **~$0.005** 다.
      키는 `rank` 와 같은 DataForSEO 자격을 쓴다.
-   셋 다 키가 없으면 **조용히 건너뛴다** — 에러가 아니고, 키가 없다고 사용자에게
+   - `backlinks` — DataForSEO 백링크. 요청당 ~$0.024 + 행당 ~$0.000036 이고,
+     행 수는 `limits.backlink_limit`(기본 200)이 정한다. 키는 같은 DataForSEO
+     자격이고, `backlink_max_age_days`(기본 7) 안에 이미 샀으면 다시 안 산다.
+   키가 없는 축은 **조용히 건너뛴다** — 에러가 아니고, 키가 없다고 사용자에게
    되묻지 않는다. `competitors` 는 키가 있어도 등록된 경쟁사가 없으면 같은 톤으로
    건너뛴다.
 2. 확인되면 `python scripts/run_all.py --project {P}` 를 **백그라운드로** 돌린다.

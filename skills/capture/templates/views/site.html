@@ -73,7 +73,9 @@ section.sec-quiet details.why { display:none; }
 .ixb.s1 { color:var(--copper); }
 .ixb.s2 { color:var(--copper); opacity:.8; }
 .ixurl { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:22ch; }
-.ixstate { font-family:var(--mono); font-size:11.5px; color:var(--slate); }
+/* 등폭을 뺀 이유: 여기 담기는 건 GSC 원문(coverage_state)이고 한국 로케일에서는
+   "제출되었으며 색인이 생성됨" 같은 한글 문장이다(scoring._indexed 참고). */
+.ixstate { font-size:11.5px; color:var(--slate); }
 .ixfix { font-size:12.5px; color:var(--slate); }
 
 /* 순위차 막대: 숫자 밑에 같은 길이의 언어를 하나 더 깔아 줄 세우기를 눈으로 만든다. */
