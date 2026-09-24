@@ -90,9 +90,9 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
 
 
 # ── DataForSEO 호출 간격 ────────────────────────────────────────────────────
-# 간격이 필요한 경로는 **둘뿐이다** (https://dataforseo.com/help-center/rate-limits-and-request-limits):
+# 간격이 필요한 경로는 **하나뿐이다** (https://dataforseo.com/help-center/rate-limits-and-request-limits):
 #   · Google Ads Live (keywords_data/google_ads/*) — 계정당 분당 12회
-#   · tasks_ready — 분당 20회
+# (tasks_ready — 분당 20회 — 는 이제 안 부른다: 아래 대기열 주석)
 # 나머지(SERP·Labs·백링크)는 계정 전체 분당 2000회다. 예전엔 "Live 는 전부 12회" 로 읽어
 # 모든 호출에 6초 간격을 걸었고, 그래서 순위 232개가 한 런에 15분을 먹었다(2026-09-24
 # theotherskin). Labs·백링크의 "동시 30" 은 간격이 아니라 동시 수 제한이라 여기서 안
@@ -100,12 +100,9 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
 # 기본값은 한도(12)가 아니라 10 이다 — 12 로 맞추면 여유가 0 이라, 시계 오차나 다른
 # 워커의 호출 하나만 겹쳐도 `12 >= 12` 로 막혔다(호스팅 기록 #53·63·65·67·68).
 DFS_RPM = 10
-READY_RPM = 18                  # tasks_ready 한도 20 — 같은 까닭으로 여유를 둔다(3.3초 간격)
 ADS_PATH = "/keywords_data/google_ads/"
-READY_PATH = "/tasks_ready"
 # 경로 조각 → 공유 간격 파일 이름. 조각이 URL 에 들어 있으면 그 칸의 간격을 지킨다.
-# 칸마다 파일이 따로다 — Google Ads 호출이 tasks_ready 자리를 먹으면 안 된다.
-PACED = {ADS_PATH: "dfs_pace", READY_PATH: "dfs_pace_ready"}
+PACED = {ADS_PATH: "dfs_pace"}
 RATE_LIMIT_RETRIES = 3          # 이 뒤로도 한도면 한도가 우리 것만이 아니다 → Fatal
 SERVER_ERROR_RETRIES = 2        # 5xx 는 다시 쳐 봐야 일시적인지 알 수 있다 (Fatal 아님)
 _last_call: dict[str, float] = {}
@@ -144,7 +141,7 @@ def pace_seconds(url: str | None = None) -> float:
     frag = ADS_PATH if url is None else _bucket(url)
     if frag is None:
         return 0.0
-    return 60.0 / (rpm if frag == ADS_PATH else READY_RPM)
+    return 60.0 / rpm                 # 간격이 있는 칸은 Google Ads 하나뿐이다
 
 
 def _pace_path(name: str = PACE_FILE) -> Path:
@@ -623,7 +620,11 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
 
 # ── DataForSEO Standard 대기열 (순위 조회) ──────────────────────────────────
 # Live 는 과제 하나에 요청 하나고 $0.002 다. 대기열은 한 번에 100개를 맡기고(task_post),
-# 다 된 것을 묻고(tasks_ready), 하나씩 받는다(task_get/advanced — 받기는 무료).
+# 맡긴 id 를 하나씩 직접 받아 본다(task_get/advanced — 받기는 무료, 안 됐으면 40601/40602).
+#
+# 다 된 것을 묻는 tasks_ready 는 **쓰지 않는다.** 2026-09-24 호스팅 런에서 우선 대기열
+# 132개가 전부 다 됐는데(task_get 20000 Ok) tasks_ready 는 0개를 돌려줬고, 그 목록만 보던
+# 대기가 10분 상한까지 기다리다 실패했다. 문서와 다른 동작이라 목록에 기대지 않는다.
 # 근거(2026-09-24 문서 확인):
 #   task_post   https://docs.dataforseo.com/v3/serp/google/organic/task_post/
 #               — 요청당 최대 100과제(넘으면 40006), priority 1=보통 2=높음(추가 요금)
@@ -636,9 +637,10 @@ def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "
 QUEUE_MAX_POST = 100
 QUEUE_PRIORITY = 2
 QUEUE_COST = 0.0012             # 높음, 깊이 10. 실청구액은 task_post 응답에서 읽는다
-QUEUE_POLL = 3.0                # tasks_ready 분당 20회 — 그보다 자주 묻지 않는다
+QUEUE_POLL = 10.0               # 남은 id 를 다시 두드리기 전 쉬는 최소 간격(우선 대기열 평균 1분)
+QUEUE_GET_RPM = 1200            # task_get 을 분당 이만큼까지 — 계정 전체 2000 에 여유를 둔다
+QUEUE_GET_WORKERS = 8           # task_get 동시 수 — 받기는 무료지만 한 번에 몰지 않는다
 QUEUE_KEEP_DAYS = 30            # task_get 이 결과를 주는 기간
-READY_LIST_MAX = 1000           # tasks_ready 한 번의 최대 개수
 _TASK_WAITING = {40601, 40602}  # Task Handed · Task In Queue — 아직 안 끝났다
 _TASK_GONE = {40401, 40403}     # Task Not Found · Results Expired — 다시 못 받는다
 
@@ -676,26 +678,6 @@ def post_serp_tasks(jobs: list[dict]) -> tuple[list[dict], float]:
                 msg = t.get("status_message") or data.get("status_message") or "과제가 안 맡겨졌다"
                 out.append({"tag": j["tag"], "id": None, "error": f"{msg} ({code})"})
     return out, cost
-
-
-def serp_tasks_ready() -> tuple[set[str], bool]:
-    """다 된(아직 안 받아 간) 과제 id 들, 그리고 목록이 꽉 찼는지.
-
-    계정 전체의 목록이다 — 다른 사이트·다른 워커의 과제도 섞여 온다. 부르는 쪽은 자기
-    id 만 골라 받는다(남의 것을 받아 가면 그쪽 목록에서 사라진다). 꽉 찼으면(1000)
-    내 과제가 남의 것에 가려 안 보일 수 있다 — wait_serp_tasks 가 직접 두드린다.
-    """
-    r = _dfs_call(
-        requests.get,
-        "https://api.dataforseo.com/v3/serp/google/organic/tasks_ready",
-        auth=_dfs_auth(), timeout=TIMEOUTS["dataforseo"])
-    raise_for(r, "DataForSEO")
-    data = r.json()
-    ids: set[str] = set()
-    for t in data.get("tasks") or []:
-        _check_dataforseo_task({"tasks": [t]})
-        ids |= {x["id"] for x in (t.get("result") or []) if isinstance(x, dict) and x.get("id")}
-    return ids, len(ids) >= READY_LIST_MAX
 
 
 def _serp_time(s) -> str | None:
@@ -748,20 +730,24 @@ def wait_serp_tasks(ids, *, depth: int, timeout_s: float, probe=(),
     """맡긴 과제가 **전부** 올 때까지 기다린다(상한 timeout_s). 반환 (결과, 오류, 남은 것):
       결과 {id: 정규화 dict} · 오류 {id: ("gone"|"error", 사유)} · 남은 것 {id} (상한에 걸림)
 
-    probe 는 tasks_ready 를 안 거치고 곧장 받아 볼 id 들 — 앞 런이 맡겨 두고 적재 못 한
-    과제다. 앞 런이 이미 받아 갔다면(task_get) tasks_ready 목록에서 빠져 있어서, 목록만
-    보면 영영 안 온다. 받기는 무료라 곧장 두드려도 돈이 안 든다.
+    남은 id 를 매 라운드 task_get 으로 직접 두드린다(동시 QUEUE_GET_WORKERS, 받기는 무료).
+    라운드 사이는 QUEUE_POLL 과 "남은 수 ÷ 분당 QUEUE_GET_RPM" 중 긴 쪽만큼 쉰다 —
+    500개가 남아도 계정 전체 분당 2000회를 넘지 않는다. probe 는 예전 호출 모양을 지키려는
+    인자다(앞 런이 남긴 id) — 이제 모든 id 를 똑같이 두드리므로 따로 다루지 않는다.
     """
     left = set(ids)
     got: dict = {}
     bad: dict = {}
     deadline = clock() + timeout_s
 
+    from concurrent.futures import ThreadPoolExecutor
+
     def take(batch) -> None:
-        for tid in sorted(batch):
-            if tid not in left:
-                continue
-            state, val = get_serp_task(tid, depth)
+        order = sorted(batch)
+        # 네트워크만 동시에 — 결과는 이 스레드가 id 순서대로 가른다(DB 는 부르는 쪽이 쓴다)
+        with ThreadPoolExecutor(max_workers=QUEUE_GET_WORKERS) as ex:
+            answers = list(ex.map(lambda t: get_serp_task(t, depth), order))
+        for tid, (state, val) in zip(order, answers):
             if state == "done":
                 got[tid] = val
                 left.discard(tid)
@@ -769,15 +755,13 @@ def wait_serp_tasks(ids, *, depth: int, timeout_s: float, probe=(),
                 bad[tid] = (state, val)
                 left.discard(tid)
 
-    take(set(probe) & left)
-    while left and clock() < deadline:
-        ready, full = serp_tasks_ready()
-        now_ = ready & left
-        if full:
-            now_ |= set(sorted(left - now_)[:QUEUE_MAX_POST])
-        take(now_)
-        if left and clock() < deadline:
-            sleep(QUEUE_POLL)
+    # 한 번은 늘 두드린다 — timeout_s=0 은 "기다리지 말고 지금 받아 볼 수 있는 것만"이다
+    # (앞 런이 남긴 id 를 곧장 받아 보는 collect_serp 의 첫 걸음이 이것에 기댄다).
+    while left:
+        take(set(left))
+        if not left or clock() >= deadline:
+            break
+        sleep(max(QUEUE_POLL, len(left) * 60.0 / QUEUE_GET_RPM))
     return got, bad, left
 
 

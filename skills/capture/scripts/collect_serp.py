@@ -383,7 +383,8 @@ def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str
     order = {k["id"]: n for n, k in enumerate(kws)}
     results = sorted(((by_id[task_of[tid]], res) for tid, res in got.items() if tid in task_of),
                      key=lambda pair: order[pair[0]["id"]])
-    # 호출 수 = 맡기기 묶음 + 받은 과제(받기 하나가 요청 하나다). tasks_ready 묻기는 안 센다.
+    # 호출 수 = 맡기기 묶음 + 받은 과제(받기 하나가 요청 하나다). 아직 안 된 과제를 다시
+    # 두드린 것(task_get 40602)은 무료라 안 센다.
     return {"results": results, "left": len(left), "asked": len(task_of),
             "cost": cost, "calls": calls + len(got) + len(bad), "task_ids": list(task_of)}
 

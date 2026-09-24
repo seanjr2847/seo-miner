@@ -2218,15 +2218,18 @@ def test_skips_are_not_failures_and_item_errors_are():
 
 
 # ── 순위 대기열 (DataForSEO Standard, priority=2) ────────────────────────────
-# 가짜 DataForSEO — task_post·tasks_ready·task_get/advanced 세 경로를 HTTP 층에서 흉내
-# 낸다. 진짜 요청은 한 번도 안 나간다. ready_at 은 "몇 번째 tasks_ready 부터 다 됐나".
+# 가짜 DataForSEO — task_post·task_get/advanced 두 경로를 HTTP 층에서 흉내 낸다. 진짜
+# 요청은 한 번도 안 나간다. ready_at 은 "그 과제를 몇 번째 받아 볼 때부터 다 됐나".
+# tasks_ready 는 **늘 빈 목록**이다 — 운영에서 실제로 그랬다(2026-09-24). 대기가 그
+# 목록에 기대면 이 가짜에서 영영 안 끝난다.
 
 class _FakeDFS:
     def __init__(self, own="q.com", ready_at=1):
         self.own, self.ready_at = own, ready_at
         self.tasks: dict[str, dict] = {}
         self.posts: list[list[dict]] = []
-        self.ready_calls = 0
+        self.ready_calls = 0                 # tasks_ready 를 부르면 센다 — 안 불러야 한다
+        self.tries: dict[str, int] = {}
         self.gets: list[str] = []
         self.urls: list[str] = []
 
@@ -2246,10 +2249,8 @@ class _FakeDFS:
         self.urls.append(url)
         if url.endswith("/tasks_ready"):
             self.ready_calls += 1
-            ids = [{"id": t} for t, v in self.tasks.items()
-                   if not v["taken"] and self.ready_calls >= v["ready_at"]]
             return FakeResponse({"status_code": 20000,
-                                 "tasks": [{"status_code": 20000, "result": ids}]})
+                                 "tasks": [{"status_code": 20000, "result": []}]})
         assert "/task_get/advanced/" in url, url
         tid = url.rsplit("/", 1)[1]
         self.gets.append(tid)
@@ -2258,7 +2259,8 @@ class _FakeDFS:
             return FakeResponse({"status_code": 20000,
                                  "tasks": [{"id": tid, "status_code": 40401,
                                             "status_message": "Task Not Found."}]})
-        if self.ready_calls < v["ready_at"]:
+        self.tries[tid] = self.tries.get(tid, 0) + 1
+        if self.tries[tid] < v["ready_at"]:
             return FakeResponse({"status_code": 20000,
                                  "tasks": [{"id": tid, "status_code": 40602,
                                             "status_message": "Task In Queue."}]})
@@ -2386,8 +2388,10 @@ def test_rank_queue_full_success_writes_all():
     assert res.ok and not res.failed and not res.skipped, res
     assert [len(b) for b in fake.posts] == [100, 50], [len(b) for b in fake.posts]
     assert all(b["priority"] == 2 for batch in fake.posts for b in batch)
-    assert fake.ready_calls >= 3, fake.ready_calls
-    assert clock.t >= serp_adapter.QUEUE_POLL * 2, f"tasks_ready 를 3초 간격 없이 두드렸다: {clock.t}"
+    # 완료 목록(tasks_ready)에 기대지 않는다 — 운영에서 다 된 132개를 0개로 돌려줬다
+    assert fake.ready_calls == 0, f"tasks_ready 를 불렀다: {fake.ready_calls}"
+    assert min(fake.tries.values()) >= 3, "다 될 때까지 다시 두드리지 않았다"
+    assert clock.t >= serp_adapter.QUEUE_POLL * 2, f"라운드 사이를 안 쉬었다: {clock.t}"
     conn = db.connect()
     n = conn.execute("SELECT COUNT(*) c FROM rank_snapshots s JOIN keywords k ON k.id=s.keyword_id "
                      "WHERE k.project_id=?", (p["id"],)).fetchone()["c"]
@@ -2514,7 +2518,7 @@ def test_rank_queue_parser_is_the_live_parser():
 
 def test_dfs_spacing_only_on_google_ads_paths():
     """분당 12회 간격은 Google Ads(keywords_data/google_ads/*)만 — SERP·Labs·백링크는 분당
-    2000회라 쉬지 않는다. tasks_ready(분당 20회)는 제 칸의 간격을 지킨다.
+    2000회라 쉬지 않는다.
 
     예전엔 모든 DataForSEO 호출에 6초를 걸어 순위 232개가 15분을 먹었다."""
     paced: list[str] = []
@@ -2527,18 +2531,16 @@ def test_dfs_spacing_only_on_google_ads_paths():
                      "/serp/google/organic/task_post",
                      "/serp/google/organic/task_get/advanced/abc",
                      "/dataforseo_labs/google/ranked_keywords/live",
-                     "/backlinks/summary/live",
-                     "/serp/google/organic/tasks_ready"):
+                     "/backlinks/summary/live"):
             serp_adapter._dfs_call(lambda url, **kw: FakeResponse({}), base + path)
     finally:
         serp_adapter._pace = orig
-    assert paced == [serp_adapter.ADS_PATH, serp_adapter.READY_PATH], paced
+    assert paced == [serp_adapter.ADS_PATH], paced
     # 소요 시간 고지도 경로를 본다 — 간격 없는 경로를 6초로 어림하지 않는다
     saved = os.environ.pop("SEOMINER_DFS_RPM", None)
     try:
         assert serp_adapter.pace_seconds(base + "/keywords_data/google_ads/x/live") == 6.0
         assert serp_adapter.pace_seconds(base + "/dataforseo_labs/google/x/live") == 0.0
-        assert serp_adapter.pace_seconds(base + "/serp/google/organic/tasks_ready") >= 3.0
     finally:
         if saved is not None:
             os.environ["SEOMINER_DFS_RPM"] = saved
