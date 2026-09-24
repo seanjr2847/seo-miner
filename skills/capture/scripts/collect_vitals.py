@@ -195,7 +195,9 @@ def _parser() -> argparse.ArgumentParser:
     collector.add_common(ap)
     collector.add_setting(ap, "--limit", key="vitals_urls", fallback=5, type=int,
                           help="속도를 잴 URL 수. 0이면 끔 (한 URL 이 기기 수만큼 호출됩니다)")
-    collector.add_setting(ap, "--strategy", key="strategy", fallback="mobile,desktop",
+    # type=str 을 꼭 준다 — add_setting 의 기본은 int 라, 빼면 'mobile,desktop' 을 int() 로
+    # 바꾸려다 속도 단계가 통째로 죽었다(호스팅 noti 런).
+    collector.add_setting(ap, "--strategy", key="strategy", fallback="mobile,desktop", type=str,
                           help="기기 — mobile,desktop. 기기 격차를 보려면 둘 다 필요합니다")
     collector.add_setting(ap, "--throttle", key="throttle", fallback=1.0, type=float,
                           help="요청 간격(초)")
@@ -226,6 +228,13 @@ def _selfcheck() -> None:
             "audits": {"largest-contentful-paint": {"numericValue": 4310.5},
                        "cumulative-layout-shift": {"numericValue": 0.2412},
                        "total-blocking-time": {"numericValue": 640}}}}
+    # 기기 설정은 문자열이다 — int() 로 바꾸려다 속도 단계가 통째로 죽었다(호스팅 noti 런)
+    import argparse
+    ap = _parser()
+    s = collector.settings(argparse.Namespace(limit=None, strategy=None, throttle=None), {},
+                           ap._collector_settings)
+    assert s["strategy"] == "mobile,desktop" and s["vitals_urls"] == 5, s
+
     r = parse("https://x.kr/a", "mobile", sample)
     assert (r["field_lcp_ms"], r["field_inp_ms"], r["field_ttfb_ms"]) == (4200, 310, 900), r
     # CLS 만 100 배로 온다 — 그대로 적으면 0.24 인 페이지가 24 로 남는다

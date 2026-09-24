@@ -82,7 +82,7 @@ def test_get_project_raises_domain_exception_for_unregistered_site():
         msg = str(e)
         assert f"'{name}' 사이트가 아직 등록되지 않았습니다" in msg, msg
         assert "`/capture add" in msg or "/capture add" in msg, msg
-        assert "sync-project" in msg, msg
+        assert "db.py register" in msg, msg
     else:
         raise AssertionError("ProjectNotFound 를 던지지 않았다")
     conn.close()
@@ -91,8 +91,9 @@ def test_get_project_raises_domain_exception_for_unregistered_site():
 def test_load_project_yaml_raises_domain_exception_when_missing():
     """db.load_project_yaml — yaml 이 없으면 sys.exit 대신 도메인 예외로 알린다.
 
-    collector.project_cfg 가 그걸 잡아 경고만 찍고 빈 dict 로 진행하는 자리 —
-    기존 sys.exit 메시지를 그대로 보존해야 동작이 안 흔들린다.
+    이제 이 함수는 **수입 전용**이다(런타임 설정은 db.project_cfg 한 곳). 옛 보관함을
+    옮기는 _import_legacy_yaml 이 이 예외로 "이 사이트는 옮길 파일이 없다"를 가른다 —
+    sys.exit 로 돌아가면 마이그레이션이 connect() 를 통째로 죽인다.
     """
     try:
         db.load_project_yaml("없는거")
@@ -268,7 +269,7 @@ def test_load_covers_every_kind():
 
 
 def test_collector_settings():
-    """설정 우선순위(CLI > 프로젝트 yaml > config.yaml > 리터럴) 및 0값 존중 자체점검."""
+    """설정 우선순위(CLI > 사이트 설정 > skill_config > 리터럴) 및 0값 존중 자체점검."""
     import argparse
     ap = argparse.ArgumentParser()
     collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
@@ -294,7 +295,7 @@ def test_collector_settings():
     assert s2["serp_depth"] == 9
     assert s2["limits.max_keywords"] == 5
 
-    # 3. config.yaml defaults
+    # 3. skill_config defaults
     s3 = collector.settings(a2, None, specs)
     assert s3["throttle"] in (0.5, 0.7)
     assert s3["serp_depth"] == 10
@@ -1614,8 +1615,9 @@ def test_ai_citation_rate_rivals_and_prescription_split():
     t = scoring.ai_tally(conn, r.id)[qa]
     assert (t["checks"], t["cited"], t["misses"]) == (6, 1, 5), t
     # 하위 도메인(www.·old.)은 reddit.com 으로 접힌다 — 답변 하나에 한 번씩
-    assert t["rivals"][0] == {"domain": "reddit.com", "n": 4, "third_party": True}, t["rivals"]
-    assert {"domain": "rival.com", "n": 2, "third_party": False} in t["rivals"], t["rivals"]
+    assert t["rivals"][0] == {"domain": "reddit.com", "n": 4, "third_party": True,
+                              "press": False}, t["rivals"]
+    assert {"domain": "rival.com", "n": 2, "third_party": False, "press": False} in t["rivals"],         t["rivals"]
     assert t["lean"] == "third_party" and t["third_share"] > scoring.AI_PRESENCE_SHARE, t
     assert t["excerpts"] == {"chatgpt": "b 첫 빠진 답", "perplexity": "p 첫 답"}, t["excerpts"]
     # 추천 목록 — NULL(안 봤다)은 분모에서 빠진다. 0 과 뭉치지 않는다
@@ -1903,6 +1905,55 @@ def test_serp_outlines_are_stored_per_url_and_reused():
                                     days=30)
     assert stale == ["https://rival.com/new"], stale
     conn.close()
+
+
+def test_ai_tally_press_lean():
+    """챗봇이 대신 인용한 곳이 대부분 언론이면 lean=press — 예전엔 '경쟁사·일반 사이트'로
+    세서 donga·mk·newsis 뿐인 질문에 내 페이지 고치기 처방이 나갔다."""
+    conn = db.connect()
+    pid = _project(conn, "ai_press")["id"]
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt, category) VALUES(?,?,?)",
+                 (pid, "언론 질문", "정보"))
+    q = conn.execute("SELECT id FROM ai_prompts WHERE project_id=?", (pid,)).fetchone()[0]
+    with db.run(conn, pid, "ai") as r:
+        for i in range(4):
+            _ai_row(conn, q, r.id, "chatgpt", 0, ["www.donga.com", "news.naver.com"], f"답 {i}")
+    conn.commit()
+    t = scoring.ai_tally(conn, r.id)[q]
+    assert t["press_share"] == 0.5 and t["third_share"] == 0.5, t
+    # 포털(news.naver.com)은 제3자 플랫폼이 먼저다 — 언론으로 두 번 세지 않는다
+    rv = {x["domain"]: x for x in t["rivals"]}
+    assert rv["donga.com"]["press"] and not rv["donga.com"]["third_party"], rv
+    assert rv["naver.com"]["third_party"] and not rv["naver.com"]["press"], rv
+    # 반반이면 어느 쪽도 과반이 아니다 — 예전 처방(sites)
+    assert t["lean"] == "sites", t
+    with db.run(conn, pid, "ai") as r2:
+        for i in range(4):
+            _ai_row(conn, q, r2.id, "chatgpt", 0, ["donga.com", "mk.co.kr"], f"답 {i}")
+    conn.commit()
+    t2 = scoring.ai_tally(conn, r2.id)[q]
+    assert t2["lean"] == "press" and t2["press_share"] == 1.0, t2
+
+
+def test_page_audits_read_latest_per_url_and_target_unseen_first():
+    """감사는 한 회차에 몇십 곳만 본다. '최신 날짜 한 벌'로 읽으면 다음 회차가 다른 곳을
+    고르는 순간 앞 회차 감사가 통째로 사라졌다(고칠 페이지 23곳 중 13곳이 '점검 안 함').
+    그리고 점수 순으로만 고르면 상한 밖 기회 페이지는 영영 안 보인다."""
+    import collect_page
+    conn = db.connect()
+    pid = _project(conn, "audits")["id"]
+    db.write_page_audits(conn, pid, "2026-09-01", [{"url": "https://e.com/a", "title": "A"},
+                                                   {"url": "https://e.com/b", "title": "B old"}])
+    db.write_page_audits(conn, pid, "2026-09-10", [{"url": "https://e.com/b", "title": "B new"}])
+    got = {r["url"]: r["title"] for r in db.latest_page_audits(conn, pid)}
+    assert got == {"https://e.com/a": "A", "https://e.com/b": "B new"}, got
+    # 기회 셋 — 점수는 b > a > c, 감사는 c 가 한 번도 없고 a 가 b 보다 오래됐다
+    for t, sc in (("https://e.com/b", 90), ("https://e.com/a", 80), ("https://e.com/c", 70)):
+        conn.execute("INSERT INTO opportunities(project_id, kind, target, score, status)"
+                     " VALUES(?, 'index_blocked', ?, ?, 'new')", (pid, t, sc))
+    conn.commit()
+    order = collect_page.target_urls(conn, pid, 3)
+    assert order == ["https://e.com/c", "https://e.com/a", "https://e.com/b"], order
 
 
 if __name__ == "__main__":

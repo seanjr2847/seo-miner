@@ -30,7 +30,7 @@ Search' 인 세션. 구글뿐 아니라 네이버·빙도 여기 잡힌다 — �
 **AI 유입(부가 조회)**: 위 조회는 전부 유기 검색 필터라 chatgpt.com·perplexity.ai
 처럼 AI 답변의 링크를 타고 온 세션(대개 Referral 채널)이 통째로 빠진다 — 인용을
 고친 뒤 실제 방문이 늘었는지 볼 길이 없었다. 그래서 sessionSource × landingPage
-(세션·key events)를 따로 한 번 받는다. 출처 목록의 정본은 config.yaml 의
+(세션·key events)를 따로 한 번 받는다. 출처 목록의 정본은 skill_config 의
 ai_referrers(호스트 목록)이고, 거르는 규칙은 ai_host() 한 곳이다. 이 조회도 부수
 호출이라 실패해도 본체 스냅샷은 그대로 저장된다.
 
@@ -106,13 +106,13 @@ BREAKDOWN_DIMS = {"device": "deviceCategory", "country": "countryId",
 # 두 지표 다 합산 가능한 카운트류라 _merge_landing 의 n_additive 는 전부다.
 AI_REFERRAL_METRICS = ("sessions", "keyEvents")
 AI_REFERRAL_LIMIT = 10000     # 분해와 같은 선택 — AI 유입은 페이지 수가 적다, 페이지네이션 안 함
-# config.yaml 을 못 읽을 때의 최소 목록. 정본은 config.yaml 의 ai_referrers 다.
+# 설정이 비었을 때의 최소 목록. 정본은 skill_config 의 ai_referrers 다.
 _AI_REFERRERS_FALLBACK = ("chatgpt.com", "chat.openai.com", "perplexity.ai",
                           "gemini.google.com", "copilot.microsoft.com", "claude.ai")
 
 
 def ai_referrers() -> tuple[str, ...]:
-    """AI 출처 호스트 목록 — config.yaml 의 ai_referrers(데이터). 읽기 실패는 수집을
+    """AI 출처 호스트 목록 — skill_config 의 ai_referrers(데이터). 읽기 실패는 수집을
     막지 않는다(최소 목록으로 간다 — scoring.ai_bots 와 같은 약속)."""
     try:
         got = collector.config().get("ai_referrers")
@@ -300,7 +300,7 @@ def collect(project: str, *,
         if not prop_id:
             return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다 — "
                            "project yaml 에 ga4_property: '숫자 ID' 를 넣고 "
-                           "python db.py sync-project <yaml> (연결 화면은 다음 단계)")
+                           "대시보드 [설정]에서 등록하세요 (연결 화면은 다음 단계)")
 
         end = date.today() - timedelta(days=3)     # GSC 와 같은 버퍼 — 모듈 docstring 참조
         start = end - timedelta(days=days)
@@ -481,7 +481,7 @@ def _selfcheck() -> None:
     assert ai_host("bayou.com", H) is None, "끝 글자만 같은 도메인을 AI 로 셌다"
     assert ai_host("google", H) is None and ai_host("", H) is None
     assert ai_host("chat.openai.com", H) == "chat.openai.com", "짧은 호스트가 긴 쪽을 삼켰다"
-    assert "chatgpt.com" in ai_referrers(), "config.yaml 의 ai_referrers 를 못 읽었다"
+    assert "chatgpt.com" in ai_referrers(), "skill_config 의 ai_referrers 를 못 읽었다"
     f = _ai_filter(("a.com", "b.ai"))["orGroup"]["expressions"]
     assert [e["filter"]["stringFilter"]["value"] for e in f] == ["a.com", "b.ai"], f
     assert {e["filter"]["fieldName"] for e in f} == {"sessionSource"}, f

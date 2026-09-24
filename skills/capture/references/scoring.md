@@ -20,7 +20,7 @@
 | striking_distance | GSC 4~20위 + 노출 유의미 → 밀면 상단 진입 | `scoring.striking()` — 구간은 `STRIKING_LO=4`·`STRIKING_HI=20`, 노출 하한 `STRIKING_MIN_IMP`(=10), 노출 내림차순. 각 행에 `band`(pos ≤ 10 → `page1`, 아니면 `page2`)와 `gap`(`gap_to_page1()`, `PAGE1=10`)이 붙는다 |
 | ctr_gap | 1페이지(1~10위)인데 기대 CTR의 절반도 못 받음 → 제목·설명 문제 | `scoring.ctr_gaps()` — 기대치는 `EXPECTED_CTR`(1~20위, %, 업계 클릭 곡선 근사), 노출 하한 `CTR_GAP_MIN_IMP`(=100), 판정은 실제 CTR < 기대 × `CTR_GAP_FACTOR`(=0.5). 손실 클릭(노출×(기대-실제)) 내림차순 |
 | cannibalization | 같은 쿼리에 내 페이지 2개 이상이 노출을 분산 | `scoring.cannibalization()` — DISTINCT page ≥ 2, 부페이지 노출 비중 ≥ `CANNI_MIN_SHARE`(=0.2), 합산 노출 ≥ `CANNI_MIN_IMP`(=50). **page 차원이 필요하다** — page가 NULL인 구버전(CSV 시절) 스냅샷에서는 빈 결과가 정상(결함 아님, 데이터 부재) |
-| ai_citation_gap | 관련성 높은 프롬프트에서 우리 인용이 드묾 (비율·표본 수로 — "인용 1/6 (n=6)") | 판정 `scoring.ai_is_gap()`, 문턱·표본 하한은 scoring 상단 `AI_*` 상수. 대신 인용된 곳·엔진별 수·발췌는 `scoring.ai_tally()` 한 벌. 제3자 플랫폼(`config.yaml` `third_party_platforms`)이 대부분이면 요청문 꼴 `presence`. 인용/언급/추천 판정 자체는 `scoring.judge()` |
+| ai_citation_gap | 관련성 높은 프롬프트에서 우리 인용이 드묾 (비율·표본 수로 — "인용 1/6 (n=6)") | 판정 `scoring.ai_is_gap()`, 문턱·표본 하한은 scoring 상단 `AI_*` 상수. 대신 인용된 곳·엔진별 수·발췌는 `scoring.ai_tally()` 한 벌. 제3자 플랫폼(`scripts/skill_config.py` `third_party_platforms`)이 대부분이면 요청문 꼴 `presence`. 인용/언급/추천 판정 자체는 `scoring.judge()` |
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
@@ -30,7 +30,7 @@
 | crawl_issue | 전수 크롤에서 심각(bad)으로 걸린 주소 (방어) | `scoring.crawl_gaps()` — 최신 크롤 회차의 `crawl_issues` 중 severity='bad' 만. warn·info 는 [사이트 점검] 화면의 표에 그대로 있다. 갈래 이름표의 정본은 `collect_crawl.ISSUE_KIND` |
 | backlink_broken | 남이 우리에게 건 링크가 없는 주소를 가리킴 (방어) | `scoring.backlink_gaps()[0]` — 이미 번 링크라 새로 얻는 것보다 싸다 |
 | backlink_prospect | 경쟁사는 링크를 받는데 우리는 못 받는 도메인 | `scoring.backlink_gaps()[1]` — `link_intersect` 의 we_have=0 |
-| ai_bot_blocked | robots.txt 가 AI **검색·인용용** 크롤러(용도 `search`·`user`)를 막음 → 그 엔진 답변의 출처로 실리기 어렵다 | `scoring.ai_bot_blocks()` — 크롤이 남긴 `crawl_runs.robots_txt` 를 `scoring.robots_blocks()` 로 다시 읽을 뿐, 새 수집이 없다. 봇 목록과 **용도**의 정본은 `config.yaml` 의 `ai_bots`(`ua`·`vendor`·`purpose`·`engine`). **학습 전용 봇(`training`: GPTBot·ClaudeBot·Google-Extended·CCBot…)만 막힌 것은 기회가 아니다** — 인용과 무관하고 권장되는 중간 지점이라 근거 표에만 적는다. 용도 모름(옛 꼴 문자열 목록)도 기회로 안 올린다. Bingbot 차단은 AI 만이 아니라 빙 검색 전체에서 빠진다는 뜻이라 그렇게 말한다. **`ai_citation_gap` 보다 먼저 본다** — 검색 봇이 막힌 채로 "콘텐츠가 약하다" 고 말하면 오진이다 |
+| ai_bot_blocked | robots.txt 가 AI **검색·인용용** 크롤러(용도 `search`·`user`)를 막음 → 그 엔진 답변의 출처로 실리기 어렵다 | `scoring.ai_bot_blocks()` — 크롤이 남긴 `crawl_runs.robots_txt` 를 `scoring.robots_blocks()` 로 다시 읽을 뿐, 새 수집이 없다. 봇 목록과 **용도**의 정본은 `scripts/skill_config.py` 의 `ai_bots`(`ua`·`vendor`·`purpose`·`engine`). **학습 전용 봇(`training`: GPTBot·ClaudeBot·Google-Extended·CCBot…)만 막힌 것은 기회가 아니다** — 인용과 무관하고 권장되는 중간 지점이라 근거 표에만 적는다. 용도 모름(옛 꼴 문자열 목록)도 기회로 안 올린다. Bingbot 차단은 AI 만이 아니라 빙 검색 전체에서 빠진다는 뜻이라 그렇게 말한다. **`ai_citation_gap` 보다 먼저 본다** — 검색 봇이 막힌 채로 "콘텐츠가 약하다" 고 말하면 오진이다 |
 | index_blocked | 색인 단계에서 죽은 URL — 순위 이전 문제 | `scoring.index_issues()` — `gsc_index_status` 의 최신 checked_date, verdict 가 'PASS' 가 아니거나 coverage_state 가 색인됨이 아닌 URL. 버킷 4종은 아래 1d절. 적재는 `/capture index`(URL 당 API 1콜) |
 
 기회 목록을 화면·리포트로 뽑을 때의 정렬은 `scoring.opportunities()` 하나뿐이다
@@ -52,7 +52,7 @@
 카탈로그(`scoring.foreign_brands()`)의 출처는 세 경로의 합이다:
 
 - `competitors` 테이블의 도메인(브랜드 이름 부분)
-- 프로젝트 yaml의 `tools` — `projects/_template.yaml`에 키가 있고, 대시보드
+- 사이트 설정의 `tools`(정본 `db.SETTING_KEYS`) — 대시보드
   사이트 등록 폼도 같은 칸으로 받는다 (`dashboard.create_project`이 `tools`
   줄바꿈·쉼표 입력을 그대로 적는다)
 - 프로젝트 yaml의 `foreign_brands` — `tools`와 목적은 같은 별칭 키

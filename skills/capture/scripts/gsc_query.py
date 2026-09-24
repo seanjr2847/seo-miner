@@ -55,7 +55,7 @@ def resolve_property(a) -> str:
         sys.exit(f"등록되지 않은 사이트입니다: {a.project}")
     if not row["gsc_property"]:
         sys.exit(f"{a.project} 에 gsc_property 가 비어 있습니다 — "
-                 "projects yaml 에 넣고 `python db.py sync-project <yaml>`.")
+                 "대시보드 [설정]의 이 사이트 설정에서 넣습니다.")
     return row["gsc_property"]
 
 

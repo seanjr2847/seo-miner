@@ -103,7 +103,7 @@ AI 인용 확인(`/capture ai`)에는 이 키가 필요하다. 나머지 기능�
    대시보드 [설정] 패널에 붙여넣으면 거기 저장되고, 모든 스크립트가
    `db.load_env()`로 읽는다 — 셸 rc를 편집할 필요가 없다. 이 절의 다른 키(7절
    포함)도 같은 파일이다. 셸에 `export`한 값이 있으면 그쪽이 우선한다(setdefault).
-3. 모델 슬러그는 시간이 지나면 바뀐다 → `config.yaml`의 `ai_engines`에서 관리.
+3. 모델 슬러그는 시간이 지나면 바뀐다 → `scripts/skill_config.py`의 `ai_engines`에서 관리.
    `:online` 접미사가 웹검색을 켠다(OpenAI·Google·Perplexity 등은 네이티브 검색 사용).
 4. 비용 감각: 검색 호출료가 토큰보다 크다. 프롬프트 30개 × 3엔진 주 1회 기준
    월 수 달러~십수 달러. 반드시 `--dry-run`으로 호출 수 확인 후 실행.
@@ -115,8 +115,7 @@ cd ~/.claude/skills/capture
 python scripts/scoring.py            # 판정 규칙 자체점검 (임계값·브랜드 제외·정렬)
 python scripts/collector.py          # 설정 우선순위 자체점검
 python scripts/test_capture.py       # 임시 폴더에서 도는 회귀 테스트
-cp projects/_template.yaml ~/.capture/projects/myproject.yaml   # 편집 후
-python scripts/db.py sync-project ~/.capture/projects/myproject.yaml
+python scripts/db.py register myproject myproject.com saas ko-KR
 python scripts/expand_keywords.py --project myproject --dry-run
 python scripts/collect_ai.py --project myproject --dry-run
 python scripts/collect_gsc.py --project myproject --dry-run
@@ -126,7 +125,7 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 
 ## 7. SERP 순위 추적 (선택 — 키 있으면 /capture rank 활성화)
 
-둘 중 하나만 있으면 됨. 둘 다 있으면 config.yaml serp.provider로 선택.
+둘 중 하나만 있으면 됨. 둘 다 있으면 `scripts/skill_config.py` 의 serp.provider로 선택.
 
 **DataForSEO (추천 — AI오버뷰 데이터 포함)**
 1. https://dataforseo.com 가입 → $1 무료 크레딧 (Live Advanced 기준 수백 회 분량)

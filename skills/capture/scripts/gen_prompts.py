@@ -115,10 +115,7 @@ def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
     rows = []
     # 1) 페이지 감사 — 제목·H1 까지 있는 가장 좋은 재료
     try:
-        rows = [(r["url"], r["title"]) for r in conn.execute(
-            """SELECT url, title FROM page_audits WHERE project_id=?
-                AND checked_date=(SELECT MAX(checked_date) FROM page_audits
-                                   WHERE project_id=?)""", (project_id, project_id))]
+        rows = [(r["url"], r["title"]) for r in db.latest_page_audits(conn, project_id)]
     except sqlite3.Error:
         rows = []
     # 2) 크롤 회차의 제목
@@ -149,12 +146,7 @@ def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
 def brief(conn, project: str, top_n: int = 15) -> dict:
     """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다."""
     p = db.get_project(conn, project)
-    cfg = {}
-    if p["config_path"]:
-        try:
-            cfg = db.load_project_yaml(p["config_path"])
-        except (db.ProjectConfigNotFound, ImportError):
-            pass
+    cfg = db.project_cfg(conn, p)
     import scoring
     cur, _, period, _ = scoring.snapshot_pair(conn, p["id"])
     queries = []

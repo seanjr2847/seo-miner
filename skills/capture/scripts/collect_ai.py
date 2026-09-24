@@ -34,7 +34,7 @@ import serp_adapter  # noqa: E402
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Model slugs drift over time; override in config.yaml -> ai_engines.
+# Model slugs drift over time; override in skill_config.CONFIG['ai_engines'].
 DEFAULT_ENGINES = {
     "chatgpt":    "openai/gpt-4o-mini:online",
     "perplexity": "perplexity/sonar",            # search built-in
@@ -279,9 +279,9 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+                          help="요청 간격(초). 기본은 skill_config defaults.throttle")
     ap.add_argument("--engines", default=None, help="comma list; default from config")
-    # 기본 2회 샘플(config.yaml ai_samples와 일치) — 비결정성 완화, 대신 호출 비용 2배.
+    # 기본 2회 샘플(skill_config ai_samples와 일치) — 비결정성 완화, 대신 호출 비용 2배.
     collector.add_setting(ap, "--samples", key="ai_samples", fallback=2, type=int)
     collector.add_setting(ap, "--max-prompts", key="limits.max_ai_prompts", fallback=30, type=int)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")

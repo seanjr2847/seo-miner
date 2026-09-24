@@ -10,7 +10,7 @@
 대상 URL: 기회에 걸린 검색어의 페이지 → 노출 상위 페이지 순. 고칠 자리부터 본다.
 
 비용: 없다. 남의 API 가 아니라 내 사이트를 여는 것뿐이다. 대신 내 서버에 요청이
-가므로 throttle 을 기본 0.5초로 두고, 상한(page_urls, 기본 20)을 넘지 않는다.
+가므로 throttle 을 기본 0.5초로 두고, 상한(page_urls, 기본 40)을 넘지 않는다.
 
 의존성: requests + stdlib html.parser. HTML 파서를 새로 들이지 않는다 —
 여기서 필요한 것은 head 몇 줄과 태그 개수라 정규 파서 하나면 충분하다.
@@ -55,6 +55,8 @@ JS_SHELL_SCRIPTS = 5
 #
 # 메뉴·꼬리말의 <ul> 까지 세면 거의 모든 페이지가 "목록 있음"이 된다. 본문 밖 틀로
 # 보는 자리다. <header> 는 <article>·<main> 안이면 글머리(H1·리드 문단)라 틀이 아니다.
+# 본문에 박힌 영상 — 검색결과에 영상 칸이 서는 검색어에서 상위 글이 영상을 품는지 본다.
+_VIDEO_SRC = re.compile(r"(youtube(-nocookie)?\.com|youtu\.be|vimeo\.com)", re.I)
 _CHROME = {"nav", "footer", "aside", "form"}
 # 이보다 짧은 <p> 는 문단이 아니라 줄 조각이다(바이라인·"공유하기"·빵부스러기) —
 # 첫 문단으로 세면 "첫 문단 3단어"라는 헛진단이 난다.
@@ -186,6 +188,7 @@ class _Page(HTMLParser):
         self.app_root = False
         # 추출성 — 본문 틀(_CHROME) 밖의 것만, 겹친 것은 바깥 하나로 센다
         self.tables = self.lists = 0
+        self.videos = 0                          # <video>·유튜브/비메오 iframe — 상위 글 형식 비교용
         self.author = None                       # meta author 또는 ld+json author.name
         self._h1_done = False                    # 첫 H1 을 지났나 — 리드 문단은 그 뒤가 본자리
         self._p: list[str] | None = None         # 지금 모으는 <p> 글자
@@ -213,6 +216,8 @@ class _Page(HTMLParser):
                 self.lists += 1
             elif tag == "p" and self._lead_after is None:
                 self._p = []
+            if tag == "video" or (tag == "iframe" and _VIDEO_SRC.search(a.get("src", ""))):
+                self.videos += 1
         if tag == "html":
             # 페이지의 언어 선언. 없으면 구글·빙이 본문 글자로 추측한다 — 다국어
             # 사이트에서 로케일 판정이 어긋나는 첫 자리다.
@@ -385,7 +390,10 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             # 질문형 H2 는 h2_json 과 같은 20개 안에서 센다(요청문이 "n/전체"로 나란히 쓴다).
             "tables": p.tables, "lists": p.lists,
             "h2_questions": sum(map(_is_question, p.h2[:20])),
-            "lead_words": p.lead_words(), "author": p.author or ""}
+            "lead_words": p.lead_words(), "author": p.author or "",
+            # page_audits 칸은 아니다(write_page_audits 가 모르는 키는 버린다) — 상위 글의
+            # 형식을 비교할 때(serp_outlines) 쓴다.
+            "videos": p.videos}
 
 
 def target_urls(conn, project_id: int, limit: int) -> list[str]:
@@ -405,13 +413,19 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     by_t = scoring.pages_by_topic(
         conn, project_id, [r["target"] for r in rows if r["kind"] in scoring.KEYWORD_KINDS
                            and not r["target"].startswith("http") and not by_q.get(r["target"])])
-    out: list[str] = []
+    opp: list[str] = []
     for t in targets:
         if t.startswith("http"):
-            out.append(t)
+            opp.append(t)
         else:
-            out += [pg["page"] for pg in by_q.get(t, [])] or [scoring.topic_page(by_t.get(t))]
-    out += scoring.top_pages(conn, project_id, limit)
+            opp += [pg["page"] for pg in by_q.get(t, [])] or [scoring.topic_page(by_t.get(t))]
+    # 기회에 걸린 페이지 중 **한 번도 안 본 것 → 가장 오래전에 본 것** 순. 점수 순만 쓰면
+    # 상한(page_urls) 밖의 기회 페이지는 영영 안 보이고, 매 회차 같은 앞쪽만 다시 본다 —
+    # 고치기 요청문 57장 중 25장이 "아직 점검하지 않았습니다"로 나갔다. 같은 날짜 안에서는
+    # 점수 순을 지킨다(sorted 는 안정 정렬이다).
+    last = {r["url"]: r["checked_date"] for r in db.latest_page_audits(conn, project_id)}
+    opp = sorted(dict.fromkeys(u for u in opp if u), key=lambda u: last.get(u) or "")
+    out = opp + scoring.top_pages(conn, project_id, limit)
     seen, uniq = set(), []
     for u in out:
         if u and u not in seen:
@@ -505,7 +519,7 @@ def collect(project: str, *,
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
-    collector.add_setting(ap, "--limit", key="page_urls", fallback=20, type=int,
+    collector.add_setting(ap, "--limit", key="page_urls", fallback=40, type=int,
                           help="한 번에 감사할 URL 수. 0이면 끔")
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
                           help="요청 간격(초) — 내 서버를 두드리는 속도")

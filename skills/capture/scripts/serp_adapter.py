@@ -728,7 +728,7 @@ def caveats(provider: str) -> list[str]:
 
 
 def detect_provider() -> str | None:
-    """config.yaml serp.provider 가 이름을 지정했으면 그게 이긴다(auto = 키 감지).
+    """skill_config serp.provider 가 이름을 지정했으면 그게 이긴다(auto = 키 감지).
 
     설정 파일에 항목만 있고 읽는 코드가 없어서, 키를 둘 다 넣어둔 사람은
     dataforseo로 고정돼 있었다.
@@ -737,7 +737,7 @@ def detect_provider() -> str | None:
     if want in PROVIDERS:
         return want
     if want != "auto":
-        print(f"[경고] config.yaml serp.provider='{want}' 는 모르는 제공자입니다 — "
+        print(f"[경고] skill_config serp.provider='{want}' 는 모르는 제공자입니다 — "
               f"키 감지로 진행합니다.", file=sys.stderr)
     if has_dataforseo():
         return "dataforseo"

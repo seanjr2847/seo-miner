@@ -38,14 +38,18 @@ description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Captur
 
 ## 답변 형식 (채팅으로 나가는 모든 말)
 
-한 줄 결론 → 근거 표 → **다음 한 걸음 하나** → 접어 둔 "안 한 것".
+한 줄 결론 → 근거 표 → **다음 한 걸음 하나** → 맨 끝 한 줄 "안 한 것"(HTML 태그 없이).
 정본은 `../setup/references/reply-format.md` — 작업을 끝내고 보고하기 전에 그 뼈대를
 따른다. 근거는 Brain 조회 결과여야 하고(철칙 1), 다음 걸음의 판정은
 `stage.state()` 가 한다(내가 다시 판단하지 않는다).
 
 ## 상태 위치
 
-데이터는 `$CAPTURE_HOME`(기본 `~/.capture`)에 산다 — brain.db, projects/*.yaml, reports/.
+데이터는 `$CAPTURE_HOME`(기본 `~/.capture`)에 산다 — brain.db, reports/.
+**사이트 설정도 brain.db 안이다**(`project_settings` 표, 정본 목록은 `db.SETTING_KEYS`).
+설정 파일은 없다 — 찾지 말고 `db.project_cfg(conn, 사이트)` 로 읽는다. 예전의
+`projects/*.yaml` 은 은퇴했다: 그 파일이 호스팅에서는 서버 디스크에 살아서 동기화로는
+영영 안 내려왔고, 원격 사이트의 별칭·한도를 로컬에서 읽을 방법이 없었다.
 brain.db는 첫 접속 때 자동 생성된다(`db.connect`) — 사용자에게 init을 시키지 말 것.
 **보관함은 컴퓨터 전역이다** — 사이트가 여럿일 때 이름 없이 "내 사이트 요즘 어때"라고
 하면 어느 것인지 정해지지 않는다. `stage.pick_project()` 로 판정하고(이 폴더의 리포
@@ -77,8 +81,8 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 `{P}` = 프로젝트 이름.
 
 ### /capture add {P} — 프로젝트 온보딩
-**이미 등록된 이름이면**(대시보드 설정 폼으로 만든 경우) 1~4단계는 건너뛰고 5단계만
-한다 — yaml을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
+**이미 등록된 이름이면**(대시보드 설정 폼으로 만든 경우) 1~3단계는 건너뛰고 4단계만
+한다 — 등록된 값을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
 `gsc_property` 를 도메인에서 추정하므로 **2번의 대조는 한 번 해 준다**.
 
 1. **인터뷰는 4문항이다** — 타입(game|local_business|saas|directory), 도메인,
@@ -107,12 +111,21 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
      목록을 뽑아 도메인이 맞는 것을 **그대로** 쓴다. 여러 개면 사용자에게 번호로
      고르게 한다.
    - 아직 연결 전이면 `sc-domain:{도메인}` 으로 채워 두고(대시보드 폼과 같은 규칙),
-     **로그인 직후 위 명령으로 대조해** 다르면 yaml을 고치고 3번을 다시 돌린다.
+     **로그인 직후 위 명령으로 대조해** 다르면 3번을 다시 돌린다.
      추정이 틀리는 건 흔하다 — URL-prefix 속성(`https://example.com/`)만 가진
      계정에는 `sc-domain:` 이 아예 없다.
-3. `projects/_template.yaml`을 복사해 `$CAPTURE_HOME/projects/{P}.yaml` 작성.
-4. `python scripts/db.py sync-project $CAPTURE_HOME/projects/{P}.yaml`
-5. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
+3. 등록한다 — 파일을 만들지 않는다. 인터뷰에서 받은 것을 그대로 넘긴다:
+   ```python
+   import db
+   conn = db.connect()
+   db.register_project(conn, {
+       "name": "{P}", "domain": "…", "type": "…", "locale": "…",
+       "gsc_property": "…", "seed_keywords": [...], "tools": [...]})
+   ```
+   `register_project` 가 받는 키는 예전 yaml 과 같은 이름이다(설정 키의 정본은
+   `db.SETTING_KEYS`). 씨앗·경쟁사는 **보낸 목록이 곧 그 사이트의 목록이다** — 뺀 것은
+   지워진다. 나중에 고칠 때는 다시 부르거나 대시보드 [설정]에서 바꾼다.
+4. 프리셋의 ai_prompt_templates를 프로젝트 맥락으로 치환해 AI 프롬프트 10~30개 초안 생성,
    사용자 검수 후 ai_prompts에 INSERT (scoring.md 5절의 파이썬 패턴 사용, is_active=1).
    손으로 짓기 어려우면 `python scripts/gen_prompts.py --project {P} --dry-run` 이
    사이트의 업종·GSC 상위 검색어를 재료로 초안을 뽑아 준다(OpenRouter 호출 1회).
@@ -453,8 +466,8 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일 · 추출성 �
 `page_audits` 에 `(프로젝트, 검사일, URL)` 로 적재된다 — 같은 날 두 번 돌아도 행이
 늘지 않는다.
 
-**대상 URL:** 기회에 걸린 검색어의 페이지(노출 상위 2개) → 노출 상위 페이지 순으로
-`page_urls`(기본 20)개. `--limit N` 으로 덮고, `page_urls: 0` 이면 끈다. 요청 간격은
+**대상 URL:** 기회에 걸린 검색어의 페이지(노출 상위 2개 — 한 번도 안 본 것, 가장 오래전에 본 것이 먼저) → 노출 상위 페이지 순으로
+`page_urls`(기본 40)개. `--limit N` 으로 덮고, `page_urls: 0` 이면 끈다. 요청 간격은
 `throttle`(기본 0.5초) — 내 서버를 두드리는 속도다.
 
 **정적 HTML 한 번이다.** 자바스크립트가 그리는 본문·스키마는 안 보인다. 본문이 얇은데
@@ -468,7 +481,7 @@ viewport · `<html lang>` · hreflang · 글의 발행·수정일 · 추출성 �
 
 ### AI 크롤러 차단 — 인용 판정보다 **먼저** 본다
 `/capture crawl` 이 남긴 robots.txt 원문(`crawl_runs.robots_txt`)을 다시 읽어,
-`config.yaml` 의 `ai_bots` 가 막혔는지 본다(`scoring.ai_bot_blocks`). **새 수집도 새
+`scripts/skill_config.py` 의 `ai_bots` 가 막혔는지 본다(`scoring.ai_bot_blocks`). **새 수집도 새
 단계도 없다.**
 
 **봇은 용도로 가른다** — `ai_bots` 의 각 줄이 `purpose` 를 갖는다(`search` 검색·인용

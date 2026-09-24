@@ -302,17 +302,21 @@ def test_backlink_and_crawl_rows_become_tables():
 
 def test_locale_sets_language_and_length_limits():
     ko, en, ja = (brief.tails(loc) for loc in ("ko-KR", "en-US", "ja-JP"))
-    assert "사이트 언어(한국어, ko-KR)로 씁니다" in ko["fix_page"] and "title 30자 이내" in ko["fix_page"]
-    assert "사이트 언어(영어, en-US)로 씁니다" in en["fix_page"], en["fix_page"]
-    assert "title 60자 이내, meta description 160자" in en["fix_page"]
-    assert "사이트 언어(일본어, ja-JP)로 씁니다" in ja["new_content"] and "title 30자 이내" in ja["new_content"]
-    # 길이 기준은 **한 벌만** 실린다 — 예전엔 사이트 언어 기준과 "다른 언어로 쓰면"
-    # 기준을 같이 실어, 한 요청문에 한국어 30/80 과 영어 60/160 이 나란히 섰다.
-    for loc, tails in (("ko-KR", ko), ("en-US", en)):
-        body = tails["fix_page"]
-        assert "자 이내" in body
-        other = "60자 이내" if loc == "ko-KR" else "30자 이내"
-        assert other not in body, f"{loc} 꼬리에 길이 기준이 두 벌이다"
+    # 사이트 기본 언어·길이는 '대상'의 줄 하나가 말한다(site_lang_line)
+    assert brief.site_lang_line("fix_page", "ko-KR") == (
+        "- 산출물 언어: 한국어 (ko-KR, 사이트 기본). 길이 기준은 title 30자 이내, meta description 80자 이내.")
+    assert "title 60자 이내, meta description 160자" in brief.site_lang_line("fix_page", "en-US")
+    assert "일본어 (ja-JP" in brief.site_lang_line("new_content", "ja-JP")
+    assert "길이" not in brief.site_lang_line("technical", "ko-KR")   # 문안을 안 쓰는 꼴
+    assert brief.shapes_payload("ko-KR")["lang_line"]["fix_page"] ==         brief.site_lang_line("fix_page", "ko-KR"), "화면 폴백이 받는 줄과 요청문의 줄이 다르다"
+    body = brief.build(_opp("ctr_gap", "검색어"), {"query_pages": {"검색어": _pages(URL)}},
+                       "ko-KR")["body"]
+    assert brief.site_lang_line("fix_page", "ko-KR") in body.split("## 대상")[1].split("\n## ")[0]
+    # 길이 기준은 **한 벌만** 실린다 — 예전엔 꼬리가 사이트 기준을 따로 말해서, 영어 페이지
+    # 요청문에 '대상'의 60/160 과 꼬리의 30/80 이 나란히 섰다. 꼬리에는 숫자가 없다.
+    for tails in (ko, en, ja):
+        for name in brief.SHAPE_NAMES:
+            assert "자 이내" not in tails[name], f"꼬리({name})가 길이 기준을 또 말한다"
     # 페이지 언어 줄이 정본이고 꼬리는 그 자리에 양보한다
     assert "위 '대상'의 '페이지 언어' 줄이 정본입니다" in ko["fix_page"]
     # 산출물(다른 언어)과 설명(한국어)의 경계를 보이게 한다
@@ -736,7 +740,7 @@ def test_fanout_questions_reach_fix_new_and_aio_briefs():
 
 
 def test_ai_visits_line_only_on_ai_kinds():
-    """AI 종류 요청문에만 'AI에서 온 방문' 줄과 '고친 뒤 볼 것' 이 붙는다.
+    """AI 종류 요청문에만 'AI에서 온 방문' 줄과 그 확인 줄이 '목표와 확인' 절에 붙는다.
 
     인용을 고치고 끝나면 측정 → 수정 → 재측정이 AI 쪽에서만 안 닫힌다. 반대로 검색어
     요청문에 AI 방문을 붙이면 상관없는 숫자가 근거 행세를 한다. 방문 줄은 그 페이지로
@@ -751,19 +755,22 @@ def test_ai_visits_line_only_on_ai_kinds():
     gap = brief.build(_opp("ai_citation_gap", "질문"), ctx)["body"]
     assert line in gap and "(chatgpt.com 9, perplexity.ai 3)" in gap, gap
     assert "GA4 2026-09-01 기준 최근 28일" in gap, gap
-    assert "## 고친 뒤 볼 것" in gap and "'AI에서 온 방문'에 이 페이지의 세션이" in gap, gap
+    assert brief.GOAL_HEAD in gap and "'AI에서 온 방문'에 이 페이지의 세션이" in gap, gap
+    assert "## 고친 뒤 볼 것" not in gap, "확인 줄이 목표 절과 따로 한 번 더 선다"
     aio = brief.build(_opp("aio_exposure", "검색어"), ctx)["body"]
     assert line in aio, aio
     # 구글 AI 요약의 클릭은 GA4 AI 유입에 안 잡힌다 — 거기서 늘기를 기다리게 하지 않는다
     assert "구글 유기 검색으로 잡혀" in aio and "'AI에서 온 방문'에" not in aio, aio
     for k in ("striking_distance", "ctr_gap", "content_gap"):
         b = brief.build(_opp(k, "검색어"), ctx)["body"]
-        assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" not in b, (k, b)
+        assert "AI 답변의 링크를 타고" not in b and "'AI에서 온 방문'" not in b, (k, b)
+        # 목표와 확인은 이제 모든 종류에 선다 — AI 쪽 문장만 없다
+        assert brief.GOAL_HEAD in b, (k, b)
     # 쟀는데 그 페이지로는 0 — 방문 줄은 없고, 볼 자리는 그대로 말한다
     none_here = {**ctx, "ai_referral_pages": [{"page": "/other", "sessions": 5,
                                                "key_events": 0, "sources": {}}]}
     b = brief.build(_opp("ai_citation_gap", "질문"), none_here)["body"]
-    assert "AI 답변의 링크를 타고" not in b and "## 고친 뒤 볼 것" in b, b
+    assert "AI 답변의 링크를 타고" not in b and "'AI에서 온 방문'에" in b, b
     # 안 쟀으면(GA4 미연결) 연결하면 잰다고 말한다 — "0" 이라고 하지 않는다
     b = brief.build(_opp("ai_citation_gap", "질문"), {"query_pages": ctx["query_pages"]})["body"]
     assert "GA4 를 연결하면" in b and "AI 답변의 링크를 타고" not in b, b
@@ -1248,7 +1255,7 @@ def test_far_aio_rank_asks_for_a_root_cause_and_a_date():
     assert ev.count("48위") >= 2 and "실제 검색 결과: 48위" not in ev, "같은 순위를 두 이름으로 두 번 말한다"
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert want.startswith("\n1. 왜 밀리는지 원인 진단 표") and "이 페이지로는 어렵다" in want, want
-    after = body.split("## 고친 뒤 볼 것")[1].split("\n## ")[0]
+    after = body.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
     assert "4주 뒤" in after and "8주 뒤에도 20위 밖이면" in after and "1페이지(10위 안)" in after, after
     # 1페이지 문턱(15위)에는 '멀다'고 하지 않는다
     near = _jv_ctx(aio_gap_ranks={"seoul juvelook": {"pos": 15, "url": _JV}},
@@ -1735,6 +1742,166 @@ def test_verdict_line_only_offers_to_compare_numbers_when_there_are_numbers():
     assert "두 숫자가 갈리면" not in brief.build(o, {}, "ko-KR")["body"]
     o["reasoning"] = "구글이 AI 요약을 붙이는데 내 링크가 없습니다 (실제 순위 40위)"
     assert "두 숫자가 갈리면" in brief.build(o, {}, "ko-KR")["body"]
+
+
+# ── 목표·끝나는 조건 — 무엇을 이루면 이 일이 끝났나 ─────────────────────────
+
+def _goal(body: str) -> str:
+    assert brief.GOAL_HEAD in body, body
+    return body.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
+
+
+def test_every_brief_says_what_done_looks_like():
+    """요청문은 할 일·산출물은 말했는데 **무엇을 이루면 끝인지**는 AI 종류에서만 말했다.
+    클릭률·순위 기회는 목표 수치도 다시 볼 때도 없이 나갔다. 끝나는 조건은 기회를
+    닫는 판정(scoring.RESOLVE_WHEN)을 가리킨다 — 두 벌이면 목표를 이뤄도 기회가 안 닫힌다."""
+    for k in scoring.ALL_KINDS:
+        tgt = "http://x/y" if k in brief.URL_KINDS else "대상"
+        g = _goal(brief.build(_opp(k, tgt), {}, "ko-KR")["body"])
+        assert "- 목표: " in g and "- 끝나는 조건: " in g, (k, g)
+        # 판정 쪽 명부(_RESOLVERS)로 가른다 — 요청문이 읽는 함수로 가르면 그 함수가 틀려도
+        # 이 검사는 같이 틀려서 통과한다
+        if k in scoring._RESOLVERS:
+            assert scoring.RESOLVE_WHEN[k] in g and "저절로 닫힙니다" in g, (k, g)
+        else:
+            assert "저절로 닫히지 않습니다" in g and "[완료 표시]" in g, (k, g)
+    # 목표는 대상 바로 뒤, 요약은 머리말 바로 뒤 — 6천 자 요청문의 중간에 묻히지 않게
+    b = brief.build(_opp("ctr_gap", "검색어"), {"query_pages": {"검색어": _pages(URL)}},
+                    "ko-KR")["body"]
+    assert b.index(brief.SUMMARY_HEAD) < b.index("## 대상") < b.index(brief.GOAL_HEAD) \
+        < b.index("## 만들어 줄 것"), b
+    summ = b.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
+    assert "- 일: 있는 페이지 고치기" in summ and "- 목표: " in summ and "- 만들 것 " in summ, summ
+
+
+def test_goal_numbers_come_from_the_expected_ctr_table():
+    # 1페이지 안(8위) · 노출 1,000 · 클릭 0 — 이 순위 기대 클릭률로 목표를 센다
+    ctx = {"striking": [{"query": "검색어", "pos": 8.0, "imp": 1000, "clk": 0, "band": "page1"}],
+           "gsc_period": 28, "query_pages": {"검색어": _pages(URL)}}
+    o = {**_opp("striking_distance", "검색어", band="page1"), "band": "page1"}
+    g = _goal(brief.build(o, ctx, "ko-KR")["body"])
+    e = scoring.EXPECTED_CTR[8]
+    assert f"기대치 {e}%" in g and f"약 {round(1000 * e / 100):,}" in g, g
+    assert "28일에" in g and "4주 뒤 첫 확인" in g, g
+    # 2페이지(14위) — 목표는 1페이지, 클릭은 10위 기대치로
+    ctx2 = {"striking": [{"query": "검색어", "pos": 14.0, "imp": 500, "clk": 1, "band": "page2",
+                          "gap": 4.0}]}
+    g2 = _goal(brief.build(_opp("striking_distance", "검색어"), ctx2, "ko-KR")["body"])
+    assert "1페이지(10위 안)" in g2 and f"약 {round(500 * scoring.EXPECTED_CTR[10] / 100):,}" in g2, g2
+    # 챗봇 인용 — 문턱을 넘는 최소 인용 수(6건이면 3건)
+    ctx3 = {"ai_by_prompt": [_ai_row(checks=6, cited=0)]}
+    g3 = _goal(brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?"), ctx3, "ko-KR")["body"])
+    assert "인용 0/6 → 3/6 이상" in g3, g3
+    assert not scoring.ai_is_gap(3, 6) and scoring.ai_is_gap(2, 6), "목표가 닫히는 판정과 어긋난다"
+
+
+def test_goal_page_baseline_uses_the_whole_page():
+    ctx = {"query_pages": {"a vs b": _pages(URL)},
+           "page_first_queries": {URL: [
+               {"query": "a vs b", "impressions": 100, "clicks": 5, "position": 8.0, "intent": "비교"},
+               {"query": "a price", "impressions": 40, "clicks": 1, "position": 9.0, "intent": "구매"}]}}
+    g = _goal(brief.build(_opp("striking_distance", "a vs b"), ctx, "ko-KR")["body"])
+    assert "기준선(지금, 이 페이지 전체): 검색어 2개 · 노출 140 · 클릭 6" in g, g
+
+
+# ── 언론 인용 — 내 페이지 고치기가 아니다 ───────────────────────────────────
+
+def test_press_lean_goes_to_presence_with_press_wording():
+    row = _ai_row(lean="press", third_share=0.0, press_share=0.8,
+                  rivals=[{"domain": "donga.com", "n": 4, "third_party": False, "press": True}])
+    ctx = {"ai_by_prompt": [row], "query_pages": {"무슨 도구가 좋아?": _pages(URL)}}
+    b = brief.build(_opp("ai_citation_gap", "무슨 도구가 좋아?", gap_kind="press"), ctx, "ko-KR")
+    assert b["shape"] == "presence", b["shape"]
+    assert b["body"].startswith(brief.INTRO_BY_LEAN["press"]), b["body"][:200]
+    assert "| donga.com | 4/6 | 언론 |" in b["body"] and "80% 가 언론 기사입니다" in b["body"], b["body"]
+    assert "기자" in " ".join(scoring.kind_play("ai_citation_gap", gap_kind="press")["deliver"])
+    assert "기사형 광고" in brief.tails("ko-KR")["presence"]
+    # 제3자 플랫폼이 먼저다 — 포털 뉴스는 포털로 센다
+    assert scoring.is_press("health.chosun.com") and not scoring.is_press("chosun.example")
+
+
+# ── 콘텐츠 공백의 갈래를 잃어도 순위가 있으면 고치기다 ─────────────────────
+
+def test_content_gap_without_gap_kind_falls_back_to_the_ranked_page():
+    """경쟁사 수집 행이 비면 gap_kind 가 None 이 되어 '페이지 자체가 없다'로 떨어졌다 —
+    홈이 10위인 검색어에 새 글 설계가 나갔다."""
+    o = _opp("content_gap", "더피부과")                      # gap_kind 없음
+    b = brief.build(o, {"query_pages": {"더피부과": _pages(URL)}}, "ko-KR")
+    assert b["shape"] == "fix_page", b["shape"]
+    assert "페이지 자체가 없는" not in b["body"], b["body"]
+    assert brief.build(o, {}, "ko-KR")["shape"] == "new_content"
+
+
+# ── 외부 출처는 진단에 서면 산출물이다 ─────────────────────────────────────
+
+def test_external_links_diagnosis_becomes_a_deliverable():
+    a = _audit()
+    a["advice"] = [{"tag": "외부 링크", "now": "외부 링크 0개", "fix": "출처를 거세요"}]
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: a}}
+    o = {**_opp("striking_distance", "검색어", band="page1"), "band": "page1"}
+    want = brief.build(o, ctx, "ko-KR")["body"].split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert brief.DELIVER_BY_TAG["외부 링크"] in want, want
+    assert "[외부 링크]" not in want, "산출물로 만들면서 '이번 아님'으로도 민다"
+
+
+# ── 링크 — 잘린 표에서도 후보를, 주제가 겹치는 글을 먼저 ────────────────────
+
+def test_link_candidates_use_the_full_list_and_topic_overlap():
+    froms = [f"https://me.example/p{i}/" for i in range(60)]
+    ins = [{"from": f, "anchor": "메뉴", "body": False} for f in froms[:40]]
+    ins[0] = {**ins[0], "total": 60, "pages": 60, "anchors": [["메뉴", 60]],
+              "from_all": froms, "chrome_known": True, "body_from": [], "body_total": 0}
+    ctx = {"crawl_inlinks": {_LK: ins},
+           "page_first_queries": {_LK: [{"query": "milia removal", "impressions": 50,
+                                         "clicks": 1, "position": 9.0}]},
+           "query_pages": {
+               "milia removal cost": [{"page": froms[50], "impressions": 30, "position": 15.0}],
+               "unrelated thing": [{"page": "https://me.example/far/", "impressions": 900,
+                                    "position": 3.0}]},
+           "crawl_outlinks": {_LK: []}}
+    body = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True, query="milia removal"))
+    # 표가 40곳에서 잘렸어도 전체 목록(from_all)이 있으니 후보를 낸다. 메뉴로만 건 글도 후보다.
+    assert brief.LINK_CANDIDATES_TRUNCATED not in body and brief.LINK_CANDIDATES_HEAD in body, body
+    sec = body.split(brief.LINK_CANDIDATES_HEAD)[1]
+    assert sec.index(froms[50]) < sec.index("/far/"), "주제가 먼 글이 겹치는 글보다 위다"
+    assert "milia, removal" in sec, sec
+    # 센 값으로 말한다 — 본문 링크 0, 추정 문장("못 가릅니다")은 없다
+    assert "본문 안** 링크 0개" in body and "못 가릅니다" not in body, body
+    # 나가는 링크 — 본문에서 아직 안 거는 관련 글
+    assert brief.OUTLINK_CANDIDATES_HEAD in body and froms[50] in body.split(
+        brief.OUTLINK_CANDIDATES_HEAD)[1], body
+    ctx["crawl_outlinks"] = {_LK: [froms[50]]}
+    body2 = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True))
+    assert brief.OUTLINK_CANDIDATES_HEAD not in body2, "이미 거는 글을 또 제안한다"
+
+
+# ── 형식 — 상위 글이 가진 표·영상, 검색결과에 선 칸 ────────────────────────
+
+def test_top_results_formats_and_serp_features_reach_the_brief():
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: {**_audit(), "tables": 0,
+                                                                          "lists": 1}},
+           "serp_top": {"검색어": [{"position": 1, "title": "상위", "url": "https://r.example/1"}]},
+           "serp_outlines": {"https://r.example/1": {"title": "상위", "h2": ["가", "나"], "words": 900,
+                                                    "tables": 2, "lists": 3, "images": 6, "videos": 1}},
+           "rank_by_kw": {"검색어": {"features": ["video", "people_also_ask", "ai_overview"]}}}
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert "| 1위 | 900 | 2 | 3 | 6 | 1 |" in body and "| 우리 페이지 | 120 | 0 | 1 | 3 | — |" in body, body
+    assert brief.SERP_FORMAT_HINT["video"] in body and brief.SERP_FORMAT_HINT["people_also_ask"] in body
+    # 옛 행(형식 칸 NULL)에는 형식 표가 안 선다 — 0 을 지어내지 않는다
+    ctx["serp_outlines"]["https://r.example/1"].update(tables=None, lists=None, images=None,
+                                                         videos=None)
+    assert "상위 글과 우리 페이지의 형식" not in brief.build(_opp("ctr_gap", "검색어"), ctx,
+                                                        "ko-KR")["body"]
+
+
+def test_differing_words_skip_plurals_and_stray_queries():
+    """'갈리는 말'은 묶음을 실제로 가르는 말만 — 복수형(scar/scars)은 한 말이고, 노출 1짜리
+    외국어 검색어('abnom adalah')의 낱말은 묶음을 가르지 않는다."""
+    rows = [{"query": "papular scar", "impressions": 17}, {"query": "papular scars nose", "impressions": 14},
+            {"query": "papular acne scar", "impressions": 10}]
+    assert brief._differing_words(rows, "papular") == ["scar", "nose", "acne"]
+    rows = [{"query": "abnom", "impressions": 165}, {"query": "abnom adalah", "impressions": 1}]
+    assert brief._differing_words(rows, "abnom") == []
 
 
 if __name__ == "__main__":

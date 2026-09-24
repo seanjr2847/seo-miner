@@ -1305,7 +1305,8 @@ def test_seam_27_ai_rivals_single_count():
     for who, got in (("ai_by_prompt", row), ("ai_gap_rows", gap)):
         for k in ("rivals", "misses", "excerpts", "by_engine", "recommended", "lean"):
             assert got.get(k) == want[k], f"{who}.{k} 가 scoring.ai_tally 와 다르다: {got.get(k)!r}"
-    assert want["rivals"][0] == {"domain": "reddit.com", "n": 2, "third_party": True}, want
+    assert want["rivals"][0] == {"domain": "reddit.com", "n": 2, "third_party": True,
+                                 "press": False}, want
     assert "miss_domains" not in row and "miss_answer" not in row, "옛 표본 칸이 되살아났다"
 
     # ── 말하는 쪽: 요청문이 그 수를 그대로 말하고, 다시 세지 않는다 ──
@@ -1571,7 +1572,7 @@ def test_seam_34_run_tool_writes_whole_brief_and_acks_the_group():
     o = {"id": 1, "kind": "striking_distance", "target": "_seam29", "score": 1.0,
          "status": "new", "reasoning": "r", "band": "page2", "gap_kind": None,
          "play": scoring.kind_play("striking_distance", band="page2")}
-    o["brief"] = brief.build(o, d)
+    o["brief"] = brief.build(o, d, "ko-KR")        # attach 가 넘기는 것과 같은 로케일
     d["opps"], d["brief"] = [o], brief.shapes_payload("ko-KR")
     want = brief.text(o, d, "ko-KR")
     assert "## 답의 형식" in want and "## 규칙" in want, "꼬리의 제목이 바뀌었다 — 검사가 헛돈다"
@@ -1777,6 +1778,17 @@ def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
     in_brief = {r["query"] for r in brief._page_queries("/p/a", ctx)}
     assert judged == in_brief, (
         f"판정과 요청문이 같은 페이지에 다른 검색어를 묶는다: {judged ^ in_brief}")
+    # 정본 경로 — gather 가 싣는 page_first_queries. query_pages 는 기회·순위의 검색어만
+    # 갖는다: 기회가 검색어 하나에만 섰으면 뒤집어 센 표는 그 하나뿐인데 판정은 넷이다.
+    import dashboard
+    narrow = {"query_pages": scoring.pages_by_query(c, 1, ["syringoma vs milia"]),
+              "page_first_queries": dashboard._axis_query_pages(
+                  c, 1, {"id": 1, "domain": "e.com"}, None,
+                  opps=[{"target": "syringoma vs milia", "kind": "ctr_gap"}],
+                  striking=[], ranks_all=[], ups=[], downs=[])["page_first_queries"]}
+    got = {r["query"] for r in brief._page_queries("/p/a", narrow)}
+    assert got == judged, (
+        f"요청문 표가 기회에 걸린 검색어만 본다 — 판정은 {sorted(judged)}, 표는 {sorted(got)}")
     # 의도 이름도 한 벌 — brief 는 scoring 의 것을 다시 내보내기만 한다
     assert brief.query_intent is scoring.query_intent, "의도 분류가 두 벌이다"
     assert brief.INTENT_DEFAULT is scoring.INTENT_DEFAULT
@@ -1877,7 +1889,7 @@ def test_seam_42_project_types_are_one_list():
     settings.html 은 조립이 채우는 <!--TYPE_OPTIONS--> 로, app.html 은 server/app.py 가
     싣는 window.__TYPES__ 로(언어-지역이 LOCALES 를 받는 것과 같은 길이다).
     **표기 규칙만 화면마다 다르다**: 설정 폼은 `id — 라벨`(사용자가 그 id 를
-    ~/.capture/projects/*.yaml 에 직접 적는다), 등록 화면은 라벨만(id 를 쓸 일이 없다).
+    설정 폼이 값으로 보낸다), 등록 화면은 라벨만(id 를 쓸 일이 없다).
     그래서 아래는 두 화면에서 **라벨 문구**가 같은지를 본다 — id 접두는 벗겨 내고 본다.
     """
     import dashboard
@@ -2244,6 +2256,113 @@ def test_seam_49_page_fix_summarizes_before_it_tables():
     for w in ("x.now", "x.fix"):
         assert w not in lead.group(1), \
             f"요약이 판정 산문({w})을 건드린다 — 정본은 scoring.page_advice 다"
+
+
+def test_seam_50_site_settings_live_only_in_the_brain():
+    """50) 사이트별 설정을 읽는 길은 db.project_cfg 하나다 — 파일을 다시 읽지 않는다.
+
+    양쪽 다 혼자서는 멀쩡했다: yaml 은 정상적인 설정 파일이었고 동기화는 정상적으로
+    brain.db 를 날랐다. 어긋난 건 둘 사이다 — 호스팅에서 그 파일은 컨테이너 디스크
+    (`/data/users/…`)에 살았고, `projects.config_path` 에 적힌 **그 경로 문자열만**
+    brain.db 를 타고 사용자 PC 로 내려왔다. 파일은 안 따라온다. 그래서 원격 사이트의
+    brand_aliases 는 몇 번을 동기화해도 로컬에서 안 읽혔고, 읽으려는 코드는 이 PC 에
+    없는 리눅스 경로를 열려다 조용히 실패했다(2026-09-18).
+
+    그 길을 하나라도 되살리면 같은 모양이 돌아온다. 그래서 두 가지를 못 박는다:
+      · 런타임 코드가 load_project_yaml·config_path 로 설정을 얻지 않는다
+      · 설정 키의 정본은 db.SETTING_KEYS 한 벌이다(화면이 다루는 것과 대조)
+    """
+    src_dir = ROOT / "skills" / "capture" / "scripts"
+    # 수입 전용 경로는 db.py 안에만 있다 — 거기가 옛 보관함을 한 번 옮기는 자리다.
+    for f in sorted(src_dir.glob("*.py")) + [ROOT / "server" / "app.py",
+                                             ROOT / "server" / "exports.py"]:
+        if f.name in ("db.py", "test_seams.py", "test_capture.py"):
+            continue
+        body = f.read_text("utf-8")
+        assert "load_project_yaml" not in body, \
+            f"{f.name} 이 설정을 파일에서 읽는다 — 정본은 db.project_cfg 다"
+        code = re.sub(r"#[^\n]*", "", body)          # 주석 속 낱말로 걸리지 않게
+        code = re.sub(r'"""[\s\S]*?"""', "", code)
+        if f.name == "remote.py":
+            # 한 곳만 이 이름을 안다 — 옮길 칸에서 **빼려고**. 서버 값을 들이면 로컬에
+            # 리눅스 경로가 박힌다(이 이음매가 생긴 바로 그 사고다).
+            assert re.findall(r'config_path', code) == ["config_path"], \
+                "remote.py 가 config_path 를 제외 목록 말고 다른 데서 쓴다"
+            assert '"id", "config_path"' in code, "remote.py 가 config_path 를 안 빼고 옮긴다"
+            continue
+        assert "config_path" not in code, \
+            f"{f.name} 이 config_path 를 읽는다 — 그 기계에서만 뜻이 있는 경로다"
+
+    # 설정 화면이 다루는 프로필 필드 ↔ Brain 이 아는 것. 양방향으로 본다.
+    sys.path.insert(0, str(ROOT / "server"))
+    import app as srv
+    profile = set(srv.PROFILE_FIELDS)
+    # 씨앗·경쟁사는 KV 가 아니라 행이 정본이다 — 그 둘만 예외로 빠진다.
+    rows = {"seed_keywords", "competitors_manual"}
+    assert profile - rows <= set(db.SETTING_KEYS),         f"화면이 다루는데 Brain 이 모르는 설정: {sorted(profile - rows - set(db.SETTING_KEYS))}"
+    for name in rows:
+        assert name not in db.SETTING_KEYS,             f"{name} 이 설정 표에도 있다 — 정본은 keywords/competitors 행 한 벌이다"
+    assert hasattr(db, "seed_keywords") and hasattr(db, "manual_competitors"),         "행에서 되읽는 통로가 없다 — 화면이 사본을 들게 된다"
+
+
+def test_seam_51_sync_carries_site_settings():
+    """51) 동기화가 project_settings 를 실어 나른다 — 사이트별로 갈라서.
+
+    설정을 Brain 으로 옮긴 이유가 이것이다. remote._plan 은 projects 에서 아래로
+    따라 내려가며 표를 스스로 찾으므로, 제대로 매달아 두기만 하면 나르는 코드는
+    한 줄도 안 고쳐도 된다. 거꾸로 **떼어 놓으면 조용히 안 실린다** — 옮기기 전과
+    똑같이 설정만 안 따라오는 모양으로 되돌아간다.
+
+    매다는 길은 둘이다(remote._parents): 선언된 FK, 아니면 `<단수>_id` 이름 규칙.
+    그래서 여기서는 "FK 를 썼나"가 아니라 **계획에 들었나**를 본다 — 그것이 나를지
+    말지를 실제로 정하는 것이고, 컬럼 이름만 바꿔도 표가 계획에서 빠진다(실측).
+    """
+    import sqlite3
+    import remote
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(db.SCHEMA)
+    order, parents = remote._plan(con)
+    assert "project_settings" in order,         "동기화 계획에 project_settings 가 없다 — projects 로 가는 FK 를 확인한다"
+    assert parents["project_settings"] == {"project_id": "projects"},         f"project_settings 의 부모가 projects 하나가 아니다: {parents['project_settings']}"
+    con.close()
+
+
+def test_seam_52_brief_language_line_is_one_set():
+    """52) 요청문의 언어·길이 기준은 '대상'의 줄 **하나**다 — 서버 요청문과 화면 폴백 양쪽.
+
+    예전엔 꼬리(사이트마다 한 벌)가 사이트 언어의 길이 기준을 말하고, 영어 페이지의 '대상'
+    줄이 또 말해서 한 요청문에 30자와 60자가 나란히 섰다. 이제 꼬리는 숫자를 안 갖고,
+    기회가 아닌 행의 폴백(dashboard.html 의 fallbackBrief)도 서버가 준 줄(BRIEF.lang_line)을
+    받아 쓴다 — 폴백이 그 줄을 안 넣으면 폴백 요청문은 언어도 길이도 없이 나간다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    pay = brief.shapes_payload("ko-KR")
+    assert set(pay["lang_line"]) == set(brief.SHAPE_NAMES), "꼴마다 언어 줄이 있어야 한다"
+    for name, t in pay["tails"].items():
+        assert "자 이내" not in t, f"꼬리({name})가 길이 기준을 또 말한다 — 두 벌이다"
+    m = re.search(r"function fallbackBrief\(c\) \{(.*?)\n\}", ctx["shell"], re.S)
+    assert m, "fallbackBrief 를 못 찾았다 — 정규식이 틀렸다"
+    assert "B.lang_line" in m.group(1), "폴백 요청문이 서버의 언어 줄(BRIEF.lang_line)을 안 넣는다"
+
+
+def test_seam_53_skill_settings_are_code_not_a_file():
+    """53) 스킬 설정은 코드 한 벌(skill_config.CONFIG)이다 — 파일이 되살아나지 않는다.
+
+    config.yaml 이었을 때 호스팅(Railway)과 로컬(플러그인 캐시)이 각자 한 벌을 들고
+    어긋났다. 파일이 다시 생기면 읽는 곳이 없어 조용히 무시되고, 사람은 그걸 고치며
+    반영됐다고 믿는다.
+    """
+    import collector
+    import skill_config
+    assert collector.config() is skill_config.CONFIG, "collector.config() 가 코드 설정을 안 돌려준다"
+    stray = SCRIPTS.parent / "config.yaml"
+    assert not stray.exists(), f"{stray} 가 되살아났다 — 읽는 곳이 없는 설정 파일이다"
+    src = (SCRIPTS / "collector.py").read_text("utf-8")
+    assert "yaml.safe_load" not in src, "collector 가 또 설정 파일을 읽는다 — 두 벌이다"
 
 
 if __name__ == "__main__":

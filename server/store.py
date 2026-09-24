@@ -234,6 +234,18 @@ def mark_run(conn: sqlite3.Connection, site_id: int) -> None:
     conn.commit()
 
 
+def mark_busy(conn: sqlite3.Connection, site_id: int) -> None:
+    """부분 실행(단계 몇 개만) 시작 표시 — 도는 중만 켜고 주기 시계(last_run_at)는 안 건드린다.
+
+    예전엔 부분 실행도 mark_run 을 불러 last_run_at 을 찍었다. 그러면 gsc 만 다시 읽어도
+    "전체 재측정을 방금 했다"가 되어 주 1회 전체 런이 매번 뒤로 밀렸다 — theotherskin 은
+    9/11·9/15·9/18 부분 실행만 돌고 순위 조회·페이지 감사가 3주 동안 한 번도 안 돌았다
+    (요청문 237장이 경쟁 상위 글 없이 나갔다). 바로 위 주석은 내내 반대를 말하고 있었다."""
+    conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP, stage=NULL, stage_pct=0 "
+                 "WHERE id=?", (site_id,))
+    conn.commit()
+
+
 def mark_stage(conn: sqlite3.Connection, site_id: int, stage: str, pct: int) -> None:
     """지금 도는 단계와 진행률. 화면이 '분석 중…' 대신 몇 %인지 말할 수 있게 하는 값이다."""
     conn.execute("UPDATE sites SET stage=?, stage_pct=? WHERE id=?",
@@ -601,6 +613,14 @@ def demo() -> None:
                      (sid,))
         conn.commit()
         assert len(due_sites(conn)) == 1, "주기가 지났는데 안 잰다"
+        # 부분 실행은 주기 시계를 안 건드린다 — 찍으면 전체 런이 매번 밀린다(3주 동안 그랬다)
+        before = conn.execute("SELECT last_run_at FROM sites WHERE id=?", (sid,)).fetchone()[0]
+        mark_busy(conn, sid)
+        assert conn.execute("SELECT last_run_at FROM sites WHERE id=?",
+                            (sid,)).fetchone()[0] == before, "부분 실행이 주기 시계를 찍었다"
+        assert due_sites(conn) == [], "부분 실행이 도는 중인데 전체 런을 또 잡는다"
+        mark_done(conn, sid)
+        assert len(due_sites(conn)) == 1, "부분 실행 뒤 밀린 전체 런이 안 잡힌다"
         conn.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP WHERE id=?", (sid,))
         conn.commit()
         assert due_sites(conn) == [], "수집 중인데 또 잡는다"

@@ -1877,6 +1877,8 @@ function fallbackBrief(c) {
   if (c.url) L.push(`- 페이지: ${c.url}`);
   else L.push(B.no_page[shape === "new_content" ? "new_content" : "unknown"]);
   if (c.problem) L.push(`- 왜 걸렸나: ${c.problem}`);
+  // 언어·길이 기준은 '대상'의 줄 하나가 말한다 — 꼬리는 그 줄을 가리키기만 한다
+  if (B.lang_line && B.lang_line[shape]) L.push(B.lang_line[shape]);
   L.push("");
 
   const a = c.audit;

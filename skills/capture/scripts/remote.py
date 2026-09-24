@@ -332,12 +332,15 @@ def merge(remote_file, project: str) -> dict[str, int]:
         rpid = row["id"]
         row = con.execute("SELECT id FROM main.projects WHERE name=?", (project,)).fetchone()
         if row is not None:
-            # 있으면 로컬 행을 그대로 둔다: config_path 는 로컬 경로라 서버 값으로
-            # 덮으면 그 사이트 로컬 명령이 통째로 깨진다.
+            # 있으면 로컬 행을 그대로 둔다 — 이름 말고는 서버가 더 잘 아는 것이 없다.
             lpid = row["id"]
         else:
+            # config_path 는 **안 옮긴다.** 그 기계에서만 뜻이 있는 절대경로라, 서버 것을
+            # 그대로 들이면 로컬에 `/data/users/1/…` 가 박힌다 — 실제로 그랬고, 사이트
+            # 설정을 읽으려는 코드가 없는 파일을 가리켰다. 설정은 이제 project_settings
+            # 표를 타고 온다(아래 _plan 이 FK 로 찾는다).
             cols = [c for c in _cols(con, "main", "projects")
-                    if c != "id" and c in _cols(con, "rem", "projects")]
+                    if c not in ("id", "config_path") and c in _cols(con, "rem", "projects")]
             q = ",".join(f'"{c}"' for c in cols)
             src = con.execute(f"SELECT {q} FROM rem.projects WHERE id=?", (rpid,)).fetchone()
             lpid = con.execute(f"INSERT INTO main.projects ({q}) "
@@ -639,7 +642,7 @@ def _defaults(stage: str) -> dict | None:
 def opts_of(args, stage: str) -> dict:
     """argparse 네임스페이스에서 **기본값이 아닌 값만** `{stage}.{key}` 로 뽑는다.
 
-    기본값과 같은 것은 안 보낸다: 서버는 자기 config.yaml·프로젝트 yaml 로 그
+    기본값과 같은 것은 안 보낸다: 서버는 자기 skill_config·사이트 설정으로 그
     값을 스스로 정하는데(collector.settings 의 우선순위), 로컬이 파서 fallback 을
     실어 보내면 서버 쪽 설정을 조용히 덮어쓴다.
 

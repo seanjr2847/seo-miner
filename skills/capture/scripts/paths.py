@@ -10,7 +10,6 @@ SQLite·SCHEMA·_migrate 를 통째로 끌고 들어와야 했다. 그 seam 을 
 
   CAPTURE_HOME (default ~/.capture)
     ├── brain.db
-    ├── projects/*.yaml
     ├── docs/{사이트}/…            (docs_dir)
     ├── creds/{사이트}/…           (creds_dir — 레거시)
     ├── env

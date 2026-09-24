@@ -621,18 +621,15 @@ def api_ai_prompts(body: dict = Depends(_body), project: str = Depends(_project_
 def _ai_prompts_view(c, project: str) -> dict:
     """질문 목록 한 벌 — 화면은 조회든 편집이든 이 모양만 받아 다시 그린다.
 
-    limit 은 사이트 yaml 의 limits.max_ai_prompts 다. collect_ai 가 켜진 질문을
+    limit 은 사이트 설정의 limits.max_ai_prompts 다. collect_ai 가 켜진 질문을
     그 수만큼만 물어보므로, 화면이 다른 수를 말하면 사용자는 자기가 켠 질문이
     조용히 빠지는 걸 보게 된다.
     """
     p = db.get_project(c, project)
-    limit = 30
-    if p["config_path"]:
-        try:
-            cfg = db.load_project_yaml(p["config_path"])
-            limit = int((cfg.get("limits") or {}).get("max_ai_prompts") or 30)
-        except (db.ProjectConfigNotFound, ImportError, TypeError, ValueError):
-            pass
+    try:
+        limit = int((db.project_cfg(c, p).get("limits") or {}).get("max_ai_prompts") or 30)
+    except (TypeError, ValueError):
+        limit = 30
     return {"prompts": [dict(r) for r in db.list_ai_prompts(c, p["id"])],
             "active_total": db.count_active_ai_prompts(c, p["id"]),
             "limit": limit}
@@ -727,8 +724,8 @@ def api_run(body: dict = Depends(_body), project: str = Depends(_project_b),
         started = store.request_run(conn, uid, project)
     else:
         # 부분 실행은 주기 판정을 건드리지 않는다 — gsc 만 다시 읽었다고
-        # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다.
-        store.mark_run(conn, row["id"])
+        # 전체 재측정을 한 것으로 치면 다음 자동 런이 통째로 밀린다(mark_busy).
+        store.mark_busy(conn, row["id"])
         started = True
     if started:
         # 새 런의 로그는 여기서부터다. 워커가 뜨기까지 몇 초가 걸리는데, 그 사이
@@ -924,22 +921,18 @@ RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72
                (168, "주 1회"))
 
 
-# 사이트 설정 화면(#sm-set)의 "이 사이트 설정" 칸이 다루는 프로필 필드 — 전부
-# 프로젝트 yaml 에만 있고 Brain(sqlite) 스키마에는 컬럼이 없다(db.py SCHEMA 참고).
-# 정본은 db.py 의 CARRY_FIELDS/PREFILL_KEYS 와 같은 이름이어야 한다 — 여기서
-# 새 이름을 짓지 않는다.
+# 사이트 설정 화면(#sm-set)의 "이 사이트 설정" 칸이 다루는 프로필 필드.
+# 전부 Brain 안에 산다: brand_aliases·tools 는 project_settings, seed_keywords·
+# competitors_manual 은 keywords(source='seed')·competitors(source='manual') 행이다.
+# 예전엔 넷 다 프로젝트 yaml 에만 있었고, 그 파일이 호스팅에서는 컨테이너 디스크에
+# 살아서 동기화로는 영영 안 내려왔다(db.project_cfg 주석).
+# 정본은 db.py 의 SETTING_KEYS/PREFILL_KEYS 와 같은 이름이어야 한다.
 PROFILE_FIELDS = ("brand_aliases", "seed_keywords", "competitors_manual", "tools")
 
 
-def _project_cfg(pr) -> dict:
-    """프로젝트 yaml — 없으면(등록 직후 sync 전, 또는 손상) 빈 값."""
-    path = pr["config_path"] if pr else None
-    if not path:
-        return {}
-    try:
-        return db.load_project_yaml(path)
-    except (db.ProjectConfigNotFound, OSError):
-        return {}
+def _project_cfg(c, pr) -> dict:
+    """사이트별 설정 — Brain 한 곳(db.project_cfg). 등록 직후면 빈 값이다."""
+    return db.project_cfg(c, pr) if pr else {}
 
 
 def _joined(cfg: dict, key: str) -> str:
@@ -959,11 +952,16 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
     try:
         pr = db.get_project(c, project)
         ga4, locale, domain = pr["ga4_property"] or "", db.project_locale(pr), pr["domain"]
-        cfg = _project_cfg(pr)
+        cfg = _project_cfg(c, pr)
+        # 씨앗·경쟁사는 설정 줄이 아니라 **행**이 정본이다 — keywords(source='seed')·
+        # competitors(source='manual'). 여기서 사본을 들고 있으면 화면이 지운 값이
+        # 다음 열람에 되살아난다(예전 yaml 이 그랬다).
+        seeds = db.seed_keywords(c, pr["id"])
+        rivals = db.manual_competitors(c, pr["id"])
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale, cfg = "", "", {}
+        ga4, locale, cfg, seeds, rivals = "", "", {}, [], []
     brand_aliases = _joined(cfg, "brand_aliases")
     # 브랜드 표기가 비어 있으면 도메인 앞부분을 초안으로 얹는다 — 검색어 화면이
     # "브랜드 표기가 비었습니다"라고 말해도 여기 채울 칸이 없던 것이 원인이다.
@@ -979,8 +977,8 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
             "brand_aliases": brand_aliases,
             "brand_suggestion": brand_suggestion,
-            "seed_keywords": _joined(cfg, "seed_keywords"),
-            "competitors_manual": _joined(cfg, "competitors_manual"),
+            "seed_keywords": ", ".join(seeds),
+            "competitors_manual": ", ".join(rivals),
             "tools": _joined(cfg, "tools")}
 
 
@@ -1016,30 +1014,29 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
 
 
 def _api_settings_profile(profile, project: str, c) -> dict:
-    """PROFILE_FIELDS 중 보낸 것만 프로젝트 yaml 에 쓰고 Brain 을 다시 맞춘다.
+    """PROFILE_FIELDS 중 보낸 것만 Brain 에 쓴다.
 
-    스키마를 아는 곳은 db.py 뿐이라 여기서 SQL 을 새로 짜지 않는다 — yaml 을
-    고친 뒤 db.sync_project 를 다시 돌리는 것은 사이트 등록(dashboard.create_project)이
-    이미 하는 것과 같은 절차다(씨앗 키워드·경쟁사 도메인을 새로 얹는다).
-    sync_project 는 INSERT OR IGNORE 라 뺀 값은 Brain 에서 지워지지 않는다 — 로컬
-    마법사에서 재등록해도 마찬가지다(그 화면 주석 참고). 새 동작이 아니다.
+    예전에는 프로젝트 yaml 을 고치고 db.sync_project 를 다시 돌렸다. 그 파일이
+    호스팅에서는 컨테이너 디스크에 살아서, 저장은 되는데 그 값이 사용자의 PC 로는
+    영영 안 내려갔다 — 동기화가 나르는 것은 Brain 뿐이기 때문이다(db.project_cfg 주석).
+    이제 설정도 Brain 안이라 저장한 것이 그대로 따라간다.
+
+    스키마를 아는 곳은 db.py 뿐이라 여기서 SQL 을 새로 짜지 않는다. 씨앗·경쟁사는
+    **보낸 목록이 곧 그 사이트의 목록이다** — 뺀 값은 지워진다. 예전 INSERT OR IGNORE
+    시절에는 안 지워져서, 화면에서 지워도 다음 열람에 그대로 되살아났다.
     """
     if not isinstance(profile, dict):
         raise HTTPException(status_code=400, detail="profile 은 {필드: 값} 모양이어야 합니다.")
     pr = db.get_project(c, project)
-    path = pr["config_path"]
-    if not path or not Path(path).exists():
-        raise HTTPException(status_code=500,
-                            detail="이 사이트의 설정 파일을 찾을 수 없습니다 — 다시 등록해 주세요.")
-    import yaml  # lazy — dashboard.create_project 와 같은 이유
-    cfg = yaml.safe_load(Path(path).read_text("utf-8")) or {}
-    for key in PROFILE_FIELDS:
-        if key not in profile:
-            continue
-        cfg[key] = [s.strip() for s in re.split(r"[,\n]", str(profile.get(key) or "")) if s.strip()]
-    Path(path).write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), "utf-8")
-    db.sync_project(path)
-    return {"ok": True, **{k: _joined(cfg, k) for k in PROFILE_FIELDS}}
+    edit = {k: [s.strip() for s in re.split(r"[,\n]", str(profile.get(k) or "")) if s.strip()]
+            for k in PROFILE_FIELDS if k in profile}
+    db.register_project(c, {**{f: pr[f] for f in ("name", "type", "domain", "locale",
+                                                  "gsc_property", "ga4_property")}, **edit})
+    cfg = db.project_cfg(c, pr)
+    return {"ok": True,
+            "brand_aliases": _joined(cfg, "brand_aliases"), "tools": _joined(cfg, "tools"),
+            "seed_keywords": ", ".join(db.seed_keywords(c, pr["id"])),
+            "competitors_manual": ", ".join(db.manual_competitors(c, pr["id"]))}
 
 
 # --- GA4 ------------------------------------------------------------------

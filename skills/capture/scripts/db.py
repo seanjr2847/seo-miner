@@ -4,7 +4,6 @@
 State lives OUTSIDE the skill folder so skill updates never touch data.
   CAPTURE_HOME (default ~/.capture)
     ├── brain.db
-    ├── projects/*.yaml
     ├── reports/{project}/{date}.html
     └── gsc_token.json / gsc_oauth_client.json
 
@@ -14,7 +13,7 @@ SQLite·SCHEMA·_migrate 를 끌고 오지 않는다.
 
 CLI:
   python db.py init
-  python db.py sync-project <path/to/project.yaml>
+  python db.py register <name> <domain> [type] [locale]
   python db.py stats <project>
   python db.py sql "SELECT ..." [--project NAME]
                                        # read-only, for Brain queries.
@@ -163,7 +162,9 @@ CREATE TABLE IF NOT EXISTS serp_outlines (
   status INTEGER,                             -- 가져오기 결과 (실패도 남긴다 — 다음 런이 또 두드리지 않게)
   title TEXT,
   h2_json TEXT,                               -- [] = 열었는데 H2 가 없었다
-  words INTEGER
+  words INTEGER,
+  -- 형식 — 본문 틀 밖의 표·목록·이미지·영상 수. NULL = 이 칸이 생기기 전에 본 글(안 셌다)
+  tables INTEGER, lists INTEGER, images INTEGER, videos INTEGER
 );
 CREATE TABLE IF NOT EXISTS serp_questions (   -- 구글이 이 검색어에 같이 보여 준 질문·검색어 (팬아웃 재료)
   id INTEGER PRIMARY KEY,
@@ -246,7 +247,7 @@ CREATE TABLE IF NOT EXISTS ga4_breakdown (
 CREATE INDEX IF NOT EXISTS idx_ga4_bd ON ga4_breakdown(project_id, snapshot_date, dim);
 -- AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회). 채널 필터가 없다 —
 -- chatgpt.com 같은 출처는 대개 Referral 로 잡혀 위 두 표(유기 검색만)에서 통째로 빠진다.
--- source 는 GA4 원문이 아니라 그것이 걸린 config.yaml ai_referrers 의 호스트다
+-- source 는 GA4 원문이 아니라 그것이 걸린 skill_config ai_referrers 의 호스트다
 -- (www.perplexity.ai → perplexity.ai) — 출처별 합계가 표기 흔들림에 안 갈라지게.
 -- 쟀는데 0 인 날은 행이 없다. 그래서 "쟀다"는 사실은 ga4_ai_measured 가 따로 갖는다 —
 -- 둘을 한 표에 두면 "안 쟀다"와 "쟀고 0"이 같은 빈 결과로 뭉친다.
@@ -468,7 +469,7 @@ CREATE TABLE IF NOT EXISTS keyword_gap (      -- 경쟁사 대비 키워드 위�
 CREATE INDEX IF NOT EXISTS idx_kwgap ON keyword_gap(project_id, checked_date, kind);
 
 -- ── 사이트 크롤 (collect_crawl.py) ────────────────────────────────────────────
--- page_audits 는 '기회가 걸린 페이지 20개'를 깊게 본다. 이쪽은 반대다: 사이트를
+-- page_audits 는 '기회가 걸린 페이지 수십 곳'을 깊게 본다. 이쪽은 반대다: 사이트를
 -- 넓게 돌아 깨진 링크·리다이렉트 사슬·고아 페이지처럼 **전수를 봐야만 나오는 것**을
 -- 잡는다. 회차(crawl_runs)로 남기는 이유는 하나다 — 지난번 대비 새로 깨진 것.
 CREATE TABLE IF NOT EXISTS crawl_runs (
@@ -516,7 +517,8 @@ CREATE TABLE IF NOT EXISTS crawl_links (
   url_to TEXT NOT NULL,
   anchor TEXT,
   is_internal INTEGER DEFAULT 1,
-  nofollow INTEGER DEFAULT 0
+  nofollow INTEGER DEFAULT 0,
+  in_chrome INTEGER                           -- 1 = 메뉴·머리말·꼬리말·곁가지 안, 0 = 본문. NULL = 이 칸 전의 크롤(모른다)
 );
 CREATE INDEX IF NOT EXISTS idx_crawl_links ON crawl_links(run_id, url_to);
 CREATE TABLE IF NOT EXISTS crawl_hreflang (   -- 페이지가 선언한 hreflang — 상호 참조는 전수를 봐야 안다
@@ -547,6 +549,13 @@ CREATE TABLE IF NOT EXISTS creations (      -- /create 가 실제로 고친 것 
   note TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   merged INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS project_settings ( -- 사이트별 설정. 정본은 여기 한 곳이다
+  id INTEGER PRIMARY KEY,                     -- remote.merge 가 FK 로 이 표를 스스로 찾아 실어 나른다
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  key        TEXT NOT NULL,                   -- 정본 목록은 db.SETTING_KEYS
+  value      TEXT NOT NULL,                   -- JSON. 목록도 수도 참도 한 가지 꼴로 담는다
+  UNIQUE(project_id, key)
 );
 CREATE TABLE IF NOT EXISTS verdicts (        -- 검색어 심사 (docs/superpowers/specs/2026-09-08-keyword-triage-design.md)
   id INTEGER PRIMARY KEY,                     -- remote.merge 가 표마다 id 로 사이트 소속을 옮긴다 — 판정도 pull/push 를 탄다
@@ -610,6 +619,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
                       ("llms_txt_head", "TEXT")):
         if col not in cr_cols:
             conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {decl}")
+            conn.commit()
+
+    # 상위 글의 형식(표·목록·이미지·영상) — H2 만 모았더니 "빠진 구간"은 찾아도 "빠진 형식"
+    # (상위는 비교표·영상이 있는데 우리는 글뿐)은 못 봤다. 옛 행은 NULL(안 셌다)이다.
+    # 링크가 틀(메뉴·꼬리말) 안인가 — 본문 링크와 공통 메뉴를 가른다. 옛 행은 NULL(모른다):
+    # 0 으로 채우면 메뉴 링크 전부가 본문 링크로 읽힌다.
+    cl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_links)")}
+    if "in_chrome" not in cl_cols:
+        conn.execute("ALTER TABLE crawl_links ADD COLUMN in_chrome INTEGER")
+        conn.commit()
+
+    so_cols = {r["name"] for r in conn.execute("PRAGMA table_info(serp_outlines)")}
+    for col in ("tables", "lists", "images", "videos"):
+        if col not in so_cols:
+            conn.execute(f"ALTER TABLE serp_outlines ADD COLUMN {col} INTEGER")
             conn.commit()
 
     pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
@@ -771,6 +795,49 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if conn.execute("SELECT 1 FROM projects WHERE type='local_clinic' LIMIT 1").fetchone():
         conn.execute("UPDATE projects SET type='local_business' WHERE type='local_clinic'")
         conn.commit()
+
+    _import_legacy_yaml(conn)
+
+
+def _import_legacy_yaml(conn: sqlite3.Connection) -> None:
+    """옛 `projects/*.yaml` 을 project_settings 로 한 번 옮기고 파일을 은퇴시킨다.
+
+    설정이 파일에 살던 시절의 보관함을 위한 것이다. 한 번만 도는 조건은 "이 사이트에
+    설정 줄이 아직 없다" 하나다 — 표식을 따로 두지 않는다.
+
+    **옮길 파일이 없으면 조용히 지나간다.** 원격(호스팅) 사이트를 받아 쓰는 PC 가
+    그렇다: 그 사이트의 yaml 은 서버 디스크에 있고 여기엔 없다. 설정은 서버에서
+    마이그레이션이 돈 뒤 `remote.pull` 이 project_settings 를 실어 오면서 채워진다.
+
+    마이그레이션은 무슨 일이 있어도 connect() 를 깨뜨리면 안 된다 — pyyaml 이 없거나
+    파일이 깨졌으면 그 사이트만 건너뛴다.
+    """
+    rows = conn.execute("""SELECT p.id, p.name, p.config_path FROM projects p
+                            WHERE NOT EXISTS (SELECT 1 FROM project_settings s
+                                               WHERE s.project_id = p.id)""").fetchall()
+    for r in rows:
+        for cand in (r["config_path"], capture_home() / "projects" / f"{r['name']}.yaml"):
+            if not cand:
+                continue
+            p = Path(cand)
+            if not p.is_file():
+                continue
+            try:
+                cfg = load_project_yaml(str(p))
+                # 이름·도메인은 Brain 이 이미 안다 — 여기서는 파일에만 있던 것만 들인다.
+                set_project_settings(conn, r["id"], {k: cfg[k] for k in SETTING_KEYS if k in cfg})
+                if cfg.get("seed_keywords"):
+                    set_seed_keywords(conn, r["id"],
+                                      seed_keywords(conn, r["id"]) + list(cfg["seed_keywords"]))
+                if cfg.get("competitors_manual"):
+                    set_manual_competitors(conn, r["id"], manual_competitors(conn, r["id"])
+                                           + list(cfg["competitors_manual"]))
+                conn.commit()
+                # 죽은 파일을 그대로 두면 누가 고치고 "왜 안 먹지" 한다. 이름으로 말해 준다.
+                p.rename(p.with_suffix(".yaml.migrated"))
+            except Exception:       # noqa: BLE001 — 이 사이트만 건너뛴다
+                conn.rollback()
+            break
 
 
 # 'auto_serp' 는 두 경로가 함께 쓰던 자동 적재 표시였다. 순위 수집 쪽 규칙이 "검색어 3개
@@ -1014,7 +1081,7 @@ def project_locale(p) -> str:
 
 
 # ── 키워드 언어 판정 — 정본은 keyword_locale_src 하나다 (사본 금지) ──────────
-# keywords 에 들어가는 행은 전부 이 판정을 거친다(sync_project·add_keyword_candidates,
+# keywords 에 들어가는 행은 전부 이 판정을 거친다(set_seed_keywords·add_keyword_candidates,
 # 옛 행을 한 번 고치는 fix_keyword_locales, GSC 나라 분해가 들어온 뒤의
 # rejudge_script_locales). 넣을 때 사이트 로케일을 그대로
 # 붙이던 동안 GSC 에서 들어온 영어 검색어가 ko-KR 로 표시돼 한국 구글에서 쟀고
@@ -1178,11 +1245,73 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     if not row:
         raise ProjectNotFound(f"'{name}' 사이트가 아직 등록되지 않았습니다 — "
                               f"먼저 `/capture add {name}` 으로 등록하세요 "
-                              "(수동: python db.py sync-project <yaml>)")
+                              "(수동: python db.py register <이름> <도메인>)")
     return row
 
 
+# 사이트별 설정의 정본 목록. 새 손잡이가 생기면 여기 이름을 더한다 — 칸을 늘리지 않는다.
+# **씨앗 키워드·경쟁사 도메인은 여기 없다**: 그건 keywords(source='seed')·
+# competitors(source='manual') 행이 정본이고, 여기 또 담으면 같은 목록이 두 벌이 된다.
+# name·domain·type·locale·gsc_property·ga4_property 도 없다 — projects 컬럼이 정본이다.
+SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
+                "surfaces_ai", "serp_depth", "limits")
+# project_cfg 가 얹어 주는 projects 행의 값 — 부르는 쪽은 예전 yaml dict 과 같은 모양을
+# 받는다(cfg["name"]·cfg.get("domain") … 을 그대로 쓴다).
+_CFG_ROW_KEYS = ("name", "type", "domain", "locale", "gsc_property", "ga4_property")
+
+
+def project_settings(conn: sqlite3.Connection, project_id: int) -> dict:
+    out: dict = {}
+    for r in conn.execute("SELECT key, value FROM project_settings WHERE project_id=?",
+                          (project_id,)):
+        try:
+            out[r["key"]] = json.loads(r["value"])
+        except (TypeError, ValueError):
+            continue        # 줄 하나가 손상됐다고 사이트 설정 전체를 못 읽게 하지 않는다
+    return out
+
+
+def project_cfg(conn: sqlite3.Connection, project) -> dict:
+    """사이트별 설정 — projects 행 + project_settings. 부르는 쪽엔 dict 하나다.
+
+    project 는 이름(str)이거나 projects 행이다.
+
+    예전엔 `projects/{이름}.yaml` 이 정본이었고 그 절대경로가 `projects.config_path` 에
+    적혔다. 호스팅에서는 그 파일이 컨테이너 디스크(`/data/users/…`)에 살았는데, 경로
+    문자열은 brain.db 를 타고 로컬로 내려오고 **파일은 안 내려왔다** — 동기화가 나르는
+    것은 Brain 뿐이기 때문이다. 그래서 로컬에서는 있지도 않은 경로를 읽으려다 늘
+    실패했고, 별칭은 몇 번을 동기화해도 안 생겼다(2026-09-18에 실제로 그랬다).
+    설정이 Brain 안에 있으면 그 문제가 구조적으로 없다: 표를 나르는 코드가 설정도
+    같이 나른다(remote._plan 이 FK 로 project_settings 를 스스로 찾는다).
+    """
+    row = project if not isinstance(project, str) else get_project(conn, project)
+    cfg = {k: row[k] for k in _CFG_ROW_KEYS if k in row.keys() and row[k] is not None}
+    cfg.update(project_settings(conn, row["id"]))
+    return cfg
+
+
+def set_project_settings(conn: sqlite3.Connection, project_id: int, values: dict) -> None:
+    """보낸 키만 쓴다 — 안 보낸 키는 그대로 둔다.
+
+    빈 값(빈 목록·빈 문자열)은 줄을 지운다. 빈 채로 남겨 두면 "정한 적 없음"과
+    "비워 뒀음"이 같은 모양이 되는데, 이 키들은 전부 목록이라 둘이 같은 뜻이다.
+    """
+    for k, v in values.items():
+        if k not in SETTING_KEYS:
+            raise ValueError(f"모르는 설정 키: {k!r} — 정본은 db.SETTING_KEYS 다")
+        if v in (None, "", [], {}):
+            conn.execute("DELETE FROM project_settings WHERE project_id=? AND key=?",
+                         (project_id, k))
+            continue
+        conn.execute("""INSERT INTO project_settings(project_id,key,value) VALUES(?,?,?)
+                        ON CONFLICT(project_id,key) DO UPDATE SET value=excluded.value""",
+                     (project_id, k, json.dumps(v, ensure_ascii=False)))
+    conn.commit()
+
+
 def load_project_yaml(name_or_path: str) -> dict:
+    """**수입 전용이다.** 런타임에 이걸로 설정을 읽지 않는다 — 정본은 project_settings 다
+    (project_cfg 주석 참고). 옛 Brain 의 yaml 을 한 번 옮기는 _migrate 만 부른다."""
     import yaml  # lazy
     p = Path(name_or_path)
     if not p.exists():
@@ -1195,33 +1324,90 @@ def load_project_yaml(name_or_path: str) -> dict:
     return cfg
 
 
-def sync_project(yaml_path: str) -> None:
-    cfg = load_project_yaml(yaml_path)
-    conn = connect()
+def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
+    """사이트를 등록하거나 고친다 — 파일을 거치지 않는다. 사이트 id 를 준다.
+
+    cfg 는 예전 yaml 과 같은 모양의 dict 다: name·domain 은 필수, 나머지는 선택.
+    settings(SETTING_KEYS)·seed_keywords·competitors_manual 도 여기서 함께 받는다 —
+    등록하는 곳마다 "그다음 뭘 더 불러야 하나"를 외우지 않게 한 자리에 모은다.
+
+    씨앗·경쟁사는 **보낸 목록이 곧 그 사이트의 목록이다**: 뺀 것은 지운다. 예전에는
+    INSERT OR IGNORE 라 한번 들어간 씨앗이 영영 안 빠졌고, 설정 화면에서 지워도
+    다음 화면에 그대로 다시 떴다. 단, 손댈 것은 **이 출처의 행뿐이다**(source='seed'
+    /'manual') — 수집이 캔 키워드나 자동으로 찾은 경쟁사는 건드리지 않는다.
+    """
+    name = str(cfg["name"]).strip()
     conn.execute(
-        """INSERT INTO projects(name,type,domain,locale,gsc_property,ga4_property,config_path)
-           VALUES(?,?,?,?,?,?,?)
+        """INSERT INTO projects(name,type,domain,locale,gsc_property,ga4_property)
+           VALUES(?,?,?,?,?,?)
            ON CONFLICT(name) DO UPDATE SET type=excluded.type, domain=excluded.domain,
              locale=excluded.locale, gsc_property=excluded.gsc_property,
-             ga4_property=excluded.ga4_property, config_path=excluded.config_path""",
-        (cfg["name"], cfg.get("type", "saas"), cfg["domain"], cfg.get("locale", DEFAULT_LOCALE),
-         cfg.get("gsc_property"), cfg.get("ga4_property"), cfg["_path"]),
+             ga4_property=excluded.ga4_property""",
+        (name, cfg.get("type", "saas"), cfg["domain"], cfg.get("locale") or DEFAULT_LOCALE,
+         cfg.get("gsc_property"), cfg.get("ga4_property")),
     )
-    pid = conn.execute("SELECT id FROM projects WHERE name=?", (cfg["name"],)).fetchone()[0]
-    judge = keyword_judge(conn, pid)     # 시드도 글자로 언어를 받는다 — NULL 로 두지 않는다
-    for kw in cfg.get("seed_keywords", []) or []:
-        kw = kw.strip()
+    pid = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()[0]
+    set_project_settings(conn, pid, {k: cfg[k] for k in SETTING_KEYS if k in cfg})
+    if "seed_keywords" in cfg:
+        set_seed_keywords(conn, pid, cfg.get("seed_keywords") or [])
+    if "competitors_manual" in cfg:
+        set_manual_competitors(conn, pid, cfg.get("competitors_manual") or [])
+    conn.commit()
+    return pid
+
+
+def seed_keywords(conn: sqlite3.Connection, project_id: int) -> list[str]:
+    """이 사이트의 씨앗 키워드 — 설정 화면이 그리는 정본이다(사본을 따로 두지 않는다)."""
+    return [r[0] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? AND source='seed' ORDER BY id",
+        (project_id,))]
+
+
+def set_seed_keywords(conn: sqlite3.Connection, project_id: int, words) -> None:
+    want = [w for w in (str(x).strip() for x in words) if w]
+    judge = keyword_judge(conn, project_id)   # 씨앗도 글자로 언어를 받는다 — NULL 로 두지 않는다
+    for kw in want:
         conn.execute(
             """INSERT OR IGNORE INTO keywords(project_id,keyword,locale,locale_src,source,is_active)
-               VALUES(?,?,?,?, 'seed', 1)""", (pid, kw, *judge(kw)))
-    for dom in cfg.get("competitors_manual", []) or []:
+               VALUES(?,?,?,?, 'seed', 1)""", (project_id, kw, *judge(kw)))
+    # 뺀 씨앗은 지운다 — 다만 그 사이에 수집이 같은 말을 캐 갔으면 그 행은 남긴다
+    # (source 가 이미 'seed' 가 아니다). 판정·기회가 매달린 행을 씨앗 목록 편집으로
+    # 지우면 그쪽이 조용히 빈다.
+    have = seed_keywords(conn, project_id)
+    for kw in set(have) - set(want):
+        conn.execute("DELETE FROM keywords WHERE project_id=? AND keyword=? AND source='seed'",
+                     (project_id, kw))
+
+
+def manual_competitors(conn: sqlite3.Connection, project_id: int) -> list[str]:
+    return [r[0] for r in conn.execute(
+        "SELECT domain FROM competitors WHERE project_id=? AND source='manual' ORDER BY id",
+        (project_id,))]
+
+
+def set_manual_competitors(conn: sqlite3.Connection, project_id: int, domains) -> None:
+    want = [d for d in (str(x).strip().lower() for x in domains) if d]
+    for dom in want:
         conn.execute(
             "INSERT OR IGNORE INTO competitors(project_id,domain,source) VALUES(?,?, 'manual')",
-            (pid, dom.strip().lower()))
-    conn.commit()
-    n_kw = conn.execute("SELECT COUNT(*) FROM keywords WHERE project_id=?", (pid,)).fetchone()[0]
-    print(f"synced project '{cfg['name']}' (id={pid}, keywords={n_kw})")
-    conn.close()
+            (project_id, dom))
+    have = manual_competitors(conn, project_id)
+    for dom in set(have) - set(want):
+        conn.execute("DELETE FROM competitors WHERE project_id=? AND domain=? AND source='manual'",
+                     (project_id, dom))
+
+
+def import_project_yaml(path) -> int:
+    """옛 `projects/*.yaml` 하나를 Brain 으로 들인다 — **한 방향, 한 번뿐이다.**
+
+    _migrate 가 옛 보관함을 옮길 때만 부른다. 런타임에 설정을 읽는 길이 아니다
+    (그 길은 project_cfg 하나뿐이다)."""
+    cfg = load_project_yaml(str(path))
+    conn = connect()
+    try:
+        return register_project(conn, cfg)
+    finally:
+        conn.close()
 
 
 def start_run(conn: sqlite3.Connection, project_id: int, kind: str) -> int:
@@ -1365,16 +1551,12 @@ def set_ga4_property(conn, project_id: int, property_id: str | None) -> None:
 
 
 def set_locale(conn, project_id: int, locale: str) -> None:
-    """언어-지역을 바꾼다 — Brain 과 yaml 둘 다. yaml 을 안 고치면 다음 sync-project 가
-    옛 값으로 되돌린다. 이미 캔 키워드의 locale 은 그대로다(그 언어로 잰 값이다)."""
+    """언어-지역을 바꾼다. 정본이 projects 컬럼 한 곳이라 여기 한 줄이면 끝이다 —
+    예전엔 yaml 도 같이 고쳐야 했고(안 고치면 다음 sync-project 가 되돌렸다) 그 둘이
+    어긋나는 것이 통째로 한 갈래의 버그였다. 이미 캔 키워드의 locale 은 그대로다
+    (그 언어로 잰 값이다)."""
     conn.execute("UPDATE projects SET locale=? WHERE id=?", (locale, project_id))
     conn.commit()
-    path = conn.execute("SELECT config_path FROM projects WHERE id=?", (project_id,)).fetchone()[0]
-    if path and Path(path).exists():
-        import yaml
-        cfg = yaml.safe_load(Path(path).read_text("utf-8")) or {}
-        cfg["locale"] = locale
-        Path(path).write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), "utf-8")
 
 
 def write_ga4_snapshot(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
@@ -1606,6 +1788,22 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
     return len(rows)
 
 
+# 페이지 감사는 한 번에 몇십 곳만 본다(collect_page.target_urls). "최신 날짜 한 벌"로 읽으면
+# 다음 회차가 다른 곳을 고르는 순간 앞 회차의 감사가 화면·요청문에서 통째로 사라진다 —
+# 기회가 걸린 페이지 23곳 중 13곳이 "아직 점검하지 않았습니다"로 나갔다. 주소마다 가장
+# 최근 감사를 읽는다. 오래된 값은 요청문이 날짜로 경고한다(brief._stale_audit_lines).
+LATEST_PAGE_AUDITS_SQL = """
+    SELECT a.* FROM page_audits a
+     WHERE a.project_id=? AND a.checked_date = (
+           SELECT MAX(b.checked_date) FROM page_audits b
+            WHERE b.project_id=a.project_id AND b.url=a.url)"""
+
+
+def latest_page_audits(conn: sqlite3.Connection, project_id: int) -> list:
+    """주소마다 가장 최근 감사 한 줄 — 읽는 쪽(대시보드·질문 재료·사이트 어휘) 한 벌."""
+    return conn.execute(LATEST_PAGE_AUDITS_SQL + " ORDER BY a.url", (project_id,)).fetchall()
+
+
 # 검색결과에서 몇 자리까지 남기나. 요청문이 "상위에 있는 페이지"를 보여주는 데
 # 쓰는 값이라 넉넉할 필요가 없다 — 사람이 실제로 비교하는 것은 위 몇 개다.
 SERP_KEEP = 5
@@ -1657,16 +1855,21 @@ SERP_OUTLINE_DAYS = 30
 
 
 def write_serp_outline(conn: sqlite3.Connection, url: str, *, status: int | None,
-                       title: str | None, h2, words: int | None) -> None:
+                       title: str | None, h2, words: int | None,
+                       tables: int | None = None, lists: int | None = None,
+                       images: int | None = None, videos: int | None = None) -> None:
     """상위 글 한 장의 겉모습 — 주소 하나에 한 줄. 실패(status 403·타임아웃)도 남긴다:
-    안 남기면 다음 런이 같은 주소를 또 두드린다."""
+    안 남기면 다음 런이 같은 주소를 또 두드린다. 형식 칸은 못 셌으면 NULL 이다."""
     conn.execute(
-        """INSERT INTO serp_outlines(url, checked_at, status, title, h2_json, words)
-           VALUES(?,?,?,?,?,?)
+        """INSERT INTO serp_outlines(url, checked_at, status, title, h2_json, words,
+                                     tables, lists, images, videos)
+           VALUES(?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(url) DO UPDATE SET checked_at=excluded.checked_at,
              status=excluded.status, title=excluded.title,
-             h2_json=excluded.h2_json, words=excluded.words""",
-        (url, now(), status, title, json.dumps(list(h2 or []), ensure_ascii=False), words))
+             h2_json=excluded.h2_json, words=excluded.words, tables=excluded.tables,
+             lists=excluded.lists, images=excluded.images, videos=excluded.videos""",
+        (url, now(), status, title, json.dumps(list(h2 or []), ensure_ascii=False), words,
+         tables, lists, images, videos))
     conn.commit()
 
 
@@ -1677,7 +1880,8 @@ def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
     for i in range(0, len(urls), 200):
         chunk = urls[i:i + 200]
         for r in conn.execute(
-            f"""SELECT url, checked_at, status, title, h2_json, words FROM serp_outlines
+            f"""SELECT url, checked_at, status, title, h2_json, words,
+                       tables, lists, images, videos FROM serp_outlines
                  WHERE url IN ({','.join('?' * len(chunk))})""", chunk):
             try:
                 h2 = json.loads(r["h2_json"] or "[]")
@@ -1685,7 +1889,9 @@ def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
                 h2 = []
             out[r["url"]] = {"url": r["url"], "checked_at": r["checked_at"],
                              "status": r["status"], "title": r["title"],
-                             "h2": h2 if isinstance(h2, list) else [], "words": r["words"]}
+                             "h2": h2 if isinstance(h2, list) else [], "words": r["words"],
+                             "tables": r["tables"], "lists": r["lists"],
+                             "images": r["images"], "videos": r["videos"]}
     return out
 
 
@@ -2556,12 +2762,10 @@ def _check_keyword_locale() -> None:
         os.environ["CAPTURE_HOME"] = d
         conn = None
         try:
-            # 2. sync_project 가 언어 칸을 비워 두지 않는다
-            y = Path(d) / "lp.yaml"
-            y.write_text("name: lp\ndomain: lp.com\nlocale: ko-KR\n"
-                         "seed_keywords: ['밀리아 제거', 'milia removal', '2024']\n", "utf-8")
-            sync_project(str(y))
+            # 2. register_project 가 언어 칸을 비워 두지 않는다
             conn = connect()
+            register_project(conn, {"name": "lp", "domain": "lp.com", "locale": "ko-KR",
+                                    "seed_keywords": ["밀리아 제거", "milia removal", "2024"]})
             pid = get_project(conn, "lp")["id"]
             got = {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
                 "SELECT keyword, locale, locale_src FROM keywords WHERE project_id=?", (pid,))}
@@ -2768,8 +2972,15 @@ if __name__ == "__main__":
         init_db()
     elif cmd == "selfcheck":
         _selfcheck()
-    elif cmd == "sync-project" and len(args) > 1:
-        sync_project(args[1])
+    elif cmd == "register" and len(args) > 2:
+        conn = connect()
+        try:
+            pid = register_project(conn, {"name": args[1], "domain": args[2],
+                                          "type": args[3] if len(args) > 3 else "saas",
+                                          "locale": args[4] if len(args) > 4 else DEFAULT_LOCALE})
+            print(f"registered '{args[1]}' (id={pid})")
+        finally:
+            conn.close()
     elif cmd == "stats" and len(args) > 1:
         stats(args[1])
     elif cmd == "sql" and len(args) > 1:

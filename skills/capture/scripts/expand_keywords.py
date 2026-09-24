@@ -212,7 +212,7 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+                          help="요청 간격(초). 기본은 skill_config defaults.throttle")
     ap.add_argument("--mode", default="all", choices=["all", "autocomplete", "gsc"])
     ap.add_argument("--per-seed-cap", type=int, default=60)
     return ap

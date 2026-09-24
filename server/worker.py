@@ -184,8 +184,9 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     project = site["project"]
     # 시작 전에 찍는다. 끝나고 찍으면 (1) 등록 직후 트리거와 60초 스케줄러 틱이 겹쳐
     # 같은 사이트를 두 번 수집하고, (2) 실패한 사이트가 매 틱마다 재시도해 비용이 샌다.
+    # 부분 실행(only)은 주기 시계를 안 건드린다 — 찍으면 주 1회 전체 런이 매번 밀린다.
     if not dry_run:
-        store.mark_run(conn, site["id"])
+        (store.mark_busy if only else store.mark_run)(conn, site["id"])
         store.save_run_log(conn, site["id"], "")     # 지난 런의 로그를 남기지 않는다
 
     def save_log(text: str) -> None:

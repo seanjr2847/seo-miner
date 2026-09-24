@@ -137,7 +137,7 @@ def summary(project: str) -> dict:
         # 스냅샷 짝은 gsc 축(dashboard._axis_gsc) 이 고른다 — 날짜만 보고 직전을
         # 고르면(예전 코드) period_days 가 다른 스냅샷끼리 빼져서 delta_clicks 가
         # 거짓이 된다. gather() 가 화면에 쓰는 것과 같은 짝짓기다.
-        cfg = dashboard.collector.project_cfg(p["config_path"] or p["name"])
+        cfg = dashboard.collector.project_cfg(conn, p)
         gsc = dashboard._axis_gsc(conn, pid, cfg, at=None)
         by_date = {r["d"]: r for r in gsc["trend"]}
         cur, prev = gsc["gsc_date"], gsc["gsc_prev"]
@@ -200,7 +200,7 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
         # 짝짓기는 gsc 축(dashboard._axis_gsc, scoring.snapshot_pair 를 이미 쓴다)
         # 하나로 — 날짜만 보고 직전을 고르면 period_days 가 다른 스냅샷끼리
         # 빼져서 Δ가 거짓이 된다 (scoring.md 4-3b). summary() 와 같은 짝짓기를 본다.
-        cfg = dashboard.collector.project_cfg(p["config_path"] or p["name"])
+        cfg = dashboard.collector.project_cfg(conn, p)
         gsc = dashboard._axis_gsc(conn, pid, cfg, at=None)
         cur, prev_date, period, period_mismatch = (
             gsc["gsc_date"], gsc["gsc_prev"], gsc["gsc_period"], gsc["period_mismatch"])

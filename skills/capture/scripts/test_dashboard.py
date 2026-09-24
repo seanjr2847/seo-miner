@@ -1120,6 +1120,33 @@ def test_ai_visits_reach_the_brief_past_the_top_100():
     assert ev and "세션 1" in ev[0] and "perplexity.ai 1" in ev[0], ev
 
 
+def test_serp_top_reads_each_keywords_own_latest_check():
+    """상위 목록은 검색어마다 **그 검색어의** 최신 순위 조회 날로 읽는다. 전체 최신 날 하나로
+    읽으면 몇 검색어만 다시 돈 날(부분 실행) 나머지 검색어의 상위 목록이 통째로 사라졌다.
+    그날 조회가 질문을 안 보여 줬으면 옛 질문으로 물러서지도 않는다."""
+    conn, pid = _brain("serp_each")
+    kid = {kw: conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
+                            " RETURNING id", (pid, kw)).fetchone()[0] for kw in ("옛날", "오늘")}
+    # '옛날'은 PREV 에만 조회됐다 — 그날 상위 목록·질문이 있다
+    db.write_rank_snapshot(conn, kid["옛날"], 5, None, checked_at=PREV + "T01:00:00Z")
+    db.write_serp_results(conn, kid["옛날"], [{"position": 1, "url": "https://r/1", "title": "옛 상위"}],
+                          checked_at=PREV + "T01:00:00Z")
+    db.write_serp_questions(conn, kid["옛날"], [("paa", "옛날 질문")], checked_at=PREV + "T01:00:00Z")
+    # '오늘'은 PREV 와 D 둘 다 조회됐고, D 조회에는 질문이 없었다
+    for day in (PREV, D):
+        db.write_rank_snapshot(conn, kid["오늘"], 3, None, checked_at=day + "T01:00:00Z")
+        db.write_serp_results(conn, kid["오늘"], [{"position": 1, "url": "https://r/" + day,
+                                                  "title": day}], checked_at=day + "T01:00:00Z")
+    db.write_serp_questions(conn, kid["오늘"], [("paa", "지난 질문")], checked_at=PREV + "T01:00:00Z")
+    conn.commit()
+    rk = dashboard._axis_rank(conn, pid)
+    assert [r["title"] for r in rk["serp_top"].get("옛날", [])] == ["옛 상위"], rk["serp_top"]
+    assert [r["title"] for r in rk["serp_top"]["오늘"]] == [D], "최신 조회가 아닌 날의 상위를 읽었다"
+    assert rk["serp_fanout"].get("옛날") == [{"kind": "paa", "text": "옛날 질문"}], rk["serp_fanout"]
+    assert "오늘" not in rk["serp_fanout"], "그날 조회에 없던 질문을 옛날 것으로 채웠다"
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

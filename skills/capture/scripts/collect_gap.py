@@ -379,7 +379,7 @@ def collect(project: str, *,
             reason = (f"'{p['name']}' 에 등록된 경쟁사가 아직 없습니다 — "
                       f"`/capture rank {p['name']}` 으로 순위를 한 바퀴 돌리면 "
                       "상위 도메인이 자동 적재됩니다. 급하면 프로젝트 yaml 의 "
-                      "`competitors_manual` 또는 `--domain` 으로 직접 지정하세요.")
+                      "대시보드 [설정]의 경쟁사 칸 또는 `--domain` 으로 직접 지정하세요.")
             print(f"[gap] {reason}")
             return st.noop(reason=reason)
 
@@ -555,7 +555,7 @@ def _parser() -> argparse.ArgumentParser:
     collector.add_setting(ap, "--intersect", key="limits.gap_rivals", fallback=3, type=int,
                           help="Content Gap 을 돌릴 경쟁사 수 상한. 0이면 끔")
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+                          help="요청 간격(초). 기본은 skill_config defaults.throttle")
     return ap
 
 
@@ -582,16 +582,11 @@ def _selfcheck() -> None:
     os.environ["DATAFORSEO_LOGIN"] = "login"
     os.environ["DATAFORSEO_PASSWORD"] = "pw"
 
-    # 프로젝트 yaml — tools 필터(자동 탐지 제외 목록)가 여기서 온다.
-    (home / "projects").mkdir(parents=True, exist_ok=True)
-    (home / "projects" / "gt.yaml").write_text(
-        "name: gt\ndomain: gt.com\nlocale: ko-KR\ntools:\n  - ToolCo\n", encoding="utf-8")
-
+    # 사이트 설정 — tools 필터(자동 탐지 제외 목록)가 여기서 온다(정본 db.SETTING_KEYS).
     conn = db.connect()
-    conn.execute(
-        "INSERT INTO projects(name, domain, locale) VALUES('gt', 'gt.com', 'ko-KR')")
+    pid = db.register_project(conn, {"name": "gt", "domain": "gt.com", "locale": "ko-KR",
+                                     "tools": ["ToolCo"]})
     p = conn.execute("SELECT * FROM projects WHERE name='gt'").fetchone()
-    pid = p["id"]
 
     # 내가 이미 가진 키워드 — 필터에서 빠져야 한다.
     db.add_keyword_candidates(conn, pid, [

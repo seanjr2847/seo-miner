@@ -209,7 +209,7 @@ def collect(project: str, *,
         if not prop:
             return st.skip("project yaml has no gsc_property "
                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
-                           "Add it, then: python db.py sync-project <yaml>")
+                           "Add it in the dashboard [설정] screen.")
 
         end = date.today() - timedelta(days=3)     # GSC delay buffer
         start = end - timedelta(days=days)

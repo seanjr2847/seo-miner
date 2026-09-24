@@ -24,7 +24,7 @@ Usage:
   python collect_serp.py --project NAME [--provider dataforseo|serper]
                          [--max-keywords N] [--ids 3,7,9] [--depth 10]
                          [--throttle 0.5] [--no-harvest] [--dry-run]
-  --depth / --throttle 를 안 주면 config.yaml defaults(serp_depth·throttle)를 쓴다.
+  --depth / --throttle 를 안 주면 skill_config defaults(serp_depth·throttle)를 쓴다.
 """
 import argparse
 import json
@@ -254,7 +254,9 @@ def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -
             except (TypeError, ValueError):
                 h2 = []
             db.write_serp_outline(conn, u, status=a.get("status"), title=a.get("title"),
-                                  h2=h2, words=a.get("words"))
+                                  h2=h2, words=a.get("words"), tables=a.get("tables"),
+                                  lists=a.get("lists"), images=a.get("images"),
+                                  videos=a.get("videos"))
             ok += 1
         if throttle and i + 1 < len(todo):
             time.sleep(throttle)
@@ -268,7 +270,7 @@ def _parser() -> argparse.ArgumentParser:
     collector.add_setting(ap, "--max-keywords", key="limits.max_keywords", fallback=100, type=int)
     collector.add_setting(ap, "--depth", key="serp_depth", fallback=10, type=int)
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
-                          help="요청 간격(초). 기본은 config.yaml defaults.throttle")
+                          help="요청 간격(초). 기본은 skill_config defaults.throttle")
     collector.add_setting(ap, "--device", key="serp_device", fallback="desktop", type=str,
                           help="측정 디바이스 (desktop|mobile). 기본은 desktop")
     ap.add_argument("--no-harvest", action="store_true")

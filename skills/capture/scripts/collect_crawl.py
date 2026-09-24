@@ -118,16 +118,28 @@ def _home_url(domain: str) -> str | None:
 
 
 # ── HTML ────────────────────────────────────────────────────────────────────
+# role 로만 틀임을 밝히는 요소 — <div role="navigation"> 처럼 태그 이름으로는 안 보인다.
+_CHROME_ROLES = {"navigation", "banner", "contentinfo"}
+
+
 class _CrawlPage(collect_page._Page):
-    """collect_page._Page + 링크(목적지·앵커·nofollow). 나머지는 부모 것 그대로."""
+    """collect_page._Page + 링크(목적지·앵커·nofollow·틀 안인가). 나머지는 부모 것 그대로.
+
+    '틀 안'(메뉴·머리말·꼬리말·곁가지)을 링크마다 적는다. 안 적으면 공통 메뉴가 모든 글에서
+    거는 링크와 본문이 문맥으로 거는 링크가 한 표에 섞여 — 요청문이 "이 페이지로 링크를 안
+    건 글"을 영영 못 골랐다(고치기 요청문 57장 중 후보 표 0장)."""
 
     def __init__(self, base: str):
         super().__init__(base)
-        self.links: list[tuple[str, str, bool]] = []
+        self.links: list[tuple[str, str, bool, bool]] = []
         self._a: list | None = None
+        self._roles: list[int] = []           # role=navigation 등이 열린 스택 깊이
 
     def handle_starttag(self, tag, attrs):
         super().handle_starttag(tag, attrs)
+        a0 = {k.lower(): (v or "") for k, v in attrs}
+        if a0.get("role", "").strip().lower() in _CHROME_ROLES:
+            self._roles.append(len(self._stack))
         if tag != "a":
             return
         self._close_a()                       # <a/> 처럼 안 닫힌 것이 다음 앵커로 새지 않게
@@ -137,7 +149,8 @@ class _CrawlPage(collect_page._Page):
             return
         to = normalize(href, self.base)
         if to:
-            self._a = [to, [], "nofollow" in a.get("rel", "").lower()]
+            self._a = [to, [], "nofollow" in a.get("rel", "").lower(),
+                       self._in_chrome() or bool(self._roles)]
 
     def handle_data(self, data):
         super().handle_data(data)
@@ -146,14 +159,15 @@ class _CrawlPage(collect_page._Page):
 
     def handle_endtag(self, tag):
         super().handle_endtag(tag)
+        self._roles = [d for d in self._roles if d <= len(self._stack)]
         if tag == "a":
             self._close_a()
 
     def _close_a(self) -> None:
         if not self._a:
             return
-        to, buf, nofollow = self._a
-        self.links.append((to, " ".join("".join(buf).split())[:ANCHOR_MAX], nofollow))
+        to, buf, nofollow, chrome = self._a
+        self.links.append((to, " ".join("".join(buf).split())[:ANCHOR_MAX], nofollow, chrome))
         self._a = None
 
 
@@ -321,10 +335,11 @@ def crawl(seeds, home: str, *, limit: int, max_depth: int,
             out = got.pop("links")
             row.update(got)
             row["links_out"] = len(out)
-            for to, anchor, nofollow in out:
+            for to, anchor, nofollow, chrome in out:
                 internal = scoring.owns(scoring.host_of(to), host)
                 links.append({"url_from": final, "url_to": to, "anchor": anchor,
-                              "is_internal": int(internal), "nofollow": int(nofollow)})
+                              "is_internal": int(internal), "nofollow": int(nofollow),
+                              "in_chrome": int(chrome)})
                 if internal and to not in seen and depth + 1 <= max_depth:
                     seen.add(to)
                     q.append((to, depth + 1))
@@ -357,10 +372,10 @@ def save(conn, run_id: int, pages, links) -> None:
         [(run_id, p["url"], str(c)[:35], normalize(str(h), p["url"]) or str(h)[:500])
          for p in pages for c, h in (p.get("hreflang") or [])[:40]])
     conn.executemany(
-        "INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,nofollow) "
-        "VALUES(?,?,?,?,?,?)",
-        [(run_id, x["url_from"], x["url_to"], x["anchor"], x["is_internal"], x["nofollow"])
-         for x in links])
+        "INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,nofollow,in_chrome) "
+        "VALUES(?,?,?,?,?,?,?)",
+        [(run_id, x["url_from"], x["url_to"], x["anchor"], x["is_internal"], x["nofollow"],
+          x.get("in_chrome")) for x in links])
     conn.execute(
         "UPDATE crawl_pages SET links_in = (SELECT COUNT(*) FROM crawl_links l "
         " WHERE l.run_id = crawl_pages.run_id AND l.is_internal = 1"
@@ -824,7 +839,15 @@ def _selfcheck() -> None:
     p = parse_page("https://s.kr/x", '<html><head><title>T</title></head><body>'
                    '<a href="/y" rel="nofollow">와이</a><a href="#top">건너뜀</a>'
                    '<a href="https://o.com/z">지</a></body></html>')
-    assert p["links"] == [("https://s.kr/y", "와이", True), ("https://o.com/z", "지", False)], p["links"]
+    assert [x[:3] for x in p["links"]] == [("https://s.kr/y", "와이", True), ("https://o.com/z", "지", False)], p["links"]
+    # 틀(메뉴·꼬리말·role=navigation) 안의 링크와 본문 링크를 가른다 — 공통 메뉴가 모든 글에서
+    # 거는 링크를 본문 링크로 세면 "링크를 안 건 글"을 영영 못 고른다.
+    p = parse_page("https://s.kr/x", '<body><nav><a href="/m">메뉴</a></nav>'
+                   '<div role="navigation"><a href="/r">롤</a></div>'
+                   '<main><p>본문 <a href="/b">본문링크</a></p></main>'
+                   '<footer><a href="/f">꼬리</a></footer></body>')
+    assert {to.rsplit("/", 1)[-1]: chrome for to, _, _, chrome in p["links"]} == \
+        {"m": True, "r": True, "b": False, "f": True}, p["links"]
     print("collect_crawl self-check ok")
 
 

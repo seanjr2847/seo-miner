@@ -2,10 +2,10 @@
 """수집기 공통 서두 + 스테이지 러너 — 인자·설정 병합·프로젝트 열기·실행 루프.
 
 수집기 다섯 개가 각자 갖고 있던 argparse 블록·부팅·설정 읽기를 여기로 모았다.
-그 전에는 --throttle 기본값만 0.5/0.3/0.5 세 벌이었고 config.yaml 의
+그 전에는 --throttle 기본값만 0.5/0.3/0.5 세 벌이었고 스킬 설정의
 defaults·serp 섹션은 읽는 코드가 아예 없었다(장식).
 
-우선순위:  CLI > 프로젝트 yaml > config.yaml defaults > 코드 리터럴
+우선순위:  CLI > 사이트 설정 > skill_config.CONFIG defaults > 코드 리터럴
 
 서두만 공유하던 시절에는 실행 루프를 수집기 여섯 개가 각자 다시 썼다 —
 dry-run 조기반환 / 오늘-중복 스킵 / db.run 기록 / 항목별 try-except /
@@ -14,6 +14,7 @@ conn.commit() / sleep(throttle) / conn.close() / StageResult 조립.
 
 self-check:  python collector.py
 """
+import builtins
 import logging
 import os
 import sys
@@ -26,8 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import db      # noqa: E402
 import remote  # noqa: E402
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
-_cache: dict | None = None
+import skill_config  # noqa: E402
 
 # 진단 로그 — 사용자 내레이션(print)과 **다른 통로**다.
 #
@@ -178,17 +178,9 @@ def failed(reason: str = "", **kw) -> StageResult:
 
 
 def config() -> dict:
-    """스킬 레벨 config.yaml. 없거나 깨졌으면 빈 dict — 수집을 막지는 않는다."""
-    global _cache
-    if _cache is None:
-        try:
-            import yaml  # lazy: pyyaml 없이도 import는 되게
-            _cache = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-        except Exception as e:
-            print(f"[경고] config.yaml 을 읽지 못했습니다 ({e}) — 코드 기본값으로 진행합니다.",
-                  file=sys.stderr)
-            _cache = {}
-    return _cache
+    """스킬 레벨 설정 — skill_config.CONFIG. 예전엔 config.yaml 파일이었고, 호스팅과
+    로컬이 각자 한 벌씩 들고 있다가 어긋났다. 코드라서 못 읽는 경우가 없다."""
+    return skill_config.CONFIG
 
 
 class _Setting:
@@ -200,14 +192,19 @@ class _Setting:
         self.help = help_text
 
 
-def add_setting(ap, flag: str, *, key: str, fallback, type=int, help: str | None = None) -> None:
+def add_setting(ap, flag: str, *, key: str, fallback, type=None, help: str | None = None) -> None:
     """argparse에 default=None으로 등록하고 설정 메타데이터(dest, key, fallback, type)를 ap에 기록한다.
+
+    type 을 안 주면 fallback 의 타입을 쓴다. 예전 기본은 int 라서, type 을 빼먹은
+    문자열 설정(--strategy 'mobile,desktop')이 int() 에서 터져 속도 단계가 통째로 죽었다.
 
     ap 마다 지역이다 — 모듈 전역에 쌓지 않는다. 프로세스 하나가 수집기 열 개를 돌리며
     _parser() 를 열 번 부르던 시절엔 이걸 전역 dict 에 key 로 쌓아서, 수집기 A 의
     --limit(dest="limit")이 수집기 B 의 --limit(dest 는 같고 key 는 다른)까지 같이
     덮어썼다. ap 지역으로 내리면 그 섞임이 구조적으로 안 생긴다.
     """
+    if type is None:
+        type = builtins.type(fallback) if fallback is not None else str
     dest = flag.lstrip("-").replace("-", "_")
     spec = _Setting(dest=dest, key=key, fallback=fallback, type_fn=type, help_text=help)
     if not hasattr(ap, "_collector_settings"):
@@ -223,7 +220,7 @@ def add_setting(ap, flag: str, *, key: str, fallback, type=int, help: str | None
 def settings(args, cfg: dict | None, specs: list) -> dict:
     """specs(이 수집기가 add_setting 으로 등록한 것들, 보통 ap._collector_settings)를
     우선순위대로 해석한다:
-    CLI (None 아니면, 0도 유효값) > 프로젝트 yaml > config.yaml defaults > fallback.
+    CLI (None 아니면, 0도 유효값) > 사이트 설정 > skill_config defaults > fallback.
     limits.* 키는 프로젝트 yaml의 limits 아래에서 읽는다.
     """
     out = {}
@@ -257,7 +254,7 @@ def settings(args, cfg: dict | None, specs: list) -> dict:
                     raw = cfg[spec.key]
                     val = spec.type_fn(raw) if spec.type_fn else raw
 
-        # 3. config.yaml defaults
+        # 3. skill_config defaults
         if val is None:
             if spec.key in gcfg_defaults and gcfg_defaults[spec.key] is not None:
                 raw = gcfg_defaults[spec.key]
@@ -282,20 +279,14 @@ def add_common(ap, *, dry_run: bool = True) -> None:
                         help="실제 호출·저장 없이 무엇을 할지만 보여준다")
 
 
-def project_cfg(name: str) -> dict:
-    """프로젝트 yaml — 없거나 pyyaml이 없으면 경고하고 빈 dict.
+def project_cfg(conn, project) -> dict:
+    """사이트별 설정 — Brain 한 곳에서 읽는다(db.project_cfg).
 
-    yaml은 기본값·브랜드 별칭 같은 부가 정보라 없다고 수집을 막으면 안 된다.
-    부가 설정 파일 때문에 수집 자체가 죽으면 안 된다. 대신 조용히 넘어가지는 않는다 —
-    별칭이 빠지면 브랜드 판정이 달라지므로 왜 달라졌는지 말해야 한다.
+    예전에는 프로젝트 yaml 을 파일로 읽었고, 못 읽으면 경고하고 빈 dict 로 갔다.
+    그 "못 읽음"이 원격 사이트에서는 **늘 참**이었다 — 파일은 서버에 있고 동기화는
+    Brain 만 나르기 때문이다. 이제 설정이 Brain 안이라 못 읽는 경우가 없다.
     """
-    try:
-        return db.load_project_yaml(name)
-    except (db.ProjectConfigNotFound, Exception) as e:   # load_project_yaml은 없으면 ProjectConfigNotFound
-        print(f"[경고] '{name}' 프로젝트 설정(yaml)을 읽지 못했습니다 ({e or '없음'}) — "
-              "기본값으로 진행합니다. 브랜드 별칭·한도 설정은 적용되지 않습니다.",
-              file=sys.stderr)
-        return {}
+    return db.project_cfg(conn, project)
 
 
 def today_clause(col: str) -> str:
@@ -491,8 +482,8 @@ class Stage:
 def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
     """수집기 한 단계를 연다 — with 에 넣으면 conn 수명이 러너 것이 된다.
 
-    yaml은 등록할 때 기록해 둔 config_path 로 찾는다. 이름만으로 찾으면
-    표준 폴더(~/.capture/projects) 밖에 둔 설정을 조용히 놓친다.
+    설정은 Brain 에서 온다(db.project_cfg) — 파일을 찾지 않으므로 "설정을 못 읽었다"
+    는 경우가 없다.
 
     conn 을 주면 그것을 쓰고 닫지 않는다 — 빌린 것은 안 닫는다. 안 주면 여기서
     열고 __exit__ 에서 닫는다(지금까지의 동작 그대로). 테스트가 globals() 를
@@ -507,8 +498,7 @@ def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
         if own:
             conn.close()        # 프로젝트가 없어도 방금 연 conn 은 닫고 나간다
         raise
-    return Stage(conn, p, project_cfg(p["config_path"] or name),
-                 dry_run=dry_run, own=own)
+    return Stage(conn, p, project_cfg(conn, p), dry_run=dry_run, own=own)
 
 
 def open_project(name: str):
@@ -581,7 +571,7 @@ def _selfcheck() -> None:
     assert s_yaml["serp_depth"] == 9
     assert s_yaml["limits.max_keywords"] == 5
 
-    # 3. config.yaml defaults
+    # 3. skill_config defaults
     s_cfg = settings(a_none, None, specs)
     assert s_cfg["throttle"] in (0.5, 0.7)
     assert s_cfg["serp_depth"] == 10

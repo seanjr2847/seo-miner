@@ -122,7 +122,7 @@ def _vendor_script() -> str:
 # <option> 으로 채우고, 등록 화면은 server/app.py 가 window.__TYPES__ 로 싣는다
 # (serp_adapter.LOCALES 와 같은 길이다). 라벨은 **혼자 서야** 한다 — 등록 화면은
 # id 를 안 보여 준다 — 그러면서 id 를 되풀이하지 않는다: 설정 폼은 `id — 라벨` 로
-# 그리고(사용자가 ~/.capture/projects/*.yaml 에 그 id 를 직접 적는다), 그 자리에서
+# 그리고(설정 폼의 고르개가 그 id 를 값으로 쓴다), 그 자리에서
 # `directory — 디렉터리…` 처럼 겹치면 읽히지 않는다. 표기 규칙은 화면마다 다르되
 # **문구는 한 벌**이다. 순서도 여기가 정본이다(흔한 것부터).
 PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
@@ -174,7 +174,7 @@ def _assemble(variant: str = "local") -> bytes:
                           f"{htmlsafe.attr(c)} — {htmlsafe.attr(t)}</option>"
                           for c, t in serp_adapter.LOCALES)
     # 사이트 종류도 같은 길이다(PROJECT_TYPES). 이 화면은 id 를 보여 준다 — 언어-지역
-    # 과 같은 `id — 라벨` 꼴이다. 사용자가 ~/.capture/projects/*.yaml 에 적는 게 그 id 다.
+    # 과 같은 `id — 라벨` 꼴이다. 고르개가 값으로 보내는 게 그 id 다.
     type_opts = "".join(f'<option value="{htmlsafe.attr(i)}">'
                         f"{htmlsafe.attr(i)} — {htmlsafe.attr(t)}</option>"
                         for i, t in PROJECT_TYPES)
@@ -332,7 +332,11 @@ def save_gsc_client(f: dict) -> dict:
 
 
 def create_project(f: dict) -> dict:
-    """폼 입력 → projects/{name}.yaml → Brain 등록. AI 프롬프트 초안은 채팅(/capture add) 몫."""
+    """폼 입력 → Brain 등록. AI 프롬프트 초안은 채팅(/capture add) 몫.
+
+    예전엔 이 사이에 `projects/{name}.yaml` 이 한 겹 있었다. 그 파일이 정본이라
+    호스팅에서는 컨테이너 디스크에 남았고, 동기화는 Brain 만 나르므로 설정이 사용자
+    PC 로 영영 안 내려갔다(db.project_cfg 주석). 이제 파일을 안 거친다."""
     name = str(f.get("name", "")).strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", name):
         return {"ok": False, "error": "이름은 영문·숫자·-·_ 로 40자까지 (파일명이 됩니다)"}
@@ -341,55 +345,30 @@ def create_project(f: dict) -> dict:
     domain = str(f.get("domain", "")).strip()
     if not domain:
         return {"ok": False, "error": "도메인을 입력해 주세요 (예: example.com)"}
-    path = db.CAPTURE_HOME / "projects" / f"{name}.yaml"
-    if path.exists():
-        return {"ok": False, "error": f"{name} 은 이미 있습니다 — 다른 이름을 쓰세요."}
-
     def items(key: str) -> list[str]:    # 줄바꿈·쉼표 아무렇게나 적어도 받는다
         return [s.strip() for s in re.split(r"[,\n]", str(f.get(key, ""))) if s.strip()]
 
-    # 폼 입력을 f-string으로 YAML에 끼우면 개행 하나로 키가 주입된다 — dump가 막는다.
-    try:
-        import yaml
-    except ImportError:
-        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
-                                      "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
-    gsc = str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}"
-    doc = {"name": name, "type": f["type"], "domain": domain,
+    # 종류별 온보딩 프리셋(_presets.yaml)은 여기서 안 베낀다 — 그건 리포에 있는 한 벌이고
+    # 채팅(/capture add)이 종류를 보고 읽는다. 사이트마다 사본을 떠 두면 리포 쪽을 고쳐도
+    # 이미 등록된 사이트는 옛 프리셋을 계속 들고 있다.
+    cfg = {"name": name, "type": f["type"], "domain": domain,
            "locale": str(f.get("locale") or db.DEFAULT_LOCALE).strip(),
-           "gsc_property": gsc,
+           "gsc_property": str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}",
            "brand_aliases": items("brand_aliases"),
            "seed_keywords": items("seed_keywords"),
            "competitors_manual": items("competitors_manual"),
            "tools": items("tools"),
            "surfaces_ai": ["chatgpt", "perplexity", "gemini"],
            "limits": {"max_keywords": 100, "max_ai_prompts": 30}}
-
-    preset_path = Path(__file__).resolve().parent.parent / "projects" / "_presets.yaml"
-    if preset_path.exists():
-        try:
-            presets = yaml.safe_load(preset_path.read_text("utf-8")) or {}
-            if isinstance(presets, dict) and f.get("type") in presets:
-                p_data = presets[f["type"]]
-                if isinstance(p_data, dict) and p_data:
-                    doc["preset"] = p_data
-        except Exception:
-            pass
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"# 대시보드 설정 화면에서 생성 — 손으로 고친 뒤에는\n"
-        f"# python db.py sync-project {path} 를 다시 돌리면 반영됩니다.\n"
-        + yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), "utf-8")
+    conn = db.connect()
     try:
-        db.sync_project(str(path))
-    except db.ProjectConfigNotFound as e:
-        return {"ok": False, "error": str(e)}
-    except ImportError:
-        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — "
-                                      "위의 [기본 부품 설치]를 먼저 눌러 주세요."}
+        if conn.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone():
+            return {"ok": False, "error": f"{name} 은 이미 있습니다 — 다른 이름을 쓰세요."}
+        db.register_project(conn, cfg)
+    finally:
+        conn.close()
     PREFILL_FILE.unlink(missing_ok=True)   # 다 썼다 — 다음 사이트 폼에 새면 오염이다
-    return {"ok": True, "name": name, "path": str(path)}
+    return {"ok": True, "name": name}
 
 
 # 호스팅(웹) 주소 — 로컬에서 만든 "웹에서 이어 하기" 링크가 가리키는 곳.
@@ -703,12 +682,18 @@ def _axis_rank(conn, pid: int) -> dict:
 
     # 검색결과 상위 몇 줄 — 요청문이 "빠진 구간" 을 짐작이 아니라 비교로 찾는 재료.
     # 순위 숫자와 같은 회차에서 나온다(같은 날짜 키로 읽는다).
+    # 검색어마다 **그 검색어의** 가장 최근 순위 조회 날을 본다. 전체 최신 날 하나로 읽으면
+    # 순위 조회를 몇 검색어만 다시 돌린 날(부분 실행·끊긴 회차) 나머지 검색어의 상위 목록이
+    # 통째로 사라진다. 기준은 상위 목록 행이 아니라 **순위 조회** 날이다 — 그날 조회에서
+    # 구글이 질문을 안 보여 줬으면 없는 것이 답이고, 더 옛날 질문으로 물러서면 안 된다.
     serp_top: dict[str, list] = {}
     if rank_dates:
         for r in q(conn, """SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
                               FROM serp_results s JOIN keywords k ON k.id = s.keyword_id
-                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=?
-                             ORDER BY k.keyword, s.position""", (pid, rank_dates[0])):
+                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
+                                   SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
+                                    WHERE rs.keyword_id = s.keyword_id)
+                             ORDER BY k.keyword, s.position""", (pid,)):
             serp_top.setdefault(r["keyword"], []).append(r)
 
     # 구글이 이 검색어에 같이 보여 준 질문·연관 검색어(팬아웃 재료) — 요청문이 "함께
@@ -720,8 +705,10 @@ def _axis_rank(conn, pid: int) -> dict:
     if rank_dates:
         for r in q(conn, """SELECT k.keyword, s.kind, s.text
                               FROM serp_questions s JOIN keywords k ON k.id = s.keyword_id
-                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=?
-                             ORDER BY k.keyword, s.kind, s.position""", (pid, rank_dates[0])):
+                             WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
+                                   SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
+                                    WHERE rs.keyword_id = s.keyword_id)
+                             ORDER BY k.keyword, s.kind, s.position""", (pid,)):
             serp_fanout.setdefault(r["keyword"], []).append({"kind": r["kind"], "text": r["text"]})
 
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
@@ -1137,13 +1124,38 @@ def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
     if not out:
         return {}
     for r in conn.execute(
-            "SELECT url_from, url_to, anchor FROM crawl_links"
+            "SELECT url_from, url_to, anchor, in_chrome FROM crawl_links"
             " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT 20000",
             (run["id"],)):
         u = by_norm.get(scoring.norm(r["url_to"]))
         if u in out:
-            out[u].append({"from": r["url_from"], "anchor": r["anchor"]})
+            out[u].append({"from": r["url_from"], "anchor": r["anchor"], "chrome": r["in_chrome"]})
     return {u: _inlink_rows(rows) for u, rows in out.items()}
+
+
+def _crawl_outlinks(conn, crawl: dict, urls) -> dict:
+    """요청문이 손댈 페이지가 **본문에서** 거는 내부 링크의 목적지 — 관련 글로 나가는 링크를
+    제안할 때 이미 건 것을 빼는 재료. 틀(메뉴) 링크는 뺀다: 메뉴가 모든 글로 거는 링크를
+    "이미 건다"로 치면 제안할 곳이 없다. 틀 여부를 모르는 옛 크롤이면 전부 싣는다.
+    크롤이 안 본 주소는 키가 없다."""
+    run = (crawl or {}).get("run")
+    want = {u for u in urls if u}
+    if not (run and want):
+        return {}
+    by_norm = {}
+    for u in want:
+        by_norm.setdefault(scoring.norm(u), u)
+    crawled = {scoring.norm(r["url"]) for r in conn.execute(
+        "SELECT url FROM crawl_pages WHERE run_id=?", (run["id"],))}
+    out: dict[str, list] = {by_norm[k]: [] for k in by_norm if k in crawled}
+    for r in conn.execute(
+            "SELECT url_from, url_to FROM crawl_links WHERE run_id=? AND is_internal=1"
+            " AND url_from <> url_to AND (in_chrome IS NULL OR in_chrome = 0) LIMIT 20000",
+            (run["id"],)):
+        u = by_norm.get(scoring.norm(r["url_from"]))
+        if u in out and r["url_to"] not in out[u]:
+            out[u].append(r["url_to"])
+    return out
 
 
 # 들어오는 링크를 요청문에 싣는 상한(글 수). 여기서 20개로 자르고 요청문이 10개만 그리자
@@ -1165,10 +1177,23 @@ def _inlink_rows(rows: list[dict]) -> list[dict]:
     for r in rows:
         a = " ".join(str(r.get("anchor") or "").split())
         anchors[a] = anchors.get(a, 0) + 1
-        by_from.setdefault(r["from"], {"from": r["from"], "anchor": a})
+        row = by_from.setdefault(r["from"], {"from": r["from"], "anchor": a, "body": False})
+        if r.get("chrome") == 0:              # 본문에서도 건다 — 앵커는 본문 것이 대표다
+            if not row["body"]:
+                row["anchor"] = a
+            row["body"] = True
     top = sorted(anchors.items(), key=lambda x: (-x[1], x[0]))[:5]
-    meta = {"total": len(rows), "pages": len(by_from), "anchors": [list(x) for x in top]}
-    out = list(by_from.values())[:INLINK_ROWS]
+    # 틀 여부를 아는 크롤인가 — 한 줄이라도 값이 있으면 이 회차는 셌다
+    known = any(r.get("chrome") is not None for r in rows)
+    meta = {"total": len(rows), "pages": len(by_from), "anchors": [list(x) for x in top],
+            # 잘리기 전 전체 — 표를 잘라도 "아직 안 건 글"을 고를 수 있게(예전엔 표가 잘리면
+            # 후보를 아예 못 냈다). 틀 여부를 알면 본문으로 건 글을 따로 싣는다.
+            "from_all": sorted(by_from), "chrome_known": known,
+            "body_from": sorted(f for f, x in by_from.items() if x["body"]) if known else None,
+            "body_total": sum(1 for r in rows if r.get("chrome") == 0) if known else None}
+    # 본문 링크가 먼저다 — 표를 자르면 메뉴 줄만 남아 본문 링크가 안 보였다
+    ordered = sorted(by_from.values(), key=lambda x: not x["body"]) if known else list(by_from.values())
+    out = [{k: v for k, v in x.items() if k != "body" or known} for x in ordered][:INLINK_ROWS]
     out[0] = {**out[0], **meta}
     return out
 
@@ -1355,7 +1380,8 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         *(r["keyword"] for r in ranks_all),
         *(r["query"] for r in ups), *(r["query"] for r in downs)], at=at)
 
-    # 내 페이지 감사(collect_page) — 최신 검사일 한 벌. 진단 문장은 여기서 만들지
+    # 내 페이지 감사(collect_page) — 주소마다 가장 최근 것(db.latest_page_audits). 한 회차가
+    # 몇십 곳만 보므로 "최신 검사일 한 벌"로 읽으면 앞 회차의 감사가 사라진다. 진단 문장은 여기서 만들지
     # 않는다: scoring.page_advice 가 정본이고 화면은 그 결과를 그리기만 한다.
     # 검색어를 같이 넘기는 이유는 "title 에 무엇을 넣어라"의 '무엇'이 그것이라서다.
     audit_date = conn.execute(
@@ -1366,8 +1392,7 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
     page_audits = {}
     if audit_date:
-        for a in q(conn, "SELECT * FROM page_audits WHERE project_id=? AND checked_date=?",
-                   (pid, audit_date)):
+        for a in (dict(r) for r in db.latest_page_audits(conn, pid)):
             qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
             a["queries"] = qs
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
@@ -1403,11 +1428,14 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
                             if str(o["target"]).startswith("http"))}
     in_play |= {r["page"] for rows in topic_pages.values() for r in rows if r.get("page")}
     page_queries = scoring.queries_by_page(conn, pid, in_play, at=at)
+    # 요청문의 '이 페이지에 걸린 검색어' 표 — 그 페이지가 노출 1등인 검색어 전부. 판정
+    # (intent_split)과 같은 한 벌이다. query_pages 를 뒤집으면 기회·순위의 검색어만 남는다.
+    page_first = scoring.page_first_queries(conn, pid, in_play, at=at)
 
     return {"query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date, "topic_pages": topic_pages,
             "intent_splits": intent_splits, "target_trend": target_trend,
-            "page_queries": page_queries}
+            "page_queries": page_queries, "page_first_queries": page_first}
 
 
 def gather(conn, p, at: str | None = None) -> dict:
@@ -1425,7 +1453,7 @@ def gather(conn, p, at: str | None = None) -> dict:
         묶으면 대부분의 축이 "그날 데이터 없음"이 된다.
     """
     pid = p["id"]
-    cfg = collector.project_cfg(p["config_path"] or p["name"])
+    cfg = collector.project_cfg(conn, p)
 
     gsc = _axis_gsc(conn, pid, cfg, at)
     rank = _axis_rank(conn, pid)
@@ -1479,6 +1507,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     # 페이로드가 링크 수만 명으로 부푼다.
     _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
     d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
+    d["crawl_outlinks"] = _crawl_outlinks(conn, d.get("crawl") or {}, _pages_in_play)
     d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
     brief.attach(d, db.project_locale(p))
@@ -1560,14 +1589,9 @@ def record_creation_route(body: dict) -> dict:
 
 
 def _brand_keys(conn, p) -> set[str]:
-    """브랜드 힌트용 — 프로젝트 이름·별칭(brand_aliases)을 norm 한 것. yaml 이 없으면
+    """브랜드 힌트용 — 사이트 이름·별칭(brand_aliases)을 norm 한 것. 별칭을 안 적었으면
     사이트 이름만. 자동 판정에는 안 쓴다 — 심사 화면이 칩 하나로 힌트만 준다."""
-    cfg = {}
-    if p["config_path"]:
-        try:
-            cfg = db.load_project_yaml(p["config_path"])
-        except (db.ProjectConfigNotFound, ImportError):
-            pass
+    cfg = db.project_cfg(conn, p)
     names = scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
     return {k for k in (scoring.norm(a) for a in names) if k}
 

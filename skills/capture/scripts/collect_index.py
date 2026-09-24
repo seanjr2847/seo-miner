@@ -102,10 +102,10 @@ def collect(project: str, *,
         if not prop:
             return st.skip("project yaml has no gsc_property "
                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
-                           "Add it, then: python db.py sync-project <yaml>")
+                           "Add it in the dashboard [설정] screen.")
         if limit <= 0:
             print("[index] index_urls=0 — 색인 검사를 끄셨습니다. "
-                  "켜려면 config.yaml defaults.index_urls 를 올리거나 --limit N 을 주세요.")
+                  "켜려면 사이트 설정의 index_urls 를 올리거나 --limit N 을 주세요.")
             return st.noop(rows=0)
 
         urls = top_pages(conn, p["id"], limit)

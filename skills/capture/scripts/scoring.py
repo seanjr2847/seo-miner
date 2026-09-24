@@ -89,7 +89,9 @@ AI_MIN_SAMPLES = 3          # 답변이 이보다 적으면 "표본 부족" — 
                             # 비용이 늘어나는 결정이라 여기서 대신 하지 않는다)
 AI_THIN_MULT = 0.6          # 표본 부족 질문의 점수 승수(score)
 AI_PRESENCE_SHARE = 0.5     # 대신 인용된 횟수 중 제3자 플랫폼 몫이 이보다 크면 처방이
-                            # "내 페이지 고치기"가 아니라 "그 플랫폼에 등장하기"다
+                            # "내 페이지 고치기"가 아니라 "그 플랫폼에 등장하기"다.
+                            # 언론(press_outlets) 몫도 같은 문턱을 본다 — 그때는 "언론에
+                            # 등장하기"(전문가 코멘트·기고)다
 AI_EXCERPT_CHARS = 280      # 엔진별 답변 발췌 — 요청문·화면이 엔진마다 한 토막씩 보인다
 AI_RIVALS_TOP = 8           # 질문 하나에 싣는 대신 인용된 도메인 수
 # 가시성 사다리(인용 → 이름 나옴 → 추천 목록)를 요청문에 싣는 질문 갈래. 갈래 이름의
@@ -227,7 +229,7 @@ SERP_RIVAL_MAX = 10             # 한 바퀴에 붙이는 수 — 많이 겹친 
 def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]:
     """순위 수집 한 바퀴가 경쟁사로 붙일 도메인. hits = {도메인: 상위에 선 검색어 수}.
 
-    우리 자신·제3자 플랫폼(config.yaml third_party_platforms)은 빼고, 문턱을 넘은 것 중
+    우리 자신·제3자 플랫폼(skill_config third_party_platforms)은 빼고, 문턱을 넘은 것 중
     많이 겹친 순으로 SERP_RIVAL_MAX 개까지.
     """
     plats = third_party_platforms() if platforms is None else platforms
@@ -571,7 +573,7 @@ def vitals_advice(rows) -> list[dict]:
     return out
 
 
-# 목록의 정본은 config.yaml 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
+# 목록의 정본은 skill_config 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
 # 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(아래 폴백).
 #
 # 봇의 **용도**가 판정의 전부다. 학습 전용 봇(GPTBot·ClaudeBot·CCBot…)을 막는 것은
@@ -1659,16 +1661,17 @@ def is_site_root(url: str) -> bool:
     return not segs or (len(segs) == 1 and bool(_LANG_SEG.match(segs[0])))
 
 
-def intent_split(conn: sqlite3.Connection, project_id: int, *,
-                 limit: int = 15, at: str | None = None) -> list[dict]:
-    """한 페이지가 두 의도를 떠안은 곳 — 2위 의도 노출이 큰 순.
+def page_first_queries(conn: sqlite3.Connection, project_id: int, urls=None, *,
+                       at: str | None = None) -> dict[str, list[dict]]:
+    """페이지 → 그 페이지가 **노출 1등**인 검색어 전부(노출 순). 판정(intent_split)과
+    요청문의 '이 페이지에 걸린 검색어' 표가 같은 이 한 벌을 본다.
 
-    페이지는 그 검색어로 노출이 가장 큰 것 하나로만 센다 — brief._page_queries 와
-    같은 규칙이다. 두 곳이 다른 규칙을 쓰면 요청문의 표와 판정이 어긋난다.
-    """
+    요청문은 예전에 query_pages(기회·순위에 걸린 검색어만)를 뒤집어 셌다 — 한 지면에
+    검색어 43개가 걸려도 10개만 보고 "(전부)"라고 불렀고, title 한 벌이 묶음 전부를
+    맡으라면서 묶음의 1/4만 보여 줬다. urls 를 주면 그 페이지만 돌려준다."""
     cur, _, period, _ = snapshot_pair(conn, project_id, at)
     if not cur:
-        return []
+        return {}
     site = site_words_of(conn, project_id)      # 자리 판정은 사이트마다 다르다
     first: dict[str, dict] = {}                 # query → 노출 1등 페이지 행
     for r in conn.execute(
@@ -1676,15 +1679,31 @@ def intent_split(conn: sqlite3.Connection, project_id: int, *,
                   ROUND(AVG(position),1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
-            GROUP BY query, page ORDER BY imp DESC""",
+              AND query IS NOT NULL
+            GROUP BY query, page ORDER BY imp DESC, page""",
             (project_id, cur, period)):
         first.setdefault(r["query"], {"page": r["page"], "query": r["query"],
                                       "impressions": r["imp"] or 0, "clicks": r["clk"] or 0,
                                       "position": r["pos"],
                                       "intent": query_intent(r["query"], site)})
+    want = None if urls is None else set(urls)
     pages: dict[str, list[dict]] = {}
     for row in first.values():
-        pages.setdefault(row["page"], []).append(row)
+        if want is None or row["page"] in want:
+            pages.setdefault(row["page"], []).append(row)
+    for rows in pages.values():
+        rows.sort(key=lambda r: (-int(r["impressions"] or 0), r["query"]))
+    return pages
+
+
+def intent_split(conn: sqlite3.Connection, project_id: int, *,
+                 limit: int = 15, at: str | None = None) -> list[dict]:
+    """한 페이지가 두 의도를 떠안은 곳 — 2위 의도 노출이 큰 순.
+
+    페이지는 그 검색어로 노출이 가장 큰 것 하나로만 센다 — brief._page_queries 와
+    같은 규칙이다. 두 곳이 다른 규칙을 쓰면 요청문의 표와 판정이 어긋난다.
+    """
+    pages = page_first_queries(conn, project_id, at=at)
     out = []
     for url, rows in pages.items():
         if is_site_root(url):
@@ -2654,17 +2673,11 @@ def _fit_hits(word: str, q_norm: str, q_toks: set[str]) -> bool:
 
 def _brand_names(conn: sqlite3.Connection, project_id: int) -> set[str]:
     """우리 이름들(정규화) — 사이트 이름·도메인 앞부분·yaml 의 brand_aliases."""
-    p = conn.execute("SELECT name, domain, config_path FROM projects WHERE id=?",
-                     (project_id,)).fetchone()
+    p = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
     if not p:
         return set()
-    names = [p["name"], _stem(p["domain"] or "")]
-    if p["config_path"]:
-        try:
-            import db
-            names += aliases_of(db.load_project_yaml(p["config_path"]))
-        except Exception:     # yaml 은 부가 정보다 — 없어도 이름·도메인으로 판정한다
-            pass
+    import db
+    names = [p["name"], _stem(p["domain"] or "")] + aliases_of(db.project_cfg(conn, p))
     return {n for n in (norm(x) for x in names if x) if len(n) >= 2}
 
 
@@ -2742,10 +2755,8 @@ def _site_docs(conn: sqlite3.Connection, project_id: int) -> list[str]:
 
     for r in _crawl_heads(conn, project_id):
         add(r["url"], f"{r['title'] or ''} {r['h1'] or ''}")
-    for r in conn.execute(
-            """SELECT url, title FROM page_audits WHERE project_id=? AND checked_date=(
-                 SELECT MAX(checked_date) FROM page_audits WHERE project_id=?)""",
-            (project_id, project_id)):
+    import db
+    for r in db.latest_page_audits(conn, project_id):
         add(r["url"], r["title"])
     cur, _prev, period, _mm = snapshot_pair(conn, project_id)
     if cur:
@@ -2946,7 +2957,7 @@ def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
 
 # 제3자 플랫폼 — 브랜드는 자기 사이트보다 커뮤니티·위키·영상·리뷰 사이트로 훨씬 자주
 # 인용된다(ai-seo 세 번째 기둥). 대신 인용된 곳이 거기면 "내 페이지를 고쳐라"는 틀린
-# 처방이다. 목록의 정본은 config.yaml 의 third_party_platforms 다 — 플랫폼이 늘고
+# 처방이다. 목록의 정본은 skill_config 의 third_party_platforms 다 — 플랫폼이 늘고
 # 주는 것은 데이터 변경이지 코드 변경이 아니다. 읽기 실패면 빈 목록: 그때는 전부
 # "경쟁사·일반 사이트"로 보고 예전 처방을 낸다(없는 갈래를 지어내지 않는다).
 def third_party_platforms() -> tuple[str, ...]:
@@ -2964,6 +2975,39 @@ def is_third_party(domain: str, platforms=None) -> bool:
     """하위 도메인까지 — ko.wikipedia.org·m.blog.naver.com 도 그 플랫폼이다(owns 규칙)."""
     plats = third_party_platforms() if platforms is None else platforms
     return any(owns(domain, p) for p in plats)
+
+
+# 언론 — 챗봇이 신문·방송·매거진을 대신 인용하면 그것도 "내 페이지를 고쳐라"가 틀린
+# 자리다. 그 기사는 우리가 고칠 수 없고, 들어가는 길은 기자에게 전문가 코멘트·자료를
+# 주는 것이다. 그런데 제3자 플랫폼 목록에 없어서 "경쟁사·일반 사이트"로 셌고, 답변 6건이
+# 전부 donga·mk·newsis 인 질문에 페이지 고치기 처방이 나갔다. 정본은 아래 상수 한 벌이다
+# — 설정 파일에 두지 않는다: 호스팅과 로컬이 같은 코드를 싣는 한 같은 목록을 본다.
+# 하위 도메인은 자동으로 포함된다(health.chosun.com). 제3자 플랫폼이 먼저다(news.naver.com
+# 은 포털로 센다).
+PRESS_OUTLETS = (
+    "chosun.com", "donga.com", "joongang.co.kr", "hani.co.kr", "khan.co.kr", "kmib.co.kr",
+    "seoul.co.kr", "segye.com", "munhwa.com", "hankookilbo.com", "mk.co.kr", "hankyung.com",
+    "mt.co.kr", "sedaily.com", "edaily.co.kr", "heraldcorp.com", "asiae.co.kr", "fnnews.com",
+    "newsis.com", "news1.kr", "yna.co.kr", "yonhapnews.co.kr", "nocutnews.co.kr",
+    "ohmynews.com", "ytn.co.kr", "kbs.co.kr", "imbc.com", "sbs.co.kr", "jtbc.co.kr",
+    "allurekorea.com", "vogue.co.kr", "elle.co.kr", "cosinkorea.com", "kormedi.com",
+    "docdocdoc.co.kr", "medicaltimes.com", "mdtoday.co.kr",
+    "nytimes.com", "washingtonpost.com", "wsj.com", "theguardian.com", "bbc.com", "bbc.co.uk",
+    "cnn.com", "reuters.com", "apnews.com", "bloomberg.com", "forbes.com",
+    "businessinsider.com", "techcrunch.com", "theverge.com", "wired.com",
+    "nikkei.com", "asahi.com", "yomiuri.co.jp",
+)
+
+
+def press_outlets() -> tuple[str, ...]:
+    return PRESS_OUTLETS
+
+
+def is_press(domain: str, outlets=None) -> bool:
+    """하위 도메인까지 — health.chosun.com 도 chosun.com 이다. 제3자 플랫폼이 먼저다
+    (news.naver.com 은 포털이다) — 부르는 쪽이 is_third_party 를 먼저 본다."""
+    outs = press_outlets() if outlets is None else outlets
+    return any(owns(domain, p) for p in outs)
 
 
 def _rival_key(host: str, platforms) -> str:
@@ -2998,13 +3042,16 @@ def _excerpt(text: str) -> str:
     return t if len(t) <= AI_EXCERPT_CHARS else t[:AI_EXCERPT_CHARS - 1].rstrip() + "…"
 
 
-def _rival_list(tally: dict[str, int], platforms, top: int) -> list[dict]:
-    return [{"domain": d, "n": n, "third_party": is_third_party(d, platforms)}
+def _rival_list(tally: dict[str, int], platforms, top: int, outlets=()) -> list[dict]:
+    """press 는 제3자 플랫폼이 아닌 언론만 — 한 도메인이 두 갈래에 동시에 서지 않는다."""
+    return [{"domain": d, "n": n, "third_party": is_third_party(d, platforms),
+             "press": not is_third_party(d, platforms) and is_press(d, outlets)}
             for d, n in sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:top]]
 
 
 def ai_tally(conn: sqlite3.Connection, run_id: int,
-             prompt_ids: list[int] | None = None, *, platforms=None) -> dict[int, dict]:
+             prompt_ids: list[int] | None = None, *, platforms=None,
+             outlets=None) -> dict[int, dict]:
     """한 회차의 질문별 집계 — "대신 인용된 곳"·엔진별 수·발췌의 **정본**.
 
     예전에는 두 벌이었다: 화면(dashboard._axis_ai)은 `MAX(cited_domains_json)` 로 표본
@@ -3019,13 +3066,16 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
       misses       우리가 인용되지 않은 답변 수 — rivals 의 분모
       rivals       [{domain, n, third_party}] 우리가 빠진 답변에서 대신 인용된 곳, 횟수 순
       third_share  rivals 횟수 중 제3자 플랫폼 몫(0~1). 대신 인용된 곳이 없으면 None
-      lean         third_party(제3자가 대부분) | sites(경쟁사·일반 사이트) | None
+      press_share  rivals 횟수 중 언론(press_outlets) 몫(0~1). 같은 조건에서 None
+      lean         third_party(제3자가 대부분) | press(언론이 대부분) | sites(경쟁사·일반
+                   사이트) | None
       excerpts     {engine: 발췌} 엔진마다 우리가 빠진 답변 중 가장 먼저 받은 것(id 순) —
                    무작위가 아니라 결정적이다. 빠진 답이 없는 엔진은 없다
       by_engine    {engine: {checks, cited, mentioned, named_only, recommended,
                              rec_checks, misses, rivals}}
     """
     plats = third_party_platforms() if platforms is None else platforms
+    outs = press_outlets() if outlets is None else outlets
     sql = ("SELECT prompt_id, engine, cited, mentioned, recommended, cited_domains_json,"
            " answer_excerpt FROM ai_checks WHERE run_id=?")
     args: list = [run_id]
@@ -3065,21 +3115,26 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
         by = {}
         for name, e in sorted(a["eng"].items()):
             t = e.pop("tally")
-            by[name] = {**e, "rivals": _rival_list(t, plats, 3),
+            by[name] = {**e, "rivals": _rival_list(t, plats, 3, outs),
                         "recommended": e["recommended"] if e["rec_checks"] else None}
         tot = lambda k: sum(e[k] or 0 for e in by.values())  # noqa: E731
-        rivals = _rival_list(a["tally"], plats, AI_RIVALS_TOP)
+        rivals = _rival_list(a["tally"], plats, AI_RIVALS_TOP, outs)
         hits = sum(a["tally"].values())
         third = sum(n for d, n in a["tally"].items() if is_third_party(d, plats))
+        press = sum(n for d, n in a["tally"].items()
+                    if not is_third_party(d, plats) and is_press(d, outs))
         share = round(third / hits, 3) if hits else None
+        pshare = round(press / hits, 3) if hits else None
         rec_checks = tot("rec_checks")
         out[pid] = {"checks": tot("checks"), "cited": tot("cited"),
                     "mentioned": tot("mentioned"), "named_only": tot("named_only"),
                     "recommended": tot("recommended") if rec_checks else None,
                     "rec_checks": rec_checks, "misses": tot("misses"),
                     "engines": list(by), "rivals": rivals, "third_share": share,
+                    "press_share": pshare,
                     "lean": (None if share is None else
-                             "third_party" if share > AI_PRESENCE_SHARE else "sites"),
+                             "third_party" if share > AI_PRESENCE_SHARE else
+                             "press" if pshare > AI_PRESENCE_SHARE else "sites"),
                     "excerpts": a["excerpts"], "by_engine": by}
     return out
 
@@ -3441,7 +3496,8 @@ _SD_PLAY = {
         acts=["title 이 이 페이지에 걸린 검색어 묶음의 주 의도를 말하는지 보고, 숫자·연도를 붙여 "
               "옆 결과와 다르게 보이게 합니다. 검색어를 글자 그대로 박지 않습니다.",
               "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
-              "질문 바로 아래 40~60자 직답 블록을 둡니다. 강조 스니펫이 거기서 나옵니다.",
+              "질문 꼴 H2 바로 아래에 두세 문장(영어면 40~60단어)으로 직답합니다. 강조 스니펫이 "
+              "거기서 나옵니다 — 그 질문을 담을 H2 가 아직 없으면 H2 부터 둡니다.",
               "상단 3위권을 노린다면 상위 페이지에만 있는 구간을 본문에 채웁니다."],
         # 1페이지 안에서 클릭이 안 나는 이유는 순위가 아니다 — 가설부터 가르게 한다.
         # 이 표가 없을 때 3.6~5.8위·클릭 0 페이지의 요청문이 순위 올리기만 시켰다.
@@ -3451,7 +3507,11 @@ _SD_PLAY = {
                  "새 title 3안. 묶음의 주 의도를 앞에 두고 숫자나 연도를 붙여서 — 지금 title 이 "
                  "이미 그 말을 하면 '안 바꿈'과 이유",
                  "meta description 2안",
-                 "질문 바로 아래 넣을 40~60자 직답 문안"]),
+                 # "40~60자"였다 — 스니펫 기준은 단어라 한국어로 옮기며 단위가 바뀌었고,
+                 # 같은 요청문의 추출성 산출물(40~60단어)과 딴말을 했다. H2 가 하나도 없는
+                 # 페이지에 "질문 바로 아래"를 시키면 그 질문이 어디에도 없다.
+                 "질문 꼴 H2 와 그 바로 아래 넣을 두세 문장 직답(영어면 40~60단어) — 그 질문을 "
+                 "담을 H2 가 지금 페이지에 없으면 그 H2 문안과 넣을 자리부터"]),
     "page2": dict(
         what="1페이지 진입까지 몇 칸 남았습니다. 그 몇 칸이 클릭의 대부분입니다.",
         acts=["아래 페이지의 title 과 H1 이 이 검색어 묶음이 묻는 것을 정면으로 말하게 고칩니다 — "
@@ -3599,11 +3659,16 @@ _KIND_SPECS = {
             what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
             acts=["title 앞 60자 안에서 검색 의도에 바로 답하고, 브랜드명은 뒤로 밉니다.",
                   "meta description 에 숫자·연도·구체적 이득을 적습니다.",
-                  "FAQ·HowTo 스키마로 검색 결과에서 차지하는 면적을 넓힙니다.",
+                  # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를
+                  # 거두고 FAQ 를 정부·보건 권위 사이트로 좁혔다(_AIO_PLAY 주석과 같은 사실).
+                  "검색결과에 실제로 보이는 모습을 봅니다 — 구글이 title 을 바꿔 보여 주는지, "
+                  "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
+                  "사이트에서 더는 안 나옵니다.",
                   "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."],
             deliver=["새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
                      "meta description 2안. 길이 기준 안에서",
-                     "검색 결과 면적을 넓힐 FAQ·HowTo 구조화 데이터(JSON-LD)"])),
+                     "지금 검색결과에 보이는 모습 점검: 구글이 보여 주는 title·설명이 페이지의 "
+                     "것과 같은지, 날짜·이동 경로가 맞는지 | 고칠 것"])),
     "cannibalization": dict(
         label="내부 경쟁", defensive=True,
         detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
@@ -3774,7 +3839,8 @@ _KIND_SPECS = {
             + (f". 이름만 나온 것은 {r['named_only']}건입니다" if r["named_only"] else "")
             + (f". 대신 인용되는 곳: {ai_rivals_text(r['rivals'], r['misses'])}"
                if r["rivals"] else "")
-            + (" — 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else "")
+            + (" — 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else
+               " — 대부분 언론입니다" if r.get("lean") == "press" else "")
             + (f" (AI 확인 {str(r['measured_at'])[:10]} 기준)"
                if r.get("measured_at") else "")),
         # 처방이 대신 인용된 곳의 갈래로 갈린다(ai_tally 의 lean) — 제3자 플랫폼이
@@ -3787,7 +3853,9 @@ _KIND_SPECS = {
                       "정의·비교표처럼 그대로 인용하기 쉬운 블록을 만듭니다."],
                 deliver=["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답",
                          "인용될 근거 블록(숫자·출처·갱신일이 들어간 표나 목록)",
-                         "Article·FAQPage 구조화 데이터(JSON-LD)"]),
+                         # FAQPage 였다 — 인용 근거가 되는 것은 화면에 보이는 저자·수정일이다.
+                         "저자·수정일을 화면에 보일 자리와 Article 구조화 데이터(JSON-LD)의 "
+                         "author·dateModified 틀. 이름·자격은 지어내지 않고 빈자리로 둡니다"]),
             "third_party": dict(
                 what="챗봇이 이 질문에서 내 사이트 대신 커뮤니티·위키·영상·리뷰 사이트 같은 "
                      "제3자 플랫폼을 출처로 씁니다. 브랜드는 자기 사이트보다 이런 곳에서 "
@@ -3801,6 +3869,22 @@ _KIND_SPECS = {
                 deliver=["플랫폼별 참여 계획 표: 어디에 · 누가 · 무엇으로 · 그 플랫폼 규칙상 "
                          "허용되는지",
                          "그 플랫폼에서 인용·링크할 만한 우리 페이지(없으면 먼저 만들 것)",
+                         "4주 순서표와 다음 AI 확인에서 볼 신호"]),
+            # 언론이 대부분일 때 — 그 기사는 우리가 고칠 수 없다. 들어가는 길은 기자가 다음
+            # 기사에서 우리를 출처로 삼게 하는 것이다(전문가 코멘트·자료).
+            "press": dict(
+                what="챗봇이 이 질문에서 내 사이트 대신 신문·방송·매거진 기사를 출처로 씁니다. "
+                     "그 기사는 우리가 고칠 수 없습니다 — 다음 기사에 우리 전문가·자료가 "
+                     "출처로 실리게 하는 것이 일입니다.",
+                acts=["대신 인용된 언론 중 가장 잦은 한두 곳과, 이 주제를 쓴 기자·섹션을 찾습니다.",
+                      "그 기사들이 누구를 전문가로 인용했는지 봅니다 — 그 자리가 우리 자리입니다.",
+                      "기자가 쓸 수 있는 것을 준비합니다: 실명 전문가 코멘트, 우리만 가진 수치·"
+                      "사례(개인정보 없이), 확인 가능한 1차 출처.",
+                      "기사가 링크할 근거 페이지가 우리 사이트에 있는지 보고, 없으면 그것부터 만듭니다."],
+                deliver=["언론별 계획 표: 매체 · 이 주제를 다룬 기사(모르면 [확인 필요]) · 그 기사가 "
+                         "인용한 전문가 · 우리가 줄 수 있는 것",
+                         "기자에게 보낼 짧은 제안문 한 벌 — 광고·기사 거래가 아니라 코멘트·자료 제공",
+                         "기사가 링크할 만한 우리 근거 페이지(없으면 먼저 만들 것)",
                          "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
         see=("rank", "ranks"),
@@ -4209,6 +4293,33 @@ _NO_RESOLVE = {
 }
 
 
+# 위 규칙을 사람 말로 — 요청문이 "무엇이 되면 이 일이 끝났나"를 말할 때 이것을 가리킨다.
+# 판정(_RESOLVERS)과 두 벌이 되지 않게 문턱은 같은 상수에서 채운다. 요청문의 목표와
+# 시스템이 기회를 닫는 조건이 딴말을 하면, 목표를 이뤘는데 기회가 안 닫히거나 그 반대다.
+RESOLVE_WHEN = {
+    "striking_distance": f"다음 구글 실적에서 이 검색어가 노출 {STRIKING_MIN_IMP} 이상으로 평균 "
+                         f"{STRIKING_LO}위 안(상단 3위권)에 들면",
+    "ctr_gap": f"다음 구글 실적에서 1페이지(노출 {CTR_GAP_MIN_IMP} 이상)를 지키며 클릭률이 그 "
+               f"순위 기대치의 {round(CTR_GAP_FACTOR * 100)}%를 넘으면",
+    "device_gap": f"다음 기기별 분해에서 모바일 노출 {DEVICE_MIN_IMP} 이상으로 모바일·데스크톱 "
+                  f"순위 차가 {DEVICE_GAP_POS:g}칸 아래로 줄면",
+    "index_blocked": "다음 색인 확인(URL 검사)에서 이 주소가 PASS·색인됨으로 나오면",
+    "ai_citation_gap": f"다음 AI 확인(끝난 회차)에서 이 질문의 인용률이 "
+                       f"{round(AI_GAP_MAX_RATE * 100)}%를 넘으면",
+    "aio_exposure": "다음 순위 조회에서 구글 AI 요약이 우리 링크를 인용하면",
+    "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
+    "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
+}
+assert set(RESOLVE_WHEN) == set(_RESOLVERS), set(RESOLVE_WHEN) ^ set(_RESOLVERS)
+assert not set(_RESOLVERS) & set(_NO_RESOLVE)
+assert set(_RESOLVERS) | set(_NO_RESOLVE) == set(ALL_KINDS)
+
+
+def resolve_when(kind: str) -> str | None:
+    """이 종류의 기회가 저절로 닫히는 조건 — 저절로 안 닫히는 종류면 None."""
+    return RESOLVE_WHEN.get(kind)
+
+
 def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None, *,
                   domain: str = "") -> dict:
     """이번 적재(run_id)에 다시 안 나온 열린 기회(new|acked) 중 새 데이터가 조건이
@@ -4250,12 +4361,7 @@ def load(project: str) -> None:
     conn = db.connect()
     p = db.get_project(conn, project)
     pid, ptype = p["id"], p["type"] or "saas"
-    cfg = {}
-    if p["config_path"]:
-        try:
-            cfg = db.load_project_yaml(p["config_path"])
-        except (db.ProjectConfigNotFound, ImportError):   # yaml 이 없어도 적재는 계속한다 (브랜드 필터만 얕아짐)
-            pass
+    cfg = db.project_cfg(conn, p)
     cur, prev, period, _ = snapshot_pair(conn, pid)
     brands = foreign_brands(conn, pid, cfg)
     # 의도 미분류(NULL)만 채움 — Claude/사람 보정은 살아남음
