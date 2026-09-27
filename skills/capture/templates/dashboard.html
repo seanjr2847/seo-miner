@@ -796,6 +796,12 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 /* 접힌 카드에서는 근거를 두 줄까지만 — 전문은 펼친 패널이 다시 말한다. */
 .opp:not([open]) .why { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
   overflow:hidden; }
+/* 좁은 화면의 표 첫 칸도 같다 — 근거·닫힌 이유가 한 뼘 폭 칸에 통째로 서면 행 하나가
+   350px 세로 막대가 됐다(9회차 재확인). 전문은 줄을 펴면 패널이 말한다. */
+@media (max-width:999px) {
+  .kwcell .why { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; }
+}
 /* 펼침 패널 — 점수 칸만큼 들여 본문 열과 왼쪽을 맞춘다. */
 .det { padding:2px 0 6px 58px; }
 @media (max-width:560px) { .det { padding-left:0; } }
