@@ -70,7 +70,7 @@ PICK_DIR_CMD = "이 폴더를 <이름> 사이트로 정해줘"
 # 목록과 어긋나는 요약("다 준비됐는데 GA4 가 막혔다")이 나올 길을 구조로 막는다.
 # 「다」라고 하지 않는다 — 선택 기능(AI 인용 질문 등)이 꺼져 있어도 이 말이 나오는데,
 # 접힌 목록을 안 연 사람은 AI 인용까지 준비된 줄 알았다(8회차). 필수만 끝났다고 한다.
-READY_VERDICT = "꼭 해야 할 준비는 끝났습니다. 바로 쓰시면 됩니다."
+READY_VERDICT = "필수 준비는 끝났습니다."
 
 BUCKET_MUST = "꼭 해야 할 일"
 BUCKET_LATER = "더 켜고 싶으면"
@@ -405,6 +405,10 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
     # 원격 CLI 는 `--project` 로 사이트를 대므로 여기서 다시 추측하면 안 된다.
     brain["picked"] = (project if project in brain["projects"]
                        else stage.pick_project(brain["projects"]))
+    # 준비 상태는 지금 보는 사이트의 것만 말한다 — 전체를 세면 개요가 보지도 않는 다른
+    # 사이트 이름을 늘어놓았다(9회차). 못 골랐을 때만 전부 말한다.
+    if brain["picked"]:
+        brain["no_prompts"] = [n for n in brain["no_prompts"] if n == brain["picked"]]
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: gsc_conn for name in brain["projects"]}
@@ -672,6 +676,9 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
                    "검색 실적은 그대로 됩니다. GA4 만 로그인을 다시 하면 됩니다.")
         next_cmd = "구글 계정 다시 연결해줘" if hosted else RESCOPE_CMD
     elif not must:
+        # "바로 쓰시면 됩니다"라고 하지 않는다 — 안내(stage.from_progress)는 수집·확인
+        # 단계가 남았다고 말하는 중이라 둘이 딴말이 됐다(9회차). 남은 선택의 개수는 화면의
+        # 접힘 줄("더 켤 수 있는 기능 N개")이 잠금까지 합쳐 센다 — 여기서 또 세지 않는다.
         verdict = READY_VERDICT
         next_cmd = f"/capture run {brain['picked']}" if brain["picked"] else None
     else:

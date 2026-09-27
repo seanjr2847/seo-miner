@@ -2348,6 +2348,9 @@ def rank_bands(conn: sqlite3.Connection, project_id: int, cur: str | None,
 # 갈래에 못 넣은 것을 버리면 표의 합이 총계와 안 맞고, 그러면 읽는 사람이 표
 # 전체를 못 믿는다. 남는 것은 언제나 이 이름으로 묶어 낸다.
 UNCLASSIFIED = "미분류"
+# coverage() 가 cluster NULL 을 모으는 이름 — 기회 대상으로는 'cluster:(미분류)'.
+UNCLASSIFIED_CLUSTER = f"({UNCLASSIFIED})"
+UNCLASSIFIED_REASON = "주제가 정해지지 않은 키워드 묶음이라 기회로 세지 않습니다"
 
 
 def is_brand_query(query: str, aliases: list[str]) -> bool:
@@ -2833,7 +2836,7 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
                 ORDER BY checked_at DESC, id DESC LIMIT 1""", (r["id"],)).fetchone()
         if rank and rank["position"] is not None:
             continue
-        cl = r["cluster"] or "(미분류)"
+        cl = r["cluster"] or UNCLASSIFIED_CLUSTER
         missing.append({"keyword": r["keyword"], "cluster": cl,
                         "volume": r["volume"]})
         by_cluster[cl] = by_cluster.get(cl, 0) + 1
@@ -3472,8 +3475,11 @@ def _coverage_rows(ctx: dict) -> list[dict]:
     """coverage() 는 클러스터별 dict 하나를 주지, per-row 목록을 안 준다 — 여기서 편다."""
     cov = coverage(ctx["conn"], ctx["pid"])
     cov_vol = cov.get("volume_by_cluster") or {}
+    # 주제가 안 정해진 키워드 묶음은 "안 다룬 주제"가 아니다 — 주제가 없으니 쓸 글도 없다.
+    # 검색량만 모여 늘 1순위가 되던 자리(9회차). 이미 선 것은 resolve_stale 이 닫는다.
     return [{"cluster": cl, "n": n, "vol": cov_vol.get(cl, 0)}
-            for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1])]
+            for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1])
+            if cl != UNCLASSIFIED_CLUSTER]
 
 
 def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
@@ -4335,6 +4341,9 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
             """SELECT id, kind, target, created_at, status_at FROM opportunities
                 WHERE project_id=? AND status IN ('new','acked') AND run_id IS NOT ?""",
             (int(project_id), run_id)).fetchall():
+        if o["kind"] == "coverage" and o["target"] == f"cluster:{UNCLASSIFIED_CLUSTER}":
+            decisions.append((o["id"], UNCLASSIFIED_REASON))   # 이제 안 세는 대상 (_coverage_rows)
+            continue
         rule = _RESOLVERS.get(o["kind"])
         marks = [t for t in (db.sql_ts(o["created_at"]), db.sql_ts(o["status_at"])) if t]
         if not rule or not marks:

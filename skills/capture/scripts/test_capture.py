@@ -1744,7 +1744,7 @@ def test_retire_auto_serp_cleans_only_what_it_made():
     assert comp == {(2, "hand.com"): "manual", (2, "lab.com"): "auto_labs"}, comp
     st = {(r[0], r[1]): (r[2], r[3], r[4]) for r in x(
         "SELECT project_id, target, status, status_prev, status_reason FROM opportunities")}
-    assert st[(1, "플랫폼만")][:2] == ("resolved", "new") and "경쟁사가 아니었습니다" in st[(1, "플랫폼만")][2], st
+    assert st[(1, "플랫폼만")] == ("resolved", "new", db.RETIRED_REASON), st
     assert st[(2, "플랫폼만2")][:2] == ("resolved", "acked"), st
     assert st[(2, "섞임")][0] == "new", st
     assert [tuple(r) for r in x("SELECT project_id, keyword, domain FROM keyword_gap")] \
@@ -1753,6 +1753,15 @@ def test_retire_auto_serp_cleans_only_what_it_made():
         == [(2, "b.com"), (2, "hand.com")], "상대가 다 빠진 날의 우리 줄은 같이 빠진다"
     kws = {(r[0], r[1]) for r in x("SELECT project_id, keyword FROM keywords")}
     assert kws == {(1, "심사한 후보"), (1, "켠 후보"), (1, "시드"), (2, "섞인 사이트 후보")}, kws
+
+    # 먼저 닫힌 기회에 남은 옛 사유(개발자 말)는 다음 연결이 지금 문구로 간다 — 작업 기록
+    # 꼬리(" · 작업 기록 있음")는 지킨다(9회차).
+    x("UPDATE opportunities SET status_reason=? WHERE target='플랫폼만2'",
+      (db._RETIRED_REASON_OLD + " · 작업 기록 있음",))
+    conn.commit()
+    db._migrate(conn)
+    got = x("SELECT status_reason FROM opportunities WHERE target='플랫폼만2'").fetchone()[0]
+    assert got == db.RETIRED_REASON + " · 작업 기록 있음", got
 
     # 한 번만 — 새 규칙이 'auto_rank' 로 다시 채운 것은 다음 연결이 건드리지 않는다
     x("INSERT INTO competitors(project_id, domain, source) VALUES(1, 'rival.com', 'auto_rank')")
@@ -1954,6 +1963,64 @@ def test_page_audits_read_latest_per_url_and_target_unseen_first():
     conn.commit()
     order = collect_page.target_urls(conn, pid, 3)
     assert order == ["https://e.com/c", "https://e.com/a", "https://e.com/b"], order
+
+
+def test_unclassified_cluster_is_not_an_opportunity_and_old_one_closes():
+    """주제가 안 정해진 키워드(cluster NULL)는 검색량만 모여 '안 다룬 주제' 1순위가 됐다
+    (9회차). 기회로 안 세고, 이미 선 것은 다음 분석(load)에서 닫는다."""
+    conn = db.connect()
+    pid = _project(conn, "uncls")["id"]
+    for kw, cl, vol in (("주제없음", None, 9000), ("주제있음", "c1", 10)):
+        conn.execute("INSERT INTO keywords(project_id, keyword, cluster, is_active, volume)"
+                     " VALUES(?,?,?,1,?)", (pid, kw, cl, vol))
+    conn.commit()
+    ctx = {"conn": conn, "pid": pid}
+    assert [r["cluster"] for r in scoring._coverage_rows(ctx)] == ["c1"], scoring._coverage_rows(ctx)
+    assert scoring.UNCLASSIFIED_CLUSTER in scoring.coverage(conn, pid)["by_cluster"],         "coverage() 합계에서까지 빠지면 표의 합이 안 맞는다 — 빼는 것은 기회뿐이다"
+    old = f"cluster:{scoring.UNCLASSIFIED_CLUSTER}"
+    _opps_at_base(conn, pid, [{"kind": "coverage", "target": old, "score": 80}])
+    conn.close()
+    scoring.load("uncls")
+    conn = db.connect()
+    st = _states(conn, pid)
+    conn.close()
+    assert st[("coverage", old)]["status"] == db.OPP_RESOLVED, st[("coverage", old)]
+    assert st[("coverage", old)]["status_reason"] == scoring.UNCLASSIFIED_REASON
+    assert st[("coverage", "cluster:c1")]["status"] == "new", st
+
+
+def test_keyword_candidates_drop_stray_symbol_tails():
+    """`noti\`·`noti]` 처럼 잘못 누른 기호로 끝나는 변형은 후보가 아니다 — 원 검색어의
+    검색량을 한 번 더 셌다(9회차). 질문·c++·c# 은 남긴다."""
+    conn = db.connect()
+    pid = _project(conn, "stray")["id"]
+    bs = chr(92)
+    n = db.add_keyword_candidates(conn, pid, [
+        (f"noti{bs}", None, "gsc"), ("noti]", None, "gsc"), ("noti/", None, "gsc"),
+        ("noti", None, "gsc"), ("노티 앱?", None, "gsc"), ("c++", None, "gsc"),
+        ("c#", None, "gsc")])
+    got = {r[0] for r in conn.execute("SELECT keyword FROM keywords WHERE project_id=?", (pid,))}
+    conn.close()
+    assert got == {"noti", "노티 앱?", "c++", "c#"} and n == 4, got
+
+
+def test_index_targets_recheck_open_blocked_urls_first():
+    """색인 막힘 기회의 주소가 노출 상위 N 에서 빠지면 다시 검사되지 않아 영영 안 닫혔다
+    (9회차: 9/6 기회가 9/22·9/25 검사 뒤에도 열림). 열린 것을 먼저 검사한다."""
+    import collect_index
+    conn = db.connect()
+    pid = _project(conn, "ixt")["id"]
+    for page, imp in (("https://e.com/a", 300), ("https://e.com/b", 200)):
+        conn.execute("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query,"
+                     " page, clicks, impressions, ctr, position)"
+                     " VALUES(?, '2026-09-20', 28, 'q', ?, 1, ?, 0.01, 9.0)", (pid, page, imp))
+    for t, stt in (("https://www.e.com/", "new"), ("https://e.com/gone", "dismissed")):
+        conn.execute("INSERT INTO opportunities(project_id, kind, target, score, status)"
+                     " VALUES(?, 'index_blocked', ?, 50, ?)", (pid, t, stt))
+    conn.commit()
+    got = collect_index.index_targets(conn, pid, 2)
+    conn.close()
+    assert got == ["https://www.e.com/", "https://e.com/a"], got
 
 
 if __name__ == "__main__":

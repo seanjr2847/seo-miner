@@ -951,6 +951,21 @@ SERP_FORMAT_HINT = {
     "top_stories": "뉴스 칸 — 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
     "topStories": "뉴스 칸 — 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
 }
+# 형식 사전에 없는 기능의 이름 — 요청문에 수집기 키(ai_overview 등)가 그대로 찍히지 않게.
+_FEATURE_NAME = {"ai_overview": "구글 AI 요약", "knowledge_graph": "지식 패널",
+                 "knowledgeGraph": "지식 패널"}
+
+
+def feature_names(feats) -> str:
+    """검색결과 기능 키 → 사람 말. 이름은 SERP_FORMAT_HINT 의 머리(— 앞)가 정본이다.
+    이름을 모르는 기능은 지어내지 않고 개수만 말한다."""
+    names = [SERP_FORMAT_HINT[f].split(" — ")[0] if f in SERP_FORMAT_HINT
+             else _FEATURE_NAME.get(f) for f in map(str, feats)]
+    known = list(dict.fromkeys(n for n in names if n))
+    rest = sum(1 for n in names if not n)
+    return ", ".join(known + ([f"그 밖의 기능 {rest}개"] if rest else []))
+
+
 _FORMAT_COLS = (("words", "본문 단어"), ("tables", "표"), ("lists", "목록"),
                 ("images", "이미지"), ("videos", "영상"))
 
@@ -1040,8 +1055,8 @@ def _serp_stale_lines(o: dict, ctx: dict, *, had_top: bool, had_fan: bool) -> li
     miss = ([] if had_top else ["상위 목록"]) + ([] if had_fan else ["함께 묻는 질문"])
     when = (ctx.get("rank_date") or "").strip()
     return [f"## 이 회차에 없는 것: {' · '.join(miss)}",
-            f"마지막 순위 조회는 이 검색어에서 {', '.join(f'`{x}`' for x in feats)}"
-            f"를 봤다고 기록했는데, {'과 '.join(miss)}은 수집본에 없습니다"
+            f"마지막 순위 조회는 이 검색어에서 검색결과 기능({feature_names(feats)})"
+            f"을 봤다고 기록했는데, {'과 '.join(miss)}은 수집본에 없습니다"
             + (f" (마지막 순위 조회 {when} 회차)." if when else ".")
             + " 구글이 안 보여 준 것이 아니라 **그 회차가 이 표들을 남기기 전**입니다 — "
             "순위 조회(`rank` 단계)를 한 번 더 돌리면 다음 요청문부터 붙습니다.",
@@ -1728,7 +1743,7 @@ def _ev_aio(o, ctx, pages):
         elif doms is not None:
             L.append("- 구글 AI 요약이 인용한 곳은 이번 조회 응답에서 뽑지 못했습니다.")
         if r.get("features"):
-            L.append(f"- 검색결과 기능: {', '.join(map(str, r['features']))}")
+            L.append(f"- 검색결과 기능: {feature_names(r['features'])}")
     L += _rank_sources(r, pages, ctx) + _far_rank_lines(r, pages, ctx)
     return L + _pages_table(pages)
 

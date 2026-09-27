@@ -1024,7 +1024,7 @@ def _axis_competitors(conn, pid: int) -> dict:
     """경쟁 분석 축 (collect_gap). 몫(share)은 저장하지 않는다 — 분모가 바뀌면 낡는다."""
     cm_date = conn.execute(
         "SELECT MAX(checked_date) FROM competitor_metrics WHERE project_id=?", (pid,)).fetchone()[0]
-    comp_metrics, kw_gap, kw_gap_counts = [], [], {}
+    comp_metrics, kw_gap, kw_gap_counts, gap_rivals = [], [], {}, []
     if cm_date:
         comp_metrics = q(conn, "SELECT * FROM competitor_metrics WHERE project_id=? AND"
                                " checked_date=? ORDER BY etv DESC", (pid, cm_date))
@@ -1039,8 +1039,15 @@ def _axis_competitors(conn, pid: int) -> dict:
         kw_gap_counts = {r["kind"]: r["n"] for r in q(
             conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " GROUP BY 1", (pid, gap_date))}
+        # 격차를 맞댄 경쟁 도메인 전부 — kw_gap 은 300줄로 잘려 거기서 모으면 빠진다.
+        # 몫(comp_metrics)은 자동 탐지에서 지표를 받은 곳만이라, 이것 없이 "경쟁사를 못
+        # 찾았다"고 말하면 바로 아래 격차 표와 모순된다(9회차).
+        gap_rivals = [r["domain"] for r in q(
+            conn, "SELECT DISTINCT domain FROM keyword_gap WHERE project_id=? AND checked_date=?"
+                  " ORDER BY 1", (pid, gap_date))]
     return {"comp_date": cm_date, "comp_metrics": comp_metrics,
-            "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts}
+            "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
+            "gap_rivals": gap_rivals}
 
 
 def _axis_ai_bots(p, crawl: dict) -> dict:

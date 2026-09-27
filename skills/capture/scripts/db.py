@@ -806,6 +806,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 이제 아무도 쓰지 않는 표시라(test_seams 가 못 박는다) 이 조건이 곧 "한 번만"이다.
     if conn.execute("SELECT 1 FROM competitors WHERE source='auto_serp' LIMIT 1").fetchone():
         retire_auto_serp(conn)
+    # 그때 닫은 기회에 남은 옛 사유는 개발자 말이었다(9회차) — 지금 문구로 갈아 둔다.
+    if conn.execute("SELECT 1 FROM opportunities WHERE status_reason LIKE ? LIMIT 1",
+                    (_RETIRED_REASON_OLD + "%",)).fetchone():
+        conn.execute("UPDATE opportunities SET status_reason=REPLACE(status_reason, ?, ?)"
+                     " WHERE status_reason LIKE ?",
+                     (_RETIRED_REASON_OLD, RETIRED_REASON, _RETIRED_REASON_OLD + "%"))
+        conn.commit()
 
     # 타입 이름에서 업종을 뺐다(local_clinic → local_business). 나머지 셋(game·saas·
     # directory)은 제품 유형인데 하나만 업종명이라 분류 축이 섞여 있었고, 그 이름이
@@ -880,8 +887,12 @@ def _import_legacy_yaml(conn: sqlite3.Connection) -> None:
 # manual 은 0개). 그 표를 갭 분석(유료)이 앞 5개로 잘라 썼다. 두 경로는 이제 'auto_rank'
 # (scoring.serp_rivals)·'auto_labs'(collect_gap) 로 쓴다. 옛 표시가 붙은 행은 어느 규칙이
 # 넣었는지 가를 수 없어 전부 걷고, 다음 순위·경쟁 분석 바퀴가 새 규칙으로 다시 채운다.
-RETIRED_REASON = ("근거가 된 경쟁사가 경쟁사가 아니었습니다 — 옛 자동 적재 규칙이 검색결과의 "
-                  "플랫폼·포털을 경쟁사로 넣었고, 그 규칙으로 넣은 경쟁사를 걷어냈습니다")
+RETIRED_REASON = ("자동으로 넣었던 경쟁사가 실제 경쟁사가 아니어서 닫혔습니다. 블로그·영상·"
+                  "포털 같은 검색결과 플랫폼이 경쟁사로 들어가 있었습니다")
+
+
+_RETIRED_REASON_OLD = ("근거가 된 경쟁사가 경쟁사가 아니었습니다 — 옛 자동 적재 규칙이 검색결과의 "
+                       "플랫폼·포털을 경쟁사로 넣었고, 그 규칙으로 넣은 경쟁사를 걷어냈습니다")
 
 
 def retire_auto_serp(conn: sqlite3.Connection) -> dict[str, int]:
@@ -2281,6 +2292,17 @@ def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
     return n
 
 
+# 검색어 끝에 붙어도 되는 기호 — 질문(?)·c++·c#·괄호 닫기·퍼센트. 그 밖의 기호로 끝나면
+# 잘못 누른 키(`noti\`·`noti]`)다: 원 검색어의 검색량을 한 번 더 세어 묶음을 부풀렸다(9회차).
+_TAIL_OK = "?+#)%"
+
+
+def stray_tail(kw: str) -> bool:
+    """글자·숫자가 아닌, 붙을 이유가 없는 기호로 끝나나."""
+    c = kw.rstrip()[-1:]
+    return bool(c) and not c.isalnum() and c not in _TAIL_OK
+
+
 def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> int:
     """키워드 후보 적재 (is_active=0 — 활성화는 Claude 큐레이션 몫).
 
@@ -2295,7 +2317,7 @@ def add_keyword_candidates(conn: sqlite3.Connection, project_id: int, items) -> 
     n = 0
     for kw, locale, source in items:
         kw = (kw or "").strip()
-        if not kw:
+        if not kw or stray_tail(kw):
             continue
         cur = conn.execute(
             """INSERT OR IGNORE INTO keywords(project_id, keyword, locale, locale_src,

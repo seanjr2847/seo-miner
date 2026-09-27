@@ -157,6 +157,8 @@ def demo() -> None:
         assert "처음으로" in r.text, "/privacy 본문에 랜딩으로 돌아가는 링크가 없다"
         nf = c.get("/없는-주소")
         assert nf.status_code == 404 and "처음으로" in nf.text, "사람이 연 없는 주소가 JSON 한 줄로 끝난다"
+        assert '"Pretendard Variable"' in nf.text and "-apple-system,BlinkMacSystemFont,'Malgun" not in nf.text, \
+            "404 본문 서체가 랜딩(--sans)과 다르다"
         nf = c.get("/api/없는-주소")
         assert nf.status_code == 404 and nf.json().get("detail"), "/api 404 가 JSON 이 아니다(클라이언트가 detail 을 읽는다)"
         assert 'name="description"' in landing and 'rel="icon"' in landing, "랜딩 머리에 설명·아이콘이 없다"
@@ -449,6 +451,13 @@ def demo() -> None:
         assert c.post("/api/creation/merged",
                       json={"project": "p1", "id": "1; DROP TABLE"}).status_code == 400, \
             "숫자가 아닌 id 가 500 을 낸다"
+        # 준비 상태는 보고 있는 사이트만 말한다 — p1 을 보는데 "질문이 없는 사이트: p1, p2"
+        # 로 옆 사이트까지 늘어놓았다(9회차). p1·p2 둘 다 질문이 없는 지금이 그 조건이다.
+        r = c.get("/api/doctor?project=p1")
+        assert r.status_code == 200, r.text
+        extra = " ".join(r.json().get("extra") or [])
+        assert "p1" in extra and "p2" not in extra, \
+            f"준비 상태가 보지 않는 사이트까지 센다: {extra}"
         bc = db.connect(home=store.home(u2))
         try:      # 뒤 검사들이 보는 목록을 흔들지 않게 치운다
             bc.execute("DELETE FROM creations WHERE id IN (?,?)", (cid_mine, cid_other))

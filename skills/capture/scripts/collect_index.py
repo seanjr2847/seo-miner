@@ -55,6 +55,18 @@ FIELDS = {
 top_pages = scoring.top_pages
 
 
+def index_targets(conn, project_id: int, limit: int) -> list[str]:
+    """검사할 주소 — 열린 색인 막힘 기회의 주소를 먼저, 남은 자리는 노출 상위 페이지.
+
+    상위 N개만 보면 노출이 밀려 목록에서 빠진 주소는 다시 검사되지 않고, 그 색인 막힘
+    기회는 닫을 근거(새 검사 행)가 안 생겨 영영 열려 있었다(9회차)."""
+    q = ",".join("?" * len(scoring.OPEN_STATUSES))
+    opened = [r[0] for r in conn.execute(
+        f"SELECT target FROM opportunities WHERE project_id=? AND kind='index_blocked'"
+        f" AND status IN ({q}) ORDER BY score DESC, id", (project_id, *scoring.OPEN_STATUSES))]
+    return list(dict.fromkeys(opened + top_pages(conn, project_id, limit)))[:limit]
+
+
 def to_row(url: str, result: dict) -> dict:
     """inspectionResult -> write_index_status 가 받는 dict.
 
@@ -108,7 +120,7 @@ def collect(project: str, *,
                   "켜려면 사이트 설정의 index_urls 를 올리거나 --limit N 을 주세요.")
             return st.noop(rows=0)
 
-        urls = top_pages(conn, p["id"], limit)
+        urls = index_targets(conn, p["id"], limit)
         if not urls:
             return st.skip("최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
                            f"--project {project}` 로 수집하세요. (page NULL 인 구버전 "

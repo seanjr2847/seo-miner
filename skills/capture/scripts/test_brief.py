@@ -1777,6 +1777,15 @@ def test_stale_serp_note_states_the_fact_instead_of_citing_a_section():
     assert "## 이 회차에 없는 것" in body, body
     assert "위 '검색결과 기능'" not in body, "없는 절을 가리킨다"
     assert "마지막 순위 조회는 이 검색어에서" in body, body
+    # 수집기 키(ai_overview·people_also_ask)가 아니라 사람 말로 적는다(9회차)
+    assert "ai_overview" not in body and "people_also_ask" not in body, body
+    assert "구글 AI 요약, 함께 묻는 질문" in body, body
+
+
+def test_feature_names_speak_people_words():
+    """검색결과 기능 키 → 이름. 같은 이름(두 수집기의 다른 키)은 한 번, 모르는 키는 개수만."""
+    assert brief.feature_names(["answerBox", "featured_snippet", "ai_overview"]) ==         "강조 스니펫, 구글 AI 요약"
+    assert brief.feature_names(["video", "carousel_x"]) == "영상 칸, 그 밖의 기능 1개"
 
 
 # ── 목표·끝나는 조건 — 무엇을 이루면 이 일이 끝났나 ─────────────────────────

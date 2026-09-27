@@ -1179,20 +1179,26 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     return await http_exception_handler(request, e)
 
 
+# 본문 서체는 랜딩(server/landing.html :root --sans)과 같은 스택이다 — 따로 적은
+# -apple-system 스택이라 404 만 다른 사이트처럼 보였다(9회차).
+_LANDING_SANS = re.search(r"--sans:([^;]+);", pages.page("landing.html")).group(1)
+
 # 머리 줄은 랜딩 헤더(.hbar·.mark)와 같은 판·같은 서체다 — 서체를 안 불러 로고가
 # 폴백 등폭으로 벌어지고 머리가 없어 다른 사이트처럼 보였다(8회차).
 # 오른쪽 버튼은 로그인 상태를 본다 — 세션에 uid 가 있는 사람에게 "Google로
 # 시작"을 또 보여 주면 이미 로그인했다는 걸 의심하게 만든다(9회차). 로그인
 # 이면 "/" 의 "내 사이트" 목록으로 보낸다 — 다시 로그인을 거치지 않는다.
 def _not_found(logged_in: bool) -> str:
-    action = ('<a href="/" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
+    action = ('<a href="/" style="font:500 13px/1 var(--sans);color:#101513;background:#57B49C;'
               'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
               'text-decoration:none">내 사이트</a>') if logged_in else (
-              '<a href="/auth/login" style="font:500 13px/1 sans-serif;color:#101513;background:#57B49C;'
+              '<a href="/auth/login" style="font:500 13px/1 var(--sans);color:#101513;background:#57B49C;'
               'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
               'text-decoration:none">Google로 시작</a>')
     return (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@600&display=swap">'
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">'
+    f'<style>:root{{--sans:{_LANDING_SANS}}}</style>'
     '<body style="margin:0;background:#E6E9E4">'
     '<header style="background:#121714"><div style="max-width:1120px;margin:0 auto;padding:12px 24px;'
     'display:flex;align-items:center;gap:16px">'
@@ -1200,10 +1206,10 @@ def _not_found(logged_in: bool) -> str:
     'color:#E6E9E4;text-decoration:none">seo<b style="color:#57B49C;font-weight:600">·</b>miner</a>'
     '<span style="flex:1"></span>'
     + action + '</div></header>'
-    '<main style="font:15px/1.7 -apple-system,BlinkMacSystemFont,\'Malgun Gothic\',sans-serif;'
+    '<main style="font:15px/1.7 var(--sans);'
     'color:#121714;max-width:36rem;margin:0 auto;padding:12vh 24px 0;word-break:keep-all">'
     '<h1 style="font-size:23px;margin:0 0 8px">페이지를 찾을 수 없습니다</h1>'
-    "<p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner 는 서치콘솔 숫자로 다음에 고칠 "
+    "<p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner는 서치콘솔 숫자로 다음에 고칠 "
     "검색어를 고르는 도구입니다.</p>"
     '<p style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:20px">'
     '<a href="/" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;'

@@ -52,6 +52,21 @@ def _brain(name="t"):
     return conn, db.get_project(conn, name)["id"]
 
 
+def test_competitors_axis_lists_every_gap_rival():
+    """몫(comp_metrics)이 비어도 격차를 맞댄 경쟁사는 있다 — 그 목록을 싣는다(9회차:
+    "경쟁 도메인을 못 찾았다" 바로 아래 격차 75건). kw_gap 300줄 상한에 안 잘린다."""
+    conn, pid = _brain("gapdom")
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, volume,"
+                     " kind) VALUES(?,?,?,?,?,'missing')",
+                     [(pid, D, f"k{i}", "big.example", 1000) for i in range(300)]
+                     + [(pid, D, "작은", "small.example", 1)])
+    conn.commit()
+    ax = dashboard._axis_competitors(conn, pid)
+    conn.close()
+    assert ax["comp_metrics"] == [] and len(ax["kw_gap"]) == 300, ax["kw_gap"][:1]
+    assert ax["gap_rivals"] == ["big.example", "small.example"], ax["gap_rivals"]
+
+
 # ── 백링크 ────────────────────────────────────────────────────────────────
 def test_gather_backlinks_axes():
     conn, pid = _brain("bl")
