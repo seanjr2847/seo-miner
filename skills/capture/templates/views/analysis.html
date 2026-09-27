@@ -680,8 +680,11 @@ function anDaily(rows) {
       <div class="acts">${act("gsc", null, false)}</div></div>`;
   // 선 하나만 놓아두면 "그래서"가 안 나온다 — 가장 높았던 날을 짚어 준다.
   const top = rows.reduce((a, r) => (r.clicks > a.clicks ? r : a), rows[0]);
-  return `<p class="anverdict">가장 많이 눌린 날은 <b>${esc(top.date)}</b>(${num(top.clicks)}클릭)입니다.
-    선이 한 칸에서만 꺾였다면 그날 무엇이 바뀌었는지부터 봅니다.</p>` +
+  // 클릭이 하루도 없으면 「가장 많이 눌린 날(0클릭)」은 뜻이 없다 — 없다고 말한다.
+  return (top.clicks > 0
+    ? `<p class="anverdict">가장 많이 눌린 날은 <b>${esc(top.date)}</b>(${num(top.clicks)}클릭)입니다.
+    선이 한 칸에서만 꺾였다면 그날 무엇이 바뀌었는지부터 봅니다.</p>`
+    : `<p class="anverdict">이 기간에는 클릭이 하루도 없었습니다.</p>`) +
     anCard(window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180}));
 }
 

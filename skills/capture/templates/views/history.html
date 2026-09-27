@@ -267,8 +267,13 @@ const HS_KNOWN = [
   [/Invalid Field/i, "외부 서비스가 요청 형식을 거절했습니다 — 다시 돌려도 같으면 알려 주세요"],
   [/Payment Required|Insufficient funds/i, "외부 서비스 잔액이 부족합니다 — 충전한 뒤 다시 수집하면 됩니다"],
   [/rates? limit/i, "분당 호출 한도를 넘었습니다 — 잠시 뒤 다시 수집하면 됩니다"],
+  [/Quota exceeded|RESOURCE_EXHAUSTED|\b429\b/i, "외부 서비스의 하루 한도를 다 썼습니다 — 내일 다시 수집하면 됩니다"],
   [/Internal (Server )?Error/i, "외부 서비스 서버 오류 — 잠시 뒤 다시 수집하면 됩니다"],
 ];
+// 옛 수정 기록의 메모 — createdb 가 예전에 「손으로 이미 실행: <해시>」로 남겼다(지금은 사람
+// 말로 남긴다). 이미 저장된 행은 여기서 같은 말로 읽는다.
+const HS_noteText = s => String(s).replace(/^손으로 이미 실행:\s*([0-9a-f]{7,40})/i,
+  "이미 적용된 수정(커밋 $1)");   // createdb 가 지금 남기는 말과 같다
 function HS_errMsg(v) {
   const m = /^(\d)\d\d\b/.exec(v.trim());
   const svc = HS_errHost(v);
@@ -321,7 +326,8 @@ function HS_notes(n) {
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }
-    if (!HS_NOTE_LABEL[k]) return "";
+    // 공급사 이름은 사람이 할 일을 바꾸지 않는다 — 화면에서는 빼고 CSV 에만 남긴다.
+    if (!HS_NOTE_LABEL[k] || k === "provider") return "";
     const bad = (k === "errors" || k === "skipped") && +v > 0;
     parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k])} ` +
                `<b>${esc(HS_NOTE_VAL[val] || val)}</b></span>`);
@@ -613,7 +619,7 @@ function HS_madeRow(c) {
              >← ${esc(c.opp_target)}</button>` : ""}
       ${c.note ? (c.note.startsWith("http")
         ? `<div class="why"><a href="${esc(c.note)}" target="_blank" rel="noopener">${esc(c.note)}</a></div>`
-        : `<div class="why">${esc(c.note)}</div>`) : ""}
+        : `<div class="why">${esc(HS_noteText(c.note))}</div>`) : ""}
       ${HS_effLine(c)}
     </div>
     <span class="badge ${c.merged ? "ok" : "warn"}" title="${c.merged

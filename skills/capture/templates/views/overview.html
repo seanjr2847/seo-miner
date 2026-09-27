@@ -126,8 +126,11 @@ function dailyChart(rows, stats) {
   // 가로폭은 VW 다.
   const VW = 1000, H = 214, L = 52, R = VW - 62, T = 26, B = 28, n = rows.length;
   const x = i => L + i * (R - L) / (n - 1);
-  const mxC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0), 1);
-  const mxI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0), 1);
+  // 범례의 「하루 최고」는 실제 값이고, 눈금 척도(mx)만 0 을 피해 1 이상으로 둔다 —
+  // 둘을 한 값으로 쓰면 클릭이 전부 0 인 사이트에 「합계 0 (하루 최고 1)」이 섰다.
+  const topC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0));
+  const topI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0));
+  const mxC = Math.max(topC, 1), mxI = Math.max(topI, 1);
   const y = (v, mx) => H - B - (v || 0) / mx * (H - T - B);
   const pts = (k, mx) => rows.map((r, i) =>
     `${x(i).toFixed(1)},${y(r[k], mx).toFixed(1)}`).join(" ");
@@ -182,8 +185,8 @@ function dailyChart(rows, stats) {
     ${hov}${idx.map(tick).join("")}
   </svg></div>
   <div class="legend"><b class="sw-clk">■</b> 클릭 ${esc(span)} 사이트 전체 합계 ${num(sumC)}
-    (하루 최고 ${num(mxC)}) · <b class="sw-imp">■</b> 노출 합계 ${num(sumI)}
-    (하루 최고 ${num(mxI)})<span class="hint" tabindex="0"
+    (하루 최고 ${num(topC)}) · <b class="sw-imp">■</b> 노출 합계 ${num(sumI)}
+    (하루 최고 ${num(topI)})<span class="hint" tabindex="0"
       data-tip="${esc(LEG_TIP)}" title="${esc(LEG_TIP)}" aria-label="${esc(LEG_TIP)}"
       >i</span></div>`;
 }
@@ -348,7 +351,17 @@ function oppMore(n) { OPP_N = n; oppList(); }
 // [필터 지우기]는 말 그대로 전부 보여 준다 — 첫 화면의 기본값(아직 안 함)이 아니다.
 function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(OV_PAGE); }
 // 거르개까지 다시 그린다 — oppStatus 는 목록만 그려서 <select> 의 선택이 안 따라온다.
-function oppClosed() { OPP_ST = "closed"; KIND_FILTER = null; renderOpps(OV_PAGE); }
+function oppClosed(st) { OPP_ST = st || "closed"; KIND_FILTER = null; renderOpps(OV_PAGE); }
+// 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「저절로 풀림」인
+// 사이트에서 [완료·뺀 것]으로 보내면 거기서 또 빈 목록을 만났다. 이름은 거르개와 같은 말(OPP_ST_OPT).
+function OV_doneBox() {
+  const n = st => OPPS.filter(o => window.oppStMatch(o, st)).length;
+  const st = ["closed", "resolved"].find(s => n(s) > 0);
+  const name = st && (window.OPP_ST_OPT.find(([v]) => v === st) || [, st])[1];
+  return `<div class="empty ok"><b>남은 기회가 없습니다</b>
+    <p>쌓인 것을 전부 처리했습니다.${name ? ` 끝난 것은 [${esc(name)}]에 그대로 있습니다.` : ""}</p>
+    ${name ? `<div class="acts"><button class="go sec" onclick="oppClosed('${st}')">${esc(name)} 보기</button></div>` : ""}</div>`;
+}
 function filterKind(el) {
   const k = el.dataset.k;
   KIND_FILTER = KIND_FILTER === k ? null : k;
@@ -423,9 +436,7 @@ function oppList() {
       ? `<div class="empty"><b>거른 조건에 맞는 기회가 없습니다</b>
         <p>찾는 말이나 상태를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
         <div class="acts"><button class="go sec" onclick="oppReset()">조건 지우기</button></div></div>`
-      : `<div class="empty ok"><b>남은 기회가 없습니다</b>
-        <p>쌓인 것을 전부 처리했습니다. 처리한 것은 [완료·제외]에 그대로 있습니다.</p>
-        <div class="acts"><button class="go sec" onclick="oppClosed()">완료·제외 보기</button></div></div>`;
+      : OV_doneBox();
   const rest = list.length - OPP_N;
   $("opplist").innerHTML = `<div class="ovrows">${list.slice(0, OPP_N).map(oppRow).join("")}</div>` + (rest > 0
     ? `<div class="acts opp-more">
