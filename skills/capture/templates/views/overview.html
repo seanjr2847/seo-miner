@@ -222,10 +222,15 @@ function kpiSpark(vals, dates, color) {
 // 그 밑에 한 줄로 흘린다. 전부와 "왜 한 줄인지"는 펼침 패널(셸 oppGroup)이 말한다.
 // data-ids 는 묶인 id 전부다 — [기록]이 변형 쪽 id 로 이 카드를 찾아온다.
 const OV_VARS_SHOWN = 4;
+// 같은 검색어의 여러 종류도 한 줄로 묶인다(g.kinds) — 그때 변형 목록에 같은 검색어가
+// 종류 수만큼 들어 있다. 검색어 수·「함께」는 겹친 것을 한 번만 센다.
+const OV_targets = o => o.group ? [...new Set(o.group.variants.map(v => v.target))] : [o.target];
+// 줄의 종류 — 서버가 준 순서(최고 점수 먼저) 그대로. 옛 페이로드는 대표 하나.
+const OV_kinds = o => o.group && o.group.kinds && o.group.kinds.length
+  ? o.group.kinds.map((k, i) => [k, o.group.labels[i] || k]) : [[o.kind, o.label || o.kind]];
 function OV_vars(o) {
-  const g = o.group;
-  if (!g || g.ids.length < 2) return "";
-  const rest = g.variants.slice(1).map(v => v.target);
+  const rest = OV_targets(o).filter(t => t !== o.target);
+  if (!rest.length) return "";
   const more = rest.length - OV_VARS_SHOWN;
   return `<div class="vars">함께: ${rest.slice(0, OV_VARS_SHOWN).map(esc).join(" · ")}${
     more > 0 ? ` 외 ${more}개` : ""}</div>`;
@@ -235,15 +240,15 @@ function OV_vars(o) {
 // 자리(oppActs), 원래 화면으로 가는 길(OV_see)은 셸 패널의 행동 줄(맨 위)에 넘긴다 —
 // 스무 줄에 버튼 마흔 개가 서지 않게, 그러면서 펼치면 맨 먼저 손에 닿게.
 function oppRow(o) {
-  const n = o.group ? o.group.ids.length : 1;
+  const n = OV_targets(o).length;
   return `<details class="opp" data-opp="${o.id}" data-ids="${(o.group ? o.group.ids : [o.id]).join(" ")}">
     <summary>
       ${oppScore(o)}
       <div>
         <div class="ovt">
           <div class="target">${esc(targetLabel(o.target))}</div>
-          <span class="kind${isDefensive(o) ? " k-def" : ""}"
-            >${esc(o.label || o.kind)}</span>
+          ${OV_kinds(o).map(([k, l]) => `<span class="kind${isDefensive(k === o.kind ? o : {kind: k})
+            ? " k-def" : ""}">${esc(l)}</span>`).join("")}
           ${n > 1 ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다. 펼치면 전부와 묶은 이유가 나옵니다."
             >검색어 ${n}개</span>` : ""}
           ${window.gaBadge(o)}
@@ -255,8 +260,23 @@ function oppRow(o) {
       </div>
       ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
     </summary>
-    ${oppPanel(o, oppActs(o) + (OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""))}
+    ${oppPanel(o, oppActs(o) + (OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""))}${OV_more(o)}
   </details>`;
+}
+/* 한 줄에 묶인 나머지 종류의 근거·할 일 — 대표 종류는 위 패널이 말한다. 종류마다 그
+   종류에서 점수가 가장 높은 기회(이 화면에 실려 온 것)를 차례로 든다. */
+let OV_BYID = {};
+function OV_more(o) {
+  const ks = OV_kinds(o).slice(1);
+  if (!ks.length) return "";
+  const members = o.group.ids.map(id => OV_BYID[id]).filter(Boolean);
+  return ks.map(([k, l]) => {
+    const m = members.find(x => x.kind === k);
+    if (!m) return "";
+    const p = m.play || {};
+    return `<div class="det"><p class="detw"><b>${esc(l)}</b>${m.reasoning
+      ? ` · ${esc(m.reasoning)}` : ""}</p>${playList(p.what, p.acts, "")}</div>`;
+  }).join("");
 }
 
 /* 개요는 여러 화면을 모아 보는 곳이다 — 모은 줄마다 그 검색어를 자세히 보는 원래 자리로
@@ -303,7 +323,7 @@ function oppByStatus() {
 function oppFiltered() {
   const q = OPP_Q.trim().toLowerCase();
   return oppByStatus().filter(o =>
-    (!KIND_FILTER || o.kind === KIND_FILTER) &&
+    (!KIND_FILTER || OV_kinds(o).some(([k]) => k === KIND_FILTER)) &&
     (!q || `${o.target} ${o.reasoning || ""} ${OV_varText(o)}`.toLowerCase().includes(q)));
 }
 // 묶인 줄은 변형 검색어로도 찾힌다 — 대표가 아닌 검색어를 쳤는데 안 나오면 없는 줄 안다.
@@ -316,6 +336,7 @@ const OV_varText = o => o.group ? o.group.variants.map(v => v.target).join(" ") 
 function OV_lines(d) {
   const byId = {};
   for (const o of d.opps || []) byId[o.id] = o;
+  OV_BYID = byId;
   if (!d.opp_groups) return d.opps || [];
   return d.opp_groups.filter(g => byId[g.lead]).map(g => g.ids.length > 1
     ? Object.assign({}, byId[g.lead], {score: g.score, status: g.status, group: g})
@@ -376,7 +397,7 @@ function oppChips() {
   const el = $("oppchips");
   if (!el) return;                       // 박제본에는 칩이 없다
   const counts = {};
-  for (const o of oppByStatus()) counts[o.kind] = (counts[o.kind] || 0) + 1;
+  for (const o of oppByStatus()) for (const [k] of OV_kinds(o)) counts[k] = (counts[k] || 0) + 1;
   if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 상태·사이트 전환 시 잔존 필터
   const kinds = Object.keys(counts);
   el.innerHTML = kinds.length > 1 ? kinds.map(k =>
@@ -408,7 +429,7 @@ function oppList() {
   const rest = list.length - OPP_N;
   $("opplist").innerHTML = `<div class="ovrows">${list.slice(0, OPP_N).map(oppRow).join("")}</div>` + (rest > 0
     ? `<div class="acts opp-more">
-         <button onclick="oppMore(${OPP_N + 12})">${rest}건 더 보기</button></div>`
+         <button onclick="oppMore(${OPP_N + 12})">${Math.min(12, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
     : "");
 }
 
@@ -416,9 +437,9 @@ function oppList() {
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다 — 여기는 무엇을 담을지만 정한다.
 function oppCsv() {
   csv("기회", [["점수", "종류", "상태", "대상", "함께 묶인 검색어", "근거", "생성일"]].concat(
-    oppFiltered().map(o => [o.score ?? "", o.label || o.kind,
+    oppFiltered().map(o => [o.score ?? "", OV_kinds(o).map(([, l]) => l).join(" · "),
       window.OPP_LABEL[o.status] || o.status, o.target,
-      o.group ? o.group.variants.slice(1).map(v => v.target).join(" · ") : "",
+      OV_targets(o).filter(t => t !== o.target).join(" · "),
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }
 
@@ -469,10 +490,10 @@ function OV_next(d) {
   // 한 화면에 둘이다. 띠의 주요 행동은 [기회 열기] 하나다.
   else if (top) {
     const sc = Number.isFinite(top.score) ? `, ${Math.round(top.score)}점` : "";
-    const bunch = top.group && top.group.ids.length > 1
-      ? ` (같은 지면의 검색어 ${top.group.ids.length}개를 묶은 줄)` : "";
+    const nq = OV_targets(top).length, kl = OV_kinds(top).map(([, l]) => l);
+    const bunch = nq > 1 ? ` (같은 지면의 검색어 ${nq}개를 묶은 줄)` : "";
     html = `<p>가장 큰 기회는 <b>${esc(targetLabel(top.target))}</b>${bunch}입니다.
-      ${esc(top.label || top.kind)}${sc}으로 맨 위입니다.</p>
+      ${esc(kl.join(" · "))}${sc}으로 맨 위입니다.</p>
       <div class="acts"><button class="go" onclick="OV_openTop()">기회 열기</button></div>`;
   } else if (filtered)
     html = `<p>걸러 놓은 조건에 남은 기회가 없습니다.
@@ -490,19 +511,30 @@ function OV_next(d) {
 VIEW("overview", function (d) {
   const t = d.trend || [];
   const last = t.find(x => x.d === d.gsc_date) || t[t.length - 1] || {};
-  const prev = (d.gsc_prev && t.find(x => x.d === d.gsc_prev)) || {};
+  // 증감의 기준은 지금 창과 **겹치지 않는** 직전 같은 길이 구간이다(d.gsc_prev_period —
+  // 서버가 검색어별 합으로 KPI 와 같은 기준으로 준다). 없으면 바로 앞 수집분(d.gsc_prev)
+  // 과 견주는데, 그건 창이 대부분 겹친 28일이라 그렇다고 라벨에 적는다.
+  const pp = d.gsc_prev_period;
+  const snap = (d.gsc_prev && t.find(x => x.d === d.gsc_prev)) || {};
+  const prev = pp ? {clk: pp.clicks, imp: pp.impressions,
+    q: (t.find(x => x.d === pp.date) || {}).q} : snap;
   const dates = t.map(x => x.d);
   // 숫자 옆에 기준을 붙인다 — 며칠치인지, 무엇과 비교한 Δ인지 말하지 않으면 못 읽는다.
   const per = d.gsc_period ? `${d.gsc_period}일` : "";
-  const cmp = d.gsc_prev && d.gsc_date
-    ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
+  const md = s => String(s || "").slice(5);
+  const gap = d.gsc_prev && d.gsc_date
+    ? Math.round((new Date(d.gsc_date) - new Date(d.gsc_prev)) / 864e5) : 0;
+  const vs = pp ? `직전 ${per || "기간"}(${md(pp.from)}~${md(pp.to)})`
+    : gap > 0 ? `${gap === 1 ? "하루" : `${gap}일`} 전 ${per || "수집분"} 대비` : "직전";
+  const cmp = pp ? `${pp.from}~${pp.to} 과 비교`
+    : d.gsc_prev && d.gsc_date ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
   // 띠의 합은 검색어별 행을 더한 것이다(gsc_snapshots) — 구글이 가린 검색어는 빠진다.
   // 아래 일별 차트(날짜별 합)보다 작게 나오는 게 정상이라, 출처를 라벨에 싣는다.
   // 안 실으면 한 화면에 "28일 합계 6"과 "합계 19"가 나란히 서서 고장으로 읽혔다.
   // 「노출된 검색어」는 합이 아니라 개수다 — 거기엔 기간만 붙인다.
   const was = k => {
     const base = per && (k === "q" ? `${per} 동안` : `검색어별 ${per} 합계`);
-    return [base, Number.isFinite(prev[k]) ? `직전 ${num(prev[k])}` : "견줄 직전 기록 없음"]
+    return [base, Number.isFinite(prev[k]) ? `${vs} ${num(prev[k])}` : "견줄 직전 기록 없음"]
       .filter(Boolean).join(" · ");
   };
   $("band").innerHTML = [

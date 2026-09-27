@@ -172,6 +172,11 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 #ai-aio tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--slate); }
 #ai-aio tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
 #ai-aio .dm { font:400 12px/1.5 var(--mono); color:var(--slate); overflow-wrap:anywhere; }
+/* 390px 에서 네 칸이 칸마다 15px 로 쪼개졌다 — 표는 셸의 행 카드(.tw.cards)로 쌓고,
+   카드에서는 검색어가 제목 줄이라 nowrap 을 푼다(nowrap 이 나머지 칸을 밀던 원인이다). */
+@media (max-width:560px) { #ai-aio .kwq { white-space:normal; } }
+/* 숫자 칸의 「순위 없음」은 한글이다 — 등폭에 얹으면 폴백 서체로 떨어져 자간이 벌어진다. */
+#ai-aio td.num .muted { font-family:var(--sans); }
 </style>
 
 <!-- 이 화면 전체의 자리표 — 뼈대(nav·앵커)가 화면 하나를 이 id 로 잡는다. -->
@@ -483,6 +488,10 @@ const AI_stOf = r => {
   return c.cited > 0 ? "cited" : c.mentioned > 0 ? "mention" : "none";
 };
 const AI_engines = () => [...new Set(AI_ROWS.flatMap(r => Object.keys(r.by_engine || {})))].sort();
+// 질문 갈래 id → 사람 말. 정본은 gen_prompts.INTENT_LABELS 이고 조립이 d.ai_intent_labels 로
+// 싣는다 — 「general」 같은 id 가 그대로 찍히던 자리다. 라벨이 없는 갈래(옛 박제본)만 id 로.
+let AI_INTENT = {};
+const AI_catName = c => AI_INTENT[c] || c || "";
 
 /* 서버는 인용 많은 순으로 준다(dashboard.py 의 ORDER BY cited DESC) — 이미 인용되는
    질문이 맨 위라 할 일 목록으로는 거꾸로다. 화면에서 기회 점수 내림차순으로 뒤집는다:
@@ -530,10 +539,14 @@ function AI_riv(r) {
 const AI_rivTxt = (x, misses) => `${x.domain} ${x.n}/${misses}`;
 // 발췌는 엔진 답변 원문이라 마크다운이 그대로 섞여 온다 — 기호만 걷는다. 발췌가 중간에서
 // 잘려 짝이 없는 ** 도 있어(9회차 재확인) 짝을 찾지 않고 기호째 지운다. 링크는 글자만,
-// 제목(#)·글머리(* -)는 줄머리 기호만, 각주 번호([1][16])는 뺀다.
+// 제목(#)·글머리(* -)는 줄머리 기호만, 각주 번호([1][16])·[source] 는 뺀다.
+// 서버가 이제 마크다운을 걷지만 옛 기록에는 그대로 남아 있다 — 「] (」처럼 사이에 공백이
+// 낀 링크, 발췌 끝에서 잘려 닫는 괄호가 없는 링크도 글자만 남긴다(10회차).
 const AI_plain = v => String(v || "")
-  .replace(/\[([^\]]+)\]\((?:[^()]|\([^)]*\))*\)/g, "$1")
-  .replace(/\[\d+\]/g, "")
+  .replace(/\[([^\]]+)\]\s*\((?:[^()]|\([^)]*\))*\)/g, "$1")
+  .replace(/\[([^\]]+)\]\s*\([^)\s]*$/g, "$1")
+  .replace(/\s*\(https?:\/\/[^)\s]*$/g, "")
+  .replace(/\[(?:\d+|source)\]/gi, "")
   .replace(/(^|\s)#{1,6}\s+/g, "$1")
   .replace(/(^|\s)[*-]\s+/g, "$1")
   .replace(/\*\*|__|\*/g, "");
@@ -631,22 +644,33 @@ function AI_row(r) {
     (riv.list.length > 3 ? `<span class="chip" title="${esc(riv.list.slice(3)
       .map(x => AI_rivTxt(x, riv.misses)).join(", "))}">+${riv.list.length - 3}</span>` : "");
   // 엔진을 골랐으면 그 엔진의 발췌만 — 표의 숫자가 그 엔진 몫이라 글도 맞춘다
-  const ex = Object.entries(r.excerpts || {}).filter(([k]) => !AI_ENG || k === AI_ENG);
+  const pick = xs => Object.entries(xs || {}).filter(([k]) => !AI_ENG || k === AI_ENG);
+  const ex = pick(r.excerpts);
+  // 인용된 질문이면 우리가 인용된 답변이 먼저다(scoring.ai_tally 의 cited_excerpts) — 빠진
+  // 답변만 보이면 「인용됨」 줄을 펴도 우리가 없는 글만 나왔다.
+  const cx = pick(r.cited_excerpts);
   // 발췌가 없어도 펼칠 게 있다 — 상태마다 다른 할 일이 늘 붙는다. 손잡이는 항상 만든다.
-  const ev = ex.length || riv.list.length;
+  const ev = cx.length || ex.length || riv.list.length;
   const body = `<div class="aiq-d" hidden>
     ${ev ? `<div class="aiev">
-      ${riv.list.length ? `<span class="lb">우리 대신 인용된 곳 · 빠진 답변 ${riv.misses}건 기준</span>
-        <div class="aidoms">${riv.list.map(x => AI_rivChip(x, riv.misses)).join("")}</div>` : ""}
-      ${ex.map(([k, v]) => `<span class="lb n2">${esc(AI_engName(k))} 답변 발췌</span>
+      ${cx.map(([k, v], i) => `<span class="lb${i ? " n2" : ""}">${esc(AI_engName(k))} · 우리가 인용된 답변</span>
         <p class="q">${esc(AI_plain(v))}</p>`).join("")}
-      <div class="ft">발췌는 엔진마다 우리가 인용되지 않은 답변 중 먼저 받은 한 건입니다.
-        답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다 — 수는 위 칩이 셉니다.</div>
+      ${riv.list.length ? `<span class="lb${cx.length ? " n2" : ""}">우리 대신 인용된 곳 · 빠진 답변 ${riv.misses}건 기준</span>
+        <div class="aidoms">${riv.list.map(x => AI_rivChip(x, riv.misses)).join("")}</div>` : ""}
+      ${ex.map(([k, v]) => `<span class="lb n2">${esc(AI_engName(k))} · 우리가 빠진 답변</span>
+        <p class="q">${esc(AI_plain(v))}</p>`).join("")}
+      <div class="ft">발췌는 엔진마다 ${cx.length ? "우리가 인용된 답변과 빠진 답변에서 각각" : "우리가 인용되지 않은 답변 중"}
+        먼저 받은 한 건입니다. 답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다.</div>
     </div>` : ""}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+  // 기회로 안 올라온 인용 공백 질문 — 기회는 점수 상위만 올라오지만(oppOf 가 없음) 판정은
+  // 서버의 ai_gap_rows 한 벌이다. 배지를 기회에만 달면 띠는 6개, 목록 배지는 3개로 갈렸다.
+  const gapTag = !o && AI_GAPS && AI_GAPS.has(r.prompt)
+    ? `<div class="oh"><span class="kind">${esc((window.KIND_LABELS || {}).ai_citation_gap
+        || AI_ST_OPT.find(x => x[0] === "gap")[1])}</span></div>` : "";
   // 접힌 줄에도 근거를 낸다 — 질문마다 다른 실물(엔진 N곳 답변 M건 중 인용 0, 대신 누가)
   // 이 여기서만 보인다. 상태마다 같은 문장 3종을 돌려 쓰던 자리를 이게 대신한다.
   const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-       >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${o ? oppWhy(o) : ""}${body}`;
+       >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${o ? oppWhy(o) : gapTag}${body}`;
   // 부품 CSS(.kind·.why)가 .opp 아래에만 걸려 있다 — 줄에 그 조상만 빌린다.
   // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
   const c = AI_cnt(r);
@@ -656,7 +680,7 @@ function AI_row(r) {
   return `<tr${o ? ` class="opp"` : ""}>
     <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">—</span>'}</td>
     <td>${q}</td>
-    <td class="kwcell">${esc(r.category || "")}</td>
+    <td class="kwcell">${esc(AI_catName(r.category))}</td>
     <td><span class="aiengst">${strip || '<span class="muted">—</span>'}</span></td>
     <td class="num ${c.cited ? "up" : "muted"}">${c.cited}</td>
     <td class="num ${c.mentioned ? "" : "muted"}">${c.mentioned}</td>
@@ -755,7 +779,7 @@ function AI_render() {
         placeholder="질문·답변으로 찾기" aria-label="질문 찾기">
       ${cats.length > 1 ? `<select onchange="AI_cat(this.value)" aria-label="카테고리로 거르기">
         <option value="">카테고리 전체</option>${cats.map(c =>
-          `<option value="${esc(c)}"${c === AI_CAT ? " selected" : ""}>${esc(c)}</option>`
+          `<option value="${esc(c)}"${c === AI_CAT ? " selected" : ""}>${esc(AI_catName(c))}</option>`
         ).join("")}</select>` : ""}
       ${engs.length > 1 ? `<select onchange="AI_engine(this.value)" aria-label="엔진으로 거르기">
         <option value="">엔진 전체</option>${engs.map(e =>
@@ -795,7 +819,7 @@ function AI_list() {
 // 파일로 만드는 일은 뼈대의 csv() 한 벌이 한다(기회 목록과 같은 자리).
 function AI_csv() {
   const rows = [["질문", "카테고리", "인용", "언급", "응답", "대신 인용된 곳", "답변 발췌(엔진별)"]]
-    .concat(AI_filtered().map(r => [r.prompt, r.category || "", r.cited, r.mentioned,
+    .concat(AI_filtered().map(r => [r.prompt, AI_catName(r.category), r.cited, r.mentioned,
       r.checks, (r.rivals || []).map(x => AI_rivTxt(x, r.misses || 0)).join(", "),
       AI_exTxt(r)]));
   csv("ai인용", rows);
@@ -1093,7 +1117,7 @@ function AI_aioDetail(r) {
   const cites = r.aio_domains && r.aio_domains.length
     ? `요약이 대신 인용한 곳 <span class="dm">${r.aio_domains.map(esc).join(", ")}</span>`
     : "요약이 인용한 곳은 못 읽었습니다";
-  const line = `<p class="detn">${r.pos != null ? `지금 순위 <b>${r.pos}위</b>`
+  const line = `<p class="detn">${r.pos != null ? `직접 확인한 순위 <b>${r.pos}위</b>`
     : "이번 조회에서 순위에 <b>안 잡혔습니다</b>"} · ${cites}</p>`;
   const o = AI_aioOpp(r.keyword);
   const ap = AI_AIO_PLAY[r.aio_band] || {};
@@ -1144,7 +1168,7 @@ function AI_aio(d) {
   const body = `<p class="ainote">${num(AI_AIO_ROWS.length)}개는 요약이 맨 위 자리를 차지하는데
     거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다. 줄을 누르면 할 일이 펼쳐집니다.</p>
     <div class="card">${table(
-      ["검색어", ">순위?같은 조회에서 우리 페이지가 있던 자리입니다",
+      ["검색어", ">순위(직접 확인)?같은 검색 결과 조회에서 우리 페이지가 있던 자리입니다. 구글 실적의 평균 순위와는 다른 숫자입니다",
        "대신 인용된 곳?요약이 출처로 실은 도메인입니다",
        ">점수?기회 점수입니다. 높을수록 먼저 손댈 자리입니다"],
       AI_AIO_ROWS.map((r, i) => {
@@ -1154,10 +1178,10 @@ function AI_aio(d) {
           title="누르면 이 검색어의 할 일이 펼쳐집니다">
           <td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${oppWhy(o)}</td>
           <td class="num">${r.pos != null ? r.pos
-            : `<span class="muted" title="이번 조회에서 못 찾았습니다">밖</span>`}</td>
+            : `<span class="muted" title="직접 확인한 검색 결과에서 우리 페이지를 못 찾았습니다">순위 없음</span>`}</td>
           <td><span class="dm">${(r.aio_domains || []).slice(0, 3).map(esc).join(", ") || "—"}</span></td>
           <td class="num">${o ? oppScore(o) : `<span class="muted">—</span>`}</td></tr>`;
-      }))}</div>`;
+      }), undefined, "cards")}</div>`;
   return [sub, body];
 }
 
@@ -1165,6 +1189,7 @@ VIEW("ai", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
   AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
+  AI_INTENT = d.ai_intent_labels || {};
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec",
                     "ai-vs-search", "ai-outranked"])
     $(id).hidden = true;
@@ -1220,7 +1245,11 @@ VIEW("ai", function (d) {
   AI_nextStep(d, true, missN, byPrompt.length > 0);
 
   // eyebrow 는 기간만, 부제는 한 줄. "표본이라 여러 번 물어 평균으로 읽는다"는 툴팁으로.
-  $("ai-eyebrow").textContent = when ? `${when} 확인` : "최근 확인";
+  // 그 확인이 오류를 남긴 회차면 날짜 옆에 말한다 — 머리 칩은 오류 난 회차를 「아직」으로
+  // 세는데 본문은 같은 회차를 「09-24 확인」으로만 적어 서로 다른 말을 했다(10회차).
+  const bad = window.runFailed ? window.runFailed("ai", d) : null;
+  const part = bad && String(bad.finished_at || bad.started_at || "").slice(0, 10) === when;
+  $("ai-eyebrow").textContent = when ? `${when} 확인${part ? " · 일부 실패" : ""}` : "최근 확인";
   const SAMPLE = "답변은 매번 달라지므로 한 번의 확인은 사실이 아니라 표본입니다. " +
     "같은 질문을 여러 번 물어 평균으로 읽습니다.";
   $("ai-sub").innerHTML = `<b>${engines.map(AI_engLabel).join(" · ")}</b>에서 받은
@@ -1295,7 +1324,7 @@ VIEW("ai", function (d) {
      ">조합 인용률?그 조합의 답변만 분모입니다. 위 KPI 의 인용률은 전체 답변이 분모라 값이 다릅니다"],
     m.map(r => `<tr class="aimx"${AI_drillAttrs(r.engine, r.category)}>
       <td class="kwcell">${AI_engLabel(r.engine)}</td>
-      <td>${esc(r.category)}</td>
+      <td>${esc(AI_catName(r.category))}</td>
       <td class="num ${r.cited ? "up" : "muted"}">${r.cited}</td>
       <td class="num ${r.mentioned ? "" : "muted"}">${r.mentioned}</td>
       <td class="num muted">${r.total}</td>
@@ -1330,7 +1359,7 @@ VIEW("ai", function (d) {
           {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`, "");
     $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
       d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
-        <td class="kwcell">${esc(r.category || "")}</td>
+        <td class="kwcell">${esc(AI_catName(r.category))}</td>
         <td class="kwcell muted">${esc(r.engines || "")}</td></tr>`));
   }
 });

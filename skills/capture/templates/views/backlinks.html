@@ -135,10 +135,14 @@ function BLK_brSt(v) { BLK_BR_ST = v; if (BLK_D) $("blk-recover").innerHTML = BL
 function BLK_ixSt(v) {
   BLK_IX_ST = v;
   if (!BLK_D) return;
-  const rivals = (BLK_D.comp_metrics || []).filter(r => !r.is_self).length;
+  const rivals = BLK_rivals(BLK_D);
   $("blk-intersect").innerHTML = BLK_intersect(BLK_D, rivals);
 }
 
+/* 견줄 경쟁사 수 — 경쟁 분석 화면과 같은 기준(CP_rivals: 몫을 잰 곳 + 격차를 맞댄 곳)을
+   그대로 부른다. 몫(comp_metrics)만 세던 때, 경쟁 분석은 「경쟁사 3곳과 맞댄 결과」인데
+   여기는 「등록된 경쟁사가 둘 미만」이라고 했다(10회차). 화면은 조립하면 한 문서다. */
+const BLK_rivals = d => CP_rivals(d || {}).all;
 const BLK_pct = v => (v == null ? "—" : Math.round(v * 100) + "%");
 const BLK_day = v => (v ? String(v).slice(0, 10) : "");
 // URL 은 읽으라고 있는 게 아니라 열어 보라고 있다 — 여태 esc() 한 글자라 못 눌렀다.
@@ -379,7 +383,7 @@ function BLK_intersect(d, rivals) {
     ? BLK_ok("우리만 빠진 링크처가 없습니다",
         "경쟁사들이 공통으로 받는 곳은 우리도 이미 받고 있습니다. 지킬 자리입니다.")
     : BLK_empty("견줄 경쟁사가 모자랍니다",
-        "등록된 경쟁사가 둘 미만이라 맞댈 대상이 없습니다. 찾으면 우리만 빠진 곳이 갈립니다.",
+        `찾은 경쟁사가 ${num(rivals)}곳이라 맞댈 대상이 모자랍니다. 둘 이상이면 우리만 빠진 곳이 갈립니다.`,
         BLK_do("competitors", BLK_name("competitors"))));
 }
 
@@ -524,7 +528,7 @@ function BLK_nextStep(d) {
   const broken = (d.bl_links || []).filter(r => r.is_broken).length;
   const lost = (d.bl_domains || []).filter(r => r.lost_date).length;
   const ixs = (d.bl_intersect || []).slice().sort((a, b) => (b.hits || 0) - (a.hits || 0));
-  const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
+  const rivals = BLK_rivals(d);
   if (ixs.length) {
     BLK_TOP = ixs[0].domain;
     return put(`경쟁사만 받은 링크처가 ${num(ixs.length)}곳입니다. 가장 많이 겹치는 곳은
@@ -607,7 +611,7 @@ VIEW("backlinks", function (d) {
   $("blk-recover").innerHTML = BLK_broken(d);
 
   // 교집합은 경쟁사가 둘 이상이어야 성립한다 — 비어 있는 이유가 그것일 수 있다.
-  const rivals = (d.comp_metrics || []).filter(r => !r.is_self).length;
+  const rivals = BLK_rivals(d);
   const ix = (d.bl_intersect || []).length;
   $("blk-ix-sub").innerHTML = ix
     ? `우리만 빠진 링크처가 <b>${num(ix)}곳</b>입니다.` +

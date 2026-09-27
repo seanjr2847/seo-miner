@@ -80,6 +80,15 @@
 #made .br::before { content:"⑂ "; }
 #made .path { font-family:var(--mono); font-size:13px; margin:8px 0 0;
   word-break:break-all; }
+#made .mn { font-size:12.5px; color:var(--slate); }
+#made .mfiles { margin-top:6px; }
+#made .mfiles > summary, #runs .hs-raw > summary { font:500 12.5px/1.5 var(--sans);
+  color:var(--slate); cursor:pointer; }
+#made .mfiles > summary:hover, #runs .hs-raw > summary:hover { color:var(--patina); }
+#made .mfiles .br { margin-top:8px; }
+/* 중단 사유 원문 — 사람 말로 옮긴 줄 밑에 접어 둔다. 영문·식별자라 등폭이다. */
+#runs .hs-raw code { display:block; margin-top:4px; font:400 11.5px/1.6 var(--mono);
+  overflow-wrap:anywhere; }
 /* 이 줄이 루프다: 어느 기회가 이 수정을 낳았나 — 그래서 눌러서 그 기회로 간다.
    등폭을 뺀 이유: 여기 담기는 건 대부분 한글 검색어다(등폭은 숫자·URL·날짜·식별자만). */
 #made .from { font:400 12.5px/1.6 var(--sans); color:var(--patina); margin-top:5px;
@@ -250,21 +259,40 @@ function HS_errHost(v) {
   // 도메인 그대로(dataforseo.com) — 라벨만 떼면 소문자 상호처럼 읽힌다.
   return m[1].split(":")[0].split(".").slice(-2).join(".");
 }
+// 상태 코드 없이 공급사 문장만 남은 옛 기록 — 알려진 것만 사람 말로 옮긴다(원문은
+// title·접힘에 남는다). 지금 수집기는 이미 사람 말로 남긴다(serp_adapter._task_error_text).
+const HS_KNOWN = [
+  [/Invalid Field:\s*'(language_code|location_name|location_code)'/i,
+    "외부 서비스가 언어·지역 설정을 거절했습니다 — 사이트의 언어·지역을 확인하세요"],
+  [/Invalid Field/i, "외부 서비스가 요청 형식을 거절했습니다 — 다시 돌려도 같으면 알려 주세요"],
+  [/Payment Required|Insufficient funds/i, "외부 서비스 잔액이 부족합니다 — 충전한 뒤 다시 수집하면 됩니다"],
+  [/rates? limit/i, "분당 호출 한도를 넘었습니다 — 잠시 뒤 다시 수집하면 됩니다"],
+  [/Internal (Server )?Error/i, "외부 서비스 서버 오류 — 잠시 뒤 다시 수집하면 됩니다"],
+];
 function HS_errMsg(v) {
   const m = /^(\d)\d\d\b/.exec(v.trim());
   const svc = HS_errHost(v);
   const who = `외부 서비스${svc ? `(${svc})` : ""}`;
   if (m && m[1] === "5") return `${who} 서버 오류 — 잠시 뒤 다시 수집하면 됩니다`;
   if (m && m[1] === "4") return `${who} 요청이 거절됐습니다 — 키·권한·잔액을 확인하세요`;
+  const k = HS_KNOWN.find(([re]) => re.test(v));
+  if (k) return k[1];
   // 옛 기록은 표시 없이 100자에서 끊겼다(collector._clip 이전) — 딱 그 길이면 잘린 것이다.
   return v.length >= 99 && !v.endsWith("…") ? v + "…" : v;
 }
 
 // 배지 밑(좁은 화면)에 올릴 실패 원인 한 줄 — 판정 이유("도중에 예외로 멈췄습니다")는
 // 무엇을 하면 되는지 안 말한다. 수집기가 남긴 중단 사유·첫 오류가 그 답이다.
+// 중단 사유는 db.run 이 "중단: <예외 이름>: <메시지>" 로 남긴다 — 예외 이름·영문 원문은
+// 사람에게 할 말이 아니다. 아는 것은 옮기고, 모르는 예외는 멈췄다고만 말한다.
+function HS_stopMsg(stop) {
+  const m = /^[A-Z]\w*(?:Error|Exception|Fatal)\w*:\s*([\s\S]*)$/.exec(stop);
+  const body = m ? m[1] : stop, said = HS_errMsg(body);
+  return said !== body ? said : m ? "수집 도중 오류로 멈췄습니다" : stop;
+}
 function HS_cause(n) {
   const s = HS_legacy(n), i = s.indexOf("중단:");
-  if (i >= 0) return s.slice(i + 3).trim();
+  if (i >= 0) return HS_stopMsg(s.slice(i + 3).trim());
   const m = /first_error=(.*?)(?=\s+[A-Za-z_]+=|$)/.exec(s);
   return m && m[1].trim() ? HS_errMsg(m[1].trim()) : "";
 }
@@ -300,7 +328,11 @@ function HS_notes(n) {
     return "";
   }).trim();
   if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
-  if (stop) parts.push(`<span class="p bad msg">중단 <b>${esc(stop)}</b></span>`);
+  if (stop) {
+    const said = HS_stopMsg(stop);
+    parts.push(`<span class="p bad msg">중단 <b>${esc(said)}</b></span>` + (said !== stop
+      ? `<details class="hs-raw"><summary>원문</summary><code>${esc(stop)}</code></details>` : ""));
+  }
   return `<span class="hs-nt">${parts.join("")}</span>`;
 }
 
@@ -460,7 +492,7 @@ function HS_runList() {
      ">비용?수집기가 적어 둔 추정치입니다 — 청구서가 아닙니다",
      "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows)}</div>` + (rest > 0
     ? `<div class="acts">
-         <button class="go sec sm" onclick="HS_runMore(${HS_RN + 20})">${rest}건 더 보기</button></div>`
+         <button class="go sec sm" onclick="HS_runMore(${HS_RN + 20})">${Math.min(20, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
     : "");
 }
 
@@ -561,14 +593,19 @@ function HS_madeRow(c) {
   // kind 한국어 라벨의 정본은 scoring.py(KINDS 명부) — payload 의 kind_labels 로 온다.
   // 여기는 대상 없이 kind 만 아는 자리라 통칭을 쓴다(밴드별 라벨은 못 낸다).
   const label = (window.KIND_LABELS || {})[c.kind] || c.kind || "수동 작업";
+  // 브랜치·파일 경로는 식별자다 — 겉에는 몇 개를 고쳤는지만, 경로는 접힘 안에.
+  // file_path 는 여러 파일이면 쉼표로 이어 온다.
+  const files = String(c.file_path || "").split(",").map(f => f.trim()).filter(Boolean);
   return `<div class="mk">
     <div>
       <div class="mh">
-        <span class="kind" title="${esc(c.kind || "수동 브리프")}">${esc(label)}</span>
+        <span class="kind">${esc(label)}</span>
+        <span class="mn">파일 ${files.length}개 수정</span>
         <span class="dt">${esc((c.created_at || "").slice(0, 10))}</span>
-        ${c.branch ? `<span class="br">${esc(c.branch)}</span>` : ""}
       </div>
-      <div class="path">${esc(c.file_path)}</div>
+      <details class="mfiles"><summary>수정한 파일${c.branch ? "·브랜치" : ""}</summary>
+        ${c.branch ? `<div class="br">${esc(c.branch)}</div>` : ""}
+        ${files.map(f => `<div class="path">${esc(f)}</div>`).join("")}</details>
       ${c.opp_target
         ? `<button class="from" data-o="${esc(c.opportunity_id)}"
              data-t="${esc(c.opp_target)}" onclick="HS_toOpp(this)"

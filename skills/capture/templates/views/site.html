@@ -1031,8 +1031,10 @@ let ST_AUDITS = {}, ST_QPAGES = {};
 let CR_KIND = {};
 const CR_SEV = {bad: "심각", warn: "권고", info: "참고"};
 // 상태는 배지다 — 색 글자로 그리면 이 표만 다른 문법을 쓰게 된다. 채운 배지(.bad)는
-// 가장 센 것 하나뿐이고, 나머지는 테두리로 무게를 낮춘다.
-const CR_SEV_CLS = {bad: "bad", warn: "warn", info: "muted"};
+// 가장 센 것 하나뿐이고, 나머지는 테두리로 무게를 낮춘다. 권고는 중립이다 — 경고색(산화동)을
+// 칠하면 띠가 「급하지 않습니다」라고 말하는 바로 밑에서 표가 급하다고 말했다(10회차).
+// 셸의 권고 배지(.badge.adv)가 그 자리다.
+const CR_SEV_CLS = {bad: "bad", warn: "adv", info: "muted"};
 const CR_sev = sev => `<span class="badge ${CR_SEV_CLS[sev] || "muted"}">`
   + `${esc(CR_SEV[sev] || sev || "—")}</span>`;
 
@@ -1074,9 +1076,12 @@ function CR_rows(d) {
   return stCard(table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
     CR_PICK ? "<b>이 종류에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
             : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>")
-    + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${num(rest)}건 더 보기</button></div>` : ""));
+    // 누르면 늘어나는 수와 남은 수를 가른다 — 「437건 더 보기」인데 50건만 펴졌다(10회차).
+    + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${
+        num(Math.min(CR_STEP, rest))}건 더 보기 (남은 ${num(rest)}건)</button></div>` : ""));
 }
-function CR_more() { CR_N += 50; $("crawl").innerHTML = CR_rows(CR_D); }
+const CR_STEP = 50;
+function CR_more() { CR_N += CR_STEP; $("crawl").innerHTML = CR_rows(CR_D); }
 function CR_setSt(v) { CR_ST = v; CR_N = CR_PAGE; $("crawl").innerHTML = CR_rows(CR_D); }
 
 /* ── 크롤 행 펼침 ────────────────────────────────────────────

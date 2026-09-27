@@ -76,6 +76,8 @@
 .anmore > summary { font:500 12.5px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
 .anmore > summary:hover, .anmore > summary:focus-visible { color:var(--patina); }
 .anmore > p { font-size:13px; line-height:1.65; color:var(--slate); margin:var(--sp-2) 0 0; }
+/* 「0.3% → 0%」가 좁은 칸에서 세 줄로 갈렸다 — 숫자 칸은 한 덩어리로 둔다. */
+#an-movers-body td.num, #an-ctr-body td.num { white-space:nowrap; }
 </style>
 
 <section id="an-top">
@@ -305,16 +307,19 @@ function anNext(d) {
   } else if (d.period_mismatch) {
     msg = "직전 수집과 기간이 달라 맞대지 않았습니다."
         + live("같은 기간으로 한 번 더 수집하면 원인이 갈립니다.");
-  } else if (!s || (!s.prev_clicks && !s.clicks)) {
+  } else if (!s || !d.gsc_prev) {
     msg = "수집이 한 번뿐이라 맞댈 시점이 없습니다."
         + live("한 번 더 수집하면 원인 분해가 채워집니다.");
+  } else if (!s.prev_clicks && !s.clicks) {
+    msg = "두 기간 모두 클릭이 없습니다."
+        + live("노출이 클릭으로 바뀌기 시작하면 원인이 갈립니다.");
   } else if (top >= 0) {
     const r = AN_MV_VIEW[top], c = AN_CAUSE[r.cause] || {t: r.cause};
     // 검색어 이름은 <b> 한 벌 — 따옴표로 감싸지 않는다(QA D12). 원인은 산문 이름
     // (클릭률)이지 표 배지의 약어(CTR)가 아니다(QA D4/A13).
     // "무엇부터 할지"는 [개요] 한 곳이 말한다 — 여기는 이 화면에서 볼 것만 짚는다.
-    msg = `이 화면에서 볼 것은 가장 크게 움직인 검색어 <b>${esc(r.query)}</b>입니다.
-      클릭 ${anNum(r.dclk)}이고 원인은 ${c.t}입니다.`;
+    msg = `가장 크게 움직인 검색어는 <b>${esc(r.query)}</b>입니다.
+      원인은 ${c.t}이고 클릭 ${anNum(r.dclk)}입니다.`;
     acts = '<button class="go" onclick="anOpenTop()">검색어 열기</button>';
   } else if (gaps.length) {
     const lost = gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0);
@@ -338,11 +343,17 @@ function anVerdict(s) {
   // 문장 + 타일로 말했다 — 여기서 "클릭이 3 → 7 늘었습니다"를 또 적으면 같은
   // 수를 세 번째로 읽는다(QA 8회차). 이 문장은 그 다음 질문("그래서 어느 축이
   // 그걸 움직였나")만 답한다.
-  return `<p class="anverdict">가장 크게 움직인 것은
-    <b>${AN_EFFECT[top[0]]}</b>입니다(${anNum(top[1])} 클릭).${
-    msg ? `<span class="hint" tabindex="0" data-tip="${esc(msg)}" title="${esc(msg)}"
-      aria-label="${esc(msg)}">i</span>` : ""}</p>`;
+  // 검색어 하나가 아니라 사이트 전체 합의 이야기다 — 띠(anNext)의 "가장 크게 움직인
+  // 검색어"와 한 화면에 서므로 범위를 문장에 싣는다.
+  const tip = [msg, AN_SPLIT_TIP].filter(Boolean).join(" ");
+  return `<p class="anverdict">전체 클릭 변화의 가장 큰 몫은
+    <b>${AN_EFFECT[top[0]]}</b>입니다(${anNum(top[1])} 클릭).<span class="hint" tabindex="0"
+      data-tip="${esc(tip)}" title="${esc(tip)}" aria-label="${esc(tip)}">i</span></p>`;
 }
+// scoring.click_shift 는 두 수집에 모두 있는 검색어만 노출·클릭률로 나누고, 한쪽에만
+// 있는 것은 새 검색어·빠진 검색어로 따로 센다.
+const AN_SPLIT_TIP = "노출 효과는 두 수집에 모두 있는 검색어만 나눈 값입니다. "
+  + "새로 뜬 검색어가 노출을 늘려도 기존 검색어의 노출이 줄었으면 마이너스로 나옵니다.";
 
 /* ── 맨 위 결론 + KPI ── 아래 절들이 다 낸 재료를 여기서 엮는다. 재료가 없으면
    그 조각은 조용히 뺀다(지어내지 않는다) — GA4 미연결이면 KPI 가 셋으로 준다. */
@@ -419,7 +430,7 @@ function anTop(d, mismatch) {
   const verdict = anTopVerdict(d), kpis = anTopKpis(d);
   const ga4 = d.ga4_funnel ? "" : anNoGa4();
   if (!verdict && !kpis)
-    return (mismatch
+    return (!mismatch && d.gsc_prev ? AN_NO_CLICKS : mismatch
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
         <p>직전 수집이 다른 기간이라 증감을 내면 전부 거짓이 됩니다. 같은 기간으로
         한 번 더 수집하면 채워집니다.</p>
@@ -433,7 +444,11 @@ function anTop(d, mismatch) {
 // 원인 넷은 "이전"에서 흘러 "현재"에 닿는 워터폴 하나로 — 합이 Δ클릭임이
 // 눈에 보인다. "현재" 막대는 kind:"total"(0부터 다시)이라 분해 합의 반올림
 // 오차와 무관하게 실제 값을 그대로 보여준다(검산 역할).
-function anShift(s, mismatch) {
+// 맞댈 수집은 있는데 두 쪽 다 클릭이 0 — "수집이 한 번뿐"이라고 하면 거짓이다.
+const AN_NO_CLICKS = `<div class="empty"><b>두 기간 모두 클릭이 없습니다</b>
+  <p>클릭이 0에서 0이라 나눌 변화가 없습니다. 노출이 클릭으로 바뀌기 시작하면 여기가 채워집니다.</p></div>`;
+function anShift(s, mismatch, hasPrev) {
+  if (s && hasPrev && !mismatch && !s.prev_clicks && !s.clicks) return AN_NO_CLICKS;
   if (!s || (!s.prev_clicks && !s.clicks))
     return mismatch
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
@@ -639,7 +654,8 @@ function anMovers(s, mismatch) {
   // 없다**(.empty.ok), 얻은 쪽이 비면 그냥 **자료가 없다**(.empty). 둘을 같은 상자로
   // 그리면 좋은 소식이 실패처럼 읽힌다(QA A2).
   const block = (title, rows, ok, off, good) => `<p class="eyebrow anblock">${title}</p>` +
-    (rows.length ? table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)))
+    // 좁은 화면에서는 줄을 카드로 쌓는다(셸 table 의 "cards") — 여섯 칸이 390px 를 밀었다.
+    (rows.length ? table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)), "", "cards")
                  : `<div class="empty${good ? " ok" : ""}"><b>${ok}</b></div>`);
   return bar + anCard(
     block("잃은 쪽", down, "클릭이 줄어든 검색어가 없습니다", 0, true)
@@ -1087,7 +1103,7 @@ VIEW("analysis", function (d) {
   AN_SHIFT = d.shift || null;
   AN_MM = mismatch;
   AN_CTR_ALL = d.ctr_gaps || null;
-  $("an-shift-body").innerHTML = anShift(d.shift, mismatch);
+  $("an-shift-body").innerHTML = anShift(d.shift, mismatch, !!d.gsc_prev);
   $("an-movers-body").innerHTML = anMovers(d.shift, mismatch);
   // CSV 는 거른 것이 아니라 회차 전부를 내보낸다(anCsv 가 AN_SHIFT 를 읽는다) —
   // 그러니 거르개로 화면이 비어도 단추는 남는다.

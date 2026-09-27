@@ -58,6 +58,12 @@
 tr[data-kwq] { cursor:pointer; }
 /* 표식은 이름과 한 덩어리다 — 칸에 걸면 좁은 화면에서 화살표만 윗줄에 남는다. */
 tr[data-kwq] .kwq::before { content:"▸ "; color:var(--slate); }
+/* 좁은 화면에서 두 표는 줄을 카드로 쌓는다(셸 table 의 "cards") — 검색어가 카드 제목
+   줄이 되어 칸 폭 전체를 쓰므로, 그때는 긴 이름이 넘치지 않게 줄을 바꾼다. */
+@media (max-width:560px) { .kwtable .kwq, #mv-list .kwq { white-space:normal; }
+  /* 점수 칸은 표에서 오른쪽 정렬 블록이다 — 카드 줄에서는 라벨 옆에 붙인다(사이트 크롤 표와 같다). */
+  .kwtable td.num .score, #mv-list td.num .score { display:inline; width:auto; font-size:13.5px; }
+  .kwtable td.num .score .u, #mv-list td.num .score .u { display:inline; margin-left:1px; } }
 tr[data-kwq][aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
 tr[data-kwq]:hover > td { background:var(--bar); }
 tr[data-kwq]:focus { outline:none; }
@@ -212,7 +218,7 @@ function depthLog(rows, brandCatalogEmpty, period) {
       <td class="num">${r.pos}</td>
       <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
       <td class="num">${num(r.imp)}</td>
-      <td class="num">${num(r.clk)}</td></tr>`));
+      <td class="num">${num(r.clk)}</td></tr>`), "", "cards");
 
   return `<div class="card kwchart">
   <div class="chleg kwleg">
@@ -332,7 +338,7 @@ function KW_mvList() {
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
-      <td class="num">${num(m.imp)}</td></tr>`)) + `</div>`;
+      <td class="num">${num(m.imp)}</td></tr>`), "", "cards") + `</div>`;
 }
 
 /* ── 행 펼침 ────────────────────────────────────────────────────────
@@ -589,8 +595,8 @@ VIEW("keywords", function (d) {
     $("log-tools").innerHTML = "";
     $("log").innerHTML = d.gsc_date
       ? `<div class="empty">
-          <b>${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 없습니다</b>
-          <p>${esc(d.gsc_date)} 실적까지 수집했습니다.
+          <b>이번 수집에서 ${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 없습니다</b>
+          <p>${esc(d.gsc_date)} 수집분 기준입니다.
             <span class="live">추적할 검색어를 더 캐면 여기부터 채워집니다.</span></p>
           ${KW_cmd("keywords")}</div>`
       : `<div class="empty"><b>실적을 아직 수집하지 않았습니다</b>

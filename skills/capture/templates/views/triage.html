@@ -42,7 +42,8 @@
 #tr-counts b { color:var(--ink); font-weight:600; }
 /* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
 #triage .trtouch { display:none; }
-@media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
+/* 좁은 화면도 같이 건다 — hover 가 있는 390px 창에서 누를 수 없는 j/k 안내가 섰다(셸의 --btn-h 와 같은 조건). */
+@media (hover:none), (max-width:560px) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
   /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수(「미판정 110」)와 같은 숫자로 읽혔다. */
   #triage .go kbd { display:none; } }
 /* 숫자 칸은 쪼개지 않는다 — 「44 / 4,64」처럼 한 값이 두 줄로 갈렸다. */
@@ -51,9 +52,18 @@
    검색어 밑 둘째 줄(.trperf)로 내린다 — 넓은 화면에서는 그 줄이 안 선다. */
 #triage .trperf { display:none; color:var(--slate); font-size:12px; margin-top:2px; }
 #triage .trperf .v { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+/* 고른 뒤 판정 버튼 — 좁은 화면에서는 표를 내려가면 위 판정 바가 화면 밖으로 나갔다.
+   한 줄이라도 고르면 같은 버튼을 화면 아래에 붙여 둔다. 위 판정 바는 그대로 두어
+   고르는 순간 표가 밀려 올라가지 않는다. */
+#triage .trdock { display:none; }
 @media (max-width:560px) {
   #triage .trtable th:nth-child(5), #triage .trtable td:nth-child(5) { display:none; }
   #triage .trperf { display:block; }
+  #triage .trdock { display:flex; align-items:center; gap:10px; position:fixed; left:0; right:0;
+    bottom:0; z-index:50; padding:8px 16px calc(8px + env(safe-area-inset-bottom));
+    background:var(--card); border-top:1px solid var(--rule); }
+  #triage .trdock .n { color:var(--slate); font-size:13px; margin-right:auto; }
+  #triage:has(.trdock) { padding-bottom:calc(var(--btn-h) + 24px); }
 }
 </style>
 
@@ -193,13 +203,8 @@ function TR_draw() {
         aria-label="보이는 줄 전부 고르기"> 전부</label>
       <span class="n">${n ? `선택 ${n}건 →`
         : `<span class="trkey">줄을 고르거나 <kbd>j</kbd><kbd>k</kbd>로 옮겨 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>으로 판정</span><span class="trtouch">줄을 고르면 판정 버튼이 켜집니다</span>`}</span>
-      <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
-        title="자동완성이 물어온 남의 검색어. 다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관<kbd>1</kbd></button>
-      <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('hold')"
-        title="우리 검색어지만 지금은 안 함(브랜드 등). 측정은 계속하고 기회에는 안 올립니다">보류<kbd>2</kbd></button>
-      <button class="go sm"${n ? "" : " disabled"} onclick="TR_setSel('work')"
-        title="개요의 기회 목록으로 보냅니다">작업<kbd>3</kbd></button>
-    </div>`;
+      ${TR_btns(n)}
+    </div>` + (n ? `<div class="trdock"><span class="n">선택 ${n}건</span>${TR_btns(n)}</div>` : "");
   $("triage").innerHTML = bar + table(
     ["", "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", "종류?이 검색어에 걸린 진단",
      ">점수?걸린 기회 중 가장 높은 점수", ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
@@ -213,6 +218,15 @@ function TR_draw() {
   const tbl = $("triage").querySelector("table");
   if (tbl) tbl.classList.add("trtable");
 }
+
+// 판정 버튼 셋 — 위 판정 바와 좁은 화면의 아래 막대가 같은 것을 쓴다.
+const TR_btns = n => `
+  <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
+    title="자동완성이 물어온 남의 검색어. 다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관<kbd>1</kbd></button>
+  <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('hold')"
+    title="우리 검색어지만 지금은 안 함(브랜드 등). 측정은 계속하고 기회에는 안 올립니다">보류<kbd>2</kbd></button>
+  <button class="go sm"${n ? "" : " disabled"} onclick="TR_setSel('work')"
+    title="개요의 기회 목록으로 보냅니다">작업<kbd>3</kbd></button>`;
 
 // 검색창으로만 스크롤한다(포커스는 안 준다) — 포커스까지 주면 모바일에서 자판이 뜬다.
 function TR_toTop() {
