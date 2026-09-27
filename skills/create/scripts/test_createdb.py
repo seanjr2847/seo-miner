@@ -8,6 +8,7 @@ done으로 닫히는지)를 본다. 이 경로가 깨지면 capture가 다음 �
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -103,7 +104,7 @@ assert conn.execute("SELECT status FROM opportunities WHERE id=?",
                     (oid2,)).fetchone()[0] == "acked", "sync 가 기회를 진행 중으로 안 옮겼다"
 c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_id=?",
                   (oid2,)).fetchone()
-assert c2 is not None and "손으로 이미 실행:" in (c2["note"] or ""), c2
+assert c2 is not None and re.fullmatch(r"이미 적용된 수정\(커밋 [0-9a-f]{8}\)", c2["note"] or ""), c2
 conn.close()
 
 # ── 머지 반영: gh 가 머지를 말하면 기록은 merged, 기회는 done(완료 시각 = 머지 시각) ──

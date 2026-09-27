@@ -514,16 +514,17 @@ _KNOWN_LANGS = {serp_adapter.lang_of(c) for c, _ in serp_adapter.LOCALES}
 
 
 def page_locale(audit: dict | None, url: str | None) -> tuple[str, str] | None:
-    """(언어 코드, 어디서 알았나) — html lang 이 먼저, 없으면 주소의 첫 경로 조각(/en/).
-    둘 다 모르면 None(사이트 기본을 따른다)."""
+    """(언어 코드, 어디서 알았나) — 주소의 첫 경로 조각(/en/)이 먼저, 없으면 html lang.
+    둘 다 모르면 None(사이트 기본을 따른다). 주소가 먼저인 이유: 다국어 사이트의 /en/
+    페이지가 템플릿째 html lang=ko 를 달고 나와, 영어 페이지 요청문이 '한국어로' 나갔다."""
     from urllib.parse import urlsplit
-    lang = serp_adapter.lang_of(str((audit or {}).get("html_lang") or "").replace("_", "-"))
-    if lang in _KNOWN_LANGS:
-        return lang, f"html lang={(audit or {}).get('html_lang')}"
     seg = (urlsplit(url or "").path.strip("/").split("/") or [""])[0].lower()
     lang = serp_adapter.lang_of(seg)
     if seg and len(lang) == 2 and lang in _KNOWN_LANGS:
         return lang, f"주소의 /{seg}/"
+    lang = serp_adapter.lang_of(str((audit or {}).get("html_lang") or "").replace("_", "-"))
+    if lang in _KNOWN_LANGS:
+        return lang, f"html lang={(audit or {}).get('html_lang')}"
     return None
 
 
@@ -656,6 +657,10 @@ def shapes_payload(locale: str) -> dict:
             "no_page": NO_PAGE,
             "by_tag": DELIVER_BY_TAG, "deliver_default": DELIVER_DEFAULT,
             "lang_line": {k: site_lang_line(k, locale) for k in SHAPES},
+            # 주소의 언어 경로(/en/) → 그 페이지의 언어 줄. 사이트 기본과 다른 언어만 —
+            # 키는 언어 코드(page_locale 이 보는 lang_of(첫 경로 조각))다.
+            "page_lang": {lang: ln[0] for lang in sorted(_KNOWN_LANGS)
+                          if (ln := _page_lang_lines(None, f"https://x.example/{lang}/", locale))},
             "locale": locale, "lang": lang_label(locale)}
 
 
@@ -2439,7 +2444,7 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
             floor = round(e * scoring.CTR_GAP_FACTOR, 1)
             act = round(clk * 100 / imp, 1) if imp else 0.0
             ctr = (f"클릭률 {act}% → 최소 {floor}%(이 순위 기대치 {e}%의 절반), 기대치면 {per}에 "
-                   f"클릭 {_n(clk)} → 약 {_n(round(imp * e / 100))}")
+                   f"클릭 {_n(clk)} → 약 {_n(round(imp * e / 100))}(추정)")
             if kind == "ctr_gap":
                 return f"순위({pos:g}위)는 그대로 두고 클릭을 늘리는 것 — {ctr}." + thin
             # 밀면 오를 검색어(1페이지 안)는 닫히는 선이 상단 3위권이다 — 목표가 클릭만 말하면
@@ -2448,7 +2453,7 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
                     f"{scoring.STRIKING_LO}위 안)." + thin)
         e10 = scoring.EXPECTED_CTR[scoring.PAGE1]
         return (f"평균 {pos:g}위 → 1페이지({scoring.PAGE1}위 안). 노출이 지금 그대로면 {per}에 "
-                f"클릭 {_n(clk)} → 약 {_n(round(imp * e10 / 100))}({scoring.PAGE1}위 기대 클릭률 "
+                f"클릭 {_n(clk)} → 약 {_n(round(imp * e10 / 100))}(추정 — {scoring.PAGE1}위 기대 클릭률 "
                 f"{e10}%)." + thin)
     if kind == "ai_citation_gap":
         r = (_find(ctx.get("ai_gap_rows"), "prompt", o.get("target"))

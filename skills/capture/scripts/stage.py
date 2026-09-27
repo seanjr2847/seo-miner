@@ -257,7 +257,8 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "state": (("건너뜀 · 물어볼 질문부터 필요" if not p.get("ai_prompts", 0)
                     else "건너뜀 · 서버 쪽 준비가 안 끝났습니다") if ai_skip and hosted else
                    "건너뜀 · OpenRouter 를 연동하면 켜집니다" if ai_skip else
-                   (f"답변 {p['ai_checks']}개 확인 · 질문 {p['ai_prompts']}개"
+                   # 무엇을 센 수인지 이름에 싣는다 — 답변은 지금까지 받은 전부, 질문은 켜 둔 것만
+                   (f"누적 답변 {p['ai_checks']}개 · 켜 둔 질문 {p['ai_prompts']}개"
                     if p.get("ai_checks", 0)
                     else ("질문은 준비됨 · 아직 안 물어봄" if p.get("ai_prompts", 0)
                           else "물어볼 질문부터 필요"))),
@@ -265,7 +266,9 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
         {"id": "gaps", "t": L["gaps"]["t"], "gain": L["gaps"]["gain"],
          "done": p.get("opps", 0) > 0,
          # 「누적」 — 개요의 개선 기회는 아직 처리 안 한 것만 세서(1) 같은 말이 164 와 1 로 갈렸다.
-         "state": f"누적 {p['opps']}건 뽑음" if p.get("opps", 0) else "아직 없음",
+         # "누적 142"만으로는 무엇이 142 인지 몰랐다 — 닫힌 기회까지 센 수라고 말한다.
+         "state": (f"지금까지 뽑은 기회 {p['opps']}건 (닫힌 것 포함)"
+                   if p.get("opps", 0) else "아직 없음"),
          "cmd": cmd_gaps, "runnable": _runnable("gaps", cmd_gaps)},
         {"id": "create", "t": L["create"]["t"], "gain": L["create"]["gain"],
          "done": p.get("creations", 0) > 0,
@@ -446,6 +449,9 @@ def _selfcheck() -> None:
         st = from_progress({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
                     "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
         assert st["here"] == -1                                    # 한 바퀴 다 돎
+        # 숫자마다 무엇을 센 것인지 붙는다 — "누적 142"만으로는 무엇이 142 인지 몰랐다
+        assert st["steps"][3]["state"] == "누적 답변 1개 · 켜 둔 질문 1개", st["steps"][3]
+        assert st["steps"][4]["state"] == "지금까지 뽑은 기회 1건 (닫힌 것 포함)", st["steps"][4]
 
         # gsc_state 3분기 검증
         assert gsc_state() == "connected"

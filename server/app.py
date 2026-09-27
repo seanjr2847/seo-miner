@@ -644,7 +644,9 @@ def _ai_prompts_view(c, project: str) -> dict:
         limit = 30
     return {"prompts": [dict(r) for r in db.list_ai_prompts(c, p["id"])],
             "active_total": db.count_active_ai_prompts(c, p["id"]),
-            "limit": limit}
+            "limit": limit,
+            # 갈래 id → 화면 이름(정본 gen_prompts.INTENT_LABELS) — "general" 을 그대로 그리지 않게
+            "intent_labels": gen_prompts.INTENT_LABELS}
 
 
 @app.get("/api/ai/prompts")
@@ -965,6 +967,8 @@ def api_run_status(uid: int = Depends(_require_uid), conn=Depends(CONN)):
 # 자동 수집 주기 프리셋 — 값(시간)과 화면에 쓸 이름. 목록의 정본은 여기다:
 # 화면은 이걸 받아 그대로 그리고, 저장은 이 안의 값만 받는다(화면이 보낸 값을 안 믿는다).
 # 0 은 '자동 재측정만 끔' — 첫 측정과 [전체 다시 재기]는 그대로 돈다(store.due_sites).
+# 고른 값은 **주간 묶음 주기**다(store.group_period) — 매일 런(검색 실적·기회)과 경쟁·링크는
+# 제 주기 그대로라, 화면(sm-set.html)·사이트 목록·랜딩이 "주 1회"를 전부라고 말하면 안 된다.
 RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72, "3일"),
                (168, "주 1회"))
 
@@ -1169,6 +1173,10 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
     if request.url.path == "/d" and e.status_code == 401:
         return RedirectResponse("/?login=required", status_code=302)
+    # /d/<무엇>(옛 링크·손으로 친 주소)은 없는 경로라 404 인데, 로그인 안 한 사람에게는
+    # /d 와 같은 로그인 안내가 맞다 — "페이지를 찾을 수 없습니다"는 사이트가 사라졌다고 읽힌다.
+    if e.status_code == 404 and request.url.path.startswith("/d/") and _uid(request) is None:
+        return RedirectResponse("/?login=required", status_code=302)
     # 사람이 연 주소(오타·옛 링크)가 없으면 JSON 한 줄 대신 돌아갈 길이 있는 화면을 준다.
     # /api/* 는 클라이언트가 detail 을 읽으므로 JSON 그대로.
     if e.status_code == 404 and not request.url.path.startswith("/api/"):
@@ -1189,10 +1197,10 @@ _LANDING_SANS = re.search(r"--sans:([^;]+);", pages.page("landing.html")).group(
 # 시작"을 또 보여 주면 이미 로그인했다는 걸 의심하게 만든다(9회차). 로그인
 # 이면 "/" 의 "내 사이트" 목록으로 보낸다 — 다시 로그인을 거치지 않는다.
 def _not_found(logged_in: bool) -> str:
-    action = ('<a href="/" style="font:500 13px/1 var(--sans);color:#101513;background:#57B49C;'
+    action = ('<a href="/" style="font:500 13px/1 var(--sans);color:#F7F8F5;background:#22705F;'
               'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
               'text-decoration:none">내 사이트</a>') if logged_in else (
-              '<a href="/auth/login" style="font:500 13px/1 var(--sans);color:#101513;background:#57B49C;'
+              '<a href="/auth/login" style="font:500 13px/1 var(--sans);color:#F7F8F5;background:#22705F;'
               'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
               'text-decoration:none">Google로 시작</a>')
     return (

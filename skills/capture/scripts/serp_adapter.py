@@ -383,8 +383,18 @@ def _check_dataforseo_task(data: dict) -> dict:
         # 잔액 부족이 본문으로 오기 때문. 이 짐작이 틀려도 손해는 없다(예전 동작).
         if code // 100 in _STATUS_NAME:
             raise fatal("DataForSEO", code // 100, str(msg))
-        raise RuntimeError(f"dataforseo task error: {msg}")
+        raise RuntimeError(_task_error_text(msg))
     return task
+
+
+def _task_error_text(msg) -> str:
+    """거절 사유를 기록에 남을 사람 말로 — 공급사 이름·영문 머리말 없이 원인 한 줄.
+    필드 이름은 따옴표째 남긴다: collect_metrics.REJECT_HINTS 가 "'keywords'" 로
+    키워드 탓인지 가른다(언어·지역 필드 거절은 쪼개지 않는다)."""
+    m = re.match(r"Invalid Field: ('[^']+')", str(msg or ""))
+    why = f"요청 형식 오류({m.group(1)})" if m else str(msg or "사유를 받지 못했습니다")
+    return f"검색 데이터 조회가 거절됐습니다: {why}"
+
 
 LOCATION_MAP = {  # locale prefix -> (dataforseo location_name, language_code, serper gl/hl)
     "ko": ("South Korea", "ko", ("kr", "ko")),
@@ -1366,6 +1376,13 @@ def _selfcheck() -> None:
     assert TIMEOUTS == {"dataforseo": 60, "serper": 30, "openrouter": 120,
                     "suggest": 10, "page": 20, "canary": 15, "psi": 90}
     assert LABS_COST_PER_CALL == 0.001
+    # 항목 거절은 기록(runs.notes)에 사람 말로 남는다 — 공급사 이름·영문 머리말 없이
+    try:
+        _check_dataforseo_task({"tasks": [{"status_code": 40501,
+                                           "status_message": "Invalid Field: 'language_code'."}]})
+        raise AssertionError("40501 을 그냥 지나쳤다")
+    except RuntimeError as e:
+        assert str(e) == "검색 데이터 조회가 거절됐습니다: 요청 형식 오류('language_code')", e
     print("serp_adapter self-check ok")
 
 

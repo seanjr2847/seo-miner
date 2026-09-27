@@ -146,6 +146,10 @@ def demo() -> None:
         r = c.get("/d", follow_redirects=False)
         assert r.status_code == 302 and r.headers["location"] == "/?login=required", \
             f"/d 가 로그인 없이 302 /?login=required 로 안 간다: {r.status_code} {r.headers.get('location')}"
+        # /d/<무엇> 도 같다 — 없는 경로라 "페이지를 찾을 수 없습니다"가 떠, 사이트가 사라졌다고 읽혔다
+        r = c.get("/d/p1", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/?login=required", \
+            f"/d/<무엇> 이 로그인 없이 로그인 안내로 안 간다: {r.status_code} {r.headers.get('location')}"
 
         # 랜딩 푸터가 부르는 방침 문서가 로그인 없이 열리고, 거기와 FAQ 가 말하는 권한이
         # 실제로 받는 스코프(identity.SCOPES)와 같다 — FAQ 가 "서치콘솔 하나"라고 말하는
@@ -162,6 +166,14 @@ def demo() -> None:
         nf = c.get("/api/없는-주소")
         assert nf.status_code == 404 and nf.json().get("detail"), "/api 404 가 JSON 이 아니다(클라이언트가 detail 을 읽는다)"
         assert 'name="description"' in landing and 'rel="icon"' in landing, "랜딩 머리에 설명·아이콘이 없다"
+        # 설정의 주기는 주간 묶음에만 먹는다(store.group_period) — 할 일 묶음(검색 실적·기회)은
+        # 매일 돈다. 랜딩·사이트 목록·설정이 "주 1회"를 전부라고 말하던 것을 사실에 묶는다.
+        import run_all
+        assert run_all.GROUP_BY_ID["todo"]["every_hours"] == 24, "매일 런 주기가 바뀌었다 — 아래 문구도 고쳐라"
+        root = Path(__file__).resolve().parent.parent
+        for name, doc in (("랜딩", landing), ("사이트 목록", (root / "server/app.html").read_text("utf-8")),
+                          ("설정", (root / "skills/capture/templates/sections/sm-set.html").read_text("utf-8"))):
+            assert "검색 실적" in doc and "매일" in doc, f"{name} 가 검색 실적을 매일 잰다는 사실을 안 말한다"
         import identity
         ga4 = "https://www.googleapis.com/auth/analytics.readonly" in identity.SCOPES
         for name, doc in (("랜딩 FAQ", landing), ("/privacy", r.text)):
@@ -470,6 +482,8 @@ def demo() -> None:
         assert r.status_code == 200 and r.json()["prompts"] == [], r.text
         # 상한은 사이트 yaml 의 limits.max_ai_prompts 다 — collect_ai 가 그 수만큼만 묻는다.
         assert r.json()["limit"] == 30, r.text
+        # 갈래 이름표도 같이 온다 — 화면이 "general" 을 영문 그대로 그리지 않게(정본 gen_prompts)
+        assert r.json()["intent_labels"] == gen_prompts.INTENT_LABELS, r.text
 
         def edit(**b):
             return c.post("/api/ai/prompts/edit", json={"project": "p1", **b})

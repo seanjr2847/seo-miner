@@ -99,10 +99,13 @@ header.sc{border-bottom-color:var(--on-ink-rule)}
 .hbar nav a{color:#A7B2AC;text-decoration:none}
 .hbar nav a:hover{color:#E6E9E4}
 .hbar .sp{flex:1}
-.hcta{font:500 13px/1 var(--sans);color:#101513;background:#57B49C;
-  text-decoration:none;border:1px solid #57B49C;border-radius:3px;padding:9px 15px;
+/* 주 버튼 색은 한 벌(--patina·--btn-ink) — 헤더만 다크 값(#57B49C)을 박아 라이트에서
+   히어로 버튼과 다른 초록이었다. 라이트 --patina 는 어두운 판(--rail) 위 3.06:1 로
+   버튼 경계 기준(3:1)을 넘고, 글자는 버튼 위 5.5:1 이다. */
+.hcta{font:500 13px/1 var(--sans);color:var(--btn-ink);background:var(--patina);
+  text-decoration:none;border:1px solid var(--patina);border-radius:3px;padding:9px 15px;
   white-space:nowrap}
-.hcta:hover{filter:brightness(1.08)}
+.hcta:hover{background:var(--patina-hi);border-color:var(--patina-hi)}
 /* 스크롤 내내 붙어 다니는 CTA 라 가장 많이 눌린다 — 터치 화면에서는 손가락 크기로. */
 /* 메뉴 링크도 같은 이유로 — 글자 높이(21px)만으로는 손가락이 옆 링크를 누른다. */
 @media (hover:none),(max-width:760px){.hcta,.hbar nav a{display:inline-flex;align-items:center;min-height:44px}}
@@ -293,8 +296,6 @@ h1 em{font-style:normal;color:var(--patina)}
 .close h2{color:#E6E9E4;max-width:18ch}
 .close .sub{color:#A7B2AC;margin-bottom:28px}
 .close .eyebrow{color:#8B9791}
-.close .go{background:#57B49C;border-color:#57B49C;color:#101513}
-.close .go:hover{filter:brightness(1.08)}
 /* 히어로의 신뢰 문구를 결정 지점에서 한 번 더 — 새 주장은 아니고 반복이다. */
 .close .recap{margin:16px 0 0;font-size:13px;color:#A7B2AC}
 
@@ -461,7 +462,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
     <figcaption><b>요청문 예시</b> · 위 예시 화면의 “seo 자동화 도구”로 만든 모양입니다</figcaption>
     <p>아래 페이지가 이 검색어에서 더 잘 보이게 고쳐 주세요. 새로 쓰는 일이 아닙니다.</p>
     <p><b>대상</b> — 검색어: seo 자동화 도구 · 페이지: <span class="num">/blog/seo-automation</span></p>
-    <p><b>목표</b> — 평균 <span class="num">12</span>위 → 1페이지(<span class="num">10</span>위 안). 노출이 지금 그대로면 <span class="num">28</span>일에 클릭 <span class="num">17</span> → 약 <span class="num">25</span></p>
+    <p><b>목표</b> — 평균 <span class="num">12</span>위 → 1페이지(<span class="num">10</span>위 안). 노출이 지금 그대로면 <span class="num">28</span>일에 클릭 <span class="num">17</span> → 약 <span class="num">25</span>(추정 — <span class="num">10</span>위 기대 클릭률 <span class="num">2%</span>)</p>
     <p><b>근거</b> — 구글 실적 최근 <span class="num">28</span>일 평균: <span class="num">12</span>위 · 노출 <span class="num">1,240</span> · 클릭 <span class="num">17</span> · 1페이지까지 <span class="num">2</span>칸</p>
     <p><b>만들어 줄 것</b> — 새 title 3안과 H1 문안, 상위 페이지가 답하는데 내게 없는 H2 목록, 이 페이지로 걸 내부 링크 3개</p>
     <p><b>언제 볼지</b> — 적용 <span class="num">4</span>주 뒤 첫 확인, <span class="num">8</span>주 뒤 다시</p>
@@ -519,8 +520,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
       <span>서치콘솔은 읽기 권한만 요청합니다. 자료를 고치거나 지우지 않습니다.</span></li>
     <li><b>사이트를 직접 고치지 않습니다</b>
       <span>무엇을 고칠지 요청문으로만 드립니다. 고칠지 말지는 사람이 정합니다.</span></li>
-    <li><b>추측한 숫자를 쓰지 않습니다</b>
-      <span>주장마다 근거가 된 숫자가 붙습니다. 자료가 없으면 없다고 말합니다.</span></li>
+    <li><b>실측한 숫자와 추정한 숫자를 섞지 않습니다</b>
+      <span>주장마다 근거가 된 숫자가 붙고, 추정은 추정이라고 적습니다. 자료가 없으면 없다고 말합니다.</span></li>
     <li><b>보고서는 그대로 가져갈 수 있습니다</b>
       <span>측정이 끝나면 그 시점 화면을 담은 HTML 한 장이 메일로 갑니다.</span></li>
   </ul>
@@ -555,8 +556,8 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
     <details><summary>얼마나 자주 측정하나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
       aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
-      <p>사이트를 고르면 바로 한 번 재고, 그다음부터 주 1회 자동으로 다시 잽니다.
-        주기는 <b>[설정]</b>에서 바꿉니다. 끝나면 보고서를 붙인 메일이 갑니다.</p></details>
+      <p>사이트를 고르면 바로 한 번 재고, 그다음부터 검색 실적은 매일, 순위·AI 인용·사이트
+        점검은 주 1회 자동으로 다시 잽니다. 주 1회 쪽 주기는 <b>[설정]</b>에서 바꿉니다. 끝나면 보고서를 붙인 메일이 갑니다.</p></details>
     <details><summary>네이버나 다음도 보나요?<svg class="chev" viewBox="0 0 16 16" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
       aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
@@ -593,7 +594,7 @@ footer a:hover{color:var(--ink);border-color:var(--patina)}
 </main>
 
 <footer><div class="wrap fbar">
-  <span>주 1회 자동으로 다시 재고, 무엇을 고칠지는 사람이 정합니다.</span>
+  <span>자동으로 다시 재고, 무엇을 고칠지는 사람이 정합니다.</span>
   <span class="sp"></span>
   <a href="/privacy">개인정보처리방침</a>
   <a href="https://github.com/seanjr2847/seo-miner" target="_blank" rel="noopener">GitHub</a>

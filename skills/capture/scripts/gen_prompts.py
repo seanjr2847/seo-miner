@@ -46,6 +46,9 @@ MODEL = "openai/gpt-4o-mini"
 CATEGORIES = ("추천", "비교", "문제해결", "브랜드")
 DEFAULT_CATEGORY = "general"
 CATEGORY_CHOICES = CATEGORIES + (DEFAULT_CATEGORY,)
+#   · INTENT_LABELS     — 화면에 쓸 이름. 기본값 id("general")가 영문 그대로 목록에 떴다.
+#     호스팅 질문 목록 API(intent_labels)·대시보드 페이로드(ai_intent_labels)가 이걸 싣는다.
+INTENT_LABELS = {**{c: c for c in CATEGORIES}, DEFAULT_CATEGORY: "일반"}
 MIN_LEN, MAX_LEN = 6, 120
 
 # 생성기 판 — 새 질문마다 ai_prompts.gen_version 으로 찍힌다(save). 판이 없던 동안,
@@ -341,6 +344,9 @@ def _selfcheck() -> None:
     # (화면이 고를 수 있는데 여기가 모르는 값이 있으면 안 된다.)
     assert DEFAULT_CATEGORY in CATEGORY_CHOICES and DEFAULT_CATEGORY not in CATEGORIES
     assert set(CATEGORIES) < set(CATEGORY_CHOICES), (CATEGORIES, CATEGORY_CHOICES)
+    # 이름표는 고를 수 있는 갈래 전부에 있고, 영문 id 를 그대로 이름으로 쓰지 않는다
+    assert tuple(INTENT_LABELS) == CATEGORY_CHOICES, INTENT_LABELS
+    assert all(not v.isascii() for v in INTENT_LABELS.values()), INTENT_LABELS
     assert "|".join(CATEGORIES) in SYSTEM, "프롬프트가 갈래 사본을 들고 있다"
 
     # 파싱: 코드펜스·설명·중복·길이 밖·잘못된 카테고리를 전부 지나간다

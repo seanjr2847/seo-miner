@@ -1207,11 +1207,16 @@ def test_output_language_follows_the_page_not_the_site():
     o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
     body = brief.build(o, ctx, "ko-KR")["body"]
     target = body.split("## 대상")[1].split("\n## ")[0]
-    assert "- 페이지 언어: 영어 (html lang=en) — 사이트 기본(한국어)과 다릅니다" in target, target
+    assert "- 페이지 언어: 영어 (주소의 /en/) — 사이트 기본(한국어)과 다릅니다" in target, target
     assert "산출물은 영어로 쓰고, 길이 기준은 title 60자 이내, meta description 160자 이내" in target
-    # html lang 이 없으면 주소의 /en/ 로 안다
-    no_lang = _jv_ctx(page_audits={_JV: _audit(url=_JV, html_lang="")})
-    assert "- 페이지 언어: 영어 (주소의 /en/)" in brief.build(o, no_lang, "ko-KR")["body"]
+    # 주소의 /en/ 이 html lang 보다 먼저다 — 템플릿째 html lang=ko 를 단 /en/ 페이지에
+    # "산출물 언어: 한국어(사이트 기본)"가 나갔다
+    ko_lang = _jv_ctx(page_audits={_JV: _audit(url=_JV, html_lang="ko")})
+    body_ko = brief.build(o, ko_lang, "ko-KR")["body"]
+    assert "- 페이지 언어: 영어 (주소의 /en/)" in body_ko, body_ko
+    assert "사이트 기본)." not in body_ko.split("## 대상")[1].split("\n## ")[0]
+    # 주소에 언어 조각이 없으면 html lang 으로 안다
+    assert brief.page_locale({"html_lang": "en"}, "https://x.example/blog/a") == ("en", "html lang=en")
     # 사이트와 같은 언어면 꼬리가 이미 말한다 — 두 번 싣지 않는다
     assert "페이지 언어" not in brief.build(o, ctx, "en-US")["body"]
     # 모르는 조각(/blog/)을 언어로 지어내지 않는다
@@ -1397,7 +1402,7 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "노리는 검색어('korean ptt')를 담은 것이 하나도 없습니다" in body, body
     assert "Person 이 있습니다" in body, body
     # 4. 영문 페이지 — 영어 산출물·영문 길이 기준
-    assert "- 페이지 언어: 영어 (html lang=en)" in body, body
+    assert "- 페이지 언어: 영어 (주소의 /en/)" in body, body
     # 앵커에 검색어의 말이 있으면 그 줄은 안 선다
     ctx2 = _ptt_ctx()
     ctx2["crawl_inlinks"][_PTT][3]["anchor"] = "Korean PTT guide"

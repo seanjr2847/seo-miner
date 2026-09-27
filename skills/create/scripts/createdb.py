@@ -159,7 +159,7 @@ def sync(project: str, repo: str) -> None:
                   for o in (_payload(project).get("opps") or []) if o.get("id") is not None}
         for opp_id, sha in hits:
             if status.get(opp_id) in ("new", "acked"):
-                _record_remote(project, opp_id, "", None, f"손으로 이미 실행: {sha[:8]}")
+                _record_remote(project, opp_id, "", None, f"이미 적용된 수정(커밋 {sha[:8]})")
                 closed += 1
             else:
                 untouched += 1
@@ -170,7 +170,7 @@ def sync(project: str, repo: str) -> None:
             row = db.get_opportunity(conn, opp_id, project_id=pid)
             if row and row["status"] in ("new", "acked"):
                 _mark_done(conn, pid, opp_id, "", branch=None,
-                           note=f"손으로 이미 실행: {sha[:8]}")
+                           note=f"이미 적용된 수정(커밋 {sha[:8]})")
                 closed += 1
             else:
                 untouched += 1
