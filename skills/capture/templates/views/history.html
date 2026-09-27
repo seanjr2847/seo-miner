@@ -150,8 +150,8 @@
 // 것인지 알 수 없는 사고가 다시 난다.
 const HS_RUN_LABEL = {full:"전체"};
 const HS_kind = k => ((window.__STAGES__ || {})[k] || {}).t || HS_RUN_LABEL[k] || k;
-// 수집기가 notes 에 남기는 key=value 를 사람 말로. 모르는 키는 원문 그대로 둔다 —
-// 새 수집기가 새 키를 남겨도 화면이 그걸 삼키면 안 된다.
+// 수집기가 notes 에 남기는 key=value 를 사람 말로. 모르는 키는 숨긴다 — 영문 필드명
+// (resolved·ai_ref …)이 그대로 서면 사람 말이 아니다. 원문은 CSV(기록 열)에 그대로 있다.
 const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:"공급자",
   device:"기기", errors:"오류", skipped:"건너뜀", harvest_kw:"수확 키워드",
   harvest_comp:"수확 경쟁사", engines:"엔진", samples:"샘플", opps:"기회",
@@ -159,14 +159,23 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   checked:"검사", striking:"밀면 오를 검색어", pseo:"pSEO",
   // 운영 기록에 실제로 남아 있던 키(2026-09-14 전수) — 없으면 영문 필드명이 그대로 보였다.
   anchors:"앵커", backlinks:"백링크", intersect:"겹친 도메인", referring_domains:"참조 도메인",
-  summary:"요약", intents_filled:"의도 채움", first_error:"첫 오류", volumes_filled:"검색량 채움",
+  summary:"요약", intents_filled:"검색 의도 분류", first_error:"첫 오류", volumes_filled:"검색량 채움",
   auto_new:"새 경쟁사", metrics:"지표", gap_rows:"빈틈 행", seed:"시드", links:"링크",
   issues:"문제", keywords:"키워드", chunks:"묶음", updated:"갱신", calls:"호출",
   daily:"일별", country:"나라",
   // 검색량 API 가 못 재는 검색어(빈 문자열·길이 초과·안 받는 지역). 실패가 아니라
   // "안 보냈다"라서 errors 와 따로 센다(collect_metrics 의 unsendable). 브라우저로
   // 기록 화면을 열었을 때 이 키만 영문 그대로 서 있었다.
-  unsendable:"못 잰 검색어"};
+  unsendable:"못 잰 검색어",
+  // 기회 분석(scoring.load)이 남기는 닫힘 수 — 셸의 상태 이름(OPP_ST_OPT)과 같은 말.
+  resolved:"저절로 풀림", done:"작업 후 풀림",
+  // GA4 수집(collect_ga4)이 남기는 부가 조회 — 값은 개수이거나 ok/skip 이다.
+  sessions_all:"전체 세션", newvsreturning:"신규·재방문", ai_ref:"AI 유입",
+  // 순위(collect_serp)·속도(collect_vitals)가 남기는 것.
+  queue_reused:"이어 받은 결과", timeout:"시간 초과", outlines:"상위 글 목차",
+  outline_errors:"목차 못 읽음", strategies:"기기", quota:"한도"};
+// 부가 조회 결과의 값 — 받았다/건너뛰었다.
+const HS_NOTE_VAL = {ok:"받음", skip:"건너뜀"};
 // 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
 const HS_STALE_DAYS = 14;
 
@@ -284,9 +293,10 @@ function HS_notes(n) {
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }
+    if (!HS_NOTE_LABEL[k]) return "";
     const bad = (k === "errors" || k === "skipped") && +v > 0;
-    parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k] || k)} ` +
-               `<b>${esc(val)}</b></span>`);
+    parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k])} ` +
+               `<b>${esc(HS_NOTE_VAL[val] || val)}</b></span>`);
     return "";
   }).trim();
   if (rest) parts.push(`<span class="p free">${esc(rest)}</span>`);
@@ -467,6 +477,11 @@ let HS_MADE = [], HS_MQ = "", HS_MM = "", HS_DAILY = [];
 // HS_todo 가 [다음 행동]에 쓰는 것과 같은 수). 0건인데 "기회 열기"를 누르면 [개요]에
 // 아무것도 없어 방금 누른 버튼이 거짓말을 한 게 된다.
 let HS_OPPS = 0;
+// 그 수는 [개요]의 [아직 안 함] 거르개와 같은 기준으로 센다 — 같은 지면끼리 묶은 줄
+// (d.opp_groups) 중 열린 것. 여태 d.opps_total(묶기 전, status new 만)을 적어 기록은
+// 206, 개요는 170 으로 같은 것을 다르게 셌다. 옛 박제본(줄 없음)만 전수로 물러선다.
+const HS_openOpps = d => d.opp_groups
+  ? d.opp_groups.filter(g => window.oppStMatch(g, "open")).length : (d.opps_total || 0);
 
 /* ── 좋아졌나 ──────────────────────────────────────────────
       이 화면은 회고인데 결론이 없었다: 고친 목록을 늘어놓고 "숫자로 돌아왔는지는
@@ -527,7 +542,7 @@ function HS_toOpp(el) {
 // 병합 전만 남기고 그 자리로 데려간다 — 목록 위 칩과 [다음 행동]이 같은 손잡이를 쓴다.
 function HS_showUnmerged() {
   HS_MM = "n";
-  HS_madeTools();                       // 거르개(select)도 같이 "병합 전"으로 맞춰진다
+  HS_madeTools();                       // 거르개(select)도 같이 "사이트 반영 전"으로 맞춰진다
   $("made-sec").scrollIntoView({behavior: "smooth", block: "start"});
 }
 
@@ -567,7 +582,7 @@ function HS_madeRow(c) {
     <span class="badge ${c.merged ? "ok" : "warn"}" title="${c.merged
       ? "사이트에 반영됐습니다. 다음 수집부터 이 수정이 숫자에 섞입니다."
       : "아직 사이트에 반영되지 않았습니다. 반영해야 검색엔진이 이 수정을 봅니다."}"
-      >${c.merged ? "병합됨" : "병합 전"}</span>
+      >${c.merged ? "사이트 반영됨" : "사이트 반영 전"}</span>
   </div>`;
 }
 
@@ -593,11 +608,11 @@ function HS_madeTools() {
   $("made").innerHTML = (un ? `<div class="oppchips"><button class="chip"
       onclick="HS_showUnmerged()"
       title="아직 사이트에 반영되지 않았습니다. 반영해야 검색엔진이 봅니다. 눌러서 그것만 봅니다."
-      >병합 전 <b>${un}건</b></button></div>` : "") + `<div class="tools">
+      >사이트 반영 전 <b>${un}건</b></button></div>` : "") + `<div class="tools">
       <input type="search" value="${esc(HS_MQ)}" oninput="HS_madeFind(this.value)"
         placeholder="파일·기회·근거로 찾기" aria-label="고친 것 찾기">
-      <select onchange="HS_madeMerged(this.value)" aria-label="병합 상태로 거르기">${
-        [["", "전체"], ["n", "병합 전"], ["y", "병합됨"]].map(([v, l]) =>
+      <select onchange="HS_madeMerged(this.value)" aria-label="사이트 반영 여부로 거르기">${
+        [["", "전체"], ["n", "사이트 반영 전"], ["y", "사이트 반영됨"]].map(([v, l]) =>
           `<option value="${v}"${v === HS_MM ? " selected" : ""}>${l} (${mn(v)})</option>`
         ).join("")}</select>
       <span class="n" id="maden"></span>
@@ -614,7 +629,7 @@ function HS_madeList() {
     ? `${HS_MADE.length}건` : `${list.length}건 / 전체 ${HS_MADE.length}건`;
   if (!list.length)
     return $("madelist").innerHTML = `<div class="empty"><b>맞는 기록이 없습니다</b>
-      <p>파일이나 병합 상태를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+      <p>파일이나 사이트 반영 여부를 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
       <div class="acts"><button class="go sec sm" onclick="HS_madeReset()">조건 지우기</button>
       </div></div>`;
   const linked = HS_MADE.filter(c => c.opportunity_id).length;
@@ -645,10 +660,10 @@ function HS_madeList() {
 }
 
 function HS_madeCsv() {
-  csv("고친것", [["작성일", "종류", "파일", "브랜치", "병합", "기회", "근거"]]
+  csv("고친것", [["작성일", "종류", "파일", "브랜치", "사이트 반영", "기회", "근거"]]
     .concat(HS_madeFiltered().map(c => [c.created_at,
       (window.KIND_LABELS || {})[c.kind] || c.kind || "", c.file_path, c.branch || "",
-      c.merged ? "병합됨" : "병합 전", c.opp_target || "",
+      c.merged ? "사이트 반영됨" : "사이트 반영 전", c.opp_target || "",
       (c.note || "").replace(/\s+/g, " ")])));
 }
 
@@ -675,8 +690,9 @@ function HS_todo(d) {
   if (next)
     // 그 단계의 지금 상태(next.state)는 괄호로 달지 않는다 — 「(아직 없음)」이 단계
     // 상태인지 결과 개수인지 문장만 봐서는 못 읽는다. 이름을 붙여 툴팁으로 내린다.
-    out.push({say: `아직 실행하지 않은 단계가 있습니다. ` +
-      `다음은 <b>${esc(next.t)}</b>입니다.${next.state
+    // "다음은 X"(전역 우선순위)는 [개요] 한 곳이 말한다 — 이 화면은 실행 기록이라
+    // 아직 안 끝난 단계라는 사실만 적는다.
+    out.push({say: `아직 끝나지 않은 단계가 있습니다: <b>${esc(next.t)}</b>.${next.state
         ? `<span class="hint" tabindex="0" data-tip="지금 상태: ${esc(next.state)}"
              title="지금 상태: ${esc(next.state)}"
              aria-label="지금 상태: ${esc(next.state)}">i</span>` : ""}`,
@@ -694,14 +710,15 @@ function HS_todo(d) {
   if (stale) out.push(stale);
   const un = HS_MADE.filter(c => !c.merged).length;
   if (un)
-    out.push({say: `${un}건이 아직 사이트에 반영되지 않았습니다(병합 전).` +
+    out.push({say: `${un}건이 아직 사이트에 반영되지 않았습니다.` +
         `<span class="live"> 반영해야 검색엔진이 그 수정을 봅니다.</span>`,
       act: p => `<button class="go${p ? "" : " sec"}"
-        onclick="HS_showUnmerged()">병합 전만 보기</button>`});
+        onclick="HS_showUnmerged()">반영 전만 보기</button>`});
   // 화면을 넘기는 손잡이도 버튼 계약을 따른다 — window.go 는 문장 안에 섞이는
   // 밑줄 링크(.gov)라 .acts 안에서는 버튼이 아닌 것으로 읽힌다.
-  if (d.opps_total)
-    out.push({say: `남은 기회 ${num(d.opps_total)}건이 있습니다.` +
+  const open = HS_openOpps(d);
+  if (open)
+    out.push({say: `[개요]에 아직 안 한 기회가 ${num(open)}건 있습니다.` +
         `<span class="live"> 점수가 높은 것부터 고릅니다.</span>`,
       act: p => `<button class="go${p ? "" : " sec"}"
         onclick="SM.touched=true;SM.show('overview')">기회 열기</button>`});
@@ -760,7 +777,7 @@ VIEW("history", function (d) {
   // 둘 다 "여기 쌓입니다"가 맞는 다음 걸음이다.
   HS_MADE = d.creations || [];
   HS_MQ = ""; HS_MM = "";
-  HS_OPPS = d.opps_total || 0;
+  HS_OPPS = HS_openOpps(d);
   // 전후 델타의 재료. 옛 박제본에는 없을 수 있다 — 그때는 못 잰다고 말한다.
   HS_DAILY = d.daily || [];
   HS_eyebrow("made-eb", HS_MADE, "created_at");

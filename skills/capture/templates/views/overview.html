@@ -181,8 +181,8 @@ function dailyChart(rows, stats) {
       stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
     ${hov}${idx.map(tick).join("")}
   </svg></div>
-  <div class="legend"><b class="sw-clk">■</b> 클릭 ${esc(span)} 합계 ${num(sumC)}
-    (하루 최고 ${num(mxC)}) · <b class="sw-imp">■</b> 노출 ${num(sumI)}
+  <div class="legend"><b class="sw-clk">■</b> 클릭 ${esc(span)} 사이트 전체 합계 ${num(sumC)}
+    (하루 최고 ${num(mxC)}) · <b class="sw-imp">■</b> 노출 합계 ${num(sumI)}
     (하루 최고 ${num(mxI)})<span class="hint" tabindex="0"
       data-tip="${esc(LEG_TIP)}" title="${esc(LEG_TIP)}" aria-label="${esc(LEG_TIP)}"
       >i</span></div>`;
@@ -460,11 +460,11 @@ function OV_next(d) {
   let html;
   if (!d.gsc_date)
     html = `<p>실적을 아직 수집하지 않았습니다. 이 화면의 숫자가 전부 그 위에서 나옵니다.</p>
-      <div class="acts">${OV_act("gsc", "실적 수집")}</div>`;
+      <div class="acts">${OV_act("gsc")}</div>`;
   else if (!OPPS.length)
     html = `<p>실적은 수집했습니다.
       <span class="live">이제 그 숫자에서 손댈 곳을 뽑을 차례입니다.</span></p>
-      <div class="acts">${OV_act("gaps", "기회 분석")}</div>`;
+      <div class="acts">${OV_act("gaps")}</div>`;
   // 다시 뽑는 손잡이는 머리줄이 이미 들고 있다 — 띠에 보조로 또 달면 같은 행동이
   // 한 화면에 둘이다. 띠의 주요 행동은 [기회 열기] 하나다.
   else if (top) {
@@ -479,11 +479,11 @@ function OV_next(d) {
       <span class="live">조건을 풀면 전체가 보입니다.</span></p>
       <div class="acts"><button class="go" onclick="oppReset()">조건 지우기</button></div>`;
   // 쌓인 것을 전부 처리한 상태. 여기서 "조건을 풀라"고 하면 안 건 조건이 없는데도
-  // 사용자를 필터로 보내게 된다 — 다음 걸음은 다시 재는 것이다.
+  // 사용자를 필터로 보내게 된다 — 다음 걸음은 다시 재는 것이다. 그 손잡이는 화면 머리의
+  // [이 묶음 다시 재기] 하나다 — 띠에 재실행 버튼을 또 달면 "다시"가 한 화면에 둘이다.
   else
     html = `<p>남은 기회를 모두 처리했습니다.
-      <span class="live">다시 수집하면 그 사이 달라진 숫자에서 새 기회가 나옵니다.</span></p>
-      <div class="acts">${OV_act("gsc", window.stageRun ? stageRun("gsc") : "실적 수집")}</div>`;
+      <span class="live">다시 수집하면 그 사이 달라진 숫자에서 새 기회가 나옵니다.</span></p>`;
   nextStep("overview", html);
 }
 

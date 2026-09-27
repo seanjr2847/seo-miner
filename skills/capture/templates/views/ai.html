@@ -340,9 +340,12 @@ function AI_trendChart(rows) {
   const step = Math.max(1, Math.ceil((n - 1) / 4)), idx = [];
   for (let i = 0; i < n; i += step) idx.push(i);
   if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+  // 하루에 확인이 여럿이면 같은 날짜가 눈금에 두 번 선다 — 앞 눈금과 같은 날은 뺀다.
+  const day = i => String(rows[i].t || "").slice(5, 10);
+  const ticks = idx.filter((i, k) => !k || day(i) !== day(idx[k - 1]));
   const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}"
     text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
-    >${esc(String(rows[i].t || "").slice(5, 10))}</text>`;
+    >${esc(day(i))}</text>`;
   const last = rows[n - 1], best = Math.max(...rows.map(r => r.cite_rate));
   return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="확인 ${n}회의 인용률 추이 — 최근 ${AI_PCT(last.cite_rate)}, 최고 ${AI_PCT(best)}">
@@ -353,7 +356,7 @@ function AI_trendChart(rows) {
       stroke-linejoin="round" points="${pts("mention_rate")}"/>
     <polyline fill="none" stroke="var(--patina)" stroke-width="1.5" stroke-linecap="round"
       stroke-linejoin="round" points="${pts("cite_rate")}"/>
-    ${dots}${hov}${idx.map(tick).join("")}
+    ${dots}${hov}${ticks.map(tick).join("")}
   </svg></div>
   <div class="chleg ailegend"><span><i class="c"></i>인용률 최근
     ${AI_PCT(last.cite_rate)} · 최고 ${AI_PCT(best)}</span>
@@ -525,9 +528,11 @@ function AI_riv(r) {
   return {list: s.rivals || [], misses: s.misses || 0};
 }
 const AI_rivTxt = (x, misses) => `${x.domain} ${x.n}/${misses}`;
+// 발췌는 엔진 답변 원문이라 마크다운 굵게(**…**·__…__)가 그대로 섞여 온다 — 기호만 걷는다.
+const AI_plain = v => String(v || "").replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2");
 // 엔진별 발췌 — 엔진마다 우리가 빠진 답변 중 먼저 받은 한 토막(결정적이다)
 const AI_exTxt = r => Object.entries(r.excerpts || {})
-  .map(([k, v]) => `${AI_engName(k)}: ${v}`).join(" / ");
+  .map(([k, v]) => `${AI_engName(k)}: ${AI_plain(v)}`).join(" / ");
 function AI_rivChip(x, misses) {
   const tip = `우리가 빠진 답변 ${misses}건 중 ${x.n}건에서 인용` +
     (x.third_party ? " · 제3자 플랫폼" : "");
@@ -627,7 +632,7 @@ function AI_row(r) {
       ${riv.list.length ? `<span class="lb">우리 대신 인용된 곳 · 빠진 답변 ${riv.misses}건 기준</span>
         <div class="aidoms">${riv.list.map(x => AI_rivChip(x, riv.misses)).join("")}</div>` : ""}
       ${ex.map(([k, v]) => `<span class="lb n2">${esc(AI_engName(k))} 답변 발췌</span>
-        <p class="q">${esc(v)}</p>`).join("")}
+        <p class="q">${esc(AI_plain(v))}</p>`).join("")}
       <div class="ft">발췌는 엔진마다 우리가 인용되지 않은 답변 중 먼저 받은 한 건입니다.
         답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다 — 수는 위 칩이 셉니다.</div>
     </div>` : ""}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
@@ -1227,7 +1232,8 @@ VIEW("ai", function (d) {
     // **샘플**이고(같은 질문을 여러 번 묻는다), 샘플은 질문마다 다르다: 19 × 3 = 57
     // 인데 실제 답변은 109 였다. 곱하지 말고 축만 센다.
     ["받은 답변", num(tot.total), "",
-      `질문 ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 · 엔진 ${engines.length}곳 · 샘플 여러 번`],
+      // 무엇을 센 질문인지 말한다 — 켜 둔 질문 수(건강 줄의 구버전·측정 안 됨)와 다른 수다.
+      `${byPrompt.length ? "이번 확인에 쓴 질문" : "질문"} ${num(byPrompt.length || d.progress?.ai_prompts || 0)}개 · 엔진 ${engines.length}곳 · 샘플 여러 번`],
     ["점유 순위", rankTxt, "", !sameScale ? "옛 기록이라 견줄 수 없습니다"
       : ours ? "인용된 도메인들과 견준 자리" : "우리 도메인이 등록돼 있지 않습니다"],
     // 밑줄은 이 숫자가 무엇을 센 것인지만 말한다 — 눈금은 띠와 한 벌(AI_missWhat).

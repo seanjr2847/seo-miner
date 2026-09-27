@@ -15,7 +15,10 @@
 /* ── 백링크 ──────────────────────────────────────────────────
    이 화면의 결론은 총수가 아니라 **참조 도메인 수와 그 기울기**다. 한 사이트에서
    100개보다 100개 사이트에서 1개씩이 낫고, 절대값보다 늘고 있나가 먼저다. */
-.blk-dom { font-family:var(--mono); font-size:12.5px; word-break:break-all; min-width:18ch; }
+/* 도메인·날짜는 한 덩어리로 읽힌다 — break-all 은 좁은 칸에서 「mediabooster.co / m」,
+   날짜는 하이픈에서 「2026- / 09-11」로 반토막 냈다. 넘치면 표가 가로로 민다. */
+.blk-dom { font-family:var(--mono); font-size:12.5px; overflow-wrap:break-word; min-width:18ch; }
+.blk-day { white-space:nowrap; }
 .blk-url { font-family:var(--mono); font-size:12px; word-break:break-all; }
 .blk-anchor { font-size:12.5px; word-break:break-word; }
 /* 스팸 앵커는 150자씩 줄마다 되풀이돼 진짜 봐야 할 링크를 밀어낸다 — 두 줄로 접고
@@ -34,7 +37,7 @@
   #blk-links .tw td:first-child { margin-bottom:4px; }
   #blk-links .tw td:nth-child(2)::before { content:"앵커 "; color:var(--slate); }
   #blk-links .tw td:nth-child(3)::before { content:"우리 페이지 "; color:var(--slate); }
-  #blk-links .tw td:nth-child(4)::before { content:"순위 반영 "; color:var(--slate); }
+  #blk-links .tw td:nth-child(4)::before { content:"순위 반영: "; color:var(--slate); }
 }
 /* 깨진 링크는 잃은 게 아니라 **되찾을 수 있는 것**이다 — 눈에 띄어야 손을 댄다. */
 .blk-broken { color:var(--copper); }
@@ -236,10 +239,10 @@ function BLK_band(d) {
   /* 이 화면의 결론은 참조 도메인 수와 **그 기울기**인데, 여태 시계열을 받아 놓고
      직전 1개만 꺼내 Δ 를 만들고 버렸다. 스파크라인은 개요가 세운 한 벌(kpiSpark)을
      그대로 부른다 — 복사하면 두 벌이 되고 그중 하나가 언젠가 낡는다. */
-  // 이름 칸은 HTML 을 받는다 — 조언 (i) 와 라틴 표기(.lat)가 거기 붙는다.
+  // 이름 칸·눈금 칸은 HTML 을 받는다 — 조언 (i)·라틴 표기(.lat)·날짜 묶음(.blk-day)이 붙는다.
   const m = (v, l, b, dd, sp) =>
     `<div class="m"><div class="v">${v}${dd || ""}</div><div class="l">${l}</div>` +
-    `<div class="b">${esc(b)}</div>${sp || ""}</div>`;
+    `<div class="b">${b}</div>${sp || ""}</div>`;
   const dates = t.map(x => BLK_day(x.d));
   /* 숫자 옆에는 늘 기준이 붙는다 — 언제 잰 것인지, 무엇과 견준 것인지. 증감이 붙는
      값은 직전 측정과 견준 것이므로 그 날짜를 적고, 나머지는 측정일을 적는다.
@@ -248,7 +251,8 @@ function BLK_band(d) {
   /* 눈금 줄(.b)에는 **사실만** — 언제 잰 것인지, 무엇과 견준 것인지. 여태 여기에
      조언이 들어가 두 줄로 접혔고, KPI 띠 높이가 이 화면만 두 배였다. 조언은 이름
      옆 (i) 로 내린다(다른 화면의 눈금 줄과 같은 규격이 된다). */
-  const on = cmp => (cmp && pday) ? `${day} 측정 · 직전 ${pday}` : `${day} 측정`;
+  const dd = v => `<span class="blk-day">${esc(v)}</span>`;
+  const on = cmp => (cmp && pday) ? `${dd(day)} 측정 · 직전 ${dd(pday)}` : `${dd(day)} 측정`;
   const tip = (was, unit) => pday ? `직전 측정 ${pday} 의 ${num(was)}${unit} 대비` : "";
   return `<div class="band">
     ${m(num(s.referring_domains),
@@ -273,7 +277,7 @@ function BLK_band(d) {
           "그대로 돌아옵니다."),
         on())}
     ${m(s.rank == null ? "—" : s.rank,
-        "도메인 지수" + BLK_tip("DataForSEO 가 0~1000 으로 매기는 도메인 지수입니다."),
+        "도메인 지수" + BLK_tip("0~1000 으로 매기는 도메인 지수입니다. 높을수록 힘 있는 도메인입니다."),
         on())}
   </div>`;
 }
@@ -294,15 +298,15 @@ function BLK_domains(d) {
       `<td class="num">${!r.rank ? `<span class="muted">${r.rank == null ? "—" : 0}</span>` : r.rank}</td>` +
       `<td class="num">${num(r.backlinks)}</td>` +
       `<td class="num">${num(r.dofollow)}</td>` +
-      (hasSeen ? `<td>${esc(BLK_day(r.first_seen))}</td>` : "") +
-      (hasLost ? `<td>${esc(BLK_day(r.lost_date))}</td>` : "");
+      (hasSeen ? `<td class="blk-day">${esc(BLK_day(r.first_seen))}</td>` : "") +
+      (hasLost ? `<td class="blk-day">${esc(BLK_day(r.lost_date))}</td>` : "");
     return r.lost_date
       ? `<tr class="blk-broken" tabindex="0" role="button" aria-expanded="false" data-i="${i}"
           onclick="BLK_domToggle(this)" onkeydown="BLK_domKey(event,this)"
           title="누르면 이 도메인의 상세와 할 일이 펼쳐집니다">${cells}</tr>`
       : `<tr>${cells}</tr>`;
   });
-  const head = [">참조 도메인?우리에게 링크를 건 도메인", ">지수?DataForSEO 도메인 지수",
+  const head = [">참조 도메인?우리에게 링크를 건 도메인", ">지수?0~1000 으로 매긴 도메인 지수",
                 ">링크 수?그 도메인에서 온 링크 개수",
                 ">순위 반영?순위로 넘어가는 링크 수. 업계 용어로 dofollow 입니다"]
     .concat(hasSeen ? [">최초 발견"] : [])
@@ -408,7 +412,8 @@ function BLK_anchors(d) {
     ? `<p class="blk-note">앵커 <b>${esc(top.anchor || "(빈 앵커)")}</b>가 전체 링크의
        ${Math.round(top.backlinks / total * 100)}%입니다.` +
       BLK_tip(`한 문구가 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 과최적화 신호입니다. ` +
-        "새로 받는 링크는 다른 문구로 요청합니다.") + `</p>`
+        "우리가 받은 링크라면 새로 받는 링크는 다른 문구로 요청합니다. 모르는 곳이 " +
+        "판매·광고 문구로 건 링크라면 스팸일 수 있으니 서치콘솔의 링크 거부(disavow)를 검토합니다.") + `</p>`
     : "";
   return head + `<div class="card">${warn}` +
     table(["앵커?링크에 실제로 적힌 글자", ">링크 수", ">도메인 수"], rows) + `</div>`;
@@ -420,7 +425,7 @@ function BLK_links(d) {
     `<td class="blk-url">${BLK_a(r.url_from || "")}</td>` +
     `<td class="blk-anchor"><span class="blk-clamp" title="${esc(r.anchor || "")}">${esc(r.anchor || "")}</span></td>` +
     `<td class="blk-url">${BLK_a(r.url_to || "")}${r.is_broken ? " ⚠" : ""}</td>` +
-    `<td class="${r.dofollow ? "" : "blk-nofollow"}">${r.dofollow ? "반영" : "안 됨"}</td>` +
+    `<td class="${r.dofollow ? "" : "blk-nofollow"}">${r.dofollow ? "예" : "아니오"}</td>` +
     `</tr>`);
   const head = BLK_colh("개별 링크",
     rows.length ? BLK_tools(rows.length, "BLK_csvLinks") : "");
@@ -445,7 +450,7 @@ function BLK_csvDomains() {
 function BLK_csvLinks() {
   csv("백링크", [["링크 건 페이지", "앵커", "우리 페이지", "순위 반영", "깨짐"],
     ...(BLK_D.bl_links || []).map(r =>
-      [r.url_from, r.anchor, r.url_to, r.dofollow ? "반영" : "안 됨",
+      [r.url_from, r.anchor, r.url_to, r.dofollow ? "예" : "아니오",
        r.is_broken ? "Y" : ""])]);
 }
 

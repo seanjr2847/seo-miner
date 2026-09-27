@@ -293,43 +293,39 @@ function anOpenTop() {
 function anNext(d) {
   if (!window.nextStep || !window.act) return;
   const s = d.shift, gaps = d.ctr_gaps || [], top = anTopMover();
-  let msg, acts;
+  // 다시 재는 손잡이는 화면 머리의 [이 묶음 다시 재기] 하나다 — 띠에 단계별 재실행
+  // 버튼을 또 달면 한 화면에 "다시"가 둘이 선다. 띠는 처음 하는 일이나 이 화면
+  // 안에서 여는 일만 든다. 라벨은 단계 용어표(stageRun)에서 온다.
+  let msg, acts = "";
   const live = t => `<span class="live"> ${t}</span>`;
   if (!d.gsc_date) {
     msg = "검색 실적이 아직 없습니다."
         + live("수집하면 여기 있는 판단이 전부 그 숫자 위에 섭니다.");
-    acts = act("gsc", "실적 수집");
+    acts = act("gsc");
   } else if (d.period_mismatch) {
     msg = "직전 수집과 기간이 달라 맞대지 않았습니다."
         + live("같은 기간으로 한 번 더 수집하면 원인이 갈립니다.");
-    acts = act("gsc", "실적 다시 수집");
   } else if (!s || (!s.prev_clicks && !s.clicks)) {
     msg = "수집이 한 번뿐이라 맞댈 시점이 없습니다."
         + live("한 번 더 수집하면 원인 분해가 채워집니다.");
-    acts = act("gsc", "실적 다시 수집");
   } else if (top >= 0) {
     const r = AN_MV_VIEW[top], c = AN_CAUSE[r.cause] || {t: r.cause};
     // 검색어 이름은 <b> 한 벌 — 따옴표로 감싸지 않는다(QA D12). 원인은 산문 이름
     // (클릭률)이지 표 배지의 약어(CTR)가 아니다(QA D4/A13).
-    msg = `가장 크게 움직인 검색어는 <b>${esc(r.query)}</b>입니다.
+    // "무엇부터 할지"는 [개요] 한 곳이 말한다 — 여기는 이 화면에서 볼 것만 짚는다.
+    msg = `이 화면에서 볼 것은 가장 크게 움직인 검색어 <b>${esc(r.query)}</b>입니다.
       클릭 ${anNum(r.dclk)}이고 원인은 ${c.t}입니다.`;
-    // 보조로 act("gaps") 를 달면 머리줄의 같은 단계 칩과 글자까지 똑같은 것이 두 벌
-    // 선다(dimHead 는 주요 버튼만 물린다). 그 단계는 머리줄이 이미 들고 있다.
     acts = '<button class="go" onclick="anOpenTop()">검색어 열기</button>';
   } else if (gaps.length) {
     const lost = gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0);
     msg = `순위를 안 올리고도 되찾을 클릭이 ${num(lost)}회 있습니다.`
         + live("제목·설명만 고치면 되는 자리입니다.");
-    acts = act("gaps", "기회 분석");
+    acts = act("gaps");
   } else {
-    // 손댈 것이 없는 회차에도 다음 걸음은 있다 — 다시 재는 것이다. 그게 이 화면에서
-    // 누를 수 있는 유일한 일이므로 보조가 아니라 주요다(찬 화면에 주요 버튼이 하나도
-    // 없으면 "여기서 뭘 하지"가 다시 화면 밖으로 나간다).
     msg = "이번 회차에 무너진 자리가 없습니다."
         + live("다음 수집에서 같은 축을 다시 맞대 봅니다.");
-    acts = act("gsc", "실적 다시 수집");
   }
-  nextStep("analysis", `<p>${msg}</p><div class="acts">${acts}</div>`);
+  nextStep("analysis", `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : ""));
 }
 
 function anVerdict(s) {
@@ -427,10 +423,10 @@ function anTop(d, mismatch) {
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
         <p>직전 수집이 다른 기간이라 증감을 내면 전부 거짓이 됩니다. 같은 기간으로
         한 번 더 수집하면 채워집니다.</p>
-        <div class="acts">${act("gsc", "실적 다시 수집", false)}</div></div>`
+        <div class="acts">${act("gsc", null, false)}</div></div>`
       : `<div class="empty"><b>맞댈 수집이 아직 없습니다</b>
         <p>결론은 두 시점을 맞대야 나옵니다. 한 번 더 수집하면 여기가 채워집니다.</p>
-        <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`) + ga4;
+        <div class="acts">${act("gsc", null, false)}</div></div>`) + ga4;
   return verdict + (kpis ? `<div class="band">${kpis}</div>` : "") + ga4;
 }
 
@@ -443,11 +439,11 @@ function anShift(s, mismatch) {
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
         <p>기간이 다른 두 기록을 빼면 원인 분해가 통째로 거짓이 됩니다. 같은 기간으로
         한 번 더 수집하면 이전과 현재가 생깁니다.</p>
-        <div class="acts">${act("gsc", "실적 다시 수집", false)}</div></div>`
+        <div class="acts">${act("gsc", null, false)}</div></div>`
       : `<div class="empty"><b>맞댈 수집이 아직 없습니다</b>
         <p>클릭이 왜 그렇게 됐는지는 두 시점을 맞대야 갈립니다. 한 번 더 수집하면
         이전과 현재가 생깁니다.</p>
-        <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+        <div class="acts">${act("gsc", null, false)}</div></div>`;
   // 합계(이전 → 현재)는 그리지 않는다 — 바로 위 KPI 가 "클릭 변화 · 이전 → 현재"로 이미
   // 말한다. 예전 워터폴은 그걸 막대로 한 번 더 세웠고, 0 부터 서야 해서 원인이 눌렸다.
   // 원인 순서는 고정이다: 기간을 바꿔도 줄 자리가 안 흔들려야 눈이 같은 자리를 본다.
@@ -492,7 +488,7 @@ function anQueryPanel(r, problem, note) {
       url, audit: url ? (window.PAGE_AUDITS || {})[url] : null,
       problem, queries: [{q: r.query, note}]})}
     <p class="detn">이 검색어는 아직 기회 목록에 없습니다. 기회를 다시 분석하면 올라옵니다.</p>
-    <div class="acts">${act("gaps", "기회 분석", false)}</div>
+    <div class="acts">${act("gaps", null, false)}</div>
   </div>`;
 }
 const anMoverPanel = r => {
@@ -629,7 +625,7 @@ function anMovers(s, mismatch) {
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
         <p>어느 검색어가 움직였는지는 같은 기간끼리만 셉니다. 같은 기간으로 한 번 더
         수집하면 목록이 생깁니다.</p>
-        <div class="acts">${act("gsc", "실적 다시 수집", false)}</div></div>`
+        <div class="acts">${act("gsc", null, false)}</div></div>`
       : `<div class="empty"><b>움직인 검색어가 없습니다</b>
         <p>노출 30 이상인 검색어만 셉니다. 그보다 적으면 표본이 아니라 잡음입니다.</p></div>`;
   const down = anStKeep(s.down), up = anStKeep(s.up);
@@ -665,7 +661,7 @@ function anDaily(rows) {
   if (!rows || rows.length < 2)
     return `<div class="empty"><b>하루 단위 실적이 없습니다</b>
       <p>한 번 수집하면 최근 28일이 하루씩 채워집니다. 이틀 치가 쌓여야 선이 그어집니다.</p>
-      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+      <div class="acts">${act("gsc", null, false)}</div></div>`;
   // 선 하나만 놓아두면 "그래서"가 안 나온다 — 가장 높았던 날을 짚어 준다.
   const top = rows.reduce((a, r) => (r.clicks > a.clicks ? r : a), rows[0]);
   return `<p class="anverdict">가장 많이 눌린 날은 <b>${esc(top.date)}</b>(${num(top.clicks)}클릭)입니다.
@@ -745,7 +741,7 @@ function anBands(rows) {
   if (!rows || !rows.length)
     return `<div class="empty"><b>순위를 말할 수집이 없습니다</b>
       <p>노출 30 이상인 검색어가 쌓여야 구간을 셀 수 있습니다.</p>
-      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+      <div class="acts">${act("gsc", null, false)}</div></div>`;
   const mx = Math.max(...rows.map(r => r.n), 1);
   const has = rows.some(r => r.d != null);
   // 좋고 나쁨이 구간마다 뒤집힌다 — 1페이지 안이 느는 건 벌었다는 뜻이고,
@@ -827,7 +823,7 @@ function anBrand(rows, hasSnap) {
          <div class="acts">${window.go("settings", "설정에서 채우기")}</div>`
       : `<b>검색 실적이 아직 없습니다</b>
          <p>브랜드 구성은 실적을 수집한 뒤에 나옵니다.</p>
-         <div class="acts">${act("gsc", "실적 수집", false)}</div>`}</div>`;
+         <div class="acts">${act("gsc", null, false)}</div>`}</div>`;
   const [b, n] = rows;
   const total = b.clicks + n.clicks;
   const share = anShare(n.clicks, total);
@@ -929,7 +925,7 @@ function anIntent(rows, gaRows) {
   if (!rows || !rows.length)
     return `<div class="empty"><b>검색 실적이 아직 없습니다</b>
       <p>의도별 구성은 실적을 수집한 뒤에 나옵니다.</p>
-      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+      <div class="acts">${act("gsc", null, false)}</div></div>`;
   const named = rows.filter(r => !r.unclassified);
   if (!named.length)
     return `<div class="empty"><b>맞는 검색어가 없습니다</b>
@@ -952,7 +948,7 @@ function anCluster(rows) {
   if (!rows || !rows.length)
     return `<div class="empty"><b>검색 실적이 아직 없습니다</b>
       <p>주제별 성적은 실적을 수집한 뒤에 나옵니다.</p>
-      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+      <div class="acts">${act("gsc", null, false)}</div></div>`;
   const named = rows.filter(r => !r.unclassified && r.impressions);
   if (!named.length)
     // 묶음을 붙이는 자리는 화면이 아니다 — keywords 단계의 큐레이션이 채운다.
@@ -963,7 +959,7 @@ function anCluster(rows) {
     return `<div class="empty"><b>주제 묶음이 아직 없습니다</b>
       <p>묶음은 키워드를 찾을 때 함께 붙고, 붙고 나면 다음 수집부터 묶음마다 성적이
       갈립니다.</p>${W(
-        `<div class="acts">${act("keywords", "키워드 찾기", false)}</div>`, "")}</div>`;
+        `<div class="acts">${act("keywords", null, false)}</div>`, "")}</div>`;
   const best = named.slice().sort((a, b) => b.clicks - a.clicks)[0];
   const worst = named.slice().sort((a, b) => a.ctr - b.ctr)[0];
   const msg = named.length > 1 && worst.label !== best.label
@@ -997,7 +993,7 @@ function anCountry(rows, date, gaRows) {
   if (!date)
     return `<div class="empty"><b>국가별 실적이 아직 없습니다</b>
       <p>국가별 분해는 이제 기본으로 켜져 있습니다. 한 번 더 수집하면 채워집니다.</p>
-      <div class="acts">${act("gsc", "실적 수집", false)}</div></div>`;
+      <div class="acts">${act("gsc", null, false)}</div></div>`;
   if (!rows || !rows.length)
     return '<div class="empty"><b>이 기간에 노출이 없습니다</b>'
       + '<p>국가는 수집했는데 담긴 행이 하나도 없습니다.</p></div>';
@@ -1065,7 +1061,7 @@ function anEmptyFill(hide) {
   $("an-empty-fill-body").innerHTML = `<div class="card empty">
     <b>실적을 수집하면 여기부터 채워집니다</b>
     <p>${AN_FILLABLE.map(([, l]) => esc(l)).join(" · ")}</p>
-    <div class="acts">${act("gsc", "실적 수집", false)}</div>
+    <div class="acts">${act("gsc", null, false)}</div>
   </div>`;
 }
 

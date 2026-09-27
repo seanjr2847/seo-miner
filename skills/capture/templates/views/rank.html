@@ -468,8 +468,8 @@ VIEW("rank", function (d) {
   RK_HAS_PREV = !!d.rank_prev && RK_ROWS.some(r => RK_d(r) != null);
   RK_Q = ""; RK_BAND = null;      // 사이트를 바꾸면 필터도 따라가면 안 된다
 
-  // 조회 조건은 숫자만큼 중요하다 — 어느 기기로, 어느 제공자로 잰 값인지 말한다.
-  // 실행 기록(runs.notes)에 적혀 있는 것만 읽는다.
+  // 조회 조건은 숫자만큼 중요하다 — 언제, 어느 기기로 잰 값인지 말한다. 공급사 이름은
+  // 사용자 말이 아니라 안 적는다. 실행 기록(runs.notes)에 적혀 있는 것만 읽는다.
   const run = (d.runs || []).find(r => r.kind === "rank");
   const nt = (run && run.notes) || "";
   const grab = k => (nt.match(new RegExp(k + "=([\\w.-]+)")) || [])[1] || "";
@@ -477,7 +477,7 @@ VIEW("rank", function (d) {
   const errN = +grab("errors") || 0;
   // 직전 확인일은 계기판의 [내린 것]이 이미 이름으로 말한다 — 여기서 또 적지 않는다.
   const cond = [d.rank_date && `${d.rank_date} 조회`,
-    grab("provider"), DEV[grab("device")] || grab("device")].filter(Boolean).join(" · ");
+    DEV[grab("device")] || grab("device")].filter(Boolean).join(" · ");
   /* 누를 것이 있어야 참인 구절은 .live 로 감싼다 — 박제본에는 서버가 없어 셸이
      그 구절과 버튼을 함께 뗀다. 남는 문장만으로 "지금 상태"가 읽혀야 한다. */
   const live = s => `<span class="live">${s}</span>`;
@@ -576,9 +576,9 @@ VIEW("rank", function (d) {
   $("rk-band").innerHTML = [
     ["1페이지 안", num(onP1), `${p1}위 안 · 확인한 ${RK_ROWS.length}개 중`],
     ["1페이지 문턱", num(nEdge), `${p1 + 1}~${edge}위 · 한 걸음이면 1페이지`],
-    ["오른 것", RK_HAS_PREV ? `<span class="up">${up}</span>` : "—",
+    ["오른 것", RK_HAS_PREV ? `<span class="${up ? "up" : ""}">${up}</span>` : "—",
       RK_HAS_PREV ? `±${(RULES.rank_noise || 3) - 1}칸은 보합으로 셉니다` : noPrev],
-    ["내린 것", RK_HAS_PREV ? `<span class="down">${down}</span>` : "—",
+    ["내린 것", RK_HAS_PREV ? `<span class="${down ? "down" : ""}">${down}</span>` : "—",
       RK_HAS_PREV ? `${esc(d.rank_prev)} 대비` : noPrev],
     [`${edge}위 밖·못 찾음`, num(nDeep + nNone), "페이지가 있는지부터 봅니다"],
   ].map(([l, v, b]) => `<div class="m"><div class="v">${v}</div>

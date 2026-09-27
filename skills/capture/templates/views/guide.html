@@ -105,15 +105,11 @@ VIEW("guide", function (d) {
   const g = d.guide;
   if (!g || !g.steps || !g.steps.length) return nextStep("guide", "");
   const steps = g.steps, here = g.here;
-  // 한 바퀴를 다 돌았으면 되돌아갈 자리는 2번 단계다 — 이름을 여기 적지 않는다.
-  if (here === -1) {
-    const back = steps[1];
-    const act2 = back && window.act && window.stageRun
-      ? act(back.id, stageRun(back.id)) : "";
+  // 한 바퀴를 다 돌았으면 다시 재는 것이 다음 걸음이다 — 그 손잡이는 화면 머리의
+  // [전체 다시 재기] 하나다. 띠에 단계별 재실행을 또 달면 "다시"가 한 화면에 둘이다.
+  if (here === -1)
     return nextStep("guide", `<p>${steps.length}단계를 모두 마쳤습니다.
-      <span class="live">다시 재면 그동안 고친 것이 숫자로 나옵니다.</span></p>`
-      + (act2 ? `<div class="acts">${act2}</div>` : ""));
-  }
+      <span class="live">다시 재면 그동안 고친 것이 숫자로 나옵니다.</span></p>`);
   const s = steps[here];
   // 돌릴 수 있는 단계면 act() 가 정본 라벨을 실어 준다. 아니면(마지막 단계처럼
   // 명령이 다른 일을 하는 자리) 이 화면이 원래 쓰던 손잡이를 그대로 쓴다.
@@ -124,8 +120,11 @@ VIEW("guide", function (d) {
   // 「4개가 끝났고 지금 4번」도 평가자 둘이 "완료는 3개"로 읽었다 — 개수 대신 끝난
   // 번호를 적는다. 번호는 아래 스테퍼의 원 숫자와 같은 말이라 대조가 된다.
   const doneNo = steps.map((x, i) => x.done ? i + 1 : 0).filter(Boolean);
-  nextStep("guide", `<p>${doneNo.length ? `${doneNo.join("·")}번이 끝났고, ` : ""}지금 할 것은
-    ${here + 1}번 ${esc(s.t)}입니다.
+  // "지금 할 것"(전역 우선순위)은 [개요] 한 곳이 말한다 — 여기는 이 순서에서 아직 안
+  // 끝난 첫 칸만 짚는다. [개요]의 준비 판정("꼭 해야 할 준비는 끝났습니다")과 같은
+  // 자리에서 "지금 할 것은 4번"이 부딪혀 둘 중 무엇이 참인지 못 읽었다.
+  nextStep("guide", `<p>${doneNo.length ? `${doneNo.join("·")}번이 끝났고, ` : ""}이 순서에서
+    아직 안 끝난 첫 칸은 ${here + 1}번 ${esc(s.t)}입니다.
     <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
     + (btn ? `<div class="acts">${btn}</div>` : ""));
 });

@@ -482,7 +482,7 @@ function KW_toggle(tr) {
   if (!r) return;
   const row = document.createElement("tr");
   row.className = "exp";
-  row.innerHTML = `<td colspan="${tr.cells.length}">${KW_det(r, tr.dataset.kwsrc)}</td>`;
+  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${KW_det(r, tr.dataset.kwsrc)}</td>`;
   tr.after(row);
   tr.setAttribute("aria-expanded", "true");
 }
@@ -562,14 +562,16 @@ VIEW("keywords", function (d) {
   // 화면 부제는 상태를 말하지 않는다 — 어느 상태에서도 참인 "여기가 무엇을 보여주나".
   viewSub("keywords", "검색어를 기회 점수 순으로 놓고 무엇부터 손댈지 봅니다.");
   // 눈썹은 데이터에서 온다 — 상수(4~20)를 적어 두면 목록이 전부 1페이지 안일 때도
-  // 「4~20위 구간」이라고 말해 내용과 반대가 된다. 개수·결론은 넣지 않는다.
+  // 「4~20위 구간」이라고 말해 내용과 반대가 된다. 결론은 넣지 않는다.
+  // 이건 이 목록의 **최소~최대 평균 순위**다 — 「4~11위 구간」이라고 적으면 정해 둔
+  // 구간(1페이지 문턱·순위 추적의 11~20위)처럼 읽혔다. 반올림해 넓히지 않고, 무엇의
+  // 범위인지(평균 순위, 검색어 몇 개)를 같이 말한다.
   const poss = KW_ROWS.map(r => r.pos).filter(Number.isFinite);
-  const lo = poss.length && Math.floor(Math.min(...poss));
-  const hi = poss.length && Math.ceil(Math.max(...poss));
-  // 검색어가 하나뿐이거나 전부 같은 순위면 "9위" 한 낱말은 위로 뭘 말하는지
-  // 안 읽힌다(무슨 목록의 9등인지로 착각한다) — 그때는 눈썹을 비운다. 범위가
-  // 실제로 있을 때만 말한다.
-  $("log-eb").textContent = poss.length && lo !== hi ? `${lo}~${hi}위 구간` : "";
+  const lo = poss.length && KW_pos(Math.min(...poss));
+  const hi = poss.length && KW_pos(Math.max(...poss));
+  // 검색어가 하나뿐이거나 전부 같은 순위면 범위가 아니다 — 그때는 눈썹을 비운다.
+  $("log-eb").textContent = poss.length && lo !== hi
+    ? `평균 순위 ${lo}~${hi}위 검색어 ${poss.length}개` : "";
   // 제목은 상태를 따라간다 — 문턱(11~20위)에 하나도 안 걸렸으면 "순위 상승
   // 기회"라는 제목 자체가 띠의 "남은 문제는 순위가 아니라 클릭입니다"와
   // 부딪힌다(QA 8회차). 그때는 지금 이 표가 실제로 보여주는 것("1페이지 안
@@ -579,7 +581,7 @@ VIEW("keywords", function (d) {
   // "1개가 전부 1페이지 안입니다"는 단수에 "전부"가 붙어 어색하다 — 한 개일
   // 때는 그 검색어를 그대로 가리키는 문장으로 가른다.
   $("log-sub").textContent = !KW_ROWS.length ? ""
-    : p2 ? `${KW_ROWS.length}개 중 ${p2}개가 1페이지 문턱입니다.`
+    : p2 ? `${KW_ROWS.length}개 중 ${p2}개가 1페이지 문턱(${RULES.page1 + 1}~${RULES.striking_hi}위)입니다.`
     : KW_ROWS.length === 1 ? "이 검색어는 이미 1페이지 안입니다."
     : `${KW_ROWS.length}개 모두 1페이지 안입니다.`;
   if (!KW_ROWS.length) {
@@ -590,11 +592,11 @@ VIEW("keywords", function (d) {
           <b>${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 없습니다</b>
           <p>${esc(d.gsc_date)} 실적까지 수집했습니다.
             <span class="live">추적할 검색어를 더 캐면 여기부터 채워집니다.</span></p>
-          ${KW_cmd("keywords", "키워드 찾기")}</div>`
+          ${KW_cmd("keywords")}</div>`
       : `<div class="empty"><b>실적을 아직 수집하지 않았습니다</b>
           <p><span class="live">수집하면 1페이지 문턱에 걸린 검색어부터
             채워집니다.</span></p>
-          ${KW_cmd("gsc", "실적 수집")}</div>`;
+          ${KW_cmd("gsc")}</div>`;
   } else {
     KW_tools();
     KW_drawLog();
@@ -604,7 +606,10 @@ VIEW("keywords", function (d) {
   // 갈리고, 그 문장이 가리키는 것을 그 자리에서 누를 수 있어야 한다.
   // 띠가 부르는 이름은 그 띠가 말한 묶음 안에서 고른다 — 문턱 이야기를 해 놓고
   // 1페이지 검색어 이름을 부르면 문장과 목록이 서로 다른 것을 가리킨다.
-  const sorted = KW_ROWS.length ? KW_filtered() : [];
+  // 이미 닫힌 기회(완료·뺀 것·저절로 풀림)가 걸린 줄은 부르지 않는다 — 풀린 검색어를
+  // 이 화면의 1순위로 세우면 끝난 일을 다시 하라는 말이 된다. 기회가 없는 줄은 남긴다.
+  const shut = r => { const o = oppOf(r.query); return !!o && !window.oppStMatch(o, "open"); };
+  const sorted = KW_ROWS.length ? KW_filtered().filter(r => !shut(r)) : [];
   const top = (p2 ? sorted.find(r => r.band === "page2") : null) || sorted[0] || null;
   KW_TOP = top ? top.query : "";
   /* 띠 문장은 [지금 상태] + [누르면 무엇이 되나] 두 토막이다. 뒤 토막은 누를 것이
@@ -614,23 +619,25 @@ VIEW("keywords", function (d) {
   if (!KW_ROWS.length) {
     // 실적을 이미 읽었는데 이 구간이 비었으면 다시 읽어도 같다 — 그때는 추적할
     // 검색어를 더 캐는 쪽이 다음 걸음이다.
+    // 띠는 행동 하나만 든다 — 다시 재는 손잡이는 화면 머리의 [이 묶음 다시 재기]다.
     KW_next(d.gsc_date
       ? "실적은 들어와 있는데 문턱 구간이 비었습니다. " +
         live("검색어를 더 캐면 여기부터 채워집니다.")
       : "실적을 아직 수집하지 않았습니다. " +
         live("수집하면 1페이지 문턱에 걸린 검색어부터 나옵니다."),
-      d.gsc_date
-        ? KW_act("keywords", "키워드 찾기") + KW_act("gsc", KW_run("gsc"), false)
-        : KW_act("gsc", "실적 수집"));
+      KW_act(d.gsc_date ? "keywords" : "gsc"));
+  } else if (!top) {
+    KW_next("이 목록의 검색어는 모두 처리했습니다. " +
+      live("다음 수집에서 새로 걸린 검색어가 여기 섭니다."));
   } else {
     // 검색어 이름은 <b> 한 벌이다 — 따옴표로 감싸면 화면마다 강조가 달라진다.
+    // "무엇부터 할지"는 [개요] 한 곳이 말한다 — 여기는 이 화면의 1순위만 짚는다.
     const lead = `<b>${esc(top.query)}</b>`;
     KW_next(p2
-      ? `1페이지 문턱에 ${p2}개가 있습니다. 가장 먼저 볼 것은 ${lead}입니다.`
+      ? `1페이지 문턱에 ${p2}개가 있습니다. 이 화면의 1순위는 ${lead}입니다.`
       : `문턱에 걸린 검색어가 없어 남은 문제는 순위가 아니라 클릭입니다. ` +
-        `가장 큰 자리는 ${lead}입니다.`,
-      `<button class="go" onclick="KW_openTop()">검색어 열기</button>` +
-      KW_act("gaps", KW_run("gaps"), false));
+        `이 화면의 1순위는 ${lead}입니다.`,
+      `<button class="go" onclick="KW_openTop()">검색어 열기</button>`);
   }
 
   // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면

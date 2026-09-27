@@ -16,8 +16,10 @@
    (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(24px)를 넘지 않는다 —
    넓히려면 검색어 열이 줄어든다. 행 클릭은 따로 없어 충돌이 없다. */
 #triage .trtable td:first-child .trchk { display:flex; align-items:flex-start;
-  justify-content:center; min-height:44px; padding-top:11px; cursor:pointer; }
-/* ↑ 가운데 정렬이면 검색어가 두 줄인 행에서 체크박스가 첫 줄 아래로 처진다 —
+  justify-content:center; min-height:44px; margin:0; padding-top:12px; cursor:pointer; }
+/* 셸의 label 여백(위 12px)이 여기까지 먹어 체크박스가 검색어 첫 줄보다 한 줄 가까이
+   아래로 처졌다 — 여백을 지우고, 윗여백은 옆 칸(td 8px + 첫 줄 21.6px 가운데)에 맞춘다.
+   ↑ 가운데 정렬이면 검색어가 두 줄인 행에서 체크박스가 첫 줄 아래로 처진다 —
    다른 칸처럼 윗줄에 맞춘다(td 윗 여백 8px + 첫 줄 가운데). */
 #triage .trtable td { vertical-align:top; }
 #triage .trrow.cur td { background:var(--wash); }
@@ -43,9 +45,16 @@
 @media (hover:none) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
   /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수(「미판정 110」)와 같은 숫자로 읽혔다. */
   #triage .go kbd { display:none; } }
-/* 390px 에서 표가 63px 넘쳐 「8 / 90」이 「8 /」로 잘렸다. 폭을 정하는 건 줄을 안
-   바꾸는 머리글(「클릭 / 노출 (i)」)이다 — 좁은 화면에서는 머리글도 줄을 바꾼다. */
-@media (max-width:560px) { #triage .trtable th { white-space:normal; } }
+/* 숫자 칸은 쪼개지 않는다 — 「44 / 4,64」처럼 한 값이 두 줄로 갈렸다. */
+#triage .trtable td.num { white-space:nowrap; }
+/* 390px 에서는 클릭/노출 열이 오른쪽 밖으로 밀려 잘렸다. 그 열을 접고 같은 값을
+   검색어 밑 둘째 줄(.trperf)로 내린다 — 넓은 화면에서는 그 줄이 안 선다. */
+#triage .trperf { display:none; color:var(--slate); font-size:12px; margin-top:2px; }
+#triage .trperf .v { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+@media (max-width:560px) {
+  #triage .trtable th:nth-child(5), #triage .trtable td:nth-child(5) { display:none; }
+  #triage .trperf { display:block; }
+}
 </style>
 
 <section id="triage-sec">
@@ -84,7 +93,7 @@ async function TR_fetch() {
   const res = await fetch("/api/triage?project=" + encodeURIComponent(TR_PROJECT));
   if (!res.ok) {
     $("triage").innerHTML = `<div class="empty err"><b>심사 목록을 불러오지 못했습니다</b>
-      <p>[새로고침] 뒤 다시 하면 됩니다.</p></div>`;
+      <p>[화면 다시 불러오기] 뒤 다시 하면 됩니다.</p></div>`;
     return;
   }
   const t = await res.json();
@@ -116,7 +125,8 @@ function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); }
 function TR_renderCounts() {
   const c = TR_COUNTS;
   const narrowed = TR_Q.trim() || TR_KIND;
-  $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업 <b>${c.work || 0}</b>` +
+  // 「작업 178」은 [개요]의 기회 수(묶은 줄)와 다른 단위다 — 무엇을 셌는지 말한다.
+  $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 검색어 <b>${c.work || 0}</b>` +
     ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
     (narrowed ? ` · 보이는 줄 <b>${TR_filtered().length}</b>` : "");
 }
@@ -153,7 +163,8 @@ function TR_row(r, i) {
       aria-label="${esc(r.label)} 고르기"></label></td>
     <td><span class="trkw">${esc(r.label)}</span>${r.variants > 1
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
-      ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}</td>
+      ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}
+      <div class="trperf">클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span></div></td>
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
       `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td class="num">${r.score == null ? "—" : Math.round(r.score)}</td>
@@ -217,7 +228,7 @@ function TR_setSel(v) { if (TR_SEL.size) TR_set([...TR_SEL], v); }
 async function TR_set(keys, verdict) {
   const [ok, r] = await post("/api/verdict", {project: TR_PROJECT, keys, verdict: verdict || null});
   if (!ok) return toast((r && (r.error || r.detail)) ||
-    "판정을 저장하지 못했습니다. [새로고침] 뒤 다시 하면 됩니다.", "bad");
+    "판정을 저장하지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad");
   toast(`${keys.length}건 — ${TR_DONE[verdict || ""]}`, "ok");
   TR_SEL = new Set();
   await TR_fetch();

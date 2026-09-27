@@ -138,7 +138,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   #crawl .tw tr:last-child { border-bottom:0; }
   #crawl .tw td { padding:2px 0; border-bottom:0; text-align:left; }
   #crawl .tw td:first-child { margin-bottom:4px; }
-  #crawl .tw td:nth-child(2)::before { content:"갈래 "; color:var(--slate); }
+  #crawl .tw td:nth-child(2)::before { content:"문제 종류 "; color:var(--slate); }
   #crawl .tw td:nth-child(3)::before { content:"심각도 "; color:var(--slate); }
   #crawl .tw td:nth-child(4)::before { content:"무엇이 "; color:var(--slate); }
   #crawl .tw td.num::before { content:"기회 "; color:var(--slate); }
@@ -360,8 +360,10 @@ function stSummary(blocked) {
   // 화면이 설명하지 않는다. 안 잰 것은 글자로 말하고, 잰 것만 숫자를 낸다.
   const out = ST_SUM.filter(([id]) => $(id) && !$(id).hidden).map(([id, label]) => {
     const n = ST_N[id];
+    // 크롤 배지는 가장 무거운 갈래의 심각도 색을 쓴다 — 전부 「참고」인데 경고색이면 급해 보인다.
     const kind = n == null ? "muted" : !n ? "ok"
-      : (id === "ix-sec" && blocked) ? "bad" : "warn";
+      : (id === "ix-sec" && blocked) ? "bad"
+      : id === "crawl-sec" ? CR_SEV_CLS[stCrawlTop(CR_D || {}).sev] : "warn";
     const val = n == null ? "미검사" : num(n);
     const tip = n == null ? `${label} — 아직 검사하지 않았습니다`
       : !n ? `${label} — 검사했고 문제가 없습니다` : `${label} 문제 ${num(n)}건`;
@@ -385,6 +387,19 @@ const stBlocked = d =>
 /* 띠가 주요로 드는 단계는 이 한 곳이 정한다. 섹션 렌더보다 **먼저** 불러야
    섹션이 같은 명령을 두 번 세우지 않는다(stAct 가 이 값을 본다). */
 let ST_LEAD = "";
+/* 크롤에서 가장 무거운 갈래 — 심각도 먼저, 같으면 많은 것. 개수는 counts(전수)에서,
+   심각도는 줄(서버가 심각도 순으로 500줄까지 준다)에서 읽는다 — 잘려 나간 갈래는
+   가장 가벼운 쪽이라 「참고」로 둔다. 이름표 정본은 d.crawl_kinds(collect_crawl.ISSUE_KIND). */
+function stCrawlTop(d) {
+  const c = d.crawl || {}, cnt = c.counts || {}, sev = {};
+  for (const r of c.issues || []) sev[r.kind] = sev[r.kind] || r.severity;
+  const rk = k => ({bad: 0, warn: 1}[sev[k]] ?? 2);
+  const ks = Object.keys(cnt).sort((a, b) => rk(a) - rk(b) || cnt[b] - cnt[a]);
+  const k = ks[0];
+  return {n: ks.reduce((a, x) => a + cnt[x], 0), cnt: cnt[k] || 0,
+    sev: (sev[k] in CR_SEV) ? sev[k] : "info",
+    label: ((d.crawl_kinds || {})[k] || [k])[0]};
+}
 function stPlan(d) {
   const crawled = !!((d.crawl || {}).run);
   const crawlN = (((d.crawl || {}).issues) || []).length;
@@ -406,9 +421,10 @@ function stPlan(d) {
   if (blocked) return {stage: "index", label: stageRun("index"), primary: true,
     msg: `구글이 아예 못 들어간 URL 이 <b>${num(blocked)}건</b>입니다. `
        + "이걸 풀기 전에는 본문을 고쳐도 순위가 안 움직입니다."};
-  if (crawlN) return {stage: "crawl", label: stageRun("crawl"), primary: true,
-    msg: `크롤이 걸어 둔 문제가 <b>${num(crawlN)}건</b>입니다. `
-       + "깨진 내부 링크부터 고치는 것이 가장 쌉니다."};
+  const cr = stCrawlTop(d);
+  if (crawlN && cr.sev !== "info") return {stage: "crawl", label: stageRun("crawl"), primary: true,
+    msg: `크롤이 걸어 둔 문제가 <b>${num(cr.n)}건</b>입니다. 이 화면에서 볼 것은 `
+       + `${esc(CR_SEV[cr.sev])} 단계인 ${esc(cr.label)} <b>${num(cr.cnt)}건</b>입니다.`};
   if (ix.length) return {stage: "index", label: stageRun("index"), primary: true,
     msg: `색인에 못 들어간 URL 이 <b>${num(ix.length)}건</b>입니다.`
        + live(" 사이트맵과 내부 링크를 고친 뒤 다시 검사하면 판정이 바뀝니다.")};
@@ -418,6 +434,10 @@ function stPlan(d) {
   if (dev) return {stage: "gsc", label: stageRun("gsc"), primary: false,
     msg: `모바일에서만 밀리는 검색어가 <b>${num(dev)}개</b>입니다. `
        + "고칠 곳은 글이 아니라 모바일 화면입니다."};
+  // 전부 「참고」면 급하다고 말하지 않는다 — 걸린 건 있으니 "손댈 것 없음"도 아니다.
+  if (crawlN) return {stage: "crawl", label: stageRun("crawl"), primary: false,
+    msg: `크롤이 걸어 둔 <b>${num(cr.n)}건</b>은 전부 「${esc(CR_SEV.info)}」 수준이라 급하지 않습니다. `
+       + `가장 많은 것은 ${esc(cr.label)} <b>${num(cr.cnt)}건</b>입니다.`};
   // 손댈 것이 없는 회차에도 다음 걸음은 있다 — 다시 재는 것이다. 여기서 누를 수
   // 있는 유일한 일이라 보조가 아니라 주요다.
   return {stage: "crawl", label: stageRun("crawl"), primary: true,
@@ -1051,8 +1071,8 @@ function CR_rows(d) {
     <button class="go sec sm" onclick="CR_csv()"
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
   const rest = rows.length - CR_N;
-  return stCard(table(["URL", "갈래", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
-    CR_PICK ? "<b>이 갈래에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
+  return stCard(table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
+    CR_PICK ? "<b>이 종류에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
             : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>")
     + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${num(rest)}건 더 보기</button></div>` : ""));
 }
@@ -1103,7 +1123,7 @@ function CR_pick(kind) {
 
 // 화면과 같은 순서·같은 칸으로 내보낸다 — "지금 걸러 놓은 목록 그대로"가 참이어야 한다.
 function CR_csv() {
-  csv("크롤문제", [["점수", "URL", "갈래", "심각도", "무엇이"],
+  csv("크롤문제", [["점수", "URL", "문제 종류", "심각도", "무엇이"],
     ...CR_sorted().map(r => [stOppVal(r.url || "") < 0 ? "" : stOppVal(r.url || ""),
       r.url, CR_label(r.kind), CR_SEV[r.severity] || r.severity, r.detail])]);
 }
