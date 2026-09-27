@@ -830,6 +830,16 @@ def test_index_bucket_priority_folds_to_the_root_cause():
          "google_canonical": "/canon같음", "user_canonical": "/canon같음"},
         {"url": "/정상", "verdict": "PASS", "coverage_state": "Submitted and indexed",
          "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL"},
+        # 정상 리다이렉트·대체 페이지는 다른 주소가 대신 색인된 것 — 막힘이 아니다
+        {"url": "/옮김", "verdict": "NEUTRAL", "coverage_state": "Page with redirect",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL"},
+        {"url": "/대체", "verdict": "NEUTRAL",
+         "coverage_state": "Alternate page with proper canonical tag",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL",
+         "google_canonical": "/x", "user_canonical": "/x"},
+        {"url": "/대체한글", "verdict": "NEUTRAL",
+         "coverage_state": "적절한 표준 태그가 포함된 대체 페이지",
+         "robots_txt_state": "ALLOWED", "page_fetch_state": "SUCCESSFUL"},
     ])
     got = {r["url"]: r["bucket"] for r in scoring.index_issues(conn, p["id"])}
     assert got == {"/셋다": "robots_blocked", "/fetch+canon": "fetch_error",
@@ -1435,8 +1445,8 @@ def test_resolve_stale_leaves_open_without_confirming_data():
     db.finish_run(conn, run_b, notes="engines=[] | 중단: KeyboardInterrupt: ")
     chk(pb, run_b, 1)
     chk(pa, db.start_run(conn, pid, "ai"), 1)          # finished_at 없음 = 도는 중(가장 최근 회차)
-    # GSC: 20위 밖으로 밀림(풀림 아님) · 새 스냅샷에 줄 없음 · 규칙 없는 종류(rank_decay)
-    _snap(conn, pid, "2026-08-20", 28, "밀려난 검색어", 25.0, 0)
+    # GSC: 규칙 없는 종류(rank_decay) · 1페이지 밖 클릭률. 밀면 오를 검색어가 조건을
+    # 벗어난 것(20위 밖·줄 없음)은 이제 닫힌다 — test_resolve_stale_closes_on_positive_confirmation
     _snap(conn, pid, "2026-08-20", 28, "되찾은 검색어", 2.0, 30)
     _snap(conn, pid, "2026-08-20", 28, "1페이지 밖 클릭", 15.0, 20)   # 클릭률은 좋지만 1페이지 밖
     # 기기: 모바일만 잡힘(비교 불가) / 백링크: 우리도 받는다는 기록이 기준 시각 전의 것뿐
@@ -1457,8 +1467,6 @@ def test_resolve_stale_leaves_open_without_confirming_data():
                               k("aio_exposure", "aio사라짐"),
                               k("ai_citation_gap", "도는중 질문"), k("ai_citation_gap", "끊긴 질문"),
                               k("ai_citation_gap", "안 잰 질문"),
-                              k("striking_distance", "밀려난 검색어"),
-                              k("striking_distance", "스냅샷에 없는 검색어"),
                               k("rank_decay", "되찾은 검색어"), k("ctr_gap", "1페이지 밖 클릭"),
                               k("device_gap", "모바일만"), k("backlink_prospect", "old.com"),
                               k("content_gap", "경쟁사 수집 실패"),
@@ -1502,6 +1510,14 @@ def test_resolve_stale_closes_on_positive_confirmation():
                       clicks,impressions,ctr,position) VALUES
                     (?, '2026-08-20', 28, '올라간 검색어', NULL, 40, 200, 0, 2.5),
                     (?, '2026-08-20', 28, '클릭 회복', NULL, 10, 200, 0, 5.0)""", (pid, pid))
+    # 밀면 오를 검색어가 조건을 벗어났다 — 20위 밖 / 노출 하한 아래 / 이번 실적에 줄 없음
+    _snap(conn, pid, "2026-08-20", 28, "밀려난 검색어", 25.0, 0)
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(?, '2026-08-20', 28, '노출 준 검색어',"
+                 " NULL, 0, 3, 0, 8.0)", (pid,))
+    # 옛 판정이 막힘으로 세운 정상 리다이렉트 — 점검일이 기준 시각 전이어도 닫는다
+    conn.execute("INSERT INTO gsc_index_status(project_id, checked_date, url, verdict, coverage_state)"
+                 " VALUES(?, '2026-08-05', '/moved', 'NEUTRAL', 'Page with redirect')", (pid,))
     conn.executemany(
         "INSERT INTO gsc_breakdown(project_id, snapshot_date, period_days, dim, dim_value, query,"
         " clicks, impressions, ctr, position) VALUES(?, '2026-08-20', 28, 'device', ?, '모바일 회복',"
@@ -1522,7 +1538,9 @@ def test_resolve_stale_closes_on_positive_confirmation():
         k("striking_distance", "올라간 검색어"), k("ctr_gap", "클릭 회복"),
         k("device_gap", "모바일 회복"), k("index_blocked", "/fixed"),
         k("backlink_prospect", "got.com"), k("ai_bot_blocked", "OAI-SearchBot"),
-        k("ai_bot_blocked", "GPTBot")])
+        k("ai_bot_blocked", "GPTBot"), k("striking_distance", "밀려난 검색어"),
+        k("striking_distance", "노출 준 검색어"), k("striking_distance", "스냅샷에 없는 검색어"),
+        k("index_blocked", "/moved")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE id=?", (ids["인용된 질문"],))
     cid = db.record_creation(conn, pid, "a.md", opportunity_id=ids["올라간 검색어"])
     work_at = conn.execute("SELECT created_at FROM creations WHERE id=?", (cid,)).fetchone()[0]
@@ -1537,7 +1555,14 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert set(st) == set(ids), set(ids) ^ set(st)
     resolved = {t for t, r in st.items() if r["status"] == db.OPP_RESOLVED}
     assert resolved == {"aio인용", "인용된 질문", "클릭 회복", "모바일 회복", "/fixed",
-                        "got.com", "OAI-SearchBot", "GPTBot"}, st
+                        "got.com", "OAI-SearchBot", "GPTBot", "밀려난 검색어", "노출 준 검색어",
+                        "스냅샷에 없는 검색어", "/moved"}, st
+    # 조건을 벗어나 닫힌 것은 '상단에 들었다'가 아니라 벗어났다고 말한다
+    assert "25.0위" in st["밀려난 검색어"]["status_reason"], st["밀려난 검색어"]
+    assert "벗어났습니다" in st["밀려난 검색어"]["status_reason"], st["밀려난 검색어"]
+    assert "벗어났습니다" in st["노출 준 검색어"]["status_reason"], st["노출 준 검색어"]
+    assert "노출이 없어" in st["스냅샷에 없는 검색어"]["status_reason"], st["스냅샷에 없는 검색어"]
+    assert "리다이렉트" in st["/moved"]["status_reason"], st["/moved"]
     assert all(st[t]["status_reason"] and st[t]["status_at"] for t in resolved), st
     assert "더는" in st["OAI-SearchBot"]["status_reason"], st["OAI-SearchBot"]
     assert "학습 전용" in st["GPTBot"]["status_reason"], st["GPTBot"]
@@ -1620,6 +1645,8 @@ def test_ai_citation_rate_rivals_and_prescription_split():
     assert {"domain": "rival.com", "n": 2, "third_party": False, "press": False} in t["rivals"],         t["rivals"]
     assert t["lean"] == "third_party" and t["third_share"] > scoring.AI_PRESENCE_SHARE, t
     assert t["excerpts"] == {"chatgpt": "b 첫 빠진 답", "perplexity": "p 첫 답"}, t["excerpts"]
+    # 인용된 답변도 같은 규칙으로 한 토막 — 인용된 답이 없는 엔진은 없다
+    assert t["cited_excerpts"] == {"chatgpt": "a 인용된 답"}, t["cited_excerpts"]
     # 추천 목록 — NULL(안 봤다)은 분모에서 빠진다. 0 과 뭉치지 않는다
     assert (t["recommended"], t["rec_checks"]) == (1, 5), t
     assert t["by_engine"]["chatgpt"]["rec_checks"] == 2, t["by_engine"]
@@ -2021,6 +2048,54 @@ def test_index_targets_recheck_open_blocked_urls_first():
     got = collect_index.index_targets(conn, pid, 2)
     conn.close()
     assert got == ["https://www.e.com/", "https://e.com/a"], got
+
+
+
+def test_position_is_impression_weighted_everywhere():
+    """검색어 하나가 여러 지면으로 걸리면 순위는 노출 가중 평균 한 벌(scoring.POS_SQL)이다.
+    맨평균이 섞이면 같은 검색어가 개요 4.5위·분석 10.3위로 갈렸다(10회차)."""
+    conn = db.connect()
+    pid = _project(conn, "wpos")["id"]
+    conn.executemany("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page,"
+                     " clicks, impressions, ctr, position) VALUES(?, '2026-09-20', 28, 'noti', ?, ?, ?,"
+                     " 0, ?)", [(pid, "https://e.com/a", 20, 500, 9.0),
+                                (pid, "https://e.com/b", 0, 1, 65.0)])
+    conn.commit()
+    want = round((9.0 * 500 + 65.0 * 1) / 501, 1)                     # 9.1 — 맨평균이면 37.0
+    assert round(scoring._snap_agg(conn, pid, "2026-09-20", 28)["noti"]["pos"], 1) == want
+    assert db.query_performance(conn, pid, "noti")["position"] == want
+    sd = {r["query"]: r for r in scoring.striking(conn, pid, "2026-09-20")}
+    assert sd["noti"]["pos"] == want, sd                               # 맨평균이면 20위 밖이라 빠진다
+    r, _ = scoring._gsc_now(conn, pid, "noti", "2026-09-01 00:00:00", {})
+    assert round(r["pos"], 1) == want, dict(r)
+    conn.close()
+
+
+def test_content_gap_reason_names_one_competitor_deterministically():
+    """검색어×경쟁사 줄이 (종류, 대상) 한 줄로 접힐 때 근거 문장은 가장 높은 순위의 경쟁사
+    하나다 — 예전에는 적재 순서의 마지막 경쟁사 문장이 남았다."""
+    conn = db.connect()
+    pid = _project(conn, "cglead")["id"]
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+                     " our_position, volume, kind) VALUES(?, '2026-09-20', '공백 검색어', ?, ?, NULL,"
+                     " 500, 'missing')", [(pid, "a-top.com", 2), (pid, "z-low.com", 8)])
+    conn.commit()
+    rows = scoring.content_gaps(conn, pid)
+    assert [(r["keyword"], r["domain"]) for r in rows] == [("공백 검색어", "a-top.com")], rows
+    conn.close()
+    scoring.load("cglead")
+    conn = db.connect()
+    why = conn.execute("SELECT reasoning FROM opportunities WHERE project_id=? AND kind='content_gap'",
+                       (pid,)).fetchall()
+    conn.close()
+    assert len(why) == 1 and "a-top.com 순위 2위" in why[0][0], [w[0] for w in why]
+
+
+def test_ai_excerpt_strips_markdown_once_on_the_server():
+    """발췌의 마크다운 기호는 서버가 한 번 걷는다 — 화면이 따로 걷으면 두 벌이다."""
+    got = scoring._excerpt("## 제목\n**굵게** 본문 [링크](https://a.com/x_(y)) 그리고 [1] 각주"
+                           " [source] - 항목 * 별 __밑__ 끝 [잘림] (https://b.com/abc")
+    assert got == "제목 굵게 본문 링크 그리고 각주 항목 별 밑 끝 잘림", got
 
 
 if __name__ == "__main__":

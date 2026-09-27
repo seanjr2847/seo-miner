@@ -22,7 +22,7 @@ import re
 import secrets
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -571,6 +571,40 @@ def crawl_compare(conn, pid: int, run_id: int) -> dict:
     return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now)}
 
 
+# 수집일과 창 끝의 거리 — collect_gsc 가 창을 (수집일 − 3일)에서 끝낸다(구글 실적 지연).
+# 직전 구간의 날짜(from~to)를 사람에게 말할 때만 쓴다.
+GSC_LAG_DAYS = 3
+# 직전 구간 스냅샷을 찾는 여유 — 수집이 매일이 아니어도(주 1회) 한 번은 걸린다.
+PREV_PERIOD_SLACK_DAYS = 7
+
+
+def _gsc_prev_period(conn, pid: int, cur: str | None, period: int | None) -> dict | None:
+    """지금 창과 **겹치지 않는** 직전 같은 길이 구간의 KPI (overview 띠의 비교 대상).
+
+    snapshot_pair 의 prev 는 바로 앞 수집분이라 매일 수집하면 창이 27일 겹친 28일이다 —
+    "직전 대비"가 사실상 하루치 차이였다. 여기는 창 끝이 지금 창 시작보다 앞인 것
+    (수집일 ≤ 지금 − period − 1) 중 가장 최근을, 그 뒤 PREV_PERIOD_SLACK_DAYS 안에서만
+    고른다. 합은 KPI 와 같은 기준(검색어별 행의 합, 순위는 scoring.POS_SQL). 없으면 None.
+    """
+    if not cur or not period:
+        return None
+    d = date.fromisoformat(cur)
+    hi = d - timedelta(days=period + 1)
+    r = conn.execute(
+        f"""SELECT snapshot_date d, SUM(clicks) c, SUM(impressions) i, {scoring.POS_SQL} p
+              FROM gsc_snapshots WHERE project_id=? AND period_days=?
+               AND snapshot_date BETWEEN ? AND ?
+             GROUP BY 1 ORDER BY 1 DESC LIMIT 1""",
+        (pid, period, str(hi - timedelta(days=PREV_PERIOD_SLACK_DAYS)), str(hi))).fetchone()
+    if not r:
+        return None
+    end = date.fromisoformat(r["d"]) - timedelta(days=GSC_LAG_DAYS)
+    c, i = int(r["c"] or 0), int(r["i"] or 0)
+    return {"date": r["d"], "from": str(end - timedelta(days=period)), "to": str(end),
+            "clicks": c, "impressions": i, "ctr": round(c / i, 4) if i else None,
+            "position": round(r["p"], 1) if r["p"] is not None else None}
+
+
 def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     """검색(GSC) 축 — KPI·추이·움직인 검색어·아깝다·의도/클러스터/국가/기기/색인.
 
@@ -625,6 +659,7 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
 
     return {
         "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
+        "gsc_prev_period": _gsc_prev_period(conn, pid, cur, period),
         # 고를 수 있는 날 = 실제로 수집한 날. 화면의 [기준 수집일]이 이걸 그린다.
         "gsc_dates": scoring.snapshot_dates(conn, pid),
         "gsc_pinned": bool(at),
@@ -862,6 +897,8 @@ def _axis_ai(conn, pid: int) -> dict:
         "ai_date": ai_date, "matrix": matrix, "gap_domains": gap_domains,
         "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
         "ai_gap_rows": ai_gap_rows,
+        # 질문 갈래 id → 사람 말 — 정본은 gen_prompts.INTENT_LABELS(화면에 사본을 안 둔다)
+        "ai_intent_labels": gen_prompts.INTENT_LABELS,
         "missed": missed, "ai_trend": ai_trend,
         "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
         # 켜 둔 질문 중 끝난 확인에서 못 잰 것·오래된 것·옛 생성기가 지은 것의 개수와
@@ -1034,11 +1071,17 @@ def _axis_competitors(conn, pid: int) -> dict:
     gap_date = conn.execute(
         "SELECT MAX(checked_date) FROM keyword_gap WHERE project_id=?", (pid,)).fetchone()[0]
     if gap_date:
+        # 경쟁사 순위 없이 'shared'(우리가 위)로 적힌 옛 행은 'unknown' 으로 읽는다 —
+        # collect_gap._kind 가 이제 그렇게 적는다. 다음 수집 전까지의 옛 행을 위한 것.
+        kind_sql = "CASE WHEN kind='shared' AND position IS NULL THEN 'unknown' ELSE kind END"
         kw_gap = q(conn, "SELECT * FROM keyword_gap WHERE project_id=? AND checked_date=?"
                          " ORDER BY volume DESC LIMIT 300", (pid, gap_date))
+        for r in kw_gap:
+            if r["kind"] == "shared" and r["position"] is None:
+                r["kind"] = "unknown"
         kw_gap_counts = {r["kind"]: r["n"] for r in q(
-            conn, "SELECT kind, COUNT(*) n FROM keyword_gap WHERE project_id=? AND checked_date=?"
-                  " GROUP BY 1", (pid, gap_date))}
+            conn, f"SELECT {kind_sql} kind, COUNT(*) n FROM keyword_gap WHERE project_id=?"
+                  " AND checked_date=? GROUP BY 1", (pid, gap_date))}
         # 격차를 맞댄 경쟁 도메인 전부 — kw_gap 은 300줄로 잘려 거기서 모으면 빠진다.
         # 몫(comp_metrics)은 자동 탐지에서 지표를 받은 곳만이라, 이것 없이 "경쟁사를 못
         # 찾았다"고 말하면 바로 아래 격차 표와 모순된다(9회차).
@@ -1288,7 +1331,11 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # striking()·content_gaps() 가 낸 원본 행(band/kind)에 있다 — 검색어·키워드
     # 문자열로 한 번만 짝짓는다(대상 문자열 자체가 판정하지 않는다).
     sd_band = {r["query"]: r["band"] for r in striking}
-    gap_kind = {r["keyword"].strip().lower(): r["kind"] for r in kw_gap}
+    # 콘텐츠 공백은 검색어×경쟁사마다 줄이라 근거 행을 적재와 같은 규칙(scoring.cg_lead)으로
+    # 하나 고른다 — 갈래도 근거 문장도 그 행에서 읽는다(최신 격차 표와 같은 말).
+    cg_rows = scoring.cg_lead(kw_gap)
+    gap_kind = {k: r["kind"] for k, r in cg_rows.items()}
+    cg_reason = scoring._KIND_BY_NAME["content_gap"].reasoning
     # 구글 AI 요약 빠짐도 우리 순위로 처방이 갈린다(scoring._AIO_PLAY) — 원본 행은 그
     # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 순위 행·GSC 순위로
     # 물러선다(_aio_band_of) — 요청문 근거가 읽는 자리와 같다.
@@ -1306,14 +1353,15 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
               and o["target"] not in sd_band]
     gsc_pos: dict[str, float] = {}
     gsc_sum: dict[str, tuple[int, int]] = {}
-    if asked:
-        for qq, prows in scoring.pages_by_query(conn, pid, asked, at=at).items():
-            rows = [p for p in prows if p.get("position") is not None]
-            imp = sum(p.get("impressions") or 0 for p in rows)
-            if rows:            # 노출 가중 평균 — GSC 가 검색어 순위를 내는 방식과 같다
-                gsc_pos[qq] = (sum(p["position"] * (p.get("impressions") or 0) for p in rows) / imp
-                               if imp else sum(p["position"] for p in rows) / len(rows))
-                gsc_sum[qq] = (imp, sum(p.get("clicks") or 0 for p in rows))
+    if asked and cur:
+        # 순위 합치기는 scoring.POS_SQL 한 벌(_snap_agg) — 여기서 따로 가중하면 상위 5개
+        # 지면만 세어 분석 화면과 다른 순위가 나왔다.
+        agg = scoring._snap_agg(conn, pid, cur, period)
+        for qq in asked:
+            r = agg.get(qq)
+            if r and r["pos"] is not None:
+                gsc_pos[qq] = r["pos"]
+                gsc_sum[qq] = (r["imp"] or 0, r["clk"] or 0)
     # 챗봇 인용 공백은 대신 인용된 곳의 갈래(scoring.ai_tally 의 lean)로 처방이 갈린다 —
     # 요청문 근거표와 같은 행에서 읽어야 표와 처방이 같은 말을 한다. 기회를 세운 행
     # (ai_gap_rows)이 먼저고, 거기 없는 질문만 최신 회차 행으로 물러선다(뒤가 이긴다).
@@ -1345,6 +1393,8 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
         else:
             band = (_aio_band_of(o["target"], aio_band, rank_pos, gsc_pos)
                     if o["kind"] == "aio_exposure" else None)
+        if o["kind"] == "content_gap" and str(o["target"]).strip().lower() in cg_rows:
+            o["reasoning"] = cg_reason(cg_rows[str(o["target"]).strip().lower()], {})
         gk = (gap_kind.get(str(o["target"]).strip().lower()) if o["kind"] == "content_gap"
               else ai_lean.get(str(o["target"])) if o["kind"] == "ai_citation_gap" else None)
         o["label"] = scoring.kind_label(o["kind"], band=band)

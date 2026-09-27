@@ -2047,7 +2047,7 @@ def test_serp_adapter_credentials_timeouts_and_labs():
                 serp_adapter.fetch_labs_ranked_keywords("test.com", "ko-KR", limit=10)
                 raise AssertionError("status_code >= 40000 은 에러를 내야 함")
             except RuntimeError as e:
-                assert "dataforseo task error" in str(e)
+                assert "거절됐습니다" in str(e) and "no rows" in str(e), str(e)
         finally:
             serp_adapter.requests.post = orig_post
     finally:

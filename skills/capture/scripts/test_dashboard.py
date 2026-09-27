@@ -67,6 +67,42 @@ def test_competitors_axis_lists_every_gap_rival():
     assert ax["gap_rivals"] == ["big.example", "small.example"], ax["gap_rivals"]
 
 
+
+def test_competitors_axis_reads_unknown_rival_rank_as_unknown():
+    """경쟁사 순위를 못 받은 줄은 '우리가 위'(shared)가 아니라 모른다(unknown) —
+    collect_gap 이 이제 그렇게 적고, 그 전에 적힌 옛 행도 화면에는 그렇게 간다(10회차 A5)."""
+    conn, pid = _brain("gapunk")
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+                     " our_position, volume, kind) VALUES(?,?,?,?,?,?,?,?)",
+                     [(pid, D, "모름", "r.example", None, 4, 100, "shared"),
+                      (pid, D, "위", "r.example", 9, 4, 90, "shared")])
+    conn.commit()
+    ax = dashboard._axis_competitors(conn, pid)
+    conn.close()
+    assert {r["keyword"]: r["kind"] for r in ax["kw_gap"]} == {"모름": "unknown", "위": "shared"}
+    assert ax["kw_gap_counts"] == {"unknown": 1, "shared": 1}, ax["kw_gap_counts"]
+
+
+def test_gsc_prev_period_does_not_overlap_the_current_window():
+    """개요 띠의 비교 대상은 지금 창과 겹치지 않는 직전 같은 길이 구간이다(D2). 바로 앞
+    수집분(하루 전 28일)은 창이 27일 겹쳐 증감이 사실상 하루치였다."""
+    conn, pid = _brain("prevper")
+    rows = [("2026-08-28", 40, 400), ("2026-08-27", 39, 390),     # 지금 · 하루 전(겹침)
+            ("2026-07-31", 30, 300),                              # 하루 겹침 — 안 고른다
+            ("2026-07-29", 20, 200),                              # 겹치지 않는 가장 최근
+            ("2026-07-01", 10, 100)]                              # 더 옛것
+    conn.executemany("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query,"
+                     " clicks, impressions, ctr, position) VALUES(?,?,28,'q',?,?,0,?)",
+                     [(pid, d_, c, i, 5.0) for d_, c, i in rows])
+    conn.commit()
+    pp = dashboard._axis_gsc(conn, pid, {}, None)["gsc_prev_period"]
+    assert pp == {"date": "2026-07-29", "from": "2026-06-28", "to": "2026-07-26", "clicks": 20,
+                  "impressions": 200, "ctr": 0.1, "position": 5.0}, pp
+    # 겹치지 않는 구간의 기록이 없으면 없다고 한다(null) — 겹친 것으로 채우지 않는다
+    assert dashboard._axis_gsc(conn, pid, {}, "2026-07-29")["gsc_prev_period"] is None  # 07-01 은 하루 겹친다
+    conn.close()
+
+
 # ── 백링크 ────────────────────────────────────────────────────────────────
 def test_gather_backlinks_axes():
     conn, pid = _brain("bl")
@@ -385,13 +421,16 @@ def test_axis_opps_resolves_band_and_gap_kind_standalone():
     conn.commit()
     db.set_verdicts(conn, pid, [scoring.norm(t) for t in ("1페이지권", "새글", "아무거나", "먹은기회")], "work")
     striking = [{"query": "1페이지권", "band": "page1"}]
-    kw_gap = [{"keyword": "새글", "kind": "missing"}]
+    kw_gap = [{"keyword": "새글", "kind": "missing", "domain": "r.com", "position": 3,
+               "our_position": None, "volume": None}]
 
     d = dashboard._axis_opps(conn, pid, None, striking, kw_gap)
     by_target = {o["target"]: o for o in d["opps"]}
 
     assert by_target["1페이지권"]["label"] == "1페이지 상단 가능", by_target["1페이지권"]
     assert by_target["새글"]["play"]["what"].startswith("경쟁 도메인은 잡고 있는데")
+    # 적재 때 문장("r")이 아니라 최신 격차 행(scoring.cg_lead)으로 다시 쓴다
+    assert by_target["새글"]["reasoning"].startswith("경쟁 도메인 r.com 순위 3위"), by_target["새글"]
     decay = by_target["아무거나"]
     assert decay["label"] == "순위 하락" and decay["is_defensive"] is True
     # opps_total 은 status='new' 만 — 'acked' 는 새 기회 개수에서 빠진다
@@ -632,7 +671,7 @@ def _surface_fixture(name: str):
       F      : 페이지 없음, SERP 가 누구와도 2개 이하로만 겹친다          → 혼자
       G·H    : 페이지·SERP 없음, 같은 클러스터                           → 한 줄(cluster)
       J·K    : A 와 같은 페이지지만 done·resolved                       → 열린 줄에 안 낀다
-      S      : A 와 같은 검색어의 다른 종류(striking_distance)            → 안 묶이는 종류, 따로
+      S      : A 와 같은 검색어의 다른 종류(striking_distance)            → A 줄에 붙음(종류 여럿)
     """
     conn, pid = _brain(name)
     t = {"A": "syringoma", "B": "syringomas", "C": "syringoma treatment",
@@ -678,18 +717,23 @@ def _surface_fixture(name: str):
 
 def test_opp_groups_fold_same_surface_into_one_line():
     """같은 지면의 변형 셋(A·B·C)과 SERP 로 붙는 E 가 **한 줄**이고, id 는 넷 다 남는다.
-    다른 지면(D)·혼자(F)·클러스터(G·H)는 안 섞인다. 묶는 종류가 아닌 기회(S)는 따로 선다."""
+    다른 지면(D)·혼자(F)·클러스터(G·H)는 안 섞인다. 같은 검색어의 다른 종류(S)도 그 줄에
+    붙는다 — 줄 하나가 할 일 하나다(D1). 대표·종류·점수는 점수가 가장 높은 쪽(S 75점)."""
     conn, pid, ids = _surface_fixture("grp")
     d = dashboard._axis_opps(conn, pid, None, [], [])
     lines = d["opp_groups"]
     of = {i: ln for ln in lines for i in ln["ids"]}
     a = of[ids["A"]]
-    assert set(a["ids"]) == {ids["A"], ids["B"], ids["C"], ids["E"]}, a
-    assert a["lead"] == ids["A"] and a["via"] == "page" and a["key_src"] == "gsc", a
+    assert set(a["ids"]) == {ids["S"], ids["A"], ids["B"], ids["C"], ids["E"]}, a
+    assert a["lead"] == ids["S"] and a["kind"] == "striking_distance" and a["score"] == 75, a
+    assert a["kinds"] == ["striking_distance", "aio_exposure"], a["kinds"]
+    assert a["labels"] == ["1페이지 상단 가능", "구글 AI 요약 빠짐"], a["labels"]
+    assert a["via"] == "page" and a["key_src"] == "gsc", a       # 묶음 이유는 지면 줄의 것
     assert a["key"].endswith("/syringoma"), a["key"]
-    assert [v["id"] for v in a["variants"]] == [ids["A"], ids["B"], ids["E"], ids["C"]], a
+    assert [v["id"] for v in a["variants"]] == [ids["S"], ids["A"], ids["B"], ids["E"], ids["C"]], a
     assert {v["id"]: v["via"] for v in a["variants"]}[ids["E"]] == "serp", a["variants"]
     assert sum(1 for ln in lines if ids["A"] in ln["ids"]) == 1, "대표가 두 줄에 선다"
+    assert sum(1 for ln in lines if ids["S"] in ln["ids"]) == 1, "같은 검색어가 종류마다 한 줄씩 선다"
     dd = of[ids["D"]]
     # 띄어쓰기 변형뿐인 줄은 "같은 검색어"라고 말한다(같은 페이지인 것은 key 가 남긴다)
     assert set(dd["ids"]) == {ids["D"], ids["D2"]} and dd["via"] == "norm", dd
@@ -697,13 +741,17 @@ def test_opp_groups_fold_same_surface_into_one_line():
     assert of[ids["F"]]["ids"] == [ids["F"]] and of[ids["F"]]["via"] == "alone"
     gh = of[ids["G"]]
     assert set(gh["ids"]) == {ids["G"], ids["H"]} and gh["via"] == "cluster" and gh["key"] == "stye"
-    s = of[ids["S"]]
-    assert s["ids"] == [ids["S"]] and s["via"] is None and s["kind"] == "striking_distance"
-    # 묶음 점수: 대표 점수 + (지면 전체 검색량으로 다시 잰 수요 - 대표 검색량의 수요)
+    # 혼자인 줄도 종류 목록을 싣는다(화면은 kinds 로 배지를 그린다)
+    assert of[ids["F"]]["kinds"] == ["aio_exposure"], of[ids["F"]]
+    # 묶음 점수(지면 줄만 있을 때): 대표 점수 + (지면 전체 검색량으로 다시 잰 수요 - 대표
+    # 검색량의 수요). S 가 붙기 전 그 줄의 점수다 — S(75)보다 낮아야 위 대표 판정이 맞다.
     base = {"impressions": 0, "position": None, "fit": 0.5}
     want = round(60 + scoring.score("aio_exposure", {**base, "volume": 1000 + 300 + 90 + 200}, "saas")
                  - scoring.score("aio_exposure", {**base, "volume": 1000}, "saas"), 1)
-    assert a["score"] == want and 60 < a["score"] <= 100, (a["score"], want)
+    alone = scoring.group_opportunities(conn, pid, [o for o in d["opps"] if o["id"] != ids["S"]])
+    aa = next(ln for ln in alone if ids["A"] in ln["ids"])
+    assert aa["score"] == want and 60 < want < 75, (aa["score"], want)
+    assert aa["lead"] == ids["A"] and aa["kinds"] == ["aio_exposure"], aa
     # 줄 순서 = 화면 순서(새 것 먼저, 점수 내림차순)
     news = [ln["score"] for ln in lines if ln["status"] == "new"]
     assert news == sorted(news, reverse=True), news

@@ -479,7 +479,7 @@ CREATE TABLE IF NOT EXISTS keyword_gap (      -- 경쟁사 대비 키워드 위�
   position INTEGER,
   our_position INTEGER,                       -- NULL = 우리는 아예 부재
   volume INTEGER,
-  kind TEXT,                                  -- missing|weak|shared
+  kind TEXT,                                  -- missing|weak|shared|unknown
   UNIQUE(project_id, checked_date, keyword, domain)
 );
 CREATE INDEX IF NOT EXISTS idx_kwgap ON keyword_gap(project_id, checked_date, kind);
@@ -2491,7 +2491,7 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
         if per is None:
             return None
         r = conn.execute(
-            f"""SELECT SUM(clicks) c, AVG(position) p FROM gsc_snapshots
+            f"""SELECT SUM(clicks) c, {scoring.POS_SQL} p FROM gsc_snapshots
                  WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?
                    AND snapshot_date=(SELECT MAX(snapshot_date) FROM gsc_snapshots
                         WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?)""",
@@ -2628,8 +2628,9 @@ def query_performance(conn: sqlite3.Connection, project_id: int,
     노출이 0 이면 None 이다. "노출 없음"과 "클릭 0"은 다르고, 근거로 쓸 수 있는 건
     노출이 있을 때뿐이라 그 판정을 호출부마다 다시 쓰지 않게 여기서 끝낸다.
     """
+    import scoring
     r = conn.execute(
-        """SELECT SUM(clicks) c, SUM(impressions) i, AVG(position) pos
+        f"""SELECT SUM(clicks) c, SUM(impressions) i, {scoring.POS_SQL} pos
              FROM gsc_snapshots WHERE project_id=? AND query=?""",
         (int(project_id), query)).fetchone()
     if not r or not r["i"]:
@@ -2737,7 +2738,7 @@ def _selfcheck() -> None:
             assert count_active_keywords(conn, pid) == 1
 
             perf = query_performance(conn, pid, "나")
-            assert perf == {"clicks": 4, "impressions": 150, "position": 8.0}, perf
+            assert perf == {"clicks": 4, "impressions": 150, "position": 7.7}, perf   # 노출 가중(scoring.POS_SQL)
             assert query_performance(conn, pid, "가") is None, "노출 0 인데 근거가 있다고 한다"
 
             upsert_opportunities(conn, pid, None, [("striking_distance", "나", 80.0, "왜")])

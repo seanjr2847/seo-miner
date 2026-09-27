@@ -9,7 +9,7 @@
 축이 셋이고, 셋 다 끌 수 있다 (0 = 끔):
   A. 역키워드     ranked_keywords/live      → keywords (source='competitor_gap')
   B. 자동 탐지·몫 competitors_domain/live   → competitors(auto_labs) + competitor_metrics
-  C. Content Gap  domain_intersection/live  → keyword_gap (missing|weak|shared)
+  C. Content Gap  domain_intersection/live  → keyword_gap (missing|weak|shared|unknown)
 
 B 는 "누가 우리와 키워드가 겹치나"를 사람 등록 없이 찾고(Ahrefs 의 Organic
 competitors), 같은 응답의 `metrics.organic` 으로 도메인별 유기 규모까지 한 번에
@@ -22,6 +22,7 @@ C 는 A 가 못 주는 것을 준다. A 는 "경쟁사가 잡은 키워드" 목�
   · missing — 우리는 순위 없음 (`intersections: false` 축)
   · weak    — 둘 다 있는데 우리가 더 아래
   · shared  — 둘 다 있고 우리가 같거나 위
+  · unknown — 우리는 있는데 경쟁사 순위를 못 받았다(누가 위인지 모른다)
 로 가른다. 경쟁사당 2콜이라 `limits.gap_rivals` 로 상한을 둔다.
 
 흐름:
@@ -167,10 +168,13 @@ def _pos_of(it: dict, which: int) -> int | None:
 
 
 def _kind(our_pos: int | None, rival_pos: int | None) -> str:
-    """missing = 우리 부재 / weak = 둘 다 있고 우리가 아래 / shared = 같거나 위."""
+    """missing = 우리 부재 / weak = 둘 다 있고 우리가 아래 / shared = 같거나 위 /
+    unknown = 경쟁사 순위를 못 받음. 모르는 걸 '우리가 위'(shared)로 세면 안 된다."""
     if our_pos is None:
         return "missing"
-    if rival_pos is not None and our_pos > rival_pos:
+    if rival_pos is None:
+        return "unknown"
+    if our_pos > rival_pos:
         return "weak"
     return "shared"
 
@@ -788,6 +792,7 @@ def _selfcheck() -> None:
             gaps["rival.com missing"]["volume"]) == (4, None, 30), gaps
     assert gaps["rival.com weak"]["domain"] == "rival.com", gaps
     assert _kind(None, 3) == "missing" and _kind(5, 5) == "shared" and _kind(5, 2) == "weak"
+    assert _kind(5, None) == "unknown"          # 경쟁사 순위를 모르면 누가 위인지 모른다
 
     # 4) 콜 모양 — 자동 탐지 1회, 교집합/부재 2축, 우리가 응답에 있으면 overview 안 부름
     paths = [q[0] for q in posts]

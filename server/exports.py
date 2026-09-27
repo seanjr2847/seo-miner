@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 
 import dashboard  # noqa: E402  (GSC 축 재사용 — summary/perf 가 스냅샷 짝을 직접 안 고른다)
 import db  # noqa: E402
+import scoring  # noqa: E402
 
 
 _ALLOWED = ("keywords", "opportunities", "queries", "index")
@@ -97,10 +98,10 @@ def _csv_queries(conn, pid: int) -> tuple[bytes, str]:
         return _csv_bytes(["검색어", "노출", "클릭", "CTR", "평균 순위"], []), \
                f"queries-{_today()}.csv"
     rows = conn.execute(
-        """SELECT query,
+        f"""SELECT query,
                   SUM(impressions), SUM(clicks),
                   ROUND(SUM(clicks)*1.0/NULLIF(SUM(impressions),0), 4),
-                  ROUND(AVG(position), 1)
+                  ROUND({scoring.POS_SQL}, 1)   -- 화면과 같은 노출 가중 평균
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=?
             GROUP BY query

@@ -426,8 +426,16 @@ def movers(now_: dict, before: dict, *, limit: int = 10) -> tuple[list[dict], li
     return ups, downs
 
 
-_STRIKING_SQL = """
-SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
+# 한 검색어·페이지가 여러 줄(검색어×페이지, 기기)로 걸릴 때 순위를 합치는 규칙은 한 벌 —
+# 노출 가중 평균(구글이 검색어 순위를 내는 방식). 맨평균이 섞이면 노출 1회짜리 65위가
+# 노출 500회짜리 9위와 같은 무게가 되어, 같은 검색어가 개요 4.5위·분석 10.3위로 갈렸다.
+# 노출이 0 인 묶음만 맨평균으로 물러선다. SQL 에서 순위를 합치는 자리는 전부 이걸 쓴다.
+POS_SQL = ("(CASE WHEN SUM(impressions) > 0 THEN SUM(position * impressions) * 1.0"
+           " / SUM(impressions) ELSE AVG(position) END)")
+
+
+_STRIKING_SQL = f"""
+SELECT query, ROUND({POS_SQL},1) pos, SUM(impressions) imp, SUM(clicks) clk
   FROM gsc_snapshots WHERE project_id=? AND snapshot_date=?
  GROUP BY query HAVING pos BETWEEN ? AND ? AND imp >= ?
  ORDER BY imp DESC LIMIT ?
@@ -465,9 +473,9 @@ def pseo_candidates(conn: sqlite3.Connection, project_id: int, snapshot_date: st
     if not snapshot_date:
         return []
     return [dict(r) for r in conn.execute(
-        """SELECT query, SUM(impressions) imp, SUM(clicks) clk,
+        f"""SELECT query, SUM(impressions) imp, SUM(clicks) clk,
                   ROUND(SUM(clicks)*100.0/SUM(impressions),2) ctr_pct,
-                  ROUND(AVG(position),1) pos
+                  ROUND({POS_SQL},1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=?
             GROUP BY query HAVING imp >= ? AND ctr_pct < ?
@@ -488,7 +496,7 @@ def ctr_gaps(conn: sqlite3.Connection, project_id: int, *, limit: int = 15,
         return []
     out = []
     for r in conn.execute(
-        """SELECT query, ROUND(AVG(position),1) pos, SUM(impressions) imp, SUM(clicks) clk
+        f"""SELECT query, ROUND({POS_SQL},1) pos, SUM(impressions) imp, SUM(clicks) clk
              FROM gsc_snapshots WHERE project_id=? AND snapshot_date=? AND period_days=?
             GROUP BY query HAVING pos BETWEEN 1 AND ? AND imp >= ?""",
             (project_id, cur, period, PAGE1, CTR_GAP_MIN_IMP)):
@@ -1294,7 +1302,7 @@ def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
         chunk = qs[i:i + 200]
         for r in conn.execute(
             f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
-                       ROUND(AVG(position),1) pos
+                       ROUND({POS_SQL},1) pos
                   FROM gsc_snapshots
                  WHERE project_id=? AND snapshot_date=? AND period_days=?
                    AND page IS NOT NULL AND query IN ({','.join('?' * len(chunk))})
@@ -1335,10 +1343,7 @@ def trend_by_target(conn: sqlite3.Connection, project_id: int, targets,
             chunk = want[i:i + 200]
             for r in conn.execute(
                 f"""SELECT {col} t, snapshot_date d, SUM(impressions) imp, SUM(clicks) clk,
-                           CASE WHEN SUM(impressions) > 0
-                                THEN ROUND(SUM(position * impressions) * 1.0
-                                           / SUM(impressions), 1)
-                                ELSE ROUND(AVG(position), 1) END pos
+                           ROUND({POS_SQL}, 1) pos
                       FROM gsc_snapshots
                      WHERE project_id=? AND period_days=? AND snapshot_date<=?
                        AND {col} IN ({','.join('?' * len(chunk))})
@@ -1369,7 +1374,7 @@ def queries_by_page(conn: sqlite3.Connection, project_id: int, pages,
         chunk = ps[i:i + 200]
         for r in conn.execute(
             f"""SELECT page, query, SUM(impressions) imp, SUM(clicks) clk,
-                       ROUND(AVG(position),1) pos
+                       ROUND({POS_SQL},1) pos
                   FROM gsc_snapshots
                  WHERE project_id=? AND snapshot_date=? AND period_days=?
                    AND query IS NOT NULL AND page IN ({','.join('?' * len(chunk))})
@@ -1675,8 +1680,8 @@ def page_first_queries(conn: sqlite3.Connection, project_id: int, urls=None, *,
     site = site_words_of(conn, project_id)      # 자리 판정은 사이트마다 다르다
     first: dict[str, dict] = {}                 # query → 노출 1등 페이지 행
     for r in conn.execute(
-        """SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
-                  ROUND(AVG(position),1) pos
+        f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
+                  ROUND({POS_SQL},1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
               AND query IS NOT NULL
@@ -1748,7 +1753,7 @@ def _page_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
               period: int) -> dict[str, dict]:
     """스냅샷 하나를 페이지 단위로 접는다 (_snap_agg 의 페이지 축 짝)."""
     return {r["page"]: dict(r) for r in conn.execute(
-        """SELECT page, SUM(clicks) clk, SUM(impressions) imp, AVG(position) pos,
+        f"""SELECT page, SUM(clicks) clk, SUM(impressions) imp, {POS_SQL} pos,
                   COUNT(DISTINCT query) q
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
@@ -1970,7 +1975,7 @@ def starved_pages(conn: sqlite3.Connection, project_id: int, *,
         crawled[url_key(r["url"])] = (r["url"], r["links_in"] or 0)
     out = []
     for n, r in enumerate(conn.execute(
-        """SELECT page, SUM(clicks) clk, SUM(impressions) imp, AVG(position) pos
+        f"""SELECT page, SUM(clicks) clk, SUM(impressions) imp, {POS_SQL} pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
             GROUP BY page ORDER BY imp DESC LIMIT ?""",
@@ -2024,8 +2029,8 @@ def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 1
         return []
     per_q: dict[str, list[dict]] = {}
     for r in conn.execute(
-        """SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
-                  ROUND(AVG(position),1) pos
+        f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
+                  ROUND({POS_SQL},1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
             GROUP BY query, page""", (project_id, cur, period)):
@@ -2091,8 +2096,8 @@ def device_gap(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
         return []
     per_q: dict[str, dict] = {}
     for r in conn.execute(
-        """SELECT dim_value, query, SUM(clicks) clk, SUM(impressions) imp,
-                  AVG(position) pos
+        f"""SELECT dim_value, query, SUM(clicks) clk, SUM(impressions) imp,
+                  {POS_SQL} pos
              FROM gsc_breakdown
             WHERE project_id=? AND snapshot_date=? AND dim='device'
             GROUP BY dim_value, query""", (project_id, cur)):
@@ -2129,6 +2134,19 @@ def _indexed(coverage_state: str | None) -> bool:
     return "indexed" in c or "색인" in c
 
 
+# 정상 리다이렉트·대체 페이지 — 이 주소 대신 다른 주소(리다이렉트 목적지·대표 주소)가
+# 색인된 것이라 색인 막힘이 아니다. 막힘으로 세면 301 을 건 주소마다 '색인 막힘' 기회가
+# 섰다. GSC 는 로케일에 따라 영/한으로 준다.
+_REDIRECT_STATES = ("page with redirect", "alternate page with proper canonical",
+                    "리디렉션이 포함된 페이지", "적절한 표준 태그가 포함된 대체 페이지")
+
+
+def _redirected(coverage_state: str | None) -> bool:
+    """coverage_state 가 정상 리다이렉트·대체 페이지인가."""
+    c = (coverage_state or "").lower()
+    return any(s in c for s in _REDIRECT_STATES)
+
+
 # 색인 실패 원인 갈래 — _index_bucket() 반환값의 정본이자 손대는 순서(막힌 것 →
 # 못 가져온 것 → 대표 URL 엇갈림 → 그냥 색인 안 됨). site.html 의 ST_IX 가 갈래마다
 # 라벨·심각도·처방을 갖는다 — 이름이 늘거나 바뀌면 거기서도 고쳐야 한다.
@@ -2159,6 +2177,7 @@ def _index_bucket(r: sqlite3.Row) -> tuple[str, str]:
 
 def index_issues(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     """최신 색인 점검에서 걸러진 URL — verdict 가 PASS 가 아니거나 색인이 안 된 것.
+    정상 리다이렉트·대체 페이지(_redirected)는 문제가 아니라서 뺀다.
 
     limit 이 없는 건 게으름이 아니다 — URL Inspection API 는 하루 할당이 작아
     (config index_urls 기본 20) 검사한 URL 자체가 이미 소수다.
@@ -2172,7 +2191,8 @@ def index_issues(conn: sqlite3.Connection, project_id: int) -> list[dict]:
                   indexing_state, google_canonical, user_canonical
              FROM gsc_index_status WHERE project_id=? AND checked_date=?
             ORDER BY url""", (project_id, cur)):
-        if (r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"]):
+        if ((r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"])
+                or _redirected(r["coverage_state"])):
             continue
         bucket, detail = _index_bucket(r)
         out.append({"url": r["url"], "bucket": bucket, "verdict": r["verdict"],
@@ -2186,7 +2206,7 @@ def _snap_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
     """스냅샷 하나를 movers() 입력 모양(query -> {pos, clk, imp})으로 집계."""
     return {r["query"]: {"pos": r["pos"], "clk": r["clk"], "imp": r["imp"]}
             for r in conn.execute(
-                """SELECT query, AVG(position) pos, SUM(clicks) clk, SUM(impressions) imp
+                f"""SELECT query, {POS_SQL} pos, SUM(clicks) clk, SUM(impressions) imp
                      FROM gsc_snapshots
                     WHERE project_id=? AND snapshot_date=? AND period_days=?
                     GROUP BY query""", (project_id, snapshot_date, period))}
@@ -3040,8 +3060,23 @@ def ai_cite_label(cited: int | None, checks: int | None) -> str:
     return s + (" · 표본 부족" if n < AI_MIN_SAMPLES else "")
 
 
+# 답변 원문의 마크다운 기호 — 발췌는 사람이 읽는 한 토막이라 서버가 한 번 걷는다(화면이
+# 따로 걷으면 두 벌이다). 링크는 글자만 남기고(주소가 잘려 닫는 괄호가 없어도), 각주 번호·
+# [source] 표시·제목(#)·목록 머리(- *)·강조(** __ *)는 지운다.
+_MD_STRIP = (
+    (re.compile(r"\[([^\]]+)\]\s?\((?:[^()\s]|\([^()\s]*\))*\)?"), r"\1"),
+    (re.compile(r"\[(?:\d+|source|sources|출처)\]", re.I), ""),
+    (re.compile(r"(^|\s)#{1,6}\s+"), r"\1"),
+    (re.compile(r"(^|\s)[*-]\s+"), r"\1"),
+    (re.compile(r"\*\*|__|\*"), ""),
+)
+
+
 def _excerpt(text: str) -> str:
-    t = re.sub(r"\s+", " ", (text or "")).strip()
+    t = text or ""
+    for rx, to in _MD_STRIP:
+        t = rx.sub(to, t)
+    t = re.sub(r"\s+", " ", t).strip()
     return t if len(t) <= AI_EXCERPT_CHARS else t[:AI_EXCERPT_CHARS - 1].rstrip() + "…"
 
 
@@ -3074,6 +3109,7 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
                    사이트) | None
       excerpts     {engine: 발췌} 엔진마다 우리가 빠진 답변 중 가장 먼저 받은 것(id 순) —
                    무작위가 아니라 결정적이다. 빠진 답이 없는 엔진은 없다
+      cited_excerpts {engine: 발췌} 같은 규칙으로 우리가 인용된 답변 중 가장 먼저 받은 것
       by_engine    {engine: {checks, cited, mentioned, named_only, recommended,
                              rec_checks, misses, rivals}}
     """
@@ -3089,7 +3125,8 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
         args += list(prompt_ids)
     acc: dict[int, dict] = {}
     for c in conn.execute(sql + " ORDER BY id", args):
-        a = acc.setdefault(c["prompt_id"], {"eng": {}, "tally": {}, "excerpts": {}})
+        a = acc.setdefault(c["prompt_id"], {"eng": {}, "tally": {}, "excerpts": {},
+                                            "cited_excerpts": {}})
         e = a["eng"].setdefault(c["engine"], {"checks": 0, "cited": 0, "mentioned": 0,
                                               "named_only": 0, "recommended": 0,
                                               "rec_checks": 0, "misses": 0, "tally": {}})
@@ -3101,6 +3138,8 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
             e["rec_checks"] += 1
             e["recommended"] += int(bool(c["recommended"]))
         if c["cited"]:
+            if c["engine"] not in a["cited_excerpts"] and (c["answer_excerpt"] or "").strip():
+                a["cited_excerpts"][c["engine"]] = _excerpt(c["answer_excerpt"])
             continue
         e["misses"] += 1
         try:
@@ -3138,7 +3177,8 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
                     "lean": (None if share is None else
                              "third_party" if share > AI_PRESENCE_SHARE else
                              "press" if pshare > AI_PRESENCE_SHARE else "sites"),
-                    "excerpts": a["excerpts"], "by_engine": by}
+                    "excerpts": a["excerpts"], "cited_excerpts": a["cited_excerpts"],
+                    "by_engine": by}
     return out
 
 
@@ -3308,12 +3348,31 @@ def content_gaps(conn: sqlite3.Connection, project_id: int, *,
     d = _latest(conn, _LATEST_KG, (project_id,))
     if not d:
         return []
-    return [dict(r) for r in conn.execute(
+    return list(cg_lead(dict(r) for r in conn.execute(
         """SELECT keyword, domain, position, our_position, volume, kind
              FROM keyword_gap
             WHERE project_id=? AND checked_date=? AND kind IN ('missing','weak')
-         ORDER BY volume IS NULL, volume DESC, keyword LIMIT ?""",
-        (project_id, d, limit))]
+         ORDER BY volume IS NULL, volume DESC, keyword""",
+        (project_id, d))).values())[:limit]
+
+
+def cg_lead(rows) -> dict[str, dict]:
+    """콘텐츠 공백 검색어 → 근거 행 하나 (키: 앞뒤 공백 뺀 소문자 검색어, 입력 순서 유지).
+
+    keyword_gap 은 검색어×경쟁사마다 줄인데 기회는 (종류, 대상) 한 줄로 접힌다. 근거를
+    정하지 않으면 적재 순서에 따라 아무 경쟁사 문장이나 남았다. 가장 높은 순위의 경쟁사
+    하나(동률은 도메인 순)로 정한다 — 적재(content_gaps)와 화면(dashboard)이 이걸 같이 쓴다.
+    """
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r["kind"] not in ("missing", "weak"):
+            continue
+        k = str(r["keyword"]).strip().lower()
+        o = out.get(k)
+        if o is None or ((r["position"] is None, r["position"] or 0, r["domain"] or "")
+                         < (o["position"] is None, o["position"] or 0, o["domain"] or "")):
+            out[k] = r
+    return out
 
 
 def crawl_gaps(conn: sqlite3.Connection, project_id: int, *,
@@ -4146,21 +4205,28 @@ def _gsc_now(conn, pid: int, target: str, since: str, ctx: dict):
     if not cur or not _after_day(cur, since):
         return None, cur
     r = conn.execute(
-        """SELECT AVG(position) pos, SUM(impressions) imp, SUM(clicks) clk FROM gsc_snapshots
+        f"""SELECT {POS_SQL} pos, SUM(impressions) imp, SUM(clicks) clk FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND query=?""",
         (pid, cur, period, target)).fetchone()
     return (r if r and r["imp"] is not None and r["pos"] is not None else None), cur
 
 
 def _resolve_striking(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
-    """밀면 오를 검색어(4~20위) → 새 스냅샷에서 노출 하한을 넘기며 3위 안.
-    20위 밖으로 떨어진 것·노출이 줄어 하한 아래로 간 것은 풀림이 아니다."""
+    """밀면 오를 검색어(4~20위) → 새 스냅샷에서 노출 하한을 넘기며 3위 안이면 풀림.
+    20위 밖으로 밀렸거나 노출이 하한 아래로 줄었거나 검색어가 사라졌으면 '밀면 오를'
+    조건 자체를 벗어난 것이라 그렇게 적고 닫는다 — 안 닫으면 조건 밖 기회가 영원히 열려
+    있었다. 떨어진 것은 순위·하락 기회(rank_decay)가 따로 잡는다."""
     r, cur = _gsc_now(conn, pid, target, since, ctx)
     if not r:
+        if cur and _after_day(cur, since):
+            return f"이번 구글 실적에 이 검색어의 노출이 없어 조건을 벗어났습니다 (구글 실적 {cur} 기준)"
         return None
     pos = round(r["pos"], 1)
     if r["imp"] >= STRIKING_MIN_IMP and pos < STRIKING_LO:
         return f"평균 {pos}위 · 노출 {r['imp']:,}로 상단 3위권에 들었습니다 (구글 실적 {cur} 기준)"
+    if pos > STRIKING_HI or r["imp"] < STRIKING_MIN_IMP:
+        return (f"평균 {pos}위 · 노출 {r['imp']:,}로 밀면 오를 검색어 조건({STRIKING_LO}~"
+                f"{STRIKING_HI}위 · 노출 {STRIKING_MIN_IMP} 이상)을 벗어났습니다 (구글 실적 {cur} 기준)")
     return None
 
 
@@ -4190,7 +4256,7 @@ def _resolve_device(conn, pid: int, target: str, since: str, ctx: dict) -> str |
     if not bd or not _after_day(bd, since):
         return None
     d = {(r["dim_value"] or "").upper(): r for r in conn.execute(
-        """SELECT dim_value, SUM(impressions) imp, AVG(position) pos FROM gsc_breakdown
+        f"""SELECT dim_value, SUM(impressions) imp, {POS_SQL} pos FROM gsc_breakdown
             WHERE project_id=? AND snapshot_date=? AND dim='device' AND query=?
             GROUP BY dim_value""", (pid, bd, target))}
     m, k = d.get("MOBILE"), d.get("DESKTOP")
@@ -4204,11 +4270,15 @@ def _resolve_device(conn, pid: int, target: str, since: str, ctx: dict) -> str |
 
 
 def _resolve_index(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
-    """색인 막힘 → 그 주소의 가장 최근 색인 점검이 PASS 이고 색인됨."""
+    """색인 막힘 → 그 주소의 가장 최근 색인 점검이 PASS 이고 색인됨.
+    정상 리다이렉트·대체 페이지는 애초에 막힘이 아니었다 — 점검일과 상관없이 닫는다."""
     r = conn.execute(
         """SELECT checked_date, verdict, coverage_state FROM gsc_index_status
             WHERE project_id=? AND url=? ORDER BY checked_date DESC LIMIT 1""",
         (pid, target)).fetchone()
+    if r and _redirected(r["coverage_state"]):
+        return (f"색인 막힘이 아닙니다 — 정상 리다이렉트·대체 페이지입니다: {r['coverage_state']} "
+                f"(색인 확인 {r['checked_date']})")
     if not r or not _after_day(r["checked_date"], since):
         return None
     if (r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"]):
@@ -4304,7 +4374,8 @@ _NO_RESOLVE = {
 # 시스템이 기회를 닫는 조건이 딴말을 하면, 목표를 이뤘는데 기회가 안 닫히거나 그 반대다.
 RESOLVE_WHEN = {
     "striking_distance": f"다음 구글 실적에서 이 검색어가 노출 {STRIKING_MIN_IMP} 이상으로 평균 "
-                         f"{STRIKING_LO}위 안(상단 3위권)에 들면",
+                         f"{STRIKING_LO}위 안(상단 3위권)에 들거나, {STRIKING_HI}위 밖·노출 "
+                         f"{STRIKING_MIN_IMP} 미만으로 조건을 벗어나면",
     "ctr_gap": f"다음 구글 실적에서 1페이지(노출 {CTR_GAP_MIN_IMP} 이상)를 지키며 클릭률이 그 "
                f"순위 기대치의 {round(CTR_GAP_FACTOR * 100)}%를 넘으면",
     "device_gap": f"다음 기기별 분해에서 모바일 노출 {DEVICE_MIN_IMP} 이상으로 모바일·데스크톱 "
@@ -4645,6 +4716,45 @@ def _group_score(kind: str, lead: dict, units: list[list[dict]],
     return round(min(100.0, (lead.get("score") or 0.0) + max(0.0, bonus)), 1)
 
 
+def _merge_kinds(lines: list[dict], shown: dict[int, dict]) -> list[dict]:
+    """같은 대상(norm)의 여러 종류를 한 줄로 — 줄 하나가 할 일 하나다. 한 검색어가
+    '밀면 오를'·'클릭률 미달'·'AI 요약 빠짐'으로 세 줄 서면 같은 페이지 일을 세 번 센다.
+
+    열린 줄끼리만 묶는다(닫힌 줄은 기록이라 한 줄씩). 점수가 가장 높은 줄이 대표다 —
+    lead·kind·score 는 그 줄 것 그대로(하위 호환), kinds·labels 는 점수 순 종류 목록과
+    같은 순서의 라벨(_axis_opps 가 입힌 o["label"], 없으면 kind_label). ids·variants 는 전부.
+    묶음 이유(via)는 앞선 줄에서 처음 있는 것, 끝내 없으면 alone(화면은 via 로 문장을 고른다).
+    """
+    out: list[dict] = []
+    by_key: dict[str, dict] = {}
+    for ln in sorted(lines, key=lambda x: (-(x["score"] or 0), -x["lead"])):
+        lead = shown.get(ln["lead"]) or {}
+        ln["kinds"] = [ln["kind"]]
+        ln["labels"] = [lead.get("label") or kind_label(ln["kind"])]
+        k = norm(str(lead.get("target") or ""))
+        if ln["status"] not in OPEN_STATUSES or not k:
+            out.append(ln)
+            continue
+        m = by_key.get(k)
+        if m is None:
+            by_key[k] = ln
+            out.append(ln)
+            continue
+        m["ids"] += [i for i in ln["ids"] if i not in m["ids"]]
+        m["variants"] += [v for v in ln["variants"] if v["id"] not in {x["id"] for x in m["variants"]}]
+        if ln["kind"] not in m["kinds"]:
+            m["kinds"].append(ln["kind"])
+            m["labels"].append(ln["labels"][0])
+        if ln["status"] == "acked":
+            m["status"] = "acked"
+        if m["via"] is None:
+            m["via"], m["key"], m["key_src"] = ln["via"], ln["key"], ln["key_src"]
+    for m in by_key.values():
+        if m["via"] is None and len(m["ids"]) > 1:
+            m["via"] = "alone"
+    return out
+
+
 def group_opportunities(conn: sqlite3.Connection, project_id: int,
                         opps: list[dict], *, kinds=GROUP_KINDS) -> list[dict]:
     """기회 목록을 줄로 접는다 — 줄 하나가 판정·실행 단위다. opps 는 opportunities() 의 결과.
@@ -4703,6 +4813,7 @@ def group_opportunities(conn: sqlite3.Connection, project_id: int,
                       "status": o["status"], "via": None, "key": None, "key_src": None,
                       "variants": [{"id": o["id"], "target": o["target"], "score": o["score"],
                                     "status": o["status"], "volume": None, "via": None}]})
+    lines = _merge_kinds(lines, shown)
     # 화면 정렬과 같다(db.list_opportunities 의 'screen'): 새 것 먼저, 점수, 최근 id.
     lines.sort(key=lambda x: (x["status"] != "new", -(x["score"] or 0), -x["lead"]))
     return lines
