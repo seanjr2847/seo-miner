@@ -2512,6 +2512,40 @@ def test_seam_56_brief_language_line_is_one_set():
     assert "B.lang_line" in m.group(1), "폴백 요청문이 서버의 언어 줄(BRIEF.lang_line)을 안 넣는다"
 
 
+def test_seam_81_fallback_brief_follows_the_page_language_path():
+    """81) 폴백 요청문도 주소의 언어 경로(/en/)를 따른다 — 서버 요청문(brief.page_locale)과 같게.
+
+    기회가 아닌 행의 폴백(dashboard.html 의 fallbackBrief)이 사이트 기본 언어 줄을 무조건
+    넣어, 한국어 사이트의 /en/ 페이지 요청문이 "산출물 언어: 한국어, title 30자"로 나갔다.
+    어느 언어를 알아보는지와 그 줄은 서버가 준다(BRIEF.page_lang) — 화면은 언어 목록을 안 갖는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import brief
+    pay = brief.shapes_payload("ko-KR")
+    assert "page_lang" in pay, ("brief.shapes_payload 가 페이지 언어 줄(page_lang)을 안 싣는다 — "
+                                "폴백 요청문이 /en/ 페이지에도 사이트 기본 언어를 말한다")
+    want = brief._page_lang_lines(None, "https://x.example/en/a", "ko-KR")
+    assert want and pay["page_lang"].get("en") == want[0], "page_lang 이 서버 요청문의 언어 줄과 다르다"
+    m = re.search(r"function fallbackBrief\(c\) \{.*?\n\}", ctx["shell"], re.S)
+    assert m, "fallbackBrief 를 못 찾았다"
+    def run(url):
+        c = {"shape": "fix_page", "url": url, "queries": []}
+        js = ("const window = {BRIEF: " + json.dumps(pay, ensure_ascii=False) + "};"
+              "const location = {href: 'https://h.example/d'}; const num = String;\n"
+              + m.group(0) + f"\nconsole.log(JSON.stringify(fallbackBrief({json.dumps(c)}).body));")
+        return _node_views(js)
+    en = run("https://x.example/en/a")
+    if en is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert want[0] in en and pay["lang_line"]["fix_page"] not in en, (
+        f"/en/ 페이지 폴백 요청문이 페이지 언어 줄 대신 사이트 기본을 말한다:\n{en}")
+    ko = run("https://x.example/blog/a")
+    assert pay["lang_line"]["fix_page"] in ko, "언어 경로가 없는 페이지에 사이트 기본 언어 줄이 없다"
+
+
 def test_seam_57_skill_settings_are_code_not_a_file():
     """57) 스킬 설정은 코드 한 벌(skill_config.CONFIG)이다 — 파일이 되살아나지 않는다.
 
@@ -2789,7 +2823,8 @@ def _node_views(js: str):
     import subprocess
     if not shutil.which("node"):
         return None
-    r = subprocess.run(["node", "-e", js], capture_output=True, text=True,
+    # 스크립트는 stdin 으로 넘긴다 — 화면 스크립트 통째는 윈도의 명령줄 길이를 넘는다.
+    r = subprocess.run(["node", "-"], input=js, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     assert r.returncode == 0, f"node 가 못 돌렸다:\n{r.stderr[-800:]}"
     return json.loads(r.stdout)
@@ -2862,6 +2897,145 @@ def test_seam_competitors_counts_rivals_from_gap_rows_too():
         print("  (node 가 없어 건너뜀)")
         return
     assert got == {"share": 0, "all": 2}, f"격차 표의 도메인을 경쟁사로 안 센다: {got}"
+
+
+# 화면 스크립트를 통째로 node 에 올릴 때 셸 몫만 갈아 끼운다(사본이 아니라 빈 손잡이).
+_VIEW_STUBS = """
+const window = globalThis;
+const esc = s => String(s ?? ""), num = n => String(n);
+const READONLY = false, VIEW = () => {}, $ = () => ({}), W = a => a;
+const document = {addEventListener: () => {}, getElementById: () => ({addEventListener: () => {}})};
+let LAST_D = null;
+const oppOf = () => null, oppsOf = () => [], oppScore = () => "", oppMeter = () => "";
+const oppWhy = () => "", oppActs = () => "", oppPanel = () => "";
+const askBlock = () => "", playList = () => "", pageTable = () => "", pageFix = () => "";
+const table = (h, rows, empty) => rows.length ? rows.join("") : (empty || "");
+const SM = {at: () => -1};
+window.oppStMatch = () => true; window.oppStSelect = () => "";
+"""
+
+
+def _view_script(name: str) -> str:
+    """화면 파일의 본 스크립트(view-def 가 아닌 <script>) 전체."""
+    src = (ROOT / "skills" / "capture" / "templates" / "views" / name).read_text("utf-8")
+    m = re.search(r"^<script>\n(.*?)^</script>", src, re.M | re.S)
+    assert m, f"{name} 에서 본 스크립트를 못 찾았다"
+    return m.group(1)
+
+
+def test_seam_90_competitors_one_card_per_keyword_and_every_gap_kind():
+    """경쟁 분석 격차 목록 — 종류는 collect_gap._kind 가 내는 전부를 알고, 검색어 한 카드로 묶는다.
+
+    10회차: 제목은 「경쟁사만 잡은 검색어」인데 기본이 전체라 270줄 중 269줄이 「우리가 위」였고
+    (경쟁사 순위를 모르는 줄까지 shared 로 셌다), 같은 검색어가 경쟁사마다 카드 3장으로
+    반복됐고, 띠는 줄 수로 「앞선 검색어」를 세며 「그중 0개는」까지 말했다.
+    """
+    import collect_gap
+    src = _view_script("competitors.html")
+    js_kinds = set(re.findall(r'^\s*\["(\w+)",',
+                              re.search(r"const CP_KINDS = \[(.*?)\n\];", src, re.S).group(1), re.M))
+    made = {collect_gap._kind(o, r) for o in (None, 1, 5) for r in (None, 1, 5)}
+    assert made <= js_kinds, f"경쟁 분석이 모르는 격차 종류: {made - js_kinds}"
+    rows = [{"keyword": "오후 3시", "domain": "a.com", "kind": "shared", "position": 5, "our_position": 3},
+            {"keyword": "오후 3시 ", "domain": "b.com", "kind": "unknown", "position": None, "our_position": 3},
+            {"keyword": "오후 3시", "domain": "c.com", "kind": "weak", "position": 1, "our_position": 3},
+            {"keyword": "새 글", "domain": "a.com", "kind": "missing", "position": 2, "our_position": None}]
+    lose = [dict(rows[2]), dict(rows[2], domain="d.com")]
+    js = _VIEW_STUBS + src + f"""
+let band = "";
+window.nextStep = (id, h) => {{ band = h; }};
+window.act = () => "<act>"; window.runFailed = () => null;
+const rows = {json.dumps(rows, ensure_ascii=False)};
+const out = {{groups: CP_groups(rows).map(g => g.length), counts: CP_counts(rows),
+             def: CP_defaultKind({{kw_gap: rows}})}};
+CP_nextStep({{comp_date: "2026-09-08", gap_date: "2026-09-08", gap_rivals: ["c.com", "d.com"],
+             kw_gap: {json.dumps(lose, ensure_ascii=False)}}});
+out.band = band;
+CP_nextStep({{comp_date: null, runs: [{{kind: "competitors", notes: ""}}], kw_gap: [], gap_rivals: []}});
+out.ran = band;
+console.log(JSON.stringify(out));
+"""
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got["groups"] == [3, 1], f"같은 검색어가 경쟁사마다 카드로 갈린다: {got['groups']}"
+    assert got["counts"] == {"": 2, "shared": 1, "unknown": 1, "weak": 1, "missing": 1}, got["counts"]
+    assert got["def"] == "weak", f"기본 갈래가 밀리는 중이 아니다: {got['def']!r}"
+    assert "앞선 검색어가 1개입니다" in got["band"], f"띠가 검색어가 아니라 줄을 센다: {got['band']}"
+    assert "그중" not in got["band"], f"띠가 0개인 절을 말한다: {got['band']}"
+    assert "돌았지만" in got["ran"] and "아직 찾지 않았습니다" not in got["ran"], (
+        f"경쟁사 찾기가 돌았는데 띠가 안 찾았다고 한다: {got['ran']}")
+
+
+def test_seam_91_backlinks_counts_rivals_like_competitors():
+    """백링크의 「견줄 경쟁사」 수는 경쟁 분석과 같은 기준(CP_rivals)이다.
+
+    10회차: 경쟁 분석은 「경쟁사 3곳과 맞댄 결과」인데 백링크는 몫(comp_metrics)만 세어
+    「등록된 경쟁사가 둘 미만」이라고 했다.
+    """
+    d = {"comp_metrics": [], "gap_rivals": ["a.com", "b.com", "c.com"], "bl_intersect": []}
+    js = (_VIEW_STUBS + _view_script("competitors.html") + _view_script("backlinks.html")
+          + f"\nconst d = {json.dumps(d)};"
+            "\nconsole.log(JSON.stringify({n: BLK_rivals(d), box: BLK_intersect(d, BLK_rivals(d))}));")
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got["n"] == 3, f"백링크가 경쟁사를 경쟁 분석과 다르게 센다: {got['n']}"
+    assert "모자랍니다" not in got["box"], f"경쟁사가 셋인데 모자라다고 한다: {got['box']}"
+
+
+def test_seam_92_ai_rows_badge_every_gap_and_show_cited_answer_first():
+    """AI 인용 질문 목록 — 인용 공백 배지는 서버 판정(ai_gap_rows) 전부에 달리고,
+    인용된 질문은 우리가 인용된 답변 발췌가 먼저, 발췌의 마크다운 찌꺼기는 걷힌다.
+
+    10회차: 띠는 「인용이 드문 질문 6개」인데 배지는 기회가 붙은 3개에만 달렸고,
+    인용된 질문을 펴도 우리가 빠진 답변만 나왔다.
+    """
+    rows = [{"prompt": "드문 질문", "category": "general", "cited": 0, "mentioned": 0, "checks": 6,
+             "excerpts": {"chatgpt": "빠진 답"}},
+            {"prompt": "인용된 질문", "category": "general", "cited": 5, "mentioned": 5, "checks": 6,
+             "excerpts": {"chatgpt": "빠진 답"}, "cited_excerpts": {"chatgpt": "우리 답"}}]
+    js = _VIEW_STUBS + _view_script("ai.html") + f"""
+window.KIND_LABELS = {{ai_citation_gap: "챗봇 인용 드묾"}};
+AI_GAPS = new Set(["드문 질문"]);
+AI_INTENT = {{general: "일반"}};
+const rows = {json.dumps(rows, ensure_ascii=False)};
+console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_row(rows[1]),
+  plain: [AI_plain("[출처] (https://a.com/x) 끝"), AI_plain("보세요 [링크](https://a.com/very-lo…"),
+          AI_plain("답입니다[source] 끝"), AI_plain("잘린 (https://a.com/b…")]}}));
+"""
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert "챗봇 인용 드묾" in got["gap"], "기회가 안 붙은 인용 공백 질문에 배지가 없다"
+    assert "챗봇 인용 드묾" not in got["cited"], "인용되는 질문에 공백 배지가 붙었다"
+    assert "일반" in got["gap"] and "general" not in got["gap"].split("kwcell")[1][:40], (
+        "질문 갈래가 id 로 찍힌다")
+    c = got["cited"]
+    assert "우리가 인용된 답변" in c and c.index("우리 답") < c.index("빠진 답"), (
+        "인용된 질문에서 우리가 인용된 답변이 먼저 오지 않는다")
+    assert got["plain"] == ["출처 끝", "보세요 링크", "답입니다 끝", "잘린"], got["plain"]
+
+
+def test_seam_93_site_crawl_more_button_says_what_it_opens():
+    """사이트 크롤 [더 보기] — 누르면 펴지는 수(CR_STEP)와 남은 수를 가른다.
+
+    10회차: 「437건 더 보기」인데 눌러 보면 50건만 펴졌다.
+    """
+    issues = [{"kind": "img_no_alt", "url": f"https://a.com/{i}", "severity": "info"}
+              for i in range(457)]
+    js = _VIEW_STUBS + _view_script("site.html") + f"""
+CR_D = {{crawl: {{issues: {json.dumps(issues)}}}}};
+console.log(JSON.stringify(CR_rows(CR_D)));
+"""
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert "50건 더 보기 (남은 437건)" in got, re.findall(r"[^>]*더 보기[^<]*", got)
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

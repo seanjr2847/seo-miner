@@ -169,11 +169,17 @@ AIO_DOM = "aioZ9.example"
 ZERO_SITE = "gamma-site"             # GA4 연결됨 + 쟀고 0
 AI_VISITS_NOGA4 = "GA4를 연결하면 여기서 잽니다"
 AI_VISITS_ZERO = "AI에서 온 방문이 아직 없습니다"
+# ZERO_SITE 는 GSC 도 두 번 쟀고 두 번 다 클릭 0 이다 — [분석]이 맞댈 시점 유무를 클릭
+# 합으로 판정하면 "한 번뿐"이라고 거짓말한다.
+AN_NO_CLICKS = "두 기간 모두 클릭이 없습니다"
+AN_ONE_RUN = "수집이 한 번뿐이라 맞댈 시점이 없습니다"
 EMPTY_LOADS = [
     (SITES[0], [(re.escape(AI_VISITS_NOGA4), "GA4 미연결 사이트에 'AI 에서 온 방문' 빈 상태가 안 섰다"),
                 ("!" + re.escape(AI_VISITS_ZERO), "GA4 미연결인데 '쟀고 0' 이라고 말한다")]),
     (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
-                 ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다")]),
+                 ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다"),
+                 (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [분석]이 그렇다고 안 말한다"),
+                 ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [분석]이 '수집이 한 번뿐'이라고 말한다")]),
 ]
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
@@ -390,7 +396,26 @@ LOCAL_MUSTS = [
     (r'!id="view-overview"(?:(?!id="view-).)*data-grp=',
      "버튼이 없어야 할 [할 일] 묶음 화면에 다시 재기가 섰다"),
 ]
-RUN_MUSTS = LOCAL_MUSTS[3:]           # 앞 셋(도구 없음 배지·로컬 주기 점)은 로컬 몫
+RUN_MUSTS = LOCAL_MUSTS[3:]
+
+# 셸 table() 의 행 카드 옵트인(.tw.cards) — 좁은 화면에서 칸 앞에 서는 라벨(data-label)은
+# 머리글 글자에서 온다. 뷰가 아직 안 붙였을 수 있어 화면 대신 셸의 table() 을 **그대로**
+# 불러 본다(사본 없음). 펼침 줄(tr.exp)의 통짜 칸은 라벨을 달면 안 된다.
+CARDS_PROBE = """<script>addEventListener("load", function () {
+  var d = document.createElement("div"); d.id = "__cards__";
+  d.innerHTML = table(["페이지", ">순위?구글이 보고한 평균 게재순위"],
+    ['<tr><td>/a</td><td class="num">3</td></tr>', '<tr class="exp"><td colspan="2">펼침</td></tr>'],
+    "", "cards");
+  document.body.appendChild(d);
+});</script>"""
+SHELL_LOCAL_MUSTS = [
+    (r'id="__cards__"><div class="tw cards[^"]*"><table>.*?<td>/a</td><td class="num" data-label="순위">3</td>',
+     "table(..., \"cards\") 가 칸 라벨을 머리글에서 안 달았다 — 좁은 화면 행 카드에 열 이름이 없다"),
+    (r'!id="__cards__">(?:(?!</table>).)*colspan="2" data-label',
+     "행 카드가 펼침 줄의 통짜 칸에 라벨을 달았다"),
+    # 로컬에는 사이트 목록 화면이 없다 — 로고는 글자 그대로다(링크는 호스팅 몫).
+    (r'!<a class="mark"', "로컬 레일 로고가 링크가 됐다 — 갈 목록 화면이 없다"),
+]           # 앞 셋(도구 없음 배지·로컬 주기 점)은 로컬 몫
 
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
@@ -412,6 +437,7 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     (r'id="nav"[^>]*>(?:(?!</nav>)[\s\S])*?<button',
      "레일 메뉴가 비었다 — 셸이 화면 목록을 못 세웠다"),
     (r'id="view-overview"', "화면 상자(개요)가 안 만들어졌다"),
+    (r'<a class="mark" href="/"', "호스팅 레일 로고가 사이트 목록(/)으로 가는 링크가 아니다"),
     (r'id="view-backlinks"', "호스팅 전용 화면(백링크)이 안 붙었다"),
     (r'id="sm-set"', "호스팅 설정 섹션이 안 만들어졌다"),
     # 호스팅은 서버가 키를 댄다. 안내가 요청마다 오는 guide.steps[].gain(로컬 갈래)을
@@ -612,6 +638,12 @@ def zero_site(home: Path) -> None:
                      (ZERO_SITE, f"{ZERO_SITE}.example", f"sc-domain:{ZERO_SITE}.example"))
         pid = conn.execute("SELECT id FROM projects WHERE name=?", (ZERO_SITE,)).fetchone()[0]
         db.write_ga4_ai_referrals(conn, pid, "2026-06-01", 28, ["chatgpt.com"], [])
+        # 두 번 쟀는데 두 번 다 클릭 0 — [분석]이 "수집이 한 번뿐"이라고 거짓말하던 판.
+        for d in ("2026-05-01", "2026-06-01"):
+            conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,"
+                         "query,page,clicks,impressions,ctr,position) VALUES(?,?,28,?,?,0,50,0,30.0)",
+                         (pid, d, f"{ZERO_SITE} 검색어", f"https://{ZERO_SITE}.example/a"))
+        conn.commit()
     finally:
         conn.close()
 
@@ -907,7 +939,8 @@ def run() -> None:
 
         # 대상마다 (이름, 서버를 세우는 것, 있어야 할 것). 서버는 대상을 볼 때만 선다 —
         # 호스팅 대상은 env 를 갈아 끼우므로 다른 대상과 겹치면 안 된다.
-        targets = [("로컬 대시보드", lambda: _stdlib(shell), MUSTS + LOCAL_MUSTS)]
+        local = shell.replace(b"</body>", CARDS_PROBE.encode("utf-8") + b"</body>", 1)
+        targets = [("로컬 대시보드", lambda: _stdlib(local), MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")

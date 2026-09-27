@@ -32,12 +32,9 @@
     .rail-foot{flex-direction:column;align-items:stretch}
   }
 
-  /* 화면 제목 옆 실행 버튼 — 그 화면을 채우는 단계를 거기서 돌린다. */
-  .sm-refresh{font:500 12.5px/1 var(--sans);color:var(--patina);background:transparent;
-    border:1px solid var(--rule);border-radius:4px;padding:8px 13px;cursor:pointer;flex:none}
-  .sm-refresh:hover:not(:disabled){border-color:var(--patina);background:var(--wash)}
-  .sm-refresh:disabled{opacity:.5;cursor:default}
-  .sm-refresh:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
+  /* 화면 제목 옆 실행 버튼 — 생김새는 셸의 .go.sm.sec 한 벌이다(.sm-refresh 는 표식). */
+  /* 레일 로고 — 호스팅에서는 사이트 목록(/)으로 가는 링크다(아래 "로고 링크"). */
+  .hbar a.mark{color:inherit;text-decoration:none}
 
   /* 실행 배너 — 눌렀다·도는 중·끝났다·못 했다를 한 자리에서 말한다.
      세 상태가 각자 다른 데 있으면 "지금 뭐가 되고 있나"를 화면이 못 답한다.
@@ -117,10 +114,9 @@
   .sm-none{font-size:13px;color:var(--slate);margin:10px 0 2px}
 
   /* 분해 표 — 긴 URL 이 표 폭을 밀지 않게 첫 칸만 줄인다 */
-  #sm-dim .tabs{display:flex;gap:6px}
-  #sm-dim .tabs button{font:400 12px/1 var(--sans);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:4px;padding:6px 12px;cursor:pointer}
-  #sm-dim .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
+  /* 탭은 셸의 필터 칩(.chip) 한 벌이다 — 모양을 여기서 다시 그리지 않는다. */
+  #sm-dim .tabs,#sm-kw .tabs{display:flex;gap:6px}
+  #sm-dim .tabs .chip,#sm-kw .tabs .chip{margin:0}
   #sm-dim table{table-layout:fixed;width:100%;min-width:420px}
   #sm-dim th:first-child,#sm-dim td:first-child{width:46%}
   #sm-dim .sm-k{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -138,11 +134,6 @@
   #sm-dim .tools{margin-bottom:10px}
 
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
-  #sm-kw .tabs{display:flex;gap:6px}
-  /* 탭 이름은 한글이다 — 등폭으로 찍으면 폴백 서체로 떨어진다(CLAUDE.md). */
-  #sm-kw .tabs button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:6px;padding:6px 12px;cursor:pointer}
-  #sm-kw .tabs button.on{color:var(--patina);border-color:var(--patina);background:var(--wash)}
   /* 목록은 폼이다 — 셸의 .card 와 같은 몸으로 세운다(테두리·모서리·종이색).
      안내가 통째로 들어설 때만 .bare 가 그 몸을 벗긴다. */
   #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule);
@@ -191,14 +182,12 @@
      꺼짐은 상태지 "덜 중요한 글자"가 아니다. */
   #sm-aiq .q.off .t{color:var(--slate)}
   #sm-aiq .t{min-width:0;font:400 13.5px/1.5 var(--sans);color:var(--ink);
-    background:transparent;border:1px solid transparent;border-radius:4px;
+    background:transparent;border:1px solid transparent;border-radius:var(--r-sm);
     padding:4px 6px;text-transform:none}
   #sm-aiq .t:hover{border-color:var(--rule-soft)}
   #sm-aiq .t:focus{outline:0;border-color:var(--patina);background:var(--wash)}
-  /* 갈래 이름(추천·비교·문제해결)도 한글이다 — 등폭에 걸지 않는다. */
-  #sm-aiq select{font:400 12px/1 var(--sans);color:var(--slate);
-    background:transparent;border:1px solid var(--rule);border-radius:6px;
-    padding:5px 6px}
+  /* 갈래 선택상자는 셸의 밑줄형 한 벌이다 — 폭만 제 글자만큼으로 줄인다. */
+  #sm-aiq select{width:auto}
   #sm-aiq .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--slate);
     white-space:nowrap}
   /* 지우기는 파괴적 행동이라 이름을 갖는다 — 부품은 셸의 .go.sm.danger 다.
@@ -221,8 +210,7 @@
     #sm-aiq .q .n{grid-area:3/2;justify-self:start}
   }
   #sm-aiq .bar2{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
-  #sm-aiq .new{flex:1 1 260px;font:400 13.5px/1 var(--sans);color:var(--ink);
-    background:transparent;border:1px solid var(--rule);border-radius:6px;padding:9px 10px}
+  #sm-aiq .new{flex:1 1 260px;width:auto}
   #sm-aiq .cnt{font-size:12.5px;color:var(--slate)}
   #sm-aiq .warn{color:var(--copper)}
 
@@ -252,22 +240,14 @@
   #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   /* 버튼 라벨은 전부 한글이다("하루 한 번"·"속성 고르기"·"연결 명령 만들기") —
      등폭으로 찍으면 폴백 서체로 떨어져 자간이 벌어진다(CLAUDE.md). */
-  #sm-set .opts button{font:400 12.5px/1 var(--sans);color:var(--slate);background:transparent;
-    border:1px solid var(--rule);border-radius:6px;padding:7px 13px;cursor:pointer}
-  #sm-set .opts button:hover{color:var(--patina);border-color:var(--patina)}
-  #sm-set .opts button:focus-visible{outline:2px solid var(--patina);outline-offset:2px}
-  #sm-set .opts button.on{color:var(--patina);border-color:var(--patina);
-    background:var(--wash);font-weight:600;box-shadow:inset 0 0 0 1px var(--patina)}
-  #sm-set .opts button.on::before{content:"";width:12px;height:12px;margin-right:6px;
-    display:inline-block;vertical-align:-2px;background:var(--patina);
-    -webkit-mask:var(--sm-tick) center/12px 12px no-repeat;
-            mask:var(--sm-tick) center/12px 12px no-repeat}
-  :root{--sm-tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5 6.5 12 13 4.5'/%3E%3C/svg%3E")}
+  /* 주기 고르기는 셸의 필터 칩(.chip) 한 벌, 저장·연결 같은 행동은 셸의 .go.sm.sec 다 —
+     모양을 여기서 다시 그리지 않는다. 고른 것은 aria-pressed 로도 말한다. */
+  #sm-set .opts .chip{margin:0}
   /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
      자간이 벌어지고 획이 얇아진다(CLAUDE.md). 등폭은 숫자·명령·URL 에만. */
   #sm-set .msg{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-left:6px}
-  #sm-set .repo select{font:400 12.5px/1 var(--sans);color:var(--ink);background:var(--card);
-    border:1px solid var(--rule);border-radius:6px;padding:8px 10px;max-width:340px}
+  /* 선택상자는 셸의 밑줄형 한 벌이다 — 폭만 줄인다. */
+  #sm-set .repo select{width:auto;max-width:340px}
   /* 상태 문장은 한글이라 --sans 다. 등폭은 그 안의 식별자(속성 번호)에만. */
   #sm-set .repo .now{font:500 13px/1.5 var(--sans);color:var(--patina)}
   #sm-set .repo .now code{font:500 12.5px/1.5 var(--mono)}
@@ -710,7 +690,7 @@
     if (b && b.classList.contains("sm-more")) b.remove();
     if (list.classList.contains("all") || n <= LIST_PAGE) return;
     list.insertAdjacentHTML("afterend", '<button type="button" class="go sm sec sm-more">' +
-      nf(n - LIST_PAGE) + "개 더 보기</button>");
+      nf(n - LIST_PAGE) + "건 더 보기</button>");
     list.nextElementSibling.onclick = function () {
       list.classList.add("all");
       this.remove();
@@ -813,7 +793,7 @@
       // 라벨은 window.stageRun(원본 dashboard.html)에서 받는다 — STAGE[st].run 을
       // 직접 읽으면 이 사이트가 그 단계를 한 번도 안 돌았어도 항상 "다시" 문구를
       // 낸다. stageRun 은 LAST_D.runs 로 첫 실행 여부를 가려 s.t/s.run 을 고른다.
-      return '<button class="sm-refresh vh-cmd" data-run="' + esc(st) +
+      return '<button class="go sm sec sm-refresh vh-cmd" data-run="' + esc(st) +
         '" title="' + esc(STAGE[st].t) +
         '" onclick="SM.host.run(\'' + esc(st) + '\', this)">' + esc(window.stageRun(st)) + '</button>';
     },
@@ -853,6 +833,17 @@
   // 붙는지를 따로 말했다 — 그 표와 실제로 만드는 것이 어긋날 수 있었다(그리고
   // 사이드바·배치·전환까지 통째로 다시 구현해 !important 로 원본을 덮어써서, 같은
   // 조립본이 배포마다 다른 몸으로 섰다). 셸도 섹션도 원본 하나뿐이다.
+
+  // 레일 로고는 호스팅에서 사이트 목록(/)으로 가는 링크다 — 여러 사이트를 오가는
+  // 자리인데 돌아갈 손잡이가 없었다. 로컬 셸은 목록 화면이 없어 글자 그대로 둔다.
+  step("로고 링크", function logo() {
+    var m = document.querySelector(".hbar span.mark");
+    if (!m) return;
+    var a = document.createElement("a");
+    a.className = "mark"; a.href = "/"; a.innerHTML = m.innerHTML;
+    a.setAttribute("aria-label", "사이트 목록으로");
+    m.replaceWith(a);
+  });
 
   step("레일 바닥", function foot() {
     var box = document.querySelector(".rail-foot");
@@ -916,8 +907,8 @@
     // 체크를 붙인다(색만으로 뜻을 말하지 않는다).
     sec.querySelector(".opts").innerHTML = SET_H.presets.map(function (p) {
       var on = p.h === SET_H.run_every_hours;
-      return '<button data-h="' + p.h + '" aria-pressed="' + on + '"' +
-        (on ? ' class="on"' : "") + ">" + esc(p.label) + "</button>";
+      return '<button class="chip' + (on ? " on" : "") + '" data-h="' + p.h +
+        '" aria-pressed="' + on + '">' + esc(p.label) + "</button>";
     }).join("") + '<span class="msg" role="status">' + esc(msg || "") + "</span>";
     langRender();
     ga4Render();
@@ -1052,7 +1043,7 @@
         var sel = p.id === (SET_H.ga4_property || GA4_SUGGESTED[0] || "");
         return '<option value="' + esc(p.id) + '"' + (sel ? " selected" : "") + ">" +
           esc(p.account) + " · " + esc(p.name) + " (" + esc(p.id) + ")</option>";
-      }).join("") + '</select><button data-ga4-save>저장</button></div>' +
+      }).join("") + '</select><button class="go sm sec" data-ga4-save>저장</button></div>' +
         (GA4_SUGGESTED.length ?
           '<p class="msg">도메인·이름이 비슷한 속성을 미리 골라 뒀습니다. 맞는지 확인하고 저장합니다.</p>' : "") +
         note;
@@ -1061,14 +1052,14 @@
     if (SET_H.ga4_property) {
       body.innerHTML = '<div class="opts"><span class="now">속성 <code>' +
         esc(SET_H.ga4_property) + "</code> 를 읽고 있습니다</span>" +
-        "<button data-ga4-pick>속성 바꾸기</button></div>" + note;
+        "<button class=\"go sm sec\" data-ga4-pick>속성 바꾸기</button></div>" + note;
       return;
     }
     // 버튼은 이 칸에만 선다 — 화면 머리 띠(SET_NEXT.ga4)는 이제 글자와 jump 손잡이만
     // 들고 채운 버튼은 안 든다(그래서 "GA4 연결"이 화면에 두 번 안 선다).
     body.innerHTML = '<div class="opts"><span class="none">아직 연결되지 않았습니다. ' +
       "연결하면 클릭 다음에 일어난 일(세션·매출)까지 봅니다.</span>" +
-      "<button data-ga4-pick>GA4 연결</button></div>" + note;
+      "<button class=\"go sm sec\" data-ga4-pick>GA4 연결</button></div>" + note;
   }
 
   async function ga4Pick() {
@@ -1121,7 +1112,7 @@
     if (!body) return;
     var note = msg ? '<span class="msg" role="status">' + esc(msg) + "</span>" : "";
     if (!CLI_TOKEN) {
-      body.innerHTML = '<div class="opts"><button data-cli-new>명령 만들기</button>' +
+      body.innerHTML = '<div class="opts"><button class="go sm sec" data-cli-new>명령 만들기</button>' +
         '<span class="msg" role="status">다시 만들면 전에 받은 토큰은 그 자리에서 끊깁니다.</span>' +
         "</div>" + note;
       return;
@@ -1316,6 +1307,8 @@
     var sec = document.getElementById("sm-kw");
     if (!sec || sec.dataset.smWired) return;
     sec.dataset.smWired = "1";
+    // 탭은 셸의 필터 칩(.chip)이다 — 켜짐(.on)을 여기서 갈아 끼우므로 몸도 여기서 단다.
+    sec.querySelectorAll(".tabs button").forEach(function (x) { x.classList.add("chip"); });
 
     // 섹션 전체에서 받는다 — 빈 상태의 [후보에서 고르기]도 같은 탭 전환이다.
     // 그래서 켜진 탭은 "눌린 것"이 아니라 지금 모드로 판단한다.
@@ -1363,13 +1356,16 @@
       return;
     }
     bare(list, false);
+    var labels = d.intent_labels || {};
     list.innerHTML = d.prompts.map(function (q) {
       return '<div class="q' + (q.is_active ? "" : " off") + '" data-id="' + q.id + '">' +
         '<input type="checkbox" class="on"' + (q.is_active ? " checked" : "") +
           ' title="켜 두면 다음 확인에 이 질문을 물어봅니다" aria-label="이 질문 켜기">' +
         '<input class="t" value="' + esc(q.prompt) + '" aria-label="질문 문장">' +
         '<select class="c" aria-label="질문 갈래">' + AIQ_CATS.map(function (c) {
-          return '<option' + (c === q.category ? " selected" : "") + ">" + esc(c) + "</option>";
+          // 이름표는 서버가 준다(정본 gen_prompts.INTENT_LABELS) — 없으면 id 그대로.
+          return '<option value="' + esc(c) + '"' + (c === q.category ? " selected" : "") + ">" +
+            esc(labels[c] || c) + "</option>";
         }).join("") + "</select>" +
         '<span class="n">' + (q.is_active ? "" : '<span class="badge muted">꺼짐</span> ') +
           (q.checks ? q.checks + "회 물음 · 인용 " + q.cited + "회" : "아직 안 물어봤습니다") +
@@ -1771,7 +1767,7 @@
         '<span class="hint" tabindex="0" data-tip="' + esc(tip) + '" aria-label="' +
         esc(tip) + '">i</span></p>' +
         '<div class="tools tabs">' + DIMS.map(function (d) {
-          return '<button data-d="' + d[0] + '">' + d[1] + "</button>";
+          return '<button class="chip" data-d="' + d[0] + '">' + d[1] + "</button>";
         }).join("") + "</div></div>" +
         '<div class="tools"><input type="search" class="sm-dimq" ' +
         'placeholder="검색어·주소로 찾기" aria-label="분해 표에서 찾기">' +

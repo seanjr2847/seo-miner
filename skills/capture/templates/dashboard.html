@@ -52,6 +52,10 @@
      다크에서도 계속 밝은 값을 쓴다(아래 다크 블록에서 안 덮는다). */
   --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.66);
   --on-ink-rule:rgba(230,233,228,.26); --on-ink-wash:rgba(230,233,228,.10);
+  /* 메뉴 호버는 선택(--on-ink-wash)보다 한 단 옅다 — 같은 바탕이면 손을 얹은 줄과
+     지금 있는 줄이 구별되지 않았다. 레일은 테마와 무관하게 어둡다: 다크 블록에서도
+     같은 값이라 거기서 안 덮는다(위 --on-ink* 넷과 같은 이유). */
+  --on-ink-hover:rgba(230,233,228,.05);
   /* 레일 위의 "때가 지났다" 점(주기를 넘긴 묶음). 레일 바탕은 늘 어두워서 이 값도
      다크에서 안 덮는다. #E0A83A/#121714 ≈ 8.9:1 — 비텍스트 최소(3:1)를 넉넉히 넘는다.
      산화동(--copper)을 안 쓰는 이유: 레일 위에서 3:1 을 못 넘기고, 본문에서 그 색은
@@ -150,8 +154,10 @@ header :focus-visible { outline-color:var(--on-ink); }
    레일은 세 통이다: 머리(무엇을 보고 있나) · 메뉴(어디를 보고 있나) ·
    바닥(무엇을 하나). 셋이 한 줄기로 흐르면 이동하는 것과 실행하는 것이 같은
    모양이 된다. */
+/* 레일과 본문 사이 경계는 --on-ink-rule 한 줄이다. 다크에서 --rail(#0B0F0D)과
+   --stone(#101513)은 1.07:1 이라 바탕색만으로는 머리가 어디서 끝나는지 안 보였다. */
 header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-index:9;
-  border-bottom:1px solid var(--rail); }
+  border-bottom:1px solid var(--on-ink-rule); }
 .hbar { max-width:1180px; margin:0 auto; padding:12px 24px;
   display:flex; align-items:baseline; gap:16px; }
 @media (max-width:860px) { .hbar { flex-wrap:wrap; gap:8px 16px; } }
@@ -190,7 +196,7 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 #nav button svg { flex:0 0 16px; width:16px; height:16px; stroke:currentColor;
   fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round;
   opacity:.8; }
-#nav button:hover { color:var(--on-ink); background:var(--on-ink-wash); }
+#nav button:hover { color:var(--on-ink); background:var(--on-ink-hover); }
 #nav button.on { font-weight:600; color:var(--on-ink); background:var(--on-ink-wash); }
 #nav button.on svg { opacity:1; }
 /* 활성 표시는 통짜 채움이 아니라 인디케이터다 — 채우면 메뉴 한 줄이 버튼으로
@@ -324,7 +330,7 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 @media (min-width:1000px) {
   body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
   header { grid-column:1; top:0; height:100vh; overflow-y:auto; display:flex;
-    flex-direction:column; border-bottom:0; border-right:1px solid var(--rail); }
+    flex-direction:column; border-bottom:0; border-right:1px solid var(--on-ink-rule); }
   .hbar { flex-direction:column; align-items:stretch; gap:4px; padding:16px 16px 8px;
     max-width:none; margin:0; }
   .hbar .sp { display:none; }
@@ -361,7 +367,9 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 @media screen and (max-width:999px) {
   header { display:contents; }
   .hbar, .navbar, .rail-foot { background:var(--rail); }
-  .navbar { position:sticky; top:0; z-index:9; }
+  /* 경계 한 줄(위 header 주석): 붙박인 메뉴가 본문 위에 설 때와, 스크롤 전 머리가 끝나는 곳 */
+  .navbar { position:sticky; top:0; z-index:9; border-bottom:1px solid var(--on-ink-rule); }
+  .rail-foot { border-bottom:1px solid var(--on-ink-rule); }
   html { scroll-padding-top:64px; }   /* 절로 옮기는 scrollIntoView 가 메뉴 밑에 깔리지 않게 */
 }
 .mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
@@ -693,6 +701,22 @@ td.num:last-child, th.num:last-child { padding-right:0; }
   .card .tw.pin > table > tbody > tr:not(.exp) > td:first-child:not([colspan]),
   .card .tw.pin > table > thead > tr > th:first-child { background:var(--card); }
 }
+/* 좁은 화면의 행 카드 — 옵트인(table(..., "cards") 가 .tw.cards 를 단다). 열이 다섯을
+   넘는 표는 390px 에서 옆 스크롤로도 읽히지 않았다: 첫 열을 붙박아도 숫자 한 칸만 남는다.
+   머리글을 접고 줄마다 첫 칸을 제목으로, 나머지 칸은 그 열 이름(data-label — table() 이
+   머리글 글자에서 단다)을 앞에 달아 세로로 쌓는다. 옆으로 안 넘치므로 페이드·붙박이는
+   tableFade() 가 스스로 끈다(.over 가 안 선다). 펼침 줄(tr.exp)의 통짜 칸은 라벨이 없다. */
+@media (max-width:560px) {
+  .tw.cards > table > thead { display:none; }
+  .tw.cards > table, .tw.cards > table > tbody, .tw.cards > table > tbody > tr,
+  .tw.cards > table > tbody > tr > td { display:block; }
+  .tw.cards > table > tbody > tr { padding:10px 0; border-bottom:1px solid var(--rule-soft); }
+  .tw.cards > table > tbody > tr:last-child { border-bottom:0; }
+  .tw.cards > table > tbody > tr > td { padding:2px 0; border-bottom:0; text-align:left; }
+  .tw.cards > table > tbody > tr > td:first-child { margin-bottom:4px; }
+  .tw.cards > table > tbody > tr > td[data-label]::before { content:attr(data-label) " ";
+    font:var(--micro); color:var(--slate); }
+}
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
   padding-top:9px; }
@@ -902,6 +926,10 @@ td.expcell { padding:0 !important; }
 /* 막힌 것 — 경고보다 한 단 세다. 채워서 눈이 먼저 가게 하되 높이는 배지 그대로다. */
 .badge.bad { color:var(--card); border-color:var(--copper); background:var(--copper); }
 .badge.muted, .st-done { color:var(--slate); border-color:var(--rule); }
+/* 권고 — 고치면 좋지만 실패도 막힘도 아니다. 산화동(.warn·.bad)은 실패·막힘 몫이라
+   권고에 쓰면 "참고" 수준의 것이 고장처럼 읽힌다. 본문 색 글자·눈금 색 테두리로
+   .muted(지나간 것)보다는 한 단 서게 한다. */
+.badge.adv { color:var(--ink); border-color:var(--slate); background:var(--bar); }
 /* 실제로 고친 기록이 있는 기회 — '작업 시작'(구리)보다 한 걸음 나아간 상태라
    완료(patina)와 같은 계열로 두되 채우지 않는다. 완료는 아직 사람이 누른다. */
 .badge.made { color:var(--patina); border-color:var(--patina); background:var(--wash); }
@@ -1094,6 +1122,10 @@ label a { text-decoration:underline; text-underline-offset:2px; }
 .gov, .lnk { font:inherit; color:var(--patina); background:transparent; border:0; padding:0;
   cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 .gov:hover, .lnk:hover { color:var(--ink); }
+/* 본문의 맨 링크 한 벌 — 규칙이 없어 브라우저 기본 파랑·보라가 화면마다 섰다.
+   :where() 로 특이도를 0 으로 둔다: 클래스를 단 링크(.go·.cmd 등)는 자기 규칙이 이긴다. */
+:where(main a) { color:var(--patina); text-decoration:none; text-underline-offset:2px; }
+:where(main a:hover) { text-decoration:underline; }
 input, select, textarea { font:400 13.5px/1.4 var(--sans); width:100%; color:var(--ink);
   background:transparent; border:0; border-bottom:1px solid var(--rule); padding:5px 2px; }
 input:focus, select:focus, textarea:focus { border-bottom-color:var(--patina); outline:0; }
@@ -1135,6 +1167,9 @@ option { background:var(--card); }
 .go:active { transform:translateY(1px); }
 .go[disabled], .go[aria-disabled="true"] { opacity:.45; cursor:default; }
 .go[disabled]:hover { background:var(--patina); border-color:var(--patina); color:var(--card); }
+/* 비활성 주 버튼은 채움을 벗는다 — 흐린 녹색 채움은 눌러도 되는 버튼으로 읽혔다(10회차 심사). */
+.go:not(.sec)[disabled], .go:not(.sec)[disabled]:hover { background:transparent; color:var(--slate);
+  border-color:var(--rule); opacity:1; }
 .go[disabled]:active { transform:none; }
 /* 보조 버튼 — 되돌리기·내보내기·다시 하기. 테두리만 두르고 물러나 있는다. */
 .go.sec { background:transparent; color:var(--ink); border-color:var(--rule); }
@@ -1538,7 +1573,7 @@ SM.host = {
         `>설정에서 고르기</button>`;
     const ids = o.group ? o.group.ids : [o.id];
     return `<button class="go sm" onclick="runTool(${o.id}, [${ids.join(",")}])"` +
-      (ids.length > 1 ? ` title="묶인 검색어 ${ids.length}개를 함께 작업 시작으로 둡니다"` : "") +
+      (ids.length > 1 ? ` title="이 줄에 묶인 기회 ${ids.length}개를 함께 작업 시작으로 둡니다"` : "") +
       `>${esc(t.label)} 로 열기</button>`;
   },
 };
@@ -1982,8 +2017,18 @@ function fallbackBrief(c) {
   if (c.url) L.push(`- 페이지: ${c.url}`);
   else L.push(B.no_page[shape === "new_content" ? "new_content" : "unknown"]);
   if (c.problem) L.push(`- 왜 걸렸나: ${c.problem}`);
-  // 언어·길이 기준은 '대상'의 줄 하나가 말한다 — 꼬리는 그 줄을 가리키기만 한다
-  if (B.lang_line && B.lang_line[shape]) L.push(B.lang_line[shape]);
+  // 언어·길이 기준은 '대상'의 줄 하나가 말한다 — 꼬리는 그 줄을 가리키기만 한다.
+  // 주소의 첫 경로가 언어(/en/)면 사이트 기본이 아니라 그 언어의 줄이다(서버 요청문의
+  // brief.page_locale 과 같은 규칙). 어느 언어를 알아보는지와 그 문장은 서버가 준다
+  // (BRIEF.page_lang: 사이트 기본과 다른 언어 코드 → 줄) — 여기서 언어 목록을 안 갖는다.
+  let seg = "";
+  try { seg = (new URL(c.url, location.href).pathname.split("/")[1] || "").toLowerCase(); }
+  catch (e) { /* 주소가 아니면 사이트 기본 */ }
+  // /zh-hans/ 처럼 지역이 붙은 조각은 언어 코드(앞 토막)로도 찾는다 — 서버 lang_of 와 같은 결론.
+  const pl = B.page_lang || {};
+  const pageLang = c.url && shape !== "outreach" && (pl[seg] || pl[seg.split("-")[0]]);
+  if (pageLang) L.push(pageLang);
+  else if (B.lang_line && B.lang_line[shape]) L.push(B.lang_line[shape]);
   L.push("");
 
   const a = c.audit;
@@ -2241,7 +2286,7 @@ const oppIdsTo = (o, st) => o.group
   ? o.group.variants.filter(v => v.status !== st).map(v => v.id) : [o.id];
 const oppBtn = (o, st) => o.group && o.group.ids.length > 1
   ? `<button onclick="setOpps([${oppIdsTo(o, st).join(",")}],'${st}')"
-      title="묶인 검색어 ${o.group.ids.length}개에 모두 적용합니다">${OPP_SET[st]}</button>`
+      title="이 줄에 묶인 기회 ${o.group.ids.length}개에 모두 적용합니다">${OPP_SET[st]}</button>`
   : `<button onclick="setOpp(${o.id},'${st}')">${OPP_SET[st]}</button>`;
 
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
@@ -2798,18 +2843,22 @@ const GROUP_WHY = {
   norm: () => "띄어쓰기·대소문자만 다른 같은 검색어입니다.",
   alone: () => "",
 };
+// 한 줄에 같은 검색어의 여러 종류가 묶이면(scoring._merge_kinds) variants 에 같은 대상이
+// 종류 수만큼 든다 — 「묶인 검색어」는 대상 수로 센다. 대상이 하나뿐이면 표가 할 말이 없다.
+const oppTargets = g => [...new Set((g.variants || []).map(v => v.target))];
 function oppGroup(o) {
   const g = o.group;
-  if (!g || g.ids.length < 2) return "";
+  if (!g || oppTargets(g).length < 2) return "";
   const url = g.via === "page" || (g.via === "norm" && /^https?:/.test(g.key || "")) ? g.key : "";
-  const rows = g.variants.map((v, i) => `<tr><td>${esc(v.target)}${i === 0
+  const seen = new Set();
+  const rows = g.variants.filter(v => !seen.has(v.target) && seen.add(v.target)).map((v, i) => `<tr><td>${esc(v.target)}${i === 0
       ? ` <span class="muted">대표</span>` : v.via === "serp" && g.via === "page"
       ? ` <span class="muted" title="우리 페이지는 없고, 검색 결과가 대표 검색어와 크게 겹쳐 붙었습니다">검색 결과 겹침</span>` : ""}</td>
     <td class="n">${v.volume ? num(v.volume) : "—"}</td>
     <td class="n">${Number.isFinite(v.score) ? Math.round(v.score) : "—"}</td>
     <td>${window.OPP_LABEL[v.status] || esc(v.status)}</td></tr>`).join("");
   const lead = g.variants[0] || {};
-  return `<p class="detw"><b>묶인 검색어 ${g.ids.length}개</b> · ${GROUP_WHY[g.via](g)}${url
+  return `<p class="detw"><b>묶인 검색어 ${oppTargets(g).length}개</b> · ${(GROUP_WHY[g.via] || GROUP_WHY.alone)(g)}${url
       ? ` <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>` : ""}</p>
     <table class="dett"><thead><tr><th>검색어</th><th class="n">월 검색량</th><th class="n">점수</th>
       <th>상태</th></tr></thead><tbody>${rows}</tbody></table>
@@ -2828,7 +2877,7 @@ async function setOpps(ids, status) {
     if (!ok) { failed++; why = why || (r && r.error) || ""; }
   }
   if (failed) toast(why || `${ids.length}개 중 ${failed}개를 못 바꿨습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.`, "bad");
-  else toast(`묶인 검색어 ${ids.length}개에 적용했습니다. ` + (OPP_DONE[status] || ""), "ok");
+  else toast(`묶인 기회 ${ids.length}개에 적용했습니다. ` + (OPP_DONE[status] || ""), "ok");
   load();
 }
 
@@ -2864,7 +2913,9 @@ const rankDelta = rd => {
 //   ">순위?구글이 보고한 평균 게재순위"
 // 줄이 SORT_MIN 을 넘으면 머리글이 정렬 손잡이가 되고 머리글 자체가 붙박인다.
 const SORT_MIN = 8;
-const table = (heads, rows, empty) => {
+// cls="cards" — 좁은 화면(≤560px)에서 줄을 카드로 쌓는다(.tw.cards). 칸 라벨은 여기서
+// 머리글 이름으로 단다 — 뷰가 열 이름을 CSS 에 다시 적으면 머리글과 두 벌이 된다.
+const table = (heads, rows, empty, cls) => {
   // 빈 표에도 다음 걸음이 있어야 한다 — 부르는 쪽이 empty 로 더 구체적인 말을
   // 주면 그쪽이 이긴다(그 화면이 무엇을 돌려야 채워지는지 안다).
   // 이 기본 문장은 배포로 안 가른다: 무엇을 누르는지는 화면 머리의 칩·버튼이 이미
@@ -2884,8 +2935,20 @@ const table = (heads, rows, empty) => {
       `${esc(name)}${why ? `<span class="hint" tabindex="0" data-tip="${esc(why)}"` +
         ` aria-label="${esc(why)}">i</span>` : ""}</th>`;
   }).join("");
-  const t = `<table><thead><tr>${th}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
-  return `<div class="tw${long ? " long" : ""}">${t}</div>`;
+  let body = rows.join("");
+  if (cls === "cards") {
+    const names = heads.map(h => h.replace(/^>/, "").split("?")[0]);
+    const tb = document.createElement("template");
+    tb.innerHTML = `<table><tbody>${body}</tbody></table>`;
+    const tbody = tb.content.querySelector("tbody");
+    [...tbody.rows].filter(tr => !tr.classList.contains("exp")).forEach(tr =>
+      [...tr.cells].forEach((td, i) => {
+        if (i && names[i] && !td.hasAttribute("colspan")) td.dataset.label = names[i];
+      }));
+    body = tbody.innerHTML;
+  }
+  const t = `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<div class="tw${long ? " long" : ""}${cls ? " " + cls : ""}">${t}</div>`;
 };
 
 // 표는 화면 밖에서도 이어진다 — 지금 걸러 놓은 목록 그대로 파일로 준다.
