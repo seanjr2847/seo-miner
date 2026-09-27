@@ -233,8 +233,23 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
    밀어냈다. 좁은 화면에서는 뺀다 — 그 화면의 주요 행동은 바로 아래 띠가 갖고
    있고, 머리 칩은 같은 단계를 한 번 더 부르는 보조일 뿐이다. */
 @media (max-width:560px) {
-  .vh .vh-cmd, .vh .sm-refresh { display:none; }
+  .vh .vh-more { display:none; }
+  .vh { padding-top:var(--sp-4); }       /* 좁은 화면에서 제목을 첫 화면 위쪽으로 */
 }
+/* 단계별 다시 재기 — [이 묶음 다시 재기] 옆의 접힘 메뉴. 손잡이는 셸의 다른 접이식
+   (.ask·.fixmore)처럼 버튼 모양이 아니라 글자 손잡이다: 앞에 서는 '다시' 버튼은
+   묶음 버튼 하나뿐이어야 한다. 띠가 전부 가져가 남은 칩이 없으면 메뉴째 뺀다. */
+.vh-more { position:relative; }
+.vh-more:not(:has(.vh-cmd:not(.taken))) { display:none; }
+.vh-more > summary { cursor:pointer; list-style:none; font:500 12.5px/1 var(--sans);
+  color:var(--slate); display:inline-flex; align-items:center; min-height:var(--btn-h); }
+.vh-more > summary::-webkit-details-marker { display:none; }
+.vh-more > summary:hover { color:var(--patina); }
+.vh-more .vh-menu { position:absolute; z-index:5; top:100%; left:0; margin-top:4px;
+  display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:var(--sp-2);
+  background:var(--card); border:1px solid var(--rule); border-radius:var(--r-md);
+  box-shadow:var(--shadow-1); }
+.vh-more .vh-menu > * { white-space:nowrap; }
 .vh .sp { flex:1; }
 .vh + section, .view > section:first-child { border-top:0; }
 
@@ -310,23 +325,25 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
   body { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
   header { grid-column:1; top:0; height:100vh; overflow-y:auto; display:flex;
     flex-direction:column; border-bottom:0; border-right:1px solid var(--rail); }
-  .hbar { flex-direction:column; align-items:stretch; gap:4px; padding:20px 16px 8px;
+  .hbar { flex-direction:column; align-items:stretch; gap:4px; padding:16px 16px 8px;
     max-width:none; margin:0; }
   .hbar .sp { display:none; }
   .tag { margin:-2px 0 12px; }
   .hbar .rl { margin-top:12px; }
   #nav { flex-direction:column; overflow:visible; padding:10px 8px 0; margin:0;
     max-width:none; flex:1; align-items:stretch; gap:1px; }
-  #nav button { text-align:left; padding:0 10px; min-height:34px; }
+  /* 1440×900 에서 레일(메뉴 열둘 + 묶음 제목 여섯 + 바닥)이 966px 이라 바닥의 [화면 다시
+     불러오기]·[보고서 내려받기]가 잘렸다 — 줄 높이와 묶음 제목 여백을 조금씩 줄여 들인다. */
+  #nav button { text-align:left; padding:0 10px; min-height:32px; }
   /* 세로 레일에서는 인디케이터가 왼쪽 모서리에 선다 — 눈이 훑는 축과 같은 방향이다. */
   #nav button.on::before { left:-8px; right:auto; top:6px; bottom:6px;
     width:3px; height:auto; border-radius:0 2px 2px 0; }
-  .navgrp { display:block; padding:16px 11px 6px; }
+  .navgrp { display:block; padding:10px 11px 4px; }
   #nav > .navgrp:first-child { padding-top:2px; }
   main { grid-column:2; }
-  /* 바닥 통 — 실행·보고서·새로고침. 애드온이 여기에 자기 버튼을 넣는다.
+  /* 바닥 통 — 실행·보고서·화면 다시 불러오기. 애드온이 여기에 자기 버튼을 넣는다.
      메뉴(이동)와 다른 일이므로 괘선으로 갈라 놓는다. */
-  .rail-foot { margin-top:auto; padding:16px; display:flex; flex-wrap:wrap;
+  .rail-foot { margin-top:auto; padding:12px 16px; display:flex; flex-wrap:wrap;
     gap:8px 12px; align-items:center; border-top:1px solid var(--on-ink-rule); }
   .rail-foot .hbtn { width:100%; }
 }
@@ -407,6 +424,15 @@ header { background:var(--rail); color:var(--on-ink); position:sticky; top:0; z-
 .vgrp .gst { font:var(--micro); color:var(--patina); }
 .vgrp .gst:empty { display:none; }
 .vgrp .go { margin-left:var(--sp-2); }
+/* 묶음 이름 — 레일의 묶음 제목이 안 서는 좁은 화면에서도 "이 묶음"이 무엇인지 말한다. */
+.vgrp .gname { font:600 12.5px/1.35 var(--sans); color:var(--ink); }
+/* 좁은 화면의 머리는 한 줄이다 — 축별 "마지막 수집" 줄은 바로 아래 묶음 줄(.vgrp)과
+   같은 날짜를 한 번 더 말해 제목을 화면 아래로 밀었다. 과거 시점 경고(<b>)가 설 때만
+   남긴다: 그건 다른 데서 말하지 않는다. */
+@media (max-width:560px) {
+  .hax:not(:has(b)) { display:none; }
+  .hax .k, .hax .ax { display:none; }
+}
 
 main { width:100%; max-width:1180px; margin:0 auto; padding:0 22px 80px; min-width:0; }
 
@@ -655,12 +681,17 @@ td.num:last-child, th.num:last-child { padding-right:0; }
    모르게 된다. 좁은 화면에서 넘치는 표만 첫 열을 붙박는다. 줄 강조는 tr 이 칠하므로
    붙박은 칸은 담는 상자의 바탕을 직접 갖는다(투명하면 밑으로 숫자가 비친다).
    첫 열이 상자 대부분을 차지하면(긴 검색어) 붙박을수록 숫자 자리가 사라진다 —
-   붙박을지는 tableFade() 가 재서 .pin 으로 정한다. */
+   붙박을지는 tableFade() 가 재서 .pin 으로 정한다.
+   붙박는 것은 **이 표의 줄**의 첫 칸뿐이다(자식 결합자) — 펼침 줄(tr.exp)의 통짜 칸
+   (colspan)이나 그 안에 든 표의 첫 칸까지 붙으면 패널이 옆으로 밀릴 때 한 조각만
+   남아 겹쳐 보였다. */
 @media (max-width:999px) {
-  .tw.pin tbody td:first-child, .tw.pin thead th:first-child {
+  .tw.pin > table > tbody > tr:not(.exp) > td:first-child:not([colspan]),
+  .tw.pin > table > thead > tr > th:first-child {
     position:sticky; left:0; z-index:1; background:var(--stone); }
-  .tw.pin thead th:first-child { z-index:2; }
-  .card .tw.pin tbody td:first-child, .card .tw.pin thead th:first-child { background:var(--card); }
+  .tw.pin > table > thead > tr > th:first-child { z-index:2; }
+  .card .tw.pin > table > tbody > tr:not(.exp) > td:first-child:not([colspan]),
+  .card .tw.pin > table > thead > tr > th:first-child { background:var(--card); }
 }
 .tw table { min-width:100%; }
 .tw thead th { position:sticky; top:0; z-index:1; background:var(--stone);
@@ -778,7 +809,10 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--patina); }
 .dett th:first-child { border-top-left-radius:4px; }
 .dett th:last-child { border-top-right-radius:4px; }
 .dett td { padding:8px 10px; border-bottom:1px solid var(--rule-soft); vertical-align:top; }
-.dett td a { font-family:var(--mono); word-break:break-all; }
+/* 주소는 경로만 한 줄로 두고 넘치면 말줄임한다(전체는 title) — 글자 단위로 끊으면
+   좁은 칸에서 주소 하나가 여러 줄 세로 막대가 되어 옆 숫자와 줄이 안 맞았다. */
+.dett td a { font-family:var(--mono); display:inline-block; max-width:26ch;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
 .dett .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .detn { font-size:12px; color:var(--slate); margin:8px 0 4px; }
 /* 진단 표: 심각한 것은 산화동, 권고는 회색. 색만으로 말하지 않게 첫 칸에 이름을 둔다. */
@@ -819,12 +853,10 @@ td.expcell { padding:0 !important; }
 .det-top > .ask, .det-top > .acts { margin:0; }
 /* 펴면 본문 상자가 한 줄을 통째로 쓴다 — 버튼 옆에 끼면 textarea 가 한 뼘이 된다. */
 .det-top > .ask[open] { flex:1 1 100%; }
-/* 접힌 줄의 복사 버튼 — 손잡이가 칠해져 있을 때(패널 맨 위)와 아닐 때 둘 다
-   읽혀야 해서 색을 스스로 안 정한다. currentColor 를 빌려 쓴다. */
-.ask > summary .askcopy { margin-left:10px; font:500 11.5px/1 var(--sans);
-  color:inherit; background:transparent; border:1px solid currentColor; opacity:.72;
-  border-radius:var(--r-sm); padding:0 8px; min-height:20px; cursor:pointer; }
-.ask > summary .askcopy:hover { opacity:1; }
+/* 요청문 복사 — 손잡이(summary) 밖의 보조 버튼(.go.sm.sec)이다. 초록 손잡이 안에
+   있으면 막대 전체가 한 버튼으로 읽혀, 복사하려던 손가락이 패널을 열었다. 손잡이
+   바로 뒤에 서서 펴기 전에도 보인다. */
+.ask + .askcopy { margin:0 0 4px; }
 /* 페이지 진단 — 한 줄이 손잡이고, 표는 그 안에 접혀 있다. */
 .fixmore { margin:2px 0 10px; }
 .fixmore > summary { cursor:pointer; list-style:none; font-size:12.5px; color:var(--ink);
@@ -1163,7 +1195,7 @@ pre { font:400 11.5px/1.65 var(--mono); background:var(--stone); border:1px soli
        window.__VIEWS__ 로 실어 보낸다(문서 머리의 MANIFEST 자리). -->
   <div class="navbar"><nav id="nav" aria-label="화면"></nav></div>
   <div class="rail-foot">
-    <button class="hbtn" id="refresh">새로고침</button>
+    <button class="hbtn" id="refresh" title="다시 재지 않고, 이미 모은 결과를 다시 읽어 옵니다">화면 다시 불러오기</button>
   </div>
 </header>
 
@@ -1528,8 +1560,16 @@ function viewCmds() {
     // 로컬 기본값이다). 그때 낡은 칩이 남아 있으면 못 지우고 그대로 있는다.
     // 사이트가 바뀔 때 sm:site 가 다시 부르는 것도 같은 길을 탄다 — 로컬 칩이 실은
     // 사이트 이름(siteArg)이 그때 비로소 정해진다.
-    vh.querySelectorAll(".vh-cmd").forEach(el => el.remove());
-    vh.insertAdjacentHTML("beforeend", v.head.map(SM.host.viewChip).join(""));
+    // '다시 ~' 버튼은 화면당 하나다 — 머리의 [이 묶음 다시 재기](groupHead)만 앞에
+    // 두고, 단계 하나씩 다시 재는 칩은 그 옆 접힘 메뉴 안에 둔다. 한 화면에 '실적 다시
+    // 수집·색인 다시 확인·속도 다시 측정…'이 나란히 서면 무엇을 누를지 못 고른다.
+    vh.querySelectorAll(".vh-more").forEach(el => el.remove());
+    const chips = v.head.map(SM.host.viewChip).join("");
+    if (!chips) continue;
+    const more = `<details class="vh-more"><summary>단계별로 다시</summary>` +
+      `<div class="vh-menu">${chips}</div></details>`;
+    const row = vh.querySelector(":scope > .vgrp");
+    (row || vh).insertAdjacentHTML("beforeend", more);
   }
 }
 // 좁은 화면의 메뉴는 가로 스크롤러다. 오른쪽 페이드는 "더 있다"는 말이라, 끝까지
@@ -1605,7 +1645,9 @@ function tableFade(root) {
     w.classList.toggle("end", !over || w.scrollLeft + w.clientWidth >= w.scrollWidth - 1);
     const c0 = w.querySelector("tbody td:first-child");
     // 첫 칸이 숫자(점수 등)면 붙박아 봐야 어느 줄인지 안 알려 준다 — 이름 칸일 때만.
+    // 체크 칸([심사]의 고르기)도 이름 칸이 아니다 — 붙박으면 상자만 남고 이름이 밀려 나간다.
     w.classList.toggle("pin", over && !!c0 && !c0.classList.contains("num")
+      && !c0.querySelector("input[type=checkbox]")
       && c0.offsetWidth <= w.clientWidth * 2 / 3);
     if (over && !w.dataset.fade) {
       w.dataset.fade = "1";
@@ -1863,11 +1905,13 @@ const delta = (d, invert, base, tip) => {
    진단 문장은 여기서 만들지 않는다 — scoring.page_advice 가 만든 것을 그린다. */
 // 표는 좁은 화면에서 상자 안에서 넘친다 — 열이 다섯이라 390px 를 넘고, 상자가
 // 없으면 펼침 패널이 아니라 페이지 전체가 옆으로 밀린다(table() 과 같은 규칙).
+// 칸에는 경로만 — 도메인은 이 사이트 것이라 줄마다 같다. 전체 주소는 title 이 든다.
+const urlPath = u => String(u || "").replace(/^https?:\/\/[^/]+/, "") || "/";
 const pageTable = rows => !rows || !rows.length ? "" :
   `<div class="tw"><table class="dett"><thead><tr><th>페이지</th><th class="n">노출</th>
      <th class="n">클릭</th><th class="n">CTR</th><th class="n">평균순위</th></tr></thead>
    <tbody>${rows.map(r => `<tr><td><a href="${esc(r.page)}" target="_blank"
-       rel="noopener">${esc(r.page)}</a></td>
+       rel="noopener" title="${esc(r.page)}">${esc(urlPath(r.page))}</a></td>
      <td class="n">${num(r.impressions)}</td><td class="n">${num(r.clicks)}</td>
      <td class="n">${r.ctr}%</td><td class="n">${r.position ?? "—"}</td></tr>`).join("")}
    </tbody></table></div>`;
@@ -1991,32 +2035,33 @@ const briefText = b => b.body + "\n" + ((window.BRIEF || {tails: {}}).tails[b.sh
 // 프롬프트 상자 — 접혀 있다가 펴면 본문이 보이고, 버튼 하나로 복사한다.
 // c.brief(서버가 만든 것)가 있으면 그것, 없으면 폴백. BRIEF 자체가 없는 것은
 // 요청문이 생기기 전의 옛 박제본이다 — 없는 글을 만들지 않고 그렇다고 말한다.
-// 복사 버튼은 **접힌 줄**에 선다. 이 상자의 유일한 목적이 복사인데 버튼이 안에
-// 있어서, 누르려면 먼저 펴야 했다 — 펴 봤자 읽을 것은 AI 에게 줄 글이지 사람이
-// 읽을 글이 아니다. summary 안의 클릭은 details 를 토글하므로 그걸 막는다.
+// 복사 버튼은 **패널 밖**, 손잡이 바로 뒤에 선다. 이 상자의 유일한 목적이 복사인데
+// 버튼이 안에 있어서 누르려면 먼저 펴야 했다. 그다음엔 초록 손잡이(summary) 안에
+// 넣었는데, 막대 전체가 한 버튼으로 읽혀 복사하려던 손가락이 패널을 열었다.
+// 그래서 손잡이와 나란한 독립 보조 버튼이다 — 펴기 전에도 보이고, 누르면 복사만 한다.
 const askBlock = c => {
   if (!window.BRIEF)
     return `<p class="detn">요청문은 이 보고서를 다시 만들면 생깁니다.</p>`;
   const b = c.brief || fallbackBrief(c);
   const t = briefText(b);
   return `<details class="ask"><summary>요청문 만들기
-      <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span>
-      <button type="button" class="askcopy" aria-label="요청문 복사"
-        onclick="event.preventDefault();event.stopPropagation();copyPrompt(this)">복사</button></summary>
+      <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span></summary>
     <div class="pbox">
       <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span></div>
       <textarea readonly rows="14" spellcheck="false" aria-label="요청문 전문">${esc(t)}</textarea>
-    </div></details>`;
+    </div></details><button type="button" class="go sm sec askcopy"
+      onclick="copyPrompt(this)">요청문 복사</button>`;
 };
 
 // 박제 보고서는 file:// 로도 열린다 — 거기서는 clipboard API 가 막히므로
 // execCommand 로 물러선다(둘 다 실패하면 사용자가 직접 고르게 안내한다).
+// 버튼은 요청문 상자(details.ask) 바로 뒤에 선다 — askBlock 이 둘을 붙여 낸다.
 window.copyPrompt = function (btn) {
-  const box = btn.closest("details.ask");
+  const box = btn.previousElementSibling;
   const ta = box.querySelector("textarea");
   const done = ok => {
     btn.textContent = ok ? "복사함" : "직접 선택";
-    setTimeout(() => { btn.textContent = "복사"; }, 2000);
+    setTimeout(() => { btn.textContent = "요청문 복사"; }, 2000);
   };
   if (navigator.clipboard && window.isSecureContext)
     return navigator.clipboard.writeText(ta.value).then(() => done(true), () => done(false));
@@ -2776,7 +2821,7 @@ async function setOpps(ids, status) {
     const [ok, r] = await post("/api/opp", {project: $("proj").value, id, status});
     if (!ok) { failed++; why = why || (r && r.error) || ""; }
   }
-  if (failed) toast(why || `${ids.length}개 중 ${failed}개를 못 바꿨습니다. [새로고침] 뒤 다시 하면 됩니다.`, "bad");
+  if (failed) toast(why || `${ids.length}개 중 ${failed}개를 못 바꿨습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.`, "bad");
   else toast(`묶인 검색어 ${ids.length}개에 적용했습니다. ` + (OPP_DONE[status] || ""), "ok");
   load();
 }
@@ -2789,7 +2834,7 @@ async function setOpp(id, status) {
   // 갈라 호스팅이면 서버로 넘긴다(프록시). 호스팅 서버는 로그인 세션으로 이미 안다.
   const [ok, r] = await post("/api/opp", {project: $("proj").value, id, status});
   if (!ok) return toast((r && r.error) ||
-    "상태를 바꾸지 못했습니다. [새로고침] 뒤 다시 하면 됩니다.", "bad");
+    "상태를 바꾸지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad");
   toast(OPP_DONE[status] || "바꿨습니다.", "ok");
   load();
 }
@@ -3138,25 +3183,35 @@ function groupHead(d) {
         return `<span class="ax${at ? "" : " none"}">${esc(stageName(st))}<em>${
           at ? esc(at) : "아직"}</em></span>`;
       }).join("");
-      html = `<span class="k">마지막으로 잰 날</span>${ax}` +
+      // 묶음 이름을 줄 맨 앞에 세운다 — 레일의 묶음 제목(.navgrp)은 좁은 화면에서 안
+      // 그려져, 모바일에서는 "이 묶음"이 무엇인지 말하는 자리가 여기뿐이다. 버튼이 다시
+      // 재는 범위(g.stages)는 이름표(title·aria-label)로 말한다.
+      const scope = `${GRP_LABEL} — ${g.name}: ${(g.stages || []).map(stageName).join(" · ")}`;
+      html = `<b class="gname">${esc(g.name)}</b><span class="k">마지막으로 잰 날</span>${ax}` +
         (READONLY || !(g.stages && g.stages.length) ? "" :
-        `<button class="go sm sec" data-grp="${esc(g.id)}"
-           onclick="groupRun(this)">${GRP_LABEL}</button><span class="gst"></span>`);
+        `<button class="go sm sec" data-grp="${esc(g.id)}" title="${esc(scope)}"
+           aria-label="${esc(scope)}" onclick="groupRun(this)">${GRP_LABEL}</button><span class="gst"></span>`);
     } else if (v.id === "guide" && !READONLY && gs.some(x => x.stages && x.stages.length)) {
       // 전체 재기는 여기 하나다 — 이름은 페이로드의 묶음에서 읽는다(사본을 안 둔다).
+      // 버튼은 [기록]이 같은 일을 부르는 act() 와 같은 몸(.go)이다 — 크기가 갈리면
+      // 같은 행동이 화면마다 다른 무게로 읽힌다.
       const names = gs.filter(x => x.stages && x.stages.length).map(x => x.name);
       html = `<span class="k">${esc(names.join(" · "))}</span>
-        <button class="go sm" data-grp="" onclick="groupRun(this)">${GRP_ALL}</button>
+        <button class="go" data-grp="" onclick="groupRun(this)">${GRP_ALL}</button>
         <span class="gst"></span>`;
     }
     let el = vh.querySelector(":scope > .vgrp");
-    if (!html) { if (el) el.remove(); continue; }
+    // 단계별 다시 재기 접힘(viewCmds 가 단다)은 묶음 버튼 옆에 선다 — 이 줄을 새로
+    // 쓰는 동안 잃지 않게 들어 두었다가 되붙인다.
+    const more = vh.querySelector(".vh-more");
+    if (!html) { if (el) el.remove(); if (more) vh.appendChild(more); continue; }
     if (!el) {
       el = document.createElement("div");
       el.className = "vgrp";
       vh.appendChild(el);
     }
     el.innerHTML = html;
+    if (more) el.appendChild(more);
   }
   grpPaint();
 }
@@ -3280,7 +3335,7 @@ async function load() {
     if (b) b.hidden = true;
     $("err").hidden = false;
     $("err").textContent = (d.error || "이 사이트의 자료를 불러오지 못했습니다.") +
-      " [새로고침]을 누르면 다시 시도합니다.";
+      " [화면 다시 불러오기]를 누르면 다시 시도합니다.";
     return;
   }
   // 그 사이트에 없는 날을 고정하면 서버가 빈 짝을 준다 — 고정을 풀고 최신으로 되돌린다.

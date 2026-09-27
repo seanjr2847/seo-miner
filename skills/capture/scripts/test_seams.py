@@ -2215,11 +2215,13 @@ def test_seam_47_panel_stats_and_relations_come_from_gather():
 
 
 def test_seam_48_copy_button_stands_before_the_panel_opens():
-    """48) 요청문 복사 버튼은 접힌 줄에 있다 — 패널 안에 두지 않는다.
+    """48) 요청문 복사 버튼은 패널을 펴기 전에 보인다 — 패널 안에도, 손잡이 안에도 두지 않는다.
 
     복사는 이 상자의 **유일한** 목적이다. 그런데 버튼이 textarea 위에 있어서,
     누르려면 먼저 펴야 했다 — 펴 봤자 읽을 것은 AI 에게 줄 글이고 사람이 읽을
-    글이 아니다. 두 벌이 되는 것도 막는다: 버튼이 양쪽에 있으면 하나는 언젠가
+    글이 아니다. 그다음엔 초록 손잡이(summary) 안에 넣었는데, 막대 전체가 한 버튼으로
+    읽혀 복사하려던 손가락이 패널을 열었다(블랙박스 2026-09-27). 그래서 details 바로
+    뒤의 독립 버튼이다. 두 벌이 되는 것도 막는다: 버튼이 양쪽에 있으면 하나는 언젠가
     다른 textarea 를 집는다(copyPrompt 가 DOM 을 거슬러 찾기 때문이다).
     """
     ctx = _load()
@@ -2231,19 +2233,19 @@ def test_seam_48_copy_button_stands_before_the_panel_opens():
     body = m.group(1)
     summary = re.search(r"<summary>(.*?)</summary>", body, re.S)
     assert summary, "askBlock 에 summary 가 없다"
-    assert "copyPrompt" in summary.group(1), "복사 버튼이 접힌 줄(summary)에 없다"
+    assert "copyPrompt" not in summary.group(1), \
+        "복사 버튼이 손잡이(summary) 안에 있다 — 누르려던 손가락이 패널을 연다"
     head = re.search(r'<div class="pb-h">(.*?)</div>', body, re.S)
     assert head, "askBlock 의 안내 줄(pb-h)이 없다"
     assert "copyPrompt" not in head.group(1), "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"
     assert body.count("copyPrompt") == 1, f"복사 버튼이 {body.count('copyPrompt')}개다"
-    # summary 안의 버튼은 details 를 토글한다 — 그걸 막지 않으면 복사가 패널을 연다
-    assert "stopPropagation" in summary.group(1) and "preventDefault" in summary.group(1), \
-        "접힌 줄의 복사 버튼이 details 토글을 안 막는다 — 누르면 패널이 열린다"
-    # copyPrompt 는 이제 .pbox 밖에서 불린다
+    # 펴기 전에 보이려면 details **밖**, 바로 뒤여야 한다(copyPrompt 가 앞 형제를 집는다)
+    assert re.search(r"</details><button[^>]*onclick=\"copyPrompt\(this\)\"", body), \
+        "복사 버튼이 요청문 상자(details) 바로 뒤에 없다 — 펴야 보이거나 다른 상자를 집는다"
     fn = re.search(r"window\.copyPrompt = function \(btn\) \{(.*?)\n\};", shell, re.S)
     assert fn, "copyPrompt 를 못 찾았다"
-    assert 'closest(".pbox")' not in fn.group(1), \
-        "copyPrompt 가 여전히 .pbox 를 거슬러 찾는다 — 접힌 줄의 버튼은 그 밖에 있다"
+    assert "previousElementSibling" in fn.group(1) and "closest(" not in fn.group(1), \
+        "copyPrompt 가 버튼의 앞 형제(details.ask)가 아니라 조상을 거슬러 찾는다 — 버튼은 상자 밖이다"
 
 
 def test_seam_49_page_fix_summarizes_before_it_tables():
@@ -2703,6 +2705,163 @@ def test_seam_62_google_ai_overview_lives_on_the_ai_screen():
     assert "AI 요약" not in code, "rank.html 코드에 'AI 요약' 문구가 남았다 — 자리는 ai.html #ai-aio"
     assert 'id="rk-aio' not in code and "ai-aio" not in code, "rank.html 에 AI 요약 섹션이 남았다"
 
+
+def test_seam_80_landing_login_label_and_privacy_fonts_are_one_set():
+    """80) 랜딩의 로그인 버튼 이름은 한 벌이고, 방침 문서는 랜딩과 같은 서체를 받는다.
+
+    /?login=required 배너가 'Google로 연결', 머리·히어로·바닥이 'Google로 시작' 이라
+    같은 버튼이 두 이름이었다. /privacy 는 서체를 안 불러 로고가 폴백 등폭으로 섰다.
+    """
+    landing = (ROOT / "server" / "landing.html").read_text("utf-8")
+    privacy = (ROOT / "server" / "privacy.html").read_text("utf-8")
+    labels = {re.sub(r"<[^>]+>|\s+", "", m) for m in
+              re.findall(r'<a[^>]*href="/auth/login"[^>]*>([\s\S]*?)</a>', landing)}
+    assert len(labels) == 1, f"랜딩의 로그인 링크 이름이 여럿이다: {sorted(labels)}"
+    fonts = set(re.findall(r'<link rel="stylesheet"[^>]*href="([^"]+)"', landing))
+    assert fonts, "랜딩 서체 링크를 못 찾았다 — 검사가 헛돈다"
+    missing = fonts - set(re.findall(r'href="([^"]+)"', privacy))
+    assert not missing, f"/privacy 가 랜딩 서체를 안 받는다: {sorted(missing)}"
+
+
+def test_seam_71_views_do_not_spell_stage_labels():
+    """71) 단계를 돌리는 손잡이의 라벨은 단계 용어표(stage.STAGE_LABELS → window.__STAGES__
+    → stageRun)에서 온다 — 뷰가 act("gsc", "실적 다시 수집") 처럼 글자로 옮겨 적으면
+    파이썬이 이름을 바꿀 때 화면만 낡고, 한 번도 안 돈 단계에 "다시"가 붙는다.
+    개요·분석·키워드·안내·기록·심사 화면을 본다(나머지 뷰의 같은 꼴은 그쪽 담당이 옮긴다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    seen = 0
+    for name in ("overview", "analysis", "keywords", "guide", "history", "triage"):
+        body = (ctx["views"] / f"{name}.html").read_text("utf-8")
+        for stage_id, label in re.findall(
+                r'(?:\bact|_act|_cmd)\(\s*"([a-z0-9]+)"\s*,\s*"([^"]*)"', body):
+            seen += 1
+            assert stage_id not in stage.STAGE_LABELS, \
+                (f"{name}.html 이 단계 {stage_id} 의 버튼 라벨을 글자로 적었다: {label!r} — "
+                 "라벨은 act(stage) 가 stageRun 에서 고른다")
+    assert seen, "라벨을 적은 호출이 하나도 없다 — 전체 다시 재기(run)까지 사라졌으면 검사가 헛돈다"
+
+
+def test_seam_72_run_note_keys_have_labels():
+    """72) 수집기가 runs.notes 에 남기는 key=value 의 key 는 [기록] 화면의 HS_NOTE_LABEL 에
+    사람 말이 있다. 없으면 화면이 숨긴다 — 여태는 resolved·ai_ref 같은 영문 필드명이
+    그대로 섰다. 키는 수집기 원문(`.notes = (...)` 안의 문자열)과 GA4 쪼갬 차원
+    (collect_ga4.BREAKDOWN_DIMS — 키 이름이 코드에서 만들어진다)에서 읽는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import collect_ga4
+    keys = set(collect_ga4.BREAKDOWN_DIMS)
+    for p in sorted(SCRIPTS.glob("*.py")):
+        if p.name.startswith("test_"):
+            continue
+        lines = p.read_text("utf-8").splitlines()
+        i = 0
+        while i < len(lines):
+            if re.search(r"\.notes\s*=", lines[i]):
+                depth, j, chunk = 0, i, []
+                while True:             # 괄호가 닫힐 때까지가 한 문장이다
+                    chunk.append(lines[j])
+                    depth += lines[j].count("(") - lines[j].count(")")
+                    if depth <= 0 or j - i > 12 or j + 1 >= len(lines):
+                        break
+                    j += 1
+                for lit in re.findall(r'"([^"]*)"', "\n".join(chunk)):
+                    keys |= set(re.findall(r"(?<![\w.{])([a-z][a-z_]*)=", lit))
+                i = j
+            i += 1
+    assert {"resolved", "ai_ref", "rows"} <= keys, f"notes 키를 못 읽었다 — 검사가 헛돈다: {sorted(keys)}"
+    hist = (ctx["views"] / "history.html").read_text("utf-8")
+    m = re.search(r"const HS_NOTE_LABEL = \{(.*?)\};", hist, re.S)
+    assert m, "history.html 에 HS_NOTE_LABEL 이 없다"
+    have = set(re.findall(r"\b([a-z][a-z_]*):\"", m.group(1)))
+    missing = sorted(keys - have)
+    assert not missing, f"[기록]이 사람 말로 못 옮기는 notes 키: {missing}"
+
+
+
+def _node_views(js: str):
+    """views/*.html 의 함수를 node 로 돌려 JSON 을 받는다. node 가 없으면 None."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        return None
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    assert r.returncode == 0, f"node 가 못 돌렸다:\n{r.stderr[-800:]}"
+    return json.loads(r.stdout)
+
+
+def _view_block(name: str, head: str) -> str:
+    """화면 파일에서 `head` 로 시작해 줄머리 `}` 로 끝나는 한 덩어리 (사본을 만들지 않는다)."""
+    src = (ROOT / "skills" / "capture" / "templates" / "views" / name).read_text("utf-8")
+    m = re.search(r"^" + re.escape(head) + r".*?^\}", src, re.M | re.S)
+    assert m, f"{name} 에서 {head} 를 못 찾았다"
+    return m.group(0)
+
+
+def test_seam_site_crawl_banner_follows_severity():
+    """사이트 점검 띠는 크롤이 실제로 건 갈래·심각도(collect_crawl.SEVERITY)를 말한다.
+
+    290건이 전부 img_no_alt(참고)인데 띠는 「깨진 내부 링크부터 고치는 것이 가장
+    쌉니다」로 고정돼 있었다. 띠 문장은 가장 무거운 갈래(심각도 먼저, 같으면 많은 것)를
+    이름표 정본(d.crawl_kinds)으로 말하고, 전부 참고면 급하다고 말하지 않는다.
+    """
+    import collect_crawl
+    site = (ROOT / "skills" / "capture" / "templates" / "views" / "site.html").read_text("utf-8")
+    sev = re.search(r"^const CR_SEV = \{.*?\};", site, re.M)
+    assert sev, "site.html 에서 CR_SEV 를 못 찾았다"
+    stubs = """
+const esc = String, num = String, live = s => s, stageRun = s => s, stageName = s => s;
+const stIxStop = () => null, stBlocked = () => 0;
+"""
+    def plan(counts: dict) -> dict:
+        issues = [{"kind": k, "severity": collect_crawl.SEVERITY[k]} for k in counts]
+        issues.sort(key=lambda r: {"bad": 0, "warn": 1}.get(r["severity"], 2))
+        d = {"crawl": {"run": {"id": 1}, "counts": counts, "issues": issues},
+             "index_date": "2026-09-27", "crawl_kinds": collect_crawl.ISSUE_KIND}
+        return _node_views(stubs + sev.group(0) + "\n"
+                           + _view_block("site.html", "function stCrawlTop(d)") + "\n"
+                           + _view_block("site.html", "function stPlan(d)") + "\n"
+                           + f"console.log(JSON.stringify(stPlan({json.dumps(d, ensure_ascii=False)})));")
+    alt = collect_crawl.ISSUE_KIND["img_no_alt"][0]
+    p = plan({"img_no_alt": 290})
+    if p is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert "쌉니다" not in p["msg"] and "깨진 내부 링크" not in p["msg"], (
+        f"전부 참고인데 띠가 고정 문구로 다른 갈래를 권한다: {p['msg']}")
+    assert alt in p["msg"] and "급하지 않습니다" in p["msg"], (
+        f"전부 참고인데 띠가 그 갈래·무게를 말하지 않는다: {p['msg']}")
+    assert p["primary"] is False, "전부 참고인데 띠가 주요 행동으로 섰다"
+    broken = collect_crawl.ISSUE_KIND["broken_internal"][0]
+    p = plan({"img_no_alt": 290, "dup_title": 40, "broken_internal": 3})
+    assert broken in p["msg"] and "3건" in p["msg"], (
+        f"심각한 갈래가 있는데 띠가 그것을 말하지 않는다 — 많은 쪽을 골랐다: {p['msg']}")
+
+
+def test_seam_competitors_counts_rivals_from_gap_rows_too():
+    """경쟁 분석 띠의 경쟁사 수는 몫(comp_metrics)과 격차(kw_gap)의 도메인을 합쳐 센다.
+
+    자동 탐지가 몫을 못 받은 날, 아래 격차 표에는 kr.calc-date.com 이 75줄인데 띠는
+    「겹치는 경쟁 도메인을 찾지 못했습니다」라고 했다 — 몫만 셌기 때문이다.
+    """
+    cp = (ROOT / "skills" / "capture" / "templates" / "views" / "competitors.html").read_text("utf-8")
+    nxt = _view_block("competitors.html", "function CP_nextStep(d)")
+    assert "CP_rivals(d)" in nxt and "comp_metrics" not in nxt, (
+        "CP_nextStep 이 경쟁사를 몫(comp_metrics)만으로 센다")
+    assert "CP_rivals(d)" in cp.split('VIEW("competitors"', 1)[1], "몫 부제가 격차 도메인을 안 센다"
+    d = {"comp_metrics": [{"domain": "me.example", "is_self": 1}],
+         "kw_gap": [{"domain": "kr.calc-date.com"}] * 75 + [{"domain": "b.example"}]}
+    got = _node_views(_view_block("competitors.html", "function CP_rivals(d)")
+                      + f"\nconsole.log(JSON.stringify(CP_rivals({json.dumps(d)})));")
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got == {"share": 0, "all": 2}, f"격차 표의 도메인을 경쟁사로 안 센다: {got}"
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

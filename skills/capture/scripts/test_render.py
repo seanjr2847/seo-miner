@@ -49,6 +49,12 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# 묶음·단계 이름의 정본 — 화면 검사가 이름을 여기 옮겨 적지 않는다.
+import run_all as _run_all  # noqa: E402
+import stage as _stage  # noqa: E402
+_GRP = {g["id"]: g for g in _run_all.GROUPS}
+_STAGE_T = {k: v["t"] for k, v in _stage.STAGE_LABELS.items()}
+
 # 사이트를 **둘** 만든다. 하나면 hash 회귀가 안 보인다 — 무엇을 눌러도 그 하나가
 # 열리니 통과해 버린다. 그 버그가 오래 산 이유가 정확히 이것이다.
 SITES = ("alpha-site", "beta-site")
@@ -230,10 +236,13 @@ MUSTS = [
     # 줄 안에 지금 상태 칩도 있어야 한다 — 버튼은 "무엇으로 바꾸나"만 말해서
     # ('완료 표시'), 칩이 없으면 지금이 어디인지 아무도 안 말한다. [개요]는 기본
     # 상태('할 일')일 때 접힌 줄의 배지도 일부러 안 달기 때문에 특히 그렇다.
-    # 요청문 복사 버튼은 **접기 전에** 보인다 — 손잡이 줄 안, </summary> 앞이다.
-    (r'<details class="ask"><summary>요청문 만들기(?:(?!</summary>).)*'
-     r'class="askcopy"(?:(?!</summary>).)*</summary>',
-     "요청문 복사 버튼이 접힌 줄에 없다 — 펴야만 보인다"),
+    # 요청문 복사 버튼은 **펴기 전에** 보인다 — 손잡이 안이 아니라 상자 바로 뒤의
+    # 독립 버튼이다(손잡이 안에 두면 막대 전체가 한 버튼으로 읽혀 패널이 열렸다).
+    (r'<details class="ask"><summary>요청문 만들기(?:(?!</summary>).)*</summary>'
+     r'(?:(?!</details>).)*</details><button[^>]*class="[^"]*askcopy',
+     "요청문 복사 버튼이 요청문 상자 바로 뒤에 없다 — 펴야만 보이거나 손잡이 안에 있다"),
+    (r'!<summary>요청문 만들기(?:(?!</summary>).)*askcopy',
+     "요청문 복사 버튼이 손잡이(summary) 안에 남아 있다 — 누르면 패널이 열린다"),
     (r'!<div class="pb-h">(?:(?!</div>).)*copyPrompt',
      "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"),
     (r'<div class="det"><div class="det-top"><details class="ask">'
@@ -267,10 +276,11 @@ MUSTS = [
     (r'<b>연관 페이지 1</b>', "펼침 패널이 연관 페이지를 안 그렸다"),
     (r'<b>연관 키워드 2</b>(?:(?!</div>).)*곁 검색어',
      "연관 키워드가 그 지면으로 들어오는 검색어 전부를 안 셌다"),
-    # coverage 기회의 대상은 내부 꼴('cluster:(미분류)')이 아니라 사람이 읽는 이름으로
+    # coverage 기회의 대상은 내부 꼴('cluster:이름')이 아니라 사람이 읽는 이름으로
     # 그려져야 한다 — 카드 제목이 'cluster:(미분류)' 그대로 보이던 것이 실제 발견이었다.
-    (r'<div class="target">미분류</div>', "coverage 기회의 대상이 사람이 읽는 이름으로 안 보인다"),
-    ("!cluster:\\(미분류\\)", "기회 대상이 내부 식별자(cluster:) 그대로 화면에 보인다"),
+    # 미분류는 이제 기회가 아니다(scoring._coverage_rows) — 이름 있는 묶음으로 본다.
+    (r'<div class="target">주제 묶음 · 피부 관리</div>', "coverage 기회의 대상이 사람이 읽는 이름으로 안 보인다"),
+    ("!cluster:피부 관리", "기회 대상이 내부 식별자(cluster:) 그대로 화면에 보인다"),
     # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
     (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
     # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
@@ -357,6 +367,22 @@ LOCAL_MUSTS = [
      "[순위 추적]에 [이 묶음 다시 재기](검색 성과)가 없다"),
     (r'id="view-guide"(?:(?!id="view-).)*<button[^>]*data-grp=""',
      "[안내]에 전체 다시 재기가 없다"),
+    # 묶음 이름은 머리줄 맨 앞에 선다 — 레일의 묶음 제목은 좁은 화면에서 안 그려져,
+    # 모바일에서 "이 묶음"이 무엇인지 말하는 자리가 여기뿐이다. 버튼 이름표는 다시 재는
+    # 범위(g.stages 의 단계 이름)까지 말한다. 이름은 정본(run_all·stage)에서 읽는다.
+    (r'id="view-rank"(?:(?!id="view-).)*class="vgrp"><b class="gname">'
+     + re.escape(_GRP["search"]["name"]) + "</b>",
+     "[순위 추적] 머리줄에 묶음 이름(검색 성과)이 없다 — 모바일에서 '이 묶음'이 무엇인지 모른다"),
+    (r'<button[^>]*data-grp="search"[^>]*aria-label="[^"]*'
+     + re.escape(_GRP["search"]["name"]) + ": "
+     + re.escape(" · ".join(_STAGE_T[s] for s in _GRP["search"]["stages"])) + '"',
+     "[이 묶음 다시 재기]의 이름표가 다시 재는 단계를 안 말한다"),
+    # '다시 ~' 버튼은 화면당 하나다(2026-09-27 제품 결정) — 단계별 다시 재기 칩은 전부
+    # 접힘 메뉴(.vh-menu) 안이다. 메뉴 밖, 제목 뒤에 칩이 서면 한 화면에 '다시'가 여럿이다.
+    (r'<details class="vh-more"><summary>단계별로 다시</summary><div class="vh-menu"><button[^>]*vh-cmd',
+     "단계별 다시 재기가 접힘 메뉴 안에 없다"),
+    (r'!</h1>(?:(?!vh-menu)(?!id="view-).)*class="[^"]*\bvh-cmd\b',
+     "단계별 다시 재기 칩이 접힘 메뉴 밖에 섰다 — 한 화면에 '다시' 버튼이 여럿이다"),
     # 그 버튼 바로 밑 산문이 "비용이 드는 단계는 돌리기 전에 물어봅니다"라고만 하면 거짓말이다 —
     # 버튼은 두 배포 다 묻지 않고 바로 돈다. 버튼 쪽 사실을 말해야 한다.
     (r'id="view-guide"(?:(?!id="view-).)*다시 재기는 누르면 바로 실행됩니다',
@@ -435,10 +461,10 @@ def _axes(conn, pid: int) -> None:
         " VALUES(?,?,?,?,?,'new')",
         [(pid, "striking_distance", f"{SITES[1]} 검색어", 71.2, "평균 9.0위 · 노출 120 · 클릭 8. 이미 1페이지이고 상단 3위권까지 6.0칸 남았습니다 (구글 실적 2026-06-01 기준)"),
          (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다"),
-         # coverage 기회는 target 이 scoring 이 적재한 내부 꼴('cluster:{이름}', 미분류는
-         # 'cluster:(미분류)')이다 — 화면은 그걸 사람이 읽을 이름으로 바꿔 그려야 한다.
+         # coverage 기회는 target 이 scoring 이 적재한 내부 꼴('cluster:{이름}')이다 —
+         # 화면은 그걸 사람이 읽을 이름으로 바꿔 그려야 한다.
          # 검색어 종류가 아니라 심사(verdict) 없이도 그대로 나온다.
-         (pid, "coverage", "cluster:(미분류)", 65.0, "이 주제를 다루는 페이지가 아직 없습니다")])
+         (pid, "coverage", "cluster:피부 관리", 65.0, "이 주제를 다루는 페이지가 아직 없습니다")])
     # 기회 목록은 심사(작업 판정)를 통과한 검색어만 낸다 — 둘 다 작업으로 둔다
     import db, scoring
     db.set_verdicts(conn, pid, [scoring.norm(f"{SITES[1]} 검색어"), scoring.norm(f"{SITES[1]} 두 번째")], "work")

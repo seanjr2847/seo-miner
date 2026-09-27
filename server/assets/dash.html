@@ -166,6 +166,16 @@
   /* 목록을 못 읽는 동안 — 그 목록에 거는 손잡이는 같이 물러난다. */
   #sm-kw.dead .tabs,#sm-kw.dead .bar2{display:none}
   #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
+  /* 좁은 화면에서는 안쪽 스크롤 상자를 풀고 스무 줄까지만 그린다 — 손가락이 늘 상자
+     위에 있어 페이지가 안 내려가고, 수백 줄 목록은 스와이프 쉰 번이 걸렸다. 나머지는
+     [N개 더 보기](listMore)로 편다(사이트 점검의 크롤 목록과 같은 문법). */
+  #sm-kw .sm-more,#sm-aiq .sm-more{display:none}
+  @media(max-width:999px){
+    #sm-kw .list,#sm-aiq .list{max-height:none}
+    #sm-kw .list:not(.all)>label:nth-child(n+21),
+    #sm-aiq .list:not(.all)>.q:nth-child(n+21){display:none}
+    #sm-kw .sm-more,#sm-aiq .sm-more{display:inline-flex;margin-top:10px}
+  }
   #sm-kw .warn{color:var(--copper)}
 
   /* AI 질문 관리 — 만들어 놓고 볼 데가 없었다. 목록이 곧 편집기다. */
@@ -692,6 +702,21 @@
   // 실선 상자 안에 또 서면 무엇이 한 덩어리인지가 안 읽힌다.
   function bare(list, on) { if (list) list.classList.toggle("bare", !!on); }
 
+  // 좁은 화면의 [N개 더 보기] — 목록 바로 뒤에 한 개. 스무 줄 넘게 감춘 것은 CSS 가
+  // 하고(넓은 화면은 상자 안 스크롤이라 다 그린다), 여기서는 남은 수만 말한다.
+  var LIST_PAGE = 20;
+  function listMore(list, n) {
+    var b = list.nextElementSibling;
+    if (b && b.classList.contains("sm-more")) b.remove();
+    if (list.classList.contains("all") || n <= LIST_PAGE) return;
+    list.insertAdjacentHTML("afterend", '<button type="button" class="go sm sec sm-more">' +
+      nf(n - LIST_PAGE) + "개 더 보기</button>");
+    list.nextElementSibling.onclick = function () {
+      list.classList.add("all");
+      this.remove();
+    };
+  }
+
   // 불러오는 동안. "불러오는 중…" 이라고 쓰지 않고 채워질 자리의 모양을 세운다 —
   // 셸의 .skel 이 그 부품이다.
   var SKEL = '<div class="sm-note"><span class="skel"></span>' +
@@ -1204,6 +1229,8 @@
     if (!proj()) return;                  // 사이트를 고르기 전이면 404 다 — 고르면 다시 불린다
     var list = box.querySelector(".list");
     box.classList.remove("dead");
+    list.classList.remove("all");
+    listMore(list, 0);
     bare(list, true);
     list.innerHTML = SKEL;                 // 글자 대신 채워질 자리의 모양을 보여 준다
     var d;
@@ -1248,6 +1275,7 @@
              '<span class="kw">' + esc(k.keyword) + "</span>" +
              '<span class="n">' + kwWhy(k) + "</span></label>";
     }).join("");
+    listMore(list, ks.length);
   }
 
   // 검색어 목록 옆 한 줄 경고 — aiqSay 와 같은 규칙이다(원인 + 복구 행동).
@@ -1328,6 +1356,7 @@
     box.querySelector(".cnt").innerHTML =
       "켠 질문 " + d.active_total + " / " + d.limit +
       "개" + (d.active_total >= d.limit ? ' <b class="warn">· 상한에 닿았습니다</b>' : "");
+    listMore(list, empty ? 0 : d.prompts.length);
     if (empty) {
       list.innerHTML = emptyNote("아직 질문이 없습니다",
         "[질문 만들기]를 누르면 업종과 검색어에 맞는 스무 개가 채워집니다.");
@@ -1369,6 +1398,8 @@
     var box = document.getElementById("sm-aiq");
     if (!box) return;
     if (!proj()) return;                  // 사이트를 고르기 전이면 404 다 — 고르면 다시 불린다
+    box.querySelector(".list").classList.remove("all");
+    listMore(box.querySelector(".list"), 0);
     bare(box.querySelector(".list"), true);
     box.querySelector(".list").innerHTML = SKEL;
     try {
