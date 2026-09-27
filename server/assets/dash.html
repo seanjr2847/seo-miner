@@ -1563,7 +1563,9 @@
     // 달라 비교하지 않았거나. 말없이 사라지면 Δ가 그냥 없어진 것처럼 보인다
     // (views/keywords.html 의 period_mismatch 안내와 같은 말을 한다).
     var basis = function (how, was, fmt) {
-      var note = was != null ? "이전 " + fmt(was)
+      // 옆 칸(클릭·노출)과 같은 '직전 28일(MM-DD~MM-DD)' — 무엇과 견준 값인지 말한다.
+      var span = pv.from && pv.to ? "(" + pv.from.slice(5) + "~" + pv.to.slice(5) + ")" : "";
+      var note = was != null ? (span ? "직전 " + (PERF.period || 28) + "일" + span + " " : "이전 ") + fmt(was)
         : PERF.period_mismatch ? "직전 기록과 기간이 달라 비교하지 않음"
         : "비교할 직전 기록 없음";
       return '<div class="b">' + how + " · " + note + "</div>";

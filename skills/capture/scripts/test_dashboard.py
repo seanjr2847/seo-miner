@@ -88,18 +88,19 @@ def test_gsc_prev_period_does_not_overlap_the_current_window():
     수집분(하루 전 28일)은 창이 27일 겹쳐 증감이 사실상 하루치였다."""
     conn, pid = _brain("prevper")
     rows = [("2026-08-28", 40, 400), ("2026-08-27", 39, 390),     # 지금 · 하루 전(겹침)
-            ("2026-07-31", 30, 300),                              # 하루 겹침 — 안 고른다
-            ("2026-07-29", 20, 200),                              # 겹치지 않는 가장 최근
+            ("2026-08-01", 30, 300),                              # 창 07-02~07-29 — 하루 겹침, 안 고른다
+            ("2026-07-31", 20, 200),                              # 창 07-01~07-28 — 바로 앞 구간
             ("2026-07-01", 10, 100)]                              # 더 옛것
     conn.executemany("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query,"
                      " clicks, impressions, ctr, position) VALUES(?,?,28,'q',?,?,0,?)",
                      [(pid, d_, c, i, 5.0) for d_, c, i in rows])
     conn.commit()
     pp = dashboard._axis_gsc(conn, pid, {}, None)["gsc_prev_period"]
-    assert pp == {"date": "2026-07-29", "from": "2026-06-28", "to": "2026-07-26", "clicks": 20,
+    # 지금 창은 07-29~08-25(양끝 포함 28일) — 직전 구간은 그 하루 앞에서 끝나는 28일이다
+    assert pp == {"date": "2026-07-31", "from": "2026-07-01", "to": "2026-07-28", "clicks": 20,
                   "impressions": 200, "ctr": 0.1, "position": 5.0}, pp
     # 겹치지 않는 구간의 기록이 없으면 없다고 한다(null) — 겹친 것으로 채우지 않는다
-    assert dashboard._axis_gsc(conn, pid, {}, "2026-07-29")["gsc_prev_period"] is None  # 07-01 은 하루 겹친다
+    assert dashboard._axis_gsc(conn, pid, {}, "2026-07-20")["gsc_prev_period"] is None  # 07-01 은 겹친다
     conn.close()
 
 

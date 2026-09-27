@@ -583,13 +583,13 @@ def _gsc_prev_period(conn, pid: int, cur: str | None, period: int | None) -> dic
 
     snapshot_pair 의 prev 는 바로 앞 수집분이라 매일 수집하면 창이 27일 겹친 28일이다 —
     "직전 대비"가 사실상 하루치 차이였다. 여기는 창 끝이 지금 창 시작보다 앞인 것
-    (수집일 ≤ 지금 − period − 1) 중 가장 최근을, 그 뒤 PREV_PERIOD_SLACK_DAYS 안에서만
+    (수집일 ≤ 지금 − period — 그 창 끝이 지금 창 시작 하루 전) 중 가장 최근을, 그 뒤 PREV_PERIOD_SLACK_DAYS 안에서만
     고른다. 합은 KPI 와 같은 기준(검색어별 행의 합, 순위는 scoring.POS_SQL). 없으면 None.
     """
     if not cur or not period:
         return None
     d = date.fromisoformat(cur)
-    hi = d - timedelta(days=period + 1)
+    hi = d - timedelta(days=period)
     r = conn.execute(
         f"""SELECT snapshot_date d, SUM(clicks) c, SUM(impressions) i, {scoring.POS_SQL} p
               FROM gsc_snapshots WHERE project_id=? AND period_days=?
@@ -600,7 +600,8 @@ def _gsc_prev_period(conn, pid: int, cur: str | None, period: int | None) -> dic
         return None
     end = date.fromisoformat(r["d"]) - timedelta(days=GSC_LAG_DAYS)
     c, i = int(r["c"] or 0), int(r["i"] or 0)
-    return {"date": r["d"], "from": str(end - timedelta(days=period)), "to": str(end),
+    # 창은 양끝 포함 period 일이다(지금 창 08-28~09-24 = 28일) — 시작은 끝 − (period − 1).
+    return {"date": r["d"], "from": str(end - timedelta(days=period - 1)), "to": str(end),
             "clicks": c, "impressions": i, "ctr": round(c / i, 4) if i else None,
             "position": round(r["p"], 1) if r["p"] is not None else None}
 

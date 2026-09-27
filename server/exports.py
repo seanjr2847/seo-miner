@@ -247,8 +247,14 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
                      "SELECT date, clicks, impressions, ctr, position FROM gsc_daily"
                      " WHERE project_id=? ORDER BY date DESC LIMIT ?", (pid, days))][::-1]
 
-        return {"snapshot": cur, "totals": totals(cur),
-                "prev": totals(prev_date) if prev_date else None,
+        # 직전은 개요 띠와 같은 것 — 지금 창과 겹치지 않는 직전 같은 길이 구간(gsc_prev_period).
+        # 바로 앞 수집분(27일 겹친 28일)과 견주면 띠의 클릭·노출과 이 칸의 클릭률·순위가
+        # 서로 다른 '직전'을 말했다. 그 구간 기록이 없을 때만 바로 앞 수집분으로 물러선다.
+        pp = gsc["gsc_prev_period"]
+        prev = totals(pp["date"]) if pp else totals(prev_date) if prev_date else None
+        if prev and pp:
+            prev.update({"from": pp["from"], "to": pp["to"]})
+        return {"snapshot": cur, "totals": totals(cur), "prev": prev, "period": period,
                 "period_mismatch": period_mismatch,
                 "daily": daily, "queries": dim("query"), "pages": dim("page"),
                 "devices": devices}
