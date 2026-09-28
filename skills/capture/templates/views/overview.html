@@ -54,6 +54,40 @@
 #opplist .opp .why { margin-top:2px; }
 #opplist .opp:not([open]) .why { -webkit-line-clamp:1; }
 #opplist .det { padding-left:48px; }
+/* 보드 — 같은 기회를 상태 칸(할 일·진행 중·완료)으로 나눠 본다. 칸 머리의 수가 곧
+   "얼마나 남았나"다. 카드를 다른 칸으로 끌어 놓으면 그 상태로 옮긴다(/api/opp).
+   끌기는 터치에서 안 되므로 카드마다 다음 행동 버튼이 그대로 선다. */
+.kseg { display:inline-flex; }
+.kseg .chip { margin:0; border-radius:0; }
+.kseg .chip:first-child { border-radius:var(--r-sm) 0 0 var(--r-sm); }
+.kseg .chip:last-child { border-radius:0 var(--r-sm) var(--r-sm) 0; margin-left:-1px; }
+.kboard { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--sp-3);
+  align-items:start; }
+.kcol { background:var(--bar); border:1px solid var(--rule-soft); border-radius:var(--r-md);
+  padding:var(--sp-2); min-height:180px; }
+.kcol.over { border-color:var(--patina); background:var(--wash); }
+.kc-top { display:flex; align-items:baseline; gap:var(--sp-2); padding:4px 6px 10px; }
+.kc-top h3 { margin:0; font-size:14px; font-weight:600; color:var(--ink); }
+.kc-n { font:600 14px/1 var(--mono); font-variant-numeric:tabular-nums; color:var(--slate); }
+.kcol-acked .kc-n { color:var(--copper); }
+.kcol-new .kc-n { color:var(--patina); }
+.kc-list { display:flex; flex-direction:column; gap:var(--sp-2); }
+.kcard { background:var(--card); border:1px solid var(--rule); border-radius:var(--r-sm);
+  padding:10px 12px; cursor:grab; }
+.kcard:hover { border-color:color-mix(in srgb, var(--patina) 45%, var(--rule)); }
+.kcard.dragging { opacity:.45; cursor:grabbing; }
+.kc-h { display:flex; align-items:baseline; gap:10px; min-width:0; }
+.kcard .score { font-size:15px; width:auto; flex:none; }
+.kcard .score .u { display:none; }
+.kcard .target { margin:0; font-weight:600; font-size:14px; overflow-wrap:anywhere; }
+.kc-k { display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:6px; }
+.kcard .why { margin-top:6px; display:-webkit-box; -webkit-line-clamp:2;
+  -webkit-box-orient:vertical; overflow:hidden; }
+.kcard .acts { margin-top:10px; gap:6px; }
+.kc-empty { margin:0; padding:14px 6px; font-size:13px; color:var(--slate); }
+.kc-more { margin-top:var(--sp-2); }
+.kc-foot { margin:10px 0 0; font-size:12.5px; color:var(--slate); }
+@media (max-width:820px) { .kboard { grid-template-columns:1fr; } .kcol { min-height:0; } }
 /* 숫자 칸의 등폭은 숫자에만 건다 — 뒤에 붙는 단위("회")는 한글이라 등폭으로 찍으면
    폴백 서체로 떨어져 한 글자만 혼자 커진다(셸의 td.num::before 와 같은 이유). */
 #watch td.num .u { font-family:var(--sans); }
@@ -324,8 +358,12 @@ let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = OV_PAGE;
 
 // 상태로 먼저 가른다 — 칩 개수도 이 묶음을 세야 "CTR 미달 12" 를 눌렀는데 8건이
 // 나오는 일이 없다.
+// 보드에서는 상태 거르개 대신 칸이 상태를 가른다 — 칸에 오르는 상태만 센다.
+// 관찰 중(o.hold)은 칸에 안 올린다 — 목록 기본값과 같은 규칙(oppStMatch 의 "")이고,
+// 몇 건을 뺐는지는 보드 밑 OV_holdLine 이 말한다.
 function oppByStatus() {
-  return OPPS.filter(o => window.oppStMatch(o, OPP_ST));
+  return OPPS.filter(o => OV_isBoard() ? OV_COLS.includes(o.status) && window.oppStMatch(o, "")
+                                        : window.oppStMatch(o, OPP_ST));
 }
 function oppFiltered() {
   const q = OPP_Q.trim().toLowerCase();
@@ -397,9 +435,9 @@ function renderOpps(n) {
   if (tbox) tbox.innerHTML = READONLY
     ? `<span class="n" id="oppn"></span>
        <button class="go sm sec" onclick="oppCsv()">CSV 내려받기</button>`
-    : (few ? "" : `<input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
+    : OV_viewSeg() + (few ? "" : `<input type="search" value="${esc(OPP_Q)}" oninput="oppFind(this.value)"
         placeholder="검색어·주소로 찾기" aria-label="기회 찾기">`) + `
-      ${window.oppStSelect(OPP_ST, "oppStatus", stn)}
+      ${OV_isBoard() ? "" : window.oppStSelect(OPP_ST, "oppStatus", stn)}
       <span class="n" id="oppn"></span>
       <button class="go sm sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
@@ -453,6 +491,8 @@ function oppList() {
   const narrowed = list.length !== oppByStatus().length;
   $("oppn").textContent = narrowed ? `${list.length}건 / 전체 ${OPPS.length}건`
     : READONLY ? `${OPPS.length}건` : "";
+  // 보드는 비어도 칸을 세운다 — 칸이 곧 끌어 놓을 자리다.
+  if (OV_isBoard()) return OV_board(list);
   // 기본 상태(아직 안 함)만 걸린 채로 비었으면 그건 거른 탓이 아니라 다 처리한
   // 것이다 — 여기서 "조건을 풀라"고 하면 안 건 조건을 풀라는 말이 된다.
   if (!list.length)
@@ -466,6 +506,160 @@ function oppList() {
     ? `<div class="acts opp-more">
          <button onclick="oppMore(${OPP_N + 12})">${Math.min(12, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
     : "");
+}
+
+/* ── 보드: 같은 기회를 상태 칸으로 ─────────────────────────────────────
+      목록은 "무엇부터"에 답하고, 보드는 "얼마나 남았고 무엇이 진행 중인가"에 답한다.
+      재료는 목록과 같은 OPPS(묶인 줄)고, 거르기(찾는 말·종류 칩)도 같은 것을 쓴다 —
+      상태 거르개만 칸이 대신한다. 칸 이름은 OPP_LABEL 한 벌에서 온다.
+      카드를 다른 칸에 놓으면 그 상태로 옮긴다: 묶인 줄이면 묶인 id 전부(oppIdsTo) —
+      상태 버튼·열기·복사와 같은 범위라야 새로고침 뒤 한 줄이 둘로 갈라지지 않는다.
+      [(도구)로 열기]·[요청문 복사]는 목록과 같은 함수라, 누르면 진행 중으로 옮기고
+      load() 가 다시 그리면서 카드가 진행 중 칸으로 간다.
+      제외·저절로 풀림은 칸을 안 만든다 — 할 일 흐름 밖이라 목록에서 본다. 관찰 중인
+      기회도 칸에 안 오른다(목록 기본값과 같다) — 보드 밑 한 줄(OV_holdLine)이 말한다. */
+const OV_COLS = ["new", "acked", "done"];
+const OV_BOARD_PAGE = 12;
+let OV_COL_N = {};
+let OPP_VIEW = (() => {
+  try { return localStorage.getItem("sm:oppview") === "board" ? "board" : "list"; }
+  catch (e) { return "list"; }
+})();
+// 박제본은 손댈 수 없는 기록이라 끌 곳이 없다 — 늘 목록이다.
+const OV_isBoard = () => OPP_VIEW === "board" && !READONLY;
+const OV_viewSeg = () => `<span class="kseg" role="group" aria-label="보기 방식">${
+  [["list", "목록"], ["board", "보드"]].map(([v, l]) =>
+    `<button type="button" class="chip${OPP_VIEW === v ? " on" : ""}" aria-pressed="${OPP_VIEW === v}"
+      onclick="OV_setView('${v}')">${l}</button>`).join("")}</span>`;
+function OV_setView(v, quiet) {
+  OPP_VIEW = v;
+  try { localStorage.setItem("sm:oppview", v); } catch (e) { /* 사생활 창 — 이번만 */ }
+  if (!quiet) renderOpps(OV_PAGE);
+}
+function OV_colMore(st) { OV_COL_N[st] = (OV_COL_N[st] || OV_BOARD_PAGE) + OV_BOARD_PAGE; oppList(); }
+
+// 칸이 비었을 때 — 어떻게 채워지는지를 말한다. 넘기는 행동의 이름은 배포마다 다르다.
+const OV_COL_EMPTY = {
+  new: () => "남은 할 일이 없습니다.",
+  acked: () => `진행 중인 기회가 없습니다. 할 일 카드에서 ${window.SM_HOSTED
+    ? "[요청문 복사]를 누르거나" : "도구로 열거나"} 이 칸으로 끌어 놓으면 여기로 옵니다.`,
+  done: () => "끝낸 기회를 이 칸으로 끌어 놓으면 완료로 옮깁니다.",
+};
+
+// 카드의 행동 — 할 일·진행 중이면 일을 도구에 넘기는 손잡이(로컬 [(도구)로 열기],
+// 호스팅 [요청문 복사]), 그다음 상태 하나(OPP_NEXT). 둘 다 목록 줄과 같은 함수다.
+function OV_cardActs(o) {
+  if (o.id == null) return "";
+  const n = OPP_NEXT[o.status];
+  const next = n ? oppBtn(o, n[0]) : "";
+  const hand = o.status === "new" || o.status === "acked"
+    ? (window.SM_HOSTED
+        ? askBlock({brief: o.brief, ack: o.status === "new" ? oppIdsTo(o, "acked") : []})
+        : (SM.host.oppBtn ? SM.host.oppBtn(o) : ""))
+    : "";
+  return hand + next;
+}
+function OV_card(o) {
+  const n = OV_targets(o).length;
+  return `<article class="kcard" draggable="true" data-card="${o.id}"
+      ondragstart="OV_drag(event)" ondragend="OV_dragEnd(event)">
+    <div class="kc-h">${oppScore(o)}<div class="target">${esc(targetLabel(o.target))}</div></div>
+    <div class="kc-k">${OV_kinds(o).map(([k, l]) => `<span class="kind${isDefensive(k === o.kind
+        ? o : {kind: k}) ? " k-def" : ""}">${esc(l)}</span>`).join("")}${n > 1
+      ? `<span class="badge" title="같은 지면이라 한 장으로 묶었습니다">검색어 ${n}개</span>` : ""}${
+      window.madeBadge(o)}</div>
+    ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
+    <div class="acts">${OV_cardActs(o)}<button type="button" class="go sm ghost"
+      onclick="OV_boardOpen(${o.id})">자세히</button></div>
+  </article>`;
+}
+function OV_board(list) {
+  const cols = OV_COLS.map(st => {
+    const rows = list.filter(o => o.status === st);
+    const shown = OV_COL_N[st] || OV_BOARD_PAGE, rest = rows.length - shown;
+    const label = window.OPP_LABEL[st] || st;
+    return `<div role="group" class="kcol kcol-${st}" data-st="${st}" aria-label="${esc(label)} ${rows.length}건"
+        ondragover="OV_over(event)" ondragleave="OV_leave(event)" ondrop="OV_drop(event)">
+      <div class="kc-top"><h3>${esc(label)}</h3><span class="kc-n">${num(rows.length)}</span></div>
+      <div class="kc-list">${rows.length ? rows.slice(0, shown).map(OV_card).join("")
+        : `<p class="kc-empty">${esc(OV_COL_EMPTY[st]())}</p>`}</div>
+      ${rest > 0 ? `<div class="acts kc-more"><button type="button" onclick="OV_colMore('${st}')"
+        >${Math.min(OV_BOARD_PAGE, rest)}건 더 보기 (남은 ${rest}건)</button></div>` : ""}
+    </div>`;
+  }).join("");
+  // 칸에 안 오르는 상태도 있다고 말한다 — 안 말하면 개수가 목록과 안 맞아 보인다.
+  const off = ["dismissed", "resolved"].map(st => [st, OPPS.filter(o => o.status === st).length])
+    .filter(([, c]) => c);
+  $("opplist").innerHTML = `<div class="kboard">${cols}</div>` + (off.length
+    ? `<p class="kc-foot">${off.map(([st, c]) => `${esc(window.OPP_LABEL[st] || st)} ${num(c)}건`)
+        .join(" · ")}은 보드에 올리지 않습니다. <button type="button" class="gov"
+        onclick="OV_listAt('')">목록에서 전체 보기</button></p>` : "");
+}
+
+// 끌어 놓기 — 놓는 순간 카드를 그 칸으로 먼저 옮겨 두고(기다리는 동안 제자리로 튀지
+// 않게), 서버가 답하면 load() 가 다시 그린다. 실패하면 setOpp 가 말하고 여기서 원래
+// 칸으로 되돌려 그린다(거짓 성공을 남기지 않는다). 묶인 줄(setOpps)은 성패와 상관없이
+// load() 가 서버에 실제로 남은 상태로 다시 그린다.
+let OV_DRAG = null;
+function OV_drag(e) {
+  const c = e.currentTarget;
+  OV_DRAG = Number(c.dataset.card);
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", String(OV_DRAG));
+  c.classList.add("dragging");
+}
+function OV_dragEnd(e) {
+  e.currentTarget.classList.remove("dragging");
+  document.querySelectorAll(".kcol.over").forEach(x => x.classList.remove("over"));
+  OV_DRAG = null;
+}
+function OV_over(e) {
+  if (OV_DRAG == null) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  e.currentTarget.classList.add("over");
+}
+function OV_leave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("over");
+}
+function OV_drop(e) {
+  e.preventDefault();
+  const col = e.currentTarget, st = col.dataset.st, id = OV_DRAG;
+  col.classList.remove("over");
+  OV_DRAG = null;
+  const o = OPPS.find(x => x.id === id);
+  if (!o || o.status === st) return;
+  const card = document.querySelector(`.kcard[data-card="${id}"]`);
+  const box = col.querySelector(".kc-list");
+  if (card && box) {
+    const empty = box.querySelector(".kc-empty");
+    if (empty) empty.remove();
+    box.prepend(card);
+  }
+  OV_move(o, st);
+}
+async function OV_move(o, st) {
+  const ids = oppIdsTo(o, st);
+  if (!ids.length) return oppList();
+  if (ids.length > 1) return setOpps(ids, st);
+  if (!(await setOpp(ids[0], st))) oppList();
+}
+
+// [자세히] — 보드 카드에는 펼침 패널을 안 넣는다(좁은 칸에 표·요청문이 끼면 칸이
+// 무너진다). 목록으로 돌아가 그 줄을 펴서 보여 준다. 상태 거르개는 그 줄이 드는 묶음으로.
+function OV_listAt(st) { OV_setView("list", true); OPP_ST = st; KIND_FILTER = null; renderOpps(OV_PAGE); }
+function OV_boardOpen(id) {
+  const o = OPPS.find(x => x.id === id);
+  if (!o) return;
+  OV_setView("list", true);
+  OPP_Q = ""; KIND_FILTER = null;
+  OPP_ST = ["open", "closed", "resolved"].find(s => window.oppStMatch(o, s)) || "";
+  const at = oppFiltered().indexOf(o);
+  renderOpps(Math.max(OV_PAGE, at + 1));
+  const row = document.querySelector(`#opplist details.opp[data-opp="${id}"]`);
+  if (!row) return;
+  row.open = true;
+  row.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
 // 트리아지는 화면 밖에서도 이어진다 — 지금 거른 목록 그대로 표로 내보낸다.
@@ -484,6 +678,10 @@ function oppCsv() {
       없었다: 기회가 스무 건 쌓여 있어도 어느 것부터 여는지는 아무 데도 안 적혔다.
       새 판정을 만들지 않는다 — 목록 맨 위가 곧 점수 1등이다(서버가 정렬해 보낸다). */
 function OV_openTop() {
+  if (OV_isBoard()) {
+    const top = OPPS.find(o => o.status === "new") || OPPS.find(o => window.oppStMatch(o, "open"));
+    return top && OV_boardOpen(top.id);
+  }
   const card = document.querySelector("#opplist details.opp");
   if (!card) return;
   card.open = true;
