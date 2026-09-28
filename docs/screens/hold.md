@@ -11,6 +11,7 @@
 | 할 일 | 어떻게 | 무엇이 바뀌나 |
 | --- | --- | --- |
 | 관찰 중인 페이지 보기 | 메뉴 [관찰 중], 또는 [개요] 기회 목록 밑 줄의 [관찰 중인 기회 보기 →] | 페이지마다 카드 하나: 주소, 관찰이 끝나는 날과 남은 날, 한 작업(날짜·어느 기회로·무엇을·머지 여부), 뺀 기회 |
+| 고치기 전과 지금 견주기 | 카드의 「이 페이지 전체 — 고치기 전과 지금」 표, 기회 줄 밑의 한 줄, 줄을 펼치면 맨 위 표 | 평균 순위·노출·클릭·클릭률을 **고친 날까지의 마지막 수집분**과 **그 뒤 최신 수집분**으로 나란히 봅니다(페이지는 검색어별 합). '지금'의 실적 창 중 며칠이 고치기 전인지 같이 적고, 어느 쪽이든 노출이 10 미만이면 순위 변화를 색으로 판정하지 않습니다 |
 | 뺀 기회 펼쳐 보기 | 카드 안의 기회 줄 | [개요]와 같은 기회 카드가 펼쳐집니다 — 요청문도 그대로 만들 수 있습니다. 요청문 맨 위에 "이 페이지는 관찰 중입니다"가, 본문에 '이 페이지에 이미 한 작업' 절이 섭니다 |
 | 다른 화면에서 거르기 | 기회를 보여 주는 화면의 상태 거르개 → 「관찰 중」 | 관찰 중인 기회만 남습니다. 「아직 안 함」·「할 일」·「진행 중」에서는 빠집니다 |
 
@@ -29,7 +30,7 @@
 "관찰 중인 페이지가 없습니다" — 최근 28일 안에 저장소를 바꾼 작업 기록이 없습니다. 작업 기록은 요청문 꼬리의 `createdb.py done …` 명령(또는 `[opp #N]` 커밋을 읽는 `sync`)이 남깁니다.
 
 <!-- 근거: skills/capture/scripts/dashboard.py (_axis_hold), scoring.py (OBSERVE_DAYS),
-     db.py (is_report_only, watch_rows), brief.py (_page_work_lines, _hold_of),
+     db.py (is_report_only, before_after, watch_rows), brief.py (_page_work_lines, _hold_of),
      templates/views/hold.html, templates/views/overview.html (OV_holdLine),
      templates/dashboard.html (OPP_ST_GROUP.hold, oppStMatch, holdBadge),
      skills/create/scripts/createdb.py (done) -->

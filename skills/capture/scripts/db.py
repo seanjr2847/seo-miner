@@ -2529,6 +2529,53 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
     return conn.execute(q, args).fetchall()
 
 
+def before_after(conn: sqlite3.Connection, project_id: int, day: str, *,
+                 query: str | None = None, page: str | None = None,
+                 period: int | None = None) -> dict:
+    """고친 날(day) 전·후의 실적 — 검색어 하나(query) 또는 페이지 하나(page, 검색어별 합).
+
+    before 는 day 까지의 마지막 수집분, after 는 day 뒤 최신 수집분. 같은 period_days 만
+    견준다(기간이 다른 둘의 Δ는 거짓이다 — 모르면 최신 수집분의 기간). 각각
+    {date, clicks, impressions, position} 이고 행이 없으면 None.
+    thin 은 어느 쪽이든 노출이 scoring.STRIKING_MIN_IMP 에 못 미친다는 뜻이다 — 노출 몇 개짜리
+    순위는 통계가 아니라서(노출 2 → 1 에 "2위 → 23위, 21칸 내려감"이 섰다) 화면이 순위 변화를
+    판정처럼 칠하지 않는다.
+    pre_days 는 after 의 실적 창(period 일) 중 고친 날 전에 속한 날 수다 — 0 이 되기 전의
+    '지금'에는 고치기 전 페이지가 섞여 있다. 완료 후 관찰(watch_rows)과 관찰 중 화면
+    (dashboard._axis_hold)이 같은 것을 이 한 벌로 센다.
+    """
+    import scoring
+    if period is None:
+        r = conn.execute("SELECT period_days FROM gsc_snapshots WHERE project_id=?"
+                         " ORDER BY snapshot_date DESC LIMIT 1", (int(project_id),)).fetchone()
+        period = r["period_days"] if r else None
+    out: dict = {"before": None, "after": None, "pre_days": None, "thin": False}
+    if period is None or not (query or page):
+        return out
+    col, val = ("query", query) if query else ("page", page)
+
+    def at(op: str) -> dict | None:
+        r = conn.execute(
+            f"""SELECT snapshot_date d, SUM(clicks) c, SUM(impressions) i, {scoring.POS_SQL} p
+                  FROM gsc_snapshots
+                 WHERE project_id=? AND period_days=? AND {col}=? AND snapshot_date=(
+                       SELECT MAX(snapshot_date) FROM gsc_snapshots
+                        WHERE project_id=? AND period_days=? AND {col}=? AND snapshot_date {op} ?)""",
+            (int(project_id), period, val, int(project_id), period, val, day)).fetchone()
+        if not r or r["p"] is None:
+            return None
+        return {"date": str(r["d"])[:10], "clicks": int(r["c"] or 0),
+                "impressions": int(r["i"] or 0), "position": round(float(r["p"]), 1)}
+
+    out["before"], out["after"] = at("<="), at(">")
+    out["thin"] = any(m and m["impressions"] < scoring.STRIKING_MIN_IMP
+                      for m in (out["before"], out["after"]))
+    if out["after"]:
+        start = datetime.fromisoformat(out["after"]["date"]) - timedelta(days=int(period) - 1)
+        out["pre_days"] = max(0, min(int(period), (datetime.fromisoformat(day[:10]) - start).days))
+    return out
+
+
 def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     """완료된 검색어 기회의 전·후 — 상태를 늘리지 않고 조회로 관찰을 만든다.
 
@@ -2559,23 +2606,11 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     per = latest["period_days"] if latest else None
     last_day = str(latest["snapshot_date"])[:10] if latest else None
 
-    def at(op: str, day: str, target: str) -> dict | None:
-        if per is None:
-            return None
-        r = conn.execute(
-            f"""SELECT SUM(clicks) c, {scoring.POS_SQL} p FROM gsc_snapshots
-                 WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?
-                   AND snapshot_date=(SELECT MAX(snapshot_date) FROM gsc_snapshots
-                        WHERE project_id=? AND period_days=? AND query=? AND snapshot_date {op} ?)""",
-            (int(project_id), per, target, day, int(project_id), per, target, day)).fetchone()
-        if not r or r["p"] is None:
-            return None
-        return {"clicks": int(r["c"] or 0), "position": round(float(r["p"]), 1)}
-
     out = []
     for o in opps:
         day = o["status_at"][:10]
-        before, after = at("<=", day, o["target"]), at(">", day, o["target"])
+        ba = before_after(conn, project_id, day, query=o["target"], period=per)
+        before, after = ba["before"], ba["after"]
         runs = conn.execute(
             "SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots WHERE project_id=?"
             " AND period_days=? AND snapshot_date>?", (int(project_id), per, day)).fetchone()[0] if per else 0

@@ -1498,12 +1498,20 @@ def _axis_hold(conn, pid: int, at: str | None, opps_d: dict, qp: dict,
                              "days_left": (until - day0).days,
                              "works": [x for x in ws if date.fromisoformat(x["day"])
                                        > last - timedelta(days=scoring.OBSERVE_DAYS)],
+                             # 페이지 전체(검색어별 합)의 고치기 전·지금 — 관찰 중에 볼 것이 이것이다
+                             "perf": db.before_after(conn, pid, last.isoformat(), page=page),
                              "opp_ids": []}
     held: dict[int, dict] = {}
     for o in pool:
         page = brief.page_of(o, ctx)
         if page in watched:
-            held[o["id"]] = {"page": page, "until": watched[page]["until"]}
+            # 검색어 하나의 고치기 전·지금 — [관찰 중]에서 그 줄을 펼치면 이것부터 본다.
+            # 기준일은 그 페이지의 마지막 작업일(관찰 기간을 연 날)이다.
+            t = str(o["target"])
+            ba = db.before_after(conn, pid, watched[page]["since"],
+                                 **({"page": t} if t.startswith("http") else {"query": t}))
+            held[o["id"]] = {"page": page, "until": watched[page]["until"],
+                             "since": watched[page]["since"], **ba}
             watched[page]["opp_ids"].append(o["id"])
     for o in opps_d["opps"]:
         if o.get("id") in held:

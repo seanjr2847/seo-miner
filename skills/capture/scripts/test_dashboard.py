@@ -697,6 +697,14 @@ def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
          # 보고서만 가리키는 기록 — 저장소가 안 바뀌었다. 이걸로 other 가 묶이면 안 된다
          (pid, ids[("striking_distance", "딴 검색어")], "striking_distance",
           r"C:\Temp\seo-fix_page-20260915-1.html", "제안 리포트만", f"{today - _t(days=3)} 01:00:00")])
+    # 고친 뒤 수집분 — 관찰 중 화면이 '고치기 전 → 지금'을 견준다
+    after_day = (today - _t(days=2)).isoformat()
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,?,28,?,?,?,?,?,?)",
+        [(pid, after_day, "한관종 vs 비립종", page, 4, 900, 0.0044, 6.1),
+         (pid, after_day, "비립종 vs 한관종", page, 1, 250, 0.004, 8.0),
+         (pid, after_day, "딴 검색어", other, 3, 120, 0.025, 7.0)])
     kid = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
                        " RETURNING id", (pid, "한관종 vs 비립종")).fetchone()[0]
     db.write_rank_snapshot(conn, kid, 8, page, aio_present=1, aio_cited=1,
@@ -710,7 +718,19 @@ def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
     ctr, sd = by[("ctr_gap", "한관종 vs 비립종")], by[("striking_distance", "비립종 vs 한관종")]
     far = by[("striking_distance", "딴 검색어")]
     until = (work_day + _t(days=scoring.OBSERVE_DAYS)).isoformat()
-    assert ctr.get("hold") == {"page": page, "until": until}, ctr.get("hold")
+    hd = ctr.get("hold") or {}
+    assert (hd.get("page"), hd.get("until"), hd.get("since")) == (page, until, work_day.isoformat()), hd
+    # 그 검색어의 고치기 전(고친 날까지 마지막 수집분) → 지금(그 뒤 최신 수집분)
+    assert hd["before"] == {"date": D, "clicks": 0, "impressions": 859, "position": 8.7}, hd
+    assert hd["after"] == {"date": after_day, "clicks": 4, "impressions": 900, "position": 6.1}, hd
+    assert hd["pre_days"] == 28 - 1 - 8, hd          # 지금 창(28일) 중 고친 날 전 19일
+    assert hd["thin"] is False, hd
+    # 노출 몇 개짜리는 순위 변화를 판정처럼 칠하지 않는다(노출 2 → 1 에 "21칸 내려감"이 섰다)
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,?,28,'가는 검색어',?,0,?,0,?)",
+        [(pid, D, page, 2, 2.0), (pid, after_day, page, 1, 23.0)])
+    assert db.before_after(conn, pid, work_day.isoformat(), query="가는 검색어")["thin"] is True
     assert sd.get("hold", {}).get("page") == page, "진행 중(acked)인 기회도 관찰 중이다"
     assert "hold" not in far, "보고서만 가리키는 기록으로 다른 페이지가 묶였다"
     assert "hold" not in by[("aio_exposure", "한관종 vs 비립종")], "닫힌 기회에 관찰을 얹었다"
@@ -718,6 +738,8 @@ def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
     assert h["page"] == page and h["until"] == until and h["days_left"] == scoring.OBSERVE_DAYS - 10
     assert set(h["opp_ids"]) == {ctr["id"], sd["id"]}, h
     assert [w["note"] for w in h["works"]] == ["title·설명 교체"], h["works"]
+    # 페이지 전체(검색어별 합) — 고치기 전은 두 검색어의 합, 지금은 그 뒤 수집분
+    assert h["perf"]["before"]["impressions"] == 859 + 278 and h["perf"]["after"]["clicks"] == 4 + 1, h["perf"]
     assert d["observe_days"] == scoring.OBSERVE_DAYS
     # "새 기회 N건"도 같은 문으로 센다 — new 둘 중 하나가 관찰 중
     assert d["opps_total"] == 1, d["opps_total"]

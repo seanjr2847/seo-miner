@@ -30,6 +30,18 @@
 #holds .none { color:var(--slate); font-size:13.5px; margin:var(--sp-2) 0 0; }
 /* 날짜는 쪼개지 않는다 — 띠 문장 안에서 「(2026-10-」/「06)」로 갈렸다. */
 #view-hold .hd-day { white-space:nowrap; }
+/* 고치기 전 → 지금. 접힌 줄에서는 한 줄, 펼치면 표. 숫자·날짜만 등폭이다. */
+#holds .hd-ba1 { font-size:12.5px; color:var(--slate); margin:2px 0 0; }
+#holds .hd-ba1 .v, #holds .hd-bat .v { font-family:var(--mono); font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
+#holds .hd-ba1 .up, #holds .hd-bat .up { color:var(--patina); }
+#holds .hd-ba1 .down, #holds .hd-bat .down { color:var(--copper); }
+#holds .hd-bat { margin:0 0 var(--sp-3); }
+/* 셸의 td.num 은 칸 전체를 등폭으로 찍는다 — 여기 칸에는 「칸 올라감」「그대로」 같은 한글이
+   섞이므로 칸은 본문 서체로 두고 숫자(.v)만 등폭이다. */
+#holds .hd-bat td.num { font-family:var(--sans); }
+#holds .hd-bat .note { font-size:12.5px; color:var(--slate); margin:6px 0 0; }
+#holds .hd-page { margin:var(--sp-3) 0 0; }
 @media (max-width:560px) { #holds .hd { padding:var(--sp-3) var(--sp-4); } }
 </style>
 
@@ -43,6 +55,52 @@
 
 <script>
 "use strict";
+/* ── 고치기 전 → 지금 ──────────────────────────────────────────
+      관찰 중에 볼 것은 "고친 뒤 달라졌나"다. 전·후는 서버가 한 벌로 고른다
+      (db.before_after — 완료 후 관찰 표와 같다): 고친 날까지의 마지막 수집분과 그 뒤 최신
+      수집분. 지금 값의 실적 창에 고치기 전 날이 며칠 섞였는지(pre_days)를 같이 말한다 —
+      그게 0 이 되기 전의 비교는 반쪽이다. */
+let HD_PER = null;            // 실적 창 길이(일) — 페이로드의 gsc_period
+const HD_md = s => String(s || "").slice(5);
+// 순위는 작을수록 좋다. thin(노출이 적어 순위가 흔들린다 — 서버 판정)이면 색을 안 칠한다.
+const HD_pos = (b, a, thin) => {
+  const d = Math.round((b - a) * 10) / 10;
+  return !d ? "그대로" : `<span class="${thin ? "" : d > 0 ? "up" : "down"}"><span class="v">${
+    Math.abs(d)}</span>칸 ${d > 0 ? "올라감" : "내려감"}</span>`;
+};
+const HD_num = (b, a) => {
+  const d = a - b;
+  return !d ? "그대로" : `<span class="v ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${num(Math.abs(d))}</span>`;
+};
+const HD_ctr = m => m && m.impressions ? (m.clicks * 100 / m.impressions).toFixed(1) + "%" : "—";
+// 접힌 줄의 한 줄 — 순위·클릭만.
+function HD_baLine(x) {
+  if (!x || !x.after) return `<div class="hd-ba1">고친 뒤 수집한 실적이 아직 없습니다.</div>`;
+  const b = x.before, a = x.after;
+  const m = v => v ? `<span class="v">${v.position}</span>위 · 클릭 <span class="v">${num(v.clicks)}</span>` : "—";
+  return `<div class="hd-ba1">고치기 전 ${m(b)} → 지금 ${m(a)}${b ? ` (${HD_pos(b.position, a.position, x.thin)})` : ""}${
+    x.thin ? " · 노출이 적어 순위는 흔들립니다" : ""}</div>`;
+}
+// 펼친 자리의 표 — 순위·노출·클릭·클릭률, 고치기 전 | 지금 | 변화.
+function HD_baTable(x, what) {
+  if (!x || (!x.before && !x.after)) return `<p class="note">${esc(what)}의 실적이 수집분에 없습니다.</p>`;
+  // 값 칸: 숫자만 등폭(.v) — 「위」 같은 한글 단위는 밖에 둔다
+  const b = x.before, a = x.after, v = s => String(s).replace(/^([\d.,−%]+)/, '<span class="v">$1</span>');
+  const row = (name, fb, fa, fd) => `<tr><td>${name}</td><td class="num">${b ? v(fb(b)) : "—"}</td>
+    <td class="num">${a ? v(fa(a)) : "—"}</td><td class="num">${b && a ? fd() : ""}</td></tr>`;
+  const t = table(["", `>고치기 전 (${b ? HD_md(b.date) : "없음"})?고친 날까지의 마지막 수집분`,
+                   `>지금 (${a ? HD_md(a.date) : "없음"})?고친 뒤 최신 수집분`, ">변화"], [
+    row("평균 순위", m => `${m.position}위`, m => `${m.position}위`, () => HD_pos(b.position, a.position, x.thin)),
+    row("노출", m => num(m.impressions), m => num(m.impressions), () => HD_num(b.impressions, a.impressions)),
+    row("클릭", m => num(m.clicks), m => num(m.clicks), () => HD_num(b.clicks, a.clicks)),
+    row("클릭률", HD_ctr, HD_ctr, () => "")], "");
+  const note = !a ? "고친 뒤 수집한 실적이 아직 없습니다 — 다음 수집부터 '지금'이 찹니다."
+    : !b ? "고치기 전 수집분에 이 대상이 없습니다(노출이 없었거나 수집 전) — '지금'만 봅니다."
+    : x.pre_days > 0 ? `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""} 중 ${x.pre_days}일이 고치기 전입니다 — 관찰이 끝날 때쯤 온전한 비교가 됩니다.`
+    : `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""}이 전부 고친 뒤입니다.`;
+  const thin = x.thin ? " 노출이 적은 쪽이 있어 순위 변화는 흔들림일 수 있습니다 — 노출·클릭을 먼저 봅니다." : "";
+  return `<div class="hd-bat">${t}<p class="note">${note}${thin}</p></div>`;
+}
 // 화면에 그릴 수 있는 뺀 기회 — 페이로드에 실린 것(d.opps) 중 셸의 [관찰 중] 묶음. 띠·카드·[개요]가
 // 같은 수를 말하도록 세는 곳도 이 하나다.
 const HD_shown = (h, byId) => (h.opp_ids || []).map(id => byId[id]).filter(o => window.oppStMatch(o, "hold"));
@@ -57,7 +115,8 @@ function HD_card(h, byId) {
   // 서버는 목록 상한(점수 순 200건) 밖의 기회까지 센다 — 그 몫은 줄로 못 그리니 개수만 말한다.
   const more = (h.opp_ids || []).length - opps.length;
   const rows = opps.map(o => `<details class="opp" data-opp="${o.id}">
-      <summary>${oppScore(o)}<div>${window.oppWhy(o)}</div></summary>
+      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary>
+      ${HD_baTable(o.hold, "이 검색어")}
       ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</details>`).join("");
   const left = Number.isFinite(h.days_left) ? ` · ${h.days_left}일 남음` : "";
   return `<article class="hd">
@@ -65,6 +124,8 @@ function HD_card(h, byId) {
       title="${esc(h.page)}">${esc(urlPath(h.page))}</a>
       <span class="badge adv">${esc(h.until)}까지${left}</span></div>
     <h3>한 작업</h3><ul class="hd-w">${works}</ul>
+    <h3>이 페이지 전체 — 고치기 전과 지금</h3>
+    <div class="hd-page">${HD_baTable(h.perf, "이 페이지")}</div>
     <h3>지켜보는 동안 뺀 기회 ${opps.length}건${more > 0 ? ` · 화면 목록 밖 ${more}건` : ""}</h3>
     ${opps.length ? `<div class="hd-o">${rows}</div>`
       : more > 0 ? "" : `<p class="none">이 페이지에 새로 선 기회는 없습니다.</p>`}
@@ -75,6 +136,7 @@ function HD_card(h, byId) {
 VIEW("hold", function (d) {
   const hs = d.holds || [];
   const days = d.observe_days;
+  HD_PER = d.gsc_period || HD_PER;
   $("hold-sub").textContent = days
     ? `마지막으로 고친 날부터 ${days}일 동안 지켜봅니다. 그동안 같은 페이지에 선 기회는 할 일 목록에서 빠지고, 기간이 끝나면 저절로 돌아옵니다.`
     : "";

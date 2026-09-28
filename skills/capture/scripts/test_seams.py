@@ -3159,6 +3159,15 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
     hold = (views / "hold.html").read_text("utf-8")
     used = set(re.findall(r"\bh\.(\w+)", hold)) | set(re.findall(r"\bw\.(\w+)", hold))
     assert used and used <= made, f"[관찰 중] 화면이 서버가 안 내는 칸을 읽는다: {used - made}"
+    # 고치기 전 → 지금 — 화면이 읽는 칸 ⊆ db.before_after 가 내는 칸(전·후 한 벌)
+    dsrc = (SCRIPTS / "db.py").read_text("utf-8")
+    bfn = dsrc.split("def before_after", 1)[1].split("\ndef ", 1)[0]
+    ba_made = set(re.findall(r'"(\w+)"', bfn))
+    ba_used = (set(re.findall(r"\bx\.(\w+)", hold))
+               | set(re.findall(r"\b[abmv]\.(\w+)", hold.split("HD_md", 1)[1].split("function HD_card", 1)[0])))
+    assert {"before", "after", "pre_days", "position", "clicks"} <= ba_used, \
+        f"[관찰 중] 화면이 고치기 전·지금을 안 그린다 — 이 검사가 헛돈다: {ba_used}"
+    assert ba_used <= ba_made, f"[관찰 중] 화면이 before_after 가 안 내는 칸을 읽는다: {ba_used - ba_made}"
     assert "d.holds" in hold and "oppStMatch(o, \"hold\")" in (views / "overview.html").read_text("utf-8"), \
         "[개요]가 관찰 중이라 뺀 기회를 말하지 않는다"
 
