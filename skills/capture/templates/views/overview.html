@@ -417,7 +417,7 @@ function OV_holdLine() {
   if (!el) return;
   // 세는 단위는 [관찰 중] 화면과 같다 — 묶은 줄이 아니라 페이로드에 실린 기회 하나하나.
   const n = OV_HELD;
-  if (!n || OPP_ST === "hold" || OPP_ST === "") return el.innerHTML = "";
+  if (!n || OPP_ST === "hold") return el.innerHTML = "";
   const pages = OV_HELD_PAGES;
   const go = SM.at("hold") >= 0 ? `SM.show('hold')` : `oppClosed('hold')`;
   // 거르개의 [관찰 중 (N)]은 이 목록의 줄(같은 지면끼리 묶음) 수라 기회 수와 다르다 — 둘을 같이 적는다.

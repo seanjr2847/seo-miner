@@ -2179,15 +2179,18 @@ window.OPP_ST_GROUP = {
   open: ["new", "acked"], new: ["new"], acked: ["acked"],
   closed: ["done", "dismissed"], resolved: ["resolved"], hold: ["new", "acked"]
 };
-window.OPP_ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
+window.OPP_ST_OPT = [["", "관찰 중 뺀 전체"], ["open", "아직 안 함"], ["new", "할 일"],
                      ["acked", "진행 중"], ["hold", "관찰 중"], ["closed", "완료·제외"],
                      ["resolved", "저절로 풀림"]];
 // 기회 하나가 고른 묶음에 드나. 기회가 안 붙은 줄(o 가 null)은 거르개를 걸면 빠진다 —
 // 개요 말고 다른 화면은 목록이 기회 목록이 아니라 검색어·주소 목록이라, "전체" 가
 // 기본값이어야 한다(거르개를 안 건드리면 지금까지와 똑같이 보인다).
-// 관찰 중인 기회는 [관찰 중] 묶음에만 든다 — 할 일·진행 중·아직 안 함에서는 빠진다.
-window.oppStMatch = (o, st) => !st || (o && (window.OPP_ST_GROUP[st] || []).includes(o.status)
-  && (st === "hold") === !!o.hold);
+// 관찰 중인 기회는 [관찰 중] 묶음에만 든다 — 할 일·진행 중·아직 안 함에서도, 거르개를 안 건
+// 기본값(전체)에서도 빠진다. 이미 고친 페이지의 일이라 지금 할 것이 아니다 — [분석]·[키워드]·
+// [순위 추적]처럼 기본이 "전체"인 측정 목록에서 그 줄이 할 일처럼 계속 섰다. 그래서 기본값의
+// 이름도 "관찰 중 뺀 전체"다. 기회가 안 붙은 줄(o 가 null)은 기본값에서 그대로 보인다.
+window.oppStMatch = (o, st) => !st ? !(o && o.hold)
+  : !!o && (window.OPP_ST_GROUP[st] || []).includes(o.status) && (st === "hold") === !!o.hold;
 // 거르개 한 벌 — 화면은 이걸 부르고 자기 상태 변수만 갖는다.
 // 박제본에는 안 세운다 — 손댈 수 없는 기록이라 그때 그 사람이 쓰던 손잡이는 뜻이
 // 없고, 종이로 나가면 <select> 가 글자 하나로 굳는다. 화면마다 READONLY 를 묻지
@@ -2217,8 +2220,13 @@ function oppIndex(opps) {
     const k = oppKey(o.target);
     (OPP_INDEX[k] || (OPP_INDEX[k] = [])).push(o);
   }
+  // 대표(oppOf)는 열린 기회가 먼저다, 그다음 점수. 점수만 보면 끝난 기회가 같은 검색어의 열린
+  // 기회를 가렸다: 'syringomas vs milia' 줄이 완료된 #201(66점)을 들고 서서, 같은 검색어의 관찰
+  // 중인 열린 기회 둘(65.5점)이 거르개에 안 걸렸다 — 이미 고친 검색어가 [키워드]의 할 일
+  // 목록에 「완료」로 계속 섰다. 열린 것이 없으면 예전처럼 점수 1등(닫힌 것)이 대표다.
+  const open = o => window.OPP_ST_GROUP.open.includes(o.status);
   for (const k in OPP_INDEX)
-    OPP_INDEX[k].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    OPP_INDEX[k].sort((a, b) => (open(b) - open(a)) || ((b.score ?? 0) - (a.score ?? 0)));
 }
 window.oppsOf = t => OPP_INDEX[oppKey(t)] || [];
 window.oppOf = t => (OPP_INDEX[oppKey(t)] || [])[0] || null;

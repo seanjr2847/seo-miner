@@ -3150,6 +3150,11 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
         "[관찰 중] 묶음이 열린 상태와 다르다"
     m = re.search(r"window\.oppStMatch = (.*?);\n", shell, re.S)
     assert m and "o.hold" in m.group(1), "oppStMatch 가 관찰 판정(o.hold)을 안 본다"
+    # 거르개를 안 건 기본값(전체)도 관찰 중을 뺀다 — [분석]·[키워드]·[순위 추적]은 기본이 "전체"라
+    # 여기서 새면 이미 고친 페이지의 일이 할 일처럼 계속 선다
+    assert re.search(r"!st \? !\(o && o\.hold\)", m.group(1)), \
+        "oppStMatch 의 기본값(전체)이 관찰 중인 기회를 그대로 보여 준다"
+    assert '["", "관찰 중 뺀 전체"]' in shell, "기본값이 관찰 중을 빼는데 이름은 '전체'다"
     assert '["hold", "관찰 중"]' in shell, "거르개 선택지에 [관찰 중]이 없다"
     assert "hold" in run_all.GROUP_BY_ID["todo"]["views"], "[관찰 중] 화면이 할 일 묶음에 없다"
     # 화면이 읽는 칸 ⊆ 서버가 내는 칸 — 서버를 실제로 돌려서 칸 이름을 받는다

@@ -294,7 +294,11 @@ function anOpenTop() {
    앞 문장만으로 지금 상태가 읽혀야 한다(QA G2). */
 function anNext(d) {
   if (!window.nextStep || !window.act) return;
-  const s = d.shift, gaps = d.ctr_gaps || [], top = anTopMover();
+  // 되찾을 클릭은 관찰 중인 페이지 몫을 뺀다 — 방금 고친 페이지의 제목·설명을 또 고치라는
+  // 말이 된다(셸의 oppStMatch 기본값과 같은 문 — 거기서 빠진 것은 여기서도 안 센다).
+  const all = d.ctr_gaps || [], s = d.shift, top = anTopMover();
+  const gaps = all.filter(r => window.oppStMatch(oppOf(r.query), ""));
+  const heldN = all.length - gaps.length;
   // 다시 재는 손잡이는 화면 머리의 [이 묶음 다시 재기] 하나다 — 띠에 단계별 재실행
   // 버튼을 또 달면 한 화면에 "다시"가 둘이 선다. 띠는 처음 하는 일이나 이 화면
   // 안에서 여는 일만 든다. 라벨은 단계 용어표(stageRun)에서 온다.
@@ -324,6 +328,7 @@ function anNext(d) {
   } else if (gaps.length) {
     const lost = gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0);
     msg = `순위를 안 올리고도 되찾을 클릭이 ${num(lost)}회 있습니다.`
+        + (heldN ? ` 고친 뒤 관찰 중인 ${num(heldN)}건은 뺀 수입니다.` : "")
         + live("제목·설명만 고치면 되는 자리입니다.");
     acts = act("gaps");
   } else {
