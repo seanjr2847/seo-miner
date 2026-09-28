@@ -743,8 +743,13 @@ def test_seam_17_verdict_and_status_single_source():
     for src, who in ((tr, "triage.html"), (shell, "dashboard.html")):
         assert "0-9a-z가-힣" not in src, f"{who} 에 norm 사본이 있다 — 정규화는 scoring.norm 하나다"
     drawn = set(db.OPP_STATUSES) | {db.OPP_RESOLVED}
-    for name, want in (("OPP_LABEL", drawn), ("OPP_NEXT", drawn),
-                       ("OPP_SET", set(db.OPP_STATUSES)), ("OPP_DONE", set(db.OPP_STATUSES))):
+    # 예외 둘은 설계다(seam 95): '할 일'의 다음 걸음은 상태 버튼이 아니라 일을 도구에 넘기는
+    # 행동(로컬 열기·호스팅 복사)이라 OPP_NEXT 에 new 가 없고, 그 행동이 진행 중(acked)으로
+    # 옮기므로 상태만 바꾸는 버튼(OPP_SET 의 acked)도 없다. OPP_DONE 은 복사가 acked 로
+    # 옮길 때도 말해야 하니 전부 갖는다.
+    for name, want in (("OPP_LABEL", drawn), ("OPP_NEXT", drawn - {"new"}),
+                       ("OPP_SET", set(db.OPP_STATUSES) - {"acked"}),
+                       ("OPP_DONE", set(db.OPP_STATUSES))):
         mm = re.search(name + r" = \{(.*?)\};", shell, re.S)
         assert mm, f"셸의 {name} 을 못 찾았다"
         keys = set(re.findall(r"(\w+):", mm.group(1)))
@@ -3064,6 +3069,38 @@ def test_seam_94_site_profile_is_one_set_for_both_deployments():
     assert ("GET", "/api/settings") in dashboard.ROUTES and \
         ("POST", "/api/settings") in dashboard.ROUTES, \
         "로컬 대시보드에 /api/settings 가 없다 — 공통 칸이 로컬에서 못 읽고 못 쓴다"
+
+
+def test_seam_95_opportunity_buttons_are_named_after_their_state():
+    """95) 기회 버튼 이름 = 상태 이름이고, '할 일'의 다음 걸음은 일을 도구에 넘기는 행동이다.
+
+    예전엔 상태는 '이 기회만 뺌'인데 버튼은 '이 기회만 빼기', 상태는 '완료'인데 버튼은
+    '완료 표시'였고, 상태만 바꾸는 [작업 시작]이 로컬의 [(도구)로 열기](열면서 진행 중으로
+    옮긴다) 옆에 반쪽짜리로 섰다. 요청문(brief.py)이 사람에게 누르라고 하는 버튼 이름도
+    같은 표에서 와야 한다 — 표가 바뀌고 요청문이 옛 이름을 말하면 없는 버튼을 찾게 된다.
+    """
+    import brief
+    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    m = re.search(r"window\.OPP_LABEL = \{(.*?)\};", shell, re.S)
+    labels = dict(re.findall(r'(\w+):"([^"]+)"', m.group(1)))
+    m = re.search(r"const OPP_SET = \{(.*?)\};", shell, re.S)
+    sets = dict(re.findall(r'(\w+): "([^"]+)"', m.group(1)))
+    assert sets, "OPP_SET 을 못 읽었다 — 정규식이 틀렸다"
+    for st, name in sets.items():
+        if st != "new":                       # 'new' 로 되돌리는 버튼은 [다시 열기]다
+            assert labels[st] == name, f"버튼 '{name}' 이 상태 이름 '{labels[st]}' 과 다르다"
+    assert "acked" not in sets, "상태만 바꾸는 [작업 시작]이 되살아났다 — 열기·복사가 그 일을 한다"
+    m = re.search(r"const OPP_NEXT = \{(.*?)\};", shell, re.S)
+    assert "new" not in re.findall(r"(\w+):\s*\[", m.group(1)), \
+        "'할 일'의 다음 걸음이 상태 버튼으로 되살아났다"
+    # 호스팅의 복사는 할 일을 진행 중으로 옮긴다(copyPrompt 의 data-ack), 로컬 열기는 run_tool 이
+    assert 'data-ack=' in shell and 'setOpp(ids[0], "acked")' in shell, \
+        "호스팅 [요청문 복사]가 할 일을 진행 중으로 안 옮긴다"
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    named = set(re.findall(r"\[(완료|제외|다시 열기|[^\]]{1,12} 표시|이 기회만 [^\]]+)\]", src))
+    for n in named:
+        assert n in sets.values(), f"brief.py 가 없는 버튼 [{n}] 을 말한다 — 이름은 OPP_SET 한 벌이다"
+    assert {"완료", "제외"} <= named, "brief.py 가 닫는 버튼 이름을 안 말한다 — 이 검사가 헛돈다"
 
 
 if __name__ == "__main__":

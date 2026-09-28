@@ -353,7 +353,7 @@ function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(OV
 // 거르개까지 다시 그린다 — oppStatus 는 목록만 그려서 <select> 의 선택이 안 따라온다.
 function oppClosed(st) { OPP_ST = st || "closed"; KIND_FILTER = null; renderOpps(OV_PAGE); }
 // 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「저절로 풀림」인
-// 사이트에서 [완료·뺀 것]으로 보내면 거기서 또 빈 목록을 만났다. 이름은 거르개와 같은 말(OPP_ST_OPT).
+// 사이트에서 [완료·제외]으로 보내면 거기서 또 빈 목록을 만났다. 이름은 거르개와 같은 말(OPP_ST_OPT).
 function OV_doneBox() {
   const n = st => OPPS.filter(o => window.oppStMatch(o, st)).length;
   const st = ["closed", "resolved"].find(s => n(s) > 0);

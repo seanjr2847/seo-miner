@@ -1813,7 +1813,7 @@ def test_every_brief_says_what_done_looks_like():
         if k in scoring._RESOLVERS:
             assert scoring.RESOLVE_WHEN[k] in g and "저절로 닫힙니다" in g, (k, g)
         else:
-            assert "저절로 닫히지 않습니다" in g and "[완료 표시]" in g, (k, g)
+            assert "저절로 닫히지 않습니다" in g and "[완료]" in g, (k, g)
     # 목표는 대상 바로 뒤, 요약은 머리말 바로 뒤 — 6천 자 요청문의 중간에 묻히지 않게
     b = brief.build(_opp("ctr_gap", "검색어"), {"query_pages": {"검색어": _pages(URL)}},
                     "ko-KR")["body"]

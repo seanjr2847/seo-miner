@@ -728,7 +728,7 @@ function stIxDetail(url) {
     ${askBlock({shape: "technical", url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
                 deliver: ST_IX_DELIVER[r.bucket] || ST_IX_DELIVER._,
                 problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}
-    <p class="detn">이 URL 은 기회 목록에 없어 확인·완료 표시를 못 답니다.
+    <p class="detn">이 URL 은 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
@@ -864,7 +864,7 @@ function stDevDetail(q) {
                 problem: `모바일 격차 — 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
                          + `${stP1(r.desktop_pos)}위, 모바일 CTR ${r.mobile_ctr}%`,
                 queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}
-    <p class="detn">이 검색어는 기회 목록에 없어 확인·완료 표시를 못 답니다.
+    <p class="detn">이 검색어는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
@@ -1416,7 +1416,7 @@ function pgStarvedDetail(page) {
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
                 deliver: ["이 페이지로 링크를 걸 글과 앵커 텍스트"],
                 problem: `내부링크 굶음 — 노출 ${num(r.impressions)}인데 내부링크 ${num(r.links_in)}개`})}
-    <p class="detn">이 페이지는 기회 목록에 없어 확인·완료 표시를 못 답니다.
+    <p class="detn">이 페이지는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       내부링크 굶음은 아직 기회로 채점하지 않습니다.</p></div>`;
 }
 
@@ -1455,7 +1455,7 @@ function pgNoConvDetail(page) {
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
                 deliver: ["이 페이지에 전환 동작(CTA)이 있는지와, 없다면 어디에 무엇을 넣을지 진단"],
                 problem: `클릭 ${num(r.clicks)}·세션 ${num(r.sessions)}인데 전환 0`})}
-    <p class="detn">이 페이지는 기회 목록에 없어 확인·완료 표시를 못 답니다.
+    <p class="detn">이 페이지는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       전환 없음은 아직 기회로 채점하지 않습니다.</p></div>`;
 }
 

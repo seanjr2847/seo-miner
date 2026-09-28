@@ -612,7 +612,7 @@ VIEW("keywords", function (d) {
   // 갈리고, 그 문장이 가리키는 것을 그 자리에서 누를 수 있어야 한다.
   // 띠가 부르는 이름은 그 띠가 말한 묶음 안에서 고른다 — 문턱 이야기를 해 놓고
   // 1페이지 검색어 이름을 부르면 문장과 목록이 서로 다른 것을 가리킨다.
-  // 이미 닫힌 기회(완료·뺀 것·저절로 풀림)가 걸린 줄은 부르지 않는다 — 풀린 검색어를
+  // 이미 닫힌 기회(완료·제외·저절로 풀림)가 걸린 줄은 부르지 않는다 — 풀린 검색어를
   // 이 화면의 1순위로 세우면 끝난 일을 다시 하라는 말이 된다. 기회가 없는 줄은 남긴다.
   const shut = r => { const o = oppOf(r.query); return !!o && !window.oppStMatch(o, "open"); };
   const sorted = KW_ROWS.length ? KW_filtered().filter(r => !shut(r)) : [];

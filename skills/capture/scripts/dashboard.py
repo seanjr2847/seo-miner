@@ -2337,14 +2337,14 @@ def run_tool(body: dict) -> dict:
     """POST /api/setup/run-tool 본체 — 기회 하나를 도구로 연다.
 
     본문은 {project, id, ids?, dry_run?}. ids 는 [개요]의 묶인 줄(opp_groups)이 싣는
-    묶음 전체다 — 창과 파일은 대표(id) 하나로 열고, '작업 시작'은 묶인 id 전부에
+    묶음 전체다 — 창과 파일은 대표(id) 하나로 열고, '진행 중'은 묶인 id 전부에
     찍는다. 상태 버튼(setOpps)은 이미 그렇게 하는데 열기만 대표 하나를 바꾸면 그
     줄이 새로고침 뒤 두 줄로 갈라진다. 그 사이트 것이 아닌 id 는 조용히 버린다 —
     열기를 그것 때문에 실패시키지 않는다.
 
     dry_run 이면 창도 안 띄우고 상태도 안 바꾸고 조립한 것만 돌려준다(검사용).
     실패는 전부 {"ok": False, "error": …} 이고 그때는 상태를 건드리지 않는다 —
-    "작업 시작"이라고 표시해 놓고 아무 창도 안 뜨는 것이 제일 나쁜 결과다.
+    "진행 중"이라고 표시해 놓고 아무 창도 안 뜨는 것이 제일 나쁜 결과다.
     """
     import shutil
     project = str(body.get("project") or "").strip()
@@ -2439,7 +2439,7 @@ def run_tool(body: dict) -> dict:
         return out
 
     out.update(_open_terminal(argv, cwd, terminal, f"seo-miner · {project} #{opp_id}"))
-    # 창이 실제로 뜬 뒤에 '작업 시작'으로 바꾼다 — 묶인 id 전부. 기록은 서버 한 곳에
+    # 창이 실제로 뜬 뒤에 '진행 중'으로 바꾼다 — 묶인 id 전부. 기록은 서버 한 곳에
     # 남아 두 화면이 같은 표를 본다 — 원격 사이트면 호스팅의 /api/opp 로 보낸다
     # (그 창구는 id 하나씩 받는다 — setOpps 와 같이 하나씩 보낸다).
     conn = None if remote.owns(project) else db.connect()

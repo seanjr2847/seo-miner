@@ -2493,7 +2493,7 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
         return "URL 검사에서 이 주소가 PASS·색인됨으로 나오는 것."
     if kind == "ai_bot_blocked":
         return ("robots.txt 가 정한 대로 바뀌는 것 — 열기로 했으면 이 크롤러를 막지 않게. 막는 게 "
-                "의도였다면 그것이 답이고, 이 기회는 [이 기회만 뺌]으로 닫습니다.")
+                "의도였다면 그것이 답이고, 이 기회는 [제외]로 닫습니다.")
     if kind == "crawl_issue":
         return "다음 크롤에서 이 주소의 문제가 사라지는 것 — 그 전에 직접 열어 확인합니다."
     if kind == "backlink_broken":
@@ -2519,7 +2519,7 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
     when = scoring.resolve_when(o["kind"])
     L.append(f"- 끝나는 조건: {when} 이 기회는 저절로 닫힙니다." if when else
              "- 끝나는 조건: 이 종류는 저절로 닫히지 않습니다 — 적용하고 위 목표를 확인했으면 "
-             "화면에서 [완료 표시]로 닫습니다.")
+             "화면에서 [완료]로 닫습니다.")
     if after:
         L += [f"- {x}" for x in after]
     else:
