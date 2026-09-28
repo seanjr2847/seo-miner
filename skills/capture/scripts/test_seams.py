@@ -213,8 +213,11 @@ def test_seam_02_view_list_single_source():
             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
         assert s["id"] not in have, \
             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
-        assert f'"{s["id"]}"' in dash, \
-            f"section-def 가 선언하는데 dash.html 이 쓰지 않는다(참조가 없다): {s['id']}"
+        # 호스팅 전용 섹션만 애드온이 다룬다 — 두 배포 공통 섹션(only 없음, 예: sm-profile)은
+        # 제 스크립트를 스스로 지니므로 dash.html 이 몰라도 된다.
+        if s.get("only") == "hosted":
+            assert f'"{s["id"]}"' in dash, \
+                f"section-def 가 선언하는데 dash.html 이 쓰지 않는다(참조가 없다): {s['id']}"
 
     for v in defs.values():             # 원본 선언이 담는 요소는 원본에 있어야 한다
         for i in v["sections"]:
@@ -3036,6 +3039,32 @@ console.log(JSON.stringify(CR_rows(CR_D)));
         print("  (node 가 없어 건너뜀)")
         return
     assert "50건 더 보기 (남은 437건)" in got, re.findall(r"[^>]*더 보기[^<]*", got)
+
+def test_seam_94_site_profile_is_one_set_for_both_deployments():
+    """94) 사이트 프로필(브랜드·경쟁사·도구·씨앗)은 읽기·쓰기가 한 벌(db.profile_read/save)이고
+    화면 칸도 한 벌(sections/sm-profile.html, 두 배포 공통)이다.
+
+    예전엔 서버(app.py)에만 읽기·쓰기가 있고 칸은 호스팅 전용 섹션(sm-set) 안에 있어서,
+    로컬 대시보드에서는 이 칸을 고칠 곳이 없었다. 한쪽에 다시 사본을 만들면 그쪽 화면만
+    옛 규칙(예: 뺀 경쟁사가 안 지워짐)으로 돈다.
+    """
+    import dashboard
+    app_src = (ROOT / "server" / "app.py").read_text("utf-8")
+    dash_src = (SCRIPTS / "dashboard.py").read_text("utf-8")
+    for name, src in (("server/app.py", app_src), ("dashboard.py", dash_src)):
+        assert "db.profile_read(" in src and "db.profile_save(" in src, \
+            f"{name} 이 프로필을 db.profile_read/save 로 안 다룬다 — 사본이 생겼다"
+    assert "seed_keywords(c, pr" not in app_src and "manual_competitors(c, pr" not in app_src, \
+        "app.py 가 프로필 칸을 직접 모은다 — db.profile_read 한 벌을 거쳐라"
+    secs = {s["id"]: s for s in dashboard.section_defs()}
+    assert "sm-profile" in secs and secs["sm-profile"].get("only") is None, \
+        "브랜드·경쟁사 칸(sm-profile)이 두 배포 공통이 아니다"
+    assert 'id="pf-alias"' not in secs["sm-set"]["html"], \
+        "호스팅 전용 섹션(sm-set)에 프로필 칸이 또 있다 — 두 벌이다"
+    assert ("GET", "/api/settings") in dashboard.ROUTES and \
+        ("POST", "/api/settings") in dashboard.ROUTES, \
+        "로컬 대시보드에 /api/settings 가 없다 — 공통 칸이 로컬에서 못 읽고 못 쓴다"
+
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

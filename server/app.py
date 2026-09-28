@@ -973,23 +973,9 @@ RUN_PRESETS = ((0, "끔"), (6, "6시간"), (12, "12시간"), (24, "하루"), (72
                (168, "주 1회"))
 
 
-# 사이트 설정 화면(#sm-set)의 "이 사이트 설정" 칸이 다루는 프로필 필드.
-# 전부 Brain 안에 산다: brand_aliases·tools 는 project_settings, seed_keywords·
-# competitors_manual 은 keywords(source='seed')·competitors(source='manual') 행이다.
-# 예전엔 넷 다 프로젝트 yaml 에만 있었고, 그 파일이 호스팅에서는 컨테이너 디스크에
-# 살아서 동기화로는 영영 안 내려왔다(db.project_cfg 주석).
-# 정본은 db.py 의 SETTING_KEYS/PREFILL_KEYS 와 같은 이름이어야 한다.
-PROFILE_FIELDS = ("brand_aliases", "seed_keywords", "competitors_manual", "tools")
-
-
-def _project_cfg(c, pr) -> dict:
-    """사이트별 설정 — Brain 한 곳(db.project_cfg). 등록 직후면 빈 값이다."""
-    return db.project_cfg(c, pr) if pr else {}
-
-
-def _joined(cfg: dict, key: str) -> str:
-    v = cfg.get(key) or []
-    return ", ".join(v) if isinstance(v, list) else str(v)
+# 사이트 프로필(브랜드·경쟁사·도구·씨앗) 읽기·쓰기의 정본은 db.profile_read/profile_save 다 —
+# 로컬 대시보드도 같은 것을 부른다(두 벌이면 한쪽 화면만 그 칸을 갖게 된다).
+PROFILE_FIELDS = db.PROFILE_FIELDS
 
 
 @app.get("/api/settings")
@@ -1000,26 +986,13 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
     화면이 그리는 칸이 곧 이 응답의 키다. 화면에 없는 값을 여기 싣지 않는다 —
     저장소(GitHub) 키가 그렇게 남아 화면이 없는 칸을 그리려 했다.
     """
-    domain = ""
     try:
         pr = db.get_project(c, project)
-        ga4, locale, domain = pr["ga4_property"] or "", db.project_locale(pr), pr["domain"]
-        cfg = _project_cfg(c, pr)
-        # 씨앗·경쟁사는 설정 줄이 아니라 **행**이 정본이다 — keywords(source='seed')·
-        # competitors(source='manual'). 여기서 사본을 들고 있으면 화면이 지운 값이
-        # 다음 열람에 되살아난다(예전 yaml 이 그랬다).
-        seeds = db.seed_keywords(c, pr["id"])
-        rivals = db.manual_competitors(c, pr["id"])
+        ga4, locale = pr["ga4_property"] or "", db.project_locale(pr)
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale, cfg, seeds, rivals = "", "", {}, [], []
-    brand_aliases = _joined(cfg, "brand_aliases")
-    # 브랜드 표기가 비어 있으면 도메인 앞부분을 초안으로 얹는다 — 검색어 화면이
-    # "브랜드 표기가 비었습니다"라고 말해도 여기 채울 칸이 없던 것이 원인이다.
-    # 초안은 골라 둔 값이 아니다: 화면이 이걸 입력칸 값이 아니라 placeholder/제안으로
-    # 보여 주고, 사람이 [저장]을 눌러야 실제로 저장된다 — 조용히 저장하지 않는다.
-    brand_suggestion = "" if brand_aliases else domain.split(".")[0] if domain else ""
+        ga4, locale = "", ""
     # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
     return {"run_every_hours": store.every_hours(tn.conn, uid, project),
             "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -1027,11 +1000,8 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
             "locale": locale,
             "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
-            "brand_aliases": brand_aliases,
-            "brand_suggestion": brand_suggestion,
-            "seed_keywords": ", ".join(seeds),
-            "competitors_manual": ", ".join(rivals),
-            "tools": _joined(cfg, "tools")}
+            # 브랜드·경쟁사·도구·씨앗 + 브랜드 초안 — 로컬 대시보드와 한 벌(db.profile_read)
+            **db.profile_read(c, project)}
 
 
 @app.post("/api/settings")
@@ -1066,29 +1036,12 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
 
 
 def _api_settings_profile(profile, project: str, c) -> dict:
-    """PROFILE_FIELDS 중 보낸 것만 Brain 에 쓴다.
-
-    예전에는 프로젝트 yaml 을 고치고 db.sync_project 를 다시 돌렸다. 그 파일이
-    호스팅에서는 컨테이너 디스크에 살아서, 저장은 되는데 그 값이 사용자의 PC 로는
-    영영 안 내려갔다 — 동기화가 나르는 것은 Brain 뿐이기 때문이다(db.project_cfg 주석).
-    이제 설정도 Brain 안이라 저장한 것이 그대로 따라간다.
-
-    스키마를 아는 곳은 db.py 뿐이라 여기서 SQL 을 새로 짜지 않는다. 씨앗·경쟁사는
-    **보낸 목록이 곧 그 사이트의 목록이다** — 뺀 값은 지워진다. 예전 INSERT OR IGNORE
-    시절에는 안 지워져서, 화면에서 지워도 다음 열람에 그대로 되살아났다.
-    """
-    if not isinstance(profile, dict):
-        raise HTTPException(status_code=400, detail="profile 은 {필드: 값} 모양이어야 합니다.")
-    pr = db.get_project(c, project)
-    edit = {k: [s.strip() for s in re.split(r"[,\n]", str(profile.get(k) or "")) if s.strip()]
-            for k in PROFILE_FIELDS if k in profile}
-    db.register_project(c, {**{f: pr[f] for f in ("name", "type", "domain", "locale",
-                                                  "gsc_property", "ga4_property")}, **edit})
-    cfg = db.project_cfg(c, pr)
-    return {"ok": True,
-            "brand_aliases": _joined(cfg, "brand_aliases"), "tools": _joined(cfg, "tools"),
-            "seed_keywords": ", ".join(db.seed_keywords(c, pr["id"])),
-            "competitors_manual": ", ".join(db.manual_competitors(c, pr["id"]))}
+    """PROFILE_FIELDS 중 보낸 것만 Brain 에 쓴다 — 본체는 db.profile_save 한 벌이다
+    (로컬 대시보드도 같은 것을 부른다). 설정이 Brain 안이라 저장한 것이 동기화로 따라간다."""
+    try:
+        return db.profile_save(c, project, profile)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- GA4 ------------------------------------------------------------------

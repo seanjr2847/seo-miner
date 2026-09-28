@@ -1795,6 +1795,27 @@ def set_verdict(body: dict) -> dict:
         conn.close()
 
 
+def _with_conn(fn):
+    """Brain 을 열어 fn(conn) 을 부르고 닫는다 — 읽기 한 번짜리 경로용."""
+    conn = db.connect()
+    try:
+        return fn(conn)
+    finally:
+        conn.close()
+
+
+def settings_profile_route(body: dict) -> dict:
+    """POST /api/settings 의 로컬 본체 — 사이트 프로필만 받는다(db.profile_save 한 벌).
+
+    호스팅 서버의 같은 경로는 주기·GA4·언어-지역도 받지만, 그 칸들은 호스팅 몫이다
+    (자동 재기·GA4 속성 고르기가 서버에 있다). 여기 그 값이 오면 조용히 버리지 않고
+    거절한다 — 저장했다는 말이 거짓이 되지 않게."""
+    if "profile" not in body:
+        raise ValueError("이 PC 의 대시보드에서는 브랜드·경쟁사·도구·씨앗만 고칠 수 있습니다.")
+    return _with_conn(lambda c: db.profile_save(c, str(body.get("project") or ""),
+                                                body.get("profile")))
+
+
 # ── 로컬 재기: POST /api/run · GET /api/run/status ────────────────────────
 # 호스팅과 같은 계약을 받는다 — 본문 {project, groups:"search,ai"}(없으면 전체),
 # 응답 {ok, started, queued}; 상태는 {사이트: {running, groups:{id:{running, queued,
@@ -2003,6 +2024,14 @@ ROUTES = {
     # 묶음 다시 재기 — 화면이 두 배포에서 같은 본문으로 부른다. 몸은 배포마다 다르다:
     # 호스팅은 워커를 쓰는 자기 구현을 갖고(app.py 의 _HAND_ROUTES), 여기 것은 로컬
     # Handler 만 부른다. 원격 사이트면 로컬 Handler 가 서버로 넘긴다(다른 ROUTES 와 같다).
+    # 사이트 프로필(브랜드·경쟁사·도구·씨앗) — 공통 설정 칸(sections/sm-profile.html)이
+    # 부른다. 원격 사이트면 Handler 가 서버로 넘기고(서버에도 같은 경로가 있다), 이 PC 의
+    # 사이트면 여기서 같은 한 벌(db.profile_read/save)로 답한다. 주기·GA4·언어 같은
+    # 나머지 설정 칸은 호스팅 몫이라 여기서는 profile 만 받는다.
+    ("GET", "/api/settings"):
+        lambda project, query, body: _with_conn(lambda c: db.profile_read(c, project)),
+    ("POST", "/api/settings"):
+        lambda project, query, body: settings_profile_route(body),
     ("POST", "/api/run"):
         lambda project, query, body: run_route(body),
     ("GET", "/api/run/status"):

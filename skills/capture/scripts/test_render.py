@@ -184,6 +184,10 @@ EMPTY_LOADS = [
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
+    # 브랜드·경쟁사 칸은 두 배포 공통이다(sections/sm-profile.html). 호스팅 전용 섹션 안에만
+    # 있던 동안 로컬 [설정]에는 이 칸이 아예 없었다.
+    (r'<section id="sm-profile"(?:(?!</section>).)*id="pf-alias"(?:(?!</section>).)*id="pf-seeds"',
+     "[설정]에 브랜드·경쟁사 칸(sm-profile)이 없다 — 두 배포 공통이어야 한다"),
     # 차트는 캔버스다(Chart.js) — 자리(<canvas data-ch>)만 서고 차트가 안 서면 화면은 빈
     # 칸인데 JS 오류도 안 날 수 있다. 셸의 chMake 가 세우면 data-ch-ok 를 단다.
     (r'<canvas data-ch="ch\d+"[^>]*data-ch-ok="1"', "차트가 하나도 안 섰다 — 캔버스 자리만 남았다"),

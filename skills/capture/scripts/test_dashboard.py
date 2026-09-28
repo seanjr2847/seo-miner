@@ -1520,6 +1520,55 @@ def test_local_run_routes_through_handler():
     assert not spawned, "검사가 실제로 런을 띄웠다"
 
 
+def test_local_profile_settings_read_and_write_through_handler():
+    """로컬 대시보드도 브랜드·경쟁사·도구·씨앗을 읽고 고친다 — 예전엔 /api/settings 가
+    로컬에 없어서 [설정]에 그 칸이 아예 없었다(호스팅 전용 섹션 안에만 있었다).
+    본체는 호스팅과 한 벌(db.profile_read/save)이고, 로컬은 profile 만 받는다 — 주기·GA4
+    같은 호스팅 몫이 오면 저장한 척하지 않고 거절한다."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+    conn, pid = _brain("pf_http")
+    conn.close()
+    srv = _serve()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def post(body, token=dashboard.TOKEN):
+        req = urllib.request.Request(base + "/api/settings", _json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", "X-Token": token})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, _json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, _json.loads(e.read() or b"{}")
+
+    def get():
+        with urllib.request.urlopen(base + "/api/settings?project=pf_http") as r:
+            return _json.loads(r.read())
+    try:
+        first = get()
+        assert set(first) >= {"brand_aliases", "competitors_manual", "tools", "seed_keywords",
+                              "brand_suggestion"}, first
+        code, saved = post({"project": "pf_http", "profile": {
+            "brand_aliases": "마이사이트, MySite", "competitors_manual": "rival.com\nother.com",
+            "seed_keywords": "무선 이어폰, 노트북"}})
+        assert code == 200 and saved["ok"], saved
+        again = get()
+        assert again["brand_aliases"] == "마이사이트, MySite", again
+        assert again["competitors_manual"] == "rival.com, other.com", again
+        assert again["seed_keywords"] == "무선 이어폰, 노트북", again
+        # 보낸 목록이 곧 목록이다 — 뺀 경쟁사는 지워진다
+        post({"project": "pf_http", "profile": {"competitors_manual": "rival.com"}})
+        assert get()["competitors_manual"] == "rival.com"
+        assert get()["brand_aliases"] == "마이사이트, MySite", "보내지 않은 칸을 지웠다"
+        # 토큰 없으면 403, 호스팅 몫(주기)만 오면 400 — 조용히 버리지 않는다
+        assert post({"project": "pf_http", "profile": {"tools": "x"}}, token="x")[0] == 403
+        assert post({"project": "pf_http", "run_every_hours": 24})[0] == 400
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

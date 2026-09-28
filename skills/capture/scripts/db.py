@@ -21,6 +21,7 @@ CLI:
   python db.py selfcheck               # 임시 brain.db 로 읽기 동사들을 돌려본다
 """
 import json
+import re
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -1431,6 +1432,54 @@ def set_seed_keywords(conn: sqlite3.Connection, project_id: int, words) -> None:
     for kw in set(have) - set(want):
         conn.execute("DELETE FROM keywords WHERE project_id=? AND keyword=? AND source='seed'",
                      (project_id, kw))
+
+
+# 사이트 프로필 — [설정]의 "브랜드·경쟁사" 칸이 다루는 네 필드. 로컬 대시보드와 호스팅
+# 서버가 **같은 이 한 벌**로 읽고 쓴다. 예전엔 서버(app.py)에만 있어서, 로컬 대시보드는
+# 이 칸을 아예 못 그렸다 — 로컬 설정 화면에는 새 사이트 등록 폼뿐이었고 "고치는 자리는
+# 아직 없습니다(웹 [설정]에는 있습니다)"라고 적혀 있었다.
+# 전부 Brain 안에 산다: brand_aliases·tools 는 project_settings, seed_keywords·
+# competitors_manual 은 keywords(source='seed')·competitors(source='manual') 행이다.
+PROFILE_FIELDS = ("brand_aliases", "seed_keywords", "competitors_manual", "tools")
+
+
+def _joined(v) -> str:
+    return ", ".join(v) if isinstance(v, list) else str(v or "")
+
+
+def profile_read(conn: sqlite3.Connection, name: str) -> dict:
+    """사이트 프로필 네 칸(쉼표로 이은 글자) + brand_suggestion.
+
+    등록 직후처럼 사이트가 아직 없으면 빈 값이다 — 설정 화면은 그래도 열려야 한다.
+    brand_suggestion: 브랜드 표기가 비었을 때 도메인 앞부분을 **초안으로만** 준다.
+    화면은 이걸 입력값이 아니라 placeholder 로 보여 주고, 사람이 적어야 저장된다."""
+    try:
+        pr = get_project(conn, name)
+    except ProjectNotFound:
+        return {**{k: "" for k in PROFILE_FIELDS}, "brand_suggestion": ""}
+    cfg = project_cfg(conn, pr)
+    brand = _joined(cfg.get("brand_aliases"))
+    dom = pr["domain"] or ""
+    return {"brand_aliases": brand, "tools": _joined(cfg.get("tools")),
+            # 씨앗·경쟁사는 설정 줄이 아니라 **행**이 정본이다 — 사본을 들면 화면이 지운
+            # 값이 다음 열람에 되살아난다(예전 yaml 이 그랬다).
+            "seed_keywords": ", ".join(seed_keywords(conn, pr["id"])),
+            "competitors_manual": ", ".join(manual_competitors(conn, pr["id"])),
+            "brand_suggestion": "" if brand else (dom.split(".")[0] if dom else "")}
+
+
+def profile_save(conn: sqlite3.Connection, name: str, profile) -> dict:
+    """PROFILE_FIELDS 중 보낸 것만 쓴다. 씨앗·경쟁사는 **보낸 목록이 곧 그 사이트의
+    목록이다** — 뺀 값은 지워진다. 스키마를 아는 곳이 이 파일뿐이라 register_project 로
+    쓴다(SQL 을 부르는 쪽이 새로 짜지 않는다). 반환은 profile_read 와 같은 꼴 + ok."""
+    if not isinstance(profile, dict):
+        raise ValueError("profile 은 {필드: 값} 모양이어야 합니다.")
+    pr = get_project(conn, name)
+    edit = {k: [x.strip() for x in re.split(r"[,\n]", str(profile.get(k) or "")) if x.strip()]
+            for k in PROFILE_FIELDS if k in profile}
+    register_project(conn, {**{f: pr[f] for f in ("name", "type", "domain", "locale",
+                                                   "gsc_property", "ga4_property")}, **edit})
+    return {"ok": True, **profile_read(conn, name)}
 
 
 def manual_competitors(conn: sqlite3.Connection, project_id: int) -> list[str]:
