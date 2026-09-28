@@ -1569,6 +1569,26 @@ def test_local_profile_settings_read_and_write_through_handler():
         srv.server_close()
 
 
+def test_dashboard_token_survives_restart():
+    """대시보드를 다시 띄워도 토큰이 같다 — 이미 열린 탭(?t=)이 계속 쓴다.
+
+    켤 때마다 새 토큰을 만들던 동안, 다시 띄운 뒤 옛 탭에서 누르는 쓰기마다 "이 창은
+    만료됐습니다"가 떴다(새로고침해도 주소의 옛 ?t= 가 그대로라 안 풀렸다)."""
+    import subprocess
+    import sys as _sys
+    import tempfile
+    from pathlib import Path as _P
+    home = tempfile.mkdtemp(prefix="seo-miner-token-")
+    env = {**os.environ, "CAPTURE_HOME": home, "PYTHONIOENCODING": "utf-8"}
+    code = "import dashboard; print(dashboard.TOKEN)"
+    run = lambda: subprocess.run([_sys.executable, "-c", code], cwd=str(_P(__file__).parent),
+                                 env=env, capture_output=True, text=True,
+                                 encoding="utf-8").stdout.strip().splitlines()[-1]
+    first, second = run(), run()
+    assert first and first == second, f"다시 띄웠더니 토큰이 바뀌었다: {first!r} → {second!r}"
+    assert (_P(home) / "dashboard.token").read_text("utf-8").strip() == first
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

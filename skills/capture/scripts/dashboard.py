@@ -235,8 +235,33 @@ KEY_FIELDS = ("OPENROUTER_API_KEY", "SERPER_API_KEY",
 ENV_FILE = db.CAPTURE_HOME / "env"
 
 # 로컬 전용이라 인증이 없다. 그런데 브라우저는 아무 웹페이지에서나 127.0.0.1로 POST를
-# 보낼 수 있어서(pip 실행·파일 쓰기 엔드포인트가 생겼으므로) 1회용 토큰으로 막는다.
-TOKEN = secrets.token_urlsafe(9)
+# 보낼 수 있어서(pip 실행·파일 쓰기 엔드포인트가 생겼으므로) 토큰으로 막는다.
+#
+# 토큰은 이 PC 에 **한 번 만들어 두고 계속 쓴다**(CAPTURE_HOME/dashboard.token). 예전엔
+# 대시보드를 켤 때마다 새로 만들어서, 다시 띄우면(플러그인 갱신 뒤 /capture dash 등) 이미
+# 열린 탭이 옛 토큰(?t=)을 들고 남아 누르는 쓰기마다 "이 창은 만료됐습니다"가 떴다 —
+# 새로고침해도 주소의 옛 ?t= 가 그대로라 풀리지 않았다. 막으려는 것(다른 웹사이트가 보내는
+# 쓰기)은 그대로 막힌다: 다른 사이트는 이 파일도, 이 페이지의 주소도 읽을 수 없다.
+TOKEN_FILE = db.CAPTURE_HOME / "dashboard.token"
+
+
+def _load_token() -> str:
+    try:
+        t = TOKEN_FILE.read_text("utf-8").strip()
+        if len(t) >= 12:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(9)
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(t, "utf-8")
+    except OSError:
+        pass            # 못 쓰면 이번 실행만의 토큰이다 — 예전 동작으로 물러선다
+    return t
+
+
+TOKEN = _load_token()
 
 
 def export(project: str, actions_file: str | None = None) -> Path:
