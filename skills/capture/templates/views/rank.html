@@ -70,8 +70,7 @@
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
    추이 선은 그리지 않는다: 확인일이 최대 두 개라 2점을 잇는 선이 된다. */
 let RK_ROWS = [], RK_Q = "", RK_BAND = null, RK_HAS_PREV = false;
-// 기회 상태 거르개 — 기본은 "전체"다. 이 목록은 기회 목록이 아니라 검색어 목록이라,
-// 걸지 않으면 기회가 안 붙은 줄까지 여태처럼 다 보인다(정본은 셸의 OPP_ST_OPT).
+// 기회 상태 거르개 — 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
 let RK_ST = "";
 
 /* ── 다음 행동 띠 ────────────────────────────────────────────────
@@ -227,6 +226,7 @@ function RK_find(v) { RK_Q = v; RK_list(); }
 function RK_setSt(v) { RK_ST = v; RK_list(); }
 function RK_setBand(k) { RK_BAND = RK_BAND === k ? null : k; RK_paint(); }
 function RK_reset() { RK_Q = ""; RK_BAND = null; RK_paint(); }
+function RK_stAll() { RK_ST = "all"; RK_paint(); }
 
 /* ── 행 펼침: "몇 위"에서 "그래서 뭘 고치나"까지 한 자리에서 ─────────────
    표 안이라 <details> 를 못 쓴다 — tr 을 버튼으로 만들고 바로 밑에 tr.exp 를 끼운다.
@@ -409,6 +409,8 @@ function RK_list() {
   const list = RK_VIEW = RK_filtered();     // 행의 data-i 는 이 배열을 가리킨다
   $("rk-n").textContent = list.length === RK_ROWS.length
     ? `${RK_ROWS.length}개` : `${list.length}개 / 전체 ${RK_ROWS.length}개`;
+  if (!list.length && window.oppLeftDone(RK_ST, RK_ROWS, r => oppOf(r.keyword)))
+    return $("rk-list").innerHTML = window.oppLeftEmpty("검색어", RK_ROWS.length, "RK_stAll()");
   if (!list.length)
     return $("rk-list").innerHTML = `<div class="empty"><b>이 조건에 맞는 검색어가 없습니다</b>
       <p>확인한 검색어는 모두 ${RK_ROWS.length}개입니다.</p>

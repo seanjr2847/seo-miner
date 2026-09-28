@@ -530,7 +530,7 @@ const ST_IX_ORDER = ["robots_blocked", "fetch_error", "canonical_mismatch", "not
 
 let ST_IX_ROWS = [], ST_IX_B = "", ST_IX_Q = "", ST_IX_TOTAL = null;
 // 기회 상태 거르개 — 목록은 셸의 OPP_ST_OPT 한 벌이고, 표마다 고른 값만 따로 갖는다.
-// 기본은 "전체"다: 세 표는 기회 목록이 아니라 URL·검색어 목록이라 기회가 안 붙은 줄도 있다.
+// 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다): 세 표는 기회 목록이 아니라 URL·검색어 목록이다.
 let ST_IX_ST = "", ST_DEV_ST = "", CR_ST = "";
 // 대상 문자열로 기회를 찾아 상태를 견준다 — 대상이 URL(색인·크롤)이든 검색어(모바일)든 같다.
 const stStOk = (t, st) => window.oppStMatch(oppOf(t), st);
@@ -597,6 +597,7 @@ function stIxChip(el) {
 }
 function stIxFind(v) { ST_IX_Q = v; stIxList(); }
 function stIxSt(v) { ST_IX_ST = v; stIxList(); }
+function stIxAll() { ST_IX_ST = "all"; stIxHead(); stIxList(); }
 function stIxReset() {
   ST_IX_B = ""; ST_IX_Q = ""; ST_IX_ST = "";
   stIxHead();
@@ -648,6 +649,8 @@ const stIxStopBox = stop => !stop ? "" :
 function stIxList() {
   const list = stIxSorted(), n = ST_IX_ROWS.length;
   $("ixn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
+  if (!list.length && window.oppLeftDone(ST_IX_ST, ST_IX_ROWS, r => oppOf(r.url)))
+    return $("ixlist").innerHTML = window.oppLeftEmpty("주소", n, "stIxAll()");
   if (!list.length)
     return $("ixlist").innerHTML = `<div class="empty"><b>맞는 URL 이 없습니다</b>
       <p>지금 걸어 둔 갈래·검색어 조건에 걸리는 줄이 없습니다.</p>
@@ -780,6 +783,7 @@ function stDevFiltered() {
 const stDevSorted = () => stByOpp(stDevFiltered(), r => r.query);
 function stDevFind(v) { ST_DEV_Q = v; stDevList(); }
 function stDevSt(v) { ST_DEV_ST = v; stDevList(); }
+function stDevAll() { ST_DEV_ST = "all"; stDevHead(); stDevList(); }
 function stDevReset() { ST_DEV_Q = ""; ST_DEV_ST = ""; stDevHead(); }
 function stDevCsv() {
   csv("모바일격차", [["점수", "검색어", "모바일 순위", "데스크톱 순위", "순위차",
@@ -805,6 +809,8 @@ function stDevHead() {
 function stDevList() {
   const list = stDevSorted(), n = ST_DEV_ROWS.length;
   $("devn").textContent = list.length === n ? `${n}건` : `${list.length}건 / 전체 ${n}건`;
+  if (!list.length && window.oppLeftDone(ST_DEV_ST, ST_DEV_ROWS, r => oppOf(r.query)))
+    return $("devlist").innerHTML = window.oppLeftEmpty("검색어", n, "stDevAll()");
   if (!list.length)
     return $("devlist").innerHTML = `<div class="empty"><b>맞는 검색어가 없습니다</b>
       <p>지금 걸어 둔 조건에 걸리는 줄이 없습니다.</p>
@@ -1072,6 +1078,10 @@ function CR_rows(d) {
     <span class="n">${rows.length}개</span>
     <button class="go sec sm" onclick="CR_csv()"
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
+  // 기본값(남은 것)이 전부 걸렀으면 "걸린 것이 없습니다"는 거짓이다 — 끝냈거나 관찰 중일 뿐이다.
+  const picked = CR_all().filter(r => !CR_PICK || r.kind === CR_PICK);
+  if (!rows.length && window.oppLeftDone(CR_ST, picked, r => oppOf(r.url || "")))
+    return stCard(window.oppLeftEmpty("문제", picked.length, "CR_setSt('all')"));
   const rest = rows.length - CR_N;
   return stCard(table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
     CR_PICK ? "<b>이 종류에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"

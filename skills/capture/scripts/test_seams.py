@@ -3148,13 +3148,12 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
     assert mm, "셸의 OPP_ST_GROUP.hold 가 없다"
     assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
         "[관찰 중] 묶음이 열린 상태와 다르다"
-    m = re.search(r"window\.oppStMatch = (.*?);\n", shell, re.S)
+    m = re.search(r"window\.oppStMatch = \(o, st\) => \{(.*?)\n\};", shell, re.S)
     assert m and "o.hold" in m.group(1), "oppStMatch 가 관찰 판정(o.hold)을 안 본다"
     # 거르개를 안 건 기본값(전체)도 관찰 중을 뺀다 — [분석]·[키워드]·[순위 추적]은 기본이 "전체"라
     # 여기서 새면 이미 고친 페이지의 일이 할 일처럼 계속 선다
-    assert re.search(r"!st \? !\(o && o\.hold\)", m.group(1)), \
-        "oppStMatch 의 기본값(전체)이 관찰 중인 기회를 그대로 보여 준다"
-    assert '["", "관찰 중 뺀 전체"]' in shell, "기본값이 관찰 중을 빼는데 이름은 '전체'다"
+    assert '["", "남은 것"]' in shell and '["all", "전체"]' in shell, \
+        "거르개의 기본값(남은 것)·전부(전체) 선택지가 없다 — 동작은 test_seam_99 가 실제로 돌려 본다"
     assert '["hold", "관찰 중"]' in shell, "거르개 선택지에 [관찰 중]이 없다"
     assert "hold" in run_all.GROUP_BY_ID["todo"]["views"], "[관찰 중] 화면이 할 일 묶음에 없다"
     # 화면이 읽는 칸 ⊆ 서버가 내는 칸 — 서버를 실제로 돌려서 칸 이름을 받는다
@@ -3191,6 +3190,55 @@ def test_seam_98_report_file_name_is_one_pattern():
         assert db.is_report_only(r"C:\Users\u\AppData\Local\Temp" + "\\" + name), name
         assert db.is_report_only("/tmp/" + name), name
     assert not db.is_report_only("content/pages/en/special-clinic/syringoma-milia/index.html")
+
+
+def test_seam_99_default_filter_is_what_is_left():
+    """99) 상태 거르개의 기본값은 「남은 것」이다 — 셸의 oppStMatch 를 node 로 **실제로 돌려** 본다.
+
+    측정 화면(분석·키워드·순위 추적·AI 인용·사이트 점검·경쟁 분석·백링크)의 기본값이 "전체"라
+    [제외]한 검색어·이미 고친 검색어가 할 일처럼 계속 섰다. 기본값에서:
+    - 기회가 안 붙은 줄은 선다(측정이다), 할 일·진행 중은 선다
+    - 완료·제외·저절로 풀림·관찰 중은 빠진다 — 「전체」(all)에서는 전부 선다
+    - 박제본(READONLY)은 거르개가 없으니 기본값이 곧 전부다
+    그리고 기본값이 목록을 비우면 [조건 지우기](=기본값)가 헛바퀴라 화면마다 oppLeftDone 으로
+    「전체」로 보내는 빈 상자를 세운다. "「전체」로 되돌리면"은 이제 틀린 말이다.
+    """
+    import shutil
+    import subprocess
+    ctx = _load()
+    if ctx is None or not shutil.which("node"):
+        return
+    shell, views = ctx["shell"], ctx["views"]
+    grp = re.search(r"window\.OPP_ST_GROUP = \{.*?\n\};", shell, re.S)
+    fn = re.search(r"window\.oppStMatch = \(o, st\) => \{.*?\n\};", shell, re.S)
+    assert grp and fn, "셸의 OPP_ST_GROUP·oppStMatch 를 못 찾았다 — 꼴이 바뀌었으면 이 검사도 고친다"
+    js = "\n".join([
+        "const window = {};", "let READONLY = false;", grp.group(0), fn.group(0),
+        "const m = window.oppStMatch, o = (status, hold) => ({status, hold: hold ? {} : undefined});",
+        "const out = {none: m(null, ''), newo: m(o('new'), ''), acked: m(o('acked'), ''),",
+        "  done: m(o('done'), ''), dism: m(o('dismissed'), ''), res: m(o('resolved'), ''),",
+        "  held: m(o('new', 1), ''), allDone: m(o('done'), 'all'), allHeld: m(o('new', 1), 'all'),",
+        "  allNone: m(null, 'all'), hold: m(o('new', 1), 'hold'), openHeld: m(o('new', 1), 'open')};",
+        "READONLY = true; out.roDone = m(o('dismissed'), '');",
+        "console.log(JSON.stringify(out));"])
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    want = {"none": True, "newo": True, "acked": True, "done": False, "dism": False, "res": False,
+            "held": False, "allDone": True, "allHeld": True, "allNone": True, "hold": True,
+            "openHeld": False, "roDone": True}
+    bad = {k: got.get(k) for k in want if got.get(k) != want[k]}
+    assert not bad, f"거르개 판정이 어긋났다(기대와 다른 칸): {bad}"
+    seen = 0
+    for p in sorted(views.glob("*.html")):
+        body = p.read_text("utf-8")
+        assert "「전체」로 되돌리면" not in body, f"{p.name}: 「전체」는 이제 기본값이 아니다 — '바꾸면'"
+        if p.name == "overview.html" or "oppStSelect(" not in body:
+            continue
+        seen += 1
+        assert "oppLeftDone(" in body, \
+            f"{p.name}: 기본값(남은 것)이 목록을 비울 때 「전체」로 보내는 빈 상자가 없다(헛바퀴)"
+    assert seen >= 7, f"측정 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
 
 
 if __name__ == "__main__":

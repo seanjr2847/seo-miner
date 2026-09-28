@@ -353,7 +353,7 @@ function oppFind(v) { OPP_Q = v; OPP_N = OV_PAGE; oppList(); }
 function oppStatus(v) { OPP_ST = v; OPP_N = OV_PAGE; oppList(); }
 function oppMore(n) { OPP_N = n; oppList(); }
 // [필터 지우기]는 말 그대로 전부 보여 준다 — 첫 화면의 기본값(아직 안 함)이 아니다.
-function oppReset() { OPP_Q = ""; OPP_ST = ""; KIND_FILTER = null; renderOpps(OV_PAGE); }
+function oppReset() { OPP_Q = ""; OPP_ST = "all"; KIND_FILTER = null; renderOpps(OV_PAGE); }
 // 거르개까지 다시 그린다 — oppStatus 는 목록만 그려서 <select> 의 선택이 안 따라온다.
 function oppClosed(st) { OPP_ST = st || "closed"; KIND_FILTER = null; renderOpps(OV_PAGE); }
 // 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「저절로 풀림」인
@@ -417,7 +417,7 @@ function OV_holdLine() {
   if (!el) return;
   // 세는 단위는 [관찰 중] 화면과 같다 — 묶은 줄이 아니라 페이로드에 실린 기회 하나하나.
   const n = OV_HELD;
-  if (!n || OPP_ST === "hold") return el.innerHTML = "";
+  if (!n || OPP_ST === "hold" || OPP_ST === "all") return el.innerHTML = "";
   const pages = OV_HELD_PAGES;
   const go = SM.at("hold") >= 0 ? `SM.show('hold')` : `oppClosed('hold')`;
   // 거르개의 [관찰 중 (N)]은 이 목록의 줄(같은 지면끼리 묶음) 수라 기회 수와 다르다 — 둘을 같이 적는다.

@@ -2176,21 +2176,37 @@ window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:
 // 묶음에서만 뺀다 — 앞 수정의 효과를 재기도 전에 같은 자리를 다시 고치라고 권하지 않게.
 // 기간이 끝나면 서버가 hold 를 안 얹으니 저절로 돌아온다.
 window.OPP_ST_GROUP = {
+  all: ["new", "acked", "done", "dismissed", "resolved"],
   open: ["new", "acked"], new: ["new"], acked: ["acked"],
   closed: ["done", "dismissed"], resolved: ["resolved"], hold: ["new", "acked"]
 };
-window.OPP_ST_OPT = [["", "관찰 중 뺀 전체"], ["open", "아직 안 함"], ["new", "할 일"],
+window.OPP_ST_OPT = [["", "남은 것"], ["all", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
                      ["acked", "진행 중"], ["hold", "관찰 중"], ["closed", "완료·제외"],
                      ["resolved", "저절로 풀림"]];
-// 기회 하나가 고른 묶음에 드나. 기회가 안 붙은 줄(o 가 null)은 거르개를 걸면 빠진다 —
-// 개요 말고 다른 화면은 목록이 기회 목록이 아니라 검색어·주소 목록이라, "전체" 가
-// 기본값이어야 한다(거르개를 안 건드리면 지금까지와 똑같이 보인다).
-// 관찰 중인 기회는 [관찰 중] 묶음에만 든다 — 할 일·진행 중·아직 안 함에서도, 거르개를 안 건
-// 기본값(전체)에서도 빠진다. 이미 고친 페이지의 일이라 지금 할 것이 아니다 — [분석]·[키워드]·
-// [순위 추적]처럼 기본이 "전체"인 측정 목록에서 그 줄이 할 일처럼 계속 섰다. 그래서 기본값의
-// 이름도 "관찰 중 뺀 전체"다. 기회가 안 붙은 줄(o 가 null)은 기본값에서 그대로 보인다.
-window.oppStMatch = (o, st) => !st ? !(o && o.hold)
-  : !!o && (window.OPP_ST_GROUP[st] || []).includes(o.status) && (st === "hold") === !!o.hold;
+// 기회 하나가 고른 묶음에 드나. 기본값("")은 **남은 것**이다: 기회가 안 붙은 줄 + 아직 안 한
+// 기회(할 일·진행 중)가 붙은 줄. 끝낸 것(완료·제외), 저절로 풀린 것, 관찰 중인 것은 빠진다.
+// 개요 말고 다른 화면(분석·키워드·순위 추적·AI 인용·사이트 점검·경쟁 분석·백링크)은 목록이
+// 기회 목록이 아니라 검색어·주소 측정 목록이라 기본값이 "전체"였다 — 그래서 [제외]한 검색어와
+// 이미 고친 검색어가 할 일 목록처럼 계속 섰고, 띠의 "1순위"만 그 줄을 따로 걸렀다. 기회가 안
+// 붙은 줄은 측정이라 기본값에 그대로 선다(o 가 null 이면 통과). 전부 보는 길은 「전체」(all)다.
+// 박제본(READONLY)은 거르개가 없어 기본값이 곧 전부다 — 그때의 기록 자체가 볼거리다.
+// 관찰 중인 기회는 [관찰 중] 묶음과 「전체」에서만 보인다.
+window.oppStMatch = (o, st) => {
+  if (!st && READONLY) st = "all";
+  if (st === "all") return true;
+  if (!st) return !o || (window.OPP_ST_GROUP.open.includes(o.status) && !o.hold);
+  return !!o && (window.OPP_ST_GROUP[st] || []).includes(o.status) && (st === "hold") === !!o.hold;
+};
+// 기본값(남은 것)으로 걸러 목록이 비었는데 줄은 있을 때 — 전부 끝냈거나 관찰 중이다. 화면마다
+// [조건 지우기]는 기본값으로 되돌리므로 여기서 누르면 헛바퀴가 된다. 「전체」로 보내는 손잡이와
+// 함께 "다 처리했다"는 좋은 소식으로 그린다. rows 는 거르기 전 줄, opp 는 줄 → 기회.
+window.oppLeftDone = (st, rows, opp) => !st && !READONLY && rows.length > 0
+  && rows.every(r => !window.oppStMatch(opp(r), ""));
+// what 은 줄의 이름(검색어·질문·링크…) — 조사가 안 붙는 자리에만 쓴다. onclick 은 화면이 주는
+// 식이다: 거르개를 「전체」로 바꾸고 **거르개 자신도 다시 그려야** 선택지가 따라온다.
+window.oppLeftEmpty = (what, n, onclick) => `<div class="empty ok"><b>남은 것이 없습니다</b>
+  <p>끝냈거나 관찰 중인 ${esc(what)} ${num(n)}개는 거르개의 「전체」에 있습니다.</p>
+  <div class="acts"><button class="go sec sm" onclick="${onclick}">전체 보기</button></div></div>`;
 // 거르개 한 벌 — 화면은 이걸 부르고 자기 상태 변수만 갖는다.
 // 박제본에는 안 세운다 — 손댈 수 없는 기록이라 그때 그 사람이 쓰던 손잡이는 뜻이
 // 없고, 종이로 나가면 <select> 가 글자 하나로 굳는다. 화면마다 READONLY 를 묻지

@@ -122,7 +122,7 @@ let BLK_D = null;                 // 마지막 payload — CSV 버튼이 지금 
 let BLK_DOMS = [];                // 마지막으로 그린 참조 도메인 목록 — 펼침이 data-i 로 찾는다
 let BLK_TOP = "";                 // 가장 많이 겹치는 링크처 — 띠의 주요 행동이 여는 줄
 // 기회 상태 거르개 — [되찾을 링크]와 [교집합] 두 목록이 각자 하나씩 갖는다.
-// 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고, 기본은 "전체"다(기회가 안 붙은 줄도 있다).
+// 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고, 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
 let BLK_BR_ST = "", BLK_IX_ST = "";
 const BLK_stOk = (t, st) => window.oppStMatch(oppOf(t), st);
 // 박제본에서는 셸이 빈 문자열을 준다 — 그때 빈 .tools 상자를 남기지 않는다.
@@ -354,8 +354,10 @@ function BLK_broken(d) {
       "기회 목록에는 지수가 높은 것부터 일부만 올립니다. 이 링크는 그 아래라 " +
       "점수와 행동 기록이 없습니다. 되살리는 방법은 위 설명과 같습니다."));
   return bar + BLK_cards(rows, all.length
-    ? BLK_empty("거른 상태에 맞는 링크가 없습니다",
-        `거르개를 「전체」로 되돌리면 ${all.length}개가 있습니다.`)
+    ? (window.oppLeftDone(BLK_BR_ST, all, r => oppOf(r.url_to))
+      ? window.oppLeftEmpty("링크", all.length, "BLK_brSt('all')")
+      : BLK_empty("거른 상태에 맞는 링크가 없습니다",
+        `거르개를 「전체」로 바꾸면 ${all.length}개가 있습니다.`))
     : BLK_ok("끊긴 링크가 없습니다",
         "받아 온 링크는 전부 살아 있습니다. 백링크는 주 단위로 움직입니다."));
 }
@@ -377,8 +379,10 @@ function BLK_intersect(d, rivals) {
       BLK_site(r.domain)));
   // 비는 이유가 둘이다: 견줄 경쟁사가 모자라거나, 다 견줬는데 우리만 빠진 곳이 없거나.
   if (all.length && !rows.length)
-    return bar + BLK_empty("거른 상태에 맞는 링크처가 없습니다",
-      `거르개를 「전체」로 되돌리면 ${all.length}곳이 있습니다.`);
+    return bar + (window.oppLeftDone(BLK_IX_ST, all, r => oppOf(r.domain))
+      ? window.oppLeftEmpty("링크처", all.length, "BLK_ixSt('all')")
+      : BLK_empty("거른 상태에 맞는 링크처가 없습니다",
+      `거르개를 「전체」로 바꾸면 ${all.length}곳이 있습니다.`));
   return bar + BLK_cards(rows, rivals >= 2
     ? BLK_ok("우리만 빠진 링크처가 없습니다",
         "경쟁사들이 공통으로 받는 곳은 우리도 이미 받고 있습니다. 지킬 자리입니다.")
