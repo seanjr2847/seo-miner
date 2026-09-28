@@ -51,7 +51,7 @@ TPL = Path(__file__).parent.parent / "templates"
 # 순서는 묶음(run_all.GROUPS) 순서를 따른다 — 할 일 · 검색 성과 · AI 노출 · 사이트 건강 ·
 # 경쟁·링크 · 관리. 메뉴가 묶음 이름을 화면이 바뀌는 자리에만 세우므로, 한 묶음의
 # 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
-VIEW_ORDER = ["triage", "overview", "analysis", "keywords", "rank", "ai", "site",
+VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "rank", "ai", "site",
               "competitors", "backlinks", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
@@ -1368,6 +1368,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     aio_band = {r["keyword"]: scoring.aio_band(r["position"])
                 for r in scoring.aio_gaps(conn, pid)}
     rank_pos = {r["keyword"]: r.get("pos") for r in ranks}
+    rank_row = {r["keyword"]: r for r in ranks}
     # GSC 는 최신 회차에도 순위 행에도 없는 대상만 묻는다 — query_pages 와 같은
     # 함수·같은 스냅샷(at)이라 근거표의 페이지 순위와 어긋나지 않는다.
     asked = [o["target"] for o in opps if o["kind"] == "aio_exposure"
@@ -1416,6 +1417,10 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                     f"{scoring.STRIKING_MIN_IMP} 이상) 밖입니다"
                     + (" — 이미 상단 3위권이라 남은 일은 클릭입니다" if p < scoring.STRIKING_LO else "")
                     + f" (구글 실적 {cur} 기준)")
+        elif o["kind"] == "ctr_gap":
+            # 결과 맨 위에 구글 AI 요약이 섰나 — 순위 조회가 본 그 행(ranks)에서 읽는다.
+            # 요약이 선 검색어는 기대 클릭률 곡선이 안 맞는다(scoring._CTR_PLAY).
+            band = "aio" if (rank_row.get(o["target"]) or {}).get("aio") else None
         else:
             band = (_aio_band_of(o["target"], aio_band, rank_pos, gsc_pos)
                     if o["kind"] == "aio_exposure" else None)
@@ -1433,6 +1438,85 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 요청문도 기회 하나마다 쓴다. 줄은 opps 의 id 를 가리키기만 한다.
     return {"opps": opps, "opps_total": opps_total,
             "opp_groups": scoring.group_opportunities(conn, pid, opps)}
+
+
+def _axis_hold(conn, pid: int, at: str | None, opps_d: dict, qp: dict,
+               today: str | None = None) -> dict:
+    """관찰 중 — 고친 페이지에 새로 선 기회를 할 일 목록에서 빼 두는 판정.
+
+    작업 기록(creations)마다 그 기록의 기회가 가리키는 페이지를 찾는다 — brief.page_of,
+    요청문이 '고칠 페이지'로 고르는 것과 한 벌이다. 그 페이지의 마지막 작업 뒤
+    scoring.OBSERVE_DAYS 가 안 지났으면 관찰 중이다. 그 페이지에 걸린 열린 기회(new·acked)는
+    지우지도 닫지도 않는다 — 판정만 얹는다(o.hold · 줄의 hold). 화면의 상태 거르개
+    (셸의 oppStMatch)가 할 일 묶음에서 빼고 [관찰 중] 화면이 페이지별로 모은다. 기간이
+    끝나면 다음 조립부터 저절로 목록에 돌아온다 — 따로 저장하는 상태가 없다.
+
+    여태는 '완료'가 기회 한 건(종류×검색어)에만 먹었다. 한관종·비립종 페이지는 9/11 에
+    title·설명을 고쳐 AI 요약 기회 둘이 완료됐는데, 같은 수정이 순위를 1페이지로 올리자
+    9/24 에 클릭률 미달이 새로 서서(28일 창의 절반이 수정 전) 같은 title·설명을 다시
+    고치라는 요청문이 나갔다. 같은 페이지의 다른 기회 열 건도 같은 처지였다.
+
+    보고서만 가리키는 기록(db.is_report_only)은 작업이 아니다 — 저장소가 안 바뀌었다.
+    page_works 는 관찰 기간과 상관없이 페이지마다의 작업 이력이다(요청문이 싣는다).
+    """
+    from datetime import datetime, timezone
+    day0 = date.fromisoformat(today) if today else datetime.now(timezone.utc).date()
+    works = [dict(r) for r in conn.execute(
+        """SELECT c.id, substr(c.created_at,1,10) day, c.file_path, c.note, c.branch, c.merged,
+                  c.opportunity_id opp_id, o.kind, o.target
+             FROM creations c JOIN opportunities o ON o.id=c.opportunity_id
+            WHERE c.project_id=? ORDER BY c.created_at DESC, c.id DESC LIMIT 500""", (pid,))
+        if not db.is_report_only(r["file_path"])]
+    pool = [dict(r) for r in db.list_opportunities(
+        conn, pid, statuses=list(scoring.OPEN_STATUSES), order="screen",
+        limit=1_000_000, with_id=True, gated=True)]
+    # 페이지 판정은 요청문과 같은 ctx 로 한다 — 화면에 실린 query_pages 는 목록에 오른
+    # 기회의 검색어만 안다. 완료된 기회·목록 밖 기회의 검색어는 여기서 채운다.
+    qpages = dict(qp.get("query_pages") or {})
+    missing = [t for t in dict.fromkeys(str(x["target"]) for x in works + pool)
+               if t and not t.startswith("http") and t not in qpages]
+    if missing:
+        qpages.update(scoring.pages_by_query(conn, pid, missing, at=at))
+    ctx = {"query_pages": qpages, "topic_pages": qp.get("topic_pages") or {}}
+
+    page_works: dict[str, list[dict]] = {}
+    for w in works:
+        page = brief.page_of(w, ctx)
+        if not page:
+            continue
+        page_works.setdefault(page, []).append({
+            "id": w["id"], "day": w["day"], "opp_id": w["opp_id"], "kind": w["kind"],
+            "label": scoring.kind_label(w["kind"]), "target": w["target"],
+            "note": w["note"] or "", "branch": w["branch"] or "", "merged": bool(w["merged"]),
+            "path": w["file_path"] or ""})
+    watched: dict[str, dict] = {}
+    for page, ws in page_works.items():
+        last = max(date.fromisoformat(x["day"]) for x in ws)
+        until = last + timedelta(days=scoring.OBSERVE_DAYS)
+        if until > day0:
+            watched[page] = {"page": page, "since": last.isoformat(), "until": until.isoformat(),
+                             "days_left": (until - day0).days,
+                             "works": [x for x in ws if date.fromisoformat(x["day"])
+                                       > last - timedelta(days=scoring.OBSERVE_DAYS)],
+                             "opp_ids": []}
+    held: dict[int, dict] = {}
+    for o in pool:
+        page = brief.page_of(o, ctx)
+        if page in watched:
+            held[o["id"]] = {"page": page, "until": watched[page]["until"]}
+            watched[page]["opp_ids"].append(o["id"])
+    for o in opps_d["opps"]:
+        if o.get("id") in held:
+            o["hold"] = held[o["id"]]
+    for g in opps_d.get("opp_groups") or []:
+        if g.get("lead") in held:
+            g["hold"] = held[g["lead"]]
+    # "새 기회 N건" 도 같은 문으로 센다 — 목록에서 뺀 것을 개수에 남기면 목록은 비었는데
+    # 기회가 있다고 말한다(_axis_opps 의 opps_total 주석과 같은 이유).
+    held_new = sum(1 for o in pool if o["id"] in held and o["status"] == "new")
+    holds = sorted(watched.values(), key=lambda h: (h["until"], h["page"]))
+    return {"holds": holds, "page_works": page_works, "observe_days": scoring.OBSERVE_DAYS,
+            "opps_total": max(0, int(opps_d.get("opps_total") or 0) - held_new)}
 
 
 def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]:
@@ -1628,6 +1712,8 @@ def gather(conn, p, at: str | None = None) -> dict:
                         ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all)
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
+    # 관찰 중 — 기회 줄에 hold 를 얹고 "새 기회 N건"을 그만큼 뺀다(opps_d 를 덮어쓴다).
+    opps_d.update(_axis_hold(conn, pid, at, opps_d, qp))
     page_perf = _axis_page_perf(conn, pid)
     ga4 = _axis_ga4(conn, pid, at)
     bl = _axis_backlinks(conn, pid)

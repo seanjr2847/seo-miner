@@ -1079,6 +1079,16 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
         if "oppOf(" not in body and not re.search(r"d\.opps\b", body):
             continue
         seen += 1
+        # 목록 자체가 거르개의 한 묶음인 화면([관찰 중])은 고를 것이 없다 — view-def 에
+        # 그 묶음(opp_st)을 적고, 셸의 oppStMatch 로 그 묶음만 거른다(사본을 안 만든다).
+        vd = re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', body, re.S)
+        fixed = json.loads(vd.group(1)).get("opp_st") if vd else None
+        if fixed:
+            assert fixed in re.findall(r"(\w+):\s*\[", m.group(1)), \
+                f"{p.name} 의 opp_st '{fixed}' 가 OPP_ST_GROUP 에 없다"
+            assert f'oppStMatch(o, "{fixed}")' in body, \
+                f"{p.name} 이 자기 묶음({fixed})을 셸의 oppStMatch 로 안 거른다"
+            continue
         assert "oppStSelect(" in body, \
             f"{p.name} 이 기회를 보여 주면서 상태 거르개가 없다"
     assert seen >= 8, f"기회를 보여 주는 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
@@ -3101,6 +3111,72 @@ def test_seam_95_opportunity_buttons_are_named_after_their_state():
     for n in named:
         assert n in sets.values(), f"brief.py 가 없는 버튼 [{n}] 을 말한다 — 이름은 OPP_SET 한 벌이다"
     assert {"완료", "제외"} <= named, "brief.py 가 닫는 버튼 이름을 안 말한다 — 이 검사가 헛돈다"
+
+
+def test_seam_96_observation_window_is_one_value():
+    """96) 관찰 기간은 한 벌이다 — 화면이 기회를 목록에서 빼 두는 기간(scoring.OBSERVE_DAYS),
+    요청문이 "몇 주 뒤 첫 확인"이라고 하는 값(brief.RECHECK_WEEKS), [관찰 중] 화면이 말하는
+    기간(d.observe_days). 셋이 갈리면 목록에 돌아온 날과 확인하라는 날이 어긋난다.
+    """
+    import brief
+    import scoring
+    assert brief.RECHECK_WEEKS[0] * 7 == scoring.OBSERVE_DAYS, \
+        f"요청문의 첫 확인 {brief.RECHECK_WEEKS[0]}주 ≠ 관찰 기간 {scoring.OBSERVE_DAYS}일"
+    hold = (SCRIPTS.parent / "templates" / "views" / "hold.html").read_text("utf-8")
+    assert "d.observe_days" in hold, "[관찰 중] 화면이 서버가 준 기간을 안 읽는다"
+    script = hold.split("<script>", 1)[1]
+    assert not re.search(r"\b%d\s*일" % scoring.OBSERVE_DAYS, script), \
+        "[관찰 중] 화면이 기간을 숫자로 박아 뒀다 — 사본이다"
+
+
+def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
+    """97) 관찰 중 이음매 — 서버가 얹고(dashboard._axis_hold: o.hold · 줄의 hold · d.holds)
+    화면이 읽는다(셸의 oppStMatch · [관찰 중] 화면).
+
+    - 거르개의 [관찰 중] 묶음은 열린 상태(scoring.OPEN_STATUSES)와 같다 — 닫힌 기회는 관찰 안 한다.
+    - oppStMatch 가 o.hold 를 본다 — 안 보면 관찰 중인 기회가 할 일 목록에 그대로 선다.
+    - [관찰 중] 화면이 읽는 d.holds 의 칸은 서버가 실제로 내는 칸이다.
+    - [관찰 중] 화면은 할 일 묶음(run_all.GROUPS 'todo')에 있다 — 따로 찾아볼 수 있어야 한다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    import run_all
+    shell, views = ctx["shell"], ctx["views"]
+    mm = re.search(r"hold: \[(.*?)\]", shell)
+    assert mm, "셸의 OPP_ST_GROUP.hold 가 없다"
+    assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
+        "[관찰 중] 묶음이 열린 상태와 다르다"
+    m = re.search(r"window\.oppStMatch = (.*?);\n", shell, re.S)
+    assert m and "o.hold" in m.group(1), "oppStMatch 가 관찰 판정(o.hold)을 안 본다"
+    assert '["hold", "관찰 중"]' in shell, "거르개 선택지에 [관찰 중]이 없다"
+    assert "hold" in run_all.GROUP_BY_ID["todo"]["views"], "[관찰 중] 화면이 할 일 묶음에 없다"
+    # 화면이 읽는 칸 ⊆ 서버가 내는 칸 — 서버를 실제로 돌려서 칸 이름을 받는다
+    src = (SCRIPTS / "dashboard.py").read_text("utf-8")
+    fn = src.split("def _axis_hold", 1)[1].split("\ndef ", 1)[0]
+    made = set(re.findall(r'"(\w+)":', fn))
+    hold = (views / "hold.html").read_text("utf-8")
+    used = set(re.findall(r"\bh\.(\w+)", hold)) | set(re.findall(r"\bw\.(\w+)", hold))
+    assert used and used <= made, f"[관찰 중] 화면이 서버가 안 내는 칸을 읽는다: {used - made}"
+    assert "d.holds" in hold and "oppStMatch(o, \"hold\")" in (views / "overview.html").read_text("utf-8"), \
+        "[개요]가 관찰 중이라 뺀 기회를 말하지 않는다"
+
+
+def test_seam_98_report_file_name_is_one_pattern():
+    """98) 요청문 답 보고서의 파일 이름 — 시키는 쪽(brief.HTML_FORM 의 `seo-{slug}-<타임스탬프>.html`)과
+    알아보는 쪽(db.REPORT_FILE — 보고서만 가리키는 작업 기록을 작업으로 안 친다). 이름이 바뀌고
+    알아보는 쪽이 그대로면, 제안서만 낸 답이 다시 '작업'이 되어 페이지를 관찰 중으로 묶는다.
+    """
+    import brief
+    import db
+    m = re.search(r"`(seo-\{slug\}-<[^>]+>\.html)`", brief.HTML_FORM)
+    assert m, "HTML_FORM 에서 보고서 이름 틀을 못 찾았다"
+    for slug in brief.SHAPE_NAMES:
+        name = m.group(1).replace("{slug}", slug).replace("<타임스탬프>", "20260928-1202")
+        assert db.is_report_only(r"C:\Users\u\AppData\Local\Temp" + "\\" + name), name
+        assert db.is_report_only("/tmp/" + name), name
+    assert not db.is_report_only("content/pages/en/special-clinic/syringoma-milia/index.html")
 
 
 if __name__ == "__main__":

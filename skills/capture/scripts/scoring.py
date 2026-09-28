@@ -56,6 +56,15 @@ IMAGE_HEAVY_MIN, IMAGE_HEAVY_WORDS = 8, 80
 LINKS_HEAVY_MIN, LINKS_HEAVY_WORDS = 30, 20
 CTR_GAP_FACTOR = 0.5     # 실제 CTR < 기대 × 이 값일 때만 기회로 본다
 
+# 고친 페이지를 지켜보는 기간(일) — 그 페이지의 마지막 작업 기록(creations)부터 센다.
+# 구글이 다시 읽고 실적 창(28일)이 수정 뒤 날로 찰 때까지는 숫자에 수정 전이 섞인다. 그
+# 사이 같은 페이지에 새로 선 기회는 앞 수정의 효과를 재기도 전에 같은 자리를 다시 고치라고
+# 한다(한관종·비립종: 9/11 에 title·설명을 고쳤는데 9/24 에 클릭률 미달이 서서 title·설명
+# 교체가 1순위로 나갔다 — 그 28일 창의 절반이 수정 전이었다). 관찰 중인 페이지의 열린 기회는
+# 할 일 목록에서 빼 [관찰 중] 화면에 모은다(dashboard._axis_hold). 요청문이 "몇 주 뒤 첫
+# 확인"이라고 말하는 값(brief.RECHECK_WEEKS)과 한 벌이다.
+OBSERVE_DAYS = 28
+
 # cannibalization: 같은 쿼리에 내 페이지 여럿이 갈릴 때
 CANNI_MIN_IMP = 50       # 쿼리 합산 노출 하한
 CANNI_MIN_SHARE = 0.2    # 부(副)페이지 노출 비중 하한 — 미만이면 사실상 한 페이지 독점
@@ -3551,6 +3560,43 @@ def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
     return s
 
 
+# ctr_gap 은 검색결과 맨 위에 구글 AI 요약이 서느냐로 처방이 갈린다(band: plain/aio).
+# 기대 클릭률(EXPECTED_CTR)은 요약이 없는 결과의 곡선이다. 요약이 선 검색어에서 "순위가
+# 아니라 제목·설명 문제"라고 단정하자, 요약이 우리를 인용해 답을 다 주는 검색어(한관종 vs
+# 비립종 — 8위·노출 859·클릭 0)에 제목·설명 교체가 1순위로 나갔다. 순위 조회가 요약을
+# 봤으면 그 사실을 먼저 말하고, 모자란 클릭 전부를 제목 탓으로 돌리지 않는다.
+_CTR_ACTS = [
+    "title 앞 60자 안에서 검색 의도에 바로 답하고, 브랜드명은 뒤로 밉니다.",
+    "meta description 에 숫자·연도·구체적 이득을 적습니다.",
+    # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를
+    # 거두고 FAQ 를 정부·보건 권위 사이트로 좁혔다(_AIO_PLAY 주석과 같은 사실).
+    "검색결과에 실제로 보이는 모습을 봅니다 — 구글이 title 을 바꿔 보여 주는지, "
+    "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
+    "사이트에서 더는 안 나옵니다.",
+    "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."]
+_CTR_DELIVER = ["새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
+                "meta description 2안. 길이 기준 안에서",
+                "지금 검색결과에 보이는 모습 점검: 구글이 보여 주는 title·설명이 페이지의 "
+                "것과 같은지, 날짜·이동 경로가 맞는지 | 고칠 것"]
+_CTR_PLAY = {
+    "plain": dict(
+        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
+        acts=_CTR_ACTS, deliver=_CTR_DELIVER),
+    "aio": dict(
+        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 다만 이 검색어는 결과 맨 위에 "
+             "구글 AI 요약이 섭니다 — 기대치는 요약이 없는 결과의 클릭 곡선이라, 모자란 클릭의 "
+             "일부는 제목·설명이 아니라 요약이 가져간 것입니다. 제목·설명 문제라고 단정하지 "
+             "않습니다.",
+        acts=["아래 근거에서 AI 요약이 우리 링크를 인용하는지 먼저 봅니다. 인용하는데도 클릭이 "
+              "없으면 요약이 답을 다 줘서 누를 이유가 없는 것입니다 — 그때 title·설명은 요약이 "
+              "못 주는 것(페이지에만 있는 비교표·사진·판단 기준)을 약속해야 클릭이 납니다.",
+              *_CTR_ACTS,
+              "고친 뒤 클릭률이 기대치까지 안 올라도 실패로 읽지 않습니다 — AI 요약이 선 "
+              "검색어의 클릭률은 곡선보다 낮은 것이 보통입니다. 볼 것은 전보다 늘었는지입니다."],
+        deliver=_CTR_DELIVER),
+}
+
+
 # striking_distance 는 4~20위 한 kind 를 밴드 둘(band: page1/page2)로 갈라 처방한다.
 # "what" 뒤에 실제로는 옛 화면에서 sdAvgNote()(평균 게재순위 안내 + [순위] 화면
 # 버튼)가 이어 붙었다 — 그 버튼(window.go)은 화면에서만 만들 수 있어 여기 텍스트에는
@@ -3720,20 +3766,7 @@ _KIND_SPECS = {
             f"{r['actual_ctr']}% (이 순위의 기대치 {r['expected_ctr']}%). "
             f"이 기간에 약 {r['lost_clicks']:,}클릭을 놓쳤습니다 "
             f"(구글 실적 {ctx['cur']} 기준)"),
-        play=dict(
-            what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
-            acts=["title 앞 60자 안에서 검색 의도에 바로 답하고, 브랜드명은 뒤로 밉니다.",
-                  "meta description 에 숫자·연도·구체적 이득을 적습니다.",
-                  # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를
-                  # 거두고 FAQ 를 정부·보건 권위 사이트로 좁혔다(_AIO_PLAY 주석과 같은 사실).
-                  "검색결과에 실제로 보이는 모습을 봅니다 — 구글이 title 을 바꿔 보여 주는지, "
-                  "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
-                  "사이트에서 더는 안 나옵니다.",
-                  "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."],
-            deliver=["새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
-                     "meta description 2안. 길이 기준 안에서",
-                     "지금 검색결과에 보이는 모습 점검: 구글이 보여 주는 title·설명이 페이지의 "
-                     "것과 같은지, 날짜·이동 경로가 맞는지 | 고칠 것"])),
+        play=_CTR_PLAY),
     "cannibalization": dict(
         label="내부 경쟁", defensive=True,
         detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
@@ -4088,8 +4121,8 @@ def kind_label(kind: str, *, band: str | None = None) -> str:
 def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None) -> dict:
     """이 kind 의 처방(what/acts/deliver) — dashboard.html 의 옛 window.PLAY 산문이 여기로 옮겨왔다.
 
-    striking_distance·content_gap·aio_exposure 는 한 kind 가 처방 둘을 갖는다(밴드/갈래로
-    갈린다). band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
+    striking_distance·content_gap·aio_exposure·ctr_gap 은 한 kind 가 처방 둘을 갖는다(밴드/
+    갈래로 갈린다 — ctr_gap 은 AI 요약이 선 검색어면 band "aio"). band·gap_kind 를 모르면(다른 kind, 대상을 못 찾은 옛 박제본) 예전 JS 삼항의
     기본값과 같은 쪽(page2/missing)으로 물러선다. aio_exposure 는 beyond 로 물러선다 —
     순위를 모르는 채로 "이미 1페이지 안"이라고 말하지 않는다. 모르는 kind 면 빈 dict —
     화면의 playList() 는 빈 처방을 아무것도 안 그리는 것으로 받아들인다.
@@ -4106,6 +4139,8 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
         return p.get(gap_kind) or p["missing"]
     if kind == "ai_citation_gap":
         return p.get(gap_kind) or p["own"]
+    if kind == "ctr_gap":
+        return p.get(band) or p["plain"]
     return p
 
 

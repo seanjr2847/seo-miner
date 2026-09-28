@@ -2407,6 +2407,24 @@ def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None
     return cur.lastrowid
 
 
+# 요청문 답 보고서의 파일 이름 — 정본은 brief.HTML_FORM 의 `seo-{slug}-<타임스탬프>.html`
+# 이다(test_seams 가 둘을 대조한다). 보고서는 제안일 뿐 저장소를 안 바꾼다.
+REPORT_FILE = re.compile(r"(^|[\\/])seo-[a-z_]+-[^\\/]*\.html$", re.I)
+
+
+def is_report_only(file_path: str | None) -> bool:
+    """이 작업 기록이 **요청문 답 보고서만** 가리키나 — 저장소는 안 바뀌었다.
+
+    요청문 꼬리는 "설계도·제안서까지만 냈으면 기록하지 않는다"고 하는데, 답 세션이
+    보고서 경로(%TEMP%\\seo-fix_page-….html)로 기록을 남긴 적이 있다("제안 리포트만 작성,
+    저장소 미변경"). 그런 기록을 작업으로 치면 아무것도 안 바뀐 페이지가 관찰 중으로
+    묶이고, 완료 후 관찰의 '전'이 엉뚱한 날이 된다. 빈 경로는 커밋에서 온 기록이다
+    (createdb sync — 이미 적용된 수정) — 작업이다.
+    """
+    parts = [x.strip() for x in str(file_path or "").split(",") if x.strip()]
+    return bool(parts) and all(REPORT_FILE.search(x) for x in parts)
+
+
 def record_creation(conn: sqlite3.Connection, project_id: int, file_path: str, *,
                     opportunity_id: int | None = None, kind: str | None = None,
                     branch: str | None = None, note: str | None = None) -> int:
@@ -2517,7 +2535,11 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     before 는 status_at 이전 마지막 스냅샷, after 는 그 뒤 최신 스냅샷의 그 검색어
     행(최신 스냅샷과 같은 period_days 만 — 기간이 다른 것을 빼면 Δ가 거짓이다).
     runs_since 는 완료 뒤 서로 다른 수집일 수. 두 번 이상 쟀는데 순위가 안 올랐으면
-    stalled — 화면이 [다시 열기]를 낸다.
+    stalled — 화면이 [다시 열기]를 낸다. 단 최신 수집일이 완료 뒤 scoring.OBSERVE_DAYS 를
+    넘겨야 한다: 실적은 28일 창이라 그 전의 '지금'에는 고치기 전 날이 섞여 있다. 매일
+    수집하는 사이트에서는 완료 이틀 뒤에 [다시 열기]가 섰다 — 효과를 재기도 전에 같은
+    기회를 다시 열라는 말이다(관찰 중 판정 dashboard._axis_hold 와 같은 기간). 그 전에는
+    until(관찰이 끝나는 날)을 싣는다.
 
     이 목록은 "우리 효과"다 — done 만 본다. 사람이 누른 완료, 머지 동기화
     (createdb.sync_merged), 작업 기록이 있는 기회의 조건 해소(resolve_opportunities)가
@@ -2535,6 +2557,7 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
         "SELECT snapshot_date, period_days FROM gsc_snapshots WHERE project_id=?"
         " ORDER BY snapshot_date DESC LIMIT 1", (int(project_id),)).fetchone()
     per = latest["period_days"] if latest else None
+    last_day = str(latest["snapshot_date"])[:10] if latest else None
 
     def at(op: str, day: str, target: str) -> dict | None:
         if per is None:
@@ -2556,11 +2579,14 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
         runs = conn.execute(
             "SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots WHERE project_id=?"
             " AND period_days=? AND snapshot_date>?", (int(project_id), per, day)).fetchone()[0] if per else 0
-        stalled = runs >= 2 and (after is None or before is None
-                                 or after["position"] >= before["position"])
+        until = (datetime.fromisoformat(day) + timedelta(days=scoring.OBSERVE_DAYS)).date().isoformat()
+        watching = not last_day or last_day < until
+        stalled = not watching and runs >= 2 and (after is None or before is None
+                                                  or after["position"] >= before["position"])
         out.append({"id": o["id"], "kind": o["kind"], "target": o["target"],
                     "done_at": o["status_at"], "before": before, "after": after,
-                    "runs_since": int(runs), "stalled": bool(stalled)})
+                    "runs_since": int(runs), "stalled": bool(stalled),
+                    "until": until if watching else None})
     return out
 
 

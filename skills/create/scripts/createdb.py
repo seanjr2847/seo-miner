@@ -118,6 +118,12 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
 
 def done(project: str, opp_id: int | None, path: str,
          branch: str | None, note: str | None) -> None:
+    # 요청문 답 보고서(%TEMP%\seo-fix_page-….html)는 작업 기록이 아니다 — 저장소가 안 바뀌었다.
+    # 요청문 꼬리가 "제안서까지만 냈으면 기록하지 않는다"고 하는데도 그 경로로 기록이 남아,
+    # 아무것도 안 고친 페이지가 '관찰 중'으로 묶이고 기회가 '작업 후 완료'로 닫힐 뻔했다.
+    if db.is_report_only(path):
+        sys.exit("요청문 답 보고서만 가리키는 기록은 남기지 않습니다 — 저장소 파일을 바꿨을 때 "
+                 "그 파일 경로로 기록합니다(제안서까지만 냈으면 기록할 것이 없습니다).")
     if _remote(project):
         _warn_branch(branch)
         _record_remote(project, opp_id, path, branch, note)

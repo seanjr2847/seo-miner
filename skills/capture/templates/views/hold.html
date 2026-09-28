@@ -1,0 +1,95 @@
+<!-- 관찰 중 — 고친 지 얼마 안 된 페이지와, 그 효과를 재는 동안 할 일 목록에서 뺀 기회.
+     판정은 서버가 한다(dashboard._axis_hold → d.holds · o.hold). 이 화면은 그리기만 한다.
+     여태는 '완료'가 기회 한 건에만 먹어서, 9/11 에 고친 페이지에 9/24 새 기회가 서고
+     같은 title·설명을 다시 고치라는 요청문이 나갔다(28일 실적의 절반이 수정 전이었다).
+     이 화면이 무엇인지는 화면 자신이 말한다 — dashboard.py 가 이 선언을 window.__VIEWS__ 로 방출한다. -->
+<script type="application/json" class="view-def">
+{"id": "hold", "group": "todo", "title": "관찰 중",
+ "sub": "고친 지 얼마 안 된 페이지와, 그 효과를 재는 동안 할 일 목록에서 빼 둔 기회입니다.",
+ "sections": ["hold-sec"], "stages": [], "opp_st": "hold"}
+</script>
+
+<style>
+/* 페이지 하나가 카드 하나다 — 관찰의 단위가 기회가 아니라 페이지라서. 토큰만 쓴다. */
+#holds .hd { border:1px solid var(--rule); border-radius:var(--r-md); background:var(--card);
+  padding:var(--sp-4) var(--sp-5); margin:0 0 var(--sp-4); }
+#holds .hd:last-child { margin-bottom:0; }
+#holds .hd-h { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3); }
+#holds .hd-h a { font:500 14px/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+#holds h3 { font:600 13px/1.5 var(--sans); color:var(--slate); margin:var(--sp-4) 0 var(--sp-2); }
+#holds .hd-w { list-style:none; margin:0; padding:0; }
+#holds .hd-w li { margin:0 0 6px; font-size:14px; line-height:1.6; }
+/* 날짜만 등폭이다 — 한글 이름표에는 안 건다. */
+#holds .hd-w .d { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--slate);
+  margin-right:6px; }
+#holds .hd-w .nt { display:block; color:var(--slate); font-size:13px; overflow-wrap:anywhere; }
+#holds .hd-o { border:1px solid var(--rule-soft); border-radius:var(--r-md); overflow:hidden; }
+#holds .hd-o .opp { margin:0; padding:11px var(--sp-4); border:0; border-radius:0;
+  border-bottom:1px solid var(--rule-soft); background:transparent; box-shadow:none; }
+#holds .hd-o .opp:last-child { border-bottom:0; }
+#holds .none { color:var(--slate); font-size:13.5px; margin:var(--sp-2) 0 0; }
+/* 날짜는 쪼개지 않는다 — 띠 문장 안에서 「(2026-10-」/「06)」로 갈렸다. */
+#view-hold .hd-day { white-space:nowrap; }
+@media (max-width:560px) { #holds .hd { padding:var(--sp-3) var(--sp-4); } }
+</style>
+
+<section id="hold-sec">
+  <div class="sh">
+    <h2>고친 페이지</h2>
+    <p class="sub" id="hold-sub"></p>
+  </div>
+  <div id="holds"></div>
+</section>
+
+<script>
+"use strict";
+// 화면에 그릴 수 있는 뺀 기회 — 페이로드에 실린 것(d.opps) 중 셸의 [관찰 중] 묶음. 띠·카드·[개요]가
+// 같은 수를 말하도록 세는 곳도 이 하나다.
+const HD_shown = (h, byId) => (h.opp_ids || []).map(id => byId[id]).filter(o => window.oppStMatch(o, "hold"));
+// 페이지 카드 하나 — 한 작업(날짜·어느 기회로·무엇을)과 뺀 기회(셸의 기회 줄·패널 그대로).
+function HD_card(h, byId) {
+  const works = (h.works || []).map(w => `<li><span class="d">${esc(w.day)}</span>[${esc(w.label || w.kind)}]
+      ${esc(w.target)}${w.opp_id ? ` <span class="badge muted">기회 #${esc(w.opp_id)}</span>` : ""}${
+      w.merged ? ` <span class="badge made">머지됨</span>` : ""}${
+      w.note ? `<span class="nt">${esc(w.note)}</span>` : ""}</li>`).join("");
+  // 이 화면의 목록은 거르개의 [관찰 중] 묶음 그 자체다(view-def 의 opp_st) — 셸 한 벌로 거른다.
+  const opps = HD_shown(h, byId);
+  // 서버는 목록 상한(점수 순 200건) 밖의 기회까지 센다 — 그 몫은 줄로 못 그리니 개수만 말한다.
+  const more = (h.opp_ids || []).length - opps.length;
+  const rows = opps.map(o => `<details class="opp" data-opp="${o.id}">
+      <summary>${oppScore(o)}<div>${window.oppWhy(o)}</div></summary>
+      ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</details>`).join("");
+  const left = Number.isFinite(h.days_left) ? ` · ${h.days_left}일 남음` : "";
+  return `<article class="hd">
+    <div class="hd-h"><a href="${esc(h.page)}" target="_blank" rel="noopener"
+      title="${esc(h.page)}">${esc(urlPath(h.page))}</a>
+      <span class="badge adv">${esc(h.until)}까지${left}</span></div>
+    <h3>한 작업</h3><ul class="hd-w">${works}</ul>
+    <h3>지켜보는 동안 뺀 기회 ${opps.length}건${more > 0 ? ` · 화면 목록 밖 ${more}건` : ""}</h3>
+    ${opps.length ? `<div class="hd-o">${rows}</div>`
+      : more > 0 ? "" : `<p class="none">이 페이지에 새로 선 기회는 없습니다.</p>`}
+    ${more > 0 ? `<p class="none">목록 밖 ${more}건은 점수가 낮아 화면 목록(상위 200건)에 안 실린 기회입니다 — 관찰이 끝나면 같이 돌아옵니다.</p>` : ""}
+  </article>`;
+}
+
+VIEW("hold", function (d) {
+  const hs = d.holds || [];
+  const days = d.observe_days;
+  $("hold-sub").textContent = days
+    ? `마지막으로 고친 날부터 ${days}일 동안 지켜봅니다. 그동안 같은 페이지에 선 기회는 할 일 목록에서 빠지고, 기간이 끝나면 저절로 돌아옵니다.`
+    : "";
+  const byId = {};
+  for (const o of d.opps || []) byId[o.id] = o;
+  $("holds").innerHTML = hs.length ? hs.map(h => HD_card(h, byId)).join("")
+    : `<div class="empty"><b>관찰 중인 페이지가 없습니다</b>
+        <p>기회로 페이지를 고치고 작업을 기록하면, 효과를 재는 동안 여기서 지켜봅니다.</p></div>`;
+  if (!window.nextStep) return;
+  const n = hs.reduce((s, h) => s + HD_shown(h, byId).length, 0);
+  const first = hs[0];
+  nextStep("hold", first
+    ? `<p>관찰 중인 페이지 ${hs.length}곳${n ? `, 뺀 기회 ${n}건` : ""}입니다. 가장 먼저 끝나는 곳은
+        <b>${esc(urlPath(first.page))}</b>(<span class="hd-day">${esc(first.until)}</span>)입니다.
+        <span class="live">지금은 고치지 않고, 끝나면 할 일 목록에서 다시 봅니다.</span></p>`
+    : "");
+});
+</script>

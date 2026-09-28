@@ -18,6 +18,9 @@
 .legend .sw-clk { color:var(--patina); }
 .legend .sw-imp { color:var(--slate); }
 .opp-more { margin-top:14px; }
+/* 관찰 중이라 뺀 기회 한 줄 — 목록 밑, 목록보다 한 단 물러선 글씨. */
+.opp-held { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3);
+  margin:var(--sp-3) 0 0; font-size:13px; color:var(--slate); }
 /* 묶인 줄의 나머지 검색어 — 표제 밑 한 줄. 접힌 카드에서는 넘치면 자른다. */
 .opp .vars { font-size:12.5px; color:var(--slate); margin:2px 0 0; }
 .opp:not([open]) .vars { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -256,6 +259,7 @@ function oppRow(o) {
             >검색어 ${n}개</span>` : ""}
           ${window.gaBadge(o)}
           ${window.madeBadge(o)}
+          ${window.holdBadge(o)}
         </div>
         ${OV_vars(o)}
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
@@ -400,8 +404,27 @@ function renderOpps(n) {
       <button class="go sm sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
   $("opps").innerHTML = (READONLY || few ? "" : `<div class="oppchips" id="oppchips"></div>`)
-    + `<div id="opplist"></div>`;
+    + `<div id="opplist"></div><div id="opphold"></div>`;
   oppList();
+}
+
+/* 관찰 중이라 뺀 기회 — 목록에서 조용히 사라지면 "어디 갔지"가 된다. 몇 건을 왜 뺐는지와
+   모아 보는 곳을 목록 바로 아래 한 줄로 말한다. 판정은 서버(o.hold, d.holds)가 했다.
+   [관찰 중] 화면이 이 배포에 없으면(옛 박제본) 거르개를 그 묶음으로 돌린다. */
+let OV_HELD = 0, OV_HELD_PAGES = 0;
+function OV_holdLine() {
+  const el = $("opphold");
+  if (!el) return;
+  // 세는 단위는 [관찰 중] 화면과 같다 — 묶은 줄이 아니라 페이로드에 실린 기회 하나하나.
+  const n = OV_HELD;
+  if (!n || OPP_ST === "hold" || OPP_ST === "") return el.innerHTML = "";
+  const pages = OV_HELD_PAGES;
+  const go = SM.at("hold") >= 0 ? `SM.show('hold')` : `oppClosed('hold')`;
+  // 거르개의 [관찰 중 (N)]은 이 목록의 줄(같은 지면끼리 묶음) 수라 기회 수와 다르다 — 둘을 같이 적는다.
+  const lines = OPPS.filter(o => window.oppStMatch(o, "hold")).length;
+  el.innerHTML = `<p class="opp-held">고친 지 얼마 안 된 페이지${pages ? ` ${pages}곳` : ""}에 걸린 기회
+    ${n}건${lines && lines !== n ? `(이 목록에서 ${lines}줄)` : ""}은 효과를 지켜보는 동안 이 목록에서 뺐습니다.
+    ${READONLY ? "" : `<button class="go sm ghost" onclick="${go}">관찰 중인 기회 보기 →</button>`}</p>`;
 }
 
 // kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
@@ -422,6 +445,7 @@ function oppChips() {
 
 function oppList() {
   oppChips();
+  OV_holdLine();
   const list = oppFiltered();
   // 개수를 두 번 적지 않는다 — 상태 거르개가 이미 "아직 안 함 (2)" 로 말한다.
   // 그 위에 무엇이 더 걸렸을 때(찾는 말·종류 칩)만 몇 건이 남았는지 적는다.
@@ -479,7 +503,10 @@ function OV_watch(d) {
       <td class="num">${esc((w.done_at || "").slice(0, 10))}</td><td>${cell(w.before)}</td><td>${cell(w.after)}</td>
       <td class="num">${w.runs_since}<span class="u">회</span></td>
       <td>${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
-        : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`) : ""}</td></tr>`), "");
+        : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`)
+        // 관찰 기간 안 — '지금' 칸의 실적 창에 아직 고치기 전 날이 섞여 있다(db.watch_rows).
+        : w.until ? `<span class="badge adv" title="실적이 고친 뒤 날로 찰 때까지 판단을 미룹니다">관찰 중 · ${
+            esc(String(w.until).slice(5))}까지</span>` : ""}</td></tr>`), "");
 }
 
 function OV_next(d) {
@@ -603,6 +630,9 @@ VIEW("overview", function (d) {
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   // 같은 지면의 변형 검색어는 서버가 한 줄로 접어 보낸다(d.opp_groups).
   OPPS = OV_lines(d);
+  const held = (d.opps || []).filter(o => window.oppStMatch(o, "hold"));
+  OV_HELD = held.length;
+  OV_HELD_PAGES = new Set(held.map(o => o.hold.page)).size;
   // 첫 적재에서만 기본값을 정한다 — 사람이 고른 필터를 재적재로 되돌리지 않는다.
   // 완료·제외는 끝난 일이라 목록에 안 낀다(윗줄 "아직 안 한 기회 N건"과 같은 몫).
   // 박제본은 그때의 트리아지 기록 자체가 볼거리라 전부 남긴다.

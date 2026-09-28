@@ -2171,17 +2171,23 @@ window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:
 // 묶음 이름은 사람의 말이다: '아직 안 함' = 손 안 댄 것 + 하는 중, '끝낸 것' = 우리가
 // 끝낸 것 + 제외한 것. `저절로 풀림` 은 따로 둔다 — 우리가 한 일이 아니라서 섞으면
 // "고쳤다" 로 읽힌다.
+// `관찰 중` 은 상태가 아니라 서버가 얹는 판정이다(o.hold — dashboard._axis_hold): 고친 지
+// scoring.OBSERVE_DAYS 가 안 된 페이지에 걸린 열린 기회. 저장된 상태를 바꾸지 않고 할 일
+// 묶음에서만 뺀다 — 앞 수정의 효과를 재기도 전에 같은 자리를 다시 고치라고 권하지 않게.
+// 기간이 끝나면 서버가 hold 를 안 얹으니 저절로 돌아온다.
 window.OPP_ST_GROUP = {
   open: ["new", "acked"], new: ["new"], acked: ["acked"],
-  closed: ["done", "dismissed"], resolved: ["resolved"]
+  closed: ["done", "dismissed"], resolved: ["resolved"], hold: ["new", "acked"]
 };
 window.OPP_ST_OPT = [["", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
-                     ["acked", "진행 중"], ["closed", "완료·제외"],
+                     ["acked", "진행 중"], ["hold", "관찰 중"], ["closed", "완료·제외"],
                      ["resolved", "저절로 풀림"]];
 // 기회 하나가 고른 묶음에 드나. 기회가 안 붙은 줄(o 가 null)은 거르개를 걸면 빠진다 —
 // 개요 말고 다른 화면은 목록이 기회 목록이 아니라 검색어·주소 목록이라, "전체" 가
 // 기본값이어야 한다(거르개를 안 건드리면 지금까지와 똑같이 보인다).
-window.oppStMatch = (o, st) => !st || (o && (window.OPP_ST_GROUP[st] || []).includes(o.status));
+// 관찰 중인 기회는 [관찰 중] 묶음에만 든다 — 할 일·진행 중·아직 안 함에서는 빠진다.
+window.oppStMatch = (o, st) => !st || (o && (window.OPP_ST_GROUP[st] || []).includes(o.status)
+  && (st === "hold") === !!o.hold);
 // 거르개 한 벌 — 화면은 이걸 부르고 자기 상태 변수만 갖는다.
 // 박제본에는 안 세운다 — 손댈 수 없는 기록이라 그때 그 사람이 쓰던 손잡이는 뜻이
 // 없고, 종이로 나가면 <select> 가 글자 하나로 굳는다. 화면마다 READONLY 를 묻지
@@ -2264,6 +2270,12 @@ window.madeBadge = o => {
   }. [완료]는 '완료 후 관찰'을 보고 직접 누르세요.">${label}</span>`;
 };
 
+// 관찰 중 배지 — 이 기회가 할 일 목록에서 빠져 있는 이유를 줄 위에서 말한다. 판정은
+// 서버(o.hold)가 했다. 끝나는 날을 같이 적는다: "언제 돌아오나"가 없으면 사라진 줄로 읽힌다.
+window.holdBadge = o => o && o.hold
+  ? `<span class="badge adv" title="이 페이지(${esc(o.hold.page)})를 고친 지 얼마 안 돼 효과를 지켜보는 중입니다. ${
+      esc(o.hold.until)}에 할 일 목록으로 돌아옵니다.">관찰 중 · ${esc(String(o.hold.until).slice(5))}까지</span>` : "";
+
 // 칩에 손을 얹으면 여태 `striking_distance` 같은 **내부 id** 가 떴다 — 사용자가
 // 본 적 없는 말이고, 라벨이 이미 한글인데 그 옆에 영문 id 를 들이미는 셈이었다.
 // 통칭표(kind_labels, 정본은 scoring.KINDS)의 한글 말로 답한다.
@@ -2272,6 +2284,7 @@ window.oppWhy = o => !o ? "" : `<div class="oh">
     <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(window.kindTip(o))}"
       >${esc(o.label || o.kind)}</span>
     <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
+    ${window.holdBadge(o)}
     ${window.gaBadge(o)}
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}${window.oppClosedWhy(o)}`;
 

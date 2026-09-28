@@ -662,6 +662,92 @@ def test_triage_payload_groups_variants_and_counts():
     conn.close()
 
 
+def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
+    """고친 페이지는 scoring.OBSERVE_DAYS 동안 관찰 중 — 그 페이지에 걸린 열린 기회는 할 일
+    목록에서 빠지고(o.hold), [관찰 중] 화면이 페이지별로 모은다(d.holds).
+
+    한관종·비립종 페이지: 9/11 에 AI 요약 기회로 title·설명을 고쳤는데(완료), 9/24 에 같은
+    검색어의 클릭률 미달이 새로 서서 같은 title·설명을 또 고치라는 요청문이 나갔다. 완료는
+    기회 한 건(종류×검색어)에만 먹었고, 같은 페이지의 다른 기회는 아무도 안 막았다."""
+    from datetime import date as _d, timedelta as _t
+    conn, pid = _brain("hold")
+    page, other = "https://hold.example/a/", "https://hold.example/b/"
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,?,28,?,?,?,?,?,?)",
+        [(pid, D, "한관종 vs 비립종", page, 0, 859, 0.0, 8.7),
+         (pid, D, "비립종 vs 한관종", page, 1, 278, 0.004, 8.2),
+         (pid, D, "딴 검색어", other, 3, 120, 0.025, 7.0)])
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        [(pid, "aio_exposure", "한관종 vs 비립종", 50, "r", "done", D),
+         (pid, "ctr_gap", "한관종 vs 비립종", 40, "r", "new", D),
+         (pid, "striking_distance", "비립종 vs 한관종", 30, "r", "acked", D),
+         (pid, "striking_distance", "딴 검색어", 20, "r", "new", D)])
+    ids = {(r["kind"], r["target"]): r["id"] for r in conn.execute(
+        "SELECT id, kind, target FROM opportunities WHERE project_id=?", (pid,))}
+    today = _d.today()
+    work_day = today - _t(days=10)
+    conn.executemany(
+        "INSERT INTO creations(project_id,opportunity_id,kind,file_path,note,created_at)"
+        " VALUES(?,?,?,?,?,?)",
+        [(pid, ids[("aio_exposure", "한관종 vs 비립종")], "aio_exposure",
+          "content/pages/a/index.html", "title·설명 교체", f"{work_day} 01:00:00"),
+         # 보고서만 가리키는 기록 — 저장소가 안 바뀌었다. 이걸로 other 가 묶이면 안 된다
+         (pid, ids[("striking_distance", "딴 검색어")], "striking_distance",
+          r"C:\Temp\seo-fix_page-20260915-1.html", "제안 리포트만", f"{today - _t(days=3)} 01:00:00")])
+    kid = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)"
+                       " RETURNING id", (pid, "한관종 vs 비립종")).fetchone()[0]
+    db.write_rank_snapshot(conn, kid, 8, page, aio_present=1, aio_cited=1,
+                           checked_at=D + "T01:00:00Z", aio_domains=["hold.example"])
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm(t) for t in
+                                ("한관종 vs 비립종", "비립종 vs 한관종", "딴 검색어")], "work")
+
+    d = dashboard.gather(conn, db.get_project(conn, "hold"))
+    by = {(o["kind"], o["target"]): o for o in d["opps"]}
+    ctr, sd = by[("ctr_gap", "한관종 vs 비립종")], by[("striking_distance", "비립종 vs 한관종")]
+    far = by[("striking_distance", "딴 검색어")]
+    until = (work_day + _t(days=scoring.OBSERVE_DAYS)).isoformat()
+    assert ctr.get("hold") == {"page": page, "until": until}, ctr.get("hold")
+    assert sd.get("hold", {}).get("page") == page, "진행 중(acked)인 기회도 관찰 중이다"
+    assert "hold" not in far, "보고서만 가리키는 기록으로 다른 페이지가 묶였다"
+    assert "hold" not in by[("aio_exposure", "한관종 vs 비립종")], "닫힌 기회에 관찰을 얹었다"
+    [h] = d["holds"]
+    assert h["page"] == page and h["until"] == until and h["days_left"] == scoring.OBSERVE_DAYS - 10
+    assert set(h["opp_ids"]) == {ctr["id"], sd["id"]}, h
+    assert [w["note"] for w in h["works"]] == ["title·설명 교체"], h["works"]
+    assert d["observe_days"] == scoring.OBSERVE_DAYS
+    # "새 기회 N건"도 같은 문으로 센다 — new 둘 중 하나가 관찰 중
+    assert d["opps_total"] == 1, d["opps_total"]
+    lines = {g["lead"]: g for g in d["opp_groups"]}
+    assert lines[ctr["id"]].get("hold", {}).get("page") == page, "목록의 줄에 관찰이 안 실렸다"
+    assert "hold" not in lines[far["id"]]
+    # 요청문 — 이미 한 작업과 관찰 중이라는 사실을 맨 위와 제 절에서 말한다
+    body = ctr["brief"]["body"]
+    import brief as _brief
+    assert _brief.WORK_HEAD in body and "title·설명 교체" in body, body
+    assert f"관찰 중 — {until}까지" in body and "주의: 이 페이지는 관찰 중" in body, body
+    # 결과 위에 AI 요약이 선 클릭률 미달은 "제목·설명 문제"라고 단정하지 않는다
+    assert ctr["band"] == "aio" and "단정하지 않습니다" in ctr["play"]["what"], ctr["play"]
+    assert "구글 AI 요약 있음 — 우리 링크를 인용합니다" in body, body
+    assert "순위 조회: 8위" in body, body
+    assert by[("striking_distance", "딴 검색어")]["brief"]["body"].count(_brief.WORK_HEAD) == 0
+
+    # 관찰 기간이 끝나면 저절로 돌아온다 — 저장된 상태가 없다
+    qp = {"query_pages": d["query_pages"], "topic_pages": d.get("topic_pages") or {}}
+    opps_d = {"opps": [dict(o, hold=None) for o in d["opps"]], "opps_total": 2}
+    for o in opps_d["opps"]:
+        o.pop("hold")
+    later = dashboard._axis_hold(conn, pid, None, opps_d, qp,
+                                 today=(work_day + _t(days=scoring.OBSERVE_DAYS)).isoformat())
+    assert later["holds"] == [] and later["opps_total"] == 2, later["holds"]
+    assert not any("hold" in o for o in opps_d["opps"])
+    assert page in later["page_works"], "관찰이 끝나도 작업 이력은 남아야 요청문이 싣는다"
+    conn.close()
+
+
 # ── 기회 묶음 — 같은 지면의 변형 검색어는 목록 한 줄 ─────────────────────────
 def _surface_fixture(name: str):
     """AI 요약 기회 여럿과 그 지면 사실(GSC 페이지·SERP 상위·클러스터).

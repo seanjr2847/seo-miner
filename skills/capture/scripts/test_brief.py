@@ -1943,6 +1943,72 @@ def test_top_results_formats_and_serp_features_reach_the_brief():
                                                         "ko-KR")["body"]
 
 
+def test_ctr_brief_carries_what_the_rank_check_saw():
+    """클릭률 미달 요청문은 순위 조회가 본 것을 싣는다 — AI 요약이 섰는지·우리를 인용하는지,
+    우리 자리. 한관종·비립종 요청문은 이걸 안 실어서 "순위가 아니라 제목·설명 문제"만 읽혔고,
+    상위 5자리 표에 우리가 없자(8위) 답은 "첫 페이지에 이 페이지가 없었다"고 썼다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "rank_date": "2026-09-24",
+           "ctr_gaps": [{"query": "검색어", "position": 8.7, "impressions": 859, "clicks": 0,
+                         "actual_ctr": 0.0, "expected_ctr": 2.2, "lost_clicks": 19}],
+           "serp_top": {"검색어": [{"position": i, "title": f"상위{i}", "url": f"https://r.example/{i}"}
+                                  for i in range(1, 6)]},
+           "rank_by_kw": {"검색어": {"pos": 8, "url": URL, "aio": 1, "aio_cited": 1,
+                                   "features": ["ai_overview", "people_also_ask"]}}}
+    o = _opp("ctr_gap", "검색어", band="aio")
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "구글 AI 요약 있음 — 우리 링크를 인용합니다 (2026-09-24 순위 조회)" in body, body
+    assert "- 순위 조회: 8위" in body and "(검색어 하나, 모든 기기·지역)" in body, body
+    assert "우리 페이지는 같은 조회에서 이 표 밖(8위)입니다" in body, body
+    assert "단정하지 않습니다" in body and "순위가 아니라 제목·설명 문제입니다" not in body
+    # 요약이 없으면 예전 처방 그대로 — 곡선이 맞는 검색어다
+    plain = _opp("ctr_gap", "검색어")
+    assert plain["play"]["what"].endswith("순위가 아니라 제목·설명 문제입니다.")
+    ctx["rank_by_kw"]["검색어"].update(aio=0, aio_cited=None, features=[])
+    assert "구글 AI 요약 있음" not in brief.build(plain, ctx, "ko-KR")["body"]
+    # 우리가 표 안이면 '표 밖' 줄은 안 선다
+    ctx["serp_top"]["검색어"][2].update(is_own=1)
+    assert "이 표 밖" not in brief.build(plain, ctx, "ko-KR")["body"]
+
+
+def test_brief_names_past_work_on_the_page_and_the_mixed_window():
+    """이 페이지에 이미 한 작업을 싣고, 관찰 중이면 맨 위와 제 절에서 말한다. 실적 창에
+    수정 전 날이 며칠 섞였는지도 — 그 요청문의 28일 중 절반이 수정 전이었는데 말이 없었다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "gsc_date": "2026-09-27", "gsc_period": 28,
+           "page_works": {URL: [{"day": "2026-09-11", "label": "구글 AI 요약 빠짐", "kind": "aio_exposure",
+                                 "target": "syringomas vs milia", "opp_id": 201,
+                                 "note": "title/H1/H2/직답", "merged": True}]},
+           "holds": [{"page": URL, "until": "2026-10-09", "since": "2026-09-11"}]}
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert brief.WORK_HEAD in body and "2026-09-11 · [구글 AI 요약 빠짐] syringomas vs milia (기회 #201)" in body
+    assert "· 머지됨" in body and "관찰 중 — 2026-10-09까지" in body, body
+    # 8/31~9/27 중 9/11 전은 11일
+    assert "(2026-08-31~2026-09-27, 28일) 중 11일이 마지막 작업 전입니다" in body, body
+    top = body.split("## 이 페이지")[0]
+    assert "주의: 이 페이지는 관찰 중입니다(2026-10-09까지)" in top, top
+    # 관찰이 끝났으면 경고 대신 "되돌리면 이유를" 한 줄
+    ctx["holds"] = []
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert "관찰 기간(28일)이 지났습니다" in body and "주의: 이 페이지는" not in body
+    # 작업이 없으면 절 자체가 안 선다
+    ctx["page_works"] = {}
+    assert brief.WORK_HEAD not in brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+
+
+def test_tails_carry_claim_rules_and_let_regulation_go_first():
+    """답이 자기 산출물·숫자·관찰을 두고 한 말을 대조하게 하는 규칙은 모든 꼴에, 출처·여러
+    자리의 같은 사실 규칙은 문안을 쓰는 꼴에만. 규제 문구가 지금 나가 있으면 '먼저 할 것'의
+    맨 위는 산출물이 아니어도 된다 — 규제 규칙이 찾은 것이 '따로 볼 것'으로 밀렸다."""
+    tails = brief.tails("ko-KR")
+    for name, tail in tails.items():
+        for r in brief.CLAIM_RULES:
+            assert r in tail, name
+        has_limits = brief.SHAPES[name]["limits"]
+        assert all((r in tail) == has_limits for r in brief.SOURCE_RULES), name
+        assert (brief.FIRST_REG_LINE in tail) == has_limits, name
+    # 신뢰 신호 카드는 이름이 불린 신호만 — 외부 링크 하나로 저자·수정일까지 채우지 않는다
+    assert "거기 이름이 나온 신호만" in tails["fix_page"]
+
+
 def test_differing_words_skip_plurals_and_stray_queries():
     """'갈리는 말'은 묶음을 실제로 가르는 말만 — 복수형(scar/scars)은 한 말이고, 노출 1짜리
     외국어 검색어('abnom adalah')의 낱말은 묶음을 가르지 않는다."""

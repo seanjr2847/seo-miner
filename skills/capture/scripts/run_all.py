@@ -194,7 +194,7 @@ DAILY = ("gsc", "ga4")
 
 GROUPS = (
     {"id": "todo", "name": "할 일", "stages": (), "every_hours": 24,
-     "views": ("triage", "overview")},
+     "views": ("triage", "overview", "hold")},
     {"id": "search", "name": "검색 성과",
      "stages": ("gsc", "ga4", "keywords", "metrics", "rank"), "every_hours": WEEKLY_HOURS,
      "views": ("analysis", "keywords", "rank")},

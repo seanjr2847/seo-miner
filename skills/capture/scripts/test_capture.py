@@ -1370,8 +1370,14 @@ def test_status_at_and_watch_rows():
     [w] = db.watch_rows(conn, pid)
     assert w["id"] == oid and w["done_at"].startswith("2026-01-02")
     assert w["before"]["position"] == 12.0 and w["after"]["position"] == 13.0, w
-    assert w["runs_since"] == 2 and w["stalled"] is True, w
-    conn.execute("UPDATE gsc_snapshots SET position=8.0 WHERE project_id=? AND snapshot_date='2026-01-20'", (pid,))
+    # 두 번 쟀어도 관찰 기간(28일 창이 수정 뒤 날로 차는 동안) 안이면 [다시 열기]를 안 낸다 —
+    # 1/20 의 28일 창은 대부분 완료 전이다
+    assert w["runs_since"] == 2 and w["stalled"] is False and w["until"] == "2026-01-30", w
+    _snap(conn, pid, "2026-02-05", 28, "q1", 13.0, 2)
+    conn.commit()
+    [w] = db.watch_rows(conn, pid)
+    assert w["runs_since"] == 3 and w["stalled"] is True and w["until"] is None, w
+    conn.execute("UPDATE gsc_snapshots SET position=8.0 WHERE project_id=? AND snapshot_date='2026-02-05'", (pid,))
     conn.commit()
     assert db.watch_rows(conn, pid)[0]["stalled"] is False
     conn.close()

@@ -74,6 +74,21 @@ cid = conn.execute("SELECT id FROM creations").fetchone()[0]
 conn.close()
 
 assert "src/app/[locale]/page.tsx" in run("list", "t")
+
+# 요청문 답 보고서만 가리키는 기록은 거절한다 — 저장소가 안 바뀌었다(제안서까지만 낸 답).
+# 받아 주면 아무것도 안 고친 페이지가 '관찰 중'으로 묶인다(dashboard._axis_hold).
+p = subprocess.run([sys.executable, str(HERE / "createdb.py"), "done", "t", str(oid), "--path",
+                    r"C:\Users\u\AppData\Local\Temp\seo-fix_page-20260915-144426.html"],
+                   capture_output=True, encoding="utf-8", errors="replace",
+                   env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+assert p.returncode != 0 and "보고서" in (p.stderr + p.stdout), (p.returncode, p.stdout, p.stderr)
+conn = createdb.connect()
+assert conn.execute("SELECT COUNT(*) FROM creations").fetchone()[0] == 1, "보고서 기록이 남았다"
+conn.close()
+# 저장소 파일이 하나라도 섞이면 작업이다
+assert not db.is_report_only(r"C:\t\seo-fix_page-1.html, content/pages/a/index.html")
+assert db.is_report_only("/tmp/seo-new_content-20260101.html")
+assert not db.is_report_only("")          # 커밋에서 온 기록(sync)은 경로가 비어 있다
 run("merged", str(cid))
 conn = createdb.connect()
 assert conn.execute("SELECT merged FROM creations WHERE id=?", (cid,)).fetchone()[0] == 1
