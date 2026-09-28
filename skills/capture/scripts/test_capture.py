@@ -2017,7 +2017,7 @@ def test_unclassified_cluster_is_not_an_opportunity_and_old_one_closes():
 
 
 def test_keyword_candidates_drop_stray_symbol_tails():
-    """`noti\`·`noti]` 처럼 잘못 누른 기호로 끝나는 변형은 후보가 아니다 — 원 검색어의
+    r"""`noti\`·`noti]` 처럼 잘못 누른 기호로 끝나는 변형은 후보가 아니다 — 원 검색어의
     검색량을 한 번 더 셌다(9회차). 질문·c++·c# 은 남긴다."""
     conn = db.connect()
     pid = _project(conn, "stray")["id"]

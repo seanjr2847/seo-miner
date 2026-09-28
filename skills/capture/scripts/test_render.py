@@ -242,20 +242,12 @@ MUSTS = [
     # 줄 안에 지금 상태 칩도 있어야 한다 — 버튼은 "무엇으로 바꾸나"만 말해서
     # ('완료 표시'), 칩이 없으면 지금이 어디인지 아무도 안 말한다. [개요]는 기본
     # 상태('할 일')일 때 접힌 줄의 배지도 일부러 안 달기 때문에 특히 그렇다.
-    # 요청문 복사 버튼은 **펴기 전에** 보인다 — 손잡이 안이 아니라 상자 바로 뒤의
-    # 독립 버튼이다(손잡이 안에 두면 막대 전체가 한 버튼으로 읽혀 패널이 열렸다).
-    (r'<details class="ask"><summary>요청문 만들기(?:(?!</summary>).)*</summary>'
-     r'(?:(?!</details>).)*</details><button[^>]*class="[^"]*askcopy',
-     "요청문 복사 버튼이 요청문 상자 바로 뒤에 없다 — 펴야만 보이거나 손잡이 안에 있다"),
-    (r'!<summary>요청문 만들기(?:(?!</summary>).)*askcopy',
-     "요청문 복사 버튼이 손잡이(summary) 안에 남아 있다 — 누르면 패널이 열린다"),
-    (r'!<div class="pb-h">(?:(?!</div>).)*copyPrompt',
-     "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"),
-    (r'<div class="det"><div class="det-top"><details class="ask">'
+    # (요청문 상자는 호스팅에만 선다 — 그 검사는 ASK_HOSTED_MUSTS·ASK_LOCAL_MUSTS 가 갈라 본다.)
+    (r'<div class="det"><div class="det-top">'
      r'(?:(?!<div class="det").)*<span class="st st-\w+"[^>]*>[^<]+</span>'
      r'(?:(?!<div class="det").)*<div class="acts oppset">'
      r'(?:(?!<div class="det").)*<b>묶인 검색어',
-     "펼침 패널의 행동 줄(요청문·지금 상태·상태 바꾸기)이 할 일보다 위에 안 섰다"),
+     "펼침 패널의 행동 줄(지금 상태·상태 바꾸기)이 할 일보다 위에 안 섰다"),
     # 펼침 패널의 수 — 서버가 센 것(target_trend)의 마지막 회차가 그대로 선다.
     # 노출 120 · 클릭 8 · CTR 6.7% · 9위(픽스처의 06-01). 상자가 서는 것과 **맞는
     # 수가 서는 것**이 다르다: 화면이 표를 다시 더하면 여기서 다른 수가 나온다.
@@ -317,6 +309,29 @@ MUSTS = [
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
 # 화면 목록은 여기 옮겨 적지 않는다 — view-def 에서 읽되 박제본이 빼는 둘만 뺀다.
+# 요청문 상자(요청문 만들기·요청문 복사)는 **호스팅에만** 선다. 로컬은 기회마다 "도구로
+# 열기"(runTool)가 요청문을 파일로 써서 도구를 바로 띄우므로, 복사해 붙여 넣는 길을 또
+# 두면 같은 행동이 두 벌이다. 호스팅은 브라우저라 도구를 못 띄워 복사가 유일한 길이다.
+ASK_HOSTED_MUSTS = [
+    # 요청문 복사 버튼은 **펴기 전에** 보인다 — 손잡이 안이 아니라 상자 바로 뒤의
+    # 독립 버튼이다(손잡이 안에 두면 막대 전체가 한 버튼으로 읽혀 패널이 열렸다).
+    (r'<details class="ask"><summary>요청문 만들기(?:(?!</summary>).)*</summary>'
+     r'(?:(?!</details>).)*</details><button[^>]*class="[^"]*askcopy',
+     "요청문 복사 버튼이 요청문 상자 바로 뒤에 없다 — 펴야만 보이거나 손잡이 안에 있다"),
+    (r'!<summary>요청문 만들기(?:(?!</summary>).)*askcopy',
+     "요청문 복사 버튼이 손잡이(summary) 안에 남아 있다 — 누르면 패널이 열린다"),
+    (r'!<div class="pb-h">(?:(?!</div>).)*copyPrompt',
+     "복사 버튼이 패널 안에도 남아 있다 — 두 벌이다"),
+    # 패널 맨 위(행동 줄의 첫 자리)가 요청문이다
+    (r'<div class="det"><div class="det-top"><details class="ask">',
+     "호스팅 펼침 패널의 행동 줄 맨 앞에 요청문 상자가 없다"),
+]
+ASK_LOCAL_MUSTS = [
+    (r'!<details class="ask">', "로컬에 요청문 상자(요청문 만들기)가 섰다 — 호스팅 전용이다"),
+    (r'!class="[^"]*askcopy', "로컬에 요청문 복사 버튼이 섰다 — 호스팅 전용이다"),
+]
+
+
 REPORT_DROPPED = ("settings", "guide", "triage")   # 심사는 서버가 있어야 저장된다
 
 
@@ -929,6 +944,13 @@ def run() -> None:
         return
 
     home = Path(tempfile.mkdtemp(prefix="seo-miner-render-"))
+    # 쓰는 방식(모드·도구·터미널)은 픽스처가 "안 고른 상태"다. 그런데 paths 는 import 할 때
+    # 이 PC 의 진짜 ~/.capture/env 를 os.environ 에 싣는다(load_env) — 사용자가 설정에서
+    # 도구를 고른 PC 에서는 그 값이 새어 들어와 '도구 없음' 배지 대신 버튼이 섰고, 검사가
+    # 화면이 아니라 이 PC 의 설정 때문에 빨개졌다. 픽스처가 정하는 값은 픽스처가 비운다.
+    import doctor
+    for k in (doctor.MODE_ENV, doctor.TOOL_ENV, doctor.TERMINAL_ENV):
+        os.environ.pop(k, None)
     try:
         fixture(home)
         zero_site(home)
@@ -940,20 +962,21 @@ def run() -> None:
         # 대상마다 (이름, 서버를 세우는 것, 있어야 할 것). 서버는 대상을 볼 때만 선다 —
         # 호스팅 대상은 env 를 갈아 끼우므로 다른 대상과 겹치면 안 된다.
         local = shell.replace(b"</body>", CARDS_PROBE.encode("utf-8") + b"</body>", 1)
-        targets = [("로컬 대시보드", lambda: _stdlib(local), MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS)]
+        targets = [("로컬 대시보드", lambda: _stdlib(local),
+                    MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
         # + 애드온). 사본을 만들어 먹이면 운영과 조립이 갈라져도 검사가 모른다.
         if (ROOT / "server" / "assets" / "dash.html").exists():
             targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
-                            HOSTED_MUSTS))
+                            HOSTED_MUSTS + ASK_HOSTED_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(
             b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
         targets.append(("박제본", lambda: _stdlib(report),
-                        REPORT_MUSTS + [m for m in view_sections()
+                        REPORT_MUSTS + ASK_LOCAL_MUSTS + [m for m in view_sections()
                                         if not any(f'[{v}]' in m[1] for v in REPORT_DROPPED)]))
 
         for label, up, musts in targets:
