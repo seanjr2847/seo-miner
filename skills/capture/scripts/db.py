@@ -340,6 +340,10 @@ CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · Page
   field_lcp_ms INTEGER, field_inp_ms INTEGER, field_cls REAL, field_ttfb_ms INTEGER,
   -- 실험실(Lighthouse, 지금 한 번) — 고친 뒤 바로 확인할 수 있는 유일한 숫자
   lab_score INTEGER, lab_lcp_ms INTEGER, lab_cls REAL, lab_tbt_ms INTEGER,
+  -- 구글이 연 모습의 SEO 점검(같은 PSI 호출의 category=seo). 우리 요청을 막는 사이트에서도
+  -- 나오는 유일한 페이지 안 사실이다. seo_json = {"ok":[id],"fail":[{id,n,items}]},
+  -- 이름표는 collect_vitals.SEO_AUDITS. NULL = 이 칸 전에 잰 행(안 봤다).
+  seo_score INTEGER, seo_json TEXT,
   UNIQUE(project_id, checked_date, url, strategy)
 );
 CREATE INDEX IF NOT EXISTS idx_page_vitals ON page_vitals(project_id, checked_date);
@@ -651,6 +655,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("tables", "lists", "images", "videos"):
         if col not in so_cols:
             conn.execute(f"ALTER TABLE serp_outlines ADD COLUMN {col} INTEGER")
+            conn.commit()
+
+    # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
+    pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
+    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT")):
+        if col not in pv_cols:
+            conn.execute(f"ALTER TABLE page_vitals ADD COLUMN {col} {decl}")
             conn.commit()
 
     pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
@@ -1928,7 +1939,7 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
     배치를 안 지우는 upsert 이고, 없는 키는 NULL 이다(안 잰 것과 0 은 다르다)."""
     cols = ("error", "origin_fallback", "field_verdict",
             "field_lcp_ms", "field_inp_ms", "field_cls", "field_ttfb_ms",
-            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms")
+            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms", "seo_score", "seo_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_vitals(project_id, checked_date, url, strategy, {', '.join(cols)})

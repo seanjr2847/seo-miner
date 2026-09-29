@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "site", "group": "site", "title": "사이트 점검",
- "sections": ["st-sum", "index", "crawl", "devgap", "vitals",
+ "sections": ["st-sum", "index", "crawl", "devgap", "vitals", "gseo",
               "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
  "stages": ["index", "crawl", "gsc", "vitals"]}
 </script>
@@ -222,6 +222,21 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       움직이는 유일한 숫자입니다. 현장 값은 28일이 지나야 따라옵니다.</p></details>
 </section>
 
+<section id="gseo-sec">
+  <div class="sh">
+    <p class="eyebrow"><span class="lat">PAGESPEED</span> · 구글이 연 모습</p>
+    <h2>구글이 본 SEO</h2>
+    <p class="sub" id="gseo-sub"></p>
+    <div class="tools" id="gseo-tools"></div>
+  </div>
+  <div id="gseo"><div class="skel box"></div></div>
+  <details class="why"><summary>페이지 점검과 무엇이 다른가</summary>
+    <p>페이지 점검과 크롤은 이 서버가 직접 페이지를 엽니다. 봇을 막는 사이트는 거기서 한
+      장도 안 열립니다. 이 표는 <b>구글(PageSpeed)이 연 결과</b>라 그런 사이트에서도 나옵니다.
+      속도를 잴 때 같은 호출로 받아서 비용은 없습니다. 제목은 <b>검색결과에 뜬 그대로</b>이고
+      구글이 고쳐 쓴 것일 수 있습니다. 본문 길이·H2·구조화 데이터는 여기서 못 봅니다.</p></details>
+</section>
+
 <section id="pgp-sec">
   <div class="sh">
     <p class="eyebrow" id="pgp-eyebrow">페이지 축</p>
@@ -344,7 +359,7 @@ function stSec(secId, n) {
 // 라벨은 그 섹션이 세는 **문제**의 이름이다 — 섹션 제목을 옮겨 적으면 "페이지 실적
 // 0" 처럼 실적이 0 이라는 말로 읽힌다(속도도 마찬가지라 「느림」으로 센다).
 const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["dev-sec", "모바일"],
-  ["vit-sec", "느림"], ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"],
+  ["vit-sec", "느림"], ["gseo-sec", "구글 SEO"], ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"],
   ["pgs-sec", "링크 부족"], ["pgc-sec", "무전환"]];
 
 function stJump(secId) {
@@ -1017,6 +1032,52 @@ function renderVitals(d) {
     }), ""));
 }
 
+/* ── 구글이 본 SEO (PageSpeed category=seo) ─────────────────
+   항목 이름·고칠 것의 정본은 collect_vitals.SEO_AUDITS — d.seo_audits 로 온다. 한 페이지를
+   두 기기로 재지만 SEO 점검은 기기와 무관하다 — 모바일 행을 먼저, 없으면 데스크톱. */
+function gseoRows(d) {
+  return Object.keys(d.vitals || {}).sort().map(url => {
+    const by = d.vitals[url] || {};
+    const r = [by.mobile, by.desktop].find(x => x && x.seo_json);
+    if (!r) return null;
+    let j = {};
+    try { j = JSON.parse(r.seo_json) || {}; } catch (e) { return null; }
+    return {url, score: r.seo_score, fail: j.fail || [], ok: j.ok || []};
+  }).filter(Boolean);
+}
+
+function renderGoogleSeo(d) {
+  const rows = gseoRows(d);
+  const L = d.seo_audits || {}, T = d.serp_titles || {};
+  stTools("gseo-tools", "");
+  if (!rows.length) {
+    // 속도를 아직 안 쟀거나, 이 칸이 생기기 전에 잰 행뿐이다 — 「문제 없음」이 아니다.
+    stSec("gseo-sec", null);
+    $("gseo-sub").textContent = "속도를 잴 때 구글이 연 페이지의 SEO 항목을 함께 봅니다.";
+    return $("gseo").innerHTML = `<div class="empty"><b>아직 결과가 없습니다</b>
+      <p>다음 속도 측정부터 나옵니다. 비용은 없습니다.</p></div>`;
+  }
+  const bad = rows.filter(r => r.fail.length);
+  stSec("gseo-sec", bad.length);
+  const when = esc(d.vitals_date);
+  $("gseo-sub").innerHTML = bad.length
+    ? `${when} 기준 · 페이지 ${rows.length}개 중 <b>${bad.length}개</b>에 고칠 항목이 있습니다.`
+    : `${when} 기준 · 페이지 ${rows.length}개가 전부 통과했습니다.`;
+  const fixes = r => r.fail.length ? r.fail.map(f => {
+      const [label, fix] = L[f.id] || [f.id, ""];
+      const ev = (f.items || []).join(" · ");
+      return `<span class="badge warn" title="${esc(fix + (ev ? " 예: " + ev : ""))}">`
+        + `${esc(label)}${f.n > 1 ? " " + f.n : ""}</span>`;
+    }).join(" ")
+    : `<span class="badge ok">전부 통과</span>`;
+  $("gseo").innerHTML = stCard(table(
+    ["페이지", "검색결과 제목?구글 검색결과에 뜬 제목입니다. 페이지의 제목 태그 원문과 다를 수 있습니다.",
+     ">점수?구글 Lighthouse SEO 점수(0~100).", "고칠 항목?항목에 마우스를 올리면 무엇을 고칠지와 예시가 보입니다."],
+    rows.map(r => `<tr><td>${esc(r.url)}</td>`
+      + `<td>${T[r.url] ? esc(T[r.url]) : '<span class="muted">검색결과에 없음</span>'}</td>`
+      + `<td class="num">${r.score ?? "—"}</td><td>${fixes(r)}</td></tr>`), ""));
+}
+
 // 펼침이 읽는 재료 — 표 행에는 없고 payload 에만 있다.
 let ST_AUDITS = {}, ST_QPAGES = {};
 
@@ -1514,6 +1575,7 @@ VIEW("site", function (d) {
   renderIndex(d);
   renderCrawl(d);
   renderVitals(d);
+  renderGoogleSeo(d);
   renderPageAxis(d);
   stNext(plan);
   stSummary(stBlocked(d));    // 섹션마다 센 뒤라야 한 줄로 요약할 수 있다

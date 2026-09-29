@@ -430,10 +430,30 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     out = opp + scoring.top_pages(conn, project_id, limit)
     seen, uniq = set(), []
     for u in out:
+        u = clean_url(u)
         if u and u not in seen:
             seen.add(u)
             uniq.append(u)
     return uniq[:limit]
+
+
+# 광고·추천 추적 꼬리표 — 같은 페이지인데 주소만 다르다. 기회·검색결과에서 온 주소에
+# `?gclid=…`·`?ref=…` 가 붙은 채로 점검 대상이 되면 같은 페이지를 이름만 바꿔 여러 번 보고,
+# 상한(page_urls) 안의 자리를 그만큼 잃는다(gucci: 10자리 중 둘이 홈의 꼬리표 사본이었다).
+TRACKING_PARAMS = frozenset({"gclid", "gclsrc", "dclid", "fbclid", "msclkid", "yclid",
+                             "ref", "ref_src", "_ga", "mc_cid", "mc_eid", "igshid"})
+
+
+def clean_url(u: str) -> str:
+    """추적 꼬리표(utm_*·gclid·ref …)와 #조각을 뗀다. 나머지 쿼리는 순서째 그대로 둔다 —
+    ?page=2·?lang=ko 는 다른 페이지다."""
+    if not u or "?" not in u and "#" not in u:
+        return u
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    parts = urlsplit(u)
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if not (k.lower() in TRACKING_PARAMS or k.lower().startswith("utm_"))]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), ""))
 
 
 # 없는 페이지 — 오류가 아니라 사실(collect 의 one 이 가른다)
@@ -714,6 +734,20 @@ def _selfcheck() -> None:
 
     _concurrency_check(conn)
     _blocked_check(conn)
+    # 추적 꼬리표는 떼고, 다른 페이지를 가르는 쿼리는 남긴다
+    assert clean_url("https://g.kr/?ref=ed3sign") == "https://g.kr/"
+    assert clean_url("https://g.kr/uk/?gclid=EAIa&gclsrc=aw.ds") == "https://g.kr/uk/"
+    assert clean_url("https://g.kr/a?utm_source=x&page=2#top") == "https://g.kr/a?page=2"
+    assert clean_url("https://g.kr/a?lang=ko") == "https://g.kr/a?lang=ko"
+    assert clean_url("https://g.kr/a") == "https://g.kr/a"
+    # 점검 대상을 고르는 자리가 실제로 떼는지 — 꼬리표 사본은 한 자리로 합쳐진다.
+    conn.executemany("INSERT INTO opportunities(project_id, kind, target, score) VALUES(1,?,?,?)",
+                     [("crawl_issue", "https://tu.kr/?ref=ed3sign", 9),
+                      ("crawl_issue", "https://tu.kr/", 8),
+                      ("crawl_issue", "https://tu.kr/uk/?gclid=EAIa", 7)])
+    conn.commit()
+    got = [u for u in target_urls(conn, 1, 40) if u.startswith("https://tu.kr")]
+    assert got == ["https://tu.kr/", "https://tu.kr/uk/"], f"점검 대상에 추적 꼬리표 사본이 남았다: {got}"
     print("collect_page self-check ok")
 
 

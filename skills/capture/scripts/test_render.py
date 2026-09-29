@@ -184,6 +184,10 @@ EMPTY_LOADS = [
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
+    # 구글이 본 SEO(사이트 점검) — 항목 이름표는 d.seo_audits(정본 collect_vitals.SEO_AUDITS)로
+    # 스크립트가 그린다. 영어 id(link-text)가 그대로 뜨면 이름표가 안 온 것이다.
+    (r'id="gseo"[^>]*>(?:(?!</section>).)*?링크 텍스트', "구글이 본 SEO 표가 안 그려졌거나 항목 이름이 한국어가 아니다"),
+    (r'!id="gseo"[^>]*>(?:(?!</section>).)*?>link-text<', "구글이 본 SEO 표에 영어 항목 id 가 샜다"),
     # 버튼 이름 = 상태 이름(완료·제외·다시 열기). 상태만 바꾸던 [작업 시작]은 없다 — 열기
     # (로컬)·복사(호스팅)가 그 일을 한다. 옛 이름이 화면 어디에 남아도 두 이름이 된다.
     (r"!<button[^>]*>작업 시작</button>", "상태만 바꾸는 [작업 시작] 버튼이 남아 있다"),
@@ -581,7 +585,10 @@ def _axes(conn, pid: int) -> None:
         {"url": _vurl, "strategy": "mobile", "error": None, "origin_fallback": 0,
          "field_verdict": "SLOW", "field_lcp_ms": 4200, "field_inp_ms": 310,
          "field_cls": 0.24, "field_ttfb_ms": 900,
-         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640},
+         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640,
+         # 구글이 본 SEO — 실패 하나(링크 텍스트). 화면이 한국어 이름표로 그리는지를 본다.
+         "seo_score": 92, "seo_json": '{"ok": ["document-title"], "fail": '
+                                      '[{"id": "link-text", "n": 1, "items": ["자세히 보기"]}]}'},
         {"url": _vurl, "strategy": "desktop", "error": None, "origin_fallback": 0,
          "field_verdict": "FAST", "field_lcp_ms": 1800, "field_inp_ms": 90,
          "field_cls": 0.02, "field_ttfb_ms": 210,

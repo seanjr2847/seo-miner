@@ -32,6 +32,7 @@ SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
+import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
@@ -1158,15 +1159,41 @@ def _axis_vitals(conn, pid: int) -> dict:
     기기의" 값이라서다 — 모바일만 밀리는 검색어의 근거는 두 기기를 나란히 놓아야
     나온다.
     """
+    # 구글이 본 SEO 점검(seo_score·seo_json)도 같은 행에 실린다 — 그 이름표는 만드는 쪽
+    # (collect_vitals.SEO_AUDITS)이 갖고 여기서 같이 보낸다. 화면이 사본을 들면 새 항목이
+    # 영어 id 로 뜬다.
+    labels = {k: list(v) for k, v in collect_vitals.SEO_AUDITS.items()}
     d = conn.execute("SELECT MAX(checked_date) d FROM page_vitals WHERE project_id=?",
                      (pid,)).fetchone()["d"]
     if not d:
-        return {"vitals_date": None, "vitals": {}}
+        return {"vitals_date": None, "vitals": {}, "seo_audits": labels, "serp_titles": {}}
     out: dict[str, dict] = {}
     for r in q(conn, "SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?",
                (pid, d)):
         out.setdefault(r["url"], {})[r["strategy"]] = r
-    return {"vitals_date": d, "vitals": out}
+    return {"vitals_date": d, "vitals": out, "seo_audits": labels,
+            "serp_titles": _own_serp_titles(conn, pid, out)}
+
+
+def _own_serp_titles(conn, pid: int, urls) -> dict:
+    """검색결과에 뜬 내 페이지 제목 {url: 제목} — 구글이 색인해 보여 주는 그대로.
+
+    우리 요청을 막는 사이트는 <title> 을 못 읽는다. 순위 수집이 이미 받아 둔 검색결과의
+    내 줄(serp_results.is_own)이 그 자리를 채운다. 구글이 제목을 고쳐 쓰는 일이 있어
+    **<title> 원문이 아니라 "검색결과에 뜬 제목"**이다 — 화면도 그렇게 부른다.
+    """
+    want = {scoring.norm(u): u for u in urls if u}
+    if not want:
+        return {}
+    got: dict[str, str] = {}
+    for r in conn.execute(
+            "SELECT s.url, s.title FROM serp_results s JOIN keywords k ON k.id = s.keyword_id"
+            " WHERE k.project_id=? AND s.is_own=1 AND s.title IS NOT NULL"
+            " ORDER BY s.checked_at DESC", (pid,)):
+        u = want.get(scoring.norm(r["url"] or ""))
+        if u and u not in got:
+            got[u] = r["title"]
+    return got
 
 
 def _axis_crawl(conn, pid: int) -> dict:
