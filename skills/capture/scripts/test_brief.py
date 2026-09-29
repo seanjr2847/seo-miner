@@ -1399,6 +1399,12 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "문안을 만들지 않습니다" not in want and "이번 아님" not in want, want
     # 헛짚은 진단은 답이 페이지를 열어 가린다 — 사람이 표를 읽고 가려내던 일이다
     assert "**진짜 문제인지** 먼저 확인합니다" in want and "'안 고침'" in want, want
+    # 글을 풍성하게 하는 일 — 상위 글·함께 묻는 질문과 견줘 빠진 내용을 찾고, 붙여 넣을
+    # 본문까지 이 답에서 쓴다. 예전엔 재료만 싣고 그걸로 본문을 채우라는 산출물이 없었다.
+    assert brief.CONTENT_FILL in want and want.count("내용 보강") == 1, want
+    assert "**붙여 넣을 본문**" in brief.CONTENT_FILL
+    rules = " ".join(brief.SHAPES["fix_page"]["rules"])
+    assert "이 답은 제안까지입니다" not in rules and "이 답에서 **붙여 넣을 수 있게**" in rules, rules
     form = brief.SHAPES["fix_page"]["form"][-1]
     assert "'안 고침'" in form and "뒤로 미루는 '이번 아님'은 쓰지 않습니다" in form, form
     # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
