@@ -107,7 +107,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  type TEXT NOT NULL DEFAULT 'saas',          -- game|local_business|saas|directory
+  type TEXT NOT NULL DEFAULT 'saas',          -- 값의 정본은 dashboard.PROJECT_TYPES
   domain TEXT NOT NULL,
   locale TEXT DEFAULT 'ko-KR',
   gsc_property TEXT,                          -- e.g. sc-domain:example.com

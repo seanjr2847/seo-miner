@@ -131,7 +131,10 @@ def _vendor_script() -> str:
 PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
                  ("game", "게임"),
                  ("local_business", "지역 비즈니스"),
-                 ("directory", "목록 · 디렉터리"))
+                 ("directory", "목록 · 디렉터리"),
+                 # 물건을 파는 사이트 — 브랜드 공식몰(gucci.com)·편집숍·쇼핑몰. 웹 서비스(saas)로
+                 # 두면 AI 계수(.45)가 상품·카테고리 수요를 누른다.
+                 ("commerce", "쇼핑몰 · 브랜드"))
 # 받는 쪽 검증이 쓰는 id 만 — 사본이 아니라 위 표에서 뽑은 것이다.
 PROJECT_TYPE_IDS = tuple(i for i, _ in PROJECT_TYPES)
 

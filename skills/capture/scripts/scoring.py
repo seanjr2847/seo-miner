@@ -109,13 +109,15 @@ AI_RIVALS_TOP = 8           # 질문 하나에 싣는 대신 인용된 도메인
 AI_LADDER_CATEGORIES = ("추천", "비교")
 
 # 결정적 점수 계수 (scoring.md 2절의 프리셋별 방향 준수: saas는 w_ai 최상향,
-# local_business은 w_fit 상향, directory는 수요·coverage 우선, game은 균형).
+# local_business은 w_fit 상향, directory는 수요·coverage 우선, game은 균형,
+# commerce는 상품·카테고리 수요 우선 + AI 쇼핑 추천은 중간).
 # 각 프리셋 합은 1.0 — score()가 0~100으로 바로 환산한다.
 WEIGHTS = {
     "game":         {"w_demand": 0.30, "w_reach": 0.25, "w_fit": 0.25, "w_ai": 0.20},
     "local_business": {"w_demand": 0.25, "w_reach": 0.20, "w_fit": 0.45, "w_ai": 0.10},
     "saas":         {"w_demand": 0.20, "w_reach": 0.20, "w_fit": 0.15, "w_ai": 0.45},
     "directory":    {"w_demand": 0.40, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.15},
+    "commerce":     {"w_demand": 0.35, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.20},
 }
 
 # 남의 브랜드 검색 판별용 (scoring.md 1a).

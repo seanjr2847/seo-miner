@@ -29,3 +29,10 @@ directory:
     - {category: 추천, t: "{head} 어디서 찾아?"}
     - {category: 추천, t: "괜찮은 {head} 모음 있어?"}
   scoring_bias: "coverage first: indexed/impressed page count (GSC page dim) over per-keyword rank"
+commerce:
+  keyword_angles: ["{category} 추천", "{product} 가격", "{brand} {product}", "{product} 후기", "{occasion} 선물"]
+  ai_prompt_templates:
+    - {category: 추천, t: "{price_band} {category} 브랜드 추천해줘"}
+    - {category: 비교, t: "{brand}랑 {competitor} 중에 뭐가 나아?"}
+    - {category: 브랜드, t: "{brand} {product} 어때? 살 만해?"}
+  scoring_bias: "product/category demand leads; AI shopping answers (추천 목록에 브랜드가 끼는가) weigh mid"
