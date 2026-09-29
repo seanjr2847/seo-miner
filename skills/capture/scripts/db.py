@@ -378,8 +378,13 @@ CREATE TABLE IF NOT EXISTS competitors (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   domain TEXT NOT NULL,
-  source TEXT DEFAULT 'manual',               -- manual|auto_rank|auto_labs (auto_serp 은 은퇴 — retire_auto_serp)
+  source TEXT DEFAULT 'manual',               -- manual|auto_rank|auto_labs|auto_nonbrand (auto_serp 은 은퇴 — retire_auto_serp)
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  -- 이 사이트에게 그 도메인이 무엇인가(collect_gap 의 판정). 이름표 정본은 scoring.ROLES.
+  -- NULL = 아직 판정 안 함(예전처럼 경쟁사로 읽는다). rival 이 아닌 판정은 scoring.rivals 가 뺀다.
+  -- 사람이 적은 행(manual)은 판정하지 않는다 — 사람이 고른 것이 이긴다.
+  role TEXT,
+  role_why TEXT,                              -- 판정 근거: 그 도메인의 상위 검색어 JSON 배열
   UNIQUE(project_id, domain)
 );
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -655,6 +660,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("tables", "lists", "images", "videos"):
         if col not in so_cols:
             conn.execute(f"ALTER TABLE serp_outlines ADD COLUMN {col} INTEGER")
+            conn.commit()
+
+    # 경쟁사 역할 판정(collect_gap) — 옛 행은 NULL(판정 안 함 = 예전처럼 경쟁사).
+    cp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(competitors)")}
+    for col in ("role", "role_why"):
+        if col not in cp_cols:
+            conn.execute(f"ALTER TABLE competitors ADD COLUMN {col} TEXT")
             conn.commit()
 
     # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.

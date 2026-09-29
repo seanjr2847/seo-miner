@@ -184,6 +184,9 @@ EMPTY_LOADS = [
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
+    # 경쟁 분석 — 판정이 판매 채널로 가른 곳은 경쟁사 몫 밑에 따로 선다(collect_gap E).
+    (r'id="cp-shares"[^>]*>(?:(?!</section>).)*?판매 채널(?:(?!</section>).)*?mall\.example',
+     "경쟁사에서 뺀 판매 채널이 경쟁 분석에 안 보인다"),
     # 구글이 본 SEO(사이트 점검) — 항목 이름표는 d.seo_audits(정본 collect_vitals.SEO_AUDITS)로
     # 스크립트가 그린다. 영어 id(link-text)가 그대로 뜨면 이름표가 안 온 것이다.
     (r'id="gseo"[^>]*>(?:(?!</section>).)*?링크 텍스트', "구글이 본 SEO 표가 안 그려졌거나 항목 이름이 한국어가 아니다"),
@@ -577,6 +580,11 @@ def _axes(conn, pid: int) -> None:
         "INSERT INTO competitor_metrics(project_id,checked_date,domain,is_self,keywords,etv,"
         "top10) VALUES(?,?,?,?,?,?,?)",
         [(pid, d, RIVAL, 0, 4120, 8800.0, 610), (pid, d, "me.example", 1, 380, 900.0, 41)])
+    # 역할 판정 — 검색결과는 겹쳐도 판매 채널이라 경쟁사에서 뺀 곳. 경쟁 분석 화면이 그것을
+    # 이름표(d.role_labels, 정본 scoring.ROLES)로 따로 보이는지를 본다.
+    conn.execute("INSERT INTO competitors(project_id, domain, source, role, role_why)"
+                 " VALUES(?, 'mall.example', 'auto_labs', 'channel', ?)",
+                 (pid, '["mall 몰", "남의브랜드 가방"]'))
     # 속도 — 같은 페이지인데 모바일만 기준을 넘긴다(현장 값 있음). 화면이 그 하나만
     # 세는지, 출처를 밝히는지를 본다.
     import db as _db

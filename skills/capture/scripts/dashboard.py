@@ -1123,9 +1123,13 @@ def _axis_competitors(conn, pid: int) -> dict:
         gap_rivals = [r["domain"] for r in q(
             conn, "SELECT DISTINCT domain FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " ORDER BY 1", (pid, gap_date))]
+    # 역할 판정(collect_gap E) — 경쟁사에서 뺀 곳(판매 채널·포털)을 근거와 함께 보인다.
+    # 안 보이면 "lfmall 은 왜 사라졌나"에 답이 없다. 이름표 정본은 scoring.ROLES.
+    comp_roles = q(conn, "SELECT domain, source, role, role_why FROM competitors"
+                         " WHERE project_id=? AND role IS NOT NULL ORDER BY id", (pid,))
     return {"comp_date": cm_date, "comp_metrics": comp_metrics,
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
-            "gap_rivals": gap_rivals}
+            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES}
 
 
 def _axis_ai_bots(p, crawl: dict) -> dict:

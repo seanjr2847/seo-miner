@@ -10,6 +10,17 @@
   A. 역키워드     ranked_keywords/live      → keywords (source='competitor_gap')
   B. 자동 탐지·몫 competitors_domain/live   → competitors(auto_labs) + competitor_metrics
   C. Content Gap  domain_intersection/live  → keyword_gap (missing|weak|shared|unknown)
+  D. 비브랜드 발견 ranked_keywords(우리) → serp_competitors/live → competitors(auto_nonbrand)
+  E. 역할 판정     ranked_keywords(후보마다) + AI 한 번 → competitors.role
+
+D·E 는 "검색결과가 겹친다 ≠ 경쟁사"라서 있다. 브랜드 사이트(gucci.com)는 검색어 대부분이
+자기 브랜드명이고, 그 검색결과는 그 브랜드를 파는 쇼핑몰·포털로 가득하다 — B 만 보면
+lfmall·ssg·무신사가 구찌의 경쟁사가 됐다(2026-09-29 실측). D 는 우리 검색어에서 브랜드명을
+뺀 것으로 검색결과 경쟁사를 찾아 dior·louisvuitton 같은 진짜 경쟁자를 끌어오고, E 는 자동
+후보마다 "그 도메인이 무슨 검색어로 트래픽을 받나"를 보고 경쟁/판매 채널/포털·미디어를
+가른다(쇼핑몰은 남의 브랜드명으로, 경쟁 브랜드는 자기 이름으로 받는다). 둘 다 AI 가 있어야
+돈다(OPENROUTER_API_KEY) — 없으면 예전 동작 그대로다. 판정은 도메인마다 한 번만 한다
+(role 이 빈 자동 후보만). 사람이 적은 경쟁사(manual)는 판정하지 않는다.
 
 B 는 "누가 우리와 키워드가 겹치나"를 사람 등록 없이 찾고(Ahrefs 의 Organic
 competitors), 같은 응답의 `metrics.organic` 으로 도메인별 유기 규모까지 한 번에
@@ -86,6 +97,17 @@ DOMAIN_CAP = 5
 LABS_COMPETITORS = "/dataforseo_labs/google/competitors_domain/live"
 LABS_INTERSECT = "/dataforseo_labs/google/domain_intersection/live"
 LABS_OVERVIEW = "/dataforseo_labs/google/domain_rank_overview/live"
+LABS_RANKED = "/dataforseo_labs/google/ranked_keywords/live"
+LABS_SERP_COMPETITORS = "/dataforseo_labs/google/serp_competitors/live"
+
+NONBRAND_KWS = 20      # D: serp_competitors 에 넣는 비브랜드 검색어 수(검색량 큰 순)
+ROLE_EVIDENCE = 20     # E: 판정 근거로 받는 후보의 상위 검색어 수 — 12개로는 쇼핑몰의 "남의 브랜드"가
+                       #    잘 안 보여 lfmall·무신사가 경쟁으로 판정됐다(실측)
+ROLE_CAP = 15          # E: 한 런에 판정하는 새 후보 수 — 후보당 ranked_keywords 한 콜이다
+# 판정·브랜드 표기 모델 — 새 후보가 생길 때만 도는 호출이라 작은 모델을 고집할 까닭이 없다.
+# 같은 근거로 3번씩 51건을 판정해 gpt-4o-mini 는 5번 틀렸고(무신사→경쟁, 다나와→미디어),
+# 이 모델은 0번이었다(2026-09-29, 구찌·aitierlist 후보).
+ROLE_MODEL = "anthropic/claude-haiku-4.5"
 
 # metrics.organic 의 top10 구간. 응답이 일부만 주면 준 것만 더한다 (없는 구간을 0으로
 # 치면 "top10 이 0" 과 "top10 을 안 줬다" 가 같아진다).
@@ -233,6 +255,126 @@ def _fetch_intersection(post, ours: str, rival: str, locale: str, limit: int,
     return out, cost
 
 
+def _top_keywords(post, target: str, locale: str, limit: int, order: str) -> tuple[list, float]:
+    """도메인이 순위를 가진 검색어 [(검색어, 검색량|None)] — order 는 Labs order_by 한 줄."""
+    loc, lang, _ = serp_adapter.location(locale)
+    result, cost = post(LABS_RANKED, [{
+        "target": target, "location_name": loc, "language_code": lang,
+        "limit": limit, "order_by": [order]}])
+    out = []
+    for r0 in result or []:
+        for it in (r0.get("items") or []):
+            if isinstance(it, dict):
+                kw, sv = _kw_of(it)
+                if kw:
+                    out.append((kw, sv))
+    return out, cost
+
+
+# 등록 도메인을 가를 때 한 칸 더 보는 2단계 최상위(co.kr·com.au …). 목록이 아니라 모양이다:
+# 끝이 두 글자 나라 코드이고 그 앞이 이 중 하나면 세 칸이 한 사이트다.
+_SLD = {"co", "or", "ne", "go", "ac", "re", "pe", "com", "net", "org", "gov", "edu"}
+
+
+def site_of(host: str) -> str:
+    """하위 도메인을 접는다 — search.11st.co.kr·m.gmarket.co.kr·kr.louisvuitton.com 이
+    따로 후보가 되면 같은 사이트를 여러 번 판정·과금한다."""
+    parts = scoring.host_of(host).split(".")
+    n = 3 if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SLD else 2
+    return ".".join(parts[-n:])
+
+
+def _serp_competitors(post, keywords: list, locale: str, limit: int) -> tuple[list, float]:
+    """이 검색어들의 검색결과에 많이 서는 도메인 — 겹친 검색어 수·가시성 순."""
+    loc, lang, _ = serp_adapter.location(locale)
+    result, cost = post(LABS_SERP_COMPETITORS, [{
+        "keywords": keywords, "location_name": loc, "language_code": lang,
+        "limit": limit, "item_types": ["organic"]}])
+    out = []
+    for r0 in result or []:
+        for it in (r0.get("items") or []):
+            d = site_of(_domain_of(it)) if isinstance(it, dict) else ""
+            if d and d not in out:
+                out.append(d)
+    return out, cost
+
+
+def openrouter_json(prompt: str) -> dict:
+    """AI 한 번 — JSON 객체 하나를 돌려받는다. 판정·브랜드명 뽑기 전용(답변 수집은 collect_ai).
+
+    collect_ai.ask 를 안 쓰는 이유: 그쪽 system 문구는 "실제 사용자처럼 답하라"다.
+    """
+    import json
+    import requests
+    import collect_ai
+    r = requests.post(
+        collect_ai.OPENROUTER_URL, timeout=serp_adapter.TIMEOUTS["openrouter"],
+        headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
+                 "Content-Type": "application/json"},
+        json={"model": ROLE_MODEL, "temperature": 0, "max_tokens": 800,
+              "response_format": {"type": "json_object"},
+              "messages": [{"role": "user", "content": prompt}]})
+    serp_adapter.raise_for(r, "OpenRouter")
+    content = ((r.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "{}"
+    # 모델에 따라 ```json 울타리를 두르거나 앞뒤에 한 줄을 붙인다 — 객체만 떼어 읽는다.
+    content = content[content.find("{"): content.rfind("}") + 1] or "{}"
+    got = json.loads(content)
+    return got if isinstance(got, dict) else {}
+
+
+def _brand_terms(ask, ours: str, top: list, aliases) -> set[str]:
+    """우리 브랜드를 부르는 말(모든 표기·언어) — 설정의 brand_aliases + 도메인 줄기 + AI.
+
+    한국어 표기('구찌')는 도메인에서 못 짓는다. 우리가 트래픽을 받는 검색어를 보여 주고
+    그 안에서 우리 이름을 고르게 한다 — 목록 밖의 말을 지어내면 버린다.
+    """
+    terms = {scoring.norm(a) for a in (aliases or []) if scoring.norm(a)}
+    stem = scoring.norm(ours.split(".")[0])
+    if stem:
+        terms.add(stem)
+    shown = [kw for kw, _ in top[:40]]
+    got = ask(f"우리 사이트는 {ours} 이다. 아래는 이 사이트가 검색에서 트래픽을 받는 검색어다.\n"
+              "이 중에서 **도메인 " + ours + " 가 가리키는 우리 이름 자체**의 표기(번역·음역·띄어쓰기 "
+              "변형 포함)만 골라라. 우리 사이트가 다루거나 파는 **남의 제품·도구·브랜드 이름은 빼라** "
+              "— 우리가 그것을 소개하는 사이트여도 그건 우리 이름이 아니다. 일반 명사도 빼라. "
+              "목록에 있는 표기에서만 뽑고, 없으면 빈 배열.\n"
+              '답은 JSON 하나: {"brand_terms": ["..."]}\n\n' + "\n".join(f"- {k}" for k in shown))
+    for t in got.get("brand_terms") or []:
+        n = scoring.norm(str(t))
+        if n and any(n in scoring.norm(k) for k in shown):
+            terms.add(n)
+    return terms
+
+
+def _nonbrand(top: list, terms: set[str], n: int) -> list[str]:
+    """브랜드명이 안 든 검색어를 검색량 큰 순으로 n 개."""
+    keep = [(kw, sv or 0) for kw, sv in top
+            if not any(t and t in scoring.norm(kw) for t in terms)]
+    keep.sort(key=lambda x: -x[1])
+    return [kw for kw, _ in keep[:n]]
+
+
+def _classify(ask, ours: str, type_label: str, evidence: dict) -> dict:
+    """{도메인: 역할} — 역할 id 는 scoring.ROLES 한 벌. 모르는 값을 돌려주면 버린다(판정 안 함)."""
+    roles = scoring.ROLES
+    got = ask(
+        f"우리 사이트는 {ours} (종류: {type_label})이다. 아래 각 도메인이 검색에서 트래픽을 가장 많이 받는 "
+        "검색어다. 각 도메인을 하나로 분류하라. **이 순서로** 판단한다:\n"
+        "1) media: 주제를 가리지 않는 포털·검색·위키·SNS·동영상·블로그 플랫폼·종합 언론\n"
+        "2) rival: 우리와 같은 방문자를 두고 **같은 종류의 것**을 내놓는 사이트. 우리가 브랜드·"
+        "서비스면 경쟁 브랜드·경쟁 서비스의 자체 사이트, 우리가 정보·비교·목록·커뮤니티 사이트면 "
+        "같은 주제를 다루는 그런 사이트\n"
+        "3) channel: 우리가 브랜드·서비스인데, 그 도메인은 **남의 브랜드** 상품·여러 판매자를 모아 "
+        "파는 곳(쇼핑몰·편집숍·백화점몰·오픈마켓·리셀·중고거래·가격비교·예약 플랫폼). 자체 상품이 "
+        "일부 있어도 여러 브랜드를 팔면 channel\n"
+        "4) other: 어느 것도 아님\n"
+        "근거는 검색어다: 브랜드·서비스 사이트는 자기 이름과 자기 제품 이름으로 트래픽을 받고, 쇼핑몰은 "
+        "남의 브랜드 이름으로 받는다. 같은 업종이라는 것만으로 rival 이 아니다.\n"
+        f'답은 JSON 하나: {{"도메인": "{"|".join(roles)}", ...}}\n\n'
+        + "\n".join(f"- {d}: {', '.join(k)}" for d, k in evidence.items()))
+    return {d: str(v) for d, v in got.items() if d in evidence and str(v) in roles}
+
+
 def _put_metric(conn, pid: int, day: str, domain: str, is_self: int, m: dict) -> None:
     """competitor_metrics 한 줄. share 는 넣지 않는다 — 분모가 바뀌면 낡기 때문에
     조회 시 `etv / SUM(etv)` 로 계산한다."""
@@ -256,6 +398,12 @@ def _put_gap(conn, pid: int, day: str, rival: str, row: dict) -> None:
              volume=excluded.volume, kind=excluded.kind""",
         (pid, day, row["keyword"], rival, row["position"], row["our_position"],
          row["volume"], _kind(row["our_position"], row["position"])))
+
+
+def dashboard_types() -> tuple:
+    """사이트 종류 (id, 라벨) — 정본은 dashboard.PROJECT_TYPES. 늦게 불러온다(순환 import 방지)."""
+    import dashboard
+    return dashboard.PROJECT_TYPES
 
 
 def _cap(domains: list[str]) -> list[str]:
@@ -334,8 +482,9 @@ def collect(project: str, *,
             throttle: float | None = None,
             conn=None,
             fetch=None,
-            post=None) -> collector.StageResult:
-    """경쟁사를 찾고(B) 역키워드를 캐고(A) 위치 차이를 적재한다(C).
+            post=None,
+            ask=None) -> collector.StageResult:
+    """경쟁사를 찾고(B·D) 가르고(E) 역키워드를 캐고(A) 위치 차이를 적재한다(C).
 
     Args:
         project: 사이트 이름
@@ -352,7 +501,9 @@ def collect(project: str, *,
         fetch: (domain, locale, limit) -> (items, cost) — 주면 Labs 대신 이것을
                부른다 (자체점검이 requests.post 를 갈아끼우던 자리)
         post: (path, body) -> (result, cost) — 주면 serp_adapter.post_dataforseo
-              대신 이것을 부른다. 새 축(B·C)의 주입 자리.
+              대신 이것을 부른다. 새 축(B·C·D·E)의 주입 자리.
+        ask: (prompt) -> dict — AI 한 번(JSON). 주면 OpenRouter 대신 이것을 부른다.
+             없고 OPENROUTER_API_KEY 도 없으면 D·E 는 끈다(예전 동작).
 
     Returns:
         StageResult(ok=...). 유료 키 부재만 ok=False, skipped=True (진짜 못 한
@@ -361,6 +512,8 @@ def collect(project: str, *,
     ap = _parser()
     fetch = fetch or serp_adapter.fetch_labs_ranked_keywords
     post = post or serp_adapter.post_dataforseo
+    if ask is None and os.environ.get("OPENROUTER_API_KEY"):
+        ask = openrouter_json
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
@@ -427,6 +580,7 @@ def collect(project: str, *,
         inserted_total = 0
         volumes_total = 0
         auto_new = metric_rows = gap_rows = extra_calls = kw_done = 0
+        nonbrand_new = judged = 0
 
         calls_lock = threading.Lock()
 
@@ -460,11 +614,14 @@ def collect(project: str, *,
             kw_done += 1
             print(f"  {d}: fetched={len(items)} kept={len(kept)} inserted={inserted}")
 
+        labs = {"rows": [], "mine": None}      # B 의 응답 — 몫(metric_axis)이 판정 뒤에 쓴다
+
         def auto_axis() -> None:
-            """자동 탐지 + 트래픽 몫 — competitors_domain 한 콜로 둘 다 나온다."""
-            nonlocal total_cost, auto_new, metric_rows, extra_calls
+            """자동 탐지 — competitors_domain 한 콜. 같은 응답의 지표는 판정 뒤 몫에 쓴다."""
+            nonlocal total_cost, auto_new
             rows, cost = _fetch_competitors(_post, ours, locale, n_auto)
             total_cost += cost
+            labs["rows"] = rows
             # 제외 필터는 새로 만들지 않는다 — scoring.foreign_brands 가 yaml 의
             # tools/foreign_brands 와 기존 competitors 를 이미 정규화해 갖고 있다.
             brands = scoring.foreign_brands(conn, p["id"], st.cfg)
@@ -486,8 +643,69 @@ def collect(project: str, *,
                     "INSERT INTO competitors(project_id, domain, source) VALUES(?,?, 'auto_labs') "
                     "ON CONFLICT(project_id, domain) DO NOTHING", (p["id"], d)).rowcount
             print(f"  auto: found={len(rows)} kept={len(cand)} new={auto_new}")
+            labs["mine"] = mine
 
-            # 몫의 분모 — 경쟁사로 읽힌 것(플랫폼 제외) 중 지표를 받은 것만.
+        def nonbrand_axis() -> None:
+            """D — 우리 검색어에서 브랜드명을 빼고 그 검색결과의 경쟁사를 찾는다."""
+            nonlocal total_cost, nonbrand_new
+            top, c = _top_keywords(_post, ours, locale, 100,
+                                   "keyword_data.keyword_info.search_volume,desc")
+            total_cost += c
+            terms = _brand_terms(ask, ours, top, (st.cfg or {}).get("brand_aliases"))
+            kws = _nonbrand(top, terms, NONBRAND_KWS)
+            if not kws:
+                print(f"  nonbrand: 브랜드명 없는 검색어가 없습니다 (브랜드 표기 {sorted(terms)})")
+                return
+            doms, c = _serp_competitors(_post, kws, locale, n_auto * 3)
+            total_cost += c
+            brands = scoring.foreign_brands(conn, p["id"], st.cfg)
+            plats = scoring.third_party_platforms()
+            cand = [d for d in doms if not scoring.owns(d, ours)
+                    and scoring._stem(d) not in brands and not scoring.is_third_party(d, plats)]
+            for d in cand[:n_auto]:
+                nonbrand_new += conn.execute(
+                    "INSERT INTO competitors(project_id, domain, source) VALUES(?,?, 'auto_nonbrand') "
+                    "ON CONFLICT(project_id, domain) DO NOTHING", (p["id"], d)).rowcount
+            print(f"  nonbrand: 브랜드 표기 {sorted(terms)} · 검색어 {len(kws)}개 → "
+                  f"found={len(doms)} kept={len(cand)} new={nonbrand_new}")
+
+        def role_axis() -> None:
+            """E — 판정 안 한 자동 후보마다 상위 검색어를 받고 AI 한 번으로 역할을 가른다."""
+            nonlocal total_cost, judged
+            import json
+            todo = scoring.unjudged(conn, p["id"], ROLE_CAP)
+            if not todo:
+                return
+            evidence: dict = {}
+
+            def got_one(d, got):
+                nonlocal total_cost
+                kws, c = got
+                total_cost += c
+                if kws:
+                    evidence[d] = [k for k, _ in kws]
+
+            fanout.each(st, todo,
+                        lambda d: _top_keywords(_post, d, locale, ROLE_EVIDENCE,
+                                                "ranked_serp_element.serp_item.etv,desc"),
+                        got_one, workers=fanout.LIMITS["dataforseo"], label=lambda d: d)
+            if not evidence:
+                return
+            label = dict(dashboard_types()).get(p["type"] or "", p["type"] or "")
+            roles = _classify(ask, ours, label, evidence)
+            for d, role in roles.items():
+                judged += conn.execute(
+                    "UPDATE competitors SET role=?, role_why=? WHERE project_id=? AND domain=?",
+                    (role, json.dumps(evidence[d][:ROLE_EVIDENCE], ensure_ascii=False),
+                     p["id"], d)).rowcount
+            conn.commit()
+            print("  roles: " + ", ".join(f"{d}={scoring.ROLES.get(r, r)}" for d, r in roles.items()))
+
+        def metric_axis() -> None:
+            """트래픽 몫 — B 의 지표를, 판정이 끝난 경쟁사로만 적는다(판매 채널이 분모에 안 섞이게)."""
+            nonlocal total_cost, metric_rows, extra_calls
+            rows, mine = labs["rows"], labs["mine"]
+            # 몫의 분모 — 경쟁사로 읽힌 것(플랫폼·판매 채널 제외) 중 지표를 받은 것만.
             regs = set(scoring.rivals(conn, p["id"], ours)[0])
             for row in rows:
                 if row["domain"] in regs and row["metrics"]:
@@ -538,6 +756,22 @@ def collect(project: str, *,
                 except Exception as e:      # 한 축이 죽어도 나머지 축은 산다
                     st.fail(str(e), item="자동 경쟁사 탐지", kind=type(e).__name__)
                 conn.commit()
+                # D·E 는 AI 가 있을 때만 — 없으면 예전 동작 그대로(B 가 붙인 것을 그대로 쓴다).
+                if ask is not None and ours:
+                    for axis, item in ((nonbrand_axis, "비브랜드 경쟁사 발견"),
+                                       (role_axis, "경쟁사 역할 판정")):
+                        try:
+                            axis()
+                        except collector.Fatal:
+                            raise
+                        except Exception as e:
+                            st.fail(str(e), item=item, kind=type(e).__name__)
+                        conn.commit()
+                try:
+                    metric_axis()
+                except Exception as e:
+                    st.fail(str(e), item="트래픽 몫", kind=type(e).__name__)
+                conn.commit()
                 if not domain:              # 새로 붙은 경쟁사도 역키워드·Gap 대상에 넣는다
                     domains = _cap(_resolve_domains(conn, p["id"], None, ours))
             # 역키워드(도메인마다)와 Content Gap(경쟁사마다)은 서로 독립이다 — 한 줄로 펴서
@@ -555,6 +789,7 @@ def collect(project: str, *,
             r.api_calls = kw_done + extra_calls
             r.notes = (f"domains={len(domains)} inserted={inserted_total} "
                        f"volumes_filled={volumes_total} auto_new={auto_new} "
+                       f"nonbrand_new={nonbrand_new} judged={judged} "
                        f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}")
 
         print(f"\ncollected {len(domains)} domains, "
@@ -566,7 +801,7 @@ def collect(project: str, *,
         # 적재 0건인데 오류가 있었으면 완료가 아니다 — 판정은 collector 한 벌이다.
         # "실제로 뭔가 했나"는 세 축의 합이다. inserted_total 만 보면 자동 탐지가
         # 죽고 Gap 축은 3행을 넣은 바퀴도 실패로 읽힌다 (아래 자체점검이 그 자리).
-        return st.verdict(inserted_total + gap_rows + metric_rows,
+        return st.verdict(inserted_total + gap_rows + metric_rows + nonbrand_new + judged,
                           rows=inserted_total, cost=total_cost)
 
 
@@ -608,6 +843,9 @@ def _selfcheck() -> None:
     # 키는 모킹 단계에서만 필요 — 실제 호출 안 함.
     os.environ["DATAFORSEO_LOGIN"] = "login"
     os.environ["DATAFORSEO_PASSWORD"] = "pw"
+    # AI 키가 이 PC 의 env 에 있으면 D·E 축이 켜져 아래 기존 검사가 흔들린다 — 끄고 시작한다.
+    # D·E 는 맨 아래에서 ask 를 주입해 따로 본다.
+    os.environ.pop("OPENROUTER_API_KEY", None)
 
     # 사이트 설정 — tools 필터(자동 탐지 제외 목록)가 여기서 온다(정본 db.SETTING_KEYS).
     conn = db.connect()
@@ -914,7 +1152,98 @@ def _selfcheck() -> None:
     assert threading.get_ident() not in on, "Labs 호출이 메인 스레드에서 돌았다"
 
     conn.close()
+    _roles_check()
+    assert [site_of(h) for h in ("search.11st.co.kr", "m.gmarket.co.kr", "kr.louisvuitton.com",
+                                 "www.dior.com", "shop.brand.com.au", "musinsa.com")] == \
+        ["11st.co.kr", "gmarket.co.kr", "louisvuitton.com", "dior.com", "brand.com.au", "musinsa.com"]
     print("collect_gap self-check ok")
+
+
+def _roles_check() -> None:
+    """D·E — 브랜드 사이트(구찌 모양): 겹침만 보면 쇼핑몰이 경쟁사가 된다(2026-09-29 실측).
+
+    D 는 브랜드명을 뺀 검색어로 경쟁 브랜드를 찾고, E 는 후보의 상위 검색어로 쇼핑몰을
+    판매 채널로 가른다. 판매 채널은 경쟁사로 안 읽히고(scoring.rivals) 몫의 분모에도 안
+    든다. 사람이 적은 경쟁사는 판정하지 않는다. AI 가 지어낸 역할·목록 밖 브랜드 표기는 버린다.
+    """
+    import contextlib
+    import io
+    import json
+    conn = db.connect()
+    pid = db.register_project(conn, {"name": "gc", "domain": "gucci.test", "locale": "ko-KR",
+                                     "type": "commerce", "brand_aliases": ["gucci"]})
+    conn.execute("INSERT INTO competitors(project_id, domain, source) VALUES(?, 'hermes.test', 'manual')",
+                 (pid,))
+    conn.commit()
+    posts, asked = [], []
+
+    def post(path, body):
+        b0 = body[0]
+        posts.append((path, b0))
+        if path == LABS_COMPETITORS:      # B — 겹침 순: 쇼핑몰이 위
+            return [{"items": [{"domain": "gucci.test", "metrics": {"organic": {"count": 50, "etv": 500.0}}},
+                               {"domain": "lfmall.test", "metrics": {"organic": {"count": 40, "etv": 400.0}}},
+                               {"domain": "hermes.test", "metrics": {"organic": {"count": 9, "etv": 90.0}}}]}], 0.01
+        if path == LABS_RANKED and b0["target"] == "gucci.test":     # D — 우리 검색어
+            return [{"items": [{"keyword_data": {"keyword": k, "keyword_info": {"search_volume": v}}}
+                               for k, v in (("구찌 가방", 9000), ("구찌", 50000), ("명품 가방", 7000),
+                                            ("gucci bag", 800), ("여성 지갑", 3000))]}], 0.01
+        if path == LABS_RANKED:                                      # E — 후보의 상위 검색어
+            ev = {"lfmall.test": ["lf몰", "구찌 가방", "크롬하츠 후드"],
+                  "dior.test": ["디올", "디올 가방", "디올 향수"]}[b0["target"]]
+            return [{"items": [{"keyword_data": {"keyword": k}} for k in ev]}], 0.01
+        if path == LABS_SERP_COMPETITORS:
+            assert set(b0["keywords"]) == {"명품 가방", "여성 지갑"}, \
+                f"브랜드명(구찌·gucci)이 든 검색어가 비브랜드 발견에 섞였다: {b0['keywords']}"
+            assert b0["keywords"] == ["명품 가방", "여성 지갑"], "검색량 큰 순이 아니다"
+            return [{"items": [{"domain": "www.dior.test"}, {"domain": "gucci.test"},
+                               {"domain": "namu.wiki"}]}], 0.01
+        if path == LABS_INTERSECT:
+            return [{"items": []}], 0.0
+        raise AssertionError(f"예상 밖 엔드포인트: {path}")
+
+    def ask(prompt):
+        asked.append(prompt)
+        if "brand_terms" in prompt:
+            return {"brand_terms": ["구찌", "지어낸이름"]}       # 목록 밖 표기는 버려져야 한다
+        return {"lfmall.test": "channel", "dior.test": "rival", "hermes.test": "channel",
+                "nowhere.test": "rival", "x": "지어낸역할"}
+
+    def fetch(domain, locale, limit):
+        return [], 0.0
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, ask=ask,
+                      rivals=5, intersect=0)
+    assert res.ok, res
+    rows = {r["domain"]: dict(r) for r in conn.execute(
+        "SELECT domain, source, role, role_why FROM competitors WHERE project_id=?", (pid,))}
+    assert rows["dior.test"]["source"] == "auto_nonbrand", rows      # D 가 경쟁 브랜드를 찾았다
+    assert "namu.wiki" not in rows and "gucci.test" not in rows, "플랫폼·우리 자신이 후보가 됐다"
+    assert rows["lfmall.test"]["role"] == "channel" and rows["dior.test"]["role"] == "rival", rows
+    assert json.loads(rows["lfmall.test"]["role_why"])[0] == "lf몰", "판정 근거가 안 남았다"
+    assert rows["hermes.test"]["role"] is None, "사람이 적은 경쟁사를 판정했다"
+    # 판정 프롬프트에 사람이 적은 것은 안 들어간다 — 역할을 돌려줘도 안 쓴다
+    judge = [q for q in asked if "brand_terms" not in q][0]
+    assert "hermes.test" not in judge and "쇼핑몰 · 브랜드" in judge, judge
+    # 경쟁사로 읽기: 판매 채널은 빠지고 사람이 적은 것·경쟁은 남는다
+    keep, dropped = scoring.rivals(conn, pid, "gucci.test")
+    assert keep == ["hermes.test", "dior.test"] and "lfmall.test" in dropped, (keep, dropped)
+    # 몫의 분모에 판매 채널이 없다
+    met = {r[0] for r in conn.execute("SELECT domain FROM competitor_metrics WHERE project_id=?", (pid,))}
+    assert "lfmall.test" not in met and {"gucci.test", "hermes.test"} <= met, met
+    # 두 번째 런 — 이미 판정한 도메인은 다시 사지 않는다(후보당 ranked_keywords 한 콜이다)
+    posts.clear()
+    with contextlib.redirect_stdout(io.StringIO()):
+        collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, ask=ask, rivals=5, intersect=0)
+    again = [b["target"] for pth, b in posts if pth == LABS_RANKED and b["target"] != "gucci.test"]
+    assert again == [], f"이미 판정한 도메인의 근거를 또 샀다: {again}"
+    # AI 가 없으면 D·E 는 안 돈다 — 예전 동작 그대로
+    posts.clear()
+    with contextlib.redirect_stdout(io.StringIO()):
+        collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, rivals=5, intersect=0)
+    assert not [1 for pth, _ in posts if pth in (LABS_RANKED, LABS_SERP_COMPETITORS)], posts
+    conn.close()
 
 
 if __name__ == "__main__":

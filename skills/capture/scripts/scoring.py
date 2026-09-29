@@ -236,6 +236,14 @@ SERP_RIVAL_MIN_SHARE = 0.10     # 이번에 잰 검색어의 10% 이상에서 �
 SERP_RIVAL_MIN_HITS = 3         # 잰 검색어가 적을 때의 바닥
 SERP_RIVAL_MAX = 10             # 한 바퀴에 붙이는 수 — 많이 겹친 순
 
+# 경쟁사 표의 역할 판정(collect_gap._classify) — {id: 화면 이름}. 정본은 여기 한 벌이다
+# (판정 프롬프트·화면·경쟁사로 읽기가 전부 이 표를 본다). 검색결과가 겹친다고 다 경쟁사가
+# 아니다: 브랜드의 검색결과는 그 브랜드를 파는 쇼핑몰·포털로 가득하다.
+ROLES = {"rival": "경쟁", "channel": "판매 채널", "media": "포털·미디어", "other": "기타"}
+# 경쟁사로 안 읽는 역할 — 역키워드·콘텐츠 갭·트래픽 몫(전부 돈이 드는 축)에서 빠진다.
+# "기타"도 뺀다: 판정이 경쟁이 아니라고 한 것이다(다나와가 기타로 판정돼 경쟁사로 남았다).
+NOT_RIVAL_ROLES = ("channel", "media", "other")
+
 
 def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]:
     """순위 수집 한 바퀴가 경쟁사로 붙일 도메인. hits = {도메인: 상위에 선 검색어 수}.
@@ -253,8 +261,8 @@ def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]
 
 def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
            platforms=None) -> tuple[list[str], list[str]]:
-    """경쟁사 표를 **경쟁사로** 읽는다 → (쓸 것, 뺀 플랫폼). 돈을 쓰는 단계(갭 분석·
-    백링크 교집합)는 이걸로 읽는다.
+    """경쟁사 표를 **경쟁사로** 읽는다 → (쓸 것, 뺀 것). 돈을 쓰는 단계(갭 분석·
+    백링크 교집합)는 이걸로 읽는다. 뺀 것 = 제3자 플랫폼 + 판정이 판매 채널·포털이라고 한 자동 후보.
 
     사람이 고른 것(manual)이 먼저, 그다음 들어온 순. 우리 자신과 제3자 플랫폼은 뺀다 —
     표에 옛 규칙이 넣은 행이 남아 있어도 대상이 되지 않게(쓰는 쪽도 이미 거른다).
@@ -262,14 +270,40 @@ def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
     plats = third_party_platforms() if platforms is None else platforms
     seen, keep, dropped = set(), [], []
     for r in conn.execute(
-            "SELECT domain FROM competitors WHERE project_id=?"
+            "SELECT domain, source, role FROM competitors WHERE project_id=?"
             " ORDER BY (source = 'manual') DESC, id", (project_id,)):
         d = host_of(str(r[0] or ""))
         if not d or d in seen or (own and owns(d, own)):
             continue
         seen.add(d)
+        # 판정이 판매 채널·포털이라고 한 자동 후보는 경쟁사가 아니다(collect_gap._classify).
+        # 브랜드 사이트의 검색결과는 그 브랜드를 파는 쇼핑몰로 가득해서, 겹침만 보면
+        # lfmall 이 구찌의 경쟁사가 됐다. 사람이 적은 것(manual)은 판정과 무관하게 쓴다.
+        if r[1] != "manual" and r[2] in NOT_RIVAL_ROLES:
+            dropped.append(d)
+            continue
         (dropped if is_third_party(d, plats) else keep).append(d)
     return keep, dropped
+
+
+def unjudged(conn: sqlite3.Connection, project_id: int, limit: int,
+             platforms=None) -> list[str]:
+    """역할 판정(collect_gap E)을 기다리는 자동 후보 — 들어온 순, 제3자 플랫폼 제외.
+
+    사람이 적은 것(manual)은 판정하지 않는다(사람이 고른 것이 이긴다). 경쟁사 표를 읽는
+    자리는 이 파일 한 곳이다(rivals 와 같은 규칙) — 수집기가 표를 직접 긁지 않게.
+    """
+    plats = third_party_platforms() if platforms is None else platforms
+    out = []
+    for r in conn.execute(
+            "SELECT domain FROM competitors WHERE project_id=? AND source<>'manual'"
+            " AND role IS NULL ORDER BY id", (project_id,)):
+        d = host_of(str(r[0] or ""))
+        if d and d not in out and not is_third_party(d, plats):
+            out.append(d)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def is_foreign_brand(query: str, brands: set[str]) -> bool:

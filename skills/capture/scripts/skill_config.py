@@ -75,6 +75,7 @@ CONFIG: dict = {
         "kakao.com",        # pf.kakao.com(카카오톡 채널) 등
         "blog.naver.com", "cafe.naver.com", "kin.naver.com", "post.naver.com",
         "tistory.com", "brunch.co.kr", "velog.io", "dcinside.com", "clien.net",
+        "google.com",       # 검색 자체(google.com/search·support 등) — 경쟁사 후보로 섞였다
         "play.google.com",  # 앱 스토어 등록 페이지 — 앱은 거기서 등장한다. 백링크
         "apps.apple.com",   #   교집합(collect_backlinks)도 이 목록으로 플랫폼을 뺀다
     ],
