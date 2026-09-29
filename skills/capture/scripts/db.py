@@ -142,6 +142,20 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀다
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
+-- 우리 도메인이 순위를 가진 검색어 — DataForSEO Labs 추정(ranked_keywords). 서치콘솔이 없는
+-- 사이트의 서치콘솔 대용이다: 어느 검색어에서 몇 위이고 어느 페이지가 걸렸나. 추정이라
+-- gsc_snapshots 와 섞지 않는다(화면·요청문이 "추정"이라고 말한다). 쓰는 쪽은 호스팅 워커.
+CREATE TABLE IF NOT EXISTS labs_ranked (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  keyword TEXT NOT NULL,
+  position INTEGER,                           -- 그 검색어의 우리 최고 순위(구글 추정)
+  url TEXT,                                   -- 그 순위의 우리 페이지
+  volume INTEGER,                             -- 월 검색량(Labs 추정). NULL = 모름
+  UNIQUE(project_id, checked_date, keyword)
+);
+CREATE INDEX IF NOT EXISTS idx_labs_ranked ON labs_ranked(project_id, checked_date);
 CREATE TABLE IF NOT EXISTS serp_results (     -- 검색결과 상위 — rank_snapshots 는 "내 자리"만 안다
   id INTEGER PRIMARY KEY,
   keyword_id INTEGER NOT NULL REFERENCES keywords(id),
@@ -1959,6 +1973,21 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
             ON CONFLICT(project_id, checked_date, url, strategy) DO UPDATE SET
               {', '.join(f'{c}=excluded.{c}' for c in cols)}""",
         [(project_id, checked_date, r["url"], r["strategy"]) + tuple(r.get(c) for c in cols)
+         for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_labs_ranked(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                      rows) -> int:
+    """우리 순위 검색어 한 회차. 같은 날 다시 쓰면 덮는다(upsert)."""
+    rows = [r for r in rows if r.get("keyword")]
+    conn.executemany(
+        """INSERT INTO labs_ranked(project_id, checked_date, keyword, position, url, volume)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(project_id, checked_date, keyword) DO UPDATE SET
+             position=excluded.position, url=excluded.url, volume=excluded.volume""",
+        [(project_id, checked_date, r["keyword"], r.get("position"), r.get("url"), r.get("volume"))
          for r in rows])
     conn.commit()
     return len(rows)

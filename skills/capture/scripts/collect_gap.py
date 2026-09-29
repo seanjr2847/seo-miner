@@ -284,6 +284,26 @@ def site_of(host: str) -> str:
     return ".".join(parts[-n:])
 
 
+def fetch_own_ranked(post, target: str, locale: str, limit: int = 500) -> tuple[list[dict], float]:
+    """우리 도메인의 순위 검색어 — [{keyword, volume, position, url}], 검색량 큰 순.
+    서치콘솔 없는 사이트의 서치콘솔 대용(db.labs_ranked). 순위는 그 검색어의 우리 최고 자리."""
+    loc, lang, _ = serp_adapter.location(locale)
+    result, cost = post(LABS_RANKED, [{
+        "target": target, "location_name": loc, "language_code": lang, "limit": limit,
+        "order_by": ["keyword_data.keyword_info.search_volume,desc"]}])
+    out: dict[str, dict] = {}
+    for r0 in result or []:
+        for it in (r0.get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            kw, sv = _kw_of(it)
+            se = _sub(_sub(it, ("ranked_serp_element",)) or {}, ("serp_item",)) or {}
+            pos = _num(se.get("rank_group") or se.get("rank_absolute"), int)
+            if kw and (kw not in out or (pos or 999) < (out[kw]["position"] or 999)):
+                out[kw] = {"keyword": kw, "volume": sv, "position": pos, "url": se.get("url")}
+    return list(out.values()), cost
+
+
 def _serp_competitors(post, keywords: list, locale: str, limit: int) -> tuple[list, float]:
     """이 검색어들의 검색결과에 많이 서는 도메인 — 겹친 검색어 수·가시성 순."""
     loc, lang, _ = serp_adapter.location(locale)

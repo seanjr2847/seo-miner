@@ -678,6 +678,8 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     brands = scoring.foreign_brands(conn, pid, cfg)
     striking = scoring.striking(conn, pid, cur, brands=brands)
     striking_page2 = sum(1 for r in striking if r.get("band") == "page2")
+    # 서치콘솔이 없으면 추정 순위로 뽑은 같은 kind 의 근거 — 요청문(brief._ev_striking)이 읽는다
+    striking_labs = [] if cur else scoring.striking_labs(conn, pid, brands=brands)
 
     # 일별 추이·기기 격차·색인 점검. 판정 함수가 빈 목록을 주는 경우가 두 가지라
     # (아직 안 수집 / 수집했는데 문제 없음) 최신 수집일도 같이 내려보낸다 —
@@ -706,7 +708,7 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
                                            scoring.aliases_of(cfg)),
         "by_intent": by_intent, "by_cluster": by_cluster,
         "by_country": by_country, "country_date": country_date,
-        "striking": striking, "striking_page2": striking_page2,
+        "striking": striking, "striking_page2": striking_page2, "striking_labs": striking_labs,
         "brand_catalog_empty": len(brands) == 0,
         "daily": daily, "daily_stats": daily_stats,
         "device_gap": scoring.device_gap(conn, pid),

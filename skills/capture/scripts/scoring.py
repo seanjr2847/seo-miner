@@ -487,6 +487,50 @@ SELECT query, ROUND({POS_SQL},1) pos, SUM(impressions) imp, SUM(clicks) clk
 """
 
 
+STRIKING_MIN_VOL = 50       # 추정 경로(labs)의 수요 하한 — 월 검색량. 노출 하한(STRIKING_MIN_IMP)의 짝
+
+
+def striking_labs(conn: sqlite3.Connection, project_id: int, *, limit: int = 15,
+                  brands: set[str] | None = None) -> list[dict]:
+    """서치콘솔 없는 사이트의 '밀면 오를 검색어' — DataForSEO 추정 순위(db.labs_ranked).
+
+    striking() 과 같은 4~20위 띠·같은 band 로 가른다. 노출·클릭은 없다(None) — 그 자리를
+    월 검색량(vol)이 대신하고, 걸린 페이지(url)를 같이 준다. 관련 없다고 판정된 검색어
+    (keywords.verdict_off)는 뺀다. src="labs" 로 표시해 화면·요청문이 추정이라고 말한다.
+    """
+    try:
+        d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?",
+                         (project_id,)).fetchone()[0]
+    except sqlite3.OperationalError:
+        return []                      # 표가 생기기 전의 Brain
+    if not d:
+        return []
+    over = limit * 3
+    rows = [dict(r) for r in conn.execute(
+        """SELECT l.keyword query, l.position pos, l.volume vol, l.url url FROM labs_ranked l
+            WHERE l.project_id=? AND l.checked_date=? AND l.position BETWEEN ? AND ?
+              AND COALESCE(l.volume, 0) >= ?
+              AND NOT EXISTS (SELECT 1 FROM keywords k WHERE k.project_id=l.project_id
+                                AND k.keyword=l.keyword AND k.verdict_off=1)
+            ORDER BY l.volume DESC LIMIT ?""",
+        (project_id, d, STRIKING_LO, STRIKING_HI, STRIKING_MIN_VOL, over))]
+    if brands:
+        rows = drop_foreign_brands(rows, brands)
+    # 띄어쓰기 변형('카드 지갑'·'카드지갑')은 한 검색어 — 검색량 큰 쪽 하나만(이미 그 순서다)
+    seen: set = set()
+    uniq = []
+    for r in rows:
+        n = norm(r["query"])
+        if n not in seen:
+            seen.add(n)
+            uniq.append(r)
+    rows = uniq[:limit]
+    for r in rows:
+        r.update(src="labs", date=d, imp=None, clk=None, gap=gap_to_page1(r["pos"]),
+                 band="page1" if r["pos"] <= PAGE1 else "page2")
+    return rows
+
+
 def striking(conn: sqlite3.Connection, project_id: int, snapshot_date: str | None,
              *, limit: int = 15, brands: set[str] | None = None) -> list[dict]:
     """조금만 밀면 1페이지 갈 검색어. 남의 브랜드 검색은 빼고, gap·band 를 붙여 돌려준다.
@@ -1323,6 +1367,18 @@ def top_pages(conn: sqlite3.Connection, project_id: int, limit: int) -> list[str
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
             GROUP BY page ORDER BY imp DESC LIMIT ?""",
         (project_id, cur, period, limit))]
+
+
+def labs_page(conn: sqlite3.Connection, project_id: int, query: str) -> str | None:
+    """추정 순위(labs_ranked)가 이 검색어에 걸었다고 한 우리 페이지 — 서치콘솔 없는 사이트에서
+    "어느 페이지를 고치나"의 답. pages_by_query 가 비었을 때만 쓴다."""
+    try:
+        r = conn.execute(
+            "SELECT url FROM labs_ranked WHERE project_id=? AND keyword=? AND url IS NOT NULL"
+            " ORDER BY checked_date DESC LIMIT 1", (project_id, query)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return r[0] if r else None
 
 
 def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
@@ -3774,8 +3830,12 @@ _KIND_SPECS = {
     "striking_distance": dict(
         see=("keywords", "log"),
         label="밀면 오를 검색어", defensive=False,
-        detect=lambda ctx: striking(ctx["conn"], ctx["pid"], ctx["cur"], brands=ctx["brands"]),
+        # 서치콘솔이 없으면 DataForSEO 추정 순위로 — 같은 kind, 근거 문장만 다르다.
+        detect=lambda ctx: (striking(ctx["conn"], ctx["pid"], ctx["cur"], brands=ctx["brands"])
+                            if ctx["cur"] else
+                            striking_labs(ctx["conn"], ctx["pid"], brands=ctx["brands"])),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
+                                 "volume": r.get("vol"),
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
@@ -3784,10 +3844,13 @@ _KIND_SPECS = {
         # "12.8위"는 실측 순위로 읽힌다 — 직접 검색해도 안 보인다는 문의가
         # 여기서 나왔다. GSC 가 보고한 기간 평균이라고 앞에서 못 박는다.
         reasoning=lambda r, ctx: (
-            f"평균 {r['pos']}위 · 노출 {r['imp']:,} · 클릭 {r['clk']:,}. "
+            (f"추정 {r['pos']}위 · 월 검색량 {r['vol']:,} · 걸린 페이지 {r.get('url') or '모름'}. "
+             if r.get("src") == "labs" else
+             f"평균 {r['pos']}위 · 노출 {r['imp']:,} · 클릭 {r['clk']:,}. ")
             + (f"이미 1페이지이고 상단 3위권까지 {round(max(0.0, r['pos'] - 3), 1)}칸"
                if r["band"] == "page1" else f"1페이지까지 {r['gap']}칸")
-            + f" 남았습니다 (구글 실적 {ctx['cur']} 기준)"),
+            + (f" 남았습니다 (DataForSEO 추정 {r['date']} 기준 — 서치콘솔 없이 본 순위)"
+               if r.get("src") == "labs" else f" 남았습니다 (구글 실적 {ctx['cur']} 기준)")),
         play=_SD_PLAY),
     "ctr_gap": dict(
         see=("analysis", "an-ctr"),
@@ -5006,6 +5069,30 @@ def _selfcheck() -> None:
     assert [r["query"] for r in rows] == ["내 키워드"], rows   # 3.0위는 구간 밖, ecrett는 남의 브랜드
     assert rows[0]["gap"] == 2.0
     assert striking(conn, 1, None) == []
+    # 서치콘솔 없는 사이트 — 추정 순위(labs_ranked)로 같은 4~20위 띠를 잡는다. 수요 하한 아래·
+    # 20위 밖·무관 판정·남의 브랜드는 빠지고, 걸린 페이지와 추정 표시가 붙는다.
+    assert striking_labs(conn, 1) == [], "추정 순위가 없는데 기회를 지어냈다"
+    conn.executemany("INSERT INTO labs_ranked(project_id, checked_date, keyword, position, url, volume)"
+                     " VALUES(1,'2026-09-29',?,?,?,?)",
+                     [("가방", 8, "https://s.kr/bags", 60500), ("셔츠", 19, "https://s.kr/shirts", 22200),
+                      ("반지", 25, "https://s.kr/rings", 12100), ("희귀어", 9, "https://s.kr/x", 10),
+                      ("매장", 12, "https://s.kr/store", 9000), ("ecrett 후기", 6, "https://s.kr/e", 5000),
+                      ("가 방", 11, "https://s.kr/bags2", 500)])     # 띄어쓰기 변형 — 한 검색어로 친다
+    conn.execute("INSERT INTO keywords(project_id, keyword, verdict_off) VALUES(1, '매장', 1)")
+    lr = striking_labs(conn, 1, brands=brands)
+    assert [r["query"] for r in lr] == ["가방", "셔츠"], lr
+    assert lr[0]["band"] == "page1" and lr[1]["band"] == "page2" and lr[0]["src"] == "labs", lr
+    assert labs_page(conn, 1, "셔츠") == "https://s.kr/shirts" and labs_page(conn, 1, "없음") is None
+    spec = next(k for k in KINDS if k.name == "striking_distance")
+    ctx = {"conn": conn, "pid": 1, "cur": None, "brands": brands}
+    got = spec.detect(ctx)
+    assert [r["query"] for r in got] == ["가방", "셔츠"], "서치콘솔이 없을 때 추정 경로로 안 간다"
+    why = spec.reasoning(got[0], ctx)
+    assert "추정 8위" in why and "https://s.kr/bags" in why and "서치콘솔 없이" in why, why
+    assert "노출" not in why, f"추정 경로가 노출을 말한다: {why}"
+    assert spec.metrics(got[0], ctx)["volume"] == 60500
+    conn.execute("DELETE FROM labs_ranked")
+    conn.execute("DELETE FROM keywords WHERE keyword='매장'")
     cands = pseo_candidates(conn, 1, "2026-08-14")
     assert [c["query"] for c in cands] == ["내 키워드"], cands
 
