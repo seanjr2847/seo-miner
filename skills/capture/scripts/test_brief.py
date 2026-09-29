@@ -1390,11 +1390,23 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "순위를 더 올려도 이대로면 클릭은 늘지 않습니다" in ev, ev
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert "1. 클릭이 안 나는 이유 가설 표" in want and "meta description 2안" in want, want
-    # 5. 진단에만 있는 항목을 말없이 두지 않는다
-    assert "위 진단에 있는데 여기 없는 것:" in want and "[이미지]" in want and "[내부 링크]" in want, want
-    # 줄지 말지를 한 번에 정한다 — "한두 줄이면 같이 주고"가 결국 아무것도 안 정했다
-    assert "**이것들은 문안을 만들지 않습니다**" in want, want
-    assert "'이번 아님'과 이유" in brief.SHAPES["fix_page"]["form"][-1]
+    # 5. 진단에만 있던 항목도 이 요청문의 산출물이다 — 한 번에 전부 처리한다. 예전엔
+    # '이번 아님'으로 밀려 같은 페이지에 요청문을 몇 번씩 다시 돌렸다.
+    assert "진단 [이미지] 의 고칠 값" in want and "진단 [내부 링크] 의 고칠 값" in want, want
+    # 태그 하나에 진단이 여럿인 것은 틀을 안 댄다 — '그림 위주'에 alt 문안, '링크 과다'에
+    # 들어오는 링크 후보가 나가면 진단과 산출물이 딴말을 한다
+    assert brief.DELIVER_BY_TAG["이미지"] not in want and brief.DELIVER_BY_TAG["내부 링크"] not in want, want
+    assert "문안을 만들지 않습니다" not in want and "이번 아님" not in want, want
+    # 헛짚은 진단은 답이 페이지를 열어 가린다 — 사람이 표를 읽고 가려내던 일이다
+    assert "**진짜 문제인지** 먼저 확인합니다" in want and "'안 고침'" in want, want
+    # 글을 풍성하게 하는 일 — 상위 글·함께 묻는 질문과 견줘 빠진 내용을 찾고, 붙여 넣을
+    # 본문까지 이 답에서 쓴다. 예전엔 재료만 싣고 그걸로 본문을 채우라는 산출물이 없었다.
+    assert brief.CONTENT_FILL in want and want.count("내용 보강") == 1, want
+    assert "**붙여 넣을 본문**" in brief.CONTENT_FILL
+    rules = " ".join(brief.SHAPES["fix_page"]["rules"])
+    assert "이 답은 제안까지입니다" not in rules and "이 답에서 **붙여 넣을 수 있게**" in rules, rules
+    form = brief.SHAPES["fix_page"]["form"][-1]
+    assert "'안 고침'" in form and "뒤로 미루는 '이번 아님'은 쓰지 않습니다" in form, form
     # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
     diag = body.split("## 진단")[1].split("\n## ")[0]
     assert "내보내는 내부 링크 64개 — 본문 11단어당 1개" in diag, diag

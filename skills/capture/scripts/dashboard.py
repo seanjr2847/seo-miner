@@ -32,6 +32,7 @@ SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
+import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
@@ -131,7 +132,10 @@ def _vendor_script() -> str:
 PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
                  ("game", "게임"),
                  ("local_business", "지역 비즈니스"),
-                 ("directory", "목록 · 디렉터리"))
+                 ("directory", "목록 · 디렉터리"),
+                 # 물건을 파는 사이트 — 브랜드 공식몰(gucci.com)·편집숍·쇼핑몰. 웹 서비스(saas)로
+                 # 두면 AI 계수(.45)가 상품·카테고리 수요를 누른다.
+                 ("commerce", "쇼핑몰 · 브랜드"))
 # 받는 쪽 검증이 쓰는 id 만 — 사본이 아니라 위 표에서 뽑은 것이다.
 PROJECT_TYPE_IDS = tuple(i for i, _ in PROJECT_TYPES)
 
@@ -359,8 +363,12 @@ def save_gsc_client(f: dict) -> dict:
     return {"ok": True, "path": str(dest), "client_id": cid[:12] + "…"}
 
 
-def create_project(f: dict) -> dict:
+def create_project(f: dict, *, auto_gsc: bool = True) -> dict:
     """폼 입력 → Brain 등록. AI 프롬프트 초안은 채팅(/capture add) 몫.
+
+    auto_gsc: 속성을 비워 두면 `sc-domain:{domain}` 으로 채운다(로컬 폼 — 서치콘솔이
+    전제다). 호스팅의 "주소로 시작"은 False 로 부른다: 서치콘솔 없이 시작한 사이트에
+    속성을 지어 넣으면 gsc 단계가 건너뛰는 대신 런마다 인증 실패로 떨어진다.
 
     예전엔 이 사이에 `projects/{name}.yaml` 이 한 겹 있었다. 그 파일이 정본이라
     호스팅에서는 컨테이너 디스크에 남았고, 동기화는 Brain 만 나르므로 설정이 사용자
@@ -381,7 +389,8 @@ def create_project(f: dict) -> dict:
     # 이미 등록된 사이트는 옛 프리셋을 계속 들고 있다.
     cfg = {"name": name, "type": f["type"], "domain": domain,
            "locale": str(f.get("locale") or db.DEFAULT_LOCALE).strip(),
-           "gsc_property": str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}",
+           "gsc_property": (str(f.get("gsc_property", "")).strip()
+                            or (f"sc-domain:{domain}" if auto_gsc else "")),
            "brand_aliases": items("brand_aliases"),
            "seed_keywords": items("seed_keywords"),
            "competitors_manual": items("competitors_manual"),
@@ -1114,9 +1123,13 @@ def _axis_competitors(conn, pid: int) -> dict:
         gap_rivals = [r["domain"] for r in q(
             conn, "SELECT DISTINCT domain FROM keyword_gap WHERE project_id=? AND checked_date=?"
                   " ORDER BY 1", (pid, gap_date))]
+    # 역할 판정(collect_gap E) — 경쟁사에서 뺀 곳(판매 채널·포털)을 근거와 함께 보인다.
+    # 안 보이면 "lfmall 은 왜 사라졌나"에 답이 없다. 이름표 정본은 scoring.ROLES.
+    comp_roles = q(conn, "SELECT domain, source, role, role_why FROM competitors"
+                         " WHERE project_id=? AND role IS NOT NULL ORDER BY id", (pid,))
     return {"comp_date": cm_date, "comp_metrics": comp_metrics,
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
-            "gap_rivals": gap_rivals}
+            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES}
 
 
 def _axis_ai_bots(p, crawl: dict) -> dict:
@@ -1150,15 +1163,41 @@ def _axis_vitals(conn, pid: int) -> dict:
     기기의" 값이라서다 — 모바일만 밀리는 검색어의 근거는 두 기기를 나란히 놓아야
     나온다.
     """
+    # 구글이 본 SEO 점검(seo_score·seo_json)도 같은 행에 실린다 — 그 이름표는 만드는 쪽
+    # (collect_vitals.SEO_AUDITS)이 갖고 여기서 같이 보낸다. 화면이 사본을 들면 새 항목이
+    # 영어 id 로 뜬다.
+    labels = {k: list(v) for k, v in collect_vitals.SEO_AUDITS.items()}
     d = conn.execute("SELECT MAX(checked_date) d FROM page_vitals WHERE project_id=?",
                      (pid,)).fetchone()["d"]
     if not d:
-        return {"vitals_date": None, "vitals": {}}
+        return {"vitals_date": None, "vitals": {}, "seo_audits": labels, "serp_titles": {}}
     out: dict[str, dict] = {}
     for r in q(conn, "SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?",
                (pid, d)):
         out.setdefault(r["url"], {})[r["strategy"]] = r
-    return {"vitals_date": d, "vitals": out}
+    return {"vitals_date": d, "vitals": out, "seo_audits": labels,
+            "serp_titles": _own_serp_titles(conn, pid, out)}
+
+
+def _own_serp_titles(conn, pid: int, urls) -> dict:
+    """검색결과에 뜬 내 페이지 제목 {url: 제목} — 구글이 색인해 보여 주는 그대로.
+
+    우리 요청을 막는 사이트는 <title> 을 못 읽는다. 순위 수집이 이미 받아 둔 검색결과의
+    내 줄(serp_results.is_own)이 그 자리를 채운다. 구글이 제목을 고쳐 쓰는 일이 있어
+    **<title> 원문이 아니라 "검색결과에 뜬 제목"**이다 — 화면도 그렇게 부른다.
+    """
+    want = {scoring.norm(u): u for u in urls if u}
+    if not want:
+        return {}
+    got: dict[str, str] = {}
+    for r in conn.execute(
+            "SELECT s.url, s.title FROM serp_results s JOIN keywords k ON k.id = s.keyword_id"
+            " WHERE k.project_id=? AND s.is_own=1 AND s.title IS NOT NULL"
+            " ORDER BY s.checked_at DESC", (pid,)):
+        u = want.get(scoring.norm(r["url"] or ""))
+        if u and u not in got:
+            got[u] = r["title"]
+    return got
 
 
 def _axis_crawl(conn, pid: int) -> dict:

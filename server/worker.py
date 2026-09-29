@@ -41,6 +41,67 @@ import store                                  # noqa: E402
 LOG = collector.LOG.getChild("worker")
 
 
+# 서치콘솔 없이 시작한 사이트가 자동으로 켜는 추적 키워드 수(씨앗 포함). 순위는 키워드당
+# 과금이라 작게 둔다 — 더 재고 싶으면 사람이 [키워드]에서 켠다.
+NO_GSC_KEYWORDS = 20
+
+
+def activate_by_volume(project: str, limit: int | None = None) -> int:
+    """서치콘솔 없는 사이트 — 후보 키워드를 **검색량 순으로** 켠다. 반환: 새로 켠 개수.
+
+    activate_from_gsc 의 짝이다. 그쪽은 "구글이 이미 내 페이지를 이 검색어에 노출했다"는
+    실측으로 고르는데, 서치콘솔이 없으면 그 재료가 없어서 씨앗 몇 개만 순위를 쟀다
+    (gucci: 자동완성 후보 66개가 전부 꺼진 채 순위는 '구찌' 1개). 여기서는 검색량이
+    확인된(volume>0) 후보를 큰 순으로 고른다.
+
+    **순위(rank) 직전에** 부른다(run_all.run_chain 의 before 훅) — 같은 런에서 검색량이
+    나온 뒤라 첫 런부터 순위가 잡힌다. 사이트당 **한 번만** 채운다(auto_keywords 표식):
+    그 뒤 사람이 끈 키워드를 런마다 되켜면 끄는 손잡이가 무의미해진다.
+    """
+    limit = min(limit or NO_GSC_KEYWORDS, settings.count("SEOMINER_MAX_KEYWORDS"))
+    conn = db.connect()
+    try:
+        p = db.get_project(conn, project)
+        if (p["gsc_property"] or "") or db.project_settings(conn, p["id"]).get("auto_keywords"):
+            return 0
+        room = max(0, limit - db.count_active_keywords(conn, p["id"]))
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM keywords WHERE project_id=? AND is_active=0"
+            " AND COALESCE(verdict_off,0)=0 AND volume>0"
+            " ORDER BY volume DESC, id LIMIT ?", (p["id"], room)).fetchall()]
+        if not ids:
+            return 0        # 검색량이 아직 없다 — 표식을 안 찍고 다음 런에 다시 본다
+        n = db.set_keywords_active(conn, p["id"], ids, True)
+        db.set_project_settings(conn, p["id"], {"auto_keywords": time.strftime("%Y-%m-%d")})
+        print(f"[rank] 서치콘솔 없는 사이트 — 검색량 상위 키워드 {n}개를 켜서 함께 잽니다")
+        return n
+    finally:
+        conn.close()
+
+
+def ensure_ai_prompts(project: str, n: int = 20) -> int:
+    """물어볼 질문이 하나도 없으면 만들어 둔다. 반환: 새로 넣은 개수.
+
+    웹에는 `/capture add` 를 칠 채팅이 없다 — 온보딩으로 만든 사이트는 질문이 빈 채로
+    첫 런을 돌아 AI 인용 단계가 통째로 건너뛰었다(gucci). [AI 인용] 화면의 [질문 만들기]
+    와 같은 한 벌(gen_prompts.suggest/save)을 부른다. 이미 질문이 있으면(사람이 만들었거나
+    지웠거나) 손대지 않는다 — 0개일 때만.
+    """
+    import gen_prompts
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, project)["id"]
+        if conn.execute("SELECT 1 FROM ai_prompts WHERE project_id=? LIMIT 1", (pid,)).fetchone():
+            return 0
+        rows = gen_prompts.suggest(project, n=n, conn=conn)
+        added = gen_prompts.save(conn, project, rows) if rows else 0
+        if added:
+            print(f"[{project}] AI 에 물어볼 질문 {added}개를 만들었습니다 — 이번 런부터 인용을 확인합니다")
+        return added
+    finally:
+        conn.close()
+
+
 def activate_from_gsc(project: str, limit: int | None = None) -> int:
     """서치콘솔에 노출된 키워드를 노출 순으로 활성화한다. 반환: 새로 켠 개수.
 
@@ -279,6 +340,14 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     ok, error, failed, rc = False, "", [], 0
     try:
         with store.tenant(conn, user_id), settings.paid_keys():
+            # 첫 런의 재료 — 질문이 없으면 AI 인용 단계가 통째로 건너뛴다. 부수 작업이라
+            # 여기서 터져도(키 없음·응답 없음) 수집은 그대로 간다.
+            if not dry_run and (not only or "ai" in only.split(",")):
+                try:
+                    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                        ensure_ai_prompts(project)
+                except Exception as e:
+                    print(f"[{project}] AI 질문 만들기 건너뜀: {e}", file=err)
             ran: set[str] = set()
             rounds = 0
             while True:
@@ -286,7 +355,9 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                 with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
                     results = run_all.run_chain(
                         project, dry_run=dry_run, skip=skip, only=only, opts=chain_opts,
-                        on_stage=on_stage, groups=None if only else groups, ran=ran)
+                        on_stage=on_stage, groups=None if only else groups, ran=ran,
+                        # 서치콘솔 없는 사이트: 검색량이 나온 뒤·순위를 재기 전에 켠다
+                        before={"rank": activate_by_volume})
                     run_all.print_summary(project, results, dry_run=dry_run)
                 rc = max(rc, run_all.chain_rc(results))
                 # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
@@ -476,7 +547,7 @@ def demo() -> None:
         called: list[dict] = []
 
         def fake_chain(project, *, dry_run=False, skip=None, only=None, opts=None,
-                       on_stage=None, groups=None, ran=()):
+                       on_stage=None, groups=None, ran=(), before=None):
             print("[가짜체인] 내레이션 한 줄")     # run_log 에 잡혀야 한다
             # 수집기의 오류 문장은 전부 stderr 다(collector.Stage.each) — 여태 화면
             # 로그에 한 줄도 안 실렸다. stdout 줄과 순서대로 섞여야 한다.
@@ -573,6 +644,33 @@ def demo() -> None:
             c.commit(); c.close()
             assert activate_from_gsc("demo-proj", limit=5) == 5, "상한만큼 안 켜진다"
             assert activate_from_gsc("demo-proj", limit=5) == 0, "상한을 넘겨 또 켠다"
+
+            # 서치콘솔 없는 사이트 — 검색량 순으로, 사이트당 한 번만(사람이 끈 것을 되켜지 않게).
+            c = db.connect()
+            c.execute("INSERT INTO projects(name, type, domain, gsc_property) VALUES (?,?,?,'')",
+                      ("nogsc", "commerce", "nogsc.test"))
+            c.execute("INSERT INTO projects(name, type, domain, gsc_property) VALUES (?,?,?,?)",
+                      ("hasgsc", "saas", "hasgsc.test", "sc-domain:hasgsc.test"))
+            c.commit()
+            ng, hg = db.get_project(c, "nogsc")["id"], db.get_project(c, "hasgsc")["id"]
+            c.executemany(
+                "INSERT INTO keywords(project_id, keyword, source, is_active, volume, verdict_off)"
+                " VALUES (?,?,?,?,?,?)",
+                # 넣는 순서(id)와 검색량 순서를 일부러 엇갈린다 — 같으면 정렬이 빠져도 통과한다.
+                [(ng, "씨앗", "seed", 1, None, 0), (ng, "작은말", "autocomplete", 0, 10, 0),
+                 (ng, "무관말", "autocomplete", 0, 99999, 1), (ng, "큰말", "autocomplete", 0, 9000, 0),
+                 (ng, "모름말", "autocomplete", 0, None, 0), (ng, "중간말", "autocomplete", 0, 500, 0),
+                 (hg, "남의말", "autocomplete", 0, 9000, 0)])
+            c.commit(); c.close()
+            assert activate_by_volume("hasgsc") == 0, "서치콘솔 있는 사이트를 검색량으로 켰다"
+            assert activate_by_volume("nogsc", limit=3) == 2, "씨앗 포함 3개가 되게 2개만 켜야 한다"
+            c = db.connect()
+            on = {r[0] for r in c.execute(
+                "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (ng,))}
+            assert on == {"씨앗", "큰말", "중간말"}, f"검색량 순·무관 판정 제외가 아니다: {on}"
+            c.execute("UPDATE keywords SET is_active=0 WHERE project_id=? AND keyword='큰말'", (ng,))
+            c.commit(); c.close()
+            assert activate_by_volume("nogsc", limit=3) == 0, "사람이 끈 키워드를 다음 런에 되켰다"
             c = db.connect()
             n = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
                           (pid,)).fetchone()[0]

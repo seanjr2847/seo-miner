@@ -598,6 +598,15 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
         with st.record("crawl") as r:
             pages, links, chains = crawl(seeds, home, limit=limit, max_depth=depth,
                                          rp=rp, throttle=st.throttle)
+            # 모든 주소가 막혔으면(응답 없음·403·429) 적지 않는다 — 적으면 막힌 홈이
+            # http_error 이슈 → "크롤에서 걸림" 기회로 선다. 없는 결함이다.
+            if pages and all(collect_page.blocked(x["status"]) for x in pages):
+                conn.execute("UPDATE crawl_runs SET finished_at=?, pages=0, issues=0 WHERE id=?",
+                             (db.now(), run_id))
+                conn.commit()
+                r.notes = f"seed={seed} blocked={len(pages)}"
+                return st.skip(collect_page.blocked_note(
+                    home.split("/")[2], len(pages)))
             save(conn, run_id, pages, links)
             # robots.txt 를 받은 김에 /llms.txt 도 한 번 — 크롤 뒤에 받는 이유는 순서다:
             # 시드가 홈일 때 robots.txt 다음 요청은 홈이어야 한다(자체점검이 못 박는다).
@@ -855,6 +864,20 @@ def _selfcheck() -> None:
         # 깊이 상한 — 0이면 시드만 본다
         r, log = run(site=_site(sitemap=False), max_depth=0)
         assert [u for u in log if u.endswith("/a")] == [], log
+
+        # 사이트가 이 서버를 막는다(gucci.com — 데이터센터 IP 에 응답 없음). 막힌 홈을
+        # http_error 로 적으면 없는 결함이 "크롤에서 걸림" 기회로 선다 — 건너뛰고 안 적는다.
+        before = conn.execute("SELECT COUNT(*) c FROM crawl_issues").fetchone()["c"]
+        globals()["fetch"] = lambda url: {"final_url": url, "status": None, "chain": [],
+                                          "text": "", "bytes": 0, "content_type": "",
+                                          "error": "ReadTimeout: Read timed out."}
+        try:
+            r = collect("cw", conn=conn, throttle=0, limit=50, max_depth=5)
+        finally:
+            globals()["fetch"] = orig_fetch
+        assert r.skipped and not r.failed and "응답하지 않습니다" in (r.reason or ""), r
+        assert conn.execute("SELECT COUNT(*) c FROM crawl_issues").fetchone()["c"] == before, \
+            "막힌 사이트의 홈을 크롤 이슈로 적었다"
     finally:
         globals()["fetch"] = orig_fetch
         conn.close()

@@ -184,6 +184,13 @@ EMPTY_LOADS = [
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
 MUSTS = [
+    # 경쟁 분석 — 판정이 판매 채널로 가른 곳은 경쟁사 몫 밑에 따로 선다(collect_gap E).
+    (r'id="cp-shares"[^>]*>(?:(?!</section>).)*?판매 채널(?:(?!</section>).)*?mall\.example',
+     "경쟁사에서 뺀 판매 채널이 경쟁 분석에 안 보인다"),
+    # 구글이 본 SEO(사이트 점검) — 항목 이름표는 d.seo_audits(정본 collect_vitals.SEO_AUDITS)로
+    # 스크립트가 그린다. 영어 id(link-text)가 그대로 뜨면 이름표가 안 온 것이다.
+    (r'id="gseo"[^>]*>(?:(?!</section>).)*?링크 텍스트', "구글이 본 SEO 표가 안 그려졌거나 항목 이름이 한국어가 아니다"),
+    (r'!id="gseo"[^>]*>(?:(?!</section>).)*?>link-text<', "구글이 본 SEO 표에 영어 항목 id 가 샜다"),
     # 버튼 이름 = 상태 이름(완료·제외·다시 열기). 상태만 바꾸던 [작업 시작]은 없다 — 열기
     # (로컬)·복사(호스팅)가 그 일을 한다. 옛 이름이 화면 어디에 남아도 두 이름이 된다.
     (r"!<button[^>]*>작업 시작</button>", "상태만 바꾸는 [작업 시작] 버튼이 남아 있다"),
@@ -442,9 +449,28 @@ SHELL_LOCAL_MUSTS = [
     (r'!<a class="mark"', "로컬 레일 로고가 링크가 됐다 — 갈 목록 화면이 없다"),
 ]           # 앞 셋(도구 없음 배지·로컬 주기 점)은 로컬 몫
 
+# 호스팅 입구 화면 — 대시보드(/d) 밖에서 서버가 따로 내보내는 것. 로그인 전 랜딩(/)과
+# 온보딩(/start). 온보딩의 고르개(종류·언어-지역)는 서버가 실은 목록으로 **스크립트가**
+# 채운다 — 스크립트가 멈추면 빈 <select> 만 서 있어 주소를 적어도 다음으로 못 간다.
+ENTRY_PAGES = [
+    ("/", [(r'href="/auth/login"', "랜딩에 로그인 손잡이가 없다")]),
+    ("/start", [
+        (r'id="s1"(?![^>]*hidden)', "온보딩 첫 걸음(사이트 주소)이 안 섰다"),
+        (r'id="s2"[^>]*hidden', "온보딩이 첫 걸음을 건너뛰고 둘째 걸음을 세웠다"),
+        (r'<select id="type"><option value="saas"', "사이트 종류 고르개가 비었다 — 스크립트가 멈췄다"),
+        (r'<select id="locale"><option value="ko-KR"', "언어-지역 고르개가 비었다 — 스크립트가 멈췄다"),
+        (r'id="r1" class="here"', "진행 레일이 첫 걸음을 가리키지 않는다"),
+        # 연결 안 한 사람에게 "서치콘솔 사이트에서 고르기"를 내밀면 누르자마자 오류다.
+        (r'id="alt"[^>]*hidden', "서치콘솔을 연결 안 했는데 '서치콘솔에서 고르기'가 보인다"),
+    ]),
+]
+
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
 HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
+    # 설정의 사이트 종류 — /api/settings 의 types 로 스크립트가 그린다. 등록 뒤 종류를
+    # 바꾸는 유일한 자리라, 안 그려지면 잘못 넣은 종류(saas 로 들어간 쇼핑몰)에 영영 묶인다.
+    (r'<select data-ptype[^>]*>(?:<option[^>]*>[^<]*</option>){2,}', "설정에 사이트 종류 고르개가 안 그려졌다"),
     # 배포마다 다른 문구는 화면이 data-web / W() 로 직접 고른다(dashboard.html).
     # 하나라도 남아 있으면 표식(SM_HOSTED)이 첫 렌더보다 늦게 선 것이다 — 응답이
     # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
@@ -554,6 +580,11 @@ def _axes(conn, pid: int) -> None:
         "INSERT INTO competitor_metrics(project_id,checked_date,domain,is_self,keywords,etv,"
         "top10) VALUES(?,?,?,?,?,?,?)",
         [(pid, d, RIVAL, 0, 4120, 8800.0, 610), (pid, d, "me.example", 1, 380, 900.0, 41)])
+    # 역할 판정 — 검색결과는 겹쳐도 판매 채널이라 경쟁사에서 뺀 곳. 경쟁 분석 화면이 그것을
+    # 이름표(d.role_labels, 정본 scoring.ROLES)로 따로 보이는지를 본다.
+    conn.execute("INSERT INTO competitors(project_id, domain, source, role, role_why)"
+                 " VALUES(?, 'mall.example', 'auto_labs', 'channel', ?)",
+                 (pid, '["mall 몰", "남의브랜드 가방"]'))
     # 속도 — 같은 페이지인데 모바일만 기준을 넘긴다(현장 값 있음). 화면이 그 하나만
     # 세는지, 출처를 밝히는지를 본다.
     import db as _db
@@ -562,7 +593,10 @@ def _axes(conn, pid: int) -> None:
         {"url": _vurl, "strategy": "mobile", "error": None, "origin_fallback": 0,
          "field_verdict": "SLOW", "field_lcp_ms": 4200, "field_inp_ms": 310,
          "field_cls": 0.24, "field_ttfb_ms": 900,
-         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640},
+         "lab_score": 42, "lab_lcp_ms": 4310, "lab_cls": 0.24, "lab_tbt_ms": 640,
+         # 구글이 본 SEO — 실패 하나(링크 텍스트). 화면이 한국어 이름표로 그리는지를 본다.
+         "seo_score": 92, "seo_json": '{"ok": ["document-title"], "fail": '
+                                      '[{"id": "link-text", "n": 1, "items": ["자세히 보기"]}]}'},
         {"url": _vurl, "strategy": "desktop", "error": None, "origin_fallback": 0,
          "field_verdict": "FAST", "field_lcp_ms": 1800, "field_inp_ms": 90,
          "field_cls": 0.02, "field_ttfb_ms": 210,
@@ -776,7 +810,9 @@ def _hosted_app(data: Path):
     fixture(store.home(uid))
 
     calls: list[str] = []               # 서버가 본 /api/* 실패
-    state = {"probed": None}            # /d 에 수집기를 끼웠나(상태코드와 함께)
+    state = {"probed": None, "entry": {}}   # /d·입구 화면에 수집기를 끼웠나(상태코드와 함께)
+    ENTRY = {p for p, _ in ENTRY_PAGES}
+    HOLD = ENTRY | {"/d"}
     spawned: list = []                  # 화면을 열기만 했는데 수집이 떴나
 
     async def app(scope, receive, send):
@@ -791,8 +827,8 @@ def _hosted_app(data: Path):
             if msg["type"] == "http.response.start":
                 head.update(msg)
                 # 손댈 것(/d)과 적을 것(/api/* 실패)만 붙잡는다 — 나머지는 그대로 흘린다
-                head["hold"] = path == "/d" or (path.startswith("/api/")
-                                                and msg["status"] >= 400)
+                head["hold"] = path in HOLD or (path.startswith("/api/")
+                                               and msg["status"] >= 400)
                 if not head["hold"]:
                     await send(msg)
                 return
@@ -802,7 +838,15 @@ def _hosted_app(data: Path):
             if msg.get("more_body"):
                 return
             body = b"".join(chunks)
-            if path == "/d":
+            if path in ENTRY:
+                # 입구 화면(랜딩·온보딩)에도 수집기를 끼운다 — 못 끼우면 여기서 멈춘다.
+                if head["status"] == 200 and b"</head>" in body:
+                    body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+                    state["entry"][path] = 200
+                else:
+                    state["entry"][path] = f"{head['status']} </head> 없음" \
+                        if head["status"] == 200 else str(head["status"])
+            elif path == "/d":
                 if head["status"] == 200 and b"</head>" in body:
                     body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
                     # 새로고침 복원 검사 하나만 켠다(쿼리 표식) — 모든 /d 응답에 걸면
@@ -869,8 +913,13 @@ def _hosted_app(data: Path):
                 "수집기 없이 도는 호스팅 검사는 JS 가 터져도 초록이다")
             assert not spawned, f"화면을 열기만 했는데 수집이 떴다: {spawned}"
 
+        def entry_after(path):
+            assert state["entry"].get(path) == 200, (
+                f"{path} 응답에 오류 수집기를 못 끼웠다 — {state['entry'].get(path) or '안 불렸다'}")
+
         yield SimpleNamespace(base=f"http://127.0.0.1:{sock.getsockname()[1]}",
-                              failures=lambda: list(calls), after=after)
+                              failures=lambda: list(calls), after=after,
+                              entry_after=entry_after)
     finally:
         server.should_exit = True
         if th.is_alive():
@@ -1009,6 +1058,13 @@ def run() -> None:
                                 f"hash 가 지목한 {other} 가 안 열렸다")] + extra,
                               site.failures())
                 if label == "호스팅 조립본":
+                    # 입구 두 화면 — 대시보드 밖에서 서버가 따로 내보낸다. 로그인은 /d 와 같은
+                    # 의존자(_require_uid) 갈아 끼우기로 선다 — 랜딩(/)은 세션을 보므로 로그인
+                    # 전 화면이다.
+                    for path, entry_musts in ENTRY_PAGES:
+                        pg2 = dom(browser, site.base + path, home / "chrome-profile")
+                        site.entry_after(path)
+                        check(f"{label} {path}", pg2, entry_musts, site.failures())
                     # 첫 화면 — 미판정 검색어가 있으면 심사, 없으면 개요(SM.land 순위).
                     # beta-site 는 위 EMPTY_LOADS 루프의 마지막 pg 가 alpha-site 것이다
                     # (호스팅은 SITES 밖 ZERO_SITE 를 건너뛰므로 alpha-site 하나뿐이다).

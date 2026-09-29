@@ -231,10 +231,12 @@ score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  �
 | local_business | .25 | .20 | .45 | .10 |
 | saas | .20 | .20 | .15 | .45 |
 | directory | .40 | .25 | .20 | .15 |
+| commerce | .35 | .25 | .20 | .20 |
 
 미등록 type은 saas 계수로 폴백. 프리셋별 방향(saas는 w_ai 최상향 — best-of
 리스트 인용이 전장, local_business은 w_fit 상향 — 네이버 미측정 한계는 reasoning에
-명시, directory는 수요·coverage 우선)은 이 표에 굳어 있다.
+명시, directory는 수요·coverage 우선, commerce는 상품·카테고리 수요 우선에 AI 쇼핑
+추천 중간)은 이 표에 굳어 있다.
 
 **Claude 재량으로 남은 것:** (a) 관련성 보정 — `metrics["fit"]`를 직접
 덮어쓰거나, 적재 후 점수·reasoning을 보정한다. 기본은 `_fit_of()` 근사

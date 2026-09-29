@@ -3151,10 +3151,14 @@ async function setOpp(id, status) {
   // 사이트 이름을 같이 싣는다 — 로컬 대시보드는 이 이름으로 "내 Brain 이냐 호스팅이냐"를
   // 갈라 호스팅이면 서버로 넘긴다(프록시). 호스팅 서버는 로그인 세션으로 이미 안다.
   const [ok, r] = await post("/api/opp", {project: $("proj").value, id, status});
-  if (!ok) return toast((r && r.error) ||
-    "상태를 바꾸지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad");
+  // 됐는지를 돌려준다 — 보드처럼 먼저 옮겨 그린 화면이 실패하면 되돌려 그린다.
+  if (!ok) {
+    toast((r && r.error) || "상태를 바꾸지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad");
+    return false;
+  }
   toast(OPP_DONE[status] || "바꿨습니다.", "ok");
   load();
+  return true;
 }
 // 누른 뒤에 무엇이 달라졌는지로 말한다 — "저장됨"은 무엇이 저장됐는지 말하지 않는다.
 const OPP_DONE = {acked: "진행 중으로 옮겼습니다.", done: "완료로 옮겼습니다. [개요]의 완료 후 관찰에서 전·후를 봅니다.",
@@ -3364,7 +3368,9 @@ function renderDates(d) {
   // 말하고 있다 — 바로 아래 이 줄이 같은 날짜를 또 적으면 "2026-06-01 · 28일치"
   // 다음 줄에 "구글 실적 2026-06-01 (28일치)"가 되풀이된다. 셀렉트가 없을
   // 때만(수집이 하나뿐이거나 없음·박제본) 이 줄이 그 정보를 대신 말한다.
-  const dateInfo = sel.hidden
+  // 서치콘솔 없이 시작한 사이트는 "아직 없음"이 아니다 — 기다려도 안 온다.
+  const dateInfo = !d.project.gsc_property ? " · 서치콘솔 연결 안 함"
+    : sel.hidden
     ? ` · 구글 실적 ${d.gsc_date || "아직 없음"}${d.gsc_period ? ` (${d.gsc_period}일치)` : ""}`
     : "";
   $("meta").textContent = (d.project.gsc_property || d.project.domain || "") + dateInfo;

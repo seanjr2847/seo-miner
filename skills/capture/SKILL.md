@@ -1,6 +1,6 @@
 ---
 name: capture
-description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Capture 전용) — GSC 실적, 순위, 키워드/롱테일 발굴, AI 인용 체크(ChatGPT·Perplexity·Gemini가 누굴 인용하는지), 인용 갭, SEO 기회, 가시성 리포트. 사용 시점 — "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘" 같은 요청 전부, 그리고 새 사이트(game/local_business/saas/directory) 추적 온보딩.
+description: 검색·AI 가시성 측정·채굴 (Boring Agent 역기획, Capture 전용) — GSC 실적, 순위, 키워드/롱테일 발굴, AI 인용 체크(ChatGPT·Perplexity·Gemini가 누굴 인용하는지), 인용 갭, SEO 기회, 가시성 리포트. 사용 시점 — "내 사이트 요즘 어때", "키워드 좀 캐줘", "AI가 우리 추천해?", "/capture ...", "가시성 리포트 뽑아줘" 같은 요청 전부, 그리고 새 사이트(게임·지역 비즈니스·웹 서비스·디렉터리·쇼핑몰) 추적 온보딩.
 ---
 
 # capture — 개인용 검색·AI 가시성 Capture 엔진
@@ -85,7 +85,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 한다 — 등록된 값을 덮어쓰지 말 것. 비어 있는 건 AI 프롬프트뿐이다. 단, 폼은
 `gsc_property` 를 도메인에서 추정하므로 **2번의 대조는 한 번 해 준다**.
 
-1. **인터뷰는 4문항이다** — 타입(game|local_business|saas|directory), 도메인,
+1. **인터뷰는 4문항이다** — 타입(정본 `scripts/dashboard.py` 의 `PROJECT_TYPES`), 도메인,
    **언어-지역**, 시드 키워드 3~10개. `projects/_presets.yaml`에서 타입 프리셋을
    읽고 그 각도에 맞춰 질문을 구체화한다. 나머지는 **묻지 않는다**:
    - `locale` — **사용자가 고른다.** 도메인·사용자가 쓰는 언어에서 추정한 값을
@@ -97,7 +97,7 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
      이 값이 SERP 나라, 자동완성 언어, AI 질문 언어를 전부 정한다. 시드 키워드는
      그 언어로 받는다 — 문자권이 다른 시드(영어 사이트에 한글 시드)는 글자로
      판별해 제 언어 로케일을 받는다(`db.keyword_locale`).
-   - `tools` — directory·saas 타입에서만 묻는다. 이 두 타입은 비면 남의 브랜드
+   - `tools` — directory·saas·commerce 타입에서만 묻는다. 이 타입들은 비면 남의 브랜드
      카탈로그가 비어서 striking_distance에 노이즈가 흘러든다 (`scoring.md` 1a).
      game·local_business은 해당 없음.
    - `brand_aliases`·`competitors_manual` — 여기서 묻지 않는다. `/capture keywords`

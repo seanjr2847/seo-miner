@@ -430,14 +430,52 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     out = opp + scoring.top_pages(conn, project_id, limit)
     seen, uniq = set(), []
     for u in out:
+        u = clean_url(u)
         if u and u not in seen:
             seen.add(u)
             uniq.append(u)
     return uniq[:limit]
 
 
+# 광고·추천 추적 꼬리표 — 같은 페이지인데 주소만 다르다. 기회·검색결과에서 온 주소에
+# `?gclid=…`·`?ref=…` 가 붙은 채로 점검 대상이 되면 같은 페이지를 이름만 바꿔 여러 번 보고,
+# 상한(page_urls) 안의 자리를 그만큼 잃는다(gucci: 10자리 중 둘이 홈의 꼬리표 사본이었다).
+TRACKING_PARAMS = frozenset({"gclid", "gclsrc", "dclid", "fbclid", "msclkid", "yclid",
+                             "ref", "ref_src", "_ga", "mc_cid", "mc_eid", "igshid"})
+
+
+def clean_url(u: str) -> str:
+    """추적 꼬리표(utm_*·gclid·ref …)와 #조각을 뗀다. 나머지 쿼리는 순서째 그대로 둔다 —
+    ?page=2·?lang=ko 는 다른 페이지다."""
+    if not u or "?" not in u and "#" not in u:
+        return u
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    parts = urlsplit(u)
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if not (k.lower() in TRACKING_PARAMS or k.lower().startswith("utm_"))]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), ""))
+
+
 # 없는 페이지 — 오류가 아니라 사실(collect 의 one 이 가른다)
 GONE_STATUS = (404, 410)
+
+
+# 사이트가 **이 서버를** 막을 때의 모양 — 응답이 없거나(시간 초과·연결 거부, status 없음)
+# 거절한다(403·429). 대형 브랜드 사이트(gucci.com)는 데이터센터 IP 를 봇으로 보고 응답을
+# 안 준다. 이건 그 사이트 페이지의 결함이 아니라 우리가 못 본 것이다 — 페이지 점검·크롤이
+# 이걸 "고칠 거리"(깨진 페이지·실패)로 적으면 없는 문제를 기회로 세우고 매 런 실패 메일을 낸다.
+BLOCK_STATUS = frozenset({403, 429})
+
+
+def blocked(status) -> bool:
+    return status is None or status in BLOCK_STATUS
+
+
+def blocked_note(host: str, n: int) -> str:
+    """전부 막혔을 때의 사유 한 벌 — 페이지 점검·크롤이 같은 말을 한다."""
+    return (f"{host} 이 이 서버의 요청에 응답하지 않습니다 — 주소 {n}개 전부 시간 초과·거부. "
+            "봇 차단(방화벽)이거나 사이트가 내려가 있습니다. 막는 동안 이 단계는 비어 있고, "
+            "우리 쪽에서 고칠 수 있는 문제가 아닙니다.")
 
 
 def fetch(url: str, timeout: int | None = None) -> dict:
@@ -529,6 +567,12 @@ def collect(project: str, *,
         bad = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} page audits (errors={st.errors})"
               + (f" · 못 가져온 URL {len(bad)}개" if bad else ""))
+        # 한 장도 못 봤고 전부 "막힘"이면 실패가 아니라 건너뜀이다 — 원인이 그 사이트의
+        # 방화벽이라 다음 런도 똑같이 막힌다. 실패로 두면 매일 실패 메일이 가고, 사유는
+        # 파이썬 예외 문장(ReadTimeout: HTTPSConnectionPool…)이라 무엇을 할지 모른다.
+        if not done and bad and len(bad) == len(rows) and all(blocked(x.get("status")) for x in bad):
+            from urllib.parse import urlparse
+            return st.skip(blocked_note(urlparse(urls[0]).hostname or p["domain"], len(bad)))
         # 실제로 감사한 건수로 판정한다 — 전부 못 가져온 것은 완료가 아니다.
         return st.verdict(done, rows=len(rows))
 
@@ -689,7 +733,51 @@ def _selfcheck() -> None:
     assert {"tables", "lists", "h2_questions", "lead_words", "author"} <= cols, cols
 
     _concurrency_check(conn)
+    _blocked_check(conn)
+    # 추적 꼬리표는 떼고, 다른 페이지를 가르는 쿼리는 남긴다
+    assert clean_url("https://g.kr/?ref=ed3sign") == "https://g.kr/"
+    assert clean_url("https://g.kr/uk/?gclid=EAIa&gclsrc=aw.ds") == "https://g.kr/uk/"
+    assert clean_url("https://g.kr/a?utm_source=x&page=2#top") == "https://g.kr/a?page=2"
+    assert clean_url("https://g.kr/a?lang=ko") == "https://g.kr/a?lang=ko"
+    assert clean_url("https://g.kr/a") == "https://g.kr/a"
+    # 점검 대상을 고르는 자리가 실제로 떼는지 — 꼬리표 사본은 한 자리로 합쳐진다.
+    conn.executemany("INSERT INTO opportunities(project_id, kind, target, score) VALUES(1,?,?,?)",
+                     [("crawl_issue", "https://tu.kr/?ref=ed3sign", 9),
+                      ("crawl_issue", "https://tu.kr/", 8),
+                      ("crawl_issue", "https://tu.kr/uk/?gclid=EAIa", 7)])
+    conn.commit()
+    got = [u for u in target_urls(conn, 1, 40) if u.startswith("https://tu.kr")]
+    assert got == ["https://tu.kr/", "https://tu.kr/uk/"], f"점검 대상에 추적 꼬리표 사본이 남았다: {got}"
     print("collect_page self-check ok")
+
+
+def _blocked_check(conn) -> None:
+    """사이트가 이 서버를 막으면(전부 무응답·403·429) 실패가 아니라 건너뜀이고, 사유가
+    사람 말이다. 하나라도 보이면(또는 막힘이 아닌 오류가 섞이면) 예전 판정 그대로다."""
+    import contextlib
+    import io
+
+    import fanout
+    urls = [f"https://blk.kr/p{i}" for i in range(3)]
+    g = globals()
+    orig = g["target_urls"], g["fetch"]
+
+    def go(fetch_fn):
+        g["target_urls"], g["fetch"] = (lambda c, pid, limit: list(urls)), fetch_fn
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return collect("p", conn=fanout.MainThreadOnly(conn), throttle=0)
+        finally:
+            g["target_urls"], g["fetch"] = orig
+
+    timeout = "ReadTimeout: HTTPSConnectionPool(host='blk.kr', port=443): Read timed out."
+    res = go(lambda u, timeout_=None, **k: {"url": u, "status": None, "error": timeout}
+             if not u.endswith("p2") else {"url": u, "status": 403, "error": "HTTP 403"})
+    assert res.skipped and not res.failed, f"전부 막혔는데 건너뜀이 아니다: {res}"
+    assert "blk.kr" in res.reason and "응답하지 않습니다" in res.reason and "ReadTimeout" not in res.reason, res.reason
+    # 서버 오류(503)가 섞이면 막힘이 아니다 — 사이트 쪽 결함일 수 있으니 실패 그대로.
+    res = go(lambda u, timeout_=None, **k: {"url": u, "status": 503, "error": "HTTP 503"})
+    assert res.failed, f"503 전부를 막힘으로 삼켰다: {res}"
 
 
 def _concurrency_check(conn) -> None:

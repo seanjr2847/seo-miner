@@ -107,7 +107,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  type TEXT NOT NULL DEFAULT 'saas',          -- game|local_business|saas|directory
+  type TEXT NOT NULL DEFAULT 'saas',          -- 값의 정본은 dashboard.PROJECT_TYPES
   domain TEXT NOT NULL,
   locale TEXT DEFAULT 'ko-KR',
   gsc_property TEXT,                          -- e.g. sc-domain:example.com
@@ -340,6 +340,10 @@ CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · Page
   field_lcp_ms INTEGER, field_inp_ms INTEGER, field_cls REAL, field_ttfb_ms INTEGER,
   -- 실험실(Lighthouse, 지금 한 번) — 고친 뒤 바로 확인할 수 있는 유일한 숫자
   lab_score INTEGER, lab_lcp_ms INTEGER, lab_cls REAL, lab_tbt_ms INTEGER,
+  -- 구글이 연 모습의 SEO 점검(같은 PSI 호출의 category=seo). 우리 요청을 막는 사이트에서도
+  -- 나오는 유일한 페이지 안 사실이다. seo_json = {"ok":[id],"fail":[{id,n,items}]},
+  -- 이름표는 collect_vitals.SEO_AUDITS. NULL = 이 칸 전에 잰 행(안 봤다).
+  seo_score INTEGER, seo_json TEXT,
   UNIQUE(project_id, checked_date, url, strategy)
 );
 CREATE INDEX IF NOT EXISTS idx_page_vitals ON page_vitals(project_id, checked_date);
@@ -374,8 +378,13 @@ CREATE TABLE IF NOT EXISTS competitors (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   domain TEXT NOT NULL,
-  source TEXT DEFAULT 'manual',               -- manual|auto_rank|auto_labs (auto_serp 은 은퇴 — retire_auto_serp)
+  source TEXT DEFAULT 'manual',               -- manual|auto_rank|auto_labs|auto_nonbrand (auto_serp 은 은퇴 — retire_auto_serp)
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  -- 이 사이트에게 그 도메인이 무엇인가(collect_gap 의 판정). 이름표 정본은 scoring.ROLES.
+  -- NULL = 아직 판정 안 함(예전처럼 경쟁사로 읽는다). rival 이 아닌 판정은 scoring.rivals 가 뺀다.
+  -- 사람이 적은 행(manual)은 판정하지 않는다 — 사람이 고른 것이 이긴다.
+  role TEXT,
+  role_why TEXT,                              -- 판정 근거: 그 도메인의 상위 검색어 JSON 배열
   UNIQUE(project_id, domain)
 );
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -651,6 +660,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("tables", "lists", "images", "videos"):
         if col not in so_cols:
             conn.execute(f"ALTER TABLE serp_outlines ADD COLUMN {col} INTEGER")
+            conn.commit()
+
+    # 경쟁사 역할 판정(collect_gap) — 옛 행은 NULL(판정 안 함 = 예전처럼 경쟁사).
+    cp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(competitors)")}
+    for col in ("role", "role_why"):
+        if col not in cp_cols:
+            conn.execute(f"ALTER TABLE competitors ADD COLUMN {col} TEXT")
+            conn.commit()
+
+    # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
+    pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
+    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT")):
+        if col not in pv_cols:
+            conn.execute(f"ALTER TABLE page_vitals ADD COLUMN {col} {decl}")
             conn.commit()
 
     pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
@@ -1303,7 +1326,10 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
 # competitors(source='manual') 행이 정본이고, 여기 또 담으면 같은 목록이 두 벌이 된다.
 # name·domain·type·locale·gsc_property·ga4_property 도 없다 — projects 컬럼이 정본이다.
 SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
-                "surfaces_ai", "serp_depth", "limits")
+                "surfaces_ai", "serp_depth", "limits",
+                # 서치콘솔 없는 사이트에서 검색량 상위 후보를 자동으로 켠 날(호스팅 워커).
+                # 한 번만 켠다 — 그 뒤 사람이 끈 키워드를 런마다 되켜지 않게.
+                "auto_keywords")
 # 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
 # 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
 # collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).
@@ -1409,6 +1435,13 @@ def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
         set_manual_competitors(conn, pid, cfg.get("competitors_manual") or [])
     conn.commit()
     return pid
+
+
+def set_project_type(conn: sqlite3.Connection, project_id: int, ptype: str) -> None:
+    """사이트 종류를 바꾼다. 값 검증은 부르는 쪽(정본 dashboard.PROJECT_TYPE_IDS)이 한다 —
+    db 는 화면의 목록을 모른다. 점수는 다음 기회 분석(gaps)부터 새 계수로 매겨진다."""
+    conn.execute("UPDATE projects SET type=? WHERE id=?", (ptype, project_id))
+    conn.commit()
 
 
 def seed_keywords(conn: sqlite3.Connection, project_id: int) -> list[str]:
@@ -1918,7 +1951,7 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
     배치를 안 지우는 upsert 이고, 없는 키는 NULL 이다(안 잰 것과 0 은 다르다)."""
     cols = ("error", "origin_fallback", "field_verdict",
             "field_lcp_ms", "field_inp_ms", "field_cls", "field_ttfb_ms",
-            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms")
+            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms", "seo_score", "seo_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_vitals(project_id, checked_date, url, strategy, {', '.join(cols)})

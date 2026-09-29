@@ -199,6 +199,7 @@ def demo() -> None:
         open_on_purpose = {
             "/healthz",                                     # 상태 확인 — 로그인 이전
             "/", "/auth/login", "/auth/callback", "/auth/logout",   # 로그인 자체
+            "/auth/connect",    # 서치콘솔 권한 동의 — 로그인 전이면 로그인을 겸한다
             "/privacy",                                     # 로그인 전에 읽는 방침 문서
             "/api/cli/token",   # 세션 전용이라 _uid 를 직접 본다(그 라우트 주석 참고)
         }
@@ -235,6 +236,18 @@ def demo() -> None:
         # PKCE 가 켜져 있으면 콜백까지 code_verifier 를 넘겨야 한다(세션에 저장).
         assert "code_challenge=" in r.headers["location"], "PKCE 가 꺼졌다"
         assert "include_granted_scopes" not in r.headers["location"],             "과거 승인 스코프까지 합쳐진다 — 읽기 전용만 받아야 한다"
+        # 로그인은 신원만 묻는다 — 서치콘솔·GA4 권한은 온보딩의 [서치콘솔 연결]이 따로 묻는다.
+        # 권한 없는 마케터가 첫 동의 화면에서 "서치콘솔 데이터 보기"를 보고 돌아서지 않게.
+        assert "webmasters" not in r.headers["location"] and "analytics" not in r.headers["location"], \
+            "로그인 동의 화면이 서치콘솔·GA4 권한까지 묻는다"
+        r = c.get("/auth/connect?next=/start", follow_redirects=False)
+        assert r.status_code == 302 and "webmasters.readonly" in r.headers["location"], \
+            "연결(/auth/connect)이 서치콘솔 읽기 권한을 안 묻는다"
+        # 돌아올 자리는 이 사이트 안의 경로만 — 남의 주소로 튕기면 열린 리다이렉트다.
+        from app import _local_path
+        for bad in ("//evil.example/x", "https://evil.example/", "/\\evil.example"):
+            assert _local_path(bad) == "/", f"돌아올 자리로 바깥 주소를 받는다: {bad}"
+        assert _local_path("/d#p1") == "/d#p1"
 
         # 남이 붙인 콜백은 state 가 안 맞는다 — 토큰 교환까지 가면 안 된다.
         r = c.get("/auth/callback?code=x&state=위조", follow_redirects=False)
@@ -254,9 +267,30 @@ def demo() -> None:
         r = c.get("/")
         assert r.status_code == 200, r.text
         assert "<!--USER-->" not in r.text and "<!--SITES-->" not in r.text, "슬롯이 안 채워졌다"
+        assert "<!--ENTRY_HEAD-->" not in r.text and "--accent" in r.text, "입구 머리(entry.html)가 안 끼워졌다"
         assert "sched@example.com" in r.text and "sc-domain:p1.com" in r.text, "슬롯이 비었다"
-        assert 'window.__TAKEN__=["sc-domain:p1.com"]' in r.text, "값이 안 실렸다"
-        assert r.text.index("window.__SITES__") < r.text.index("const $ = id =>"),             "값이 페이지 스크립트보다 뒤에 실린다 — 화면이 undefined 를 읽는다"
+        assert 'href="/start"' in r.text, "사이트 목록에 [사이트 추가](온보딩) 손잡이가 없다"
+        assert r.text.index("window.__STAGES__") < r.text.index("const $ = id =>"),             "값이 페이지 스크립트보다 뒤에 실린다 — 화면이 undefined 를 읽는다"
+
+        # 온보딩 — 사이트가 없는 사람의 "/" 는 /start 다. 빈 목록에서 등록을 찾게 하지 않는다.
+        c3 = store.connect()
+        u3 = store.upsert_user(c3, "fresh@example.com")
+        c3.close()
+        login_as(c, u3, "fresh@example.com")
+        r = c.get("/", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/start", \
+            f"사이트 없는 사람의 첫 화면이 온보딩이 아니다: {r.status_code} {r.headers.get('location')}"
+        r = c.get("/start")
+        assert r.status_code == 200 and "<!--ENTRY_HEAD-->" not in r.text, r.status_code
+        for k in ("__TYPES__", "__LOCALES__", "__STAGES__", "__CARRY__", "__GSC__=false"):
+            assert "window." + k in r.text, f"온보딩에 {k} 가 안 실렸다"
+        assert r.text.index("window.__TYPES__") < r.text.index("const $ = id =>"), \
+            "값이 온보딩 스크립트보다 뒤에 실린다"
+        c.cookies.clear()
+        r = c.get("/start", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/?login=required", \
+            "로그인 없이 연 온보딩이 로그인 안내로 안 간다"
+        login_as(c, u2, "sched@example.com")
 
         assert c.get("/api/projects").json() == ["p1"], c.get("/api/projects").text
         assert c.get("/d").status_code == 200
@@ -311,21 +345,70 @@ def demo() -> None:
             # 검증을 통과한 값은 워커가 알아듣는 `--opt K=V` 로 간다.
             assert "--opt" in spawned[0] and "rank.device=mobile" in spawned[0], spawned
 
-            # /api/sites — 등록 진입점. 여태 demo() 어디에도 안 나왔다.
-            assert c.post("/api/sites", json={"properties": []}).status_code == 400
-            r = c.post("/api/sites", json={"properties": ["sc-domain:new1.com"]})
+            # /api/sites — 온보딩(/start)의 마지막 걸음. 주소가 정본이고 서치콘솔은 선택이다.
+            # .test 는 안 풀리는 예약 도메인이라 DNS·네트워크를 안 탄다.
+            assert c.post("/api/sites", json={}).status_code == 400
+            for bad in ("localhost", "127.0.0.1", "http://10.0.0.8/", "ftp://x.test"):
+                assert c.post("/api/sites", json={"url": bad}).status_code == 400, \
+                    f"공개 주소가 아닌 것으로 등록된다: {bad}"
+            r = c.post("/api/sites", json={"url": "https://www.new1.test/blog?x=1",
+                                           "seeds": ["회계 프로그램", " ", "회계 프로그램"],
+                                           "competitors": "https://rival.test/a\nrival2.test"})
             assert r.status_code == 200 and r.json()["ok"], r.text
-            assert r.json()["added"][0]["project"] == "new1", r.json()
+            assert r.json()["project"] == "new1" and r.json()["gsc"] is False, r.json()
             assert kicked, "새 사이트 등록인데 워커를 안 띄웠다"
-            # 언어-지역은 사이트마다 — 목록 밖은 400, 고른 값은 그 사이트의 yaml 로 간다.
-            assert c.post("/api/sites", json={"properties": ["sc-domain:new2.com"],
-                                              "locales": {"sc-domain:new2.com": "xx-XX"}}
+            cs = store.connect()
+            assert store.site(cs, u2, "new1")["domain"] == "new1.test", "도메인이 www·경로째 들어갔다"
+            cs.close()
+            bc = db.connect(home=store.home(u2))
+            try:
+                pr = db.get_project(bc, "new1")
+                # 속성을 지어 넣지 않는다 — 지으면 gsc 단계가 건너뛰는 대신 런마다 인증 실패다.
+                assert (pr["gsc_property"] or "") == "", \
+                    f"서치콘솔 없이 시작했는데 속성이 지어졌다: {pr['gsc_property']}"
+                assert db.seed_keywords(bc, pr["id"]) == ["회계 프로그램"], "씨앗이 안 들어갔다(중복·빈 칸 포함)"
+            finally:
+                bc.close()
+            prof = c.get("/api/settings?project=new1").json()
+            assert "rival.test" in prof["competitors_manual"] and "rival2.test" in prof["competitors_manual"], prof
+            assert c.post("/api/sites", json={"url": "new1.test"}).status_code == 409, \
+                "같은 도메인이 두 번 등록된다"
+            # 속성은 적은 주소와 같은 사이트여야 한다 — 남의 속성을 붙이면 숫자가 조용히 거짓이 된다.
+            assert c.post("/api/sites", json={"url": "new3.test", "property": "sc-domain:other.test"}
+                          ).status_code == 400, "다른 사이트의 서치콘솔 속성이 붙는다"
+            # 언어-지역은 사이트마다 — 목록 밖은 400, 고른 값은 그 사이트로 간다.
+            assert c.post("/api/sites", json={"url": "new2.test", "locale": "xx-XX"}
                           ).status_code == 400, "목록 밖 언어로 등록된다"
-            r = c.post("/api/sites", json={"properties": ["sc-domain:new2.com"],
-                                           "locales": {"sc-domain:new2.com": "en-GB"}})
-            assert r.status_code == 200 and r.json()["ok"], r.text
+            r = c.post("/api/sites", json={"url": "new2.test", "locale": "en-GB",
+                                           "property": "sc-domain:new2.test"})
+            assert r.status_code == 200 and r.json()["gsc"] is True, r.text
             assert c.get("/api/settings?project=new2").json()["locale"] == "en-GB", \
                 "고른 언어가 안 실렸다"
+            # 사이트 종류는 등록 뒤에도 바꾼다 — 목록은 정본(PROJECT_TYPES), 밖의 값은 400.
+            got = c.get("/api/settings?project=new2").json()
+            assert got["type"] == "saas" and [t["id"] for t in got["types"]] == \
+                list(dashboard.PROJECT_TYPE_IDS), got
+            assert c.post("/api/settings", json={"project": "new2", "type": "shop"}
+                          ).status_code == 400, "목록 밖 종류가 저장된다"
+            r = c.post("/api/settings", json={"project": "new2", "type": "commerce"})
+            assert r.status_code == 200 and r.json()["type"] == "commerce", r.text
+            assert c.get("/api/settings?project=new2").json()["type"] == "commerce", "종류가 안 바뀌었다"
+
+            # 1단계 미리보기 — 홈페이지 제목에서 씨앗 초안을 뽑는다. 네트워크는 안 탄다.
+            import collect_page
+            real_fetch = collect_page.fetch
+            collect_page.fetch = lambda url, timeout=None: collect_page.audit_html(
+                url, "<title>온라인 회계 프로그램 | New4</title><h1>소상공인 장부 앱</h1>")
+            try:
+                pk = c.post("/api/start/peek", json={"url": "new4.test"}).json()
+                assert pk["reachable"] and pk["domain"] == "new4.test", pk
+                assert pk["seeds"] == ["온라인 회계 프로그램", "소상공인 장부 앱"], \
+                    f"씨앗 초안이 브랜드를 빼고 제목·H1 을 안 가른다: {pk['seeds']}"
+                collect_page.fetch = lambda url, timeout=None: {"url": url, "error": "HTTP 403"}
+                pk = c.post("/api/start/peek", json={"url": "new4.test"}).json()
+                assert pk["reachable"] is False and pk["seeds"] == [], "못 연 사이트를 연 것처럼 말한다"
+            finally:
+                collect_page.fetch = real_fetch
         finally:
             app.dependency_overrides.pop(_dispatch_dep, None)
             app.dependency_overrides.pop(_kick_dep, None)
@@ -551,7 +634,7 @@ def demo() -> None:
                 raise HttpError(_Resp(), b'{"error": "insufficient scope"}')
             collect_ga4.list_properties = _scope_missing
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"], \
+            assert r.status_code == 403 and "구글 계정을 다시 연결" in r.json()["detail"], \
                 r.text
 
             # 스코프가 모자란 걸 doctor 로 미리 알면 — API 를 아예 안 부르고 같은
@@ -562,7 +645,7 @@ def demo() -> None:
             doctor.gsc_missing_scopes = lambda: [
                 "https://www.googleapis.com/auth/analytics.readonly"]
             r = c.get("/api/ga4/properties?project=p1")
-            assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"], \
+            assert r.status_code == 403 and "구글 계정을 다시 연결" in r.json()["detail"], \
                 r.text
             doctor.gsc_missing_scopes = lambda: []
 
@@ -584,7 +667,7 @@ def demo() -> None:
                 doctor.gsc_missing_scopes = lambda: [
                     "https://www.googleapis.com/auth/analytics.readonly"]
                 r = c.get("/api/properties")
-                assert r.status_code == 403 and "다시 구글 계정으로 로그인" in r.json()["detail"],                     r.text
+                assert r.status_code == 403 and "구글 계정을 다시 연결" in r.json()["detail"],                     r.text
                 doctor.gsc_missing_scopes = lambda: []
                 db.gsc_connected = lambda: False
                 r = c.get("/api/properties")

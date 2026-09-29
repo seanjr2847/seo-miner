@@ -29,6 +29,7 @@ Usage:
   python collect_vitals.py                                  # self-check
 """
 import argparse
+import json
 import os
 import sys
 from datetime import date
@@ -50,6 +51,56 @@ _FIELD = {"field_lcp_ms": "LARGEST_CONTENTFUL_PAINT_MS",
           "field_ttfb_ms": "EXPERIMENTAL_TIME_TO_FIRST_BYTE"}
 _LAB = {"lab_lcp_ms": "largest-contentful-paint",
         "lab_tbt_ms": "total-blocking-time"}
+
+# 구글이 연 모습으로 본 SEO 점검 — 같은 PageSpeed 호출에 category=seo 를 더하면 온다(추가 비용 0).
+# 왜 여기 있나: 데이터센터 IP·파이썬 클라이언트를 막는 사이트(gucci.com)는 페이지 점검
+# (collect_page)도 크롤도 한 장도 못 본다. PageSpeed 는 구글 인프라가 여는 것이라 통과한다 —
+# 그 사이트에서 우리가 얻을 수 있는 유일한 "페이지 안" 사실이다.
+# {Lighthouse audit id: (화면 이름, 실패일 때 고칠 것)} — 이름표의 정본은 여기 한 벌이다
+# (화면은 d.seo_audits 로 받는다). 여기 없는 id 는 적지 않는다(구글이 항목을 늘려도 모르는
+# 영어 이름이 화면에 새지 않게).
+SEO_AUDITS = {
+    "http-status-code":  ("응답 상태", "검색 로봇이 받는 응답이 200 이 아닙니다."),
+    "is-crawlable":      ("색인 허용", "noindex 나 robots 규칙이 이 페이지의 색인을 막습니다."),
+    "robots-txt":        ("robots.txt", "robots.txt 에 문법 오류가 있습니다."),
+    "document-title":    ("제목 태그", "<title> 이 없습니다."),
+    "meta-description":  ("메타 설명", "meta description 이 없습니다."),
+    "canonical":         ("canonical", "rel=canonical 이 없거나 잘못된 주소를 가리킵니다."),
+    "hreflang":          ("hreflang", "언어·지역 대체 주소 표기가 잘못됐습니다."),
+    "image-alt":         ("이미지 alt", "alt 없는 이미지가 있습니다."),
+    "link-text":         ("링크 텍스트", "'더보기'·'여기'처럼 뜻 없는 링크 글자가 있습니다."),
+    "crawlable-anchors": ("크롤 가능한 링크", "href 없이 스크립트로만 움직이는 링크가 있습니다."),
+}
+
+
+def parse_seo(lh: dict) -> tuple:
+    """Lighthouse 결과 → (seo_score 0~100 | None, seo_json | None). 실패 항목만 근거를 싣는다."""
+    cat = (lh.get("categories") or {}).get("seo") or {}
+    score = cat.get("score")
+    if not isinstance(score, (int, float)):
+        return None, None
+    audits = lh.get("audits") or {}
+    ok, fail = [], []
+    for aid in SEO_AUDITS:
+        a = audits.get(aid) or {}
+        s = a.get("score")
+        if a.get("scoreDisplayMode") not in ("binary", "numeric") or s is None:
+            continue                     # 해당 없음·수동 — 통과도 실패도 아니다
+        if s >= 1:
+            ok.append(aid)
+            continue
+        items = ((a.get("details") or {}).get("items") or [])
+        ev = []
+        for it in items[:3]:
+            node = it.get("node") or {}
+            v = node.get("snippet") or it.get("text") or it.get("href") or it.get("source") or ""
+            if isinstance(v, dict):
+                v = v.get("url") or ""
+            if v:
+                ev.append(str(v)[:120])
+        fail.append({"id": aid, "n": len(items), "items": ev})
+    return round(score * 100), json.dumps({"ok": ok, "fail": fail}, ensure_ascii=False)
+
 
 QUOTA_STATUS = 429
 QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
@@ -93,16 +144,19 @@ def parse(url: str, strategy: str, data: dict) -> dict:
         row[col] = round(v) if isinstance(v, (int, float)) else None
     v = (audits.get("cumulative-layout-shift") or {}).get("numericValue")
     row["lab_cls"] = round(v, 3) if isinstance(v, (int, float)) else None
+    row["seo_score"], row["seo_json"] = parse_seo(lh)
     return row
 
 
 def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
     """URL 하나·기기 하나. 실패도 한 줄로 남긴다 — collect_page.fetch 와 같은 규칙이다."""
     import requests
-    params = {"url": url, "strategy": strategy, "category": "performance"}
+    # category 는 여러 번 싣는다(PSI 는 반복 키로 받는다) — seo 는 같은 호출에 얹혀 공짜다.
+    params = [("url", url), ("strategy", strategy),
+              ("category", "performance"), ("category", "seo")]
     key = os.environ.get("PAGESPEED_API_KEY")
     if key:
-        params["key"] = key
+        params.append(("key", key))
     try:
         r = requests.get(API, params=params,
                          timeout=timeout or serp_adapter.TIMEOUTS["psi"])
@@ -259,6 +313,23 @@ def _selfcheck() -> None:
             "audits": {"largest-contentful-paint": {"numericValue": 4310.5},
                        "cumulative-layout-shift": {"numericValue": 0.2412},
                        "total-blocking-time": {"numericValue": 640}}}}
+    # 구글이 연 모습의 SEO 점검 — 실패 항목만 근거와 함께, 수동·해당 없음은 빼고, 모르는 id 는 버린다.
+    assert parse_seo({}) == (None, None), "SEO 카테고리가 없는 응답(옛 호출)에 점수를 지어낸다"
+    lh = {"categories": {"seo": {"score": 0.92}},
+          "audits": {"document-title": {"score": 1, "scoreDisplayMode": "binary"},
+                     "link-text": {"score": 0, "scoreDisplayMode": "binary", "details": {"items": [
+                         {"href": "https://g.kr/a", "text": "더보기"}, {"href": "https://g.kr/b", "text": "여기"}]}},
+                     "image-alt": {"score": 0, "scoreDisplayMode": "binary", "details": {"items": [
+                         {"node": {"snippet": '<img src="x.jpg">'}}]}},
+                     "structured-data": {"score": None, "scoreDisplayMode": "manual"},
+                     "new-google-audit": {"score": 0, "scoreDisplayMode": "binary"}}}
+    sc, sj = parse_seo(lh)
+    got = json.loads(sj)
+    assert sc == 92 and got["ok"] == ["document-title"], (sc, got)
+    assert [(f["id"], f["n"], f["items"]) for f in got["fail"]] == [
+        ("image-alt", 1, ['<img src="x.jpg">']), ("link-text", 2, ["더보기", "여기"])], got["fail"]
+    r = parse("https://g.kr/", "mobile", {"lighthouseResult": lh})
+    assert r["seo_score"] == 92 and r["seo_json"] == sj, "parse 가 SEO 점검을 행에 안 싣는다"
     # 기기 설정은 문자열이다 — int() 로 바꾸려다 속도 단계가 통째로 죽었다(호스팅 noti 런)
     import argparse
     ap = _parser()

@@ -150,6 +150,29 @@ function CP_shares(d) {
   }).join("") + `</div>`;
 }
 
+/* 경쟁사에서 뺀 곳 — 역할 판정(collect_gap E)이 판매 채널·포털로 가른 자동 후보.
+   이름표 정본은 scoring.ROLES(d.role_labels). 근거(그 도메인의 상위 검색어)는 배지 툴팁이다.
+   사람이 경쟁사 칸에 적으면 판정과 무관하게 경쟁사로 쓴다 — 그 길을 같이 말한다. */
+function CP_roles(d) {
+  const L = d.role_labels || {};
+  // 경쟁이 아닌 판정 전부(판매 채널·포털·기타) — 경쟁사로 읽기(scoring.rivals)와 같은 기준이다.
+  const out = (d.comp_roles || []).filter(r => r.role && r.role !== "rival");
+  if (!out.length) return "";
+  const why = r => { try { return JSON.parse(r.role_why || "[]").slice(0, 6).join(", "); }
+                     catch (e) { return ""; } };
+  const group = role => out.filter(r => r.role === role).map(r =>
+    `<span class="badge muted" title="${esc("주로 이런 검색어로 트래픽을 받습니다: " + why(r))}">`
+    + `${esc(r.domain)}</span>`).join(" ");
+  return `<div class="card cp-roles"><p class="cp-meta left">검색결과가 겹쳐도 경쟁사가 아니라서 뺀 곳`
+    + CP_tip("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
+             + "남의 브랜드 이름으로, 경쟁 사업체는 자기 이름과 자기 제품으로 받습니다. 틀렸으면 "
+             + "[설정]의 경쟁사 칸에 적으세요. 적은 것은 판정과 무관하게 경쟁사로 씁니다.")
+    + `</p>`
+    + ["channel", "media", "other"].filter(k => out.some(r => r.role === k)).map(k =>
+        `<div class="cp-riv"><b>${esc(L[k] || k)}</b> ${group(k)}</div>`).join("")
+    + `</div>`;
+}
+
 /* 점수가 없는 줄 — 왜 없는지를 화면이 말한다. 빈칸으로 두면 "고장인가"가 된다.
    상한의 정본은 scoring.content_gaps(limit=25) 다. missing/weak 이 뭘 해야 하는지는
    CP_KINDS(위)가 이미 갖고 있다 — 칩 툴팁에만 쓰던 것을 여기서도 그대로 읽는다. */
@@ -438,7 +461,7 @@ VIEW("competitors", function (d) {
   // 실패는 비어 있는 것과 다른 일이다 — 비었으면 채우면 되고, 실패했으면 무엇이
   // 실패했는지 알아야 다시 할 수 있다. 그래서 상자 모양부터 가른다(.empty.err).
   $("cp-shares").innerHTML = d.comp_date
-    ? (CP_shares(d) || CP_empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다"
+    ? (CP_shares(d) ? CP_shares(d) + CP_roles(d) : CP_empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다"
         : "겹치는 경쟁 도메인이 없습니다",
         "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
         "적어 두면 그것부터 맞댑니다.",

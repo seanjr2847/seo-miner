@@ -523,8 +523,10 @@ def test_seam_11_carry_fields_match():
         assert "dashboard.carry_read" in app_src, \
             "호스팅이 carry 를 직접 푼다 — 형식의 정본은 dashboard 의 carry_pack/carry_read 다"
         used = set(srv.CARRY_FIELDS)      # 서버가 선언한 것 그대로 — 소스를 안 긁는다
-        used |= set(re.findall(r"CARRY\.(\w+)",
-                               (ROOT / "server" / "app.html").read_text("utf-8")))
+        # 칸을 carry 로 채우는 화면은 온보딩(start.html) 하나다 — 사이트 목록(app.html)은 안 읽는다.
+        start_html = (ROOT / "server" / "start.html").read_text("utf-8")
+        assert "window.__CARRY__" in start_html, "온보딩이 carry 를 안 읽는다 — 플러그인이 실어 보낸 설정이 버려진다"
+        used |= set(re.findall(r"CARRY\.(\w+)", start_html))
         used.add("gsc_property")          # 어느 속성에 얹을지 — 아래에서 쓰는지 본다
         assert used <= set(dashboard.PREFILL_KEYS), \
             f"호스팅이 carry 에서 꺼내는데 로컬이 싣지 않는 이름: " \
@@ -532,11 +534,11 @@ def test_seam_11_carry_fields_match():
         assert 'carry.get("gsc_property"' in app_src, \
             "호스팅이 carry 가 가리키는 속성을 안 본다 — 남의 사이트에 씨앗이 얹힌다"
 
-        # 단계 용어표는 한 벌이다 — 등록 화면(app.html)도 사본을 갖지 않는다.
-        # 대시보드에 대해 위 3) 이 지키는 것과 같은 계약이다.
-        app_html = (ROOT / "server" / "app.html").read_text("utf-8")
-        assert "window.__STAGES__" in app_html, \
-            "app.html 이 서버가 실어 보낸 단계 용어표를 안 읽는다"
+        # 단계 용어표는 한 벌이다 — 사이트 목록(app.html)·온보딩(start.html)도 사본을 갖지
+        # 않는다. 대시보드에 대해 위 3) 이 지키는 것과 같은 계약이다.
+        for name in ("app.html", "start.html"):
+            assert "window.__STAGES__" in (ROOT / "server" / name).read_text("utf-8"), \
+                f"{name} 이 서버가 실어 보낸 단계 용어표를 안 읽는다"
         assert "__STAGES__=stage.STAGE_LABELS" in app_src, \
             "app.py 가 등록 화면에 단계 용어표를 안 싣는다 — 화면이 사본을 갖게 된다"
 
@@ -588,16 +590,16 @@ def test_seam_13_collectors_use_collector_cli():
 
 def test_seam_14_locale_list_single_source():
     """14) 언어-지역 목록은 한 벌이다(serp_adapter.LOCALES). 고르는 자리가 셋이다 —
-    로컬 설정 폼(settings.html 의 <select>, 조립이 채운다), 호스팅 등록 화면
-    (app.html 이 window.__LOCALES__ 를 읽는다), 호스팅 설정(dash.html 이 /api/settings
+    로컬 설정 폼(settings.html 의 <select>, 조립이 채운다), 호스팅 온보딩
+    (start.html 이 window.__LOCALES__ 를 읽는다), 호스팅 설정(dash.html 이 /api/settings
     의 locales 를 읽는다). 셋 중 하나라도 사본을 들면 새 언어를 한 곳에만 더하게
     되고, 고를 수 있는데 미국 SERP 로 떨어지는 항목이 생긴다 — 그래서 목록의 모든
     키가 LOCATION_MAP 에 닿는지까지 본다.
 
     조립본 매니페스트에는 이 목록이 안 실린다. 예전에는 실렸고 여기서 그걸 못
     박았는데, 조립본 안에서 window.__LOCALES__ 를 읽는 자리는 **없었다** — 설정 폼은
-    <option> 으로 이미 채워져 오고, 호스팅 설정은 /api/settings 로 받는다. 등록 화면
-    (app.html)의 window.__LOCALES__ 는 server/app.py 가 따로 싣는 다른 경로다.
+    <option> 으로 이미 채워져 오고, 호스팅 설정은 /api/settings 로 받는다. 온보딩
+    (start.html)의 window.__LOCALES__ 는 server/app.py 가 따로 싣는 다른 경로다.
     """
     import dashboard
     import serp_adapter
@@ -616,11 +618,11 @@ def test_seam_14_locale_list_single_source():
     ctx = _load()
     if ctx is None:
         return
-    assert "window.__LOCALES__" in (ROOT / "server" / "app.html").read_text("utf-8"), \
-        "app.html 이 서버가 실어 보낸 언어-지역 목록을 안 읽는다"
+    assert "window.__LOCALES__" in (ROOT / "server" / "start.html").read_text("utf-8"), \
+        "온보딩(start.html)이 서버가 실어 보낸 언어-지역 목록을 안 읽는다"
     app_src = ctx["app_f"].read_text("utf-8")
     assert "__LOCALES__=serp_adapter.LOCALES" in app_src, \
-        "app.py 가 app.html 에 언어-지역 목록을 안 싣는다"
+        "app.py 가 온보딩에 언어-지역 목록을 안 싣는다"
     assert "serp_adapter.LOCALES" in app_src.split("def api_settings(")[1].split("@app.")[0], \
         "/api/settings 가 언어-지역 목록을 안 준다 — dash.html 의 선택지가 빈다"
     assert "SET_H.locales" in ctx["dash"] and "[data-lang]" in ctx["dash"], \
@@ -1914,7 +1916,7 @@ def test_seam_42_project_types_are_one_list():
 
     id 는 다섯 곳에 흩어져 산다: 받는 쪽 검증(dashboard.PROJECT_TYPE_IDS), 점수
     계수(scoring.WEIGHTS), 온보딩 few-shot(_presets.yaml), 그리고 화면 둘 — 로컬
-    settings.html 과 호스팅 app.html. 한 곳만 고치면 나머지가 조용히 모른 척한다:
+    settings.html 과 호스팅 온보딩 start.html. 한 곳만 고치면 나머지가 조용히 모른 척한다:
     화면에만 넣은 종류는 서버가 "종류는 …중 하나"로 거부하고, WEIGHTS 에만 빠진
     종류는 거부당하는 대신 saas 계수로 **조용히** 떨어진다(scoring.score 의 폴백
     `WEIGHTS.get(t) or WEIGHTS["saas"]`) — w_fit 0.45 짜리 프리셋이 0.15 로 바뀌어도
@@ -1954,21 +1956,31 @@ def test_seam_42_project_types_are_one_list():
     for i, t in opts.items():
         assert t == f"{i} — {labels[i]}", f"설정 화면 라벨이 정본과 다르다: {t!r}"
 
-    # 호스팅 화면 — 리포 밖(플러그인 설치본)에는 server/ 가 없다
-    app_html = ROOT / "server" / "app.html"
+    # 호스팅 화면(온보딩) — 리포 밖(플러그인 설치본)에는 server/ 가 없다
+    app_html = ROOT / "server" / "start.html"
     if app_html.exists():
         src = app_html.read_text("utf-8")
         assert "window.__TYPES__" in src, \
-            "app.html 이 서버가 실어 보낸 종류 목록을 안 읽는다 — 사본이 되살아났다"
+            "start.html 이 서버가 실어 보낸 종류 목록을 안 읽는다 — 사본이 되살아났다"
         # 폴백 한 줄(서버가 안 실었을 때)까지 정본이어야 한다 — 거기 옛 문구가 남으면
         # 그 화면만 조용히 두 벌로 돌아간다.
         m = re.search(r"window\.__TYPES__ \|\| (\[\[.*?\]\]);", src, re.S)
-        assert m, "app.html 의 TYPES 폴백을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
+        assert m, "start.html 의 TYPES 폴백을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
         for i, t in re.findall(r'\["([a-z_]+)", "([^"]+)"\]', m.group(1)):
             assert i in canon and t == labels[i], f"호스팅 화면 폴백 라벨이 정본과 다르다: {t!r}"
         app_src = (ROOT / "server" / "app.py").read_text("utf-8")
         assert "__TYPES__=dashboard.PROJECT_TYPES" in app_src, \
-            "app.py 가 app.html 에 종류 목록을 안 싣는다 — 화면 고르개가 빈다"
+            "app.py 가 온보딩에 종류 목록을 안 싣는다 — 화면 고르개가 빈다"
+        # 등록 뒤 바꾸는 자리(호스팅 설정) — 목록은 /api/settings 가 정본에서 실어 보내고,
+        # 받는 쪽 검증도 같은 정본을 본다. 설정 화면이 사본을 들면 새 종류가 거기서만 빠진다.
+        body = app_src.split("def api_settings(")[1].split("@app.")[0]
+        # 주석 속 낱말이 아니라 코드의 꼴을 본다 — 낱말로 찾으면 주석이 검사를 대신 통과시킨다.
+        assert re.search(r'"types":\s*\[.*for i, t in dashboard\.PROJECT_TYPES\]', body),             "/api/settings 가 종류 목록을 정본에서 안 싣는다"
+        setb = app_src.split("def api_settings_set(")[1].split("\ndef ")[0]
+        assert "dashboard.PROJECT_TYPE_IDS" in setb, "종류 저장이 정본으로 검증하지 않는다"
+        dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
+        assert "SET_H.types" in dash and "[data-ptype]" in dash, \
+            "dash.html 이 /api/settings 의 types 로 종류 고르개를 안 그린다"
 
     # 옛 이름이 어디에도 안 남았다 — 남으면 그 자리만 saas 계수로 떨어진다
     for p in (presets, sett, app_html):
@@ -3192,8 +3204,8 @@ def test_seam_98_report_file_name_is_one_pattern():
     assert not db.is_report_only("content/pages/en/special-clinic/syringoma-milia/index.html")
 
 
-def test_seam_99_default_filter_is_what_is_left():
-    """99) 상태 거르개의 기본값은 「남은 것」이다 — 셸의 oppStMatch 를 node 로 **실제로 돌려** 본다.
+def test_seam_101_default_filter_is_what_is_left():
+    """101) 상태 거르개의 기본값은 「남은 것」이다 — 셸의 oppStMatch 를 node 로 **실제로 돌려** 본다.
 
     측정 화면(분석·키워드·순위 추적·AI 인용·사이트 점검·경쟁 분석·백링크)의 기본값이 "전체"라
     [제외]한 검색어·이미 고친 검색어가 할 일처럼 계속 섰다. 기본값에서:
@@ -3241,15 +3253,15 @@ def test_seam_99_default_filter_is_what_is_left():
     assert seen >= 7, f"측정 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
 
 
-def test_seam_100_design_tokens_are_one_block_in_three_files():
-    """100) 디자인 토큰 블록(`/* tokens:begin */`~`/* tokens:end */`)은 세 화면에 글자 하나 안 다르게 같다.
+def test_seam_102_design_tokens_are_one_block_in_three_files():
+    """102) 디자인 토큰 블록(`/* tokens:begin */`~`/* tokens:end */`)은 세 화면에 글자 하나 안 다르게 같다.
 
     셸(dashboard.html)·랜딩(landing.html)·앱 셸(app.html)은 각자 단독 파일이라 토큰을
     import 할 수 없어 같은 블록을 심어 둔다. 한 벌이 낡으면 화면마다 색·반경이 갈린다.
     마커가 없거나 블록이 다르면 FAIL — 첫 차이 줄을 보인다. 정본은 dashboard.html.
     """
     files = [ROOT / "skills" / "capture" / "templates" / "dashboard.html",
-             ROOT / "server" / "landing.html", ROOT / "server" / "app.html"]
+             ROOT / "server" / "landing.html", ROOT / "server" / "assets" / "entry.html"]
     if not all(f.exists() for f in files[1:]):
         return   # 리포 밖(플러그인 설치본)에는 server/ 가 없다
 
@@ -3269,6 +3281,79 @@ def test_seam_100_design_tokens_are_one_block_in_three_files():
             b = got[n] if n < len(got) else "(없음)"
             assert a == b, (f"{f.name} 의 토큰 블록이 {files[0].name} 와 다르다 — 블록 {n + 1}째 줄:"
                             f" 정본 {a!r} / 여기 {b!r}")
+
+def test_seam_99_onboarding_calls_exist_on_hosted():
+    """99) 온보딩(start.html)이 부르는 /api/* 와 /auth/* 가 호스팅 서버에 그 메서드로 있다.
+
+    온보딩은 대시보드 셸 밖의 화면이라 6) 이 보는 조립본에 안 든다 — 따로 대조한다.
+    경로를 하나 옮기면 주소를 적고 [다음]을 눌러도 아무 일도 안 일어나는 화면이 된다.
+    """
+    srv = _server()
+    if srv is None:
+        return
+    src = (ROOT / "server" / "start.html").read_text("utf-8")
+    served = {(m, r.path) for r in srv.app.routes if hasattr(r, "methods") for m in r.methods}
+    posts = set(re.findall(r'post\("(/api/[a-z/]+)"', src))
+    gets = set(re.findall(r'fetch\("(/api/[a-z/]+)"\)', src))
+    links = set(re.findall(r'href="(/auth/[a-z]+)', src))
+    assert posts and gets and links, f"온보딩 호출을 못 읽었다 — 꼴이 바뀌었으면 이 검사도 옮긴다: {posts} {gets} {links}"
+    for m, paths in (("POST", posts), ("GET", gets | links)):
+        miss = sorted(p for p in paths if (m, p) not in served)
+        assert not miss, f"온보딩이 {m} 로 부르는데 호스팅에 없다: {miss}"
+
+
+def test_seam_100_no_gsc_site_is_skipped_everywhere():
+    """100) 서치콘솔 없이 시작한 사이트(gsc_property 가 빈 값)는 어디서도 '필수 연결'로 안 선다.
+
+    네 곳이 같은 사실을 각자 읽는다: 등록(create_project 가 속성을 지어 넣지 않는다) →
+    수집(collect_gsc 가 실패 대신 건너뛴다) → 안내(stage 의 gsc 단계가 skip 이라 "지금
+    할 것"이 거기 서지 않는다) → 진단(doctor 가 구글 연결을 must 로 안 세운다). 한 곳만
+    옛 규칙이면 — 지어 넣으면 런마다 인증 실패 메일, 안내가 안 물러서면 개요 맨 위에
+    영영 "구글 연결 한 번만 남았습니다" — 권한 없는 마케터가 거기서 막힌다.
+    """
+    import os
+    import tempfile
+    import dashboard
+    import stage
+    import collect_gsc
+    sys.path.insert(0, str(ROOT / "skills" / "setup" / "scripts"))
+    import doctor
+    with tempfile.TemporaryDirectory() as d:
+        keys = ("CAPTURE_HOME", "GSC_TOKEN_FILE", doctor.HOSTED_ENV)
+        saved = {k: os.environ.get(k) for k in keys}
+        os.environ["CAPTURE_HOME"] = d
+        os.environ["GSC_TOKEN_FILE"] = str(Path(d) / "없는토큰.json")   # 연결 안 한 사람
+        os.environ[doctor.HOSTED_ENV] = "1"
+        try:
+            r = dashboard.create_project({"name": "nogsc", "type": "saas", "domain": "nogsc.test",
+                                          "seed_keywords": "씨앗"}, auto_gsc=False)
+            assert r.get("ok"), r
+            # 로컬 폼(기본값)은 여전히 지어 넣는다 — 서치콘솔이 전제다.
+            assert dashboard.create_project({"name": "local", "type": "saas",
+                                             "domain": "local.test"}).get("ok")
+            conn = db.connect()
+            try:
+                pr = db.get_project(conn, "nogsc")
+                assert (pr["gsc_property"] or "") == "", "서치콘솔 없이 시작했는데 속성을 지어 넣었다"
+                assert db.get_project(conn, "local")["gsc_property"] == "sc-domain:local.test"
+                g = stage.state(conn, pr)
+            finally:
+                conn.close()
+            res = collect_gsc.collect("nogsc")
+            assert res.skipped and not res.failed, f"gsc 단계가 건너뛰지 않고 실패한다: {res.reason}"
+            step = next(x for x in g["steps"] if x["id"] == "gsc")
+            assert step.get("skip"), "안내의 gsc 단계가 건너뜀이 아니다"
+            assert g["steps"][g["here"]]["id"] != "gsc", "'지금 할 것'이 서치콘솔 연결에 서 있다"
+            diag = doctor.diagnose("nogsc")
+            ids = {m.get("id") for m in diag["must"] if isinstance(m, dict)}
+            assert not ids & {"gsc_login", "gsc_rescope"}, f"진단이 구글 연결을 할 일로 세운다: {ids}"
+            assert "구글" not in diag["verdict"], f"요약이 구글 연결을 말한다: {diag['verdict']}"
+            # 거꾸로 — 속성이 있는 사이트에는 연결 안내가 그대로 선다(검사가 헛돌지 않는다).
+            ids = {m.get("id") for m in doctor.diagnose("local")["must"] if isinstance(m, dict)}
+            assert "gsc_login" in ids, f"속성이 있는 사이트에도 연결 안내가 사라졌다: {ids}"
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 if __name__ == "__main__":
