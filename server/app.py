@@ -1124,11 +1124,11 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
     """
     try:
         pr = db.get_project(c, project)
-        ga4, locale = pr["ga4_property"] or "", db.project_locale(pr)
+        ga4, locale, ptype = pr["ga4_property"] or "", db.project_locale(pr), pr["type"] or ""
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale = "", ""
+        ga4, locale, ptype = "", "", ""
     # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
     return {"run_every_hours": store.every_hours(tn.conn, uid, project),
             "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -1136,6 +1136,11 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
             "locale": locale,
             "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
+            # 사이트 종류 — 값과 고를 수 있는 목록(정본 dashboard.PROJECT_TYPES)을 같이 준다.
+            # 등록 뒤에도 바꿀 수 있어야 한다: 종류가 점수 계수를 정하는데, 등록할 때
+            # 맞는 종류가 없어서 saas 로 넣은 사이트(gucci)가 그 계수에 묶여 있었다.
+            "type": ptype,
+            "types": [{"id": i, "label": t} for i, t in dashboard.PROJECT_TYPES],
             # 브랜드·경쟁사·도구·씨앗 + 브랜드 초안 — 로컬 대시보드와 한 벌(db.profile_read)
             **db.profile_read(c, project)}
 
@@ -1158,6 +1163,13 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
                                 detail="고를 수 없는 언어-지역입니다. 새로고침한 뒤 다시 고르세요.")
         db.set_locale(c, db.get_project(c, project)["id"], loc)
         return {"ok": True, "locale": loc}
+    if "type" in body:        # 사이트 종류만 바꾸는 호출 — 점수 계수(scoring.WEIGHTS)가 바뀐다
+        ptype = str(body.get("type") or "")
+        if ptype not in dashboard.PROJECT_TYPE_IDS:
+            raise HTTPException(status_code=400,
+                                detail="고를 수 없는 사이트 종류입니다. 새로고침한 뒤 다시 고르세요.")
+        db.set_project_type(c, db.get_project(c, project)["id"], ptype)
+        return {"ok": True, "type": ptype}
     if "profile" in body:     # 브랜드 표기·경쟁사 도메인·도구·씨앗 — yaml 에만 있는 값
         return _api_settings_profile(body.get("profile"), project, c)
     try:

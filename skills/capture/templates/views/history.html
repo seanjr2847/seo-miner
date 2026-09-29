@@ -172,6 +172,8 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   auto_new:"새 경쟁사", metrics:"지표", gap_rows:"빈틈 행", seed:"시드", links:"링크",
   issues:"문제", keywords:"키워드", chunks:"묶음", updated:"갱신", calls:"호출",
   daily:"일별", country:"나라",
+  // 사이트가 이 서버를 막아(무응답·403·429) 못 본 주소 수 — collect_crawl 이 적는다.
+  blocked:"막힌 주소",
   // 검색량 API 가 못 재는 검색어(빈 문자열·길이 초과·안 받는 지역). 실패가 아니라
   // "안 보냈다"라서 errors 와 따로 센다(collect_metrics 의 unsendable). 브라우저로
   // 기록 화면을 열었을 때 이 키만 영문 그대로 서 있었다.

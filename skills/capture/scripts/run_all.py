@@ -416,8 +416,14 @@ def preflight(stages=STAGES) -> dict[str, str]:
 
 
 def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
-               only_set: set[str], opts: dict, blocked: dict | None = None) -> StageResult:
-    """단계 하나 — 건너뛸 이유를 먼저 보고, 아니면 fn 을 부른다."""
+               only_set: set[str], opts: dict, blocked: dict | None = None,
+               before=None) -> StageResult:
+    """단계 하나 — 건너뛸 이유를 먼저 보고, 아니면 fn 을 부른다.
+
+    before: fn(project) — 이 단계가 **실제로 돌기 직전** 한 번(건너뛰면 안 부른다). 앞
+    단계가 만든 재료로 이 단계의 대상을 정하는 자리다(호스팅 워커: 검색량이 나온 뒤
+    순위를 잴 키워드를 켠다). 여기서 난 예외는 삼킨다 — 부수 준비가 단계를 죽이면 안 된다.
+    """
     blocked = blocked or {}
 
     def _skip(reason: str) -> StageResult:
@@ -438,6 +444,12 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
             # 카나리아가 이미 답을 알고 있다 — 402 를 100번 사러 가지 않는다.
             return _skip(blocked[stage.name])
 
+    if before and not dry_run:
+        try:
+            before(project)
+        except Exception as e:
+            log.exception("[%s] 단계 앞 준비에서 예외", stage.name)
+            print(f"[{stage.name}] 단계 앞 준비를 건너뜁니다 ({e})")
     try:
         return stage.fn(project=project, dry_run=dry_run, **opts)
     except collector.Fatal as e:
@@ -524,7 +536,7 @@ def _wal() -> None:
 
 
 def _run_groups(project: str, table: tuple, *, dry_run: bool, skip_set: set, opts: dict,
-                blocked: dict, ran: set, on_stage) -> list[tuple[str, StageResult]]:
+                blocked: dict, ran: set, on_stage, before=None) -> list[tuple[str, StageResult]]:
     """묶음 런 — 준비된 단계부터 동시에 띄우고, 끝나는 대로 다음을 띄운다.
 
     스레드다(프로세스가 아니다): 단계가 하는 일은 거의 네트워크 대기라 GIL 이 문제가
@@ -561,7 +573,8 @@ def _run_groups(project: str, table: tuple, *, dry_run: bool, skip_set: set, opt
                 print(f"[{stg.name}] {RAN_REASON}")
                 return collector.skipped(RAN_REASON)
             return _run_stage(stg, project, dry_run=dry_run, skip_set=skip_set, only_set=set(),
-                              opts=opts.get(stg.name) or {}, blocked=blocked)
+                              opts=opts.get(stg.name) or {}, blocked=blocked,
+                              before=(before or {}).get(stg.name))
         finally:
             out.drain()
             err.drain()
@@ -607,6 +620,7 @@ def run_chain(
     preflight=preflight,
     groups=None,
     ran=(),
+    before=None,
 ) -> list[tuple[str, StageResult]]:
     """수집 체인을 실행하고 각 단계의 결과를 그대로 돌려줍니다.
 
@@ -627,6 +641,8 @@ def run_chain(
             (plan + 동시 실행). None 이면 순차 체인.
         ran: 묶음 런 전용 — 바로 앞 런에서 이미 돈 단계. 대기열의 다음 런이 공유 단계
             (rank 등)를 또 사지 않게 서버가 준다. 건너뜀으로 남는다.
+        before: {단계 이름: fn(project)} — 그 단계가 실제로 돌기 직전에 한 번 부른다
+            (_run_stage). 묶음 런은 AFTER 순서를 지키므로 앞 단계의 결과가 이미 있다.
 
     Returns:
         [(단계 이름, StageResult), ...] — 단계당 한 건, STAGES 순서.
@@ -677,7 +693,7 @@ def run_chain(
         blocked = preflight(to_run) if any(s.is_paid for s in to_run) else {}
         _wal()
         return _run_groups(project, table, dry_run=dry_run, skip_set=skip_set, opts=opts,
-                           blocked=blocked, ran=ran, on_stage=on_stage)
+                           blocked=blocked, ran=ran, on_stage=on_stage, before=before)
 
     print(f"\n{SEPARATOR}")
     print(f"수집 시작: {project}" + (" (실행 없이 계획만 봅니다)" if dry_run else ""))
@@ -704,7 +720,8 @@ def run_chain(
         print(SUB_SEPARATOR)
 
         r = _run_stage(stage, project, dry_run=dry_run, skip_set=skip_set,
-                       only_set=only_set, opts=opts.get(stage.name) or {}, blocked=blocked)
+                       only_set=only_set, opts=opts.get(stage.name) or {}, blocked=blocked,
+                       before=(before or {}).get(stage.name))
         results.append((stage.name, r))
 
         if r.failed:
@@ -961,6 +978,23 @@ def _check_groups() -> None:
     res, _, _ = go(["ai"], ran={"rank"})
     assert "rank" not in calls and "ai" in calls, calls
     assert dict(res)["rank"].reason == RAN_REASON and not dict(res)["rank"].failed, res
+
+    # ── 단계 앞 준비(before): 그 단계가 실제로 돌기 직전, 앞 단계가 끝난 뒤에 한 번.
+    #    건너뛴 단계엔 안 부르고, 준비가 터져도 단계는 돈다.
+    seen: list = []
+
+    def prep(project):
+        seen.append(("prep", list(calls)))
+        raise RuntimeError("준비 터짐")
+
+    res, out, _ = go(["search"], before={"rank": prep, "backlinks": prep})
+    assert len(seen) == 1, f"rank 앞 준비가 한 번이 아니다(안 도는 backlinks 에도 불렸다?): {seen}"
+    assert "metrics" in seen[0][1] and "rank" not in seen[0][1],         f"준비가 검색량(metrics) 뒤·순위(rank) 앞이 아니다: {seen[0][1]}"
+    assert "rank" in calls and not dict(res)["rank"].failed, "준비가 터지자 단계가 안 돌았다"
+    assert "단계 앞 준비를 건너뜁니다" in out, out
+    seen.clear()
+    go(["search"], before={"rank": prep}, ran={"rank"})
+    assert not seen, "이미 돈(건너뛴) 단계 앞에서 준비를 불렀다"
 
     # ── --skip 은 묶음 런에서도 듣는다 / --only 와 같이 쓰면 거절
     go(["compete"], skip="backlinks")

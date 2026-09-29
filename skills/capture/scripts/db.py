@@ -1303,7 +1303,10 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
 # competitors(source='manual') 행이 정본이고, 여기 또 담으면 같은 목록이 두 벌이 된다.
 # name·domain·type·locale·gsc_property·ga4_property 도 없다 — projects 컬럼이 정본이다.
 SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
-                "surfaces_ai", "serp_depth", "limits")
+                "surfaces_ai", "serp_depth", "limits",
+                # 서치콘솔 없는 사이트에서 검색량 상위 후보를 자동으로 켠 날(호스팅 워커).
+                # 한 번만 켠다 — 그 뒤 사람이 끈 키워드를 런마다 되켜지 않게.
+                "auto_keywords")
 # 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
 # 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
 # collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).
@@ -1409,6 +1412,13 @@ def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
         set_manual_competitors(conn, pid, cfg.get("competitors_manual") or [])
     conn.commit()
     return pid
+
+
+def set_project_type(conn: sqlite3.Connection, project_id: int, ptype: str) -> None:
+    """사이트 종류를 바꾼다. 값 검증은 부르는 쪽(정본 dashboard.PROJECT_TYPE_IDS)이 한다 —
+    db 는 화면의 목록을 모른다. 점수는 다음 기회 분석(gaps)부터 새 계수로 매겨진다."""
+    conn.execute("UPDATE projects SET type=? WHERE id=?", (ptype, project_id))
+    conn.commit()
 
 
 def seed_keywords(conn: sqlite3.Connection, project_id: int) -> list[str]:

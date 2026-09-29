@@ -384,6 +384,15 @@ def demo() -> None:
             assert r.status_code == 200 and r.json()["gsc"] is True, r.text
             assert c.get("/api/settings?project=new2").json()["locale"] == "en-GB", \
                 "고른 언어가 안 실렸다"
+            # 사이트 종류는 등록 뒤에도 바꾼다 — 목록은 정본(PROJECT_TYPES), 밖의 값은 400.
+            got = c.get("/api/settings?project=new2").json()
+            assert got["type"] == "saas" and [t["id"] for t in got["types"]] == \
+                list(dashboard.PROJECT_TYPE_IDS), got
+            assert c.post("/api/settings", json={"project": "new2", "type": "shop"}
+                          ).status_code == 400, "목록 밖 종류가 저장된다"
+            r = c.post("/api/settings", json={"project": "new2", "type": "commerce"})
+            assert r.status_code == 200 and r.json()["type"] == "commerce", r.text
+            assert c.get("/api/settings?project=new2").json()["type"] == "commerce", "종류가 안 바뀌었다"
 
             # 1단계 미리보기 — 홈페이지 제목에서 씨앗 초안을 뽑는다. 네트워크는 안 탄다.
             import collect_page

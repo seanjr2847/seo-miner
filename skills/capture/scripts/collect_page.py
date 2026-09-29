@@ -440,6 +440,24 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
 GONE_STATUS = (404, 410)
 
 
+# 사이트가 **이 서버를** 막을 때의 모양 — 응답이 없거나(시간 초과·연결 거부, status 없음)
+# 거절한다(403·429). 대형 브랜드 사이트(gucci.com)는 데이터센터 IP 를 봇으로 보고 응답을
+# 안 준다. 이건 그 사이트 페이지의 결함이 아니라 우리가 못 본 것이다 — 페이지 점검·크롤이
+# 이걸 "고칠 거리"(깨진 페이지·실패)로 적으면 없는 문제를 기회로 세우고 매 런 실패 메일을 낸다.
+BLOCK_STATUS = frozenset({403, 429})
+
+
+def blocked(status) -> bool:
+    return status is None or status in BLOCK_STATUS
+
+
+def blocked_note(host: str, n: int) -> str:
+    """전부 막혔을 때의 사유 한 벌 — 페이지 점검·크롤이 같은 말을 한다."""
+    return (f"{host} 이 이 서버의 요청에 응답하지 않습니다 — 주소 {n}개 전부 시간 초과·거부. "
+            "봇 차단(방화벽)이거나 사이트가 내려가 있습니다. 막는 동안 이 단계는 비어 있고, "
+            "우리 쪽에서 고칠 수 있는 문제가 아닙니다.")
+
+
 def fetch(url: str, timeout: int | None = None) -> dict:
     """URL 한 장. 실패도 한 줄로 남긴다 — "못 가져왔다"는 것 자체가 진단이다."""
     import requests
@@ -529,6 +547,12 @@ def collect(project: str, *,
         bad = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} page audits (errors={st.errors})"
               + (f" · 못 가져온 URL {len(bad)}개" if bad else ""))
+        # 한 장도 못 봤고 전부 "막힘"이면 실패가 아니라 건너뜀이다 — 원인이 그 사이트의
+        # 방화벽이라 다음 런도 똑같이 막힌다. 실패로 두면 매일 실패 메일이 가고, 사유는
+        # 파이썬 예외 문장(ReadTimeout: HTTPSConnectionPool…)이라 무엇을 할지 모른다.
+        if not done and bad and len(bad) == len(rows) and all(blocked(x.get("status")) for x in bad):
+            from urllib.parse import urlparse
+            return st.skip(blocked_note(urlparse(urls[0]).hostname or p["domain"], len(bad)))
         # 실제로 감사한 건수로 판정한다 — 전부 못 가져온 것은 완료가 아니다.
         return st.verdict(done, rows=len(rows))
 
@@ -689,7 +713,37 @@ def _selfcheck() -> None:
     assert {"tables", "lists", "h2_questions", "lead_words", "author"} <= cols, cols
 
     _concurrency_check(conn)
+    _blocked_check(conn)
     print("collect_page self-check ok")
+
+
+def _blocked_check(conn) -> None:
+    """사이트가 이 서버를 막으면(전부 무응답·403·429) 실패가 아니라 건너뜀이고, 사유가
+    사람 말이다. 하나라도 보이면(또는 막힘이 아닌 오류가 섞이면) 예전 판정 그대로다."""
+    import contextlib
+    import io
+
+    import fanout
+    urls = [f"https://blk.kr/p{i}" for i in range(3)]
+    g = globals()
+    orig = g["target_urls"], g["fetch"]
+
+    def go(fetch_fn):
+        g["target_urls"], g["fetch"] = (lambda c, pid, limit: list(urls)), fetch_fn
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return collect("p", conn=fanout.MainThreadOnly(conn), throttle=0)
+        finally:
+            g["target_urls"], g["fetch"] = orig
+
+    timeout = "ReadTimeout: HTTPSConnectionPool(host='blk.kr', port=443): Read timed out."
+    res = go(lambda u, timeout_=None, **k: {"url": u, "status": None, "error": timeout}
+             if not u.endswith("p2") else {"url": u, "status": 403, "error": "HTTP 403"})
+    assert res.skipped and not res.failed, f"전부 막혔는데 건너뜀이 아니다: {res}"
+    assert "blk.kr" in res.reason and "응답하지 않습니다" in res.reason and "ReadTimeout" not in res.reason, res.reason
+    # 서버 오류(503)가 섞이면 막힘이 아니다 — 사이트 쪽 결함일 수 있으니 실패 그대로.
+    res = go(lambda u, timeout_=None, **k: {"url": u, "status": 503, "error": "HTTP 503"})
+    assert res.failed, f"503 전부를 막힘으로 삼켰다: {res}"
 
 
 def _concurrency_check(conn) -> None:

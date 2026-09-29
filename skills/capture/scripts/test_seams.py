@@ -1971,6 +1971,16 @@ def test_seam_42_project_types_are_one_list():
         app_src = (ROOT / "server" / "app.py").read_text("utf-8")
         assert "__TYPES__=dashboard.PROJECT_TYPES" in app_src, \
             "app.py 가 온보딩에 종류 목록을 안 싣는다 — 화면 고르개가 빈다"
+        # 등록 뒤 바꾸는 자리(호스팅 설정) — 목록은 /api/settings 가 정본에서 실어 보내고,
+        # 받는 쪽 검증도 같은 정본을 본다. 설정 화면이 사본을 들면 새 종류가 거기서만 빠진다.
+        body = app_src.split("def api_settings(")[1].split("@app.")[0]
+        # 주석 속 낱말이 아니라 코드의 꼴을 본다 — 낱말로 찾으면 주석이 검사를 대신 통과시킨다.
+        assert re.search(r'"types":\s*\[.*for i, t in dashboard\.PROJECT_TYPES\]', body),             "/api/settings 가 종류 목록을 정본에서 안 싣는다"
+        setb = app_src.split("def api_settings_set(")[1].split("\ndef ")[0]
+        assert "dashboard.PROJECT_TYPE_IDS" in setb, "종류 저장이 정본으로 검증하지 않는다"
+        dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
+        assert "SET_H.types" in dash and "[data-ptype]" in dash, \
+            "dash.html 이 /api/settings 의 types 로 종류 고르개를 안 그린다"
 
     # 옛 이름이 어디에도 안 남았다 — 남으면 그 자리만 saas 계수로 떨어진다
     for p in (presets, sett, app_html):
