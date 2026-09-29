@@ -347,10 +347,10 @@ def home(request: Request):
                '<div class="prog"><div class="progress"><i></i></div>'
                '<p class="stg">수집을 준비합니다</p></div>')
             + '</li>' for r in rows)
-        block = (f'<section id="live"><p class="eyebrow">사이트 {len(rows)}개</p>'
+        block = (f'<section id="live">'
                  # 「분석 중인 사이트」라고 부르면 끝난 사이트가 섞인 목록을 잘못
                  # 가리킨다 — 이 목록은 등록한 것 전부다.
-                 '<h2>내 사이트</h2>'
+                 f'<h2>내 사이트 {len(rows)}개</h2>'
                  '<p class="sub">첫 분석이 끝나면 이 줄에서 대시보드로 들어갑니다.</p>'
                  f'<ul class="sites">{items}</ul>')
         if any(not r["last_run_at"] for r in rows):

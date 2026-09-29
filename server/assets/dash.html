@@ -9,28 +9,27 @@
   :root{
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"Malgun Gothic",monospace;
   }
-  /* 원본 셸(dashboard.html)이 레일·화면 전환·괘선 체계를 다 갖는다. 여기서는
-     호스팅에만 있는 것만 칠한다 — 예전에는 이 애드온이 body 격자부터 카드까지
-     원본을 !important 로 덮어써서, 같은 조립본이 배포마다 다른 몸으로 섰다. */
+  /* 원본 셸(dashboard.html)이 레일·화면 전환·상자 문법(면 카드 하나)을 다 갖는다.
+     여기서는 호스팅에만 있는 것만 칠한다 — 예전에는 이 애드온이 body 격자부터 카드까지
+     원본을 !important 로 덮어써서, 같은 조립본이 배포마다 다른 몸으로 섰다.
+     상자는 셸과 같은 하나다: 면 · 반경 · 옅은 그림자 · 테두리 없음. 알림·빈 상태는
+     면의 색조(--sunk·--accent-wash·--warn-wash)로 가르고, 굵은 옆줄·점선은 안 쓴다. */
 
   /* 로컬 설정(부품 설치·API 키·구글 클라이언트)은 호스팅에서 유저 몫이 아니다.
      지우지 않고 감춘다 — 원본 스크립트가 이 칸들에 이벤트를 이미 걸어 뒀다. */
   #setup { display:none; }
 
-  /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다. */
-  #sm-fail{border-left:2px solid var(--copper);padding:12px 0 12px 16px;
-    margin:0 0 18px;color:var(--copper);font:400 13px/1.6 var(--sans)}
+  /* 초기화 한 곳이 터졌을 때의 알림. 조용히 넘어가지 않되, 화면을 죽이지도 않는다.
+     경고면(--warn-wash) 한 장 — 옆줄 없이 색조로 말한다. */
+  #sm-fail{padding:var(--sp-4) var(--sp-5);margin:0 0 var(--sp-4);
+    background:var(--warn-wash);border-radius:var(--r-md);
+    color:var(--warn);font:400 var(--fs-2)/1.6 var(--sans)}
   #sm-fail p{margin:0}
 
-  /* 레일 바닥 통 — 보고서·새로고침. 전체 재기 버튼은 여기 없다: 재는 단위가 메뉴의
-     묶음이 되면서 전체 재기는 [안내] 화면 한 곳으로 옮겼다(원본 셸의 groupHead). */
-  .rail-foot .cmd{font:400 12.5px/1 var(--sans);color:var(--on-ink-dim);
-    cursor:pointer;text-decoration:none;border:0;background:none;padding:2px 0;margin:0}
-  .rail-foot .cmd:hover{opacity:1}
-  .rail-foot .cmd::after{content:none}   /* 원본 .cmd 는 복사 칩이라 아이콘을 달고 있다 */
-  @media (min-width:1000px){
-    .rail-foot{flex-direction:column;align-items:stretch}
-  }
+  /* 레일 바닥 통 — 보고서·새로고침. 생김새(알약·높이·색)는 셸의
+     .railcard .rail-foot > .cmd 가 갖는다 — 여기서 다시 칠하지 않는다. 전체 재기 버튼은
+     여기 없다: 재는 단위가 메뉴의 묶음이 되면서 전체 재기는 [안내] 화면 한 곳으로
+     옮겼다(원본 셸의 groupHead). */
 
   /* 화면 제목 옆 실행 버튼 — 생김새는 셸의 .go.sm.sec 한 벌이다(.sm-refresh 는 표식). */
   /* 레일 로고 — 호스팅에서는 사이트 목록(/)으로 가는 링크다(아래 "로고 링크"). */
@@ -38,34 +37,34 @@
 
   /* 실행 배너 — 눌렀다·도는 중·끝났다·못 했다를 한 자리에서 말한다.
      세 상태가 각자 다른 데 있으면 "지금 뭐가 되고 있나"를 화면이 못 답한다.
-     자리는 화면 머리(.vh) 아래·다음 행동 띠 위다(위 slot()). 예전에는 sticky 로
-     화면 위에 붙여 뒀는데, 그 자리로 내려온 지금은 스크롤하면 제목 위를 덮는다 —
-     붙이지 않는다. 눌러 놓고 아래를 보는 동안 진행을 알리는 일은 토스트가 맡는다.
-     바탕은 반투명 위에 종이색을 깐다 — 그냥 --wash 만 쓰면 아래 글자가 비쳐 읽힌다.
+     자리는 화면 머리(.vh) 아래·다음 행동 띠 위다(위 slot()). 붙이지 않는다 —
+     스크롤하면 제목 위를 덮는다. 눌러 놓고 아래를 보는 동안 진행을 알리는 일은
+     토스트가 맡는다.
+     상자는 셸의 면 문법이다: 옅은 색조 면(--accent-wash) 한 장, 테두리·옆줄 없음.
      상태(수집 중·완료·실패)는 셸의 .badge 가, 얼마나 왔는지는 셸의 .progress 가
      말한다 — 이 파일이 점·맥박을 따로 그리지 않는다. */
   /* 배너 자리는 셸의 .vban 이다(화면 머리 아래·다음 행동 띠 위, 본문 칸 폭).
      여기서는 상자 안쪽만 그린다 — 폭도 자리도 셸이 정한다. 셸이 아직 그 규칙을
      안 가졌을 때를 대비해 빈 자리는 접어 둔다. */
   #sm-wait{margin:0;
-    padding:13px 16px;border-left:2px solid var(--patina);
-    background:linear-gradient(var(--wash),var(--wash)),var(--stone);
-    color:var(--ink);font-size:13.5px;line-height:1.6;
+    padding:var(--sp-4) var(--sp-5);border-radius:var(--r-md);
+    background:var(--accent-wash);
+    color:var(--ink);font-size:var(--fs-2);line-height:1.6;
     display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
   /* 문장만 재운다 — 상자는 본문 폭이고, 한 줄이 74자를 넘으면 눈이 다음 줄
      머리를 못 찾는다(셸의 .sub 과 같은 규칙). */
   #sm-wait .t{margin:0;flex:1 1 min(320px,100%);max-width:74ch}
   #sm-wait .progress{flex:0 0 100%}
   /* 오류가 초록 바탕을 쓰면 색이 뜻과 반대로 말한다. */
-  #sm-wait.bad{border-left-color:var(--copper);color:var(--copper);
-    background:linear-gradient(var(--wash-copper),var(--wash-copper)),var(--stone)}
-  #sm-wait.bad .progress i{background:var(--copper)}
+  #sm-wait.bad{color:var(--warn);background:var(--warn-wash)}
+  #sm-wait.bad .progress i{background:var(--warn)}
 
-  /* 목록 자리의 빈 상태·오류. 생김새는 셸의 .empty 가 갖는다 — 여기서는 그것이
-     테두리 있는 상자(.list) 안에 설 때만 손본다: 상자 안 상자가 되지 않게
-     바깥 테두리를 지우고(.bare), 안쪽 여백을 준다. */
-  .sm-note{margin:14px}
-  #sm-kw .list.bare,#sm-aiq .list.bare{border:0;background:none;box-shadow:none}
+  /* 목록 자리의 빈 상태·오류. 생김새는 셸의 .empty 가 갖는다(옅은 면). 목록 상자
+     (.list)가 이미 면 카드라 그 안에 든 .empty 는 상자 안 상자가 된다 — 안내가 통째로
+     들어설 때 .bare 가 바깥 면을 벗기고, 안쪽 여백만 준다. */
+  .sm-note{margin:var(--sp-3)}
+  #sm-kw .list.bare,#sm-aiq .list.bare{background:none;box-shadow:none}
+  .list.bare > .sm-note{margin:0}
   #view-ai:has(.next [data-sm-act="make-prompts"]) #sm-aiq .gen{display:none}
   /* 불러오는 동안 세우는 스켈레톤 — 셸의 .skel 을 그대로 쓴다. */
   .sm-note > .skel{margin:10px 0}
@@ -73,45 +72,44 @@
   /* 마지막 수집이 일부 실패했다는 알림. #sm-wait 과 같은 자리·같은 몸을 쓰되 색만
      산화동(경고)이다 — 자리가 다르면 "무엇이 지금 화면을 설명하는가"가 흩어진다.
      한글이 섞이는 문장이라 letter-spacing·uppercase 를 걸지 않는다.
-     "같은 몸"이라 실행 배너가 화면 위에 붙게 된 것도 같이 따라간다 — 둘이 나란히
-     설 수 있어서, 하나만 붙으면 스크롤할 때 서로 어긋나 보인다.
      (주석이 여기서 한 번 일찍 닫혀 있었다 — 그 뒤 두 줄이 선택자로 읽혀 아래
      #sm-bad 규칙을 통째로 삼켰다. 실패 알림이 색도 자리도 없이 나갔다.) */
   #sm-bad{margin:0;
-    padding:13px 16px;border-left:2px solid var(--copper);
-    background:linear-gradient(var(--wash-copper),var(--wash-copper)),var(--stone);
-    color:var(--copper);font-size:13.5px;line-height:1.6;
+    padding:var(--sp-4) var(--sp-5);border-radius:var(--r-md);
+    background:var(--warn-wash);
+    color:var(--warn);font-size:var(--fs-2);line-height:1.6;
     display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
   #sm-bad .t{margin:0;flex:1 1 min(320px,100%);max-width:74ch}
   #sm-bad .acts{margin:0;flex:0 0 auto}
 
   /* 검색 성과 — 서치콘솔 4대 지표를 같은 크기로 나란히 둔다.
      축이 서로 달라 한 그림에 겹치지 않는다(게재순위는 방향까지 반대다). */
-  .sm-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:44px;margin-top:4px}
+  .sm-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-6) 44px;margin-top:4px}
   @media(max-width:760px){.sm-charts{grid-template-columns:1fr}}
   .sm-ct{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
-    font:500 12.5px/1 var(--sans);color:var(--ink);margin-bottom:10px}
-  /* 제목 옆 현재 값 — 선은 모양만 말한다. 지금 얼마인지는 숫자로 붙인다. */
-  .sm-ct .nowv{font:500 14px/1 var(--mono);font-variant-numeric:tabular-nums;
+    font:500 var(--fs-1)/1.35 var(--sans);color:var(--sub);margin-bottom:10px}
+  /* 제목 옆 현재 값 — 선은 모양만 말한다. 지금 얼마인지는 숫자로 붙인다. 지표 값은
+     화면의 KPI 와 같은 서체(Pretendard·tabular-nums)다 — 등폭이 아니다. */
+  .sm-ct .nowv{font:650 var(--fs-3)/1.2 var(--sans);font-variant-numeric:tabular-nums;
     color:var(--ink);white-space:nowrap}
-  .sm-ct .nowv .d{font-size:11px;margin-left:5px}
+  .sm-ct .nowv .d{font-size:var(--fs-1);margin-left:5px}
   /* 세로축 값은 그림 오른쪽 위·아래에 얹는다 — preserveAspectRatio:none 이라
-     SVG 안에 글자를 두면 늘어난다. */
+     SVG 안에 글자를 두면 늘어난다. 얹은 글자의 바탕은 그것이 놓인 면(--card)이다. */
   .sm-plot{position:relative}
-  .sm-gl{position:absolute;right:0;font:400 10.5px/1 var(--mono);color:var(--slate);
-    background:var(--stone);padding:1px 0 1px 7px;pointer-events:none}
+  .sm-gl{position:absolute;right:0;font:400 var(--fs-1)/1 var(--mono);color:var(--mute);
+    background:var(--card);padding:1px 0 1px 7px;pointer-events:none}
   .sm-gl.t{top:-4px} .sm-gl.b{bottom:-4px}
   .sm-line{display:block;width:100%;height:76px;overflow:visible}
-  .sm-line path{fill:none;stroke:var(--patina);stroke-width:1.2;
+  .sm-line path{fill:none;stroke:var(--accent);stroke-width:2;
     vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
-  .sm-line circle{fill:var(--patina);vector-effect:non-scaling-stroke}
-  .sm-line line.g{stroke:var(--rule-soft);stroke-width:1;stroke-dasharray:2 4;
+  .sm-line circle{fill:var(--accent);vector-effect:non-scaling-stroke}
+  .sm-line line.g{stroke:var(--line);stroke-width:1;
     vector-effect:non-scaling-stroke}
   .sm-line rect{fill:transparent}
-  .sm-line rect:hover{fill:var(--wash)}
-  .sm-ax{display:flex;justify-content:space-between;font:400 10.5px/1 var(--mono);
-    color:var(--slate);margin-top:6px;opacity:.75}
-  .sm-none{font-size:13px;color:var(--slate);margin:10px 0 2px}
+  .sm-line rect:hover{fill:var(--accent-wash)}
+  .sm-ax{display:flex;justify-content:space-between;font:400 var(--fs-1)/1 var(--mono);
+    color:var(--mute);margin-top:6px}
+  .sm-none{font-size:var(--fs-2);color:var(--sub);margin:10px 0 2px}
 
   /* 분해 표 — 긴 URL 이 표 폭을 밀지 않게 첫 칸만 줄인다 */
   /* 탭은 셸의 필터 칩(.chip) 한 벌이다 — 모양을 여기서 다시 그리지 않는다. */
@@ -121,84 +119,86 @@
   #sm-dim th:first-child,#sm-dim td:first-child{width:46%}
   #sm-dim .sm-k{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #sm-dim th button{font:inherit;color:inherit;background:none;border:0;padding:0;
-    cursor:pointer;letter-spacing:inherit;text-transform:inherit}
+    cursor:pointer}
   #sm-dim th button:hover{color:var(--ink)}
-  #sm-dim th button.on{color:var(--patina)}
+  @media (hover:none),(max-width:999px){#sm-dim th button{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:flex-end}}
+  #sm-dim th button.on{color:var(--accent)}
   #sm-dim th button.on::after{content:" ↓"}
   #sm-dim th button.on.asc::after{content:" ↑"}
   /* 노출 비중 막대 — 상위 몇 줄이 전부인지가 숫자보다 빨리 보인다. */
-  #sm-dim .sm-share{display:block;height:2px;background:var(--bar);border-radius:2px;
+  #sm-dim .sm-share{display:block;height:4px;background:var(--sunk);border-radius:var(--r-pill);
     margin-top:6px;max-width:260px}
-  #sm-dim .sm-share i{display:block;height:100%;border-radius:2px;background:var(--patina);
-    opacity:.55}
+  #sm-dim .sm-share i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent)}
   #sm-dim .tools{margin-bottom:10px}
 
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
-  /* 목록은 폼이다 — 셸의 .card 와 같은 몸으로 세운다(테두리·모서리·종이색).
-     안내가 통째로 들어설 때만 .bare 가 그 몸을 벗긴다. */
-  #sm-kw .list{max-height:340px;overflow:auto;border:1px solid var(--rule);
-    border-radius:var(--r-md);background:var(--card);box-shadow:var(--shadow-1);
+  /* 목록은 폼이다 — 셸의 .card 와 같은 몸으로 세운다(면·반경·그림자, 테두리 없음).
+     행 사이는 --line 옅은 선. 안내가 통째로 들어설 때만 .bare 가 그 몸을 벗긴다. */
+  #sm-kw .list{max-height:340px;overflow:auto;border:0;
+    border-radius:var(--r-card);background:var(--card);box-shadow:var(--shadow);
     overflow-x:hidden}
   /* flex 로 두면 자식이 넘칠 때 .kw 의 flex-basis:0 이 0px 으로 굳어 글자가 사라진다.
      grid 의 1fr 은 넘쳐도 자기 몫을 지킨다. */
   #sm-kw label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
-    align-items:center;gap:10px;padding:7px 12px;cursor:pointer;
-    border-bottom:1px solid var(--rule-soft);font-size:13.5px}
-  #sm-kw label:hover{background:var(--bar)}
-  #sm-kw label input{accent-color:var(--patina);flex:none;margin:0}
+    align-items:center;gap:10px;margin:0;padding:10px 16px;cursor:pointer;
+    border-bottom:1px solid var(--line);font:400 var(--fs-2)/1.5 var(--sans);color:var(--ink)}
+  #sm-kw label:last-child{border-bottom:0}
+  #sm-kw label:hover{background:var(--sunk)}
+  #sm-kw label input{accent-color:var(--accent);flex:none;margin:0}
   /* 원본 어딘가의 text-transform 이 상속돼 검색어가 전부 대문자로 보였다.
      검색어는 사용자가 실제로 친 문자열이라 그대로 보여야 한다. */
   #sm-kw .kw{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     color:var(--ink);text-transform:none}
   /* "노출 1,234" 는 한글과 숫자가 한 요소에 섞인다 — 등폭은 숫자 정렬만 얻는다. */
-  #sm-kw .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--slate);
+  #sm-kw .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--mute);
     white-space:nowrap}
-  #sm-kw .bar2{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+  #sm-kw .bar2{display:flex;align-items:center;gap:12px;margin-top:var(--sp-4);flex-wrap:wrap}
   /* 목록을 못 읽는 동안 — 그 목록에 거는 손잡이는 같이 물러난다. */
   #sm-kw.dead .tabs,#sm-kw.dead .bar2{display:none}
-  #sm-kw .cnt{font-size:12.5px;color:var(--slate)}
+  #sm-kw .cnt{font-size:var(--fs-1);color:var(--sub)}
   /* 좁은 화면에서는 안쪽 스크롤 상자를 풀고 스무 줄까지만 그린다 — 손가락이 늘 상자
      위에 있어 페이지가 안 내려가고, 수백 줄 목록은 스와이프 쉰 번이 걸렸다. 나머지는
-     [N개 더 보기](listMore)로 편다(사이트 점검의 크롤 목록과 같은 문법). */
+     [N개 더 보기](listMore)로 편다(사이트 점검의 크롤 목록과 같은 문법).
+     행은 손가락이 누르므로 44px 를 채운다. */
   #sm-kw .sm-more,#sm-aiq .sm-more{display:none}
   @media(max-width:999px){
     #sm-kw .list,#sm-aiq .list{max-height:none}
     #sm-kw .list:not(.all)>label:nth-child(n+21),
     #sm-aiq .list:not(.all)>.q:nth-child(n+21){display:none}
     #sm-kw .sm-more,#sm-aiq .sm-more{display:inline-flex;margin-top:10px}
+    #sm-kw label{min-height:44px}
   }
-  #sm-kw .warn{color:var(--copper)}
+  #sm-kw .warn{color:var(--warn)}
 
   /* AI 질문 관리 — 만들어 놓고 볼 데가 없었다. 목록이 곧 편집기다. */
-  #sm-aiq .list{max-height:420px;overflow:auto;border:1px solid var(--rule);
-    border-radius:var(--r-md);background:var(--card);box-shadow:var(--shadow-1)}
+  #sm-aiq .list{max-height:420px;overflow:auto;border:0;
+    border-radius:var(--r-card);background:var(--card);box-shadow:var(--shadow)}
   #sm-aiq .q{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;
-    align-items:center;gap:10px;padding:7px 12px;
-    border-bottom:1px solid var(--rule-soft)}
+    align-items:center;gap:10px;padding:10px 16px;
+    border-bottom:1px solid var(--line)}
   #sm-aiq .q:last-child{border-bottom:0}
-  #sm-aiq .q input[type=checkbox]{accent-color:var(--patina);margin:0}
+  #sm-aiq .q input[type=checkbox]{accent-color:var(--accent);margin:0}
   /* 꺼진 질문은 목록에 남지만 이번 확인에는 안 나간다. 그 사실은 배지가 말한다 —
      예전에는 줄 전체를 opacity .45 로 흐려서 무슨 질문인지 읽을 수가 없었다.
      꺼짐은 상태지 "덜 중요한 글자"가 아니다. */
-  #sm-aiq .q.off .t{color:var(--slate)}
-  #sm-aiq .t{min-width:0;font:400 13.5px/1.5 var(--sans);color:var(--ink);
-    background:transparent;border:1px solid transparent;border-radius:var(--r-sm);
-    padding:4px 6px;text-transform:none}
-  #sm-aiq .t:hover{border-color:var(--rule-soft)}
-  #sm-aiq .t:focus{outline:0;border-color:var(--patina);background:var(--wash)}
-  /* 갈래 선택상자는 셸의 밑줄형 한 벌이다 — 폭만 제 글자만큼으로 줄인다. */
+  #sm-aiq .q.off .t{color:var(--sub)}
+  #sm-aiq .t{min-width:0;font:400 var(--fs-2)/1.5 var(--sans);color:var(--ink);
+    background:transparent;border:1px solid transparent;border-radius:var(--r-in);
+    padding:6px 8px;text-transform:none}
+  #sm-aiq .t:hover{background:var(--sunk)}
+  #sm-aiq .t:focus{outline:0;border-color:var(--accent);background:var(--accent-wash)}
+  /* 갈래 선택상자는 셸의 입력 한 벌이다 — 폭만 제 글자만큼으로 줄인다. */
   #sm-aiq select{width:auto}
-  #sm-aiq .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--slate);
+  #sm-aiq .n{font:var(--micro);font-variant-numeric:tabular-nums;color:var(--mute);
     white-space:nowrap}
   /* 지우기는 파괴적 행동이라 이름을 갖는다 — 부품은 셸의 .go.sm.danger 다.
      다만 스무 줄짜리 목록에서 채운 산화동 버튼이 스무 개 서면 목록이 아니라
-     경고판이 된다. 평소에는 테두리로 물러나 있다가 그 줄에 손을 얹거나 포커스가
+     경고판이 된다. 평소에는 옅은 면으로 물러나 있다가 그 줄에 손을 얹거나 포커스가
      닿으면 제 색(파괴적)으로 선다 — 기회 카드의 .acts 와 같은 규칙이다.
      누르면 confirm 이 무엇이 사라지는지 먼저 말한다(아래 aiqPanel). */
-  #sm-aiq .del:not(:hover):not(:focus-visible){background:transparent;
-    border-color:var(--rule);color:var(--slate)}
-  #sm-aiq .q:hover .del:not(:hover):not(:focus-visible){border-color:var(--copper);
-    color:var(--copper)}
+  #sm-aiq .del:not(:hover):not(:focus-visible){background:var(--sunk);color:var(--sub)}
+  #sm-aiq .q:hover .del:not(:hover):not(:focus-visible){background:var(--warn-wash);
+    color:var(--warn)}
   /* 좁은 화면에서는 다섯 칸이 한 줄에 못 선다 — 질문 글자가 반쪽만 보였다.
      질문·지우기를 첫 줄에 두고 갈래·횟수를 아래로 내린다. */
   @media(max-width:560px){
@@ -209,18 +209,20 @@
     #sm-aiq .q select{grid-area:2/2;justify-self:start}
     #sm-aiq .q .n{grid-area:3/2;justify-self:start}
   }
-  #sm-aiq .bar2{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  #sm-aiq .bar2{display:flex;align-items:center;gap:10px;margin-top:var(--sp-4);flex-wrap:wrap}
   #sm-aiq .new{flex:1 1 260px;width:auto}
-  #sm-aiq .cnt{font-size:12.5px;color:var(--slate)}
-  #sm-aiq .warn{color:var(--copper)}
+  #sm-aiq .cnt{font-size:var(--fs-1);color:var(--sub)}
+  #sm-aiq .warn{color:var(--warn)}
 
-  /* 플러그인으로 넘기는 일 — 조용한 목록. 화면의 결론이 아니라 각주다. */
-  #sm-cc ul{list-style:none;padding:0;margin:0;border-top:1px solid var(--rule-soft)}
-  #sm-cc li{display:flex;align-items:center;gap:18px;padding:12px 0;
-    border-bottom:1px solid var(--rule-soft)}
+  /* 플러그인으로 넘기는 일 — 조용한 목록. 화면의 결론이 아니라 각주다.
+     구분은 괘선 상자가 아니라 행 사이 옅은 선이다. */
+  #sm-cc ul{list-style:none;padding:0;margin:0}
+  #sm-cc li{display:flex;align-items:center;gap:18px;padding:14px 0;
+    border-bottom:1px solid var(--line)}
+  #sm-cc li:last-child{border-bottom:0}
   #sm-cc li div{flex:1;min-width:0}
-  #sm-cc li b{display:block;font-weight:600;font-size:14px}
-  #sm-cc li span{color:var(--slate);font-size:12.5px}
+  #sm-cc li b{display:block;font-weight:600;font-size:var(--fs-2)}
+  #sm-cc li span{color:var(--sub);font-size:var(--fs-1)}
   /* 칩은 셸의 .cmd.sec 을 그대로 쓴다 — 명령을 복사하는 칩이라는 뜻이 이미 그
      부품에 있다(복사 아이콘·[복사됨] 표시). 여기서 다시 칠하면 같은 것이 화면마다
      다르게 보인다. 줄 안에서 안 눌리게 하는 것만 손본다. */
@@ -229,13 +231,14 @@
 
   /* 설정 — 고르면 곧바로 저장한다. 저장 버튼이 따로 없으니 결과는 옆에서 말해 준다. */
   /* 칸 넷(주기·GA4·언어-지역·명령어 연결)은 한 섹션 안의 형제다 — 섹션
-     제목(h2)과 같은 크기로 세우면 어느 것이 상위인지가 안 읽힌다. */
-  #sm-set .grp{padding-top:22px;margin-top:22px;border-top:1px solid var(--rule-soft)}
+     제목(h2)과 같은 크기로 세우면 어느 것이 상위인지가 안 읽힌다. 칸 사이는 괘선이
+     아니라 여백이다. */
+  #sm-set .grp{margin-top:var(--sp-6)}
   /* 설정을 못 읽는 동안 — 빈 칸 셋 대신 상자 하나가 말한다. .cli 는 /api/settings
      와 무관하게 서므로 남는다. */
   #sm-set.dead .grp:not(.cli){display:none}
   .sm-setfail{margin-top:4px}
-  #sm-set .grp h3{font:600 14.5px/1.35 var(--sans);color:var(--ink);margin:0}
+  #sm-set .grp h3{font:650 var(--fs-3)/1.4 var(--sans);color:var(--ink);margin:0}
   #sm-set .grp .sub{margin:5px 0 12px}
   #sm-set .opts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   /* 버튼 라벨은 전부 한글이다("하루 한 번"·"속성 고르기"·"연결 명령 만들기") —
@@ -245,20 +248,22 @@
   #sm-set .opts .chip{margin:0}
   /* 여기 들어가는 건 한글 상태어·안내다 — 등폭으로 찍으면 폴백 서체로 떨어져
      자간이 벌어지고 획이 얇아진다(CLAUDE.md). 등폭은 숫자·명령·URL 에만. */
-  #sm-set .msg{font:400 11.5px/1.5 var(--sans);color:var(--slate);margin-left:6px}
-  /* 선택상자는 셸의 밑줄형 한 벌이다 — 폭만 줄인다. */
+  #sm-set .msg{font:400 var(--fs-1)/1.5 var(--sans);color:var(--sub);margin-left:6px}
+  /* 선택상자는 셸의 입력 한 벌이다 — 폭만 줄인다. */
   #sm-set .repo select{width:auto;max-width:340px}
   /* 상태 문장은 한글이라 --sans 다. 등폭은 그 안의 식별자(속성 번호)에만. */
-  #sm-set .repo .now{font:500 13px/1.5 var(--sans);color:var(--patina)}
-  #sm-set .repo .now code{font:500 12.5px/1.5 var(--mono)}
-  #sm-set .repo .none{font:400 13px/1.5 var(--sans);color:var(--slate)}
-  #sm-set .repo a{color:var(--patina)}
+  #sm-set .repo .now{font:500 var(--fs-2)/1.5 var(--sans);color:var(--accent)}
+  #sm-set .repo .now code{font:500 var(--fs-1)/1.5 var(--mono)}
+  #sm-set .repo .none{font:400 var(--fs-2)/1.5 var(--sans);color:var(--sub)}
+  #sm-set .repo a{color:var(--accent)}
   /* 연결 명령은 한 줄이 길다 — 셸의 .cmd 칩(등폭 + 복사 손잡이)을 그대로 쓰되
      칸 안에서 접히게만 한다. 등폭이 걸리는 건 명령·주소·토큰뿐이고, 위 설명은
-     한글이라 --sans 그대로다(CLAUDE.md: 등폭·자간은 한글에 안 건다). */
-  #sm-set .cli .cmd{display:block;max-width:100%;margin:2px 0 0;padding:10px 12px;
+     한글이라 --sans 그대로다(CLAUDE.md: 등폭·자간은 한글에 안 건다). 알약 칩이
+     여러 줄로 접히면 모서리가 이상하므로 이 자리만 안쪽 면 반경으로 쓴다. */
+  #sm-set .cli .cmd{display:block;max-width:100%;margin:2px 0 0;padding:12px 16px;
+    border-radius:var(--r-in);
     line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left}
-  #sm-set .cli .warn{color:var(--copper)}
+  #sm-set .cli .warn{color:var(--warn)}
 
   /* 모바일: 차트 SVG 는 720px 고정이고 부모(.logwrap)가 overflow-x:auto 로 받는다.
      스크롤이 된다는 걸 알려주지 않으면 잘린 그림으로만 보인다. */
@@ -268,15 +273,17 @@
       -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);
       mask-image:linear-gradient(90deg,#000 88%,transparent)}
     .logwrap.at-end{-webkit-mask-image:none;mask-image:none}
-    .sm-swipe{font:var(--micro);color:var(--slate);margin:6px 0 0;
+    .sm-swipe{font:var(--micro);color:var(--mute);margin:6px 0 0;
       display:flex;align-items:center;gap:6px}
   }
   @media(min-width:901px){.sm-swipe{display:none}}
 
-  /* 안내 단계의 실행 버튼 — 원본 .cmd 는 명령어를 복사하는 칩이었다. */
-  .stp .cmd{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--patina);
-    background:transparent;color:var(--patina);border-radius:6px;padding:5px 12px}
-  .stp .cmd:hover:not(:disabled){background:var(--wash)}
+  /* 안내 단계의 실행 버튼 — 원본 .cmd 는 명령어를 복사하는 칩이었다. 여기서는 셸의
+     .go.sm.sec 와 같은 알약(ghost)이다: 면 + 그림자, 테두리 없음. */
+  .stp .cmd{font:600 var(--fs-1)/1 var(--sans);cursor:pointer;border:0;
+    background:var(--card);box-shadow:var(--shadow);color:var(--ink);
+    border-radius:var(--r-pill);padding:0 14px;min-height:var(--btn-h-sm)}
+  .stp .cmd:hover:not(:disabled){background:var(--accent-wash);color:var(--accent)}
   .stp .cmd:disabled{opacity:.5;cursor:default}
   .stp .cmd::after{content:none}
 
@@ -285,6 +292,9 @@
   .opp .acts button,.opp .acts summary{opacity:.72;transition:opacity .12s}
   .opp:hover .acts button,.opp:hover .acts summary,
   .opp .acts button:focus-visible,.opp .acts summary:focus-visible{opacity:1}
+  @media(prefers-reduced-motion:reduce){
+    .opp .acts button,.opp .acts summary{transition:none}
+  }
 </style>
 <script>
 (function () {

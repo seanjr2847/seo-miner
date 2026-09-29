@@ -7,75 +7,86 @@
 </script>
 
 <style>
-/* ── AI 인용: 깊이 로그와 같은 언어(등폭·괘선·patina/copper).
-      얻는 것(우리 인용)은 녹청, 남이 가져간 자리는 산화동. ── */
+/* ── AI 인용: 면 카드 한 문법. 얻는 것(우리 인용)은 accent, 남이 가져간 자리는 warn.
+      색은 뜻에만 쓴다 — 인용=accent, 언급=mute, 빠진 자리=warn. ── */
+
+/* 이 화면의 섹션 머리는 eyebrow 없이 h2 부터 시작한다 — 위쪽 여백이 남지 않게. */
+#ai .sh > h2:first-child { margin-top:0; }
+#ai-eyebrow { white-space:nowrap; }
+/* 숫자 칸은 본문 서체의 자리 맞춤 숫자다 — 등폭은 도메인·경로·명령에만. */
+#ai td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
+/* 검색어·질문 칸이 1120px 에서 양 끝으로 벌어지지 않게 한다. */
+#ai td.kwcell { max-width:44ch; }
 
 /* 런별 추이 — 일별 추이(.log)와 같은 문법. 세로축만 0~100% 로 고정한다. */
-#ai-trend .grid { stroke:var(--rule-soft); stroke-dasharray:2 4; }
-#ai-trend .hov line { stroke:var(--slate); stroke-width:1; opacity:0; }
-#ai-trend .hov:hover line, #ai-trend .hov:focus line { opacity:.5; }
+#ai-trend:not(:empty), #ai-health:not(:empty) { margin-top:var(--gap); }
+#ai-trend .grid { stroke:var(--line); stroke-dasharray:2 4; }
+#ai-trend .hov line { stroke:transparent; stroke-width:1; }
+#ai-trend .hov:hover line, #ai-trend .hov:focus line { stroke:var(--mute); }
 
-/* ── 엔진별 막대: 언급(회색 바탕) 위에 인용(녹청)을 겹친다 —
+/* ── 엔진별 막대: 언급(회색 바탕) 위에 인용(accent)을 겹친다 —
       "이름은 나오는데 링크는 안 걸린다"가 한눈에 보이는 게 이 화면의 요점. ── */
-.aiengs { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
-  gap:22px 30px; }
+.aiengs { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:8px 16px; }
+.aieng { padding:12px 14px; border-radius:var(--r-in); }
 .aieng .hd { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-.aieng .e { font:500 13px/1 var(--mono); display:flex; align-items:center; gap:7px; }
+.aieng .e { font:600 var(--fs-2)/1.3 var(--sans); display:flex; align-items:center; gap:8px; }
 /* 카드·표 줄은 질문 목록으로 내려가는 손잡이다 — 눌리는 것처럼 보여야 한다. */
-.aieng[role="button"] { cursor:pointer; border-radius:4px; }
-.aieng[role="button"]:hover .e, .aieng[role="button"]:focus-visible .e { color:var(--patina); }
+.aieng[role="button"] { cursor:pointer; }
+.aieng[role="button"]:hover { background:var(--sunk); }
+.aieng[role="button"]:hover .e, .aieng[role="button"]:focus-visible .e { color:var(--accent); }
 tr.aimx { cursor:pointer; }
-tr.aimx:hover td, tr.aimx:focus-visible td { color:var(--patina); }
+tr.aimx:hover td, tr.aimx:focus-visible td { color:var(--accent); }
 /* 엔진 로고 — 글자색을 따른다(currentColor). 엔진마다 브랜드색을 칠하지 않는다 —
-   이 화면의 색은 뜻(녹청=인용, 회색=언급)에만 쓴다. */
+   이 화면의 색은 뜻(accent=인용, mute=언급)에만 쓴다. */
 .ailogo { width:14px; height:14px; flex:none; fill:currentColor; vertical-align:-2px; }
 td .ailogo, #ai-sub .ailogo { margin-right:6px; }
-/* 질문 줄의 엔진 띠 — 로고 하나가 엔진 하나. 진한 녹청은 인용, 회색은 언급, 흐림은 없음. */
-.aiengst { display:inline-flex; gap:7px; align-items:center; }
-.aiengst .ailogo { opacity:.2; margin:0; }
-.aiengst .ailogo.m { opacity:.6; }
-.aiengst .ailogo.c { opacity:1; color:var(--patina); }
-.aieng .v { font:600 20px/1 var(--mono); font-variant-numeric:tabular-nums;
+/* 질문 줄의 엔진 띠 — 로고 하나가 엔진 하나. accent 는 인용, mute 는 언급, 옅은 선색은 없음. */
+.aiengst { display:inline-flex; gap:8px; align-items:center; color:var(--rule); }
+.aiengst .ailogo { margin:0; }
+.aiengst .ailogo.m { color:var(--mute); }
+.aiengst .ailogo.c { color:var(--accent); }
+.aieng .v { font:650 var(--fs-4)/1 var(--sans); font-variant-numeric:tabular-nums;
   letter-spacing:-.02em; }
-.aieng .tr { position:relative; height:6px; background:var(--bar); border-radius:2px;
-  margin:9px 0 7px; overflow:hidden; }
-.aieng .tr i { position:absolute; top:0; bottom:0; left:0; border-radius:2px;
+.aieng .tr { position:relative; height:8px; background:var(--sunk); border-radius:var(--r-pill);
+  margin:12px 0 8px; overflow:hidden; }
+.aieng .tr i { position:absolute; top:0; bottom:0; left:0; border-radius:var(--r-pill);
   transform-origin:left; }
-.aieng .tr i.m { background:var(--slate); opacity:.34; }
-.aieng .tr i.c { background:var(--patina); }
+.aieng .tr i.m { background:var(--mute); }
+.aieng .tr i.c { background:var(--accent); }
 /* 「인용 1/2 · 언급 1/2」 — 한글이 섞인 줄이라 등폭이 아니다. 자리 맞춤만 물려받는다. */
-.aieng .n { font:400 12px/1.5 var(--sans); color:var(--slate);
+.aieng .n { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub);
   font-variant-numeric:tabular-nums; }
 @media (prefers-reduced-motion: no-preference) {
   .aieng .tr i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
 /* 두 색이 무슨 뜻인지는 산문이 아니라 범례가 말한다 — 막대와 같은 색 조각을 옆에 둔다.
    공용 .chleg 의 문법 그대로이고, 이 화면 몫은 조각 색 두 개뿐이다. */
-.ailegend { margin-top:14px; }
-.ailegend i.c { background:var(--patina); }
-.ailegend i.m { background:var(--slate); opacity:.34; }
-/* 표·차트에 딸린 한 줄. .sub 의 아래 여백(20px)이 여기서는 너무 벌어진다. */
-.ainote { font-size:13.5px; line-height:1.6; color:var(--slate); margin:20px 0 10px; }
+.ailegend { margin-top:16px; }
+.ailegend i.c { background:var(--accent); }
+.ailegend i.m { background:var(--mute); }
+/* 표·차트에 딸린 한 줄. .sub 의 아래 여백이 여기서는 너무 벌어진다. */
+.ainote { font-size:var(--fs-2); line-height:1.6; color:var(--sub); margin:16px 0 12px; }
 
 /* ── 인용 점유: 우리 도메인을 남의 도메인과 같은 자에 올린다 ── */
-.aishare .r { display:grid; grid-template-columns:24px minmax(130px,1.1fr) 2fr 52px 40px;
-  gap:0 12px; align-items:center; padding:7px 0;
-  border-bottom:1px solid var(--rule-soft); }
+.aishare .r { display:grid; grid-template-columns:24px minmax(130px,1.1fr) 2fr 56px 48px;
+  gap:0 12px; align-items:center; padding:10px 0;
+  border-bottom:1px solid var(--line); }
 .aishare .r:last-child { border-bottom:0; }
-.aishare .rk { font:400 11px/1 var(--mono); color:var(--slate); text-align:right;
+.aishare .rk { font:500 var(--fs-1)/1 var(--sans); color:var(--mute); text-align:right;
   font-variant-numeric:tabular-nums; }
-.aishare .dm { font:400 12.5px/1.3 var(--mono); color:var(--ink); text-decoration:none;
+.aishare .dm { font:400 var(--fs-1)/1.4 var(--mono); color:var(--ink); text-decoration:none;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.aishare .dm:hover { color:var(--patina); text-decoration:underline;
+.aishare .dm:hover { color:var(--accent); text-decoration:underline;
   text-underline-offset:2px; }
-.aishare .bar { height:8px; background:var(--bar); border-radius:2px; overflow:hidden; }
-.aishare .bar i { display:block; height:100%; background:var(--copper); opacity:.62;
-  border-radius:2px; transform-origin:left; }
+.aishare .bar { height:8px; background:var(--sunk); border-radius:var(--r-pill); overflow:hidden; }
+.aishare .bar i { display:block; height:100%; background:var(--warn);
+  border-radius:var(--r-pill); transform-origin:left; }
 /* 몫(%)과 건수를 같은 줄에서 읽는다 — 도넛을 따로 두면 같은 값을 두 번 그리게 된다. */
-.aishare .pc, .aishare .n { font:500 12.5px/1 var(--mono);
-  font-variant-numeric:tabular-nums; text-align:right; color:var(--slate); }
-.aishare .us .dm { color:var(--patina); font-weight:500; }
-.aishare .us .bar i { background:var(--patina); opacity:1; }
+.aishare .pc, .aishare .n { font:600 var(--fs-2)/1 var(--sans);
+  font-variant-numeric:tabular-nums; text-align:right; color:var(--sub); }
+.aishare .us .dm { color:var(--accent); font-weight:600; }
+.aishare .us .bar i { background:var(--accent); }
 .aishare .us .n, .aishare .us .pc { color:var(--ink); }
 @media (prefers-reduced-motion: no-preference) {
   .aishare .bar i { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; }
@@ -83,7 +94,7 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 /* 좁은 화면에서는 도메인 이름이 한 줄을 통째로 갖는다 — 「← 우리」 가 잘리면
    그 줄이 우리 줄이라는 사실 자체가 사라진다. 막대·몫·건수는 그 밑 한 줄로 내린다. */
 @media (max-width:560px) {
-  .aishare .r { grid-template-columns:24px 1fr 52px 40px; row-gap:6px; }
+  .aishare .r { grid-template-columns:24px 1fr 56px 48px; row-gap:6px; }
   .aishare .dm { grid-column:2 / -1; }
   .aishare .bar { grid-column:2 / 3; grid-row:2; }
   .aishare .pc { grid-column:3; grid-row:2; }
@@ -94,88 +105,93 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
       "왜 빠졌나"에 답할 수 있는 유일한 실물이 이것뿐이다. ── */
 /* 질문 줄은 문장이라 등폭이 아니다 — 등폭은 숫자·식별자 몫이다. 펼침 손잡이는
    글자(▸)가 아니라 셰브론 하나로, 열리면 90도 돈다. */
-.aiq-t { display:flex; gap:7px; align-items:flex-start; text-align:left;
-  font:400 13px/1.5 var(--sans); color:var(--ink);
+.aiq-t { display:flex; gap:8px; align-items:flex-start; text-align:left;
+  font:500 var(--fs-2)/1.5 var(--sans); color:var(--ink);
   background:transparent; border:0; padding:0; cursor:pointer; max-width:54ch; }
-.aiq-t .chev { flex:none; width:14px; height:14px; margin-top:3px; color:var(--slate);
+.aiq-t .chev { flex:none; width:14px; height:14px; margin-top:4px; color:var(--mute);
   transition:transform .14s ease, color .14s ease; }
-.aiq-t[aria-expanded="true"] .chev { transform:rotate(90deg); color:var(--patina); }
-.aiq-t:hover, .aiq-t:hover .chev { color:var(--patina); }
+.aiq-t[aria-expanded="true"] .chev { transform:rotate(90deg); color:var(--accent); }
+.aiq-t:hover, .aiq-t:hover .chev { color:var(--accent); }
 @media (prefers-reduced-motion: reduce) { .aiq-t .chev { transition:none; } }
-.aiq-p { font:400 13px/1.5 var(--sans); max-width:54ch; }
-.aiev { margin:9px 0 3px; padding:11px 13px; border-left:2px solid var(--copper);
-  background:var(--wash-copper); max-width:74ch; }
+.aiq-p { font:400 var(--fs-2)/1.5 var(--sans); max-width:54ch; }
+/* 발췌는 --sunk 면 하나다 — 좌측 굵은 선도 이중 상자도 없다. */
+.aiev { margin:8px 0 4px; padding:14px 16px; border-radius:var(--r-in);
+  background:var(--sunk); max-width:74ch; }
 .aiev .lb { font:var(--micro);
-  color:var(--slate); display:block; margin-bottom:8px; }
-.aiev .lb.n2 { margin-top:11px; }
-.aiev .q { font-size:12.5px; line-height:1.7; color:var(--ink); white-space:pre-wrap;
+  color:var(--mute); display:block; margin-bottom:8px; }
+.aiev .lb.n2 { margin-top:12px; }
+.aiev .q { font-size:var(--fs-2); line-height:1.7; color:var(--ink); white-space:pre-wrap;
   margin:0; }
-.aiev .ft { font:400 11.5px/1.5 var(--sans); color:var(--slate); margin-top:9px; }
-.aidoms .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
-/* 횟수(4/6)는 숫자라 등폭, 도메인보다 한 단 흐리게. 제3자 플랫폼은 점선 테두리 —
-   "내 페이지로는 못 들어가는 자리"라는 갈래가 칩 모양에서 먼저 읽힌다(말은 title). */
-.aidoms .chip b { font:500 10.5px/1 var(--mono); color:var(--slate); margin-left:2px; }
-.aidoms .chip.tp { border-style:dashed; }
+.aiev .ft { font:400 var(--fs-1)/1.5 var(--sans); color:var(--mute); margin-top:12px; }
+.aidoms .chip { font-size:var(--fs-1); min-height:24px; padding:0 10px; margin:0 4px 4px 0; }
+/* 횟수(4/6)는 숫자라 자리를 맞춘다. 제3자 플랫폼은 info 색조 — "내 페이지로는 못
+   들어가는 자리"라는 갈래가 칩 색에서 먼저 읽힌다(말은 title). */
+.aidoms .chip b { font:600 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums;
+  color:var(--mute); margin-left:2px; }
+.aidoms .chip.tp { background:var(--info-wash); color:var(--info); }
+.aidoms .chip.tp b { color:var(--info); }
 
 /* 펼침 안에는 발췌 아래로 "그래서 뭘 바꾸나"가 이어 붙는다.
    표 칸 안이라 공용 .det 의 58px 들여쓰기는 여기서 죽인다. */
 .aiq-d .det { padding-left:0; }
-.aiq-d .detw:first-child { margin-top:14px; }
+.aiq-d .detw:first-child { margin-top:16px; }
 /* 그 질문의 자리를 계속 가져가는 도메인 — 한 줄이면 충분하다. */
-.aiq-note { font:400 12px/1.6 var(--sans); color:var(--copper); margin:9px 0 0; }
+.aiq-note { font:500 var(--fs-2)/1.6 var(--sans); color:var(--warn); margin:12px 0 0; }
 
 /* ── 검색 × AI 교차: 새로 필요한 규칙은 도메인 한 줄뿐이다. 나머지는 공용 표가
       그린다 — 질문은 문장이라 본문 서체 그대로 두고(등폭에 얹지 않는다),
       도메인만 식별자라 등폭으로 찍는다. ── */
-#ai-outranked .dm { font:400 12.5px/1.3 var(--mono); color:var(--ink);
+#ai-outranked .dm { font:400 var(--fs-1)/1.4 var(--mono); color:var(--ink);
   text-decoration:none; }
-#ai-outranked .dm:hover { color:var(--patina); text-decoration:underline;
+#ai-outranked .dm:hover { color:var(--accent); text-decoration:underline;
   text-underline-offset:2px; }
 
 /* ── 이 숫자에 안 들어간 질문: 측정 안 됨·오래됨·구버전·끊긴 확인.
       위 띠(band)의 분모에서 빠진 것이 무엇인지 말하는 자리라, 띠 바로 밑에 붙는다.
-      경고색(산화동) 괘선 하나만 쓴다 — 칸을 칠하면 결제 벽처럼 읽힌다.
-      개수는 문장 속 굵은 글자다(등폭 아님 — 한글이 섞인 줄이다). ── */
-.aihealth { margin:18px 0 4px; padding:2px 0 2px 13px; border-left:2px solid var(--copper); }
+      --warn-wash 면 하나다 — 괘선도 이중 상자도 없다. 개수는 문장 속 굵은 글자다. ── */
+.aihealth { padding:16px 20px; border-radius:var(--r-in); background:var(--warn-wash); }
 .aihealth ul { margin:0; padding:0; list-style:none; }
-.aihealth li { font:400 13px/1.6 var(--sans); color:var(--slate); margin:5px 0;
+.aihealth li { font:400 var(--fs-2)/1.6 var(--sans); color:var(--sub); margin:6px 0;
   font-variant-numeric:tabular-nums; }
+.aihealth li:first-child { margin-top:0; }
+.aihealth li:last-child { margin-bottom:0; }
 .aihealth li b { color:var(--ink); font-weight:600; }
-.aihealth .acts { margin-top:9px; }
+.aihealth .acts { margin-top:12px; }
 
-/* 질문마다 반복되는 조건은 질문 밖에 한 번만 접어 둔다. */
-.aichk { margin:6px 0 18px; padding:2px 0 2px 13px; border-left:2px solid var(--rule-soft); }
-.aichk summary { font:500 12.5px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
-.aichk summary:hover { color:var(--patina); }
-.aichk ol { margin:9px 0 2px; padding-left:18px; font-size:12.5px; color:var(--slate); }
-.aichk li { margin:5px 0; }
+/* 질문마다 반복되는 조건은 질문 밖에 한 번만 접어 둔다. --sunk 면 하나. */
+.aichk { margin:0 0 16px; padding:0 20px; border-radius:var(--r-in); background:var(--sunk); }
+.aichk summary { display:flex; align-items:center; min-height:44px;
+  font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub); cursor:pointer; }
+.aichk summary:hover { color:var(--accent); }
+.aichk ol { margin:0; padding:0 0 16px 18px; font-size:var(--fs-2); line-height:1.6; color:var(--sub); }
+.aichk li { margin:6px 0; }
 
 /* ── AI 에서 온 방문(GA4): 인용 점유와 같은 막대 문법(.aishare)을 빌린다. 다른 것은
-      색 하나 — 여기 막대는 남이 가져간 자리가 아니라 우리가 받은 방문이라 녹청이다.
+      색 하나 — 여기 막대는 남이 가져간 자리가 아니라 우리가 받은 방문이라 accent 다.
       페이지 경로는 식별자라 등폭, 출처 칩은 호스트라 그대로 둔다. ── */
-.aivis .bar i { background:var(--patina); opacity:1; }
+.aivis .bar i { background:var(--accent); }
 .aivis .dm { color:var(--ink); }
-#ai-visits .aivp { font:400 12.5px/1.3 var(--mono); color:var(--ink); text-decoration:none;
+#ai-visits .aivp { font:400 var(--fs-1)/1.4 var(--mono); color:var(--ink); text-decoration:none;
   overflow-wrap:anywhere; }
-#ai-visits a.aivp:hover { color:var(--patina); text-decoration:underline;
+#ai-visits a.aivp:hover { color:var(--accent); text-decoration:underline;
   text-underline-offset:2px; }
-#ai-visits .chip { font-size:11px; padding:3px 6px; margin:0 4px 4px 0; }
+#ai-visits .chip { font-size:var(--fs-1); min-height:24px; padding:0 10px; margin:0 4px 4px 0; }
 
 /* ── 구글 AI 요약: 순위 조회가 같이 걷어 온 값이라 예전엔 [순위 추적]에 살았다. 묶음이
       [AI 노출]이 되면서 이리 왔다 — 사용자가 "AI 에 우리가 나오나"를 묻는 자리가 여기다.
       줄 하나가 검색어 하나이고, 누르면 그 기회(aio_exposure)의 펼침이 선다(표 안이라
       <details> 를 못 쓴다 — 순위 화면과 같은 tr 펼침 문법). 도메인은 식별자라 등폭. ── */
 #ai-aio tbody tr[role="button"] { cursor:pointer; }
-#ai-aio tbody tr[role="button"]:hover { background:var(--bar); }
-#ai-aio tbody tr[role="button"]:focus-visible { outline:2px solid var(--patina); outline-offset:-2px; }
+#ai-aio tbody tr[role="button"]:hover { background:var(--sunk); }
+#ai-aio tbody tr[role="button"]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 #ai-aio .kwq { white-space:nowrap; }
-#ai-aio tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--slate); }
-#ai-aio tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
-#ai-aio .dm { font:400 12px/1.5 var(--mono); color:var(--slate); overflow-wrap:anywhere; }
+#ai-aio tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--mute); }
+#ai-aio tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
+#ai-aio .dm { font:400 var(--fs-1)/1.5 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
 /* 390px 에서 네 칸이 칸마다 15px 로 쪼개졌다 — 표는 셸의 행 카드(.tw.cards)로 쌓고,
    카드에서는 검색어가 제목 줄이라 nowrap 을 푼다(nowrap 이 나머지 칸을 밀던 원인이다). */
 @media (max-width:560px) { #ai-aio .kwq { white-space:normal; } }
-/* 숫자 칸의 「순위 없음」은 한글이다 — 등폭에 얹으면 폴백 서체로 떨어져 자간이 벌어진다. */
+/* 숫자 칸의 「순위 없음」은 한글이다 — 본문 서체 그대로. */
 #ai-aio td.num .muted { font-family:var(--sans); }
 </style>
 
@@ -197,14 +213,15 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 
 <section id="ai-eng-sec" hidden>
   <div class="sh">
-    <p class="eyebrow">엔진별</p>
     <h2>엔진별 인용</h2>
     <p class="sub">인용과 언급의 차이가 클수록 링크로 이어질 자리를 놓치고 있습니다.</p>
   </div>
-  <div class="aiengs" id="ai-engines"></div>
-  <div class="chleg ailegend">
-    <span><i class="c"></i>인용 — 답변에 우리 링크가 붙음</span>
-    <span><i class="m"></i>언급 — 이름만 나옴</span>
+  <div class="card">
+    <div class="aiengs" id="ai-engines"></div>
+    <div class="chleg ailegend">
+      <span><i class="c"></i>인용 — 답변에 우리 링크가 붙음</span>
+      <span><i class="m"></i>언급 — 이름만 나옴</span>
+    </div>
   </div>
   <p class="ainote" id="ai-matrix-note">줄을 누르면 그 조합의 질문 목록으로 내려갑니다.</p>
   <div class="card" id="ai-matrix"></div>
@@ -212,7 +229,6 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 
 <section id="ai-prompt-sec" hidden>
   <div class="sh">
-    <p class="eyebrow">질문별</p>
     <h2>질문별 인용</h2>
     <p class="sub">먼저 손댈 질문이 위입니다.<span class="hint" tabindex="0"
       data-tip="줄을 펴면 그 질문에서 실제로 온 답변과 무엇을 고칠지가 나옵니다. 우리가 왜 빠졌는지는 거기서만 읽힙니다."
@@ -234,7 +250,6 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 
 <section id="ai-miss-sec" hidden>
   <div class="sh">
-    <p class="eyebrow">공백</p>
     <h2>안 잡힌 질문</h2>
     <p class="sub" id="ai-miss-sub"></p>
   </div>
@@ -256,7 +271,6 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
      aio_exposure 기회다(scoring). -->
 <section id="ai-aio">
   <div class="sh">
-    <p class="eyebrow">구글 AI 요약</p>
     <h2>AI 요약에 빠진 검색어</h2>
     <p class="sub" id="ai-aio-sub"></p>
   </div>
@@ -300,6 +314,8 @@ td .ailogo, #ai-sub .ailogo { margin-right:6px; }
 /* ── 이 화면이 답하는 것: "AI가 누구를 인용하나, 우리는 왜 빠졌나".
       재료는 ai_checks 한 장 — 인용/언급은 scoring.judge 가 이미 판정해서 넣는다.
       화면은 다시 판정하지 않고, 비율만 만들어 보인다. ── */
+// 표는 면 카드 안에 선다 — 캔버스 위에 맨몸으로 두지 않는다.
+const AI_card = h => `<div class="card">${h}</div>`;
 const AI_PCT = v => (Math.round(v * 10) / 10) + "%";
 const AI_RATE = (n, t) => t ? Math.round(n / t * 1000) / 10 : 0;
 
@@ -340,7 +356,7 @@ function AI_trendChart(rows) {
   }).join("");
   const dots = rows.map((r, i) =>
     `<circle cx="${x(i).toFixed(1)}" cy="${y(r.cite_rate).toFixed(1)}" r="3"
-       fill="var(--patina)"/>`).join("");
+       fill="var(--accent)"/>`).join("");
   // 날짜 눈금은 다섯 개까지 — 확인이 3회든 40회든 같은 간격으로 읽힌다.
   const step = Math.max(1, Math.ceil((n - 1) / 4)), idx = [];
   for (let i = 0; i < n; i += step) idx.push(i);
@@ -352,21 +368,21 @@ function AI_trendChart(rows) {
     text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
     >${esc(day(i))}</text>`;
   const last = rows[n - 1], best = Math.max(...rows.map(r => r.cite_rate));
-  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
+  return `<div class="card"><div class="logwrap"><svg class="log" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="확인 ${n}회의 인용률 추이 — 최근 ${AI_PCT(last.cite_rate)}, 최고 ${AI_PCT(best)}">
     ${grid}
     <polygon points="${x(0)},${H - B} ${pts("cite_rate")} ${x(n - 1)},${H - B}"
-      fill="var(--wash)"/>
-    <polyline fill="none" stroke="var(--slate)" stroke-width="1" stroke-dasharray="2 4"
+      fill="var(--accent-wash)"/>
+    <polyline fill="none" stroke="var(--mute)" stroke-width="1" stroke-dasharray="2 4"
       stroke-linejoin="round" points="${pts("mention_rate")}"/>
-    <polyline fill="none" stroke="var(--patina)" stroke-width="1.5" stroke-linecap="round"
+    <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"
       stroke-linejoin="round" points="${pts("cite_rate")}"/>
     ${dots}${hov}${ticks.map(tick).join("")}
   </svg></div>
   <div class="chleg ailegend"><span><i class="c"></i>인용률 최근
     ${AI_PCT(last.cite_rate)} · 최고 ${AI_PCT(best)}</span>
     <span><i class="m"></i>언급률 ${AI_PCT(last.mention_rate)}</span>
-    <span>확인 ${n}회 · 세로축 0~100% 고정</span></div>`;
+    <span>확인 ${n}회 · 세로축 0~100% 고정</span></div></div>`;
 }
 
 /* ── 엔진 로고 (simple-icons, CC0). 키는 collect_ai.DEFAULT_ENGINES 의 엔진 id 다 —
@@ -807,7 +823,7 @@ function AI_list() {
     return $("ai-plist").innerHTML = `<div class="empty"><b>맞는 질문이 없습니다</b>
       <p>조건을 지우면 질문 ${num(AI_ROWS.length)}개가 그대로 돌아옵니다.</p>
       <div class="acts"><button onclick="AI_reset()">조건 지우기</button></div></div>`;
-  $("ai-plist").innerHTML = table(
+  $("ai-plist").innerHTML = AI_card(table(
     [">점수?인용이 드문 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
      "질문?누르면 그 질문에서 받은 답변 발췌가 엔진별로 펼쳐집니다", "카테고리",
      "엔진?진한 녹청은 인용, 회색은 언급, 흐린 것은 둘 다 없음. 로고 위에 올리면 수가 보입니다",
@@ -816,7 +832,7 @@ function AI_list() {
      ">응답?질문 × 엔진 × 샘플. 이 질문에 실제로 받은 답변 수",
      "대신 인용된 곳?우리가 인용되지 않은 응답에서 대신 인용된 도메인. 4/6 은 빠진 응답 6건 중 4건에서 인용됐다는 뜻입니다"],
     // 좁은 화면은 행 카드 — 여덟 칸이 390px 에 들어가지 않아 질문 칸이 90px 로 쪼개졌다.
-    list.map(AI_row), undefined, "cards");
+    list.map(AI_row), undefined, "cards"));
 }
 
 // 질문 목록은 화면 밖에서 콘텐츠 기획서가 된다 — 지금 거른 그대로 표로 내보낸다.
@@ -902,13 +918,13 @@ function AI_vsSearch(x, gscDate) {
       data-tip="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
       aria-label="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
       >i</span>`;
-  return [sub, table(
+  return [sub, AI_card(table(
     ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
      "겹치는 내 검색어?이 질문과 낱말이 겹치는 검색어 중 우리가 상위인 것",
      ">내 평균순위?그 검색어에서 구글이 보고한 평균 게재순위",
      ">노출?그 검색어의 노출 수. 자리의 크기입니다",
      "대신 인용된 곳?그 질문의 답변에서 우리 자리에 인용된 도메인"],
-    rows.map(AI_vsRow))];
+    rows.map(AI_vsRow)))];
 }
 
 function AI_outranked(o) {
@@ -937,7 +953,7 @@ function AI_outranked(o) {
       data-tip="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
       aria-label="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
       >i</span>`,
-    table(["도메인?AI 답변에서 인용된 경쟁사",
+    AI_card(table(["도메인?AI 답변에서 인용된 경쟁사",
       ">AI 인용?이번 확인에서 그 도메인이 인용된 답변 수",
       ">우리가 위인 검색어?경쟁 검색어 중 우리 순위가 더 높은 것의 수",
       "그중 몇 개?우리 순위 대 저쪽 순위. 누르면 그 검색어로 걸린 내 페이지로 갑니다"],
@@ -954,7 +970,7 @@ function AI_outranked(o) {
             rel="noopener" title="이 검색어로 걸린 내 페이지 열기">${label}</a>` : label;
         }).join(" · ")}${r.won > r.top.length
           ? ` <span class="muted">외 ${r.won - r.top.length}개</span>` : ""}</td>
-      </tr>`))];
+      </tr>`)))];
 }
 
 /* ── AI 에서 온 방문. 서버(dashboard._ai_referrals)가 접어 보낸 것을 그리기만 한다.
@@ -1011,7 +1027,7 @@ function AI_visits(d) {
     num(Math.round(ke * 100) / 100)}</b>입니다.${hint}`;
   return [sub, `<div class="card"><div class="aishare aivis">${bars}</div></div>
     <p class="ainote">인용을 고친 페이지가 아래 표에서 오르는지가 고친 결과입니다.</p>
-    ${table(["페이지?AI 답변의 링크로 들어온 첫 페이지. 쿼리스트링은 뗐습니다",
+    ${AI_card(table(["페이지?AI 답변의 링크로 들어온 첫 페이지. 쿼리스트링은 뗐습니다",
       ">세션?그 페이지에서 시작된, AI 출처의 세션 수",
       ">키 이벤트?그 세션에서 난 GA4 key events 합",
       "출처?어느 AI 답변에서 왔나. 숫자는 세션 수"],
@@ -1019,7 +1035,7 @@ function AI_visits(d) {
         <td class="num">${num(p.sessions)}</td>
         <td class="num ${p.key_events ? "" : "muted"}">${num(p.key_events)}</td>
         <td>${Object.entries(p.sources || {}).sort((a, b) => b[1] - a[1]).map(([h, n]) =>
-          `<span class="chip">${esc(h)} ${num(n)}</span>`).join("")}</td></tr>`))}`];
+          `<span class="chip">${esc(h)} ${num(n)}</span>`).join("")}</td></tr>`)))}`];
 }
 
 /* ── 이 숫자에 안 들어간 질문. 서버(scoring.ai_health)가 센 것을 그대로 말한다 —
@@ -1361,10 +1377,10 @@ VIEW("ai", function (d) {
       + W(`<span class="cmd live" role="button" tabindex="0" onclick="copyCmd(this)"
         onkeydown="if(event.key==='Enter'||event.key===' ')
           {event.preventDefault();copyCmd(this)}">/create plan ${esc(AI_NM)}</span>`, "");
-    $("ai-missed").innerHTML = table(["질문", "카테고리", "확인한 엔진"],
+    $("ai-missed").innerHTML = AI_card(table(["질문", "카테고리", "확인한 엔진"],
       d.missed.map(r => `<tr><td class="aiq-p">${esc(r.prompt)}</td>
         <td class="kwcell">${esc(AI_catName(r.category))}</td>
-        <td class="kwcell muted">${esc(r.engines || "")}</td></tr>`));
+        <td class="kwcell muted">${esc(r.engines || "")}</td></tr>`)));
   }
 });
 </script>

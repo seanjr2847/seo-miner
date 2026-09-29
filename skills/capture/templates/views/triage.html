@@ -9,36 +9,48 @@
 </script>
 
 <style>
-/* 심사 표 — 행 하나가 판정 단위(정규화한 검색어)다. 체크 열은 좁게, 검색어 열이 넓게.
+/* 심사 표 — 행 하나가 판정 단위(정규화한 검색어)다. 표는 면 카드 안에 서고(셸의 .tw 를
+   카드 면으로 세운다), 행 사이는 셸의 --line 이다. 체크 열은 좁게, 검색어 열이 넓게.
    커서 행(키보드 j/k)은 배경으로만 표시하고, 고른 행은 체크박스가 말한다. */
-#triage .trtable td:first-child, #triage .trtable th:first-child { width:24px; padding:0; }
+#triage .tw { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
+  padding:14px 12px 8px; }
+#triage .trtable td:first-child, #triage .trtable th:first-child { width:32px; padding:0 0 0 4px; }
+/* 검색어 열이 1120px 에서 양 끝으로 벌어지지 않게 — 넓어져도 520px, 좁아져도 200px. */
+#triage .trtable th:nth-child(2), #triage .trtable td:nth-child(2) { width:44%; min-width:200px; max-width:520px; }
 /* 체크박스 자체(13×13)만 눌려서 모바일 탭이 자주 빗나갔다 — label 이 셀 전체
-   (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(24px)를 넘지 않는다 —
-   넓히려면 검색어 열이 줄어든다. 행 클릭은 따로 없어 충돌이 없다. */
+   (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(32px)를 넘지 않는다. 행 클릭은
+   따로 없어 충돌이 없다. 셸의 label 여백(위 12px)은 지우고, 윗여백은 옆 칸(td 14px)에
+   맞춰 첫 줄 가운데에 온다 — 검색어가 두 줄이어도 첫 줄에 붙는다. */
 #triage .trtable td:first-child .trchk { display:flex; align-items:flex-start;
-  justify-content:center; min-height:44px; margin:0; padding-top:12px; cursor:pointer; }
-/* 셸의 label 여백(위 12px)이 여기까지 먹어 체크박스가 검색어 첫 줄보다 한 줄 가까이
-   아래로 처졌다 — 여백을 지우고, 윗여백은 옆 칸(td 8px + 첫 줄 21.6px 가운데)에 맞춘다.
-   ↑ 가운데 정렬이면 검색어가 두 줄인 행에서 체크박스가 첫 줄 아래로 처진다 —
-   다른 칸처럼 윗줄에 맞춘다(td 윗 여백 8px + 첫 줄 가운데). */
+  justify-content:center; min-height:44px; margin:0; padding-top:16px; cursor:pointer; }
 #triage .trtable td { vertical-align:top; }
-#triage .trrow.cur td { background:var(--wash); }
-#triage .trrow:hover td { background:var(--bar); }
+/* 터치: 체크박스 칸을 44px 폭으로 — 라벨이 그 칸 전체를 누르는 자리라 폭이 곧 터치 타깃이다. */
+@media (hover:none), (max-width:999px) {
+  #triage .trtable th:first-child, #triage .trtable td:first-child { width:44px; min-width:44px;
+    padding-left:0; padding-right:0; }
+  #triage .trtable input[type=checkbox], #triage .trbar input[type=checkbox] { width:20px; height:20px; }
+  #triage .trbar label { min-width:44px; }
+}
+#triage .trrow.cur td { background:var(--accent-wash); }
+#triage .trrow.cur td:first-child { border-radius:var(--r-in) 0 0 var(--r-in); }
+#triage .trrow.cur td:last-child { border-radius:0 var(--r-in) var(--r-in) 0; }
+#triage .trrow:hover td { background:var(--sunk); }
+#triage .trrow.cur:hover td { background:var(--accent-wash); }
 #triage .trrow { cursor:pointer; }
-#triage .trkw { font-weight:500; }
-#triage .trvar { color:var(--slate); font-size:12px; margin-left:6px; }
+#triage .trkw { font-weight:600; }
+#triage .trvar { color:var(--sub); font-size:var(--fs-1); margin-left:6px; }
 #triage .trkinds { display:flex; flex-wrap:wrap; gap:4px; }
-#triage .trbrand { color:var(--copper); border-color:var(--copper); margin-left:8px; }
+#triage .trbrand { color:var(--warn); background:var(--warn-wash); margin-left:8px; }
 /* 일괄 판정 바 — 늘 선다(키보드 안내가 여기 있다). 판정 버튼 셋은 셸의 .go 와 같은 높이. */
-#triage .trbar { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; margin:0 0 12px;
+#triage .trbar { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; margin:0 0 var(--sp-4);
   min-height:var(--btn-h); }
-#triage .trbar .n { color:var(--slate); font-size:13px; }
-#triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:13px;
-  min-height:var(--btn-h); }   /* 「전부」 체크는 줄이 아니라 이 라벨로 누른다 — 버튼과 같은 높이 */
+#triage .trbar .n { color:var(--sub); font-size:var(--fs-2); }
+#triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-2);
+  min-height:var(--btn-h); margin:0; color:var(--ink); }   /* 「전부」 체크는 줄이 아니라 이 라벨로 누른다 — 버튼과 같은 높이 */
 #triage .trbar input[type=checkbox], #triage .trtable input[type=checkbox] { width:auto; margin:0; }
-#triage kbd { font:400 11px/1 var(--mono); color:var(--slate); border:1px solid var(--rule);
-  border-radius:3px; padding:2px 4px; margin-left:4px; background:var(--card); }
-#triage .go kbd { color:inherit; border-color:currentColor; background:transparent; opacity:.7; }
+#triage kbd { font:600 var(--fs-1)/1 var(--sans); color:var(--sub); background:var(--card);
+  box-shadow:var(--shadow); border-radius:6px; padding:4px 7px; margin:0 1px; }
+#triage .go kbd { color:inherit; background:transparent; box-shadow:none; font-weight:500; }
 #tr-counts b { color:var(--ink); font-weight:600; }
 /* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
 #triage .trtouch { display:none; }
@@ -46,12 +58,13 @@
 @media (hover:none), (max-width:560px) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
   /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수(「미판정 110」)와 같은 숫자로 읽혔다. */
   #triage .go kbd { display:none; } }
-/* 숫자 칸은 쪼개지 않는다 — 「44 / 4,64」처럼 한 값이 두 줄로 갈렸다. */
-#triage .trtable td.num { white-space:nowrap; }
+/* 숫자 칸은 쪼개지 않는다 — 「44 / 4,64」처럼 한 값이 두 줄로 갈렸다. 등폭이 아니라
+   Pretendard 의 tabular-nums 다(셸의 td.num 등폭을 되돌린다). */
+#triage .trtable td.num { white-space:nowrap; font-family:var(--sans); font-variant-numeric:tabular-nums; }
 /* 390px 에서는 클릭/노출 열이 오른쪽 밖으로 밀려 잘렸다. 그 열을 접고 같은 값을
    검색어 밑 둘째 줄(.trperf)로 내린다 — 넓은 화면에서는 그 줄이 안 선다. */
-#triage .trperf { display:none; color:var(--slate); font-size:12px; margin-top:2px; }
-#triage .trperf .v { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+#triage .trperf { display:none; color:var(--sub); font-size:var(--fs-1); margin-top:2px; white-space:nowrap; }
+#triage .trperf .v { font-variant-numeric:tabular-nums; }
 /* 고른 뒤 판정 버튼 — 좁은 화면에서는 표를 내려가면 위 판정 바가 화면 밖으로 나갔다.
    한 줄이라도 고르면 같은 버튼을 화면 아래에 붙여 둔다. 위 판정 바는 그대로 두어
    고르는 순간 표가 밀려 올라가지 않는다. */
@@ -61,15 +74,14 @@
   #triage .trperf { display:block; }
   #triage .trdock { display:flex; align-items:center; gap:10px; position:fixed; left:0; right:0;
     bottom:0; z-index:50; padding:8px 16px calc(8px + env(safe-area-inset-bottom));
-    background:var(--card); border-top:1px solid var(--rule); }
-  #triage .trdock .n { color:var(--slate); font-size:13px; margin-right:auto; }
+    background:var(--card); box-shadow:var(--shadow); }
+  #triage .trdock .n { color:var(--sub); font-size:var(--fs-2); margin-right:auto; }
   #triage:has(.trdock) { padding-bottom:calc(var(--btn-h) + 24px); }
 }
 </style>
 
 <section id="triage-sec">
   <div class="sh">
-    <p class="eyebrow">검색어 심사</p>
     <h2>가릴 검색어</h2>
     <p class="sub" id="tr-counts"></p>
     <div class="tools" id="tr-tools"></div>

@@ -8,46 +8,46 @@
 
 <style>
 /* 단계 줄을 부품 계약에 맞춘다 — 마크업은 셸(renderGuide)이 만들고, 여기서는
-   그 마크업이 [카드 + 번호 + 상태 배지 + 행동 하나]로 읽히게 자리만 잡는다.
+   그 마크업이 [면 카드 + 번호 + 상태 알약 + 행동 하나]로 읽히게 자리만 잡는다.
    토큰만 쓴다(자체 색상값·!important 없음). */
 
-/* ① 단계 하나가 카드 하나다. 여태는 괘선도 상자도 없어서 여섯 줄이 한 덩어리로
-      흘렀고, 어디까지가 3번이고 어디부터 4번인지 여백으로만 갈렸다. */
-#guide .stp .body { border:1px solid var(--rule-soft); border-radius:var(--r-md);
-  background:var(--card); padding:var(--sp-4) var(--sp-5);
-  margin:0 0 var(--sp-3); }
+/* ① 단계 하나가 면 카드 하나다(반경 20·옅은 그림자·테두리 없음). 아직 안 한 단계는
+      그림자 없이 --sunk 면으로 물러나고, 끝난 것·지금 할 것은 흰 면이다. */
+#guide .stp .body { border:0; border-radius:var(--r-card); background:var(--card);
+  box-shadow:var(--shadow); padding:var(--sp-4) var(--sp-5); margin:0 0 var(--sp-3); }
+#guide .stp.later .body { background:var(--sunk); box-shadow:none; }
 #guide .stp:last-child .body { margin-bottom:0; }
-/* ② 행동은 카드의 오른쪽 끝에 붙는다. 62ch 고정폭이라 넓은 화면에서 명령 칩이
-      본문에서 30rem 쯤 떨어져 혼자 떠 있었다 — 어느 단계의 손잡이인지 안 보였다. */
+/* ② 행동은 카드의 오른쪽 끝에 붙는다 — 어느 단계의 손잡이인지 본문 옆에서 읽힌다. */
 #guide .stp .body { grid-template-columns:minmax(0,1fr) auto; align-items:center;
   gap:0 var(--sp-5); }
 #guide .stp .body .txt { max-width:66ch; }
 #guide .stp .cmd, #guide .stp .go { margin-top:0; }
-/* 지금 할 단계만 도드라진다 — 나머지는 같은 카드 안에서 물러난다. 산화동·wash 는
-   완료 배지가 이미 쓴다(아래) — 카드까지 초록이면 "끝남"과 "지금 여기"가 색만
-   으로 헷갈린다. 지금 카드는 중립(--ink)으로, 초록은 완료 전용으로 남긴다. */
-#guide .stp.here .body { border:2px solid var(--ink); }
-/* ③ 상태는 배지다. 여태는 제목 옆 회색 글씨라 제목의 일부처럼 읽혔다.
-      모양은 셸의 .badge 와 같다(끝난 것=ok, 지금=warn, 아직=muted). */
-#guide .stp .state { display:inline-flex; align-items:center; min-height:22px;
-  border:1px solid var(--rule); border-radius:var(--r-sm);
-  padding:2px var(--sp-2); font:var(--micro); white-space:nowrap; }
-#guide .stp.done .state { color:var(--patina); border-color:var(--patina);
-  background:var(--wash); }
-/* 지금 할 단계에서는 배지가 둘이다(자료 상태 + [지금 할 것]). 둘 다 산화동으로
-   칠하면 같은 것이 두 번 선 것처럼 읽힌다 — 강조는 [지금 할 것] 한쪽만 갖는다. */
-#guide .stp.here .state, #guide .stp.later .state { color:var(--slate); }
-/* 배지가 섰으니 제목 옆 ✓ 는 같은 말을 두 번 하는 것이다. */
+/* 지금 할 단계는 번호 원(강조 고리)과 [지금 할 것] 알약이 말한다. 카드 색은 끝남(초록
+   알약)과 겹치지 않게 흰 면 그대로 둔다. */
+/* ③ 상태는 옅은 알약이다(24px·12px 600). 끝난 것=accent, 지금·아직=중립. */
+#guide .stp .state { display:inline-flex; align-items:center; height:24px;
+  border:0; border-radius:var(--r-pill); padding:0 var(--sp-3);
+  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap;
+  color:var(--sub); background:var(--sunk); }
+#guide .stp.here .state { color:var(--sub); background:var(--sunk); }
+#guide .stp.later .state { color:var(--sub); background:var(--card); }
+#guide .stp.done .state { color:var(--accent); background:var(--accent-wash); }
+/* 알약이 섰으니 제목 옆 ✓ 는 같은 말을 두 번 하는 것이다. */
 #guide .stp .ok { display:none; }
-/* 갱도 벽은 카드 사이를 잇는다 — 카드에 여백이 생겨 점과 선이 어긋난 자리를 맞춘다. */
+/* 갱도 벽은 카드 사이를 잇는다 — 점이 카드 제목 줄에 오게 맞춘다. */
 #guide .stp .dot { top:var(--sp-4); }
-/* ④ 접은 산문 — 세 문장짜리 설명이 마지막 단계 밑에 그대로 깔려 있었다. */
-#guide .loopback > summary { font:500 13px/1.5 var(--sans); color:var(--slate);
-  cursor:pointer; }
-#guide .loopback > summary:hover { color:var(--patina); }
-#guide .loopback p { margin:var(--sp-2) 0 0; }
+/* ④ 접은 산문. */
+#guide .loopback { margin-top:var(--sp-5); }
+#guide .loopback > summary { display:flex; align-items:center; min-height:44px;
+  font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub); cursor:pointer; }
+#guide .loopback > summary:hover { color:var(--accent); }
+#guide .loopback > summary:focus-visible { outline:2px solid var(--accent);
+  outline-offset:2px; border-radius:var(--r-in); }
+#guide .loopback p { margin:var(--sp-2) 0 0; font-size:var(--fs-2); line-height:1.7;
+  color:var(--sub); }
 @media (max-width:720px) {
-  #guide .stp .body { grid-template-columns:minmax(0,1fr); align-items:start; }
+  #guide .stp .body { grid-template-columns:minmax(0,1fr); align-items:start;
+    padding:var(--sp-4); }
   #guide .stp .cmd, #guide .stp .go { margin-top:var(--sp-3); }
   #guide .loopback { padding-left:0; }
 }

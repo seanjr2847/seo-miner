@@ -10,39 +10,43 @@
 </script>
 
 <style>
-/* 페이지 하나가 카드 하나다 — 관찰의 단위가 기회가 아니라 페이지라서. 토큰만 쓴다. */
-#holds .hd { border:1px solid var(--rule); border-radius:var(--r-md); background:var(--card);
-  padding:var(--sp-4) var(--sp-5); margin:0 0 var(--sp-4); }
+/* 페이지 하나가 면 카드 하나다 — 관찰의 단위가 기회가 아니라 페이지라서. 토큰만 쓴다. */
+#holds .hd { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
+  padding:22px 24px; margin:0 0 var(--gap); min-width:0; }
 #holds .hd:last-child { margin-bottom:0; }
 #holds .hd-h { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3); }
-#holds .hd-h a { font:500 14px/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
-#holds h3 { font:600 13px/1.5 var(--sans); color:var(--slate); margin:var(--sp-4) 0 var(--sp-2); }
+#holds .hd-h a { font:500 var(--fs-2)/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere;
+  min-width:0; max-width:100%; }
+#holds .hd-h .badge { white-space:nowrap; }
+#holds h3 { font:600 var(--fs-2)/1.5 var(--sans); color:var(--sub); margin:var(--sp-5) 0 var(--sp-2); }
 #holds .hd-w { list-style:none; margin:0; padding:0; }
-#holds .hd-w li { margin:0 0 6px; font-size:14px; line-height:1.6; }
+#holds .hd-w li { margin:0 0 6px; font-size:var(--fs-2); line-height:1.6; }
 /* 날짜만 등폭이다 — 한글 이름표에는 안 건다. */
-#holds .hd-w .d { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--slate);
-  margin-right:6px; }
-#holds .hd-w .nt { display:block; color:var(--slate); font-size:13px; overflow-wrap:anywhere; }
-#holds .hd-o { border:1px solid var(--rule-soft); border-radius:var(--r-md); overflow:hidden; }
+#holds .hd-w .d { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--sub);
+  margin-right:6px; white-space:nowrap; }
+#holds .hd-w .nt { display:block; color:var(--sub); font-size:var(--fs-1); overflow-wrap:anywhere; }
+/* 뺀 기회 목록 — 카드 안의 옅은 면. 행 사이는 --line 한 줄. */
+#holds .hd-o { background:var(--sunk); border-radius:var(--r-in); overflow:hidden; }
 #holds .hd-o .opp { margin:0; padding:11px var(--sp-4); border:0; border-radius:0;
-  border-bottom:1px solid var(--rule-soft); background:transparent; box-shadow:none; }
+  border-bottom:1px solid var(--line); background:transparent; box-shadow:none; }
 #holds .hd-o .opp:last-child { border-bottom:0; }
-#holds .none { color:var(--slate); font-size:13.5px; margin:var(--sp-2) 0 0; }
+#holds .none { color:var(--sub); font-size:var(--fs-2); margin:var(--sp-2) 0 0; }
 /* 날짜는 쪼개지 않는다 — 띠 문장 안에서 「(2026-10-」/「06)」로 갈렸다. */
 #view-hold .hd-day { white-space:nowrap; }
-/* 고치기 전 → 지금. 접힌 줄에서는 한 줄, 펼치면 표. 숫자·날짜만 등폭이다. */
-#holds .hd-ba1 { font-size:12.5px; color:var(--slate); margin:2px 0 0; }
-#holds .hd-ba1 .v, #holds .hd-bat .v { font-family:var(--mono); font-variant-numeric:tabular-nums;
-  white-space:nowrap; }
-#holds .hd-ba1 .up, #holds .hd-bat .up { color:var(--patina); }
-#holds .hd-ba1 .down, #holds .hd-bat .down { color:var(--copper); }
-#holds .hd-bat { margin:0 0 var(--sp-3); }
+/* 고치기 전 → 지금. 접힌 줄에서는 한 줄, 펼치면 표. 숫자·날짜만 등폭이 아닌 Pretendard 숫자다. */
+#holds .hd-ba1 { font-size:var(--fs-1); color:var(--sub); margin:2px 0 0; }
+#holds .hd-ba1 .v, #holds .hd-bat .v { font-variant-numeric:tabular-nums; white-space:nowrap; }
+#holds .hd-ba1 .up, #holds .hd-bat .up { color:var(--up); }
+#holds .hd-ba1 .down, #holds .hd-bat .down { color:var(--dn); }
+#holds .hd-bat { margin:0 0 var(--sp-3); max-width:760px; }
 /* 셸의 td.num 은 칸 전체를 등폭으로 찍는다 — 여기 칸에는 「칸 올라감」「그대로」 같은 한글이
-   섞이므로 칸은 본문 서체로 두고 숫자(.v)만 등폭이다. */
-#holds .hd-bat td.num { font-family:var(--sans); }
-#holds .hd-bat .note { font-size:12.5px; color:var(--slate); margin:6px 0 0; }
+   섞이므로 칸은 본문 서체로 두고 숫자(.v)만 tabular-nums 다. 첫 열은 꺾이지 않게 최소 폭을 준다. */
+#holds .hd-bat td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
+#holds .hd-bat td:first-child, #holds .hd-bat th:first-child { min-width:88px; white-space:nowrap; }
+#holds .hd-bat th { white-space:nowrap; }
+#holds .hd-bat .note { font-size:var(--fs-1); color:var(--sub); margin:6px 0 0; }
 #holds .hd-page { margin:var(--sp-3) 0 0; }
-@media (max-width:560px) { #holds .hd { padding:var(--sp-3) var(--sp-4); } }
+@media (max-width:560px) { #holds .hd { padding:var(--sp-4); } }
 </style>
 
 <section id="hold-sec">

@@ -9,28 +9,43 @@
 </script>
 
 <style>
-/* 0 을 가운데 둔 좌우 막대 — 부호가 방향이고 길이가 크기다. 항이 넷뿐이라
+/* 면 카드 하나 문법 — 색·반경·크기는 전부 셸 토큰. 섹션 구분은 셸의 여백(48px)이 한다.
+   0 을 가운데 둔 좌우 막대 — 부호가 방향이고 길이가 크기다. 항이 넷뿐이라
    축·눈금 없이 서로의 길이만 비교하면 된다. */
-.anbar { position:relative; height:9px; background:var(--bar); border-radius:2px; }
+.anbar { position:relative; height:8px; background:var(--line); border-radius:var(--r-pill); }
 .anbar::before { content:""; position:absolute; left:50%; top:-3px; bottom:-3px;
   width:1px; background:var(--rule); }
-.anbar i { position:absolute; top:0; bottom:0; display:block; border-radius:2px; }
-.anbar i.pos { left:50%; background:var(--patina); }
-.anbar i.neg { right:50%; background:var(--copper); }
-/* 원인 배지 — 표 안에서 한 눈에 갈린다 */
-.ancause { font:var(--micro); padding:2px 6px; border-radius:2px; white-space:nowrap; }
-.ancause.imp { color:var(--slate); background:var(--bar); }
-.ancause.ctr { color:var(--patina); background:var(--wash); }
-.ancause.new { color:var(--patina); background:var(--wash); }
-.ancause.lost { color:var(--copper); background:var(--wash-copper); }
+.anbar i { position:absolute; top:0; bottom:0; display:block; border-radius:var(--r-pill); }
+.anbar i.pos { left:50%; background:var(--accent); }
+.anbar i.neg { right:50%; background:var(--warn); }
+/* 원인 배지 — 옅은 알약(24px). 표 안에서 한 눈에 갈린다 */
+.ancause { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  font:600 var(--fs-1)/1 var(--sans); border-radius:var(--r-pill); white-space:nowrap; }
+.ancause.imp { color:var(--info); background:var(--info-wash); }
+.ancause.ctr { color:var(--accent); background:var(--accent-wash); }
+.ancause.new { color:var(--accent); background:var(--accent-wash); }
+.ancause.lost { color:var(--warn); background:var(--warn-wash); }
 /* Δ는 값 아래에 작게 붙인다 — 축마다 열을 두 벌로 늘리면 좁은 화면에서 표가
-   가로로 흘러 아무것도 못 읽는다. */
-.andelta { display:block; font:var(--micro); font-variant-numeric:tabular-nums; }
-.anverdict { font-size:15px; line-height:1.65; margin:0 0 2px; }
+   가로로 흘러 아무것도 못 읽는다. 색은 셸의 .up/.down 전용 토큰이 준다(투명도로 안 줄인다). */
+.andelta { display:block; font:500 var(--fs-1)/1.4 var(--sans); font-variant-numeric:tabular-nums; }
+.anverdict { font-size:var(--fs-3); line-height:1.65; margin:0 0 var(--sp-4); max-width:72ch; }
 .anverdict b { color:var(--ink); }
 /* 행동이 붙은 한 줄 안내(GA4 미연결·미분류 경고)만 여기 남는다. 표·차트 밑의
    각주 산문은 전부 .anmore 로 접혔다 — 맨 문단은 아무도 안 읽고 위계만 흐린다. */
-.anthin { font-size:12.5px; color:var(--slate); margin-top:10px; line-height:1.55; }
+.anthin { font-size:var(--fs-2); color:var(--sub); margin:var(--sp-4) 0 0; line-height:1.6; }
+/* 이번 회차 날짜 범위 — 「2026-08-21 → 09-18」 이 반토막 나지 않게 한 덩어리로 둔다. */
+#an-shift-eye { white-space:nowrap; }
+/* 표 숫자는 Pretendard 자리맞춤(tabular-nums) — 등폭은 URL·식별자·날짜에만 쓴다. 셸의
+   td.num 이 등폭이라 이 화면 안에서만 되돌린다. */
+section[id^="an-"] td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
+/* 줄 자체가 손잡이인 tr.opp 는 셸의 카드 문법(그림자·반경·여백)을 받지 않는다 — 표 행이다. */
+section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:none; box-shadow:none; }
+/* 검색어 열이 1120px 에서 양 끝으로 벌어지지 않게 — 검색어 열에 몫을, 숫자 열에 바닥을 준다.
+   좁은 화면(≤560px)은 셸의 카드 모드(.tw.cards)가 줄을 쌓으니 건드리지 않는다. */
+@media (min-width:561px) {
+  section[id^="an-"] td.kwcell { width:34%; min-width:200px; }
+  section[id^="an-"] th.num, section[id^="an-"] td.num { min-width:88px; }
+}
 /* 검색어 행 펼침 — rank.html/keywords.html 과 같은 손잡이(행 자체가 버튼). */
 #an-movers-body tbody tr[role="button"],
 #an-ctr-body tbody tr[role="button"],
@@ -43,46 +58,48 @@
 #an-bands-body tbody tr[role="button"]:hover > td,
 #an-brand-body tbody tr[role="button"]:hover > td,
 #an-intent-body tbody tr[role="button"]:hover > td,
-#an-cluster-body tbody tr[role="button"]:hover > td { background:var(--bar); }
+#an-cluster-body tbody tr[role="button"]:hover > td { background:var(--sunk); }
 #an-movers-body tbody tr[role="button"]:focus-visible > td,
 #an-ctr-body tbody tr[role="button"]:focus-visible > td,
 #an-bands-body tbody tr[role="button"]:focus-visible > td,
 #an-brand-body tbody tr[role="button"]:focus-visible > td,
 #an-intent-body tbody tr[role="button"]:focus-visible > td,
-#an-cluster-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--patina); outline-offset:-2px; }
+#an-cluster-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--accent); outline-offset:-2px; }
 #an-movers-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-ctr-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-bands-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-brand-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-intent-body tbody tr[aria-expanded="false"] > td:first-child::before,
-#an-cluster-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--slate); }
+#an-cluster-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--mute); }
 #an-movers-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-ctr-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-bands-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-brand-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-intent-body tbody tr[aria-expanded="true"] > td:first-child::before,
-#an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--patina); }
+#an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--accent); }
 
 /* 채널 도넛 + 한 줄 설명 — 나란히, 좁은 화면에선 세로로. */
-.anchannels { display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+.anchannels { display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
 .anchannels .anverdict { flex:1; min-width:220px; margin:0; }
-/* 섹션 안 작은 머리(잃은 쪽·얻은 쪽) — 카드 안에서 표 두 벌을 가른다. */
-.anblock { margin:var(--sp-5) 0 var(--sp-2); }
+/* 카드 안 작은 머리(잃은 쪽·얻은 쪽) — 카드 하나 안에서 표 두 벌을 가른다. 다른 정보를 주는
+   라벨이라 남긴다(섹션 제목을 되풀이하는 눈썹과 다르다). */
+.eyebrow.anblock { margin:var(--sp-5) 0 var(--sp-2); font:600 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
 .card > .anblock:first-child { margin-top:0; }
 /* 부제 한 줄에 안 들어간 나머지와 표 밑 각주는 접는다 — 세 문장째부터가 여기다.
    펼침 표시(셰브론)는 셸의 summary::before 한 벌이 그린다. 여기서 마커를 또
    정하면 화면마다 어포던스가 갈린다(QA A1 이 그 셋을 잡았다). */
 .anmore { margin:var(--sp-3) 0 var(--sp-4); }
-.anmore > summary { font:500 12.5px/1.5 var(--sans); color:var(--slate); cursor:pointer; }
-.anmore > summary:hover, .anmore > summary:focus-visible { color:var(--patina); }
-.anmore > p { font-size:13px; line-height:1.65; color:var(--slate); margin:var(--sp-2) 0 0; }
+.anmore > summary { font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub); cursor:pointer; }
+.anmore > summary:hover, .anmore > summary:focus-visible { color:var(--accent); }
+.anmore > p { font-size:var(--fs-2); line-height:1.65; color:var(--sub); margin:var(--sp-2) 0 0; max-width:72ch; }
+@media (max-width:999px) { .anmore > summary { display:flex; align-items:center; min-height:44px; } }
 /* 「0.3% → 0%」가 좁은 칸에서 세 줄로 갈렸다 — 숫자 칸은 한 덩어리로 둔다. */
 #an-movers-body td.num, #an-ctr-body td.num { white-space:nowrap; }
 </style>
 
 <section id="an-top">
   <div class="sh">
-    <p class="eyebrow">이번 회차</p><h2>클릭 변화 요약</h2>
+    <h2>클릭 변화 요약</h2>
     <p class="sub">두 시점을 맞대 클릭이 얼마나 움직였는지 봅니다.</p>
   </div>
   <div id="an-top-body"><span class="skel"></span><span class="skel line2"></span>
@@ -91,7 +108,7 @@
 
 <section id="an-shift">
   <div class="sh">
-    <p class="eyebrow" id="an-shift-eye">원인 분해</p><h2>클릭 변화의 원인</h2>
+    <p class="eyebrow" id="an-shift-eye" hidden></p><h2>클릭 변화의 원인</h2>
     <p class="sub">클릭 = 노출 × 클릭률. 가장 긴 막대가 이번에 손댈 자리입니다.<span
       id="an-shift-tip" hidden></span></p>
   </div>
@@ -103,7 +120,7 @@
 
 <section id="an-movers">
   <div class="sh">
-    <p class="eyebrow">검색어별 기여</p><h2>움직인 검색어</h2>
+    <h2>움직인 검색어</h2>
     <p class="sub">잃은 쪽 맨 위부터 봅니다. 줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
     <div class="tools">
       <button class="go sm sec" id="an-movers-csv" onclick="anCsv()" hidden>CSV 내려받기</button>
@@ -124,7 +141,7 @@
 
 <section id="an-daily">
   <div class="sh">
-    <p class="eyebrow">일별 추이</p><h2>하루 단위 클릭</h2>
+    <h2>하루 단위 클릭</h2>
     <p class="sub">하루 단위라 어느 날부터 달라졌는지 보입니다.<span class="hint"
       tabindex="0" data-tip="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
       title="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
@@ -135,7 +152,7 @@
 
 <section id="an-ctr">
   <div class="sh">
-    <p class="eyebrow">되찾을 클릭</p><h2>안 눌리는 검색어</h2>
+    <h2>안 눌리는 검색어</h2>
     <p class="sub">1페이지인데 그 순위면 보통 나오는 클릭률의 절반도 못 받는 검색어입니다.<span
       class="hint" tabindex="0" data-tip="순위를 올릴 필요가 없어 여기가 가장 싼 클릭입니다. 노출 100 이상만 봅니다."
       title="순위를 올릴 필요가 없어 여기가 가장 싼 클릭입니다. 노출 100 이상만 봅니다."
@@ -146,7 +163,7 @@
 
 <section id="an-bands">
   <div class="sh">
-    <p class="eyebrow">순위 분포</p><h2>순위 구간 이동</h2>
+    <h2>순위 구간 이동</h2>
     <p class="sub">1페이지에서 몇 개가 빠지고 늘었는지 봅니다.<span class="hint"
       tabindex="0" data-tip="검색어 하나하나의 순위는 흔들리지만, 구간별 검색어 수의 이동은 그 흔들림이 상쇄됩니다."
       title="검색어 하나하나의 순위는 흔들리지만, 구간별 검색어 수의 이동은 그 흔들림이 상쇄됩니다."
@@ -157,7 +174,7 @@
 
 <section id="an-brand">
   <div class="sh">
-    <p class="eyebrow">수요 구성</p><h2>브랜드·논브랜드</h2>
+    <h2>브랜드·논브랜드</h2>
     <p class="sub">새 수요는 논브랜드 쪽에서만 옵니다.<span class="hint"
       tabindex="0" data-tip="검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이 20% 늘어도 그게 전부 브랜드 검색이면 새 수요는 못 잡은 것입니다."
       title="검색어에 내 이름이 들어 있으면 이미 나를 아는 사람입니다. 클릭이 20% 늘어도 그게 전부 브랜드 검색이면 새 수요는 못 잡은 것입니다."
@@ -168,7 +185,7 @@
 
 <section id="an-newret-sec">
   <div class="sh">
-    <p class="eyebrow">수요 구성 · <span class="lat">GA4</span></p><h2>신규·재방문</h2>
+    <p class="eyebrow"><span class="lat">GA4</span></p><h2>신규·재방문</h2>
     <p class="sub">재방문은 이미 나를 아는 사람이 돌아온 몫입니다.</p>
   </div>
   <div id="an-newret-body"></div>
@@ -176,7 +193,7 @@
 
 <section id="an-intent">
   <div class="sh">
-    <p class="eyebrow">의도별</p><h2>검색 의도 구성</h2>
+    <h2>검색 의도 구성</h2>
     <!-- ⓘ가 하던 말("사람은 오는데 살 사람이 없어…")은 이 부제가 이미 하는 말과
          같은 뜻이라 뺐다(QA 8회차 — 부제가 이미 답한 것을 ⓘ가 또 답했다). -->
     <p class="sub">정보성만 잡고 거래성이 0인 상태가 가장 흔한 실패입니다.</p>
@@ -186,7 +203,7 @@
 
 <section id="an-cluster">
   <div class="sh">
-    <p class="eyebrow">주제 묶음별</p><h2>주제별 성적</h2>
+    <h2>주제별 성적</h2>
     <!-- ⓘ가 "글을 더 쓸 곳이 아니라…"라고 되풀이했다 — 부제의 "고칠 곳입니다"가
          이미 같은 결론이다(QA 8회차). -->
     <p class="sub">노출은 많은데 안 눌리는 묶음은 고칠 곳입니다.</p>
@@ -212,7 +229,7 @@
 
 <section id="an-country">
   <div class="sh">
-    <p class="eyebrow">국가별</p><h2>국가별 클릭</h2>
+    <h2>국가별 클릭</h2>
     <p class="sub" id="an-country-sub">타깃 밖 나라가 노출을 먹고 있는지 봅니다.</p>
   </div>
   <div id="an-country-body"><span class="skel box"></span></div>
@@ -1109,7 +1126,8 @@ VIEW("analysis", function (d) {
   // 통째로 없으므로, "아직 없다"가 아니라 "기간이 달라 안 맞댔다"고 말해야 한다.
   const mismatch = !!d.period_mismatch;
   $("an-top-body").innerHTML = anTop(d, mismatch);
-  $("an-shift-eye").textContent = cmp || "원인 분해";
+  $("an-shift-eye").textContent = cmp;
+  $("an-shift-eye").hidden = !cmp;
   if (d.gsc_period) {
     const t = `두 수집 다 ${d.gsc_period}일치입니다. 기간이 다르면 짝을 안 짓습니다.`;
     $("an-shift-tip").outerHTML = `<span class="hint" id="an-shift-tip" tabindex="0"

@@ -12,34 +12,41 @@
 <style>
 /* ── 경쟁 분석 ────────────────────────────────────────────────
    몫은 숫자보다 길이로 읽힌다. 우리 줄만 녹청, 나머지는 회색 — 색으로 "누가 우리인가"
-   하나만 말하고, 크기 비교는 막대 길이가 한다. */
-.cp-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 14px;
-  align-items:baseline; padding:9px 0; border-bottom:1px solid var(--rule-soft); }
-.cp-row:last-child { border-bottom:0; }
-.cp-dom { font-family:var(--mono); font-size:13px; word-break:break-all; }
-.cp-row.me .cp-dom { color:var(--patina); font-weight:600; }
-.cp-n { font-family:var(--mono); font-size:13px; font-variant-numeric:tabular-nums;
+   하나만 말하고, 크기 비교는 막대 길이가 한다. 표 상자는 셸의 면 카드(.card) 한 벌이다. */
+#cp-shares .card { max-width:760px; }
+.cp-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 16px;
+  align-items:baseline; padding:12px 0; border-bottom:1px solid var(--line); }
+.cp-row:first-child { padding-top:0; }
+.cp-row:last-child { padding-bottom:0; border-bottom:0; }
+.cp-dom { font-family:var(--mono); font-size:var(--fs-2); word-break:break-all; }
+.cp-row.me .cp-dom { color:var(--accent); font-weight:600; }
+/* 숫자 열은 Pretendard 표 숫자 — 등폭은 도메인(식별자)에만 쓴다. */
+.cp-n { font:650 var(--fs-3)/1.4 var(--sans); font-variant-numeric:tabular-nums;
   white-space:nowrap; }
-.cp-bar { grid-column:1 / -1; height:4px; border-radius:2px; background:var(--bar);
-  margin-top:6px; }
-.cp-bar i { display:block; height:100%; border-radius:2px; background:var(--slate);
-  opacity:.45; }
-.cp-row.me .cp-bar i { background:var(--patina); opacity:.75; }
+.cp-bar { grid-column:1 / -1; height:4px; border-radius:2px; background:var(--sunk);
+  margin-top:8px; }
+.cp-bar i { display:block; height:100%; border-radius:2px; background:var(--mute); }
+.cp-row.me .cp-bar i { background:var(--accent); }
 @media (prefers-reduced-motion: no-preference) {
   .cp-bar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
 /* 곁줄 한 벌 — 막대 밑의 설명과 카드 안의 범례가 같은 무게로 읽혀야 한다.
-   .left 는 격자 왼쪽 칸에 붙는 곁줄이다(인라인 style 로 박아 두던 자리). */
-.cp-meta { font:400 11.5px/1.5 var(--sans); color:var(--slate); }
+   .left 는 격자 왼쪽 칸에 붙는 곁줄이다(인라인 style 로 박아 두던 자리).
+   숫자 곁줄은 꺾이면 「추정 트래픽 / 1,234」로 갈라지므로 통째로 묶는다. */
+.cp-meta { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
 .cp-meta.left { grid-column:1; }
+.cp-row > .cp-meta:not(.left) { white-space:nowrap; }
 /* 검색어 한 카드 안의 경쟁사 줄 — 같은 검색어가 경쟁사마다 카드로 반복되던 것을 묶었다.
    배지 모양은 셸의 .badge 한 벌이다(화면별 배지 변형을 두지 않는다). */
-.cp-riv { margin-top:4px; }
+.cp-riv { margin-top:6px; }
+/* 걸러진 머리말이 비면(제목을 되풀이하던 자리) 자리를 접는다. */
+#cp-share .sh > .eyebrow:empty, #cp-gap .sh > .eyebrow:empty { display:none; }
+#cp-share .sh > .eyebrow:empty + h2, #cp-gap .sh > .eyebrow:empty + h2 { margin-top:0; }
 </style>
 
 <section id="cp-share">
   <div class="sh">
-    <p class="eyebrow" id="cp-share-eyebrow">유기 검색</p>
+    <p class="eyebrow" id="cp-share-eyebrow"></p>
     <h2>유기 검색 몫</h2>
     <p class="sub" id="cp-share-sub"></p>
   </div>
@@ -49,7 +56,7 @@
 
 <section id="cp-gap">
   <div class="sh">
-    <p class="eyebrow" id="cp-gap-eyebrow">키워드 격차</p>
+    <p class="eyebrow" id="cp-gap-eyebrow"></p>
     <h2 id="cp-gap-h">경쟁사와 맞댄 검색어</h2>
     <p class="sub" id="cp-gap-sub"></p>
     <div class="tools" id="cp-gap-tools"></div>
@@ -417,9 +424,9 @@ VIEW("competitors", function (d) {
   window.viewSub && viewSub("competitors",
     "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.");
 
-  // eyebrow 는 "언제·어느 범위"만 적는다 — 개수·상태·결론은 부제와 배지가 갖는다.
+  // eyebrow 는 "언제·어느 범위"만 적는다(없으면 비워 접는다 — 제목을 되풀이하지 않는다) — 개수·상태·결론은 부제와 배지가 갖는다.
   $("cp-share-eyebrow").textContent = d.comp_date
-    ? `${String(d.comp_date).slice(0, 10)} 기준` : "유기 검색";
+    ? `${String(d.comp_date).slice(0, 10)} 기준` : "";
   $("cp-share-sub").innerHTML = !d.comp_date
     ? "누가 이 주제에서 얼마를 가져가는지 세는 자리입니다."
     : rivals
@@ -458,7 +465,7 @@ VIEW("competitors", function (d) {
           "선택 단계입니다. 안 돌려도 다른 화면과 기회 목록은 그대로 채워집니다.");
 
   $("cp-gap-eyebrow").textContent = d.gap_date
-    ? `${String(d.gap_date).slice(0, 10)} 기준` : "키워드 격차";
+    ? `${String(d.gap_date).slice(0, 10)} 기준` : "";
   $("cp-gap-sub").innerHTML = !d.gap_date
     ? "경쟁사가 순위를 가졌는데 우리는 없거나 아래인 검색어를 모으는 자리입니다."
     // 배지 이름을 산문에 박으면 배지 문구를 바꿀 때마다 두 벌이 된다 — 갈래가

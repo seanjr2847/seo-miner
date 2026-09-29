@@ -3241,6 +3241,36 @@ def test_seam_99_default_filter_is_what_is_left():
     assert seen >= 7, f"측정 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
 
 
+def test_seam_100_design_tokens_are_one_block_in_three_files():
+    """100) 디자인 토큰 블록(`/* tokens:begin */`~`/* tokens:end */`)은 세 화면에 글자 하나 안 다르게 같다.
+
+    셸(dashboard.html)·랜딩(landing.html)·앱 셸(app.html)은 각자 단독 파일이라 토큰을
+    import 할 수 없어 같은 블록을 심어 둔다. 한 벌이 낡으면 화면마다 색·반경이 갈린다.
+    마커가 없거나 블록이 다르면 FAIL — 첫 차이 줄을 보인다. 정본은 dashboard.html.
+    """
+    files = [ROOT / "skills" / "capture" / "templates" / "dashboard.html",
+             ROOT / "server" / "landing.html", ROOT / "server" / "app.html"]
+    if not all(f.exists() for f in files[1:]):
+        return   # 리포 밖(플러그인 설치본)에는 server/ 가 없다
+
+    def block(f):
+        t = f.read_text("utf-8").replace("\r\n", "\n")
+        b, e = t.count("/* tokens:begin */"), t.count("/* tokens:end */")
+        assert b == 1 and e == 1, f"{f.name}: 토큰 마커가 begin {b}개·end {e}개다 — 각각 정확히 하나여야 한다"
+        i, j = t.index("/* tokens:begin */"), t.index("/* tokens:end */")
+        assert i < j, f"{f.name}: tokens:end 가 tokens:begin 앞에 있다"
+        return t[i:j + len("/* tokens:end */")].split("\n")
+
+    ref = block(files[0])
+    for f in files[1:]:
+        got = block(f)
+        for n in range(max(len(ref), len(got))):
+            a = ref[n] if n < len(ref) else "(없음)"
+            b = got[n] if n < len(got) else "(없음)"
+            assert a == b, (f"{f.name} 의 토큰 블록이 {files[0].name} 와 다르다 — 블록 {n + 1}째 줄:"
+                            f" 정본 {a!r} / 여기 {b!r}")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -7,20 +7,20 @@
 
 <style>
 /* ── 깊이 로그(시그니처) ─────────────────────────────────── */
-.log .lane:hover .lane-bg { fill:var(--bar); }
+.log .lane:hover .lane-bg { fill:var(--sunk); }
 /* 레인을 누르면 아래 표의 그 줄이 펼쳐진다 — 그림에서 찍은 점과 할 일이 이어진다.
    칠하지 않은 배경 사각형(fill:none)은 기본값으로 포인터를 안 받으므로 여기서 연다. */
 .log .lane { cursor:pointer; }
 .log .lane-bg { pointer-events:all; }
 /* 행 라벨은 검색어(한글이 섞인 문장)다 — 셸의 `.log text` 가 등폭이라 한글이
    폴백 서체로 떨어져 자간이 벌어졌다. 등폭은 옆의 숫자(.num)만 쓴다. */
-.log .kw { font-size:12.5px; fill:var(--ink); font-family:var(--sans); }
-.log .num { font-size:11.5px; fill:var(--slate); }
-.log .track { stroke:var(--rule-soft); }
+.log .kw { font-size:var(--fs-1); fill:var(--ink); font-family:var(--sans); }
+.log .num { font-size:var(--fs-1); fill:var(--sub); }
+.log .track { stroke:var(--line); }
 .log .dist { stroke-linecap:round; }
 /* 눈금선 — 축 숫자만 있으면 15줄 아래에서 그 점이 몇 위인지 못 읽는다.
    일별 추이(overview)의 .grid 와 같은 점선 언어를 세로로 쓴다. */
-.log .vgrid { stroke:var(--rule-soft); stroke-dasharray:2 4; }
+.log .vgrid { stroke:var(--line); stroke-dasharray:2 4; }
 @media (prefers-reduced-motion: no-preference) {
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
@@ -35,19 +35,26 @@
 .kwtable .kwcell, #mv-list .kwcell { word-break:keep-all; overflow-wrap:break-word; }
 /* 검색어 자체는 아예 안 쪼갠다 — keep-all 은 한글 어절만 지키고 "beta-site" 의
    하이픈 뒤는 그대로 갈랐다. 이름보다 칸이 좁으면 표가 자기 상자 안에서 가로로 민다. */
-.kwtable .kwq, #mv-list .kwq { white-space:nowrap; }
+.kwtable .kwq, #mv-list .kwq { white-space:nowrap; display:inline-block; max-width:420px;
+  overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
+/* 표는 카드 안에 서고, 숫자 칸은 본문 서체의 자릿수 맞춤(tabular-nums)이다 — 등폭은 URL·날짜·식별자 몫. */
+.kwtable td.num, #mv-list td.num { font-family:var(--sans); }
+.kwtable .kwcell, #mv-list .kwcell { min-width:220px; }
+.kwtable { margin-top:var(--gap); }
 /* 범례는 그림 위에 선다 — 색이 무슨 뜻인지 모른 채로 그림을 먼저 읽게 두지 않는다.
    부품은 셸의 .chleg 를 그대로 쓰고, 조각의 모양(점·막대·영역)만 여기서 준다. */
 .kwleg { margin:0 0 12px; }
-.kwleg i.dot { border-radius:50%; background:var(--patina); }
-.kwleg i.bar { width:15px; height:6px; border-radius:3px; background:var(--copper); opacity:.5; }
-.kwleg i.zone { background:var(--wash); border:1px solid var(--rule); }
-/* 목록이 무엇에 오염됐는지는 상태다 — 배지로 말하고, 고치러 갈 자리를 옆에 둔다.
+.kwleg i.dot { border-radius:50%; background:var(--accent); }
+.kwleg i.bar { width:15px; height:6px; border-radius:3px; background:var(--warn); opacity:.38; }
+.kwleg i.zone { background:var(--accent-wash); box-shadow:inset 0 0 0 1px var(--rule); }
+/* 목록이 무엇에 오염됐는지는 상태다 — 면의 색조(--sunk) 위에 배지 하나, 한 줄, 버튼 하나.
    여태 이 자리에 산문 두 줄이 서 있어서 경고인지 설명인지 갈리지 않았다. */
-.kwwarn { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-  font-size:12.5px; color:var(--slate); margin:12px 0 0; }
+.kwwarn { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+  font-size:var(--fs-2); color:var(--ink); background:var(--warn-wash);
+  border-radius:var(--r-card); padding:12px 20px; margin:var(--gap) 0 0; }
 /* 비교 기간은 눈썹에 선다 — 날짜뿐이라 등폭이 맞고, 없으면 자리를 안 차지한다. */
-#mv-eb { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:0; }
+#mv-eb { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:0;
+  white-space:nowrap; }
 .sh > .eyebrow:empty { display:none; }
 /* 그림은 최소 720px 다 — 390 에서는 눈금 왼쪽 끝만 남아 「평균 순위 → / 1」로 잘렸다.
    잘린 그림은 정보가 아니라 고장으로 읽히므로, 좁은 화면에서는 표만 남긴다.
@@ -57,18 +64,20 @@
    눌러도 되는 줄임을 커서와 첫 칸의 표식으로 말한다(색만으로 말하지 않는다). */
 tr[data-kwq] { cursor:pointer; }
 /* 표식은 이름과 한 덩어리다 — 칸에 걸면 좁은 화면에서 화살표만 윗줄에 남는다. */
-tr[data-kwq] .kwq::before { content:"▸ "; color:var(--slate); }
+tr[data-kwq] .kwq::before { content:"▸ "; color:var(--sub); }
 /* 좁은 화면에서 두 표는 줄을 카드로 쌓는다(셸 table 의 "cards") — 검색어가 카드 제목
    줄이 되어 칸 폭 전체를 쓰므로, 그때는 긴 이름이 넘치지 않게 줄을 바꾼다. */
-@media (max-width:560px) { .kwtable .kwq, #mv-list .kwq { white-space:normal; }
+@media (max-width:560px) { .kwtable .kwq, #mv-list .kwq { white-space:normal; display:inline;
+    max-width:none; overflow:visible; }
+  .kwtable .kwcell, #mv-list .kwcell { min-width:0; }
   /* 점수 칸은 표에서 오른쪽 정렬 블록이다 — 카드 줄에서는 라벨 옆에 붙인다(사이트 크롤 표와 같다). */
-  .kwtable td.num .score, #mv-list td.num .score { display:inline; width:auto; font-size:13.5px; }
+  .kwtable td.num .score, #mv-list td.num .score { display:inline; width:auto; font-size:var(--fs-2); }
   .kwtable td.num .score .u, #mv-list td.num .score .u { display:inline; margin-left:1px; } }
-tr[data-kwq][aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--patina); }
-tr[data-kwq]:hover > td { background:var(--bar); }
+tr[data-kwq][aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
+tr[data-kwq]:hover > td { background:var(--sunk); }
 tr[data-kwq]:focus { outline:none; }
-tr[data-kwq]:focus-visible > td { background:var(--bar); }
-tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--patina); }
+tr[data-kwq]:focus-visible > td { background:var(--sunk); }
+tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--accent); }
 </style>
 
 <!-- 눈썹의 구간은 RULES(서버)가 정한다 — 여기에 숫자를 적으면 경계값이 바뀔 때
@@ -139,7 +148,7 @@ function KW_jump(btn) {
       막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
 function depthLog(rows, brandCatalogEmpty, period) {
   // 폭은 WIDTH 다 — W 는 뼈대의 문구 고르개(W(로컬, 웹))라 여기서 가리면 안 된다.
-  const WIDTH = 1000, LANE = 30, PAD_T = 44;
+  const WIDTH = 1000, LANE = 30, PAD_T = 58;
   // 줄이 길어지면 위쪽 눈금이 화면 밖으로 나간다 — 아래에도 같은 눈금을 깐다.
   const botAxis = rows.length >= 8, PAD_B = botAxis ? 26 : 10;
   const L = 330, R = WIDTH - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
@@ -153,12 +162,12 @@ function depthLog(rows, brandCatalogEmpty, period) {
   const lanes = rows.map((r, i) => {
     const y = PAD_T + i * LANE + LANE / 2;
     const px = x(r.pos), onPage1 = r.band ? r.band === "page1" : r.pos <= (RULES.page1 || 10);
-    const c = onPage1 ? "var(--patina)" : "var(--copper)";
+    const c = onPage1 ? "var(--accent)" : "var(--warn)";
     const x1 = Math.min(px, x10), x2 = Math.max(px, x10);
     // 2페이지 검색어는 1페이지 경계까지 되밀어야 할 거리를 막대로 — 이 화면이 파는 값.
     const dist = onPage1 ? "" :
       `<rect class="grow" x="${x1}" y="${y - 4}" width="${x2 - x1}" height="8" rx="4"
-             fill="var(--copper)" opacity=".38" style="transform-origin:${x2}px 0;
+             fill="var(--warn)" opacity=".38" style="transform-origin:${x2}px 0;
              animation-delay:${i * 16}ms"/>`;
     // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
     const gap = onPage1 ? "이미 1페이지"
@@ -227,15 +236,15 @@ function depthLog(rows, brandCatalogEmpty, period) {
   </div>
   <div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" role="img"
       aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리. 1페이지 안 ${p1}개, 문턱 ${rows.length - p1}개">
-    <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--wash)"/>
+    <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--accent-wash)"/>
     ${grid}
-    <line x1="${x10}" y1="${top - 6}" x2="${x10}" y2="${bot}"
-          stroke="var(--patina)" stroke-width="1"/>
-    <text class="axis" x="${L}" y="${PAD_T - 26}">평균 순위 →</text>
-    <text class="axis" x="${x10 - 6}" y="${PAD_T - 26}" text-anchor="end"
-          fill="var(--patina)">1페이지 경계</text>
-    ${tick(PAD_T - 14)}
-    <text class="axis" x="${WIDTH}" y="${PAD_T - 14}" text-anchor="end">${esc(impLabel)}</text>
+    <line x1="${x10}" y1="${top}" x2="${x10}" y2="${bot}"
+          stroke="var(--accent)" stroke-width="1"/>
+    <text class="axis" x="${L}" y="${PAD_T - 40}">평균 순위 →</text>
+    <text class="axis" x="${x10 - 6}" y="${PAD_T - 40}" text-anchor="end"
+          fill="var(--accent)">1페이지 경계</text>
+    ${tick(PAD_T - 17)}
+    <text class="axis" x="${WIDTH}" y="${PAD_T - 17}" text-anchor="end">${esc(impLabel)}</text>
     ${lanes}
     ${botAxis ? tick(H - 7) : ""}
   </svg></div></div>${warn}

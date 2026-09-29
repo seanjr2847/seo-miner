@@ -10,46 +10,55 @@
    모든 선택자를 이 화면의 id 아래로 가둔다 — 조립하면 형제 화면들과 한 문서가 된다.
    상태는 셸의 .badge 한 벌을 쓴다(여기서 .hs-r 로 배지를 또 만들지 않는다). */
 #acts ol { margin:0; padding-left:20px; }
-#acts li { margin:14px 0; font-size:14.5px; }
+#acts li { margin:14px 0; font-size:var(--fs-2); }
 #acts li:first-child { margin-top:0; }
-#acts li::marker { font-family:var(--mono); color:var(--slate); }
+#acts li::marker { font-family:var(--mono); color:var(--sub); }
 
 /* ── 한 실행이 남긴 key=value: 원문 대신 사람 말 + 등폭 값 ── */
 /* 등폭을 뺀 이유: 이 줄의 절반은 한글 이름표다("밀면 오를 검색어"·"겹친 도메인"·
    "오류"). 등폭은 아래 값(<b>)에만 건다 — 숫자·URL·날짜·식별자만. */
-.hs-nt { display:block; font:400 11.5px/1.7 var(--sans); color:var(--slate); }
+.hs-nt { display:block; font:400 var(--fs-1)/1.7 var(--sans); color:var(--sub); }
 /* 값은 줄을 바꾼다 — 한 줄로 묶었더니 긴 값(중단 사유·교집합 도메인 목록)이 표를
    1,484px 로 밀어 기본 화면에서 오류 결론이 칸 밖으로 잘렸다. */
-.hs-nt .p { display:inline; margin-right:11px; }
+.hs-nt .p { display:inline; margin-right:12px; }
 .hs-nt .p b { color:var(--ink); font-weight:500; overflow-wrap:anywhere;
   font-family:var(--mono); font-variant-numeric:tabular-nums; }
-.hs-nt .p.bad b { color:var(--copper); }
+.hs-nt .p.bad b { color:var(--warn); }
 /* 값 자리에 숫자가 아니라 문장이 오는 둘(첫 오류·중단 사유)은 한글이라 등폭을 뺀다. */
 .hs-nt .p.msg b { font-family:var(--sans); font-variant-numeric:normal; }
-.hs-nt .p.free { white-space:normal; color:var(--slate); }
+.hs-nt .p.free { white-space:normal; color:var(--sub); }
 /* ── 요약: 아래 목록이 통째로 답하는 네 가지. 숫자 KPI 는 셸의 .band 한 벌이다 ──
    (칩 줄로 그렸더니 버튼처럼 읽혔다 — 상태·수치를 누를 수 있는 것과 같은 모양으로
    그리지 않는다.) */
 #runsum { margin:0 0 var(--sp-5); }
 #runsum:empty { display:none; }
-/* 범위가 없으면 눈썹도 없다 — 빈 눈썹이 제목 위에 여백만 남기지 않게. */
+/* 범위가 없으면 눈썹도 없다 — 빈 눈썹이 제목 위에 여백만 남기지 않게.
+   눈썹은 제목을 되풀이하지 않고 이 목록이 덮는 기간만 적는다. */
 #runs-eb:empty, #made-eb:empty { display:none; }
 /* 종류별 마지막 — "무엇을 다시 돌릴 때가 됐나"에 답하는 자리다. 칸을 괘선으로
    가르지 않는다: auto-fit 이라 줄바꿈이 생기면 마지막 칸 괘선이 허공에 남는다. */
 #lastby { margin:0 0 var(--sp-5); }
 #lastby:empty { display:none; }
-#lastby .lbh { font:var(--micro); color:var(--slate); margin:0 0 var(--sp-3); }
-#lastby .lb { display:grid; gap:var(--sp-3) var(--sp-4);
-  grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
-#lastby .k { font:var(--micro); color:var(--slate); }
-#lastby .v { font:400 12.5px/1.5 var(--mono); font-variant-numeric:tabular-nums;
+#lastby .lbh { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0 0 var(--sp-3); }
+#lastby .lb { display:grid; gap:var(--sp-4) var(--sp-4);
+  grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); }
+#lastby .k { font:var(--micro); color:var(--mute); }
+#lastby .v { font:400 var(--fs-2)/1.5 var(--mono); font-variant-numeric:tabular-nums;
   margin-top:6px; display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
 /* 날짜는 등폭(칸마다 줄이 맞아야 한다), 그 옆 HS_ago 는 "방금"·"3일 전" 한글이라
    본문 서체다 — 등폭으로 찍으면 폴백 서체로 떨어져 낱자가 벌어진다. */
-#lastby .ago { color:var(--slate); font-family:var(--sans);
-  font-variant-numeric:normal; }
+#lastby .ago { color:var(--sub); font-family:var(--sans); font-size:var(--fs-1);
+  font-variant-numeric:normal; white-space:nowrap; }
 
-#runs .when { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums;
+/* 표는 카드 안 — 행 사이는 옅은 --line 한 줄뿐이고 마지막 줄 밑은 비운다. */
+#runlist .card { padding:14px 12px 8px; }
+#runs tr:last-child td { border-bottom:0; }
+/* 숫자 열(소요·호출·비용)은 본문 서체의 tabular-nums — 등폭은 날짜·URL·식별자만. */
+#runs td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 1120px 에서 종류·기록 칸이 양 끝으로 벌어지지 않게 폭을 잡는다. */
+#runs td.kwcell { min-width:120px; max-width:200px; }
+#runs td:last-child { min-width:260px; max-width:520px; }
+#runs .when { font-family:var(--mono); font-size:var(--fs-1); font-variant-numeric:tabular-nums;
   white-space:nowrap; }
 /* 같은 이유 — 이 칸의 등폭은 앞의 "2026-09-14 09:31" 것이고 뒤의 한글은 아니다. */
 #runs .when .muted { font-family:var(--sans); font-variant-numeric:normal; }
@@ -57,7 +66,7 @@
    보이고 무슨 일이 났는지는 손을 얹어야 나왔다. 실패·중단만 항상 편다: 성공한 40줄까지
    다 펴면 로그가 시끄러워져 정작 실패가 안 보인다. 이유 아래에 그 종류를 다시 돌리는
    손잡이를 같이 둔다 — 실패한 줄에서 다음 걸음까지 한 자리에서 끝난다. */
-#runs .why { font-size:12.5px; color:var(--copper); margin-top:4px; }
+#runs .why { font-size:var(--fs-1); color:var(--warn); margin-top:4px; }
 /* 좁은 화면에서 기록 칸은 표를 옆으로 여섯 칸 밀어야 나온다 — 실패 원인은 늘 보이는 첫
    칸(시각, 붙박이)으로 당겨 온다. 셋째 칸(결과)에 뒀더니 화면 오른쪽 끝에서 잘렸다.
    넓은 화면은 기록 칸 그대로. .when 의 nowrap 을 풀어야 문장이 칸 안에서 접힌다. */
@@ -68,48 +77,52 @@
 #runs .why + .acts { margin-top:8px; }
 
 /* ── 고친 것: 표가 아니라 줄이다. 경로·근거가 산문이라 칸에 안 들어간다. ── */
-#made .mk { display:grid; grid-template-columns:1fr auto; gap:0 14px;
-  padding:13px 0; border-bottom:1px solid var(--rule-soft);
+#made .mk { display:grid; grid-template-columns:1fr auto; gap:0 16px;
+  padding:16px 0; border-bottom:1px solid var(--line);
   align-items:baseline; }
 #made .mk:first-of-type { padding-top:0; }
 #made .mk:last-of-type { border-bottom:0; padding-bottom:0; }
-#made .mh { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-#made .kind { font:var(--micro);
-  color:var(--patina); background:var(--wash); border-radius:2px; padding:4px 7px; }
-#made .dt, #made .br { font:400 11px/1 var(--mono); color:var(--slate); }
+#made .mh { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }
+#made .kind { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap;
+  color:var(--accent); background:var(--accent-wash); border-radius:var(--r-pill); }
+#made .dt, #made .br { font:400 var(--fs-1)/1.4 var(--mono); color:var(--sub); white-space:nowrap; }
+#made .br { white-space:normal; overflow-wrap:anywhere; }
 #made .br::before { content:"⑂ "; }
-#made .path { font-family:var(--mono); font-size:13px; margin:8px 0 0;
+#made .path { font-family:var(--mono); font-size:var(--fs-1); line-height:1.5; margin:8px 0 0;
   word-break:break-all; }
-#made .mn { font-size:12.5px; color:var(--slate); }
-#made .mfiles { margin-top:6px; }
-#made .mfiles > summary, #runs .hs-raw > summary { font:500 12.5px/1.5 var(--sans);
-  color:var(--slate); cursor:pointer; }
-#made .mfiles > summary:hover, #runs .hs-raw > summary:hover { color:var(--patina); }
+#made .mn { font-size:var(--fs-1); color:var(--sub); }
+#made .mfiles { margin-top:8px; }
+#made .mfiles > summary, #runs .hs-raw > summary { font:500 var(--fs-1)/1.5 var(--sans);
+  color:var(--sub); cursor:pointer; }
+#made .mfiles > summary:hover, #runs .hs-raw > summary:hover { color:var(--accent); }
 #made .mfiles .br { margin-top:8px; }
 /* 중단 사유 원문 — 사람 말로 옮긴 줄 밑에 접어 둔다. 영문·식별자라 등폭이다. */
-#runs .hs-raw code { display:block; margin-top:4px; font:400 11.5px/1.6 var(--mono);
+#runs .hs-raw code { display:block; margin-top:4px; font:400 var(--fs-1)/1.6 var(--mono);
   overflow-wrap:anywhere; }
 /* 이 줄이 루프다: 어느 기회가 이 수정을 낳았나 — 그래서 눌러서 그 기회로 간다.
    등폭을 뺀 이유: 여기 담기는 건 대부분 한글 검색어다(등폭은 숫자·URL·날짜·식별자만). */
-#made .from { font:400 12.5px/1.6 var(--sans); color:var(--patina); margin-top:5px;
+#made .from { font:400 var(--fs-1)/1.6 var(--sans); color:var(--accent); margin-top:8px;
   display:block; background:transparent; border:0; padding:0; cursor:pointer;
   text-align:left; }
 #made .from:hover { text-decoration:underline; }
-#made .why { font-size:12.5px; color:var(--slate); margin-top:5px; }
+#made .why { font-size:var(--fs-1); color:var(--sub); margin-top:8px; }
 /* 근거가 PR 주소면 링크다 — 브라우저 기본 파랑은 어두운 배경에서 안 읽힌다. */
-#made .why a { color:var(--patina); text-decoration:underline; text-underline-offset:2px;
+#made .why a { color:var(--accent); text-decoration:underline; text-underline-offset:2px;
   word-break:break-all; }
 /* 회고의 결론이 붙는 자리 — 고친 날 앞뒤로 클릭이 어떻게 됐나. */
-#made .eff { font-size:12.5px; color:var(--slate); margin-top:5px; }
-#made .eff b { font:500 12.5px/1.6 var(--mono); font-variant-numeric:tabular-nums;
+#made .eff { font-size:var(--fs-1); color:var(--sub); margin-top:8px; }
+#made .eff b { font:500 var(--fs-1)/1.6 var(--sans); font-variant-numeric:tabular-nums;
   color:var(--ink); }
-#made .eff.up b { color:var(--patina); }
-#made .eff.down b { color:var(--copper); }
-#made .loop { margin-top:var(--sp-4); font-size:13px; color:var(--slate); }
-#made .loop b { color:var(--patina); font-weight:600; }
+#made .eff.up, #made .eff.up b { color:var(--up); }
+#made .eff.down, #made .eff.down b { color:var(--dn); }
+/* 한 바퀴 결론 — 카드 밑의 옅은 면 한 장. */
+#made .loop { margin-top:var(--sp-4); padding:16px 20px; font-size:var(--fs-2);
+  line-height:1.6; color:var(--sub); background:var(--sunk); border-radius:var(--r-in); }
+#made .loop b { color:var(--accent); font-weight:650; }
 @media (max-width:560px) {
   #made .mk { grid-template-columns:1fr; }
-  #made .mk .badge { margin-top:9px; justify-self:start; }
+  #made .mk .badge { margin-top:8px; justify-self:start; }
   /* 좁은 화면에서는 상자 여백이 표가 쓸 폭을 먹는다 — 표는 상자 안에서 옆으로 넘친다. */
   #runlist .card, #madelist .card { padding:var(--sp-3); }
 }

@@ -8,16 +8,10 @@
      숨긴다(메뉴에는 [설정]이 남는다 — 저장소 연결 칸은 호스팅에서도 쓴다).
      그래서 이 마크업은 **로컬 전용**이다: 여기 문구에 W() 를 쓸 이유가 없다. -->
 <style>
-/* 묶음 하나 = 섹션 머리(.sh) + 상자(.card). 상태는 오른쪽 배지, 행동은 상자 안.
-   셸이 채우는 상태 칸(#s-*)은 .stat 클래스로 온다 — 여기서 그 글자를 배지 모양으로
-   세운다(셸의 .badge 와 같은 치수·같은 토큰). 색상값을 새로 만들지 않는다. */
-#setup .stat { display:inline-flex; align-items:center; min-height:22px;
-  padding:2px var(--sp-2); border:1px solid var(--rule); border-radius:var(--r-sm);
-  font:var(--micro); color:var(--slate); white-space:nowrap; }
-#setup .stat.ok { color:var(--patina); border-color:var(--patina); background:var(--wash); }
-#setup .stat.todo { color:var(--copper); border-color:var(--copper);
-  background:var(--wash-copper); }
-#setup .stat.opt { color:var(--slate); border-color:var(--rule); }
+/* 묶음 하나 = 섹션 머리(.sh) + 면 카드(.card). 상태는 오른쪽 배지(셸의 .badge),
+   행동은 카드 안. 섹션 사이는 괘선이 아니라 여백(48px)이다. 색·반경은 전부 셸 토큰. */
+#setup .step { padding:0; border-top:0; margin-top:48px; }
+#setup .step:first-of-type { margin-top:0; }
 
 /* 셸의 .go 는 display:inline-flex 라 브라우저 기본 [hidden]{display:none} 을 이긴다 —
    그래서 서치콘솔 칸의 조건부 버튼 두 개가 hidden 인데도 늘 서 있었다(연결이 끝난
@@ -26,7 +20,7 @@
 /* 넘길 사이트 고르개는 폼 칸이 아니라 행동 줄의 일부다 — 100% 로 늘리면 글자가 잘린다. */
 #setup #c-proj { flex:0 0 auto; width:auto; min-width:170px; }
 
-/* 접은 설명이 상자 맨 위에 오면 셸의 .step details 위 괘선이 상자 안에 겹쳐 그어진다. */
+/* 접은 설명이 카드 맨 위에 오면 셸의 .step details 위 괘선이 카드 안에 겹쳐 그어진다. */
 #setup .card > details:first-child { margin-top:0; border-top:0; padding-top:0; }
 #setup .card > details:first-child + .grid,
 #setup .card > details:first-child + label { margin-top:var(--sp-4); }
@@ -35,25 +29,31 @@
    어디까지가 칸 이름인지 안 읽힌다. 이름만 라벨에 두고 설명은 아래 한 줄로 내린다.
    크기는 그대로 두고 색으로만 가른다 — 셸의 label 규칙을 다시 만들지 않는다. */
 #setup label { color:var(--ink); margin-bottom:2px; }
-#setup .lh { display:block; font:var(--micro); color:var(--slate);
-  margin:0 0 5px; max-width:52ch; }
-#setup .lh a { color:var(--patina); text-decoration:underline; text-underline-offset:2px; }
+#setup .lh { display:block; font:var(--micro); color:var(--sub);
+  margin:0 0 var(--sp-2); max-width:52ch; }
+#setup .lh a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
 /* 칸 밑 한 줄에도 경로·명령이 실린다 — 등폭은 그 조각에만 건다(한글엔 안 건다).
    치수는 셸의 `.step .why code` 와 같은 값이다 — 그 규칙은 .why 안만 잡는다. */
-#setup .lh code { font-family:var(--mono); font-size:11.5px; }
+#setup .lh code { font-family:var(--mono); font-size:var(--fs-1); }
 
 /* 0단계의 고르개 — 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다).
-   선택지 이름은 서버가 실어 보낸 표에서 오므로 여기엔 모양만 있다. */
+   선택지 이름은 서버가 실어 보낸 표에서 오므로 여기엔 모양만 있다. 알약 면 하나,
+   골라지면 --accent-wash 로 물든다(테두리 없음). */
 #usage .opts { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin:0 0 var(--sp-4); }
-#usage .opt { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
-  padding:6px var(--sp-3); border:1px solid var(--rule); border-radius:var(--r-sm);
-  color:var(--ink); margin:0; }
-#usage .opt:hover { border-color:var(--patina); }
-#usage .opt:has(input:checked) { border-color:var(--patina); background:var(--wash); }
+#usage .opt { display:inline-flex; align-items:center; gap:var(--sp-2); cursor:pointer;
+  min-height:var(--btn-h-sm); padding:0 var(--sp-4); border:0; border-radius:var(--r-pill);
+  background:var(--sunk); color:var(--ink); margin:0; }
+#usage .opt:hover { background:var(--accent-wash); }
+#usage .opt:has(input:checked) { background:var(--accent-wash); color:var(--accent);
+  font-weight:600; }
 #usage .opt input { width:auto; margin:0; }
-/* 표 안의 폴더 칸은 한 줄짜리 경로다 — 등폭은 경로에만 걸고 사이트 이름엔 안 건다. */
-#dirs input { font-family:var(--mono); font-size:12px; }
+/* 표 안의 폴더 칸은 한 줄짜리 경로다 — 등폭은 경로에만 걸고 사이트 이름엔 안 건다.
+   1120px 에서 이름 열과 버튼 열이 양 끝으로 벌어지지 않게 입력 칸에 상한을 둔다. */
+#dirs input { font-family:var(--mono); font-size:var(--fs-1); max-width:560px; }
 #dirs td { vertical-align:middle; }
+#dirs td:first-child { white-space:nowrap; font-weight:600; width:1%; }
+#dirs td:last-child { width:1%; white-space:nowrap; }
+#dirs tbody tr:last-child td { border-bottom:0; }
 </style>
 
 <section id="setup">
@@ -64,7 +64,7 @@
     <div class="sh">
       <p class="eyebrow">0단계</p><h2>쓰는 방식</h2>
       <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다.</p>
-      <div class="tools"><span class="stat" id="s-usage"></span></div>
+      <div class="tools"><span id="s-usage"></span></div>
     </div>
     <div class="card">
       <label id="l-u-mode">측정을 맡는 곳</label>
@@ -104,7 +104,7 @@
       <p class="sub">키워드 수집과 보고서에 쓰는 파이썬 부품 두 개를 설치합니다.<span
         class="hint" tabindex="0" data-tip="무료이고 1분쯤 걸립니다."
         title="무료이고 1분쯤 걸립니다." aria-label="무료이고 1분쯤 걸립니다.">i</span></p>
-      <div class="tools"><span class="stat" id="s-deps"></span></div>
+      <div class="tools"><span id="s-deps"></span></div>
     </div>
     <div class="card">
       <div class="row"><button class="go" id="btn-deps">설치</button>
@@ -123,7 +123,7 @@
         data-tip="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
         title="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
         aria-label="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다.">i</span></p>
-      <div class="tools"><span class="stat" id="s-proj"></span></div>
+      <div class="tools"><span id="s-proj"></span></div>
     </div>
     <div class="card">
       <!-- 양쪽 의도를 다 남긴다: 여기 적은 값이 이후 수집의 기준이라는 것(이 화면 정비)과,
@@ -181,7 +181,7 @@
     <div class="sh">
       <p class="eyebrow">3단계</p><h2>서치콘솔 연결</h2>
       <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
-      <div class="tools"><span class="stat" id="s-gsc"></span></div>
+      <div class="tools"><span id="s-gsc"></span></div>
     </div>
     <div class="card">
       <!-- 문구는 3-상태(연결됨 / 로그인 대기 / 인증 없음)마다 다르다 — renderSetup이 채운다.
@@ -215,7 +215,7 @@
     <div class="sh">
       <p class="eyebrow">4단계</p><h2>API 키</h2>
       <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>
-      <div class="tools"><span class="stat" id="s-keys"></span></div>
+      <div class="tools"><span id="s-keys"></span></div>
     </div>
     <div class="card">
       <details>
@@ -253,7 +253,7 @@
     <div class="sh">
       <p class="eyebrow">5단계</p><h2>마케팅 스킬</h2>
       <p class="sub">글의 각도와 진단을 맡는 스킬 묶음입니다.</p>
-      <div class="tools"><span class="stat" id="s-skills"></span></div>
+      <div class="tools"><span id="s-skills"></span></div>
     </div>
     <div class="card">
       <!-- doctor가 누락을 보고해 채팅(또는 이 버튼)이 설치를 끝낸다. 완료 후에는
@@ -269,7 +269,7 @@
     <div class="sh">
       <p class="eyebrow">6단계</p><h2>웹에서 이어 하기</h2>
       <p class="sub">여기 적어 둔 설정 그대로 웹에 등록합니다.</p>
-      <div class="tools"><span class="stat opt">선택</span></div>
+      <div class="tools"><span class="badge muted">선택</span></div>
     </div>
     <div class="card">
       <details>
