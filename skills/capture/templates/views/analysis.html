@@ -1077,12 +1077,18 @@ function anChannels(c) {
 const AN_FILLABLE = [
   ["an-daily", "하루 단위 클릭"], ["an-ctr", "되찾을 클릭"], ["an-brand", "브랜드·논브랜드"],
   ["an-intent", "검색 의도"], ["an-cluster", "주제 묶음"], ["an-country", "국가별 클릭"]];
-function anEmptyFill(hide) {
+function anEmptyFill(hide, noGsc) {
   AN_FILLABLE.forEach(([id]) => { const el = $(id); if (el) el.hidden = hide; });
   const wrap = $("an-empty-fill");
   if (wrap) wrap.hidden = !hide;
   if (!hide) return;
-  $("an-empty-fill-body").innerHTML = `<div class="card empty">
+  // 서치콘솔 없이 시작한 사이트(호스팅 온보딩) — [실적 수집]을 내밀면 눌러도 건너뛰기만
+  // 한다. 무엇이 없고 왜 없는지, 대신 어디를 보면 되는지를 말한다.
+  $("an-empty-fill-body").innerHTML = noGsc ? `<div class="card empty">
+    <b>서치콘솔을 붙인 사이트에서만 채워집니다</b>
+    <p>${AN_FILLABLE.map(([, l]) => esc(l)).join(" · ")}. 이 사이트는 서치콘솔 없이
+      시작해서 클릭·노출 실측이 없습니다. 순위·AI 인용·사이트 점검은 각 화면에서 봅니다.</p>
+  </div>` : `<div class="card empty">
     <b>실적을 수집하면 여기부터 채워집니다</b>
     <p>${AN_FILLABLE.map(([, l]) => esc(l)).join(" · ")}</p>
     <div class="acts">${act("gsc", null, false)}</div>
@@ -1121,7 +1127,7 @@ VIEW("analysis", function (d) {
   // 뒤에는(gsc_date 가 생기면) 각 절이 원래대로 선다 — 절마다 조건이 다르므로
   // (브랜드는 브랜드 표기 유무, 국가는 country_date 유무) 그때부터는 각자 판단한다.
   const noData = !d.gsc_date;
-  anEmptyFill(noData);
+  anEmptyFill(noData, !(d.project && d.project.gsc_property));
   if (!noData) {
     $("an-daily-body").innerHTML = anDaily(d.daily);
     $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);

@@ -200,14 +200,21 @@ def _runnable(step_id: str, cmd: str | None) -> bool:
     return bool(cmd) and cmd.split()[:2] == ["/capture", step_id]
 
 
-def from_progress(p: dict, name: str, domain: str) -> dict:
+def from_progress(p: dict, name: str, domain: str, *, no_gsc: bool = False) -> dict:
     # 사이트가 아직 없어도 안내는 그린다 — 첫 사용자가 정확히 이 상태이고, 여태
     # 그 사람에게만 6단계가 통째로 비어 있었다("아래 [지금 할 것] 하나만 하시면
     # 됩니다" 밑에 아무것도 없는 화면). 이름 자리는 고쳐 쓸 자리표로 둔다.
     name = name or "사이트이름"
     gst = gsc_state()
     ai_skip = skippable("ai")
-    if gst == "connected":
+    # 서치콘솔 속성 없이 시작한 사이트(호스팅의 "주소로 시작") — 이 단계는 선택이다.
+    # 못 하는 단계 앞에서 안내를 멈추지 않는다: ai 와 같은 skip 으로 넘긴다. 안 넘기면
+    # "지금 할 것"이 영영 서치콘솔 연결에 서 있고, 연결할 뜻이 없는 사람은 거기서 막힌다.
+    if no_gsc:
+        gsc_done = False
+        gsc_state_str = "건너뜀 · 서치콘솔 없이 시작한 사이트"
+        gsc_cmd = None
+    elif gst == "connected":
         gsc_done = p.get("gsc_days", 0) > 0
         gsc_state_str = (f"{p['gsc_days']}번 수집 · 최근 {p['gsc_last']}"
                          if p.get("gsc_days", 0) else "아직 수집 안 함")
@@ -236,6 +243,7 @@ def from_progress(p: dict, name: str, domain: str) -> dict:
          "cmd": cmd_register, "runnable": _runnable("register", cmd_register)},
         {"id": "gsc", "t": L["gsc"]["t"], "gain": L["gsc"]["gain"],
          "done": gsc_done,
+         "skip": no_gsc,
          "state": gsc_state_str,
          "cmd": gsc_cmd, "runnable": _runnable("gsc", gsc_cmd)},
         {"id": "keywords", "t": L["keywords"]["t"], "gain": L["keywords"]["gain"],
@@ -289,7 +297,9 @@ def state(conn, project, domain: str = "") -> dict:
     domain: 생략하면 project 의 domain 을 쓴다
     """
     dom = domain or (project["domain"] or "")
-    return from_progress(progress(conn, project["id"]), project["name"], dom)
+    keys = project.keys() if hasattr(project, "keys") else ()
+    no_gsc = "gsc_property" in keys and not (project["gsc_property"] or "")
+    return from_progress(progress(conn, project["id"]), project["name"], dom, no_gsc=no_gsc)
 
 
 def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:

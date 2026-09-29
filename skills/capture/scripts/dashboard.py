@@ -359,8 +359,12 @@ def save_gsc_client(f: dict) -> dict:
     return {"ok": True, "path": str(dest), "client_id": cid[:12] + "…"}
 
 
-def create_project(f: dict) -> dict:
+def create_project(f: dict, *, auto_gsc: bool = True) -> dict:
     """폼 입력 → Brain 등록. AI 프롬프트 초안은 채팅(/capture add) 몫.
+
+    auto_gsc: 속성을 비워 두면 `sc-domain:{domain}` 으로 채운다(로컬 폼 — 서치콘솔이
+    전제다). 호스팅의 "주소로 시작"은 False 로 부른다: 서치콘솔 없이 시작한 사이트에
+    속성을 지어 넣으면 gsc 단계가 건너뛰는 대신 런마다 인증 실패로 떨어진다.
 
     예전엔 이 사이에 `projects/{name}.yaml` 이 한 겹 있었다. 그 파일이 정본이라
     호스팅에서는 컨테이너 디스크에 남았고, 동기화는 Brain 만 나르므로 설정이 사용자
@@ -381,7 +385,8 @@ def create_project(f: dict) -> dict:
     # 이미 등록된 사이트는 옛 프리셋을 계속 들고 있다.
     cfg = {"name": name, "type": f["type"], "domain": domain,
            "locale": str(f.get("locale") or db.DEFAULT_LOCALE).strip(),
-           "gsc_property": str(f.get("gsc_property", "")).strip() or f"sc-domain:{domain}",
+           "gsc_property": (str(f.get("gsc_property", "")).strip()
+                            or (f"sc-domain:{domain}" if auto_gsc else "")),
            "brand_aliases": items("brand_aliases"),
            "seed_keywords": items("seed_keywords"),
            "competitors_manual": items("competitors_manual"),

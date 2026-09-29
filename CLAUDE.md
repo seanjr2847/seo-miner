@@ -15,7 +15,7 @@
 - 문구가 결제 벽처럼 읽힌다
 - 대비가 3:1 을 못 넘긴다
 
-그래서: **화면 파일(`templates/`, `server/assets/`, `landing.html`, `app.html`)이나
+그래서: **화면 파일(`templates/`, `server/assets/`, `landing.html`, `app.html`, `start.html`)이나
 사용자에게 보이는 문구를 고쳤으면, 커밋 전에 브라우저로 그 화면을 연다.** 고친
 자리만 보지 말고 그 화면에 들어가는 경로를 실제로 눌러 본다 — 사이트 링크 hash
 버그는 헤더만 보고 목록에서 들어가 보지 않아서 살아남았다.

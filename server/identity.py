@@ -1,6 +1,9 @@
 """로그인 제공자를 같은 두 동사 뒤에 둔다 — start() / finish().
 
-구글은 로그인이자 서치콘솔을 읽을 자격증명이다. 지금 제공자는 구글 하나뿐이지만
+구글은 로그인이자 서치콘솔을 읽을 자격증명이다 — 다만 **따로** 받는다. 로그인은
+신원(openid·email)만 묻고, 서치콘솔·GA4 읽기는 온보딩의 [서치콘솔 연결]에서
+start(..., connect=True) 로 한 번 더 묻는다. 권한이 없는 마케터가 첫 동의 화면에서
+"서치콘솔 데이터 보기"를 보고 돌아서지 않게. 지금 제공자는 구글 하나뿐이지만
 (GitHub 연동은 떼어 냈다) 라우트가 어느 쪽인지 몰라도 되는 모양은 그대로 둔다:
 
     url, carry = identity.start("google")   # carry 를 세션에 실어 콜백까지 나른다
@@ -13,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 import sys
 from dataclasses import dataclass
@@ -45,8 +49,10 @@ def session_key(provider: str) -> str:
     """
     return f"{SESSION_KEY}:{provider}"
 
-SCOPES = collect_gsc.SCOPES + ["openid",
-                               "https://www.googleapis.com/auth/userinfo.email"]
+# 로그인 = 신원만. 연결(connect) = 신원 + 수집기가 읽는 스코프(정본 collect_gsc.SCOPES).
+# SCOPES 는 "이 배포가 요청할 수 있는 전부"다 — 랜딩·개인정보처리방침이 이걸 가리킨다.
+LOGIN_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+SCOPES = collect_gsc.SCOPES + LOGIN_SCOPES
 
 
 class NotConfigured(RuntimeError):
@@ -79,7 +85,7 @@ def _need(name: str, what: str) -> str:
     return v
 
 
-def _flow() -> Flow:
+def _flow(scopes: list[str]) -> Flow:
     redirect = settings.get("OAUTH_REDIRECT_URI")
     config = {"web": {
         "client_id": _need("GOOGLE_CLIENT_ID", "구글 로그인"),
@@ -88,15 +94,15 @@ def _flow() -> Flow:
         "token_uri": "https://oauth2.googleapis.com/token",
         "redirect_uris": [redirect],
     }}
-    return Flow.from_client_config(config, scopes=SCOPES, redirect_uri=redirect)
+    return Flow.from_client_config(config, scopes=scopes, redirect_uri=redirect)
 
 
-def start(provider: str) -> tuple[str, dict]:
-    """(인가 URL, 세션에 실어 콜백까지 나를 것)."""
+def start(provider: str, *, connect: bool = False) -> tuple[str, dict]:
+    """(인가 URL, 세션에 실어 콜백까지 나를 것). connect 면 서치콘솔·GA4 읽기까지 묻는다."""
     if provider not in PROVIDERS:
         raise ValueError(provider)
     state = secrets.token_urlsafe(16)
-    flow = _flow()
+    flow = _flow(SCOPES if connect else LOGIN_SCOPES)
     # include_granted_scopes 는 쓰지 않는다 — 과거에 승인해 둔 스코프(webmasters 쓰기
     # 등)까지 토큰에 합쳐진다. 여기는 읽기만 필요하다.
     # select_account 가 없으면 로그아웃해도 구글이 직전 계정으로 그냥 들여보내서
@@ -105,7 +111,7 @@ def start(provider: str) -> tuple[str, dict]:
                                     prompt="select_account consent", state=state)
     # PKCE: authorization_url() 이 만든 verifier 를 콜백까지 넘겨야 한다. 콜백은 Flow 를
     # 새로 만들기 때문에, 안 넘기면 토큰 교환이 'Missing code verifier' 로 죽는다.
-    return url, {"provider": provider, "state": state,
+    return url, {"provider": provider, "state": state, "connect": connect,
                  "code_verifier": flow.code_verifier}
 
 
@@ -125,22 +131,47 @@ def finish(provider: str, code: str, carry: dict) -> Account:
     """인가 코드를 계정으로 바꾼다."""
     if provider not in PROVIDERS:
         raise ValueError(provider)
-    flow = _flow()
+    flow = _flow(SCOPES if carry.get("connect") else LOGIN_SCOPES)
     flow.code_verifier = carry.get("code_verifier")
     flow.fetch_token(code=code)
     creds = flow.credentials
     email = google.oauth2.id_token.verify_oauth2_token(
         creds.id_token, google.auth.transport.requests.Request(),
         _need("GOOGLE_CLIENT_ID", "구글 로그인"))["email"]
-    return Account(email, creds.to_json())
+    # 구글 동의 화면은 스코프를 하나씩 끌 수 있다(세분 동의). to_json() 의 scopes 는
+    # **요청한** 목록이라, 서치콘솔을 끄고 동의해도 "연결됨"으로 읽힌다 — 실제로 받은
+    # 목록(granted_scopes)으로 갈아 적는다. covers_gsc·doctor.gsc_missing_scopes 가 이걸 본다.
+    tok = json.loads(creds.to_json())
+    granted = getattr(creds, "granted_scopes", None)
+    if isinstance(granted, str):        # 토큰 응답의 "scope" 는 공백으로 이은 한 줄이다
+        granted = granted.split()
+    if granted:
+        tok["scopes"] = list(granted)
+    return Account(email, json.dumps(tok))
+
+
+def covers_gsc(token_json: str) -> bool:
+    """이 토큰으로 서치콘솔을 읽을 수 있나 — 토큰이 담아 온 scopes 로 본다."""
+    try:
+        scopes = json.loads(token_json).get("scopes") or []
+    except (ValueError, AttributeError):
+        return False
+    return collect_gsc.SCOPES[0] in scopes
 
 
 def remember(conn, provider: str, acct: Account) -> int:
-    """토큰을 저장하고 유저 id 를 돌려준다 — 구글은 계정 자체를 만든다(로그인)."""
+    """유저 id 를 돌려준다 — 구글은 계정 자체를 만든다(로그인).
+
+    토큰은 **서치콘솔을 읽을 수 있을 때만** 저장한다. 로그인만 한 토큰(openid·email)을
+    저장하면 두 가지가 틀어진다: ① 전에 연결해 둔 사람이 다시 로그인할 때 쓸 수 있던
+    토큰을 못 쓰는 토큰으로 덮는다 ② 토큰 파일이 있다는 것만으로 "연결됨"으로 읽혀
+    (paths.gsc) 수집이 인증 실패로 떨어진다. 연결하지 않은 사람은 토큰이 없는 게 맞다.
+    """
     if provider not in PROVIDERS:
         raise ValueError(provider)
     uid = store.upsert_user(conn, acct.who)
-    store.save_token(conn, uid, acct.token)
+    if covers_gsc(acct.token):
+        store.save_token(conn, uid, acct.token)
     return uid
 
 
@@ -174,6 +205,11 @@ def demo() -> None:
         os.environ["GOOGLE_CLIENT_SECRET"] = "dummy"
 
         url, carry = start("google")
+        # 로그인은 신원만 묻는다 — 서치콘솔 권한은 연결할 때 따로(start(connect=True)).
+        assert "webmasters" not in url and "analytics" not in url,             "로그인 동의 화면이 서치콘솔·GA4 권한까지 묻는다"
+        curl, ccarry = start("google", connect=True)
+        assert "webmasters.readonly" in curl and "analytics.readonly" in curl, curl
+        assert ccarry["connect"] and not carry["connect"]
         assert url.startswith("https://accounts.google.com"), url
         assert "dummy.apps.googleusercontent.com" in url, "client_id 가 안 실렸다"
         assert "code_challenge=" in url, "PKCE 가 꺼졌다"
@@ -198,8 +234,16 @@ def demo() -> None:
             os.environ["SEOMINER_DATA"] = d
             os.environ["SEOMINER_SECRET_KEY"] = Fernet.generate_key().decode()
             conn = store.connect()
-            uid = remember(conn, "google", Account("a@example.com", '{"t":1}'))
-            assert store.load_token(conn, uid) == '{"t":1}', "구글 토큰이 안 돌아온다"
+            full = json.dumps({"t": 1, "scopes": SCOPES})
+            uid = remember(conn, "google", Account("a@example.com", full))
+            assert store.load_token(conn, uid) == full, "구글 토큰이 안 돌아온다"
+            # 로그인만 한 토큰은 연결해 둔 토큰을 덮지 않는다 — 덮으면 다시 로그인한
+            # 순간부터 수집이 인증 실패로 떨어진다.
+            login = json.dumps({"t": 2, "scopes": LOGIN_SCOPES})
+            assert remember(conn, "google", Account("a@example.com", login)) == uid
+            assert store.load_token(conn, uid) == full, "로그인 토큰이 연결 토큰을 덮었다"
+            uid2 = remember(conn, "google", Account("b@example.com", login))
+            assert store.load_token(conn, uid2) is None,                 "연결 안 한 사람에게 토큰이 생겼다 — '연결됨'으로 잘못 읽힌다"
             try:
                 remember(conn, "gitlab", Account("x", "t"))
                 raise AssertionError("모르는 제공자의 토큰이 저장됐다")

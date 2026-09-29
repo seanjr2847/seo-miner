@@ -21,9 +21,11 @@ sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
 import asyncio
 import html
 import io
+import ipaddress
 import json
 import re
 import secrets
+import socket
 import sqlite3
 import tempfile
 import traceback
@@ -41,6 +43,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import collect_ga4
 import collect_gsc
+import collect_page
 import dashboard
 import db
 import doctor    # setup 스킬의 진단 — dashboard 가 이미 skills/setup/scripts 를 sys.path 에 얹는다
@@ -137,9 +140,8 @@ UNAUTHORIZED = "로그인이 풀렸습니다. 처음 화면에서 구글 계정�
 # GA4 스코프가 모자랄 때 할 말. 두 자리가 이 사실을 말한다 — 부르기 전 검사
 # (_require_google)와, 그걸 뚫고 구글이 직접 403 을 준 경우. 같은 사실이니
 # 문구도 한 벌이다.
-RELOGIN_FOR_GA4 = ("로그인한 뒤에 GA4 읽기 권한이 늘었습니다. 권한 문제가 아니라 "
-                   "저장된 로그인이 오래된 것입니다. 로그아웃한 뒤 "
-                   "다시 구글 계정으로 로그인하세요.")
+RELOGIN_FOR_GA4 = ("연결해 둔 구글 계정에 서치콘솔·GA4 읽기 권한이 다 있지 않습니다. "
+                   "구글 계정을 다시 연결해 두 권한에 모두 동의하세요.")
 
 
 def _uid(request: Request) -> Optional[int]:
@@ -286,8 +288,8 @@ def _integrity(request: Request, e: sqlite3.IntegrityError):
 
 # 로컬 플러그인이 링크로 실어 보낸 사이트 설정 중, 등록에 실제로 얹는 것.
 # 이름·도메인·속성은 서버가 정한 것이 이긴다(슬러그 충돌·표기 검증). 종류(type)도
-# 여기 없다 — 화면이 carry 값으로 미리 골라 두므로 types 에 담겨 오고, 사용자가
-# 바꿨으면 그쪽이 이긴다. 여기 남는 건 사람이 정했고 기계가 못 짓는 것뿐이다.
+# 여기 없다 — 화면(start.html)이 carry 값으로 미리 골라 두므로 본문에 담겨 오고,
+# 사용자가 바꿨으면 그쪽이 이긴다(언어-지역·씨앗·경쟁사도 같다). 여기 남는 건 사람이 정했고 기계가 못 짓는 것뿐이다.
 # 이름의 정본은 dashboard.PREFILL_KEYS 이고 test_seams 가 대조한다.
 CARRY_FIELDS = ("locale", "brand_aliases", "seed_keywords",
                 "competitors_manual", "tools")
@@ -311,13 +313,16 @@ def home(request: Request):
     # 정본은 dashboard.carry_pack/carry_read 다. 여기서 형식을 다시 정하지 않는다.
     if request.query_params.get("carry"):
         request.session["carry"] = request.query_params["carry"][:8000]
-    carry = dashboard.carry_read(request.session.get("carry", ""))
-
     uid = _uid(request)
     if uid is None:
         return _html(pages.page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
     with store.session(uid) as conn:
         rows = store.sites(conn, uid)
+    # 처음 온 사람의 "/" 는 온보딩이다 — 빈 사이트 목록을 보여 주고 거기서 등록을
+    # 찾게 하지 않는다. 목록 화면(app.html)은 사이트가 있는 사람의 것이다.
+    # 로컬 플러그인이 설정을 실어 보낸 링크도 온보딩으로 간다 — 그 칸들을 채우는 곳이 거기다.
+    if not rows or request.query_params.get("carry"):
+        return RedirectResponse("/start", status_code=302)
     # create_project 는 name 만 정규식으로 검증한다 — domain·gsc_property 는 그대로
     # 저장되므로 <script> 가 들어올 수 있다.
     e = html.escape
@@ -334,7 +339,7 @@ def home(request: Request):
         items = "".join(
             f'<li class="{"waiting" if not r["last_run_at"] else "done"}">'
             f'<div class="s-id"><span class="nm">{e(r["project"])}</span>'
-            f'<span class="pr">{e(r["gsc_property"])}</span></div>'
+            f'<span class="pr">{e(r["gsc_property"] or r["domain"])}</span></div>'
             '<div class="s-state">'
             + ('<span class="badge run">첫 분석 진행 중</span><span class="when"></span>'
                if not r["last_run_at"]
@@ -354,35 +359,63 @@ def home(request: Request):
                  '<p class="sub">첫 분석이 끝나면 이 줄에서 대시보드로 들어갑니다.</p>'
                  f'<ul class="sites">{items}</ul>')
         if any(not r["last_run_at"] for r in rows):
-            block += ('<p class="wait-note">검색 실적 · 색인 · 키워드 순으로 몇 분에 걸쳐 '
+            block += ('<p class="wait-note">키워드 · 순위 · 사이트 점검 순으로 몇 분에 걸쳐 '
                       '수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
         block += "</section>"
-    else:
-        block = ""
-    who = html.escape(str(request.session.get("email") or ""))
-    user_bar = (f'<span class="who">{who}</span>'
-                '<form method="post" action="/auth/logout" class="lo">'
-                '<button type="submit">로그아웃</button></form>') if who else ""
-    doc = pages.fill(pages.page("app.html"), USER=user_bar, SITES=block)
+    doc = pages.fill(pages.page("app.html"), ENTRY_HEAD=pages.asset("entry.html"),
+                     USER=_user_bar(request), SITES=block)
     doc = pages.data(doc,
-                     __TAKEN__=[r["gsc_property"] for r in rows],
-                     __SITES__=[{"project": r["project"]} for r in rows],
-                     __CARRY__=carry,
                      # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
                      # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
+                     __STAGES__=stage.STAGE_LABELS)
+    return _html(doc, "사이트 관리 — seo-miner")
+
+
+def _user_bar(request: Request) -> str:
+    who = html.escape(str(request.session.get("email") or ""))
+    return (f'<span class="who">{who}</span>'
+            '<form method="post" action="/auth/logout" class="lo">'
+            '<button type="submit">로그아웃</button></form>') if who else ""
+
+
+@app.get("/start")
+def start(request: Request, uid: int = Depends(_require_uid)):
+    """온보딩 — 사이트 하나를 등록하고 첫 측정을 띄운다. 처음 온 사람의 "/" 가 여기로 온다.
+
+    주소가 입구다. 서치콘솔은 건너뛸 수 있는 한 걸음이다 — 권한이 없는 마케터도
+    주소만으로 순위·경쟁사·AI 노출·사이트 점검까지 받는다. 서치콘솔을 연결하러
+    구글에 다녀오면(/auth/connect?next=/start) 이 화면으로 돌아온다.
+    """
+    with store.session(uid) as conn:
+        rows = store.sites(conn, uid)
+        connected = identity.covers_gsc(store.load_token(conn, uid) or "")
+    doc = pages.fill(pages.page("start.html"), ENTRY_HEAD=pages.asset("entry.html"),
+                     USER=_user_bar(request))
+    doc = pages.data(doc,
+                     # 로컬 플러그인이 링크로 실어 보낸 사이트 설정(?carry=) — 칸을 미리 채운다
+                     __CARRY__=dashboard.carry_read(request.session.get("carry", "")),
+                     __DOMAINS__=[r["domain"] for r in rows],
+                     __GSC__=connected,
+                     # 단계 이름표는 한 벌이다(stage.STAGE_LABELS) — 진행 줄이 읽는다
                      __STAGES__=stage.STAGE_LABELS,
                      # 언어-지역 목록도 한 벌이다(serp_adapter.LOCALES)
                      __LOCALES__=serp_adapter.LOCALES,
                      # 사이트 종류(id·라벨)도 한 벌이다(dashboard.PROJECT_TYPES) —
                      # 받는 쪽 검증이 보는 표를 화면이 그대로 그린다.
                      __TYPES__=dashboard.PROJECT_TYPES)
-    return _html(doc, "사이트 관리 — seo-miner")
+    return _html(doc, "시작하기 — seo-miner")
 
 
-def _begin(request: Request, provider: str) -> RedirectResponse:
-    url, carry = identity.start(provider)
+def _begin(request: Request, provider: str, *, connect: bool = False) -> RedirectResponse:
+    url, carry = identity.start(provider, connect=connect)
     request.session[identity.session_key(provider)] = carry
     return RedirectResponse(url, status_code=302)
+
+
+def _local_path(raw) -> str:
+    """돌아올 자리 — 이 사이트 안의 경로만. `//evil.com` 같은 남의 주소로 튕기지 않는다."""
+    s = str(raw or "")
+    return s if s.startswith("/") and not s.startswith("//") and "\\" not in s else "/"
 
 
 def _carry(request: Request, provider: str, state: str) -> dict:
@@ -394,20 +427,39 @@ def _carry(request: Request, provider: str, state: str) -> dict:
 
 @app.get("/auth/login")
 def auth_login(request: Request):
+    """로그인 — 신원(이메일)만 묻는다. 서치콘솔 권한은 /auth/connect 가 따로 묻는다."""
+    request.session.pop("after_auth", None)
     return _begin(request, "google")
+
+
+@app.get("/auth/connect")
+def auth_connect(request: Request, next: str = "/"):
+    """서치콘솔·GA4 읽기 권한을 받는다 — 온보딩의 [서치콘솔 연결], 대시보드의 [구글 연결].
+    다녀오면 next 로 돌아온다. 로그인 전이면 이것이 로그인도 겸한다."""
+    request.session["after_auth"] = _local_path(next)
+    return _begin(request, "google", connect=True)
 
 
 @app.get("/auth/callback")
 def auth_callback(request: Request, code: str, state: str):
-    acct = identity.finish("google", code, _carry(request, "google", state))
+    carry = _carry(request, "google", state)
+    acct = identity.finish("google", code, carry)
     conn = store.connect()
     try:
-        uid = identity.remember(conn, "google", acct)
+        uid = _uid(request)
+        if carry.get("connect") and uid is not None:
+            # 이미 로그인한 사람의 연결 — 신원은 그대로 두고 토큰만 이 계정에 붙인다.
+            # 서치콘솔 권한이 다른 구글 계정(회사 계정)에 있는 사람이 흔하다: 그 계정으로
+            # 연결했다고 로그인 신원까지 바꾸면 등록해 둔 사이트가 통째로 사라져 보인다.
+            if identity.covers_gsc(acct.token):
+                store.save_token(conn, uid, acct.token)
+        else:
+            uid = identity.remember(conn, "google", acct)
+            request.session["email"] = acct.who
     finally:
         conn.close()
     request.session["uid"] = uid
-    request.session["email"] = acct.who
-    return RedirectResponse("/", status_code=302)
+    return RedirectResponse(_local_path(request.session.pop("after_auth", "/")), status_code=302)
 
 
 @app.post("/auth/logout")
@@ -441,8 +493,8 @@ def _require_google() -> None:
     if not db.gsc_connected():
         raise HTTPException(
             status_code=403,
-            detail="구글 계정이 연결돼 있지 않습니다. "
-                   "다시 구글 계정으로 로그인하세요.")
+            detail="서치콘솔이 아직 연결돼 있지 않습니다. "
+                   "구글 계정을 연결해 서치콘솔·GA4 읽기 권한에 동의하세요.")
     if doctor.gsc_missing_scopes():
         raise HTTPException(
             status_code=403,
@@ -493,58 +545,142 @@ def _host_of(prop: str) -> str:
         return ""
 
 
+def _site_url(raw) -> tuple[str, str]:
+    """사람이 적은 주소 → (홈 URL, 도메인). 도메인은 www. 를 뗀 소문자다(_host_of 와 같은 규칙).
+
+    `example.com`·`https://www.example.com/blog?x=1` 을 다 받는다. 공개 인터넷 주소만 —
+    서버가 이 주소를 직접 연다(peek·crawl). 사설·루프백 주소를 받으면 이 서버 안쪽을
+    남이 들여다보는 통로가 된다.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail="사이트 주소를 적어 주세요. 예: example.com")
+    if "://" not in s:
+        s = "https://" + s
+    try:
+        u = urlparse(s)
+        scheme, host = u.scheme, (u.hostname or "").lower().rstrip(".")
+    except ValueError:
+        scheme, host = "", ""
+    if scheme not in ("http", "https") or "." not in host or not re.fullmatch(r"[a-z0-9.-]+", host):
+        raise HTTPException(status_code=400,
+                            detail="알아볼 수 없는 주소입니다. example.com 처럼 도메인을 적어 주세요.")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        infos = []          # 아직 안 열린 도메인일 수 있다 — 막지 않는다(peek 이 '못 열었다'고 말한다)
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise HTTPException(status_code=400, detail="공개된 사이트 주소만 등록할 수 있습니다.")
+    return f"{scheme}://{host}/", host.removeprefix("www.")
+
+
+def _words(raw, limit: int, size: int) -> list[str]:
+    """목록 입력 한 벌 — 배열이든 쉼표·줄바꿈 문자열이든 받는다. 중복·빈 칸은 뺀다."""
+    items = raw if isinstance(raw, list) else re.split(r"[,\n]", str(raw or ""))
+    out: list[str] = []
+    for x in items:
+        w = str(x).strip()[:size]
+        if w and w.lower() not in {o.lower() for o in out}:
+            out.append(w)
+    return out[:limit]
+
+
+# 제목을 자를 자리 — "상품명 | 브랜드", "브랜드 - 한 줄 설명" 같은 꼴.
+_TITLE_SPLIT = re.compile(r"\s*[|｜·•:–—/]\s*|\s+-\s+")
+
+
+def _seed_hints(page: dict, domain: str) -> list[str]:
+    """홈페이지 제목·H1·설명에서 씨앗 후보를 뽑는다 — 사람이 고칠 초안이지 판정이 아니다.
+
+    브랜드(도메인 첫 마디)만인 조각은 뺀다: 내 이름으로 검색하는 사람은 이미 나를 안다.
+    """
+    brand = re.sub(r"[^a-z0-9가-힣]", "", domain.split(".")[0].lower())
+    try:
+        h1 = json.loads(page.get("h1_json") or "[]")
+    except ValueError:
+        h1 = []
+    parts: list[str] = []
+    for text in [page.get("title") or "", *h1[:3]]:
+        parts += _TITLE_SPLIT.split(str(text))
+    out = []
+    for p in parts:
+        p = re.sub(r"\s+", " ", p).strip(" .,!?")
+        key = re.sub(r"[^a-z0-9가-힣]", "", p.lower())
+        if 2 <= len(p) <= 40 and key and key != brand:
+            out.append(p)
+    return _words(out, 6, 40)
+
+
+@app.post("/api/start/peek")
+def api_start_peek(body: dict = Depends(_body), uid: int = Depends(_require_uid)):
+    """온보딩 1단계 — 적은 주소가 열리는 사이트인지 보고, 씨앗 초안을 건넨다.
+
+    못 열어도 등록은 막지 않는다(reachable=False) — 방화벽·JS 셸 사이트도 순위·AI 노출은
+    잴 수 있다. 화면이 그 사실을 말하고 씨앗을 직접 적게 한다.
+    """
+    url, domain = _site_url(body.get("url"))
+    page = collect_page.fetch(url, timeout=8)
+    ok = not page.get("error")
+    return {"url": url, "domain": domain, "reachable": ok,
+            "title": (page.get("title") or "")[:200] if ok else "",
+            "seeds": _seed_hints(page, domain) if ok else []}
+
+
 @app.post("/api/sites")
 def api_sites(request: Request, body: dict = Depends(_body),
               uid: int = Depends(_require_uid), t=Depends(TENANT),
               kick=Depends(_kick_dep)):
-    """속성 여러 개를 한 번에 등록한다. 이름·도메인은 속성에서 짓고, 종류만 받는다."""
-    props = body.get("properties") or []
-    if isinstance(props, str):
-        props = [props]
-    if not props:
-        raise HTTPException(status_code=400, detail="분석할 사이트를 하나 이상 고르세요.")
-    types = body.get("types") or {}
+    """사이트 하나를 등록하고 첫 측정을 띄운다 — 온보딩(/start)의 마지막 걸음.
+
+    주소가 정본이다. 서치콘솔 속성(property)은 선택이다: 없으면 gsc·ga4·index 가
+    건너뛰고 나머지(순위·경쟁사·AI 노출·사이트 점검)는 그대로 돈다. 속성을 지어 넣지
+    않는다(create_project(auto_gsc=False)) — 지어 넣으면 건너뛸 단계가 런마다 인증
+    실패로 떨어진다.
+    """
+    _, host = _site_url(body.get("url"))
+    rows = store.sites(t.conn, uid)
+    dup = next((r for r in rows if r["domain"] == host), None)
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"이미 등록한 사이트입니다({dup['project']}). 사이트 목록에서 여세요.")
+    prop = str(body.get("property") or "").strip()
+    if prop and _host_of(prop) not in (host, "www." + host):
+        raise HTTPException(status_code=400,
+                            detail="고른 서치콘솔 속성이 적은 주소와 다른 사이트입니다.")
     # 언어-지역은 사이트마다 고른다(한 계정에 한국어·영어 사이트가 같이 있다).
     # 목록 밖 값은 미국 SERP 로 조용히 떨어지므로 여기서 막는다.
-    locales = body.get("locales") or {}
-    known = dict(serp_adapter.LOCALES)
-    for loc in set(locales.values()) | {body.get("locale", db.DEFAULT_LOCALE)}:
-        if loc not in known:
-            raise HTTPException(status_code=400, detail=f"고를 수 없는 언어-지역입니다: {loc}")
+    locale = body.get("locale") or db.DEFAULT_LOCALE
+    if locale not in dict(serp_adapter.LOCALES):
+        raise HTTPException(status_code=400, detail=f"고를 수 없는 언어-지역입니다: {locale}")
+    competitors = []
+    for c in _words(body.get("competitors"), 10, 200):
+        try:
+            competitors.append(_site_url(c)[1])
+        except HTTPException:
+            raise HTTPException(status_code=400, detail=f"경쟁사 주소를 알아볼 수 없습니다: {c}")
 
-    # 로컬에서 넘어온 설정은 그 속성 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
-    # (다음에 다른 사이트를 등록할 때 남의 씨앗이 섞이면 안 된다).
+    name = _slug(host, {r["project"] for r in rows})
+    f = {"name": name, "type": body.get("type") or "saas", "domain": host,
+         "gsc_property": prop, "locale": locale,
+         "brand_aliases": host.split(".")[0], "tools": ""}
+    # 로컬에서 넘어온 설정은 그 사이트 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
+    # (다음에 다른 사이트를 등록할 때 남의 씨앗이 섞이면 안 된다). 화면이 씨앗·경쟁사를
+    # 이미 그 값으로 채워 보여 줬으므로, 사람이 보낸 칸이 이긴다.
     carry = dashboard.carry_read(request.session.pop("carry", ""))
-    carry_prop = carry.get("gsc_property", "")
-
-    added, failed = [], []
-    taken = {r["project"] for r in store.sites(t.conn, uid)}
-    for prop in props[:20]:
-        host = _host_of(str(prop))
-        if not host:
-            failed.append({"property": prop, "error": "도메인을 알 수 없습니다"})
-            continue
-        name = _slug(host, taken)
-        f = {
-            "name": name, "type": types.get(prop, "saas"), "domain": host,
-            "gsc_property": prop, "locale": locales.get(prop) or body.get("locale", db.DEFAULT_LOCALE),
-            "brand_aliases": host.split(".")[0], "seed_keywords": "",
-            "competitors_manual": "",
-        }
-        if prop == carry_prop:
-            f.update({k: carry[k] for k in CARRY_FIELDS if carry.get(k)})
-        r = dashboard.create_project(f)
-        if r.get("ok"):
-            taken.add(name)
-            added.append({"project": name, "property": prop})
-        else:
-            failed.append({"property": prop, "error": r.get("error", "등록 실패")})
-    for a in added:
-        store.add_site(t.conn, uid, a["project"], a["property"], _host_of(a["property"]))
-
-    if added:
-        kick()
-    return {"ok": bool(added), "added": added, "failed": failed}
+    carry_host = carry.get("domain") or _host_of(carry.get("gsc_property", ""))
+    if carry_host and carry_host.removeprefix("www.") == host:
+        f.update({k: carry[k] for k in CARRY_FIELDS if carry.get(k)})
+    f["locale"] = locale
+    f["seed_keywords"] = ", ".join(_words(body.get("seeds"), 20, 80))
+    f["competitors_manual"] = ", ".join(competitors)
+    r = dashboard.create_project(f, auto_gsc=False)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error", "등록하지 못했습니다."))
+    store.add_site(t.conn, uid, name, prop, host)
+    kick()
+    return {"ok": True, "project": name, "gsc": bool(prop)}
 
 
 # 단계 목록의 정본은 run_all 의 표 하나다. 여기에 사본을 두면 화면에는 있는
@@ -1124,7 +1260,7 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     JSON {"detail":...} 만 뜬다. _require_uid 자체는 /api/* 가 계속 JSON 401 을 써야
     하므로 안 바꾸고, 여기서 /d 하나만 처음 화면(/)으로 302 돌린다. hash(#사이트)는
     서버로 안 오므로 리다이렉트로 잃는 것이 없다. 나머지는 FastAPI 기본 처리 그대로."""
-    if request.url.path == "/d" and e.status_code == 401:
+    if request.url.path in ("/d", "/start") and e.status_code == 401:
         return RedirectResponse("/?login=required", status_code=302)
     # /d/<무엇>(옛 링크·손으로 친 주소)은 없는 경로라 404 인데, 로그인 안 한 사람에게는
     # /d 와 같은 로그인 안내가 맞다 — "페이지를 찾을 수 없습니다"는 사이트가 사라졌다고 읽힌다.

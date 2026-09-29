@@ -1032,9 +1032,9 @@
     if (!sec || !SET_H) return;
     var body = sec.querySelector(".ga4 .body");
     if (!body) return;
-    if (GA4_AUTH_ERR) {           // 스코프 부족 — 재로그인 손잡이를 준다
+    if (GA4_AUTH_ERR) {           // 미연결·스코프 부족 — 연결(권한 동의) 손잡이를 준다
       body.innerHTML = '<p class="none">' + esc(GA4_AUTH_ERR) + "</p>" +
-        '<a href="/auth/login">다시 로그인</a>';
+        '<a href="/auth/connect?next=' + encodeURIComponent("/d" + location.hash) + '">구글 계정 연결</a>';
       return;
     }
     var note = msg ? '<span class="msg" role="status">' + esc(msg) + "</span>" : "";
@@ -1073,7 +1073,7 @@
       return ga4Render(OFFLINE + " 다시 누르면 재시도합니다.");
     }
     if (r.status === 403) {
-      GA4_AUTH_ERR = d.detail || "이 로그인에는 GA4 읽기 권한이 없습니다. 다시 로그인하면 권한을 받습니다.";
+      GA4_AUTH_ERR = d.detail || "연결된 구글 계정에 GA4 읽기 권한이 없습니다. 구글 계정을 연결하면 권한을 받습니다.";
       return ga4Render();
     }
     if (!r.ok) return ga4Render("속성 목록을 못 읽었습니다. " + (d.detail || "잠시 뒤 다시 누르면 재시도합니다."));

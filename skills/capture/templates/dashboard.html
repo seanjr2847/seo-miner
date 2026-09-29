@@ -3141,7 +3141,9 @@ function renderDates(d) {
   // 말하고 있다 — 바로 아래 이 줄이 같은 날짜를 또 적으면 "2026-06-01 · 28일치"
   // 다음 줄에 "구글 실적 2026-06-01 (28일치)"가 되풀이된다. 셀렉트가 없을
   // 때만(수집이 하나뿐이거나 없음·박제본) 이 줄이 그 정보를 대신 말한다.
-  const dateInfo = sel.hidden
+  // 서치콘솔 없이 시작한 사이트는 "아직 없음"이 아니다 — 기다려도 안 온다.
+  const dateInfo = !d.project.gsc_property ? " · 서치콘솔 연결 안 함"
+    : sel.hidden
     ? ` · 구글 실적 ${d.gsc_date || "아직 없음"}${d.gsc_period ? ` (${d.gsc_period}일치)` : ""}`
     : "";
   $("meta").textContent = (d.project.gsc_property || d.project.domain || "") + dateInfo;

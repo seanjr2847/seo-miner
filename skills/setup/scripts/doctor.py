@@ -359,7 +359,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
     deps_gsc = {m: has(m) for m in ("googleapiclient", "google_auth_oauthlib")}
     brain = {"home": str(CAPTURE_HOME), "home_exists": CAPTURE_HOME.exists(),
              "db_exists": DB.exists(), "tables": 0, "projects": [],
-             "no_prompts": []}
+             "no_prompts": [], "no_gsc": []}
     if DB.exists():
         try:
             conn = sqlite3.connect(DB)
@@ -373,6 +373,11 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
                 """SELECT p.name FROM projects p
                      LEFT JOIN ai_prompts a ON a.project_id=p.id AND a.is_active=1
                     GROUP BY p.id HAVING COUNT(a.id)=0""")] if brain["tables"] else []
+            # 서치콘솔 속성 없이 시작한 사이트(호스팅의 "주소로 시작"). 이 사이트에게 구글
+            # 연결은 필수가 아니라 선택이다 — 아래 must·verdict 가 이걸 보고 물러선다.
+            brain["no_gsc"] = [r[0] for r in conn.execute(
+                "SELECT name FROM projects WHERE COALESCE(gsc_property,'')=''"
+            )] if brain["tables"] else []
             conn.close()
         except Exception as e:
             brain["error"] = str(e)
@@ -409,6 +414,14 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
     # 사이트 이름을 늘어놓았다(9회차). 못 골랐을 때만 전부 말한다.
     if brain["picked"]:
         brain["no_prompts"] = [n for n in brain["no_prompts"] if n == brain["picked"]]
+    # 지금 보는 사이트가 서치콘솔 없이 시작했으면(못 골랐으면 전부가 그렇다면) 구글 연결을
+    # 할 일로 세우지 않는다. 세우면 연결할 뜻이 없는(권한이 없는) 사람의 개요 맨 위에
+    # "한 번만 남았습니다"가 영영 서 있다. 대신 later 에 선택으로 한 줄 남긴다.
+    no_gsc = bool(brain["projects"]) and (
+        brain["picked"] in brain["no_gsc"] if brain["picked"]
+        else set(brain["projects"]) <= set(brain["no_gsc"]))
+    gsc_ask = gsc_pending and not no_gsc
+    gsc_rescope = [] if no_gsc else gsc_missing
     gsc_legacy = {name: (db.creds_dir(name) / "gsc_token.json").exists()
                   for name in brain["projects"]}
     gsc_sites = {name: gsc_conn for name in brain["projects"]}
@@ -538,7 +551,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
                      "go": go, "cmd": cmd})
     # GSC 연결은 필수다 — 실측(클릭·노출) 없이는 이 도구의 판정 전부가 재료가 없다.
     # (CSV 내보내기 임시 경로는 2026-08-18 정책으로 삭제 — 연결이 유일한 실적 경로.)
-    if core_ok and brain_ok and gsc_pending:
+    if core_ok and brain_ok and gsc_ask:
         # 남은 게 로그인뿐인데 "연결하세요"라고만 하면, 사용자는 이미 끝난 콘솔 작업을
         # 다시 찾으러 간다. 다음 걸음은 **로그인을 유발하는 행동** 하나여야 한다.
         must.append({
@@ -553,7 +566,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
                        + (" 로그인 창에 \"확인되지 않은 앱\" 경고가 한 번 뜨는데 "
                           "정상입니다. [고급] 다음 [이동]을 누르시면 됩니다."
                           if gsc_bundled else "")),
-            "go": {"label": "구글 연결", "href": "/auth/login"} if hosted else None,
+            "go": {"label": "구글 연결", "href": "/auth/connect"} if hosted else None,
             "cmd": None if hosted else "GSC 로그인해줘",
         })
     if core_ok and brain_ok and not gsc_mode:
@@ -571,7 +584,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         })
     # analytics.readonly 가 나중에 추가된 스코프라, 그 전에 로그인해 둔 토큰은
     # GA4 를 못 읽는다 — 조용히 403 으로 막히기 전에 여기서 먼저 말한다.
-    if core_ok and brain_ok and gsc_missing:
+    if core_ok and brain_ok and gsc_rescope:
         must.append({
             "id": "gsc_rescope",
             "msg": "저장된 로그인에 GA4 읽기 권한이 없습니다. 검색 실적 수집은 "
@@ -582,13 +595,17 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
                        "동의합니다. 안 지우면 기존 로그인을 그대로 재사용해 동의 "
                        "창이 안 뜹니다. Claude 에게 부탁하시면 지우는 것부터 대신 "
                        "합니다."),
-            "go": {"label": "구글 다시 연결", "href": "/auth/login"} if hosted else None,
+            "go": {"label": "구글 다시 연결", "href": "/auth/connect"} if hosted else None,
             "cmd": None if hosted else RESCOPE_CMD,
         })
 
     must = _drop_local_only(must, hosted)
 
     later = []
+    if no_gsc:
+        later.append("서치콘솔 없이 시작한 사이트입니다. 순위·경쟁사·AI 노출·사이트 점검은 "
+                     "그대로 돕니다. 클릭·노출 실측과 색인 검사는 서치콘솔 속성이 있어야 "
+                     "나옵니다.")
     if brain["no_prompts"]:
         who = ", ".join(brain["no_prompts"])
         later.append(f"AI 인용 확인에 쓸 질문이 없는 사이트: {who}. 질문이 없으면 그 "
@@ -651,7 +668,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
     elif not brain["projects"]:
         verdict = "설치는 끝났습니다. 첫 사이트만 등록하면 시작합니다."
         next_cmd = "/capture add <원하는이름>"
-    elif gsc_pending:
+    elif gsc_ask:
         verdict = ("구글 계정 연결 한 번만 남았습니다. 그래야 실적이 쌓입니다."
                    if hosted else
                    "구글 로그인 한 번만 남았습니다. 그래야 실적이 쌓입니다.")
@@ -667,7 +684,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         verdict = (f"등록된 사이트 {len(brain['projects'])}개 중 이 폴더가 어느 "
                    "것인지 모릅니다.")
         next_cmd = None
-    elif gsc_missing:
+    elif gsc_rescope:
         # GA4 를 아직 안 붙인 사람에게도 이 말은 사실이다 — 막힌 것이 GA4 하나뿐이고
         # 검색 실적은 그대로 돈다. 전에는 GA4 를 붙인 사람에게만 이 분기를 태웠는데,
         # 그러면 나머지 사람은 목록에 할 일이 남은 채 "다 준비됐습니다"를 읽었다.

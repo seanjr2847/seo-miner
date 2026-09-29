@@ -1,0 +1,270 @@
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
+     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
+     못 받으면(오프라인·사내망) --sans 의 뒤쪽 스택으로 조용히 떨어진다 — 화면은 그대로 선다.
+
+     **막지 않게 받는다.** 평범한 stylesheet 링크는 파서를 막아, 뒤에 오는 모든
+     스크립트가 이 파일을 받을 때까지 실행되지 않는다. CDN 이 안 열리는
+     환경(오프라인·사내망·검사 샌드박스)에서는 그게 곧 이 화면이 죽는 것이다:
+     사이트 목록도 진행 상황도 아래 페이지 스크립트가 /api 를 불러 채우는데 그것이
+     시작을 못 한다. (이 주석에 여는 스크립트 태그를 글자로 적으면 안 된다 —
+     pages.data 가 "문서의 첫 script 태그 앞"에 값을 싣는데, 주석 안의 글자가 그
+     자리로 잡히면 window.__SITES__ 가 통째로 주석 속에 묻힌다. 실제로 묻혔다.)
+     media=print 로 받으면 이 파일은 처음부터 이 화면의 스타일이
+     아니라서 아무것도 막지 않고, 다 받은 뒤 onload 가 media 를 열어 그때 글꼴이
+     적용된다. 서체는 읽는 데 필요한 게 아니라 좋아지는 것이므로 늦게 와도 된다.
+     (정본은 dashboard.html 의 같은 자리다.) -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<noscript><link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
+<style>
+/* 입구 두 화면(app.html 사이트 목록 · start.html 온보딩)이 같이 쓰는 머리 — 서버가
+   <!-- ENTRY_HEAD --> 자리에 끼운다. 색·서체·괘선·마이크로 라벨을 dashboard.html 의
+   :root 와 한 벌로 맞춘다. 정본은 그쪽이고 여기는 같은 값을 적어 둔 사본이다.
+   두 화면에 각자 적으면 사본이 셋이 된다 — 여기 하나만 둔다. */
+:root {
+  /* --slate 는 부제·눈금·상태 글자를 전부 칠한다. #66726D 은 --stone 위에서 4.09:1 로
+     AA 를 못 넘겼다 — 대시보드가 #576259 로 옮겼고 여기도 같은 값을 쓴다. */
+  --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#576259;
+  --patina:#22705F; --patina-hi:#1A5A4C; --copper:#A9491F; --btn-ink:#F7F8F5;
+  --rule:rgba(18,23,20,.13); --rule-soft:rgba(18,23,20,.07);
+  --wash:rgba(34,112,95,.10); --wash-copper:rgba(169,73,31,.10);
+  --bar:rgba(18,23,20,.05);
+  /* 헤더는 항상 어두운 판이다(라이트·다크 공통) — --ink 처럼 다크에서 뒤집히면
+     본문만 어둡고 헤더가 밝아 "반쪽 다크"가 된다. */
+  --rail:#121714;
+  /* 레일(헤더) 위의 글자. --slate 는 거기서 2.6:1 이라 안 읽힌다. 헤더가 다크에서도
+     어두우므로 이 셋은 뒤집지 않는다(다크 블록에 없음). */
+  --on-ink:#E6E9E4; --on-ink-dim:rgba(230,233,228,.68);
+  --on-ink-rule:rgba(230,233,228,.26);
+  --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
+         "Malgun Gothic",monospace;
+  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
+         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  /* 마이크로 라벨 한 벌 — dashboard.html 의 --micro 와 같은 값. 자간은 안 벌린다. */
+  --micro:500 11px/1.35 var(--sans);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791;
+    --patina:#57B49C; --patina-hi:#6CC4AD; --copper:#DE8351; --btn-ink:#0E1412;
+    --rule:rgba(228,235,231,.16); --rule-soft:rgba(228,235,231,.08);
+    --wash:rgba(87,180,156,.14); --wash-copper:rgba(222,131,81,.14);
+    --bar:rgba(228,235,231,.06);
+    --rail:#0B0F0D;
+  }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--stone); color:var(--ink);
+  font:15px/1.6 var(--sans); word-break:keep-all; overflow-wrap:break-word;
+  -webkit-font-smoothing:antialiased; }
+:focus-visible { outline:2px solid var(--patina); outline-offset:2px; border-radius:2px; }
+
+/* 한글에 letter-spacing/uppercase 를 걸면 "사 이 트 관 리" 로 벌어진다. 그래서 이
+   화면의 위계는 크기·굵기·색으로만 만든다. 트래킹이 붙은 곳은 로고(.mark) 하나뿐이고,
+   거기에는 라틴 글자만 들어간다. 등폭(--mono)도 URL·날짜·식별자에만 쓴다. */
+
+.wrap { max-width:1080px; margin:0 auto; padding:0 26px; }
+
+/* ── 버튼: 행동은 전부 이 한 벌이다. 상태는 .badge 가 맡는다 ─── */
+.go { display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  font:600 14px/1 var(--sans); color:var(--btn-ink); background:var(--patina);
+  border:1px solid var(--patina); border-radius:3px; padding:12px 20px;
+  cursor:pointer; text-decoration:none; white-space:nowrap; }
+.go:hover:not(:disabled) { background:var(--patina-hi); border-color:var(--patina-hi); }
+/* 비활성은 "옅은 초록"이 아니라 빈 테두리다 — 켜졌는지 껐는지가 형태로 갈린다. */
+.go:disabled { background:transparent; color:var(--slate);
+  border-color:var(--rule); cursor:default; }
+.go.sec { background:transparent; color:var(--ink); border-color:var(--rule); }
+.go.sec:hover { background:var(--wash); color:var(--patina); border-color:var(--patina); }
+.go.ghost { background:transparent; color:var(--slate); border-color:transparent; }
+.go.ghost:hover { background:var(--bar); color:var(--patina); border-color:var(--rule); }
+.go.sm { font-size:12.5px; padding:8px 13px; }
+
+/* ── 상태 배지: 절대 버튼 모양이 아니다 ───────────────────── */
+.badge { display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+  font:500 11.5px/1.35 var(--sans); border:1px solid var(--rule);
+  border-radius:999px; padding:4px 10px; color:var(--slate); }
+.badge::before { content:""; width:5px; height:5px; border-radius:50%;
+  background:currentColor; flex:none; }
+.badge.ok { color:var(--patina); border-color:rgba(34,112,95,.35); background:var(--wash); }
+.badge.run { color:var(--copper); border-color:rgba(169,73,31,.35);
+  background:var(--wash-copper); }
+.badge.muted::before { display:none; }
+
+/* ── 헤더: 시추공 상단 케이싱 ─────────────────────────────── */
+header { background:var(--rail); color:var(--on-ink); }
+.hbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:13px 26px; }
+.mark { font:600 15px/1 var(--mono); letter-spacing:.06em; white-space:nowrap; }
+.mark b { color:var(--patina); font-weight:600; }
+h1.tag { font:var(--micro); color:var(--on-ink-dim); white-space:nowrap; margin:0; }
+.hbar .sp { flex:1; }
+.who { font:400 11.5px/1 var(--mono); color:var(--on-ink-dim); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.lo { margin:0; flex:0 0 auto; }
+.lo button { font:400 12px/1 var(--sans); color:var(--on-ink-dim); background:transparent;
+  border:1px solid transparent; border-radius:3px; padding:7px 11px; cursor:pointer; }
+.lo button:hover { color:var(--on-ink); border-color:var(--on-ink-rule); }
+
+main { padding:0 0 12px; }
+section { padding:34px 0 0; }
+
+/* ── 제목 묶음: 대시보드와 같은 문법(eyebrow → h2 → sub) ──── */
+.eyebrow, .label { font:var(--micro); color:var(--slate); margin:0; }
+.eyebrow { color:var(--patina); }
+h2 { font:650 21px/1.35 var(--sans); letter-spacing:-.012em; margin:8px 0 5px; }
+.sub { font-size:13.5px; color:var(--slate); margin:0 0 18px; max-width:62ch; }
+
+/* ── 진행 레일: 지금 어느 걸음인지 ────────────────────────── */
+.rail { padding-top:26px; }
+.rail ol { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap;
+  align-items:center; gap:10px; font:400 12.5px/1 var(--sans); color:var(--slate); }
+.rail li { display:flex; align-items:center; gap:8px; }
+.rail li + li::before { content:""; width:22px; height:1px; background:var(--rule);
+  margin-right:2px; }
+.rail .n { display:inline-flex; align-items:center; justify-content:center;
+  width:19px; height:19px; border-radius:50%; border:1px solid var(--rule);
+  font:600 10px/1 var(--mono); color:var(--slate); }
+.rail .here { color:var(--ink); font-weight:600; }
+.rail .here .n { border-color:var(--patina); color:var(--patina);
+  box-shadow:0 0 0 3px var(--wash); }
+.rail .done { color:var(--slate); }
+.rail .done .n { background:var(--patina); border-color:var(--patina); color:var(--btn-ink); }
+.rail .done .n::before { content:"✓"; }
+.rail .done .n b { display:none; }
+
+/* ── 분석 중인 사이트(서버가 채운다) — 사이트가 있으면 이게 주역 ── */
+.sites { list-style:none; margin:0; padding:0; background:var(--card);
+  border:1px solid var(--rule); border-radius:4px; overflow:hidden; }
+.sites li + li { border-top:1px solid var(--rule-soft); }
+/* 이름·주소 / 상태 / 행동 세 통. 좁아지면 세 통이 세로로 쌓인다. */
+.sites li { display:grid; grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center; gap:10px 16px; padding:15px 16px; }
+.sites li:hover { background:var(--bar); }
+.s-id { min-width:0; display:grid; gap:2px; }
+.nm { font:650 14.5px/1.35 var(--sans); }
+.pr { font:400 11.5px/1.4 var(--mono); color:var(--slate); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.s-state { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+/* 날짜는 등폭 — 자릿수가 줄마다 같은 자리에 선다. */
+.when { font:400 11.5px/1.35 var(--mono); font-variant-numeric:tabular-nums;
+  color:var(--slate); white-space:nowrap; }
+/* 진행 막대는 행 아래 한 줄을 다 쓴다 — 상태 칸에 끼우면 3px 짜리 실이 된다. */
+.prog { grid-column:1 / -1; display:grid; gap:6px; }
+.progress { height:3px; border-radius:2px; background:var(--rule); overflow:hidden; }
+.progress i { display:block; height:100%; width:6%; background:var(--patina);
+  transition:width .5s ease; }
+.stg { margin:0; font:400 12px/1.35 var(--sans); color:var(--slate); }
+.wait-note { font-size:12.5px; color:var(--slate); margin:12px 0 0; max-width:62ch; }
+@media (max-width:620px) {
+  .sites li { grid-template-columns:minmax(0,1fr); }
+  .sites li .go { justify-self:start; }
+}
+
+/* ── 선택 패널 ───────────────────────────────────────────── */
+.panel { background:var(--card); border:1px solid var(--rule); border-radius:4px;
+  overflow:hidden; }
+.ptool { display:flex; align-items:center; gap:14px; padding:10px 15px;
+  border-bottom:1px solid var(--rule); background:var(--bar); }
+/* display:flex 가 [hidden] 의 display:none 을 이긴다 — 그래서 오류·빈 상태에서도
+   "전체 선택" 줄이 남아 있었다. JS 는 hidden 을 켰는데 화면은 안 지워졌다. */
+.ptool[hidden] { display:none; }
+.all { display:flex; align-items:center; gap:9px; cursor:pointer;
+  font:400 12.5px/1 var(--sans); color:var(--slate); }
+.cnt { margin-left:auto; font:500 12.5px/1 var(--sans); color:var(--slate);
+  font-variant-numeric:tabular-nums; }
+.cnt b { color:var(--patina); font-weight:600; }
+
+/* 사이트가 여럿이면 가로로 벌린다. 칸 사이 1px 틈이 그대로 괘선이 된다.
+   min(300px,100%) 은 320px 화면에서 트랙이 화면보다 넓어지는 것을 막는다. */
+.props { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));
+  gap:1px; background:var(--rule-soft); }
+/* 빈 상태·오류는 한 칸이 아니라 한 폭 */
+.props > .empty { grid-column:1/-1; }
+
+.prop { display:flex; flex-wrap:wrap; align-items:center; gap:9px 12px;
+  padding:12px 15px; cursor:pointer; background:var(--card);
+  box-shadow:inset 2px 0 0 transparent; }
+/* 칸 배경이 불투명해야 괘선이 비치지 않는다 — 강조는 배경 위에 한 겹 덧칠한다. */
+.prop:hover { background-image:linear-gradient(var(--bar),var(--bar)); }
+.prop.on { background-image:linear-gradient(var(--wash),var(--wash));
+  box-shadow:inset 2px 0 0 var(--patina); }
+.prop.off { cursor:default; opacity:.62; }
+input[type=checkbox] { width:16px; height:16px; flex:none; margin:0;
+  accent-color:var(--patina); cursor:pointer; }
+input[type=checkbox]:disabled { cursor:default; }
+/* flex-basis 0 — 긴 도메인이 제 길이만큼 자리를 요구해 체크박스를 다음 줄로
+   밀어내던 자리다. 줄을 넘기는 대신 말줄임으로 줄인다. */
+.pname { flex:1 1 0; min-width:0; font:500 13.5px/1.4 var(--mono);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pname .pfx { color:var(--slate); font-weight:400; }
+.lv { flex:0 0 auto; font:400 11.5px/1 var(--sans); color:var(--slate); }
+.lv.bad { color:var(--copper); }
+.tick { flex:none; width:16px; text-align:center; color:var(--patina); }
+
+select { font:400 12.5px/1 var(--sans); color:var(--ink); background:var(--stone);
+  border:1px solid var(--rule); border-radius:2px; padding:7px 9px; cursor:pointer; }
+select:hover { border-color:var(--patina); }
+/* 체크박스 아래로 정렬. 칸이 하나뿐이면 패널 폭만큼 늘어나므로 상한을 둔다. */
+#props select { flex:1 1 100%; margin-left:28px; max-width:420px; }
+.prop:not(.on) select { opacity:.6; }
+
+/* ── 빈 상태·오류: 무엇이 없다 / 왜 / 지금 누를 것 ─────────── */
+.empty { padding:20px 17px; display:grid; gap:6px; background:var(--card); }
+.empty b { font:650 14.5px/1.45 var(--sans); }
+.empty span { font-size:13.5px; color:var(--slate); }
+.empty a { color:var(--patina); }
+/* 셋째 줄이 없으면 사용자는 이 화면에서 할 일이 없다 — 행동 줄을 못 박아 둔다. */
+.empty .acts { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:8px; }
+.empty.err { border-left:2px solid var(--copper);
+  background-image:linear-gradient(var(--wash-copper),var(--wash-copper)); }
+.empty.info { border-left:2px solid var(--patina);
+  background-image:linear-gradient(var(--wash),var(--wash)); }
+/* `.empty a` 가 링크를 patina 로 칠한다 — 그 색이 그대로 patina 바탕 위에 얹히면
+   버튼이 글자 없는 초록 사각형이 된다. 버튼은 버튼 색을 되찾아야 한다. */
+.empty .acts .go { color:var(--btn-ink); }
+.empty .acts .go.sec { color:var(--ink); }
+
+/* ── 다음 한 걸음 ────────────────────────────────────────── */
+.act { margin-top:18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+/* .ptool 과 같은 함정 — display:flex 가 [hidden] 을 이긴다. 고를 것이 하나도 없는
+   화면에서 꺼진 "분석 시작"이 남아 있으면 주요 행동이 둘로 보인다. */
+.act[hidden] { display:none; }
+.msg { font-size:13px; color:var(--slate); }
+.msg.err { color:var(--copper); }
+.msg.ok { color:var(--patina); }
+
+.skel { height:48px;
+  background:linear-gradient(90deg,var(--rule-soft),var(--bar),var(--rule-soft));
+  background-size:200% 100%; }
+@media (prefers-reduced-motion: no-preference) {
+  .skel { animation:sh 1.3s linear infinite; }
+  @keyframes sh { to { background-position:-200% 0; } }
+  .badge.run::before { animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+  .prop, .go { transition:background .13s, box-shadow .13s; }
+}
+
+/* footer 는 .wrap 이기도 하다 — `.wrap { margin:0 auto }` 가 클래스라 요소 선택자보다
+   세다. `footer` 로만 적으면 margin-top 이 조용히 0 이 되고, 바닥 괘선이 위 패널의
+   테두리에 겹쳐 붙는다. 그래서 선택자에 클래스를 같이 적는다. */
+footer.wrap { margin-top:44px; border-top:1px solid var(--rule-soft);
+  padding-top:18px; padding-bottom:44px;   /* 좌우는 .wrap 것을 그대로 쓴다 */
+  font:400 12.5px/1.5 var(--sans); color:var(--slate);
+  display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+/* display:flex 가 [hidden] 의 display:none 을 이긴다 — .ptool·.act 와 같은 함정이다. */
+footer[hidden] { display:none; }
+footer a { color:var(--slate); }
+footer a:hover { color:var(--patina); }
+
+@media (max-width:560px) {
+  .wrap { padding:0 18px; }
+  .hbar { padding:13px 18px; }
+  /* 넷이 한 줄에 안 들어가면 "로그아웃"만 다음 줄로 떨어져 나간다 — 그러느니
+     여백을 통째로 접어 계정 묶음을 둘째 줄 오른쪽에 세운다. */
+  .hbar .sp { flex:1 0 100%; height:0; }
+  .who { margin-left:auto; }
+  .pname { white-space:normal; overflow-wrap:anywhere; }
+}
+</style>
