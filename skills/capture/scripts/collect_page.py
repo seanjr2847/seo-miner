@@ -420,7 +420,9 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
         if t.startswith("http"):
             opp.append(t)
         else:
-            opp += [pg["page"] for pg in by_q.get(t, [])] or [scoring.topic_page(by_t.get(t))]
+            # 서치콘솔 페이지가 없으면 추정 순위가 건 페이지, 그것도 없으면 주제 페이지
+            opp += ([pg["page"] for pg in by_q.get(t, [])]
+                    or [scoring.labs_page(conn, project_id, t) or scoring.topic_page(by_t.get(t))])
     # 기회에 걸린 페이지 중 **한 번도 안 본 것 → 가장 오래전에 본 것** 순. 점수 순만 쓰면
     # 상한(page_urls) 밖의 기회 페이지는 영영 안 보이고, 매 회차 같은 앞쪽만 다시 본다 —
     # 고치기 요청문 57장 중 25장이 "아직 점검하지 않았습니다"로 나갔다. 같은 날짜 안에서는

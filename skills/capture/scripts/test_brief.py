@@ -2031,6 +2031,19 @@ def test_differing_words_skip_plurals_and_stray_queries():
     assert brief._differing_words(rows, "abnom") == []
 
 
+
+def test_striking_without_gsc_cites_the_estimate_and_the_page():
+    """서치콘솔 없는 사이트의 '밀면 오를 검색어'는 추정 순위(labs)가 근거다 — 노출·클릭을
+    지어내지 않고, 추정이라고 밝히고, 걸린 페이지를 댄다(dashboard 가 striking_labs 로 싣는다)."""
+    o = {"kind": "striking_distance", "target": "가방"}
+    ctx = {"striking": [], "striking_labs": [{"query": "가방", "pos": 8, "vol": 60500, "band": "page1",
+                                              "gap": 0.0, "url": "https://g.kr/bags", "date": "2026-09-29"}]}
+    text = "\n".join(brief._ev_striking(o, ctx, []))
+    assert "DataForSEO 추정" in text and "8위" in text and "60,500" in text, text
+    assert "https://g.kr/bags" in text and "노출·클릭은 모릅니다" in text, text
+    assert "노출 0" not in text and "클릭 0" not in text, text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

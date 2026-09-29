@@ -79,6 +79,188 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
         conn.close()
 
 
+# ── 서치콘솔 없는 사이트의 추적 키워드 — 우리 순위 검색어(DataForSEO)가 주 출처 ──────────
+# 자동완성 검색량 순(activate_by_volume)으로 고르면 씨앗 하나('구찌')에서 나온 "구찌 ○○"만
+# 켜졌다 — 20개 중 12개가 이미 1위라 할 일이 안 나왔고, 정작 이미 4~30위에 오른 비브랜드
+# 카테고리 검색어 304개(가방 8위·토트백 6위·지갑 10위 …)는 안 봤다(2026-09-29 gucci).
+LABS_EVERY_DAYS = 7          # 우리 순위 검색어를 다시 사는 주기(일) — 한 번에 ~$0.06
+LABS_LIMIT = 500             # 검색량 큰 순으로 이만큼
+AUTO_VERSION = "labs1"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+RISE_SHARE, RECLAIM_SHARE = 0.6, 0.25     # 나머지는 방어(1~3위)
+JUDGE_POOL = 150             # AI 관련성 판정에 보여 주는 검색어 수(검색량 큰 순)
+
+
+def _refresh_labs(conn, p, post) -> bool:
+    """우리 순위 검색어를 LABS_EVERY_DAYS 마다 받아 labs_ranked·후보 키워드로 올린다."""
+    import datetime
+    import collect_gap
+    d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?",
+                     (p["id"],)).fetchone()[0]
+    today = datetime.date.today()
+    if d and (today - datetime.date.fromisoformat(d)).days < LABS_EVERY_DAYS:
+        return False
+    locale = db.project_locale(p)
+    rows, cost = collect_gap.fetch_own_ranked(post, p["domain"], locale, LABS_LIMIT)
+    db.write_labs_ranked(conn, p["id"], today.isoformat(), rows)
+    db.add_keyword_candidates(conn, p["id"], [(r["keyword"], locale, "labs_ranked") for r in rows])
+    collect_gap._backfill_volumes(conn, p["id"], [(r["keyword"], r.get("volume")) for r in rows])
+    print(f"[rank] 우리 순위 검색어 {len(rows)}개를 받았습니다 (DataForSEO 추정 · ${cost:.3f})")
+    return True
+
+
+def _judge_keywords(ask, p, pool: list, aliases) -> tuple[set, set]:
+    """(우리 브랜드 표기, 버릴 검색어) — AI 한 번. 목록 밖의 말은 버린다."""
+    import scoring
+    shown = [(k, pos, (url or "").split("/", 3)[-1][:60]) for k, pos, url in pool]
+    got = ask(
+        f"우리 사이트는 {p['domain']} 이다. 아래는 이 사이트가 검색에서 순위를 가진·후보인 검색어다 "
+        "(순위, 걸린 페이지 경로).\n"
+        f"1) brand_terms: 도메인 {p['domain']} 가 가리키는 **우리 이름 자체**의 표기만(번역·음역 포함). "
+        "우리가 다루는 남의 제품·브랜드 이름은 빼라.\n"
+        "2) drop: 추적할 가치가 **없는** 검색어만 — 우리 사업·상품과 무관한 것, 매장 위치·지점·"
+        "주소·백화점 찾기, 오타·깨진 말, 다른 사이트·서비스 이름, 우리와 무관한 인물·사건. "
+        "상품·카테고리를 가리키는 일반 검색어(영어 포함, '○○ 브랜드'·'○○ 추천' 포함)는 **절대 "
+        "drop 하지 마라** — 그게 검색에서 경쟁하는 자리다. 애매하면 남겨라.\n"
+        '둘 다 목록에 있는 표기 그대로. 답은 JSON 하나: {"brand_terms": [...], "drop": [...]}\n\n'
+        + "\n".join(f"- {k} ({pos or '-'}위, /{u})" for k, pos, u in shown))
+    known = {k for k, _, _ in pool}
+    terms = {scoring.norm(a) for a in (aliases or []) if scoring.norm(a)}
+    stem = scoring.norm(p["domain"].split(".")[0])
+    if stem:
+        terms.add(stem)
+    # AI 가 준 표기를 데이터로 검증한다 — 우리 이름이면 그 말 자체로 상위(1~3위)에 서거나 여러
+    # 검색어에 걸쳐 나온다. 귀걸이 은어(귀찌·금찌·방찌)를 브랜드로 뽑아 "되찾기" 칸에 들인 적이 있다.
+    pos_of = {scoring.norm(k): pos for k, pos, _ in pool if pos}
+    norms = [scoring.norm(k) for k in known]
+    for t in got.get("brand_terms") or []:
+        n = scoring.norm(str(t))
+        if n and ((pos_of.get(n) or 99) <= 3 or sum(1 for k in norms if n in k) >= 3):
+            terms.add(n)
+    drop = {str(k) for k in (got.get("drop") or []) if str(k) in known}
+    return terms, drop
+
+
+def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
+    """추적할 키워드 id — 씨앗 + 올릴 기회(4~30위 비브랜드) + 되찾기(우리 상품인데 밖·10위 밖)
+    + 방어(1~3위). 칸마다 검색량 큰 순, 모자란 칸은 다른 칸이 메운다."""
+    import scoring
+    brand = lambda k: any(t and t in scoring.norm(k) for t in terms)
+    d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?", (pid,)).fetchone()[0]
+    # 순위는 띄어쓰기를 무시하고 찾는다 — '구찌 가방' 1위인데 '구찌가방'을 "순위권 밖"이라며
+    # 되찾기 칸에 넣었다(같은 검색어다). 변형이 여럿이면 가장 높은 자리.
+    pos: dict = {}
+    for kw, p_ in conn.execute(
+            "SELECT keyword, position FROM labs_ranked WHERE project_id=? AND checked_date=?", (pid, d)):
+        n = scoring.norm(kw)
+        if p_ and (n not in pos or p_ < pos[n]):
+            pos[n] = p_
+    kws = [dict(r) for r in conn.execute(
+        "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
+        " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0 ORDER BY volume DESC, id", (pid,))]
+    seeds = [r[0] for r in conn.execute(
+        "SELECT id FROM keywords WHERE project_id=? AND source='seed'", (pid,))]
+    at = lambda k: pos.get(scoring.norm(k))
+    rise = [k["id"] for k in kws if not brand(k["keyword"]) and 4 <= (at(k["keyword"]) or 0) <= 30]
+    reclaim = [k["id"] for k in kws if brand(k["keyword"]) and (at(k["keyword"]) or 999) > 10]
+    defend = [k["id"] for k in kws if 1 <= (at(k["keyword"]) or 0) <= 3]
+    room = max(0, cap - len(seeds))
+    want = [round(room * RISE_SHARE), round(room * RECLAIM_SHARE)]
+    want.append(room - sum(want))
+    # 띄어쓰기·대소문자 변형은 한 말이다('카드 지갑'·'카드지갑') — 검색량 큰 쪽 하나만.
+    norm_of = {k["id"]: scoring.norm(k["keyword"]) for k in kws}
+    seen = {scoring.norm(r[0]) for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? AND source='seed'", (pid,))}
+    picked: list[int] = list(seeds)
+
+    def take(bucket, n):
+        got = 0
+        for i in bucket:
+            if got >= n or len(picked) >= max(cap, len(seeds)):
+                break
+            if i in picked or norm_of.get(i) in seen:
+                continue
+            picked.append(i)
+            seen.add(norm_of.get(i))
+            got += 1
+
+    buckets = [rise, reclaim, defend]
+    for bucket, n in zip(buckets, want):
+        take(bucket, n)
+    for bucket in buckets:                      # 모자란 칸은 순서대로 메운다
+        take(bucket, cap)
+    return picked
+
+
+def activate_keywords(project: str, limit: int | None = None, *, post=None, ask=None) -> int:
+    """서치콘솔 없는 사이트의 추적 키워드를 고른다 — 순위(rank) 직전(run_all before 훅).
+
+    주 출처는 우리 순위 검색어(DataForSEO ranked_keywords → labs_ranked). 판(AUTO_VERSION)이
+    바뀐 첫 번에는 **다시 고른다**(예전 판이 켠 것을 이 선택으로 바꾼다 — 씨앗은 그대로).
+    그 뒤로는 빈자리만 채운다 — 사람이 끈 키워드를 되켜지 않는다. AI 나 DataForSEO 키가
+    없으면 예전 경로(activate_by_volume)로 물러선다. 반환: 새로 켠 개수.
+    """
+    import os
+    import time
+    import collect_gap
+    import serp_adapter
+    if ask is None and os.environ.get("OPENROUTER_API_KEY"):
+        ask = collect_gap.openrouter_json
+    if post is None and serp_adapter.has_dataforseo():
+        post = serp_adapter.post_dataforseo
+    cap = min(limit or NO_GSC_KEYWORDS, settings.count("SEOMINER_MAX_KEYWORDS"))
+    conn = db.connect()
+    try:
+        p = db.get_project(conn, project)
+        if (p["gsc_property"] or ""):
+            return 0
+        if ask is None or post is None or not p["domain"]:
+            conn.close()
+            conn = None
+            return activate_by_volume(project, limit)
+        cfg = db.project_cfg(conn, p)
+        flag = str(cfg.get("auto_keywords") or "")
+        fresh = not flag.startswith(AUTO_VERSION)
+        refreshed = _refresh_labs(conn, p, post)
+        active = db.count_active_keywords(conn, p["id"])
+        if not fresh and not refreshed and active >= cap:
+            return 0
+        d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?",
+                         (p["id"],)).fetchone()[0]
+        pool = [(r[0], r[1], r[2]) for r in conn.execute(
+            "SELECT keyword, position, url FROM labs_ranked WHERE project_id=? AND checked_date=?"
+            " ORDER BY volume DESC LIMIT ?", (p["id"], d, JUDGE_POOL))]
+        pool += [(r[0], None, None) for r in conn.execute(      # 자동완성 후보(우리 상품 검색 등)
+            "SELECT keyword FROM keywords WHERE project_id=? AND source<>'labs_ranked'"
+            " AND is_active=0 ORDER BY volume DESC LIMIT 40", (p["id"],))]
+        if not pool:
+            return 0
+        terms, drop = _judge_keywords(ask, p, pool, cfg.get("brand_aliases"))
+        for k in drop:        # 무관 — 꺼진 후보에만 표시한다(켜 둔 것은 사람이 판단한다)
+            conn.execute("UPDATE keywords SET verdict_off=1 WHERE project_id=? AND keyword=?"
+                         " AND is_active=0", (p["id"], k))
+        conn.commit()
+        want = _select_keywords(conn, p["id"], cap, terms)
+        cur = {r[0] for r in conn.execute(
+            "SELECT id FROM keywords WHERE project_id=? AND is_active=1", (p["id"],))}
+        if fresh:
+            seeds = {r[0] for r in conn.execute(
+                "SELECT id FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))}
+            off = [i for i in cur if i not in want and i not in seeds]
+            db.set_keywords_active(conn, p["id"], off, False)
+            new = [i for i in want if i not in cur]
+        else:
+            new = [i for i in want if i not in cur][:max(0, cap - len(cur))]
+        n = db.set_keywords_active(conn, p["id"], new, True) if new else 0
+        db.set_project_settings(conn, p["id"], {"auto_keywords": f"{AUTO_VERSION}:{time.strftime('%Y-%m-%d')}"})
+        print(f"[rank] 추적 키워드를 골랐습니다 — 새로 {n}개"
+              + (f" · 뺀 것 {len(off)}개" if fresh else "")
+              + f" · 무관 {len(drop)}개 · 우리 브랜드 표기 {sorted(terms)}")
+        return n
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def ensure_ai_prompts(project: str, n: int = 20) -> int:
     """물어볼 질문이 하나도 없으면 만들어 둔다. 반환: 새로 넣은 개수.
 
@@ -356,8 +538,8 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                     results = run_all.run_chain(
                         project, dry_run=dry_run, skip=skip, only=only, opts=chain_opts,
                         on_stage=on_stage, groups=None if only else groups, ran=ran,
-                        # 서치콘솔 없는 사이트: 검색량이 나온 뒤·순위를 재기 전에 켠다
-                        before={"rank": activate_by_volume})
+                        # 서치콘솔 없는 사이트: 검색량이 나온 뒤·순위를 재기 전에 고른다
+                        before={"rank": activate_keywords})
                     run_all.print_summary(project, results, dry_run=dry_run)
                 rc = max(rc, run_all.chain_rc(results))
                 # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
@@ -671,6 +853,68 @@ def demo() -> None:
             c.execute("UPDATE keywords SET is_active=0 WHERE project_id=? AND keyword='큰말'", (ng,))
             c.commit(); c.close()
             assert activate_by_volume("nogsc", limit=3) == 0, "사람이 끈 키워드를 다음 런에 되켰다"
+
+            # 우리 순위 검색어가 주 출처 — gucci 모양: 브랜드 1위투성이 + 이미 순위권인 비브랜드.
+            c = db.connect()
+            c.execute("INSERT INTO projects(name, type, domain, gsc_property) VALUES (?,?,?,'')",
+                      ("brandx", "commerce", "gc.test"))
+            c.commit()
+            bx = db.get_project(c, "brandx")["id"]
+            db.set_seed_keywords(c, bx, ["구찌"])
+            # 예전 판(검색량 순)이 켠 브랜드 검색어 — 새 판은 이걸 다시 고른다
+            c.executemany("INSERT INTO keywords(project_id, keyword, source, is_active, volume) VALUES (?,?,?,?,?)",
+                          [(bx, "구찌 로고", "autocomplete", 1, 90000), (bx, "구찌 지갑", "autocomplete", 0, 30000),
+                           (bx, "구찌 모자", "autocomplete", 1, 1000),     # 새 선택에 안 드는 예전 것
+                           # '구찌 가방'(1위)의 붙여 쓴 변형 — 순위권 밖이 아니다(되찾기 칸에 들면 안 된다)
+                           (bx, "구찌가방", "autocomplete", 0, 50000)])
+            db.set_project_settings(c, bx, {"auto_keywords": "2026-09-29"})
+            c.commit(); c.close()
+            labs_rows = [("구찌 로고", 1, 90000), ("구찌 벨트", 1, 60000), ("가방", 8, 60500),
+                         ("카드 지갑", 11, 25000), ("카드지갑", 13, 24900), ("귀찌", 41, 1900),
+                         ("구찌 가방", 1, 40000),
+                         ("토트백", 6, 12100), ("지갑", 10, 14800), ("하남스타필드", 29, 8100),
+                         ("your.gg", 25, 27100), ("셔츠", 19, 22200), ("구찌 가방 인기 순위", 7, 390)]
+            posts = []
+
+            def fake_post(path, body):
+                posts.append(path)
+                return [{"items": [{"keyword_data": {"keyword": k, "keyword_info": {"search_volume": v}},
+                                    "ranked_serp_element": {"serp_item": {"rank_group": r,
+                                                                          "url": f"https://gc.test/{k}"}}}
+                                   for k, r, v in labs_rows]}], 0.06
+
+            def fake_ask(prompt):
+                assert "하남스타필드" in prompt and "/가방" in prompt, "판정에 걸린 페이지가 안 실렸다"
+                # '귀찌'는 41위·검색어 하나뿐 — 우리 이름일 수 없다(데이터 검증으로 버려져야 한다)
+                return {"brand_terms": ["구찌", "지어낸", "귀찌"], "drop": ["하남스타필드", "your.gg", "없는말"]}
+
+            n = activate_keywords("brandx", limit=6, post=fake_post, ask=fake_ask)
+            c = db.connect()
+            on = {r[0] for r in c.execute("SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (bx,))}
+            off = {r[0] for r in c.execute("SELECT keyword FROM keywords WHERE project_id=? AND verdict_off=1", (bx,))}
+            flag = db.project_settings(c, bx).get("auto_keywords", "")
+            nlabs = c.execute("SELECT COUNT(*) FROM labs_ranked WHERE project_id=?", (bx,)).fetchone()[0]
+            c.close()
+            assert nlabs == len(labs_rows), "우리 순위 검색어를 labs_ranked 에 안 적었다"
+            assert {"하남스타필드", "your.gg"} <= off, f"무관 판정이 안 걸렸다: {off}"
+            # 씨앗 1 + 5칸: 올릴 기회 3(가방·카드 지갑·셔츠 — '카드지갑'은 같은 말이라 빠진다) + 되찾기 1
+            #   (구찌 지갑 — '귀찌'는 브랜드로 안 받아서 이 칸 후보가 아니다) + 방어 1(구찌 로고).
+            # 새 판 첫 번은 다시 고른다 — 예전 판이 켠 '구찌 모자'는 꺼진다(빈자리 채우기만 하면 남는다)
+            assert on == {"구찌", "가방", "카드 지갑", "셔츠", "구찌 지갑", "구찌 로고"}, on
+            assert flag.startswith(AUTO_VERSION), flag
+            # 브랜드 표기는 AI 말만 믿지 않는다 — 그 말 자체로 1~3위이거나 3개 이상 검색어에 나와야 한다
+            terms, _ = _judge_keywords(
+                lambda _p: {"brand_terms": ["구찌", "귀찌", "구찌벨트"], "drop": []},
+                {"domain": "gc.test"},
+                [("구찌", 1, None), ("구찌 벨트", 2, None), ("구찌 지갑", None, None),
+                 ("구찌 로고", 1, None), ("귀찌", 41, None)], [])
+            assert "구찌" in terms and "구찌벨트" in terms and "귀찌" not in terms, terms
+            # 다음 런 — 7일 안에는 다시 안 사고, 자리가 차 있으면 아무것도 안 바꾼다
+            posts.clear()
+            assert activate_keywords("brandx", limit=6, post=fake_post, ask=fake_ask) == 0
+            assert posts == [], f"주기 안에 순위 검색어를 또 샀다: {posts}"
+            # AI 가 없으면 예전 경로(검색량 순) — 이 사이트는 이미 새 판이라 아무것도 안 한다
+            assert activate_keywords("brandx", limit=6, post=fake_post, ask=None) == 0
             c = db.connect()
             n = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1",
                           (pid,)).fetchone()[0]

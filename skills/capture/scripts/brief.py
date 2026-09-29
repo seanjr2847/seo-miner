@@ -1485,6 +1485,17 @@ def _ev_striking(o, ctx, pages):
                     f" · 상단 3위권까지 {round(max(0.0, r['pos'] - 3), 1)}칸"))
         L.append("- 이 순위는 기간 평균 게재순위입니다. 노출된 순간들의 평균이라 지금 직접 "
                  "검색하면 안 보일 수 있습니다.")
+    if not r:
+        # 서치콘솔 없는 사이트 — DataForSEO 추정 순위. 노출·클릭이 없다고 말하고 걸린 페이지를 댄다.
+        lr = _find(ctx.get("striking_labs"), "query", o["target"])
+        if lr:
+            L.append(f"- DataForSEO 추정 ({lr.get('date') or ''} · 서치콘솔 없음): {lr['pos']}위 · "
+                     f"월 검색량 {_n(lr.get('vol'))}"
+                     + (f" · 1페이지까지 {lr['gap']}칸" if lr.get("band") == "page2" else
+                        f" · 상단 3위권까지 {round(max(0.0, lr['pos'] - 3), 1)}칸"))
+            if lr.get("url"):
+                L.append(f"- 이 검색어에 걸린 우리 페이지: {lr['url']}")
+            L.append("- 추정 순위라 실제 노출·클릭은 모릅니다. 서치콘솔을 연결하면 실측으로 바뀝니다.")
     L += _ctr_lines(r, pages)
     return L + _pages_table(pages)
 
