@@ -1115,7 +1115,8 @@
     var box = document.getElementById("view-settings");
     if (!box) return;
     var cur = box.querySelector(".next");
-    if (cur && cur.innerHTML === SET_NEXT[SET_STATE]) return;
+    // 비교는 nextStep 이 적어 둔 받은 글자(_html)로 — 셸이 닫기 버튼을 덧붙여 innerHTML 은 다르다
+    if (cur && cur._html === SET_NEXT[SET_STATE]) return;
     nextStep("settings", SET_NEXT[SET_STATE]);
   }
 

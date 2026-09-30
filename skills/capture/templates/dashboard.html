@@ -466,6 +466,27 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   color:var(--accent-ink); }
 .next .acts .cmd:not(.sec)::after { color:var(--accent-ink); }
 .next .acts .cmd:not(.sec).copied::after { color:var(--accent-ink); }
+/* 화면에서는 띠가 본문 사이에 서지 않고 **우하단 알림 카드**로 뜬다 — 진행 배너와 지표 사이에
+   한 줄을 더 끼우면 화면 머리가 띠 세 겹으로 읽혔다. 닫으면(✕) 같은 문장인 동안 그 사이트·
+   화면에선 다시 안 뜬다(nextStep 의 nxGone). [안내]는 띠가 화면 본문(현재 단계 카드)이라
+   제자리에 둔다. 종이(print)는 위 인쇄 규칙대로 문장만 제자리에 남는다. */
+@media screen {
+  .view:not(#view-guide) > .next { position:fixed; right:var(--sp-4); bottom:var(--sp-4); z-index:55;
+    width:min(380px, calc(100vw - 32px)); margin:0; padding:14px 44px 14px 16px;
+    align-items:flex-start; box-shadow:var(--shadow-2); }
+  .view:not(#view-guide) > .next::before { margin-top:3px; }
+  .view:not(#view-guide) > .next p { flex:1 1 0; min-width:0; }
+  .view:not(#view-guide) > .next .acts { flex:1 1 100%; padding-left:34px; }
+  .view:not(#view-guide) > .next .progress { order:3; }
+  @media (max-width:560px) { .view:not(#view-guide) > .next { left:var(--sp-4); width:auto; } }
+  /* 카드가 본문 끝을 가리지 않게 — 떠 있는 동안만 아래를 더 비운다 */
+  body:has(.view:not([hidden]):not(#view-guide) > .next) main { padding-bottom:200px; }
+}
+.nx-x { position:absolute; top:8px; right:8px; width:28px; height:28px; display:grid; place-items:center;
+  border:0; border-radius:var(--r-in); background:none; color:var(--sub); cursor:pointer;
+  font:400 16px/1 var(--sans); }
+.nx-x:hover { background:color-mix(in srgb, var(--ink) 8%, transparent); color:var(--ink); }
+@media print { .nx-x { display:none; } }
 
 /* 띠가 주요 버튼으로 든 단계는 머리줄에서 **뺀다**. 흐리게만 두면 그 화면의 주
    단계 칩이 머리줄에서 가장 흐린 글자가 되어 위계가 거꾸로 선다. 지우지 않고
@@ -1991,10 +2012,31 @@ window.viewBanner = viewId => {
 };
 SM.slot = function () { return window.viewBanner(this.cur); };
 
+// 닫은 알림 카드 — 사이트·화면별로 닫을 때의 문장을 적어 둔다. 문장이 바뀌면(다음 걸음이
+// 달라지면) 다시 뜬다. 저장이 막힌 브라우저면 이번 화면에서만 닫힌다.
+const nxKey = viewId => "sm:nx:" + (($("proj") || {}).value || "") + ":" + viewId;
+const NX_GONE = {};
+const nxGone = (viewId, html) => {
+  let v = NX_GONE[nxKey(viewId)];
+  try { v = v || localStorage.getItem(nxKey(viewId)); } catch (e) {}
+  return !!html && v === html;
+};
+document.addEventListener("click", ev => {
+  const x = ev.target.closest && ev.target.closest("[data-nx-x]");
+  if (!x) return;
+  const el = x.closest(".next"), box = el && el.closest(".view");
+  if (!box) return;
+  const id = box.id.replace(/^view-/, "");
+  NX_GONE[nxKey(id)] = el._html;
+  try { localStorage.setItem(nxKey(id), el._html); } catch (e) {}
+  window.nextStep(id, el._html);
+});
+
 window.nextStep = (viewId, html) => {
   const box = $("view-" + viewId);
   if (!box) return;
   let el = box.querySelector(":scope > .next");
+  if (viewId !== "guide" && nxGone(viewId, html)) html = "";
   if (!html) { if (el) el.remove(); dimHead(viewId); return banSync(); }
   if (!el) {
     el = document.createElement("div");
@@ -2008,6 +2050,9 @@ window.nextStep = (viewId, html) => {
   // 넘겨받은 글자와 달라져, 이 띠를 자기가 세웠는지 내용으로 판별하는 층
   // (dash.html 의 paintSetNext)이 매번 "내 말이 아니다"라고 읽는다.
   el.innerHTML = html;
+  el._html = html;       // 받은 글자 — 닫기 버튼을 덧붙여 innerHTML 은 이것과 다르다
+  if (viewId !== "guide" && !READONLY)
+    el.insertAdjacentHTML("beforeend", '<button type="button" class="nx-x" data-nx-x aria-label="이 알림 닫기">✕</button>');
   if (READONLY) el.querySelectorAll(".acts").forEach(a => a.remove());
   deadSweep(el);
   applyWording(el);
@@ -2041,6 +2086,9 @@ window.toast = (msg, kind) => {
   t.className = "toast" + (kind ? " " + kind : "");
   t.setAttribute("role", "status");
   t.textContent = msg;
+  // 다음 걸음 카드가 우하단에 떠 있으면 그 위로 쌓는다
+  const nx = document.querySelector(".view:not([hidden]):not(#view-guide) > .next");
+  box.style.bottom = nx && nx.offsetHeight ? `calc(var(--sp-4) + ${nx.offsetHeight + 8}px)` : "";
   box.appendChild(t);
   setTimeout(() => t.remove(), 3000);
 };

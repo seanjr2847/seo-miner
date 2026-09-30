@@ -85,7 +85,8 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
 # 카테고리 검색어 304개(가방 8위·토트백 6위·지갑 10위 …)는 안 봤다(2026-09-29 gucci).
 LABS_EVERY_DAYS = 7          # 우리 순위 검색어를 다시 사는 주기(일) — 한 번에 ~$0.06
 LABS_LIMIT = 500             # 검색량 큰 순으로 이만큼
-AUTO_VERSION = "labs3"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+AUTO_VERSION = "labs4"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+                             # labs4: labs3 은 다른 언어-지역 연관 검색어(Gucci India …)로 빈칸을 메웠다
                              # labs3: labs2 는 라틴 글자 검색어를 en-US 로 두고 미국 검색량 순으로
                              #   골라 영어 검색어(belt·lipstick …)로 뒤덮였다
                              # labs2: labs1 은 AI 판정이 잘려 빈 채로 골랐다(무관 0·매장 위치가
@@ -184,9 +185,13 @@ def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
             pos[n] = p_
         if v:
             lvol[n] = max(lvol.get(n, 0), v)
+    # 다른 언어-지역 키워드는 고르지 않는다 — 브랜드가 든 연관 검색어('Gucci India'·'Gucci us',
+    # en-US·미국 검색량)가 순위 추정에 없다는 이유로 되찾기 칸에 들어 한국 사이트의 추적을 채웠다.
+    site_loc = db.project_locale(conn.execute("SELECT locale FROM projects WHERE id=?", (pid,)).fetchone())
     kws = [dict(r) for r in conn.execute(
         "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
-        " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0 ORDER BY id", (pid,))]
+        " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0"
+        " AND (locale IS NULL OR locale=?) ORDER BY id", (pid, site_loc))]
     for k in kws:
         k["vol"] = lvol.get(scoring.norm(k["keyword"])) or k["volume"] or 0
     kws.sort(key=lambda k: (-k["vol"], k["id"]))
@@ -928,6 +933,9 @@ def demo() -> None:
             c = db.connect()
             c.execute("INSERT INTO keywords(project_id, keyword, source, is_active, volume, locale, locale_src)"
                       " VALUES(?, 'belt', 'labs_ranked', 0, 900000, 'en-US', 'script')", (bx,))
+            # 브랜드가 든 다른 나라 연관 검색어 — 순위 추정에 없어 되찾기 칸 후보처럼 보인다
+            c.execute("INSERT INTO keywords(project_id, keyword, source, is_active, volume, locale, locale_src)"
+                      " VALUES(?, '구찌 us', 'serp', 0, 800000, 'en-US', 'script')", (bx,))
             c.commit(); c.close()
             n = activate_keywords("brandx", limit=6, post=fake_post, ask=fake_ask)
             c = db.connect()
@@ -953,6 +961,7 @@ def demo() -> None:
             c.close()
             assert loc == "ko-KR", f"한국 구글에서 잡힌 영어 검색어를 {loc} 로 뒀다 — 미국 검색량이 붙는다"
             assert "belt" not in on, "다른 나라 검색량으로 줄을 세웠다(사이트 나라 검색량 300짜리가 뽑혔다)"
+            assert "구찌 us" not in on, "다른 언어-지역(en-US) 연관 검색어를 한국 사이트 추적에 넣었다"
             # 브랜드 표기는 AI 말만 믿지 않는다 — 그 말 자체로 1~3위이거나 3개 이상 검색어에 나와야 한다
             terms, _ = _judge_keywords(
                 lambda _p: {"brand_terms": ["구찌", "귀찌", "구찌벨트"], "drop": []},
