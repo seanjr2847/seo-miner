@@ -377,4 +377,83 @@ finally:
     LR.clear()
     LR.update(_orig_routes)
 
-print(f"ok — 설정 API · 안내 판정 · 박제본 · 로컬 route 표 {len(LR)}개 정상 ({HOME})")
+# ── 할 일(play) → PR — 실제 HTTP 경로와 로컬 기록·상태 갈래(_play_record·_play_mark) ─────
+# 진짜 claude·gh 는 안 부른다: play_pr 의 _which·_spawn·_start 를 갈아 끼운다. play 는
+# 페이로드(d.plays — 갈래 A 의 gather)에서 오는데 여기서는 load 만 바꿔 같은 꼴을 준다.
+import play_pr  # noqa: E402
+_c = dashboard.db.connect()
+try:
+    # plays 표는 db.SCHEMA 가 갖는다(계약서 그대로). 아직 없는 체크아웃에서도 이 검사가
+    # 돌도록 같은 꼴을 여기서만 세운다 — 제품 코드에는 사본을 두지 않는다.
+    _c.execute("""CREATE TABLE IF NOT EXISTS plays (
+      id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP, page TEXT NOT NULL, title TEXT,
+      keywords_json TEXT, opp_ids_json TEXT, score REAL, evidence_json TEXT,
+      result_json TEXT, markdown TEXT, model TEXT, cost REAL, status TEXT DEFAULT 'new')""")
+    _oids = [_c.execute("INSERT INTO opportunities(project_id, kind, target, score) "
+                        "VALUES(?, 'striking_distance', ?, 10)", (_pid, t)).lastrowid
+             for t in ("가방", "토트백")]
+    _play_id = _c.execute("INSERT INTO plays(project_id, page, opp_ids_json, markdown) "
+                          "VALUES(?, 'https://demo.com/bags', ?, '# 가방 페이지')",
+                          (_pid, json.dumps(_oids))).lastrowid
+    _c.commit()
+finally:
+    _c.close()
+_repo = HOME / "demo-repo"
+(_repo / ".git").mkdir(parents=True)
+dashboard.paths.dirs_file().write_text(json.dumps({"demo": str(_repo)}), "utf-8")
+_real = (play_pr._which, play_pr._spawn, play_pr._start, dashboard._PLAY_SITE["load"])
+_watch = []
+
+
+class _Done:
+    pid = 1
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _fake_spawn(cmd, cwd, stdin_file, log_file):
+    Path(log_file).write_text("https://github.com/me/demo/pull/7\n", "utf-8")
+    return _Done()
+
+
+play_pr._which = lambda exe: f"/bin/{exe}"
+play_pr._spawn = _fake_spawn
+play_pr._start = _watch.append
+dashboard._PLAY_SITE["load"] = lambda p: {"plays": [
+    {"id": _play_id, "page": "https://demo.com/bags", "opp_ids": _oids, "status": "new",
+     "markdown": "# 가방 페이지"}]}
+try:
+    code, st = get("/api/plays/apply?project=demo")
+    assert code == 200 and st["ready"] and st["jobs"] == {}, st
+    code, r = post("/api/plays/apply", {"project": "demo", "id": _play_id}, token="wrong")
+    assert code == 403 and not _watch, "토큰 없이 PR 만들기가 돌았다"
+    code, r = post("/api/plays/apply", {"project": "demo", "id": _play_id})
+    assert code == 200 and r["ok"] and r["job"]["status"] == "running", (code, r)
+    code, r = post("/api/plays/apply", {"project": "demo", "id": _play_id})
+    assert code == 400 and "만드는 중" in r["error"], (code, r)
+    _watch.pop()()                                     # 프로세스가 끝났다
+    code, st = get(f"/api/plays/apply?project=demo&id={_play_id}")
+    assert st["job"]["status"] == "done" and st["job"]["pr_url"].endswith("/pull/7"), st
+    _c = dashboard.db.connect()
+    try:
+        rows = _c.execute("SELECT opportunity_id, branch, note, file_path FROM creations "
+                          "WHERE project_id=? ORDER BY id", (_pid,)).fetchall()
+        got = [(r[0], r[1], r[2]) for r in rows if r[0] in _oids]
+        assert got == [(o, f"seo/play-{_play_id}", "https://github.com/me/demo/pull/7")
+                       for o in _oids], got
+        assert {_c.execute("SELECT status FROM opportunities WHERE id=?", (o,)).fetchone()[0]
+                for o in _oids} == {"acked"}, "기록된 기회가 진행 중이 아니다"
+        assert _c.execute("SELECT status FROM plays WHERE id=?", (_play_id,)).fetchone()[0] \
+            == "applied", "PR 을 만들었는데 play 가 applied 가 아니다"
+    finally:
+        _c.close()
+    # 준비 안 됨(폴더 없음) — 버튼이 [설정]으로 보낼 수 있게 fix 를 싣는다
+    dashboard.paths.dirs_file().write_text("{}", "utf-8")
+    code, st = get("/api/plays/apply?project=demo")
+    assert not st["ready"] and st["fix"] == "settings", st
+finally:
+    play_pr._which, play_pr._spawn, play_pr._start, dashboard._PLAY_SITE["load"] = _real
+
+print(f"ok — 설정 API · 안내 판정 · 박제본 · 로컬 route 표 {len(LR)}개 · 할 일 PR 정상 ({HOME})")
