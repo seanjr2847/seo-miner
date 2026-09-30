@@ -479,9 +479,32 @@ def _hand_off(conn, site) -> bool:
     return True
 
 
+def _defer_unmeasured(conn, site, groups, results, db_lock) -> list[str]:
+    """이번 라운드에서 못 잰 묶음의 시계를 되돌리고 로그에 한 줄씩 남긴다(Railway 로그·
+    런 로그 둘 다 보인다). 부수 작업이다 — 여기서 터져도 수집을 실패로 만들지 않는다."""
+    try:
+        miss = run_all.unmeasured(groups, results)
+        if not miss:
+            return []
+        with db_lock:
+            row = conn.execute("SELECT * FROM sites WHERE id=?", (site["id"],)).fetchone()
+            back = store.defer_groups(conn, row, list(miss), scheduler.every_hours(),
+                                      run_all.RETRY_HOURS)
+        for g, why in miss.items():
+            name = run_all.GROUP_BY_ID[g]["name"]
+            tail = (f" — {run_all.RETRY_HOURS}시간 뒤 다시 잽니다" if g in back
+                    else " — 자동 재기가 꺼져 있어 다시 잡지 않습니다")
+            print(f"[{site['project']}] {name} 을(를) 이번에 못 쟀습니다 ({why}){tail}")
+        return back
+    except Exception as e:
+        print(f"[{site['project']}] 못 잰 묶음 되돌리기 건너뜀: {e}")
+        return []
+
+
 def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
              only: str | None = None, opts: dict[str, dict] | None = None,
-             groups=None, queue: bool = False, merge_wait: float = MERGE_SECONDS) -> dict:
+             groups=None, queue: bool = False, merge_wait: float = MERGE_SECONDS,
+             fresh=()) -> dict:
     """사이트 1건 처리. tenant() 안에서 유료 키를 주입하고 run_chain 을 호출.
 
     세 갈래다:
@@ -497,6 +520,13 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
     기회를 다시 세워야 한다.
 
     opts 는 `--opt STAGE.KEY=VALUE` 로 들어온 단계별 노브다(원격 CLI 가 쓴다).
+
+    fresh 는 첫 라운드가 다시 안 살 유료 단계다(run_all.borrowed — 이번 주기에 다른 묶음이
+    이미 잰 것). 스윕(run_all_due)만 준다.
+
+    라운드가 끝날 때마다 **시계만 찍히고 못 잰 묶음**(run_all.unmeasured — 제 단계가 통째로
+    건너뜀)의 시계를 되돌린다(store.defer_groups): 하루 뒤 다시 잡힌다. 안 그러면 질문이
+    없거나 잔액이 막힌 [AI 노출] 이 시작할 때 찍힌 시계 때문에 한 주씩 계속 밀린다.
 
     체인이 뱉는 내레이션은 그대로 잡아 sites.run_log 에 둔다 — 원격 CLI 는 자기가
     요약표를 다시 만들지 않고 이걸 받아 그대로 print 한다(문구는 한 벌이다). 라운드가
@@ -582,8 +612,12 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
                         project, dry_run=dry_run, skip=skip, only=only, opts=chain_opts,
                         on_stage=on_stage, groups=None if only else groups, ran=ran,
                         # 서치콘솔 없는 사이트: 검색량이 나온 뒤·순위를 재기 전에 고른다
-                        before={"rank": activate_keywords})
+                        before={"rank": activate_keywords},
+                        # 빌린 단계가 있을 때만 싣는다(첫 라운드·묶음 런) — 없으면 예전 호출 그대로
+                        **({"fresh": set(fresh)} if fresh and rounds == 1 and not only else {}))
                     run_all.print_summary(project, results, dry_run=dry_run)
+                    if not only and not dry_run:
+                        _defer_unmeasured(conn, site, groups, results, db_lock)
                 rc = max(rc, run_all.chain_rc(results))
                 # 실패한 단계는 화면·메일이 읽는 사실이 된다. 여태 rc 는 반환값으로만
                 # 나가고 아무도 안 읽어서, 402 를 100번 맞은 런도 화면에는 그냥 '완료'였다.
@@ -678,17 +712,20 @@ def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
             if fresh is None:
                 print(f"[{site['user_id']}/{site['project']}] 건너뜀 — 다른 워커가 도는 중")
                 continue
-        want = set(store.due_groups(conn, fresh, every_hours))
-        if not dry_run:
-            want |= set(store.claim_queue(conn, site["id"]))
+        due = set(store.due_groups(conn, fresh, every_hours))
+        pressed = set() if dry_run else set(store.claim_queue(conn, site["id"]))
+        want = due | pressed
         groups = [g for g in run_all.RUNNABLE_GROUPS if g in want]
+        # 사람이 누른 묶음이 섞이면 빌리지 않는다 — 누른 사람은 새로 재기를 바란다.
+        borrow = set() if pressed else run_all.borrowed(
+            groups, [g for g in run_all.RUNNABLE_GROUPS if g not in want])
         if not groups:
             if not dry_run:                   # 잡았는데 잴 것이 없다 — 잡은 것을 푼다
                 store.mark_done(conn, site["id"])
                 _hand_off(conn, site)
             continue
         print(f"[{site['user_id']}/{site['project']}] 시작 — {','.join(groups)}")
-        r = run_site(conn, site, dry_run=dry_run, skip=skip, groups=groups)
+        r = run_site(conn, site, dry_run=dry_run, skip=skip, groups=groups, fresh=borrow)
         results.append(r)
         print(f"[{site['user_id']}/{site['project']}] {'ok' if r.get('ok') else '실패'}")
     return results
@@ -1261,6 +1298,45 @@ def _group_demo(conn, uid, called) -> None:
     _handed.clear()
     run_site(conn, site(), groups=["search"])
     assert not _handed, f"넘길 것이 없는데 워커를 띄웠다: {_handed}"
+
+    # 9. 시계만 찍히고 못 잰 묶음(P3) — aitierlist·noti 의 [AI 노출] 은 ai 단계가 매번
+    #    건너뛰었는데 시계는 시작할 때 찍혀 한 주씩 밀렸다(ai 기록 0). 제 단계가 통째로
+    #    건너뛴 묶음은 시계를 되돌려 하루 뒤 다시 잡는다. 그 스윕은 이번 주기에 검색 성과가
+    #    잰 rank 를 다시 안 산다(fresh).
+    store.mark_done(conn, sid)
+    age(1000)
+    seen9 = []
+
+    def chain9(project, **kw):
+        seen9.append({"groups": kw.get("groups"), "fresh": set(kw.get("fresh") or ())})
+        return [("ai", StageResult(ok=True, skipped=True, reason="AI에 물어볼 질문이 아직 없습니다")),
+                ("rank", StageResult(ok=True)), ("gaps", StageResult(ok=True))]
+
+    run_all.run_chain = chain9
+    try:
+        run_site(conn, site(), groups=list(ALL))
+        due9 = store.due_groups(conn, site(), 168.0)
+        assert due9 == [], f"못 잰 묶음을 되돌리자마자 또 잡는다(매 틱 재시도): {due9}"
+        log = conn.execute("SELECT run_log FROM sites WHERE id=?", (sid,)).fetchone()[0]
+        assert "AI 노출 을(를) 이번에 못 쟀습니다" in log and "질문이 아직 없습니다" in log, log[-500:]
+        conn.execute("UPDATE site_groups SET last_run_at=datetime(last_run_at, '-25 hours') "
+                     "WHERE site_id=?", (sid,))
+        conn.commit()
+        assert store.due_groups(conn, site(), 168.0) == ["todo", "ai"], \
+            f"하루 뒤 못 잰 묶음이 다시 안 잡힌다: {store.due_groups(conn, site(), 168.0)}"
+        # 다음 스윕 — 할 일과 AI 노출만. rank 는 이번 주기에 검색 성과가 이미 쟀다
+        run_all_due(conn, every_hours=168.0)
+        assert seen9[-1]["groups"] == ["todo", "ai"] and seen9[-1]["fresh"] == {"rank"}, seen9[-1]
+        # 사람이 누른 묶음이 섞이면 빌리지 않는다 — 새로 재기를 바란 것이다
+        conn.execute("UPDATE site_groups SET last_run_at=datetime(last_run_at, '-25 hours') "
+                     "WHERE site_id=? AND grp IN ('todo','ai')", (sid,))
+        conn.commit()
+        store.queue_groups(conn, sid, ["ai"])
+        run_all_due(conn, every_hours=168.0)
+        assert seen9[-1]["fresh"] == set(), f"누른 묶음인데 rank 를 빌렸다: {seen9[-1]}"
+    finally:
+        run_all.run_chain = prev
+    store.mark_done(conn, sid)
 
 
 _real_chain: list = []

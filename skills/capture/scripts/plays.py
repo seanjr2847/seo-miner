@@ -63,11 +63,19 @@ PLAY_FRESH_DAYS = 7
 PLAY_HOLD_DAYS = 30         # PR 을 만들었거나(applied) 사람이 뺀(dismissed) 페이지는 이만큼 안 다시 낸다
 PLAY_GAPS = 12
 PROMPT_BRIEF_MAX = 12000    # 요청문 본문 상한(글자) — 프롬프트가 요청문 하나로 다 차지 않게
+# 묶음 하나의 AI 한 번 **추정** 단가($) — 긴 입력(요청문+증거 ~15k 토큰)과 긴 답(최대
+# PLAY_MAX_TOKENS). 실청구는 응답 usage.cost 다. 잔액 카나리아(run_all.preflight)만 쓴다.
+PLAY_CALL_USD = 0.25
+
+
+def estimate_usd() -> float:
+    """이번 할 일 만들기의 추정 비용 — 묶음 수 상한 × PLAY_CALL_USD."""
+    return round(PLAY_MAX * PLAY_CALL_USD, 2)
 
 # '있는 페이지 고치기' 종류 — 첫 판은 이것만. content_gap 은 밀림(weak)만이다(없음은 새 글이다).
 PLAY_KINDS = ("striking_distance", "aio_exposure", "ctr_gap", "content_gap")
 
-ON_PAGE_PARSE = "/on_page/content_parsing/live"
+ON_PAGE_PARSE = collect_page.ON_PAGE_PARSE
 
 
 def _utcnow() -> datetime:
@@ -164,67 +172,10 @@ def _jl(v) -> list:
     return [str(i) for i in x] if isinstance(x, list) else []
 
 
-def parse_content(result) -> dict | None:
-    """DataForSEO On-Page content_parsing 응답 → {title, h1, headings, words}. 못 읽으면 None.
-
-    응답 꼴은 문서와 버전마다 조금씩 다르다 — items[0].page_content 의 main_topic·
-    secondary_topic(각각 h_title·level·primary_content[].text)을 읽고, 없는 칸은 건너뛴다.
-    """
-    try:
-        items = (result[0] or {}).get("items") or []
-        item = items[0] if items else None
-    except (IndexError, TypeError, AttributeError):
-        return None
-    if not isinstance(item, dict):
-        return None
-    pc = item.get("page_content") or {}
-    topics = [t for t in (pc.get("main_topic") or []) + (pc.get("secondary_topic") or [])
-              if isinstance(t, dict)]
-    h1: list[str] = []
-    h2: list[str] = []
-    words = 0
-    for t in topics:
-        ht = " ".join(str(t.get("h_title") or "").split())
-        if ht:
-            (h1 if t.get("level") == 1 else h2 if t.get("level") == 2 else []).append(ht)
-        for part in ("primary_content", "secondary_content"):
-            for c in t.get(part) or []:
-                if isinstance(c, dict):
-                    words += len(str(c.get("text") or "").split())
-    if not (h1 or h2 or words):
-        return None
-    title = next((str(t.get("main_title")) for t in topics if t.get("main_title")), None) \
-        or (h1[0] if h1 else None)
-    return {"title": title, "h1": h1[0] if h1 else None, "headings": h2[:30], "words": words}
-
-
-def read_page(url: str, *, fetch, post, dfs: bool) -> tuple[dict, float, str | None]:
-    """한 장 읽기 → (정보, 비용, 못 읽은 사유). 직접 → (막히면) DataForSEO → 못 읽음.
-
-    정보: {title, h1, meta, headings(H2), words, fetched_via}. 못 읽어도 한 줄은 낸다 —
-    "못 읽었다"가 증거다(화면이 그렇게 말한다).
-    """
-    a = fetch(url) or {}
-    if not a.get("error"):
-        return ({"title": a.get("title"), "h1": (_jl(a.get("h1_json")) or [None])[0],
-                 "meta": a.get("meta_description"), "headings": _jl(a.get("h2_json")),
-                 "words": a.get("words"), "fetched_via": "direct"}, 0.0, None)
-    why = str(a.get("error") or "")
-    if collect_page.blocked(a.get("status")) and dfs:
-        try:
-            res, cost = post(ON_PAGE_PARSE, [{"url": url}])
-            got = parse_content(res)
-            if got:
-                return ({**got, "meta": None, "fetched_via": "dataforseo"}, float(cost or 0), None)
-            why += " · DataForSEO 로도 본문을 못 읽었습니다"
-            return ({"title": None, "h1": None, "meta": None, "headings": [], "words": None,
-                     "fetched_via": "none"}, float(cost or 0), why)
-        except collector.Fatal:
-            raise
-        except Exception as e:
-            why += f" · DataForSEO: {e}"
-    return ({"title": None, "h1": None, "meta": None, "headings": [], "words": None,
-             "fetched_via": "none"}, 0.0, why)
+# 한 장 읽기(직접 → 막히면 DataForSEO On-Page)는 페이지 점검(collect_page)과 한 벌이다 —
+# 봇 차단 사이트(gucci)에서 페이지 점검도 같은 폴백을 쓴다. 정본은 collect_page 에 있다.
+parse_content = collect_page.parse_content
+read_page = collect_page.read_page
 
 
 def gaps(ours: list[str], tops: list[list[str]], *, min_pages: int = 2,

@@ -862,6 +862,16 @@ def _stale_days(audit: dict) -> int | None:
     return (datetime.date.today() - d).days
 
 
+def _has_head_fields(audit: dict) -> bool:
+    """이 감사 행이 페이지 머리(meta description·ld+json)를 읽고 온 것인가.
+
+    collect_page.audit_html 은 schema_json 을 늘 채운다(없으면 "[]"). 봇 차단 사이트를
+    DataForSEO 로 대신 읽은 행(collect_page.audit_from_parsed)은 본문 구조만 있고 이 칸이
+    NULL 이다 — 그걸 "설명 없음·구조화 데이터 없음"으로 읽으면 없는 문제를 세운다.
+    """
+    return audit.get("schema_json") is not None
+
+
 def _has_render_fields(audit: dict) -> bool:
     """이 감사 행이 모바일·언어 칸을 읽고 온 것인가.
 
@@ -1047,6 +1057,22 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     def add(tag, level, now, fix):
         out.append({"tag": tag, "level": level, "now": now, "fix": fix})
 
+    if audit.get("status") in (404, 410):
+        # 없는 페이지 — "브라우저로 열어 보세요"는 이미 확인한 것을 또 시킨다. 검색어가 아직
+        # 이 주소로 걸려 있으면(queries) 번 노출을 버리는 중이다 → 가장 가까운 살아 있는
+        # 페이지로 301. 걸린 검색어가 없으면 링크한 쪽을 고치는 문제다.
+        live = [q for q in queries if q]
+        if live:
+            add("없는 페이지", "bad",
+                f"HTTP {audit['status']} — 그런데 검색어 {len(live)}개('{live[0]}' 등)로 아직 노출됩니다",
+                "이 주소를 내용이 가장 가까운 살아 있는 페이지로 301 리다이렉트하세요. 새로 쓰는 "
+                "것보다 싸고, 지금 들어오는 노출을 버리지 않습니다. 옮길 곳이 없으면 이 주소에 "
+                "페이지를 되살립니다.")
+        else:
+            add("없는 페이지", "warn", f"HTTP {audit['status']} — 걸린 검색어는 없습니다",
+                "이 주소로 링크한 곳(사이트 안 링크·사이트맵·백링크)을 살아 있는 주소로 바꾸거나, "
+                "옮겨 간 페이지가 있으면 301 을 거세요.")
+        return out
     if audit.get("error"):
         add("가져오기", "bad", audit["error"],
             "이 주소를 브라우저로 직접 열어 보세요. 사람에게도 안 열리면 순위·색인 이전의 문제입니다.")
@@ -1081,9 +1107,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
 
     h1 = _as_list(audit.get("h1_json"))
     desc = (audit.get("meta_description") or "").strip()
+    head = _has_head_fields(audit)
     # 긁어 온 설명은 길이가 맞아도 설명이 아니다 — 길이 지적보다 이것을 앞세우고,
     # 한 페이지에 description 지적은 하나만 둔다(둘이면 어느 쪽을 고치라는지 흐려진다).
-    if not desc:
+    if not head:
+        pass                              # 대신 읽은 행 — 설명을 안 봤다(없는 게 아니다)
+    elif not desc:
         add("meta description", "bad", "설명이 없습니다",
             "검색결과에 뜰 2~3문장을 직접 쓰세요. 안 쓰면 구글이 본문에서 아무 데나 뽑습니다.")
     elif _desc_scraped(desc, title, h1[0] if len(h1) == 1 else ""):
@@ -1159,7 +1188,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
     # 판정을 확인 지시로 바꾼다(없앨 수는 없다 — 정말 없는 사이트가 더 많다).
     schema = _as_list(audit.get("schema_json"))
-    if not schema:
+    if not schema and head:
         if audit.get("js_shell"):
             add("구조화 데이터", "warn", "정적 HTML 에는 ld+json 이 없습니다 "
                 "(본문도 자바스크립트로 그리는 페이지로 보입니다)",
@@ -5353,6 +5382,17 @@ def _selfcheck() -> None:
     assert tags == ["title", "title", "meta description", "H1", "본문",
                     "구조화 데이터", "robots", "이미지", "내부 링크"], tags
     assert page_advice({"error": "HTTP 404 · text/html"})[0]["level"] == "bad"
+    # 없는 페이지 — 검색어가 걸려 있으면 301 이 처방이다(theotherskin /review/ 가 404 인데
+    # '디아더피부과 리뷰' 로 노출되고 있었다). 걸린 검색어가 없으면 링크 쪽 문제다.
+    gone = {"status": 404, "error": "HTTP 404 · text/html"}
+    g1 = page_advice(gone, ["디아더피부과 리뷰"])
+    assert [(a["tag"], a["level"]) for a in g1] == [("없는 페이지", "bad")] \
+        and "301" in g1[0]["fix"], g1
+    assert [(a["tag"], a["level"]) for a in page_advice(gone, [])] == [("없는 페이지", "warn")]
+    # 봇 차단이라 대신 읽은 행(머리 칸 NULL) — 안 본 설명·구조화 데이터를 "없음"으로 세우지 않는다
+    via = {k: v for k, v in bad.items() if k not in ("meta_description", "schema_json")}
+    tags = [a["tag"] for a in page_advice(via, ["밀리아 제거"], domain="x.com")]
+    assert "meta description" not in tags and "구조화 데이터" not in tags and "H1" in tags, tags
     assert page_advice(None) == []
 
     # ── title/H1 은 글자가 아니라 말로 대조한다 ──

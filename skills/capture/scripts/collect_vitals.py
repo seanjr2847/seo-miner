@@ -107,6 +107,47 @@ QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
                 "(PAGESPEED_API_KEY 를 넣으면 한도가 커집니다)")
 
 
+# 측정 불가 — PageSpeed 는 응답했는데 Lighthouse 가 페이지를 못 그렸다고 답한 것
+# ("Lighthouse returned error: NO_FCP"). 우리 수집의 고장도, 그 페이지가 느리다는 뜻도
+# 아니다. noti 는 매주 10회 중 9회가 이것이었고, 항목 실패로 세어져 런이 매주 errors=9 로
+# 남았다. 코드의 뜻(Lighthouse 문서 기준):
+#   NO_FCP / NO_LCP      측정 시간 안에 화면에 아무것도 안 그려졌다 — 첫 화면이 자바스크립트
+#                        뒤에야 나타나거나(투명도 0 에서 시작하는 등장 효과·로딩 화면),
+#                        측정기(구글 데이터센터의 헤드리스 크롬)를 막거나 빈 화면을 줄 때
+#   PAGE_HUNG            페이지가 멈춰 측정을 끝내지 못했다
+#   NO_SPEEDLINE_FRAMES  그려진 프레임을 하나도 못 모았다
+UNMEASURABLE = ("NO_FCP", "NO_LCP", "PAGE_HUNG", "NO_SPEEDLINE_FRAMES")
+UNMEASURABLE_WHY = ("구글 측정기(Lighthouse)가 이 페이지에서 화면이 그려지는 것을 못 봤습니다 — "
+                    "첫 화면이 자바스크립트가 끝난 뒤에야 나타나거나(투명도 0 에서 시작하는 등장 "
+                    "효과·로딩 화면) 측정기를 막으면 납니다. 사람 눈에는 보여도 구글 렌더러에는 "
+                    "빈 화면일 수 있으니 그 자체로 확인할 거리입니다")
+# 측정 불가였던 주소는 이 기간 동안 다른 페이지로 바꿔 잰다 — 같은 주소를 매주 다시 재면
+# 같은 답(NO_FCP)을 사러 가는 것이다. 기간이 지나면 한 번 다시 본다(고쳤을 수 있다).
+UNMEASURABLE_DAYS = 28
+
+
+def unmeasurable(error: str | None) -> str | None:
+    """오류 문장 → 측정 불가 코드(NO_FCP 등) | None. 옛 행의 원문("HTTP 400 · Lighthouse
+    returned error: NO_FCP …")과 새 행("측정 불가(NO_FCP) — …")을 다 읽는다."""
+    for code in UNMEASURABLE:
+        if error and code in error:
+            return code
+    return None
+
+
+def recent_unmeasurable(conn, project_id: int, days: int = UNMEASURABLE_DAYS) -> set[str]:
+    """최근 days 일 안의 마지막 측정에서 **모든 기기가** 측정 불가였던 주소."""
+    rows = conn.execute(
+        "SELECT v.url, v.error FROM page_vitals v WHERE v.project_id=? AND v.checked_date = ("
+        " SELECT MAX(b.checked_date) FROM page_vitals b WHERE b.project_id=v.project_id"
+        " AND b.url=v.url) AND julianday('now') - julianday(v.checked_date) < ?",
+        (project_id, days)).fetchall()
+    by: dict[str, list] = {}
+    for r in rows:
+        by.setdefault(r["url"], []).append(unmeasurable(r["error"]))
+    return {u for u, codes in by.items() if codes and all(codes)}
+
+
 class _QuotaHit(collector.Fatal):
     """PageSpeed 한도(429) — 남은 URL 도 같은 한도에 걸린다. Stage.each 는 Fatal 만
     삼키지 않고 올리므로 그 통로로 멈추되, collect 가 받아서 **건너뜀**으로 바꾼다
@@ -168,6 +209,10 @@ def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
             detail = ((r.json().get("error") or {}).get("message") or "")[:120]
         except Exception:
             pass
+        code = unmeasurable(detail)
+        if code:
+            return {"url": url, "strategy": strategy, "status": r.status_code,
+                    "unmeasurable": code, "error": f"측정 불가({code}) — {UNMEASURABLE_WHY}"}
         return {"url": url, "strategy": strategy, "status": r.status_code,
                 "error": f"HTTP {r.status_code}" + (f" · {detail}" if detail else "")}
     try:
@@ -213,7 +258,13 @@ def collect(project: str, *,
 
         # 잴 페이지의 정본은 페이지 감사와 같다 — 두 단계가 서로 다른 페이지를 보면
         # 요청문 안에서 "이 페이지" 가 두 곳을 가리킨다.
-        urls = collect_page.target_urls(conn, p["id"], limit)
+        # 측정 불가였던 주소는 빼고 그만큼 다음 페이지로 채운다(UNMEASURABLE_DAYS 동안).
+        dead = recent_unmeasurable(conn, p["id"])
+        urls = [u for u in collect_page.target_urls(conn, p["id"], limit + len(dead))
+                if u not in dead][:limit]
+        if dead:
+            print(f"[vitals] 최근 측정 불가(NO_FCP 등)였던 {len(dead)}곳은 "
+                  f"{UNMEASURABLE_DAYS}일 동안 다른 페이지로 바꿔 잽니다")
         if not urls:
             return st.skip("잴 페이지가 없습니다 — 먼저 gsc 를 수집하세요 "
                            "(page 분해가 있어야 어느 URL 인지 알 수 있습니다).")
@@ -230,6 +281,7 @@ def collect(project: str, *,
             return st.noop(rows=0)
 
         rows: list[dict] = []
+        unmeas: list[str] = []
 
         def one(job) -> None:
             url, dev = job
@@ -241,6 +293,11 @@ def collect(project: str, *,
             # 그리고 실패는 예외로 올린다: 여기서 return 하면 실패가 데이터로만 남아
             # 전부 못 재고도 runs.notes 에 errors=0 이 적힌다(collect_page 와 같은 규칙).
             rows.append(row)
+            if row.get("unmeasurable"):
+                # 페이지 쪽 사실이다 — 행은 남기되(화면이 사유를 말한다) 실패로 안 센다
+                unmeas.append(url)
+                print(f"  · [{dev}] {url} — 측정 불가({row['unmeasurable']})")
+                return
             if row.get("error"):
                 raise collector.ItemFailed(row["error"])
             lcp = row.get("field_lcp_ms") or row.get("lab_lcp_ms")
@@ -259,8 +316,11 @@ def collect(project: str, *,
             checked = str(date.today())
             db.write_page_vitals(conn, p["id"], checked, rows)
             r.api_calls = done
+            measured = sum(1 for x in rows if not x.get("error"))    # 측정 불가는 잰 것이 아니다
             r.notes = (f"urls={len(urls)} strategies={','.join(want)} "
-                       f"rows={len(rows)} checked={checked} {st.err_note}"
+                       f"rows={len(rows)} checked={checked} "
+                       + (f"unmeasurable={len(unmeas)} " if unmeas else "")
+                       + f"{st.err_note}"
                        + (f" | quota={QUOTA_STATUS} — {QUOTA_REASON}" if quota else ""))
 
         bad_rows = [x for x in rows if x.get("error")]
@@ -270,9 +330,14 @@ def collect(project: str, *,
             # 한 건도 못 잰 채 한도 — 건너뜀이다. 앞 URL 에 다른 실패가 있었어도 오늘 이
             # 단계가 말할 수 있는 것은 "한도라서 못 쟀다" 하나다.
             return st.skip(QUOTA_REASON)
+        if unmeas:
+            print(f"  ! 측정 불가 {len(unmeas)}건 — {UNMEASURABLE_WHY}", file=sys.stderr)
+        if unmeas and not measured and not st.errors:
+            # 전부 측정 불가 — 실패가 아니라 건너뜀이다. 사유는 한 번만 사람 말로.
+            return st.skip(f"잰 페이지 {len(set(unmeas))}곳이 전부 측정 불가입니다. {UNMEASURABLE_WHY}.")
         # 실제로 잰 건수로 판정한다 — 전부 못 잰 것은 완료가 아니다. 한도 전까지 잰 것이
         # 있으면 그만큼으로 완료다(한도는 실패로 안 센다 — each 가 세기 전에 멈췄다).
-        return st.verdict(done, rows=len(rows))
+        return st.verdict(measured, rows=len(rows))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -448,6 +513,43 @@ def _quota_and_key_check(sample: dict) -> None:
         script[:] = [Resp(500, {}), Resp(500, {})]
         res = run()
         assert res.failed, f"500 을 건너뜀으로 삼켰다: {res}"
+
+        # 5. 측정 불가(NO_FCP) — noti 가 매주 10회 중 9회 이것이었다. 실패가 아니라 페이지의
+        #    사실이다: 전부 그러면 건너뜀(사유 한 번), 섞이면 잰 것만으로 완료(errors=0).
+        nofcp = {"error": {"code": 400, "message": "Lighthouse returned error: NO_FCP. The page "
+                           "did not paint any content."}}
+        script[:] = [Resp(400, nofcp), Resp(400, nofcp)]
+        res = run()
+        assert (res.ok, res.skipped, res.failed) == (True, True, False), res
+        assert "측정 불가" in res.reason and "NO_FCP" not in res.reason, res.reason
+        conn = db.connect()
+        errs = [r["error"] for r in conn.execute(
+            "SELECT error FROM page_vitals WHERE checked_date=date('now') AND error IS NOT NULL")]
+        assert errs and all(e.startswith("측정 불가(NO_FCP)") for e in errs), errs
+        # 다음 회차 — 측정 불가였던 두 곳은 빼고 다음 페이지를 잰다
+        asked: list = []
+        collect_page.target_urls = lambda c, pid, limit: (asked.append(limit) or
+                                                          ["https://vt.kr/a", "https://vt.kr/b",
+                                                           "https://vt.kr/c"])[:limit]
+        sent.clear()
+        script[:] = [Resp(200, sample)]
+        res = run()
+        assert [p["url"] for p in sent] == ["https://vt.kr/c"], f"측정 불가 주소를 또 쟀다: {sent}"
+        assert res.ok and not res.partial and asked == [7], (res, asked)
+        # 섞인 회차 — 잰 것은 완료, 측정 불가는 errors 에 안 들어간다
+        conn.execute("DELETE FROM page_vitals")
+        conn.commit()
+        collect_page.target_urls = lambda c, pid, limit: ["https://vt.kr/a", "https://vt.kr/b"]
+        script[:] = [Resp(200, sample), Resp(400, nofcp)]
+        res = run()
+        assert (res.ok, res.partial, res.failed) == (True, False, False), res
+        notes = conn.execute("SELECT notes FROM runs WHERE kind='vitals' ORDER BY id DESC"
+                             ).fetchone()["notes"]
+        assert "unmeasurable=1" in notes and "errors=0" in notes, notes
+        conn.close()
+        # 옛 행의 원문도 같은 판정이다(바꾸기 전 저장된 noti 의 행)
+        assert unmeasurable("HTTP 400 · Lighthouse returned error: NO_FCP. The page did not") == "NO_FCP"
+        assert unmeasurable("HTTP 500") is None
     finally:
         requests.get = orig_get
         collect_page.target_urls = orig_targets

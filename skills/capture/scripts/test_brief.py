@@ -2051,6 +2051,20 @@ def test_striking_without_gsc_cites_the_estimate_and_the_page():
     assert "노출 0" not in text and "클릭 0" not in text, text
 
 
+def test_page_state_says_unseen_for_proxy_read_rows():
+    """봇 차단이라 DataForSEO 로 본문만 대신 읽은 행(collect_page.audit_from_parsed) — 머리
+    칸(meta description·ld+json)은 NULL 이다. 요청문이 '(없음)'이라 말하면 AI 가 있는 설명을
+    또 쓰게 시킨다. '(못 봄)'이고 대신 읽었다고 밝힌다."""
+    a = {"url": "https://g.kr/bags", "status": None, "error": None, "title": "구찌 가방",
+         "h1_json": '["가방"]', "h2_json": '["크기"]', "words": 300, "checked_date": "2026-09-30"}
+    text = "\n".join(brief._page_state(a, a["url"]))
+    assert "meta description: (못 봄)" in text and "구조화 데이터: (못 봄)" in text, text
+    assert "DataForSEO 로 대신 읽었습니다" in text, text
+    full = dict(a, meta_description=None, schema_json="[]")
+    text = "\n".join(brief._page_state(full, a["url"]))
+    assert "meta description: (없음)" in text and "못 봄" not in text, text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
