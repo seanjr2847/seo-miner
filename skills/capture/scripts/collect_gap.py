@@ -331,14 +331,21 @@ def openrouter_json(prompt: str) -> dict:
         collect_ai.OPENROUTER_URL, timeout=serp_adapter.TIMEOUTS["openrouter"],
         headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
                  "Content-Type": "application/json"},
-        json={"model": ROLE_MODEL, "temperature": 0, "max_tokens": 800,
+        json={"model": ROLE_MODEL, "temperature": 0, "max_tokens": 4000,
               "response_format": {"type": "json_object"},
               "messages": [{"role": "user", "content": prompt}]})
     serp_adapter.raise_for(r, "OpenRouter")
-    content = ((r.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "{}"
+    choice = (r.json().get("choices") or [{}])[0]
+    # 잘린 답을 빈 답으로 읽으면 안 된다 — 800토큰 상한에서 판정 목록이 잘리자 아래 파싱이
+    # 조용히 {} 를 돌려, 걸러야 할 검색어(매장 위치)를 거르지 않은 채 키워드를 골랐다(gucci).
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError("AI 답이 길이 상한에서 잘렸습니다 — 판정을 쓰지 않습니다")
+    content = (choice.get("message") or {}).get("content") or ""
     # 모델에 따라 ```json 울타리를 두르거나 앞뒤에 한 줄을 붙인다 — 객체만 떼어 읽는다.
-    content = content[content.find("{"): content.rfind("}") + 1] or "{}"
-    got = json.loads(content)
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end < start:
+        raise RuntimeError("AI 답에 JSON 객체가 없습니다 — 판정을 쓰지 않습니다")
+    got = json.loads(content[start:end + 1])
     return got if isinstance(got, dict) else {}
 
 
@@ -1173,10 +1180,46 @@ def _selfcheck() -> None:
 
     conn.close()
     _roles_check()
+    _openrouter_check()
     assert [site_of(h) for h in ("search.11st.co.kr", "m.gmarket.co.kr", "kr.louisvuitton.com",
                                  "www.dior.com", "shop.brand.com.au", "musinsa.com")] == \
         ["11st.co.kr", "gmarket.co.kr", "louisvuitton.com", "dior.com", "brand.com.au", "musinsa.com"]
     print("collect_gap self-check ok")
+
+
+def _openrouter_check() -> None:
+    """잘린 AI 답·JSON 없는 답은 오류다 — 빈 판정({})으로 읽으면 거르기 없이 골라 버린다."""
+    import requests
+
+    class R:
+        def __init__(self, body):
+            self.status_code, self._b = 200, body
+        def json(self):
+            return self._b
+
+        def raise_for_status(self):
+            return None
+
+        text = ""
+
+    real = requests.post
+    os.environ["OPENROUTER_API_KEY"] = "test"
+    try:
+        for body, ok in (
+                ({"choices": [{"finish_reason": "stop", "message": {"content": '```json\n{"a": 1}\n```'}}]}, True),
+                # 진짜 잘림 모양 — 안쪽 } 가 있어 괄호만 보면 멀쩡해 보인다
+                ({"choices": [{"finish_reason": "length",
+                               "message": {"content": '{"brand_terms": {"a": 1}, "drop": ["매장'}}]}, False),
+                ({"choices": [{"finish_reason": "stop", "message": {"content": "모르겠습니다"}}]}, False)):
+            requests.post = lambda *a, _b=body, **k: R(_b)
+            try:
+                got = openrouter_json("x")
+                assert ok and got == {"a": 1}, got
+            except RuntimeError:
+                assert not ok, f"멀쩡한 답을 오류로 봤다: {body}"
+    finally:
+        requests.post = real
+        os.environ.pop("OPENROUTER_API_KEY", None)
 
 
 def _roles_check() -> None:

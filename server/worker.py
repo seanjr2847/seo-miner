@@ -85,7 +85,9 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
 # 카테고리 검색어 304개(가방 8위·토트백 6위·지갑 10위 …)는 안 봤다(2026-09-29 gucci).
 LABS_EVERY_DAYS = 7          # 우리 순위 검색어를 다시 사는 주기(일) — 한 번에 ~$0.06
 LABS_LIMIT = 500             # 검색량 큰 순으로 이만큼
-AUTO_VERSION = "labs1"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+AUTO_VERSION = "labs2"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+                             # labs2: labs1 은 AI 판정이 잘려 빈 채로 골랐다(무관 0·매장 위치가
+                             #   추적에 들었다) — 판정이 제대로 도는 판으로 한 번 다시 고른다
 RISE_SHARE, RECLAIM_SHARE = 0.6, 0.25     # 나머지는 방어(1~3위)
 JUDGE_POOL = 150             # AI 관련성 판정에 보여 주는 검색어 수(검색량 큰 순)
 
@@ -104,6 +106,13 @@ def _refresh_labs(conn, p, post) -> bool:
     db.write_labs_ranked(conn, p["id"], today.isoformat(), rows)
     db.add_keyword_candidates(conn, p["id"], [(r["keyword"], locale, "labs_ranked") for r in rows])
     collect_gap._backfill_volumes(conn, p["id"], [(r["keyword"], r.get("volume")) for r in rows])
+    # 검색량을 이미 받았다 — 지표 단계(collect_metrics)가 metrics_at 빈 키워드를 전부 다시 사서
+    # 이 500개에 매 런 ~$0.26 을 또 냈을 것이다. 받은 날을 찍어 둔다(난이도·CPC 는 그대로 빈다).
+    conn.executemany(
+        "UPDATE keywords SET metrics_at=? WHERE project_id=? AND keyword=?"
+        " AND metrics_at IS NULL AND volume IS NOT NULL",
+        [(db.now(), p["id"], r["keyword"]) for r in rows if r.get("volume") is not None])
+    conn.commit()
     print(f"[rank] 우리 순위 검색어 {len(rows)}개를 받았습니다 (DataForSEO 추정 · ${cost:.3f})")
     return True
 
@@ -896,6 +905,11 @@ def demo() -> None:
             nlabs = c.execute("SELECT COUNT(*) FROM labs_ranked WHERE project_id=?", (bx,)).fetchone()[0]
             c.close()
             assert nlabs == len(labs_rows), "우리 순위 검색어를 labs_ranked 에 안 적었다"
+            c = db.connect()
+            unbought = c.execute("SELECT COUNT(*) FROM keywords WHERE project_id=? AND source='labs_ranked'"
+                                 " AND metrics_at IS NULL", (bx,)).fetchone()[0]
+            c.close()
+            assert unbought == 0, "검색량을 받은 순위 검색어를 지표 단계가 또 사게 남겼다(metrics_at 빈 채)"
             assert {"하남스타필드", "your.gg"} <= off, f"무관 판정이 안 걸렸다: {off}"
             # 씨앗 1 + 5칸: 올릴 기회 3(가방·카드 지갑·셔츠 — '카드지갑'은 같은 말이라 빠진다) + 되찾기 1
             #   (구찌 지갑 — '귀찌'는 브랜드로 안 받아서 이 칸 후보가 아니다) + 방어 1(구찌 로고).
