@@ -459,6 +459,7 @@ CREATE TABLE IF NOT EXISTS backlinks (
   rank INTEGER,
   dofollow INTEGER,
   is_broken INTEGER DEFAULT 0,                -- url_to 가 4xx/5xx (되찾을 수 있는 링크)
+  to_status INTEGER,                          -- url_to 의 응답 코드(0 = 응답에 없었음). NULL = 이 칸 전의 옛 수집
   first_seen TEXT,
   last_seen TEXT,
   UNIQUE(project_id, checked_date, url_from, url_to)
@@ -682,6 +683,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cp_cols:
             conn.execute(f"ALTER TABLE competitors ADD COLUMN {col} TEXT")
             conn.commit()
+
+    # 백링크 대상의 응답 코드 — 403(크롤러 차단)을 깨진 링크와 가르려고 적는다. 옛 행은 NULL 이고,
+    # 그 회차는 수집기가 캐시로 인정하지 않고 한 번 다시 산다(collect_backlinks).
+    bl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(backlinks)")}
+    if "to_status" not in bl_cols:
+        conn.execute("ALTER TABLE backlinks ADD COLUMN to_status INTEGER")
+        conn.commit()
 
     # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
     pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}

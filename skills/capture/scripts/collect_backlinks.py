@@ -148,6 +148,16 @@ def _put_refdomains(conn, pid: int, today: str, res) -> int:
     return len(rows)
 
 
+def _legacy_broken(conn, pid: int) -> bool:
+    """마지막 회차가 응답 코드(to_status) 없이 적은 '깨진 링크'를 갖고 있나 — 그 회차는
+    403(크롤러 차단)을 깨짐으로 적었을 수 있다(gucci: 60개 전부 403). 캐시로 인정하지 않고
+    한 번 다시 산다. 새 회차는 코드가 없어도 0 을 적어서 이 판정이 되풀이되지 않는다."""
+    return bool(conn.execute(
+        "SELECT 1 FROM backlinks WHERE project_id=? AND is_broken=1 AND to_status IS NULL"
+        " AND checked_date=(SELECT MAX(checked_date) FROM backlinks WHERE project_id=?) LIMIT 1",
+        (pid, pid)).fetchone())
+
+
 def _blocked_codes() -> frozenset:
     import collect_page
     return collect_page.BLOCK_STATUS
@@ -173,15 +183,15 @@ def _put_backlinks(conn, pid: int, today: str, res) -> int:
                      (_g(it, "domain_from", "page_from_domain") or _host(u_from)),
                      _g(it, "anchor", "text"),
                      _int(_g(it, "rank", "page_from_rank", "domain_from_rank")),
-                     _int(_g(it, "dofollow")), int(bool(broken)),
+                     _int(_g(it, "dofollow")), int(bool(broken)), status or 0,
                      _g(it, "first_seen"), _g(it, "last_seen", "last_visited")))
     conn.executemany(
         "INSERT INTO backlinks(project_id, checked_date, url_from, url_to, domain_from,"
-        " anchor, rank, dofollow, is_broken, first_seen, last_seen)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        " anchor, rank, dofollow, is_broken, to_status, first_seen, last_seen)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(project_id, checked_date, url_from, url_to) DO UPDATE SET"
         " domain_from=excluded.domain_from, anchor=excluded.anchor, rank=excluded.rank,"
-        " dofollow=excluded.dofollow, is_broken=excluded.is_broken,"
+        " dofollow=excluded.dofollow, is_broken=excluded.is_broken, to_status=excluded.to_status,"
         " first_seen=excluded.first_seen, last_seen=excluded.last_seen", rows)
     return len(rows)
 
@@ -286,7 +296,7 @@ def collect(project: str, *,
         if max_age > 0 and conn.execute(
                 "SELECT 1 FROM backlink_summary WHERE project_id=? AND"
                 " checked_date > date('now', ?) LIMIT 1",
-                (pid, f"-{max_age} days")).fetchone():
+                (pid, f"-{max_age} days")).fetchone() and not _legacy_broken(conn, pid):
             reason = (f"최근 {max_age}일 안에 이미 수집했습니다 — 백링크는 하루 단위로 "
                       f"움직이지 않습니다. 다시 사려면 `--max-age 0`.")
             print(f"[backlinks] {reason}")
@@ -563,6 +573,17 @@ def _selfcheck() -> None:
     res = collect("bt", conn=conn, post=_boom, max_age=7)
     assert (res.ok, res.skipped, res.cost) == (True, True, 0.0), res
     assert "이미 수집" in res.reason, res.reason
+    # 새 회차는 응답 코드를 적는다(없으면 0) — 그래야 아래 '옛 회차' 판정이 되풀이되지 않는다.
+    assert conn.execute("SELECT COUNT(*) FROM backlinks WHERE to_status IS NULL").fetchone()[0] == 0
+    # 응답 코드 칸 전의 옛 회차가 '깨진 링크'를 갖고 있으면(403 을 깨짐으로 적었을 수 있다)
+    # 신선도 안이어도 한 번 다시 산다.
+    conn.execute("UPDATE backlinks SET to_status=NULL, is_broken=1 WHERE url_to='https://bt.com/'")
+    conn.commit()
+    calls = []
+    res = collect("bt", conn=conn, post=_fake_post(calls), max_age=7)
+    assert not res.skipped and calls, f"옛 회차(응답 코드 없는 깨진 링크)를 캐시로 믿고 안 샀다: {res}"
+    assert conn.execute("SELECT is_broken FROM backlinks WHERE url_to='https://bt.com/'"
+                        " ORDER BY checked_date DESC LIMIT 1").fetchone()[0] == 0
 
     # dry-run 은 호출도 기록도 없다.
     conn.execute("DELETE FROM runs")
