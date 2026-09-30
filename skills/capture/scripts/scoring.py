@@ -32,6 +32,10 @@ NOISE_POS = 0.5
 # rank_decay 기회로 올릴 하락 폭 (scoring.md 1절). 노이즈 바닥과 다른 개념이다 —
 # 노이즈는 "화면에 띄울까", 이건 "방어 기회로 적재할까".
 DECAY_POS = -1.5
+# 순위 하락의 노출 하한 — 두 스냅샷 모두 이만큼은 노출돼야 평균 순위를 견준다. 다른 규칙은
+# 하한이 있는데(STRIKING_MIN_IMP·CTR_GAP_MIN_IMP·DEVICE_MIN_IMP) 여기만 없어, 노출 12짜리
+# '근처 피부과'가 하루 사이 1.0위→9.3위로 '방어 필요'가 됐다(theotherskin 28건 중 다수).
+DECAY_MIN_IMP = 30
 
 # pseo_pattern 후보 추출 임계 (scoring.md 1b-1). 노출 큰 사이트면 올린다.
 PSEO_MIN_IMP, PSEO_MAX_CTR = 50, 1.5
@@ -2457,7 +2461,7 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
         if not b:
             continue
         dpos = round(b["pos"] - r["pos"], 1)
-        if dpos <= DECAY_POS:
+        if dpos <= DECAY_POS and min(r["imp"] or 0, b["imp"] or 0) >= DECAY_MIN_IMP:
             rows.append({"query": q, "pos": round(r["pos"], 1), "prev_pos": round(b["pos"], 1),
                          "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
                          "imp": r["imp"]})
@@ -4135,10 +4139,11 @@ _KIND_SPECS = {
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
         reasoning=lambda r, ctx: (
-            f"{r['prev_pos']}위에서 {r['pos']}위로 {r['dpos']}칸 밀렸습니다. "
-            f"같은 기간 클릭은 {abs(r['dclk'])}회 "
-            f"{'줄었' if r['dclk'] < 0 else '늘었'}습니다 "
-            f"(구글 실적 {ctx['prev']}과 {ctx['cur']} 비교)"),
+            # dpos 는 음수(하락)라 "밀렸습니다" 앞에서는 크기만 쓴다 — "-2.0칸 밀렸습니다"로 찍혔다.
+            f"{r['prev_pos']}위에서 {r['pos']}위로 {abs(r['dpos'])}칸 밀렸습니다. "
+            + (f"같은 기간 클릭은 {abs(r['dclk'])}회 {'줄었' if r['dclk'] < 0 else '늘었'}습니다 "
+               if r['dclk'] else "같은 기간 클릭은 그대로입니다 ")
+            + f"(구글 실적 {ctx['prev']}과 {ctx['cur']} 비교)"),
         play=dict(
             what="잡고 있던 순위가 밀렸습니다. 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
             acts=["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
@@ -4539,6 +4544,15 @@ def _resolve_decay(conn, pid: int, target: str, since: str, ctx: dict) -> str | 
     다음 날 이후의 최신 구글 실적에서 그 순위와 DECAY_POS 칸 안으로 돌아왔다. 검색어가 최신
     실적에서 빠진 것은 풀림이 아니다(더 떨어져 안 잡힌 것일 수 있다). 기준을 못 믿으면
     (decay_state 가 None) 판단하지 않는다."""
+    # 노출이 하한 밑이면 평균 순위가 통계가 아니다 — 세우는 쪽(rank_decay)이 이제 안 세우는 것을
+    # 옛 기회도 닫는다. 최신 실적에 줄이 아예 없으면(더 떨어졌을 수 있다) 판단하지 않는다.
+    cur, _prev, period, _ = ctx.setdefault("_decay_pair", snapshot_pair(conn, pid))
+    if cur:
+        agg = ctx.setdefault("_decay_agg", _snap_agg(conn, pid, cur, period))
+        row = agg.get(target)
+        if row and (row["imp"] or 0) < DECAY_MIN_IMP and _after_day(cur, since):
+            return (f"노출이 {row['imp'] or 0}회로 적어(하한 {DECAY_MIN_IMP}) 평균 순위의 오르내림이 "
+                    f"통계가 아닙니다 (구글 실적 {cur} 기준)")
     st = decay_state(conn, pid, (ctx.get("opp") or {}).get("run_id"), target,
                      cache=ctx.setdefault("_decay", {}))
     if not st or not _after_day(st["cur"], since) or st["cur"] <= st["at"]:

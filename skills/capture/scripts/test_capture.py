@@ -1031,6 +1031,25 @@ def test_rank_decay_finds_defense_targets():
     assert [o["query"] for o in out] == ["하락"], out
     assert out[0]["dpos"] == -4.0 and out[0]["dclk"] == -8, out[0]
     assert out[0]["prev_pos"] == 5.0 and out[0]["pos"] == 9.0
+    # 노출 하한 밑(DECAY_MIN_IMP)은 평균 순위가 통계가 아니다 — 노출 12짜리가 하루 사이
+    # 1.0위→9.3위로 '방어 필요'가 됐다(theotherskin).
+    for d_, pos in (("2026-04-01", 1.0), ("2026-04-08", 9.3)):
+        conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                     "clicks,impressions,ctr,position) VALUES(?,?,28,'근처',NULL,1,12,0.1,?)",
+                     (p["id"], d_, pos))
+    conn.commit()
+    assert "근처" not in [o["query"] for o in scoring.rank_decay(conn, p["id"])], "노출 12짜리가 순위 하락이 됐다"
+    # 근거 문장 — 하락 칸 수에 음수 부호가 없고, 클릭이 그대로면 '늘었다'고 안 한다
+    k = scoring._KIND_BY_NAME["rank_decay"]
+    ctx = {"prev": "2026-04-01", "cur": "2026-04-08"}
+    txt = k.reasoning({"prev_pos": 2.5, "pos": 4.5, "dpos": -2.0, "dclk": 0}, ctx)
+    assert "-2.0칸" not in txt and "2.0칸 밀렸습니다" in txt and "0회 늘었" not in txt, txt
+    # 이미 선 옛 기회도 — 최신 실적 노출이 하한 밑이면 사유와 함께 닫는다
+    why = scoring._resolve_decay(conn, p["id"], "근처", "2026-04-02 00:00:00", {})
+    assert why and "통계가 아닙니다" in why, why
+    assert scoring._resolve_decay(conn, p["id"], "하락", "2026-04-02 00:00:00", {}) is None or \
+        "통계가 아닙니다" not in (scoring._resolve_decay(conn, p["id"], "하락", "2026-04-02 00:00:00", {}) or ""), \
+        "노출 100짜리를 통계가 아니라며 닫았다"
     conn.close()
 
 

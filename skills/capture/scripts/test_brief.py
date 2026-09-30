@@ -1900,6 +1900,21 @@ def test_content_gap_without_gap_kind_falls_back_to_the_ranked_page():
     assert brief.build(o, {}, "ko-KR")["shape"] == "new_content"
 
 
+def test_content_gap_unknown_rival_rank_is_not_printed_as_none():
+    """그쪽 순위를 못 받은 격차 줄은 "모름"이고, 목표는 순위를 아는 경쟁사 중 가장 높은 곳이다 —
+    theotherskin 'melasma treatment' 요청문이 "ovid.com(None위)보다 위"를 목표로 삼았다."""
+    o = _opp("content_gap", "melasma treatment")
+    ctx = {"query_pages": {"melasma treatment": _pages(URL)},
+           "kw_gap": [{"keyword": "melasma treatment", "domain": "ovid.com", "position": None,
+                       "our_position": 61, "volume": 140, "kind": "unknown"},
+                      {"keyword": "melasma treatment", "domain": "pmc.ncbi.nlm.nih.gov", "position": 1,
+                       "our_position": 61, "volume": 140, "kind": "weak"}]}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "None" not in body, "요청문에 None 이 찍혔다"
+    assert "pmc.ncbi.nlm.nih.gov(1위)보다 위" in body, "순위 모르는 경쟁사를 목표로 삼았다"
+    assert "| ovid.com | 모름 |" in body, body
+
+
 # ── 외부 출처는 진단에 서면 산출물이다 ─────────────────────────────────────
 
 def test_external_links_diagnosis_becomes_a_deliverable():

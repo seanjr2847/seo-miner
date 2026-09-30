@@ -1953,10 +1953,13 @@ def _far_rank_lines(r: dict | None, pages: list[dict], ctx: dict | None = None) 
 
 def _ev_content_gap(o, ctx, pages):
     t = str(o["target"]).strip().lower()
-    rows = [r for r in (ctx.get("kw_gap") or [])
-            if str(r.get("keyword") or "").strip().lower() == t]
+    # 순위를 아는 경쟁사부터(높은 순) — 그쪽 순위를 못 받은 줄은 "모름"이다. 여태 "None위"가
+    # 요청문 표에 그대로 찍혔다(theotherskin 'melasma treatment', 데이터 점검 bad_text 가 잡았다).
+    rows = sorted((r for r in (ctx.get("kw_gap") or [])
+                   if str(r.get("keyword") or "").strip().lower() == t),
+                  key=lambda r: (r.get("position") is None, r.get("position") or 0))
     L = _table(["경쟁 도메인", "그쪽 순위", "내 순위", "월 검색량", "갈래"],
-               [[r["domain"], f"{r['position']}위",
+               [[r["domain"], f"{r['position']}위" if r.get("position") is not None else "모름",
                  f"{r['our_position']}위" if r.get("our_position") else "없음",
                  _n(r.get("volume")), r.get("kind")] for r in rows[:6]])
     return L + _pages_table(pages)
@@ -2608,9 +2611,12 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
                     f"{scoring.DEVICE_GAP_POS:g}칸 아래.")
         return f"모바일·데스크톱 순위 차가 {scoring.DEVICE_GAP_POS:g}칸 아래로 주는 것."
     if kind == "content_gap":
-        r = next((x for x in (ctx.get("kw_gap") or [])
-                  if str(x.get("keyword") or "").strip().lower()
-                  == str(o.get("target") or "").strip().lower()), None)
+        # 목표로 삼을 경쟁사는 순위를 아는 줄 중 가장 높은 곳 — 첫 줄을 집으면 순위를 못 받은
+        # 줄이 걸려 "ovid.com(None위)보다 위"가 목표가 됐다.
+        r = min((x for x in (ctx.get("kw_gap") or [])
+                 if str(x.get("keyword") or "").strip().lower()
+                 == str(o.get("target") or "").strip().lower() and x.get("position") is not None),
+                key=lambda x: x["position"], default=None)
         if r and r.get("our_position"):
             return (f"이 검색어에서 {r['domain']}({r['position']}위)보다 위 — 지금 우리는 "
                     f"{r['our_position']}위.")
