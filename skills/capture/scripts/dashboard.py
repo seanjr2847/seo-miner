@@ -1750,6 +1750,25 @@ def _axis_groups(conn, pid, now=None) -> dict:
     return {"groups": out}
 
 
+# ── [갈래 B 임시] "이번 달 할 일"(plays) 읽기 ─────────────────────────────────
+# 정본은 엔진 갈래(A — plays 단계·db.SCHEMA 의 plays 표)가 낸다. 화면 갈래가 혼자서도
+# 서고 검사되도록 계약(PLAYS_CONTRACT: d.plays · d.plays_at) 꼴만 최소로 읽는다.
+# 합칠 때는 A 의 것을 쓰고 이 함수는 지운다 — 이름·꼴은 계약 그대로다.
+def _axis_plays(conn, pid: int) -> dict:
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plays'").fetchone():
+        return {"plays": [], "plays_at": None}
+    rows = q(conn, """SELECT * FROM plays WHERE project_id=?
+                       ORDER BY score DESC, id DESC LIMIT 20""", (pid,))
+    js = lambda s, dflt: json.loads(s) if s else dflt
+    out = [{"id": r["id"], "page": r["page"], "title": r["title"],
+            "keywords": js(r["keywords_json"], []), "opp_ids": js(r["opp_ids_json"], []),
+            "score": r["score"], "created_at": r["created_at"], "status": r["status"],
+            "model": r["model"], "cost": r["cost"],
+            "evidence": js(r["evidence_json"], {}), "result": js(r["result_json"], {}),
+            "markdown": r["markdown"] or ""} for r in rows]
+    return {"plays": out, "plays_at": max((x["created_at"] or "" for x in out), default=None) or None}
+
+
 def gather(conn, p, at: str | None = None) -> dict:
     """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
 
@@ -1801,6 +1820,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     d = {"schema": 1, "project": dict(p),
          **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
          **vitals, **ai_bots, **_axis_groups(conn, pid),
+         **_axis_plays(conn, pid),               # [갈래 B 임시] — 합칠 때 A 의 것으로
          "runs": runs, "creations": creations,
          # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
          # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.

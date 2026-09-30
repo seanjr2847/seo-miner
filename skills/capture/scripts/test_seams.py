@@ -3351,6 +3351,71 @@ def test_seam_104_gap_readers_use_current_rivals():
     assert "scoring.gap_rival_set(conn, pid)" in dash, "[경쟁 분석]의 거르개가 기회와 다른 목록이다"
 
 
+def test_seam_105_plays_card_and_drawer_read_what_the_payload_carries():
+    """105) [개요]의 [이번 달 할 일]은 엔진이 싣는 d.plays 를 그리기만 한다 — 두 끝을 함께 본다.
+
+    한쪽(gather 의 plays 줄 · 그 안의 evidence/result)은 정상적인 dict 고 다른 쪽(카드·서랍)은
+    정상적인 자바스크립트다. 이름이 하나 어긋나면(예: result.expected ↔ r.expect) 서랍의 그 칸만
+    조용히 빈다 — 콘솔에도 검사에도 안 남는다(seam 10 은 d.* 윗단만 본다).
+    · 화면이 읽는 p.* 는 gather() 가 실은 줄의 키 안에 있고, r.* · ev.* · our.* · 상위 결과 줄(sr.*) ·
+      AI 요약 줄(ai.*)은 화면 검사 픽스처(test_render._plays — 계약 꼴로 쓴 표본)의 키 안에 있다.
+    · 서랍은 한 벌이다 — 할 일도 기회와 같은 상자(#ov-drawer, OV_drawerEls)에 칠한다. 둘째 dialog 가
+      생기면 기회와 할 일이 겹쳐 열리고 Esc·초점 되돌리기가 두 벌이 된다.
+    · 줄의 id 는 페이로드(p.id)에서 온다 — 렌더된 순번·글자를 되짚지 않는다.
+    · 발판의 PR 버튼은 셸의 SM.host.playBtn(갈래 C)이 준다 — 없는 배포(옛 셸)에서도 서도록 가드한다.
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import dashboard
+    import test_render
+    ov = _view_script("overview.html")
+    m = re.search(r"/\* ── 이번 달 할 일\(plays\) ─+\n(.*?)\n/\* ── 스포트라이트", ov, re.S)
+    assert m, "overview.html 에서 [이번 달 할 일] 블록을 못 찾았다 — 머리 주석이 바뀌었으면 이 검사도 옮긴다"
+    blk = m.group(1)
+
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    test_render._plays(c, 1)                  # 표가 SCHEMA 에 있으면 그것에, 없으면 계약 꼴로 만든다
+    null = _io.StringIO()
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        d = dashboard.gather(c, db.get_project(c, "_seam"))
+    c.close()
+    assert d.get("plays") and "plays_at" in d, "gather() 가 d.plays·d.plays_at 을 안 싣는다"
+    full = next(p for p in d["plays"] if not (p.get("result") or {}).get("error"))
+
+    def reads(var):
+        return set(re.findall(rf"\b{var}\.([a-z_]+)\b", blk))
+    have = {
+        "p": set(full),
+        "r": set(full["result"]) | {"error"},
+        "ev": set(full["evidence"]),
+        "our": set(full["evidence"]["our"]),
+        "sr": set(full["evidence"]["serp"][0]),
+        "ai": set(full["evidence"]["aio"][0]),
+    }
+    for var, keys in have.items():
+        got = reads(var)
+        assert got, f"[이번 달 할 일]이 {var}.* 를 하나도 안 읽는다 — 변수 이름이 바뀌었으면 이 검사도 옮긴다"
+        assert got <= keys, f"[이번 달 할 일]이 페이로드에 없는 {var}.* 를 읽는다: {sorted(got - keys)}"
+    # 제목·설명·H1 은 r[k] 로 읽는다 — 그 이름표도 페이로드 키여야 한다.
+    ba = re.search(r'\[\["title", "제목"\], \["meta", "설명"\], \["h1", "H1"\]\]', blk)
+    assert ba and {"title", "meta", "h1"} <= have["r"], "지금 → 새로 비교가 result 의 title·meta·h1 을 안 읽는다"
+
+    play = re.search(r"function OV_play\(id, from\) \{(.*?)\n\}", blk, re.S)
+    paint = re.search(r"function OV_playPaint\(p\) \{\n  const dr = \$\(\"ov-drawer\"\);", blk)
+    assert play and "OV_drawerEls()" in play.group(1) and paint, \
+        "할 일 서랍이 기회 서랍 상자(#ov-drawer · OV_drawerEls)를 안 쓴다 — 서랍이 두 벌이 된다"
+    assert ov.count('role="dialog"') == 1, "[개요]에 dialog 상자가 둘이다 — 서랍은 하나를 같이 쓴다"
+    assert re.search(r'data-play="\$\{Number\(p\.id\)\}"', blk) and "p.id === id" in blk, \
+        "할 일 줄의 id 가 페이로드(p.id)에서 안 온다"
+    assert 'SM.host.playBtn ? SM.host.playBtn(p) : ""' in blk, \
+        "할 일 서랍 발판이 SM.host.playBtn 을 가드 없이 부르거나 안 부른다"
+
+
 def test_seam_100_no_gsc_site_is_skipped_everywhere():
     """100) 서치콘솔 없이 시작한 사이트(gsc_property 가 빈 값)는 어디서도 '필수 연결'로 안 선다.
 

@@ -3333,12 +3333,17 @@ const table = (heads, rows, empty, cls) => {
 const csv = (name, rows) => {
   const body = "\uFEFF" + rows.map(r => r.map(
     c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  saveFile(`seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`, body, "text/csv;charset=utf-8");
+};
+// \uBE0C\uB77C\uC6B0\uC800 \uC548\uC5D0\uC11C \uD30C\uC77C \uD558\uB098\uB97C \uB0B4\uB824\uBC1B\uAC8C \uD558\uB294 \uC790\uB9AC\uB294 \uC774 \uD55C \uBC8C\uC774\uB2E4 \u2014 CSV \uB3C4, [\uAC1C\uC694] \uD560 \uC77C
+// \uC11C\uB78D\uC758 .md \uBB38\uC11C\uB3C4 \uC5EC\uAE30\uB85C \uC628\uB2E4(\uD654\uBA74\uC774 Blob \uC744 \uB530\uB85C \uBE5A\uC73C\uBA74 \uCC98\uB9AC\uAC00 \uB610 \uAC08\uB77C\uC9C4\uB2E4).
+function saveFile(filename, body, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([body], {type: "text/csv;charset=utf-8"}));
-  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = URL.createObjectURL(new Blob([body], {type}));
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
-};
+}
 
 // 정렬은 위임 한 곳에서. 표를 그리는 쪽은 아무것도 안 해도 된다.
 document.addEventListener("click", e => {
