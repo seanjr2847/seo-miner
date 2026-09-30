@@ -2554,12 +2554,16 @@ def test_rank_aio_citations_known_unknown_and_own_subdomain():
         res = collect_serp.collect("rq_aio", provider="dataforseo", no_harvest=True)
     assert res.ok and not res.failed, res
     assert all(b.get("load_async_ai_overview") is True for batch in fake.posts for b in batch),         fake.posts
-    conn = db.connect()
-    got = {k: conn.execute("SELECT aio_present, aio_cited, aio_domains_json FROM rank_snapshots "
-                           "WHERE keyword_id=?", (i,)).fetchone() for k, i in kid.items()}
+    # 수집기가 **적은 그대로**를 본다 — db.connect() 는 _migrate 로 옛 "[]" 행을 NULL 로
+    # 되돌리므로, 그걸로 읽으면 수집기가 "[]"·0 을 적어도 이 검사가 못 본다.
+    import sqlite3
+    raw = sqlite3.connect(db.db_path())
+    raw.row_factory = sqlite3.Row
+    got = {k: raw.execute("SELECT aio_present, aio_cited, aio_domains_json FROM rank_snapshots "
+                          "WHERE keyword_id=?", (i,)).fetchone() for k, i in kid.items()}
     import scoring
-    gaps = [r["keyword"] for r in scoring.aio_gaps(conn, p["id"])]
-    conn.close()
+    gaps = [r["keyword"] for r in scoring.aio_gaps(raw, p["id"])]
+    raw.close()
     row = {k: (v["aio_present"], v["aio_cited"],
                json.loads(v["aio_domains_json"]) if v["aio_domains_json"] is not None else None)
            for k, v in got.items()}
