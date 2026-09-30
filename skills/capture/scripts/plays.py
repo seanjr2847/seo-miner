@@ -240,13 +240,32 @@ def evidence(g: dict, d: dict, *, fetch, post, dfs: bool, serp_n: int = PLAY_SER
                 continue
             if u not in to_read and len(to_read) < serp_n:
                 to_read.append(u)
+    # 순위 단계가 상위 글을 이미 읽어 둔 목차(serp_outlines — 주소별 title·h2·단어 수)가 있으면
+    # 그걸 쓴다: 다시 사지 않고, 우리 서버·DataForSEO 둘 다 막힌 글(gucci 는 둘 다 403)도 증거가 선다.
+    outlines = d.get("serp_outlines") or {}
     read: dict[str, dict] = {}
+    for u in list(to_read):
+        ol = outlines.get(u) or {}
+        if (ol.get("status") or 0) < 400 and ol.get("h2"):
+            read[u] = {"headings": list(ol.get("h2") or []), "words": ol.get("words"),
+                       "title": ol.get("title"), "fetched_via": "outline"}
     for u in to_read:
+        if u in read:
+            continue
         got, c, why = read_page(u, fetch=fetch, post=post, dfs=dfs)
         cost += c
         read[u] = got
         if why:
             misses.append(f"{u}: {why}")
+    # 우리 페이지를 못 읽었으면(봇 차단) 구글 검색 결과에 뜬 우리 제목이라도 증거로 — 지금 값을
+    # 비우면 수정안의 '지금 → 고친 값'이 반쪽이다. 검색 결과 제목이 곧 구글이 보는 title 이다.
+    if not our.get("title"):
+        own = next((r for r in rows if r["is_own"] and r.get("title") and _key(r["url"] or "") == _key(page)),
+                   None) or next((r for r in rows if r["is_own"] and r.get("title")), None)
+        if own:
+            our["title"] = own["title"]
+            if our.get("fetched_via") == "none":
+                our["fetched_via"] = "serp"
     for row in rows:
         if row["is_own"]:
             row.update(headings=our.get("headings") or [], words=our.get("words"))
@@ -820,6 +839,23 @@ def _selfcheck() -> None:
     r, _ = run(dry_run=True, force=True)
     assert r.skipped and len(asks) == n_ask, "dry-run 인데 AI 를 불렀다"
     assert parse_content([]) is None and parse_content([{"items": []}]) is None
+    # 막힌 사이트(gucci: 우리 서버·DataForSEO 둘 다 403) — 순위 조회가 읽어 둔 목차로 상위 글
+    # 증거를 세우고(다시 안 산다), 우리 페이지는 검색 결과의 제목이라도 쓴다.
+    calls: list[str] = []
+
+    def blocked_fetch(u):
+        calls.append(u)
+        return {"url": u, "status": 403, "error": "HTTP 403"}
+    d2 = {"serp_top": {"가": [
+            {"position": 1, "url": "https://o.com/a", "title": "O", "domain": "o.com", "is_own": 0},
+            {"position": 2, "url": "https://me.kr/p", "title": "우리 제목 | 브랜드", "domain": "me.kr", "is_own": 1}]},
+          "serp_outlines": {"https://o.com/a": {"status": 200, "h2": ["가격", "관리"], "words": 900}}}
+    ev2, _, _ = evidence({"page": "https://me.kr/p", "keywords": ["가"], "opps": []}, d2,
+                         fetch=blocked_fetch, post=None, dfs=False)
+    assert "https://o.com/a" not in calls, "순위 조회가 읽어 둔 목차가 있는데 다시 읽으러 갔다"
+    assert ev2["serp"][0]["headings"] == ["가격", "관리"], ev2["serp"][0]
+    assert (ev2["our"]["title"], ev2["our"]["fetched_via"]) == ("우리 제목 | 브랜드", "serp"), ev2["our"]
+
     # 답 길이 상한 — 프롬프트가 말하고, 정리가 넘친 구간을 자른다(12000 토큰에서 4묶음 중 3이 잘렸다)
     assert f"sections 최대 {PLAY_SECTIONS}개" in prompt(
         {"page": "https://s.kr/x", "keywords": ["가"],

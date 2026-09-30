@@ -1333,7 +1333,9 @@ function OV_playFix(r) {
 // 증거 탭 — 실제로 읽은 것: 우리 페이지 점검값, 검색어별 상위 결과(우리 줄 칠함·소제목), AI 요약, 빠진 주제.
 function OV_playEv(ev) {
   const our = ev.our || {};
-  const via = {direct: ["", "직접 읽음"], dataforseo: ["", "대신 읽음"], none: ["warn", "못 읽음"]}[our.fetched_via];
+  // serp — 막혀서 본문은 못 읽고 구글 검색 결과의 우리 제목만 씀 · outline — 순위 조회 때 읽어 둔 목차
+  const via = {direct: ["", "직접 읽음"], dataforseo: ["", "대신 읽음"], outline: ["", "순위 조회 때 읽은 목차"],
+               serp: ["warn", "검색 결과 제목만"], none: ["warn", "못 읽음"]}[our.fetched_via];
   const tiles = [];
   if (Number.isFinite(our.words)) tiles.push(["", "본문 단어", num(our.words)]);
   if (via) tiles.push([via[0], "페이지 읽기", via[1]]);
