@@ -3532,6 +3532,56 @@ def test_seam_110_play_pr_is_local_only():
         "헤드리스 PR 이 권한 확인을 통째로 끈다 — 허용 목록으로만 돌아야 한다"
 
 
+def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
+    """121) 데이터 점검은 audit_data 한 벌이다 — 페이로드(d.health)·gaps 단계 로그 한 줄·출시 문
+    (test_remote)이 같은 판정을 읽는다. 런 실패 표식(errors=N · 중단:)도 그 모듈 한 벌이다.
+
+    · 실패 표식이 세 벌이었다(dashboard._RE_RUN_ERRORS · test_remote.ERRORS · 점검 초안). 그중
+      test_remote 것만 경계(\\b)가 없어 rank 런의 outline_errors=4 를 실패로 읽을 수 있었다.
+    · [개요]의 접힌 띠는 d.health 를 그리기만 한다 — 등급 이름(높음·중간·낮음)을 화면이 따로
+      적으면 사본이다. 서버가 d.health_sev 로 싣는다.
+    · 심사 대기 빈 상태의 "점수 N점 이상"은 심사 화면의 진한 색점(TR_tier)과 같은 문턱이다 —
+      한쪽만 바꾸면 개요는 "70점 이상 8건"이라는데 심사에서는 진한 점이 다른 수로 선다.
+    """
+    import audit_data
+    import dashboard
+    import run_all
+    import test_remote
+    S = ROOT / "skills" / "capture"
+    dash = (S / "scripts" / "dashboard.py").read_text("utf-8")
+    g = re.search(r"\ndef gather\(.*?\n(?=def )", dash, re.S).group(0)
+    assert "audit_data.audit(d" in g and 'd["health"]' in g, "gather 가 d.health 를 audit_data 로 안 짓는다"
+    assert 'd["health_sev"] = dict(audit_data.SEV_LABEL)' in g
+    assert not re.search(r"errors=\(\\d\+\)", dash), "dashboard 가 런 실패 표식을 따로 갖는다"
+    assert test_remote.ERRORS is audit_data.RUN_ERRORS, "출시 문의 실패 표식이 사본이다"
+    assert "audit_data.audit(" in inspect_src(test_remote.health_alerts)
+    assert "audit_data.log_line(" in inspect_src(run_all.health_line)
+    assert "health_line(project)" in inspect_src(run_all.load_opportunities), \
+        "gaps 단계가 끝에 데이터 점검 한 줄을 안 찍는다"
+
+    ov = (S / "templates" / "views" / "overview.html").read_text("utf-8")
+    js = ov.split("<script>", 1)[1]
+    assert "d.health_sev" in js and "d.health ||" in js, "개요가 d.health·d.health_sev 를 안 읽는다"
+    for lab in audit_data.SEV_LABEL.values():
+        assert f'"{lab}"' not in js, f"개요가 등급 이름 {lab!r} 을 따로 적는다 — d.health_sev 가 정본이다"
+    assert set(re.search(r"OV_SEV_CLS = \{(.*?)\}", js).group(1).replace('"', "").replace(" ", "")
+               .replace(":bad", "").replace(":warn", "").replace(":adv", "").split(",")) \
+        == set(audit_data.SEV_ORDER), "배지 색 표의 등급 id 가 audit_data.SEV_ORDER 와 다르다"
+
+    tri = (S / "templates" / "views" / "triage.html").read_text("utf-8")
+    m = re.search(r'TR_tier = s => .*?s >= (\d+) \? "t1"', tri)
+    assert m, "심사 화면의 색점 문턱(TR_tier)을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
+    assert int(m.group(1)) == dashboard.TRIAGE_HOT, \
+        f"개요의 '점수 {dashboard.TRIAGE_HOT}점 이상'과 심사 색점 문턱({m.group(1)})이 다르다"
+    assert "(OV_D || {}).triage_pending" in js, "개요 빈 상태가 서버의 심사 대기 수를 안 읽는다"
+    assert "SM.show('triage')" in js, "개요 빈 상태가 심사 화면으로 안 보낸다"
+
+
+def inspect_src(fn) -> str:
+    import inspect
+    return inspect.getsource(fn)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
