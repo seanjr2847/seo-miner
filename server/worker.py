@@ -85,7 +85,9 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
 # 카테고리 검색어 304개(가방 8위·토트백 6위·지갑 10위 …)는 안 봤다(2026-09-29 gucci).
 LABS_EVERY_DAYS = 7          # 우리 순위 검색어를 다시 사는 주기(일) — 한 번에 ~$0.06
 LABS_LIMIT = 500             # 검색량 큰 순으로 이만큼
-AUTO_VERSION = "labs2"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+AUTO_VERSION = "labs3"       # auto_keywords 표식의 판 — 판이 다르면 한 번 다시 고른다
+                             # labs3: labs2 는 라틴 글자 검색어를 en-US 로 두고 미국 검색량 순으로
+                             #   골라 영어 검색어(belt·lipstick …)로 뒤덮였다
                              # labs2: labs1 은 AI 판정이 잘려 빈 채로 골랐다(무관 0·매장 위치가
                              #   추적에 들었다) — 판정이 제대로 도는 판으로 한 번 다시 고른다
 RISE_SHARE, RECLAIM_SHARE = 0.6, 0.25     # 나머지는 방어(1~3위)
@@ -149,6 +151,22 @@ def _judge_keywords(ask, p, pool: list, aliases) -> tuple[set, set]:
     return terms, drop
 
 
+def _relocale_labs(conn, pid: int) -> int:
+    """순위 검색어에서 온 후보의 언어-지역을 사이트 나라로 맞춘다(db.site_country_judge).
+    서치콘솔 나라로 정한 것(gsc_country)은 건드리지 않는다. 반환: 바꾼 수."""
+    judge = db.site_country_judge(conn, pid)
+    n = 0
+    for kid, kw, loc, src in conn.execute(
+            "SELECT id, keyword, locale, locale_src FROM keywords WHERE project_id=?"
+            " AND source='labs_ranked' AND COALESCE(locale_src,'')<>'gsc_country'", (pid,)).fetchall():
+        new, new_src = judge(kw)
+        if (new, new_src) != (loc, src):
+            conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?", (new, new_src, kid))
+            n += 1
+    conn.commit()
+    return n
+
+
 def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
     """추적할 키워드 id — 씨앗 + 올릴 기회(4~30위 비브랜드) + 되찾기(우리 상품인데 밖·10위 밖)
     + 방어(1~3위). 칸마다 검색량 큰 순, 모자란 칸은 다른 칸이 메운다."""
@@ -158,14 +176,20 @@ def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
     # 순위는 띄어쓰기를 무시하고 찾는다 — '구찌 가방' 1위인데 '구찌가방'을 "순위권 밖"이라며
     # 되찾기 칸에 넣었다(같은 검색어다). 변형이 여럿이면 가장 높은 자리.
     pos: dict = {}
-    for kw, p_ in conn.execute(
-            "SELECT keyword, position FROM labs_ranked WHERE project_id=? AND checked_date=?", (pid, d)):
+    lvol: dict = {}         # 사이트 나라의 검색량(Labs) — 지표 단계가 다른 나라 값으로 덮어써도 이걸로 줄 세운다
+    for kw, p_, v in conn.execute(
+            "SELECT keyword, position, volume FROM labs_ranked WHERE project_id=? AND checked_date=?", (pid, d)):
         n = scoring.norm(kw)
         if p_ and (n not in pos or p_ < pos[n]):
             pos[n] = p_
+        if v:
+            lvol[n] = max(lvol.get(n, 0), v)
     kws = [dict(r) for r in conn.execute(
         "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
-        " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0 ORDER BY volume DESC, id", (pid,))]
+        " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0 ORDER BY id", (pid,))]
+    for k in kws:
+        k["vol"] = lvol.get(scoring.norm(k["keyword"])) or k["volume"] or 0
+    kws.sort(key=lambda k: (-k["vol"], k["id"]))
     seeds = [r[0] for r in conn.execute(
         "SELECT id FROM keywords WHERE project_id=? AND source='seed'", (pid,))]
     at = lambda k: pos.get(scoring.norm(k))
@@ -230,6 +254,7 @@ def activate_keywords(project: str, limit: int | None = None, *, post=None, ask=
         flag = str(cfg.get("auto_keywords") or "")
         fresh = not flag.startswith(AUTO_VERSION)
         refreshed = _refresh_labs(conn, p, post)
+        _relocale_labs(conn, p["id"])        # 일찍 끝나도 돈다 — 다음 지표 단계가 이 나라 값으로 사게
         active = db.count_active_keywords(conn, p["id"])
         if not fresh and not refreshed and active >= cap:
             return 0
@@ -881,6 +906,8 @@ def demo() -> None:
             labs_rows = [("구찌 로고", 1, 90000), ("구찌 벨트", 1, 60000), ("가방", 8, 60500),
                          ("카드 지갑", 11, 25000), ("카드지갑", 13, 24900), ("귀찌", 41, 1900),
                          ("구찌 가방", 1, 40000),
+                         # 한국 구글에서 12위인 영어 검색어 — 한국 검색량은 작다(아래에서 미국 값으로 덮인다)
+                         ("belt", 12, 300),
                          ("토트백", 6, 12100), ("지갑", 10, 14800), ("하남스타필드", 29, 8100),
                          ("your.gg", 25, 27100), ("셔츠", 19, 22200), ("구찌 가방 인기 순위", 7, 390)]
             posts = []
@@ -897,6 +924,11 @@ def demo() -> None:
                 # '귀찌'는 41위·검색어 하나뿐 — 우리 이름일 수 없다(데이터 검증으로 버려져야 한다)
                 return {"brand_terms": ["구찌", "지어낸", "귀찌"], "drop": ["하남스타필드", "your.gg", "없는말"]}
 
+            # 지표 단계가 'belt' 에 미국 검색량을 붙여 둔 상태를 흉내 낸다 — 이 값으로 줄 세우면 1등이다
+            c = db.connect()
+            c.execute("INSERT INTO keywords(project_id, keyword, source, is_active, volume, locale, locale_src)"
+                      " VALUES(?, 'belt', 'labs_ranked', 0, 900000, 'en-US', 'script')", (bx,))
+            c.commit(); c.close()
             n = activate_keywords("brandx", limit=6, post=fake_post, ask=fake_ask)
             c = db.connect()
             on = {r[0] for r in c.execute("SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (bx,))}
@@ -916,6 +948,11 @@ def demo() -> None:
             # 새 판 첫 번은 다시 고른다 — 예전 판이 켠 '구찌 모자'는 꺼진다(빈자리 채우기만 하면 남는다)
             assert on == {"구찌", "가방", "카드 지갑", "셔츠", "구찌 지갑", "구찌 로고"}, on
             assert flag.startswith(AUTO_VERSION), flag
+            c = db.connect()
+            loc = c.execute("SELECT locale FROM keywords WHERE project_id=? AND keyword='belt'", (bx,)).fetchone()[0]
+            c.close()
+            assert loc == "ko-KR", f"한국 구글에서 잡힌 영어 검색어를 {loc} 로 뒀다 — 미국 검색량이 붙는다"
+            assert "belt" not in on, "다른 나라 검색량으로 줄을 세웠다(사이트 나라 검색량 300짜리가 뽑혔다)"
             # 브랜드 표기는 AI 말만 믿지 않는다 — 그 말 자체로 1~3위이거나 3개 이상 검색어에 나와야 한다
             terms, _ = _judge_keywords(
                 lambda _p: {"brand_terms": ["구찌", "귀찌", "구찌벨트"], "drop": []},

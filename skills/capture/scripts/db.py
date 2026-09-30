@@ -1326,6 +1326,18 @@ def keyword_judge(conn: sqlite3.Connection, project_id: int):
         kw, default or site, en, geo.get((kw or "").lower()))
 
 
+def site_country_judge(conn: sqlite3.Connection, project_id: int):
+    """사이트 나라의 검색에서 잡힌 것을 **아는** 키워드(DataForSEO 순위 추정 — 그 나라 구글
+    결과다)의 (로케일, 출처). 나라를 아니 keyword_locale_src 의 ①이다: 한국 구글에서 순위가
+    잡힌 'belt' 는 한국 사람이 친 영어 검색어 → ko-KR. 글자로만 정하면 en-US 가 되고, 지표
+    단계가 미국 검색량을 붙여 한국 사이트의 추적 키워드가 영어로 뒤덮였다(gucci)."""
+    row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
+    site = project_locale(row) if row else DEFAULT_LOCALE
+    en = english_locale(conn, project_id)
+    a3 = _ALPHA3.get(_region(site))
+    return lambda kw: keyword_locale_src(kw, site, en, {a3: 1} if a3 else None)
+
+
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
