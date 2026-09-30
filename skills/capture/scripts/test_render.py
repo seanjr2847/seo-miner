@@ -221,6 +221,7 @@ MUSTS = [
     (r"20,241", "백링크 화면이 요약 계기판을 안 그렸다"),
     (re.escape(RIVAL), "경쟁 분석 화면이 경쟁사를 안 그렸다"),
     (re.escape(GAP_KW), "경쟁 분석 화면이 키워드 격차를 안 그렸다"),
+    ("!쇼핑몰만 잡은 검색어", "판매 채널로 판정된 곳(mall.example)의 격차를 경쟁 격차로 그렸다"),
     (re.escape(CRAWL_NEW), "사이트 점검이 크롤 이슈를 안 그렸다"),
     (r"새로 생김", "크롤 회차 비교가 신규 이슈를 표시 안 했다 — 이 축의 전부가 그것이다"),
     # 속도는 표가 서는 것과 **판정이 맞는 것**이 다르다 — 픽스처는 모바일만
@@ -606,6 +607,13 @@ def _axes(conn, pid: int) -> None:
     conn.execute("INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
                  "our_position,volume,kind) VALUES(?,?,?,?,2,NULL,2400,'missing')",
                  (pid, d, GAP_KW, GAP_RIVAL))
+    # 격차는 지금 경쟁사로 등록된 곳의 것만 그린다(scoring.gap_rival_set) — 판매 채널(mall)의
+    # 격차 행이 남아 있어도 화면·기회에 안 선다. 둘 다 깔아 경쟁사 쪽만 보이는지를 본다.
+    conn.execute("INSERT INTO competitors(project_id, domain, source) VALUES(?, ?, 'manual')",
+                 (pid, GAP_RIVAL))
+    conn.execute("INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
+                 "our_position,volume,kind) VALUES(?,?,'쇼핑몰만 잡은 검색어','mall.example',1,NULL,9000,'missing')",
+                 (pid, d))
     r1 = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"
                       " VALUES(?,?,'sitemap',10,1)", (pid, prev)).lastrowid
     r2 = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"

@@ -3439,8 +3439,18 @@ def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
         """SELECT k.keyword, k.volume, rs.position
              FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
             WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?
-              AND rs.aio_present=1 AND rs.aio_cited=0
+              AND rs.aio_present=1 AND rs.aio_cited=0 AND k.is_active=1
          ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""", (project_id, d))]
+
+
+def gap_rival_set(conn: sqlite3.Connection, project_id: int) -> set[str]:
+    """격차를 읽어도 되는 경쟁 도메인 — 지금의 경쟁사 판정(rivals)이 '쓸 것'이라고 한 곳.
+
+    keyword_gap 은 **그때의** 경쟁사로 캔 것이다. 판정이 나중에 판매 채널이라고 한 곳
+    (gucci 의 lfmall)이나 표에서 지운 곳의 행이 최신 회차로 남아, 콘텐츠 공백 25건이 전부
+    "경쟁 도메인 lfmall.co.kr" 이었다. 읽는 쪽(기회·[경쟁 분석] 표)이 이걸로 거른다."""
+    row = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
+    return {host_of(d) for d in rivals(conn, project_id, row[0] if row else "")[0]}
 
 
 def content_gaps(conn: sqlite3.Connection, project_id: int, *,
@@ -3449,12 +3459,13 @@ def content_gaps(conn: sqlite3.Connection, project_id: int, *,
     d = _latest(conn, _LATEST_KG, (project_id,))
     if not d:
         return []
+    keep = gap_rival_set(conn, project_id)
     return list(cg_lead(dict(r) for r in conn.execute(
         """SELECT keyword, domain, position, our_position, volume, kind
              FROM keyword_gap
             WHERE project_id=? AND checked_date=? AND kind IN ('missing','weak')
          ORDER BY volume IS NULL, volume DESC, keyword""",
-        (project_id, d))).values())[:limit]
+        (project_id, d)) if host_of(r["domain"] or "") in keep).values())[:limit]
 
 
 def cg_lead(rows) -> dict[str, dict]:
@@ -4287,10 +4298,15 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     """구글 AI 요약에 내 링크 없음 → 그 키워드의 최신 순위 기록에서 AI 요약이 우리를
     인용한다(aio_cited=1). AI 요약이 사라진 것(aio_present=0)은 풀림이 아니다 — 요약은
     붙었다 떨어졌다 한다. 미측정(NULL, serper 경로)도 아무 말도 안 한다."""
-    kw = conn.execute("SELECT id FROM keywords WHERE project_id=? AND keyword=?",
+    kw = conn.execute("SELECT id, is_active FROM keywords WHERE project_id=? AND keyword=?",
                       (pid, target)).fetchone()
     if not kw:
         return None
+    # 추적에서 뺀 검색어는 다시 안 잰다 — 풀렸다는 확인이 영영 안 오니 열린 채로 남아 심사를
+    # 채웠다(gucci: 한때 미국 검색어로 잰 sneakers·bamboo 가 추적에서 빠진 뒤에도 할 일로 남았다).
+    # "추적을 그만뒀다"는 긍정된 사실이다 — 다시 켜면 다음 순위 확인에서 다시 선다(aio_gaps).
+    if not kw[1]:
+        return "추적 키워드에서 뺀 검색어라 더 재지 않습니다 — 다시 추적하면 다음 순위 확인에서 다시 판단합니다"
     r = conn.execute(
         """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
             WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
@@ -5070,6 +5086,15 @@ def _selfcheck() -> None:
                       ("auto.com", "auto_labs"), ("hand.com", "manual")])
     assert rivals(conn, 1, "selfcheck.com", ("blog.naver.com",)) == (
         ["ecrett.com", "hand.com", "auto.com"], ["m.blog.naver.com"])
+    # 콘텐츠 공백은 지금의 경쟁사 격차만 — 판정이 판매 채널이라고 한 곳(gucci 의 lfmall)의
+    # 옛 격차 행이 최신 회차로 남아도 기회가 되지 않는다. 사람이 적은 곳은 판정과 무관하다.
+    conn.execute("INSERT INTO competitors(project_id, domain, source, role) VALUES(1,'mall.com','auto_labs','channel')")
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+                     " our_position, volume, kind) VALUES(1,'2026-09-29',?,?,3,9,?,'weak')",
+                     [("쇼핑몰 검색어", "mall.com", 900), ("진짜 격차", "hand.com", 500)])
+    assert [r["keyword"] for r in content_gaps(conn, 1)] == ["진짜 격차"], \
+        f"판매 채널로 판정된 곳의 격차가 콘텐츠 공백이 됐다: {content_gaps(conn, 1)}"
+    conn.execute("DELETE FROM keyword_gap")
     conn.execute("DELETE FROM competitors WHERE domain != 'ecrett.com'")
     rows = striking(conn, 1, "2026-08-14", brands=brands)
     assert [r["query"] for r in rows] == ["내 키워드"], rows   # 3.0위는 구간 밖, ecrett는 남의 브랜드

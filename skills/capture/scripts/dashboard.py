@@ -1111,20 +1111,29 @@ def _axis_competitors(conn, pid: int) -> dict:
         # 경쟁사 순위 없이 'shared'(우리가 위)로 적힌 옛 행은 'unknown' 으로 읽는다 —
         # collect_gap._kind 가 이제 그렇게 적는다. 다음 수집 전까지의 옛 행을 위한 것.
         kind_sql = "CASE WHEN kind='shared' AND position IS NULL THEN 'unknown' ELSE kind END"
+        # 지금 경쟁사로 판정된 곳의 행만 읽는다(scoring.gap_rival_set) — 기회(content_gaps)와
+        # 같은 거르개라야 표와 기회가 같은 경쟁사를 말한다. 판매 채널로 빠진 곳의 옛 행은 뺀다.
+        # 비교는 기회와 같은 정규화(host_of)로 — 표에 적힌 그대로의 도메인 중 경쟁사인 것을 골라
+        # SQL 에 넘긴다(대소문자·www 가 다르게 적힌 행을 SQL 비교가 떨어뜨리지 않게).
+        rivals_now = scoring.gap_rival_set(conn, pid)
+        keep = [r["domain"] for r in q(conn, "SELECT DISTINCT domain FROM keyword_gap"
+                                              " WHERE project_id=? AND checked_date=?", (pid, gap_date))
+                if scoring.host_of(r["domain"] or "") in rivals_now]
+        dom_in = f" AND domain IN ({','.join('?' * len(keep))})" if keep else " AND 0"
         kw_gap = q(conn, "SELECT * FROM keyword_gap WHERE project_id=? AND checked_date=?"
-                         " ORDER BY volume DESC LIMIT 300", (pid, gap_date))
+                         + dom_in + " ORDER BY volume DESC LIMIT 300", (pid, gap_date, *keep))
         for r in kw_gap:
             if r["kind"] == "shared" and r["position"] is None:
                 r["kind"] = "unknown"
         kw_gap_counts = {r["kind"]: r["n"] for r in q(
             conn, f"SELECT {kind_sql} kind, COUNT(*) n FROM keyword_gap WHERE project_id=?"
-                  " AND checked_date=? GROUP BY 1", (pid, gap_date))}
+                  " AND checked_date=?" + dom_in + " GROUP BY 1", (pid, gap_date, *keep))}
         # 격차를 맞댄 경쟁 도메인 전부 — kw_gap 은 300줄로 잘려 거기서 모으면 빠진다.
         # 몫(comp_metrics)은 자동 탐지에서 지표를 받은 곳만이라, 이것 없이 "경쟁사를 못
         # 찾았다"고 말하면 바로 아래 격차 표와 모순된다(9회차).
         gap_rivals = [r["domain"] for r in q(
             conn, "SELECT DISTINCT domain FROM keyword_gap WHERE project_id=? AND checked_date=?"
-                  " ORDER BY 1", (pid, gap_date))]
+                  + dom_in + " ORDER BY 1", (pid, gap_date, *keep))]
     # 역할 판정(collect_gap E) — 경쟁사에서 뺀 곳(판매 채널·포털)을 근거와 함께 보인다.
     # 안 보이면 "lfmall 은 왜 사라졌나"에 답이 없다. 이름표 정본은 scoring.ROLES.
     comp_roles = q(conn, "SELECT domain, source, role, role_why FROM competitors"

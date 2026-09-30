@@ -3330,6 +3330,27 @@ def test_seam_103_opp_row_opens_the_drawer():
     assert "window.oppParts(o)" in ov, "서랍이 셸의 펼침 조각(oppParts)을 안 쓴다 — 조각이 두 벌이 된다"
 
 
+def test_seam_104_gap_readers_use_current_rivals():
+    """104) 격차(keyword_gap)를 읽는 두 곳 — 기회(content_gaps)와 [경쟁 분석] 표 — 이 같은
+    거르개(scoring.gap_rival_set = 지금의 경쟁사 판정)로 읽는다.
+
+    격차 행은 그때의 경쟁사로 캔 것이라, 판매 채널로 빠진 곳(gucci 의 lfmall)의 옛 행이 남는다.
+    한쪽만 거르면 표는 "경쟁사 없음"인데 기회 25건이 lfmall 을 말하거나, 그 반대가 된다.
+    """
+    sc = (ROOT / "skills" / "capture" / "scripts" / "scoring.py").read_text("utf-8")
+    dash = (ROOT / "skills" / "capture" / "scripts" / "dashboard.py").read_text("utf-8")
+    cg = re.search(r"def content_gaps\(.*?\n(?=def )", sc, re.S)
+    assert cg and "gap_rival_set(" in cg.group(0), "기회(content_gaps)가 지금의 경쟁사로 격차를 안 거른다"
+    # 행을 읽는 자리 전부(날짜만 묻는 MAX(checked_date) 는 빼고) — 문자열이 두 줄로 갈라진 것도 잡는다
+    reads = [m.start() for m in re.finditer(r"FROM keyword_gap WHERE project_id=\?", dash)
+             if "MAX(checked_date)" not in dash[max(0, m.start() - 40):m.start()]]
+    assert reads, "대시보드가 keyword_gap 을 읽는 자리를 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
+    for at in reads:
+        tail = dash[at:at + 200]
+        assert "dom_in" in tail, f"[경쟁 분석]이 거르지 않은 격차를 읽는다: {tail[:120]!r}"
+    assert "scoring.gap_rival_set(conn, pid)" in dash, "[경쟁 분석]의 거르개가 기회와 다른 목록이다"
+
+
 def test_seam_100_no_gsc_site_is_skipped_everywhere():
     """100) 서치콘솔 없이 시작한 사이트(gsc_property 가 빈 값)는 어디서도 '필수 연결'로 안 선다.
 

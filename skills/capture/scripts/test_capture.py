@@ -229,6 +229,9 @@ def test_load_covers_every_kind():
         "INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position, "
         "our_position, volume, kind) VALUES(?, '2026-08-14', '경쟁사만있는키워드', 'rival.com', "
         "3, NULL, 800, 'missing')", (pid,))
+    # 격차는 지금 경쟁사로 등록된 곳의 것만 기회가 된다(scoring.gap_rival_set)
+    if not conn.execute("SELECT 1 FROM competitors WHERE project_id=? AND domain='rival.com'", (pid,)).fetchone():
+        conn.execute("INSERT INTO competitors(project_id, domain) VALUES(?, 'rival.com')", (pid,))
 
     # robots.txt 원문까지 남긴다 — AI 크롤러 차단(ai_bot_blocked)은 새로 가져오지
     # 않고 이 원문을 다시 읽는다. 학습 봇(GPTBot)과 검색 봇(OAI-SearchBot)을 둘 다
@@ -1506,6 +1509,11 @@ def test_resolve_stale_closes_on_positive_confirmation():
                        "VALUES(?, 'aio인용', 1) RETURNING id", (pid,)).fetchone()[0]
     conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present, aio_cited)"
                  " VALUES(?, '2026-08-20T00:00:00Z', 9, 1, 1)", (kid,))
+    # 추적에서 뺀 검색어 — 같은 날 잰 요약 미인용 기록이 있어도 다시 서지 않고 닫힌다
+    off = conn.execute("INSERT INTO keywords(project_id, keyword, is_active) "
+                       "VALUES(?, '뺀 검색어', 0) RETURNING id", (pid,)).fetchone()[0]
+    conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present, aio_cited)"
+                 " VALUES(?, '2026-08-20T00:00:00Z', 4, 1, 0)", (off,))
     pq = conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, '인용된 질문') "
                       "RETURNING id", (pid,)).fetchone()[0]
     with db.run(conn, pid, "ai") as r:
@@ -1546,7 +1554,7 @@ def test_resolve_stale_closes_on_positive_confirmation():
         k("backlink_prospect", "got.com"), k("ai_bot_blocked", "OAI-SearchBot"),
         k("ai_bot_blocked", "GPTBot"), k("striking_distance", "밀려난 검색어"),
         k("striking_distance", "노출 준 검색어"), k("striking_distance", "스냅샷에 없는 검색어"),
-        k("index_blocked", "/moved")])
+        k("index_blocked", "/moved"), k("aio_exposure", "뺀 검색어")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE id=?", (ids["인용된 질문"],))
     cid = db.record_creation(conn, pid, "a.md", opportunity_id=ids["올라간 검색어"])
     work_at = conn.execute("SELECT created_at FROM creations WHERE id=?", (cid,)).fetchone()[0]
@@ -1562,7 +1570,8 @@ def test_resolve_stale_closes_on_positive_confirmation():
     resolved = {t for t, r in st.items() if r["status"] == db.OPP_RESOLVED}
     assert resolved == {"aio인용", "인용된 질문", "클릭 회복", "모바일 회복", "/fixed",
                         "got.com", "OAI-SearchBot", "GPTBot", "밀려난 검색어", "노출 준 검색어",
-                        "스냅샷에 없는 검색어", "/moved"}, st
+                        "스냅샷에 없는 검색어", "/moved", "뺀 검색어"}, st
+    assert "추적" in st["뺀 검색어"]["status_reason"], st["뺀 검색어"]
     # 조건을 벗어나 닫힌 것은 '상단에 들었다'가 아니라 벗어났다고 말한다
     assert "25.0위" in st["밀려난 검색어"]["status_reason"], st["밀려난 검색어"]
     assert "벗어났습니다" in st["밀려난 검색어"]["status_reason"], st["밀려난 검색어"]
@@ -2085,6 +2094,9 @@ def test_content_gap_reason_names_one_competitor_deterministically():
     conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
                      " our_position, volume, kind) VALUES(?, '2026-09-20', '공백 검색어', ?, ?, NULL,"
                      " 500, 'missing')", [(pid, "a-top.com", 2), (pid, "z-low.com", 8)])
+    # 격차는 지금 경쟁사로 등록된 곳의 것만 읽는다(scoring.gap_rival_set)
+    conn.executemany("INSERT INTO competitors(project_id, domain) VALUES(?, ?)",
+                     [(pid, "a-top.com"), (pid, "z-low.com")])
     conn.commit()
     rows = scoring.content_gaps(conn, pid)
     assert [(r["keyword"], r["domain"]) for r in rows] == [("공백 검색어", "a-top.com")], rows

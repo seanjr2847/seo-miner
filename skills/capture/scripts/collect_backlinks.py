@@ -148,6 +148,11 @@ def _put_refdomains(conn, pid: int, today: str, res) -> int:
     return len(rows)
 
 
+def _blocked_codes() -> frozenset:
+    import collect_page
+    return collect_page.BLOCK_STATUS
+
+
 def _put_backlinks(conn, pid: int, today: str, res) -> int:
     rows = []
     for it in _items(res):
@@ -156,8 +161,13 @@ def _put_backlinks(conn, pid: int, today: str, res) -> int:
         if not u_from or not u_to:
             continue                     # 링크의 양 끝이 없으면 백링크가 아니다
         broken = _g(it, "is_broken", "is_lost", default=False)
-        if broken is False:
-            status = _int(_g(it, "url_to_status_code", "page_to_status_code"))
+        status = _int(_g(it, "url_to_status_code", "page_to_status_code"))
+        if status in _blocked_codes():
+            # 403·429 는 페이지가 없는 게 아니라 **크롤러를 막은** 것이다. gucci.com 의 '깨진
+            # 링크' 60개가 전부 403 이었다 — 홈(gucci.com/)까지 "페이지가 없습니다"라며
+            # 되찾으라는 기회가 섰다. 막힘의 정본은 collect_page.BLOCK_STATUS 한 벌이다.
+            broken = False
+        elif broken is False:
             broken = bool(status and status >= 400)
         rows.append((pid, today, str(u_from), str(u_to),
                      (_g(it, "domain_from", "page_from_domain") or _host(u_from)),
@@ -427,6 +437,8 @@ def _fake_post(calls: list):
                  "last_seen": "2026-08-01"},
                 {"page_from_url": "https://b.com/q", "page_to_url": "https://bt.com/404",
                  "text": "깨진 링크", "url_to_status_code": 404},   # 다른 필드명 + 파생 is_broken
+                {"url_from": "https://c.com/r", "url_to": "https://bt.com/",
+                 "is_broken": True, "url_to_status_code": 403},   # 크롤러를 막았다(gucci 모양)
                 {"anchor": "끝이 없다"},                     # url 이 없다 — 건너뛴다
             ]}], 0.04
         if path.endswith("/anchors/live"):
@@ -492,7 +504,8 @@ def _selfcheck() -> None:
     assert rd["d2.com"]["rank"] is None and rd["shared.com"]["rank"] == 90, rd
 
     bl = {r["url_to"]: r for r in rows("backlinks")}
-    assert set(bl) == {"https://bt.com/x", "https://bt.com/404"}, bl
+    assert set(bl) == {"https://bt.com/x", "https://bt.com/404", "https://bt.com/"}, bl
+    assert bl["https://bt.com/"]["is_broken"] == 0,         "403(크롤러 차단)을 깨진 링크로 적었다 — 홈페이지를 되찾으라는 기회가 선다"
     assert bl["https://bt.com/x"]["anchor"] == "좋은 앵커"
     assert bl["https://bt.com/x"]["dofollow"] == 1 and bl["https://bt.com/x"]["is_broken"] == 0
     assert bl["https://bt.com/404"]["is_broken"] == 1, bl  # 404 → 파생
