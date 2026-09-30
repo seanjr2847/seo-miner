@@ -338,6 +338,15 @@ def demo() -> None:
                         {"rank.project": "남의사이트"}, {"rank.dry_run": True}, "mobile"):
                 assert c.post("/api/run", json={"project": "p1", "opts": bad}
                               ).status_code == 400, f"모르는 opt 가 통과했다: {bad!r}"
+            # 할 일(plays)을 단계로 누른 것은 사람이 누른 것 — 신선 판정을 끄는 force 가 실린다.
+            # 이게 없으면 [할 일 만들기]가 "7일 안이라 건너뜁니다"로 끝나 버튼이 헛돈다.
+            r = c.post("/api/run", json={"project": "p1", "stages": "plays"})
+            assert r.status_code == 200 and r.json()["started"], r.text
+            assert "plays.force=true" in spawned[-1], f"할 일 버튼이 force 를 안 싣는다: {spawned}"
+            cs = store.connect()
+            store.mark_done(cs, store.site(cs, u2, "p1")["id"])
+            cs.close()
+            spawned.clear()
             r = c.post("/api/run", json={"project": "p1", "stages": "competitors",
                                          "opts": {"rank.device": "mobile"}})
             assert r.status_code == 200 and r.json()["started"], r.text

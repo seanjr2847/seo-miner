@@ -1370,12 +1370,12 @@ def _aio_band_of(target: str, gap_band: dict, rank_pos: dict, gsc_pos: dict) -> 
 
 
 def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict],
-               ai_rows: list[dict] = (), ranks: list[dict] = ()) -> dict:
+               ai_rows: list[dict] = (), ranks: list[dict] = (), gated: bool = True) -> dict:
     """기회 축 — striking(GSC 축)·kw_gap(경쟁 분석 축)·ai_rows(AI 축의 질문 행)·ranks
     (순위 축의 행, 화면용 30개로 자르기 전)가 낸 원본 행을 대상 문자열로 한 번만
     짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
     """
-    opps = scoring.opportunities(conn, pid, limit=200, with_id=True)
+    opps = scoring.opportunities(conn, pid, limit=200, with_id=True, gated=gated)
 
     # GA4 매출 잠재력 보정 배지 — scoring.load() 가 저장할 때 이미 score() 로 승수를
     # 반영해 놨다. 여기서는 화면이 "왜 이게 위로 왔는지" 말할 수 있게 같은 승수를
@@ -1750,7 +1750,18 @@ def _axis_groups(conn, pid, now=None) -> dict:
     return {"groups": out}
 
 
-def gather(conn, p, at: str | None = None) -> dict:
+def _axis_plays(conn, pid: int) -> dict:
+    """이번 달 할 일(plays.py 가 만든 것) — 뺀 것(dismissed)은 안 싣는다. 꼴은 db.list_plays.
+
+    plays_at 은 지금 실린 묶음을 만든 때(가장 늦은 created_at)다. 없으면 None 이고
+    plays 는 빈 목록이다 — 화면은 그때 [할 일 만들기]를 그린다.
+    """
+    plays = db.list_plays(conn, pid, statuses=("new", "applied"))
+    return {"plays": plays,
+            "plays_at": max((x["created_at"] for x in plays if x["created_at"]), default=None)}
+
+
+def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
 
     각 축(_axis_*)이 자기 키 묶음을 내고, 여기서는 그 합집합만 한다 — 축끼리
@@ -1763,6 +1774,9 @@ def gather(conn, p, at: str | None = None) -> dict:
         근거 페이지)만 그날로 돌아간다. 순위·색인·기기·AI·기회는 수집 주기가 따로라
         각자 최신을 본다 — 그래서 화면 머리가 축별 날짜를 다 적는다. 한 날짜로
         묶으면 대부분의 축이 "그날 데이터 없음"이 된다.
+    gated: False 면 심사 전 기회까지 싣는다(scoring.opportunities) — 이번 달 할 일(plays)이
+        후보를 고를 때만 쓴다. 요청문·고칠 페이지 판정(brief.page_of)을 화면과 한 벌로
+        쓰려고 같은 조립을 다시 부르는 것이지, 화면에 심사 전 기회를 싣는 길이 아니다.
     """
     pid = p["id"]
     cfg = collector.project_cfg(conn, p)
@@ -1775,7 +1789,7 @@ def gather(conn, p, at: str | None = None) -> dict:
     ai = _axis_ai(conn, pid)
     comp = _axis_competitors(conn, pid)
     opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
-                        ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all)
+                        ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all, gated=gated)
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
     # 관찰 중 — 기회 줄에 hold 를 얹고 "새 기회 N건"을 그만큼 뺀다(opps_d 를 덮어쓴다).
@@ -1813,7 +1827,8 @@ def gather(conn, p, at: str | None = None) -> dict:
          "keyword_kinds": list(scoring.KEYWORD_KINDS),
          "progress": stage.progress(conn, pid),
          "guide": stage.state(conn, p, p["domain"] or ""),
-         "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])}
+         "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"]),
+         **_axis_plays(conn, pid)}
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
     # 들어오는 내부 링크만 여기서 한 번 더 읽는다: 어느 페이지가 필요한지는 기회와
@@ -2003,7 +2018,7 @@ def settings_profile_route(body: dict) -> dict:
 #
 # 규칙(설계서 결정 2):
 #   · 도는 중에 다른 묶음을 누르면 대기열 — 지금 런이 끝나면 이어서 돈다. 방금 런에서
-#     돈 공유 단계(rank 등)는 건너뛴다. 꼬리(gaps·pages·report)는 다시 돈다 — 새로 잰
+#     돈 공유 단계(rank 등)는 건너뛴다. 꼬리(run_all.TAIL)는 다시 돈다 — 새로 잰
 #     것으로 기회를 다시 세워야 하기 때문이다.
 #   · 시작 전(RUN_DEBOUNCE_S 안)에 연달아 누르면 한 런으로 합친다.
 RUN_DEBOUNCE_S = 3.0

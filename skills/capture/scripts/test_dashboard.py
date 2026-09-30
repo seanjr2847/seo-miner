@@ -1445,7 +1445,7 @@ def _until(cond, what):
 def test_local_run_merges_presses_and_queues_while_running():
     """로컬 /api/run — (1) 시작 전(몇 초 안)에 연달아 누른 묶음은 한 런으로 합친다
     (2) 도는 중에 누르면 대기열이고, 끝나면 이어서 돈다 (3) 이어서 돌 때 방금 돈 공유
-    단계(rank)는 빼되 꼬리(gaps·pages·report)는 뺄 수 없다 (4) 모르는 묶음은 거절."""
+    단계(rank)는 빼되 꼬리(run_all.TAIL)는 뺄 수 없다 (4) 모르는 묶음은 거절."""
     import run_all
     conn, pid = _brain("lr")
     conn.close()

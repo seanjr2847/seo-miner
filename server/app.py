@@ -893,6 +893,10 @@ def api_run(body: dict = Depends(_body), project: str = Depends(_project_b),
         # 새 런의 로그는 여기서부터다. 워커가 뜨기까지 몇 초가 걸리는데, 그 사이
         # 폴링이 지난 런 텍스트를 읽으면 사용자는 끝난 런을 지금 도는 런으로 읽는다.
         store.save_run_log(conn, row["id"], "")
+        # 단계만 고른 실행은 사람이 누른 것이다 — 할 일(plays)은 "신선하면 건너뜀"을 끄고
+        # 다시 만든다. 자동 런(묶음 꼬리)은 이 길로 안 온다: 거기서는 신선 판정이 돈을 아낀다.
+        if "plays" in stages:
+            opts.setdefault("plays.force", "true")
         argv = ["--user", str(uid), "--project", project, "--only", ",".join(stages)]
         for k, v in opts.items():
             for one in (v if isinstance(v, list) else [v]):

@@ -19,6 +19,9 @@ StageResult 를 그대로 호출자에게 넘긴다.
   competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
   backlinks   : 유료 백링크 프로필·링크 교집합. 키 없으면 건너뜀.
   gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
+  plays       : 열린 기회를 페이지별 할 일로 묶고 증거·AI 수정안을 붙인다 (plays.py). 기회가
+                선 뒤여야 하고, 페이지 점검(pages)이 막 읽은 값을 못 읽었을 때의 대체로 쓴다.
+                신선하면(7일 안·같은 후보) 스스로 건너뛴다 — 매 런 돈을 쓰지 않는다.
   pages       : 내 페이지 HTML 감사 (기회에 걸린 URL 부터, 비용 0).
   vitals      : 그 페이지들의 속도(LCP·INP·CLS)를 기기별로. pages 와 같은 URL 목록을
                 본다 — 어느 페이지를 손댈지가 먼저 정해져야 같은 페이지를 잰다. 무료.
@@ -67,6 +70,7 @@ import collector           # noqa: E402
 import dashboard           # noqa: E402
 import db                  # noqa: E402
 import expand_keywords     # noqa: E402
+import plays               # noqa: E402
 import remote              # noqa: E402
 import scoring             # noqa: E402
 import serp_adapter        # noqa: E402
@@ -158,6 +162,7 @@ STAGES = (
     _stage("competitors", "경쟁사 검색어·트래픽 몫",          collect_gap.collect,     True, collect_gap),
     _stage("backlinks",   "프로필·앵커·링크 교집합",     collect_backlinks.collect, True, collect_backlinks),
     _stage("gaps",        "외부 호출 없음",           load_opportunities,      False),
+    _stage("plays",       "이번 달 할 일 — 페이지 읽기·수정안", plays.collect, True, plays),
     _stage("pages",       "제목·설명·본문·구조화 데이터", collect_page.collect, False, collect_page),
     # 속도는 페이지 점검 뒤다 — 같은 URL 목록(collect_page.target_urls)을 보기 때문에,
     # 어느 페이지를 손댈지가 먼저 정해져 있어야 같은 페이지를 잰다.
@@ -189,7 +194,7 @@ STAGE_BY_NAME = {s.name: s for s in STAGES}
 # 단다). 대신 그 묶음의 시계는 **매일 런**(DAILY + TAIL)이 찍는다: 심사·개요가 읽는 건
 # 검색 실적과 기회 목록이고, 그 둘이 매일 도는 것이다. group_stages() 가 그 연결이다.
 WEEKLY_HOURS = 168
-TAIL = ("gaps", "pages", "report")
+TAIL = ("gaps", "plays", "pages", "report")
 DAILY = ("gsc", "ga4")
 
 GROUPS = (
@@ -222,6 +227,7 @@ RUNNABLE_GROUPS = tuple(g["id"] for g in GROUPS if g["every_hours"] is not None)
 #   backlinks   링크 교집합의 경쟁사가 competitors 의 자동 탐지(auto_labs)까지다
 #   pages       기회에 걸린 페이지부터 본다 (collect_page.target_urls → opportunities)
 #   vitals      pages 와 같은 URL 목록 — 어느 페이지를 손댈지가 먼저 정해져야 같은 페이지를 잰다
+#   plays       기회(gaps)로 후보를 고르고, 우리 페이지를 못 읽으면 페이지 점검(pages)의 값으로 선다
 # gaps 와 report 는 표 대신 규칙이다(_waits): gaps 는 꼬리·vitals 를 뺀 전부 뒤(scoring 은
 # page_vitals 를 안 읽는다), report 는 나머지 전부 뒤.
 AFTER = {
@@ -233,6 +239,7 @@ AFTER = {
     "backlinks": ("competitors",),
     "pages": ("gaps",),
     "vitals": ("pages",),
+    "plays": ("gaps", "pages"),
 }
 
 
@@ -295,10 +302,12 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
                           "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 넣으면 순위를 "
                           "확인합니다. 발급: https://dataforseo.com (권장) 또는 "
                           "https://serper.dev")
-    elif stage_name == "ai":
+    elif stage_name in ("ai", "plays"):
         if not serp_adapter.has_openrouter():
-            return False, ("키가 없어 건너뜁니다. OPENROUTER_API_KEY 를 넣으면 AI 가 "
-                          "누구를 인용하는지 확인합니다. 발급: https://openrouter.ai/keys")
+            what = ("AI 가 누구를 인용하는지 확인합니다" if stage_name == "ai"
+                    else "기회를 페이지별 할 일로 묶고 수정안을 씁니다")
+            return False, ("키가 없어 건너뜁니다. OPENROUTER_API_KEY 를 넣으면 "
+                          f"{what}. 발급: https://openrouter.ai/keys")
     elif stage_name in ("metrics", "backlinks"):
         if not serp_adapter.has_dataforseo():
             what = ("검색량과 난이도를 조회합니다" if stage_name == "metrics"
@@ -407,11 +416,14 @@ def preflight(stages=STAGES) -> dict[str, str]:
                   f"충전: https://app.dataforseo.com")
             for n in dfs:
                 blocked[n] = f"DataForSEO 잔액 없음 (${bal:.2f})"
-    if "ai" in paid and serp_adapter.has_openrouter():
+    # OpenRouter 를 쓰는 단계(AI 인용·할 일 수정안)는 같은 키 하나를 본다 — 한 번만 묻는다.
+    orr = [n for n in ("ai", "plays") if n in paid]
+    if orr and serp_adapter.has_openrouter():
         ok, msg = collect_ai.openrouter_ok()
         if not ok:
-            print(f"[경고] {msg} — ai 단계를 건너뜁니다.")
-            blocked["ai"] = msg
+            print(f"[경고] {msg} — {'·'.join(orr)} 단계를 건너뜁니다.")
+            for n in orr:
+                blocked[n] = msg
     return blocked
 
 
@@ -897,7 +909,7 @@ def _check_groups() -> None:
     # ── plan — 공유 단계는 한 번, 꼬리는 늘, 매일 런은 gsc·ga4+꼬리
     p = plan(["search", "ai"])
     assert p.count("rank") == 1 and set(TAIL) <= set(p) and "crawl" not in p, p
-    assert plan(["todo"]) == ("gsc", "ga4", "gaps", "pages", "report"), plan(["todo"])
+    assert plan(["todo"]) == ("gsc", "ga4", "gaps", "plays", "pages", "report"), plan(["todo"])
     assert set(plan("all")) == set(VALID_STAGE_NAMES), plan("all")
     assert covered(plan(["search"])) == ["todo", "search"], covered(plan(["search"]))
     assert covered(plan(["ai"])) == ["ai"], covered(plan(["ai"]))
@@ -952,7 +964,8 @@ def _check_groups() -> None:
     must = [("gsc", "keywords"), ("keywords", "metrics"), ("metrics", "rank"),
             ("rank", "competitors"), ("competitors", "backlinks"), ("gsc", "index"),
             ("ai", "gaps"), ("crawl", "gaps"), ("backlinks", "gaps"), ("gaps", "pages"),
-            ("pages", "vitals"), ("vitals", "report"), ("pages", "report")]
+            ("pages", "vitals"), ("vitals", "report"), ("pages", "report"),
+            ("gaps", "plays"), ("pages", "plays"), ("plays", "report")]
     for d_, n in must:
         assert spans[d_][1] <= spans[n][0], f"{n} 이 {d_} 가 끝나기 전에 시작했다"
     # 동시성: ai 와 crawl 은 서로 안 기다린다 — 겹쳐서 돌아야 한다

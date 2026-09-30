@@ -489,7 +489,7 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
 
     한 런이 끝나면 **대기열을 다시 본다**: 도는 동안 누른 묶음이 있으면 이어서 돈다
     (라운드). 다음 라운드는 앞 라운드에서 잘 돈 공유 단계(rank 등)를 다시 사지 않는다 —
-    run_chain(ran=…). 꼬리(gaps·pages·report)는 매 라운드 다시 돈다: 새로 잰 것으로
+    run_chain(ran=…). 꼬리(run_all.TAIL)는 매 라운드 다시 돈다: 새로 잰 것으로
     기회를 다시 세워야 한다.
 
     opts 는 `--opt STAGE.KEY=VALUE` 로 들어온 단계별 노브다(원격 CLI 가 쓴다).
