@@ -1708,6 +1708,45 @@ def test_dashboard_token_survives_restart():
     assert (_P(home) / "dashboard.token").read_text("utf-8").strip() == first
 
 
+def test_rank_axis_reads_only_tracked_keywords_in_their_locale():
+    """순위 표·rank_by_kw·상위 목록은 추적 중인(is_active=1) 키워드의, 지금 로케일로 잰
+    행만 읽는다. gucci 순위 표 42줄 중 22줄이 추적에서 뺀 옛 en-US 검색어였다(미국·카타르·
+    핀란드 URL) — 화면과 기회가 그것을 "이번 순위"로 읽었다."""
+    conn, pid = _brain("rank_live")
+    kid = {}
+    for kw, loc, active in (("추적", "ko-KR", 1), ("뺀것", "en-US", 0), ("나라바뀜", "ko-KR", 1),
+                            ("옛행", None, 1)):
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id,keyword,locale,is_active)"
+                               " VALUES(?,?,?,?) RETURNING id", (pid, kw, loc, active)).fetchone()[0]
+    at = D + "T01:00:00Z"
+    db.write_rank_snapshot(conn, kid["추적"], 3, "https://rank_live.example/a",
+                           locale="ko-KR", checked_at=at)
+    db.write_rank_snapshot(conn, kid["추적"], 5, None, locale="ko-KR",
+                           checked_at=PREV + "T01:00:00Z")
+    db.write_rank_snapshot(conn, kid["뺀것"], 1, "https://rank_live.example/us",
+                           locale="en-US", checked_at=at)
+    # 추적에서 뺀 검색어만 잰 더 늦은 날 — 그날이 "최신 회차"가 되면 표가 통째로 빈다
+    db.write_rank_snapshot(conn, kid["뺀것"], 2, None, locale="en-US",
+                           checked_at="2026-08-30T01:00:00Z")
+    db.write_serp_results(conn, kid["뺀것"], [{"position": 1, "url": "https://us.example/"}],
+                          checked_at=at)
+    # 로케일이 바뀐 뒤 순위 단계가 아직 안 돈 검색어 — 미국 구글 값을 그리지 않는다
+    db.write_rank_snapshot(conn, kid["나라바뀜"], 1, "https://rank_live.example/us2",
+                           locale="en-US", checked_at=at)
+    db.write_serp_results(conn, kid["나라바뀜"], [{"position": 1, "url": "https://us2.example/"}],
+                          checked_at=at)
+    db.write_rank_snapshot(conn, kid["옛행"], 8, None, checked_at=at)      # 잰 로케일 모름 → 읽는다
+    conn.commit()
+
+    rk = dashboard._axis_rank(conn, pid)
+    assert rk["rank_date"] == D and rk["rank_prev"] == PREV, (rk["rank_date"], rk["rank_prev"])
+    assert set(rk["rank_by_kw"]) == {"추적", "옛행"}, set(rk["rank_by_kw"])
+    assert {r["keyword"] for r in rk["ranks"]} == {"추적", "옛행"}
+    assert rk["rank_by_kw"]["추적"]["prev_pos"] == 5
+    assert "뺀것" not in rk["serp_top"] and "나라바뀜" not in rk["serp_top"], rk["serp_top"]
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

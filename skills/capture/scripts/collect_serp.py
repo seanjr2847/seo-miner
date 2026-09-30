@@ -72,6 +72,60 @@ def targets(conn, project_id: int, limit: int) -> list:
                         (*open_st, project_id, limit)).fetchall()
 
 
+# 깊은 조회 — 기본 깊이(serp_depth, 10 = 구글 1쪽) 밖이라도 서치콘솔·순위 추정이 이
+# 깊이 안이라고 말하는 검색어만 여기까지 본다. 전부를 깊게 보지 않는 까닭(2026-09-30 운영
+# 페이로드): 추적 대비 "순위 없음" 415개 중 서치콘솔 평균이 11~30위인 것은 20개(5%)뿐이고,
+# 207개는 서치콘솔 노출조차 없었다(1쪽 밖 깊숙이 — 깊이를 늘려도 안 잡힌다). DataForSEO 는
+# 결과 10개 한 쪽마다 과금하므로 깊이 30 은 그 검색어 값이 최대 3배다. 여기 걸리는 것만 3배.
+DEEP_DEPTH = 30
+
+
+def _pages(depth: int) -> int:
+    """깊이 → 과금되는 쪽 수(결과 10개 한 쪽). 단가는 깊이 10 기준이다(serp_adapter)."""
+    return max(1, -(-int(depth) // 10))
+
+
+def rank_hints(conn, project_id: int) -> dict[str, float]:
+    """{norm(검색어): 구글 실적이 말하는 순위} — 서치콘솔 최신 스냅샷의 노출 가중 평균
+    (scoring.POS_SQL 한 벌)과 순위 추정(labs_ranked 최신) 중 더 높은 자리.
+
+    순위 조회는 한 나라·한 기기의 한 순간이고 서치콘솔은 28일·모든 나라·모든 기기의 평균이라
+    둘이 어긋날 수 있다 — 그래서 이것은 "얼마나 깊이 볼까"의 힌트로만 쓴다(순위를 대신하지
+    않는다)."""
+    out: dict[str, float] = {}
+
+    def put(q, pos):
+        n = scoring.norm(q)
+        if n and pos and (n not in out or pos < out[n]):
+            out[n] = float(pos)
+
+    d = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
+                     (project_id,)).fetchone()[0]
+    if d:
+        per = conn.execute("SELECT MIN(period_days) FROM gsc_snapshots WHERE project_id=?"
+                           " AND snapshot_date=?", (project_id, d)).fetchone()[0]
+        # 띄어쓰기만 다른 변형('가 까움'·'가까움')은 한 검색어다 — norm 으로 묶어 노출 가중.
+        for q, pos in conn.execute(
+                f"SELECT norm(query), {scoring.POS_SQL} FROM gsc_snapshots WHERE project_id=?"
+                " AND snapshot_date=? AND period_days=? GROUP BY norm(query)", (project_id, d, per)):
+            put(q, pos)
+    d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?",
+                     (project_id,)).fetchone()[0]
+    if d:
+        for q, pos in conn.execute("SELECT keyword, position FROM labs_ranked"
+                                   " WHERE project_id=? AND checked_date=?", (project_id, d)):
+            put(q, pos)
+    return out
+
+
+def depth_for(keyword: str, depth: int, hints: dict) -> int:
+    """이 검색어를 얼마나 깊이 볼까 — 힌트가 기본 깊이 밖·DEEP_DEPTH 안이면 DEEP_DEPTH."""
+    h = hints.get(scoring.norm(keyword))
+    if depth < DEEP_DEPTH and h is not None and depth < h <= DEEP_DEPTH:
+        return DEEP_DEPTH
+    return depth
+
+
 def collect(project: str, *,
             dry_run: bool = False,
             provider: str | None = None,
@@ -126,6 +180,16 @@ def collect(project: str, *,
             print("[경고] 모바일 측정 시 직전 스냅샷(desktop)과의 순위 비교(Δ)가 한 번 왜곡될 수 있습니다.",
                   file=sys.stderr)
 
+        # 다른 나라에서 잰 순위를 먼저 치운다 — 키워드 로케일이 바뀐 뒤에도 옛 행이 남으면
+        # 아래 "오늘 이미 확인"이 그 행을 보고 건너뛰고(gucci 'gucci' 가 미국 값으로 남았다),
+        # 다음 조회와 비교돼 가짜 등락이 된다. 누가 로케일을 바꿨든 여기서 걸린다.
+        if not st.dry_run:
+            parked = db.park_offlocale(conn, p["id"])
+            conn.commit()
+            if parked["rank"]:
+                print(f"[serp] 로케일이 바뀐 검색어의 옛 순위 {parked['rank']}건을 비교에서 뺐습니다"
+                      " (offlocale_snapshots)")
+
         if ids:
             # 부분 실행. 이게 없으면 "이 몇 개만 다시" 하려고 is_active를 직접 토글하게
             # 되는데, 되돌릴 때 통째로 UPDATE 해버려 큐레이션한 활성 집합이 날아간다.
@@ -151,13 +215,19 @@ def collect(project: str, *,
         # en-US로 긁어 전부 "순위 없음"으로 적재해도 아무도 눈치채지 못한다.
         default_locale = db.project_locale(p)
         locales = Counter((k["locale"] or default_locale) for k in (kws if kws else target_kws))
+        # 검색어마다 깊이 — 구글 실적이 1쪽 밖·DEEP_DEPTH 안이라고 하는 것만 깊게(depth_for).
+        hints = rank_hints(conn, p["id"])
+        depth_of = {k["id"]: depth_for(k["keyword"], depth, hints) for k in kws}
+        deep = sum(1 for k in kws if depth_of[k["id"]] > depth)
         # 대기열은 앞 런이 맡겨 둔 과제를 먼저 받는다 — 그 몫은 이번에 돈이 안 든다.
-        reuse = _reusable(conn, p["name"], kws, default_locale, depth, device) if queued else {}
-        est = serp_adapter.cost_per_query(provider) * (len(kws) - len(reuse))
+        reuse = _reusable(conn, p["name"], kws, default_locale, depth_of, device) if queued else {}
+        est = serp_adapter.cost_per_query(provider) * sum(
+            _pages(depth_of[k["id"]]) for k in kws if k["id"] not in reuse)
         took = (f"대기열 — 보통 1~2분, 최대 {WAIT_LIMIT_S // 60}분" if queued else
                 f"~{len(kws) * (throttle + 2) / 60:.0f} min")
         print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "
               f"depth={depth} device={device} "
+              + (f"deep={deep}(→{DEEP_DEPTH}) " if deep else "")
               + (f"reuse={len(reuse)} " if reuse else "")
               + f"est_cost≈${est:.2f} ({took})")
         if locales:
@@ -219,7 +289,8 @@ def collect(project: str, *,
             db.write_rank_snapshot(
                 conn, row["id"], position, url,
                 res["serp_features"], res["aio_present"], aio_cited, checked_at=at,
-                aio_domains=doms if res["aio_present"] == 1 else None)
+                aio_domains=doms if res["aio_present"] == 1 else None,
+                locale=kw_locale)       # 어느 나라 구글에서 쟀나 — park_offlocale 이 대조한다
             db.write_serp_results(conn, row["id"], top_rows, checked_at=at)
             # 상위 글 몇 개의 주소만 모아 둔다 — 여는 것은 런 끝에 한 번, 주소 단위로.
             outline_urls.extend(
@@ -247,13 +318,15 @@ def collect(project: str, *,
         def one(row) -> None:
             """한 건씩 재는 제공자 — 가져와서 쓴다. 실패는 러너가 세고 다음으로 넘어간다."""
             kw_locale = row["locale"] or default_locale
-            write(row, serp_adapter.fetch(provider, row["keyword"], kw_locale, depth, device=device))
+            write(row, serp_adapter.fetch(provider, row["keyword"], kw_locale,
+                                          depth_of[row["id"]], device=device))
 
         timed_out = None
+        demoted: list[str] = []
         with st.record("rank") as r:
             if queued:
                 q = _queue(st, kws, reuse, default_locale=default_locale,
-                           depth=depth, device=device)
+                           depth=depth_of, device=device)
                 total_cost += q["cost"]
                 if q["left"]:
                     # 다 안 왔다 — 온 것도 안 쓴다. id 는 serp_tasks 에 남아 있다.
@@ -284,10 +357,20 @@ def collect(project: str, *,
                 # 상위 글의 제목·H2 — 요청문이 "빠진 구간"을 짐작이 아니라 비교로 찾는 재료다.
                 # 여태 이걸 안 모아서 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 있었다).
                 out_ok, out_bad = _collect_outlines(conn, outline_urls, throttle=throttle)
+                # 자동 선택분 중 몇 번 연속 순위 밖인 것은 추적에서 내린다(db.demote_unranked —
+                # 씨앗·사람이 켠 것·열린 기회의 대상은 안 건드린다). 구글 실적이 깊은 조회
+                # 안이라고 하는 검색어도 둔다 — 한 나라·한 기기 조회가 놓쳤을 수 있다.
+                # 부분 실행(--ids)은 판정하지 않는다: 일부만 잰 회차다.
+                if not ids:
+                    near = {n for n, h in hints.items() if h <= DEEP_DEPTH}
+                    demoted = db.demote_unranked(conn, p["id"], keep=near)
+                    conn.commit()
             else:
                 out_ok = out_bad = 0
             r.api_calls, r.cost = calls, total_cost
             r.notes = (f"provider={provider} device={device} {st.err_note} skipped={skipped} "
+                       + (f"deep={deep} " if deep else "")
+                       + (f"demoted={len(demoted)} " if demoted else "")
                        + (f"queue_reused={len(reuse)} " if queued else "")
                        + ("timeout=1 " if timed_out else "")
                        + f"harvest_kw={new_kw} harvest_comp={new_comp} "
@@ -303,6 +386,10 @@ def collect(project: str, *,
         print(f"\nsaved {done} snapshots{st.skip_note(skipped)} (errors={st.errors}) "
               f"actual_cost=${total_cost:.3f} | 부산물: 키워드 후보 +{new_kw}, "
               f"경쟁사 +{new_comp}\nrun_id={r.id}")
+        if demoted:
+            print(f"[serp] 자동 선택 키워드 {len(demoted)}개가 {db.DEMOTE_AFTER}회 연속 순위 밖이라 "
+                  f"추적에서 내렸습니다(후보로 남음 — 다시 켜면 자동으로 안 내립니다): "
+                  + ", ".join(demoted[:10]) + (" …" if len(demoted) > 10 else ""))
         return st.verdict(done, rows=done, cost=total_cost)
 
 
@@ -311,26 +398,30 @@ def _job_key(keyword: str, locale: str, depth: int, device: str) -> tuple:
     return (keyword, locale, int(depth), device)
 
 
-def _reusable(conn, project: str, kws, default_locale: str, depth: int, device: str) -> dict:
+def _reusable(conn, project: str, kws, default_locale: str, depth: dict, device: str) -> dict:
     """{keyword id: 과제 id} — 앞 런이 맡겨 두고 적재 못 한 것 중 이번 조회와 같은 것.
 
-    보관 기간(serp_adapter.QUEUE_KEEP_DAYS)을 넘긴 id 는 db.serp_tasks_pending 이 지운다.
-    한 검색어에 여럿이면 가장 새것을 쓴다(pending 이 새것부터 온다).
+    depth 는 {keyword id: 깊이}(depth_for). 보관 기간(serp_adapter.QUEUE_KEEP_DAYS)을 넘긴
+    id 는 db.serp_tasks_pending 이 지운다. 한 검색어에 여럿이면 가장 새것을 쓴다(pending 이
+    새것부터 온다).
     """
     pend: dict = {}
     for t in db.serp_tasks_pending(conn, project, serp_adapter.QUEUE_KEEP_DAYS):
         pend.setdefault(_job_key(t["keyword"], t["locale"], t["depth"], t["device"]), t["task_id"])
     out = {}
     for k in kws:
-        tid = pend.get(_job_key(k["keyword"], k["locale"] or default_locale, depth, device))
+        tid = pend.get(_job_key(k["keyword"], k["locale"] or default_locale,
+                                depth[k["id"]], device))
         if tid:
             out[k["id"]] = tid
     return out
 
 
-def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str) -> dict:
+def _queue(st, kws, reuse: dict, *, default_locale: str, depth: dict, device: str) -> dict:
     """대기열로 잰다 — 앞 런 것을 먼저 받고, 나머지를 맡기고, **전부** 올 때까지 기다린다.
 
+    depth 는 {keyword id: 깊이}(depth_for). 받은 결과를 자르는 깊이는 가장 깊은 값이다 —
+    응답은 맡긴 깊이만큼만 오므로 얕게 맡긴 것이 더 길게 오지 않는다.
     반환 {results: [(row, res)], left, asked, cost, calls, task_ids}.
     left>0 이면 상한에 걸린 것이다 — 부르는 쪽이 아무것도 안 쓴다.
     쓰지 않는다(DB 에 쓰는 것은 맡긴 id 뿐이다): 적재는 다 온 뒤 한 번에 한다.
@@ -338,11 +429,12 @@ def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str
     by_id = {k["id"]: k for k in kws}
     name = st.project["name"]
     task_of: dict[str, int] = {tid: kid for kid, tid in reuse.items()}
+    deepest = max(depth.values(), default=10)
     calls = 0
 
     # ① 앞 런이 맡긴 것부터 곧장 받아 본다(받기는 무료). 못 받는 것(만료·없음)은 새로 맡긴다.
     got, bad, _ = serp_adapter.wait_serp_tasks(
-        list(task_of), depth=depth, timeout_s=0, probe=list(task_of),
+        list(task_of), depth=deepest, timeout_s=0, probe=list(task_of),
         clock=_clock, sleep=_sleep)
     gone = [tid for tid, (state, _) in bad.items() if state == "gone"]
     db.drop_serp_tasks(conn=st.conn, task_ids=gone)
@@ -355,7 +447,7 @@ def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str
     #    402 로 멈춰도 돈 낸 과제는 남는다.
     cost = 0.0
     jobs = [{"tag": k["id"], "keyword": k["keyword"],
-             "locale": k["locale"] or default_locale, "depth": depth, "device": device}
+             "locale": k["locale"] or default_locale, "depth": depth[k["id"]], "device": device}
             for k in fresh]
     for i in range(0, len(jobs), serp_adapter.QUEUE_MAX_POST):
         chunk = jobs[i:i + serp_adapter.QUEUE_MAX_POST]
@@ -366,7 +458,7 @@ def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str
         for j, x in zip(chunk, posted):
             if x["id"]:
                 task_of[x["id"]] = int(x["tag"])
-                keep.append((j["keyword"], j["locale"], device, depth, x["id"]))
+                keep.append((j["keyword"], j["locale"], device, j["depth"], x["id"]))
             else:
                 st.fail(x["error"], item=j["keyword"], kind="task_post")
         db.add_serp_tasks(st.conn, name, keep)
@@ -374,7 +466,7 @@ def _queue(st, kws, reuse: dict, *, default_locale: str, depth: int, device: str
     # ③ 전부 올 때까지 — 상한은 WAIT_LIMIT_S.
     wait = [tid for tid in task_of if tid not in got]
     more, bad2, left = serp_adapter.wait_serp_tasks(
-        wait, depth=depth, timeout_s=WAIT_LIMIT_S, clock=_clock, sleep=_sleep)
+        wait, depth=deepest, timeout_s=WAIT_LIMIT_S, clock=_clock, sleep=_sleep)
     got.update(more)
     bad.update(bad2)
     # 과제는 끝났는데 실패한 것 — 항목 오류다. 다시 받아도 같은 답이라 id 를 버린다.

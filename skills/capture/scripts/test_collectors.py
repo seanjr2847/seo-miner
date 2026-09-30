@@ -2619,6 +2619,236 @@ def test_serp_tasks_stay_on_this_machine():
     assert "rank_snapshots" in order, "검사가 아무것도 안 본다 — _plan 이 표를 못 찾는다"
 
 
+# ── 순위 데이터 갈래(E2): 로케일 바뀜 · 깊은 조회 · 자동 선택분 내리기 ──────────────
+
+@contextlib.contextmanager
+def _serper_fake(own: str, ranked: dict | None = None):
+    """serper 가짜 — (검색어, 로케일, 깊이)를 적는다. ranked 에 있는 검색어만 우리 도메인이
+    그 자리에 선다. 상위 글 열기(collect_page.fetch)는 막는다(네트워크 없음)."""
+    import collect_page
+    calls: list[tuple] = []
+    ranked = ranked or {}
+
+    def fetch(provider, keyword, locale, depth=10, device="desktop"):
+        calls.append((keyword, locale, depth))
+        top = ([{"pos": ranked[keyword], "domain": own, "url": f"https://{own}/p", "title": "T"}]
+               if keyword in ranked else [])
+        return {"top": top, "serp_features": [], "aio_present": None, "aio_domains": [],
+                "related": [], "paa": [], "cost": 0.001}
+
+    saved = (serp_adapter.fetch, collect_page.fetch)
+    serp_adapter.fetch = fetch
+    collect_page.fetch = lambda url, timeout=None: {"url": url, "status": 0, "error": "test"}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            yield calls
+    finally:
+        serp_adapter.fetch, collect_page.fetch = saved
+
+
+def test_rank_locale_change_parks_old_rows_and_rechecks_today():
+    """키워드 로케일이 바뀌면 예전 로케일로 잰 순위는 비교에서 빠진다(offlocale_snapshots).
+
+    gucci 'gucci' — 사이트 나라 판정이 en-US → ko-KR 로 바꿨는데 미국 구글 값이 남았고,
+    '오늘 이미 확인' 판정이 그 행을 보고 한국 구글로 다시 재지 않았다."""
+    conn = db.connect()
+    p = _project(conn, "loc_chg", domain="lc.com")
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active)"
+                 " VALUES(?, 'gucci', 'en-US', 1)", (p["id"],))
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active)"
+                 " VALUES(?, '그대로', 'ko-KR', 1)", (p["id"],))
+    conn.commit()
+    kid = {r["keyword"]: r["id"] for r in conn.execute(
+        "SELECT id, keyword FROM keywords WHERE project_id=?", (p["id"],))}
+    conn.close()
+
+    with _serper_fake("lc.com", {"gucci": 3, "그대로": 4}) as calls:
+        collect_serp.collect("loc_chg", provider="serper", throttle=0, no_harvest=True)
+    assert sorted(calls) == [("gucci", "en-US", 10), ("그대로", "ko-KR", 10)], calls
+    conn = db.connect()
+    assert conn.execute("SELECT locale FROM rank_snapshots WHERE keyword_id=?",
+                        (kid["gucci"],)).fetchone()[0] == "en-US", "잰 로케일을 안 적었다"
+
+    # ① 로케일을 바꾸는 코드가 옮기기를 잊어도(직접 UPDATE) 다음 순위 단계가 치운다 —
+    #    같은 날이라도 새 로케일로 다시 잰다
+    conn.execute("UPDATE keywords SET locale='ko-KR' WHERE id=?", (kid["gucci"],))
+    conn.commit()
+    conn.close()
+    with _serper_fake("lc.com", {"gucci": 9}) as calls:
+        collect_serp.collect("loc_chg", provider="serper", throttle=0, no_harvest=True)
+    assert calls == [("gucci", "ko-KR", 10)], \
+        f"다른 나라에서 잰 순위를 '오늘 이미 확인'으로 읽었다: {calls}"
+    conn = db.connect()
+    rows = [tuple(r) for r in conn.execute(
+        "SELECT position, locale FROM rank_snapshots WHERE keyword_id=?", (kid["gucci"],))]
+    assert rows == [(9, "ko-KR")], rows
+    parked = [tuple(r) for r in conn.execute(
+        "SELECT kind, locale FROM offlocale_snapshots WHERE keyword_id=? ORDER BY kind",
+        (kid["gucci"],))]
+    assert ("rank", "en-US") in parked, parked
+    assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                        (kid["그대로"],)).fetchone()[0] == 1, "안 바뀐 검색어를 옮겼다"
+
+    # ② db.set_keyword_locale — 바꾸면서 바로 옮긴다(워커의 사이트 나라 판정이 이걸 쓴다).
+    #    같은 로케일로 다시 적으면 아무것도 안 옮긴다
+    assert db.set_keyword_locale(conn, kid["gucci"], "ko-KR", "site_country") is False
+    assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                        (kid["gucci"],)).fetchone()[0] == 1
+    assert db.set_keyword_locale(conn, kid["gucci"], "en-GB", "manual") is True
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                        (kid["gucci"],)).fetchone()[0] == 0, "바꾼 뒤에도 옛 로케일 순위가 남았다"
+
+    # ③ 사이트 로케일을 바꾸면 — 사이트 로케일을 따르던(locale NULL) 옛 키워드의 순위
+    #    (잰 로케일 칸이 빈 옛 행 포함)가 옮겨진다. 제 로케일이 있는 키워드는 그대로다
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active)"
+                 " VALUES(?, '옛키워드', NULL, 1)", (p["id"],))
+    old_kid = conn.execute("SELECT id FROM keywords WHERE project_id=? AND keyword='옛키워드'",
+                           (p["id"],)).fetchone()[0]
+    db.write_rank_snapshot(conn, old_kid, 5, None, checked_at="2026-09-01T00:00:00Z")   # 칸 없음
+    db.write_serp_results(conn, old_kid, [{"position": 1, "url": "https://x.com/"}],
+                          checked_at="2026-09-01T00:00:00Z")
+    db.set_locale(conn, p["id"], "en-US")
+    assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                        (old_kid,)).fetchone()[0] == 0, "사이트 로케일을 바꿨는데 옛 순위가 남았다"
+    assert conn.execute("SELECT COUNT(*) FROM serp_results WHERE keyword_id=?",
+                        (old_kid,)).fetchone()[0] == 0, "같은 회차 검색결과가 남았다"
+    assert conn.execute("SELECT locale FROM offlocale_snapshots WHERE keyword_id=? AND kind='rank'",
+                        (old_kid,)).fetchone()[0] == "ko-KR"
+    assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                        (kid["그대로"],)).fetchone()[0] == 1, "제 로케일이 있는 키워드를 옮겼다"
+    conn.close()
+
+
+def test_rank_deep_only_where_google_says_near():
+    """깊이 30 은 서치콘솔·순위 추정이 1쪽 밖·30위 안이라고 하는 검색어에만 — 나머지는
+    기본 깊이(10). 전부를 깊게 보면 값이 3배다(collect_serp.DEEP_DEPTH 주석)."""
+    conn = db.connect()
+    p = _project(conn, "deep_hint", domain="dh.com")
+    for kw in ("가까움", "1쪽", "멀리", "모름", "추정가까움"):
+        conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active)"
+                     " VALUES(?,?, 'ko-KR', 1)", (p["id"], kw))
+    # 노출 가중 평균: 가까움 = (18*90 + 2*10)/100 = 16.4 → 깊게. 1쪽 = 4 → 기본. 멀리 = 55 → 기본
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+        "clicks,impressions,ctr,position) VALUES(?,?,28,?,?,0,?,0,?)",
+        [(p["id"], "2026-09-29", "가 까움", "https://dh.com/a", 90, 18.0),     # 띄어쓰기만 다름
+         (p["id"], "2026-09-29", "가까움", "https://dh.com/b", 10, 2.0),
+         (p["id"], "2026-09-29", "1쪽", "https://dh.com/c", 50, 4.0),
+         (p["id"], "2026-09-29", "멀리", "https://dh.com/d", 5, 55.0),
+         (p["id"], "2026-09-01", "모름", "https://dh.com/e", 5, 15.0)])       # 옛 스냅샷은 안 본다
+    conn.execute("INSERT INTO labs_ranked(project_id, checked_date, keyword, position)"
+                 " VALUES(?, '2026-09-28', '추정가까움', 22)", (p["id"],))
+    conn.commit()
+    conn.close()
+    with _serper_fake("dh.com", {"가까움": 14}) as calls:
+        collect_serp.collect("deep_hint", provider="serper", throttle=0, no_harvest=True)
+    depth = {kw: d for kw, _, d in calls}
+    assert depth == {"가까움": 30, "1쪽": 10, "멀리": 10, "모름": 10, "추정가까움": 30}, depth
+    conn = db.connect()
+    pos = conn.execute("SELECT s.position FROM rank_snapshots s JOIN keywords k ON k.id=s.keyword_id"
+                       " WHERE k.project_id=? AND k.keyword='가까움'", (p["id"],)).fetchone()[0]
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? AND kind='rank'"
+                         " ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()[0]
+    conn.close()
+    assert pos == 14, f"깊게 본 자리를 못 적었다: {pos}"
+    assert "deep=2" in notes, notes
+    # 깊이 설정을 이미 30 이상으로 두었으면 더 깊게 안 간다
+    assert collect_serp.depth_for("가까움", 30, {"가까움": 16.4}) == 30
+    assert collect_serp.depth_for("가까움", 50, {"가까움": 16.4}) == 50
+    assert collect_serp._pages(10) == 1 and collect_serp._pages(30) == 3
+
+
+def test_rank_queue_sends_deep_depth_per_keyword():
+    """대기열(DataForSEO)도 검색어마다 깊이를 보낸다 — 맡긴 과제 id 의 깊이도 그 값이다
+    (다음 런이 같은 조회인지 가를 때 깊이가 열쇠에 든다)."""
+    conn, p = _rank_project("rq_deep", 2)
+    kws = [r["keyword"] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? ORDER BY id", (p["id"],))]
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(?, '2026-09-29', 28, ?, 'u', 0, 9, 0, 12)",
+                 (p["id"], kws[0]))
+    conn.commit()
+    conn.close()
+    fake = _FakeDFS(ready_at=1)
+    with _dfs_env(fake):
+        res = collect_serp.collect("rq_deep", provider="dataforseo", no_harvest=True)
+    assert res.ok, res
+    sent = {b["keyword"]: b["depth"] for batch in fake.posts for b in batch}
+    assert sent == {kws[0]: 30, kws[1]: 10}, sent
+
+
+def test_rank_demotes_only_auto_selected_after_repeated_misses():
+    """자동 선택분(active_src='auto')만 db.DEMOTE_AFTER 회 연속 순위 밖이면 추적에서 내린다.
+    씨앗·사람이 켠 것·누가 켰는지 모르는 옛 행·열린 기회의 대상·구글 실적이 가까운 것은
+    안 건드린다. 내린 것은 사람이 다시 켜면 manual 이 되어 다시는 자동으로 안 내린다."""
+    n = db.DEMOTE_AFTER
+    conn = db.connect()
+    p = _project(conn, "demote", domain="dm.com")
+    spec = {   # 검색어: (source, active_src, 앞선 순위 밖 횟수)
+        "내릴것": ("serp", "auto", n - 1),
+        "모자람": ("serp", "auto", n - 2),
+        "사람": ("serp", "manual", n - 1),
+        "옛행": ("serp", None, n - 1),
+        "씨앗": ("seed", "auto", n - 1),
+        "기회": ("serp", "auto", n - 1),
+        "가까움": ("serp", "auto", n - 1),
+        "최근잡힘": ("serp", "auto", n - 1),
+    }
+    kid = {}
+    for kw, (src, by, misses) in spec.items():
+        kid[kw] = conn.execute(
+            "INSERT INTO keywords(project_id, keyword, locale, source, is_active, active_src)"
+            " VALUES(?,?, 'ko-KR', ?, 1, ?) RETURNING id", (p["id"], kw, src, by)).fetchone()[0]
+        for i in range(misses):
+            db.write_rank_snapshot(conn, kid[kw], None, None, locale="ko-KR",
+                                   checked_at=f"2026-08-{10 + i:02d}T00:00:00Z")
+    conn.execute("INSERT INTO opportunities(project_id, kind, target, status)"
+                 " VALUES(?, 'content_gap', '기회', 'new')", (p["id"],))
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(?, '2026-09-29', 28, '가까움', 'u',"
+                 " 0, 5, 0, 40)", (p["id"],))        # 40위 — 깊은 조회 밖이라 keep 아님
+    conn.execute("INSERT INTO labs_ranked(project_id, checked_date, keyword, position)"
+                 " VALUES(?, '2026-09-28', '가까움', 25)", (p["id"],))   # 순위 추정은 25위 → 둔다
+    conn.commit()
+    conn.close()
+    # 이번 조회: '최근잡힘'만 우리가 선다. '가까움'은 깊게 봐도 없다
+    with _serper_fake("dm.com", {"최근잡힘": 7}):
+        collect_serp.collect("demote", provider="serper", throttle=0, no_harvest=True)
+    conn = db.connect()
+    state = {r["keyword"]: (r["is_active"], r["active_src"]) for r in conn.execute(
+        "SELECT keyword, is_active, active_src FROM keywords WHERE project_id=?", (p["id"],))}
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? AND kind='rank'"
+                         " ORDER BY id DESC LIMIT 1", (p["id"],)).fetchone()[0]
+    assert state["내릴것"] == (0, "demoted"), state
+    assert "demoted=1" in notes, notes
+    for kw in ("모자람", "최근잡힘", "기회", "가까움", "씨앗"):
+        assert state[kw] == (1, "auto"), (kw, state[kw])
+    assert state["사람"] == (1, "manual") and state["옛행"] == (1, None), state
+
+    # 사람이 다시 켜면 manual — 다음 런에서 또 순위 밖이어도 안 내린다
+    assert db.set_keywords_active(conn, p["id"], [kid["내릴것"]], True) == 1
+    assert conn.execute("SELECT active_src FROM keywords WHERE id=?",
+                        (kid["내릴것"],)).fetchone()[0] == "manual"
+    assert db.demote_unranked(conn, p["id"], keep={"가까움"}) == []
+    try:
+        db.set_keywords_active(conn, p["id"], [kid["내릴것"]], True, by="robot")
+        raise AssertionError("모르는 by 를 받았다")
+    except ValueError:
+        pass
+    # 부분 실행(--ids)은 내리기를 판정하지 않는다
+    conn.execute("UPDATE keywords SET active_src='auto' WHERE id=?", (kid["내릴것"],))
+    conn.commit()
+    conn.close()
+    with _serper_fake("dm.com"):
+        collect_serp.collect("demote", provider="serper", throttle=0, no_harvest=True,
+                             ids=str(kid["모자람"]), force=True)
+    conn = db.connect()
+    assert conn.execute("SELECT is_active FROM keywords WHERE id=?",
+                        (kid["내릴것"],)).fetchone()[0] == 1, "부분 실행이 내리기를 판정했다"
+    conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

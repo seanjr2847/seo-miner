@@ -68,10 +68,11 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
         ids = [r[0] for r in conn.execute(
             "SELECT id FROM keywords WHERE project_id=? AND is_active=0"
             " AND COALESCE(verdict_off,0)=0 AND volume>0"
+            " AND COALESCE(active_src,'')<>'demoted'"
             " ORDER BY volume DESC, id LIMIT ?", (p["id"], room)).fetchall()]
         if not ids:
             return 0        # 검색량이 아직 없다 — 표식을 안 찍고 다음 런에 다시 본다
-        n = db.set_keywords_active(conn, p["id"], ids, True)
+        n = db.set_keywords_active(conn, p["id"], ids, True, by="auto")
         db.set_project_settings(conn, p["id"], {"auto_keywords": time.strftime("%Y-%m-%d")})
         print(f"[rank] 서치콘솔 없는 사이트 — 검색량 상위 키워드 {n}개를 켜서 함께 잽니다")
         return n
@@ -162,7 +163,9 @@ def _relocale_labs(conn, pid: int) -> int:
             " AND source='labs_ranked' AND COALESCE(locale_src,'')<>'gsc_country'", (pid,)).fetchall():
         new, new_src = judge(kw)
         if (new, new_src) != (loc, src):
-            conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?", (new, new_src, kid))
+            # 로케일이 바뀌면 예전 로케일로 잰 순위를 옮긴다(db.set_keyword_locale) — 직접 UPDATE
+            # 하던 동안 gucci 'gucci' 의 미국 구글 순위가 한국 키워드의 기록으로 남았다.
+            db.set_keyword_locale(conn, kid, new, new_src)
             n += 1
     conn.commit()
     return n
@@ -191,6 +194,7 @@ def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
     kws = [dict(r) for r in conn.execute(
         "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
         " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0"
+        " AND COALESCE(active_src,'')<>'demoted'"      # 순위 밖이 이어져 내린 것(db.demote_unranked)
         " AND (locale IS NULL OR locale=?) ORDER BY id", (pid, site_loc))]
     for k in kws:
         k["vol"] = lvol.get(scoring.norm(k["keyword"])) or k["volume"] or 0
@@ -285,11 +289,11 @@ def activate_keywords(project: str, limit: int | None = None, *, post=None, ask=
             seeds = {r[0] for r in conn.execute(
                 "SELECT id FROM keywords WHERE project_id=? AND source='seed'", (p["id"],))}
             off = [i for i in cur if i not in want and i not in seeds]
-            db.set_keywords_active(conn, p["id"], off, False)
+            db.set_keywords_active(conn, p["id"], off, False, by="auto")
             new = [i for i in want if i not in cur]
         else:
             new = [i for i in want if i not in cur][:max(0, cap - len(cur))]
-        n = db.set_keywords_active(conn, p["id"], new, True) if new else 0
+        n = db.set_keywords_active(conn, p["id"], new, True, by="auto") if new else 0
         db.set_project_settings(conn, p["id"], {"auto_keywords": f"{AUTO_VERSION}:{time.strftime('%Y-%m-%d')}"})
         print(f"[rank] 추적 키워드를 골랐습니다 — 새로 {n}개"
               + (f" · 뺀 것 {len(off)}개" if fresh else "")
@@ -347,10 +351,10 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         ids = [r[0] for r in conn.execute(
             "SELECT k.id FROM keywords k"
             "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
-            " WHERE k.project_id=? AND k.is_active=0"
+            " WHERE k.project_id=? AND k.is_active=0 AND COALESCE(k.active_src,'')<>'demoted'"
             " GROUP BY k.id ORDER BY SUM(g.impressions) DESC LIMIT ?",
             (pid, room)).fetchall()]
-        return db.set_keywords_active(conn, pid, ids, True)
+        return db.set_keywords_active(conn, pid, ids, True, by="auto")
     finally:
         conn.close()
 
@@ -865,6 +869,21 @@ def demo() -> None:
             c.commit(); c.close()
             assert activate_from_gsc("demo-proj", limit=5) == 5, "상한만큼 안 켜진다"
             assert activate_from_gsc("demo-proj", limit=5) == 0, "상한을 넘겨 또 켠다"
+            # 워커가 켠 것은 자동 선택분(active_src='auto') — 순위 밖이 이어지면 이것만 내린다
+            # (db.demote_unranked). 내린 것(demoted)은 빈자리를 채울 때 다시 켜지 않는다.
+            c = db.connect()
+            srcs = {r[0] for r in c.execute(
+                "SELECT active_src FROM keywords WHERE project_id=? AND is_active=1", (pid,))}
+            assert srcs == {"auto"}, f"자동으로 켠 것을 auto 로 안 적었다: {srcs}"
+            c.execute("UPDATE keywords SET is_active=0, active_src='demoted'"
+                      " WHERE project_id=? AND keyword='kw0'", (pid,))
+            c.commit(); c.close()
+            assert activate_from_gsc("demo-proj", limit=5) == 1, "빈자리를 안 채웠다"
+            c = db.connect()
+            back = c.execute("SELECT is_active FROM keywords WHERE project_id=? AND keyword='kw0'",
+                             (pid,)).fetchone()[0]
+            c.close()
+            assert back == 0, "순위 밖이라 내린 키워드를 빈자리 채우기가 되켰다"
 
             # 서치콘솔 없는 사이트 — 검색량 순으로, 사이트당 한 번만(사람이 끈 것을 되켜지 않게).
             c = db.connect()
@@ -933,6 +952,11 @@ def demo() -> None:
             c = db.connect()
             c.execute("INSERT INTO keywords(project_id, keyword, source, is_active, volume, locale, locale_src)"
                       " VALUES(?, 'belt', 'labs_ranked', 0, 900000, 'en-US', 'script')", (bx,))
+            # 글자 판정(en-US)으로 미국 구글에서 잰 옛 순위(잰 로케일 칸 이전 행) — 사이트 나라
+            # 판정이 ko-KR 로 바꾸면 한국 키워드의 기록에서 빠져야 한다(gucci 'gucci')
+            belt = c.execute("SELECT id FROM keywords WHERE project_id=? AND keyword='belt'",
+                             (bx,)).fetchone()[0]
+            db.write_rank_snapshot(c, belt, 3, None, checked_at="2026-09-20T00:00:00Z")
             # 브랜드가 든 다른 나라 연관 검색어 — 순위 추정에 없어 되찾기 칸 후보처럼 보인다
             c.execute("INSERT INTO keywords(project_id, keyword, source, is_active, volume, locale, locale_src)"
                       " VALUES(?, '구찌 us', 'serp', 0, 800000, 'en-US', 'script')", (bx,))
@@ -960,6 +984,13 @@ def demo() -> None:
             loc = c.execute("SELECT locale FROM keywords WHERE project_id=? AND keyword='belt'", (bx,)).fetchone()[0]
             c.close()
             assert loc == "ko-KR", f"한국 구글에서 잡힌 영어 검색어를 {loc} 로 뒀다 — 미국 검색량이 붙는다"
+            c = db.connect()
+            left = c.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?", (belt,)).fetchone()[0]
+            parked = c.execute("SELECT locale FROM offlocale_snapshots WHERE keyword_id=? AND kind='rank'",
+                               (belt,)).fetchone()
+            c.close()
+            assert left == 0 and parked and parked[0] == "en-US", \
+                f"로케일을 바꾸고도 미국 구글 순위가 남았다(left={left}, parked={parked})"
             assert "belt" not in on, "다른 나라 검색량으로 줄을 세웠다(사이트 나라 검색량 300짜리가 뽑혔다)"
             assert "구찌 us" not in on, "다른 언어-지역(en-US) 연관 검색어를 한국 사이트 추적에 넣었다"
             # 브랜드 표기는 AI 말만 믿지 않는다 — 그 말 자체로 1~3위이거나 3개 이상 검색어에 나와야 한다
