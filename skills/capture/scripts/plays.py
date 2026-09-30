@@ -52,7 +52,7 @@ import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
 # 모델 — 수정안은 긴 한국어 문안이라 판정용 작은 모델(collect_gap.ROLE_MODEL)과 따로 둔다.
-PLAY_MODEL = "anthropic/claude-sonnet-4.5"
+PLAY_MODEL = "anthropic/claude-sonnet-5.5"
 PLAY_MAX_TOKENS = 12000
 PLAY_TIMEOUT = 300          # 긴 답 한 번 — 판정용 기본(TIMEOUTS["openrouter"])보다 넉넉히
 PLAY_MAX = 4                # 한 번에 내는 할 일 수

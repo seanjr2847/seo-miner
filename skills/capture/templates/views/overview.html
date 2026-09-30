@@ -1315,7 +1315,8 @@ function OV_playEv(ev) {
           ? `<div class="h">${[hd && `소제목: ${hd}`, w].filter(Boolean).join(" · ")}</div>` : ""}</li>`;
     }).join("")}</ol>`).join("");
   const aio = (ev.aio || []).map(ai => `<li>${esc(ai.keyword || "")} — ${ai.present
-      ? (ai.cited ? "AI 요약에 우리가 인용됨" : "AI 요약이 뜨는데 우리 인용 없음") : "AI 요약 없음"}${(ai.domains || []).length
+      ? (ai.cited == null ? "AI 요약이 뜨는데 출처를 못 받아 인용 여부는 모름"
+         : ai.cited ? "AI 요약에 우리가 인용됨" : "AI 요약이 뜨는데 우리 인용 없음") : "AI 요약 없음"}${(ai.domains || []).length
       ? ` · 인용된 곳 <span class="odr-u">${esc(ai.domains.slice(0, 4).join(", "))}</span>` : ""}</li>`).join("");
   const gaps = (ev.gaps || []).filter(Boolean);
   const body = `${ours}${tiles.length ? `<div class="odr-tiles">${tiles.map(([c, l, v]) => `<div class="odr-tile${
