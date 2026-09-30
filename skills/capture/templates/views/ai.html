@@ -1382,6 +1382,9 @@ function AI_aio(d) {
   const all = d.rank_by_kw ? Object.values(d.rank_by_kw) : (d.ranks || []);
   const known = all.filter(r => r.aio != null), on = known.filter(r => r.aio === 1);
   const cited = on.filter(r => r.aio_cited).length;
+  // 요약은 떴는데 출처를 못 받은 줄(aio_cited NULL) — '안 실림'으로 세지 않는다(모른다).
+  const unk = on.filter(r => r.aio_cited == null).length;
+  const unkNote = unk ? ` ${num(unk)}개는 출처를 못 받아 실렸는지 모릅니다.` : "";
   const gapRanks = d.aio_gap_ranks || {};
   AI_AIO_ROWS = (d.aio_gap || []).map(k => gapRanks[k] || {keyword: k});
   if (!all.length)
@@ -1395,9 +1398,10 @@ function AI_aio(d) {
   if (!on.length)
     return ["", `<div class="empty ok"><b>AI 요약에 자리를 뺏긴 검색어가 없습니다</b>
       <p>확인한 ${num(known.length)}개 어디에도 요약이 뜨지 않았습니다.</p></div>`];
-  const sub = `AI 요약이 뜬 ${num(on.length)}개 중 ${num(cited)}개에 내 페이지가 출처로 실렸습니다.`;
+  const sub = `AI 요약이 뜬 ${num(on.length)}개 중 ${num(cited)}개에 내 페이지가 출처로 실렸습니다.${unkNote}`;
   if (!AI_AIO_ROWS.length)
-    return [sub, `<div class="empty ok"><b>요약이 뜬 검색어에 전부 내 링크가 실렸습니다</b>
+    return [sub, `<div class="empty ok"><b>${unk ? "출처를 받은 검색어에는 전부 내 링크가 실렸습니다"
+        : "요약이 뜬 검색어에 전부 내 링크가 실렸습니다"}</b>
       <p>순위가 떨어지면 요약에서도 빠지기 쉽습니다. 다음 확인 때 다시 봅니다.</p></div>`];
   const meter = `<div class="aimeter"><span class="tr"><i style="width:${AI_RATE(cited, on.length)}%"></i></span>
     <b title="AI 요약이 뜬 검색어 중 내 페이지가 출처로 실린 수">${num(cited)} / ${num(on.length)}개 실림</b></div>`;

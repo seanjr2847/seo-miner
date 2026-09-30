@@ -2564,10 +2564,11 @@ def _play_record(project: str, body: dict) -> None:
 
 
 def _play_mark(project: str, play_id: int) -> None:
-    """play 를 applied 로. 이 PC 의 Brain 만 — 호스팅 사이트의 play 상태는 호스팅이
-    갖는데 그걸 바꾸는 창구가 아직 없다. 그 사이트의 '만들었다'는 작업 기록(위)과
-    이 PC 의 일 파일(play_pr 의 play-<id>.json, 화면이 GET 으로 읽는다)이 말한다."""
+    """play 를 applied 로. 호스팅 사이트의 play 는 호스팅이 가지므로 그 창구(/api/plays/status)로
+    보낸다 — 작업 기록(_play_record)과 같은 갈래."""
     if remote.owns(project):
+        remote.api("POST", "/api/plays/status",
+                   json={"project": project, "id": int(play_id), "status": "applied"})
         return
     conn = db.connect()
     try:

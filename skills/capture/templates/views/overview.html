@@ -1090,7 +1090,9 @@ function OV_drTiles(o) {
     r.pos != null ? `${r.pos}위` : "잰 범위 밖"]);
   if (vol) t.push(["", "월 검색량", num(vol)]);
   if (r && r.aio != null) t.push(r.aio
-    ? (r.aio_cited ? ["ok", "구글 AI 요약", "우리 인용됨"] : ["warn", "구글 AI 요약", "우리 인용 안 됨"])
+    // 출처를 못 받은 줄(aio_cited NULL)은 '안 됨'이 아니라 모른다 — 빠짐으로 칠하지 않는다.
+    ? (r.aio_cited == null ? ["", "구글 AI 요약", "있음 · 출처 모름"]
+       : r.aio_cited ? ["ok", "구글 AI 요약", "우리 인용됨"] : ["warn", "구글 AI 요약", "우리 인용 안 됨"])
     : ["", "구글 AI 요약", "없음"]);
   return t.length ? `<div class="odr-tiles">${t.map(([c, l, v]) => `<div class="odr-tile${c ? " " + c : ""}">
     <span>${l}</span><b${v.length > 5 ? ` class="s"` : ""}>${esc(v)}</b></div>`).join("")}</div>` : "";

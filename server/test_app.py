@@ -376,6 +376,22 @@ def demo() -> None:
                 assert (pr["gsc_property"] or "") == "", \
                     f"서치콘솔 없이 시작했는데 속성이 지어졌다: {pr['gsc_property']}"
                 assert db.seed_keywords(bc, pr["id"]) == ["회계 프로그램"], "씨앗이 안 들어갔다(중복·빈 칸 포함)"
+                play_id = bc.execute("INSERT INTO plays(project_id, page, status) VALUES(?, 'https://new1.test/a', 'new')"
+                                     " RETURNING id", (pr["id"],)).fetchone()[0]
+                bc.commit()
+            finally:
+                bc.close()
+            # 할 일 상태 — 로컬 PR 자동(play_pr)이 호스팅 사이트의 play 를 applied 로 적는 창구
+            assert c.post("/api/plays/status", json={"project": "new1", "id": play_id,
+                                                     "status": "없는상태"}).status_code == 400
+            assert c.post("/api/plays/status", json={"project": "new1", "id": play_id + 999,
+                                                     "status": "applied"}).status_code == 404
+            r = c.post("/api/plays/status", json={"project": "new1", "id": play_id, "status": "applied"})
+            assert r.status_code == 200, r.text
+            bc = db.connect(home=store.home(u2))
+            try:
+                assert bc.execute("SELECT status FROM plays WHERE id=?", (play_id,)).fetchone()[0] == "applied", \
+                    "호스팅 할 일 상태가 안 바뀌었다 — PR 을 만들어도 카드가 '할 일'로 남는다"
             finally:
                 bc.close()
             prof = c.get("/api/settings?project=new1").json()
