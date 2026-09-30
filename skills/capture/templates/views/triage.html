@@ -243,7 +243,11 @@ async function TR_fetch() {
   TR_SITE_LANG = t.site_lang || ""; TR_LANG_LABELS = t.lang_labels || {};
   if (TR_LANG_FOR !== TR_PROJECT) {
     TR_LANG_FOR = TR_PROJECT;
-    const langs = new Set(TR_ROWS.map(r => r.lang).filter(Boolean));
+    // 기본 거르개는 **지금 보는 판정 묶음**(처음엔 미판정)에 사이트 언어 줄이 있을 때만 건다 —
+    // 전체 행으로 정하면 미판정이 전부 다른 언어인 사이트(theotherskin: 미판정 3줄이 영어·중국어)가
+    // "한국어만 봅니다"로 빈 목록을 봤다.
+    const cur = TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER);
+    const langs = new Set(cur.map(r => r.lang).filter(Boolean));
     TR_LANG = langs.size > 1 && langs.has(TR_SITE_LANG) ? TR_SITE_LANG : "";
   }
   // 행이 하나도 없으면 숫자 카드는 0 만 말한다 — 큐 카드의 빈 상태 한 줄만 남긴다.
@@ -328,6 +332,9 @@ function TR_tools() {
   const lc = {};
   for (const r of TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER))
     if (r.lang) lc[r.lang] = (lc[r.lang] || 0) + 1;
+  // 고른 언어가 지금 판정 묶음에 0줄이어도 선택지로 남긴다 — 빠지면 셀렉트가 첫 줄("모든 언어")을
+  // 보이면서 실제로는 그 언어로 거르고 있어, 눈에 보이는 것과 거르는 것이 달랐다.
+  if (TR_LANG && !lc[TR_LANG]) lc[TR_LANG] = 0;
   const langs = Object.keys(lc).sort((a, b) => (b === TR_SITE_LANG) - (a === TR_SITE_LANG) || lc[b] - lc[a]);
   const all = Object.values(lc).reduce((a, b) => a + b, 0);
   const langSel = new Set(TR_ROWS.map(r => r.lang).filter(Boolean)).size > 1
