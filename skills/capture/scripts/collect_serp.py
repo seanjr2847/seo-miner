@@ -206,14 +206,20 @@ def collect(project: str, *,
                 elif d not in seen:
                     seen.add(d)
                     domain_hits[d] += 1
-            aio_cited = (int(any(scoring.owns(d, own) for d in res["aio_domains"]))
-                         if res["aio_present"] else None)
+            # 인용 판정은 인용 목록이 있을 때만 한다. 요약은 섰는데 목록이 비었거나(None·[])
+            # 못 받았으면 aio_cited 도 None(모름) — 0 으로 적으면 "우리 링크 없음"이 되어
+            # AI 요약 빠짐 기회(scoring.aio_gaps: aio_cited=0)가 빈 응답에서 선다.
+            # 내 도메인 판정은 순위와 같은 scoring.owns 한 벌(www·kr. 같은 하위 도메인 포함).
+            doms = res.get("aio_domains") or None
+            aio_cited = (int(any(scoring.owns(d, own) for d in doms))
+                         if res["aio_present"] == 1 and doms else None)
             # 인용 도메인은 0/1 로 접고 끝내지 않는다 — "누가 대신 인용됐나"가 AI 요약
-            # 요청문의 근거다. 요약이 없었거나(0) 안 쟀으면(None, serper) 목록도 None 이다.
+            # 요청문의 근거다. 요약이 없었거나(0) 안 쟀거나(None, serper) 인용을 못 받았으면
+            # 목록도 None 이다.
             db.write_rank_snapshot(
                 conn, row["id"], position, url,
                 res["serp_features"], res["aio_present"], aio_cited, checked_at=at,
-                aio_domains=res["aio_domains"] if res["aio_present"] == 1 else None)
+                aio_domains=doms if res["aio_present"] == 1 else None)
             db.write_serp_results(conn, row["id"], top_rows, checked_at=at)
             # 상위 글 몇 개의 주소만 모아 둔다 — 여는 것은 런 끝에 한 번, 주소 단위로.
             outline_urls.extend(
@@ -234,7 +240,8 @@ def collect(project: str, *,
                 for kw in (res["related"] + res["paa"]):
                     harvested_kw.add((kw.strip(), kw_locale))
             pos = position if position is not None else "-"
-            aio = " AIO" + ("✓" if aio_cited else "") if res["aio_present"] else ""
+            aio = (" AIO" + ("✓" if aio_cited else "?" if aio_cited is None else "")
+                   if res["aio_present"] else "")
             print(f"  {pos!s:>3}  {row['keyword']}{aio}")
 
         def one(row) -> None:

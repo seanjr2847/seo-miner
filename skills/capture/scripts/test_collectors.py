@@ -2224,8 +2224,9 @@ def test_skips_are_not_failures_and_item_errors_are():
 # 목록에 기대면 이 가짜에서 영영 안 끝난다.
 
 class _FakeDFS:
-    def __init__(self, own="q.com", ready_at=1):
+    def __init__(self, own="q.com", ready_at=1, extra=None):
         self.own, self.ready_at = own, ready_at
+        self.extra = extra or {}             # 검색어 → 결과 items 에 덧붙일 항목(AI 요약 등)
         self.tasks: dict[str, dict] = {}
         self.posts: list[list[dict]] = []
         self.ready_calls = 0                 # tasks_ready 를 부르면 센다 — 안 불러야 한다
@@ -2269,7 +2270,7 @@ class _FakeDFS:
         items = [{"type": "organic", "rank_group": 1, "url": f"https://rival.com/{kw_}",
                   "title": "R"},
                  {"type": "organic", "rank_group": 2, "url": f"https://{self.own}/{kw_}",
-                  "title": "Mine"}]
+                  "title": "Mine"}] + list(self.extra.get(kw_, []))
         return FakeResponse({"status_code": 20000, "tasks": [{
             "id": tid, "status_code": 20000, "status_message": "Ok.",
             "data": dict(v["body"]),
@@ -2514,6 +2515,65 @@ def test_rank_queue_parser_is_the_live_parser():
     items = fake.get("…/task_get/advanced/" + posted[0]["id"])._data["tasks"][0]["result"][0]["items"]
     live = serp_adapter._parse_serp(items, 10)
     assert {k: queued[k] for k in live} == live, (queued, live)
+
+
+def test_rank_aio_citations_known_unknown_and_own_subdomain():
+    """AI 요약 인용: 요청은 비동기 요약까지 달라고 하고, 적을 때는 세 가지를 가른다.
+      인용에 우리(하위 도메인 kr.·www. 포함, scoring.owns) → aio_cited=1
+      인용은 왔는데 우리 없음 → 0 + 목록 (AI 요약 빠짐이 서는 유일한 경우)
+      요약은 섰는데 인용이 안 실려 옴(비동기) → aio_cited·aio_domains_json 둘 다 NULL(모름)
+
+    gucci 운영: '구찌가방' 1위·요약 있음·인용 [] 가 aio_cited=0 으로 적혀 AI 요약 빠짐이 섰다."""
+    conn = db.connect()
+    p = _project(conn, "rq_aio", domain="gucci.com")
+    kws = ["우리 인용", "남만 인용", "비동기 빈 요약", "요약 없음", "우리 www 인용"]
+    conn.executemany("INSERT INTO keywords(project_id, keyword, locale, is_active) "
+                     "VALUES(?,?, 'ko-KR', 1)", [(p["id"], k) for k in kws])
+    conn.commit()
+    kid = {r["keyword"]: r["id"] for r in conn.execute(
+        "SELECT id, keyword FROM keywords WHERE project_id=?", (p["id"],))}
+    conn.close()
+    extra = {
+        # 알려진 모양 — 요약 항목 최상위 references 에 우리 하위 도메인
+        "우리 인용": [{"type": "ai_overview", "asynchronous_ai_overview": False,
+                     "items": [{"type": "ai_overview_element", "markdown": "…"}],
+                     "references": [{"domain": "kr.gucci.com", "url": "https://kr.gucci.com/a"},
+                                    {"domain": "namu.wiki", "url": "https://namu.wiki/w/x"}]}],
+        # 다른 모양 — 요소 안(items[].references·links)에만 인용, 우리는 없다
+        "남만 인용": [{"type": "ai_overview", "items": [
+            {"type": "ai_overview_element",
+             "references": [{"url": "https://www.musinsa.com/p"}],
+             "links": [{"url": "https://notgucci.com/x"}]}]}],
+        "비동기 빈 요약": [{"type": "ai_overview", "asynchronous_ai_overview": True,
+                        "items": None, "references": None}],
+        "우리 www 인용": [{"type": "ai_overview", "items": [
+            {"type": "ai_overview_element", "links": [{"url": "https://www.gucci.com/kr/ko/"}]}]}],
+    }
+    fake = _FakeDFS(own="gucci.com", ready_at=1, extra=extra)
+    with _dfs_env(fake):
+        res = collect_serp.collect("rq_aio", provider="dataforseo", no_harvest=True)
+    assert res.ok and not res.failed, res
+    assert all(b.get("load_async_ai_overview") is True for batch in fake.posts for b in batch),         fake.posts
+    # 수집기가 **적은 그대로**를 본다 — db.connect() 는 _migrate 로 옛 "[]" 행을 NULL 로
+    # 되돌리므로, 그걸로 읽으면 수집기가 "[]"·0 을 적어도 이 검사가 못 본다.
+    import sqlite3
+    raw = sqlite3.connect(db.db_path())
+    raw.row_factory = sqlite3.Row
+    got = {k: raw.execute("SELECT aio_present, aio_cited, aio_domains_json FROM rank_snapshots "
+                          "WHERE keyword_id=?", (i,)).fetchone() for k, i in kid.items()}
+    import scoring
+    gaps = [r["keyword"] for r in scoring.aio_gaps(raw, p["id"])]
+    raw.close()
+    row = {k: (v["aio_present"], v["aio_cited"],
+               json.loads(v["aio_domains_json"]) if v["aio_domains_json"] is not None else None)
+           for k, v in got.items()}
+    assert row["우리 인용"] == (1, 1, ["kr.gucci.com", "namu.wiki"]), row
+    assert row["우리 www 인용"] == (1, 1, ["gucci.com"]), row
+    assert row["남만 인용"] == (1, 0, ["musinsa.com", "notgucci.com"]), row
+    assert row["비동기 빈 요약"] == (1, None, None),         f"인용이 안 실려 온 요약을 '우리 링크 없음'으로 적었다: {row['비동기 빈 요약']}"
+    assert row["요약 없음"] == (0, None, None), row
+    # AI 요약 빠짐은 인용을 **보고** 우리가 없을 때만 — 모름에서 서지 않는다
+    assert gaps == ["남만 인용"], gaps
 
 
 def test_dfs_spacing_only_on_google_ads_paths():

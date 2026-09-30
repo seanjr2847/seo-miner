@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   serp_features_json TEXT,
   aio_present INTEGER,
   aio_cited INTEGER,
-  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀다
+  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀거나 인용을 못 받았다
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 -- 우리 도메인이 순위를 가진 검색어 — DataForSEO Labs 추정(ranked_keywords). 서치콘솔이 없는
@@ -801,6 +801,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "aio_domains_json" not in {r["name"] for r in conn.execute(
             "PRAGMA table_info(rank_snapshots)")}:
         conn.execute("ALTER TABLE rank_snapshots ADD COLUMN aio_domains_json TEXT")
+        conn.commit()
+
+    # 요약은 섰는데 인용 목록이 빈 채("[]")로 적힌 행은 "인용을 못 받았다"였다 — 수집기가
+    # 비동기 요약을 요청하지 않아 인용 없이 온 응답을 "우리 링크 없음(aio_cited=0)"으로
+    # 적었고, 그게 AI 요약 빠짐 기회로 섰다(gucci '구찌가방' 1위). 빈 목록으로는 우리가
+    # 인용됐을 수가 없으니 이 행들의 aio_cited 는 전부 0 이다 — 모름(NULL)으로 되돌린다.
+    # 이제 수집기는 그런 응답을 처음부터 NULL 로 적는다(collect_serp.write). 걸리는 행이
+    # 있을 때만 쓴다(위 runs.kind 와 같은 까닭 — 여는 것만으로 쓰기 잠금을 다투지 않게).
+    if conn.execute("SELECT 1 FROM rank_snapshots WHERE aio_present=1"
+                    " AND aio_domains_json='[]' LIMIT 1").fetchone():
+        conn.execute("UPDATE rank_snapshots SET aio_cited=NULL, aio_domains_json=NULL"
+                     " WHERE aio_present=1 AND aio_domains_json='[]'")
         conn.commit()
 
     # runs.kind 는 단계 id 와 같은 말이어야 한다(run_all.STAGES 정본) — 화면
@@ -2275,8 +2287,10 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
     불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
     안 된다 (serper 경로는 AIO를 측정하지 않아 NULL로 남아야 한다).
 
-    aio_domains 도 같은 불변식이다: None 은 "요약이 없었거나 안 쟀다", [] 는 "요약은
-    떴는데 인용 도메인을 하나도 못 뽑았다". 요약이 뜨지 않은 조회(aio_present 가 1 이
+    aio_domains 도 같은 불변식이다: None 은 "요약이 없었거나 안 쟀거나 인용을 못
+    받았다", [] 는 "요약은 떴는데 인용 도메인을 하나도 못 뽑았다"(수집기는 이제 이걸
+    None 으로 넘긴다 — 빈 응답과 "아무도 인용 안 함"을 못 가른다. collect_serp.write).
+    aio_cited 도 그때는 None 이다. 요약이 뜨지 않은 조회(aio_present 가 1 이
     아닌 것)에는 목록이 있을 수 없어 넘겨도 NULL 로 적는다 — serper 가 주는 빈 목록이
     "봤는데 아무도 없었다"로 둔갑하지 않게.
     """
