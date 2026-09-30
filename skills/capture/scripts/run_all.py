@@ -55,6 +55,7 @@ from pathlib import Path
 # db import를 통해 CAPTURE_HOME/env 자동 로딩 및 콘솔 UTF-8 설정 적용
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage               # noqa: E402
+import audit_data        # noqa: E402
 import collect_ai          # noqa: E402
 import collect_backlinks   # noqa: E402
 import collect_crawl       # noqa: E402
@@ -94,7 +95,21 @@ def load_opportunities(project: str, *, dry_run: bool = False, **_opts) -> Stage
         print(f"[gaps] {reason}")
         return collector.skipped(reason)
     scoring.load(project)
+    health_line(project)
     return collector.succeeded()
+
+
+def health_line(project: str) -> None:
+    """기회를 새로 세운 뒤 데이터 점검(audit_data) 요약을 한 줄 찍는다 — 호스팅에서는 이
+    출력이 Railway 로그로 간다(worker 의 _Tee). 운영 페이로드를 사람이 훑어야 보이던 이상
+    (AI 묶음이 한 번도 안 돎·순위 없음 93%)이 매 런 로그에 남는다.
+
+    점검이 터져도 기회 분석은 성공이다 — 사유만 한 줄 남긴다."""
+    try:
+        d = dashboard.payload(project)
+        print(audit_data.log_line(project, d.get("health") or []))
+    except Exception as e:   # noqa: BLE001 — 요약 한 줄이 단계를 실패로 만들지 않는다
+        print(f"[health] {project}: 데이터 점검 건너뜀 — {e!r}"[:200])
 
 
 def export_report(project: str, *, dry_run: bool = False, **_opts) -> StageResult:

@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
+import audit_data  # noqa: E402  (데이터 점검 — 페이로드의 이상한 모양을 d.health 로)
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
@@ -1729,14 +1730,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
 # 한 런이 "성공"인지는 셸의 runVerdict 와 같은 규칙으로 가른다 — 끝났고, 중단 표식이
 # 없고, 항목 오류(errors=N)가 0 이다. 건너뜀은 실패가 아니다. 판정의 원본은 수집기가
 # runs.notes 에 남긴 글자다(collector.err_note / db.run 의 "중단:") — 구조화된 칸이
-# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다.
-_RE_RUN_ERRORS = re.compile(r"\berrors=(\d+)")
-
-
+# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다. 표식의 정본은 audit_data.run_failed —
+# 데이터 점검·출시 문(test_remote)이 같은 규칙을 본다(outline_errors= 같은 부분 일치는 안 센다).
 def _run_ok(notes: str | None) -> bool:
-    n = notes or ""
-    m = _RE_RUN_ERRORS.search(n)
-    return "중단:" not in n and not (m and int(m.group(1)))
+    return not audit_data.run_failed(notes)
 
 
 def _ts(s: str) -> "datetime | None":
@@ -1886,6 +1883,19 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
     brief.attach(d, db.project_locale(p))
+    # 심사 대기 — [개요] 기회 카드가 비었을 때 "심사에서 고르면 여기 선다"를 말하는 재료.
+    tri = _triage(conn, p)["rows"]
+    d["triage_pending"] = _triage_pending(tri)
+    # 데이터 점검은 맨 마지막이다 — 다 조립된 페이로드(요청문 꼴·고칠 페이지까지)를 그대로
+    # 읽는다. 페이로드에 없는 사실(추적 중 키워드·씨앗·직접 적은 경쟁사·심사 목록)만 ctx 로.
+    d["health"] = audit_data.audit(d, {
+        "active": {r[0] for r in conn.execute(
+            "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))},
+        "seeds": len(db.seed_keywords(conn, pid)),
+        "manual_rivals": len(db.manual_competitors(conn, pid)),
+        "triage": tri,
+        "foreign_brands": scoring.foreign_brands(conn, pid, cfg)})
+    d["health_sev"] = dict(audit_data.SEV_LABEL)   # 등급 이름 — 화면이 사본을 안 갖는다
     return d
 
 
@@ -1977,73 +1987,7 @@ def triage_payload(project: str) -> dict:
     검색어가 아닌 종류(KEYWORD_KINDS 밖)는 심사에 안 오른다."""
     conn = db.connect()
     try:
-        p = db.get_project(conn, project)
-        pid = p["id"]
-        vm = db.verdict_map(conn, pid)
-        ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
-        rows = conn.execute(
-            f"""SELECT norm(target) key, target, kind, score FROM opportunities
-                 WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
-                 ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
-        latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
-                              (pid,)).fetchone()[0]
-        perf: dict[str, tuple[int, int]] = {}
-        if latest:
-            for r in conn.execute(
-                    "SELECT norm(query) k, SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots"
-                    " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
-                perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
-        brands = _brand_keys(conn, p)
-        # 언어-지역 — 다국어 사이트(theotherskin)는 한국어 검색어 사이에 영어·중국어 150건이
-        # 섞여 한 줄로 심사됐다. 키워드 표의 locale(조회에 쓴 값)이 정본이고, 표에 없는
-        # 검색어는 적재와 같은 규칙(db.keyword_locale)으로 가른다. 언어로 묶는다 — en-US 와
-        # en-GB 를 따로 세우면 같은 영어 검색어가 두 칸으로 갈린다.
-        site_locale = db.project_locale(p)
-        kw_loc = {r["k"]: r["locale"] for r in conn.execute(
-            "SELECT norm(keyword) k, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
-            (pid,))}
-        # 남의 브랜드 힌트 — 카탈로그(foreign_brands) + "〈이름〉+간판말"(scoring.looks_other_brand)
-        cfg = db.project_cfg(conn, p)
-        kw_rows = conn.execute(
-            "SELECT keyword, source FROM keywords WHERE project_id=? AND (is_active=1 OR source='seed')",
-            (pid,)).fetchall()
-        known_kw = [r[0] for r in kw_rows]
-        known = {scoring.norm(k) for k in known_kw if scoring.norm(k)}
-        seeds = {scoring.norm(r[0]) for r in kw_rows if r[1] == "seed"}
-        site = scoring.site_words_of(conn, pid, cfg)
-        storefront = scoring.storefront_words(
-            [p["name"], *(cfg.get("brand_aliases") or [])], known_kw)
-        foreign = scoring.foreign_brands(conn, pid, {**cfg, "name": p["name"]})
-        groups: dict[str, dict] = {}
-        for r in rows:
-            g = groups.get(r["key"])
-            if g is None:
-                c, i = perf.get(r["key"], (0, 0))
-                label = r["target"].strip()
-                loc = kw_loc.get(r["key"]) or db.keyword_locale(label, site_locale)
-                g = groups[r["key"]] = {
-                    "key": r["key"], "label": label, "variants": set(),
-                    "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
-                    "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"]),
-                    "lang": serp_adapter.lang_of(loc),
-                    "other_brand": not any(b in r["key"] for b in brands) and
-                    scoring.looks_other_brand(label, brands=foreign, site=site,
-                                              storefront=storefront, known=known, seeds=seeds)}
-            g["variants"].add(r["target"].strip())
-            if r["kind"] not in g["kinds"]:
-                g["kinds"].append(r["kind"])
-        out = []
-        for g in groups.values():
-            g["variants"] = len(g["variants"])
-            g["labels"] = [scoring.kind_label(k) for k in g["kinds"]]
-            g["score"] = round(g["score"], 1) if g["score"] is not None else None
-            out.append(g)
-        out.sort(key=lambda g: -(g["score"] or 0))
-        counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
-        for g in out:
-            counts[g["verdict"] or "none"] += 1
-        return {"rows": out, "counts": counts, "site_lang": serp_adapter.lang_of(site_locale),
-                "lang_labels": _lang_labels({g["lang"] for g in out})}
+        return _triage(conn, db.get_project(conn, project))
     finally:
         conn.close()
 
@@ -2056,6 +2000,92 @@ def _lang_labels(langs) -> dict[str, str]:
     for code, label in serp_adapter.LOCALES:
         names.setdefault(serp_adapter.lang_of(code), re.sub(r"\(.*?\)", "", label.split(" · ")[0]))
     return {lg: names.get(lg, lg.upper()) for lg in langs if lg}
+
+
+# [개요] 기회 카드의 빈 상태가 "점수 N점 이상 몇 건"을 말하는 문턱. 심사 화면의 진한 색점
+# (triage.html TR_tier 의 70)과 같은 수다 — 화면은 페이로드(d.triage_pending.hot_min)로 받는다.
+TRIAGE_HOT = 70
+
+
+def _triage_pending(rows: list[dict]) -> dict:
+    """심사 대기(미판정) 수와 그중 점수 TRIAGE_HOT 이상 수 — [개요] 기회 카드의 빈 상태가 쓴다.
+
+    개요 목록은 심사에서 '작업'으로 고른 것만 싣는다(db.gate_sql). 그래서 목록이 비었는데
+    심사에 113건이 쌓인 사이트(aitierlist)가 "남은 기회가 없습니다 · 쌓인 것을 전부
+    처리했습니다"를 봤다 — 한 건도 처리한 적이 없는데."""
+    pend = [r for r in rows if not r.get("verdict")]
+    return {"n": len(pend), "hot_min": TRIAGE_HOT,
+            "hot": sum(1 for r in pend if (r.get("score") or 0) >= TRIAGE_HOT)}
+
+
+def _triage(conn, p) -> dict:
+    """심사 목록 한 벌 — /api/triage 와 gather(개요의 심사 대기 수·데이터 점검)가 같이 쓴다."""
+    pid = p["id"]
+    vm = db.verdict_map(conn, pid)
+    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+    rows = conn.execute(
+        f"""SELECT norm(target) key, target, kind, score FROM opportunities
+             WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
+             ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
+    latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
+                          (pid,)).fetchone()[0]
+    perf: dict[str, tuple[int, int]] = {}
+    if latest:
+        for r in conn.execute(
+                "SELECT norm(query) k, SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots"
+                " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
+            perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
+    brands = _brand_keys(conn, p)
+    # 언어-지역 — 다국어 사이트(theotherskin)는 한국어 검색어 사이에 영어·중국어 150건이
+    # 섞여 한 줄로 심사됐다. 키워드 표의 locale(조회에 쓴 값)이 정본이고, 표에 없는
+    # 검색어는 적재와 같은 규칙(db.keyword_locale)으로 가른다. 언어로 묶는다 — en-US 와
+    # en-GB 를 따로 세우면 같은 영어 검색어가 두 칸으로 갈린다.
+    site_locale = db.project_locale(p)
+    kw_loc = {r["k"]: r["locale"] for r in conn.execute(
+        "SELECT norm(keyword) k, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
+        (pid,))}
+    # 남의 브랜드 힌트 — 카탈로그(foreign_brands) + "〈이름〉+간판말"(scoring.looks_other_brand)
+    cfg = db.project_cfg(conn, p)
+    kw_rows = conn.execute(
+        "SELECT keyword, source FROM keywords WHERE project_id=? AND (is_active=1 OR source='seed')",
+        (pid,)).fetchall()
+    known_kw = [r[0] for r in kw_rows]
+    known = {scoring.norm(k) for k in known_kw if scoring.norm(k)}
+    seeds = {scoring.norm(r[0]) for r in kw_rows if r[1] == "seed"}
+    site = scoring.site_words_of(conn, pid, cfg)
+    storefront = scoring.storefront_words(
+        [p["name"], *(cfg.get("brand_aliases") or [])], known_kw)
+    foreign = scoring.foreign_brands(conn, pid, {**cfg, "name": p["name"]})
+    groups: dict[str, dict] = {}
+    for r in rows:
+        g = groups.get(r["key"])
+        if g is None:
+            c, i = perf.get(r["key"], (0, 0))
+            label = r["target"].strip()
+            loc = kw_loc.get(r["key"]) or db.keyword_locale(label, site_locale)
+            g = groups[r["key"]] = {
+                "key": r["key"], "label": label, "variants": set(),
+                "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
+                "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"]),
+                "lang": serp_adapter.lang_of(loc),
+                "other_brand": not any(b in r["key"] for b in brands) and
+                scoring.looks_other_brand(label, brands=foreign, site=site,
+                                          storefront=storefront, known=known, seeds=seeds)}
+        g["variants"].add(r["target"].strip())
+        if r["kind"] not in g["kinds"]:
+            g["kinds"].append(r["kind"])
+    out = []
+    for g in groups.values():
+        g["variants"] = len(g["variants"])
+        g["labels"] = [scoring.kind_label(k) for k in g["kinds"]]
+        g["score"] = round(g["score"], 1) if g["score"] is not None else None
+        out.append(g)
+    out.sort(key=lambda g: -(g["score"] or 0))
+    counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
+    for g in out:
+        counts[g["verdict"] or "none"] += 1
+    return {"rows": out, "counts": counts, "site_lang": serp_adapter.lang_of(site_locale),
+            "lang_labels": _lang_labels({g["lang"] for g in out})}
 
 
 def set_verdict(body: dict) -> dict:

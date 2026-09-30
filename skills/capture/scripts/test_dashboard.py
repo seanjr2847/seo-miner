@@ -24,6 +24,7 @@ os.environ["CAPTURE_HOME"] = str(HOME)
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "setup" / "scripts"))
 
+import audit_data  # noqa: E402
 import dashboard  # noqa: E402
 import db         # noqa: E402
 import scoring    # noqa: E402
@@ -731,6 +732,38 @@ def test_competitors_axis_counts_only_confirmed_rivals():
     pr = db.profile_read(conn, "confrv")
     assert pr["rivals_confirmed"] == 2 and pr["gsc_connected"] is True, pr
     conn.close()
+
+
+def test_gather_carries_triage_pending_and_health():
+    """[개요]가 비었을 때 말할 심사 대기 수(d.triage_pending)와 데이터 점검(d.health)을 싣는다.
+
+    aitierlist·noti 는 개요 목록이 0건인데 심사에 113·79건이 쌓여 있었다 — 개요는 "남은 기회가
+    없습니다"만 말했다. 점검은 페이로드에 없는 사실(추적 중 키워드)을 gather 가 ctx 로 넘겨야
+    '추적에서 뺀 검색어가 순위 표에 섞임'을 본다(페이로드의 rank_by_kw 는 is_active 를 모른다)."""
+    conn, pid = _brain("hp")
+    db.upsert_opportunities(conn, pid, None, [
+        {"kind": "striking_distance", "target": "높은 점수", "score": 81.0},
+        {"kind": "striking_distance", "target": "낮은 점수", "score": 30.0},
+        {"kind": "ctr_gap", "target": "판정함", "score": 90.0}])
+    db.set_verdicts(conn, pid, [scoring.norm("판정함")], "work")
+    for kw, on in (("켠 것", 1), ("끈 것", 0)):
+        k = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,?)"
+                         " RETURNING id", (pid, kw, on)).fetchone()[0]
+        db.write_rank_snapshot(conn, k, 3, "https://hp.example/a", checked_at=D + "T01:00:00Z")
+    conn.commit()
+    d = dashboard.gather(conn, db.get_project(conn, "hp"))
+    conn.close()
+    assert d["triage_pending"] == {"n": 2, "hot": 1, "hot_min": dashboard.TRIAGE_HOT}, d["triage_pending"]
+    assert isinstance(d["health"], list) and d["health_sev"] == audit_data.SEV_LABEL
+    for f in d["health"]:
+        assert set(f) == {"sev", "area", "code", "msg", "count"}, f
+    got = {f["code"]: f for f in d["health"]}
+    # 추적에서 뺀 검색어는 순위 표(rank_by_kw)에 아예 안 실린다(_RANK_LIVE) — 그래서 점검의
+    # '순위 표에 섞임' 규칙(ranks_untracked)도 안 선다. 규칙은 이게 다시 새면 잡으려고 남겨 둔다.
+    assert "끈 것" not in d["rank_by_kw"] and "켠 것" in d["rank_by_kw"], sorted(d["rank_by_kw"])
+    assert "ranks_untracked" not in got, got.get("ranks_untracked")
+    assert "audit_error" not in got, got["audit_error"]
+    json.dumps(d["health"], ensure_ascii=False)     # 페이로드에 실린다 — 직렬화돼야 한다
 
 
 def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():

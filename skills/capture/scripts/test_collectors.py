@@ -1860,6 +1860,7 @@ def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard(
     import run_all
 
     orig_load, orig_export = run_all.scoring.load, run_all.dashboard.export
+    orig_payload = run_all.dashboard.payload
     try:
         # dry-run 이면 외부 호출이 아예 없다
         def boom(*a, **k):
@@ -1887,8 +1888,22 @@ def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard(
             seen["loaded"] = project
 
         run_all.scoring.load = fake_load
-        g = run_all.load_opportunities("p")
+        # 기회를 세운 뒤 데이터 점검 요약 한 줄(Railway 로그) — 페이로드의 d.health 를 읽는다.
+        # 점검이 터져도 단계는 성공이다(사유만 한 줄).
+        run_all.dashboard.payload = lambda project, at=None: {"health": [
+            {"sev": "high", "area": "런", "code": "run_failed", "msg": "m", "count": 1}]}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            g = run_all.load_opportunities("p")
         assert g.ok and seen["loaded"] == "p", seen
+        assert "[health] p: 데이터 이상 1건 (높음 1) — 높음: run_failed" in buf.getvalue(), buf.getvalue()
+        def raises(*a, **k):
+            raise RuntimeError("db 잠김")
+        run_all.dashboard.payload = raises
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert run_all.load_opportunities("p").ok
+        assert "데이터 점검 건너뜀" in buf.getvalue() and "db 잠김" in buf.getvalue(), buf.getvalue()
 
         # 예외는 여기서 삼키지 않고 그대로 올린다 — _run_stage 가 StageResult(ok=False)로 접는다.
         def raises(*a, **k):
@@ -1900,6 +1915,7 @@ def test_run_all_script_stages_are_uniform_and_report_path_comes_from_dashboard(
     finally:
         run_all.scoring.load = orig_load
         run_all.dashboard.export = orig_export
+        run_all.dashboard.payload = orig_payload
 
 
 def test_collector_cli_forwards_knob_and_dispatches_correct_stage_name():

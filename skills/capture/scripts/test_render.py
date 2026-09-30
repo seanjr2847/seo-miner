@@ -190,7 +190,21 @@ EMPTY_LOADS = [
     (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
                  ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다"),
                  (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [분석]이 그렇다고 안 말한다"),
-                 ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [분석]이 '수집이 한 번뿐'이라고 말한다")]),
+                 ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [분석]이 '수집이 한 번뿐'이라고 말한다"),
+                 # 개요 목록은 비었는데 심사에 쌓였다 — "다 처리했다"가 아니라 [심사하기]
+                 (r'id="opps"[^>]*>(?:(?!class="card).)*심사할 검색어가 1건 남았습니다'
+                  r'(?:(?!class="card).)*점수 70점 이상이 1건(?:(?!class="card).)*'
+                  r"SM\.show\('triage'\)[^>]*>심사하기</button>",
+                  "개요 목록이 빈 채 심사에 쌓였는데 빈 상태가 [심사하기]로 안 보낸다"),
+                 ("!" + re.escape("쌓인 것을 전부 처리했습니다"),
+                  "심사에 쌓여 있는데 개요가 '전부 처리했다'고 말한다"),
+                 # 데이터 점검 — 이상이 있으면 접힌 띠가 서고, 펼칠 목록에 등급·내용이 있다
+                 (r'<details[^>]*id="ov-health"(?![^>]*hidden)[^>]*>\s*<summary>'
+                  r'<span class="ovhl-t">데이터 이상 <b[^>]*>\d+</b>건',
+                  "데이터 이상이 있는데 개요에 접힌 띠가 안 섰다"),
+                 (r'id="ov-health-list"[^>]*>(?:(?!</ul>).)*class="badge warn">중간<'
+                  r"(?:(?!</ul>).)*추적에서 뺀 검색어",
+                  "데이터 이상 목록에 등급·내용(추적에서 뺀 검색어)이 안 그려졌다")]),
 ]
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
@@ -849,6 +863,14 @@ def zero_site(home: Path) -> None:
             conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,"
                          "query,page,clicks,impressions,ctr,position) VALUES(?,?,28,?,?,0,50,0,30.0)",
                          (pid, d, f"{ZERO_SITE} 검색어", f"https://{ZERO_SITE}.example/a"))
+        # 심사에만 쌓인 기회 하나(미판정) — 개요 목록은 비고, 빈 상태가 [심사하기]로 보낸다.
+        conn.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+                     " VALUES(?,'striking_distance',?,75,'r','new')", (pid, f"{ZERO_SITE} 대기"))
+        # 추적에서 뺀 검색어의 순위 행 — 데이터 점검(ranks_untracked)이 개요의 접힌 띠에 선다.
+        k = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,0)"
+                         " RETURNING id", (pid, f"{ZERO_SITE} 끈 검색어")).fetchone()[0]
+        db.write_rank_snapshot(conn, k, 5, f"https://{ZERO_SITE}.example/a",
+                               checked_at="2026-06-01T01:00:00Z")
         conn.commit()
     finally:
         conn.close()
