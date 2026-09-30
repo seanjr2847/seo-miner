@@ -278,6 +278,51 @@ def covered(stages) -> list[str]:
             if set(group_stages(g)) <= have and set(TAIL) <= have]
 
 
+# 못 잰 묶음을 다시 잡는 간격(시간). 묶음 시계는 **시작할 때** 찍힌다(store.mark_groups —
+# 실패가 매 틱 재시도하며 돈을 새지 않게). 그런데 그 묶음의 제 단계가 통째로 건너뛰면(질문
+# 없음·잔액 카나리아·키 없음) 시계만 찍히고 아무것도 안 잰 채 한 주가 간다 — aitierlist·noti
+# 의 [AI 노출] 이 그렇게 한 번도 안 돌았다(ai 단계 기록 0, 시계는 매주 찍힘, 화면의 due 도
+# 꺼짐). 그런 묶음은 시계를 되돌려 RETRY_HOURS 뒤 다시 잡는다. 하루인 이유: 매일 런(할 일)과
+# 같은 스윕에 얹혀 따로 런을 세우지 않고, 원인(충전·질문 생성)이 풀릴 시간을 준다.
+RETRY_HOURS = 24
+SKIP_FLAG_REASON = "--skip 으로 지정해 건너뜁니다"
+FRESH_REASON = "이번 주기에 다른 묶음이 이미 재서 건너뜁니다"
+
+
+def own_stages(gid: str) -> tuple:
+    """이 묶음만 가진 단계 — 다른 잴 수 있는 묶음과 안 겹치는 것(rank 는 검색 성과·AI 노출이
+    나눠 쓰니 어느 쪽 것도 아니다). 묶음을 '쟀다'고 말할 근거는 이 단계들이다."""
+    others = {n for g in RUNNABLE_GROUPS if g != gid for n in group_stages(g)}
+    return tuple(n for n in group_stages(gid) if n not in others)
+
+
+def unmeasured(groups, results) -> dict[str, str]:
+    """이번 런에서 시계만 찍히고 못 잰 묶음 → 사유. 제 단계(own_stages)가 이번 런에 있고
+    전부 **건너뜀**이면 못 잰 것이다. --skip·앞 라운드·다른 묶음 몫으로 건너뛴 것은 뜻한
+    것이라 안 친다. 실패는 여기 안 든다 — 돌긴 돌았다(시계 정책 그대로, 알림이 따로 간다)."""
+    res = dict(results)
+    out: dict[str, str] = {}
+    for g in group_names(groups):
+        mine = [(n, res[n]) for n in own_stages(g) if n in res
+                and res[n].reason not in (SKIP_FLAG_REASON, RAN_REASON, FRESH_REASON)]
+        if mine and all(r.skipped for _, r in mine):
+            out[g] = "; ".join(f"{n}: {r.reason or '사유 없음'}" for n, r in mine)
+    return out
+
+
+def borrowed(groups, fresh_groups) -> set[str]:
+    """이번 런이 다시 안 사도 되는 유료 단계 — 이번 런에 없는 묶음 중 시계가 신선한 묶음
+    (fresh_groups)이 같이 가진 단계. [AI 노출] 만 다시 잡힌 날(RETRY_HOURS) 순위(rank)를 또
+    사지 않게 한다 — 이번 주기에 검색 성과가 이미 쟀다. 무료 단계(gsc 등)는 빌리지 않는다."""
+    want = set(group_names(groups))
+    out = set()
+    for g in fresh_groups:
+        if g in want or g not in GROUP_BY_ID:
+            continue
+        out |= {n for n in group_stages(g) if STAGE_BY_NAME[n].is_paid}
+    return out & set(plan(list(want)))
+
+
 def _waits(names) -> dict[str, set]:
     """이번 런의 단계별 '먼저 끝나야 하는 것' — 이번 런에 없는 단계는 기다리지 않는다."""
     here = set(names)
@@ -393,12 +438,26 @@ MIN_BALANCE = 1.0                       # 이보다 적으면 유료 단계는 �
 DFS_STAGES = ("metrics", "rank", "competitors", "backlinks")
 
 
-def preflight(stages=STAGES) -> dict[str, str]:
+def paid_estimate(name: str, project: str | None = None) -> float:
+    """OpenRouter 단계의 이번 회차 추정 비용($) — 잔액 카나리아가 비교할 값. 정본은 각 수집기."""
+    if name == "ai":
+        return collect_ai.estimate_usd(project)
+    if name == "plays":
+        return plays.estimate_usd()
+    return 0.0
+
+
+def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
     """유료 단계를 돌리기 전 한 번. 반환: {건너뛸 단계: 사유}.
 
-    두 호출(DataForSEO user_data, OpenRouter auth/key)이 다 무료라 dry-run 에서도
+    호출(DataForSEO user_data, OpenRouter auth/key·credits)이 다 무료라 dry-run 에서도
     한다. 확인 자체가 실패하면(네트워크 등) 아무것도 막지 않는다 — 카나리아가
-    수집을 죽이면 안 된다.
+    수집을 죽이면 안 된다. 읽은 잔액은 몇 분 기억한다(serp_adapter.canary_cached) —
+    호스팅 스윕이 사이트마다 다시 묻지 않는다.
+
+    OpenRouter 는 잔액을 **이번 단계의 추정 비용**(paid_estimate)과 견준다 — 호스팅 키가
+    $0.14 까지 떨어진 채 AI 인용·할 일이 402 를 맞고서야 알았다. 두 단계가 같은 돈을 쓰므로
+    앞 단계(ai)의 몫을 빼고 뒤 단계(plays)를 본다.
     """
     blocked: dict[str, str] = {}
     paid = {s.name for s in stages if s.is_paid}
@@ -419,12 +478,39 @@ def preflight(stages=STAGES) -> dict[str, str]:
     # OpenRouter 를 쓰는 단계(AI 인용·할 일 수정안)는 같은 키 하나를 본다 — 한 번만 묻는다.
     orr = [n for n in ("ai", "plays") if n in paid]
     if orr and serp_adapter.has_openrouter():
-        ok, msg = collect_ai.openrouter_ok()
-        if not ok:
-            print(f"[경고] {msg} — {'·'.join(orr)} 단계를 건너뜁니다.")
-            for n in orr:
+        need = 0.0
+        for n in orr:
+            need += paid_estimate(n, project)
+            ok, msg = collect_ai.openrouter_ok(need)
+            if not ok:
+                print(f"[경고] {msg} — {n} 단계를 건너뜁니다.")
                 blocked[n] = msg
+                need -= paid_estimate(n, project)      # 안 쓸 돈 — 뒤 단계 몫에서 뺀다
     return blocked
+
+
+_PREFLIGHT = preflight
+
+
+BLOCKED_NOTE = "돈 쓰기 전에 건너뜀"
+
+
+def note_blocked(project: str, kind: str, reason: str) -> None:
+    """카나리아가 막은 유료 단계를 runs 한 줄로 남긴다 — 건너뜀은 여태 로그에만 있고 기록이
+    없어서, [AI 노출] 이 두 사이트(aitierlist·noti)에서 한 번도 안 돈 이유가 어디에도 안
+    남았다. notes 에 scoring.AI_RUN_ABORTED("중단:") 표식을 단다: 이 줄은 **잰 날이 아니다**
+    (dashboard._run_ok·scoring.ai_run_done 이 그 표식으로 뺀다), 그리고 [AI 인용] 화면은
+    ai_health.last_run 의 사유로 이 문장을 그대로 말한다. 기록이 실패해도 수집은 간다."""
+    try:
+        conn = db.connect()
+        try:
+            pid = db.get_project(conn, project)["id"]
+            rid = db.start_run(conn, pid, kind)
+            db.finish_run(conn, rid, notes=f"{BLOCKED_NOTE} | {scoring.AI_RUN_ABORTED} {reason}"[:500])
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("[%s] 건너뜀 기록 실패: %s", kind, e)
 
 
 def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
@@ -443,7 +529,7 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
         return collector.skipped(reason)
 
     if stage.name in skip_set:
-        return _skip("--skip 으로 지정해 건너뜁니다")
+        return _skip(SKIP_FLAG_REASON)
 
     if only_set and stage.name not in only_set:
         return _skip("--only 대상이 아니라 건너뜁니다")
@@ -454,6 +540,8 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
             return _skip(paid_skip_msg)
         if stage.name in blocked:
             # 카나리아가 이미 답을 알고 있다 — 402 를 100번 사러 가지 않는다.
+            if not dry_run:
+                note_blocked(project, stage.name, blocked[stage.name])
             return _skip(blocked[stage.name])
 
     if before and not dry_run:
@@ -473,6 +561,14 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
         # 어디에도 안 남는다 — 여기가 이 저장소에서 진단이 사라지던 자리다.
         log.exception("[%s] 단계에서 처리하지 못한 예외", stage.name)
         return collector.failed(f"이 단계에서 오류가 났습니다 ({e})")
+
+
+def _ask_preflight(fn, to_run, project: str) -> dict[str, str]:
+    """돈 쓰는 단계가 남아 있을 때만 카나리아를 부른다. 기본 카나리아에는 사이트를 넘겨
+    추정 비용을 사이트 크기로 잡는다 — 주입된 가짜(fn(stages))는 예전 모양 그대로 부른다."""
+    if not any(s.is_paid for s in to_run):
+        return {}
+    return fn(to_run, project=project) if fn is _PREFLIGHT else fn(to_run)
 
 
 RAN_REASON = "바로 앞 런에서 이미 돌아 건너뜁니다"
@@ -548,7 +644,8 @@ def _wal() -> None:
 
 
 def _run_groups(project: str, table: tuple, *, dry_run: bool, skip_set: set, opts: dict,
-                blocked: dict, ran: set, on_stage, before=None) -> list[tuple[str, StageResult]]:
+                blocked: dict, ran: set, on_stage, before=None,
+                fresh=frozenset()) -> list[tuple[str, StageResult]]:
     """묶음 런 — 준비된 단계부터 동시에 띄우고, 끝나는 대로 다음을 띄운다.
 
     스레드다(프로세스가 아니다): 단계가 하는 일은 거의 네트워크 대기라 GIL 이 문제가
@@ -581,9 +678,10 @@ def _run_groups(project: str, table: tuple, *, dry_run: bool, skip_set: set, opt
         _CURRENT.name = stg.name
         try:
             print(f"\n{stg.name} 시작 — {stg.desc}")
-            if stg.name in ran:
-                print(f"[{stg.name}] {RAN_REASON}")
-                return collector.skipped(RAN_REASON)
+            if stg.name in ran or stg.name in fresh:
+                why = RAN_REASON if stg.name in ran else FRESH_REASON
+                print(f"[{stg.name}] {why}")
+                return collector.skipped(why)
             return _run_stage(stg, project, dry_run=dry_run, skip_set=skip_set, only_set=set(),
                               opts=opts.get(stg.name) or {}, blocked=blocked,
                               before=(before or {}).get(stg.name))
@@ -633,6 +731,7 @@ def run_chain(
     groups=None,
     ran=(),
     before=None,
+    fresh=(),
 ) -> list[tuple[str, StageResult]]:
     """수집 체인을 실행하고 각 단계의 결과를 그대로 돌려줍니다.
 
@@ -655,6 +754,8 @@ def run_chain(
             (rank 등)를 또 사지 않게 서버가 준다. 건너뜀으로 남는다.
         before: {단계 이름: fn(project)} — 그 단계가 실제로 돌기 직전에 한 번 부른다
             (_run_stage). 묶음 런은 AFTER 순서를 지키므로 앞 단계의 결과가 이미 있다.
+        fresh: 묶음 런 전용 — 이번 주기에 다른 묶음이 이미 잰 유료 단계(borrowed).
+            FRESH_REASON 건너뜀으로 남는다.
 
     Returns:
         [(단계 이름, StageResult), ...] — 단계당 한 건, STAGES 순서.
@@ -701,11 +802,14 @@ def run_chain(
               + " · ".join(GROUP_BY_ID[g]["name"] for g in gids)
               + (" (실행 없이 계획만 봅니다)" if dry_run else ""))
         print(f"{SEPARATOR}")
-        to_run = [s for s in table if s.name not in skip_set and s.name not in ran]
-        blocked = preflight(to_run) if any(s.is_paid for s in to_run) else {}
+        fresh = set(fresh or ())
+        to_run = [s for s in table
+                  if s.name not in skip_set and s.name not in ran and s.name not in fresh]
+        blocked = _ask_preflight(preflight, to_run, project)
         _wal()
         return _run_groups(project, table, dry_run=dry_run, skip_set=skip_set, opts=opts,
-                           blocked=blocked, ran=ran, on_stage=on_stage, before=before)
+                           blocked=blocked, ran=ran, on_stage=on_stage, before=before,
+                           fresh=fresh)
 
     print(f"\n{SEPARATOR}")
     print(f"수집 시작: {project}" + (" (실행 없이 계획만 봅니다)" if dry_run else ""))
@@ -714,7 +818,7 @@ def run_chain(
     # 돈 쓰는 단계가 하나라도 남아 있으면 그 앞에서 무료로 한 번 묻는다.
     to_run = [s for s in stages
               if s.name not in skip_set and (not only_set or s.name in only_set)]
-    blocked = preflight(to_run) if any(s.is_paid for s in to_run) else {}
+    blocked = _ask_preflight(preflight, to_run, project)
 
     for idx, stage in enumerate(stages, start=1):
         # gsc 가 실패했을 때 나머지 단계는 실행하지 않고 중단 상태로 기록
@@ -876,7 +980,55 @@ def _selfcheck() -> None:
             raise AssertionError(f"[{stg.name}] 파서 기본값으로 collect() 를 못 부른다: {e}") from e
 
     _check_groups()
+    _check_preflight()
     print("run_all self-check ok")
+
+
+def _check_preflight() -> None:
+    """잔액 카나리아(P4) — OpenRouter 단계는 남은 돈을 이번 단계 추정 비용과 견주고, 앞
+    단계(ai) 몫을 뺀 뒤 뒤 단계(plays)를 본다. 막힌 단계는 runs 한 줄(중단: 사유)로 남아
+    화면·출시 문이 본다. 네트워크 0 — 판정 함수를 갈아 끼운다."""
+    import contextlib
+    import io
+    g = globals()
+    saved = (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
+             collect_ai.openrouter_ok, g["paid_estimate"])
+    left = {"v": 1.5}
+    serp_adapter.has_openrouter = lambda: True
+    serp_adapter.has_dataforseo = lambda: False
+    collect_ai.openrouter_ok = lambda need=0.0: (
+        (True, "ok") if need <= left["v"] else (False, f"OpenRouter 잔액 ${left['v']:.2f}"))
+    g["paid_estimate"] = lambda n, project=None: {"ai": 1.2, "plays": 1.0}.get(n, 0.0)
+    try:
+        both = [STAGE_BY_NAME["ai"], STAGE_BY_NAME["plays"]]
+        with contextlib.redirect_stdout(io.StringIO()):
+            b = preflight(both)
+            assert set(b) == {"plays"}, f"ai($1.20)는 되고 ai+plays($2.20)는 안 된다: {b}"
+            left["v"] = 1.1
+            b = preflight(both)
+            assert set(b) == {"ai"}, f"ai 가 막히면 그 몫을 빼고 plays($1.00)를 본다: {b}"
+            left["v"] = 0.14
+            assert set(preflight(both)) == {"ai", "plays"}
+        # 막힌 단계는 기록이 남는다 — 건너뜀이 로그에만 있으면 왜 안 돌았는지 아무도 모른다
+        c = db.connect()
+        c.execute("INSERT OR IGNORE INTO projects(name, domain, locale) VALUES('pf','pf.kr','ko-KR')")
+        c.commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = _run_stage(STAGE_BY_NAME["ai"], "pf", dry_run=False, skip_set=set(), only_set=set(),
+                           opts={}, blocked={"ai": "OpenRouter 잔액 $0.14"})
+            _run_stage(STAGE_BY_NAME["ai"], "pf", dry_run=True, skip_set=set(), only_set=set(),
+                       opts={}, blocked={"ai": "OpenRouter 잔액 $0.14"})
+        assert r.skipped and "$0.14" in r.reason, r
+        rows = c.execute("SELECT notes, finished_at FROM runs WHERE kind='ai'").fetchall()
+        assert len(rows) == 1, f"막힌 단계 기록이 없거나(또는 dry-run 까지) 남았다: {len(rows)}"
+        assert scoring.AI_RUN_ABORTED in rows[0]["notes"] and "$0.14" in rows[0]["notes"], rows[0]["notes"]
+        st = scoring.ai_prompt_state(c, c.execute("SELECT id FROM projects WHERE name='pf'"
+                                                  ).fetchone()["id"])
+        assert st["last_run"]["state"] == "aborted" and "$0.14" in st["last_run"]["note"], st["last_run"]
+        c.close()
+    finally:
+        (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
+         collect_ai.openrouter_ok, g["paid_estimate"]) = saved
 
 
 def _check_groups() -> None:
@@ -913,6 +1065,23 @@ def _check_groups() -> None:
     assert set(plan("all")) == set(VALID_STAGE_NAMES), plan("all")
     assert covered(plan(["search"])) == ["todo", "search"], covered(plan(["search"]))
     assert covered(plan(["ai"])) == ["ai"], covered(plan(["ai"]))
+    # 못 잰 묶음(P3) — 제 단계가 전부 건너뜀이면 시계만 찍힌 것이다. rank 는 AI 노출의 제
+    # 단계가 아니다(검색 성과와 나눠 쓴다) — rank 가 돌았다고 AI 노출을 잰 것이 아니다.
+    assert own_stages("ai") == ("ai",) and own_stages("todo") == (), own_stages("ai")
+    sk, ok_ = collector.skipped, collector.succeeded
+    res = [("ai", sk("AI에 물어볼 질문이 아직 없습니다")), ("rank", ok_()), ("gaps", ok_())]
+    assert list(unmeasured(["ai"], res)) == ["ai"], unmeasured(["ai"], res)
+    assert "질문이 아직 없습니다" in unmeasured(["ai"], res)["ai"]
+    assert unmeasured(["ai"], [("ai", ok_()), ("rank", sk("x"))]) == {}, "잰 묶음을 못 쟀다고 한다"
+    assert unmeasured(["ai"], [("ai", collector.failed("402"))]) == {}, "실패는 시계 정책 그대로다"
+    assert unmeasured(["ai"], [("ai", sk(SKIP_FLAG_REASON))]) == {}, "--skip 은 뜻한 것이다"
+    assert unmeasured(["search"], [("keywords", ok_()), ("metrics", sk("키 없음"))]) == {}
+    assert unmeasured(["compete"], [("competitors", sk("키 없음")), ("backlinks", sk(SKIP_FLAG_REASON))]) \
+        == {"compete": "competitors: 키 없음"}
+    # 빌려 쓰기 — AI 노출만 다시 잡힌 날, 이번 주기의 검색 성과가 잰 rank 는 다시 안 산다
+    assert borrowed(["ai"], ["search", "site"]) == {"rank"}, borrowed(["ai"], ["search"])
+    assert borrowed(["ai", "search"], []) == set()
+    assert borrowed(["todo"], ["search"]) == set(), "무료 단계(gsc·ga4)를 빌렸다"
     try:
         group_names("search,없는묶음")
         raise AssertionError("모르는 묶음이 통과했다")

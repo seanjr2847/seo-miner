@@ -51,32 +51,90 @@ SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
           "to a {lang}-speaking audience in {country} ({locale}).")
 
 
-def openrouter_ok() -> tuple[bool, str]:
-    """키가 살아 있나 — GET /auth/key, **무료 호출**. 반환: (쓸 수 있나, 사람 말).
+# 호출 한 번의 **추정** 단가($) — 실청구는 응답 usage 가 말한다. ':online' 웹 검색은 요청마다
+# 검색 요금(결과 5건 ≈ $0.02)이 토큰 위에 붙고, sonar 도 요청 요금이 있다. 잔액 카나리아가
+# "이번 확인을 끝까지 할 돈이 있나"를 가늠하는 데만 쓴다 — 넉넉하게 잡는다.
+AI_CALL_USD = 0.02
 
-    돈 쓰는 ai 단계 앞과 doctor 진단이 같은 이 함수를 쓴다(판정 두 벌 금지).
-    확인 자체가 실패하면(네트워크·모르는 응답) True 다 — 카나리아가 수집을
-    막으면 안 된다. 막는 건 "확실히 못 쓴다"일 때뿐.
+
+def estimate_usd(project: str | None) -> float:
+    """이번 AI 인용 확인의 추정 비용 — 켠 질문 수(상한 안) × 엔진 × 표본 × AI_CALL_USD.
+    사이트를 못 읽으면 상한으로 잡는다(모르면 넉넉하게)."""
+    gcfg = collector.config()
+    engines = len(gcfg.get("default_ai_engines") or DEFAULT_ENGINES)
+    samples = int((gcfg.get("defaults") or {}).get("ai_samples") or 2)
+    cap = 30                              # _parser 의 --max-prompts 기본값과 같다
+    n = cap
+    if project:
+        try:
+            conn = db.connect()
+            try:
+                p = db.get_project(conn, project)
+                n = conn.execute("SELECT COUNT(*) c FROM ai_prompts WHERE project_id=? "
+                                 "AND is_active=1", (p["id"],)).fetchone()["c"]
+            finally:
+                conn.close()
+        except Exception:
+            n = cap
+    return round(min(n, cap) * engines * samples * AI_CALL_USD, 2)
+
+
+def _openrouter_state(key: str) -> tuple[bool, str, float | None]:
+    """(쓸 수 있나, 사람 말, 남은 돈 | 모름). GET /auth/key 와 GET /credits — 둘 다 무료.
+
+    남은 돈은 둘 중 작은 것이다: 키마다 건 한도(auth/key 의 limit_remaining)와 계정 잔액
+    (credits 의 total_credits - total_usage). 어느 쪽이든 못 읽으면 그 쪽은 모름이다.
+    """
+    hdr = {"Authorization": f"Bearer {key}"}
+    t = serp_adapter.TIMEOUTS["canary"]
+    left: list[float] = []
+    r = requests.get("https://openrouter.ai/api/v1/auth/key", timeout=t, headers=hdr)
+    if r.status_code in serp_adapter.FATAL_STATUS:
+        return False, str(serp_adapter.fatal("OpenRouter", r.status_code)), None
+    r.raise_for_status()
+    d = (r.json().get("data") or {})
+    limit, used = d.get("limit"), d.get("usage")
+    if limit is not None and used is not None and float(used) >= float(limit):
+        return False, (f"OpenRouter 크레딧 소진 (${float(used):.2f}/${float(limit):.2f}) — "
+                       f"{serp_adapter.FATAL_FIX['OpenRouter']}"), 0.0
+    if isinstance(d.get("limit_remaining"), (int, float)):
+        left.append(float(d["limit_remaining"]))
+    try:
+        c = requests.get("https://openrouter.ai/api/v1/credits", timeout=t, headers=hdr)
+        if c.status_code == 200:
+            cd = c.json().get("data") or {}
+            tot, use = cd.get("total_credits"), cd.get("total_usage")
+            if isinstance(tot, (int, float)) and isinstance(use, (int, float)):
+                left.append(float(tot) - float(use))
+    except Exception:
+        pass                              # 계정 잔액을 못 읽었다 — 키 판정만으로 간다
+    return True, "OpenRouter 키 유효", (min(left) if left else None)
+
+
+def openrouter_ok(need: float = 0.0) -> tuple[bool, str]:
+    """키가 살아 있고 need 달러를 쓸 돈이 있나 — **무료 호출**. 반환: (쓸 수 있나, 사람 말).
+
+    돈 쓰는 단계(ai·plays) 앞과 doctor 진단이 같은 이 함수를 쓴다(판정 두 벌 금지).
+    확인 자체가 실패하면(네트워크·모르는 응답) True 다 — 카나리아가 수집을 막으면 안 된다.
+    막는 건 "확실히 못 쓴다"일 때뿐: 키가 죽었거나, 남은 돈이 need 보다 적다. 호스팅 키가
+    $0.14 로 떨어졌을 때 AI 인용·판정·할 일이 402 를 맞고서야 알았다 — 이제는 돈 쓰기 전에.
+    읽은 값은 몇 분 기억한다(serp_adapter.canary_cached) — 단계마다 다시 안 묻는다.
     """
     import os
     if not serp_adapter.has_openrouter():
         return False, "OPENROUTER_API_KEY 없음"
+    key = os.environ["OPENROUTER_API_KEY"]
     try:
-        r = requests.get(
-            "https://openrouter.ai/api/v1/auth/key",
-            timeout=serp_adapter.TIMEOUTS["canary"],
-            headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
-        if r.status_code in serp_adapter.FATAL_STATUS:
-            return False, str(serp_adapter.fatal("OpenRouter", r.status_code))
-        r.raise_for_status()
-        d = (r.json().get("data") or {})
-        limit, used = d.get("limit"), d.get("usage")
-        if limit is not None and used is not None and float(used) >= float(limit):
-            return False, (f"OpenRouter 크레딧 소진 (${float(used):.2f}/${float(limit):.2f}) — "
-                           f"{serp_adapter.FATAL_FIX['OpenRouter']}")
-        return True, "OpenRouter 키 유효"
+        ok, msg, left = serp_adapter.canary_cached("openrouter", key,
+                                                   lambda: _openrouter_state(key))
     except Exception as e:
         return True, f"OpenRouter 키 확인 실패 ({e}) — 그대로 진행합니다"
+    if not ok:
+        return False, msg
+    if left is not None and need > 0 and left < need:
+        return False, (f"OpenRouter 잔액 ${left:.2f} — 이번 단계 예상 ${need:.2f} 보다 적어 돈 쓰기 "
+                       f"전에 건너뜁니다. {serp_adapter.FATAL_FIX['OpenRouter']}")
+    return True, (f"OpenRouter 키 유효 · 잔액 ${left:.2f}" if left is not None else msg)
 
 
 def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
@@ -395,7 +453,69 @@ def _selfcheck() -> None:
         globals()["ask"] = orig_ask
     assert len(sent) <= fanout.LIMITS["openrouter"], f"402 뒤로도 계속 물었다: {len(sent)}회"
     conn.close()
+    _canary_check()
     print("collect_ai self-check ok")
+
+
+def _canary_check() -> None:
+    """잔액 카나리아(P4) — 가짜 requests.get(네트워크 0). 남은 돈 = min(키 한도 잔여,
+    계정 total_credits - total_usage). 추정 비용보다 적으면 막고, 몇 분은 다시 안 묻는다."""
+    import os
+    real_get = requests.get
+    seen: list[str] = []
+
+    class R:
+        def __init__(self, status, body):
+            self.status_code, self._b = status, body
+
+        def json(self):
+            return self._b
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(self.status_code)
+
+    state = {"credits": (10.0, 9.86), "key": {"limit": None, "usage": 3.0},
+             "credits_status": 200}
+
+    def fake_get(url, timeout=None, headers=None):
+        seen.append(url.rsplit("/", 1)[-1])
+        if url.endswith("/auth/key"):
+            return R(200, {"data": state["key"]})
+        tot, use = state["credits"]
+        return R(state["credits_status"], {"data": {"total_credits": tot, "total_usage": use}})
+
+    os.environ["OPENROUTER_API_KEY"] = "canary-selftest"
+    requests.get = fake_get
+    serp_adapter._canary.clear()
+    try:
+        ok, msg = openrouter_ok(1.0)                # 호스팅 키가 $0.14 로 떨어졌던 그때
+        assert not ok and "$0.14" in msg and "$1.00" in msg, msg
+        assert seen == ["key", "credits"], seen
+        ok, _ = openrouter_ok(0.1)                  # 같은 값을 기억해서 판정만 다시
+        assert ok and seen == ["key", "credits"], f"몇 분 안에 잔액을 또 물었다: {seen}"
+        serp_adapter._canary.clear()
+        state["credits"] = (10.0, 1.0)
+        state["key"] = {"limit": 5.0, "usage": 4.5, "limit_remaining": 0.5}
+        ok, msg = openrouter_ok(1.0)                # 계정엔 $9 있어도 키 한도 잔여가 $0.50
+        assert not ok and "$0.50" in msg, msg
+        serp_adapter._canary.clear()
+        state["credits_status"] = 403               # credits 를 못 읽으면 키 판정만으로
+        state["key"] = {"limit": None, "usage": 1.0}
+        ok, msg = openrouter_ok(5.0)
+        assert ok and "잔액" not in msg, msg
+        serp_adapter._canary.clear()
+
+        def down(url, timeout=None, headers=None):
+            raise OSError("network down")
+        requests.get = down
+        ok, msg = openrouter_ok(5.0)
+        assert ok and "그대로 진행" in msg, "확인이 실패했는데 수집을 막았다"
+        assert estimate_usd(None) == round(30 * 3 * 2 * AI_CALL_USD, 2), estimate_usd(None)
+    finally:
+        requests.get = real_get
+        serp_adapter._canary.clear()
+        os.environ.pop("OPENROUTER_API_KEY", None)
 
 
 if __name__ == "__main__":

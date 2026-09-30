@@ -315,7 +315,11 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   sessions_all:"전체 세션", newvsreturning:"신규·재방문", ai_ref:"AI 유입",
   // 순위(collect_serp)·속도(collect_vitals)가 남기는 것.
   queue_reused:"이어 받은 결과", timeout:"시간 초과", outlines:"상위 글 목차",
-  outline_errors:"목차 못 읽음", strategies:"기기", quota:"한도"};
+  outline_errors:"목차 못 읽음", strategies:"기기", quota:"한도",
+  // 페이지 점검(collect_page) — 막혀서 DataForSEO 로 대신 읽은 수, 막혔지만 최근 값을 둔 수,
+  // 최근 404 라 건너뛴 수. 속도(collect_vitals) — 구글 측정기가 화면을 못 본(NO_FCP 등) 수.
+  dfs:"대신 읽음", kept:"지난 값 유지", gone_skipped:"없는 페이지 건너뜀",
+  unmeasurable:"측정 불가"};
 // 부가 조회 결과의 값 — 받았다/건너뛰었다.
 const HS_NOTE_VAL = {ok:"받음", skip:"건너뜀"};
 // 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.

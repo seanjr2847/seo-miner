@@ -927,15 +927,41 @@ def post_dataforseo(path: str, body: list, timeout: int | None = None) -> tuple[
     return (task.get("result") or []), cost
 
 
+# 잔액 카나리아의 짧은 기억 — 호스팅 워커는 한 스윕에서 사이트 여럿을 연달아 돌고, 키는
+# 서버 키 하나다. 사이트마다·단계마다 잔액을 다시 묻지 않게 몇 분만 기억한다. 키마다 따로
+# 기억한다(사용자 키가 섞이면 남의 잔액으로 판정한다) — 키 원문 대신 해시로.
+CANARY_TTL = 300.0
+_canary: dict = {}
+
+
+def canary_cached(kind: str, secret: str, fn, *, ttl: float = CANARY_TTL):
+    """(kind, 키 해시) 로 fn() 결과를 ttl 초 기억한다. 예외는 기억하지 않는다."""
+    import hashlib
+    k = (kind, hashlib.sha256(secret.encode()).hexdigest()[:16])
+    hit = _canary.get(k)
+    now = time.monotonic()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    v = fn()
+    _canary[k] = (now, v)
+    return v
+
+
 def dataforseo_balance() -> float:
     """남은 잔액($). GET /v3/appendix/user_data — **무료 호출**이다.
 
     돈 쓰는 단계 앞에서 한 번 묻는 카나리아. 이게 없어서 잔액 0 인 계정이
     키워드 100개에 402 를 100번 맞고 "완료"로 끝났다(8/30·9/1·9/2 자동 런).
     판정(얼마 아래면 건너뛰나)은 여기서 안 한다 — run_all.preflight 이 한 벌로 갖는다.
+    몇 분은 기억한다(canary_cached).
     """
     if not has_dataforseo():
         raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    return canary_cached("dfs", os.environ["DATAFORSEO_LOGIN"] + ":" + os.environ["DATAFORSEO_PASSWORD"],
+                         _dataforseo_balance)
+
+
+def _dataforseo_balance() -> float:
     r = _dfs_call(
         requests.get,
         "https://api.dataforseo.com/v3/appendix/user_data",
@@ -1409,8 +1435,15 @@ def _selfcheck() -> None:
             assert dataforseo_balance() == 0.12
             assert got["url"].endswith("/v3/appendix/user_data"), got
             assert got["timeout"] == TIMEOUTS["canary"], got
+            # 몇 분 안에 다시 물으면 기억한 값 — 사이트·단계마다 다시 부르지 않는다
+            got.clear()
+            assert dataforseo_balance() == 0.12 and not got, "잔액을 캐시 없이 또 물었다"
+            _canary.clear()
+            dataforseo_balance()
+            assert got, "캐시를 비웠는데 다시 안 묻는다"
         finally:
             requests.get = real_get
+            _canary.clear()
 
         # 키가 없으면 부르기 전에 멈춘다(401 을 사러 가지 않는다)
         del os.environ["DATAFORSEO_LOGIN"]
