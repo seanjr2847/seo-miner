@@ -734,16 +734,29 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     }
 
 
+# 화면·기회가 읽어도 되는 순위 행 — 추적 중인 키워드의, 지금 로케일로 잰 행(잰 로케일을
+# 모르는 옛 행은 지금 로케일로 쳤다고 본다). 자리표시자 하나(사이트 로케일)를 먹는다.
+# 로케일이 바뀐 행은 순위 단계가 offlocale_snapshots 로 옮기지만(db.park_offlocale), 그
+# 단계가 돌기 전에도 화면이 옛 나라 값을 "이번 순위"로 그리지 않게 여기서도 거른다.
+_RANK_LIVE = ("k.is_active=1 AND (rs.locale IS NULL OR rs.locale = COALESCE(k.locale, ?))")
+
+
 def _axis_rank(conn, pid: int) -> dict:
     """순위(rank_snapshots) 축 — SERP 순위·AIO 인용 갭·추적 중인 키워드 수.
 
     "ranks" 는 여기서 자르지 않은 전체 목록이다 — gather() 가 화면용으로 30개까지
     자르고, 그 앞의 전체는 query_pages 근거 조립에 쓴다.
+
+    읽는 순위는 **추적 중인(is_active=1) 키워드의, 지금 로케일로 잰 행**뿐이다(_RANK_LIVE).
+    추적에서 뺀 검색어의 옛 순위가 섞이면 화면·기회가 그것을 "이번 순위"로 읽는다 — gucci
+    순위 표 42줄 중 22줄이 추적에서 뺀 옛 en-US 검색어(미국·카타르·핀란드 URL)였다.
     """
+    site = db.project_locale(conn.execute("SELECT locale FROM projects WHERE id=?",
+                                          (pid,)).fetchone() or {"locale": None})
     rank_dates = [r[0] for r in conn.execute(
-        """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
+        f"""SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
              JOIN keywords k ON k.id=rs.keyword_id
-            WHERE k.project_id=? ORDER BY d DESC LIMIT 2""", (pid,))]
+            WHERE k.project_id=? AND {_RANK_LIVE} ORDER BY d DESC LIMIT 2""", (pid, site))]
 
     def rank_agg(d):
         if not d:
@@ -751,10 +764,11 @@ def _axis_rank(conn, pid: int) -> dict:
         # url·피처까지 읽는다 — 예전엔 순위 숫자만 실어서, 화면이 "몇 위"는 알아도
         # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
         return {r["keyword"]: r for r in q(conn,
-            """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
+            f"""SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
                       rs.aio_present, rs.aio_cited, rs.aio_domains_json
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
-                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
+                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=? AND {_RANK_LIVE}""",
+            (pid, d, site))}
 
     # 검색결과 상위 몇 줄 — 요청문이 "빠진 구간" 을 짐작이 아니라 비교로 찾는 재료.
     # 순위 숫자와 같은 회차에서 나온다(같은 날짜 키로 읽는다).
@@ -764,12 +778,12 @@ def _axis_rank(conn, pid: int) -> dict:
     # 구글이 질문을 안 보여 줬으면 없는 것이 답이고, 더 옛날 질문으로 물러서면 안 된다.
     serp_top: dict[str, list] = {}
     if rank_dates:
-        for r in q(conn, """SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
+        for r in q(conn, f"""SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
                               FROM serp_results s JOIN keywords k ON k.id = s.keyword_id
                              WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
                                    SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
-                                    WHERE rs.keyword_id = s.keyword_id)
-                             ORDER BY k.keyword, s.position""", (pid,)):
+                                    WHERE rs.keyword_id = s.keyword_id AND {_RANK_LIVE})
+                             ORDER BY k.keyword, s.position""", (pid, site)):
             serp_top.setdefault(r["keyword"], []).append(r)
 
     # 구글이 이 검색어에 같이 보여 준 질문·연관 검색어(팬아웃 재료) — 요청문이 "함께
@@ -779,12 +793,12 @@ def _axis_rank(conn, pid: int) -> dict:
     # 블록을 안 단다(없다고 단정하지 않는다).
     serp_fanout: dict[str, list] = {}
     if rank_dates:
-        for r in q(conn, """SELECT k.keyword, s.kind, s.text
+        for r in q(conn, f"""SELECT k.keyword, s.kind, s.text
                               FROM serp_questions s JOIN keywords k ON k.id = s.keyword_id
                              WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
                                    SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
-                                    WHERE rs.keyword_id = s.keyword_id)
-                             ORDER BY k.keyword, s.kind, s.position""", (pid,)):
+                                    WHERE rs.keyword_id = s.keyword_id AND {_RANK_LIVE})
+                             ORDER BY k.keyword, s.kind, s.position""", (pid, site)):
             serp_fanout.setdefault(r["keyword"], []).append({"kind": r["kind"], "text": r["text"]})
 
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
