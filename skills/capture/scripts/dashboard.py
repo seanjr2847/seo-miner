@@ -1417,7 +1417,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 순위 행·GSC 순위로
     # 물러선다(_aio_band_of) — 요청문 근거가 읽는 자리와 같다.
     aio_band = {r["keyword"]: scoring.aio_band(r["position"])
-                for r in scoring.aio_gaps(conn, pid)}
+                for r in scoring.aio_gaps(conn, pid, ranked_only=False)}
     rank_pos = {r["keyword"]: r.get("pos") for r in ranks}
     rank_row = {r["keyword"]: r for r in ranks}
     # GSC 는 최신 회차에도 순위 행에도 없는 대상만 묻는다 — query_pages 와 같은
@@ -1453,9 +1453,34 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                              " AND volume IS NOT NULL", (pid,)):
         n = scoring.norm(k)
         kw_vol[n] = max(kw_vol.get(n, 0), v or 0)
+    # 순위 하락은 연속한 두 스냅샷 사이의 것이라 다음 스냅샷부터 검출기가 안 내고, 그래서
+    # 근거 문장이 그날의 수로 박제됐다(theotherskin: 최신 실적 9/29 인데 "8/25→9/2" 문장).
+    # 그 기회를 세운 적재의 스냅샷 짝(scoring.decay_state — 자동 해소와 같은 기준)에 지금
+    # 순위를 덧붙여 다시 쓴다. 짝을 못 믿으면(옛 스냅샷이 지워졌다 등) 옛 문장을 둔다 —
+    # 문장 속 날짜가 이미 그때 것이라고 말한다.
+    decay_run = {}
+    decay_ids = [o["id"] for o in opps if o["kind"] == "rank_decay" and o.get("id")]
+    if decay_ids and cur:
+        decay_run = dict(conn.execute(
+            f"SELECT id, run_id FROM opportunities WHERE id IN ({','.join('?' * len(decay_ids))})",
+            decay_ids).fetchall())
+    decay_cache: dict = {}
     for o in opps:
         o["volume"] = kw_vol.get(scoring.norm(str(o["target"]))) or None
         o["is_defensive"] = scoring.is_defensive(o["kind"])
+        if o["kind"] == "rank_decay" and o.get("id") in decay_run:
+            st = scoring.decay_state(conn, pid, decay_run[o["id"]], o["target"], cur=cur,
+                                     cache=decay_cache)
+            if st and st["cur"] and st["cur"] != st["at"]:
+                o["reasoning"] = (
+                    f"{st['pre']}위에서 {st['drop']}위로 {round(st['drop'] - st['pre'], 1)}칸 "
+                    f"밀렸습니다 (구글 실적 {st['prev']}과 {st['at']} 비교). "
+                    + (f"최신 구글 실적 {st['cur']}에서는 평균 {st['now']}위 · 노출 "
+                       f"{st['imp'] or 0:,} · 클릭 {st['clk'] or 0:,}"
+                       + (" — 떨어지기 전 순위로 돌아왔습니다" if scoring.decay_recovered(st)
+                          else " — 아직 떨어지기 전 순위로 못 돌아왔습니다")
+                       if st["now"] is not None else
+                       f"최신 구글 실적 {st['cur']}에는 이 검색어가 잡히지 않습니다"))
         if o["kind"] == "striking_distance":
             band = sd_band.get(o["target"]) or (
                 ("page1" if gsc_pos[o["target"]] <= scoring.PAGE1 else "page2")

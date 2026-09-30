@@ -155,6 +155,10 @@ ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "intent_split",
 KEYWORD_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
                  "pseo_pattern", "device_gap", "ai_citation_gap", "aio_exposure",
                  "content_gap")
+# 검출기가 띄어쓰기·대소문자만 다른 검색어(norm 이 같은 것)를 한 줄로 접는 종류 — 접힌
+# 옛 변형 줄은 resolve_stale 이 "그 줄로 합쳤다"로 닫는다. 검출기를 접게 고쳤으면 여기
+# 넣는다(안 넣으면 옛 변형 줄이 열린 채 남는다).
+NORM_FOLD_KINDS = ("cannibalization",)
 
 
 
@@ -2124,28 +2128,49 @@ def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 1
     page 차원이 필요하다 — page가 NULL인 구버전(CSV 시절) 스냅샷에서는
     이 함수는 자동으로 빈 결과를 돌려준다 (결함이 아니라 데이터 부재).
     부페이지 노출 비중 >= CANNI_MIN_SHARE, 합산 노출 >= CANNI_MIN_IMP 일 때만 잡는다.
+
+    띄어쓰기·대소문자만 다른 검색어(norm 이 같은 것)는 한 검색어로 접는다 — 구글에는
+    '구진성 흉터'와 '구진성흉터'가 따로 오지만 같은 두 페이지가 같은 답을 나눠 갖는
+    한 문제다. 따로 세면 할 일이 두 줄로 섰다(theotherskin). 대상 문자열은 노출이 가장
+    큰 변형이고, 나머지는 variants 에 담는다(근거 문장이 밝힌다). 페이지별 노출·클릭은
+    변형을 합한 것, 순위는 노출 가중 평균이다. 옛 변형 줄은 resolve_stale 이 닫는다
+    (NORM_FOLD_KINDS).
     """
     cur, _, period, _ = snapshot_pair(conn, project_id)
     if not cur:
         return []
-    per_q: dict[str, list[dict]] = {}
+    per_n: dict[str, dict] = {}
     for r in conn.execute(
         f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
                   ROUND({POS_SQL},1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
-            GROUP BY query, page""", (project_id, cur, period)):
-        per_q.setdefault(r["query"], []).append(
-            {"page": r["page"], "impressions": r["imp"], "clicks": r["clk"], "position": r["pos"]})
+            GROUP BY query, page ORDER BY query, page""", (project_id, cur, period)):
+        g = per_n.setdefault(norm(r["query"]) or r["query"], {"q": {}, "p": {}})
+        imp = r["imp"] or 0
+        g["q"][r["query"]] = g["q"].get(r["query"], 0) + imp
+        p = g["p"].setdefault(r["page"], {"page": r["page"], "impressions": 0, "clicks": 0,
+                                          "_w": 0.0, "_pos": []})
+        p["impressions"] += imp
+        p["clicks"] += r["clk"] or 0
+        if r["pos"] is not None:
+            p["_w"] += r["pos"] * imp
+            p["_pos"].append(r["pos"])
     out = []
-    for q, pages in per_q.items():
+    for g in per_n.values():
+        pages = list(g["p"].values())
+        for p in pages:
+            w, ps = p.pop("_w"), p.pop("_pos")
+            p["position"] = (round(w / p["impressions"], 1) if p["impressions"]
+                             else (round(sum(ps) / len(ps), 1) if ps else None))
         total = sum(p["impressions"] for p in pages)
         if len(pages) < 2 or total < CANNI_MIN_IMP:
             continue
         pages.sort(key=lambda p: -p["impressions"])
         if pages[1]["impressions"] < total * CANNI_MIN_SHARE:
             continue
-        out.append({"query": q, "impressions": total, "pages": pages})
+        qs = sorted(g["q"], key=lambda q: (-g["q"][q], q))
+        out.append({"query": qs[0], "variants": qs[1:], "impressions": total, "pages": pages})
     return sorted(out, key=lambda x: -x["impressions"])[:limit]
 
 
@@ -2335,6 +2360,59 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
                          "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
                          "imp": r["imp"]})
     return sorted(rows, key=lambda x: x["dpos"])[:limit]
+
+
+def decay_state(conn: sqlite3.Connection, project_id: int, run_id, target: str, *,
+                cur: str | None = None, cache: dict | None = None) -> dict | None:
+    """순위 하락 기회 하나의 '떨어지기 전·후'와 지금 순위 — 자동 해소(_resolve_decay)와
+    화면의 근거 문장(dashboard)이 같은 수를 읽는다.
+
+    하락은 연속한 두 스냅샷 사이의 것이라 다음 스냅샷에서 검출기(rank_decay)가 더는
+    안 낸다 — 그래서 근거 문장은 그날의 수(8/25→9/2)로 박제된 채 남았다. 떨어지기 전
+    순위는 문장에만 있는 게 아니라 **그 기회를 마지막으로 세운 적재(run_id)** 가 본
+    스냅샷 짝에 있다: 그 적재 날짜 이하의 최신 스냅샷(at)과 같은 기간의 직전(prev).
+    그 짝에서 이 검색어가 실제로 DECAY_POS 이상 떨어졌을 때만 기준으로 믿는다 — 스냅샷이
+    적재 뒤에 같은 날 들어왔거나 옛 스냅샷이 지워졌으면 짝이 어긋나니 None(모름)이다.
+
+    cur: 지금으로 볼 스냅샷(화면의 기준 수집일). None 이면 최신. 기간이 다르면 비교하지
+    않는다(now=None). 반환: {prev, at, pre, drop, cur, now, imp, clk} 또는 None.
+    cache: 같은 스냅샷을 검색어마다 다시 모으지 않게 호출부가 넘기는 dict."""
+    import db
+    cache = {} if cache is None else cache
+
+    def agg(day, period):
+        k = ("agg", day, period)
+        if k not in cache:
+            cache[k] = _snap_agg(conn, project_id, day, period)
+        return cache[k]
+
+    rk = ("run", run_id)
+    if rk not in cache:
+        row = conn.execute("SELECT started_at FROM runs WHERE id=?", (run_id,)).fetchone() \
+            if run_id is not None else None
+        day = (db.sql_ts(row[0]) or "")[:10] if row else ""
+        at = _latest(conn, "SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?"
+                     " AND snapshot_date<=?", (project_id, day)) if day else None
+        cache[rk] = snapshot_pair(conn, project_id, at) if at else (None, None, None, False)
+    at, prev, period, _ = cache[rk]
+    if not (at and prev):
+        return None
+    a, b = agg(at, period).get(target), agg(prev, period).get(target)
+    if not (a and b) or round(b["pos"] - a["pos"], 1) > DECAY_POS:
+        return None
+    if "now" not in cache:
+        cache["now"] = snapshot_pair(conn, project_id, cur)
+    now_d, _, now_period, _ = cache["now"]
+    n = agg(now_d, period).get(target) if now_d and now_period == period else None
+    return {"prev": prev, "at": at, "pre": round(b["pos"], 1), "drop": round(a["pos"], 1),
+            "cur": now_d, "now": round(n["pos"], 1) if n else None,
+            "imp": n["imp"] if n else None, "clk": n["clk"] if n else None}
+
+
+def decay_recovered(st: dict) -> bool:
+    """지금 순위가 떨어지기 전 순위와 DECAY_POS 칸 안으로 돌아왔나 — 세우는 조건
+    (직전 대비 DECAY_POS 이상 하락)을 같은 기준(떨어지기 전)에 대고 뒤집은 것."""
+    return st.get("now") is not None and round(st["pre"] - st["now"], 1) > DECAY_POS
 
 
 def _band_of(pos) -> str:
@@ -3427,8 +3505,22 @@ def ai_outranked(conn: sqlite3.Connection, project_id: int,
     return {"rows": rows, "competitors": len(comps), "cited": cited, "gap_date": d}
 
 
-def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
-    """구글이 AI 요약을 붙이는데 거기 내 링크가 없는 검색어 — 최신 순위 회차 기준."""
+def aio_gaps(conn: sqlite3.Connection, project_id: int, *,
+             ranked_only: bool = True) -> list[dict]:
+    """구글이 AI 요약을 붙이는데 거기 내 링크가 없고, **우리가 순위(조회 깊이) 안에 있는**
+    검색어 — 최신 순위 회차 기준.
+
+    순위가 없는(position NULL — 조회 깊이 안에 우리 페이지가 없다) 검색어는 뺀다. 구글 AI
+    요약은 상위 페이지에서 출처를 뽑으니(_AIO_PLAY) 그 검색어의 문제는 요약이 아니라
+    순위다. 넣던 시절 theotherskin 열린 기회 226건 중 189건이 이 종류였고 그중 183건이
+    순위 없는 검색어였다 — 목록이 "요약에 빠졌다"는 같은 말로 덮여 다른 할 일이 안 보였다.
+    순위 없는 검색어를 다른 종류(새 글 필요 등)로 옮기지도 않는다: 추적 키워드가 순위에
+    없다는 사실은 [순위] 화면이 이미 말하고, 그 검색어에 우리 페이지가 있는지(새 글인지
+    고칠 글인지)는 이 데이터로 가를 수 없다 — 콘텐츠 공백(content_gap)은 경쟁사가 잡은
+    검색어로 그걸 가른다. 이미 선 것은 _resolve_aio 가 사유를 달고 닫는다.
+
+    ranked_only=False 는 순위 없는 행까지 낸다 — 기회를 세우는 데가 아니라, 이미 선(작업
+    기록이 있어 안 닫힌) 기회의 처방 갈래를 최신 회차 행에서 읽는 화면(dashboard)용이다."""
     d = conn.execute(
         "SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs"
         " JOIN keywords k ON k.id=rs.keyword_id WHERE k.project_id=?",
@@ -3440,7 +3532,9 @@ def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
              FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
             WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?
               AND rs.aio_present=1 AND rs.aio_cited=0 AND k.is_active=1
-         ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""", (project_id, d))]
+              AND (rs.position IS NOT NULL OR ?=0)
+         ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""",
+        (project_id, d, 1 if ranked_only else 0))]
 
 
 def gap_rival_set(conn: sqlite3.Connection, project_id: int) -> set[str]:
@@ -3888,7 +3982,9 @@ _KIND_SPECS = {
         reasoning=lambda r, ctx: (
             f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,}을 나눠 갖습니다: "
             f"{' vs '.join(pg['page'] for pg in r['pages'][:2])} "
-            f"(구글 실적 {ctx['cur']} 기준)"),
+            + ("(띄어쓰기·대소문자만 다른 '" + "', '".join(r["variants"]) + "' 합산) "
+               if r.get("variants") else "")
+            + f"(구글 실적 {ctx['cur']} 기준)"),
         play=dict(
             what="같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다. 구글이 어느 쪽을 올릴지 못 정합니다.",
             acts=["아래 표에서 노출·클릭이 가장 큰 페이지를 정본으로 정합니다.",
@@ -4311,11 +4407,43 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
         """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
             WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
         (kw[0],)).fetchone()
+    if r and r["position"] is None:
+        # 순위 조회 깊이 안에 우리가 없다 — 세우는 쪽(aio_gaps)이 이제 안 세우는 대상이다.
+        # "안 보였다"는 측정이라 긍정 확인이고, 풀림을 기다리는 게 아니라 애초에 이 종류가
+        # 아니었다는 판정이라 기회가 만들어진 뒤의 조회를 기다리지 않는다(9/24 조회로 9/25 에
+        # 선 것도 닫는다). 두 경우만 남긴다: 사람이 [다시 열기]를 누른 뒤의 조회가 아니면
+        # 그 손을 덮지 않고, 작업 기록이 있으면(새 글을 냈을 수 있다) 다음 조회까지 둔다.
+        opp = ctx.get("opp") or {}
+        import db
+        if opp.get("status_at") and not _after_ts(r["checked_at"], db.sql_ts(opp["status_at"])):
+            return None
+        if opp.get("id") and conn.execute(
+                "SELECT 1 FROM creations WHERE opportunity_id=? LIMIT 1",
+                (int(opp["id"]),)).fetchone():
+            return None
+        return (f"순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 ({str(r['checked_at'])[:10]} "
+                f"순위 확인) — 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
+                f"문제입니다. 순위에 들면 다음 순위 확인에서 다시 판단합니다")
     if not r or not _after_ts(r["checked_at"], since):
         return None
     if r["aio_present"] == 1 and r["aio_cited"] == 1:
         pos = f", 순위 {r['position']}위" if r["position"] else ""
         return f"구글 AI 요약이 우리 링크를 인용합니다 ({str(r['checked_at'])[:10]} 순위 확인{pos})"
+    return None
+
+
+def _resolve_decay(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """순위 하락 → 기회를 세운 적재가 본 '떨어지기 전 순위'(decay_state)와 비교해, 기준 시각
+    다음 날 이후의 최신 구글 실적에서 그 순위와 DECAY_POS 칸 안으로 돌아왔다. 검색어가 최신
+    실적에서 빠진 것은 풀림이 아니다(더 떨어져 안 잡힌 것일 수 있다). 기준을 못 믿으면
+    (decay_state 가 None) 판단하지 않는다."""
+    st = decay_state(conn, pid, (ctx.get("opp") or {}).get("run_id"), target,
+                     cache=ctx.setdefault("_decay", {}))
+    if not st or not _after_day(st["cur"], since) or st["cur"] <= st["at"]:
+        return None
+    if decay_recovered(st):
+        return (f"떨어지기 전 순위로 돌아왔습니다: {st['pre']}위 → {st['drop']}위 → 지금 "
+                f"{st['now']}위 (구글 실적 {st['cur']} 기준)")
     return None
 
 
@@ -4537,6 +4665,7 @@ _RESOLVERS = {
     "index_blocked": _resolve_index,
     "ai_citation_gap": _resolve_ai_citation,
     "aio_exposure": _resolve_aio,
+    "rank_decay": _resolve_decay,
     "backlink_prospect": _resolve_prospect,
     "ai_bot_blocked": _resolve_ai_bot,
     "content_gap": _resolve_content_gap,
@@ -4544,8 +4673,6 @@ _RESOLVERS = {
 }
 # 자동 해소에서 뺀 종류와 그 이유 — 규칙을 세울 수 없거나, 세우면 살아 있는 것을 닫는다.
 _NO_RESOLVE = {
-    "rank_decay": "연속한 두 스냅샷 사이의 하락이라 다음 스냅샷에서 저절로 사라진다 — "
-                  "'더 안 떨어졌다'는 '되찾았다'가 아니고, 떨어지기 전 순위는 근거 문장에만 있다",
     "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다 — 301 로 합친 것과 "
                        "GSC 행 상한에 잘린 것을 가르지 못한다",
     "intent_split": "풀렸다는 증거가 '2위 의도 줄이 없다'는 부재다 — 지면을 갈라 옮겨 간 것과, "
@@ -4574,7 +4701,11 @@ RESOLVE_WHEN = {
     "index_blocked": "다음 색인 확인(URL 검사)에서 이 주소가 PASS·색인됨으로 나오면",
     "ai_citation_gap": f"다음 AI 확인(끝난 회차)에서 이 질문의 인용률이 "
                        f"{round(AI_GAP_MAX_RATE * 100)}%를 넘으면",
+    # 순위 조회 깊이 밖이면 닫는 것(_resolve_aio)은 목표를 이룬 게 아니라 "애초에 이 종류가
+    # 아니었다"는 판정이라 요청문의 끝나는 조건에 적지 않는다.
     "aio_exposure": "다음 순위 조회에서 구글 AI 요약이 우리 링크를 인용하면",
+    "rank_decay": f"다음 구글 실적에서 이 검색어의 평균 순위가 떨어지기 전 순위와 "
+                  f"{abs(DECAY_POS):g}칸 안으로 돌아오면",
     "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
     "content_gap": "근거였던 도메인이 경쟁사 판정에서 빠지면(판매 채널·포털) — 경쟁사가 여전히 "
@@ -4603,12 +4734,29 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
     import db
     ctx: dict = {"domain": domain}
     decisions, checked = [], 0
+    # 이번 적재가 norm 으로 접어 세운 줄 — 같은 종류·같은 norm 의 다른 글자 줄은 그 줄로
+    # 합쳐진 것이다(긍정 확인: 같은 문제를 이번 회차의 다른 줄이 맡았다).
+    folded: dict[tuple[str, str], str] = {}
+    if run_id is not None:
+        for r in conn.execute(
+                f"""SELECT kind, target FROM opportunities WHERE project_id=? AND run_id=?
+                     AND kind IN ({','.join('?' * len(NORM_FOLD_KINDS))})""",
+                (int(project_id), run_id, *NORM_FOLD_KINDS)):
+            folded[(r["kind"], norm(r["target"]))] = r["target"]
     for o in conn.execute(
-            """SELECT id, kind, target, created_at, status_at FROM opportunities
+            """SELECT id, kind, target, created_at, status_at, run_id FROM opportunities
                 WHERE project_id=? AND status IN ('new','acked') AND run_id IS NOT ?""",
             (int(project_id), run_id)).fetchall():
+        # 규칙이 대상 문자열만으로 못 정하는 것(세운 적재의 스냅샷 짝·사람 손·작업 기록)을
+        # 읽는 자리 — 규칙 사이에 쌓이는 캐시(_decay 등)와 같은 ctx 에 한 줄씩 갈아 끼운다.
+        ctx["opp"] = {"id": o["id"], "run_id": o["run_id"], "status_at": o["status_at"]}
         if o["kind"] == "coverage" and o["target"] == f"cluster:{UNCLASSIFIED_CLUSTER}":
             decisions.append((o["id"], UNCLASSIFIED_REASON))   # 이제 안 세는 대상 (_coverage_rows)
+            continue
+        twin = folded.get((o["kind"], norm(o["target"])))
+        if twin and twin != o["target"]:
+            decisions.append((o["id"], f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다 — "
+                                       f"같은 검색어라 할 일은 그 줄 하나입니다"))
             continue
         rule = _RESOLVERS.get(o["kind"])
         marks = [t for t in (db.sql_ts(o["created_at"]), db.sql_ts(o["status_at"])) if t]
