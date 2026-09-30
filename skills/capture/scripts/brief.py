@@ -2230,6 +2230,16 @@ def page_of(o: dict, ctx: dict) -> str | None:
     pages = (ctx.get("query_pages") or {}).get(t) or []
     if pages:
         return pages[0].get("page")
+    # 서치콘솔이 없는 사이트 — 순위 조회가 실제로 잡은 우리 주소(rank_by_kw), 그다음 순위 추정
+    # (DataForSEO Labs, striking_labs)이 걸었다는 주소. 둘 다 "이 검색어로 순위에 걸린 우리
+    # 페이지"라 제목 매칭보다 앞선다. 없으면 gucci 처럼 봇 차단으로 페이지 점검도 못 하는 사이트는
+    # 기회마다 고칠 페이지가 비어 [이번 달 할 일]이 하나도 못 섰다.
+    r = (ctx.get("rank_by_kw") or {}).get(t) or {}
+    if r.get("url") and r.get("pos") is not None:
+        return r["url"]
+    lab = next((x for x in ctx.get("striking_labs") or [] if x.get("query") == t and x.get("url")), None)
+    if lab:
+        return lab["url"]
     return scoring.topic_page(_topic_of(o, ctx))
 
 

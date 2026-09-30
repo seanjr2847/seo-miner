@@ -840,6 +840,13 @@ def test_unranked_page_found_by_title_is_fixed_not_rewritten():
     # 순위에 걸린 페이지가 있으면 그게 먼저다 — 제목 매칭은 폴백일 뿐
     both = {**one, "query_pages": {"써마지": _pages(URL)}}
     assert brief.page_of(_opp("aio_exposure", "써마지"), both) == URL
+    # 서치콘솔이 없으면 순위 조회가 잡은 우리 주소, 그다음 순위 추정의 주소 — 제목 매칭보다 앞선다
+    ranked = {**one, "rank_by_kw": {"써마지": {"keyword": "써마지", "pos": 3, "url": URL2}}}
+    assert brief.page_of(_opp("aio_exposure", "써마지"), ranked) == URL2, "순위 조회가 잡은 우리 주소를 안 썼다"
+    unranked = {**one, "rank_by_kw": {"써마지": {"keyword": "써마지", "pos": None, "url": None}},
+                "striking_labs": [{"query": "써마지", "pos": 8, "url": URL}]}
+    assert brief.page_of(_opp("aio_exposure", "써마지"), unranked) == URL, "순위 추정의 주소를 안 썼다"
+    assert brief.page_of(_opp("aio_exposure", "써마지"), {**both, **ranked}) == URL, "서치콘솔 페이지보다 앞섰다"
     assert "순위에 걸린 페이지는 없고" not in brief.build(_opp("aio_exposure", "써마지"), both)["body"]
     # 후보가 둘이면 고르지 않는다 — 새 글로 두되 후보를 싣고 멈추게 한다
     two = {"topic_pages": {"써마지": [{"page": T, "title": "써마지 FLX", "h1": "", "primary": True},
