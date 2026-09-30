@@ -375,7 +375,9 @@ def clean_result(got) -> dict:
         raise ValueError("AI 답이 JSON 객체가 아닙니다")
 
     def s(v) -> str:
-        return " ".join(str(v).split()) if isinstance(v, (str, int, float)) else ""
+        # 모델이 표 칸 안의 '|' 를 마크다운 탈출(\|)로 적어 온다 — title 은 문안이라 그대로 붙여 넣을
+        # 값이어야 한다(gucci: "명품 핸드백 \| 여성 가방"). 탈출만 걷는다.
+        return " ".join(str(v).replace("\\|", "|").split()) if isinstance(v, (str, int, float)) else ""
 
     def pair(v) -> dict:
         v = v if isinstance(v, dict) else {}
@@ -860,6 +862,8 @@ def _selfcheck() -> None:
     assert f"sections 최대 {PLAY_SECTIONS}개" in prompt(
         {"page": "https://s.kr/x", "keywords": ["가"],
          "opps": [{"id": 1, "kind": "striking_distance", "target": "가", "brief": {"body": "요청문"}}]}, d, {"our": {}, "serp": [], "aio": [], "gaps": []}),         "프롬프트에 답 길이 상한이 없다"
+    esc = clean_result({"title": {"now": "명품 핸드백 \\| 여성 가방", "new": "a \\| b"}, "summary": "x"})
+    assert esc["title"] == {"now": "명품 핸드백 | 여성 가방", "new": "a | b"}, esc["title"]
     many = clean_result({"sections": [{"h2": f"h{i}", "draft": "d"} for i in range(9)]})
     assert len(many["sections"]) == PLAY_SECTIONS, many["sections"]
     assert gaps(["관리 방법"], [["관리 방법 안내", "가격"], ["관리방법", "가격"]]) == ["가격"]
