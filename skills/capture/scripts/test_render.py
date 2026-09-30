@@ -295,7 +295,9 @@ MUSTS = [
     (r'<div class="target">주제 묶음 · 피부 관리</div>', "coverage 기회의 대상이 사람이 읽는 이름으로 안 보인다"),
     ("!cluster:피부 관리", "기회 대상이 내부 식별자(cluster:) 그대로 화면에 보인다"),
     # 완료 후 관찰 — 그때(14위)와 지금(9위)이 한 줄에 나란히 선다.
-    (r'id="watch"[^>]*>(?:(?!</section>).)*<td>14위 · 클릭(?:(?!</tr>).)*<td>9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
+    # 리디자인으로 표(<td>)가 행 카드(.ovw-r)가 됐다 — 한 행 카드 안에 그때·지금 칸이 같이 선다.
+    (r'id="watch"[^>]*>(?:(?!</section>).)*class="ovw-r"(?:(?!class="ovw-r").)*그때 <span class="nw">14위 · 클릭'
+     r'(?:(?!class="ovw-r").)*지금 <span class="nw">9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
     # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
      + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
@@ -408,7 +410,7 @@ LOCAL_MUSTS = [
     # 묶음 이름은 머리줄 맨 앞에 선다 — 레일의 묶음 제목은 좁은 화면에서 안 그려져,
     # 모바일에서 "이 묶음"이 무엇인지 말하는 자리가 여기뿐이다. 버튼 이름표는 다시 재는
     # 범위(g.stages 의 단계 이름)까지 말한다. 이름은 정본(run_all·stage)에서 읽는다.
-    (r'id="view-rank"(?:(?!id="view-).)*class="vgrp"><b class="gname">'
+    (r'id="view-rank"(?:(?!id="view-).)*class="vgrp"[^>]*><b class="gname">'
      + re.escape(_GRP["search"]["name"]) + "</b>",
      "[순위 추적] 머리줄에 묶음 이름(검색 성과)이 없다 — 모바일에서 '이 묶음'이 무엇인지 모른다"),
     (r'<button[^>]*data-grp="search"[^>]*aria-label="[^"]*'

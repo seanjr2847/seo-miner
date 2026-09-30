@@ -2,7 +2,12 @@
      판정은 서버가 한다(dashboard._axis_hold → d.holds · o.hold). 이 화면은 그리기만 한다.
      여태는 '완료'가 기회 한 건에만 먹어서, 9/11 에 고친 페이지에 9/24 새 기회가 서고
      같은 title·설명을 다시 고치라는 요청문이 나갔다(28일 실적의 절반이 수정 전이었다).
-     이 화면이 무엇인지는 화면 자신이 말한다 — dashboard.py 가 이 선언을 window.__VIEWS__ 로 방출한다. -->
+     이 화면이 무엇인지는 화면 자신이 말한다 — dashboard.py 가 이 선언을 window.__VIEWS__ 로 방출한다.
+     주 질문: 「고친 페이지가 좋아지고 있나, 관찰은 언제 끝나 할 일로 돌아오나」.
+     구성(12열): ① KPI 넷(끝까지 며칠 · 순위 · 클릭 · 뺀 기회) ② 관찰 현황판 8 + 고친 뒤 몫 도넛 4
+     ③ 페이지마다 [전·후 비교 7 | 한 작업 5] → 뺀 기회 표 12.
+     전·후가 두 점뿐이라 꺾은선은 안 쓴다(거짓 추이가 된다) — 쌍 막대·자·트랙으로 그리고,
+     범주가 있는 도넛 하나만 셸의 chDonut(Chart.js) 을 쓴다. 색은 토큰이라 라이트·다크가 따라온다. -->
 <script type="application/json" class="view-def">
 {"id": "hold", "group": "todo", "title": "관찰 중",
  "sub": "고친 지 얼마 안 된 페이지와, 그 효과를 재는 동안 할 일 목록에서 빼 둔 기회입니다.",
@@ -10,49 +15,222 @@
 </script>
 
 <style>
-/* 페이지 하나가 면 카드 하나다 — 관찰의 단위가 기회가 아니라 페이지라서. 토큰만 쓴다. */
-#holds .hd { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
-  padding:22px 24px; margin:0 0 var(--gap); min-width:0; }
-#holds .hd:last-child { margin-bottom:0; }
-#holds .hd-h { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3); }
-#holds .hd-h a { font:500 var(--fs-2)/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere;
-  min-width:0; max-width:100%; }
-#holds .hd-h .badge { white-space:nowrap; }
-#holds h3 { font:600 var(--fs-2)/1.5 var(--sans); color:var(--sub); margin:var(--sp-5) 0 var(--sp-2); }
-#holds .hd-w { list-style:none; margin:0; padding:0; }
-#holds .hd-w li { margin:0 0 6px; font-size:var(--fs-2); line-height:1.6; }
-/* 날짜만 등폭이다 — 한글 이름표에는 안 건다. */
-#holds .hd-w .d { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--sub);
-  margin-right:6px; white-space:nowrap; }
-#holds .hd-w .nt { display:block; color:var(--sub); font-size:var(--fs-1); overflow-wrap:anywhere; }
-/* 뺀 기회 목록 — 카드 안의 옅은 면. 행 사이는 --line 한 줄. */
-#holds .hd-o { background:var(--sunk); border-radius:var(--r-in); overflow:hidden; }
-#holds .hd-o .opp { margin:0; padding:11px var(--sp-4); border:0; border-radius:0;
-  border-bottom:1px solid var(--line); background:transparent; box-shadow:none; }
-#holds .hd-o .opp:last-child { border-bottom:0; }
+/* 카드 한 벌(.card)에 이 화면 몫만 얹는다. 토큰만 쓴다. 새 클래스는 전부 #hold-sec 안이다. */
+#hold-sec { margin-top:var(--sp-4); }
+#hold-sec .hd-g { display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); gap:var(--gap); }
+#hold-sec .hd-g > .card { margin:0; min-width:0; }
+#hold-sec .hd-g > .c3 { grid-column:span 3; } #hold-sec .hd-g > .c4 { grid-column:span 4; }
+#hold-sec .hd-g > .c5 { grid-column:span 5; } #hold-sec .hd-g > .c7 { grid-column:span 7; }
+#hold-sec .hd-g > .c8 { grid-column:span 8; } #hold-sec .hd-g > .c12 { grid-column:span 12; }
+#hold-sec .hd-top { margin-top:var(--gap); }
+#hold-sec .hd-g[hidden], #hold-sec .hd-g > .card[hidden] { display:none; }
+@media (max-width:1180px) {
+  #hold-sec .hd-g > .c3 { grid-column:span 6; }
+  #hold-sec .hd-top > .c8, #hold-sec .hd-top > .c4 { grid-column:span 12; }
+}
+@media (max-width:999px) { #hold-sec .hd-g > .c7, #hold-sec .hd-g > .c5 { grid-column:span 12; } }
+
+#hold-sec .hd-ch { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between;
+  gap:var(--sp-2) var(--sp-4); margin:0 0 var(--sp-4); }
+#hold-sec .hd-ch > div:first-child { min-width:0; flex:1 1 220px; }
+#hold-sec .hd-ct { font:650 var(--fs-3)/1.4 var(--sans); margin:0; color:var(--ink); }
+#hold-sec .hd-cs { font-size:var(--fs-1); line-height:1.55; color:var(--sub); margin:2px 0 0; overflow-wrap:anywhere; }
+#hold-sec .hd-cs:empty { display:none; }
+#hold-sec .hd-tl2 { display:flex; align-items:center; flex-wrap:wrap; gap:6px var(--sp-3); }
+#hold-sec .hd-tl2 .go { margin:0; }
+#hold-sec .v { font-variant-numeric:tabular-nums; white-space:nowrap; }
+#hold-sec .hd-day { white-space:nowrap; }
+#hold-sec .chip { margin:0; white-space:nowrap; }
+/* 아바타 — 경로의 첫 글자. 색은 세 가지 옅은 면을 돌려 쓴다(색이 뜻을 갖지 않는 구별용). */
+#hold-sec .hd-av { flex:0 0 auto; display:inline-grid; place-items:center; width:36px; height:36px;
+  border-radius:12px; font:700 var(--fs-2)/1 var(--sans); color:var(--accent); background:var(--accent-wash); }
+#hold-sec .hd-av.a1 { color:var(--info); background:var(--info-wash); }
+#hold-sec .hd-av.a2 { color:var(--warn); background:var(--warn-wash); }
+#hold-sec .hd-av.sm { width:24px; height:24px; border-radius:8px; font-size:var(--fs-1); }
+
+/* ── ① KPI 넷 ───────────────────────────────────────────── */
+@media (max-width:560px) { #hold-sec .hd-kv b { font-size:var(--fs-4); } #hold-sec .hd-k .hd-kh { flex-wrap:wrap; } }
+#hold-sec .hd-k { display:flex; flex-direction:column; gap:var(--sp-2); }
+#hold-sec .hd-kh { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); min-height:24px; }
+#hold-sec .hd-kt { font:600 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#hold-sec .hd-kv { display:flex; align-items:baseline; gap:6px; margin:2px 0 var(--sp-1); }
+#hold-sec .hd-kv b { font:700 var(--fs-5)/1.1 var(--sans); color:var(--ink); font-variant-numeric:tabular-nums; }
+#hold-sec .hd-kv span { font:500 var(--fs-3)/1 var(--sans); color:var(--sub); }
+#hold-sec .hd-kx { min-height:34px; display:flex; flex-direction:column; justify-content:center; gap:5px; }
+#hold-sec .hd-k .hd-cs { margin-top:auto; }
+#hold-sec .hd-mini { display:grid; grid-template-columns:30px minmax(0,1fr); align-items:center; gap:var(--sp-2);
+  font-size:var(--fs-1); color:var(--sub); }
+#hold-sec .hd-mini .tr { height:8px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+#hold-sec .hd-mini .tr i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); opacity:.55; }
+#hold-sec .hd-mini.now .tr i { background:var(--accent); opacity:1; }
+#hold-sec .hd-avs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+#hold-sec .hd-avs span.q { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-1); color:var(--sub); }
+
+/* 진행 막대와 순위 자 — KPI·현황판·비교 카드가 같이 쓴다 */
+#hold-sec .hd-bar { position:relative; height:12px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+#hold-sec .hd-bar i.f { position:absolute; left:0; top:0; bottom:0; border-radius:var(--r-pill); background:var(--accent); }
+#hold-sec .hd-bar i.tk { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--card); }
+#hold-sec .hd-scale { position:relative; height:10px; margin:2px 0 0; border-radius:var(--r-pill); background:var(--sunk); }
+#hold-sec .hd-scale .sg { position:absolute; top:3px; height:4px; background:var(--accent); opacity:.4; }
+#hold-sec .hd-scale .sg.dn { background:var(--dn); }
+#hold-sec .hd-scale .sg.ne { background:var(--mute); }
+#hold-sec .hd-scale i { position:absolute; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+  background:var(--mute); box-shadow:0 0 0 3px var(--card); }
+#hold-sec .hd-scale i.now { background:var(--accent); }
+#hold-sec .hd-sc-t { display:flex; justify-content:space-between; font-size:var(--fs-1); color:var(--mute); }
+
+/* ── ② 관찰 현황판 — 페이지마다 한 덩어리(위: 누구·며칠·변화, 아래: 관찰 트랙) ── */
+#hold-sec .hd-rows { display:flex; flex-direction:column; gap:var(--sp-2); }
+#hold-sec .hd-row { display:grid; align-items:center; gap:var(--sp-2) var(--sp-4);
+  grid-template-columns:36px minmax(0,1fr) auto auto; padding:var(--sp-4); border-radius:var(--r-in);
+  background:var(--sunk); cursor:pointer; }
+#hold-sec .hd-row:hover { background:var(--accent-wash); }
+#hold-sec .hd-who { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+#hold-sec .hd-jump { all:unset; box-sizing:border-box; max-width:100%; cursor:pointer; overflow-wrap:anywhere;
+  font:500 var(--fs-2)/1.45 var(--mono); color:var(--ink); border-radius:6px; }
+#hold-sec .hd-jump:hover { color:var(--accent); }
+#hold-sec .hd-jump:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+#hold-sec .hd-meta { font-size:var(--fs-1); color:var(--sub); }
+#hold-sec .hd-chg { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+#hold-sec .hd-left { font-size:var(--fs-1); color:var(--sub); white-space:nowrap; text-align:right; }
+#hold-sec .hd-left .v { display:block; font:700 var(--fs-4)/1.1 var(--sans); color:var(--ink); }
+#hold-sec .hd-track { grid-column:2 / -1; }
+#hold-sec .hd-ax { position:relative; display:flex; justify-content:space-between; margin-top:6px; height:16px;
+  font-size:var(--fs-1); color:var(--sub); font-variant-numeric:tabular-nums; }
+#hold-sec .hd-ax .mk { position:absolute; top:0; transform:translateX(-50%); color:var(--accent); font-weight:650; white-space:nowrap; }
+#hold-sec .hd-row .hd-bar { background:var(--card); }
+#hold-sec .hd-row:hover .hd-bar { background:var(--card); }
+@media (max-width:720px) {
+  #hold-sec .hd-row { grid-template-columns:36px minmax(0,1fr) auto; padding:var(--sp-3); }
+  #hold-sec .hd-chg { grid-column:2 / -1; grid-row:3; justify-content:flex-start; }
+  #hold-sec .hd-track { grid-row:2; grid-column:1 / -1; }
+  #hold-sec .hd-left { grid-column:3; grid-row:1; }
+}
+
+/* 고친 뒤 몫 도넛 */
+#hold-sec .hd-dn { display:flex; align-items:center; gap:var(--sp-4); flex-wrap:wrap; }
+#hold-sec .hd-dl { flex:1 1 140px; min-width:0; display:flex; flex-direction:column; gap:var(--sp-2);
+  font-size:var(--fs-2); color:var(--ink); }
+#hold-sec .hd-dl span.k { display:flex; align-items:center; gap:8px; }
+#hold-sec .hd-dl i { width:10px; height:10px; border-radius:50%; background:var(--accent); flex:0 0 auto; }
+#hold-sec .hd-dl span.k.pre i { background:var(--mute); opacity:.5; }
+#hold-sec .hd-pl { margin-top:var(--sp-4); display:flex; flex-direction:column; gap:var(--sp-2); }
+#hold-sec .hd-pl .r { display:grid; grid-template-columns:24px minmax(0,1fr) auto; align-items:center; gap:var(--sp-2);
+  font-size:var(--fs-1); color:var(--sub); }
+#hold-sec .hd-pl .r .p { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink);
+  font-family:var(--mono); }
+
+/* ── ③ 페이지 상세 ─────────────────────────────────────────── */
+#holds .hdp { margin:var(--sp-5) 0 0; scroll-margin-top:16px; }
+#holds .hdp-h { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3); margin:0 0 var(--sp-3);
+  padding:0 var(--sp-1); }
+#holds .hdp-h a { font:500 var(--fs-3)/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere;
+  min-width:0; max-width:100%; text-decoration:underline; text-decoration-color:var(--rule);
+  text-underline-offset:4px; }
+#holds .hdp-h a:hover { color:var(--accent); text-decoration-color:var(--accent); }
+#holds .hdp-h .badge { white-space:nowrap; }
+#holds .hdp-g > .c5 { display:flex; flex-direction:column; }
+
+/* 고치기 전 → 지금 — 표 시맨틱은 role 로 두고, 값은 막대로 읽힌다. */
+#holds .hd-cmp { display:flex; flex-direction:column; }
+#holds .hd-cr { display:grid; grid-template-columns:76px minmax(0,1fr) 112px; align-items:center;
+  gap:var(--sp-3) var(--sp-4); padding:14px 0; }
+#holds .hd-cr + .hd-cr { background:linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat; }
+#holds .hd-cr.hd-hd { padding:0 0 10px; font-size:var(--fs-1); color:var(--sub); }
+#holds .hd-cr.hd-hd + .hd-cr { background:none; }
+#holds .hd-cr .nm { font:600 var(--fs-2)/1.4 var(--sans); }
+#holds .hd-cr .chg { display:flex; justify-content:flex-end; }
+#holds .hd-cr.hd-hd .lg { display:flex; flex-wrap:wrap; gap:4px var(--sp-4); }
+#holds .hd-cr.hd-hd .lg span.k { display:inline-flex; align-items:center; }
+#holds .hd-cr.hd-hd .lg span.k::before { content:""; width:8px; height:8px; border-radius:50%;
+  background:var(--mute); margin-right:6px; opacity:.6; }
+#holds .hd-cr.hd-hd .lg span.k + span.k::before { background:var(--accent); opacity:1; }
+#holds .hd-cr.hd-hd .chg { font-weight:500; }
+#holds .hd-vis { display:flex; flex-direction:column; gap:6px; min-width:0; }
+#holds .hd-br { display:grid; grid-template-columns:34px minmax(0,1fr) 68px; align-items:center; gap:var(--sp-2);
+  font-size:var(--fs-1); }
+#holds .hd-br .t { color:var(--sub); }
+#holds .hd-br .tr { height:10px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+#holds .hd-br .tr i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); opacity:.55; }
+#holds .hd-br.now .tr i { background:var(--accent); opacity:1; }
+#holds .hd-br .n { text-align:right; font:600 var(--fs-2)/1.2 var(--sans); font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
+#holds .hd-br.was .n { color:var(--sub); font-weight:500; }
+#holds .hd-rk { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px var(--sp-3); font-size:var(--fs-2); }
+#holds .hd-rk .was { color:var(--sub); }
+#holds .hd-rk .now { font-weight:650; }
+#holds .hd-nt { font-size:var(--fs-1); line-height:1.6; color:var(--sub); margin:var(--sp-3) 0 0;
+  padding:10px var(--sp-3); border-radius:var(--r-in); background:var(--sunk); }
+@media (max-width:560px) {
+  #holds .hd-cr { grid-template-columns:minmax(0,1fr) auto; }
+  #holds .hd-cr .hd-vis { grid-column:1 / -1; grid-row:2; }
+  #holds .hd-cr.hd-hd { grid-template-columns:minmax(0,1fr); }
+  #holds .hd-cr.hd-hd > span:first-child, #holds .hd-cr.hd-hd .chg { display:none; }
+}
+
+/* 한 작업 — 세로 타임라인 */
+#holds .hd-wk { list-style:none; margin:0; padding:0; }
+#holds .hd-wk li { position:relative; padding:0 0 var(--sp-4) 22px; font-size:var(--fs-2); line-height:1.6; }
+#holds .hd-wk li::before { content:""; position:absolute; left:0; top:8px; width:10px; height:10px;
+  border-radius:50%; background:var(--accent); }
+#holds .hd-wk li::after { content:""; position:absolute; left:4px; top:22px; bottom:2px; width:2px;
+  background:var(--sunk); }
+#holds .hd-wk li:last-child { padding-bottom:0; }
+#holds .hd-wk li:last-child::after { display:none; }
+#holds .hd-wk .d { display:block; font:400 var(--fs-1)/1.5 var(--mono); color:var(--sub);
+  font-variant-numeric:tabular-nums; }
+#holds .hd-wk .tg { font-weight:600; overflow-wrap:anywhere; }
+#holds .hd-wk .kind { margin:0 6px 2px 0; }
+#holds .hd-wk .badge { margin:0 0 2px 6px; vertical-align:1px; }
+#holds .hd-wk .nt { display:block; color:var(--sub); font-size:var(--fs-1); overflow-wrap:anywhere; margin-top:2px; }
+#holds .hd-wf { margin:auto 0 0; padding:var(--sp-3) var(--sp-4); border-radius:var(--r-in); background:var(--sunk);
+  font-size:var(--fs-1); line-height:1.6; color:var(--sub); }
+#holds .hd-wk { margin-bottom:var(--sp-5); }
+#holds .hd-wf b { color:var(--ink); font-weight:650; font-size:var(--fs-2); display:block; }
+
+/* 뺀 기회 — 표 카드. 기회 행은 옅은 면이다(카드 속 카드가 아니다). */
+#holds .hd-ol .opp { margin:0 0 8px; padding:14px 16px; background:var(--sunk); box-shadow:none;
+  border-radius:var(--r-in); }
+#holds .hd-ol .opp:last-child { margin-bottom:0; }
+#holds .hd-ol .opp:hover { background:color-mix(in srgb, var(--sunk) 70%, var(--accent-wash)); }
+#holds .hd-ol .hd-br .tr, #holds .hd-ol .hd-scale { background:var(--line); }
+#holds .hd-ol .hd-scale i { box-shadow:0 0 0 3px var(--sunk); }
+#holds .hd-ol .hd-nt { background:var(--card); }
+#holds .hd-opc { margin:var(--sp-3) 0 var(--sp-4); max-width:760px; }
+#holds .hd-sort { display:inline-flex; flex-wrap:wrap; gap:6px; }
+#holds .hd-sort .chip { margin:0; }
 #holds .none { color:var(--sub); font-size:var(--fs-2); margin:var(--sp-2) 0 0; }
-/* 날짜는 쪼개지 않는다 — 띠 문장 안에서 「(2026-10-」/「06)」로 갈렸다. */
-#view-hold .hd-day { white-space:nowrap; }
-/* 고치기 전 → 지금. 접힌 줄에서는 한 줄, 펼치면 표. 숫자·날짜만 등폭이 아닌 Pretendard 숫자다. */
-#holds .hd-ba1 { font-size:var(--fs-1); color:var(--sub); margin:2px 0 0; }
-#holds .hd-ba1 .v, #holds .hd-bat .v { font-variant-numeric:tabular-nums; white-space:nowrap; }
-#holds .hd-ba1 .up, #holds .hd-bat .up { color:var(--up); }
-#holds .hd-ba1 .down, #holds .hd-bat .down { color:var(--dn); }
-#holds .hd-bat { margin:0 0 var(--sp-3); max-width:760px; }
-/* 셸의 td.num 은 칸 전체를 등폭으로 찍는다 — 여기 칸에는 「칸 올라감」「그대로」 같은 한글이
-   섞이므로 칸은 본문 서체로 두고 숫자(.v)만 tabular-nums 다. 첫 열은 꺾이지 않게 최소 폭을 준다. */
-#holds .hd-bat td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
-#holds .hd-bat td:first-child, #holds .hd-bat th:first-child { min-width:88px; white-space:nowrap; }
-#holds .hd-bat th { white-space:nowrap; }
-#holds .hd-bat .note { font-size:var(--fs-1); color:var(--sub); margin:6px 0 0; }
-#holds .hd-page { margin:var(--sp-3) 0 0; }
-@media (max-width:560px) { #holds .hd { padding:var(--sp-4); } }
+/* 접힌 줄의 한 줄 — 고치기 전 → 지금. 숫자만 tabular-nums. */
+#holds .hd-ba1 { font-size:var(--fs-1); color:var(--sub); margin:4px 0 0; display:flex; flex-wrap:wrap;
+  align-items:center; gap:4px 8px; }
+#holds .hd-ba1 .chip { margin:0; white-space:nowrap; }
+/* 빈 상태 */
+#holds .hd-empty { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:var(--sp-3) var(--sp-5); }
+#holds .hd-empty .empty { flex:1 1 320px; padding:0; }
+
+@media (max-width:560px) {
+  #holds .hdp-g > .card, #hold-sec .hd-g > .card { padding:var(--sp-4); }
+}
 </style>
 
 <section id="hold-sec">
-  <div class="sh">
-    <h2>고친 페이지</h2>
-    <p class="sub" id="hold-sub"></p>
+  <div class="hd-g hd-kpis" id="hd-kpis" hidden></div>
+  <div class="hd-g hd-top" id="hd-top" hidden>
+    <div class="card c8 hd-board" id="hd-board">
+      <div class="hd-ch">
+        <div>
+          <h2 class="hd-ct">관찰 현황</h2>
+          <p class="hd-cs" id="hd-sum"></p>
+          <p class="hd-cs" id="hold-sub"></p>
+        </div>
+        <div class="hd-tl2">
+          <button type="button" class="go sm sec" onclick="SM.touched=true;SM.show('triage')">심사에서 기회 보기</button>
+        </div>
+      </div>
+      <div class="hd-rows" id="hd-rows"></div>
+    </div>
+    <div class="card c4" id="hd-donut"></div>
   </div>
   <div id="holds"></div>
 </section>
@@ -65,97 +243,307 @@
       수집분. 지금 값의 실적 창에 고치기 전 날이 며칠 섞였는지(pre_days)를 같이 말한다 —
       그게 0 이 되기 전의 비교는 반쪽이다. */
 let HD_PER = null;            // 실적 창 길이(일) — 페이로드의 gsc_period
+let HD_OBS = null;            // 관찰 기간(일) — 페이로드의 observe_days
+let HD_CTX = { hs: [], byId: {}, sort: {} };
+let HD_BOUND = false;
 const HD_md = s => String(s || "").slice(5);
-// 순위는 작을수록 좋다. thin(노출이 적어 순위가 흔들린다 — 서버 판정)이면 색을 안 칠한다.
-const HD_pos = (b, a, thin) => {
+// 알약 안은 한 덩어리다 — 칩이 flex 라 자식마다 사이가 벌어진다.
+const HD_pill = (cls, html) => `<span class="chip ${cls}"><span>${html}</span></span>`;
+// 변화 알약 — 순위는 작을수록 좋다. 올랐으면 up, 내렸으면 dn, 같거나 흔들리면(thin — 서버 판정) ne.
+function HD_posPill(b, a, thin) {
   const d = Math.round((b - a) * 10) / 10;
-  return !d ? "그대로" : `<span class="${thin ? "" : d > 0 ? "up" : "down"}"><span class="v">${
-    Math.abs(d)}</span>칸 ${d > 0 ? "올라감" : "내려감"}</span>`;
-};
-const HD_num = (b, a) => {
+  if (!d) return HD_pill("ne", "그대로");
+  return HD_pill(thin ? "ne" : d > 0 ? "up" : "dn",
+    `<span class="v">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}</span>칸 ${d > 0 ? "올라감" : "내려감"}`);
+}
+function HD_numPill(b, a, unit) {
   const d = a - b;
-  return !d ? "그대로" : `<span class="v ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${num(Math.abs(d))}</span>`;
-};
-const HD_ctr = m => m && m.impressions ? (m.clicks * 100 / m.impressions).toFixed(1) + "%" : "—";
+  if (!d) return HD_pill("ne", "그대로");
+  return HD_pill(d > 0 ? "up" : "dn", `<span class="v">${d > 0 ? "+" : "−"}${num(Math.abs(d))}</span>${unit || ""}`);
+}
 // 접힌 줄의 한 줄 — 순위·클릭만.
 function HD_baLine(x) {
   if (!x || !x.after) return `<div class="hd-ba1">고친 뒤 수집한 실적이 아직 없습니다.</div>`;
   const b = x.before, a = x.after;
   const m = v => v ? `<span class="v">${v.position}</span>위 · 클릭 <span class="v">${num(v.clicks)}</span>` : "—";
-  return `<div class="hd-ba1">고치기 전 ${m(b)} → 지금 ${m(a)}${b ? ` (${HD_pos(b.position, a.position, x.thin)})` : ""}${
-    x.thin ? " · 노출이 적어 순위는 흔들립니다" : ""}</div>`;
+  return `<div class="hd-ba1"><span>고치기 전 ${m(b)} → 지금 ${m(a)}</span>${b ? HD_posPill(b.position, a.position, x.thin) : ""}${
+    x.thin ? `<span>노출이 적어 순위는 흔들립니다</span>` : ""}</div>`;
 }
-// 펼친 자리의 표 — 순위·노출·클릭·클릭률, 고치기 전 | 지금 | 변화.
-function HD_baTable(x, what) {
-  if (!x || (!x.before && !x.after)) return `<p class="note">${esc(what)}의 실적이 수집분에 없습니다.</p>`;
-  // 값 칸: 숫자만 등폭(.v) — 「위」 같은 한글 단위는 밖에 둔다
-  const b = x.before, a = x.after, v = s => String(s).replace(/^([\d.,−%]+)/, '<span class="v">$1</span>');
-  const row = (name, fb, fa, fd) => `<tr><td>${name}</td><td class="num">${b ? v(fb(b)) : "—"}</td>
-    <td class="num">${a ? v(fa(a)) : "—"}</td><td class="num">${b && a ? fd() : ""}</td></tr>`;
-  const t = table(["", `>고치기 전 (${b ? HD_md(b.date) : "없음"})?고친 날까지의 마지막 수집분`,
-                   `>지금 (${a ? HD_md(a.date) : "없음"})?고친 뒤 최신 수집분`, ">변화"], [
-    row("평균 순위", m => `${m.position}위`, m => `${m.position}위`, () => HD_pos(b.position, a.position, x.thin)),
-    row("노출", m => num(m.impressions), m => num(m.impressions), () => HD_num(b.impressions, a.impressions)),
-    row("클릭", m => num(m.clicks), m => num(m.clicks), () => HD_num(b.clicks, a.clicks)),
-    row("클릭률", HD_ctr, HD_ctr, () => "")], "");
+// 전·후 비교 아래의 주석 — 어느 쪽이 비었는지, 실적 창에 고치기 전 날이 며칠 섞였는지, 흔들림.
+function HD_note(x) {
+  const b = x.before, a = x.after;
   const note = !a ? "고친 뒤 수집한 실적이 아직 없습니다 — 다음 수집부터 '지금'이 찹니다."
     : !b ? "고치기 전 수집분에 이 대상이 없습니다(노출이 없었거나 수집 전) — '지금'만 봅니다."
     : x.pre_days > 0 ? `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""} 중 ${x.pre_days}일이 고치기 전입니다 — 관찰이 끝날 때쯤 온전한 비교가 됩니다.`
     : `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""}이 전부 고친 뒤입니다.`;
   const thin = x.thin ? " 노출이 적은 쪽이 있어 순위 변화는 흔들림일 수 있습니다 — 노출·클릭을 먼저 봅니다." : "";
-  return `<div class="hd-bat">${t}<p class="note">${note}${thin}</p></div>`;
+  return note + thin;
+}
+// 순위 자 — 작을수록 좋아서 막대 길이로 그리면 거꾸로 읽힌다. 1위가 왼쪽인 자 위에 전·후 점 둘.
+// 눈금 끝은 10위 또는 두 값 중 큰 쪽.
+function HD_scale(pb, pa, thin) {
+  const end = Math.max(10, Math.ceil(Math.max(pb || 0, pa || 0)));
+  const at = p => Math.min(100, Math.max(0, (p - 1) / (end - 1) * 100));
+  const d = pb != null && pa != null ? Math.round((pb - pa) * 10) / 10 : 0;
+  const seg = d ? `<span class="sg ${thin ? "ne" : d > 0 ? "" : "dn"}" style="left:${Math.min(at(pb), at(pa))}%;width:${Math.abs(at(pb) - at(pa))}%"></span>` : "";
+  return `<div class="hd-scale" aria-hidden="true">${seg}${pb != null ? `<i style="left:${at(pb)}%"></i>` : ""}${
+    pa != null ? `<i class="now" style="left:${at(pa)}%"></i>` : ""}</div>
+    <div class="hd-sc-t" aria-hidden="true"><span>1위</span><span>${end}위</span></div>`;
+}
+// 전·후 비교의 몸 — 노출·클릭·클릭률은 쌍 막대, 순위는 자 위의 두 점. 표 시맨틱은 role 로 둔다.
+function HD_cmp(x, what) {
+  if (!x || (!x.before && !x.after)) return `<p class="none">${esc(what)}의 실적이 수집분에 없습니다.</p>`;
+  const b = x.before, a = x.after;
+  const tip = (t, why) => `${esc(t)}<span class="hint" tabindex="0" data-tip="${esc(why)}" aria-label="${esc(why)}">i</span>`;
+  const head = `<div class="hd-cr hd-hd" role="row"><span role="columnheader">항목</span>
+    <div class="lg"><span class="k" role="columnheader">${tip(`고치기 전 (${b ? HD_md(b.date) : "없음"})`, "고친 날까지의 마지막 수집분")}</span>
+    <span class="k" role="columnheader">${tip(`지금 (${a ? HD_md(a.date) : "없음"})`, "고친 뒤 최신 수집분")}</span></div>
+    <span class="chg" role="columnheader">변화</span></div>`;
+  const pair = (name, get, fmt, chg) => {
+    const vb = b ? get(b) : null, va = a ? get(a) : null;
+    const mx = Math.max(vb || 0, va || 0) || 1;
+    const one = (cls, tag, val) => `<div class="hd-br ${cls}"><span class="t">${tag}</span>
+      <span class="tr"><i style="width:${val == null ? 0 : Math.max(2, val / mx * 100)}%"></i></span>
+      <span class="n">${val == null ? "—" : fmt(val)}</span></div>`;
+    return `<div class="hd-cr" role="row"><span class="nm" role="rowheader">${name}</span>
+      <div class="hd-vis" role="cell">${one("was", "전", vb)}${one("now", "지금", va)}</div>
+      <span class="chg" role="cell">${b && a ? chg() : ""}</span></div>`;
+  };
+  const rank = () => {
+    const pb = b ? b.position : null, pa = a ? a.position : null;
+    return `<div class="hd-cr" role="row"><span class="nm" role="rowheader">평균 순위</span>
+      <div class="hd-vis" role="cell"><div class="hd-rk"><span class="was">${pb != null ? `<span class="v">${pb}</span>위` : "—"}</span>
+        <span class="now">${pa != null ? `지금 <span class="v">${pa}</span>위` : "—"}</span></div>${HD_scale(pb, pa, x.thin)}</div>
+      <span class="chg" role="cell">${b && a ? HD_posPill(b.position, a.position, x.thin) : ""}</span></div>`;
+  };
+  const rate = m => m.impressions ? m.clicks * 100 / m.impressions : null;
+  const rows = rank()
+    + pair("노출", m => m.impressions, n => num(n), () => HD_numPill(b.impressions, a.impressions))
+    + pair("클릭", m => m.clicks, n => num(n), () => HD_numPill(b.clicks, a.clicks))
+    + pair("클릭률", rate, n => n.toFixed(1) + "%", () => {
+        const d = Math.round(((rate(a) || 0) - (rate(b) || 0)) * 10) / 10;
+        return !d ? HD_pill("ne", "그대로")
+          : HD_pill(d > 0 ? "up" : "dn", `<span class="v">${d > 0 ? "+" : "−"}${Math.abs(d)}</span>%p`);
+      });
+  return `<div class="hd-cmp" role="table" aria-label="${esc(what)} 고치기 전과 지금">${head}${rows}</div>
+    <p class="hd-nt">${HD_note(x)}</p>`;
 }
 // 화면에 그릴 수 있는 뺀 기회 — 페이로드에 실린 것(d.opps) 중 셸의 [관찰 중] 묶음. 띠·카드·[개요]가
 // 같은 수를 말하도록 세는 곳도 이 하나다.
 const HD_shown = (h, byId) => (h.opp_ids || []).map(id => byId[id]).filter(o => window.oppStMatch(o, "hold"));
-// 페이지 카드 하나 — 한 작업(날짜·어느 기회로·무엇을)과 뺀 기회(셸의 기회 줄·패널 그대로).
-function HD_card(h, byId) {
-  const works = (h.works || []).map(w => `<li><span class="d">${esc(w.day)}</span>[${esc(w.label || w.kind)}]
-      ${esc(w.target)}${w.opp_id ? ` <span class="badge muted">기회 #${esc(w.opp_id)}</span>` : ""}${
-      w.merged ? ` <span class="badge made">머지됨</span>` : ""}${
+// 순위 변화 — 올라간 칸(클수록 좋다). 전·후 중 하나라도 없으면 맨 뒤.
+const HD_gain = o => o.hold && o.hold.before && o.hold.after ? o.hold.before.position - o.hold.after.position : -Infinity;
+function HD_rows(list, mode) {
+  const ord = list.slice();
+  if (mode === "gain") ord.sort((p, q) => HD_gain(q) - HD_gain(p) || (q.score || 0) - (p.score || 0));
+  else ord.sort((p, q) => (q.score || 0) - (p.score || 0));
+  return ord.map(o => `<details class="opp" data-opp="${o.id}">
+      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary>
+      <div class="hd-opc">${HD_cmp(o.hold, "이 검색어")}</div>
+      ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</details>`).join("");
+}
+const HD_av = (page, i, sm) => {
+  const t = urlPath(page).replace(/^\/+/, "").match(/[^\W_]/u);
+  return `<span class="hd-av a${i % 3}${sm ? " sm" : ""}" aria-hidden="true">${esc(t ? t[0].toUpperCase() : "/")}</span>`;
+};
+const HD_days = (s, u) => Math.round((Date.parse(u) - Date.parse(s)) / 864e5);
+const HD_left = h => Number.isFinite(h.days_left) ? h.days_left : null;
+// 관찰 길이(일)와 지난 비율 — 서버가 준 observe_days, 없으면 시작~끝 날짜.
+function HD_prog(h) {
+  const total = HD_OBS || (h.since && h.until ? HD_days(h.since, h.until) : 0);
+  const left = HD_left(h);
+  const pct = left != null && total > 0 ? Math.min(100, Math.max(0, (total - left) / total * 100)) : null;
+  return { total, left, pct };
+}
+// 현황판 한 덩어리 — 누구 · 며칠 남았나 · 순위와 클릭이 어느 쪽인가, 그 아래 관찰 트랙(주 단위 눈금).
+function HD_row(h, i, byId) {
+  const { total, left, pct } = HD_prog(h);
+  const x = h.perf, b = x && x.before, a = x && x.after;
+  const chg = !a ? HD_pill("ne", "고친 뒤 실적 아직 없음")
+    : b ? `${HD_posPill(b.position, a.position, x.thin).replace("<span>", "<span>순위 ")}${
+        HD_numPill(b.clicks, a.clicks, " 클릭")}`
+    : HD_pill("ne", "고치기 전 실적 없음");
+  const nw = (h.works || []).length, no = HD_shown(h, byId).length;
+  const label = pct == null ? "" : `관찰 ${total}일 중 ${Math.round(total - left)}일 지남, ${h.until} 종료`;
+  const ticks = total > 0 ? Array.from({ length: Math.floor((total - 1) / 7) }, (_, k) =>
+    `<i class="tk" style="left:${((k + 1) * 7 / total * 100).toFixed(2)}%"></i>`).join("") : "";
+  const at = pct == null ? 0 : Math.min(92, Math.max(8, pct));
+  return `<div class="hd-row" data-hd-go="${i}">${HD_av(h.page, i)}
+    <div class="hd-who"><button type="button" class="hd-jump" data-hd-go="${i}"
+      aria-label="${esc(urlPath(h.page))} 상세로 이동">${esc(urlPath(h.page))}</button>
+      <span class="hd-meta">작업 ${nw}건${no ? ` · 뺀 기회 ${no}건` : ""}</span></div>
+    <div class="hd-chg">${chg}</div>
+    <div class="hd-left">${left != null ? `<span class="v">${left}</span>일 남음` : "—"}</div>
+    <div class="hd-track"${label ? ` role="img" aria-label="${esc(label)}"` : ""}>
+      <div class="hd-bar">${pct == null ? "" : `<i class="f" style="width:${pct.toFixed(1)}%"></i>`}${ticks}</div>
+      <div class="hd-ax"><span>${esc(HD_md(h.since))} 시작</span>${pct == null ? "" : `<span class="mk" style="left:${at}%">오늘</span>`}
+        <span class="hd-day">${esc(HD_md(h.until))} 종료</span></div></div></div>`;
+}
+// 페이지 상세 — [전·후 비교 | 한 작업] 아래에 [뺀 기회 표].
+function HD_card(h, byId, i) {
+  const works = (h.works || []).map(w => `<li><span class="d">${esc(w.day)}</span><span class="kind">${esc(w.label || w.kind)}</span>
+      <span class="tg">${esc(w.target)}</span>${w.opp_id ? `<span class="badge muted">기회 #${esc(w.opp_id)}</span>` : ""}${
+      w.merged ? `<span class="badge made">머지됨</span>` : ""}${
       w.note ? `<span class="nt">${esc(w.note)}</span>` : ""}</li>`).join("");
   // 이 화면의 목록은 거르개의 [관찰 중] 묶음 그 자체다(view-def 의 opp_st) — 셸 한 벌로 거른다.
   const opps = HD_shown(h, byId);
   // 서버는 목록 상한(점수 순 200건) 밖의 기회까지 센다 — 그 몫은 줄로 못 그리니 개수만 말한다.
   const more = (h.opp_ids || []).length - opps.length;
-  const rows = opps.map(o => `<details class="opp" data-opp="${o.id}">
-      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary>
-      ${HD_baTable(o.hold, "이 검색어")}
-      ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</details>`).join("");
   const left = Number.isFinite(h.days_left) ? ` · ${h.days_left}일 남음` : "";
-  return `<article class="hd">
-    <div class="hd-h"><a href="${esc(h.page)}" target="_blank" rel="noopener"
+  const mode = HD_CTX.sort[i] || "score";
+  const { total } = HD_prog(h);
+  const sortBar = opps.length > 1 ? `<div class="hd-sort" role="group" aria-label="정렬">
+      <button type="button" class="chip ${mode === "score" ? "on" : ""}" data-hd-sort="${i}" data-mode="score"
+        aria-pressed="${mode === "score"}">점수순</button>
+      <button type="button" class="chip ${mode === "gain" ? "on" : ""}" data-hd-sort="${i}" data-mode="gain"
+        aria-pressed="${mode === "gain"}">순위 변화순</button></div>` : "";
+  return `<div class="hdp" id="hdp-${i}">
+    <div class="hdp-h">${HD_av(h.page, i)}<a href="${esc(h.page)}" target="_blank" rel="noopener"
       title="${esc(h.page)}">${esc(urlPath(h.page))}</a>
       <span class="badge adv">${esc(h.until)}까지${left}</span></div>
-    <h3>한 작업</h3><ul class="hd-w">${works}</ul>
-    <h3>이 페이지 전체 — 고치기 전과 지금</h3>
-    <div class="hd-page">${HD_baTable(h.perf, "이 페이지")}</div>
-    <h3>지켜보는 동안 뺀 기회 ${opps.length}건${more > 0 ? ` · 화면 목록 밖 ${more}건` : ""}</h3>
-    ${opps.length ? `<div class="hd-o">${rows}</div>`
-      : more > 0 ? "" : `<p class="none">이 페이지에 새로 선 기회는 없습니다.</p>`}
-    ${more > 0 ? `<p class="none">목록 밖 ${more}건은 점수가 낮아 화면 목록(상위 200건)에 안 실린 기회입니다 — 관찰이 끝나면 같이 돌아옵니다.</p>` : ""}
-  </article>`;
+    <div class="hd-g hdp-g">
+      <article class="card c7"><div class="hd-ch"><div><h3 class="hd-ct">고치기 전 → 지금</h3>
+        <p class="hd-cs">이 페이지 전체의 검색 실적${HD_PER ? ` · 구글 실적 ${HD_PER}일 기준` : ""}</p></div></div>${HD_cmp(h.perf, "이 페이지")}</article>
+      <article class="card c5"><div class="hd-ch"><div><h3 class="hd-ct">한 작업</h3>
+        <p class="hd-cs">이 페이지에 기록한 수정 ${(h.works || []).length}건</p></div></div>
+        <ol class="hd-wk">${works}</ol>
+        <p class="hd-wf"><b>${esc(HD_md(h.until))}에 관찰이 끝납니다</b>마지막으로 고친 ${esc(HD_md(h.since))}부터 ${total ? `${total}일 동안` : ""} 지켜보고, 끝나면 이 페이지의 기회가 할 일 목록으로 돌아옵니다.</p></article>
+      <article class="card c12"><div class="hd-ch"><div><h3 class="hd-ct">지켜보는 동안 뺀 기회 ${opps.length}건${more > 0 ? ` · 화면 목록 밖 ${more}건` : ""}</h3>
+        <p class="hd-cs">관찰이 끝나면 할 일 목록으로 돌아옵니다.</p></div>${sortBar}</div>
+        ${opps.length ? `<div class="hd-ol" data-hd-list="${i}">${HD_rows(opps, mode)}</div>`
+          : more > 0 ? "" : `<p class="none">이 페이지에 새로 선 기회는 없습니다.</p>`}
+        ${more > 0 ? `<p class="none">목록 밖 ${more}건은 점수가 낮아 화면 목록(상위 200건)에 안 실린 기회입니다 — 관찰이 끝나면 같이 돌아옵니다.</p>` : ""}
+      </article>
+    </div></div>`;
+}
+
+/* ── 위쪽 카드: 모든 페이지를 한 줄로 요약한다 ──────────────────────
+   페이지가 여러 곳이면 순위는 페이지 평균, 클릭·노출은 합이다. 전·후가 다 있는 페이지만 센다. */
+function HD_agg(hs, byId) {
+  const A = { n: hs.length, opps: 0, ps: [], cb: 0, ca: 0, ib: 0, ia: 0, thin: false, both: 0,
+    post: 0, pre: 0, win: 0, first: null, per: [] };
+  for (const pg of hs) {
+    A.opps += HD_shown(pg, byId).length;
+    if (!A.first || (HD_left(pg) ?? 1e9) < (HD_left(A.first) ?? 1e9)) A.first = pg;
+    const pf = pg.perf, pb = pf && pf.before, pa = pf && pf.after;
+    if (pb && pa) {
+      A.both++; A.ps.push([pb.position, pa.position]);
+      A.cb += pb.clicks; A.ca += pa.clicks; A.ib += pb.impressions; A.ia += pa.impressions;
+      if (pf.thin) A.thin = true;
+    }
+    if (HD_PER && pa && Number.isFinite(pf.pre_days)) {
+      const pre = Math.min(HD_PER, Math.max(0, pf.pre_days));
+      A.pre += pre; A.post += HD_PER - pre; A.win += HD_PER;
+      A.per.push({ pg, pre, post: HD_PER - pre });
+    }
+  }
+  const mean = k => Math.round(A.ps.reduce((s, p) => s + p[k], 0) / A.ps.length * 10) / 10;
+  A.pos = A.ps.length ? [mean(0), mean(1)] : null;
+  return A;
+}
+function HD_kpiCard(title, chip, big, unit, vis, sub) {
+  return `<article class="card c3 hd-k"><div class="hd-kh"><span class="hd-kt">${title}</span>${chip}</div>
+    <div class="hd-kv"><b>${big}</b>${unit ? `<span>${unit}</span>` : ""}</div>
+    <div class="hd-kx">${vis}</div><p class="hd-cs">${sub}</p></article>`;
+}
+function HD_kpis(A) {
+  const f = A.first, pr = HD_prog(f), multi = A.n > 1;
+  const who = esc(urlPath(f.page));
+  const end = HD_kpiCard(multi ? "가장 먼저 끝나는 관찰" : "관찰 끝까지",
+    HD_pill("ne", `<span class="hd-day">${esc(HD_md(f.until))}</span> 종료`),
+    pr.left != null ? pr.left : "—", pr.left != null ? "일 남음" : "",
+    pr.pct == null ? "" : `<div class="hd-bar" role="img" aria-label="관찰 ${pr.total}일 중 ${Math.round(pr.total - pr.left)}일 지남"><i class="f" style="width:${pr.pct.toFixed(1)}%"></i></div>`,
+    pr.pct == null ? who : `${who} · ${pr.total}일 관찰 중 ${Math.round(pr.total - pr.left)}일 지남`);
+  const rk = A.pos ? HD_kpiCard("평균 순위", HD_posPill(A.pos[0], A.pos[1], A.thin),
+      A.pos[1], "위", HD_scale(A.pos[0], A.pos[1], A.thin),
+      `고치기 전 ${A.pos[0]}위${multi ? " · 페이지 평균" : ""}${A.thin ? " · 노출이 적어 흔들립니다" : ""}`)
+    : HD_kpiCard("평균 순위", HD_pill("ne", "비교 전"), "—", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
+  const mx = Math.max(A.cb, A.ca) || 1;
+  const mini = (cls, t, v) => `<div class="hd-mini ${cls}"><span>${t}</span><span class="tr"><i style="width:${Math.max(2, v / mx * 100)}%"></i></span></div>`;
+  const ck = A.both ? HD_kpiCard("클릭", HD_numPill(A.cb, A.ca, ""), num(A.ca), "회",
+      mini("was", "전", A.cb) + mini("now", "지금", A.ca),
+      `고치기 전 ${num(A.cb)}회 · 노출 ${num(A.ib)} → ${num(A.ia)}`)
+    : HD_kpiCard("클릭", HD_pill("ne", "비교 전"), "—", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
+  const avs = A.opps ? `<div class="hd-avs">${hsAvs(A)}</div>` : "";
+  const oc = HD_kpiCard("뺀 기회", HD_pill("ne", `페이지 ${A.n}곳`), A.opps, "건", avs,
+    "관찰이 끝나면 할 일 목록으로 돌아옵니다.");
+  return end + rk + ck + oc;
+}
+// 뺀 기회 카드의 시각 — 페이지마다 아바타와 건수.
+function hsAvs(A) {
+  return HD_CTX.hs.map((pg, i) => `<span class="q">${HD_av(pg.page, i, true)}<span class="v">${
+    HD_shown(pg, HD_CTX.byId).length}</span></span>`).join("");
+}
+function HD_donut(A) {
+  const head = `<div class="hd-ch"><div><h3 class="hd-ct">고친 뒤 실적의 몫</h3>
+    <p class="hd-cs">${HD_PER ? `지금 실적 ${HD_PER}일 중 고친 뒤에 쌓인 날` : "지금 실적의 창 길이가 없습니다"}${A.n > 1 ? " · 페이지 합산" : ""}</p></div></div>`;
+  if (!A.win) return head + `<p class="none">고친 뒤 수집한 실적이 아직 없습니다 — 다음 수집부터 채워집니다.</p>`;
+  const ring = window.chDonut ? window.chDonut([
+    { label: `고친 뒤 ${A.post}일`, value: A.post, on: true },
+    { label: `고치기 전 ${A.pre}일`, value: A.pre }], { width: 132, unit: "일" }) : "";
+  const per = A.per.length > 1 || A.n > 1 ? `<div class="hd-pl">${A.per.map(r => `<div class="r">${
+    HD_av(r.pg.page, HD_CTX.hs.indexOf(r.pg), true)}<span class="p">${esc(urlPath(r.pg.page))}</span>
+    <span class="v">${r.post}/${HD_PER}일</span></div>`).join("")}</div>` : "";
+  return head + `<div class="hd-dn">${ring}<div class="hd-dl">
+      <span class="k"><i></i><span><span class="v">${A.post}</span>일 고친 뒤</span></span>
+      <span class="k pre"><i></i><span><span class="v">${A.pre}</span>일 고치기 전</span></span></div></div>${per}
+    <p class="hd-cs" style="margin-top:var(--sp-4)">${A.pre > 0
+      ? `고치기 전 ${A.pre}일이 섞여 있습니다. 고친 뒤가 ${A.win}일이 되면 온전한 비교입니다.`
+      : "전부 고친 뒤의 실적이라 온전한 비교입니다."}</p>`;
+}
+// 현황판 행 → 상세로 스크롤 · 정렬 칩. 한 번만 단다(화면은 다시 그려져도 sec 는 그대로다).
+function HD_bind() {
+  if (HD_BOUND) return;
+  HD_BOUND = true;
+  $("hold-sec").addEventListener("click", e => {
+    const t = e.target.closest && e.target.closest("[data-hd-sort]");
+    if (t) {
+      const i = +t.dataset.hdSort, h = HD_CTX.hs[i];
+      if (!h) return;
+      HD_CTX.sort[i] = t.dataset.mode;
+      const box = $("holds").querySelector(`[data-hd-list="${i}"]`);
+      if (box) box.innerHTML = HD_rows(HD_shown(h, HD_CTX.byId), t.dataset.mode);
+      t.parentNode.querySelectorAll(".chip").forEach(c => {
+        const on = c === t; c.classList.toggle("on", on); c.setAttribute("aria-pressed", on);
+      });
+      return;
+    }
+    const g = e.target.closest && e.target.closest("[data-hd-go]");
+    const dest = g && $("hdp-" + g.dataset.hdGo);
+    if (!dest) return;
+    const calm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    dest.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
+  });
 }
 
 VIEW("hold", function (d) {
   const hs = d.holds || [];
   const days = d.observe_days;
   HD_PER = d.gsc_period || HD_PER;
+  HD_OBS = days || null;
   $("hold-sub").textContent = days
     ? `마지막으로 고친 날부터 ${days}일 동안 지켜봅니다. 그동안 같은 페이지에 선 기회는 할 일 목록에서 빠지고, 기간이 끝나면 저절로 돌아옵니다.`
     : "";
   const byId = {};
   for (const o of d.opps || []) byId[o.id] = o;
-  $("holds").innerHTML = hs.length ? hs.map(h => HD_card(h, byId)).join("")
-    : `<div class="empty"><b>관찰 중인 페이지가 없습니다</b>
-        <p>기회로 페이지를 고치고 작업을 기록하면, 효과를 재는 동안 여기서 지켜봅니다.</p></div>`;
+  HD_CTX = { hs, byId, sort: HD_CTX.sort };
+  const A = hs.length ? HD_agg(hs, byId) : null;
+  $("hd-top").hidden = !hs.length;
+  $("hd-board").hidden = !hs.length;
+  $("hd-kpis").hidden = !hs.length;
+  $("hd-sum").innerHTML = hs.length ? `페이지 ${hs.length}곳 · 뺀 기회 ${A.opps}건` : "";
+  $("hd-kpis").innerHTML = A ? HD_kpis(A) : "";
+  $("hd-rows").innerHTML = hs.map((h, i) => HD_row(h, i, byId)).join("");
+  $("hd-donut").innerHTML = A ? HD_donut(A) : "";
+  $("holds").innerHTML = hs.length ? hs.map((h, i) => HD_card(h, byId, i)).join("")
+    : `<div class="card hd-empty"><div class="empty"><b>관찰 중인 페이지가 없습니다</b>
+        <p>기회로 페이지를 고치고 작업을 기록하면, 효과를 재는 동안 여기서 지켜봅니다.</p></div>
+        <button type="button" class="go sm" onclick="SM.touched=true;SM.show('triage')">심사에서 기회 보기</button></div>`;
+  HD_bind();
   if (!window.nextStep) return;
-  const n = hs.reduce((s, h) => s + HD_shown(h, byId).length, 0);
-  const first = hs[0];
-  nextStep("hold", first
-    ? `<p>관찰 중인 페이지 ${hs.length}곳${n ? `, 뺀 기회 ${n}건` : ""}입니다. 가장 먼저 끝나는 곳은
-        <b>${esc(urlPath(first.page))}</b>(<span class="hd-day">${esc(first.until)}</span>)입니다.
-        <span class="live">지금은 고치지 않고, 끝나면 할 일 목록에서 다시 봅니다.</span></p>`
+  nextStep("hold", A
+    ? `<p>지금은 고치지 않고 기다립니다. 가장 먼저 끝나는 곳은
+        <b>${esc(urlPath(A.first.page))}</b>(<span class="hd-day">${esc(A.first.until)}</span>)입니다.</p>`
     : "");
 });
 </script>

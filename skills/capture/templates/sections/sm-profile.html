@@ -7,20 +7,23 @@
      값은 Brain 한 곳에 산다(db.profile_read/save) — 원격 사이트는 로컬 서버가 호스팅으로
      넘기므로 두 화면이 같은 값을 본다. -->
 <style>
+#sm-profile .sm-ch { margin:0 0 var(--sp-4); }
+#sm-profile .sm-ch h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-profile .sm-ch .sub { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:2px 0 0; max-width:74ch; }
 #sm-profile .profile .lh { display:block; font:var(--micro); color:var(--sub);
   margin:0 0 6px; max-width:56ch; }
 #sm-profile .profile label:not(:first-of-type) { margin-top:16px; }
 #sm-profile .profile .msg { display:block; min-height:1.6em; margin-top:2px; }
 </style>
 <section id="sm-profile">
-  <div class="sh">
-    <p class="eyebrow">이 사이트 설정</p><h2>브랜드·경쟁사<span class="hint" tabindex="0"
+  <div class="card">
+  <div class="sm-ch">
+    <h2>브랜드·경쟁사<span class="hint" tabindex="0"
       data-tip="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
       aria-label="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
       >i</span></h2>
     <p class="sub">벗어나면(포커스를 잃으면) 그 자리에서 저장되고 다음 실행부터 적용됩니다.</p>
   </div>
-  <div class="card">
   <div class="profile">
     <label for="pf-alias">브랜드 표기</label>
     <span class="lh" id="pf-alias-lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>

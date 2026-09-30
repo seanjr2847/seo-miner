@@ -6,50 +6,56 @@
      sections/sm-profile.html 로 옮겼다(로컬 대시보드도 그 칸을 갖는다).
      원본 [설정] 화면(#setup)은 호스팅에서 CSS 로 숨는다 — 이 섹션은 그 뒤(view-def 의
      "setup" 다음)에 붙는, 호스팅에서 유일하게 보이는 설정 칸이다.
-     칸들은 전부 h3 다: 섹션 제목(h2)과 같은 크기로 세우면 위계가 사라진다.
-     부제는 한 문장이다 — 나머지 설명은 제목 옆 ⓘ 툴팁으로 접는다(copy-guide 5장). -->
+     섹션은 상자가 아니다(display:contents) — 안의 카드가 화면 격자에 곧바로 선다:
+     #set-cycle(주기·언어-지역·종류 한 장), GA4 한 장, 명령어 한 장. 카드 제목은 h2,
+     한 카드 안의 묶음 제목은 h3 다. 셸·애드온이 집는 이름(.opts .body .grp .repo .ga4
+     .lang .ptype .cli)은 그대로다 — 자리로 집지 않고 이름으로 집는다.
+     첫 .opts 는 주기 칩 자리다(setRender 가 그 하나를 채운다) — 그 앞에 다른 .opts 를 두지
+     않는다. 부제는 한 문장이다 — 나머지 설명은 제목 옆 ⓘ 툴팁으로 접는다(copy-guide 5장). -->
 <section id="sm-set">
-  <div class="sh">
-    <p class="eyebrow">이 사이트 설정</p><h2>측정 주기와 연결</h2>
-    <p class="sub">얼마나 자주 다시 잴지, 결과를 어디로 보낼지 정합니다.</p>
+  <div class="card" id="set-cycle">
+    <div class="sh">
+      <h2>측정 방식</h2>
+      <p class="sub">얼마나 자주, 어느 언어·종류로 잴지 정합니다. 고르면 그 자리에서 저장됩니다.</p>
+    </div>
+    <div class="grp"><h3>자동 수집 주기<span class="hint" tabindex="0"
+        data-tip="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
+        aria-label="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
+        >i</span></h3>
+      <p class="sub">검색 실적과 기회 목록은 매일 재고, 여기서 고른 주기는 순위·검색어 발굴·AI 인용·사이트 점검에 적용됩니다.</p>
+      <div class="opts"></div>
+    </div>
+    <!-- .repo 는 스타일 이름일 뿐이다(select·상태 문장의 생김새 한 벌) — 떼어 낸
+         저장소 칸의 잔재다. 칸을 집는 쪽은 전부 자기 이름(.ga4/.lang/.cli)으로 집는다. -->
+    <div class="repo lang grp"><h3>언어-지역<span class="hint" tabindex="0"
+        data-tip="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
+        aria-label="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
+        >i</span></h3>
+      <p class="sub">고르면 그 자리에서 저장되고 다음 측정부터 적용됩니다.</p>
+      <div class="body"></div>
+    </div>
+    <div class="repo ptype grp"><h3>사이트 종류<span class="hint" tabindex="0"
+        data-tip="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
+        aria-label="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
+        >i</span></h3>
+      <p class="sub">고르면 그 자리에서 저장되고 다음 기회 분석부터 점수에 반영됩니다.</p>
+      <div class="body"></div>
+    </div>
   </div>
-  <div class="grp"><h3>자동 수집 주기<span class="hint" tabindex="0"
-      data-tip="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
-      aria-label="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
-      >i</span></h3>
-    <p class="sub">검색 실적과 기회 목록은 매일 재고, 여기서 고른 주기는 순위·검색어 발굴·AI 인용·사이트 점검에 적용됩니다.</p>
-    <div class="opts"></div>
-  </div>
-  <div class="repo ga4 grp"><h3>GA4 연결<span class="hint" tabindex="0"
+  <div class="repo ga4 grp card"><div class="gh"><h2>GA4 연결<span class="hint" tabindex="0"
       data-tip="연결하지 않아도 검색 실적 측정은 그대로 됩니다."
       aria-label="연결하지 않아도 검색 실적 측정은 그대로 됩니다."
-      >i</span></h3>
+      >i</span></h2><span id="st-ga4-pill" class="badge muted">확인 중</span></div>
     <p class="sub">클릭 다음에 일어난 일을 랜딩페이지 축으로 봅니다.</p>
-    <div class="body"></div>
-  </div>
-  <!-- .repo 는 스타일 이름일 뿐이다(select·상태 문장의 생김새 한 벌) — 떼어 낸
-       저장소 칸의 잔재다. 칸을 집는 쪽은 전부 자기 이름(.ga4/.lang/.cli)으로 집는다. -->
-  <div class="repo lang grp"><h3>언어-지역<span class="hint" tabindex="0"
-      data-tip="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
-      aria-label="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
-      >i</span></h3>
-    <p class="sub">고르면 그 자리에서 저장되고 다음 측정부터 적용됩니다.</p>
-    <div class="body"></div>
-  </div>
-  <div class="repo ptype grp"><h3>사이트 종류<span class="hint" tabindex="0"
-      data-tip="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
-      aria-label="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
-      >i</span></h3>
-    <p class="sub">고르면 그 자리에서 저장되고 다음 기회 분석부터 점수에 반영됩니다.</p>
     <div class="body"></div>
   </div>
   <!-- 토큰 원문은 발급 응답에만 있다(서버는 해시만 보관한다) — 그래서 이 칸은
        "한 번만 보인다"고 먼저 말하고 나서 보여 준다. 그 경고는 만들기 전에도
        보여야 하므로 툴팁이 아니라 버튼 옆 문장으로 둔다(dash.html 의 cliRender). -->
-  <div class="repo cli grp"><h3>명령어로 연결<span class="hint" tabindex="0"
+  <div class="repo cli grp card"><div class="gh"><h2>명령어로 연결<span class="hint" tabindex="0"
       data-tip="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다 — 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
       aria-label="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다 — 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
-      >i</span></h3>
+      >i</span></h2><span id="st-cli-pill" class="badge muted">선택</span></div>
     <p class="sub">클로드 코드를 쓰신다면 명령으로도 이 사이트를 다룹니다.</p>
     <div class="body"></div>
   </div>

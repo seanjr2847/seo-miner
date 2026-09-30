@@ -1,19 +1,42 @@
 <script type="application/json" class="section-def">
-{"id": "sm-kw", "view": "keywords", "after": "log", "only": "hosted"}
+{"id": "sm-kw", "view": "keywords", "after": "movers", "only": "hosted"}
 </script>
 <!-- 목록·개수(.list/.cnt)는 dash.html 의 kwLoad() 가 채운다. 여기 있는 것은 껍데기와
-     탭·버튼 배선 대상뿐이다. 탭은 목록을 거르는 도구라 섹션 머리(.sh .tools)에 선다. -->
-<section id="sm-kw">
-  <div class="sh">
-    <p class="eyebrow">키워드 관리</p><h2>추적할 검색어</h2>
-    <p class="sub">추적을 켠 검색어만 순위를 잽니다.<span class="hint" tabindex="0"
-      data-tip="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
-      aria-label="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
-      >i</span></p>
+     탭·버튼 배선 대상뿐이다. 탭은 목록을 거르는 도구라 카드 머리(.kwch .tabs)에 선다.
+     진행 막대(.kwprog)는 keywords.html 의 KW_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다. -->
+<style>
+/* 이 화면의 카드 문법(제목 + 보조 설명 + 오른쪽 도구)을 그대로 쓴다. 목록 상자는 dash.html 이
+   면 카드로 세워 두므로, 카드 속 카드가 되지 않게 이 화면 안에서만 벗긴다. */
+#view-keywords #sm-kw .kwch { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:8px 16px; flex-wrap:wrap; margin:0 0 14px; }
+#view-keywords #sm-kw .kwch h2 { margin:0; }
+#view-keywords #sm-kw .kwch .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 0; }
+#view-keywords #sm-kw .tabs { margin:0; }
+#view-keywords #sm-kw .list { background:transparent; box-shadow:none; border-radius:0;
+  margin:0 -8px; padding:0; }
+#view-keywords #sm-kw label { border-bottom:0; border-radius:var(--r-in); padding:10px 8px; }
+#view-keywords #sm-kw .bar2 { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap;
+  margin-top:var(--sp-4); }
+#view-keywords #sm-kw .kwprog { flex:1 1 180px; max-width:360px; height:8px; margin:0;
+  border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+#view-keywords #sm-kw .kwprog[hidden] { display:none; }
+#view-keywords #sm-kw .kwprog i { display:block; height:100%; width:0; border-radius:var(--r-pill);
+  background:var(--accent); }
+#view-keywords #sm-kw .kwprog.full i { background:var(--warn); }
+</style>
+<section id="sm-kw" class="card kwtrack">
+  <div class="kwch">
+    <div>
+      <h2>추적할 검색어</h2>
+      <p class="sub">추적을 켠 검색어만 순위를 잽니다.<span class="hint" tabindex="0"
+        data-tip="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
+        aria-label="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
+        >i</span></p>
+    </div>
     <div class="tools tabs"><button data-m="candidate" class="on">후보</button>
     <button data-m="active">추적 중</button></div>
   </div>
   <div class="list"></div>
   <div class="bar2"><button class="go sm sec">추적에 넣기</button>
-  <span class="cnt"></span></div>
+  <span class="cnt"></span><div class="kwprog" role="img" hidden><i></i></div></div>
 </section>

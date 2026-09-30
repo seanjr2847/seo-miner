@@ -1,10 +1,37 @@
 <!--ENTRY_HEAD-->
 <style>
-/* 온보딩만 쓰는 것 — 입력 칸과 걸음 전환. 색·버튼·레일·패널은 입구 머리(entry.html) 한 벌이다.
-   상자 문법도 같다: 면 카드 하나(반경 20px · 옅은 그림자 · 테두리 없음), 카드 속 카드 없음. */
-.step[hidden] { display:none; }
-.form { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
-  padding:24px; display:grid; gap:20px; max-width:720px; }
+/* 온보딩만 쓰는 것 — 12열 격자(진행 카드 · 걸음 카드 8 · 미리보기 카드 4)와 입력 칸.
+   색·버튼·배지·빈 상태는 입구 머리(entry.html) 한 벌이다. 새 이름은 전부 #start 안에 가둔다.
+   상자 문법: 면 카드(반경 20px · 옅은 그림자 · 테두리 없음). 카드 속 카드는 없다 —
+   카드 안의 구분은 색조 면(--sunk · --accent-wash · --info-wash)이다. */
+#start { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:var(--gap);
+  padding-top:24px; align-items:stretch; }
+#start .card { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow); }
+#start .step[hidden] { display:none; }
+
+/* ── 진행 카드: 칸이 곧 막대다. 끝난 칸은 꽉 차고 지금 칸은 반쯤 찬다 ── */
+#start .rail { grid-column:1 / -1; padding:20px 24px; }
+#start .rail ol { display:flex; gap:16px; flex-wrap:nowrap; align-items:stretch; }
+#start .rail li { flex:1 1 0; min-width:0; display:grid; grid-template-columns:auto minmax(0,1fr);
+  align-items:center; gap:10px 10px; font:500 var(--fs-2)/1.3 var(--sans); color:var(--sub); }
+#start .rail li::before { content:""; grid-column:1 / -1; width:auto; height:6px; margin:0;
+  border-radius:var(--r-pill); background:var(--rule); }
+#start .rail li + li::before { width:auto; height:6px; margin:0; background:var(--rule); }
+#start .rail li.here::before { background:linear-gradient(90deg,var(--accent) 45%,var(--accent-wash) 45%); }
+#start .rail li.done::before { background:var(--accent); }
+#start .rail .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#start .rail .here { color:var(--ink); font-weight:650; }
+#start .rail .done { color:var(--ink); }
+
+/* ── 걸음 카드(8열) ───────────────────────────────────────── */
+#start .step { grid-column:1 / span 8; grid-row:2; padding:28px; min-width:0; }
+#start .st-head { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:16px; margin-bottom:24px; }
+#start .st-head h2 { margin:0 0 4px; }
+#start .st-head .sub { margin:0; }
+#start .st-no { flex:none; font-variant-numeric:tabular-nums; }
+
+.form { display:grid; gap:20px; }
 .field { display:grid; gap:8px; min-width:0; }
 .field > span { font:600 var(--fs-2)/1.4 var(--sans); color:var(--ink); }
 .field .hint { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:0; }
@@ -24,43 +51,149 @@ textarea { resize:vertical; min-height:96px; }
 .cnt2 { font:400 var(--fs-1)/1 var(--sans); color:var(--sub); font-variant-numeric:tabular-nums; }
 .cnt2 b { color:var(--accent); font-weight:650; }
 
-/* 1단계의 둘째 길 — 서치콘솔에서 고르기. 주요 행동(다음)과 겨루지 않게 글자 버튼이다. */
-.alt { margin-top:16px; font-size:var(--fs-2); color:var(--sub); }
-.alt button { font:600 var(--fs-2)/1 var(--sans); color:var(--accent); background:none; border:0;
-  padding:14px 0; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
-.alt .props { margin-top:8px; max-width:720px; }
+/* 1단계의 둘째 길 — 서치콘솔에 이미 있는 사이트는 목록에서 고른다. 주 행동(다음)과 겨루지 않게
+   색조 면 한 줄이고, 버튼은 흰 알약이다. */
+#start .alt { margin-top:4px; background:var(--sunk); border-radius:var(--r-in); padding:16px 20px;
+  display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px 16px; }
+#start .alt[hidden] { display:none; }
+#start .alt .alt-t { display:grid; gap:2px; min-width:0; }
+#start .alt .alt-t b { font:650 var(--fs-2)/1.4 var(--sans); }
+#start .alt .alt-t span { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
+#start .alt .go.sec { background:var(--card); }
+#start .alt .props { grid-column:1 / -1; margin-top:4px; background:var(--card); }
 /* .props 의 display:grid 가 [hidden] 을 이긴다 — entry 의 .ptool·.act 와 같은 함정. */
-.alt .props[hidden] { display:none; }
+#start .alt .props[hidden] { display:none; }
 code { font:500 .95em var(--mono); }
 
-/* 고르는 목록은 한 줄에 하나 — 면 카드 하나 안에서 행 사이만 옅은 선이다(여긴 하나만 고른다). */
-.alt .props, #gscbox .props { background:var(--card); border-radius:var(--r-card);
-  box-shadow:var(--shadow); padding:8px; overflow:hidden; }
-/* 안내가 목록 자리를 차지하면 안내 자신이 면이다 — 바깥 카드를 벗겨 상자 안 상자를 없앤다. */
-.alt .props:has(> .empty), #gscbox .props:has(> .empty) { background:transparent;
-  box-shadow:none; padding:0; }
-#gscbox { max-width:720px; }
+/* 고르는 목록은 카드 안의 색조 면 하나 — 행 사이만 옅은 선이다(여긴 하나만 고른다). */
+#start .props { background:var(--sunk); border-radius:var(--r-in); padding:6px; overflow:hidden; }
+#start .props:has(> .empty) { background:transparent; padding:0; }
+#start .alt .props .prop:hover { background:var(--sunk); }
+#start .prop:hover { background:var(--card); }
+#start .prop.on { background:var(--accent-wash); }
+#start .prop + .prop { border-top:1px solid var(--line); }
+#start .prop .av { flex:none; }
+#start .empty { background:var(--sunk); box-shadow:none; }
+#start .empty.err { background:var(--warn-wash); }
+#start .empty.info { background:var(--accent-wash); }
+#start .empty.err .go.sec, #start .empty.info .go.sec { background:var(--card); }
+#start .empty .go.sec { background:var(--card); box-shadow:none; }
 
-/* 3단계 — 지금 되는 것 / 붙이면 더해지는 것. 둘을 나란히 두어 "없어도 된다"가 눈에 먼저 온다.
-   왼쪽은 면 카드, 오른쪽은 색조 면 — 카드 하나가 다시 상자를 두르지 않는다. */
-.gain { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));
-  gap:var(--gap); max-width:720px; margin-bottom:16px; }
-.gain > div { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
-  padding:20px 24px; }
-.gain > div:not(.now) { background:var(--info-wash); box-shadow:none; }
+/* 이니셜 아바타 — 파비콘 자리다. 색은 첫 글자로 두 색조 중 하나 */
+#start .av { width:32px; height:32px; border-radius:50%; display:inline-flex; align-items:center;
+  justify-content:center; font:700 var(--fs-2)/1 var(--sans); background:var(--accent-wash);
+  color:var(--accent); text-transform:none; }
+#start .av.i { background:var(--info-wash); color:var(--info); }
+#start .av.lg { width:44px; height:44px; font-size:var(--fs-3); }
+#start .av.none { background:var(--card); color:var(--sub); }
+
+/* 3단계 — 지금 되는 것 / 붙이면 더해지는 것. 색조 면 둘이라 "없어도 된다"가 먼저 온다. */
+.gain { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));
+  gap:var(--gap); margin-bottom:16px; }
+.gain > div { background:var(--accent-wash); border-radius:var(--r-in); padding:20px; }
+.gain > div:not(.now) { background:var(--info-wash); }
 .gain h3 { font:650 var(--fs-3)/1.4 var(--sans); margin:0 0 8px; }
-.gain ul { margin:0; padding-left:18px; font-size:var(--fs-2); line-height:1.7; }
 .gain .now h3 { color:var(--accent); }
-.gain .plus { color:var(--sub); }
+.gain > div:not(.now) h3 { color:var(--info); }
+.gain ul { margin:0; padding:0; list-style:none; font-size:var(--fs-2); line-height:1.6; display:grid; gap:6px; }
+.gain li { position:relative; padding-left:16px; }
+.gain li::before { content:""; position:absolute; left:0; top:.6em; width:6px; height:6px;
+  border-radius:50%; background:currentColor; opacity:.55; }
 
-/* 4단계 — 진행 한 줄. 사이트 목록(.sites)과 같은 문법이다. */
-/* .badge.run 과 이름이 겹치지 않게 .runbox 다 — .run 이면 배지가 상자 모양이 된다. */
-.runbox { max-width:720px; background:var(--card); border-radius:var(--r-card);
-  box-shadow:var(--shadow); padding:24px; display:grid; gap:12px; }
-.runbox .top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.runbox .dom { font:600 var(--fs-3)/1.35 var(--mono); overflow-wrap:anywhere; }
-.runbox .note { font-size:var(--fs-2); color:var(--sub); margin:0; }
-.runbox .stg { margin:0; font:400 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#start .step .act { margin-top:28px; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+#start .step .act .msg { margin-right:auto; order:-1; }
+#start .msg a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
+
+/* ── 4단계 — 진행 링 카드. 첫 분석이 도는 순간이 온보딩의 유일한 기다림이라 화면에서 가장 크다.
+   걸음 카드 자체가 옅은 강조 면이 되고, 링은 흰 트랙 위에 그린다. ── */
+#start #s4 { background:var(--accent-wash); padding:36px; }
+#start #s4 .st-no { background:var(--card); }
+.runbox { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:40px; padding:8px 0; }
+.runbox .ring { position:relative; width:216px; height:216px; flex:none; }
+.runbox .ring svg { width:100%; height:100%; transform:rotate(-90deg); display:block; }
+.runbox .ring .trk { stroke:var(--card); }
+.runbox .ring .val { stroke:var(--accent); transition:stroke-dashoffset .5s ease; }
+.runbox .ring .ctr { position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; font:700 var(--fs-5)/1 var(--sans);
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.runbox .ring .ctr span { font:700 var(--fs-4)/1 var(--sans); }
+.runbox .ring .ctr small { font:600 var(--fs-3)/1 var(--sans); color:var(--sub); margin-left:2px; letter-spacing:0; }
+.runbox .info { display:grid; gap:14px; min-width:0; }
+.runbox .top { display:grid; gap:10px; justify-items:start; }
+.runbox .dom { font:600 var(--fs-4)/1.3 var(--mono); overflow-wrap:anywhere; }
+.runbox .progress { background:var(--card); height:10px; }
+.runbox .stg { margin:0; font:500 var(--fs-3)/1.5 var(--sans); color:var(--ink); }
+#start #s4 .act { justify-content:flex-start; }
+#start #s4 .act .go.sec { background:var(--card); }
+
+/* 4단계 옆 카드 — 끝나면 받는 것 */
+#get4 { display:none; }
+#start[data-step="4"] #get4 { display:grid; }
+#start[data-step="4"] #pv, #start[data-step="4"] #learn { display:none; }
+
+/* ── 미리보기 카드(4열): 입력이 결과 카드가 되는 과정을 보여 준다 ─── */
+#pv { grid-column:9 / -1; grid-row:2; padding:24px; display:grid; gap:20px; align-content:start; min-width:0; }
+#pv .pv-h { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+#pv .pv-h > div { display:grid; gap:2px; }
+#pv .pv-h b { font:650 var(--fs-3)/1.4 var(--sans); }
+#pv .pv-h span { font-size:var(--fs-1); color:var(--sub); }
+#pv .pv-id { display:flex; align-items:center; gap:12px; min-width:0; background:var(--sunk);
+  border-radius:var(--r-in); padding:14px 16px; }
+#pv .pv-dom { font:600 var(--fs-3)/1.35 var(--mono); overflow-wrap:anywhere; min-width:0; }
+#pv .pv-dom.empty-dom { font:400 var(--fs-2)/1.5 var(--sans); color:var(--sub); }
+#pv .pls { display:flex; flex-wrap:wrap; gap:6px; }
+#pv .pl { display:inline-flex; align-items:center; height:24px; padding:0 10px; max-width:100%;
+  border-radius:var(--r-pill); background:var(--sunk); color:var(--sub);
+  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#pv .pl.ok { background:var(--accent-wash); color:var(--accent); }
+#pv .pl.off { color:var(--sub); }
+#pv .pv-k { display:grid; gap:8px; }
+#pv .pv-k > span { font:600 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#pv .pv-k > span b { color:var(--ink); font-variant-numeric:tabular-nums; }
+#pv .pv-k > .pv-none { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+/* 받는 것 — 1~3단계 아래 한 줄(4열 카드 넷), 4단계는 옆 카드 한 장. 같은 목록(LEARN)에서 그린다. */
+#learn { grid-column:1 / -1; grid-row:3; display:grid; gap:12px; }
+#start[data-step="3"] #learn { display:none; }
+#learn .lh { display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:8px 4px 0; }
+#learn .lh b { font:650 var(--fs-3)/1.4 var(--sans); }
+#learn .lh span { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
+#learn .lg { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--gap); }
+#learn .lc { padding:20px; display:grid; gap:14px; align-content:start; }
+#learn .lc b, #get4 .li b { font:650 var(--fs-2)/1.4 var(--sans); display:block; }
+#learn .lc span.d, #get4 .li span.d { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); display:block; }
+#get4 { grid-column:9 / -1; grid-row:2; padding:28px 24px; gap:20px; align-content:start; min-width:0; }
+#get4 h3 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
+#get4 .ls { display:grid; gap:18px; }
+#get4 .li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:start; }
+
+@media (prefers-reduced-motion: reduce) {
+  #start .progress i, .runbox .ring .val { transition:none; }
+}
+@media (max-width:999px) {
+  #start .step, #pv, #get4, #learn { grid-column:1 / -1; grid-row:auto; }
+  #start .rail { padding:16px; }
+  #learn .lg { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:640px) {
+  #start .step { padding:20px 16px; }
+  #start #s4 { padding:24px 16px; }
+  #pv, #get4 { padding:20px 16px; }
+  #learn .lg { grid-template-columns:minmax(0,1fr); }
+  #learn .lc { grid-template-columns:auto minmax(0,1fr); align-items:center; padding:16px; gap:12px; }
+  #start .st-head { flex-direction:column-reverse; gap:8px; }
+  #start .alt { grid-template-columns:minmax(0,1fr); }
+  /* 네 칸은 유지하고 지금 칸만 이름을 보인다 */
+  #start .rail ol { gap:8px; }
+  #start .rail li { gap:8px; grid-template-columns:auto; justify-content:start; }
+  #start .rail li.here { flex:3 1 0; grid-template-columns:auto minmax(0,1fr); }
+  #start .rail li:not(.here) .nm { display:none; }
+  .runbox { grid-template-columns:minmax(0,1fr); justify-items:start; gap:24px; }
+  .runbox .ring { width:152px; height:152px; }
+  .runbox .ring .ctr { font-size:var(--fs-4); }
+  .runbox .ring .ctr span { font-size:var(--fs-3); }
+}
 </style>
 
 <header><div class="wrap hbar">
@@ -71,20 +204,25 @@ code { font:500 .95em var(--mono); }
 </div></header>
 
 <main class="wrap">
-  <nav class="rail" aria-label="진행 단계">
+<div id="start" data-step="1">
+  <nav class="rail card" aria-label="진행 단계">
     <ol>
-      <li id="r1" class="here"><span class="n"><b>1</b></span>사이트 주소</li>
-      <li id="r2"><span class="n"><b>2</b></span>키워드</li>
-      <li id="r3"><span class="n"><b>3</b></span>서치콘솔 (선택)</li>
-      <li id="r4"><span class="n"><b>4</b></span>첫 분석</li>
+      <li id="r1" class="here"><span class="n"><b>1</b></span><span class="nm">사이트 주소</span></li>
+      <li id="r2"><span class="n"><b>2</b></span><span class="nm">키워드</span></li>
+      <li id="r3"><span class="n"><b>3</b></span><span class="nm">서치콘솔 (선택)</span></li>
+      <li id="r4"><span class="n"><b>4</b></span><span class="nm">첫 분석</span></li>
     </ol>
   </nav>
 
   <!-- 1 — 주소가 입구다. 서치콘솔 권한은 여기서 묻지 않는다. -->
-  <section class="step" id="s1">
-    <p class="eyebrow">1단계 · 사이트 주소</p>
-    <h2>어느 사이트를 볼까요?</h2>
-    <p class="sub">주소만 있으면 시작합니다. 서치콘솔 권한이 없어도 됩니다.</p>
+  <section class="step card" id="s1">
+    <div class="st-head">
+      <div>
+        <h2>어느 사이트를 볼까요?</h2>
+        <p class="sub">주소만 있으면 시작합니다. 서치콘솔 권한이 없어도 됩니다.</p>
+      </div>
+      <span class="badge muted st-no">1 / 4</span>
+    </div>
     <form class="form" id="f1" novalidate>
       <label class="field"><span>사이트 주소</span>
         <input type="text" id="url" inputmode="url" autocomplete="url" spellcheck="false"
@@ -95,21 +233,26 @@ code { font:500 .95em var(--mono); }
         <label class="field"><span>검색 결과 기준 (언어 · 지역)</span><select id="locale"></select></label>
       </div>
     </form>
+    <div class="alt" id="alt" hidden>
+      <div class="alt-t"><b>서치콘솔에 이미 등록한 사이트인가요?</b><span>목록에서 고르면 주소가 채워집니다.</span></div>
+      <button class="go sec" type="button" id="pickgsc">사이트 고르기</button>
+      <div class="props" id="plist" hidden></div>
+    </div>
     <div class="act">
       <button class="go" id="next1" type="submit" form="f1">다음</button>
       <span class="msg" id="msg1"></span>
     </div>
-    <div class="alt" id="alt" hidden>
-      <button type="button" id="pickgsc">서치콘솔 사이트에서 고르기</button>
-      <div class="props" id="plist" hidden></div>
-    </div>
   </section>
 
   <!-- 2 — 무엇을 잴지. 홈페이지 제목에서 초안을 뽑아 두고 사람이 고친다. -->
-  <section class="step" id="s2" hidden>
-    <p class="eyebrow">2단계 · 키워드 · 경쟁사</p>
-    <h2>어떤 검색어에서 보이고 싶나요?</h2>
-    <p class="sub" id="sub2"></p>
+  <section class="step card" id="s2" hidden>
+    <div class="st-head">
+      <div>
+        <h2>어떤 검색어에서 보이고 싶나요?</h2>
+        <p class="sub" id="sub2"></p>
+      </div>
+      <span class="badge muted st-no">2 / 4</span>
+    </div>
     <div class="form">
       <label class="field"><span>씨앗 키워드 · 한 줄에 하나</span>
         <textarea id="seeds" rows="5" placeholder="예: 온라인 회계 프로그램&#10;소상공인 장부 앱"></textarea>
@@ -129,10 +272,14 @@ code { font:500 .95em var(--mono); }
   </section>
 
   <!-- 3 — 서치콘솔은 건너뛸 수 있는 한 걸음이다. 없어도 되는 것을 먼저 보여 준다. -->
-  <section class="step" id="s3" hidden>
-    <p class="eyebrow">3단계 · 서치콘솔 (선택)</p>
-    <h2>서치콘솔도 붙일까요?</h2>
-    <p class="sub">없어도 바로 시작합니다. 권한이 있으면 붙여 두세요. 실제 클릭 수가 더해집니다.</p>
+  <section class="step card" id="s3" hidden>
+    <div class="st-head">
+      <div>
+        <h2>서치콘솔도 붙일까요?</h2>
+        <p class="sub">없어도 바로 시작합니다. 권한이 있으면 붙여 두세요. 실제 클릭 수가 더해집니다.</p>
+      </div>
+      <span class="badge muted st-no">3 / 4</span>
+    </div>
     <div class="gain">
       <div class="now"><h3>지금 바로 되는 것</h3>
         <ul><li>키워드 순위 · 검색량</li><li>경쟁사가 가져가는 검색어</li>
@@ -150,21 +297,59 @@ code { font:500 .95em var(--mono); }
   </section>
 
   <!-- 4 — 첫 분석. 무슨 일이 일어나는 중인지 말한다(안 보이면 빈 대시보드만 보고 떠난다). -->
-  <section class="step" id="s4" hidden>
-    <p class="eyebrow">4단계 · 첫 분석</p>
-    <h2 id="h4">첫 분석을 시작했습니다</h2>
-    <p class="sub" id="sub4">몇 분 걸립니다. 창을 닫아도 계속 진행되고, 끝나면 대시보드에 결과가 쌓입니다.</p>
+  <section class="step card" id="s4" hidden>
+    <div class="st-head">
+      <div>
+        <h2 id="h4">첫 분석을 시작했습니다</h2>
+        <p class="sub" id="sub4">몇 분 걸립니다. 창을 닫아도 계속 진행되고, 끝나면 대시보드에 결과가 쌓입니다.</p>
+      </div>
+      <span class="badge muted st-no">4 / 4</span>
+    </div>
     <div class="runbox">
-      <div class="top"><span class="dom" id="dom4"></span>
-        <span class="badge run" id="badge4">진행 중</span></div>
-      <div class="progress"><i id="bar4"></i></div>
-      <p class="stg" id="stg4">수집을 준비합니다</p>
+      <div class="ring" role="img" aria-label="첫 분석 진행률">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="trk" cx="60" cy="60" r="52" fill="none" stroke-width="10"></circle>
+          <circle class="val" id="ring4" cx="60" cy="60" r="52" fill="none" stroke-width="10"
+                  stroke-linecap="round" stroke-dasharray="326.73" stroke-dashoffset="326.73"></circle>
+        </svg>
+        <div class="ctr" id="pct4"><span>시작</span></div>
+      </div>
+      <div class="info">
+        <div class="top"><span class="dom" id="dom4"></span>
+          <span class="badge run" id="badge4">진행 중</span></div>
+        <div class="progress"><i id="bar4"></i></div>
+        <p class="stg" id="stg4">수집을 준비합니다</p>
+      </div>
     </div>
     <div class="act">
-      <a class="go sec" id="open4" href="/">대시보드 열기</a>
-      <a class="go ghost" href="/">사이트 목록</a>
+      <a class="go" id="open4" href="/">대시보드 열기</a>
+      <a class="go sec" href="/">사이트 목록</a>
     </div>
   </section>
+
+  <!-- 미리보기 — 적는 대로 채워진다. -->
+  <aside class="card" id="pv" aria-label="입력 미리보기">
+    <div class="pv-h"><div><b>미리보기</b><span>적는 대로 여기에 채워집니다</span></div>
+      <span class="badge muted" id="pvStep">1 / 4</span></div>
+    <div class="pv-id" id="pvId"></div>
+    <div class="pls" id="pvPills"></div>
+    <div class="pv-k" id="pvSeeds"></div>
+    <div class="pv-k" id="pvComp"></div>
+    <p class="sr" id="pvSr" aria-live="polite"></p>
+  </aside>
+
+  <!-- 4단계 옆 — 끝나면 받는 것 -->
+  <aside class="card" id="get4" aria-label="끝나면 받는 것">
+    <h3>끝나면 받는 것</h3>
+    <div class="ls" id="get4List"></div>
+  </aside>
+
+  <!-- 1·2단계 아래 — 첫 분석이 채우는 것 -->
+  <section id="learn" aria-label="첫 분석이 채우는 것">
+    <div class="lh"><b>첫 분석이 끝나면 받는 것</b><span>몇 분 걸립니다. 창을 닫아도 계속 진행됩니다.</span></div>
+    <div class="lg" id="learnGrid"></div>
+  </section>
+</div>
 </main>
 
 <script>
@@ -187,10 +372,33 @@ const DRAFT = "sm-start";
 
 const S = { url: "", domain: "", type: "", locale: "", seeds: [], comp: [], property: "",
             reachable: true, title: "" };
+let CUR = 1;
 
 const hostOf = p => (p.startsWith("sc-domain:") ? p.slice(10)
   : (p.match(/^https?:\/\/([^/]+)/) || [, ""])[1]).toLowerCase().replace(/^www\./, "");
 const lines = v => [...new Set(String(v || "").split(/[\n,]/).map(s => s.trim()).filter(Boolean))];
+// 입력 도중의 주소를 도메인 모양으로만 다듬는다(등록 때는 서버가 다시 판정한다).
+const looseDom = v => String(v || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "")
+  .split(/[\/?#\s]/)[0].toLowerCase();
+// 이니셜 아바타 — 첫 글자와 두 색조 중 하나.
+const avatar = (s, cls) => {
+  const t = String(s || "").replace(/^sc-domain:/, "").replace(/^https?:\/\/(www\.)?/i, "");
+  const c = (t.match(/[0-9A-Za-z가-힣]/) || ["–"])[0].toUpperCase();
+  return '<span class="av' + (cls ? " " + cls : "") + (/\bi\b/.test(cls || "") || c.charCodeAt(0) % 2 ? "" : " i") +
+    '" aria-hidden="true">' + esc(c) + '</span>';
+};
+
+// 첫 분석이 채우는 것 — 아래 카드 넷과 4단계 옆 카드가 이 목록 한 벌에서 그려진다.
+const LEARN = [
+  ["키워드 순위", "검색어별 순위와 검색량을 잽니다."],
+  ["경쟁사 검색어", "경쟁사가 가져가는 검색어를 찾습니다."],
+  ["AI 답변 노출", "AI 답변에 내 사이트가 나오는지 봅니다."],
+  ["사이트 점검", "깨진 링크 · 페이지 점검 · 속도를 봅니다."],
+];
+const learnItem = (l, i, cls) => '<div class="' + cls + '">' + avatar(l[0], i % 2 ? "i" : "") +
+  '<div><b>' + esc(l[0]) + '</b><span class="d">' + esc(l[1]) + '</span></div></div>';
+$("learnGrid").innerHTML = LEARN.map((l, i) => learnItem(l, i, "card lc")).join("");
+$("get4List").innerHTML = LEARN.map((l, i) => learnItem(l, i, "li")).join("");
 
 TYPES.forEach(t => $("type").add(new Option(t[1], t[0])));
 LOCALES.forEach(l => $("locale").add(new Option(l[1], l[0])));
@@ -202,15 +410,48 @@ if (CARRY.seed_keywords) S.seeds = lines(CARRY.seed_keywords);
 if (CARRY.competitors_manual) S.comp = lines(CARRY.competitors_manual);
 if (CARRY.gsc_property) S.property = CARRY.gsc_property;
 
+// ── 미리보기 카드 — 입력이 결과 카드가 되는 과정 ────────────
+function renderPv(announce) {
+  $("pvStep").textContent = CUR + " / 4";
+  const dom = CUR === 1 ? looseDom($("url").value) : S.domain;
+  const seeds = CUR === 2 ? lines($("seeds").value) : S.seeds;
+  const comp = CUR === 2 ? lines($("comp").value) : S.comp;
+  const opt = id => { const o = $(id).selectedOptions[0]; return o ? o.text : ""; };
+  $("pvId").innerHTML = dom
+    ? avatar(dom, "lg") + '<span class="pv-dom">' + esc(dom) + '</span>'
+    : avatar("", "lg none") + '<span class="pv-dom empty-dom">사이트 주소를 적으면 여기에 나옵니다</span>';
+  let pills = '<span class="pl">' + esc(opt("type")) + '</span><span class="pl">' + esc(opt("locale")) + '</span>';
+  if (S.property) pills += '<span class="pl ok">서치콘솔 연결</span>';
+  else if (CUR >= 3) pills += '<span class="pl off">서치콘솔 없이</span>';
+  $("pvPills").innerHTML = pills;
+  $("pvSeeds").innerHTML = '<span>씨앗 키워드 <b>' + seeds.length + '</b>개</span>' +
+    (seeds.length
+      ? '<div class="pls">' + seeds.slice(0, 6).map(k => '<span class="pl ok" title="' + esc(k) + '">' + esc(k) + '</span>').join("") +
+        (seeds.length > 6 ? '<span class="pl">외 ' + (seeds.length - 6) + '개</span>' : "") + '</div>'
+      : '<span class="pv-none">2단계에서 정합니다</span>');
+  $("pvComp").innerHTML = '<span>경쟁사 <b>' + comp.length + '</b>곳</span>' +
+    (comp.length
+      ? '<div class="pls">' + comp.slice(0, 4).map(c => '<span class="pl">' + esc(c) + '</span>').join("") +
+        (comp.length > 4 ? '<span class="pl">외 ' + (comp.length - 4) + '곳</span>' : "") + '</div>'
+      : '<span class="pv-none">비워 두면 순위 결과에서 찾습니다</span>');
+  if (announce)
+    $("pvSr").textContent = CUR + "단계. " + (dom ? dom + ". " : "") + "씨앗 키워드 " + seeds.length + "개, 경쟁사 " + comp.length + "곳.";
+}
+
 // ── 걸음 전환 ─────────────────────────────────────────────
 function show(n) {
+  CUR = n;
+  $("start").dataset.step = n;
   for (let i = 1; i <= 4; i++) {
     $("s" + i).hidden = i !== n;
     $("r" + i).className = i < n ? "done" : i === n ? "here" : "";
+    if (i === n) $("r" + i).setAttribute("aria-current", "step");
+    else $("r" + i).removeAttribute("aria-current");
   }
   const f = { 1: "url", 2: "seeds" }[n];
   if (f) $(f).focus();
   window.scrollTo(0, 0);
+  renderPv(true);
 }
 document.querySelectorAll("[data-back]").forEach(b =>
   b.addEventListener("click", () => show(+b.dataset.back)));
@@ -231,6 +472,9 @@ async function post(path, body) {
 const why = e => e instanceof TypeError ? "서버에 연결하지 못했습니다. 새로고침한 뒤 다시 누르십시오." : esc(e.message);
 
 // ── 1 · 주소 ──────────────────────────────────────────────
+$("url").addEventListener("input", () => renderPv());
+$("type").addEventListener("change", () => renderPv());
+$("locale").addEventListener("change", () => renderPv());
 $("f1").addEventListener("submit", async ev => {
   ev.preventDefault();
   const raw = $("url").value.trim();
@@ -260,6 +504,9 @@ $("f1").addEventListener("submit", async ev => {
 
 // 1단계의 둘째 길 — 이미 서치콘솔을 연결해 둔 사람은 목록에서 고른다.
 if (GSC) $("alt").hidden = false;
+const propRow = (name, lv, extra) =>
+  '<label class="prop">' + extra + avatar(name) +
+  '<span class="pname">' + esc(name) + '</span><span class="lv">' + lv + '</span></label>';
 $("pickgsc").addEventListener("click", async () => {
   const box = $("plist");
   box.hidden = false;
@@ -272,8 +519,7 @@ $("pickgsc").addEventListener("click", async () => {
       return;
     }
     box.innerHTML = props.map(p =>
-      '<label class="prop"><input type="radio" name="gp" value="' + esc(p.property) + '">' +
-      '<span class="pname">' + esc(p.property) + '</span><span class="lv">' + LEVELS[p.level] + '</span></label>'
+      propRow(p.property, LEVELS[p.level], '<input type="radio" name="gp" value="' + esc(p.property) + '">')
     ).join("");
   } catch (e) {
     box.innerHTML = '<div class="empty err"><b>서치콘솔 사이트 목록을 가져오지 못했습니다</b><span>' +
@@ -286,6 +532,7 @@ $("plist").addEventListener("change", ev => {
   S.property = p;
   $("url").value = p.startsWith("sc-domain:") ? p.slice(10) : p;
   say("msg1", "주소를 채웠습니다. [다음]을 누르세요.", "ok");
+  renderPv();
 });
 
 let PROPS = null;
@@ -314,8 +561,10 @@ function count() {
   $("next2").disabled = !n;
   if (!$("msg2").classList.contains("err"))
     say("msg2", n ? "" : "씨앗 키워드를 하나 이상 적으면 다음으로 갑니다.");
+  renderPv();
 }
 $("seeds").addEventListener("input", count);
+$("comp").addEventListener("input", () => renderPv());
 $("next2").addEventListener("click", () => {
   S.seeds = lines($("seeds").value);
   S.comp = lines($("comp").value);
@@ -354,22 +603,26 @@ async function fill3() {
       '권한이 있는 다른 계정으로 연결하거나, 서치콘솔 없이 시작하세요.</span>' +
       '<div class="acts">' + connectBtn("다른 계정으로 연결", "go sec") + '</div></div>';
     S.property = "";
+    renderPv();
     return;
   }
   if (!ok.some(p => p.property === S.property)) S.property = ok[0].property;
   box.innerHTML = '<div class="props">' + ok.map(p =>
     '<label class="prop' + (p.property === S.property ? " on" : "") + '"><input type="radio" name="gsc" value="' +
-    esc(p.property) + '"' + (p.property === S.property ? " checked" : "") + '>' +
+    esc(p.property) + '"' + (p.property === S.property ? " checked" : "") + '>' + avatar(p.property) +
     '<span class="pname">' + esc(p.property) + '</span><span class="lv">' + LEVELS[p.level] + '</span></label>'
   ).join("") +
-    '<label class="prop"><input type="radio" name="gsc" value=""><span class="pname" style="font-family:var(--sans)">서치콘솔 없이 시작</span></label>' +
+    '<label class="prop"><input type="radio" name="gsc" value=""><span class="av none" aria-hidden="true">–</span>' +
+    '<span class="pname" style="font-family:var(--sans)">서치콘솔 없이 시작</span></label>' +
     '</div>';
+  renderPv();
 }
 $("gscbox").addEventListener("change", ev => {
   if (ev.target.name !== "gsc") return;
   S.property = ev.target.value;
   $("gscbox").querySelectorAll(".prop").forEach(l =>
     l.classList.toggle("on", l.querySelector("input").checked && !!S.property));
+  renderPv();
 });
 // 구글에 다녀오는 동안 적은 칸을 들고 있는다. 저장이 안 되는 브라우저면(사생활 창 등)
 // 돌아와서 1단계부터 다시 적을 뿐 — 막지 않는다.
@@ -394,6 +647,13 @@ $("go").addEventListener("click", async () => {
 });
 
 // ── 4 · 첫 분석 ───────────────────────────────────────────
+const RING = 326.73;                       // 2π × 52
+// 막대(#bar4)가 정본이고 링은 같은 값을 따라 그린다.
+function setProgress(p) {
+  $("bar4").style.width = p + "%";
+  $("ring4").style.strokeDashoffset = RING * (1 - p / 100);
+  $("pct4").innerHTML = p + '<small>%</small>';
+}
 function begin4(project) {
   $("dom4").textContent = S.domain;
   $("open4").href = "/d#" + encodeURIComponent(project);
@@ -406,7 +666,7 @@ function begin4(project) {
     if (s && s.last_run_at && !s.running) {
       const b = $("badge4");
       b.className = "badge ok"; b.textContent = "분석 완료";
-      $("bar4").style.width = "100%";
+      setProgress(100);
       $("stg4").textContent = s.last_ok === 0
         ? "끝났습니다. 몇몇 단계는 실패했습니다 — 대시보드 위쪽에 이유가 있습니다."
         : "끝났습니다. 대시보드에서 결과를 보세요.";
@@ -420,7 +680,7 @@ function begin4(project) {
     if (s) {
       const t = s.stage && (STAGES[s.stage] || {}).t;
       if (t) $("stg4").textContent = t;
-      if (s.pct) $("bar4").style.width = Math.max(6, s.pct) + "%";
+      if (s.pct) setProgress(Math.max(6, Math.round(s.pct)));
     }
     setTimeout(tick, 5000);
   }
@@ -429,6 +689,7 @@ function begin4(project) {
 
 // 서치콘솔 연결에서 돌아왔으면 적어 둔 것으로 3단계에 선다.
 (function () {
+  renderPv();
   let d = null;
   try { d = JSON.parse(sessionStorage.getItem(DRAFT) || "null"); sessionStorage.removeItem(DRAFT); } catch (e) {}
   if (!d || !d.domain) return;

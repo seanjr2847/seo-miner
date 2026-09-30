@@ -9,18 +9,80 @@
 </script>
 
 <style>
-/* 심사 표 — 행 하나가 판정 단위(정규화한 검색어)다. 표는 면 카드 안에 서고(셸의 .tw 를
-   카드 면으로 세운다), 행 사이는 셸의 --line 이다. 체크 열은 좁게, 검색어 열이 넓게.
-   커서 행(키보드 j/k)은 배경으로만 표시하고, 고른 행은 체크박스가 말한다. */
-#triage .tw { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
-  padding:14px 12px 8px; }
+/* 심사 화면은 카드 격자다. 위에서 아래로: 현황(12) → 큐(8, 이 화면의 일이 여기서 일어난다) +
+   옆 분해(4). 큐만 커서 행·채운 주 버튼을 갖고, 나머지는 면 색조로 조용히 선다.
+   새 클래스는 전부 #triage-sec 아래로 스코프한다. */
+#tr-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:var(--gap);
+  align-items:start; }
+#tr-grid[hidden] { display:none; }
+#tr-grid > .trstat { grid-column:1 / -1; }
+#tr-grid > .trq { grid-column:span 8; }
+#tr-grid > .trside { grid-column:span 4; display:flex; flex-direction:column; gap:var(--gap);
+  position:sticky; top:var(--gap); }
+#tr-grid > .trside[hidden] { display:none; }
+#tr-grid.solo > .trq { grid-column:1 / -1; }
+#tr-grid .card + .card { margin-top:0; }
+/* 레일이 붙는 1000~1179px 는 본문이 720~900px 다 — 8+4 면 큐 표가 ~500px 라 클릭/노출·점수 열이 밀려난다. */
+@media (max-width:1179px) {
+  #tr-grid > .trq, #tr-grid > .trside { grid-column:1 / -1; }
+  #tr-grid > .trside { position:static; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #tr-grid > .trside > [hidden] { display:none; }
+}
+@media (max-width:640px) { #tr-grid > .trside { grid-template-columns:minmax(0,1fr); } }
+
+/* 카드 머리 한 벌 — 제목(16px 650)·보조 한 줄(12px 이상)·우측 도구. */
+#triage-sec .trh { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:var(--sp-3) var(--sp-4); flex-wrap:wrap; margin:0 0 var(--sp-4); }
+#triage-sec .trh > div:first-child { min-width:0; flex:1 1 220px; }
+#triage-sec .trh h2 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
+#triage-sec .trsub { margin:2px 0 0; font:400 var(--fs-2)/1.55 var(--sans); color:var(--sub); }
+#triage-sec .trsub b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+#triage-sec .trh .tools { margin:0; flex:0 1 auto; }
+#tr-counts b { color:var(--ink); font-weight:600; }
+
+/* 현황 — 링 하나(가린 비율)와 판정 네 칸. 네 칸은 숫자이자 거르개다. */
+#triage-sec .trstatbody { display:flex; align-items:center; gap:var(--sp-5) 32px; flex-wrap:wrap; }
+#triage-sec .trring { display:flex; align-items:center; gap:var(--sp-4); flex:0 0 auto; }
+#triage-sec .trring p { margin:0; font:400 var(--fs-2)/1.5 var(--sans); color:var(--sub); }
+#triage-sec .trring p b { display:block; font:700 var(--fs-4)/1.3 var(--sans); color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+#triage-sec .trtabs { flex:1 1 440px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:var(--sp-3); }
+#triage-sec .trtab { display:flex; flex-direction:column; align-items:flex-start; gap:2px;
+  min-height:var(--btn-h); padding:14px 16px; border:0; border-radius:var(--r-in);
+  background:var(--sunk); color:var(--sub); font:500 var(--fs-2)/1.3 var(--sans); text-align:left;
+  cursor:pointer; transition:background .12s, color .12s; }
+#triage-sec .trtab:hover { background:var(--accent-wash); }
+#triage-sec .trtab .l { display:inline-flex; align-items:center; gap:8px; font:600 var(--fs-2)/1.3 var(--sans);
+  color:var(--ink); }
+#triage-sec .trtab .l::before { content:""; flex:none; width:8px; height:8px; border-radius:50%;
+  background:var(--dot, var(--mute)); }
+#triage-sec .trtab .v { font:700 var(--fs-5)/1.2 var(--sans); font-variant-numeric:tabular-nums;
+  color:var(--ink); margin-top:4px; }
+#triage-sec .trtab .p { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; }
+#triage-sec .trtab[data-v=""] { --dot:var(--warn); }
+#triage-sec .trtab[data-v=""] .v.left { color:var(--warn); }
+#triage-sec .trtab[data-v="work"] { --dot:var(--accent); }
+#triage-sec .trtab[data-v="hold"] { --dot:var(--info); }
+#triage-sec .trtab[data-v="irrelevant"] { --dot:var(--mute); }
+#triage-sec .trtab[aria-pressed="true"] { background:var(--accent-wash); }
+#triage-sec .trtab[aria-pressed="true"] .l { color:var(--accent); }
+#triage-sec .trtab[aria-pressed="true"] .p::before { content:"보는 중 · "; color:var(--accent); font-weight:600; }
+@media (max-width:760px) {
+  #triage-sec .trtabs { grid-template-columns:repeat(2,minmax(0,1fr)); flex-basis:100%; }
+}
+
+/* 큐 — 표는 카드 면 위에 바로 선다(셸의 .tw 를 카드 면으로 또 세우지 않는다).
+   행 사이는 --line, 체크 열은 좁게, 검색어 열이 넓게. 커서 행(j/k)은 배경으로만 표시하고,
+   고른 행은 체크박스가 말한다. */
+#triage .tw { background:transparent; border-radius:0; box-shadow:none; padding:0; }
 #triage .trtable td:first-child, #triage .trtable th:first-child { width:32px; padding:0 0 0 4px; }
-/* 검색어 열이 1120px 에서 양 끝으로 벌어지지 않게 — 넓어져도 520px, 좁아져도 200px. */
+/* 검색어 열이 넓은 화면에서 양 끝으로 벌어지지 않게 — 넓어져도 520px, 좁아져도 200px. */
 #triage .trtable th:nth-child(2), #triage .trtable td:nth-child(2) { width:44%; min-width:200px; max-width:520px; }
 /* 체크박스 자체(13×13)만 눌려서 모바일 탭이 자주 빗나갔다 — label 이 셀 전체
-   (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(32px)를 넘지 않는다. 행 클릭은
-   따로 없어 충돌이 없다. 셸의 label 여백(위 12px)은 지우고, 윗여백은 옆 칸(td 14px)에
-   맞춰 첫 줄 가운데에 온다 — 검색어가 두 줄이어도 첫 줄에 붙는다. */
+   (행 높이만큼)를 눌리는 자리로 넓힌다. 폭은 열 너비(32px)를 넘지 않는다. 셸의 label
+   여백(위 12px)은 지우고, 윗여백은 옆 칸(td 14px)에 맞춰 첫 줄 가운데에 온다. */
 #triage .trtable td:first-child .trchk { display:flex; align-items:flex-start;
   justify-content:center; min-height:44px; margin:0; padding-top:16px; cursor:pointer; }
 #triage .trtable td { vertical-align:top; }
@@ -41,22 +103,27 @@
 #triage .trvar { color:var(--sub); font-size:var(--fs-1); margin-left:6px; }
 #triage .trkinds { display:flex; flex-wrap:wrap; gap:4px; }
 #triage .trbrand { color:var(--warn); background:var(--warn-wash); margin-left:8px; }
+/* 점수 앞 색점 — 우선순위를 훑어 읽는 자리. 값은 그대로 옆에 있다(색만으로 말하지 않는다). */
+#triage .trdot { display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%;
+  background:var(--mute); vertical-align:1px; }
+#triage .trdot.t1 { background:var(--accent); }
+#triage .trdot.t2 { background:color-mix(in srgb, var(--accent) 45%, var(--card)); }
 /* 일괄 판정 바 — 늘 선다(키보드 안내가 여기 있다). 판정 버튼 셋은 셸의 .go 와 같은 높이. */
 #triage .trbar { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; margin:0 0 var(--sp-4);
   min-height:var(--btn-h); }
 #triage .trbar .n { color:var(--sub); font-size:var(--fs-2); }
+#triage .trbar .n:nth-of-type(1) { flex:1 1 200px; }
 #triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-2);
   min-height:var(--btn-h); margin:0; color:var(--ink); }   /* 「전부」 체크는 줄이 아니라 이 라벨로 누른다 — 버튼과 같은 높이 */
 #triage .trbar input[type=checkbox], #triage .trtable input[type=checkbox] { width:auto; margin:0; }
-#triage kbd { font:600 var(--fs-1)/1 var(--sans); color:var(--sub); background:var(--card);
-  box-shadow:var(--shadow); border-radius:6px; padding:4px 7px; margin:0 1px; }
-#triage .go kbd { color:inherit; background:transparent; box-shadow:none; font-weight:500; }
-#tr-counts b { color:var(--ink); font-weight:600; }
+#triage kbd { font:600 var(--fs-1)/1 var(--sans); color:var(--sub); background:var(--sunk);
+  border-radius:6px; padding:4px 7px; margin:0 1px; }
+#triage .go kbd { color:inherit; background:transparent; font-weight:500; }
 /* 키보드 안내는 키보드가 있을 법한 기기에서만 — 터치 화면에서는 누를 수 없는 지시가 된다. */
 #triage .trtouch { display:none; }
 /* 좁은 화면도 같이 건다 — hover 가 있는 390px 창에서 누를 수 없는 j/k 안내가 섰다(셸의 --btn-h 와 같은 조건). */
 @media (hover:none), (max-width:560px) { #triage .trkey { display:none; } #triage .trtouch { display:inline; }
-  /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수(「미판정 110」)와 같은 숫자로 읽혔다. */
+  /* 버튼 속 단축키 숫자도 누를 수 없는 지시다 — 옆 개수와 같은 숫자로 읽혔다. */
   #triage .go kbd { display:none; } }
 /* 숫자 칸은 쪼개지 않는다 — 「44 / 4,64」처럼 한 값이 두 줄로 갈렸다. 등폭이 아니라
    Pretendard 의 tabular-nums 다(셸의 td.num 등폭을 되돌린다). */
@@ -68,25 +135,65 @@
 /* 고른 뒤 판정 버튼 — 좁은 화면에서는 표를 내려가면 위 판정 바가 화면 밖으로 나갔다.
    한 줄이라도 고르면 같은 버튼을 화면 아래에 붙여 둔다. 위 판정 바는 그대로 두어
    고르는 순간 표가 밀려 올라가지 않는다. */
-#triage .trdock { display:none; }
+#triage .trdock, #triage .trkm { display:none; }
+#triage .trkm { flex-wrap:wrap; gap:4px; margin-top:6px; }
 @media (max-width:560px) {
-  #triage .trtable th:nth-child(5), #triage .trtable td:nth-child(5) { display:none; }
+  #triage .trtable th:nth-child(n+3):nth-child(-n+5), #triage .trtable td:nth-child(n+3):nth-child(-n+5) { display:none; }
+  #triage .trkm { display:flex; }
   #triage .trperf { display:block; }
   #triage .trdock { display:flex; align-items:center; gap:10px; position:fixed; left:0; right:0;
     bottom:0; z-index:50; padding:8px 16px calc(8px + env(safe-area-inset-bottom));
     background:var(--card); box-shadow:var(--shadow); }
   #triage .trdock .n { color:var(--sub); font-size:var(--fs-2); margin-right:auto; }
-  #triage:has(.trdock) { padding-bottom:calc(var(--btn-h) + 24px); }
+  #triage-sec:has(.trdock) { padding-bottom:calc(var(--btn-h) + 24px); }
 }
+
+/* 종류 분해 — 어떤 진단에 몇 줄이 걸렸나. 한 줄이 곧 거르개(누르면 그 종류만, 다시 누르면 해제). */
+#tr-kinds .trklist { display:flex; flex-direction:column; gap:2px; max-height:360px; overflow:auto;
+  margin:0 -8px; }
+#tr-kinds .trk { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 12px; align-items:center;
+  width:100%; padding:10px 8px; border:0; border-radius:var(--r-in); background:transparent;
+  color:var(--ink); font:500 var(--fs-2)/1.35 var(--sans); text-align:left; cursor:pointer; }
+#tr-kinds .trk:hover { background:var(--sunk); }
+#tr-kinds .trk .kn { color:var(--sub); font-variant-numeric:tabular-nums; font-weight:600; }
+#tr-kinds .trk .kb { grid-column:1 / -1; height:6px; border-radius:var(--r-pill);
+  background:var(--accent-wash); overflow:hidden; }
+#tr-kinds .trk .kb i { display:block; height:100%; border-radius:var(--r-pill); background:var(--accent); }
+#tr-kinds .trk[aria-pressed="true"] { background:var(--accent-wash); }
+#tr-kinds .trk[aria-pressed="true"] .kl { color:var(--accent); font-weight:650; }
+#tr-kinds .trk[aria-pressed="true"] .kb { background:var(--card); }
+
+/* 손 볼 곳 — 지금 보는 줄에서 뽑은 두 묶음. 고르기만 하고 판정은 사용자가 누른다. */
+#tr-fix .trfx { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3);
+  padding:12px 14px; border-radius:var(--r-in); background:var(--sunk); flex-wrap:wrap; }
+#tr-fix .trfx + .trfx { margin-top:var(--sp-2); }
+#tr-fix .trfx > div { min-width:0; flex:1 1 150px; }
+#tr-fix .trfx b { display:block; font:650 var(--fs-2)/1.4 var(--sans); font-variant-numeric:tabular-nums; }
+#tr-fix .trfx span { display:block; font:400 var(--fs-1)/1.45 var(--sans); color:var(--sub); }
+#tr-fix .trfx .go { flex:0 0 auto; }
 </style>
 
 <section id="triage-sec">
-  <div class="sh">
-    <h2>가릴 검색어</h2>
-    <p class="sub" id="tr-counts"></p>
-    <div class="tools" id="tr-tools"></div>
+  <div id="tr-grid" hidden>
+    <div class="card trstat" id="tr-stat">
+      <div class="trh">
+        <div><h2>심사 현황</h2><p class="trsub" id="tr-counts"></p></div>
+        <div id="tr-start"></div>
+      </div>
+      <div class="trstatbody" id="tr-statbody"></div>
+    </div>
+    <div class="card trq" id="tr-q">
+      <div class="trh">
+        <div><h2>검색어 심사</h2><p class="trsub" id="tr-qsub"></p></div>
+        <div class="tools" id="tr-tools"></div>
+      </div>
+      <div id="triage"></div>
+    </div>
+    <div class="trside">
+      <div class="card" id="tr-kinds"></div>
+      <div class="card" id="tr-fix" hidden></div>
+    </div>
   </div>
-  <div id="triage"></div>
 </section>
 
 <script>
@@ -103,6 +210,7 @@ const TR_DONE = {irrelevant: "무관으로 뺐습니다. 다음 측정부터 안
                  hold: "보류했습니다. 측정은 계속하고 기회에는 안 올립니다.",
                  work: "작업으로 보냈습니다. [개요]의 기회에 있습니다.",
                  "": "미판정으로 되돌렸습니다."};
+const TR_FILTER_LABEL = v => (TR_FILTER_OPT.find(o => o[0] === v) || ["", ""])[1];
 
 VIEW("triage", function (d) {
   TR_PROJECT = (d.project && d.project.name) || "";
@@ -114,36 +222,35 @@ async function TR_fetch() {
   if (READONLY || !TR_PROJECT) return;
   const res = await fetch("/api/triage?project=" + encodeURIComponent(TR_PROJECT));
   if (!res.ok) {
+    // 오류는 큐 카드 안에서 말한다 — 나머지 카드는 숫자가 없어 접는다.
+    $("tr-grid").hidden = false; $("tr-grid").classList.add("solo");
+    for (const id of ["tr-stat"]) $(id).hidden = true;
+    document.querySelector("#tr-grid > .trside").hidden = true;
     $("triage").innerHTML = `<div class="empty err"><b>심사 목록을 불러오지 못했습니다</b>
       <p>[화면 다시 불러오기] 뒤 다시 하면 됩니다.</p></div>`;
     return;
   }
   const t = await res.json();
   TR_ROWS = t.rows || [];
+  // 행이 하나도 없으면 숫자 카드는 0 만 말한다 — 큐 카드의 빈 상태 한 줄만 남긴다.
+  const none = !TR_ROWS.length;
+  $("tr-grid").hidden = false; $("tr-grid").classList.toggle("solo", none);
+  $("tr-stat").hidden = none;
+  document.querySelector("#tr-grid > .trside").hidden = none;
   TR_counts(t.counts || {});
   TR_tools();
   TR_draw();
-  TR_nextStep(t.counts || {});
+  TR_nextStep();
 }
 
-// 다른 11 화면은 전부 머리에 [다음 행동] 띠가 선다 — 이 화면만 없었다
-// (20-view-01-심사-mobile.png). 셸의 nextStep 은 이 화면을 특별히 빼지 않는다
-// (dashboard.html 은 박제본에서 화면째로 SM.drop 할 뿐 — 판정은 종이에서 못 누르니까다)
-// — 그냥 부른 적이 없었다. 판정 바가 행동 그 자체라 버튼은 안 두고 개수만 짧게 말한다.
-function TR_nextStep(c) {
-  if (!window.nextStep) return;
-  const none = c.none || 0;
-  nextStep("triage", none
-    // 키 안내(1·2·3)는 판정 바가 기기에 맞춰 따로 말한다 — 여기선 터치에도 참인 말만.
-    ? `<p>미판정 <b>${none}</b>건이 남았습니다. 줄을 고르고 판정 버튼을 누릅니다.</p>`
-    : "");
-}
+// 셸의 [다음 행동] 띠는 이 화면에서 걷는다 — 남은 건수·다음 걸음은 현황 카드가 말하고
+// [심사 시작]이 그 걸음이다. 예전 띠가 남아 있으면 지운다.
+function TR_nextStep() { if (window.nextStep) nextStep("triage", ""); }
 
 let TR_COUNTS = {};
-function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); }
+function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); TR_stat(); }
 // 판정별 전체 수는 거르기와 무관하게 그대로 둔다(요약이 거짓말하면 안 된다) — 검색·종류
-// 필터가 걸려 있을 때만 뒤에 보이는 줄 수를 덧붙인다. 검색창에 찾는 말을 넣어도
-// 머리글이 안 바뀌었다(72_review_search_ai.png).
+// 필터가 걸려 있을 때만 뒤에 보이는 줄 수를 덧붙인다.
 function TR_renderCounts() {
   const c = TR_COUNTS;
   const narrowed = TR_Q.trim() || TR_KIND;
@@ -151,6 +258,35 @@ function TR_renderCounts() {
   $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 검색어 <b>${c.work || 0}</b>` +
     ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
     (narrowed ? ` · 보이는 줄 <b>${TR_filtered().length}</b>` : "");
+}
+
+// 현황 카드 — 링(가린 비율) + 판정 네 칸. 숫자가 바뀔 때만 다시 그린다(링은 캔버스라 비싸다).
+function TR_stat() {
+  const c = TR_COUNTS, none = c.none || 0;
+  const total = none + (c.work || 0) + (c.hold || 0) + (c.irrelevant || 0);
+  const done = total - none;
+  const ring = window.chDonut ? chDonut([
+    {label: "작업", value: c.work || 0, on: true},
+    {label: "보류", value: c.hold || 0, on: true},
+    {label: "무관", value: c.irrelevant || 0, on: true},
+    {label: "미판정", value: none}], {width: 132, unit: "건"}) : "";
+  const pct = n => total ? Math.round(n / total * 100) + "%" : "0%";
+  $("tr-statbody").innerHTML = `
+    <div class="trring">${ring}
+      <p><b>${none ? `${num(none)}건 남음` : "다 가렸습니다"}</b>전체 ${num(total)}건 중 ${num(done)}건(${pct(done)})을<br>가렸습니다</p></div>
+    <div class="trtabs" role="group" aria-label="판정별 검색어 수 — 누르면 그 판정만 봅니다">${TR_FILTER_OPT.map(([v, l]) => {
+      const n = v === "" ? none : (c[v] || 0);
+      return `<button type="button" class="trtab" data-v="${v}" aria-pressed="${v === TR_FILTER}" onclick="TR_setFilter('${v}')">
+        <span class="l">${l}</span><span class="v${v === "" && n ? " left" : ""}">${num(n)}</span>
+        <span class="p">전체의 ${pct(n)}</span></button>`;
+    }).join("")}</div>`;
+  // 주 버튼 — 남은 게 있을 때만. 누르면 첫 미판정 줄로 커서를 옮긴다.
+  $("tr-start").innerHTML = none && !READONLY
+    ? `<button type="button" class="go" onclick="TR_start()">남은 ${num(none)}건 심사 시작</button>` : "";
+}
+function TR_tabs() {
+  document.querySelectorAll("#tr-statbody .trtab").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.v === TR_FILTER)));
 }
 
 function TR_filtered() {
@@ -161,22 +297,55 @@ function TR_filtered() {
 }
 
 // 도구줄은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이 포커스를 잃는다.
-function TR_tools() {
+function TR_kindCounts() {
   const kinds = {};
   for (const r of TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER))
     for (const k of r.kinds) kinds[k] = (kinds[k] || 0) + 1;
-  $("tr-tools").innerHTML =
-    `<select onchange="TR_setFilter(this.value)" aria-label="판정으로 거르기">${TR_FILTER_OPT.map(([v, l]) =>
-        `<option value="${v}"${v === TR_FILTER ? " selected" : ""}>${l}</option>`).join("")}</select>
-     <select onchange="TR_setKind(this.value)" aria-label="종류로 거르기"><option value="">모든 종류</option>${Object.keys(kinds).map(k =>
-        `<option value="${esc(k)}"${k === TR_KIND ? " selected" : ""}>${esc((window.KIND_LABELS || {})[k] || k)} (${kinds[k]})</option>`).join("")}</select>
-     <input type="search" value="${esc(TR_Q)}" oninput="TR_find(this.value)" placeholder="검색어로 찾기" aria-label="검색어로 찾기">`;
+  return kinds;
 }
-function TR_setFilter(v) { TR_FILTER = v; TR_KIND = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tools(); TR_draw(); }
-function TR_setKind(v) { TR_KIND = v; TR_CUR = 0; TR_draw(); }
+const TR_kindLabel = k => (window.KIND_LABELS || {})[k] || k;
+function TR_tools() {
+  const kinds = TR_kindCounts();
+  $("tr-tools").innerHTML =
+    `<select onchange="TR_setKind(this.value)" aria-label="종류로 거르기"><option value="">모든 종류</option>${Object.keys(kinds).map(k =>
+        `<option value="${esc(k)}"${k === TR_KIND ? " selected" : ""}>${esc(TR_kindLabel(k))} (${kinds[k]})</option>`).join("")}</select>
+     <input type="search" value="${esc(TR_Q)}" oninput="TR_find(this.value)" placeholder="검색어로 찾기" aria-label="검색어로 찾기">`;
+  TR_kinds(kinds);
+}
+// 종류 분해 카드 — 같은 개수를 select 도 갖는다(좁은 화면·키보드 폴백).
+function TR_kinds(kinds) {
+  kinds = kinds || TR_kindCounts();
+  const keys = Object.keys(kinds).sort((a, b) => kinds[b] - kinds[a]);
+  const mx = Math.max(1, ...keys.map(k => kinds[k]));
+  const rows = TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER).length;
+  $("tr-kinds").innerHTML = `<div class="trh"><div><h2>어떤 진단에 걸렸나</h2>
+      <p class="trsub">${TR_FILTER_LABEL(TR_FILTER)} ${num(rows)}줄 기준. 누르면 그 종류만 봅니다.</p></div></div>` +
+    (keys.length
+      ? `<div class="trklist" role="group" aria-label="종류별 줄 수">${keys.map(k => `
+        <button type="button" class="trk" data-k="${esc(k)}" aria-pressed="${k === TR_KIND}" onclick="TR_setKind(TR_KIND === this.dataset.k ? '' : this.dataset.k)">
+          <span class="kl">${esc(TR_kindLabel(k))}</span><span class="kn">${num(kinds[k])}줄</span>
+          <span class="kb"><i style="width:${Math.max(4, Math.round(kinds[k] / mx * 100))}%"></i></span></button>`).join("")}</div>`
+      : `<div class="empty"><b>걸린 종류가 없습니다</b><p>이 판정에 해당하는 검색어가 없습니다.</p></div>`);
+}
+function TR_setFilter(v) { TR_FILTER = v; TR_KIND = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tabs(); TR_tools(); TR_draw(); }
+function TR_setKind(v) {
+  TR_KIND = v; TR_CUR = 0;
+  const sel = document.querySelector("#tr-tools select");
+  if (sel) sel.value = v;
+  document.querySelectorAll("#tr-kinds .trk").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === v)));
+  TR_draw();
+}
 function TR_find(v) { TR_Q = v; TR_CUR = 0; TR_draw(); }
 
+// 주 버튼 — 미판정으로 돌아가 첫 줄에 커서를 두고 큐로 내려간다. 새 행동은 없다(커서·스크롤뿐).
+function TR_start() {
+  if (TR_FILTER !== "") TR_setFilter(""); else { TR_CUR = 0; TR_draw(); }
+  $("tr-q").scrollIntoView({block: "start"});
+}
+
 const TR_UNDO = () => TR_FILTER && !READONLY;
+// 점수 색점 — 70 이상 진함, 40 이상 중간, 그 아래 옅음(점수는 100점 만점이다).
+const TR_tier = s => s == null ? "" : s >= 70 ? "t1" : s >= 40 ? "t2" : "t3";
 function TR_row(r, i) {
   const on = TR_SEL.has(r.key);
   const k = esc(r.key);
@@ -186,18 +355,40 @@ function TR_row(r, i) {
     <td><span class="trkw">${esc(r.label)}</span>${r.variants > 1
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
       ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}
-      <div class="trperf">클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span></div></td>
+      <div class="trperf">${r.score == null ? "" : `점수 <span class="v">${Math.round(r.score)}</span> · `}클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span></div>
+      <div class="trkm">${r.kinds.map((kd, j) => `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
       `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
-    <td class="num">${r.score == null ? "—" : Math.round(r.score)}</td>
+    <td class="num">${r.score == null ? "—" : `<span class="trdot ${TR_tier(r.score)}" aria-hidden="true"></span>${Math.round(r.score)}`}</td>
     <td class="num">${num(r.clicks)} /&nbsp;${num(r.impressions)}</td>
     ${TR_UNDO() ? `<td><button class="go sm sec" onclick="TR_set([this.closest('tr').dataset.key], '')">미판정으로 되돌리기</button></td>` : ""}
   </tr>`;
 }
 
+// 손 볼 곳 — 지금 보는 줄에서 뽑는다(새 필드 없음). 0건이면 카드째 접는다.
+const TR_FIX = {
+  brand: {test: r => r.brand, head: n => `브랜드 표기 ${n}건`, note: "사이트 이름이 들어 있어 보통 보류합니다.", btn: "브랜드 줄 고르기"},
+  zero: {test: r => (r.impressions || 0) > 0 && !(r.clicks || 0), head: n => `노출은 있고 클릭은 0인 줄 ${n}건`,
+         note: "보여도 눌리지 않는 검색어입니다.", btn: "이 줄 고르기"}};
+function TR_fix() {
+  const list = TR_filtered(), el = $("tr-fix");
+  const items = READONLY ? [] : Object.entries(TR_FIX).map(([k, f]) => [k, f, list.filter(f.test).length]).filter(x => x[2]);
+  el.hidden = !items.length;
+  if (!items.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="trh"><div><h2>손 볼 곳</h2><p class="trsub">보이는 줄에서 모았습니다. 고른 뒤 판정은 직접 누릅니다.</p></div></div>` +
+    items.map(([k, f, n]) => `<div class="trfx"><div><b>${f.head(n)}</b><span>${f.note}</span></div>
+      <button type="button" class="go sm sec" onclick="TR_pick('${k}')">${f.btn}</button></div>`).join("");
+}
+function TR_pick(k) {
+  TR_SEL = new Set(TR_filtered().filter(TR_FIX[k].test).map(r => r.key));
+  TR_draw();
+}
+
 function TR_draw() {
   TR_renderCounts();
   const list = TR_filtered();
+  $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} 검색어 <b>${num(list.length)}</b>줄을 보고 있습니다.`;
+  TR_fix();
   if (!TR_ROWS.length)
     return $("triage").innerHTML = `<div class="empty"><b>심사할 검색어가 없습니다</b>
       <p>기회 분석을 돌리면 측정이 물어온 검색어가 여기로 옵니다.</p></div>`;
@@ -219,7 +410,8 @@ function TR_draw() {
     </div>` + (n ? `<div class="trdock"><span class="n">선택 ${n}건</span>${TR_btns(n)}</div>` : "");
   $("triage").innerHTML = bar + table(
     ["", "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", "종류?이 검색어에 걸린 진단",
-     ">점수?걸린 기회 중 가장 높은 점수", ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
+     ">점수?걸린 기회 중 가장 높은 점수(100점 만점). 색점은 70 이상 진함, 40 이상 중간, 그 아래 옅음",
+     ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
       .concat(TR_UNDO() ? [""] : []),   // 되돌리기 칸은 판정을 거를 때만 — 빈 칸도 폭을 먹는다
     list.map(TR_row), "")
     // 표가 길면(모바일에서 20줄 넘게 스크롤하면) 필터·판정 바로 돌아갈 길이 없었다
@@ -245,7 +437,7 @@ function TR_toTop() {
   const el = document.querySelector("#tr-tools input[type=search]");
   if (el) el.scrollIntoView({block: "center"});   // 부드럽게는 셸의 scroll-behavior 가 정한다
 }
-function TR_reset() { TR_FILTER = ""; TR_KIND = ""; TR_Q = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tools(); TR_draw(); }
+function TR_reset() { TR_FILTER = ""; TR_KIND = ""; TR_Q = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tabs(); TR_tools(); TR_draw(); }
 function TR_toggle(key, on) { if (on) TR_SEL.add(key); else TR_SEL.delete(key); TR_draw(); }
 function TR_all(on) { TR_SEL = new Set(on ? TR_filtered().map(r => r.key) : []); TR_draw(); }
 function TR_setSel(v) { if (TR_SEL.size) TR_set([...TR_SEL], v); }

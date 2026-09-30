@@ -6,99 +6,239 @@
 </script>
 
 <style>
-/* ── 깊이 로그(시그니처) ─────────────────────────────────── */
+/* ── 카드 격자 ───────────────────────────────────────────────
+   이 화면의 주 질문은 "1페이지 문턱에 걸린 검색어 중 무엇을 먼저 밀까"다. 그 답이 첫 화면에
+   그림(순위 사다리)과 이름(먼저 할 3개)으로 함께 보이게 짠다. 새 클래스는 전부 #view-keywords
+   안에서만 산다. 셸의 12열이 아니라 이 화면이 스스로 세운 12열이다. */
+#view-keywords > section { margin-top:var(--gap); }
+#view-keywords .kwgrid { display:grid; grid-template-columns:repeat(12, minmax(0,1fr));
+  gap:var(--gap); align-items:stretch; }
+#view-keywords .kwgrid > .card, #view-keywords .kwside > .card, #view-keywords .kwkpis > .card { margin:0; }
+#view-keywords .kwkpis { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:var(--gap); }
+#view-keywords .kwkpis > .card { flex:1 1 240px; min-width:0; }
+#view-keywords .kwhero { grid-column:span 8; }
+#view-keywords .kwside { grid-column:span 4; display:flex; flex-direction:column; gap:var(--gap); min-width:0; }
+#view-keywords .kwside > .kwdonut { flex:1 1 auto; }
+#view-keywords .kwtbl { grid-column:1 / -1; }
+#view-keywords .kwdiv { grid-column:span 4; align-self:start; position:sticky; top:var(--gap); }
+#view-keywords .kwmvt { grid-column:span 8; }
+#view-keywords .kwmvt.wide { grid-column:1 / -1; }
+#view-keywords .kwgrid.nomv .kwdiv { display:none; }
+/* 비었으면 그림 자리 하나만 남는다 — KPI·먼저 할 3개·표는 그릴 것이 없다. */
+#view-keywords .kwgrid.kw0 .kwkpis, #view-keywords .kwgrid.kw0 .kwside,
+#view-keywords .kwgrid.kw0 .kwtbl, #view-keywords .kwgrid.kw0 .kwleg { display:none; }
+#view-keywords .kwgrid.kw0 .kwhero { grid-column:1 / -1; }
+
+/* 카드 머리 한 벌: 제목(16px 650) + 보조 설명(12px) + 오른쪽 도구 */
+#view-keywords .kwch { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:8px 16px; flex-wrap:wrap; margin:0 0 14px; }
+#view-keywords .kwch h2 { margin:0; }
+#view-keywords .kwch .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 0; }
+#view-keywords .kwsm { font:var(--micro); color:var(--mute); margin:3px 0 0;
+  font-variant-numeric:tabular-nums; }
+#view-keywords .kwsm:empty { display:none; }
+#view-keywords .kwd { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+/* 비교 기간(날짜 둘)은 카드 머리 오른쪽에 옅은 알약으로 선다. */
+#view-keywords #mv-eb { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  margin:0; border-radius:var(--r-pill); background:var(--sunk); color:var(--sub);
+  font:500 var(--fs-1)/1 var(--mono); letter-spacing:0; white-space:nowrap; }
+#view-keywords #mv-eb:empty { display:none; }
+
+/* ── KPI 세 장: 이 화면의 세 질문에만 답한다 ─────────────────── */
+#view-keywords .kwk { padding:20px 22px; display:flex; flex-direction:column; gap:0; }
+#view-keywords .kwkh { display:flex; align-items:center; justify-content:space-between; gap:8px;
+  min-height:24px; }
+#view-keywords .kwkt { font:600 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#view-keywords .kwkv { display:flex; align-items:baseline; flex-wrap:wrap; gap:0 8px; margin:10px 0 2px; }
+#view-keywords .kwkv b { font:700 var(--fs-5)/1.1 var(--sans); font-variant-numeric:tabular-nums;
+  letter-spacing:0; }
+#view-keywords .kwkv b.up { color:var(--up); }
+#view-keywords .kwkv b.dn { color:var(--dn); }
+#view-keywords .kwkv span { font:500 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#view-keywords .kwks { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:2px 0 0;
+  font-variant-numeric:tabular-nums; }
+#view-keywords .kwkz { margin-top:auto; padding-top:14px; }
+#view-keywords .kwkz svg { display:block; max-width:100%; height:32px; }
+#view-keywords .kwmeter { height:8px; border-radius:var(--r-pill); background:var(--sunk);
+  overflow:hidden; display:flex; }
+#view-keywords .kwmeter i { display:block; height:100%; }
+#view-keywords .kwmeter i.a { background:var(--accent); }
+#view-keywords .kwmeter i.w { background:var(--warn); }
+#view-keywords .kwmeter i + i { margin-left:2px; }
+
+/* ── 순위 사다리(이 화면의 시그니처) ─────────────────────────── */
+#view-keywords .kwhero { padding:22px 24px 16px; }
+#view-keywords .kwleg { margin:2px 0 0; }
+.kwleg i.dot { border-radius:50%; background:var(--accent); }
+.kwleg i.dot.w { background:var(--warn); }
+.kwleg i.bar { width:15px; height:6px; border-radius:3px; background:var(--warn); opacity:.38; }
+.kwleg i.zone { background:var(--accent-wash); }
 .log .lane:hover .lane-bg { fill:var(--sunk); }
 /* 레인을 누르면 아래 표의 그 줄이 펼쳐진다 — 그림에서 찍은 점과 할 일이 이어진다.
    칠하지 않은 배경 사각형(fill:none)은 기본값으로 포인터를 안 받으므로 여기서 연다. */
 .log .lane { cursor:pointer; }
 .log .lane-bg { pointer-events:all; }
-/* 행 라벨은 검색어(한글이 섞인 문장)다 — 셸의 `.log text` 가 등폭이라 한글이
-   폴백 서체로 떨어져 자간이 벌어졌다. 등폭은 옆의 숫자(.num)만 쓴다. */
+/* 행 라벨은 검색어(한글이 섞인 문장)다 — 등폭은 옆의 숫자(.num)만 쓴다. */
 .log .kw { font-size:var(--fs-1); fill:var(--ink); font-family:var(--sans); }
 .log .num { font-size:var(--fs-1); fill:var(--sub); }
 .log .track { stroke:var(--line); }
 .log .dist { stroke-linecap:round; }
-/* 눈금선 — 축 숫자만 있으면 15줄 아래에서 그 점이 몇 위인지 못 읽는다.
-   일별 추이(overview)의 .grid 와 같은 점선 언어를 세로로 쓴다. */
 .log .vgrid { stroke:var(--line); stroke-dasharray:2 4; }
+.log .logwrap { overflow:hidden; }
+#view-keywords .kwnone { font-size:var(--fs-2); color:var(--sub); margin:0; padding:8px 0; }
 @media (prefers-reduced-motion: no-preference) {
   .log .grow { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; }
 }
-/* 표는 그림의 각주가 아니라 이 화면의 할 일 목록이다 — 점수·근거·행동이 줄마다
-   붙으면서 여기가 답이 됐다. 그래서 그림과 같은 무게(.card)로 세운다.
-   가로로 넘치는 일은 셸의 table() 이 늘 두르는 .tw 가 맡는다 — 여기서 또 두르면
-   스크롤 상자가 둘 겹쳐 안쪽 표가 카드 테두리를 물고 잘린다. */
-/* 검색어는 낱말째로 읽는다 — 좁은 화면에서 "beta-site 검색어"가 하이픈 뒤에서 갈려
-   "beta- / site 검색어"로 읽혔다. 한글 어절도 같은 이유로 안 쪼갠다. 한 낱말이 칸보다 길면(긴 URL 같은 것)
-   그때만 낱말 안에서 끊는다(anywhere 는 칸을 최소 너비로 줄여 더 잘게 갈랐다). .kwcell 은 다른 화면도 쓰므로
-   이 화면의 두 표 안에서만 건다. */
+
+/* ── 먼저 할 3개 · 문턱 비중 ────────────────────────────────── */
+#view-keywords .kwtop { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
+  gap:8px; }
+#view-keywords .kwtop li { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:4px 12px;
+  align-items:center; padding:12px; border-radius:var(--r-in); background:var(--sunk); }
+#view-keywords .kwtop .q { font:600 var(--fs-2)/1.4 var(--sans); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+#view-keywords .kwtop .m { font:400 var(--fs-1)/1.45 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  margin-top:2px; }
+#view-keywords .kwtop .go { align-self:center; }
+#view-keywords .kwtop .kwsc { display:inline-flex; align-items:center; height:20px; padding:0 8px;
+  border-radius:var(--r-pill); background:var(--card); color:var(--ink);
+  font:650 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums; }
+#view-keywords .kwdn { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+#view-keywords .kwdn ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
+  gap:8px; font-size:var(--fs-2); }
+#view-keywords .kwdn li { display:flex; align-items:center; gap:8px; }
+#view-keywords .kwdn li b { font-variant-numeric:tabular-nums; }
+#view-keywords .kwdn i { width:10px; height:10px; border-radius:50%; flex:none; background:var(--accent); }
+#view-keywords .kwdn i.g { background:var(--mute); opacity:.55; }
+
+/* 이니셜 아바타 — 도메인·검색어 옆에서 스캔을 돕는다. 색은 구간이다(문턱=산화동, 1페이지 안=녹청). */
+#view-keywords .kwav { display:inline-flex; flex:none; align-items:center; justify-content:center;
+  width:28px; height:28px; border-radius:50%; font:650 var(--fs-1)/1 var(--sans);
+  background:var(--info-wash); color:var(--info); }
+#view-keywords .kwav.w { background:var(--warn-wash); color:var(--warn); }
+#view-keywords .kwav.a { background:var(--accent-wash); color:var(--accent); }
+#view-keywords .kwtop .kwav { width:32px; height:32px; }
+#view-keywords .kwl { display:flex; align-items:flex-start; gap:10px; }
+#view-keywords .kwm { min-width:0; flex:1; }
+/* 순위 알약 — 4~10위는 녹청, 11위 밖은 산화동. 색만으로 말하지 않는다: 1페이지까지 열이 옆에 있다. */
+#view-keywords .kwrk { display:inline-flex; align-items:center; justify-content:center; min-width:48px;
+  height:24px; padding:0 10px; border-radius:var(--r-pill); font:600 var(--fs-1)/1 var(--sans);
+  font-variant-numeric:tabular-nums; background:var(--accent-wash); color:var(--accent); }
+#view-keywords .kwrk.w { background:var(--warn-wash); color:var(--warn); }
+
+/* ── 표 ─────────────────────────────────────────────────────── */
+#view-keywords .kwtools { margin:0 0 6px; }
+#view-keywords .kwchips { display:flex; flex-wrap:wrap; gap:6px; }
+#view-keywords .kwchips .chip { margin:0; }
+#view-keywords .kwchips .chip b { font-variant-numeric:tabular-nums; }
+/* 검색어는 낱말째로 읽는다 — 이 화면의 두 표 안에서만 건다(.kwcell 은 다른 화면도 쓴다). */
 .kwtable .kwcell, #mv-list .kwcell { word-break:keep-all; overflow-wrap:break-word; }
-/* 검색어 자체는 아예 안 쪼갠다 — keep-all 은 한글 어절만 지키고 "beta-site" 의
-   하이픈 뒤는 그대로 갈랐다. 이름보다 칸이 좁으면 표가 자기 상자 안에서 가로로 민다. */
 .kwtable .kwq, #mv-list .kwq { white-space:nowrap; display:inline-block; max-width:420px;
   overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
-/* 표는 카드 안에 서고, 숫자 칸은 본문 서체의 자릿수 맞춤(tabular-nums)이다 — 등폭은 URL·날짜·식별자 몫. */
-.kwtable td.num, #mv-list td.num { font-family:var(--sans); }
-.kwtable .kwcell, #mv-list .kwcell { min-width:220px; }
-.kwtable { margin-top:var(--gap); }
-/* 범례는 그림 위에 선다 — 색이 무슨 뜻인지 모른 채로 그림을 먼저 읽게 두지 않는다.
-   부품은 셸의 .chleg 를 그대로 쓰고, 조각의 모양(점·막대·영역)만 여기서 준다. */
-.kwleg { margin:0 0 12px; }
-.kwleg i.dot { border-radius:50%; background:var(--accent); }
-.kwleg i.bar { width:15px; height:6px; border-radius:3px; background:var(--warn); opacity:.38; }
-.kwleg i.zone { background:var(--accent-wash); box-shadow:inset 0 0 0 1px var(--rule); }
-/* 목록이 무엇에 오염됐는지는 상태다 — 면의 색조(--sunk) 위에 배지 하나, 한 줄, 버튼 하나.
-   여태 이 자리에 산문 두 줄이 서 있어서 경고인지 설명인지 갈리지 않았다. */
+/* 숫자 칸은 본문 서체의 자릿수 맞춤(tabular-nums) — 등폭은 URL·날짜·식별자 몫. */
+.kwtable td.num, #mv-list td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
+.kwtable .kwcell, #mv-list .kwcell { min-width:240px; }
+.kwtable .tw, #mv-list .tw { margin-top:6px; }
+@media (min-width:561px) { #mv-list td.num { white-space:nowrap; } }
+/* 접힌 줄은 이름·종류·상태까지만 — 막대·근거 문장·GA4 배지는 펼쳐야 나온다. 줄마다 네다섯 줄이
+   서서 행 높이가 들쭉날쭉하고 표가 5,000px 로 길었다. */
+tr[data-kwq]:not([aria-expanded="true"]) .kwm .meter,
+tr[data-kwq]:not([aria-expanded="true"]) .kwm .why,
+tr[data-kwq]:not([aria-expanded="true"]) .kwm .gm { display:none; }
 .kwwarn { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
   font-size:var(--fs-2); color:var(--ink); background:var(--warn-wash);
-  border-radius:var(--r-card); padding:12px 20px; margin:var(--gap) 0 0; }
-/* 비교 기간은 눈썹에 선다 — 날짜뿐이라 등폭이 맞고, 없으면 자리를 안 차지한다. */
-#mv-eb { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:0;
-  white-space:nowrap; }
-.sh > .eyebrow:empty { display:none; }
-/* 그림은 최소 720px 다 — 390 에서는 눈금 왼쪽 끝만 남아 「평균 순위 → / 1」로 잘렸다.
-   잘린 그림은 정보가 아니라 고장으로 읽히므로, 좁은 화면에서는 표만 남긴다.
-   같은 값을 표가 전부 들고 있어서 잃는 것이 없다. */
-@media (max-width:640px) { .kwchart { display:none; } }
+  border-radius:var(--r-in); padding:10px 16px; margin:0 0 12px; }
 /* 표의 줄은 그 자체로 답이 아니다 — 눌러야 "어느 페이지를 뭘 고치나"가 나온다.
    눌러도 되는 줄임을 커서와 첫 칸의 표식으로 말한다(색만으로 말하지 않는다). */
 tr[data-kwq] { cursor:pointer; }
-/* 표식은 이름과 한 덩어리다 — 칸에 걸면 좁은 화면에서 화살표만 윗줄에 남는다. */
 tr[data-kwq] .kwq::before { content:"▸ "; color:var(--sub); }
-/* 좁은 화면에서 두 표는 줄을 카드로 쌓는다(셸 table 의 "cards") — 검색어가 카드 제목
-   줄이 되어 칸 폭 전체를 쓰므로, 그때는 긴 이름이 넘치지 않게 줄을 바꾼다. */
-@media (max-width:560px) { .kwtable .kwq, #mv-list .kwq { white-space:normal; display:inline;
-    max-width:none; overflow:visible; }
-  .kwtable .kwcell, #mv-list .kwcell { min-width:0; }
-  /* 점수 칸은 표에서 오른쪽 정렬 블록이다 — 카드 줄에서는 라벨 옆에 붙인다(사이트 크롤 표와 같다). */
-  .kwtable td.num .score, #mv-list td.num .score { display:inline; width:auto; font-size:var(--fs-2); }
-  .kwtable td.num .score .u, #mv-list td.num .score .u { display:inline; margin-left:1px; } }
 tr[data-kwq][aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
 tr[data-kwq]:hover > td { background:var(--sunk); }
 tr[data-kwq]:focus { outline:none; }
-tr[data-kwq]:focus-visible > td { background:var(--sunk); }
-tr[data-kwq]:focus-visible > td:first-child { box-shadow:inset 2px 0 var(--accent); }
+tr[data-kwq]:focus-visible > td { background:var(--accent-wash); }
+tr[data-kwq]:focus-visible > td:first-child { border-radius:var(--r-in) 0 0 var(--r-in); }
+tr[data-kwq]:focus-visible > td:last-child { border-radius:0 var(--r-in) var(--r-in) 0; }
+
+/* ── 반응형 ─────────────────────────────────────────────────── */
+/* 레일이 붙는 1000~1179px 는 본문이 720~900px 다 — 8+4 로 나누면 옆 카드의 이름이 세 글자로 잘린다.
+   그림은 전폭, 옆 카드 둘은 그 밑에 나란히. */
+@media (max-width:1179px) {
+  #view-keywords .kwhero, #view-keywords .kwside, #view-keywords .kwdiv,
+  #view-keywords .kwmvt { grid-column:1 / -1; }
+  #view-keywords .kwdiv { position:static; }
+  #view-keywords .kwside { flex-direction:row; flex-wrap:wrap; }
+  #view-keywords .kwside > .card { flex:1 1 300px; }
+}
+@media (max-width:999px) {
+  #view-keywords .kwside { flex-direction:row; flex-wrap:wrap; }
+  #view-keywords .kwside > .card { flex:1 1 300px; }
+}
+/* 그림은 최소 520px 폭이 있어야 눈금이 산다 — 좁은 화면에서는 표만 남긴다. 같은 값을 표가 전부 들고 있다. */
+@media (max-width:640px) {
+  #view-keywords .kwhero { display:none; }
+  #view-keywords .kwkpis { grid-template-columns:minmax(0,1fr); }
+  #view-keywords .kwside { flex-direction:column; }
+}
+/* 좁은 화면에서 두 표는 줄을 카드로 쌓는다(셸 table 의 "cards") — 검색어가 카드 제목
+   줄이 되어 칸 폭 전체를 쓰므로, 그때는 긴 이름이 넘치지 않게 줄을 바꾼다. */
+@media (max-width:560px) {
+  .kwtable .kwq, #mv-list .kwq { white-space:normal; display:inline; max-width:none; overflow:visible; }
+  .kwtable .kwcell, #mv-list .kwcell { min-width:0; }
+  .kwtable td.num .score, #mv-list td.num .score { display:inline; width:auto; font-size:var(--fs-2); }
+  .kwtable td.num .score .u, #mv-list td.num .score .u { display:inline; margin-left:1px; }
+  #view-keywords .kwrk { min-width:0; }
+}
 </style>
 
 <!-- 눈썹의 구간은 RULES(서버)가 정한다 — 여기에 숫자를 적으면 경계값이 바뀔 때
-     화면만 낡는다. 제목은 한 벌이다: 로컬과 호스팅이 같은 것을 본다. -->
+     화면만 낡는다. 제목은 한 벌이다: 로컬과 호스팅이 같은 것을 본다.
+     #log 는 표 자리(줄 펼침·레인 번호가 이 안의 tr 을 센다), #log-fig 는 그림 자리다. -->
 <section>
-  <div class="sh">
-    <p class="eyebrow" id="log-eb"></p>
-    <h2 id="log-h2">순위 상승 기회</h2>
-    <p class="sub" id="log-sub"></p>
+  <div class="kwgrid" id="kw-grid">
+    <div class="kwkpis" id="kw-kpis"></div>
+    <div class="card kwhero kwchart">
+      <div class="kwch">
+        <div>
+          <h2 id="log-h2">순위 상승 기회</h2>
+          <p class="sub" id="log-sub"></p>
+          <p class="kwsm" id="log-eb"></p>
+        </div>
+        <div class="chleg kwleg" id="log-leg"></div>
+      </div>
+      <div id="log-fig"></div>
+    </div>
+    <div class="kwside">
+      <div class="card kwtopc" id="kw-top"></div>
+      <div class="card kwdonut" id="kw-donut"></div>
+    </div>
+    <div class="card kwtbl">
+      <div class="kwch">
+        <div>
+          <h2>검색어별 기회</h2>
+          <p class="sub">줄을 누르면 어느 페이지를 어떻게 고칠지 펼쳐집니다.</p>
+        </div>
+      </div>
+      <div class="tools kwtools" id="log-tools"></div>
+      <div id="log" class="kwtable"></div>
+    </div>
   </div>
-  <div class="tools" id="log-tools"></div>
-  <div id="log"></div>
 </section>
 
 <section>
-  <div class="sh">
-    <p class="eyebrow" id="mv-eb"></p>
-    <h2>순위 변동</h2>
-    <p class="sub" id="mv-sub"></p>
+  <div class="kwgrid nomv" id="kw-mvgrid">
+    <div class="card kwdiv" id="mv-div"></div>
+    <div class="card kwmvt wide" id="mv-card">
+      <div class="kwch">
+        <div>
+          <h2>순위 변동</h2>
+          <p class="sub" id="mv-sub"></p>
+        </div>
+        <p class="kwsm" id="mv-eb"></p>
+      </div>
+      <div id="movers"></div>
+    </div>
   </div>
-  <div id="movers"></div>
 </section>
 
 <script>
@@ -144,24 +284,50 @@ function KW_jump(btn) {
   KW_open(tr && KW_logRow(tr.dataset.kwq));
 }
 
-/* ── 깊이 로그: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
-      막대는 "1페이지까지 밀어야 하는 거리" — 이 섹션이 파는 바로 그 값. ── */
-function depthLog(rows, brandCatalogEmpty, period) {
+const KW_band = r => r.band || (Number.isFinite(r.pos) && r.pos <= (RULES.page1 || 10) ? "page1" : "page2");
+const KW_gap = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
+// 이니셜 아바타 — 색은 구간이다(문턱=산화동 w, 1페이지 안=녹청 a, 이 목록에 없는 검색어=정보색).
+const KW_tone = q => { const r = KW_ROWS.find(x => x.query === q);
+  return r ? (KW_band(r) === "page2" ? "w" : "a") : ""; };
+const KW_av = (q, tone) => `<span class="kwav ${tone === undefined ? KW_tone(q) : tone}"
+  aria-hidden="true">${esc(String(q).trim().charAt(0).toUpperCase() || "·")}</span>`;
+// 눌린 칩 표시 — 칩을 다시 그리지 않고 켜짐만 옮긴다(키보드 초점이 안 사라진다).
+function KW_pressed(sel, v) {
+  document.querySelectorAll(sel).forEach(b => {
+    const on = b.dataset.v === v;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+// 그림 폭 — 그림은 자기 카드 폭 그대로 그린다(viewBox 를 줄여 쓰면 글자가 12px 밑으로 내려간다).
+let KW_FIGW = 0;
+
+/* ── 순위 사다리: 순위 축(1위 왼쪽 → 20위 오른쪽), 10위가 1페이지 경계.
+      막대는 "1페이지까지 밀어야 하는 거리" — 이 화면이 파는 바로 그 값. ── */
+function depthFig(rows, period, w) {
   // 폭은 WIDTH 다 — W 는 뼈대의 문구 고르개(W(로컬, 웹))라 여기서 가리면 안 된다.
-  const WIDTH = 1000, LANE = 30, PAD_T = 58;
+  const WIDTH = Math.max(520, w || 720), LANE = 32, PAD_T = 54;
   // 줄이 길어지면 위쪽 눈금이 화면 밖으로 나간다 — 아래에도 같은 눈금을 깐다.
-  const botAxis = rows.length >= 8, PAD_B = botAxis ? 26 : 10;
-  const L = 330, R = WIDTH - 74, EDGE = RULES.striking_hi;  // 라벨은 축 바로 왼쪽에 붙인다
+  const botAxis = rows.length >= 8, PAD_B = botAxis ? 30 : 12;
+  const L = Math.round(Math.min(330, Math.max(170, WIDTH * .34))), R = WIDTH - 72,
+    EDGE = RULES.striking_hi;                        // 라벨은 축 바로 왼쪽에 붙인다
   const H = PAD_T + rows.length * LANE + PAD_B;
   const x = p => L + Math.min(p, EDGE) / EDGE * (R - L);
   const x10 = x(RULES.page1);
   const ticks = [1, 5, RULES.page1, 15, EDGE];
   const top = PAD_T - 8, bot = PAD_T + rows.length * LANE + 4;
-  const gap1 = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
+  // 라벨은 칸에 들어갈 만큼만 — 한글은 12px 안팎, 라틴은 그 절반쯤이다.
+  const tw = s => [...s].reduce((a, c) => a + (c.charCodeAt(0) > 127 ? 12.4 : 6.8), 0);
+  const fit = (s, mx) => {
+    if (tw(s) <= mx) return s;
+    let o = "";
+    for (const c of s) { if (tw(o + c + "…") > mx) break; o += c; }
+    return o + "…";
+  };
 
   const lanes = rows.map((r, i) => {
     const y = PAD_T + i * LANE + LANE / 2;
-    const px = x(r.pos), onPage1 = r.band ? r.band === "page1" : r.pos <= (RULES.page1 || 10);
+    const px = x(r.pos), onPage1 = KW_band(r) === "page1";
     const c = onPage1 ? "var(--accent)" : "var(--warn)";
     const x1 = Math.min(px, x10), x2 = Math.max(px, x10);
     // 2페이지 검색어는 1페이지 경계까지 되밀어야 할 거리를 막대로 — 이 화면이 파는 값.
@@ -171,17 +337,16 @@ function depthLog(rows, brandCatalogEmpty, period) {
              animation-delay:${i * 16}ms"/>`;
     // 거리는 서버가 계산해 준다(scoring.gap_to_page1).
     const gap = onPage1 ? "이미 1페이지"
-      : `1페이지까지 ${gap1(r).toFixed(1)}칸`;
+      : `1페이지까지 ${KW_gap(r).toFixed(1)}칸`;
     // data-lane 은 아래 표의 몇 번째 줄인가다 — 검색어 문자열로 되짚지 않는다(따옴표·
     // 대소문자에서 어긋난다). 표는 같은 rows 를 같은 순서로 그리므로 번호가 정본이다.
     return `<g class="lane" data-lane="${i}">
-      <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${WIDTH}" height="${LANE}" fill="none"/>
-      <text class="kw" x="${L - 18}" y="${y + 4}" text-anchor="end">${esc(r.query.length > 36
-        ? r.query.slice(0, 35) + "…" : r.query)}</text>
+      <rect class="lane-bg" x="0" y="${y - LANE / 2}" width="${WIDTH}" height="${LANE}" rx="8" fill="none"/>
+      <text class="kw" x="${L - 16}" y="${y + 4}" text-anchor="end">${esc(fit(r.query, L - 22))}</text>
       <line class="track" x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke-width="1"/>
       ${dist}
-      <circle cx="${px}" cy="${y}" r="4.5" fill="${c}"/>
-      <text class="num" x="${px + (onPage1 ? 0 : 10)}" y="${y - 9}"
+      <circle cx="${px}" cy="${y}" r="5.5" fill="${c}" stroke="var(--card)" stroke-width="2"/>
+      <text class="num" x="${px + (onPage1 ? 0 : 11)}" y="${y - 10}"
             text-anchor="${onPage1 ? "middle" : "start"}">${r.pos}</text>
       <text class="num" x="${WIDTH}" y="${y + 4}" text-anchor="end">${num(r.imp)}</text>
       <title>${esc(r.query)} · ${r.pos}위 · 노출 ${num(r.imp)} · 클릭 ${num(r.clk)} · ${gap}</title>
@@ -198,23 +363,40 @@ function depthLog(rows, brandCatalogEmpty, period) {
       text-anchor="${i === ticks.length - 1 ? "end" : "middle"}"
       >${t}${t === EDGE ? "위+" : ""}</text>`).join("");
 
-  const p1 = rows.filter(r => (r.band || (r.pos <= RULES.page1 ? "page1" : "page2")) === "page1")
-    .length;
+  const p1 = rows.filter(r => KW_band(r) === "page1").length;
   const impLabel = period ? `${period} 노출` : "노출";
+  return `<div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" width="${WIDTH}"
+      style="display:block;width:100%;min-width:0;height:auto" role="img"
+      aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리. 1페이지 안 ${p1}개, 문턱 ${rows.length - p1}개">
+    <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" rx="10" fill="var(--accent-wash)"/>
+    ${grid}
+    <line x1="${x10}" y1="${top}" x2="${x10}" y2="${bot}"
+          stroke="var(--accent)" stroke-width="1"/>
+    <text class="axis" x="${L}" y="${PAD_T - 36}">평균 순위 →</text>
+    <text class="axis" x="${x10 - 6}" y="${PAD_T - 36}" text-anchor="end"
+          fill="var(--accent)">1페이지 경계</text>
+    ${tick(PAD_T - 15)}
+    <text class="axis" x="${WIDTH}" y="${PAD_T - 15}" text-anchor="end">${esc(impLabel)}</text>
+    ${lanes}
+    ${botAxis ? tick(H - 9) : ""}
+  </svg></div>`;
+}
+
+// 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
+// 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
+function KW_logTable(rows, brandCatalogEmpty, period) {
   // 목록이 남의 브랜드로 오염됐다는 것은 상태다 — 배지로 말하고 고치러 갈 자리를
   // 옆에 둔다. 설정이 없는 배포(호스팅)에서는 window.go 가 글자로 물러선다.
   const warn = brandCatalogEmpty
-    ? `\n  <p class="kwwarn"><span class="badge warn">타사 섞임</span>
+    ? `<p class="kwwarn"><span class="badge warn">타사 섞임</span>
         <span>경쟁사 이름을 채우면 남의 브랜드 검색어가 목록에서 빠집니다.</span>
         ${window.SM && SM.at("settings") >= 0
           ? window.go("settings", "설정 열기") : ""}</p>`
     : "";
-  // 그림이 답 못 하는 것(정확한 값·키보드·낭독기)은 같은 데이터를 표로 낸다.
-  // 여기가 이 화면의 할 일 목록이다 — 줄마다 점수·왜·펼치면 무엇을 고칠지가 붙는다.
   const hasScore = KW_hasScore(rows);
+  const impLabel = period ? `${period} 노출` : "노출";
   // "평균 순위"·"클릭"은 열 이름 그대로라 ⓘ가 없어도 읽힌다 — 정말 처음 보면
-  // 모를 것("1페이지까지"의 계산 기준, 노출이 왜 기회인지)만 남긴다(QA 8회차 —
-  // 표 열마다 ⓘ가 서서 어느 게 정말 볼 것인지 안 도드라졌다).
+  // 모를 것("1페이지까지"의 계산 기준, 노출이 왜 기회인지)만 남긴다.
   const tbl = table([
     "검색어",
     ...(hasScore ? [KW_SCORE_TH] : []),
@@ -223,32 +405,11 @@ function depthLog(rows, brandCatalogEmpty, period) {
     `>${impLabel}?${period || "기간"} 합계 노출입니다. 순위를 올리면 클릭으로 바뀔 몫입니다`,
     ">클릭"],
     rows.map(r => `<tr ${KW_rowAttr(r.query, "log")}>${KW_qcell(r.query, hasScore)}
-      <td class="num">${r.pos}</td>
-      <td class="num">${gap1(r) > 0 ? gap1(r).toFixed(1) : '<span class="muted">—</span>'}</td>
+      <td class="num"><span class="kwrk${KW_band(r) === "page2" ? " w" : ""}">${r.pos}</span></td>
+      <td class="num">${KW_gap(r) > 0 ? KW_gap(r).toFixed(1) : '<span class="muted">—</span>'}</td>
       <td class="num">${num(r.imp)}</td>
       <td class="num">${num(r.clk)}</td></tr>`), "", "cards");
-
-  return `<div class="card kwchart">
-  <div class="chleg kwleg">
-    <span><i class="dot"></i>지금 평균 순위</span>
-    <span><i class="bar"></i>1페이지까지 남은 거리</span>
-    <span><i class="zone"></i>1페이지 영역(1~${RULES.page1}위)</span>
-  </div>
-  <div class="logwrap"><svg class="log" viewBox="0 0 ${WIDTH} ${H}" role="img"
-      aria-label="검색어 ${rows.length}개의 평균 순위와 1페이지까지 남은 거리. 1페이지 안 ${p1}개, 문턱 ${rows.length - p1}개">
-    <rect x="${L}" y="${top}" width="${x10 - L}" height="${bot - top}" fill="var(--accent-wash)"/>
-    ${grid}
-    <line x1="${x10}" y1="${top}" x2="${x10}" y2="${bot}"
-          stroke="var(--accent)" stroke-width="1"/>
-    <text class="axis" x="${L}" y="${PAD_T - 40}">평균 순위 →</text>
-    <text class="axis" x="${x10 - 6}" y="${PAD_T - 40}" text-anchor="end"
-          fill="var(--accent)">1페이지 경계</text>
-    ${tick(PAD_T - 17)}
-    <text class="axis" x="${WIDTH}" y="${PAD_T - 17}" text-anchor="end">${esc(impLabel)}</text>
-    ${lanes}
-    ${botAxis ? tick(H - 7) : ""}
-  </svg></div></div>${warn}
-  <div class="card kwtable">${tbl}</div>`;
+  return warn + tbl;
 }
 
 // 거르기·정렬은 화면에서 한다 — 서버가 준 15개가 이 화면이 가진 전부다.
@@ -260,12 +421,12 @@ function KW_filtered() {
   return rows.sort((a, b) => key(a) - key(b));
 }
 function KW_setSort(v) { KW_SORT = v; KW_drawLog(); }
-function KW_setBand(v) { KW_BAND = v; KW_drawLog(); }
+function KW_setBand(v) { KW_BAND = v; KW_pressed("#log-tools .kwchips .chip", v); KW_drawLog(); }
 function KW_setSt(v) { KW_ST = v; KW_drawLog(); }
 function KW_reset() { KW_BAND = ""; KW_ST = ""; KW_tools(); KW_drawLog(); }
 function KW_stAll() { KW_ST = "all"; KW_tools(); KW_drawLog(); }
 
-// 도구줄은 데이터가 바뀔 때만 그린다 — 거르기는 아래 그림만 다시 그린다(KW_drawLog).
+// 도구줄은 데이터가 바뀔 때만 그린다 — 거르기는 아래 그림·표만 다시 그린다(KW_drawLog).
 function KW_tools() {
   const cnt = b => b ? KW_ROWS.filter(r => r.band === b).length : KW_ROWS.length;
   const bands = [["", "전체"],
@@ -273,12 +434,13 @@ function KW_tools() {
     ["page1", `1페이지 안 ${RULES.striking_lo}~${RULES.page1}위`]];
   // #log-tools 가 곧 도구줄이다 — 안에 .tools 를 한 겹 더 두면 여백이 두 번 선다.
   $("log-tools").innerHTML = `
+    <div class="kwchips" role="group" aria-label="구간으로 거르기">${bands.map(([v, l]) =>
+      `<button type="button" class="chip${v === KW_BAND ? " on" : ""}" data-v="${v}"
+        aria-pressed="${v === KW_BAND}" onclick="KW_setBand('${v}')">${l} <b>${cnt(v)}</b></button>`
+      ).join("")}</div>
     <select onchange="KW_setSort(this.value)" aria-label="정렬 기준">${KW_SORTS.map(
       ([v, l]) => `<option value="${v}"${v === KW_SORT ? " selected" : ""}>${l}</option>`
       ).join("")}</select>
-    <select onchange="KW_setBand(this.value)" aria-label="구간으로 거르기">${bands.map(
-      ([v, l]) => `<option value="${v}"${v === KW_BAND ? " selected" : ""}>${l} ` +
-        `(${cnt(v)})</option>`).join("")}</select>
     ${window.oppStSelect(KW_ST, "KW_setSt",
       s2 => KW_ROWS.filter(r => window.oppStMatch(oppOf(r.query), s2)).length)}
     <span class="n" id="logn"></span>
@@ -287,18 +449,147 @@ function KW_tools() {
       title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
 }
 
+// 그림만 다시 그린다 — 카드 폭이 바뀌면(창 크기·레일 접기) 폭을 새로 재서 그린다.
+function KW_drawFig(rows) {
+  const box = $("log-fig");
+  if (!box || !KW_ROWS.length) return;
+  rows = rows || KW_filtered();
+  KW_FIGW = Math.round(box.clientWidth);
+  box.innerHTML = rows.length ? depthFig(rows, KW_PERIOD, KW_FIGW)
+    : `<p class="kwnone">표 위의 조건에 맞는 검색어가 없어 그림도 비었습니다.</p>`;
+}
+
 function KW_drawLog() {
   const rows = KW_filtered();
   $("logn").textContent = rows.length === KW_ROWS.length
     ? `${rows.length}개` : `${rows.length}개 / 전체 ${KW_ROWS.length}개`;
+  KW_drawFig(rows);
   $("log").innerHTML = rows.length
-    ? depthLog(rows, KW_BRAND_EMPTY, KW_PERIOD)
+    ? KW_logTable(rows, KW_BRAND_EMPTY, KW_PERIOD)
     // 기본값(남은 것)이 전부 걸렀으면 [전체 보기](조건 지우기)는 헛바퀴다 — 다 처리했다고 말한다
     : window.oppLeftDone(KW_ST, KW_ROWS, r => oppOf(r.query))
     ? window.oppLeftEmpty("검색어", KW_ROWS.length, "KW_stAll()")
     : `<div class="empty"><b>거른 조건에 맞는 검색어가 없습니다</b>
         <p>조건을 풀면 ${KW_ROWS.length}개가 있습니다.</p>
         <div class="acts"><button onclick="KW_reset()">전체 보기</button></div></div>`;
+}
+// 카드 폭이 달라지면 그림을 다시 잰다. 숨은 화면(폭 0)에서 보이는 순간도 여기서 잡힌다.
+function KW_watchFig() {
+  const box = $("log-fig");
+  if (!box || box.dataset.kwRo || !window.ResizeObserver) return;
+  box.dataset.kwRo = "1";
+  new ResizeObserver(() => {
+    const w = Math.round(box.clientWidth);
+    if (w && Math.abs(w - KW_FIGW) > 6 && KW_ROWS.length) KW_drawFig();
+  }).observe(box);
+}
+
+/* ── 위쪽 카드들: 세 질문(얼마나 걸렸나·얼마 놓치나·움직였나)과 먼저 할 3개 ── */
+// 계산은 전부 이 화면이 이미 가진 KW_ROWS·KW_MV 에서 한다 — 새 필드가 없다.
+function KW_kpis(d, p2) {
+  const box = $("kw-kpis");
+  if (!KW_ROWS.length) { box.innerHTML = ""; return; }
+  const n = KW_ROWS.length, per = KW_PERIOD || "기간";
+  const totImp = KW_ROWS.reduce((s, r) => s + (r.imp || 0), 0);
+  const gate = KW_ROWS.filter(r => KW_band(r) === "page2");
+  const gImp = gate.reduce((s, r) => s + (r.imp || 0), 0);
+  const gClk = gate.reduce((s, r) => s + (r.clk || 0), 0);
+  const share = totImp ? Math.round(gImp / totImp * 100) : 0;
+  // ① 문턱 검색어 수 + 검색어별 노출 막대(순위 순, 색은 구간)
+  const sorted = [...KW_ROWS].sort((a, b) => a.pos - b.pos);
+  const mx = Math.max(1, ...sorted.map(r => r.imp || 0));
+  const bars = sorted.map((r, i) => {
+    const h = Math.max(4, Math.round((r.imp || 0) / mx * 30));
+    return `<rect x="${i * 12}" y="${32 - h}" width="8" height="${h}" rx="3"
+      fill="${KW_band(r) === "page2" ? "var(--warn)" : "var(--accent)"}"><title>${esc(r.query)} · ${r.pos}위 · 노출 ${num(r.imp)}</title></rect>`;
+  }).join("");
+  const k1 = `<div class="card kwk">
+    <div class="kwkh"><span class="kwkt">1페이지 문턱 검색어</span>
+      <span class="chip ne">${RULES.page1 + 1}~${RULES.striking_hi}위</span></div>
+    <div class="kwkv"><b>${p2}</b><span>/ ${n}개</span></div>
+    <p class="kwks">이 목록의 검색어 ${n}개 중 문턱에 걸린 것입니다.</p>
+    <div class="kwkz"><svg viewBox="0 0 ${n * 12 - 4} 32" width="${n * 12 - 4}" role="img"
+      aria-label="검색어 ${n}개의 노출 막대. 문턱 ${p2}개, 1페이지 안 ${n - p2}개">${bars}</svg></div></div>`;
+  // ② 문턱에 묶인 노출 — 순위를 올리면 클릭으로 바뀔 몫
+  const k2 = `<div class="card kwk">
+    <div class="kwkh"><span class="kwkt">문턱에 묶인 ${esc(per)} 노출</span>
+      <span class="chip ${gImp ? "dn" : "ne"}">전체의 ${share}%</span></div>
+    <div class="kwkv"><b>${num(gImp)}</b><span>노출</span></div>
+    <p class="kwks">${p2 ? `문턱 ${p2}개의 합 · 클릭 ${num(gClk)}` : "문턱에 걸린 검색어가 없습니다"}
+      · 이 목록 ${n}개 기준</p>
+    <div class="kwkz"><div class="kwmeter" role="img"
+      aria-label="목록 노출 ${num(totImp)} 중 문턱 ${share}%"><i class="w" style="width:${share}%"></i></div></div></div>`;
+  // ③ 움직임 — 직전 기록과 같은 기간끼리 견준 것
+  const nUp = (d.ups || []).length, nDown = (d.downs || []).length, nMv = nUp + nDown;
+  const cmp = d.gsc_prev
+    ? `<span class="kwd">${esc(d.gsc_prev)}</span> → <span class="kwd">${esc(d.gsc_date)}</span>`
+    : "";
+  const k3 = `<div class="card kwk">
+    <div class="kwkh"><span class="kwkt">순위 움직임</span>
+      ${nMv ? `<span class="chip ne">${esc(String(d.gsc_period || ""))}일치끼리</span>` : ""}</div>
+    ${nMv
+      ? `<div class="kwkv"><b class="up">▲ ${nUp}</b><b class="dn">▼ ${nDown}</b><span>개</span></div>
+         <p class="kwks">직전 기록 대비 ${cmp}</p>
+         <div class="kwkz"><div class="kwmeter" role="img"
+           aria-label="오른 것 ${nUp}개, 내린 것 ${nDown}개">
+           <i class="a" style="width:${nUp / nMv * 100}%"></i><i class="w" style="width:${nDown / nMv * 100}%"></i></div></div>`
+      : `<div class="kwkv"><b>${d.gsc_prev && !d.period_mismatch ? "0" : "—"}</b>${
+           d.gsc_prev && !d.period_mismatch ? "<span>개</span>" : ""}</div>
+         <p class="kwks">${d.period_mismatch ? "직전 기록과 기간이 달라 견주지 않았습니다."
+           : d.gsc_prev ? "직전 기록과 견줘 움직인 검색어가 없습니다."
+           : "실적을 두 번 이상 수집하면 채워집니다."}</p>`}</div>`;
+  box.innerHTML = k1 + k2 + k3;
+}
+
+// 먼저 할 3개 — 이름이 붙은 우선순위. 순서는 셸의 기회 점수가 정한다(이 화면이 다시 매기지 않는다).
+let KW_TOP3 = [];
+function KW_openAt(i) {
+  const r = KW_TOP3[i];
+  if (!r) return;
+  let tr = KW_logRow(r.query);
+  if (!tr) { KW_reset(); tr = KW_logRow(r.query); }   // 거르기에 가려졌으면 조건부터 푼다
+  KW_open(tr);
+}
+function KW_topCard(p2, top) {
+  const box = $("kw-top");
+  if (!KW_ROWS.length) { KW_TOP3 = []; box.innerHTML = ""; return; }
+  const shut = r => { const o = oppOf(r.query); return !!o && !window.oppStMatch(o, "open"); };
+  const rest = KW_ROWS.filter(r => !shut(r) && (!top || r.query !== top.query))
+    .sort((a, b) => (p2 ? (KW_band(b) === "page2") - (KW_band(a) === "page2") : 0)
+      || KW_score(a.query) - KW_score(b.query) || (b.imp || 0) - (a.imp || 0));
+  KW_TOP3 = (top ? [top, ...rest] : rest).slice(0, 3);
+  const head = `<div class="kwch"><div><h2>먼저 할 3개</h2>
+    <p class="sub">${KW_ROWS.some(r => oppOf(r.query)) ? "기회 점수가 높은 순, 아직 처리하지 않은 것" : "노출이 많은 순, 아직 처리하지 않은 것"}</p></div></div>`;
+  if (!KW_TOP3.length) {
+    box.innerHTML = head + `<div class="empty ok"><b>이 목록의 검색어는 모두 처리했습니다</b>
+      <p><span class="live">다음 수집에서 새로 걸린 검색어가 여기 섭니다.</span></p></div>`;
+    return;
+  }
+  box.innerHTML = head + `<ol class="kwtop">${KW_TOP3.map((r, i) => {
+    const o = oppOf(r.query), page2 = KW_band(r) === "page2";
+    return `<li>${KW_av(r.query)}
+      <div style="min-width:0"><div class="q" title="${esc(r.query)}">${esc(r.query)}</div>
+        <div class="m">${o && Number.isFinite(o.score)
+          ? `<span class="kwsc" title="기회 점수 ${o.score}점 / 100점">${Math.round(o.score)}점</span>` : ""}
+          <span>${KW_pos(r.pos)}위${page2 ? ` · 1페이지까지 ${KW_gap(r).toFixed(1)}칸` : " · 1페이지 안"}</span></div></div>
+      <button class="go sm sec" onclick="KW_openAt(${i})"
+        aria-label="${esc(r.query)} 열기">열기</button></li>`;
+  }).join("")}</ol>`;
+}
+
+// 문턱 비중 — 개수만 말하는 보조 도넛이다. 녹청이 1페이지 안(그림의 점과 같은 색)이고 회색이 문턱이다.
+function KW_donutCard() {
+  const box = $("kw-donut");
+  if (!KW_ROWS.length) { box.innerHTML = ""; return; }
+  const n = KW_ROWS.length, a = KW_ROWS.filter(r => KW_band(r) === "page1").length, w = n - a;
+  const ring = window.chDonut
+    ? window.chDonut([{label: "1페이지 안", value: a, on: true},
+                      {label: "1페이지 문턱", value: w}], {width: 124, unit: "개"}) : "";
+  box.innerHTML = `<div class="kwch"><div><h2>문턱 비중</h2>
+    <p class="sub">검색어 ${n}개를 1페이지 안팎으로 나눴습니다.</p></div></div>
+    <div class="kwdn">${ring}<ul>
+      <li><i></i>1페이지 안 <b>${a}개</b></li>
+      <li><i class="g"></i>1페이지 문턱 <b>${w}개</b></li></ul></div>`;
 }
 
 // ── 움직인 검색어 ────────────────────────────────────────────
@@ -308,18 +599,39 @@ function KW_mvFiltered() {
     (!q || m.query.toLowerCase().includes(q)));
 }
 function KW_mvFind(v) { KW_MQ = v; KW_mvList(); }
-function KW_mvDir(v) { KW_MDIR = v; KW_mvList(); }
+function KW_mvDir(v) { KW_MDIR = v; KW_pressed("#movers .kwchips .chip", v); KW_mvList(); }
 function KW_mvReset() { KW_MQ = ""; KW_MDIR = ""; KW_mvRender(); }
+
+// 변동 분해 — 가장 크게 움직인 검색어 위 3·아래 3의 Δ순위. 값은 페이로드의 dpos 그대로다.
+function KW_mvDiv() {
+  const grid = $("kw-mvgrid"), box = $("mv-div");
+  grid.classList.toggle("nomv", !KW_MV.length);
+  $("mv-card").classList.toggle("wide", !KW_MV.length);
+  if (!KW_MV.length) { box.innerHTML = ""; return; }
+  const val = m => Number.isFinite(m.dpos) ? (m.dir === "down" ? -Math.abs(m.dpos) : Math.abs(m.dpos)) : 0;
+  const cut = s => s.length > 12 ? s.slice(0, 11) + "…" : s;
+  const ups = KW_MV.filter(m => m.dir === "up").sort((a, b) => val(b) - val(a)).slice(0, 3);
+  const dns = KW_MV.filter(m => m.dir === "down").sort((a, b) => val(a) - val(b)).slice(0, 3);
+  const rows = [...ups, ...dns].map(m => ({label: cut(m.query), value: +val(m).toFixed(1)}));
+  const fmt = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1);
+  box.innerHTML = `<div class="kwch"><div><h2>가장 크게 움직인 검색어</h2>
+    <p class="sub">직전 기록 대비 순위가 움직인 칸 수입니다. 오른쪽이 올라온 것입니다.</p></div></div>
+    ${window.chDiverge ? window.chDiverge(rows, {fmt})
+      : `<p class="kwnone">${rows.map(r => `${esc(r.label)} ${fmt(r.value)}`).join(", ")}</p>`}
+    <div class="chleg"><span><i style="background:var(--accent)"></i>올라온 것 ${ups.length}개</span>
+      <span><i style="background:var(--warn)"></i>내려간 것 ${dns.length}개</span></div>`;
+}
 
 function KW_mvRender() {
   const cnt = d => d ? KW_MV.filter(m => m.dir === d).length : KW_MV.length;
   const dirs = [["", "전체"], ["up", "오른 것"], ["down", "내린 것"]];
-  $("movers").innerHTML = `<div class="tools">
+  $("movers").innerHTML = `<div class="tools kwtools">
       <input type="search" value="${esc(KW_MQ)}" oninput="KW_mvFind(this.value)"
         placeholder="검색어로 찾기" aria-label="검색어 찾기">
-      <select onchange="KW_mvDir(this.value)" aria-label="방향으로 거르기">${dirs.map(
-        ([v, l]) => `<option value="${v}"${v === KW_MDIR ? " selected" : ""}>${l} ` +
-          `(${cnt(v)})</option>`).join("")}</select>
+      <div class="kwchips" role="group" aria-label="방향으로 거르기">${dirs.map(([v, l]) =>
+        `<button type="button" class="chip${v === KW_MDIR ? " on" : ""}" data-v="${v}"
+          aria-pressed="${v === KW_MDIR}" onclick="KW_mvDir('${v}')">${l} <b>${cnt(v)}</b></button>`
+        ).join("")}</div>
       <span class="n" id="mvn"></span>
       <span class="sp"></span>
       <button class="go sm sec" onclick="KW_csvMv()"
@@ -339,7 +651,7 @@ function KW_mvList() {
   const per = KW_PERIOD || "기간", hasScore = KW_hasScore(list);
   // "평균 순위"·"클릭"은 옆 위 표와 같은 이유로 ⓘ를 뗐다 — "Δ순위"(부호가 무슨
   // 뜻인지)와 "노출"(적으면 순위가 왜 흔들리는지)만 처음 보면 모를 내용이라 남긴다.
-  $("mv-list").innerHTML = `<div class="card">` + table([
+  $("mv-list").innerHTML = table([
     "검색어",
     ...(hasScore ? [KW_SCORE_TH] : []),
     ">평균 순위",
@@ -350,7 +662,7 @@ function KW_mvList() {
       <td class="num">${Number.isFinite(m.pos) ? m.pos.toFixed(1) : "—"}</td>
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
-      <td class="num">${num(m.imp)}</td></tr>`), "", "cards") + `</div>`;
+      <td class="num">${num(m.imp)}</td></tr>`), "", "cards");
 }
 
 /* ── 행 펼침 ────────────────────────────────────────────────────────
@@ -372,8 +684,8 @@ const KW_SCORE_TH = ">점수?기회 점수 100점 만점입니다. 높을수록 
   + " 빈 칸은 아직 기회 목록에 없는 검색어입니다";
 function KW_qcell(q, showScore = true) {
   const o = oppOf(q);
-  return `<td class="kwcell"><span class="kwq">${esc(q)}</span>${
-    o ? oppMeter(o) + oppWhy(o) : ""}</td>` +
+  return `<td class="kwcell"><div class="kwl">${KW_av(q)}<div class="kwm"><span class="kwq">${esc(q)}</span>${
+    o ? oppMeter(o) + oppWhy(o) : ""}</div></div></td>` +
     (showScore ? `<td class="num">${o ? oppScore(o) : '<span class="muted">—</span>'}</td>` : "");
 }
 // 점수 열은 보이는 줄 전부에 점수가 없으면 뺀다 — "—"만 줄줄이 선 열은 읽어도
@@ -563,6 +875,26 @@ function KW_csvMv() {
       m.dpos, m.clk, m.dclk, m.imp])));
 }
 
+// 「추적 중 N / 100」은 호스팅 애드온(kwLoad)이 .cnt 에 글자로 쓴다 — 그 글자에서 숫자를 읽어
+// 진행 막대만 그린다. 글자를 여기서 다시 짓지 않는다(숫자의 정본은 서버 응답 한 벌).
+function KW_wireTrack() {
+  const box = document.getElementById("sm-kw");
+  if (!box || box.dataset.kwProg) return;
+  const cnt = box.querySelector(".cnt"), bar = box.querySelector(".kwprog");
+  if (!cnt || !bar) return;
+  box.dataset.kwProg = "1";
+  const paint = () => {
+    const m = /(\d+)\s*\/\s*(\d+)/.exec(cnt.textContent);
+    const p = m && +m[2] ? Math.min(100, +m[1] / +m[2] * 100) : 0;
+    bar.hidden = !m;
+    bar.firstElementChild.style.width = p + "%";
+    bar.classList.toggle("full", p >= 100);
+    bar.setAttribute("aria-label", m ? `추적 ${m[1]}개, 한도 ${m[2]}개` : "");
+  };
+  new MutationObserver(paint).observe(cnt, {childList: true, characterData: true, subtree: true});
+  paint();
+}
+
 VIEW("keywords", function (d) {
   KW_ROWS = d.striking || [];
   KW_PAGES = d.query_pages || {};
@@ -574,6 +906,13 @@ VIEW("keywords", function (d) {
   KW_SORT = KW_ROWS.some(r => oppOf(r.query)) ? "opp" : "imp";
   KW_BAND = "";                                   // 사이트를 바꾸면 필터도 처음으로
   const p2 = d.striking_page2 ?? KW_ROWS.filter(r => r.band === "page2").length;
+  $("kw-grid").classList.toggle("kw0", !KW_ROWS.length);
+  KW_watchFig();
+  // 범례는 그림 위에 선다 — 색이 무슨 뜻인지 모른 채로 그림을 먼저 읽게 두지 않는다.
+  $("log-leg").innerHTML = `<span><i class="dot"></i>1페이지 안</span>
+    <span><i class="dot w"></i>1페이지 문턱</span>
+    <span><i class="bar"></i>1페이지까지 남은 거리</span>
+    <span><i class="zone"></i>1페이지 영역(1~${RULES.page1}위)</span>`;
   /* 이 화면의 상태 판정은 **한 번만** 한다. 여태 화면 부제·눈썹·섹션 부제·띠가
      각자 판정해서, 부제는 "문턱에 걸린 검색어를 봅니다"라고 하고 띠는 "문턱에 걸린
      검색어가 없습니다"라고 하는 화면이 나왔다. 아래 세 값이 그 한 판정이다. */
@@ -605,7 +944,8 @@ VIEW("keywords", function (d) {
   if (!KW_ROWS.length) {
     // 빈 이유가 둘이다 — 아직 안 수집했다 / 수집했는데 이 구간에 걸린 게 없다.
     $("log-tools").innerHTML = "";
-    $("log").innerHTML = d.gsc_date
+    $("log").innerHTML = "";
+    $("log-fig").innerHTML = d.gsc_date
       ? `<div class="empty">
           <b>이번 수집에서 ${RULES.striking_lo}~${RULES.striking_hi}위에 걸린 검색어가 없습니다</b>
           <p>${esc(d.gsc_date)} 수집분 기준입니다.
@@ -630,6 +970,8 @@ VIEW("keywords", function (d) {
   const sorted = KW_ROWS.length ? KW_filtered().filter(r => !shut(r)) : [];
   const top = (p2 ? sorted.find(r => r.band === "page2") : null) || sorted[0] || null;
   KW_TOP = top ? top.query : "";
+  KW_topCard(p2, top);
+  KW_donutCard();
   /* 띠 문장은 [지금 상태] + [누르면 무엇이 되나] 두 토막이다. 뒤 토막은 누를 것이
      있어야 참이므로 .live 로 감싼다 — 박제본에는 서버가 없어 셸이 그 토막과 버튼을
      함께 떼고, 남는 앞 토막만으로 "지금 상태"가 읽힌다. */
@@ -673,6 +1015,9 @@ VIEW("keywords", function (d) {
     : d.gsc_prev
     ? `직전 기록과 견줘 움직인 검색어가 없습니다.`
     : `실적을 두 번 이상 수집하면 채워집니다.`;
+  KW_kpis(d, p2);
+  KW_mvDiv();
+  KW_wireTrack();
   if (KW_MV.length) return KW_mvRender();
   $("movers").innerHTML = d.period_mismatch
     ? `<div class="empty"><b>기간이 달라 견주지 않았습니다</b>

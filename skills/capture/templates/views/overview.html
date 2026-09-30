@@ -7,48 +7,88 @@
 </script>
 
 <style>
-/* 눈금선과 세로 조준선 — 값을 읽으려면 축이 있어야 한다. 조준선은 CSS 로만 켠다
-   (칸마다 이벤트 핸들러를 붙이면 90일치에 핸들러가 90개 붙는다). */
-.log .grid { stroke:var(--line); stroke-dasharray:2 4; }
-.log .hov line { stroke:var(--sub); stroke-width:1; opacity:0; }
-.log .hov circle { opacity:0; }
-.log .hov:hover line, .log .hov:focus line { opacity:.5; }
-.log .hov:hover circle, .log .hov:focus circle { opacity:1; }
-/* 범례 표식과 [더 보기] — 인라인 style 로 흩어져 있던 자리를 이름 붙인 자리로 모은다. */
-.legend .sw-clk { color:var(--accent); }
-.legend .sw-imp { color:var(--sub); }
+/* ── 개요는 12열 카드 격자다 ─────────────────────────────────────────
+   주 질문은 "지금 무엇부터 손대면 되고, 지난번보다 나아졌나"다. 그래서 첫 화면에
+   성적(띠) → 1순위 기회와 [기회 열기](스포트라이트) → 대기열 줄이 차례로 선다. 추이
+   차트는 확인용이라 그 아래 12열로 내려간다. 격자는 화면 폭이 아니라 이 섹션의 폭을
+   본다(@container) — 레일이 폭을 얼마나 먹는지와 상관없이 4열 카드가 좁아지지 않는다.
+   카드는 제목(16px 650)·보조 설명(12px)·우측 도구 한 벌(.ovh)이다. */
+#ov-grid { margin-top:var(--sp-4); container-type:inline-size; }
+.ov-in { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--gap); align-items:start; }
+.ov-side { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--gap); align-content:start; min-width:0; }
+#ov-grid .ov-in > .card, #ov-grid .ov-side > .card { margin:0; }
+@container (min-width:880px) {
+  .ov-in { grid-template-columns:repeat(12, minmax(0,1fr)); }
+  .ov-hero { grid-column:1 / span 8; }
+  .ov-side { grid-column:9 / span 4; }
+  .ov-daily { grid-column:1 / -1; }
+  /* 보드는 칸이 셋이라 8열로는 좁다 — 보드일 때만 대기열이 전폭이 되고 옆 카드는 아래로 나란히 선다. */
+  #ov-grid.ovb .ov-hero { grid-column:1 / -1; }
+  #ov-grid.ovb .ov-side { grid-column:1 / -1; grid-template-columns:repeat(2, minmax(0,1fr)); }
+  #ov-grid.ovb .ov-side > .card[hidden] + .card { grid-column:1 / -1; }
+}
+@container (max-width:760px) { .kboard { grid-template-columns:minmax(0,1fr); } .kcol { min-height:0; } }
+
+/* 카드 머리 한 벌 — 제목·보조 설명은 왼쪽, 도구는 오른쪽. 도구가 안 들어가면 아래로 내려선다. */
+.ovh { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
+  gap:var(--sp-3) var(--sp-4); margin:0 0 var(--sp-4); }
+.ovh-t { flex:1 1 200px; min-width:0; }
+.ovh h2 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
+.ovh .sub { font-size:var(--fs-1); line-height:1.5; margin:2px 0 0; max-width:none; }
+.ovh .tools { margin:0; flex:0 1 auto; justify-content:flex-end; }
+.ovh .tools input { flex:1 1 140px; max-width:200px; }
+@media (max-width:640px) {
+  .ovh .tools { flex:1 1 100%; justify-content:flex-start; }
+  .ovh .tools input { flex:1 1 100%; max-width:none; }
+}
 .nw { white-space:nowrap; }              /* 날짜 범위·기준 캡션은 중간에서 꺾이지 않는다 */
+
+/* ── KPI 띠: 스파크라인을 카드 폭으로 키운다(스냅샷 3개 이상·변동이 있을 때만 선다) ── */
+#band .spark { margin-top:auto; padding-top:var(--sp-3); }
+#band .spark svg { display:block; width:100%; max-width:220px; height:auto; aspect-ratio:160 / 36; }
+
+/* ── 스포트라이트: 1순위 기회 하나와 그걸 여는 버튼. 목록 맨 위 줄과 같은 기회다. ── */
+.ovs { --ovc:var(--accent); --ovw:var(--accent-wash);
+  display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--sp-4); align-items:center;
+  margin:0 0 var(--sp-3); padding:var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-4);
+  border-radius:var(--r-in); background:var(--ovw); }
+.ovs[hidden] { display:none; }
+.ovs.def { --ovc:var(--warn); --ovw:var(--warn-wash); }
+.ovs-ring { position:relative; width:64px; height:64px; flex:none; }
+.ovs-ring svg { display:block; width:64px; height:64px; transform:rotate(-90deg); }
+.ovs-ring .trk { stroke:color-mix(in srgb, var(--ovc) 18%, transparent); }
+.ovs-ring .arc { stroke:var(--ovc); }
+.ovs-ring b { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:2px; font:650 var(--fs-3)/1 var(--sans);
+  font-variant-numeric:tabular-nums; color:var(--ink); }
+.ovs-ring b i { font:500 var(--fs-1)/1 var(--sans); font-style:normal; color:var(--sub); }
+.ovs-k { font:600 var(--fs-1)/1.3 var(--sans); color:var(--ovc); }
+.ovs-t { font:650 var(--fs-4)/1.3 var(--sans); margin:2px 0 var(--sp-2); overflow-wrap:anywhere; }
+.ovs-m { display:flex; flex-wrap:wrap; gap:var(--sp-1) 6px; }
+.ovs-w { margin:var(--sp-2) 0 0; font-size:var(--fs-2); line-height:1.55; color:var(--ink);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.ovs-a { align-self:center; }
+/* 알약이 스포트라이트 면과 같은 색이면 사라진다 — 흰 면을 깐다. */
+#ov-spot .kind, #ov-spot .badge { background:var(--card); }
+@media (max-width:560px) {
+  .ovs { grid-template-columns:auto minmax(0,1fr); padding:var(--sp-4); }
+  .ovs-a { grid-column:1 / -1; }
+  .ovs-a .go { width:100%; justify-content:center; }
+}
+
+/* ── 대기열: 카드 안의 줄이다(카드 속 카드가 아니라 카드 폭을 쓴다) ── */
 .opp-more { margin-top:var(--sp-4); }
-/* 일별 추이는 면 카드 하나 — 차트는 1000 칸 좌표라 이보다 좁아지면 글자가 12px 밑으로
-   줄어든다. 좁은 화면에서는 줄이지 않고 카드 안에서 옆으로 민다(.logwrap). */
-#daily .log { min-width:1000px; }
-/* 관찰 중이라 뺀 기회 한 줄 — 목록 밑, 목록보다 한 단 물러선 글씨. */
 .opp-held { display:flex; flex-wrap:wrap; align-items:center; gap:6px var(--sp-3);
-  margin:var(--sp-3) 0 0; font-size:var(--fs-2); color:var(--sub); }
-/* 묶인 줄의 나머지 검색어 — 표제 밑 한 줄. 접힌 카드에서는 넘치면 자른다. */
+  margin:var(--sp-4) 0 0; font-size:var(--fs-1); color:var(--sub); }
 .opp .vars { font-size:var(--fs-1); color:var(--sub); margin:2px 0 0; }
 .opp:not([open]) .vars { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .opp > summary > div { min-width:0; }     /* 안 그러면 잘라야 할 한 줄이 격자 칸을 민다 */
-/* 도구줄이 섹션 머리 오른쪽에 설 때는 한 줄로 선다 — 두 줄이 되면 격자가
-   그만큼 키를 키워서 왼쪽의 제목이 도구줄보다 아래로 내려앉는다. 좁아지면
-   찾기 칸이 먼저 줄고, 640px 밑에서는 셸이 도구줄을 제목 아래로 내린다. */
-.sh > .tools { flex-wrap:nowrap; }
-.sh > .tools input { flex:1 1 160px; min-width:0; }
-@media (max-width:640px) { .sh > .tools { flex-wrap:wrap; } }
-
-/* 기회 목록은 카드 더미가 아니라 면 카드 하나 안의 줄이다. 카드 한 장이 150px 이면 여덟 건을
-   보는 데 1200px 을 내려야 했고, 줄마다 같은 날짜·같은 「할 일」·점수를 또 그린 막대·
-   버튼 둘이 되풀이됐다. 접힌 줄은 "무엇이, 왜" 두 줄만 — 점수·표제·종류·근거 한 줄.
-   손잡이·날짜·자세한 근거는 펼치면 나온다. 셸의 .opp 규칙은 다른 화면(백링크·경쟁)도
-   쓰므로 여기서는 #opplist 아래만 덮는다. */
-.ovrows { border:0; border-radius:var(--r-card); background:var(--card);
-  box-shadow:var(--shadow); overflow:hidden; }
+/* 줄은 카드 가장자리까지 뻗는다 — hover 면이 카드 끝에서 끝까지 차야 줄로 읽힌다. */
+.ovrows { margin:0 calc(-1 * var(--sp-5)); }
 #opplist .opp { margin:0; padding:12px var(--sp-5); border:0; border-radius:0;
-  border-bottom:1px solid var(--line); background:transparent; box-shadow:none; }
-#opplist .opp:last-child { border-bottom:0; }
+  border-top:1px solid var(--line); background:transparent; box-shadow:none; }
 #opplist .opp:hover { background:var(--sunk); }
-/* 펼친 줄은 면 색을 그대로 둔다 — 안의 보조 버튼·표가 --sunk 면이라 같은 색 위에 서면 사라진다.
-   펼쳤다는 건 셰브론과 아래로 열린 패널이 말한다. */
+/* 펼친 줄은 면 색을 그대로 둔다 — 안의 보조 버튼·표가 --sunk 면이라 같은 색 위에 서면 사라진다. */
 #opplist .opp[open] { background:var(--card); }
 #opplist .opp > summary { align-items:center; }
 #opplist .opp > summary::before { align-self:center; margin:0; }
@@ -59,26 +99,32 @@
 #opplist .opp .why { margin-top:2px; }
 #opplist .opp:not([open]) .why { -webkit-line-clamp:1; }
 #opplist .det { padding-left:48px; }
-/* 보드 — 같은 기회를 상태 칸(할 일·진행 중·완료)으로 나눠 본다. 칸 머리의 수가 곧
-   "얼마나 남았나"다. 카드를 다른 칸으로 끌어 놓으면 그 상태로 옮긴다(/api/opp).
-   끌기는 터치에서 안 되므로 카드마다 다음 행동 버튼이 그대로 선다. */
+@media (max-width:560px) {
+  #opplist .opp > summary { grid-template-columns:auto 1fr auto; }
+  #opplist .opp > summary::before { display:none; }
+  #opplist .opp > summary > * { grid-column:auto; grid-row:auto; }
+  #opplist .det { padding-left:0; }
+}
+
+/* ── 보드: 같은 기회를 상태 칸(할 일·진행 중·완료)으로 나눠 본다 ─────────
+   칸 머리의 수가 곧 "얼마나 남았나"다. 카드를 다른 칸으로 끌어 놓으면 그 상태로 옮긴다
+   (/api/opp). 끌기는 터치에서 안 되므로 카드마다 다음 행동 버튼이 그대로 선다.
+   칸은 카드 안의 한 단 가라앉은 면(--sunk)이고, 그 안의 기회 카드는 흰 면(--card)이다. */
 .kseg { display:inline-flex; gap:var(--sp-1); }
 .kseg .chip { margin:0; }
-.kboard { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--gap);
-  align-items:start; }
-/* 칸은 면 카드 하나 — 안의 기회 카드는 한 단 가라앉은 면(--sunk)이다. 테두리는 안 쓴다. */
-.kcol { background:var(--card); border:0; border-radius:var(--r-card); box-shadow:var(--shadow);
+.kboard { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--gap); align-items:start; }
+.kcol { background:var(--sunk); border:0; border-radius:var(--r-in); box-shadow:none;
   padding:var(--sp-3); min-height:180px; }
 .kcol.over { background:var(--accent-wash); }
 .kc-top { display:flex; align-items:center; gap:var(--sp-2); padding:var(--sp-1) var(--sp-2) var(--sp-3); }
 .kc-top h3 { margin:0; font-size:var(--fs-3); font-weight:600; color:var(--ink); }
 .kc-n { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px;
-  padding:0 var(--sp-2); border-radius:var(--r-pill); background:var(--sunk);
+  padding:0 var(--sp-2); border-radius:var(--r-pill); background:var(--card);
   font:600 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums; color:var(--sub); }
 .kcol-acked .kc-n { color:var(--warn); background:var(--warn-wash); }
 .kcol-new .kc-n { color:var(--accent); background:var(--accent-wash); }
 .kc-list { display:flex; flex-direction:column; gap:var(--sp-2); }
-.kcard { background:var(--sunk); border:0; border-radius:var(--r-in);
+.kcard { background:var(--card); border:0; border-radius:var(--r-in); box-shadow:var(--shadow);
   padding:var(--sp-3); cursor:grab; }
 .kcard:hover { background:var(--accent-wash); }
 .kcard.dragging { opacity:.45; cursor:grabbing; }
@@ -90,70 +136,131 @@
 .kcard .why { margin-top:6px; display:-webkit-box; -webkit-line-clamp:2;
   -webkit-box-orient:vertical; overflow:hidden; }
 .kcard .acts { margin-top:10px; gap:6px; }
-/* 카드 안 요청문 손잡이 — 좁은 칸이라 꼴 이름은 접고(펴면 안에 나온다), 가라앉은 면 위에서
-   묻히지 않게 카드 면을 깐다. */
+/* 카드 안 요청문 손잡이 — 좁은 칸이라 꼴 이름은 접고(펴면 안에 나온다). 카드 면이 흰색이라
+   손잡이는 한 단 가라앉은 면을 깐다. */
 .kcard .ask, .kcard .ask + .askcopy { margin:0; }
-.kcard .ask > summary { background:var(--card); min-height:var(--btn-h-sm); }
+.kcard .ask > summary { background:var(--sunk); min-height:var(--btn-h-sm); }
 .kcard .ask > summary .micro { display:none; }
 .kcard .ask[open] { flex:1 1 100%; }
 .kc-empty { margin:0; padding:14px var(--sp-2); font-size:var(--fs-2); color:var(--sub); }
 .kc-more { margin-top:var(--sp-2); }
 .kc-foot { margin:var(--sp-3) 0 0; font-size:var(--fs-2); color:var(--sub); }
 @media (max-width:820px) { .kboard { grid-template-columns:1fr; } .kcol { min-height:0; } }
-/* 숫자 칸의 등폭은 숫자에만 건다 — 뒤에 붙는 단위("회")는 한글이라 등폭으로 찍으면
-   폴백 서체로 떨어져 한 글자만 혼자 커진다(셸의 td.num::before 와 같은 이유). */
-#watch td.num .u { font-family:var(--sans); }
-/* 관찰 표는 면 카드 안에 선다. 검색어 열은 1120px 에서 양 끝으로 벌어지지 않게 폭을 묶고,
-   숫자는 본문 서체의 표 자리 숫자다(등폭은 날짜 열만). */
-#watch > .tw { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow);
-  padding:12px 12px 4px; }
-#watch td { font-variant-numeric:tabular-nums; }
-#watch td:first-child { min-width:14ch; max-width:32ch; overflow-wrap:anywhere; }
-#watch td.num.cnt { font-family:var(--sans); }
-#watch td.num, #watch td:nth-child(3), #watch td:nth-child(4) { white-space:nowrap; }
-@media (max-width:560px) {
-  #opplist .opp > summary { grid-template-columns:auto 1fr auto; }
-  #opplist .opp > summary::before { display:none; }
-  #opplist .opp > summary > * { grid-column:auto; grid-row:auto; }
-  #opplist .det { padding-left:0; }
-}
+
+/* ── 종류별 기회: 도넛은 종류 칩의 그림판이다. 범례 한 줄이 곧 칩(누르면 그 종류만) ── */
+.ovk-body { display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+  gap:var(--sp-4); }
+.ovk-donut { position:relative; width:136px; height:136px; flex:none; }
+.ovk-c { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:2px; pointer-events:none; }
+.ovk-c b { font:650 var(--fs-4)/1 var(--sans); font-variant-numeric:tabular-nums; color:var(--ink); }
+.ovk-c span { font:500 var(--fs-1)/1.2 var(--sans); color:var(--sub); }
+#oppchips { flex:1 1 200px; min-width:0; margin:0; display:flex; flex-direction:column; gap:2px; }
+#oppchips .chip { display:grid; grid-template-columns:10px minmax(0,1fr) auto; align-items:center;
+  gap:2px var(--sp-2); width:100%; margin:0; padding:var(--sp-2) var(--sp-2);
+  border-radius:var(--r-in); background:transparent; color:var(--ink); text-align:left;
+  font:500 var(--fs-2)/1.35 var(--sans); min-height:0; }
+#oppchips .chip:hover { background:var(--sunk); color:var(--ink); }
+#oppchips .chip.on { background:var(--accent-wash); color:var(--ink); font-weight:600; }
+#oppchips .chip b { font-variant-numeric:tabular-nums; color:var(--sub); font-weight:600;
+  font-size:var(--fs-1); }
+#oppchips .chip .dot { width:10px; height:10px; border-radius:3px; }
+#oppchips .chip .nm { min-width:0; overflow-wrap:anywhere; }
+#oppchips .chip .bar { grid-column:2 / -1; height:4px; border-radius:var(--r-pill);
+  background:var(--sunk); overflow:hidden; }
+#oppchips .chip.on .bar { background:var(--card); }
+#oppchips .chip .bar em { display:block; height:100%; border-radius:var(--r-pill); }
+#oppchips .ovk-all { align-self:flex-start; margin-top:var(--sp-1); }
+
+/* ── 고친 뒤 달라졌나: 이름과 그때 → 지금이 한 행이고, 변화는 오른쪽 알약이다 ── */
+.ovw { display:flex; flex-direction:column; gap:2px; margin:0 calc(-1 * var(--sp-2)); }
+.ovw-r { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:0 var(--sp-3);
+  align-items:center; padding:var(--sp-3) var(--sp-2); border-radius:var(--r-in); }
+.ovw-r:hover { background:var(--sunk); }
+.ov-av { display:grid; place-items:center; width:32px; height:32px; border-radius:10px;
+  background:var(--accent-wash); color:var(--accent); font:700 var(--fs-2)/1 var(--sans); }
+.ovw-n { font:600 var(--fs-2)/1.4 var(--sans); overflow-wrap:anywhere; }
+.ovw-m { margin-top:2px; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; }
+.ovw-m .nw { color:var(--ink); }
+.ovw-s { align-self:start; }
+.ovw-st { margin-top:var(--sp-2); }
+.ovw-st:empty { display:none; }
+.ovw-more { margin:var(--sp-3) 0 0; }
+#watch .empty { padding:var(--sp-2) 0; }
+
+/* ── 일별 추이: 한 번에 하나만(클릭 | 노출) — 자릿수가 다른 두 선을 한 축에 겹치지 않는다 ── */
+.ovd-leg { font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub); margin-top:var(--sp-3); }
+.ovd-leg b { color:var(--ink); font-weight:600; }
+.ovalt { margin-top:var(--sp-3); }
+.ovalt > summary { display:inline-flex; align-items:center; cursor:pointer; min-height:var(--btn-h-sm);
+  font:500 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.ovalt > summary:hover { color:var(--accent); }
+.ovalt .tw { max-height:260px; margin-top:var(--sp-2); }
 </style>
 
 <div class="band" id="band"></div>
 
-<section id="daily-sec">
-  <div class="sh">
-    <p class="eyebrow">성과일 기준</p>
-    <h2>일별 클릭 추이</h2>
-    <p class="sub">클릭이 어느 날 늘고 줄었는지 하루 단위로 봅니다.<span class="hint"
-      tabindex="0" data-tip="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
-      title="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
-      aria-label="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
-      >i</span></p>
-  </div>
-  <div id="daily"></div>
-</section>
+<!-- 격자 하나가 섹션 하나다 — 셸(SM.sync)은 #opps·#watch·#daily 의 가장 가까운 <section> 을
+     화면 상자로 옮긴다. 카드마다 <section> 을 두면 격자에서 뜯겨 나가므로 카드는 <div> 다.
+     칸은 왼쪽 큰 것(대기열) · 오른쪽 조용한 것(종류·달라졌나) · 아래 12열(추이)이다. -->
+<section id="ov-grid">
+  <div class="ov-in">
+    <div class="card ov-hero" id="opps-card">
+      <!-- 도구줄(찾기·상태·CSV)은 머리 오른쪽에 선다. 안을 채우는 것은 renderOpps 다. -->
+      <div class="ovh">
+        <div class="ovh-t">
+          <h2>개선 기회</h2>
+          <p class="sub" id="opp-sub"></p>
+        </div>
+        <div class="tools" id="opp-tools"></div>
+      </div>
+      <div class="ovs" id="ov-spot" hidden></div>
+      <div id="opps"></div>
+    </div>
 
-<!-- 도구줄(찾기·상태·CSV)은 섹션 머리 오른쪽에 선다 — 목록 위에 따로 떠 있으면
-     "무엇을 보고 있나"와 "어떻게 걸렀나"가 두 줄로 갈라진다. 안을 채우는 것은
-     renderOpps 다(상태에 따라 달라진다). -->
-<section>
-  <div class="sh">
-    <h2>개선 기회</h2>
-    <p class="sub" id="opp-sub"></p>
-    <div class="tools" id="opp-tools"></div>
-  </div>
-  <div id="opps"></div>
-</section>
+    <div class="ov-side">
+      <div class="card ov-kinds" id="ov-kinds" hidden>
+        <div class="ovh">
+          <div class="ovh-t">
+            <h2>종류별 기회</h2>
+            <p class="sub">종류를 누르면 목록이 그 종류만 남고, 다시 누르면 풀립니다.</p>
+          </div>
+        </div>
+        <div class="ovk-body">
+          <div class="ovk-donut" id="ov-donut"></div>
+          <div id="oppchips"></div>
+        </div>
+      </div>
 
-<!-- 완료 후 관찰 — 상태를 늘리지 않는다. 완료 시각(status_at) 전·후의 GSC 스냅샷을
-     나란히 놓는다(서버 db.watch_rows). 두 번 이상 쟀는데 안 올랐으면 [다시 열기]. -->
-<section id="watch-sec">
-  <div class="sh">
-    <h2>고친 뒤 달라졌나</h2>
-    <p class="sub">완료로 옮긴 검색어의 그때와 지금입니다. 두 번 재도 안 오르면 다시 엽니다.</p>
+      <!-- 완료 후 관찰 — 상태를 늘리지 않는다. 완료 시각(status_at) 전·후의 GSC 스냅샷을
+           나란히 놓는다(서버 db.watch_rows). 두 번 이상 쟀는데 안 올랐으면 [다시 열기]. -->
+      <div class="card ov-watch" id="watch-sec">
+        <div class="ovh">
+          <div class="ovh-t">
+            <h2>고친 뒤 달라졌나</h2>
+            <p class="sub">완료로 옮긴 검색어의 그때(완료 직전 수집분)와 지금(최근 수집분)의 순위입니다. 두 번 재도 안 오르면 다시 엽니다.</p>
+          </div>
+        </div>
+        <div id="watch"></div>
+      </div>
+    </div>
+
+    <div class="card ov-daily" id="daily-sec">
+      <div class="ovh">
+        <div class="ovh-t">
+          <h2>일별 클릭 추이</h2>
+          <p class="sub">클릭이 어느 날 늘고 줄었는지 하루 단위로 봅니다. 성과일 기준이라 하루가 점 하나입니다.<span class="hint"
+            tabindex="0" data-tip="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
+            title="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
+            aria-label="위 숫자의 증감은 수집을 돌린 간격만큼 성깁니다. 여기는 성과일 기준이라 하루가 점 하나입니다."
+            >i</span></p>
+        </div>
+        <div class="tools" id="daily-tools"></div>
+      </div>
+      <div id="daily"></div>
+    </div>
   </div>
-  <div id="watch"></div>
 </section>
 
 <script>
@@ -167,11 +274,22 @@ const OV_act = (stage, label, primary) =>
 const OV_acts = html => html ? `<div class="acts">${html}</div>` : "";
 
 /* ── 일별 추이: gsc_daily 의 date 는 성과일(수집일이 아니다)이라 하루가 점 하나다.
-      클릭과 노출은 자릿수가 달라 각자 축을 쓴다 — 여기서 읽는 건 모양이고,
-      값은 점 위에 올리면 나온다. 깊이 로그와 같은 .log/.logwrap 을 그대로 쓴다
-      (좁은 화면에선 축소 대신 가로 스크롤). ── */
-const LEG_TIP = "클릭과 노출은 자릿수가 달라 세로축을 따로 씁니다. 왼쪽이 클릭, 오른쪽이 노출입니다. "
-  + "위 띠의 합계는 검색어별로 더한 값이라 구글이 가린 검색어가 빠지고, 기준일도 달라 여기보다 작습니다.";
+      클릭과 노출은 자릿수가 달라 한 번에 하나만 그린다 — 두 선을 한 카드에 겹치면 서로 상관이
+      있어 보인다. 토글은 카드 머리의 [클릭|노출]이고, 나머지 값(클릭률·평균 순위)은 점에
+      올리면 나오는 말풍선이 말한다. 차트는 셸의 chMount 로 세운다(Chart.js, 직접 세우지 않는다). ── */
+const LEG_TIP = "클릭과 노출은 자릿수가 달라 한 번에 하나씩 봅니다. 위 띠의 합계는 검색어별로 더한 값이라 "
+  + "구글이 가린 검색어가 빠지고, 기준일도 달라 여기보다 작습니다.";
+let OV_DM = "clicks", OV_DAILY = {rows: [], stats: null};
+const OV_DM_OPT = [["clicks", "클릭"], ["impressions", "노출"]];
+function OV_dailyMode(m) { OV_DM = m; OV_dailyDraw(); }
+function OV_dailyDraw() {
+  const rows = OV_DAILY.rows;
+  $("daily-tools").innerHTML = rows.length < 2 ? ""
+    : `<span class="kseg" role="group" aria-label="보는 지표">${OV_DM_OPT.map(([v, l]) =>
+        `<button type="button" class="chip${OV_DM === v ? " on" : ""}" aria-pressed="${OV_DM === v}"
+          onclick="OV_dailyMode('${v}')">${l}</button>`).join("")}</span>`;
+  $("daily").innerHTML = dailyChart(rows, OV_DAILY.stats);
+}
 
 function dailyChart(rows, stats) {
   if (rows.length < 2)
@@ -179,46 +297,10 @@ function dailyChart(rows, stats) {
     // 있고, 띠도 수집 전이면 그것을 주요 행동으로 든다(한 화면에 세 번이었다).
     return `<div class="empty"><b>일별 실적이 아직 없습니다</b>
       <p class="live">실적을 한 번 더 수집하면 최근 28일이 하루 단위로 채워집니다.</p></div>`;
-  // 가로폭은 VW 다.
-  const VW = 1000, H = 214, L = 52, R = VW - 62, T = 26, B = 28, n = rows.length;
-  const x = i => L + i * (R - L) / (n - 1);
-  // 범례의 「하루 최고」는 실제 값이고, 눈금 척도(mx)만 0 을 피해 1 이상으로 둔다 —
-  // 둘을 한 값으로 쓰면 클릭이 전부 0 인 사이트에 「합계 0 (하루 최고 1)」이 섰다.
+  const n = rows.length, key = OV_DM, label = key === "clicks" ? "클릭" : "노출";
+  // 범례의 「하루 최고」는 실제 값이다(척도는 차트가 알아서 0 부터 잡는다).
   const topC = stats?.clicks_max ?? Math.max(...rows.map(r => r.clicks || 0));
   const topI = stats?.impressions_max ?? Math.max(...rows.map(r => r.impressions || 0));
-  const mxC = Math.max(topC, 1), mxI = Math.max(topI, 1);
-  const y = (v, mx) => H - B - (v || 0) / mx * (H - T - B);
-  const pts = (k, mx) => rows.map((r, i) =>
-    `${x(i).toFixed(1)},${y(r[k], mx).toFixed(1)}`).join(" ");
-  // 눈금 셋(0·절반·최고). 왼쪽 축은 클릭, 오른쪽 축은 노출 — 자릿수가 달라 축이 둘이다.
-  const grid = [0, .5, 1].map(f => {
-    const yy = y(f * mxC, mxC).toFixed(1), ty = (+yy + 3.5).toFixed(1);
-    return `<line class="grid" x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke-width="1"/>
-      <text class="axis" x="${L - 9}" y="${ty}" text-anchor="end"
-        fill="var(--accent)">${num(Math.round(f * mxC))}</text>
-      <text class="axis" x="${R + 9}" y="${ty}">${num(Math.round(f * mxI))}</text>`;
-  }).join("");
-  const bw = (R - L) / n;
-  // 칸마다 투명한 띠 + 조준선. 켜고 끄는 건 CSS(:hover)라 핸들러가 하나도 없다.
-  const hov = rows.map((r, i) => {
-    const cx = x(i).toFixed(1);
-    return `<g class="hov">
-      <line x1="${cx}" y1="${T - 8}" x2="${cx}" y2="${H - B}"/>
-      <circle cx="${cx}" cy="${y(r.clicks, mxC).toFixed(1)}" r="3.2" fill="var(--accent)"/>
-      <circle cx="${cx}" cy="${y(r.impressions, mxI).toFixed(1)}" r="3.2" fill="var(--sub)"/>
-      <rect x="${(x(i) - bw / 2).toFixed(1)}" y="${T - 12}" width="${bw.toFixed(1)}"
-        height="${H - B - T + 12}" fill="transparent"/>
-      <title>${esc(r.date)} — 클릭 ${num(r.clicks)} · 노출 ${num(r.impressions)} · 클릭률 ${r.ctr}%` +
-    ` · 평균 ${r.position ?? "—"}위</title></g>`;
-  }).join("");
-  // 날짜 눈금은 다섯 개까지 — 28일이든 90일이든 같은 간격으로 읽힌다.
-  const step = Math.max(1, Math.ceil((n - 1) / 4));
-  const idx = [];
-  for (let i = 0; i < n; i += step) idx.push(i);
-  if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
-  const tick = i => `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}"
-    text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}"
-    >${esc(String(rows[i].date).slice(5))}</text>`;
   const sumC = stats?.clicks_sum ?? rows.reduce((a, r) => a + (r.clicks || 0), 0);
   const sumI = stats?.impressions_sum ?? rows.reduce((a, r) => a + (r.impressions || 0), 0);
   // 이 합계는 위 띠의 합계와 **같은 28일이 아니다** — 여기는 성과일(gsc_daily,
@@ -226,47 +308,76 @@ function dailyChart(rows, stats) {
   // (날짜별 vs 검색어별). 둘 다 "28일 합계"라고만 적어 두면 한 화면에서 736 과 980
   // 이 나란히 서서 무엇이 고장 났나 싶어진다. 이 자리는 자기 날짜를 말한다.
   const span = `${String(rows[0].date).slice(5)}~${String(rows[n - 1].date).slice(5)}`;
-  return `<div class="card"><div class="logwrap"><svg class="log" viewBox="0 0 ${VW} ${H}" role="img"
-      aria-label="최근 ${n}일 클릭·노출 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}">
-    <text class="axis" x="${L - 9}" y="${T - 12}" text-anchor="end"
-      fill="var(--accent)">클릭</text>
-    <text class="axis" x="${R + 9}" y="${T - 12}">노출</text>
-    ${grid}
-    <polygon points="${x(0)},${H - B} ${pts("clicks", mxC)} ${x(n - 1)},${H - B}"
-      fill="var(--accent-wash)"/>
-    <polyline fill="none" stroke="var(--sub)" stroke-width="1" stroke-dasharray="2 4"
-      stroke-linejoin="round" points="${pts("impressions", mxI)}"/>
-    <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"
-      stroke-linejoin="round" points="${pts("clicks", mxC)}"/>
-    ${hov}${idx.map(tick).join("")}
-  </svg></div>
-  <div class="legend"><b class="sw-clk">■</b> 클릭 <span class="nw">${esc(span)}</span> 사이트 전체 합계 ${num(sumC)}
-    (하루 최고 ${num(topC)}) · <b class="sw-imp">■</b> 노출 합계 ${num(sumI)}
+  const aria = `최근 ${n}일 ${label} 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}`;
+  const chart = chMount(T => {
+    const S = getComputedStyle(document.documentElement);
+    const col = key === "clicks" ? T.patina : S.getPropertyValue("--info").trim();
+    return {type: "line",
+      data: {labels: rows.map(r => String(r.date).slice(5)),
+        datasets: [{data: rows.map(r => r[key] || 0), borderColor: col, borderWidth: 2.5,
+          tension: .35, fill: true, borderCapStyle: "round", borderJoinStyle: "round",
+          // 위→아래로 옅어지는 면 — 색은 선과 같은 토큰이다(새 색을 안 만든다).
+          backgroundColor: c => {
+            const a = c.chart.chartArea;
+            if (!a) return chA(col, .12);
+            const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom);
+            g.addColorStop(0, chA(col, .26)); g.addColorStop(1, chA(col, 0));
+            return g;
+          },
+          pointRadius: c => c.dataIndex === n - 1 ? 4 : 0, pointHoverRadius: 5,
+          pointBackgroundColor: col, pointBorderColor: T.card, pointBorderWidth: 2}]},
+      options: {responsive: true, maintainAspectRatio: false,
+        interaction: {mode: "index", intersect: false},
+        scales: {
+          x: {grid: {display: false}, border: {display: false},
+            ticks: {color: T.slate, font: {family: T.mono, size: 12}, maxTicksLimit: 6,
+              maxRotation: 0, autoSkipPadding: 12}},
+          y: {beginAtZero: true, grid: {color: T.soft}, border: {display: false},
+            ticks: {color: T.slate, font: {family: T.mono, size: 12}, maxTicksLimit: 4,
+              callback: v => num(v)}}},
+        plugins: {legend: {display: false},
+          tooltip: chTipSays(T, {callbacks: {title: c => rows[c[0].dataIndex].date,
+            label: c => {
+              const r = rows[c.dataIndex];
+              return [`클릭 ${num(r.clicks)} · 노출 ${num(r.impressions)}`,
+                `클릭률 ${r.ctr}% · 평균 ${r.position ?? "—"}위`];
+            }}}),
+          chText: {T, cross: true}}}};
+  }, aria, "height:clamp(200px, 24vw, 280px)");
+  // 캔버스는 스크린리더가 값을 못 읽는다 — 같은 값을 표로도 둔다(접혀 있다).
+  const alt = `<details class="ovalt"><summary>날짜별 값을 표로 보기</summary>${table(
+    ["날짜", ">클릭", ">노출", ">클릭률", ">평균 순위"],
+    rows.slice().reverse().map(r => `<tr><td class="num">${esc(r.date)}</td><td class="num">${num(r.clicks)}</td>
+      <td class="num">${num(r.impressions)}</td><td class="num">${r.ctr}%</td>
+      <td class="num">${r.position ?? "—"}</td></tr>`), "")}</details>`;
+  return `${chart}
+  <div class="ovd-leg"><b>클릭</b> <span class="nw">${esc(span)}</span> 사이트 전체 합계 ${num(sumC)}
+    (하루 최고 ${num(topC)}) · <b>노출</b> 합계 ${num(sumI)}
     (하루 최고 ${num(topI)})<span class="hint" tabindex="0"
       data-tip="${esc(LEG_TIP)}" title="${esc(LEG_TIP)}" aria-label="${esc(LEG_TIP)}"
-      >i</span></div></div>`;
+      >i</span></div>${alt}`;
 }
 
 /* ── KPI 마이크로 추이: 스냅샷 3개부터, 변동이 있을 때만. 축·라벨 없이 흐름만 —
-      정확한 값은 위의 큰 숫자가 이미 말하고 있다. ── */
+      정확한 값은 위의 큰 숫자가 이미 말하고 있다. 선 밑에 옅은 면을 깔고 끝점에 점을 찍는다. ── */
 function kpiSpark(vals, dates, color) {
   if (vals.length < 3) return "";
   const mx = Math.max(...vals), mn = Math.min(...vals);
   if (mx === mn) return "";
-  const W = 96, H = 22, P = 2;
+  const W = 160, H = 36, P = 3;
   const x = i => P + i * (W - 2 * P) / (vals.length - 1);
   const y = v => H - P - (v - mn) / (mx - mn) * (H - 2 * P);
   const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   return `<div class="spark"><svg viewBox="0 0 ${W} ${H}" role="img"
       aria-label="스냅샷 ${vals.length}회 추이">
     <title>${esc(dates[0])} → ${esc(dates[dates.length - 1])} · ${vals.length}회</title>
-    <polyline fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round"
+    <polygon fill="${color}" fill-opacity=".10" points="${x(0)},${H} ${pts} ${x(vals.length - 1)},${H}"/>
+    <polyline fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"
       stroke-linejoin="round" points="${pts}"/>
     <circle cx="${x(vals.length - 1).toFixed(1)}" cy="${y(vals[vals.length - 1]).toFixed(1)}"
-      r="2.2" fill="${color}"/>
+      r="3" fill="${color}"/>
   </svg></div>`;
 }
-
 
 // 카드 자체가 <details> 다 — 어디를 눌러도 펼쳐지고, 키보드·스크린리더가 공짜로
 // 따라온다. 점수·트리아지·펼침·배지는 셸의 한 벌(oppScore/oppMeter/oppActs/
@@ -436,6 +547,9 @@ function renderOpps(n) {
   const tbox = $("opp-tools");
   if (!OPPS.length) {
     if (tbox) tbox.innerHTML = "";
+    $("ov-grid").classList.remove("ovb");
+    $("ov-kinds").hidden = true; OV_KSIG = "";
+    $("ov-spot").hidden = true;
     // 칩은 놓지 않는다 — 이 상태에서는 띠가 [기회 분석]을 주요 행동으로 들고 있고,
     // 화면 머리에도 같은 명령이 있다(D14: 한 화면에 같은 칩 세 번).
     return $("opps").innerHTML =
@@ -460,8 +574,10 @@ function renderOpps(n) {
       <span class="n" id="oppn"></span>
       <button class="go sm sec" onclick="oppCsv()"
         title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`;
-  $("opps").innerHTML = (READONLY || few ? "" : `<div class="oppchips" id="oppchips"></div>`)
-    + `<div id="opplist"></div><div id="opphold"></div>`;
+  // 종류 칩(#oppchips)은 이제 종류별 기회 카드가 갖는다 — 목록 위에 두 줄로 서 있지 않다.
+  // 보드는 칸이 셋이라 대기열 카드가 전폭이 된다(격자의 .ovb).
+  $("ov-grid").classList.toggle("ovb", OV_isBoard());
+  $("opps").innerHTML = `<div id="opplist"></div><div id="opphold"></div>`;
   oppList();
 }
 
@@ -484,25 +600,70 @@ function OV_holdLine() {
     ${READONLY ? "" : `<button class="go sm ghost" onclick="${go}">관찰 중인 기회 보기 →</button>`}</p>`;
 }
 
-// kind가 2종 이상이면 칩으로 거른다 — 트리아지는 보통 같은 종류끼리 몰아서 한다.
-// 개수는 지금 보고 있는 상태 묶음 기준이다.
+/* 종류별 기회 카드 — 도넛은 장식이 아니라 종류 칩(filterKind)의 그림판이다. 범례 한 줄이 칩이고
+   (data-k·aria-pressed 그대로), 누르면 목록이 그 종류만 남는다. 열일곱 종류를 다 조각내면 안 읽히므로
+   조각은 많은 순 다섯 + 기타이고, 범례는 여섯 줄에 [모두 보기]가 나머지를 편다.
+   개수는 지금 보고 있는 상태 묶음 기준이다(한 줄이 여러 종류일 수 있어 합이 줄 수보다 클 수 있다).
+   색은 순서를 말할 뿐 뜻이 없다 — 방어형(산화동)은 목록의 종류 알약이 이미 말한다. */
+const OV_TONES = [["--accent", 1], ["--info", 1], ["--accent", .5], ["--info", .5], ["--sub", .5], ["--sub", .26]];
+const OV_toneCss = ([v, a]) => a === 1 ? `var(${v})` : `color-mix(in srgb, var(${v}) ${a * 100}%, var(--card))`;
+let OV_KALL = false, OV_KSIG = "";
+function OV_kindsAll() { OV_KALL = !OV_KALL; oppChips(); }
 function oppChips() {
-  const el = $("oppchips");
-  if (!el) return;                       // 박제본에는 칩이 없다
+  const el = $("oppchips"), card = $("ov-kinds");
+  if (!el || !card) return;
   const counts = {};
   for (const o of oppByStatus()) for (const [k] of OV_kinds(o)) counts[k] = (counts[k] || 0) + 1;
   if (KIND_FILTER && !counts[KIND_FILTER]) KIND_FILTER = null;  // 상태·사이트 전환 시 잔존 필터
-  const kinds = Object.keys(counts);
-  el.innerHTML = kinds.length > 1 ? kinds.map(k =>
-    `<button class="chip${KIND_FILTER === k ? " on" : ""}" data-k="${esc(k)}"
-       onclick="filterKind(this)"
-       aria-pressed="${KIND_FILTER === k}">${esc((window.KIND_LABELS || {})[k] || k)}
-       <b>${counts[k]}</b></button>`).join("") : "";
+  const kinds = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  // 박제본·한 번에 다 보이는 목록·종류 하나뿐인 목록에는 카드를 안 세운다.
+  card.hidden = READONLY || OPPS.length <= OV_PAGE || kinds.length < 2;
+  if (card.hidden) { el.innerHTML = ""; OV_KSIG = ""; return; }
+  const name = k => (window.KIND_LABELS || {})[k] || k;
+  const tone = i => OV_TONES[Math.min(i, OV_TONES.length - 1)];
+  const idx = k => kinds.indexOf(k);
+  const rows = kinds.filter((k, i) => OV_KALL || i < 6 || k === KIND_FILTER);
+  const mx = counts[kinds[0]] || 1;
+  el.innerHTML = rows.map(k => `<button type="button" class="chip${KIND_FILTER === k ? " on" : ""}"
+      data-k="${esc(k)}" onclick="filterKind(this)" aria-pressed="${KIND_FILTER === k}">
+      <i class="dot" style="background:${OV_toneCss(tone(idx(k)))}"></i><span class="nm">${esc(name(k))}</span>
+      <b>${counts[k]}</b><span class="bar"><em style="width:${Math.max(4, counts[k] / mx * 100).toFixed(0)}%;background:${
+        OV_toneCss(tone(idx(k)))}"></em></span></button>`).join("")
+    + (kinds.length > 6 ? `<button type="button" class="gov ovk-all" onclick="OV_kindsAll()">${
+        OV_KALL ? "접기" : `모두 보기 (${kinds.length}종)`}</button>` : "");
+  // 도넛은 조각이 달라질 때만 다시 세운다 — 찾기 칸에 글자를 칠 때마다 갈아치우지 않는다.
+  const head = kinds.slice(0, 5), tail = kinds.slice(5);
+  const data = head.map(k => counts[k]).concat(tail.length ? [tail.reduce((s, k) => s + counts[k], 0)] : []);
+  const names = head.map(name).concat(tail.length ? [`기타 ${tail.length}종`] : []);
+  const on = KIND_FILTER == null ? -1 : (idx(KIND_FILTER) < 5 ? idx(KIND_FILTER) : 5);
+  const sig = data.join(",") + "#" + on;
+  const dn = $("ov-donut");
+  if (sig !== OV_KSIG || !dn.firstElementChild) {
+    OV_KSIG = sig;
+    const total = data.reduce((s, v) => s + v, 0);
+    dn.innerHTML = chMount(T => {
+      const S = getComputedStyle(document.documentElement);
+      return {type: "doughnut",
+        data: {labels: names, datasets: [{data,
+          backgroundColor: data.map((_, i) => {
+            const [v, a] = tone(i);
+            return chA(S.getPropertyValue(v).trim(), on < 0 || on === i ? a : a * .3);
+          }),
+          borderColor: T.card, borderWidth: 2}]},
+        options: {responsive: true, maintainAspectRatio: false, cutout: "68%",
+          plugins: {legend: {display: false},
+            tooltip: chTipSays(T, {callbacks: {title: c => c[0].label,
+              label: c => `${num(c.raw)}건 (${(c.raw / total * 100).toFixed(0)}%)`}})}}};
+    }, `종류별 기회 — ${names.map((n, i) => `${n} ${data[i]}건`).join(", ")}`, "width:136px;height:136px")
+      + `<div class="ovk-c"><b></b><span>줄</span></div>`;
+  }
+  dn.querySelector(".ovk-c b").textContent = num(oppFiltered().length);
 }
 
 function oppList() {
   oppChips();
   OV_holdLine();
+  OV_spot();
   const list = oppFiltered();
   // 개수를 두 번 적지 않는다 — 상태 거르개가 이미 "아직 안 함 (2)" 로 말한다.
   // 그 위에 무엇이 더 걸렸을 때(찾는 말·종류 칩)만 몇 건이 남았는지 적는다.
@@ -707,23 +868,80 @@ function OV_openTop() {
   card.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
-function OV_watch(d) {
-  const rows = d.watch || [];
+/* ── 스포트라이트: 이 화면의 답 ────────────────────────────────────────
+      "지금 무엇부터 손대나"에 대한 답이 첫 화면에 한 장으로 선다 — 1순위 기회와 그걸 여는
+      버튼. 새 판정을 만들지 않는다: 목록 맨 위가 곧 점수 1등이다(서버가 정렬해 보낸다).
+      보드에서는 첫 「할 일」 카드(OV_openTop 과 같은 규칙)다. 이미 끝낸 것이 맨 위에 서는
+      상태(전체·완료 보기)에서는 "먼저 손댈 것"이 아니므로 세우지 않는다. */
+function OV_topOpp() {
+  if (OV_isBoard())
+    return OPPS.find(o => o.status === "new") || OPPS.find(o => window.oppStMatch(o, "open")) || null;
+  return oppFiltered()[0] || null;
+}
+function OV_spot() {
+  const el = $("ov-spot");
+  if (!el) return;
+  const top = OPPS.length ? OV_topOpp() : null;
+  if (!top || !window.oppStMatch(top, "open")) { el.hidden = true; el.innerHTML = ""; return; }
+  const sc = Number.isFinite(top.score) ? Math.round(top.score) : null;
+  const C = 2 * Math.PI * 26, n = OV_targets(top).length;
+  el.classList.toggle("def", !!isDefensive(top));
+  el.hidden = false;
+  el.innerHTML = `<div class="ovs-ring" role="img"
+      aria-label="${sc == null ? "점수 없음" : `${sc}점, 100점 만점`}">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="trk" cx="32" cy="32" r="26" fill="none" stroke-width="6"/>
+        <circle class="arc" cx="32" cy="32" r="26" fill="none" stroke-width="6" stroke-linecap="round"
+          stroke-dasharray="${(sc == null ? 0 : Math.min(100, sc) / 100 * C).toFixed(1)} ${C.toFixed(1)}"/></svg>
+      <b>${sc == null ? "—" : sc}<i>점</i></b></div>
+    <div class="ovs-b">
+      <div class="ovs-k">지금 가장 먼저 손댈 기회</div>
+      <div class="ovs-t">${esc(targetLabel(top.target))}</div>
+      <div class="ovs-m">${OV_kinds(top).map(([k, l]) => `<span class="kind${isDefensive(k === top.kind
+        ? top : {kind: k}) ? " k-def" : ""}">${esc(l)}</span>`).join("")}${n > 1
+        ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다.">검색어 ${n}개</span>` : ""}</div>
+      ${top.reasoning ? `<p class="ovs-w">${esc(top.reasoning)}</p>` : ""}
+    </div>
+    ${READONLY ? "" : `<div class="ovs-a"><button class="go" onclick="OV_openTop()">기회 열기</button></div>`}`;
+}
+
+/* 고친 뒤 달라졌나 — 이름 밑에 그때 → 지금, 오른쪽에 변화 알약. 표로 자르면 4열 카드에서 숫자
+   열이 무너져 행 카드로 짰다. 순위는 낮을수록 좋다: 숫자가 줄면 오른 것이다. */
+let OV_WATCH_ROWS = [], OV_WATCH_N = 6;
+function OV_watchMore() { OV_WATCH_N += 12; OV_watchDraw(); }
+function OV_watch(d) { OV_WATCH_ROWS = d.watch || []; OV_watchDraw(); }
+function OV_watchDraw() {
+  const rows = OV_WATCH_ROWS;
   if (!rows.length)
     return $("watch").innerHTML = `<div class="empty"><b>완료한 검색어가 아직 없습니다</b>
       <p>기회를 완료로 옮기면 여기서 그때와 지금을 나란히 봅니다.</p></div>`;
-  const cell = m => m ? `${m.position}위 · 클릭 ${num(m.clicks)}` : "—";
-  $("watch").innerHTML = table(
-    ["검색어", ">완료일", "그때?완료 직전 수집분의 순위·클릭", "지금?최근 수집분의 순위·클릭",
-     ">그 뒤 측정?완료 뒤 수집한 횟수", ""],
-    rows.map(w => `<tr><td>${esc(w.target)}</td>
-      <td class="num">${esc((w.done_at || "").slice(0, 10))}</td><td>${cell(w.before)}</td><td>${cell(w.after)}</td>
-      <td class="num cnt">${w.runs_since}<span class="u">회</span></td>
-      <td>${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
+  const pos = m => m && Number.isFinite(Number(m.position)) ? Number(m.position) : null;
+  const f = v => String(Math.round(v * 10) / 10);
+  const cell = m => m ? `${m.position}위 · 클릭 ${num(m.clicks)}` : "측정 전";
+  const move = w => {
+    const b = pos(w.before), a = pos(w.after);
+    if (b == null || a == null) return `<span class="chip ne">비교 전</span>`;
+    if (a < b) return `<span class="chip up" title="순위가 ${f(b - a)}계단 올랐습니다">↑ ${f(b - a)}위</span>`;
+    if (a > b) return `<span class="chip dn" title="순위가 ${f(a - b)}계단 내려갔습니다">↓ ${f(a - b)}위</span>`;
+    return `<span class="chip ne">변동 없음</span>`;
+  };
+  $("watch").innerHTML = `<div class="ovw">${rows.slice(0, OV_WATCH_N).map(w => `<div class="ovw-r">
+      <div class="ov-av" aria-hidden="true">${esc([...String(w.target || "?")][0])}</div>
+      <div>
+        <div class="ovw-n">${esc(w.target)}</div>
+        <div class="ovw-m">그때 <span class="nw">${cell(w.before)}</span></div>
+        <div class="ovw-m">지금 <span class="nw">${cell(w.after)}</span></div>
+        <div class="ovw-m">완료 <span class="nw" title="${esc((w.done_at || "").slice(0, 10))}">${
+          esc((w.done_at || "").slice(5, 10))}</span> · 그 뒤 ${w.runs_since}회 측정</div>
+        <div class="ovw-st">${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
         : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`)
         // 관찰 기간 안 — '지금' 칸의 실적 창에 아직 고치기 전 날이 섞여 있다(db.watch_rows).
         : w.until ? `<span class="badge adv" title="실적이 고친 뒤 날로 찰 때까지 판단을 미룹니다">관찰 중 · ${
-            esc(String(w.until).slice(5))}까지</span>` : ""}</td></tr>`), "");
+            esc(String(w.until).slice(5))}까지</span>` : ""}</div>
+      </div>
+      <div class="ovw-s">${move(w)}</div>
+    </div>`).join("")}</div>` + (rows.length > OV_WATCH_N
+    ? `<div class="acts ovw-more"><button type="button" onclick="OV_watchMore()">${
+        Math.min(12, rows.length - OV_WATCH_N)}건 더 보기 (남은 ${rows.length - OV_WATCH_N}건)</button></div>` : "");
 }
 
 function OV_next(d) {
@@ -743,6 +961,11 @@ function OV_next(d) {
       <div class="acts">${OV_act("gaps")}</div>`;
   // 다시 뽑는 손잡이는 머리줄이 이미 들고 있다 — 띠에 보조로 또 달면 같은 행동이
   // 한 화면에 둘이다. 띠의 주요 행동은 [기회 열기] 하나다.
+  // 찬 화면의 "가장 큰 기회는 …" 문장은 스포트라이트(OV_spot)가 대신 말한다 — 같은 말이
+  // 띠와 카드에 둘이 서지 않게 띠를 걷는다. 스포트라이트가 못 서는 상태(끝낸 것이 맨 위인
+  // 전체 보기)에서만 띠가 이 문장을 든다.
+  else if (top && window.oppStMatch(top, "open"))
+    return nextStep("overview", "");
   else if (top) {
     const sc = Number.isFinite(top.score) ? `, ${Math.round(top.score)}점` : "";
     const nq = OV_targets(top).length, kl = OV_kinds(top).map(([, l]) => l);
@@ -798,7 +1021,8 @@ VIEW("overview", function (d) {
     ["노출", num(last.imp), delta(last.imp - prev.imp, false, prev.imp, cmp),
       kpiSpark(t.map(x => x.imp), dates, "var(--sub)"), was("imp")],
     ["노출된 검색어", num(last.q),
-      delta(last.q - prev.q, false, prev.q, cmp), "", was("q")],
+      delta(last.q - prev.q, false, prev.q, cmp),
+      kpiSpark(t.map(x => x.q), dates, "var(--info)"), was("q")],
     // 「추적 검색어」와 「개선 기회」 칸은 두지 않는다. 앞의 것은 [순위 추적]의 숫자이고
     // 칸 안의 [추적에 넣기]가 위 띠의 행동과 겨뤘다. 뒤의 것은 검색어 수라 바로 아래
     // 목록의 줄 수와 달라 "목록에서는 4줄"이라는 설명을 달아야 읽혔다 — 개수는 목록의
@@ -814,7 +1038,8 @@ VIEW("overview", function (d) {
   // 말하는 대신, 그 자료를 실제로 가진 섹션 하나만 남긴다.
   const dl = d.daily || [];
   $("daily-sec").hidden = !dl.length && !!window.SM_HOSTED;
-  $("daily").innerHTML = dailyChart(dl, d.daily_stats);
+  OV_DAILY = {rows: dl, stats: d.daily_stats};
+  OV_dailyDraw();
 
   // 이 절의 눈썹에 "2026-06-01 기준"을 적던 자리를 뗐다 — 레일(#datelab/#gscdate)이
   // 이 화면을 보는 내내 같은 날짜를 이미 보여준다. 여기서 또 적으면 스크롤할 때마다

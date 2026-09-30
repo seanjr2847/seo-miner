@@ -15,10 +15,10 @@
      연결이 아니다) 접었다 펴는 것으로 가른다: 펼치기 전에는 한 줄 안내만 서고,
      이미 클로드 코드를 쓰는 사람은 눌러서 펴면 여느 때처럼 넷이 다 보인다. -->
 <section id="sm-cc">
+  <div class="card">
   <details class="cc-fold">
     <summary>클로드 코드가 있으면 검색어 고르기·기회 깊이 보기·질문하기·작업 순서 짜기를 여기서 이어갈 수 있습니다</summary>
-    <div class="sh">
-      <p class="eyebrow">이어서 할 일</p>
+    <div class="sm-ch">
       <h2>여기서 못 하는 것</h2>
       <p class="sub">이 넷은 클로드 코드에서 실행합니다 · 누르면 명령이 복사됩니다<span
         class="hint" tabindex="0"
@@ -37,13 +37,18 @@
         <button class="cmd sec" data-cc="/create plan ">/create plan</button></li>
     </ul>
   </details>
+  </div>
 </section>
 <style>
 /* 접었을 때는 한 줄 안내다 — 나머지 섹션과 같은 무게로 서면 안 펴 본 사람에게도
    "여기서 못 하는 것"이 실행 기록만큼 큰 자리를 차지한 것처럼 읽힌다. */
-#sm-cc > details > summary { font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub);
+#sm-cc details > summary { font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub);
   cursor:pointer; min-height:44px; display:flex; align-items:center; }
-#sm-cc > details > summary:hover { color:var(--accent); }
-#sm-cc > details[open] > summary { margin-bottom:var(--sp-4); }
-#sm-cc > details > .sh { margin-top:0; }
+#sm-cc details > summary:hover { color:var(--accent); }
+#sm-cc details[open] > summary { margin-bottom:var(--sp-4); }
+#sm-cc > .card { padding-block:6px; }
+#sm-cc > .card > details[open] { padding-bottom:var(--sp-4); }
+#sm-cc .sm-ch { margin:0 0 var(--sp-3); }
+#sm-cc .sm-ch h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-cc .sm-ch .sub { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:2px 0 0; max-width:74ch; }
 </style>

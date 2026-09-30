@@ -157,31 +157,230 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); letter-spacing:-.01em; margin:4px 0 
 .rail .done .n::before { content:"✓"; }
 .rail .done .n b { display:none; }
 
-/* ── 사이트 카드(서버가 채운다) ─────────────────────────────── */
-.sites { list-style:none; margin:0; padding:8px 0; background:var(--card);
-  border-radius:var(--r-card); box-shadow:var(--shadow); overflow:hidden; }
-.sites li + li { border-top:1px solid var(--line); }
-/* 이름·주소 / 상태 / 행동 세 통. 좁아지면 세 통이 세로로 쌓인다. */
-.sites li { display:grid; grid-template-columns:minmax(0,1fr) auto auto;
-  align-items:center; gap:10px 16px; padding:14px 24px; }
-.s-id { min-width:0; display:grid; gap:2px; }
+/* ── 사이트 목록 화면(app.html): 머리 · 상태 띠 · 카드 격자 ────────────
+   .nm .pr .when .progress .stg 는 온보딩(start.html)도 쓰는 기본형이라 그대로 두고,
+   목록 전용 모양은 전부 .sites / .strip / .shead 안에서만 덮는다. 카드는 테두리 없이 면 색조로 가른다:
+   끝난 사이트는 흰 면, 첫 분석 중인 사이트는 옅은 강조 면, 추가 타일은 가라앉은 면. */
 .nm { font:650 var(--fs-3)/1.35 var(--sans); overflow-wrap:anywhere; }
 .pr { font:400 var(--fs-1)/1.4 var(--mono); color:var(--sub); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; }
-.s-state { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 /* 날짜는 등폭 — 자릿수가 줄마다 같은 자리에 선다. */
 .when { font:400 var(--fs-1)/1.35 var(--mono); font-variant-numeric:tabular-nums;
   color:var(--sub); white-space:nowrap; }
-/* 진행 막대는 행 아래 한 줄을 다 쓴다. */
-.prog { grid-column:1 / -1; display:grid; gap:6px; }
 .progress { height:6px; border-radius:var(--r-pill); background:var(--accent-wash); overflow:hidden; }
 .progress i { display:block; height:100%; width:6%; background:var(--accent);
   border-radius:var(--r-pill); transition:width .5s ease; }
 .stg { margin:0; font:400 var(--fs-1)/1.35 var(--sans); color:var(--sub); }
-.wait-note { font-size:var(--fs-2); color:var(--sub); margin:12px 0 0; max-width:62ch; }
+
+/* 머리: 물음 하나 + 한 문장 + 주 행동 하나 */
+.shead { display:flex; align-items:flex-end; justify-content:space-between;
+  flex-wrap:wrap; gap:16px 24px; padding-top:32px; }
+.shead h1 { padding:0; }
+.shead p { margin:8px 0 0; font-size:var(--fs-2); color:var(--sub); max-width:52ch; }
+.shead .go::before { content:"+"; font:500 var(--fs-4)/1 var(--sans); margin-top:-2px; }
+/* 화면의 h1 은 하나다 — 상단 띠의 "사이트 관리"는 이름표일 뿐이라 span 이다. */
+.hbar span.tag { font:600 var(--fs-2)/1 var(--sans); color:var(--sub); margin:0; white-space:nowrap;
+  padding:0 0 0 16px; border-left:1px solid var(--rule); }
+
+/* 카드 머리 한 벌: 제목(16px 650) + 보조 설명(12px). 요약 카드 둘이 같이 쓴다. */
+.ch { display:grid; gap:2px; margin-bottom:16px; }
+.ch b { font:650 var(--fs-3)/1.4 var(--sans); }
+.ch span { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+
+/* 요약 줄: 사이트 단위 네 칸(넓은 카드) + 측정 단위 도넛(좁은 카드). 상태 조회가 실패하면 도넛이 빠지고 띠가 전폭이다. */
+.sumrow { margin-top:24px; display:grid; gap:var(--gap); grid-template-columns:repeat(12,minmax(0,1fr)); }
+.sumrow > * { background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow); padding:20px 24px; min-width:0; }
+.sumrow > [hidden] { display:none; }
+.strip { grid-column:span 8; }
+.ringcard { grid-column:span 4; }
+.sumrow:has(#sitering[hidden]) .strip { grid-column:1 / -1; }
+.pcs { display:grid; gap:16px 20px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+.pc[hidden] { display:none; }
+.pc { display:grid; grid-template-columns:44px minmax(0,1fr); column-gap:14px; align-items:center;
+  --c:var(--mute); --w:var(--sunk); }
+.pc[data-k="sites"] { --c:var(--accent); --w:var(--accent-wash); }
+.pc[data-k="run"] { --c:var(--warn); --w:var(--warn-wash); }
+.pc[data-k="due"] { --c:var(--info); --w:var(--info-wash); }
+.pc[data-k="fail"] { --c:var(--dn); --w:var(--dn-wash); }
+.pc.zero { --c:var(--mute); --w:var(--sunk); }
+.pc .ic { grid-row:span 2; width:44px; height:44px; border-radius:16px; display:grid; place-items:center;
+  background:var(--w); color:var(--c); }
+.pc .ic svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8;
+  stroke-linecap:round; stroke-linejoin:round; }
+.pc .l { font:var(--micro); color:var(--sub); align-self:end; }
+.pc .v { display:flex; align-items:baseline; gap:4px; align-self:start; }
+.pc .v b { font:700 var(--fs-4)/1.25 var(--sans); font-variant-numeric:tabular-nums; }
+.pc .v small { font:500 var(--fs-2)/1 var(--sans); color:var(--sub); }
+.pc.zero .v b { color:var(--mute); }
+/* 손댈 곳: 이 화면의 물음("어디를 열까")에 대한 답을 카드 격자 위에서 한 줄로. 눌리면 그 사이트 대시보드다. */
+.strip { display:flex; flex-direction:column; }
+.jump { margin-top:auto; padding-top:20px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.jump:empty { display:none; }
+.jump .jl { font:var(--micro); color:var(--sub); margin-right:4px; }
+.jump a { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px 0 6px;
+  border-radius:var(--r-pill); background:var(--sunk); color:var(--ink); text-decoration:none;
+  font:600 var(--fs-2)/1 var(--sans); }
+.jump a:hover { background:var(--accent-wash); color:var(--accent); }
+.jump a .av { width:32px; height:32px; border-radius:50%; font-size:var(--fs-2); }
+.jump a small { font:500 var(--fs-1)/1 var(--sans); color:var(--warn); }
+.jump .ok { font:400 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+
+/* 도넛: 색 세 가지(최신 · 다시 잴 때 · 재는 중). 가운데 숫자가 답이고 옆 목록이 근거다. */
+.rg { display:flex; align-items:center; gap:20px; }
+.ring { position:relative; width:104px; height:104px; flex:none; }
+.ring svg { display:block; width:100%; height:100%; transform:rotate(-90deg); }
+.ring circle { fill:none; stroke-width:12; }
+.ring .trk { stroke:var(--sunk); }
+.ring .s-up { stroke:var(--up); }
+.ring .s-due { stroke:var(--warn); }
+.ring .s-run { stroke:var(--info); }
+.rc { position:absolute; inset:0; display:grid; place-content:center; text-align:center; }
+.rc b { font:700 var(--fs-4)/1.1 var(--sans); font-variant-numeric:tabular-nums; }
+.rc small { font:500 var(--fs-1)/1.3 var(--sans); color:var(--sub); }
+.leg { list-style:none; margin:0; padding:0; display:grid; gap:8px; flex:1; min-width:0; }
+.leg li { display:flex; align-items:center; gap:8px; font:400 var(--fs-2)/1.3 var(--sans); color:var(--sub); }
+.leg li::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--c); flex:none; }
+.leg li b { margin-left:auto; color:var(--ink); font:650 var(--fs-2)/1.3 var(--sans); font-variant-numeric:tabular-nums; }
+.leg .up { --c:var(--up); } .leg .due { --c:var(--warn); } .leg .run { --c:var(--info); }
+.leg li.z b { color:var(--mute); font-weight:500; }
+
+.sites { list-style:none; margin:0; padding:0; display:grid; gap:var(--gap);
+  grid-template-columns:repeat(12,minmax(0,1fr)); }
+#live { padding-top:24px; }
+#live h2 { font:650 var(--fs-3)/1.4 var(--sans); letter-spacing:0; margin:0 0 12px; }
+/* 서버가 h2 아래에 싣는 "이 줄에서 들어갑니다" 문장은 머리 한 문장과 겹친다 — 카드 격자에 맞지 않는 말이라 감춘다. */
+#live > .sub { display:none; }
+
+/* 사이트 카드 — 이니셜 · 이름/주소 · 상태 알약 / 마지막 분석 / 측정 현황(링 + 경과일 막대) / 열기 */
+.sites > li { position:relative; grid-column:span 4; display:grid; align-content:start;
+  grid-template-columns:48px minmax(0,1fr) auto;
+  grid-template-rows:auto auto auto 1fr auto;
+  grid-template-areas:"av id badge" "last last last" "fresh fresh fresh" "go go go" "prog prog prog";
+  align-items:center; column-gap:14px; padding:20px;
+  background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow); }
+.sites > li.done:hover { box-shadow:0 2px 4px rgba(16,22,19,.06), 0 22px 40px -16px rgba(16,22,19,.22); }
+.sites > li.waiting { background:var(--accent-wash); box-shadow:none; }
+.sites > li:has(.go:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+/* .s-state 는 자리 잡는 상자가 아니다 — 안의 알약·날짜가 카드 칸에 바로 앉는다. */
+.sites .s-state { display:contents; }
+.sites .av { grid-area:av; }
+.sites .s-id { grid-area:id; min-width:0; display:grid; gap:2px; }
+.sites .badge { grid-area:badge; justify-self:end; }
+.sites .lastrow { grid-area:last; margin-top:20px; display:grid; gap:2px; }
+.sites .when { grid-area:last; }
+.sites .lastrow .lbl { font:var(--micro); color:var(--sub); }
+.sites .lastrow .v { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 10px; }
+.sites .ago { font:650 var(--fs-3)/1.4 var(--sans); }
+.sites .ago:empty { display:none; }
+.sites .fresh { grid-area:fresh; display:grid; gap:16px; margin-top:20px; }
+.sites .fresh:empty { display:none; }
+.fsum { display:flex; align-items:center; gap:14px; }
+.fsum .ring { width:56px; height:56px; }
+.fsum .ring circle { stroke-width:10; }
+.fsum .rc b { font-size:var(--fs-2); }
+.ftxt { display:grid; gap:4px; justify-items:start; min-width:0; }
+.fcap { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.sites .badge.due { color:var(--warn); background:var(--warn-wash); }
+.sites .ftxt .badge { grid-area:auto; justify-self:start; }
+.sites .badge.bad { color:var(--dn); background:var(--dn-wash); }
+
+/* 경과일 막대: 측정 묶음마다 알약 트랙 하나, 채움 높이가 "마지막으로 잰 뒤 지난 날"이다.
+   높을수록 오래됐다. 다시 잴 때가 된 묶음은 주황, 재는 중은 파랑. 트랙은 면 색조로만 가른다. */
+.bars { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:8px;
+  padding:14px 12px 12px; background:var(--sunk); border-radius:var(--r-in); }
+.bars .col { display:grid; justify-items:center; gap:6px; min-width:0; }
+.bars .trk { position:relative; width:28px; height:72px; border-radius:var(--r-pill);
+  background:var(--card); overflow:hidden; }
+.bars .trk i { position:absolute; left:0; right:0; bottom:0; border-radius:var(--r-pill);
+  background:var(--up); min-height:6px; }
+.bars .due i { background:var(--warn); }
+.bars .run i { background:var(--info); }
+.bars .nmg { font:500 var(--fs-1)/1.3 var(--sans); color:var(--sub); text-align:center;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.bars .d { font:650 var(--fs-1)/1.3 var(--sans); font-variant-numeric:tabular-nums; color:var(--ink); }
+.bars .due .d { color:var(--warn); }
+.sites .ferr { display:flex; align-items:flex-start; flex-wrap:wrap; gap:6px 10px;
+  font:400 var(--fs-1)/1.5 var(--sans); color:var(--dn); }
+.sites .ferr > span:last-child { flex:1 1 160px; min-width:0; overflow-wrap:anywhere; }
+.sites .go { grid-area:go; align-self:end; width:100%; margin-top:20px; }
+/* 카드 전체가 눌린다 — 버튼의 ::after 를 카드 크기로 펴서 목록 어디를 눌러도 대시보드가 열린다. */
+.sites .go::after { content:""; position:absolute; inset:0; border-radius:var(--r-card); }
+.sites > li:hover .go:not(.sec) { filter:brightness(1.08); }
+.sites .prog { grid-area:prog; display:grid; gap:8px; margin-top:16px; }
+.sites .progress { height:10px; background:var(--card); }
+.sites .stg { font:500 var(--fs-2)/1.4 var(--sans); color:var(--ink); }
+.sites > li.waiting .lastrow, .sites > li.waiting .fresh { display:none; }
+/* 첫 분석 중인 카드는 진행 막대가 열기 버튼 위에 선다 — 지금 일어나는 일이 먼저다. */
+.sites > li.waiting { grid-template-rows:auto auto 1fr;
+  grid-template-areas:"av id badge" "prog prog prog" "go go go"; }
+.sites > li.waiting .go.sec { background:var(--card); }
+
+/* 이니셜: 이름에서 뽑은 색 지문. 다섯 색조만 쓴다 — 캔버스와 어울리는 면 색조. */
+.av { width:48px; height:48px; border-radius:16px; display:grid; place-items:center;
+  font:700 var(--fs-4)/1 var(--sans); background:var(--b); color:var(--f); }
+.av[data-t="0"] { --b:var(--accent-wash); --f:var(--accent); }
+.av[data-t="1"] { --b:var(--info-wash); --f:var(--info); }
+.av[data-t="2"] { --b:var(--warn-wash); --f:var(--warn); }
+.av[data-t="3"] { --b:color-mix(in srgb, var(--accent) 12%, var(--info-wash));
+  --f:color-mix(in srgb, var(--accent) 55%, var(--info)); }
+.av[data-t="4"] { --b:color-mix(in srgb, var(--warn) 10%, var(--info-wash));
+  --f:color-mix(in srgb, var(--warn) 45%, var(--info)); }
+.sites > li.waiting .av { background:var(--card); }
+
+/* 사이트 추가 타일: 점선 상자가 아니라 가라앉은 면. 마지막 줄이 차 있으면 한 줄 전체(JS 가 data-fit). */
+.sites > li.addtile { display:block; grid-column:span 4; padding:0; background:var(--sunk);
+  box-shadow:none; }
+.addtile a { display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:12px; height:100%; min-height:120px; padding:24px; text-align:center;
+  color:var(--sub); text-decoration:none; border-radius:var(--r-card); }
+.addtile a:hover { background:var(--accent-wash); }
+.addtile .plus { width:48px; height:48px; border-radius:16px; display:grid; place-items:center;
+  background:var(--card); color:var(--accent); font:500 var(--fs-4)/1 var(--sans); }
+.addtile .t { display:grid; gap:2px; }
+.addtile b { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
+.addtile .t span { font-size:var(--fs-1); }
+.sites > li.addtile[data-fit="row"] { grid-column:1 / -1; }
+.sites > li.addtile[data-fit="row"] a { flex-direction:row; justify-content:flex-start;
+  min-height:0; padding:14px 20px; text-align:left; gap:16px; }
+.sites > li.addtile[data-fit="row"] .plus { width:40px; height:40px; border-radius:14px; }
+
+/* 사이트 한 곳이면 카드가 전폭 가로형(왼쪽 정보 · 오른쪽 측정 현황), 두 곳이면 반씩. */
+.sites[data-n="2"] > li:not(.addtile) { grid-column:span 6; }
+.sites[data-n="1"] > li:not(.addtile) { grid-column:1 / -1; }
+@media (min-width:1000px) {
+  .sites[data-n="1"] > li.done { padding:24px 28px; column-gap:20px;
+    grid-template-columns:56px minmax(0,1fr) auto minmax(0,1.4fr);
+    grid-template-rows:auto auto 1fr;
+    grid-template-areas:"av id badge fresh" "last last last fresh" "go go go fresh"; }
+  .sites[data-n="1"] .lastrow { margin-top:24px; }
+  .sites[data-n="1"] .fresh { margin-top:0; align-self:stretch; align-content:center; }
+  .sites[data-n="1"] .go { width:220px; }
+  .sites[data-n="1"] .av { width:56px; height:56px; border-radius:18px; }
+  .sites[data-n="1"] .trk { height:96px; }
+}
+
+/* 진행 안내: 상자 없이 옅은 강조 면 한 줄. 카드가 다 끝나면 스크립트가 지운다. */
+.wait-note { font-size:var(--fs-2); color:var(--ink); margin:16px 0 0; padding:14px 20px;
+  background:var(--accent-wash); border-radius:var(--r-in); }
+
+@media (max-width:999px) {
+  .sites > li, .sites[data-n="2"] > li:not(.addtile) { grid-column:span 6; }
+  .sites[data-n="1"] > li:not(.addtile) { grid-column:1 / -1; }
+  .sites > li.addtile { grid-column:span 6; }
+  .strip, .ringcard { grid-column:1 / -1; }
+  .sumrow > * { padding:18px 20px; }
+}
 @media (max-width:620px) {
-  .sites li { grid-template-columns:minmax(0,1fr); padding:14px 16px; }
-  .sites li .go { justify-self:start; }
+  .shead .go { width:100%; }
+  .pcs { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .pc { grid-template-columns:36px minmax(0,1fr); column-gap:10px; }
+  .pc .ic { width:36px; height:36px; border-radius:12px; }
+  .sites[data-n] > li:not(.addtile), .sites > li.addtile { grid-column:1 / -1; }
+  .sites > li { padding:16px; }
+  .sites .pr { white-space:normal; overflow-wrap:anywhere; }
+  .rg { gap:16px; }
+  .ring { width:88px; height:88px; }
+  .fsum .ring { width:56px; height:56px; }
 }
 
 /* ── 선택 패널: 면 카드 하나, 행 사이는 옅은 선 ────────────── */

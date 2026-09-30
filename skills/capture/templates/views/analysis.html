@@ -2,16 +2,69 @@
 <script type="application/json" class="view-def">
 {"id": "analysis", "group": "search", "title": "분석",
  "sub": "클릭이 왜 늘고 줄었는지 원인별로 가릅니다.",
- "sections": ["an-top", "an-shift", "an-movers", "an-daily", "an-ctr", "an-bands",
-              "an-brand", "an-newret-body", "an-intent", "an-cluster",
-              "an-funnel-body", "an-channels-body", "an-country"],
+ "sections": ["an-top", "an-shift", "an-daily", "an-movers", "an-ctr",
+              "an-bands", "an-brand", "an-intent", "an-cluster", "an-country",
+              "an-newret-body", "an-funnel-body", "an-channels-body", "an-empty-fill"],
  "stages": ["gsc", "gaps"]}
 </script>
 
 <style>
-/* 면 카드 하나 문법 — 색·반경·크기는 전부 셸 토큰. 섹션 구분은 셸의 여백(48px)이 한다.
-   0 을 가운데 둔 좌우 막대 — 부호가 방향이고 길이가 크기다. 항이 넷뿐이라
-   축·눈금 없이 서로의 길이만 비교하면 된다. */
+/* ── 카드 격자 ───────────────────────────────────────────────────────────────
+   이 화면의 상자(#view-analysis)를 12열 격자로 세운다. 섹션 하나가 카드 한 장이고, 카드
+   안에 카드를 또 두지 않는다(안쪽 구획은 면 색조·여백). 두 칸 배치는 ≥1200px 에서만 —
+   그 밑에서는 한 열로 쌓이고, 이때 DOM 순서(=키보드 순서)가 곧 읽는 순서다.
+   `:not([hidden])` — id 특이도가 셸의 .view[hidden] 을 이기므로 숨김을 여기서 지킨다. */
+#view-analysis:not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:var(--gap); align-items:stretch; }
+#view-analysis > * { grid-column:1 / -1; min-width:0; }
+#view-analysis > section { margin:0; }
+@media (min-width:1200px) {
+  #view-analysis > #an-shift { grid-column:span 7; }
+  #view-analysis > #an-daily { grid-column:span 5; }
+  #view-analysis > #an-bands { grid-column:span 5; }
+  #view-analysis > #an-brand { grid-column:span 7; }
+  #view-analysis > #an-cluster, #view-analysis > #an-country { grid-column:span 6; }
+  #view-analysis > #an-newret-sec, #view-analysis > #an-channels-sec { grid-column:span 4; }
+  #view-analysis > #an-funnel-sec { grid-column:span 4; }
+  /* 수집 전에는 짝이 되는 카드(하루 단위·브랜드)가 접힌다 — 혼자 남은 카드는 전폭으로 편다. */
+  #view-analysis.an-nodata > #an-shift, #view-analysis.an-nodata > #an-bands,
+  #view-analysis.an-noshift > #an-daily { grid-column:1 / -1; }
+}
+
+/* 안내 알럿 — 화면 맨 아래. 카드가 아니라 옅은 정보색 면이고 오른쪽 X 로 닫는다. */
+#an-empty-fill-body > .analert { display:flex; align-items:flex-start; gap:var(--sp-3);
+  background:var(--info-wash); border-radius:var(--r-card); padding:16px 12px 16px 20px; margin:0; }
+.analert .anic { flex:none; width:24px; height:24px; margin-top:1px; border-radius:50%;
+  background:var(--info); color:var(--card); display:grid; place-items:center;
+  font:700 var(--fs-1)/1 var(--sans); }
+.analert .anbody { flex:1; min-width:0; }
+.analert b { display:block; font:650 var(--fs-2)/1.5 var(--sans); color:var(--ink); }
+.analert p { margin:2px 0 0; font:400 var(--fs-2)/1.6 var(--sans); color:var(--sub); max-width:72ch; }
+.analert .acts { margin-top:var(--sp-3); }
+.analert .anx { flex:none; width:32px; height:32px; min-height:0; padding:0; border:0;
+  border-radius:50%; background:transparent; display:grid; place-items:center; color:var(--sub); }
+.analert .anx:hover { background:var(--card); color:var(--ink); }
+.analert .anx svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8;
+  stroke-linecap:round; }
+@media (max-width:999px) { .analert .anx { width:44px; height:44px; margin:-8px -4px 0 0; } }
+
+/* 카드 머리 — 제목(16px 650, 셸의 .card h2) · 보조 설명(12px) · 우측 도구가 한 벌 */
+.ang > .sh { margin:0 0 var(--sp-4); }
+.ang > .sh > .sub { font-size:var(--fs-1); line-height:1.6; }
+.ang > .sh .lat { font-size:var(--fs-1); }
+.ansr { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
+  clip:rect(0 0 0 0); white-space:nowrap; }
+/* 옅은 알약 — 기간·건수·출처. 뜻은 글자가 말하고 색은 거든다 */
+.anpill { display:inline-flex; align-items:center; height:24px; padding:0 10px; margin-left:8px;
+  border-radius:var(--r-pill); background:var(--sunk); color:var(--sub); white-space:nowrap;
+  font:600 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums; }
+.anpill[hidden] { display:none; }
+.anpill.up { background:var(--up-wash); color:var(--up); }
+.anpill.dn { background:var(--dn-wash); color:var(--dn); }
+.tools > .anpill:first-child { margin-left:0; }
+#an-shift-eye { margin-left:0; font-family:var(--mono); font-weight:500; }
+
+/* 0 을 가운데 둔 좌우 막대 — 부호가 방향이고 길이가 크기다. */
 .anbar { position:relative; height:8px; background:var(--line); border-radius:var(--r-pill); }
 .anbar::before { content:""; position:absolute; left:50%; top:-3px; bottom:-3px;
   width:1px; background:var(--rule); }
@@ -25,80 +78,149 @@
 .ancause.ctr { color:var(--accent); background:var(--accent-wash); }
 .ancause.new { color:var(--accent); background:var(--accent-wash); }
 .ancause.lost { color:var(--warn); background:var(--warn-wash); }
-/* Δ는 값 아래에 작게 붙인다 — 축마다 열을 두 벌로 늘리면 좁은 화면에서 표가
-   가로로 흘러 아무것도 못 읽는다. 색은 셸의 .up/.down 전용 토큰이 준다(투명도로 안 줄인다). */
+/* Δ는 값 아래에 작게 붙인다 — 열을 두 벌로 늘리면 좁은 화면에서 표가 가로로 흘러 못 읽는다. */
 .andelta { display:block; font:500 var(--fs-1)/1.4 var(--sans); font-variant-numeric:tabular-nums; }
-.anverdict { font-size:var(--fs-3); line-height:1.65; margin:0 0 var(--sp-4); max-width:72ch; }
+.anverdict { font-size:var(--fs-2); line-height:1.65; margin:0 0 var(--sp-4); max-width:72ch; }
 .anverdict b { color:var(--ink); }
-/* 행동이 붙은 한 줄 안내(GA4 미연결·미분류 경고)만 여기 남는다. 표·차트 밑의
-   각주 산문은 전부 .anmore 로 접혔다 — 맨 문단은 아무도 안 읽고 위계만 흐린다. */
+/* 행동이 붙은 한 줄 안내(GA4 미연결·미분류 경고)만 여기 남는다. */
 .anthin { font-size:var(--fs-2); color:var(--sub); margin:var(--sp-4) 0 0; line-height:1.6; }
-/* 이번 회차 날짜 범위 — 「2026-08-21 → 09-18」 이 반토막 나지 않게 한 덩어리로 둔다. */
-#an-shift-eye { white-space:nowrap; }
-/* 표 숫자는 Pretendard 자리맞춤(tabular-nums) — 등폭은 URL·식별자·날짜에만 쓴다. 셸의
-   td.num 이 등폭이라 이 화면 안에서만 되돌린다. */
+
+/* ── 맨 위: 리드 문장 + KPI 스트립. 이 절은 카드가 아니다 — KPI 하나하나가 카드다. ── */
+#an-top .anverdict { font:500 var(--fs-3)/1.6 var(--sans); color:var(--ink); max-width:none;
+  margin:0 0 var(--sp-4); }
+#an-top-body > .empty { background:var(--card); box-shadow:var(--shadow);
+  border-radius:var(--r-card); padding:22px 24px; margin:0; }
+#an-top .band { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#an-top .band .m:last-child:nth-child(odd) { grid-column:1 / -1; }
+#an-top .band .m { position:relative; }
+@media (min-width:1200px) {
+  #an-top .band[data-n="4"] { grid-template-columns:1.6fr 1.2fr 1.2fr 1fr; }
+  #an-top .band[data-n="3"] { grid-template-columns:1.6fr 1.2fr 1.2fr; }
+  #an-top .band[data-n="2"] { grid-template-columns:1.6fr 1.2fr; }
+  #an-top .band[data-n="1"] { grid-template-columns:minmax(0,1fr); }
+  #an-top .band .m:last-child:nth-child(odd) { grid-column:auto; }
+}
+/* KPI 마다 다른 미니 그림 — 스파크라인·분할 막대·미니 막대·링. 전부 인라인 SVG/CSS 이고 색은 토큰이다. */
+.anviz { margin-top:auto; padding-top:14px; font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.anspark svg { display:block; width:100%; height:44px; }
+.anspark span { display:block; margin-top:6px; }
+.anspark .ln { fill:none; stroke:var(--accent); stroke-width:2; vector-effect:non-scaling-stroke;
+  stroke-linecap:round; stroke-linejoin:round; }
+.anspark .s0 { stop-color:var(--accent); stop-opacity:.28; }
+.anspark .s1 { stop-color:var(--accent); stop-opacity:0; }
+.anspark.dn .ln { stroke:var(--dn); }
+.anspark.dn .s0, .anspark.dn .s1 { stop-color:var(--dn); }
+.ansplit { display:flex; gap:2px; height:12px; border-radius:var(--r-pill); overflow:hidden; }
+.ansplit i { display:block; height:100%; }
+.ansplit i.b { background:var(--accent); }
+.ansplit i.n { background:var(--sub); }
+.ansplitl { display:flex; flex-wrap:wrap; gap:2px 12px; margin-top:8px; }
+.ansplitl span::before { content:""; display:inline-block; width:8px; height:8px; margin-right:6px;
+  border-radius:2px; background:var(--accent); }
+.ansplitl span.n::before { background:var(--sub); }
+.anminibars { display:flex; align-items:flex-end; gap:6px; height:44px; }
+.anminibars i { flex:1 1 0; max-width:22px; border-radius:6px; background:var(--accent); opacity:.85; }
+.anminibars i:first-child { opacity:1; }
+.anminibars + span { display:block; margin-top:6px; }
+.anring { position:absolute; right:20px; top:20px; width:48px; height:48px; }
+.anring circle { fill:none; stroke-width:6; }
+.anring .tr { stroke:var(--rule); }
+.anring .fg { stroke:var(--accent); stroke-linecap:round; }
+.anring.dn .fg { stroke:var(--dn); }
+
+/* ── 원인 분해(이 화면의 주인공): 문장이 크고, 그 밑에 네 막대 ── */
+#an-shift .anverdict { font:650 var(--fs-4)/1.4 var(--sans); color:var(--ink); max-width:none;
+  margin:0 0 var(--sp-5); text-wrap:balance; }
+#an-shift .anverdict b { font-weight:inherit; }
+#an-shift .hint, #an-daily .hint { vertical-align:middle; }
+/* 하루 단위 클릭 — 옆 카드와 높이를 맞추고, 남는 높이는 선이 먹는다 */
+#an-daily:not([hidden]) { display:flex; flex-direction:column; }
+#an-daily-body { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+#an-daily-body .chwrap { flex:1 1 auto; min-height:180px; }
+#an-daily .anverdict { font-size:var(--fs-2); }
+
+/* 표 숫자는 Pretendard 자리맞춤 — 등폭은 URL·식별자·날짜에만. 셸의 td.num 이 등폭이라 되돌린다. */
 section[id^="an-"] td.num { font-family:var(--sans); font-variant-numeric:tabular-nums; }
 /* 줄 자체가 손잡이인 tr.opp 는 셸의 카드 문법(그림자·반경·여백)을 받지 않는다 — 표 행이다. */
 section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:none; box-shadow:none; }
-/* 검색어 열이 1120px 에서 양 끝으로 벌어지지 않게 — 검색어 열에 몫을, 숫자 열에 바닥을 준다.
-   좁은 화면(≤560px)은 셸의 카드 모드(.tw.cards)가 줄을 쌓으니 건드리지 않는다. */
 @media (min-width:561px) {
-  section[id^="an-"] td.kwcell { width:34%; min-width:200px; }
-  section[id^="an-"] th.num, section[id^="an-"] td.num { min-width:88px; }
+  #an-movers-body td.kwcell, #an-ctr-body td.kwcell { width:44%; min-width:220px; }
+  section[id^="an-"] th.num, section[id^="an-"] td.num { min-width:64px; }
 }
-/* 검색어 행 펼침 — rank.html/keywords.html 과 같은 손잡이(행 자체가 버튼). */
-#an-movers-body tbody tr[role="button"],
-#an-ctr-body tbody tr[role="button"],
-#an-bands-body tbody tr[role="button"],
-#an-brand-body tbody tr[role="button"],
-#an-intent-body tbody tr[role="button"],
-#an-cluster-body tbody tr[role="button"] { cursor:pointer; }
-#an-movers-body tbody tr[role="button"]:hover > td,
-#an-ctr-body tbody tr[role="button"]:hover > td,
-#an-bands-body tbody tr[role="button"]:hover > td,
-#an-brand-body tbody tr[role="button"]:hover > td,
+/* 검색어 열: 이니셜 아바타 + 이름 + 보조 문장. 앞의 ▸/▾ 가 펼침 손잡이다. */
+.anq { display:flex; align-items:flex-start; gap:10px; }
+.anq::before { content:"▸"; flex:none; width:12px; line-height:28px; color:var(--mute); }
+tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
+.anqt { min-width:0; overflow-wrap:anywhere; }
+.anqn { display:block; line-height:28px; font-weight:500; color:var(--ink); }
+.anav { flex:none; display:grid; place-items:center; width:28px; height:28px; border-radius:50%;
+  font:650 var(--fs-1)/1 var(--sans); background:var(--sunk); color:var(--sub); }
+.anav.imp { background:var(--info-wash); color:var(--info); }
+.anav.ctr, .anav.new { background:var(--accent-wash); color:var(--accent); }
+.anav.lost { background:var(--warn-wash); color:var(--warn); }
+/* 되찾을 클릭 — 값 밑의 데이터 막대. 절반 넘게 큰 손실은 산화동으로 갈라 우선순위를 말한다 */
+.anmb { height:4px; margin-top:6px; border-radius:var(--r-pill); background:var(--line); overflow:hidden; }
+.anmb i { display:block; height:100%; border-radius:inherit; background:var(--accent); }
+.anmb i.big { background:var(--warn); }
+
+/* 검색어 행 펼침 — 행 자체가 버튼(rank.html/keywords.html 과 같은 손잡이). */
+#an-movers-body tbody tr[role="button"], #an-ctr-body tbody tr[role="button"],
+#an-bands-body tbody tr[role="button"], #an-brand-body tbody tr[role="button"],
+#an-intent-body tbody tr[role="button"], #an-cluster-body tbody tr[role="button"] { cursor:pointer; }
+#an-movers-body tbody tr[role="button"]:hover > td, #an-ctr-body tbody tr[role="button"]:hover > td,
+#an-bands-body tbody tr[role="button"]:hover > td, #an-brand-body tbody tr[role="button"]:hover > td,
 #an-intent-body tbody tr[role="button"]:hover > td,
 #an-cluster-body tbody tr[role="button"]:hover > td { background:var(--sunk); }
-#an-movers-body tbody tr[role="button"]:focus-visible > td,
-#an-ctr-body tbody tr[role="button"]:focus-visible > td,
-#an-bands-body tbody tr[role="button"]:focus-visible > td,
-#an-brand-body tbody tr[role="button"]:focus-visible > td,
+#an-movers-body tbody tr[role="button"]:focus-visible > td, #an-ctr-body tbody tr[role="button"]:focus-visible > td,
+#an-bands-body tbody tr[role="button"]:focus-visible > td, #an-brand-body tbody tr[role="button"]:focus-visible > td,
 #an-intent-body tbody tr[role="button"]:focus-visible > td,
 #an-cluster-body tbody tr[role="button"]:focus-visible > td { outline:2px solid var(--accent); outline-offset:-2px; }
-#an-movers-body tbody tr[aria-expanded="false"] > td:first-child::before,
-#an-ctr-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-bands-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-brand-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-intent-body tbody tr[aria-expanded="false"] > td:first-child::before,
 #an-cluster-body tbody tr[aria-expanded="false"] > td:first-child::before { content:"▸ "; color:var(--mute); }
-#an-movers-body tbody tr[aria-expanded="true"] > td:first-child::before,
-#an-ctr-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-bands-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-brand-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-intent-body tbody tr[aria-expanded="true"] > td:first-child::before,
 #an-cluster-body tbody tr[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--accent); }
+/* 「0.3% → 0%」가 좁은 칸에서 세 줄로 갈렸다 — 숫자 칸은 한 덩어리로 둔다. */
+#an-movers-body td.num, #an-ctr-body td.num { white-space:nowrap; }
 
-/* 채널 도넛 + 한 줄 설명 — 나란히, 좁은 화면에선 세로로. */
-.anchannels { display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
-.anchannels .anverdict { flex:1; min-width:220px; margin:0; }
-/* 카드 안 작은 머리(잃은 쪽·얻은 쪽) — 카드 하나 안에서 표 두 벌을 가른다. 다른 정보를 주는
-   라벨이라 남긴다(섹션 제목을 되풀이하는 눈썹과 다르다). */
-.eyebrow.anblock { margin:var(--sp-5) 0 var(--sp-2); font:600 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
-.card > .anblock:first-child { margin-top:0; }
-/* 부제 한 줄에 안 들어간 나머지와 표 밑 각주는 접는다 — 세 문장째부터가 여기다.
-   펼침 표시(셰브론)는 셸의 summary::before 한 벌이 그린다. 여기서 마커를 또
-   정하면 화면마다 어포던스가 갈린다(QA A1 이 그 셋을 잡았다). */
-.anmore { margin:var(--sp-3) 0 var(--sp-4); }
+/* 표 카드 툴바 — 거르개는 표 바로 위 왼쪽 */
+#an-movers-body > .tools, #an-ctr-body > .tools { margin:0 0 var(--sp-3); }
+/* 카드 안 작은 머리(잃은 쪽·얻은 쪽) — 표 두 벌을 가르고, 건수는 알약이 말한다. */
+.eyebrow.anblock { display:flex; align-items:center; margin:var(--sp-5) 0 var(--sp-2);
+  font:650 var(--fs-2)/1.4 var(--sans); color:var(--ink); }
+.eyebrow.anblock:first-child, .tools + .eyebrow.anblock { margin-top:var(--sp-2); }
+
+/* 두 칸 카드 — 왼쪽이 결론+그림, 오른쪽이 표. ≥1200px 에서만 나란히. */
+.ancols { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4) var(--sp-5); align-items:start; }
+.ancol { min-width:0; }
+@media (min-width:1200px) {
+  #an-ctr .ancols { grid-template-columns:minmax(0,4fr) minmax(0,8fr); }
+  #an-intent .ancols { grid-template-columns:minmax(0,4fr) minmax(0,8fr); }
+}
+.ancol > .chwrap { margin-top:var(--sp-2); }
+
+/* 채널 도넛 + 한 줄 설명 — 나란히, 좁으면 세로로. */
+.anchannels { display:flex; gap:var(--sp-4) var(--sp-5); align-items:center; flex-wrap:wrap; }
+.anchannels .anverdict { flex:1; min-width:180px; margin:0; }
+/* 부제 한 줄에 안 들어간 나머지와 표 밑 각주는 접는다. 셰브론은 셸의 summary::before 한 벌. */
+.anmore { margin:var(--sp-3) 0 0; }
 .anmore > summary { font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub); cursor:pointer; }
 .anmore > summary:hover, .anmore > summary:focus-visible { color:var(--accent); }
 .anmore > p { font-size:var(--fs-2); line-height:1.65; color:var(--sub); margin:var(--sp-2) 0 0; max-width:72ch; }
 @media (max-width:999px) { .anmore > summary { display:flex; align-items:center; min-height:44px; } }
-/* 「0.3% → 0%」가 좁은 칸에서 세 줄로 갈렸다 — 숫자 칸은 한 덩어리로 둔다. */
-#an-movers-body td.num, #an-ctr-body td.num { white-space:nowrap; }
+/* GA4 카드는 짧다 — 카드 안 여백을 조금 줄여 세 장이 한 줄로 고르게 선다 */
+#an-newret-body .chleg { margin-top:var(--sp-3); }
+@media (max-width:560px) {
+  .ang { padding:18px 16px; }
+  .anring { right:16px; top:16px; }
+}
 </style>
 
 <section id="an-top">
-  <div class="sh">
+  <div class="sh ansr">
     <h2>클릭 변화 요약</h2>
     <p class="sub">두 시점을 맞대 클릭이 얼마나 움직였는지 봅니다.</p>
   </div>
@@ -106,19 +228,31 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
     <span class="skel box"></span></div>
 </section>
 
-<section id="an-shift">
+<section id="an-shift" class="card ang">
   <div class="sh">
-    <p class="eyebrow" id="an-shift-eye" hidden></p><h2>클릭 변화의 원인</h2>
+    <h2>클릭 변화의 원인</h2>
     <p class="sub">클릭 = 노출 × 클릭률. 가장 긴 막대가 이번에 손댈 자리입니다.<span
       id="an-shift-tip" hidden></span></p>
+    <div class="tools"><span class="anpill" id="an-shift-eye" hidden></span></div>
   </div>
+  <div id="an-shift-body"><span class="skel box"></span></div>
   <details class="anmore"><summary>노출과 클릭률은 손댈 자리가 왜 다른가</summary>
     <p>노출이 줄어서 잃은 것은 색인·수요가 빠진 것이라 순위보다 사이트 점검이 먼저입니다.
       덜 눌려서 잃은 것은 제목·설명이 손댈 자리이고, 아래 안 눌리는 검색어 표가 그 목록입니다.</p></details>
-  <div id="an-shift-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-movers">
+<section id="an-daily" class="card ang">
+  <div class="sh">
+    <h2>하루 단위 클릭</h2>
+    <p class="sub">어느 날부터 달라졌는지 보입니다.<span class="hint"
+      tabindex="0" data-tip="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
+      title="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
+      aria-label="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다.">i</span></p>
+  </div>
+  <div id="an-daily-body"><span class="skel box"></span></div>
+</section>
+
+<section id="an-movers" class="card ang">
   <div class="sh">
     <h2>움직인 검색어</h2>
     <p class="sub">잃은 쪽 맨 위부터 봅니다. 줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
@@ -129,28 +263,7 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-movers-body"><span class="skel box"></span></div>
 </section>
 
-<!-- 실적을 아직 수집하지 않았으면 아래 여섯 절(하루 단위 클릭·되찾을 클릭·
-     브랜드·의도별·주제 묶음별·국가별)이 전부 "아직 없습니다 + [실적 수집]"
-     카드로 따로 선다 — 같은 버튼이 한 화면에 여섯 번 찍혀 스크롤만 하다
-     지친다(QA 8회차). 수집 전에는 이 카드 하나로 접고, 무엇이 채워지는지만
-     목록으로 말한다. anEmptyFill() 이 그 여섯 절을 숨기고 이 카드를 켠다 —
-     수집한 뒤에는 각 절이 원래대로 선다(절마다 결론·조건이 다르다). -->
-<section id="an-empty-fill" hidden>
-  <div id="an-empty-fill-body"></div>
-</section>
-
-<section id="an-daily">
-  <div class="sh">
-    <h2>하루 단위 클릭</h2>
-    <p class="sub">하루 단위라 어느 날부터 달라졌는지 보입니다.<span class="hint"
-      tabindex="0" data-tip="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
-      title="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다."
-      aria-label="위 숫자는 수집과 수집 사이만큼 성깁니다. 이 선만 하루 단위입니다.">i</span></p>
-  </div>
-  <div id="an-daily-body"><span class="skel box"></span></div>
-</section>
-
-<section id="an-ctr">
+<section id="an-ctr" class="card ang">
   <div class="sh">
     <h2>안 눌리는 검색어</h2>
     <p class="sub">1페이지인데 그 순위면 보통 나오는 클릭률의 절반도 못 받는 검색어입니다.<span
@@ -161,7 +274,7 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-ctr-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-bands">
+<section id="an-bands" class="card ang">
   <div class="sh">
     <h2>순위 구간 이동</h2>
     <p class="sub">1페이지에서 몇 개가 빠지고 늘었는지 봅니다.<span class="hint"
@@ -172,7 +285,7 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-bands-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-brand">
+<section id="an-brand" class="card ang">
   <div class="sh">
     <h2>브랜드·논브랜드</h2>
     <p class="sub">새 수요는 논브랜드 쪽에서만 옵니다.<span class="hint"
@@ -183,15 +296,7 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-brand-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-newret-sec">
-  <div class="sh">
-    <p class="eyebrow"><span class="lat">GA4</span></p><h2>신규·재방문</h2>
-    <p class="sub">재방문은 이미 나를 아는 사람이 돌아온 몫입니다.</p>
-  </div>
-  <div id="an-newret-body"></div>
-</section>
-
-<section id="an-intent">
+<section id="an-intent" class="card ang">
   <div class="sh">
     <h2>검색 의도 구성</h2>
     <!-- ⓘ가 하던 말("사람은 오는데 살 사람이 없어…")은 이 부제가 이미 하는 말과
@@ -201,7 +306,7 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-intent-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-cluster">
+<section id="an-cluster" class="card ang">
   <div class="sh">
     <h2>주제별 성적</h2>
     <!-- ⓘ가 "글을 더 쓸 곳이 아니라…"라고 되풀이했다 — 부제의 "고칠 곳입니다"가
@@ -211,28 +316,50 @@ section[id^="an-"] tr.opp { padding:0; margin:0; border-radius:0; background:non
   <div id="an-cluster-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-funnel-sec">
-  <div class="sh">
-    <p class="eyebrow">방문 이후 · <span class="lat">GA4</span></p><h2>단계별 이탈</h2>
-    <p class="sub">노출에서 전환까지 단계마다 얼마가 남는지 봅니다.</p>
-  </div>
-  <div id="an-funnel-body"></div>
-</section>
-
-<section id="an-channels-sec">
-  <div class="sh">
-    <p class="eyebrow">방문 이후 · <span class="lat">GA4</span></p><h2>채널별 세션 구성</h2>
-    <p class="sub">검색이 흔들릴 때 대신할 채널이 있는지 봅니다.</p>
-  </div>
-  <div id="an-channels-body"></div>
-</section>
-
-<section id="an-country">
+<section id="an-country" class="card ang">
   <div class="sh">
     <h2>국가별 클릭</h2>
     <p class="sub" id="an-country-sub">타깃 밖 나라가 노출을 먹고 있는지 봅니다.</p>
   </div>
   <div id="an-country-body"><span class="skel box"></span></div>
+</section>
+
+<section id="an-newret-sec" class="card ang">
+  <div class="sh">
+    <h2>신규·재방문</h2>
+    <p class="sub">재방문은 이미 나를 아는 사람이 돌아온 몫입니다.</p>
+    <div class="tools"><span class="anpill"><span class="lat">GA4</span></span></div>
+  </div>
+  <div id="an-newret-body"></div>
+</section>
+
+<section id="an-funnel-sec" class="card ang">
+  <div class="sh">
+    <h2>단계별 이탈</h2>
+    <p class="sub">노출에서 전환까지 단계마다 얼마가 남는지 봅니다.</p>
+    <div class="tools"><span class="anpill">방문 이후 · <span class="lat">GA4</span></span></div>
+  </div>
+  <div id="an-funnel-body"></div>
+</section>
+
+<section id="an-channels-sec" class="card ang">
+  <div class="sh">
+    <h2>채널별 세션 구성</h2>
+    <p class="sub">검색이 흔들릴 때 대신할 채널이 있는지 봅니다.</p>
+    <div class="tools"><span class="anpill">방문 이후 · <span class="lat">GA4</span></span></div>
+  </div>
+  <div id="an-channels-body"></div>
+</section>
+
+<!-- 실적을 아직 수집하지 않았으면 위 여섯 절(하루 단위 클릭·되찾을 클릭·
+     브랜드·의도별·주제 묶음별·국가별)이 전부 "아직 없습니다 + [실적 수집]"
+     카드로 따로 선다 — 같은 버튼이 한 화면에 여섯 번 찍혀 스크롤만 하다
+     지친다(QA 8회차). 수집 전에는 그 절들을 숨기고, 무엇이 채워지는지만
+     알럿 하나로 말한다. anEmptyFill() 이 그 여섯 절을 숨기고 이 알럿을 켠다 —
+     수집한 뒤에는 각 절이 원래대로 선다(절마다 결론·조건이 다르다).
+     알럿이라 화면 맨 아래에 서고, X 로 닫으면 이 사이트에서는 다시 안 뜬다. -->
+<section id="an-empty-fill" hidden>
+  <div id="an-empty-fill-body"></div>
 </section>
 
 <script>
@@ -278,9 +405,7 @@ const AN_NEXT = {
   lost_down: "걸려 있던 검색어가 통째로 빠졌습니다. 색인에서 빠졌거나 20위 밖으로 밀렸다는 뜻입니다.",
 };
 
-/* 표·차트는 카드 한 장에 담는다 — 결론 문장(.anverdict)과 각주(.anthin)는 밖에
-   둔다. 전부 싸면 화면이 상자밭이 되고 무엇이 결론인지가 도로 사라진다. */
-const anCard = h => h ? `<div class="card">${h}</div>` : "";
+/* 섹션 자신이 카드다 — 본문에 카드를 또 두르지 않는다(카드 속 카드 금지). */
 
 /* 이 회차에 가장 크게 움직인 검색어 — 띠의 주요 행동이 그 줄을 연다. */
 function anTopMover() {
@@ -382,38 +507,89 @@ const AN_SPLIT_TIP = "노출 효과는 두 수집에 모두 있는 검색어만 
 
 /* ── 맨 위 결론 + KPI ── 아래 절들이 다 낸 재료를 여기서 엮는다. 재료가 없으면
    그 조각은 조용히 뺀다(지어내지 않는다) — GA4 미연결이면 KPI 가 셋으로 준다. */
-// 숫자 KPI 는 셸의 .band 한 벌이다 — 이 화면만 카드 안 두 칸으로 그리고 있었고,
-// 개요·AI·백링크와 스캔 리듬이 끊겼다(QA A3). .b 눈금 줄에는 사실만 넣는다.
-function anKpi(k, v, s, cls) {
-  return `<div class="m"><div class="v ${cls || ""}">${v}</div>
-    <div class="l">${esc(k)}</div>${s ? `<div class="b">${esc(s)}</div>` : ""}</div>`;
+// 숫자 KPI 는 셸의 .band 한 벌이다(.m .v .l .b). 카드마다 미니 그림 하나가 붙는다 —
+// 값이 무엇에 대한 것인지 한눈에 읽히게. 그림은 인라인 SVG/CSS 이고 색은 토큰이다.
+function anKpi(k, v, s, cls, viz, mod) {
+  return `<div class="m${mod ? " " + mod : ""}"><div class="v ${cls || ""}">${v}</div>
+    <div class="l">${esc(k)}</div>${s ? `<div class="b">${esc(s)}</div>` : ""}${viz || ""}</div>`;
 }
+
+// 점들을 부드러운 곡선으로 잇는다(Catmull-Rom → 3차 베지어).
+function anSmooth(pts) {
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const f = n => n.toFixed(1);
+    d += ` C${f(p1[0] + (p2[0] - p0[0]) / 6)},${f(p1[1] + (p2[1] - p0[1]) / 6)}`
+       + ` ${f(p2[0] - (p3[0] - p1[0]) / 6)},${f(p2[1] - (p3[1] - p1[1]) / 6)}`
+       + ` ${f(p2[0])},${f(p2[1])}`;
+  }
+  return d;
+}
+// 하루 단위 클릭 스파크라인 — 곡선 + 옅은 면. 데이터는 daily 그대로다.
+function anSpark(rows, down) {
+  if (!rows || rows.length < 2) return "";
+  const W = 200, H = 48, P = 4, ys = rows.map(r => r.clicks || 0);
+  const mn = Math.min(...ys), mx = Math.max(...ys), sp = (mx - mn) || 1;
+  const line = anSmooth(ys.map((y, i) => [i / (ys.length - 1) * W, P + (1 - (y - mn) / sp) * (H - 2 * P)]));
+  const aria = `최근 ${rows.length}일 하루 클릭 추이, 최저 ${num(mn)} 최고 ${num(mx)}`;
+  return `<div class="anviz anspark${down ? " dn" : ""}"><svg viewBox="0 0 ${W} ${H}"
+    preserveAspectRatio="none" role="img" aria-label="${esc(aria)}"><defs><linearGradient id="anSpG"
+    x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s0"/><stop offset="1" class="s1"/></linearGradient>
+    </defs><path d="${line} L${W},${H} L0,${H} Z" fill="url(#anSpG)"/><path class="ln" d="${line}"/></svg>
+    <span>최근 ${num(rows.length)}일 하루 단위</span></div>`;
+}
+// 막대 몇 개 — 값이 큰 순서를 높이로 말한다.
+const anMiniBars = (vals, aria, cap) => vals.length
+  ? `<div class="anviz"><div class="anminibars" role="img" aria-label="${esc(aria)}">${vals.map(v =>
+      `<i style="height:${Math.max(10, Math.round(v / Math.max(...vals, 1) * 100))}%"></i>`).join("")}</div>
+    <span>${esc(cap)}</span></div>` : "";
+const anRing = (pct, low) => `<svg class="anring${low ? " dn" : ""}" viewBox="0 0 44 44" role="img"
+  aria-label="참여 세션 ${pct}%"><circle class="tr" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22"
+  r="18" stroke-dasharray="${(113.1 * pct / 100).toFixed(1)} 113.1" transform="rotate(-90 22 22)"/></svg>`;
 
 function anTopKpis(d) {
   const out = [];
   const s = d.shift;
-  if (s && (s.prev_clicks || s.clicks))
-    out.push(anKpi("클릭 변화", anNum(s.d_clicks), `${num(s.prev_clicks)} → ${num(s.clicks)}`,
-      s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted"));
+  if (s && (s.prev_clicks || s.clicks)) {
+    const pc = s.prev_clicks ? Math.round(s.d_clicks / s.prev_clicks * 1000) / 10 : null;
+    const pill = pc == null ? "" : `<span class="d ${pc > 0 ? "up" : pc < 0 ? "down" : "muted"}">${
+      pc > 0 ? "+" : pc < 0 ? "−" : ""}${Math.abs(pc)}%</span>`;
+    out.push(anKpi("클릭 변화", anNum(s.d_clicks) + pill, `${num(s.prev_clicks)} → ${num(s.clicks)}`,
+      s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted", anSpark(d.daily, s.d_clicks < 0)));
+  }
   const bs = d.brand_split;
-  if (bs && bs.length === 2 && bs[1].d_clicks != null)
+  if (bs && bs.length === 2 && bs[1].d_clicks != null) {
+    const tot = bs[0].clicks + bs[1].clicks, nb = anShare(bs[1].clicks, tot);
+    const split = tot ? `<div class="anviz"><div class="ansplit" role="img"
+      aria-label="브랜드 ${100 - nb}% · 논브랜드 ${nb}%"><i class="b" style="width:${100 - nb}%"></i><i class="n"
+      style="width:${nb}%"></i></div><div class="ansplitl"><span>브랜드 ${100 - nb}%</span><span
+      class="n">논브랜드 ${nb}%</span></div></div>` : "";
     out.push(anKpi("논브랜드 증감", anNum(bs[1].d_clicks),
       `전체 Δ${anNum((bs[0].d_clicks || 0) + bs[1].d_clicks)} 중`,
-      bs[1].d_clicks > 0 ? "up" : bs[1].d_clicks < 0 ? "down" : "muted"));
+      bs[1].d_clicks > 0 ? "up" : bs[1].d_clicks < 0 ? "down" : "muted", split));
+  }
   const gaps = d.ctr_gaps;
-  if (gaps && gaps.length)
+  if (gaps && gaps.length) {
+    const top = gaps.map(r => r.lost_clicks || 0).sort((a, b) => b - a).slice(0, 5);
     out.push(anKpi("되찾을 클릭", "+" + num(gaps.reduce((a, r) => a + (r.lost_clicks || 0), 0)),
-      `검색어 ${num(gaps.length)}개`, "up"));
+      `검색어 ${num(gaps.length)}개`, "up",
+      anMiniBars(top, `손실이 큰 검색어 ${top.length}개의 되찾을 클릭 ${top.map(num).join(", ")}`,
+        `큰 순서 ${num(top.length)}개`)));
+  }
   if (d.ga4_funnel && d.ga4_funnel.sessions) {
     const rate = Math.round(d.ga4_funnel.engaged_sessions / d.ga4_funnel.sessions * 100);
     out.push(anKpi("참여 세션", rate + "%", `세션 ${num(d.ga4_funnel.sessions)} 중`,
-      rate < 50 ? "down" : ""));
+      rate < 50 ? "down" : "", anRing(Math.min(100, rate), rate < 50)));
   } else {
-    const b1 = (d.rank_bands || []).find(r => r.label === "1–3위");
+    const bands = d.rank_bands || [], b1 = bands.find(r => r.label === "1–3위");
     if (b1) out.push(anKpi("1–3위 검색어", num(b1.n),
-      b1.d != null ? `직전 대비 ${anNum(b1.d)}` : "노출 30 이상 기준"));
+      b1.d != null ? `직전 대비 ${anNum(b1.d)}` : "노출 30 이상 기준", "",
+      anMiniBars(bands.map(r => r.n), "구간별 검색어 수 " + bands.map(r => `${r.label} ${r.n}`).join(", "),
+        "구간별 검색어 수")));
   }
-  return out.slice(0, 4).join("");
+  const k = out.slice(0, 4);
+  return k.length ? `<div class="band" data-n="${k.length}">${k.join("")}</div>` : "";
 }
 
 function anTopVerdict(d) {
@@ -463,7 +639,7 @@ function anTop(d, mismatch) {
       : `<div class="empty"><b>맞댈 수집이 아직 없습니다</b>
         <p>결론은 두 시점을 맞대야 나옵니다. 한 번 더 수집하면 여기가 채워집니다.</p>
         <div class="acts">${act("gsc", null, false)}</div></div>`) + ga4;
-  return verdict + (kpis ? `<div class="band">${kpis}</div>` : "") + ga4;
+  return verdict + kpis + ga4;
 }
 
 // 원인 넷은 "이전"에서 흘러 "현재"에 닿는 워터폴 하나로 — 합이 Δ클릭임이
@@ -498,7 +674,7 @@ function anShift(s, mismatch, hasPrev) {
     ? anNote(`목록에 없는 검색어 ${num(s.thin)}개`,
         "노출 30 미만이라 아래 목록에 이름을 안 올렸습니다. 위 합계에는 들어 있습니다. "
         + "노출 몇 번짜리 클릭률 흔들림은 원인이 아니라 표본 부족입니다.") : "";
-  return anVerdict(s) + anCard(chart) + thin;
+  return anVerdict(s) + chart + thin;
 }
 
 /* ── 검색어 행 펼침: 클릭을 움직인 검색어에서 바로 그 페이지로 ───────────────────────────────
@@ -557,7 +733,7 @@ const anBandsPanel = r => {
   const idx = {};
   AN_BANDS_VIEW.forEach((b, i) => { idx[b.label] = i; });
   return table(["검색어", ">클릭", ">노출", ">평균 순위", "이전 구간"],
-    r.queries.map(q => anBandsQueryRow(q, r.label, idx)));
+    r.queries.map(q => anBandsQueryRow(q, r.label, idx)), "", "cards");
 };
 
 // 수요 구성 갈래 펼침(brand·intent·cluster 공유) — 그 갈래 안에서 클릭이 큰 검색어.
@@ -611,10 +787,15 @@ document.addEventListener("click", e => {
   if (box) anCollapse(box.id);
 }, true);
 
+// 이니셜 아바타 — 검색어를 훑어 읽는 손잡이. 장식이라 낭독기에는 안 읽힌다.
+const anAv = (q, cls) => `<span class="anav ${esc(cls)}" aria-hidden="true">${
+  esc([...String(q).trim()][0] || "·")}</span>`;
+const anQ = (q, cls, more) => `<div class="anq">${anAv(q, cls)}<div class="anqt"><span
+  class="anqn">${esc(q)}</span>${more || ""}</div></div>`;
+
 function anMoverRow(r, i) {
   const c = AN_CAUSE[r.cause] || {t: r.cause, why: ""};
-  // 화살표는 뒤 값에 붙인다(nbsp) — 좁은 화면에서 접힐 때 "1.56% →" 로 반토막 나면
-  // 화살표만 줄 끝에 남아 읽히지 않는다. "→ 2.46%" 로 넘어가야 한 덩어리로 읽힌다.
+  // 화살표는 뒤 값에 붙인다 — 좁은 화면에서 "1.56% →" 로 반토막 나면 화살표만 줄 끝에 남는다.
   const arrow = (a, b) => `${a} → ${b}`;
   const ctr = r.prev_ctr == null ? `${r.ctr ?? "—"}%`
     : r.ctr == null ? `${r.prev_ctr}% →` : arrow(`${r.prev_ctr}%`, `${r.ctr}%`);
@@ -624,7 +805,7 @@ function anMoverRow(r, i) {
   return `<tr class="opp" tabindex="0" role="button" aria-expanded="false"
     data-ansrc="mv" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
     title="누르면 이 검색어의 페이지와 할 일이 펼쳐집니다">
-    <td class="kwcell">${esc(r.query)}${oppWhy(o)}</td>
+    <td class="kwcell">${anQ(r.query, r.cause, oppWhy(o))}</td>
     <td><span class="ancause ${esc(r.cause)}" title="${esc(c.why)}">${c.t}</span></td>
     <td class="num ${r.dclk > 0 ? "up" : "down"}">${anNum(r.dclk)}</td>
     <td class="num">${num(r.imp)}</td>
@@ -680,13 +861,13 @@ function anMovers(s, mismatch) {
   // 한쪽이 비었을 때 무엇으로 그리는지가 갈린다: 잃은 쪽이 비면 **검사했고 문제가
   // 없다**(.empty.ok), 얻은 쪽이 비면 그냥 **자료가 없다**(.empty). 둘을 같은 상자로
   // 그리면 좋은 소식이 실패처럼 읽힌다(QA A2).
-  const block = (title, rows, ok, off, good) => `<p class="eyebrow anblock">${title}</p>` +
+  const block = (title, rows, ok, off, good) => `<p class="eyebrow anblock">${title}${rows.length
+    ? `<span class="anpill ${good ? "dn" : "up"}">${num(rows.length)}개</span>` : ""}</p>` +
     // 좁은 화면에서는 줄을 카드로 쌓는다(셸 table 의 "cards") — 여섯 칸이 390px 를 밀었다.
     (rows.length ? table(AN_HEAD, rows.map((r, i) => anMoverRow(r, off + i)), "", "cards")
                  : `<div class="empty${good ? " ok" : ""}"><b>${ok}</b></div>`);
-  return bar + anCard(
-    block("잃은 쪽", down, "클릭이 줄어든 검색어가 없습니다", 0, true)
-    + block("얻은 쪽", up, "클릭이 늘어난 검색어가 없습니다", down.length, false));
+  return bar + block("잃은 쪽", down, "클릭이 줄어든 검색어가 없습니다", 0, true)
+    + block("얻은 쪽", up, "클릭이 늘어난 검색어가 없습니다", down.length, false);
 }
 
 function anCsv() {
@@ -712,7 +893,7 @@ function anDaily(rows) {
     ? `<p class="anverdict">가장 많이 눌린 날은 <b>${esc(top.date)}</b>(${num(top.clicks)}클릭)입니다.
     선이 한 칸에서만 꺾였다면 그날 무엇이 바뀌었는지부터 봅니다.</p>`
     : `<p class="anverdict">이 기간에는 클릭이 하루도 없었습니다.</p>`) +
-    anCard(window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180}));
+    window.chLine(rows.map(r => ({x: r.date, y: r.clicks})), {width: 1000, height: 180});
 }
 
 // CTR 곡선 — ctr_gaps 는 이미 "기대의 절반도 못 받는" 검색어만 걸러 둔 목록이라,
@@ -721,7 +902,7 @@ function anDaily(rows) {
 function anCtrChart(rows) {
   if (!rows || !rows.length) return "";
   const groups = rows.slice(0, 8).map(r => ({
-    title: `${r.position}위 · ${r.query}`,
+    title: `${r.position}위 · ${[...r.query].length > 11 ? [...r.query].slice(0, 10).join("") + "…" : r.query}`,
     lo: 0, hi: Math.max(r.actual_ctr, r.expected_ctr, 1) * 1.1,
     items: [{label: "실제", value: r.actual_ctr}, {label: "기대", value: r.expected_ctr}]}));
   return window.chDumbbell(groups, {width: 640, unit: "%"});
@@ -740,28 +921,30 @@ function anCtr(all) {
       : `<div class="empty"><b>거른 상태에 맞는 검색어가 없습니다</b>
       <p>거르개를 「전체」로 바꾸면 ${all.length}개가 있습니다.</p></div>`);
   const total = rows.reduce((a, r) => a + (r.lost_clicks || 0), 0);
-  return bar + `<p class="anverdict">아래를 다 고치면 같은 순위에서
+  const mx = Math.max(...rows.map(r => r.lost_clicks || 0), 1);
+  return bar + `<div class="ancols"><div class="ancol"><p class="anverdict">아래를 다 고치면 같은 순위에서
     <b>${num(total)}클릭</b>쯤을 되찾습니다. 순위를 올리는 일이 아니라 제목·설명을
-    고치는 일입니다.</p>` + anCard(anCtrChart(rows) +
+    고치는 일입니다.</p>${anCtrChart(rows)}</div><div class="ancol">` +
     // "실제 CTR"은 이름 그대로라 ⓘ가 없어도 읽힌다 — "기대 CTR"과 "되찾을 클릭"만
-    // 계산식이 숨어 있어 ⓘ가 남는다(QA 8회차: 열마다 ⓘ가 서서 정작 이 둘이
-    // 안 도드라졌다).
+    // 계산식이 숨어 있어 ⓘ가 남는다(QA 8회차).
     table(["검색어", ">평균 순위", ">노출", ">실제 CTR",
            ">기대 CTR?이 순위면 보통 이 정도는 눌립니다",
            ">되찾을 클릭?노출 × (기대 − 실제) 클릭률"],
-      rows.map(anCtrRow)));
+      rows.map((r, i) => anCtrRow(r, i, mx)), "", "cards") + `</div></div>`;
 }
-function anCtrRow(r, i) {
+function anCtrRow(r, i, mx) {
   const o = oppOf(r.query);
+  const big = (r.lost_clicks || 0) >= mx * 0.5;
   return `<tr class="opp" tabindex="0" role="button" aria-expanded="false"
     data-ansrc="ctr" data-i="${i}" onclick="anToggle(this)" onkeydown="anKey(event,this)"
     title="누르면 이 검색어의 페이지와 할 일이 펼쳐집니다">
-    <td class="kwcell">${esc(r.query)}${oppWhy(o)}</td>
+    <td class="kwcell">${anQ(r.query, "ctr", oppWhy(o))}</td>
     <td class="num">${r.position}</td>
     <td class="num">${num(r.impressions)}</td>
     <td class="num down">${r.actual_ctr}%</td>
     <td class="num muted">${r.expected_ctr}%</td>
-    <td class="num up">+${num(r.lost_clicks)}</td></tr>`;
+    <td class="num up">+${num(r.lost_clicks)}<div class="anmb" title="${big ? "손실이 큰 검색어" : "손실 비중"}"><i
+      class="${big ? "big" : ""}" style="width:${Math.max(4, Math.round((r.lost_clicks || 0) / mx * 100))}%"></i></div></td></tr>`;
 }
 
 /* 점 차트를 뺐다. 바로 밑 표가 같은 네 값을 이미 그리고 있었고(검색어 수 열 +
@@ -796,7 +979,7 @@ function anBands(rows) {
   // 2페이지 밖이 느는 건 밀렸다는 뜻이다. 한 방향으로 칠하면 색이 거짓말을 한다.
   const good = (r, i) => i < 2 ? r.d > 0 : r.d < 0;
   AN_BANDS_VIEW = rows;                        // 행의 data-i 는 이 배열을 가리킨다
-  return anBandsVerdict(rows) + anCard(
+  return anBandsVerdict(rows) +
     table(["구간?구글 검색결과에서 이 검색어가 선 자리. 1–10위가 1페이지입니다",
            ">검색어 수?노출 30 이상인 검색어 중 이 구간에 선 개수",
            "분포?막대 길이가 곧 검색어 수입니다. 가장 많은 구간이 꽉 찹니다",
@@ -811,7 +994,7 @@ function anBands(rows) {
         ></i></div></td>
       ${has ? `<td class="num ${!r.d ? "muted" : good(r, i) ? "up" : "down"}"
         >${r.d ? anNum(r.d) : "—"}</td>` : ""}</tr>`;
-    })))
+    }))
     + anNote("이 표를 읽는 법",
         "1–3위가 줄고 11–20위가 늘었다면 순위가 밀린 것이고, 전체 수가 함께 늘었다면 "
         + "새 검색어가 들어온 것입니다.");
@@ -891,9 +1074,9 @@ function anBrand(rows, hasSnap) {
     {label: "브랜드", value: b.clicks, tone: "patina"},
     {label: "논브랜드", value: n.clicks, tone: "slate"}], {width: 640, unit: "클릭"});
   return `<p class="anverdict">전체 클릭의 <b>${share}%</b>가 논브랜드입니다.
-    ${msg}</p>` + anCard(chart +
+    ${msg}</p>` + chart +
     anMix(rows, r => r.label === "brand" ? "브랜드 · 내 이름을 치고 온" :
-      "논브랜드 · 나를 모르고 온", null, "brand"));
+      "논브랜드 · 나를 모르고 온", null, "brand");
 }
 
 /* ── 신규·재방문(GA4) — 08. 다섯 GA4 키가 통째로 없으면 VIEW() 가 이 절 자체를
@@ -909,7 +1092,7 @@ function anNewret(rows) {
     label: AN_NEWRET[r.label] || r.label, value: r.sessions,
     tone: r.label === "new" ? "patina" : "slate"})), {width: 640, unit: "세션"});
   return `<p class="anverdict">유기 세션의 <b>${share}%</b>가 신규 방문입니다.
-    새 수요는 신규 쪽에서만 옵니다.</p>` + anCard(chart) +
+    새 수요는 신규 쪽에서만 옵니다.</p>` + chart +
     anNote("브랜드·논브랜드와 왜 안 겹치나",
       "GSC 클릭은 구글만 세고 GA4 세션은 네이버·빙 등도 셉니다. 위 브랜드·논브랜드와 "
       + "이 축은 서로 다른 집계라 1:1로 안 겹칩니다.");
@@ -945,13 +1128,13 @@ function anGa4Intent(rows) {
       + "GA4 실적을 더한 값입니다. 이 의도만의 전환이 아니라 이 의도가 데려온 페이지 "
       + "전체의 전환으로 읽습니다. 페이지 하나가 여러 의도에 걸리면 그 전환은 갈래마다 "
       + "중복으로 잡힙니다 — 겹친 페이지 열이 그 수입니다.") +
-    anCard(table(head, rows.map(r => `<tr>
+    table(head, rows.map(r => `<tr>
       <td>${esc(AN_INTENT[r.label] || r.label)}</td>
       <td class="num">${num(r.pages_matched)}/${num(r.pages)}</td>
       <td class="num">${num(r.sessions)}</td>
       <td class="num">${num(r.key_events)}</td>
       <td class="num">${r.shared_pages ? num(r.shared_pages) : "—"}</td>
-    </tr>`)));
+    </tr>`), "", "cards");
 }
 
 // 클릭 비중 막대 + 오른쪽에 GA4 전환(gaRows 있을 때만) — 클릭은 있는데 전환이
@@ -986,9 +1169,9 @@ function anIntent(rows, gaRows) {
        치는 말로 페이지를 하나 만드는 것이 먼저입니다.`
     : `클릭이 가장 많은 갈래는 <b>${esc(AN_INTENT[top.label] || top.label)}</b>이고,
        거래성은 ${num(tx.clicks)}클릭(평균 순위 ${tx.position ?? "—"})입니다.`;
-  return `<p class="anverdict">${msg}</p>`
-    + anCard(anIntentChart(named, gaRows)
-      + anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent"))
+  return `<div class="ancols"><div class="ancol"><p class="anverdict">${msg}</p>`
+    + anIntentChart(named, gaRows) + `</div><div class="ancol">`
+    + anMix(rows, r => esc(AN_INTENT[r.label] || r.label), null, "intent") + `</div></div>`
     + anUnmatched(rows, "의도") + anGa4Intent(gaRows);
 }
 
@@ -1020,7 +1203,7 @@ function anCluster(rows) {
   // 클릭 비중만 낸다. 전환까지 보려면 위 [의도별]을 본다.
   const chart = window.chBarList(named.map(r => ({label: r.label, value: r.clicks})), {width: 640});
   return `<p class="anverdict">${msg}</p>`
-    + anCard(chart + anMix(rows, r => esc(r.label), null, "cluster"))
+    + chart + anMix(rows, r => esc(r.label), null, "cluster")
     + anUnmatched(rows, "주제 묶음");
 }
 
@@ -1054,8 +1237,8 @@ function anCountry(rows, date, gaRows) {
        페이지가 없다는 뜻이라, 새로 쓰거나 hreflang 으로 잇는 것이 다음 일입니다.`
     : `클릭이 <b>${rows.length}개 나라</b>에 갈려 있고 1위가 ${share}% 입니다.
        타깃 밖 나라가 먹는 노출은 클릭률·평균 순위만 끌어내리므로 그 몫을 빼고 봅니다.`;
-  return `<p class="anverdict">${msg}</p>` + anCard(anCountryChart(rows, gaRows) +
-    anMix(rows, r => `<span class="lat">${esc(r.label).toUpperCase()}</span>`));
+  return `<p class="anverdict">${msg}</p>` + anCountryChart(rows, gaRows) +
+    anMix(rows, r => `<span class="lat">${esc(r.label).toUpperCase()}</span>`);
 }
 
 /* ── 검색에서 전환까지 단계별 이탈(11) — GSC 축(노출·클릭)과 GA4 축(세션부터)이
@@ -1069,7 +1252,7 @@ function anFunnel(f) {
   ];
   const rate = f.sessions ? Math.round(f.engaged_sessions / f.sessions * 100) : 0;
   return `<p class="anverdict">들어온 세션의 <b>${rate}%</b>만 무언가를 하고 나머지는
-    그대로 나갑니다.</p>` + anCard(window.chFunnel(steps, {width: 640})) +
+    그대로 나갑니다.</p>` + window.chFunnel(steps, {width: 640}) +
     anNote("두 축을 나란히 놓았습니다",
       "노출·클릭은 GSC(구글 검색결과만) 축이고 유기 세션부터는 GA4(네이버·빙 등도 포함) "
       + "축입니다. 하나로 이어진 값이 아니라 각자 자기 축에서 읽은 값이라 클릭과 세션은 "
@@ -1086,10 +1269,10 @@ function anChannels(c) {
   const share = anShare(c.organic, total);
   const donut = window.chDonut([
     {label: "유기 검색", value: c.organic, on: true},
-    {label: "그 외 채널", value: other}], {width: 160});
-  return anCard(`<div class="anchannels">${donut}
+    {label: "그 외 채널", value: other}], {width: 140});
+  return `<div class="anchannels">${donut}
     <p class="anverdict">전체 세션의 <b>${share}%</b>를 검색이 데려옵니다.
-      검색이 흔들리면 대체할 채널의 몫이 그만큼 좁다는 뜻입니다.</p></div>`) +
+      검색이 흔들리면 대체할 채널의 몫이 그만큼 좁다는 뜻입니다.</p></div>` +
     anNote("유기 검색에 무엇이 들어가나",
       "네이버·빙 등 다른 검색엔진 유입도 들어갑니다. GSC 클릭은 구글만 세므로 같은 것을 "
       + "세지 않습니다.");
@@ -1101,21 +1284,47 @@ function anChannels(c) {
 const AN_FILLABLE = [
   ["an-daily", "하루 단위 클릭"], ["an-ctr", "되찾을 클릭"], ["an-brand", "브랜드·논브랜드"],
   ["an-intent", "검색 의도"], ["an-cluster", "주제 묶음"], ["an-country", "국가별 클릭"]];
+/* 알럿을 닫은 기억 — 사이트(#hash)와 알럿 종류(서치콘솔 없음 / 수집 전)마다 따로다. 닫은 종류가
+   아닌 다른 상태가 되면(예: 서치콘솔을 붙인 뒤 다시 수집 전) 새 안내이므로 다시 뜬다.
+   저장이 막힌 환경(사생활 보호 창 등)에서는 이번 화면이 열려 있는 동안만 닫혀 있다. */
+const AN_ALERT_KEY = "sm:an-alert-x:";
+const AN_ALERT_GONE = {};
+const anAlertKind = noGsc => (location.hash || "") + ":" + (noGsc ? "nogsc" : "prefill");
+function anAlertClosed(k) {
+  if (AN_ALERT_GONE[k]) return true;
+  try { return localStorage.getItem(AN_ALERT_KEY + k) === "1"; } catch (e) { return false; }
+}
+function anAlertClose(k) {
+  AN_ALERT_GONE[k] = true;
+  try { localStorage.setItem(AN_ALERT_KEY + k, "1"); } catch (e) {}
+  const wrap = $("an-empty-fill");
+  if (wrap) wrap.hidden = true;
+}
+const anAlertX = k => `<button type="button" class="anx" data-k="${esc(k)}"
+  aria-label="안내 닫기" title="닫기" onclick="anAlertClose(this.dataset.k)"><svg viewBox="0 0 16 16"
+  aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>`;
+
 function anEmptyFill(hide, noGsc) {
   AN_FILLABLE.forEach(([id]) => { const el = $(id); if (el) el.hidden = hide; });
   const wrap = $("an-empty-fill");
-  if (wrap) wrap.hidden = !hide;
+  const k = anAlertKind(noGsc);
+  if (wrap) wrap.hidden = !hide || anAlertClosed(k);
   if (!hide) return;
   // 서치콘솔 없이 시작한 사이트(호스팅 온보딩) — [실적 수집]을 내밀면 눌러도 건너뛰기만
   // 한다. 무엇이 없고 왜 없는지, 대신 어디를 보면 되는지를 말한다.
-  $("an-empty-fill-body").innerHTML = noGsc ? `<div class="card empty">
-    <b>서치콘솔을 붙인 사이트에서만 채워집니다</b>
-    <p>${AN_FILLABLE.map(([, l]) => esc(l)).join(" · ")}. 이 사이트는 서치콘솔 없이
-      시작해서 클릭·노출 실측이 없습니다. 순위·AI 인용·사이트 점검은 각 화면에서 봅니다.</p>
-  </div>` : `<div class="card empty">
-    <b>실적을 수집하면 여기부터 채워집니다</b>
-    <p>${AN_FILLABLE.map(([, l]) => esc(l)).join(" · ")}</p>
-    <div class="acts">${act("gsc", null, false)}</div>
+  const labels = AN_FILLABLE.map(([, l]) => esc(l)).join(" · ");
+  $("an-empty-fill-body").innerHTML = noGsc ? `<div class="analert" role="status">
+    <span class="anic" aria-hidden="true">i</span>
+    <div class="anbody"><b>서치콘솔을 붙인 사이트에서만 채워집니다</b>
+      <p>${labels}. 이 사이트는 서치콘솔 없이
+        시작해서 클릭·노출 실측이 없습니다. 순위·AI 인용·사이트 점검은 각 화면에서 봅니다.</p></div>
+    ${anAlertX(k)}
+  </div>` : `<div class="analert" role="status">
+    <span class="anic" aria-hidden="true">i</span>
+    <div class="anbody"><b>실적을 수집하면 여기부터 채워집니다</b>
+      <p>${labels}</p>
+      <div class="acts">${act("gsc", null, false)}</div></div>
+    ${anAlertX(k)}
   </div>`;
 }
 
@@ -1152,7 +1361,14 @@ VIEW("analysis", function (d) {
   // 뒤에는(gsc_date 가 생기면) 각 절이 원래대로 선다 — 절마다 조건이 다르므로
   // (브랜드는 브랜드 표기 유무, 국가는 country_date 유무) 그때부터는 각자 판단한다.
   const noData = !d.gsc_date;
+  // 짝 카드가 접히면 남은 카드가 전폭으로 서도록 상자에 표식을 단다(CSS 가 읽는다).
+  const box = $("view-analysis");
+  if (box) box.classList.toggle("an-nodata", noData);
   anEmptyFill(noData, !(d.project && d.project.gsc_property));
+  // 맨 위 카드가 이미 "맞댈 수집이 없다"고 말했으면 원인 카드가 같은 말을 되풀이하지 않는다.
+  const dupe = !anTopVerdict(d) && !anTopKpis(d);
+  $("an-shift").hidden = dupe;
+  if (box) box.classList.toggle("an-noshift", dupe);
   if (!noData) {
     $("an-daily-body").innerHTML = anDaily(d.daily);
     $("an-ctr-body").innerHTML = anCtr(d.ctr_gaps);

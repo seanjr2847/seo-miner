@@ -7,66 +7,228 @@
      토글은 상태를 하나 더 만들고(열렸나 닫혔나), 그 상태는 아무 데도 안 남았다. -->
 
 <style>
-/* 단계 줄을 부품 계약에 맞춘다 — 마크업은 셸(renderGuide)이 만들고, 여기서는
-   그 마크업이 [면 카드 + 번호 + 상태 알약 + 행동 하나]로 읽히게 자리만 잡는다.
-   토큰만 쓴다(자체 색상값·!important 없음). */
+/* 이 화면의 주 질문은 하나다: 한 바퀴에서 지금 몇 번째이고, 다음에 무엇을 누르나.
+   그래서 첫 줄이 [한 바퀴 링 | 지금 할 것]이다. 링이 "어디까지"를, 옆 카드가 "무엇을"을
+   한 번에 답한다. 단계 카드 여섯은 그 아래 참고 표다.
+   화면 상자(#view-guide)를 12열 격자로 세우고 섹션은 display:contents 로 풀어 링·단계·
+   표가 머리(.vh)·띠(.next)와 같은 격자의 칸이 되게 한다. 셸이 짓는 마크업(#shaft 의
+   .stp, .next 띠)은 이름을 그대로 두고 여기서 모양만 바꾼다. 토큰만 쓴다. */
+#view-guide:not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:var(--gap); align-content:start; }
+#view-guide:not([hidden]) > * { grid-column:1 / -1; min-width:0; margin:0; }
+#view-guide:not([hidden]) > .vh { padding-bottom:var(--sp-2); }
+#guide { display:contents; }
+#guide .card { margin:0; }
 
-/* ① 단계 하나가 면 카드 하나다(반경 20·옅은 그림자·테두리 없음). 아직 안 한 단계는
-      그림자 없이 --sunk 면으로 물러나고, 끝난 것·지금 할 것은 흰 면이다. */
-#guide .stp .body { border:0; border-radius:var(--r-card); background:var(--card);
-  box-shadow:var(--shadow); padding:var(--sp-4) var(--sp-5); margin:0 0 var(--sp-3); }
-#guide .stp.later .body { background:var(--sunk); box-shadow:none; }
-#guide .stp:last-child .body { margin-bottom:0; }
-/* ② 행동은 카드의 오른쪽 끝에 붙는다 — 어느 단계의 손잡이인지 본문 옆에서 읽힌다. */
-#guide .stp .body { grid-template-columns:minmax(0,1fr) auto; align-items:center;
-  gap:0 var(--sp-5); }
-#guide .stp .body .txt { max-width:66ch; }
-#guide .stp .cmd, #guide .stp .go { margin-top:0; }
-/* 지금 할 단계는 번호 원(강조 고리)과 [지금 할 것] 알약이 말한다. 카드 색은 끝남(초록
-   알약)과 겹치지 않게 흰 면 그대로 둔다. */
-/* ③ 상태는 옅은 알약이다(24px·12px 600). 끝난 것=accent, 지금·아직=중립. */
-#guide .stp .state { display:inline-flex; align-items:center; height:24px;
-  border:0; border-radius:var(--r-pill); padding:0 var(--sp-3);
-  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap;
+/* ── ① 한 바퀴 링 카드 (5열) ─────────────────────────────── */
+#view-guide:not([hidden]) #gring { grid-column:1 / 6; order:1; display:flex;
+  flex-direction:column; gap:var(--sp-4); }
+#view-guide:not([hidden]):not(:has(> .next)) #gring { grid-column:1 / -1; }
+#guide .gch h2 { margin:0; }
+#guide .gch .sub { margin:2px 0 0; font-size:var(--fs-1); line-height:1.55; }
+#guide .gbody { display:flex; align-items:center; gap:var(--sp-5); flex-wrap:wrap; }
+#guide .gdial { position:relative; flex:0 0 176px; width:176px; height:176px; }
+#guide .gdial svg { display:block; width:100%; height:100%; transform:rotate(-90deg); }
+#guide .gseg { fill:none; stroke-width:14; stroke-linecap:round; }
+#guide .gseg.later { stroke:var(--rule); }
+#guide .gseg.done { stroke:var(--accent); }
+#guide .gseg.skip { stroke:var(--info); }
+#guide .gseg.here { stroke:color-mix(in srgb, var(--accent) 38%, var(--card)); }
+#guide .gmid { position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; text-align:center; gap:2px; }
+#guide .gmid b { font:700 var(--fs-5)/1.1 var(--sans); font-variant-numeric:tabular-nums;
+  color:var(--ink); }
+#guide .gmid b i { font-style:normal; color:var(--mute); font-weight:500; }
+#guide .gmid span { font:500 var(--fs-1)/1.35 var(--sans); color:var(--sub); }
+#guide .gkey { flex:1 1 200px; min-width:0; list-style:none; margin:0; padding:0;
+  display:grid; gap:2px; }
+#guide .gkey li { display:grid; grid-template-columns:10px minmax(0,1fr) auto;
+  align-items:center; gap:var(--sp-3); min-height:30px;
+  font:500 var(--fs-2)/1.35 var(--sans); color:var(--ink); }
+#guide .gkey li.later { color:var(--sub); }
+#guide .gkey .gk { width:10px; height:10px; border-radius:50%; background:var(--rule); }
+#guide .gkey .done .gk { background:var(--accent); }
+#guide .gkey .skip .gk { background:var(--info); }
+#guide .gkey .here .gk { background:color-mix(in srgb, var(--accent) 38%, var(--card)); }
+#guide .gkey .gks { font:600 var(--fs-1)/1 var(--sans); color:var(--sub); }
+#guide .gkey .done .gks { color:var(--accent); }
+#guide .gkey .here .gks { color:var(--ink); }
+#guide .gkey .skip .gks { color:var(--info); }
+#guide .gkey em { font-style:normal; font-variant-numeric:tabular-nums; color:var(--mute);
+  margin-right:6px; }
+/* 링은 첫 그림에서만 한 번 차오른다 — 다시 그릴 때마다 움직이면 눈에 거슬린다. */
+@media (prefers-reduced-motion:no-preference) {
+  #guide .gseg.enter { animation:gseg-in .5s cubic-bezier(.2,.7,.2,1) both;
+    animation-delay:calc(var(--i) * 70ms); }
+  @keyframes gseg-in { from { opacity:0; stroke-width:4; } to { opacity:1; stroke-width:14; } }
+}
+
+/* ── ② 지금 할 것 카드 (7열) — 셸의 다음 행동 띠(.next)가 이 자리다 ── */
+#view-guide:not([hidden]) > .next { grid-column:6 / -1; order:2; display:flex;
+  flex-direction:column; flex-wrap:nowrap; align-items:flex-start; justify-content:center;
+  gap:var(--sp-3);
+  padding:28px 32px; border-radius:var(--r-card); background:var(--accent-wash); }
+#view-guide > .next::before { display:none; }
+#view-guide > .next p { flex:0 0 auto; margin:0; max-width:56ch; }
+#view-guide > .next .gnk { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
+#view-guide > .next .gpill { display:inline-flex; align-items:center; gap:6px; height:24px;
+  padding:0 var(--sp-3); border-radius:var(--r-pill); background:var(--accent);
+  color:var(--accent-ink); font:600 var(--fs-1)/1 var(--sans); }
+#view-guide > .next .gpill::before { content:""; width:6px; height:6px; border-radius:50%;
+  background:currentColor; }
+#view-guide > .next .gnst { font:500 var(--fs-1)/1.35 var(--sans); color:var(--sub); }
+#view-guide > .next .gnt { font:650 var(--fs-4)/1.35 var(--sans); color:var(--ink);
+  text-wrap:balance; }
+#view-guide > .next .gnt b { font-weight:inherit; }
+#view-guide > .next .gng { font:400 var(--fs-2)/1.65 var(--sans); color:var(--sub); }
+#view-guide > .next .gnr { font:500 var(--fs-2)/1.65 var(--sans); color:var(--ink); }
+#view-guide > .next .acts { margin-top:var(--sp-2); flex:0 0 auto; max-width:100%; }
+#view-guide > .next.run { background:var(--info-wash); }
+
+/* ── ③ 단계 카드 ×6 (3열 × 2줄, 각 4열) ────────────────────
+   끝난 단계는 흰 면, 아직 안 한 단계는 그림자 없이 --sunk 면으로 물러난다. 지금 할 단계는
+   번호 원의 고리가 말한다(옆 카드가 이미 크게 말하니 카드는 조용히 둔다). */
+#guide .shaft { grid-column:1 / -1; order:3; display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--gap); }
+#guide .stp { display:grid; grid-template-columns:28px minmax(0,1fr); grid-template-rows:1fr auto;
+  gap:0 var(--sp-3); padding:var(--sp-5); border-radius:var(--r-card); background:var(--card);
+  box-shadow:var(--shadow); min-width:0; }
+#guide .stp.later { background:var(--sunk); box-shadow:none; }
+#guide .stp .rail { position:static; grid-column:1; grid-row:1; }
+#guide .stp .rail::before { display:none; }
+#guide .stp .dot { position:static; width:28px; height:28px; line-height:24px; }
+#guide .stp.done .dot { background:var(--accent); border-color:var(--accent); }
+#guide .stp.here .dot { background:var(--card); border-color:var(--accent);
+  box-shadow:0 0 0 4px var(--accent-wash); }
+#guide .stp .body { display:contents; }
+#guide .stp .txt { grid-column:2; grid-row:1; min-width:0; max-width:none; }
+#guide .stp .body > div:not(.txt) { grid-column:1 / -1; grid-row:2; }
+#guide .stp h3 { display:grid; grid-template-columns:auto 1fr; align-items:center;
+  gap:var(--sp-2) var(--sp-2); font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
+#guide .stp .t { grid-column:1; grid-row:1; }
+#guide .stp .now { grid-column:2; grid-row:1; justify-self:start; }
+#guide .stp .state { grid-column:1 / -1; grid-row:2; justify-self:start; max-width:100%; }
+#guide .stp .gain { margin:var(--sp-3) 0 0; font:400 var(--fs-2)/1.65 var(--sans);
+  color:var(--sub); max-width:none; letter-spacing:0; }
+#guide .stp.later h3 { color:var(--sub); }
+/* 상태는 옅은 알약이다(12px 600). 끝난 것=accent, 건너뜀=청회색, 그 밖은 중립. 긴 문구는
+   카드 안에서 줄을 바꾼다 — 알약이 카드 밖으로 밀려 나가지 않게. */
+#guide .stp .state { display:inline-flex; align-items:center; min-height:24px;
+  border:0; border-radius:12px; padding:4px var(--sp-3);
+  font:600 var(--fs-1)/1.35 var(--sans); white-space:normal; overflow-wrap:anywhere;
   color:var(--sub); background:var(--sunk); }
-#guide .stp.here .state { color:var(--sub); background:var(--sunk); }
 #guide .stp.later .state { color:var(--sub); background:var(--card); }
 #guide .stp.done .state { color:var(--accent); background:var(--accent-wash); }
-/* 알약이 섰으니 제목 옆 ✓ 는 같은 말을 두 번 하는 것이다. */
+#guide .stp .now { height:24px; color:var(--accent); background:var(--accent-wash); }
 #guide .stp .ok { display:none; }
-/* 갱도 벽은 카드 사이를 잇는다 — 점이 카드 제목 줄에 오게 맞춘다. */
-#guide .stp .dot { top:var(--sp-4); }
-/* ④ 접은 산문. */
-#guide .loopback { margin-top:var(--sp-5); }
-#guide .loopback > summary { display:flex; align-items:center; min-height:44px;
-  font:500 var(--fs-2)/1.5 var(--sans); color:var(--sub); cursor:pointer; }
+#guide .stp .cmd, #guide .stp .go { margin:var(--sp-4) 0 0; white-space:normal;
+  overflow-wrap:anywhere; text-align:left; max-width:100%; }
+#guide .stp .cmd { padding-top:8px; padding-bottom:8px; }
+
+/* ── ④ 보조 패널: 마지막으로 잰 날(7) + 돌아오는 길(5) ─────── */
+#guide .glast { grid-column:1 / 8; order:4; }
+#guide .loopback { grid-column:8 / -1; order:5; margin:0; padding:22px 24px;
+  font-size:var(--fs-2); line-height:1.7; color:var(--sub); max-width:none; }
+#guide .glast .gch, #guide .loopback > summary { margin:0 0 var(--sp-4); }
+#guide .glast .gch { display:flex; align-items:baseline; justify-content:space-between;
+  gap:var(--sp-3); flex-wrap:wrap; }
+#guide .glast .gch h2 { margin:0; }
+#guide .glast .gch .sub { margin:2px 0 0; font-size:var(--fs-1); flex:0 0 100%; }
+#guide .glist { list-style:none; margin:0; padding:0; display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px var(--sp-6); }
+#guide .glist li { display:grid; grid-template-columns:10px minmax(0,1fr) auto;
+  align-items:baseline; gap:0 var(--sp-3); min-height:36px; align-content:center;
+  font:500 var(--fs-2)/1.35 var(--sans); color:var(--ink); }
+#guide .glist .gf { width:8px; height:8px; border-radius:50%; background:var(--accent);
+  align-self:center; }
+#guide .glist .stale .gf { background:var(--warn); }
+#guide .glist .none .gf { background:var(--rule); }
+#guide .glist .gd { text-align:right; white-space:nowrap; }
+#guide .glist .gd time { font:500 var(--fs-1)/1 var(--mono); font-variant-numeric:tabular-nums;
+  color:var(--ink); }
+#guide .glist .gd small { font:400 var(--fs-1)/1 var(--sans); color:var(--sub);
+  margin-left:var(--sp-2); }
+#guide .glist .none { color:var(--sub); }
+#guide .glist .none .gd { font:500 var(--fs-1)/1 var(--sans); color:var(--sub); }
+#guide .gkeyl { display:flex; gap:var(--sp-4); flex-wrap:wrap; font:500 var(--fs-1)/1.35 var(--sans);
+  color:var(--sub); }
+#guide .gkeyl i { display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-right:6px; vertical-align:baseline; background:var(--accent); }
+#guide .gkeyl .s i { background:var(--warn); }
+#guide .gkeyl .n i { background:var(--rule); }
+
+#guide .loopback > summary { display:flex; align-items:center; min-height:0;
+  font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); cursor:pointer; }
 #guide .loopback > summary:hover { color:var(--accent); }
 #guide .loopback > summary:focus-visible { outline:2px solid var(--accent);
-  outline-offset:2px; border-radius:var(--r-in); }
-#guide .loopback p { margin:var(--sp-2) 0 0; font-size:var(--fs-2); line-height:1.7;
-  color:var(--sub); }
+  outline-offset:4px; border-radius:var(--r-in); }
+#guide .loopback p { margin:0; font-size:var(--fs-2); line-height:1.7; color:var(--sub); }
+#guide .loopback p + p, #guide .loopback p + .gloop { margin-top:var(--sp-4); }
+#guide .loopback code { background:var(--sunk); }
+#guide .loopback b { color:var(--ink); }
+#guide .gloop { display:flex; flex-wrap:wrap; gap:var(--sp-2); align-items:center; }
+#guide .gloop:empty { display:none; }
+#guide .gloop span { display:inline-flex; align-items:center; gap:6px; min-height:28px;
+  padding:0 var(--sp-3); border-radius:var(--r-pill); background:var(--sunk);
+  font:500 var(--fs-1)/1 var(--sans); color:var(--ink); white-space:nowrap; }
+#guide .gloop span em { font-style:normal; font-variant-numeric:tabular-nums; color:var(--sub); }
+#guide .gloop .back { background:var(--accent-wash); color:var(--accent); font-weight:600; }
+
+/* 순서: 머리 → 링 → 지금 할 것 → 단계 → 표·설명 (좁은 화면도 같은 차례) */
+@media (max-width:1199px) {
+  #view-guide:not([hidden]) #gring { grid-column:1 / 7; }
+  #view-guide:not([hidden]) > .next { grid-column:7 / -1; padding:24px; }
+  #guide .shaft { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #guide .glast { grid-column:1 / -1; }
+  #guide .loopback { grid-column:1 / -1; }
+}
+@media (max-width:999px) {
+  #view-guide:not([hidden]) #gring,
+  #view-guide:not([hidden]) > .next { grid-column:1 / -1; }
+  #guide .glist { grid-template-columns:minmax(0,1fr); }
+}
 @media (max-width:720px) {
-  #guide .stp .body { grid-template-columns:minmax(0,1fr); align-items:start;
-    padding:var(--sp-4); }
-  #guide .stp .cmd, #guide .stp .go { margin-top:var(--sp-3); }
-  #guide .loopback { padding-left:0; }
+  #guide .shaft { grid-template-columns:minmax(0,1fr); }
+  #guide .gbody { justify-content:center; }
+  #guide .gdial { flex-basis:160px; width:160px; height:160px; }
+  #view-guide > .next { padding:20px; }
+  #view-guide > .next .acts { align-self:stretch; }
+  #view-guide > .next .acts .go, #view-guide > .next .acts .cmd { width:100%;
+    justify-content:center; }
+  #guide .stp .cmd, #guide .stp .go { width:100%; justify-content:center; }
 }
 </style>
 
 <section id="guide">
-  <div class="sh">
-    <h2>한 바퀴 순서</h2>
-    <p class="sub">끝난 단계는 실제로 모인 자료를 보고 스스로 표시됩니다.<span class="hint"
-      tabindex="0" data-tip="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
-      title="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
-      aria-label="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
-      >i</span></p>
+  <!-- 링 카드는 그릴 데이터(d.guide)가 온 뒤에야 보인다 -->
+  <div class="card" id="gring" hidden>
+    <div class="gch">
+      <h2>한 바퀴 순서</h2>
+      <p class="sub">끝난 단계는 실제로 모인 자료를 보고 스스로 표시됩니다.<span class="hint"
+        tabindex="0" data-tip="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+        title="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+        aria-label="한 바퀴 돌 때마다 재료가 쌓여서 다음 바퀴가 쉬워집니다. 앞 단계가 비어 있으면 뒤 단계는 잴 것이 없어 돌지 않습니다."
+        >i</span></p>
+    </div>
+    <div class="gbody">
+      <div class="gdial" id="gdial" role="img" aria-label=""></div>
+      <ol class="gkey" id="gkey"></ol>
+    </div>
   </div>
+  <!-- 셸이 #shaft 에 단계 카드(.stp)를 짓는다(renderGuide). 모양은 위 CSS 가 바꾼다. -->
   <div class="shaft" id="shaft"></div>
-  <!-- 설명 산문은 접는다. 갈래(data-web)는 남긴다 — 로컬은 채팅에 명령을 치고
+  <div class="card glast" id="glast" hidden>
+    <div class="gch">
+      <h2>마지막으로 잰 날</h2>
+      <div class="gkeyl" aria-hidden="true"><span><i></i>주기 안</span><span class="s"><i></i>주기 지남</span><span class="n"><i></i>아직</span></div>
+      <p class="sub">단계마다 성공한 마지막 수집일입니다. 이 사이트의 기록에서 읽습니다.</p>
+    </div>
+    <ul class="glist" id="glist"></ul>
+  </div>
+  <!-- 설명 산문은 접을 수 있게 둔다. 갈래(data-web)는 남긴다 — 로컬은 채팅에 명령을 치고
        호스팅은 이 화면 머리줄의 [전체 다시 재기]를 누른다(셸의 groupHead — 전체
        재기 버튼은 이 화면 한 곳에만 선다). 할 수 있는 일이 실제로 다른 자리다. -->
-  <details class="loopback">
+  <details class="loopback card" open>
     <!-- data-web 은 textContent 로만 갈아 끼운다(applyWording) — 태그를 못 실어
          로컬의 <code> 대신 대괄호로 명령 이름을 표시해 왔다. 이 화면 다른 자리엔
          대괄호 표기가 없어서 여기만 다른 말투로 읽혔다 — 그냥 뺀다. -->
@@ -82,12 +244,90 @@
       단계도 따로 묻지 않습니다.</span> 마지막 단계가 끝나면
       <b>다시 실적을 수집하는 단계로 돌아옵니다</b>. 고친 것이 순위와 인용에
       반영됐는지는 그때 숫자로 나옵니다.</p>
+    <div class="gloop" id="gloop" role="img" aria-label=""></div>
   </details>
 </section>
 
 <script>
 "use strict";
-/* ── 다음 행동 띠 ───────────────────────────────────────────
+/* ── 링·마지막으로 잰 날·돌아오는 길 ─────────────────────────
+      판정은 새로 하지 않는다 — done·skip·here 는 서버가 정한다(stage.from_progress),
+      날짜는 d.groups[].last(서버가 성공한 런에서 뽑는다). 여기는 그 값을 도형과 목록으로
+      옮기기만 한다. 색은 CSS 변수라 다크·라이트 전환에 다시 그릴 일이 없다. ── */
+const G_TAU = 2 * Math.PI, G_R = 74, G_C = G_TAU * G_R;
+let G_RING_SEEN = false;              // 링이 차오르는 모션은 첫 그림에서 한 번만
+
+function gRing(g) {
+  const box = $("gring");
+  if (!box) return;
+  const steps = (g && g.steps) || [];
+  if (!steps.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const n = steps.length, here = g.here;
+  const seg = G_C / n, dash = seg - 22;   // 조각 사이 8px + 둥근 끝 14px
+  const kind = (s, i) => s.skip ? "skip" : s.done ? "done" : i === here ? "here" : "later";
+  const doneN = steps.filter(s => s.done).length;
+  const skipN = steps.filter(s => s.skip).length;
+  const label = `${n}단계 중 ${doneN}단계 끝남` + (skipN ? `, ${skipN}단계 건너뜀` : "")
+    + (here === -1 ? ", 한 바퀴 완주" : `, 지금 할 것은 ${here + 1}번 ${steps[here].t}`);
+  const enter = !G_RING_SEEN ? " enter" : "";
+  G_RING_SEEN = true;
+  const arcs = steps.map((s, i) => `<circle class="gseg ${kind(s, i)}${enter}" style="--i:${i}"
+      cx="90" cy="90" r="${G_R}" stroke-dasharray="${dash.toFixed(2)} ${(G_C - dash).toFixed(2)}"
+      stroke-dashoffset="${(-(i * seg + (seg - dash) / 2)).toFixed(2)}"/>`).join("");
+  const dial = $("gdial");
+  dial.setAttribute("aria-label", label);
+  dial.innerHTML = `<svg viewBox="0 0 180 180" aria-hidden="true">${arcs}</svg>
+    <div class="gmid"><b>${doneN}<i>/${n}</i></b><span>${here === -1 ? "한 바퀴 완주" : "단계 끝남"}</span></div>`;
+  const word = {done: "끝남", skip: "건너뜀", here: "지금", later: "아직"};
+  $("gkey").innerHTML = steps.map((s, i) => {
+    const k = kind(s, i);
+    return `<li class="${k}"><span class="gk"></span><span><em>${i + 1}</em>${esc(s.t)}</span>
+      <span class="gks">${word[k]}</span></li>`;
+  }).join("");
+}
+
+function gLast(d) {
+  const box = $("glast"), ul = $("glist");
+  if (!box) return;
+  const gs = grpDue(d.groups || []);
+  const rows = new Map();                       // 단계 → {at, stale}  (순위처럼 두 묶음이 함께 쓰는 단계는 한 줄)
+  gs.forEach(g => Object.keys(g.last || {}).forEach(st => {
+    const r = rows.get(st) || {at: null, stale: false};
+    const at = g.last[st];
+    if (at && (!r.at || at > r.at)) r.at = at;
+    if (g.due === true) r.stale = true;
+    rows.set(st, r);
+  }));
+  if (!rows.size) { box.hidden = true; return; }
+  box.hidden = false;
+  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const ago = at => {
+    const dt = new Date(String(at).slice(0, 10) + "T00:00:00");
+    if (isNaN(dt)) return "";
+    const n = Math.round((t0 - dt) / 864e5);
+    return n <= 0 ? "오늘" : `${n}일 전`;
+  };
+  ul.innerHTML = [...rows].map(([st, r]) => {
+    const cls = !r.at ? "none" : r.stale ? "stale" : "fresh";
+    return `<li class="${cls}"><span class="gf"></span><span>${esc(stageName(st))}</span>
+      <span class="gd">${r.at ? `<time>${esc(String(r.at).slice(0, 10))}</time><small>${esc(ago(r.at))}</small>` : "아직"}</span></li>`;
+  }).join("");
+}
+
+// 돌아오는 길 — 2번부터 마지막까지가 매 바퀴 도는 자리고, 끝나면 2번으로 돌아온다.
+function gLoop(g) {
+  const el = $("gloop");
+  if (!el) return;
+  const steps = (g && g.steps) || [];
+  if (steps.length < 3) { el.innerHTML = ""; return; }
+  const rest = steps.slice(1);
+  el.setAttribute("aria-label", `${rest.map((s, i) => `${i + 2}번 ${s.t}`).join(", ")} 순서로 돌고, 끝나면 2번 ${steps[1].t}로 돌아옵니다`);
+  el.innerHTML = rest.map((s, i) => `<span data-stage="${esc(s.id)}"><em>${i + 2}</em>${esc(s.t)}</span>`).join("")
+    + `<span class="back">2번으로 돌아옴</span>`;
+}
+
+/* ── 다음 행동 카드(셸의 .next 띠) ────────────────────────────
       여태 이 화면에만 띠가 없었다. "단계 목록이 곧 지금 할 것"이라고 봤는데,
       실제로 열어 보면 여섯 카드가 나란히 서 있고 채운 버튼이 하나도 없어서
       어느 것부터 누르는지가 가장 안 보이는 화면이었다(11화면 중 유일).
@@ -101,29 +341,35 @@
       단계로 못 돌리는 자리(마지막 [콘텐츠 작성])는 그 화면이 이미 가진 손잡이를
       그대로 쓴다(SM.host.stepChip). ── */
 VIEW("guide", function (d) {
-  if (!window.nextStep) return;
   const g = d.guide;
+  gRing(g); gLast(d); gLoop(g);
+  if (!window.nextStep) return;
   if (!g || !g.steps || !g.steps.length) return nextStep("guide", "");
   const steps = g.steps, here = g.here;
   // 한 바퀴를 다 돌았으면 다시 재는 것이 다음 걸음이다 — 그 손잡이는 화면 머리의
-  // [전체 다시 재기] 하나다. 띠에 단계별 재실행을 또 달면 "다시"가 한 화면에 둘이다.
+  // [전체 다시 재기] 하나다. 카드에 단계별 재실행을 또 달면 "다시"가 한 화면에 둘이다.
   if (here === -1)
-    return nextStep("guide", `<p>${steps.length}단계를 모두 마쳤습니다.
-      <span class="live">다시 재면 그동안 고친 것이 숫자로 나옵니다.</span></p>`);
+    return nextStep("guide", `<div class="gnk"><span class="gpill">한 바퀴 완주</span></div>
+      <p class="gnt">${steps.length}단계를 모두 마쳤습니다.</p>
+      <p class="gnr"><span class="live">다시 재면 그동안 고친 것이 숫자로 나옵니다.</span></p>
+      <p class="gng">화면 위쪽의 전체 다시 재기가 2번 ${esc(steps[1] ? steps[1].t : "")}부터 다시 돕니다.</p>`);
   const s = steps[here];
   // 돌릴 수 있는 단계면 act() 가 정본 라벨을 실어 준다. 아니면(마지막 단계처럼
   // 명령이 다른 일을 하는 자리) 이 화면이 원래 쓰던 손잡이를 그대로 쓴다.
   const btn = (s.runnable && window.act) ? act(s.id, s.t)
     : (window.SM && SM.host && SM.host.stepChip) ? SM.host.stepChip(s) : "";
   // 「4단계가 끝났습니다」는 4번이 끝났다고 읽힌다 — 단계는 건너뛰어 끝나기도 해서
-  // (4번 대기·5번 끝) 개수와 순번이 갈린다. 개수로 적고, 지금 할 순번을 따로 말한다.
-  // 「4개가 끝났고 지금 4번」도 평가자 둘이 "완료는 3개"로 읽었다 — 개수 대신 끝난
-  // 번호를 적는다. 번호는 아래 스테퍼의 원 숫자와 같은 말이라 대조가 된다.
+  // (4번 대기·5번 끝) 개수와 순번이 갈린다. 개수 대신 끝난 번호를 적는다. 번호는
+  // 링·단계 카드의 숫자와 같은 말이라 대조가 된다.
   const doneNo = steps.map((x, i) => x.done ? i + 1 : 0).filter(Boolean);
   // "지금 할 것"(전역 우선순위)은 [개요] 한 곳이 말한다 — 여기는 이 순서에서 아직 안
   // 끝난 첫 칸만 짚는다. [개요]의 준비 판정("꼭 해야 할 준비는 끝났습니다")과 같은
   // 자리에서 "지금 할 것은 4번"이 부딪혀 둘 중 무엇이 참인지 못 읽었다.
-  nextStep("guide", `<p>${doneNo.length ? `${doneNo.join("·")}번이 끝났고, ` : ""}이 순서에서
+  nextStep("guide", `<div class="gnk"><span class="gpill">지금 할 것</span>
+      <span class="gnst">${esc(s.state)}</span></div>
+    <p class="gnt"><b data-stage="${esc(s.id)}">${here + 1}. ${esc(s.t)}</b></p>
+    <p class="gng">${esc(s.gain)}</p>
+    <p class="gnr">${doneNo.length ? `${doneNo.join("·")}번이 끝났고, ` : ""}이 순서에서
     아직 안 끝난 첫 칸은 ${here + 1}번 ${esc(s.t)}입니다.
     <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
     + (btn ? `<div class="acts">${btn}</div>` : ""));

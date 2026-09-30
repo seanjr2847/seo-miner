@@ -1,95 +1,334 @@
 <script type="application/json" class="view-def">
 {"id": "settings", "group": "admin", "title": "설정",
- "render": "shell", "sections": ["usage", "setup"], "stages": []}
+ "render": "shell", "sections": ["st-hero", "usage", "setup"], "stages": []}
 </script>
-<!-- 설정은 데이터보다 먼저 오지 않는다. 여태는 본문 맨 위에 얹혀서, 이미 다
-     끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 호스팅은 이 화면을 통째로
-     감춘다(서버가 키를 댄다) — server/assets/dash.html 이 #setup 을 CSS 로
-     숨긴다(메뉴에는 [설정]이 남는다 — 저장소 연결 칸은 호스팅에서도 쓴다).
-     그래서 이 마크업은 **로컬 전용**이다: 여기 문구에 W() 를 쓸 이유가 없다. -->
+<!-- 설정은 "지금 이 사이트를 잴 준비가 됐나"에 먼저 답한다. 옛 화면은 0~6단계를 세로로
+     늘어놓아서, 다 끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 지금은 첫 카드(#st-hero)가
+     그 답이고(링 + 상태 행), 나머지는 그 답을 받치는 카드다.
+     호스팅은 #setup 을 통째로 감춘다(서버가 키를 댄다) — server/assets/dash.html 이 CSS 로
+     숨긴다. 메뉴에는 [설정]이 남는다: 브랜드·경쟁사(sm-profile)와 측정 주기·GA4·명령어
+     (sm-set)는 호스팅에서도 쓴다. 그래서 #setup 안의 마크업은 **로컬 전용**이다.
+     카드 격자는 화면 상자(#view-settings)에 12열로 건다. 섹션 셋(#st-hero, #setup,
+     #sm-profile, #sm-set)은 셸이 상자로 옮기는 단위라 그대로 두고, #setup·#sm-set 은
+     display:contents 로 풀어 그 안 카드가 격자 칸을 직접 받는다. -->
 <style>
-/* 묶음 하나 = 섹션 머리(.sh) + 면 카드(.card). 상태는 오른쪽 배지(셸의 .badge),
-   행동은 카드 안. 섹션 사이는 괘선이 아니라 여백(48px)이다. 색·반경은 전부 셸 토큰. */
-#setup .step { padding:0; border-top:0; margin-top:48px; }
-#setup .step:first-of-type { margin-top:0; }
+/* ── 격자 ── 모든 선택자는 이 화면의 id 아래로 가둔다(조립하면 다른 화면과 한 문서다). */
+#view-settings:not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:var(--gap); align-content:start; grid-auto-flow:row dense; }
+/* 셸이 상자에 끼우는 것(머리·배너·띠)은 전폭이다. */
+#view-settings > * { min-width:0; grid-column:1 / -1; }
+#view-settings > .vh { margin-bottom:var(--sp-2); }
+#view-settings > .vban { margin:0; }
+#view-settings > section { margin:0; }
+/* 다음 행동 띠의 문장은 첫 카드(준비 상태)가, 누를 것은 화면 머리의 버튼이 이어받는다.
+   띠 요소는 셸·호스팅 애드온이 계속 쓴다(문장을 갈아 끼우는 쪽이 있다) — 지우지 않고
+   눈에서만 뺀다. 띠 마크업 자체를 없애는 일은 셸 몫이다. */
+#view-settings > .next { display:none; }
+/* 로컬만 #setup 을 푼다. 호스팅은 dash.html 이 #setup 을 display:none 으로 감추는데
+   여기서 무조건 풀면 그 규칙(같은 특이도)과 부딪힌다 — 호스팅 전용 섹션(#sm-set)이 있는
+   조립본에서는 건드리지 않는다. */
+#view-settings:not(:has(#sm-set)) #setup { display:contents; }
+#sm-set { display:contents; }
+#view-settings [hidden] { display:none; }
+
+/* 카드 자리 — 좁으면 전부 한 열, 넓으면 폭으로 위계를 만든다(8+4 / 7+5 / 8+4). */
+#view-settings :where(#st-hero, #st-gsc, #usage, #sm-profile, #st-parts, #st-keys, #st-carry,
+    #st-project, #set-cycle, #sm-set .ga4, #sm-set .cli, #setup-log, .sm-setfail) {
+  grid-column:1 / -1; margin:0; }
+#st-hero { order:1; } #st-gsc { order:2; }
+#usage { order:3; } #sm-profile { order:4; } #st-parts { order:5; }
+/* 호스팅 순서: 준비 상태 → GA4 → 명령어 → 측정 방식 → 프로필 */
+#sm-set .ga4 { order:2; } #sm-set .cli { order:3; } #set-cycle { order:4; }
+#view-settings:where(:has(#sm-set)) #sm-profile { order:5; }
+#st-keys { order:6; } #st-carry { order:7; } #st-project { order:8; }
+#setup-log { order:9; } .sm-setfail { order:0; }
+@media (min-width:1000px) {
+  #view-settings #st-hero { grid-column:span 8; }
+  #view-settings #st-gsc, #view-settings #set-cycle { grid-column:span 4; }
+  #view-settings #sm-profile { grid-column:span 7; }
+  #view-settings #st-parts { grid-column:span 5; }
+  #view-settings #st-keys { grid-column:span 8; }
+  #view-settings #st-carry { grid-column:span 4; }
+  /* 호스팅: 첫 카드가 두 줄을 차지하고 그 옆에 연결 카드 둘이 쌓인다. 그 밑은 측정 방식 4 + 프로필 8 */
+  #view-settings:where(:has(#sm-set)) #st-hero { grid-row:span 2; }
+  #view-settings:where(:has(#sm-set)) #sm-set .ga4,
+  #view-settings:where(:has(#sm-set)) #sm-set .cli { grid-column:span 4; }
+  #view-settings:where(:has(#sm-set)) #sm-profile { grid-column:span 8; }
+  /* 로컬에서 쓰는 방식이 호스팅이면 구글·키 카드가 접힌다 — 남은 카드가 빈자리를 채운다 */
+  #view-settings:where(:not(:has(#sm-set))):where(:has(#st-gsc[hidden])) #st-hero { grid-column:1 / -1; }
+  #view-settings:where(:not(:has(#sm-set))):where(:has(#st-keys[hidden])) #st-carry { grid-column:span 6; }
+}
+/* 없는 자리가 남기는 구멍 — 설정을 못 읽으면 세 칸이 접히고 오류 상자 하나가 선다 */
+#view-settings > .vh #st-primary { margin:0; }
+
+/* ── 카드 머리: 제목(16px 650) + 보조 설명(12px) + 우측 도구 한 벌 ── */
+#view-settings .card { padding:22px 24px; }
+#view-settings .sh { align-items:start; margin:0 0 var(--sp-4); }
+#view-settings .sh > h2 { margin:0; }
+#view-settings .sh > .eyebrow { display:none; }
+#view-settings .sh > .sub { margin:2px 0 0; font-size:var(--fs-1); line-height:1.5; }
+#view-settings .sh > .tools { align-self:start; margin:0; }
+#view-settings .step { padding:22px 24px; border-top:0; margin:0; }
+#view-settings .step:first-of-type { border-top:0; }
+
+/* 카드 안 접이식 — 안쪽 구획은 테두리가 아니라 옅은 면이다 */
+#view-settings .step details { margin:var(--sp-4) 0 0; padding:10px 14px; border-top:0;
+  background:var(--sunk); border-radius:var(--r-in); }
+#view-settings .step details > summary { font:500 var(--fs-1)/1.5 var(--sans); color:var(--sub);
+  cursor:pointer; }
+#view-settings .step details > summary:hover { color:var(--accent); }
+#view-settings .step details .why { margin:var(--sp-2) 0 0; font-size:var(--fs-1); line-height:1.6; }
+#view-settings .step details .why code { font-size:var(--fs-1); }
+#view-settings .step .why { font-size:var(--fs-2); line-height:1.6; margin:0 0 var(--sp-3);
+  max-width:none; }
+#view-settings .step .row { margin-top:var(--sp-4); }
+#view-settings .step > .row:first-child { margin-top:0; }
+/* 접힌 설명이 카드 맨 위에 오면 위 여백이 카드 안에 겹쳐 남는다 */
+#view-settings .step > details:first-child { margin-top:0; }
 
 /* 셸의 .go 는 display:inline-flex 라 브라우저 기본 [hidden]{display:none} 을 이긴다 —
-   그래서 서치콘솔 칸의 조건부 버튼 두 개가 hidden 인데도 늘 서 있었다(연결이 끝난
-   사람에게 [구글 로그인]이 보였다). 이 화면 안에서만 다시 잠근다. */
+   조건부 버튼(구글 로그인·수집 부품·스킬 설치)이 hidden 인데도 서 있던 자리다. */
 #setup .go[hidden] { display:none; }
-/* 넘길 사이트 고르개는 폼 칸이 아니라 행동 줄의 일부다 — 100% 로 늘리면 글자가 잘린다. */
-#setup #c-proj { flex:0 0 auto; width:auto; min-width:170px; }
-
-/* 접은 설명이 카드 맨 위에 오면 셸의 .step details 위 괘선이 카드 안에 겹쳐 그어진다. */
-#setup .card > details:first-child { margin-top:0; border-top:0; padding-top:0; }
-#setup .card > details:first-child + .grid,
-#setup .card > details:first-child + label { margin-top:var(--sp-4); }
+#setup #c-proj { flex:1 1 170px; width:auto; min-width:150px; max-width:260px; }
 
 /* 라벨이 "이름 — 무엇을 바꾸는지"를 줄표로 이으면 둘이 같은 크기·같은 색으로 붙어
-   어디까지가 칸 이름인지 안 읽힌다. 이름만 라벨에 두고 설명은 아래 한 줄로 내린다.
-   크기는 그대로 두고 색으로만 가른다 — 셸의 label 규칙을 다시 만들지 않는다. */
+   어디까지가 칸 이름인지 안 읽힌다. 이름만 라벨에 두고 설명은 아래 한 줄로 내린다. */
 #setup label { color:var(--ink); margin-bottom:2px; }
 #setup .lh { display:block; font:var(--micro); color:var(--sub);
   margin:0 0 var(--sp-2); max-width:52ch; }
 #setup .lh a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
-/* 칸 밑 한 줄에도 경로·명령이 실린다 — 등폭은 그 조각에만 건다(한글엔 안 건다).
-   치수는 셸의 `.step .why code` 와 같은 값이다 — 그 규칙은 .why 안만 잡는다. */
+/* 칸 밑 한 줄에도 경로·명령이 실린다 — 등폭은 그 조각에만 건다(한글엔 안 건다). */
 #setup .lh code { font-family:var(--mono); font-size:var(--fs-1); }
+/* 저장된 키 지우기 — 위 label 색 규칙이 셸의 .delkey(산화동)를 덮으므로 다시 세운다 */
+#setup .delkey { color:var(--warn); margin-top:var(--sp-2); }
 
-/* 0단계의 고르개 — 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다).
-   선택지 이름은 서버가 실어 보낸 표에서 오므로 여기엔 모양만 있다. 알약 면 하나,
-   골라지면 --accent-wash 로 물든다(테두리 없음). */
-#usage .opts { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin:0 0 var(--sp-4); }
-#usage .opt { display:inline-flex; align-items:center; gap:var(--sp-2); cursor:pointer;
-  min-height:var(--btn-h-sm); padding:0 var(--sp-4); border:0; border-radius:var(--r-pill);
-  background:var(--sunk); color:var(--ink); margin:0; }
+/* ── 준비 상태(히어로) ── 링 하나 + 상태 행. 링은 인라인 SVG(라이브러리가 필요 없다) ── */
+#st-hero { display:flex; flex-wrap:wrap; align-items:flex-start; gap:var(--sp-5) var(--sp-6);
+  padding:26px 28px; }
+#st-hero .hz { flex:0 0 190px; display:flex; flex-direction:column; gap:var(--sp-3); }
+#st-ring { position:relative; width:104px; height:104px; }
+#st-ring svg { display:block; width:104px; height:104px; transform:rotate(-90deg); }
+#st-ring circle { fill:none; stroke-width:10; }
+#st-ring .trk { stroke:var(--sunk); }
+#st-ring .val { stroke:var(--accent); stroke-linecap:round;
+  transition:stroke-dashoffset .7s cubic-bezier(.2,.7,.2,1); }
+#st-ring .rn { position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; }
+#st-ring .rn b { font:700 var(--fs-4)/1 var(--sans); font-variant-numeric:tabular-nums; color:var(--ink); }
+#st-ring .rn span { font:var(--micro); color:var(--sub); margin-top:5px; }
+#st-hero h2 { margin:0; text-wrap:balance; }
+#st-hero .hs { margin:4px 0 0; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
+#st-rows { flex:1 1 320px; min-width:0; list-style:none; margin:0; padding:0;
+  display:grid; gap:4px; }
+.st-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto 14px; align-items:center;
+  gap:0 var(--sp-3); width:100%; min-height:58px; padding:8px 14px; border:0;
+  border-radius:var(--r-in); background:transparent; color:var(--ink); text-align:left;
+  font:inherit; }
+.st-row.first { background:var(--sunk); }
+button.st-row { cursor:pointer; }
+button.st-row:hover { background:var(--accent-wash); }
+.st-row .dot { width:10px; height:10px; border-radius:50%; background:var(--mute); }
+.st-row .dot.ok { background:var(--accent); }
+.st-row .dot.todo { background:var(--warn); }
+.st-row .dot.wait { background:var(--rule); }
+.st-row .rt b { display:block; font:650 var(--fs-2)/1.4 var(--sans); }
+.st-row .rt small { display:block; font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub);
+  overflow-wrap:anywhere; }
+.st-row .chev { width:14px; height:14px; background:var(--mute);
+  -webkit-mask:var(--chev) center/9px 9px no-repeat; mask:var(--chev) center/9px 9px no-repeat; }
+button.st-row:hover .chev { background:var(--accent); }
+.st-row .badge { justify-self:end; }
+/* 눌러서 도착한 카드가 잠깐 물든다 — 어디로 왔는지 알리는 한 번의 움직임이다 */
+@keyframes st-hit { from { background-color:var(--accent-wash); } to { background-color:var(--card); } }
+.st-hit { animation:st-hit 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  #st-ring .val { transition:none; }
+  .st-hit { animation:none; }
+}
+@media (max-width:640px) {
+  #st-hero { padding:22px 20px; }
+  #st-hero .hz { flex:1 1 100%; flex-direction:row; align-items:center; gap:var(--sp-4); }
+  .st-row { grid-template-columns:10px minmax(0,1fr) auto; }
+  .st-row .chev { display:none; }
+}
+
+/* ── 쓰는 방식 ── 라디오 세 묶음이 한 줄, 그 밑에 사이트별 폴더 표 ── */
+#usage .ugrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:var(--sp-5) var(--sp-6); }
+#usage .ug { min-width:0; }
+#usage .udirs label, #usage #u-remote label { font-weight:650; font-size:var(--fs-2); }
+#usage .ug label { margin-top:0; font-weight:650; font-size:var(--fs-2); color:var(--ink); }
+/* 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다). 선택지 이름은 서버가 실어 보낸
+   표에서 오므로 여기엔 모양만 있다. 골라지면 --accent-wash 로 물든다(테두리 없음). */
+#usage .opts { display:flex; flex-direction:column; align-items:stretch; gap:var(--sp-2);
+  margin:var(--sp-2) 0 0; }
+#usage .opt { display:flex; align-items:center; gap:var(--sp-2); cursor:pointer;
+  min-height:var(--btn-h); padding:0 var(--sp-4); border:0; border-radius:var(--r-in);
+  background:var(--sunk); color:var(--ink); margin:0; font:500 var(--fs-2)/1.3 var(--sans); }
 #usage .opt:hover { background:var(--accent-wash); }
 #usage .opt:has(input:checked) { background:var(--accent-wash); color:var(--accent);
-  font-weight:600; }
+  font-weight:650; }
 #usage .opt input { width:auto; margin:0; }
-/* 표 안의 폴더 칸은 한 줄짜리 경로다 — 등폭은 경로에만 걸고 사이트 이름엔 안 건다.
-   1120px 에서 이름 열과 버튼 열이 양 끝으로 벌어지지 않게 입력 칸에 상한을 둔다. */
-#dirs input { font-family:var(--mono); font-size:var(--fs-1); max-width:560px; }
+#usage .opt .badge { margin-left:auto; }
+#usage #m-usage, #usage #m-dirs { display:block; margin-top:var(--sp-3); }
+#usage #m-usage:empty, #usage #m-dirs:empty { display:none; }
+#usage .udirs { margin-top:var(--sp-5); padding-top:var(--sp-2); }
+#usage #u-remote { margin-top:var(--sp-5); }
+#usage #u-remote .row { margin-top:var(--sp-2); }
+#usage #u-line { flex:1 1 260px; width:auto; max-width:560px; font-family:var(--mono);
+  font-size:var(--fs-1); }
+/* 표 안의 폴더 칸은 한 줄짜리 경로다 — 등폭은 경로에만 걸고 사이트 이름엔 안 건다. */
+#dirs .tw { background:transparent; box-shadow:none; padding:0; }
+#dirs input { font-family:var(--mono); font-size:var(--fs-1); max-width:none; }
 #dirs td { vertical-align:middle; }
-#dirs td:first-child { white-space:nowrap; font-weight:600; width:1%; }
+#dirs td:first-child { white-space:nowrap; font-weight:650; width:1%; }
 #dirs td:last-child { width:1%; white-space:nowrap; }
 #dirs tbody tr:last-child td { border-bottom:0; }
+@media (max-width:640px) {
+  #dirs table, #dirs tbody, #dirs tr, #dirs td { display:block; width:auto; }
+  #dirs thead { display:none; }
+  #dirs td:first-child, #dirs td:last-child { width:auto; }
+  #dirs tr { padding:var(--sp-3) 0; }
+  #dirs td:last-child .go { width:100%; margin-top:var(--sp-2); }
+}
+
+/* ── 기본 부품·스킬 ── 두 줄: 이름+상태, 한 줄 설명, 행동 ── */
+#st-parts .prow + .prow { margin-top:var(--sp-5); }
+#st-parts .ph { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); }
+#st-parts .ph b { font:650 var(--fs-2)/1.4 var(--sans); }
+#st-parts .prow .row { margin-top:var(--sp-3); }
+#st-parts .prow .why { margin:var(--sp-2) 0 0; font-size:var(--fs-1); color:var(--sub); }
+#st-parts .prow > .lh { margin:2px 0 0; }
+
+/* ── 서치콘솔·키·이어 하기·등록 ── */
+#st-gsc .row { margin-top:var(--sp-3); }
+#st-keys .grid, #st-project .grid { gap:0 var(--sp-5); }
+#st-keys .grid > div, #st-project .grid > div { min-width:0; }
+#st-project .grid { grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+#st-carry .cr { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap;
+  margin-top:var(--sp-4); }
+#st-carry .cr .msg { flex:1 1 100%; }
+#st-carry .cl { margin:var(--sp-3) 0 0; }
+/* 등록 카드 — 접힌 채로 제목 줄만 선다. 열려 있으면 폼이 12열을 다 쓴다 */
+#st-project > summary { display:flex; align-items:center; gap:var(--sp-3); cursor:pointer;
+  color:var(--ink); font:650 var(--fs-3)/1.4 var(--sans); min-height:var(--btn-h); }
+#st-project > summary .stt { flex:1; min-width:0; }
+#st-project > summary .stt small { display:block; font:400 var(--fs-1)/1.5 var(--sans);
+  color:var(--sub); }
+#st-project > summary:hover { color:var(--accent); }
+#st-project[open] > summary { margin-bottom:var(--sp-4); }
+#st-project > summary .tools { margin:0; }
+
+/* ── 사이트 프로필(sm-profile, 소유 밖) — 섹션이 곧 카드다 ── */
+#view-settings #sm-profile { background:var(--card); border-radius:var(--r-card);
+  box-shadow:var(--shadow); padding:22px 24px; }
+#view-settings #sm-profile .sh h2 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
+#view-settings #sm-profile > .card { padding:0; margin:0; background:transparent;
+  box-shadow:none; border-radius:0; }
+#view-settings #sm-profile .profile label { font-weight:650; font-size:var(--fs-2);
+  color:var(--ink); margin:var(--sp-4) 0 2px; }
+#view-settings #sm-profile .profile { display:grid; grid-template-columns:minmax(0,1fr); }
+#view-settings #sm-profile .profile > :nth-child(1) { margin-top:0; }
+#view-settings #sm-profile .profile .msg { margin-top:2px; min-height:1.6em; }
+@media (min-width:1240px), (min-width:640px) and (max-width:999px) {
+  #view-settings #sm-profile .profile { grid-template-columns:repeat(2,minmax(0,1fr));
+    column-gap:var(--sp-5); grid-auto-flow:row; }
+  #view-settings #sm-profile .profile > :nth-child(-n+4) { grid-column:1; }
+  #view-settings #sm-profile .profile > :nth-child(n+5):nth-child(-n+8) { grid-column:2; }
+  #view-settings #sm-profile .profile > :nth-child(n+9):nth-child(-n+12) { grid-column:1; }
+  #view-settings #sm-profile .profile > :nth-child(n+13) { grid-column:2; }
+  #view-settings #sm-profile .profile > :nth-child(1) { grid-row:1; }
+  #view-settings #sm-profile .profile > :nth-child(2) { grid-row:2; }
+  #view-settings #sm-profile .profile > :nth-child(3) { grid-row:3; }
+  #view-settings #sm-profile .profile > :nth-child(4) { grid-row:4; }
+  #view-settings #sm-profile .profile > :nth-child(5) { grid-row:1; margin-top:0; }
+  #view-settings #sm-profile .profile > :nth-child(6) { grid-row:2; }
+  #view-settings #sm-profile .profile > :nth-child(7) { grid-row:3; }
+  #view-settings #sm-profile .profile > :nth-child(8) { grid-row:4; }
+  #view-settings #sm-profile .profile > :nth-child(9) { grid-row:5; }
+  #view-settings #sm-profile .profile > :nth-child(10) { grid-row:6; }
+  #view-settings #sm-profile .profile > :nth-child(11) { grid-row:7; }
+  #view-settings #sm-profile .profile > :nth-child(12) { grid-row:8; }
+  #view-settings #sm-profile .profile > :nth-child(13) { grid-row:5; }
+  #view-settings #sm-profile .profile > :nth-child(14) { grid-row:6; }
+  #view-settings #sm-profile .profile > :nth-child(15) { grid-row:7 / span 2; }
+  #view-settings #sm-profile .profile > :nth-child(16) { grid-row:9; }
+  #view-settings #sm-profile .profile > :nth-child(15) { height:100%; min-height:88px; }
+}
+
+/* ── 호스팅: 측정 방식 카드(주기·언어·종류)와 연결 카드(GA4·명령어) ── */
+#view-settings #sm-set .grp { margin:0; }
+#view-settings #sm-set .grp h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#view-settings #sm-set .grp h3 { font:650 var(--fs-2)/1.4 var(--sans); color:var(--ink); margin:0; }
+#view-settings #sm-set .grp .sub { font-size:var(--fs-1); line-height:1.5; margin:2px 0 var(--sp-3); }
+#view-settings #set-cycle .grp + .grp { margin-top:var(--sp-5); }
+#view-settings #sm-set .repo select { width:100%; max-width:none; }
+#view-settings #sm-set .grp .gh { display:flex; align-items:flex-start;
+  justify-content:space-between; gap:var(--sp-3); }
+#view-settings #sm-set .sm-setfail { margin:0 0 var(--sp-3); }
 </style>
 
+<section id="st-hero" class="card" aria-labelledby="st-hero-t">
+  <!-- 값은 아래 스크립트가 채운다: 로컬은 셸이 그리는 상태 배지(#s-*)를, 호스팅은 설정
+       칸(#sm-set)이 그린 값을 **읽기만** 한다. 여기서 판정을 새로 만들지 않는다(서버가
+       이미 고른 결론이다). 필수 항목만 링에 센다 — 키·스킬은 없어도 잰다. -->
+  <div class="hz">
+    <div id="st-ring" role="img" aria-label="준비 상태를 확인하고 있습니다">
+      <svg viewBox="0 0 104 104" aria-hidden="true">
+        <circle class="trk" cx="52" cy="52" r="44"></circle>
+        <circle class="val" id="st-ring-v" cx="52" cy="52" r="44" stroke-dasharray="276.46 276.46"
+          stroke-dashoffset="276.46"></circle>
+      </svg>
+      <div class="rn"><b id="st-ring-n">–</b><span id="st-ring-l">확인 중</span></div>
+    </div>
+    <div>
+      <h2 id="st-hero-t">준비 상태를 확인하고 있습니다</h2>
+      <p class="hs" id="st-hero-s"></p>
+    </div>
+  </div>
+  <ul id="st-rows"></ul>
+</section>
+
 <section id="setup">
-  <!-- 0단계는 "이 사람이 무엇으로 일하는가"다. 선택지(쓰는 방식·도구·터미널)와 그
+  <!-- 쓰는 방식은 "이 사람이 무엇으로 일하는가"다. 선택지(쓰는 방식·도구·터미널)와 그
        라벨은 전부 서버 payload 에서 온다 — doctor 의 표가 정본이라 여기 이름을
        박으면 표가 늘어난 날 화면만 낡는다. 그리는 것은 셸의 renderUsage 다. -->
-  <div class="step" id="usage">
+  <div class="step card" id="usage">
     <div class="sh">
-      <p class="eyebrow">0단계</p><h2>쓰는 방식</h2>
-      <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다.</p>
+      <h2>쓰는 방식</h2>
+      <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다. 고르면 그 자리에서 저장됩니다.</p>
       <div class="tools"><span id="s-usage"></span></div>
     </div>
-    <div class="card">
-      <label id="l-u-mode">측정을 맡는 곳</label>
-      <span class="lh">호스팅을 고르면 아래 2·3·4단계는 웹이 대신합니다.</span>
-      <div class="opts" id="u-mode" role="group" aria-labelledby="l-u-mode"></div>
-
-      <label id="l-u-tool">기회를 열 도구</label>
-      <span class="lh">기회 카드의 열기 버튼이 이 도구를 그 사이트 폴더에서 띄웁니다.</span>
-      <div class="opts" id="u-tool" role="group" aria-labelledby="l-u-tool"></div>
-
-      <label id="l-u-terminal">터미널</label>
-      <span class="lh">고르지 않으면 Orca 가 있을 때 Orca, 없으면 시스템 터미널입니다.</span>
-      <div class="opts" id="u-terminal" role="group" aria-labelledby="l-u-terminal"></div>
-      <span class="msg" role="status" id="m-usage"></span>
-
-      <!-- 호스팅을 고른 사람에게만 선다 — 로컬에는 붙을 곳이 없다. -->
-      <div id="u-remote" hidden>
-        <label for="u-line">웹에 연결</label>
-        <span class="lh">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 그대로 붙여
-          넣으시면 됩니다. 그 줄에서 주소와 토큰만 읽습니다.</span>
-        <div class="row"><input id="u-line" autocomplete="off" spellcheck="false" placeholder="붙여 넣기">
-          <button class="go" id="btn-remote">연결</button>
-          <span class="msg" role="status" id="m-remote"></span></div>
+    <div class="ugrid">
+      <div class="ug">
+        <label id="l-u-mode">측정을 맡는 곳</label>
+        <span class="lh">호스팅을 고르면 사이트 등록·구글·키는 웹이 대신합니다.</span>
+        <div class="opts" id="u-mode" role="group" aria-labelledby="l-u-mode"></div>
       </div>
+      <div class="ug">
+        <label id="l-u-tool">기회를 열 도구</label>
+        <span class="lh">기회 카드의 열기 버튼이 이 도구를 그 사이트 폴더에서 띄웁니다.</span>
+        <div class="opts" id="u-tool" role="group" aria-labelledby="l-u-tool"></div>
+      </div>
+      <div class="ug">
+        <label id="l-u-terminal">터미널</label>
+        <span class="lh">고르지 않으면 Orca 가 있을 때 Orca, 없으면 시스템 터미널입니다.</span>
+        <div class="opts" id="u-terminal" role="group" aria-labelledby="l-u-terminal"></div>
+      </div>
+    </div>
+    <span class="msg" role="status" id="m-usage"></span>
 
+    <!-- 호스팅을 고른 사람에게만 선다 — 로컬에는 붙을 곳이 없다. -->
+    <div id="u-remote" hidden>
+      <label for="u-line">웹에 연결</label>
+      <span class="lh">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 그대로 붙여
+        넣으시면 됩니다. 그 줄에서 주소와 토큰만 읽습니다.</span>
+      <div class="row"><input id="u-line" autocomplete="off" spellcheck="false" placeholder="붙여 넣기">
+        <button class="go" id="btn-remote">연결</button>
+        <span class="msg" role="status" id="m-remote"></span></div>
+    </div>
+
+    <div class="udirs">
       <label id="l-dirs">사이트별 로컬 폴더</label>
       <span class="lh">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
         도구를 띄웁니다. 비운 채 저장하면 지워집니다.</span>
@@ -98,164 +337,22 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step card" id="st-parts">
     <div class="sh">
-      <p class="eyebrow">1단계</p><h2>기본 부품</h2>
-      <p class="sub">키워드 수집과 보고서에 쓰는 파이썬 부품 두 개를 설치합니다.<span
-        class="hint" tabindex="0" data-tip="무료이고 1분쯤 걸립니다."
-        title="무료이고 1분쯤 걸립니다." aria-label="무료이고 1분쯤 걸립니다.">i</span></p>
-      <div class="tools"><span id="s-deps"></span></div>
+      <h2>기본 부품·스킬</h2>
+      <p class="sub">수집과 보고서에 쓰는 부품, 글의 각도와 진단을 맡는 스킬입니다.</p>
     </div>
-    <div class="card">
+    <div class="prow">
+      <div class="ph"><b>기본 부품<span
+        class="hint" tabindex="0" data-tip="무료이고 1분쯤 걸립니다."
+        title="무료이고 1분쯤 걸립니다." aria-label="무료이고 1분쯤 걸립니다.">i</span></b>
+        <span id="s-deps"></span></div>
+      <p class="lh">키워드 수집과 보고서에 쓰는 파이썬 부품 두 개를 설치합니다.</p>
       <div class="row"><button class="go" id="btn-deps">설치</button>
         <span class="msg" role="status" id="m-deps"></span></div>
     </div>
-  </div>
-
-  <div class="step" id="st-project">
-    <div class="sh">
-      <p class="eyebrow">2단계</p><h2>사이트 등록</h2>
-      <!-- 오른쪽 배지(완료/아직 없음)는 **등록된 사이트가 하나라도 있나**를 말하고,
-           아래 폼은 **새로 등록할 값**이다(이 폴더의 저장소를 읽어 미리 채운다).
-           둘이 다른 것을 가리키는 바람에 "완료인데 도메인 칸이 비었다"로 읽혔다. -->
-      <p class="sub">이 칸에 적은 값이 그 사이트 수집의 기준이 됩니다.<span
-        class="hint" tabindex="0"
-        data-tip="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
-        title="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
-        aria-label="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다.">i</span></p>
-      <div class="tools"><span id="s-proj"></span></div>
-    </div>
-    <div class="card">
-      <!-- 양쪽 의도를 다 남긴다: 여기 적은 값이 이후 수집의 기준이라는 것(이 화면 정비)과,
-           웹에서 쓰던 사이트를 여기 또 등록하면 두 벌이 된다는 것(origin/main). -->
-      <details>
-        <summary>웹에서 쓰던 사이트라면 여기 등록하지 않습니다</summary>
-        <!-- "등록한 값을 나중에 어떻게 고치나"는 아래 [이름] 칸 밑에 한 벌로 적는다 —
-             거절 문구가 뜨는 자리가 거기다. 여기 또 적으면 두 벌이 된다. -->
-        <p class="why">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 채팅에 붙이면 그
-          사이트가 그대로 붙습니다.</p>
-      </details>
-      <div class="grid">
-        <div><label for="p-name">이름</label>
-          <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다. 이미 등록한
-            이름은 거절합니다 — 등록해 둔 값은 <code>db.py register {이름} {도메인}</code>
-            을 다시 돌려 바꿉니다. 등록한 뒤 브랜드 표기·경쟁사·도구·씨앗은 위
-            [브랜드·경쟁사] 칸에서 고칩니다.</span>
-          <input id="p-name" spellcheck="false" placeholder="mysite"></div>
-        <div><label for="p-type">종류</label>
-          <span class="lh">기회를 뽑는 기준이 종류마다 다릅니다.</span>
-          <!-- 목록은 조립(dashboard.py)이 PROJECT_TYPES 로 채운다 — 사본을 두지 않는다 -->
-          <select id="p-type"><!--TYPE_OPTIONS--></select></div>
-        <div><label for="p-domain">도메인</label>
-          <span class="lh">순위 확인과 크롤이 이 주소를 봅니다.</span>
-          <input id="p-domain" spellcheck="false" placeholder="example.com"></div>
-        <div><label for="p-locale">언어-지역</label>
-          <span class="lh">어느 언어·나라의 검색 결과에서 잴지 정합니다. 자동완성·AI 질문도 이 언어로 갑니다.</span>
-          <!-- 목록은 조립(dashboard.py)이 serp_adapter.LOCALES 로 채운다 — 사본을 두지 않는다 -->
-          <select id="p-locale"><!--LOCALE_OPTIONS--></select></div>
-        <div><label for="p-gsc">서치콘솔 속성</label>
-          <span class="lh">실적을 읽어 올 자리입니다. 비우면 sc-domain:도메인 을 씁니다.</span>
-          <input id="p-gsc" spellcheck="false" placeholder="sc-domain:example.com"></div>
-        <div><label for="p-alias">브랜드 표기</label>
-          <span class="lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
-          <input id="p-alias" placeholder="마이사이트, MySite"></div>
-        <div><label for="p-dir">로컬 폴더</label>
-          <span class="lh">선택입니다. 적어 두면 위 0단계의 표에 그대로 실립니다.</span>
-          <input id="p-dir" spellcheck="false" list="dir-cands" placeholder="C:/code/mysite"></div>
-      </div>
-      <label for="p-seeds">씨앗 키워드</label>
-      <span class="lh">여기서 자동완성으로 후보를 넓힙니다. 3~10개, 쉼표나 줄바꿈으로.</span>
-      <textarea id="p-seeds" placeholder="예) 무선 이어폰 추천&#10;노트북 가성비 비교"></textarea>
-      <label for="p-comp">직접 적은 경쟁사</label>
-      <span class="lh">경쟁사 찾기가 자동으로 찾은 곳보다 먼저 견줍니다. 선택이고 쉼표로 여러 개.</span>
-      <input id="p-comp" spellcheck="false" placeholder="competitor.com, other.com">
-      <label for="p-tools">등재·경쟁 도구 이름</label>
-      <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
-      <input id="p-tools" placeholder="ecrett, paperpal, future tools">
-      <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
-        <span class="msg" role="status" id="m-proj"></span></div>
-    </div>
-  </div>
-
-  <div class="step" id="st-gsc">
-    <div class="sh">
-      <p class="eyebrow">3단계</p><h2>서치콘솔 연결</h2>
-      <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
-      <div class="tools"><span id="s-gsc"></span></div>
-    </div>
-    <div class="card">
-      <!-- 문구는 3-상태(연결됨 / 로그인 대기 / 인증 없음)마다 다르다 — renderSetup이 채운다.
-           파일이 놓였나가 아니라 **연결됐나**로 갈린다(번들 클라이언트는 늘 존재한다). -->
-      <p class="why" id="why-gsc"></p>
-      <div class="row"><button class="go" id="btn-gsclogin" hidden>구글 로그인</button>
-        <button class="go" id="btn-gsc">인증 파일 열기</button>
-        <button class="go" id="btn-depsgsc" hidden>수집 부품 설치</button>
-        <span class="msg" role="status" id="m-gsc"></span></div>
-      <details id="own-client">
-        <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
-        <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
-          [OAuth 클라이언트 ID 만들기] → <b>데스크톱 앱</b>. 다 만들면 화면에 뜨는
-          <b>두 문자열만</b> 옮겨 적으면 됩니다. JSON 다운로드는 필요 없습니다.
-          저장하면 <code>~/.capture/gsc_oauth_client.json</code> 이 되고, 동봉 클라이언트
-          대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 해야
-          합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
-        <div class="grid">
-          <div><label for="oc-id">client_id</label>
-            <input id="oc-id" autocomplete="off" spellcheck="false" placeholder="1234-abc.apps.googleusercontent.com"></div>
-          <div><label for="oc-secret">client_secret</label>
-            <input id="oc-secret" autocomplete="off" spellcheck="false" type="password" placeholder="GOCSPX-…"></div>
-        </div>
-        <div class="row"><button class="go sec" id="btn-ocsave">클라이언트 저장</button>
-          <span class="msg" role="status" id="m-oc"></span></div>
-      </details>
-    </div>
-  </div>
-
-  <div class="step" id="st-keys">
-    <div class="sh">
-      <p class="eyebrow">4단계</p><h2>API 키</h2>
-      <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>
-      <div class="tools"><span id="s-keys"></span></div>
-    </div>
-    <div class="card">
-      <details>
-        <summary>키가 하는 일과 저장되는 자리</summary>
-        <p class="why">측정을 막는 것은 위 <b>3단계 구글 연결 하나뿐</b>이고 그건
-          무료입니다. 아래 키는 새 기능이 아니라 <b>자동화를 삽니다</b>. 없으면 그
-          단계만 건너뛰고 나머지는 그대로 돕니다. 저장하면
-          <code>~/.capture/env</code> 에만 들어갑니다. 저장한 값은 화면에 다시 표시되지
-          않습니다 — 칸이 비어 보여도 저장된 키는 그대로 있고, 몇 개가 저장돼 있는지는
-          오른쪽 배지가 말합니다.</p>
-      </details>
-      <div class="grid">
-        <div><label for="k-or">OpenRouter</label>
-          <span class="lh">ChatGPT·Perplexity·Gemini에 질문 수십 개를 자동으로 던집니다.
-            발급은 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a>.</span>
-          <input id="k-or" autocomplete="off" spellcheck="false" type="password" placeholder="sk-or-…"></div>
-        <div><label for="k-dfsl">DataForSEO 아이디</label>
-          <span class="lh">순위·AI 요약·경쟁사 검색어를 잽니다.
-            발급은 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a>.</span>
-          <input id="k-dfsl" autocomplete="off" spellcheck="false" placeholder="가입 이메일"></div>
-        <div><label for="k-dfsp">DataForSEO 비밀번호</label>
-          <span class="lh">계정 비밀번호가 아닙니다. API Settings 에서 확인합니다.</span>
-          <input id="k-dfsp" autocomplete="off" spellcheck="false" type="password" placeholder="API 비밀번호"></div>
-        <div><label for="k-serper">Serper</label>
-          <span class="lh">DataForSEO 대체재입니다. AI 요약을 못 재서 보통은 필요 없습니다.
-            발급은 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a>.</span>
-          <input id="k-serper" autocomplete="off" spellcheck="false" type="password" placeholder="선택 — 보통 필요 없음"></div>
-      </div>
-      <div class="row"><button class="go" id="btn-keys">키 저장</button>
-        <span class="msg" role="status" id="m-keys"></span></div>
-    </div>
-  </div>
-
-  <div class="step">
-    <div class="sh">
-      <p class="eyebrow">5단계</p><h2>마케팅 스킬</h2>
-      <p class="sub">글의 각도와 진단을 맡는 스킬 묶음입니다.</p>
-      <div class="tools"><span id="s-skills"></span></div>
-    </div>
-    <div class="card">
+    <div class="prow">
+      <div class="ph"><b>마케팅 스킬</b><span id="s-skills"></span></div>
       <!-- doctor가 누락을 보고해 채팅(또는 이 버튼)이 설치를 끝낸다. 완료 후에는
            Claude Code를 한 번 재시작해야 화면에 뜬다 — 그 동안은 현재 세션이
            그 스킬을 모른다. 그래서 "재시작 필요"를 명시한다. -->
@@ -265,26 +362,158 @@
     </div>
   </div>
 
-  <div class="step">
+  <div class="step card" id="st-gsc">
     <div class="sh">
-      <p class="eyebrow">6단계</p><h2>웹에서 이어 하기</h2>
+      <h2>서치콘솔 연결</h2>
+      <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
+      <div class="tools"><span id="s-gsc"></span></div>
+    </div>
+    <!-- 문구는 3-상태(연결됨 / 로그인 대기 / 인증 없음)마다 다르다 — renderSetup이 채운다.
+         파일이 놓였나가 아니라 **연결됐나**로 갈린다(번들 클라이언트는 늘 존재한다). -->
+    <p class="why" id="why-gsc"></p>
+    <div class="row"><button class="go" id="btn-gsclogin" hidden>구글 로그인</button>
+      <button class="go" id="btn-gsc">인증 파일 열기</button>
+      <button class="go" id="btn-depsgsc" hidden>수집 부품 설치</button>
+      <span class="msg" role="status" id="m-gsc"></span></div>
+    <details id="own-client">
+      <summary>내 OAuth 클라이언트 쓰기 — 경고 화면과 100명 상한이 없어집니다 (선택)</summary>
+      <p class="why">구글 클라우드 콘솔 → API 및 서비스 → 사용자 인증 정보 →
+        [OAuth 클라이언트 ID 만들기] → <b>데스크톱 앱</b>. 다 만들면 화면에 뜨는
+        <b>두 문자열만</b> 옮겨 적으면 됩니다. JSON 다운로드는 필요 없습니다.
+        저장하면 <code>~/.capture/gsc_oauth_client.json</code> 이 되고, 동봉 클라이언트
+        대신 이게 쓰입니다. <b>클라이언트가 바뀌므로 로그인은 다시 한 번</b> 해야
+        합니다. 시크릿은 저장 후 화면에 다시 표시되지 않습니다.</p>
+      <div class="grid">
+        <div><label for="oc-id">client_id</label>
+          <input id="oc-id" autocomplete="off" spellcheck="false" placeholder="1234-abc.apps.googleusercontent.com"></div>
+        <div><label for="oc-secret">client_secret</label>
+          <input id="oc-secret" autocomplete="off" spellcheck="false" type="password" placeholder="GOCSPX-…"></div>
+      </div>
+      <div class="row"><button class="go sec" id="btn-ocsave">클라이언트 저장</button>
+        <span class="msg" role="status" id="m-oc"></span></div>
+    </details>
+  </div>
+
+  <div class="step card" id="st-keys">
+    <div class="sh">
+      <h2>API 키</h2>
+      <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>
+      <div class="tools"><span id="s-keys"></span></div>
+    </div>
+    <details>
+      <summary>키가 하는 일과 저장되는 자리</summary>
+      <p class="why">측정을 막는 것은 <b>서치콘솔 연결 하나뿐</b>이고 그건
+        무료입니다. 아래 키는 새 기능이 아니라 <b>자동화를 삽니다</b>. 없으면 그
+        단계만 건너뛰고 나머지는 그대로 돕니다. 저장하면
+        <code>~/.capture/env</code> 에만 들어갑니다. 저장한 값은 화면에 다시 표시되지
+        않습니다 — 칸이 비어 보여도 저장된 키는 그대로 있고, 몇 개가 저장돼 있는지는
+        오른쪽 위 배지가 말합니다.</p>
+    </details>
+    <div class="grid">
+      <div><label for="k-or">OpenRouter</label>
+        <span class="lh">ChatGPT·Perplexity·Gemini에 질문 수십 개를 자동으로 던집니다.
+          발급은 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a>.</span>
+        <input id="k-or" autocomplete="off" spellcheck="false" type="password" placeholder="sk-or-…"></div>
+      <div><label for="k-dfsl">DataForSEO 아이디</label>
+        <span class="lh">순위·AI 요약·경쟁사 검색어를 잽니다.
+          발급은 <a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer">dataforseo.com</a>.</span>
+        <input id="k-dfsl" autocomplete="off" spellcheck="false" placeholder="가입 이메일"></div>
+      <div><label for="k-dfsp">DataForSEO 비밀번호</label>
+        <span class="lh">계정 비밀번호가 아닙니다. API Settings 에서 확인합니다.</span>
+        <input id="k-dfsp" autocomplete="off" spellcheck="false" type="password" placeholder="API 비밀번호"></div>
+      <div><label for="k-serper">Serper</label>
+        <span class="lh">DataForSEO 대체재입니다. AI 요약을 못 재서 보통은 필요 없습니다.
+          발급은 <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a>.</span>
+        <input id="k-serper" autocomplete="off" spellcheck="false" type="password" placeholder="선택 — 보통 필요 없음"></div>
+    </div>
+    <div class="row"><button class="go" id="btn-keys">키 저장</button>
+      <span class="msg" role="status" id="m-keys"></span></div>
+  </div>
+
+  <div class="step card" id="st-carry">
+    <div class="sh">
+      <h2>웹에서 이어 하기</h2>
       <p class="sub">여기 적어 둔 설정 그대로 웹에 등록합니다.</p>
       <div class="tools"><span class="badge muted">선택</span></div>
     </div>
-    <div class="card">
-      <details>
-        <summary>무엇이 넘어가고 무엇이 안 넘어가나</summary>
-        <p class="why">위 2단계 등록 폼에 적은 값이 그대로 넘어갑니다 — 로컬 폴더만
-          빼고(웹에는 그 폴더가 없습니다). API 키는 서버가 대므로 다시 넣지 않습니다.
-          <b>측정한 자료는 넘어가지 않습니다</b> — 웹이 자기 계정에서 처음부터 다시 잽니다. 여기서 쓰던 것은
-          그대로 남습니다.</p>
-      </details>
-      <div class="row"><select id="c-proj" aria-label="넘길 사이트"></select>
-        <button class="go sec" id="btn-carry">링크 만들기</button>
-        <span class="msg" role="status" id="m-carry"></span></div>
-      <p class="why"><a id="c-url" target="_blank" rel="noopener noreferrer" hidden></a></p>
-    </div>
+    <details>
+      <summary>무엇이 넘어가고 무엇이 안 넘어가나</summary>
+      <p class="why">아래 새 사이트 등록 폼에 적은 값이 그대로 넘어갑니다 — 로컬 폴더만
+        빼고(웹에는 그 폴더가 없습니다). API 키는 서버가 대므로 다시 넣지 않습니다.
+        <b>측정한 자료는 넘어가지 않습니다</b> — 웹이 자기 계정에서 처음부터 다시 잽니다. 여기서 쓰던 것은
+        그대로 남습니다.</p>
+    </details>
+    <div class="cr"><select id="c-proj" aria-label="넘길 사이트"></select>
+      <button class="go sec" id="btn-carry">링크 만들기</button>
+      <span class="msg" role="status" id="m-carry"></span></div>
+    <p class="why cl"><a id="c-url" target="_blank" rel="noopener noreferrer" hidden></a></p>
   </div>
+
+  <!-- 오른쪽 배지(완료/아직 없음)는 **등록된 사이트가 하나라도 있나**를 말하고,
+       아래 폼은 **새로 등록할 값**이다(이 폴더의 저장소를 읽어 미리 채운다).
+       둘이 다른 것을 가리키는 바람에 "완료인데 도메인 칸이 비었다"로 읽혔다.
+       등록한 사이트가 없으면 스크립트가 이 카드를 펼친다 — 있으면 제목 줄만 선다. -->
+  <details class="step card" id="st-project">
+    <summary>
+      <span class="stt">새 사이트 등록
+        <small>이 칸에 적은 값이 그 사이트 수집의 기준이 됩니다.<span
+        class="hint" tabindex="0"
+        data-tip="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
+        title="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다."
+        aria-label="칸은 이 폴더를 읽어 미리 채운 새 등록값입니다. 여기는 새로 등록하는 자리라서, 이미 등록한 이름은 거절합니다. 오른쪽 배지는 등록된 사이트가 하나라도 있는지를 말합니다.">i</span></small></span>
+      <span class="tools"><span id="s-proj"></span></span>
+    </summary>
+    <!-- 양쪽 의도를 다 남긴다: 여기 적은 값이 이후 수집의 기준이라는 것(이 화면 정비)과,
+         웹에서 쓰던 사이트를 여기 또 등록하면 두 벌이 된다는 것(origin/main). -->
+    <details>
+      <summary>웹에서 쓰던 사이트라면 여기 등록하지 않습니다</summary>
+      <!-- "등록한 값을 나중에 어떻게 고치나"는 아래 [이름] 칸 밑에 한 벌로 적는다 —
+           거절 문구가 뜨는 자리가 거기다. 여기 또 적으면 두 벌이 된다. -->
+      <p class="why">웹 [설정]의 <b>명령어로 연결하기</b> 한 줄을 채팅에 붙이면 그
+        사이트가 그대로 붙습니다.</p>
+    </details>
+    <div class="grid">
+      <div><label for="p-name">이름</label>
+        <span class="lh">명령에서 이 사이트를 가리킬 짧은 영문입니다. 이미 등록한
+          이름은 거절합니다 — 등록해 둔 값은 <code>db.py register {이름} {도메인}</code>
+          을 다시 돌려 바꿉니다. 등록한 뒤 브랜드 표기·경쟁사·도구·씨앗은 위
+          [브랜드·경쟁사] 칸에서 고칩니다.</span>
+        <input id="p-name" spellcheck="false" placeholder="mysite"></div>
+      <div><label for="p-type">종류</label>
+        <span class="lh">기회를 뽑는 기준이 종류마다 다릅니다.</span>
+        <!-- 목록은 조립(dashboard.py)이 PROJECT_TYPES 로 채운다 — 사본을 두지 않는다 -->
+        <select id="p-type"><!--TYPE_OPTIONS--></select></div>
+      <div><label for="p-domain">도메인</label>
+        <span class="lh">순위 확인과 크롤이 이 주소를 봅니다.</span>
+        <input id="p-domain" spellcheck="false" placeholder="example.com"></div>
+      <div><label for="p-locale">언어-지역</label>
+        <span class="lh">어느 언어·나라의 검색 결과에서 잴지 정합니다. 자동완성·AI 질문도 이 언어로 갑니다.</span>
+        <!-- 목록은 조립(dashboard.py)이 serp_adapter.LOCALES 로 채운다 — 사본을 두지 않는다 -->
+        <select id="p-locale"><!--LOCALE_OPTIONS--></select></div>
+      <div><label for="p-gsc">서치콘솔 속성</label>
+        <span class="lh">실적을 읽어 올 자리입니다. 비우면 sc-domain:도메인 을 씁니다.</span>
+        <input id="p-gsc" spellcheck="false" placeholder="sc-domain:example.com"></div>
+      <div><label for="p-alias">브랜드 표기</label>
+        <span class="lh">AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개.</span>
+        <input id="p-alias" placeholder="마이사이트, MySite"></div>
+      <div><label for="p-dir">로컬 폴더</label>
+        <span class="lh">선택입니다. 적어 두면 위 쓰는 방식 카드의 표에 그대로 실립니다.</span>
+        <input id="p-dir" spellcheck="false" list="dir-cands" placeholder="C:/code/mysite"></div>
+    </div>
+    <div class="grid">
+      <div><label for="p-seeds">씨앗 키워드</label>
+        <span class="lh">여기서 자동완성으로 후보를 넓힙니다. 3~10개, 쉼표나 줄바꿈으로.</span>
+        <textarea id="p-seeds" placeholder="예) 무선 이어폰 추천&#10;노트북 가성비 비교"></textarea></div>
+      <div><label for="p-comp">직접 적은 경쟁사</label>
+        <span class="lh">경쟁사 찾기가 자동으로 찾은 곳보다 먼저 견줍니다. 선택이고 쉼표로 여러 개.</span>
+        <input id="p-comp" spellcheck="false" placeholder="competitor.com, other.com">
+        <label for="p-tools">등재·경쟁 도구 이름</label>
+        <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
+        <input id="p-tools" placeholder="ecrett, paperpal, future tools"></div>
+    </div>
+    <div class="row"><button class="go" id="btn-proj">사이트 등록</button>
+      <span class="msg" role="status" id="m-proj"></span></div>
+  </details>
   <pre id="setup-log" hidden></pre>
 </section>
 
@@ -301,12 +530,27 @@
    그 단계의 수집 이름(「검색 실적 수집」)과 다른 일이다. */
 const ST_GATE = {register: {ids: ["btn-proj"], t: "사이트 등록"},
                  gsc: {ids: ["btn-gsclogin", "btn-gsc"], t: "구글 연결"}};
+/* 눌러서 그 카드로 간다 — 접힌 자리(등록 카드·내 OAuth 칸)는 펴 주고, 도착한 카드는
+   한 번 물들어 어디로 왔는지 알린다. 움직임을 줄인 환경에서는 스크롤도 물들임도 없다. */
 function ST_jump(...ids) {
   const b = ids.map(i => $(i)).find(x => x && !x.hidden);
   if (!b) return;
-  const card = b.closest(".step");
-  if (card) card.scrollIntoView({behavior: "smooth", block: "start"});
-  b.focus({preventScroll: true});
+  for (let dt = b.closest("details"); dt; dt = dt.parentElement && dt.parentElement.closest("details"))
+    dt.open = true;
+  const card = b.closest(".step, .card");
+  const calm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (card) {
+    card.scrollIntoView({behavior: calm ? "auto" : "smooth", block: "start"});
+    if (!calm) {
+      card.classList.remove("st-hit");
+      void card.offsetWidth;
+      card.classList.add("st-hit");
+      setTimeout(() => card.classList.remove("st-hit"), 1500);
+    }
+  }
+  const f = b.matches("button,input,select,textarea,a") ? b
+    : b.querySelector("input,button,select,textarea");
+  if (f) f.focus({preventScroll: true});
 }
 
 /* 넘길 사이트 고르개는 셸의 renderCarry 가 옵션을 다시 그릴 때마다 첫 사이트로
@@ -328,6 +572,208 @@ function ST_carryWatch() {
   document.addEventListener("sm:site", ST_carrySync);
 }
 
+/* ── 준비 상태 카드 ────────────────────────────────────────────
+   읽기 전용이다. 로컬은 셸이 doctor 응답마다 다시 그리는 상태 배지(#s-deps …)를, 호스팅은
+   설정 칸(#sm-set)이 그린 값을 읽어 링과 행을 만든다. 새 필드도 새 API 도 없다.
+   자기가 읽는 자리(#setup·#sm-set) 밖에 그리므로 관찰이 자기 자신을 깨우지 않는다. */
+const ST_LOCAL = [   // 필수(req)만 링에 센다. 키·스킬은 없어도 잰다.
+  {id: "s-deps", name: "기본 부품", desc: "수집·보고서에 쓰는 파이썬 부품", req: true, go: ["btn-deps"]},
+  {id: "s-usage", name: "쓰는 방식", desc: "누가 재고 무엇으로 열지", req: true, go: ["u-mode"]},
+  {id: "s-proj", name: "사이트 등록", desc: "잴 사이트 한 곳 이상", req: true, go: ["btn-proj"], card: "st-project"},
+  {id: "s-gsc", name: "서치콘솔 연결", desc: "클릭·노출을 읽는 구글 연결", req: true,
+   go: ["btn-gsclogin", "btn-gsc"], card: "st-gsc"},
+  {id: "s-keys", name: "API 키", desc: "자동화 단계를 여는 키 · 선택", req: false, go: ["k-or"], card: "st-keys"},
+  {id: "s-skills", name: "마케팅 스킬", desc: "글의 각도·진단 스킬 · 선택", req: false, go: ["btn-skills"]}
+];
+function ST_badge(id) {
+  const el = $(id);
+  if (!el || !el.textContent.trim()) return {st: "wait", text: "확인 중", cls: "muted"};
+  const c = el.classList;
+  return {st: c.contains("ok") ? "ok" : c.contains("warn") ? "todo" : "opt",
+          text: el.textContent.trim(), cls: c.contains("ok") ? "ok" : c.contains("warn") ? "warn" : "muted"};
+}
+function ST_modelLocal() {
+  const rows = [];
+  for (const r of ST_LOCAL) {
+    const card = $(r.card || (r.id === "s-usage" ? "usage" : r.id === "s-deps" || r.id === "s-skills" ? "st-parts" : ""));
+    if (card && card.hidden) continue;                 // 호스팅으로 쓰면 이 칸들은 웹 몫이다
+    const b = ST_badge(r.id);
+    // 선택 항목은 안 한 것을 경고색으로 찍지 않는다 — 찍으면 할 일이 된다
+    const st = !r.req && b.st === "todo" ? "opt" : b.st;
+    rows.push({name: r.name, desc: r.desc, req: r.req, st,
+               pill: {cls: !r.req && b.cls === "warn" ? "muted" : b.cls, text: b.text},
+               jump: st === "ok" || st === "wait" ? null : {ids: r.go}});
+  }
+  return {rows, noun: "준비됨", title: {ok: "측정을 시작할 준비가 됐습니다",
+    sub: "필수 항목을 모두 마쳤습니다. 키와 스킬은 없어도 됩니다."}};
+}
+function ST_modelHosted() {
+  const sec = $("sm-set"), rows = [];
+  const dead = sec.classList.contains("dead");
+  const loaded = !!sec.querySelector(".opts .chip");
+  const wait = !loaded;                 // 아직 못 받았거나(dead) 받는 중
+  const pick = sel => { const s = sec.querySelector(sel); return s && s.options.length ? s.options[s.selectedIndex].text : ""; };
+  const chip = sec.querySelector(".opts .chip.on");
+  const lang = pick("select[data-lang]"), typ = pick("select[data-ptype]");
+  const ga = sec.querySelector(".ga4 .now code");
+  const cmd = sec.querySelector(".cli .cmd");
+  const R = (name, desc, req, st, pill, jump) => rows.push({name, desc, req, st, pill, jump});
+  const W_ = dead ? {cls: "warn", text: "읽지 못함"} : {cls: "muted", text: "확인 중"};
+  R("자동 수집 주기", chip ? chip.textContent.trim() : "순위·검색어·AI 인용·사이트 점검을 얼마나 자주 잴지", true,
+    wait ? "wait" : chip ? "ok" : "todo", wait ? W_ : chip ? {cls: "ok", text: "설정됨"} : {cls: "warn", text: "고르기 전"},
+    !wait && !chip ? {jump: "opts"} : null);
+  R("언어-지역", lang || "어느 언어·나라의 검색 결과에서 잴지", !!lang || wait,
+    wait ? "wait" : lang ? "ok" : "opt", wait ? W_ : lang ? {cls: "ok", text: "설정됨"} : {cls: "muted", text: "첫 측정 뒤"}, null);
+  R("사이트 종류", typ || "종류마다 기회 점수의 비중이 다릅니다", !!typ || wait,
+    wait ? "wait" : typ ? "ok" : "opt", wait ? W_ : typ ? {cls: "ok", text: "설정됨"} : {cls: "muted", text: "첫 측정 뒤"}, null);
+  R("GA4 연결", ga ? "속성 " + ga.textContent.trim() : "클릭 다음에 일어난 일까지 보려면", true,
+    wait ? "wait" : ga ? "ok" : "todo", wait ? W_ : ga ? {cls: "ok", text: "연결됨"} : {cls: "warn", text: "연결 전"},
+    !wait && !ga ? {jump: "ga4"} : null);
+  R("명령어로 연결", "클로드 코드에서 이 사이트를 다룰 때 · 선택", false, cmd ? "ok" : "opt",
+    cmd ? {cls: "ok", text: "명령 발급됨"} : {cls: "muted", text: "선택"}, null);
+  return {rows, noun: "설정됨", dead, wait, title: {ok: "이 사이트의 측정 설정이 끝났습니다",
+    sub: "여기서 바꾼 값은 다음 실행부터 적용됩니다."}};
+}
+function ST_paint() {
+  const hero = $("st-hero");
+  if (!hero) return;
+  const m = document.getElementById("sm-set") ? ST_modelHosted()
+    : $("s-deps") ? ST_modelLocal() : null;
+  if (!m) return;
+  const need = m.rows.filter(r => r.req), done = need.filter(r => r.st === "ok").length;
+  const waiting = m.rows.some(r => r.st === "wait");
+  const first = need.find(r => r.st !== "ok" && r.st !== "wait");
+  const sig = JSON.stringify([m.rows.map(r => [r.name, r.desc, r.st, r.pill.text, !!r.jump]), m.dead, need.length]);
+  if (sig === ST_paint.sig) return;
+  ST_paint.sig = sig;
+  ST_paint.first = first && !m.dead ? first : null;
+  const total = need.length, C = 276.46;
+  let title, sub;
+  if (m.dead) { title = "설정을 못 읽었습니다"; sub = "아래 안내에서 다시 시도하면 값을 받아 옵니다."; }
+  else if (waiting) { title = "준비 상태를 확인하고 있습니다"; sub = ""; }
+  else if (first) { title = "다음은 " + first.name + "입니다"; sub = "필수 " + total + "개 중 " + done + "개를 마쳤습니다."; }
+  else { title = m.title.ok; sub = m.title.sub; }
+  $("st-hero-t").textContent = title;
+  $("st-hero-s").textContent = sub;
+  const ring = $("st-ring");
+  const known = !waiting && !m.dead && total > 0;
+  ring.setAttribute("aria-label", known ? `${m.noun} ${done}/${total}` : "준비 상태를 확인하고 있습니다");
+  $("st-ring-n").textContent = known ? `${done}/${total}` : "–";
+  $("st-ring-l").textContent = known ? m.noun : "확인 중";
+  $("st-ring-v").setAttribute("stroke-dashoffset", String(known ? C * (1 - done / total) : C));
+  $("st-rows").innerHTML = m.rows.map(r => {
+    const inner = `<i class="dot ${r.st}" aria-hidden="true"></i>` +
+      `<span class="rt"><b>${esc(r.name)}</b><small>${esc(r.desc)}</small></span>` +
+      `<span class="badge ${r.pill.cls}">${esc(r.pill.text)}</span>` +
+      (r.jump ? `<i class="chev" aria-hidden="true"></i>` : `<i></i>`);
+    const cls = "st-row" + (r === first ? " first" : "");
+    if (!r.jump) return `<li><div class="${cls}">${inner}</div></li>`;
+    return r.jump.ids
+      ? `<li><button type="button" class="${cls}" data-st-go="${esc(r.jump.ids.join(" "))}">${inner}</button></li>`
+      : `<li><button type="button" class="${cls}" data-sm-jump="${esc(r.jump.jump)}">${inner}</button></li>`;
+  }).join("");
+  ST_pills(m);
+}
+// 호스팅 연결 카드 머리의 상태 알약 — 값은 위에서 읽은 그대로, 다르면 그때만 쓴다
+function ST_pills(m) {
+  if (!document.getElementById("sm-set")) return;
+  const put = (id, r) => {
+    const el = $(id);
+    if (!el || !r) return;
+    const cls = "badge " + r.pill.cls;
+    if (el.className !== cls) el.className = cls;
+    if (el.textContent !== r.pill.text) el.textContent = r.pill.text;
+  };
+  put("st-ga4-pill", m.rows.find(r => r.name === "GA4 연결"));
+  put("st-cli-pill", m.rows.find(r => r.name === "명령어로 연결"));
+}
+
+/* 화면 머리의 주 행동은 다음 행동 띠(눈에서만 뺐다)가 가진 버튼의 거울이다 — 누르면 그
+   버튼이 눌린다. 그래서 로컬은 등록·연결으로, 호스팅은 GA4 칸·다시 시도·개요로 가는
+   길이 하나로 남는다. 채운 버튼은 띠가 채운 것만 채운다(화면에 채운 버튼은 하나). */
+function ST_head() {
+  const vh = document.querySelector("#view-settings > .vh");
+  if (!vh) return;
+  const box = $("view-settings");
+  if (!box.dataset.stw) {        // 띠는 나중에 끼는 자식이다 — 서면 다시 그리게 본다
+    box.dataset.stw = "1";
+    new MutationObserver(ST_soon).observe(box, {childList: true});
+  }
+  const src = document.querySelector("#view-settings > .next .acts button");
+  let b = $("st-primary");
+  // 띠는 문장을 갈아 끼울 때 요소를 새로 만들지 않는다 — 안쪽 변화를 따로 본다
+  const band = document.querySelector("#view-settings > .next");
+  if (band && !band.dataset.stw) {
+    band.dataset.stw = "1";
+    new MutationObserver(ST_soon).observe(band, {childList: true, subtree: true, characterData: true});
+  }
+  const fb = ST_paint.first && ST_paint.first.jump;
+  if (!src && !fb) { if (b) b.hidden = true; return; }
+  if (!b) {
+    b = document.createElement("button");
+    b.type = "button";
+    b.id = "st-primary";
+    b.addEventListener("click", () => {
+      const s = document.querySelector("#view-settings > .next .acts button");
+      if (s) return void s.click();
+      // 띠가 아직 안 섰다(사이트가 없어 화면이 그려지기 전) — 첫 미완료 칸으로 간다
+      const j = ST_paint.first && ST_paint.first.jump;
+      if (j && j.ids) ST_jump(...j.ids);
+    });
+    const sp = vh.querySelector(".sp");
+    if (sp) sp.insertAdjacentElement("afterend", b); else vh.appendChild(b);
+  }
+  b.hidden = false;
+  const cls = src ? (src.classList.contains("go") && !src.classList.contains("sec") ? "go" : "go sec") : "go sec";
+  if (b.className !== cls) b.className = cls;
+  const t = src ? src.textContent.trim() : "다음: " + ST_paint.first.name;
+  if (b.textContent !== t) b.textContent = t;
+  // 호스팅 띠 없이 서는 경우(띠 전 GA4 칸으로 가기)도 애드온의 위임 손잡이를 쓴다
+  if (!src && fb.jump) b.dataset.smJump = fb.jump; else delete b.dataset.smJump;
+}
+
+let ST_SOON = 0;
+function ST_soon() {
+  if (ST_SOON) return;
+  ST_SOON = setTimeout(() => { ST_SOON = 0; ST_paint(); ST_head(); ST_autoOpen(); }, 30);
+}
+// 등록한 사이트가 없으면 등록 카드를 한 번 펴 준다 — 있으면 제목 줄만 선다
+function ST_autoOpen() {
+  const dt = $("st-project"), b = $("s-proj");
+  if (!dt || !b || dt.dataset.auto) return;
+  if (b.classList.contains("warn")) { dt.open = true; dt.dataset.auto = "1"; }
+  else if (b.classList.contains("ok")) dt.dataset.auto = "1";
+}
+let ST_HERO_WATCH = false;
+function ST_heroWatch() {
+  if (ST_HERO_WATCH) return;
+  ST_HERO_WATCH = true;
+  const opt = {subtree: true, childList: true, attributes: true, attributeFilter: ["class", "hidden", "selected"]};
+  for (const id of ["setup", "sm-set"])
+    if ($(id)) new MutationObserver(ST_soon).observe($(id), opt);
+  const rows = $("st-rows");
+  // 박제본은 [설정] 화면 마크업을 뺀다(스크립트만 남는다) — 없으면 배선할 것도 없다.
+  if (rows) rows.addEventListener("click", e => {
+    const t = e.target.closest("[data-st-go]");
+    if (t) ST_jump(...t.dataset.stGo.split(" "));
+  });
+  document.addEventListener("sm:site", ST_soon);
+  // 화면 상자는 셸이 나중에 세운다 — 서면 띠가 끼는 것을 보러 상자에 붙는다
+  document.addEventListener("sm:views", () => {
+    const box = $("view-settings");
+    if (box && !box.dataset.stw) {
+      box.dataset.stw = "1";
+      new MutationObserver(ST_soon).observe(box, {childList: true});
+    }
+    ST_soon();
+  });
+}
+// 이 화면의 렌더(VIEW)는 사이트가 하나라도 있어야 돈다 — 처음 쓰는 사람(사이트 0개)이
+// 바로 이 화면의 주 손님이다. 그래서 준비 상태 카드는 렌더를 안 기다리고 스스로 선다.
+function ST_boot() { ST_heroWatch(); ST_soon(); }
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ST_boot);
+else ST_boot();
+
 /* 이 화면에서 사람이 헷갈리는 것은 "어디까지 해야 재기 시작하나" 하나다. 답은
    서버가 이미 골라 두었다 — 안내 단계(d.guide)가 등록·연결을 앞 두 단계로 들고
    있다. 여기서 다시 판정하지 않고 그 결론만 머리로 올린다. */
@@ -336,6 +782,8 @@ VIEW("settings", function (d) {
                         "이 사이트를 어떻게 재고 어디로 보낼지 정합니다."));
   ST_carryWatch();
   ST_carrySync();
+  ST_heroWatch();
+  ST_soon();
   if (!window.nextStep) return;
   // 박제본이라고 띠를 지우지 않는다 — 문장은 종이에서도 읽을 값이 있고, 누를 수
   // 없는 것을 떼는 일은 셸의 nextStep 이 한 벌로 한다(.acts·.live 를 뗀다).
@@ -345,10 +793,11 @@ VIEW("settings", function (d) {
     // 그 칸은 로컬 마법사에만 있다 — 호스팅에서는 #setup 이 통째로 감춰져 있고
     // 띠도 dash.html 의 setNext 가 자기 문장으로 덮는다.
     const g = !window.SM_HOSTED && ST_GATE[gate.id];
-    return void nextStep("settings",
+    nextStep("settings",
       `<p>측정이 시작되려면 <b>${esc(gate.t)}</b>이 먼저 끝나야 합니다.</p>` +
       (g ? `<div class="acts"><button class="go sec" onclick="ST_jump(${
         g.ids.map(i => `'${i}'`).join(",")})">${g.t}</button></div>` : ""));
+    return void ST_soon();
   }
   // 다 됐으면 이 화면에 남은 일이 없다 — 다음 걸음은 측정 결과를 보는 것이다.
   nextStep("settings", `<p>${W(
@@ -356,5 +805,6 @@ VIEW("settings", function (d) {
     "측정에 필요한 연결은 다 됐습니다.<span class=\"live\"> 여기서 바꾼 값은 다음 실행부터 적용됩니다.</span>")}</p>`
     + `<div class="acts"><button class="go"
          onclick="SM.touched=true;SM.show('overview')">개요 열기</button></div>`);
+  ST_soon();
 });
 </script>

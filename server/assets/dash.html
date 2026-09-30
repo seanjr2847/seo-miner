@@ -84,6 +84,16 @@
 
   /* 검색 성과 — 서치콘솔 4대 지표를 같은 크기로 나란히 둔다.
      축이 서로 달라 한 그림에 겹치지 않는다(게재순위는 방향까지 반대다). */
+  /* 이 파일이 세우는 섹션(추이 선·분해 표)은 셸의 카드 문법을 따른다: 카드 한 장 =
+     제목(16px 650)·보조 설명(12px)·우측 도구. 눈썹·카드 밖 제목은 쓰지 않는다. */
+  .sm-ch{display:flex;justify-content:space-between;align-items:flex-start;
+    gap:var(--sp-3) var(--sp-4);flex-wrap:wrap;margin:0 0 var(--sp-4)}
+  .sm-ch > div:first-child{min-width:0;flex:1 1 280px}
+  .sm-ch h2{font:650 var(--fs-3)/1.4 var(--sans);color:var(--ink);margin:0}
+  .sm-ch .sub{font:400 var(--fs-1)/1.5 var(--sans);color:var(--sub);margin:2px 0 0;max-width:74ch}
+  .sm-ch .sub + .sub{margin-top:4px}
+  .sm-ch .tools{margin:0;flex:0 0 auto}
+  #sm-perf,#sm-dim{margin-top:var(--gap)}
   .sm-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-6) 44px;margin-top:4px}
   @media(max-width:760px){.sm-charts{grid-template-columns:1fr}}
   .sm-ct{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
@@ -105,6 +115,7 @@
   .sm-line circle{fill:var(--accent);vector-effect:non-scaling-stroke}
   .sm-line line.g{stroke:var(--line);stroke-width:1;
     vector-effect:non-scaling-stroke}
+  .sm-line path.a{fill:url(#sm-grad);stroke:none}
   .sm-line rect{fill:transparent}
   .sm-line rect:hover{fill:var(--accent-wash)}
   .sm-ax{display:flex;justify-content:space-between;font:400 var(--fs-1)/1 var(--mono);
@@ -130,6 +141,33 @@
     margin-top:6px;max-width:260px}
   #sm-dim .sm-share i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent)}
   #sm-dim .tools{margin-bottom:10px}
+  #sm-dim .sm-ch .tools{margin-bottom:0}
+  #sm-dim .sm-cell{display:flex;align-items:center;gap:12px;min-width:0}
+  #sm-dim .sm-cell > div{min-width:0;flex:1}
+  /* 이니셜 아바타 — 검색어·페이지를 훑을 때 첫 글자가 닻이 된다. 색은 한 톤(면 색조). */
+  #sm-dim .sm-av{flex:none;width:28px;height:28px;border-radius:50%;display:grid;
+    place-items:center;background:var(--accent-wash);color:var(--accent);
+    font:650 var(--fs-1)/1 var(--sans);text-transform:uppercase}
+  #sm-dim .tw{max-height:none}
+  #sm-dim td.num,#sm-dim th.num{white-space:nowrap}
+  /* 좁은 화면 — 다섯 열이 390px 에 안 들어가 숫자가 두 줄로 쪼개지고 오른쪽 열이 잘렸다.
+     줄을 카드로 접는다: 이름이 위, 네 숫자가 그 밑 한 줄(칸 이름은 값 위에 작게).
+     정렬 손잡이(머리글 버튼)는 표 위 한 줄로 남긴다. */
+  @media (max-width:560px){
+    #sm-dim table{min-width:0;display:block}
+    #sm-dim thead,#sm-dim tbody{display:block}
+    #sm-dim thead tr{display:flex;align-items:center;justify-content:space-between;gap:4px;padding-bottom:6px}
+    #sm-dim thead tr::before{content:"정렬";font:600 var(--fs-1)/1 var(--sans);color:var(--sub);margin-right:auto}
+    #sm-dim thead th:first-child{display:none}
+    #sm-dim thead th{padding:0;border:0}
+    #sm-dim thead th button{min-width:44px;justify-content:center}
+    #sm-dim tbody tr{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 4px;
+      padding:12px 0;border-top:1px solid var(--line)}
+    #sm-dim tbody td{display:block;padding:0;border:0}
+    #sm-dim tbody td:first-child{grid-column:1 / -1;width:auto}
+    #sm-dim tbody td.num{text-align:left;font:600 var(--fs-2)/1.3 var(--sans);font-variant-numeric:tabular-nums}
+    #sm-dim tbody td.num::before{content:attr(data-label);display:block;font:400 var(--fs-1)/1.3 var(--sans);color:var(--sub)}
+  }
 
   /* 키워드 선별 — 자동은 서치콘솔 노출만 켠다. 나머지는 사람이 골라야 한다. */
   /* 목록은 폼이다 — 셸의 .card 와 같은 몸으로 세운다(면·반경·그림자, 테두리 없음).
@@ -1615,14 +1653,40 @@
         : "비교할 직전 기록 없음";
       return '<div class="b">' + how + " · " + note + "</div>";
     };
+    // 클릭률·평균 순위에도 옆 칸(클릭·노출)과 같은 마이크로 추이를 단다 — 이 두 칸만 아래가
+    // 비어 카드 높이가 어긋나 보였다. 원본 kpiSpark 와 같은 마크업(.spark)이다.
+    var micro = function (key, color, label) {
+      var v = (PERF.daily || []).map(function (r) { return r[key]; })
+        .filter(function (x) { return x != null; });
+      if (v.length < 3) return "";
+      // 하루치는 들쭉날쭉해 스파크라인이 톱니가 된다 — 이동 평균(최대 7일)으로 흐름만 남긴다.
+      v = v.map(function (_, i) {
+        var seg = v.slice(Math.max(0, i - 6), i + 1);
+        return seg.reduce(function (a, b) { return a + b; }, 0) / seg.length;
+      });
+      var mx = Math.max.apply(null, v), mn = Math.min.apply(null, v);
+      if (mx === mn) return "";
+      var W = 160, H = 36, P = 3;
+      var X = function (i) { return P + i * (W - 2 * P) / (v.length - 1); };
+      var Y = function (x) { return H - P - (x - mn) / (mx - mn) * (H - 2 * P); };
+      var pts = v.map(function (x, i) { return X(i).toFixed(1) + "," + Y(x).toFixed(1); }).join(" ");
+      return '<div class="spark"><svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' +
+        label + " 최근 " + v.length + '일 추이"><polygon fill="' + color + '" fill-opacity=".10" points="' +
+        X(0) + "," + H + " " + pts + " " + X(v.length - 1) + "," + H + '"/><polyline fill="none" stroke="' +
+        color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="' + pts +
+        '"/><circle cx="' + X(v.length - 1).toFixed(1) + '" cy="' + Y(v[v.length - 1]).toFixed(1) +
+        '" r="3" fill="' + color + '"/></svg></div>';
+    };
     box.innerHTML =
       '<div class="m"><div class="v">' + pct(t.ctr) +
         smDelta(t.ctr, pv.ctr, function (x) { return (x * 100).toFixed(2) + "%p"; }, false) +
-        '</div><div class="l">클릭률</div>' + basis("노출 대비 클릭", pv.ctr, pct) + "</div>" +
+        '</div><div class="l">클릭률</div>' + basis("노출 대비 클릭", pv.ctr, pct) +
+        micro("ctr", "var(--info)", "클릭률") + "</div>" +
       '<div class="m"><div class="v">' + pos(t.position) +
         smDelta(t.position, pv.position, function (x) { return x.toFixed(1); }, true) +
         '</div><div class="l">평균 순위</div>' +
-        basis("노출 가중 평균", pv.position, pos) + "</div>";
+        basis("노출 가중 평균", pv.position, pos) +
+        micro("position", "var(--sub)", "평균 순위") + "</div>";
     band.appendChild(box);
   }
 
@@ -1667,6 +1731,8 @@
         (r[key] == null ? "값 없음" : opt.fmt(r[key])) + "</title></rect>";
     }).join("");
     var mid = n > 2 ? "<span>" + esc(rows[Math.floor((n - 1) / 2)].d) + "</span>" : "";
+    var area = d + " L" + X(last[0]).toFixed(2) + " " + H + " L" + X(pts[0][0]).toFixed(2) +
+      " " + H + " Z";
     return head() +
       '<div class="sm-plot"><span class="sm-gl t">' +
       opt.fmt(opt.invert ? lo : hi) + '</span><span class="sm-gl b">' +
@@ -1674,7 +1740,7 @@
       '<svg class="sm-line" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none"' +
       ' role="img" aria-label="' + opt.label + ' 추이 — 최고 ' +
       opt.fmt(opt.invert ? lo : hi) + ', 최저 ' + opt.fmt(opt.invert ? hi : lo) + '">' +
-      grid + '<path d="' + d + '"/>' +
+      grid + '<path class="a" d="' + area + '"/><path d="' + d + '"/>' +
       '<circle cx="' + X(last[0]).toFixed(2) + '" cy="' + Y(last[1]).toFixed(2) +
       '" r="1.1"/>' + hov + "</svg></div>" +
       '<div class="sm-ax"><span>' + esc(rows[0].d) + "</span>" + mid +
@@ -1698,22 +1764,27 @@
       "위로 갈수록 순위가 높습니다. 위 일별 추이가 클릭과 노출을 그리고, 남은 두 " +
       "지표를 여기서 봅니다.";
     // eyebrow 는 기간만 적는다 — 개수·상태·결론은 부제와 배지의 몫이다.
-    sec.innerHTML = '<div class="sh"><p class="eyebrow">' + esc(span) + "</p>" +
+    sec.innerHTML = '<div class="card"><div class="sm-ch"><div>' +
       "<h2>클릭률과 순위</h2>" +
-      '<p class="sub">' + (dl.length ? dl.length + "일치입니다. " : "") +
+      '<p class="sub">' + esc(span) + " · " + (dl.length ? dl.length + "일치입니다. " : "") +
       '제목 옆 숫자가 지금 값이고, 증감은 직전 측정 대비입니다.' +
       '<span class="hint" tabindex="0" data-tip="' + esc(tip) + '" aria-label="' +
       esc(tip) + '">i</span></p>' +
       (PERF.period_mismatch ? '<p class="sub">직전 기록과 기간이 달라 이번에는 증감을 ' +
         "비교하지 않았습니다. 같은 기간으로 한 번 더 수집하면 채워집니다.</p>" : "") +
-      "</div>" +
-      '<div class="card sm-charts">' +
+      "</div></div>" +
+      '<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">' +
+      '<defs><linearGradient id="sm-grad" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" style="stop-color:var(--accent);stop-opacity:.22"/>' +
+      '<stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/>' +
+      "</linearGradient></defs></svg>" +
+      '<div class="sm-charts">' +
       ['<div>' + line(dl, "ctr", {label: "클릭률", fmt: pct, now: t.ctr, was: pv.ctr,
           dfmt: function (x) { return (x * 100).toFixed(2) + "%p"; }}) + "</div>",
        '<div>' + line(dl, "position", {label: "평균 순위", fmt: pos, invert: true,
           now: t.position, was: pv.position,
           dfmt: function (x) { return x.toFixed(1); }}) + "</div>"
-      ].join("") + "</div>";
+      ].join("") + "</div></div>";
   }
 
   var DIMS = [["queries", "검색어"], ["pages", "페이지"], ["devices", "기기"]];
@@ -1776,16 +1847,18 @@
         var k = r.key;
         if (dimMode === "pages") k = k.replace(/^https?:\/\/[^/]+/, "") || "/";
         if (dimMode === "devices") k = DEVICE[k] || k;
-        return '<tr><td title="' + esc(r.key) + '"><span class="sm-k">' + esc(k) +
+        var ini = esc(String(k).replace(/^[\/\s]+/, "").charAt(0) || "/");
+        return '<tr><td title="' + esc(r.key) + '"><div class="sm-cell"><span class="sm-av" ' +
+          'aria-hidden="true">' + ini + '</span><div><span class="sm-k">' + esc(k) +
           '</span><span class="sm-share"><i style="width:' +
-          ((r.impressions || 0) / mxI * 100).toFixed(1) + '%"></i></span>' +
-          '</td><td class="num">' + nf(r.clicks) + '</td><td class="num">' +
-          nf(r.impressions) + '</td><td class="num">' + pct(r.ctr) +
-          '</td><td class="num">' + pos(r.position) + "</td></tr>";
+          ((r.impressions || 0) / mxI * 100).toFixed(1) + '%"></i></span></div></div>' +
+          '</td><td class="num" data-label="클릭">' + nf(r.clicks) + '</td><td class="num" data-label="노출">' +
+          nf(r.impressions) + '</td><td class="num" data-label="클릭률">' + pct(r.ctr) +
+          '</td><td class="num" data-label="평균 순위">' + pos(r.position) + "</td></tr>";
       }).join("") + "</tbody></table>";
     // 늘 .tw 로 싼다 — 좁은 화면에서 다섯 열이 접히면 숫자가 두 줄로 쪼개진다.
     // 상자 안에서 옆으로 넘기게 두는 편이 읽힌다(min-width 는 아래 CSS).
-    box.innerHTML = '<div class="card"><div class="tw">' + t + "</div></div>";
+    box.innerHTML = '<div class="tw">' + t + "</div>";
   }
 
   // 지금 보이는 줄 그대로 표로 내보낸다 — 만드는 코드는 셸의 csv(name, rows)
@@ -1808,11 +1881,11 @@
     if (!sec.querySelector(".sm-dimt")) {
       var tip = "열 이름을 누르면 그 기준으로 정렬하고, 같은 열을 다시 누르면 반대 " +
         "순서가 됩니다. 노출 상위 25개까지 봅니다.";
-      sec.innerHTML = '<div class="sh"><p class="eyebrow">유입 분해</p>' +
+      sec.innerHTML = '<div class="card"><div class="sm-ch"><div>' +
         "<h2>무엇으로 들어오나</h2>" +
         '<p class="sub">노출은 많은데 클릭률이 낮은 줄이 제목과 설명을 고칠 자리입니다.' +
         '<span class="hint" tabindex="0" data-tip="' + esc(tip) + '" aria-label="' +
-        esc(tip) + '">i</span></p>' +
+        esc(tip) + '">i</span></p></div>' +
         '<div class="tools tabs">' + DIMS.map(function (d) {
           return '<button class="chip" data-d="' + d[0] + '">' + d[1] + "</button>";
         }).join("") + "</div></div>" +
@@ -1821,7 +1894,7 @@
         '<span class="n sm-dimn"></span><span class="sp"></span>' +
         '<button class="go sm sec sm-dimx" title="지금 보이는 줄 그대로 내려받습니다"' +
         ">CSV 내려받기</button></div>" +
-        '<div class="sm-dimt"></div>';
+        '<div class="sm-dimt"></div></div>';
       // 위임 한 번만 — 그릴 때마다 붙이면 핸들러가 쌓여 한 번 누른 게 여러 번 돈다.
       sec.addEventListener("click", function (ev) {
         if (ev.target.classList.contains("sm-dimx")) return dimCsv();

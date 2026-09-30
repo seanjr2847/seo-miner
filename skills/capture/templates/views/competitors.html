@@ -3,66 +3,231 @@
 
      여태 경쟁사 축은 "경쟁사가 잡은 키워드를 우리 추적 목록에 부어 넣는 것"뿐이었다
      (collect_gap). 누가 몇 위로 잡고 있고 우리는 몇 위인지가 없어서, 목록만 늘고
-     무엇부터 손댈지는 여전히 화면 밖에 있었다. -->
+     무엇부터 손댈지는 여전히 화면 밖에 있었다.
+
+     이 화면의 주 질문: 이 주제에서 우리는 몇 등이고, 누구에게 어떤 검색어를 뺏기고 있어서
+     무엇부터 따라잡을까? 그래서 12열 카드 격자다 — 위는 등수(몫 순위표)와 뺏긴 검색어의
+     종류(도넛), 그 아래가 이 화면의 힘 카드인 점수순 격차 큐, 맨 아래가 보조 두 장. -->
 <script type="application/json" class="view-def">
 {"id": "competitors", "group": "compete", "title": "경쟁 분석",
  "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"], "head": ["competitors"]}
 </script>
 
 <style>
-/* ── 경쟁 분석 ────────────────────────────────────────────────
-   몫은 숫자보다 길이로 읽힌다. 우리 줄만 녹청, 나머지는 회색 — 색으로 "누가 우리인가"
-   하나만 말하고, 크기 비교는 막대 길이가 한다. 표 상자는 셸의 면 카드(.card) 한 벌이다. */
-#cp-shares .card { max-width:760px; }
-.cp-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 16px;
-  align-items:baseline; padding:12px 0; border-bottom:1px solid var(--line); }
-.cp-row:first-child { padding-top:0; }
-.cp-row:last-child { padding-bottom:0; border-bottom:0; }
-.cp-dom { font-family:var(--mono); font-size:var(--fs-2); word-break:break-all; }
-.cp-row.me .cp-dom { color:var(--accent); font-weight:600; }
-/* 숫자 열은 Pretendard 표 숫자 — 등폭은 도메인(식별자)에만 쓴다. */
-.cp-n { font:650 var(--fs-3)/1.4 var(--sans); font-variant-numeric:tabular-nums;
-  white-space:nowrap; }
-.cp-bar { grid-column:1 / -1; height:4px; border-radius:2px; background:var(--sunk);
-  margin-top:8px; }
-.cp-bar i { display:block; height:100%; border-radius:2px; background:var(--mute); }
-.cp-row.me .cp-bar i { background:var(--accent); }
-@media (prefers-reduced-motion: no-preference) {
-  .cp-bar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+/* ── 경쟁 분석: 카드 격자 ─────────────────────────────────────
+   이 화면 상자(#view-competitors)가 12열 격자다. 두 섹션과 그 안의 묶음 상자는
+   display:contents 로 풀어 카드가 곧장 격자 칸이 되게 하고, 카드의 자리는 order 로 정한다
+   (몫 -> 도넛 -> 큐 -> 경쟁사별 -> 뺀 곳). DOM 순서를 안 바꾸는 이유: 뺀 곳 카드가
+   #cp-shares 안에 있어야 test_render 가 읽는다.
+   [hidden] 을 이기지 않도록 :not([hidden]) 을 단다 — id 특이도가 UA 의 hidden 을 이긴다. */
+#view-competitors:not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:var(--gap); align-items:start; }
+#view-competitors > :not(section) { grid-column:1 / -1; }
+#view-competitors > .vh { padding-bottom:var(--sp-2); }
+#cp-share, #cp-gap, #cp-shares, #cp-riv { display:contents; }
+#view-competitors .card { margin:0; padding:20px 24px 22px; }
+#view-competitors .cp-w4 { grid-column:span 4; }
+#view-competitors .cp-w6 { grid-column:span 6; }
+#view-competitors .cp-w8 { grid-column:span 8; }
+#view-competitors .cp-w12 { grid-column:1 / -1; }
+#view-competitors .cp-o1 { order:1; } #view-competitors .cp-o2 { order:2; }
+#view-competitors .cp-o3 { order:3; } #view-competitors .cp-o4 { order:4; }
+#view-competitors .cp-o5 { order:5; }
+@media (max-width:1240px) {
+  #view-competitors .cp-w4, #view-competitors .cp-w6, #view-competitors .cp-w8 { grid-column:1 / -1; }
 }
-/* 곁줄 한 벌 — 막대 밑의 설명과 카드 안의 범례가 같은 무게로 읽혀야 한다.
-   .left 는 격자 왼쪽 칸에 붙는 곁줄이다(인라인 style 로 박아 두던 자리).
-   숫자 곁줄은 꺾이면 「추정 트래픽 / 1,234」로 갈라지므로 통째로 묶는다. */
-.cp-meta { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
-.cp-meta.left { grid-column:1; }
-.cp-row > .cp-meta:not(.left) { white-space:nowrap; }
-/* 검색어 한 카드 안의 경쟁사 줄 — 같은 검색어가 경쟁사마다 카드로 반복되던 것을 묶었다.
-   배지 모양은 셸의 .badge 한 벌이다(화면별 배지 변형을 두지 않는다). */
-.cp-riv { margin-top:6px; }
-/* 걸러진 머리말이 비면(제목을 되풀이하던 자리) 자리를 접는다. */
-#cp-share .sh > .eyebrow:empty, #cp-gap .sh > .eyebrow:empty { display:none; }
-#cp-share .sh > .eyebrow:empty + h2, #cp-gap .sh > .eyebrow:empty + h2 { margin-top:0; }
+
+/* 카드 머리 한 벌 — 제목(16px 650)·보조 설명·오른쪽 도구. 같은 종류의 정보는 같은 머리다. */
+.cpc-h { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start;
+  gap:10px 16px; margin:0 0 16px; }
+.cpc-t { min-width:0; flex:1 1 240px; }
+.cpc-t h2 { margin:0; }
+.cpc-s { margin:4px 0 0; font:400 var(--fs-1)/1.55 var(--sans); color:var(--sub); }
+.cpc-s b { color:var(--ink); font-weight:650; }
+.cpc-r { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; min-width:0; }
+.cpc-r .tools { margin:0; }
+/* 기준일 알약 — 날짜는 숫자라 표 숫자로 맞춘다. 비면 접는다. */
+.cp-date { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  border-radius:var(--r-pill); background:var(--sunk); color:var(--sub);
+  font:500 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.cp-date:empty { display:none; }
+.cp-me { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  border-radius:var(--r-pill); background:var(--accent-wash); color:var(--accent);
+  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap; }
+/* 범례 — 색점 + 이름. 우리 = 녹청, 경쟁사 = 회색. */
+.cp-key { display:inline-flex; align-items:center; gap:14px; font:400 var(--fs-1)/1 var(--sans);
+  color:var(--sub); }
+.cp-key span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.cp-key i { width:9px; height:9px; border-radius:50%; background:var(--mute); }
+.cp-key .me i { background:var(--accent); }
+
+/* 곁줄 한 벌 — 카드 안의 설명·순위·수치 곁글이 같은 무게로 읽힌다. */
+.cp-meta { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:0; }
+.cp-dom { font-family:var(--mono); font-size:var(--fs-1); word-break:break-all; }
+
+/* 이니셜 아바타 — 외부 파비콘을 부르지 않는다(오프라인에서도 같은 모양). 우리만 녹청. */
+.cp-av { flex:none; display:grid; place-items:center; width:32px; height:32px; border-radius:10px;
+  background:var(--sunk); color:var(--sub); font:650 var(--fs-2)/1 var(--sans); }
+.cp-me-row .cp-av { background:var(--accent); color:var(--accent-ink); }
+
+/* ── 몫 순위표 ─ 몫은 숫자보다 길이로 읽힌다 ───────────────── */
+.cp-tb { --cols:22px 32px minmax(0,1.7fr) minmax(0,1fr) 48px 72px; }
+.cp-tb > .cp-r, .cp-tb > .cp-th { display:grid; grid-template-columns:var(--cols);
+  align-items:center; gap:0 14px; padding:0 12px; }
+.cp-th { padding-bottom:6px; }
+.cp-th > span { font:500 var(--fs-1)/1.35 var(--sans); color:var(--mute); }
+.cp-th .rt { text-align:right; }
+.cp-tb > .cp-r { padding-top:10px; padding-bottom:10px; border-radius:14px; }
+.cp-rk { font:500 var(--fs-1)/1 var(--sans); color:var(--mute); font-variant-numeric:tabular-nums;
+  text-align:center; }
+.cp-nm { min-width:0; }
+.cp-nm .cp-dom { display:block; font-size:var(--fs-2); color:var(--ink); }
+.cp-me-row .cp-nm .cp-dom { color:var(--accent); font-weight:600; }
+.cp-nm .cp-meta { margin-top:2px; }
+.cp-track { height:10px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+.cp-track i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); }
+.cp-me-row .cp-track i { background:var(--accent); }
+.cp-n { font:650 var(--fs-3)/1.3 var(--sans); font-variant-numeric:tabular-nums; text-align:right;
+  white-space:nowrap; }
+.cp-me-row .cp-n { color:var(--accent); }
+.cp-etv { font:400 var(--fs-1)/1.3 var(--sans); font-variant-numeric:tabular-nums; color:var(--sub);
+  text-align:right; white-space:nowrap; }
+/* 우리 줄은 면 색조로 — 첫·끝 칸이 둥글게 이어져 한 띠로 읽힌다. */
+.cp-tb > .cp-me-row { background:var(--accent-wash); }
+@media (prefers-reduced-motion: no-preference) {
+  .cp-track i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+}
+
+/* ── 종류 도넛 ─ 조각과 범례를 누르면 큐가 걸러진다 ──────────── */
+.cp-dnw { display:flex; flex-direction:column; align-items:stretch; gap:16px; }
+#view-competitors .cp-donut { align-self:stretch; }
+.cp-dn { position:relative; width:100%; max-width:200px; margin:0 auto; }
+.cp-dn .chwrap { overflow:visible; }
+.cp-dn-c { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; pointer-events:none; text-align:center; }
+.cp-dn-c b { font:700 var(--fs-5)/1.1 var(--sans); font-variant-numeric:tabular-nums; }
+.cp-dn-c span { font:400 var(--fs-1)/1.35 var(--sans); color:var(--sub); max-width:96px; }
+.cp-lgs { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+.cp-lg { display:grid; grid-template-columns:10px minmax(0,1fr) auto; align-items:center; gap:0 10px;
+  min-height:40px; padding:0 12px; border:0; border-radius:12px; background:transparent;
+  color:var(--ink); font:500 var(--fs-2)/1.3 var(--sans); text-align:left; cursor:pointer; }
+.cp-lg i { width:10px; height:10px; border-radius:50%; background:var(--kc, var(--mute)); }
+.cp-lg b { font:650 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; }
+.cp-lg:hover { background:var(--sunk); }
+.cp-lg.on { background:var(--accent-wash); }
+.k-missing { --kc:var(--warn); } .k-weak { --kc:var(--info); }
+.k-shared { --kc:var(--accent); } .k-unknown { --kc:var(--mute); }
+@media (max-width:1240px) {
+  .cp-dnw { flex-direction:row; align-items:center; gap:24px; }
+  .cp-dn { flex:0 0 180px; margin:0; }
+}
+@media (max-width:560px) {
+  .cp-dnw { flex-direction:column; align-items:stretch; }
+  .cp-dn { margin:0 auto; }
+}
+
+/* ── 격차 큐 ─ 이 화면의 힘 카드. 기회 카드(.opp)를 표 행으로 편다 ─ */
+#cp-gap-card .oppchips { display:flex; gap:0 6px; flex-wrap:wrap; margin:0 0 12px; }
+#cp-gap-card .oppchips .chip { margin:0 0 6px; }
+#cp-gap-card .oppchips:empty { display:none; }
+#cp-gaps { --cols:9px 64px minmax(0,1.5fr) minmax(0,1.2fr) 84px 150px; --cgap:14px; }
+#cp-gaps .cp-th { display:grid; grid-template-columns:var(--cols); column-gap:var(--cgap);
+  padding:0 12px 8px; }
+#cp-gaps .cp-th span { font:500 var(--fs-1)/1.35 var(--sans); color:var(--mute); }
+#cp-gaps .cp-th .rt { text-align:right; }
+#cp-gaps .opp { padding:0; margin:0; border-radius:14px; background:transparent; box-shadow:none;
+  transition:background .12s; }
+#cp-gaps .opp:hover, #cp-gaps .opp[open] { background:var(--sunk); }
+#cp-gaps .opp > summary { display:grid; grid-template-columns:var(--cols); column-gap:var(--cgap);
+  align-items:start; padding:14px 12px; cursor:pointer; border-radius:14px; }
+#cp-gaps .opp > summary::before { margin:7px 0 0; align-self:start; }
+#cp-gaps .opp > summary > div { grid-column:auto; grid-row:auto; min-width:0; }
+.cp-sc .score { width:auto; text-align:right; }
+.cp-sc .meter { margin:8px 0 0; max-width:none; }
+#cp-gaps .opp .target { margin:0 0 2px; }
+.cp-main .oh { margin-top:8px; }
+.cp-main .why { margin-top:6px; }
+#cp-gaps .opp:not([open]) .cp-main .why { -webkit-line-clamp:1; }
+.cp-rivs { display:flex; flex-direction:column; gap:6px; padding-top:1px; }
+.cp-rv { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; }
+.cp-rv .cp-pos { font:650 var(--fs-2)/1.3 var(--sans); font-variant-numeric:tabular-nums; }
+.cp-vol { text-align:right; font:500 var(--fs-2)/1.5 var(--sans); font-variant-numeric:tabular-nums;
+  padding-top:1px; }
+.cp-vol .u { display:none; font-weight:400; color:var(--sub); font-size:var(--fs-1); }
+.cp-act { justify-self:end; }
+.cp-act .acts { margin:0; justify-content:flex-end; }
+.cp-act:empty { display:none; }
+.cp-det { padding:0 12px 14px calc(12px + 9px + var(--cgap) + 64px + var(--cgap)); }
+.cp-det .det { padding:0; }
+.cp-det > .why { margin:0; }
+#cp-gaps:focus-within .opp > summary:focus-visible { outline-offset:-2px; }
+@media (max-width:999px) {
+  #cp-gaps .cp-th { display:none; }
+  #cp-gaps .opp > summary { grid-template-columns:9px minmax(0,1fr) auto; column-gap:12px;
+    grid-template-areas:"c m s" ". r r" ". v a"; row-gap:8px; }
+  #cp-gaps .opp > summary::before { grid-area:c; }
+  #cp-gaps .opp > summary > .cp-main { grid-area:m; }
+  #cp-gaps .opp > summary > .cp-sc { grid-area:s; width:56px; }
+  #cp-gaps .opp > summary > .cp-rivs { grid-area:r; }
+  #cp-gaps .opp > summary > .cp-vol { grid-area:v; text-align:left; align-self:center; }
+  #cp-gaps .opp > summary > .cp-act { grid-area:a; align-self:center; }
+  .cp-vol .u { display:inline; }
+  .cp-det { padding-left:33px; }
+}
+@media (max-width:560px) {
+  #view-competitors .card { padding:18px 16px 20px; }
+  /* 좁은 화면의 몫 표 — 이름 아래에 막대가 내려앉는다. */
+  .cp-tb > .cp-r { grid-template-columns:22px 32px minmax(0,1fr) auto; gap:0 12px; padding:10px 8px; }
+  .cp-tb > .cp-th { display:none; }
+  .cp-tb > .cp-r > .cp-tr { grid-column:3 / -1; grid-row:2; padding:8px 0 0; }
+  .cp-tb > .cp-r > .cp-etv { display:none; }
+}
+
+/* ── 경쟁사별 누적 막대 / 뺀 곳 ────────────────────────────── */
+.cp-rk-row { display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center;
+  gap:0 12px; padding:9px 0; }
+.cp-rk-row .cp-dom { display:block; font-size:var(--fs-2); color:var(--ink); margin-bottom:6px; }
+.cp-stack { display:flex; gap:2px; height:10px; border-radius:var(--r-pill); overflow:hidden; }
+.cp-stack i { display:block; height:100%; background:var(--kc, var(--mute)); min-width:4px; }
+.cp-lead { text-align:right; font:400 var(--fs-1)/1.35 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; white-space:nowrap; }
+.cp-lead b { display:block; font:650 var(--fs-3)/1.3 var(--sans); color:var(--ink); }
+.cp-rk-more { margin:6px 0 0; }
+.cp-roleg + .cp-roleg { margin-top:14px; }
+.cp-roleg > b { display:block; font:600 var(--fs-2)/1.4 var(--sans); margin-bottom:8px; }
+.cp-pills { display:flex; flex-wrap:wrap; gap:8px; }
+.cp-pills .badge { height:28px; padding:0 12px; font-family:var(--mono); font-size:var(--fs-1); }
+
+/* 빈 상태·오류·좋은 소식 — 카드 안에서도 면 색조로 갈린다(셸의 .card .empty 는 투명이라 옅어진다). */
+/* 빈 상태 자체는 카드 면 위에 바로 선다(상자 안 상자 금지) — 색조로 갈리는 것은 오류·정상뿐이다. */
+#view-competitors .card .empty { background:transparent; padding:8px 0; border-radius:var(--r-in); }
+#view-competitors .card .empty.err, #view-competitors .card .empty.ok { padding:16px 18px; }
+#view-competitors .card .empty.err { background:var(--warn-wash); }
+#view-competitors .card .empty.ok { background:var(--accent-wash); }
+#view-competitors .card .empty .go { margin-top:0; }
 </style>
 
 <section id="cp-share">
-  <div class="sh">
-    <p class="eyebrow" id="cp-share-eyebrow"></p>
-    <h2>유기 검색 몫</h2>
-    <p class="sub" id="cp-share-sub"></p>
-  </div>
   <!-- 첫 그림은 빈 상자가 아니라 채워질 자리의 모양이다 — VIEW() 가 덮는다. -->
-  <div id="cp-shares"><span class="skel"></span><span class="skel line2"></span></div>
+  <div id="cp-shares"><div class="card cp-w12 cp-o1"><span class="skel"></span><span class="skel line2"></span></div></div>
 </section>
 
 <section id="cp-gap">
-  <div class="sh">
-    <p class="eyebrow" id="cp-gap-eyebrow"></p>
-    <h2 id="cp-gap-h">경쟁사와 맞댄 검색어</h2>
-    <p class="sub" id="cp-gap-sub"></p>
-    <div class="tools" id="cp-gap-tools"></div>
+  <div class="card cp-w12 cp-o3" id="cp-gap-card">
+    <div class="cpc-h">
+      <div class="cpc-t">
+        <h2 id="cp-gap-h">경쟁사와 맞댄 검색어</h2>
+        <p class="cpc-s" id="cp-gap-sub"></p>
+      </div>
+      <div class="cpc-r">
+        <span class="cp-date" id="cp-gap-eyebrow"></span>
+        <div class="tools" id="cp-gap-tools"></div>
+      </div>
+    </div>
+    <div id="cp-chips" class="oppchips"></div>
+    <div id="cp-gaps"><span class="skel"></span><span class="skel line2"></span></div>
   </div>
-  <div id="cp-chips" class="oppchips"></div>
-  <div id="cp-gaps"><span class="skel"></span><span class="skel line2"></span></div>
+  <div id="cp-riv"></div>
 </section>
 
 <script>
@@ -71,9 +236,10 @@
    뒤가 앞을 조용히 덮는다(dashboard._selfcheck 가 그걸 센다). */
 
 let CP_D = null;
-let CP_KIND = "";                 // "" = 전체. 칩이 거른다.
+let CP_KIND = "";                 // "" = 전체. 칩·도넛·범례가 같은 이 값을 거른다.
 let CP_SITE = null;               // 기본 갈래를 다시 고를 때 — 사이트가 바뀌었나
 let CP_TOP = "";                  // 격차가 가장 큰 검색어 — 띠의 주요 행동이 여는 줄
+let CP_DRAWN = false;             // 도넛은 처음 한 번만 움직인다 — 조각을 누를 때마다 다시 돌지 않게
 // 기회 상태 거르개 — 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
 // 이 목록은 기회 목록이 아니라 검색어 격차 목록이라, 점수가 안 붙은 줄도 있다.
 let CP_ST = "";
@@ -82,19 +248,23 @@ const CP_stOk = (r, st) => window.oppStMatch(oppOf(r.keyword), st);
 // [종류 id, 배지, 뜻, 그 종류로 거른 목록의 제목, 배지 색(셸 .badge)]. 종류 id 의 정본은
 // collect_gap._kind 다. unknown 은 경쟁사 순위를 못 받은 줄 — 우리가 위(shared)로 세면
 // 「경쟁사만 잡은 검색어」 아래 270줄 중 269줄이 「우리가 위」가 됐다(10회차).
+// 색은 도넛·누적 막대와 한 벌이다(.k-종류 의 --kc): 없음=산화동, 밀림=청회색, 위=녹청, 모름=회색.
 const CP_KINDS = [
   ["missing", "우리는 없음", "그 검색어에서 우리는 순위가 아예 없습니다. 새로 써야 하는 것",
    "경쟁사만 잡은 검색어", "warn"],
   ["weak",    "밀리는 중",   "둘 다 있는데 우리가 더 아래입니다. 있는 글을 고치는 것",
-   "경쟁사가 앞선 검색어", "ok"],
+   "경쟁사가 앞선 검색어", "adv"],
   ["shared",  "우리가 위",   "같거나 우리가 위입니다. 지킬 자리",
-   "우리가 같거나 앞선 검색어", "muted"],
+   "우리가 같거나 앞선 검색어", "ok"],
   ["unknown", "비교 불가",   "경쟁사 순위를 받지 못해 누가 위인지 모릅니다",
    "경쟁사 순위를 모르는 검색어", "muted"],
 ];
 const CP_kind = k => CP_KINDS.find(x => x[0] === k) || [k, k || "", "", "", "muted"];
 // 전체(거르지 않음)일 때의 제목 — 종류가 섞여 있어 어느 한 종류의 이름을 붙이지 않는다.
 const CP_title = () => CP_KIND ? CP_kind(CP_KIND)[3] : "경쟁사와 맞댄 검색어";
+// 캔버스는 var(--x) 를 못 읽는다 — 그 자리에서 토큰을 읽는다(다크로 바뀌면 같은 이름이 다른 색).
+const CP_KC = {missing: "--warn", weak: "--info", shared: "--accent", unknown: "--mute"};
+const CP_css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 /* keyword_gap 은 검색어×경쟁사마다 한 줄이라 같은 검색어가 경쟁사 수만큼 카드로 반복됐다.
    화면은 검색어 하나에 카드 하나 — 경쟁사는 카드 안의 줄이다. 묶는 열쇠는 적재와 같은
@@ -133,27 +303,65 @@ const CP_tip = t =>
   `<span class="hint" tabindex="0" data-tip="${esc(t)}" title="${esc(t)}"
      aria-label="${esc(t)}">i</span>`;
 
-function CP_shares(d) {
+/* 카드 머리 한 벌 — 제목 · 보조 설명(id 가 있으면 그 자리) · 오른쪽 도구. */
+const CP_head = (title, sub, right, sid) =>
+  `<div class="cpc-h"><div class="cpc-t"><h2>${title}</h2>${
+    sub ? `<p class="cpc-s"${sid ? ` id="${sid}"` : ""}>${sub}</p>` : ""}</div>${
+    right ? `<div class="cpc-r">${right}</div>` : ""}</div>`;
+const CP_date = (id, v) => `<span class="cp-date"${id ? ` id="${id}"` : ""}>${
+  v ? esc(String(v).slice(0, 10)) + " 기준" : ""}</span>`;
+// 도메인 이니셜 아바타.
+const CP_av = d => `<span class="cp-av" aria-hidden="true">${
+  esc((String(d || "").replace(/^www\./, "")[0] || "?").toUpperCase())}</span>`;
+
+/* 몫 순위표 — 우리 줄만 녹청 면, 나머지는 회색. 크기는 막대 길이가 말하고 숫자는 옆에 둔다.
+   막대는 추정 트래픽 기준이다(몫과 같은 분모). */
+function CP_shareRows(d) {
   const rows = d.comp_metrics || [];
   if (!rows.length) return "";
   const max = rows.reduce((m, r) => Math.max(m, r.etv || 0), 0) || 1;
-  return `<div class="card">` + rows.map(r => {
+  return `<div class="cp-tb" role="table" aria-label="유기 검색 몫 순위표">
+    <div class="cp-th" role="row" aria-hidden="true"><span></span><span></span>
+      <span>도메인</span><span>추정 트래픽 크기</span><span class="rt">몫</span>
+      <span class="rt">추정 트래픽</span></div>` + rows.map((r, i) => {
     const w = Math.round((r.etv || 0) / max * 100);
-    return `<div class="cp-row${r.is_self ? " me" : ""}">
-      <div class="cp-dom">${esc(r.domain)}${r.is_self ? " ← 우리" : ""}</div>
+    return `<div class="cp-r${r.is_self ? " cp-me-row" : ""}" role="row">
+      <span class="cp-rk">${i + 1}</span>${CP_av(r.domain)}
+      <div class="cp-nm"><span class="cp-dom">${esc(r.domain)}</span>
+        <p class="cp-meta">순위를 가진 검색어 ${num(r.keywords)}개${
+          r.top10 == null ? "" : ` · 1페이지 ${num(r.top10)}개`}</p></div>
+      <div class="cp-tr"><div class="cp-track"><i style="width:${w}%"></i></div></div>
       <div class="cp-n">${r.share == null ? "—" : Math.round(r.share * 100) + "%"}</div>
-      <div class="cp-meta left">순위를 가진 검색어 ${num(r.keywords)}개` +
-      `${r.top10 == null ? "" : ` · 1페이지 ${num(r.top10)}개`}</div>
-      <div class="cp-meta">${r.etv == null ? "" : "추정 트래픽 " + num(Math.round(r.etv))}</div>
-      <span class="cp-bar"><i style="width:${w}%"></i></span>
+      <div class="cp-etv">${r.etv == null ? "" : num(Math.round(r.etv))}</div>
     </div>`;
   }).join("") + `</div>`;
+}
+
+/* 우리가 몇 등인가 — 몫이 우리보다 큰 곳의 수 + 1. 몫이 없으면(null) 등수를 말하지 않는다. */
+function CP_myRank(d) {
+  const rows = d.comp_metrics || [], me = rows.find(r => r.is_self);
+  if (!me || me.share == null) return "";
+  return rows.filter(r => r.share != null && r.share > me.share).length + 1;
+}
+
+/* 몫 한 줄 — 숫자 옆에 늘 견줄 상대를 놓는다. 목록을 읽기 전에 "우리가 몇 등인가"에
+   먼저 답하는 자리라, 우리 몫과 1위 몫을 같은 문장에 세운다. */
+function CP_standing(d) {
+  const rows = d.comp_metrics || [];
+  const me = rows.find(r => r.is_self), top = rows.find(r => !r.is_self);
+  const pc = r => (r && r.share != null) ? Math.round(r.share * 100) + "%" : null;
+  const mine = pc(me), best = pc(top);
+  const tip = CP_tip("몫은 추정 트래픽 기준이라 실측이 아니라 추정입니다. 순위를 가진 " +
+                     "검색어 수와 같이 읽습니다. 우리 줄이 녹청입니다.");
+  return (mine && best
+    ? `우리 몫은 <b>${mine}</b>, 가장 큰 곳은 ${esc(top.domain)} <b>${best}</b>입니다.`
+    : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세웠습니다.") + tip;
 }
 
 /* 경쟁사에서 뺀 곳 — 역할 판정(collect_gap E)이 판매 채널·포털로 가른 자동 후보.
    이름표 정본은 scoring.ROLES(d.role_labels). 근거(그 도메인의 상위 검색어)는 배지 툴팁이다.
    사람이 경쟁사 칸에 적으면 판정과 무관하게 경쟁사로 쓴다 — 그 길을 같이 말한다. */
-function CP_roles(d) {
+function CP_roles(d, cls) {
   const L = d.role_labels || {};
   // 경쟁이 아닌 판정 전부(판매 채널·포털·기타) — 경쟁사로 읽기(scoring.rivals)와 같은 기준이다.
   const out = (d.comp_roles || []).filter(r => r.role && r.role !== "rival");
@@ -162,15 +370,86 @@ function CP_roles(d) {
                      catch (e) { return ""; } };
   const group = role => out.filter(r => r.role === role).map(r =>
     `<span class="badge muted" title="${esc("주로 이런 검색어로 트래픽을 받습니다: " + why(r))}">`
-    + `${esc(r.domain)}</span>`).join(" ");
-  return `<div class="card cp-roles"><p class="cp-meta left">검색결과가 겹쳐도 경쟁사가 아니라서 뺀 곳`
-    + CP_tip("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
+    + `${esc(r.domain)}</span>`).join("");
+  return `<div class="card cp-roles ${cls}">` + CP_head("경쟁사에서 뺀 곳",
+      "검색결과가 겹쳐도 경쟁사가 아니라서 뺀 곳" +
+      CP_tip("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
              + "남의 브랜드 이름으로, 경쟁 사업체는 자기 이름과 자기 제품으로 받습니다. 틀렸으면 "
-             + "[설정]의 경쟁사 칸에 적으세요. 적은 것은 판정과 무관하게 경쟁사로 씁니다.")
-    + `</p>`
+             + "[설정]의 경쟁사 칸에 적으세요. 적은 것은 판정과 무관하게 경쟁사로 씁니다."))
     + ["channel", "media", "other"].filter(k => out.some(r => r.role === k)).map(k =>
-        `<div class="cp-riv"><b>${esc(L[k] || k)}</b> ${group(k)}</div>`).join("")
+        `<div class="cp-roleg"><b>${esc(L[k] || k)}</b><div class="cp-pills">${group(k)}</div></div>`)
+        .join("")
     + `</div>`;
+}
+
+/* 뺏긴 검색어의 종류 — 도넛의 조각과 범례가 칩과 같은 CP_KIND 를 건드린다(다시 누르면 해제). */
+function CP_donutBody(d) {
+  const c = CP_counts(d.kw_gap || []);
+  const rows = CP_KINDS.filter(([k]) => c[k]).map(([k, l, w]) => [k, l, c[k], w]);
+  const total = c[""];
+  if (!total) return "";
+  const dim = k => CP_KIND && CP_KIND !== k;
+  const anim = !CP_DRAWN && !matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? {duration: 700, easing: "easeOutCubic"} : false;
+  CP_DRAWN = true;
+  const chart = chMount(T => ({type: "doughnut",
+    data: {labels: rows.map(r => r[1]), datasets: [{data: rows.map(r => r[2]),
+      backgroundColor: rows.map(r => { const col = CP_css(CP_KC[r[0]]); return dim(r[0]) ? chA(col, .28) : col; }),
+      borderColor: T.card, borderWidth: 3, borderRadius: 6, hoverOffset: 4}]},
+    options: {responsive: true, maintainAspectRatio: false, cutout: "72%", animation: anim,
+      onClick: (e, els) => { if (els.length) CP_pick(rows[els[0].index][0]); },
+      onHover: (e, els) => { if (e.native) e.native.target.style.cursor = els.length ? "pointer" : "default"; },
+      plugins: {legend: {display: false},
+        tooltip: chTip(T, {callbacks: {title: x => x[0].label,
+          label: x => `${num(x.raw)}개 · ${Math.round(x.raw / total * 100)}%`}})}}}),
+    `검색어 ${total}개를 종류로 나눈 도넛 — ` +
+      rows.map(r => `${r[1]} ${r[2]}개`).join(", "), "height:180px");
+  const shown = CP_KIND ? (c[CP_KIND] || 0) : total;
+  const cap = CP_KIND ? CP_kind(CP_KIND)[1] : "검색어";
+  const legend = rows.map(([k, l, n, w]) =>
+    `<button type="button" class="cp-lg k-${k}${CP_KIND === k ? " on" : ""}" title="${esc(w)}"
+       aria-pressed="${CP_KIND === k}" onclick="CP_pick('${k}')"><i></i><span>${esc(l)}</span>
+       <b>${num(n)}</b></button>`).join("");
+  return `<div class="cp-dnw"><div class="cp-dn">${chart}<div class="cp-dn-c"><b>${num(shown)}</b>
+    <span>${esc(cap)}</span></div></div><div class="cp-lgs">${legend}</div></div>`;
+}
+const CP_donutCard = (d, cls) => `<div class="card cp-donut ${cls}" id="cp-donut">` +
+  CP_head("뺏기고 있는 검색어", "종류를 누르면 아래 목록이 그 종류로 걸러집니다.") +
+  `<div id="cp-donut-body">${CP_donutBody(d)}</div></div>`;
+
+/* 경쟁사별로 누가 앞서나 — 도메인마다 맞댄 검색어를 종류별로 쌓는다. 앞선 것(없음+밀림)이
+   많은 곳이 위다. 검색어 수 기준이라 큐의 칩과 같은 단위다. */
+function CP_rivCard(d, cls) {
+  const by = new Map();
+  for (const r of d.kw_gap || []) {
+    if (!r.domain) continue;
+    if (!by.has(r.domain)) by.set(r.domain, {});
+    const m = by.get(r.domain);
+    (m[r.kind] || (m[r.kind] = new Set())).add(CP_key(r));
+  }
+  const list = [...by].map(([dom, m]) => {
+    const n = k => m[k] ? m[k].size : 0;
+    return {dom, n, lead: n("missing") + n("weak"),
+      total: CP_KINDS.reduce((s, [k]) => s + n(k), 0)};
+  }).sort((a, b) => b.lead - a.lead || b.total - a.total);
+  if (!list.length) return "";
+  const TOP = 8, shown = list.slice(0, TOP);
+  const max = shown.reduce((m, x) => Math.max(m, x.total), 0) || 1;
+  const used = CP_KINDS.filter(([k]) => list.some(x => x.n(k)));
+  const key = `<span class="cp-key">${used.map(([k, l]) =>
+    `<span class="k-${k}"><i style="background:var(--kc)"></i>${esc(l)}</span>`).join("")}</span>`;
+  return `<div class="card cp-rivcard ${cls}">` + CP_head("경쟁사별로 누가 앞서나",
+      "검색어 수 기준, 앞선 검색어가 많은 곳부터.", key) +
+    shown.map(x => `<div class="cp-rk-row">${CP_av(x.dom)}<div style="min-width:0">
+      <span class="cp-dom">${esc(x.dom)}</span>
+      <div class="cp-stack" style="width:${Math.max(8, Math.round(x.total / max * 100))}%"
+        role="img" aria-label="${esc(CP_KINDS.filter(([k]) => x.n(k))
+          .map(([k, l]) => l + " " + x.n(k) + "개").join(", "))}">${
+        CP_KINDS.filter(([k]) => x.n(k)).map(([k]) =>
+          `<i class="k-${k}" style="flex:${x.n(k)} 1 0"></i>`).join("")}</div></div>
+      <div class="cp-lead"><b>${num(x.lead)}개</b>앞선 검색어</div></div>`).join("") +
+    (list.length > TOP ? `<p class="cp-meta cp-rk-more">그 밖에 ${list.length - TOP}곳이 더 있습니다.</p>` : "") +
+    `</div>`;
 }
 
 /* 점수가 없는 줄 — 왜 없는지를 화면이 말한다. 빈칸으로 두면 "고장인가"가 된다.
@@ -190,33 +469,34 @@ const CP_noOpp = g => {
 // 정렬 자 — 기회가 없는 줄은 맨 아래(-1). 점수가 같으면 원래 순서(검색량 큰 순)가 남는다.
 const CP_rank = r => { const o = oppOf(r.keyword); return Number.isFinite(o && o.score) ? o.score : -1; };
 
-/* 갭 한 줄 = 기회 한 건. 여태 6열 텍스트라 무엇부터 손댈지도, 왜인지도, 했다는
-   표시도 없었고 유일한 출구가 CSV 였다. 점수·근거·행동·펼침은 전부 셸의 한 벌이고
+/* 갭 한 줄 = 기회 한 건. 점수·근거·행동·펼침은 전부 셸의 한 벌이고
    (oppScore/oppMeter/oppWhy/oppActs/oppPanel) 이 화면은 대상 문자열(검색어)만 댄다.
    할 일 목록은 PLAY.content_gap 이 갖는다 — 여기 옮겨 적지 않는다.
    data-key 는 띠의 주요 행동이 이 줄을 도로 찾는 손잡이다 — 검색어를 onclick 에
-   실으면 따옴표 하나에 깨지므로, 찾는 쪽이 dataset 으로 맞춘다. */
+   실으면 따옴표 하나에 깨지므로, 찾는 쪽이 dataset 으로 맞춘다.
+   줄은 표 행이다: 점수 · 검색어와 우리 자리 · 경쟁사 줄 · 월 검색량 · 행동. */
 function CP_card(g) {
   const r = g[0], o = oppOf(r.keyword);
   const me = g.find(x => x.our_position != null);
-  // 카드의 주인공은 검색어다 — 우리 자리와 경쟁사 줄은 그 검색어를 설명하는 곁줄이라 밑에 둔다.
+  const vol = (g.find(x => x.volume != null) || {}).volume;
   // 우리 순위는 경쟁사 순위와 같은 검색 결과 조회에서 온 값이다 — 구글 실적의 평균 순위와
   // 다른 숫자라 출처를 붙인다(같은 검색어가 개요 4.5위·여기 5위로 갈려 읽혔다).
-  const head = `<div class="target">${esc(r.keyword)}</div>
-    <p class="cp-meta">우리 ${me ? me.our_position + "위" : "순위 없음"}(검색 결과 조회)${
-      // 점수가 붙은 줄은 근거 문장이 검색량까지 말한다 — 같은 숫자를 두 번 적지 않는다.
-      o || r.volume == null ? "" : ` · 월 검색량 ${num(r.volume)}`}</p>
-    ${g.map(x => `<div class="oh cp-riv">
+  const main = `<div class="target">${esc(r.keyword)}</div>
+    <p class="cp-meta">우리 ${me ? me.our_position + "위" : "순위 없음"}(검색 결과 조회)</p>
+    ${o ? oppWhy(o) : ""}`;
+  const rivs = g.map(x => `<div class="cp-rv"><span class="cp-dom">${esc(x.domain)}</span>
+      <span class="cp-pos">${x.position == null ? "순위 모름" : x.position + "위"}</span>
       <span class="badge ${CP_kind(x.kind)[4]}" title="${esc(CP_kind(x.kind)[2])}">${
-        esc(CP_kind(x.kind)[1])}</span>
-      <span class="cp-meta"><span class="cp-dom">${esc(x.domain)}</span> ${
-        x.position == null ? "순위 모름" : x.position + "위"}</span></div>`).join("")}`;
+        esc(CP_kind(x.kind)[1])}</span></div>`).join("");
   // 점수가 없어도 펼친다 — BLK_row 와 같은 어투: <details> 는 늘, 안에서만 갈린다.
   return `<details class="opp" data-key="${esc(r.keyword)}"${
-      o ? ` data-opp="${o.id}"` : ""}><summary>${
-      o ? oppScore(o) : `<div class="score"></div>`}<div>${head}
-      ${o ? oppMeter(o) + oppWhy(o) + oppActs(o) : ""}</div></summary>
-      ${o ? oppPanel(o) : `<div class="why">${CP_noOpp(g)}</div>`}</details>`;
+      o ? ` data-opp="${o.id}"` : ""}><summary>
+      <div class="cp-sc">${oppScore(o)}${o ? oppMeter(o) : ""}</div>
+      <div class="cp-main">${main}</div>
+      <div class="cp-rivs">${rivs}</div>
+      <div class="cp-vol">${vol == null ? "" : `<span class="u">월 검색량 </span>${num(vol)}`}</div>
+      <div class="cp-act">${o ? oppActs(o) : ""}</div></summary>
+      <div class="cp-det">${o ? oppPanel(o) : `<div class="why">${CP_noOpp(g)}</div>`}</div></details>`;
 }
 
 // 지금 거른 줄 — 목록·개수·CSV 가 같은 것을 본다.
@@ -226,7 +506,10 @@ const CP_rows = d => ((d && d.kw_gap) || [])
 function CP_gapRows(d) {
   const all = d.kw_gap || [];
   const groups = CP_groups(CP_rows(d)).sort((a, b) => CP_rank(b[0]) - CP_rank(a[0]));
-  if (groups.length) return groups.map(CP_card).join("");
+  if (groups.length)
+    return `<div class="cp-th" aria-hidden="true"><span></span><span class="rt">점수</span>
+      <span>검색어 · 우리 순위</span><span>경쟁사 순위</span><span class="rt">월 검색량</span><span></span></div>`
+      + groups.map(CP_card).join("");
   // 상태로 걸러 빈 것은 갈래로 걸러 빈 것과 또 다르다 — 무엇을 풀면 되는지가 다르다.
   // 기본값(남은 것)이 전부 걸렀으면 다 처리한 것이다 — 「전체」로 보내는 손잡이를 준다.
   if (!CP_KIND && all.length && window.oppLeftDone(CP_ST, all, r => oppOf(r.keyword)))
@@ -273,16 +556,18 @@ function CP_setSt(v) {
   CP_tools(CP_D);
 }
 
+// 도넛·범례·칩이 같은 상태를 본다 — 하나를 누르면 셋이 함께 바뀐다.
 function CP_pick(kind) {
   CP_KIND = (CP_KIND === kind) ? "" : kind;
   $("cp-gap-h").textContent = CP_title();
   $("cp-chips").innerHTML = CP_chips(CP_D);
   $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+  const dn = $("cp-donut-body");
+  if (dn) dn.innerHTML = CP_donutBody(CP_D);
   CP_tools(CP_D);
 }
 
-// 표 위 도구줄은 섹션 머리 오른쪽 한 자리다(.sh > .tools) — 화면마다 다른 데
-// 서 있던 것을 셸이 한 벌로 잡았다. 개수는 지금 걸러 놓은 검색어를 센다.
+// 표 위 도구줄은 카드 머리 오른쪽 한 자리다 — 개수는 지금 걸러 놓은 검색어를 센다.
 function CP_tools(d) {
   const all = (d && d.kw_gap) || [];
   $("cp-gap-tools").innerHTML = all.length
@@ -352,8 +637,8 @@ function CP_open() {
   if (!det) return;
   det.open = true;
   // 카드만 가운데로 밀면 짧은 화면에서는 몇 px 밖에 안 움직여 눌린 티가 안 난다.
-  // 섹션 머리를 위로 올려 목록이 화면을 채우게 한다 — 열린 카드가 그 첫 줄이다.
-  const sec = $("cp-gap");
+  // 큐 카드의 머리를 위로 올려 목록이 화면을 채우게 한다 — 열린 카드가 그 첫 줄이다.
+  const sec = $("cp-gap-card");
   (sec || det).scrollIntoView({behavior: "smooth", block: "start"});
 }
 
@@ -423,51 +708,26 @@ function CP_nextStep(d) {
             : window.act("gaps", "", true)) + jump);
 }
 
-/* 몫 한 줄 — 숫자 옆에 늘 견줄 상대를 놓는다. 목록을 읽기 전에 "우리가 몇 등인가"에
-   먼저 답하는 자리라, 우리 몫과 1위 몫을 같은 문장에 세운다. */
-function CP_standing(d) {
-  const rows = d.comp_metrics || [];
-  const me = rows.find(r => r.is_self), top = rows.find(r => !r.is_self);
-  const pc = r => (r && r.share != null) ? Math.round(r.share * 100) + "%" : null;
-  const mine = pc(me), best = pc(top);
-  const tip = CP_tip("몫은 추정 트래픽 기준이라 실측이 아니라 추정입니다. 순위를 가진 " +
-                     "검색어 수와 같이 읽습니다. 우리 줄이 녹청입니다.");
-  return (mine && best
-    ? `우리 몫은 <b>${mine}</b>, 가장 큰 곳은 ${esc(top.domain)} <b>${best}</b>입니다.`
-    : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세웠습니다.") + tip;
-}
-
-VIEW("competitors", function (d) {
-  CP_D = d;
-  // 사이트가 바뀌면 갈래를 기본으로 되돌린다 — 같은 사이트를 다시 그릴 때는 고른 것을 둔다.
-  const site = (d.project || {}).name;
-  if (site !== CP_SITE) { CP_SITE = site; CP_KIND = CP_defaultKind(d); }
-  const rv = CP_rivals(d), rivals = rv.share;
-  CP_nextStep(d);
-  window.viewSub && viewSub("competitors",
-    "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.");
-
-  // eyebrow 는 "언제·어느 범위"만 적는다(없으면 비워 접는다 — 제목을 되풀이하지 않는다) — 개수·상태·결론은 부제와 배지가 갖는다.
-  $("cp-share-eyebrow").textContent = d.comp_date
-    ? `${String(d.comp_date).slice(0, 10)} 기준` : "";
-  $("cp-share-sub").innerHTML = !d.comp_date
-    ? "누가 이 주제에서 얼마를 가져가는지 세는 자리입니다."
-    : rivals
-      ? CP_standing(d)
-      : rv.all
-      // 자동 탐지는 비었는데 격차는 경쟁사 목록과 맞댔다 — 「없다」가 아니라 「몫을 못 쟀다」다.
-      ? `자동 탐지로는 몫을 잰 경쟁 도메인이 없습니다. 아래 키워드 격차는 경쟁사 ${num(rv.all)}곳과 맞댄 결과입니다.`
-      : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세우는 자리입니다.";
-  // 실패는 비어 있는 것과 다른 일이다 — 비었으면 채우면 되고, 실패했으면 무엇이
-  // 실패했는지 알아야 다시 할 수 있다. 그래서 상자 모양부터 가른다(.empty.err).
-  $("cp-shares").innerHTML = d.comp_date
-    ? (CP_shares(d) ? CP_shares(d) + CP_roles(d) : CP_empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다"
-        : "겹치는 경쟁 도메인이 없습니다",
+/* 몫 카드 — 자료가 있으면 순위표, 없으면 왜 없는지와 다음 행동 한 줄. 실패는 비어 있는 것과
+   다른 일이다(비었으면 채우면 되고, 실패했으면 무엇이 실패했는지 알아야 다시 할 수 있다).
+   그래서 상자 모양부터 가른다(.empty.err). */
+function CP_shareCard(d, rv, cls) {
+  const rivals = rv.share, has = (d.comp_metrics || []).length;
+  const title = "유기 검색 몫";
+  if (d.comp_date && has) {
+    const rk = CP_myRank(d);
+    return `<div class="card cp-sharecard ${cls}">` + CP_head(title, CP_standing(d),
+      `<span class="cp-key"><span class="me"><i></i>우리</span><span><i></i>경쟁사</span></span>` +
+      (rk ? `<span class="cp-me">우리 ${rk}위 / ${num((d.comp_metrics || []).length)}곳</span>` : "") +
+      CP_date("cp-share-eyebrow", d.comp_date), "cp-share-sub") + CP_shareRows(d) + `</div>`;
+  }
+  const empty = d.comp_date
+    ? CP_empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다" : "겹치는 경쟁 도메인이 없습니다",
         "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
         "적어 두면 그것부터 맞댑니다.",
         // 띠가 이미 같은 행동(재실행)을 들고 있다 — 여기 또 두지 않는다.
         CP_acts(READONLY || window.nextStep ? "" : window.act("competitors", "", false),
-                CP_toSettings())))
+                CP_toSettings()))
     : window.runFailed("competitors", d)
       ? `<div class="empty err"><b>${esc(CP_name("competitors"))}에서 멈췄습니다</b>
           <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
@@ -486,6 +746,35 @@ VIEW("competitors", function (d) {
                   : window.act("competitors", CP_name("competitors"), false),
                   CP_toSettings()),
           "선택 단계입니다. 안 돌려도 다른 화면과 기회 목록은 그대로 채워집니다.");
+  return `<div class="card cp-sharecard ${cls}">` + CP_head(title,
+    !d.comp_date ? "누가 이 주제에서 얼마를 가져가는지 세는 자리입니다."
+      : rv.all
+      // 자동 탐지는 비었는데 격차는 경쟁사 목록과 맞댔다 — 「없다」가 아니라 「몫을 못 쟀다」다.
+      ? `자동 탐지로는 몫을 잰 경쟁 도메인이 없습니다. 아래 키워드 격차는 경쟁사 ${num(rv.all)}곳과 맞댄 결과입니다.`
+      : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세우는 자리입니다.",
+    CP_date("cp-share-eyebrow", d.comp_date), "cp-share-sub") + empty + `</div>`;
+}
+
+VIEW("competitors", function (d) {
+  CP_D = d;
+  // 사이트가 바뀌면 갈래를 기본으로 되돌린다 — 같은 사이트를 다시 그릴 때는 고른 것을 둔다.
+  const site = (d.project || {}).name;
+  if (site !== CP_SITE) { CP_SITE = site; CP_KIND = CP_defaultKind(d); }
+  const rv = CP_rivals(d);
+  CP_nextStep(d);
+  window.viewSub && viewSub("competitors",
+    "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.");
+
+  const hasGap = !!d.gap_date && (d.kw_gap || []).length > 0;
+  const hasShare = !!d.comp_date && (d.comp_metrics || []).length > 0;
+  const donut = hasGap ? CP_donutCard(d, "cp-w4 cp-o2") : "";
+  // 자리는 짝에 따라 갈린다 — 짝이 없으면 12열을 다 쓴다(반쪽 빈 카드를 만들지 않는다).
+  const riv = hasGap ? CP_rivCard(d, "cp-o4") : "";
+  const roles = hasShare ? CP_roles(d, "cp-o5") : "";
+  $("cp-shares").innerHTML =
+    CP_shareCard(d, rv, `cp-o1 ${donut ? "cp-w8" : "cp-w12"}`) + donut +
+    roles.replace("cp-o5", `cp-o5 ${riv ? "cp-w6" : "cp-w12"}`);
+  $("cp-riv").innerHTML = riv.replace("cp-o4", `cp-o4 ${roles ? "cp-w6" : "cp-w12"}`);
 
   $("cp-gap-eyebrow").textContent = d.gap_date
     ? `${String(d.gap_date).slice(0, 10)} 기준` : "";

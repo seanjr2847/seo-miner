@@ -1,75 +1,172 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
-     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
+     dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다.
+     sections 의 차례가 곧 격자의 차례다(셸이 이 순서로 화면 상자에 옮긴다). -->
 <script type="application/json" class="view-def">
 {"id": "site", "group": "site", "title": "사이트 점검",
- "sections": ["st-sum", "index", "crawl", "devgap", "vitals", "gseo",
+ "sections": ["st-sum", "ix-donut", "kp-crawl", "kp-dev", "kp-vit", "kp-gseo",
+              "index", "crawl", "devgap", "vitals", "gseo",
               "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
  "stages": ["index", "crawl", "gsc", "vitals"]}
 </script>
 
 <style>
 /* ── 사이트 점검 ────────────────────────────────────────────
-   크롤러가 없는 대신 구글이 URL 하나하나에 직접 답한 것만 쓴다. 그래서 이 화면의
+   이 화면의 물음은 하나다 — 구글이 내 사이트에 못 들어오거나 밀어내는 곳이 어디고
+   오늘 무엇부터 고치나. 그래서 첫 화면의 주인공은 추이 차트가 아니라 「점검 상태판」
+   (아홉 갈래를 색점·막대·건수로 세운 줄 목록)이고, 옆 도넛이 구글이 담은 URL 의
+   비율을 하나의 큰 숫자로 말한다. 그 밑 네 장은 갈래마다 다른 그림(알약·기준선 막대·
+   링·덤벨)을 든 요약이고, 표는 그 아래 카드 한 장씩이다.
    색은 둘뿐이다 — 구글이 색인했다(녹청) / 안 했다(산화동). 갈래별 심각도는 색을
    더 늘리는 대신 진하기로 말한다. 진하기는 opacity 가 아니라 카드 면에 섞은 색으로
    만든다 — 글자·막대를 투명하게 하면 라이트·다크에서 대비가 각자 흔들린다.
-   상자는 면 카드(.card) 하나다 — 표는 stCard 로 카드 안에 서고, 섹션 사이는 여백이다. ── */
+   화면 상자(#view-site)가 12열 격자다: 머리·띠·배너는 전폭, 카드는 열을 나눠 갖는다.
+   카드는 셸의 .card 한 벌이고 표는 그 안에 선다 — 카드 속 카드는 없다. ── */
 #view-site {
   --seg-ok: color-mix(in srgb, var(--accent) 45%, var(--card));
   --seg-2: color-mix(in srgb, var(--warn) 55%, var(--card));
   --seg-3: color-mix(in srgb, var(--mute) 70%, var(--card));
 }
+/* [hidden] 의 display:none 을 id 특이도가 덮지 않게 :not([hidden]) 으로 건다. */
+#view-site:not([hidden]) { display:grid; grid-template-columns:repeat(12, minmax(0,1fr));
+  gap:var(--gap); align-content:start; }
+#view-site > :not(section) { grid-column:1 / -1; margin:0; }
+#view-site > .next { margin-top:var(--sp-2); }
+#view-site > section { grid-column:1 / -1; margin:0; }
+#view-site > #st-board { grid-column:span 8; }
+#view-site > #ixd-sec { grid-column:span 4; }
+#view-site > #st-board:has(+ #ixd-sec[hidden]) { grid-column:1 / -1; }
+#view-site > .kp { grid-column:span 3; }
+#view-site > #pgs-sec, #view-site > #pgc-sec { grid-column:span 6; }
+/* 짝이 없으면 혼자 전폭 — GA4 가 없거나 크롤 전이면 반쪽이 비지 않게. */
+#view-site > #pgs-sec:has(+ #pgc-sec[hidden]), #view-site > #pgs-sec[hidden] + #pgc-sec { grid-column:1 / -1; }
+/* 노트북 폭 — 본문이 900px 안팎이라 네 칸 요약은 2×2 로, 나란한 표는 한 줄씩. */
+@media (max-width:1199px) {
+  #view-site > .kp { grid-column:span 6; }
+}
+@media (max-width:1099px) {
+  #view-site > #st-board, #view-site > #ixd-sec, #view-site > #pgs-sec,
+  #view-site > #pgc-sec { grid-column:1 / -1; }
+}
+@media (max-width:560px) {
+  #view-site > .kp { grid-column:1 / -1; }
+  #view-site .card { padding:var(--sp-3); }
+}
+
+/* 전부 미검사 — 요약 타일은 감추고, 개별 카드는 제목 + 버튼 한 줄로 줄인다(설명·중복 문장은 접는다). */
+#view-site.st-allquiet > .kp { display:none; }
+#view-site.st-allquiet .stl small { display:none; }
+#view-site.st-allquiet > section.card:not(#st-board) { padding:var(--sp-4) var(--sp-5); }
+#view-site.st-allquiet > section.card:not(#st-board) .sh { margin-bottom:var(--sp-2); }
+#view-site.st-allquiet > section.card:not(#st-board) .sh > .sub { display:none; }
+#view-site.st-allquiet > section.card:not(#st-board) .empty > p { display:none; }
+
 /* 날짜·기간은 중간에서 꺾이지 않는다 — `20 / 26-08-21` 로 반토막 나던 것. */
 #view-site .nw, #view-site #cr-eyebrow, #view-site #pgp-eyebrow { white-space:nowrap; }
 
+/* ── 카드 머리 한 벌 ────────────────────────────────────────
+   제목(16px·650) · 보조 12px · 오른쪽 도구. 표 카드는 전부 같은 머리를 쓴다. 날짜 알약은
+   제목 옆에 붙는다 — 예전 눈썹(제목 위 작은 글자)이 하던 일이다. */
+#view-site .sh > h2 { margin:0; display:flex; align-items:center; flex-wrap:wrap; gap:var(--sp-2); }
+#view-site .sh > .sub { margin:2px 0 0; font-size:var(--fs-1); line-height:1.6; }
+#view-site .stdate { display:inline-flex; align-items:center; height:24px; padding:0 10px;
+  border-radius:var(--r-pill); background:var(--sunk); color:var(--sub);
+  font:500 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums; }
+#view-site .stdate[hidden] { display:none; }
+/* 나란히 서는 카드(6열: 링크 부족·전환 없음)는 폭이 좁다 — 호스트 줄은 접고(같은 사이트라 어느 줄이나 같다),
+   제목 칸은 한 줄로 자른다(전체는 title). */
+#view-site #pgs-sec .sth, #view-site #pgc-sec .sth { display:none; }
+#view-site #pgs-sec .pgurl, #view-site #pgc-sec .pgurl { min-width:19ch; }
+/* 나란히 서는 카드(6열)는 도구를 머리 밑으로 — 폭이 좁아 옆에 서면 제목이 눌린다. */
+#view-site #pgs-sec .sh, #view-site #pgc-sec .sh { grid-template-columns:minmax(0,1fr); }
+#view-site #pgs-sec .sh > .tools, #view-site #pgc-sec .sh > .tools {
+  grid-column:1; grid-row:auto; margin-top:var(--sp-3); }
+
 /* ── 설명 산문은 접는다 ─────────────────────────────────────
-   부제 한 줄이 정본이고, 표를 읽는 근거는 그 나머지다. 펴는 사람만 읽으면 된다 —
-   여태 이 글이 표보다 먼저 와서 섹션이 전부 글부터 시작했다. */
+   부제 한 줄이 정본이고, 표를 읽는 근거는 그 나머지다. 펴는 사람만 읽으면 된다. */
 #view-site details.why { margin:var(--sp-4) 0 0; max-width:74ch; }
-/* 마커는 셸이 한 벌로 그린다(summary::before 셰브론) — 여기서 또 정하지 않는다.
-   여태 이 화면만 `+` 를 써서 "펼칠 수 있다"는 신호가 화면마다 달랐다. */
-#view-site details.why > summary { font:var(--micro); color:var(--sub); }
+/* 마커는 셸이 한 벌로 그린다(summary::before 셰브론) — 여기서 또 정하지 않는다. */
+#view-site details.why > summary { font:var(--micro); color:var(--sub); cursor:pointer; }
 #view-site details.why > summary:hover { color:var(--accent); }
 #view-site details.why p { font-size:var(--fs-2); line-height:1.75; color:var(--sub);
   margin:var(--sp-3) 0 0; }
 #view-site details.why b { color:var(--ink); font-weight:600; }
 
-/* ── 섹션 상태를 머리 밑 한 줄로 ────────────────────────────
-   어디를 봐야 하는지가 스크롤 전에 보여야 한다. 상태는 배지고, 누르면 그 섹션으로
-   갈 뿐 값을 바꾸지 않는다 — 행동은 위 띠의 버튼 하나가 든다.
-   어느 섹션이 이 줄에 서는지의 정본은 아래 ST_SUM 이다(개수는 거기서 센다). */
-#view-site .stsum { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2);
-  margin:var(--sp-4) 0 0; }
-#view-site .stsum-t { font:var(--micro); color:var(--mute); margin-right:var(--sp-1); }
-#view-site .stsum button { cursor:pointer; }
-#view-site .stsum b { font-weight:650; font-variant-numeric:tabular-nums; }
-
-/* 390px 에서 카드 안쪽 여백이 표가 쓸 폭을 먹는다 — 좁을수록 표에 넘긴다. */
-@media (max-width:560px) { #view-site .card { padding:var(--sp-3); } }
-
-/* ── 섹션을 스캔하게 만드는 것 ──────────────────────────────
-   괜찮은 섹션도 문제 있는 섹션과 같은 높이를 먹으면 어디를 봐야 하는지가 안 보인다.
-   개수는 머리 밑 배지 줄이 말하고(눈썹은 기간·구간만 적는다), 문제가 없으면 섹션
-   본문을 `.empty.ok` 한 줄로 접는다. */
 /* 오류와 "문제 없음"은 접지 않는다 — 둘 다 그 자체가 결론이다.
    접는 것은 "읽을 표가 있을 때만 읽는 근거 글"과 "자료 없음" 상자뿐이다. */
 section.sec-ok details.why, section.sec-ok .empty:not(.err):not(.ok) { display:none; }
 #index .empty.err { margin:0 0 var(--sp-4); }
-/* 아직 안 잰 섹션에서는 읽을 표가 없다 — 근거 글도 같이 접는다.
-   무엇이 없는지는 빈 상태가 말한다. */
+/* 아직 안 잰 섹션에서는 읽을 표가 없다 — 근거 글도 같이 접는다. */
 section.sec-quiet details.why { display:none; }
 
-/* 색인 막대: 검사한 URL 전부를 한 줄에. 정상이 얼마나 되는지가 먼저 보여야 한다. */
-.ixbar { display:flex; gap:2px; height:8px; margin:0 0 var(--sp-4); }
-.ixbar i { display:block; border-radius:3px; min-width:3px; }
-.ixbar .b-ok { background:var(--seg-ok); }
-.ixbar .b-s1 { background:var(--warn); }
-.ixbar .b-s2 { background:var(--seg-2); }
-.ixbar .b-s3 { background:var(--seg-3); }
+/* ── 점검 상태판(히어로) ────────────────────────────────────
+   줄 하나 = 갈래 하나: 색점(심각도) · 이름과 모수 · 막대(모수 대비 문제 비율) · 건수 알약.
+   누르면 그 카드로 스크롤만 한다 — 상태는 배지고 행동은 띠의 버튼 하나가 든다.
+   막힌 것(구글이 아예 못 들어감)만 면 색조로 한 단 세게 — 나머지는 같은 무게다.
+   어느 갈래가 이 줄에 서는지의 정본은 아래 ST_SUM 이다(개수는 거기서 센다). */
+#view-site .stboard { display:flex; flex-direction:column; gap:2px; margin:0 calc(-1 * var(--sp-3)); }
+#view-site .stx { --k:var(--mute);
+  display:grid; grid-template-columns:10px minmax(0,11.5rem) minmax(48px,1fr) auto 16px;
+  align-items:center; gap:0 var(--sp-3); width:100%; min-height:52px; padding:6px var(--sp-3);
+  border:0; border-radius:var(--r-in); background:transparent; color:var(--ink);
+  font:inherit; text-align:left; cursor:pointer; transition:background .12s; }
+#view-site .stx:hover { background:var(--sunk); }
+#view-site .stx.k-bad { --k:var(--warn); background:var(--warn-wash); }
+#view-site .stx.k-bad:hover { background:color-mix(in srgb, var(--warn-wash) 82%, var(--warn)); }
+#view-site .stx.k-ok { --k:var(--accent); }
+#view-site .stx.k-warn { --k:color-mix(in srgb, var(--warn) 62%, var(--card)); }
+#view-site .stx.k-adv { --k:var(--info); }
+#view-site .stdot { width:10px; height:10px; border-radius:50%; background:var(--k); }
+#view-site .stl { display:flex; flex-direction:column; min-width:0; }
+#view-site .stl b { font:600 var(--fs-2)/1.4 var(--sans); }
+#view-site .stl small { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#view-site .stbar { height:8px; border-radius:var(--r-pill); background:var(--rule); overflow:hidden; }
+#view-site .stbar i { display:block; height:100%; border-radius:var(--r-pill); background:var(--k); }
+/* 모수를 모르는 갈래는 막대 자리에 글로 말한다 — 빈 막대는 「0%」로 읽힌다. */
+#view-site .stnote { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#view-site .stv { justify-self:end; }
+#view-site .stx > svg { width:14px; height:14px; stroke:var(--mute); fill:none; stroke-width:2;
+  stroke-linecap:round; stroke-linejoin:round; }
+#view-site .stx:hover > svg { stroke:var(--ink); }
 @media (prefers-reduced-motion: no-preference) {
-  .ixbar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+  #view-site .stbar i { animation:grow .5s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
 }
-/* 갈래 칩이 곧 막대의 범례다 — 같은 색 조각을 앞에 달고, 누르면 표를 거른다. */
+@media (max-width:560px) {
+  #view-site .stboard { margin:0 calc(-1 * var(--sp-2)); }
+  #view-site .stx { grid-template-columns:10px minmax(0,1fr) auto 16px; min-height:48px;
+    padding:6px var(--sp-2); }
+  #view-site .stbar, #view-site .stnote { grid-column:2 / 4; grid-row:2; margin-top:6px; }
+}
+
+/* ── 색인 도넛 ──────────────────────────────────────────────
+   검사한 URL 전부를 한 바퀴에. 가운데 숫자 하나(정상 %)가 이 카드가 말하는 전부고,
+   범례는 갈래 이름·건수를 글자로도 말한다(캔버스는 낭독기가 못 읽는다). */
+#view-site #ixd-sec:not([hidden]) { display:flex; flex-direction:column; }
+#view-site #ixd-sec .stdn { flex:1; align-content:center; }
+#view-site .stdn { display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+  gap:var(--sp-4) var(--sp-5); }
+#view-site .stdn-c { position:relative; flex:none; }
+#view-site .stdn-c > div:last-child { position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; pointer-events:none; text-align:center; }
+#view-site .stdn-c b { font:650 var(--fs-5)/1.1 var(--sans); letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; }
+#view-site .stdn-c span { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); margin-top:2px; }
+#view-site .stdn-n { flex:1 1 100%; margin:var(--sp-2) 0 0; font:400 var(--fs-1)/1.6 var(--sans);
+  color:var(--sub); }
+#view-site .stdn-n b { color:var(--ink); font-weight:600; }
+#view-site .stlg { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
+  gap:var(--sp-2); min-width:150px; flex:1 1 150px; max-width:260px; }
+#view-site .stlg li { display:flex; align-items:center; gap:var(--sp-2); font:400 var(--fs-1)/1.4 var(--sans);
+  color:var(--sub); }
+#view-site .stlg li b { margin-left:auto; color:var(--ink); font:600 var(--fs-1)/1.4 var(--sans);
+  font-variant-numeric:tabular-nums; }
+#view-site .stlg .sw { flex:none; width:10px; height:10px; border-radius:3px; background:var(--seg-3); }
+#view-site .stlg .sw.b-ok { background:var(--seg-ok); }
+#view-site .stlg .sw.b-s1 { background:var(--warn); }
+#view-site .stlg .sw.b-s2 { background:var(--seg-2); }
+#view-site .stlg .sw.b-s3 { background:var(--seg-3); }
+
+/* 갈래 칩은 표를 거른다 — 도넛 범례와 같은 색 조각을 앞에 단다. */
 .ixchip .sw { display:inline-block; width:8px; height:8px; border-radius:3px;
   margin-right:var(--sp-2); background:var(--seg-3); }
 .ixchip.s1 .sw { background:var(--warn); }
@@ -78,11 +175,95 @@ section.sec-quiet details.why { display:none; }
 .ixchip.all .sw { display:none; }
 .ixchips { margin:0 0 var(--sp-3); }
 
+/* ── 요약 카드 넷 ───────────────────────────────────────────
+   각자 다른 그림을 든다: 크롤=알약+갈래 막대, 모바일=덤벨, 속도=기준선 막대, SEO=링.
+   같은 숫자+알약 꼴을 넷 반복하면 격자가 아니라 복사가 된다. */
+#view-site .kp { display:flex; flex-direction:column; gap:var(--sp-2); padding:18px 20px; }
+#view-site .kp > div { display:flex; flex-direction:column; gap:var(--sp-2); flex:1; }
+#view-site .kp-go { align-self:flex-start; display:inline-flex; align-items:center; gap:6px;
+  min-height:28px; margin:0 0 0 -8px; padding:0 8px; border:0; border-radius:var(--r-pill);
+  background:transparent; color:var(--sub); font:600 var(--fs-1)/1 var(--sans); cursor:pointer; }
+#view-site .kp-go:hover { background:var(--sunk); color:var(--ink); }
+#view-site .kp-go svg { width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:2;
+  stroke-linecap:round; stroke-linejoin:round; }
+#view-site .kp-v { font:650 var(--fs-5)/1.15 var(--sans); letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; }
+#view-site .kp-v small { margin-left:6px; font:500 var(--fs-2)/1.4 var(--sans); letter-spacing:0;
+  color:var(--sub); }
+#view-site .kp-note { margin:0; font:400 var(--fs-1)/1.55 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; }
+#view-site .kp-empty { margin:0; font:400 var(--fs-2)/1.6 var(--sans); color:var(--sub); }
+#view-site .kp-pills { display:flex; flex-wrap:wrap; gap:6px; }
+#view-site .kp-viz { margin-top:auto; padding-top:var(--sp-2); }
+#view-site .kp-row { display:flex; align-items:center; gap:var(--sp-4); }
+/* 갈래 막대 — 이름 · 막대 · 건수. 심각도는 막대 색이 말한다. */
+#view-site .kpb { display:grid; grid-template-columns:minmax(0,7.5em) minmax(0,1fr) auto; align-items:center;
+  gap:var(--sp-2); font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#view-site .kpb + .kpb { margin-top:6px; }
+#view-site .kpb > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#view-site .kpb-t { height:8px; border-radius:var(--r-pill); background:var(--rule); overflow:hidden; }
+#view-site .kpb-t i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); }
+#view-site .kpb.s-bad .kpb-t i { background:var(--warn); }
+#view-site .kpb.s-warn .kpb-t i { background:var(--info); }
+#view-site .kpb b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+/* 심각도 분포 띠 + 갈래 목록 — 크롤 카드. 같은 값 막대 셋 대신 분포와 이름을 준다. */
+#view-site .kpseg { display:flex; gap:2px; height:8px; }
+#view-site .kpseg i { display:block; min-width:6px; border-radius:var(--r-pill); background:var(--seg-3); }
+#view-site .kpseg i.s-bad { background:var(--warn); }
+#view-site .kpseg i.s-warn { background:var(--info); }
+#view-site .kpl { display:grid; grid-template-columns:8px minmax(0,1fr) auto; align-items:center;
+  gap:var(--sp-2); font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#view-site .kpl + .kpl { margin-top:6px; }
+#view-site .kpl > i { width:8px; height:8px; border-radius:50%; background:var(--seg-3); }
+#view-site .kpl.s-bad > i { background:var(--warn); }
+#view-site .kpl.s-warn > i { background:var(--info); }
+#view-site .kpl > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#view-site .kpl b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+/* 기준선 막대 — 잰 값마다 기둥 하나, 기준선(가로 선) 위로 넘은 것만 산화동. */
+#view-site .vcol { position:relative; display:flex; align-items:flex-end; gap:3px; height:56px; }
+#view-site .vcol i { flex:1 1 0; min-width:3px; max-width:18px; border-radius:3px 3px 0 0;
+  background:var(--seg-ok); }
+#view-site .vcol i.over { background:var(--warn); }
+#view-site .vcol u { position:absolute; left:0; right:0; height:1px; background:var(--ink);
+  text-decoration:none; }
+/* 링 — 통과한 페이지 비율. 안쪽 글자는 HTML 이라 서체·자리 맞춤이 본문과 같다. */
+#view-site .ring { position:relative; flex:none; width:76px; height:76px; }
+#view-site .ring svg { width:100%; height:100%; transform:rotate(-90deg); }
+#view-site .ring circle { fill:none; stroke-width:4; }
+#view-site .ring .rt { stroke:var(--rule); }
+#view-site .ring .rf { stroke:var(--accent); stroke-linecap:round; }
+#view-site .ring b { position:absolute; inset:0; display:grid; place-items:center;
+  font:650 var(--fs-3)/1 var(--sans); font-variant-numeric:tabular-nums; }
+/* 덤벨 — 데스크톱 점과 모바일 점을 한 줄에. 멀수록 모바일에서만 밀린다. */
+#view-site .dbl { position:relative; height:18px; }
+#view-site .dbl::before { content:""; position:absolute; left:0; right:0; top:7px; height:4px;
+  border-radius:var(--r-pill); background:var(--rule); }
+#view-site .dbl u { position:absolute; top:7px; height:4px; border-radius:var(--r-pill);
+  background:var(--seg-2); text-decoration:none; }
+#view-site .dbl i { position:absolute; top:2px; width:14px; height:14px; margin-left:-7px;
+  border-radius:50%; background:var(--sub); box-shadow:0 0 0 2px var(--card); }
+#view-site .dbl i.m { background:var(--warn); }
+#view-site .dbl-l { display:flex; justify-content:space-between; gap:var(--sp-3); margin-top:var(--sp-2);
+  font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); font-variant-numeric:tabular-nums; }
+#view-site .dbl-l b { color:var(--ink); font-weight:600; }
+
+/* ── 표 안의 이름 칸 ────────────────────────────────────────
+   URL·검색어는 이니셜 아바타 + 경로(본문) + 호스트(보조)로 선다 — 스캔하는 눈이 첫 글자와
+   경로 끝을 먼저 잡는다. 등폭은 URL 에만 쓴다(검색어는 한글이라 본문 서체). */
+.stu { display:flex; align-items:center; gap:10px; min-width:0; }
+.stav { flex:none; width:28px; height:28px; border-radius:50%; display:grid; place-items:center;
+  font:650 var(--fs-1)/1 var(--sans); font-style:normal; background:var(--accent-wash); color:var(--accent); }
+.stav.t1 { background:var(--info-wash); color:var(--info); }
+.stav.t2 { background:var(--sunk); color:var(--sub); }
+.stt { display:flex; flex-direction:column; min-width:0; }
+.stp { font:500 var(--fs-1)/1.45 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.stp a { color:inherit; }
+.stp a:hover { color:var(--accent); }
+.stq { font:500 var(--fs-2)/1.45 var(--sans); color:var(--ink); }
+.sth { font:400 var(--fs-1)/1.45 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
+
 .ixb { font:var(--micro); white-space:nowrap; color:var(--sub); }
-.ixb.s1 { color:var(--warn); font-weight:650; }
-.ixb.s2 { color:var(--warn); }
-.ixurl { font-family:var(--mono); font-size:var(--fs-1); word-break:break-all;
-  min-width:22ch; max-width:48ch; }
+.ixurl { min-width:30ch; max-width:48ch; }
 /* 등폭을 뺀 이유: 여기 담기는 건 GSC 원문(coverage_state)이고 한국 로케일에서는
    "제출되었으며 색인이 생성됨" 같은 한글 문장이다(scoring._indexed 참고). */
 .ixstate { font-size:var(--fs-1); color:var(--sub); }
@@ -91,7 +272,7 @@ section.sec-quiet details.why { display:none; }
 /* 순위차 막대: 숫자 밑에 같은 길이의 언어를 하나 더 깔아 줄 세우기를 눈으로 만든다. */
 .dgap { display:block; height:4px; margin:var(--sp-1) 0 0 auto; border-radius:var(--r-pill);
   background:var(--seg-2); }
-/* 검색어 열이 1120px 에서 양 끝으로 벌어지지 않게 — 숫자 열이 남는 폭을 먹지 않는다. */
+/* 검색어 열이 양 끝으로 벌어지지 않게 — 숫자 열이 남는 폭을 먹지 않는다. */
 #devgap .kwcell { min-width:16ch; max-width:36ch; }
 
 /* 이 표는 여덟 칸이라 크롤 표(다섯 칸)보다 더 심하게 쪼개진다 — 같은 방식으로 쌓는다. */
@@ -111,30 +292,34 @@ section.sec-quiet details.why { display:none; }
   #devgap .tw td:nth-child(8)::before { content:"기회 "; color:var(--sub); }
 }
 
-/* 순위 격차 옆에 GA4 기기별 전환율을 나란히 놓는다 — 단위가 달라 작은 배수로 각자
-   축을 준다(chDumbbell). GA4 미연결이면 stDevChart() 가 빈 문자열을 내 이 자리
-   자체가 안 생긴다. */
-.devcharts { display:flex; flex-wrap:wrap; gap:var(--sp-5) 32px; margin:0 0 var(--sp-4); }
-.devchart { flex:1 1 260px; min-width:220px; }
-.devchart-t { font:var(--micro); color:var(--mute); margin:0 0 var(--sp-1); }
-.devchart-verdict { font-size:var(--fs-2); line-height:1.6; margin:0 0 var(--sp-4); }
+/* GA4 기기별 전환율 — 순위 격차만으로는 「페이지를 고쳐야 하나」가 안 나온다. 전환율을
+   모바일 요약 카드 안에 덤벨 밑으로 나란히 놓아야 나온다. GA4 미연결이면 이 자리 자체가 안 선다. */
+#view-site .kp .kp-viz + .kp-viz { margin-top:0; }
+.devchart-t { font:var(--micro); color:var(--sub); margin:0 0 var(--sp-1); }
+.devchart-verdict { font-size:var(--fs-1); line-height:1.6; margin:var(--sp-2) 0 0; color:var(--ink); }
 .devchart-verdict b { color:var(--warn); font-weight:600; }
 
-/* 행을 누르면 밑이 열린다 — 표가 목록에서 끝나면 "그래서 뭘 하냐"는 화면 밖에 남는다.
-   펼칠 수 있다는 사실은 첫 칸의 꺾쇠가 말한다(::before 라 정렬·CSV 에는 안 섞인다). */
+/* 행을 누르면 밑이 열린다 — 표가 목록에서 끝나면 「그래서 뭘 하냐」는 화면 밖에 남는다.
+   펼칠 수 있다는 사실은 첫 칸의 꺾쇠가 말한다(::before 라 정렬·CSV 에는 안 섞인다).
+   이름 칸(.stu)이 첫 칸이면 꺾쇠는 그 안쪽 앞에 선다 — 칸 밖에 두면 아바타 위 줄로 떨어진다. */
 tr.rw { cursor:pointer; }
 tr.rw:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 tr.rw[aria-expanded="true"] > td { background:var(--sunk); }
 tr.rw > td:first-child::before { content:"▸ "; color:var(--sub); }
 tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var(--accent); }
+tr.rw > td:first-child:has(> .stu)::before { content:none; }
+tr.rw > td:first-child > .stu::before { content:"▸"; flex:none; width:10px; color:var(--sub);
+  font-size:var(--fs-1); }
+tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; color:var(--accent); }
 
 /* ── 사이트 크롤 ────────────────────────────────────────────
    색인 화면은 구글이 URL 하나하나에 답한 것이고, 이쪽은 우리가 사이트를 직접 돌아
    본 것이다. 그래서 여기서만 나오는 것이 있다 — 깨진 내부 링크·리다이렉트 사슬·
    고아 페이지처럼 **한 장만 보면 절대 안 나오는 것**.
-   이 섹션의 주인공은 목록이 아니라 **직전 회차 대비 무엇이 새로 깨졌나**다. */
+   이 카드의 주인공은 목록이 아니라 **직전 회차 대비 무엇이 새로 깨졌나**다. */
 .cr-diff { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2) var(--sp-3);
   margin:0 0 var(--sp-4); font:400 var(--fs-2)/1.6 var(--sans); }
+.cr-diff:empty { display:none; }
 .cr-diff b { font-weight:650; font-variant-numeric:tabular-nums; }
 /* 라벨 뒤의 둘은 24px 알약이다 — 새로 생긴 것은 나쁜 쪽(산화동), 해결된 것은 녹청. */
 .cr-diff > span + span { display:inline-flex; align-items:center; height:24px;
@@ -142,16 +327,15 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   white-space:nowrap; color:var(--sub); background:var(--sunk); }
 .cr-diff > span + span.up { color:var(--warn); background:var(--warn-wash); }
 .cr-diff > span + span.ok { color:var(--accent); background:var(--accent-wash); }
-.cr-url { font-family:var(--mono); font-size:var(--fs-1); word-break:break-all;
-  min-width:20ch; max-width:48ch; }
+.cr-url { min-width:20ch; max-width:48ch; }
 .cr-new { display:inline-flex; align-items:center; height:24px; padding:0 8px;
   margin-left:var(--sp-2); border-radius:var(--r-pill); vertical-align:middle;
   font:600 var(--fs-1)/1 var(--sans); color:var(--warn); background:var(--warn-wash);
   white-space:nowrap; }
 #crawl .tw td:nth-child(4) { min-width:22ch; max-width:52ch; }
-/* 390px 에서 다섯 칸이 한 줄에 못 들어가 칸마다 서너 줄로 쪼개지고 URL 도 끊겼다
-   (사이트 크롤 표). 머리글을 접고 줄을 카드처럼 쌓는다 — URL 은 이미 첫 칸이라
-   그대로 제목 줄이 되고(첫 칸 셰브론도 남는다), 나머지 칸은 라벨을 붙인다. */
+/* 390px 에서 다섯 칸이 한 줄에 못 들어가 칸마다 서너 줄로 쪼개지고 URL 도 끊겼다.
+   머리글을 접고 줄을 카드처럼 쌓는다 — URL 은 이미 첫 칸이라 그대로 제목 줄이 되고,
+   나머지 칸은 라벨을 붙인다. */
 @media (max-width:560px) {
   #crawl .tw thead { display:none; }
   #crawl .tw table, #crawl .tw tbody, #crawl .tw tr, #crawl .tw td { display:block; }
@@ -164,8 +348,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
   #crawl .tw td:nth-child(4)::before { content:"무엇이 "; color:var(--sub); }
   #crawl .tw td:nth-child(4) { max-width:none; }
   #crawl .tw td.num::before { content:"기회 "; color:var(--sub); }
-  /* 점수 칸은 표에서 오른쪽 정렬 44px 블록이다 — 카드 줄에서는 라벨 옆에 붙인다
-     (그대로 두면 「기회」 다음 줄 오른쪽 끝에 「—」가 떨어져 들여쓴 것처럼 보였다). */
+  /* 점수 칸은 표에서 오른쪽 정렬 44px 블록이다 — 카드 줄에서는 라벨 옆에 붙인다. */
   #crawl .tw td.num .score, #devgap .tw td.num .score { display:inline; width:auto; font-size:var(--fs-2); }
   #crawl .tw td.num .score .u, #devgap .tw td.num .score .u { display:inline; margin-left:1px; }
 }
@@ -173,19 +356,45 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
 /* ── 페이지 축 ──────────────────────────────────────────────
    위 세 표는 전부 검색어 단위다. 검색어 하나하나의 순위는 흔들려서, "어디가
    무너지는 중인가"에는 답이 안 나왔다 — 페이지로 합치면 흔들림이 상쇄되고 정말
-   내려가는 자리만 남는다. 아래 두 표는 크롤과 GSC 를 처음 맞대 본 것이다:
+   내려가는 자리만 남는다. 아래 표들은 크롤과 GSC 를 처음 맞대 본 것이다:
    크롤엔 있는데 검색엔 없는 페이지, 성과에 비해 링크가 굶은 페이지. ── */
-.pgurl { font-family:var(--mono); font-size:var(--fs-1); word-break:break-all;
-  min-width:22ch; max-width:56ch; }
-.pgurl a { color:inherit; }
+.pgurl { min-width:22ch; max-width:56ch; }
 .pgtitle { font-size:var(--fs-1); color:var(--sub); max-width:40ch; }
 .pglow { color:var(--warn); font-weight:600; }   /* 굶은 링크 수 — 이 표의 눈금 */
 </style>
 
-<!-- 어느 섹션을 봐야 하는지. 상태 배지 한 줄이 스크롤 전에 답한다(정본은 ST_SUM). -->
-<div class="stsum" id="st-sum" hidden></div>
+<!-- 첫 줄: 점검 상태판(8) + 색인 도넛(4). 어디가 아픈지가 스크롤 전에 답한다. -->
+<section id="st-board" class="card" hidden>
+  <div class="sh">
+    <h2>점검 상태판</h2>
+    <p class="sub" id="st-sub">갈래를 누르면 그 카드로 갑니다.</p>
+  </div>
+  <div class="stboard" id="st-sum"></div>
+</section>
 
-<section id="ix-sec">
+<section id="ixd-sec" class="card" hidden>
+  <div class="sh">
+    <h2>색인 비율</h2>
+    <p class="sub" id="ixd-sub"></p>
+  </div>
+  <div id="ix-donut" class="stdn"></div>
+</section>
+
+<!-- 요약 넷: 갈래마다 다른 그림. 채우는 쪽은 각 render 함수다. -->
+<section id="kp-crawl-sec" class="card kp" aria-label="사이트 크롤 요약">
+  <div id="kp-crawl"><div class="skel box"></div></div>
+</section>
+<section id="kp-dev-sec" class="card kp" aria-label="모바일 격차 요약">
+  <div id="kp-dev"><div class="skel box"></div></div>
+</section>
+<section id="kp-vit-sec" class="card kp" aria-label="속도 요약">
+  <div id="kp-vit"><div class="skel box"></div></div>
+</section>
+<section id="kp-gseo-sec" class="card kp" aria-label="구글 SEO 요약">
+  <div id="kp-gseo"><div class="skel box"></div></div>
+</section>
+
+<section id="ix-sec" class="card">
   <div class="sh">
     <h2>색인 상태</h2>
     <p class="sub" id="ix-sub"></p>
@@ -198,10 +407,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       검사는 노출 상위 페이지부터 하고, 하루 할당은 2,000회입니다.</p></details>
 </section>
 
-<section id="crawl-sec">
+<section id="crawl-sec" class="card">
   <div class="sh">
-    <p class="eyebrow" id="cr-eyebrow" hidden></p>
-    <h2>사이트 크롤</h2>
+    <h2>사이트 크롤 <span class="stdate" id="cr-eyebrow" hidden></span></h2>
     <p class="sub" id="cr-sub"></p>
     <div class="tools" id="cr-tools"></div>
   </div>
@@ -214,13 +422,12 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       내 사이트만 두드리므로 비용이 없고, 고친 뒤 다시 크롤하면 해결된 것에 쌓입니다.</p></details>
 </section>
 
-<section id="dev-sec">
+<section id="dev-sec" class="card">
   <div class="sh">
     <h2>모바일 격차</h2>
     <p class="sub" id="dev-sub"></p>
     <div class="tools" id="dev-tools"></div>
   </div>
-  <div id="dev-chart"></div>
   <div id="devgap"><div class="skel box"></div></div>
   <details class="why"><summary>고칠 곳이 글이 아닌 이유</summary>
     <p>같은 검색어를 기기별로 갈라 평균 순위를 맞대 본 것입니다. 격차가 크면
@@ -228,7 +435,7 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       전환율을 옆에 나란히 놓아 페이지 자체를 의심할 자리인지까지 봅니다.</p></details>
 </section>
 
-<section id="vit-sec">
+<section id="vit-sec" class="card">
   <div class="sh">
     <h2>속도</h2>
     <p class="sub" id="vit-sub"></p>
@@ -242,10 +449,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       움직이는 유일한 숫자입니다. 현장 값은 28일이 지나야 따라옵니다.</p></details>
 </section>
 
-<section id="gseo-sec">
+<section id="gseo-sec" class="card">
   <div class="sh">
-    <p class="eyebrow"><span class="lat">PAGESPEED</span> · 구글이 연 모습</p>
-    <h2>구글이 본 SEO</h2>
+    <h2>구글이 본 SEO <span class="stdate"><span class="lat">PAGESPEED</span></span></h2>
     <p class="sub" id="gseo-sub"></p>
     <div class="tools" id="gseo-tools"></div>
   </div>
@@ -257,10 +463,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       구글이 고쳐 쓴 것일 수 있습니다. 본문 길이·H2·구조화 데이터는 여기서 못 봅니다.</p></details>
 </section>
 
-<section id="pgp-sec">
+<section id="pgp-sec" class="card">
   <div class="sh">
-    <p class="eyebrow" id="pgp-eyebrow" hidden></p>
-    <h2>페이지별 실적</h2>
+    <h2>페이지별 실적 <span class="stdate" id="pgp-eyebrow" hidden></span></h2>
     <p class="sub" id="pgp-sub"></p>
     <div class="tools" id="pgp-tools"></div>
   </div>
@@ -272,10 +477,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       것은 없고, 이미 수집한 실적을 페이지로 다시 합친 것입니다.</p></details>
 </section>
 
-<section id="pgd-sec">
+<section id="pgd-sec" class="card">
   <div class="sh">
-    <p class="eyebrow">크롤 × 실적</p>
-    <h2>노출 없는 페이지</h2>
+    <h2>노출 없는 페이지 <span class="stdate">크롤 × 실적</span></h2>
     <p class="sub" id="pgd-sub"></p>
     <div class="tools" id="pgd-tools"></div>
   </div>
@@ -287,10 +491,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       없거나</b>입니다. 맨 위(얕고 링크 많은 페이지)부터 봅니다.</p></details>
 </section>
 
-<section id="pgs-sec">
+<section id="pgs-sec" class="card">
   <div class="sh">
-    <p class="eyebrow">크롤 × 실적</p>
-    <h2>내부 링크 부족</h2>
+    <h2>내부 링크 부족 <span class="stdate">크롤 × 실적</span></h2>
     <p class="sub" id="pgs-sub"></p>
     <div class="tools" id="pgs-tools"></div>
   </div>
@@ -302,10 +505,9 @@ tr.rw[aria-expanded="true"] > td:first-child::before { content:"▾ "; color:var
       앵커에는 그 페이지가 걸린 검색어를 그대로 씁니다.</p></details>
 </section>
 
-<section id="pgc-sec">
+<section id="pgc-sec" class="card">
   <div class="sh">
-    <p class="eyebrow"><span class="lat">GA4</span> 교차</p>
-    <h2>전환 없는 페이지</h2>
+    <h2>전환 없는 페이지 <span class="stdate"><span class="lat">GA4</span> 교차</span></h2>
     <p class="sub" id="pgc-sub"></p>
     <div class="tools" id="pgc-tools"></div>
   </div>
@@ -337,8 +539,39 @@ const stOk = basis => `<div class="empty ok"><b>문제 없습니다</b>
 // 셸이 그 둘을 준다 — 화면은 부르기만 한다.
 // 표 위 도구줄은 섹션 머리 오른쪽에 산다 — 화면마다 다른 자리에 서던 것을 한 벌로.
 const stTools = (id, html) => { const e = $(id); if (e) e.innerHTML = html || ""; };
-// 표는 카드 한 겹 안에서만 넘친다(.tw). 카드를 안 두르면 표가 화면을 옆으로 민다.
-const stCard = html => `<div class="card">${html}</div>`;
+/* 표는 이제 섹션 카드(section.card) 안에 서므로 표를 또 카드로 싸지 않는다 — 카드 속
+   카드는 없다. 표 상자(.tw)는 카드 안에서만 옆으로 넘친다. */
+
+// 이름 칸: 이니셜 아바타 + 경로(본문) + 호스트(보조). 전체 주소는 title 이 든다.
+// 아바타는 경로의 마지막 조각(없으면 호스트)의 첫 글자다 — 같은 사이트 안에서 줄을 구별하는 표식.
+function stUrl(u, opt) {
+  const s = String(u || ""), o = opt || {};
+  let host = "", path = s;
+  try {
+    const x = new URL(s);
+    host = x.host.replace(/^www\./, "");
+    path = (x.pathname || "/") + x.search;
+  } catch (e) { /* URL 이 아닌 문자열은 그대로 보인다 */ }
+  const seg = path.split("/").filter(Boolean).pop() || host || "/";
+  const ch = (seg.replace(/[^0-9A-Za-z\uAC00-\uD7A3]/g, "")[0] || "/").toUpperCase();
+  const tone = (s.length + ch.charCodeAt(0)) % 3;
+  const p = o.link
+    ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(path)}</a>` : esc(path);
+  return `<span class="stu" title="${esc(s)}"><i class="stav t${tone}" aria-hidden="true">${esc(ch)}</i>`
+    + `<span class="stt"><span class="stp">${p}</span>`
+    + (host ? `<span class="sth">${esc(host)}</span>` : "") + `</span>${o.after || ""}</span>`;
+}
+// 검색어 칸: 이니셜 아바타 + 검색어(본문 서체 — 한글이라 등폭이 아니다).
+function stQ(q) {
+  const s = String(q || ""), ch = (s.trim()[0] || "?").toUpperCase();
+  return `<span class="stu"><i class="stav t${(s.length + ch.charCodeAt(0)) % 3}"`
+    + ` aria-hidden="true">${esc(ch)}</i><span class="stq">${esc(s)}</span></span>`;
+}
+const ST_CHEV = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>`;
+// 요약 카드 한 장의 틀 — 제목은 그 카드로 가는 버튼이고, 본문은 갈래마다 다른 그림이다.
+const stKp = (jump, title, body) =>
+  `<button type="button" class="kp-go" onclick="stJump('${jump}')"
+     title="${esc(title)} 카드로 이동" aria-label="${esc(title)} 카드로 이동">${esc(title)}${ST_CHEV}</button>${body}`;
 // 부제 세 번째 문장 자리 — 산문으로 늘리는 대신 (i) 뒤로 접는다. 키보드로도 닿는다.
 const hint = tip => ` <span class="hint" tabindex="0" data-tip="${esc(tip)}"` +
   ` title="${esc(tip)}" aria-label="${esc(tip)}">i</span>`;
@@ -363,14 +596,16 @@ function stEyebrow(id, text) {
 // 날짜·기간은 중간에서 꺾이지 않게 한 덩어리로 묶는다(.nw).
 const stNw = s => `<span class="nw">${s}</span>`;
 
-// 섹션마다 센 문제 수 — 머리 밑 배지 줄이 이 표를 읽는다.
-const ST_N = {};
+// 섹션마다 센 문제 수와 그 모수 — 점검 상태판이 이 두 표를 읽는다.
+// 모수(of)는 {n: 분모, t: 줄 밑 글, k: 분자(없으면 문제 수)} 이고, 모르면 막대를 안 그린다.
+const ST_N = {}, ST_OF = {};
 
 /* 개수는 눈썹이 아니라 머리 밑 배지 줄이 말한다 — 눈썹에는 기간·구간만 적는다.
    여기서는 섹션을 접을지(문제 0건)와 조용히 둘지(아직 안 잼)만 정한다. */
-function stSec(secId, n) {
+function stSec(secId, n, of) {
   const s = $(secId);
   ST_N[secId] = n;
+  ST_OF[secId] = of || null;
   if (s) {
     s.classList.toggle("sec-ok", n === 0);
     s.classList.toggle("sec-quiet", n == null);
@@ -378,16 +613,16 @@ function stSec(secId, n) {
   return n;
 }
 
-/* ── 섹션 상태 한 줄 ────────────────────────────────────────
+/* ── 점검 상태판 ────────────────────────────────────────────
    이 화면은 세로로 길다 — 어느 섹션에 문제가 있는지 알려면 끝까지 스크롤해야 했다.
-   머리 밑 배지 줄이 그걸 대신 답하고, 누르면 그 자리로만 간다. 상태는 배지고
-   행동이 아니다 — 누를 것 하나는 위 띠가 든다. */
-/* 배지 줄에 서는 섹션의 정본은 이 표 하나다 — 개수는 여기서 센다(주석·문서에 숫자로
+   상태판이 그걸 대신 답하고, 누르면 그 자리로만 간다. 상태는 배지고 행동이 아니다 —
+   누를 것 하나는 위 띠가 든다. */
+/* 줄에 서는 섹션의 정본은 이 표 하나다 — 개수는 여기서 센다(주석·문서에 숫자로
    적으면 섹션이 늘 때 한쪽만 낡는다). 섹션을 더할 때 stSec() 만 부르면 개수는
-   ST_N 에 담기지만 배지는 안 선다 — 속도(vit-sec)가 그렇게 한 벌 빠져 있었다.
+   ST_N 에 담기지만 줄은 안 선다 — 속도(vit-sec)가 그렇게 한 벌 빠져 있었다.
    차례는 화면에 선 순서 그대로다 — 누르면 그 자리로 가므로 순서가 곧 스크롤 순서다. */
-// 라벨은 그 섹션이 세는 **문제**의 이름이다 — 섹션 제목을 옮겨 적으면 "페이지 실적
-// 0" 처럼 실적이 0 이라는 말로 읽힌다(속도도 마찬가지라 「느림」으로 센다).
+// 라벨은 그 섹션이 세는 **문제**의 이름이다 — 섹션 제목을 옮겨 적으면 「페이지 실적
+// 0」처럼 실적이 0 이라는 말로 읽힌다(속도도 마찬가지라 「느림」으로 센다).
 const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["dev-sec", "모바일"],
   ["vit-sec", "느림"], ["gseo-sec", "구글 SEO"], ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"],
   ["pgs-sec", "링크 부족"], ["pgc-sec", "무전환"]];
@@ -399,26 +634,42 @@ function stJump(secId) {
 
 // 막힌 것(구글이 아예 못 들어감)만 한 단 세게 — 나머지 문제는 전부 같은 무게다.
 function stSummary(blocked) {
-  const box = $("st-sum");
+  const box = $("st-sum"), hero = $("st-board");
   if (!box) return;
+  let hit = 0, quiet = 0;
   // 「아직 안 쟀다」와 「재 봤더니 0」은 다른 뜻이다 — 기호(—/0)로 가르면 그 차이를
   // 화면이 설명하지 않는다. 안 잰 것은 글자로 말하고, 잰 것만 숫자를 낸다.
   const out = ST_SUM.filter(([id]) => $(id) && !$(id).hidden).map(([id, label]) => {
-    const n = ST_N[id];
-    // 크롤 배지는 가장 무거운 갈래의 심각도 색을 쓴다 — 전부 「참고」인데 경고색이면 급해 보인다.
+    const n = ST_N[id], of = ST_OF[id];
+    // 크롤은 가장 무거운 갈래의 심각도 색을 쓴다 — 전부 「참고」인데 경고색이면 급해 보인다.
     const kind = n == null ? "muted" : !n ? "ok"
       : (id === "ix-sec" && blocked) ? "bad"
       : id === "crawl-sec" ? CR_SEV_CLS[stCrawlTop(CR_D || {}).sev] : "warn";
-    const val = n == null ? "미검사" : num(n);
+    if (n == null) quiet++; else if (n) hit++;
+    const val = n == null ? "미검사" : !n ? "이상 없음" : `${num(n)}건`;
     const tip = n == null ? `${label} — 아직 검사하지 않았습니다`
       : !n ? `${label} — 검사했고 문제가 없습니다` : `${label} 문제 ${num(n)}건`;
-    return `<button class="badge ${kind}" onclick="stJump('${id}')"
-      title="${esc(tip)}. 눌러서 그 자리로" aria-label="${esc(tip)}">${esc(label)}
-      <b>${esc(val)}</b></button>`;
+    const small = n == null ? "아직 검사하지 않았습니다" : (of && of.t) || "";
+    // 막대 = 모수 대비 문제 비율. 모수를 모르는 줄은 막대 자리만 비워 두어 열이 안 흔들린다.
+    const frac = n && of && of.n > 0 ? Math.min(1, (of.k == null ? n : of.k) / of.n) : 0;
+    const bar = of && of.n > 0
+      ? `<span class="stbar" aria-hidden="true"><i style="width:${
+          (n ? Math.max(frac, .04) * 100 : 0).toFixed(1)}%"></i></span>`
+      : `<span class="stnote">${n && of && of.note ? esc(of.note) : ""}</span>`;
+    return `<button type="button" class="stx k-${kind}" onclick="stJump('${id}')"
+      title="${esc(tip)}. 눌러서 그 자리로" aria-label="${esc(tip)}"><i class="stdot"></i>
+      <span class="stl"><b>${esc(label)}</b><small>${esc(small)}</small></span>${bar}
+      <span class="badge ${kind}">${esc(val)}</span>${ST_CHEV}</button>`;
   });
-  box.innerHTML = out.length
-    ? `<span class="stsum-t">섹션별 문제</span>${out.join("")}` : "";
-  box.hidden = !out.length;
+  box.innerHTML = out.join("");
+  if (hero) hero.hidden = !out.length;
+  // 아무것도 안 잰 사이트 — 같은 「아직 안 했다」가 상태판 → 요약 타일 → 개별 카드로 세 번 서서
+  // 정보는 배너 한 줄인데 화면만 길었다. 상태판 하나만 말하고 나머지는 접는다.
+  const box2 = $("view-site");
+  if (box2) box2.classList.toggle("st-allquiet", out.length > 0 && quiet === out.length);
+  const sub = $("st-sub");
+  if (sub) sub.textContent = (hit ? `${hit}곳에서 문제가 걸렸습니다.` : "걸린 곳이 없습니다.")
+    + (quiet ? ` ${quiet}곳은 아직 안 쟀습니다.` : "") + " 줄을 누르면 그 카드로 갑니다.";
 }
 
 /* ── 이 화면의 다음 한 수 ───────────────────────────────────
@@ -608,17 +859,60 @@ function stIxStop(d) {
   return {why: m ? m[1].trim() : ""};
 }
 
-function stIxBar(counts, ok) {
-  const seg = [];
-  if (ok > 0) seg.push(`<i class="b-ok" style="flex:${ok}" title="정상 ${ok}건"></i>`);
-  for (const b of ST_IX_ORDER) {
-    if (!counts[b]) continue;
-    seg.push(`<i class="b-s${ST_IX[b].sev}" style="flex:${counts[b]}"
-      title="${esc(ST_IX[b].label)} ${counts[b]}건"></i>`);
-  }
-  const n = ST_IX_ROWS.length;
-  return `<div class="ixbar" role="img" aria-label="검사한 URL ${ok + n}개 중 정상 ${ok}개, 문제 ${n}개"
-    >${seg.join("")}</div>`;
+/* 도넛 색은 CSS 토큰이다 — Chart.js 는 var(--x)·color-mix() 를 못 읽으므로 화면 상자에서
+   한 번 풀어(computed) 1px 캔버스로 rgb 문자열을 얻는다. 차트는 다크 전환 때 셸이 설정을
+   다시 지으므로(build 가 다시 불린다) 여기서 매번 읽으면 라이트·다크가 따라온다. */
+function stCss(name) {
+  const host = $("view-site"), p = document.createElement("i");
+  p.style.cssText = `position:absolute;visibility:hidden;color:var(${name})`;
+  host.appendChild(p);
+  const c = getComputedStyle(p).color;
+  p.remove();
+  try {
+    const cx = document.createElement("canvas").getContext("2d");
+    cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = cx.getImageData(0, 0, 1, 1).data;
+    return `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`;
+  } catch (e) { return c; }
+}
+const ST_IX_VAR = {"b-ok": "--seg-ok", "b-s1": "--warn", "b-s2": "--seg-2", "b-s3": "--seg-3"};
+
+// 검사한 URL 전부를 한 바퀴에. 가운데는 정상 % 하나(총수를 모르면 못 들어간 건수).
+function stIxDonut(date, total) {
+  const sec = $("ixd-sec"), box = $("ix-donut");
+  if (!sec || !box) return;
+  const n = ST_IX_ROWS.length, counts = {};
+  for (const r of ST_IX_ROWS) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+  const ok = total == null ? 0 : total - n;
+  const segs = [];
+  if (ok > 0) segs.push({label: "정상", v: ok, cls: "b-ok"});
+  for (const b of ST_IX_ORDER)
+    if (counts[b]) segs.push({label: ST_IX[b].label, v: counts[b], cls: `b-s${ST_IX[b].sev}`});
+  if (!segs.length || typeof chMount !== "function") { sec.hidden = true; return; }
+  sec.hidden = false;
+  const sum = segs.reduce((a, s) => a + s.v, 0);
+  // 갈래 순서가 곧 심각도 순이다 — 문제가 걸린 첫 갈래가 가장 먼저 풀 자리.
+  const fb = ST_IX_ORDER.find(b => counts[b]);
+  const first = fb ? {b: fb, label: ST_IX[fb].label} : null;
+  const pct = total ? (ok >= total ? 100 : Math.min(99, Math.round(ok / total * 100))) : null;
+  const aria = total == null ? `색인에 못 들어간 URL ${n}건`
+    : `검사한 URL ${total}개 중 정상 ${ok}개, 문제 ${n}개`;
+  $("ixd-sub").innerHTML = `${stNw(esc(date))} 점검 · ` +
+    (total == null ? `문제 ${num(n)}건` : `URL ${num(total)}개 중 정상 ${num(ok)}개`);
+  const cv = chMount(T => ({type: "doughnut",
+    data: {labels: segs.map(s => s.label), datasets: [{data: segs.map(s => s.v),
+      backgroundColor: segs.map(s => stCss(ST_IX_VAR[s.cls])),
+      borderColor: T.card, borderWidth: 3, borderRadius: 5, hoverOffset: 0}]},
+    options: {responsive: true, maintainAspectRatio: false, cutout: "72%",
+      plugins: {legend: {display: false},
+        tooltip: chTipSays(T, {callbacks: {title: c => c[0].label,
+          label: c => `${num(segs[c.dataIndex].v)}건 (${Math.round(segs[c.dataIndex].v / sum * 100)}%)`}})}}}),
+    aria, "width:172px;height:172px");
+  box.innerHTML = `<div class="stdn-c">${cv}<div><b>${pct == null ? num(n) : pct + "%"}</b>
+      <span>${pct == null ? "건이 못 들어감" : "정상"}</span></div></div>
+    <ul class="stlg">${segs.map(s => `<li><i class="sw ${s.cls}"></i>${esc(s.label)}
+      <b>${num(s.v)}건</b></li>`).join("")}</ul>${first
+      ? `<p class="stdn-n"><b>${esc(first.label)}</b>부터 풀어야 아래가 풀립니다. ${esc((ST_IX_PLAY[first.b] || {}).what || "")}</p>` : ""}`;
 }
 
 function stIxFiltered() {
@@ -660,7 +954,6 @@ function stIxCsv() {
 function stIxHead() {
   const counts = {};
   for (const r of ST_IX_ROWS) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
-  const ok = ST_IX_TOTAL == null ? 0 : ST_IX_TOTAL - ST_IX_ROWS.length;
   const chips = ST_IX_ORDER.filter(b => counts[b]).map(b =>
     `<button class="chip ixchip s${ST_IX[b].sev}${ST_IX_B === b ? " on" : ""}"
        data-b="${esc(b)}" onclick="stIxChip(this)" title="${esc(b)}"
@@ -674,12 +967,12 @@ function stIxHead() {
      <span class="n" id="ixn"></span>
      <button class="go sec sm" onclick="stIxCsv()"
        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
-  $("index").innerHTML = stIxStopBox(ST_IX_STOP) + stIxBar(counts, ok) +
+  $("index").innerHTML = stIxStopBox(ST_IX_STOP) +
     `<div class="ixchips">
        <button class="chip ixchip all${ST_IX_B ? "" : " on"}" data-b=""
          onclick="stIxChip(this)" aria-pressed="${!ST_IX_B}"><em class="sw"></em>전체
          <b>${ST_IX_ROWS.length}</b></button>${chips}</div>` +
-    stCard(`<div id="ixlist"></div>`);
+    `<div id="ixlist"></div>`;
   stIxList();
 }
 
@@ -708,8 +1001,9 @@ function stIxList() {
     list.map(r => {
       const b = ST_IX[r.bucket] || {label:r.bucket, sev:3};
       return `<tr ${stRw(r.url)}>
-        <td class="ixb s${b.sev}" title="${esc(r.bucket)}">${esc(b.label)}</td>
-        <td class="ixurl">${esc(r.url)}</td>
+        <td class="ixb s${b.sev}" title="${esc(r.bucket)}"><span class="badge ${
+          b.sev === 1 ? "bad" : b.sev === 2 ? "warn" : "muted"}">${esc(b.label)}</span></td>
+        <td class="ixurl">${stUrl(r.url)}</td>
         <td class="ixstate">${esc(r.coverage_state || r.verdict || "—")}</td>
         <td class="ixfix">${esc(r.detail)}</td>${stOppCell(r.url)}</tr>`;
     }));
@@ -781,8 +1075,9 @@ function stIxDetail(url) {
 }
 
 function renderIndex(d) {
-  if (!d.index_issues) return $("ix-sec").hidden = true;
+  if (!d.index_issues) { $("ixd-sec").hidden = true; return $("ix-sec").hidden = true; }
   $("ix-sec").hidden = false;
+  $("ixd-sec").hidden = true;      // 도넛은 검사한 날이 있을 때만 선다
   ST_IX_ROWS = d.index_issues;
   ST_IX_B = ""; ST_IX_Q = "";
   ST_IX_TOTAL = d.index_date ? stIxChecked(d) : null;
@@ -799,18 +1094,23 @@ function renderIndex(d) {
   }
   const total = ST_IX_TOTAL, n = ST_IX_ROWS.length;
   const scope = total == null ? "" : `URL ${num(total)}개 중 `;
-  stSec("ix-sec", n);
+  stSec("ix-sec", n, total == null
+    ? {note: ST_IX_ORDER.filter(b => ST_IX_ROWS.some(r => r.bucket === b))
+        .map(b => ST_IX[b].label).join(" · ")}
+    : {n: total, t: `URL ${num(total)}개 중`});
   if (!n) {
     // 개수·축하는 위 sub 가 맡는다. 섹션은 머리 한 줄로 접힌다(.sec-ok).
     stTools("ix-tools", "");
     $("ix-sub").innerHTML = `${stNw(esc(d.index_date))} 점검 · 검사한 URL` +
       (total == null ? "" : ` ${num(total)}개`) + `이 전부 색인됐습니다.`;
-    return $("index").innerHTML = stIxStopBox(ST_IX_STOP) + stIxBar({}, total || 1) +
+    stIxDonut(d.index_date, total);
+    return $("index").innerHTML = stIxStopBox(ST_IX_STOP) +
       stOk(total == null ? "검사한 URL 전부" : `검사한 URL ${num(total)}개 전부`);
   }
   $("ix-sub").innerHTML = `${stNw(esc(d.index_date))} 점검 · ${scope}<b>${n}건</b>이 색인에 못 들어갔습니다` +
     (total == null ? "" : ` · 정상 ${num(total - n)}개`) + `.` +
     hint("표는 기회 점수 순입니다. 갈래 칩은 심각도 순이고, 막힌 것부터 풀어야 아래가 풀립니다.");
+  stIxDonut(d.index_date, total);
   stIxHead();
 }
 
@@ -847,7 +1147,7 @@ function stDevHead() {
      <span class="n" id="devn"></span>
      <button class="go sec sm" onclick="stDevCsv()"
        title="지금 걸러 놓은 목록 그대로 내려받습니다">CSV 내려받기</button>`);
-  $("devgap").innerHTML = stCard(`<div id="devlist"></div>`);
+  $("devgap").innerHTML = `<div id="devlist"></div>`;
   stDevList();
 }
 
@@ -869,7 +1169,7 @@ function stDevList() {
      ">모바일 노출?이 검색어의 모바일 노출 수. 큰 것부터 고쳐야 이득이 크다",
      ">모바일 CTR", ">데스크톱 CTR?같은 검색어인데 기기에 따라 클릭률이 얼마나 갈리는지",
      ST_OPP_H],
-    list.map(r => `<tr ${stRw(r.query)}><td class="kwcell">${esc(r.query)}</td>
+    list.map(r => `<tr ${stRw(r.query)}><td class="kwcell">${stQ(r.query)}</td>
       <td class="num down">${stP1(r.mobile_pos)}</td>
       <td class="num">${stP1(r.desktop_pos)}</td>
       <td class="num down">${stP1(r.dpos)}
@@ -919,11 +1219,22 @@ function stDevDetail(q) {
       기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
 
+// 이 표에 걸린 검색어의 가중평균 순위(모바일 노출로 가중) — 요약 카드의 덤벨과 GA4 카드의
+// 판정문이 같은 숫자를 본다.
+function stDevPos() {
+  let w = 0, mSum = 0, dSum = 0;
+  for (const r of ST_DEV_ROWS) {
+    w += r.mobile_imp; mSum += r.mobile_pos * r.mobile_imp; dSum += r.desktop_pos * r.mobile_imp;
+  }
+  if (!w) return null;
+  return {m: Math.round(mSum / w * 10) / 10, d: Math.round(dSum / w * 10) / 10};
+}
+
 // GSC 순위 격차만으로는 "그래서 페이지를 고쳐야 하나"가 안 나온다 — GA4 기기별
 // 전환율을 나란히 놓아야 나온다. 순위(이 표에 걸린 검색어의 가중평균)와 전환율
-// (사이트 전체 GA4)은 모집단이 달라 숫자를 더하지 않는다 — 각자 자기 축을 가진
-// 작은 배수(chDumbbell) 둘로 나란히 보여주고, 결론 문장은 GA4 쪽도 나쁠 때만 낸다.
-// d.ga4_by_device 자체가 없으면(GA4 미연결) 빈 문자열을 내 이 절이 통째로 안 보인다.
+// (사이트 전체 GA4)은 모집단이 달라 숫자를 더하지 않는다 — 전환율은 자기 축을 가진 작은
+// 배수(chDumbbell)로 그리고, 결론 문장은 GA4 쪽도 나쁠 때만 낸다.
+// d.ga4_by_device 자체가 없으면(GA4 미연결) 빈 문자열을 내 카드가 통째로 안 선다.
 function stDevChart(d) {
   const bd = d.ga4_by_device;
   if (!bd || !bd.length || !ST_DEV_ROWS.length) return "";
@@ -933,33 +1244,61 @@ function stDevChart(d) {
   if (!m || !k || !m.sessions || !k.sessions) return "";
   const mCvr = Math.round(m.key_events / m.sessions * 1000) / 10;
   const kCvr = Math.round(k.key_events / k.sessions * 1000) / 10;
-  let w = 0, mSum = 0, dSum = 0;
-  for (const r of ST_DEV_ROWS) {
-    w += r.mobile_imp; mSum += r.mobile_pos * r.mobile_imp; dSum += r.desktop_pos * r.mobile_imp;
-  }
-  if (!w) return "";
-  const mPos = Math.round(mSum / w * 10) / 10, dPos = Math.round(dSum / w * 10) / 10;
-  const rankCh = window.chDumbbell(
-    [{title: "", items: [{label: "데스크톱", pos: dPos}, {label: "모바일", pos: mPos}]}],
-    {width: 320, unit: "위"});
-  const cvrCh = window.chDumbbell(
+  const pos = stDevPos();
+  if (!pos) return "";
+  // 두 점이 겹칠 만큼 같으면 덤벨은 정보가 없다 — 글 한 줄로 「차이 없음」을 말한다.
+  const same = Math.abs(mCvr - kCvr) < 0.3;
+  const cvrCh = same ? "" : window.chDumbbell(
     [{title: "", items: [{label: "데스크톱", pos: kCvr}, {label: "모바일", pos: mCvr}]}],
     {width: 320, unit: "%"});
-  return `<div class="devcharts">
-      <div class="devchart"><p class="devchart-t">이 표에 걸린 검색어의 평균 순위</p>${rankCh}</div>
-      <div class="devchart"><p class="devchart-t">전환율 · GA4 사이트 전체</p>${cvrCh}</div>
-    </div>` + (mCvr < kCvr
-    ? `<p class="devchart-verdict">모바일이 순위도 ${stP1(dPos)}위 → ${stP1(mPos)}위로 아래고
+  return `<div class="devchart"><p class="devchart-t">전환율 · GA4 사이트 전체</p>${cvrCh}
+      <p class="kp-note"><span class="nw">데스크톱 <b>${kCvr}%</b></span> ·
+        <span class="nw">모바일 <b>${mCvr}%</b></span>${same ? " — 기기별 차이가 거의 없습니다" : ""}</p></div>` + (mCvr < kCvr
+    ? `<p class="devchart-verdict">모바일이 순위도 ${stP1(pos.d)}위 → ${stP1(pos.m)}위로 아래고
       전환율도 ${kCvr}% → ${mCvr}%로 아래입니다. 순위가 아니라 <b>페이지 자체를 의심</b>할 자리입니다.</p>`
     : "");
 }
 
+// 요약 카드 — 덤벨: 데스크톱 점과 모바일 점의 거리가 곧 이 화면의 문제다.
+function stKpDev(d) {
+  const T = "모바일 격차", J = "dev-sec";
+  if (!d.device_date)
+    return stKp(J, T, `<p class="kp-empty">검색어별 기기 실적이 아직 없습니다. 실적을 수집하면
+      같은 검색어가 폰에서만 밀리는지 나옵니다.</p>`);
+  const n = ST_DEV_ROWS.length;
+  if (!n)
+    return stKp(J, T, `<div class="kp-v">0<small>개</small></div>
+      <div class="kp-pills"><span class="badge ok">모바일에서만 밀리는 검색어 없음</span></div>
+      <p class="kp-note">${stNw(esc(d.device_date))} 기준 · 모바일 노출 ${num(RULES.device_min_imp)} 이상</p>`);
+  const p = stDevPos();
+  const imp = ST_DEV_ROWS.reduce((a, r) => a + (r.mobile_imp || 0), 0);
+  const worst = Math.max(...ST_DEV_ROWS.map(r => r.dpos));
+  let viz = "";
+  if (p) {
+    const hi = Math.max(p.m, p.d) * 1.12 || 1;
+    const a = Math.min(p.m, p.d) / hi * 100, b = Math.max(p.m, p.d) / hi * 100;
+    viz = `<div class="kp-viz"><div class="dbl" role="img"
+        aria-label="이 표에 걸린 검색어의 평균 순위 — 데스크톱 ${stP1(p.d)}위, 모바일 ${stP1(p.m)}위">
+        <u style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></u>
+        <i style="left:${(p.d / hi * 100).toFixed(1)}%"></i>
+        <i class="m" style="left:${(p.m / hi * 100).toFixed(1)}%"></i></div>
+      <div class="dbl-l"><span>데스크톱 <b>${stP1(p.d)}위</b></span>
+        <span>모바일 <b>${stP1(p.m)}위</b></span></div></div>`;
+  }
+  const ga4 = stDevChart(d);
+  return stKp(J, T, `<div class="kp-v">${num(n)}<small>개가 모바일에서 밀림</small></div>
+    <p class="kp-note">최대 ${stP1(worst)}칸 아래 · 걸린 모바일 노출 ${num(imp)}</p>${viz}${
+    ga4 ? `<div class="kp-viz" id="dev-chart">${ga4}</div>` : ""}`);
+}
+
 function renderDevice(d) {
-  if (!d.device_gap) return $("dev-sec").hidden = true;
+  const kp = $("kp-dev-sec");
+  if (!d.device_gap) { kp.hidden = true; return $("dev-sec").hidden = true; }
   $("dev-sec").hidden = false;
+  kp.hidden = false;
   ST_DEV_ROWS = d.device_gap;
   ST_DEV_Q = "";
-  $("dev-chart").innerHTML = "";
+  $("kp-dev").innerHTML = stKpDev(d);
   if (!d.device_date) {
     stSec("dev-sec", null);
     stTools("dev-tools", "");
@@ -971,7 +1310,9 @@ function renderDevice(d) {
       <p>같은 검색어의 모바일·데스크톱 순위를 맞대 보는 표입니다.${live(" 실적을 수집하면 채워집니다.")}</p>
       ${stAct("gsc", "실적 수집")}</div>`;
   }
-  stSec("dev-sec", ST_DEV_ROWS.length);
+  stSec("dev-sec", ST_DEV_ROWS.length, ST_DEV_ROWS.length
+    ? {note: `최대 ${stP1(Math.max(...ST_DEV_ROWS.map(r => r.dpos)))}칸 아래 · 모바일 노출 `
+        + num(ST_DEV_ROWS.reduce((a, r) => a + (r.mobile_imp || 0), 0))} : null);
   if (!ST_DEV_ROWS.length) {
     stTools("dev-tools", "");
     $("dev-sub").innerHTML = `${stNw(esc(d.device_date))} 기준 · 모바일이 크게 밀리는 검색어가 ` +
@@ -986,7 +1327,6 @@ function renderDevice(d) {
     hint(`최대 격차 ${stP1(worst)}칸, 걸린 모바일 노출 ${num(imp)}. ` +
          `모바일 평균 순위가 데스크톱보다 ${RULES.device_gap_pos}칸 이상 아래이고 ` +
          `모바일 노출 ${num(RULES.device_min_imp)} 이상인 검색어만 셉니다.`);
-  $("dev-chart").innerHTML = stDevChart(d);
   stDevHead();
 }
 
@@ -994,6 +1334,8 @@ function renderDevice(d) {
    기준값은 서버가 준다(d.rules) — scoring.LCP_GOOD_MS 등이 정본이다. 여기 숫자를
    적으면 판정과 화면이 두 벌이 되고, 구글이 기준을 옮길 때 한쪽만 낡는다. */
 const VIT_DEV = {mobile: "모바일", desktop: "데스크톱"};
+const stEmptyKp = (id, jump, title, msg) =>
+  $(id).innerHTML = stKp(jump, title, `<p class="kp-empty">${msg}</p>`);
 const vitSec = ms => (ms === null || ms === undefined) ? "—" : (ms / 1000).toFixed(1) + "초";
 // 기준을 넘긴 값만 빨갛게. 안 잰 값(null)은 통과도 실패도 아니다 — 회색으로 둔다.
 const vitCell = (v, good, fmt) => (v === null || v === undefined)
@@ -1011,6 +1353,26 @@ function vitRows(d) {
   return out;
 }
 
+// 요약 카드 — 기준선 막대: 잰 값마다 기둥 하나, 가로선(기준) 위로 넘은 것만 산화동.
+function stKpVit(d, rows, over, when) {
+  const lcp = (d.rules || {}).lcp_good_ms;
+  const vals = rows.map(([u, dev, r]) => {
+    const L = r.field_lcp_ms != null ? r.field_lcp_ms : r.lab_lcp_ms;
+    return L == null ? null : {u, dev, L};
+  }).filter(Boolean).sort((a, b) => b.L - a.L).slice(0, 16);
+  const mx = Math.max(lcp * 1.25, ...vals.map(v => v.L));
+  const viz = vals.length ? `<div class="kp-viz"><div class="vcol" role="img"
+      aria-label="LCP ${vals.length}건 — 기준 ${vitSec(lcp)}, 가장 느린 것 ${vitSec(vals[0].L)}">
+      ${vals.map(v => `<i class="${v.L > lcp ? "over" : ""}" style="height:${(v.L / mx * 100).toFixed(1)}%"
+        title="${esc(v.u)} · ${esc(VIT_DEV[v.dev] || v.dev)} · ${vitSec(v.L)}"></i>`).join("")}
+      <u style="bottom:${(lcp / mx * 100).toFixed(1)}%"></u></div>
+      <p class="kp-note">가로선이 LCP 기준 ${vitSec(lcp)}입니다.</p></div>` : "";
+  return stKp("vit-sec", "속도", `<div class="kp-v">${num(over.length)}<small>${
+      over.length ? "건이 기준을 넘김" : "건 — 전부 기준 안"}</small></div>
+    <p class="kp-note">${when} 기준 · 잰 ${num(rows.length)}건${
+      vals.length ? ` · 가장 느린 LCP ${vitSec(vals[0].L)}` : ""}</p>${viz}`);
+}
+
 function renderVitals(d) {
   const rows = vitRows(d);
   const R = (d.rules || {});
@@ -1019,6 +1381,7 @@ function renderVitals(d) {
     stSec("vit-sec", null);
     stTools("vit-tools", "");
     $("vit-sub").textContent = "고칠 페이지가 폰에서 얼마나 느린지 잽니다.";
+    stEmptyKp("kp-vit", "vit-sec", "속도", "아직 속도를 안 쟀습니다. 재면 페이지마다 LCP 가 기준선과 나란히 섭니다.");
     return $("vitals").innerHTML = `<div class="empty"><b>아직 속도를 안 쟀습니다</b>
       <p>기회에 걸린 페이지를 모바일·데스크톱에서 열어 LCP·INP·CLS 를 잽니다.
         비용은 없습니다.${live(" 한 번 돌리면 표가 생깁니다.")}</p>
@@ -1040,10 +1403,12 @@ function renderVitals(d) {
     stSec("vit-sec", null);
     stTools("vit-tools", "");
     $("vit-sub").innerHTML = `${when} 기준 · 잰 페이지가 없습니다.`;
+    stEmptyKp("kp-vit", "vit-sec", "속도", "잰 페이지가 없습니다. 기회에 걸린 페이지가 있어야 잴 대상이 정해집니다.");
     return $("vitals").innerHTML = `<div class="empty"><b>잰 페이지가 없습니다</b>
       <p>기회에 걸린 페이지가 있어야 잴 대상이 정해집니다.</p></div>`;
   }
-  stSec("vit-sec", over.length);
+  stSec("vit-sec", over.length, {n: rows.length, t: `측정 ${rows.length}건 중`});
+  $("kp-vit").innerHTML = stKpVit(d, rows, over, when);
   $("vit-sub").innerHTML = over.length
     ? `${when} 기준 · <b>${over.length}개</b>가 기준을 넘겼습니다.`
       + hint(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls} 이내가 기준입니다. `
@@ -1051,7 +1416,7 @@ function renderVitals(d) {
     : `${when} 기준 · 잰 ${rows.length}개가 전부 기준 안입니다.`;
   if (!over.length)
     return $("vitals").innerHTML = stOk(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls}`);
-  $("vitals").innerHTML = stCard(table(
+  $("vitals").innerHTML = (table(
     ["페이지", "기기", ">LCP?가장 큰 것이 뜨는 시각. 현장 값이 있으면 현장.",
      ">INP?누른 뒤 화면이 반응하기까지. 현장 값에만 있습니다.",
      ">CLS?그리는 도중 화면이 밀린 정도.", ">점수?실험실 1회 측정(0~100).", "출처"],
@@ -1060,7 +1425,7 @@ function renderVitals(d) {
       const src = r.error ? "못 쟀음"
         : !f ? "실험실만 (사용자 표본 부족)"
         : r.origin_fallback ? "사이트 전체 값" : "이 페이지의 실제 사용자";
-      return `<tr><td>${esc(url)}</td><td>${VIT_DEV[dev] || esc(dev)}</td>`
+      return `<tr><td>${stUrl(url)}</td><td>${VIT_DEV[dev] || esc(dev)}</td>`
         + vitCell(f ? r.field_lcp_ms : r.lab_lcp_ms, lcp, vitSec)
         + vitCell(r.field_inp_ms, inp, v => v + "ms")
         + vitCell(f ? r.field_cls : r.lab_cls, cls, v => v)
@@ -1082,6 +1447,28 @@ function gseoRows(d) {
   }).filter(Boolean);
 }
 
+// 요약 카드 — 링: 고칠 항목이 하나도 없는 페이지의 비율.
+function stKpGseo(rows, bad, L) {
+  const pass = rows.length - bad.length, pct = Math.round(pass / rows.length * 100);
+  const cnt = {};
+  for (const r of bad) for (const f of r.fail) cnt[f.id] = (cnt[f.id] || 0) + 1;
+  const tops = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 3);
+  const scored = rows.filter(r => r.score != null);
+  const avg = scored.length ? Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length) : null;
+  return stKp("gseo-sec", "구글이 본 SEO", `<div class="kp-row">
+      <div class="ring"><svg viewBox="0 0 36 36" role="img"
+          aria-label="고칠 항목 없이 통과한 페이지 ${pass}개 / ${rows.length}개">
+        <circle class="rt" cx="18" cy="18" r="15" pathLength="100"/>
+        <circle class="rf" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray="${pct} 100"/></svg>
+        <b>${pct}%</b></div>
+      <div class="kp-v">${num(pass)}<small>/ ${num(rows.length)}개 통과</small></div></div>
+    <p class="kp-note">${bad.length ? `고칠 항목이 있는 페이지 ${num(bad.length)}개` : "고칠 항목이 있는 페이지가 없습니다"}${
+      avg == null ? "" : ` · 평균 ${avg}점`}</p>${tops.length
+      ? `<div class="kp-viz">${tops.map(k => `<div class="kpb s-bad"><span title="${esc((L[k] || [k])[0])}">${
+          esc((L[k] || [k])[0])}</span><span class="kpb-t"><i style="width:${
+          (cnt[k] / rows.length * 100).toFixed(1)}%"></i></span><b>${num(cnt[k])}개</b></div>`).join("")}</div>` : ""}`);
+}
+
 function renderGoogleSeo(d) {
   const rows = gseoRows(d);
   const L = d.seo_audits || {}, T = d.serp_titles || {};
@@ -1090,11 +1477,13 @@ function renderGoogleSeo(d) {
     // 속도를 아직 안 쟀거나, 이 칸이 생기기 전에 잰 행뿐이다 — 「문제 없음」이 아니다.
     stSec("gseo-sec", null);
     $("gseo-sub").textContent = "속도를 잴 때 구글이 연 페이지의 SEO 항목을 함께 봅니다.";
+    stEmptyKp("kp-gseo", "gseo-sec", "구글이 본 SEO", "아직 결과가 없습니다. 다음 속도 측정부터 나옵니다.");
     return $("gseo").innerHTML = `<div class="empty"><b>아직 결과가 없습니다</b>
       <p>다음 속도 측정부터 나옵니다. 비용은 없습니다.</p></div>`;
   }
   const bad = rows.filter(r => r.fail.length);
-  stSec("gseo-sec", bad.length);
+  stSec("gseo-sec", bad.length, {n: rows.length, t: `페이지 ${rows.length}개 중`});
+  $("kp-gseo").innerHTML = stKpGseo(rows, bad, L);
   const when = esc(d.vitals_date);
   $("gseo-sub").innerHTML = bad.length
     ? `${when} 기준 · 페이지 ${rows.length}개 중 <b>${bad.length}개</b>에 고칠 항목이 있습니다.`
@@ -1106,10 +1495,10 @@ function renderGoogleSeo(d) {
         + `${esc(label)}${f.n > 1 ? " " + f.n : ""}</span>`;
     }).join(" ")
     : `<span class="badge ok">전부 통과</span>`;
-  $("gseo").innerHTML = stCard(table(
+  $("gseo").innerHTML = (table(
     ["페이지", "검색결과 제목?구글 검색결과에 뜬 제목입니다. 페이지의 제목 태그 원문과 다를 수 있습니다.",
      ">점수?구글 Lighthouse SEO 점수(0~100).", "고칠 항목?항목에 마우스를 올리면 무엇을 고칠지와 예시가 보입니다."],
-    rows.map(r => `<tr><td>${esc(r.url)}</td>`
+    rows.map(r => `<tr><td>${stUrl(r.url)}</td>`
       + `<td>${T[r.url] ? esc(T[r.url]) : '<span class="muted">검색결과에 없음</span>'}</td>`
       + `<td class="num">${r.score ?? "—"}</td><td>${fixes(r)}</td></tr>`), ""));
 }
@@ -1160,8 +1549,8 @@ function CR_rows(d) {
   // 이번에 새로 생긴 것을 줄에 표시한다 — 같은 갈래라도 새 것이 먼저 눈에 들어와야 한다.
   const fresh = new Set(((c.compare || {}).new || []).map(CR_key));
   const rows = CR_sorted().map(r =>
-    `<tr ${stRw(CR_key(r))}><td class="cr-url">${esc(r.url || "")}` +
-    `${fresh.has(CR_key(r)) ? '<span class="cr-new">새로 생김</span>' : ""}</td>` +
+    `<tr ${stRw(CR_key(r))}><td class="cr-url">${stUrl(r.url || "",
+      {after: fresh.has(CR_key(r)) ? '<span class="cr-new">새로 생김</span>' : ""})}</td>` +
     `<td>${esc(CR_label(r.kind))}</td>` +
     `<td>${CR_sev(r.severity)}</td>` +
     `<td>${esc(r.detail || "")}</td>${stOppCell(r.url || "")}</tr>`);
@@ -1172,9 +1561,9 @@ function CR_rows(d) {
   // 기본값(남은 것)이 전부 걸렀으면 "걸린 것이 없습니다"는 거짓이다 — 끝냈거나 관찰 중일 뿐이다.
   const picked = CR_all().filter(r => !CR_PICK || r.kind === CR_PICK);
   if (!rows.length && window.oppLeftDone(CR_ST, picked, r => oppOf(r.url || "")))
-    return stCard(window.oppLeftEmpty("문제", picked.length, "CR_setSt('all')"));
+    return window.oppLeftEmpty("문제", picked.length, "CR_setSt('all')");
   const rest = rows.length - CR_N;
-  return stCard(table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
+  return (table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
     CR_PICK ? "<b>이 종류에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
             : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>")
     // 누르면 늘어나는 수와 남은 수를 가른다 — 「437건 더 보기」인데 50건만 펴졌다(10회차).
@@ -1256,6 +1645,32 @@ function CR_diff(d) {
          CR_fixed(f);
 }
 
+// 요약 카드 — 회차 비교 알약 둘과, 가장 많이 걸린 갈래 셋의 막대. 심각도는 막대 색이 말한다.
+function stKpCrawl(d) {
+  const c = d.crawl || {}, J = "crawl-sec", T = "사이트 크롤";
+  if (!c.run)
+    return stKp(J, T, `<p class="kp-empty">아직 크롤하지 않았습니다. 사이트를 한 바퀴 돌면
+      깨진 내부 링크와 고아 페이지가 나옵니다.</p>`);
+  const crn = CR_all().length, cmp = c.compare || {}, cnt = c.counts || {};
+  const nw = (cmp.new || []).length, fx = (cmp.fixed || []).length;
+  const pills = !crn ? `<span class="badge ok">걸린 것 없음</span>` : cmp.prev_run_id
+    ? `<span class="badge ${nw ? "warn" : "muted"}">새로 생긴 ${num(nw)}건</span>`
+      + `<span class="badge ${fx ? "ok" : "muted"}">해결 ${num(fx)}건</span>`
+    : `<span class="badge muted">첫 크롤</span>`;
+  const sev = {}, sc = {bad: 0, warn: 0, info: 0};
+  for (const r of c.issues || []) { sev[r.kind] = sev[r.kind] || r.severity; sc[r.severity] = (sc[r.severity] || 0) + 1; }
+  const top = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 3);
+  const seg = ["bad", "warn", "info"].filter(k => sc[k]);
+  const bars = seg.length ? `<div class="kpseg" role="img" aria-label="${esc(seg.map(k =>
+      `${CR_SEV[k]} ${sc[k]}건`).join(", "))}">${seg.map(k => `<i class="s-${k}" style="flex:${sc[k]}"></i>`).join("")}</div>
+    <p class="kp-note">${seg.map(k => `${CR_SEV[k]} ${num(sc[k])}`).join(" · ")}</p>`
+    + top.map(k => `<div class="kpl s-${sev[k] || "info"}"><i></i><span title="${esc(CR_label(k))}">${
+      esc(CR_label(k))}</span><b>${num(cnt[k])}건</b></div>`).join("") : "";
+  return stKp(J, T, `<div class="kp-v">${num(crn)}<small>건 걸림</small></div>
+    <p class="kp-note">${num(c.run.pages)}쪽을 돌았습니다 · ${esc(String(c.run.finished_at || "").slice(0, 10))}</p>
+    <div class="kp-pills">${pills}</div>${bars ? `<div class="kp-viz">${bars}</div>` : ""}`);
+}
+
 function renderCrawl(d) {
   CR_D = d; CR_N = CR_PAGE;
   CR_KIND = d.crawl_kinds || {};   // 이름표의 정본은 서버(collect_crawl.ISSUE_KIND)다
@@ -1265,7 +1680,11 @@ function renderCrawl(d) {
   stEyebrow("cr-eyebrow", has
     ? `${String(c.run.finished_at || "").slice(0, 10)} 크롤` : "");
   const crn = has ? CR_all().length : null;
-  stSec("crawl-sec", crn);
+  // 막대 = 문제가 걸린 쪽 수 / 돈 쪽 수 (한 쪽에 여러 갈래가 걸리므로 건수가 아니라 쪽 수로 센다)
+  const pgs = has ? +c.run.pages || 0 : 0;
+  const hitPages = has ? new Set(CR_all().map(r => r.url || "")).size : 0;
+  stSec("crawl-sec", crn, pgs > 0 ? {n: pgs, k: hitPages, t: `${num(pgs)}쪽 중 ${num(hitPages)}쪽에서`} : null);
+  $("kp-crawl").innerHTML = stKpCrawl(d);
   const seed = has && c.run.seed === "sitemap" ? "사이트맵을" : "홈에서 내부 링크를";
   $("cr-sub").innerHTML = !has
     ? "사이트를 한 바퀴 돌아 링크와 페이지 상태를 전수로 봅니다."
@@ -1352,7 +1771,8 @@ function renderPagePerf(d) {
     $("pgp-sub").textContent = "페이지 축으로 다시 합칠 실적이 이 수집본에 없습니다.";
     return $("pg-perf").innerHTML = PG_OLD_SNAP();
   }
-  stSec("pgp-sec", PG_PERF.filter(r => (r.dclk || 0) < 0).length);
+  const lostN = PG_PERF.filter(r => (r.dclk || 0) < 0).length;
+  stSec("pgp-sec", lostN, {n: PG_PERF.length, t: `페이지 ${num(PG_PERF.length)}개 중`});
   stEyebrow("pgp-eyebrow", d.gsc_prev
     ? `${d.gsc_prev} → ${String(d.gsc_date).slice(5)}` : `${d.gsc_date} 기준`);
   // (i) 는 부제 하나에 하나다 — 세 조각을 각자 달면 물음표가 줄줄이 선다.
@@ -1361,11 +1781,10 @@ function renderPagePerf(d) {
                      PG_GA4 ? `GA4 ${d.ga4_date} 기준으로 세션·전환 열도 붙였습니다.` : ""]);
   stTools("pgp-tools", `<span class="n">${num(PG_PERF.length)}개</span>
     <button class="go sec sm" onclick="pgPerfCsv()">CSV 내려받기</button>`);
-  $("pg-perf").innerHTML = stCard(table(
+  $("pg-perf").innerHTML = (table(
     PG_GA4 ? PG_PERF_HEAD.concat(PG_PERF_HEAD_GA4) : PG_PERF_HEAD,
     PG_PERF.map(r =>
-    `<tr><td class="pgurl"><a href="${esc(r.page)}" target="_blank"
-       rel="noopener">${esc(r.page)}</a></td>
+    `<tr><td class="pgurl">${stUrl(r.page, {link: true})}</td>
      <td class="num">${r.dclk == null ? "—" : (delta(r.dclk) || "0")}</td>
      <td class="num">${num(r.clicks)}</td>
      <td class="num">${num(r.impressions)}</td>
@@ -1402,7 +1821,8 @@ function renderPageDead(d) {
     $("pgd-sub").textContent = "크롤이 연 페이지 중 검색에서 통째로 빠진 것을 찾습니다.";
     return $("pg-dead").innerHTML = d.gsc_date ? PG_OLD_SNAP() : PG_NO_GSC();
   }
-  stSec("pgd-sec", PG_DEAD.length);
+  const crawlPages = +d.crawl.run.pages || 0;
+  stSec("pgd-sec", PG_DEAD.length, crawlPages > 0 ? {n: crawlPages, t: `크롤 ${num(crawlPages)}쪽 중`} : null);
   const asOf = `${stNw(esc(d.gsc_date))} 실적 × ` +
     `${stNw(esc(String(d.crawl.run.finished_at || "").slice(0, 10)))} 크롤`;
   if (!PG_DEAD.length) {
@@ -1418,9 +1838,8 @@ function renderPageDead(d) {
                 : "링크는 다 붙어 있으니 색인이나 수요 쪽을 봅니다.");
   stTools("pgd-tools", `<span class="n">${num(PG_DEAD.length)}개</span>
     <button class="go sec sm" onclick="pgDeadCsv()">CSV 내려받기</button>`);
-  $("pg-dead").innerHTML = stCard(table(PG_DEAD_HEAD, PG_DEAD.map(r =>
-    `<tr><td class="pgurl"><a href="${esc(r.url)}" target="_blank"
-       rel="noopener">${esc(r.url)}</a></td>
+  $("pg-dead").innerHTML = (table(PG_DEAD_HEAD, PG_DEAD.map(r =>
+    `<tr><td class="pgurl">${stUrl(r.url, {link: true})}</td>
      <td class="num">${r.depth ?? "—"}</td>
      <td class="num">${r.words == null ? "—" : num(r.words)}</td>
      <td class="num ${r.links_in ? "" : "pglow"}">${num(r.links_in)}</td>
@@ -1454,7 +1873,7 @@ function renderPageStarved(d) {
     $("pgs-sub").textContent = pgsAim;
     return $("pg-starved").innerHTML = d.gsc_date ? PG_OLD_SNAP() : PG_NO_GSC();
   }
-  stSec("pgs-sec", PG_STARVED.length);
+  stSec("pgs-sec", PG_STARVED.length, topn ? {n: topn, t: `노출 상위 ${num(topn)}개 중`} : null);
   if (!PG_STARVED.length) {
     stTools("pgs-tools", "");
     $("pgs-sub").innerHTML = `${stNw(esc(d.gsc_date))} 기준 · 노출 상위 ${num(topn)}개는 `
@@ -1469,8 +1888,8 @@ function renderPageStarved(d) {
          `${num(lim)}개 미만은 헤더·푸터·사이트맵에서만 걸린 상태로 봅니다.`);
   stTools("pgs-tools", `<span class="n">${num(PG_STARVED.length)}개</span>
     <button class="go sec sm" onclick="pgStarvedCsv()">CSV 내려받기</button>`);
-  $("pg-starved").innerHTML = stCard(table(PG_ST_HEAD, PG_STARVED.map(r =>
-    `<tr ${stRw(r.page)}><td class="pgurl">${esc(r.page)}</td>
+  $("pg-starved").innerHTML = (table(PG_ST_HEAD, PG_STARVED.map(r =>
+    `<tr ${stRw(r.page)}><td class="pgurl">${stUrl(r.page)}</td>
      <td class="num">${num(r.rank)}</td>
      <td class="num">${num(r.impressions)}</td>
      <td class="num">${num(r.clicks)}</td>
@@ -1565,7 +1984,7 @@ function renderPageNoConv(d) {
   $("pgc-sec").hidden = false;
   PG_NOCONV = d.zero_conv_pages || [];
   const rules = d.page_rules || {};
-  stSec("pgc-sec", PG_NOCONV.length);
+  stSec("pgc-sec", PG_NOCONV.length, PG_NOCONV.length ? {note: "클릭은 버는데 전환이 0"} : null);
   if (!PG_NOCONV.length) {
     stTools("pgc-tools", "");
     $("pgc-sub").innerHTML = `GA4 ${stNw(esc(d.ga4_date))} 기준 · 표본을 넘긴 페이지는 `
@@ -1582,8 +2001,8 @@ function renderPageNoConv(d) {
          `전환 0 이 우연일 수 있어서입니다.`);
   stTools("pgc-tools", `<span class="n">${num(PG_NOCONV.length)}개</span>
     <button class="go sec sm" onclick="pgNoConvCsv()">CSV 내려받기</button>`);
-  $("pg-noconv").innerHTML = stCard(table(PG_NOCONV_HEAD, PG_NOCONV.map(r =>
-    `<tr ${stRw(r.page)}><td class="pgurl">${esc(r.page)}</td>
+  $("pg-noconv").innerHTML = (table(PG_NOCONV_HEAD, PG_NOCONV.map(r =>
+    `<tr ${stRw(r.page)}><td class="pgurl">${stUrl(r.page)}</td>
      <td class="num">${num(r.clicks)}</td>
      <td class="num">${num(r.impressions)}</td>
      <td class="num">${num(r.sessions)}</td>

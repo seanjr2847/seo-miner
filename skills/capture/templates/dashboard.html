@@ -359,6 +359,10 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   .rail-foot { flex-direction:row; align-items:center; flex-wrap:wrap; gap:8px 12px;
     margin:0; padding:8px 16px 0; background:none; }
   .rail-foot .rfs { flex:1 1 100%; min-width:0; }
+  /* 수집 상태·다시 불러오기·내려받기는 화면 아래 바닥 줄로 보낸다 — 제목 위에 서면 첫 화면의
+     1/3 을 먹어 그 화면의 답(지표)이 fold 밖으로 밀렸다(390 에서 h1 이 y≈290). */
+  body { display:flex; flex-direction:column; }
+  .rail-foot { order:90; margin-top:var(--sp-5); padding:12px 16px 32px; }
   #meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; overflow-wrap:normal; }
   .hbtn, .railcard .rail-foot > .cmd { min-height:44px; }
 }
@@ -402,7 +406,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   color:var(--sub); display:inline-flex; align-items:center; min-height:var(--btn-h); }
 .vh-more > summary::-webkit-details-marker { display:none; }
 .vh-more > summary:hover { color:var(--accent); }
-.vh-more .vh-menu { position:absolute; z-index:5; top:100%; left:0; margin-top:4px;
+.vh-more .vh-menu { position:absolute; z-index:5; top:100%; right:0; margin-top:4px;
   display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:var(--sp-3);
   background:var(--card); border-radius:var(--r-in); box-shadow:var(--shadow-2); }
 .vh-more .vh-menu > * { white-space:nowrap; }
@@ -415,8 +419,8 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
    순간 다음 걸음이 화면에서 사라졌다. 심는 것은 window.nextStep 이다.
    박제본에서는 누를 서버가 없어 .acts 를 떼고 문장만 남긴다.
    면의 색조로 말한다: 다음 걸음은 옅은 녹청 면, 도는 중은 옅은 청회색 면. */
-.next { display:flex; align-items:center; gap:10px 20px; flex-wrap:wrap;
-  margin:var(--sp-5) 0 0; padding:16px 20px; border:0; border-radius:var(--r-card);
+.next { display:flex; align-items:center; gap:8px 16px; flex-wrap:wrap;
+  margin:var(--sp-4) 0 0; padding:12px 18px; border:0; border-radius:var(--r-card);
   background:var(--accent-wash); }
 .next p { margin:0; flex:1 1 min(320px,100%); font:500 var(--fs-2)/1.6 var(--sans);
   color:var(--ink); max-width:74ch; }
@@ -509,6 +513,18 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
    한글이라 등폭에 얹지 않는다(.none). 부제(.sub1, order:1) 밑에 선다. */
 .vh .vgrp { order:2; flex:0 0 100%; display:flex; flex-wrap:wrap; align-items:center;
   gap:6px var(--sp-2); margin:var(--sp-3) 0 0; }
+/* 머리는 제목·부제·행동 하나다. "마지막으로 잰 날 + 단계별 날짜"는 레일의 상태 카드와
+   줄 위 title 이 이미 말한다 — 12px 회색 글자가 제목과 한 줄에서 빽빽해 스캔이 안 됐다.
+   DOM 은 그대로 두고(groupHead 가 계속 짓는다) 보이지만 않게 한다. */
+.vh .vgrp .gname, .vh .vgrp .k, .vh .vgrp .ax { display:none; }
+@media (min-width:561px) {
+  .vh { align-items:center; }
+  .vh .vgrp { order:0; flex:0 1 auto; margin:0 0 0 auto; gap:4px var(--sp-3); justify-content:flex-end; }
+}
+/* 화면 위 수집일 알약 줄 — 레일 상태 카드가 갖는다. 과거 시점 경고(<b>)가 설 때만 남긴다. */
+.hax:not(:has(b)) { display:none; }
+.hax { padding-top:10px; }
+.topbar { margin-top:12px; }
 .vgrp .ax.none em { font-family:var(--sans); color:var(--sub); }
 /* 도는 중·대기 중은 실패가 아니다 — warn(본문의 실패·빠짐 색)을 쓰지 않는다. */
 .vgrp .gst { font:var(--micro); color:var(--accent); }
@@ -581,14 +597,19 @@ main > * { max-width:1120px; }
 
 /* ── 측정 요약: KPI 카드 한 줄 ─────────────────────────────── */
 .band { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:var(--gap); }
+/* 개요의 띠는 카드 수가 배포마다 셋~다섯이다 — 줄이 넘어가도 빈자리를 남기지 않게 카드가
+   남는 폭을 나눠 가진다(5장이 3+2 로 꺾여도 고아 없이 꽉 찬다). */
+#band.band { display:flex; flex-wrap:wrap; }
+#band.band > .m, #band.band > [data-sm-kpi] > .m { flex:1 1 190px; }
+#band.band > [data-sm-kpi] { display:contents; }
 .view > .band { margin-top:var(--sp-5); }
 .band .m { display:flex; flex-direction:column; min-width:0; padding:22px 24px;
   background:var(--card); border-radius:var(--r-card); box-shadow:var(--shadow); }
 @media (max-width:720px) {
   .band { grid-template-columns:repeat(2,1fr); }
+  #band.band > .m, #band.band > [data-sm-kpi] > .m { flex:1 1 calc(50% - var(--gap) / 2); }
   .band .m { padding:16px; }
-  /* 지표가 홀수면 마지막 칸이 왼쪽에 혼자 남고 오른쪽 절반이 빈다 — 그 줄만 전폭으로
-     펴서 격자가 도중에 끊긴 것처럼 보이지 않게 한다. */
+  /* 지표가 홀수면 마지막 칸이 왼쪽에 혼자 남고 오른쪽 절반이 빈다 — 그 줄만 전폭으로 편다. */
   .band .m:last-child:nth-child(odd) { grid-column:1 / -1; }
   .band .v { font-size:var(--fs-4); }
 }
@@ -654,6 +675,27 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:6px 0 4px; }
 .card { border:0; border-radius:var(--r-card); background:var(--card);
   padding:22px 24px; box-shadow:var(--shadow); min-width:0; }
 .card + .card { margin-top:var(--gap); }
+/* ── 카드 격자(공용) — 화면이 12열로 짤 때 쓰는 한 벌 ────────────────────────
+   .g12 가 격자 상자, 자식은 .c3~.c9·.c12 로 칸 수를 고른다. 화면 파일이 자기 id 로 따로
+   격자를 세운 곳(#view-x, .rkg, .hd-g …)은 그대로 둔다 — 그쪽 규칙이 id 라 이 규칙을 이긴다.
+   격자 안 카드는 형제 여백을 안 쓴다(칸 사이는 gap 이 준다). */
+.g12 { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:var(--gap); }
+.g12 > * { min-width:0; }
+.g12 > .card, .g12 > .card + .card, .view > .g12 > .card + .card { margin:0; }
+.g12 > .c3 { grid-column:span 3; } .g12 > .c4 { grid-column:span 4; }
+.g12 > .c5 { grid-column:span 5; } .g12 > .c6 { grid-column:span 6; }
+.g12 > .c7 { grid-column:span 7; } .g12 > .c8 { grid-column:span 8; }
+.g12 > .c9 { grid-column:span 9; } .g12 > .c12 { grid-column:1 / -1; }
+@media (max-width:1099px) {
+  .g12 > .c3, .g12 > .c4 { grid-column:span 6; }
+  .g12 > .c5, .g12 > .c7, .g12 > .c8, .g12 > .c9 { grid-column:1 / -1; }
+}
+@media (max-width:999px) { .g12 > .c6 { grid-column:1 / -1; } }
+@media (max-width:640px) { .g12 > * { grid-column:1 / -1; } }
+/* 이름 첫 글자 아바타 — 도메인·검색어 옆. 색은 --accent-wash 하나(글자 색으로 위계를 낸다). */
+.ini { flex:none; display:inline-grid; place-items:center; width:28px; height:28px;
+  border-radius:var(--r-in); background:var(--accent-wash); color:var(--accent);
+  font:650 var(--fs-1)/1 var(--sans); text-transform:uppercase; }
 .card > :first-child { margin-top:0; }
 .card > :last-child { margin-bottom:0; }
 /* 카드에 안 담긴 채 섹션 바로 밑에 서는 표 상자도 같은 면이다 — 뷰가 카드로 싸지 않은
@@ -763,7 +805,9 @@ td.num::before { font-family:var(--sans); }
 .empty.ok > b:first-child::before { content:"✓"; margin-right:6px; }
 /* 카드(면) 안의 빈 상태는 자기 면을 또 깔지 않는다 — 상자 안 상자가 된다. 카드가 곧
    면이라 글만 남기고, 색조는 제목 색(.ok·.err)이 말한다. */
-.card .empty, .tw .empty { background:transparent; padding:8px 0; margin:0; }
+.card .empty:not(.err):not(.ok), .tw .empty { background:transparent; padding:8px 0; margin:0; }
+/* 오류·정상 알림은 카드 안에서도 옅은 면을 유지한다 — 색조가 원인/상태를 말한다. */
+.card .empty.err, .card .empty.ok { padding:12px 14px; margin:0; border-radius:var(--r-in); }
 
 /* ── 표 살림: 긴 표를 실제로 읽을 수 있게 ─────────────────────
    시추공은 깊다 — 표가 40줄을 넘으면 머리글이 화면 밖으로 나간다. 머리글을 붙박고,
@@ -788,6 +832,8 @@ td.num::before { font-family:var(--sans); }
    아래 섹션에 못 닿았다). 세로는 페이지가, 가로 넘침만 상자가 맡는다.
    붙박이 머리글은 상자가 세로로 스크롤할 때만 붙으므로 여기서는 같이 사라진다. */
 @media (max-width:999px) { .tw.long { max-height:none; } }
+/* 카드 안 표는 스크롤 상자로 자르지 않는다 — 마지막 줄이 반쯤 걸려 보였다. 길이는 페이지가 진다. */
+.card .tw.long { max-height:none; }
 /* 옆으로 밀면 첫 열(검색어·페이지)이 같이 밀려 나가 숫자만 남는다 — 어느 줄의 숫자인지
    모르게 된다. 좁은 화면에서 넘치는 표만 첫 열을 붙박는다. 줄 강조는 tr 이 칠하므로
    붙박은 칸은 담는 상자의 바탕을 직접 갖는다(투명하면 밑으로 숫자가 비친다).
@@ -1172,6 +1218,7 @@ button.chip.on { color:var(--accent); background:var(--accent-wash); font-weight
 /* 안내 한 줄만 남았을 때 — 상자를 두르지 않는다(위 주석의 이유는 banSync 에). */
 #docban.thin { border:0; border-radius:0; padding:0; background:transparent;
   margin:24px 0 0; }
+#docban.thin .nx, #docban.thin .verdict { display:none; }
 #docban.thin .nx { margin-top:0; color:var(--sub); }
 #docban.thin .nx b { color:var(--ink); }
 /* 다음 한 걸음 — 이름표(무엇을 할 때인가)와 단계 이름(무엇을)을 갈라 놓는다.
@@ -2945,7 +2992,11 @@ window.chLine = (series, opt = {}) => {
   const aria = `${series.length}개 지점 추이 — 최근 ${String(last.x)} ${chVal(last.y, unit)}`;
   return chMount(T => ({type: "line",
     data: {labels: series.map(p => String(p.x)), datasets: [{data: ys,
-      borderColor: T.patina, borderWidth: 2, backgroundColor: T.wash, fill: "start", tension: 0,
+      borderColor: T.patina, borderWidth: 2, fill: "start", tension: .35, cubicInterpolationMode: "monotone",
+      backgroundColor: c => { const a = c.chart.chartArea;
+        if (!a) return T.wash;
+        const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom);
+        g.addColorStop(0, chA(T.patina, .22)); g.addColorStop(1, chA(T.patina, 0)); return g; },
       borderCapStyle: "round", borderJoinStyle: "round",
       pointRadius: series.map(p => p.mark ? 4 : 0), pointHoverRadius: 4,
       pointBackgroundColor: series.map(p => p.mark ? T.copper : T.patina),
@@ -3392,6 +3443,10 @@ function renderDates(d) {
     ? "<b>과거 시점을 보고 있습니다. 되돌린 것은 구글 실적뿐이고 아래 날짜는 최신입니다.</b>"
     : "") + (ax.length ? `<span class="k">마지막 수집</span>` + ax.join("") : "");
   $("axes").hidden = !ax.length && !past;
+  // 수집일 알약 줄은 화면 머리에서 걷었다(CSS: .hax:not(:has(b))). 정보는 레일 상태 카드가 갖는다 —
+  // 마우스를 올리면 축별 마지막 수집일이 나온다.
+  const axTxt = AXES.filter(([, key]) => d[key]).map(([name, key]) => `${name} ${d[key]}`).join(" · ");
+  $("meta").title = axTxt ? `마지막 수집 — ${axTxt}` : "";
 }
 
 // 첫 render() 가 자리표를 내리고 본문을 연다 — 이후 재렌더(SM.repaint 등)는
@@ -3556,6 +3611,9 @@ function groupHead(d) {
       vh.appendChild(el);
     }
     el.innerHTML = html;
+    // 넓은 화면의 머리에는 날짜가 둘까지만 서고(CSS), 전부는 이 줄에 마우스를 올리면 나온다.
+    el.title = clock.length ? "마지막으로 잰 날 — " + clock.map(st =>
+      `${stageName(st)} ${g.last[st] || "아직"}`).join(" · ") : "";
     if (more) el.appendChild(more);
   }
   grpPaint();
@@ -3715,8 +3773,9 @@ function banSync() {
   // 눈이 지표보다 배너를 먼저 읽는다.
   const heavy = !!b.querySelector("ul.must");
   b.classList.toggle("thin", !heavy);
-  b.hidden = !(b.querySelector(".verdict, ul, details") ||
-               (nx && !nx.hidden && nx.innerHTML.trim()));
+  // 막는 항목이 없으면(=준비 끝) 안내 줄은 서지 않는다 — "필수 준비는 끝났습니다 · 한 바퀴
+  // 완주"가 지표 위에서 화면 머리와 같은 말을 되풀이했다. 무엇을 눌러야 하는지는 띠와 레일이 말한다.
+  b.hidden = !(heavy || b.querySelector("details") || b.classList.contains("bad"));
 }
 
 /* 배너 항목을 "첫 문장 + 접은 나머지"로 가른다. 다섯 문장짜리 산문이 화면 맨 위에

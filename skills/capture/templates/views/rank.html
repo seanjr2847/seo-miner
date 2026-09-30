@@ -6,67 +6,211 @@
 </script>
 
 <style>
-/* ── 순위 추적: 시추 코어의 단면 ──────────────────────────────
-   순위는 깊이다. 1위가 지표면, 10위가 1페이지 바닥, 20위 아래는 암반,
-   못 찾은 건 그보다 더 아래다. 지층 막대가 그 단면이고, 표가 시추 기록이다.
-   상자는 셸의 면 카드 하나뿐이다 — 여기서 테두리·점선을 따로 만들지 않는다. */
-/* 지층 띠 글자는 12px 밑으로 내려가면 안 된다 — 뷰박스(1000)가 그대로 화면 폭이 되도록
-   최소 폭을 1000 으로 둔다(좁은 화면에서는 .logwrap 이 가로로 민다). 숫자는 표 자리만
-   맞추고(tabular-nums) 등폭 서체는 안 쓴다. */
-.rk-strata.log { min-width:1000px; }
-.rk-strata .n { font-family:var(--sans); font-size:var(--fs-2); font-weight:650;
-  font-variant-numeric:tabular-nums; }
-.rk-strata .lb { font-size:var(--fs-1); fill:var(--sub); font-family:var(--sans); }
-.rk-strata .edge { font-size:var(--fs-1); fill:var(--accent); font-family:var(--sans); }
-@keyframes rk-fade { from { opacity:0; } to { opacity:1; } }
-@media (prefers-reduced-motion: no-preference) {
-  .rk-strata .bar { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
-  .rk-strata .lbl { animation:rk-fade .55s .2s both; }
+/* ── 순위 추적: 카드 격자 ─────────────────────────────────────
+   이 화면의 주 질문은 "내 검색어가 지금 몇 위이고, 어디를 손대면 1페이지로 오르나"다.
+   그래서 첫 줄이 답이다: 왼쪽 큰 카드(손댈 자리)가 다음 걸음을, 오른쪽 카드(움직인 것)가
+   직전 대비 누가 오르고 내렸는지를 말한다. 그 밑으로 순위 깊이 분포 · 평균 · 검색어 표.
+   상자는 셸의 면 카드 하나뿐이다 — 테두리·점선·좌측 선을 따로 만들지 않고, 안쪽 구획은
+   --sunk 면과 여백으로 가른다. 새 클래스는 전부 #ranks 아래에서만 산다. */
+#ranks .rkhead { display:flex; align-items:center; justify-content:space-between;
+  gap:10px 20px; flex-wrap:wrap; margin:0 0 var(--gap); }
+#ranks .rk-cond { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0;
+  font:400 var(--fs-2)/1.6 var(--sans); color:var(--sub); }
+#ranks .rk-nb { white-space:nowrap; }
+#ranks .rkhead .acts { margin:0; }
+#ranks .rkg { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:var(--gap); }
+#ranks .rkg > .card, #ranks .rkg > .empty { grid-column:1 / -1; margin:0; }
+#ranks .rkg > .card.c5 { grid-column:span 5; }
+#ranks .rkg > .card.c7 { grid-column:span 7; }
+#ranks .rkg > .card.c8 { grid-column:span 8; }
+#ranks .rkg > .card.c4 { grid-column:span 4; }
+@media (max-width:1099px) {
+  #ranks .rkg > .card.c5, #ranks .rkg > .card.c7 { grid-column:1 / -1; }
 }
-/* 칩 앞 색 조각 — 막대의 어느 지층인지 눈으로 잇는다. */
-.rk-sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:8px; }
-.rk-sw.hatch { background:var(--sunk); box-shadow:inset 0 0 0 1px var(--rule); }
-/* 한 화면 안의 칸막이 — 괘선이 아니라 여백(48px)으로 가른다. 각 층의 머리(.sh)는
-   눈썹 자리에 그 층의 이름이 서므로 제목 크기로 키운다(h2 를 되풀이하는 말이 아니다). */
-.rk-part { margin-top:48px; }
-.rk-part .sh > .eyebrow { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
-/* 꺾이면 안 되는 묶음(날짜·기준일)은 통째로 다음 줄로 간다. */
-.rk-nb { white-space:nowrap; }
-/* 조회 비용은 눌러 보기 전에 알아야 한다 — 여기 있던 <details> 접이식 비용 안내는
-   결제 벽처럼 읽혔다. 이제 비용은 그 버튼과 같은 문장에 바로 선다. */
-/* 실패 상자와 그 밑 띠 사이는 카드 사이 간격과 같다. */
-#ranks > .empty.err { margin:0 0 var(--gap); }
-/* .score 는 폭 44px 블록이라 오른쪽 정렬 칸에서도 왼쪽에 붙는다 — 이 칸에서만 상자를
-   오른쪽으로 민다. 막대도 같은 폭으로 잘려 숫자 바로 밑에 선다. */
-.rk-sc { width:44px; margin-left:auto; }
-/* 가로로 넘치는 일은 셸의 table() 이 늘 두르는 .tw 가 맡는다 — 여기서 또 두르면
-   스크롤 상자가 둘 겹친다. */
+@media (max-width:999px) {
+  #ranks .rkg > .card.c8, #ranks .rkg > .card.c4 { grid-column:1 / -1; }
+}
+/* 카드 머리 한 벌 — 제목(16px 650) + 보조 설명(12px) 왼쪽, 범례·도구 오른쪽. */
+#ranks .rkc-h { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:8px 16px; flex-wrap:wrap; margin:0 0 16px; }
+#ranks .rkc-h h2 { margin:0; }
+#ranks .rkc-h p { margin:2px 0 0; font:400 var(--fs-1)/1.55 var(--sans); color:var(--sub);
+  max-width:60ch; overflow-wrap:anywhere; }
+#ranks .rk-lg { display:flex; gap:4px 14px; flex-wrap:wrap; font:500 var(--fs-1)/1.4 var(--sans);
+  color:var(--sub); padding-top:4px; }
+#ranks .rk-lg span { display:inline-flex; align-items:center; gap:6px; }
+/* 이름 첫 글자 아바타 — 검색어·도메인 옆의 스캔 손잡이. 색은 글자 코드로 네 갈래. */
+#ranks .rk-av { flex:none; display:inline-flex; align-items:center; justify-content:center;
+  width:28px; height:28px; border-radius:50%; font:650 var(--fs-1)/1 var(--sans);
+  font-style:normal; background:var(--accent-wash); color:var(--accent); }
+#ranks .rk-av.t1 { background:var(--info-wash); color:var(--info); }
+#ranks .rk-av.t2 { background:var(--warn-wash); color:var(--warn); }
+#ranks .rk-av.t3 { background:var(--sunk); color:var(--sub); }
+/* 구간 색점 — 순위 옆에서 어느 지층인지 색으로 잇는다(숫자가 뜻을 말하고 색은 거든다). */
+#ranks .rk-dot { display:inline-block; flex:none; width:10px; height:10px; border-radius:50%;
+  background:var(--accent); }
+#ranks .rk-dot.b-page1 { background:color-mix(in srgb, var(--accent) 45%, var(--card)); }
+#ranks .rk-dot.b-page2 { background:var(--sub); }
+#ranks .rk-dot.b-deep { background:var(--warn); }
+#ranks .rk-dot.b-none { background:var(--card); box-shadow:inset 0 0 0 2px var(--mute); }
+#ranks .rk-dot.prev { background:var(--card); box-shadow:inset 0 0 0 2px var(--mute); }
+#ranks .rk-dot.now { background:var(--sub); }
+
+/* ── 손댈 자리(히어로): 이 화면이 힘을 쓰는 한 장 ─────────────────── */
+#ranks .rk-hero { background:var(--accent-wash); display:flex; flex-direction:column; }
+#ranks .rk-hero.warn { background:var(--warn-wash); }
+#ranks .rk-hero .rkc-h p { color:var(--sub); }
+#ranks .rk-big { display:flex; align-items:baseline; gap:8px; margin:0 0 6px; color:var(--accent); }
+#ranks .rk-hero.warn .rk-big { color:var(--warn); }
+#ranks .rk-big b { font:650 var(--fs-5)/1.15 var(--sans); font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em; }
+#ranks .rk-big span { font:600 var(--fs-3)/1.3 var(--sans); }
+#ranks .rk-line { margin:0 0 16px; font:400 var(--fs-2)/1.6 var(--sans); color:var(--ink);
+  max-width:46ch; }
+#ranks .rk-hl { list-style:none; margin:0 0 18px; padding:0; display:grid; gap:6px; }
+#ranks .rk-hr, #ranks .rk-lr { display:grid; align-items:center; width:100%; text-align:left;
+  border:0; border-radius:var(--r-in); color:var(--ink); font:inherit; cursor:pointer; }
+#ranks .rk-hr { grid-template-columns:28px minmax(0,1fr) auto auto; gap:10px; padding:8px 12px;
+  background:var(--card); min-height:var(--btn-h); }
+#ranks .rk-hr:hover, #ranks .rk-lr:hover { background:color-mix(in srgb, var(--card) 40%, var(--sunk)); }
+#ranks .rk-hr:focus-visible, #ranks .rk-lr:focus-visible { outline:2px solid var(--accent);
+  outline-offset:2px; }
+#ranks .rk-hr .k { font:500 var(--fs-2)/1.4 var(--sans); word-break:keep-all;
+  overflow-wrap:anywhere; }
+#ranks .rk-hr .p { font:650 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; }
+#ranks .rk-hr .s { font:500 var(--fs-1)/1 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; min-width:32px; text-align:right; }
+#ranks .rk-hero .go { align-self:flex-start; margin-top:auto; }
+
+/* ── 이번에 움직인 것: 이전 → 지금 사다리 ───────────────────────────
+   행마다 같은 축(1위 ~ 가장 깊은 값)이라 줄끼리 길이를 견줄 수 있다. 오른 것은 녹청,
+   내린 것은 산화동 — 그러나 부호(+/−)와 "12위 → 6위" 글자가 뜻을 말하고 색은 거든다. */
+#ranks .rk-lad { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+#ranks .rk-lr { grid-template-columns:minmax(0,190px) minmax(0,1fr) 64px; gap:14px;
+  padding:10px 14px; background:var(--sunk); }
+#ranks .rk-lr .k { min-width:0; }
+#ranks .rk-lr .k b { display:block; font:500 var(--fs-2)/1.4 var(--sans); word-break:keep-all;
+  overflow-wrap:anywhere; }
+#ranks .rk-lr .k span { display:block; font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub);
+  font-variant-numeric:tabular-nums; }
+#ranks .rk-lr .d { justify-self:end; }
+#ranks .rk-tr { position:relative; height:20px; }
+#ranks .rk-z { position:absolute; left:0; top:0; bottom:0; border-radius:10px;
+  background:var(--accent-wash); }
+#ranks .rk-seg { position:absolute; top:8px; height:4px; border-radius:2px;
+  background:var(--accent); }
+#ranks .rk-lr.dn .rk-seg { background:var(--warn); }
+#ranks .rk-pt { position:absolute; top:4px; width:12px; height:12px; margin-left:-6px;
+  border-radius:50%; }
+#ranks .rk-pt.a { background:var(--card); box-shadow:inset 0 0 0 2px var(--mute); }
+#ranks .rk-pt.b { background:var(--accent); }
+#ranks .rk-lr.dn .rk-pt.b { background:var(--warn); }
+#ranks .rk-axis { display:grid; grid-template-columns:minmax(0,190px) minmax(0,1fr) 64px; gap:14px;
+  padding:0 14px 6px; font:500 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+#ranks .rk-axis div { position:relative; height:18px; }
+#ranks .rk-axis div span { position:absolute; top:0; white-space:nowrap; }
+#ranks .rk-more { margin:12px 0 0; font:400 var(--fs-1)/1.55 var(--sans); color:var(--sub); }
+@media (prefers-reduced-motion: no-preference) {
+  #ranks .rk-seg { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+}
+@media (max-width:600px) {
+  #ranks .rk-axis { display:none; }
+  #ranks .rk-lr { grid-template-columns:minmax(0,1fr) auto; row-gap:8px; }
+  #ranks .rk-lr .rk-tr { grid-column:1 / -1; grid-row:2; }
+}
+
+/* ── 순위 구간 분포: 지층 띠 ────────────────────────────────────────
+   순위는 깊이다. 1위가 지표면, 10위가 1페이지 바닥, 20위 아래는 암반, 못 찾은 건 그보다
+   더 아래다. 띠의 칸 너비가 그대로 비율이라 개수 축이 필요 없다. 도넛은 순서를 못 말해서
+   쓰지 않는다. */
+#ranks .rk-scale { position:relative; height:22px; font:500 var(--fs-1)/1.4 var(--sans);
+  color:var(--sub); }
+#ranks .rk-scale span { position:absolute; top:0; white-space:nowrap; }
+#ranks .rk-scale .end { right:0; }
+#ranks .rk-scale .edge { color:var(--accent); font-weight:600; transform:translateX(calc(-100% - 8px)); }
+#ranks .rk-scale .edge.flip { transform:translateX(8px); }
+#ranks .rk-strip { position:relative; display:flex; gap:3px; height:56px; }
+#ranks .rk-seg2 { min-width:6px; display:flex; align-items:center; justify-content:center;
+  border-radius:10px; font:650 var(--fs-3)/1 var(--sans); font-variant-numeric:tabular-nums;
+  color:var(--ink); overflow:hidden; }
+#ranks .rk-seg2.top3 { color:var(--accent-ink); }
+#ranks .rk-seg2.hatch { background:repeating-linear-gradient(45deg, var(--sunk) 0 5px, var(--line) 5px 7px);
+  color:var(--sub); }
+#ranks .rk-edgeline { position:absolute; top:-8px; bottom:-8px; width:2px; margin-left:-1px;
+  background:var(--accent); border-radius:1px; pointer-events:none; }
+#ranks .oppchips { margin:16px 0 0; display:flex; flex-wrap:wrap; gap:6px 0; }
+#ranks .oppchips .rk-pc { color:var(--sub); font-weight:500; font-variant-numeric:tabular-nums; }
+#ranks .rk-sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:2px; }
+#ranks .rk-sw.hatch { background:var(--sunk); box-shadow:inset 0 0 0 1px var(--rule); }
+@media (prefers-reduced-motion: no-preference) {
+  #ranks .rk-seg2 { animation:grow .55s cubic-bezier(.2,.7,.3,1) both; transform-origin:left; }
+}
+@media (max-width:999px) {
+  #ranks button.chip { min-height:44px; }
+}
+
+/* ── 평균·커버리지 ─────────────────────────────────────────────── */
+#ranks .rk-avg { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; margin:0 0 8px; }
+#ranks .rk-avg b { font:650 var(--fs-5)/1.15 var(--sans); font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em; }
+#ranks .rk-avg span { font:500 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#ranks .rk-avgd { margin:0 0 16px; min-height:24px; }
+#ranks .rk-cov { display:flex; flex-direction:column; }
+#ranks .rk-cov .rk-ring { margin-top:auto; }
+#ranks .rk-ring { display:flex; align-items:center; gap:16px; padding:14px 16px;
+  background:var(--sunk); border-radius:var(--r-in); }
+#ranks .rk-ring svg { flex:none; width:72px; height:72px; display:block; }
+#ranks .rk-ring .trk { stroke:var(--card); }
+#ranks .rk-ring .arc { stroke:var(--accent); }
+#ranks .rk-ring text { font:650 var(--fs-2) var(--sans); fill:var(--ink); }
+#ranks .rk-ring p { margin:0; font:400 var(--fs-2)/1.55 var(--sans); color:var(--sub); }
+#ranks .rk-ring p b { color:var(--ink); font-weight:650; font-variant-numeric:tabular-nums; }
+/* KPI 스트립 — 다섯 값. 0 인 칸은 숫자를 죽여 무게를 뺀다(없다는 것도 답이지만 크게 말할 일은 아니다). */
+#ranks .rk-kpis { grid-column:1 / -1; display:grid; gap:var(--gap);
+  grid-template-columns:repeat(5,minmax(0,1fr)); }
+#ranks .rk-kpi { margin:0; padding:18px 20px; display:flex; flex-direction:column; gap:4px; min-width:0; }
+#ranks .rk-kpi .l { font:500 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#ranks .rk-kpi .v { display:flex; align-items:baseline; gap:4px; margin:2px 0 4px; }
+#ranks .rk-kpi .v b { font:650 var(--fs-5)/1.15 var(--sans); font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em; }
+#ranks .rk-kpi .v span { font:500 var(--fs-2)/1.4 var(--sans); color:var(--sub); }
+#ranks .rk-kpi .n { margin:0; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
+#ranks .rk-kpi .gm { align-self:flex-start; }
+#ranks .rk-kpi .meter { margin:auto 0 0; max-width:none; }
+#ranks .rk-kpi.zero .v b { color:var(--mute); }
+#ranks .rk-kpi.k-up .v b { color:var(--up); }
+#ranks .rk-kpi.k-dn .v b { color:var(--dn); }
+#ranks .rk-kpi.k-up.zero .v b, #ranks .rk-kpi.k-dn.zero .v b { color:var(--mute); }
+@media (max-width:1199px) { #ranks .rk-kpis { grid-template-columns:repeat(6,minmax(0,1fr)); }
+  #ranks .rk-kpi { grid-column:span 2; } #ranks .rk-kpi:nth-child(n+4) { grid-column:span 3; } }
+@media (max-width:600px) { #ranks .rk-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #ranks .rk-kpi, #ranks .rk-kpi:nth-child(n+4) { grid-column:auto; }
+  #ranks .rk-kpi:last-child { grid-column:1 / -1; } }
+
+/* ── 검색어별 기록 표 ──────────────────────────────────────────── */
+#ranks .rkt .tools { margin:0 0 12px; }
 /* 검색어는 낱말째로 읽는다 — 좁은 화면에서 하이픈 뒤가 갈려 이름이 반토막 났다.
-   한 낱말이 칸보다 길 때만 낱말 안에서 끊는다. .kwcell 은 다른 화면도 쓰므로 여기서만.
-   검색어 칸이 남는 폭을 다 가지고, 숫자 칸은 제 글자만큼만 — 1120 폭에서 열이 양 끝으로
-   벌어지지 않는다. */
+   검색어 칸이 남는 폭을 다 가지고, 숫자 칸은 제 글자만큼만. */
 #rk-list .kwcell { word-break:keep-all; overflow-wrap:break-word; min-width:240px; }
 #rk-list td.num, #rk-list th.num { width:1%; white-space:nowrap; padding-left:24px; }
 /* 숫자는 등폭이 아니라 Pretendard 표 자리 맞춤이다(등폭은 URL·식별자·날짜에만). */
-#rk-list td.num { font-family:var(--sans); font-weight:600; }
-/* 검색어 자체는 아예 안 쪼갠다 — keep-all 은 한글 어절만 지킨다. 이름보다 칸이 좁으면
-   목록이 자기 상자 안에서 가로로 민다. */
+#rk-list td.num { font-family:var(--sans); font-weight:600; font-variant-numeric:tabular-nums; }
+#rk-list .rk-k { display:flex; align-items:flex-start; gap:12px; }
+#rk-list .rk-k .rk-av { margin-top:1px; }
+#rk-list .rk-k > div { min-width:0; }
+/* 검색어 자체는 아예 안 쪼갠다 — 이름보다 칸이 좁으면 목록이 자기 상자 안에서 가로로 민다. */
 #rk-list .kwq { white-space:nowrap; }
-/* 행 자체가 펼침 손잡이 — 표 안이라 <details> 를 못 쓴다(tr 사이에 넣을 자리가 없다).
-   손을 얹은 줄의 면(--sunk)은 셸의 tbody tr:hover 가 칠한다. */
+#rk-list .rk-pos { display:inline-flex; align-items:center; justify-content:flex-end; gap:8px; }
+/* .score 는 폭 44px 블록이라 오른쪽 정렬 칸에서도 왼쪽에 붙는다 — 이 칸에서만 상자를 민다. */
+.rk-sc { width:44px; margin-left:auto; }
+/* 행 자체가 펼침 손잡이 — 표 안이라 <details> 를 못 쓴다. */
 #rk-list tbody tr[role="button"] { cursor:pointer; }
 #rk-list tbody tr[role="button"]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-/* 표식은 이름과 한 덩어리다 — 칸에 걸면 좁은 화면에서 화살표만 윗줄에 남는다. */
 #rk-list tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--sub); }
 #rk-list tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
 </style>
 
 <section>
-  <div class="sh">
-    <p class="eyebrow lat">SERP</p>
-    <h2>순위 기록</h2>
-    <p class="sub" id="rk-sub"></p>
-  </div>
   <div id="ranks"></div>
 </section>
 
@@ -87,7 +231,7 @@ let RK_ST = "";
    셸 스크립트는 이 파일보다 뒤에 조립되므로 렌더 시점에만 부른다.
    행동 버튼도 셸이 배포에 맞게 고른다(window.act): 로컬은 명령 칩, 호스팅은 버튼. */
 const RK_next = (msg, acts) => window.nextStep &&
-  nextStep("rank", `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : ""));
+  nextStep("rank", msg ? `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : "") : "");
 // 명령 칩의 정본은 셸의 window.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg).
 // 예전에 여기 있던 폴백은 이름 없는 `/capture rank` 를 찍었고, 박제본을 받은 사람이
 // 그걸 복사하면 doctor 가 어느 사이트냐고 되묻는 명령이 됐다.
@@ -152,67 +296,205 @@ function RK_bands() {
      hit:r => r.pos != null && r.pos > p1 && r.pos <= edge},
     {k:"deep",  t:`${edge}위 밖`,        c:"var(--warn)", o:.55,
      hit:r => r.pos != null && r.pos > edge},
-    {k:"none",  t:"못 찾음",             c:"url(#rk-hatch)", o:1,
+    {k:"none",  t:"못 찾음",             c:"var(--mute)", o:1,
      hit:r => r.pos == null},
   ];
 }
 
 /* ── 지층 단면: 확인한 키워드를 깊이별로 가른 한 줄. 왼쪽이 지표면(1위),
-      오른쪽이 암반(미검출). 칸 너비가 그대로 비율이라 개수 축이 필요 없다. ── */
+      오른쪽이 암반(미검출). 칸 너비가 그대로 비율이라 개수 축이 필요 없다.
+      예전 SVG(뷰박스 1000)는 8열 카드에서 글자가 0.7배로 줄어 HTML 띠로 바꿨다 —
+      글자는 늘 제 크기(12px 밑으로 안 내려간다)이고 띠만 폭을 따라 늘고 줄어든다. ── */
 function RK_strata(bs, total) {
-  const W = 1000, BH = 44, T = 30, H = T + BH + 24;
-  let x = 0;
-  const segs = [];
-  for (const b of bs) {
-    if (!b.n) continue;
-    const w = b.n / total * W;
-    segs.push({...b, x, w});
-    x += w;
-  }
-  const p1w = segs.filter(s => s.k === "top3" || s.k === "page1")
-                  .reduce((a, s) => a + s.w, 0);
-  // 막대는 자라고 글자는 스며든다 — 글자를 같이 늘리면 애니메이션 동안 찌그러진다.
-  const bars = segs.map(s =>
-    `<g><rect x="${s.x.toFixed(1)}" y="${T}" width="${(s.w - 1.5).toFixed(1)}"
-        height="${BH}" fill="${s.c}" opacity="${s.o}"/>
-      <title>${esc(s.t)} · ${s.n}개 (${(s.n / total * 100).toFixed(0)}%)</title></g>`).join("");
-  const marks = segs.map(s => {
-    const cx = (s.x + s.w / 2).toFixed(1);
-    return (s.w >= 52
-      ? `<text class="n" x="${cx}" y="${T + BH / 2 + 5}" text-anchor="middle"
-           fill="${s.k === "none" ? "var(--sub)" : "var(--card)"}">${s.n}</text>` : "")
-      + (s.w >= 88
-      ? `<text class="lb" x="${cx}" y="${T + BH + 16}" text-anchor="middle"
-           >${esc(s.t)}</text>` : "");
+  const segs = bs.filter(b => b.n);
+  const p1n = segs.filter(s => s.k === "top3" || s.k === "page1").reduce((a, s) => a + s.n, 0);
+  const p1w = p1n / total * 100;
+  const cells = segs.map(s => {
+    const pct = s.n / total * 100;
+    const bg = s.k === "none" ? "" :
+      ` style="flex:${s.n} 1 0;background:color-mix(in srgb, ${s.c} ${Math.round(s.o * 100)}%, transparent)"`;
+    return `<div class="rk-seg2 ${s.k}${s.k === "none" ? " hatch" : ""}"${
+      s.k === "none" ? ` style="flex:${s.n} 1 0"` : bg}
+      title="${esc(s.t)} · ${s.n}개 (${pct.toFixed(0)}%)">${pct >= 6 ? s.n : ""}</div>`;
   }).join("");
-  // 1페이지 경계선 — 깊이 로그(키워드 화면)와 같은 문법이다.
-  const edge = p1w > 0 && p1w < W - 1
-    ? `<line x1="${p1w.toFixed(1)}" y1="${T - 10}" x2="${p1w.toFixed(1)}" y2="${T + BH + 4}"
-         stroke="var(--accent)" stroke-width="1"/>
-       <text class="edge" x="${(p1w - 7).toFixed(1)}" y="${T - 15}" text-anchor="end"
-         >1페이지 경계</text>` : "";
-  const label = bs.filter(b => b.n).map(b => `${b.t} ${b.n}개`).join(", ");
-  return `<div class="logwrap"><svg class="rk-strata log" viewBox="0 0 ${W} ${H}" role="img"
-      aria-label="확인한 ${total}개를 순위 구간별로 가른 띠. ${esc(label)}">
-    <defs><pattern id="rk-hatch" width="6" height="6" patternUnits="userSpaceOnUse"
-        patternTransform="rotate(45)">
-      <rect width="6" height="6" fill="var(--sunk)"/>
-      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--rule)" stroke-width="1.4"/>
-    </pattern></defs>
-    <text class="lb" x="0" y="${T - 15}">1위</text>
-    <text class="lb" x="${W}" y="${T - 15}" text-anchor="end">순위가 뒤로 →</text>
-    <g class="bar">${bars}</g><g class="lbl">${marks}</g>${edge}
-  </svg></div>`;
+  const showEdge = p1w > 0 && p1w < 99.5;
+  const label = segs.map(b => `${b.t} ${b.n}개`).join(", ");
+  return `<div class="rk-scale"><span>1위</span>${showEdge
+      ? `<span class="edge${p1w < 26 ? " flip" : ""}" style="left:${p1w.toFixed(1)}%">1페이지 경계</span>` : ""}
+      <span class="end">순위가 뒤로 →</span></div>
+    <div class="rk-strip" role="img" aria-label="확인한 ${total}개를 순위 구간별로 가른 띠. ${esc(label)}">${cells}${
+      showEdge ? `<i class="rk-edgeline" style="left:${p1w.toFixed(1)}%"></i>` : ""}</div>`;
 }
 
 // 지층 칩 = 목록 필터. 기회 화면의 kind 칩과 같은 부품·같은 동작이다.
-function RK_chips(bs) {
+function RK_chips(bs, total) {
   return `<div class="oppchips">${bs.filter(b => b.n).map(b =>
     `<button class="chip${RK_BAND === b.k ? " on" : ""}" onclick="RK_setBand('${b.k}')"
        aria-pressed="${RK_BAND === b.k}" title="${esc(b.t)}만 보기">
        <i class="rk-sw${b.k === "none" ? " hatch" : ""}"${b.k === "none" ? "" :
          ` style="background:${b.c};opacity:${b.o}"`}></i>${esc(b.t)}
-       <b>${b.n}</b></button>`).join("")}</div>`;
+       <b>${b.n}</b><span class="rk-pc">${Math.round(b.n / total * 100)}%</span></button>`).join("")}</div>`;
+}
+
+/* ── 카드 부품 ─────────────────────────────────────────────────────
+   아바타·구간 점·히어로·사다리·커버리지. 전부 화면이 이미 받은 데이터(d.ranks 등)로만
+   짓는다 — 새 필드를 요구하지 않는다. */
+function RK_av(k) {
+  const ch = [...String(k).trim()][0] || "?";
+  return `<i class="rk-av t${ch.codePointAt(0) % 4}" aria-hidden="true">${esc(ch.toUpperCase())}</i>`;
+}
+const RK_bandOf = r => (RK_bands().find(b => b.hit(r)) || {k: "none"}).k;
+
+// 검색어 하나를 표에서 그 줄만 남겨 펼친다 — 히어로·사다리 행이 누르는 자리.
+function RK_focus(i) {
+  const r = RK_ROWS[i];
+  if (!r) return;
+  RK_Q = r.keyword; RK_BAND = null; RK_ST = "all";
+  RK_paint();
+  const tr = $("rk-list").querySelector("tr[role=button]");
+  if (tr) RK_toggle(tr);
+  $("rk-tools").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+// 손댈 자리 — 사이트마다 답이 다르다: 문턱이 있으면 문턱, 없으면 20위 밖·못 찾음,
+// 전부 1페이지면 클릭 개선. 어느 데이터에서도 카드가 비지 않는다.
+function RK_hero(c) {
+  const byScore = (a, b) => RK_score(b) - RK_score(a) || (a.pos ?? 999) - (b.pos ?? 999);
+  const bs = RK_bands();
+  const pick = k => RK_ROWS.filter(bs.find(b => b.k === k).hit).sort(byScore);
+  let warn = false, tag, n, unit, line, rows, btn;
+  if (c.nEdge) {
+    tag = `${c.p1 + 1}~${c.edge}위 · 1페이지 문턱`;
+    n = c.nEdge; unit = "개가 문턱에 있습니다";
+    line = "한 걸음이면 1페이지입니다. 가장 적은 손으로 가장 크게 움직이는 자리입니다.";
+    rows = pick("page2");
+    btn = `<button class="go" onclick="RK_only('page2')">문턱 ${c.nEdge}개 보기</button>`;
+  } else if (c.nDeep + c.nNone) {
+    const k = c.nDeep >= c.nNone ? "deep" : "none";
+    warn = true;
+    tag = `${c.edge}위 밖 · 못 찾음`;
+    n = c.nDeep + c.nNone; unit = "개가 깊이 있거나 안 잡혔습니다";
+    line = "그 자리는 순위보다 그 검색어를 다루는 페이지가 있는지부터 봅니다.";
+    rows = pick(k);
+    btn = `<button class="go" onclick="RK_only('${k}')">${
+      k === "deep" ? `${c.edge}위 밖 ${c.nDeep}개` : `못 찾은 ${c.nNone}개`} 보기</button>`;
+  } else {
+    tag = "1페이지 안 · 클릭 늘리기";
+    n = c.onP1; unit = "개가 전부 1페이지 안입니다";
+    line = "남은 문제는 순위가 아니라 클릭입니다. 점수가 높은 검색어부터 title·설명을 다듬습니다.";
+    rows = RK_ROWS.filter(r => r.pos != null).sort(byScore);
+    btn = `<button class="go" onclick="RK_only(null)">점수 높은 순으로 보기</button>`;
+  }
+  const list = rows.slice(0, 5).map(r => {
+    const o = oppOf(r.keyword);
+    return `<li><button class="rk-hr" onclick="RK_focus(${RK_ROWS.indexOf(r)})"
+        title="이 검색어만 표에 남기고 펼칩니다">${RK_av(r.keyword)}
+      <span class="k">${esc(r.keyword)}</span>
+      <span class="p">${r.pos != null ? r.pos + "위" : "못 찾음"}</span>
+      <span class="s">${o && o.score != null ? o.score + "점" : "—"}</span></button></li>`;
+  }).join("");
+  return `<div class="card rk-hero c5${warn ? " warn" : ""}">
+    <div class="rkc-h"><div><h2>지금 손댈 자리</h2><p>${esc(tag)}</p></div></div>
+    <div class="rk-big"><b>${num(n)}</b><span>${esc(unit)}</span></div>
+    <p class="rk-line">${esc(line)}</p>
+    ${list ? `<ul class="rk-hl">${list}</ul>` : ""}${btn}</div>`;
+}
+
+// 이번에 움직인 것 — 이전 → 지금 사다리. 두 시점뿐이라 선 그래프 대신 줄마다 화살 막대다.
+function RK_moves(d, c) {
+  const noise = (RULES.rank_noise || 3) - 1;
+  if (!RK_HAS_PREV)
+    return `<div class="card c7"><div class="rkc-h"><div><h2>이번에 움직인 것</h2>
+      <p>확인일이 1회뿐이라 아직 변화가 없습니다.</p></div></div>
+      <div class="empty"><b>견줄 직전 확인이 없습니다</b>
+      <p>한 번 더 확인하면 어떤 검색어가 오르고 내렸는지 여기에 나옵니다.</p>
+      <div class="acts">${RK_act("rank", RK_run("rank"), false)}</div></div></div>`;
+  const mv = RK_ROWS.filter(r => RK_d(r) != null && !RK_flat(r) && r.pos != null && RK_prevPos(r) != null)
+    .sort((a, b) => Math.abs(RK_d(b)) - Math.abs(RK_d(a)));
+  let shown = mv.slice(0, 6);
+  const fall = mv.find(r => RK_d(r) < 0);
+  if (fall && !shown.includes(fall)) shown[shown.length - 1] = fall;    // 내린 것은 늘 보인다
+  const flatN = RK_ROWS.filter(r => RK_d(r) != null && RK_flat(r)).length;
+  const head = `<div class="rkc-h"><div><h2>이번에 움직인 것</h2>
+      <p><span class="rk-nb">${esc(d.rank_prev)}</span> 대비 · 오른 것 ${c.up}개 · 내린 것 ${c.down}개
+        · 보합 ${flatN}개(±${noise}칸). 추이 그래프는 확인일이 3회 쌓이면 그립니다.</p></div>
+      <div class="rk-lg"><span><i class="rk-dot prev"></i>직전</span>
+        <span><i class="rk-dot now"></i>지금</span></div></div>`;
+  if (!shown.length)
+    return `<div class="card c7">${head}<div class="empty"><b>순위가 눈에 띄게 움직인 검색어가 없습니다</b>
+      <p>±${noise}칸 안의 흔들림은 보합으로 셉니다. 전부 그 안에 있었습니다.</p></div></div>`;
+  const p1 = c.p1;
+  const xmax = Math.max(c.edge, ...shown.map(r => Math.max(r.pos, RK_prevPos(r))));
+  const f = v => ((v - 1) / (xmax - 1));
+  const at = v => `calc(6px + (100% - 12px) * ${f(v).toFixed(4)})`;
+  const rows = shown.map(r => {
+    const a = RK_prevPos(r), b = r.pos, dn = RK_d(r) < 0;
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    return `<li><button class="rk-lr${dn ? " dn" : ""}" onclick="RK_focus(${RK_ROWS.indexOf(r)})"
+        aria-label="${esc(r.keyword)}: ${a}위에서 ${b}위로, ${Math.abs(RK_d(r))}칸 ${dn ? "내렸습니다" : "올랐습니다"}"
+        title="이 검색어만 표에 남기고 펼칩니다">
+      <span class="k"><b>${esc(r.keyword)}</b><span>${a}위 → ${b}위</span></span>
+      <span class="rk-tr" aria-hidden="true"><i class="rk-z" style="width:calc(6px + (100% - 12px) * ${f(p1).toFixed(4)} + 6px)"></i>
+        <i class="rk-seg" style="left:${at(lo)};width:calc((100% - 12px) * ${(f(hi) - f(lo)).toFixed(4)})"></i>
+        <i class="rk-pt a" style="left:${at(a)}"></i><i class="rk-pt b" style="left:${at(b)}"></i></span>
+      <span class="d">${RK_dCell(r)}</span></button></li>`;
+  }).join("");
+  const rest = mv.length - shown.length;
+  return `<div class="card c7">${head}
+    <div class="rk-axis"><span></span><div><span style="left:0">1위</span><span style="left:${(f(p1) * 100).toFixed(1)}%;transform:translateX(-50%)">1페이지 경계 ${p1}위</span><span style="right:0">${xmax}위</span></div><span></span></div>
+    <ul class="rk-lad">${rows}</ul>
+    ${rest > 0 ? `<p class="rk-more">움직임이 큰 ${shown.length}개만 보입니다. 나머지 ${rest}개는 아래 표의 Δ 열에 있습니다.</p>` : ""}</div>`;
+}
+
+// KPI 스트립 다섯 장 — 1페이지 안 · 문턱 · 오른 것 · 내린 것 · 20위 밖·못 찾음.
+// 오른/내린은 직전 확인이 있어야 뜻이 있다: 없으면 "—" 와 이유를 말한다.
+function RK_kpis(c) {
+  const N = RK_ROWS.length || 1;
+  const bar = (n, lab) => `<div class="meter" role="img" aria-label="${esc(lab)}"><i style="width:${(n / N * 100).toFixed(1)}%"></i></div>`;
+  const card = (cls, label, n, sub, pill, meter) => `<div class="card rk-kpi ${cls}${n === 0 ? " zero" : ""}">
+    <span class="l">${label}</span><div class="v"><b>${n == null ? "—" : num(n)}</b>${n == null ? "" : "<span>개</span>"}</div>
+    ${pill || ""}<p class="n">${sub}</p>${meter || ""}</div>`;
+  const pct = n => `<span class="gm">전체의 ${Math.round(n / N * 100)}%</span>`;
+  const mv = (n, kind) => RK_HAS_PREV ? card(kind, kind === "k-up" ? "오른 것" : "내린 것", n,
+    `${esc(c.prevDate)} 대비 ±${(RULES.rank_noise || 3) - 1}칸 밖으로 움직인 검색어`,
+    n ? `<span class="gm ${kind === "k-up" ? "gm-up" : "gm-down"}">${kind === "k-up" ? "+" : "−"}${n}</span>` : `<span class="gm">변화 없음</span>`)
+    : card(kind, kind === "k-up" ? "오른 것" : "내린 것", null, "견줄 직전 확인 없음");
+  return `<div class="rk-kpis">
+    ${card("", "1페이지 안", c.onP1, `${c.p1}위 안. 확인한 ${RK_ROWS.length}개 기준`, pct(c.onP1), bar(c.onP1, `확인한 ${RK_ROWS.length}개 중 ${c.onP1}개가 1페이지 안`))}
+    ${card("", "1페이지 문턱", c.nEdge, `${c.p1 + 1}~${c.edge}위. 한 걸음이면 1페이지`, pct(c.nEdge), bar(c.nEdge, `문턱 ${c.nEdge}개`))}
+    ${mv(c.up, "k-up")}${mv(c.down, "k-dn")}
+    ${card("", `${c.edge}위 밖·못 찾음`, c.nDeep + c.nNone, `밖 ${c.nDeep}개 · 못 찾음 ${c.nNone}개`, pct(c.nDeep + c.nNone), bar(c.nDeep + c.nNone, `${c.edge}위 밖·못 찾음 ${c.nDeep + c.nNone}개`))}
+  </div>`;
+}
+
+// 평균·커버리지 — 평균 순위 한 숫자, 확인한 만큼의 링, 구간별 개수.
+function RK_cover(d, c, capped) {
+  const both = RK_ROWS.filter(r => r.pos != null && RK_prevPos(r) != null);
+  let pill = "";
+  if (RK_HAS_PREV && both.length) {
+    const now = both.reduce((a, r) => a + r.pos, 0) / both.length;
+    const was = both.reduce((a, r) => a + RK_prevPos(r), 0) / both.length;
+    const x = was - now;
+    pill = Math.abs(x) < 0.05 ? `<span class="gm">직전과 같습니다</span>`
+      : `<span class="gm ${x > 0 ? "gm-up" : "gm-down"}">직전보다 ${Math.abs(x).toFixed(1)}칸 ${
+          x > 0 ? "올랐습니다" : "내렸습니다"}</span>`;
+  }
+  const tracked = Math.max(d.kw_active || 0, RK_ROWS.length);
+  const frac = tracked ? RK_ROWS.length / tracked : 0;
+  const R = 30, C = 2 * Math.PI * R;
+  const ring = `<svg viewBox="0 0 72 72" role="img"
+      aria-label="추적 ${tracked}개 중 ${RK_ROWS.length}개를 이 화면에서 봅니다">
+      <circle class="trk" cx="36" cy="36" r="${R}" fill="none" stroke-width="9"/>
+      <circle class="arc" cx="36" cy="36" r="${R}" fill="none" stroke-width="9" stroke-linecap="round"
+        stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 36 36)"/>
+      <text x="36" y="41" text-anchor="middle">${Math.round(frac * 100)}%</text></svg>`;
+  return `<div class="card c4 rk-cov"><div class="rkc-h"><div><h2>평균 순위</h2>
+      <p>순위에 잡힌 ${c.ranked}개의 평균입니다. 못 찾은 검색어는 뺍니다.</p></div></div>
+    <div class="rk-avg"><b>${c.avg != null ? c.avg : "—"}</b><span>${c.avg != null ? "위" : ""}</span></div>
+    <div class="rk-avgd">${pill}</div>
+    <div class="rk-ring">${ring}<p>확인한 <b>${RK_ROWS.length}</b>개 / 추적 <b>${num(tracked)}</b>개${
+      capped ? `<br>나머지 ${num(tracked - RK_ROWS.length)}개는 키워드 화면에 있습니다.` : ""}</p></div>
+  </div>`;
 }
 
 // 기회 점수 — 없는 행은 −1 로 뒤로 민다. 색인은 셸의 render() 가 이미 세워 뒀다.
@@ -395,12 +677,13 @@ function RK_row(r, i) {
   const o = oppOf(r.keyword);
   const top = (RK_PAGES[r.keyword] || [])[0];
   // 종류·근거를 접힌 행에도 둔다 — 펼쳐야만 "왜"가 나오면 목록에서 고를 수가 없다.
-  const cells = [`<td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${
-      oppWhy(o)}</td>`,
+  const cells = [`<td class="kwcell"><div class="rk-k">${RK_av(r.keyword)}<div><span class="kwq">${
+      esc(r.keyword)}</span>${oppWhy(o)}</div></div></td>`,
     `<td class="num">${o ? `<div class="rk-sc">${oppScore(o)}${oppMeter(o)}</div>`
       : `<span class="muted" title="아직 기회 목록에 없는 검색어입니다">—</span>`}</td>`,
-    `<td class="num">${r.pos != null ? r.pos
-      : `<span class="muted" title="이번 조회에서 못 찾았습니다">밖</span>`}</td>`];
+    `<td class="num"><span class="rk-pos"><i class="rk-dot b-${RK_bandOf(r)}" aria-hidden="true"></i>${
+      r.pos != null ? r.pos
+      : `<span class="muted" title="이번 조회에서 못 찾았습니다">밖</span>`}</span></td>`];
   if (RK_HAS_PREV)
     cells.push(`<td class="num muted">${p != null ? p : "—"}</td>`,
       `<td class="num">${RK_dCell(r)}</td>`);
@@ -431,14 +714,14 @@ function RK_list() {
     heads.push(">이전?직전 확인일의 순위입니다. 지금 순위에 Δ를 되돌린 값입니다",
       `>Δ?올라간 칸수입니다. ±${(RULES.rank_noise || 3) - 1}칸까지는 노이즈로 보고 보합으로 적습니다`);
   heads.push(">노출?이 검색어로 노출이 가장 큰 페이지의 노출 수입니다. 같은 순위라도 규모는 다릅니다");
-  $("rk-list").innerHTML = `<div class="card">${table(heads, list.map(RK_row))}</div>`;
+  $("rk-list").innerHTML = table(heads, list.map(RK_row));
 }
 
 // 목록·칩·도구줄을 한 번에 다시 그린다. 찾기 칸을 갈아치우면 포커스를 잃으므로
 // 글자를 칠 때는(RK_find) 아래 목록만 다시 그린다.
 function RK_paint() {
   const bs = RK_bands().map(b => ({...b, n: RK_ROWS.filter(b.hit).length}));
-  $("rk-strata").innerHTML = RK_strata(bs, RK_ROWS.length) + RK_chips(bs);
+  $("rk-strata").innerHTML = RK_strata(bs, RK_ROWS.length) + RK_chips(bs, RK_ROWS.length);
   $("rk-tools").innerHTML = `
     <input type="search" value="${esc(RK_Q)}" oninput="RK_find(this.value)"
       placeholder="검색어로 찾기" aria-label="검색어 찾기">
@@ -486,9 +769,9 @@ VIEW("rank", function (d) {
   const grab = k => (nt.match(new RegExp(k + "=([\\w.-]+)")) || [])[1] || "";
   const DEV = {desktop: "데스크톱", mobile: "모바일"};
   const errN = +grab("errors") || 0;
-  // 직전 확인일은 계기판의 [내린 것]이 이미 이름으로 말한다 — 여기서 또 적지 않는다.
-  const cond = [d.rank_date && `${d.rank_date} 조회`,
-    DEV[grab("device")] || grab("device")].filter(Boolean).join(" · ");
+  const condItems = [d.rank_date && `${d.rank_date} 조회`,
+    DEV[grab("device")] || grab("device")].filter(Boolean);
+  const cond = condItems.map(t => `<span class="rk-nb">${esc(t)}</span>`).join("");
   /* 누를 것이 있어야 참인 구절은 .live 로 감싼다 — 박제본에는 서버가 없어 셸이
      그 구절과 버튼을 함께 뗀다. 남는 문장만으로 "지금 상태"가 읽혀야 한다. */
   const live = s => `<span class="live">${s}</span>`;
@@ -499,80 +782,47 @@ VIEW("rank", function (d) {
         <p>${live("다시 확인하면 실패한 검색어부터 이어서 채워집니다.")}</p>
         <div class="acts">${RK_act("rank", RK_run("rank"), false)}</div></div>`
     : "";
+  // 카드 안 빈 상태 — 원인 한 줄과 다음 걸음 하나.
+  const emptyCard = html => `<div class="rkg">${errBox}<div class="card">
+    <div class="empty">${html}</div></div></div>`;
 
   viewSub("rank", "추적 검색어가 구글 결과에서 지금 몇 위인지 봅니다.");
 
   if (!RK_ROWS.length) {
-    $("rk-sub").innerHTML = cond ? `<span class="rk-nb">${esc(cond)}</span>` : "";
+    $("ranks").innerHTML = (cond ? `<div class="rkhead"><p class="rk-cond" id="rk-sub">${cond}</p></div>` : "");
     // 추적 중인 키워드가 0개면 확인할 대상 자체가 없다 — 그런데도 초록 [순위 확인]을
     // 앞세우면 눌러도 조회할 것이 없다. 그때는 키워드를 추가하는 것이 유일한 다음
     // 걸음이고, 그 버튼이 이 화면의 주요 행동이 된다.
     if (!d.kw_active) {
-      RK_next("추적 중인 키워드가 없습니다. " +
-        live("키워드 화면에서 추적할 검색어를 추가하면 순위를 확인할 수 있습니다."),
-        RK_goKw(true));
-      $("ranks").innerHTML = errBox + `<div class="empty">
-        <b>추적 중인 키워드가 없습니다</b>
+      RK_next("");   // 카드가 같은 말과 같은 버튼을 든다 — 띠를 따로 세우지 않는다
+      $("ranks").innerHTML += emptyCard(`<b>추적 중인 키워드가 없습니다</b>
         <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다. 순위 확인은
           추적할 검색어를 정한 뒤의 일입니다.</p>
-        <div class="acts">${RK_goKw()}</div></div>`;
+        <div class="acts">${RK_goKw(true)}</div>`);
       return;
     }
     // 빈 화면도 다음 걸음을 말한다. 다만 한 번도 조회한 적이 없으면 순위 제공자가
     // 아직 없다는 뜻이라, 조회부터 권하면 눌러도 실패한다 — 그때는 연결을 가리킨다.
     // 조회 기록(runs)이 이 화면이 연결 여부를 알 수 있는 유일한 자리다.
     // 설정 화면이 없는 배포에서는 키를 서버가 대므로 조회가 그 자리를 대신한다.
-    /* 다음 걸음을 말하는 자리는 띠 하나다. 여태 띠와 빈 상태가 같은 문장("연결하면
-       … 채워집니다")과 같은 버튼([순위 제공자 연결])을 각각 들고 있어서, 한 화면에
-       같은 말이 세 번 섰다. 빈 상태는 이제 **지금 상태**만 말한다. */
     // 비용은 버튼을 누르기 전에, 같은 문장 안에서 말한다 — <details> 뒤에 접어
     // 두면 초록 버튼만 먼저 보이고 비용은 한 번 더 눌러야 나와 결제 벽처럼 읽힌다.
     const costLine = `추적 중인 검색어 ${num(d.kw_active)}개만큼 제공자 조회 비용이 붙습니다.`;
-    if (run)
-      RK_next("지난 조회에서 잡힌 순위가 없습니다. " +
-        live("다시 확인하면 검색어마다 지금 몇 위인지 잡힙니다. "
-          + costLine),
-        RK_act("rank", RK_run("rank")));
-    else
-      RK_next("구글 결과의 실제 순위는 아직 재지 않았습니다. " +
-        live(RK_hasSetup()
-          ? "순위 제공자를 연결하면 추적 검색어마다 지금 몇 위인지 채워집니다."
-          : `한 번 확인하면 추적 검색어마다 지금 몇 위인지 채워집니다. ${costLine}`),
-        RK_setup() || RK_act("rank", "순위 확인"));
-    $("ranks").innerHTML = errBox + `<div class="empty">
+    RK_next("");
+    // 이 카드 안에도 같은 다음 걸음이 선다 — 띠가 걷혀도 빈 화면이 막다른 길이 되지 않게.
+    const nextBtn = run ? RK_act("rank", RK_run("rank")) : (RK_setup() || RK_act("rank", "순위 확인"));
+    $("ranks").innerHTML += emptyCard(`
       <b>${run ? "이번 조회에서 잡힌 순위가 없습니다" : "순위를 아직 확인하지 않았습니다"}</b>
-      <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다.</p>
-      <div class="acts">${RK_goKw()}</div></div>`;
+      <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다.
+        ${live(costLine)}</p>
+      <div class="acts">${nextBtn}${RK_goKw()}</div>`);
     return;
   }
 
-  // 조회 조건(어느 날, 어느 제공자, 어느 기기)은 섹션 부제에 선다.
-  // 평균 순위는 여기 산다 — 계기판 자리는 손댈 묶음(문턱·오른 것·내린 것)이 가져간다.
-  const RANKED = RK_ROWS.filter(r => r.pos != null);
-  const AVG = RANKED.length
-    ? (RANKED.reduce((a, r) => a + r.pos, 0) / RANKED.length).toFixed(1) : null;
-  $("rk-sub").innerHTML = [`검색어 ${RK_ROWS.length}개`,
-    AVG && `순위에 잡힌 ${RANKED.length}개 평균 ${AVG}위`, cond].filter(Boolean)
-    .map(t => `<span class="rk-nb">${esc(t)}</span>`).join(" · ");
-  $("ranks").innerHTML = errBox + `
-    <div class="band" id="rk-band"></div>
-    <div class="rk-part">
-      <div class="sh">
-        <p class="eyebrow">순위 구간</p>
-        <p class="sub" id="rk-trend"></p>
-      </div>
-      <div class="card" id="rk-strata"></div>
-    </div>
-    <div class="rk-part">
-      <div class="sh">
-        <p class="eyebrow">검색어별 기록</p>
-        <p class="sub" id="rk-cap"></p>
-      </div>
-      <div class="tools" id="rk-tools"></div>
-      <div id="rk-list"></div>
-    </div>`;
-
-  const ranked = RANKED;
+  // 평균 순위는 잡힌 것만으로 잰다(못 찾은 것은 순위가 없다).
+  const ranked = RK_ROWS.filter(r => r.pos != null);
+  const avg = ranked.length
+    ? (ranked.reduce((a, r) => a + r.pos, 0) / ranked.length).toFixed(1) : null;
   const p1 = RULES.page1 || 10, edge = RULES.striking_hi || 20;
   const onP1 = ranked.filter(r => r.pos <= p1).length;
   const nEdge = ranked.filter(r => r.pos > p1 && r.pos <= edge).length;   // 1페이지 문턱
@@ -583,50 +833,40 @@ VIEW("rank", function (d) {
     return v != null && !RK_flat(r) && f(v);
   }).length;
   const up = moved(v => v > 0), down = moved(v => v < 0);
-  const noPrev = "견줄 직전 확인 없음";
-  // 계기판은 "손댈 묶음"으로 세운다 — 문턱·오른 것·내린 것이 먼저 보여야 한다.
-  $("rk-band").innerHTML = [
-    ["1페이지 안", num(onP1), `${p1}위 안 · 확인한 ${RK_ROWS.length}개 중`],
-    ["1페이지 문턱", num(nEdge), `${p1 + 1}~${edge}위 · 한 걸음이면 1페이지`],
-    ["오른 것", RK_HAS_PREV ? `<span class="${up ? "up" : ""}">${up}</span>` : "—",
-      RK_HAS_PREV ? `±${(RULES.rank_noise || 3) - 1}칸은 보합으로 셉니다` : noPrev],
-    ["내린 것", RK_HAS_PREV ? `<span class="${down ? "down" : ""}">${down}</span>` : "—",
-      RK_HAS_PREV ? `<span class="rk-nb">${esc(d.rank_prev)}</span> 대비` : noPrev],
-    [`${edge}위 밖·못 찾음`, num(nDeep + nNone), "페이지가 있는지부터 봅니다"],
-  ].map(([l, v, b]) => `<div class="m"><div class="v">${v}</div>
-    <div class="l">${l}</div><div class="b">${b}</div></div>`).join("");
-
-  RK_paint();
-
-  // 다음 행동 띠 — 화면 하나에 하나. 내려간 것이 있으면 그 사실을 먼저 말하고,
-  // 그다음에 지금 가장 크게 움직일 묶음을 가리킨다(그 묶음만 남기는 버튼과 함께).
-  const fell = down ? `직전 확인보다 ${down}개가 내려갔습니다. ` : "";
-  if (nEdge) {
-    RK_next(fell +
-      `1페이지 문턱에 ${nEdge}개가 있습니다. 가장 적은 손으로 움직이는 자리입니다.`,
-      `<button class="go" onclick="RK_only('page2')">문턱 ${nEdge}개 보기</button>` +
-      RK_act("rank", RK_run("rank"), false));
-  } else if (nDeep + nNone) {
-    const k = nDeep >= nNone ? "deep" : "none";
-    RK_next(fell + `${nDeep + nNone}개가 ${edge}위 밖이거나 검색에 안 잡혔습니다. ` +
-      "그 자리는 순위보다 페이지가 있는지부터 봅니다.",
-      `<button class="go" onclick="RK_only('${k}')">${
-        k === "deep" ? `${edge}위 밖 ${nDeep}개` : `못 찾은 ${nNone}개`} 보기</button>` +
-      RK_act("rank", RK_run("rank"), false));
-  } else {
-    RK_next(fell +
-      `확인한 ${RK_ROWS.length}개가 전부 1페이지 안입니다. 남은 문제는 순위가 아니라 클릭입니다.`,
-      RK_act("rank", RK_run("rank")));
-  }
-
-  // 추이 선은 확인일이 3회는 쌓여야 그린다 — 2점을 잇는 선은 추세가 아니다.
-  $("rk-trend").textContent = RK_HAS_PREV
-    ? "추이 그래프는 확인일이 3회 쌓이면 그립니다."
-    : "확인일이 1회뿐이라 아직 변화가 없습니다.";
-
+  const c = {prevDate: d.rank_prev || "직전 확인", p1, edge, onP1, nEdge, nDeep, nNone, up, down, avg, ranked: ranked.length};
   // 둘째 문장(펼침이 쓰는 점검 기준일)은 툴팁으로 접는다 — 목록을 훑는 데 필요한
   // 말이 아니라, 펼쳐 본 뒤에 궁금해지는 말이다.
   const capped = RK_ROWS.length >= 30 && (d.kw_active || 0) > RK_ROWS.length;
+
+  // 머리: 조회 조건 한 줄 + 주 행동 하나. 실패 알림이 이미 다시 확인 버튼을 들고 있으면
+  // 같은 버튼을 또 세우지 않는다.
+  $("ranks").innerHTML = `
+    <div class="rkhead"><p class="rk-cond" id="rk-sub"><span class="rk-nb">검색어 ${
+      RK_ROWS.length}개</span>${cond}</p>
+      ${errN ? "" : `<div class="acts">${RK_act("rank", RK_run("rank"), true)}</div>`}</div>
+    <div class="rkg">${errBox}
+      ${RK_kpis(c)}
+      ${RK_hero(c)}
+      ${RK_moves(d, c)}
+      <div class="card c8">
+        <div class="rkc-h"><div><h2>순위 구간 분포</h2>
+          <p>확인한 ${RK_ROWS.length}개를 순위 깊이로 나눴습니다. 칩을 누르면 아래 표가 그 구간만 남깁니다.</p></div></div>
+        <div id="rk-strata"></div>
+      </div>
+      ${RK_cover(d, c, capped)}
+      <div class="card rkt">
+        <div class="rkc-h"><div><h2>검색어별 기록</h2><p id="rk-cap"></p></div></div>
+        <div class="tools" id="rk-tools"></div>
+        <div id="rk-list"></div>
+      </div>
+    </div>`;
+
+  RK_paint();
+
+  // 다음 행동 띠는 세우지 않는다 — 같은 말을 손댈 자리 카드가 하고, 다시 확인 버튼은 머리에
+  // 하나뿐이다. 이전 화면이 남긴 띠가 있으면 걷는다(셸 계약: 빈 html 이 띠를 뗀다).
+  RK_next("");
+
   $("rk-cap").innerHTML = esc(capped
     ? `추적 검색어 ${num(d.kw_active)}개 중 ${RK_ROWS.length}개까지 이 화면에 옵니다.`
     : `기회 점수가 높은 것부터 봅니다.`)
