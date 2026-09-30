@@ -106,6 +106,10 @@ TOOLS = (
     ("pi",       "pi",          "pi",       ["pi", "{prompt}"]),
 )
 TERMINALS = (("orca", "Orca"), ("system", "시스템 터미널"))
+# 이번 달 할 일(play)의 [PR 만들기]가 헤드리스로 돌리는 도구 — 위 TOOLS 의 id 하나다.
+# 창을 여는 도구(고른 도구)와 다르다: 사람 없이 브랜치·커밋·PR 까지 끝내야 해서 비대화형
+# 실행과 권한 허용 목록이 있는 도구만 된다. 명령줄은 dashboard 쪽 play_pr.argv 한 자리가 짓는다.
+PR_TOOL = "claude"
 # 저장 자리 — dashboard.KEY_FIELDS 가 이 셋을 그대로 받고 값은 위 표의 id 만 받는다.
 MODE_ENV, TOOL_ENV, TERMINAL_ENV = "SEOMINER_MODE", "SEOMINER_TOOL", "SEOMINER_TERMINAL"
 

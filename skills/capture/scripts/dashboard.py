@@ -39,6 +39,7 @@ import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 
 import gen_prompts  # noqa: E402  (AI 질문 갈래 정본 — 매니페스트가 이걸 실어 보낸다)
 import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 — 한 벌)
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
+import play_pr    # noqa: E402  (이번 달 할 일 → PR — 로컬 대시보드의 [PR 만들기])
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
@@ -2260,6 +2261,15 @@ LOCAL_ROUTES = {
     # 이 경로가 없다(그 화면은 안내만 그린다).
     ("POST", "/api/setup/run-tool"):
         lambda project, query, body: _by_ok(run_tool(body)),
+    # 이번 달 할 일(play)을 PR 로 — 같은 까닭으로 로컬 전용이다. 이 PC 에서 Claude Code 를
+    # 헤드리스로 띄우고(POST), 도는 동안 화면이 상태를 묻는다(GET). 원격 사이트여도
+    # 프록시하지 않는다 — play 만 호스팅에서 받아 오고 PR 은 이 PC 에서 만든다.
+    ("POST", "/api/plays/apply"):
+        lambda project, query, body: _by_ok(play_pr.apply(body, **_PLAY_SITE)),
+    ("GET", "/api/plays/apply"):
+        lambda project, query, body: _by_ok(play_pr.status(
+            project, _int_or_none(query.get("id")),
+            record=_PLAY_SITE["record"], mark=_PLAY_SITE["mark"])),
 }
 LOCAL_ONLY_GET = {path for method, path in LOCAL_ROUTES if method == "GET"}
 LOCAL_ONLY_POST = {path for method, path in LOCAL_ROUTES if method == "POST"}
@@ -2510,6 +2520,54 @@ def _system_terminal(argv: list[str], line: str, cwd: Path) -> None:
         subprocess.Popen(["x-terminal-emulator", "-e", *argv], cwd=str(cwd))
 
 
+def _site_data(project: str) -> dict:
+    """그 사이트의 화면 페이로드 — 원격 사이트면 호스팅 것을 받아 온다.
+
+    기회(run_tool)도 할 일(play_pr)도 서버가 이미 써 둔 것을 그대로 쓴다 — 여기서
+    다시 짓지 않는다. 원격 판정은 remote.owns 하나다.
+    """
+    if remote.owns(project):
+        return remote.api("GET", "/api/data", params={"project": project}) or {}
+    return payload(project)
+
+
+def _int_or_none(v) -> int | None:
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _play_record(project: str, body: dict) -> None:
+    """PR 하나 = 작업 기록 하나(묶인 기회마다). 본문 꼴은 /api/creation 그대로라, 원격
+    사이트면 호스팅의 그 창구로 보내고(createdb._record_remote 와 같다) 이 PC 의
+    사이트면 같은 본체(record_creation_route)를 부른다."""
+    if remote.owns(project):
+        remote.api("POST", "/api/creation", json=body)
+    else:
+        record_creation_route(body)
+
+
+def _play_mark(project: str, play_id: int) -> None:
+    """play 를 applied 로. 이 PC 의 Brain 만 — 호스팅 사이트의 play 상태는 호스팅이
+    갖는데 그걸 바꾸는 창구가 아직 없다. 그 사이트의 '만들었다'는 작업 기록(위)과
+    이 PC 의 일 파일(play_pr 의 play-<id>.json, 화면이 GET 으로 읽는다)이 말한다."""
+    if remote.owns(project):
+        return
+    conn = db.connect()
+    try:
+        pid = db.get_project(conn, project)["id"]
+        conn.execute("UPDATE plays SET status='applied' WHERE id=? AND project_id=?",
+                     (int(play_id), pid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# play_pr 에 넘기는 갈래 셋 — 로컬/원격을 여기서 고르고 play_pr 은 판정을 다시 안 한다.
+_PLAY_SITE = {"load": _site_data, "record": _play_record, "mark": _play_mark}
+
+
 def run_tool(body: dict) -> dict:
     """POST /api/setup/run-tool 본체 — 기회 하나를 도구로 연다.
 
@@ -2550,8 +2608,7 @@ def run_tool(body: dict) -> dict:
     # 요청문은 서버가 이미 써 둔 것을 그대로 쓴다(brief.attach) — 여기서 다시 짓지
     # 않는다. 원격 사이트의 기회는 호스팅이 갖고 있으므로 거기서 받아온다.
     try:
-        data = (remote.api("GET", "/api/data", params={"project": project})
-                if remote.owns(project) else payload(project))
+        data = _site_data(project)
     except db.ProjectNotFound as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:                      # 원격이 죽었거나 토큰이 끊겼거나
