@@ -53,7 +53,10 @@ import serp_adapter  # noqa: E402
 
 # 모델 — 수정안은 긴 한국어 문안이라 판정용 작은 모델(collect_gap.ROLE_MODEL)과 따로 둔다.
 PLAY_MODEL = "anthropic/claude-sonnet-5.5"
-PLAY_MAX_TOKENS = 12000
+PLAY_MAX_TOKENS = 32000     # 12000 에서 theotherskin 4묶음 중 3묶음이 잘렸다(추론 토큰도 여기서 센다) —
+                            # 넉넉히 두고, 답 길이는 아래 PLAY_SECTIONS·PLAY_DRAFT_CHARS 로 묶는다
+PLAY_SECTIONS = 5           # 넣을 구간 상한
+PLAY_DRAFT_CHARS = 700      # 구간 초안 하나의 길이 상한(글자)
 PLAY_TIMEOUT = 300          # 긴 답 한 번 — 판정용 기본(TIMEOUTS["openrouter"])보다 넉넉히
 PLAY_MAX = 4                # 한 번에 내는 할 일 수
 PLAY_SERP_N = 3             # 묶음마다 직접 여는 상위 글 수
@@ -323,6 +326,8 @@ def prompt(g: dict, d: dict, ev: dict) -> str:
         f"- 문안(title·meta·H1·H2·초안·앵커)은 {lang_name} 로, 설명(summary·why·trust·expected)은 "
         f"한국어로 씁니다. 길이: title {t_max}자 이내, meta description {d_max}자 이내.",
         "- title/meta/h1 의 now 는 증거의 our 값을 그대로 옮깁니다(없으면 빈 문자열). 지어내지 않습니다.",
+        f"- 길이 상한: sections 최대 {PLAY_SECTIONS}개, 초안 하나는 {PLAY_DRAFT_CHARS}자 이내, why·links 는 "
+        "각 5개 이내, trust 는 4개 이내. 상한을 넘기면 답이 잘려 버려집니다.",
         "- sections 는 증거의 gaps(상위 글에는 있고 우리엔 없는 소제목)와 요청문의 '만들어 줄 것'에서 "
         "고릅니다. 초안에는 우리가 확인할 수 없는 수치·효능·후기를 넣지 않습니다 — 필요하면 "
         "[확인 필요] 로 자리만 둡니다.",
@@ -367,7 +372,7 @@ def clean_result(got) -> dict:
         "sections": [{"h2": s(x.get("h2")), "draft": str(x.get("draft") or "").strip(),
                       "for": strs(x.get("for"))}
                      for x in (got.get("sections") if isinstance(got.get("sections"), list) else [])
-                     if isinstance(x, dict) and (x.get("h2") or x.get("draft"))],
+                     if isinstance(x, dict) and (x.get("h2") or x.get("draft"))][:PLAY_SECTIONS],
         "links": [{"from": s(x.get("from")), "anchor": s(x.get("anchor"))}
                   for x in (got.get("links") if isinstance(got.get("links"), list) else [])
                   if isinstance(x, dict) and (x.get("from") or x.get("anchor"))],
@@ -815,6 +820,12 @@ def _selfcheck() -> None:
     r, _ = run(dry_run=True, force=True)
     assert r.skipped and len(asks) == n_ask, "dry-run 인데 AI 를 불렀다"
     assert parse_content([]) is None and parse_content([{"items": []}]) is None
+    # 답 길이 상한 — 프롬프트가 말하고, 정리가 넘친 구간을 자른다(12000 토큰에서 4묶음 중 3이 잘렸다)
+    assert f"sections 최대 {PLAY_SECTIONS}개" in prompt(
+        {"page": "https://s.kr/x", "keywords": ["가"],
+         "opps": [{"id": 1, "kind": "striking_distance", "target": "가", "brief": {"body": "요청문"}}]}, d, {"our": {}, "serp": [], "aio": [], "gaps": []}),         "프롬프트에 답 길이 상한이 없다"
+    many = clean_result({"sections": [{"h2": f"h{i}", "draft": "d"} for i in range(9)]})
+    assert len(many["sections"]) == PLAY_SECTIONS, many["sections"]
     assert gaps(["관리 방법"], [["관리 방법 안내", "가격"], ["관리방법", "가격"]]) == ["가격"]
 
     # ── 6. 페이로드 — d.plays 꼴
