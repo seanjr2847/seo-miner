@@ -4448,6 +4448,49 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
     return None
 
 
+def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """콘텐츠 공백 → 근거였던 도메인이 **이제 경쟁사가 아니다**(판정이 판매 채널·포털로 뺐거나
+    표에서 지웠다). 이번 적재에 다시 안 나온 기회만 여기 온다 — 지금의 경쟁사 격차로도 안
+    섰다는 뜻이다. 근거 경쟁사가 여전히 경쟁사면 판단하지 않는다(_NO_RESOLVE 의 옛 이유 —
+    그 경쟁사 수집이 실패해 줄이 빠진 것일 수 있다 — 가 그대로 산다).
+    gucci: 판정 전에 캔 lfmall.co.kr 의 격차 16건이 기회로 남아 영영 안 닫혔다."""
+    o = conn.execute("SELECT reasoning FROM opportunities WHERE project_id=? AND kind='content_gap'"
+                     " AND target=?", (pid, target)).fetchone()
+    m = re.search(r"경쟁 도메인 (\S+)", (o[0] if o else "") or "")
+    if not m:
+        return None
+    dom = host_of(m.group(1))
+    if not dom or dom in gap_rival_set(conn, pid):
+        return None
+    role = conn.execute("SELECT role FROM competitors WHERE project_id=? AND domain=?",
+                        (pid, dom)).fetchone()
+    what = ROLES.get(role[0]) if role and role[0] else None
+    return (f"근거였던 {dom} 은(는) " + (f"{what}(으)로 판정돼 경쟁사가 아닙니다" if what
+                                     else "더는 경쟁사 목록에 없습니다")
+            + " — 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
+
+
+def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """깨진 백링크 → 그 뒤 수집이 이 주소의 **응답 코드**를 적었고, 그게 깨짐이 아니다.
+    is_broken=0 만으로는 닫지 않는다(_NO_RESOLVE 에 있던 이유 — 필드가 안 온 것과 살아 있는
+    것을 못 가른다). 코드(to_status)가 적혀 있을 때만 말한다: 403·429 는 크롤러 차단이라
+    처음부터 깨진 링크가 아니었고(gucci 의 홈·/us/en/ 이 그랬다), 2xx·3xx 는 살아 있다."""
+    import collect_page
+    d = conn.execute("SELECT MAX(checked_date) FROM backlinks WHERE project_id=?", (pid,)).fetchone()[0]
+    if not d or not _after_day(d, since):
+        return None
+    codes = {r[0] for r in conn.execute(
+        "SELECT to_status FROM backlinks WHERE project_id=? AND checked_date=? AND url_to=?",
+        (pid, d, target))}
+    if not codes or None in codes or 0 in codes or any(c >= 400 and c not in collect_page.BLOCK_STATUS
+                                                       for c in codes):
+        return None
+    if codes <= set(collect_page.BLOCK_STATUS):
+        return (f"이 주소는 크롤러를 막았을 뿐입니다(응답 {', '.join(map(str, sorted(codes)))}) — "
+                f"깨진 링크가 아닙니다 (백링크 {d} 기준)")
+    return f"이 주소가 응답합니다(응답 {', '.join(map(str, sorted(codes)))}) (백링크 {d} 기준)"
+
+
 def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """AI 크롤러 차단 → 그 뒤에 끝난 크롤이 가져온 robots.txt 가 그 봇을 안 막는다.
     원문에 User-agent 줄이 하나도 없으면 robots.txt 가 아니다(200 으로 온 오류 페이지)
@@ -4496,6 +4539,8 @@ _RESOLVERS = {
     "aio_exposure": _resolve_aio,
     "backlink_prospect": _resolve_prospect,
     "ai_bot_blocked": _resolve_ai_bot,
+    "content_gap": _resolve_content_gap,
+    "backlink_broken": _resolve_backlink_broken,
 }
 # 자동 해소에서 뺀 종류와 그 이유 — 규칙을 세울 수 없거나, 세우면 살아 있는 것을 닫는다.
 _NO_RESOLVE = {
@@ -4510,12 +4555,8 @@ _NO_RESOLVE = {
                     "올랐다고 템플릿을 찍은 것이 아니다",
     "coverage": "대상이 클러스터이고 그 구성은 키워드 큐레이션(켜기·끄기·재분류)으로 바뀐다 — "
                 "비었다는 것이 다룬 것인지 뺀 것인지 모른다",
-    "content_gap": "경쟁사별로 따로 받는 기록이라 한 경쟁사 수집이 실패하면 그 줄이 빠진다 — "
-                   "남은 줄이 전부 shared 여도 우리를 이기는 경쟁사가 빠진 것일 수 있다",
     "crawl_issue": "크롤 상한에 안 든 주소는 안 보이고, 관계형 문제(중복·상호 참조)는 짝이 "
                    "크롤돼야 잡힌다 — 이번 크롤에 문제가 없다는 것이 고쳐졌다는 뜻이 아니다",
-    "backlink_broken": "is_broken=0 은 '살아 있음'과 '필드가 안 왔음'(API 기본값)을 가르지 "
-                       "못한다 — 응답 모양이 바뀌면 깨진 링크 전부가 한꺼번에 닫힌다",
 }
 
 
@@ -4536,6 +4577,10 @@ RESOLVE_WHEN = {
     "aio_exposure": "다음 순위 조회에서 구글 AI 요약이 우리 링크를 인용하면",
     "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
+    "content_gap": "근거였던 도메인이 경쟁사 판정에서 빠지면(판매 채널·포털) — 경쟁사가 여전히 "
+                   "경쟁사면 따로 닫히지 않으니 할 일을 마치면 직접 [완료]를 누릅니다",
+    "backlink_broken": "다음 백링크 수집이 이 주소의 응답 코드를 2xx·3xx(살아 있음) 또는 403·429"
+                       "(크롤러 차단 — 깨진 링크가 아니었다)로 적으면",
 }
 assert set(RESOLVE_WHEN) == set(_RESOLVERS), set(RESOLVE_WHEN) ^ set(_RESOLVERS)
 assert not set(_RESOLVERS) & set(_NO_RESOLVE)

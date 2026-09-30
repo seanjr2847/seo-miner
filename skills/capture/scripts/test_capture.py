@@ -1464,6 +1464,10 @@ def test_resolve_stale_leaves_open_without_confirming_data():
                  " 'MOBILE', '모바일만', 5, 100, 0, 5.0)", (pid,))
     conn.execute("INSERT INTO link_intersect(project_id, checked_date, domain, hits, we_have)"
                  " VALUES(?, '2026-08-05', 'old.com', 2, 1)", (pid,))
+    # 근거 경쟁사가 여전히 경쟁사 / 링크 대상의 응답 코드가 안 왔다(0) — 둘 다 판단하지 않는다
+    conn.execute("INSERT INTO competitors(project_id, domain) VALUES(?, 'still-rival.kr')", (pid,))
+    conn.execute("INSERT INTO backlinks(project_id, checked_date, url_from, url_to, is_broken, to_status)"
+                 " VALUES(?, '2026-08-20', 'https://a.kr/', 'https://me.kr/x', 0, 0)", (pid,))
     # 색인: 색인됨 기록이 기준 시각 전의 것뿐 / 크롤: robots.txt 가 오류 페이지(규칙 없음)
     conn.execute("INSERT INTO gsc_index_status(project_id, checked_date, url, verdict, coverage_state)"
                  " VALUES(?, '2026-08-05', '/still', 'PASS', 'Submitted and indexed')", (pid,))
@@ -1479,6 +1483,8 @@ def test_resolve_stale_leaves_open_without_confirming_data():
                               k("rank_decay", "되찾은 검색어"), k("ctr_gap", "1페이지 밖 클릭"),
                               k("device_gap", "모바일만"), k("backlink_prospect", "old.com"),
                               k("content_gap", "경쟁사 수집 실패"),
+                              dict(k("content_gap", "아직 경쟁사"), reasoning="경쟁 도메인 still-rival.kr 순위 2위"),
+                              k("backlink_broken", "https://me.kr/x"),
                               k("index_blocked", "/still"), k("ai_bot_blocked", "OAI-SearchBot")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE project_id=? AND target='끊긴 질문'", (pid,))
     conn.commit()
@@ -1514,6 +1520,10 @@ def test_resolve_stale_closes_on_positive_confirmation():
                        "VALUES(?, '뺀 검색어', 0) RETURNING id", (pid,)).fetchone()[0]
     conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present, aio_cited)"
                  " VALUES(?, '2026-08-20T00:00:00Z', 4, 1, 0)", (off,))
+    # 근거 경쟁사가 판매 채널로 판정됐다 / 깨졌다던 링크 대상이 크롤러 차단(403)이었다
+    conn.execute("INSERT INTO competitors(project_id, domain, source, role) VALUES(?, 'mall.kr', 'auto_labs', 'channel')", (pid,))
+    conn.execute("INSERT INTO backlinks(project_id, checked_date, url_from, url_to, is_broken, to_status)"
+                 " VALUES(?, '2026-08-20', 'https://a.kr/', 'https://me.kr/', 0, 403)", (pid,))
     pq = conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, '인용된 질문') "
                       "RETURNING id", (pid,)).fetchone()[0]
     with db.run(conn, pid, "ai") as r:
@@ -1554,7 +1564,9 @@ def test_resolve_stale_closes_on_positive_confirmation():
         k("backlink_prospect", "got.com"), k("ai_bot_blocked", "OAI-SearchBot"),
         k("ai_bot_blocked", "GPTBot"), k("striking_distance", "밀려난 검색어"),
         k("striking_distance", "노출 준 검색어"), k("striking_distance", "스냅샷에 없는 검색어"),
-        k("index_blocked", "/moved"), k("aio_exposure", "뺀 검색어")])
+        k("index_blocked", "/moved"), k("aio_exposure", "뺀 검색어"),
+        dict(k("content_gap", "채널 격차"), reasoning="경쟁 도메인 mall.kr 순위 3위. 나는 9위로 밀려 있습니다"),
+        k("backlink_broken", "https://me.kr/")])
     conn.execute("UPDATE opportunities SET status='acked' WHERE id=?", (ids["인용된 질문"],))
     cid = db.record_creation(conn, pid, "a.md", opportunity_id=ids["올라간 검색어"])
     work_at = conn.execute("SELECT created_at FROM creations WHERE id=?", (cid,)).fetchone()[0]
@@ -1570,7 +1582,9 @@ def test_resolve_stale_closes_on_positive_confirmation():
     resolved = {t for t, r in st.items() if r["status"] == db.OPP_RESOLVED}
     assert resolved == {"aio인용", "인용된 질문", "클릭 회복", "모바일 회복", "/fixed",
                         "got.com", "OAI-SearchBot", "GPTBot", "밀려난 검색어", "노출 준 검색어",
-                        "스냅샷에 없는 검색어", "/moved", "뺀 검색어"}, st
+                        "스냅샷에 없는 검색어", "/moved", "뺀 검색어", "채널 격차", "https://me.kr/"}, st
+    assert "판매 채널" in st["채널 격차"]["status_reason"], st["채널 격차"]
+    assert "크롤러" in st["https://me.kr/"]["status_reason"], st["https://me.kr/"]
     assert "추적" in st["뺀 검색어"]["status_reason"], st["뺀 검색어"]
     # 조건을 벗어나 닫힌 것은 '상단에 들었다'가 아니라 벗어났다고 말한다
     assert "25.0위" in st["밀려난 검색어"]["status_reason"], st["밀려난 검색어"]
