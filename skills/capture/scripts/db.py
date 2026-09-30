@@ -1560,12 +1560,18 @@ def profile_read(conn: sqlite3.Connection, name: str) -> dict:
     cfg = project_cfg(conn, pr)
     brand = _joined(cfg.get("brand_aliases"))
     dom = pr["domain"] or ""
+    import scoring               # 늦은 import: 확인된 경쟁사 판정의 정본
     return {"brand_aliases": brand, "tools": _joined(cfg.get("tools")),
             # 씨앗·경쟁사는 설정 줄이 아니라 **행**이 정본이다 — 사본을 들면 화면이 지운
             # 값이 다음 열람에 되살아난다(예전 yaml 이 그랬다).
             "seed_keywords": ", ".join(seed_keywords(conn, pr["id"])),
             "competitors_manual": ", ".join(manual_competitors(conn, pr["id"])),
-            "brand_suggestion": "" if brand else (dom.split(".")[0] if dom else "")}
+            "brand_suggestion": "" if brand else (dom.split(".")[0] if dom else ""),
+            # 칸 옆 안내 한 줄의 재료 — 값이 아니라 사실이다(저장되지 않는다).
+            # 확인된 경쟁사가 0 이면 경쟁사 칸이, 서치콘솔이 붙었는데 씨앗이 비면 씨앗 칸이
+            # 무엇이 달라지는지 말한다(억지로 채우라고 하지 않는다).
+            "rivals_confirmed": len(scoring.confirmed_rivals(conn, pr["id"], dom)),
+            "gsc_connected": bool(pr["gsc_property"])}
 
 
 def profile_save(conn: sqlite3.Connection, name: str, profile) -> dict:

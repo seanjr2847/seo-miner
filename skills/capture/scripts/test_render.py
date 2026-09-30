@@ -156,6 +156,7 @@ GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — R
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
+TRIAGE_EN = "english triage termz9"   # 심사: 다른 언어(영어) 미판정 — 처음엔 사이트 언어만 보인다
 GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
 AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
 AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321" 로 서야 한다
@@ -249,7 +250,14 @@ MUSTS = [
     (r'<tr class="trrow[^"]*"[^>]*data-key="[^"]+"[^>]*>(?:(?!</tr>).)*' + re.escape(TRIAGE_KW)
      + r'(?:(?!</tr>).)*\(\+1\)',
      "심사 화면이 검색어를 한 줄로 묶어 안 그렸다(변형 +1)"),
-    (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>1</b>', "심사 화면 상단 카운트가 안 나왔다"),
+    # 카운트는 거르기와 무관한 전체다(요약이 거짓말하면 안 된다) — 영어 줄까지 2.
+    (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>2</b>', "심사 화면 상단 카운트가 안 나왔다"),
+    # 다국어 — 섞여 있으면 처음엔 사이트 언어(한국어)만 보이고, 언어 거르개가 영어 줄 수를
+    # 말하며, 가린 줄이 있다고 부제가 말한다(안 말하면 영어 줄이 없는 것으로 읽힌다).
+    (r'<select[^>]*aria-label="언어로 거르기"(?:(?!</select>).)*<option value="en"[^>]*>영어 \(1\)</option>',
+     "심사 화면에 언어 거르개(영어 1줄)가 없다 — 다국어 검색어가 한 줄로 섞인다"),
+    ("!" + TRIAGE_EN, "심사 화면이 처음부터 다른 언어 줄을 사이트 언어 줄과 섞어 그렸다"),
+    (r'id="tr-qsub"[^>]*>(?:(?!</p>).)*한국어만 봅니다\(다른 언어 1줄', "언어로 가린 줄 수를 부제가 안 말한다"),
     # 기회 묶음 — 같은 페이지의 AI 요약 기회 셋이 개요에서 카드 **하나**(id 셋)로 서고,
     # 접힌 줄에 변형이, 펼침 패널에 묶은 이유가 그려진다.
     # 울타리가 </details> 가 아니라 다음 카드인 이유: 패널 안에 요청문 상자(<details
@@ -637,7 +645,8 @@ def _axes(conn, pid: int) -> None:
     # 심사에 남는 미판정 검색어 — 띄어쓰기 변형 둘이 한 줄이어야 한다
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,status) VALUES(?,?,?,?,'new')",
-        [(pid, "striking_distance", TRIAGE_KW, 77), (pid, "aio_exposure", TRIAGE_KW.replace("Z", " Z"), 40)])
+        [(pid, "striking_distance", TRIAGE_KW, 77), (pid, "aio_exposure", TRIAGE_KW.replace("Z", " Z"), 40),
+         (pid, "aio_exposure", TRIAGE_EN, 30)])
     # 기회 묶음 — AI 요약 기회 셋이 GSC 에서 같은 페이지로 들어온다(최신 수집일 06-01).
     grp = [GROUP_KW, f"{GROUP_KW} 비교", f"{GROUP_KW} 가격"]
     conn.executemany(

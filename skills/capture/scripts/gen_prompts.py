@@ -58,8 +58,13 @@ MIN_LEN, MAX_LEN = 6, 120
 #   0    — 생성기가 아니라 사람이 직접 적은 질문(db.add_ai_prompts 의 기본값). 구버전 아님
 #   1    — (기록 없음) 업종·GSC 검색어만 보고 짓던 판
 #   2    — 사이트 페이지 목록(offers)을 재료로 받고, 질문마다 겨냥(aim)을 적는 판
+#   3    — 재료를 **수요 순으로 고르게** 싣는 판. 2판은 페이지 목록을 주소 가나다순으로
+#          앞 24개만 잘라 실었고(latest_page_audits 가 ORDER BY url 이다) 주제도 이름순
+#          15개였다 — gucci 는 /beauty… 가 /handbags·/women 보다 앞이라 질문 7개 중 5개가
+#          뷰티였다. 이제 페이지는 노출·추정 검색량 순으로 섹션마다 돌아가며, 주제는
+#          추적 검색량 순으로 싣고, 서치콘솔이 없으면 추정 순위 검색어를 대신 싣는다.
 # 짓는 방식을 바꾸면 이 수를 올린다 — 그 전 판 질문이 전부 "다시 만들기 권함"으로 뜬다.
-GEN_VERSION = 2
+GEN_VERSION = 3
 # 겨냥(ai_prompts.aim)의 꼴. 모델이 준 겨냥은 재료 목록에 **글자 그대로** 있어야만
 # 받는다(parse) — 없는 페이지를 겨냥했다고 적지 않는다.
 AIM_KINDS = ("page", "keyword", "cluster", "brand")
@@ -93,14 +98,78 @@ SYSTEM = (
     "offers. Prefer what is specific to this site (its own named offerings, the specific "
     "problems it solves, the people behind it) over generic industry terms that every "
     "competitor also targets. Never invent a service the page list does not show. "
-    "For 브랜드, ask about the site's own named services and people too, not just its name."
+    "For 브랜드, ask about the site's own named services and people too, not just its name. "
+    "Every list is ordered by search demand, most first. Spread the prompts across the "
+    "different topics and page sections roughly in proportion to that demand — no single "
+    "topic or section may take more than a third of the prompts."
 )
 
 
 # 다국어 사본은 같은 것을 두세 번 말한다 — 경로 앞의 로케일 조각을 접는다.
-_LOCALE_SEG = re.compile(r"^/(?:[a-z]{2}(?:-[a-z]{2,4})?)(?=/)", re.I)
+# 나라·언어 두 칸(gucci 의 /kr/ko/…)까지 접는다 — 한 칸만 접던 때는 /ko/… 가 남았다.
+_LOCALE_SEG = re.compile(r"^(?:/(?:[a-z]{2}(?:-[a-z]{2,4})?)(?=/)){1,2}", re.I)
 # 목록·공지처럼 무엇을 파는지 안 말하는 자리는 재료가 못 된다.
 _NOISE = re.compile(r"^/(?:category|notice|page|tag|author|search|wp-)", re.I)
+
+
+def _path_of(url) -> str:
+    """주소 → 재료로 쓸 경로(호스트·쿼리·로케일 조각을 뗀다). 루트는 '/'."""
+    path = urllib.parse.unquote(re.sub(r"^https?://[^/]+", "", str(url or "")))
+    return _LOCALE_SEG.sub("", path.split("?")[0].split("#")[0]).rstrip("/") or "/"
+
+
+def _section(path: str) -> str:
+    """경로의 섹션 — 고르게 나눌 단위. 두 글자 이하 칸(gucci 의 /ca/·/pr/ 같은 꼴 표지)은
+    건너뛰고 첫 이름 칸을 쓴다: /ca/women/handbags → women, /acne-scar/papular → acne-scar."""
+    segs = [s for s in path.strip("/").split("/") if s]
+    return next((s.lower() for s in segs if len(s) > 2), segs[0].lower() if segs else "")
+
+
+def _page_demand(conn, project_id: int) -> dict[str, float]:
+    """경로 → 수요(최신 서치콘솔 노출 + 최신 추정 순위의 월 검색량). 둘 다 "이 페이지로
+    사람이 오는 정도"다 — 서치콘솔이 없는 사이트(gucci)는 추정 순위만 있다."""
+    import scoring
+    out: dict[str, float] = {}
+    cur, _, period, _ = scoring.snapshot_pair(conn, project_id)
+    if cur:
+        for r in conn.execute(
+                """SELECT page, SUM(impressions) imp FROM gsc_snapshots
+                    WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
+                    GROUP BY page""", (project_id, cur, period)):
+            p = _path_of(r["page"])
+            out[p] = out.get(p, 0) + float(r["imp"] or 0)
+    try:
+        for r in conn.execute(
+                """SELECT url, SUM(COALESCE(volume,0)) v FROM labs_ranked
+                    WHERE project_id=? AND url IS NOT NULL AND checked_date=(
+                      SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?)
+                    GROUP BY url""", (project_id, project_id)):
+            p = _path_of(r["url"])
+            out[p] = out.get(p, 0) + float(r["v"] or 0)
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _spread(items: list, key, weight) -> list:
+    """섹션마다 돌아가며 뽑는다 — 섹션은 수요 합이 큰 순, 섹션 안은 수요 큰 순.
+
+    한 섹션에 페이지가 몰린 사이트(gucci 의 뷰티)에서 앞에서부터 자르면 그 섹션이
+    재료를 다 먹는다. 돌아가며 뽑으면 가방·의류가 같은 무게로 한 자리씩 들어온다.
+    """
+    groups: dict[str, list] = {}
+    for it in items:
+        groups.setdefault(key(it), []).append(it)
+    order = sorted(groups.values(),
+                   key=lambda g: (-sum(weight(x) for x in g), -len(g)))
+    for g in order:
+        g.sort(key=lambda x: -weight(x))        # 안정 정렬 — 같은 수요는 들어온 순
+    out = []
+    while any(order):
+        for g in order:
+            if g:
+                out.append(g.pop(0))
+    return out
 
 
 def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
@@ -114,37 +183,65 @@ def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
     제목이 있으면 제목을 쓴다(사람 말이다). 없으면 URL 경로가 대신 말해 준다 —
     /signature/scene-bgm/ 은 경로 자체가 그 사이트만의 기능 이름을 담는다.
     셋 다 없으면 빈 목록이다: 없는 것을 지어내지 않는다.
+
+    **무엇을 먼저 싣나**가 질문의 쏠림을 정한다. 예전엔 페이지 감사를 주소 가나다순으로
+    받아 앞 24개를 잘랐다 — gucci 는 /beauty 가 /handbags·/women 보다 앞이라 질문 7개 중
+    5개가 뷰티였다. 이제 세 출처(감사·크롤·서치콘솔)를 합쳐 수요(_page_demand) 순으로,
+    섹션마다 돌아가며(_spread) 싣는다. 못 가져온 페이지(4xx·오류 — 봇 차단의
+    "Access Denied" 제목)는 무엇을 파는지 말하지 않으므로 뺀다.
     """
-    rows = []
+    rows: list[tuple[str, str | None]] = []
     # 1) 페이지 감사 — 제목·H1 까지 있는 가장 좋은 재료
     try:
-        rows = [(r["url"], r["title"]) for r in db.latest_page_audits(conn, project_id)]
+        rows += [(r["url"], r["title"]) for r in db.latest_page_audits(conn, project_id)
+                 if not r["error"] and not (r["status"] and int(r["status"]) >= 400)]
     except sqlite3.Error:
-        rows = []
+        pass
     # 2) 크롤 회차의 제목
-    if not rows:
-        rows = [(r["url"], r["title"]) for r in conn.execute(
-            """SELECT url, title FROM crawl_pages WHERE run_id=(
-                 SELECT MAX(id) FROM crawl_runs WHERE project_id=?)""", (project_id,))]
-    # 3) GSC 가 본 페이지 — 제목은 없지만 경로가 남는다. 노출 많은 순이 곧 중요한 순이다.
-    if not rows:
-        rows = [(r["page"], None) for r in conn.execute(
-            """SELECT page, SUM(impressions) imp FROM gsc_snapshots
-                WHERE project_id=? AND page IS NOT NULL
-             GROUP BY page ORDER BY imp DESC""", (project_id,))]
+    rows += [(r["url"], r["title"]) for r in conn.execute(
+        """SELECT url, title FROM crawl_pages WHERE run_id=(
+             SELECT MAX(id) FROM crawl_runs WHERE project_id=?)
+             AND (status IS NULL OR status < 400)""", (project_id,))]
+    # 3) GSC 가 본 페이지 — 제목은 없지만 경로가 남는다.
+    rows += [(r["page"], None) for r in conn.execute(
+        """SELECT page, SUM(impressions) imp FROM gsc_snapshots
+            WHERE project_id=? AND page IS NOT NULL
+         GROUP BY page ORDER BY imp DESC""", (project_id,))]
 
-    out, seen = [], set()
+    pages: dict[str, str] = {}
     for url, title in rows:
-        path = urllib.parse.unquote(re.sub(r"^https?://[^/]+", "", str(url or "")))
-        path = _LOCALE_SEG.sub("", path.split("?")[0]).rstrip("/") or "/"
-        if path == "/" or _NOISE.match(path) or path in seen:
+        path = _path_of(url)
+        if path == "/" or _NOISE.match(path):
             continue
-        seen.add(path)
         t = " ".join(str(title or "").split())
-        out.append(f"{path} — {t}" if t else path)
-        if len(out) >= limit:
-            break
-    return out
+        if path not in pages or (t and not pages[path]):
+            pages[path] = t
+    demand = _page_demand(conn, project_id)
+    picked = _spread(list(pages), _section, lambda p: demand.get(p, 0))[:limit]
+    return [f"{p} — {pages[p]}" if pages[p] else p for p in picked]
+
+
+def _ranked(conn, project_id: int, n: int) -> list[str]:
+    """추정 순위(labs_ranked)에서 우리가 걸린 검색어 — 월 검색량 큰 순. 서치콘솔이 없는
+    사이트(gucci)에서 "사람들이 우리로 무엇을 찾나"를 말하는 유일한 재료다."""
+    try:
+        return [r[0] for r in conn.execute(
+            """SELECT keyword FROM labs_ranked WHERE project_id=? AND checked_date=(
+                 SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?)
+               ORDER BY COALESCE(volume,0) DESC, keyword LIMIT ?""",
+            (project_id, project_id, n))]
+    except sqlite3.OperationalError:
+        return []
+
+
+def _tracked(conn, project_id: int, n: int) -> list[str]:
+    """추적 중인 검색어 — 주제(cluster)마다 돌아가며, 주제 안은 검색량 큰 순."""
+    rows = [dict(r) for r in conn.execute(
+        """SELECT keyword, COALESCE(cluster,'') cluster, COALESCE(volume,0) volume
+             FROM keywords WHERE project_id=? AND is_active=1""", (project_id,))]
+    return [r["keyword"] for r in _spread(rows, lambda r: r["cluster"],
+                                          lambda r: r["volume"])[:n]]
+
 
 def brief(conn, project: str, top_n: int = 15) -> dict:
     """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다."""
@@ -163,15 +260,23 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
             "locale": db.project_locale(p),
             "aliases": cfg.get("brand_aliases") or [],
             "queries": queries,
+            # 서치콘솔이 없을 때만 — 있으면 실측이 이긴다(추정을 같이 실으면 같은 수요를
+            # 두 번 센다).
+            "ranked": [] if queries else _ranked(conn, p["id"], top_n),
             # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
             # 알고 짓게 되고, 그러면 어느 사이트에 물어도 같은 질문이 나온다.
             "offers": offers(conn, p["id"]),
             "seeds": (cfg.get("seed_keywords") or [])[:20],
+            "tracked": _tracked(conn, p["id"], top_n),
             # 추적 중인 주제 묶음 — 질문이 무엇을 겨냥했는지(aim) 적을 세 번째 재료다.
+            # 이름순이 아니라 추적 검색량 순이다(이름순 15개는 가나다 앞 주제만 실었다).
             "clusters": [r[0] for r in conn.execute(
-                """SELECT DISTINCT cluster FROM keywords
+                """SELECT cluster FROM keywords
                     WHERE project_id=? AND is_active=1 AND cluster IS NOT NULL
-                      AND TRIM(cluster)<>'' ORDER BY cluster LIMIT 15""", (p["id"],))]}
+                      AND TRIM(cluster)<>''
+                    GROUP BY cluster
+                    ORDER BY SUM(COALESCE(volume,0)) DESC, COUNT(*) DESC, cluster
+                    LIMIT 15""", (p["id"],))]}
 
 
 def targets(b: dict) -> dict[str, str]:
@@ -183,7 +288,7 @@ def targets(b: dict) -> dict[str, str]:
     out: dict[str, str] = {}
     for c in b.get("clusters") or []:
         out[str(c).strip()] = f"cluster:{str(c).strip()}"
-    for k in b.get("seeds") or []:
+    for k in [*(b.get("seeds") or []), *(b.get("tracked") or [])]:
         out[str(k).strip()] = f"keyword:{str(k).strip()}"
     for o in b.get("offers") or []:
         path = str(o).split(" — ", 1)[0].strip()
@@ -197,16 +302,21 @@ def user_msg(b: dict, n: int) -> str:
     q = ", ".join(b["queries"][:15]) or "(none yet)"
     alias = ", ".join(x for x in [b["name"], *b["aliases"]] if x)
     seeds = ", ".join(b.get("seeds") or []) or "(none)"
+    tracked = ", ".join(b.get("tracked") or []) or "(none)"
     topics = ", ".join(b.get("clusters") or []) or "(none)"
     # 페이지 목록은 줄바꿈으로 준다 — 쉼표로 이으면 경로끼리 붙어 한 줄로 읽힌다.
     pages = "\n".join(f"  {x}" for x in (b.get("offers") or [])) or "  (none yet)"
     lang, country = serp_adapter.describe(b["locale"])
+    ranked = (f"Search queries this site ranks for (estimated, by monthly volume): "
+              f"{', '.join(b['ranked'])}\n") if b.get("ranked") else ""
     return (f"Site: {b['name']} ({b['domain']})\n"
             f"Kind: {b['type']}\n"
             f"Audience: {lang} speakers in {country} ({b['locale']}) — write in {lang}.\n"
             f"Brand names: {alias}\n"
             f"Search queries this site already gets impressions for: {q}\n"
+            f"{ranked}"
             f"Keywords this site targets: {seeds}\n"
+            f"Keywords this site tracks (spread across its topics): {tracked}\n"
             f"Topics this site tracks: {topics}\n"
             f"Pages this site actually has (its services, in its own words):\n{pages}\n\n"
             f"Write exactly {n} prompts.")
@@ -312,6 +422,24 @@ def save(conn, project: str, rows: list[dict]) -> int:
         {**r, "gen_version": GEN_VERSION, "aim": r.get("aim")} for r in rows])
 
 
+def retire_outdated(conn, project: str) -> int:
+    """옛 판 질문(outdated)을 **끈다** — 지우지 않는다. 반환: 끈 개수.
+
+    [질문 다시 만들기]가 새 질문을 넣기만 하던 동안, 옛 판 37개(theotherskin)는 그대로
+    켜진 채 남아 새 질문과 함께 상한을 나눠 먹었고, 그 인용 0 이 기회 목록에 계속 섰다.
+    화면은 "직접 끄세요"라고만 했다 — 다시 만들기는 있는데 바꾸기는 없었다.
+    끄기만 하므로 지금까지의 인용 이력(ai_checks)은 그대로고(db.set_ai_prompts_active),
+    사람이 적은 질문(판 0)은 outdated 가 아니라 안 건드린다. 판정은 outdated 한 벌이다.
+    부르는 쪽은 새 질문이 실제로 들어갔을 때만 부른다 — 다 실패했는데 옛 것까지 끄면
+    물어볼 질문이 0 이 된다.
+    """
+    pid = db.get_project(conn, project)["id"]
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id, gen_version FROM ai_prompts WHERE project_id=? AND is_active=1", (pid,))
+        if outdated(r["gen_version"])]
+    return db.set_ai_prompts_active(conn, pid, ids, False)
+
+
 def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
@@ -320,6 +448,8 @@ def main() -> None:
     ap.add_argument("--project", required=True)
     ap.add_argument("--limit", type=int, default=20, help="만들 질문 수 (기본 20)")
     ap.add_argument("--dry-run", action="store_true", help="저장하지 않고 보여만 준다")
+    ap.add_argument("--replace", action="store_true",
+                    help="새 질문이 들어가면 옛 판 질문을 끈다(지우지 않는다 — 인용 이력은 남는다)")
     a = ap.parse_args()
     rows = suggest(a.project, n=a.limit)
     if not rows:
@@ -333,8 +463,11 @@ def main() -> None:
     conn = db.connect()
     try:
         added = save(conn, a.project, rows)
+        retired = retire_outdated(conn, a.project) if a.replace and added else 0
     finally:
         conn.close()
+    if retired:
+        print(f"옛 판 질문 {retired}개를 껐습니다 (지우지 않았습니다 — 인용 이력은 그대로).")
     print(f"\n질문 {added}개 저장 (이미 있던 것은 그대로). "
           f"이제 `python collect_ai.py --project {a.project}` 로 인용을 확인합니다.")
 
@@ -446,6 +579,56 @@ def _selfcheck() -> None:
     assert hand == 0 and not outdated(hand), hand
     assert outdated(None) and not outdated(GEN_VERSION), "판 판정이 뒤집혔다"
     assert GEN_VERSION < 2 or outdated(GEN_VERSION - 1), "옛 판을 구버전으로 안 센다"
+
+    # 다시 만들기 = 바꾸기 — 옛 판(NULL)만 끄고, 새 판·사람이 적은 질문은 그대로. 지우지 않는다.
+    conn.execute("INSERT INTO ai_checks(prompt_id, engine, cited) SELECT id, 'chatgpt', 0 "
+                 "FROM ai_prompts WHERE gen_version IS NULL")
+    assert retire_outdated(conn, "ecrett") == 1
+    act = {r[0]: r[1] for r in conn.execute("SELECT prompt, is_active FROM ai_prompts")}
+    assert act["판 표시 전에 들어온 옛 질문"] == 0, act
+    assert act["사람이 적은 질문입니다"] == 1 and act["ecrett 써본 사람 있어?"] == 1, act
+    assert conn.execute("SELECT COUNT(*) FROM ai_checks").fetchone()[0] == 1, "인용 이력이 지워졌다"
+    assert retire_outdated(conn, "ecrett") == 0, "두 번 끄면 0 이어야 한다"
+
+    # 재료 쏠림(gucci) — 페이지 감사를 주소 가나다순으로 앞에서 자르면 /beauty… 가 자리를
+    # 다 먹었다. 수요 순·섹션마다 돌아가며 실어야 가방·의류가 들어온다. 봇 차단(403)
+    # 페이지의 제목("Access Denied")은 재료가 아니다.
+    g = sqlite3.connect(":memory:")
+    g.row_factory = sqlite3.Row
+    g.executescript(db.SCHEMA)
+    g.execute("INSERT INTO projects(id,name,type,domain,locale) "
+              "VALUES(1,'gucci','commerce','gucci.com','ko-KR')")
+    audits = [(f"https://www.gucci.com/kr/ko/ca/beauty/item-{i:02d}", 200, f"뷰티 {i}")
+              for i in range(30)]
+    audits += [("https://www.gucci.com/kr/ko/ca/women/handbags", 200, "여성 가방"),
+               ("https://www.gucci.com/kr/ko/ca/men/ready-to-wear", 200, "남성 의류"),
+               ("https://www.gucci.com/kr/ko/ca/women/shoes", 403, "Access Denied")]
+    g.executemany("INSERT INTO page_audits(project_id,checked_date,url,status,title) "
+                  "VALUES(1,'2026-09-20',?,?,?)", audits)
+    g.executemany("INSERT INTO labs_ranked(project_id,checked_date,keyword,url,volume) "
+                  "VALUES(1,'2026-09-20',?,?,?)",
+                  [("구찌 가방", "https://www.gucci.com/kr/ko/ca/women/handbags", 9000),
+                   ("구찌 남자 옷", "https://www.gucci.com/kr/ko/ca/men/ready-to-wear", 4000),
+                   ("구찌 향수", "https://www.gucci.com/kr/ko/ca/beauty/item-29", 3000)])
+    g.executemany("INSERT INTO keywords(project_id,keyword,cluster,volume,is_active) "
+                  "VALUES(1,?,?,?,1)",
+                  [("구찌 립스틱", "beauty", 100), ("구찌 향수", "beauty", 200),
+                   ("구찌 가방", "handbags", 9000), ("구찌 벨트", "accessories", 800)])
+    g.commit()
+    o = offers(g, 1, limit=6)
+    assert o[0] == "/ca/women/handbags — 여성 가방", o          # 수요 1위 섹션이 먼저
+    assert "/ca/men/ready-to-wear — 남성 의류" in o, o
+    assert sum(x.startswith("/ca/beauty/") for x in o) <= 4, f"뷰티가 재료를 다 먹었다: {o}"
+    assert o.index("/ca/beauty/item-29 — 뷰티 29") < o.index("/ca/beauty/item-00 — 뷰티 0"), o
+    assert not [x for x in o if "Access Denied" in x or "/shoes" in x], f"차단 페이지가 실렸다: {o}"
+    gb = brief(g, "gucci")
+    assert gb["queries"] == [] and gb["ranked"][0] == "구찌 가방", gb     # 서치콘솔 없음 → 추정 순위
+    assert gb["clusters"][0] == "handbags" and gb["clusters"][-1] == "beauty", gb   # 이름순 아님
+    assert gb["tracked"][:3] == ["구찌 가방", "구찌 벨트", "구찌 향수"], gb        # 주제마다 한 자리씩
+    m = user_msg(gb, 7)
+    assert "ranks for (estimated" in m and "구찌 가방" in m, m
+    assert targets(gb).get("구찌 벨트") == "keyword:구찌 벨트", "추적 검색어를 겨냥으로 못 받는다"
+    assert "no single topic" in SYSTEM, "프롬프트가 고르게 나누라고 말하지 않는다"
     os.environ.pop("OPENROUTER_API_KEY", None)
     print("gen_prompts self-check ok")
 

@@ -482,12 +482,23 @@ def demo() -> None:
         gen_prompts.suggest = lambda project, **kw: [
             {"prompt": f"{project} 어디가 잘해?", "category": "추천"}]
         gen_prompts.save = lambda conn, project, rows: made.extend(rows) or len(rows)
+        retired, real_retire = [], gen_prompts.retire_outdated
+        gen_prompts.retire_outdated = lambda conn, project: retired.append(project) or 7
         try:
             r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
             assert r.status_code == 200 and r.json()["added"] == 1, r.text
             assert made and made[0]["prompt"].startswith("p1"), made
+            # 그냥 만들기는 옛 질문을 안 끈다 — [질문 다시 만들기](replace)만 끈다
+            assert not retired and r.json()["retired"] == 0, r.text
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
+            assert r.status_code == 200 and r.json()["retired"] == 7 and retired == ["p1"], r.text
+            # 새 질문이 하나도 안 들어갔으면(전부 겹침) 옛 것도 그대로 둔다
+            gen_prompts.save = lambda conn, project, rows: 0
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
+            assert r.status_code == 200 and r.json()["retired"] == 0 and retired == ["p1"], r.text
         finally:
             gen_prompts.suggest, gen_prompts.save = real_suggest, real_save
+            gen_prompts.retire_outdated = real_retire
             if saved_key:
                 os.environ["OPENROUTER_API_KEY"] = saved_key
 

@@ -286,18 +286,37 @@ def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
     return keep, dropped
 
 
+def confirmed_rivals(conn: sqlite3.Connection, project_id: int, own: str = "") -> list[str]:
+    """경쟁사로 **확인된** 곳 — rivals() 가 쓰는 것 중 사람이 적었거나(manual) 역할 판정이
+    '경쟁'이라고 한 것. 판정 전 자동 후보(role NULL)는 rivals() 에는 남지만 여기엔 없다.
+
+    theotherskin 의 경쟁 표에는 pmc.ncbi.nlm.nih.gov·ovid.com 같은 논문 사이트가 판정 전
+    후보로 서 있었다 — 도메인 수만 세면 "경쟁사 4곳"이지만 확인된 곳은 0곳이었다. 화면이
+    "경쟁사를 적거나 찾으세요"라고 말할지는 이 수로 가른다.
+    """
+    sure = {host_of(str(r[0] or "")) for r in conn.execute(
+        "SELECT domain FROM competitors WHERE project_id=? AND (source='manual' OR role='rival')",
+        (project_id,))}
+    return [d for d in rivals(conn, project_id, own)[0] if d in sure]
+
+
 def unjudged(conn: sqlite3.Connection, project_id: int, limit: int,
              platforms=None) -> list[str]:
     """역할 판정(collect_gap E)을 기다리는 자동 후보 — 들어온 순, 제3자 플랫폼 제외.
 
     사람이 적은 것(manual)은 판정하지 않는다(사람이 고른 것이 이긴다). 경쟁사 표를 읽는
     자리는 이 파일 한 곳이다(rivals 와 같은 규칙) — 수집기가 표를 직접 긁지 않게.
+
+    **한 번도 안 물어본 것이 먼저**다(role_why IS NULL). 근거 검색어를 못 받았거나 AI 가
+    답을 안 준 후보는 role 이 빈 채 남는데(collect_gap 이 role_why 에 시도 흔적을 적는다),
+    들어온 순으로만 자르면 그런 후보 ROLE_CAP 개가 매 런 앞자리를 차지해 뒤의 후보가
+    영영 판정을 못 받는다 — 역할 판정이 붙기 전에 들어온 옛 후보가 많은 사이트일수록 그렇다.
     """
     plats = third_party_platforms() if platforms is None else platforms
     out = []
     for r in conn.execute(
             "SELECT domain FROM competitors WHERE project_id=? AND source<>'manual'"
-            " AND role IS NULL ORDER BY id", (project_id,)):
+            " AND role IS NULL ORDER BY role_why IS NOT NULL, id", (project_id,)):
         d = host_of(str(r[0] or ""))
         if d and d not in out and not is_third_party(d, plats):
             out.append(d)
@@ -321,6 +340,60 @@ def is_foreign_brand(query: str, brands: set[str]) -> bool:
     if not core:
         return False
     return norm("".join(core)) in brands
+
+
+# 한국어 지명 꼴의 끝 글자 — '신사동'·'강남역'·'서초구'. 지명 목록이 아니라 꼴이다
+# (REGION_PLACE 주석: 세상의 지명을 늘어놓지 않는다). 간판말 앞이 이 꼴이면 자리지 이름이 아니다.
+_PLACE_TAIL = ("동", "역", "구", "시", "군", "읍", "면", "로", "길")
+
+
+def storefront_words(aliases, known) -> set[str]:
+    """우리 이름에 붙은 **간판말**('디아더 피부과'의 피부과) — 업종을 말하는 낱말.
+
+    여러 낱말로 된 별칭의 **끝 낱말** 중, 우리 이름이 안 든 추적·씨앗 검색어에도 들어 있는
+    것(='강남 피부과')이 간판말이다. 사전이 아니라 사이트가 쓰는 말에서 뽑는다 — 업종마다
+    다르다. 끝 낱말만 보는 까닭: 'The Other 피부과' 의 the·other 는 이름의 앞머리인데
+    영어 검색어에 흔히 들어 있어 간판말로 잘못 뽑혔다. 라틴은 낱말 단위로, 한글은 조사가
+    붙으므로 부분 문자열로 찾는다(_fit_hits 와 같은 규칙).
+    """
+    own = {norm(a) for a in aliases if norm(a)}
+    words = {tokens(a)[-1] for a in aliases if len(tokens(a)) >= 2 and len(tokens(a)[-1]) >= 2}
+    other = [(norm(k), set(tokens(k))) for k in known
+             if norm(k) and not any(o in norm(k) for o in own)]
+    return {w for w in words if w not in own and any(_fit_hits(w, n, ts) for n, ts in other)}
+
+
+def looks_other_brand(query: str, *, brands: set[str], site: "SiteWords",
+                      storefront: set[str], known: set[str], seeds: set[str] = frozenset()) -> bool:
+    """심사 힌트 — 남의 브랜드(다른 병원·가게 이름)로 보이는 검색어인가.
+
+    ① 경쟁사·등재 도구 카탈로그(foreign_brands)에 걸리면 그렇다(is_foreign_brand 한 벌).
+    ② "〈이름〉+간판말"(더스킨피부과) — 우리 이름도, 우리 자리(지명·지명 꼴)도, 의도어(근처)도,
+       사이트가 쓰는 다른 검색어의 말도 아닌 머리가 간판말 앞에 붙은 것. 다국어 병원 사이트의
+       심사 대기에 남의 병원 이름이 섞여 우리 검색어처럼 섰다(theotherskin '더스킨피부과' —
+       서치콘솔 노출로 추적에까지 자동으로 켜져 있었다).
+    known 은 추적·씨앗 검색어(norm)다 — 머리가 **다른** 검색어에 들어 있으면 사이트의 말이다.
+    그 검색어 자체가 추적 중이라는 것만으로는 면제하지 않는다(자동 선택이 켰을 수 있다) —
+    사람이 적은 씨앗(seeds)일 때만 면제한다.
+    자동 판정이 아니다 — 심사 화면의 칩 하나다. 틀리면 사람이 그냥 작업으로 보낸다.
+    """
+    if is_foreign_brand(query, brands):
+        return True
+    core = norm("".join(t for t in tokens(query) if t not in BRAND_MODIFIERS))
+    # site.own 은 별칭의 낱말 조각까지 담는다('디아더 피부과' → 피부과) — 간판말은 이름이 아니다
+    own = [o for o in site.own if len(o) >= 2 and o not in storefront]
+    if not core or core in seeds or any(o in core for o in own):
+        return False
+    for g in sorted(storefront, key=len, reverse=True):
+        if not core.endswith(g) or len(core) - len(g) < 2:
+            continue
+        head = core[:-len(g)]
+        if (any(p and norm(p) in head for p in site.place) or head.endswith(_PLACE_TAIL)
+                or query_intent(head, site) != INTENT_DEFAULT
+                or any(head in k and head + g not in k for k in known)):
+            return False
+        return True
+    return False
 
 
 def drop_foreign_brands(rows: list[dict], brands: set[str], key: str = "query") -> list[dict]:
