@@ -574,6 +574,7 @@ def collect(project: str, *,
 
         made: list[dict] = []
         total = 0.0
+        fatal: list[str] = []
 
         def work(g: dict) -> dict:
             # 일꾼 스레드 — 네트워크만(Brain 을 안 만진다). AI 실패는 값으로 돌려준다:
@@ -583,8 +584,13 @@ def collect(project: str, *,
                 got, c = ask(prompt(g, d, ev))
                 cost += float(c or 0)
                 result, err = clean_result(got), None
-            except collector.Fatal:
-                raise
+            except collector.Fatal as e:
+                # 잔액 없음(402)·키 없음 같은 치명 오류도 증거는 버리지 않는다 — 이미 산 것이고
+                # 화면은 증거라도 보여 준다. 단계는 저장한 뒤 그 이유로 실패시킨다(알림·출시 문).
+                # gucci: 페이지 4곳을 다 읽고 AI 에서 402 가 나 증거까지 통째로 사라졌다.
+                err = str(e)[:300]
+                return {"ev": ev, "cost": round(cost, 4), "misses": misses,
+                        "result": {"error": err}, "err": err, "fatal": err}
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"[:300]
                 result = {"error": err}
@@ -603,6 +609,8 @@ def collect(project: str, *,
             play["title"] = title_of(g, out["ev"])
             play["markdown"] = render_markdown(play)
             made.append(play)
+            if out.get("fatal"):
+                fatal.append(out["fatal"])
             if out["err"]:
                 # 줄은 남긴다(증거는 쓸모 있다) — 실패는 오류 목록으로 세어 요약·notes 에 싣는다.
                 st.fail(out["err"], item=g["page"], kind="plays")
@@ -620,6 +628,8 @@ def collect(project: str, *,
             r.cost = total
             r.notes = f"pages={len(made)} opps={sum(len(g['opps']) for g in groups)} {st.err_note}"
         print(f"\nsaved {len(made)} plays (수정안 {ok}건) · ${total:.4f}")
+        if fatal:
+            raise collector.Fatal(fatal[0])
         return st.verdict(ok, rows=len(made), cost=round(total, 4))
 
 
@@ -824,6 +834,27 @@ def _selfcheck() -> None:
     n_ask = len(asks)
     r, _ = run(max=2)
     assert r.ok and not r.skipped and len(asks) > n_ask, "실패한 줄이 있는데 신선하다고 건너뛰었다"
+
+    # ── 4b. 치명 오류(OpenRouter 잔액 없음 402) — 증거는 저장하고, 단계는 그 이유로 실패
+    real_ask = fake_ask
+
+    def broke_ask(text):
+        raise collector.Fatal("OpenRouter 잔액 없음(402)")
+    fake_ask = broke_ask
+    try:
+        run(max=2, force=True)
+        raised = None
+    except collector.Fatal as e:
+        raised = str(e)
+    finally:
+        fake_ask = real_ask
+    assert raised and "402" in raised, "잔액 없음이 단계 실패로 안 올라갔다 — 알림·출시 문이 못 본다"
+    got = {x["page"]: x for x in db.list_plays(conn, pid, statuses=("new",))}
+    assert got and all("402" in (x["result"] or {}).get("error", "") for x in got.values()), got
+    assert got["https://s.kr/bags"]["evidence"]["our"]["title"] == "여성 가방", \
+        "치명 오류에 읽어 온 증거까지 버렸다"
+    r, _ = run(max=2, force=True)
+    assert r.ok, "치명 오류 뒤 정상 런이 안 섰다"
 
     # ── 5. 키 없음·dry-run·DataForSEO 응답 꼴
     with contextlib.redirect_stdout(io.StringIO()):
