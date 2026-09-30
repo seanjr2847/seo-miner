@@ -774,11 +774,13 @@
     try {
       var r = await fetch("/api/ai/prompts", {method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({project: proj(), limit: 20})});
+        // 다시 만들기 버튼은 data-sm-replace 를 단다 — 서버가 새 질문을 넣은 뒤 옛 판을 끈다.
+        body: JSON.stringify({project: proj(), limit: 20, replace: !!btn.dataset.smReplace})});
       var d = await r.json().catch(noDetail);
       if (!r.ok) throw new Error(d.detail || "");
-      banner("done", "질문 " + d.added + "개를 만들었습니다. 아래 목록에서 읽어 보고" +
-        " 업종과 안 맞는 것은 끄거나 고치면 됩니다.");
+      banner("done", "질문 " + d.added + "개를 만들었습니다." +
+        (d.retired ? " 옛 질문 " + d.retired + "개는 껐습니다(인용 기록은 남습니다)." : "") +
+        " 아래 목록에서 읽어 보고 업종과 안 맞는 것은 끄거나 고치면 됩니다.");
       say("질문을 만들었습니다", "ok");
       load(); loadDoctor(); aiqLoad();
       return;                                     // 화면이 다시 그려지며 이 버튼은 사라진다

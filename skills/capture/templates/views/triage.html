@@ -103,6 +103,9 @@
 #triage .trvar { color:var(--sub); font-size:var(--fs-1); margin-left:6px; }
 #triage .trkinds { display:flex; flex-wrap:wrap; gap:4px; }
 #triage .trbrand { color:var(--warn); background:var(--warn-wash); margin-left:8px; }
+/* 남의 브랜드로 보이는 줄 — 힌트라 경고색이 아니라 권고색(청회색). 언어 배지는 옅은 회색. */
+#triage .trother { color:var(--info); background:var(--info-wash); margin-left:8px; }
+#triage .trlang { margin-left:8px; }
 /* 점수 앞 색점 — 우선순위를 훑어 읽는 자리. 값은 그대로 옆에 있다(색만으로 말하지 않는다). */
 #triage .trdot { display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%;
   background:var(--mute); vertical-align:1px; }
@@ -202,6 +205,11 @@
    종류 거르개, 찾는 말, 고른 키, 키보드 커서. 정규화는 서버가 한다 — 여기는 서버가 준
    key 를 그대로 돌려보낸다(사본을 두지 않는다). */
 let TR_ROWS = [], TR_FILTER = "", TR_KIND = "", TR_Q = "", TR_SEL = new Set(), TR_CUR = 0, TR_PROJECT = "";
+/* 언어 거르개 — 다국어 사이트는 한국어 검색어 사이에 영어·중국어가 섞여 한 줄로 심사됐다
+   (theotherskin 150건). 언어는 서버가 가른다(r.lang, 규칙의 정본은 db.keyword_locale).
+   섞여 있으면 처음엔 사이트 언어만 보여 주고, 거르개가 나머지 언어의 줄 수를 말한다.
+   같은 사이트를 다시 받을 때(판정 뒤)는 고른 것을 둔다. */
+let TR_LANG = "", TR_LANG_FOR = "", TR_SITE_LANG = "", TR_LANG_LABELS = {};
 // 판정 셋 — 정본은 db.VERDICTS 다(test_seams 17 이 대조한다).
 const TR_VERDICT = {irrelevant: "무관", hold: "보류", work: "작업"};
 const TR_FILTER_OPT = [["", "미판정"], ["work", "작업"], ["hold", "보류"], ["irrelevant", "무관"]];
@@ -232,6 +240,16 @@ async function TR_fetch() {
   }
   const t = await res.json();
   TR_ROWS = t.rows || [];
+  TR_SITE_LANG = t.site_lang || ""; TR_LANG_LABELS = t.lang_labels || {};
+  if (TR_LANG_FOR !== TR_PROJECT) {
+    TR_LANG_FOR = TR_PROJECT;
+    // 기본 거르개는 **지금 보는 판정 묶음**(처음엔 미판정)에 사이트 언어 줄이 있을 때만 건다 —
+    // 전체 행으로 정하면 미판정이 전부 다른 언어인 사이트(theotherskin: 미판정 3줄이 영어·중국어)가
+    // "한국어만 봅니다"로 빈 목록을 봤다.
+    const cur = TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER);
+    const langs = new Set(cur.map(r => r.lang).filter(Boolean));
+    TR_LANG = langs.size > 1 && langs.has(TR_SITE_LANG) ? TR_SITE_LANG : "";
+  }
   // 행이 하나도 없으면 숫자 카드는 0 만 말한다 — 큐 카드의 빈 상태 한 줄만 남긴다.
   const none = !TR_ROWS.length;
   $("tr-grid").hidden = false; $("tr-grid").classList.toggle("solo", none);
@@ -253,7 +271,7 @@ function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); TR_stat(); }
 // 필터가 걸려 있을 때만 뒤에 보이는 줄 수를 덧붙인다.
 function TR_renderCounts() {
   const c = TR_COUNTS;
-  const narrowed = TR_Q.trim() || TR_KIND;
+  const narrowed = TR_Q.trim() || TR_KIND || TR_LANG;
   // 「작업 178」은 [개요]의 기회 수(묶은 줄)와 다른 단위다 — 무엇을 셌는지 말한다.
   $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 검색어 <b>${c.work || 0}</b>` +
     ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
@@ -289,9 +307,13 @@ function TR_tabs() {
     b.setAttribute("aria-pressed", String(b.dataset.v === TR_FILTER)));
 }
 
+// 판정·언어로 거른 줄 — 종류 분해·종류 거르개가 세는 바탕이다(보이는 줄과 같은 모집단).
+const TR_base = () => TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER)
+  .filter(r => !TR_LANG || r.lang === TR_LANG);
+const TR_langName = lg => TR_LANG_LABELS[lg] || lg;
 function TR_filtered() {
   const q = TR_Q.trim().toLowerCase();
-  return TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER)
+  return TR_base()
     .filter(r => !TR_KIND || r.kinds.indexOf(TR_KIND) >= 0)
     .filter(r => !q || r.label.toLowerCase().includes(q));
 }
@@ -299,14 +321,26 @@ function TR_filtered() {
 // 도구줄은 데이터가 바뀔 때만 다시 그린다 — 매 키 입력마다 갈아치우면 찾기 칸이 포커스를 잃는다.
 function TR_kindCounts() {
   const kinds = {};
-  for (const r of TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER))
+  for (const r of TR_base())
     for (const k of r.kinds) kinds[k] = (kinds[k] || 0) + 1;
   return kinds;
 }
 const TR_kindLabel = k => (window.KIND_LABELS || {})[k] || k;
 function TR_tools() {
   const kinds = TR_kindCounts();
-  $("tr-tools").innerHTML =
+  // 언어 거르개는 언어가 둘 이상일 때만 — 줄 수는 지금 보는 판정 기준이다.
+  const lc = {};
+  for (const r of TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER))
+    if (r.lang) lc[r.lang] = (lc[r.lang] || 0) + 1;
+  // 고른 언어가 지금 판정 묶음에 0줄이어도 선택지로 남긴다 — 빠지면 셀렉트가 첫 줄("모든 언어")을
+  // 보이면서 실제로는 그 언어로 거르고 있어, 눈에 보이는 것과 거르는 것이 달랐다.
+  if (TR_LANG && !lc[TR_LANG]) lc[TR_LANG] = 0;
+  const langs = Object.keys(lc).sort((a, b) => (b === TR_SITE_LANG) - (a === TR_SITE_LANG) || lc[b] - lc[a]);
+  const all = Object.values(lc).reduce((a, b) => a + b, 0);
+  const langSel = new Set(TR_ROWS.map(r => r.lang).filter(Boolean)).size > 1
+    ? `<select onchange="TR_setLang(this.value)" aria-label="언어로 거르기"><option value="">모든 언어 (${all})</option>${langs.map(lg =>
+        `<option value="${esc(lg)}"${lg === TR_LANG ? " selected" : ""}>${esc(TR_langName(lg))} (${lc[lg]})</option>`).join("")}</select>` : "";
+  $("tr-tools").innerHTML = langSel +
     `<select onchange="TR_setKind(this.value)" aria-label="종류로 거르기"><option value="">모든 종류</option>${Object.keys(kinds).map(k =>
         `<option value="${esc(k)}"${k === TR_KIND ? " selected" : ""}>${esc(TR_kindLabel(k))} (${kinds[k]})</option>`).join("")}</select>
      <input type="search" value="${esc(TR_Q)}" oninput="TR_find(this.value)" placeholder="검색어로 찾기" aria-label="검색어로 찾기">`;
@@ -317,9 +351,9 @@ function TR_kinds(kinds) {
   kinds = kinds || TR_kindCounts();
   const keys = Object.keys(kinds).sort((a, b) => kinds[b] - kinds[a]);
   const mx = Math.max(1, ...keys.map(k => kinds[k]));
-  const rows = TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER).length;
+  const rows = TR_base().length;
   $("tr-kinds").innerHTML = `<div class="trh"><div><h2>어떤 진단에 걸렸나</h2>
-      <p class="trsub">${TR_FILTER_LABEL(TR_FILTER)} ${num(rows)}줄 기준. 누르면 그 종류만 봅니다.</p></div></div>` +
+      <p class="trsub">${TR_FILTER_LABEL(TR_FILTER)}${TR_LANG ? ` ${esc(TR_langName(TR_LANG))}` : ""} ${num(rows)}줄 기준. 누르면 그 종류만 봅니다.</p></div></div>` +
     (keys.length
       ? `<div class="trklist" role="group" aria-label="종류별 줄 수">${keys.map(k => `
         <button type="button" class="trk" data-k="${esc(k)}" aria-pressed="${k === TR_KIND}" onclick="TR_setKind(TR_KIND === this.dataset.k ? '' : this.dataset.k)">
@@ -336,6 +370,7 @@ function TR_setKind(v) {
   TR_draw();
 }
 function TR_find(v) { TR_Q = v; TR_CUR = 0; TR_draw(); }
+function TR_setLang(v) { TR_LANG = v; TR_KIND = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tools(); TR_draw(); }
 
 // 주 버튼 — 미판정으로 돌아가 첫 줄에 커서를 두고 큐로 내려간다. 새 행동은 없다(커서·스크롤뿐).
 function TR_start() {
@@ -354,7 +389,9 @@ function TR_row(r, i) {
       aria-label="${esc(r.label)} 고르기"></label></td>
     <td><span class="trkw">${esc(r.label)}</span>${r.variants > 1
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
-      ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}
+      ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}${r.other_brand
+      ? `<span class="st trother" title="다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.">남의 이름?</span>` : ""}${r.lang && r.lang !== TR_SITE_LANG && !TR_LANG
+      ? `<span class="st trlang">${esc(TR_langName(r.lang))}</span>` : ""}
       <div class="trperf">${r.score == null ? "" : `점수 <span class="v">${Math.round(r.score)}</span> · `}클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span></div>
       <div class="trkm">${r.kinds.map((kd, j) => `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
@@ -368,6 +405,8 @@ function TR_row(r, i) {
 // 손 볼 곳 — 지금 보는 줄에서 뽑는다(새 필드 없음). 0건이면 카드째 접는다.
 const TR_FIX = {
   brand: {test: r => r.brand, head: n => `브랜드 표기 ${n}건`, note: "사이트 이름이 들어 있어 보통 보류합니다.", btn: "브랜드 줄 고르기"},
+  other: {test: r => r.other_brand, head: n => `남의 이름으로 보이는 줄 ${n}건`,
+          note: "다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관입니다.", btn: "이 줄 고르기"},
   zero: {test: r => (r.impressions || 0) > 0 && !(r.clicks || 0), head: n => `노출은 있고 클릭은 0인 줄 ${n}건`,
          note: "보여도 눌리지 않는 검색어입니다.", btn: "이 줄 고르기"}};
 function TR_fix() {
@@ -387,15 +426,19 @@ function TR_pick(k) {
 function TR_draw() {
   TR_renderCounts();
   const list = TR_filtered();
-  $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} 검색어 <b>${num(list.length)}</b>줄을 보고 있습니다.`;
+  // 언어로 거르고 있으면 가린 줄 수를 같이 말한다 — 처음부터 사이트 언어만 보여 주므로
+  // 안 말하면 나머지 언어가 없는 줄로 읽힌다.
+  const hid = TR_LANG ? TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER && r.lang !== TR_LANG).length : 0;
+  $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} 검색어 <b>${num(list.length)}</b>줄을 보고 있습니다.` +
+    (TR_LANG ? ` ${esc(TR_langName(TR_LANG))}만 봅니다${hid ? `(다른 언어 ${num(hid)}줄은 위 언어 거르개에서)` : ""}.` : "");
   TR_fix();
   if (!TR_ROWS.length)
     return $("triage").innerHTML = `<div class="empty"><b>심사할 검색어가 없습니다</b>
       <p>기회 분석을 돌리면 측정이 물어온 검색어가 여기로 옵니다.</p></div>`;
   if (!list.length)
-    return $("triage").innerHTML = (TR_FILTER || TR_KIND || TR_Q.trim())
+    return $("triage").innerHTML = (TR_FILTER || TR_KIND || TR_LANG || TR_Q.trim())
       ? `<div class="empty"><b>거른 조건에 맞는 검색어가 없습니다</b>
-         <p>판정·종류·찾는 말을 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+         <p>판정·언어·종류·찾는 말을 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
          <div class="acts"><button class="go sec" onclick="TR_reset()">조건 지우기</button></div></div>`
       : `<div class="empty ok"><b>미판정 검색어가 없습니다</b>
          <p>전부 가렸습니다. 작업으로 보낸 것은 ${window.go ? go("overview") : "[개요]"}의 기회에 있습니다.</p></div>`;
@@ -437,7 +480,7 @@ function TR_toTop() {
   const el = document.querySelector("#tr-tools input[type=search]");
   if (el) el.scrollIntoView({block: "center"});   // 부드럽게는 셸의 scroll-behavior 가 정한다
 }
-function TR_reset() { TR_FILTER = ""; TR_KIND = ""; TR_Q = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tabs(); TR_tools(); TR_draw(); }
+function TR_reset() { TR_FILTER = ""; TR_KIND = ""; TR_Q = ""; TR_LANG = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tabs(); TR_tools(); TR_draw(); }
 function TR_toggle(key, on) { if (on) TR_SEL.add(key); else TR_SEL.delete(key); TR_draw(); }
 function TR_all(on) { TR_SEL = new Set(on ? TR_filtered().map(r => r.key) : []); TR_draw(); }
 function TR_setSel(v) { if (TR_SEL.size) TR_set([...TR_SEL], v); }

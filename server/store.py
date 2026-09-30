@@ -478,6 +478,28 @@ def mark_groups(conn: sqlite3.Connection, site_id: int, groups) -> None:
     conn.commit()
 
 
+def defer_groups(conn: sqlite3.Connection, site_row, groups, every_hours: float,
+                 retry_hours: float) -> list[str]:
+    """시계만 찍히고 못 잰 묶음(run_all.unmeasured)의 시계를 되돌린다 — retry_hours 뒤에
+    다시 '밀린 묶음'이 되게. 반환: 되돌린 묶음.
+
+    mark_groups 는 시작할 때 찍는다(실패가 매 틱 재시도하며 돈을 새지 않게). 그 정책은 둔다
+    — 되돌리는 것은 **제 단계가 통째로 건너뛴** 묶음뿐이고, 되돌려도 다음 기회는 retry_hours
+    뒤다(매 틱이 아니다). 자동이 꺼진(주기 0·None) 묶음은 건드리지 않는다.
+    """
+    done = []
+    for g in groups:
+        per = group_period(site_row, g, every_hours)
+        if not per:
+            continue
+        back = max(float(per) - float(retry_hours), 0.0)
+        conn.execute("UPDATE site_groups SET last_run_at=datetime('now', ?) "
+                     "WHERE site_id=? AND grp=?", (f"-{back} hours", site_row["id"], g))
+        done.append(g)
+    conn.commit()
+    return done
+
+
 def clear_pending(conn: sqlite3.Connection, site_id: int) -> None:
     """가져갈 대기열이 없는데 pending 으로 남은 자리를 푼다. 남이 이미 가져가 도는 중이면
     (running) 건드리지 않는다 — 그 런의 표시를 끄면 화면이 거짓말한다."""
@@ -936,6 +958,27 @@ def demo() -> None:
         assert due_of("myproj") == ["todo", "search", "ai", "site"], due_of("myproj")
         set_every_hours(conn, uid, "myproj", 168)
         assert due_of("myproj") == ["todo"], due_of("myproj")
+        # 못 잰 묶음 되돌리기(P3) — 시작할 때 찍힌 AI 노출 시계를 되돌려 하루 뒤 다시 밀리게.
+        # 되돌린 직후엔 안 밀리고(매 틱 재시도 아님), 하루가 지나면 밀린다. 다른 묶음은 그대로.
+        mark_groups(conn, sid, ALL)
+        mark_done(conn, sid)
+        assert defer_groups(conn, site(conn, uid, "myproj"), ["ai"], 168.0, 24) == ["ai"]
+        assert due_of("myproj") == [], f"되돌리자마자 또 잰다: {due_of('myproj')}"
+        age(sid, 25, ["ai", "todo"])
+        assert due_of("myproj") == ["todo"], due_of("myproj")
+        mark_groups(conn, sid, ALL)
+        mark_done(conn, sid)
+        defer_groups(conn, site(conn, uid, "myproj"), ["ai"], 168.0, 24)
+        conn.execute("UPDATE site_groups SET last_run_at=datetime(last_run_at, '-25 hours') "
+                     "WHERE site_id=?", (sid,))
+        conn.commit()
+        assert due_of("myproj") == ["todo", "ai"], f"하루 뒤 못 잰 묶음이 안 밀렸다: {due_of('myproj')}"
+        set_every_hours(conn, uid, "myproj", 0)
+        assert defer_groups(conn, site(conn, uid, "myproj"), ["ai"], 168.0, 24) == [], \
+            "자동을 끈 사이트의 시계를 되돌렸다"
+        set_every_hours(conn, uid, "myproj", 168)
+        mark_groups(conn, sid, ALL)
+        mark_done(conn, sid)
         # 0 = 자동 재기 전부 끔 — 매일 런까지
         set_every_hours(conn, uid, "myproj", 0)
         age(sid, 999)

@@ -679,6 +679,15 @@ function CP_nextStep(d) {
         : `${esc(CP_name("competitors"))}는 돌았지만 몫을 잰 도메인이 없습니다.`}
       <span class="live">추적 검색어를 늘리거나 경쟁 도메인을 직접 적어 두면 맞댈 대상이
       생깁니다.</span>`, window.act("competitors", "", true) + CP_toSettings());
+  /* 도메인은 있는데 경쟁사로 확인된 곳이 0곳 — 검색 결과가 겹쳤을 뿐인 판정 전 후보다
+     (theotherskin: 논문 사이트 둘·앱 하나). 그 격차를 "경쟁사에게 뺏긴 검색어"로 읽으면
+     안 되므로 격차보다 이 걸음이 먼저다. 확인 수의 정본은 scoring.confirmed_rivals —
+     옛 박제본엔 값이 없어(undefined) 이 걸음을 건너뛴다. */
+  if (d.rivals_confirmed === 0)
+    return put(`맞댄 도메인 ${num(rivals)}곳 중 <b>경쟁사로 확인된 곳이 아직 없습니다</b>.
+      <span class="live">검색 결과가 겹친 곳일 뿐이라 아래 격차는 참고로만 보세요. 아는 경쟁사를
+      적어 두면 그 상대와 견줍니다.</span>`,
+      window.act("competitors", "", true) + CP_toSettings());
   if (!d.gap_date)
     return put(`경쟁사 ${num(rivals)}곳을 찾았습니다.
       <span class="live">격차를 재면 어느 검색어에서 지고 있는지 나옵니다.</span>`,

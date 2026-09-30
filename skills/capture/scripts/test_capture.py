@@ -1656,6 +1656,119 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert again["/fixed"][0] == db.OPP_RESOLVED
 
 
+def test_aio_exposure_needs_our_rank_and_unranked_ones_close():
+    """구글 AI 요약 빠짐은 우리가 순위(조회 깊이) 안에 있을 때만 선다 — 순위 없는 검색어는
+    요약이 아니라 순위 문제다(theotherskin: 열린 기회 226 중 189 가 이 종류, 그중 183 이
+    순위 없음). 이미 선 순위 없는 줄은 사유를 달고 닫는다 — 순위 조회보다 나중에 선 것도.
+    사람이 [다시 열기]를 조회 뒤에 눌렀거나 작업 기록이 있으면 둔다."""
+    conn = db.connect()
+    pid = _project(conn, "aio-rank")["id"]
+    kid = {}
+    for kw, pos in (("순위 안", 14), ("순위 밖", None), ("순위 밖 늦게 선", None),
+                    ("순위 밖 다시 연", None), ("순위 밖 작업함", None)):
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id, keyword, is_active) VALUES(?,?,1)"
+                               " RETURNING id", (pid, kw)).fetchone()[0]
+        conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present,"
+                     " aio_cited) VALUES(?, '2026-08-20T00:00:00Z', ?, 1, 0)", (kid[kw], pos))
+    conn.commit()
+    assert [r["keyword"] for r in scoring.aio_gaps(conn, pid)] == ["순위 안"]
+    k = lambda t: {"kind": "aio_exposure", "target": t, "score": 10}
+    ids = _opps_at_base(conn, pid, [k("순위 밖"), k("순위 밖 늦게 선"), k("순위 밖 다시 연"),
+                                    k("순위 밖 작업함")])
+    conn.execute("UPDATE opportunities SET created_at='2026-08-25 00:00:00' WHERE id=?",
+                 (ids["순위 밖 늦게 선"],))
+    conn.execute("UPDATE opportunities SET status_at='2026-08-26 00:00:00' WHERE id=?",
+                 (ids["순위 밖 다시 연"],))
+    db.record_creation(conn, pid, "a.md", opportunity_id=ids["순위 밖 작업함"])
+    conn.commit()
+    conn.close()
+
+    scoring.load("aio-rank")
+
+    conn = db.connect()
+    st = {(r["kind"], r["target"]): r for r in _states(conn, pid).values()}
+    conn.close()
+    assert st[("aio_exposure", "순위 안")]["status"] == "new", "순위 안의 검색어가 안 섰다"
+    for t in ("순위 밖", "순위 밖 늦게 선"):
+        r = st[("aio_exposure", t)]
+        assert r["status"] == db.OPP_RESOLVED and "순위 문제" in r["status_reason"], (t, r)
+    for t in ("순위 밖 다시 연", "순위 밖 작업함"):
+        assert st[("aio_exposure", t)]["status"] == "new", (t, st[("aio_exposure", t)])
+
+
+def test_rank_decay_closes_when_rank_returns_and_sentence_is_rewritten():
+    """순위 하락은 세운 적재의 스냅샷 짝(scoring.decay_state)이 '떨어지기 전'을 안다 — 최신
+    실적이 그 순위와 DECAY_POS 칸 안으로 돌아오면 닫고, 아직이면 두되 화면의 근거 문장은
+    지금 순위를 덧붙여 다시 쓴다(theotherskin: 최신 실적 9/29 인데 '8/25→9/2' 문장). 세운
+    적재가 없거나 그 짝에서 실제로 안 떨어졌으면 판단하지 않는다."""
+    import dashboard
+    conn = db.connect()
+    pid = _project(conn, "decay-life")["id"]
+    for q, a, b, c in (("되찾음", 5.0, 9.0, 5.5), ("계속 밀림", 5.0, 9.0, 9.0),
+                       ("짝이 안 맞음", 5.0, 5.2, 4.0)):
+        _snap(conn, pid, "2026-08-01", 28, q, a, 5)
+        _snap(conn, pid, "2026-08-08", 28, q, b, 5)
+        _snap(conn, pid, "2026-08-20", 28, q, c, 5)
+    run = db.start_run(conn, pid, "gaps")
+    conn.execute("UPDATE runs SET started_at='2026-08-08 09:00:00' WHERE id=?", (run,))
+    conn.commit()
+    k = lambda t: {"kind": "rank_decay", "target": t, "score": 10,
+                   "reasoning": "11.4위 → 14.7위 (gsc 2026-07-25→2026-08-08)"}   # 박제된 옛 문장
+    ids = _opps_at_base(conn, pid, [k("되찾음"), k("계속 밀림"), k("짝이 안 맞음"),
+                                    k("적재 모름")])
+    conn.execute(f"UPDATE opportunities SET run_id=? WHERE id IN ({','.join('?' * 3)})",
+                 (run, ids["되찾음"], ids["계속 밀림"], ids["짝이 안 맞음"]))
+    conn.commit()
+    st = scoring.decay_state(conn, pid, run, "계속 밀림")
+    assert (st["prev"], st["at"], st["pre"], st["drop"], st["cur"], st["now"]) == \
+        ("2026-08-01", "2026-08-08", 5.0, 9.0, "2026-08-20", 9.0), st
+    assert scoring.decay_state(conn, pid, run, "짝이 안 맞음") is None
+    got = {o["target"]: o["reasoning"] for o in
+           dashboard._axis_opps(conn, pid, None, [], [], gated=False)["opps"] if o["kind"] == "rank_decay"}
+    assert "2026-08-01과 2026-08-08 비교" in got["계속 밀림"] and \
+        "최신 구글 실적 2026-08-20에서는 평균 9.0위" in got["계속 밀림"] and \
+        "못 돌아왔습니다" in got["계속 밀림"], got["계속 밀림"]
+    conn.close()
+
+    scoring.load("decay-life")
+
+    conn = db.connect()
+    st = {kk[1]: v for kk, v in _states(conn, pid).items() if kk[0] == "rank_decay"}
+    conn.close()
+    assert st["되찾음"]["status"] == db.OPP_RESOLVED and \
+        "5.5위" in st["되찾음"]["status_reason"], st["되찾음"]
+    for t in ("계속 밀림", "짝이 안 맞음", "적재 모름"):
+        assert st[t]["status"] == "new", (t, st[t])
+
+
+def test_cannibalization_folds_spacing_variants_and_closes_old_row():
+    """띄어쓰기만 다른 검색어는 내부 경쟁 한 줄이다(theotherskin '구진성 흉터'·'구진성흉터'
+    두 줄). 노출 큰 변형이 대상, 페이지 노출은 합산, 옛 변형 줄은 '합쳤다'로 닫힌다."""
+    conn = db.connect()
+    pid = _project(conn, "canni-fold")["id"]
+    d = "2026-08-20"
+    _gsc(conn, pid, d, 28, "구진성 흉터", "/a", 3, 60, 4.0)
+    _gsc(conn, pid, d, 28, "구진성 흉터", "/b", 1, 40, 7.0)
+    _gsc(conn, pid, d, 28, "구진성흉터", "/a", 1, 30, 6.0)
+    _gsc(conn, pid, d, 28, "구진성흉터", "/b", 0, 20, 9.0)
+    out = scoring.cannibalization(conn, pid)
+    assert [(o["query"], o["variants"], o["impressions"]) for o in out] == \
+        [("구진성 흉터", ["구진성흉터"], 150)], out
+    a = out[0]["pages"][0]
+    assert (a["page"], a["impressions"], a["clicks"], a["position"]) == ("/a", 90, 4, 4.7), a
+    _opps_at_base(conn, pid, [{"kind": "cannibalization", "target": "구진성흉터", "score": 10}])
+    conn.close()
+
+    scoring.load("canni-fold")
+
+    conn = db.connect()
+    st = {kk[1]: v for kk, v in _states(conn, pid).items() if kk[0] == "cannibalization"}
+    conn.close()
+    assert st["구진성 흉터"]["status"] == "new" and st["구진성 흉터"]["run_id"], st
+    assert st["구진성흉터"]["status"] == db.OPP_RESOLVED and \
+        "합쳤습니다" in st["구진성흉터"]["status_reason"], st["구진성흉터"]
+
+
 def _ai_row(conn, pid_, run_id, engine, cited, doms, answer, rec=None, mentioned=0):
     conn.execute("INSERT INTO ai_checks(prompt_id, run_id, engine, mentioned, cited,"
                  " cited_domains_json, answer_excerpt, recommended) VALUES(?,?,?,?,?,?,?,?)",

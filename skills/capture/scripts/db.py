@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS keywords (
   source TEXT DEFAULT 'seed',                 -- seed|autocomplete|gsc|competitor|claude
   is_active INTEGER DEFAULT 0,                -- 1 = tracked set (curated by Claude+user)
   verdict_off INTEGER DEFAULT 0,              -- 1 = '무관' 판정이 is_active 를 껐다(되돌리기가 되켤 줄). 사람이 손대면 0
+  active_src TEXT,                            -- is_active 를 마지막으로 정한 쪽: manual(사람) | auto(워커 자동 선택) | demoted(순위 밖이 이어져 내림 — demote_unranked). NULL = 이 칸 이전(모름 — 사람 것으로 친다)
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, keyword)
 );
@@ -139,7 +140,8 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   serp_features_json TEXT,
   aio_present INTEGER,
   aio_cited INTEGER,
-  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀거나 인용을 못 받았다
+  aio_domains_json TEXT,                      -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀거나 인용을 못 받았다
+  locale TEXT                                 -- 이 순위를 잰 언어-지역. NULL = 이 칸 이전(모름). 키워드 로케일과 다르면 park_offlocale 이 옮긴다
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 -- 우리 도메인이 순위를 가진 검색어 — DataForSEO Labs 추정(ranked_keywords). 서치콘솔이 없는
@@ -802,6 +804,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "PRAGMA table_info(rank_snapshots)")}:
         conn.execute("ALTER TABLE rank_snapshots ADD COLUMN aio_domains_json TEXT")
         conn.commit()
+    # 순위를 **어느 언어-지역으로** 쟀나. 키워드의 로케일이 바뀌면(사이트 나라 판정·GSC 나라
+    # 재판정·사이트 로케일 변경) 예전 행은 다른 나라 구글의 순위다 — gucci 'gucci' 가 미국
+    # 구글 값으로 남아 "오늘 이미 확인"으로 건너뛰어졌다. 옛 행은 NULL(모름)로 둔다.
+    if "locale" not in {r["name"] for r in conn.execute("PRAGMA table_info(rank_snapshots)")}:
+        conn.execute("ALTER TABLE rank_snapshots ADD COLUMN locale TEXT")
+        conn.commit()
+    # 추적을 누가 켰나 — 자동 선택분만 순위 밖이 이어질 때 내린다(demote_unranked).
+    if "active_src" not in {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}:
+        conn.execute("ALTER TABLE keywords ADD COLUMN active_src TEXT")
+        conn.commit()
 
     # 요약은 섰는데 인용 목록이 빈 채("[]")로 적힌 행은 "인용을 못 받았다"였다 — 수집기가
     # 비동기 요약을 요청하지 않아 인용 없이 온 응답을 "우리 링크 없음(aio_cited=0)"으로
@@ -1116,26 +1128,101 @@ def rejudge_script_locales(conn: sqlite3.Connection, project_id: int) -> dict[st
     return n
 
 
-def _park_offlocale(conn, keyword_id: int, measured: str, new: str, n: dict) -> None:
-    """measured 로 잰 순위·검색결과를 offlocale_snapshots 로 옮긴다(new 와 같으면 그대로).
+def _park_offlocale(conn, keyword_id: int, measured: str | None, new: str, n: dict) -> None:
+    """new 가 아닌 로케일로 잰 순위·검색결과를 offlocale_snapshots 로 옮긴다.
 
-    함께 묻는 질문(serp_questions)도 옮긴다 — 한국 구글이 준 질문이 영어 키워드의
-    요청문에 "함께 답해야 할 질문"으로 실리면 안 된다."""
-    if not measured or measured == new:
-        return                               # 같은 로케일로 쟀다 — 기록은 그대로 유효하다
+    순위 행이 어느 로케일로 쟀는지는 rank_snapshots.locale 이 말한다. 그 칸이 비어 있는
+    옛 행은 measured(바뀌기 전 로케일)로 쟀다고 본다 — measured 가 None 이면 옛 행은 모름이라
+    그대로 둔다. 검색결과·함께 묻는 질문은 같은 회차(같은 날)의 순위 행을 따라간다: 순위를
+    옮긴 날의 것은 함께 옮기고, 남는 순위 행이 없는 날의 옛 행은 measured 로 잰 것으로 본다.
+    한국 구글이 준 질문이 영어 키워드의 요청문에 "함께 답해야 할 질문"으로 실리면 안 된다."""
+    rank = conn.execute("SELECT * FROM rank_snapshots WHERE keyword_id=?",
+                        (keyword_id,)).fetchall()
+
+    def loc_of(r):
+        return (r["locale"] if "locale" in r.keys() else None) or measured
+
+    moved = {}                                # 날 → 그날 순위를 잰 로케일
+    keep = set()
+    for r in rank:
+        day = str(r["checked_at"] or "")[:10]
+        if loc_of(r) and loc_of(r) != new:
+            moved[day] = loc_of(r)
+        else:
+            keep.add(day)
+    stale = bool(measured and measured != new)  # 옛 행(칸 없음)은 measured 로 쟀다
+
+    def where(r, kind):
+        day = str(r["checked_at"] or "")[:10]
+        if kind == "rank":
+            return loc_of(r) if loc_of(r) and loc_of(r) != new else None
+        if day in moved:
+            return moved[day]
+        return measured if stale and day not in keep else None
+
     for kind, table in (("rank", "rank_snapshots"), ("serp", "serp_results"),
                         ("questions", "serp_questions")):
-        rows = conn.execute(f"SELECT * FROM {table} WHERE keyword_id=?",
-                            (keyword_id,)).fetchall()
+        rows = rank if kind == "rank" else conn.execute(
+            f"SELECT * FROM {table} WHERE keyword_id=?", (keyword_id,)).fetchall()
+        gone = []
         for r in rows:
+            loc = where(r, kind)
+            if not loc:
+                continue                     # 지금 로케일로 쟀다(또는 모름) — 그대로 유효하다
             d = {c: r[c] for c in r.keys() if c != "id"}
             conn.execute(
                 """INSERT INTO offlocale_snapshots(keyword_id, kind, locale,
                      checked_at, row_json) VALUES(?,?,?,?,?)""",
-                (keyword_id, kind, measured, d.get("checked_at"),
+                (keyword_id, kind, loc, d.get("checked_at"),
                  json.dumps(d, ensure_ascii=False)))
-        conn.execute(f"DELETE FROM {table} WHERE keyword_id=?", (keyword_id,))
-        n[kind] += len(rows)
+            gone.append(r["id"])
+        for i in range(0, len(gone), 500):
+            part = gone[i:i + 500]
+            conn.execute(f"DELETE FROM {table} WHERE id IN ({','.join('?' * len(part))})", part)
+        n[kind] = n.get(kind, 0) + len(gone)
+
+
+def park_offlocale(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
+    """잰 로케일(rank_snapshots.locale)이 키워드의 지금 로케일(NULL 이면 사이트 로케일)과
+    다른 순위 행을 — 같은 날 검색결과·질문과 함께 — offlocale_snapshots 로 옮긴다.
+
+    로케일을 바꾸는 길은 여럿이다(fix_keyword_locales·rejudge_script_locales·set_locale·
+    set_keyword_locale — 앞으로 생길 길도). 그 길이 하나라도 옮기기를 잊으면 다른 나라의
+    순위가 비교·"오늘 이미 확인"에 남는다. 그래서 순위 단계가 재기 전에 이것을 한 번 돈다 —
+    잰 로케일을 행에 적어 두었으니 누가 바꿨든 여기서 걸린다. 칸이 빈 옛 행은 모름이라
+    안 건드린다. 커밋은 호출자가 한다. 반환: 옮긴 수 {rank, serp, questions}."""
+    row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
+    site = project_locale(row) if row else DEFAULT_LOCALE
+    n = dict.fromkeys(("rank", "serp", "questions"), 0)
+    for r in conn.execute(
+            """SELECT DISTINCT k.id, COALESCE(k.locale, ?) cur
+                 FROM keywords k JOIN rank_snapshots s ON s.keyword_id = k.id
+                WHERE k.project_id = ? AND s.locale IS NOT NULL
+                  AND s.locale <> COALESCE(k.locale, ?)""", (site, project_id, site)).fetchall():
+        _park_offlocale(conn, r["id"], None, r["cur"], n)
+    return n
+
+
+def set_keyword_locale(conn: sqlite3.Connection, keyword_id: int, locale: str | None,
+                       src: str | None) -> bool:
+    """키워드 하나의 로케일을 바꾸고, 바뀌면 예전 로케일로 잰 순위를 옮긴다.
+
+    UPDATE keywords SET locale=… 를 직접 쓰는 곳이 옮기기를 잊으면 예전 나라의 순위가
+    남는다(워커의 사이트 나라 판정이 그랬다 — gucci 'gucci'). 로케일을 바꾸는 코드는
+    이것을 부른다. 커밋은 호출자가 한다. 반환: 로케일이 실제로 바뀌었나."""
+    k = conn.execute(
+        "SELECT k.locale, p.locale AS site FROM keywords k JOIN projects p ON p.id = k.project_id"
+        " WHERE k.id=?", (keyword_id,)).fetchone()
+    if k is None:
+        return False
+    site = k["site"] or DEFAULT_LOCALE
+    conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?",
+                 (locale, src, keyword_id))
+    old, cur = k["locale"] or site, locale or site
+    if old == cur:
+        return False
+    _park_offlocale(conn, keyword_id, old, cur, {})
+    return True
 
 
 def connect(home: Path | None = None) -> sqlite3.Connection:
@@ -1560,12 +1647,18 @@ def profile_read(conn: sqlite3.Connection, name: str) -> dict:
     cfg = project_cfg(conn, pr)
     brand = _joined(cfg.get("brand_aliases"))
     dom = pr["domain"] or ""
+    import scoring               # 늦은 import: 확인된 경쟁사 판정의 정본
     return {"brand_aliases": brand, "tools": _joined(cfg.get("tools")),
             # 씨앗·경쟁사는 설정 줄이 아니라 **행**이 정본이다 — 사본을 들면 화면이 지운
             # 값이 다음 열람에 되살아난다(예전 yaml 이 그랬다).
             "seed_keywords": ", ".join(seed_keywords(conn, pr["id"])),
             "competitors_manual": ", ".join(manual_competitors(conn, pr["id"])),
-            "brand_suggestion": "" if brand else (dom.split(".")[0] if dom else "")}
+            "brand_suggestion": "" if brand else (dom.split(".")[0] if dom else ""),
+            # 칸 옆 안내 한 줄의 재료 — 값이 아니라 사실이다(저장되지 않는다).
+            # 확인된 경쟁사가 0 이면 경쟁사 칸이, 서치콘솔이 붙었는데 씨앗이 비면 씨앗 칸이
+            # 무엇이 달라지는지 말한다(억지로 채우라고 하지 않는다).
+            "rivals_confirmed": len(scoring.confirmed_rivals(conn, pr["id"], dom)),
+            "gsc_connected": bool(pr["gsc_property"])}
 
 
 def profile_save(conn: sqlite3.Connection, name: str, profile) -> dict:
@@ -1757,8 +1850,20 @@ def set_locale(conn, project_id: int, locale: str) -> None:
     """언어-지역을 바꾼다. 정본이 projects 컬럼 한 곳이라 여기 한 줄이면 끝이다 —
     예전엔 yaml 도 같이 고쳐야 했고(안 고치면 다음 sync-project 가 되돌렸다) 그 둘이
     어긋나는 것이 통째로 한 갈래의 버그였다. 이미 캔 키워드의 locale 은 그대로다
-    (그 언어로 잰 값이다)."""
+    (그 언어로 잰 값이다).
+
+    단 locale 이 NULL 인(사이트 로케일을 따르는) 옛 키워드는 이제 다른 나라에서 잰다 —
+    예전 사이트 로케일로 잰 순위는 옮긴다(_park_offlocale). 안 옮기면 다음 조회와 비교돼
+    가짜 등락이 되고, 같은 날이면 "오늘 이미 확인"으로 건너뛴다."""
+    row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
+    old = project_locale(row) if row else None
     conn.execute("UPDATE projects SET locale=? WHERE id=?", (locale, project_id))
+    new = locale or DEFAULT_LOCALE
+    if old and old != new:
+        for (kid,) in conn.execute("SELECT id FROM keywords WHERE project_id=? AND locale IS NULL",
+                                   (project_id,)).fetchall():
+            _park_offlocale(conn, kid, old, new, {})
+        park_offlocale(conn, project_id)
     conn.commit()
 
 
@@ -2281,7 +2386,8 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
                         aio_present: int | None = None,
                         aio_cited: int | None = None,
                         checked_at: str | None = None,
-                        aio_domains: list[str] | None = None) -> int:
+                        aio_domains: list[str] | None = None,
+                        locale: str | None = None) -> int:
     """SERP 순위 스냅샷 적재. 같은 키워드를 같은 날 다시 확인하면 덮어쓴다(하루 1행).
 
     불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
@@ -2293,6 +2399,9 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
     aio_cited 도 그때는 None 이다. 요약이 뜨지 않은 조회(aio_present 가 1 이
     아닌 것)에는 목록이 있을 수 없어 넘겨도 NULL 로 적는다 — serper 가 주는 빈 목록이
     "봤는데 아무도 없었다"로 둔갑하지 않게.
+
+    locale 은 이 조회에 쓴 언어-지역이다(park_offlocale 이 키워드 로케일과 대조한다).
+    수집기는 늘 넘긴다 — None 은 "모름"이라 로케일이 바뀌어도 옮겨지지 않는다.
     """
     if isinstance(serp_features, (list, dict)):
         feat_json = json.dumps(serp_features, ensure_ascii=False)
@@ -2311,14 +2420,14 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
                  else None)
     cur = conn.execute(
         """INSERT INTO rank_snapshots(keyword_id, checked_at, position, url,
-             serp_features_json, aio_present, aio_cited, aio_domains_json)
-           VALUES(?,?,?,?,?,?,?,?)""",
+             serp_features_json, aio_present, aio_cited, aio_domains_json, locale)
+           VALUES(?,?,?,?,?,?,?,?,?)""",
         (keyword_id, ts,
          int(position) if position is not None else None,
          url, feat_json,
          int(aio_present) if aio_present is not None else None,
          int(aio_cited) if aio_cited is not None else None,
-         doms_json))
+         doms_json, locale or None))
     conn.commit()
     return cur.lastrowid
 
@@ -2941,8 +3050,11 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
         (int(project_id), 1 if active else 0, int(limit))).fetchall()
 
 
+ACTIVE_SRCS = ("manual", "auto")
+
+
 def set_keywords_active(conn: sqlite3.Connection, project_id: int, ids,
-                        active: bool) -> int:
+                        active: bool, by: str = "manual") -> int:
     """키워드 추적 토글. 반환: 실제로 손댄 행 수(남의 사이트 id 는 안 세어진다).
 
     상한(몇 개까지 켤 수 있나)은 여기 없다 — 값을 아는 호출부가 ids 를 잘라서 넘긴다.
@@ -2950,16 +3062,65 @@ def set_keywords_active(conn: sqlite3.Connection, project_id: int, ids,
     사람이 손대면 '무관이 껐다'는 표식(verdict_off)은 지운다 — 켰든 껐든, 이 줄의
     현재 상태를 정한 건 이제 사람이다. 안 지우면 나중에 판정을 되돌릴 때 사람이
     끈 것을 다시 켠다.
+
+    by — 누가 정했나(keywords.active_src). 기본이 manual 인 까닭: 모르는 호출은 사람
+    것으로 쳐야 안전하다 — 자동 내리기(demote_unranked)는 auto 만 건드린다. 워커의 자동
+    선택만 by="auto" 를 넘긴다.
     """
+    if by not in ACTIVE_SRCS:
+        raise ValueError(f"by must be one of {ACTIVE_SRCS}, got {by!r}")
     ids = [int(x) for x in ids]
     if not ids:
         return 0
     cur = conn.execute(
-        f"UPDATE keywords SET is_active=?, verdict_off=0"
+        f"UPDATE keywords SET is_active=?, verdict_off=0, active_src=?"
         f" WHERE project_id=? AND id IN ({','.join('?' * len(ids))})",
-        [1 if active else 0, int(project_id), *ids])
+        [1 if active else 0, by, int(project_id), *ids])
     conn.commit()
     return cur.rowcount
+
+
+# 자동 선택으로 켠 키워드가 몇 번 연속 조회 깊이 밖이면 추적에서 내리나. 순위 단계는 주
+# 1회가 보통이라 4 ≈ 한 달이다. 한두 번은 구글 흔들림·일시 탈락일 수 있다.
+DEMOTE_AFTER = 4
+
+
+def demote_unranked(conn: sqlite3.Connection, project_id: int, *, keep=(),
+                    after: int = DEMOTE_AFTER) -> list[str]:
+    """자동 선택분 중 최근 after 번 순위 조회가 전부 순위 밖(position NULL)인 키워드를 내린다.
+
+    내리는 것: active_src='auto'(워커가 켠 것)만 — 씨앗(source='seed')·사람이 켠 것
+    (manual)·이 칸 이전에 켜진 것(NULL, 누가 켰는지 모른다)은 절대 안 건드린다. 열린
+    기회의 대상 검색어도 안 내린다(그 기회의 진척을 재는 중이다). keep 은 호출부가 아는
+    "순위가 가까운" 검색어(norm)다 — 서치콘솔·순위 추정이 깊은 조회 안이라고 하면 둔다.
+    내린 줄은 active_src='demoted' 로 남아 워커가 빈자리를 채울 때 다시 켜지 않는다.
+    사람이 다시 켜면(set_keywords_active) manual 이 되어 다시는 자동으로 안 내린다.
+    커밋은 호출자가 한다. 반환: 내린 검색어.
+    """
+    import scoring
+    keep = set(keep)
+    open_st = tuple(scoring.OPEN_STATUSES)
+    rows = conn.execute(
+        f"""SELECT k.id, k.keyword FROM keywords k
+             WHERE k.project_id=? AND k.is_active=1 AND k.active_src='auto'
+               AND COALESCE(k.source,'') <> 'seed'
+               AND NOT EXISTS (SELECT 1 FROM opportunities o
+                                WHERE o.project_id=k.project_id
+                                  AND o.status IN ({','.join('?' * len(open_st))})
+                                  AND lower(trim(o.target)) = lower(trim(k.keyword)))""",
+        (project_id, *open_st)).fetchall()
+    out = []
+    for r in rows:
+        if scoring.norm(r["keyword"]) in keep:
+            continue
+        last = [x["position"] for x in conn.execute(
+            "SELECT position FROM rank_snapshots WHERE keyword_id=?"
+            " ORDER BY datetime(checked_at) DESC LIMIT ?", (r["id"], after))]
+        if len(last) >= after and all(p is None for p in last):
+            conn.execute("UPDATE keywords SET is_active=0, active_src='demoted' WHERE id=?",
+                         (r["id"],))
+            out.append(r["keyword"])
+    return out
 
 
 def query_performance(conn: sqlite3.Connection, project_id: int,

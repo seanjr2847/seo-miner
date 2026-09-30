@@ -155,6 +155,10 @@ ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "intent_split",
 KEYWORD_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
                  "pseo_pattern", "device_gap", "ai_citation_gap", "aio_exposure",
                  "content_gap")
+# 검출기가 띄어쓰기·대소문자만 다른 검색어(norm 이 같은 것)를 한 줄로 접는 종류 — 접힌
+# 옛 변형 줄은 resolve_stale 이 "그 줄로 합쳤다"로 닫는다. 검출기를 접게 고쳤으면 여기
+# 넣는다(안 넣으면 옛 변형 줄이 열린 채 남는다).
+NORM_FOLD_KINDS = ("cannibalization",)
 
 
 
@@ -286,18 +290,37 @@ def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
     return keep, dropped
 
 
+def confirmed_rivals(conn: sqlite3.Connection, project_id: int, own: str = "") -> list[str]:
+    """경쟁사로 **확인된** 곳 — rivals() 가 쓰는 것 중 사람이 적었거나(manual) 역할 판정이
+    '경쟁'이라고 한 것. 판정 전 자동 후보(role NULL)는 rivals() 에는 남지만 여기엔 없다.
+
+    theotherskin 의 경쟁 표에는 pmc.ncbi.nlm.nih.gov·ovid.com 같은 논문 사이트가 판정 전
+    후보로 서 있었다 — 도메인 수만 세면 "경쟁사 4곳"이지만 확인된 곳은 0곳이었다. 화면이
+    "경쟁사를 적거나 찾으세요"라고 말할지는 이 수로 가른다.
+    """
+    sure = {host_of(str(r[0] or "")) for r in conn.execute(
+        "SELECT domain FROM competitors WHERE project_id=? AND (source='manual' OR role='rival')",
+        (project_id,))}
+    return [d for d in rivals(conn, project_id, own)[0] if d in sure]
+
+
 def unjudged(conn: sqlite3.Connection, project_id: int, limit: int,
              platforms=None) -> list[str]:
     """역할 판정(collect_gap E)을 기다리는 자동 후보 — 들어온 순, 제3자 플랫폼 제외.
 
     사람이 적은 것(manual)은 판정하지 않는다(사람이 고른 것이 이긴다). 경쟁사 표를 읽는
     자리는 이 파일 한 곳이다(rivals 와 같은 규칙) — 수집기가 표를 직접 긁지 않게.
+
+    **한 번도 안 물어본 것이 먼저**다(role_why IS NULL). 근거 검색어를 못 받았거나 AI 가
+    답을 안 준 후보는 role 이 빈 채 남는데(collect_gap 이 role_why 에 시도 흔적을 적는다),
+    들어온 순으로만 자르면 그런 후보 ROLE_CAP 개가 매 런 앞자리를 차지해 뒤의 후보가
+    영영 판정을 못 받는다 — 역할 판정이 붙기 전에 들어온 옛 후보가 많은 사이트일수록 그렇다.
     """
     plats = third_party_platforms() if platforms is None else platforms
     out = []
     for r in conn.execute(
             "SELECT domain FROM competitors WHERE project_id=? AND source<>'manual'"
-            " AND role IS NULL ORDER BY id", (project_id,)):
+            " AND role IS NULL ORDER BY role_why IS NOT NULL, id", (project_id,)):
         d = host_of(str(r[0] or ""))
         if d and d not in out and not is_third_party(d, plats):
             out.append(d)
@@ -321,6 +344,60 @@ def is_foreign_brand(query: str, brands: set[str]) -> bool:
     if not core:
         return False
     return norm("".join(core)) in brands
+
+
+# 한국어 지명 꼴의 끝 글자 — '신사동'·'강남역'·'서초구'. 지명 목록이 아니라 꼴이다
+# (REGION_PLACE 주석: 세상의 지명을 늘어놓지 않는다). 간판말 앞이 이 꼴이면 자리지 이름이 아니다.
+_PLACE_TAIL = ("동", "역", "구", "시", "군", "읍", "면", "로", "길")
+
+
+def storefront_words(aliases, known) -> set[str]:
+    """우리 이름에 붙은 **간판말**('디아더 피부과'의 피부과) — 업종을 말하는 낱말.
+
+    여러 낱말로 된 별칭의 **끝 낱말** 중, 우리 이름이 안 든 추적·씨앗 검색어에도 들어 있는
+    것(='강남 피부과')이 간판말이다. 사전이 아니라 사이트가 쓰는 말에서 뽑는다 — 업종마다
+    다르다. 끝 낱말만 보는 까닭: 'The Other 피부과' 의 the·other 는 이름의 앞머리인데
+    영어 검색어에 흔히 들어 있어 간판말로 잘못 뽑혔다. 라틴은 낱말 단위로, 한글은 조사가
+    붙으므로 부분 문자열로 찾는다(_fit_hits 와 같은 규칙).
+    """
+    own = {norm(a) for a in aliases if norm(a)}
+    words = {tokens(a)[-1] for a in aliases if len(tokens(a)) >= 2 and len(tokens(a)[-1]) >= 2}
+    other = [(norm(k), set(tokens(k))) for k in known
+             if norm(k) and not any(o in norm(k) for o in own)]
+    return {w for w in words if w not in own and any(_fit_hits(w, n, ts) for n, ts in other)}
+
+
+def looks_other_brand(query: str, *, brands: set[str], site: "SiteWords",
+                      storefront: set[str], known: set[str], seeds: set[str] = frozenset()) -> bool:
+    """심사 힌트 — 남의 브랜드(다른 병원·가게 이름)로 보이는 검색어인가.
+
+    ① 경쟁사·등재 도구 카탈로그(foreign_brands)에 걸리면 그렇다(is_foreign_brand 한 벌).
+    ② "〈이름〉+간판말"(더스킨피부과) — 우리 이름도, 우리 자리(지명·지명 꼴)도, 의도어(근처)도,
+       사이트가 쓰는 다른 검색어의 말도 아닌 머리가 간판말 앞에 붙은 것. 다국어 병원 사이트의
+       심사 대기에 남의 병원 이름이 섞여 우리 검색어처럼 섰다(theotherskin '더스킨피부과' —
+       서치콘솔 노출로 추적에까지 자동으로 켜져 있었다).
+    known 은 추적·씨앗 검색어(norm)다 — 머리가 **다른** 검색어에 들어 있으면 사이트의 말이다.
+    그 검색어 자체가 추적 중이라는 것만으로는 면제하지 않는다(자동 선택이 켰을 수 있다) —
+    사람이 적은 씨앗(seeds)일 때만 면제한다.
+    자동 판정이 아니다 — 심사 화면의 칩 하나다. 틀리면 사람이 그냥 작업으로 보낸다.
+    """
+    if is_foreign_brand(query, brands):
+        return True
+    core = norm("".join(t for t in tokens(query) if t not in BRAND_MODIFIERS))
+    # site.own 은 별칭의 낱말 조각까지 담는다('디아더 피부과' → 피부과) — 간판말은 이름이 아니다
+    own = [o for o in site.own if len(o) >= 2 and o not in storefront]
+    if not core or core in seeds or any(o in core for o in own):
+        return False
+    for g in sorted(storefront, key=len, reverse=True):
+        if not core.endswith(g) or len(core) - len(g) < 2:
+            continue
+        head = core[:-len(g)]
+        if (any(p and norm(p) in head for p in site.place) or head.endswith(_PLACE_TAIL)
+                or query_intent(head, site) != INTENT_DEFAULT
+                or any(head in k and head + g not in k for k in known)):
+            return False
+        return True
+    return False
 
 
 def drop_foreign_brands(rows: list[dict], brands: set[str], key: str = "query") -> list[dict]:
@@ -858,6 +935,16 @@ def _stale_days(audit: dict) -> int | None:
     return (datetime.date.today() - d).days
 
 
+def _has_head_fields(audit: dict) -> bool:
+    """이 감사 행이 페이지 머리(meta description·ld+json)를 읽고 온 것인가.
+
+    collect_page.audit_html 은 schema_json 을 늘 채운다(없으면 "[]"). 봇 차단 사이트를
+    DataForSEO 로 대신 읽은 행(collect_page.audit_from_parsed)은 본문 구조만 있고 이 칸이
+    NULL 이다 — 그걸 "설명 없음·구조화 데이터 없음"으로 읽으면 없는 문제를 세운다.
+    """
+    return audit.get("schema_json") is not None
+
+
 def _has_render_fields(audit: dict) -> bool:
     """이 감사 행이 모바일·언어 칸을 읽고 온 것인가.
 
@@ -1043,6 +1130,22 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     def add(tag, level, now, fix):
         out.append({"tag": tag, "level": level, "now": now, "fix": fix})
 
+    if audit.get("status") in (404, 410):
+        # 없는 페이지 — "브라우저로 열어 보세요"는 이미 확인한 것을 또 시킨다. 검색어가 아직
+        # 이 주소로 걸려 있으면(queries) 번 노출을 버리는 중이다 → 가장 가까운 살아 있는
+        # 페이지로 301. 걸린 검색어가 없으면 링크한 쪽을 고치는 문제다.
+        live = [q for q in queries if q]
+        if live:
+            add("없는 페이지", "bad",
+                f"HTTP {audit['status']} — 그런데 검색어 {len(live)}개('{live[0]}' 등)로 아직 노출됩니다",
+                "이 주소를 내용이 가장 가까운 살아 있는 페이지로 301 리다이렉트하세요. 새로 쓰는 "
+                "것보다 싸고, 지금 들어오는 노출을 버리지 않습니다. 옮길 곳이 없으면 이 주소에 "
+                "페이지를 되살립니다.")
+        else:
+            add("없는 페이지", "warn", f"HTTP {audit['status']} — 걸린 검색어는 없습니다",
+                "이 주소로 링크한 곳(사이트 안 링크·사이트맵·백링크)을 살아 있는 주소로 바꾸거나, "
+                "옮겨 간 페이지가 있으면 301 을 거세요.")
+        return out
     if audit.get("error"):
         add("가져오기", "bad", audit["error"],
             "이 주소를 브라우저로 직접 열어 보세요. 사람에게도 안 열리면 순위·색인 이전의 문제입니다.")
@@ -1077,9 +1180,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
 
     h1 = _as_list(audit.get("h1_json"))
     desc = (audit.get("meta_description") or "").strip()
+    head = _has_head_fields(audit)
     # 긁어 온 설명은 길이가 맞아도 설명이 아니다 — 길이 지적보다 이것을 앞세우고,
     # 한 페이지에 description 지적은 하나만 둔다(둘이면 어느 쪽을 고치라는지 흐려진다).
-    if not desc:
+    if not head:
+        pass                              # 대신 읽은 행 — 설명을 안 봤다(없는 게 아니다)
+    elif not desc:
         add("meta description", "bad", "설명이 없습니다",
             "검색결과에 뜰 2~3문장을 직접 쓰세요. 안 쓰면 구글이 본문에서 아무 데나 뽑습니다.")
     elif _desc_scraped(desc, title, h1[0] if len(h1) == 1 else ""):
@@ -1155,7 +1261,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
     # 판정을 확인 지시로 바꾼다(없앨 수는 없다 — 정말 없는 사이트가 더 많다).
     schema = _as_list(audit.get("schema_json"))
-    if not schema:
+    if not schema and head:
         if audit.get("js_shell"):
             add("구조화 데이터", "warn", "정적 HTML 에는 ld+json 이 없습니다 "
                 "(본문도 자바스크립트로 그리는 페이지로 보입니다)",
@@ -2124,28 +2230,49 @@ def cannibalization(conn: sqlite3.Connection, project_id: int, *, limit: int = 1
     page 차원이 필요하다 — page가 NULL인 구버전(CSV 시절) 스냅샷에서는
     이 함수는 자동으로 빈 결과를 돌려준다 (결함이 아니라 데이터 부재).
     부페이지 노출 비중 >= CANNI_MIN_SHARE, 합산 노출 >= CANNI_MIN_IMP 일 때만 잡는다.
+
+    띄어쓰기·대소문자만 다른 검색어(norm 이 같은 것)는 한 검색어로 접는다 — 구글에는
+    '구진성 흉터'와 '구진성흉터'가 따로 오지만 같은 두 페이지가 같은 답을 나눠 갖는
+    한 문제다. 따로 세면 할 일이 두 줄로 섰다(theotherskin). 대상 문자열은 노출이 가장
+    큰 변형이고, 나머지는 variants 에 담는다(근거 문장이 밝힌다). 페이지별 노출·클릭은
+    변형을 합한 것, 순위는 노출 가중 평균이다. 옛 변형 줄은 resolve_stale 이 닫는다
+    (NORM_FOLD_KINDS).
     """
     cur, _, period, _ = snapshot_pair(conn, project_id)
     if not cur:
         return []
-    per_q: dict[str, list[dict]] = {}
+    per_n: dict[str, dict] = {}
     for r in conn.execute(
         f"""SELECT query, page, SUM(impressions) imp, SUM(clicks) clk,
                   ROUND({POS_SQL},1) pos
              FROM gsc_snapshots
             WHERE project_id=? AND snapshot_date=? AND period_days=? AND page IS NOT NULL
-            GROUP BY query, page""", (project_id, cur, period)):
-        per_q.setdefault(r["query"], []).append(
-            {"page": r["page"], "impressions": r["imp"], "clicks": r["clk"], "position": r["pos"]})
+            GROUP BY query, page ORDER BY query, page""", (project_id, cur, period)):
+        g = per_n.setdefault(norm(r["query"]) or r["query"], {"q": {}, "p": {}})
+        imp = r["imp"] or 0
+        g["q"][r["query"]] = g["q"].get(r["query"], 0) + imp
+        p = g["p"].setdefault(r["page"], {"page": r["page"], "impressions": 0, "clicks": 0,
+                                          "_w": 0.0, "_pos": []})
+        p["impressions"] += imp
+        p["clicks"] += r["clk"] or 0
+        if r["pos"] is not None:
+            p["_w"] += r["pos"] * imp
+            p["_pos"].append(r["pos"])
     out = []
-    for q, pages in per_q.items():
+    for g in per_n.values():
+        pages = list(g["p"].values())
+        for p in pages:
+            w, ps = p.pop("_w"), p.pop("_pos")
+            p["position"] = (round(w / p["impressions"], 1) if p["impressions"]
+                             else (round(sum(ps) / len(ps), 1) if ps else None))
         total = sum(p["impressions"] for p in pages)
         if len(pages) < 2 or total < CANNI_MIN_IMP:
             continue
         pages.sort(key=lambda p: -p["impressions"])
         if pages[1]["impressions"] < total * CANNI_MIN_SHARE:
             continue
-        out.append({"query": q, "impressions": total, "pages": pages})
+        qs = sorted(g["q"], key=lambda q: (-g["q"][q], q))
+        out.append({"query": qs[0], "variants": qs[1:], "impressions": total, "pages": pages})
     return sorted(out, key=lambda x: -x["impressions"])[:limit]
 
 
@@ -2335,6 +2462,59 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
                          "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
                          "imp": r["imp"]})
     return sorted(rows, key=lambda x: x["dpos"])[:limit]
+
+
+def decay_state(conn: sqlite3.Connection, project_id: int, run_id, target: str, *,
+                cur: str | None = None, cache: dict | None = None) -> dict | None:
+    """순위 하락 기회 하나의 '떨어지기 전·후'와 지금 순위 — 자동 해소(_resolve_decay)와
+    화면의 근거 문장(dashboard)이 같은 수를 읽는다.
+
+    하락은 연속한 두 스냅샷 사이의 것이라 다음 스냅샷에서 검출기(rank_decay)가 더는
+    안 낸다 — 그래서 근거 문장은 그날의 수(8/25→9/2)로 박제된 채 남았다. 떨어지기 전
+    순위는 문장에만 있는 게 아니라 **그 기회를 마지막으로 세운 적재(run_id)** 가 본
+    스냅샷 짝에 있다: 그 적재 날짜 이하의 최신 스냅샷(at)과 같은 기간의 직전(prev).
+    그 짝에서 이 검색어가 실제로 DECAY_POS 이상 떨어졌을 때만 기준으로 믿는다 — 스냅샷이
+    적재 뒤에 같은 날 들어왔거나 옛 스냅샷이 지워졌으면 짝이 어긋나니 None(모름)이다.
+
+    cur: 지금으로 볼 스냅샷(화면의 기준 수집일). None 이면 최신. 기간이 다르면 비교하지
+    않는다(now=None). 반환: {prev, at, pre, drop, cur, now, imp, clk} 또는 None.
+    cache: 같은 스냅샷을 검색어마다 다시 모으지 않게 호출부가 넘기는 dict."""
+    import db
+    cache = {} if cache is None else cache
+
+    def agg(day, period):
+        k = ("agg", day, period)
+        if k not in cache:
+            cache[k] = _snap_agg(conn, project_id, day, period)
+        return cache[k]
+
+    rk = ("run", run_id)
+    if rk not in cache:
+        row = conn.execute("SELECT started_at FROM runs WHERE id=?", (run_id,)).fetchone() \
+            if run_id is not None else None
+        day = (db.sql_ts(row[0]) or "")[:10] if row else ""
+        at = _latest(conn, "SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?"
+                     " AND snapshot_date<=?", (project_id, day)) if day else None
+        cache[rk] = snapshot_pair(conn, project_id, at) if at else (None, None, None, False)
+    at, prev, period, _ = cache[rk]
+    if not (at and prev):
+        return None
+    a, b = agg(at, period).get(target), agg(prev, period).get(target)
+    if not (a and b) or round(b["pos"] - a["pos"], 1) > DECAY_POS:
+        return None
+    if "now" not in cache:
+        cache["now"] = snapshot_pair(conn, project_id, cur)
+    now_d, _, now_period, _ = cache["now"]
+    n = agg(now_d, period).get(target) if now_d and now_period == period else None
+    return {"prev": prev, "at": at, "pre": round(b["pos"], 1), "drop": round(a["pos"], 1),
+            "cur": now_d, "now": round(n["pos"], 1) if n else None,
+            "imp": n["imp"] if n else None, "clk": n["clk"] if n else None}
+
+
+def decay_recovered(st: dict) -> bool:
+    """지금 순위가 떨어지기 전 순위와 DECAY_POS 칸 안으로 돌아왔나 — 세우는 조건
+    (직전 대비 DECAY_POS 이상 하락)을 같은 기준(떨어지기 전)에 대고 뒤집은 것."""
+    return st.get("now") is not None and round(st["pre"] - st["now"], 1) > DECAY_POS
 
 
 def _band_of(pos) -> str:
@@ -3427,8 +3607,22 @@ def ai_outranked(conn: sqlite3.Connection, project_id: int,
     return {"rows": rows, "competitors": len(comps), "cited": cited, "gap_date": d}
 
 
-def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
-    """구글이 AI 요약을 붙이는데 거기 내 링크가 없는 검색어 — 최신 순위 회차 기준."""
+def aio_gaps(conn: sqlite3.Connection, project_id: int, *,
+             ranked_only: bool = True) -> list[dict]:
+    """구글이 AI 요약을 붙이는데 거기 내 링크가 없고, **우리가 순위(조회 깊이) 안에 있는**
+    검색어 — 최신 순위 회차 기준.
+
+    순위가 없는(position NULL — 조회 깊이 안에 우리 페이지가 없다) 검색어는 뺀다. 구글 AI
+    요약은 상위 페이지에서 출처를 뽑으니(_AIO_PLAY) 그 검색어의 문제는 요약이 아니라
+    순위다. 넣던 시절 theotherskin 열린 기회 226건 중 189건이 이 종류였고 그중 183건이
+    순위 없는 검색어였다 — 목록이 "요약에 빠졌다"는 같은 말로 덮여 다른 할 일이 안 보였다.
+    순위 없는 검색어를 다른 종류(새 글 필요 등)로 옮기지도 않는다: 추적 키워드가 순위에
+    없다는 사실은 [순위] 화면이 이미 말하고, 그 검색어에 우리 페이지가 있는지(새 글인지
+    고칠 글인지)는 이 데이터로 가를 수 없다 — 콘텐츠 공백(content_gap)은 경쟁사가 잡은
+    검색어로 그걸 가른다. 이미 선 것은 _resolve_aio 가 사유를 달고 닫는다.
+
+    ranked_only=False 는 순위 없는 행까지 낸다 — 기회를 세우는 데가 아니라, 이미 선(작업
+    기록이 있어 안 닫힌) 기회의 처방 갈래를 최신 회차 행에서 읽는 화면(dashboard)용이다."""
     d = conn.execute(
         "SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs"
         " JOIN keywords k ON k.id=rs.keyword_id WHERE k.project_id=?",
@@ -3440,7 +3634,9 @@ def aio_gaps(conn: sqlite3.Connection, project_id: int) -> list[dict]:
              FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
             WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?
               AND rs.aio_present=1 AND rs.aio_cited=0 AND k.is_active=1
-         ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""", (project_id, d))]
+              AND (rs.position IS NOT NULL OR ?=0)
+         ORDER BY k.volume IS NULL, k.volume DESC, k.keyword""",
+        (project_id, d, 1 if ranked_only else 0))]
 
 
 def gap_rival_set(conn: sqlite3.Connection, project_id: int) -> set[str]:
@@ -3888,7 +4084,9 @@ _KIND_SPECS = {
         reasoning=lambda r, ctx: (
             f"페이지 {len(r['pages'])}개가 노출 {r['impressions']:,}을 나눠 갖습니다: "
             f"{' vs '.join(pg['page'] for pg in r['pages'][:2])} "
-            f"(구글 실적 {ctx['cur']} 기준)"),
+            + ("(띄어쓰기·대소문자만 다른 '" + "', '".join(r["variants"]) + "' 합산) "
+               if r.get("variants") else "")
+            + f"(구글 실적 {ctx['cur']} 기준)"),
         play=dict(
             what="같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다. 구글이 어느 쪽을 올릴지 못 정합니다.",
             acts=["아래 표에서 노출·클릭이 가장 큰 페이지를 정본으로 정합니다.",
@@ -4311,11 +4509,43 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
         """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
             WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
         (kw[0],)).fetchone()
+    if r and r["position"] is None:
+        # 순위 조회 깊이 안에 우리가 없다 — 세우는 쪽(aio_gaps)이 이제 안 세우는 대상이다.
+        # "안 보였다"는 측정이라 긍정 확인이고, 풀림을 기다리는 게 아니라 애초에 이 종류가
+        # 아니었다는 판정이라 기회가 만들어진 뒤의 조회를 기다리지 않는다(9/24 조회로 9/25 에
+        # 선 것도 닫는다). 두 경우만 남긴다: 사람이 [다시 열기]를 누른 뒤의 조회가 아니면
+        # 그 손을 덮지 않고, 작업 기록이 있으면(새 글을 냈을 수 있다) 다음 조회까지 둔다.
+        opp = ctx.get("opp") or {}
+        import db
+        if opp.get("status_at") and not _after_ts(r["checked_at"], db.sql_ts(opp["status_at"])):
+            return None
+        if opp.get("id") and conn.execute(
+                "SELECT 1 FROM creations WHERE opportunity_id=? LIMIT 1",
+                (int(opp["id"]),)).fetchone():
+            return None
+        return (f"순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 ({str(r['checked_at'])[:10]} "
+                f"순위 확인) — 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
+                f"문제입니다. 순위에 들면 다음 순위 확인에서 다시 판단합니다")
     if not r or not _after_ts(r["checked_at"], since):
         return None
     if r["aio_present"] == 1 and r["aio_cited"] == 1:
         pos = f", 순위 {r['position']}위" if r["position"] else ""
         return f"구글 AI 요약이 우리 링크를 인용합니다 ({str(r['checked_at'])[:10]} 순위 확인{pos})"
+    return None
+
+
+def _resolve_decay(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """순위 하락 → 기회를 세운 적재가 본 '떨어지기 전 순위'(decay_state)와 비교해, 기준 시각
+    다음 날 이후의 최신 구글 실적에서 그 순위와 DECAY_POS 칸 안으로 돌아왔다. 검색어가 최신
+    실적에서 빠진 것은 풀림이 아니다(더 떨어져 안 잡힌 것일 수 있다). 기준을 못 믿으면
+    (decay_state 가 None) 판단하지 않는다."""
+    st = decay_state(conn, pid, (ctx.get("opp") or {}).get("run_id"), target,
+                     cache=ctx.setdefault("_decay", {}))
+    if not st or not _after_day(st["cur"], since) or st["cur"] <= st["at"]:
+        return None
+    if decay_recovered(st):
+        return (f"떨어지기 전 순위로 돌아왔습니다: {st['pre']}위 → {st['drop']}위 → 지금 "
+                f"{st['now']}위 (구글 실적 {st['cur']} 기준)")
     return None
 
 
@@ -4537,6 +4767,7 @@ _RESOLVERS = {
     "index_blocked": _resolve_index,
     "ai_citation_gap": _resolve_ai_citation,
     "aio_exposure": _resolve_aio,
+    "rank_decay": _resolve_decay,
     "backlink_prospect": _resolve_prospect,
     "ai_bot_blocked": _resolve_ai_bot,
     "content_gap": _resolve_content_gap,
@@ -4544,8 +4775,6 @@ _RESOLVERS = {
 }
 # 자동 해소에서 뺀 종류와 그 이유 — 규칙을 세울 수 없거나, 세우면 살아 있는 것을 닫는다.
 _NO_RESOLVE = {
-    "rank_decay": "연속한 두 스냅샷 사이의 하락이라 다음 스냅샷에서 저절로 사라진다 — "
-                  "'더 안 떨어졌다'는 '되찾았다'가 아니고, 떨어지기 전 순위는 근거 문장에만 있다",
     "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다 — 301 로 합친 것과 "
                        "GSC 행 상한에 잘린 것을 가르지 못한다",
     "intent_split": "풀렸다는 증거가 '2위 의도 줄이 없다'는 부재다 — 지면을 갈라 옮겨 간 것과, "
@@ -4574,7 +4803,11 @@ RESOLVE_WHEN = {
     "index_blocked": "다음 색인 확인(URL 검사)에서 이 주소가 PASS·색인됨으로 나오면",
     "ai_citation_gap": f"다음 AI 확인(끝난 회차)에서 이 질문의 인용률이 "
                        f"{round(AI_GAP_MAX_RATE * 100)}%를 넘으면",
+    # 순위 조회 깊이 밖이면 닫는 것(_resolve_aio)은 목표를 이룬 게 아니라 "애초에 이 종류가
+    # 아니었다"는 판정이라 요청문의 끝나는 조건에 적지 않는다.
     "aio_exposure": "다음 순위 조회에서 구글 AI 요약이 우리 링크를 인용하면",
+    "rank_decay": f"다음 구글 실적에서 이 검색어의 평균 순위가 떨어지기 전 순위와 "
+                  f"{abs(DECAY_POS):g}칸 안으로 돌아오면",
     "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
     "content_gap": "근거였던 도메인이 경쟁사 판정에서 빠지면(판매 채널·포털) — 경쟁사가 여전히 "
@@ -4603,12 +4836,29 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
     import db
     ctx: dict = {"domain": domain}
     decisions, checked = [], 0
+    # 이번 적재가 norm 으로 접어 세운 줄 — 같은 종류·같은 norm 의 다른 글자 줄은 그 줄로
+    # 합쳐진 것이다(긍정 확인: 같은 문제를 이번 회차의 다른 줄이 맡았다).
+    folded: dict[tuple[str, str], str] = {}
+    if run_id is not None:
+        for r in conn.execute(
+                f"""SELECT kind, target FROM opportunities WHERE project_id=? AND run_id=?
+                     AND kind IN ({','.join('?' * len(NORM_FOLD_KINDS))})""",
+                (int(project_id), run_id, *NORM_FOLD_KINDS)):
+            folded[(r["kind"], norm(r["target"]))] = r["target"]
     for o in conn.execute(
-            """SELECT id, kind, target, created_at, status_at FROM opportunities
+            """SELECT id, kind, target, created_at, status_at, run_id FROM opportunities
                 WHERE project_id=? AND status IN ('new','acked') AND run_id IS NOT ?""",
             (int(project_id), run_id)).fetchall():
+        # 규칙이 대상 문자열만으로 못 정하는 것(세운 적재의 스냅샷 짝·사람 손·작업 기록)을
+        # 읽는 자리 — 규칙 사이에 쌓이는 캐시(_decay 등)와 같은 ctx 에 한 줄씩 갈아 끼운다.
+        ctx["opp"] = {"id": o["id"], "run_id": o["run_id"], "status_at": o["status_at"]}
         if o["kind"] == "coverage" and o["target"] == f"cluster:{UNCLASSIFIED_CLUSTER}":
             decisions.append((o["id"], UNCLASSIFIED_REASON))   # 이제 안 세는 대상 (_coverage_rows)
+            continue
+        twin = folded.get((o["kind"], norm(o["target"])))
+        if twin and twin != o["target"]:
+            decisions.append((o["id"], f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다 — "
+                                       f"같은 검색어라 할 일은 그 줄 하나입니다"))
             continue
         rule = _RESOLVERS.get(o["kind"])
         marks = [t for t in (db.sql_ts(o["created_at"]), db.sql_ts(o["status_at"])) if t]
@@ -5205,6 +5455,17 @@ def _selfcheck() -> None:
     assert tags == ["title", "title", "meta description", "H1", "본문",
                     "구조화 데이터", "robots", "이미지", "내부 링크"], tags
     assert page_advice({"error": "HTTP 404 · text/html"})[0]["level"] == "bad"
+    # 없는 페이지 — 검색어가 걸려 있으면 301 이 처방이다(theotherskin /review/ 가 404 인데
+    # '디아더피부과 리뷰' 로 노출되고 있었다). 걸린 검색어가 없으면 링크 쪽 문제다.
+    gone = {"status": 404, "error": "HTTP 404 · text/html"}
+    g1 = page_advice(gone, ["디아더피부과 리뷰"])
+    assert [(a["tag"], a["level"]) for a in g1] == [("없는 페이지", "bad")] \
+        and "301" in g1[0]["fix"], g1
+    assert [(a["tag"], a["level"]) for a in page_advice(gone, [])] == [("없는 페이지", "warn")]
+    # 봇 차단이라 대신 읽은 행(머리 칸 NULL) — 안 본 설명·구조화 데이터를 "없음"으로 세우지 않는다
+    via = {k: v for k, v in bad.items() if k not in ("meta_description", "schema_json")}
+    tags = [a["tag"] for a in page_advice(via, ["밀리아 제거"], domain="x.com")]
+    assert "meta description" not in tags and "구조화 데이터" not in tags and "H1" in tags, tags
     assert page_advice(None) == []
 
     # ── title/H1 은 글자가 아니라 말로 대조한다 ──

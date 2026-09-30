@@ -1285,9 +1285,9 @@ function AI_health(h, has) {
     lines.push(`<b>오래됨 ${num(h.stale)}개.</b> 마지막으로 잰 지 ${num(h.stale_days)}일이
       지났습니다. 기회 점수는 그때 받은 답을 씁니다.${eg(h.stale_eg)}`);
   if (h.outdated)
-    lines.push(`<b>구버전 ${num(h.outdated)}개.</b> 사이트의 페이지를 보기 전의 생성기가 지은
-      질문입니다. 다시 만들면 새 질문은 다음 확인에서 먼저 잽니다. 옛 질문은 인용 이력이
-      붙어 있어 저절로 끄거나 지우지 않으니, 더 볼 필요가 없으면 직접 끄세요.${eg(h.outdated_eg)}`);
+    lines.push(`<b>구버전 ${num(h.outdated)}개.</b> 지금보다 옛 생성기가 지은 질문입니다.
+      다시 만들면 새 질문으로 바꿉니다. 옛 질문은 지우지 않고 끄기만 해서 인용 기록은
+      남고, 새 질문은 다음 확인에서 먼저 잽니다.${eg(h.outdated_eg)}`);
   if (!lines.length) return "";
   const acts = [];
   if (!READONLY && window.act) {
@@ -1295,7 +1295,7 @@ function AI_health(h, has) {
       acts.push(AI_act("ai", false));
     if (h.outdated)
       acts.push(W(window.act("add", "질문 다시 만들기", false),
-        `<button class="go sec" data-sm-act="make-prompts">질문 다시 만들기</button>`));
+        `<button class="go sec" data-sm-act="make-prompts" data-sm-replace="1">질문 다시 만들기</button>`));
   }
   return `<div class="aihealth" role="note"><ul>${lines.map(l => `<li>${l}</li>`).join("")}</ul>${
     acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}</div>`;

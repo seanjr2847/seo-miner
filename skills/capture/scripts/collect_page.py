@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+import threading
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
@@ -430,7 +431,10 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     last = {r["url"]: r["checked_date"] for r in db.latest_page_audits(conn, project_id)}
     opp = sorted(dict.fromkeys(u for u in opp if u), key=lambda u: last.get(u) or "")
     out = opp + scoring.top_pages(conn, project_id, limit)
-    seen, uniq = set(), []
+    # 방금 없는 페이지(404·410)로 확인한 주소는 GONE_RECHECK_DAYS 동안 빼고 그 자리를 다른
+    # 페이지에 준다 — 매일 같은 404 를 다시 여느라 상한 안의 자리를 잃었다(aitierlist 34곳 중
+    # 5곳). 그 주소의 진단은 최신 행(404)이 그대로 갖고 있다(scoring.page_advice 가 말한다).
+    seen, uniq = set(recent_gone(conn, project_id)), []
     for u in out:
         u = clean_url(u)
         if u and u not in seen:
@@ -460,6 +464,16 @@ def clean_url(u: str) -> str:
 
 # 없는 페이지 — 오류가 아니라 사실(collect 의 one 이 가른다)
 GONE_STATUS = (404, 410)
+# 없는 페이지로 확인한 주소를 다시 여는 간격(일). 되살아났거나 리다이렉트를 걸었는지는
+# 이 간격으로 다시 본다 — 영영 빼면 고친 뒤에도 화면이 계속 404 라고 말한다.
+GONE_RECHECK_DAYS = 7
+
+
+def recent_gone(conn, project_id: int, days: int = GONE_RECHECK_DAYS) -> list[str]:
+    """주소마다 최신 감사가 404·410 이고 그게 days 일 안인 주소."""
+    return [r["url"] for r in db.latest_page_audits(conn, project_id)
+            if r["status"] in GONE_STATUS and r["checked_date"]
+            and (date.today() - date.fromisoformat(str(r["checked_date"])[:10])).days < days]
 
 
 # 사이트가 **이 서버를** 막을 때의 모양 — 응답이 없거나(시간 초과·연결 거부, status 없음)
@@ -494,11 +508,125 @@ def fetch(url: str, timeout: int | None = None) -> dict:
     return audit_html(url, r.text, r.status_code)
 
 
+# ── 막힌 페이지 대신 읽기 — DataForSEO On-Page content_parsing ────────────────
+# 데이터센터 IP 를 봇으로 보는 사이트(gucci.com)는 fetch 가 한 장도 못 본다. 그때 DataForSEO
+# 가 대신 열어 본문 구조(제목·H1·H2·단어 수)를 준다. 이번 달 할 일(plays)의 증거 읽기와 이
+# 단계가 **같은 함수**를 쓴다 — 두 벌이면 한쪽만 응답 꼴 변화를 따라간다.
+#
+# 대신 읽기가 주는 것은 본문 구조뿐이다: meta description·구조화 데이터·viewport·링크 수는
+# 안 온다. 그래서 page_audits 에는 그 칸을 **NULL(안 봄)** 으로 둔다 — audit_html 은
+# schema_json 을 늘 채우므로(없으면 "[]"), schema_json 이 NULL 인 성공 행이 "머리를 못 본
+# 행"이다(scoring._has_head_fields). 빈 칸을 "없음"으로 읽으면 멀쩡한 페이지에 "설명이
+# 없습니다"를 세운다.
+ON_PAGE_PARSE = "/on_page/content_parsing/live"
+
+
+def _jl(v) -> list:
+    try:
+        x = json.loads(v) if isinstance(v, str) else v
+    except (TypeError, ValueError):
+        return []
+    return [str(i) for i in x] if isinstance(x, list) else []
+
+
+def parse_content(result) -> dict | None:
+    """DataForSEO On-Page content_parsing 응답 → {title, h1, headings, words}. 못 읽으면 None.
+
+    응답 꼴은 문서와 버전마다 조금씩 다르다 — items[0].page_content 의 main_topic·
+    secondary_topic(각각 h_title·level·primary_content[].text)을 읽고, 없는 칸은 건너뛴다.
+    """
+    try:
+        items = (result[0] or {}).get("items") or []
+        item = items[0] if items else None
+    except (IndexError, TypeError, AttributeError):
+        return None
+    if not isinstance(item, dict):
+        return None
+    pc = item.get("page_content") or {}
+    topics = [t for t in (pc.get("main_topic") or []) + (pc.get("secondary_topic") or [])
+              if isinstance(t, dict)]
+    h1: list[str] = []
+    h2: list[str] = []
+    words = 0
+    for t in topics:
+        ht = " ".join(str(t.get("h_title") or "").split())
+        if ht:
+            (h1 if t.get("level") == 1 else h2 if t.get("level") == 2 else []).append(ht)
+        for part in ("primary_content", "secondary_content"):
+            for c in t.get(part) or []:
+                if isinstance(c, dict):
+                    words += len(str(c.get("text") or "").split())
+    if not (h1 or h2 or words):
+        return None
+    title = next((str(t.get("main_title")) for t in topics if t.get("main_title")), None) \
+        or (h1[0] if h1 else None)
+    return {"title": title, "h1": h1[0] if h1 else None, "headings": h2[:30], "words": words}
+
+
+def read_blocked(url: str, post) -> tuple[dict | None, float, str | None]:
+    """막힌 한 장을 DataForSEO 로 읽기 → (parse_content 꼴 | None, 비용, 못 읽은 사유).
+    잔액·인증(collector.Fatal)은 올린다 — 다음 장에서도 안 낫는다."""
+    try:
+        res, cost = post(ON_PAGE_PARSE, [{"url": url}])
+    except collector.Fatal:
+        raise
+    except Exception as e:
+        return None, 0.0, f"DataForSEO: {e}"
+    got = parse_content(res)
+    return got, float(cost or 0), (None if got else "DataForSEO 로도 본문을 못 읽었습니다")
+
+
+def read_page(url: str, *, fetch, post, dfs: bool) -> tuple[dict, float, str | None]:
+    """한 장 읽기 → (정보, 비용, 못 읽은 사유). 직접 → (막히면) DataForSEO → 못 읽음.
+
+    정보: {title, h1, meta, headings(H2), words, fetched_via}. 못 읽어도 한 줄은 낸다 —
+    "못 읽었다"가 증거다(화면이 그렇게 말한다).
+    """
+    a = fetch(url) or {}
+    if not a.get("error"):
+        return ({"title": a.get("title"), "h1": (_jl(a.get("h1_json")) or [None])[0],
+                 "meta": a.get("meta_description"), "headings": _jl(a.get("h2_json")),
+                 "words": a.get("words"), "fetched_via": "direct"}, 0.0, None)
+    why = str(a.get("error") or "")
+    none = {"title": None, "h1": None, "meta": None, "headings": [], "words": None,
+            "fetched_via": "none"}
+    if blocked(a.get("status")) and dfs:
+        got, cost, miss = read_blocked(url, post)
+        if got:
+            return ({**got, "meta": None, "fetched_via": "dataforseo"}, cost, None)
+        return (none, cost, f"{why} · {miss}")
+    return (none, 0.0, why)
+
+
+def audit_from_parsed(url: str, got: dict) -> dict:
+    """대신 읽은 본문 구조 → page_audits 한 줄. 안 온 칸은 넣지 않는다(= NULL, 안 봄)."""
+    return {"url": url, "status": None, "error": None, "title": got.get("title"),
+            "h1_json": json.dumps([got["h1"]] if got.get("h1") else [], ensure_ascii=False),
+            "h2_json": json.dumps((got.get("headings") or [])[:20], ensure_ascii=False),
+            "words": got.get("words")}
+
+
+# 대신 읽기 상한 — 페이지 점검은 매일 도는 꼬리 단계다. 막힌 사이트에서 40장을 매일 사면
+# 한 달 1,200건이다. 한 회차에 PAGE_DFS_MAX 장까지만, 그리고 최근 PAGE_DFS_FRESH_DAYS 안에
+# 읽은(오류 없는 행이 있는) 주소는 다시 안 산다 — 그 주소는 오늘 막힌 줄을 적지 않고 지난
+# 행을 그대로 둔다(주소마다 최신 행을 읽으므로, 막힌 줄을 적으면 멀쩡한 지난 값을 덮는다).
+PAGE_DFS_MAX = 10
+PAGE_DFS_FRESH_DAYS = 7
+
+
+def _recent_ok(conn, project_id: int, days: int) -> set[str]:
+    return {r["url"] for r in conn.execute(
+        "SELECT DISTINCT url FROM page_audits WHERE project_id=? AND error IS NULL "
+        "AND julianday('now') - julianday(checked_date) < ?", (project_id, days))}
+
+
 def collect(project: str, *,
             dry_run: bool = False,
             limit: int | None = None,
             throttle: float | None = None,
-            conn=None) -> collector.StageResult:
+            dfs_max: int | None = None,
+            conn=None,
+            post=None) -> collector.StageResult:
     """내 페이지를 가져와 감사 결과를 Brain 에 적재한다. sys.exit 호출 없음.
 
     Args:
@@ -508,7 +636,10 @@ def collect(project: str, *,
             CLI 플래그(--limit)와 이름을 맞춘다. 어긋나면 `--opt pages.limit=5` 가
             TypeError 로 죽는다(collect_index 의 --limit vs index_urls 가 그 사례).
         throttle: 요청 간격(초) — 내 서버를 두드리는 속도다
+        dfs_max: 막힌 페이지를 DataForSEO 로 대신 읽을 상한(설정 키 page_dfs_max,
+            기본 PAGE_DFS_MAX). 0 이면 대신 읽기 끔. 키가 없으면 안 한다
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
+        post: (path, body) -> (result, cost). 기본 serp_adapter.post_dataforseo(검사용 주입)
 
     Returns:
         StageResult(ok=...). 사유 있는 비종료는 ok=False, skipped=True.
@@ -516,25 +647,62 @@ def collect(project: str, *,
     ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
-        s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle))
+        s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle,
+                                               dfs_max=dfs_max))
         limit = s["page_urls"]
+        use_dfs = post is not None or serp_adapter.has_dataforseo()
+        post = post or serp_adapter.post_dataforseo
+        n_dfs = s["page_dfs_max"] if use_dfs else 0
         if limit <= 0:
             print("[pages] page_urls=0 — 페이지 감사를 끄셨습니다.")
             return st.noop(rows=0)
 
+        gone = recent_gone(conn, p["id"])
         urls = target_urls(conn, p["id"], limit)
         if not urls:
             return st.skip("감사할 페이지가 없습니다 — 먼저 gsc 를 수집하세요"
                            " (page 분해가 있어야 어느 URL 인지 알 수 있습니다).")
 
         print(f"[pages] URL {len(urls)}개 · 비용 없음 · 내 사이트 직접 조회 "
-              f"(간격 {st.throttle}초)")
+              f"(간격 {st.throttle}초)"
+              + (f" · 막히면 DataForSEO 로 최대 {n_dfs}장 대신 읽기" if n_dfs else "")
+              + (f" · 최근 없는 페이지(404·410) {len(gone)}곳은 {GONE_RECHECK_DAYS}일 뒤 다시 봅니다"
+                 if gone else ""))
         if st.dry_run:
             for i, u in enumerate(urls, 1):
                 print(f"  {i:>3}. {u}")
             return st.noop(rows=0)
 
         rows: list[dict] = []
+        kept: list[str] = []
+        fresh_ok = _recent_ok(conn, p["id"], PAGE_DFS_FRESH_DAYS)
+        lock = threading.Lock()
+        spend = {"n": 0, "cost": 0.0, "off": ""}
+
+        def get(url: str) -> dict:
+            # 일꾼 스레드 — 네트워크만(Brain 을 안 만진다). 막혔으면: 최근에 잘 읽은 주소는
+            # 지난 값을 그대로 두고(_keep), 아니면 상한 안에서 DataForSEO 로 대신 읽는다.
+            row = fetch(url)
+            if not (row.get("error") and blocked(row.get("status"))):
+                return row
+            if url in fresh_ok:
+                return {**row, "_keep": True}
+            with lock:
+                if spend["off"] or spend["n"] >= n_dfs:
+                    return row
+                spend["n"] += 1
+            try:
+                got, cost, miss = read_blocked(url, post)
+            except collector.Fatal as e:
+                # 잔액·인증 — 이 회차의 대신 읽기만 멈춘다. 페이지 점검 자체를 죽이지 않는다.
+                with lock:
+                    spend["off"] = str(e)[:160]
+                return row
+            with lock:
+                spend["cost"] += cost
+            if got:
+                return audit_from_parsed(url, got)
+            return {**row, "error": f"{row['error']} · {miss}"[:300]}
 
         def one(url: str, row: dict) -> None:
             # 가져오기(fetch)는 일꾼이 동시에 하고, 여기는 이 스레드가 urls 순서대로
@@ -542,6 +710,10 @@ def collect(project: str, *,
             # 행은 남긴다 — page_audits.error 는 "못 가져왔다"를 적는 진짜 칸이다.
             # 하지만 거기서 끝내면 실패가 **데이터**가 되어 st.errors 를 못 지나간다:
             # URL 이 전부 죽어도 runs.notes 에 errors=0 이 적히던 자리다.
+            if row.get("_keep"):
+                kept.append(url)
+                print(f"  · {url} — 막힘, {PAGE_DFS_FRESH_DAYS}일 안에 읽은 지난 값을 그대로 둡니다")
+                return
             rows.append(row)
             # 404·410 은 못 가져온 게 아니라 "가져왔고 페이지가 없다"는 사실이다 — 깨진 백링크·
             # 크롤 이슈 기회는 대상이 원래 없는 주소다. 이걸 오류로 세면 그런 기회가 열려
@@ -553,18 +725,27 @@ def collect(project: str, *,
             if row.get("error"):
                 raise collector.ItemFailed(row["error"], status=row.get("status"))
             print(f"  ✓ {url} — title {len(row['title'] or '')}자 · "
-                  f"본문 {row['words']}단어 · H1 {len(json.loads(row['h1_json']))}개")
+                  f"본문 {row['words']}단어 · H1 {len(json.loads(row['h1_json']))}개"
+                  + (" (막혀서 DataForSEO 로 대신 읽음 — 설명·구조화 데이터는 못 봄)"
+                     if row.get("schema_json") is None else ""))
 
         with st.record("pages") as r:
             # 내 사이트다 — 한 호스트에 동시 4개까지(fanout.LIMITS["own_site"]).
             # throttle 은 일꾼마다 제 요청 뒤에 쉰다.
-            done = fanout.each(st, urls, lambda u: fetch(u), one,
+            done = fanout.each(st, urls, get, one,
                                workers=fanout.LIMITS["own_site"], label=lambda u: u)
             checked = str(date.today())
             db.write_page_audits(conn, p["id"], checked, rows)
             r.api_calls = done
+            r.cost = round(spend["cost"], 4)
             r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} "
-                       f"{st.err_note}")
+                       + (f"dfs={spend['n']} " if spend["n"] else "")
+                       + (f"kept={len(kept)} " if kept else "")
+                       + (f"gone_skipped={len(gone)} " if gone else "")
+                       + f"{st.err_note}")
+        if spend["off"]:
+            print(f"  ! DataForSEO 대신 읽기를 이 회차에서 멈췄습니다 — {spend['off']}",
+                  file=sys.stderr)
 
         bad = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} page audits (errors={st.errors})"
@@ -576,7 +757,7 @@ def collect(project: str, *,
             from urllib.parse import urlparse
             return st.skip(blocked_note(urlparse(urls[0]).hostname or p["domain"], len(bad)))
         # 실제로 감사한 건수로 판정한다 — 전부 못 가져온 것은 완료가 아니다.
-        return st.verdict(done, rows=len(rows))
+        return st.verdict(done, rows=len(rows), cost=round(spend["cost"], 4))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -586,6 +767,8 @@ def _parser() -> argparse.ArgumentParser:
                           help="한 번에 감사할 URL 수. 0이면 끔")
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
                           help="요청 간격(초) — 내 서버를 두드리는 속도")
+    collector.add_setting(ap, "--dfs-max", key="page_dfs_max", fallback=PAGE_DFS_MAX, type=int,
+                          help="막힌 페이지를 DataForSEO 로 대신 읽을 상한(장). 0이면 끔")
     return ap
 
 
@@ -736,6 +919,7 @@ def _selfcheck() -> None:
 
     _concurrency_check(conn)
     _blocked_check(conn)
+    _dfs_check(conn)
     # 추적 꼬리표는 떼고, 다른 페이지를 가르는 쿼리는 남긴다
     assert clean_url("https://g.kr/?ref=ed3sign") == "https://g.kr/"
     assert clean_url("https://g.kr/uk/?gclid=EAIa&gclsrc=aw.ds") == "https://g.kr/uk/"
@@ -751,6 +935,81 @@ def _selfcheck() -> None:
     got = [u for u in target_urls(conn, 1, 40) if u.startswith("https://tu.kr")]
     assert got == ["https://tu.kr/", "https://tu.kr/uk/"], f"점검 대상에 추적 꼬리표 사본이 남았다: {got}"
     print("collect_page self-check ok")
+
+
+def _dfs_check(conn) -> None:
+    """막힌 페이지 대신 읽기(P11)와 없는 페이지 건너뛰기(P9) — 가짜 fetch·post(네트워크 0).
+
+    ① 막힌 주소는 상한(dfs_max) 안에서 DataForSEO 로 읽고, 행은 머리 칸이 NULL(안 봄)이다
+    ② 상한을 넘은 주소는 막힌 줄 그대로 ③ 최근에 읽은 주소는 막혀도 지난 값을 덮지 않는다
+    ④ 잔액(Fatal)이면 대신 읽기만 멈추고 점검은 산다 ⑤ 최근 404 는 대상에서 빠진다.
+    """
+    import contextlib
+    import io
+
+    conn.execute("INSERT INTO projects(id,name,type,domain) VALUES(7,'dfs','saas','g.kr')")
+    conn.commit()
+    urls = [f"https://g.kr/p{i}" for i in range(4)]
+    g = globals()
+    orig = g["target_urls"], g["fetch"]
+    calls: list[str] = []
+
+    def post(path, body):
+        assert path == ON_PAGE_PARSE, path
+        calls.append(body[0]["url"])
+        return ([{"items": [{"page_content": {"main_topic": [
+            {"h_title": "가방", "level": 1, "main_title": "구찌 가방",
+             "primary_content": [{"text": "하나 둘 셋"}]},
+            {"h_title": "크기", "level": 2}]}}]}], 0.002)
+
+    def go(project, post_fn, dfs_max, urls_now=urls):
+        g["target_urls"] = lambda c, pid, limit: list(urls_now)
+        g["fetch"] = lambda u, timeout=None: {"url": u, "status": 403, "error": "HTTP 403"}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return collect(project, conn=fanout.MainThreadOnly(conn), throttle=0,
+                               dfs_max=dfs_max, post=post_fn)
+        finally:
+            g["target_urls"], g["fetch"] = orig
+
+    res = go("dfs", post, 2)
+    assert len(calls) == 2, f"상한(2)을 넘겨 샀다: {calls}"
+    got = {r["url"]: dict(r) for r in conn.execute(
+        "SELECT * FROM page_audits WHERE project_id=7")}
+    ok = [u for u, r in got.items() if not r["error"]]
+    assert len(ok) == 2 and all(got[u]["schema_json"] is None and got[u]["meta_description"] is None
+                                for u in ok), got
+    assert got[ok[0]]["title"] == "구찌 가방" and json.loads(got[ok[0]]["h2_json"]) == ["크기"], got[ok[0]]
+    assert res.partial and abs(res.cost - 0.004) < 1e-9, res
+    # ③ 다음 날 — 대신 읽은 주소는 7일 안이라 다시 안 사고, 막힌 줄로 덮지도 않는다
+    conn.execute("UPDATE page_audits SET checked_date=date('now','-1 day') WHERE project_id=7")
+    conn.commit()
+    calls.clear()
+    go("dfs", post, 10)
+    assert not set(calls) & set(ok), f"최근에 읽은 주소를 또 샀다: {calls}"
+    today = {r["url"] for r in conn.execute(
+        "SELECT url FROM page_audits WHERE project_id=7 AND checked_date=date('now')")}
+    assert not today & set(ok), "최근에 잘 읽은 주소에 막힌 줄을 덮어 적었다"
+    # ④ 잔액 없음 — 점검은 끝까지 가고(막힌 줄), 단계가 Fatal 로 죽지 않는다
+    conn.execute("DELETE FROM page_audits WHERE project_id=7")
+    conn.commit()
+
+    def broke(path, body):
+        raise collector.Fatal("DataForSEO 잔액 없음(402)")
+    res = go("dfs", broke, 10)
+    assert res.skipped and "응답하지 않습니다" in res.reason, res
+    # ⑤ 최근 404 는 대상에서 빠지고, 오래된 404 는 다시 본다
+    conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status,error) "
+                 "VALUES(1,date('now','-1 day'),'https://c.kr/gone',404,'HTTP 404')")
+    conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status,error) "
+                 "VALUES(1,date('now','-30 day'),'https://c.kr/old-gone',404,'HTTP 404')")
+    conn.executemany("INSERT INTO opportunities(project_id,kind,target,score,status) "
+                     "VALUES(1,'crawl_issue',?,50,'new')",
+                     [("https://c.kr/gone",), ("https://c.kr/old-gone",)])
+    conn.commit()
+    tu = target_urls(conn, 1, 40)
+    assert "https://c.kr/gone" not in tu, f"방금 404 였던 주소를 또 연다: {tu}"
+    assert "https://c.kr/old-gone" in tu, "404 를 영영 빼 버렸다 — 고친 뒤에도 404 로 남는다"
 
 
 def _blocked_check(conn) -> None:

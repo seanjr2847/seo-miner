@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
+import audit_data  # noqa: E402  (데이터 점검 — 페이로드의 이상한 모양을 d.health 로)
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
@@ -734,16 +735,29 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     }
 
 
+# 화면·기회가 읽어도 되는 순위 행 — 추적 중인 키워드의, 지금 로케일로 잰 행(잰 로케일을
+# 모르는 옛 행은 지금 로케일로 쳤다고 본다). 자리표시자 하나(사이트 로케일)를 먹는다.
+# 로케일이 바뀐 행은 순위 단계가 offlocale_snapshots 로 옮기지만(db.park_offlocale), 그
+# 단계가 돌기 전에도 화면이 옛 나라 값을 "이번 순위"로 그리지 않게 여기서도 거른다.
+_RANK_LIVE = ("k.is_active=1 AND (rs.locale IS NULL OR rs.locale = COALESCE(k.locale, ?))")
+
+
 def _axis_rank(conn, pid: int) -> dict:
     """순위(rank_snapshots) 축 — SERP 순위·AIO 인용 갭·추적 중인 키워드 수.
 
     "ranks" 는 여기서 자르지 않은 전체 목록이다 — gather() 가 화면용으로 30개까지
     자르고, 그 앞의 전체는 query_pages 근거 조립에 쓴다.
+
+    읽는 순위는 **추적 중인(is_active=1) 키워드의, 지금 로케일로 잰 행**뿐이다(_RANK_LIVE).
+    추적에서 뺀 검색어의 옛 순위가 섞이면 화면·기회가 그것을 "이번 순위"로 읽는다 — gucci
+    순위 표 42줄 중 22줄이 추적에서 뺀 옛 en-US 검색어(미국·카타르·핀란드 URL)였다.
     """
+    site = db.project_locale(conn.execute("SELECT locale FROM projects WHERE id=?",
+                                          (pid,)).fetchone() or {"locale": None})
     rank_dates = [r[0] for r in conn.execute(
-        """SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
+        f"""SELECT DISTINCT substr(rs.checked_at,1,10) d FROM rank_snapshots rs
              JOIN keywords k ON k.id=rs.keyword_id
-            WHERE k.project_id=? ORDER BY d DESC LIMIT 2""", (pid,))]
+            WHERE k.project_id=? AND {_RANK_LIVE} ORDER BY d DESC LIMIT 2""", (pid, site))]
 
     def rank_agg(d):
         if not d:
@@ -751,10 +765,11 @@ def _axis_rank(conn, pid: int) -> dict:
         # url·피처까지 읽는다 — 예전엔 순위 숫자만 실어서, 화면이 "몇 위"는 알아도
         # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
         return {r["keyword"]: r for r in q(conn,
-            """SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
+            f"""SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
                       rs.aio_present, rs.aio_cited, rs.aio_domains_json
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
-                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=?""", (pid, d))}
+                WHERE k.project_id=? AND substr(rs.checked_at,1,10)=? AND {_RANK_LIVE}""",
+            (pid, d, site))}
 
     # 검색결과 상위 몇 줄 — 요청문이 "빠진 구간" 을 짐작이 아니라 비교로 찾는 재료.
     # 순위 숫자와 같은 회차에서 나온다(같은 날짜 키로 읽는다).
@@ -764,12 +779,12 @@ def _axis_rank(conn, pid: int) -> dict:
     # 구글이 질문을 안 보여 줬으면 없는 것이 답이고, 더 옛날 질문으로 물러서면 안 된다.
     serp_top: dict[str, list] = {}
     if rank_dates:
-        for r in q(conn, """SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
+        for r in q(conn, f"""SELECT k.keyword, s.position, s.url, s.title, s.domain, s.is_own
                               FROM serp_results s JOIN keywords k ON k.id = s.keyword_id
                              WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
                                    SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
-                                    WHERE rs.keyword_id = s.keyword_id)
-                             ORDER BY k.keyword, s.position""", (pid,)):
+                                    WHERE rs.keyword_id = s.keyword_id AND {_RANK_LIVE})
+                             ORDER BY k.keyword, s.position""", (pid, site)):
             serp_top.setdefault(r["keyword"], []).append(r)
 
     # 구글이 이 검색어에 같이 보여 준 질문·연관 검색어(팬아웃 재료) — 요청문이 "함께
@@ -779,12 +794,12 @@ def _axis_rank(conn, pid: int) -> dict:
     # 블록을 안 단다(없다고 단정하지 않는다).
     serp_fanout: dict[str, list] = {}
     if rank_dates:
-        for r in q(conn, """SELECT k.keyword, s.kind, s.text
+        for r in q(conn, f"""SELECT k.keyword, s.kind, s.text
                               FROM serp_questions s JOIN keywords k ON k.id = s.keyword_id
                              WHERE k.project_id=? AND substr(s.checked_at,1,10)=(
                                    SELECT MAX(substr(rs.checked_at,1,10)) FROM rank_snapshots rs
-                                    WHERE rs.keyword_id = s.keyword_id)
-                             ORDER BY k.keyword, s.kind, s.position""", (pid,)):
+                                    WHERE rs.keyword_id = s.keyword_id AND {_RANK_LIVE})
+                             ORDER BY k.keyword, s.kind, s.position""", (pid, site)):
             serp_fanout.setdefault(r["keyword"], []).append({"kind": r["kind"], "text": r["text"]})
 
     r_cur = rank_agg(rank_dates[0] if rank_dates else None)
@@ -1139,9 +1154,15 @@ def _axis_competitors(conn, pid: int) -> dict:
     # 안 보이면 "lfmall 은 왜 사라졌나"에 답이 없다. 이름표 정본은 scoring.ROLES.
     comp_roles = q(conn, "SELECT domain, source, role, role_why FROM competitors"
                          " WHERE project_id=? AND role IS NOT NULL ORDER BY id", (pid,))
+    # 확인된 경쟁사 수(사람이 적었거나 판정이 '경쟁') — 격차 표의 도메인 수와 다르다. 판정 전
+    # 후보만 있는 사이트(theotherskin: 논문 사이트 둘·앱 하나)에서 화면이 "경쟁사 4곳"만
+    # 말하면 진짜 경쟁사가 0곳이라는 사실이 안 보인다(정본 scoring.confirmed_rivals).
+    own = scoring.host_of(conn.execute("SELECT domain FROM projects WHERE id=?",
+                                       (pid,)).fetchone()[0] or "")
     return {"comp_date": cm_date, "comp_metrics": comp_metrics,
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
-            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES}
+            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES,
+            "rivals_confirmed": len(scoring.confirmed_rivals(conn, pid, own))}
 
 
 def _axis_ai_bots(p, crawl: dict) -> dict:
@@ -1417,7 +1438,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 종류의 검출기(aio_gaps)가 낸 최신 회차다. 거기 없는 옛 기회는 순위 행·GSC 순위로
     # 물러선다(_aio_band_of) — 요청문 근거가 읽는 자리와 같다.
     aio_band = {r["keyword"]: scoring.aio_band(r["position"])
-                for r in scoring.aio_gaps(conn, pid)}
+                for r in scoring.aio_gaps(conn, pid, ranked_only=False)}
     rank_pos = {r["keyword"]: r.get("pos") for r in ranks}
     rank_row = {r["keyword"]: r for r in ranks}
     # GSC 는 최신 회차에도 순위 행에도 없는 대상만 묻는다 — query_pages 와 같은
@@ -1453,9 +1474,34 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                              " AND volume IS NOT NULL", (pid,)):
         n = scoring.norm(k)
         kw_vol[n] = max(kw_vol.get(n, 0), v or 0)
+    # 순위 하락은 연속한 두 스냅샷 사이의 것이라 다음 스냅샷부터 검출기가 안 내고, 그래서
+    # 근거 문장이 그날의 수로 박제됐다(theotherskin: 최신 실적 9/29 인데 "8/25→9/2" 문장).
+    # 그 기회를 세운 적재의 스냅샷 짝(scoring.decay_state — 자동 해소와 같은 기준)에 지금
+    # 순위를 덧붙여 다시 쓴다. 짝을 못 믿으면(옛 스냅샷이 지워졌다 등) 옛 문장을 둔다 —
+    # 문장 속 날짜가 이미 그때 것이라고 말한다.
+    decay_run = {}
+    decay_ids = [o["id"] for o in opps if o["kind"] == "rank_decay" and o.get("id")]
+    if decay_ids and cur:
+        decay_run = dict(conn.execute(
+            f"SELECT id, run_id FROM opportunities WHERE id IN ({','.join('?' * len(decay_ids))})",
+            decay_ids).fetchall())
+    decay_cache: dict = {}
     for o in opps:
         o["volume"] = kw_vol.get(scoring.norm(str(o["target"]))) or None
         o["is_defensive"] = scoring.is_defensive(o["kind"])
+        if o["kind"] == "rank_decay" and o.get("id") in decay_run:
+            st = scoring.decay_state(conn, pid, decay_run[o["id"]], o["target"], cur=cur,
+                                     cache=decay_cache)
+            if st and st["cur"] and st["cur"] != st["at"]:
+                o["reasoning"] = (
+                    f"{st['pre']}위에서 {st['drop']}위로 {round(st['drop'] - st['pre'], 1)}칸 "
+                    f"밀렸습니다 (구글 실적 {st['prev']}과 {st['at']} 비교). "
+                    + (f"최신 구글 실적 {st['cur']}에서는 평균 {st['now']}위 · 노출 "
+                       f"{st['imp'] or 0:,} · 클릭 {st['clk'] or 0:,}"
+                       + (" — 떨어지기 전 순위로 돌아왔습니다" if scoring.decay_recovered(st)
+                          else " — 아직 떨어지기 전 순위로 못 돌아왔습니다")
+                       if st["now"] is not None else
+                       f"최신 구글 실적 {st['cur']}에는 이 검색어가 잡히지 않습니다"))
         if o["kind"] == "striking_distance":
             band = sd_band.get(o["target"]) or (
                 ("page1" if gsc_pos[o["target"]] <= scoring.PAGE1 else "page2")
@@ -1684,14 +1730,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
 # 한 런이 "성공"인지는 셸의 runVerdict 와 같은 규칙으로 가른다 — 끝났고, 중단 표식이
 # 없고, 항목 오류(errors=N)가 0 이다. 건너뜀은 실패가 아니다. 판정의 원본은 수집기가
 # runs.notes 에 남긴 글자다(collector.err_note / db.run 의 "중단:") — 구조화된 칸이
-# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다.
-_RE_RUN_ERRORS = re.compile(r"\berrors=(\d+)")
-
-
+# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다. 표식의 정본은 audit_data.run_failed —
+# 데이터 점검·출시 문(test_remote)이 같은 규칙을 본다(outline_errors= 같은 부분 일치는 안 센다).
 def _run_ok(notes: str | None) -> bool:
-    n = notes or ""
-    m = _RE_RUN_ERRORS.search(n)
-    return "중단:" not in n and not (m and int(m.group(1)))
+    return not audit_data.run_failed(notes)
 
 
 def _ts(s: str) -> "datetime | None":
@@ -1841,6 +1883,19 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
     brief.attach(d, db.project_locale(p))
+    # 심사 대기 — [개요] 기회 카드가 비었을 때 "심사에서 고르면 여기 선다"를 말하는 재료.
+    tri = _triage(conn, p)["rows"]
+    d["triage_pending"] = _triage_pending(tri)
+    # 데이터 점검은 맨 마지막이다 — 다 조립된 페이로드(요청문 꼴·고칠 페이지까지)를 그대로
+    # 읽는다. 페이로드에 없는 사실(추적 중 키워드·씨앗·직접 적은 경쟁사·심사 목록)만 ctx 로.
+    d["health"] = audit_data.audit(d, {
+        "active": {r[0] for r in conn.execute(
+            "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))},
+        "seeds": len(db.seed_keywords(conn, pid)),
+        "manual_rivals": len(db.manual_competitors(conn, pid)),
+        "triage": tri,
+        "foreign_brands": scoring.foreign_brands(conn, pid, cfg)})
+    d["health_sev"] = dict(audit_data.SEV_LABEL)   # 등급 이름 — 화면이 사본을 안 갖는다
     return d
 
 
@@ -1932,48 +1987,105 @@ def triage_payload(project: str) -> dict:
     검색어가 아닌 종류(KEYWORD_KINDS 밖)는 심사에 안 오른다."""
     conn = db.connect()
     try:
-        p = db.get_project(conn, project)
-        pid = p["id"]
-        vm = db.verdict_map(conn, pid)
-        ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
-        rows = conn.execute(
-            f"""SELECT norm(target) key, target, kind, score FROM opportunities
-                 WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
-                 ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
-        latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
-                              (pid,)).fetchone()[0]
-        perf: dict[str, tuple[int, int]] = {}
-        if latest:
-            for r in conn.execute(
-                    "SELECT norm(query) k, SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots"
-                    " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
-                perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
-        brands = _brand_keys(conn, p)
-        groups: dict[str, dict] = {}
-        for r in rows:
-            g = groups.get(r["key"])
-            if g is None:
-                c, i = perf.get(r["key"], (0, 0))
-                g = groups[r["key"]] = {
-                    "key": r["key"], "label": r["target"].strip(), "variants": set(),
-                    "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
-                    "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"])}
-            g["variants"].add(r["target"].strip())
-            if r["kind"] not in g["kinds"]:
-                g["kinds"].append(r["kind"])
-        out = []
-        for g in groups.values():
-            g["variants"] = len(g["variants"])
-            g["labels"] = [scoring.kind_label(k) for k in g["kinds"]]
-            g["score"] = round(g["score"], 1) if g["score"] is not None else None
-            out.append(g)
-        out.sort(key=lambda g: -(g["score"] or 0))
-        counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
-        for g in out:
-            counts[g["verdict"] or "none"] += 1
-        return {"rows": out, "counts": counts}
+        return _triage(conn, db.get_project(conn, project))
     finally:
         conn.close()
+
+
+def _lang_labels(langs) -> dict[str, str]:
+    """언어 코드 → 화면 이름. 정본은 serp_adapter.LOCALES 의 이름표('중국어(번체) · 대만')에서
+    언어 칸만 쓴다 — 사본을 안 둔다. 거기 없는 언어(zh 간체만 있는 식)는 괄호를 떼고 찾고,
+    그래도 없으면 코드 그대로."""
+    names: dict[str, str] = {}
+    for code, label in serp_adapter.LOCALES:
+        names.setdefault(serp_adapter.lang_of(code), re.sub(r"\(.*?\)", "", label.split(" · ")[0]))
+    return {lg: names.get(lg, lg.upper()) for lg in langs if lg}
+
+
+# [개요] 기회 카드의 빈 상태가 "점수 N점 이상 몇 건"을 말하는 문턱. 심사 화면의 진한 색점
+# (triage.html TR_tier 의 70)과 같은 수다 — 화면은 페이로드(d.triage_pending.hot_min)로 받는다.
+TRIAGE_HOT = 70
+
+
+def _triage_pending(rows: list[dict]) -> dict:
+    """심사 대기(미판정) 수와 그중 점수 TRIAGE_HOT 이상 수 — [개요] 기회 카드의 빈 상태가 쓴다.
+
+    개요 목록은 심사에서 '작업'으로 고른 것만 싣는다(db.gate_sql). 그래서 목록이 비었는데
+    심사에 113건이 쌓인 사이트(aitierlist)가 "남은 기회가 없습니다 · 쌓인 것을 전부
+    처리했습니다"를 봤다 — 한 건도 처리한 적이 없는데."""
+    pend = [r for r in rows if not r.get("verdict")]
+    return {"n": len(pend), "hot_min": TRIAGE_HOT,
+            "hot": sum(1 for r in pend if (r.get("score") or 0) >= TRIAGE_HOT)}
+
+
+def _triage(conn, p) -> dict:
+    """심사 목록 한 벌 — /api/triage 와 gather(개요의 심사 대기 수·데이터 점검)가 같이 쓴다."""
+    pid = p["id"]
+    vm = db.verdict_map(conn, pid)
+    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+    rows = conn.execute(
+        f"""SELECT norm(target) key, target, kind, score FROM opportunities
+             WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
+             ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
+    latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
+                          (pid,)).fetchone()[0]
+    perf: dict[str, tuple[int, int]] = {}
+    if latest:
+        for r in conn.execute(
+                "SELECT norm(query) k, SUM(clicks) c, SUM(impressions) i FROM gsc_snapshots"
+                " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
+            perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
+    brands = _brand_keys(conn, p)
+    # 언어-지역 — 다국어 사이트(theotherskin)는 한국어 검색어 사이에 영어·중국어 150건이
+    # 섞여 한 줄로 심사됐다. 키워드 표의 locale(조회에 쓴 값)이 정본이고, 표에 없는
+    # 검색어는 적재와 같은 규칙(db.keyword_locale)으로 가른다. 언어로 묶는다 — en-US 와
+    # en-GB 를 따로 세우면 같은 영어 검색어가 두 칸으로 갈린다.
+    site_locale = db.project_locale(p)
+    kw_loc = {r["k"]: r["locale"] for r in conn.execute(
+        "SELECT norm(keyword) k, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
+        (pid,))}
+    # 남의 브랜드 힌트 — 카탈로그(foreign_brands) + "〈이름〉+간판말"(scoring.looks_other_brand)
+    cfg = db.project_cfg(conn, p)
+    kw_rows = conn.execute(
+        "SELECT keyword, source FROM keywords WHERE project_id=? AND (is_active=1 OR source='seed')",
+        (pid,)).fetchall()
+    known_kw = [r[0] for r in kw_rows]
+    known = {scoring.norm(k) for k in known_kw if scoring.norm(k)}
+    seeds = {scoring.norm(r[0]) for r in kw_rows if r[1] == "seed"}
+    site = scoring.site_words_of(conn, pid, cfg)
+    storefront = scoring.storefront_words(
+        [p["name"], *(cfg.get("brand_aliases") or [])], known_kw)
+    foreign = scoring.foreign_brands(conn, pid, {**cfg, "name": p["name"]})
+    groups: dict[str, dict] = {}
+    for r in rows:
+        g = groups.get(r["key"])
+        if g is None:
+            c, i = perf.get(r["key"], (0, 0))
+            label = r["target"].strip()
+            loc = kw_loc.get(r["key"]) or db.keyword_locale(label, site_locale)
+            g = groups[r["key"]] = {
+                "key": r["key"], "label": label, "variants": set(),
+                "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
+                "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"]),
+                "lang": serp_adapter.lang_of(loc),
+                "other_brand": not any(b in r["key"] for b in brands) and
+                scoring.looks_other_brand(label, brands=foreign, site=site,
+                                          storefront=storefront, known=known, seeds=seeds)}
+        g["variants"].add(r["target"].strip())
+        if r["kind"] not in g["kinds"]:
+            g["kinds"].append(r["kind"])
+    out = []
+    for g in groups.values():
+        g["variants"] = len(g["variants"])
+        g["labels"] = [scoring.kind_label(k) for k in g["kinds"]]
+        g["score"] = round(g["score"], 1) if g["score"] is not None else None
+        out.append(g)
+    out.sort(key=lambda g: -(g["score"] or 0))
+    counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
+    for g in out:
+        counts[g["verdict"] or "none"] += 1
+    return {"rows": out, "counts": counts, "site_lang": serp_adapter.lang_of(site_locale),
+            "lang_labels": _lang_labels({g["lang"] for g in out})}
 
 
 def set_verdict(body: dict) -> dict:

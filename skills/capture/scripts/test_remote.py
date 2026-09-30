@@ -6,12 +6,16 @@
 아무도 못 봤다 — 로컬 brain 에는 그 런이 아예 없기 때문이다. 그래서 이 검사만
 **진짜 호스팅 서버에 묻는다**.
 
-두 가지를 본다:
+세 가지를 본다:
 
 1. 지금 런이 도는가. 돌면 FAIL — main push 가 Railway 재배포를 일으키고, 워커는
    subprocess 라 컨테이너와 함께 죽는다. 실제로 오늘 그렇게 런 하나를 죽였다.
 2. 마지막 체인이 성공했는가. `errors=N(N>0)`, 유료 단계인데 `api_calls=0` 인데
    건너뜀 표식도 없음, `finished_at IS NULL` — 셋 중 하나라도 있으면 FAIL.
+3. 데이터 점검(audit_data)에 높음 등급이 있는가. 있으면 **알린다**(FAIL 은 아니다) —
+   게이트가 막는 것은 위 두 가지(재배포가 런을 죽인다 · 런이 실패했다)뿐이다. 데이터
+   이상은 push 로 고쳐지는 것이 대부분이라 막으면 고치는 push 도 못 나간다. 런 실패는
+   2번이 이미 막는다.
 
 원격 연결(`~/.capture/remote.json`)이 없으면 건너뛴다 — CI·남의 머신에서는
 물어볼 서버가 없다. 네트워크 오류·토큰 만료도 FAIL 이 아니다(사유만 찍는다):
@@ -32,6 +36,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import audit_data  # noqa: E402
 import remote  # noqa: E402
 
 # 마지막 체인 = 가장 최근 gsc 런 이후의 runs 행들. gsc 가 체인의 첫 단계라 그것이
@@ -48,7 +53,9 @@ ORDER BY r.started_at"""
 # 건너뛴 것은 실패가 아니다: 키가 없어 안 돈 단계는 runs 행이 아예 안 생기고,
 # "오늘 이미 확인" 은 notes 에 skipped=N 으로 남는다(collector.Stage.skip_note).
 SKIP_MARK = re.compile(r"건너뜀|skipped=[1-9]")
-ERRORS = re.compile(r"errors=(\d+)")
+# 실패 표식의 정본은 audit_data 다 — 경계(\b)가 없던 사본은 rank 런의 outline_errors=4 를
+# 실패로 읽을 수 있었다(그 앞에 errors=0 이 먼저 와서 우연히 비껴갔을 뿐이다).
+ERRORS = audit_data.RUN_ERRORS
 
 
 def paid_stages() -> set[str]:
@@ -110,6 +117,17 @@ def chain_fails(project: str, rows: list[dict], paid: set[str]) -> list[str]:
     return out
 
 
+def health_alerts(project: str, d: dict) -> list[str]:
+    """데이터 점검의 높음 등급 한 줄씩. 호스팅이 실어 준 d.health 가 정본이고, 옛 서버라
+    없으면 같은 규칙(audit_data.audit)을 여기서 돌린다 — 페이로드에 없는 사실이 필요한
+    규칙(추적 중 키워드 등)만 빠진다."""
+    found = d.get("health")
+    if found is None:
+        found = audit_data.audit(d)
+    return [f"'{project}' 데이터 이상(높음) {f['area']}: {f['msg'][:140]}"
+            for f in found if f.get("sev") == "high"]
+
+
 def check() -> tuple[list[str], list[str]]:
     """(FAIL 줄, 알림 줄). 원격이 없거나 못 닿으면 FAIL 없이 알림만."""
     cfg = remote.config()
@@ -150,6 +168,12 @@ def check() -> tuple[list[str], list[str]]:
         if not bad:
             notes.append(f"'{project}': 마지막 체인 {len(rows)}단계 이상 없음 "
                          f"({rows[0].get('started_at')})")
+        d, err = ask(f"'{project}' 데이터 점검을 못 읽었다",
+                     lambda: remote.api("GET", "/api/data", params={"project": project}))
+        if err:
+            notes.append(err)
+        elif isinstance(d, dict):
+            notes += health_alerts(project, d)
     return fails, notes
 
 
@@ -161,13 +185,16 @@ def _selfcheck() -> None:
     d = Path(tempfile.mkdtemp(prefix="seo-miner-remote-check-"))
     os.environ["CAPTURE_HOME"] = str(d)
 
-    def serve(status, rows):
+    def serve(status, rows, data=None):
         def fake(method, url, **kw):
             if url.endswith("/api/run/status"):
                 return remote._Resp(200, status)
             if url.endswith("/api/sql"):
                 assert "runs" in kw["json"]["sql"], kw["json"]["sql"]
                 return remote._Resp(200, rows)
+            if url.endswith("/api/data"):
+                assert kw["params"] == {"project": "theotherskin"}, kw
+                return remote._Resp(200, data if data is not None else {"health": []})
             raise AssertionError(url)
         remote._request = fake
 
@@ -233,6 +260,24 @@ def _selfcheck() -> None:
         serve({"theotherskin": {"running": False}}, hung)
         fails, _ = check()
         assert len(fails) == 1 and "안 끝났다" in fails[0], fails
+
+        # 데이터 점검의 높음은 알림이지 FAIL 이 아니다 — 중간·낮음은 안 싣는다
+        hi = {"sev": "high", "area": "순위", "code": "rank_missing", "msg": "순위 없음 93%",
+              "count": 1}
+        lo = {"sev": "low", "area": "설정", "code": "no_seeds", "msg": "씨앗 없음", "count": 0}
+        serve({"theotherskin": {"running": False}}, ok_rows, {"health": [hi, lo]})
+        fails, notes = check()
+        assert not fails, fails
+        assert any("데이터 이상(높음) 순위: 순위 없음 93%" in n for n in notes), notes
+        assert not any("씨앗" in n for n in notes), notes
+        # 옛 서버(d.health 없음)면 같은 규칙을 여기서 돌린다
+        serve({"theotherskin": {"running": False}}, ok_rows,
+              {"runs": [{"kind": "vitals", "notes": "errors=9", "finished_at": "x"}]})
+        fails, notes = check()
+        assert not fails and any("데이터 이상(높음) 런" in n for n in notes), (fails, notes)
+        # outline_errors= 는 실패가 아니다 — errors=0 이 뒤에 와도(부분 일치를 안 센다)
+        assert why_bad({"kind": "rank", "finished_at": "x", "api_calls": 3,
+                        "notes": "outlines=36 outline_errors=4 errors=0"}, paid_stages()) is None
 
         # 네트워크 오류·401 은 FAIL 이 아니라 '확인 불가'
         remote._request = lambda *a, **kw: remote._Resp(401, {"detail": "로그인이 필요합니다"})

@@ -834,8 +834,14 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     # 시키면 첫 칸부터 빈다.
     if a.get("status") is not None:
         L.append(f"- HTTP 상태: {a['status']}")
+    head = scoring._has_head_fields(a)
+    if not head:
+        L.append("- 이 사이트가 우리 서버의 요청을 막아 본문 구조(title·H1·H2·단어 수)만 "
+                 "DataForSEO 로 대신 읽었습니다. meta description·구조화 데이터는 못 봤습니다 — "
+                 "'없다'가 아니라 '안 봤다'입니다. 열어서 확인하고 씁니다.")
     L += [f"- title: {title or '(없음)'}" + (f" — {len(title)}자" if title else ""),
-          f"- meta description: {desc or '(없음)'}" + (f" — {len(desc)}자" if desc else ""),
+          (f"- meta description: {desc or '(없음)'}" + (f" — {len(desc)}자" if desc else ""))
+          if head else "- meta description: (못 봄)",
           f"- H1: {' / '.join(h1) if h1 else '(없음)'}"]
     if h2:
         shown = h2[:12]
@@ -847,7 +853,7 @@ def _page_state(a: dict | None, url: str) -> list[str]:
     # 이 줄이 "(없음)" 한 마디였을 때, 자바스크립트로 스키마를 넣는 사이트(Yoast·
     # RankMath·AIOSEO)에서 있는 것을 없다고 말했다. 우리가 본 것이 정적 HTML 뿐임을
     # 요청문이 먼저 밝힌다 — 그래야 AI 가 확인부터 시킬 수 있다.
-    L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)'}"
+    L.append(f"- 구조화 데이터: {', '.join(sc) if sc else '(없음)' if head else '(못 봄)'}"
              + ("" if sc or not fresh else " — 정적 HTML 기준"))
     # Person 이 있으면 신뢰 신호(저자)가 "없다"는 전제가 틀릴 수 있다 — 그게 글쓴이인지
     # 글이 소개하는 인물(구성원·전문가 프로필)인지는 스키마 이름만으로 모른다.

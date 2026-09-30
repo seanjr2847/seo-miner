@@ -1373,8 +1373,20 @@ function stKpVit(d, rows, over, when) {
       vals.length ? ` · 가장 느린 LCP ${vitSec(vals[0].L)}` : ""}</p>${viz}`);
 }
 
+/* 못 잰 행 — 표(기준 넘김만 그린다)에도 카드에도 안 들어가 「잰 10건 전부 기준 안」이
+   되던 자리다(noti: 10건 중 9건이 NO_FCP). 잰 것만 세고, 못 잰 것은 사유를 **한 번만**
+   말한다. 사유 원문은 collect_vitals 가 사람 말로 적는다("측정 불가(NO_FCP) — …"). */
+function vitMissWhy(miss) {
+  const e = String(miss[0][2].error || "");
+  return (e.includes(" — ") ? e.slice(e.indexOf(" — ") + 3) : e).replace(/[.\s]+$/, "") + ".";
+}
+function vitMissNote(miss) {
+  return miss.length ? ` · 못 잰 ${num(miss.length)}건` + hint(vitMissWhy(miss)) : "";
+}
+
 function renderVitals(d) {
-  const rows = vitRows(d);
+  const all = vitRows(d);
+  const rows = all.filter(([, , r]) => !r.error), miss = all.filter(([, , r]) => r.error);
   const R = (d.rules || {});
   const lcp = R.lcp_good_ms, inp = R.inp_good_ms, cls = R.cls_good;
   if (!d.vitals_date) {
@@ -1402,6 +1414,12 @@ function renderVitals(d) {
     // 세면 배지가 「검사했고 문제가 없습니다」라고 이 섹션 본문과 반대로 말한다.
     stSec("vit-sec", null);
     stTools("vit-tools", "");
+    if (miss.length) {
+      $("vit-sub").innerHTML = `${when} 기준 · ${num(miss.length)}건 모두 못 쟀습니다.`;
+      stEmptyKp("kp-vit", "vit-sec", "속도", "이번 측정에서는 한 건도 못 쟀습니다.");
+      return $("vitals").innerHTML = `<div class="empty"><b>이번 측정에서는 한 건도 못 쟀습니다</b>
+        <p>${esc(vitMissWhy(miss))}</p></div>`;
+    }
     $("vit-sub").innerHTML = `${when} 기준 · 잰 페이지가 없습니다.`;
     stEmptyKp("kp-vit", "vit-sec", "속도", "잰 페이지가 없습니다. 기회에 걸린 페이지가 있어야 잴 대상이 정해집니다.");
     return $("vitals").innerHTML = `<div class="empty"><b>잰 페이지가 없습니다</b>
@@ -1409,11 +1427,11 @@ function renderVitals(d) {
   }
   stSec("vit-sec", over.length, {n: rows.length, t: `측정 ${rows.length}건 중`});
   $("kp-vit").innerHTML = stKpVit(d, rows, over, when);
-  $("vit-sub").innerHTML = over.length
+  $("vit-sub").innerHTML = (over.length
     ? `${when} 기준 · <b>${over.length}개</b>가 기준을 넘겼습니다.`
       + hint(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls} 이내가 기준입니다. `
              + `현장 값이 있으면 그것으로, 없으면 실험실 값으로 셉니다.`)
-    : `${when} 기준 · 잰 ${rows.length}개가 전부 기준 안입니다.`;
+    : `${when} 기준 · 잰 ${rows.length}개가 전부 기준 안입니다.`) + vitMissNote(miss);
   if (!over.length)
     return $("vitals").innerHTML = stOk(`LCP ${vitSec(lcp)} · INP ${inp}ms · CLS ${cls}`);
   $("vitals").innerHTML = (table(
