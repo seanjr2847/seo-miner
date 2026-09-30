@@ -399,7 +399,7 @@ flowchart TD
 | `/setup web` | 같은 일을 화면으로 — 부품 설치·사이트 등록·구글 연결·키 저장을 폼에서 |
 | `/setup doctor` | 진단 결과의 CLI 전문을 채팅으로 — 화면 대신 글로 봐야 할 때 |
 | `/capture add` | 사이트 온보딩 — 4문항(타입·도메인·언어-지역·시드 키워드) + AI 질문 초안. 서치콘솔 속성은 로그인해 두면 목록에서 고릅니다 |
-| `/capture run` | **한 번에 끝까지** — 단계 `gsc → ga4 → index → keywords → metrics → rank → crawl → ai → competitors → backlinks → gaps → pages → vitals → report` 를 묶음(정본 `run_all.py` 의 `GROUPS`)으로 나눠 동시에 돌리고(순서가 필요한 단계만 기다립니다 — `AFTER`) 꼬리(`TAIL`)로 마무리한 뒤 리포트 파일을 알려 줍니다. `--groups` 로 묶음 몇 개만 돌립니다. 돈이 나가는 축(정본은 `run_all.py` `STAGES` 의 `is_paid`)은 키가 없으면 알아서 빠집니다 |
+| `/capture run` | **한 번에 끝까지** — 단계 `gsc → ga4 → index → keywords → metrics → rank → crawl → ai → competitors → backlinks → gaps → plays → pages → vitals → report` 를 묶음(정본 `run_all.py` 의 `GROUPS`)으로 나눠 동시에 돌리고(순서가 필요한 단계만 기다립니다 — `AFTER`) 꼬리(`TAIL`)로 마무리한 뒤 리포트 파일을 알려 줍니다. `--groups` 로 묶음 몇 개만 돌립니다. 돈이 나가는 축(정본은 `run_all.py` `STAGES` 의 `is_paid`)은 키가 없으면 알아서 빠집니다 |
 | `/capture gsc` | Search Console 실적 자동 수집 — 합계·날짜별 추이·디바이스 분해 (구글 계정 연결 — 필수) |
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
@@ -409,6 +409,7 @@ flowchart TD
 | `/capture competitors` | 경쟁사 탐지·역키워드·트래픽 몫 — 그쪽은 잡았는데 나는 없는 검색어 (DataForSEO Labs, 유료 키). 옛 이름은 `/capture gap` |
 | `/capture backlinks` | 백링크 프로필·참조 도메인·앵커 + 링크 교집합(경쟁사는 받는데 우리는 못 받는 곳) (DataForSEO, 유료 키) |
 | `/capture gaps` | 모아 둔 자료만으로 기회를 세웁니다 (API 호출 없음). 종류의 정본은 `skills/capture/scripts/scoring.py` 의 `ALL_KINDS` — 대시보드 [개요]의 칩이 그 한 벌을 그대로 그립니다 |
+| `/capture plays` | **이번 달 할 일** — 열린 기회를 고칠 페이지 하나씩 묶고, 그 페이지와 검색결과 상위 글을 직접 읽어(봇 차단이면 DataForSEO) 바로 붙여 넣을 수정안을 AI 로 씁니다. 대시보드 [개요]에 카드로 서고, 문서는 PR 입력으로 그대로 씁니다 (OpenRouter 키) |
 | `/capture pages` | 내 페이지를 직접 열어 감사 — title·설명·H1/H2·본문 길이·구조화 데이터·링크·alt. **이게 없으면 요청문의 '진단' 절이 통째로 빕니다** (내 사이트라 돈 안 듦) |
 | `/capture vitals` | 속도 측정 (PageSpeed Insights, 돈 안 듦) — 모바일이 밀리는 검색어의 근거 |
 | `/capture dash` | 로컬 대시보드 |

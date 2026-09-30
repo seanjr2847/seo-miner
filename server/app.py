@@ -893,6 +893,10 @@ def api_run(body: dict = Depends(_body), project: str = Depends(_project_b),
         # 새 런의 로그는 여기서부터다. 워커가 뜨기까지 몇 초가 걸리는데, 그 사이
         # 폴링이 지난 런 텍스트를 읽으면 사용자는 끝난 런을 지금 도는 런으로 읽는다.
         store.save_run_log(conn, row["id"], "")
+        # 단계만 고른 실행은 사람이 누른 것이다 — 할 일(plays)은 "신선하면 건너뜀"을 끄고
+        # 다시 만든다. 자동 런(묶음 꼬리)은 이 길로 안 온다: 거기서는 신선 판정이 돈을 아낀다.
+        if "plays" in stages:
+            opts.setdefault("plays.force", "true")
         argv = ["--user", str(uid), "--project", project, "--only", ",".join(stages)]
         for k, v in opts.items():
             for one in (v if isinstance(v, list) else [v]):
@@ -1385,6 +1389,24 @@ def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     if full:
         return doctor.diagnose(project)
     return dashboard.ROUTES[("GET", "/api/doctor")](project, {}, None)
+
+
+@app.post("/api/plays/status")
+def api_plays_status(b: dict = Depends(_body), project: str = Depends(_project_b),
+                     c=Depends(BRAIN_B)):
+    """할 일(plays) 한 건의 상태 — 로컬 대시보드가 이 사이트의 PR 을 만든 뒤(play_pr) applied 로
+    적는 호스팅 창구. 호스팅 사이트의 play 는 호스팅이 가져서, 이게 없으면 PR 을 만들어도 카드가
+    계속 '할 일'이었다. 값의 정본은 db.PLAY_STATUSES, 남의 사이트 줄은 404 다(set_play_status)."""
+    try:
+        play_id = int(b.get("id") or 0)
+    except (TypeError, ValueError):
+        play_id = 0
+    status = str(b.get("status") or "")
+    if not play_id or status not in db.PLAY_STATUSES:
+        raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
+    if not db.set_play_status(c, db.get_project(c, project)["id"], play_id, status):
+        raise HTTPException(status_code=404, detail="이 사이트의 할 일이 아닙니다.")
+    return {"ok": True, "id": play_id, "status": status}
 
 
 @app.post("/api/creation/merged")

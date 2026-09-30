@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   serp_features_json TEXT,
   aio_present INTEGER,
   aio_cited INTEGER,
-  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀다
+  aio_domains_json TEXT                       -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀거나 인용을 못 받았다
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 -- 우리 도메인이 순위를 가진 검색어 — DataForSEO Labs 추정(ranked_keywords). 서치콘솔이 없는
@@ -606,6 +606,27 @@ CREATE TABLE IF NOT EXISTS verdicts (        -- 검색어 심사 (docs/superpowe
   decided_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, key)
 );
+-- 이번 달 할 일(plays.py) — 우리 페이지 하나를 어떻게 고치면 검색어 여럿이 같이 움직이나.
+-- 기회(opportunities)는 검색어마다 한 줄이라 "무엇을 고치나"가 페이지로 안 모인다 — 여기가
+-- 그 묶음과 실제로 읽은 증거·AI 수정안의 자리다. 새 표라 IF NOT EXISTS 가 옛 Brain 에도
+-- 그대로 만든다(칸을 덧붙이는 마이그레이션이 필요 없다). project_id FK 라 삭제
+-- (delete_project)와 동기화(remote._plan)가 저절로 이 표를 찾는다.
+CREATE TABLE IF NOT EXISTS plays (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  page TEXT NOT NULL,                         -- 고칠 우리 페이지 URL
+  title TEXT,                                 -- 한 줄 제목
+  keywords_json TEXT,                         -- 이 페이지로 움직일 검색어 JSON 배열
+  opp_ids_json TEXT,                          -- 묶인 기회 id JSON 배열
+  score REAL,                                 -- 기대 이득 순서 (묶인 기회 점수 합)
+  evidence_json TEXT,                         -- 실제로 읽은 것 (plays.py 의 evidence 꼴)
+  result_json TEXT,                           -- AI 수정안. 실패면 {"error": "..."}
+  markdown TEXT,                              -- 사람이 바로 쓰는 문서
+  model TEXT, cost REAL,
+  status TEXT DEFAULT 'new'                   -- 정본 목록은 db.PLAY_STATUSES
+);
+CREATE INDEX IF NOT EXISTS idx_plays_project ON plays(project_id, status);
 """
 
 
@@ -780,6 +801,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "aio_domains_json" not in {r["name"] for r in conn.execute(
             "PRAGMA table_info(rank_snapshots)")}:
         conn.execute("ALTER TABLE rank_snapshots ADD COLUMN aio_domains_json TEXT")
+        conn.commit()
+
+    # 요약은 섰는데 인용 목록이 빈 채("[]")로 적힌 행은 "인용을 못 받았다"였다 — 수집기가
+    # 비동기 요약을 요청하지 않아 인용 없이 온 응답을 "우리 링크 없음(aio_cited=0)"으로
+    # 적었고, 그게 AI 요약 빠짐 기회로 섰다(gucci '구찌가방' 1위). 빈 목록으로는 우리가
+    # 인용됐을 수가 없으니 이 행들의 aio_cited 는 전부 0 이다 — 모름(NULL)으로 되돌린다.
+    # 이제 수집기는 그런 응답을 처음부터 NULL 로 적는다(collect_serp.write). 걸리는 행이
+    # 있을 때만 쓴다(위 runs.kind 와 같은 까닭 — 여는 것만으로 쓰기 잠금을 다투지 않게).
+    if conn.execute("SELECT 1 FROM rank_snapshots WHERE aio_present=1"
+                    " AND aio_domains_json='[]' LIMIT 1").fetchone():
+        conn.execute("UPDATE rank_snapshots SET aio_cited=NULL, aio_domains_json=NULL"
+                     " WHERE aio_present=1 AND aio_domains_json='[]'")
         conn.commit()
 
     # runs.kind 는 단계 id 와 같은 말이어야 한다(run_all.STAGES 정본) — 화면
@@ -2254,8 +2287,10 @@ def write_rank_snapshot(conn: sqlite3.Connection, keyword_id: int,
     불변식: aio_present/aio_cited 의 None은 "미측정"이며 0으로 강제 변환하면
     안 된다 (serper 경로는 AIO를 측정하지 않아 NULL로 남아야 한다).
 
-    aio_domains 도 같은 불변식이다: None 은 "요약이 없었거나 안 쟀다", [] 는 "요약은
-    떴는데 인용 도메인을 하나도 못 뽑았다". 요약이 뜨지 않은 조회(aio_present 가 1 이
+    aio_domains 도 같은 불변식이다: None 은 "요약이 없었거나 안 쟀거나 인용을 못
+    받았다", [] 는 "요약은 떴는데 인용 도메인을 하나도 못 뽑았다"(수집기는 이제 이걸
+    None 으로 넘긴다 — 빈 응답과 "아무도 인용 안 함"을 못 가른다. collect_serp.write).
+    aio_cited 도 그때는 None 이다. 요약이 뜨지 않은 조회(aio_present 가 1 이
     아닌 것)에는 목록이 있을 수 없어 넘겨도 NULL 로 적는다 — serper 가 주는 빈 목록이
     "봤는데 아무도 없었다"로 둔갑하지 않게.
     """
@@ -2574,6 +2609,78 @@ def unmerged_creations(conn: sqlite3.Connection, project_id: int) -> list[sqlite
         """SELECT id, opportunity_id, branch FROM creations
             WHERE project_id=? AND merged=0 AND branch IS NOT NULL AND TRIM(branch)!=''
             ORDER BY id""", (int(project_id),)).fetchall()
+
+
+# ── 이번 달 할 일(plays) ─────────────────────────────────────────────────────
+# new = 도구가 낸 채 그대로 · applied = PR 을 만들었다 · dismissed = 사람이 뺐다.
+PLAY_STATUSES = ("new", "applied", "dismissed")
+_PLAY_JSON = (("keywords", "keywords_json", list), ("opp_ids", "opp_ids_json", list),
+              ("evidence", "evidence_json", dict), ("result", "result_json", dict))
+
+
+def replace_plays(conn: sqlite3.Connection, project_id: int, plays) -> list[int]:
+    """새로 만든 할 일 묶음으로 갈아 끼운다 — 'new' 만 지우고 applied·dismissed 는 둔다.
+
+    지우기와 넣기를 한 트랜잭션에 둔다: 중간에 죽으면 옛 묶음이 그대로 남는다(빈 카드가
+    되지 않는다). 한 건씩 쓰면 화면이 반쯤 바뀐 목록을 읽는다. 반환: 새 id 들(넣은 순서).
+    """
+    if conn.in_transaction:
+        conn.commit()
+    ids: list[int] = []
+    with conn:
+        conn.execute("DELETE FROM plays WHERE project_id=? AND status='new'", (int(project_id),))
+        for p in plays:
+            cur = conn.execute(
+                """INSERT INTO plays(project_id, page, title, keywords_json, opp_ids_json, score,
+                                     evidence_json, result_json, markdown, model, cost)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (int(project_id), p["page"], p.get("title"),
+                 json.dumps(p.get("keywords") or [], ensure_ascii=False),
+                 json.dumps(p.get("opp_ids") or []),
+                 p.get("score"),
+                 json.dumps(p.get("evidence") or {}, ensure_ascii=False),
+                 json.dumps(p.get("result") or {}, ensure_ascii=False),
+                 p.get("markdown") or "", p.get("model"), p.get("cost")))
+            ids.append(cur.lastrowid)
+    return ids
+
+
+def list_plays(conn: sqlite3.Connection, project_id: int,
+               statuses=None) -> list[dict]:
+    """할 일 목록 — JSON 칸을 풀어 페이로드 꼴(plays.py 모듈 설명·계약서)로 낸다. 점수 순.
+
+    못 읽는 JSON 칸은 빈 값으로 둔다 — 한 줄이 망가졌다고 카드 전체를 잃지 않는다.
+    """
+    q = ("SELECT id, created_at, page, title, keywords_json, opp_ids_json, score, "
+         "evidence_json, result_json, markdown, model, cost, status FROM plays WHERE project_id=?")
+    args: list = [int(project_id)]
+    st = [s for s in (statuses or ()) if s]
+    if st:
+        q += f" AND status IN ({','.join('?' * len(st))})"
+        args += st
+    out = []
+    for r in conn.execute(q + " ORDER BY score DESC, id", args):
+        d = {k: r[k] for k in ("id", "page", "title", "score", "created_at", "status",
+                               "model", "cost", "markdown")}
+        for key, col, typ in _PLAY_JSON:
+            try:
+                v = json.loads(r[col] or "null")
+            except (TypeError, ValueError):
+                v = None
+            d[key] = v if isinstance(v, typ) else typ()
+        out.append(d)
+    return out
+
+
+def set_play_status(conn: sqlite3.Connection, project_id: int, play_id: int,
+                    status: str) -> int:
+    """할 일 한 건의 상태. 그 사이트 것이 아니면 0 을 돌려준다(남의 줄을 안 바꾼다)."""
+    if status not in PLAY_STATUSES:
+        raise ValueError(f"모르는 할 일 상태: {status!r} (가능: {', '.join(PLAY_STATUSES)})")
+    cur = conn.execute("UPDATE plays SET status=? WHERE id=? AND project_id=?",
+                       (status, int(play_id), int(project_id)))
+    conn.commit()
+    return cur.rowcount
 
 
 def set_keyword_intent(conn: sqlite3.Connection, keyword_id: int, intent: str | None) -> int:

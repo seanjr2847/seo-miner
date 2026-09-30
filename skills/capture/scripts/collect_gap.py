@@ -319,23 +319,34 @@ def _serp_competitors(post, keywords: list, locale: str, limit: int) -> tuple[li
     return out, cost
 
 
-def openrouter_json(prompt: str) -> dict:
-    """AI 한 번 — JSON 객체 하나를 돌려받는다. 판정·브랜드명 뽑기 전용(답변 수집은 collect_ai).
+def openrouter_json(prompt: str, *, model: str = ROLE_MODEL, max_tokens: int = 4000,
+                    timeout: int | None = None, usage: dict | None = None) -> dict:
+    """AI 한 번 — JSON 객체 하나를 돌려받는다. 판정·브랜드명 뽑기·할 일 수정안(plays)이 쓴다
+    (답변 수집은 collect_ai).
 
     collect_ai.ask 를 안 쓰는 이유: 그쪽 system 문구는 "실제 사용자처럼 답하라"다.
+    잘림·JSON 없음을 오류로 올리는 판정이 여기 한 벌이라, 긴 답을 받는 쪽(plays)도 모델·
+    상한만 바꿔 이 길을 탄다. usage 를 주면 응답의 사용량(OpenRouter 가 세는 cost 포함)을
+    거기 채운다 — 청구액을 추정하지 않고 응답이 말하는 값을 쓰려고.
     """
     import json
     import requests
     import collect_ai
+    body = {"model": model, "temperature": 0, "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "user", "content": prompt}]}
+    if usage is not None:
+        body["usage"] = {"include": True}
     r = requests.post(
-        collect_ai.OPENROUTER_URL, timeout=serp_adapter.TIMEOUTS["openrouter"],
+        collect_ai.OPENROUTER_URL, timeout=timeout or serp_adapter.TIMEOUTS["openrouter"],
         headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
                  "Content-Type": "application/json"},
-        json={"model": ROLE_MODEL, "temperature": 0, "max_tokens": 4000,
-              "response_format": {"type": "json_object"},
-              "messages": [{"role": "user", "content": prompt}]})
+        json=body)
     serp_adapter.raise_for(r, "OpenRouter")
-    choice = (r.json().get("choices") or [{}])[0]
+    data = r.json()
+    if usage is not None:
+        usage.update(data.get("usage") or {})
+    choice = (data.get("choices") or [{}])[0]
     # 잘린 답을 빈 답으로 읽으면 안 된다 — 800토큰 상한에서 판정 목록이 잘리자 아래 파싱이
     # 조용히 {} 를 돌려, 걸러야 할 검색어(매장 위치)를 거르지 않은 채 키워드를 골랐다(gucci).
     if choice.get("finish_reason") == "length":

@@ -3,7 +3,7 @@
 <script type="application/json" class="view-def">
 {"id": "overview", "group": "todo", "title": "개요",
  "sub": "지금 상태와 다음에 손댈 것을 한자리에서 봅니다.",
- "sections": ["docban", "band", "opps", "watch", "daily"], "stages": ["gsc", "gaps"]}
+ "sections": ["docban", "band", "plays", "opps", "watch", "daily"], "stages": ["gsc", "gaps", "plays"]}
 </script>
 
 <style>
@@ -21,7 +21,7 @@
   .ov-in { grid-template-columns:repeat(12, minmax(0,1fr)); }
   .ov-hero { grid-column:1 / span 8; }
   .ov-side { grid-column:9 / span 4; }
-  .ov-daily { grid-column:1 / -1; }
+  .ov-daily, .ov-plays { grid-column:1 / -1; }
   /* 보드는 칸이 셋이라 8열로는 좁다 — 보드일 때만 대기열이 전폭이 되고 옆 카드는 아래로 나란히 선다. */
   #ov-grid.ovb .ov-hero { grid-column:1 / -1; }
   #ov-grid.ovb .ov-side { grid-column:1 / -1; grid-template-columns:repeat(2, minmax(0,1fr)); }
@@ -189,6 +189,31 @@
 .ovw-more { margin:var(--sp-3) 0 0; }
 #watch .empty { padding:var(--sp-2) 0; }
 
+/* ── 이번 달 할 일(plays): 페이지 하나 = 한 줄. 줄을 누르면 기회와 같은 오른쪽 서랍이 열린다 ──
+   줄은 대기열 줄과 같은 결(카드 가장자리까지 뻗는 hover 면)이다. 페이지 경로·날짜만 등폭이다. */
+.ovp-list { list-style:none; margin:0 calc(-1 * var(--sp-5)); padding:0; }
+.ovp { display:grid; grid-template-columns:28px minmax(0,1fr) auto; gap:4px var(--sp-3); align-items:start;
+  width:100%; box-sizing:border-box; margin:0; padding:12px var(--sp-5); border:0; border-top:1px solid var(--line);
+  border-radius:0; background:transparent; color:var(--ink); text-align:left; font:inherit; }
+button.ovp { cursor:pointer; }
+button.ovp:hover, .ovp.odr-on { background:var(--sunk); }
+.ovp-n { display:grid; place-items:center; width:28px; height:28px; border-radius:50%;
+  background:var(--accent-wash); color:var(--accent); font:700 var(--fs-1)/1 var(--sans);
+  font-variant-numeric:tabular-nums; }
+.ovp-b { min-width:0; display:flex; flex-direction:column; gap:6px; }
+.ovp-t { font:600 var(--fs-2)/1.45 var(--sans); overflow-wrap:anywhere; }
+.ovp-m { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; font-size:var(--fs-1); color:var(--sub); }
+.ovp-u { font-family:var(--mono); font-size:var(--fs-1); color:var(--sub); overflow-wrap:anywhere; }
+.ovp-k { display:inline-flex; align-items:center; height:24px; padding:0 8px; border-radius:var(--r-pill);
+  background:var(--sunk); color:var(--ink); font:500 var(--fs-1)/1 var(--sans); white-space:nowrap; }
+button.ovp:hover .ovp-k { background:var(--card); }
+.ovp-s { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+.ovp-d { font:400 var(--fs-1)/1.3 var(--mono); color:var(--sub); font-variant-numeric:tabular-nums; }
+@media (max-width:560px) {
+  .ovp { grid-template-columns:28px minmax(0,1fr); }
+  .ovp-s { grid-column:2; flex-direction:row; align-items:center; }
+}
+
 /* ── 일별 추이: 한 번에 하나만(클릭 | 노출) — 자릿수가 다른 두 선을 한 축에 겹치지 않는다 ── */
 .ovd-leg { font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub); margin-top:var(--sp-3); }
 .ovd-leg b { color:var(--ink); font-weight:600; }
@@ -259,6 +284,26 @@
   color:var(--sub); font:500 var(--fs-1)/1 var(--sans); cursor:pointer; }
 .odr-seg button[aria-pressed="true"] { background:var(--card); color:var(--ink); box-shadow:var(--shadow-1); }
 #opplist details.opp.odr-on > summary { background:var(--accent-wash); }
+/* 할 일 서랍 — 같은 서랍 상자(.odr)에 칠하는 조각들. 지금 → 새로 는 두 줄 비교다. */
+.odr-u { font:400 var(--fs-1)/1.4 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
+.odr-list { margin:0 0 4px; padding-left:18px; display:flex; flex-direction:column; gap:6px;
+  font-size:var(--fs-2); line-height:1.6; }
+.odr-ba { display:grid; grid-template-columns:44px minmax(0,1fr); gap:4px 10px; margin:0 0 10px;
+  font-size:var(--fs-2); line-height:1.55; }
+.odr-ba > span { font:600 var(--fs-1)/1.9 var(--sans); color:var(--sub); }
+.odr-ba .now { color:var(--sub); padding:4px 8px; }
+.odr-ba .new { color:var(--ink); font-weight:600; background:var(--accent-wash); border-radius:8px; padding:4px 8px; }
+.odr-ba i { font-style:normal; color:var(--sub); }
+.odr-sec { background:var(--sunk); border-radius:var(--r-in); padding:12px 14px; margin:0 0 8px; }
+.odr-sec b { display:block; font:650 var(--fs-2)/1.45 var(--sans); }
+.odr-sec p { margin:6px 0 0; font-size:var(--fs-2); line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; }
+.odr-sec .odr-chips { margin-top:8px; }
+.odr-serp li .h { grid-column:2 / -1; color:var(--sub); font-size:var(--fs-1); line-height:1.5; }
+.odr-note { margin:0 0 16px; }
+.odr-doc textarea { min-height:360px; }
+.odr-doc .acts { margin-top:12px; }
+/* 복사 폴백용 임시 입력칸 — 보이지 않게 두되 select() 가 먹도록 display 는 안 끈다. */
+.ovp-clip { position:fixed; top:0; left:0; width:1px; height:1px; opacity:0; }
 @media (max-width:560px) {
   .odr-h, .odr-b, .odr-f { padding-left:16px; padding-right:16px; }
   .odr-tabs { gap:16px; }
@@ -273,6 +318,19 @@
      칸은 왼쪽 큰 것(대기열) · 오른쪽 조용한 것(종류·달라졌나) · 아래 12열(추이)이다. -->
 <section id="ov-grid">
   <div class="ov-in">
+    <!-- 이번 달 할 일 — 지표 바로 아래, 개선 기회 위. 도구가 페이지를 읽고 만든 수정안(d.plays)이다.
+         안을 채우는 것은 OV_plays 다. -->
+    <div class="card ov-plays" id="plays-card">
+      <div class="ovh">
+        <div class="ovh-t">
+          <h2>이번 달 할 일</h2>
+          <p class="sub" id="plays-sub"></p>
+        </div>
+        <div class="tools" id="plays-tools"></div>
+      </div>
+      <div id="plays"></div>
+    </div>
+
     <div class="card ov-hero" id="opps-card">
       <!-- 도구줄(찾기·상태·CSV)은 머리 오른쪽에 선다. 안을 채우는 것은 renderOpps 다. -->
       <div class="ovh">
@@ -946,6 +1004,8 @@ function OV_openTop() {
    다시 접고 서랍을 연다. 그래서 여는 쪽 네 곳을 고치지 않는다. 박제본(READONLY)과 인쇄는
    손대지 않는다 — 거기서는 제자리 펼침이 맞다(종이에 서랍은 없다). */
 let OV_D = {}, OV_DR = null, OV_DR_TAB = "ev", OV_DR_FROM = null, OV_PRINTING = false;
+// 같은 서랍에 [이번 달 할 일]도 칠한다(OV_play) — 둘 중 하나만 선다: OV_DR(기회) 또는 OV_PL(할 일).
+let OV_PL = null, OV_PL_TAB = "fix";
 // 이 뷰는 셸 스크립트보다 위에 꽂힌다 — 문서의 <details open> 은 셸이 READONLY 를 선언하기
 // 전에 toggle 을 쏜다. 그래서 대상부터 거르고, READONLY 는 선언됐는지 보고 읽는다.
 const OV_RO = () => typeof READONLY === "undefined" || READONLY;
@@ -980,6 +1040,8 @@ function OV_drawer(id, from) {
   const dr = OV_drawerEls();
   if (!o || !dr) return;
   if (OV_DR !== id) OV_DR_TAB = "ev";
+  // 할 일 서랍이 떠 있었으면 그 자리를 내준다 — 되돌아갈 곳도 이제 이 줄이다.
+  if (OV_PL != null) { OV_playMark(null); OV_PL = null; OV_DR_FROM = null; }
   OV_DR = id;
   if (from) OV_DR_FROM = from;
   OV_drawerPaint(o);
@@ -994,10 +1056,13 @@ function OV_drawerClose() {
   dr.hidden = true;
   $("ov-drawer-bg").hidden = true;
   document.querySelectorAll("#opplist details.opp.odr-on").forEach(x => x.classList.remove("odr-on"));
+  OV_playMark(null);
   // 연 줄로 초점을 돌려준다 — 상태를 바꿨으면 목록이 다시 그려져 그 요소는 없다. 같은 줄을 다시 찾는다.
   const back = OV_DR_FROM && OV_DR_FROM.isConnected ? OV_DR_FROM
+    : OV_PL != null ? document.querySelector(`#plays .ovp[data-play="${OV_PL}"]`)
     : document.querySelector(`#opplist details.opp[data-opp="${OV_DR}"] > summary`);
   OV_DR = null;
+  OV_PL = null;
   OV_DR_FROM = null;
   if (back) back.focus({preventScroll: true});
 }
@@ -1010,7 +1075,7 @@ function OV_drawerSync() {
   OV_drawerPaint(o);
 }
 function OV_drawerTab(t) {
-  OV_DR_TAB = t;
+  if (OV_PL != null) OV_PL_TAB = t; else OV_DR_TAB = t;
   const dr = $("ov-drawer");
   dr.querySelectorAll(".odr-tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.t === t));
   dr.querySelectorAll("[data-panel]").forEach(p => { p.hidden = p.dataset.panel !== t; });
@@ -1025,7 +1090,9 @@ function OV_drTiles(o) {
     r.pos != null ? `${r.pos}위` : "잰 범위 밖"]);
   if (vol) t.push(["", "월 검색량", num(vol)]);
   if (r && r.aio != null) t.push(r.aio
-    ? (r.aio_cited ? ["ok", "구글 AI 요약", "우리 인용됨"] : ["warn", "구글 AI 요약", "우리 인용 안 됨"])
+    // 출처를 못 받은 줄(aio_cited NULL)은 '안 됨'이 아니라 모른다 — 빠짐으로 칠하지 않는다.
+    ? (r.aio_cited == null ? ["", "구글 AI 요약", "있음 · 출처 모름"]
+       : r.aio_cited ? ["ok", "구글 AI 요약", "우리 인용됨"] : ["warn", "구글 AI 요약", "우리 인용 안 됨"])
     : ["", "구글 AI 요약", "없음"]);
   return t.length ? `<div class="odr-tiles">${t.map(([c, l, v]) => `<div class="odr-tile${c ? " " + c : ""}">
     <span>${l}</span><b${v.length > 5 ? ` class="s"` : ""}>${esc(v)}</b></div>`).join("")}</div>` : "";
@@ -1110,6 +1177,232 @@ function OV_drawerPaint(o) {
     <div class="odr-f">${seg}<span class="sp"></span>${main}</div>`;
   deadSweep(dr);
   applyWording(dr);
+}
+
+/* ── 이번 달 할 일(plays) ────────────────────────────────────────────────
+   도구가 고른 우리 페이지 하나 = 한 줄: 그 페이지를 어떻게 고치면 검색어 여러 개가 같이
+   움직이는지, 실제로 읽은 증거, 바로 쓸 수정안. 재료·수정안은 엔진(plays 단계)이 페이로드
+   d.plays 로 싣는다 — 화면은 그리기만 한다(새 판정을 만들지 않는다). 옛 박제본·옛 페이로드
+   에는 이 키가 없다 — 그때는 빈 목록이다.
+   줄을 누르면 기회와 **같은 서랍 상자**(#ov-drawer)에 칠한다. 서랍은 한 번에 하나라 기회와
+   할 일이 겹쳐 열리지 않고, 닫기(Esc·바깥·✕)와 초점 되돌리기도 한 벌(OV_drawerClose)이다.
+   박제본은 줄을 문장으로만 남긴다 — 서랍·만들기 버튼이 없다(누를 서버가 없다). */
+const OV_PLAYS_N = 5, OV_PLAY_KW = 3;
+const OV_PLAY_ST = {new: ["", "할 일"], applied: ["made", "PR 만듦"], dismissed: ["muted", "뺌"]};
+let OV_PLAYS = [];
+const OV_playOf = id => OV_PLAYS.find(p => p.id === id);
+const OV_playSt = p => {
+  const [c, l] = OV_PLAY_ST[p.status] || ["", p.status || "할 일"];
+  return `<span class="badge${c ? " " + c : ""}">${esc(l)}</span>`;
+};
+// 검색어 칩 — 앞의 몇 개만, 나머지는 「외 N」(전부는 서랍의 증거가 말한다).
+const OV_playKws = (ks, n = OV_PLAY_KW) => {
+  const a = (ks || []).filter(Boolean);
+  return a.slice(0, n).map(k => `<span class="ovp-k">${esc(k)}</span>`).join("")
+    + (a.length > n ? `<span class="ovp-k" title="${esc(a.slice(n).join(" · "))}">외 ${a.length - n}</span>` : "");
+};
+const OV_playDate = p => p.created_at ? `<span class="ovp-d" title="${esc(p.created_at)}">${
+  esc(String(p.created_at).slice(5, 10))}</span>` : "";
+// 줄·서랍 머리의 강조 — 서랍이 보고 있는 할 일 한 줄만.
+function OV_playMark(id) {
+  document.querySelectorAll("#plays .ovp").forEach(x => x.classList.toggle("odr-on", id != null && +x.dataset.play === id));
+}
+
+function OV_plays(d) {
+  OV_PLAYS = (Array.isArray(d.plays) ? d.plays : []).filter(p => p && p.id != null && p.status !== "dismissed")
+    .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, OV_PLAYS_N);
+  const at = d.plays_at ? String(d.plays_at).slice(0, 10) : "";
+  $("plays-sub").innerHTML = (READONLY
+      ? "이 기록을 남긴 시점에 도구가 페이지를 읽고 만든 수정안입니다."
+      : "도구가 우리 페이지와 상위 결과를 직접 읽고 만든 수정안입니다. 페이지 하나를 고치면 검색어 여러 개가 같이 움직입니다.")
+    + (at && OV_PLAYS.length ? ` <span class="nw">${esc(at)}</span> 기준.` : "");
+  // 다시 만드는 손잡이는 머리 오른쪽 하나 — 비었을 때는 빈 상태가 주요 행동으로 든다.
+  $("plays-tools").innerHTML = OV_PLAYS.length ? OV_act("plays", null, false) : "";
+  if (!OV_PLAYS.length) {
+    $("plays").innerHTML = READONLY
+      ? `<div class="empty"><b>이 기록에는 이번 달 할 일이 없습니다</b>
+          <p>기록을 남길 때 도구가 만든 수정안이 없었습니다.</p></div>`
+      : `<div class="empty"><b>이번 달 할 일이 아직 없습니다</b>
+          <p>도구가 기회를 페이지별로 묶고, 그 페이지와 상위 결과를 직접 읽어 고칠 곳 3~5개를 수정안까지 만들어 둡니다.</p>
+          ${OV_acts(OV_act("plays"))}</div>`;
+  } else {
+    const row = (p, i) => {
+      const inner = `<span class="ovp-n" aria-hidden="true">${i + 1}</span>
+        <span class="ovp-b"><span class="ovp-t">${esc(p.title || urlPath(p.page))}</span>
+          <span class="ovp-m"><span class="ovp-u">${esc(urlPath(p.page))}</span>${OV_playKws(p.keywords)}</span></span>
+        <span class="ovp-s">${OV_playSt(p)}${OV_playDate(p)}</span>`;
+      return READONLY ? `<li><div class="ovp">${inner}</div></li>`
+        : `<li><button type="button" class="ovp" data-play="${Number(p.id)}" aria-haspopup="dialog"
+            onclick="OV_play(${Number(p.id)}, this)">${inner}</button></li>`;
+    };
+    $("plays").innerHTML = `<ol class="ovp-list">${OV_PLAYS.map(row).join("")}</ol>`;
+  }
+  // 다시 그려졌다(사이트 전환·재적재) — 보던 할 일이 아직 있으면 새 값으로 다시 칠하고, 없으면 닫는다.
+  if (OV_PL != null) {
+    const p = OV_playOf(OV_PL);
+    if (p) { OV_playPaint(p); OV_playMark(p.id); } else OV_drawerClose();
+  }
+}
+
+function OV_play(id, from) {
+  const p = OV_playOf(id), dr = OV_drawerEls();
+  if (!p || !dr || OV_RO()) return;
+  const bad = OV_playErr(p);
+  if (OV_PL !== id) OV_PL_TAB = bad ? "ev" : "fix";
+  // 기회 서랍이 떠 있었으면 그 자리를 내준다 — 서랍은 한 번에 하나다.
+  document.querySelectorAll("#opplist details.opp.odr-on").forEach(x => x.classList.remove("odr-on"));
+  OV_DR = null;
+  OV_PL = id;
+  OV_DR_FROM = from || null;
+  OV_playPaint(p);
+  OV_playMark(id);
+  dr.hidden = false;
+  $("ov-drawer-bg").hidden = false;
+  const x = dr.querySelector(".odr-x");
+  if (x) x.focus({preventScroll: true});
+}
+// 수정안을 못 만든 할 일 — 엔진이 result = {error} 를 남긴다. 빈 result 도 같은 뜻이다.
+function OV_playErr(p) {
+  const r = p.result || {};
+  if (r.error) return String(r.error);
+  return Object.keys(r).length ? "" : "이유가 남지 않았습니다.";
+}
+
+// 수정안 탭 — 요약·근거, 제목·설명·H1 지금 → 새로, 넣을 소제목과 초안, 내부 링크, 신뢰 요소, 기대 효과.
+function OV_playFix(r) {
+  const ba = [["title", "제목"], ["meta", "설명"], ["h1", "H1"]].filter(([k]) => r[k] && (r[k].new || r[k].now))
+    .map(([k, l]) => `<div class="odr-ba"><span>${l}</span><div>
+        <div class="now"><i>지금</i> ${r[k].now ? esc(r[k].now) : "없음"}</div>
+        <div class="new"><i>새로</i> ${esc(r[k].new || r[k].now || "")}</div></div></div>`).join("");
+  const sec = (r.sections || []).filter(s => s && (s.h2 || s.draft));
+  const links = (r.links || []).filter(l => l && (l.from || l.anchor));
+  const list = xs => `<ul class="odr-list">${xs.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  const lk = s => /^https?:\/\//.test(String(s || "")) ? `<span class="odr-u">${esc(urlPath(s))}</span>` : esc(s || "");
+  return `${r.summary ? `<p class="odr-why">${esc(r.summary)}</p>` : ""}
+    ${(r.why || []).length ? list(r.why) : ""}
+    ${ba ? `<h3 class="odr-h3">제목·설명·H1</h3>${ba}` : ""}
+    ${sec.length ? `<h3 class="odr-h3">넣을 소제목 ${sec.length}개</h3>${sec.map(s => `<div class="odr-sec">
+        <b>${esc(s.h2 || "")}</b>${s.draft ? `<p>${esc(s.draft)}</p>` : ""}${(s.for || []).length
+          ? `<div class="odr-chips">${OV_playKws(s.for, 6)}</div>` : ""}</div>`).join("")}` : ""}
+    ${links.length ? `<h3 class="odr-h3">내부 링크</h3><ul class="odr-list">${links.map(l =>
+        `<li>${lk(l.from)}${l.anchor ? ` → 앵커 「${esc(l.anchor)}」` : ""}</li>`).join("")}</ul>` : ""}
+    ${(r.trust || []).length ? `<h3 class="odr-h3">신뢰 요소</h3>${list(r.trust)}` : ""}
+    ${r.expected ? `<h3 class="odr-h3">기대 효과 · 추정</h3><p class="odr-why">${esc(r.expected)}</p>` : ""}`;
+}
+// 증거 탭 — 실제로 읽은 것: 우리 페이지 점검값, 검색어별 상위 결과(우리 줄 칠함·소제목), AI 요약, 빠진 주제.
+function OV_playEv(ev) {
+  const our = ev.our || {};
+  const via = {direct: ["", "직접 읽음"], dataforseo: ["", "대신 읽음"], none: ["warn", "못 읽음"]}[our.fetched_via];
+  const tiles = [];
+  if (Number.isFinite(our.words)) tiles.push(["", "본문 단어", num(our.words)]);
+  if (via) tiles.push([via[0], "페이지 읽기", via[1]]);
+  const ours = (our.title || our.h1 || our.url) ? `<h3 class="odr-h3" style="margin-top:0">우리 페이지</h3>
+    ${our.url ? `<p class="odr-u odr-note">${esc(our.url)}</p>` : ""}
+    <div class="odr-ba"><span>제목</span><div class="now">${our.title ? esc(our.title) : "없음"}</div></div>
+    <div class="odr-ba"><span>H1</span><div class="now">${our.h1 ? esc(our.h1) : "없음"}</div></div>` : "";
+  const byKw = new Map();
+  for (const s of ev.serp || []) {
+    if (!byKw.has(s.keyword)) byKw.set(s.keyword, []);
+    byKw.get(s.keyword).push(s);
+  }
+  const serp = [...byKw].map(([kw, rows]) => `<h3 class="odr-h3">「${esc(kw || "")}」 검색 결과 상위 ${rows.length}</h3>
+    <ol class="odr-serp">${rows.map(sr => {
+      const hd = (sr.headings || []).slice(0, 6).map(esc).join(" · ");
+      const w = Number.isFinite(sr.words) ? `본문 단어 ${num(sr.words)}` : "";
+      return `<li${sr.is_own ? ` class="own"` : ""}><span class="p">${sr.position ?? "—"}</span>
+        <span class="t" title="${esc(sr.title || sr.url || "")}">${esc(sr.title || sr.url || "")}</span>
+        <span class="d">${sr.is_own ? "우리" : esc(sr.domain || "")}</span>${hd || w
+          ? `<div class="h">${[hd && `소제목: ${hd}`, w].filter(Boolean).join(" · ")}</div>` : ""}</li>`;
+    }).join("")}</ol>`).join("");
+  const aio = (ev.aio || []).map(ai => `<li>${esc(ai.keyword || "")} — ${ai.present
+      ? (ai.cited == null ? "AI 요약이 뜨는데 출처를 못 받아 인용 여부는 모름"
+         : ai.cited ? "AI 요약에 우리가 인용됨" : "AI 요약이 뜨는데 우리 인용 없음") : "AI 요약 없음"}${(ai.domains || []).length
+      ? ` · 인용된 곳 <span class="odr-u">${esc(ai.domains.slice(0, 4).join(", "))}</span>` : ""}</li>`).join("");
+  const gaps = (ev.gaps || []).filter(Boolean);
+  const body = `${ours}${tiles.length ? `<div class="odr-tiles">${tiles.map(([c, l, v]) => `<div class="odr-tile${
+      c ? " " + c : ""}"><span>${l}</span><b class="s">${esc(v)}</b></div>`).join("")}</div>` : ""}${serp}
+    ${aio ? `<h3 class="odr-h3">구글 AI 요약</h3><ul class="odr-list">${aio}</ul>` : ""}
+    ${gaps.length ? `<h3 class="odr-h3">상위엔 있고 우리엔 없는 것</h3><ul class="odr-list">${
+      gaps.map(g => `<li>${esc(g)}</li>`).join("")}</ul>` : ""}`;
+  return body.trim() ? body : `<div class="empty"><b>읽어 온 증거가 없습니다</b>
+    <p>페이지와 상위 결과를 읽지 못한 채 끝났습니다. 다시 만들면 다시 읽습니다.</p></div>`;
+}
+
+function OV_playPaint(p) {
+  const dr = $("ov-drawer");
+  const r = p.result || {}, ev = p.evidence || {}, bad = OV_playErr(p);
+  const tabs = (bad ? [] : [["fix", "수정안"]]).concat([["ev", "증거"], ["doc", "문서"]]);
+  if (!tabs.some(([t]) => t === OV_PL_TAB)) OV_PL_TAB = tabs[0][0];
+  const n = OV_PLAYS.indexOf(p) + 1;
+  const kws = (p.keywords || []).filter(Boolean);
+  const pb = SM.host.playBtn ? SM.host.playBtn(p) : "";
+  const doc = p.markdown
+    ? `<div class="pbox"><textarea readonly rows="18" spellcheck="false" aria-label="할 일 문서 전문">${
+        esc(p.markdown)}</textarea></div>
+      <div class="acts"><button type="button" class="go sm sec" onclick="OV_playCopy(this)">복사</button>
+        <button type="button" class="go sm sec" onclick="OV_playDown()">.md 내려받기</button></div>`
+    : `<div class="empty"><b>문서가 없습니다</b><p>수정안을 못 만들면 문서도 만들지 않습니다.</p></div>`;
+  dr.innerHTML = `<div class="odr-h">
+      <div class="odr-top">
+        <div class="odr-ring" title="이번 달 할 일 ${n}번째 — 기대 이득이 큰 순서입니다">${n || "—"}</div>
+        <div class="odr-tt"><h2 id="odr-t">${esc(p.title || urlPath(p.page))}</h2>
+          <div class="odr-u">${esc(urlPath(p.page))}</div>
+          <div class="odr-chips">${OV_playSt(p)}${kws.slice(0, 6).map(k => `<span class="ovp-k">${esc(k)}</span>`).join("")}${
+            kws.length > 6 ? `<span class="ovp-k" title="${esc(kws.slice(6).join(" · "))}">외 ${kws.length - 6}</span>` : ""}</div></div>
+        <button type="button" class="odr-x" aria-label="닫기" onclick="OV_drawerClose()">✕</button>
+      </div>
+      <div class="odr-tabs" role="tablist">${tabs.map(([t, l]) => `<button type="button" role="tab" data-t="${t}"
+        aria-selected="${t === OV_PL_TAB}" onclick="OV_drawerTab('${t}')">${l}</button>`).join("")}</div>
+    </div>
+    <div class="odr-b">
+      ${bad ? "" : `<div class="det" role="tabpanel" data-panel="fix"${OV_PL_TAB === "fix" ? "" : " hidden"}>${OV_playFix(r)}</div>`}
+      <div class="det" role="tabpanel" data-panel="ev"${OV_PL_TAB === "ev" ? "" : " hidden"}>
+        ${bad ? `<div class="empty err odr-note"><b>수정안을 못 만들었습니다</b><p>${esc(bad)}</p><p>아래는 그때 읽어 온 증거입니다.</p></div>` : ""}
+        ${OV_playEv(ev)}
+      </div>
+      <div class="det odr-doc" role="tabpanel" data-panel="doc"${OV_PL_TAB === "doc" ? "" : " hidden"}>${doc}</div>
+    </div>
+    <div class="odr-f">${p.created_at ? `<span class="ovp-m">만든 날 ${OV_playDate(p)}</span>` : ""}<span class="sp"></span>${p.markdown
+      ? `<button type="button" class="go${pb ? " sec" : ""}" onclick="OV_playCopy(this)">문서 복사</button>` : ""}${pb}</div>`;
+  deadSweep(dr);
+  applyWording(dr);
+}
+
+// [복사] — 박제본·비보안 출처(file://)에서는 clipboard API 가 막혀 임시 입력칸으로 물러선다.
+async function OV_playCopy(btn) {
+  const p = OV_playOf(OV_PL);
+  if (!p || !p.markdown) return;
+  const was = btn.textContent;
+  let ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(p.markdown); ok = true; }
+  } catch (e) { ok = false; }
+  if (!ok) {
+    const ta = document.createElement("textarea");
+    ta.value = p.markdown;
+    ta.setAttribute("readonly", "");
+    ta.className = "ovp-clip";
+    btn.after(ta);
+    ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    btn.focus({preventScroll: true});
+  }
+  btn.textContent = ok ? "복사함" : "직접 선택";
+  setTimeout(() => { btn.textContent = was; }, 2000);
+  if (!ok && window.toast) window.toast("복사하지 못했습니다. 문서 탭의 글을 직접 선택해 복사하세요.", "bad");
+}
+// [.md 내려받기] — 파일 이름은 페이지 경로에서 짓는다(/women/bags → play-women-bags.md).
+const OV_playSlug = u => {
+  const s = urlPath(u).split(/[?#]/)[0].replace(/^\/+|\/+$/g, "");
+  let t;
+  try { t = decodeURIComponent(s); } catch (e) { t = s; }
+  return "play-" + (t.replace(/[^\w가-힣.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "home");
+};
+function OV_playDown() {
+  const p = OV_playOf(OV_PL);
+  if (!p || !p.markdown) return;
+  saveFile(`${OV_playSlug(p.page)}.md`, p.markdown, "text/markdown;charset=utf-8");
 }
 
 /* ── 스포트라이트: 이 화면의 답 ────────────────────────────────────────
@@ -1324,6 +1617,8 @@ VIEW("overview", function (d) {
   // 완료·제외는 끝난 일이라 목록에 안 낀다(윗줄 "아직 안 한 기회 N건"과 같은 몫).
   // 박제본은 그때의 트리아지 기록 자체가 볼거리라 전부 남긴다.
   if (OPP_ST === null) OPP_ST = READONLY ? "" : "open";
+  // 이번 달 할 일 — 지표 바로 아래 카드. 옛 페이로드(plays 없음)면 빈 상태로 선다.
+  OV_plays(d);
   // 검색어별 페이지 표·밴드·기회 색인은 셸의 render() 가 화면 전부를 위해 먼저 세운다.
   renderOpps(OV_PAGE);
   OV_watch(d);

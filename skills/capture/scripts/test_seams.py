@@ -272,7 +272,10 @@ def test_seam_05_api_calls_exist_on_servers():
     경로 오타 하나면 fetch 가 조용히 404 로 죽고 화면에는 "불러오지 못했습니다"
     만 남는다 — 화면 파일도 서버 파일도 따로 보면 멀쩡하다. 원본 화면은 로컬과
     호스팅 양쪽에서 뜨므로 둘 다 검사한다(/api/data?date= 를 한쪽에만 넣는 실수).
-    /api/setup/* 만 면제한다: 호스팅은 설정 화면을 통째로 숨긴다(dash.html).
+    로컬 전용 경로(dashboard.LOCAL_ROUTES — /api/setup/* 와 /api/plays/apply)만 호스팅
+    대조를 면제한다: 이 PC 의 프로세스·파일을 만지는 경로라 호스팅에 있으면 안 되고,
+    호스팅은 그걸 부르는 화면(설정)을 숨기거나 부르는 훅(SM.host)을 안내로 갈아 끼운다.
+    면제가 공짜가 아니게 짝 검사가 따로 있다 — 18번(run-tool)·110번(plays/apply).
     양쪽 서버 모두 소스가 아니라 **등록된 경로 집합**을 본다 — 호스팅은
     app.routes(_server_paths), 로컬은 dashboard.ROUTES(+LOCAL_ONLY_PATHS)다.
     """
@@ -299,9 +302,9 @@ def test_seam_05_api_calls_exist_on_servers():
                 if where == "로컬":
                     assert call in dashboard.LOCAL_PATHS, \
                         f"{who} 가 부르는데 로컬 서버에 없다: {call}"
-                elif app_routes is not None and not call.startswith("/api/setup/"):
+                elif app_routes is not None and call not in dashboard.LOCAL_ONLY_PATHS:
                     assert call in app_routes, \
-                        f"{who} 가 부르는데 호스팅 서버에 없다: {call}"   # setup 은 면제
+                        f"{who} 가 부르는데 호스팅 서버에 없다: {call}"   # 로컬 전용은 면제
 
 
 def test_seam_06_runnable_stages_known_to_server():
@@ -3351,6 +3354,71 @@ def test_seam_104_gap_readers_use_current_rivals():
     assert "scoring.gap_rival_set(conn, pid)" in dash, "[경쟁 분석]의 거르개가 기회와 다른 목록이다"
 
 
+def test_seam_105_plays_card_and_drawer_read_what_the_payload_carries():
+    """105) [개요]의 [이번 달 할 일]은 엔진이 싣는 d.plays 를 그리기만 한다 — 두 끝을 함께 본다.
+
+    한쪽(gather 의 plays 줄 · 그 안의 evidence/result)은 정상적인 dict 고 다른 쪽(카드·서랍)은
+    정상적인 자바스크립트다. 이름이 하나 어긋나면(예: result.expected ↔ r.expect) 서랍의 그 칸만
+    조용히 빈다 — 콘솔에도 검사에도 안 남는다(seam 10 은 d.* 윗단만 본다).
+    · 화면이 읽는 p.* 는 gather() 가 실은 줄의 키 안에 있고, r.* · ev.* · our.* · 상위 결과 줄(sr.*) ·
+      AI 요약 줄(ai.*)은 화면 검사 픽스처(test_render._plays — 계약 꼴로 쓴 표본)의 키 안에 있다.
+    · 서랍은 한 벌이다 — 할 일도 기회와 같은 상자(#ov-drawer, OV_drawerEls)에 칠한다. 둘째 dialog 가
+      생기면 기회와 할 일이 겹쳐 열리고 Esc·초점 되돌리기가 두 벌이 된다.
+    · 줄의 id 는 페이로드(p.id)에서 온다 — 렌더된 순번·글자를 되짚지 않는다.
+    · 발판의 PR 버튼은 셸의 SM.host.playBtn(갈래 C)이 준다 — 없는 배포(옛 셸)에서도 서도록 가드한다.
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import dashboard
+    import test_render
+    ov = _view_script("overview.html")
+    m = re.search(r"/\* ── 이번 달 할 일\(plays\) ─+\n(.*?)\n/\* ── 스포트라이트", ov, re.S)
+    assert m, "overview.html 에서 [이번 달 할 일] 블록을 못 찾았다 — 머리 주석이 바뀌었으면 이 검사도 옮긴다"
+    blk = m.group(1)
+
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    test_render._plays(c, 1)                  # 표가 SCHEMA 에 있으면 그것에, 없으면 계약 꼴로 만든다
+    null = _io.StringIO()
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        d = dashboard.gather(c, db.get_project(c, "_seam"))
+    c.close()
+    assert d.get("plays") and "plays_at" in d, "gather() 가 d.plays·d.plays_at 을 안 싣는다"
+    full = next(p for p in d["plays"] if not (p.get("result") or {}).get("error"))
+
+    def reads(var):
+        return set(re.findall(rf"\b{var}\.([a-z_]+)\b", blk))
+    have = {
+        "p": set(full),
+        "r": set(full["result"]) | {"error"},
+        "ev": set(full["evidence"]),
+        "our": set(full["evidence"]["our"]),
+        "sr": set(full["evidence"]["serp"][0]),
+        "ai": set(full["evidence"]["aio"][0]),
+    }
+    for var, keys in have.items():
+        got = reads(var)
+        assert got, f"[이번 달 할 일]이 {var}.* 를 하나도 안 읽는다 — 변수 이름이 바뀌었으면 이 검사도 옮긴다"
+        assert got <= keys, f"[이번 달 할 일]이 페이로드에 없는 {var}.* 를 읽는다: {sorted(got - keys)}"
+    # 제목·설명·H1 은 r[k] 로 읽는다 — 그 이름표도 페이로드 키여야 한다.
+    ba = re.search(r'\[\["title", "제목"\], \["meta", "설명"\], \["h1", "H1"\]\]', blk)
+    assert ba and {"title", "meta", "h1"} <= have["r"], "지금 → 새로 비교가 result 의 title·meta·h1 을 안 읽는다"
+
+    play = re.search(r"function OV_play\(id, from\) \{(.*?)\n\}", blk, re.S)
+    paint = re.search(r"function OV_playPaint\(p\) \{\n  const dr = \$\(\"ov-drawer\"\);", blk)
+    assert play and "OV_drawerEls()" in play.group(1) and paint, \
+        "할 일 서랍이 기회 서랍 상자(#ov-drawer · OV_drawerEls)를 안 쓴다 — 서랍이 두 벌이 된다"
+    assert ov.count('role="dialog"') == 1, "[개요]에 dialog 상자가 둘이다 — 서랍은 하나를 같이 쓴다"
+    assert re.search(r'data-play="\$\{Number\(p\.id\)\}"', blk) and "p.id === id" in blk, \
+        "할 일 줄의 id 가 페이로드(p.id)에서 안 온다"
+    assert 'SM.host.playBtn ? SM.host.playBtn(p) : ""' in blk, \
+        "할 일 서랍 발판이 SM.host.playBtn 을 가드 없이 부르거나 안 부른다"
+
+
 def test_seam_100_no_gsc_site_is_skipped_everywhere():
     """100) 서치콘솔 없이 시작한 사이트(gsc_property 가 빈 값)는 어디서도 '필수 연결'로 안 선다.
 
@@ -3403,6 +3471,65 @@ def test_seam_100_no_gsc_site_is_skipped_everywhere():
         finally:
             for k, v in saved.items():
                 os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+def test_seam_110_play_pr_is_local_only():
+    """110) 이번 달 할 일의 [PR 만들기]는 로컬 전용이고, 호스팅은 그 자리를 안내로 갈아 끼운다.
+
+    이음매는 셋이다. 어느 한쪽 파일만 보면 다 멀쩡하다:
+    - 셸의 로컬 기본 SM.host.playBtn → POST /api/plays/apply, 상태는 GET 같은 경로
+      (SM.host.playSync → prSync). 그 경로가 로컬 서버의 LOCAL_ROUTES 에 GET·POST 둘 다
+      있어야 한다 — 하나라도 빠지면 버튼은 눌리는데 404 거나 '진행 중'이 영영 안 끝난다.
+    - 호스팅 서버에는 **없어야** 한다: 브라우저 뒤의 서버는 사용자 PC 의 저장소에서
+      프로세스를 못 띄운다. 5번 검사가 이 경로를 면제하는 대가가 이 검사다.
+    - 그래서 호스팅 SM.host 는 playBtn(p) 을 "이 PC 에서" 안내로 갈아 끼우고, 로컬 전용
+      조회 훅(playSync)은 갖지 않는다 — 셸은 그 훅이 있을 때만 부르므로 호스팅 화면은
+      없는 경로를 안 부른다. 셸이 훅을 거치지 않고 prSync 를 바로 부르면 그 약속이 깨진다.
+    - 명령줄은 play_pr.argv 한 자리, 도구는 doctor.PR_TOOL(=TOOLS 의 id) 이다.
+    """
+    import dashboard
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, dash = ctx["shell"], ctx["dash"]
+    for m in ("GET", "POST"):
+        assert (m, "/api/plays/apply") in dashboard.LOCAL_ROUTES, \
+            f"로컬 서버에 {m} /api/plays/apply 가 없다 — [PR 만들기]가 404 로 죽는다"
+    app_routes = _server_paths()
+    assert app_routes is None or "/api/plays/apply" not in app_routes, \
+        "호스팅 서버에 /api/plays/apply 가 있다 — 서버는 사용자 PC 에서 PR 을 못 만든다"
+
+    # 셸 — 로컬 기본 playBtn 이 그 경로를 부르고, 조회는 SM.host.playSync 로만 간다.
+    m = re.search(r"\n  playBtn\(p\) \{(.*?)\n  \},", shell, re.S)
+    assert m, "셸의 SM.host.playBtn(p) 을 못 찾았다"
+    assert "prApply(" in m.group(1), "셸의 playBtn 이 PR 만들기를 안 부른다"
+    assert '"/api/plays/apply"' in shell, "셸이 /api/plays/apply 를 안 부른다"
+    assert "playSync() { prSync(); }" in shell, "셸의 SM.host.playSync 가 상태 조회로 안 간다"
+    bare = [ln.strip() for ln in shell.splitlines()
+            if re.search(r"(?<![\w.])prSync\(\)", ln) and "async function prSync" not in ln
+            and "playSync() { prSync(); }" not in ln]
+    assert not bare, f"셸이 SM.host 를 거치지 않고 상태 조회를 부른다 — 호스팅이 404 를 부른다: {bare}"
+
+    # 호스팅 — 안내로 갈아 끼우고, 로컬 경로·조회 훅은 없다.
+    m = re.search(r"playBtn\(p\) \{(.*?)\n    \},", dash, re.S)
+    assert m, "dash.html 의 SM.host.playBtn(p) 을 못 찾았다 — 호스팅 서랍에 로컬 버튼이 선다"
+    assert "이 PC 에서" in m.group(1), "호스팅 [PR 만들기] 자리에 로컬 안내가 없다"
+    assert "/api/plays/apply" not in dash, "호스팅 화면이 로컬 전용 경로를 부른다"
+    host = dash.split("SM.host = {", 1)[-1].split("\n  };", 1)[0]
+    assert not re.search(r"\n    playSync\s*[(:]", host), \
+        "호스팅 SM.host 가 로컬 전용 조회 훅(playSync)을 갖는다 — 없는 경로를 부른다"
+
+    # 명령줄·도구 — 한 자리.
+    import play_pr
+    sys.path.insert(0, str(SETUP_SCRIPTS))
+    import doctor
+    assert doctor.tool_of(doctor.PR_TOOL), "doctor.PR_TOOL 이 TOOLS 에 없는 id 다"
+    src = (ROOT / "skills" / "capture" / "scripts" / "play_pr.py").read_text("utf-8")
+    assert "doctor.PR_TOOL" in src
+    assert src.count('"--permission-mode", "acceptEdits"') == 1, "헤드리스 명령줄을 두 자리에서 짓는다"
+    a = play_pr.argv("x", 1)
+    assert "-p" in a and "--dangerously-skip-permissions" not in a, \
+        "헤드리스 PR 이 권한 확인을 통째로 끈다 — 허용 목록으로만 돌아야 한다"
 
 
 if __name__ == "__main__":

@@ -173,8 +173,18 @@ AI_VISITS_ZERO = "AI에서 온 방문이 아직 없습니다"
 # 합으로 판정하면 "한 번뿐"이라고 거짓말한다.
 AN_NO_CLICKS = "두 기간 모두 클릭이 없습니다"
 AN_ONE_RUN = "수집이 한 번뿐이라 맞댈 시점이 없습니다"
+# 이번 달 할 일(plays) — [개요] 카드와 오른쪽 서랍. 수정안이 선 것 하나, 못 만든 것(result.error) 하나.
+PLAY_TITLE = "할일제목Z9"
+PLAY_DRAFT = "초안문단Z9"             # 수정안 탭의 소제목 초안 — 서랍 안에만 나온다
+PLAY_ERR = "할일실패Z9"               # 수정안을 못 만든 할 일의 제목
+PLAY_ERR_WHY = "모델응답없음Z9"       # 그 이유 — 서랍이 그대로 말해야 한다
+PLAY_GAP = "빠진주제Z9"               # 증거 탭의 빠진 주제
 EMPTY_LOADS = [
     (SITES[0], [(re.escape(AI_VISITS_NOGA4), "GA4 미연결 사이트에 'AI 에서 온 방문' 빈 상태가 안 섰다"),
+                # 할 일이 없는 사이트 — 빈 상태가 만드는 손잡이(data-run="plays")를 든다.
+                (r'id="plays"[^>]*><div class="empty"><b>이번 달 할 일이 아직 없습니다</b>'
+                 r'(?:(?!class="card).)*<div class="acts"><button[^>]*data-run="plays"',
+                 "할 일이 없는 사이트의 [이번 달 할 일] 빈 상태에 만들기 손잡이가 없다"),
                 ("!" + re.escape(AI_VISITS_ZERO), "GA4 미연결인데 '쟀고 0' 이라고 말한다")]),
     (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
                  ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다"),
@@ -349,6 +359,82 @@ ASK_HOSTED_MUSTS = [
 ASK_LOCAL_MUSTS = [
     (r'!<details class="ask">', "로컬에 요청문 상자(요청문 만들기)가 섰다 — 호스팅 전용이다"),
     (r'!class="[^"]*askcopy', "로컬에 요청문 복사 버튼이 섰다 — 호스팅 전용이다"),
+]
+
+
+# [이번 달 할 일] 서랍 — 서랍은 누를 때 생긴다(OV_drawerEls). 그래서 화면이 선 뒤 줄을 실제로
+# 눌러 본다: ① 수정안을 못 만든 할 일을 열어 그 서랍을 떠 두고 ② 기회 줄을 눌러 같은 서랍이
+# 기회로 바뀌는지(서랍은 한 번에 하나) 적고 ③ 수정안이 선 할 일을 연 채로 DOM 이 떨어진다.
+# 사람이 누르는 길과 같은 onclick 을 탄다 — 함수를 직접 부르지 않는다.
+PLAY_PROBE = """<script>addEventListener("load", function () {
+  var n = 0, t = setInterval(function () {
+    var rows = document.querySelectorAll('#plays button.ovp');
+    if (rows.length < 2) { if (++n > 80) clearInterval(t); return; }
+    clearInterval(t);
+    var dr = function () { return document.getElementById("ov-drawer"); };
+    var out = document.createElement("div"); out.id = "__plays__"; out.hidden = true;
+    document.body.appendChild(out);
+    rows[1].click();
+    out.insertAdjacentHTML("beforeend", '<div id="__play_err__">' + dr().innerHTML + '</div>');
+    var s = document.querySelector('#opplist details.opp > summary');
+    if (s) s.click();
+    out.insertAdjacentHTML("beforeend", '<p id="__play_opp__">marks=' +
+      document.querySelectorAll('#plays .ovp.odr-on').length + ' drawers=' +
+      document.querySelectorAll('aside.odr').length + ' fix=' + !!dr().querySelector('[data-panel="fix"]') +
+      ' ev=' + !!dr().querySelector('[data-panel="ev"]') + '</p>');
+    document.querySelectorAll('#plays button.ovp')[0].click();
+  }, 100);
+});</script>"""
+PLAY_MUSTS = [
+    # 카드 — 점수 순 첫 줄이 수정안이 선 할 일이고, 줄은 누르는 버튼(data-play = 페이로드 id)이다.
+    (r'id="plays"[^>]*><ol class="ovp-list"><li><button type="button" class="ovp[^"]*" data-play="\d+"'
+     r'(?:(?!</button>).)*' + re.escape(PLAY_TITLE),
+     "[이번 달 할 일] 카드 첫 줄에 할 일 제목이 없다 — d.plays 를 안 그렸다"),
+    (r'id="plays"(?:(?!</li>).)*<span class="ovp-u">/bagsZ9</span>',
+     "[이번 달 할 일] 줄에 고칠 페이지 경로가 없다"),
+    (r'id="plays"(?:(?!</li>).)*<span class="ovp-k"[^>]*>외 1</span>',
+     "[이번 달 할 일] 줄의 검색어 칩이 셋에서 안 접혔다(외 N)"),
+    # ③ 수정안이 선 할 일을 연 서랍 — 탭 셋, 초안, 증거의 우리 줄, 문서, 발판의 복사.
+    (r'<aside class="odr" id="ov-drawer"(?![^>]*\shidden)[^>]*>(?:(?!</aside>).)*id="odr-t">'
+     + re.escape(PLAY_TITLE),
+     "할 일 줄을 눌렀는데 오른쪽 서랍이 그 할 일로 안 열렸다"),
+    (r'id="ov-drawer"(?:(?!</aside>).)*data-t="fix"[^>]*>수정안</button>'
+     r'(?:(?!</aside>).)*data-t="ev"[^>]*>증거</button>(?:(?!</aside>).)*data-t="doc"[^>]*>문서</button>',
+     "할 일 서랍에 수정안·증거·문서 탭이 없다"),
+    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="fix"(?:(?!</aside>).)*' + re.escape(PLAY_DRAFT),
+     "할 일 서랍의 수정안 탭이 소제목 초안을 안 그렸다"),
+    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="ev"(?:(?!</aside>).)*<li class="own">'
+     r'(?:(?!</aside>).)*' + re.escape(PLAY_GAP),
+     "할 일 서랍의 증거 탭이 상위 결과(우리 줄)나 빠진 주제를 안 그렸다"),
+    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="doc"(?:(?!</aside>).)*<textarea readonly[^>]*>'
+     r'(?:(?!</aside>).)*\.md 내려받기',
+     "할 일 서랍의 문서 탭에 문서 전문·내려받기가 없다"),
+    (r'id="ov-drawer"(?:(?!</aside>).)*<div class="odr-f">(?:(?!</aside>).)*>문서 복사</button>',
+     "할 일 서랍 발판에 [문서 복사]가 없다"),
+    # ① 수정안을 못 만든 할 일 — 수정안 탭 없이 이유를 말하고 증거를 보인다.
+    (r'id="__play_err__">(?:(?!id="__play_opp__").)*id="odr-t">' + re.escape(PLAY_ERR)
+     + r'(?:(?!id="__play_opp__").)*수정안을 못 만들었습니다(?:(?!id="__play_opp__").)*' + re.escape(PLAY_ERR_WHY),
+     "수정안을 못 만든 할 일의 서랍이 그 이유를 안 말한다"),
+    (r'!id="__play_err__">(?:(?!id="__play_opp__").)*data-t="fix"',
+     "수정안을 못 만든 할 일의 서랍에 빈 수정안 탭이 섰다"),
+    # ② 기회 줄을 누르면 같은 서랍 하나가 기회로 바뀐다 — 할 일 강조가 풀리고 서랍이 둘이 안 된다.
+    (r'id="__play_opp__">marks=0 drawers=1 fix=false ev=true<',
+     "할 일 서랍이 열린 채 기회를 누르면 서랍이 둘이 되거나 할 일이 남는다"),
+]
+PLAY_LOCAL_MUSTS = [
+    (r'id="plays-tools"[^>]*><button class="cmd sec" data-run="plays"[^>]*>/capture plays ' + re.escape(SITES[1]),
+     "로컬 [이번 달 할 일] 머리에 다시 만들기 명령 칩(/capture plays 사이트)이 없다"),
+]
+PLAY_HOSTED_MUSTS = [
+    # 호스팅은 실행 버튼이다 — onclick 없이 data-run 만 달아 애드온의 위임(/api/run)이 받는다.
+    (r'id="plays-tools"[^>]*><button class="go sec" data-run="plays"(?![^>]*onclick)',
+     "호스팅 [이번 달 할 일] 머리에 다시 만들기 실행 버튼(data-run=plays)이 없다"),
+]
+PLAY_REPORT_MUSTS = [
+    (r'id="plays"[^>]*><ol class="ovp-list"><li><div class="ovp">(?:(?!</li>).)*' + re.escape(PLAY_TITLE),
+     "박제본 [이번 달 할 일]이 할 일을 문장으로 안 남겼다"),
+    (r"!data-play=", "박제본 [이번 달 할 일] 줄이 누르는 버튼이다 — 열 서랍이 없다"),
+    (r'!id="plays-tools"[^>]*><button', "박제본 [이번 달 할 일]에 다시 만들기 손잡이가 남았다"),
 ]
 
 
@@ -649,10 +735,52 @@ def _axes(conn, pid: int) -> None:
     db.write_rank_snapshot(conn, kid, 14, f"https://{SITES[1]}.example/a",
                            aio_present=1, aio_cited=0, checked_at=f"{d}T00:00:00Z",
                            aio_domains=[AIO_DOM])
+    _plays(conn, pid)
     # AI 에서 온 방문(GA4 부가 조회) — 두 출처가 같은 페이지로 들어왔다.
     db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],
                               [("chatgpt.com", AI_VISIT_PAGE, AI_VISIT_N - 21, 3),
                                ("perplexity.ai", AI_VISIT_PAGE, 21, 0)])
+
+
+def _plays(conn, pid: int) -> None:
+    """이번 달 할 일 둘 — 수정안이 선 것(점수 높음)과 못 만든 것(result.error).
+
+    표는 엔진 갈래의 db.SCHEMA 가 만든다. 그 전의 Brain 에서도 이 검사가 혼자 서도록
+    계약(PLAYS_CONTRACT)의 꼴로 IF NOT EXISTS 를 한 번 더 건다 — 표가 이미 있으면 아무 일도 안 한다."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS plays (
+        id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, page TEXT NOT NULL, title TEXT,
+        keywords_json TEXT, opp_ids_json TEXT, score REAL, evidence_json TEXT, result_json TEXT,
+        markdown TEXT, model TEXT, cost REAL, status TEXT DEFAULT 'new')""")
+    page = f"https://{SITES[1]}.example/bagsZ9"
+    ev = {"our": {"url": page, "title": "가방", "h1": "", "words": 320, "fetched_via": "direct"},
+          "serp": [{"keyword": "가방Z9", "position": 1, "url": "https://r1.example/b", "domain": "r1.example",
+                    "title": "상위 가방", "is_own": 0, "headings": ["소재 고르기", "크기표"], "words": 1400},
+                   {"keyword": "가방Z9", "position": 7, "url": page, "domain": f"{SITES[1]}.example",
+                    "title": "가방", "is_own": 1, "headings": [], "words": 320}],
+          "aio": [{"keyword": "가방Z9", "present": 1, "cited": 0, "domains": ["r1.example"]}],
+          "gaps": [PLAY_GAP]}
+    res = {"summary": "상위 세 곳이 다루는 소재·크기 안내가 우리 페이지에 없습니다.",
+           "why": ["상위 1위는 본문 1,400단어, 우리는 320단어"],
+           "title": {"now": "가방", "new": "가방 — 소재·크기로 고르는 법"},
+           "meta": {"now": "", "new": "소재와 크기로 가방 고르는 법"},
+           "h1": {"now": "", "new": "가방 고르기"},
+           "sections": [{"h2": "소재로 고르기", "draft": PLAY_DRAFT, "for": ["가방Z9"]}],
+           "links": [{"from": f"https://{SITES[1]}.example/", "anchor": "가방 고르기"}],
+           "trust": ["수정일"], "expected": "추정 — 1페이지 상단"}
+    rows = [
+        (f"{PLAY_TITLE} — 가방 목록", ["가방Z9", "토트백Z9", "숄더백Z9", "크로스백Z9"], 173.4, ev, res,
+         "# 가방 목록 페이지 고치기\n\n- 제목을 바꾼다\n"),
+        (f"{PLAY_ERR} — 신발 목록", ["신발Z9"], 40.0, {"our": {"url": page, "fetched_via": "none"},
+                                                    "gaps": ["상위엔 치수표가 있다"]},
+         {"error": PLAY_ERR_WHY}, ""),
+    ]
+    conn.executemany(
+        "INSERT INTO plays(project_id,created_at,page,title,keywords_json,opp_ids_json,score,"
+        "evidence_json,result_json,markdown,model,cost,status)"
+        " VALUES(?,'2026-06-01 07:00:00',?,?,?,'[]',?,?,?,?,'stub',0,'new')",
+        [(pid, page, t, json.dumps(k, ensure_ascii=False), s, json.dumps(e, ensure_ascii=False),
+          json.dumps(r, ensure_ascii=False), m) for t, k, s, e, r, m in rows])
 
 
 def fixture(home: Path) -> None:
@@ -859,6 +987,8 @@ def _hosted_app(data: Path):
             elif path == "/d":
                 if head["status"] == 200 and b"</head>" in body:
                     body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
+                    # 할 일 서랍 — 줄을 실제로 눌러 본다(PLAY_PROBE). 할 일이 없는 사이트면 그냥 물러난다.
+                    body = body.replace(b"</body>", PLAY_PROBE.encode("utf-8") + b"</body>", 1)
                     # 새로고침 복원 검사 하나만 켠다(쿼리 표식) — 모든 /d 응답에 걸면
                     # 이 자리의 다른 검사(기본 화면이 무엇인가)가 클릭·새로고침에 덮인다.
                     if b"reload_probe=1" in scope.get("query_string", b""):
@@ -1030,22 +1160,23 @@ def run() -> None:
 
         # 대상마다 (이름, 서버를 세우는 것, 있어야 할 것). 서버는 대상을 볼 때만 선다 —
         # 호스팅 대상은 env 를 갈아 끼우므로 다른 대상과 겹치면 안 된다.
-        local = shell.replace(b"</body>", CARDS_PROBE.encode("utf-8") + b"</body>", 1)
+        local = shell.replace(b"</body>", (CARDS_PROBE + PLAY_PROBE).encode("utf-8") + b"</body>", 1)
         targets = [("로컬 대시보드", lambda: _stdlib(local),
-                    MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS)]
+                    MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS
+                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
         # + 애드온). 사본을 만들어 먹이면 운영과 조립이 갈라져도 검사가 모른다.
         if (ROOT / "server" / "assets" / "dash.html").exists():
             targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
-                            HOSTED_MUSTS + ASK_HOSTED_MUSTS))
+                            HOSTED_MUSTS + ASK_HOSTED_MUSTS + PLAY_MUSTS + PLAY_HOSTED_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(
             b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
         targets.append(("박제본", lambda: _stdlib(report),
-                        REPORT_MUSTS + ASK_LOCAL_MUSTS + [m for m in view_sections()
+                        REPORT_MUSTS + ASK_LOCAL_MUSTS + PLAY_REPORT_MUSTS + [m for m in view_sections()
                                         if not any(f'[{v}]' in m[1] for v in REPORT_DROPPED)]))
 
         for label, up, musts in targets:

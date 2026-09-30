@@ -1822,6 +1822,35 @@ SM.host = {
       `진행 중으로 옮기고 ${esc(t.label)}를 이 사이트 폴더에서 엽니다"` +
       `>${esc(t.label)}로 열기</button>`;
   },
+  /* 이번 달 할 일(play) 서랍 발판의 실행 자리 — [PR 만들기]. 누르면 이 PC 가 그 사이트의
+     저장소 폴더에서 수정안을 적용하고 PR 을 연다(서버 play_pr — 헤드리스로 돈다).
+     호스팅은 브라우저라 못 띄운다 — dash.html 이 "이 PC 에서 열기" 안내로 갈아 끼운다.
+     할 수 있나(도구·gh·폴더)와 도는 일의 상태는 서버가 판정해 window.PLAY_PR 로 준다
+     (playSync) — 화면은 그걸 그리기만 한다. 받는 것은 play 한 건(p, d.plays 의 한 줄). */
+  playBtn(p) {
+    if (!p || READONLY || p.id == null) return "";
+    const s = window.PLAY_PR, j = s && s.jobs ? s.jobs[p.id] : null;
+    if (j && j.status === "running")
+      return `<button class="go sm" disabled title="저장소에서 고치고 PR 을 여는 중입니다. 끝나면 알려 드립니다."` +
+        `>PR 만드는 중…</button>`;
+    if (j && j.status === "done" && j.pr_url)
+      return `<a class="go sm sec" href="${esc(j.pr_url)}" target="_blank" rel="noopener"` +
+        ` title="이 할 일로 연 PR 입니다">PR 보기</a>`;
+    if (p.status === "applied") return `<span class="badge">PR 만듦</span>`;
+    if (s && !s.ready)
+      return `<span class="badge warn" title="${esc(s.why)}">PR 준비 안 됨</span>` +
+        (s.fix === "settings"
+          ? `<button class="go sm ghost" onclick="SM.touched=true;SM.show('settings')" title="${esc(s.why)}"` +
+            `>설정에서 폴더 정하기</button>`
+          : `<span class="sub">${esc(s.why)}</span>`);
+    const failed = j && j.status === "failed";
+    return (failed ? `<span class="badge warn" title="${esc(j.error || "")}">지난번 실패</span>` : "") +
+      `<button class="go sm" onclick="prApply(${+p.id}, this)"` +
+      ` title="이 PC 가 사이트 저장소에서 수정안을 적용하고 PR 을 엽니다. 머지는 직접 합니다."` +
+      `>${failed ? "PR 다시 만들기" : "PR 만들기"}</button>`;
+  },
+  // 준비 상태·도는 일을 서버에서 받아 온다(로컬 전용 경로라 호스팅 SM.host 에는 없다).
+  playSync() { prSync(); },
 };
 
 /* ── 화면 머리의 갱신 손잡이 ─────────────────────────────────────────────
@@ -2700,6 +2729,64 @@ async function runTool(id, ids) {
   load();
 }
 
+/* 할 일(play) 하나를 PR 로 — 누른 것을 서버(play_pr.apply)에 넘기고, 도는 동안 상태를
+   묻는다. 어느 폴더·어느 도구·명령줄은 전부 서버가 정한다(runTool 과 같다). 요청은 바로
+   돌아오고 일은 이 PC 의 백그라운드에서 돈다 — 브라우저 창을 닫아도 멈추지 않는다.
+   window.PLAY_PR = {ready, why, fix, jobs: {play id: 일}} — 모양은 play_pr.status 가 정본. */
+const PR_POLL = {};
+async function prSync() {
+  if (window.SM_HOSTED || READONLY || !$("proj")) return;
+  const project = $("proj").value;
+  if (!project) return;
+  let r;
+  try {
+    r = await (await fetch("/api/plays/apply?project=" + encodeURIComponent(project))).json();
+  } catch (e) { return; }
+  if (!r || !r.ok || $("proj").value !== project) return;
+  window.PLAY_PR = {ready: r.ready, why: r.why, fix: r.fix, jobs: r.jobs || {}};
+  Object.values(window.PLAY_PR.jobs).forEach(j => prWatch(project, j));
+  SM.repaint();
+}
+async function prApply(id, btn) {
+  if (btn) btn.disabled = true;
+  const project = $("proj").value;
+  const [ok, r] = await post("/api/plays/apply", {project, id});
+  if (!ok || !r.ok) {
+    if (btn) btn.disabled = false;
+    if (r && r.job) prWatch(project, r.job);
+    return toast((r && r.error) || "PR 만들기를 시작하지 못했습니다. 잠시 뒤 다시 눌러 주세요.", "bad");
+  }
+  toast("PR 만들기를 시작했습니다. 저장소에서 고치고 PR 을 여는 데 몇 분 걸립니다.", "ok");
+  prWatch(project, r.job);
+}
+function prWatch(project, j) {
+  if (!j || j.id == null) return;
+  const s = window.PLAY_PR || (window.PLAY_PR = {ready: true, why: "", fix: "", jobs: {}});
+  s.jobs[j.id] = j;
+  SM.repaint();
+  const key = project + "#" + j.id;
+  if (j.status !== "running" || PR_POLL[key]) return;
+  PR_POLL[key] = setInterval(async () => {
+    let r;
+    try {
+      r = await (await fetch("/api/plays/apply?project=" + encodeURIComponent(project) +
+                             "&id=" + encodeURIComponent(j.id))).json();
+    } catch (e) { return; }                   // 한 번 못 물었다고 멈추지 않는다
+    const now = r && r.job;
+    if (!now || now.status === "running") return;
+    clearInterval(PR_POLL[key]); delete PR_POLL[key];
+    if ($("proj").value !== project) return;  // 그새 다른 사이트로 갔다 — 돌아오면 playSync 가 다시 받는다
+    s.jobs[j.id] = now;
+    if (now.status === "done") toast("PR 을 열었습니다. 서랍의 [PR 보기]로 갑니다.", "ok");
+    else toast("PR 을 못 만들었습니다 — " + (now.error || "이유를 못 받았습니다."), "bad");
+    load();
+  }, 4000);
+}
+document.addEventListener("sm:site", () => {
+  window.PLAY_PR = null;
+  if (SM.host.playSync) SM.host.playSync();
+});
+
 // 글자로만 "[개요]에서" 라고 말하던 자리를 실제로 눌리게 한다. 화면 이름은
 // SM.views(=view-def)의 정본에서 읽는다 — 라벨을 두 벌로 만들지 않는다.
 // 그 배포에 없는 화면(호스팅의 [설정], 박제본의 [안내])이면 글자로 물러선다.
@@ -3333,12 +3420,17 @@ const table = (heads, rows, empty, cls) => {
 const csv = (name, rows) => {
   const body = "\uFEFF" + rows.map(r => r.map(
     c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  saveFile(`seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`, body, "text/csv;charset=utf-8");
+};
+// \uBE0C\uB77C\uC6B0\uC800 \uC548\uC5D0\uC11C \uD30C\uC77C \uD558\uB098\uB97C \uB0B4\uB824\uBC1B\uAC8C \uD558\uB294 \uC790\uB9AC\uB294 \uC774 \uD55C \uBC8C\uC774\uB2E4 \u2014 CSV \uB3C4, [\uAC1C\uC694] \uD560 \uC77C
+// \uC11C\uB78D\uC758 .md \uBB38\uC11C\uB3C4 \uC5EC\uAE30\uB85C \uC628\uB2E4(\uD654\uBA74\uC774 Blob \uC744 \uB530\uB85C \uBE5A\uC73C\uBA74 \uCC98\uB9AC\uAC00 \uB610 \uAC08\uB77C\uC9C4\uB2E4).
+function saveFile(filename, body, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([body], {type: "text/csv;charset=utf-8"}));
-  a.download = `seo-miner-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = URL.createObjectURL(new Blob([body], {type}));
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
-};
+}
 
 // 정렬은 위임 한 곳에서. 표를 그리는 쪽은 아무것도 안 해도 된다.
 document.addEventListener("click", e => {
@@ -3872,6 +3964,7 @@ async function loadDoctor() {
     if (window.SM_HOSTED && !cur) return;    // 호스팅은 사이트 없이 물으면 404 다 — 고른 뒤에 다시 불린다
     const d = await (await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""))).json();
     window.SETUP = d; SM.repaint();   // 기회 카드의 실행 자리(SM.host.oppBtn)가 여기서 도구 상태를 읽는다 — 늦게 오면 다시 그린다
+    if (SM.host.playSync) SM.host.playSync();   // 할 일의 [PR 만들기] 준비·진행 상태(로컬만 — 호스팅 SM.host 에는 없다)
     // verdict·must·extra 는 이제 청중별로 갈려서 온다(doctor.py 가 SEOMINER_HOSTED
     // 로 가른다) — 호스팅 갈래에는 명령·파일 경로·"채팅에"가 안 들어가고,
     // doctor._selfcheck() 가 그걸 못 박는다. 그래서 화면이 다시 가릴 이유가 없다.

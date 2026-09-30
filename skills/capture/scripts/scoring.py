@@ -4673,8 +4673,12 @@ def load(project: str) -> None:
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,
-                  limit: int, with_id: bool = False) -> list[dict]:
+                  limit: int, with_id: bool = False, gated: bool = True) -> list[dict]:
     """기회 목록 — 화면과 박제본이 같은 정렬을 본다.
+
+    gated=False 는 심사(verdicts)를 거치지 않은 기회까지 낸다 — 이번 달 할 일(plays.py)이
+    쓴다. 그 흐름은 사람이 심사하기 전에 도구가 스스로 고르는 것이라, 심사 문을 걸면
+    처음 쓰는 사이트(판정 0건)에는 후보가 하나도 없다. 화면은 늘 기본값(True)이다.
 
     정렬이 두 벌이던 시절엔 대시보드와 리포트가 같은 데이터로 다른 순서를 보여줬다.
 
@@ -4685,7 +4689,7 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
     """
     import db
     rows = [dict(r) for r in db.list_opportunities(
-        conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
+        conn, project_id, limit=limit, order="screen", with_id=with_id, gated=gated)]
     key = (lambda r: r["id"]) if with_id else (lambda r: (r["kind"], r["target"]))
     have = {key(r) for r in rows}
     # 진행 중(acked)도 같은 꼬리로 붙인다 — '새 것 먼저'라 할 일이 limit 을 넘는 사이트에서는
@@ -4694,7 +4698,7 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
     for sts, cap in ((["acked"], limit), (list(closed_statuses()), CLOSED_LIMIT)):
         more = [d for d in (dict(r) for r in db.list_opportunities(
             conn, project_id, statuses=sts, limit=cap,
-            order="screen", with_id=with_id, gated=True)) if key(d) not in have]
+            order="screen", with_id=with_id, gated=gated)) if key(d) not in have]
         rows += more
         have |= {key(d) for d in more}
     return rows

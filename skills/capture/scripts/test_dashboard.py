@@ -52,6 +52,13 @@ def _brain(name="t"):
     return conn, db.get_project(conn, name)["id"]
 
 
+def _gap_rivals_registered(conn, pid):
+    """격차 행의 도메인을 경쟁사로 등록한다 — 격차는 지금 경쟁사로 판정된 곳의 것만 읽는다
+    (scoring.gap_rival_set). 픽스처가 격차만 깔고 경쟁사를 안 깔면 표·기회가 비어 보인다."""
+    conn.execute("INSERT INTO competitors(project_id, domain) SELECT DISTINCT project_id, domain"
+                 " FROM keyword_gap WHERE project_id=?", (pid,))
+
+
 def test_competitors_axis_lists_every_gap_rival():
     """몫(comp_metrics)이 비어도 격차를 맞댄 경쟁사는 있다 — 그 목록을 싣는다(9회차:
     "경쟁 도메인을 못 찾았다" 바로 아래 격차 75건). kw_gap 300줄 상한에 안 잘린다."""
@@ -60,6 +67,7 @@ def test_competitors_axis_lists_every_gap_rival():
                      " kind) VALUES(?,?,?,?,?,'missing')",
                      [(pid, D, f"k{i}", "big.example", 1000) for i in range(300)]
                      + [(pid, D, "작은", "small.example", 1)])
+    _gap_rivals_registered(conn, pid)
     conn.commit()
     ax = dashboard._axis_competitors(conn, pid)
     conn.close()
@@ -76,6 +84,7 @@ def test_competitors_axis_reads_unknown_rival_rank_as_unknown():
                      " our_position, volume, kind) VALUES(?,?,?,?,?,?,?,?)",
                      [(pid, D, "모름", "r.example", None, 4, 100, "shared"),
                       (pid, D, "위", "r.example", 9, 4, 90, "shared")])
+    _gap_rivals_registered(conn, pid)
     conn.commit()
     ax = dashboard._axis_competitors(conn, pid)
     conn.close()
@@ -205,6 +214,7 @@ def test_gather_keyword_gap_counts_and_order():
          (pid, D, "작은 것", "r.com", 4, None, 320, "missing"),
          (pid, D, "밀림", "r.com", 1, 14, 1900, "weak"),
          (pid, D, "우위", "r.com", 6, 3, 880, "shared")])
+    _gap_rivals_registered(conn, pid)
     conn.commit()
     d = dashboard.gather(conn, db.get_project(conn, "gp"))
     assert d["kw_gap_counts"] == {"missing": 2, "weak": 1, "shared": 1}, d["kw_gap_counts"]
@@ -238,6 +248,7 @@ def test_gather_resolves_striking_band_and_content_gap_kind():
          (pid, "content_gap", "약한글", 60, "r", "new", D),
          (pid, "content_gap", "  없는글  ", 50, "r", "new", D),   # 앞뒤 공백 — 정규화 확인
          (pid, "rank_decay", "아무거나", 40, "r", "new", D)])
+    _gap_rivals_registered(conn, pid)
     conn.commit()
     # 화면 목록은 심사(작업 판정)를 통과한 것만 낸다
     db.set_verdicts(conn, pid, [scoring.norm(t) for t in
@@ -1445,7 +1456,7 @@ def _until(cond, what):
 def test_local_run_merges_presses_and_queues_while_running():
     """로컬 /api/run — (1) 시작 전(몇 초 안)에 연달아 누른 묶음은 한 런으로 합친다
     (2) 도는 중에 누르면 대기열이고, 끝나면 이어서 돈다 (3) 이어서 돌 때 방금 돈 공유
-    단계(rank)는 빼되 꼬리(gaps·pages·report)는 뺄 수 없다 (4) 모르는 묶음은 거절."""
+    단계(rank)는 빼되 꼬리(run_all.TAIL)는 뺄 수 없다 (4) 모르는 묶음은 거절."""
     import run_all
     conn, pid = _brain("lr")
     conn.close()

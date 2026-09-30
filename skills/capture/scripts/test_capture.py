@@ -892,6 +892,39 @@ def test_rank_snapshot_keeps_aio_none():
     conn.close()
 
 
+def test_empty_aio_citations_are_unknown_not_uncited():
+    """요약은 섰는데 인용이 "[]" 로 적힌 옛 행은 "인용을 못 받았다"다 — 연결을 열면(_migrate)
+    aio_cited·aio_domains_json 을 NULL(모름)로 되돌리고, 그래서 AI 요약 빠짐(aio_gaps)과
+    풀림 판정(_resolve_aio)이 모름을 "우리 링크 없음"·"인용됨" 어느 쪽으로도 읽지 않는다.
+
+    gucci 운영: '구찌가방' 1위·요약 있음·인용 [] 가 aio_cited=0 으로 AI 요약 빠짐이 됐다."""
+    conn = db.connect()
+    p = _project(conn, "aio_empty")
+    kid = {}
+    for kw in ("빈 인용", "남 인용", "요약 없음"):
+        kid[kw] = conn.execute("INSERT INTO keywords(project_id, keyword, is_active) "
+                               "VALUES(?, ?, 1) RETURNING id", (p["id"], kw)).fetchone()[0]
+    at = "2026-09-29T00:00:00Z"
+    for kw, present, cited, doms in (("빈 인용", 1, 0, "[]"), ("남 인용", 1, 0, '["x.com"]'),
+                                     ("요약 없음", 0, None, None)):
+        conn.execute("INSERT INTO rank_snapshots(keyword_id, checked_at, position, aio_present, "
+                     "aio_cited, aio_domains_json) VALUES(?,?,1,?,?,?)",
+                     (kid[kw], at, present, cited, doms))
+    conn.commit()
+    conn.close()
+    conn = db.connect()                       # 연결마다 _migrate 가 돈다
+    row = {kw: tuple(conn.execute("SELECT aio_present, aio_cited, aio_domains_json FROM "
+                                  "rank_snapshots WHERE keyword_id=?", (i,)).fetchone())
+           for kw, i in kid.items()}
+    assert row["빈 인용"] == (1, None, None), row
+    assert row["남 인용"] == (1, 0, '["x.com"]'), row
+    assert row["요약 없음"] == (0, None, None), row
+    assert [r["keyword"] for r in scoring.aio_gaps(conn, p["id"])] == ["남 인용"]
+    # 모름은 풀림(인용됨)도 아니다
+    assert scoring._resolve_aio(conn, p["id"], "빈 인용", "2026-09-01 00:00:00", {}) is None
+    conn.close()
+
+
 def test_serp_questions_keep_the_keyword_and_overwrite_the_day():
     """함께 묻는 질문·연관 검색어는 어느 검색어에서 나왔는지와 함께, 하루 한 벌로 남는다."""
     conn = db.connect()

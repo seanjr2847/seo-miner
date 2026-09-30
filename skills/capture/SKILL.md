@@ -482,6 +482,27 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 3. pseo_pattern 군집 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로 추가
    적재 → Next Actions 3~5개를 JSON 파일로 저장.
 
+### /capture plays {P} — 이번 달 할 일 (페이지별 수정안, OpenRouter 키 필요)
+**풀런(`/capture run`)의 꼬리에 포함된다** — `gaps` 뒤다(순서의 정본은 `run_all.STAGES`·
+`run_all.AFTER`). 자동으로 돌 때는 마지막 할 일이 7일 안이고 후보 페이지가 같으면 스스로
+건너뛴다(돈을 매 런 쓰지 않는다). 사람이 부를 때는 늘 다시 만든다:
+
+`python scripts/plays.py --project {P} --force` (계획만 보려면 `--dry-run`).
+
+하는 일(정본은 `scripts/plays.py` 모듈 설명):
+1. 열린 기회 중 '있는 페이지 고치기' 종류(`plays.PLAY_KINDS`)를 고칠 페이지로 묶는다 —
+   심사 대기 중인 기회도 넣는다(이 흐름은 도구가 고른다). 고칠 페이지는 요청문과 같은
+   규칙(`brief.page_of`)이고, 페이지를 못 정한 기회는 뺀다. 점수 합 순으로 위에서 몇 개
+   (`--max`, 기본 `plays.PLAY_MAX`).
+2. 그 페이지와 검색결과 상위 글 몇 장(`--serp`)을 직접 연다. 봇 차단이면 DataForSEO
+   On-Page 로 읽는다(DataForSEO 키가 있을 때만). 상위 글 둘 이상에 있고 우리엔 없는
+   소제목을 규칙으로 뽑는다.
+3. 요청문 본문 + 읽은 증거로 AI(OpenRouter, 모델 `plays.PLAY_MODEL`)에게 수정안을
+   받는다 — title·meta·H1 지금→새로, 넣을 구간 초안, 내부 링크, 신뢰 신호, 기대 효과.
+   실패하면 그 줄에 이유를 남기고 증거는 그대로 둔다.
+4. `plays` 표에 적는다. 도구가 낸 채 그대로인 할 일(new)만 갈아 끼우고, PR 을 만든 것
+   (applied)·사람이 뺀 것(dismissed)은 남긴다. 대시보드 페이로드의 `plays` 로 실린다.
+
 ### /capture pages {P} — 내 페이지 감사 (내 사이트 직접 조회, 돈 안 듦)
 **풀런(`/capture run`)에 포함된다** — `gaps` 다음이다(순서의 정본은 `run_all.STAGES`).
 
