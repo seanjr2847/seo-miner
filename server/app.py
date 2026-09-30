@@ -760,9 +760,12 @@ def api_ai_prompts(body: dict = Depends(_body), project: str = Depends(_project_
                 status_code=502,
                 detail="질문을 하나도 만들지 못했습니다. 잠시 뒤 다시 시도하세요.")
         added = gen_prompts.save(c, project, rows)
+        # [질문 다시 만들기](replace) — 새 질문이 실제로 들어갔을 때만 옛 판을 끈다(지우지
+        # 않는다, 인용 이력은 남는다). 다 겹쳐 0개면 옛 것도 그대로 둔다.
+        retired = gen_prompts.retire_outdated(c, project) if body.get("replace") and added else 0
     except RuntimeError as e:                 # 키 부재 등 — 사유를 그대로 화면에 보낸다
         raise HTTPException(status_code=503, detail=str(e))
-    return {"ok": True, "added": added, "total": len(rows),
+    return {"ok": True, "added": added, "total": len(rows), "retired": retired,
             "prompts": [r["prompt"] for r in rows[:5]]}
 
 

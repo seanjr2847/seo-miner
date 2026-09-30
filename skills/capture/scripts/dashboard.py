@@ -1153,9 +1153,15 @@ def _axis_competitors(conn, pid: int) -> dict:
     # 안 보이면 "lfmall 은 왜 사라졌나"에 답이 없다. 이름표 정본은 scoring.ROLES.
     comp_roles = q(conn, "SELECT domain, source, role, role_why FROM competitors"
                          " WHERE project_id=? AND role IS NOT NULL ORDER BY id", (pid,))
+    # 확인된 경쟁사 수(사람이 적었거나 판정이 '경쟁') — 격차 표의 도메인 수와 다르다. 판정 전
+    # 후보만 있는 사이트(theotherskin: 논문 사이트 둘·앱 하나)에서 화면이 "경쟁사 4곳"만
+    # 말하면 진짜 경쟁사가 0곳이라는 사실이 안 보인다(정본 scoring.confirmed_rivals).
+    own = scoring.host_of(conn.execute("SELECT domain FROM projects WHERE id=?",
+                                       (pid,)).fetchone()[0] or "")
     return {"comp_date": cm_date, "comp_metrics": comp_metrics,
             "gap_date": gap_date, "kw_gap": kw_gap, "kw_gap_counts": kw_gap_counts,
-            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES}
+            "gap_rivals": gap_rivals, "comp_roles": comp_roles, "role_labels": scoring.ROLES,
+            "rivals_confirmed": len(scoring.confirmed_rivals(conn, pid, own))}
 
 
 def _axis_ai_bots(p, crawl: dict) -> dict:
@@ -1988,15 +1994,41 @@ def triage_payload(project: str) -> dict:
                     " WHERE project_id=? AND snapshot_date=? GROUP BY 1", (pid, latest)):
                 perf[r["k"]] = (int(r["c"] or 0), int(r["i"] or 0))
         brands = _brand_keys(conn, p)
+        # 언어-지역 — 다국어 사이트(theotherskin)는 한국어 검색어 사이에 영어·중국어 150건이
+        # 섞여 한 줄로 심사됐다. 키워드 표의 locale(조회에 쓴 값)이 정본이고, 표에 없는
+        # 검색어는 적재와 같은 규칙(db.keyword_locale)으로 가른다. 언어로 묶는다 — en-US 와
+        # en-GB 를 따로 세우면 같은 영어 검색어가 두 칸으로 갈린다.
+        site_locale = db.project_locale(p)
+        kw_loc = {r["k"]: r["locale"] for r in conn.execute(
+            "SELECT norm(keyword) k, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
+            (pid,))}
+        # 남의 브랜드 힌트 — 카탈로그(foreign_brands) + "〈이름〉+간판말"(scoring.looks_other_brand)
+        cfg = db.project_cfg(conn, p)
+        kw_rows = conn.execute(
+            "SELECT keyword, source FROM keywords WHERE project_id=? AND (is_active=1 OR source='seed')",
+            (pid,)).fetchall()
+        known_kw = [r[0] for r in kw_rows]
+        known = {scoring.norm(k) for k in known_kw if scoring.norm(k)}
+        seeds = {scoring.norm(r[0]) for r in kw_rows if r[1] == "seed"}
+        site = scoring.site_words_of(conn, pid, cfg)
+        storefront = scoring.storefront_words(
+            [p["name"], *(cfg.get("brand_aliases") or [])], known_kw)
+        foreign = scoring.foreign_brands(conn, pid, {**cfg, "name": p["name"]})
         groups: dict[str, dict] = {}
         for r in rows:
             g = groups.get(r["key"])
             if g is None:
                 c, i = perf.get(r["key"], (0, 0))
+                label = r["target"].strip()
+                loc = kw_loc.get(r["key"]) or db.keyword_locale(label, site_locale)
                 g = groups[r["key"]] = {
-                    "key": r["key"], "label": r["target"].strip(), "variants": set(),
+                    "key": r["key"], "label": label, "variants": set(),
                     "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
-                    "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"])}
+                    "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"]),
+                    "lang": serp_adapter.lang_of(loc),
+                    "other_brand": not any(b in r["key"] for b in brands) and
+                    scoring.looks_other_brand(label, brands=foreign, site=site,
+                                              storefront=storefront, known=known, seeds=seeds)}
             g["variants"].add(r["target"].strip())
             if r["kind"] not in g["kinds"]:
                 g["kinds"].append(r["kind"])
@@ -2010,9 +2042,20 @@ def triage_payload(project: str) -> dict:
         counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
         for g in out:
             counts[g["verdict"] or "none"] += 1
-        return {"rows": out, "counts": counts}
+        return {"rows": out, "counts": counts, "site_lang": serp_adapter.lang_of(site_locale),
+                "lang_labels": _lang_labels({g["lang"] for g in out})}
     finally:
         conn.close()
+
+
+def _lang_labels(langs) -> dict[str, str]:
+    """언어 코드 → 화면 이름. 정본은 serp_adapter.LOCALES 의 이름표('중국어(번체) · 대만')에서
+    언어 칸만 쓴다 — 사본을 안 둔다. 거기 없는 언어(zh 간체만 있는 식)는 괄호를 떼고 찾고,
+    그래도 없으면 코드 그대로."""
+    names: dict[str, str] = {}
+    for code, label in serp_adapter.LOCALES:
+        names.setdefault(serp_adapter.lang_of(code), re.sub(r"\(.*?\)", "", label.split(" · ")[0]))
+    return {lg: names.get(lg, lg.upper()) for lg in langs if lg}
 
 
 def set_verdict(body: dict) -> dict:

@@ -30,7 +30,7 @@
     <input id="pf-alias" spellcheck="false">
     <span class="msg" role="status" id="pf-alias-m"></span>
     <label for="pf-comp">경쟁사 도메인</label>
-    <span class="lh">경쟁사 검색어와 백링크를 견줄 상대입니다. 선택이고 쉼표로 여러 개.</span>
+    <span class="lh" id="pf-comp-lh">경쟁사 검색어와 백링크를 견줄 상대입니다. 선택이고 쉼표로 여러 개.</span>
     <input id="pf-comp" spellcheck="false" placeholder="competitor.com, other.com">
     <span class="msg" role="status" id="pf-comp-m"></span>
     <label for="pf-tools">등재·경쟁 도구 이름</label>
@@ -38,7 +38,7 @@
     <input id="pf-tools" placeholder="ecrett, paperpal, future tools">
     <span class="msg" role="status" id="pf-tools-m"></span>
     <label for="pf-seeds">씨앗 키워드</label>
-    <span class="lh">자동완성으로 후보를 넓히는 출발점입니다. 3~10개, 쉼표나 줄바꿈으로.</span>
+    <span class="lh" id="pf-seeds-lh">자동완성으로 후보를 넓히는 출발점입니다. 3~10개, 쉼표나 줄바꿈으로.</span>
     <textarea id="pf-seeds" placeholder="예) 무선 이어폰 추천&#10;노트북 가성비 비교"></textarea>
     <span class="msg" role="status" id="pf-seeds-m"></span>
   </div>
@@ -84,6 +84,29 @@
         "AI 답변에서 우리 이름을 알아보는 데 씁니다. 쉼표로 여러 개 — 비어 있으면 " +
         "검색어 화면에서 남의 브랜드를 못 거릅니다. 예: " + d.brand_suggestion;
     }
+    hints(d);
+  }
+
+  // 칸 옆 안내 한 줄 — 비었을 때 무엇이 달라지는지만 말한다(채우라고 조르지 않는다).
+  // 재료는 서버가 준 사실(db.profile_read 의 rivals_confirmed·gsc_connected)이다.
+  var BASE = {};
+  function hints(d) {
+    ["comp", "seeds"].forEach(function (k) {
+      var el = document.getElementById("pf-" + k + "-lh");
+      if (el && !(k in BASE)) BASE[k] = el.innerHTML;
+      if (el) el.innerHTML = BASE[k];
+    });
+    var comp = document.getElementById("pf-comp-lh");
+    // 판정 전 후보(검색 결과가 겹친 곳)만 있고 확인된 경쟁사가 0곳 — [경쟁 분석]도 같은 말을 한다.
+    if (comp && !d.competitors_manual && d.rivals_confirmed === 0)
+      comp.innerHTML = "경쟁사로 확인된 곳이 아직 없습니다. 아는 곳을 적거나 " +
+        (window.go ? window.go("competitors") : "[경쟁 분석]") +
+        "에서 찾으세요. 쉼표로 여러 개.";
+    var seeds = document.getElementById("pf-seeds-lh");
+    // 서치콘솔이 붙은 사이트는 씨앗이 없어도 후보를 캔다(구글 실적의 검색어) — 비워 둬도 된다.
+    if (seeds && !d.seed_keywords && d.gsc_connected)
+      seeds.innerHTML = "비어 있으면 서치콘솔 검색어로만 후보를 캡니다. 아직 노출이 없는 주제로 " +
+        "넓히고 싶을 때만 3~10개 적으세요.";
   }
 
   async function pfSave(k) {
@@ -99,6 +122,7 @@
       if (!res[0]) throw new Error(d.detail || d.error || "");
       m.textContent = "저장했습니다.";
       if (k === "alias" && val) { el.placeholder = ""; }   // 채웠으면 초안 문구를 뗀다
+      hints(d);            // 저장 응답도 profile_read 꼴이다 — 경쟁사를 적으면 안내가 걷힌다
     } catch (e) {
       m.textContent = "저장하지 못했습니다. 다시 벗어나면 재시도합니다.";
     }

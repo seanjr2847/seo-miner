@@ -673,6 +673,66 @@ def test_triage_payload_groups_variants_and_counts():
     conn.close()
 
 
+def test_triage_rows_carry_language_and_other_brand_hint():
+    """다국어 사이트의 심사 대기 — 한국어 사이에 영어·중국어가 섞여 한 줄로 심사됐고(theotherskin
+    150건), 남의 병원 이름(더스킨피부과)이 우리 검색어처럼 섰다. 행마다 언어(lang)와 남의
+    브랜드 힌트(other_brand)를 싣고, 화면이 쓸 언어 이름표는 serp_adapter.LOCALES 에서 온다."""
+    conn, pid = _brain("trilang")
+    conn.execute("UPDATE projects SET name='trilang' WHERE id=?", (pid,))
+    db.register_project(conn, {"name": "trilang", "domain": "trilang.example", "locale": "ko-KR",
+                               "type": "local_business",
+                               "brand_aliases": ["디아더피부과", "디아더 피부과"],
+                               "seed_keywords": ["강남 피부과", "도산대로 피부과", "여드름 흉터 치료"]})
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active) "
+                 "VALUES(?, 'papular scar', 'en-US', 1)", (pid,))
+    # 남의 병원 이름이 서치콘솔 노출로 추적에까지 자동으로 켜져 있었다 — 추적 중이라고 면제하지 않는다
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source) "
+                 "VALUES(?, '더스킨피부과', 'ko-KR', 1, 'gsc')", (pid,))
+    db.upsert_opportunities(conn, pid, None, [
+        {"kind": "rank_decay", "target": "더스킨피부과", "score": 73.0},
+        {"kind": "aio_exposure", "target": "강남 피부과", "score": 70.0},
+        {"kind": "aio_exposure", "target": "신사동 피부과", "score": 69.0},
+        {"kind": "aio_exposure", "target": "여드름 피부과", "score": 68.0},
+        {"kind": "aio_exposure", "target": "디아더피부과 후기", "score": 67.0},
+        {"kind": "aio_exposure", "target": "papular scar", "score": 66.0},
+        {"kind": "striking_distance", "target": "韩国延世皮肤科患者评价", "score": 65.0}])
+    conn.commit()
+    conn.close()
+    t = dashboard.triage_payload("trilang")
+    by = {r["label"]: r for r in t["rows"]}
+    assert t["site_lang"] == "ko", t["site_lang"]
+    assert by["papular scar"]["lang"] == "en" and by["강남 피부과"]["lang"] == "ko", by
+    assert by["韩国延世皮肤科患者评价"]["lang"] == "zh", by["韩国延世皮肤科患者评价"]
+    assert t["lang_labels"] == {"ko": "한국어", "en": "영어", "zh": "중국어"}, t["lang_labels"]
+    hint = {k for k, r in by.items() if r["other_brand"]}
+    # 남의 병원만 — 지명(강남)·지명 꼴(신사동)·사이트가 쓰는 말(여드름)·우리 이름은 아니다
+    assert hint == {"더스킨피부과"}, hint
+    assert by["디아더피부과 후기"]["brand"] and not by["디아더피부과 후기"]["other_brand"]
+
+
+def test_competitors_axis_counts_only_confirmed_rivals():
+    """경쟁 표에 판정 전 후보만 있으면 확인된 경쟁사는 0곳이다 — theotherskin 은 논문 사이트
+    둘·앱 하나가 격차 표의 '경쟁사'였다. 사람이 적은 것·판정이 '경쟁'인 것만 센다.
+    설정 칸(db.profile_read)도 같은 수를 받아 "경쟁사를 적거나 찾으세요"를 말한다."""
+    conn, pid = _brain("confrv")
+    conn.executemany("INSERT INTO competitors(project_id, domain, source, role) VALUES(?,?,?,?)",
+                     [(pid, "pmc.ncbi.nlm.nih.gov", "auto", None),
+                      (pid, "lfmall.example", "auto_labs", "channel")])
+    conn.commit()
+    assert dashboard._axis_competitors(conn, pid)["rivals_confirmed"] == 0
+    pr = db.profile_read(conn, "confrv")
+    assert pr["rivals_confirmed"] == 0 and pr["gsc_connected"] is False, pr
+    conn.execute("UPDATE competitors SET role='rival' WHERE domain='pmc.ncbi.nlm.nih.gov'")
+    conn.execute("INSERT INTO competitors(project_id, domain, source) VALUES(?, 'me2.example', 'manual')",
+                 (pid,))
+    conn.execute("UPDATE projects SET gsc_property='sc-domain:confrv.example' WHERE id=?", (pid,))
+    conn.commit()
+    assert dashboard._axis_competitors(conn, pid)["rivals_confirmed"] == 2
+    pr = db.profile_read(conn, "confrv")
+    assert pr["rivals_confirmed"] == 2 and pr["gsc_connected"] is True, pr
+    conn.close()
+
+
 def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
     """고친 페이지는 scoring.OBSERVE_DAYS 동안 관찰 중 — 그 페이지에 걸린 열린 기회는 할 일
     목록에서 빠지고(o.hold), [관찰 중] 화면이 페이지별로 모은다(d.holds).
@@ -1223,9 +1283,11 @@ def test_gather_ai_health_reaches_the_screen():
     말할 수가 없다(09-02 #56 이 그랬다: 질문 17개가 한 번도 안 재졌는데 조용했다).
     """
     import collector
+    import gen_prompts
     conn, pid = _brain("aihealth")
     conn.executemany("INSERT INTO ai_prompts(project_id, prompt, gen_version) VALUES(?,?,?)",
-                     [(pid, "잰 질문", None), (pid, "안 잰 질문", 2), (pid, "손으로 적은 질문", 0)])
+                     [(pid, "잰 질문", None), (pid, "안 잰 질문", gen_prompts.GEN_VERSION),
+                      (pid, "손으로 적은 질문", 0)])   # 지금 판은 정본에서 — 판을 올려도 안 낡는다
     qa = conn.execute("SELECT id FROM ai_prompts WHERE prompt='잰 질문'").fetchone()[0]
     qb = conn.execute("SELECT id FROM ai_prompts WHERE prompt='안 잰 질문'").fetchone()[0]
     with db.run(conn, pid, "ai") as r:

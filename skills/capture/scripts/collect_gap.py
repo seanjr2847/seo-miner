@@ -727,15 +727,27 @@ def collect(project: str, *,
                         lambda d: _top_keywords(_post, d, locale, ROLE_EVIDENCE,
                                                 "ranked_serp_element.serp_item.etv,desc"),
                         got_one, workers=fanout.LIMITS["dataforseo"], label=lambda d: d)
-            if not evidence:
-                return
-            label = dict(dashboard_types()).get(p["type"] or "", p["type"] or "")
-            roles = _classify(ask, ours, label, evidence)
+            roles = {}
+            if evidence:
+                label = dict(dashboard_types()).get(p["type"] or "", p["type"] or "")
+                roles = _classify(ask, ours, label, evidence)
             for d, role in roles.items():
                 judged += conn.execute(
                     "UPDATE competitors SET role=?, role_why=? WHERE project_id=? AND domain=?",
                     (role, json.dumps(evidence[d][:ROLE_EVIDENCE], ensure_ascii=False),
                      p["id"], d)).rowcount
+            # 물어봤는데 판정이 안 선 후보(근거 검색어 0개·AI 가 빠뜨림)는 시도 흔적만 남긴다 —
+            # role 은 빈 채라 경쟁사 읽기는 그대로고, scoring.unjudged 가 다음 런에 한 번도 안
+            # 물어본 후보를 먼저 준다. 흔적이 없으면 같은 후보가 매 런 앞자리를 먹는다.
+            # 네트워크가 죽어 근거를 못 받은 후보(st.fail 로 세어진 것)도 여기 든다 — 뒤로
+            # 밀릴 뿐 빠지지 않는다(한 번도 안 물어본 후보가 다 판정된 뒤 다시 온다).
+            for d in todo:
+                if d not in roles:
+                    conn.execute(
+                        "UPDATE competitors SET role_why=? WHERE project_id=? AND domain=?"
+                        " AND role IS NULL",
+                        (json.dumps(evidence.get(d, [])[:ROLE_EVIDENCE], ensure_ascii=False),
+                         p["id"], d))
             conn.commit()
             print("  roles: " + ", ".join(f"{d}={scoring.ROLES.get(r, r)}" for d, r in roles.items()))
 
@@ -1264,7 +1276,8 @@ def _roles_check() -> None:
                                             ("gucci bag", 800), ("여성 지갑", 3000))]}], 0.01
         if path == LABS_RANKED:                                      # E — 후보의 상위 검색어
             ev = {"lfmall.test": ["lf몰", "구찌 가방", "크롬하츠 후드"],
-                  "dior.test": ["디올", "디올 가방", "디올 향수"]}[b0["target"]]
+                  "dior.test": ["디올", "디올 가방", "디올 향수"],
+                  "old3.test": ["올드쓰리", "올드쓰리 가방"]}.get(b0["target"], [])
             return [{"items": [{"keyword_data": {"keyword": k}} for k in ev]}], 0.01
         if path == LABS_SERP_COMPETITORS:
             assert set(b0["keywords"]) == {"명품 가방", "여성 지갑"}, \
@@ -1281,6 +1294,7 @@ def _roles_check() -> None:
         if "brand_terms" in prompt:
             return {"brand_terms": ["구찌", "지어낸이름"]}       # 목록 밖 표기는 버려져야 한다
         return {"lfmall.test": "channel", "dior.test": "rival", "hermes.test": "channel",
+                "old3.test": "rival",
                 "nowhere.test": "rival", "x": "지어낸역할"}
 
     def fetch(domain, locale, limit):
@@ -1303,6 +1317,7 @@ def _roles_check() -> None:
     # 경쟁사로 읽기: 판매 채널은 빠지고 사람이 적은 것·경쟁은 남는다
     keep, dropped = scoring.rivals(conn, pid, "gucci.test")
     assert keep == ["hermes.test", "dior.test"] and "lfmall.test" in dropped, (keep, dropped)
+    assert scoring.confirmed_rivals(conn, pid, "gucci.test") == ["hermes.test", "dior.test"]
     # 몫의 분모에 판매 채널이 없다
     met = {r[0] for r in conn.execute("SELECT domain FROM competitor_metrics WHERE project_id=?", (pid,))}
     assert "lfmall.test" not in met and {"gucci.test", "hermes.test"} <= met, met
@@ -1312,6 +1327,35 @@ def _roles_check() -> None:
         collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, ask=ask, rivals=5, intersect=0)
     again = [b["target"] for pth, b in posts if pth == LABS_RANKED and b["target"] != "gucci.test"]
     assert again == [], f"이미 판정한 도메인의 근거를 또 샀다: {again}"
+    # 새 후보가 없어도 비브랜드 축(D)은 돈다 — 새 후보가 생길 때만 도는 축이 아니다
+    assert any(pth == LABS_SERP_COMPETITORS for pth, _ in posts), "새 후보가 없다고 D 를 건너뛰었다"
+
+    # 판정 전에 들어온 옛 후보(순위 수집이 붙인 source='auto')도 판정한다. 근거를 못 받는
+    # 후보가 앞자리에 있어도 뒤 후보가 굶지 않는다 — 들어온 순으로만 자르던 때는 근거 없는
+    # 옛 후보 ROLE_CAP 개가 매 런 같은 자리를 먹어 old3 이 영영 판정을 못 받았다.
+    global ROLE_CAP
+    cap = ROLE_CAP
+    conn.executemany("INSERT INTO competitors(project_id, domain, source) VALUES(?, ?, 'auto')",
+                     [(pid, d) for d in ("old1.test", "old2.test", "old3.test")])
+    conn.commit()
+    try:
+        ROLE_CAP = 2
+        for _ in range(2):
+            with contextlib.redirect_stdout(io.StringIO()):
+                collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, ask=ask,
+                        rivals=5, intersect=0)
+    finally:
+        ROLE_CAP = cap
+    old = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT domain, role, role_why FROM competitors WHERE domain LIKE 'old%'")}
+    assert old["old3.test"][0] == "rival", f"근거 없는 옛 후보에 막혀 old3 을 판정 못 했다: {old}"
+    assert old["old1.test"] == (None, "[]"), f"근거 없는 후보의 시도 흔적이 안 남았다: {old}"
+    assert "old3.test" in scoring.rivals(conn, pid, "gucci.test")[0]
+    # 판정 전 후보(old1)는 경쟁사로 읽히지만(rivals) 확인된 경쟁사는 아니다 — 화면이
+    # "경쟁사를 적거나 찾으세요"를 이 수로 가른다
+    assert "old1.test" in scoring.rivals(conn, pid, "gucci.test")[0]
+    assert "old1.test" not in scoring.confirmed_rivals(conn, pid, "gucci.test")
+    assert "old3.test" in scoring.confirmed_rivals(conn, pid, "gucci.test")
     # AI 가 없으면 D·E 는 안 돈다 — 예전 동작 그대로
     posts.clear()
     with contextlib.redirect_stdout(io.StringIO()):
