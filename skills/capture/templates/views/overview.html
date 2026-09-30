@@ -197,6 +197,73 @@
   font:500 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
 .ovalt > summary:hover { color:var(--accent); }
 .ovalt .tw { max-height:260px; margin-top:var(--sp-2); }
+
+/* ── 기회 상세 — 오른쪽 서랍 ───────────────────────────────────────────
+   줄을 누르면 목록 안에서 펼치지 않고 오른쪽에 서랍이 열린다. 목록 자리를 잃지 않고
+   다음 줄로 넘겨 보기 위해서다. 내용은 셸의 펼침 조각(oppParts)을 근거·할 일·요청문
+   세 탭으로 나눠 놓은 것이고, 상태·요청문 복사는 아래 발판에 고정된다.
+   박제본·인쇄는 여전히 제자리 펼침이다(<details> 그대로 — 서랍은 화면에서만). */
+.odr-bg { position:fixed; inset:0; z-index:57; background:color-mix(in srgb, var(--ink) 18%, transparent); }
+.odr { position:fixed; top:0; right:0; bottom:0; z-index:58; width:min(560px, 100%);
+  display:flex; flex-direction:column; background:var(--card); box-shadow:var(--shadow-2); }
+.odr[hidden], .odr-bg[hidden] { display:none; }
+.odr-h { padding:24px 28px 0; display:flex; flex-direction:column; gap:14px; }
+.odr-top { display:flex; gap:14px; align-items:flex-start; }
+.odr-ring { flex:none; width:48px; height:48px; box-sizing:border-box; border-radius:50%; border:3px solid var(--accent);
+  display:grid; place-items:center; font:700 var(--fs-3)/1 var(--sans); font-variant-numeric:tabular-nums; }
+.odr-ring.def { border-color:var(--warn); }
+.odr-tt { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.odr-tt h2 { margin:0; font:700 var(--fs-4)/1.35 var(--sans); overflow-wrap:anywhere; }
+.odr-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.odr-x { flex:none; width:44px; height:44px; border:0; border-radius:var(--r-in); background:var(--sunk);
+  color:var(--sub); cursor:pointer; font:400 16px/1 var(--sans); }
+.odr-x:hover { color:var(--ink); }
+.odr-tabs { display:flex; gap:24px; border-bottom:1px solid var(--line); }
+.odr-tabs button { height:44px; padding:0 2px; margin-bottom:-1px; border:0; border-bottom:2px solid transparent;
+  background:none; font:500 var(--fs-2)/1 var(--sans); color:var(--sub); cursor:pointer; }
+.odr-tabs button[aria-selected="true"] { color:var(--ink); font-weight:650; border-bottom-color:var(--accent); }
+.odr-b { flex:1; overflow:auto; overscroll-behavior:contain; padding:20px 28px 28px; }
+.odr .det { padding:0; }
+.odr-why { margin:0 0 16px; font:500 var(--fs-2)/1.6 var(--sans); color:var(--ink); }
+.odr-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:8px; margin:0 0 4px; }
+.odr-tile { background:var(--sunk); border-radius:var(--r-in); padding:12px 14px; display:flex;
+  flex-direction:column; gap:2px; min-width:0; }
+.odr-tile span { font-size:var(--fs-1); color:var(--sub); }
+.odr-tile b { font:700 var(--fs-4)/1.3 var(--sans); font-variant-numeric:tabular-nums; }
+.odr-tile b.s { font-size:var(--fs-3); }
+.odr-tile.warn { background:var(--warn-wash); }
+.odr-tile.warn span, .odr-tile.warn b { color:var(--warn); }
+.odr-tile.ok b { color:var(--accent); }
+.odr-h3 { margin:20px 0 8px; font:600 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.odr-serp { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+.odr-serp li { display:grid; grid-template-columns:20px minmax(0,1fr) auto; gap:10px; align-items:baseline;
+  padding:8px 10px; border-radius:10px; font-size:var(--fs-1); line-height:1.5; }
+.odr-serp li.own { background:var(--accent-wash); }
+.odr-serp .p { font-weight:700; color:var(--sub); font-variant-numeric:tabular-nums; }
+.odr-serp .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.odr-serp .d { color:var(--sub); font-family:var(--mono); font-size:var(--fs-1); white-space:nowrap; }
+.odr-serp li.own .p, .odr-serp li.own .d { color:var(--accent); font-weight:600; font-family:var(--sans); }
+.odr-deliver { list-style:none; counter-reset:dl; margin:0 0 16px; padding:0; display:flex; flex-direction:column; gap:10px; }
+.odr-deliver li { counter-increment:dl; display:grid; grid-template-columns:24px minmax(0,1fr); gap:12px;
+  font-size:var(--fs-2); line-height:1.6; }
+.odr-deliver li::before { content:counter(dl); width:24px; height:24px; border-radius:50%; background:var(--accent-wash);
+  color:var(--accent); display:grid; place-items:center; font:700 var(--fs-1)/1 var(--sans); }
+.odr-ask .ask { margin:0; }
+.odr-ask .ask > summary, .odr .askcopy { display:none; }
+.odr-ask .pbox textarea { min-height:360px; }
+.odr-ask > * + * { margin-top:12px; }
+.odr-f { padding:14px 28px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.odr-f .sp { flex:1; }
+.odr-seg { display:inline-flex; padding:4px; border-radius:var(--r-pill); background:var(--sunk); gap:2px; }
+.odr-seg button { height:36px; padding:0 12px; border:0; border-radius:var(--r-pill); background:none;
+  color:var(--sub); font:500 var(--fs-1)/1 var(--sans); cursor:pointer; }
+.odr-seg button[aria-pressed="true"] { background:var(--card); color:var(--ink); box-shadow:var(--shadow-1); }
+#opplist details.opp.odr-on > summary { background:var(--accent-wash); }
+@media (max-width:560px) {
+  .odr-h, .odr-b, .odr-f { padding-left:16px; padding-right:16px; }
+  .odr-tabs { gap:16px; }
+}
+@media print { .odr, .odr-bg { display:none; } }
 </style>
 
 <div class="band" id="band"></div>
@@ -661,6 +728,7 @@ function oppChips() {
 }
 
 function oppList() {
+  OV_drawerSync();
   oppChips();
   OV_holdLine();
   OV_spot();
@@ -826,11 +894,14 @@ async function OV_move(o, st) {
 }
 
 // [자세히] — 보드 카드에는 펼침 패널을 안 넣는다(좁은 칸에 표·요청문이 끼면 칸이
-// 무너진다). 목록으로 돌아가 그 줄을 펴서 보여 준다. 상태 거르개는 그 줄이 드는 묶음으로.
+// 무너진다). 화면에서는 오른쪽 서랍으로 연다. 서랍이 없는 자리(박제본)만 목록으로 돌아가
+// 그 줄을 펴서 보여 준다 — 상태 거르개는 그 줄이 드는 묶음으로.
 function OV_listAt(st) { OV_setView("list", true); OPP_ST = st; KIND_FILTER = null; renderOpps(OV_PAGE); }
 function OV_boardOpen(id) {
   const o = OPPS.find(x => x.id === id);
   if (!o) return;
+  // 화면에서는 보드 그대로 서랍을 연다 — 목록으로 옮겨 펼칠 까닭이 사라졌다(서랍은 칸을 안 무너뜨린다).
+  if (!READONLY) return OV_drawer(id, document.querySelector(`.kcard[data-card="${id}"] .acts .ghost`));
   OV_setView("list", true);
   OPP_Q = ""; KIND_FILTER = null;
   OPP_ST = ["open", "closed", "resolved"].find(s => window.oppStMatch(o, s)) || "";
@@ -866,6 +937,179 @@ function OV_openTop() {
   if (!card) return;
   card.open = true;
   card.scrollIntoView({behavior: "smooth", block: "center"});
+}
+
+
+/* ── 기회 상세 서랍 ─────────────────────────────────────────────────────
+   목록 줄(<details class="opp">)을 여는 모든 길 — 누르기·[기회 열기]·보드 [자세히]·[기록]의
+   되돌아가기 — 이 여기로 온다: 여는 쪽은 여전히 row.open = true 만 하고, toggle 을 받아 줄은
+   다시 접고 서랍을 연다. 그래서 여는 쪽 네 곳을 고치지 않는다. 박제본(READONLY)과 인쇄는
+   손대지 않는다 — 거기서는 제자리 펼침이 맞다(종이에 서랍은 없다). */
+let OV_D = {}, OV_DR = null, OV_DR_TAB = "ev", OV_DR_FROM = null, OV_PRINTING = false;
+// 이 뷰는 셸 스크립트보다 위에 꽂힌다 — 문서의 <details open> 은 셸이 READONLY 를 선언하기
+// 전에 toggle 을 쏜다. 그래서 대상부터 거르고, READONLY 는 선언됐는지 보고 읽는다.
+const OV_RO = () => typeof READONLY === "undefined" || READONLY;
+addEventListener("beforeprint", () => { OV_PRINTING = true; });
+addEventListener("afterprint", () => { setTimeout(() => { OV_PRINTING = false; }, 0); });
+document.addEventListener("click", e => {
+  const sum = e.target.closest && e.target.closest("#opplist details.opp > summary");
+  if (!sum || OV_RO()) return;
+  e.preventDefault();
+  OV_drawer(+sum.parentElement.dataset.opp, sum);
+});
+document.addEventListener("toggle", e => {
+  const el = e.target;
+  if (!el.matches || !el.matches("#opplist details.opp") || !el.open || OV_PRINTING || OV_RO()) return;
+  el.open = false;
+  OV_drawer(+el.dataset.opp, el.querySelector("summary"));
+}, true);
+
+function OV_drawerEls() {
+  const box = $("view-overview");
+  let dr = $("ov-drawer");
+  if (!dr && box) {
+    box.insertAdjacentHTML("beforeend", `<div class="odr-bg" id="ov-drawer-bg" hidden
+      onclick="OV_drawerClose()"></div><aside class="odr" id="ov-drawer" role="dialog"
+      aria-labelledby="odr-t" hidden onkeydown="if(event.key==='Escape')OV_drawerClose()"></aside>`);
+    dr = $("ov-drawer");
+  }
+  return dr;
+}
+function OV_drawer(id, from) {
+  const o = OPPS.find(x => x.id === id);
+  const dr = OV_drawerEls();
+  if (!o || !dr) return;
+  if (OV_DR !== id) OV_DR_TAB = "ev";
+  OV_DR = id;
+  if (from) OV_DR_FROM = from;
+  OV_drawerPaint(o);
+  dr.hidden = false;
+  $("ov-drawer-bg").hidden = false;
+  const x = dr.querySelector(".odr-x");
+  if (x) x.focus({preventScroll: true});
+}
+function OV_drawerClose() {
+  const dr = $("ov-drawer");
+  if (!dr || dr.hidden) return;
+  dr.hidden = true;
+  $("ov-drawer-bg").hidden = true;
+  document.querySelectorAll("#opplist details.opp.odr-on").forEach(x => x.classList.remove("odr-on"));
+  // 연 줄로 초점을 돌려준다 — 상태를 바꿨으면 목록이 다시 그려져 그 요소는 없다. 같은 줄을 다시 찾는다.
+  const back = OV_DR_FROM && OV_DR_FROM.isConnected ? OV_DR_FROM
+    : document.querySelector(`#opplist details.opp[data-opp="${OV_DR}"] > summary`);
+  OV_DR = null;
+  OV_DR_FROM = null;
+  if (back) back.focus({preventScroll: true});
+}
+// 다시 그려진 목록에 맞춘다 — 상태를 바꾸면 load() 가 화면을 새로 그린다. 같은 줄이 아직
+// 있으면 새 값으로 다시 칠하고(보던 탭 그대로), 없어졌으면(사이트를 바꿨다) 닫는다.
+function OV_drawerSync() {
+  if (OV_DR == null) return;
+  const o = OPPS.find(x => x.id === OV_DR);
+  if (!o) return OV_drawerClose();
+  OV_drawerPaint(o);
+}
+function OV_drawerTab(t) {
+  OV_DR_TAB = t;
+  const dr = $("ov-drawer");
+  dr.querySelectorAll(".odr-tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.t === t));
+  dr.querySelectorAll("[data-panel]").forEach(p => { p.hidden = p.dataset.panel !== t; });
+}
+// 근거 칸 — 순위 조회가 잰 그 행(rank_by_kw)과 키워드 표의 검색량(o.volume, 묶인 줄이면 대표
+// 변형의 것)에서 읽는다. 없는 수는 칸째 뺀다(빈 칸에 "—"를 세우지 않는다).
+function OV_drTiles(o) {
+  const r = (OV_D.rank_by_kw || {})[o.target];
+  const vol = o.volume || (o.group && o.group.variants[0] && o.group.variants[0].volume);
+  const t = [];
+  if (r) t.push(["", `실제 순위${OV_D.rank_date ? ` · ${esc(OV_D.rank_date.slice(5))}` : ""}`,
+    r.pos != null ? `${r.pos}위` : "잰 범위 밖"]);
+  if (vol) t.push(["", "월 검색량", num(vol)]);
+  if (r && r.aio != null) t.push(r.aio
+    ? (r.aio_cited ? ["ok", "구글 AI 요약", "우리 인용됨"] : ["warn", "구글 AI 요약", "우리 인용 안 됨"])
+    : ["", "구글 AI 요약", "없음"]);
+  return t.length ? `<div class="odr-tiles">${t.map(([c, l, v]) => `<div class="odr-tile${c ? " " + c : ""}">
+    <span>${l}</span><b${v.length > 5 ? ` class="s"` : ""}>${esc(v)}</b></div>`).join("")}</div>` : "";
+}
+// 이 검색어의 검색 결과 상위 — 순위 조회가 남긴 그대로(serp_top). 우리 줄을 칠한다.
+function OV_drSerp(o) {
+  const rows = ((OV_D.serp_top || {})[o.target] || []).slice(0, 5);
+  if (!rows.length) return "";
+  return `<h3 class="odr-h3">검색 결과 상위 ${rows.length}${OV_D.rank_date
+      ? ` · ${esc(OV_D.rank_date.slice(5))}` : ""}</h3>
+    <ol class="odr-serp">${rows.map(x => `<li${x.is_own ? ` class="own"` : ""}>
+      <span class="p">${x.position}</span><span class="t" title="${esc(x.title || x.url)}">${
+        esc(x.title || x.url)}</span><span class="d">${x.is_own ? "우리" : esc(x.domain || "")}</span></li>`
+      ).join("")}</ol>`;
+}
+function OV_drawerSet(st) {
+  const o = OPPS.find(x => x.id === OV_DR);
+  if (!o || o.status === st) return;
+  const ids = oppIdsTo(o, st);
+  if (!ids.length) return;
+  ids.length > 1 ? setOpps(ids, st) : setOpp(ids[0], st);
+}
+// 발판의 [요청문 복사] — 요청문 탭 안의 복사 손잡이(askBlock)를 그대로 누른다. 복사하면서
+// '진행 중'으로 옮기는 규칙이 그 버튼에 있다 — 여기서 다시 짜면 두 벌이다.
+function OV_drawerCopy(btn) {
+  const c = $("ov-drawer").querySelector(".askcopy");
+  if (!c) return;
+  c.click();
+  btn.textContent = "복사함";
+  setTimeout(() => { btn.textContent = "요청문 복사"; }, 2000);
+}
+function OV_drawerPaint(o) {
+  const dr = $("ov-drawer");
+  const P = window.oppParts(o);
+  const p = o.play || {};
+  const n = OV_targets(o).length;
+  const hosted = !!window.SM_HOSTED;
+  const ask = hosted && P.ask && P.ask.includes('class="ask"')
+    ? P.ask.replace('<details class="ask">', '<details class="ask" open>') : "";
+  const deliver = (p.deliver || []).length ? `<h3 class="odr-h3" style="margin-top:0">요청문으로 받을 것</h3>
+    <ol class="odr-deliver">${p.deliver.map(x => `<li><span>${esc(x)}</span></li>`).join("")}</ol>` : "";
+  const see = OV_see(o);
+  const tabs = [["ev", "근거"], ["do", "할 일"]].concat(ask ? [["ask", "요청문"]] : []);
+  if (!tabs.some(([t]) => t === OV_DR_TAB)) OV_DR_TAB = "ev";
+  const seg = (o.status === "resolved" ? `<span class="st st-resolved">${window.OPP_LABEL.resolved}</span>` : "")
+    + `<div class="odr-seg" role="group" aria-label="상태">${["new", "acked", "done", "dismissed"].map(st =>
+      `<button type="button" aria-pressed="${o.status === st}" onclick="OV_drawerSet('${st}')"${
+        o.group && o.group.ids.length > 1 ? ` title="이 줄에 묶인 기회 ${o.group.ids.length}개에 모두 적용합니다"` : ""
+      }>${window.OPP_LABEL[st]}</button>`).join("")}</div>`;
+  const main = hosted ? (ask ? `<button type="button" class="go" onclick="OV_drawerCopy(this)">요청문 복사</button>` : "")
+    : (SM.host.oppBtn ? SM.host.oppBtn(o) : "");
+  document.querySelectorAll("#opplist details.opp").forEach(x =>
+    x.classList.toggle("odr-on", +x.dataset.opp === o.id));
+  dr.innerHTML = `<div class="odr-h">
+      <div class="odr-top">
+        <div class="odr-ring${isDefensive(o) ? " def" : ""}" title="${Number.isFinite(o.score)
+          ? `${o.score}점 / 100점. 높을수록 먼저 손댑니다.` : ""}">${Number.isFinite(o.score) ? Math.round(o.score) : "—"}</div>
+        <div class="odr-tt"><h2 id="odr-t">${esc(targetLabel(o.target))}</h2>
+          <div class="odr-chips">${OV_kinds(o).map(([k, l]) => `<span class="kind${isDefensive(k === o.kind
+              ? o : {kind: k}) ? " k-def" : ""}">${esc(l)}</span>`).join("")}${n > 1
+            ? `<span class="badge" title="${esc(OV_targets(o).join(" · "))}">검색어 ${n}개</span>` : ""}${
+            window.gaBadge(o)}${window.madeBadge(o)}${window.holdBadge(o)}</div></div>
+        <button type="button" class="odr-x" aria-label="닫기" onclick="OV_drawerClose()">✕</button>
+      </div>
+      <div class="odr-tabs" role="tablist">${tabs.map(([t, l]) => `<button type="button" role="tab" data-t="${t}"
+        aria-selected="${t === OV_DR_TAB}" onclick="OV_drawerTab('${t}')">${l}</button>`).join("")}</div>
+    </div>
+    <div class="odr-b">
+      <div class="det" role="tabpanel" data-panel="ev"${OV_DR_TAB === "ev" ? "" : " hidden"}>
+        ${o.reasoning ? `<p class="odr-why">${esc(o.reasoning)}</p>` : ""}${window.oppClosedWhy(o)}
+        ${OV_drTiles(o)}${P.stat}${OV_drSerp(o)}
+        ${P.page}${P.note}
+        ${P.group}${P.rel}
+        ${see ? `<div class="acts">${see}</div>` : ""}
+      </div>
+      <div class="det" role="tabpanel" data-panel="do"${OV_DR_TAB === "do" ? "" : " hidden"}>
+        ${deliver}${P.play}${OV_more(o)}${P.works}
+      </div>
+      ${ask ? `<div class="det odr-ask" role="tabpanel" data-panel="ask"${OV_DR_TAB === "ask" ? "" : " hidden"}>
+        ${ask}${SM.host.oppBtn ? SM.host.oppBtn(o) : ""}</div>` : ""}
+    </div>
+    <div class="odr-f">${seg}<span class="sp"></span>${main}</div>`;
+  deadSweep(dr);
+  applyWording(dr);
 }
 
 /* ── 스포트라이트: 이 화면의 답 ────────────────────────────────────────
@@ -1071,6 +1315,7 @@ VIEW("overview", function (d) {
         aria-label="${esc(tip)}">i</span>` + esc(capped);
   // 한 번에 손대는 건 몇 건뿐이다 — 나머지는 접어 둔다(점수 높은 순, 새 기회 먼저).
   // 같은 지면의 변형 검색어는 서버가 한 줄로 접어 보낸다(d.opp_groups).
+  OV_D = d;
   OPPS = OV_lines(d);
   const held = (d.opps || []).filter(o => window.oppStMatch(o, "hold"));
   OV_HELD = held.length;

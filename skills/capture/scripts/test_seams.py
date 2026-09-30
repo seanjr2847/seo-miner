@@ -706,8 +706,9 @@ def test_seam_16_brief_shapes_single_source():
     # 기회 패널의 '고칠 페이지'는 요청문이 고른 페이지(o.brief.page = brief.page_of)다.
     # 화면이 query_pages 로 따로 고르면 순위 밖 지면을 요청문은 "고쳐라", 화면은
     # "걸린 페이지 없음"이라고 한다(써마지에서 실제로 그랬다).
-    m = re.search(r"function oppDetail\(o(?:, \w+)?\) \{(.*?)\n\}", shell, re.S)
-    assert m, "셸의 oppDetail 을 못 찾았다"
+    # 고르는 몸통은 oppParts 다 — 제자리 펼침(oppDetail)과 [개요]의 서랍이 같은 조각을 쓴다.
+    m = re.search(r"window\.oppParts = o => \{(.*?)\n\};", shell, re.S)
+    assert m, "셸의 oppParts(펼침 조각)를 못 찾았다"
     code = re.sub(r"//[^\n]*", "", m.group(1))     # 주석 속 낱말로 통과하지 않게
     assert "o.brief.page" in code, "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
     # 고르지 못했을 때의 후보도 요청문과 같은 목록(o.brief.candidates)을 그린다
@@ -3300,6 +3301,33 @@ def test_seam_99_onboarding_calls_exist_on_hosted():
     for m, paths in (("POST", posts), ("GET", gets | links)):
         miss = sorted(p for p in paths if (m, p) not in served)
         assert not miss, f"온보딩이 {m} 로 부르는데 호스팅에 없다: {miss}"
+
+
+def test_seam_103_opp_row_opens_the_drawer():
+    """103) [개요]의 기회 줄을 여는 길은 전부 오른쪽 서랍으로 간다 — 줄 마크업과 서랍이 한 짝이다.
+
+    여는 쪽(누르기·[기회 열기]·보드 [자세히]·[기록]의 되돌아가기)은 줄을 row.open = true 로
+    열기만 하고, 서랍이 그 toggle 을 받아 줄을 접고 서랍을 연다. 줄 마크업(oppRow 의
+    details.opp · data-opp)이나 서랍이 듣는 선택자 중 한쪽만 바뀌면 어느 파일도 틀려 보이지
+    않는데 서랍이 조용히 안 열리고 옛 제자리 펼침으로 돌아간다. 인쇄 중에는 서랍이 끼어들면
+    안 된다(펼친 줄이 종이에 나가야 한다).
+    """
+    ov = _view_script("overview.html")
+    assert re.search(r'<details class="opp" data-opp="\$\{o\.id\}"', ov), \
+        "oppRow 가 details.opp[data-opp] 로 줄을 안 그린다 — 서랍이 줄을 못 알아본다"
+    assert re.search(r'\$\("opplist"\)\.innerHTML = [^;]*\.map\(oppRow\)', ov), \
+        "줄이 #opplist 안에 안 그려진다 — 서랍의 선택자(#opplist details.opp)가 빗나간다"
+    listen = re.search(r'document\.addEventListener\("toggle", e => \{(.*?)\n\}, true\);', ov, re.S)
+    assert listen, "줄의 toggle 을 서랍으로 받는 자리가 없다 — [기회 열기]·[기록]이 제자리 펼침으로 연다"
+    body = listen.group(1)
+    assert '"#opplist details.opp"' in body and "dataset.opp" in body and "OV_drawer(" in body, \
+        "toggle 을 받는 쪽이 줄 마크업(#opplist details.opp · data-opp)과 짝이 안 맞는다"
+    assert "OV_PRINTING" in body and re.search(r'addEventListener\("beforeprint", \(\) => \{ OV_PRINTING = true', ov), \
+        "인쇄 중에도 서랍이 줄을 접는다 — 종이에 펼친 줄이 안 나간다"
+    click = re.search(r'document\.addEventListener\("click", e => \{(.*?)\n\}\);', ov, re.S)
+    assert click and '"#opplist details.opp > summary"' in click.group(1), \
+        "줄 머리를 누르면 서랍 대신 제자리 펼침이 먼저 번쩍인다"
+    assert "window.oppParts(o)" in ov, "서랍이 셸의 펼침 조각(oppParts)을 안 쓴다 — 조각이 두 벌이 된다"
 
 
 def test_seam_100_no_gsc_site_is_skipped_everywhere():

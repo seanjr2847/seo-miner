@@ -1436,7 +1436,15 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     ai_lean = {str(r.get("prompt") or ""): r.get("lean") for r in ai_rows}
     sd_rows = {r["query"]: r for r in striking}
     sd_reason = scoring._KIND_BY_NAME["striking_distance"].reasoning
+    # 대상의 월 검색량 — 기회 상세(서랍)의 근거 칸이 문장을 되짚지 않고 수로 싣는다. 짝짓기는
+    # 묶인 줄의 변형(scoring._surface_facts)과 같은 norm 이라 두 자리가 같은 수를 말한다.
+    kw_vol: dict = {}
+    for k, v in conn.execute("SELECT keyword, volume FROM keywords WHERE project_id=?"
+                             " AND volume IS NOT NULL", (pid,)):
+        n = scoring.norm(k)
+        kw_vol[n] = max(kw_vol.get(n, 0), v or 0)
     for o in opps:
+        o["volume"] = kw_vol.get(scoring.norm(str(o["target"]))) or None
         o["is_defensive"] = scoring.is_defensive(o["kind"])
         if o["kind"] == "striking_distance":
             band = sd_band.get(o["target"]) or (

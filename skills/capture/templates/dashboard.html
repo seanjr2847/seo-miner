@@ -3128,7 +3128,9 @@ window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD |
       근거 문장은 숫자를 요약할 뿐이라 "그래서 어디를 고치냐"에 답하지 못했다.
       표(어느 URL 이 이 검색어로 걸려 있나)는 payload 의 opp_pages 가 대고,
       할 일은 o.play 가 댄다. ── */
-function oppDetail(o, extra) {
+// 펼침 패널의 조각들 — 제자리 펼침(oppDetail)과 [개요]의 오른쪽 서랍(OV_drawer)이 같은
+// 조각을 다른 순서·자리에 놓는다. 조각을 두 벌 만들면 두 자리가 다른 말을 한다.
+window.oppParts = o => {
   const pages = (window.QUERY_PAGES || {})[o.target] || [];
   const p = o.play || {};
   // striking_distance 의 "무엇을" 뒤에는 평균 게재순위 안내 + [순위] 화면 버튼이
@@ -3186,11 +3188,18 @@ function oppDetail(o, extra) {
   // 둘로 갈라진다.
   // 수(지금 몇 위고 어디로 가고 있나)가 맨 위다 — 처방과 페이지보다 먼저 온다.
   // 연관 페이지·연관 키워드는 맨 아래다: 이 기회를 끝낸 다음에 가 볼 곳이다.
-  return `<div class="det"><div class="det-top">${ask}${oppNow(o)}${oppRest(o)}${extra || ""}</div>
-    ${window.targetStat(o.target)}${oppGroup(o)}${playList(p.what, p.acts, sdTail)}${note}
-    ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
-      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : ""}
-    ${window.relPages(pages, url)}${window.relQueries(url)}${works}</div>`;
+  return {ask, url, note, works,
+    stat: window.targetStat(o.target), group: oppGroup(o), play: playList(p.what, p.acts, sdTail),
+    page: url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
+      rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : "",
+    rel: window.relPages(pages, url) + window.relQueries(url)};
+};
+function oppDetail(o, extra) {
+  const P = window.oppParts(o);
+  return `<div class="det"><div class="det-top">${P.ask}${oppNow(o)}${oppRest(o)}${extra || ""}</div>
+    ${P.stat}${P.group}${P.play}${P.note}
+    ${P.page}
+    ${P.rel}${P.works}</div>`;
 }
 
 /* 묶인 줄의 변형 목록 — 어느 검색어가 한 줄이 됐고 **왜** 한 줄인지. 열쇠(via)는

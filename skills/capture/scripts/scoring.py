@@ -4627,9 +4627,15 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
         conn, project_id, limit=limit, order="screen", with_id=with_id, gated=True)]
     key = (lambda r: r["id"]) if with_id else (lambda r: (r["kind"], r["target"]))
     have = {key(r) for r in rows}
-    rows += [d for d in (dict(r) for r in db.list_opportunities(
-        conn, project_id, statuses=list(closed_statuses()), limit=CLOSED_LIMIT,
-        order="screen", with_id=with_id, gated=True)) if key(d) not in have]
+    # 진행 중(acked)도 같은 꼬리로 붙인다 — '새 것 먼저'라 할 일이 limit 을 넘는 사이트에서는
+    # [요청문 복사]로 진행 중이 된 기회가 목록에서 통째로 사라졌다(theotherskin: 할 일 228건 ·
+    # 복사하자마자 그 줄과 열어 둔 상세 서랍이 함께 없어졌다).
+    for sts, cap in ((["acked"], limit), (list(closed_statuses()), CLOSED_LIMIT)):
+        more = [d for d in (dict(r) for r in db.list_opportunities(
+            conn, project_id, statuses=sts, limit=cap,
+            order="screen", with_id=with_id, gated=True)) if key(d) not in have]
+        rows += more
+        have |= {key(d) for d in more}
     return rows
 
 
@@ -5244,6 +5250,14 @@ def _selfcheck() -> None:
     got = [o["target"] for o in opportunities(conn, 1, limit=10)]
     assert got == ["new-high", "new-low", "old-done"], got
     assert "id" in opportunities(conn, 1, limit=1, with_id=True)[0]
+    # 할 일이 limit 을 채워도 진행 중은 실린다 — 요청문을 복사한(진행 중) 기회가 목록에서
+    # 사라지면 안 된다. limit=2 면 앞쪽은 할 일 둘로 차고, 진행 중은 꼬리로 붙는다.
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at) "
+                 "VALUES(1,'striking_distance','in-work',5,'r','acked','2026-08-01')")
+    conn.execute("INSERT INTO verdicts(project_id,key,verdict) VALUES(1,?,'work')", (norm("in-work"),))
+    got = [o["target"] for o in opportunities(conn, 1, limit=2)]
+    assert got[:2] == ["new-high", "new-low"] and "in-work" in got,         f"할 일이 한도를 채우자 진행 중 기회가 목록에서 빠졌다: {got}"
+    conn.execute("DELETE FROM opportunities WHERE target='in-work'")
 
     conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query) "
                  "VALUES(2,'2026-08-20',28,'_meta')")
