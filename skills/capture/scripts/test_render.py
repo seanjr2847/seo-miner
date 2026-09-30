@@ -203,8 +203,8 @@ EMPTY_LOADS = [
                   r'<span class="ovhl-t">데이터 이상 <b[^>]*>\d+</b>건',
                   "데이터 이상이 있는데 개요에 접힌 띠가 안 섰다"),
                  (r'id="ov-health-list"[^>]*>(?:(?!</ul>).)*class="badge warn">중간<'
-                  r"(?:(?!</ul>).)*추적에서 뺀 검색어",
-                  "데이터 이상 목록에 등급·내용(추적에서 뺀 검색어)이 안 그려졌다")]),
+                  r"(?:(?!</ul>).)*열리지 않는 페이지\(404\)",
+                  "데이터 이상 목록에 등급·내용(404 페이지 점검)이 안 그려졌다")]),
 ]
 
 # 두 화면이 함께 지켜야 하는 것. 정규식은 "그려졌는가"만 본다 — 예쁜지는 안 본다.
@@ -866,11 +866,11 @@ def zero_site(home: Path) -> None:
         # 심사에만 쌓인 기회 하나(미판정) — 개요 목록은 비고, 빈 상태가 [심사하기]로 보낸다.
         conn.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
                      " VALUES(?,'striking_distance',?,75,'r','new')", (pid, f"{ZERO_SITE} 대기"))
-        # 추적에서 뺀 검색어의 순위 행 — 데이터 점검(ranks_untracked)이 개요의 접힌 띠에 선다.
-        k = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,0)"
-                         " RETURNING id", (pid, f"{ZERO_SITE} 끈 검색어")).fetchone()[0]
-        db.write_rank_snapshot(conn, k, 5, f"https://{ZERO_SITE}.example/a",
-                               checked_at="2026-06-01T01:00:00Z")
+        # 열리지 않는 페이지(404)를 점검한 기록 — 데이터 점검(page_404)이 개요의 접힌 띠에 선다.
+        # 개요 기회 목록은 건드리지 않는다(위의 '심사에만 쌓임' 빈 상태를 같이 봐야 한다).
+        db.write_page_audits(conn, pid, "2026-06-01", [
+            {"url": f"https://{ZERO_SITE}.example/gone", "status": 404, "error": "HTTP 404"},
+            {"url": f"https://{ZERO_SITE}.example/a", "status": 200, "title": "살아 있는 페이지"}])
         conn.commit()
     finally:
         conn.close()
