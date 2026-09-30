@@ -12,7 +12,9 @@ fetch(provider, keyword, locale, depth) -> normalized dict:
                  알 필요가 없고, 알면 같은 규칙이 양쪽에 두 벌로 생긴다)
   serp_features [feature type strings]
   aio_present   1 / 0 / None(제공자가 측정하지 않음) — 그대로 DB에 넣을 수 있는 값
-  aio_domains   AI Overview 안에서 인용된 도메인들 (판정은 호출부의 scoring.owns)
+  aio_domains   AI Overview 안에서 인용된 도메인들 (판정은 호출부의 scoring.owns).
+                요약이 떴는데(aio_present=1) 인용을 하나도 못 뽑았으면 None —
+                "인용이 없었다"가 아니라 "응답에 인용이 안 실려 왔다"(_parse_serp)
   related / paa 무료 부산물
   cost          제공자가 보고한 실청구액, 없으면 제공자 단가
 
@@ -563,13 +565,25 @@ def _domains_in(obj) -> list[str]:
     return sorted(set(out))
 
 
+# AI 요약을 비동기로 싣는 검색결과에서도 요약 본문·인용을 받아 오라는 요청 칸.
+# 안 보내면(기본 false) DataForSEO 는 **캐시에 있던** 요약만 준다 — 구글이 요약을 늦게
+# 그리는 검색어는 ai_overview 칸만 서고 인용(references·links)은 비어 온다. gucci 운영
+# 순위(한국어)에서 '구찌가방' 1위·요약 있음·인용 [] 로 적혀 "AI 요약 빠짐"이 선 게 그 자리다
+# (같은 회차 다른 검색어는 인용 6~8곳). 요금: 문서가 이 칸에 추가 요금을 적는다 — 금액은
+# 이 리포에서 확인하지 못했다(2026-09-30, 실호출 없이 작성). 실청구액은 task_post 응답의
+# cost 로 읽어 runs 에 적으니 첫 런의 cost_estimate_usd 로 확인한다. 순위는 추적 키워드
+# (is_active=1)만 재므로 이 요금도 추적 키워드에만 붙는다.
+LOAD_ASYNC_AIO = True
+
+
 def _serp_task(keyword: str, locale: str, depth: int, device: str) -> dict:
-    """SERP 과제 하나의 본문 — Live 와 대기열이 같은 한 벌을 보낸다(지역·언어·기기·깊이)."""
+    """SERP 과제 하나의 본문 — Live 와 대기열이 같은 한 벌을 보낸다(지역·언어·기기·깊이·
+    비동기 AI 요약)."""
     if device not in ("desktop", "mobile"):
         raise ValueError(f"device must be 'desktop' or 'mobile', got {device!r}")
     loc, lang, _ = location(locale)
     return {"keyword": keyword, "location_name": loc, "language_code": lang,
-            "device": device, "depth": depth}
+            "device": device, "depth": depth, "load_async_ai_overview": LOAD_ASYNC_AIO}
 
 
 def _dfs_auth() -> tuple[str, str]:
@@ -584,6 +598,13 @@ def _parse_serp(items, depth: int) -> dict:
     **파서는 이것 한 벌이다.** Live(fetch_dataforseo)와 대기열(get_serp_task)이 같은
     응답 모양(result[0].items)을 받는다 — 둘이 각자 풀면 AI 요약 인용·질문 뽑기 같은
     규칙이 한쪽에만 고쳐진다.
+
+    aio_domains 의 세 값: 요약이 없으면 [] (볼 것이 없었다), 요약이 있고 인용을 뽑았으면
+    그 목록, 요약은 섰는데 인용을 하나도 못 뽑았으면 **None(모름)**. 마지막을 [] 로 적으면
+    호출부가 "우리 링크 없음(aio_cited=0)"으로 읽고 AI 요약 빠짐 기회를 세운다 — 비동기
+    요약(asynchronous_ai_overview)이 인용 없이 오거나 인용이 우리가 모르는 칸에 실려 온
+    경우와 "구글이 아무도 인용하지 않았다"를 응답만으로는 가를 수 없다. 인용은 요약
+    항목 어디에 있든(최상위 references, items[].references·links 등) _domains_in 이 줍는다.
     """
     top, features, aio_present, aio_domains = [], set(), 0, []
     related, paa = [], []
@@ -609,7 +630,9 @@ def _parse_serp(items, depth: int) -> dict:
         else:
             features.add(t)
     return {"top": top[:depth], "serp_features": sorted(features),
-            "aio_present": aio_present, "aio_domains": sorted(set(aio_domains)),
+            "aio_present": aio_present,
+            "aio_domains": (sorted(set(aio_domains)) if aio_domains or not aio_present
+                            else None),
             "related": related, "paa": paa}
 
 
@@ -1015,6 +1038,39 @@ def _selfcheck() -> None:
     nest = {"items": [{"type": "ai_overview_element",
                        "images": [{"items": [{"url": "https://nested.example.com/x"}]}]}]}
     assert _domains_in(nest) == [], _domains_in(nest)
+
+    # ── AI 요약 인용: 요청과 파싱 (gucci '구찌가방' 1위·요약 있음·인용 [] 의 자리) ──
+    # 요청: 비동기로 그려지는 요약도 받아 오라고 늘 말한다 — Live·대기열이 같은 한 벌
+    assert _serp_task("k", "ko-KR", 10, "desktop")["load_async_ai_overview"] is True
+    org = {"type": "organic", "rank_group": 1, "url": "https://www.gucci.com/kr/ko/", "title": "G"}
+    # (1) 알려진 모양 — 요약 항목 최상위 references + 요소 안 links
+    known = {"type": "ai_overview", "asynchronous_ai_overview": False,
+             "items": [{"type": "ai_overview_element", "markdown": "…",
+                        "links": [{"url": "https://www.musinsa.com/x", "title": "M"}]}],
+             "references": [{"type": "ai_overview_reference", "source": "나무위키",
+                             "domain": "namu.wiki", "url": "https://namu.wiki/w/구찌",
+                             "title": "구찌"}]}
+    got = _parse_serp([org, known], 10)
+    assert got["aio_present"] == 1 and got["aio_domains"] == ["musinsa.com", "namu.wiki"], got
+    # (2) 다른 모양 — 요소가 한 겹 더 들어가고(items > items) 인용이 domain 칸만 싣는다
+    alt = {"type": "ai_overview", "items": [
+        {"type": "ai_overview_expanded_element", "items": [
+            {"type": "ai_overview_element",
+             "references": [{"domain": "kr.gucci.com", "source": "Gucci"}],
+             "citations": [{"url": "https://blog.naver.com/p/1"}]}]}]}
+    got = _parse_serp([alt], 10)
+    assert got["aio_domains"] == ["blog.naver.com", "kr.gucci.com"], got
+    # (3) 비동기 요약이 인용 없이 왔다 — [] (알고 보니 없음)가 아니라 None (모름)
+    for bare in ({"type": "ai_overview", "asynchronous_ai_overview": True,
+                  "items": None, "references": None},
+                 {"type": "ai_overview", "items": [{"type": "ai_overview_element",
+                                                    "markdown": "본문만", "images": [
+                                                        {"url": "https://cdn.x/p.png"}]}]}):
+        got = _parse_serp([org, bare], 10)
+        assert got["aio_present"] == 1 and got["aio_domains"] is None, (bare, got)
+    # (4) 요약이 없으면 볼 인용도 없다 — [] 그대로(호출부는 요약이 없으면 목록을 안 적는다)
+    got = _parse_serp([org], 10)
+    assert got["aio_present"] == 0 and got["aio_domains"] == [], got
 
     # ── post_dataforseo ─────────────────────────────────────────────
     # 네 수집기(metrics·backlinks·competitors·gap)가 전부 이 하나를 지난다 —
