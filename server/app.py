@@ -1183,6 +1183,32 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
     return {"ok": True, "run_every_hours": hours}
 
 
+@app.post("/api/sites/delete")
+def api_sites_delete(b: dict = Depends(_body), project: str = Depends(_project_b),
+                     uid: int = Depends(_require_uid), t=Depends(TENANT_B), c=Depends(BRAIN_B)):
+    """사이트를 지운다 — 서버의 사이트 행·묶음 시계, 그 사람 brain 의 이 사이트 데이터, 보고서 파일.
+
+    되돌릴 수 없어서 사이트 이름을 그대로 다시 적어 보내야 한다(confirm). 수집이 도는 중이면
+    거절한다 — 워커가 지운 사이트에 계속 쓰면 반쯤 지워진 사이트가 되살아난다.
+    """
+    if str(b.get("confirm") or "") != project:
+        raise HTTPException(status_code=400,
+                            detail="확인용으로 사이트 이름을 그대로 적어 주세요.")
+    site = store.site(t.conn, uid, project)
+    if site and site["running_since"]:
+        raise HTTPException(status_code=409,
+                            detail="지금 수집이 도는 중입니다. 끝난 뒤에 지우세요.")
+    removed = 0
+    try:
+        removed = db.delete_project(c, project)
+    except db.ProjectNotFound:
+        pass                     # 등록 직후라 brain 에 아직 없을 수 있다 — 서버 행은 지운다
+    store.delete_site(t.conn, uid, project)
+    import shutil
+    shutil.rmtree(store.home(uid) / "reports" / project, ignore_errors=True)
+    return {"ok": True, "project": project, "rows": removed}
+
+
 def _api_settings_profile(profile, project: str, c) -> dict:
     """PROFILE_FIELDS 중 보낸 것만 Brain 에 쓴다 — 본체는 db.profile_save 한 벌이다
     (로컬 대시보드도 같은 것을 부른다). 설정이 Brain 안이라 저장한 것이 동기화로 따라간다."""

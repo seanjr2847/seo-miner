@@ -208,6 +208,18 @@ def add_site(conn: sqlite3.Connection, user_id: int, project: str,
                         (user_id, project)).fetchone()["id"]
 
 
+def delete_site(conn: sqlite3.Connection, user_id: int, project: str) -> bool:
+    """이 사람의 사이트 행과 묶음 시계를 지운다(brain 의 데이터는 db.delete_project 몫)."""
+    row = conn.execute("SELECT id FROM sites WHERE user_id=? AND project=?",
+                       (user_id, project)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM site_groups WHERE site_id=?", (row["id"],))
+    conn.execute("DELETE FROM sites WHERE id=?", (row["id"],))
+    conn.commit()
+    return True
+
+
 def sites(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM sites WHERE user_id=? AND active=1 ORDER BY id",
                         (user_id,)).fetchall()

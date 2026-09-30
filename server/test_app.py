@@ -394,6 +394,40 @@ def demo() -> None:
             assert r.status_code == 200 and r.json()["type"] == "commerce", r.text
             assert c.get("/api/settings?project=new2").json()["type"] == "commerce", "종류가 안 바뀌었다"
 
+            # 사이트 삭제 — 이름을 그대로 다시 적어야 하고, 도는 중이면 거절하고, 지우면 서버 행과
+            # 그 사람 brain 의 데이터가 같이 사라진다(순위 같은 자식 표까지).
+            r = c.post("/api/sites", json={"url": "del5.test", "seeds": ["지울 씨앗"]})
+            assert r.status_code == 200, r.text
+            assert c.post("/api/sites/delete", json={"project": "del5"}).status_code == 400, \
+                "확인 이름 없이 지워진다"
+            assert c.post("/api/sites/delete", json={"project": "del5", "confirm": "del"}).status_code == 400
+            cs = store.connect()
+            cs.execute("UPDATE sites SET running_since=CURRENT_TIMESTAMP WHERE project='del5'")
+            cs.commit()
+            assert c.post("/api/sites/delete", json={"project": "del5", "confirm": "del5"}
+                          ).status_code == 409, "수집이 도는 중인데 지워진다"
+            cs.execute("UPDATE sites SET running_since=NULL WHERE project='del5'")
+            cs.commit()
+            bc = db.connect(home=store.home(u2))
+            kid = bc.execute("SELECT id FROM keywords WHERE keyword='지울 씨앗'").fetchone()[0]
+            bc.execute("INSERT INTO rank_snapshots(keyword_id, position) VALUES(?, 3)", (kid,))
+            bc.commit()
+            bc.close()
+            r = c.post("/api/sites/delete", json={"project": "del5", "confirm": "del5"})
+            assert r.status_code == 200 and r.json()["rows"] > 0, r.text
+            assert "del5" not in c.get("/api/projects").json(), "지운 사이트가 목록에 남았다"
+            assert store.site(cs, u2, "del5") is None
+            cs.close()
+            bc = db.connect(home=store.home(u2))
+            assert not bc.execute("SELECT 1 FROM projects WHERE name='del5'").fetchone()
+            assert not bc.execute("SELECT 1 FROM rank_snapshots WHERE keyword_id=?", (kid,)).fetchone(), \
+                "지운 사이트의 순위(키워드의 자식 표)가 남았다"
+            assert bc.execute("SELECT 1 FROM projects WHERE name='new1'").fetchone(), "남의 사이트까지 지웠다"
+            bc.close()
+            # 내 사이트가 아니면(없으면) 404 — 남의 이름으로 지우지 못한다
+            assert c.post("/api/sites/delete", json={"project": "del5", "confirm": "del5"}
+                          ).status_code == 404
+
             # 1단계 미리보기 — 홈페이지 제목에서 씨앗 초안을 뽑는다. 네트워크는 안 탄다.
             import collect_page
             real_fetch = collect_page.fetch

@@ -1978,6 +1978,48 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
     return len(rows)
 
 
+def delete_project(conn: sqlite3.Connection, name: str) -> int:
+    """사이트 하나와 그 사이트에 매달린 행을 전부 지운다. 반환: 지운 행 수.
+
+    표를 손으로 나열하지 않는다 — 나열하면 새 표가 생길 때마다 거기만 남는다(지운 사이트의
+    순위가 다른 화면에 떠돌게 된다). 외래키를 따라 자식부터 재귀로 지우고, 외래키 선언 없이
+    project_id 칸만 가진 표도 같이 지운다.
+    """
+    row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+    if not row:
+        raise ProjectNotFound(f"'{name}' 사이트가 없습니다")
+    pid = row["id"] if isinstance(row, sqlite3.Row) else row[0]
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    children: dict[str, list[tuple[str, str]]] = {}
+    for t in tables:
+        for fk in conn.execute(f"PRAGMA foreign_key_list({t})"):
+            children.setdefault(fk[2], []).append((t, fk[3]))      # 부모 표 → (자식 표, 자식 칸)
+    n = 0
+    done: set = set()
+
+    def drop(table: str, where: str, args: tuple, depth: int = 0) -> None:
+        nonlocal n
+        if depth > 8:
+            return
+        for child, col in children.get(table, []):
+            if child == table:
+                continue
+            drop(child, f"{col} IN (SELECT id FROM {table} WHERE {where})", args, depth + 1)
+        n += conn.execute(f"DELETE FROM {table} WHERE {where}", args).rowcount
+
+    for t in tables:                       # 외래키가 없어도 project_id 칸이 있으면 이 사이트 것이다
+        if t == "projects":
+            continue
+        cols = {c[1] for c in conn.execute(f"PRAGMA table_info({t})")}
+        if "project_id" in cols and t not in done:
+            drop(t, "project_id=?", (pid,))
+            done.add(t)
+    drop("projects", "id=?", (pid,))
+    conn.commit()
+    return n
+
+
 def write_labs_ranked(conn: sqlite3.Connection, project_id: int, checked_date: str,
                       rows) -> int:
     """우리 순위 검색어 한 회차. 같은 날 다시 쓰면 덮는다(upsert)."""

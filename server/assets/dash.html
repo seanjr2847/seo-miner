@@ -302,6 +302,10 @@
     border-radius:var(--r-in);
     line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left}
   #sm-set .cli .warn{color:var(--warn)}
+  #sm-set .del input{font:400 var(--fs-2)/1.4 var(--mono);padding:8px 10px;border:1px solid var(--rule);
+    border-radius:var(--r-in);background:var(--sunk);color:var(--ink);min-width:0;width:220px;max-width:100%}
+  #sm-set .del .danger:not(:disabled){color:var(--warn);border-color:var(--warn)}
+  #sm-set .del .warn{color:var(--warn)}
 
   /* 모바일: 차트 SVG 는 720px 고정이고 부모(.logwrap)가 overflow-x:auto 로 받는다.
      스크롤이 된다는 걸 알려주지 않으면 잘린 그림으로만 보인다. */
@@ -935,12 +939,20 @@
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
       if (ev.target.closest && ev.target.closest("[data-cli-new]")) return cliNew();
+      if (ev.target.closest && ev.target.closest("[data-del-go]")) return delGo();
+    });
+    sec.addEventListener("input", function (ev) {
+      if (ev.target.matches && ev.target.matches("[data-del-name]")) {
+        var b = sec.querySelector("[data-del-go]");
+        if (b) b.disabled = ev.target.value.trim() !== proj();
+      }
     });
     sec.addEventListener("change", function (ev) {
       if (ev.target.matches && ev.target.matches("[data-lang]")) langSave(ev.target.value);
       if (ev.target.matches && ev.target.matches("[data-ptype]")) typeSave(ev.target.value);
     });
     cliRender();       // 이 칸은 사이트 설정과 무관하다 — /api/settings 를 안 기다린다
+    delRender();
     setRender("");     // 상자가 신호보다 늦게 생겼으면 이미 받아 둔 값으로 지금 그린다
   });
 
@@ -961,6 +973,7 @@
     }).join("") + '<span class="msg" role="status">' + esc(msg || "") + "</span>";
     langRender();
     typeRender();
+    delRender();       // 사이트 이름은 설정이 온 뒤에야 안다(처음 그릴 때는 비어 있다)
     ga4Render();
     setNext(true);
   }
@@ -1188,6 +1201,35 @@
   // 다시 물어봐도 못 준다. 그래서 화면에 쟁여 두지 않고(새로고침하면 사라진다),
   // 누르기 전에 "한 번만 보인다"를 먼저 말한다(칸 설명은 sm-set.html 에 있다).
   var CLI_TOKEN = "";
+  // 사이트 삭제 — 이름을 그대로 적어야 버튼이 켜진다. 지우면 사이트 목록(/)으로 간다.
+  function delRender(msg) {
+    var sec = document.getElementById("sm-set");
+    var body = sec && sec.querySelector(".del .body");
+    if (!body) return;
+    body.innerHTML = '<div class="opts"><input type="text" data-del-name autocomplete="off" ' +
+      'spellcheck="false" aria-label="확인용 사이트 이름" placeholder="' + esc(proj()) + '">' +
+      '<button class="go sm sec danger" data-del-go disabled>삭제</button></div>' +
+      '<p class="msg">확인하려면 <code>' + esc(proj()) + '</code> 를 그대로 적으세요.</p>' +
+      (msg ? '<p class="msg warn" role="status">' + esc(msg) + "</p>" : "");
+  }
+
+  async function delGo() {
+    var sec = document.getElementById("sm-set");
+    var name = (sec.querySelector("[data-del-name]") || {}).value || "";
+    var btn = sec.querySelector("[data-del-go]");
+    if (btn) { btn.disabled = true; btn.textContent = "지우는 중"; }
+    try {
+      var r = await fetch("/api/sites/delete", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), confirm: name.trim()})});
+      var d = await r.json().catch(function () { return {}; });
+      if (!r.ok) throw new Error(d.detail || "");
+      location.href = "/";
+    } catch (e) {
+      delRender("지우지 못했습니다. " + reason(e));
+    }
+  }
+
   function cliRender(msg) {
     var sec = document.getElementById("sm-set");
     if (!sec) return;

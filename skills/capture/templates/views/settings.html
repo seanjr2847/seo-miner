@@ -33,7 +33,7 @@
 
 /* 카드 자리 — 좁으면 전부 한 열, 넓으면 폭으로 위계를 만든다(8+4 / 7+5 / 8+4). */
 #view-settings :where(#st-hero, #st-gsc, #usage, #sm-profile, #st-parts, #st-keys, #st-carry,
-    #st-project, #set-cycle, #sm-set .ga4, #sm-set .cli, #setup-log, .sm-setfail) {
+    #st-project, #set-cycle, #sm-set .ga4, #sm-set .cli, #sm-set .del, #setup-log, .sm-setfail) {
   grid-column:1 / -1; margin:0; }
 #st-hero { order:1; } #st-gsc { order:2; }
 #usage { order:3; } #sm-profile { order:4; } #st-parts { order:5; }
@@ -42,6 +42,8 @@
 #view-settings:where(:has(#sm-set)) #sm-profile { order:5; }
 #st-keys { order:6; } #st-carry { order:7; } #st-project { order:8; }
 #setup-log { order:9; } .sm-setfail { order:0; }
+/* 사이트 삭제(호스팅) — 되돌릴 수 없는 행동이라 다른 카드와 떨어진 맨 끝, 한 줄 전체 */
+#sm-set .del { order:10; }
 @media (min-width:1000px) {
   #view-settings #st-hero { grid-column:span 8; }
   #view-settings #st-gsc, #view-settings #set-cycle { grid-column:span 4; }
