@@ -1765,6 +1765,29 @@ def test_new_article_language_comes_from_the_keyword_not_the_site():
     assert "페이지 언어" not in brief.build(_opp("coverage", "검색어"), {}, "ko-KR")["body"]
 
 
+def test_unreadable_page_gets_the_open_ladder_not_a_dead_end():
+    """봇을 막는 사이트(gucci.com)에서 받은 AI 가 '직접 열 수 없었고 웹 검색으로도 못 봤습니다. 이번
+    작업은 실패했습니다'로 끝냈다. 요청문이 "점검 실패: …" 한 줄만 싣고 내려갈 길을 안 줬기 때문이다.
+    못 읽은 페이지(점검 실패·아직 안 점검)에는 세 단계 사다리가 실리고, 읽은 페이지에는 안 실린다.
+    단계는 브라우저 → 붙여 넣기 청하고 멈춤 → 검색결과 근거로 진행([확인 필요]) 순이다."""
+    opp = _opp("ctr_gap", "검색어")
+    for ctx in ({"page_audits": {URL: _audit(error="HTTP 403", status=403)},
+                 "query_pages": {"검색어": _pages(URL)}},
+                {"query_pages": {"검색어": _pages(URL)}}):          # 점검 실패 / 아직 안 점검
+        body = brief.build(opp, ctx, "ko-KR")["body"]
+        assert all(line in body for line in brief.OPEN_LADDER), body
+        i = [body.index(f"  {n}. ") for n in (1, 2, 3)]
+        assert i == sorted(i), "사다리 순서가 뒤집혔다"
+        assert "브라우저 도구" in brief.OPEN_LADDER[1], "1번이 브라우저가 아니다"
+        assert "붙여 넣기를 청하고 멈춥니다" in brief.OPEN_LADDER[2], "2번이 붙여 넣기 청하기가 아니다"
+        assert "[확인 필요]" in brief.OPEN_LADDER[3] and "근거: 검색결과 제목만" in brief.OPEN_LADDER[3], \
+            "3번이 근거 수준을 말하고 못 읽은 자리를 [확인 필요]로 남기라고 하지 않는다"
+        assert "'실패했습니다'로 끝내지 않습니다" in brief.OPEN_LADDER[0]
+    ok = brief.build(opp, {"page_audits": {URL: _audit()}, "query_pages": {"검색어": _pages(URL)}},
+                     "ko-KR")["body"]
+    assert "브라우저 도구" not in ok, "멀쩡히 읽은 페이지에 열기 사다리가 실렸다"
+
+
 def test_missing_serp_tables_say_why_instead_of_going_quiet():
     """'검색결과 기능'은 PAA 를 봤다는데 질문 본문이 없으면, 왜 없는지 같은 자리에서 말한다.
 
