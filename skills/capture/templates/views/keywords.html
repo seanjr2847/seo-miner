@@ -141,20 +141,23 @@
 .kwtable .kwcell, #mv-list .kwcell { min-width:240px; }
 .kwtable .tw, #mv-list .tw { margin-top:6px; }
 @media (min-width:561px) { #mv-list td.num { white-space:nowrap; } }
-/* 접힌 줄은 이름·종류·상태까지만 — 막대·근거 문장·GA4 배지는 펼쳐야 나온다. 줄마다 네다섯 줄이
-   서서 행 높이가 들쭉날쭉하고 표가 5,000px 로 길었다. */
-tr[data-kwq]:not([aria-expanded="true"]) .kwm .meter,
-tr[data-kwq]:not([aria-expanded="true"]) .kwm .why,
-tr[data-kwq]:not([aria-expanded="true"]) .kwm .gm { display:none; }
+/* 줄은 이름·종류·상태까지만 — 막대·근거 문장·GA4 배지는 오른쪽 서랍에 나온다. 줄마다 네다섯 줄이
+   서서 행 높이가 들쭉날쭉하고 표가 5,000px 로 길었다. 서랍이 열려 있어도 줄은 늘어나지 않는다. */
+tr[data-kwq] .kwm .meter,
+tr[data-kwq] .kwm .why,
+tr[data-kwq] .kwm .gm { display:none; }
+/* 서랍 본문 — 펼침 패널(.det)은 표 안에서 쓰던 들여쓰기를 서랍에서는 갖지 않는다. */
+#sdr .det { padding:0; }
 .kwwarn { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
   font-size:var(--fs-2); color:var(--ink); background:var(--warn-wash);
   border-radius:var(--r-in); padding:10px 16px; margin:0 0 12px; }
 /* 표의 줄은 그 자체로 답이 아니다 — 눌러야 "어느 페이지를 뭘 고치나"가 나온다.
-   눌러도 되는 줄임을 커서와 첫 칸의 표식으로 말한다(색만으로 말하지 않는다). */
+   눌러도 되는 줄임을 커서와 첫 칸의 표식으로 말한다(색만으로 말하지 않는다).
+   서랍에 떠 있는 줄은 ▾ 와 배경으로 표시한다. */
 tr[data-kwq] { cursor:pointer; }
 tr[data-kwq] .kwq::before { content:"▸ "; color:var(--sub); }
 tr[data-kwq][aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
-tr[data-kwq]:hover > td { background:var(--sunk); }
+tr[data-kwq]:hover > td, tr[data-kwq][aria-expanded="true"] > td { background:var(--sunk); }
 tr[data-kwq]:focus { outline:none; }
 tr[data-kwq]:focus-visible > td { background:var(--accent-wash); }
 tr[data-kwq]:focus-visible > td:first-child { border-radius:var(--r-in) 0 0 var(--r-in); }
@@ -274,15 +277,10 @@ const KW_logRows = () => $("log") ? [...$("log").querySelectorAll("tr[data-kwq]"
 const KW_logRow = q => KW_logRows().find(x => x.dataset.kwq === q);
 const KW_open = tr => {
   if (!tr) return;
-  if (tr.getAttribute("aria-expanded") !== "true") KW_toggle(tr);
-  tr.scrollIntoView({behavior: "smooth", block: "center"});
+  tr.scrollIntoView({behavior: "smooth", block: "nearest"});
+  KW_drawer(tr);
 };
 function KW_openTop() { KW_open(KW_logRow(KW_TOP) || KW_logRows()[0]); }
-// 아래 표의 펼침 줄에서 위 표의 같은 검색어로 건너간다 — 검색어는 그 줄이 들고 있다.
-function KW_jump(btn) {
-  const exp = btn.closest("tr.exp"), tr = exp && exp.previousElementSibling;
-  KW_open(tr && KW_logRow(tr.dataset.kwq));
-}
 
 const KW_band = r => r.band || (Number.isFinite(r.pos) && r.pos <= (RULES.page1 || 10) ? "page1" : "page2");
 const KW_gap = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
@@ -472,6 +470,7 @@ function KW_drawLog() {
     : `<div class="empty"><b>거른 조건에 맞는 검색어가 없습니다</b>
         <p>조건을 풀면 ${KW_ROWS.length}개가 있습니다.</p>
         <div class="acts"><button onclick="KW_reset()">전체 보기</button></div></div>`;
+  KW_mark();
 }
 // 카드 폭이 달라지면 그림을 다시 잰다. 숨은 화면(폭 0)에서 보이는 순간도 여기서 잡힌다.
 function KW_watchFig() {
@@ -663,6 +662,7 @@ function KW_mvList() {
       <td class="num">${delta(m.dpos) || '<span class="muted">—</span>'}</td>
       <td class="num">${num(m.clk)} ${delta(m.dclk)}</td>
       <td class="num">${num(m.imp)}</td></tr>`), "", "cards");
+  KW_mark();
 }
 
 /* ── 행 펼침 ────────────────────────────────────────────────────────
@@ -673,7 +673,7 @@ function KW_mvList() {
 // "줄을 누르면 …" 한 줄을 따로 세우던 자리를 그 표식이 가져갔다.
 const KW_rowAttr = (q, src) =>
   `data-kwq="${esc(q)}" data-kwsrc="${src}" tabindex="0" role="button" aria-expanded="false"
-   title="누르면 이 검색어로 고칠 것이 펼쳐집니다"`;
+   title="누르면 오른쪽에 이 검색어로 고칠 것이 열립니다"`;
 
 /* 두 표의 앞 두 칸은 같은 것을 묻는다: 어느 검색어이고, 이걸 먼저 해야 하나.
    점수·막대·종류·근거는 전부 셸의 한 벌(oppScore/oppMeter/oppWhy)이다 — 접힌
@@ -691,8 +691,6 @@ function KW_qcell(q, showScore = true) {
 // 점수 열은 보이는 줄 전부에 점수가 없으면 뺀다 — "—"만 줄줄이 선 열은 읽어도
 // 뜻이 없다(정렬 th[data-s] 인덱스가 셀과 어긋나지 않게 헤더·행 양쪽에서 같이 뺀다).
 const KW_hasScore = rows => rows.some(r => oppOf(r.query));
-const KW_find = tr => (tr.dataset.kwsrc === "mv" ? KW_MV : KW_ROWS)
-  .find(r => r.query === tr.dataset.kwq);
 const KW_pos = p => Number.isFinite(p) ? String(+p.toFixed(1)) : "—";
 
 // 지금 상태 한 줄 — 표에 이미 있는 숫자지만, 펼친 줄만 봐도 판단이 되게 되풀이한다.
@@ -767,13 +765,7 @@ function KW_plan(r) {
    (셸의 PLAY 한 벌). 그래서 있을 때는 그쪽을 쓰고, 없을 때만 아래 KW_plan 으로
    물러선다. 두 벌을 겹쳐 내면 같은 검색어에 서로 다른 할 일이 두 장 나온다.
    행동 기록(확인·완료·제외)은 패널 끝에 — 무엇을 할지 읽은 다음에 누르는 것이다. */
-function KW_det(r, src) {
-  // 같은 검색어가 두 표에 다 서면 펼침 본문도 두 벌이 된다 — 아래 표는 본문을 안 갖고
-  // 위 표의 그 줄로 데려간다. 위에 그 줄이 없을 때만(예: 필터로 빠졌을 때) 직접 그린다.
-  if (src === "mv" && KW_logRow(r.query))
-    return `<div class="det"><p class="detn">이 검색어의 페이지와 할 일은
-      위 [순위 상승 기회]에 있습니다.
-      <button class="go sm sec" onclick="KW_jump(this)">그 줄 열기</button></p></div>`;
+function KW_det(r) {
   const o = oppOf(r.query);
   if (o) return oppPanel(o, oppActs(o));
   const pages = KW_PAGES[r.query] || [];
@@ -802,32 +794,46 @@ const KW_run = id => window.stageRun ? stageRun(id)
 const KW_noOpp = () => `<p class="detn">이 검색어는 아직 기회 목록에 없습니다.
   ${esc(KW_stage("gaps"))} 단계를 한 번 돌리면 점수가 붙습니다.</p>`;
 
-function KW_toggle(tr) {
-  const nx = tr.nextElementSibling;
-  if (nx && nx.classList.contains("exp")) {
-    nx.remove();
-    return tr.setAttribute("aria-expanded", "false");
-  }
-  const r = KW_find(tr);
-  if (!r) return;
-  const row = document.createElement("tr");
-  row.className = "exp";
-  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${KW_det(r, tr.dataset.kwsrc)}</td>`;
-  tr.after(row);
-  tr.setAttribute("aria-expanded", "true");
+/* 서랍 — 줄을 누르면 오른쪽 공용 서랍(SM.drawer)에 그 검색어의 패널이 선다. 두 표가 같은
+   본문을 쓴다(검색어가 같으면 같은 패널). 어느 줄이 떠 있는지는 KW_SEL 한 곳이 들고,
+   데이터가 다시 그려지면(상태를 바꾸면 load() 가 화면을 새로 그린다) KW_sync 가 새 값으로 칠한다. */
+let KW_SEL = null;                                  // {q, src}
+const KW_rowOf = sel => sel && [...document.querySelectorAll("tr[data-kwq]")]
+  .find(x => x.dataset.kwq === sel.q && x.dataset.kwsrc === sel.src);
+const KW_recOf = sel => sel && (sel.src === "mv" ? KW_MV : KW_ROWS).find(r => r.query === sel.q);
+function KW_mark() {
+  document.querySelectorAll("tr[data-kwq]").forEach(x =>
+    x.setAttribute("aria-expanded", String(!!KW_SEL && x.dataset.kwq === KW_SEL.q
+      && x.dataset.kwsrc === KW_SEL.src)));
 }
-function KW_closeAll() {
-  ["log", "mv-list"].forEach(id => ($(id) || document.createElement("div"))
-    .querySelectorAll("tr.exp").forEach(x => {
-      const p = x.previousElementSibling;
-      if (p) p.setAttribute("aria-expanded", "false");
-      x.remove();
-    }));
+const KW_dsub = r => `지금 ${KW_pos(r.pos)}위 · 노출 ${num(r.imp)} · 클릭 ${num(r.clk)}`;
+const KW_dcontent = r => ({title: r.query, sub: KW_dsub(r), bodyHtml: KW_det(r)});
+function KW_drawer(tr) {
+  const sel = {q: tr.dataset.kwq, src: tr.dataset.kwsrc}, r = KW_recOf(sel);
+  if (!r) return;
+  KW_SEL = sel;
+  KW_mark();
+  SM.drawer.open({...KW_dcontent(r), from: tr, onClose: () => {
+    const was = KW_SEL;
+    KW_SEL = null;
+    KW_mark();
+    // 닫기 전에 목록이 다시 그려졌으면 연 줄이 사라졌다 — 같은 줄을 다시 찾아 초점을 돌려준다.
+    const back = KW_rowOf(was);
+    if (back && back !== tr) back.focus({preventScroll: true});
+  }});
+}
+// 다시 그려진 화면에 맞춘다 — 같은 검색어가 아직 있으면 새 값으로 칠하고, 없으면(사이트를 바꿨다) 닫는다.
+function KW_sync() {
+  if (!KW_SEL) return;
+  const r = KW_recOf(KW_SEL);
+  if (!r) return SM.drawer.close();
+  KW_mark();
+  SM.drawer.paint(KW_dcontent(r));
 }
 
 document.addEventListener("click", e => {
   const tr = e.target.closest && e.target.closest("tr[data-kwq]");
-  if (tr) return KW_toggle(tr);
+  if (tr) return KW_drawer(tr);
   // 그림에서 찍은 점과 할 일 사이가 두 번 클릭만큼 떨어져 있었다 — 레인을 누르면
   // 아래 표의 같은 줄이 펼쳐진다. 펼침 줄(tr.exp)에는 data-kwq 가 없으므로
   // data-lane 번호와 이 목록의 순서가 계속 맞는다.
@@ -835,22 +841,16 @@ document.addEventListener("click", e => {
   if (!g) return;
   const row = $("log").querySelectorAll("tr[data-kwq]")[+g.dataset.lane];
   if (!row) return;
-  KW_toggle(row);
-  if (row.getAttribute("aria-expanded") === "true")
-    row.scrollIntoView({block: "nearest"});
+  row.scrollIntoView({block: "nearest"});
+  KW_drawer(row);
 });
 document.addEventListener("keydown", e => {
   if (e.key !== "Enter" && e.key !== " ") return;
   const tr = e.target.closest && e.target.closest("tr[data-kwq]");
   if (!tr) return;
   e.preventDefault();                     // Space 로 화면이 밀리지 않게
-  KW_toggle(tr);
+  KW_drawer(tr);
 });
-// 머리글 정렬(뼈대)은 tbody 행을 재배치한다 — 펼친 줄이 제 부모와 떨어지므로
-// 그 정렬이 돌기 전(캡처 단계)에 먼저 접는다.
-document.addEventListener("click", e => {
-  if (e.target.closest && e.target.closest("th[data-s]")) KW_closeAll();
-}, true);
 
 // 빈 상태의 행동 — 배포에 맞는 것을 셸이 고른다(로컬은 명령 칩, 호스팅은 버튼).
 // 바로 위 띠가 같은 단계를 주요 버튼으로 들고 있으므로 여기서는 보조 톤으로 물러난다
@@ -1018,7 +1018,7 @@ VIEW("keywords", function (d) {
   KW_kpis(d, p2);
   KW_mvDiv();
   KW_wireTrack();
-  if (KW_MV.length) return KW_mvRender();
+  if (KW_MV.length) { KW_mvRender(); return KW_sync(); }
   $("movers").innerHTML = d.period_mismatch
     ? `<div class="empty"><b>기간이 달라 견주지 않았습니다</b>
         <p>지금은 ${d.gsc_period}일치입니다. <span class="live">같은 기간으로 한 번 더
@@ -1031,5 +1031,6 @@ VIEW("keywords", function (d) {
         <p><span class="live">한 번 더 수집하면 그때부터 오른 검색어와 내린 검색어가
           갈립니다.</span></p>
         ${KW_cmd("gsc", KW_run("gsc"))}</div>`;
+  KW_sync();
 });
 </script>

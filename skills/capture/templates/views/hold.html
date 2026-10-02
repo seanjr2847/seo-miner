@@ -70,14 +70,14 @@
 #hold-sec .hd-bar { position:relative; height:12px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
 #hold-sec .hd-bar i.f { position:absolute; left:0; top:0; bottom:0; border-radius:var(--r-pill); background:var(--accent); }
 #hold-sec .hd-bar i.tk { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--card); }
-#hold-sec .hd-scale { position:relative; height:10px; margin:2px 0 0; border-radius:var(--r-pill); background:var(--sunk); }
-#hold-sec .hd-scale .sg { position:absolute; top:3px; height:4px; background:var(--accent); opacity:.4; }
-#hold-sec .hd-scale .sg.dn { background:var(--dn); }
-#hold-sec .hd-scale .sg.ne { background:var(--mute); }
-#hold-sec .hd-scale i { position:absolute; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+:is(#hold-sec, .hd-dr) .hd-scale { position:relative; height:10px; margin:2px 0 0; border-radius:var(--r-pill); background:var(--sunk); }
+:is(#hold-sec, .hd-dr) .hd-scale .sg { position:absolute; top:3px; height:4px; background:var(--accent); opacity:.4; }
+:is(#hold-sec, .hd-dr) .hd-scale .sg.dn { background:var(--dn); }
+:is(#hold-sec, .hd-dr) .hd-scale .sg.ne { background:var(--mute); }
+:is(#hold-sec, .hd-dr) .hd-scale i { position:absolute; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
   background:var(--mute); box-shadow:0 0 0 3px var(--card); }
-#hold-sec .hd-scale i.now { background:var(--accent); }
-#hold-sec .hd-sc-t { display:flex; justify-content:space-between; font-size:var(--fs-1); color:var(--mute); }
+:is(#hold-sec, .hd-dr) .hd-scale i.now { background:var(--accent); }
+:is(#hold-sec, .hd-dr) .hd-sc-t { display:flex; justify-content:space-between; font-size:var(--fs-1); color:var(--mute); }
 
 /* ── ② 관찰 현황판 — 페이지마다 한 덩어리(위: 누구·며칠·변화, 아래: 관찰 트랙) ── */
 #hold-sec .hd-rows { display:flex; flex-direction:column; gap:var(--sp-2); }
@@ -132,40 +132,40 @@
 #holds .hdp-g > .c5 { display:flex; flex-direction:column; }
 
 /* 고치기 전 → 지금 — 표 시맨틱은 role 로 두고, 값은 막대로 읽힌다. */
-#holds .hd-cmp { display:flex; flex-direction:column; }
-#holds .hd-cr { display:grid; grid-template-columns:76px minmax(0,1fr) 112px; align-items:center;
+:is(#holds, .hd-dr) .hd-cmp { display:flex; flex-direction:column; }
+:is(#holds, .hd-dr) .hd-cr { display:grid; grid-template-columns:76px minmax(0,1fr) 112px; align-items:center;
   gap:var(--sp-3) var(--sp-4); padding:14px 0; }
-#holds .hd-cr + .hd-cr { background:linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat; }
-#holds .hd-cr.hd-hd { padding:0 0 10px; font-size:var(--fs-1); color:var(--sub); }
-#holds .hd-cr.hd-hd + .hd-cr { background:none; }
-#holds .hd-cr .nm { font:600 var(--fs-2)/1.4 var(--sans); }
-#holds .hd-cr .chg { display:flex; justify-content:flex-end; }
-#holds .hd-cr.hd-hd .lg { display:flex; flex-wrap:wrap; gap:4px var(--sp-4); }
-#holds .hd-cr.hd-hd .lg span.k { display:inline-flex; align-items:center; }
-#holds .hd-cr.hd-hd .lg span.k::before { content:""; width:8px; height:8px; border-radius:50%;
+:is(#holds, .hd-dr) .hd-cr + .hd-cr { background:linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat; }
+:is(#holds, .hd-dr) .hd-cr.hd-hd { padding:0 0 10px; font-size:var(--fs-1); color:var(--sub); }
+:is(#holds, .hd-dr) .hd-cr.hd-hd + .hd-cr { background:none; }
+:is(#holds, .hd-dr) .hd-cr .nm { font:600 var(--fs-2)/1.4 var(--sans); }
+:is(#holds, .hd-dr) .hd-cr .chg { display:flex; justify-content:flex-end; }
+:is(#holds, .hd-dr) .hd-cr.hd-hd .lg { display:flex; flex-wrap:wrap; gap:4px var(--sp-4); }
+:is(#holds, .hd-dr) .hd-cr.hd-hd .lg span.k { display:inline-flex; align-items:center; }
+:is(#holds, .hd-dr) .hd-cr.hd-hd .lg span.k::before { content:""; width:8px; height:8px; border-radius:50%;
   background:var(--mute); margin-right:6px; opacity:.6; }
-#holds .hd-cr.hd-hd .lg span.k + span.k::before { background:var(--accent); opacity:1; }
-#holds .hd-cr.hd-hd .chg { font-weight:500; }
-#holds .hd-vis { display:flex; flex-direction:column; gap:6px; min-width:0; }
-#holds .hd-br { display:grid; grid-template-columns:34px minmax(0,1fr) 68px; align-items:center; gap:var(--sp-2);
+:is(#holds, .hd-dr) .hd-cr.hd-hd .lg span.k + span.k::before { background:var(--accent); opacity:1; }
+:is(#holds, .hd-dr) .hd-cr.hd-hd .chg { font-weight:500; }
+:is(#holds, .hd-dr) .hd-vis { display:flex; flex-direction:column; gap:6px; min-width:0; }
+:is(#holds, .hd-dr) .hd-br { display:grid; grid-template-columns:34px minmax(0,1fr) 68px; align-items:center; gap:var(--sp-2);
   font-size:var(--fs-1); }
-#holds .hd-br .t { color:var(--sub); }
-#holds .hd-br .tr { height:10px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
-#holds .hd-br .tr i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); opacity:.55; }
-#holds .hd-br.now .tr i { background:var(--accent); opacity:1; }
-#holds .hd-br .n { text-align:right; font:600 var(--fs-2)/1.2 var(--sans); font-variant-numeric:tabular-nums;
+:is(#holds, .hd-dr) .hd-br .t { color:var(--sub); }
+:is(#holds, .hd-dr) .hd-br .tr { height:10px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+:is(#holds, .hd-dr) .hd-br .tr i { display:block; height:100%; border-radius:var(--r-pill); background:var(--mute); opacity:.55; }
+:is(#holds, .hd-dr) .hd-br.now .tr i { background:var(--accent); opacity:1; }
+:is(#holds, .hd-dr) .hd-br .n { text-align:right; font:600 var(--fs-2)/1.2 var(--sans); font-variant-numeric:tabular-nums;
   white-space:nowrap; }
-#holds .hd-br.was .n { color:var(--sub); font-weight:500; }
-#holds .hd-rk { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px var(--sp-3); font-size:var(--fs-2); }
-#holds .hd-rk .was { color:var(--sub); }
-#holds .hd-rk .now { font-weight:650; }
-#holds .hd-nt { font-size:var(--fs-1); line-height:1.6; color:var(--sub); margin:var(--sp-3) 0 0;
+:is(#holds, .hd-dr) .hd-br.was .n { color:var(--sub); font-weight:500; }
+:is(#holds, .hd-dr) .hd-rk { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px var(--sp-3); font-size:var(--fs-2); }
+:is(#holds, .hd-dr) .hd-rk .was { color:var(--sub); }
+:is(#holds, .hd-dr) .hd-rk .now { font-weight:650; }
+:is(#holds, .hd-dr) .hd-nt { font-size:var(--fs-1); line-height:1.6; color:var(--sub); margin:var(--sp-3) 0 0;
   padding:10px var(--sp-3); border-radius:var(--r-in); background:var(--sunk); }
 @media (max-width:560px) {
-  #holds .hd-cr { grid-template-columns:minmax(0,1fr) auto; }
-  #holds .hd-cr .hd-vis { grid-column:1 / -1; grid-row:2; }
-  #holds .hd-cr.hd-hd { grid-template-columns:minmax(0,1fr); }
-  #holds .hd-cr.hd-hd > span:first-child, #holds .hd-cr.hd-hd .chg { display:none; }
+  :is(#holds, .hd-dr) .hd-cr { grid-template-columns:minmax(0,1fr) auto; }
+  :is(#holds, .hd-dr) .hd-cr .hd-vis { grid-column:1 / -1; grid-row:2; }
+  :is(#holds, .hd-dr) .hd-cr.hd-hd { grid-template-columns:minmax(0,1fr); }
+  :is(#holds, .hd-dr) .hd-cr.hd-hd > span:first-child, :is(#holds, .hd-dr) .hd-cr.hd-hd .chg { display:none; }
 }
 
 /* 한 작업 — 세로 타임라인 */
@@ -193,10 +193,16 @@
   border-radius:var(--r-in); }
 #holds .hd-ol .opp:last-child { margin-bottom:0; }
 #holds .hd-ol .opp:hover { background:color-mix(in srgb, var(--sunk) 70%, var(--accent-wash)); }
-#holds .hd-ol .hd-br .tr, #holds .hd-ol .hd-scale { background:var(--line); }
-#holds .hd-ol .hd-scale i { box-shadow:0 0 0 3px var(--sunk); }
-#holds .hd-ol .hd-nt { background:var(--card); }
-#holds .hd-opc { margin:var(--sp-3) 0 var(--sp-4); max-width:760px; }
+#holds .hd-ol .opp > summary { cursor:pointer; }
+#holds .hd-ol .opp.hd-on { background:var(--accent-wash); }
+/* 서랍 본문 — 공용 서랍(.sdr)은 body 끝에 서서 #holds 밖이다. 비교 표 조각은 .hd-dr 로 같은 모양을 받는다. */
+.hd-dr .v { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.hd-dr .chip { margin:0; white-space:nowrap; }
+.hd-dr .det { padding-left:0; }
+.hd-dr .hd-why { margin:0 0 var(--sp-3); }
+.hd-dr .hd-sec { margin:var(--sp-4) 0 var(--sp-2); font:650 var(--fs-2)/1.4 var(--sans); }
+.hd-dr .hd-sec:first-child { margin-top:0; }
+.hd-dr .none { color:var(--sub); font-size:var(--fs-2); margin:var(--sp-2) 0 0; }
 #holds .hd-sort { display:inline-flex; flex-wrap:wrap; gap:6px; }
 #holds .hd-sort .chip { margin:0; }
 #holds .none { color:var(--sub); font-size:var(--fs-2); margin:var(--sp-2) 0 0; }
@@ -337,10 +343,43 @@ function HD_rows(list, mode) {
   const ord = list.slice();
   if (mode === "gain") ord.sort((p, q) => HD_gain(q) - HD_gain(p) || (q.score || 0) - (p.score || 0));
   else ord.sort((p, q) => (q.score || 0) - (p.score || 0));
-  return ord.map(o => `<details class="opp" data-opp="${o.id}">
-      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary>
-      <div class="hd-opc">${HD_cmp(o.hold, "이 검색어")}</div>
-      ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</details>`).join("");
+  // 줄은 한 줄 요약뿐이다. 누르면 펼쳐지지 않고 오른쪽 서랍(SM.drawer)이 열린다 — 개요와 같다.
+  // <details> 를 그대로 둔 건 접힌 줄의 격자·칩 CSS 를 빌리기 위해서고, 토글은 HD_bind 가 막는다.
+  return ord.map(o => `<details class="opp${HD_DR === o.id ? " hd-on" : ""}" data-opp="${o.id}">
+      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary></details>`).join("");
+}
+// 서랍 — 줄 하나의 전·후 비교와 할 일 패널. 기회가 [관찰 중] 묶음에서 빠지면(상태를 바꿨다) 닫는다.
+let HD_DR = null;
+function HD_drContent(o) {
+  return {
+    title: window.targetLabel ? targetLabel(o.target) : String(o.target),
+    sub: Number.isFinite(o.score) ? `관찰 중 · ${Math.round(o.score)}점` : "관찰 중",
+    bodyHtml: `<div class="hd-dr"><div class="hd-why">${window.oppWhy(o)}</div>
+      <h3 class="hd-sec">고치기 전 → 지금</h3>${HD_cmp(o.hold, "이 검색어")}
+      ${oppPanel(o, window.oppActs ? window.oppActs(o) : "")}</div>`,
+  };
+}
+function HD_drOpen(id, from) {
+  const o = HD_CTX.byId[id];
+  if (!o) return;
+  HD_DR = id;
+  document.querySelectorAll("#holds .hd-ol .opp").forEach(row => row.classList.toggle("hd-on", +row.dataset.opp === id));
+  SM.drawer.open(Object.assign(HD_drContent(o), { from, onClose() {
+    HD_DR = null;
+    document.querySelectorAll("#holds .hd-ol .opp.hd-on").forEach(row => row.classList.remove("hd-on"));
+    // 상태를 바꿨으면 목록이 다시 그려져 연 줄이 없다 — 같은 줄을 다시 찾아 초점을 돌려준다.
+    if (from && from.isConnected) return;
+    const s = document.querySelector(`#holds .hd-ol .opp[data-opp="${id}"] > summary`);
+    if (s) s.focus({ preventScroll: true });
+  } }));
+}
+// 다시 그려진 화면에 맞춘다 — 같은 기회가 아직 [관찰 중]이면 새 값으로 칠하고, 아니면 닫는다.
+function HD_drSync() {
+  if (HD_DR == null) return;
+  const o = HD_CTX.byId[HD_DR];
+  const still = o && HD_CTX.hs.some(h => HD_shown(h, HD_CTX.byId).includes(o));
+  if (!still) return SM.drawer.close();
+  SM.drawer.paint(HD_drContent(o));
 }
 const HD_av = (page, i, sm) => {
   const t = urlPath(page).replace(/^\/+/, "").match(/[^\W_]/u);
@@ -496,7 +535,13 @@ function HD_bind() {
   if (HD_BOUND) return;
   HD_BOUND = true;
   $("hold-sec").addEventListener("click", e => {
-    const t = e.target.closest && e.target.closest("[data-hd-sort]");
+    const sum = e.target.closest && e.target.closest("#holds .hd-ol details.opp > summary");
+    if (sum) {
+      e.preventDefault();   // 제자리로 펼치지 않는다 — 서랍으로 연다
+      HD_drOpen(+sum.parentElement.dataset.opp, sum);
+      return;
+    }
+    const t =e.target.closest && e.target.closest("[data-hd-sort]");
     if (t) {
       const i = +t.dataset.hdSort, h = HD_CTX.hs[i];
       if (!h) return;
@@ -540,6 +585,7 @@ VIEW("hold", function (d) {
         <p>기회로 페이지를 고치고 작업을 기록하면, 효과를 재는 동안 여기서 지켜봅니다.</p></div>
         <button type="button" class="go sm" onclick="SM.touched=true;SM.show('triage')">심사에서 기회 보기</button></div>`;
   HD_bind();
+  HD_drSync();
   if (!window.nextStep) return;
   nextStep("hold", A
     ? `<p>지금은 고치지 않고 기다립니다. 가장 먼저 끝나는 곳은

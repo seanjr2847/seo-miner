@@ -137,17 +137,22 @@
 #cp-gaps .cp-th .rt { text-align:right; }
 #cp-gaps .opp { padding:0; margin:0; border-radius:14px; background:transparent; box-shadow:none;
   transition:background .12s; }
-#cp-gaps .opp:hover, #cp-gaps .opp[open] { background:var(--sunk); }
-#cp-gaps .opp > summary { display:grid; grid-template-columns:var(--cols); column-gap:var(--cgap);
-  align-items:start; padding:14px 12px; cursor:pointer; border-radius:14px; }
-#cp-gaps .opp > summary::before { margin:7px 0 0; align-self:start; }
-#cp-gaps .opp > summary > div { grid-column:auto; grid-row:auto; min-width:0; }
+#cp-gaps .opp:hover, #cp-gaps .opp.cp-on { background:var(--sunk); }
+/* 줄은 서랍을 여는 버튼이다(오른쪽 서랍 SM.drawer) — 늘어나지 않으므로 셰브론은 돌지 않는다. */
+#cp-gaps .opp { cursor:pointer; }
+#cp-gaps .opp:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+#cp-gaps .opp > .cp-sum { display:grid; grid-template-columns:var(--cols); column-gap:var(--cgap);
+  align-items:start; padding:14px 12px; border-radius:14px; }
+#cp-gaps .opp > .cp-sum::before { content:""; width:9px; height:9px; margin:7px 0 0; align-self:start;
+  background:currentColor; -webkit-mask:var(--chev) center/9px 9px no-repeat;
+  mask:var(--chev) center/9px 9px no-repeat; }
+#cp-gaps .opp > .cp-sum > div { grid-column:auto; grid-row:auto; min-width:0; }
 .cp-sc .score { width:auto; text-align:right; }
 .cp-sc .meter { margin:8px 0 0; max-width:none; }
 #cp-gaps .opp .target { margin:0 0 2px; }
 .cp-main .oh { margin-top:8px; }
 .cp-main .why { margin-top:6px; }
-#cp-gaps .opp:not([open]) .cp-main .why { -webkit-line-clamp:1; }
+#cp-gaps .opp .cp-main .why { -webkit-line-clamp:1; }
 .cp-rivs { display:flex; flex-direction:column; gap:6px; padding-top:1px; }
 .cp-rv { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; }
 .cp-rv .cp-pos { font:650 var(--fs-2)/1.3 var(--sans); font-variant-numeric:tabular-nums; }
@@ -157,22 +162,23 @@
 .cp-act { justify-self:end; }
 .cp-act .acts { margin:0; justify-content:flex-end; }
 .cp-act:empty { display:none; }
-.cp-det { padding:0 12px 14px calc(12px + 9px + var(--cgap) + 64px + var(--cgap)); }
-.cp-det .det { padding:0; }
-.cp-det > .why { margin:0; }
-#cp-gaps:focus-within .opp > summary:focus-visible { outline-offset:-2px; }
+/* 서랍 본문 — 서랍은 body 끝에 서므로 .cp-dr 로 스코프한다. */
+.cp-dr .det { padding:0; }
+.cp-dr .cp-rivs { padding:0 0 4px; }
+.cp-dr > .why { margin:0 0 16px; }
+.cp-dr-h { margin:0 0 8px; font:600 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.cp-dr .cp-main { margin:0 0 18px; }
 @media (max-width:999px) {
   #cp-gaps .cp-th { display:none; }
-  #cp-gaps .opp > summary { grid-template-columns:9px minmax(0,1fr) auto; column-gap:12px;
+  #cp-gaps .opp > .cp-sum { grid-template-columns:9px minmax(0,1fr) auto; column-gap:12px;
     grid-template-areas:"c m s" ". r r" ". v a"; row-gap:8px; }
-  #cp-gaps .opp > summary::before { grid-area:c; }
-  #cp-gaps .opp > summary > .cp-main { grid-area:m; }
-  #cp-gaps .opp > summary > .cp-sc { grid-area:s; width:56px; }
-  #cp-gaps .opp > summary > .cp-rivs { grid-area:r; }
-  #cp-gaps .opp > summary > .cp-vol { grid-area:v; text-align:left; align-self:center; }
-  #cp-gaps .opp > summary > .cp-act { grid-area:a; align-self:center; }
+  #cp-gaps .opp > .cp-sum::before { grid-area:c; }
+  #cp-gaps .opp > .cp-sum > .cp-main { grid-area:m; }
+  #cp-gaps .opp > .cp-sum > .cp-sc { grid-area:s; width:56px; }
+  #cp-gaps .opp > .cp-sum > .cp-rivs { grid-area:r; }
+  #cp-gaps .opp > .cp-sum > .cp-vol { grid-area:v; text-align:left; align-self:center; }
+  #cp-gaps .opp > .cp-sum > .cp-act { grid-area:a; align-self:center; }
   .cp-vol .u { display:inline; }
-  .cp-det { padding-left:33px; }
 }
 @media (max-width:560px) {
   #view-competitors .card { padding:18px 16px 20px; }
@@ -239,6 +245,7 @@ let CP_D = null;
 let CP_KIND = "";                 // "" = 전체. 칩·도넛·범례가 같은 이 값을 거른다.
 let CP_SITE = null;               // 기본 갈래를 다시 고를 때 — 사이트가 바뀌었나
 let CP_TOP = "";                  // 격차가 가장 큰 검색어 — 띠의 주요 행동이 여는 줄
+let CP_SEL = null;                // 오른쪽 서랍에 열린 검색어(CP_key) — 닫혀 있으면 null
 let CP_DRAWN = false;             // 도넛은 처음 한 번만 움직인다 — 조각을 누를 때마다 다시 돌지 않게
 // 기회 상태 거르개 — 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
 // 이 목록은 기회 목록이 아니라 검색어 격차 목록이라, 점수가 안 붙은 줄도 있다.
@@ -475,28 +482,100 @@ const CP_rank = r => { const o = oppOf(r.keyword); return Number.isFinite(o && o
    data-key 는 띠의 주요 행동이 이 줄을 도로 찾는 손잡이다 — 검색어를 onclick 에
    실으면 따옴표 하나에 깨지므로, 찾는 쪽이 dataset 으로 맞춘다.
    줄은 표 행이다: 점수 · 검색어와 우리 자리 · 경쟁사 줄 · 월 검색량 · 행동. */
-function CP_card(g) {
-  const r = g[0], o = oppOf(r.keyword);
-  const me = g.find(x => x.our_position != null);
-  const vol = (g.find(x => x.volume != null) || {}).volume;
-  // 우리 순위는 경쟁사 순위와 같은 검색 결과 조회에서 온 값이다 — 구글 실적의 평균 순위와
-  // 다른 숫자라 출처를 붙인다(같은 검색어가 개요 4.5위·여기 5위로 갈려 읽혔다).
-  const main = `<div class="target">${esc(r.keyword)}</div>
-    <p class="cp-meta">우리 ${me ? me.our_position + "위" : "순위 없음"}(검색 결과 조회)</p>
-    ${o ? oppWhy(o) : ""}`;
-  const rivs = g.map(x => `<div class="cp-rv"><span class="cp-dom">${esc(x.domain)}</span>
+// 우리 순위는 경쟁사 순위와 같은 검색 결과 조회에서 온 값이다 — 구글 실적의 평균 순위와
+// 다른 숫자라 출처를 붙인다(같은 검색어가 개요 4.5위·여기 5위로 갈려 읽혔다).
+const CP_me = g => { const m = g.find(x => x.our_position != null);
+  return `우리 ${m ? m.our_position + "위" : "순위 없음"}(검색 결과 조회)`; };
+const CP_vol = g => (g.find(x => x.volume != null) || {}).volume;
+const CP_rivs = g => g.map(x => `<div class="cp-rv"><span class="cp-dom">${esc(x.domain)}</span>
       <span class="cp-pos">${x.position == null ? "순위 모름" : x.position + "위"}</span>
       <span class="badge ${CP_kind(x.kind)[4]}" title="${esc(CP_kind(x.kind)[2])}">${
         esc(CP_kind(x.kind)[1])}</span></div>`).join("");
-  // 점수가 없어도 펼친다 — BLK_row 와 같은 어투: <details> 는 늘, 안에서만 갈린다.
-  return `<details class="opp" data-key="${esc(r.keyword)}"${
-      o ? ` data-opp="${o.id}"` : ""}><summary>
+
+/* 줄은 서랍을 여는 버튼이다 — 누르면 오른쪽 서랍(SM.drawer)에 근거·경쟁사 순위·할 일이 열린다.
+   점수가 없어도 연다: 서랍 안에서만 갈린다(CP_drawerOpts). 안의 행동 버튼은 전파를 멈춰
+   서랍이 같이 열리지 않는다(oppActs). */
+function CP_card(g) {
+  const r = g[0], o = oppOf(r.keyword), vol = CP_vol(g);
+  const main = `<div class="target">${esc(r.keyword)}</div>
+    <p class="cp-meta">${CP_me(g)}</p>
+    ${o ? oppWhy(o) : ""}`;
+  return `<div class="opp" role="button" tabindex="0" aria-haspopup="dialog"
+      data-key="${esc(r.keyword)}"${o ? ` data-opp="${o.id}"` : ""} onclick="CP_row(this)"
+      onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();CP_row(this)}">
+    <div class="cp-sum">
       <div class="cp-sc">${oppScore(o)}${o ? oppMeter(o) : ""}</div>
       <div class="cp-main">${main}</div>
-      <div class="cp-rivs">${rivs}</div>
+      <div class="cp-rivs">${CP_rivs(g)}</div>
       <div class="cp-vol">${vol == null ? "" : `<span class="u">월 검색량 </span>${num(vol)}`}</div>
-      <div class="cp-act">${o ? oppActs(o) : ""}</div></summary>
-      <div class="cp-det">${o ? oppPanel(o) : `<div class="why">${CP_noOpp(g)}</div>`}</div></details>`;
+      <div class="cp-act">${o ? oppActs(o) : ""}</div></div></div>`;
+}
+
+/* ── 오른쪽 서랍 — 개요와 같은 경험. 상자·닫기·초점은 셸의 SM.drawer 한 벌이고 이 화면은
+      안쪽만 만든다. 열린 검색어는 CP_SEL(CP_key). 상태를 바꾸면 load() 가 화면을 다시 그리므로
+      VIEW 끝의 CP_sync 가 새 값으로 다시 칠하고, 그 검색어가 없어졌으면 닫는다. ── */
+const CP_grp = key => ((CP_D && CP_D.kw_gap) || []).filter(r => CP_key(r) === key);
+
+function CP_drawerOpts(g) {
+  const r = g[0], o = oppOf(r.keyword), vol = CP_vol(g);
+  return {
+    title: r.keyword,
+    sub: CP_me(g) + (vol == null ? "" : ` · 월 검색량 ${num(vol)}`),
+    bodyHtml: `<div class="cp-dr">${o ? `<div class="cp-main">${oppWhy(o)}</div>` : ""}
+      <h3 class="cp-dr-h">경쟁사 순위</h3><div class="cp-rivs">${CP_rivs(g)}</div>
+      ${o ? oppPanel(o) : `<p class="why">${CP_noOpp(g)}</p>`}</div>`,
+    footHtml: o ? oppActs(o) : "",
+  };
+}
+
+function CP_polish() {
+  const b = SM.drawer.body();
+  if (!b) return;
+  if (typeof deadSweep === "function") deadSweep(b);
+  if (typeof applyWording === "function") applyWording(b);
+}
+
+// 연 줄에 표시를 단다 — 목록을 다시 그리면 사라지므로 그릴 때마다 다시 부른다.
+function CP_mark() {
+  document.querySelectorAll("#cp-gaps .opp.cp-on").forEach(x => x.classList.remove("cp-on"));
+  if (!CP_SEL) return;
+  const row = [...document.querySelectorAll("#cp-gaps .opp[data-key]")]
+    .find(x => CP_key({keyword: x.dataset.key}) === CP_SEL);
+  if (row) row.classList.add("cp-on");
+}
+
+function CP_closed() {
+  const key = CP_SEL;
+  CP_SEL = null;
+  CP_mark();
+  // 다른 줄로 옮겨 열 때는 서랍이 아직 열려 있다 — 초점을 뺏지 않는다. 닫혔는데 연 줄이
+  // 다시 그려져 사라졌으면(셸은 없는 요소에 초점을 안 돌린다) 같은 줄을 다시 찾아 준다.
+  if (SM.drawer.isOpen() || !key) return;
+  setTimeout(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const row = [...document.querySelectorAll("#cp-gaps .opp[data-key]")]
+      .find(x => CP_key({keyword: x.dataset.key}) === key);
+    if (row) row.focus({preventScroll: true});
+  }, 0);
+}
+
+function CP_show(keyword, from) {
+  const key = CP_key({keyword}), g = CP_grp(key);
+  if (!g.length) return;
+  SM.drawer.open({...CP_drawerOpts(g), from, onClose: CP_closed});
+  CP_SEL = key;   // 열기가 앞 줄의 onClose 를 먼저 부르므로 그 뒤에 적는다
+  CP_mark();
+  CP_polish();
+}
+const CP_row = el => CP_show(el.dataset.key, el);
+
+function CP_sync() {
+  if (CP_SEL == null) return;
+  const g = CP_grp(CP_SEL);
+  if (!SM.drawer.isOpen() || !g.length) { SM.drawer.close(); CP_SEL = null; return CP_mark(); }
+  SM.drawer.paint(CP_drawerOpts(g));
+  CP_mark();
+  CP_polish();
 }
 
 // 지금 거른 줄 — 목록·개수·CSV 가 같은 것을 본다.
@@ -553,6 +632,7 @@ const CP_defaultKind = d => {
 function CP_setSt(v) {
   CP_ST = v;
   $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+  CP_mark();
   CP_tools(CP_D);
 }
 
@@ -562,6 +642,7 @@ function CP_pick(kind) {
   $("cp-gap-h").textContent = CP_title();
   $("cp-chips").innerHTML = CP_chips(CP_D);
   $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+  CP_mark();
   const dn = $("cp-donut-body");
   if (dn) dn.innerHTML = CP_donutBody(CP_D);
   CP_tools(CP_D);
@@ -624,22 +705,21 @@ const CP_acts = (...parts) => {
 const CP_empty = (title, why, acts, tip) =>
   `<div class="empty"><b>${title}${tip ? CP_tip(tip) : ""}</b><p>${why}</p>${acts || ""}</div>`;
 
-/* 격차가 가장 큰 검색어를 그 자리에서 편다 — 띠가 이름을 말했으니 누르면 그 줄이
-   열려야 한다. 칩으로 걸러 둔 상태라 안 보이면 조건부터 푼다. */
+/* 격차가 가장 큰 검색어를 오른쪽 서랍에 연다 — 띠가 이름을 말했으니 누르면 그 검색어가
+   열려야 한다. 칩으로 걸러 둔 상태라 줄이 안 보이면 조건부터 푼다. */
 function CP_open() {
   const box = $("cp-gaps");
   if (!box) return;
-  const find = () => [...box.querySelectorAll("details[data-key]")]
+  const find = () => [...box.querySelectorAll(".opp[data-key]")]
     .find(x => x.dataset.key === CP_TOP);
   // 기본 갈래(밀리는 중)로 걸린 채면 그 검색어가 이미 보인다 — 안 보일 때만 조건을 푼다.
   if (!find() && CP_KIND) CP_pick("");
-  const det = find();
-  if (!det) return;
-  det.open = true;
-  // 카드만 가운데로 밀면 짧은 화면에서는 몇 px 밖에 안 움직여 눌린 티가 안 난다.
-  // 큐 카드의 머리를 위로 올려 목록이 화면을 채우게 한다 — 열린 카드가 그 첫 줄이다.
+  const row = find();
+  if (!row) return;
+  // 서랍 뒤의 목록도 그 줄이 보이게 올려 둔다 — 닫았을 때 어디였는지 남는다.
   const sec = $("cp-gap-card");
-  (sec || det).scrollIntoView({behavior: "smooth", block: "start"});
+  (sec || row).scrollIntoView({behavior: "smooth", block: "start"});
+  CP_show(CP_TOP, row);
 }
 
 /* 맞댄 경쟁 도메인 수. 몫(comp_metrics)은 자동 탐지에서 지표를 받은 곳만 싣고,
@@ -807,5 +887,6 @@ VIEW("competitors", function (d) {
           "이미 모은 숫자만 쓰므로 조회 비용이 들지 않습니다.",
           CP_do("gaps", CP_name("gaps"), false));
   CP_tools(d.gap_date ? d : null);
+  CP_sync();
 });
 </script>

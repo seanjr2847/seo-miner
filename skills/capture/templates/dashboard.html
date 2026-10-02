@@ -1446,6 +1446,27 @@ pre { font:400 var(--fs-1)/1.65 var(--mono); background:var(--sunk); border:0; b
   [hidden], [hidden][class] { display:none; }
 }
 
+/* ── 공용 서랍 (.sdr) — 개요의 .odr 와 같은 모양, 모든 화면이 쓴다 ─────────
+   body 최상위에 한 번 선다. 이름은 .sdr 계열만 — 개요의 .odr 와 겹치지 않는다. */
+.sdr-bg { position:fixed; inset:0; z-index:57; background:color-mix(in srgb, var(--ink) 18%, transparent); }
+.sdr { position:fixed; top:0; right:0; bottom:0; z-index:58; width:min(560px, 100%);
+  display:flex; flex-direction:column; background:var(--card); box-shadow:var(--shadow-2); }
+.sdr[hidden], .sdr-bg[hidden] { display:none; }
+.sdr-h { padding:24px 28px 0; }
+.sdr-top { display:flex; gap:14px; align-items:flex-start; padding-bottom:14px; border-bottom:1px solid var(--line); }
+.sdr-tt { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.sdr-tt h2 { margin:0; font:700 var(--fs-4)/1.35 var(--sans); overflow-wrap:anywhere; }
+.sdr-sub { font:400 var(--fs-2)/1.5 var(--sans); color:var(--sub); overflow-wrap:anywhere; }
+.sdr-x { flex:none; width:44px; height:44px; border:0; border-radius:var(--r-in); background:var(--sunk);
+  color:var(--sub); font-size:var(--fs-3); cursor:pointer; }
+.sdr-x:hover { color:var(--ink); }
+.sdr-b { flex:1; overflow:auto; overscroll-behavior:contain; padding:20px 28px 28px; }
+.sdr-f { padding:14px 28px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+@media (max-width:640px) {
+  .sdr-h, .sdr-b, .sdr-f { padding-left:16px; padding-right:16px; }
+}
+@media print { .sdr, .sdr-bg { display:none; } }
+
 /* ── 인쇄에서 빼는 것 ──────────────────────────────────────────────
    종이에는 누를 데가 없다 — 이동(레일·탭)·버튼·도구는 전부 뺀다. 위 [인쇄] 블록에 두면
    부품 규칙(.go·.cmd 의 display:inline-flex)이 같은 특정도에서 뒤에 와서 이긴다 — 그래서
@@ -1659,6 +1680,7 @@ const SM = {
     // 사람에게는 버튼이 고장 난 것으로 읽힌다. 박제본에서 [설정]·[안내] 로 가는
     // 링크가 정확히 그랬다. 왜 안 가는지 말한다. 첫 적재(cur 가 아직 빈 때)는
     // 사용자가 누른 것이 아니므로 말하지 않는다.
+    if (id !== this.cur && this.drawer) this.drawer.close();   // 화면을 옮기면 공용 서랍은 닫힌다
     if (this.at(id) < 0) {
       if (this.cur && window.toast)
         toast(window.__SNAPSHOT__ ? "이 보고서에는 없는 화면입니다."
@@ -1834,6 +1856,65 @@ const SM = {
 // 최상위 const 는 global lexical 환경에 들어간다 — 다른 스크립트에서 이름으로는
 // 보이지만 window 의 속성은 아니다. 뒤에 얹히는 층이 "셸이 있나"를 물을 자리를 준다.
 window.SM = SM;
+
+/* ── 공용 서랍 (SM.drawer) ──────────────────────────────────────────────────
+   개요의 오른쪽 서랍(.odr)과 같은 모양을 모든 화면이 한 벌로 쓴다. 상자는 body 맨 위에
+   한 번만 서고(화면 상자 안이 아니다), 한 번에 하나만 열린다. 닫기(바깥·Esc·✕)와 열기
+   전 초점 되돌리기도 여기서 한 벌이다. 화면은 안쪽 HTML 만 만든다.
+     SM.drawer.open({title, sub, bodyHtml, footHtml, from, onClose})
+     SM.drawer.paint({title, sub, bodyHtml, footHtml})   // 열린 채로 다시 칠함(초점 안 옮김)
+     SM.drawer.close()   /   SM.drawer.isOpen()   /   SM.drawer.body()  // 본문 요소
+   title·sub 는 글자(여기서 이스케이프), bodyHtml·footHtml 은 화면이 이스케이프한 HTML. */
+SM.drawer = (() => {
+  let from = null, onClose = null, open = false;
+  const q = id => document.getElementById(id);
+  const esc1 = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  function els() {
+    let dr = q("sdr");
+    if (!dr) {
+      document.body.insertAdjacentHTML("beforeend", `<div class="sdr-bg" id="sdr-bg" hidden></div>
+        <aside class="sdr" id="sdr" role="dialog" aria-modal="true" aria-labelledby="sdr-t" hidden></aside>`);
+      dr = q("sdr");
+      q("sdr-bg").addEventListener("click", () => SM.drawer.close());
+      dr.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); SM.drawer.close(); } });
+      dr.addEventListener("click", e => { if (e.target.closest(".sdr-x")) SM.drawer.close(); });
+    }
+    return dr;
+  }
+  function paint(o) {
+    const dr = els();
+    dr.innerHTML = `<div class="sdr-h"><div class="sdr-top">
+        <div class="sdr-tt"><h2 id="sdr-t">${esc1(o.title)}</h2>${o.sub ? `<div class="sdr-sub">${esc1(o.sub)}</div>` : ""}</div>
+        <button type="button" class="sdr-x" aria-label="닫기">✕</button></div></div>
+      <div class="sdr-b">${o.bodyHtml || ""}</div>${o.footHtml ? `<div class="sdr-f">${o.footHtml}</div>` : ""}`;
+  }
+  return {
+    open(o) {
+      o = o || {};
+      // 한 번에 하나 — 열려 있으면 앞 것의 onClose 를 부르되 초점 기억은 처음 연 줄을 지킨다.
+      const keep = open ? from : (o.from || document.activeElement);
+      if (open && onClose) { const f = onClose; onClose = null; try { f(); } catch (e) {} }
+      from = keep; onClose = o.onClose || null;
+      paint(o);
+      els().hidden = false; q("sdr-bg").hidden = false; open = true;
+      const x = q("sdr").querySelector(".sdr-x");
+      if (x) x.focus({preventScroll: true});
+    },
+    paint(o) { if (open) paint(o || {}); },
+    close() {
+      if (!open) return;
+      open = false;
+      q("sdr").hidden = true; q("sdr-bg").hidden = true;
+      const back = from, f = onClose;
+      from = null; onClose = null;
+      if (f) { try { f(); } catch (e) {} }
+      if (back && back.isConnected && back.focus) back.focus({preventScroll: true});
+    },
+    isOpen() { return open; },
+    body() { return open ? q("sdr").querySelector(".sdr-b") : null; },
+  };
+})();
 
 /* ── 배포 손잡이 (로컬 ↔ 호스팅) ───────────────────────────────────────────
       명령 칩·기회 카드는 배포마다 하는 일이 다르다 — 로컬은 터미널이 있어

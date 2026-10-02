@@ -203,10 +203,8 @@ td .ailogo { margin-right:6px; }
   font:500 var(--fs-2)/1.5 var(--sans); color:var(--ink);
   background:transparent; border:0; padding:0; cursor:pointer; max-width:54ch; }
 .aiq-t .chev { flex:none; width:14px; height:14px; margin-top:4px; color:var(--mute);
-  transition:transform .14s ease, color .14s ease; }
-.aiq-t[aria-expanded="true"] .chev { transform:rotate(90deg); color:var(--accent); }
+  transition:color .14s ease; }
 .aiq-t:hover, .aiq-t:hover .chev { color:var(--accent); }
-@media (prefers-reduced-motion: reduce) { .aiq-t .chev { transition:none; } }
 .aiq-p { font:400 var(--fs-2)/1.5 var(--sans); max-width:54ch; }
 .aiev { margin:8px 0 4px; padding:14px 16px; border-radius:var(--r-in);
   background:var(--sunk); max-width:74ch; }
@@ -278,8 +276,8 @@ td .ailogo { margin-right:6px; }
 #ai-aio tbody tr[role="button"]:hover { background:var(--sunk); }
 #ai-aio tbody tr[role="button"]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 #ai-aio .kwq { white-space:nowrap; }
-#ai-aio tbody tr[aria-expanded="false"] .kwq::before { content:"▸ "; color:var(--mute); }
-#ai-aio tbody tr[aria-expanded="true"] .kwq::before { content:"▾ "; color:var(--accent); }
+#ai-aio tbody tr .kwq::before { content:"▸ "; color:var(--mute); }
+#ai-aio tbody tr:hover .kwq::before { color:var(--accent); }
 #ai-aio .dmi { white-space:nowrap; }
 #ai-aio .dmi:not(:last-child)::after { content:","; }
 #ai-visits td:first-child { min-width:170px; }
@@ -749,12 +747,16 @@ function AI_status(el) {
   AI_render();
 }
 function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = ""; AI_render(); }
+/* 질문·검색어를 누르면 오른쪽 서랍(SM.drawer)에 상세가 선다 — 개요와 같은 경험.
+   줄은 늘어나지 않는다. 어느 줄인지는 data-k(질문·검색어 종류)와 data-i/data-p 로 찾는다. */
+let AI_VS_ROWS = [];
 function AI_ev(btn) {
-  const on = btn.getAttribute("aria-expanded") === "true";
-  btn.setAttribute("aria-expanded", String(!on));
-  // 칸 안에서 펼침을 이름으로 찾는다 — nextElementSibling 이었을 때, 버튼과 펼침
-  // 사이에 근거(oppWhy)를 끼우자 화살표만 뒤집히고 아무것도 안 열렸다.
-  btn.closest("td").querySelector(".aiq-d").hidden = on;
+  const k = btn.dataset.k;
+  const r = k === "v" ? AI_VS_ROWS[+btn.dataset.i] : AI_ROWS.find(q => q.prompt === btn.dataset.p);
+  if (!r) return;
+  const sub = k === "v" ? AI_vsSub(r) : AI_catName(r.category);
+  SM.drawer.open({title: r.prompt, sub,
+    bodyHtml: k === "v" ? AI_vsBody(r) : AI_rowBody(r), from: btn});
 }
 /* 대신 인용된 곳·발췌는 서버(scoring.ai_tally)가 전 표본으로 센 것 그대로다 — 화면이
    다시 세지 않는다. 예전에는 서버가 표본 하나(사전순 최대 JSON)를 골라 보냈고 화면은
@@ -864,13 +866,10 @@ function AI_detail(r, riv) {
     : ""}${ask}</div>`;
 }
 
-function AI_row(r) {
-  // 이 질문에 걸린 기회 — 인용이 드문 질문마다 하나씩 있다(scoring.ai_gaps).
+// 서랍 본문 — 질문 한 줄의 펼침. 기회가 있으면 셸의 oppPanel, 없으면 AI_detail.
+function AI_rowBody(r) {
   const o = oppOf(r.prompt);
   const riv = AI_riv(r);
-  const chips = riv.list.slice(0, 3).map(x => AI_rivChip(x, riv.misses)).join("") +
-    (riv.list.length > 3 ? `<span class="chip" title="${esc(riv.list.slice(3)
-      .map(x => AI_rivTxt(x, riv.misses)).join(", "))}">+${riv.list.length - 3}</span>` : "");
   // 엔진을 골랐으면 그 엔진의 발췌만 — 표의 숫자가 그 엔진 몫이라 글도 맞춘다
   const pick = xs => Object.entries(xs || {}).filter(([k]) => !AI_ENG || k === AI_ENG);
   const ex = pick(r.excerpts);
@@ -879,7 +878,7 @@ function AI_row(r) {
   const cx = pick(r.cited_excerpts);
   // 발췌가 없어도 펼칠 게 있다 — 상태마다 다른 할 일이 늘 붙는다. 손잡이는 항상 만든다.
   const ev = cx.length || ex.length || riv.list.length;
-  const body = `<div class="aiq-d" hidden>
+  return `<div class="aiq-d">
     ${ev ? `<div class="aiev">
       ${cx.map(([k, v], i) => `<span class="lb${i ? " n2" : ""}">${esc(AI_engName(k))} · 우리가 인용된 답변</span>
         <p class="q">${esc(AI_plain(v))}</p>`).join("")}
@@ -890,6 +889,15 @@ function AI_row(r) {
       <div class="ft">발췌는 엔진마다 ${cx.length ? "우리가 인용된 답변과 빠진 답변에서 각각" : "우리가 인용되지 않은 답변 중"}
         먼저 받은 한 건입니다. 답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다.</div>
     </div>` : ""}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+}
+
+function AI_row(r) {
+  // 이 질문에 걸린 기회 — 인용이 드문 질문마다 하나씩 있다(scoring.ai_gaps).
+  const o = oppOf(r.prompt);
+  const riv = AI_riv(r);
+  const chips = riv.list.slice(0, 3).map(x => AI_rivChip(x, riv.misses)).join("") +
+    (riv.list.length > 3 ? `<span class="chip" title="${esc(riv.list.slice(3)
+      .map(x => AI_rivTxt(x, riv.misses)).join(", "))}">+${riv.list.length - 3}</span>` : "");
   // 기회로 안 올라온 인용 공백 질문 — 기회는 점수 상위만 올라오지만(oppOf 가 없음) 판정은
   // 서버의 ai_gap_rows 한 벌이다. 배지를 기회에만 달면 띠는 6개, 목록 배지는 3개로 갈렸다.
   const gapTag = !o && AI_GAPS && AI_GAPS.has(r.prompt)
@@ -897,8 +905,8 @@ function AI_row(r) {
         || AI_ST_OPT.find(x => x[0] === "gap")[1])}</span></div>` : "";
   // 접힌 줄에도 근거를 낸다 — 질문마다 다른 실물(엔진 N곳 답변 M건 중 인용 0, 대신 누가)
   // 이 여기서만 보인다. 상태마다 같은 문장 3종을 돌려 쓰던 자리를 이게 대신한다.
-  const q = `<button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-       >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${o ? oppWhy(o) : gapTag}${body}`;
+  const q = `<button class="aiq-t" aria-haspopup="dialog" data-k="p" data-p="${esc(r.prompt)}"
+       onclick="AI_ev(this)">${AI_CHEV}<span>${esc(r.prompt)}</span></button>${o ? oppWhy(o) : gapTag}`;
   // 부품 CSS(.kind·.why)가 .opp 아래에만 걸려 있다 — 줄에 그 조상만 빌린다.
   // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
   const c = AI_cnt(r);
@@ -943,8 +951,8 @@ function AI_showMissed() {
   AI_ENG = ""; AI_CAT = ""; AI_Q = ""; AI_ST = AI_GAPS ? "gap" : "none";
   AI_render();
   const t = $("ai-plist").querySelector("tbody tr .aiq-t");
-  if (t && t.getAttribute("aria-expanded") !== "true") AI_ev(t);
   $("ai-prompt-sec").scrollIntoView({behavior: "smooth", block: "start"});
+  if (t) AI_ev(t);
 }
 
 /* ── 다음 한 걸음: 화면 머리 아래 띠 한 줄. 이 화면의 상태는 다섯이다 —
@@ -1069,7 +1077,8 @@ const AI_gscCmd = () =>
 // 이미 걸린 페이지가 나온다 — AI_detail 과 같은 재료(QUERY_PAGES·PAGE_AUDITS)를
 // 같은 방식(pageFix·askBlock)으로 쓴다. 다른 점은 오직 키뿐이다: 저기는 질문
 // 문장으로 찾고, 여기는 이미 걸린 검색어(r.query)로 찾는다 — 그래서 훨씬 잘 걸린다.
-function AI_vsRow(r) {
+const AI_vsSub = r => `검색어 ${r.query}`;
+function AI_vsBody(r) {
   const pages = (window.QUERY_PAGES || {})[r.query] || [];
   const url = pages.length ? pages[0].page : "";
   const note = pages.length ? "" : `<p class="detn">이 검색어로 걸린 내 페이지가
@@ -1087,15 +1096,18 @@ function AI_vsRow(r) {
       (r.rivals.length ? ` — 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),
     queries: [{q: r.query, note: `평균 ${r.pos}위 · 노출 ${num(r.imp)}`}],
   });
-  const body = `<div class="aiq-d" hidden><div class="det">${playList("", acts)}
+  return `<div class="aiq-d"><div class="det">${playList("", acts)}
     ${pageTable(pages)}${note}
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${AI_pageFix(url)}`
     : ""}${ask}</div></div>`;
+}
+function AI_vsRow(r, i) {
   return `<tr>
-    <td><button class="aiq-t" aria-expanded="false" onclick="AI_ev(this)"
-        >${AI_CHEV}<span>${esc(r.prompt)}</span></button>${body}</td>
-    <td class="kwcell">${esc(r.query)}</td>
+    <td><button class="aiq-t" aria-haspopup="dialog" data-k="v" data-i="${i}"
+        onclick="AI_ev(this)">${AI_CHEV}<span>${esc(r.prompt)}</span></button></td>
+    <td class="kwcell"><button class="aiq-t" aria-haspopup="dialog" data-k="v" data-i="${i}"
+        onclick="AI_ev(this)"><span>${esc(r.query)}</span></button></td>
     <td class="num up">${r.pos}</td>
     <td class="num muted">${num(r.imp)}</td>
     <td class="aidoms">${r.rivals.length
@@ -1105,6 +1117,7 @@ function AI_vsRow(r) {
 
 function AI_vsSearch(x, gscDate) {
   const rows = x.rows || [];
+  AI_VS_ROWS = rows;
   const lead = "검색 순위와 AI 인용을 한 줄에 놓습니다.";
   if (!gscDate) return [lead,
     `<div class="empty"><b>실적을 아직 수집하지 않았습니다</b>
@@ -1359,18 +1372,9 @@ function AI_aioDetail(r) {
     : `<div class="det">${playList(ap.what || "", ap.acts || [])}</div>`);
 }
 function AI_aioToggle(tr) {
-  const nx = tr.nextElementSibling;
-  if (nx && nx.classList.contains("exp")) {
-    nx.remove();
-    return tr.setAttribute("aria-expanded", "false");
-  }
   const r = AI_AIO_ROWS[+tr.dataset.i];
   if (!r) return;
-  const row = document.createElement("tr");
-  row.className = "exp";
-  row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${AI_aioDetail(r)}</td>`;
-  tr.after(row);
-  tr.setAttribute("aria-expanded", "true");
+  SM.drawer.open({title: r.keyword, sub: "구글 AI 요약", bodyHtml: AI_aioDetail(r), from: tr});
 }
 function AI_aioKey(e, tr) {
   if (e.key !== "Enter" && e.key !== " ") return;
@@ -1406,16 +1410,16 @@ function AI_aio(d) {
   const meter = `<div class="aimeter"><span class="tr"><i style="width:${AI_RATE(cited, on.length)}%"></i></span>
     <b title="AI 요약이 뜬 검색어 중 내 페이지가 출처로 실린 수">${num(cited)} / ${num(on.length)}개 실림</b></div>`;
   const body = meter + `<p class="ainote">${num(AI_AIO_ROWS.length)}개는 요약이 맨 위 자리를 차지하는데
-    거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다. 줄을 누르면 할 일이 펼쳐집니다.</p>
+    거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다. 줄을 누르면 오른쪽에 할 일이 열립니다.</p>
     <div class="aitb">${table(
       ["검색어", ">순위(직접 확인)?같은 검색 결과 조회에서 우리 페이지가 있던 자리입니다. 구글 실적의 평균 순위와는 다른 숫자입니다",
        "대신 인용된 곳?요약이 출처로 실은 도메인입니다",
        ">점수?기회 점수입니다. 높을수록 먼저 손댈 자리입니다"],
       AI_AIO_ROWS.map((r, i) => {
         const o = AI_aioOpp(r.keyword);
-        return `<tr class="opp" tabindex="0" role="button" aria-expanded="false" data-i="${i}"
+        return `<tr class="opp" tabindex="0" role="button" aria-haspopup="dialog" data-i="${i}"
           onclick="AI_aioToggle(this)" onkeydown="AI_aioKey(event,this)"
-          title="누르면 이 검색어의 할 일이 펼쳐집니다">
+          title="누르면 오른쪽에 이 검색어의 할 일이 열립니다">
           <td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${oppWhy(o)}</td>
           <td class="num">${r.pos != null ? r.pos
             : `<span class="muted" title="직접 확인한 검색 결과에서 우리 페이지를 못 찾았습니다">순위 없음</span>`}</td>

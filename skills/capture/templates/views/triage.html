@@ -99,7 +99,22 @@
 #triage .trrow:hover td { background:var(--sunk); }
 #triage .trrow.cur:hover td { background:var(--accent-wash); }
 #triage .trrow { cursor:pointer; }
-#triage .trkw { font-weight:600; }
+#triage .trkw { font:inherit; font-weight:600; color:inherit; background:none; border:0; padding:0; margin:0;
+  text-align:left; cursor:pointer; text-decoration:underline; text-decoration-color:transparent;
+  text-underline-offset:3px; overflow-wrap:anywhere; }
+#triage .trkw:hover { text-decoration-color:currentColor; }
+/* 오른쪽 서랍(SM.drawer) 본문 — 서랍은 body 끝에 서므로 .trdr 로 스코프한다. */
+.trdr-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--sp-3); margin:0 0 var(--sp-5); }
+.trdr-tile { background:var(--sunk); border-radius:var(--r-in); padding:12px 14px; }
+.trdr-tile .l { display:block; font:500 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+.trdr-tile .v { display:block; margin-top:2px; font:700 var(--fs-4)/1.25 var(--sans); color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+.trdr-sec { margin:0 0 var(--sp-5); }
+.trdr-sec h3 { margin:0 0 var(--sp-2); font:650 var(--fs-2)/1.4 var(--sans); }
+.trdr-sec p { margin:0; font:400 var(--fs-2)/1.6 var(--sans); color:var(--sub); }
+.trdr-badges, .trdr-kinds { display:flex; flex-wrap:wrap; gap:6px; }
+.trdr-badges .st { margin:0; }
+.trdr-note { margin:6px 0 0; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
 #triage .trvar { color:var(--sub); font-size:var(--fs-1); margin-left:6px; }
 #triage .trkinds { display:flex; flex-wrap:wrap; gap:4px; }
 #triage .trbrand { color:var(--warn); background:var(--warn-wash); margin-left:8px; }
@@ -387,7 +402,8 @@ function TR_row(r, i) {
   return `<tr class="trrow${i === TR_CUR ? " cur" : ""}" data-key="${k}" data-i="${i}">
     <td><label class="trchk"><input type="checkbox"${on ? " checked" : ""} onchange="TR_toggle(this.closest('tr').dataset.key, this.checked)"
       aria-label="${esc(r.label)} 고르기"></label></td>
-    <td><span class="trkw">${esc(r.label)}</span>${r.variants > 1
+    <td><button type="button" class="trkw" data-key="${k}" aria-haspopup="dialog" title="누르면 오른쪽에 자세히 펼칩니다"
+      onclick="TR_open(this.dataset.key, this)">${esc(r.label)}</button>${r.variants > 1
       ? `<span class="trvar" title="띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다">(+${r.variants - 1})</span>` : ""}${r.brand
       ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}${r.other_brand
       ? `<span class="st trother" title="다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.">남의 이름?</span>` : ""}${r.lang && r.lang !== TR_SITE_LANG && !TR_LANG
@@ -466,6 +482,49 @@ function TR_draw() {
   if (tbl) tbl.classList.add("trtable");
 }
 
+/* 검색어 상세 — 개요처럼 오른쪽 서랍(SM.drawer)으로 연다. 행은 이미 가진 필드만 쓴다. */
+let TR_DR = null;   // 서랍이 보여 주는 줄의 key
+function TR_drBody(r) {
+  const badges = (r.brand ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : "") +
+    (r.other_brand ? `<span class="st trother" title="다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.">남의 이름?</span>` : "") +
+    (r.lang ? `<span class="st trlang">${esc(TR_langName(r.lang))}</span>` : "");
+  return `<div class="trdr-tiles">
+      <div class="trdr-tile"><span class="l">점수</span><span class="v">${r.score == null ? "—" : Math.round(r.score)}</span></div>
+      <div class="trdr-tile"><span class="l">클릭</span><span class="v">${num(r.clicks)}</span></div>
+      <div class="trdr-tile"><span class="l">노출</span><span class="v">${num(r.impressions)}</span></div></div>
+    <div class="trdr-sec"><h3>걸린 진단</h3>
+      <div class="trdr-kinds">${r.kinds.map((kd, j) => `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("") || "<p>걸린 진단이 없습니다.</p>"}</div></div>` +
+    (badges ? `<div class="trdr-sec"><h3>이 검색어는</h3><div class="trdr-badges">${badges}</div>
+      ${r.brand ? `<p class="trdr-note">사이트 이름이 들어 있어 보통 보류합니다.</p>` : ""}
+      ${r.other_brand ? `<p class="trdr-note">다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.</p>` : ""}</div>` : "") +
+    (r.variants > 1 ? `<div class="trdr-sec"><h3>묶인 변형</h3>
+      <p>띄어쓰기·대소문자만 다른 변형 ${r.variants - 1}개를 한 줄로 묶었습니다.</p></div>` : "") +
+    `<div class="trdr-sec"><h3>지금 판정</h3><p>${r.verdict ? TR_VERDICT[r.verdict] : "미판정"}${READONLY ? "" : " — 아래 버튼으로 바꿉니다."}</p></div>`;
+}
+function TR_drFoot(r) {
+  if (READONLY) return "";
+  return `<button class="go sm sec" onclick="TR_drSet('irrelevant')" title="다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관</button>
+    <button class="go sm sec" onclick="TR_drSet('hold')" title="측정은 계속하고 기회에는 안 올립니다">보류</button>
+    <button class="go sm" onclick="TR_drSet('work')" title="개요의 기회 목록으로 보냅니다">작업</button>` +
+    (r.verdict ? `<button class="go sm sec" onclick="TR_drSet('')">미판정으로 되돌리기</button>` : "");
+}
+function TR_open(key, el) {
+  const r = TR_ROWS.find(x => x.key === key);
+  if (!r || !window.SM || !SM.drawer) return;
+  TR_DR = key;
+  const i = TR_filtered().findIndex(x => x.key === key);
+  if (i >= 0) TR_CUR = i;
+  SM.drawer.open({title: r.label, sub: `${TR_VERDICT[r.verdict] || "미판정"} 검색어`,
+    bodyHtml: TR_drBody(r), footHtml: TR_drFoot(r), from: el,
+    onClose: () => { TR_DR = null; }});
+}
+async function TR_drSet(v) {
+  if (!TR_DR) return;
+  const key = TR_DR;
+  const ok = await TR_set([key], v);
+  if (ok) SM.drawer.close();
+}
+
 // 판정 버튼 셋 — 위 판정 바와 좁은 화면의 아래 막대가 같은 것을 쓴다.
 const TR_btns = n => `
   <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
@@ -488,18 +547,20 @@ function TR_setSel(v) { if (TR_SEL.size) TR_set([...TR_SEL], v); }
 /* 판정 저장. 실패하면 행을 그대로 두고 말한다(거짓 성공을 그리지 않는다). */
 async function TR_set(keys, verdict) {
   const [ok, r] = await post("/api/verdict", {project: TR_PROJECT, keys, verdict: verdict || null});
-  if (!ok) return toast((r && (r.error || r.detail)) ||
-    "판정을 저장하지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad");
+  if (!ok) { toast((r && (r.error || r.detail)) ||
+    "판정을 저장하지 못했습니다. [화면 다시 불러오기] 뒤 다시 하면 됩니다.", "bad"); return false; }
   toast(`${keys.length}건 — ${TR_DONE[verdict || ""]}`, "ok");
   TR_SEL = new Set();
   await TR_fetch();
   // 작업으로 보낸 것(또는 되돌린 것)은 기회 목록이 달라진다 — 페이로드를 다시 받는다.
   if (verdict === "work" || !verdict) load();
+  return true;
 }
 
 /* 키보드 — 이 화면이 보일 때, 입력칸 밖에서만. j/k 이동, 스페이스 고르기, 1/2/3 판정. */
 document.addEventListener("keydown", e => {
   if (!window.SM || SM.cur !== "triage" || READONLY) return;
+  if (SM.drawer && SM.drawer.isOpen()) return;   // 서랍이 열려 있으면 뒤 표를 키로 건드리지 않는다
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
   const list = TR_filtered();

@@ -3037,7 +3037,7 @@ window.KIND_LABELS = {{ai_citation_gap: "챗봇 인용 드묾"}};
 AI_GAPS = new Set(["드문 질문"]);
 AI_INTENT = {{general: "일반"}};
 const rows = {json.dumps(rows, ensure_ascii=False)};
-console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_row(rows[1]),
+console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_rowBody(rows[1]),
   plain: [AI_plain("[출처] (https://a.com/x) 끝"), AI_plain("보세요 [링크](https://a.com/very-lo…"),
           AI_plain("답입니다[source] 끝"), AI_plain("잘린 (https://a.com/b…")]}}));
 """
@@ -3700,6 +3700,50 @@ def test_seam_124_coverage_looks_for_the_topic_page_before_asking_for_a_new_arti
         f"지면이 있는데 요청문이 새 글로 간다: {o['brief']['shape']} {o['brief']['page']}"
     assert o["gap_kind"] == "covered" and "이미 있습니다" in o["play"]["what"], \
         "화면의 처방(o.play)이 요청문과 다른 말을 한다 — 요청문은 고치기, 화면은 '페이지 없음'"
+
+
+def test_seam_shared_drawer_is_one_box_in_the_shell():
+    """공용 오른쪽 서랍 — 키워드·질문·줄을 누르면 모든 화면이 같은 서랍(SM.drawer)에 상세를 연다.
+
+    양쪽 끝: 셸이 서랍 상자(#sdr)·CSS(.sdr)·API 를 한 벌 갖고, 화면은 그 API 이름만 부른다.
+    - 서랍 상자는 셸 한 곳에서만 만든다 — 화면이 자기 서랍(id="sdr")을 또 지으면
+      오른쪽에서 열리는 상자가 둘이 되어 Esc·바깥·✕ 가 한쪽만 닫는다.
+    - 개요는 자기 서랍(#ov-drawer, .odr)을 따로 갖는다 — 그 밖의 화면이 .odr 를 빌리거나
+      #ov-drawer 를 만지면 서랍이 둘이다(개요 서랍과 공용 서랍의 이중 존재).
+    - 화면이 부르는 SM.drawer.<이름> 은 셸이 내는 것(open·paint·close·isOpen·body)뿐이다.
+    - 화면을 옮기면 서랍이 닫힌다(SM.show) — 안 닫으면 다른 화면 위에 이전 화면의 서랍이 선다.
+    - 호스팅 애드온(dash.html)은 서랍을 짓지 않는다 — 셸이 한 벌이다.
+    - 서랍을 열어야 하는 화면 여덟은 실제로 SM.drawer.open 을 부른다 — 인라인 펼침으로 돌아가면 걸린다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, dash, views = ctx["shell"], ctx["dash"], ctx["views"]
+    body = shell.split("SM.drawer = (() => {", 1)[1].split("})();", 1)[0]
+    made = set(re.findall(r"^    (open|paint|close|isOpen|body)\(", body, re.M))
+    assert made == {"open", "paint", "close", "isOpen", "body"}, f"셸의 서랍 API 가 바뀌었다: {made}"
+    assert shell.count('id="sdr"') == 1 and shell.count('id="sdr-bg"') == 1, \
+        "공용 서랍 상자(#sdr·#sdr-bg)가 셸에 한 번이 아니다"
+    assert re.search(r"\.sdr \{ position:fixed; top:0; right:0;", shell), \
+        "공용 서랍(.sdr)이 오른쪽에 붙어 있지 않다"
+    assert "this.drawer.close()" in shell, "SM.show 가 화면을 옮길 때 공용 서랍을 닫지 않는다"
+    assert 'id="sdr"' not in dash and 'class="sdr' not in dash and "SM.drawer =" not in dash, \
+        "dash.html 이 서랍을 또 짓는다 — 셸 한 벌이다"
+    opened = set()
+    for f in sorted(views.glob("*.html")):
+        t = f.read_text("utf-8")
+        assert 'id="sdr"' not in t and "SM.drawer =" not in t, f"{f.name} 이 공용 서랍을 또 짓는다"
+        if f.name != "overview.html":
+            assert "odr-" not in t and "ov-drawer" not in t, \
+                f"{f.name} 이 개요 서랍(.odr·#ov-drawer)을 빌려 쓴다 — 공용 서랍(.sdr)을 쓴다"
+        for name in re.findall(r"SM\.drawer\.(\w+)", t):
+            assert name in made, f"{f.name} 이 셸에 없는 서랍 API 를 부른다: SM.drawer.{name}"
+        if "SM.drawer.open(" in t:
+            opened.add(f.name)
+    want = {"ai.html", "analysis.html", "competitors.html", "hold.html", "keywords.html",
+            "rank.html", "site.html", "triage.html"}
+    assert want <= opened, f"서랍을 안 여는 화면이 있다: {sorted(want - opened)}"
+    assert "ov-drawer" in (views / "overview.html").read_text("utf-8"), "개요 서랍이 없다"
 
 
 def inspect_src(fn) -> str:
