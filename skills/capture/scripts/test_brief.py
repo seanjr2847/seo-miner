@@ -1632,12 +1632,10 @@ def test_top_pages_outline_replaces_the_paste_ask():
 # 틀린 안내가 그대로 AI 에게 간다 (Person 스키마를 보고 "원장·의료진인지 확인하라"고
 # 시키던 줄, "효능을 지어내지 않습니다" 규칙 3곳이 실제로 그랬다).
 INDUSTRY_WORDS = ("원장", "의료진", "효능", "시술", "병원", "환자", "클리닉")
-# 한 상수만 예외다. YMYL_RULE 은 **자기 안에 조건을 달고 있다** — "건강·의료·돈·법을
-# 다루는 페이지면" 으로 시작하고, 그 뒤의 '시술'·'효능'·'환자 후기'는 의료광고가 못 쓰게
-# 한 표현을 가리키는 이름이라 바꾸면 규칙이 가리키는 것이 없어진다. 업종을 **가정**하는
-# 문구가 아니라 업종을 **가려내는** 문구다. 예외를 이름으로 못 박는 까닭은, 낱말만 보고
-# 빼면 다음에 누가 같은 낱말을 조건 없이 써도 검사가 눈감기 때문이다.
-CONDITIONAL_RULES = ("YMYL_RULE",)
+# 이름으로 못 박은 예외 — 자기 안에 조건을 달고 있어 업종어가 허용되는 상수. 지금은 없다
+# (건강·의료 규제 문단 YMYL_RULE 은 요청문에서 뺐다). 낱말만 보고 빼면 다음에 누가 같은
+# 낱말을 조건 없이 써도 검사가 눈감으니, 새 예외는 이 튜플에 이름으로만 넣는다.
+CONDITIONAL_RULES = ()
 
 
 def test_brief_copy_has_no_industry_words():
@@ -1725,14 +1723,6 @@ def test_new_article_language_comes_from_the_keyword_not_the_site():
     assert "페이지 언어" not in same, same
     # 로케일을 모르는 검색어는 아무 줄도 안 만든다(지어내지 않는다)
     assert "페이지 언어" not in brief.build(_opp("coverage", "검색어"), {}, "ko-KR")["body"]
-
-
-def test_ymyl_rule_names_the_market_it_means():
-    """"그 나라에서 어떻게 불려야 하는지 확인하라"고만 하면 확인할 규정을 못 고른다."""
-    assert "한국(ko-KR)" in brief.tails("ko-KR")["new_content"]
-    assert "미국(en-US)" in brief.tails("en-US")["new_content"]
-    # 검색어 자체가 효능을 묻는 말일 때 제목 표가 빈 칸으로 남지 않게
-    assert "'검색어 자리' 칸에 '안 넣음'" in brief.tails("ko-KR")["new_content"]
 
 
 def test_missing_serp_tables_say_why_instead_of_going_quiet():
@@ -2028,17 +2018,18 @@ def test_brief_names_past_work_on_the_page_and_the_mixed_window():
     assert brief.WORK_HEAD not in brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
 
 
-def test_tails_carry_claim_rules_and_let_regulation_go_first():
+def test_tails_carry_claim_rules_and_no_regulation_paragraph():
     """답이 자기 산출물·숫자·관찰을 두고 한 말을 대조하게 하는 규칙은 모든 꼴에, 출처·여러
-    자리의 같은 사실 규칙은 문안을 쓰는 꼴에만. 규제 문구가 지금 나가 있으면 '먼저 할 것'의
-    맨 위는 산출물이 아니어도 된다 — 규제 규칙이 찾은 것이 '따로 볼 것'으로 밀렸다."""
+    자리의 같은 사실 규칙은 문안을 쓰는 꼴에만. 건강·의료 규제 문단(YMYL_RULE)과 그 파생
+    ('먼저 할 것'의 규제 1순위 줄)은 요청문에 싣지 않는다 — 사용자가 뺐다."""
     tails = brief.tails("ko-KR")
     for name, tail in tails.items():
         for r in brief.CLAIM_RULES:
             assert r in tail, name
         has_limits = brief.SHAPES[name]["limits"]
         assert all((r in tail) == has_limits for r in brief.SOURCE_RULES), name
-        assert (brief.FIRST_REG_LINE in tail) == has_limits, name
+        for gone in ("[규제 확인]", "표현 제한이 먼저", "의료광고"):
+            assert gone not in tail, f"{name}: 빼기로 한 규제 문단이 남았다 — {gone}"
     # 신뢰 신호 카드는 이름이 불린 신호만 — 외부 링크 하나로 저자·수정일까지 채우지 않는다
     assert "거기 이름이 나온 신호만" in tails["fix_page"]
 

@@ -3626,6 +3626,45 @@ def test_seam_122_scope_path_is_one_rule_at_every_api():
     assert '"scope": scope' in app_src and "d.scope" in start, "peek 이 돌려준 범위를 온보딩이 안 받는다"
 
 
+def test_seam_123_settings_logout_posts_to_a_real_server_route():
+    """123) [설정]의 [로그아웃]은 서버가 실제로 받는 POST /auth/logout 으로 간다.
+
+    이음매는 둘이다. 화면(sections/sm-set.html 의 폼)만 보면 멀쩡하고 서버(app.py)만 봐도
+    멀쩡하다 — 어긋나면 눌러도 405 거나 아무 일도 안 일어난다.
+    - 폼은 method=post 다. 서버에 같은 경로의 POST 가 있어야 하고 GET 이 있으면 안 된다
+      (링크 한 번 — prefetch·남이 심은 이미지 태그 — 에 로그아웃되므로).
+    - 호스팅 전용이다: 로컬 대시보드엔 로그인이 없다(섹션이 only=hosted).
+    - .grp 를 안 쓴다 — 설정을 못 읽어 #sm-set.dead 가 .grp 를 숨겨도 로그아웃은 남는다.
+    - 자리는 격자 목록(views/settings.html)에 있어야 한다 — 없으면 12열 중 1칸에 찌그러진다.
+    """
+    sec = ROOT / "skills" / "capture" / "templates" / "sections" / "sm-set.html"
+    view = ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"
+    if not (sec.exists() and view.exists() and (ROOT / "server" / "app.py").exists()):
+        return
+    html_ = sec.read_text("utf-8")
+    i = html_.find('id="set-account"')
+    assert i >= 0, "sm-set.html 에 #set-account 카드가 없다"
+    card = html_[i:html_.index("</form>", i)]
+    form = re.search(r"<form([^>]*)>", card)
+    assert form and 'method="post"' in form.group(1), "로그아웃 폼이 POST 가 아니다"
+    action = re.search(r'action="([^"]+)"', form.group(1)).group(1)
+    assert 'type="submit"' in card and "로그아웃" in card, "로그아웃 버튼이 없다"
+    assert "grp" not in card and 'class="repo' not in card, \
+        "#set-account 가 .grp 를 쓴다 — 설정을 못 읽을 때 같이 숨는다"
+    assert '"only": "hosted"' in html_, "로그아웃은 호스팅 전용 섹션에 있어야 한다"
+    srv = _server()
+    if srv is not None:
+        mine = [r for r in srv.app.routes if getattr(r, "path", None) == action]
+        assert any("POST" in (r.methods or ()) for r in mine), \
+            f"폼이 가는 POST {action} 이 서버에 없다"
+        assert not any("GET" in (r.methods or ()) for r in mine), \
+            f"{action} 이 GET 도 받는다 — 링크 한 번(prefetch)에 로그아웃된다"
+    css = view.read_text("utf-8")
+    places = css.split(":where(", 1)[-1].split(") {", 1)[0]
+    assert "#set-account" in places, \
+        "views/settings.html 의 카드 자리 목록에 #set-account 가 없다 — 격자 1칸에 찌그러진다"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)
