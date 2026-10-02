@@ -3665,6 +3665,42 @@ def test_seam_123_settings_logout_posts_to_a_real_server_route():
         "views/settings.html 의 카드 자리 목록에 #set-account 가 없다 — 격자 1칸에 찌그러진다"
 
 
+def test_seam_124_coverage_looks_for_the_topic_page_before_asking_for_a_new_article():
+    """124) 주제 묶음(coverage)은 '순위에 걸린 페이지 없음'이 정의라, 지면 조회를 안 거치면
+    사이트에 지면이 있어도 늘 "페이지가 없다 → 새 글 설계"가 된다(소프웨이브). 양쪽 끝:
+    gather() 가 `topic_pages` 를 대상 그대로의 키('cluster:이름')로 싣는가, 요청문(brief)과
+    화면의 처방(o.play)이 그걸 읽고 같은 갈래(고치기)로 가는가. 파일 하나씩은 멀쩡하다 —
+    dashboard 는 키워드 종류만 조회했고 brief 는 그 키를 읽었는데, 그 둘 사이에 coverage 가 없었다.
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import dashboard
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam123','saas','x.com')")
+    c.execute("INSERT INTO keywords(project_id,keyword,cluster,volume,is_active) "
+              "VALUES(1,'sofwave aftercare','sofwave',50,1)")
+    run = c.execute("INSERT INTO crawl_runs(project_id, finished_at, seed) "
+                    "VALUES(1,'2026-09-01','sitemap') RETURNING id").fetchone()[0]
+    c.execute("INSERT INTO crawl_pages(run_id,url,status,depth,title,h1) "
+              "VALUES(?,'https://x.com/en/laser/sofwave/',200,1,'sofwave | Clinic','Sofwave')", (run,))
+    c.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning) "
+              "VALUES(1,'coverage','cluster:sofwave',50,'근거')")
+    with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(_io.StringIO()):
+        d = dashboard.gather(c, db.get_project(c, "_seam123"))
+    c.close()
+    assert "cluster:sofwave" in (d.get("topic_pages") or {}), \
+        f"gather() 가 주제 묶음의 지면을 안 찾는다: {list((d.get('topic_pages') or {}))}"
+    o = next(x for x in d["opps"] if x["kind"] == "coverage")
+    assert o["brief"]["shape"] == "fix_page" and o["brief"]["page"] == "https://x.com/en/laser/sofwave/", \
+        f"지면이 있는데 요청문이 새 글로 간다: {o['brief']['shape']} {o['brief']['page']}"
+    assert o["gap_kind"] == "covered" and "이미 있습니다" in o["play"]["what"], \
+        "화면의 처방(o.play)이 요청문과 다른 말을 한다 — 요청문은 고치기, 화면은 '페이지 없음'"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

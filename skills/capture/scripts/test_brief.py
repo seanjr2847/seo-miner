@@ -860,6 +860,46 @@ def test_unranked_page_found_by_title_is_fixed_not_rewritten():
     assert b["candidates"] == [] and b["page"] == T
 
 
+def test_coverage_with_existing_topic_page_fixes_it_instead_of_new_article():
+    """주제 묶음(coverage)은 순위에 걸린 페이지가 정의상 없다 — 그래도 사이트에 이 주제의
+    지면이 있으면 새 글 설계가 아니라 그 지면을 고친다(소프웨이브: /en/ 지면이 있는데
+    "페이지가 없다"는 설계도가 나갔다)."""
+    base = "https://me.example"
+    main = f"{base}/en/lifting/sofwave/"
+    cands = [{"page": main, "title": "sofwave | Clinic", "h1": "Sofwave", "primary": True},
+             {"page": f"{base}/zh-hans/lifting/sofwave/", "title": "Sofwave | 诊所",
+              "h1": "Sofwave 索夫波", "primary": True},
+             {"page": f"{base}/en/press/sofwave-interview-2026/",
+              "title": "Sofwave: Firmness - Clinic", "h1": "Sofwave: Firmness", "primary": True}]
+    o = _opp("coverage", "cluster:sofwave")
+    ctx = {"topic_pages": {"cluster:sofwave": cands},
+           "cluster_keywords": {"sofwave": [{"keyword": "sofwave aftercare", "volume": 50},
+                                            {"keyword": "sofwave austin", "volume": 90}]}}
+    # 영어 키워드 + 주소 끝 조각이 주제 이름 → 전용 지면 하나로 좁혀진다
+    assert brief.page_of(o, ctx) == main
+    b = brief.build(o, ctx)
+    assert b["shape"] == "fix_page" and b["page"] == main
+    assert "있는 페이지 고치기" in b["body"] and "키워드 분류 표" in b["body"]
+    assert "대표 글 한 장" not in b["body"] and "이 요청문은 그 갈래가 아닙니다" in b["body"]
+    # 화면의 처방(o.play)도 같은 갈래다 — attach 가 gather 의 "없음" 처방을 바꿔 끼운다
+    d = {"opps": [{**o}], **ctx}
+    brief.attach(d, "ko-KR")
+    got = d["opps"][0]
+    assert got["gap_kind"] == "covered" and "이미 있습니다" in got["play"]["what"]
+    assert got["brief"]["shape"] == "fix_page"
+    # 좁히지 못하면(전용 지면이 둘 이상) 새 글 꼴로 두되 후보를 싣고 멈추게 한다 — 처방은 그대로 '있음'
+    amb = {**ctx, "topic_pages": {"cluster:sofwave": [
+        {**cands[0], "page": f"{base}/en/a/"}, {**cands[0], "page": f"{base}/en/b/"}]}}
+    assert brief.page_of(o, amb) is None
+    ba = brief.build(o, amb)
+    assert ba["shape"] == "new_content" and len(ba["candidates"]) == 2
+    assert "이 주제를 맡는 지면을 위 후보에서 고른 결과" in ba["body"]
+    # 지면이 하나도 없으면 예전 그대로 — 단, "사이트에 없다"고 단정하지 않는다
+    none = brief.build(o, {"cluster_keywords": ctx["cluster_keywords"]})
+    assert none["shape"] == "new_content" and "대표 글 한 장" in none["body"]
+    assert "사이트에 아예 없다는 뜻은 아닙니다" in scoring.kind_play("coverage")["what"]
+
+
 def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
     import db
     conn = db.connect()                       # CAPTURE_HOME 은 위에서 임시 폴더로 돌렸다

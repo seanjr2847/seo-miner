@@ -394,7 +394,10 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
     "pseo_pattern": "new_content",
     "device_gap": "technical",
     "index_blocked": "technical",
-    "coverage": "new_content",
+    # 순위에 걸린 페이지는 정의상 없다 — 갈리는 건 사이트에 이 주제의 지면(제목·H1)이 있느냐다.
+    # has_page 는 page_of 가 그 지면을 하나로 골랐을 때만 참이고, 후보만 있으면 새 글 꼴이
+    # 후보 목록을 싣고 "새 글 대신 그 지면"이라 말한다(_target_lines).
+    "coverage": _by_page,
     "ai_citation_gap": _ai_shape,
     "aio_exposure": _aio_shape,
     "content_gap": lambda gk, has_page, band: "fix_page" if gk == "weak" else "new_content",
@@ -2132,9 +2135,16 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
     if url and url != t and mine:
         # 순위가 아니라 제목·H1 로 찾은 지면 — 그렇다고 밝혀야 사람이 틀린 짝을 잡는다
         L.append(f"- 페이지: {url} ({_head(mine)})")
-        L.append("  이 검색어로 순위에 걸린 페이지는 없고, 제목·H1 이 이 검색어로 시작하는 "
-                 "내 지면이 이것 하나입니다 — 새 글 대신 이 지면을 고칩니다. 다른 지면이 이 "
-                 "검색어를 맡아야 한다면 고치기 전에 말해 주세요.")
+        if kind == "coverage":
+            # 묶음은 검색어가 여럿이고 언어마다 지면이 있어, 후보가 여럿 중 골랐을 수 있다
+            L.append("  이 주제로 묶인 키워드는 순위에 걸린 페이지가 없습니다. 지면이 없는 "
+                     "것이 아니라 제목·H1 이 이 주제로 시작하는 내 지면이 이미 있습니다 — "
+                     "새 글 대신 이 지면을 고칩니다. 다른 지면이 이 주제를 맡아야 한다면 "
+                     "고치기 전에 말해 주세요.")
+        else:
+            L.append("  이 검색어로 순위에 걸린 페이지는 없고, 제목·H1 이 이 검색어로 시작하는 "
+                     "내 지면이 이것 하나입니다 — 새 글 대신 이 지면을 고칩니다. 다른 지면이 이 "
+                     "검색어를 맡아야 한다면 고치기 전에 말해 주세요.")
         rest = [p for p in topic if p is not mine]
         if rest:
             L.append("  제목·H1 에 이 검색어가 드는 다른 지면(내부 링크·겹침 확인용): "
@@ -2211,7 +2221,39 @@ def page_of(o: dict, ctx: dict) -> str | None:
     lab = next((x for x in ctx.get("striking_labs") or [] if x.get("query") == t and x.get("url")), None)
     if lab:
         return lab["url"]
+    if o.get("kind") == "coverage":
+        return _coverage_page(o, ctx)
     return scoring.topic_page(_topic_of(o, ctx))
+
+
+def _coverage_page(o: dict, ctx: dict) -> str | None:
+    """주제 묶음의 지면 하나 — 후보(제목·H1 에 주제가 든 지면) 가운데서 좁힌다.
+
+    다국어 사이트는 한 주제가 언어마다 지면을 갖고(/en/·/ja/·…), 보도 글도 제목이 주제로
+    시작한다 — 그냥은 전용 지면이 여럿이라 고르지 못한다. 두 가지로 좁힌다: ① 묶인
+    키워드가 전부 라틴 글자면 영어 지면(주소 /en/), ② 주소의 마지막 조각이 주제 이름인
+    지면(/lifting-contour/sofwave/ — 보도 글의 긴 슬러그가 아니다). 그래도 하나가 안
+    되면 None — 사람이 후보에서 고른다."""
+    hits = [p for p in _topic_of(o, ctx) if p.get("primary")]
+    cl = str(o["target"]).split(":", 1)[-1].strip()
+    kws = (ctx.get("cluster_keywords") or {}).get(cl) or []
+    if len(hits) > 1 and kws and all(str(k["keyword"]).isascii() for k in kws):
+        en = [p for p in hits if (page_locale(None, p["page"]) or ("",))[0] == "en"]
+        hits = en or hits
+    if len(hits) > 1:
+        from urllib.parse import urlsplit
+        own = [p for p in hits
+               if scoring.norm(urlsplit(p["page"]).path.strip("/").rsplit("/", 1)[-1]
+                               .replace("-", " ")) == scoring.norm(cl)]
+        hits = own or hits
+    return hits[0]["page"] if len(hits) == 1 else None
+
+
+def coverage_gap(o: dict, ctx: dict) -> str | None:
+    """주제 묶음의 갈래 — 이 주제의 지면(후보라도)이 사이트에 있으면 "covered"."""
+    if o.get("kind") != "coverage":
+        return o.get("gap_kind")
+    return "covered" if _topic_of(o, ctx) else None
 
 
 def _topic_of(o: dict, ctx: dict) -> list[dict]:
@@ -2472,7 +2514,10 @@ def _split_pending_lines(o: dict, ctx: dict, url: str) -> list[str]:
 
 
 def _unit_lines(rows: list[dict]) -> list[str]:
-    """'대상'의 마지막 줄 — 일의 단위는 페이지고 누른 검색어는 입구다."""
+    """'대상'의 마지막 줄 — 일의 단위는 페이지고 누른 검색어는 입구다.
+
+    주제 묶음(coverage)에는 안 단다: 입구가 이 페이지에 이미 걸린 검색어가 아니라 **아직 안
+    걸린** 키워드들이라, 이 줄이 이미 걸린 검색어에 맞추라고 하면 정반대 일을 시킨다."""
     if not rows:
         return []
     share = _intent_share(rows)
@@ -2713,6 +2758,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     pages = (ctx.get("query_pages") or {}).get(str(o.get("target") or "")) or []
     play = o.get("play") or {}
     gk = o.get("gap_kind")
+    if kind == "coverage":
+        # 갈래는 지면 조회가 안다 — 처방(play)도 그 갈래의 것으로 바꿔 끼운다
+        gk = coverage_gap(o, ctx)
+        play = scoring.kind_play(kind, gap_kind=gk) or play
     if kind == "content_gap" and gk is None:
         # 갈래(밀림/없음)는 최신 경쟁사 수집 행이 안다 — 그 수집이 비거나 그 경쟁사를 걷어
         # 내면 갈래를 잃고 '없음'으로 떨어졌다. 홈이 10위인 검색어에 "페이지 자체가 없다"는
@@ -2748,7 +2797,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
         lang_line = [site_lang_line(shape, locale)]
     L += (_target_lines(o, url, shape, ctx, has_evidence=bool(ev))[:-1]
-          + lang_line + _unit_lines(pq) + [""])
+          + lang_line + ([] if kind == "coverage" else _unit_lines(pq)) + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
     L += _page_work_lines(url, ctx) if url else []
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
@@ -2836,7 +2885,9 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
             f"진단 [{t}] 의 고칠 값 — 진단 문장이 짚은 것을 이 페이지 어디에서 무엇으로 바꿀지"
             f"까지(문안이 필요하면 문안까지)" for t in left) if d not in want]
         left = []
-    if shape == "fix_page" and url and CONTENT_FILL not in want:
+    # 주제 묶음은 뺀다 — 그 처방이 '구간 추가 문안'으로 무엇을 어디에 더할지까지만 정한다.
+    # 본문까지 쓰라는 이 줄이 붙으면 같은 목록의 2번("본문은 쓰지 않습니다")과 부딪힌다.
+    if shape == "fix_page" and url and kind != "coverage" and CONTENT_FILL not in want:
         want = list(want) + [CONTENT_FILL]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     # 진단은 정적 HTML 을 센 값이라 헛짚는다(장식 아이콘의 빈 alt, 메뉴·푸터까지 센 링크 수,
@@ -2943,6 +2994,11 @@ def text(o: dict, ctx: dict, locale: str) -> str:
 def attach(d: dict, locale: str) -> None:
     """gather() 가 모은 페이로드에 요청문을 싣는다 — 기회마다 brief, 프로젝트마다 한 벌의 꼴."""
     for o in d.get("opps") or []:
+        if o["kind"] == "coverage":
+            # 화면의 '무엇을·할 일'(o.play)도 요청문과 같은 갈래여야 한다 — gather 가
+            # 지면 조회 전에 못 박은 처방("페이지가 없다")을 여기서 바꾼다.
+            o["gap_kind"] = coverage_gap(o, d)
+            o["play"] = scoring.kind_play("coverage", gap_kind=o["gap_kind"])
         o["brief"] = build(o, d, locale)
     d["brief"] = shapes_payload(locale)
 

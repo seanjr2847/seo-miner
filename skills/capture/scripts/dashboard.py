@@ -1694,6 +1694,14 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     topic_pages = scoring.pages_by_topic(
         conn, pid, [o["target"] for o in opps if o["kind"] in scoring.KEYWORD_KINDS
                     and not query_pages.get(str(o["target"]))])
+    # 주제 묶음(coverage)도 같다 — 대상은 'cluster:이름' 이고 이 묶음의 검색어는 순위에
+    # 걸린 페이지가 없는 게 정의라, 안 찾으면 늘 "페이지 없음 → 새 글"이 된다. 사이트에
+    # 소프웨이브 지면이 있는데 그 설계도가 나갔다. 이름으로 찾고 키는 기회의 대상 그대로 둔다.
+    cov_names = {str(o["target"]): str(o["target"]).split(":", 1)[-1].strip()
+                 for o in opps if o["kind"] == "coverage"}
+    if cov_names:
+        by_name = scoring.pages_by_topic(conn, pid, cov_names.values())
+        topic_pages.update({t: by_name[n] for t, n in cov_names.items() if n in by_name})
 
     # 한 페이지에 두 의도 — 판정을 여기서 다시 돌린다. query_pages 는 기회·순위의
     # 검색어만 싣기 때문에 그 페이지에 걸린 검색어 전부를 갖지 못한다: 요청문이 그걸로
