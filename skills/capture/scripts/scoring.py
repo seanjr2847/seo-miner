@@ -191,6 +191,45 @@ def owns(domain: str, own: str) -> bool:
     return bool(d and o) and (d == o or d.endswith("." + o))
 
 
+def scope_of(path) -> str:
+    """분석 범위 경로의 정본 꼴 — '/kr/ko/'. 앞뒤 '/' 를 하나씩, 소문자. 비었거나 '/'
+    뿐이면 '' (= 도메인 전체). URL 을 통째로 넣어도 경로만 뽑는다
+    ('https://www.gucci.com/kr/ko/' → '/kr/ko/'). 스킴 없이 'gucci.com/kr/ko' 라고 적어도
+    첫 칸이 호스트 꼴(점이 있다)이면 떼어 낸다."""
+    s = str(path or "").strip()
+    if re.match(r"^[a-z]+://", s, re.I):
+        s = re.sub(r"^[a-z]+://[^/?#]*", "", s, flags=re.I)
+    elif not s.startswith("/") and "." in s.split("/")[0]:
+        s = s.split("/", 1)[1] if "/" in s else ""
+    s = s.split("?")[0].split("#")[0].strip().strip("/").lower()
+    return f"/{s}/" if s else ""
+
+
+def path_of(url: str) -> str:
+    """URL 의 경로만('/kr/ko/pr/x'). 스킴 없는 'gucci.com/kr/ko' 도 받는다."""
+    s = re.sub(r"^[a-z]+://", "", str(url or "").strip(), flags=re.I)
+    s = s.split("?")[0].split("#")[0]
+    return "/" + s.split("/", 1)[1] if "/" in s else "/"
+
+
+def in_scope(url: str, scope) -> bool:
+    """URL 의 경로가 범위 아래인가. 범위가 비었으면 늘 참이다. 상대 경로('/kr/ko/x')도
+    받는다 — GA4 의 landingPage·Labs 의 relative_url 이 그 꼴이다. '/kr/ko' 처럼 끝
+    '/' 가 없는 범위 자체의 주소도 안으로 친다."""
+    sc = scope_of(scope)
+    if not sc:
+        return True
+    u = str(url or "")
+    p = u if u.startswith("/") else path_of(u)
+    return (p.split("?")[0].split("#")[0].rstrip("/") + "/").lower().startswith(sc)
+
+
+def owns_url(url: str, own: str, scope="") -> bool:
+    """이 URL 이 우리 것인가 — 호스트(owns) **그리고** 분석 범위 경로(in_scope).
+    gucci.com/kr/ko/ 만 보는 사이트에서 gucci.com/us/en/ 은 우리 순위가 아니다."""
+    return owns(url, own) and in_scope(url, scope)
+
+
 # 나라 도메인 아래 2단 접미사의 둘째 칸 — 'co.kr'·'or.kr'·'com.au'. 이 칸 앞이 이름이다.
 _SLD = frozenset({"co", "or", "ac", "go", "ne", "re", "pe", "com", "net", "org", "gov", "edu"})
 
@@ -5297,6 +5336,21 @@ def _selfcheck() -> None:
     assert owns("blog.example.com", "example.com")
     assert owns("example.com", "https://example.com/")
     assert not owns("notexample.com", "example.com")
+    # 분석 범위 경로 — 정규화·판정·호스트와 함께
+    assert scope_of("https://www.gucci.com/kr/ko/") == "/kr/ko/" == scope_of("kr/ko") == scope_of("/KR/ko")
+    assert scope_of("gucci.com/kr/ko") == scope_of("www.gucci.com/kr/ko/") == "/kr/ko/"
+    assert scope_of("gucci.com") == ""
+    assert scope_of("") == scope_of("/") == scope_of(None) == scope_of("https://gucci.com") == ""
+    assert in_scope("https://www.gucci.com/kr/ko/pr/bag-1", "/kr/ko/")
+    assert in_scope("https://www.gucci.com/kr/ko", "/kr/ko/"), "범위 자체의 주소가 밖으로 갔다"
+    assert in_scope("/kr/ko/c/women?x=1", "/kr/ko/") and in_scope("gucci.com/kr/ko/x", "/kr/ko/")
+    assert not in_scope("https://www.gucci.com/us/en/pr/bag-1", "/kr/ko/")
+    assert not in_scope("https://www.gucci.com/kr/kokr", "/kr/ko/"), "접두 글자만 같은 경로가 안으로 들어왔다"
+    assert in_scope("https://a.com/anything", "") and in_scope("", "")
+    assert owns_url("https://www.gucci.com/kr/ko/x", "gucci.com", "/kr/ko/")
+    assert not owns_url("https://www.gucci.com/us/en/x", "gucci.com", "/kr/ko/")
+    assert not owns_url("https://other.com/kr/ko/x", "gucci.com", "/kr/ko/")
+    assert owns_url("https://blog.example.com/a", "example.com")
     assert _stem("futuretools.io") == "futuretools"
     # 이름은 등록 도메인에서 — 하위 도메인 첫 칸('gangnam'·'blog')이 브랜드가 되면
     # 'gangnam dermatology clinic' 같은 일반 검색어가 남의 브랜드로 걸러진다.

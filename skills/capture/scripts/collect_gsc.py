@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 from datetime import date, timedelta
@@ -174,6 +175,19 @@ def _status(e) -> int | None:
         return None
 
 
+def scope_filter(scope) -> dict:
+    """분석 범위 경로(gucci.com/kr/ko/)를 Search Analytics 요청에 거는 page 필터.
+    범위가 없으면 빈 dict — 요청 본문에 그대로 펼쳐 넣는다. 호스트는 속성이 이미
+    정했으니 경로만 본다. 끝 '/' 없는 범위 자체의 주소('/kr/ko')도 안으로 친다
+    (scoring.in_scope 와 같은 규칙)."""
+    sc = scoring.scope_of(scope)
+    if not sc:
+        return {}
+    rx = r"^https?://[^/]+" + re.escape(sc.rstrip("/")) + r"(/|$|\?)"
+    return {"dimensionFilterGroups": [{"filters": [
+        {"dimension": "page", "operator": "includingRegex", "expression": rx}]}]}
+
+
 def _query(service, prop: str, body: dict) -> dict:
     """Search Analytics 호출 한 번 + 403 안내.
 
@@ -225,6 +239,9 @@ def collect(project: str, *,
         breakdown = s["gsc_breakdown"]
         dims = [d.strip().lower() for d in (breakdown or "").split(",") if d.strip()]
         prop = p["gsc_property"]
+        # 분석 범위 경로 — 모든 Search Analytics 호출에 같은 page 필터를 건다
+        # (query×page 만 거르면 일별 추이·나라 분해가 다른 나라 경로까지 센다).
+        flt = scope_filter(p["scope_path"] if "scope_path" in p.keys() else None)
         if not prop:
             return st.skip("project yaml has no gsc_property "
                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "
@@ -232,6 +249,8 @@ def collect(project: str, *,
 
         end = date.today() - timedelta(days=3)     # GSC delay buffer
         start = end - timedelta(days=days)
+        if flt:
+            print(f"[gsc] 분석 범위: {flt['dimensionFilterGroups'][0]['filters'][0]['expression']}")
         print(f"[gsc] {prop}  window {start} ~ {end} (period={days}d) "
               f"rowLimit={row_limit}")
         # 비용 고지 — dry-run 이 말한 호출 수와 실제 호출 수가 어긋나면 안 된다.
@@ -255,7 +274,7 @@ def collect(project: str, *,
             resp = _query(service, prop, {
                 "startDate": str(start), "endDate": str(end),
                 "dimensions": ["query", "page"], "rowLimit": want,
-                "startRow": len(rows), "dataState": "final"})
+                "startRow": len(rows), "dataState": "final", **flt})
             batch = resp.get("rows", [])
             rows += batch
             calls += 1
@@ -295,7 +314,7 @@ def collect(project: str, *,
         # 호출 1회로 끝나고 비용이 사실상 없다. 그래서 옵션이 아니라 항상 한다.
         drows = _optional("일별 추이", {
             "startDate": str(start), "endDate": str(end),
-            "dimensions": ["date"], "rowLimit": days + 10, "dataState": "final"})
+            "dimensions": ["date"], "rowLimit": days + 10, "dataState": "final", **flt})
         if drows is not None:
             print(f"[gsc] fetched {len(drows)} daily rows")
 
@@ -308,7 +327,7 @@ def collect(project: str, *,
         for dim in dims:
             brows = _optional(f"{dim} 분해", {
                 "startDate": str(start), "endDate": str(end),
-                "dimensions": [dim, "query"], "rowLimit": PAGE, "dataState": "final"})
+                "dimensions": [dim, "query"], "rowLimit": PAGE, "dataState": "final", **flt})
             if brows is None:
                 continue
             bd.append((dim, brows))

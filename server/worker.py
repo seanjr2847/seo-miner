@@ -100,13 +100,16 @@ def _refresh_labs(conn, p, post) -> bool:
     """우리 순위 검색어를 LABS_EVERY_DAYS 마다 받아 labs_ranked·후보 키워드로 올린다."""
     import datetime
     import collect_gap
+    import scoring
     d = conn.execute("SELECT MAX(checked_date) FROM labs_ranked WHERE project_id=?",
                      (p["id"],)).fetchone()[0]
     today = datetime.date.today()
     if d and (today - datetime.date.fromisoformat(d)).days < LABS_EVERY_DAYS:
         return False
     locale = db.project_locale(p)
-    rows, cost = collect_gap.fetch_own_ranked(post, p["domain"], locale, LABS_LIMIT)
+    rows, cost = collect_gap.fetch_own_ranked(
+        post, scoring.host_of(p["domain"]), locale, LABS_LIMIT,
+        scope=p["scope_path"] if "scope_path" in p.keys() else None)
     db.write_labs_ranked(conn, p["id"], today.isoformat(), rows)
     db.add_keyword_candidates(conn, p["id"], [(r["keyword"], locale, "labs_ranked") for r in rows])
     collect_gap._backfill_volumes(conn, p["id"], [(r["keyword"], r.get("volume")) for r in rows])

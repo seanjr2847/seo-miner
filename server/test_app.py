@@ -418,6 +418,25 @@ def demo() -> None:
             r = c.post("/api/settings", json={"project": "new2", "type": "commerce"})
             assert r.status_code == 200 and r.json()["type"] == "commerce", r.text
             assert c.get("/api/settings?project=new2").json()["type"] == "commerce", "종류가 안 바뀌었다"
+            # 분석 범위 경로 — 적은 주소의 경로가 범위가 되고(new1: /blog), 설정에서 고친다.
+            assert c.get("/api/settings?project=new1").json()["scope_path"] == "/blog/",                 "적은 주소의 경로가 분석 범위로 안 갔다"
+            got = c.get("/api/settings?project=new2").json()
+            assert got["domain"] == "new2.test" and got["scope_path"] == "", got
+            r = c.post("/api/settings", json={"project": "new2", "scope_path": "kr/ko"})
+            assert r.status_code == 200 and r.json()["scope_path"] == "/kr/ko/", r.text
+            assert c.get("/api/settings?project=new2").json()["scope_path"] == "/kr/ko/", "범위가 안 저장됐다"
+            r = c.post("/api/settings", json={"project": "new2", "scope_path": "https://www.new2.test/jp/ja"})
+            assert r.json()["scope_path"] == "/jp/ja/", r.text
+            assert c.post("/api/settings", json={"project": "new2", "scope_path": "https://other.test/kr/"}
+                          ).status_code == 400, "남의 도메인 주소가 범위로 들어간다"
+            assert c.post("/api/settings", json={"project": "new2", "scope_path": "/a b/"}
+                          ).status_code == 400, "알아볼 수 없는 경로가 저장된다"
+            r = c.post("/api/settings", json={"project": "new2", "scope_path": ""})
+            assert r.json()["scope_path"] == "" and                 c.get("/api/settings?project=new2").json()["scope_path"] == "", "범위를 못 비운다"
+            # 온보딩이 범위를 따로 보내면 그 칸이 주소의 경로를 이긴다(화면이 되묻고 고친 값)
+            r = c.post("/api/sites", json={"url": "https://new4.test/x/y", "scope": "/kr/ko/"})
+            assert r.status_code == 200, r.text
+            assert c.get("/api/settings?project=new4").json()["scope_path"] == "/kr/ko/"
 
             # 사이트 삭제 — 이름을 그대로 다시 적어야 하고, 도는 중이면 거절하고, 지우면 서버 행과
             # 그 사람 brain 의 데이터가 같이 사라진다(순위 같은 자식 표까지).

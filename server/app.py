@@ -54,6 +54,7 @@ import pages
 import remote      # graft — 로컬 플러그인이 올린 측정치를 테넌트 brain 에 더한다
 import serp_adapter   # 언어-지역 목록 정본 — 등록·설정 화면이 이걸 그린다
 import run_all
+import scoring    # 분석 범위 경로의 정규화(scope_of·path_of) 정본
 import scheduler
 import settings
 import stage
@@ -621,9 +622,12 @@ def api_start_peek(body: dict = Depends(_body), uid: int = Depends(_require_uid)
     잴 수 있다. 화면이 그 사실을 말하고 씨앗을 직접 적게 한다.
     """
     url, domain = _site_url(body.get("url"))
-    page = collect_page.fetch(url, timeout=8)
+    # 경로까지 적었으면(gucci.com/kr/ko/) 그 경로가 분석 범위다 — 화면이 되물어 보이고,
+    # 씨앗 초안도 그 경로의 첫 화면에서 뽑는다(나라별 첫 화면은 말이 다르다).
+    scope = scoring.scope_of(scoring.path_of(str(body.get("url") or "")))
+    page = collect_page.fetch(url + scope.lstrip("/"), timeout=8)
     ok = not page.get("error")
-    return {"url": url, "domain": domain, "reachable": ok,
+    return {"url": url, "domain": domain, "scope": scope, "reachable": ok,
             "title": (page.get("title") or "")[:200] if ok else "",
             "seeds": _seed_hints(page, domain) if ok else []}
 
@@ -661,9 +665,12 @@ def api_sites(request: Request, body: dict = Depends(_body),
         except HTTPException:
             raise HTTPException(status_code=400, detail=f"경쟁사 주소를 알아볼 수 없습니다: {c}")
 
+    # 분석 범위 경로 — 화면이 보낸 칸이 있으면 그것, 없으면 적은 주소의 경로.
+    scope = scoring.scope_of(body["scope"] if "scope" in body
+                             else scoring.path_of(str(body.get("url") or "")))
     name = _slug(host, {r["project"] for r in rows})
     f = {"name": name, "type": body.get("type") or "saas", "domain": host,
-         "gsc_property": prop, "locale": locale,
+         "scope_path": scope, "gsc_property": prop, "locale": locale,
          "brand_aliases": host.split(".")[0], "tools": ""}
     # 로컬에서 넘어온 설정은 그 사이트 하나에만 얹는다 — 한 번 쓰면 세션에서 뺀다
     # (다음에 다른 사이트를 등록할 때 남의 씨앗이 섞이면 안 된다). 화면이 씨앗·경쟁사를
@@ -1132,10 +1139,11 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
     try:
         pr = db.get_project(c, project)
         ga4, locale, ptype = pr["ga4_property"] or "", db.project_locale(pr), pr["type"] or ""
+        domain, scope = pr["domain"] or "", scoring.scope_of(pr["scope_path"])
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale, ptype = "", "", ""
+        ga4, locale, ptype, domain, scope = "", "", "", "", ""
     # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
     return {"run_every_hours": store.every_hours(tn.conn, uid, project),
             "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -1143,6 +1151,8 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             # 언어-지역 — 값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다
             "locale": locale,
             "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
+            # 분석 범위 경로 — 도메인은 바꿀 수 없고(보여만 준다) 경로만 고친다
+            "domain": domain, "scope_path": scope,
             # 사이트 종류 — 값과 고를 수 있는 목록(정본 dashboard.PROJECT_TYPES)을 같이 준다.
             # 등록 뒤에도 바꿀 수 있어야 한다: 종류가 점수 계수를 정하는데, 등록할 때
             # 맞는 종류가 없어서 saas 로 넣은 사이트(gucci)가 그 계수에 묶여 있었다.
@@ -1170,6 +1180,17 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
                                 detail="고를 수 없는 언어-지역입니다. 새로고침한 뒤 다시 고르세요.")
         db.set_locale(c, db.get_project(c, project)["id"], loc)
         return {"ok": True, "locale": loc}
+    if "scope_path" in body:  # 분석 범위 경로만 바꾸는 호출 — 다음 런부터 그 경로 아래만 잰다
+        raw = str(body.get("scope_path") or "").strip()
+        if len(raw) > 200 or re.search(r"[\s<>\"']", raw):
+            raise HTTPException(status_code=400,
+                                detail="경로를 알아볼 수 없습니다. 예: /kr/ko/ (비우면 사이트 전체)")
+        pr = db.get_project(c, project)
+        if re.match(r"^[a-z]+://", raw, re.I) and not scoring.owns(raw, pr["domain"]):
+            raise HTTPException(status_code=400,
+                                detail=f"{pr['domain']} 의 주소가 아닙니다. 경로만 적어도 됩니다. 예: /kr/ko/")
+        sp = db.set_scope_path(c, pr["id"], raw)
+        return {"ok": True, "scope_path": sp}
     if "type" in body:        # 사이트 종류만 바꾸는 호출 — 점수 계수(scoring.WEIGHTS)가 바뀐다
         ptype = str(body.get("type") or "")
         if ptype not in dashboard.PROJECT_TYPE_IDS:

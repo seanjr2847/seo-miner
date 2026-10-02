@@ -383,13 +383,17 @@ def create_project(f: dict, *, auto_gsc: bool = True) -> dict:
     domain = str(f.get("domain", "")).strip()
     if not domain:
         return {"ok": False, "error": "도메인을 입력해 주세요 (예: example.com)"}
+    # 'gucci.com/kr/ko/' 처럼 경로까지 적었으면 경로는 분석 범위로 나눠 담는다 —
+    # domain 칸은 호스트만 받는 곳(경쟁사 발견·백링크·서치콘솔 속성 짓기)이 그대로 쓴다.
+    scope = scoring.scope_of(f.get("scope_path") or scoring.path_of(domain))
+    domain = scoring.host_of(domain)
     def items(key: str) -> list[str]:    # 줄바꿈·쉼표 아무렇게나 적어도 받는다
         return [s.strip() for s in re.split(r"[,\n]", str(f.get(key, ""))) if s.strip()]
 
     # 종류별 온보딩 프리셋(_presets.yaml)은 여기서 안 베낀다 — 그건 리포에 있는 한 벌이고
     # 채팅(/capture add)이 종류를 보고 읽는다. 사이트마다 사본을 떠 두면 리포 쪽을 고쳐도
     # 이미 등록된 사이트는 옛 프리셋을 계속 들고 있다.
-    cfg = {"name": name, "type": f["type"], "domain": domain,
+    cfg = {"name": name, "type": f["type"], "domain": domain, "scope_path": scope,
            "locale": str(f.get("locale") or db.DEFAULT_LOCALE).strip(),
            "gsc_property": (str(f.get("gsc_property", "")).strip()
                             or (f"sc-domain:{domain}" if auto_gsc else "")),
@@ -2393,10 +2397,15 @@ LOCAL_ROUTES = {
     # 프록시하지 않는다 — play 만 호스팅에서 받아 오고 PR 은 이 PC 에서 만든다.
     ("POST", "/api/plays/apply"):
         lambda project, query, body: _by_ok(play_pr.apply(body, **_PLAY_SITE)),
+    # check=1 이면 띄우지 않고 점검만 — [PR 만들기]를 누르면 뜨는 확인 창이 먼저 묻는다.
     ("GET", "/api/plays/apply"):
-        lambda project, query, body: _by_ok(play_pr.status(
-            project, _int_or_none(query.get("id")),
-            record=_PLAY_SITE["record"], mark=_PLAY_SITE["mark"])),
+        lambda project, query, body: (
+            _by_ok(play_pr.preflight(project, _int_or_none(query.get("id")) or 0,
+                                     load=_PLAY_SITE["load"]))
+            if query.get("check") else
+            _by_ok(play_pr.status(
+                project, _int_or_none(query.get("id")),
+                record=_PLAY_SITE["record"], mark=_PLAY_SITE["mark"]))),
 }
 LOCAL_ONLY_GET = {path for method, path in LOCAL_ROUTES if method == "GET"}
 LOCAL_ONLY_POST = {path for method, path in LOCAL_ROUTES if method == "POST"}

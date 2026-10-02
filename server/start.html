@@ -227,6 +227,7 @@ code { font:500 .95em var(--mono); }
       <label class="field"><span>사이트 주소</span>
         <input type="text" id="url" inputmode="url" autocomplete="url" spellcheck="false"
                placeholder="example.com" autofocus>
+        <p class="hint">나라·언어별 경로가 따로 있으면 경로까지 적으세요. 예: brand.com/kr/ko/ — 그 아래만 봅니다.</p>
       </label>
       <div class="row">
         <label class="field"><span>사이트 종류</span><select id="type"></select></label>
@@ -370,7 +371,7 @@ const LEVELS = {siteOwner:"소유자", siteFullUser:"전체 권한", siteRestric
 // 서치콘솔 연결은 구글에 다녀온다 — 적은 칸을 잃지 않게 그 사이만 들고 있는다.
 const DRAFT = "sm-start";
 
-const S = { url: "", domain: "", type: "", locale: "", seeds: [], comp: [], property: "",
+const S = { url: "", domain: "", scope: "", type: "", locale: "", seeds: [], comp: [], property: "",
             reachable: true, title: "" };
 let CUR = 1;
 
@@ -380,6 +381,12 @@ const lines = v => [...new Set(String(v || "").split(/[\n,]/).map(s => s.trim())
 // 입력 도중의 주소를 도메인 모양으로만 다듬는다(등록 때는 서버가 다시 판정한다).
 const looseDom = v => String(v || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "")
   .split(/[\/?#\s]/)[0].toLowerCase();
+// 같은 입력의 경로 쪽 — 'brand.com/kr/ko' → '/kr/ko/'. 분석 범위다(정본 판정은 서버 scoring.scope_of).
+const looseScope = v => {
+  const p = String(v || "").trim().replace(/^https?:\/\//i, "").split(/[?#\s]/)[0].split("/").slice(1)
+    .filter(Boolean).join("/").toLowerCase();
+  return p ? "/" + p + "/" : "";
+};
 // 이니셜 아바타 — 첫 글자와 두 색조 중 하나.
 const avatar = (s, cls) => {
   const t = String(s || "").replace(/^sc-domain:/, "").replace(/^https?:\/\/(www\.)?/i, "");
@@ -414,11 +421,12 @@ if (CARRY.gsc_property) S.property = CARRY.gsc_property;
 function renderPv(announce) {
   $("pvStep").textContent = CUR + " / 4";
   const dom = CUR === 1 ? looseDom($("url").value) : S.domain;
+  const scope = CUR === 1 ? looseScope($("url").value) : S.scope;
   const seeds = CUR === 2 ? lines($("seeds").value) : S.seeds;
   const comp = CUR === 2 ? lines($("comp").value) : S.comp;
   const opt = id => { const o = $(id).selectedOptions[0]; return o ? o.text : ""; };
   $("pvId").innerHTML = dom
-    ? avatar(dom, "lg") + '<span class="pv-dom">' + esc(dom) + '</span>'
+    ? avatar(dom, "lg") + '<span class="pv-dom">' + esc(dom + (dom ? scope : "")) + '</span>'
     : avatar("", "lg none") + '<span class="pv-dom empty-dom">사이트 주소를 적으면 여기에 나옵니다</span>';
   let pills = '<span class="pl">' + esc(opt("type")) + '</span><span class="pl">' + esc(opt("locale")) + '</span>';
   if (S.property) pills += '<span class="pl ok">서치콘솔 연결</span>';
@@ -489,7 +497,7 @@ $("f1").addEventListener("submit", async ev => {
     }
     // 주소가 바뀌었으면 앞 사이트의 씨앗·속성을 끌고 가지 않는다.
     if (S.domain && S.domain !== d.domain) { S.seeds = []; S.property = ""; }
-    Object.assign(S, { url: d.url, domain: d.domain, reachable: d.reachable, title: d.title,
+    Object.assign(S, { url: d.url, domain: d.domain, scope: d.scope || "", reachable: d.reachable, title: d.title,
                        type: $("type").value, locale: $("locale").value });
     if (S.property && hostOf(S.property) !== d.domain) S.property = "";
     if (!S.seeds.length) S.seeds = d.seeds || [];
@@ -548,11 +556,15 @@ async function gscProps() {
 function fill2() {
   $("seeds").value = S.seeds.join("\n");
   $("comp").value = S.comp.join("\n");
-  $("sub2").innerHTML = !S.reachable
+  // 경로까지 적었으면 범위를 한 번 되짚어 준다 — 상품 주소를 붙여 넣어 사이트 전체가 아닌
+  // 한 페이지 아래로 좁혀지는 실수가 여기서 보인다(설정에서 언제든 바꾼다).
+  $("sub2").innerHTML = (S.scope
+    ? "<b>" + esc(S.domain + S.scope) + "</b> 아래만 봅니다. 사이트 전체를 보려면 1단계 주소에서 경로를 지우세요. "
+    : "") + (!S.reachable
     ? "홈페이지를 열지 못했습니다. 순위 · AI 노출은 그래도 잴 수 있습니다. 키워드를 직접 적어 주세요."
     : S.seeds.length
       ? "홈페이지 제목에서 " + S.seeds.length + "개를 뽑아 뒀습니다. 브랜드 이름뿐이면 지우고, 고객이 칠 말로 고치거나 더 적으세요."
-      : "고객이 검색창에 칠 말을 적어 주세요.";
+      : "고객이 검색창에 칠 말을 적어 주세요.");
   count();
 }
 function count() {
@@ -635,7 +647,7 @@ $("go").addEventListener("click", async () => {
   const btn = $("go");
   btn.disabled = true; say("msg3", "시작하는 중입니다");
   try {
-    const d = await post("/api/sites", { url: S.url, type: S.type, locale: S.locale,
+    const d = await post("/api/sites", { url: S.url, scope: S.scope, type: S.type, locale: S.locale,
                                          seeds: S.seeds, competitors: S.comp, property: S.property });
     try { sessionStorage.removeItem(DRAFT); } catch (e) {}
     say("msg3", "");
@@ -655,7 +667,7 @@ function setProgress(p) {
   $("pct4").innerHTML = p + '<small>%</small>';
 }
 function begin4(project) {
-  $("dom4").textContent = S.domain;
+  $("dom4").textContent = S.domain + (S.scope || "");
   $("open4").href = "/d#" + encodeURIComponent(project);
   show(4);
   $("r4").className = "here";
@@ -694,7 +706,7 @@ function begin4(project) {
   try { d = JSON.parse(sessionStorage.getItem(DRAFT) || "null"); sessionStorage.removeItem(DRAFT); } catch (e) {}
   if (!d || !d.domain) return;
   Object.assign(S, d);
-  $("url").value = S.domain;
+  $("url").value = S.domain + (S.scope || "");
   $("type").value = S.type || $("type").value;
   $("locale").value = S.locale || $("locale").value;
   fill2();

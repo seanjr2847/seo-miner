@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT UNIQUE NOT NULL,
   type TEXT NOT NULL DEFAULT 'saas',          -- 값의 정본은 dashboard.PROJECT_TYPES
   domain TEXT NOT NULL,
+  scope_path TEXT,                            -- 분석 범위 경로('/kr/ko/'). NULL = 도메인 전체. 판정은 scoring.in_scope
   locale TEXT DEFAULT 'ko-KR',
   gsc_property TEXT,                          -- e.g. sc-domain:example.com
   ga4_property TEXT,                          -- GA4 속성 숫자 ID만 (예: '123456789') — 'properties/' 접두는 API 부를 때 collect_ga4 가 붙인다
@@ -642,6 +643,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     proj_cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
     if "ga4_property" not in proj_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN ga4_property TEXT")
+        conn.commit()
+    # 한 도메인 아래 나라별 경로가 갈린 사이트(gucci.com/kr/ko/)를 그 경로만 보게 한다.
+    if "scope_path" not in proj_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN scope_path TEXT")
         conn.commit()
 
     # 전체 유기 검색 필터·참여율/체류/깊이 지표가 새로 생겼다(collect_ga4.py 참조).
@@ -1492,7 +1497,7 @@ RANK_KEYWORDS_CAP = 500
 LEGACY_LIMITS = {"max_keywords": 100, "max_ai_prompts": 30}
 # project_cfg 가 얹어 주는 projects 행의 값 — 부르는 쪽은 예전 yaml dict 과 같은 모양을
 # 받는다(cfg["name"]·cfg.get("domain") … 을 그대로 쓴다).
-_CFG_ROW_KEYS = ("name", "type", "domain", "locale", "gsc_property", "ga4_property")
+_CFG_ROW_KEYS = ("name", "type", "domain", "scope_path", "locale", "gsc_property", "ga4_property")
 
 
 def project_settings(conn: sqlite3.Connection, project_id: int) -> dict:
@@ -1582,6 +1587,8 @@ def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
          cfg.get("gsc_property"), cfg.get("ga4_property")),
     )
     pid = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()[0]
+    if "scope_path" in cfg:       # 안 보낸 곳(옛 등록 경로)이 범위를 지우지 않게 — 보낸 때만 쓴다
+        set_scope_path(conn, pid, cfg["scope_path"])
     set_project_settings(conn, pid, {k: cfg[k] for k in SETTING_KEYS if k in cfg})
     if "seed_keywords" in cfg:
         set_seed_keywords(conn, pid, cfg.get("seed_keywords") or [])
@@ -1589,6 +1596,22 @@ def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
         set_manual_competitors(conn, pid, cfg.get("competitors_manual") or [])
     conn.commit()
     return pid
+
+
+def set_scope_path(conn: sqlite3.Connection, project_id: int, path) -> str:
+    """분석 범위 경로를 바꾼다. 정규화한 값을 돌려준다('' = 도메인 전체).
+    이미 잰 행은 지우지 않는다 — 범위 밖 URL 은 읽는 쪽(scoring.in_scope)이 거르고,
+    순위는 다음 런에 새 범위로 다시 잰다."""
+    import scoring               # 늦은 import: 범위 정규화의 정본
+    sp = scoring.scope_of(path)
+    old = conn.execute("SELECT scope_path FROM projects WHERE id=?", (project_id,)).fetchone()
+    conn.execute("UPDATE projects SET scope_path=? WHERE id=?", (sp or None, project_id))
+    if old is not None and scoring.scope_of(old[0]) != sp:
+        # 우리 순위 검색어(Labs)는 며칠에 한 번만 다시 받는다 — 옛 범위로 받은 것을 두면
+        # 범위를 바꾼 뒤에도 그 주기 동안 다른 나라 경로의 검색어가 그대로 쓰인다.
+        conn.execute("DELETE FROM labs_ranked WHERE project_id=?", (project_id,))
+    conn.commit()
+    return sp
 
 
 def set_project_type(conn: sqlite3.Connection, project_id: int, ptype: str) -> None:

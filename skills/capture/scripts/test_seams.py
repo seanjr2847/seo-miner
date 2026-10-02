@@ -2822,6 +2822,7 @@ def test_seam_72_run_note_keys_have_labels():
     if ctx is None:
         return
     import collect_ga4
+    import scoring
     keys = set(collect_ga4.BREAKDOWN_DIMS)
     for p in sorted(SCRIPTS.glob("*.py")):
         if p.name.startswith("test_"):
@@ -3502,7 +3503,14 @@ def test_seam_110_play_pr_is_local_only():
     # 셸 — 로컬 기본 playBtn 이 그 경로를 부르고, 조회는 SM.host.playSync 로만 간다.
     m = re.search(r"\n  playBtn\(p\) \{(.*?)\n  \},", shell, re.S)
     assert m, "셸의 SM.host.playBtn(p) 을 못 찾았다"
-    assert "prApply(" in m.group(1), "셸의 playBtn 이 PR 만들기를 안 부른다"
+    # 버튼은 확인 창(prAsk)만 연다 — prApply 를 바로 부르면 저장소를 안 보여 주고 돌아서
+    # 막힌 채 12초 뒤 '지난번 실패'만 남는다. prApply 는 창의 [시작]에서만 불린다.
+    assert "prAsk(" in m.group(1), "셸의 playBtn 이 확인 창(prAsk)을 안 연다"
+    assert "prApply(" not in m.group(1), "셸의 playBtn 이 확인 없이 PR 을 바로 돌린다"
+    ask = re.search(r"async function prAsk\(.*?\n\}\n", shell, re.S)
+    assert ask, "셸의 prAsk 를 못 찾았다"
+    assert "check=1" in ask.group(0), "확인 창이 서버 점검(check=1)을 안 부른다"
+    assert "prApply(" in ask.group(0), "확인 창에 [시작](prApply)이 없다"
     assert '"/api/plays/apply"' in shell, "셸이 /api/plays/apply 를 안 부른다"
     assert "playSync() { prSync(); }" in shell, "셸의 SM.host.playSync 가 상태 조회로 안 간다"
     bare = [ln.strip() for ln in shell.splitlines()
@@ -3575,6 +3583,47 @@ def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
         f"개요의 '점수 {dashboard.TRIAGE_HOT}점 이상'과 심사 색점 문턱({m.group(1)})이 다르다"
     assert "(OV_D || {}).triage_pending" in js, "개요 빈 상태가 서버의 심사 대기 수를 안 읽는다"
     assert "SM.show('triage')" in js, "개요 빈 상태가 심사 화면으로 안 보낸다"
+
+
+def test_seam_122_scope_path_is_one_rule_at_every_api():
+    """122) 분석 범위 경로(gucci.com/kr/ko/)는 한 규칙이다 — 파이썬 판정(scoring.in_scope)과
+    API 에 거는 필터(서치콘솔 page 정규식·GA4 landingPage 정규식·Labs relative_url like)가
+    같은 주소를 같은 쪽으로 가른다. 하나만 '/kr/kokr' 를 안으로 치면 그 단계만 남의 경로를
+    센다 — 파일 하나만 보면 각자 멀쩡하다.
+
+    화면 쪽: 설정이 보내는 scope_path, 온보딩이 보내는 scope 를 서버가 읽는다.
+    """
+    import collect_ga4
+    import scoring
+    import collect_gap
+    import collect_gsc
+    sc = "/kr/ko/"
+    cases = ["https://www.g.com/kr/ko/pr/a", "https://www.g.com/kr/ko", "https://www.g.com/kr/ko/?x=1",
+             "https://www.g.com/us/en/", "https://www.g.com/kr/kokr/a", "https://www.g.com/xx/kr/ko/"]
+    want = [scoring.in_scope(u, sc) for u in cases]
+    assert want == [True, True, True, False, False, False], want
+    gsc = collect_gsc.scope_filter(sc)["dimensionFilterGroups"][0]["filters"][0]
+    assert gsc["dimension"] == "page" and gsc["operator"] == "includingRegex", gsc
+    assert [bool(re.search(gsc["expression"], u)) for u in cases] == want, "서치콘솔 필터가 in_scope 와 다르다"
+    ga = collect_ga4.scoped(None, sc)["filter"]["stringFilter"]["value"]
+    paths = [scoring.path_of(u) + ("?x=1" if "?x=1" in u else "") for u in cases]
+    assert [bool(re.search(ga, p, re.I)) for p in paths] == want, "GA4 필터가 in_scope 와 다르다"
+    f = collect_gap.scope_body(sc)["filters"][0]
+    assert f[0] == "ranked_serp_element.serp_item.relative_url" and f[1] == "like", f
+    like = re.compile("^" + re.escape(f[2]).replace("%", ".*") + "$")
+    # like 는 끝 '/' 없는 범위 자체('/kr/ko')를 못 잡는다 — 받은 뒤 in_scope 로 한 번 더 거른다
+    # (fetch_own_ranked). 나머지는 같아야 한다.
+    assert [bool(like.match(scoring.path_of(u))) for u in cases] == [True, False, True, False, False, False]
+    assert "scoring.in_scope" in inspect_src(collect_gap.fetch_own_ranked),         "Labs 응답을 범위로 한 번 더 거르지 않는다 — 필터가 무시되면 다른 나라 경로가 샌다"
+    for mod in (collect_gsc.scope_filter, collect_gap.scope_body):
+        assert not (collect_ga4.scoped(None, "") or mod("")), "범위가 없는데 필터가 붙는다"
+
+    app_src = (ROOT / "server" / "app.py").read_text("utf-8")
+    dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
+    start = (ROOT / "server" / "start.html").read_text("utf-8")
+    assert "scope_path: inp.value" in dash and '"scope_path" in body' in app_src,         "설정 화면이 보내는 scope_path 를 서버가 안 읽는다"
+    assert "scope: S.scope" in start and 'body["scope"]' in app_src,         "온보딩이 보내는 scope 를 서버가 안 읽는다"
+    assert '"scope": scope' in app_src and "d.scope" in start, "peek 이 돌려준 범위를 온보딩이 안 받는다"
 
 
 def inspect_src(fn) -> str:

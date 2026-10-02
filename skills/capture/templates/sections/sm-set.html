@@ -9,7 +9,7 @@
      섹션은 상자가 아니다(display:contents) — 안의 카드가 화면 격자에 곧바로 선다:
      #set-cycle(주기·언어-지역·종류 한 장), GA4 한 장, 명령어 한 장. 카드 제목은 h2,
      한 카드 안의 묶음 제목은 h3 다. 셸·애드온이 집는 이름(.opts .body .grp .repo .ga4
-     .lang .ptype .cli)은 그대로다 — 자리로 집지 않고 이름으로 집는다.
+     .lang .scope .ptype .cli)은 그대로다 — 자리로 집지 않고 이름으로 집는다.
      첫 .opts 는 주기 칩 자리다(setRender 가 그 하나를 채운다) — 그 앞에 다른 .opts 를 두지
      않는다. 부제는 한 문장이다 — 나머지 설명은 제목 옆 ⓘ 툴팁으로 접는다(copy-guide 5장). -->
 <section id="sm-set">
@@ -32,6 +32,13 @@
         aria-label="어느 언어·나라의 검색 결과에서 잴지입니다. 자동완성·AI 질문도 이 언어로 갑니다. 이미 잰 값은 그대로고 다음 측정부터 바뀝니다."
         >i</span></h3>
       <p class="sub">고르면 그 자리에서 저장되고 다음 측정부터 적용됩니다.</p>
+      <div class="body"></div>
+    </div>
+    <div class="repo scope grp"><h3>분석 범위<span class="hint" tabindex="0"
+        data-tip="한 도메인 아래 나라·언어별 경로가 나뉜 사이트라면 그 경로만 봅니다. 예: /kr/ko/ 를 적으면 그 아래 페이지만 우리 순위·검색 실적으로 셉니다. 비우면 사이트 전체입니다."
+        aria-label="한 도메인 아래 나라·언어별 경로가 나뉜 사이트라면 그 경로만 봅니다. 예: /kr/ko/ 를 적으면 그 아래 페이지만 우리 순위·검색 실적으로 셉니다. 비우면 사이트 전체입니다."
+        >i</span></h3>
+      <p class="sub">비우면 사이트 전체를 봅니다. 저장하면 다음 측정부터 적용됩니다.</p>
       <div class="body"></div>
     </div>
     <div class="repo ptype grp"><h3>사이트 종류<span class="hint" tabindex="0"

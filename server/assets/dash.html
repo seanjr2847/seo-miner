@@ -304,6 +304,16 @@
   #sm-set .cli .warn{color:var(--warn)}
   #sm-set .del input{font:400 var(--fs-2)/1.4 var(--mono);padding:8px 10px;border:1px solid var(--rule);
     border-radius:var(--r-in);background:var(--sunk);color:var(--ink);min-width:0;width:220px;max-width:100%}
+  /* 분석 범위 — 도메인(고정) 뒤에 경로 입력이 붙은 한 칸. 둘 다 URL 조각이라 등폭이다. */
+  #sm-set .scope-in{display:flex;flex:1 1 200px;align-items:center;min-width:0;border:1px solid var(--rule);
+    border-radius:var(--r-in);background:var(--sunk);overflow:hidden}
+  #sm-set .scope-in .dom{font:400 var(--fs-2)/1.4 var(--mono);color:var(--sub);padding:8px 0 8px 10px;
+    white-space:nowrap}
+  #sm-set .scope-in input{font:400 var(--fs-2)/1.4 var(--mono);padding:8px 10px 8px 1px;border:0;
+    background:transparent;color:var(--ink);min-width:0;flex:1}
+  #sm-set .scope-in:focus-within{border-color:var(--accent)}
+  /* 입력과 [저장]이 한 줄, 상태 문장은 그 아래 한 줄 — 좁은 카드에서 버튼 옆으로 접히지 않게 */
+  #sm-set .scope .msg{flex-basis:100%;margin-left:0}
   #sm-set .del .danger:not(:disabled){color:var(--warn);border-color:var(--warn)}
   #sm-set .del .warn{color:var(--warn)}
 
@@ -952,8 +962,15 @@
       if (t) return setSave(Number(t.dataset.h));
       if (ev.target.closest && ev.target.closest("[data-ga4-pick]")) return ga4Pick();
       if (ev.target.closest && ev.target.closest("[data-ga4-save]")) return ga4Save();
+      if (ev.target.closest && ev.target.closest("[data-scope-save]")) return scopeSave();
       if (ev.target.closest && ev.target.closest("[data-cli-new]")) return cliNew();
       if (ev.target.closest && ev.target.closest("[data-del-go]")) return delGo();
+    });
+    sec.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && ev.target.matches && ev.target.matches("[data-scope]")) {
+        ev.preventDefault();
+        scopeSave();
+      }
     });
     sec.addEventListener("input", function (ev) {
       if (ev.target.matches && ev.target.matches("[data-del-name]")) {
@@ -986,6 +1003,7 @@
         '" aria-pressed="' + on + '">' + esc(p.label) + "</button>";
     }).join("") + '<span class="msg" role="status">' + esc(msg || "") + "</span>";
     langRender();
+    scopeRender();
     typeRender();
     delRender();       // 사이트 이름은 설정이 온 뒤에야 안다(처음 그릴 때는 비어 있다)
     ga4Render();
@@ -1022,6 +1040,50 @@
       say("저장했습니다", "ok");
     } catch (e) {
       langRender("저장하지 못했습니다. " + reason(e) + " 다시 고르면 재시도합니다.");
+    }
+  }
+
+  // 분석 범위 경로 — 도메인 아래 나라별 경로(gucci.com/kr/ko/)만 볼 때. 정규화는
+  // 서버(scoring.scope_of)가 한다 — 화면은 받은 값을 그대로 다시 그린다.
+  function scopeRender(msg) {
+    var sec = document.getElementById("sm-set");
+    if (!sec || !SET_H) return;
+    var body = sec.querySelector(".scope .body");
+    if (!body) return;
+    if (!SET_H.domain) {                    // 등록 직후 Brain 이 아직 없다
+      body.innerHTML = '<p class="none">첫 측정이 끝나면 여기서 바꿀 수 있습니다.</p>';
+      return;
+    }
+    body.innerHTML = '<div class="opts"><label class="scope-in"><span class="dom">' +
+      esc(SET_H.domain) + '</span><input data-scope type="text" inputmode="url" ' +
+      'spellcheck="false" autocomplete="off" placeholder="/kr/ko/" aria-label="분석 범위 경로" value="' +
+      esc(SET_H.scope_path || "") + '"></label>' +
+      '<button class="go sm sec" data-scope-save>저장</button>' +
+      '<span class="msg" role="status">' + esc(msg || (SET_H.scope_path
+        ? "이 경로 아래만 봅니다."
+        : "사이트 전체를 봅니다.")) + "</span></div>";
+  }
+
+  async function scopeSave() {
+    var sec = document.getElementById("sm-set");
+    var inp = sec && sec.querySelector("[data-scope]");
+    if (!inp) return;
+    try {
+      var r = await fetch("/api/settings", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project: proj(), scope_path: inp.value})});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "");
+      SET_H.scope_path = d.scope_path;
+      scopeRender(d.scope_path
+        ? "저장했습니다. 다음 측정부터 이 경로 아래만 봅니다."
+        : "저장했습니다. 다음 측정부터 사이트 전체를 봅니다.");
+      say("저장했습니다", "ok");
+    } catch (e) {
+      var keep = inp.value;
+      scopeRender("저장하지 못했습니다. " + reason(e));
+      var again = sec.querySelector("[data-scope]");
+      if (again) again.value = keep;          // 적은 것을 지우지 않는다
     }
   }
 

@@ -118,7 +118,17 @@ code, r = post("/api/setup/project", {"name": "evil", "type": "saas",
                                       "domain": "evil.com\nname: hacked"})
 assert code == 200, r
 doc = dashboard.db.project_cfg(dashboard.db.connect(), "evil")
-assert doc["name"] == "evil" and "hacked" in doc["domain"], doc
+# 도메인 칸은 호스트만 남긴다(경로는 분석 범위로 나뉜다) — 끼워 넣은 줄은 키가 되지 않고
+# 값 쪽에서 잘려 나간다.
+assert doc["name"] == "evil" and "hacked" not in doc and doc["domain"].startswith("evil.com"), doc
+
+# 경로까지 적은 주소 — 호스트는 domain, 경로는 분석 범위(scope_path)로 나뉜다
+code, r = post("/api/setup/project", {"name": "gkr", "type": "saas",
+                                      "domain": "https://www.gucci.com/kr/ko/"})
+assert code == 200, r
+doc = dashboard.db.project_cfg(dashboard.db.connect(), "gkr")
+assert doc["domain"] == "gucci.com" and doc["scope_path"] == "/kr/ko/", doc
+assert doc["gsc_property"] == "sc-domain:gucci.com", doc
 
 code, r = post("/api/setup/project", {"name": "demo", "type": "saas",
                                       "domain": "demo.com"})
@@ -427,6 +437,15 @@ dashboard._PLAY_SITE["load"] = lambda p: {"plays": [
 try:
     code, st = get("/api/plays/apply?project=demo")
     assert code == 200 and st["ready"] and st["jobs"] == {}, st
+    # 누르기 전 점검 — 띄우지 않고 폴더·브랜치·막는 것만 말한다
+    _git_real = play_pr._git
+    play_pr._git = lambda cwd, *a: {"status": " M a.py\n?? b/\n", "branch": "feat/x\n",
+                                    "symbolic-ref": "origin/main\n"}.get(a[0])
+    code, ck = get(f"/api/plays/apply?project=demo&id={_play_id}&check=1")
+    play_pr._git = _git_real
+    assert code == 200 and ck["ready"] and ck["blocked"] and ck["dirty_n"] == 2, ck
+    assert ck["branch"] == "feat/x" and ck["base"] == "main" and ck["off_base"], ck
+    assert ck["new_branch"] == f"seo/play-{_play_id}" and not _watch, "점검이 프로세스를 띄웠다"
     code, r = post("/api/plays/apply", {"project": "demo", "id": _play_id}, token="wrong")
     assert code == 403 and not _watch, "토큰 없이 PR 만들기가 돌았다"
     code, r = post("/api/plays/apply", {"project": "demo", "id": _play_id})

@@ -82,6 +82,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collect_gsc  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
+import scoring  # noqa: E402
 
 # runReport 의 metrics 순서 — 응답 row 의 metricValues 인덱스와 이 순서가 맞아야 한다.
 # 앞 3개(sessions, keyEvents, totalRevenue)는 합산 가능한 카운트류, 뒤 3개는
@@ -101,6 +102,22 @@ ORGANIC_FILTER = {"filter": {"fieldName": "sessionDefaultChannelGroup",
 # 분해 축 키 → GA4 차원 API 이름 (exploration-api-schema/api-schema 로 확인).
 BREAKDOWN_DIMS = {"device": "deviceCategory", "country": "countryId",
                   "newvsreturning": "newVsReturning"}
+
+
+
+def scoped(f, scope):
+    """분석 범위 경로(gucci.com/kr/ko/)를 dimensionFilter 에 AND 로 건다. landingPage 는
+    호스트 없는 경로로 온다. 범위가 없으면 f 를 그대로(None 이면 None) 돌려준다 —
+    범위 없는 사이트의 요청은 한 글자도 안 바뀐다. 규칙은 scoring.in_scope 와 같다
+    (끝 '/' 없는 범위 자체의 주소도 안)."""
+    sc = scoring.scope_of(scope)
+    if not sc:
+        return f
+    pf = {"filter": {"fieldName": "landingPage", "stringFilter": {
+        "matchType": "PARTIAL_REGEXP",
+        "value": "^" + re.escape(sc.rstrip("/")) + r"(/|$|\?)"}}}
+    return {"andGroup": {"expressions": [f, pf]}} if f else pf
+
 
 # AI 유입 부가 조회 — sessionSource(세션을 시작시킨 출처, 보통 참조 호스트)×landingPage.
 # 두 지표 다 합산 가능한 카운트류라 _merge_landing 의 n_additive 는 전부다.
@@ -297,6 +314,7 @@ def collect(project: str, *,
         s = st.settings(ap, argparse.Namespace(days=days))
         days = s["ga4_days"]
         prop_id = p["ga4_property"]
+        scope = p["scope_path"] if "scope_path" in p.keys() else None
         if not prop_id:
             return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다 — "
                            "project yaml 에 ga4_property: '숫자 ID' 를 넣고 "
@@ -326,7 +344,7 @@ def collect(project: str, *,
                 "dateRanges": [date_range],
                 "dimensions": [{"name": "landingPage"}],
                 "metrics": [{"name": m} for m in METRICS],
-                "dimensionFilter": ORGANIC_FILTER,
+                "dimensionFilter": scoped(ORGANIC_FILTER, scope),
                 "limit": row_limit})
         except HttpError as e:
             if getattr(e.resp, "status", None) == 403:
@@ -365,7 +383,8 @@ def collect(project: str, *,
 
         all_rows = _optional("전체 채널 세션", {
             "dateRanges": [date_range], "dimensions": [{"name": "landingPage"}],
-            "metrics": [{"name": "sessions"}], "limit": row_limit})
+            "metrics": [{"name": "sessions"}], "limit": row_limit,
+            **({"dimensionFilter": scoped(None, scope)} if scope else {})})
         sessions_all = {}
         if all_rows is not None:
             m = _merge_landing(all_rows, [_landing_path], ("sessions",), 1)
@@ -378,7 +397,7 @@ def collect(project: str, *,
                 "dateRanges": [date_range],
                 "dimensions": [{"name": ga4_dim}, {"name": "landingPage"}],
                 "metrics": [{"name": m} for m in BREAKDOWN_METRICS],
-                "dimensionFilter": ORGANIC_FILTER, "limit": BREAKDOWN_LIMIT})
+                "dimensionFilter": scoped(ORGANIC_FILTER, scope), "limit": BREAKDOWN_LIMIT})
             if brows is None:
                 continue
             norm = {"device": _device_code, "country": _country_code,
@@ -397,7 +416,7 @@ def collect(project: str, *,
             "dateRanges": [date_range],
             "dimensions": [{"name": "sessionSource"}, {"name": "landingPage"}],
             "metrics": [{"name": m} for m in AI_REFERRAL_METRICS],
-            "dimensionFilter": _ai_filter(hosts), "limit": AI_REFERRAL_LIMIT})
+            "dimensionFilter": scoped(_ai_filter(hosts), scope), "limit": AI_REFERRAL_LIMIT})
         ai_merged = None
         if ai_raw is not None:
             kept = [r for r in ai_raw if ai_host(r["dimensionValues"][0]["value"], hosts)]
@@ -485,6 +504,13 @@ def _selfcheck() -> None:
     f = _ai_filter(("a.com", "b.ai"))["orGroup"]["expressions"]
     assert [e["filter"]["stringFilter"]["value"] for e in f] == ["a.com", "b.ai"], f
     assert {e["filter"]["fieldName"] for e in f} == {"sessionSource"}, f
+    # 분석 범위 — 없으면 요청이 그대로, 있으면 landingPage 정규식이 AND 로 붙는다
+    assert scoped(ORGANIC_FILTER, None) is ORGANIC_FILTER and scoped(None, "") is None
+    g = scoped(ORGANIC_FILTER, "https://www.gucci.com/kr/ko/")["andGroup"]["expressions"]
+    assert g[0] is ORGANIC_FILTER and g[1]["filter"]["fieldName"] == "landingPage", g
+    rx = g[1]["filter"]["stringFilter"]["value"]
+    assert [bool(re.search(rx, x)) for x in ("/kr/ko/pr/a", "/kr/ko", "/kr/ko?x", "/us/en/", "/kr/kokr")]         == [True, True, True, False, False], rx
+    assert scoped(None, "/kr/ko/")["filter"]["fieldName"] == "landingPage"
 
     # 2. 속성 제안 — 도메인과 겹치는 것만, 확정은 하지 않는다.
     props = [{"account": "A", "id": "111", "name": "example.com - GA4"},

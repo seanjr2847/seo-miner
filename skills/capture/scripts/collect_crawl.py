@@ -295,7 +295,7 @@ def probe_llms_txt(home: str) -> dict:
 # ── 크롤 ────────────────────────────────────────────────────────────────────
 def crawl(seeds, home: str, *, limit: int, max_depth: int,
           rp=None, throttle: float = 0.0,
-          workers: int | None = None) -> tuple[list[dict], list[dict], list[list[str]]]:
+          workers: int | None = None, scope=None) -> tuple[list[dict], list[dict], list[list[str]]]:
     """BFS. (crawl_pages 행, crawl_links 행, 리다이렉트 사슬) 을 돌려준다.
 
     같은 호스트만 따라간다 — 외부 링크는 crawl_links 에 is_internal=0 으로
@@ -311,6 +311,9 @@ def crawl(seeds, home: str, *, limit: int, max_depth: int,
     끝나고 save 가 한 번에 한다).
     """
     host = scoring.host_of(home)
+    # 분석 범위 경로(gucci.com/kr/ko/)가 있으면 그 아래만 따라간다 — 다른 나라 경로로
+    # 나가는 링크도 내부 링크로 기록은 하되 가져오지는 않는다.
+    seeds = [u for u in seeds if u and scoring.in_scope(u, scope)]
     q = deque((u, 0) for u in seeds if u)
     seen = {u for u in seeds if u}
     pages: list[dict] = []
@@ -350,14 +353,14 @@ def crawl(seeds, home: str, *, limit: int, max_depth: int,
             r = pending.pop(url).result()
             fetched += 1
             _visit(r, url, depth, host=host, max_depth=max_depth, q=q, seen=seen,
-                   pages=pages, links=links, chains=chains, parsed=parsed)
+                   pages=pages, links=links, chains=chains, parsed=parsed, scope=scope)
     finally:
         pool.shutdown(wait=True, cancel_futures=True)
     return pages, links, chains
 
 
 def _visit(r: dict, url: str, depth: int, *, host, max_depth, q, seen, pages, links,
-           chains, parsed) -> None:
+           chains, parsed, scope=None) -> None:
     """가져온 한 장을 BFS 상태에 반영한다 — 순서대로 한 번에 하나씩만 불린다."""
     final = normalize(r.get("final_url") or url) or url
 
@@ -386,7 +389,8 @@ def _visit(r: dict, url: str, depth: int, *, host, max_depth, q, seen, pages, li
             links.append({"url_from": final, "url_to": to, "anchor": anchor,
                           "is_internal": int(internal), "nofollow": int(nofollow),
                           "in_chrome": int(chrome)})
-            if internal and to not in seen and depth + 1 <= max_depth:
+            if (internal and to not in seen and depth + 1 <= max_depth
+                    and scoring.in_scope(to, scope)):
                 seen.add(to)
                 q.append((to, depth + 1))
     pages.append(row)
@@ -586,6 +590,13 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             return st.noop(rows=0)
 
         seeds, seed, rp, robots_txt = discover_seeds(home)
+        scope = scoring.scope_of(p["scope_path"] if "scope_path" in p.keys() else None)
+        if scope:
+            # 사이트맵은 도메인 전체다 — 범위 안 주소만 시드로. 하나도 없으면 범위의 첫 화면에서.
+            seeds = [u for u in seeds if scoring.in_scope(u, scope)]
+            if not seeds:
+                seeds, seed = [normalize(urljoin(home, scope))], "home"
+            print(f"  분석 범위 {scope} 아래만 따라갑니다")
         print(f"  시드 {len(seeds)}개 ({seed})")
 
         run_id = conn.execute(
@@ -597,7 +608,7 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             db.write_sitemap_urls(conn, run_id, seeds)
         with st.record("crawl") as r:
             pages, links, chains = crawl(seeds, home, limit=limit, max_depth=depth,
-                                         rp=rp, throttle=st.throttle)
+                                         rp=rp, throttle=st.throttle, scope=scope)
             # 모든 주소가 막혔으면(응답 없음·403·429) 적지 않는다 — 적으면 막힌 홈이
             # http_error 이슈 → "크롤에서 걸림" 기회로 선다. 없는 결함이다.
             if pages and all(collect_page.blocked(x["status"]) for x in pages):
@@ -990,6 +1001,24 @@ def _concurrency_check(orig_fetch) -> None:
         assert not any("/private" in u for u in log4), "robots Disallow 를 미리 띄웠다"
         assert 1 < live["peak"] <= 4, f"동시 상한: peak={live['peak']}"
     assert c1, "리다이렉트 사슬 재료가 검사에 없다"
+
+    # 분석 범위 — /kr/ko/ 아래만 가져오고, 다른 나라 경로는 내부 링크로 기록만 한다
+    pagesx = {"https://g.com/kr/ko/": '<a href="/kr/ko/a">a</a><a href="/us/en/b">b</a>',
+              "https://g.com/kr/ko/a": '<a href="/kr/ko/">h</a>'}
+    got_urls: list[str] = []
+
+    def fake(u):
+        got_urls.append(u)
+        return {"status": 200, "final_url": u, "content_type": "text/html",
+                "text": f"<html><body>{pagesx.get(u, '')}</body></html>", "bytes": 10}
+    globals()["fetch"] = fake
+    try:
+        _, lx, _ = crawl(["https://g.com/", "https://g.com/kr/ko/"], "https://g.com/",
+                         limit=20, max_depth=3, workers=1, scope="/kr/ko/")
+    finally:
+        globals()["fetch"] = orig_fetch
+    assert sorted(got_urls) == ["https://g.com/kr/ko/", "https://g.com/kr/ko/a"], got_urls
+    assert any(x["url_to"].endswith("/us/en/b") and x["is_internal"] for x in lx), "범위 밖 링크 기록이 사라졌다"
 
 
 if __name__ == "__main__":

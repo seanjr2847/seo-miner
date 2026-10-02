@@ -255,12 +255,24 @@ def _fetch_intersection(post, ours: str, rival: str, locale: str, limit: int,
     return out, cost
 
 
-def _top_keywords(post, target: str, locale: str, limit: int, order: str) -> tuple[list, float]:
+def scope_body(scope) -> dict:
+    """분석 범위 경로(gucci.com/kr/ko/)를 ranked_keywords 요청에 거는 필터. 이 엔드포인트의
+    target 은 도메인이나 페이지 하나만 받고 경로 접두는 못 받는다 — 경로는 filters 의
+    ranked_serp_element.serp_item.relative_url 로 건다(공식 문서의 페이지 필터 칸).
+    범위가 없으면 빈 dict. 경쟁사 발견·교집합(competitors_domain·domain_intersection)은
+    도메인만 받으므로 도메인 단위로 남는다."""
+    sc = scoring.scope_of(scope)
+    return ({"filters": [["ranked_serp_element.serp_item.relative_url", "like", sc + "%"]]}
+            if sc else {})
+
+
+def _top_keywords(post, target: str, locale: str, limit: int, order: str,
+                  scope=None) -> tuple[list, float]:
     """도메인이 순위를 가진 검색어 [(검색어, 검색량|None)] — order 는 Labs order_by 한 줄."""
     loc, lang, _ = serp_adapter.location(locale)
     result, cost = post(LABS_RANKED, [{
         "target": target, "location_name": loc, "language_code": lang,
-        "limit": limit, "order_by": [order]}])
+        "limit": limit, "order_by": [order], **scope_body(scope)}])
     out = []
     for r0 in result or []:
         for it in (r0.get("items") or []):
@@ -284,13 +296,16 @@ def site_of(host: str) -> str:
     return ".".join(parts[-n:])
 
 
-def fetch_own_ranked(post, target: str, locale: str, limit: int = 500) -> tuple[list[dict], float]:
+def fetch_own_ranked(post, target: str, locale: str, limit: int = 500,
+                     scope=None) -> tuple[list[dict], float]:
     """우리 도메인의 순위 검색어 — [{keyword, volume, position, url}], 검색량 큰 순.
-    서치콘솔 없는 사이트의 서치콘솔 대용(db.labs_ranked). 순위는 그 검색어의 우리 최고 자리."""
+    서치콘솔 없는 사이트의 서치콘솔 대용(db.labs_ranked). 순위는 그 검색어의 우리 최고 자리.
+    scope(분석 범위 경로)가 있으면 그 경로 아래 페이지가 선 검색어만 — 요청에 필터를 걸고,
+    받은 뒤에도 URL 을 한 번 더 본다(필터가 무시돼도 다른 나라 경로가 새지 않게)."""
     loc, lang, _ = serp_adapter.location(locale)
     result, cost = post(LABS_RANKED, [{
         "target": target, "location_name": loc, "language_code": lang, "limit": limit,
-        "order_by": ["keyword_data.keyword_info.search_volume,desc"]}])
+        "order_by": ["keyword_data.keyword_info.search_volume,desc"], **scope_body(scope)}])
     out: dict[str, dict] = {}
     for r0 in result or []:
         for it in (r0.get("items") or []):
@@ -299,6 +314,8 @@ def fetch_own_ranked(post, target: str, locale: str, limit: int = 500) -> tuple[
             kw, sv = _kw_of(it)
             se = _sub(_sub(it, ("ranked_serp_element",)) or {}, ("serp_item",)) or {}
             pos = _num(se.get("rank_group") or se.get("rank_absolute"), int)
+            if scope and not scoring.in_scope(se.get("url") or se.get("relative_url") or "", scope):
+                continue
             if kw and (kw not in out or (pos or 999) < (out[kw]["position"] or 999)):
                 out[kw] = {"keyword": kw, "volume": sv, "position": pos, "url": se.get("url")}
     return list(out.values()), cost
@@ -687,7 +704,8 @@ def collect(project: str, *,
             """D — 우리 검색어에서 브랜드명을 빼고 그 검색결과의 경쟁사를 찾는다."""
             nonlocal total_cost, nonbrand_new
             top, c = _top_keywords(_post, ours, locale, 100,
-                                   "keyword_data.keyword_info.search_volume,desc")
+                                   "keyword_data.keyword_info.search_volume,desc",
+                                   scope=p["scope_path"] if "scope_path" in p.keys() else None)
             total_cost += c
             terms = _brand_terms(ask, ours, top, (st.cfg or {}).get("brand_aliases"))
             kws = _nonbrand(top, terms, NONBRAND_KWS)
