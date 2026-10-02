@@ -178,6 +178,68 @@ def ready(project: str) -> dict:
     return {"ok": True, "fix": "", "why": "", "cwd": str(Path(d)), "exe": exe}
 
 
+# ── 누르기 전 점검 ──────────────────────────────────────────────────────────
+
+def _git(cwd: str, *args: str) -> str | None:
+    """읽기 전용 git 한 번 — 못 돌면(없음·저장소 아님·시간 초과) None. 검사가 갈아 끼운다."""
+    try:
+        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=15,
+                           creationflags=0x08000000 if sys.platform == "win32" else 0)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _default_branch(cwd: str) -> str:
+    """원격의 기본 브랜치 — origin/HEAD 가 없으면 main·master 중 있는 것."""
+    ref = (_git(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or "").strip()
+    if ref:
+        return ref.split("/", 1)[-1]
+    for b in ("main", "master"):
+        if _git(cwd, "rev-parse", "--verify", "--quiet", b) is not None:
+            return b
+    return ""
+
+
+def preflight(project: str, play_id: int, *, load) -> dict:
+    """[PR 만들기]를 누르면 화면이 **먼저** 묻는 창의 재료 — 아무것도 띄우지 않는다.
+
+    돌기 전에 사람이 볼 것: 어느 폴더에서, 어느 브랜치에서 갈라져, 무엇이 막는가.
+    막는 것(blocked)은 헤드리스가 첫 단계에서 멈출 것과 같은 조건(커밋 안 된 변경)이라
+    창에서 미리 말하고 시작 버튼을 잠근다 — 12초 돌고 '지난번 실패'만 남기지 않는다.
+    off_base 는 막지 않고 알리기만 한다: 기본 브랜치가 아닌 곳에서 갈라지면 그 브랜치의
+    커밋이 PR 에 같이 실린다.
+    """
+    r = ready(project)
+    out = {"ok": True, "ready": r["ok"], "why": r["why"], "fix": r["fix"],
+           "new_branch": BRANCH.format(id=int(play_id))}
+    if not r["ok"]:
+        return out
+    cwd = r["cwd"]
+    out["cwd"] = cwd
+    try:
+        play = _find(load(project) or {}, play_id)
+    except Exception as e:
+        return {**out, "ready": False, "fix": "",
+                "why": f"할 일을 불러오지 못했습니다: {e}"}
+    if not play:
+        return {**out, "ready": False, "fix": "",
+                "why": "그 할 일을 못 찾았습니다. [새로고침] 뒤 다시 눌러 주세요."}
+    out["page"] = play.get("page") or ""
+    out["keywords"] = [str(k) for k in (play.get("keywords") or [])][:6]
+    porcelain = _git(cwd, "status", "--porcelain")
+    out["dirty"] = [ln[3:] for ln in (porcelain or "").splitlines() if ln.strip()][:8]
+    out["dirty_n"] = len([ln for ln in (porcelain or "").splitlines() if ln.strip()])
+    out["git_ok"] = porcelain is not None
+    cur = (_git(cwd, "branch", "--show-current") or "").strip()
+    base = _default_branch(cwd)
+    out["branch"], out["base"] = cur, base
+    out["off_base"] = bool(cur and base and cur != base)
+    out["blocked"] = out["dirty_n"] > 0
+    return out
+
+
 # ── 실행 ────────────────────────────────────────────────────────────────────
 
 def _spawn(cmd: list[str], cwd: str, stdin_file: Path, log_file: Path):

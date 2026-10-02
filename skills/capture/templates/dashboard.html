@@ -769,6 +769,23 @@ section > .tw { background:var(--card); border-radius:var(--r-card); box-shadow:
 }
 @media print { #toasts { display:none; } }
 
+/* ── [PR 만들기] 확인 창 ─────────────────────────────────────────────────
+   누르면 바로 돌지 않고 이 창이 먼저 저장소를 보여 준다. 경로·브랜치는 식별자라 등폭,
+   문장은 한글이라 본문 서체다. 막는 이유는 색이 아니라 글자로 말한다. */
+.prbox { width:min(520px, calc(100vw - 32px)); padding:24px; border:0; border-radius:var(--r-card);
+  background:var(--card); color:var(--ink); box-shadow:var(--shadow-2); font:400 var(--fs-2)/1.6 var(--sans); }
+.prbox::backdrop { background:rgba(16,22,19,.42); }
+.prbox h3 { margin:0 0 14px; font:700 var(--fs-3, 16px)/1.4 var(--sans); }
+.prbox p { margin:0 0 12px; }
+.prbox .mono { font-family:var(--mono); overflow-wrap:anywhere; }
+.prbox-facts { display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; margin:0 0 14px; }
+.prbox-facts dt { color:var(--sub); }
+.prbox-facts dd { margin:0; }
+.prbox .prbox-warn { padding:10px 14px; border-radius:var(--r-in); background:var(--warn-wash); color:var(--warn); }
+.prbox-files { margin:0 0 12px; padding:0 0 0 18px; font-size:var(--fs-1); color:var(--sub); }
+.prbox-acts { display:flex; gap:var(--sp-2); justify-content:flex-end; margin-top:16px; }
+@media print { .prbox { display:none; } }
+
 /* ── 차트 공통: 깊이 로그·일별 추이·기기 격차가 같은 언어를 쓴다 ── */
 /* 좁은 화면에선 축소 대신 가로 스크롤 — 줄여 봐야 글자를 못 읽는다. */
 .logwrap { overflow-x:auto; }
@@ -1844,9 +1861,11 @@ SM.host = {
             `>설정에서 폴더 정하기</button>`
           : `<span class="sub">${esc(s.why)}</span>`);
     const failed = j && j.status === "failed";
-    return (failed ? `<span class="badge warn" title="${esc(j.error || "")}">지난번 실패</span>` : "") +
-      `<button class="go sm" onclick="prApply(${+p.id}, this)"` +
-      ` title="이 PC 가 사이트 저장소에서 수정안을 적용하고 PR 을 엽니다. 머지는 직접 합니다."` +
+    // 실패 이유는 툴팁에만 두지 않는다 — 눌러서 보는 화면에서는 호버가 없다.
+    return (failed ? `<span class="badge warn" title="${esc(j.error || "")}">지난번 실패</span>` +
+        (j.error ? `<span class="sub">${esc(j.error)}</span>` : "") : "") +
+      `<button class="go sm" onclick="prAsk(${+p.id})"` +
+      ` title="저장소를 확인하고, 시작할지 물어봅니다. 머지는 직접 합니다."` +
       `>${failed ? "PR 다시 만들기" : "PR 만들기"}</button>`;
   },
   // 준비 상태·도는 일을 서버에서 받아 온다(로컬 전용 경로라 호스팅 SM.host 에는 없다).
@@ -2746,6 +2765,64 @@ async function prSync() {
   window.PLAY_PR = {ready: r.ready, why: r.why, fix: r.fix, jobs: r.jobs || {}};
   Object.values(window.PLAY_PR.jobs).forEach(j => prWatch(project, j));
   SM.repaint();
+}
+/* [PR 만들기]를 누르면 바로 돌리지 않고 창을 먼저 연다 — 서버(play_pr.preflight)가 저장소를
+   읽어 어느 폴더·어느 브랜치에서 갈라지는지, 막는 것(커밋 안 된 변경)이 있는지 말하고, 사람이
+   [시작]을 눌러야 prApply 가 돈다. 막힌 채로 돌리면 12초 뒤 '지난번 실패'만 남는다. */
+function prDialog() {
+  let d = $("prbox");
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "prbox"; d.className = "prbox";
+    d.setAttribute("aria-labelledby", "prbox-h");
+    d.addEventListener("click", e => { if (e.target === d) d.close(); });   // 바깥을 누르면 닫힌다
+    document.body.appendChild(d);
+  }
+  return d;
+}
+async function prAsk(id) {
+  const project = $("proj").value;
+  const d = prDialog();
+  const paint = (body, acts) => {
+    d.innerHTML = `<h3 id="prbox-h">PR 만들기 — 시작하기 전에</h3>${body}` +
+      `<div class="prbox-acts">${acts}</div>`;
+  };
+  const close = `<button class="go sm ghost" onclick="$('prbox').close()">닫기</button>`;
+  paint(`<p class="sub" role="status">저장소를 확인하는 중…</p>`, close);
+  if (!d.open) d.showModal();
+  let r = null;
+  try {
+    r = await (await fetch("/api/plays/apply?check=1&project=" + encodeURIComponent(project) +
+                           "&id=" + encodeURIComponent(id))).json();
+  } catch (e) { /* 아래서 안내 */ }
+  if (!d.open) return;                          // 확인하는 사이 닫았다
+  if (!r || !r.ok)
+    return paint(`<p class="prbox-warn">저장소를 확인하지 못했습니다 — ${esc((r && r.error) || "대시보드에 닿지 않습니다")}</p>`,
+                 `<button class="go sm" onclick="prAsk(${+id})">다시 확인</button>${close}`);
+  const row = (k, v) => v ? `<dt>${k}</dt><dd class="mono">${esc(v)}</dd>` : "";
+  const facts = `<dl class="prbox-facts">${row("페이지", r.page)}${row("저장소 폴더", r.cwd)}` +
+    `${row("지금 브랜치", r.branch)}${row("새 브랜치", r.new_branch)}</dl>`;
+  if (!r.ready)
+    return paint(`<p class="prbox-warn">${esc(r.why)}</p>`,
+      (r.fix === "settings"
+        ? `<button class="go sm" onclick="$('prbox').close();SM.touched=true;SM.show('settings')">설정에서 폴더 정하기</button>`
+        : `<button class="go sm" onclick="prAsk(${+id})">다시 확인</button>`) + close);
+  if (r.blocked)
+    return paint(facts +
+      `<p class="prbox-warn">저장소에 커밋 안 된 변경이 ${+r.dirty_n}개 있어 시작할 수 없습니다. ` +
+      `수정안이 이 변경과 섞이지 않게 하려는 것입니다. 커밋하거나 치운 뒤 [다시 확인]을 누르세요.</p>` +
+      `<ul class="prbox-files mono">${(r.dirty || []).map(f => `<li>${esc(f)}</li>`).join("")}` +
+      `${r.dirty_n > (r.dirty || []).length ? `<li>…외 ${r.dirty_n - r.dirty.length}개</li>` : ""}</ul>`,
+      `<button class="go sm" onclick="prAsk(${+id})">다시 확인</button>${close}`);
+  paint(facts +
+    (r.off_base
+      ? `<p class="prbox-warn">지금 브랜치가 기본 브랜치(${esc(r.base)})가 아닙니다. 새 브랜치는 지금 브랜치에서 갈라지므로 ` +
+        `그 브랜치의 커밋이 PR 에 같이 실립니다. 기본 브랜치에서 시작하려면 먼저 옮겨 두세요.</p>` : "") +
+    (r.git_ok ? "" : `<p class="sub">git 상태를 읽지 못했습니다 — 시작하면 돌리는 쪽이 다시 확인합니다.</p>`) +
+    `<p>이 PC 가 위 폴더에서 새 브랜치를 만들어 수정안을 적용하고, 커밋·push 한 뒤 PR 을 엽니다. ` +
+    `몇 분 걸리고 창을 닫아도 계속 돕니다. 머지는 직접 합니다.</p>`,
+    `<button class="go sm" onclick="$('prbox').close();prApply(${+id})">시작</button>` +
+    `<button class="go sm ghost" onclick="$('prbox').close()">취소</button>`);
 }
 async function prApply(id, btn) {
   if (btn) btn.disabled = true;
