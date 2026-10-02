@@ -106,12 +106,21 @@ def _refresh_labs(conn, p, post) -> bool:
     today = datetime.date.today()
     if d and (today - datetime.date.fromisoformat(d)).days < LABS_EVERY_DAYS:
         return False
-    locale = db.project_locale(p)
-    rows, cost = collect_gap.fetch_own_ranked(
-        post, scoring.host_of(p["domain"]), locale, LABS_LIMIT,
-        scope=p["scope_path"] if "scope_path" in p.keys() else None)
+    # 시장마다 받는다 — 그 나라 구글에서 그 시장 경로(/kr/ko/ · /us/en/)가 선 검색어.
+    # 같은 검색어가 두 시장에 서면 앞 시장(기본 시장 먼저)이 갖는다.
+    rows, cost, came = [], 0.0, {}
+    for locale, scope in db.site_markets(conn, p["id"]):
+        got, c = collect_gap.fetch_own_ranked(
+            post, scoring.host_of(p["domain"]), locale, LABS_LIMIT, scope=scope)
+        cost += c
+        for r in got:
+            if r["keyword"] not in came:
+                came[r["keyword"]] = locale
+                rows.append(r)
     db.write_labs_ranked(conn, p["id"], today.isoformat(), rows)
-    db.add_keyword_candidates(conn, p["id"], [(r["keyword"], locale, "labs_ranked") for r in rows])
+    db.add_keyword_candidates(conn, p["id"], [(r["keyword"], came[r["keyword"]], "labs_ranked")
+                                              for r in rows])
+    _market_locale(conn, p["id"], came)
     collect_gap._backfill_volumes(conn, p["id"], [(r["keyword"], r.get("volume")) for r in rows])
     # 검색량을 이미 받았다 — 지표 단계(collect_metrics)가 metrics_at 빈 키워드를 전부 다시 사서
     # 이 500개에 매 런 ~$0.26 을 또 냈을 것이다. 받은 날을 찍어 둔다(난이도·CPC 는 그대로 빈다).
@@ -156,9 +165,29 @@ def _judge_keywords(ask, p, pool: list, aliases) -> tuple[set, set]:
     return terms, drop
 
 
+def _market_locale(conn, pid: int, came: dict) -> int:
+    """시장이 여럿인 사이트 — 순위 검색어 후보의 언어-지역을 **그 검색어를 준 시장**으로.
+    Labs 가 그 나라 구글 결과라 나라를 안다(한국 시장에서 잡힌 'gucci' 는 한국 사람이 친 말).
+    글자로만 정하면 한국 시장의 라틴 검색어가 영어 시장으로 간다. 서치콘솔 나라·사람이 정한
+    것은 안 건드린다. 시장이 하나면 판정이 이미 그 시장으로 접었다(db.snap_locale)."""
+    if len(db.site_locales(conn, pid)) < 2 or not came:
+        return 0
+    n = 0
+    for kid, kw, src in conn.execute(
+            "SELECT id, keyword, locale_src FROM keywords WHERE project_id=? AND source='labs_ranked'"
+            " AND COALESCE(locale_src,'') NOT IN ('gsc_country','manual')", (pid,)).fetchall():
+        if kw in came and db.set_keyword_locale(conn, kid, came[kw], "site_country"):
+            n += 1
+    conn.commit()
+    return n
+
+
 def _relocale_labs(conn, pid: int) -> int:
     """순위 검색어에서 온 후보의 언어-지역을 사이트 나라로 맞춘다(db.site_country_judge).
-    서치콘솔 나라로 정한 것(gsc_country)은 건드리지 않는다. 반환: 바꾼 수."""
+    서치콘솔 나라로 정한 것(gsc_country)은 건드리지 않는다. 반환: 바꾼 수.
+    시장이 여럿이면 하지 않는다 — 어느 시장이 준 검색어인지로 정한다(_market_locale)."""
+    if len(db.site_locales(conn, pid)) > 1:
+        return 0
     judge = db.site_country_judge(conn, pid)
     n = 0
     for kid, kw, loc, src in conn.execute(
@@ -193,12 +222,14 @@ def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
             lvol[n] = max(lvol.get(n, 0), v)
     # 다른 언어-지역 키워드는 고르지 않는다 — 브랜드가 든 연관 검색어('Gucci India'·'Gucci us',
     # en-US·미국 검색량)가 순위 추정에 없다는 이유로 되찾기 칸에 들어 한국 사이트의 추적을 채웠다.
-    site_loc = db.project_locale(conn.execute("SELECT locale FROM projects WHERE id=?", (pid,)).fetchone())
+    # 시장이 여럿이면 그 시장들의 키워드가 다 후보다.
+    locs = db.site_locales(conn, pid)
     kws = [dict(r) for r in conn.execute(
         "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
         " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0"
         " AND COALESCE(active_src,'')<>'demoted'"      # 순위 밖이 이어져 내린 것(db.demote_unranked)
-        " AND (locale IS NULL OR locale=?) ORDER BY id", (pid, site_loc))]
+        f" AND (locale IS NULL OR locale IN ({','.join('?' * len(locs))})) ORDER BY id",
+        (pid, *locs))]
     for k in kws:
         k["vol"] = lvol.get(scoring.norm(k["keyword"])) or k["volume"] or 0
     kws.sort(key=lambda k: (-k["vol"], k["id"]))

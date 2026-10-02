@@ -110,12 +110,13 @@ def scoped(f, scope):
     호스트 없는 경로로 온다. 범위가 없으면 f 를 그대로(None 이면 None) 돌려준다 —
     범위 없는 사이트의 요청은 한 글자도 안 바뀐다. 규칙은 scoring.in_scope 와 같다
     (끝 '/' 없는 범위 자체의 주소도 안)."""
-    sc = scoring.scope_of(scope)
-    if not sc:
+    scs = scoring.scopes_of(scope)          # 시장마다 하나 — 하나라도 전체면 거르지 않는다
+    if not scs:
         return f
+    alt = "|".join(re.escape(x.rstrip("/")) for x in scs)
     pf = {"filter": {"fieldName": "landingPage", "stringFilter": {
         "matchType": "PARTIAL_REGEXP",
-        "value": "^" + re.escape(sc.rstrip("/")) + r"(/|$|\?)"}}}
+        "value": "^(" + alt + r")(/|$|\?)"}}}
     return {"andGroup": {"expressions": [f, pf]}} if f else pf
 
 
@@ -314,7 +315,7 @@ def collect(project: str, *,
         s = st.settings(ap, argparse.Namespace(days=days))
         days = s["ga4_days"]
         prop_id = p["ga4_property"]
-        scope = p["scope_path"] if "scope_path" in p.keys() else None
+        scope = scoring.scopes_of([sc for _, sc in db.site_markets(conn, p["id"])])
         if not prop_id:
             return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다 — "
                            "project yaml 에 ga4_property: '숫자 ID' 를 넣고 "
@@ -511,6 +512,9 @@ def _selfcheck() -> None:
     rx = g[1]["filter"]["stringFilter"]["value"]
     assert [bool(re.search(rx, x)) for x in ("/kr/ko/pr/a", "/kr/ko", "/kr/ko?x", "/us/en/", "/kr/kokr")]         == [True, True, True, False, False], rx
     assert scoped(None, "/kr/ko/")["filter"]["fieldName"] == "landingPage"
+    rx2 = scoped(None, ["/kr/ko/", "/us/en/"])["filter"]["stringFilter"]["value"]
+    assert [bool(re.search(rx2, x)) for x in ("/kr/ko/a", "/us/en", "/jp/ja/")] == [True, True, False], rx2
+    assert scoped(ORGANIC_FILTER, ["/kr/ko/", ""]) is ORGANIC_FILTER, "전체 시장이 있는데 걸렀다"
 
     # 2. 속성 제안 — 도메인과 겹치는 것만, 확정은 하지 않는다.
     props = [{"account": "A", "id": "111", "name": "example.com - GA4"},

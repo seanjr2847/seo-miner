@@ -317,6 +317,8 @@ def test_keyword_candidates_always_carry_locale():
     쓰기 경로가 하나라서 호출부가 빼먹을 수 없어야 한다."""
     conn = db.connect()
     p = _project(conn, "loc")
+    import serp_adapter as _sa      # 시장 둘(한국어·영어) — 시장 하나면 영어도 ko-KR 로 접힌다
+    db._write_markets(conn, p["id"], [("ko-KR", ""), ("en-US", "")])
     n = db.add_keyword_candidates(conn, p["id"], [
         ("한국어 키워드", "ko-KR", "autocomplete"),
         ("english keyword", "en-US", "autocomplete"),

@@ -212,10 +212,21 @@ def path_of(url: str) -> str:
     return "/" + s.split("/", 1)[1] if "/" in s else "/"
 
 
+def scopes_of(scope) -> list[str]:
+    """범위 하나 또는 여럿(시장마다 하나 — db.site_markets) → 정규화한 목록. 하나라도
+    비었으면(그 시장은 사이트 전체) [] — 거를 것이 없다. API 필터를 짓는 쪽이 이걸 본다."""
+    items = list(scope) if isinstance(scope, (list, tuple, set)) else [scope]
+    out = [scope_of(x) for x in items]
+    return [] if not out or "" in out else list(dict.fromkeys(out))
+
+
 def in_scope(url: str, scope) -> bool:
     """URL 의 경로가 범위 아래인가. 범위가 비었으면 늘 참이다. 상대 경로('/kr/ko/x')도
     받는다 — GA4 의 landingPage·Labs 의 relative_url 이 그 꼴이다. '/kr/ko' 처럼 끝
-    '/' 가 없는 범위 자체의 주소도 안으로 친다."""
+    '/' 가 없는 범위 자체의 주소도 안으로 친다. 범위가 여럿이면 그중 하나 아래면 안이다."""
+    if isinstance(scope, (list, tuple, set)):
+        scs = scopes_of(scope)
+        return not scs or any(in_scope(url, x) for x in scs)
     sc = scope_of(scope)
     if not sc:
         return True
@@ -5382,6 +5393,12 @@ def _selfcheck() -> None:
     assert not owns_url("https://www.gucci.com/us/en/x", "gucci.com", "/kr/ko/")
     assert not owns_url("https://other.com/kr/ko/x", "gucci.com", "/kr/ko/")
     assert owns_url("https://blog.example.com/a", "example.com")
+    #   시장마다 범위 — 하나 아래면 안, 하나라도 전체면 거르지 않는다
+    assert in_scope("https://g.com/us/en/x", ["/kr/ko/", "/us/en/"])
+    assert not in_scope("https://g.com/jp/ja/x", ["/kr/ko/", "/us/en/"])
+    assert in_scope("https://g.com/jp/ja/x", ["/kr/ko/", ""]) and in_scope("https://g.com/x", [])
+    assert scopes_of(["kr/ko", "/kr/ko/", "us/en"]) == ["/kr/ko/", "/us/en/"]
+    assert scopes_of(["/kr/ko/", ""]) == [] == scopes_of("") == scopes_of(None)
     assert _stem("futuretools.io") == "futuretools"
     # 이름은 등록 도메인에서 — 하위 도메인 첫 칸('gangnam'·'blog')이 브랜드가 되면
     # 'gangnam dermatology clinic' 같은 일반 검색어가 남의 브랜드로 걸러진다.

@@ -619,7 +619,10 @@ function ST_modelHosted() {
   const wait = !loaded;                 // 아직 못 받았거나(dead) 받는 중
   const pick = sel => { const s = sec.querySelector(sel); return s && s.options.length ? s.options[s.selectedIndex].text : ""; };
   const chip = sec.querySelector(".opts .chip.on");
-  const lang = pick("select[data-lang]"), typ = pick("select[data-ptype]");
+  // 언어-지역은 여럿일 수 있다(시장마다 한 줄) — 고른 것을 다 적는다
+  const lang = [...sec.querySelectorAll("select[data-lang]")].filter(s => s.options.length)
+      .map(s => s.options[s.selectedIndex].text).join(", "),
+    typ = pick("select[data-ptype]");
   const ga = sec.querySelector(".ga4 .now code");
   const cmd = sec.querySelector(".cli .cmd");
   const R = (name, desc, req, st, pill, jump) => rows.push({name, desc, req, st, pill, jump});

@@ -3621,7 +3621,8 @@ def test_seam_122_scope_path_is_one_rule_at_every_api():
     app_src = (ROOT / "server" / "app.py").read_text("utf-8")
     dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
     start = (ROOT / "server" / "start.html").read_text("utf-8")
-    assert "scope_path: inp.value" in dash and '"scope_path" in body' in app_src,         "설정 화면이 보내는 scope_path 를 서버가 안 읽는다"
+    assert "markets: mk" in dash and '"markets" in body' in app_src,         "설정 화면이 보내는 시장 목록(markets)을 서버가 안 읽는다"
+    assert "SET_H.markets" in dash and '"markets": markets' in app_src,         "서버가 주는 시장 목록을 설정 화면이 안 읽는다"
     assert "scope: S.scope" in start and 'body["scope"]' in app_src,         "온보딩이 보내는 scope 를 서버가 안 읽는다"
     assert '"scope": scope' in app_src and "d.scope" in start, "peek 이 돌려준 범위를 온보딩이 안 받는다"
 

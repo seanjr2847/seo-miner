@@ -1140,10 +1140,11 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
         pr = db.get_project(c, project)
         ga4, locale, ptype = pr["ga4_property"] or "", db.project_locale(pr), pr["type"] or ""
         domain, scope = pr["domain"] or "", scoring.scope_of(pr["scope_path"])
+        markets = [{"locale": loc, "scope": sc} for loc, sc in db.site_markets(c, pr["id"])]
     except db.ProjectNotFound:
         # 전역 404 핸들러로 넘기지 않는다 — 등록 직후 Brain 이 아직 없어도 설정
         # 화면은 열려야 한다. 여기서만 '없음'이 정상이다.
-        ga4, locale, ptype, domain, scope = "", "", "", "", ""
+        ga4, locale, ptype, domain, scope, markets = "", "", "", "", "", []
     # 사이트 값이 없으면 전역 기본값이 실효값이다 — 화면은 그게 골라진 것으로 그린다.
     return {"run_every_hours": store.every_hours(tn.conn, uid, project),
             "presets": [{"h": h, "label": t} for h, t in RUN_PRESETS],
@@ -1153,6 +1154,9 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
             # 분석 범위 경로 — 도메인은 바꿀 수 없고(보여만 준다) 경로만 고친다
             "domain": domain, "scope_path": scope,
+            # 시장 — 언어-지역과 그 경로의 짝 여럿. 첫 것이 기본(= locale·scope_path).
+            # 하나면 키워드는 전부 그 시장에서 잰다(db.snap_locale). 개수 상한도 같이 준다.
+            "markets": markets, "max_markets": db.MAX_MARKETS,
             # 사이트 종류 — 값과 고를 수 있는 목록(정본 dashboard.PROJECT_TYPES)을 같이 준다.
             # 등록 뒤에도 바꿀 수 있어야 한다: 종류가 점수 계수를 정하는데, 등록할 때
             # 맞는 종류가 없어서 saas 로 넣은 사이트(gucci)가 그 계수에 묶여 있었다.
@@ -1160,6 +1164,18 @@ def api_settings(project: str, uid: int = Depends(_require_uid),
             "types": [{"id": i, "label": t} for i, t in dashboard.PROJECT_TYPES],
             # 브랜드·경쟁사·도구·씨앗 + 브랜드 초안 — 로컬 대시보드와 한 벌(db.profile_read)
             **db.profile_read(c, project)}
+
+
+def _scope_input(raw, domain: str) -> str:
+    """사람이 적은 분석 범위 경로 한 칸을 검사한다 — 정규화는 scoring.scope_of 가 한다."""
+    raw = str(raw or "").strip()
+    if len(raw) > 200 or re.search(r"[\s<>\"']", raw):
+        raise HTTPException(status_code=400,
+                            detail="경로를 알아볼 수 없습니다. 예: /kr/ko/ (비우면 사이트 전체)")
+    if re.match(r"^[a-z]+://", raw, re.I) and not scoring.owns(raw, domain):
+        raise HTTPException(status_code=400,
+                            detail=f"{domain} 의 주소가 아닙니다. 경로만 적어도 됩니다. 예: /kr/ko/")
+    return raw
 
 
 @app.post("/api/settings")
@@ -1173,23 +1189,38 @@ def api_settings_set(body: dict = Depends(_body), project: str = Depends(_projec
     바꾸는 호출에서도 brain 이 열리는데, 같은 화면을 그리는 GET /api/settings 가
     이미 그렇게 열고 있다(등록 직후 빈 brain.db 가 생기는 것도 거기서부터다).
     """
+    if "markets" in body:     # 시장 목록 통째로 — [{locale, scope}], 첫 것이 기본
+        pr = db.get_project(c, project)
+        raw = body.get("markets")
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="언어-지역 목록을 알아볼 수 없습니다.")
+        items = []
+        for m in raw:
+            if not isinstance(m, dict):
+                raise HTTPException(status_code=400, detail="언어-지역 목록을 알아볼 수 없습니다.")
+            items.append({"locale": str(m.get("locale") or ""),
+                          "scope": _scope_input(m.get("scope"), pr["domain"])})
+        try:
+            got = db.set_markets(c, pr["id"], items)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "markets": [{"locale": loc, "scope": sc} for loc, sc in got]}
     if "locale" in body:      # 언어-지역만 바꾸는 호출 — 수집 주기는 안 건드린다
         loc = str(body.get("locale") or "")
         if loc not in dict(serp_adapter.LOCALES):
             raise HTTPException(status_code=400,
                                 detail="고를 수 없는 언어-지역입니다. 새로고침한 뒤 다시 고르세요.")
-        db.set_locale(c, db.get_project(c, project)["id"], loc)
+        pid = db.get_project(c, project)["id"]
+        rest = db.site_markets(c, pid)[1:]
+        try:      # 기본 시장만 바꾼다 — 나머지 시장은 그대로(같은 것을 고르면 기본으로 올린다)
+            db.set_markets(c, pid, [(loc, db.site_markets(c, pid)[0][1])]
+                           + [m for m in rest if m[0] != loc])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "locale": loc}
     if "scope_path" in body:  # 분석 범위 경로만 바꾸는 호출 — 다음 런부터 그 경로 아래만 잰다
-        raw = str(body.get("scope_path") or "").strip()
-        if len(raw) > 200 or re.search(r"[\s<>\"']", raw):
-            raise HTTPException(status_code=400,
-                                detail="경로를 알아볼 수 없습니다. 예: /kr/ko/ (비우면 사이트 전체)")
         pr = db.get_project(c, project)
-        if re.match(r"^[a-z]+://", raw, re.I) and not scoring.owns(raw, pr["domain"]):
-            raise HTTPException(status_code=400,
-                                detail=f"{pr['domain']} 의 주소가 아닙니다. 경로만 적어도 됩니다. 예: /kr/ko/")
-        sp = db.set_scope_path(c, pr["id"], raw)
+        sp = db.set_scope_path(c, pr["id"], _scope_input(body.get("scope_path"), pr["domain"]))
         return {"ok": True, "scope_path": sp}
     if "type" in body:        # 사이트 종류만 바꾸는 호출 — 점수 계수(scoring.WEIGHTS)가 바뀐다
         ptype = str(body.get("type") or "")

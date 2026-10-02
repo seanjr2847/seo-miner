@@ -822,6 +822,8 @@ def fixture(home: Path) -> None:
                 " VALUES(?,?,?,'saas')",
                 (name, f"{name}.example", f"sc-domain:{name}.example"))
             pid = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()[0]
+            # 시장 둘(한국어·영어) — 심사 화면의 언어 거르개를 본다(시장 하나면 전부 한국어다)
+            db._write_markets(conn, pid, [("ko-KR", ""), ("en-US", "")])
             for d, pos, clk in (("2026-05-01", 14.0, 3 + i), ("2026-06-01", 9.0, 7 + i)):
                 conn.execute(
                     """INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,

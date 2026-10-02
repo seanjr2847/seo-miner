@@ -180,10 +180,11 @@ def scope_filter(scope) -> dict:
     범위가 없으면 빈 dict — 요청 본문에 그대로 펼쳐 넣는다. 호스트는 속성이 이미
     정했으니 경로만 본다. 끝 '/' 없는 범위 자체의 주소('/kr/ko')도 안으로 친다
     (scoring.in_scope 와 같은 규칙)."""
-    sc = scoring.scope_of(scope)
-    if not sc:
+    scs = scoring.scopes_of(scope)          # 시장마다 하나 — 하나라도 전체면 거르지 않는다
+    if not scs:
         return {}
-    rx = r"^https?://[^/]+" + re.escape(sc.rstrip("/")) + r"(/|$|\?)"
+    alt = "|".join(re.escape(x.rstrip("/")) for x in scs)
+    rx = r"^https?://[^/]+(" + alt + r")(/|$|\?)"
     return {"dimensionFilterGroups": [{"filters": [
         {"dimension": "page", "operator": "includingRegex", "expression": rx}]}]}
 
@@ -241,7 +242,7 @@ def collect(project: str, *,
         prop = p["gsc_property"]
         # 분석 범위 경로 — 모든 Search Analytics 호출에 같은 page 필터를 건다
         # (query×page 만 거르면 일별 추이·나라 분해가 다른 나라 경로까지 센다).
-        flt = scope_filter(p["scope_path"] if "scope_path" in p.keys() else None)
+        flt = scope_filter([sc for _, sc in db.site_markets(conn, p["id"])])
         if not prop:
             return st.skip("project yaml has no gsc_property "
                            "(e.g. 'sc-domain:example.com' or 'https://example.com/'). "

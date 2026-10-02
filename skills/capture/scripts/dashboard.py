@@ -2056,6 +2056,7 @@ def _triage(conn, p) -> dict:
     kw_loc = {r["k"]: r["locale"] for r in conn.execute(
         "SELECT norm(keyword) k, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
         (pid,))}
+    judge = db.keyword_judge(conn, pid)       # 고른 시장 안으로 접는다(db.snap_locale)
     # 남의 브랜드 힌트 — 카탈로그(foreign_brands) + "〈이름〉+간판말"(scoring.looks_other_brand)
     cfg = db.project_cfg(conn, p)
     kw_rows = conn.execute(
@@ -2074,7 +2075,7 @@ def _triage(conn, p) -> dict:
         if g is None:
             c, i = perf.get(r["key"], (0, 0))
             label = r["target"].strip()
-            loc = kw_loc.get(r["key"]) or db.keyword_locale(label, site_locale)
+            loc = kw_loc.get(r["key"]) or judge(label)[0]
             g = groups[r["key"]] = {
                 "key": r["key"], "label": label, "variants": set(),
                 "kinds": [], "score": r["score"], "clicks": c, "impressions": i,

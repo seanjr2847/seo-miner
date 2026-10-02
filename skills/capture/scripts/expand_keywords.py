@@ -97,14 +97,20 @@ def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: st
         # 한국어 시드에서 캔 후보가 locale NULL로 들어가면 다음 런에서 프로젝트
         # 로케일로 조회돼, 이중언어 프로젝트의 한쪽이 통째로 "순위 없음"이 된다.
         kw_locale = seed_locale or locale_of(seed, locale)
+        # 시드가 다른 시장(다국어 사이트의 영어 시드)이면 그 시장 구글의 자동완성에 묻는다
+        s_hl, s_gl = hl, gl
+        if kw_locale != locale:
+            s_hl, _, s_gl = kw_locale.partition("-")
+            s_gl = (s_gl or serp_adapter.location(kw_locale)[2][0]).lower()
+        s_mods = mods if s_hl == hl else modifiers(kw_locale, s_hl)
         found: set[str] = set()
-        queries = [seed] + [f"{seed} {m}" for m in mods]
+        queries = [seed] + [f"{seed} {m}" for m in s_mods]
         for q in queries:
             if len(found) >= per_seed_cap:
                 break
             reqs += 1
             try:
-                for s in suggest(q, hl, gl):
+                for s in suggest(q, s_hl, s_gl):
                     s = s.strip()
                     if s and s.lower() != seed.lower():
                         found.add(s)

@@ -1364,8 +1364,31 @@ def _script_lang(text: str) -> str | None:
                  if any(lo <= c <= hi for c in (text or ""))), None)
 
 
+def snap_locale(loc: str, src: str, allowed) -> tuple[str, str]:
+    """판정값을 사이트가 고른 시장(언어-지역 목록) 안으로. 목록이 하나면 키워드는 전부
+    그 시장에서 잰다 — 한국어 사이트의 영어 검색어도 한국 구글이다(한국 사람이 친 말).
+    여럿이면 판정값이 목록에 있으면 그대로, 없으면 같은 언어의 시장, 그것도 없으면 첫
+    시장(기본). 출처 'site' 는 "시장 목록이 정했다"는 뜻이다."""
+    allowed = [a for a in (allowed or []) if a]
+    if not allowed or loc in allowed and len(allowed) > 1:
+        return loc, src
+    if len(allowed) == 1:
+        return allowed[0], ("site" if loc != allowed[0] else src)
+    import serp_adapter
+    same = [a for a in allowed if serp_adapter.lang_of(a) == serp_adapter.lang_of(loc)]
+    return (same[0], src) if same else (allowed[0], "site")
+
+
 def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
-                       countries: dict[str, int] | None = None) -> tuple[str, str]:
+                       countries: dict[str, int] | None = None,
+                       allowed=None) -> tuple[str, str]:
+    """allowed: 사이트가 고른 시장의 로케일 목록(site_locales). 주면 결과를 그 안으로
+    접는다(snap_locale). 아래 규칙은 시장이 여럿일 때 어느 시장인지 고르는 규칙이다."""
+    return snap_locale(*_keyword_locale_raw(text, site_locale, english, countries), allowed)
+
+
+def _keyword_locale_raw(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
+                        countries: dict[str, int] | None = None) -> tuple[str, str]:
     """키워드를 잴 언어-지역과 그 출처('gsc_country' | 'script'). 판정 규칙의 정본.
 
     로케일은 두 축이다 — **언어는 글자에서, 지역은 검색한 사람의 나라에서** 온다.
@@ -1431,20 +1454,22 @@ def gsc_countries(conn: sqlite3.Connection, project_id: int) -> dict[str, dict[s
 
 
 def english_locale(conn: sqlite3.Connection, project_id: int) -> str:
-    """이 사이트가 영어 키워드를 잴 로케일. 사이트 로케일이 en 계열이면 그것, 아니면
+    """이 사이트가 영어 키워드를 잴 로케일. 고른 시장에 en 계열이 있으면 그것(첫 것), 아니면
     이 사이트 키워드가 이미 쓰는 en 계열 중 가장 많은 것, 둘 다 없으면 en-US.
     고를 수 있는 목록 정본(serp_adapter.LOCALES) 밖의 값은 고르지 않는다."""
     import serp_adapter
     en = [c for c, _ in serp_adapter.LOCALES if serp_adapter.lang_of(c) == "en"]
     row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
-    if row and row["locale"] in en:
+    mine = [c for c in site_locales(conn, project_id) if c in en]
+    pool = mine or en
+    if row and row["locale"] in pool:
         return row["locale"]
     for r in conn.execute(
             """SELECT locale FROM keywords WHERE project_id=? AND locale IS NOT NULL
                GROUP BY locale ORDER BY COUNT(*) DESC, locale""", (project_id,)):
-        if r["locale"] in en:
+        if r["locale"] in pool:
             return r["locale"]
-    return _ENGLISH_FALLBACK
+    return mine[0] if mine else _ENGLISH_FALLBACK
 
 
 def keyword_judge(conn: sqlite3.Connection, project_id: int):
@@ -1455,8 +1480,9 @@ def keyword_judge(conn: sqlite3.Connection, project_id: int):
     site = project_locale(row) if row else DEFAULT_LOCALE
     en = english_locale(conn, project_id)
     geo = gsc_countries(conn, project_id)
+    allowed = site_locales(conn, project_id)
     return lambda kw, default=None: keyword_locale_src(
-        kw, default or site, en, geo.get((kw or "").lower()))
+        kw, default or site, en, geo.get((kw or "").lower()), allowed)
 
 
 def site_country_judge(conn: sqlite3.Connection, project_id: int):
@@ -1468,7 +1494,8 @@ def site_country_judge(conn: sqlite3.Connection, project_id: int):
     site = project_locale(row) if row else DEFAULT_LOCALE
     en = english_locale(conn, project_id)
     a3 = _ALPHA3.get(_region(site))
-    return lambda kw: keyword_locale_src(kw, site, en, {a3: 1} if a3 else None)
+    allowed = site_locales(conn, project_id)
+    return lambda kw: keyword_locale_src(kw, site, en, {a3: 1} if a3 else None, allowed)
 
 
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
@@ -1486,6 +1513,9 @@ def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
 # name·domain·type·locale·gsc_property·ga4_property 도 없다 — projects 컬럼이 정본이다.
 SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
                 "surfaces_ai", "serp_depth", "limits",
+                # 사이트가 노리는 시장 — [{"locale": "ko-KR", "scope": "/kr/ko/"}, …]. 첫 것이
+                # 기본이고 projects.locale·scope_path 와 같은 값이다(site_markets 주석).
+                "markets",
                 # 서치콘솔 없는 사이트에서 검색량 상위 후보를 자동으로 켠 날(호스팅 워커).
                 # 한 번만 켠다 — 그 뒤 사람이 끈 키워드를 런마다 되켜지 않게.
                 "auto_keywords")
@@ -1598,6 +1628,139 @@ def register_project(conn: sqlite3.Connection, cfg: dict) -> int:
     return pid
 
 
+MAX_MARKETS = 5
+
+
+def site_markets(conn: sqlite3.Connection, project_id: int) -> list[tuple[str, str]]:
+    """사이트가 노리는 시장 [(로케일, 범위 경로)] — 첫 것이 기본 시장이다.
+
+    정본은 project_settings 의 markets 고, 첫 칸은 projects.locale·scope_path 와 늘 같다
+    (set_markets·set_locale·set_scope_path 가 함께 쓴다 — 한 칸만 읽는 옛 코드가 그대로
+    맞는 값을 본다). markets 가 없는 사이트(등록 직후·이 칸 이전)는 projects 행 하나다.
+    키워드 언어 판정은 이 목록 안에서만 고른다(keyword_judge → snap_locale)."""
+    import scoring
+    row = conn.execute("SELECT locale, scope_path FROM projects WHERE id=?",
+                       (project_id,)).fetchone()
+    if row is None:
+        return [(DEFAULT_LOCALE, "")]
+    first = (project_locale(row), scoring.scope_of(row["scope_path"]))
+    got = project_settings(conn, project_id).get("markets")
+    out: list[tuple[str, str]] = [first]
+    if isinstance(got, list):
+        for m in got[1:]:
+            if isinstance(m, dict) and m.get("locale") and m["locale"] not in {x for x, _ in out}:
+                out.append((str(m["locale"]), scoring.scope_of(m.get("scope"))))
+    return out
+
+
+def site_locales(conn: sqlite3.Connection, project_id: int) -> list[str]:
+    """site_markets 의 로케일만 — 판정(snap_locale)이 고를 수 있는 목록."""
+    return [loc for loc, _ in site_markets(conn, project_id)]
+
+
+def market_scopes(conn: sqlite3.Connection, project_id: int) -> dict[str, str]:
+    """{로케일: 범위 경로} — 키워드의 로케일로 그 시장의 경로를 찾는다(순위의 '우리 URL')."""
+    return dict(site_markets(conn, project_id))
+
+
+def _write_markets(conn: sqlite3.Connection, project_id: int, markets) -> None:
+    conn.execute(
+        """INSERT INTO project_settings(project_id,key,value) VALUES(?,'markets',?)
+           ON CONFLICT(project_id,key) DO UPDATE SET value=excluded.value""",
+        (project_id, json.dumps([{"locale": loc, "scope": sc} for loc, sc in markets],
+                                ensure_ascii=False)))
+
+
+def rejudge_markets(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
+    """시장 목록이 바뀐 뒤 — 사람이 정한(manual) 것 말고 모든 키워드의 언어를 다시 판정한다.
+    바뀐 키워드의 예전 로케일 순위는 옮긴다(_park_offlocale). 커밋은 호출자가 한다."""
+    n = dict.fromkeys(("changed", "rank", "serp", "questions"), 0)
+    judge = keyword_judge(conn, project_id)
+    site = site_locales(conn, project_id)[0]
+    for k in conn.execute(
+            """SELECT id, keyword, locale, locale_src FROM keywords
+                WHERE project_id=? AND COALESCE(locale_src,'') <> 'manual'
+                  AND locale IS NOT NULL""",
+            (project_id,)).fetchall():
+        new, src = judge(k["keyword"])
+        if new == (k["locale"] or site) and src == k["locale_src"]:
+            continue
+        conn.execute("UPDATE keywords SET locale=?, locale_src=? WHERE id=?",
+                     (new, src, k["id"]))
+        if new != (k["locale"] or site):
+            n["changed"] += 1
+            _park_offlocale(conn, k["id"], k["locale"] or site, new, n)
+    return n
+
+
+def ensure_markets(conn: sqlite3.Connection, project_id: int) -> bool:
+    """시장 목록(markets)이 없는 사이트 — 지금 언어 하나로 세우고 키워드 언어를 다시 판정한다.
+    이 칸 이전엔 한국어 사이트의 영어 검색어를 미국 구글에서 쟀다. 시장이 하나면 전부 그
+    시장에서 잰다(snap_locale). markets 행이 곧 "했다"라 두 번째부터는 읽기 한 번이다.
+
+    연결마다(_migrate) 모든 사이트에 하지 않는다 — 그 사이트를 재는 단계가 연다
+    (collector.stage). 남의 사이트 행을 연결만으로 바꾸면 동기화가 그 행을 바뀐 것으로 본다.
+    반환: 이번에 세웠나."""
+    try:
+        if conn.execute("SELECT 1 FROM project_settings WHERE project_id=? AND key='markets'",
+                        (project_id,)).fetchone():
+            return False
+        if "locale_src" not in {r[1] for r in conn.execute("PRAGMA table_info(keywords)")}:
+            return False                 # 검사용 최소 스키마 — 판정할 칸이 없다
+    except sqlite3.OperationalError:
+        return False                     # project_settings 가 없는 최소 스키마
+    _write_markets(conn, project_id, site_markets(conn, project_id))
+    rejudge_markets(conn, project_id)
+    conn.commit()
+    return True
+
+
+def set_markets(conn: sqlite3.Connection, project_id: int, markets) -> list[tuple[str, str]]:
+    """시장 목록을 통째로 바꾼다. markets: [(로케일, 범위)] 또는 [{"locale","scope"}].
+    검증(LOCALES 안·중복 없음·1~MAX_MARKETS 개)은 여기서 한다 — ValueError 로 말한다.
+    기본 시장(첫 칸)은 projects 행에도 쓰고, 키워드 언어를 다시 판정한다."""
+    import scoring
+    import serp_adapter
+    ok = dict(serp_adapter.LOCALES)
+    out: list[tuple[str, str]] = []
+    for m in markets or []:
+        loc, sc = (m.get("locale"), m.get("scope")) if isinstance(m, dict) else m
+        loc = str(loc or "").strip()
+        if loc not in ok:
+            raise ValueError(f"고를 수 없는 언어-지역입니다: {loc or '(빈 값)'}")
+        if loc in {x for x, _ in out}:
+            raise ValueError(f"같은 언어-지역을 두 번 골랐습니다: {ok[loc]}")
+        out.append((loc, scoring.scope_of(sc)))
+    if not out:
+        raise ValueError("언어-지역을 하나 이상 골라 주세요.")
+    if len(out) > MAX_MARKETS:
+        raise ValueError(f"언어-지역은 {MAX_MARKETS}개까지 고를 수 있습니다.")
+    before = site_markets(conn, project_id)
+    _write_markets(conn, project_id, out)
+    set_locale(conn, project_id, out[0][0])          # 기본 시장 — NULL 로케일 키워드의 순위를 옮긴다
+    set_scope_path(conn, project_id, out[0][1])
+    if [x for x, _ in before] != [x for x, _ in out]:
+        rejudge_markets(conn, project_id)
+    if {x: y for x, y in before} != dict(out):
+        # 우리 순위 검색어(Labs)는 시장마다 받는다 — 바뀐 목록으로 다시 받게 비운다
+        conn.execute("DELETE FROM labs_ranked WHERE project_id=?", (project_id,))
+    conn.commit()
+    return out
+
+
+def _market0(conn: sqlite3.Connection, project_id: int, locale=None, scope=None) -> None:
+    """markets 가 있으면 첫 칸을 projects 행과 맞춘다(set_locale·set_scope_path 가 부른다)."""
+    got = project_settings(conn, project_id).get("markets")
+    if not isinstance(got, list) or not got or not isinstance(got[0], dict):
+        return
+    if locale is not None:
+        got[0]["locale"] = locale
+    if scope is not None:
+        got[0]["scope"] = scope
+    conn.execute("UPDATE project_settings SET value=? WHERE project_id=? AND key='markets'",
+                 (json.dumps(got, ensure_ascii=False), project_id))
+
+
 def set_scope_path(conn: sqlite3.Connection, project_id: int, path) -> str:
     """분석 범위 경로를 바꾼다. 정규화한 값을 돌려준다('' = 도메인 전체).
     이미 잰 행은 지우지 않는다 — 범위 밖 URL 은 읽는 쪽(scoring.in_scope)이 거르고,
@@ -1606,6 +1769,7 @@ def set_scope_path(conn: sqlite3.Connection, project_id: int, path) -> str:
     sp = scoring.scope_of(path)
     old = conn.execute("SELECT scope_path FROM projects WHERE id=?", (project_id,)).fetchone()
     conn.execute("UPDATE projects SET scope_path=? WHERE id=?", (sp or None, project_id))
+    _market0(conn, project_id, scope=sp)
     if old is not None and scoring.scope_of(old[0]) != sp:
         # 우리 순위 검색어(Labs)는 며칠에 한 번만 다시 받는다 — 옛 범위로 받은 것을 두면
         # 범위를 바꾼 뒤에도 그 주기 동안 다른 나라 경로의 검색어가 그대로 쓰인다.
@@ -1881,6 +2045,7 @@ def set_locale(conn, project_id: int, locale: str) -> None:
     row = conn.execute("SELECT locale FROM projects WHERE id=?", (project_id,)).fetchone()
     old = project_locale(row) if row else None
     conn.execute("UPDATE projects SET locale=? WHERE id=?", (locale, project_id))
+    _market0(conn, project_id, locale=locale or DEFAULT_LOCALE)
     new = locale or DEFAULT_LOCALE
     if old and old != new:
         for (kid,) in conn.execute("SELECT id FROM keywords WHERE project_id=? AND locale IS NULL",
@@ -3394,7 +3559,10 @@ def _check_keyword_locale() -> None:
         try:
             # 2. register_project 가 언어 칸을 비워 두지 않는다
             conn = connect()
+            #    (판정 규칙을 보는 사이트라 시장을 셋 고른다 — 시장 하나면 아래 10. 처럼 전부 접힌다)
             register_project(conn, {"name": "lp", "domain": "lp.com", "locale": "ko-KR",
+                                    "markets": [{"locale": "ko-KR"}, {"locale": "en-US"},
+                                                {"locale": "en-GB"}],
                                     "seed_keywords": ["밀리아 제거", "milia removal", "2024"]})
             pid = get_project(conn, "lp")["id"]
             got = {r["keyword"]: (r["locale"], r["locale_src"]) for r in conn.execute(
@@ -3533,6 +3701,7 @@ def _check_keyword_locale() -> None:
             #    manual 은 안 덮고, 동률은 글자 그대로, 이미 나라로 정한 것도 안 건드린다.
             conn.execute("INSERT INTO projects(name,domain,locale) VALUES('nt','nt.com','ko-KR')")
             npid = get_project(conn, "nt")["id"]
+            _write_markets(conn, npid, [("ko-KR", ""), ("en-US", ""), ("en-GB", "")])
             add_keyword_candidates(conn, npid, [("nootio", None, "gsc"), ("i noti", None, "gsc"),
                                                 ("noti blog", None, "gsc")])
 
@@ -3558,6 +3727,50 @@ def _check_keyword_locale() -> None:
             write_gsc_breakdown(conn, npid, "2026-09-11", 28, "country",
                                 [("usa", "nootio", 0, 50, 0, 3.0)])
             assert nt()["nootio"] == ("ko-KR", "gsc_country"), "script 가 아닌 것을 다시 판정했다"
+
+            # 10. 시장 — 하나면 키워드는 전부 그 시장에서 잰다(한국어 사이트의 영어·중국어
+            #     검색어도 한국 구글). 여럿이면 그 안에서만 고른다. 바꾸면 다시 판정하고 옮긴다.
+            assert snap_locale("en-US", "script", ["ko-KR"]) == ("ko-KR", "site")
+            assert snap_locale("ko-KR", "script", ["ko-KR"]) == ("ko-KR", "script")
+            assert snap_locale("en-GB", "gsc_country", ["ko-KR", "en-US"]) == ("en-US", "gsc_country")
+            assert snap_locale("ja-JP", "script", ["ko-KR", "en-US"]) == ("ko-KR", "site")
+            assert snap_locale("en-US", "script", ["ko-KR", "en-US"]) == ("en-US", "script")
+            assert snap_locale("en-US", "script", None) == ("en-US", "script")
+            conn.execute("INSERT INTO projects(name,domain,locale) VALUES('one','one.com','ko-KR')")
+            opid = get_project(conn, "one")["id"]
+            assert site_markets(conn, opid) == [("ko-KR", "")], "markets 없는 사이트는 projects 행 하나다"
+            add_keyword_candidates(conn, opid, [("milia removal", None, "gsc"),
+                                                ("韩国皮肤科", None, "gsc"), ("밀리아", None, "gsc")])
+
+            def one():
+                return {r["keyword"]: r["locale"] for r in conn.execute(
+                    "SELECT keyword, locale FROM keywords WHERE project_id=?", (opid,))}
+            assert set(one().values()) == {"ko-KR"}, f"시장 하나인데 다른 나라로 갔다: {one()}"
+            ok = {r["keyword"]: r["id"] for r in conn.execute(
+                "SELECT id, keyword FROM keywords WHERE project_id=?", (opid,))}
+            write_rank_snapshot(conn, ok["milia removal"], 3, None,
+                                checked_at="2026-09-03T00:00:00Z", locale="ko-KR")
+            assert ensure_markets(conn, opid) and not ensure_markets(conn, opid), "한 번만 세운다"
+            got_m = set_markets(conn, opid, [{"locale": "ko-KR", "scope": "kr/ko"},
+                                             {"locale": "en-US", "scope": "/us/en/"}])
+            assert got_m == [("ko-KR", "/kr/ko/"), ("en-US", "/us/en/")], got_m
+            assert get_project(conn, "one")["scope_path"] == "/kr/ko/", "기본 시장 경로가 projects 에 안 갔다"
+            assert market_scopes(conn, opid) == {"ko-KR": "/kr/ko/", "en-US": "/us/en/"}
+            assert one() == {"milia removal": "en-US", "韩国皮肤科": "ko-KR", "밀리아": "ko-KR"}, one()
+            assert conn.execute("SELECT COUNT(*) FROM rank_snapshots WHERE keyword_id=?",
+                                (ok["milia removal"],)).fetchone()[0] == 0, "한국에서 잰 순위가 남았다"
+            #    옛 칸을 고치는 길(set_locale·set_scope_path)도 첫 시장과 함께 간다
+            set_scope_path(conn, opid, "/kr/")
+            assert site_markets(conn, opid)[0] == ("ko-KR", "/kr/"), site_markets(conn, opid)
+            for bad in ([], [{"locale": "xx-XX"}], [{"locale": "ko-KR"}, {"locale": "ko-KR"}],
+                        [{"locale": c} for c in ("ko-KR", "en-US", "en-GB", "ja-JP", "de-DE", "fr-FR")]):
+                try:
+                    set_markets(conn, opid, bad)
+                    raise AssertionError(f"틀린 시장 목록이 저장됐다: {bad}")
+                except ValueError:
+                    pass
+            set_markets(conn, opid, [("ko-KR", "")])
+            assert set(one().values()) == {"ko-KR"}, one()
         finally:
             if conn is not None:
                 conn.close()        # 열린 채로 실패하면 윈도우가 임시 폴더를 못 지워 원래 오류를 가린다

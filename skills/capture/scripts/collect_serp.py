@@ -247,7 +247,10 @@ def collect(project: str, *,
         own = p["domain"]
         # 분석 범위 경로(gucci.com/kr/ko/) — 같은 도메인의 다른 나라 경로가 한국 검색에
         # 떠도 그건 "우리 순위"가 아니다. 경쟁사로 세지도 않는다(같은 회사다).
-        scope = p["scope_path"] if "scope_path" in p.keys() else None
+        # 시장마다 경로가 다를 수 있다(/kr/ko/ · /us/en/) — 키워드의 로케일로 그 시장 경로를 찾는다.
+        # 목록에 없는 로케일(사람이 손으로 정한 것)은 기본 시장 경로다.
+        scopes = db.market_scopes(conn, p["id"])
+        base_scope = next(iter(scopes.values()), "")
         total_cost = 0.0
         domain_hits: Counter = Counter()
         harvested_kw = set()
@@ -274,7 +277,8 @@ def collect(project: str, *,
                 if not d:
                     continue
                 if scoring.owns(d, own):
-                    if position is None and scoring.in_scope(t.get("url") or "", scope):
+                    if position is None and scoring.in_scope(
+                            t.get("url") or "", scopes.get(kw_locale, base_scope)):
                         position, url = t.get("pos"), t.get("url")
                 elif d not in seen:
                     seen.add(d)

@@ -590,13 +590,13 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             return st.noop(rows=0)
 
         seeds, seed, rp, robots_txt = discover_seeds(home)
-        scope = scoring.scope_of(p["scope_path"] if "scope_path" in p.keys() else None)
+        scope = scoring.scopes_of([sc for _, sc in db.site_markets(conn, p["id"])])
         if scope:
-            # 사이트맵은 도메인 전체다 — 범위 안 주소만 시드로. 하나도 없으면 범위의 첫 화면에서.
+            # 사이트맵은 도메인 전체다 — 범위 안 주소만 시드로. 하나도 없으면 범위들의 첫 화면에서.
             seeds = [u for u in seeds if scoring.in_scope(u, scope)]
             if not seeds:
-                seeds, seed = [normalize(urljoin(home, scope))], "home"
-            print(f"  분석 범위 {scope} 아래만 따라갑니다")
+                seeds, seed = [normalize(urljoin(home, x)) for x in scope], "home"
+            print(f"  분석 범위 {', '.join(scope)} 아래만 따라갑니다")
         print(f"  시드 {len(seeds)}개 ({seed})")
 
         run_id = conn.execute(

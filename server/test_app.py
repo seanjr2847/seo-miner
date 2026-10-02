@@ -419,7 +419,8 @@ def demo() -> None:
             assert r.status_code == 200 and r.json()["type"] == "commerce", r.text
             assert c.get("/api/settings?project=new2").json()["type"] == "commerce", "종류가 안 바뀌었다"
             # 분석 범위 경로 — 적은 주소의 경로가 범위가 되고(new1: /blog), 설정에서 고친다.
-            assert c.get("/api/settings?project=new1").json()["scope_path"] == "/blog/",                 "적은 주소의 경로가 분석 범위로 안 갔다"
+            assert c.get("/api/settings?project=new1").json()["scope_path"] == "/blog/", \
+                "적은 주소의 경로가 분석 범위로 안 갔다"
             got = c.get("/api/settings?project=new2").json()
             assert got["domain"] == "new2.test" and got["scope_path"] == "", got
             r = c.post("/api/settings", json={"project": "new2", "scope_path": "kr/ko"})
@@ -432,11 +433,32 @@ def demo() -> None:
             assert c.post("/api/settings", json={"project": "new2", "scope_path": "/a b/"}
                           ).status_code == 400, "알아볼 수 없는 경로가 저장된다"
             r = c.post("/api/settings", json={"project": "new2", "scope_path": ""})
-            assert r.json()["scope_path"] == "" and                 c.get("/api/settings?project=new2").json()["scope_path"] == "", "범위를 못 비운다"
+            assert r.json()["scope_path"] == "" and \
+                c.get("/api/settings?project=new2").json()["scope_path"] == "", "범위를 못 비운다"
             # 온보딩이 범위를 따로 보내면 그 칸이 주소의 경로를 이긴다(화면이 되묻고 고친 값)
             r = c.post("/api/sites", json={"url": "https://new4.test/x/y", "scope": "/kr/ko/"})
             assert r.status_code == 200, r.text
             assert c.get("/api/settings?project=new4").json()["scope_path"] == "/kr/ko/"
+            # 시장(언어-지역 + 경로) 여럿 — 첫 것이 기본(locale·scope_path 와 같은 값)
+            got = c.get("/api/settings?project=new4").json()
+            assert got["markets"] == [{"locale": "ko-KR", "scope": "/kr/ko/"}], got["markets"]
+            assert got["max_markets"] >= 2, got
+            r = c.post("/api/settings", json={"project": "new4", "markets": [
+                {"locale": "ko-KR", "scope": "/kr/ko/"}, {"locale": "en-US", "scope": "us/en"}]})
+            assert r.status_code == 200, r.text
+            assert r.json()["markets"] == [{"locale": "ko-KR", "scope": "/kr/ko/"},
+                                           {"locale": "en-US", "scope": "/us/en/"}], r.json()
+            got = c.get("/api/settings?project=new4").json()
+            assert len(got["markets"]) == 2 and got["locale"] == "ko-KR" and got["scope_path"] == "/kr/ko/", got
+            for bad in ([], [{"locale": "xx-XX"}], [{"locale": "ko-KR"}, {"locale": "ko-KR"}],
+                        [{"locale": "ko-KR", "scope": "https://other.test/kr/"}], "ko-KR"):
+                assert c.post("/api/settings", json={"project": "new4", "markets": bad}
+                              ).status_code == 400, f"틀린 시장 목록이 저장됐다: {bad}"
+            #   옛 길(locale 하나)은 기본 시장만 바꾸고 나머지는 둔다
+            r = c.post("/api/settings", json={"project": "new4", "locale": "ja-JP"})
+            assert r.status_code == 200, r.text
+            assert [m["locale"] for m in c.get("/api/settings?project=new4").json()["markets"]] \
+                == ["ja-JP", "en-US"], "기본 언어만 바꿨는데 나머지 시장이 사라졌다"
 
             # 사이트 삭제 — 이름을 그대로 다시 적어야 하고, 도는 중이면 거절하고, 지우면 서버 행과
             # 그 사람 brain 의 데이터가 같이 사라진다(순위 같은 자식 표까지).

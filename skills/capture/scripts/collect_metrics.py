@@ -453,6 +453,8 @@ def _selfcheck() -> None:
     conn.execute("INSERT INTO projects(name, domain, locale) VALUES('mt','mt.com','ko-KR')")
     p = conn.execute("SELECT * FROM projects WHERE name='mt'").fetchone()
     pid = p["id"]
+    # 시장 둘(한국어·영어) — 로케일마다 요청이 갈리는지 본다(시장 하나면 전부 한국으로 접힌다)
+    db._write_markets(conn, pid, [("ko-KR", ""), ("en-US", "")])
 
     fresh = db.now()
     stale = "2000-01-01T00:00:00Z"

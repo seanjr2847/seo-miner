@@ -58,6 +58,11 @@ def _project(conn, name="t", domain="e.com", locale="ko-KR"):
         "INSERT OR IGNORE INTO projects(name, domain, locale) VALUES(?, ?, ?)",
         (name, domain, locale),
     )
+    pid = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()[0]
+    # 시장은 전 언어-지역 — 키워드별 로케일 분기를 보는 검사들이다(시장 하나면 전부 그 시장으로
+    # 접힌다: db 셀프체크 10.). 사이트 로케일이 첫 칸(기본 시장)이다.
+    import serp_adapter as _sa
+    db._write_markets(conn, pid, [(locale, "")] + [(c, "") for c, _ in _sa.LOCALES if c != locale])
     conn.commit()
     return conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
 

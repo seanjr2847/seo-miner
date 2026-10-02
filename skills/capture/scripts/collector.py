@@ -505,6 +505,9 @@ def stage(name: str, *, conn=None, dry_run: bool = False) -> Stage:
         if own:
             conn.close()        # 프로젝트가 없어도 방금 연 conn 은 닫고 나간다
         raise
+    if not dry_run:
+        # 시장 목록이 없던 사이트 — 재기 전에 한 번 세우고 키워드 언어를 다시 판정한다
+        db.ensure_markets(conn, p["id"])
     return Stage(conn, p, project_cfg(conn, p), dry_run=dry_run, own=own)
 
 
