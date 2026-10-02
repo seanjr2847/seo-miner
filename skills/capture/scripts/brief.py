@@ -356,7 +356,10 @@ NO_PAGE = {
                    "지면을 고치자고 말하고 멈춥니다 — 같은 주제로 새 글을 내면 두 지면이 한 "
                    "검색어를 나눠 갖습니다.",
     "unknown": "- 페이지: 아직 모릅니다 — 이 검색어로 걸린 내 페이지가 수집본에 없습니다. "
-               "고칠 페이지를 직접 적어 주세요: [URL]",
+               "짐작으로 제안하지 말고 먼저 찾습니다: ① 저장소·사이트맵에서 이 검색어를 다루는 "
+               "페이지 ② 검색 도구가 있으면 `site:사이트 검색어`. 후보가 하나뿐이면 그 주소를 쓰되 "
+               "어떻게 골랐는지 적고, 여럿이면 목록을 보여 주고 고르게 합니다. 그래도 못 찾으면 "
+               "이렇게 묻고 멈춥니다 — 고칠 페이지를 직접 적어 주세요: [URL]",
 }
 
 # 종류 → 꼴. 값이 문자열이면 고정, 함수면 (gap_kind, has_page) 로 가른다 —
@@ -2187,8 +2190,16 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
         # 하면 없는 일을 시킨다(대상이 봇 이름인데 그 문장이 나갔다).
         L.append(f"- 고칠 자리: {SITE_KINDS[kind]}")
     elif not url and _shows_page(shape):
-        # 고칠 페이지를 모르는 채로 고치라고 할 수는 없다 — 사람이 채울 자리를 둔다.
+        # 고칠 페이지를 모르는 채로 고치라고 할 수는 없다 — 먼저 찾게 하고, 못 찾으면 사람이 채운다.
+        # 찾을 재료를 같이 준다: 사이트 도메인("site:" 검색의 근거 — 이게 없어서 받은 쪽이
+        # "근거가 없다"며 멈췄다)과, 순위엔 안 걸려도 제목·H1 에 이 검색어가 든 내 지면.
         L.append(NO_PAGE["unknown"])
+        dom = str(((ctx or {}).get("project") or {}).get("domain") or "").strip()
+        if dom:
+            L.append(f"- 사이트: {_ext(dom, 120)}")
+        if topic:
+            L.append("- 제목·H1 에 이 검색어가 드는 내 지면(후보):")
+            L += [f"  - {p['page']} ({_head(p)})" for p in topic]
     why = " — ".join(x for x in (o.get("label"), o.get("reasoning")) if x)
     if why:
         # 근거 문장은 **기회가 선 그때의 판정**이다. 그 사실을 안 적었더니 한 요청문에

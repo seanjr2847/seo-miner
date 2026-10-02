@@ -140,6 +140,26 @@ def test_fix_page_without_known_page_leaves_url_slot():
     assert "## 지금 이 페이지 상태" not in t  # 모르는 페이지의 상태를 지어내지 않는다
 
 
+def test_fix_page_without_known_page_gives_the_domain_and_a_way_to_find_it():
+    """고칠 페이지를 모르는 고치기 요청문이 '[URL] 을 적어 주세요'만 남기자, 받은 AI 가 "사이트 도메인 등
+    찾을 근거도 없다"며 HTML 을 안 만들고 멈췄다. 사이트 도메인(project.domain)과 찾는 길(저장소·
+    사이트맵 → site: 검색 → 후보 하나면 쓰고 여럿이면 고르게 → 그래도 없으면 묻기)을 같이 싣는다.
+    제목·H1 에 검색어가 든 내 지면이 있으면 그 목록도 싣는다. 도메인을 모르면 그 줄은 안 낸다."""
+    opp = _opp("ctr_gap", "검색어")
+    ctx = {"project": {"domain": "me.example", "locale": "ko-KR"},
+           "topic_pages": {"검색어": [{"page": "https://me.example/guide", "title": "검색어 가이드",
+                                      "h1": "검색어 가이드"}]}}
+    t = brief.text(opp, ctx, "ko-KR")
+    assert "- 사이트: me.example" in t, t
+    assert "`site:사이트 검색어`" in t and "여럿이면 목록을 보여 주고 고르게 합니다" in t, t
+    assert "https://me.example/guide" in t and "제목·H1 에 이 검색어가 드는 내 지면(후보)" in t, t
+    assert "고칠 페이지를 직접 적어 주세요: [URL]" in t, "마지막 수단(묻고 멈춤)이 사라졌다"
+    bare = brief.text(opp, {"project": {}}, "ko-KR")
+    assert "- 사이트:" not in bare and "(후보)" not in bare, bare
+    known = brief.text(opp, {**ctx, "query_pages": {"검색어": _pages(URL)}}, "ko-KR")
+    assert "아직 모릅니다" not in known and "- 사이트:" not in known, "아는 페이지에 찾기 안내가 실렸다"
+
+
 # scoring.ai_tally 가 내는 질문 행의 모양 그대로 — 요청문은 여기서 다시 세지 않는다
 def _ai_row(**over):
     r = {"prompt": "무슨 도구가 좋아?", "category": "문제해결", "checks": 6, "cited": 0,
