@@ -390,6 +390,9 @@ def setup_payload(d: dict = None, conn=None, project: str = "") -> dict:
         # 쓰는 방식(설정 0단계) — 정본은 doctor 의 MODES/TOOLS/TERMINALS 다.
         # 화면은 여기 실린 것만 그린다: 도구 이름·설치 여부의 사본을 HTML 에 두지 않는다.
         "mode": d.get("mode"), "tool": d.get("tool"),
+        # 연결된 웹 주소 — 호스팅 측정 모드에서는 사이트 등록을 웹(/start)이 맡는다
+        # (사이트 고르개의 [새 사이트 추가]가 그리로 보낸다). 연결 전이면 빈 값.
+        "web_url": ((d.get("remote") or {}).get("url") or "").rstrip("/"),
         "terminal": d.get("terminal") or "system",
         "modes": d.get("modes") or [],
         "tools": d.get("tools") or [],
