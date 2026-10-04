@@ -398,9 +398,12 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
     "device_gap": "technical",
     "index_blocked": "technical",
     # 순위에 걸린 페이지는 정의상 없다 — 갈리는 건 사이트에 이 주제의 지면(제목·H1)이 있느냐다.
-    # has_page 는 page_of 가 그 지면을 하나로 골랐을 때만 참이고, 후보만 있으면 새 글 꼴이
-    # 후보 목록을 싣고 "새 글 대신 그 지면"이라 말한다(_target_lines).
-    "coverage": _by_page,
+    # 후보가 있는데 하나로 못 골랐어도(has_page 거짓) 고치기 꼴이다 — 주소만 모른다
+    # (NO_PAGE["unknown"] 이 후보를 싣고 고르게 한다). 예전엔 새 글 꼴로 두고 산출물만
+    # '지면 고르기'로 바꿔 끼워, 머리말·목표·답의 형식·'앞으로 쓸 새 글' 줄이 전부 새 글을
+    # 말하고 처방 한 줄만 "새 글을 만들지 않습니다"라고 했다(theotherskin pigment).
+    "coverage": lambda gk, has_page, band: ("fix_page" if has_page or gk == "covered"
+                                            else "new_content"),
     "ai_citation_gap": _ai_shape,
     "aio_exposure": _aio_shape,
     "content_gap": lambda gk, has_page, band: "fix_page" if gk == "weak" else "new_content",
@@ -2291,8 +2294,42 @@ def coverage_gap(o: dict, ctx: dict) -> str | None:
 
 
 def _topic_of(o: dict, ctx: dict) -> list[dict]:
-    """순위와 무관하게 제목·H1 에 이 검색어가 있는 내 지면 (dashboard 가 scoring.pages_by_topic 로 싣는다)."""
-    return (ctx.get("topic_pages") or {}).get(str(o.get("target") or "")) or []
+    """순위와 무관하게 제목·H1 에 이 검색어가 있는 내 지면 (dashboard 가 scoring.pages_by_topic 로 싣는다).
+
+    검색어와 다른 언어의 지면은 뺀다. 묶음은 **이름**으로 찾는데 이름이 키워드와 다른 말일
+    수 있다 — 'pigment' 묶음(키워드는 전부 '기미 …')에 /en/pigmentation-rosacea/ 하나가
+    걸려, 한국어 키워드를 맡을 수 없는 영어 지면을 두고 '이미 있다 → 새 글 금지'가 섰다."""
+    rows = (ctx.get("topic_pages") or {}).get(str(o.get("target") or "")) or []
+    lang = _kw_lang(o, ctx)
+    if not lang:
+        return rows
+    return [p for p in rows if (page_locale(None, p["page"]) or (lang,))[0] == lang]
+
+
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _kw_lang(o: dict, ctx: dict) -> str | None:
+    """이 기회의 검색어(묶음이면 그 키워드 전부)의 언어 — 하나로 모일 때만.
+
+    조회 지역(kw_locales)이 정본이고, 그게 없으면 한글이 든 검색어만 한국어로 본다. 라틴
+    글자는 언어를 말하지 않는다(ko-KR 에서 찾는 'pdrn') — 모르면 None 이고 거르지 않는다."""
+    t = str(o.get("target") or "")
+    if o.get("kind") == "coverage":
+        cl = t.split(":", 1)[-1].strip()
+        kws = [str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {}).get(cl) or []]
+    else:
+        kws = [t]
+    locs = ctx.get("kw_locales") or {}
+    langs = set()
+    for k in kws:
+        if locs.get(k):
+            langs.add(serp_adapter.lang_of(str(locs[k])))
+        elif _HANGUL.search(k):
+            langs.add("ko")
+        else:
+            return None
+    return next(iter(langs)) if len(langs) == 1 else None
 
 
 # ── 페이지 단위 ──────────────────────────────────────────────────────────────
@@ -2678,6 +2715,9 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
         return "이 주소로 들어오던 링크가 301 을 거쳐 살아 있는 페이지에 닿는 것(직접 열어 확인)."
     if kind == "backlink_prospect":
         return "이 도메인에서 우리 페이지로 링크 하나. 연락문을 보내는 것까지가 이번 일입니다."
+    if kind == "coverage" and shape == "fix_page":
+        return ("이 주제를 맡은 지면이 묶인 키워드로 노출을 잡는 것 — '구간 추가'로 가른 키워드부터. "
+                f"그다음 목표는 1페이지({scoring.PAGE1}위 안)입니다.")
     if shape in ("new_content",):
         return (f"새 글이 색인되고 이 검색어로 노출이 잡히는 것 — 그다음 목표는 1페이지"
                 f"({scoring.PAGE1}위 안)입니다.")
@@ -2979,7 +3019,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 같은 목록이다. 화면이 이걸 안 받으면 요청문은 "지면이 3개 있다", 화면은 "걸린 페이지를
     # 아직 모으지 않았다"가 된다(모공에서 실제로 그랬다).
     cands = [{"page": p["page"], "title": p.get("title") or ""}
-             for p in _topic_of(o, ctx)] if not url and shape == "new_content" else []
+             for p in _topic_of(o, ctx)] if not url and shape in ("new_content", "fix_page") else []
     return {"shape": shape, "body": "\n".join(L), "page": url, "candidates": cands}
 
 

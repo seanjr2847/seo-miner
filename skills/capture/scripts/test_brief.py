@@ -907,17 +907,49 @@ def test_coverage_with_existing_topic_page_fixes_it_instead_of_new_article():
     got = d["opps"][0]
     assert got["gap_kind"] == "covered" and "이미 있습니다" in got["play"]["what"]
     assert got["brief"]["shape"] == "fix_page"
-    # 좁히지 못하면(전용 지면이 둘 이상) 새 글 꼴로 두되 후보를 싣고 멈추게 한다 — 처방은 그대로 '있음'
+    # 좁히지 못하면(전용 지면이 둘 이상) 고치기 꼴로 두고 주소를 고르게 한다 — 처방이 '새 글을
+    # 만들지 않습니다'인데 새 글 꼴이면 머리말("새 글의 설계도")·목표("새 글이 색인")·답의
+    # 형식(제목 3안·목차 트리)·'앞으로 쓸 새 글' 줄이 전부 처방과 정면으로 부딪혔다(pigment)
     amb = {**ctx, "topic_pages": {"cluster:sofwave": [
         {**cands[0], "page": f"{base}/en/a/"}, {**cands[0], "page": f"{base}/en/b/"}]}}
     assert brief.page_of(o, amb) is None
     ba = brief.build(o, amb)
-    assert ba["shape"] == "new_content" and len(ba["candidates"]) == 2
-    assert "이 주제를 맡는 지면을 위 후보에서 고른 결과" in ba["body"]
+    assert ba["shape"] == "fix_page" and len(ba["candidates"]) == 2
+    assert brief.NO_PAGE["unknown"] in ba["body"] and f"  - {base}/en/a/" in ba["body"]
+    for bad in ("새 글의 설계도", "새 글이 색인", "앞으로 쓸 새 글", "위 후보에서 고른 결과"):
+        assert bad not in ba["body"], bad
+    assert "키워드 분류 표" in ba["body"]
     # 지면이 하나도 없으면 예전 그대로 — 단, "사이트에 없다"고 단정하지 않는다
     none = brief.build(o, {"cluster_keywords": ctx["cluster_keywords"]})
     assert none["shape"] == "new_content" and "대표 글 한 장" in none["body"]
     assert "사이트에 아예 없다는 뜻은 아닙니다" in scoring.kind_play("coverage")["what"]
+
+
+def test_topic_candidate_in_another_language_is_not_a_candidate():
+    """묶음 이름(pigment)으로 찾으면 키워드(기미 레이저…)와 다른 언어의 지면이 걸린다 — 한국어
+    키워드를 /en/ 지면이 맡을 수는 없는데, 그 지면 하나로 '이미 있다 → 새 글 금지'가 섰다."""
+    base = "https://me.example"
+    en = {"page": f"{base}/en/pigmentation-rosacea/", "title": "Pigmentation & Rosacea",
+          "h1": "Pigmentation & Rosacea", "primary": True}
+    o = _opp("coverage", "cluster:pigment")
+    ko_kws = {"pigment": [{"keyword": "기미 레이저", "volume": 390},
+                          {"keyword": "기미 검버섯 차이", "volume": 110}]}
+    ctx = {"topic_pages": {"cluster:pigment": [en]}, "cluster_keywords": ko_kws}
+    assert brief.coverage_gap(o, ctx) is None
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "new_content" and b["candidates"] == [] and en["page"] not in b["body"]
+    assert brief.NO_PAGE["new_content"] in b["body"]
+    # 언어 경로가 없는 지면(사이트 기본)·같은 언어의 지면은 그대로 후보다
+    ko = {**en, "page": f"{base}/pigmentation-rosacea/"}
+    assert brief.page_of(o, {**ctx, "topic_pages": {"cluster:pigment": [en, ko]}}) == ko["page"]
+    # 조회 지역이 정본이다 — 라틴 글자 키워드라도 ko-KR 로 조회했으면 /en/ 은 후보가 아니다
+    kr = {"topic_pages": {"cluster:pigment": [en]},
+          "cluster_keywords": {"pigment": [{"keyword": "pdrn", "volume": 10}]},
+          "kw_locales": {"pdrn": "ko-KR"}}
+    assert brief.coverage_gap(o, kr) is None
+    # 언어를 모르면 거르지 않는다(지어내지 않는다)
+    unk = {**kr, "kw_locales": {}}
+    assert brief.coverage_gap(o, unk) == "covered"
 
 
 def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
