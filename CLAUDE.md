@@ -117,3 +117,14 @@ python run_checks.py            # 전부
 python run_checks.py render     # 화면만
 python run_checks.py remote     # 호스팅 런만 (원격 미연결이면 건너뜀)
 ```
+
+## 하네스: 요청문 업그레이드
+
+**목표:** 붙여 넣은 요청문의 하자를 생성기(`brief.py`·`scoring.py`) 원인까지 추적해 테스트부터 고친다.
+
+**호출 조건:** 사용자가 seo-miner 요청문을 붙여 넣고 하자·이상함을 말하면 `brief-upgrade` 스킬을 쓴다. 요청문대로 일을 하라는 뜻이면 쓰지 않는다.
+
+**변경 이력:**
+| 날짜 | 변경 내용 | 대상 | 사유 |
+| --- | --- | --- | --- |
+| 2026-10-04 | Harness v2로 처음 구성 | 전체 | pigment 요청문(#232) 수정 흐름을 재사용 |
