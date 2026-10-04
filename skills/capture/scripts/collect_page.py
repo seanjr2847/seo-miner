@@ -494,6 +494,29 @@ def blocked_note(host: str, n: int) -> str:
             "우리 쪽에서 고칠 수 있는 문제가 아닙니다.")
 
 
+_META_CHARSET = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_\-]+)""", re.I)
+
+
+def html_text(r) -> str:
+    """응답 본문을 글자로 — 헤더에 charset 이 없으면 본문의 <meta charset>, 그것도 없으면 내용 판정.
+
+    requests 의 r.text 는 'text/html' 에 charset 이 없으면 ISO-8859-1 로 읽는다(RFC 2616 기본값).
+    그래서 상위 글 개요가 'ë¥í° ì¹¼ë¼' 로 저장돼 요청문에 나갔다(cnpskin — 본문은 utf-8).
+    우리 페이지 감사(fetch)와 크롤(collect_crawl.fetch)이 같은 길이라 둘 다 이걸 쓴다."""
+    if "charset" in (r.headers.get("content-type") or "").lower():
+        return r.text
+    m = _META_CHARSET.search(r.content[:4096])
+    for enc in ((m.group(1).decode("ascii", "ignore") if m else None),
+                r.apparent_encoding, "utf-8"):
+        if not enc:
+            continue
+        try:
+            return r.content.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return r.content.decode("utf-8", errors="replace")
+
+
 def fetch(url: str, timeout: int | None = None) -> dict:
     """URL 한 장. 실패도 한 줄로 남긴다 — "못 가져왔다"는 것 자체가 진단이다."""
     import requests
@@ -505,7 +528,7 @@ def fetch(url: str, timeout: int | None = None) -> dict:
     if r.status_code >= 400 or "html" not in (r.headers.get("content-type") or "").lower():
         return {"url": url, "status": r.status_code,
                 "error": f"HTTP {r.status_code} · {r.headers.get('content-type', '?')}"}
-    return audit_html(url, r.text, r.status_code)
+    return audit_html(url, html_text(r), r.status_code)
 
 
 # ── 막힌 페이지 대신 읽기 — DataForSEO On-Page content_parsing ────────────────

@@ -577,24 +577,42 @@ def site_lang_line(shape: str, locale: str) -> str:
             + (f". 길이 기준은 {_limits_line(locale)}." if SHAPES[shape]["limits"] else "."))
 
 
-def _target_lang_lines(o: dict, ctx: dict, locale: str | None) -> list[str]:
-    """'대상'의 언어 줄 — 손댈 페이지가 없을 때. 그 검색어를 조회한 언어-지역이 정본이다.
+def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") -> list[str]:
+    """'대상'의 언어 줄 — 손댈 페이지를 모를 때. 검색어의 언어(_kw_lang)가 정본이다.
 
-    page_locale 은 html lang 이나 주소로 읽으니 **페이지가 있어야** 선다. 새 글 꼴에는
-    그 페이지가 없어 언어 줄이 구조적으로 못 서고, 꼬리가 "그 줄이 없으면 사이트 언어로"
-    라고 물러선다 — 영어 검색어의 설계도에 "한국어로 쓰고 title 30자"가 실렸다.
-    조회에 쓴 값도 keywords.locale 이라(collect_serp), 여기가 같은 사실을 본다.
+    page_locale 은 html lang 이나 주소로 읽으니 **페이지가 있어야** 선다. 새 글·주소 모르는
+    고치기 꼴에는 그 페이지가 없어 언어 줄이 구조적으로 못 서고 사이트 기본으로 떨어진다 —
+    영어 검색어의 설계도에 "한국어로 쓰고 title 30자"가 실렸다(theotherskin 'korean ptt'·
+    'melasma treatment'). 예전엔 kw_locales[대상] 을 봤는데, 그건 언어가 아니라 시장이고
+    주제 묶음(대상이 'cluster:…')에서는 아예 빗나갔다.
+
+    검색어가 라틴 글자뿐이라 언어를 모르고 사이트는 라틴 글자 언어가 아니면, 사이트 기본을
+    못 박지 않고 페이지(새 글이면 상위 글)의 언어를 따르게 한다.
     """
-    kwl = str((ctx.get("kw_locales") or {}).get(str(o.get("target") or "")) or "")
-    if not kwl or locale is None:
+    if locale is None:
         return []
-    lang = serp_adapter.lang_of(kwl)
-    if lang not in _KNOWN_LANGS or lang == serp_adapter.lang_of(locale):
-        return []                   # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
-    name = lang_label(kwl)
-    return [f"- 페이지 언어: {name} (이 검색어를 조회한 지역 {kwl}) — 사이트 기본"
-            f"({lang_label(locale)})과 다릅니다. 산출물은 {name}로 쓰고, 길이 기준은 "
-            f"{_limits_line(kwl)}."]
+    import db
+    site = serp_adapter.lang_of(locale)
+    lang = _kw_lang(o, ctx, locale)
+    if lang:
+        if lang not in _KNOWN_LANGS or lang == site:
+            return []               # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
+        name = lang_label(lang)
+        return [f"- 페이지 언어: {name} (검색어의 언어) — 사이트 기본({lang_label(locale)})과 "
+                f"다릅니다. 산출물은 {name}로 쓰고, 길이 기준은 {_limits_line(lang)}."]
+    non_latin = {lg for _, lg in db._SCRIPTS}
+    t = str(o.get("target") or "")
+    kws = ([str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {})
+            .get(t.split(":", 1)[-1].strip()) or []] if o.get("kind") == "coverage" else [t])
+    latin = bool(kws) and all(re.search(r"[A-Za-z]", k) and not db._script_lang(k) for k in kws)
+    if not latin or site not in non_latin:
+        return []
+    whose = ("이 검색어의 검색결과 상위 글이 쓰는 언어" if shape == "new_content"
+             else "고칠 페이지의 언어(주소의 언어 경로 /en/ 같은 것, 없으면 html lang)")
+    return [f"- 산출물 언어: {whose}를 따릅니다 — 검색어가 라틴 글자라 언어를 여기서 정하지 "
+            f"않습니다. 길이 기준도 그 언어의 것을 씁니다({lang_label(locale)}이면 "
+            f"{_limits_line(locale)}, 영어면 {_limits_line('en')}, 일본어·중국어면 {_limits_line('ja')}). "
+            "정하지 못하면 [확인 필요]."]
 
 
 PRODUCT_NOUN = {"outreach": "연락문", "presence": "게시·답변 문안"}
@@ -961,7 +979,7 @@ def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
 SERP_OUTLINE_HEAD = "위 글들의 H2 목록"
 
 
-def _serp_top(o: dict, ctx: dict) -> list[str]:
+def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
     """이 검색어의 지금 검색결과 상위 — 우리가 방금 조회한 그 응답에서 나온다.
 
     이 표가 없던 동안 요청문은 "상위 페이지 2~3개의 제목을 붙여 넣으세요" 라고
@@ -989,16 +1007,22 @@ def _serp_top(o: dict, ctx: dict) -> list[str]:
     got = [(r, outlines.get(str(r.get("url") or ""))) for r in rows]
     shown = [(r, x) for r, x in got if x and x.get("h2")]
     if shown:
-        L.append(SERP_OUTLINE_HEAD + " — 우리가 열어 본 것입니다. '빠진 구간'은 여기와 "
-                 "'지금 이 페이지 상태'의 H2 를 견주어 찾습니다:")
+        # 새 글 꼴엔 '지금 이 페이지 상태' 절이 없다 — 견줄 상대를 꼴마다 말한다(theotherskin 울쎄라).
+        L.append(SERP_OUTLINE_HEAD + (
+            " — 우리가 열어 본 것입니다. 새 글이 다룰 구간을 정하는 재료입니다 — 상위가 공통으로 "
+            "다루는 질문은 빠뜨리지 않되 순서와 관점은 우리 것으로:" if shape == "new_content" else
+            " — 우리가 열어 본 것입니다. '빠진 구간'은 여기와 '지금 이 페이지 상태'의 H2 를 "
+            "견주어 찾습니다:"))
         for r, x in shown[:3]:
-            head = f"- {r['position']}위 {x.get('title') or r.get('title') or ''} ({r.get('url')})"
+            # 제목은 위 표와 같은 검색결과 제목이 먼저다 — 열어 본 페이지의 <title> 은 인코딩이
+            # 깨져 들어온 적이 있다(cnpskin, 헤더에 charset 없음)
+            head = f"- {r['position']}위 {r.get('title') or x.get('title') or ''} ({r.get('url')})"
             L.append(head)
             L += [f"  - {_ext(h, 120)}" for h in (x.get("h2") or [])[:12]]
             if len(x.get("h2") or []) > 12:
                 L.append(f"  - 외 {len(x['h2']) - 12}개")
         L.append("")
-    L += _format_lines(o, ctx, [(r, x) for r, x in got if x and not r.get("is_own")])
+    L += _format_lines(o, ctx, [(r, x) for r, x in got if x and not r.get("is_own")], shape)
     failed = [r for r, x in got if x and not x.get("h2") and not r.get("is_own")]
     if failed:
         L.append(f"- 상위 글 {len(failed)}곳은 열지 못했습니다(막혔거나 H2 가 없습니다) — "
@@ -1042,7 +1066,8 @@ _FORMAT_COLS = (("words", "본문 단어"), ("tables", "표"), ("lists", "목록
                 ("images", "이미지"), ("videos", "영상"))
 
 
-def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]]) -> list[str]:
+def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]],
+                  shape: str = "fix_page") -> list[str]:
     """상위 글과 우리 페이지의 **형식**을 나란히 — 본문 단어·표·목록·이미지·영상 수.
 
     H2 만 견주면 "빠진 구간"은 찾아도 "빠진 형식"은 못 찾는다: 상위 셋이 비교표와 영상을
@@ -1057,12 +1082,15 @@ def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]]) -> list
         a = (ctx.get("page_audits") or {}).get(url) if url else None
         rows = [[f"{r['position']}위", *(_n(x.get(k)) for k, _ in _FORMAT_COLS)]
                 for r, x in counted[:3]]
-        if a and not a.get("error"):
+        mine = bool(a and not a.get("error")) and shape != "new_content"
+        if mine:
             rows.append(["우리 페이지", *(_n(a.get(k)) for k, _ in _FORMAT_COLS)])
-        L += ["", "상위 글과 우리 페이지의 형식 (본문 틀 밖만 셉니다 — 메뉴·푸터 제외):",
+        L += ["", ("상위 글과 우리 페이지의 형식" if mine else "상위 글의 형식")
+              + " (본문 틀 밖만 셉니다 — 메뉴·푸터 제외):",
               *_table(["자리", *(h for _, h in _FORMAT_COLS)], rows),
-              "- 상위가 모두 가진 형식을 우리만 안 가졌으면 그것이 '빠진 형식'입니다. 분량은 "
-              "맞출 목표가 아니라 다루는 깊이의 단서입니다 — 단어 수를 늘리려고 늘리지 않습니다."]
+              ("- 상위가 모두 가진 형식을 우리만 안 가졌으면 그것이 '빠진 형식'입니다." if mine else
+               "- 상위가 모두 가진 형식은 새 글도 갖출 형식입니다.")
+              + " 분량은 맞출 목표가 아니라 다루는 깊이의 단서입니다 — 단어 수를 늘리려고 늘리지 않습니다."]
     return L
 
 
@@ -1281,7 +1309,8 @@ def _link_candidates(ctx: dict, url: str, ins: list[dict]) -> list[dict]:
     for q, prs in (ctx.get("query_pages") or {}).items():
         for p in prs or []:
             pg = p.get("page")
-            if not pg or scoring.norm(pg) in linked:
+            # 다른 언어 글은 후보가 아니다 — 한국어 기미 페이지 후보에 /ja/ 글이 순위로 올라왔다
+            if not pg or scoring.norm(pg) in linked or not _same_lang(pg, url):
                 continue
             row = acc.setdefault(pg, {"page": pg, "impressions": 0, "clicks": 0,
                                       "position": None, "shared": set()})
@@ -1302,6 +1331,11 @@ def _link_candidates(ctx: dict, url: str, ins: list[dict]) -> list[dict]:
     return sorted(out, key=lambda r: (not r["shared"], r["position"] is None,
                                       r["position"] if r["position"] is not None else 0,
                                       -r["impressions"], r["page"]))[:_LINK_CANDIDATES]
+
+
+def _same_lang(a: str, b: str) -> bool:
+    """두 주소가 같은 언어 지면인가 — 주소의 언어 경로(/en/·/ja/)로, 없으면 사이트 기본끼리."""
+    return (page_locale(None, a) or ("",))[0] == (page_locale(None, b) or ("",))[0]
 
 
 def _words(q) -> set[str]:
@@ -1340,7 +1374,7 @@ def _outlink_candidates(ctx: dict, url: str) -> list[dict]:
         if not shared or not prs:
             continue
         pg = prs[0].get("page")
-        if not pg or scoring.norm(pg) in done:
+        if not pg or scoring.norm(pg) in done or not _same_lang(pg, url):
             continue
         row = acc.setdefault(pg, {"page": pg, "impressions": 0, "shared": set()})
         row["impressions"] += int(prs[0].get("impressions") or 0)
@@ -1572,8 +1606,15 @@ def _ev_ctr(o, ctx, pages):
 
 def _ev_cannibal(o, ctx, pages):
     L = _pages_table(pages)
-    if L:
-        L.append("- 노출이 가장 큰 페이지가 정본 후보입니다. 표의 숫자로 판단하세요.")
+    if L and len(pages) > 1:
+        # 정본 기준은 처방(scoring 의 cannibalization play) 한 곳이다 — 여기는 표가 그 기준에서
+        # 갈리는지만 말한다. "노출이 가장 큰 페이지가 정본 후보"라고 따로 적었더니, 노출은 A·클릭은
+        # B 인 표(theotherskin 구진성 흉터)에서 기준이 두 벌이 됐다.
+        by_imp = max(pages, key=lambda r: int(r.get("impressions") or 0))["page"]
+        by_clk = max(pages, key=lambda r: int(r.get("clicks") or 0))["page"]
+        L.append(f"- 노출로는 {by_imp}, 클릭으로는 {by_clk} 가 앞섭니다 — '이 상황에서 할 일' 1의 "
+                 "순서로 정합니다." if by_imp != by_clk else
+                 f"- 노출·클릭 모두 {by_imp} 가 앞섭니다.")
     audits = ctx.get("page_audits") or {}
     rows = []
     for p in pages[:6]:
@@ -1952,10 +1993,12 @@ def _ev_content_gap(o, ctx, pages):
     rows = sorted((r for r in (ctx.get("kw_gap") or [])
                    if str(r.get("keyword") or "").strip().lower() == t),
                   key=lambda r: (r.get("position") is None, r.get("position") or 0))
-    L = _table(["경쟁 도메인", "그쪽 순위", "내 순위", "월 검색량", "갈래"],
+    # 갈래 칸(수집기의 weak·unknown)은 뺐다 — 코드값이 그대로 찍혔고, 누가 위인지는 순위 두
+    # 칸이 이미 말한다(그쪽 순위 '모름'이 unknown 이다).
+    L = _table(["경쟁 도메인", "그쪽 순위", "내 순위", "월 검색량"],
                [[r["domain"], f"{r['position']}위" if r.get("position") is not None else "모름",
                  f"{r['our_position']}위" if r.get("our_position") else "없음",
-                 _n(r.get("volume")), r.get("kind")] for r in rows[:6]])
+                 _n(r.get("volume"))] for r in rows[:6]])
     return L + _pages_table(pages)
 
 
@@ -2179,7 +2222,9 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
             L.append("  제목·H1 에 이 검색어가 드는 다른 지면(내부 링크·겹침 확인용): "
                      + ", ".join(p["page"] for p in rest))
     elif url and url != t:
-        L.append(f"- {'정본 후보 페이지' if shape == 'consolidate' else '페이지'}: {url}")
+        # 정리 꼴의 이 주소는 page_of(노출 최대)다 — 정본은 처방의 기준으로 정하므로 '정본 후보'라
+        # 부르지 않는다(노출과 클릭이 갈리면 그 말이 기준과 부딪힌다).
+        L.append(f"- {'노출이 가장 큰 페이지' if shape == 'consolidate' else '페이지'}: {url}")
     elif not url and shape == "new_content" and topic:
         L.append(f"- 페이지: 수집본에 없음 — 순위에 걸린 페이지는 없지만, 제목·H1 에 이 "
                  f"검색어가 있는 내 지면이 {len(topic)}개 있습니다:")
@@ -2306,29 +2351,30 @@ def _topic_of(o: dict, ctx: dict) -> list[dict]:
     return [p for p in rows if (page_locale(None, p["page"]) or (lang,))[0] == lang]
 
 
-_HANGUL = re.compile(r"[가-힣]")
+def _kw_lang(o: dict, ctx: dict, locale: str | None = None) -> str | None:
+    """이 기회의 검색어(묶음이면 그 키워드 전부)의 언어 — 하나로 모일 때만, 모르면 None.
 
-
-def _kw_lang(o: dict, ctx: dict) -> str | None:
-    """이 기회의 검색어(묶음이면 그 키워드 전부)의 언어 — 하나로 모일 때만.
-
-    조회 지역(kw_locales)이 정본이고, 그게 없으면 한글이 든 검색어만 한국어로 본다. 라틴
-    글자는 언어를 말하지 않는다(ko-KR 에서 찾는 'pdrn') — 모르면 None 이고 거르지 않는다."""
+    kw_locales 는 언어가 아니라 **잴 시장**이다. 시장이 하나인 사이트는 영어 검색어도 전부 사이트
+    기본으로 적힌다(v1.138 — 한국 사람이 친 영어도 한국 구글). 그걸 언어로 읽었더니(v1.139.1)
+    영어 묶음 9건(theotherskin thermage·sofwave…)이 이미 있는 /en/ 지면을 잃고 새 글 설계도가
+    됐다. 그래서 사이트 기본과 **다른** 시장만 증거로 쓰고, 나머지는 글자로 본다(db._script_lang —
+    한글·가나·한자…). 라틴 글자는 언어를 말하지 않는다(ko-KR 에서 찾는 'pdrn') — None."""
+    import db
     t = str(o.get("target") or "")
     if o.get("kind") == "coverage":
         cl = t.split(":", 1)[-1].strip()
         kws = [str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {}).get(cl) or []]
     else:
         kws = [t]
+    site = serp_adapter.lang_of(str(locale or (ctx.get("project") or {}).get("locale") or ""))
     locs = ctx.get("kw_locales") or {}
     langs = set()
     for k in kws:
-        if locs.get(k):
-            langs.add(serp_adapter.lang_of(str(locs[k])))
-        elif _HANGUL.search(k):
-            langs.add("ko")
-        else:
+        mk = serp_adapter.lang_of(str(locs.get(k) or ""))
+        lang = mk if mk and site and mk != site else db._script_lang(k)
+        if not lang:
             return None
+        langs.add(lang)
     return next(iter(langs)) if len(langs) == 1 else None
 
 
@@ -2389,9 +2435,17 @@ def _page_query_lines(o: dict, rows: list[dict]) -> list[str]:
         return []
     mine = str(o.get("target") or "")
     shown = rows[:_PAGE_QUERY_ROWS]
+    # 제목·H1 로 찾은 지면은 누른 검색어로 걸린 적이 없을 수 있다 — 그때 "누른 검색어는 그중
+    # 하나일 뿐"이라 하면, 검색량 8,100 인 '기미'를 두고 노출 1 짜리 '기미 재발'에 맞추라는 말이
+    # 된다(theotherskin). 그때는 참고 표로만 싣는다.
     L = [PAGE_QUERIES_HEAD,
          "이 페이지는 아래 검색어 전부에서 첫째로 걸립니다. 누른 검색어는 그중 하나일 뿐이라, "
-         "title·H1·본문은 이 묶음이 주로 묻는 것에 답해야 합니다."]
+         "title·H1·본문은 이 묶음이 주로 묻는 것에 답해야 합니다." if _reaches(o, rows) else
+         # 주제 묶음은 대상이 'cluster:…' 키라 그대로 찍으면 안 되고, 맞출 것은 묶인 키워드다
+         "이 페이지에 지금 걸린 검색어입니다 — 참고용입니다. 맞출 것은 '근거' 절의 키워드이고, "
+         "이 검색어들을 잃지 않게 고칩니다." if o.get("kind") == "coverage" else
+         f"'{_ext(mine, 60)}'로는 아직 이 페이지가 걸리지 않습니다. 이 페이지에 지금 걸린 검색어는 "
+         "아래뿐입니다 — 참고용이고, title·H1·본문은 누른 검색어를 기준으로 정합니다."]
     L += _table(["검색어", "노출", "클릭", "평균 순위", "의도"],
                 [[r["query"] + (" ← 이 기회" if r["query"] == mine else ""),
                   _n(r["impressions"]), _n(r["clicks"]),
@@ -2584,6 +2638,12 @@ def _split_pending_lines(o: dict, ctx: dict, url: str) -> list[str]:
             "아래대로 한 벌을 씁니다.", ""]
 
 
+def _reaches(o: dict, rows: list[dict]) -> bool:
+    """누른 검색어가 이 페이지에 걸린 검색어 묶음에 실제로 있나."""
+    t = str(o.get("target") or "")
+    return any(r.get("query") == t for r in rows)
+
+
 def _unit_lines(rows: list[dict]) -> list[str]:
     """'대상'의 마지막 줄 — 일의 단위는 페이지고 누른 검색어는 입구다.
 
@@ -2642,7 +2702,9 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
     if kind in ("striking_distance", "ctr_gap", "rank_decay"):
         pos, imp, clk = _query_now(o, ctx, pages)
         if pos is None:
-            return "이 검색어의 순위와 클릭이 오르는 것 — 지금 값은 수집본에 없습니다([확인 필요])."
+            # 무엇이 없는지 말한다 — "수집본에 없음"만 적었더니 '왜 걸렸나'의 숫자와 부딪혀 읽혔다.
+            return ("이 검색어의 순위와 클릭이 오르는 것 — 최신 구글 실적에 이 검색어가 없습니다(기회가 "
+                    "선 시점의 값은 '대상'의 '왜 걸렸나'). 지금 자리는 직접 검색해 [확인 필요].")
         thin = (f" 노출이 {_n(imp)}뿐이라 클릭 수 목표는 흔들립니다 — 순위·클릭률을 먼저 봅니다."
                 if imp < scoring.CTR_GAP_MIN_IMP else "")
         if kind == "rank_decay":
@@ -2735,9 +2797,15 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
                  f"({_gsc_src(ctx)}). 이 페이지를 끝내면 이 합계로 전·후를 봅니다 — 검색어 하나의 "
                  "수는 기간마다 흔들립니다.")
     when = scoring.resolve_when(o["kind"])
+    if CLOSED_NOTE.get(str(o.get("status") or "")):
+        # 이미 닫힌 기회에 "다음 실적에서 … 저절로 닫힙니다"를 세우면 닫힌 것을 또 닫으라는 말이 된다
+        return L + ["- 끝나는 조건: 이 기회는 이미 닫혔습니다(위 '한눈에'의 주의). 다시 진행하면 위 "
+                    "목표를 이룬 것을 직접 확인하고 화면에서 [완료]로 닫습니다.", ""]
     L.append(f"- 끝나는 조건: {when} 이 기회는 저절로 닫힙니다." if when else
              "- 끝나는 조건: 이 종류는 저절로 닫히지 않습니다 — 적용하고 위 목표를 확인했으면 "
              "화면에서 [완료]로 닫습니다.")
+    if when and scoring.RESOLVE_ALSO.get(o["kind"]):
+        L.append(f"- {scoring.RESOLVE_ALSO[o['kind']]}")
     if after:
         L += [f"- {x}" for x in after]
     else:
@@ -2753,6 +2821,9 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
                      "돌아가 방향을 다시 정합니다. 고친 다음 날의 순위로 판단하지 않습니다.")
     return L + [""]
 
+
+CLOSED_NOTE = {"resolved": "저절로 닫혔습니다", "done": "[완료]로 닫혔습니다",
+               "dismissed": "[제외]로 닫혔습니다"}
 
 WORK_HEAD = "## 이 페이지에 이미 한 작업"
 HOLD_MARK = "관찰 중"
@@ -2867,11 +2938,12 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     lang_line = _page_lang_lines(audit, url, locale) if shape != "outreach" else []
     # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
     if not lang_line and not url and shape != "outreach":
-        lang_line = _target_lang_lines(o, ctx, locale)
+        lang_line = _target_lang_lines(o, ctx, locale, shape)
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
         lang_line = [site_lang_line(shape, locale)]
     L += (_target_lines(o, url, shape, ctx, has_evidence=bool(ev))[:-1]
-          + lang_line + ([] if kind == "coverage" else _unit_lines(pq)) + [""])
+          + lang_line + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
+          + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
     L += _page_work_lines(url, ctx) if url else []
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
@@ -2881,7 +2953,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False
     if s["slot"]:                             # 상위와 비교해야 하는 일(고치기·새 글)만
-        top = _serp_top(o, ctx)
+        top = _serp_top(o, ctx, shape)
         if top:
             L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
             had_top = True
@@ -2926,7 +2998,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         # 위의 거울 — 처방이 "걸린 페이지가 있으면 그 페이지를"이라고 두 갈래를 다 말하는데
         # 이쪽에는 그 페이지가 없다. 못 박지 않으면 '이 페이지로 내부 링크를 겁니다' 같은
         # 줄이 없는 페이지를 가리킨 채 그대로 읽힌다.
-        if not url and shape == "new_content":
+        # 처방에 그 갈래(걸린 페이지·이 페이지)를 말하는 줄이 있을 때만. 늘 붙였더니 주제 묶음의
+        # "있는데 안 걸린다면…"(있는 지면 이야기)과 "'이 페이지'는 전부 새 글"이 부딪혔다(thermage).
+        if not url and shape == "new_content" and any(
+                "걸린 페이지" in x or "이 페이지" in x for x in play["acts"]):
             L.append("- 위 목록에 '걸린 페이지가 있으면 그 페이지를'류가 있어도 **이 요청문은 "
                      "그 갈래가 아닙니다** — 이 검색어로 순위에 걸린 우리 페이지가 없습니다. "
                      "'이 페이지'라고 적힌 자리는 전부 **앞으로 쓸 새 글**을 가리킵니다.")
@@ -2984,7 +3059,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                    "만듭니다. 대신 '고칠 것' 표에 한 줄씩 넣고, 고칠 값 칸에 '이번 아님'과 "
                    "이유(무엇이 문제이고 다음에 무엇을 하면 되는지)를 적습니다. 진단 문장이 "
                    "'직접 쓰세요'라고 해도 이 요청문에서는 쓰지 않습니다.")
-    if len(pq) > 1:
+    if len(pq) > 1 and _reaches(o, pq):
         # 처방의 산출물(scoring PLAY)은 종류 한 벌이라 "검색어"를 단수로 말한다. 검색어
         # 여럿이 걸린 페이지에서는 그 자리가 묶음의 주된 의도라고 여기서 못 박는다.
         # 같은 말의 변형뿐인 묶음이면 "주된 의도"를 가를 것이 없다고 위에서 이미 말했다.
@@ -3004,6 +3079,21 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         # 맨 위 세 줄만 읽고 손대는 도구도 있다 — 관찰 중이라는 말이 아래 절에만 있으면 묻힌다.
         summary[-1:-1] = [f"- 주의: 이 페이지는 {HOLD_MARK}입니다({hold['until']}까지) — 아래 "
                           f"'{WORK_HEAD[3:]}'부터 읽습니다."]
+    if kind == "coverage" and not (ctx.get("cluster_keywords") or {}).get(
+            str(o.get("target") or "").split(":", 1)[-1].strip()):
+        # 기회가 선 뒤 키워드가 꺼지거나 다른 묶음으로 옮겨지면 '근거' 절이 안 서는데, 산출물은
+        # "위 근거의 키워드가 빠짐없이"였다(theotherskin cluster:lifting — 16개가 0개가 됨).
+        summary[-1:-1] = ["- 주의: 이 묶음에는 지금 켜진 키워드가 없습니다 — 기회가 선 뒤 꺼졌거나 다른 "
+                          "묶음으로 옮겨졌습니다. 키워드 분류 표를 만들 수 없으니, 이 기회를 [제외]로 "
+                          "닫을지 먼저 묻고 멈춥니다."]
+    closed = CLOSED_NOTE.get(str(o.get("status") or ""))
+    if closed:
+        # 닫힌 기회에도 화면이 요청문을 낸다(theotherskin 381건 중 265건이 resolved) — 맨 위에서 말한다.
+        why = f" — {_ext(o['status_reason'], 200)}" if o.get("status_reason") else ""
+        # 받는 쪽(AI)엔 화면이 없다 — "화면에서 먼저 봅니다"라고 했더니 멈추라는 건지 하라는 건지 안 정해졌다.
+        summary[-1:-1] = [f"- 주의: 이 요청문은 이미 닫힌 기회의 것입니다 — {closed}{why}. 보낸 "
+                          "사람이 다시 하기로 한 게 아니면 일을 시작하지 말고, 이 기회가 닫혔다는 것과 "
+                          "그래도 진행할지를 먼저 묻습니다."]
     L[2:2] = summary
     # H2 까지 이미 실었으면 붙여 넣기 칸을 아예 내지 않는다 — 다 준 뒤에 "붙여 넣으세요"
     # 라고 하면 사용자가 이미 있는 것을 다시 찾아 온다. 제목만 있으면 H2 만 청하고,

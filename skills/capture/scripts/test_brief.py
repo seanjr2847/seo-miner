@@ -87,9 +87,9 @@ def test_consolidate_lists_every_page_and_skips_advice():
     ctx = {"query_pages": {"검색어": _pages(URL, URL2)}, "page_audits": audits}
     t = brief.text(_opp("cannibalization", "검색어"), ctx, "ko-KR")
     assert t.startswith(brief.SHAPES["consolidate"]["intro"])
-    assert "정본 후보 페이지: " + URL in t
+    assert "노출이 가장 큰 페이지: " + URL in t
     assert f"| {URL} | 100 | 5 |" in t and f"| {URL2} | 70 | 4 |" in t
-    assert "정본 후보입니다" in t
+    assert "노출·클릭 모두 " + URL + " 가 앞섭니다" in t
     assert "| " + URL2 + " | 다른 제목 | 다른 |" in t     # 페이지별 제목 표
     assert "## 진단" not in t                        # 정리는 페이지 안을 안 고친다
     assert "리다이렉트 사슬" in t
@@ -103,7 +103,7 @@ def test_new_content_says_no_page_and_offers_slot():
     assert brief.NO_PAGE["new_content"] in t
     # "없음"이라고 단정하지 않는다 — 10위 밖 지면은 있어도 수집본에 안 걸린다
     assert "- 페이지: 없음" not in t and "지면부터 찾고" in t
-    assert "| rival.example | 2위 | 없음 | 2,400 | missing |" in t
+    assert "| rival.example | 2위 | 없음 | 2,400 |" in t
     assert "## 있으면 붙여 넣을 것" in t and "[여기에 붙여 넣기]" in t
     assert "지금 이 페이지 상태" not in t
     assert "본문을 쓰지 않습니다" in t
@@ -942,14 +942,35 @@ def test_topic_candidate_in_another_language_is_not_a_candidate():
     # 언어 경로가 없는 지면(사이트 기본)·같은 언어의 지면은 그대로 후보다
     ko = {**en, "page": f"{base}/pigmentation-rosacea/"}
     assert brief.page_of(o, {**ctx, "topic_pages": {"cluster:pigment": [en, ko]}}) == ko["page"]
-    # 조회 지역이 정본이다 — 라틴 글자 키워드라도 ko-KR 로 조회했으면 /en/ 은 후보가 아니다
-    kr = {"topic_pages": {"cluster:pigment": [en]},
+    # 조회 지역(kw_locales)은 언어가 아니라 **시장**이다 — 시장이 하나인 사이트는 영어 검색어도
+    # 전부 사이트 기본(ko-KR)으로 적힌다(v1.138). 그걸 언어로 읽었더니(v1.139.1) 영어 묶음
+    # 9건(thermage·sofwave…)이 이미 있는 /en/ 지면을 잃고 새 글 설계도가 됐다. 라틴 글자는
+    # 언어를 말하지 않는다 — 거르지 않는다.
+    site = {"project": {"locale": "ko-KR"}}
+    kr = {**site, "topic_pages": {"cluster:pigment": [en]},
           "cluster_keywords": {"pigment": [{"keyword": "pdrn", "volume": 10}]},
           "kw_locales": {"pdrn": "ko-KR"}}
-    assert brief.coverage_gap(o, kr) is None
-    # 언어를 모르면 거르지 않는다(지어내지 않는다)
-    unk = {**kr, "kw_locales": {}}
-    assert brief.coverage_gap(o, unk) == "covered"
+    assert brief.coverage_gap(o, kr) == "covered"
+    # 사이트 기본과 **다른** 시장으로 잰 키워드는 그 시장의 언어가 증거다
+    jp = {**kr, "kw_locales": {"pdrn": "ja-JP"}}
+    assert brief.coverage_gap(o, jp) is None
+
+
+def test_english_cluster_keeps_its_en_page_on_a_single_market_site():
+    """실데이터 꼴 — theotherskin 은 kw_locales 5,184개가 전부 ko-KR 이다(시장 하나). 영어 키워드
+    묶음은 /en/ 지면을 그대로 후보로 갖고, 그 지면을 고친다."""
+    base = "https://me.example"
+    main = f"{base}/en/lifting/sofwave/"
+    o = _opp("coverage", "cluster:sofwave")
+    kws = [{"keyword": "sofwave aftercare", "volume": 50}, {"keyword": "sofwave austin", "volume": 90}]
+    ctx = {"project": {"locale": "ko-KR"},
+           "topic_pages": {"cluster:sofwave": [
+               {"page": main, "title": "sofwave | Clinic", "h1": "Sofwave", "primary": True}]},
+           "cluster_keywords": {"sofwave": kws},
+           "kw_locales": {k["keyword"]: "ko-KR" for k in kws}}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "fix_page" and b["page"] == main, (b["shape"], b["page"])
+    assert "- 페이지 언어: 영어" in b["body"], b["body"]
 
 
 def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
@@ -2018,6 +2039,174 @@ def test_content_gap_unknown_rival_rank_is_not_printed_as_none():
     assert "None" not in body, "요청문에 None 이 찍혔다"
     assert "pmc.ncbi.nlm.nih.gov(1위)보다 위" in body, "순위 모르는 경쟁사를 목표로 삼았다"
     assert "| ovid.com | 모름 |" in body, body
+    # 갈래 칸은 수집기의 코드값(weak·unknown)을 그대로 찍었다 — 순위 두 칸이 이미 같은 말을 한다
+    table = body.split("## 근거")[1].split("\n## ")[0]
+    for code in ("weak", "unknown", "missing"):
+        assert f"| {code} |" not in table, (code, table)
+
+
+def test_resolve_when_is_a_clause_the_brief_can_close():
+    """끝나는 조건 줄은 '{조건} 이 기회는 저절로 닫힙니다.'로 잇는다. content_gap 의 조건 문장이
+    "… 직접 [완료]를 누릅니다"로 끝나 "…누릅니다 이 기회는 저절로 닫힙니다."가 나갔다 —
+    한 문장이 '저절로 안 닫힘'과 '저절로 닫힘'을 같이 말했다(theotherskin 'melasma treatment')."""
+    for k, w in scoring.RESOLVE_WHEN.items():
+        assert w.rstrip().endswith("면"), (k, w)
+    g = _goal(brief.build(_opp("content_gap", "검색어"), {}, "ko-KR")["body"])
+    line = next(x for x in g.splitlines() if x.startswith("- 끝나는 조건: "))
+    assert line.endswith("이 기회는 저절로 닫힙니다."), line
+    assert "[완료]" in g, "경쟁사가 그대로면 직접 닫는다는 말이 빠졌다"
+
+
+def test_new_article_guard_only_when_the_acts_talk_about_a_ranked_page():
+    """'위 목록에 걸린 페이지가 있으면…류가 있어도 이 갈래가 아닙니다' 줄은 처방이 두 갈래를 다
+    말할 때(구글 AI 요약 처방)를 위한 것인데 새 글 꼴이면 늘 붙었다. 주제 묶음(지면 없음)은
+    할 일 3이 '있는데 안 걸린다면…'(있는 지면 이야기)이라, '이 페이지는 전부 앞으로 쓸 새 글'과
+    정면으로 부딪혔다(theotherskin cluster:thermage). 챗봇 인용 처방엔 그런 줄 자체가 없다."""
+    guard = "앞으로 쓸 새 글"
+    cov = brief.build(_opp("coverage", "cluster:thermage"), {}, "ko-KR")
+    assert cov["shape"] == "new_content" and guard not in cov["body"], cov["body"]
+    ai = brief.build(_opp("ai_citation_gap", "질문?"), {}, "ko-KR")
+    assert ai["shape"] == "new_content" and guard not in ai["body"], ai["body"]
+    # 처방이 실제로 두 갈래를 말하는 구글 AI 요약은 그대로 못 박는다
+    o = {**_opp("aio_exposure", "검색어", band="beyond"), "band": "beyond"}
+    aio = brief.build(o, {}, "ko-KR")
+    assert aio["shape"] == "new_content" and guard in aio["body"], aio["body"]
+
+
+
+def test_link_candidates_stay_in_the_page_language():
+    """한국어 페이지(theotherskin /pigmentation-rosacea/melasma/)로 링크를 걸 후보에 /ja/ 글이
+    올라왔다 — 순위가 좋아서. 다른 언어 글에서 거는 본문 링크는 읽는 사람이 못 따라간다."""
+    me = "https://me.example/melasma/"
+    ctx = {"crawl_inlinks": {me: [{"from": "https://me.example/linked/", "anchor": "a",
+                                   "total": 1, "pages": 1, "anchors": [["a", 1]]}]},
+           "crawl_outlinks": {me: []},
+           "page_first_queries": {me: [{"query": "기미 치료", "impressions": 5}]},
+           "query_pages": {"기미 레이저": [{"page": "https://me.example/laser/", "impressions": 50,
+                                         "clicks": 1, "position": 9.0}],
+                           "기미 원인": [{"page": "https://me.example/ja/kimi/", "impressions": 90,
+                                       "clicks": 9, "position": 2.0}]}}
+    got = [r["page"] for r in brief._link_candidates(ctx, me, ctx["crawl_inlinks"][me])]
+    assert "https://me.example/laser/" in got and not any("/ja/" in g for g in got), got
+    out = [r["page"] for r in brief._outlink_candidates(ctx, me)]
+    assert not any("/ja/" in g for g in out), out
+
+
+def test_page_query_frame_only_when_the_target_reaches_the_page():
+    """제목·H1 로 찾은 지면은 누른 검색어로 걸린 적이 없을 수 있다. theotherskin '기미'(검색량
+    8,100)에 "위 검색어는 들어온 입구일 뿐 — 아래 묶음이 묻는 것에 맞춥니다"가 나갔는데, 그 묶음은
+    '기미 재발' 노출 1 한 줄이었다."""
+    t = "https://me.example/melasma/"
+    ctx = {"topic_pages": {"기미": [{"page": t, "title": "기미 | 클리닉", "h1": "기미", "primary": True}]},
+           "page_first_queries": {t: [{"query": "기미 재발", "impressions": 1, "clicks": 0, "intent": "정보",
+                                       "position": 23.0}]}}
+    o = {**_opp("aio_exposure", "기미", band="beyond"), "band": "beyond"}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "들어온 입구일 뿐" not in body and "누른 검색어는 그중 하나일 뿐" not in body, body
+    assert "'기미'로는 아직 이 페이지가 걸리지 않습니다" in body, body
+
+
+def test_new_article_serp_notes_do_not_point_at_our_page():
+    """새 글 꼴엔 '지금 이 페이지 상태' 절도 '우리 페이지' 행도 없는데, 상위 글 H2 문단이 그 절과
+    견주라고 했고 형식 표 제목은 '상위 글과 우리 페이지의 형식'이었다(theotherskin 울쎄라)."""
+    rows = [{"position": 1, "title": "SERP 제목", "url": "https://r.example/1"}]
+    ctx = {"serp_top": {"검색어": rows},
+           "serp_outlines": {"https://r.example/1": {"title": "깨진 <title>", "h2": ["가", "나"],
+                                                     "words": 900, "tables": 1}}}
+    o = {**_opp("aio_exposure", "검색어", band="beyond"), "band": "beyond"}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "new_content"
+    assert "지금 이 페이지 상태" not in b["body"] and "우리 페이지의 형식" not in b["body"], b["body"]
+    # 개요의 제목은 위 표와 같은 검색결과 제목 — 열어 본 페이지의 <title> 은 깨져 있을 수 있다
+    assert "1위 SERP 제목 (https://r.example/1)" in b["body"], b["body"]
+
+
+def test_latin_query_without_a_page_does_not_pin_the_site_language():
+    """한국어 사이트의 'korean ptt'·'melasma treatment' 요청문이, 고칠 페이지를 모르는 채로
+    "산출물 언어: 한국어 · title 30자"를 못 박았다 — 그 검색어로 걸리는 건 대개 /en/ 지면이다."""
+    body = brief.build(_opp("striking_distance", "korean ptt"), {"project": {"locale": "ko-KR"}},
+                       "ko-KR")["body"]
+    assert "한국어 (ko-KR, 사이트 기본)" not in body, body
+    assert "고칠 페이지의 언어" in body, body
+    # 한글 검색어는 그대로 사이트 기본
+    ko = brief.build(_opp("striking_distance", "기미"), {"project": {"locale": "ko-KR"}},
+                     "ko-KR")["body"]
+    assert "한국어 (ko-KR, 사이트 기본)" in ko, ko
+
+
+def test_closed_opportunity_brief_says_it_is_closed():
+    """닫힌 기회(theotherskin 381건 중 265건이 resolved)에도 살아 있는 요청문이 나갔다 — 화면이
+    닫힌 기회 펼침에도 요청문 버튼을 낸다. 목표는 "지금 값은 수집본에 없습니다"라고만 했다."""
+    o = {**_opp("striking_distance", "검색어"), "status": "resolved",
+         "status_reason": "이번 구글 실적에 이 검색어의 노출이 없어 조건을 벗어났습니다"}
+    body = brief.build(o, {}, "ko-KR")["body"]
+    summ = body.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
+    assert "닫혔습니다" in summ and "노출이 없어 조건을 벗어났습니다" in summ, summ
+    assert "최신 구글 실적에 이 검색어가 없습니다" in body, body
+
+
+def test_cannibal_canonical_rule_is_one_and_names_the_split():
+    """정본 기준이 세 벌이었다(처방 '노출·클릭이 가장 큰', 근거 '노출이 가장 큰', 산출물 '노출·클릭·
+    의도'). 노출로는 A, 클릭으로는 B 인 표(theotherskin 구진성 흉터)에서 어느 쪽인지 못 정했다."""
+    a, b = "https://me.example/a", "https://me.example/b"
+    pages = [{"page": a, "impressions": 131, "clicks": 1, "ctr": 0.76, "position": 7.5},
+             {"page": b, "impressions": 61, "clicks": 4, "ctr": 6.56, "position": 5.1}]
+    body = brief.build(_opp("cannibalization", "구진성 흉터"),
+                       {"query_pages": {"구진성 흉터": pages}}, "ko-KR")["body"]
+    assert "노출로는" in body and "클릭으로는" in body, body
+    assert "노출이 가장 큰 페이지가 정본 후보입니다" not in body, body
+    # 절의 방향을 틀리게 가리키지 않는다 — '할 일'은 근거 아래, 제목 표는 할 일 위에 있다
+    assert "위 '이 상황에서 할 일'" not in body and "아래 제목 표" not in body, body
+
+
+
+def test_closed_notice_tells_the_reader_what_to_do_and_drops_the_close_rule():
+    """닫힌 기회 안내가 "화면에서 먼저 봅니다"라고 했다 — 받는 AI 에겐 화면이 없다. 그리고 이미
+    닫혔는데 '끝나는 조건: 다음 실적에서 … 저절로 닫힙니다'가 그대로 섰다."""
+    o = {**_opp("striking_distance", "검색어"), "status": "resolved", "status_reason": "조건을 벗어남"}
+    body = brief.build(o, {}, "ko-KR")["body"]
+    assert "화면에서 먼저 봅니다" not in body, body
+    assert "일을 시작하지 말고" in body, body
+    g = _goal(body)
+    assert "저절로 닫힙니다" not in g and "이미 닫혔습니다" in g, g
+    # '왜 걸렸나'는 '대상' 절에 있다 — 맨 위 한눈에서 "위"라고 가리키면 틀린다
+    assert "위 '왜 걸렸나'" not in body, body
+
+
+def test_coverage_page_queries_do_not_show_the_cluster_key():
+    """주제 묶음은 대상이 'cluster:thermage' 다 — 그 키가 "'cluster:thermage'로는 아직 이 페이지가
+    걸리지 않습니다 … 누른 검색어를 기준으로"로 나가, 맞출 것이 근거 키워드와 걸린 검색어로 갈렸다."""
+    t = "https://me.example/en/thermage/"
+    ctx = {"topic_pages": {"cluster:thermage": [{"page": t, "title": "Thermage", "h1": "Thermage",
+                                                 "primary": True}]},
+           "cluster_keywords": {"thermage": [{"keyword": "thermage flx", "volume": 10}]},
+           "page_first_queries": {t: [{"query": "thermage seoul", "impressions": 9, "clicks": 0,
+                                       "position": 12.0, "intent": "정보"}]}}
+    body = brief.build(_opp("coverage", "cluster:thermage"), ctx, "ko-KR")["body"]
+    assert "cluster:" not in body.split("## 답의 형식")[0], body
+    assert "'근거' 절의 키워드" in body.split(brief.PAGE_QUERIES_HEAD)[1].split("\n## ")[0], body
+    # 산출물과 꼴의 규칙이 본문 쓰기를 두고 딴말하지 않는다(규칙: 보탤 문단은 붙여 넣을 수 있게)
+    assert "본문은 이 답에서 쓰지 않습니다" not in body, body
+
+
+def test_coverage_without_live_keywords_stops_instead_of_pointing_at_empty_evidence():
+    """theotherskin cluster:lifting — 기회가 선 뒤 키워드 16개가 전부 꺼져 '근거' 절이 안 섰는데,
+    산출물 1은 "위 근거의 키워드가 빠짐없이 한 줄씩"이었다. 만들 수 없는 산출물이다."""
+    t = "https://me.example/lifting/"
+    ctx = {"topic_pages": {"cluster:lifting": [{"page": t, "title": "lifting", "h1": "", "primary": True}]},
+           "cluster_keywords": {"lifting": []}}
+    body = brief.build(_opp("coverage", "cluster:lifting"), ctx, "ko-KR")["body"]
+    summ = body.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
+    assert "켜진 키워드가 없습니다" in summ, summ
+
+
+def test_unknown_language_line_covers_cjk_pages_too():
+    """언어를 모를 때 길이 기준을 한국어·영어 둘만 적어, 고칠 페이지가 /ja/·/zh-hans/ 로 나오면
+    기준이 없었다."""
+    body = brief.build(_opp("striking_distance", "korean ptt"), {"project": {"locale": "ko-KR"}},
+                       "ko-KR")["body"]
+    line = next(x for x in body.splitlines() if x.startswith("- 산출물 언어: "))
+    assert "일본어·중국어" in line, line
 
 
 # ── 외부 출처는 진단에 서면 산출물이다 ─────────────────────────────────────

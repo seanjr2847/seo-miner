@@ -208,7 +208,7 @@ def fetch(url: str) -> dict:
                 "bytes": 0, "content_type": "", "error": f"{type(e).__name__}: {e}"[:200]}
     return {"final_url": r.url, "status": r.status_code,
             "chain": [(h.url, h.status_code) for h in r.history],
-            "text": r.text, "bytes": len(r.content),
+            "text": collect_page.html_text(r), "bytes": len(r.content),
             "content_type": (r.headers.get("content-type") or ""), "error": None}
 
 

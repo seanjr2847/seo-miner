@@ -2870,6 +2870,34 @@ def test_rank_demotes_only_auto_selected_after_repeated_misses():
     conn.close()
 
 
+
+def test_html_without_header_charset_is_not_read_as_latin1():
+    """응답 헤더가 'text/html' 뿐이면 requests 의 r.text 는 ISO-8859-1 로 읽는다 — 상위 글 개요가
+    'ë¥í° ì¹¼ë¼' 로 저장돼 요청문에 그대로 나갔다(cnpskin, 본문은 <meta charset=utf-8>). 우리 페이지
+    감사·크롤도 같은 길이다. 헤더에 charset 이 없으면 본문의 meta 를, 그것도 없으면 내용으로 판정한다."""
+    import collect_page
+
+    class R:
+        def __init__(self, body: bytes, ctype: str, enc=None):
+            self.content, self.headers = body, {"content-type": ctype}
+            self.encoding = enc or ("ISO-8859-1" if "charset" not in ctype else ctype.split("=")[-1])
+            self.apparent_encoding = "utf-8"
+
+        @property
+        def text(self):
+            return self.content.decode(self.encoding, errors="replace")
+
+    page = "<html><head><meta charset=utf-8><title>루터 칼라</title></head></html>"
+    assert "루터 칼라" in collect_page.html_text(R(page.encode("utf-8"), "text/html"))
+    # meta 가 euc-kr 이면 그것을 따른다
+    kr = page.replace("utf-8", "euc-kr")
+    assert "루터 칼라" in collect_page.html_text(R(kr.encode("euc-kr"), "text/html"))
+    # meta 도 없으면 내용 판정(apparent_encoding)
+    bare = "<html><title>루터 칼라</title></html>"
+    assert "루터 칼라" in collect_page.html_text(R(bare.encode("utf-8"), "text/html"))
+    # 헤더가 charset 을 말하면 그대로
+    assert "루터 칼라" in collect_page.html_text(R(page.encode("utf-8"), "text/html; charset=utf-8"))
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

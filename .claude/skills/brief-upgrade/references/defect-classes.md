@@ -39,6 +39,10 @@
 - 어디서 생기나: `page_of`·`_topic_of`·`_coverage_page`·`coverage_gap`, 그리고 `dashboard.gather`
   가 싣는 `topic_pages`·`query_pages`·`kw_locales`. 페이로드에 이미 틀린 값이 실렸으면 원인은
   `dashboard.py`·`scoring.pages_by_topic` 쪽이다.
+- **`kw_locales` 는 언어가 아니라 잴 시장이다.** 시장이 하나인 사이트는 영어 검색어도 전부 사이트
+  기본으로 적힌다. 이걸 언어로 읽은 v1.139.1 이 영어 묶음 9건의 /en/ 지면을 지웠다(v1.139.2 에서
+  되돌림). 언어는 `brief._kw_lang` 한 벌 — 사이트 기본과 다른 시장만 증거, 나머지는 글자(`db._script_lang`).
+- 다른 언어 지면(링크 후보·주제 후보)이 섞이는지도 본다 — `brief._same_lang`.
 
 ## 5. 산출물과 답의 형식이 어긋난다
 
