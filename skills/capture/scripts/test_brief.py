@@ -973,6 +973,36 @@ def test_english_cluster_keeps_its_en_page_on_a_single_market_site():
     assert "- 페이지 언어: 영어" in b["body"], b["body"]
 
 
+
+def test_cluster_pages_are_found_by_the_shared_keyword_word_too():
+    """묶음 이름은 키워드와 다른 말일 수 있다 — 'pigment' 묶음의 키워드는 전부 '기미 …'인데
+    이름으로만 찾아 /en/pigmentation-rosacea/ 하나가 걸렸고, 같은 사이트의 기미 지면
+    (/pigmentation-rosacea/melasma/, title '기미 | …')은 못 찾아 새 글 설계도가 나갔다."""
+    import db
+    conn = db.connect()
+    conn.execute("INSERT INTO projects(name, domain) VALUES('clu-t', 'me.example')")
+    pid = conn.execute("SELECT id FROM projects WHERE name='clu-t'").fetchone()[0]
+    run = conn.execute("INSERT INTO crawl_runs(project_id, finished_at, seed) "
+                       "VALUES(?, '2026-09-01', 'sitemap') RETURNING id", (pid,)).fetchone()[0]
+    en = "https://me.example/en/pigmentation-rosacea/"
+    ko = "https://me.example/pigmentation-rosacea/melasma/"
+    conn.executemany("INSERT INTO crawl_pages(run_id, url, status, depth, title, h1) VALUES(?,?,?,1,?,?)",
+                     [(run, en, 200, "Pigmentation & Rosacea | Clinic", "Pigmentation & Rosacea"),
+                      (run, ko, 200, "기미 | 병원", "기미")])
+    conn.executemany("INSERT INTO keywords(project_id, keyword, cluster, is_active) VALUES(?,?,?,1)",
+                     [(pid, "기미 레이저", "pigment"), (pid, "기미 검버섯 차이", "pigment"),
+                      (pid, "기미 관리", "pigment")])
+    got = scoring.pages_by_cluster(conn, pid, ["pigment"])
+    assert {p["page"] for p in got["pigment"]} == {en, ko}, got
+    # 요청문은 그중 키워드와 같은 언어의 지면을 고친다
+    o = _opp("coverage", "cluster:pigment")
+    ctx = {"topic_pages": {"cluster:pigment": got["pigment"]},
+           "cluster_keywords": {"pigment": [{"keyword": "기미 레이저", "volume": 390}]}}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "fix_page" and b["page"] == ko, (b["shape"], b["page"])
+    conn.close()
+
+
 def test_pages_by_topic_matches_title_or_h1_on_live_pages_only():
     import db
     conn = db.connect()                       # CAPTURE_HOME 은 위에서 임시 폴더로 돌렸다

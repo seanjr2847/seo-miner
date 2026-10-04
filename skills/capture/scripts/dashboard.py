@@ -1700,7 +1700,8 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     cov_names = {str(o["target"]): str(o["target"]).split(":", 1)[-1].strip()
                  for o in opps if o["kind"] == "coverage"}
     if cov_names:
-        by_name = scoring.pages_by_topic(conn, pid, cov_names.values())
+        # 이름으로도, 묶음 키워드가 모두 품은 낱말로도 찾는다(pigment → '기미')
+        by_name = scoring.pages_by_cluster(conn, pid, cov_names.values())
         topic_pages.update({t: by_name[n] for t, n in cov_names.items() if n in by_name})
 
     # 한 페이지에 두 의도 — 판정을 여기서 다시 돌린다. query_pages 는 기회·순위의

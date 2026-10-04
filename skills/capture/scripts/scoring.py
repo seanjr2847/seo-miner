@@ -3087,6 +3087,39 @@ def pages_by_topic(conn: sqlite3.Connection, project_id: int,
     return out
 
 
+def pages_by_cluster(conn: sqlite3.Connection, project_id: int, names) -> dict[str, list[dict]]:
+    """주제 묶음 이름 → 그 주제의 내 지면(pages_by_topic 의 행). 이름으로도, 묶음 키워드가 모두
+    품은 낱말로도 찾는다.
+
+    이름은 키워드와 다른 말일 수 있다 — 'pigment' 묶음의 키워드는 전부 '기미 …'인데 이름으로만
+    찾아 /en/pigmentation-rosacea/ 하나가 걸렸고, 같은 사이트의 기미 지면은 못 찾아 새 글
+    설계도가 나갔다(theotherskin). 언어가 다른 지면을 거르는 것은 요청문(brief._topic_of)이 한다.
+    공통 낱말은 키워드가 둘 이상일 때만 — 하나면 그 키워드 전체가 낱말이다.
+    """
+    names = [str(n) for n in dict.fromkeys(names) if n]
+    heads: dict[str, list[str]] = {}
+    for n in names:
+        kws = [r[0] for r in conn.execute(
+            "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1 "
+            "AND COALESCE(cluster,'(미분류)')=?", (int(project_id), n))]
+        common = None
+        for k in kws:
+            ws = {w for w in tokens(k) if len(w) >= 2}
+            common = ws if common is None else common & ws
+        heads[n] = sorted(w for w in (common or set()) if len(kws) > 1 and norm(w) != norm(n))
+    found = pages_by_topic(conn, project_id, [*names, *(w for ws in heads.values() for w in ws)])
+    out: dict[str, list[dict]] = {}
+    for n in names:
+        rows: dict[str, dict] = {}
+        for key in (n, *heads[n]):
+            for r in found.get(key) or []:
+                if r["page"] not in rows or (r["primary"] and not rows[r["page"]]["primary"]):
+                    rows[r["page"]] = r
+        if rows:
+            out[n] = sorted(rows.values(), key=lambda h: not h["primary"])
+    return out
+
+
 def topic_page(hits) -> str | None:
     """pages_by_topic 후보 → 손댈 지면 하나. 전용 지면(primary)이 딱 하나일 때만 고른다 —
     둘이면 어느 쪽이 맡을지 사람이 정하고, 스치는 글뿐이면 그 글은 주제 지면이 아니다.
