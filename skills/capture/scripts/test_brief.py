@@ -125,7 +125,7 @@ def test_fix_page_carries_h2_list_and_advice():
     assert "H2 (3개): 첫째 / 둘째 / 셋째" in t
     assert "내부 링크 1개 · 외부 링크 2개 · 이미지 3개 (alt 없음 2개)" in t
     assert "## 진단 — 고쳐야 할 것" in t and "[title]" in t
-    assert ("구글 실적 2026-08-25, 최근 28일 평균 (검색어 전체): 평균 12.4위 · 노출 1,204 · 클릭 8 · "
+    assert ("구글 실적 2026-08-25, 최근 28일 평균 (검색어 하나): 평균 12.4위 · 노출 1,204 · 클릭 8 · "
             "1페이지까지 2.4칸") in t, t
     assert "기간 평균 게재순위" in t
     # 이 답은 파일을 안 고친다 — '전/후'가 아니라 '지금/고칠'이다(제안 표라고 말한다)
@@ -1533,9 +1533,9 @@ def _ptt_ctx():
 def test_striking_brief_on_page_one_with_zero_clicks():
     ctx = _ptt_ctx()
     body = brief.build(ctx["opps"][0], ctx, "ko-KR")["body"]
-    # 1. 숫자의 범위를 밝힌다 — 검색어 전체(페이지 2개 합) vs 이 페이지, 그리고 페이지 합계
+    # 1. 숫자의 범위를 밝힌다 — 검색어 하나(페이지 2개 합) vs 이 페이지, 그리고 페이지 합계
     ev = body.split("## 근거")[1].split("\n## ")[0]
-    assert "(검색어 전체 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
+    assert "(검색어 하나 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
     # 페이지가 둘 이상이면 어느 페이지끼리 나눠 갖는지가 새 정보라 그대로 그린다
     assert "| 이 검색어 하나의 내 페이지 |" in ev, ev
     assert "이 페이지 합계: 검색어 2개 · 노출 44 · 클릭 0" in body, body
@@ -2895,6 +2895,99 @@ def test_gsc_rank_line_names_the_page_it_belongs_to():
     # 걸린 페이지가 하나면 이름을 안 붙인다 — 아래 표가 그 하나다
     one = brief._rank_sources(None, ctx["query_pages"]["sofwave"][:1], ctx, page)
     assert one and page not in one[0] and "43위" in one[0], one
+
+
+_SM = "https://theotherskin.com/en/special-clinic/syringoma-milia/"
+
+
+def _overlap_ctx():
+    """theotherskin #61 의 링크 후보 표 꼴 — 한관종·비립종 페이지에 걸린 검색어 꼬리에 연결어·
+    사이트 이름·지명이 섞여 있다."""
+    tail = " | The Other Dermatology, Seoul"
+    pages = {"home": "https://theotherskin.com/en/",
+             "olidia": "https://theotherskin.com/en/porecare-skincare/olidia/",
+             "onda": "https://theotherskin.com/en/lifting-contour/onda/",
+             "milia": "https://theotherskin.com/en/blog/milia-about/"}
+    return pages, {
+        "project": {"name": "theotherskin", "domain": "theotherskin.com", "locale": "ko-KR"},
+        "page_audits": {_SM: {"title": "Syringoma vs Milia" + tail},
+                        pages["home"]: {"title": "Home" + tail},
+                        pages["onda"]: {"title": "Onda Lifting" + tail}},
+        "crawl_inlinks": {_SM: [{"from": "https://theotherskin.com/en/linked/", "anchor": "a",
+                                 "total": 1, "pages": 1, "anchors": [["a", 1]]}]},
+        "crawl_outlinks": {_SM: []},
+        "page_perf": [{"page": pages["home"], "impressions": 93, "clicks": 10, "position": 5.9}],
+        "page_first_queries": {_SM: [{"query": q} for q in (
+            "syringoma vs milia", "what is syringoma", "syringoma and milia",
+            "the other dermatology seoul korea milia")]},
+        "query_pages": {
+            "the other dermatology seoul korea": [{"page": pages["home"], "impressions": 93,
+                                                   "clicks": 10, "position": 5.9}],
+            "olidia vs juvelook and": [{"page": pages["olidia"], "impressions": 183,
+                                        "clicks": 1, "position": 6.4}],
+            "what is onda": [{"page": pages["onda"], "impressions": 47, "position": 62.4}],
+            "milia under eyes": [{"page": pages["milia"], "impressions": 20, "position": 9.0}]}}
+
+
+def test_link_overlap_ignores_stopwords_and_the_site_name():
+    """theotherskin #61: 링크 후보의 '겹치는 말'이 'after, and, before, vs'·'clinic, seoul, the'·
+    'is, what' 이었다 — 연결어와 사이트 이름(title 꼬리 'The Other Dermatology, Seoul')·지명이다.
+    주제가 먼 홈·olidia·onda 가 '겹치는 글'로 위에 섰다. 겹침은 주제 낱말로만 센다."""
+    pages, ctx = _overlap_ctx()
+    noise = {"the", "and", "vs", "is", "what", "seoul", "korea", "dermatology", "other"}
+    rows = brief._link_candidates(ctx, _SM, ctx["crawl_inlinks"][_SM])
+    got = {r["page"]: r["shared"] for r in rows}
+    assert not any(s & noise for s in got.values()), got
+    # 주제가 겹치는 글(비립종)은 남고 맨 위다 — 순위가 더 좋은 홈·olidia 보다
+    assert got[pages["milia"]] == {"milia"} and rows[0]["page"] == pages["milia"], rows
+    assert got[pages["home"]] == set() and got[pages["olidia"]] == set(), got
+    outs = {r["page"] for r in brief._outlink_candidates(ctx, _SM)}
+    assert outs == {pages["milia"]}, outs
+    body = "\n".join(brief._site_facts(ctx, _SM, link_candidates=True))
+    assert f"| {pages['home']} | 93 | 10 | 5.9위 | — |" in body, body
+    # title 꼬리가 한 페이지에만 있으면 사이트 이름이 아니다 — 주제 낱말을 지우지 않는다
+    one = {"page_audits": {_SM: {"title": "Syringoma | Milia Guide"}}}
+    assert not {"milia", "guide"} & brief._site_name_words(one), brief._site_name_words(one)
+
+
+def test_striking_scope_says_one_query_not_all_queries():
+    """theotherskin #61 근거: '(검색어 전체): 평균 8.5위 · 노출 745' — 값은 검색어 하나
+    (syringoma vs milia)의 것인데 이름표가 '검색어 전체'라, 바로 위 기준선의 페이지 합계
+    (검색어 73개 · 노출 1,351)와 같은 범위로 읽혔다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()},
+           "striking": [{"query": "검색어", "pos": 12.4, "imp": 1204, "clk": 8, "gap": 2.4,
+                         "band": "page2"}], "gsc_date": "2026-08-25", "gsc_period": 28}
+    t = brief.text(_opp("striking_distance", "검색어", band="page2"), ctx, "ko-KR")
+    assert "검색어 전체" not in t, t
+    assert "최근 28일 평균 (검색어 하나): 평균 12.4위 · 노출 1,204 · 클릭 8" in t, t
+    ctx["query_pages"] = {"검색어": _pages(URL, URL2)}
+    t2 = brief.text(_opp("striking_distance", "검색어", band="page2"), ctx, "ko-KR")
+    assert "(검색어 하나 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 12.4위" in t2, t2
+
+
+def test_cannibal_lead_line_says_clicks_tie():
+    """theotherskin #698 근거: 클릭 0 대 0 인 표 아래에 '노출·클릭 모두 …papular-scar-about/ 가
+    앞섭니다'가 나갔다 — max 가 동점에서 첫 행(=노출 1위)을 골라서다. 할 일 1(클릭이 같으면
+    노출)의 근거를 클릭이라고 잘못 쓰게 만든다."""
+    a, b = "https://me.example/blog/papular-scar-about/", "https://me.example/acne-scar/papular-scar/"
+    pages = [{"page": a, "impressions": 53, "clicks": 0, "ctr": 0.0, "position": 7.7},
+             {"page": b, "impressions": 21, "clicks": 0, "ctr": 0.0, "position": 11.6}]
+    body = brief.build(_opp("cannibalization", "papular scar"),
+                       {"query_pages": {"papular scar": pages}}, "ko-KR")["body"]
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    assert "노출·클릭 모두" not in ev and "클릭으로는" not in ev, ev
+    assert f"- 클릭은 같습니다(2곳 모두 0). 노출로는 {a} 가 앞섭니다" in ev, ev
+    # 노출까지 같으면 숫자로는 안 갈린다고 말한다 — 첫 행을 이긴 쪽으로 찍지 않는다
+    tie = [dict(p, impressions=30) for p in pages]
+    ev2 = brief.build(_opp("cannibalization", "papular scar"),
+                      {"query_pages": {"papular scar": tie}}, "ko-KR")["body"]
+    assert "가 앞섭니다" not in ev2.split("## 근거")[1].split("\n## ")[0], ev2
+    assert "노출·클릭 모두 같습니다" in ev2, ev2
+    # 클릭만 갈리고 노출이 같으면 클릭 쪽을 댄다
+    one = [dict(pages[0], impressions=30), dict(pages[1], impressions=30, clicks=2)]
+    ev3 = brief.build(_opp("cannibalization", "papular scar"),
+                      {"query_pages": {"papular scar": one}}, "ko-KR")["body"]
+    assert f"- 노출은 같습니다(2곳 모두 30). 클릭으로는 {b} 가 앞섭니다" in ev3, ev3
 
 
 if __name__ == "__main__":

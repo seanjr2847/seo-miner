@@ -1447,12 +1447,43 @@ def _same_lang(a: str, b: str) -> bool:
 
 
 def _words(q) -> set[str]:
-    return {t for t in scoring.tokens(str(q or "")) if len(t) >= 2}
+    """검색어의 낱말 — 연결어(scoring.QUERY_STOPWORDS: vs·and·the·is·what)는 뺀다. 겹침을 세는
+    자리라 'syringoma vs milia' 와 'olidia vs juvelook' 이 'vs' 로 겹치면 안 된다."""
+    return {t for t in scoring.tokens(str(q or ""))
+            if len(t) >= 2 and t not in scoring.QUERY_STOPWORDS}
+
+
+# title 꼬리를 가르는 구분자 — 'Syringoma vs Milia | The Other Dermatology, Seoul'
+_TITLE_TAIL_SEP = re.compile(r"\s[|\-–—·]\s")
+
+
+def _site_name_words(ctx: dict) -> frozenset[str]:
+    """사이트가 제 이름·자리로 쓰는 낱말 — 주제 낱말이 아니다.
+
+    프로젝트 이름·도메인·지명(site_of)에 더해, title 꼬리에 **두 페이지 이상** 되풀이되는
+    사이트 이름('… | The Other Dermatology, Seoul')의 낱말. 프로젝트 이름은 'theotherskin'
+    한 낱말이라 'dermatology'·'clinic' 은 못 가렸다. 한 페이지에만 있는 꼬리는 그 글의
+    부제일 수 있어서 안 본다."""
+    site = site_of(ctx)
+    tails: dict[str, int] = {}
+    for a in (ctx.get("page_audits") or {}).values():
+        if not isinstance(a, dict):
+            continue
+        segs = _TITLE_TAIL_SEP.split(str(a.get("title") or ""))
+        if len(segs) > 1:
+            tail = segs[-1].strip().lower()
+            tails[tail] = tails.get(tail, 0) + 1
+    named = {t for tail, n in tails.items() if n >= 2 for t in scoring.tokens(tail)}
+    return frozenset(site.own | site.place | named)
 
 
 def _topic_words(ctx: dict, url: str) -> set[str]:
     """이 페이지의 주제 낱말 — 걸린 검색어 전부(page_first_queries)에서, 없으면 query_pages.
-    후보를 가르는 것은 겹침의 유무지 가중치가 아니다."""
+    후보를 가르는 것은 겹침의 유무지 가중치가 아니다.
+
+    사이트 이름·지명은 뺀다 — theotherskin #61 의 링크 후보 표가 'clinic, seoul, the' 로
+    겹친다며 홈·소개 글을 한관종·비립종 페이지의 '주제가 겹치는 글' 맨 위에 세웠다. 그 말은
+    사이트의 거의 모든 검색어에 붙는다."""
     rows = (ctx.get("page_first_queries") or {}).get(url)
     qs = ([r.get("query") for r in rows] if rows is not None else
           [q for q, prs in (ctx.get("query_pages") or {}).items()
@@ -1460,7 +1491,7 @@ def _topic_words(ctx: dict, url: str) -> set[str]:
     out: set[str] = set()
     for q in qs:
         out |= _words(q)
-    return out
+    return out - _site_name_words(ctx)
 
 
 def _outlink_candidates(ctx: dict, url: str) -> list[dict]:
@@ -1628,12 +1659,14 @@ def _ev_striking(o, ctx, pages):
     r = _find(ctx.get("striking"), "query", o["target"])
     L = []
     if r:
-        # 검색어 전체의 수는 내 페이지 여럿의 합(순위는 페이지별 평균)이고, 아래 표는 페이지
-        # 하나의 수다. 범위를 안 밝히자 6.3위·노출 39 와 5.8위·노출 32 가 같은 날짜 딱지를
-        # 달고 서로 틀린 값처럼 읽혔다.
+        # 이 줄은 검색어 하나의 수다 — 내 페이지가 여럿이면 그 합(순위는 페이지별 평균)이고,
+        # 아래 표는 페이지 하나의 수다. 범위를 안 밝히자 6.3위·노출 39 와 5.8위·노출 32 가 같은
+        # 날짜 딱지를 달고 서로 틀린 값처럼 읽혔다. 이름표를 '검색어 전체'라 했더니 theotherskin
+        # #61 에서 'syringoma vs milia' 하나의 노출 745 가 기준선의 페이지 합계(검색어 73개·
+        # 노출 1,351)와 같은 범위로 읽혔다 — 클릭률 미달 근거(_ev_ctr)처럼 '검색어 하나'다.
         n_pages = len(pages)
-        scope = (f"검색어 전체 — 내 페이지 {n_pages}개 합, 순위는 페이지별 평균"
-                 if n_pages > 1 else "검색어 전체")
+        scope = (f"검색어 하나 — 내 페이지 {n_pages}개 합, 순위는 페이지별 평균"
+                 if n_pages > 1 else "검색어 하나")
         L.append(f"- {_gsc_src(ctx)} ({scope}): 평균 {r['pos']}위 · 노출 {_n(r['imp'])} · 클릭 "
                  f"{_n(r['clk'])}"
                  + (f" · 1페이지까지 {r['gap']}칸" if r.get("band") == "page2" else
@@ -1731,11 +1764,23 @@ def _ev_cannibal(o, ctx, pages):
         # 정본 기준은 처방(scoring 의 cannibalization play) 한 곳이다 — 여기는 표가 그 기준에서
         # 갈리는지만 말한다. "노출이 가장 큰 페이지가 정본 후보"라고 따로 적었더니, 노출은 A·클릭은
         # B 인 표(theotherskin 구진성 흉터)에서 기준이 두 벌이 됐다.
-        by_imp = max(pages, key=lambda r: int(r.get("impressions") or 0))["page"]
-        by_clk = max(pages, key=lambda r: int(r.get("clicks") or 0))["page"]
-        L.append(f"- 노출로는 {by_imp}, 클릭으로는 {by_clk} 가 앞섭니다 — '이 상황에서 할 일' 1의 "
-                 "순서로 정합니다." if by_imp != by_clk else
-                 f"- 노출·클릭 모두 {by_imp} 가 앞섭니다.")
+        # 동점이면 앞서는 쪽이 없다 — max 가 첫 행(=노출 1위)을 골라, 클릭 0 대 0 인 표 아래에
+        # "노출·클릭 모두 …papular-scar-about/ 가 앞섭니다"가 나갔다(theotherskin #698).
+        imp_lead, imp_top = _leaders(pages, "impressions")
+        clk_lead, clk_top = _leaders(pages, "clicks")
+        if len(imp_lead) > 1 and len(clk_lead) > 1:
+            L.append("- 노출·클릭 모두 같습니다 — 숫자로는 정본이 안 갈립니다.")
+        elif len(clk_lead) > 1:
+            L.append(f"- 클릭은 같습니다({_tied(clk_lead, pages, clk_top)}). 노출로는 {imp_lead[0]} "
+                     "가 앞섭니다 — '이 상황에서 할 일' 1의 순서로 정합니다.")
+        elif len(imp_lead) > 1:
+            L.append(f"- 노출은 같습니다({_tied(imp_lead, pages, imp_top)}). 클릭으로는 {clk_lead[0]} "
+                     "가 앞섭니다 — '이 상황에서 할 일' 1의 순서로 정합니다.")
+        elif imp_lead != clk_lead:
+            L.append(f"- 노출로는 {imp_lead[0]}, 클릭으로는 {clk_lead[0]} 가 앞섭니다 — '이 상황에서 "
+                     "할 일' 1의 순서로 정합니다.")
+        else:
+            L.append(f"- 노출·클릭 모두 {imp_lead[0]} 가 앞섭니다.")
     audits = ctx.get("page_audits") or {}
     rows = []
     for p in pages[:6]:
@@ -1748,6 +1793,18 @@ def _ev_cannibal(o, ctx, pages):
         L += ["", "페이지별 제목 — 검색 의도가 정말 같은지 여기서 가릅니다:"]
         L += _table(["내 페이지", "title", "H1", "본문 단어"], rows)
     return L
+
+
+def _leaders(pages: list[dict], key: str) -> tuple[list[str], int]:
+    """key 가 가장 큰 페이지들(동점이면 여럿)과 그 값."""
+    top = max(int(r.get(key) or 0) for r in pages)
+    return [r["page"] for r in pages if int(r.get(key) or 0) == top], top
+
+
+def _tied(lead: list[str], pages: list[dict], top: int) -> str:
+    """동점 괄호 — '2곳 모두 0' 또는 '가장 많은 2곳이 5씩'."""
+    return (f"{len(lead)}곳 모두 {_n(top)}" if len(lead) == len(pages)
+            else f"가장 많은 {len(lead)}곳이 {_n(top)}씩")
 
 
 def _split_group(head: str, rows: list[dict], limit: int = 12) -> list[str]:
