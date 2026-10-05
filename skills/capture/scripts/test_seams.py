@@ -884,8 +884,11 @@ def test_seam_19_brief_context_keys_come_from_gather():
     # 값을 치르고 배운 자리라 이름으로 못 박는다.
     # serp_fanout·aio_gap_ranks: 함께 묻는 질문과 AI 요약이 대신 인용한 곳 — 수집기가
     # 받아 놓고 버리던 것을 남기게 된 자리다.
+    # decay_pages·crawl_lost_inlinks: 순위를 잃은 페이지(떨어지기 전 스냅샷)와 끊긴 링크(크롤
+    # 회차 비교) — 수집본(옛 스냅샷·옛 회차)에 있었는데 페이로드가 최신 한 벌만 실어, 요청문이
+    # "페이지: 아직 모릅니다"·근거 없는 "끊긴 링크를 다시 걸라"를 내보냈다(theotherskin #128·#703).
     for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals",
-                "serp_fanout", "aio_gap_ranks"):
+                "serp_fanout", "aio_gap_ranks", "decay_pages", "crawl_lost_inlinks"):
         assert key in served, f"gather() 가 {key} 를 안 싣는다"
         assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 

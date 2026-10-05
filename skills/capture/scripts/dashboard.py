@@ -1263,8 +1263,11 @@ def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
     "어느 글에서 이 페이지로 링크를 걸지" 를 시키면서 지금 어디서 링크가 오는지를 안
     주면, AI 는 이미 링크가 있는 글을 또 제안한다.
 
-    값이 없는 URL 은 키를 안 만든다 — 크롤이 안 본 주소를 "고아" 라고 부르지 않기
-    위해서다(빈 리스트는 "보고 링크가 없었다"는 뜻으로 남겨 둔다).
+    크롤이 열지도 않았고 거는 글도 없는 URL 은 키를 안 만든다 — 크롤이 안 본 주소를
+    "고아" 라고 부르지 않기 위해서다(빈 리스트는 "열어 봤고 링크가 없었다"는 뜻으로 남겨 둔다).
+    열지 않았어도 크롤한 글이 그 주소로 건 링크는 **본 것**이라 싣는다 — theotherskin #703
+    의 페이지는 크롤 상한(300장)에 걸려 안 열렸는데 3곳이 링크하고 있었고, 요청문은 "끊긴
+    내부 링크를 어디서 다시 걸지"를 시키면서 들어오는 링크를 한 줄도 못 댔다.
     """
     run = (crawl or {}).get("run")
     want = {u for u in urls if u}
@@ -1275,9 +1278,7 @@ def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
         by_norm.setdefault(scoring.norm(u), u)
     crawled = {scoring.norm(r["url"]) for r in conn.execute(
         "SELECT url FROM crawl_pages WHERE run_id=?", (run["id"],))}
-    out = {by_norm[k]: [] for k in by_norm if k in crawled}
-    if not out:
-        return {}
+    out: dict[str, list] = {u: [] for u in by_norm.values()}
     for r in conn.execute(
             "SELECT url_from, url_to, anchor, in_chrome FROM crawl_links"
             " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT 20000",
@@ -1285,7 +1286,8 @@ def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
         u = by_norm.get(scoring.norm(r["url_to"]))
         if u in out:
             out[u].append({"from": r["url_from"], "anchor": r["anchor"], "chrome": r["in_chrome"]})
-    return {u: _inlink_rows(rows) for u, rows in out.items()}
+    return {u: _inlink_rows(rows) for u, rows in out.items()
+            if rows or scoring.norm(u) in crawled}
 
 
 def _crawl_outlinks(conn, crawl: dict, urls) -> dict:
@@ -1310,6 +1312,92 @@ def _crawl_outlinks(conn, crawl: dict, urls) -> dict:
         u = by_norm.get(scoring.norm(r["url_from"]))
         if u in out and r["url_to"] not in out[u]:
             out[u].append(r["url_to"])
+    return out
+
+
+# 크롤 회차를 몇 번까지 거슬러 견주나 — 회차마다 이 주소로 가는 링크를 색인으로 한 번 읽는다.
+LOST_INLINK_RUNS = 12
+
+
+def _url_forms(u: str) -> list[str]:
+    """crawl_links.url_to 를 색인으로 찾을 모양들 — 끝 빗금 유무·%XX 대소문자. 같은 주소가
+    다르게 적혀 들어온다(theotherskin: %E7… 와 %e7… 가 한 회차에 같이 있다)."""
+    out: set[str] = set()
+    for x in {u, u.rstrip("/"), u.rstrip("/") + "/"}:
+        out |= {x, re.sub(r"%[0-9a-fA-F]{2}", lambda m: m.group(0).upper(), x),
+                re.sub(r"%[0-9a-fA-F]{2}", lambda m: m.group(0).lower(), x)}
+    return sorted(out)
+
+
+def _crawl_lost_inlinks(conn, pid: int, crawl: dict, urls) -> dict:
+    """크롤 회차를 견줘 이 주소로 오던 내부 링크 중 **끊긴 것** — 순위 하락 요청문의 산출물
+    '끊긴 내부 링크를 어디서 다시 걸지'의 근거.
+
+    들어오는 링크 표(_crawl_inlinks)는 지금 회차 하나라 무엇이 끊겼는지 말하지 못한다.
+    theotherskin #703 의 /ja/acne-scars/papular_scar/ 는 9/3 크롤에서 75곳이 걸었고 9/24
+    부터 3곳이었다 — 72곳이 같은 앵커로 /ja/acne-scar/papular-scar/ 를 걸게 바뀌었는데,
+    요청문은 무엇이 끊겼는지 근거 없이 '다시 걸 자리'를 시켰다.
+
+    기준은 앞 회차 중 이 주소로 거는 글이 가장 많던 회차다. 떨어지기 전 날짜로 고르지
+    않는다: 순위는 28일 평균이라 링크가 바뀐 뒤 몇 주 늦게 떨어진다(#703 은 9/24 크롤 뒤에
+    떨어졌다). 끊겼다고 치는 것은 그 글을 지금 회차도 열었는데 이 주소로 안 거는 것뿐이다 —
+    지금 크롤이 그 글에 안 닿았으면 끊긴 건지 모른다. 그 글들이 같은 앵커로 지금 거는
+    주소(moved_to)도 싣는다 — 주소가 바뀐 것인지 링크가 빠진 것인지가 그걸로 갈린다.
+
+    앞 회차에서 이 주소로 오는 링크가 한 번도 안 잡혔으면 키를 안 만든다 — 끊긴 게 없는
+    게 아니라 견줄 것이 없다(요청문이 그렇다고 말한다)."""
+    run = (crawl or {}).get("run")
+    want = [u for u in dict.fromkeys(urls) if u]
+    if not (run and want):
+        return {}
+    runs = [dict(r) for r in conn.execute(
+        "SELECT id, started_at FROM crawl_runs WHERE project_id=? AND id<=?"
+        " AND finished_at IS NOT NULL ORDER BY id DESC LIMIT ?",
+        (pid, run["id"], LOST_INLINK_RUNS))][::-1]
+    if len(runs) < 2 or runs[-1]["id"] != run["id"]:
+        return {}
+    ids, cur = [r["id"] for r in runs], run["id"]
+    day = {r["id"]: str(r["started_at"] or "")[:10] for r in runs}
+    out = {}
+    for u in want:
+        forms = _url_forms(u)
+        froms: dict[int, dict[str, str]] = {i: {} for i in ids}
+        for r in conn.execute(
+                f"SELECT run_id, url_from, anchor FROM crawl_links"
+                f" WHERE run_id IN ({','.join('?' * len(ids))})"
+                f" AND url_to IN ({','.join('?' * len(forms))})"
+                " AND is_internal=1 AND url_from <> url_to", (*ids, *forms)):
+            froms[r["run_id"]].setdefault(r["url_from"], " ".join(str(r["anchor"] or "").split()))
+        base = max(ids[:-1], key=lambda i: (len(froms[i]), i))
+        if not froms[base]:
+            continue
+        gone = [f for f in sorted(froms[base]) if f not in froms[cur]]
+        seen_now: set[str] = set()
+        moved: dict[str, set] = {}
+        for i in range(0, len(gone), 400):
+            chunk = gone[i:i + 400]
+            marks = ",".join("?" * len(chunk))
+            seen_now |= {r[0] for r in conn.execute(
+                f"SELECT url FROM crawl_pages WHERE run_id=? AND url IN ({marks})", (cur, *chunk))}
+            for r in conn.execute(
+                    f"SELECT url_from, url_to, anchor FROM crawl_links WHERE run_id=?"
+                    f" AND url_from IN ({marks}) AND is_internal=1", (cur, *chunk)):
+                # 빈 앵커(그림 링크)는 짝을 못 짓는다 — 그 글의 다른 그림 링크가 다 걸린다
+                a = froms[base][r["url_from"]]
+                if a and " ".join(str(r["anchor"] or "").split()) == a:
+                    moved.setdefault(r["url_to"], set()).add(r["url_from"])
+        lost = [{"from": f, "anchor": froms[base][f]} for f in gone if f in seen_now]
+        lost_from = {x["from"] for x in lost}
+        moved_to = sorted(([t, len(fs & lost_from)] for t, fs in moved.items() if fs & lost_from),
+                          key=lambda x: (-x[1], x[0]))[:3]
+        # 같은 날 회차가 둘이면 뒤 것 하나로 — 날짜만 말하는 줄에 같은 날이 두 번 서지 않게
+        hist = {day[i]: len(froms[i]) for i in ids}
+        out[u] = {"history": [{"date": k, "n": v} for k, v in hist.items()],
+                  "base": {"date": day[base], "n": len(froms[base])},
+                  "now": {"date": day[cur], "n": len(froms[cur])},
+                  "lost": lost[:INLINK_ROWS], "lost_total": len(lost), "moved_to": moved_to,
+                  # 그때 걸던 글인데 이번 크롤이 안 연 곳 — 끊겼다고도 안 끊겼다고도 못 한다
+                  "unseen": len(gone) - len(lost)}
     return out
 
 
@@ -1393,6 +1481,17 @@ def _aio_band_of(target: str, gap_band: dict, rank_pos: dict, gsc_pos: dict) -> 
     if target in gsc_pos:
         return scoring.aio_band(gsc_pos[target])
     return None
+
+
+def _decay_runs(conn, opps: list[dict]) -> dict:
+    """순위 하락 기회 id → 그 기회를 세운 적재(run_id). 떨어지기 전·후 짝(scoring.decay_state)은
+    그 적재가 본 스냅샷에 있다 — 근거 문장(_axis_opps)과 옛 페이지(_axis_query_pages)가 같이 쓴다."""
+    ids = [o["id"] for o in opps if o["kind"] == "rank_decay" and o.get("id")]
+    if not ids:
+        return {}
+    return dict(conn.execute(
+        f"SELECT id, run_id FROM opportunities WHERE id IN ({','.join('?' * len(ids))})",
+        ids).fetchall())
 
 
 def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: list[dict],
@@ -1483,12 +1582,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 그 기회를 세운 적재의 스냅샷 짝(scoring.decay_state — 자동 해소와 같은 기준)에 지금
     # 순위를 덧붙여 다시 쓴다. 짝을 못 믿으면(옛 스냅샷이 지워졌다 등) 옛 문장을 둔다 —
     # 문장 속 날짜가 이미 그때 것이라고 말한다.
-    decay_run = {}
-    decay_ids = [o["id"] for o in opps if o["kind"] == "rank_decay" and o.get("id")]
-    if decay_ids and cur:
-        decay_run = dict(conn.execute(
-            f"SELECT id, run_id FROM opportunities WHERE id IN ({','.join('?' * len(decay_ids))})",
-            decay_ids).fetchall())
+    decay_run = _decay_runs(conn, opps) if cur else {}
     decay_cache: dict = {}
     for o in opps:
         o["volume"] = kw_vol.get(scoring.norm(str(o["target"]))) or None
@@ -1586,7 +1680,8 @@ def _axis_hold(conn, pid: int, at: str | None, opps_d: dict, qp: dict,
                if t and not t.startswith("http") and t not in qpages]
     if missing:
         qpages.update(scoring.pages_by_query(conn, pid, missing, at=at))
-    ctx = {"query_pages": qpages, "topic_pages": qp.get("topic_pages") or {}}
+    ctx = {"query_pages": qpages, "topic_pages": qp.get("topic_pages") or {},
+           "decay_pages": qp.get("decay_pages") or {}}
 
     page_works: dict[str, list[dict]] = {}
     for w in works:
@@ -1666,6 +1761,12 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         *(r["query"] for r in striking),
         *(r["keyword"] for r in ranks_all),
         *(r["query"] for r in ups), *(r["query"] for r in downs)], at=at)
+    # 순위 하락은 떨어지기 전·후 스냅샷의 페이지를 따로 싣는다 — query_pages 는 기준일 한
+    # 날이라, 그 검색어가 최신 실적에서 빠지면 순위를 잃은 페이지를 모른다고 했다(#128).
+    run_of = _decay_runs(conn, opps)
+    decay_pages = scoring.decay_pages(conn, pid, [
+        (o["target"], run_of[o["id"]]) for o in opps
+        if o["kind"] == "rank_decay" and o.get("id") in run_of])
 
     # 내 페이지 감사(collect_page) — 주소마다 가장 최근 것(db.latest_page_audits). 한 회차가
     # 몇십 곳만 보므로 "최신 검사일 한 벌"로 읽으면 앞 회차의 감사가 사라진다. 진단 문장은 여기서 만들지
@@ -1718,11 +1819,12 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     # 이 페이지로 들어오는 검색어 — query_pages 를 뒤집어서는 못 센다. 그 표에는
     # 기회·순위에 걸린 검색어만 있어서 한 지면에 마흔 개가 들어와도 셋만 세고,
     # 화면은 그 셋을 "연관 검색어 전부"라고 말하게 된다.
-    # 손댈 페이지는 brief.page_of 가 고르고(순위 → 주제 지면 순), 그 후보가 모두
-    # 이 둘 안에 있다 — 여기서 따로 고르지 않고 둘을 합쳐 넘긴다.
+    # 손댈 페이지는 brief.page_of 가 고르고(순위 → 떨어지기 전 페이지 → 주제 지면 순), 그
+    # 후보가 모두 이 셋 안에 있다 — 여기서 따로 고르지 않고 셋을 합쳐 넘긴다.
     in_play = {*q_of_url, *(str(o["target"]) for o in opps
                             if str(o["target"]).startswith("http"))}
     in_play |= {r["page"] for rows in topic_pages.values() for r in rows if r.get("page")}
+    in_play |= {r["page"] for v in decay_pages.values() for r in v["before"][:1]}
     page_queries = scoring.queries_by_page(conn, pid, in_play, at=at)
     # 요청문의 '이 페이지에 걸린 검색어' 표 — 그 페이지가 노출 1등인 검색어 전부. 판정
     # (intent_split)과 같은 한 벌이다. query_pages 를 뒤집으면 기회·순위의 검색어만 남는다.
@@ -1731,7 +1833,8 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     return {"query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date, "topic_pages": topic_pages,
             "intent_splits": intent_splits, "target_trend": target_trend,
-            "page_queries": page_queries, "page_first_queries": page_first}
+            "page_queries": page_queries, "page_first_queries": page_first,
+            "decay_pages": decay_pages}
 
 
 # ── 묶음(메뉴 = 사용자의 질문 = 재기 단위) ─────────────────────────────────
@@ -1893,6 +1996,10 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
     d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
     d["crawl_outlinks"] = _crawl_outlinks(conn, d.get("crawl") or {}, _pages_in_play)
+    # 끊긴 링크는 순위 하락 요청문만 시킨다 — 그 페이지들만 회차를 견준다
+    d["crawl_lost_inlinks"] = _crawl_lost_inlinks(
+        conn, pid, d.get("crawl") or {},
+        {brief.page_of(o, d) for o in (d.get("opps") or []) if o.get("kind") == "rank_decay"})
     d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
     d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
     brief.attach(d, db.project_locale(p))

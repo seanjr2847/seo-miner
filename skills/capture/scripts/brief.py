@@ -1294,6 +1294,57 @@ def _asks_more_outlinks(audit: dict | None) -> bool:
             and any(x.get("tag") == "내부 링크" for x in a.get("advice") or []))
 
 
+# 순위 하락의 산출물 '끊긴 내부 링크를 어디서 다시 걸지'에 근거가 없을 때. theotherskin #703 은
+# 크롤이 그 페이지를 안 열어 들어오는 링크 표도 모른다는 말도 없이 나갔고, 직접 크롤해 찾을지
+# 근거 없음으로 끝낼지가 정해지지 않았다. 갈 길을 여기서 정한다.
+BROKEN_LINKS_UNKNOWN = (
+    "- 끊긴 내부 링크: 견줄 근거가 이 수집본에 없습니다 — 사이트 크롤이 없었거나, 앞 크롤 회차에서 "
+    "이 주소로 오던 링크가 잡힌 적이 없습니다(그때 크롤이 이 주소를 거는 글에 닿지 않았을 수 "
+    "있습니다). 저장소가 "
+    "있으면 이 주소(와 canonical 이 가리키는 주소·옛 주소)로 거는 링크를 검색하고, 커밋 기록에서 "
+    "그 링크가 지워지거나 주소가 바뀐 흔적을 찾아 그것을 근거로 다시 걸 자리를 댑니다. 흔적이 "
+    "없으면 그 산출물은 '근거 없음 — 다음 크롤에서 다시 봄' 한 줄로 끝냅니다. 사이트를 직접 "
+    "크롤하거나 짐작으로 걸 자리를 만들지 않습니다.")
+
+
+def _lost_link_lines(lost: dict | None) -> list[str]:
+    """크롤 회차를 견준 끊긴 링크(dashboard._crawl_lost_inlinks) — 순위 하락 요청문만 싣는다."""
+    if not lost:
+        return [BROKEN_LINKS_UNKNOWN]
+    base, now = lost.get("base") or {}, lost.get("now") or {}
+    hist = " · ".join(f"{h['date']} {_n(h['n'])}곳" for h in lost.get("history") or [])
+    L = [f"- 이 주소로 링크를 거는 글, 크롤 회차별: {hist}"]
+    n = int(lost.get("lost_total") or 0)
+    unseen = int(lost.get("unseen") or 0)
+    if n:
+        rows = lost.get("lost") or []
+        shown = rows[:_INLINK_SHOWN]
+        L.append(f"- 끊긴 내부 링크: 가장 많이 걸던 회차({base.get('date')}, {_n(base.get('n'))}곳) 대비 "
+                 f"지금({now.get('date')}) {_n(n)}곳이 이 주소로 안 겁니다 — 그 글들은 지금 크롤에서도 "
+                 "열렸는데 이 주소로 가는 링크만 빠졌습니다. 다시 걸 자리는 이 글들이 먼저입니다:")
+        L += _table(["링크가 빠진 글", "그때 앵커"],
+                    [[r.get("from"), r.get("anchor") or "(빈 앵커)"] for r in shown])
+        if n > len(shown):
+            L.append(f"- 표는 {len(shown)}곳까지입니다 — 나머지 {_n(n - len(shown))}곳도 같은 "
+                     "처지입니다.")
+        moved = lost.get("moved_to") or []
+        if moved:
+            L.append("- 그 글들이 같은 앵커로 지금 거는 주소: "
+                     + ", ".join(f"{u} ({_n(c)}곳)" for u, c in moved)
+                     + " — 링크가 빠진 게 아니라 주소가 바뀐 것이면, 링크를 되돌리기 전에 두 주소 중 "
+                       "어느 쪽이 정본인지(리다이렉트·canonical)부터 정합니다. 옛 주소를 살릴 게 "
+                       "아니면 '다시 걸 자리' 대신 옛 주소의 리다이렉트를 '따로 볼 것'에 적습니다.")
+    else:
+        L.append(f"- 끊긴 내부 링크: 크롤 회차를 견주면(가장 많이 걸던 {base.get('date')} "
+                 f"{_n(base.get('n'))}곳 → 지금 {now.get('date')} {_n(now.get('n'))}곳) 이번 크롤이 "
+                 "다시 연 글 가운데 이 주소로 오던 링크가 사라진 것은 없습니다 — 그 산출물의 답은 "
+                 "'끊긴 링크 없음'이고, 걸 자리를 짐작으로 만들지 않습니다.")
+    if unseen:
+        L.append(f"- 그때 걸던 글 중 {_n(unseen)}곳은 이번 크롤이 열지 않아 지금도 거는지 모릅니다 — "
+                 "끊겼다고 치지 않습니다. 확인하려면 그 글을 직접 엽니다.")
+    return L
+
+
 def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
                   audit_title: str | None = None, *, work: bool = True,
                   queries=()) -> list[str]:
@@ -1541,7 +1592,7 @@ def _outlink_candidates(ctx: dict, url: str) -> list[dict]:
 def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
                 query: str | None = None, inlink_work: bool = True,
                 outlink_candidates: bool = False, sitemap_check: bool = True,
-                queries=()) -> list[str]:
+                queries=(), broken: bool = False) -> list[str]:
     """사이트 전체를 봐야 아는 사실 — 제목 중복, 이 페이지로 들어오는 내부 링크.
 
     "새 title 3안" 을 시키면서 같은 title 을 쓰는 다른 페이지가 있다는 것을 안 주면
@@ -1590,6 +1641,9 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
     elif ins is not None:
         L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다(고아 페이지)."
                  + (" 링크를 걸 자리를 찾는 것이 첫 일입니다." if inlink_work else ""))
+    if broken:
+        # 끊긴 링크는 지금 표 하나로는 못 본다 — 크롤 회차를 견준 것(없으면 갈 길)을 싣는다
+        L += [""] + _lost_link_lines((ctx.get("crawl_lost_inlinks") or {}).get(url))
     # 크롤이 이 주소를 봤을 때만(None 이 아닐 때) — 안 봤으면 '아직 안 걸었다'를 모른다
     if link_candidates and inlink_work and ins is not None:
         head0 = ins[0] if ins else {}
@@ -1872,7 +1926,37 @@ def _ev_decay(o, ctx, pages):
             L.append(f"- 노출이 {_n(r.get('imp'))}뿐이라 이 하락은 기간 평균의 흔들림일 수 있습니다 — "
                      "본문을 바꾸기 전에 직접 검색해 지금 자리를 보고, 다음 구글 실적에서도 "
                      "이어지는지 봅니다. 이어지지 않으면 '안 바꿈'이 답입니다.")
-    return L + _pages_table(pages)
+    L += _pages_table(pages)
+    dk = _decay_page_lines(_decay_of(o, ctx), pages, ctx)
+    return L + ([""] if L and dk else []) + dk
+
+
+def _decay_page_lines(dk: dict, pages: list[dict], ctx: dict) -> list[str]:
+    """떨어지기 전·후 이 검색어로 걸린 내 페이지 — 순위를 잃은 페이지와, 그 자리에 선 것이
+    내 다른 페이지인지. 최신 표(query_pages)는 하락 뒤의 한 날이라 둘 다 말하지 못한다
+    (theotherskin #128 은 최신 실적에 그 검색어가 없어 페이지를 통째로 몰랐다)."""
+    bef = {p["page"]: p for p in dk.get("before") or [] if p.get("page")}
+    aft = {p["page"]: p for p in dk.get("after") or [] if p.get("page")}
+    if not (bef or aft):
+        return []
+    prev, at = dk.get("prev"), dk.get("at")
+    pos = lambda p: f"{p['position']}위" if p and p.get("position") is not None else "—"
+    L = [f"떨어지기 전·후 이 검색어로 걸린 내 페이지 (구글 실적 {prev} → {at} — '왜 걸렸나'와 "
+         "같은 짝입니다):"]
+    L += _table(["페이지", f"{prev} 노출", f"{prev} 순위", f"{at} 노출", f"{at} 순위"],
+                [[u, _n((bef.get(u) or {}).get("impressions")), pos(bef.get(u)),
+                  _n((aft.get(u) or {}).get("impressions")), pos(aft.get(u))]
+                 for u in list(dict.fromkeys([*bef, *aft]))[:6]])
+    held = next(iter(bef), None)
+    gd = str(ctx.get("gsc_date") or "")[:10]
+    now, when = ((pages[0].get("page"), "최신 구글 실적" + (f"({gd})" if gd else ""))
+                 if pages else (next(iter(aft), None), f"떨어진 회차({at})"))
+    if held and now and held != now:
+        L.append(f"- 떨어지기 전 이 검색어의 첫째 페이지는 {held}였는데 {when}에는 {now}입니다 — "
+                 "우리 자리를 가져간 것이 바깥 글이 아니라 내 다른 페이지일 수 있습니다. 두 페이지가 "
+                 "이 검색어를 나눠 갖는지(내용이 겹치는지·어느 쪽이 맡을지)부터 보고, 맡을 쪽을 "
+                 "정한 뒤에 고칩니다.")
+    return L
 
 
 def _ev_pseo(o, ctx, pages):
@@ -2459,7 +2543,17 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
     ranked = bool(((ctx or {}).get("query_pages") or {}).get(str(o["target"])))
     topic = _topic_of(o, ctx or {})
     mine = next((p for p in topic if p["page"] == url), None) if url and not ranked else None
-    if url and url != t and mine:
+    dk = _decay_of(o, ctx or {})
+    if url and not ranked and url == _decay_held(o, ctx or {}):
+        # 최신 실적엔 이 검색어가 없고, 주소는 떨어지기 전 스냅샷에서 왔다 — 어디서 왔는지 밝힌다.
+        # 안 밝히면 '최신 구글 실적에 없습니다'(목표 줄)와 이 주소가 부딪혀 읽힌다.
+        gd = str((ctx or {}).get("gsc_date") or "")[:10]
+        L.append(f"- 페이지: {url}")
+        L.append(f"  떨어지기 전 구글 실적({dk['prev']})에서 이 검색어로 노출이 가장 컸던 내 페이지 — "
+                 "순위를 잃은 페이지가 이것입니다. 최신 구글 실적"
+                 + (f"({gd})" if gd else "") + "에는 이 검색어가 없어, 지금 이 검색어로 걸리는 "
+                 "페이지는 모릅니다.")
+    elif url and url != t and mine:
         # 순위가 아니라 제목·H1 로 찾은 지면 — 그렇다고 밝혀야 사람이 틀린 짝을 잡는다
         L.append(f"- 페이지: {url} ({_head(mine)})")
         if kind == "coverage":
@@ -2556,6 +2650,12 @@ def page_of(o: dict, ctx: dict) -> str | None:
         fit = _lang_fit(o, ctx)
         return next((p.get("page") for p in pages if fit(str(p.get("page") or ""))),
                     pages[0].get("page"))
+    # 순위 하락 — 그 검색어가 최신 실적에서 빠지면 query_pages(기준일 한 날)가 빈다. 순위를
+    # 잃은 페이지는 떨어지기 전 스냅샷에 있다(dashboard 가 decay_pages 로 싣는다). 이걸 안
+    # 읽어 theotherskin #128 이 "페이지: 아직 모릅니다 … site: 로 찾습니다"로 나갔다.
+    held = _decay_held(o, ctx)
+    if held:
+        return held
     # 서치콘솔이 없는 사이트 — 순위 조회가 실제로 잡은 우리 주소(rank_by_kw), 그다음 순위 추정
     # (DataForSEO Labs, striking_labs)이 걸었다는 주소. 둘 다 "이 검색어로 순위에 걸린 우리
     # 페이지"라 제목 매칭보다 앞선다. 없으면 gucci 처럼 봇 차단으로 페이지 점검도 못 하는 사이트는
@@ -2569,6 +2669,19 @@ def page_of(o: dict, ctx: dict) -> str | None:
     if o.get("kind") == "coverage":
         return _coverage_page(o, ctx)
     return scoring.topic_page(_topic_of(o, ctx))
+
+
+def _decay_of(o: dict, ctx: dict) -> dict:
+    """순위 하락 기회의 떨어지기 전·후 페이지(scoring.decay_pages) — 다른 종류는 빈 dict."""
+    if o.get("kind") != "rank_decay":
+        return {}
+    return (ctx.get("decay_pages") or {}).get(str(o.get("target") or "")) or {}
+
+
+def _decay_held(o: dict, ctx: dict) -> str | None:
+    """떨어지기 전 스냅샷에서 이 검색어로 노출이 가장 컸던 내 페이지 — 순위를 잃은 페이지."""
+    before = _decay_of(o, ctx).get("before") or []
+    return before[0].get("page") if before else None
 
 
 def _coverage_page(o: dict, ctx: dict) -> str | None:
@@ -3290,7 +3403,11 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         lang_line = _target_lang_lines(o, ctx, locale, shape)
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
         lang_line = [site_lang_line(shape, locale)]
-    L += (_target_lines(o, url, shape, ctx, has_evidence=bool(ev))[:-1]
+    # '근거'가 서도 그 안에 최신 값이 없을 수 있다 — 순위 하락의 떨어지기 전·후 표는 '왜
+    # 걸렸나'와 같은 그때의 짝이다. 그것만 서는데 "근거 쪽이 새것"이라고 하면 거짓이다(#128).
+    fresh = bool(ev) and not (kind == "rank_decay" and not pages
+                              and not _find(ctx.get("downs"), "query", o.get("target")))
+    L += (_target_lines(o, url, shape, ctx, has_evidence=fresh)[:-1]
           + lang_line + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
           + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
@@ -3399,9 +3516,19 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                          # "노리는 검색어('cluster:lifting')"가 나갔다
                          query=str(o.get("target") or "") if shape == "fix_page"
                          and kind != "coverage" else None,
-                         queries=[r["query"] for r in pq])
+                         queries=[r["query"] for r in pq], broken=kind == "rank_decay")
         L[page_at:page_at] = ps + (["## 사이트 전체에서 본 이 주소", *sf, ""] if sf else [])
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
+    if kind == "rank_decay" and shape == "fix_page":
+        # 처방은 비교 대상을 '우리보다 위에 선 글'로만 말한다 — 그 글을 어디서 얻는지는 이
+        # 요청문이 정한다. #128 은 그 말이 없어 11위 근처 글인지 상위 2~3개인지 두 갈래로 읽혔다.
+        L.append("- '되찾으려고 본문에 채울 구간'의 비교 대상(우리보다 위에 선 글)은 "
+                 + ("위 '지금 이 검색어의 검색결과 상위' 표에서 우리 페이지보다 위의 글입니다 — 그 "
+                    "글들의 목차와 견줍니다." if had_top else
+                    "이 수집본에 없습니다 — 이 검색어를 직접 검색해 우리 페이지보다 위에 선 글 중 "
+                    "위에서 2~3개를 열어 목차를 봅니다. 맨 아래 '있으면 붙여 넣을 것' 칸이 바로 그 "
+                    "글들입니다(붙여 주면 검색 대신 그것을 씁니다). 검색도 붙여 넣기도 못 하면 H2 "
+                    "목록을 짐작으로 채우지 않고 [확인 필요]로 둡니다."))
     # 진단은 정적 HTML 을 센 값이라 헛짚는다(장식 아이콘의 빈 alt, 메뉴·푸터까지 센 링크 수,
     # 글자 없는 그림까지 센 '그림 위주'). 사람이 표를 읽고 가려내던 일을 답이 페이지를 열어
     # 먼저 가리게 한다 — 헛짚은 것에 문안을 만들면 필요 없는 수정이 원장 검수까지 간다.

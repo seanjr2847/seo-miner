@@ -2571,6 +2571,36 @@ def decay_recovered(st: dict) -> bool:
     return st.get("now") is not None and round(st["pre"] - st["now"], 1) > DECAY_POS
 
 
+def decay_pages(conn: sqlite3.Connection, project_id: int, decays, *,
+                top: int = 5) -> dict[str, dict]:
+    """순위 하락 기회마다 떨어지기 전(prev)·떨어진(at) 스냅샷에서 그 검색어로 걸린 내 페이지.
+
+    pages_by_query 는 기준 수집일 한 날만 본다. 하락은 옛 스냅샷 짝의 일이라 최신 실적에서
+    그 검색어가 빠지면 순위를 잃은 페이지가 페이로드에서 사라졌다 — theotherskin #128
+    ('seoul dermatology clinic gangnam', 8/25 11.2위 → 9/2 15.0위, 10/4 실적엔 없음)이
+    "페이지: 아직 모릅니다 … site: 로 찾습니다"로 나갔는데, 그 주소는 8/25 스냅샷에 있었다.
+    짝은 decay_state 가 고른다(자동 해소·근거 문장과 같은 짝) — 그 짝에서 실제로 안
+    떨어졌거나 짝을 못 믿으면 싣지 않는다(옛 페이지를 짐작으로 대지 않는다).
+
+    decays: (대상, 기회를 세운 적재 run_id) 목록. 반환: 대상 → {prev, at, before, after}
+    — before·after 행 모양은 pages_by_query 와 같다. 둘 다 비면 키를 안 만든다."""
+    cache: dict = {}
+    pairs: dict[str, tuple[str, str]] = {}
+    for t, run_id in decays:
+        st = decay_state(conn, project_id, run_id, str(t), cache=cache)
+        if st:
+            pairs[str(t)] = (st["prev"], st["at"])
+    by_day: dict[str, set] = {}
+    for t, (prev, at) in pairs.items():
+        by_day.setdefault(prev, set()).add(t)
+        by_day.setdefault(at, set()).add(t)
+    got = {day: pages_by_query(conn, project_id, sorted(ts), top=top, at=day)
+           for day, ts in by_day.items()}
+    out = {t: {"prev": prev, "at": at, "before": got[prev].get(t, []),
+               "after": got[at].get(t, [])} for t, (prev, at) in pairs.items()}
+    return {t: v for t, v in out.items() if v["before"] or v["after"]}
+
+
 def _band_of(pos) -> str:
     """평균순위를 구간 이름으로. 3.4위는 3위로 읽는다 — 소수점은 표본의 흔들림이다."""
     if pos is None:
@@ -4254,11 +4284,16 @@ _KIND_SPECS = {
             + f"(구글 실적 {ctx['prev']}과 {ctx['cur']} 비교)"),
         play=dict(
             what="잡고 있던 순위가 밀렸습니다. 새로 만드는 것보다 되찾는 쪽이 쌉니다.",
+            # 비교 대상은 '그 자리를 가져간 페이지'라고만 하지 않는다 — theotherskin #128 이
+            # 그 페이지를 대지 않아 11위 근처의 글인지 상위 2~3개인지 두 갈래로 읽혔다.
+            # 누가 우리를 넘었는지는 우리보다 위에 선 글 안에 있다(요청문이 어디서 얻는지 댄다).
             acts=["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
-                  "지금 그 자리를 가져간 페이지와 목차를 비교해 빠진 구간을 채웁니다.",
+                  "이 검색어로 지금 우리보다 위에 선 글과 목차를 비교해 빠진 구간을 채웁니다 — "
+                  "우리 자리를 가져간 글이 그 안에 있습니다.",
                   "본문을 실제로 갱신합니다. 날짜만 바꾸는 것은 효과가 없습니다.",
                   "그 페이지로 오던 내부 링크가 끊겼는지 확인합니다."],
-            deliver=["되찾으려고 본문에 채울 구간(H2 목록). 지금 그 자리를 가져간 페이지와 비교해서",
+            deliver=["되찾으려고 본문에 채울 구간(H2 목록) — 이 검색어로 지금 우리보다 위에 선 글과 "
+                     "목차를 견줘서",
                      "끊긴 내부 링크를 어디서 다시 걸지"])),
     "pseo_pattern": dict(
         label="템플릿 패턴", defensive=False,

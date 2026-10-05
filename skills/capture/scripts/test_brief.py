@@ -3104,6 +3104,118 @@ def test_cannibalization_split_branch_has_its_own_deliverable():
     assert f"만들 것 {len(play['deliver'])}개" in summary, summary
 
 
+# ── 순위 하락 — 순위를 잃은 페이지·그 자리를 가져간 글·끊긴 링크 ────────────────
+_EN = "https://theotherskin.example/en/"
+_DECAY_Q = "seoul dermatology clinic gangnam"
+
+
+def _decay_ctx(before, after=None, **kw):
+    o = {**_opp("rank_decay", _DECAY_Q),
+         "reasoning": "11.2위에서 15.0위로 3.8칸 밀렸습니다 (구글 실적 2026-08-25과 2026-09-02 비교). "
+                      "최신 구글 실적 2026-10-04에는 이 검색어가 잡히지 않습니다"}
+    ctx = {"project": {"domain": "theotherskin.example"}, "gsc_date": "2026-10-04",
+           "query_pages": {},
+           "decay_pages": {_DECAY_Q: {"prev": "2026-08-25", "at": "2026-09-02", "before": before,
+                                      "after": before if after is None else after}}, **kw}
+    return o, ctx
+
+
+def _sec(body: str, head: str) -> str:
+    assert head in body, body
+    return body.split(head)[1].split("\n## ")[0]
+
+
+def test_rank_decay_page_is_the_one_that_held_the_rank_before_the_drop():
+    """theotherskin #128 — 'seoul dermatology clinic gangnam' 이 8/25 11.2위 → 9/2 15.0위로
+    밀렸고 최신 실적(10/4)에는 그 검색어가 없다. query_pages 는 최신 스냅샷만 봐서 비었고,
+    요청문은 "페이지: 아직 모릅니다 … site: 로 찾습니다"로 나갔다. 순위를 잃은 페이지(/en/)는
+    8/25 스냅샷에 있었다 — site: 로 고른 페이지가 그 페이지라는 보장은 없다."""
+    before = [{"page": _EN, "impressions": 4, "clicks": 0, "ctr": 0.0, "position": 11.2}]
+    after = [{"page": _EN, "impressions": 1, "clicks": 0, "ctr": 0.0, "position": 15.0}]
+    o, ctx = _decay_ctx(before, after)
+    assert brief.page_of(o, ctx) == _EN
+    b = brief.build(o, ctx, "ko-KR")
+    body = b["body"]
+    assert b["page"] == _EN and b["shape"] == "fix_page", b["page"]
+    assert brief.NO_PAGE["unknown"] not in body and "site:" not in body, body
+    tgt = _sec(body, "## 대상")
+    assert f"- 페이지: {_EN}" in tgt and "2026-08-25" in tgt, tgt
+    ev = _sec(body, "## 근거")
+    assert _EN in ev and "11.2위" in ev and "15.0위" in ev, ev
+    # 이 표는 '왜 걸렸나'와 같은 그때의 짝이다 — "근거 쪽이 새것"이라고 하면 거짓이다
+    assert "근거 쪽이 새것" not in body, body
+    # 지금 걸린 페이지가 있으면 그것이 먼저다 — 떨어지기 전 페이지와 다르면 그렇다고 말한다
+    ctx["query_pages"] = {_DECAY_Q: _pages(URL)}
+    assert brief.page_of(o, ctx) == URL
+    ev = _sec(brief.build(o, ctx, "ko-KR")["body"], "## 근거")
+    assert _EN in ev and URL in ev and "내 다른 페이지" in ev, ev
+    # 하락 짝을 못 믿으면(페이로드에 없음) 예전처럼 주소를 모른다고 한다 — 짐작하지 않는다
+    o2, ctx2 = _decay_ctx([])
+    ctx2["decay_pages"] = {}
+    assert brief.page_of(o2, ctx2) is None
+    assert brief.NO_PAGE["unknown"] in brief.build(o2, ctx2, "ko-KR")["body"]
+
+
+def test_rank_decay_says_which_page_took_the_spot():
+    """theotherskin #128 — 산출물이 "지금 그 자리를 가져간 페이지와 비교해서"라는데 요청문
+    어디에도 그 페이지가 없었다. 11위 근처의 글인지 붙여 넣기 칸의 '상위 2~3개'인지 두 갈래로
+    읽혔다. 처방이 비교 대상을 정의하고, 요청문은 그 글을 어디서 얻는지 말한다."""
+    deliver = scoring.kind_play("rank_decay")["deliver"][0]
+    assert "우리보다 위에 선 글" in deliver, deliver
+    # 떨어진 회차에 내 다른 페이지가 첫째로 올라섰다 — 바깥 글이 아니라 그 페이지를 댄다
+    before = [{"page": _EN, "impressions": 40, "clicks": 1, "ctr": 2.5, "position": 11.2}]
+    after = [{"page": URL2, "impressions": 30, "clicks": 1, "ctr": 3.3, "position": 9.0},
+             {"page": _EN, "impressions": 5, "clicks": 0, "ctr": 0.0, "position": 15.0}]
+    o, ctx = _decay_ctx(before, after)
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    ev = _sec(body, "## 근거")
+    assert URL2 in ev and "내 다른 페이지" in ev, ev
+    # 상위 표가 없다 — 그 글을 어디서 얻는지, 그리고 그것이 붙여 넣기 칸과 같은 것이라고 말한다
+    want = _sec(body, "## 만들어 줄 것")
+    assert "직접 검색" in want and "붙여 넣을 것" in want, want
+    # 상위 표가 있으면 그 표를 가리킨다 — 검색을 또 시키지 않는다
+    ctx["serp_top"] = {_DECAY_Q: [{"position": 1, "title": "T", "url": "https://r.example/x"}]}
+    want = _sec(brief.build(o, ctx, "ko-KR")["body"], "## 만들어 줄 것")
+    assert "검색결과 상위" in want and "직접 검색" not in want, want
+
+
+_OLD = "https://me.example/ja/acne-scars/papular_scar/"
+_NEW = "https://me.example/ja/acne-scar/papular-scar/"
+
+
+def test_rank_decay_broken_links_come_from_crawl_history():
+    """theotherskin #703 — 산출물 2가 "끊긴 내부 링크를 어디서 다시 걸지"인데 그 페이지는 이번
+    크롤이 열지 않아(사이트맵 밖) 들어오는 링크 표도, 모른다는 말도 없었다. 크롤 회차를
+    견주면 9/3 에는 75곳이 이 주소로 걸었고 9/24 부터 3곳 — 72곳이 /ja/acne-scar/papular-scar/
+    로 옮겨 갔다. 끊긴 링크의 근거는 그 차이다. 견줄 회차가 없으면 무엇을 할지 정해 준다."""
+    o = _opp("rank_decay", "丘疹性瘢痕 鼻")
+    ctx = {"query_pages": {o["target"]: _pages(_OLD)}, "page_audits": {_OLD: _audit(url=_OLD)},
+           "crawl": {"run": {"id": 15, "started_at": "2026-10-01T09:10:27Z", "pages": 300}},
+           "site_probe": {_OLD: {"robots": None, "in_sitemap": False}},
+           "crawl_lost_inlinks": {_OLD: {
+               "history": [{"date": "2026-09-03", "n": 75}, {"date": "2026-09-24", "n": 3},
+                           {"date": "2026-10-01", "n": 3}],
+               "base": {"date": "2026-09-03", "n": 75}, "now": {"date": "2026-10-01", "n": 3},
+               "lost": [{"from": f"https://me.example/p{i}/", "anchor": "丘疹性瘢痕"} for i in range(40)],
+               "lost_total": 72, "moved_to": [[_NEW, 72]]}}}
+    site = _sec(brief.build(o, ctx, "ko-KR")["body"], "## 사이트 전체에서 본 이 주소")
+    assert "2026-09-03" in site and "75" in site and "72곳" in site, site
+    assert "https://me.example/p0/" in site and _NEW in site, site
+    assert brief.BROKEN_LINKS_UNKNOWN not in site, site
+    # 회차를 견줬는데 사라진 링크가 없다 — '없음'이 답이라고 말한다
+    ctx["crawl_lost_inlinks"][_OLD].update(lost=[], lost_total=0, moved_to=[],
+                                           now={"date": "2026-10-01", "n": 75})
+    site = _sec(brief.build(o, ctx, "ko-KR")["body"], "## 사이트 전체에서 본 이 주소")
+    assert "사라진 것은 없습니다" in site, site
+    # 견줄 회차도 들어오는 링크도 없다 — 직접 찾을지 근거 없음으로 끝낼지 정해 준다
+    del ctx["crawl_lost_inlinks"]
+    site = _sec(brief.build(o, ctx, "ko-KR")["body"], "## 사이트 전체에서 본 이 주소")
+    assert brief.BROKEN_LINKS_UNKNOWN in site, site
+    # '끊긴 링크'를 시키지 않는 요청문에는 이 줄을 달지 않는다
+    assert brief.BROKEN_LINKS_UNKNOWN not in brief.build(
+        _opp("ctr_gap", "丘疹性瘢痕 鼻"), ctx, "ko-KR")["body"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

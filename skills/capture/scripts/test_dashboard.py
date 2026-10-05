@@ -1847,6 +1847,74 @@ def test_rank_axis_reads_only_tracked_keywords_in_their_locale():
     conn.close()
 
 
+def test_decay_pages_carry_the_page_that_lost_the_rank():
+    """theotherskin #128 — 8/25 11.2위 → 9/2 15.0위로 밀린 검색어가 최신 실적(10/4)에서 빠지자
+    query_pages(최신 스냅샷 한 날)가 비어 요청문이 '페이지: 아직 모릅니다'로 나갔다. 순위를
+    잃은 페이지는 떨어지기 전 스냅샷에 있다 — 기회를 세운 짝(decay_state)으로 읽어 싣는다."""
+    conn, pid = _brain("decaypg")
+    en = "https://decaypg.example/en/"
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,?,28,?,?,?,?,0.0,?)",
+        [(pid, "2026-08-25", "q decay", en, 0, 40, 11.2),
+         (pid, "2026-09-02", "q decay", en, 0, 35, 15.0),
+         (pid, "2026-10-04", "다른 검색어", en, 1, 50, 5.0)])
+    run = db.start_run(conn, pid, "gaps")
+    conn.execute("UPDATE runs SET started_at='2026-09-02 09:00:00' WHERE id=?", (run,))
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,"
+                 "created_at,run_id) VALUES(?,?,?,?,?,?,?,?)",
+                 (pid, "rank_decay", "q decay", 40, "r", "new", "2026-09-02", run))
+    conn.commit()
+    db.set_verdicts(conn, pid, [scoring.norm("q decay")], "work")
+    d = dashboard.gather(conn, db.get_project(conn, "decaypg"))
+    o = next(x for x in d["opps"] if x["target"] == "q decay")
+    assert "q decay" not in d["query_pages"], d["query_pages"]
+    dp = d["decay_pages"]["q decay"]
+    assert (dp["prev"], dp["at"]) == ("2026-08-25", "2026-09-02"), dp
+    assert dp["before"][0]["page"] == en and dp["before"][0]["position"] == 11.2, dp
+    assert dp["after"][0]["position"] == 15.0, dp
+    # 화면의 '고칠 페이지'와 요청문이 같은 주소를 말한다(brief.page_of 한 벌)
+    assert o["brief"]["page"] == en, o["brief"]["page"]
+    conn.close()
+
+
+def test_crawl_lost_inlinks_compare_runs_and_name_where_links_went():
+    """theotherskin #703 — 9/3 크롤에서 75곳이 /ja/acne-scars/papular_scar/ 로 걸었는데 9/24
+    부터 3곳이다(72곳이 /ja/acne-scar/papular-scar/ 로 옮겨 갔다). 최신 크롤은 그 주소를 열지
+    않아 들어오는 링크가 통째로 '모름'이 됐다. 회차를 견주면 끊긴 링크와 그 링크가 간 곳이 나온다."""
+    conn, pid = _brain("lostlk")
+    old = "https://lostlk.example/ja/acne-scars/papular_scar/"
+    new = "https://lostlk.example/ja/acne-scar/papular-scar/"
+    ps = [f"https://lostlk.example/p{i}/" for i in range(4)]
+    r1 = _run(conn, pid, "2026-09-03 01:00:00", [])
+    r2 = _run(conn, pid, "2026-10-01 01:00:00", [])
+    conn.execute("UPDATE crawl_runs SET started_at='2026-09-03 00:00:00' WHERE id=?", (r1,))
+    conn.execute("UPDATE crawl_runs SET started_at='2026-10-01 00:00:00' WHERE id=?", (r2,))
+    conn.executemany("INSERT INTO crawl_pages(run_id,url,status) VALUES(?,?,200)",
+                     [(r1, u) for u in ps + [old]] + [(r2, u) for u in ps + [new]])
+    conn.executemany(
+        "INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,in_chrome)"
+        " VALUES(?,?,?,?,1,?)",
+        [(r1, p, old, "丘疹性瘢痕", 1) for p in ps[:3]] + [(r1, ps[3], old, "more", 0)]
+        + [(r2, p, new, "丘疹性瘢痕", 1) for p in ps[:3]] + [(r2, ps[3], old, "more", 0)])
+    conn.commit()
+    crawl = dashboard._axis_crawl(conn, pid)["crawl"]
+    lost = dashboard._crawl_lost_inlinks(conn, pid, crawl, [old])[old]
+    assert lost["lost_total"] == 3 and {r["from"] for r in lost["lost"]} == set(ps[:3]), lost
+    assert lost["moved_to"] == [[new, 3]], lost["moved_to"]
+    assert [(h["date"], h["n"]) for h in lost["history"]] == \
+        [("2026-09-03", 4), ("2026-10-01", 1)], lost["history"]
+    assert (lost["base"]["date"], lost["now"]["date"]) == ("2026-09-03", "2026-10-01"), lost
+    # 앞 회차가 없는 주소(첫 크롤)는 견줄 게 없다 — 키를 안 만든다(없음이 아니라 모름)
+    assert dashboard._crawl_lost_inlinks(conn, pid, crawl, [new]) == {}
+    # 크롤이 안 연 주소라도 다른 글이 거는 링크는 본 것이다 — 모름(키 없음)으로 버리지 않는다
+    never = "https://lostlk.example/never/"
+    ins = dashboard._crawl_inlinks(conn, crawl, [old, never])
+    assert [r["from"] for r in ins[old]] == [ps[3]], ins
+    assert never not in ins, "아무도 안 걸고 크롤도 안 연 주소를 '고아'로 만든다"
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
