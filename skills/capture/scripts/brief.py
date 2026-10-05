@@ -64,6 +64,11 @@ RULE_READ_TOP = ("설계하기 전에 검색결과 상위 2~3개를 실제로 �
 # 한 페이지에 검색어 여럿 — 검색어마다 한 번씩 고치면 같은 title 을 16번 다르게 고친다.
 RULE_ONE_SET = ("검색어 여럿이 한 페이지에 걸려 있으면 title·H1·H2 한 벌이 그 전부를 맡습니다 "
                 "— 검색어마다 한 번씩 고치지 않습니다.")
+# 본문 절의 머리말 — 꼬리(꼴마다 한 벌)가 이 이름으로 그 절을 가리킨다. 절은 페이지를 알 때만
+# 서므로 꼬리는 "있으면"으로 부른다(아래 fix_page form 의 '고칠 것' 카드).
+ADVICE_HEAD = "## 진단 — 고쳐야 할 것"
+WORK_HEAD = "## 이 페이지에 이미 한 작업"
+HOLD_MARK = "관찰 중"
 
 SHAPES: dict[str, dict] = {
     "fix_page": dict(
@@ -86,7 +91,8 @@ SHAPES: dict[str, dict] = {
               # 진단의 [외부 링크] 하나로 이 카드가 서자, 답이 저자·수정일 행까지 채우고 '고칠 것'
               # 표에 "(진단 밖)" 줄을 만들었다 — 이름이 불린 신호만 다룬다.
               "위 '만들어 줄 것'이나 진단에 신뢰 신호(저자·출처·수정일)가 있으면: **거기 이름이 "
-              "나온 신호만**(진단의 '외부 링크'는 출처 하나입니다) 이 페이지에 **없는 것**과 무엇을 "
+              "나온 신호만**(진단에 '외부 링크'가 있으면 그것은 출처 하나입니다) 이 페이지에 "
+              "**없는 것**과 무엇을 "
               "어디에 넣을지. 있는 것은 '있음' 한 줄로 끝내고 제안을 덧붙이지 않습니다. 이름이 안 "
               "나온 신호에서 눈에 띈 것은 '따로 볼 것'에 한 줄로. 둘 다에 없으면 이 카드는 "
               "만들지 않습니다.",
@@ -94,19 +100,33 @@ SHAPES: dict[str, dict] = {
               # 일 하나만 하고 나머지는 사람이 다음 요청문으로 다시 돌려야 했고, 그 목록에
               # '다음에 할 일'과 '애초에 문제가 아닌 것'(장식 아이콘의 빈 alt)이 한 말로 섞였다.
               # 이제 진단은 전부 이 답에서 처리한다: 고치거나, 문제가 아니라고 밝히거나.
-              "'고칠 것' 표: 진단 항목 | 지금 값 | 고칠 값. 진단 항목은 **전부** 한 줄씩 — "
-              "고칠 값 칸에는 고친 값(자세한 것은 그 카드로 가는 앵커), 또는 페이지를 열어 "
-              "보니 문제가 아니면 '안 고침'과 이유 한 줄. 뒤로 미루는 '이번 아님'은 쓰지 "
-              "않습니다 — 진단에 선 것은 이 답에서 전부 처리합니다. 진단에 없는 것을 "
+              # 관찰 중인 자리는 셋째 답이다 — 본문(_page_work_lines)이 "그 산출물의 답은
+              # '안 바꿈 — 관찰 중'"이라 하는데 이 표가 고친 값·'안 고침' 둘만 받자, #153 의
+              # [meta description]처럼 문제는 맞는데 관찰 중인 자리를 고칠지 미룰지가 갈렸다.
+              # 진단 절은 페이지를 알 때만 선다 — 조건 없이 두자 진단 없는 #128·#654·#317 에서
+              # 표를 뺄지 산출물을 진단처럼 채울지가 갈렸다(2·3번 카드처럼 "없으면"을 단다).
+              # 조건부로 가리키는 절은 "위 'X' 절이 있으면/있고" 한 꼴로 쓴다 — seam 51 이 그 꼴만
+              # 조건부로 알아본다.
+              f"위 '{ADVICE_HEAD[3:]}' 절이 있으면: '고칠 것' 표: 진단 항목 | 지금 값 | 고칠 "
+              "값. 진단 항목은 **전부** 한 줄씩 — 고칠 값 칸에는 고친 값(자세한 것은 그 카드로 "
+              "가는 앵커), 또는 페이지를 열어 보니 문제가 아니면 '안 고침'과 이유 한 줄. 뒤로 "
+              "미루는 '이번 아님'은 쓰지 않습니다 — 진단에 선 것은 이 답에서 전부 처리합니다. "
+              f"하나 다른 답이 있습니다: 위 '{WORK_HEAD[3:]}' 절이 있고 거기서 {HOLD_MARK}이라고 "
+              f"한 자리를 다시 고칠 이유가 페이지에 없으면, 그 줄은 '안 바꿈 — {HOLD_MARK}'과 그 "
+              "날짜 — 앞 작업의 효과를 재는 동안 그대로 둔다는 이 답의 결정입니다. 진단에 없는 것을 "
               "고치자고 했으면 왜인지 한 줄. 이 표는 **제안**입니다 — 이 답은 파일을 고치지 "
-              "않으므로 '전/후'가 아니라 '지금/고칠'입니다."],
+              "않으므로 '전/후'가 아니라 '지금/고칠'입니다. 그 절이 없으면 이 카드는 만들지 "
+              "않습니다."],
         graph="",
         rules=["사실(수치·가격·사례·이력)은 직접 확인한 것만 씁니다: 이 요청문의 표, 직접 열어 "
                "확인한 이 페이지, 직접 열어 본 상위 글, 그리고 **본문 주장의 근거로 걸려고 "
                "직접 열어 본 1차 출처**(학회 지침·논문·공식 문서). 남의 글에서 온 것은 그 주소를 "
                "답니다 — '외부 링크'가 산출물에 있는데 출처를 못 열게 하면 그 과업이 성립하지 "
                "않습니다(열지 못했으면 후보 주소와 [확인 필요]까지만). "
-               "'지금 이 페이지 상태'가 비어 있으면 페이지를 열어 확인한 값으로 채웁니다. "
+               # 그 절도 페이지를 알 때만 선다 — "비어 있으면"만으로는 절이 없는 요청문(#128)에서
+               # 없는 절을 가리켰다.
+               "'지금 값'은 위 '지금 이 페이지 상태' 절이 있으면 거기서 가져오고, 그 절이 "
+               "없거나 비어 있으면 페이지를 열어 확인한 값으로 씁니다. "
                "어디에도 없는 것은 지어내지 않고 [확인 필요]로 남깁니다.",
                "저자·자격·경력을 지어내지 않습니다. 신뢰 신호는 '무엇을 넣어야 하는지'까지만 "
                "말하고, 이름·자격은 [저자] 자리로 비워 둡니다.",
@@ -210,20 +230,29 @@ SHAPES: dict[str, dict] = {
         label="주소 정리",
         intro="아래 주소들을 정리해 주세요. 글을 새로 쓰거나 고치는 일이 아니라, 어느 "
               "주소를 남기고 나머지를 어디로 보낼지 정하는 일입니다.",
-        form=["결정 표: 주소 | 처분(정본으로 남김 / 301 → 어디로 / canonical → 어디로 / "
-              "합침) | 근거(위 표의 노출·클릭·의도).",
+        # 이 꼴엔 내부 경쟁(주소별 노출·클릭 표가 있다)과 깨진 백링크·크롤 404(그 표가 없고 주소가
+        # 하나다)가 함께 온다. 근거를 "위 표의 노출·클릭"으로만 두자 #655·#308 에서 가리킬 표가
+        # 없었고, '살릴지 301 할지'를 묻는 산출물에 '살림' 칸도 없었다 — 꼬리는 한 벌이라 조건으로.
+        form=["결정 표: 주소 | 처분(정본으로 남김 / 살림 / 301 → 어디로 / canonical → 어디로 / "
+              "합침) | 근거. 근거 칸은 위 '근거' 절이 있고 거기 주소별 노출·클릭 표가 있으면 "
+              "그 숫자와 검색 의도, 없으면(깨진 주소·크롤에서 걸린 주소) 직접 열어 확인한 것 "
+              "— 지금 응답 코드, 그 주소에 무엇이 있었는지, 보낼 페이지가 어느 주제인지 — 과 "
+              "어디서 봤는지.",
               "합치는 경우에만: 합친 뒤의 H2 목록과, 어느 글의 어느 문단이 어디로 가는지.",
               "리다이렉트·canonical 은 적용할 코드나 설정 예시를 `<pre>` 로. 스택을 "
               "모르면 [스택 확인] 이라 쓰고 가장 흔한 두 경우의 예시를 줍니다.",
               "적용 뒤 확인: 무엇을 어디서 보면 된 것인지 순서대로."],
-        rules=["근거는 위 표의 숫자입니다. 감으로 정본을 고르지 않습니다. 숫자가 비슷하면 "
-               "그렇다고 말하고 검색 의도로 가릅니다.",
+        rules=["위 '근거' 절이 있고 거기 주소별 노출·클릭 표가 있으면 근거는 그 숫자입니다. "
+               "감으로 정본을 고르지 않습니다. 숫자가 비슷하면 그렇다고 말하고 검색 의도로 "
+               "가릅니다. 그 표가 없으면 근거는 직접 열어 확인한 것이고, 어느 주소를 열어 "
+               "무엇을 봤는지 적습니다.",
                "내용을 지우자고 하지 않습니다. 합칠 때는 문단을 옮기는 것까지만.",
                "리다이렉트 사슬(A→B→C)을 만들지 않습니다. 이미 리다이렉트인 주소는 최종 "
                "주소로 바로 보냅니다.",
                "홈으로 몰지 않습니다. 가장 가까운 주제의 페이지로 보냅니다."],
-        graph="주소 처분은 Mermaid `flowchart LR` 지도 하나로 그립니다 — 정본으로 남길 "
-              "주소는 굵은 상자, 화살표에 처분(301·canonical·합침)을 답니다.",
+        graph="주소 처분은 Mermaid `flowchart LR` 지도 하나로 그립니다 — 남는 주소(정본, "
+              "301·canonical 이 닿는 곳, 살리는 주소)는 굵은 상자, 화살표에 처분(301·"
+              "canonical·합침)을 답니다.",
         slot="", limits=False),
     "technical": dict(
         label="기술 점검",
@@ -1548,7 +1577,7 @@ def _advice(a: dict | None, extra=(), *, split: bool = False) -> list[str]:
     aside = [x for x in adv if split and x["tag"] in TECH_TAGS]
     L = []
     if here:
-        L += ["## 진단 — 고쳐야 할 것",
+        L += [ADVICE_HEAD,
               *(f"{i + 1}. [{x['tag']}] 지금: {x['now']} → {x['fix']}"
                 for i, x in enumerate(here)), ""]
     if aside:
@@ -2936,21 +2965,21 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
 CLOSED_NOTE = {"resolved": "저절로 닫혔습니다", "done": "[완료]로 닫혔습니다",
                "dismissed": "[제외]로 닫혔습니다"}
 
-WORK_HEAD = "## 이 페이지에 이미 한 작업"
-HOLD_MARK = "관찰 중"
-
 
 def _hold_of(url: str | None, ctx: dict) -> dict | None:
     """이 페이지가 관찰 중인가 — 판정은 서버(dashboard._axis_hold)가 한 번 한 것을 읽는다."""
     return next((h for h in ctx.get("holds") or [] if url and h.get("page") == url), None)
 
 
-def _page_work_lines(url: str | None, ctx: dict) -> list[str]:
+def _page_work_lines(url: str | None, ctx: dict, *, table: bool = False) -> list[str]:
     """이 페이지에 이미 한 작업 — 날짜·어느 기회로·무엇을. 관찰 중이면 그 사실을 먼저 말한다.
 
     요청문이 작업 이력을 안 실어서, 17일 전에 title·설명을 고친 페이지에 "title·설명을
     고쳐라"가 다시 나갔고 답은 앞 수정의 효과를 재기도 전에 그것을 뒤집는 안을 1순위로
     올렸다. 그 요청문의 28일 실적 창은 절반이 수정 전이었는데 그 말도 없었다.
+
+    table — 이 요청문에 꼬리의 '고칠 것' 표가 서는가(고치기 꼴 + 진단 절). 서면 관찰 중의
+    답이 그 표의 줄이기도 하다고 말한다. 꼬리가 그 답을 받는 자리가 그 표다(#153).
     """
     ws = (ctx.get("page_works") or {}).get(url or "") or []
     if not ws:
@@ -2979,7 +3008,8 @@ def _page_work_lines(url: str | None, ctx: dict) -> list[str]:
                  f"{scoring.OBSERVE_DAYS}일).{mixed} 그 전에 같은 자리(title·설명·H1·본문)를 다시 "
                  "고치면 앞 작업의 효과를 못 잽니다. 앞 작업이 무엇을 바꿨는지 페이지에서 먼저 "
                  "확인하고, 다시 고칠 이유가 숫자가 아니라 **페이지에** 있을 때만 고칩니다 — 아니면 "
-                 f"그 산출물의 답은 '안 바꿈 — {HOLD_MARK}'입니다.")
+                 "그 산출물의 답" + ("과 '고칠 것' 표의 그 줄은" if table else "은")
+                 + f" '안 바꿈 — {HOLD_MARK}'입니다.")
     else:
         L.append(f"- 마지막 작업({last.isoformat()}) 뒤 관찰 기간({scoring.OBSERVE_DAYS}일)이 "
                  f"지났습니다.{mixed} 앞 작업이 바꾼 것을 되돌리는 안이면 왜 되돌리는지 적습니다.")
@@ -3062,7 +3092,16 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
           + lang_line + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
           + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
-    L += _page_work_lines(url, ctx) if url else []
+    # AI 종류(챗봇 인용·구글 AI 요약)에서만 붙는 추출성 진단 — 판정은 scoring 한 곳.
+    # 같은 tag(갱신)는 AI 기준으로 갈아 끼운다: 2년 기준과 6개월 기준이 한 요청문에
+    # 나란히 서면 어느 쪽을 따를지 모른다. 진단 절은 아래(페이지 상태 뒤)에 그리지만 여기서
+    # 먼저 센다 — 관찰 중 문단이 '고칠 것' 표를 부를지가 진단 절의 유무에 달렸다.
+    ex = scoring.extract_advice(audit, kind) if url else []
+    adv_audit = _with_extract(audit, ex)
+    adv = (_advice(adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
+                   split=shape != "technical")
+           if _shows_page(shape) and url and shape != "consolidate" else [])  # 정리는 페이지 안을 안 고친다
+    L += _page_work_lines(url, ctx, table=shape == "fix_page" and ADVICE_HEAD in adv) if url else []
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
     L += _page_query_lines(o, pq)
     L += _page_sibling_lines(sibs, o, pq, play)
@@ -3081,17 +3120,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
             L += ["## 함께 답해야 할 질문 (구글이 같이 보여 준 것)", *fan, ""]
         L += _serp_stale_lines(o, ctx, had_top=had_top, had_fan=bool(fan))
         L += _serp_feature_lines(o, ctx)
-    # AI 종류(챗봇 인용·구글 AI 요약)에서만 붙는 추출성 진단 — 판정은 scoring 한 곳.
-    # 같은 tag(갱신)는 AI 기준으로 갈아 끼운다: 2년 기준과 6개월 기준이 한 요청문에
-    # 나란히 서면 어느 쪽을 따를지 모른다.
-    ex = scoring.extract_advice(audit, kind) if url else []
-    adv_audit = _with_extract(audit, ex)
     page_at = None                            # 페이지 상태·사이트 사실 — 산출물이 정해진 뒤 끼운다
     if _shows_page(shape) and url:
         page_at = len(L)
-        if shape != "consolidate":            # 정리는 페이지 안을 안 고친다
-            L += _advice(adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
-                         split=shape != "technical")
+        L += adv
     if play.get("what"):
         L += ["## 상황", play["what"], ""]
     if play.get("acts"):

@@ -2322,10 +2322,18 @@ def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
 
     한 파일만 보면 양쪽 다 멀쩡하다: 가리키는 문장도 맞는 말이고 그 절도 제대로
     그려진다. 어긋난 건 **조건**이다 — 그래서 이음매로 세운다.
+
+    꼬리는 꼴마다 한 벌이라 조건부 절을 조건문으로 가리킨다: `위 'X' 절이 있으면`·`… 있고`.
+    그 꼴만 없어도 되는 것으로 치되, X 는 brief.py 가 실제로 그리는 머리말(`## X`)이어야
+    한다 — 안 그러면 오타 난 이름도 "조건부"로 통과한다. 예전엔 조건부 참조가 이 검사를
+    피하려고 `위에 '…'`·따옴표만으로 썼고, 그래서 진단 절이 없는 요청문에 "진단 항목은
+    **전부** 한 줄씩"이 조건 없이 나갔다(theotherskin #128).
     """
     import brief
     import scoring
     ref = re.compile(r"(?:위|아래)\s*'([^']{2,30})'")
+    cond = re.compile(r"\s*절이 (?:있으면|있고)")
+    src = Path(brief.__file__).read_text("utf-8")
     bands = {"aio_exposure": tuple(scoring._AIO_PLAY),
              "striking_distance": tuple(scoring._SD_PLAY)}
     tails = brief.tails("ko-KR")
@@ -2351,6 +2359,11 @@ def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
                     labels = " ".join(re.findall(r"^-\s*([^:]{2,30}):", full, re.M))
                     for m in ref.finditer(full):
                         name = m.group(1)
+                        if cond.match(full, m.end()):
+                            if f'"## {name}' not in src:
+                                bad.append(f"{kind}/{shape}: 조건부로 '{name}' 을 가리키는데 "
+                                           "brief.py 가 그런 머리말을 안 그린다")
+                            continue
                         if name not in heads and name not in labels:
                             bad.append(f"{kind}/{shape}/gk={gk}/band={band}/page={has_page}: "
                                        f"'{name}' 을 가리키는데 그 절이 없다")

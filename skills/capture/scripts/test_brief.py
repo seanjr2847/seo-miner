@@ -2689,6 +2689,90 @@ def test_page_siblings_cover_only_same_deliverables():
     assert "이 요청문을 끝내도 닫히지 않습니다" in sib, sib
 
 
+def _fix_card(name: str) -> str:
+    """fix_page 꼬리의 '고칠 것' 카드 — 꼬리에서 번호 줄 하나만 떼어 본다."""
+    tail = brief.tails("ko-KR")[name]
+    return next(x for x in tail.splitlines() if "'고칠 것' 표" in x)
+
+
+def test_fix_page_tail_allows_the_hold_answer_the_body_asks_for():
+    """관찰 중 문단이 시키는 답('안 바꿈 — 관찰 중')을 꼬리의 '고칠 것' 표가 받아야 한다.
+    theotherskin #153(#61·#609도): 본문은 "아니면 그 산출물의 답은 '안 바꿈 — 관찰 중'"이라
+    하고, 꼬리는 "뒤로 미루는 '이번 아님'은 쓰지 않습니다 — 진단에 선 것은 이 답에서 전부
+    처리합니다"에 칸에 쓸 말도 고친 값·'안 고침' 둘뿐이었다 — [meta description]처럼 문제는
+    맞는데 관찰 중인 자리를 고쳐야 하는지 미뤄야 하는지가 둘로 갈렸다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit(title="짧")},
+           "page_works": {URL: [{"day": "2026-09-28", "label": "클릭률 미달", "kind": "ctr_gap",
+                                 "target": "검색어", "opp_id": 709}]},
+           "holds": [{"page": URL, "until": "2026-10-26", "since": "2026-09-28"}]}
+    t = brief.text(_opp("ctr_gap", "검색어"), ctx, "ko-KR")
+    answer = f"'안 바꿈 — {brief.HOLD_MARK}'"
+    assert answer in t.split("## 답의 형식")[0], t          # 본문이 시키는 답
+    card = _fix_card("fix_page")
+    # 같은 말이 표의 칸에 쓸 수 있는 답으로 있고, 미루기 금지는 그대로다
+    assert answer in card and f"위 '{brief.WORK_HEAD[3:]}' 절이 있고" in card, card
+    assert "뒤로 미루는 '이번 아님'은 쓰지 않습니다" in card, card
+    # 본문 쪽도 그 답이 '고칠 것' 표의 그 줄이라고 말한다 — 산출물 카드와 표가 따로 놀지 않게
+    work = t.split(brief.WORK_HEAD)[1].split("\n## ")[0]
+    assert "'고칠 것' 표의 그 줄" in work, work
+    # 진단 절이 없으면 그 표도 안 선다 — 없는 표를 부르지 않는다(답 문장은 그대로)
+    del ctx["page_audits"]
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert brief.ADVICE_HEAD not in body and "'고칠 것' 표" not in body, body
+    assert f"그 산출물의 답은 {answer}입니다" in body, body
+
+
+def test_fix_page_tail_cards_stand_only_on_sections_the_body_has():
+    """페이지를 모르면 '진단'·'지금 이 페이지 상태' 절이 안 선다 — 꼬리가 그 절을 조건 없이
+    가리키면 없는 것을 채우라는 말이 된다. theotherskin #128·#654·#317: 진단 절이 없는데
+    "'고칠 것' 표: … 진단 항목은 **전부** 한 줄씩"이 조건 없이 서서, 표를 뺄지 산출물을 진단
+    항목처럼 채울지가 갈렸다. 꼬리는 꼴마다 한 벌이라 조건문으로 쓴다."""
+    body = brief.build(_opp("rank_decay", "검색어"), {}, "ko-KR")["body"]
+    assert brief.ADVICE_HEAD not in body and "## 지금 이 페이지 상태" not in body, body
+    card = _fix_card("fix_page")
+    assert card.split(". ", 1)[1].startswith(f"위 '{brief.ADVICE_HEAD[3:]}' 절이 있으면"), card
+    assert card.endswith("그 절이 없으면 이 카드는 만들지 않습니다."), card
+    # 진단 절이 있는 요청문에서는 그 머리말이 꼬리가 부르는 이름 그대로다
+    t = brief.text(_opp("ctr_gap", "검색어"),
+                   {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()}}, "ko-KR")
+    assert brief.ADVICE_HEAD + "\n" in t, t
+    rule = brief.SHAPES["fix_page"]["rules"][0]
+    assert "'지금 이 페이지 상태'가 비어 있으면" not in rule, rule
+    assert "위 '지금 이 페이지 상태' 절이 있으면 거기서" in rule, rule
+    assert "그 절이 없거나 비어 있으면 페이지를 열어" in rule, rule
+
+
+def test_consolidate_tail_basis_does_not_point_at_a_missing_traffic_table():
+    """주소 정리 꼴엔 내부 경쟁(주소별 노출·클릭 표가 있다)과 깨진 주소·크롤 404(그 표가
+    없다)가 함께 온다. theotherskin #655(깨진 백링크)·#308(크롤 404): 꼬리가 "근거(위 표의
+    노출·클릭·의도)"·"근거는 위 표의 숫자입니다"·"정본으로 남길 주소는 굵은 상자"라고 해서
+    가리킬 표도, 고를 정본도 없는 일에 칸이 안 맞았다. '살릴지 301 할지'의 '살림'도 없었다."""
+    tail = brief.tails("ko-KR")["consolidate"]
+    assert "근거(위 표의 노출·클릭·의도)" not in tail, tail
+    assert "- 근거는 위 표의 숫자입니다" not in tail, tail
+    form = brief.SHAPES["consolidate"]["form"][0]
+    assert "노출·클릭 표가 있으면" in form and "없으면" in form and "직접 열어" in form, form
+    assert "살림" in form, form
+    rules = brief.SHAPES["consolidate"]["rules"][0]
+    assert rules.startswith("위 '근거' 절이 있고 거기 주소별 노출·클릭 표가 있으면"), rules
+    assert "표가 없으면" in rules and "직접 열어" in rules, rules
+    graph = brief.SHAPES["consolidate"]["graph"]
+    assert "정본으로 남길 주소는 굵은 상자" not in graph and "살리는 주소" in graph, graph
+    # 표가 없는 두 종류에는 정말 없고, 내부 경쟁에는 정말 있다 — 조건의 두 갈래가 다 산다
+    bl = brief.build(_opp("backlink_broken", "http://x/gone"),
+                     {"bl_links": [{"url_from": "https://ref.example/p", "url_to": "http://x/gone",
+                                    "anchor": "a", "rank": 7, "dofollow": 1, "is_broken": 1}]},
+                     "ko-KR")
+    cr = brief.build(_opp("crawl_issue", "http://x/404"),
+                     {"crawl": {"issues": [{"url": "http://x/404", "kind": "http_error",
+                                            "severity": "bad", "detail": "404"}]}}, "ko-KR")
+    for b in (bl, cr):
+        assert b["shape"] == "consolidate" and "| 노출 | 클릭 |" not in b["body"], b["body"]
+    ca = brief.build(_opp("cannibalization", "검색어"),
+                     {"query_pages": {"검색어": _pages(URL, URL2)}}, "ko-KR")
+    assert ca["shape"] == "consolidate" and "| 노출 | 클릭 |" in ca["body"], ca["body"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
