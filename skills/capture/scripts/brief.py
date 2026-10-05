@@ -1687,12 +1687,32 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
 TECH_TAGS = ("모바일", "언어", "hreflang", "속도", "robots", "canonical", "가져오기")
 
 
-def _advice(a: dict | None, extra=(), *, split: bool = False) -> list[str]:
+# 고칠 페이지의 canonical 이 다른 주소일 때 산출물 맨 앞 — 나머지 산출물이 어느 주소의
+# 것인지가 여기서 정해진다.
+CANON_FIRST = ("고칠 주소 정하기 — 이 주소({url})의 canonical 이 {canon} 를 가리킵니다. 둘 중 "
+               "어느 쪽이 정본인지와 그 근거(두 주소의 내용이 같은지 · 사이트맵 · 들어오는 링크 · "
+               "구글 실적에 어느 주소가 뜨는지). {canon} 이 정본이면 그 주소를 열어 지금 상태를 "
+               "다시 읽고 나머지 산출물을 그 주소의 것으로 만들며, 이 주소는 301 로 넘길지 그대로 "
+               "둘지 적습니다. 이 주소가 정본이면 canonical 을 자기 주소로 고치는 값을 적습니다")
+
+
+def _canon_elsewhere(audit: dict | None) -> str | None:
+    """이 페이지의 canonical 이 내 사이트의 **다른 주소**를 가리키면 그 주소. 판정은 scoring
+    (page_advice 의 [canonical] warn)이 이미 했다 — 여기서 주소를 다시 견주지 않는다."""
+    if any(x.get("tag") == "canonical" and x.get("level") == "warn"
+           for x in (audit or {}).get("advice") or []):
+        return str(audit.get("canonical") or "").strip() or None
+    return None
+
+
+def _advice(a: dict | None, extra=(), *, split: bool = False, keep=()) -> list[str]:
     adv = list((a or {}).get("advice") or []) + list(extra or [])
     if not adv:
         return []
-    here = [x for x in adv if not (split and x["tag"] in TECH_TAGS)]
-    aside = [x for x in adv if split and x["tag"] in TECH_TAGS]
+    # keep: 기술 태그라도 이번 일의 전제인 것 — 고치기에서 canonical 이 다른 주소를 가리키면
+    # 그건 설정 문제가 아니라 '어느 주소를 고치나'다(_canon_elsewhere).
+    here = [x for x in adv if not (split and x["tag"] in TECH_TAGS and x["tag"] not in keep)]
+    aside = [x for x in adv if split and x["tag"] in TECH_TAGS and x["tag"] not in keep]
     L = []
     if here:
         L += [ADVICE_HEAD,
@@ -2157,16 +2177,54 @@ def _ev_ai(o, ctx, pages):
     return L + _pages_table(pages)
 
 
-def _ev_aio(o, ctx, pages):
+def _aio_row(o, ctx) -> dict | None:
     # 화면용 ranks 는 순위 순 30개로 잘린다 — AI 요약 기회는 대개 그 밖이라 잘리기 전
     # 행(aio_gap_ranks)을 먼저 본다.
-    # 최신 회차의 AI 요약 빠짐 행 > 그 검색어의 최신 순위 행(회차가 옛것이어도) > 잘린 화면용
-    # 목록. 가운데를 안 보면 판정이 쓴 실측 순위를 요청문이 못 찾는다 — 그러면 GSC 평균만
-    # 보고 "가장 나은 순위도 22.4위"라고 쓴다(조회는 6위였다).
+    # 최신 회차의 AI 요약 빠짐 행 > 그 검색어의 최신 회차 순위 행(빠짐이 아니어도) > 잘린
+    # 화면용 목록. 가운데를 안 보면 판정이 쓴 실측 순위를 요청문이 못 찾는다 — 그러면 GSC
+    # 평균만 보고 "가장 나은 순위도 22.4위"라고 쓴다(조회는 6위였다).
     t = str(o.get("target") or "")
-    r = ((ctx.get("aio_gap_ranks") or {}).get(t)
-         or (ctx.get("rank_by_kw") or {}).get(t)
-         or _find(ctx.get("ranks"), "keyword", o["target"]))
+    return ((ctx.get("aio_gap_ranks") or {}).get(t)
+            or (ctx.get("rank_by_kw") or {}).get(t)
+            or _find(ctx.get("ranks"), "keyword", o["target"]))
+
+
+def _aio_cited_missing_lines(o, ctx, want) -> list[str]:
+    """산출물이 '요약이 대신 인용한 곳'에서 출발하는데 요청문이 그 목록을 못 실었으면, 산출물
+    바로 아래에서 그렇다고 말하고 어디서 구할지 준다.
+
+    theotherskin #153('abnom dermatology')은 마지막 순위 조회가 몇 검색어만 다시 돈 회차라
+    그 검색어 행이 없었다 — 근거엔 GSC 평균 한 줄뿐인데 산출물 1은 "요약이 대신 인용한 곳이
+    답하는데…"였고, 8주 뒤 "다시 견줍니다"도 견줄 것이 없었다. 인용처가 없다고 단정하지는
+    않는다(안 쟀을 뿐이다) — 직접 보고 적게 한다."""
+    if o.get("kind") != "aio_exposure":
+        return []
+    at = next((i for i, x in enumerate(want) if AIO_CITED_WORD in x), None)
+    if at is None:
+        return []
+    r = _aio_row(o, ctx)
+    if r and r.get("aio_domains"):
+        return []
+    rd = ctx.get("rank_date")
+    why = ("이 검색어의 순위 조회 행이 이 수집본에 없습니다" if not r and not rd
+           else f"마지막 순위 조회({rd})에 이 검색어가 없습니다" if not r
+           else "마지막 순위 조회 응답에서 인용한 곳을 뽑지 못했습니다"
+           if r.get("aio_domains") is not None
+           else "이 검색어의 마지막 순위 조회가 인용 목록을 남기지 않았습니다")
+    t = _ext(str(o.get("target") or ""), 80)
+    return [f"- {at + 1}번이 출발점으로 삼는 '{AIO_CITED_WORD}'이 이 요청문에 없습니다 — {why}. "
+            f"먼저 '{t}' 를 직접 검색해 구글 AI 요약이 출처로 단 링크(주소)를 적고, 그 글들과 "
+            "견줍니다. 요약이 안 뜨거나 출처가 안 보이면 그렇다고 적고 검색결과 상위 글과 "
+            "견줍니다 — 인용처를 지어내지 않습니다."]
+
+
+# 구글 AI 요약 처방(scoring._AIO_PLAY page1)의 산출물이 출발점으로 삼는 말 — 이 말이 든
+# 산출물이 있을 때만 _aio_cited_missing_lines 가 선다(갈래마다 산출물이 다르다).
+AIO_CITED_WORD = "요약이 대신 인용한 곳"
+
+
+def _ev_aio(o, ctx, pages):
+    r = _aio_row(o, ctx)
     L = []
     if r:
         # 순위 숫자는 _rank_sources 한 곳에서만 말한다 — 여기서 또 적으면 같은 값이
@@ -3455,8 +3513,12 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 먼저 센다 — 관찰 중 문단이 '고칠 것' 표를 부를지가 진단 절의 유무에 달렸다.
     ex = scoring.extract_advice(audit, kind) if url else []
     adv_audit = _with_extract(audit, ex)
+    # 고칠 페이지가 canonical 로 다른 주소를 정본이라 선언했다 — theotherskin #703 은 그걸
+    # 기술 태그로 '이번 일은 아닙니다'에 빼 두고 중복 주소의 H1·meta·본문을 고치라고 했다.
+    # 구글이 안 보는 주소를 고치는 일일 수 있으니 어느 주소를 고칠지가 맨 앞이다.
+    canon = _canon_elsewhere(audit) if shape == "fix_page" and url else None
     adv = (_advice(adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
-                   split=shape != "technical")
+                   split=shape != "technical", keep=("canonical",) if canon else ())
            if _shows_page(shape) and url and shape != "consolidate" else [])  # 정리는 페이지 안을 안 고친다
     L += _page_work_lines(url, ctx, table=shape == "fix_page" and ADVICE_HEAD in adv) if url else []
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
@@ -3556,7 +3618,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                          and kind != "coverage" else None,
                          queries=[r["query"] for r in pq], broken=kind == "rank_decay")
         L[page_at:page_at] = ps + (["## 사이트 전체에서 본 이 주소", *sf, ""] if sf else [])
+    if canon:
+        want = [CANON_FIRST.format(url=url, canon=canon)] + list(want)
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
+    L += _aio_cited_missing_lines(o, ctx, want)
     if kind == "rank_decay" and shape == "fix_page":
         # 처방은 비교 대상을 '우리보다 위에 선 글'로만 말한다 — 그 글을 어디서 얻는지는 이
         # 요청문이 정한다. #128 은 그 말이 없어 11위 근처 글인지 상위 2~3개인지 두 갈래로 읽혔다.
@@ -3607,6 +3672,9 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         # 맨 위 세 줄만 읽고 손대는 도구도 있다 — 관찰 중이라는 말이 아래 절에만 있으면 묻힌다.
         summary[-1:-1] = [f"- 주의: 이 페이지는 {HOLD_MARK}입니다({hold['until']}까지) — 아래 "
                           f"'{WORK_HEAD[3:]}'부터 읽습니다."]
+    if canon:
+        summary[-1:-1] = [f"- 주의: 이 페이지의 canonical 이 다른 주소({canon})를 정본으로 가리킵니다 "
+                          "— 고치기 전에 어느 주소를 고칠지부터 정합니다(만들어 줄 것 1)."]
     closed = CLOSED_NOTE.get(str(o.get("status") or ""))
     if closed:
         # 닫힌 기회에도 화면이 요청문을 낸다(theotherskin 381건 중 265건이 resolved) — 맨 위에서 말한다.

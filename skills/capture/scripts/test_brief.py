@@ -3357,6 +3357,67 @@ def test_coverage_new_post_names_the_keyword_it_leads_with():
     assert "- 이 글이 맡을 검색어" not in other
 
 
+def test_aio_deliverable_says_where_to_get_cited_sources_when_brief_has_none():
+    """구글 AI 요약(1페이지 안) 산출물 1번은 '요약이 대신 인용한 곳'에서 출발한다. 그 목록이
+    요청문에 없으면 무엇과 견줄지가 빈다 — theotherskin #153 'abnom dermatology' 는 마지막
+    순위 조회(부분 회차)에 그 검색어가 없어 근거에 GSC 평균 한 줄만 남았는데, 산출물은 그대로
+    "요약이 대신 인용한 곳이 답하는데…"였다. 빈 자리에서 그렇다고 말하고 어디서 구할지 준다."""
+    o = _opp("aio_exposure", "검색어", band="page1")
+    o["band"] = "page1"
+    base = {"rank_date": "2026-10-01", "query_pages": {"검색어": _pages(URL)},
+            "page_audits": {URL: _audit()}}
+
+    def want_of(ctx):
+        body = brief.build(o, ctx, "ko-KR")["body"]
+        return body, body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+
+    # 순위 조회 행이 없다 — 산출물 바로 아래에서 비었다고 말하고, 직접 검색해 적게 한다
+    body, want = want_of(base)
+    assert "1. 요약이 대신 인용한 곳이 답하는데" in want, want
+    assert "'요약이 대신 인용한 곳'이 이 요청문에 없습니다" in want, want
+    assert "마지막 순위 조회(2026-10-01)에 이 검색어가 없습니다" in want, want
+    assert "'검색어' 를 직접 검색해" in want and "지어내지 않습니다" in want, want
+    # 행은 있는데 인용 목록을 안 남긴 옛 조회(None)·못 뽑은 조회([]) — 이유만 다르다
+    row = {"keyword": "검색어", "pos": 8, "url": URL, "aio": 1, "aio_cited": 0}
+    _, want = want_of(dict(base, rank_by_kw={"검색어": dict(row, aio_domains=None)}))
+    assert "'요약이 대신 인용한 곳'이 이 요청문에 없습니다" in want, want
+    assert "인용 목록을 남기지 않았습니다" in want, want
+    _, want = want_of(dict(base, rank_by_kw={"검색어": dict(row, aio_domains=[])}))
+    assert "응답에서 인용한 곳을 뽑지 못했습니다" in want, want
+    # 목록이 있으면 근거에 이미 있다 — 이 줄은 안 붙는다
+    body, want = want_of(dict(base, rank_by_kw={"검색어": dict(row, aio_domains=["r.example"])}))
+    assert "구글 AI 요약이 대신 인용한 곳: r.example" in body, body
+    assert "이 요청문에 없습니다" not in want, want
+    # 산출물이 인용처에서 출발하지 않는 갈래(1페이지 밖)에는 안 붙는다
+    far = _opp("aio_exposure", "검색어", band="beyond")
+    far["band"] = "beyond"
+    assert "이 요청문에 없습니다" not in brief.build(far, base, "ko-KR")["body"]
+
+
+def test_fix_page_settles_canonical_target_before_fixing():
+    """고칠 페이지의 canonical 이 다른 주소를 가리키면 그건 '이번 일 아님'이 아니라 **어느 주소를
+    고칠지**의 문제다. theotherskin #703 은 /ja/acne-scars/papular_scar/ 가 canonical 로
+    /ja/acne-scar/papular-scar/ 를 가리키는데 canonical 을 기술 태그로 '이번 일은 아닙니다'에
+    빼 두고 중복 주소의 H1·meta·본문을 고치라고 했다 — 고쳐도 구글이 안 보는 주소일 수 있다."""
+    canon = "https://me.example/a-canonical"
+    o = _opp("rank_decay", "검색어")
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit(canonical=canon)}}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "fix_page" and b["page"] == URL, b
+    body = b["body"]
+    aside = body.split("(이번 일은 아닙니다)")[1].split("\n## ")[0] if "(이번 일은 아닙니다)" in body else ""
+    assert "[canonical]" not in aside, aside
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    first = want.strip().splitlines()[0]
+    assert first.startswith("1. 고칠 주소 정하기") and canon in first and URL in first, first
+    # 맨 위 요약에서도 먼저 말한다 — 위 세 줄만 읽고 손대는 도구가 있다
+    top = body.split("## 대상")[0]
+    assert "canonical" in top and canon in top, top
+    # 자기 자신을 가리키는 canonical 은 아무 일도 아니다
+    same = brief.build(o, {**ctx, "page_audits": {URL: _audit(canonical=URL)}}, "ko-KR")["body"]
+    assert "고칠 주소 정하기" not in same and canon not in same, same
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

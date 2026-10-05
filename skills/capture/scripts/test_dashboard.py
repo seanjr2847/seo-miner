@@ -1914,6 +1914,30 @@ def test_crawl_lost_inlinks_compare_runs_and_name_where_links_went():
     ins = dashboard._crawl_inlinks(conn, crawl, [old, never])
     assert [r["from"] for r in ins[old]] == [ps[3]], ins
     assert never not in ins, "아무도 안 걸고 크롤도 안 연 주소를 '고아'로 만든다"
+
+
+def test_crawl_inlinks_reach_target_the_crawl_did_not_fetch():
+    """들어오는 링크는 **링크를 건 글**을 크롤하면 잡힌다 — 대상 주소를 받았느냐와 상관없다.
+    예전엔 대상이 그 회차 crawl_pages 에 없으면 키를 안 만들어서, theotherskin #308(404 주소
+    /blog/lentigo-about/)의 요청문이 '고쳐야 할 내부 링크 목록: 어느 글의 어느 앵커인지'를
+    시키면서 그 링크(melasma-abnom-about 의 본문 링크)를 하나도 안 실었다. 크롤이 300쪽에서
+    멈춰 404 주소 자체는 안 받았지만 링크는 그 회차 crawl_links 에 있었다."""
+    conn, pid = _brain("inl404")
+    rid = _run(conn, pid, D, [])
+    a, gone, seen, never = ("https://inl404.example/a/", "https://inl404.example/gone/",
+                            "https://inl404.example/seen/", "https://inl404.example/never/")
+    conn.executemany("INSERT INTO crawl_pages(run_id,url,status) VALUES(?,?,?)",
+                     [(rid, a, 200), (rid, seen, 200)])
+    conn.execute("INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,in_chrome)"
+                 " VALUES(?,?,?,?,1,0)", (rid, a, gone, "검버섯이란"))
+    conn.commit()
+    out = dashboard._crawl_inlinks(conn, {"run": {"id": rid}}, [gone, seen, never])
+    assert gone in out, out
+    assert out[gone][0]["from"] == a and out[gone][0]["anchor"] == "검버섯이란", out[gone]
+    # 받았는데 들어오는 링크가 없으면 빈 목록(고아) — 그대로다
+    assert out.get(seen) == [], out
+    # 안 받았고 링크도 없으면 모른다 — '고아'라고 부르지 않게 키를 안 만든다
+    assert never not in out, out
     conn.close()
 
 
