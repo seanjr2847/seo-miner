@@ -3443,6 +3443,21 @@ def test_content_gap_goal_skips_reference_sites():
     g = _goal(brief.build(o, ctx, "ko-KR")["body"])
     assert "pmc.ncbi" not in g and "rival.example(7위)보다 위" in g, g
 
+
+def test_content_gap_with_our_rank_but_no_ranked_rival_is_still_weak():
+    """#654 'melasma treatment' — 논문 저장소(pmc)를 경쟁사에서 빼자 남은 줄이 '그쪽 순위 모름'
+    하나(unni.app)라 갈래를 잃고 '페이지 자체가 없다 → 새 글'로 떨어졌다. 같은 요청문 근거 표엔
+    '내 순위 61위'가 섰다. 우리 순위가 있으면 '밀림'이다."""
+    o = _opp("content_gap", "melasma treatment")
+    ctx = {"kw_gap": [{"keyword": "melasma treatment", "domain": "unni.app", "position": None,
+                       "our_position": 61, "volume": 140, "kind": "unknown"}]}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "fix_page", b["shape"]
+    assert "페이지 자체가 없는" not in b["body"], b["body"]
+    # 우리 순위도 없으면 그대로 '없음'(새 글)
+    none = {"kw_gap": [{**ctx["kw_gap"][0], "our_position": None}]}
+    assert brief.build(o, none, "ko-KR")["shape"] == "new_content"
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

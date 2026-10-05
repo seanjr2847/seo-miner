@@ -3475,8 +3475,13 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     if kind == "content_gap" and gk is None:
         # 갈래(밀림/없음)는 최신 경쟁사 수집 행이 안다 — 그 수집이 비거나 그 경쟁사를 걷어
         # 내면 갈래를 잃고 '없음'으로 떨어졌다. 홈이 10위인 검색어에 "페이지 자체가 없다"는
-        # 새 글 설계가 나갔다. 순위에 걸린 내 페이지가 있으면 '밀림'이다.
-        gk = "weak" if pages else "missing"
+        # 새 글 설계가 나갔다. 순위에 걸린 내 페이지가 있으면 '밀림'이다. 경쟁사 수집 행이 우리
+        # 순위를 알아도 '밀림'이다 — 논문 저장소를 경쟁사에서 빼자 '그쪽 순위 모름' 줄만 남은
+        # #654 가 근거 표엔 '내 순위 61위'를 싣고 "페이지 자체가 없다"는 새 글 설계로 나갔다.
+        t = str(o.get("target") or "").strip().lower()
+        ours = any(r.get("our_position") for r in ctx.get("kw_gap") or []
+                   if str(r.get("keyword") or "").strip().lower() == t)
+        gk = "weak" if pages or ours else "missing"
         play = scoring.kind_play(kind, gap_kind=gk) or play
     shape = shape_of(kind, gap_kind=gk, has_page=bool(url), band=o.get("band"))
     s = SHAPES[shape]
