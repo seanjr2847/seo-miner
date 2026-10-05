@@ -153,6 +153,9 @@ setup 스킬의 doctor(`../setup/scripts/doctor.py`)를 먼저 돌려 진단 기
 2. 후보(is_active=0)를 sql로 조회해 관련성 필터·클러스터 라벨링을 수행하고,
    프리셋 keyword_angles와 프로젝트 코어 토픽 기준으로 limits.max_keywords 내에서
    활성화할 목록을 사용자에게 제안 → 승인분만 UPDATE로 is_active=1, cluster 기록.
+   클러스터는 **주제**로 묶는다 — 나라·지역·브랜드 같은 공통 낱말('korea')로 묶으면 검색
+   의도가 다른 키워드가 한 묶음이 된다. 그런 이름의 묶음은 '안 다룬 주제' 기회로 안 선다
+   (`scoring.not_topic_cluster`).
    **인텐트 라벨링은 별도 단계가 아니다** — `scoring.py load`가 시작 시
    `_backfill_intents`로 `intent`가 NULL인 활성 키워드만 `classify_intent()`로
    채우고, 이미 적힌 값은 보존한다 (트랜잭셔널 > 커머셜 > 내비게이셔널 > info

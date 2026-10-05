@@ -2528,6 +2528,36 @@ _TARGET_NOUN = {
 }
 
 
+# 주제 묶음의 새 글이 맡을 검색어. 묶음은 키워드가 여럿인데 요청문은 '이 검색어로 노출'·'이 검색어로
+# 상위에 있는 페이지'·꼬리의 '검색어 자리'로 하나를 가리킨다 — theotherskin #318 은 키워드 다섯 개의
+# 묶음이라 그 하나가 없었고, 목표·제목을 어느 키워드로 잡을지가 갈렸다. 그 하나를 대상에서 정한다.
+LEAD_UNKNOWN = "정하지 못했습니다"
+
+
+def _cluster_lead(o: dict, ctx: dict) -> str | None:
+    """묶인 키워드 중 월 검색량이 가장 큰 것 — 검색량을 하나도 모르면 None(지어서 고르지 않는다)."""
+    cl = str(o.get("target") or "").split(":", 1)[-1].strip()
+    kws = [k for k in (ctx.get("cluster_keywords") or {}).get(cl) or [] if k.get("volume")]
+    return str(max(kws, key=lambda k: int(k["volume"]))["keyword"]) if kws else None
+
+
+def _lead_lines(o: dict, ctx: dict) -> list[str]:
+    cl = str(o.get("target") or "").split(":", 1)[-1].strip()
+    kws = (ctx.get("cluster_keywords") or {}).get(cl) or []
+    if not kws:
+        return []      # 고를 키워드가 없다 — 요약의 '주의'가 닫을지 묻게 한다
+    lead = _cluster_lead(o, ctx)
+    rest = "이 요청문의 '이 검색어'와 제목의 검색어 자리는 이것입니다."
+    if len(kws) > 1:
+        rest += (" 의도가 같은 나머지 키워드는 이 글의 구간으로 받고, 의도가 다른 키워드는 이 글에 "
+                 "넣지 않고 '따로 볼 것'에 적습니다 — 한 글이 한 검색 의도에 답합니다.")
+    if lead:
+        return [f"- 이 글이 맡을 검색어: '{_ext(lead, 120)}' — 묶인 키워드 중 월 검색량이 가장 큰 "
+                f"것입니다. {rest}"]
+    return [f"- 이 글이 맡을 검색어: {LEAD_UNKNOWN} — 묶인 키워드의 검색량을 모릅니다. 아래 '근거'의 "
+            f"키워드에서 하나를 골라 고른 이유와 함께 답의 맨 앞에 적고, 그것으로 진행합니다. {rest}"]
+
+
 def _head(p: dict) -> str:
     """지면 후보 한 줄의 꼬리 — 크롤이 본 title·H1."""
     return " · ".join(f"{k}: {v}" for k, v in (("title", p.get("title")), ("H1", p.get("h1"))) if v)
@@ -2540,7 +2570,9 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
     if kind == "coverage":
         t = t.split(":", 1)[-1]
     L = ["## 대상", f"- {_TARGET_NOUN.get(kind, '검색어')}: {_ext(t)}"]
-    ranked = bool(((ctx or {}).get("query_pages") or {}).get(str(o["target"])))
+    if kind == "coverage" and shape == "new_content":
+        L += _lead_lines(o, ctx or {})
+    ranked =bool(((ctx or {}).get("query_pages") or {}).get(str(o["target"])))
     topic = _topic_of(o, ctx or {})
     mine = next((p for p in topic if p["page"] == url), None) if url and not ranked else None
     dk = _decay_of(o, ctx or {})
@@ -3235,6 +3267,12 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
     if kind == "coverage" and shape == "fix_page":
         return ("이 주제를 맡은 지면이 묶인 키워드로 노출을 잡는 것 — '구간 추가'로 가른 키워드부터. "
                 f"그다음 목표는 1페이지({scoring.PAGE1}위 안)입니다.")
+    if kind == "coverage" and shape == "new_content":
+        # 묶음에는 '이 검색어'가 없다 — '대상'이 정한 맡을 검색어를 가리킨다(_lead_lines)
+        lead = _cluster_lead(o, ctx)
+        what = f"맡은 검색어 '{_ext(lead, 120)}'" if lead else "위 '대상'의 '이 글이 맡을 검색어'"
+        return (f"새 글이 색인되고 {what}로 노출이 잡히는 것 — 그다음 목표는 1페이지"
+                f"({scoring.PAGE1}위 안)입니다.")
     if shape in ("new_content",):
         return (f"새 글이 색인되고 이 검색어로 노출이 잡히는 것 — 그다음 목표는 1페이지"
                 f"({scoring.PAGE1}위 안)입니다.")

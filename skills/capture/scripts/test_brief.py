@@ -3294,6 +3294,69 @@ def test_content_gap_goal_never_targets_a_reference_site():
     assert "- 목표: " in _goal(body)
 
 
+def test_place_or_brand_cluster_is_not_a_topic_to_cover():
+    """theotherskin #318 — 'korea' 묶음의 키워드는 색소 치료·피부과 찾기·레이저 비용·점 빼기·홍대
+    피부과였다. 공통점이 '한국에서'뿐인데 '안 다룬 주제 korea'로 대표 글 한 장의 설계도가 나갔다.
+    이름이 사이트의 자리(ko-KR 의 korea·서울)나 제 이름뿐인 묶음은 기회로 안 세고, 이미 선 것은
+    닫는다. 주제인 묶음('기미')과 다른 나라 사이트의 'korea'(그 사이트의 자리가 아니다)는 그대로다."""
+    import db
+    conn = db.connect()
+    conn.execute("INSERT INTO projects(name, domain, locale) VALUES('placeclu', 'theotherskin.com', 'ko-KR')")
+    pid = conn.execute("SELECT id FROM projects WHERE name='placeclu'").fetchone()[0]
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, cluster, is_active, volume) VALUES(?,?,?,1,?)",
+        [(pid, k, c, v) for k, c, v in (
+            ("korean pigmentation treatment", "korea", 50), ("derma clinic in korea", "korea", None),
+            ("mole removal in korea", "korea", None), ("skin clinic hongdae korea", "korea", None),
+            ("서울 피부과", "서울", None), ("theotherskin price", "TheOtherSkin", None),
+            ("기미 레이저", "기미", 390), ("기미 관리", "기미", None))])
+    ctx = {"conn": conn, "pid": pid}
+    assert [r["cluster"] for r in scoring._coverage_rows(ctx)] == ["기미"], scoring._coverage_rows(ctx)
+    assert "korea" in scoring.coverage(conn, pid)["by_cluster"], \
+        "coverage() 합계에서까지 빠지면 표의 합이 안 맞는다 — 빼는 것은 기회뿐이다"
+    # 이미 선 'korea' 기회는 다음 적재에서 닫힌다 — 주제 묶음의 기회는 그대로 열려 있다
+    old = conn.execute("INSERT INTO runs(project_id, kind) VALUES(?, 'score') RETURNING id", (pid,)).fetchone()[0]
+    now = conn.execute("INSERT INTO runs(project_id, kind) VALUES(?, 'score') RETURNING id", (pid,)).fetchone()[0]
+    conn.executemany("INSERT INTO opportunities(project_id, run_id, kind, target, score, status)"
+                     " VALUES(?,?, 'coverage', ?, 50, 'new')",
+                     [(pid, old, "cluster:korea"), (pid, old, "cluster:기미")])
+    scoring.resolve_stale(conn, pid, now)
+    st = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT target, status, status_reason FROM opportunities WHERE project_id=?", (pid,))}
+    assert st["cluster:korea"] == (db.OPP_RESOLVED, scoring.NOT_TOPIC_REASON), st
+    assert st["cluster:기미"][0] == "new", st
+    # 'korea' 가 자리가 아닌 사이트(en-US)에서는 묶음 이름이 주제일 수 있다 — 거르지 않는다
+    conn.execute("UPDATE projects SET locale='en-US' WHERE id=?", (pid,))
+    assert "korea" in [r["cluster"] for r in scoring._coverage_rows(ctx)]
+    conn.close()
+
+
+def test_coverage_new_post_names_the_keyword_it_leads_with():
+    """theotherskin #318 — 묶음의 새 글 요청문이 '이 검색어로 노출이 잡히는 것'을 목표로 삼았는데
+    대상은 키워드 다섯 개짜리 묶음이라 '이 검색어'가 가리킬 하나가 없었다. 목표·제목의 검색어
+    자리가 어느 키워드인지 갈렸다. 대상이 맡을 검색어(검색량 최대)를 이름으로 대고, 목표도 그걸 말한다."""
+    o = _opp("coverage", "cluster:기미")
+    kws = [{"keyword": "기미 관리", "volume": None}, {"keyword": "기미 레이저", "volume": 390},
+           {"keyword": "기미 원인", "volume": 110}]
+    b = brief.build(o, {"cluster_keywords": {"기미": kws}}, "ko-KR")
+    assert b["shape"] == "new_content", b["shape"]
+    body = b["body"]
+    goal = [x for x in body.splitlines() if x.startswith("- 목표: ")]
+    assert goal and all("'기미 레이저'" in x and "이 검색어로" not in x for x in goal), goal
+    lead = next((x for x in body.splitlines() if x.startswith("- 이 글이 맡을 검색어: ")), "")
+    assert lead.startswith("- 이 글이 맡을 검색어: '기미 레이저'") and "의도가 다른" in lead, body
+    # 검색량을 하나도 모르면 지어서 고르지 않는다 — 고르게 하고, 목표는 그 고른 것을 가리킨다
+    unk = [{**k, "volume": None} for k in kws]
+    body = brief.build(o, {"cluster_keywords": {"기미": unk}}, "ko-KR")["body"]
+    lead = next((x for x in body.splitlines() if x.startswith("- 이 글이 맡을 검색어: ")), "")
+    assert "정하지 못했습니다" in lead and "'기미" not in lead, body
+    goal = next(x for x in body.splitlines() if x.startswith("- 목표: "))
+    assert "이 검색어로" not in goal and "이 글이 맡을 검색어" in goal, goal
+    # 고치기 꼴(지면이 이미 있다)과 다른 종류의 새 글은 그대로다
+    other = brief.build(_opp("content_gap", "기미 레이저", gap_kind="missing"), {}, "ko-KR")["body"]
+    assert "- 이 글이 맡을 검색어" not in other
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -17,6 +17,7 @@ import re
 import sqlite3
 import sys
 from collections import namedtuple
+from collections.abc import Callable
 from urllib import robotparser
 from urllib.parse import urlsplit
 
@@ -2775,6 +2776,28 @@ UNCLASSIFIED = "미분류"
 # coverage() 가 cluster NULL 을 모으는 이름 — 기회 대상으로는 'cluster:(미분류)'.
 UNCLASSIFIED_CLUSTER = f"({UNCLASSIFIED})"
 UNCLASSIFIED_REASON = "주제가 정해지지 않은 키워드 묶음이라 기회로 세지 않습니다"
+# 이름이 주제가 아니라 사이트의 자리·제 이름인 묶음도 미분류와 같다. theotherskin 의 'korea'
+# 묶음(색소 치료·피부과 찾기·레이저 비용·점 빼기·홍대 피부과)은 공통점이 '한국에서'뿐이라 대표 글
+# 한 장이 무엇에 대한 글인지 안 정해지는데, '안 다룬 주제 korea'로 새 글 설계도가 나갔다(#318).
+NOT_TOPIC_REASON = ("묶음 이름이 주제가 아니라 사이트의 자리·이름이라 기회로 세지 않습니다 — "
+                    "키워드를 주제별로 다시 묶으면 그 묶음이 기회가 됩니다")
+
+
+def not_topic_cluster(conn: sqlite3.Connection, project_id: int) -> Callable[[str], bool]:
+    """묶음 이름 → 주제가 아닌가(사이트의 자리나 제 이름뿐인가). 사이트를 한 번 읽고 판정기를 준다.
+
+    지명 사전을 새로 만들지 않는다 — 자리는 site_words 의 place(그 사이트의 나라 칸 + place_aliases)
+    만 본다(REGION_PLACE 주석). 그래서 미국 사이트의 'korea' 묶음은 주제로 남는다. 이름은 통째로만
+    견준다: 별칭의 낱말 조각('the other skin' 의 'skin')으로 견주면 주제 묶음 'skin' 이 이름이 된다."""
+    import db
+    p = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    place = site_words_of(conn, project_id, db.project_cfg(conn, p) if p else None).place
+    brands = _brand_names(conn, project_id)
+
+    def judge(name: str) -> bool:
+        toks = tokens(name)
+        return bool(toks) and (norm(name) in brands or all(t in place for t in toks))
+    return judge
 
 
 def is_brand_query(query: str, aliases: list[str]) -> bool:
@@ -4018,9 +4041,11 @@ def _coverage_rows(ctx: dict) -> list[dict]:
     cov_vol = cov.get("volume_by_cluster") or {}
     # 주제가 안 정해진 키워드 묶음은 "안 다룬 주제"가 아니다 — 주제가 없으니 쓸 글도 없다.
     # 검색량만 모여 늘 1순위가 되던 자리(9회차). 이미 선 것은 resolve_stale 이 닫는다.
+    # 이름이 자리·제 이름뿐인 묶음('korea')도 같다 — not_topic_cluster.
+    not_topic = not_topic_cluster(ctx["conn"], ctx["pid"])
     return [{"cluster": cl, "n": n, "vol": cov_vol.get(cl, 0)}
             for cl, n in sorted(cov["by_cluster"].items(), key=lambda x: -x[1])
-            if cl != UNCLASSIFIED_CLUSTER]
+            if cl != UNCLASSIFIED_CLUSTER and not not_topic(cl)]
 
 
 def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
@@ -5084,6 +5109,7 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
     # 이번 적재가 norm 으로 접어 세운 줄 — 같은 종류·같은 norm 의 다른 글자 줄은 그 줄로
     # 합쳐진 것이다(긍정 확인: 같은 문제를 이번 회차의 다른 줄이 맡았다).
     folded: dict[tuple[str, str], str] = {}
+    not_topic = not_topic_cluster(conn, int(project_id))
     if run_id is not None:
         for r in conn.execute(
                 f"""SELECT kind, target FROM opportunities WHERE project_id=? AND run_id=?
@@ -5099,6 +5125,9 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
         ctx["opp"] = {"id": o["id"], "run_id": o["run_id"], "status_at": o["status_at"]}
         if o["kind"] == "coverage" and o["target"] == f"cluster:{UNCLASSIFIED_CLUSTER}":
             decisions.append((o["id"], UNCLASSIFIED_REASON))   # 이제 안 세는 대상 (_coverage_rows)
+            continue
+        if o["kind"] == "coverage" and not_topic(o["target"].split(":", 1)[-1]):
+            decisions.append((o["id"], NOT_TOPIC_REASON))      # 같은 이유 — 주제가 아닌 묶음
             continue
         twin = folded.get((o["kind"], norm(o["target"])))
         if twin and twin != o["target"]:
