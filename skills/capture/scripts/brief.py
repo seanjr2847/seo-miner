@@ -550,7 +550,18 @@ def page_locale(audit: dict | None, url: str | None) -> tuple[str, str] | None:
     return None
 
 
-def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None) -> list[str]:
+def _lang_and_limits(name: str, lang: str, shape: str | None) -> str:
+    """'산출물은 X로 …' — 길이 기준은 title·설명을 만드는 꼴(SHAPES[...]['limits'])에만 붙인다.
+    site_lang_line 은 그 갈래를 봤는데 이 줄은 안 봐서, '글의 내용은 손대지 않습니다'라는 모바일
+    점검(theotherskin #623)에 'title 60자 이내, meta description 160자 이내'가 실렸다.
+    shape 가 None 이면 꼴을 모르는 자리(화면의 폴백 표 page_lang)라 기준을 싣는다."""
+    if shape is None or SHAPES[shape]["limits"]:
+        return f"산출물은 {name}로 쓰고, 길이 기준은 {_limits_line(lang)}."
+    return f"산출물은 {name}로 씁니다."
+
+
+def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None,
+                     shape: str | None = None) -> list[str]:
     """'대상'의 언어 줄 — 페이지 언어를 알 때만. 꼬리의 언어·길이 줄이 이 줄을 따르라고 한다."""
     pl = page_locale(audit, url)
     if not pl or locale is None:
@@ -560,7 +571,7 @@ def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None) ->
         return []                   # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
     name = lang_label(lang)
     return [f"- 페이지 언어: {name} ({src}) — 사이트 기본({lang_label(locale)})과 다릅니다. "
-            f"산출물은 {name}로 쓰고, 길이 기준은 {_limits_line(lang)}."]
+            + _lang_and_limits(name, lang, shape)]
 
 
 def site_lang_line(shape: str, locale: str) -> str:
@@ -599,7 +610,7 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
             return []               # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
         name = lang_label(lang)
         return [f"- 페이지 언어: {name} (검색어의 언어) — 사이트 기본({lang_label(locale)})과 "
-                f"다릅니다. 산출물은 {name}로 쓰고, 길이 기준은 {_limits_line(lang)}."]
+                "다릅니다. " + _lang_and_limits(name, lang, shape or None)]
     non_latin = {lg for _, lg in db._SCRIPTS}
     t = str(o.get("target") or "")
     kws = ([str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {})
@@ -609,10 +620,11 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
         return []
     whose = ("이 검색어의 검색결과 상위 글이 쓰는 언어" if shape == "new_content"
              else "고칠 페이지의 언어(주소의 언어 경로 /en/ 같은 것, 없으면 html lang)")
+    limits = (f"길이 기준도 그 언어의 것을 씁니다({lang_label(locale)}이면 "
+              f"{_limits_line(locale)}, 영어면 {_limits_line('en')}, 일본어·중국어면 "
+              f"{_limits_line('ja')}). " if not shape or SHAPES[shape]["limits"] else "")
     return [f"- 산출물 언어: {whose}를 따릅니다 — 검색어가 라틴 글자라 언어를 여기서 정하지 "
-            f"않습니다. 길이 기준도 그 언어의 것을 씁니다({lang_label(locale)}이면 "
-            f"{_limits_line(locale)}, 영어면 {_limits_line('en')}, 일본어·중국어면 {_limits_line('ja')}). "
-            "정하지 못하면 [확인 필요]."]
+            f"않습니다. {limits}정하지 못하면 [확인 필요]."]
 
 
 PRODUCT_NOUN = {"outreach": "연락문", "presence": "게시·답변 문안"}
@@ -823,10 +835,13 @@ OPEN_LADDER = (
 )
 
 
-def _page_state(a: dict | None, url: str) -> list[str]:
+def _page_state(a: dict | None, url: str, *, author_work: bool = True) -> list[str]:
     """감사 결과를 사실 그대로 — 판정은 page_advice(진단)가 한다. 옛 요청문이 안 싣던
     H2 목록·내부 링크·alt 를 싣는다. "본문에 보탤 H2"를 시키면서 지금 H2 를 안 주면
-    AI 는 이미 있는 것을 또 제안한다."""
+    AI 는 이미 있는 것을 또 제안한다.
+
+    author_work: 산출물이 저자·신뢰 신호를 만드는가(_asks(want, AUTHOR_WORK_WORDS)) — 아니면
+    Person 안내를 안 싣는다."""
     if not a:
         return ["## 지금 이 페이지 상태",
                 "- 아직 이 페이지를 직접 점검하지 않았습니다. 먼저 열어서 title·meta "
@@ -869,7 +884,10 @@ def _page_state(a: dict | None, url: str) -> list[str]:
              + ("" if sc or not fresh else " — 정적 HTML 기준"))
     # Person 이 있으면 신뢰 신호(저자)가 "없다"는 전제가 틀릴 수 있다 — 그게 글쓴이인지
     # 글이 소개하는 인물(구성원·전문가 프로필)인지는 스키마 이름만으로 모른다.
-    if any(str(x).lower() == "person" for x in sc):
+    # 그 전제는 저자·신뢰 신호를 만드는 산출물에만 있다. 꼴과 상관없이 붙였더니 301 주소·
+    # 정본 정리·모바일 점검(theotherskin #655·#698·#623)에 "무엇을 어디에 보일지 적습니다"가
+    # 실려, 만들어 줄 것에 없는 안을 하나 더 시켰다.
+    if author_work and any(str(x).lower() == "person" for x in sc):
         L.append("  - Person 이 있습니다. 이 글의 저자(author)인지, 글이 소개하는 인물(인물 "
                  "프로필)인지 스키마 이름만으로는 모릅니다 — 열어서 확인합니다. 다만 스키마에 "
                  "있다고 신뢰 신호의 저자가 '있음'이 되는 것은 아닙니다: 기준은 **사람이 "
@@ -1192,21 +1210,55 @@ OUTLINK_CANDIDATES_HEAD = ("이 페이지가 본문에서 **아직 안 거는** 
 LINK_CANDIDATES_TRUNCATED = ("- 링크를 걸 후보를 내지 않습니다 — 들어오는 링크 표가 잘려서 "
                              "어느 글이 아직 이 페이지로 링크를 안 걸었는지 모릅니다. 후보를 "
                              "고르려면 그 글을 열어 링크가 이미 있는지 직접 확인합니다.")
+# 그 일이 산출물(만들어 줄 것) 문장에 어떤 말로 나오나 — _TAG_WORDS 와 같은 방식이다. 재료(표·
+# 지시·안내)는 그 일이 산출물에 있을 때만 싣는다. 문장의 정본은 scoring 의 처방(deliver)과
+# DELIVER_BY_TAG 이고, 처방 문장이 바뀌어 여기서 놓치면 test_brief 가 잡는다.
+INLINK_WORK_WORDS = ("이 페이지로 내부 링크", "이 페이지로 링크", "끊긴 내부 링크",
+                     "고쳐야 할 내부 링크", "두 지면을 잇는", "서로 거는 내부 링크")
+AUTHOR_WORK_WORDS = ("저자", "신뢰 신호")
+
+
+def _asks(want, words) -> bool:
+    text = " ".join(want)
+    return any(w in text for w in words)
+
+
+def _asks_more_outlinks(audit: dict | None) -> bool:
+    """진단 [내부 링크] 가 '내보내는 링크가 적다'(더하라)인가. 같은 태그에 '과다'(줄이라)도
+    있어 태그만으로는 못 가른다 — 둘을 가르는 값은 scoring.page_advice 와 같은 LINKS_HEAVY_MIN."""
+    a = audit or {}
+    n = a.get("internal_links")
+    return (isinstance(n, int) and n < scoring.LINKS_HEAVY_MIN
+            and any(x.get("tag") == "내부 링크" for x in a.get("advice") or []))
 
 
 def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
-                  audit_title: str | None = None) -> list[str]:
+                  audit_title: str | None = None, *, work: bool = True,
+                  queries=()) -> list[str]:
     """들어오는 링크 — 전체 수는 잘리기 전 값(dashboard._inlink_rows 의 첫 행)으로 말한다.
-    옛 행(total 없음)은 받은 행 수가 곧 전체다."""
+    옛 행(total 없음)은 받은 행 수가 곧 전체다.
+
+    work: 산출물이 이 페이지로 오는 링크를 걸거나 고치는가(_asks(want, INLINK_WORK_WORDS)).
+    아니면 수만 한 줄로 말한다 — 글 표·'후보 글을 제안하기 전에'·앵커 지시는 새 링크를 거는
+    일의 재료다. 늘 실었더니 1페이지 클릭·주제 묶음·모바일 점검(theotherskin #61·#232·#623)이
+    74곳 표와 '새 링크의 앵커는…'을 받아 꼬리의 '다른 페이지는 손대지 않습니다'와 딴말을 했다.
+    queries: 이 페이지에 걸린 검색어 전부(노출 순) — 앵커가 검색어를 담는지 볼 때 쓴다."""
     head = ins[0]
     pages = head.get("pages") or len(ins)
     total = head.get("total") or len(ins)
     shown = ins[:_INLINK_SHOWN]
+    known = bool(head.get("chrome_known"))
+    body_from = head.get("body_from") or []
+    anchors = head.get("anchors") or []
+    if not work:
+        return [f"- 이 페이지로 **들어오는** 내부 링크 {_n(total)}개 · 글 {_n(pages)}곳"
+                + (f"(그중 본문 안 {_n(head.get('body_total') or 0)}개 · 글 {_n(len(body_from))}곳)"
+                   if known else "")
+                + ". 새 링크를 거는 일은 이 요청문의 산출물이 아닙니다 — 필요해 보이면 '따로 볼 "
+                  "것'에 적습니다."] + _anchor_name_lines(anchors, url, audit_title)
     L = [f"이 페이지로 **들어오는** 내부 링크 {_n(total)}개 · 글 {_n(pages)}곳 "
          "(여기 있는 글에서 또 걸지 않습니다):"]
     L += _table(["링크를 건 글", "앵커"], [[r.get("from"), r.get("anchor")] for r in shown])
-    known = bool(head.get("chrome_known"))
-    body_from = head.get("body_from") or []
     if known:
         # 크롤이 링크마다 틀(메뉴·머리말·꼬리말) 안인지 셌다 — 추정 대신 센 값으로 말한다
         L.append(f"- 그중 **본문 안** 링크 {_n(head.get('body_total') or 0)}개 · 글 {_n(len(body_from))}곳"
@@ -1216,7 +1268,6 @@ def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
         L.append(f"- 표는 {len(shown)}곳까지입니다. 나머지 {_n(pages - len(shown))}곳도 이미 링크를 "
                  "걸었습니다 — 후보 글을 제안하기 전에 그 글을 열어 이 페이지로 가는 링크가 "
                  "이미 있는지 확인합니다.")
-    anchors = head.get("anchors") or []
     nav = (not body_from and pages >= 2) if known else _looks_like_nav(ins, anchors, total, pages)
     if nav and known:
         # 센 값이다 — 본문 링크가 0 이면 메뉴로 걸린 글 전부가 본문 링크의 후보다.
@@ -1242,17 +1293,7 @@ def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
             L.append(f"- 앵커가 '{_ext(a, 60) or '(빈 앵커)'}' 에 몰려 있습니다({_n(n)}/{_n(total)}). "
                      "새 링크의 앵커는 이 말을 되풀이하지 않고, 이 페이지가 답하는 내용을 "
                      "설명하는 다른 표현으로 씁니다(서로도 겹치지 않게).")
-    # 진단이 "주소와 title 중 무엇이 이 페이지의 이름이냐"를 묻는다(scoring 의 페이지 이름).
-    # 앵커는 그 물음의 근거다 — 남들이 이 페이지를 무엇이라 부르며 링크하는지.
-    if anchors and audit_title is not None:
-        a0 = str(anchors[0][0] or "")
-        at = set(scoring.tokens(a0))
-        in_slug = [t for t in scoring._slug_tokens(url) if t in at]
-        in_title = [t for t in scoring.tokens(audit_title) if len(t) >= 2 and t in at]
-        if in_slug and len(in_slug) > len(in_title):
-            L.append(f"- 남들은 이 페이지를 '{_ext(a0, 60)}' 라고 부르며 링크합니다 — 주소 쪽 "
-                     "말이지 지금 title 쪽 말이 아닙니다. '페이지 이름' 진단의 근거로 씁니다: "
-                     "앵커와 주소가 한편이면 title·H1 을 그쪽으로 맞추는 것이 대개 맞습니다.")
+    L += _anchor_name_lines(anchors, url, audit_title)
     if anchors and total > sum(int(n) for _, n in anchors):
         rest = total - sum(int(n) for _, n in anchors)
         L.append(f"- 나머지 앵커 {_n(rest)}개는 위 목록에 없습니다(상위 {len(anchors)}개만 셌습니다) — "
@@ -1260,13 +1301,34 @@ def _inlink_lines(ins: list[dict], query: str | None = None, url: str = "",
     # 앵커가 브랜드명뿐이고 노리는 검색어를 담은 것이 하나도 없으면 — 그것도 순위 정체의
     # 후보다. 낱말 하나 겹침으로는 못 가른다: 'The Other PTT' 는 'korean ptt' 와 ptt 를
     # 나눠 갖지만 일반명 앵커가 아니다. 검색어의 낱말을 **전부** 담은 앵커가 있는지 본다.
-    want = {t for t in scoring.tokens(query or "") if len(t) >= 2}
+    # 검색어는 누른 것 하나가 아니라 이 페이지에 걸린 것 전부다 — 'ABNOM' 앵커 77개(첫째
+    # 검색어 abnom, 노출 172)를 두고 "노리는 검색어('abnom dermatology', 노출 6)를 담은
+    # 앵커가 없다"고 해서(#153) '검색어 하나에 페이지를 맞추지 않습니다'와 부딪혔다.
+    qs = [q for q in dict.fromkeys([*queries, query or ""]) if q]
+    wants = [w for w in ({t for t in scoring.tokens(q) if len(t) >= 2} for q in qs) if w]
     seen = [str(a) for a, _ in anchors] + [str(r.get("anchor") or "") for r in ins]
-    if want and seen and not any(want <= set(scoring.tokens(a)) for a in seen):
-        L.append(f"- 들어오는 앵커 중 노리는 검색어('{_ext(query, 60)}')를 담은 것이 하나도 없습니다. "
+    if wants and seen and not any(w <= set(scoring.tokens(a)) for w in wants for a in seen):
+        L.append(f"- 들어오는 앵커 중 노리는 검색어('{_ext(qs[0], 60)}')를 담은 것이 하나도 없습니다. "
                  "링크는 있어도 무엇에 대한 페이지인지 앵커가 말하지 않습니다 — 새 링크 중 일부는 "
                  "이 검색어를 자연스럽게 담은 설명형 앵커로 씁니다(전부 같은 말로 맞추지는 않습니다).")
     return L
+
+
+def _anchor_name_lines(anchors: list, url: str, audit_title: str | None) -> list[str]:
+    """진단이 "주소와 title 중 무엇이 이 페이지의 이름이냐"를 묻는다(scoring 의 페이지 이름).
+    앵커는 그 물음의 근거다 — 남들이 이 페이지를 무엇이라 부르며 링크하는지. 새 링크를
+    안 거는 요청문에서도 title 을 고치면 근거다(_inlink_lines 의 work 와 상관없다)."""
+    if not anchors or audit_title is None:
+        return []
+    a0 = str(anchors[0][0] or "")
+    at = set(scoring.tokens(a0))
+    in_slug = [t for t in scoring._slug_tokens(url) if t in at]
+    in_title = [t for t in scoring.tokens(audit_title) if len(t) >= 2 and t in at]
+    if in_slug and len(in_slug) > len(in_title):
+        return [f"- 남들은 이 페이지를 '{_ext(a0, 60)}' 라고 부르며 링크합니다 — 주소 쪽 "
+                "말이지 지금 title 쪽 말이 아닙니다. '페이지 이름' 진단의 근거로 씁니다: "
+                "앵커와 주소가 한편이면 title·H1 을 그쪽으로 맞추는 것이 대개 맞습니다."]
+    return []
 
 
 def _looks_like_nav(ins: list[dict], anchors: list, total: int, pages: int) -> bool:
@@ -1384,12 +1446,20 @@ def _outlink_candidates(ctx: dict, url: str) -> list[dict]:
 
 
 def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
-                query: str | None = None) -> list[str]:
+                query: str | None = None, inlink_work: bool = True,
+                outlink_candidates: bool = False, sitemap_check: bool = True,
+                queries=()) -> list[str]:
     """사이트 전체를 봐야 아는 사실 — 제목 중복, 이 페이지로 들어오는 내부 링크.
 
     "새 title 3안" 을 시키면서 같은 title 을 쓰는 다른 페이지가 있다는 것을 안 주면
     새 안이 또 겹친다. "어느 글에서 이 페이지로 링크를 걸지" 를 시키면서 지금 어디서
     링크가 오는지를 안 주면 이미 있는 링크를 또 제안한다 — H2 에서 한 번 배운 실수다.
+
+    거꾸로, 산출물에 없는 일의 재료는 싣지 않는다 — 아래 넷은 build 가 산출물(want)을 보고 정한다.
+    inlink_work: 들어오는 링크를 걸거나 고치는 산출물이 있다(없으면 수만, _inlink_lines).
+    link_candidates: 그중 새로 걸 글을 고르는 일(고치기 꼴) — 들어오는 후보 표.
+    outlink_candidates: 내보내는 링크를 **더하라**는 진단이 산출물이다 — 나가는 후보 표.
+    sitemap_check: 이 주소가 살아 있어야 하는 주소다 — 아니면 '사이트맵에 없음'을 안 묻는다.
     """
     if not url:
         return []
@@ -1412,7 +1482,9 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
                  "여기부터입니다(막힌 주소는 noindex 도 못 읽힙니다).")
     elif probe:
         L.append("- robots.txt: 이 주소를 막는 줄은 없습니다.")
-    if probe.get("in_sitemap") is False:
+    # 301 로 보낼 주소·없는 주소가 사이트맵에 없는 것은 당연하다 — 깨진 백링크의 http:// 홈
+    # (theotherskin #655)에 "빠진 것이 의도인지 확인하세요"가 붙어 할 일을 하나 더 얹었다.
+    if probe.get("in_sitemap") is False and sitemap_check:
         L.append("- 사이트맵에 이 주소가 없습니다. 크롤 시드는 사이트맵이었습니다 — "
                  "빠진 것이 의도인지 확인하세요.")
     elif probe.get("in_sitemap"):
@@ -1420,12 +1492,13 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
     ins = (ctx.get("crawl_inlinks") or {}).get(url)
     if ins:
         L += [""] + _inlink_lines(ins, query, url,
-                                  ((ctx.get("page_audits") or {}).get(url) or {}).get("title"))
+                                  ((ctx.get("page_audits") or {}).get(url) or {}).get("title"),
+                                  work=inlink_work, queries=queries)
     elif ins is not None:
-        L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다"
-                 "(고아 페이지). 링크를 걸 자리를 찾는 것이 첫 일입니다.")
+        L.append("- 이 페이지로 들어오는 내부 링크가 크롤에서 하나도 안 잡혔습니다(고아 페이지)."
+                 + (" 링크를 걸 자리를 찾는 것이 첫 일입니다." if inlink_work else ""))
     # 크롤이 이 주소를 봤을 때만(None 이 아닐 때) — 안 봤으면 '아직 안 걸었다'를 모른다
-    if link_candidates and ins is not None:
+    if link_candidates and inlink_work and ins is not None:
         head0 = ins[0] if ins else {}
         truncated = (head0.get("from_all") is None
                      and (head0.get("pages") or len(ins)) > len(ins))
@@ -1448,14 +1521,16 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
                          "문맥 링크를 대신하지 않습니다.")
         else:
             L += ["", NO_LINK_CANDIDATES]
-        outs = _outlink_candidates(ctx, url)
-        if outs:
-            L += ["", OUTLINK_CANDIDATES_HEAD]
-            L += _table(["글", "노출", "겹치는 말"],
-                        [[r["page"], _n(r["impressions"]), ", ".join(sorted(r["shared"])[:4])]
-                         for r in outs])
-            L.append("- 본문에서 그 글이 답하는 내용을 말하는 자리에만 겁니다 — 목록으로 몰아 "
-                     "붙이지 않습니다. 걸 자리가 없으면 '안 검'이 답입니다.")
+    # 나가는 링크 후보는 들어오는 링크와 따로 정한다 — 진단이 '내보내는 링크를 줄이라'(과다)일
+    # 때 이 표(더하기)가 실려 한 요청문이 두 갈래로 읽혔다(theotherskin #313).
+    outs = _outlink_candidates(ctx, url) if outlink_candidates else []
+    if outs:
+        L += ["", OUTLINK_CANDIDATES_HEAD]
+        L += _table(["글", "노출", "겹치는 말"],
+                    [[r["page"], _n(r["impressions"]), ", ".join(sorted(r["shared"])[:4])]
+                     for r in outs])
+        L.append("- 본문에서 그 글이 답하는 내용을 말하는 자리에만 겁니다 — 목록으로 몰아 "
+                 "붙이지 않습니다. 걸 자리가 없으면 '안 검'이 답입니다.")
     return L
 
 
@@ -2941,7 +3016,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     intro = ((INTRO_BY_LEAN.get(str(o.get("gap_kind"))) if shape == "presence" else None)
              or INTRO_BY_KIND.get(kind) or s["intro"])
     L = [intro, ""]
-    lang_line = _page_lang_lines(audit, url, locale) if shape != "outreach" else []
+    lang_line = _page_lang_lines(audit, url, locale, shape) if shape != "outreach" else []
     # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
     if not lang_line and not url and shape != "outreach":
         lang_line = _target_lang_lines(o, ctx, locale, shape)
@@ -2975,19 +3050,9 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 나란히 서면 어느 쪽을 따를지 모른다.
     ex = scoring.extract_advice(audit, kind) if url else []
     adv_audit = _with_extract(audit, ex)
+    page_at = None                            # 페이지 상태·사이트 사실 — 산출물이 정해진 뒤 끼운다
     if _shows_page(shape) and url:
-        ps = _page_state(audit, url)
-        vit = _vitals_lines(ctx, url)
-        if vit:
-            ps = ps[:-1] + vit + [""] if ps and ps[-1] == "" else ps + vit
-        L += ps
-        sf = _site_facts(ctx, url, link_candidates=shape == "fix_page",
-                         # 주제 묶음의 대상은 'cluster:…' 키라 검색어가 아니다 — 그대로 넘기면
-                         # "노리는 검색어('cluster:lifting')"가 나갔다
-                         query=str(o.get("target") or "") if shape == "fix_page"
-                         and kind != "coverage" else None)
-        if sf:
-            L += ["## 사이트 전체에서 본 이 주소", *sf, ""]
+        page_at = len(L)
         if shape != "consolidate":            # 정리는 페이지 안을 안 고친다
             L += _advice(adv_audit, scoring.vitals_advice(_vitals_rows(ctx, url).values()),
                          split=shape != "technical")
@@ -3047,6 +3112,25 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 본문까지 쓰라는 이 줄이 붙으면 같은 목록의 2번("본문은 쓰지 않습니다")과 부딪힌다.
     if shape == "fix_page" and url and kind != "coverage" and CONTENT_FILL not in want:
         want = list(want) + [CONTENT_FILL]
+    if page_at is not None:
+        # 페이지 상태·사이트 사실은 진단 앞 자리에 서지만, 무엇을 실을지는 산출물(want)이 정한다
+        # — 산출물에 없는 일의 재료(들어오는 링크 표·앵커 지시·후보 표, 저자 안내)를 꼴과
+        # 상관없이 실었더니 그 일을 하라는 뜻으로 읽혔다(theotherskin #61·#232·#313·#623·#655).
+        ps = _page_state(audit, url, author_work=_asks(want, AUTHOR_WORK_WORDS))
+        vit = _vitals_lines(ctx, url)
+        if vit:
+            ps = ps[:-1] + vit + [""] if ps and ps[-1] == "" else ps + vit
+        inl = _asks(want, INLINK_WORK_WORDS)
+        sf = _site_facts(ctx, url, link_candidates=shape == "fix_page", inlink_work=inl,
+                         outlink_candidates=shape == "fix_page" and _asks_more_outlinks(adv_audit),
+                         sitemap_check=kind != "backlink_broken" and not (
+                             isinstance((audit or {}).get("status"), int) and audit["status"] >= 400),
+                         # 주제 묶음의 대상은 'cluster:…' 키라 검색어가 아니다 — 그대로 넘기면
+                         # "노리는 검색어('cluster:lifting')"가 나갔다
+                         query=str(o.get("target") or "") if shape == "fix_page"
+                         and kind != "coverage" else None,
+                         queries=[r["query"] for r in pq])
+        L[page_at:page_at] = ps + (["## 사이트 전체에서 본 이 주소", *sf, ""] if sf else [])
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     # 진단은 정적 HTML 을 센 값이라 헛짚는다(장식 아이콘의 빈 alt, 메뉴·푸터까지 센 링크 수,
     # 글자 없는 그림까지 센 '그림 위주'). 사람이 표를 읽고 가려내던 일을 답이 페이지를 열어

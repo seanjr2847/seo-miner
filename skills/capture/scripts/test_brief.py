@@ -497,7 +497,12 @@ def test_site_wide_facts_reach_the_page_brief():
     # 페이지 한 장 진단이 이미 말하는 것을 두 번 싣지 않는다
     assert "thin_content" not in body, body
     assert "남의 행" not in body, "다른 주소의 크롤 이슈가 새어 들어온다"
-    assert "들어오는** 내부 링크 1개" in body and "| 여기 |" in body, body
+    # 클릭률 요청문은 들어오는 링크를 안 만든다 — 수만 싣고, 글·앵커 표는 그 산출물이 있는
+    # 요청문(2페이지: '이 페이지로 내부 링크를 걸 글')에서 선다
+    assert "들어오는** 내부 링크 1개" in body and "| 여기 |" not in body, body
+    linked = brief.build({**_opp("striking_distance", "검색어", band="page2"), "band": "page2"},
+                         ctx)["body"]
+    assert "들어오는** 내부 링크 1개" in linked and "| 여기 |" in linked, linked
     # 같은 요청문 안에 두 방향의 링크 수가 있다 — 방향을 안 적으면 한 값의 두 표현처럼 읽힌다
     # 진단 문장이 아니라 상태 줄에서 본다 — 진단에도 같은 말이 있어 그것만 보면
     # 늘 참인 검사가 된다
@@ -1564,14 +1569,20 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     diag = body.split("## 진단")[1].split("\n## ")[0]
     assert "내보내는 내부 링크 64개 — 본문 11단어당 1개" in diag, diag
     assert "이미지 12개에 본문 697단어 — 그림 위주입니다" in diag, diag
-    assert "노리는 검색어('korean ptt')를 담은 것이 하나도 없습니다" in body, body
-    assert "Person 이 있습니다" in body, body
+    # 앵커 지시·Person 안내는 그 산출물(이 페이지로 걸 링크·저자)이 있는 요청문에서만 선다 —
+    # 이 요청문(1페이지 클릭)에는 둘 다 없다(theotherskin #61 이 바로 이 꼴이었다)
+    assert "를 담은 것이 하나도 없습니다" not in body, body
+    assert "Person 이 있습니다" not in body, body
     # 4. 영문 페이지 — 영어 산출물·영문 길이 기준
     assert "- 페이지 언어: 영어 (주소의 /en/)" in body, body
-    # 앵커에 검색어의 말이 있으면 그 줄은 안 선다
+    # 들어오는 링크를 거는 요청문(2페이지)에서는 앵커가 검색어를 안 담으면 그 줄이 서고,
+    # 앵커에 검색어의 말이 있으면 안 선다
+    o2 = {**_opp("striking_distance", "korean ptt", band="page2"), "band": "page2"}
+    assert "노리는 검색어('korean ptt')를 담은 것이 하나도 없습니다" in brief.build(
+        o2, ctx, "ko-KR")["body"]
     ctx2 = _ptt_ctx()
     ctx2["crawl_inlinks"][_PTT][3]["anchor"] = "Korean PTT guide"
-    assert "를 담은 것이 하나도 없습니다" not in brief.build(ctx2["opps"][0], ctx2, "ko-KR")["body"]
+    assert "를 담은 것이 하나도 없습니다" not in brief.build(o2, ctx2, "ko-KR")["body"]
 
 
 def test_striking_above_top3_says_the_job_is_clicks():
@@ -1799,9 +1810,10 @@ def test_brief_copy_has_no_industry_words():
            and id(n) not in exempt
            for w in INDUSTRY_WORDS if w in n.value]
     assert not bad, f"요청문 문구에 업종어가 있습니다: {bad}"
-    # 렌더까지 한 번 — Person 줄은 스키마가 있어야 서고, 거기가 업종어가 살던 자리다
+    # 렌더까지 한 번 — Person 줄은 스키마가 있어야 서고, 거기가 업종어가 살던 자리다.
+    # 저자·신뢰 신호를 만드는 요청문에서만 선다(AI 요약 1페이지 — 산출물에 '신뢰 신호(저자…)')
     a = _audit(schema_json='["Organization", "Person"]')
-    body = brief.build(_opp("content_gap", "검색어", gap_kind="weak"),
+    body = brief.build({**_opp("aio_exposure", "검색어", band="page1"), "band": "page1"},
                        {"page_audits": {URL: a}, "query_pages": {"검색어": _pages(URL)}},
                        "ko-KR")["body"]
     assert "Person 이 있습니다" in body, body
@@ -2296,7 +2308,8 @@ def test_link_candidates_use_the_full_list_and_topic_overlap():
                "unrelated thing": [{"page": "https://me.example/far/", "impressions": 900,
                                     "position": 3.0}]},
            "crawl_outlinks": {_LK: []}}
-    body = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True, query="milia removal"))
+    body = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True, query="milia removal",
+                                          outlink_candidates=True))
     # 표가 40곳에서 잘렸어도 전체 목록(from_all)이 있으니 후보를 낸다. 메뉴로만 건 글도 후보다.
     assert brief.LINK_CANDIDATES_TRUNCATED not in body and brief.LINK_CANDIDATES_HEAD in body, body
     sec = body.split(brief.LINK_CANDIDATES_HEAD)[1]
@@ -2308,7 +2321,7 @@ def test_link_candidates_use_the_full_list_and_topic_overlap():
     assert brief.OUTLINK_CANDIDATES_HEAD in body and froms[50] in body.split(
         brief.OUTLINK_CANDIDATES_HEAD)[1], body
     ctx["crawl_outlinks"] = {_LK: [froms[50]]}
-    body2 = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True))
+    body2 = chr(10).join(brief._site_facts(ctx, _LK, link_candidates=True, outlink_candidates=True))
     assert brief.OUTLINK_CANDIDATES_HEAD not in body2, "이미 거는 글을 또 제안한다"
 
 
@@ -2433,6 +2446,176 @@ def test_page_state_says_unseen_for_proxy_read_rows():
     full = dict(a, meta_description=None, schema_json="[]")
     text = "\n".join(brief._page_state(full, a["url"]))
     assert "meta description: (없음)" in text and "못 봄" not in text, text
+
+
+# ── 재료는 산출물이 그 일을 시킬 때만 ─────────────────────────────────────────
+
+_PTT_CARE = "https://clinic.example/en/blog/ptt-care"
+
+
+def _ptt_link_ctx():
+    """_ptt_ctx 에 '아직 안 건' 관련 글(ptt-care)과 본문 나가는 링크(없음)를 보탠 것."""
+    ctx = _ptt_ctx()
+    ctx["query_pages"]["ptt aftercare"] = [{"page": _PTT_CARE, "impressions": 40, "clicks": 1,
+                                            "ctr": 2.5, "position": 7.0}]
+    ctx["crawl_outlinks"] = {_PTT: []}
+    return ctx
+
+
+def test_inlink_sections_stand_only_when_a_deliverable_links_in():
+    """들어오는 링크 표·앵커 지시·후보 표는 산출물에 '이 페이지로 링크를 걸 글'이 있을 때만.
+    theotherskin #61·#609(1페이지·클릭), #232(주제 묶음), #623(모바일 기술 점검)은 만들어 줄
+    것에 들어오는 링크가 없는데 74곳 표·'새 링크의 앵커는…'·'새 링크는 이 안에서 고릅니다'가
+    실려, 꼬리의 '다른 페이지는 손대지 않습니다'와 딴말을 했다."""
+    ctx = _ptt_link_ctx()
+    row = "| https://clinic.example/en/p3 | The Other PTT |"
+    # 1페이지 클릭 — 산출물에 들어오는 링크가 없다
+    body = brief.build(ctx["opps"][0], ctx, "ko-KR")["body"]
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "이 페이지로 내부 링크" not in want, want
+    site = body.split("## 사이트 전체에서 본 이 주소")[1].split("\n## ")[0]
+    for x in (brief.LINK_CANDIDATES_HEAD, brief.NO_LINK_CANDIDATES, brief.LINK_CANDIDATES_TRUNCATED,
+              row, "새 링크의 앵커는", "새 링크 중 일부는", "후보 글을 제안하기 전에"):
+        assert x not in site, (x, site)
+    # 사실(몇 개·몇 곳)은 남고, 새 링크는 '따로 볼 것'으로 간다고 말한다
+    assert "들어오는** 내부 링크 20개 · 글 20곳" in site, site
+    assert "'따로 볼 것'" in site, site
+    # 2페이지 — 처방의 산출물이 '이 페이지로 내부 링크를 걸 글과 앵커'다
+    o2 = {**_opp("striking_distance", "korean ptt", band="page2"), "band": "page2"}
+    body2 = brief.build(o2, ctx, "ko-KR")["body"]
+    assert "이 페이지로 내부 링크를 걸 글" in body2.split("## 만들어 줄 것")[1], body2
+    assert row in body2 and brief.LINK_CANDIDATES_HEAD in body2, body2
+    assert _PTT_CARE in body2.split(brief.LINK_CANDIDATES_HEAD)[1], body2
+    assert "앵커가 'The Other PTT' 에 몰려 있습니다(20/20)" in body2, body2
+    # 모바일 기술 점검 — 표가 잘린 꼴(74곳 중 20)에서도 '후보 글을 제안하기 전에'가 없다
+    ctx_t = _ptt_link_ctx()
+    ctx_t["crawl_inlinks"][_PTT][0].update(total=82, pages=74)
+    tech = brief.build(_opp("device_gap", "korean ptt"), ctx_t, "ko-KR")
+    assert tech["shape"] == "technical", tech["shape"]
+    for x in ("표는 20곳까지", "후보 글을 제안하기 전에", "새 링크의 앵커는", row):
+        assert x not in tech["body"], (x, tech["body"])
+    assert "들어오는** 내부 링크 82개 · 글 74곳" in tech["body"], tech["body"]
+
+
+def test_inlink_work_words_cover_every_deliverable_that_links_in():
+    """INLINK_WORK_WORDS 는 산출물 문장(scoring 처방·DELIVER_BY_TAG)을 말로 알아본다. 처방 문장이
+    바뀌어 여기서 놓치면 그 요청문이 들어오는 링크 표·후보를 조용히 잃는다 — 양쪽을 대조한다.
+    '내부 링크'를 말하는 산출물은 전부 알아보거나, 이 페이지로 오는 링크가 아닌 것으로 이름을 댄다."""
+    not_inbound = (
+        "왜 밀리는지 원인 진단 표",          # 표의 한 항목(내부 링크)일 뿐 링크를 거는 일이 아니다
+        "발행 뒤 이 글로 내부 링크를 걸",    # 새 글 — 손댈 페이지가 없어 사이트 사실이 안 선다
+    )
+    items = list(brief.DELIVER_BY_TAG.values())
+    for k in scoring.ALL_KINDS:
+        p = scoring._KIND_BY_NAME[k].play
+        for v in (p.values() if p and all(isinstance(x, dict) for x in p.values()) else [p]):
+            items += list(v.get("deliver") or []) + list(v.get("deliver_new") or [])
+    links = [x for x in items if "내부 링크" in x or "이 페이지로 링크" in x]
+    assert links, "산출물에서 내부 링크를 하나도 못 찾았다 — 검사가 아무것도 안 본다"
+    missed = [x for x in links if not brief._asks([x], brief.INLINK_WORK_WORDS)
+              and not any(x.startswith(n) for n in not_inbound)]
+    assert not missed, f"들어오는 링크 산출물을 INLINK_WORK_WORDS 가 못 알아본다: {missed}"
+    assert brief._asks(["이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개"], brief.INLINK_WORK_WORDS)
+
+
+def test_outlink_candidates_only_when_the_diagnosis_asks_for_more_links():
+    """#313 — 진단은 '내보내는 링크 65개, 주제와 가까운 것만 남기세요'(줄이기)인데 '나가는 내부
+    링크는 이 안에서 고릅니다' 표(더하기)가 실려 두 갈래로 읽혔다. 나가는 링크를 더하라는
+    산출물은 '내보내는 링크가 적다' 진단뿐이다."""
+    ctx = _ptt_link_ctx()                      # 내보내는 링크 64 · 697단어 → 링크 과다 진단
+    body = brief.build(ctx["opps"][0], ctx, "ko-KR")["body"]
+    assert "진단 [내부 링크] 의 고칠 값" in body.split("## 만들어 줄 것")[1], body
+    assert brief.OUTLINK_CANDIDATES_HEAD not in body, body
+    few = _ptt_link_ctx()
+    few["page_audits"][_PTT] = _audit(url=_PTT, html_lang="en", title="The Other PTT",
+                                      words=697, internal_links=1, images=1, images_no_alt=0)
+    body2 = brief.build(few["opps"][0], few, "ko-KR")["body"]
+    assert "진단 [내부 링크] 의 고칠 값" in body2.split("## 만들어 줄 것")[1], body2
+    assert brief.OUTLINK_CANDIDATES_HEAD in body2, body2
+    assert _PTT_CARE in body2.split(brief.OUTLINK_CANDIDATES_HEAD)[1], body2
+
+
+def test_anchor_query_line_reads_the_page_queries():
+    """#153 — 'ABNOM' 앵커 77개(이 페이지 첫째 검색어, 노출 172)를 두고 '노리는 검색어('abnom
+    dermatology', 노출 6)를 담은 앵커가 없다'고 판정해 '일의 단위: 검색어 하나에 맞추지
+    않는다'와 부딪혔다. 앵커가 이 페이지에 걸린 검색어 중 하나라도 담으면 페이지를 말한다."""
+    ab = "https://clinic.example/en/abnom"
+    qp = {q: [{"page": ab, "impressions": imp, "clicks": 0, "ctr": 0.0, "position": 8.3}]
+          for q, imp in (("abnom", 172), ("abnom dermatology", 6))}
+
+    def ctx_with(anchor):
+        return {"query_pages": qp, "page_audits": {ab: _audit(url=ab, html_lang="en", title="ABNOM")},
+                "crawl": {"run": {"id": 1}, "issues": []},
+                "crawl_inlinks": {ab: [{"from": f"https://clinic.example/en/p{i}", "anchor": anchor,
+                                        **({"total": 20, "pages": 20, "anchors": [[anchor, 20]]}
+                                           if i == 0 else {})} for i in range(20)]}}
+    o = {**_opp("striking_distance", "abnom dermatology", band="page2"), "band": "page2"}
+    body = brief.build(o, ctx_with("ABNOM"), "ko-KR")["body"]
+    assert "이 페이지로 내부 링크를 걸 글" in body.split("## 만들어 줄 것")[1], body
+    assert "를 담은 것이 하나도 없습니다" not in body, body
+    # 어느 검색어도 안 담으면 선다 — 이름은 이 페이지의 첫째 검색어다(누른 검색어가 아니라)
+    body2 = brief.build(o, ctx_with("The Other"), "ko-KR")["body"]
+    assert "노리는 검색어('abnom')를 담은 것이 하나도 없습니다" in body2, body2
+    # 들어오는 링크를 만들지 않는 요청문에는 앵커 지시 자체가 없다(#153 은 AI 요약 1페이지)
+    o3 = {**_opp("aio_exposure", "abnom dermatology", band="page1"), "band": "page1"}
+    body3 = brief.build(o3, ctx_with("The Other"), "ko-KR")["body"]
+    assert "를 담은 것이 하나도 없습니다" not in body3, body3
+
+
+def test_person_note_only_when_the_author_is_a_deliverable():
+    """#655·#698·#623 — 301 주소·정본 정리·모바일 점검 요청문에 'Person … 무엇을 어디에 보일지
+    적습니다'가 실렸다. 그 산출물은 저자·신뢰 신호를 만드는 요청문에만 있다."""
+    a = _audit(schema_json='["MedicalClinic", "Person"]')
+    ctx = {"page_audits": {URL: a}, "query_pages": {"검색어": _pages(URL)}}
+    tech = brief.build(_opp("device_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert "구조화 데이터: MedicalClinic, Person" in tech, tech     # 사실은 그대로
+    assert "Person 이 있습니다" not in tech, tech
+    cons = brief.build(_opp("backlink_broken", URL), ctx, "ko-KR")["body"]
+    assert "Person 이 있습니다" not in cons, cons
+    o = {**_opp("aio_exposure", "검색어", band="page1"), "band": "page1"}
+    fix = brief.build(o, ctx, "ko-KR")["body"]
+    assert "신뢰 신호(저자" in fix.split("## 만들어 줄 것")[1], fix
+    assert "Person 이 있습니다" in fix and "무엇을 어디에 보일지 적습니다" in fix, fix
+
+
+def test_sitemap_note_skips_an_address_being_retired():
+    """#655 — 깨진 백링크의 http:// 주소에 '사이트맵에 없습니다 — 의도인지 확인하세요'가
+    붙었다. 301 로 보낼 주소·404 주소가 사이트맵에 없는 것은 당연하다."""
+    probe = {URL: {"robots": None, "in_sitemap": False}}
+    ctx = {"page_audits": {URL: _audit()}, "site_probe": probe}
+    broken = brief.build(_opp("backlink_broken", URL), ctx, "ko-KR")["body"]
+    assert "사이트맵에 이 주소가 없습니다" not in broken, broken
+    assert "robots.txt: 이 주소를 막는 줄은 없습니다" in broken, broken
+    assert "1. 301 대상 주소와 그 근거" in broken, broken
+    dead = brief.build(_opp("crawl_issue", URL),
+                       {"page_audits": {URL: _audit(status=404)}, "site_probe": probe},
+                       "ko-KR")["body"]
+    assert "사이트맵에 이 주소가 없습니다" not in dead, dead
+    live = brief.build(_opp("ctr_gap", "검색어"),
+                       {**ctx, "query_pages": {"검색어": _pages(URL)}}, "ko-KR")["body"]
+    assert "사이트맵에 이 주소가 없습니다" in live, live
+
+
+def test_language_line_has_length_rule_only_for_shapes_with_titles():
+    """#623 — '글의 내용은 손대지 않습니다'라는 모바일 점검에 'title 60자 이내, meta description
+    160자 이내'가 실렸다. 길이 기준은 title·설명을 만드는 꼴(SHAPES[...]['limits'])에만."""
+    en = "https://clinic.example/en/x"
+    ctx = {"query_pages": {"korean ptt": [{"page": en, "impressions": 30, "clicks": 0,
+                                           "ctr": 0.0, "position": 8.0}]},
+           "page_audits": {en: _audit(url=en, html_lang="en")}}
+    tech = brief.build(_opp("device_gap", "korean ptt"), ctx, "ko-KR")["body"]
+    target = tech.split("## 대상")[1].split("\n## ")[0]
+    assert "- 페이지 언어: 영어 (주소의 /en/)" in target and "산출물은 영어로 씁니다" in target, target
+    assert "title 60자" not in tech, tech
+    o = {**_opp("striking_distance", "korean ptt", band="page1"), "band": "page1"}
+    fix = brief.build(o, ctx, "ko-KR")["body"]
+    assert "산출물은 영어로 쓰고, 길이 기준은 title 60자 이내" in fix, fix
+    # 페이지를 모르는 꼴(검색어의 언어로 정하는 줄)도 같은 규칙이다
+    jp = {"kind": "ai_citation_gap", "target": "日本の美容皮膚科"}
+    pres = brief._target_lang_lines(jp, {}, "ko-KR", "presence")
+    assert pres and "일본어" in pres[0] and "title" not in pres[0], pres
+    new = brief._target_lang_lines(jp, {}, "ko-KR", "new_content")
+    assert new and "title" in new[0], new
 
 
 if __name__ == "__main__":
