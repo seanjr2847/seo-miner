@@ -2916,6 +2916,12 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     shape = shape_of(kind, gap_kind=gk, has_page=bool(url), band=o.get("band"))
     s = SHAPES[shape]
     audit = (ctx.get("page_audits") or {}).get(url) if url else None
+    # 묶음 키워드를 실은 페이로드에서만 판정한다 — 키 자체가 없으면(옛 페이로드) 모르는 것이지
+    # 꺼진 것이 아니다. gather 는 열린 묶음마다 목록을 싣는다(빈 목록 = 정말 0개).
+    ck = ctx.get("cluster_keywords")
+    if kind == "coverage" and ck is not None and not ck.get(
+            str(o.get("target") or "").split(":", 1)[-1].strip()):
+        return _empty_cluster_brief(o, shape, url)
 
     # 페이지 단위 — 고치기 꼴에서만. 주소 정리·기술 점검은 페이지가 대상이어도 검색어
     # 묶음이 일을 정하지 않고, 새 글·연락문에는 걸린 페이지가 없다.
@@ -2976,7 +2982,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
             ps = ps[:-1] + vit + [""] if ps and ps[-1] == "" else ps + vit
         L += ps
         sf = _site_facts(ctx, url, link_candidates=shape == "fix_page",
-                         query=str(o.get("target") or "") if shape == "fix_page" else None)
+                         # 주제 묶음의 대상은 'cluster:…' 키라 검색어가 아니다 — 그대로 넘기면
+                         # "노리는 검색어('cluster:lifting')"가 나갔다
+                         query=str(o.get("target") or "") if shape == "fix_page"
+                         and kind != "coverage" else None)
         if sf:
             L += ["## 사이트 전체에서 본 이 주소", *sf, ""]
         if shape != "consolidate":            # 정리는 페이지 안을 안 고친다
@@ -3079,13 +3088,6 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         # 맨 위 세 줄만 읽고 손대는 도구도 있다 — 관찰 중이라는 말이 아래 절에만 있으면 묻힌다.
         summary[-1:-1] = [f"- 주의: 이 페이지는 {HOLD_MARK}입니다({hold['until']}까지) — 아래 "
                           f"'{WORK_HEAD[3:]}'부터 읽습니다."]
-    if kind == "coverage" and not (ctx.get("cluster_keywords") or {}).get(
-            str(o.get("target") or "").split(":", 1)[-1].strip()):
-        # 기회가 선 뒤 키워드가 꺼지거나 다른 묶음으로 옮겨지면 '근거' 절이 안 서는데, 산출물은
-        # "위 근거의 키워드가 빠짐없이"였다(theotherskin cluster:lifting — 16개가 0개가 됨).
-        summary[-1:-1] = ["- 주의: 이 묶음에는 지금 켜진 키워드가 없습니다 — 기회가 선 뒤 꺼졌거나 다른 "
-                          "묶음으로 옮겨졌습니다. 키워드 분류 표를 만들 수 없으니, 이 기회를 [제외]로 "
-                          "닫을지 먼저 묻고 멈춥니다."]
     closed = CLOSED_NOTE.get(str(o.get("status") or ""))
     if closed:
         # 닫힌 기회에도 화면이 요청문을 낸다(theotherskin 381건 중 265건이 resolved) — 맨 위에서 말한다.
@@ -3111,6 +3113,38 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     cands = [{"page": p["page"], "title": p.get("title") or ""}
              for p in _topic_of(o, ctx)] if not url and shape in ("new_content", "fix_page") else []
     return {"shape": shape, "body": "\n".join(L), "page": url, "candidates": cands}
+
+
+EMPTY_CLUSTER_INTRO = ("아래 주제 묶음은 지금 손댈 수 없습니다 — 묶인 키워드가 하나도 켜져 있지 "
+                       "않습니다. 고치거나 설계하지 말고, 이 기회를 닫을지만 묻습니다.")
+
+
+def _empty_cluster_brief(o: dict, shape: str, url: str | None) -> dict:
+    """켜진 키워드가 하나도 없는 주제 묶음 — 할 수 있는 일이 '닫을지 묻기'뿐이다.
+
+    기회가 선 뒤 키워드가 꺼지거나 다른 묶음으로 옮겨지면 '근거' 절이 안 선다. v1.139.2 는 맨
+    위에 '묻고 멈춥니다'를 붙이기만 해서, 그 아래 목표·할 일·"위 근거의 키워드가 빠짐없이"
+    분류 표·HTML 답 형식이 그대로 일을 시켰다(theotherskin #234 lifting, #235 local). 일을 시키는
+    절은 세우지 않고 산출물은 묻는 것 하나다. 주제 묶음은 저절로 닫히지 않는다
+    (scoring._NO_RESOLVE["coverage"]) — 사람이 닫아야 끝난다."""
+    name = str(o.get("target") or "").split(":", 1)[-1].strip()
+    L = [EMPTY_CLUSTER_INTRO, "",
+         SUMMARY_HEAD,
+         f"- 일: 기회 정리 — 주제 '{_ext(name, 80)}'",
+         "- 주의: 이 묶음에는 지금 켜진 키워드가 없습니다 — 기회가 선 뒤 꺼졌거나 다른 묶음으로 "
+         "옮겨졌습니다. 가를 키워드가 없어 이 묶음의 일은 지금 할 수 없습니다.",
+         "- 만들 것 1개: 이 기회를 닫을지 묻는 한 줄", "",
+         "## 대상", f"- 주제 (추적 키워드 묶음): {_ext(name, 80)}"]
+    if url:
+        L.append(f"- 이 주제로 찾아 둔 지면: {url} (참고 — 이번에 고치지 않습니다)")
+    why = " — ".join(x for x in (o.get("label"), o.get("reasoning")) if x)
+    if why:
+        L.append(f"- 왜 걸렸나(기회가 선 시점): {_ext(why, 400)}")
+    L += ["", "## 만들어 줄 것",
+          "1. 이 기회를 [제외]로 닫을지 묻는 한 줄 — 키워드를 다시 켜서 이 묶음으로 계속할 생각이면 "
+          "그렇게 답해 달라고 덧붙입니다. 아래 '답의 형식'(HTML 파일)은 이 요청문에서는 따르지 않고 "
+          "대화로 묻고 멈춥니다.", ""]
+    return {"shape": shape, "body": "\n".join(L), "page": url, "candidates": []}
 
 
 # 진단 tag 가 산출물 문장에 어떤 말로 나오나 — tag 이름 그대로가 아닌 것만.

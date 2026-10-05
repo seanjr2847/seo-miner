@@ -418,8 +418,11 @@ def test_gather_attaches_brief_to_every_opportunity():
     assert d["opps"], "픽스처에 기회가 없다"
     for o in d["opps"]:
         b = o["brief"]
-        assert b["shape"] in brief.SHAPES and b["body"].startswith(
-            brief.INTRO_BY_KIND.get(o["kind"]) or brief.SHAPES[b["shape"]]["intro"]), o["kind"]
+        # 켜진 키워드가 0개인 주제 묶음은 '닫을지 묻기' 요청문이다(_empty_cluster_brief)
+        lead = (brief.EMPTY_CLUSTER_INTRO if o["kind"] == "coverage"
+                and not (d.get("cluster_keywords") or {}).get(str(o["target"]).split(":", 1)[-1])
+                else brief.INTRO_BY_KIND.get(o["kind"]) or brief.SHAPES[b["shape"]]["intro"])
+        assert b["shape"] in brief.SHAPES and b["body"].startswith(lead), o["kind"]
         assert "## 만들어 줄 것" in b["body"]
     sd = next(o for o in d["opps"] if o["kind"] == "striking_distance")
     assert sd["band"] == "page1" and sd["brief"]["shape"] == "fix_page"
@@ -2225,9 +2228,36 @@ def test_coverage_without_live_keywords_stops_instead_of_pointing_at_empty_evide
     t = "https://me.example/lifting/"
     ctx = {"topic_pages": {"cluster:lifting": [{"page": t, "title": "lifting", "h1": "", "primary": True}]},
            "cluster_keywords": {"lifting": []}}
-    body = brief.build(_opp("coverage", "cluster:lifting"), ctx, "ko-KR")["body"]
+    b = brief.build(_opp("coverage", "cluster:lifting"), ctx, "ko-KR")
+    body = b["body"]
     summ = body.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
     assert "켜진 키워드가 없습니다" in summ, summ
+    # v1.139.2 는 맨 위에 '묻고 멈춥니다'를 붙이기만 하고 아래는 그대로 일을 시켰다 — 목표·할 일·
+    # 분류 표·없는 근거를 가리키는 산출물이 한 요청문에 같이 섰다(#234 lifting, #235 local).
+    # 할 수 없는 일이면 산출물은 묻는 것 하나뿐이고, 일을 시키는 절은 서지 않는다.
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert want.count("\n1. ") == 1 and "\n2. " not in want and "[제외]" in want, want
+    for head in (brief.GOAL_HEAD, "## 이 상황에서 할 일", "## 상황", "## 있으면 붙여 넣을 것"):
+        assert head not in body, (head, body)
+    assert "키워드 분류 표" not in body and "위 근거의 키워드" not in body, body
+    assert "고쳐 주세요" not in body.splitlines()[0], body.splitlines()[0]
+    # 대상 키('cluster:…')는 어디에도 그대로 나가지 않는다 — 내부 링크 문단이 "노리는 검색어
+    # ('cluster:lifting')" 라고 썼다
+    assert "cluster:" not in body, body
+    assert b["candidates"] == []
+
+
+def test_coverage_inlink_note_does_not_name_the_cluster_key():
+    """주제 묶음은 노리는 검색어가 하나가 아니다 — 내부 링크 문단이 대상 키를 검색어처럼 불렀다."""
+    t = "https://me.example/en/lifting/"
+    ctx = {"topic_pages": {"cluster:lifting": [{"page": t, "title": "Lifting", "h1": "Lifting",
+                                                "primary": True}]},
+           "cluster_keywords": {"lifting": [{"keyword": "face lifting seoul", "volume": 30}]},
+           "crawl_inlinks": {t: [{"from": f"https://me.example/en/p{i}/", "anchor": "Lifting & Contour",
+                                  "total": 3, "pages": 3, "anchors": [["Lifting & Contour", 3]]}
+                                 for i in range(3)]}}
+    body = brief.build(_opp("coverage", "cluster:lifting"), ctx, "ko-KR")["body"]
+    assert "cluster:" not in body.split("## 답의 형식")[0], body
 
 
 def test_unknown_language_line_covers_cjk_pages_too():
