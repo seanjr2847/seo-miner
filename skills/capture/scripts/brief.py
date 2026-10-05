@@ -2602,8 +2602,8 @@ def _is_same_opp(a: dict, b: dict) -> bool:
 def _page_siblings(o: dict, ctx: dict, url: str) -> list[dict]:
     """같은 페이지로 푸는 다른 열린 기회 — 페이지 본문의 일(고치기·새 글 꼴)만.
 
-    주소 정리·기술 점검·플랫폼 등장은 같은 주소여도 다른 일이라 이 요청문이 못 덮는다 —
-    "이 페이지를 끝내면 같이 닫힌다"고 말할 수 있는 것만 싣는다."""
+    주소 정리·기술 점검·플랫폼 등장은 같은 주소여도 다른 일이라 싣지 않는다. 실린 것 중
+    이 요청문이 덮는지는 _covers 가 가른다(본문의 일이어도 종류가 다르면 따로다)."""
     out = []
     for x in ctx.get("opps") or []:
         if _is_same_opp(x, o) or (x.get("status") or "new") not in scoring.OPEN_STATUSES:
@@ -2618,41 +2618,77 @@ def _page_siblings(o: dict, ctx: dict, url: str) -> list[dict]:
 
 
 _PAGE_SIBLING_ROWS = 12
+APART_MARK = "(따로)"
+
+
+def _covers(o: dict, play: dict, x: dict) -> bool:
+    """누른 기회의 요청문이 같은 페이지의 기회 x 까지 덮나 — 종류가 같고 처방의 산출물이
+    같을 때만. 산출물은 누른 기회의 처방 한 벌이고 끝나는 조건은 종류마다 다르다.
+    종류를 안 가렸더니 [클릭률 미달] #609(검색결과 점검)와 [1페이지 상단 가능] #61(가설 표·
+    질문 꼴 H2 직답)이 서로를 덮는다 했다 — 하나만 받으면 다른 쪽 산출물이 빠진다.
+    같은 종류라도 밴드가 다르면(1페이지 상단 / 진입) 산출물이 다르다."""
+    if x.get("kind") != o.get("kind"):
+        return False
+    xp = x.get("play") or scoring.kind_play(x["kind"], band=x.get("band"),
+                                            gap_kind=x.get("gap_kind"))
+    return list(xp.get("deliver") or []) == list(play.get("deliver") or [])
 
 
 def _page_sibling_lines(sibs: list[dict], o: dict | None = None,
-                        pq: list[dict] | None = None) -> list[str]:
-    """같은 페이지의 다른 기회. 두 가지를 바로잡은 모양이다.
+                        pq: list[dict] | None = None, play: dict | None = None) -> list[str]:
+    """같은 페이지의 다른 기회. 세 가지를 바로잡은 모양이다.
 
     · 누른 검색어와 **같은 검색어**의 다른 종류(AI 요약 빠짐 등)는 "다른 기회"로 세지 않고
       한 줄로 따로 말한다 — 대상 검색어가 다른 기회로 또 세어졌다.
     · 기회에 저장된 근거 문장은 적재한 날의 수(08-25, 4.8위·노출 23)라 바로 위 검색어 표
       (최신 3.6위·노출 12)와 어긋났다. 검색어 표에 그 검색어가 있으면 거기 수를 쓴다.
+    · "이 요청문 하나가 그 전부를 덮습니다 — 같이 닫힙니다"를 종류 가리지 않고 붙였다
+      (theotherskin #609·#61·#153). 덮는 것은 만들 것이 같은 기회(_covers)뿐이고, 나머지는
+      종류마다 '(따로)'를 달아 이 요청문으로 안 닫힌다고 한다.
     """
     if not sibs:
         return []
-    mine = str((o or {}).get("target") or "")
+    o = o or {}
+    play = play if play is not None else (o.get("play") or {})
+    cov = {id(x) for x in sibs if _covers(o, play, x)}
+    mine = str(o.get("target") or "")
     same = [x for x in sibs if mine and str(x.get("target")) == mine]
     rest = [x for x in sibs if x not in same]
     now = {r["query"]: r for r in (pq or [])}
+    label = lambda x: str(x.get("label") or scoring.kind_label(x["kind"]))  # noqa: E731
+    mylab = label(o) if o.get("kind") else ""
     L = [PAGE_SIBLINGS_HEAD]
-    if same:
+    same_apart = [x for x in same if id(x) not in cov]
+    if same_apart:
         # 대괄호만 두면 "[템플릿 패턴]" 이 채우다 만 자리처럼 읽힌다(실제로 그렇게 읽혔다).
-        L.append("같은 검색어로 선 기회도 이 요청문이 덮습니다 — 기회 종류: "
-                 + ", ".join(str(x.get("label") or scoring.kind_label(x["kind"])) for x in same))
+        L.append("같은 검색어로 선 다른 종류의 기회: " + ", ".join(map(label, same_apart))
+                 + " — 만들 것과 끝나는 조건이 이 기회와 달라 이 요청문을 끝내도 닫히지 않습니다. "
+                   "그 산출물은 그 기회의 요청문으로 따로 합니다.")
     if not rest:
         return L + [""]
     shown = rest[:_PAGE_SIBLING_ROWS]
-    L.append(f"같은 페이지로 푸는 다른 검색어의 열린 기회가 {len(rest)}건 있습니다. 이 요청문 하나가 "
-             "그 전부를 덮습니다 — 기회마다 따로 고치지 않고, 이 페이지를 끝내면 같이 닫힙니다.")
+    n_cov = sum(1 for x in rest if id(x) in cov)
+    n_apart = len(rest) - n_cov
+    L.append(f"같은 페이지로 푸는 다른 검색어의 열린 기회가 {len(rest)}건 있습니다.")
+    if n_cov:
+        L.append((f"그중 {n_cov}건은" if n_apart else "그 1건은" if n_cov == 1
+                  else f"그 {n_cov}건 전부가")
+                 + f" 이 기회와 같은 종류([{mylab}])라 만들 것과 끝나는 조건이 같습니다 — 이 "
+                   "요청문 하나가 덮습니다. 기회마다 따로 고치지 않고, 이 페이지를 끝내면 같이 닫힙니다.")
+    if n_apart:
+        L.append(f"'{APART_MARK}'가 붙은 {n_apart}건은 종류나 처방이 달라 만들 것과 끝나는 조건이 "
+                 "다릅니다 — 이 요청문을 끝내도 닫히지 않습니다. 여기서 그 산출물을 만들지 않고, "
+                 "그 기회의 요청문으로 따로 합니다.")
 
     # 검색어 하나에 종류가 여럿이면 한 줄이다 — 종류마다 줄을 세우면 같은 검색어·같은
-    # 수치가 두 줄로 나와 "다른 기회 2건"이 사실상 하나가 된다(실제로 그랬다).
+    # 수치가 두 줄로 나와 "다른 기회 2건"이 사실상 하나가 된다(실제로 그랬다). 덮는 종류를
+    # 앞에, 따로 할 종류를 뒤에 둔다.
     by_target: dict[str, list[dict]] = {}
     for x in shown:
         by_target.setdefault(str(x.get("target")), []).append(x)
     for t, xs in by_target.items():
-        kinds = ", ".join(f"[{x.get('label') or scoring.kind_label(x['kind'])}]" for x in xs)
+        xs = sorted(xs, key=lambda x: id(x) not in cov)
+        kinds = ", ".join(f"[{label(x)}]" + ("" if id(x) in cov else APART_MARK) for x in xs)
         q = now.get(t)
         head = (f" — 이 페이지 {q['position']}위 · 노출 {_n(q['impressions'])} · 클릭 "
                 f"{_n(q['clicks'])} (위 검색어 표와 같은 최신 값)"
@@ -3029,7 +3065,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     L += _page_work_lines(url, ctx) if url else []
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
     L += _page_query_lines(o, pq)
-    L += _page_sibling_lines(sibs, o, pq)
+    L += _page_sibling_lines(sibs, o, pq, play)
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False

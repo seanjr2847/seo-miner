@@ -1249,10 +1249,11 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     assert brief.PAGE_SIBLINGS_HEAD in body, body
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
     # 누른 검색어와 같은 검색어의 다른 종류는 '다른 기회'로 세지 않고 한 줄로 따로 말한다
-    # 대괄호만 두면 "[템플릿 패턴]" 이 채우다 만 자리처럼 읽힌다 — 종류 이름이라고 밝힌다
-    assert ("같은 검색어로 선 기회도 이 요청문이 덮습니다 — 기회 종류: "
-            + scoring.kind_label("pseo_pattern")) in sib, sib
-    assert "덮습니다: [" not in sib, "종류 이름이 빈칸처럼 읽히는 대괄호로 남아 있다"
+    # 대괄호만 두면 "[템플릿 패턴]" 이 채우다 만 자리처럼 읽힌다 — 종류 이름이라고 밝힌다.
+    # 다른 종류라 이 요청문이 덮지 않는다(test_page_siblings_cover_only_same_deliverables).
+    assert ("같은 검색어로 선 다른 종류의 기회: "
+            + scoring.kind_label("pseo_pattern") + " — ") in sib, sib
+    assert "기회: [" not in sib, "종류 이름이 빈칸처럼 읽히는 대괄호로 남아 있다"
     assert "다른 검색어의 열린 기회가 7건 있습니다" in sib, sib
     assert f"] milia vs syringoma —" not in sib, "누른 검색어가 다른 기회로 또 세어진다"
     # 검색어 하나에 종류가 여럿이면 **한 줄**이다 — 종류마다 줄을 세우면 같은 검색어·같은
@@ -1263,9 +1264,8 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     for k in ("striking_distance", "aio_exposure"):
         assert f"[{scoring.kind_label(k)}]" in sv[0], sv
     # 최신 값이 판정 근거를 **덮지 않는다** — 덮으면 '순위 하락'의 이전 값이 사라진다
-    assert "[순위 하락] milia vs syringomas" in sib and "판정 근거: 근거 문장" in sib, sib
+    assert "[순위 하락](따로) milia vs syringomas" in sib and "판정 근거: 근거 문장" in sib, sib
     assert "기회가 선 시점의 값입니다" in sib, sib
-    assert f"[{scoring.kind_label('rank_decay')}] milia vs syringomas" in sib, sib
     assert f"[{scoring.kind_label('aio_exposure')}] milia vs syringoma\n" not in sib + "\n", \
         "누른 기회가 자기 목록에 있다"
     assert f"[{scoring.kind_label('ctr_gap')}] syringoma —" not in sib, "닫힌(done) 기회가 실렸다"
@@ -1541,7 +1541,7 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "이 페이지 합계: 검색어 2개 · 노출 44 · 클릭 0" in body, body
     # '다른 기회'에 자기 검색어가 또 세어지지 않고, 옛 근거 문장(08-25·0.0칸) 대신 최신 값
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
-    assert "같은 검색어로 선 기회도" in sib and "다른 검색어의 열린 기회가 1건" in sib, sib
+    assert "같은 검색어로 선 다른 종류의 기회" in sib and "다른 검색어의 열린 기회가 1건" in sib, sib
     assert "ptt korea — 이 페이지 3.6위 · 노출 12 · 클릭 0" in sib and "0.0칸" not in sib, sib
     # 3. 1페이지 안 클릭 0 — 순위가 아니라 스니펫·의도라고 먼저 말한다
     assert "1페이지 안(5.8위)인데 노출 39에 클릭 0입니다" in ev, ev
@@ -2616,6 +2616,77 @@ def test_language_line_has_length_rule_only_for_shapes_with_titles():
     assert pres and "일본어" in pres[0] and "title" not in pres[0], pres
     new = brief._target_lang_lines(jp, {}, "ko-KR", "new_content")
     assert new and "title" in new[0], new
+
+
+def _sib_ctx(page, rows):
+    """한 페이지에 여러 종류의 기회 — rows 는 (id, kind, 검색어, band)."""
+    opps = []
+    for i, k, q, band in rows:
+        o = {**_opp(k, q, band=band), "id": i, "status": "new", "band": band,
+             "label": scoring.kind_label(k, band=band)}
+        opps.append(o)
+    qp = {q: [{"page": page, "impressions": 100, "clicks": 0, "ctr": 0.0, "position": 8.0}]
+          for _, _, q, _ in rows}
+    return {"query_pages": qp, "opps": opps, "page_audits": {page: _audit(url=page)}}
+
+
+def _sib_line(sib, q):
+    return next(ln for ln in sib.splitlines() if ln.startswith("- ") and f" {q} —" in ln)
+
+
+def test_page_siblings_cover_only_same_deliverables():
+    """'이 요청문 하나가 그 전부를 덮습니다 — 같이 닫힙니다'가 종류를 안 가렸다(theotherskin).
+    #609([클릭률 미달] milia vs syringoma — 산출물: 검색결과 점검)가 [1페이지 상단 가능]까지
+    덮는다 했고, #61([1페이지 상단 가능] syringoma vs milia — 산출물: 가설 표·질문 꼴 H2 직답)
+    은 #609 의 기회를 덮는다 했다. 서로를 덮는다니 하나만 받으면 다른 쪽 산출물이 빠진다.
+    #153([구글 AI 요약 빠짐])도 [1페이지 상단 가능]·[클릭률 미달]까지 '같이 닫힌다'고 했다.
+    산출물은 누른 기회의 처방 한 벌이다 — 만들 것이 같은 기회만 덮고, 나머지는 따로라고 한다."""
+    ctx = _sib_ctx(_SM, [(61, "striking_distance", "syringoma vs milia", "page1"),
+                         (62, "ctr_gap", "syringoma vs milia", None),
+                         (63, "pseo_pattern", "syringoma vs milia", None),
+                         (609, "ctr_gap", "milia vs syringoma", None),
+                         (610, "striking_distance", "milia vs syringoma", "page1"),
+                         (611, "pseo_pattern", "milia vs syringoma", None),
+                         (612, "striking_distance", "syringomas vs milia", "page2")])
+    by = {o["id"]: o for o in ctx["opps"]}
+    lab = {k: scoring.kind_label(k, band=b) for k, b in
+           (("ctr_gap", None), ("pseo_pattern", None), ("striking_distance", "page1"))}
+    p2 = scoring.kind_label("striking_distance", band="page2")
+
+    def sib_of(i):
+        body = brief.build(by[i], ctx)["body"]
+        assert brief.PAGE_SIBLINGS_HEAD in body, body
+        return body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
+
+    s609, s61 = sib_of(609), sib_of(61)
+    for sib in (s609, s61):
+        assert "이 요청문이 덮습니다 — 기회 종류" not in sib, sib
+        assert "그 전부를 덮습니다" not in sib, sib
+    # #609 — 같은 검색어의 다른 종류는 덮지 않는다고 말한다
+    assert (f"같은 검색어로 선 다른 종류의 기회: {lab['striking_distance']}, {lab['pseo_pattern']} — "
+            "만들 것과 끝나는 조건이 이 기회와 달라 이 요청문을 끝내도 닫히지 않습니다") in s609, s609
+    # 같은 종류([클릭률 미달] syringoma vs milia)만 덮고, 다른 종류는 '(따로)'
+    ln = _sib_line(s609, "syringoma vs milia")
+    assert ln.startswith(f"- [{lab['ctr_gap']}], ") and f"[{lab['ctr_gap']}](따로)" not in ln, ln
+    assert f"[{lab['striking_distance']}](따로)" in ln and f"[{lab['pseo_pattern']}](따로)" in ln, ln
+    assert "그중 1건은 이 기회와 같은 종류" in s609 and "같이 닫힙니다" in s609, s609
+    assert "'(따로)'가 붙은 3건은" in s609 and "그 기회의 요청문으로 따로 합니다" in s609, s609
+    # 같은 종류라도 처방(밴드)이 다르면 만들 것이 다르다 — page2 는 page1 이 덮지 않는다
+    assert f"[{p2}](따로) syringomas vs milia" in s61, s61
+    # #61 은 #609 의 기회([클릭률 미달] milia vs syringoma)를 덮는다고 하지 않는다 — 서로 덮기 없음
+    ln = _sib_line(s61, "milia vs syringoma")
+    assert f"[{lab['ctr_gap']}](따로)" in ln and ln.startswith(f"- [{lab['striking_distance']}], "), ln
+    assert f"[{lab['striking_distance']}](따로)" in _sib_line(s609, "syringoma vs milia")
+    # #153 꼴 — 같은 종류가 하나도 없으면 덮는다는 말이 아예 없다
+    ctx = _sib_ctx(_SM, [(153, "aio_exposure", "abnom dermatology", "page1"),
+                         (154, "pseo_pattern", "abnom", None),
+                         (155, "striking_distance", "abnom", "page1"),
+                         (156, "ctr_gap", "abnom", None)])
+    body = brief.build(ctx["opps"][0], ctx)["body"]
+    sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
+    assert "덮습니다" not in sib and "같이 닫힙니다" not in sib, sib
+    assert "다른 검색어의 열린 기회가 3건 있습니다" in sib and "'(따로)'가 붙은 3건은" in sib, sib
+    assert "이 요청문을 끝내도 닫히지 않습니다" in sib, sib
 
 
 if __name__ == "__main__":
