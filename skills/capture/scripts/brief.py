@@ -594,12 +594,14 @@ def _page_tag(audit: dict | None, url: str | None) -> tuple[str, str] | None:
     return None
 
 
-def _lang_and_limits(name: str, lang: str, shape: str | None) -> str:
+def _lang_and_limits(name: str, lang: str, shape: str | None, titles: bool = False) -> str:
     """'산출물은 X로 …' — 길이 기준은 title·설명을 만드는 꼴(SHAPES[...]['limits'])에만 붙인다.
     site_lang_line 은 그 갈래를 봤는데 이 줄은 안 봐서, '글의 내용은 손대지 않습니다'라는 모바일
     점검(theotherskin #623)에 'title 60자 이내, meta description 160자 이내'가 실렸다.
     shape 가 None 이면 꼴을 모르는 자리(화면의 폴백 표 page_lang)라 기준을 싣는다."""
-    if shape is None or SHAPES[shape]["limits"]:
+    # titles — 꼴은 title 을 안 만드는데 산출물이 만드는 경우(내부 경쟁의 '의도가 다르면 새
+    # title·H1'). 꼴만 봤더니 theotherskin #698 의 새 title 에 길이 기준이 없었다.
+    if shape is None or SHAPES[shape]["limits"] or titles:
         return f"산출물은 {name}로 쓰고, 길이 기준은 {_limits_line(lang)}."
     return f"산출물은 {name}로 씁니다."
 
@@ -614,7 +616,7 @@ def page_locale(audit: dict | None, url: str | None) -> tuple[str, str] | None:
 
 
 def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None,
-                     shape: str | None = None) -> list[str]:
+                     shape: str | None = None, titles: bool = False) -> list[str]:
     """'대상'의 언어 줄 — 페이지 언어를 알 때만. 꼬리의 언어·길이 줄이 이 줄을 따르라고 한다."""
     pt = _page_tag(audit, url)
     if not pt or locale is None:
@@ -625,10 +627,10 @@ def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None,
         return []                   # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
     name = lang_label(tag)
     return [f"- 페이지 언어: {name} ({src}) — 사이트 기본({lang_label(locale)})과 다릅니다. "
-            + _lang_and_limits(name, lang, shape)]
+            + _lang_and_limits(name, lang, shape, titles)]
 
 
-def site_lang_line(shape: str, locale: str) -> str:
+def site_lang_line(shape: str, locale: str, titles: bool = False) -> str:
     """'대상'의 언어 줄 — 페이지·검색어가 사이트와 같은 언어일 때(또는 모를 때).
 
     예전엔 이 기본값을 꼬리가 말했다("그 줄이 없으면 사이트 언어로 — title 30자"). 그런데
@@ -639,7 +641,8 @@ def site_lang_line(shape: str, locale: str) -> str:
     if shape == "outreach":
         return f"- 산출물 언어: 연락할 사이트의 언어(모르면 사이트 기본 {lang}, {locale})."
     return (f"- 산출물 언어: {lang} ({locale}, 사이트 기본)"
-            + (f". 길이 기준은 {_limits_line(locale)}." if SHAPES[shape]["limits"] else "."))
+            + (f". 길이 기준은 {_limits_line(locale)}." if SHAPES[shape]["limits"] or titles
+               else "."))
 
 
 def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") -> list[str]:
@@ -2737,9 +2740,12 @@ def page_of(o: dict, ctx: dict) -> str | None:
         return t
     pages = (ctx.get("query_pages") or {}).get(t) or []
     if pages:
-        fit = _lang_fit(o, ctx)
-        return next((p.get("page") for p in pages if fit(str(p.get("page") or ""))),
-                    pages[0].get("page"))
+        # 순위에 걸린 페이지는 노출 1위 그대로다 — 언어로 건너뛰었더니(_lang_fit) 대상이 엉뚱한
+        # 지면으로 옮겨 갔다: theotherskin #675 'sofwave' 는 작업 기록·관찰 기간이 걸린 /zh-hans/
+        # 대신 홈으로, #703 '丘疹性瘢痕 鼻'(한자뿐인 일본어)는 노출 35 중 33을 가진 /ja/ 대신 노출
+        # 1 짜리 /zh-hans/ 로. 그 위의 목표·관찰 중·링크 문장이 전부 어긋났다. 언어 거르기는 후보
+        # 목록(_topic_of)에만 쓴다 — 거기는 순위가 아니라 제목으로 찾은 것이라 틀린 언어가 섞인다.
+        return pages[0].get("page")
     # 순위 하락 — 그 검색어가 최신 실적에서 빠지면 query_pages(기준일 한 날)가 빈다. 순위를
     # 잃은 페이지는 떨어지기 전 스냅샷에 있다(dashboard 가 decay_pages 로 싣는다). 이걸 안
     # 읽어 theotherskin #128 이 "페이지: 아직 모릅니다 … site: 로 찾습니다"로 나갔다.
@@ -2843,6 +2849,8 @@ def _lang_fit(o: dict, ctx: dict) -> Callable[[str], bool]:
     kws = _kws(o, ctx)
     ok = ({site} | {serp_adapter.lang_of(str(locs.get(k) or "")) for k in kws}
           | {db._script_lang(k) for k in kws}) - {"", None}
+    if "zh" in ok:                  # 한자뿐인 말은 일본어일 수도 있다(丘疹性瘢痕) — _kw_lang 주석
+        ok.add("ja")
     non_latin = {lg for _, lg in db._SCRIPTS}
 
     def fit(url: str) -> bool:
@@ -2869,7 +2877,10 @@ def _kw_lang(o: dict, ctx: dict, locale: str | None = None) -> str | None:
     for k in kws:
         mk = serp_adapter.lang_of(str(locs.get(k) or ""))
         lang = mk if mk and site and mk != site else db._script_lang(k)
-        if not lang:
+        # 한자뿐인 말은 중국어로 못 박지 않는다 — 가나 없이 한자로만 쓴 일본어 검색어가 있다
+        # (theotherskin '丘疹性瘢痕 鼻' 는 /ja/ 지면이 노출 35 중 33을 갖는다). db._script_lang 은
+        # 가나가 있어야 일본어라고 하므로, 한자만이면 '모름'이다.
+        if not lang or (lang == "zh" and not mk):
             return None
         langs.add(lang)
     return next(iter(langs)) if len(langs) == 1 else None
@@ -3294,7 +3305,9 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
         # 줄이 걸려 "ovid.com(None위)보다 위"가 목표가 됐다.
         r = min((x for x in (ctx.get("kw_gap") or [])
                  if str(x.get("keyword") or "").strip().lower()
-                 == str(o.get("target") or "").strip().lower() and x.get("position") is not None),
+                 == str(o.get("target") or "").strip().lower() and x.get("position") is not None
+                 # 논문 저장소는 경쟁사가 아니다 — #654 목표가 "pmc.ncbi.nlm.nih.gov(1위)보다 위"였다
+                 and not scoring.is_reference(str(x.get("domain") or ""))),
                 key=lambda x: x["position"], default=None)
         if r and r.get("our_position"):
             return (f"이 검색어에서 {r['domain']}({r['position']}위)보다 위 — 지금 우리는 "
@@ -3493,12 +3506,13 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     intro = ((INTRO_BY_LEAN.get(str(o.get("gap_kind"))) if shape == "presence" else None)
              or INTRO_BY_KIND.get(kind) or s["intro"])
     L = [intro, ""]
-    lang_line = _page_lang_lines(audit, url, locale, shape) if shape != "outreach" else []
+    titles = any("title" in str(d) for d in play.get("deliver") or [])
+    lang_line = _page_lang_lines(audit, url, locale, shape, titles) if shape != "outreach" else []
     # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
     if not lang_line and not url and shape != "outreach":
         lang_line = _target_lang_lines(o, ctx, locale, shape)
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
-        lang_line = [site_lang_line(shape, locale)]
+        lang_line = [site_lang_line(shape, locale, titles)]
     # '근거'가 서도 그 안에 최신 값이 없을 수 있다 — 순위 하락의 떨어지기 전·후 표는 '왜
     # 걸렸나'와 같은 그때의 짝이다. 그것만 서는데 "근거 쪽이 새것"이라고 하면 거짓이다(#128).
     fresh = bool(ev) and not (kind == "rank_decay" and not pages

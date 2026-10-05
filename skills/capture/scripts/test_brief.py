@@ -2794,11 +2794,11 @@ def test_simplified_chinese_page_is_not_called_traditional():
     assert brief.page_locale(None, "https://me.example/zh-hans/a/") == ("zh", "주소의 /zh-hans/")
 
 
-def test_page_of_prefers_a_page_in_the_search_language():
-    """theotherskin #675 — ko-KR 시장의 'sofwave' 에 노출 1 인 지면이 둘(/zh-hans/ 43위·홈 11위)
-    이었고, 순서로 /zh-hans/ 가 뽑혀 "한국 검색결과에 중국어 지면을 맞추라"가 나갔다. 라틴
-    검색어는 언어를 말하지 않지만, 시장의 언어도 검색어의 글자도 아닌 문자권(중국어·일본어)의
-    지면은 그 검색을 맡을 지면이 아니다."""
+def test_page_of_keeps_the_ranked_page_and_reads_kanji_as_unknown():
+    """순위에 걸린 페이지는 노출 1위 그대로다. 한때(g4) 언어로 건너뛰게 했더니 대상이 엉뚱한
+    지면으로 옮겨 갔다 — theotherskin #675 'sofwave' 는 작업 기록·관찰 기간이 걸린 /zh-hans/
+    대신 홈으로, #703 '丘疹性瘢痕 鼻'(한자뿐인 일본어)는 노출 35 중 33을 가진 /ja/ 대신 노출
+    1 짜리 /zh-hans/ 로. 언어 거르기는 제목으로 찾은 후보(_topic_of)에만 쓴다."""
     zh = "https://me.example/zh-hans/lifting/sofwave/"
     home = "https://www.me.example/"
     o = _opp("aio_exposure", "sofwave")
@@ -2806,27 +2806,22 @@ def test_page_of_prefers_a_page_in_the_search_language():
            "query_pages": {"sofwave": [
                {"page": zh, "impressions": 1, "clicks": 0, "position": 43.0, "ctr": 0.0},
                {"page": home, "impressions": 1, "clicks": 0, "position": 11.0, "ctr": 0.0}]}}
-    assert brief.page_of(o, ctx) == home, brief.page_of(o, ctx)
-    b = brief.build(o, ctx, "ko-KR")
-    assert f"- 페이지: {home}" in b["body"] and "중국어" not in b["body"].split("## 근거")[0], b["body"]
-    assert "- 산출물 언어: 한국어 (ko-KR, 사이트 기본)" in b["body"], b["body"]
-    # 노출이 더 커도 다른 문자권 지면은 뒤로 — 서치콘솔은 모든 나라의 노출을 합친다
+    assert brief.page_of(o, ctx) == zh, brief.page_of(o, ctx)
+    # 한자뿐인 검색어는 중국어로 못 박지 않는다 — /ja/ 지면이 노출 1위면 그 지면이다
+    ja = "https://me.example/ja/acne-scars/papular_scar/"
+    zh2 = "https://me.example/zh-hans/acne-scar/papular-scar/"
+    jo = _opp("rank_decay", "丘疹性瘢痕 鼻")
+    jctx = {"project": {"locale": "ko-KR"},
+            "query_pages": {"丘疹性瘢痕 鼻": [{"page": ja, "impressions": 33, "position": 2.1},
+                                         {"page": zh2, "impressions": 1, "position": 5.0}]}}
+    assert brief.page_of(jo, jctx) == ja
+    assert brief._kw_lang(jo, jctx) is None, "한자뿐인 말을 중국어로 못 박았다"
+    assert brief._lang_fit(jo, jctx)(ja), "한자뿐인 말의 후보에서 /ja/ 를 걸렀다"
+    # 정리 꼴이 '노출이 가장 큰 페이지'라고 부르는 것은 정말 그 페이지다
     big = {**ctx, "query_pages": {"sofwave": [{**ctx["query_pages"]["sofwave"][0], "impressions": 50},
                                               ctx["query_pages"]["sofwave"][1]]}}
-    assert brief.page_of(o, big) == home
-    # 검색어의 글자가 언어를 말하면 그 언어의 지면이다
-    ja = "https://me.example/ja/lifting/sofwave/"
-    jo = _opp("aio_exposure", "ソフウェーブ")
-    jctx = {"project": {"locale": "ko-KR"},
-            "query_pages": {"ソフウェーブ": [{"page": home, "impressions": 9, "position": 5.0},
-                                         {"page": ja, "impressions": 2, "position": 30.0}]}}
-    assert brief.page_of(jo, jctx) == ja
-    # 맞는 언어의 지면이 하나도 없으면 예전대로 노출이 가장 큰 지면 — 비우지 않는다
-    only = {**ctx, "query_pages": {"sofwave": ctx["query_pages"]["sofwave"][:1]}}
-    assert brief.page_of(o, only) == zh
-    # 정리 꼴이 '노출이 가장 큰 페이지'라고 부르는 것은 정말 그 페이지일 때만
     c = brief.build(_opp("cannibalization", "sofwave"), big, "ko-KR")
-    assert f"노출이 가장 큰 페이지: {home}" not in c["body"], c["body"]
+    assert f"노출이 가장 큰 페이지: {zh}" in c["body"], c["body"]
 
 
 def test_latin_cluster_candidates_drop_pages_in_other_scripts():
@@ -3417,6 +3412,36 @@ def test_fix_page_settles_canonical_target_before_fixing():
     same = brief.build(o, {**ctx, "page_audits": {URL: _audit(canonical=URL)}}, "ko-KR")["body"]
     assert "고칠 주소 정하기" not in same and canon not in same, same
 
+
+
+def test_title_deliverable_carries_a_length_rule_in_any_shape():
+    """내부 경쟁(정리 꼴)에 '의도가 다르면 새 title·H1' 산출물이 생겼는데, 정리 꼴은 길이 기준을
+    안 싣는 꼴이라(SHAPES limits) 새 title 에 기준이 없었다(theotherskin #698). 꼴이 아니라
+    산출물이 title 을 말하면 기준을 싣는다."""
+    pages = [{"page": "https://me.example/en/a/", "impressions": 9, "clicks": 1, "position": 5.0},
+             {"page": "https://me.example/en/b/", "impressions": 7, "clicks": 1, "position": 6.0}]
+    o = _opp("cannibalization", "papular scar")
+    assert any("title" in d for d in o["play"]["deliver"]), o["play"]["deliver"]
+    body = brief.build(o, {"query_pages": {"papular scar": pages}}, "ko-KR")["body"]
+    line = next(x for x in body.splitlines() if x.startswith(("- 페이지 언어:", "- 산출물 언어:")))
+    assert "길이 기준" in line, line
+    # title 을 안 만드는 정리(깨진 백링크)는 그대로 길이 기준이 없다
+    nb = brief.build(_opp("backlink_broken", "https://me.example/en/old/"), {}, "ko-KR")["body"]
+    line = next(x for x in nb.splitlines() if x.startswith(("- 페이지 언어:", "- 산출물 언어:")))
+    assert "길이 기준" not in line, line
+
+
+def test_content_gap_goal_skips_reference_sites():
+    """#654 'melasma treatment' 의 목표가 "pmc.ncbi.nlm.nih.gov(1위)보다 위"였다 — 논문 저장소는
+    경쟁사가 아니다(scoring.is_reference). 목표는 남은 경쟁 도메인 가운데서 고른다."""
+    o = _opp("content_gap", "melasma treatment")
+    ctx = {"query_pages": {"melasma treatment": _pages(URL)},
+           "kw_gap": [{"keyword": "melasma treatment", "domain": "pmc.ncbi.nlm.nih.gov", "position": 1,
+                       "our_position": 61, "volume": 140, "kind": "weak"},
+                      {"keyword": "melasma treatment", "domain": "rival.example", "position": 7,
+                       "our_position": 61, "volume": 140, "kind": "weak"}]}
+    g = _goal(brief.build(o, ctx, "ko-KR")["body"])
+    assert "pmc.ncbi" not in g and "rival.example(7위)보다 위" in g, g
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
