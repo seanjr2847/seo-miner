@@ -3788,6 +3788,22 @@ def crawl_gaps(conn: sqlite3.Connection, project_id: int, *,
          ORDER BY kind, url LIMIT ?""", (cr["id"], limit))]
 
 
+def _is_home(url: str | None) -> bool:
+    """사이트 홈(경로 없음·'/', 쿼리 없음) — http·www 판 포함.
+
+    깨진 백링크의 처방은 '가장 가까운 페이지로 301, 홈으로 몰지 않는다'인데 홈의 가장 가까운
+    페이지는 홈 자신이다. theotherskin #655 가 'http://theotherskin.com/'(링크 5개)을 깨진 주소로
+    세워 '301 대상 주소'를 규칙대로 낼 수 없었고, 그 홈은 우리 점검에서 200 이었다(gucci 의 홈도
+    403 을 깨짐으로 적었다). 홈이 정말 안 열리면 백링크가 아니라 사이트(또는 http→https
+    리다이렉트)의 문제라 301 로 되찾을 일이 아니다."""
+    from urllib.parse import urlsplit
+    try:
+        p = urlsplit(str(url or "").strip())
+    except ValueError:
+        return False
+    return bool(p.netloc) and p.path in ("", "/") and not p.query
+
+
 def backlink_gaps(conn: sqlite3.Connection, project_id: int, *,
                   limit: int = 15) -> tuple[list[dict], list[dict]]:
     """되찾을 링크(깨진 것)와 새로 받을 곳(경쟁사만 받는 도메인).
@@ -3797,10 +3813,12 @@ def backlink_gaps(conn: sqlite3.Connection, project_id: int, *,
     broken, prospects = [], []
     d = _latest(conn, _LATEST_BL, (project_id,))
     if d:
+        # 홈은 되찾을 주소가 아니다 — 거른 뒤에 자른다(LIMIT 을 SQL 에 걸면 홈이 자리를 먹는다)
         broken = [dict(r) for r in conn.execute(
             """SELECT url_from, url_to, domain_from, anchor, rank FROM backlinks
                 WHERE project_id=? AND checked_date=? AND is_broken=1
-             ORDER BY rank IS NULL, rank DESC LIMIT ?""", (project_id, d, limit))]
+             ORDER BY rank IS NULL, rank DESC""", (project_id, d))
+                  if not _is_home(r["url_to"])][:limit]
     di = _latest(conn, _LATEST_LI, (project_id,))
     if di:
         prospects = [dict(r) for r in conn.execute(
@@ -4183,9 +4201,13 @@ _KIND_SPECS = {
                   "나머지는 정본으로 301 리다이렉트하거나 canonical 을 정본으로 겁니다.",
                   "합칠 수 없으면 검색 의도를 갈라 제목·H1 을 서로 다르게 씁니다.",
                   "나머지 페이지에서 정본으로 내부 링크를 겁니다."],
+            # 3번 갈래(의도가 다름)의 산출물이 없어 theotherskin #698(블로그 글 vs 진료 페이지)이
+            # 그 갈래를 탈 때 낼 것이 없었다 — 4번째가 그 갈래 몫이다. 머리말은 brief.INTRO_BY_KIND.
             deliver=["어느 페이지를 정본으로 할지와 그 근거(노출·클릭·의도 기준)",
                      "나머지 페이지 처리 계획: 301 리다이렉트 대상과 canonical 지정",
-                     "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다"])),
+                     "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다",
+                     "의도가 달라 합치지 않을 때의 title·H1: 두 페이지 각각 지금 값 | 바꿀 값과 "
+                     "그 페이지가 맡을 의도 한 줄 — 이때 1~3번은 '합치지 않음'과 이유 한 줄"])),
     # 내부 경쟁의 거울이다: 저쪽은 "한 검색어를 여러 페이지가 나눠 갖는다"고
     # 이쪽은 "한 페이지가 여러 의도를 떠안는다"다. 만드는 쪽이 저쪽만 있어서 이 리포는
     # "합쳐라"는 말할 수 있고 "갈라라"는 못 했다 — 요청문의 fix_page 는 검색어가 몇
@@ -4832,7 +4854,17 @@ def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict)
     """깨진 백링크 → 그 뒤 수집이 이 주소의 **응답 코드**를 적었고, 그게 깨짐이 아니다.
     is_broken=0 만으로는 닫지 않는다(_NO_RESOLVE 에 있던 이유 — 필드가 안 온 것과 살아 있는
     것을 못 가른다). 코드(to_status)가 적혀 있을 때만 말한다: 403·429 는 크롤러 차단이라
-    처음부터 깨진 링크가 아니었고(gucci 의 홈·/us/en/ 이 그랬다), 2xx·3xx 는 살아 있다."""
+    처음부터 깨진 링크가 아니었고(gucci 의 홈·/us/en/ 이 그랬다), 2xx·3xx 는 살아 있다.
+    코드가 아무 말도 안 하는데 대상이 사이트 홈이면 닫는다 — 홈은 이제 세우지 않는다(_is_home).
+    학습 전용 봇(_resolve_ai_bot)처럼 '애초에 이 종류가 아니었다'는 판정이라 새 데이터를 안 기다린다."""
+    why = _backlink_codes_say(conn, pid, target, since)
+    if why is None and _is_home(target):
+        return ("사이트 홈은 깨진 백링크로 되찾을 주소가 아닙니다 — 홈의 가장 가까운 페이지는 홈 "
+                "자신이라 301 할 곳이 없고, 홈이 정말 안 열리면 사이트의 문제입니다")
+    return why
+
+
+def _backlink_codes_say(conn, pid: int, target: str, since: str) -> str | None:
     import collect_page
     d = conn.execute("SELECT MAX(checked_date) FROM backlinks WHERE project_id=?", (pid,)).fetchone()[0]
     if not d or not _after_day(d, since):

@@ -86,7 +86,7 @@ def test_consolidate_lists_every_page_and_skips_advice():
     audits = {URL: _audit(), URL2: _audit(url=URL2, title="다른 제목", h1_json='["다른"]')}
     ctx = {"query_pages": {"검색어": _pages(URL, URL2)}, "page_audits": audits}
     t = brief.text(_opp("cannibalization", "검색어"), ctx, "ko-KR")
-    assert t.startswith(brief.SHAPES["consolidate"]["intro"])
+    assert t.startswith(brief.INTRO_BY_KIND["cannibalization"])
     assert "노출이 가장 큰 페이지: " + URL in t
     assert f"| {URL} | 100 | 5 |" in t and f"| {URL2} | 70 | 4 |" in t
     assert "노출·클릭 모두 " + URL + " 가 앞섭니다" in t
@@ -2988,6 +2988,120 @@ def test_cannibal_lead_line_says_clicks_tie():
     ev3 = brief.build(_opp("cannibalization", "papular scar"),
                       {"query_pages": {"papular scar": one}}, "ko-KR")["body"]
     assert f"- 노출은 같습니다(2곳 모두 30). 클릭으로는 {b} 가 앞섭니다" in ev3, ev3
+
+
+def test_gone_page_state_is_the_verdict_not_an_open_ladder():
+    """404·410 은 봇 차단이 아니라 그 자체가 판정이다. theotherskin #308(크롤 404) 이
+    '열 수 없으면' 사다리를 그대로 달고 나갔다 — 사용자에게 붙여 넣기를 청하고 멈추라 하고,
+    이 요청문에 없는 '검색결과 제목·설명·순위'와 '제목·설명 안'을 가리켰다. 막힘(403)은
+    여전히 사다리를 단다."""
+    gone = _audit(error="HTTP 404 · text/html; charset=utf-8", status=404, checked_date="2026-10-02")
+    text = "\n".join(brief._page_state(gone, URL))
+    assert brief.OPEN_LADDER[0] not in text and "붙여 넣기" not in text, text
+    assert "HTTP 상태: 404" in text and "판정" in text and "301" in text, text
+    assert "2026-10-02" in text, text
+    t = brief.text(_opp("crawl_issue", URL), {"page_audits": {URL: gone}}, "ko-KR")
+    assert "열 수 없으면" not in t and "검색결과 제목·설명·순위" not in t, t
+    blocked = _audit(error="HTTP 403 · text/html", status=403)
+    assert brief.OPEN_LADDER[0] in "\n".join(brief._page_state(blocked, URL))
+
+
+def test_broken_backlink_evidence_matches_our_own_audit():
+    """theotherskin #655: 근거 절이 '이 주소는 지금 열리지 않습니다(4xx/5xx)'라고 단정했는데
+    같은 요청문의 '지금 이 페이지 상태'는 HTTP 200 이었다(백링크 수집 9/24 는 응답 코드 없이
+    깨짐만 적었고, 우리 점검 10/4 가 열었다). 301 을 걸지 오탐이라 닫을지가 갈렸다. 더 새
+    점검이 열리면 오탐이라고 말하고 목표도 그 갈래부터 세운다."""
+    gone = "https://me.example/old"
+    rows = [{"url_from": "https://ref.example/p", "url_to": gone, "anchor": "앵커", "rank": 40,
+             "dofollow": 1, "is_broken": 1, "to_status": None, "checked_date": "2026-09-24"}]
+    alive = _audit(url=gone, status=200, checked_date="2026-10-04")
+    t = brief.text(_opp("backlink_broken", gone),
+                   {"bl_links": rows, "page_audits": {gone: alive}}, "ko-KR")
+    assert "지금 열리지 않습니다" not in t, t
+    ev = t.split("## 근거", 1)[1].split("\n## ", 1)[0]
+    assert "2026-10-04" in ev and "HTTP 200" in ev and "오탐" in ev and "2026-09-24" in ev, ev
+    summary = t.split("## 한눈에", 1)[1].split("\n## ", 1)[0]
+    assert "오탐" in summary and "HTTP 200" in summary, summary
+    # 점검도 404 면 두 출처가 같은 말을 한다 — 301 을 정하는 일 그대로
+    dead = _audit(url=gone, error="HTTP 404 · text/html", status=404, checked_date="2026-10-04")
+    t2 = brief.text(_opp("backlink_broken", gone),
+                    {"bl_links": rows, "page_audits": {gone: dead}}, "ko-KR")
+    assert "오탐" not in t2 and "HTTP 404" in t2.split("## 근거", 1)[1].split("\n## ", 1)[0], t2
+    # 점검이 없으면 수집이 적은 것으로만 말한다 — '지금'이라고 단정하지 않는다
+    t3 = brief.text(_opp("backlink_broken", gone), {"bl_links": rows}, "ko-KR")
+    ev3 = t3.split("## 근거", 1)[1].split("\n## ", 1)[0]
+    assert "지금 열리지 않습니다" not in ev3 and "백링크 수집(2026-09-24)" in ev3, ev3
+    # 점검이 수집보다 옛것이면 그 200 은 깨지기 전 값일 수 있다 — 오탐이라 하지 않는다
+    old = _audit(url=gone, status=200, checked_date="2026-09-01")
+    t4 = brief.text(_opp("backlink_broken", gone),
+                    {"bl_links": rows, "page_audits": {gone: old}}, "ko-KR")
+    assert "오탐" not in t4, t4
+
+
+def test_broken_backlink_to_home_is_not_an_opportunity():
+    """theotherskin #655: 깨졌다는 주소가 사이트 홈의 http 판(http://theotherskin.com/)이었다.
+    처방은 '가장 가까운 페이지로 301, 홈으로 몰면 값이 사라진다'인데 홈의 가장 가까운 페이지는
+    홈 자신이라 '301 대상 주소'를 규칙대로 낼 수 없었다. 홈은 깨진 백링크로 세우지 않고, 이미
+    선 것은 닫는다(응답 코드가 말하는 것이 있으면 그 말이 먼저다)."""
+    import db
+    conn = db.connect()
+    conn.execute("INSERT INTO projects(name, domain) VALUES('bl-home', 'me.kr')")
+    pid = conn.execute("SELECT id FROM projects WHERE name='bl-home'").fetchone()[0]
+    conn.executemany(
+        "INSERT INTO backlinks(project_id, checked_date, url_from, url_to, is_broken, to_status, rank)"
+        " VALUES(?, '2026-09-24', ?, ?, 1, NULL, ?)",
+        [(pid, "https://a.kr/1", "http://me.kr/", 113), (pid, "https://a.kr/2", "https://me.kr", 40),
+         (pid, "https://a.kr/3", "https://www.me.kr/?lang=en", 30),
+         (pid, "https://a.kr/4", "https://me.kr/old-post/", 20)])
+    conn.commit()
+    try:
+        got = [r["url_to"] for r in scoring.backlink_gaps(conn, pid)[0]]
+        assert got == ["https://www.me.kr/?lang=en", "https://me.kr/old-post/"], got
+        why = scoring._resolve_backlink_broken(conn, pid, "http://me.kr/", "2026-09-26 00:00:00", {})
+        assert why and "홈" in why, why
+        assert scoring._resolve_backlink_broken(conn, pid, "https://me.kr/old-post/",
+                                                "2026-09-26 00:00:00", {}) is None
+    finally:
+        conn.close()
+
+
+def test_rank_decay_goal_without_prev_does_not_order_a_recovery():
+    """theotherskin #703: 떨어지기 전 2.5위, 지금 2.1위 — 이미 그보다 위인데 한눈에·목표가
+    '평균 2.1위에서 떨어지기 전 자리로 되찾는 것(이전 순위는 위 '왜 걸렸나')'이라 했다.
+    이전 순위를 모르는 폴백(하락 목록에서 빠짐)이 견주지 않고 되찾으라 했고, 한눈에로 복사되면
+    '위'가 실제로는 아래였다. 견주는 기준(끝나는 조건과 같은 칸 수)과 이미 돌아왔을 때의 답을
+    같이 준다."""
+    q = "丘疹性瘢痕 鼻"
+    o = dict(_opp("rank_decay", q),
+             reasoning="2.5위에서 4.5위로 -2.0칸 밀렸습니다 (구글 실적 2026-09-25과 2026-09-26 비교)")
+    pages = [{"page": URL, "impressions": 18, "clicks": 2, "ctr": 11.1, "position": 2.1}]
+    t = brief.text(o, {"query_pages": {q: pages}}, "ko-KR")
+    goal = next(x for x in t.splitlines() if x.startswith("- 목표: "))
+    assert "위 '왜 걸렸나'" not in t, goal
+    assert "'대상'의 '왜 걸렸나'" in goal and "2.1위" in goal, goal
+    assert f"{abs(scoring.DECAY_POS):g}칸" in goal and "되찾을 것이 없" in goal, goal
+    # 이전 순위를 알면(하락 목록에 있으면) 그 수로 말한다 — 그대로
+    downs = [{"query": q, "pos": 4.5, "prev_pos": 2.5, "dpos": -2.0, "clk": 0, "dclk": 0, "imp": 40}]
+    t2 = brief.text(o, {"query_pages": {q: pages}, "downs": downs}, "ko-KR")
+    assert "떨어지기 전 자리(2.5위)로 되찾는 것" in t2, t2
+
+
+def test_cannibalization_split_branch_has_its_own_deliverable():
+    """theotherskin #698: 할 일 1이 '의도가 다르면 합치지 않고 3번(제목·H1 을 서로 다르게)'을
+    정식 갈래로 여는데, 머리말은 '글을 새로 쓰거나 고치는 일이 아니라'였고 '만들어 줄 것'
+    세 개 중 어느 것도 그 갈래의 산출물(새 title·H1)이 아니었다. 블로그 글과 진료 페이지처럼
+    실제로 그 갈래를 탈 때 낼 것이 없었다."""
+    play = scoring.kind_play("cannibalization")
+    assert any("title·H1" in d and "지금 값" in d for d in play["deliver"]), play["deliver"]
+    audits = {URL: _audit(), URL2: _audit(url=URL2, title="다른 제목", h1_json='["다른"]')}
+    t = brief.text(_opp("cannibalization", "검색어"),
+                   {"query_pages": {"검색어": _pages(URL, URL2)}, "page_audits": audits}, "ko-KR")
+    head = t.split("\n## ", 1)[0]
+    assert "고치는 일이 아니라" not in head and "title·H1" in head, head
+    want = t.split("## 만들어 줄 것", 1)[1]
+    assert "title·H1" in want, want
+    summary = t.split("## 한눈에", 1)[1].split("\n## ", 1)[0]
+    assert f"만들 것 {len(play['deliver'])}개" in summary, summary
 
 
 if __name__ == "__main__":

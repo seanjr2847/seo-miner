@@ -457,6 +457,12 @@ INTRO_BY_KIND = {
     "backlink_broken": "아래 주소로 들어오던 링크를 되살려 주세요. 이미 번 링크라 새로 얻는 "
                        "것보다 늘 쌉니다 — 어디로 301 할지 정하고, 링크를 건 쪽에 보낼 짧은 "
                        "안내문까지입니다.",
+    # 정리 꼴의 머리말("글을 새로 쓰거나 고치는 일이 아니라")은 처방의 3번 갈래(의도가 다르면
+    # title·H1 을 가른다)와 부딪쳤다 — theotherskin #698.
+    "cannibalization": "아래 검색어에 걸린 내 페이지들을 정리해 주세요. 새 글을 쓰는 일이 아니라, "
+                       "어느 페이지를 정본으로 남기고 나머지를 어디로 보낼지 정하는 일입니다 — 두 "
+                       "페이지의 검색 의도가 달라 합치지 않는다면 서로 겹치지 않게 title·H1 을 "
+                       "가르는 것까지입니다.",
 }
 
 # 등장하기 꼴의 머리말은 "제3자 플랫폼"을 말한다 — 대신 인용된 곳이 언론이면 그 말이 틀린다.
@@ -896,6 +902,16 @@ def _page_state(a: dict | None, url: str, *, author_work: bool = True) -> list[s
                 *OPEN_LADDER,
                 ""]
     if a.get("error"):
+        import collect_page
+        if a.get("status") in collect_page.GONE_STATUS:
+            # 404·410 은 못 연 게 아니라 '없다'는 답이다. theotherskin #308(크롤 404)이 사다리를
+            # 그대로 달고 나가 붙여 넣기를 청하고 멈추라 했고, 이 요청문에 없는 검색결과 표와
+            # '제목·설명 안'을 가리켰다. 사다리는 막힘(403·빈 응답)일 때만이다.
+            return [f"## 지금 이 페이지 상태 ({a.get('checked_date') or '점검일 미상'} 직접 확인)",
+                    f"- HTTP 상태: {a['status']} — 페이지가 없다는 응답입니다. 봇 차단이 아니라 그 "
+                    "자체가 판정이라 다른 길로 열어 볼 것이 없습니다. 주소를 직접 열어 지금도 "
+                    f"{a['status']} 인지만 확인하고, 그렇다면 살릴지 301 할지부터 정합니다. 지금 "
+                    "열리면 그 사이 되살아난 것이니 그렇게 답합니다.", ""]
         return ["## 지금 이 페이지 상태", f"- 점검 실패: {a['error']}", *OPEN_LADDER, ""]
     h1, h2 = scoring._as_list(a.get("h1_json")), scoring._as_list(a.get("h2_json"))
     sc = scoring._as_list(a.get("schema_json"))
@@ -2219,9 +2235,46 @@ def _ev_bl_broken(o, ctx, pages):
     L = _table(["링크를 건 곳", "앵커", "도메인 지수", "dofollow"],
                [[r["url_from"], r.get("anchor"), _n(r.get("rank")),
                  "예" if r.get("dofollow") else "아니오"] for r in rows[:8]])
-    if L:
-        L.append("- 이 주소는 지금 열리지 않습니다(4xx/5xx). 링크는 살아 있고 페이지만 없습니다.")
+    if not L:
+        return L
+    # '깨짐'은 백링크 수집이 적은 판정이다 — 우리가 연 것이 아니다. 예전엔 "이 주소는 지금 열리지
+    # 않습니다"로 단정했는데, theotherskin #655 는 같은 요청문의 페이지 상태가 HTTP 200 이었다
+    # (수집 9/24 는 응답 코드 없이 깨짐만, 점검 10/4 는 열렸다). 더 새 점검이 있으면 그 말이 먼저다.
+    a, day = _bl_recheck(o, ctx)
+    codes = sorted({int(r["to_status"]) for r in rows if r.get("to_status")})
+    if a and _bl_alive(a):
+        L.append(f"- 우리 점검({a['checked_date']})에서는 이 주소가 열립니다(HTTP {a['status']}) — "
+                 f"백링크 수집({day})이 깨졌다고 적은 것"
+                 + (f"(응답 {', '.join(map(str, codes))})" if codes else "(응답 코드는 안 적힘)")
+                 + "과 다르고, 점검이 더 새것입니다. 오탐일 가능성이 큽니다: 직접 열어 살아 있으면 "
+                 "301·안내문을 만들지 않고 그렇게 답한 뒤 이 기회를 [제외]로 닫습니다.")
+    elif a and a.get("status") is not None:
+        L.append(f"- 우리 점검({a['checked_date']})에서도 HTTP {a['status']} 입니다. 링크는 살아 있고 "
+                 "페이지만 없습니다.")
+    else:
+        L.append(f"- 백링크 수집({day or '날짜 미상'})이 이 주소를 깨졌다고(4xx/5xx"
+                 + (f", 응답 {', '.join(map(str, codes))}" if codes else "")
+                 + ") 적었습니다. 링크는 살아 있고 페이지만 없다는 판정입니다 — 직접 열어 확인합니다.")
     return L
+
+
+def _bl_recheck(o: dict, ctx: dict) -> tuple[dict | None, str | None]:
+    """깨진 백링크 대상의 우리 페이지 점검 — 백링크 수집일 이후(같은 날 포함)의 것만 쓴다.
+    그보다 옛 점검의 200 은 깨지기 전 값일 수 있다. 반환: (점검 행 또는 None, 수집일)."""
+    rows = [r for r in (ctx.get("bl_links") or [])
+            if r.get("url_to") == o["target"] and r.get("is_broken")]
+    day = max((str(r.get("checked_date") or "")[:10] for r in rows), default="") or None
+    a = (ctx.get("page_audits") or {}).get(o["target"])
+    if not a or not day or str(a.get("checked_date") or "")[:10] < day:
+        return None, day
+    return a, day
+
+
+def _bl_alive(a: dict) -> bool:
+    """점검이 이 주소를 열었다 — 리다이렉트를 따라간 끝의 응답(collect_page.fetch)이 2xx·3xx.
+    HTML 이 아니어서 error 가 붙은 200 도 열린 것이다."""
+    s = a.get("status")
+    return isinstance(s, int) and 200 <= s < 400
 
 
 def _ev_bl_prospect(o, ctx, pages):
@@ -2987,9 +3040,15 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
         if kind == "rank_decay":
             r = _find(ctx.get("downs"), "query", o.get("target")) or {}
             prev = r.get("prev_pos")
+            # 이전 순위를 모르면(하락 목록에서 빠졌다) 견줄 기준과 이미 돌아왔을 때의 답을 같이 준다.
+            # 견주지 않고 "되찾는 것"만 말했더니 theotherskin #703 이 떨어지기 전 2.5위보다 이미 위인
+            # 2.1위에서 되찾을 구간을 만들라고 했다. 이 줄은 한눈에로도 복사돼 '왜 걸렸나'보다 위에
+            # 서므로 '위'가 아니라 '대상'의 줄이라고 가리킨다. 칸 수는 끝나는 조건과 같은 DECAY_POS.
+            gap = f"{abs(scoring.DECAY_POS):g}칸"
             return (f"평균 {pos:g}위 → 떨어지기 전 자리({prev}위)로 되찾는 것." if prev is not None
-                    else f"평균 {pos:g}위에서 떨어지기 전 자리로 되찾는 것(이전 순위는 위 '왜 "
-                         "걸렸나'에 있습니다).") + thin
+                    else f"평균 {pos:g}위 — 떨어지기 전 순위('대상'의 '왜 걸렸나')보다 {gap} 이상 "
+                         f"아래면 그 자리로 되찾는 것. {gap} 안이면 이미 돌아온 것이라 되찾을 것이 "
+                         "없습니다 — 고치지 않고 그렇게 답합니다.") + thin
         if kind == "ctr_gap" or pos <= scoring.PAGE1:
             e = _ctr_at(pos)
             floor = round(e * scoring.CTR_GAP_FACTOR, 1)
@@ -3051,6 +3110,12 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
     if kind == "crawl_issue":
         return "다음 크롤에서 이 주소의 문제가 사라지는 것 — 그 전에 직접 열어 확인합니다."
     if kind == "backlink_broken":
+        a, _day = _bl_recheck(o, ctx)
+        if a and _bl_alive(a):
+            # 근거 절만 오탐이라 하고 목표가 301 을 말하면 일이 두 갈래로 읽힌다(theotherskin #655)
+            return (f"먼저 이 주소가 정말 깨졌는지 — 우리 점검({a['checked_date']})에서는 열립니다"
+                    f"(HTTP {a['status']}, 오탐일 가능성). 열리면 할 일 없이 [제외]로 닫고, 정말 "
+                    "깨졌으면 301 을 거쳐 살아 있는 페이지에 닿게.")
         return "이 주소로 들어오던 링크가 301 을 거쳐 살아 있는 페이지에 닿는 것(직접 열어 확인)."
     if kind == "backlink_prospect":
         return "이 도메인에서 우리 페이지로 링크 하나. 연락문을 보내는 것까지가 이번 일입니다."
