@@ -719,16 +719,18 @@ def test_triage_rows_carry_language_and_other_brand_hint():
 def test_competitors_axis_counts_only_confirmed_rivals():
     """경쟁 표에 판정 전 후보만 있으면 확인된 경쟁사는 0곳이다 — theotherskin 은 논문 사이트
     둘·앱 하나가 격차 표의 '경쟁사'였다. 사람이 적은 것·판정이 '경쟁'인 것만 센다.
-    설정 칸(db.profile_read)도 같은 수를 받아 "경쟁사를 적거나 찾으세요"를 말한다."""
+    설정 칸(db.profile_read)도 같은 수를 받아 "경쟁사를 적거나 찾으세요"를 말한다.
+    (논문 사이트는 이제 판정과 무관하게 빠진다 — scoring.is_reference. 판정이 '경쟁'으로 바뀌는
+    후보는 그래서 병원 도메인이다.)"""
     conn, pid = _brain("confrv")
     conn.executemany("INSERT INTO competitors(project_id, domain, source, role) VALUES(?,?,?,?)",
-                     [(pid, "pmc.ncbi.nlm.nih.gov", "auto", None),
+                     [(pid, "clinic.example", "auto", None),
                       (pid, "lfmall.example", "auto_labs", "channel")])
     conn.commit()
     assert dashboard._axis_competitors(conn, pid)["rivals_confirmed"] == 0
     pr = db.profile_read(conn, "confrv")
     assert pr["rivals_confirmed"] == 0 and pr["gsc_connected"] is False, pr
-    conn.execute("UPDATE competitors SET role='rival' WHERE domain='pmc.ncbi.nlm.nih.gov'")
+    conn.execute("UPDATE competitors SET role='rival' WHERE domain='clinic.example'")
     conn.execute("INSERT INTO competitors(project_id, domain, source) VALUES(?, 'me2.example', 'manual')",
                  (pid,))
     conn.execute("UPDATE projects SET gsc_property='sc-domain:confrv.example' WHERE id=?", (pid,))

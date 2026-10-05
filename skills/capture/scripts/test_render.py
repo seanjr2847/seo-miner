@@ -212,6 +212,10 @@ MUSTS = [
     # 경쟁 분석 — 판정이 판매 채널로 가른 곳은 경쟁사 몫 밑에 따로 선다(collect_gap E).
     (r'id="cp-shares"[^>]*>(?:(?!</section>).)*?판매 채널(?:(?!</section>).)*?mall\.example',
      "경쟁사에서 뺀 판매 채널이 경쟁 분석에 안 보인다"),
+    # 갈래 목록은 이름표(scoring.ROLES) 그대로다 — 화면이 사본(channel·media·other)을 들고 있던
+    # 동안 새 갈래 ref(논문·공공 자료)로 판정된 곳은 카드에 안 그려졌다.
+    (r'id="cp-shares"[^>]*>(?:(?!</section>).)*?논문·공공 자료(?:(?!</section>).)*?papers\.example',
+     "경쟁사에서 뺀 논문·공공 자료가 경쟁 분석에 안 보인다"),
     # 구글이 본 SEO(사이트 점검) — 항목 이름표는 d.seo_audits(정본 collect_vitals.SEO_AUDITS)로
     # 스크립트가 그린다. 영어 id(link-text)가 그대로 뜨면 이름표가 안 온 것이다.
     (r'id="gseo"[^>]*>(?:(?!</section>).)*?링크 텍스트', "구글이 본 SEO 표가 안 그려졌거나 항목 이름이 한국어가 아니다"),
@@ -697,6 +701,9 @@ def _axes(conn, pid: int) -> None:
     conn.execute("INSERT INTO competitors(project_id, domain, source, role, role_why)"
                  " VALUES(?, 'mall.example', 'auto_labs', 'channel', ?)",
                  (pid, '["mall 몰", "남의브랜드 가방"]'))
+    conn.execute("INSERT INTO competitors(project_id, domain, source, role, role_why)"
+                 " VALUES(?, 'papers.example', 'auto_rank', 'ref', ?)",
+                 (pid, '["melasma pathogenesis"]'))
     # 속도 — 같은 페이지인데 모바일만 기준을 넘긴다(현장 값 있음). 화면이 그 하나만
     # 세는지, 출처를 밝히는지를 본다.
     import db as _db

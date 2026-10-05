@@ -297,10 +297,44 @@ SERP_RIVAL_MAX = 10             # 한 바퀴에 붙이는 수 — 많이 겹친 
 # 경쟁사 표의 역할 판정(collect_gap._classify) — {id: 화면 이름}. 정본은 여기 한 벌이다
 # (판정 프롬프트·화면·경쟁사로 읽기가 전부 이 표를 본다). 검색결과가 겹친다고 다 경쟁사가
 # 아니다: 브랜드의 검색결과는 그 브랜드를 파는 쇼핑몰·포털로 가득하다.
-ROLES = {"rival": "경쟁", "channel": "판매 채널", "media": "포털·미디어", "other": "기타"}
+# ref(논문·공공 자료): theotherskin 의 콘텐츠 공백 요청문(#654)이 "pmc.ncbi.nlm.nih.gov(1위)보다
+# 위"를 목표로 삼았다 — 논문 저장소는 병원의 경쟁사가 아니다. 판정에 그 갈래가 없어 포털도
+# 판매 채널도 아닌 자료 사이트가 경쟁사로 남았다(판정 전에 아는 곳은 is_reference 가 가른다).
+ROLES = {"rival": "경쟁", "channel": "판매 채널", "media": "포털·미디어", "ref": "논문·공공 자료",
+         "other": "기타"}
 # 경쟁사로 안 읽는 역할 — 역키워드·콘텐츠 갭·트래픽 몫(전부 돈이 드는 축)에서 빠진다.
 # "기타"도 뺀다: 판정이 경쟁이 아니라고 한 것이다(다나와가 기타로 판정돼 경쟁사로 남았다).
-NOT_RIVAL_ROLES = ("channel", "media", "other")
+NOT_RIVAL_ROLES = ("channel", "media", "ref", "other")
+
+# 논문 저장소·학술지·학술 DB — 공공·학술 도메인(.gov·.edu·.ac.kr·.go.kr…)이 아니어서 꼴로는
+# 못 가르는 곳만 적는다. theotherskin 의 경쟁 표에 ovid.com 이 pmc 와 나란히 서 있었다.
+# 정본은 이 상수 한 벌이다(PRESS_OUTLETS 와 같은 까닭). 하위 도메인은 자동으로 포함된다.
+REFERENCE_SITES = (
+    "ovid.com", "sciencedirect.com", "springer.com", "wiley.com", "nature.com", "cell.com",
+    "jamanetwork.com", "nejm.org", "thelancet.com", "bmj.com", "mdpi.com", "frontiersin.org",
+    "plos.org", "biomedcentral.com", "tandfonline.com", "sagepub.com", "karger.com", "oup.com",
+    "europepmc.org", "cochranelibrary.com", "researchgate.net", "semanticscholar.org",
+    "jstor.org", "arxiv.org", "ssrn.com", "cnki.net",
+    "dbpia.co.kr", "riss.kr", "koreascience.kr", "koreascience.or.kr", "kiss.kstudy.com",
+)
+_PUBLIC_TLD = ("gov", "edu", "mil", "int")          # who.int·ncbi.nlm.nih.gov
+_PUBLIC_SLD = ("gov", "go", "ac", "edu", "mil", "re")   # go.kr·ac.kr·re.kr·gov.uk·ac.jp
+
+
+def is_reference(domain: str) -> bool:
+    """논문 저장소·학술지·정부·공공기관·대학 — 검색결과에는 서도 넘을 경쟁사가 아닌 자료 사이트.
+
+    판정(collect_gap._classify 의 ref)을 기다리지 않고 도메인 꼴로 아는 것만 — 판정 전 후보로
+    오래 남은 pmc 가 요청문 목표가 됐다. 꼴: 끝이 .gov·.edu·.mil·.int, 또는 국가 도메인 앞
+    칸이 gov·go·ac·edu·mil·re(.go.kr·.ac.uk), 또는 REFERENCE_SITES."""
+    labels = [x for x in host_of(domain).split(".") if x]
+    if len(labels) < 2:
+        return False
+    if labels[-1] in _PUBLIC_TLD:
+        return True
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _PUBLIC_SLD:
+        return True
+    return any(owns(domain, s) for s in REFERENCE_SITES)
 
 
 def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]:
@@ -320,12 +354,15 @@ def serp_rivals(hits: dict, checked: int, own: str, platforms=None) -> list[str]
 def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
            platforms=None) -> tuple[list[str], list[str]]:
     """경쟁사 표를 **경쟁사로** 읽는다 → (쓸 것, 뺀 것). 돈을 쓰는 단계(갭 분석·
-    백링크 교집합)는 이걸로 읽는다. 뺀 것 = 제3자 플랫폼 + 판정이 판매 채널·포털이라고 한 자동 후보.
+    백링크 교집합)는 이걸로 읽는다. 뺀 것 = 제3자 플랫폼 + 판정이 판매 채널·포털·자료라고 한
+    자동 후보 + 논문·공공 자료 사이트(is_reference)인 자동 후보.
 
     사람이 고른 것(manual)이 먼저, 그다음 들어온 순. 우리 자신과 제3자 플랫폼은 뺀다 —
     표에 옛 규칙이 넣은 행이 남아 있어도 대상이 되지 않게(쓰는 쪽도 이미 거른다).
     """
     plats = third_party_platforms() if platforms is None else platforms
+    # 우리가 공공·학술 사이트면 같은 자료 사이트가 진짜 경쟁사다 — 그때는 이 갈래로 안 뺀다
+    refs_out = not (own and is_reference(own))
     seen, keep, dropped = set(), [], []
     for r in conn.execute(
             "SELECT domain, source, role FROM competitors WHERE project_id=?"
@@ -337,7 +374,9 @@ def rivals(conn: sqlite3.Connection, project_id: int, own: str = "",
         # 판정이 판매 채널·포털이라고 한 자동 후보는 경쟁사가 아니다(collect_gap._classify).
         # 브랜드 사이트의 검색결과는 그 브랜드를 파는 쇼핑몰로 가득해서, 겹침만 보면
         # lfmall 이 구찌의 경쟁사가 됐다. 사람이 적은 것(manual)은 판정과 무관하게 쓴다.
-        if r[1] != "manual" and r[2] in NOT_RIVAL_ROLES:
+        # 논문·공공 자료 사이트는 판정 전이어도(판정이 '경쟁'이라 해도) 뺀다 — theotherskin 의
+        # pmc.ncbi.nlm.nih.gov 는 판정 전 후보로 남아 콘텐츠 공백의 목표 경쟁사가 됐다(#654).
+        if r[1] != "manual" and (r[2] in NOT_RIVAL_ROLES or (refs_out and is_reference(d))):
             dropped.append(d)
             continue
         (dropped if is_third_party(d, plats) else keep).append(d)
@@ -4864,9 +4903,9 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
 
 
 def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
-    """콘텐츠 공백 → 근거였던 도메인이 **이제 경쟁사가 아니다**(판정이 판매 채널·포털로 뺐거나
-    표에서 지웠다). 이번 적재에 다시 안 나온 기회만 여기 온다 — 지금의 경쟁사 격차로도 안
-    섰다는 뜻이다. 근거 경쟁사가 여전히 경쟁사면 판단하지 않는다(_NO_RESOLVE 의 옛 이유 —
+    """콘텐츠 공백 → 근거였던 도메인이 **이제 경쟁사가 아니다**(판정이 판매 채널·포털·자료로
+    뺐거나, 논문·공공 자료 사이트이거나, 표에서 지웠다). 이번 적재에 다시 안 나온 기회만 여기
+    온다 — 지금의 경쟁사 격차로도 안 섰다는 뜻이다. 근거 경쟁사가 여전히 경쟁사면 판단하지 않는다(_NO_RESOLVE 의 옛 이유 —
     그 경쟁사 수집이 실패해 줄이 빠진 것일 수 있다 — 가 그대로 산다).
     gucci: 판정 전에 캔 lfmall.co.kr 의 격차 16건이 기회로 남아 영영 안 닫혔다."""
     o = conn.execute("SELECT reasoning FROM opportunities WHERE project_id=? AND kind='content_gap'"
@@ -4879,7 +4918,9 @@ def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> 
         return None
     role = conn.execute("SELECT role FROM competitors WHERE project_id=? AND domain=?",
                         (pid, dom)).fetchone()
-    what = ROLES.get(role[0]) if role and role[0] else None
+    # 판정 전 자료 사이트(pmc)는 표에 그대로 있다 — "목록에 없다"고 하면 틀린 사유다
+    what = (ROLES["ref"] if is_reference(dom)
+            else ROLES.get(role[0]) if role and role[0] else None)
     return (f"근거였던 {dom} 은(는) " + (f"{what}(으)로 판정돼 경쟁사가 아닙니다" if what
                                      else "더는 경쟁사 목록에 없습니다")
             + " — 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
@@ -5007,7 +5048,8 @@ RESOLVE_WHEN = {
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
     # 조건절('…면')만 둔다 — 요청문이 뒤에 "이 기회는 저절로 닫힙니다"를 잇는다. "직접 [완료]"까지
     # 여기 넣었더니 "…누릅니다 이 기회는 저절로 닫힙니다."가 나갔다. 그 말은 RESOLVE_ALSO 에.
-    "content_gap": "근거였던 도메인이 경쟁사가 아니라 판매 채널·포털로 다시 판정되면",
+    "content_gap": f"근거였던 도메인이 경쟁사가 아니라 판매 채널·포털·{ROLES['ref']} 사이트로 다시 "
+                   "판정되면",
     "backlink_broken": "다음 백링크 수집이 이 주소의 응답 코드를 2xx·3xx(살아 있음) 또는 403·429"
                        "(크롤러 차단 — 깨진 링크가 아니었다)로 적으면",
 }

@@ -2073,17 +2073,19 @@ def test_content_gap_without_gap_kind_falls_back_to_the_ranked_page():
 
 def test_content_gap_unknown_rival_rank_is_not_printed_as_none():
     """그쪽 순위를 못 받은 격차 줄은 "모름"이고, 목표는 순위를 아는 경쟁사 중 가장 높은 곳이다 —
-    theotherskin 'melasma treatment' 요청문이 "ovid.com(None위)보다 위"를 목표로 삼았다."""
+    theotherskin 'melasma treatment' 요청문이 "ovid.com(None위)보다 위"를 목표로 삼았다(논문
+    사이트는 이제 경쟁사에서 빠지므로 — test_content_gap_goal_never_targets_a_reference_site —
+    여기 도메인은 자료 사이트가 아닌 것으로 바꿨다)."""
     o = _opp("content_gap", "melasma treatment")
     ctx = {"query_pages": {"melasma treatment": _pages(URL)},
-           "kw_gap": [{"keyword": "melasma treatment", "domain": "ovid.com", "position": None,
+           "kw_gap": [{"keyword": "melasma treatment", "domain": "unni.app", "position": None,
                        "our_position": 61, "volume": 140, "kind": "unknown"},
-                      {"keyword": "melasma treatment", "domain": "pmc.ncbi.nlm.nih.gov", "position": 1,
+                      {"keyword": "melasma treatment", "domain": "clinic.example", "position": 1,
                        "our_position": 61, "volume": 140, "kind": "weak"}]}
     body = brief.build(o, ctx, "ko-KR")["body"]
     assert "None" not in body, "요청문에 None 이 찍혔다"
-    assert "pmc.ncbi.nlm.nih.gov(1위)보다 위" in body, "순위 모르는 경쟁사를 목표로 삼았다"
-    assert "| ovid.com | 모름 |" in body, body
+    assert "clinic.example(1위)보다 위" in body, "순위 모르는 경쟁사를 목표로 삼았다"
+    assert "| unni.app | 모름 |" in body, body
     # 갈래 칸은 수집기의 코드값(weak·unknown)을 그대로 찍었다 — 순위 두 칸이 이미 같은 말을 한다
     table = body.split("## 근거")[1].split("\n## ")[0]
     for code in ("weak", "unknown", "missing"):
@@ -3214,6 +3216,82 @@ def test_rank_decay_broken_links_come_from_crawl_history():
     # '끊긴 링크'를 시키지 않는 요청문에는 이 줄을 달지 않는다
     assert brief.BROKEN_LINKS_UNKNOWN not in brief.build(
         _opp("ctr_gap", "丘疹性瘢痕 鼻"), ctx, "ko-KR")["body"]
+
+
+# ── 논문 저장소·공공 자료는 경쟁사가 아니다 ─────────────────────────────
+
+def _ref_db():
+    import sqlite3
+    import db
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    conn.execute("INSERT INTO projects(id, name, type, domain) VALUES(1, 't', 'local', 'theotherskin.com')")
+    conn.executemany("INSERT INTO competitors(project_id, domain, source, role) VALUES(1,?,?,?)",
+                     [("pmc.ncbi.nlm.nih.gov", "auto_rank", None),
+                      ("ovid.com", "auto_labs", "rival"),          # 판정이 잘못 '경쟁'이라 해도
+                      ("clinic.example", "auto_rank", None),
+                      ("kci.go.kr", "manual", None)])              # 사람이 적은 것은 쓴다
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+                     " our_position, volume, kind) VALUES(1,'2026-10-01',?,?,?,61,?,'weak')",
+                     [("melasma treatment", "pmc.ncbi.nlm.nih.gov", 1, 140),
+                      ("melasma treatment", "clinic.example", 4, 140),
+                      ("melasma cream", "pmc.ncbi.nlm.nih.gov", 2, 90),
+                      ("melasma cream", "ovid.com", 3, 90)])
+    return conn
+
+
+def test_reference_sites_are_not_content_gap_rivals():
+    """theotherskin 'melasma treatment' 요청문(#654)의 목표가 "pmc.ncbi.nlm.nih.gov(1위)보다 위"
+    였다 — 논문 저장소는 병원의 경쟁사가 아니고, 끝나는 조건(판매 채널·포털 재판정)에도 안 걸려
+    기회가 닫히지 않았다. 자료 사이트는 경쟁사 읽기(rivals)에서 빠지고, 판정 갈래로도 있다."""
+    assert scoring.is_reference("pmc.ncbi.nlm.nih.gov") and scoring.is_reference("ovid.com")
+    assert scoring.is_reference("www.kci.go.kr") and scoring.is_reference("who.int")
+    assert scoring.is_reference("journals.plos.org") and scoring.is_reference("snu.ac.kr")
+    for d in ("theotherskin.com", "unni.app", "museclinic.co.kr", "gangnam.go.example", "x.gov.example"):
+        assert not scoring.is_reference(d), d
+    assert "ref" in scoring.ROLES and "ref" in scoring.NOT_RIVAL_ROLES
+    conn = _ref_db()
+    keep, dropped = scoring.rivals(conn, 1, "theotherskin.com", ())
+    assert keep == ["kci.go.kr", "clinic.example"], keep
+    assert set(dropped) == {"pmc.ncbi.nlm.nih.gov", "ovid.com"}, dropped
+    assert scoring.confirmed_rivals(conn, 1, "theotherskin.com") == ["kci.go.kr"]
+    # 콘텐츠 공백 — 근거는 남은 진짜 경쟁사이고, 자료 사이트만 이긴 검색어는 기회가 아니다
+    gaps = scoring.content_gaps(conn, 1)
+    assert [(r["keyword"], r["domain"]) for r in gaps] == [("melasma treatment", "clinic.example")], gaps
+    # 우리가 공공·학술 사이트면 같은 자료 사이트가 경쟁사다 — 이 갈래로 빼지 않는다
+    assert "pmc.ncbi.nlm.nih.gov" in scoring.rivals(conn, 1, "kdca.go.kr", ())[0]
+    # 이미 선 기회는 닫힌다 — 사유가 "목록에 없다"가 아니라 무엇이라서 빠졌는지를 말한다
+    conn.execute("INSERT INTO opportunities(project_id, kind, target, reasoning) VALUES(1,"
+                 " 'content_gap', 'melasma cream', '콘텐츠 공백 — 경쟁 도메인 pmc.ncbi.nlm.nih.gov 순위 2위')")
+    why = scoring._resolve_content_gap(conn, 1, "melasma cream", "2026-09-01", {})
+    assert why and scoring.ROLES["ref"] in why and "목록에 없습니다" not in why, why
+    when = scoring.RESOLVE_WHEN["content_gap"]
+    assert scoring.ROLES["ref"] in when and when.endswith("면"), when
+    # 판정(collect_gap._classify)이 이 갈래를 받는다 — 프롬프트에 있고, 답이 버려지지 않는다
+    import collect_gap
+    seen = []
+    got = collect_gap._classify(lambda p: seen.append(p) or {"pubs.example": "ref"}, "theotherskin.com",
+                                "병원", {"pubs.example": ["melasma pathogenesis"]})
+    assert got == {"pubs.example": "ref"} and "ref:" in seen[0], (got, seen)
+
+
+def test_content_gap_goal_never_targets_a_reference_site():
+    """요청문 목표는 넘을 경쟁사를 댄다 — 논문 저장소를 대면 "1위를 하라"와 같고, 할 일 1이 논문
+    목차(초록·방법·결과)를 H2로 따라 하게 만든다(#654). 요청문이 읽는 격차 줄(dashboard 의
+    kw_gap — 기회와 같은 거르개 scoring.gap_rival_set)에서 자료 사이트가 빠져, 목표는 순위를
+    아는 진짜 경쟁사 중 가장 높은 곳이다. 그런 곳이 없으면 도메인을 대지 않는다."""
+    import dashboard
+    ctx = dict(dashboard._axis_competitors(_ref_db(), 1),
+               query_pages={"melasma treatment": _pages(URL), "melasma cream": _pages(URL)})
+    body = brief.build(_opp("content_gap", "melasma treatment", gap_kind="weak"), ctx, "ko-KR")["body"]
+    g = _goal(body)
+    assert "clinic.example(4위)보다 위 — 지금 우리는 61위." in g, g
+    assert "| clinic.example | 4위 | 61위 |" in body, body
+    assert "pmc.ncbi" not in body, body
+    body = brief.build(_opp("content_gap", "melasma cream", gap_kind="weak"), ctx, "ko-KR")["body"]
+    assert "pmc.ncbi" not in body and "ovid.com" not in body, body
+    assert "- 목표: " in _goal(body)
 
 
 if __name__ == "__main__":

@@ -365,12 +365,12 @@ function CP_standing(d) {
     : "같은 검색어에서 순위를 가진 도메인을 우리와 나란히 세웠습니다.") + tip;
 }
 
-/* 경쟁사에서 뺀 곳 — 역할 판정(collect_gap E)이 판매 채널·포털로 가른 자동 후보.
+/* 경쟁사에서 뺀 곳 — 역할 판정(collect_gap E)이 판매 채널·포털·자료 등으로 가른 자동 후보.
    이름표 정본은 scoring.ROLES(d.role_labels). 근거(그 도메인의 상위 검색어)는 배지 툴팁이다.
    사람이 경쟁사 칸에 적으면 판정과 무관하게 경쟁사로 쓴다 — 그 길을 같이 말한다. */
 function CP_roles(d, cls) {
   const L = d.role_labels || {};
-  // 경쟁이 아닌 판정 전부(판매 채널·포털·기타) — 경쟁사로 읽기(scoring.rivals)와 같은 기준이다.
+  // 경쟁이 아닌 판정 전부(판매 채널·포털·자료·기타) — 경쟁사로 읽기(scoring.rivals)와 같은 기준이다.
   const out = (d.comp_roles || []).filter(r => r.role && r.role !== "rival");
   if (!out.length) return "";
   const why = r => { try { return JSON.parse(r.role_why || "[]").slice(0, 6).join(", "); }
@@ -383,7 +383,9 @@ function CP_roles(d, cls) {
       CP_tip("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
              + "남의 브랜드 이름으로, 경쟁 사업체는 자기 이름과 자기 제품으로 받습니다. 틀렸으면 "
              + "[설정]의 경쟁사 칸에 적으세요. 적은 것은 판정과 무관하게 경쟁사로 씁니다."))
-    + ["channel", "media", "other"].filter(k => out.some(r => r.role === k)).map(k =>
+    // 갈래 순서·목록은 이름표(scoring.ROLES)를 그대로 따른다 — 사본(channel·media·other)이면
+    // 새 갈래(ref: 논문·공공 자료)로 판정된 곳은 카드만 서고 칸에는 안 그려진다.
+    + Object.keys(L).filter(k => k !== "rival" && out.some(r => r.role === k)).map(k =>
         `<div class="cp-roleg"><b>${esc(L[k] || k)}</b><div class="cp-pills">${group(k)}</div></div>`)
         .join("")
     + `</div>`;
