@@ -528,17 +528,28 @@ FIX_TAG_DELIVER = frozenset({"title", "meta description", "H1", "H2", "본문", 
 # ── 언어·길이 ────────────────────────────────────────────────────────────────
 _LOCALE_LABEL = dict(serp_adapter.LOCALES)          # "ja-JP" → "일본어 · 일본"
 _CJK_LANGS = {"ko", "ja", "zh"}                      # 검색결과 폭을 로마자의 두 배로 먹는 문자
+# 중국어 태그의 문자 체계(zh-hans·zh-CN → 간체, zh-hant·zh-TW → 번체). 언어 코드만으로는
+# 어느 쪽인지 모른다 — 예전엔 'zh' 에 첫 LOCALES 항목(zh-TW)의 '중국어(번체)'를 붙여, 간체
+# 페이지(theotherskin /zh-hans/sofwave/, #675)에 "산출물은 중국어(번체)로"가 나갔다.
+_ZH_SCRIPT = {"hans": "간체", "cn": "간체", "sg": "간체",
+              "hant": "번체", "tw": "번체", "hk": "번체", "mo": "번체"}
 
 
 def lang_label(locale: str) -> str:
-    """'ja-JP' → '일본어'. 매핑에 없으면 언어 코드 그대로 — 지어내지 않는다."""
+    """'ja-JP' → '일본어', 'zh-hans' → '중국어(간체)'. 매핑에 없으면 언어 코드 그대로 —
+    지어내지 않는다. 언어 코드만 왔으면 그 언어의 이름만 — 지역에 딸린 꼬리('(번체)')는
+    그 지역의 것이라 옮겨 붙이지 않는다."""
     lab = _LOCALE_LABEL.get(locale or "")
-    if not lab:                 # 언어 코드만 왔으면('en') 그 언어의 첫 언어-지역 이름
-        lang = serp_adapter.lang_of(locale)
-        lab = next((v for c, v in serp_adapter.LOCALES if lang and serp_adapter.lang_of(c) == lang), "")
     if lab:
         return lab.split(" · ")[0]
-    return serp_adapter.lang_of(locale) or "한국어"
+    lang = serp_adapter.lang_of(locale)
+    lab = next((v for c, v in serp_adapter.LOCALES if lang and serp_adapter.lang_of(c) == lang), "")
+    if not lab:
+        return lang or "한국어"
+    name = re.sub(r"\(.*?\)", "", lab.split(" · ")[0])
+    script = next((_ZH_SCRIPT[s] for s in (locale or "").lower().split("-")[1:]
+                   if lang == "zh" and s in _ZH_SCRIPT), None)
+    return f"{name}({script})" if script else name
 
 
 def limits(locale: str) -> tuple[int, int]:
@@ -564,18 +575,16 @@ def _limits_line(locale: str) -> str:
 _KNOWN_LANGS = {serp_adapter.lang_of(c) for c, _ in serp_adapter.LOCALES}
 
 
-def page_locale(audit: dict | None, url: str | None) -> tuple[str, str] | None:
-    """(언어 코드, 어디서 알았나) — 주소의 첫 경로 조각(/en/)이 먼저, 없으면 html lang.
-    둘 다 모르면 None(사이트 기본을 따른다). 주소가 먼저인 이유: 다국어 사이트의 /en/
-    페이지가 템플릿째 html lang=ko 를 달고 나와, 영어 페이지 요청문이 '한국어로' 나갔다."""
+def _page_tag(audit: dict | None, url: str | None) -> tuple[str, str] | None:
+    """(언어 태그 그대로 — 'zh-hans'·'en', 어디서 알았나). 판정 규칙은 page_locale 의 것이다."""
     from urllib.parse import urlsplit
     seg = (urlsplit(url or "").path.strip("/").split("/") or [""])[0].lower()
     lang = serp_adapter.lang_of(seg)
     if seg and len(lang) == 2 and lang in _KNOWN_LANGS:
-        return lang, f"주소의 /{seg}/"
-    lang = serp_adapter.lang_of(str((audit or {}).get("html_lang") or "").replace("_", "-"))
-    if lang in _KNOWN_LANGS:
-        return lang, f"html lang={(audit or {}).get('html_lang')}"
+        return seg, f"주소의 /{seg}/"
+    tag = str((audit or {}).get("html_lang") or "").replace("_", "-")
+    if serp_adapter.lang_of(tag) in _KNOWN_LANGS:
+        return tag, f"html lang={(audit or {}).get('html_lang')}"
     return None
 
 
@@ -589,16 +598,26 @@ def _lang_and_limits(name: str, lang: str, shape: str | None) -> str:
     return f"산출물은 {name}로 씁니다."
 
 
+def page_locale(audit: dict | None, url: str | None) -> tuple[str, str] | None:
+    """(언어 코드, 어디서 알았나) — 주소의 첫 경로 조각(/en/)이 먼저, 없으면 html lang.
+    둘 다 모르면 None(사이트 기본을 따른다). 주소가 먼저인 이유: 다국어 사이트의 /en/
+    페이지가 템플릿째 html lang=ko 를 달고 나와, 영어 페이지 요청문이 '한국어로' 나갔다.
+    언어 코드는 견주는 데 쓴다 — 이름(간체·번체)은 _page_tag 의 태그로 붙인다."""
+    pt = _page_tag(audit, url)
+    return (serp_adapter.lang_of(pt[0]), pt[1]) if pt else None
+
+
 def _page_lang_lines(audit: dict | None, url: str | None, locale: str | None,
                      shape: str | None = None) -> list[str]:
     """'대상'의 언어 줄 — 페이지 언어를 알 때만. 꼬리의 언어·길이 줄이 이 줄을 따르라고 한다."""
-    pl = page_locale(audit, url)
-    if not pl or locale is None:
+    pt = _page_tag(audit, url)
+    if not pt or locale is None:
         return []
-    lang, src = pl
+    tag, src = pt
+    lang = serp_adapter.lang_of(tag)
     if lang == serp_adapter.lang_of(locale):
         return []                   # 꼬리가 이미 같은 말을 한다 — 두 번 싣지 않는다
-    name = lang_label(lang)
+    name = lang_label(tag)
     return [f"- 페이지 언어: {name} ({src}) — 사이트 기본({lang_label(locale)})과 다릅니다. "
             + _lang_and_limits(name, lang, shape)]
 
@@ -641,10 +660,8 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
         return [f"- 페이지 언어: {name} (검색어의 언어) — 사이트 기본({lang_label(locale)})과 "
                 "다릅니다. " + _lang_and_limits(name, lang, shape or None)]
     non_latin = {lg for _, lg in db._SCRIPTS}
-    t = str(o.get("target") or "")
-    kws = ([str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {})
-            .get(t.split(":", 1)[-1].strip()) or []] if o.get("kind") == "coverage" else [t])
-    latin = bool(kws) and all(re.search(r"[A-Za-z]", k) and not db._script_lang(k) for k in kws)
+    kws = _kws(o, ctx)
+    latin =bool(kws) and all(re.search(r"[A-Za-z]", k) and not db._script_lang(k) for k in kws)
     if not latin or site not in non_latin:
         return []
     whose = ("이 검색어의 검색결과 상위 글이 쓰는 언어" if shape == "new_content"
@@ -2007,7 +2024,8 @@ def _ev_aio(o, ctx, pages):
             L.append("- 구글 AI 요약이 인용한 곳은 이번 조회 응답에서 뽑지 못했습니다.")
         if r.get("features"):
             L.append(f"- 검색결과 기능: {feature_names(r['features'])}")
-    L += _rank_sources(r, pages, ctx) + _far_rank_lines(r, pages, ctx)
+    url = page_of(o, ctx)
+    L += _rank_sources(r, pages, ctx, url) + _far_rank_lines(r, pages, ctx, url)
     return L + _pages_table(pages)
 
 
@@ -2041,12 +2059,28 @@ def _stale_audit_lines(checked: str | None) -> list[str]:
             "다르면 '고칠 것' 표의 '지금 값' 칸은 이 표가 아니라 **직접 본 값**으로 적습니다."]
 
 
-def _rank_sources(r: dict | None, pages: list[dict], ctx: dict | None = None) -> list[str]:
+def _gsc_row(pages: list[dict], url: str | None) -> tuple[dict | None, bool]:
+    """GSC 평균 순위를 말할 행 하나와, 그게 고칠 페이지의 것인가.
+
+    고칠 페이지의 행이 있으면 그것이다. 예전엔 걸린 페이지 전부의 최솟값을 이름 없이 썼다 —
+    theotherskin #675 에서 '구글 실적 평균: 11위'는 홈의 값이고 고칠 페이지는 43위라, '지금
+    11위'로 읽혔고 같은 최솟값 때문에 '아는 순위가 모두 20위 밖' 경고도 서지 않았다. 고칠
+    페이지를 모르면 가장 앞선 행이다(그때는 어느 페이지의 값인지 이름을 붙인다)."""
+    rows = [p for p in pages if isinstance(p.get("position"), (int, float))]
+    mine = next((p for p in rows if url and p.get("page") == url), None)
+    if mine:
+        return mine, True
+    return (min(rows, key=lambda p: p["position"]) if rows else None), False
+
+
+def _rank_sources(r: dict | None, pages: list[dict], ctx: dict | None = None,
+                  url: str | None = None) -> list[str]:
     """이 검색어의 순위를 **잰 방법마다** 한 줄 — 숫자만 늘어놓지 않는다.
 
     순위 조회(특정 날·기기·지역에서 한 번 본 값)와 GSC 평균(28일·모든 기기·모든 지역의
     평균)은 다른 것을 잰다. 한 요청문에 6위와 22.4위가 함께 실리고 어느 쪽이 무엇인지
     아무 데도 없으면, 읽는 쪽은 둘 중 하나를 골라 진단 방향을 정한다(실제로 그랬다).
+    GSC 평균은 페이지마다 다르다 — 걸린 페이지가 여럿이면 어느 페이지의 값인지 밝힌다(_gsc_row).
     """
     ctx = ctx or {}
     L = []
@@ -2056,14 +2090,19 @@ def _rank_sources(r: dict | None, pages: list[dict], ctx: dict | None = None) ->
                  + (f"{d} 에 " if d else "")
                  + "한 번 본 값입니다(그날·그 기기·그 지역 기준)."
                  + (f" 그 자리의 내 페이지: {r['url']}" if r.get("url") else ""))
-    gsc = [p.get("position") for p in pages if isinstance(p.get("position"), (int, float))]
-    if gsc:
-        L.append(f"- 구글 실적 평균: {min(gsc):g}위 — {_gsc_src(ctx)}. 기기·지역이 뒤섞인 평균이라 "
-                 "조회 순위보다 대개 뒤로 나옵니다.")
+    row, mine = _gsc_row(pages, url)
+    if row:
+        many = sum(isinstance(p.get("position"), (int, float)) for p in pages) > 1
+        who = (f" ({'고칠 페이지' if mine else '걸린 내 페이지 중 가장 앞선 것'} {row.get('page')})"
+               if many else "")
+        L.append(f"- 구글 실적 평균: {row['position']:g}위{who} — {_gsc_src(ctx)}. 기기·지역이 뒤섞인 "
+                 "평균이라 조회 순위보다 대개 뒤로 나옵니다."
+                 + (" 다른 내 페이지의 값은 아래 표에 있습니다." if many and mine else ""))
     return L
 
 
-def _far_rank_lines(r: dict | None, pages: list[dict], ctx: dict | None = None) -> list[str]:
+def _far_rank_lines(r: dict | None, pages: list[dict], ctx: dict | None = None,
+                    url: str | None = None) -> list[str]:
     """AI 요약 기회인데 우리가 한참 뒤일 때 — 처방(title·H1·H2 손질 + 내부 링크)이 닿는
     거리가 아닐 수 있다고 먼저 말한다. 48위 페이지의 요청문이 손질안 셋만 시켰고, "이
     페이지로는 안 된다"는 결론을 낼 자리가 없었다. 아는 순위가 하나도 없으면 말하지 않는다.
@@ -2073,19 +2112,21 @@ def _far_rank_lines(r: dict | None, pages: list[dict], ctx: dict | None = None) 
     검색어에서 그 문장은 그냥 틀렸고 진단 방향까지 바꿨다.
     """
     checked = (r or {}).get("pos")
-    gsc = [p.get("position") for p in pages if isinstance(p.get("position"), (int, float))]
-    best_gsc = min(gsc) if gsc else None
+    # GSC 쪽은 _rank_sources 가 말한 그 행의 값이다 — 걸린 페이지 전부의 최솟값이 아니다
+    row, mine = _gsc_row(pages, url)
+    best_gsc = row["position"] if row else None
     if isinstance(checked, (int, float)) and best_gsc is not None \
             and (checked <= FAR_RANK) != (best_gsc <= FAR_RANK):
         return [f"{RANK_SPLIT_HEAD}: 조회는 {checked:g}위, 구글 실적 평균은 {best_gsc:g}위입니다. "
                 "먼저 어느 쪽이 이 검색어의 실제 자리인지 정하고(직접 검색해 확인) 그다음에 "
                 "진단합니다 — 1페이지 안이면 남은 일은 순위가 아니라 클릭·인용이고, 밖이면 "
                 "순위가 먼저입니다. 둘이 갈린 채로 손질안부터 쓰지 않습니다."]
-    known = [x for x in ([checked] + gsc) if isinstance(x, (int, float))]
+    known = [x for x in (checked, best_gsc) if isinstance(x, (int, float))]
     if not known or min(known) <= FAR_RANK:
         return []
     best = min(known)
-    return [f"- 아는 순위가 모두 {best:g}위 밖입니다({FAR_RANK}위 기준). 여기서 막힌 것은 AI 요약이 "
+    whose = "고칠 페이지의 " if mine and len(pages) > 1 else ""
+    return [f"- {whose}아는 순위가 모두 {best:g}위 밖입니다({FAR_RANK}위 기준). 여기서 막힌 것은 AI 요약이 "
             "아니라 순위이고, title·H1·H2 손질만으로 1페이지에 닿는 거리가 아닐 수 있습니다 — "
             "'만들어 줄 것'의 원인 진단부터 하고, 이 페이지로는 어렵다는 결론도 답입니다."]
 
@@ -2327,8 +2368,10 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
                      + ", ".join(p["page"] for p in rest))
     elif url and url != t:
         # 정리 꼴의 이 주소는 page_of(노출 최대)다 — 정본은 처방의 기준으로 정하므로 '정본 후보'라
-        # 부르지 않는다(노출과 클릭이 갈리면 그 말이 기준과 부딪힌다).
-        L.append(f"- {'노출이 가장 큰 페이지' if shape == 'consolidate' else '페이지'}: {url}")
+        # 부르지 않는다(노출과 클릭이 갈리면 그 말이 기준과 부딪힌다). page_of 는 다른 문자권
+        # 지면을 건너뛰므로(_lang_fit) 노출 1위가 아닐 수 있다 — 그때는 그 이름으로 안 부른다.
+        top = (((ctx or {}).get("query_pages") or {}).get(str(o["target"])) or [{}])[0].get("page")
+        L.append(f"- {'노출이 가장 큰 페이지' if shape == 'consolidate' and top == url else '페이지'}: {url}")
     elif not url and shape == "new_content" and topic:
         L.append(f"- 페이지: 수집본에 없음 — 순위에 걸린 페이지는 없지만, 제목·H1 에 이 "
                  f"검색어가 있는 내 지면이 {len(topic)}개 있습니다:")
@@ -2386,7 +2429,11 @@ URL_KINDS = frozenset({"index_blocked", "crawl_issue", "backlink_broken", "inten
 
 
 def page_of(o: dict, ctx: dict) -> str | None:
-    """이 기회에서 손댈 페이지 — 대상이 주소면 그것, 검색어면 노출이 가장 큰 페이지.
+    """이 기회에서 손댈 페이지 — 대상이 주소면 그것, 검색어면 그 검색어를 맡을 수 있는 언어의
+    지면(_lang_fit) 가운데 노출이 가장 큰 페이지. 서치콘솔은 모든 나라의 노출을 합치므로
+    노출 순서만 보면 다른 문자권 지면이 뽑힌다 — 한국 시장 'sofwave' 에 노출 1 로 홈과 동률인
+    /zh-hans/ 지면(43위)이 순서로 뽑혀 "중국어로 고치라"가 나갔다(theotherskin #675). 맞는
+    지면이 하나도 없으면 예전대로 노출이 가장 큰 페이지다 — 걸린 페이지를 비우지 않는다.
 
     순위에 걸린 페이지가 없으면 제목·H1 이 그 검색어로 시작하는 전용 지면(topic_pages
     의 primary)으로 내려간다 — 단 그런 지면이 하나일 때만. 둘 이상이거나 스치는 글뿐이면
@@ -2396,7 +2443,9 @@ def page_of(o: dict, ctx: dict) -> str | None:
         return t
     pages = (ctx.get("query_pages") or {}).get(t) or []
     if pages:
-        return pages[0].get("page")
+        fit = _lang_fit(o, ctx)
+        return next((p.get("page") for p in pages if fit(str(p.get("page") or ""))),
+                    pages[0].get("page"))
     # 서치콘솔이 없는 사이트 — 순위 조회가 실제로 잡은 우리 주소(rank_by_kw), 그다음 순위 추정
     # (DataForSEO Labs, striking_labs)이 걸었다는 주소. 둘 다 "이 검색어로 순위에 걸린 우리
     # 페이지"라 제목 매칭보다 앞선다. 없으면 gucci 처럼 봇 차단으로 페이지 점검도 못 하는 사이트는
@@ -2449,10 +2498,46 @@ def _topic_of(o: dict, ctx: dict) -> list[dict]:
     수 있다 — 'pigment' 묶음(키워드는 전부 '기미 …')에 /en/pigmentation-rosacea/ 하나가
     걸려, 한국어 키워드를 맡을 수 없는 영어 지면을 두고 '이미 있다 → 새 글 금지'가 섰다."""
     rows = (ctx.get("topic_pages") or {}).get(str(o.get("target") or "")) or []
+    fit = _lang_fit(o, ctx)
+    return [p for p in rows if fit(p["page"])]
+
+
+def _kws(o: dict, ctx: dict) -> list[str]:
+    """이 기회의 검색어 — 묶음이면 그 키워드 전부, 아니면 대상 하나."""
+    t = str(o.get("target") or "")
+    if o.get("kind") == "coverage":
+        cl = t.split(":", 1)[-1].strip()
+        return [str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {}).get(cl) or []]
+    return [t]
+
+
+def _lang_fit(o: dict, ctx: dict) -> Callable[[str], bool]:
+    """주소 하나가 이 기회의 검색어를 맡을 수 있는 언어의 지면인가 — 고를 지면(page_of)과
+    후보·겹침 목록(_topic_of)이 같은 판정을 쓴다.
+
+    검색어의 언어(_kw_lang)를 알면 그 언어의 지면만. 모르면(라틴 글자 — ko-KR 의 'sofwave')
+    언어를 못 박지는 않지만, 시장 언어도 검색어의 글자도 아닌 **다른 문자권**(일본어·
+    중국어…)의 지면은 그 검색을 맡지 못한다. 예전엔 모르면 거르지 않아 영어 묶음의 후보에
+    /ja/·/zh-hans/ 가 섞였고(theotherskin #317 milia — 후보 셋을 내놓고 멈췄다, #313
+    thermage — 겹침 확인용에 /zh-hans/ 둘), 한국 시장 'sofwave' 의 고칠 페이지로 노출 1·43위
+    /zh-hans/ 지면이 순서로 뽑혔다(#675). 라틴 문자 언어(/en/)는 그대로 둔다 — 한국 사람이
+    친 영어 검색어를 /en/ 지면이 맡는 일은 실제로 있다(v1.139.2). 언어 경로가 없는 지면은
+    사이트 기본 언어로 본다. 그것도 모르면 거르지 않는다."""
+    import db
+    site = serp_adapter.lang_of(str((ctx.get("project") or {}).get("locale") or ""))
     lang = _kw_lang(o, ctx)
-    if not lang:
-        return rows
-    return [p for p in rows if (page_locale(None, p["page"]) or (lang,))[0] == lang]
+    locs = ctx.get("kw_locales") or {}
+    kws = _kws(o, ctx)
+    ok = ({site} | {serp_adapter.lang_of(str(locs.get(k) or "")) for k in kws}
+          | {db._script_lang(k) for k in kws}) - {"", None}
+    non_latin = {lg for _, lg in db._SCRIPTS}
+
+    def fit(url: str) -> bool:
+        pl = (page_locale(None, url) or (site,))[0]
+        if not pl:
+            return True
+        return pl == lang if lang else (pl not in non_latin or pl in ok)
+    return fit
 
 
 def _kw_lang(o: dict, ctx: dict, locale: str | None = None) -> str | None:
@@ -2464,12 +2549,7 @@ def _kw_lang(o: dict, ctx: dict, locale: str | None = None) -> str | None:
     됐다. 그래서 사이트 기본과 **다른** 시장만 증거로 쓰고, 나머지는 글자로 본다(db._script_lang —
     한글·가나·한자…). 라틴 글자는 언어를 말하지 않는다(ko-KR 에서 찾는 'pdrn') — None."""
     import db
-    t = str(o.get("target") or "")
-    if o.get("kind") == "coverage":
-        cl = t.split(":", 1)[-1].strip()
-        kws = [str(k["keyword"]) for k in (ctx.get("cluster_keywords") or {}).get(cl) or []]
-    else:
-        kws = [t]
+    kws = _kws(o, ctx)
     site = serp_adapter.lang_of(str(locale or (ctx.get("project") or {}).get("locale") or ""))
     locs = ctx.get("kw_locales") or {}
     langs = set()

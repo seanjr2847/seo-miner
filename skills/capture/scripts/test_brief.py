@@ -2773,6 +2773,130 @@ def test_consolidate_tail_basis_does_not_point_at_a_missing_traffic_table():
     assert ca["shape"] == "consolidate" and "| 노출 | 클릭 |" in ca["body"], ca["body"]
 
 
+def test_simplified_chinese_page_is_not_called_traditional():
+    """/zh-hans/ 는 간체다 — 언어 코드만 남기고(zh) 첫 LOCALES 항목(zh-TW)의 이름을 붙여,
+    theotherskin #675 가 간체 페이지(索夫波·皮肤科)에 "산출물은 중국어(번체)로"라고 시켰다."""
+    hans = brief._page_lang_lines(None, "https://me.example/zh-hans/lifting/sofwave/", "ko-KR")
+    assert hans and "중국어(간체) (주소의 /zh-hans/)" in hans[0], hans
+    assert "산출물은 중국어(간체)로" in hans[0] and "번체" not in hans[0], hans
+    assert "title 30자 이내" in hans[0], hans            # 길이 기준은 중국어(CJK) 그대로
+    hant = brief._page_lang_lines(None, "https://me.example/zh-hant/a/", "ko-KR")
+    assert hant and "중국어(번체) (주소의 /zh-hant/)" in hant[0], hant
+    assert "중국어(번체)" in brief._page_lang_lines(None, "https://me.example/zh-tw/a/", "ko-KR")[0]
+    assert "중국어(간체)" in brief._page_lang_lines({"html_lang": "zh-Hans"}, "https://me.example/a",
+                                                  "ko-KR")[0]
+    # 문자 체계를 모르면 모른다 — 대만의 '(번체)'를 언어 이름에 옮겨 붙이지 않는다
+    assert brief.lang_label("zh") == "중국어", brief.lang_label("zh")
+    assert brief.lang_label("zh-TW") == "중국어(번체)" and brief.lang_label("en") == "영어"
+    # 비교·거르기에 쓰는 언어 코드는 그대로 zh 다(_topic_of·_coverage_page 가 이 값으로 견준다)
+    assert brief.page_locale(None, "https://me.example/zh-hans/a/") == ("zh", "주소의 /zh-hans/")
+
+
+def test_page_of_prefers_a_page_in_the_search_language():
+    """theotherskin #675 — ko-KR 시장의 'sofwave' 에 노출 1 인 지면이 둘(/zh-hans/ 43위·홈 11위)
+    이었고, 순서로 /zh-hans/ 가 뽑혀 "한국 검색결과에 중국어 지면을 맞추라"가 나갔다. 라틴
+    검색어는 언어를 말하지 않지만, 시장의 언어도 검색어의 글자도 아닌 문자권(중국어·일본어)의
+    지면은 그 검색을 맡을 지면이 아니다."""
+    zh = "https://me.example/zh-hans/lifting/sofwave/"
+    home = "https://www.me.example/"
+    o = _opp("aio_exposure", "sofwave")
+    ctx = {"project": {"locale": "ko-KR"}, "kw_locales": {"sofwave": "ko-KR"},
+           "query_pages": {"sofwave": [
+               {"page": zh, "impressions": 1, "clicks": 0, "position": 43.0, "ctr": 0.0},
+               {"page": home, "impressions": 1, "clicks": 0, "position": 11.0, "ctr": 0.0}]}}
+    assert brief.page_of(o, ctx) == home, brief.page_of(o, ctx)
+    b = brief.build(o, ctx, "ko-KR")
+    assert f"- 페이지: {home}" in b["body"] and "중국어" not in b["body"].split("## 근거")[0], b["body"]
+    assert "- 산출물 언어: 한국어 (ko-KR, 사이트 기본)" in b["body"], b["body"]
+    # 노출이 더 커도 다른 문자권 지면은 뒤로 — 서치콘솔은 모든 나라의 노출을 합친다
+    big = {**ctx, "query_pages": {"sofwave": [{**ctx["query_pages"]["sofwave"][0], "impressions": 50},
+                                              ctx["query_pages"]["sofwave"][1]]}}
+    assert brief.page_of(o, big) == home
+    # 검색어의 글자가 언어를 말하면 그 언어의 지면이다
+    ja = "https://me.example/ja/lifting/sofwave/"
+    jo = _opp("aio_exposure", "ソフウェーブ")
+    jctx = {"project": {"locale": "ko-KR"},
+            "query_pages": {"ソフウェーブ": [{"page": home, "impressions": 9, "position": 5.0},
+                                         {"page": ja, "impressions": 2, "position": 30.0}]}}
+    assert brief.page_of(jo, jctx) == ja
+    # 맞는 언어의 지면이 하나도 없으면 예전대로 노출이 가장 큰 지면 — 비우지 않는다
+    only = {**ctx, "query_pages": {"sofwave": ctx["query_pages"]["sofwave"][:1]}}
+    assert brief.page_of(o, only) == zh
+    # 정리 꼴이 '노출이 가장 큰 페이지'라고 부르는 것은 정말 그 페이지일 때만
+    c = brief.build(_opp("cannibalization", "sofwave"), big, "ko-KR")
+    assert f"노출이 가장 큰 페이지: {home}" not in c["body"], c["body"]
+
+
+def test_latin_cluster_candidates_drop_pages_in_other_scripts():
+    """영어 키워드 묶음의 후보·겹침 지면에 /ja/·/zh-hans/ 가 섞였다 — _topic_of 가 라틴 키워드
+    (언어 None)면 거르지 않아서. theotherskin #317(milia)은 후보 3개를 내놓고 "여럿이면 고르게"
+    로 멈췄고, #313(thermage)은 /en/ 지면을 고치면서 겹침 확인용으로 /zh-hans/ 둘을 실었다.
+    라틴 키워드가 언어를 안 말해도 시장 언어(ko)·라틴 문자 언어(en) 지면만 맡을 수 있다."""
+    base = "https://me.example"
+    site = {"project": {"locale": "ko-KR"}}
+    kws = [{"keyword": "milia and syringoma difference", "volume": 10},
+           {"keyword": "can you remove milia under eyes", "volume": 10}]
+    en = {"page": f"{base}/en/special-clinic/syringoma-milia/", "title": "Syringoma vs Milia",
+          "h1": "Syringoma vs Milia", "primary": False}
+    ja = {"page": f"{base}/ja/special-clinic/syringoma-milia/", "title": "汗管腫・稗粒腫",
+          "h1": "Syringoma and Milia", "primary": False}
+    zh = {"page": f"{base}/zh-hans/special-clinic/syringoma-milia/", "title": "汗管瘤•粟丘疹",
+          "h1": "Syringoma and Milia", "primary": False}
+    ko = {"page": f"{base}/special-clinic/syringoma-milia/", "title": "한관종·비립종",
+          "h1": "Milia", "primary": False}
+    o = _opp("coverage", "cluster:milia")
+    ctx = {**site, "topic_pages": {"cluster:milia": [en, ja, zh]},
+           "cluster_keywords": {"milia": kws}, "kw_locales": {k["keyword"]: "ko-KR" for k in kws}}
+    b = brief.build(o, ctx, "ko-KR")
+    assert [c["page"] for c in b["candidates"]] == [en["page"]], b["candidates"]
+    assert f"  - {en['page']}" in b["body"], b["body"]
+    assert "/ja/" not in b["body"] and "/zh-hans/" not in b["body"], b["body"]
+    # 사이트 기본 언어(주소에 언어 경로 없음)의 지면은 그대로 후보다 — 한국 사람이 친 영어
+    k2 = brief.build(o, {**ctx, "topic_pages": {"cluster:milia": [en, ja, ko]}}, "ko-KR")
+    assert [c["page"] for c in k2["candidates"]] == [en["page"], ko["page"]], k2["candidates"]
+    # #313 꼴 — /en/ 지면을 고칠 때 겹침 확인용 '다른 지면'에도 다른 문자권 지면이 안 선다
+    main = {"page": f"{base}/en/lifting-contour/thermage-flx/", "title": "Thermage FLX | Clinic",
+            "h1": "Thermage FLX", "primary": True}
+    zmain = {**main, "page": f"{base}/zh-hans/lifting-contour/thermage-flx/"}
+    blog = {"page": f"{base}/en/blog/ultherapy-prime-about/", "title": "Ultherapy vs Thermage",
+            "h1": "", "primary": False}
+    zblog = {**blog, "page": f"{base}/zh-hans/blog/ultherapy-prime-about/"}
+    tk = [{"keyword": "thermage flx", "volume": 90}, {"keyword": "thermage cost", "volume": 50}]
+    t = brief.build(_opp("coverage", "cluster:thermage"),
+                    {**site, "topic_pages": {"cluster:thermage": [main, zmain, blog, zblog]},
+                     "cluster_keywords": {"thermage": tk},
+                     "kw_locales": {k["keyword"]: "ko-KR" for k in tk}}, "ko-KR")
+    assert t["page"] == main["page"], t["page"]
+    assert f"다른 지면(내부 링크·겹침 확인용): {blog['page']}\n" in t["body"], t["body"]
+    assert "/zh-hans/" not in t["body"], t["body"]
+
+
+def test_gsc_rank_line_names_the_page_it_belongs_to():
+    """'구글 실적 평균: 11위'는 이 검색어에 걸린 페이지들의 최솟값이었다 — theotherskin #675 에서
+    11위는 홈의 값이고 고칠 페이지는 43위였다. 이름이 없어 '지금 11위'로 읽혔고, 같은 최솟값
+    때문에 '아는 순위가 모두 20위 밖' 경고도 서지 않았다. 고칠 페이지의 값을 그 이름으로 싣는다."""
+    page = "https://me.example/lifting/sofwave/"
+    home = "https://me.example/"
+    o = _opp("aio_exposure", "sofwave")
+    ctx = {"project": {"locale": "ko-KR"}, "gsc_date": "2026-10-04", "gsc_period": 28,
+           "aio_gap_ranks": {"sofwave": {"keyword": "sofwave", "pos": None, "aio_domains": ["a.kr"]}},
+           "query_pages": {"sofwave": [
+               {"page": page, "impressions": 5, "clicks": 0, "position": 43.0, "ctr": 0.0},
+               {"page": home, "impressions": 1, "clicks": 0, "position": 11.0, "ctr": 0.0}]}}
+    assert brief.page_of(o, ctx) == page
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    ev = body.split("## 근거")[1]
+    line = next((x for x in ev.splitlines() if x.startswith("- 구글 실적 평균")), "")
+    assert "43위" in line and page in line and "11위" not in line.split(" — ")[0], line
+    assert "아는 순위가 모두 43위 밖" in ev, ev
+    # 고칠 페이지를 모르면(표만 있으면) 가장 앞선 값을 쓰되 어느 페이지의 값인지 밝힌다
+    L = brief._rank_sources(None, ctx["query_pages"]["sofwave"], ctx)
+    assert any("11위" in x and home in x for x in L), L
+    # 걸린 페이지가 하나면 이름을 안 붙인다 — 아래 표가 그 하나다
+    one = brief._rank_sources(None, ctx["query_pages"]["sofwave"][:1], ctx, page)
+    assert one and page not in one[0] and "43위" in one[0], one
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
