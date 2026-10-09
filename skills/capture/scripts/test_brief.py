@@ -492,20 +492,29 @@ def test_pseo_one_address_one_verdict():
     assert "이미 전용 페이지가 있는 값" not in tgt and "- 찍을 값 3개(전용 페이지 없음)" in tgt, tgt
     assert "전용 페이지가 아니라" in tgt and "'서울'" in tgt, tgt
     _one_verdict(body)
-    # 값 둘이 한 페이지를 나눠 쓰면 더 높이 걸린 값의 것이다 — 씨앗(부산)의 페이지가 서울의 전용
-    # 페이지면 허브는 새로 짓고, 그 까닭도 '서울의 전용 페이지'라고 같은 판정으로 말한다
+    # 값 둘이 한 페이지를 나눠 쓰고 감사가 없어 말로 못 보면 더 높이 걸린 값의 것이다 — 씨앗(부산)의
+    # 페이지가 서울의 전용 페이지면 허브는 새로 짓고, 그 까닭도 '서울의 전용 페이지'라고 같은 판정으로 말한다
     g = _pseo_group()
     g["seed"] = "부산 세무사 추천"
     g["values"][1].update(page=URL, own=True, page_pos=20.0)
     g["values"][0].update(page_pos=9.0)
-    both = {"query_pages": {"부산 세무사 추천": _pages(URL)}, "pseo_groups": [g],
-            "page_audits": {URL: _audit(title="서울·부산 세무사 추천", h1_json='["서울·부산 세무사"]')}}
-    body = brief.build(_opp("pseo_pattern", "부산 세무사 추천"), both, "ko-KR")["body"]
+    for v in g["values"]:
+        v.pop("why", None)            # 페이로드에 판정이 없으면 요청문이 같은 함수로 다시 단다
+    shared = {"query_pages": {"부산 세무사 추천": _pages(URL)}, "pseo_groups": [g]}
+    body = brief.build(_opp("pseo_pattern", "부산 세무사 추천"), shared, "ko-KR")["body"]
     tgt = body.split("## 대상")[1].split("\n## ")[0]
     assert f"- 이미 전용 페이지가 있는 값 1개: '서울' ({URL})" in tgt, tgt
     assert "'부산'" in tgt.split("- 찍을 값")[1].splitlines()[0], tgt
     hub = next(x for x in tgt.splitlines() if x.startswith("- 허브: "))
     assert "'서울'의 전용 페이지" in hub and "새로 짓습니다" in hub, hub
+    _one_verdict(body)
+    # 감사의 title 이 두 값을 다 말하면('서울·부산 세무사 추천') 둘 다 그 페이지가 전용이다 — 말로
+    # 확인했는데 순위로 하나를 '찍을 값'으로 돌리면, 이미 있는 페이지를 또 찍으라고 한다
+    both = {**shared, "page_audits": {URL: _audit(title="서울·부산 세무사 추천",
+                                                  h1_json='["서울·부산 세무사"]')}}
+    body = brief.build(_opp("pseo_pattern", "부산 세무사 추천"), both, "ko-KR")["body"]
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    assert f"'서울' ({URL}), '부산' ({URL})" in tgt and "- 허브로 쓸 페이지: " + URL in tgt, tgt
     _one_verdict(body)
     # 씨앗의 전용 페이지면 허브로 쓴다 — 그 주소는 '이미 있는 값' 목록과 허브 줄에 같은 판정으로 선다
     ok = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],

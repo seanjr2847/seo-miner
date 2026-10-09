@@ -16,6 +16,7 @@ import math
 import re
 import sqlite3
 import sys
+import unicodedata
 from collections import namedtuple
 from collections.abc import Callable
 from urllib import robotparser
@@ -1102,25 +1103,37 @@ def pseo_audits(conn: sqlite3.Connection, project_id: int) -> dict:
     return {r["url"]: dict(r) for r in db.latest_page_audits(conn, project_id)}
 
 
+def _fold_script(s: str) -> str:
+    """글자로 찾을 때 접는 표기 — 전각/반각(NFKC)·가타카나→히라가나·띄어쓰기. 원문 그대로 찾았더니
+    theotherskin /ja/ 페이지의 title 'ニキビ跡'이 값 'にきび跡'의 전용 페이지가 아니게 됐고, '90 일 후'가
+    '90일'을 못 말했다."""
+    s = unicodedata.normalize("NFKC", str(s or "")).lower()
+    s = "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in s)
+    return "".join(s.split())
+
+
 def pseo_page_misses(value: str, url: str | None, audits: dict | None) -> list[str] | None:
     """값의 내용어 가운데 그 페이지의 title·H1 에 없는 것 — '그 값의 전용 페이지인가'를 말로 보는 한 벌
     (pseo_mark_own 이 부르고, 요청문의 허브도 그 판정을 읽는다). 감사가 없거나 title·H1 을 못 읽었으면
     None 이다 — 모르는 것을 '다른 주제'라 하지 않고 구조로만 본다. 한글·일본어는 조사가 붙거나 띄어
-    쓰지 않아 낱말 대신 글자로 찾는다."""
+    쓰지 않아 낱말 대신 글자로 찾고, 표기 변이는 접는다(_fold_script)."""
     a = ((audits or {}).get(url) if url else None) or {}
     text = " ".join([str(a.get("title") or ""), *(str(h) for h in _as_list(a.get("h1_json")))]).strip()
     if not text:
         return None
-    low = text.lower()
-    return [t for t in _missing_tokens(value, text) if t.isascii() or t not in low]
+    text = unicodedata.normalize("NFKC", text)
+    folded = _fold_script(text)
+    return [t for t in _missing_tokens(unicodedata.normalize("NFKC", value), text)
+            if t.isascii() or _fold_script(t) not in folded]
 
 
 def pseo_mark_own(values: list[dict], seed: str, audits: dict | None) -> None:
     """값마다 전용 페이지가 걸렸나(own)와, 아니면 그 까닭(why) — 검출기·자동 해소·요청문(찍을 값·이미
-    있는 값·허브)이 이 한 벌로 가른다. 까닭은 넷이다: 'none'(걸린 페이지 없음)·'home'·'guide'(무리의
+    있는 값·허브)이 이 한 벌로 가른다. 까닭은 다섯이다: 'none'(걸린 페이지 없음)·'home'·'guide'(무리의
     값 PSEO_MIN_VALUES 개 이상이 함께 걸린 안내 페이지 — 틀 자체를 다루는 페이지)·'topic'(감사의
     title·H1 에 값의 내용어가 없다 — miss, pseo_page_misses)·'shared'(값 둘이 나눠 쓰는 페이지에서 더
-    낮게 걸렸다 — owner 가 그 페이지의 주인 값).
+    낮게 걸렸다 — owner 가 그 페이지의 주인 값. 감사가 없어 말로 못 볼 때만 가른다 — title 이 두 값을
+    다 말하면('赤ら顔・酒さ') 둘 다 그 페이지가 전용이다).
 
     예전엔 전용을 구조로만 봤고 요청문의 허브는 title·H1 으로 따로 봤다 — 씨앗이 걸린 '부가세 신고 기한
     총정리' 글이 한 요청문 안에서 '이미 전용 페이지가 있는 값'이자 '허브: 전용 페이지가 아니라'였다.
@@ -1134,6 +1147,7 @@ def pseo_mark_own(values: list[dict], seed: str, audits: dict | None) -> None:
         return bool(seed_keys & {k for q in (v["query"], *(v.get("variants") or []))
                                  for k in pseo_fold_keys(q) if k})
     by_page: dict[str, list[dict]] = {}
+    named: set[str] = set()          # 감사의 title·H1 이 값을 말한다고 확인한 페이지
     for v in values:
         for k in ("why", "owner", "miss"):
             v.pop(k, None)
@@ -1152,7 +1166,11 @@ def pseo_mark_own(values: list[dict], seed: str, audits: dict | None) -> None:
             v["why"] = "topic" if miss else None
             if miss:
                 v["miss"] = miss
-    for vs in by_page.values():
+            elif miss is not None:
+                named.add(p)
+    for p, vs in by_page.items():
+        if p in named:
+            continue
         ok = [v for v in vs if v["why"] is None]
         if len(ok) < 2:
             continue

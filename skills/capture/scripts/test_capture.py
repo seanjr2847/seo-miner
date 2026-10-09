@@ -654,6 +654,36 @@ def test_pseo_own_page_must_speak_the_value():
         [("서울", False), ("부산", True), ("대구", False), ("광주", True)], dg["values"]
 
 
+def test_pseo_own_page_folds_spelling_and_shares_when_both_are_named():
+    """말 검사는 표기 변이를 접는다 — 히라가나/가타카나(にきび跡/ニキビ跡), 전각/반각, 띄어쓰기
+    ('90일'/'90 일'). 원문 그대로 찾았더니 theotherskin /ja/ 페이지(title 이 가타카나 'ニキビ跡')에
+    감사가 들어오면 'にきび跡'이 '다른 주제'가 되어 닫힌 #724 '江南市 肝斑'이 다시 열렸다(4차 검토
+    재현). 또 한 페이지를 나눠 쓰는 두 값을 title 이 둘 다 말하면('赤ら顔・酒さ') 둘 다 그 페이지가
+    전용이다 — 더 높이 걸린 값 하나로 가르는 것은 감사가 없어 말로 못 볼 때만이다."""
+    conn = db.connect()
+    dom = "fold.example"
+    pid = _pseo_site(conn, "pseo-fold", dom, [
+        ("江南市 肝斑", 40, 0, 9.0, "/ja/melasma/"), ("江南市 にきび跡", 30, 0, 9.0, "/ja/acne-scars/"),
+        ("江南市 赤ら顔", 25, 0, 8.0, "/ja/rosacea/"), ("江南市 酒さ", 20, 0, 9.0, "/ja/rosacea/"),
+        ("서울 90일 후", 60, 0, 9.0, "/in-90"), ("서울 100일 후", 40, 0, 9.0, "/in-100"),
+        ("서울 60일 후", 30, 0, 9.0, "/in-60")])
+    _pseo_audit(conn, pid, dom, "/ja/melasma/", "肝斑 | 江南 The Other皮膚科", "肝斑")
+    _pseo_audit(conn, pid, dom, "/ja/acne-scars/", "ニキビ跡 | 江南 The Other皮膚科", "ニキビ跡")
+    _pseo_audit(conn, pid, dom, "/ja/rosacea/", "赤ら顔・酒さ | 江南 The Other皮膚科", "赤ら顔・酒さ")
+    _pseo_audit(conn, pid, dom, "/in-90", "오늘부터 90 일 후 날짜", "90 일 후")
+    _pseo_audit(conn, pid, dom, "/in-100", "１００일 후는 언제", "100일 후")
+    _pseo_audit(conn, pid, dom, "/in-60", "60일 후 계산기", "60일 후")
+    gs = {g["frame"]: g for g in scoring.pseo_groups(conn, pid, "2026-10-01")}
+    ja = gs["江南市 {X}"]
+    assert [(v["value"], v["own"]) for v in ja["values"]] == \
+        [("肝斑", True), ("にきび跡", True), ("赤ら顔", True), ("酒さ", True)], ja["values"]
+    days = gs["서울 {X} 후"]
+    assert all(v["own"] for v in days["values"]), days["values"]
+    spec = next(k for k in scoring.KINDS if k.name == "pseo_pattern")
+    assert spec.detect({"conn": conn, "pid": pid, "cur": "2026-10-01", "brands": set()}) == []
+    conn.close()
+
+
 def test_pseo_dropped_seed_row_merges_into_the_new_seed():
     """붙잡은 씨앗이 무리의 값에서 빠지면(노출이 값 하한 밑으로 내려가거나 다른 틀이 가져가면) 새
     씨앗 줄이 서고, 옛 씨앗 줄은 그 줄로 합친다. 예전엔 둘 다 열린 채 남았다 — 같은 틀에 열린 줄이
