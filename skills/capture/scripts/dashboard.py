@@ -1750,7 +1750,7 @@ def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]
 
 def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
                       striking: list[dict], ranks_all: list[dict],
-                      ups: list[dict], downs: list[dict]) -> dict:
+                      ups: list[dict], downs: list[dict], vitals: dict | None = None) -> dict:
     """행을 펼쳤을 때 보여줄 근거 — 그 검색어에 실제로 걸린 내 페이지들, 그리고 페이지
     감사. 기회·키워드·순위·움직인 검색어가 같은 한 벌을 본다(화면마다 다른 표를
     만들면 같은 검색어가 화면마다 다른 페이지를 말한다) — 그래서 이 축은 다른 축이
@@ -1783,7 +1783,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         for a in (dict(r) for r in db.latest_page_audits(conn, pid)):
             qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
             a["queries"] = qs
-            a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "")
+            # 속도 행(_axis_vitals 의 {url: {기기: 행}})도 넘긴다 — [이미지] 용량·포맷은 감사가
+            # 아니라 같은 PageSpeed 응답에서 온다. 안 넘기면 그 갈래는 화면에도 요청문에도 안 선다.
+            a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "",
+                                              vitals=(vitals or {}).get(a["url"]))
             # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
             # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.
@@ -1949,15 +1952,16 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     comp = _axis_competitors(conn, pid)
     opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
                         ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all, gated=gated)
+    vitals = _axis_vitals(conn, pid)          # 페이지 진단([이미지] 용량·포맷)이 읽는다 — 먼저 센다
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
-                           ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"])
+                           ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"],
+                           vitals=vitals["vitals"])
     # 관찰 중 — 기회 줄에 hold 를 얹고 "새 기회 N건"을 그만큼 뺀다(opps_d 를 덮어쓴다).
     opps_d.update(_axis_hold(conn, pid, at, opps_d, qp))
     page_perf = _axis_page_perf(conn, pid)
     ga4 = _axis_ga4(conn, pid, at)
     bl = _axis_backlinks(conn, pid)
     crawl = _axis_crawl(conn, pid)
-    vitals = _axis_vitals(conn, pid)
     ai_bots = _axis_ai_bots(p, crawl)
 
     runs = q(conn,

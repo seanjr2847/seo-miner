@@ -361,6 +361,10 @@ CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · Page
   -- 나오는 유일한 페이지 안 사실이다. seo_json = {"ok":[id],"fail":[{id,n,items}]},
   -- 이름표는 collect_vitals.SEO_AUDITS. NULL = 이 칸 전에 잰 행(안 봤다).
   seo_score INTEGER, seo_json TEXT,
+  -- 이미지 용량·포맷(같은 호출의 performance 카테고리 — collect_vitals.parse_images).
+  -- img_json = {"save":[{id,kb,n,items}]}, 이름표는 collect_vitals.IMAGE_AUDITS, 판정은
+  -- scoring.image_weight_advice. NULL = 이 칸 전에 잰 행이거나 이미지 진단이 없던 응답.
+  img_json TEXT,
   UNIQUE(project_id, checked_date, url, strategy)
 );
 CREATE INDEX IF NOT EXISTS idx_page_vitals ON page_vitals(project_id, checked_date);
@@ -721,7 +725,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
     pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
-    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT")):
+    # 이미지 용량·포맷(collect_vitals.parse_images)도 같은 자리다 — 옛 행은 NULL(안 봤다).
+    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT"), ("img_json", "TEXT")):
         if col not in pv_cols:
             conn.execute(f"ALTER TABLE page_vitals ADD COLUMN {col} {decl}")
             conn.commit()
@@ -2311,7 +2316,8 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
     배치를 안 지우는 upsert 이고, 없는 키는 NULL 이다(안 잰 것과 0 은 다르다)."""
     cols = ("error", "origin_fallback", "field_verdict",
             "field_lcp_ms", "field_inp_ms", "field_cls", "field_ttfb_ms",
-            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms", "seo_score", "seo_json")
+            "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms", "seo_score", "seo_json",
+            "img_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_vitals(project_id, checked_date, url, strategy, {', '.join(cols)})

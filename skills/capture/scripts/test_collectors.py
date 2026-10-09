@@ -2898,6 +2898,107 @@ def test_html_without_header_charset_is_not_read_as_latin1():
     # 헤더가 charset 을 말하면 그대로
     assert "루터 칼라" in collect_page.html_text(R(page.encode("utf-8"), "text/html; charset=utf-8"))
 
+
+def _img_item(url, wasted, total=None):
+    return {"url": url, "wastedBytes": wasted, "totalBytes": total or wasted * 2,
+            "node": {"snippet": f'<img src="{url}">'}}
+
+
+def test_vitals_reads_image_audits_from_the_same_psi_call():
+    """이미지 용량·포맷 — 같은 PageSpeed 응답의 performance 카테고리에 이미 있다(새 호출 0).
+
+    Lighthouse 12 까지는 감사 넷(uses-optimized-images·modern-image-formats·
+    uses-responsive-images·offscreen-images)이 따로 오고, 13 부터는 앞의 셋이
+    image-delivery-insight 하나로 합쳐졌다(offscreen-images 는 없어졌다). 구글이 PSI 의
+    Lighthouse 를 올리는 날 칸이 조용히 비지 않게 둘 다 받는다 — 둘이 함께 오면 합친 쪽
+    하나만 적는다(같은 그림을 두 번 세면 줄일 양이 부푼다).
+    """
+    import collect_vitals
+    # 이름표·고칠 것의 정본은 한 벌 — 화면·진단이 사본을 안 든다
+    for aid, (label, fix) in collect_vitals.IMAGE_AUDITS.items():
+        assert label and fix and not label.isascii(), (aid, label)
+    assert set(collect_vitals.IMAGE_INSIGHT_COVERS) < set(collect_vitals.IMAGE_AUDITS)
+    assert collect_vitals.IMAGE_INSIGHT in collect_vitals.IMAGE_AUDITS
+
+    legacy = {
+        "uses-optimized-images": {"score": 0.5, "scoreDisplayMode": "metricSavings", "details": {
+            "type": "opportunity", "overallSavingsBytes": 312000, "items": [
+                _img_item("https://x.kr/s.jpg", 12000), _img_item("https://x.kr/big.jpg", 150000),
+                _img_item("https://x.kr/mid.jpg", 90000), _img_item("https://x.kr/m2.jpg", 60000)]}},
+        "modern-image-formats": {"score": 0, "scoreDisplayMode": "metricSavings", "details": {
+            "type": "opportunity", "overallSavingsBytes": 2048, "items": [
+                _img_item("https://x.kr/a.png", 2048)]}},
+        # 해당 없음 — 통과도 실패도 아니다(적지 않는다)
+        "uses-responsive-images": {"score": None, "scoreDisplayMode": "notApplicable"},
+        "offscreen-images": {"score": 1, "scoreDisplayMode": "metricSavings", "details": {
+            "type": "opportunity", "overallSavingsBytes": 0, "items": []}},
+    }
+    got = json.loads(collect_vitals.parse_images({"audits": legacy}))
+    by = {x["id"]: x for x in got["save"]}
+    assert set(by) == {"uses-optimized-images", "modern-image-formats"}, got
+    # 바이트 → KB, 대상은 줄일 양이 큰 순으로 상위 3개
+    assert by["uses-optimized-images"]["kb"] == 305 and by["uses-optimized-images"]["n"] == 4, by
+    assert by["uses-optimized-images"]["items"] == [
+        "https://x.kr/big.jpg", "https://x.kr/mid.jpg", "https://x.kr/m2.jpg"], by
+    assert by["modern-image-formats"]["kb"] == 2, by
+    assert [x["id"] for x in got["save"]][0] == "uses-optimized-images", "줄일 양이 큰 것부터가 아니다"
+
+    # Lighthouse 13 — 합친 진단 하나. 합계 칸이 없으면 대상들의 합이다.
+    insight = {"image-delivery-insight": {"score": 0, "scoreDisplayMode": "metricSavings", "details": {
+        "type": "table", "items": [_img_item("https://x.kr/1.jpg", 100000),
+                                   _img_item("https://x.kr/2.jpg", 50000),
+                                   _img_item("https://x.kr/3.jpg", 30000),
+                                   _img_item("https://x.kr/4.jpg", 20000)]}}}
+    got = json.loads(collect_vitals.parse_images({"audits": insight}))
+    assert [(x["id"], x["kb"], x["n"]) for x in got["save"]] == [
+        ("image-delivery-insight", 195, 4)], got
+    assert got["save"][0]["items"] == ["https://x.kr/1.jpg", "https://x.kr/2.jpg", "https://x.kr/3.jpg"]
+
+    # 둘 다 온 판 — 합친 쪽이 덮는 셋은 버리고, 덮지 않는 것(화면 밖 이미지)은 남긴다
+    both = {**legacy, **insight, "offscreen-images": {"score": 0, "scoreDisplayMode": "metricSavings",
+            "details": {"type": "opportunity", "overallSavingsBytes": 409600,
+                        "items": [_img_item("https://x.kr/below.jpg", 409600)]}}}
+    got = json.loads(collect_vitals.parse_images({"audits": both}))
+    assert {x["id"] for x in got["save"]} == {"image-delivery-insight", "offscreen-images"}, got
+
+    # 감사가 아예 없는 응답(옛 호출·실패)은 None — "줄일 것 없음"과 다르다
+    assert collect_vitals.parse_images({}) is None
+    assert collect_vitals.parse_images({"audits": {"largest-contentful-paint": {}}}) is None
+    # 봤는데 줄일 것 없음
+    assert json.loads(collect_vitals.parse_images({"audits": {
+        "offscreen-images": legacy["offscreen-images"]}})) == {"save": []}
+
+    # parse 가 행에 싣고, 적재가 그 칸을 남긴다
+    row = collect_vitals.parse("https://x.kr/", "mobile", {"lighthouseResult": {"audits": insight}})
+    assert json.loads(row["img_json"])["save"][0]["kb"] == 195, row
+    conn = db.connect()
+    conn.execute("INSERT OR IGNORE INTO projects(name, domain) VALUES('imgv', 'x.kr')")
+    pid = db.get_project(conn, "imgv")["id"]
+    db.write_page_vitals(conn, pid, "2026-10-09", [row])
+    saved = conn.execute("SELECT img_json FROM page_vitals WHERE project_id=?", (pid,)).fetchone()[0]
+    conn.close()
+    assert saved == row["img_json"], saved
+
+
+def test_page_vitals_image_column_migrates_as_null():
+    """옛 Brain 의 page_vitals 에 img_json 칸이 생기고, 옛 행은 NULL(안 봤다)이다."""
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    conn.executescript("""DROP TABLE page_vitals;
+        CREATE TABLE page_vitals (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,
+          checked_date TEXT NOT NULL, url TEXT NOT NULL, strategy TEXT NOT NULL, error TEXT,
+          lab_score INTEGER, UNIQUE(project_id, checked_date, url, strategy));""")
+    conn.execute("INSERT INTO page_vitals(project_id, checked_date, url, strategy, lab_score)"
+                 " VALUES(1, '2026-09-01', 'https://x.kr/', 'mobile', 50)")
+    conn.commit()
+    db._migrate(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
+    assert "img_json" in cols, cols
+    assert conn.execute("SELECT img_json FROM page_vitals").fetchone()[0] is None
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

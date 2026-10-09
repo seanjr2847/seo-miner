@@ -58,6 +58,12 @@ CTR_GAP_MIN_IMP = 100    # 이보다 적은 노출은 CTR 자체가 통계로 �
 # page_advice 의 구조 신호 — 그림 위주(이미지 N개 이상, 이미지당 본문 단어가 이보다 적음),
 # 링크 과다(내보내는 내부 링크 N개 이상, 링크당 본문 단어가 이보다 적음).
 IMAGE_HEAVY_MIN, IMAGE_HEAVY_WORDS = 8, 80
+# [이미지] 용량·포맷 — 진단 하나(압축·포맷·크기 맞춤·화면 밖)가 줄일 수 있다는 양이 이만큼
+# (KB)은 돼야 세운다. Lighthouse 는 몇 KB 짜리도 목록에 올리는데, 그걸 다 진단으로 세우면
+# 이미지를 다시 뽑아 올리는 일이 남는 것 없이 요청문마다 붙는다. 100KB 는 모바일 회선에서
+# 체감되는 크기의 하한으로 잡은 값이다(진단별로 본다 — 같은 그림이 여러 진단에 겹쳐 세지므로
+# 합치지 않는다).
+IMAGE_SAVINGS_MIN_KB = 100
 LINKS_HEAVY_MIN, LINKS_HEAVY_WORDS = 30, 20
 CTR_GAP_FACTOR = 0.5     # 실제 CTR < 기대 × 이 값일 때만 기회로 본다
 
@@ -841,6 +847,42 @@ def vitals_advice(rows) -> list[dict]:
     return out
 
 
+def image_weight_advice(rows) -> list[dict]:
+    """한 페이지의 속도 행들(기기별, page_vitals.img_json) → [이미지] 용량·포맷 진단 한 줄.
+
+    page_advice 의 [이미지] 셋째 갈래다(alt 없음·그림 위주 다음). 같은 태그라 요청문은
+    틀(DELIVER_BY_TAG 의 alt 문안)을 대지 않고 이 진단 문장을 산출물로 부른다.
+    모바일 행을 먼저 본다 — 검색은 모바일로 읽는다. 이름표·고칠 것은 collect_vitals.
+    IMAGE_AUDITS 한 벌이고, 진단별 줄일 양이 IMAGE_SAVINGS_MIN_KB 미만이면 안 세운다.
+    rows 는 {strategy: 행} 이나 행 목록. 못 잰 행·안 본 행(img_json NULL)은 말하지 않는다.
+    """
+    if isinstance(rows, dict):
+        rows = rows.values()
+    by = {r.get("strategy"): r for r in rows or []
+          if isinstance(r, dict) and not r.get("error") and r.get("img_json")}
+    r = by.get("mobile") or by.get("desktop")
+    if not r:
+        return []
+    try:
+        save = (json.loads(r["img_json"]) or {}).get("save") or []
+    except (ValueError, TypeError, AttributeError):
+        return []
+    import collect_vitals          # 이름표·고칠 것의 정본 — 여기 사본을 두지 않는다
+    L = collect_vitals.IMAGE_AUDITS
+    big = [x for x in save if isinstance(x, dict) and x.get("id") in L
+           and isinstance(x.get("kb"), (int, float)) and x["kb"] >= IMAGE_SAVINGS_MIN_KB]
+    if not big:
+        return []
+    dev = "모바일" if r.get("strategy") == "mobile" else "데스크톱"
+    urls = list(dict.fromkeys(u for x in big for u in x.get("items") or [] if u))[:3]
+    now = (f"이미지 용량·포맷 — 줄일 수 있는 양 "
+           + " · ".join(f"{L[x['id']][0]} {round(x['kb']):,}KB" for x in big)
+           + f" ({dev}, 구글 실험실 1회 측정)"
+           + (f" · 큰 것: {', '.join(urls)}" if urls else ""))
+    return [{"tag": "이미지", "level": "warn", "now": now,
+             "fix": " ".join(dict.fromkeys(L[x["id"]][1] for x in big))}]
+
+
 # 목록의 정본은 skill_config 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
 # 변경이 아니라 데이터 변경이라서. 읽기 실패는 수집을 막지 않는다(아래 폴백).
 #
@@ -1205,11 +1247,14 @@ def _name_split_advice(audit: dict, title: str, h1: list) -> list[dict]:
                      "이름으로 두고 다른 하나는 본문에서 설명합니다.")}]
 
 
-def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dict]:
+def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None) -> list[dict]:
     """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
 
     반환: [{"tag": 손댈 자리, "level": "bad"|"warn", "now": 지금 상태, "fix": 할 일}]
     빈 리스트면 "규칙으로 잡히는 문제 없음"이지 "완벽함"이 아니다.
+
+    vitals 는 이 주소의 속도 행({strategy: page_vitals 행}) — [이미지] 용량·포맷 갈래
+    (image_weight_advice)가 읽는다. 감사(정적 HTML)는 이미지 바이트를 모른다.
 
     queries 는 이 URL 이 실제로 걸린 검색어들(노출 많은 순). title·H1 판정은 첫
     검색어의 **내용어**로 하고(글자 그대로가 아니다 — _content_tokens), 비교 의도는
@@ -1243,7 +1288,8 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
     if audit.get("error"):
         add("가져오기", "bad", audit["error"],
             "이 주소를 브라우저로 직접 열어 보세요. 사람에게도 안 열리면 순위·색인 이전의 문제입니다.")
-        return out
+        # 우리 요청을 막는 사이트(gucci)도 PageSpeed 는 구글 인프라가 연다 — 그 이미지 사실은 남는다
+        return out + image_weight_advice(vitals)
 
     top = [q for q in queries if q][:TOP_QUERIES]
     kw = top[0] if top else ""
@@ -1417,6 +1463,8 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "") -> list[dic
         add("이미지", "warn", f"이미지 {images}개에 본문 {words_n}단어 — 그림 위주입니다",
             "그림 속 글자는 검색이 못 읽습니다. 핵심 설명·가격·과정이 그림이 아니라 본문 "
             "텍스트에 있는지 확인하고, 그림에만 있으면 본문으로 옮기세요.")
+    # 셋째 갈래 — 용량·포맷. 감사가 아니라 속도 단계(같은 PageSpeed 응답)에서 온다.
+    out += image_weight_advice(vitals)
 
     internal = audit.get("internal_links")
     if isinstance(internal, int) and internal < 3:

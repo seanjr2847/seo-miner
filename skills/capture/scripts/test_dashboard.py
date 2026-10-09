@@ -1941,6 +1941,28 @@ def test_crawl_inlinks_reach_target_the_crawl_did_not_fetch():
     conn.close()
 
 
+def test_image_weight_from_vitals_reaches_the_page_diagnosis():
+    """이음매: 속도 단계가 남긴 이미지 진단(page_vitals.img_json) → 페이지 진단(page_audits
+    [url].advice) → 화면의 진단표(pageFix)·요청문. 두 표가 다른 단계에서 와서, 감사 쪽만
+    보면 '용량·포맷' 갈래는 영영 안 선다."""
+    import collect_vitals
+    conn, pid = _brain("imgw")
+    url = "https://imgw.example/a"
+    db.write_page_audits(conn, pid, D, [{"url": url, "status": 200, "title": "Image Weight Guide",
+                                         "words": 900, "images": 2, "images_no_alt": 0,
+                                         "internal_links": 5, "js_shell": 0}])
+    kb = scoring.IMAGE_SAVINGS_MIN_KB + 250
+    db.write_page_vitals(conn, pid, D, [{"url": url, "strategy": "mobile", "lab_score": 40,
+                                         "img_json": json.dumps({"save": [
+                                             {"id": "uses-optimized-images", "kb": kb, "n": 2,
+                                              "items": ["https://imgw.example/big.jpg"]}]})}])
+    d = dashboard.gather(conn, db.get_project(conn, "imgw"))
+    conn.close()
+    adv = [x for x in d["page_audits"][url]["advice"] if x["tag"] == "이미지"]
+    assert len(adv) == 1 and "용량·포맷" in adv[0]["now"] and f"{kb}KB" in adv[0]["now"], adv
+    assert collect_vitals.IMAGE_AUDITS["uses-optimized-images"][1] in adv[0]["fix"], adv
+
+
 if __name__ == "__main__":
     import shutil
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

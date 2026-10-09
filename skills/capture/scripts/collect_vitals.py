@@ -102,6 +102,76 @@ def parse_seo(lh: dict) -> tuple:
     return round(score * 100), json.dumps({"ok": ok, "fail": fail}, ensure_ascii=False)
 
 
+# 이미지 용량·포맷 — 같은 응답의 performance 카테고리에 이미 있다(새 호출 0). 속도 진단은
+# "LCP 가 늦다"까지만 말해서, 늦게 뜨는 그 큰 것이 어느 이미지이고 몇 KB 를 덜 수 있는지는
+# 요청문이 짐작해야 했다. {Lighthouse audit id: (이름표, 고칠 것)} — 이름표·고칠 것의 정본은
+# 여기 한 벌이다(진단 scoring.image_weight_advice 가 이것을 읽는다). Lighthouse 13 이
+# 앞의 셋을 image-delivery-insight 하나로 합쳤고 offscreen-images 는 없앴다 — 구글이 PSI 의
+# Lighthouse 를 올리는 날 칸이 조용히 비지 않게 옛 id 와 새 id 를 다 받는다.
+IMAGE_AUDITS = {
+    "image-delivery-insight": ("이미지 전달", "이미지를 압축하고, WebP·AVIF 로 바꾸고, 화면에 "
+                               "그려지는 크기에 맞춰 내보내세요(srcset·sizes)."),
+    "uses-optimized-images":  ("이미지 압축", "같은 화질로 더 작게 다시 저장하세요(JPEG 품질 "
+                               "80 안팎 · 메타데이터 제거)."),
+    "modern-image-formats":   ("차세대 포맷", "JPEG·PNG 를 WebP·AVIF 로 바꾸세요. 옛 브라우저용 "
+                               "원본은 <picture> 안에 남겨 둡니다."),
+    "uses-responsive-images": ("크기 맞춤", "화면에 그려지는 크기보다 큰 원본을 받고 있습니다. "
+                               "srcset·sizes 로 기기 폭에 맞는 크기를 내보내세요."),
+    "offscreen-images":       ("화면 밖 이미지", "첫 화면 밖 이미지는 loading=\"lazy\" 로 미루세요 "
+                               "— 첫 화면의 큰 이미지에는 걸지 않습니다."),
+}
+# 새 판이 합친 진단과 그것이 덮는 옛 진단. 둘이 한 응답에 같이 오면(전환기의 판) 합친 쪽만
+# 적는다 — 같은 그림을 압축·포맷·크기로 세 번 세면 줄일 양이 부푼다.
+IMAGE_INSIGHT = "image-delivery-insight"
+IMAGE_INSIGHT_COVERS = ("uses-optimized-images", "modern-image-formats", "uses-responsive-images")
+_IMG_SKIP_MODES = ("notApplicable", "manual", "error")
+
+
+def _detail_items(details: dict) -> list:
+    """표(table·opportunity)의 줄. 목록(list)으로 싸여 오면 안의 표들을 편다."""
+    if (details or {}).get("type") == "list":
+        return [it for sub in details.get("items") or [] for it in _detail_items(sub)]
+    return [it for it in (details or {}).get("items") or [] if isinstance(it, dict)]
+
+
+def parse_images(lh: dict) -> str | None:
+    """Lighthouse 결과 → img_json | None.
+
+    {"save": [{id, kb, n, items}]} — kb 는 줄일 수 있는 양(KB), n 은 대상 이미지 수, items 는
+    줄일 양이 큰 순으로 주소 상위 3개. 줄일 양이 큰 진단부터. 판정(얼마부터 말할지)은 여기서
+    안 한다 — scoring.IMAGE_SAVINGS_MIN_KB. 이미지 진단이 하나도 없는 응답은 None(안 봤다)이고,
+    봤는데 줄일 것이 없으면 {"save": []} 다. 둘을 뭉치면 "안 쟀다"가 "가볍다"로 읽힌다.
+    """
+    audits = (lh or {}).get("audits") or {}
+    seen = [aid for aid in IMAGE_AUDITS if aid in audits]
+    if not seen:
+        return None
+    save = []
+    for aid in seen:
+        a = audits.get(aid) or {}
+        if a.get("scoreDisplayMode") in _IMG_SKIP_MODES:
+            continue                     # 해당 없음 — 줄일 것도 없다
+        details = a.get("details") or {}
+        items = sorted((it for it in _detail_items(details)
+                        if isinstance(it.get("wastedBytes"), (int, float)) and it["wastedBytes"] > 0),
+                       key=lambda it: -it["wastedBytes"])
+        total = details.get("overallSavingsBytes")
+        if not isinstance(total, (int, float)):
+            dbg = details.get("debugData") or a.get("debugData") or {}
+            total = dbg.get("wastedBytes")
+        if not isinstance(total, (int, float)):
+            total = sum(it["wastedBytes"] for it in items)
+        kb = round(total / 1024)
+        if kb < 1:
+            continue
+        save.append({"id": aid, "kb": kb, "n": len(items),
+                     "items": [str(it.get("url") or "")[:160] for it in items[:3] if it.get("url")]})
+    if any(x["id"] == IMAGE_INSIGHT for x in save):
+        save = [x for x in save if x["id"] not in IMAGE_INSIGHT_COVERS]
+    save.sort(key=lambda x: -x["kb"])
+    return json.dumps({"save": save}, ensure_ascii=False)
+
+
 QUOTA_STATUS = 429
 QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
                 "(PAGESPEED_API_KEY 를 넣으면 한도가 커집니다)")
@@ -186,6 +256,7 @@ def parse(url: str, strategy: str, data: dict) -> dict:
     v = (audits.get("cumulative-layout-shift") or {}).get("numericValue")
     row["lab_cls"] = round(v, 3) if isinstance(v, (int, float)) else None
     row["seo_score"], row["seo_json"] = parse_seo(lh)
+    row["img_json"] = parse_images(lh)
     return row
 
 
@@ -395,6 +466,8 @@ def _selfcheck() -> None:
         ("image-alt", 1, ['<img src="x.jpg">']), ("link-text", 2, ["더보기", "여기"])], got["fail"]
     r = parse("https://g.kr/", "mobile", {"lighthouseResult": lh})
     assert r["seo_score"] == 92 and r["seo_json"] == sj, "parse 가 SEO 점검을 행에 안 싣는다"
+    # 이미지 진단이 없는 응답은 None(안 봤다) — 갈래별 검사는 test_collectors 가 한다
+    assert r["img_json"] is None, r["img_json"]
     # 기기 설정은 문자열이다 — int() 로 바꾸려다 속도 단계가 통째로 죽었다(호스팅 noti 런)
     import argparse
     ap = _parser()

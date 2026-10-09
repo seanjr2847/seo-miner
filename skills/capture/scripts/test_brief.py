@@ -1585,6 +1585,47 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "를 담은 것이 하나도 없습니다" not in brief.build(o2, ctx2, "ko-KR")["body"]
 
 
+def test_image_weight_diag_calls_its_own_sentence_not_the_alt_template():
+    """[이미지] 용량·포맷 — alt 도 그림 위주도 아닌 페이지에 이것만 섰을 때.
+
+    [이미지] 는 한 태그에 갈래가 셋이라(alt 없음·그림 위주·용량·포맷) 틀(DELIVER_BY_TAG
+    의 'alt 문안')을 대면 용량 진단에 alt 문안을 시킨다. 고치기 요청문은 진단 문장을
+    산출물로 부르고(FIX_TAG_DELIVER 밖), 어느 종류의 요청문도 alt 가 멀쩡한 페이지에
+    alt 문안을 시키지 않는다.
+    """
+    import json as _json
+    floor = scoring.IMAGE_SAVINGS_MIN_KB
+    vit = {"mobile": {"strategy": "mobile", "error": None, "lab_score": 41, "img_json": _json.dumps(
+        {"save": [{"id": "modern-image-formats", "kb": floor + 500, "n": 4,
+                   "items": ["https://me.example/img/hero.png"]}]})}}
+    a = _audit(images=3, images_no_alt=0, internal_links=6, words=900)
+    a["advice"] = scoring.page_advice(a, ["검색어"], domain="me.example", vitals=vit)
+    assert [x["tag"] for x in a["advice"]].count("이미지") == 1, a["advice"]
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: a},
+           "vitals": {URL: vit}, "vitals_date": "2026-10-01",
+           "striking": [{"query": "검색어", "pos": 6.1, "imp": 300, "clk": 2, "gap": 0.0,
+                         "band": "page1"}], "gsc_date": "2026-10-01", "gsc_period": 28}
+    o = {**_opp("striking_distance", "검색어", band="page1"), "band": "page1"}
+    b = brief.build(o, ctx, "ko-KR")
+    assert b["shape"] == "fix_page", b["shape"]
+    diag = _sec(b["body"], "## 진단")
+    assert "[이미지] 지금: 이미지 용량·포맷" in diag and "hero.png" in diag, diag
+    want = _sec(b["body"], "## 만들어 줄 것")
+    assert "진단 [이미지] 의 고칠 값" in want, want
+    assert brief.DELIVER_BY_TAG["이미지"] not in want, want
+    # 어느 종류로 열어도 alt 가 멀쩡한 페이지에 alt 문안을 안 시킨다(폴백 _deliver_from 포함)
+    for k in scoring.ALL_KINDS:
+        body = brief.build({**_opp(k, "검색어"), "band": "page1"}, ctx, "ko-KR")["body"]
+        if "## 만들어 줄 것" in body:
+            w = _sec(body, "## 만들어 줄 것")
+            assert "alt" not in w or "용량" in w or "진단 [이미지]" in w, (k, w)
+    # 틀을 대는 자리(기회로 안 올라온 행의 화면 폴백 askBlock 이 by_tag 로 받는다·_deliver_from)
+    # 에서도 [이미지] 틀이 alt 만 말하면 용량 진단에 alt 문안을 시킨다 — 갈래 셋을 다 말한다.
+    t = brief.DELIVER_BY_TAG["이미지"]
+    assert "alt" in t and "본문" in t and "용량" in t, t
+    assert t in brief._deliver_from(a), brief._deliver_from(a)
+
+
 def test_striking_above_top3_says_the_job_is_clicks():
     ctx = _ptt_ctx()
     ptt_korea = ctx["opps"][2]
