@@ -212,7 +212,8 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
     nested: 다른 노드의 속성 값으로 든 노드(@graph·최상위 목록 안은 아니다) — 그 안의 리뷰·평점은
     대상(itemReviewed)이 바깥 노드라 그 칸을 빠졌다고 하지 않는다.
     Person 은 저자만 본다 — 글(scoring.writes_page)의 author 로 직접 들었거나 그 @id 가 가리키는
-    노드. 상품 리뷰의 author 는 고객이다. 저자마다 따로 본다(each, 문서 순서).
+    노드. 상품 리뷰의 author 는 고객이다. 사람마다 따로 본다(each — _authors 가 같은 사람을 접고
+    글의 author 순서로 늘어놓는다).
     """
     # 1) 훑기 — 객체마다 (객체, nested). 같은 노드를 가리키는 열쇠는 @id, 없으면 객체 자체.
     def key(d: dict):
@@ -245,17 +246,18 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
         for p, v in d.items():
             if p not in ("@id", "@type", "@graph", "@context") and not _filled(m["props"].get(p)):
                 m["props"][p] = v
-    # 3) 저자 — 글의 author 가 가리키는 노드의 열쇠
-    authors = {key(x) for m in merged.values() if scoring.writes_page(m["types"])
-               for x in (m["props"].get("author") if isinstance(m["props"].get("author"), list)
-                         else [m["props"].get("author")]) if isinstance(x, dict)}
-    for k, m in merged.items():
+    def add_same_as(rule: str, node: dict) -> None:
+        sa = node.get("sameAs")
+        for u in ([sa] if isinstance(sa, str) else sa if isinstance(sa, list) else []):
+            u = u.strip() if isinstance(u, str) else ""
+            if u.startswith("http") and [rule, u] not in same_as:
+                same_as.append([rule, u])
+
+    for m in merged.values():
         hit = scoring.schema_rule_of(m["types"])
-        if not hit:
+        if not hit or hit[0] == "Person":           # 저자는 아래에서 사람 단위로
             continue
         rule, written = hit
-        if rule == "Person" and k not in authors:
-            continue
         node, nested = m["props"], m["nested"]
         need = [p for p in scoring.schema_props(rule, "required")
                 if not (nested and p in scoring.SCHEMA_NESTED_OPTIONAL) and not _has_prop(node, p)]
@@ -265,20 +267,79 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
         # 필수는 노드 하나라도 빠지면 그 노드가 결과에 못 나간다(합집합). 권장은 엔티티를 보는
         # 자리라 같은 유형의 어느 노드에도 없는 것만(교집합) — 글의 publisher 처럼 이름만 단
         # Organization 이 함께 있어도 온전한 주인 노드가 있으면 빠졌다고 하지 않는다.
-        # 저자는 예외다 — 사람마다 다른 엔티티라 저자마다 남기고(each), want 는 합집합이다.
         g["need"] += [p for p in need if p not in g["need"]]
-        if rule == "Person":
-            g.setdefault("each", []).append(want)
-            g["want"] = [p for p in scoring.schema_props(rule, "recommended")
-                         if any(p in w for w in g["each"])]
-        else:
-            g["want"] = want if g["want"] is None else [p for p in g["want"] if p in want]
-        if rule in scoring.OWNER_TYPES or rule == "Person":
-            sa = node.get("sameAs")
-            for u in ([sa] if isinstance(sa, str) else sa if isinstance(sa, list) else []):
-                u = u.strip() if isinstance(u, str) else ""
-                if u.startswith("http") and [rule, u] not in same_as:
-                    same_as.append([rule, u])
+        g["want"] = want if g["want"] is None else [p for p in g["want"] if p in want]
+        if rule in scoring.OWNER_TYPES:
+            add_same_as(rule, node)
+    # 3) 저자 — 사람마다 따로 본다(each). 사람마다 다른 엔티티라 한데 모으면(교집합) 한 명이라도
+    # url 이 있는 순간 다른 저자의 빈칸이 사라진다. want 는 합집합이다.
+    for written, node in _authors(merged, key):
+        want = [p for p in scoring.schema_props("Person", "recommended") if not _has_prop(node, p)]
+        g = gaps.setdefault("Person", {"type": "Person", "as": written, "n": 0, "need": [],
+                                       "want": None, "each": []})
+        g["n"] += 1
+        g["each"].append(want)
+        g["want"] = [p for p in scoring.schema_props("Person", "recommended")
+                     if any(p in w for w in g["each"])]
+        add_same_as("Person", node)
+
+
+def _authors(merged: dict, key) -> list[tuple[str, dict]]:
+    """글(scoring.writes_page)의 author 가 가리키는 Person → [(쓴 @type, 합친 속성)], 사람 하나에 한 줄.
+
+    순서는 글 노드의 author 에 적힌 순서다(글이 여럿이면 훑은 순서의 글마다). 이름을 안 남기므로
+    순번이 사람을 가리키는 유일한 수단이라, 읽는 사람이 마크업에서 보는 순서여야 한다 — 예전엔
+    @graph 에 놓인 순서로 세서 [A, B] 중 B 가 빠졌는데 '1번째'라고 했다.
+    같은 사람은 접는다 — 이름(대소문자·앞뒤 빈칸 무시)·url·sameAs 중 하나라도 겹치면 같은 사람이다.
+    노드 단위로 셌더니 글 목록(CollectionPage 안 BlogPosting 8개)의 같은 inline 저자 'Kim' 이
+    '저자 8명'이 되고 같은 줄이 여덟 번 섰다. 접은 사람의 속성은 합친다(한 자리에 url 이 있으면
+    이어진 사람이다). 가를 표지(이름·url·sameAs)가 하나도 없는 저자끼리는 가를 수 없으니 한 사람으로
+    친다. 이름은 접는 데만 쓰고 어디에도 남기지 않는다(원문 미저장)."""
+    order: list = []
+    for m in merged.values():
+        if not scoring.writes_page(m["types"]):
+            continue
+        au = m["props"].get("author")
+        for x in (au if isinstance(au, list) else [au]):
+            k = key(x) if isinstance(x, dict) else None
+            if k in merged and k not in order and \
+                    (scoring.schema_rule_of(merged[k]["types"]) or ("",))[0] == "Person":
+                order.append(k)
+
+    def marks(node: dict) -> set:
+        out = set()
+        n = node.get("name")
+        if isinstance(n, str) and n.strip():
+            out.add(("name", " ".join(n.split()).casefold()))
+        for p in ("url", "sameAs"):
+            v = node.get(p)
+            for u in ([v] if isinstance(v, str) else v if isinstance(v, list) else []):
+                if isinstance(u, str) and u.strip():
+                    out.add(("url", u.strip().rstrip("/")))
+        return out or {("none",)}
+
+    people: list[dict] = []                      # {"marks", "as", "props"} — author 순서
+    for k in order:
+        m = merged[k]
+        mk = marks(m["props"])
+        same = [p for p in people if p["marks"] & mk]
+        if not same:
+            people.append({"marks": mk, "as": scoring.schema_rule_of(m["types"])[1],
+                           "props": dict(m["props"])})
+            continue
+        # 이 노드가 앞의 둘을 잇기도 한다(이름은 A 와, url 은 B 와) — 앞의 사람에 다 합친다
+        head = same[0]
+        for p in same[1:]:
+            head["marks"] |= p["marks"]
+            for prop, v in p["props"].items():
+                if not _filled(head["props"].get(prop)):
+                    head["props"][prop] = v
+            people.remove(p)
+        head["marks"] |= mk
+        for prop, v in m["props"].items():
+            if not _filled(head["props"].get(prop)):
+                head["props"][prop] = v
+    return [(p["as"], p["props"]) for p in people]
 
 
 def _schema_gaps_out(gaps: dict, broken: int) -> list[dict]:
@@ -286,7 +347,7 @@ def _schema_gaps_out(gaps: dict, broken: int) -> list[dict]:
     깨진 블록 수는 {"broken": n} 한 줄로 — 구글도 그 블록을 버리니 그 자체가 진단이다."""
     out = [{**g, "want": g["want"] or []} for r in scoring.SCHEMA_RULES
            if (g := gaps.get(r)) and (g["need"] or g["want"])]
-    # (저자별 빈칸 each 는 저자 수 n 과 짝이다 — 빠진 것 없는 저자도 [] 로 자리를 지킨다)
+    # (저자별 빈칸 each 는 사람 수 n 과 짝이다 — 빠진 것 없는 저자도 [] 로 자리를 지킨다)
     return out + ([{"broken": broken}] if broken else [])
 
 
@@ -577,20 +638,29 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     # 페이지에 준다 — 매일 같은 404 를 다시 여느라 상한 안의 자리를 잃었다(aitierlist 34곳 중
     # 5곳). 그 주소의 진단은 최신 행(404)이 그대로 갖고 있다(scoring.page_advice 가 말한다).
     gone = set(recent_gone(conn, project_id))
-    seen, uniq = set(gone), []
+    row = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
+    domain = (row[0] if row else "") or ""
+    # 홈은 한 꼴만 연다 — 후보에서 먼저 나온 꼴(기회가 걸린 주소, 그다음 최신 서치콘솔 노출 순)이다.
+    # 그 꼴은 요청문·화면이 그 글자 그대로 찾는 주소이기도 하다. 예전엔 후보에 www 홈과 비www 홈이
+    # 둘 다 있으면 둘 다 열어(theotherskin 은 9/02부터 매일 두 행) 홈 엔티티 진단이 두 번 섰다.
+    seen, uniq, took_home = set(gone), [], False
     for u in out:
         u = clean_url(u)
-        if u and u not in seen:
+        if not u:
+            continue
+        is_home = bool(domain) and scoring.is_home(u, domain)
+        if is_home and took_home:
+            continue
+        if u not in seen:
             seen.add(u)
             uniq.append(u)
+            took_home = took_home or is_home
     uniq = uniq[:limit]
     # 홈 — 사이트 주인 엔티티(scoring.entity_advice)를 보는 자리. 검색어가 전부 글로 가는 사이트는
     # 노출 상위에 홈이 없어 한 번도 안 열렸다. 상한과 상관없이 상한 밖 한 자리로 넣는다(기회
     # 페이지의 자리를 뺏지 않는다). 예전엔 상한 안 마지막 자리를 받되, 후보에 있다가 상한에 잘린
     # 홈은 '이미 본 후보'로 쳐서 빠졌다 — 기회가 많은 사이트일수록 홈이 영영 안 열렸다.
     # 빼는 것은 최근에 본 홈과 방금 없는 페이지로 확인한 홈뿐이다.
-    row = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
-    domain = (row[0] if row else "") or ""
     home = home_of(conn, project_id, domain, out + list(last))
     seen_at = max((str(d)[:10] for u, d in last.items() if d and scoring.is_home(u, domain)),
                   default="")
@@ -1304,6 +1374,28 @@ def _schema_check() -> None:
                    '{"@type":"Person","name":"B"}]}')
     assert many["Person"]["n"] == 2 and many["Person"]["each"] == [[], ["url|sameAs"]], many
     assert many["Person"]["want"] == ["url|sameAs"], many
+    # 저자는 사람 단위로 센다 — 노드 단위로 셌더니 글 목록(CollectionPage > ItemList 안 BlogPosting
+    # 8개)에 같은 'Kim' 을 inline 으로 적은 페이지가 '저자 8명'이 되고 같은 줄이 여덟 번 섰다.
+    # 이름·url·sameAs 가 겹치면 같은 사람이다(이름은 접는 데만 쓰고 남기지 않는다).
+    posts = [{"@type": "ListItem", "position": i + 1,
+              "item": {"@type": "BlogPosting", "headline": f"h{i}",
+                       "author": {"@type": "Person", "name": "Kim"}}} for i in range(8)]
+    listing = gaps_of(json.dumps({"@type": "CollectionPage", "mainEntity": {
+        "@type": "ItemList", "itemListElement": posts}}))
+    assert listing["Person"]["n"] == 1 and listing["Person"]["each"] == [["url|sameAs"]], listing
+    # 글과 쪽에 같은 사람을 두 번 적은 테마 — 한 명이고, 한 자리에 url 이 있으면 그 사람은 이어졌다
+    twice = gaps_of('[{"@type":"WebPage","author":{"@type":"Person","name":"Kim"}},'
+                    '{"@type":"Article","author":{"@type":"Person","name":" kim ","url":"https://c.kr/kim"}}]')
+    assert "Person" not in twice, twice
+    by_url = gaps_of('{"@type":"Article","author":[{"@type":"Person","name":"김","url":"https://c.kr/kim/"},'
+                     '{"@type":"Person","name":"Kim","url":"https://c.kr/kim"}]}')
+    assert "Person" not in by_url, by_url
+    # 순번은 글의 author 순서다(@graph·훑은 순서가 아니다) — 이름을 안 남기니 사람을 가리키는 수단이
+    # 순번뿐이다. @graph 에 B(url 없음)를 먼저 두고 author 는 [A, B] 인 글에서 빠진 사람은 2번째다.
+    order = gaps_of('{"@graph":[{"@type":"Person","@id":"#b","name":"B"},'
+                    '{"@type":"BlogPosting","author":[{"@id":"#a"},{"@id":"#b"}]},'
+                    '{"@type":"Person","@id":"#a","name":"A","url":"https://c.kr/a"}]}')
+    assert order["Person"]["n"] == 2 and order["Person"]["each"] == [[], ["url|sameAs"]], order
     # @graph 에 따로 두고 @id 로 잇는 평점은 그 바깥 노드(Product) 안에 든 것이다 — 구글은 @id 를
     # 합쳐 읽는다. 같은 @id 를 두 자리에 나눠 적은 노드도 한 노드로 합친다.
     ref = gaps_of('{"@context":"https://schema.org","@graph":[{"@type":"Product","@id":"#p",'
@@ -1347,6 +1439,23 @@ def _home_check(conn) -> None:
     urls = target_urls(conn, 1, 40)
     homes = [u for u in urls if scoring.is_home(u, "c.kr")]
     assert homes == ["https://www.c.kr/"], f"홈을 두 꼴로 연다: {homes}"
+    # 후보(노출 상위)에 www 홈과 비www 홈이 둘 다 있어도 한 꼴만 연다 — 서치콘솔이 더 많이 보인 꼴.
+    # 예전엔 덧붙이는 홈만 한 번이었고 후보에 든 두 꼴은 둘 다 열었다(theotherskin 은 9/02부터 매일
+    # 두 행이 생겨 홈 엔티티 진단이 두 번 섰다).
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(1,'2026-08-20',28,'브랜드2',"
+                 "'https://c.kr/',0,5,0.0,3.0)")
+    conn.commit()
+    homes = [u for u in target_urls(conn, 1, 40) if scoring.is_home(u, "c.kr")]
+    assert homes == ["https://c.kr/"], f"후보에 든 두 꼴을 다 연다: {homes}"
+    # 기회가 콕 집은 홈 주소가 있으면 그 꼴 하나 — 요청문이 그 글자로 감사 행을 찾는다
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,status) "
+                 "VALUES(1,'crawl_issue','https://www.c.kr/',99,'new')")
+    conn.commit()
+    homes = [u for u in target_urls(conn, 1, 40) if scoring.is_home(u, "c.kr")]
+    assert homes == ["https://www.c.kr/"], f"기회의 홈과 노출 상위의 홈을 둘 다 연다: {homes}"
+    conn.execute("DELETE FROM opportunities WHERE target='https://www.c.kr/'")
+    conn.execute("DELETE FROM gsc_snapshots WHERE page='https://c.kr/'")
     conn.execute("DELETE FROM gsc_snapshots WHERE page='https://www.c.kr/'")
     # 어제 www 꼴로 본 홈이면(크롤 주소) 도메인 꼴로 또 열지 않는다
     conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status) "

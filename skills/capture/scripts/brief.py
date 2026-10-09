@@ -1233,9 +1233,15 @@ def _nap_lines(ctx: dict) -> list[str]:
     문장만 만든다."""
     dom = str((ctx.get("project") or {}).get("domain") or "")
     audits = ctx.get("page_audits") or {}
-    # 홈 행이 둘이면(옛 www·비www 행) 가장 최근에 본 것
+    # 홈 행이 둘이면(www·비www 행) 가장 최근에 본 것. 같은 날짜면 마크업을 읽은 행 → 주인을 찾은
+    # 행 → 주소 글자 순으로 하나를 정한다 — 예전엔 dict 순서로 아무거나 골라 같은 사이트의 요청문이
+    # 뽑을 때마다 다른 홈을 말할 수 있었다(theotherskin 은 9/02부터 매일 두 꼴을 다 봤다).
+    def rank(a: dict) -> tuple:
+        s = scoring.nap_state(a)
+        return (str(a.get("checked_date") or ""), s is not None, bool(s and s["rule"]),
+                str(a.get("url") or ""))
     homes = [a for u, a in audits.items() if scoring.is_home(str(u), dom)]
-    home = max(homes, key=lambda a: str(a.get("checked_date") or ""), default=None)
+    home = max(homes, key=rank, default=None)
     st = scoring.nap_state(home)
     nap = "·".join(scoring.NAP_PROPS)            # 속성 이름의 정본은 scoring — 사본을 안 적는다
     if home is None:
@@ -1243,8 +1249,9 @@ def _nap_lines(ctx: dict) -> list[str]:
     elif st is None:
         known = "- 홈 점검이 마크업을 읽지 못했습니다(막혔거나 오래된 점검) — 마크업 칸은 직접 읽습니다."
     elif not st["rule"] and st.get("unknown"):
-        known = (f"- 홈 마크업의 유형({', '.join(st['unknown'][:3])})은 이 도구가 판정하지 않는 "
-                 "유형입니다 — 사이트 주인을 밝히는 것일 수 있으니 마크업 칸은 홈을 열어 직접 읽습니다.")
+        known = (f"- 홈 마크업의 유형({', '.join(st['unknown'][:3])})은 schema.org 이름으로 읽히지 "
+                 "않습니다(오타·확장 유형) — 사이트 주인을 밝히려던 것일 수 있으니 마크업 칸은 홈을 "
+                 "열어 직접 읽습니다.")
     elif not st["rule"]:
         known = ("- 홈 마크업에 사이트 주인(Organization·LocalBusiness)이 없습니다 — 마크업 줄은 "
                  "'(없음)'으로 두고, 지역 업체면 LocalBusiness 를 넣어야 한다고 한 줄 적습니다.")

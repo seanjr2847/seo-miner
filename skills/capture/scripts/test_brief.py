@@ -3786,6 +3786,68 @@ def test_each_author_is_judged_on_its_own():
         and "3명 중 3번째" in ent[1] and "name" not in ent[1], ent
 
 
+def test_owner_absent_is_said_when_the_home_types_are_known_non_owners():
+    """'모름'(주인 없음을 말하지 않는 유형)이 너무 넓어 거짓 경보가 거짓 침묵으로 바뀌었다 — 손으로
+    고른 '주인 아닌 줄 아는 유형' 목록 밖이면 다 모름으로 쳐서, 앱 홈(WebSite + SoftwareApplication,
+    Organization 없음)·서비스 홈·행사 홈에서 '주인 없음'이 소리 없이 사라졌다. 실데이터 page_audits
+    에서 그 목록 밖으로 걸린 유형이 SoftwareApplication 316행, Place 246행이었다(noti 홈에
+    SoftwareApplication, theotherskin 홈에 Place). schema.org 이름이면 그 계층으로 주인인지 아닌지
+    안다 — 모름은 schema.org 이름으로 못 읽는 것(오타·확장 유형·남의 어휘)뿐이다."""
+    import json
+
+    import schema_vocab
+    absent = ["홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다"]
+    for other in ("SoftwareApplication", "Service", "Event", "Place", "MedicalEntity",
+                  "MedicalAudience", "MobileApplication", "Product"):
+        a = _audit(url=HOME_URL, schema_json=json.dumps(["WebSite", other]), schema_gaps_json="[]")
+        assert [x["now"] for x in a["advice"] if x["tag"] == "엔티티"] == absent, (other, a["advice"])
+        assert scoring.nap_state(a)["missing"] == list(scoring.NAP_PROPS), other
+    # 접두사·URL 꼴로 적은 이름은 읽어서 판정한다 — 'schema:Organization' 은 Organization 이다
+    for t in ("schema:Organization", "https://schema.org/Organization", "http://schema.org/Organization",
+              "https://www.schema.org/Organization"):
+        assert scoring.schema_rule_of(t) == ("Organization", "Organization"), t
+        a = _audit(url=HOME_URL, schema_json=json.dumps(["WebSite", t]), schema_gaps_json="[]")
+        assert not [x for x in a["advice"] if x["tag"] == "엔티티"], (t, a["advice"])
+        assert not scoring.schema_unknown(a), t
+    assert scoring.schema_rule_of("schema:Dentist") == ("LocalBusiness", "Dentist")
+    assert scoring.writes_page("https://schema.org/BlogPosting")
+    # 모름 — schema.org 이름이 아니다. 주인일 수 있으니 '없음'이라고 하지 않는다
+    for t in ("Organisation", "VeterinaryClinicX", "https://example.org/vocab/Clinic", "ext:Clinic"):
+        a = _audit(url=HOME_URL, schema_json=json.dumps(["WebSite", t]), schema_gaps_json="[]")
+        assert not [x for x in a["advice"] if x["tag"] == "엔티티"], (t, a["advice"])
+        assert scoring.schema_unknown(a) == [t], t
+    # 주인 계층은 schema.org 어휘에서 짓는다 — 손으로 옮긴 표에는 OnlineMarketplace·Ophthalmology 가 없었다
+    assert scoring.schema_rule_of("OnlineMarketplace") == ("Organization", "OnlineMarketplace")
+    assert scoring.schema_rule_of("Ophthalmology") == ("LocalBusiness", "Ophthalmology")
+    # 규칙 표가 쓰는 이름은 전부 schema.org 이름이다(AskPublicUseNewsArticle 처럼 틀린 이름은 아무것도
+    # 안 거른다 — 조용히 빠진다)
+    names = {x for subs in scoring.SCHEMA_SUBTYPES.values() for x in subs} \
+        | set(scoring.SCHEMA_RULES) | set(scoring.WEBPAGE_TYPES)
+    assert names <= set(schema_vocab.PARENTS), sorted(names - set(schema_vocab.PARENTS))
+
+
+def test_nap_picks_the_same_home_row_whatever_the_order():
+    """www·비www 홈 두 행이 같은 날짜면 dict 순서로 아무거나 골랐다 — theotherskin 은 9/02부터 매일
+    두 꼴을 다 봤다. 같은 날짜면 마크업을 읽은 행 → 주인을 찾은 행 → 주소 글자 순으로 하나를 정한다."""
+    www = _audit(url="https://www.me.example/", schema_json='["Dentist"]', schema_gaps_json=_gaps(
+        {"type": "LocalBusiness", "as": "Dentist", "n": 1, "need": [], "want": ["telephone"]}))
+    bare = _audit(url=HOME_URL, schema_json='["Organization"]', schema_gaps_json="[]")
+    read = _audit(url=HOME_URL, schema_json='["Dentist"]', schema_gaps_json=_gaps(
+        {"type": "LocalBusiness", "as": "Dentist", "n": 1, "need": [], "want": ["telephone"]}))
+    unread = _audit(url="https://www.me.example/", schema_json=None, schema_gaps_json=None)
+
+    def nap(*rows):
+        ctx = {"query_pages": {"검색어": _pages(URL)},
+               "page_audits": {URL: _audit(), **{r["url"]: r for r in rows}},
+               "project": {"domain": "me.example"},
+               "rank_by_kw": {"검색어": {"features": ["local_pack"]}}}
+        body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+        return body.split(brief.NAP_HEAD)[1].split("\n## ")[0]
+    assert nap(www, bare) == nap(bare, www), (nap(www, bare), nap(bare, www))
+    # 못 읽은 행은 읽은 행에 진다(같은 날짜면)
+    assert nap(read, unread) == nap(unread, read) and "Dentist" in nap(unread, read), nap(unread, read)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
