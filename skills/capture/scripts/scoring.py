@@ -1102,6 +1102,216 @@ def _has_head_fields(audit: dict) -> bool:
     return audit.get("schema_json") is not None
 
 
+# ── 구조화 데이터 — 유형별 필수·권장 속성 (정본) ──────────────────────────────
+# 수집기(collect_page)가 ld+json 을 읽을 때 이 표로 바로 검사해 '빠진 것'만 남기고
+# (schema_gaps_json), 진단(page_advice)이 그것을 말한다. 원문 JSON 은 안 남긴다.
+# 기준은 구글 리치 결과 문서(developers.google.com/search/docs/appearance/structured-data)의
+# Required / Recommended 다 — 권장 목록은 그중 판정에 쓰는 것만 추렸다. "a|b" 는 둘 중
+# 하나면 된다(Product 는 offers·review·aggregateRating 중 하나가 있어야 결과에 나간다).
+# base: 그 유형의 속성을 물려받는다(LocalBusiness 는 Organization 이다 — logo·sameAs 도 본다).
+# Organization·Person 은 구글 기준 필수가 없다 — 이 둘은 엔티티(누구의 사이트·누가 쓴 글)로만
+# 본다(entity_advice). Person 은 **저자**만 검사한다(수집기가 author 로 이어진 것만 고른다):
+# 글이 소개하는 인물 프로필에 url 이 없다고 지적하면 고칠 일이 아닌 것을 시킨다.
+SCHEMA_RULES = {
+    "Organization": {"required": (), "recommended": ("name", "url", "logo", "sameAs")},
+    "LocalBusiness": {"base": "Organization", "required": ("name", "address"),
+                      "recommended": ("telephone", "geo", "openingHoursSpecification")},
+    "Article": {"required": (),
+                "recommended": ("headline", "image", "datePublished", "dateModified", "author")},
+    "Product": {"required": ("name", "offers|review|aggregateRating"),
+                "recommended": ("image", "description", "brand", "sku")},
+    "BreadcrumbList": {"required": ("itemListElement",), "recommended": ()},
+    "FAQPage": {"required": ("mainEntity",), "recommended": ()},
+    "Review": {"required": ("author", "reviewRating", "itemReviewed"),
+               "recommended": ("datePublished",)},
+    "AggregateRating": {"required": ("ratingValue", "ratingCount|reviewCount", "itemReviewed"),
+                        "recommended": ("bestRating", "worstRating")},
+    "Event": {"required": ("name", "startDate", "location"),
+              "recommended": ("description", "endDate", "eventStatus", "image", "offers",
+                              "organizer", "performer")},
+    "VideoObject": {"required": ("name", "thumbnailUrl", "uploadDate"),
+                    "recommended": ("description", "contentUrl|embedUrl", "duration")},
+    "Person": {"required": (), "recommended": ("name", "url|sameAs")},
+}
+# 다른 노드의 속성 값으로 들어 있으면 대상이 그 바깥 노드라 필요 없는 칸(Product.review 안의 Review).
+SCHEMA_NESTED_OPTIONAL = frozenset({"itemReviewed"})
+# 하위 유형 → 규칙. schema.org 의 하위 유형은 수백 개라 다 적지 않는다 — 실제 사이트에서
+# 흔히 쓰는 것만. 여기 없는 유형은 검사하지 않는다(모르는 것을 지어내지 않는다).
+SCHEMA_SUBTYPES = {
+    "Article": ("NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
+                "AnalysisNewsArticle", "OpinionNewsArticle"),
+    "Organization": ("Corporation", "NGO", "OnlineBusiness", "OnlineStore",
+                     "EducationalOrganization", "MedicalOrganization", "SportsOrganization",
+                     "NewsMediaOrganization", "GovernmentOrganization"),
+    "LocalBusiness": ("MedicalClinic", "MedicalBusiness", "Dentist", "Physician", "Hospital",
+                      "Optician", "Pharmacy", "HealthAndBeautyBusiness", "BeautySalon", "DaySpa",
+                      "HairSalon", "NailSalon", "TattooParlor", "HealthClub", "ExerciseGym",
+                      "SportsActivityLocation", "Restaurant", "FoodEstablishment",
+                      "CafeOrCoffeeShop", "Bakery", "BarOrPub", "Store", "ClothingStore",
+                      "ProfessionalService", "LegalService", "Attorney", "Notary",
+                      "AccountingService", "FinancialService", "RealEstateAgent",
+                      "AutomotiveBusiness", "AutoRepair", "HomeAndConstructionBusiness",
+                      "LodgingBusiness", "Hotel", "ChildCare", "TravelAgency",
+                      "EntertainmentBusiness", "EmploymentAgency", "EmergencyService"),
+    "Event": ("MusicEvent", "BusinessEvent", "EducationEvent", "SportsEvent", "Festival",
+              "ExhibitionEvent", "SocialEvent", "TheaterEvent", "ComedyEvent", "FoodEvent"),
+    "Review": ("CriticReview", "UserReview", "EmployerReview"),
+}
+_SCHEMA_RULE_OF = {**{t: t for t in SCHEMA_RULES},
+                   **{s: base for base, subs in SCHEMA_SUBTYPES.items() for s in subs}}
+# 유형을 여럿 단 노드(["Organization","Dentist"])는 좁은 쪽 규칙으로 — 앞일수록 좁다.
+_SCHEMA_SPECIFIC = ("LocalBusiness",)
+# 사이트 주인 엔티티 — 홈에서 본다. 지역 업체면 이름·주소·전화(NAP)를 지도 칸 요청문이 대조한다.
+OWNER_TYPES = ("LocalBusiness", "Organization")
+NAP_PROPS = ("name", "address", "telephone")
+
+
+def schema_rule_of(types) -> tuple[str, str] | None:
+    """@type(글자 하나 또는 목록) → (규칙 이름, 그 규칙을 고른 @type). 규칙이 없으면 None."""
+    names = [types] if isinstance(types, str) else [t for t in (types or []) if isinstance(t, str)]
+    hits = [(_SCHEMA_RULE_OF[t], t) for t in names if t in _SCHEMA_RULE_OF]
+    if not hits:
+        return None
+    return next((h for s in _SCHEMA_SPECIFIC for h in hits if h[0] == s), hits[0])
+
+
+def schema_props(rule: str, part: str) -> tuple[str, ...]:
+    """규칙의 required|recommended — base 의 것까지(물려받은 것이 앞). 겹치면 한 번."""
+    r = SCHEMA_RULES[rule]
+    got = (schema_props(r["base"], part) if r.get("base") else ()) + tuple(r.get(part) or ())
+    return tuple(dict.fromkeys(got))
+
+
+def _prop_name(p: str) -> str:
+    """'offers|review|aggregateRating' → 'offers·review·aggregateRating 중 하나'."""
+    alts = p.split("|")
+    return p if len(alts) == 1 else ("·".join(alts) + " 중 하나" if len(alts) > 2
+                                     else " 또는 ".join(alts))
+
+
+def _schema_gaps(audit: dict) -> list[dict] | None:
+    """수집기가 남긴 '빠진 것' — None 이면 이 칸을 안 읽은 행(옛 행·대신 읽은 행)이다."""
+    raw = audit.get("schema_gaps_json")
+    if raw is None or not _has_head_fields(audit):
+        return None
+    return [g for g in _as_list(raw) if isinstance(g, dict)]
+
+
+def is_home(url: str, domain: str = "") -> bool:
+    """사이트 첫 화면인가 — 경로가 비었거나 '/'. 도메인을 알면 그 사이트의 것이어야 한다."""
+    u = urlsplit(url or "")
+    return (u.path or "/") == "/" and not u.query and bool(u.netloc) \
+        and (not domain or owns(host_of(url), domain))
+
+
+def owner_types(audit: dict) -> list[tuple[str, str]]:
+    """이 감사 행의 ld+json 에 있는 사이트 주인 유형 [(규칙, 쓴 @type)] — 좁은 쪽이 앞."""
+    hits = [h for t in _as_list(audit.get("schema_json")) if (h := schema_rule_of(t))
+            and h[0] in OWNER_TYPES]
+    return sorted(dict.fromkeys(hits), key=lambda h: OWNER_TYPES.index(h[0]))
+
+
+def _structured_data_advice(audit: dict, gaps: list[dict]) -> list[dict]:
+    """[구조화 데이터] — 필수 속성이 빠진 유형마다 한 줄, 깨진 블록 한 줄. 권장은 여기서 안
+    말한다: 모든 고치기 요청문이 권장 목록으로 부푼다(엔티티 쪽만 권장을 본다)."""
+    out = []
+    broken = sum(int(g.get("broken") or 0) for g in gaps)
+    if broken:
+        out.append({"tag": "구조화 데이터", "level": "bad",
+                    "now": f"ld+json 블록 {broken}개가 JSON 문법 오류로 읽히지 않습니다",
+                    "fix": "쉼표·따옴표·중괄호를 고치세요. 문법이 틀린 블록은 구글도 통째로 버립니다 — "
+                           "리치 결과 테스트(search.google.com/test/rich-results)로 확인합니다."})
+    for g in gaps:
+        need = [p for p in g.get("need") or [] if p]
+        if not need or not g.get("type"):
+            continue
+        out.append({"tag": "구조화 데이터", "level": "bad",
+                    "now": f"{g.get('as') or g['type']} 에 필수 속성이 없습니다: "
+                           + ", ".join(map(_prop_name, need)),
+                    "fix": "필수 속성이 빠진 마크업은 그 유형의 리치 결과에 나갈 자격이 없습니다. "
+                           "빠진 속성을 채우되 값은 화면에 실제로 보이는 것과 같게 씁니다 — 화면에 "
+                           "없는 값을 마크업에만 넣지 않습니다."})
+    return out
+
+
+def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]:
+    """[엔티티] — 누구의 사이트인가(홈의 Organization·LocalBusiness), 누가 쓴 글인가(저자 Person).
+
+    새 기회 종류로 세우지 않는다: 빠진 속성은 페이지 한 장(홈·그 글)의 사실이라 그 페이지의
+    진단이고, 진단 → 산출물(brief.DELIVER_BY_TAG) 길이 그 페이지를 고치는 요청문까지 이미
+    닿는다. 기회로 세우면 점수를 매길 검색어 근거가 없어 순위 없는 줄이 목록에 하나 는다.
+    필수(SCHEMA_RULES required)는 [구조화 데이터] 가 말하므로 여기서는 권장만 말한다.
+    """
+    out = []
+    by = {g.get("type"): g for g in gaps if g.get("type")}
+    home = is_home(str(audit.get("url") or ""), domain)
+    if home:
+        owner = owner_types(audit)
+        if not owner:
+            if not audit.get("js_shell"):    # 껍데기면 정적 HTML 이 못 본 것일 수 있다
+                out.append({"tag": "엔티티", "level": "warn",
+                            "now": "홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다",
+                            "fix": "홈에 Organization(손님이 찾아오는 지점이 있으면 LocalBusiness 의 "
+                                   "맞는 하위 유형) 하나를 넣으세요 — name·url·logo·sameAs(공식 "
+                                   "계정·프로필 주소)를 채우고, 지점이 있으면 주소·전화·좌표·영업시간"
+                                   "까지. 검색엔진이 이 사이트를 다른 곳(지도·공식 계정)의 같은 "
+                                   "주인과 잇는 재료입니다."})
+        else:
+            rule, written = owner[0]
+            g = by.get(rule) or {}
+            want = [p for p in g.get("want") or [] if p not in (g.get("need") or [])]
+            if want:
+                # 빠진 것에 대한 설명만 붙인다 — 있는 속성을 설명하면 그것도 고치라는 말로 읽힌다
+                hint = {"logo": "logo 는 로고 이미지 주소입니다.",
+                        "sameAs": "sameAs 는 공식 계정·프로필 주소 목록입니다.",
+                        "telephone": "주소·전화는 꼬리말·연락처 페이지에 보이는 것과 글자까지 같게 "
+                                     "씁니다 — 지도의 업체 정보와 이어 보는 재료입니다."}
+                out.append({"tag": "엔티티", "level": "warn",
+                            "now": f"{g.get('as') or written} 에 {', '.join(map(_prop_name, want))} "
+                                   "이 없습니다",
+                            "fix": " ".join(["사이트에 실제로 있는 값으로 채우세요."]
+                                            + [h for p, h in hint.items() if p in want])})
+    p = by.get("Person") or {}
+    pw = [x for x in p.get("want") or [] if x]
+    if pw:
+        out.append({"tag": "엔티티", "level": "warn",
+                    "now": f"저자(Person) 마크업에 {', '.join(map(_prop_name, pw))} 이 없습니다",
+                    "fix": "저자 이름과 함께 그 사람을 소개하는 페이지(url)나 외부 프로필(sameAs)을 "
+                           "적으세요. 이름만으로는 누가 쓴 글인지 다른 자리와 이어 볼 수 없습니다. "
+                           "모르는 값은 지어내지 않고 비워 둡니다."})
+    # sameAs — 수집기가 몇 곳만 열어 본 것. 404·410 만 죽은 주소다(403·429 는 봇 막힘일 수 있다).
+    dead = [x for x in _as_list(audit.get("same_as_json"))
+            if isinstance(x, dict) and x.get("dead") and (home or x.get("of") == "Person")]
+    if dead:
+        urls = list(dict.fromkeys(str(x.get("url")) for x in dead))
+        out.append({"tag": "엔티티", "level": "warn",
+                    "now": f"sameAs 의 주소 {len(urls)}곳이 없는 페이지입니다(404·410): "
+                           + ", ".join(urls[:3]) + (f" 외 {len(urls) - 3}곳" if len(urls) > 3 else ""),
+                    "fix": "옮겨 간 계정이면 새 주소로 고치고, 없어진 계정이면 sameAs 에서 빼세요. "
+                           "없는 주소를 '같은 주인'이라고 가리키면 연결이 끊깁니다."})
+    return out
+
+
+def nap_state(audit: dict | None) -> dict | None:
+    """홈 마크업에서 본 이름·주소·전화(NAP) — 지도 칸 요청문의 재료. 안 본 행이면 None.
+
+    {"as": 쓴 @type 또는 None, "rule": "LocalBusiness"|"Organization"|None,
+     "missing": NAP_PROPS 중 마크업에 없는 것}"""
+    if not audit or audit.get("error"):
+        return None
+    gaps = _schema_gaps(audit)
+    if gaps is None:
+        return None
+    owner = owner_types(audit)
+    if not owner:
+        return {"as": None, "rule": None, "missing": list(NAP_PROPS)}
+    rule, written = owner[0]
+    g = next((x for x in gaps if x.get("type") == rule), {})
+    gone = set(g.get("need") or []) | set(g.get("want") or [])
+    return {"as": g.get("as") or written, "rule": rule,
+            "missing": [p for p in NAP_PROPS if p in gone] if rule == "LocalBusiness" else []}
+
+
 def _has_render_fields(audit: dict) -> bool:
     """이 감사 행이 모바일·언어 칸을 읽고 온 것인가.
 
@@ -1422,7 +1632,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
     # 판정을 확인 지시로 바꾼다(없앨 수는 없다 — 정말 없는 사이트가 더 많다).
     schema = _as_list(audit.get("schema_json"))
-    if not schema and head:
+    gaps = _schema_gaps(audit)
+    # 홈은 '어느 유형을 넣을까'의 답이 정해져 있다(사이트 주인) — 엔티티 줄이 그것을 말하므로
+    # Article·FAQPage 를 권하는 일반 줄을 또 세우지 않는다. 껍데기면 일반 줄(확인부터)이 선다.
+    home_owner = (gaps is not None and not audit.get("js_shell")
+                  and is_home(str(audit.get("url") or ""), domain))
+    if not schema and head and not home_owner:
         if audit.get("js_shell"):
             add("구조화 데이터", "warn", "정적 HTML 에는 ld+json 이 없습니다 "
                 "(본문도 자바스크립트로 그리는 페이지로 보입니다)",
@@ -1432,6 +1647,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             add("구조화 데이터", "warn", "ld+json 이 없습니다",
                 "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요. "
                 "AI 답변과 리치 결과가 읽는 자리입니다.")
+    # 있는 마크업의 속을 본다 — 수집기가 SCHEMA_RULES 로 검사해 남긴 '빠진 것'. 이 칸이 생기기
+    # 전에는 '구조화 데이터: Product' 로 끝나서, 필수 속성이 빠져 리치 결과에 못 나가는 마크업도
+    # "있음"으로 읽혔다.
+    if gaps is not None:
+        out += _structured_data_advice(audit, gaps)
+        out += entity_advice(audit, gaps, domain)
 
     # 모바일 — 뷰포트가 없으면 모바일 브라우저가 데스크톱 폭(980px)으로 그린 뒤
     # 축소한다. 기기별 순위 차이의 원인 후보 1번인데 지금까지 아무도 안 봤다.

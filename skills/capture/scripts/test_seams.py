@@ -3816,6 +3816,61 @@ def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
         "셸 폴백 요청문이 by_tag 를 tag 로 찾지 않는다"
 
 
+def test_seam_126_schema_rules_are_one_table_from_collector_to_brief():
+    """126) 구조화 데이터 속성 표는 한 벌(scoring.SCHEMA_RULES)이고, 수집기가 남긴 '빠진 것'이
+    칸 → 페이로드 → 진단 → 산출물까지 끊기지 않는다.
+
+    네 끝이 따로 있다: 수집기(collect_page)가 표로 검사해 schema_gaps_json·same_as_json 을 쓰고,
+    db 가 그 칸을 갖고, 진단(scoring.page_advice)이 그 칸을 읽어 [구조화 데이터]·[엔티티] 를
+    세우고, 요청문(brief.DELIVER_BY_TAG)이 그 tag 의 산출물을 낸다. 어느 하나가 이름을 다르게
+    쓰면(유형 이름·칸 이름·tag) 각 파일은 멀쩡한데 진단이 조용히 안 선다 — 예전 칸(schema_json)
+    이 유형 이름만 남겨 '구조화 데이터: Product' 로 끝났던 것과 같은 모양이다.
+    """
+    import sqlite3 as _sq
+
+    import brief
+    import collect_page
+    import scoring
+    # ① 수집기가 적는 유형 이름은 표의 규칙 이름이다 — 규칙마다 하위 유형 하나씩 태운다(빈 노드)
+    picks = [(scoring.SCHEMA_SUBTYPES.get(r) or (r,))[0] for r in scoring.SCHEMA_RULES]
+    nodes = [{"@type": t} for t in picks if t != "Person"]
+    nodes.append({"@type": "Article", "author": {"@type": "Person"}})
+    html = ('<script type="application/ld+json">' + json.dumps({"@graph": nodes}) + "</script>")
+    a = collect_page.audit_html("https://x.com/", html)
+    got = {g["type"] for g in json.loads(a["schema_gaps_json"]) if g.get("type")}
+    assert got == set(scoring.SCHEMA_RULES), (
+        f"수집기가 표에 없는 유형 이름을 쓰거나 규칙을 빠뜨렸다: {got ^ set(scoring.SCHEMA_RULES)}")
+    # ② 칸 — 수집기 키 = db 칸 = gather 가 싣는 행(latest_page_audits 의 SELECT a.*)
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'s125','saas','x.com')")
+    a["same_as_json"] = json.dumps([{"url": "https://g.example/", "of": "Organization",
+                                     "status": 404, "dead": True}])
+    db.write_page_audits(c, 1, "2026-10-01", [a])
+    row = dict(db.latest_page_audits(c, 1)[0])
+    c.close()
+    for k in ("schema_gaps_json", "same_as_json"):
+        assert row.get(k) == a[k], f"{k} 가 Brain 을 거쳐 페이로드 행까지 안 간다: {row.get(k)!r}"
+    # ③ 진단 — 그 행 그대로 page_advice 에 넣으면 두 갈래가 다 선다(홈이라 엔티티까지)
+    adv = scoring.page_advice(row, [], domain="x.com")
+    tags = {x["tag"] for x in adv}
+    assert {"구조화 데이터", "엔티티"} <= tags, f"수집기가 남긴 칸으로 진단이 안 선다: {adv}"
+    # ④ 산출물 — tag 마다 틀이 있고, 고치기 요청문이 그 틀을 그대로 쓴다(기술 칸으로 안 밀린다)
+    for t in ("구조화 데이터", "엔티티"):
+        assert t in brief.DELIVER_BY_TAG and t in brief.FIX_TAG_DELIVER and t not in brief.TECH_TAGS, t
+    # ⑤ 사본 금지 — 말하는 쪽(요청문·화면)이 속성 목록을 다시 적지 않는다. 표에만 있는 이름으로 본다
+    only_in_table = ("openingHoursSpecification", "thumbnailUrl", "itemListElement", "ratingCount")
+    speak = [SCRIPTS / "brief.py", SCRIPTS / "dashboard.py",
+             *sorted((ROOT / "skills" / "capture" / "templates").rglob("*.html"))]
+    for f in speak:
+        src = f.read_text("utf-8")
+        bad = [w for w in only_in_table if w in src]
+        assert not bad, f"{f.name} 이 속성 표의 사본을 갖는다({bad}) — 정본은 scoring.SCHEMA_RULES"
+    assert "SCHEMA_RULES = " not in (SCRIPTS / "collect_page.py").read_text("utf-8"), \
+        "수집기가 속성 표를 따로 갖는다 — scoring.SCHEMA_RULES 를 읽는다"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

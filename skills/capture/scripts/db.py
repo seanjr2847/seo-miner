@@ -342,6 +342,8 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   h2_questions INTEGER,                       -- 질문형 H2 수 (h2_json 과 같은 20개 안, 휴리스틱)
   lead_words INTEGER,                         -- 첫 본문 문단 단어 수. 0 = <p> 문단을 못 찾음
   author TEXT,                                -- meta author 또는 ld+json author.name. '' = 없음
+  schema_gaps_json TEXT,                      -- 유형별 빠진 필수·권장 속성(scoring.SCHEMA_RULES). '[]' = 없음
+  same_as_json TEXT,                          -- 열어 본 sameAs [{url,of,status,dead}]. NULL = 안 봄
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
@@ -746,6 +748,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
                       ("author", "TEXT")):
         if col not in pa_cols:
             conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} {decl}")
+            conn.commit()
+    # 구조화 데이터 검증·엔티티 — 옛 행은 NULL(안 봄)로 남는다. "[]"(봤고 빠진 것 없음)와 다르다
+    # (scoring._schema_gaps 가 그 칸 하나로 가른다).
+    for col in ("schema_gaps_json", "same_as_json"):
+        if col not in pa_cols:
+            conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} TEXT")
             conn.commit()
 
     opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
@@ -2276,7 +2284,8 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
             "words", "schema_json", "canonical", "robots",
             "internal_links", "external_links", "images", "images_no_alt",
             "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell",
-            "tables", "lists", "h2_questions", "lead_words", "author")
+            "tables", "lists", "h2_questions", "lead_words", "author",
+            "schema_gaps_json", "same_as_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})

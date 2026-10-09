@@ -3560,6 +3560,141 @@ def test_ctr_gap_brief_sorts_the_cause_before_asking_for_titles():
     none = brief.build(o, {"query_pages": {"milia vs syringoma": _pages(URL)}}, "ko-KR")["body"]
     assert "가르지 못했습니다" in none.split(brief.CTR_CAUSE_HEAD)[1].split("\n## ")[0], none
 
+
+# ── 구조화 데이터 검증·엔티티 — 수집기가 남긴 '빠진 것'(schema_gaps_json)을 진단으로 ──────
+
+def _gaps(*rows):
+    import json
+    return json.dumps(list(rows), ensure_ascii=False)
+
+
+HOME_URL = "https://me.example/"
+
+
+def test_required_schema_property_missing_is_a_structured_data_diagnosis():
+    """필수 속성이 빠진 마크업은 구글이 리치 결과에 안 쓴다 — 예전 진단은 '있다/없다'만 봐서
+    Product 에 offers·review·aggregateRating 이 다 빠져도 아무 말이 없었다. 판정은
+    [구조화 데이터] 한 갈래로(ld+json 이 없을 때와 같은 tag — 산출물 DELIVER_BY_TAG 한 벌)."""
+    a = _audit(schema_json='["Product"]', schema_gaps_json=_gaps(
+        {"type": "Product", "as": "Product", "n": 1, "need": ["offers|review|aggregateRating"],
+         "want": ["image"]}))
+    sd = [x for x in a["advice"] if x["tag"] == "구조화 데이터"]
+    assert len(sd) == 1 and sd[0]["level"] == "bad", a["advice"]
+    assert "Product" in sd[0]["now"] and "offers·review·aggregateRating 중 하나" in sd[0]["now"], sd
+    # 권장만 빠진 것은 페이지 진단이 아니다 — 모든 고치기 요청문이 권장 목록으로 부푼다
+    rec = _audit(schema_json='["Article"]', schema_gaps_json=_gaps(
+        {"type": "Article", "as": "BlogPosting", "n": 1, "need": [], "want": ["image"]}))
+    assert not [x for x in rec["advice"] if x["tag"] in ("구조화 데이터", "엔티티")], rec["advice"]
+    # 깨진 블록 — 구글도 그 블록을 통째로 버린다
+    br = _audit(schema_json='["FAQPage"]', schema_gaps_json=_gaps({"broken": 2}))
+    assert any(x["tag"] == "구조화 데이터" and "2개" in x["now"] and x["level"] == "bad"
+               for x in br["advice"]), br["advice"]
+    # 옛 행(칸 없음 = 안 봄)과 대신 읽은 행에는 새 판정이 없다 — 안 본 것을 없다고 하지 않는다
+    old = _audit(schema_json='["Product"]')
+    assert not [x for x in old["advice"] if x["tag"] == "구조화 데이터"], old["advice"]
+    # 요청문 — 진단 줄과 그것을 고칠 산출물이 같이 선다
+    body = brief.build(_opp("ctr_gap", "검색어"),
+                       {"page_audits": {URL: a}, "query_pages": {"검색어": _pages(URL)}},
+                       "ko-KR")["body"]
+    assert "[구조화 데이터] 지금: Product 에 필수 속성" in body, body
+    assert brief.DELIVER_BY_TAG["구조화 데이터"] in body.split("## 만들어 줄 것")[1], body
+
+
+def test_home_entity_markup_is_judged_once_and_reaches_the_home_brief():
+    """엔티티(사이트 주인) — 홈의 Organization/LocalBusiness 에 name·url·logo·sameAs, 지역 업체면
+    주소·전화·좌표·영업시간. 새 기회 종류를 만들지 않고 홈 페이지의 진단 [엔티티] 로 세운다:
+    빠진 속성은 그 페이지 한 장의 사실이고, 진단 → 산출물(DELIVER_BY_TAG) 길이 이미 홈을
+    고치는 요청문까지 닿는다. 기회로 세우면 순위를 매길 검색어 근거가 없다."""
+    lb = _audit(url=HOME_URL, schema_json='["MedicalClinic", "WebSite"]', schema_gaps_json=_gaps(
+        {"type": "LocalBusiness", "as": "MedicalClinic", "n": 1, "need": ["address"],
+         "want": ["logo", "sameAs", "geo"]}),
+        same_as_json='[{"url": "https://gone.example/x", "of": "LocalBusiness", "status": 404, '
+                     '"dead": true}, {"url": "https://sns.example/", "of": "LocalBusiness", '
+                     '"status": 403, "dead": false}]')
+    adv = lb["advice"]
+    # 필수(address)는 [구조화 데이터] 가 말하고 [엔티티] 가 또 말하지 않는다
+    assert any(x["tag"] == "구조화 데이터" and "address" in x["now"] for x in adv), adv
+    ent = [x for x in adv if x["tag"] == "엔티티"]
+    assert len(ent) == 2 and all(x["level"] == "warn" for x in ent), ent
+    assert "MedicalClinic" in ent[0]["now"] and "logo, sameAs, geo" in ent[0]["now"] \
+        and "address" not in ent[0]["now"], ent[0]
+    # 403 은 죽은 주소가 아니다(봇 막힘) — 404·410 만
+    assert "https://gone.example/x" in ent[1]["now"] and "sns.example" not in ent[1]["now"], ent[1]
+    # 홈이 아닌 페이지의 Organization(글의 publisher 등)은 엔티티 판정 밖이다
+    post = _audit(schema_json='["Article", "Organization"]', schema_gaps_json=_gaps(
+        {"type": "Organization", "as": "Organization", "n": 1, "need": [], "want": ["sameAs"]}))
+    assert not [x for x in post["advice"] if x["tag"] == "엔티티"], post["advice"]
+    # 홈에 사이트 주인 마크업이 아예 없다
+    bare = _audit(url=HOME_URL, schema_json='["WebSite"]', schema_gaps_json="[]")
+    assert [x["now"] for x in bare["advice"] if x["tag"] == "엔티티"] == [
+        "홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다"], bare["advice"]
+    # ld+json 이 하나도 없는 홈 — 일반 줄(Article·FAQPage 를 권하던) 대신 엔티티 줄 하나
+    none = _audit(url=HOME_URL, schema_json="[]", schema_gaps_json="[]")
+    tags = [x["tag"] for x in none["advice"]]
+    assert tags.count("엔티티") == 1 and "구조화 데이터" not in tags, none["advice"]
+    # 다 갖춘 홈 — 아무 말 없다
+    full = _audit(url=HOME_URL, schema_json='["Organization"]', schema_gaps_json="[]")
+    assert not [x for x in full["advice"] if x["tag"] == "엔티티"], full["advice"]
+    # 요청문 — 홈을 고치는 요청문이 진단과 산출물을 같이 싣는다
+    o = _opp("ctr_gap", "검색어")
+    body = brief.build(o, {"page_audits": {HOME_URL: lb},
+                           "query_pages": {"검색어": _pages(HOME_URL)}}, "ko-KR")["body"]
+    assert "[엔티티] 지금: MedicalClinic 에" in body, body
+    assert brief.DELIVER_BY_TAG["엔티티"] in body.split("## 만들어 줄 것")[1], body
+
+
+def test_author_person_entity_is_judged_on_any_page():
+    """저자(Person)의 name·url/sameAs — 글 쪽 엔티티. 홈이 아니어도 그 글의 진단이다."""
+    a = _audit(schema_json='["Article", "Person"]', schema_gaps_json=_gaps(
+        {"type": "Person", "as": "Person", "n": 1, "need": [], "want": ["url|sameAs"]}))
+    ent = [x for x in a["advice"] if x["tag"] == "엔티티"]
+    assert len(ent) == 1 and "저자" in ent[0]["now"] and "url 또는 sameAs" in ent[0]["now"], ent
+
+
+def test_schema_tags_have_a_deliverable_and_stay_in_the_page_work():
+    """이음매: 구조화 데이터·엔티티 진단(판정 쪽) ↔ DELIVER_BY_TAG·FIX_TAG_DELIVER·TECH_TAGS
+    (말하는 쪽). 산출물 표에 없으면 진단만 서고 '만들어 줄 것'이 빈손이 된다."""
+    a = _audit(url=HOME_URL, schema_json='["Organization", "Product"]', schema_gaps_json=_gaps(
+        {"type": "Organization", "as": "Organization", "n": 1, "need": [], "want": ["logo"]},
+        {"type": "Product", "as": "Product", "n": 1, "need": ["name"], "want": []},
+        {"type": "Person", "as": "Person", "n": 1, "need": [], "want": ["name"]}, {"broken": 1}),
+        same_as_json='[{"url": "https://g.example/", "of": "Organization", "status": 410, "dead": true}]')
+    tags = {x["tag"] for x in a["advice"]}
+    assert {"구조화 데이터", "엔티티"} <= tags, tags
+    assert {"구조화 데이터", "엔티티"} <= set(brief.DELIVER_BY_TAG) & brief.FIX_TAG_DELIVER
+    assert not {"구조화 데이터", "엔티티"} & set(brief.TECH_TAGS)
+    for w in INDUSTRY_WORDS:
+        assert w not in brief.DELIVER_BY_TAG["엔티티"], w
+
+
+def test_local_pack_brief_asks_a_person_to_check_nap():
+    """지도 칸(local_pack)이 선 검색어 — 그 자리는 글이 아니라 비즈니스 프로필이 가져가고,
+    구글은 사이트 본문·마크업·프로필의 이름·주소·전화(NAP)가 같은지를 본다. 예전엔 '따로 볼
+    것' 한마디로 넘겨서 아무도 대조하지 않았다. 프로필은 도구도 답하는 쪽도 못 보니 사람이
+    확인할 항목으로 싣고, 홈 마크업에서 우리가 아는 것(빠진 주소·전화)은 같이 말한다."""
+    home = _audit(url=HOME_URL, schema_json='["Dentist"]', schema_gaps_json=_gaps(
+        {"type": "LocalBusiness", "as": "Dentist", "n": 1, "need": [], "want": ["telephone"]}))
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit(), HOME_URL: home},
+           "project": {"domain": "me.example"},
+           "rank_by_kw": {"검색어": {"features": ["local_pack", "people_also_ask"]}}}
+    body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
+    assert brief.NAP_HEAD in body, body
+    nap = body.split(brief.NAP_HEAD)[1].split("\n## ")[0]
+    assert "[사람 확인]" in nap and "구글 비즈니스 프로필" in nap, nap
+    assert "Dentist" in nap and "telephone" in nap, nap          # 홈 마크업에서 아는 것
+    assert "따로 볼 것" not in brief.SERP_FORMAT_HINT["local_pack"], "지도 칸을 또 한마디로 넘긴다"
+    # 새 글(걸린 페이지 없음)에도 선다 — NAP 는 사이트 단위 사실이다
+    new = brief.build(_opp("content_gap", "검색어", gap_kind="missing"),
+                      {**ctx, "query_pages": {}}, "ko-KR")
+    assert new["shape"] == "new_content" and brief.NAP_HEAD in new["body"], new["body"]
+    # 홈을 아직 안 봤으면 그렇게 말한다(지어내지 않는다)
+    ctx2 = {**ctx, "page_audits": {URL: _audit()}}
+    nap2 = brief.build(_opp("ctr_gap", "검색어"), ctx2, "ko-KR")["body"].split(brief.NAP_HEAD)[1]
+    assert "홈을 아직 점검하지 않았습니다" in nap2.split("\n## ")[0], nap2
+    # 지도 칸이 없으면 이 절도 없다
+    ctx3 = {**ctx, "rank_by_kw": {"검색어": {"features": ["people_also_ask"]}}}
+    assert brief.NAP_HEAD not in brief.build(_opp("ctr_gap", "검색어"), ctx3, "ko-KR")["body"]
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
