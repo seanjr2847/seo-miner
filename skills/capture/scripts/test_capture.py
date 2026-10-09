@@ -2279,7 +2279,8 @@ def test_page_audits_read_latest_per_url_and_target_unseen_first():
                      " VALUES(?, 'index_blocked', ?, ?, 'new')", (pid, t, sc))
     conn.commit()
     order = collect_page.target_urls(conn, pid, 3)
-    assert order == ["https://e.com/c", "https://e.com/a", "https://e.com/b"], order
+    # 홈(사이트 주인 엔티티를 보는 자리)은 상한 밖 한 자리로 맨 뒤에 붙는다 — 기회 순서는 그대로
+    assert order == ["https://e.com/c", "https://e.com/a", "https://e.com/b", "https://e.com/"], order
 
 
 def test_unclassified_cluster_is_not_an_opportunity_and_old_one_closes():

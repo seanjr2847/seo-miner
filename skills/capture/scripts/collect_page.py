@@ -106,11 +106,28 @@ def _date(raw: str) -> str | None:
     return v[:40]
 
 
+# ld+json 을 감싼 껍데기 — 옛 브라우저용 주석·CDATA. 구글은 벗겨 읽는데 그대로 json 에 넣으면
+# 멀쩡한 블록이 '깨진 블록'(bad)으로 셌다.
+_LD_WRAP = re.compile(r"^\s*(?:<!--|/\*\s*<!\[CDATA\[\s*\*/|//\s*<!\[CDATA\[|<!\[CDATA\[)"
+                      r"|(?:-->|/\*\s*\]\]>\s*\*/|//\s*\]\]>|\]\]>)\s*$")
+
+
+def _ld_load(blob: str):
+    """ld+json 블록 하나 → 파이썬 값. 못 읽으면 ValueError(깨진 블록).
+
+    strict=False — 문자열 안의 제어 문자(CMS 가 그대로 흘린 탭 등)는 문법 오류가 아니라고 본다.
+    껍데기(주석·CDATA)는 앞뒤에서 벗긴다(겹쳐 쌀 수 있어 안 바뀔 때까지)."""
+    s, prev = (blob or "").strip(), None
+    while s != prev:
+        prev, s = s, _LD_WRAP.sub("", s).strip()
+    return json.loads(s, strict=False)
+
+
 def _schema_dates(blob: str) -> tuple[str | None, str | None]:
     """ld+json 의 datePublished/dateModified. 깨진 JSON 이어도 글자로 건진다 —
     _schema_types 와 같은 규칙이다."""
     try:
-        data = json.loads(blob)
+        data = _ld_load(blob)
     except ValueError:
         def grab(key):
             m = re.search(r'"%s"\s*:\s*"([^"]+)"' % key, blob)
@@ -147,7 +164,7 @@ def _schema_author(blob: str) -> str | None:
     """ld+json 의 author(.name). 깨진 JSON 이어도 글자로 건진다 — _schema_dates 와 같은
     규칙이다. {"@type":"Person"} 처럼 이름 없는 author 는 저자 표시가 아니다."""
     try:
-        data = json.loads(blob)
+        data = _ld_load(blob)
     except ValueError:
         m = (re.search(r'"author"\s*:\s*\{[^{}]*?"name"\s*:\s*"([^"]+)"', blob)
              or re.search(r'"author"\s*:\s*"([^"]+)"', blob))
@@ -187,13 +204,22 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
     sameAs 주소를 same_as 에 보탠다. 원문은 어디에도 남기지 않는다.
 
     문서 순서로 훑는다(앞에서부터) — sameAs 는 앞의 것부터 열어 보므로 순서가 뜻이 있다.
+    data 는 한 페이지의 블록 전부(목록)여도 된다 — @id 참조는 블록을 넘어 잇는다.
+
+    @id 는 합쳐 읽는다(구글도 그렇게 읽는다): 같은 @id 를 단 객체는 한 노드이고, 참조만 한
+    객체({"@id":"#r"})가 놓인 자리가 그 노드가 놓인 자리다. 예전엔 @graph 에 따로 두고 @id 로
+    이은 평점을 '맨 위의 평점'으로 쳐서 itemReviewed 가 빠졌다는 거짓 bad 를 세웠다.
     nested: 다른 노드의 속성 값으로 든 노드(@graph·최상위 목록 안은 아니다) — 그 안의 리뷰·평점은
     대상(itemReviewed)이 바깥 노드라 그 칸을 빠졌다고 하지 않는다.
-    Person 은 저자만 본다 — author 값으로 직접 들었거나 author 의 @id 가 가리키는 노드.
+    Person 은 저자만 본다 — 글(scoring.writes_page)의 author 로 직접 들었거나 그 @id 가 가리키는
+    노드. 상품 리뷰의 author 는 고객이다. 저자마다 따로 본다(each, 문서 순서).
     """
-    nodes: list[tuple[dict, bool]] = []
-    author_objs: set[int] = set()
-    author_ids: set[str] = set()
+    # 1) 훑기 — 객체마다 (객체, nested). 같은 노드를 가리키는 열쇠는 @id, 없으면 객체 자체.
+    def key(d: dict):
+        i = d.get("@id")
+        return ("id", i) if isinstance(i, str) and i.strip() else ("obj", id(d))
+
+    seen: list[tuple[dict, bool]] = []
     queue: list[tuple[object, bool]] = [(data, False)]
     i = 0
     while i < len(queue):
@@ -204,24 +230,33 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
             continue
         if not isinstance(cur, dict):
             continue
+        seen.append((cur, nested))
         typed = "@type" in cur
-        if typed:
-            nodes.append((cur, nested))
-        au = cur.get("author")
-        for x in (au if isinstance(au, list) else [au]):
-            if isinstance(x, dict):
-                author_objs.add(id(x))
-                if isinstance(x.get("@id"), str):
-                    author_ids.add(x["@id"])
         queue += [(v, nested if k == "@graph" else (typed or nested))
                   for k, v in cur.items() if isinstance(v, (dict, list))]
-    for node, nested in nodes:
-        hit = scoring.schema_rule_of(node.get("@type"))
+    # 2) @id 로 합치기 — 속성은 먼저 채워진 값이 이긴다, 유형은 모은다, 놓인 자리는 하나라도 안이면 안
+    merged: dict = {}
+    for d, nested in seen:
+        m = merged.setdefault(key(d), {"props": {}, "types": [], "nested": False})
+        m["nested"] = m["nested"] or nested
+        t = d.get("@type")
+        m["types"] += [x for x in ([t] if isinstance(t, str) else t if isinstance(t, list) else [])
+                       if isinstance(x, str) and x not in m["types"]]
+        for p, v in d.items():
+            if p not in ("@id", "@type", "@graph", "@context") and not _filled(m["props"].get(p)):
+                m["props"][p] = v
+    # 3) 저자 — 글의 author 가 가리키는 노드의 열쇠
+    authors = {key(x) for m in merged.values() if scoring.writes_page(m["types"])
+               for x in (m["props"].get("author") if isinstance(m["props"].get("author"), list)
+                         else [m["props"].get("author")]) if isinstance(x, dict)}
+    for k, m in merged.items():
+        hit = scoring.schema_rule_of(m["types"])
         if not hit:
             continue
         rule, written = hit
-        if rule == "Person" and id(node) not in author_objs and node.get("@id") not in author_ids:
+        if rule == "Person" and k not in authors:
             continue
+        node, nested = m["props"], m["nested"]
         need = [p for p in scoring.schema_props(rule, "required")
                 if not (nested and p in scoring.SCHEMA_NESTED_OPTIONAL) and not _has_prop(node, p)]
         want = [p for p in scoring.schema_props(rule, "recommended") if not _has_prop(node, p)]
@@ -230,8 +265,14 @@ def _schema_scan(data, gaps: dict, same_as: list) -> None:
         # 필수는 노드 하나라도 빠지면 그 노드가 결과에 못 나간다(합집합). 권장은 엔티티를 보는
         # 자리라 같은 유형의 어느 노드에도 없는 것만(교집합) — 글의 publisher 처럼 이름만 단
         # Organization 이 함께 있어도 온전한 주인 노드가 있으면 빠졌다고 하지 않는다.
+        # 저자는 예외다 — 사람마다 다른 엔티티라 저자마다 남기고(each), want 는 합집합이다.
         g["need"] += [p for p in need if p not in g["need"]]
-        g["want"] = want if g["want"] is None else [p for p in g["want"] if p in want]
+        if rule == "Person":
+            g.setdefault("each", []).append(want)
+            g["want"] = [p for p in scoring.schema_props(rule, "recommended")
+                         if any(p in w for w in g["each"])]
+        else:
+            g["want"] = want if g["want"] is None else [p for p in g["want"] if p in want]
         if rule in scoring.OWNER_TYPES or rule == "Person":
             sa = node.get("sameAs")
             for u in ([sa] if isinstance(sa, str) else sa if isinstance(sa, list) else []):
@@ -245,6 +286,7 @@ def _schema_gaps_out(gaps: dict, broken: int) -> list[dict]:
     깨진 블록 수는 {"broken": n} 한 줄로 — 구글도 그 블록을 버리니 그 자체가 진단이다."""
     out = [{**g, "want": g["want"] or []} for r in scoring.SCHEMA_RULES
            if (g := gaps.get(r)) and (g["need"] or g["want"])]
+    # (저자별 빈칸 each 는 저자 수 n 과 짝이다 — 빠진 것 없는 저자도 [] 로 자리를 지킨다)
     return out + ([{"broken": broken}] if broken else [])
 
 
@@ -262,9 +304,8 @@ class _Page(HTMLParser):
         self.h1: list[str] = []
         self.h2: list[str] = []
         self.schema: list[str] = []
-        self.schema_gaps: dict = {}              # 규칙 → 빠진 속성 집계(_schema_scan)
+        self.ld_blocks: list = []                # 읽힌 ld+json 블록 — 끝에 한 번 검사(_schema_scan)
         self.schema_broken = 0                   # JSON 으로 안 읽히는 ld+json 블록 수
-        self.same_as: list[list[str]] = []       # [[규칙, 주소], ...] — 수집 중에만 쓴다
         self.internal = self.external = 0
         self.images = self.images_no_alt = 0
         self.viewport = None
@@ -371,9 +412,10 @@ class _Page(HTMLParser):
             elif self._grab == "ld":
                 self.schema += _schema_types(text)
                 # 속성 검사는 JSON 으로 읽히는 블록만 — 깨진 블록은 @type 을 글자로 건지는
-                # 데서 멈추고(지금처럼 수집은 이어진다) 깨졌다는 사실만 센다.
+                # 데서 멈추고(지금처럼 수집은 이어진다) 깨졌다는 사실만 센다. 검사는 블록을 다
+                # 모은 뒤 audit_html 에서 한 번 — @id 참조가 블록을 넘어 잇는다.
                 try:
-                    _schema_scan(json.loads(text), self.schema_gaps, self.same_as)
+                    self.ld_blocks.append(_ld_load(text))
                 except ValueError:
                     self.schema_broken += 1
                 pub, mod = _schema_dates(text)
@@ -435,7 +477,7 @@ class _Page(HTMLParser):
 def _schema_types(blob: str) -> list[str]:
     """ld+json 에서 @type 만. 깨진 JSON 이어도 수집을 멈추지 않는다 — 흔하다."""
     try:
-        data = json.loads(blob)
+        data = _ld_load(blob)
     except ValueError:
         return re.findall(r'"@type"\s*:\s*"([^"]+)"', blob)
     out: list[str] = []
@@ -467,6 +509,9 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
     # "없음" 을 사실처럼 말하지 않게 하는 데만 쓴다.
     js_shell = int(words < JS_SHELL_WORDS
                    and (p.app_root or p.scripts >= JS_SHELL_SCRIPTS))
+    gaps: dict = {}                              # 규칙 → 빠진 속성 집계
+    same_as: list[list[str]] = []                # [[규칙, 주소], ...] — 수집 중에만 쓴다
+    _schema_scan(p.ld_blocks, gaps, same_as)
     return {"url": url, "status": status, "error": None,
             "title": p.title, "meta_description": p.meta_description,
             "h1_json": json.dumps(p.h1, ensure_ascii=False),
@@ -474,7 +519,7 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "words": words,
             "schema_json": json.dumps(sorted(set(p.schema)), ensure_ascii=False),
             # 유형별 필수·권장 속성 중 빠진 것(scoring.SCHEMA_RULES). "[]" = 봤고 빠진 것 없음.
-            "schema_gaps_json": json.dumps(_schema_gaps_out(p.schema_gaps, p.schema_broken),
+            "schema_gaps_json": json.dumps(_schema_gaps_out(gaps, p.schema_broken),
                                            ensure_ascii=False),
             "canonical": p.canonical, "robots": p.robots,
             "internal_links": p.internal, "external_links": p.external,
@@ -493,7 +538,7 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "videos": p.videos,
             # 이것도 칸이 아니다 — 수집(collect)이 몇 곳만 열어 살아 있는지 보고 그 결과를
             # same_as_json 에 적는다. 주소 목록 자체는 원문이라 남기지 않는다.
-            "same_as": p.same_as[:20]}
+            "same_as": same_as[:20]}
 
 
 def target_urls(conn, project_id: int, limit: int) -> list[str]:
@@ -531,7 +576,8 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
     # 방금 없는 페이지(404·410)로 확인한 주소는 GONE_RECHECK_DAYS 동안 빼고 그 자리를 다른
     # 페이지에 준다 — 매일 같은 404 를 다시 여느라 상한 안의 자리를 잃었다(aitierlist 34곳 중
     # 5곳). 그 주소의 진단은 최신 행(404)이 그대로 갖고 있다(scoring.page_advice 가 말한다).
-    seen, uniq = set(recent_gone(conn, project_id)), []
+    gone = set(recent_gone(conn, project_id))
+    seen, uniq = set(gone), []
     for u in out:
         u = clean_url(u)
         if u and u not in seen:
@@ -539,21 +585,41 @@ def target_urls(conn, project_id: int, limit: int) -> list[str]:
             uniq.append(u)
     uniq = uniq[:limit]
     # 홈 — 사이트 주인 엔티티(scoring.entity_advice)를 보는 자리. 검색어가 전부 글로 가는 사이트는
-    # 노출 상위에 홈이 없어 한 번도 안 열렸다. 마지막 자리를 내주되, 최근에 본 홈이면 안 연다.
+    # 노출 상위에 홈이 없어 한 번도 안 열렸다. 상한과 상관없이 상한 밖 한 자리로 넣는다(기회
+    # 페이지의 자리를 뺏지 않는다). 예전엔 상한 안 마지막 자리를 받되, 후보에 있다가 상한에 잘린
+    # 홈은 '이미 본 후보'로 쳐서 빠졌다 — 기회가 많은 사이트일수록 홈이 영영 안 열렸다.
+    # 빼는 것은 최근에 본 홈과 방금 없는 페이지로 확인한 홈뿐이다.
     row = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
-    home = home_url(row[0] if row else "")
-    seen_at = str(last.get(home) or "")[:10]
+    domain = (row[0] if row else "") or ""
+    home = home_of(conn, project_id, domain, out + list(last))
+    seen_at = max((str(d)[:10] for u, d in last.items() if d and scoring.is_home(u, domain)),
+                  default="")
     fresh = bool(seen_at) and (date.today() - date.fromisoformat(seen_at)).days < HOME_RECHECK_DAYS
-    if home and limit >= HOME_MIN_LIMIT and home not in uniq and home not in seen and not fresh:
-        uniq = uniq[:limit - 1] + [home]
+    if home and home not in gone and not fresh \
+            and not any(scoring.is_home(u, domain) for u in uniq):
+        uniq.append(home)
     return uniq
 
 
-# 홈을 점검 대상에 끼우는 최소 상한 — 상한을 이보다 작게 잡았으면(사람이 일부러 좁혔다) 기회
-# 페이지에 자리를 다 준다. 기본 상한(page_urls 40)에서는 한 자리를 내준다.
-HOME_MIN_LIMIT = 10
 # 홈을 이 날수 안에 봤으면 다시 안 연다(엔티티 마크업은 자주 안 바뀐다).
 HOME_RECHECK_DAYS = 7
+
+
+def home_of(conn, project_id: int, domain: str, known=()) -> str | None:
+    """이 사이트의 홈 주소 한 꼴 — www 유무·http(s)는 사이트가 실제로 쓰는 쪽을 따른다.
+
+    도메인 칸('c.kr')에서 지으면 사이트가 www 일 때 'https://c.kr/' 과 'https://www.c.kr/' 을
+    둘 다 열고 엔티티 진단이 두 번 섰다. 서치콘솔이 본 홈(노출 많은 꼴) → 이미 아는 주소(known:
+    점검 후보·크롤한 주소) → 도메인에서 지은 꼴 순으로 고른다."""
+    if not home_url(domain):
+        return None
+    host = scoring.host_of(domain)               # www 를 뗀 호스트 — LIKE 로 좁히고 is_home 로 가린다
+    gsc = [r[0] for r in conn.execute(
+        "SELECT page, SUM(impressions) imp FROM gsc_snapshots WHERE project_id=? AND page IS NOT NULL"
+        " AND (page LIKE ? OR page LIKE ?) GROUP BY page ORDER BY imp DESC",
+        (project_id, f"%{host}/", f"%{host}")) if scoring.is_home(r[0], domain)]
+    pick = next((u for u in [*gsc, *known] if u and scoring.is_home(clean_url(u), domain)), None)
+    return clean_url(pick) if pick else home_url(domain)
 
 
 def home_url(domain: str) -> str | None:
@@ -586,14 +652,19 @@ def check_link(url: str, timeout: float | None = None) -> int | None:
     return r.status_code
 
 
-def check_same_as(rows: list[dict], home: str | None) -> int:
+def check_same_as(rows: list[dict], domain: str) -> int:
     """rows 의 sameAs 를 몇 곳 열어 그 결과를 행의 same_as_json 에 적는다 → 연 주소 수.
 
     죽었다(dead)는 404·410 뿐이다: 소셜 사이트는 봇에 403·429·로그인 벽을 주는 일이 흔해서
     그것을 죽은 주소로 읽으면 멀쩡한 공식 계정을 빼라고 시킨다. 안 연 주소는 안 적는다(안 봄).
+    홈 행은 도메인으로 알아본다(scoring.is_home — www 유무 무관). 도메인에서 지은 주소와 글자가
+    같은 행만 홈으로 쳤더니 www 사이트의 주인 sameAs 를 하나도 안 열었다.
     """
     import time
-    first = [u for r in rows if r.get("url") == home
+
+    def home(r) -> bool:
+        return scoring.is_home(str(r.get("url") or ""), domain)
+    first = [u for r in rows if home(r)
              for t, u in r.get("same_as") or [] if t in scoring.OWNER_TYPES]
     rest = [u for r in rows for t, u in r.get("same_as") or [] if t == "Person"]
     status: dict[str, int | None] = {}
@@ -605,7 +676,7 @@ def check_same_as(rows: list[dict], home: str | None) -> int:
         status[u] = check_link(u, timeout=min(SAME_AS_TIMEOUT, max(1.0, left)))
     for r in rows:
         own = [(t, u) for t, u in r.get("same_as") or []
-               if u in status and (t == "Person" or r.get("url") == home)]
+               if u in status and (t == "Person" or home(r))]
         if own:
             r["same_as_json"] = json.dumps(
                 [{"url": u, "of": t, "status": status[u], "dead": status[u] in GONE_STATUS}
@@ -929,7 +1000,7 @@ def collect(project: str, *,
                                workers=fanout.LIMITS["own_site"], label=lambda u: u)
             # 엔티티의 sameAs — 일꾼이 끝난 뒤 이 스레드에서 몇 곳만(상한·시간 안에서). runs.notes
             # 에는 안 싣는다: 그 키는 [기록] 화면의 이름표(HS_NOTE_LABEL)까지 같이 늘려야 한다.
-            n_sa = check_same_as(rows, home_url(p["domain"] or ""))
+            n_sa = check_same_as(rows, p["domain"] or "")
             if n_sa:
                 print(f"  · sameAs {n_sa}곳을 열어 살아 있는지 봤습니다")
             checked = str(date.today())
@@ -1087,7 +1158,9 @@ def _selfcheck() -> None:
     urls = target_urls(conn, 1, 5)
     assert urls[0] == "https://c.kr/a", urls          # 기회에 걸린 페이지가 먼저
     assert "https://c.kr/b" in urls, urls             # 나머지는 노출 상위로 채운다
-    assert target_urls(conn, 1, 1) == ["https://c.kr/a"], "상한을 넘긴다"
+    # 상한은 기회·노출 페이지의 것이다 — 홈은 그 밖의 한 자리(_home_check)
+    assert [u for u in target_urls(conn, 1, 1) if u != "https://c.kr/"] == ["https://c.kr/a"], \
+        "상한을 넘긴다"
 
     n = db.write_page_audits(conn, 1, "2026-08-20", [a])
     assert n == 1
@@ -1122,7 +1195,7 @@ def _selfcheck() -> None:
     assert row[0] == a["schema_gaps_json"] and json.loads(row[0]) == [
         {"type": "Article", "as": "Article", "n": 1, "need": [], "want": ["headline", "image"]},
         {"type": "Person", "as": "Person", "n": 1, "need": [],
-         "want": ["name", "url|sameAs"]}], row[0]
+         "want": ["name", "url|sameAs"], "each": [["name", "url|sameAs"]]}], row[0]
 
     _concurrency_check(conn)
     _blocked_check(conn)
@@ -1211,20 +1284,79 @@ def _schema_check() -> None:
     # 대신 읽은 행(DataForSEO)은 마크업을 못 봤다 — 칸이 NULL(안 봄)
     assert "schema_gaps_json" not in audit_from_parsed("https://g.kr/", {"title": "t", "h1": "h"})
 
+    def gaps_of(blob: str) -> dict:
+        r = audit_html("https://c.kr/z", f'<script type="application/ld+json">{blob}</script>')
+        return {g["type"]: g for g in json.loads(r["schema_gaps_json"]) if g.get("type")}
+    # 저자는 글(Article 계열·WebPage)의 author 뿐이다 — 상품 리뷰의 author 는 고객이다. 고객에게
+    # 소개 페이지·외부 프로필을 적으라는 [엔티티] 가 리뷰 단 상품 페이지마다 섰다.
+    rv = gaps_of('{"@type":"Product","name":"p","offers":{"price":1},"review":[{"@type":"Review",'
+                 '"reviewRating":{"ratingValue":5},"author":{"@type":"Person","name":"고객"}}]}')
+    assert "Person" not in rv, rv
+    assert audit_html("https://c.kr/z", '<script type="application/ld+json">{"@type":"Product",'
+                      '"review":{"@type":"Review","author":{"@type":"Person","name":"고객",'
+                      '"sameAs":"https://sns.example/u"}}}</script>')["same_as"] == [], \
+        "고객의 sameAs 를 열어 본다"
+    wp = gaps_of('{"@type":"WebPage","author":{"@type":"Person","name":"쓴 사람"}}')
+    assert wp["Person"]["want"] == ["url|sameAs"], wp
+    # 저자가 여럿이면 저자마다 — 한 명이라도 url 이 있으면 다른 저자의 빈칸이 사라졌다(교집합)
+    many = gaps_of('{"@type":"Article","headline":"h","image":"i","datePublished":"d",'
+                   '"dateModified":"d","author":[{"@type":"Person","name":"A","url":"https://c.kr/a"},'
+                   '{"@type":"Person","name":"B"}]}')
+    assert many["Person"]["n"] == 2 and many["Person"]["each"] == [[], ["url|sameAs"]], many
+    assert many["Person"]["want"] == ["url|sameAs"], many
+    # @graph 에 따로 두고 @id 로 잇는 평점은 그 바깥 노드(Product) 안에 든 것이다 — 구글은 @id 를
+    # 합쳐 읽는다. 같은 @id 를 두 자리에 나눠 적은 노드도 한 노드로 합친다.
+    ref = gaps_of('{"@context":"https://schema.org","@graph":[{"@type":"Product","@id":"#p",'
+                  '"name":"p","aggregateRating":{"@id":"#r"}},{"@type":"AggregateRating","@id":"#r",'
+                  '"ratingValue":4,"reviewCount":3},{"@id":"#p","offers":{"price":1}}]}')
+    assert ref.get("AggregateRating", {}).get("need", []) == [], ref
+    assert ref.get("Product", {}).get("need", []) == [], ref
+    # 주석·CDATA 로 감싼 블록, 제어 문자가 든 문자열은 깨진 블록이 아니다(strict=False)
+    for blob in ('<!-- {"@type":"BreadcrumbList","itemListElement":[1]} -->',
+                 '//<![CDATA[\n{"@type":"BreadcrumbList","itemListElement":[1]}\n//]]>',
+                 '/*<![CDATA[*/{"@type":"BreadcrumbList","itemListElement":[1]}/*]]>*/'):
+        got = audit_html("https://c.kr/w", f'<script type="application/ld+json">{blob}</script>')
+        assert got["schema_gaps_json"] == "[]" and json.loads(got["schema_json"]) == ["BreadcrumbList"], \
+            (blob, got["schema_gaps_json"], got["schema_json"])
+    assert _ld_load('{"name":"a\tb\x07c"}') == {"name": "a\tb\x07c"}
+
 
 def _home_check(conn) -> None:
-    """홈은 엔티티(사이트 주인 마크업)를 보는 자리라 점검 대상에 늘 든다 — 단, 최근에 본 홈은
-    자리를 다른 페이지에 준다. 상위 노출 페이지 목록에 홈이 없는 사이트(검색어가 전부 글로
-    가는 곳)는 홈을 한 번도 안 열어 엔티티 판정이 영영 안 섰다."""
-    urls = target_urls(conn, 1, HOME_MIN_LIMIT)
-    assert "https://c.kr/" in urls, urls
-    assert urls[0] == "https://c.kr/a", "홈을 넣느라 기회 페이지 순서를 흔들었다"
-    assert "https://c.kr/" not in target_urls(conn, 1, HOME_MIN_LIMIT - 1), "상한이 작은데 홈이 자리를 뺏는다"
-    conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status) "
-                 "VALUES(1,date('now','-1 day'),'https://c.kr/',200)")
+    """홈은 엔티티(사이트 주인 마크업)를 보는 자리라 점검 대상에 늘 든다 — 상한과 상관없이(상한
+    밖 한 자리), 단 최근에 본 홈은 다시 안 연다. 상위 노출 페이지 목록에 홈이 없는 사이트(검색어가
+    전부 글로 가는 곳)는 홈을 한 번도 안 열어 엔티티 판정이 영영 안 섰다."""
+    urls = target_urls(conn, 1, 1)
+    assert urls == ["https://c.kr/a", "https://c.kr/"], f"상한이 작아도 홈은 따로 한 자리: {urls}"
+    # 홈이 후보(노출 상위)에 있되 상한 밖으로 잘렸어도 넣는다 — 예전엔 '이미 본 후보'로 쳐서 뺐다
+    # (기회 둘이 a·b 를 앞에 세우고, 노출 상위 둘 중 홈이 셋째 자리로 밀려 잘린다)
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(1,'2026-08-20',28,'브랜드','https://c.kr/',"
+                 "0,300,0.0,3.0)")
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,status) "
+                 "VALUES(1,'ctr_gap','점 빼기',70,'new')")
     conn.commit()
-    assert "https://c.kr/" not in target_urls(conn, 1, HOME_MIN_LIMIT), "어제 본 홈을 또 연다"
-    conn.execute("DELETE FROM page_audits WHERE url='https://c.kr/'")
+    urls = target_urls(conn, 1, 2)
+    assert urls == ["https://c.kr/a", "https://c.kr/b", "https://c.kr/"], urls
+    conn.execute("DELETE FROM gsc_snapshots WHERE page='https://c.kr/'")
+    conn.execute("DELETE FROM opportunities WHERE target='점 빼기'")
+    # www — 서치콘솔·크롤이 아는 주소 꼴을 따른다. 도메인이 'c.kr' 이어도 사이트가 www 면 www 한 번
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(1,'2026-08-20',28,'브랜드',"
+                 "'https://www.c.kr/',0,1,0.0,3.0)")
+    conn.commit()
+    urls = target_urls(conn, 1, 40)
+    homes = [u for u in urls if scoring.is_home(u, "c.kr")]
+    assert homes == ["https://www.c.kr/"], f"홈을 두 꼴로 연다: {homes}"
+    conn.execute("DELETE FROM gsc_snapshots WHERE page='https://www.c.kr/'")
+    # 어제 www 꼴로 본 홈이면(크롤 주소) 도메인 꼴로 또 열지 않는다
+    conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status) "
+                 "VALUES(1,date('now','-1 day'),'https://www.c.kr/',200)")
+    conn.commit()
+    assert not [u for u in target_urls(conn, 1, 40) if scoring.is_home(u, "c.kr")], "어제 본 홈을 또 연다"
+    conn.execute("UPDATE page_audits SET checked_date=date('now','-30 day') WHERE url='https://www.c.kr/'")
+    conn.commit()
+    assert [u for u in target_urls(conn, 1, 40) if scoring.is_home(u, "c.kr")] == ["https://www.c.kr/"]
+    conn.execute("DELETE FROM page_audits WHERE url='https://www.c.kr/'")
     conn.commit()
 
 
@@ -1286,6 +1418,18 @@ def _same_as_check(conn) -> None:
     assert not opened, opened
     assert conn.execute("SELECT same_as_json FROM page_audits WHERE project_id=9 "
                         "AND url='https://sa.kr/'").fetchone()[0] is None
+    # 홈 행은 도메인으로 알아본다 — 사이트가 www 면 'https://www.sa.kr/' 이 홈이다. 예전엔 도메인에서
+    # 지은 주소와 글자가 같은 행만 홈으로 쳐서 www 홈의 주인 sameAs 를 하나도 안 열었다.
+    rows = [{"url": "https://sa.kr/p", "same_as": [["Person", "https://p.example/"]]},
+            {"url": "https://www.sa.kr/", "same_as": [["Organization", "https://o.example/"]]}]
+    g["check_link"] = link
+    try:
+        opened.clear()
+        assert check_same_as(rows, "sa.kr") == 2
+    finally:
+        g["check_link"] = orig[2]
+    assert opened == ["https://o.example/", "https://p.example/"], opened
+    assert json.loads(rows[1]["same_as_json"])[0]["url"] == "https://o.example/", rows
 
 
 def _dfs_check(conn) -> None:

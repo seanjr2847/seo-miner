@@ -1110,8 +1110,9 @@ def _has_head_fields(audit: dict) -> bool:
 # 하나면 된다(Product 는 offers·review·aggregateRating 중 하나가 있어야 결과에 나간다).
 # base: 그 유형의 속성을 물려받는다(LocalBusiness 는 Organization 이다 — logo·sameAs 도 본다).
 # Organization·Person 은 구글 기준 필수가 없다 — 이 둘은 엔티티(누구의 사이트·누가 쓴 글)로만
-# 본다(entity_advice). Person 은 **저자**만 검사한다(수집기가 author 로 이어진 것만 고른다):
-# 글이 소개하는 인물 프로필에 url 이 없다고 지적하면 고칠 일이 아닌 것을 시킨다.
+# 본다(entity_advice). Person 은 **저자**만 검사한다 — 수집기가 글(writes_page)의 author 로
+# 이어진 것만 고른다. 글이 소개하는 인물·상품 리뷰를 쓴 고객에게 url 이 없다고 지적하면 고칠
+# 일이 아닌 것을 시킨다.
 SCHEMA_RULES = {
     "Organization": {"required": (), "recommended": ("name", "url", "logo", "sameAs")},
     "LocalBusiness": {"base": "Organization", "required": ("name", "address"),
@@ -1135,30 +1136,89 @@ SCHEMA_RULES = {
 }
 # 다른 노드의 속성 값으로 들어 있으면 대상이 그 바깥 노드라 필요 없는 칸(Product.review 안의 Review).
 SCHEMA_NESTED_OPTIONAL = frozenset({"itemReviewed"})
-# 하위 유형 → 규칙. schema.org 의 하위 유형은 수백 개라 다 적지 않는다 — 실제 사이트에서
-# 흔히 쓰는 것만. 여기 없는 유형은 검사하지 않는다(모르는 것을 지어내지 않는다).
+# 하위 유형 → 규칙. 사이트 주인(Organization·LocalBusiness)은 schema.org 의 계층을 통째로 옮겨
+# 적었다 — 홈의 주인 판정이 이 표에 기대서, 빠진 하위 유형(JewelryStore·Plumber)을 '주인 없음'
+# 으로 읽고 멀쩡한 홈에 Organization 을 또 넣으라고 시켰다. 그래도 여기 없는 유형은 '없음'이
+# 아니라 '모름'이다(schema_unknown) — 판정하지 않는다.
 SCHEMA_SUBTYPES = {
     "Article": ("NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
-                "AnalysisNewsArticle", "OpinionNewsArticle"),
-    "Organization": ("Corporation", "NGO", "OnlineBusiness", "OnlineStore",
-                     "EducationalOrganization", "MedicalOrganization", "SportsOrganization",
-                     "NewsMediaOrganization", "GovernmentOrganization"),
-    "LocalBusiness": ("MedicalClinic", "MedicalBusiness", "Dentist", "Physician", "Hospital",
-                      "Optician", "Pharmacy", "HealthAndBeautyBusiness", "BeautySalon", "DaySpa",
-                      "HairSalon", "NailSalon", "TattooParlor", "HealthClub", "ExerciseGym",
-                      "SportsActivityLocation", "Restaurant", "FoodEstablishment",
-                      "CafeOrCoffeeShop", "Bakery", "BarOrPub", "Store", "ClothingStore",
-                      "ProfessionalService", "LegalService", "Attorney", "Notary",
-                      "AccountingService", "FinancialService", "RealEstateAgent",
-                      "AutomotiveBusiness", "AutoRepair", "HomeAndConstructionBusiness",
-                      "LodgingBusiness", "Hotel", "ChildCare", "TravelAgency",
-                      "EntertainmentBusiness", "EmploymentAgency", "EmergencyService"),
+                "AnalysisNewsArticle", "OpinionNewsArticle", "BackgroundNewsArticle",
+                "ReportageNewsArticle", "ReviewNewsArticle", "AskPublicUseNewsArticle",
+                "LiveBlogPosting", "AdvertiserContentArticle", "SatiricalArticle",
+                "MedicalScholarlyArticle", "APIReference"),
+    # (SocialMediaPosting·DiscussionForumPosting 은 뺐다 — 구글 기준이 따로고, 그 author 는
+    #  사이트가 아니라 게시판 이용자다. 상품 리뷰의 고객과 같은 자리다.)
+    "Organization": ("Airline", "Consortium", "Cooperative", "Corporation", "NGO",
+                     "EducationalOrganization", "CollegeOrUniversity", "ElementarySchool",
+                     "HighSchool", "MiddleSchool", "Preschool", "School", "FundingScheme",
+                     "GovernmentOrganization", "LibrarySystem", "MedicalOrganization",
+                     "DiagnosticLab", "VeterinaryCare", "NewsMediaOrganization",
+                     "OnlineBusiness", "OnlineStore", "PerformingGroup", "DanceGroup",
+                     "MusicGroup", "TheaterGroup", "PoliticalParty", "Project", "FundingAgency",
+                     "ResearchProject", "ResearchOrganization", "SearchRescueOrganization",
+                     "SportsOrganization", "SportsTeam", "WorkersUnion"),
+    "LocalBusiness": (
+        # LocalBusiness 바로 아래
+        "AnimalShelter", "ArchiveOrganization", "AutomotiveBusiness", "ChildCare", "Dentist",
+        "DryCleaningOrLaundry", "EmergencyService", "EmploymentAgency", "EntertainmentBusiness",
+        "FinancialService", "FoodEstablishment", "GovernmentOffice", "HealthAndBeautyBusiness",
+        "HomeAndConstructionBusiness", "InternetCafe", "LegalService", "Library",
+        "LodgingBusiness", "MedicalBusiness", "ProfessionalService", "RadioStation",
+        "RealEstateAgent", "RecyclingCenter", "SelfStorage", "ShoppingCenter",
+        "SportsActivityLocation", "Store", "TelevisionStation", "TouristInformationCenter",
+        "TravelAgency",
+        # 그 아래
+        "AutoBodyShop", "AutoDealer", "AutoPartsStore", "AutoRental", "AutoRepair", "AutoWash",
+        "GasStation", "MotorcycleDealer", "MotorcycleRepair",
+        "FireStation", "Hospital", "PoliceStation",
+        "AdultEntertainment", "AmusementPark", "ArtGallery", "Casino", "ComedyClub",
+        "MovieTheater", "NightClub",
+        "AccountingService", "AutomatedTeller", "BankOrCreditUnion", "InsuranceAgency",
+        "Bakery", "BarOrPub", "Brewery", "CafeOrCoffeeShop", "Distillery", "FastFoodRestaurant",
+        "IceCreamShop", "Restaurant", "Winery",
+        "PostOffice",
+        "BeautySalon", "DaySpa", "HairSalon", "HealthClub", "NailSalon", "TattooParlor",
+        "Electrician", "GeneralContractor", "HVACBusiness", "HousePainter", "Locksmith",
+        "MovingCompany", "Plumber", "RoofingContractor",
+        "Attorney", "Notary",
+        "BedAndBreakfast", "Campground", "Hostel", "Hotel", "Motel", "Resort", "SkiResort",
+        "VacationRental",
+        "CommunityHealth", "Dermatology", "DietNutrition", "Emergency", "Geriatric",
+        "Gynecologic", "MedicalClinic", "CovidTestingFacility", "Midwifery", "Nursing",
+        "Obstetric", "Oncologic", "Optician", "Optometric", "Otolaryngologic", "Pediatric",
+        "Pharmacy", "Physician", "IndividualPhysician", "PhysiciansOffice", "Physiotherapy",
+        "PlasticSurgery", "Podiatric", "PrimaryCare", "Psychiatric", "PublicHealth",
+        "BowlingAlley", "ExerciseGym", "GolfCourse", "PublicSwimmingPool", "SportsClub",
+        "StadiumOrArena", "TennisComplex",
+        "BikeStore", "BookStore", "ClothingStore", "ComputerStore", "ConvenienceStore",
+        "DepartmentStore", "ElectronicsStore", "Florist", "FurnitureStore", "GardenStore",
+        "GroceryStore", "HardwareStore", "HobbyShop", "HomeGoodsStore", "JewelryStore",
+        "LiquorStore", "MensClothingStore", "MobilePhoneStore", "MovieRentalStore", "MusicStore",
+        "OfficeEquipmentStore", "OutletStore", "PawnShop", "PetStore", "ShoeStore",
+        "SportingGoodsStore", "TireShop", "ToyStore", "WholesaleStore"),
     "Event": ("MusicEvent", "BusinessEvent", "EducationEvent", "SportsEvent", "Festival",
-              "ExhibitionEvent", "SocialEvent", "TheaterEvent", "ComedyEvent", "FoodEvent"),
+              "ExhibitionEvent", "SocialEvent", "TheaterEvent", "ComedyEvent", "FoodEvent",
+              "ChildrensEvent", "DanceEvent", "Hackathon", "LiteraryEvent", "SaleEvent",
+              "ScreeningEvent", "VisualArtsEvent"),
     "Review": ("CriticReview", "UserReview", "EmployerReview"),
 }
 _SCHEMA_RULE_OF = {**{t: t for t in SCHEMA_RULES},
                    **{s: base for base, subs in SCHEMA_SUBTYPES.items() for s in subs}}
+# 쪽(WebPage 계열) — 이것과 Article 계열의 author 만 '이 페이지를 쓴 사람'이다(writes_page).
+# FAQPage 도 WebPage 다(규칙은 따로 있다).
+WEBPAGE_TYPES = ("WebPage", "AboutPage", "CheckoutPage", "CollectionPage", "ContactPage",
+                 "FAQPage", "ItemPage", "MedicalWebPage", "ProfilePage", "QAPage",
+                 "RealEstateListing", "SearchResultsPage", "MediaGallery", "ImageGallery",
+                 "VideoGallery")
+# 주인이 아닌 줄 아는 유형 — 홈에 흔히 붙는 틀·부품. 주인 판정에서 '안다'로 친다. 이 표에도
+# 규칙 표에도 없는 유형이 홈에 있으면 그게 주인일 수 있어 '주인 없음'이라 하지 않는다.
+SCHEMA_KNOWN_OTHER = frozenset({
+    *WEBPAGE_TYPES, "WebSite", "SearchAction", "EntryPoint", "PropertyValueSpecification",
+    "ReadAction", "ListItem", "ItemList", "SiteNavigationElement", "WPHeader", "WPFooter",
+    "WPSideBar", "WPAdBlock", "ImageObject", "PostalAddress", "GeoCoordinates", "ContactPoint",
+    "OpeningHoursSpecification", "Offer", "AggregateOffer", "Rating", "Brand", "Question",
+    "Answer", "Thing", "CreativeWork", "Language", "Country", "City", "AdministrativeArea",
+    "PriceSpecification", "UnitPriceSpecification", "QuantitativeValue", "MonetaryAmount"})
 # 유형을 여럿 단 노드(["Organization","Dentist"])는 좁은 쪽 규칙으로 — 앞일수록 좁다.
 _SCHEMA_SPECIFIC = ("LocalBusiness",)
 # 사이트 주인 엔티티 — 홈에서 본다. 지역 업체면 이름·주소·전화(NAP)를 지도 칸 요청문이 대조한다.
@@ -1173,6 +1233,21 @@ def schema_rule_of(types) -> tuple[str, str] | None:
     if not hits:
         return None
     return next((h for s in _SCHEMA_SPECIFIC for h in hits if h[0] == s), hits[0])
+
+
+def writes_page(types) -> bool:
+    """이 유형의 author 가 '이 페이지를 쓴 사람'인가 — Article 계열과 쪽(WEBPAGE_TYPES).
+    리뷰·상품·행사의 author 는 고객·주최자다(엔티티 검사 밖)."""
+    names = [types] if isinstance(types, str) else [t for t in (types or []) if isinstance(t, str)]
+    return any(_SCHEMA_RULE_OF.get(t) == "Article" or t in WEBPAGE_TYPES for t in names)
+
+
+def schema_unknown(audit: dict) -> list[str]:
+    """이 행의 @type 중 이 도구가 모르는 것 — 규칙 표에도, 주인이 아닌 줄 아는 유형에도 없다.
+    이게 있으면 주인이 '없다'고 하지 않는다(그 유형이 주인일 수 있다)."""
+    return list(dict.fromkeys(
+        t for t in _as_list(audit.get("schema_json"))
+        if isinstance(t, str) and t not in _SCHEMA_RULE_OF and t not in SCHEMA_KNOWN_OTHER))
 
 
 def schema_props(rule: str, part: str) -> tuple[str, ...]:
@@ -1198,10 +1273,11 @@ def _schema_gaps(audit: dict) -> list[dict] | None:
 
 
 def is_home(url: str, domain: str = "") -> bool:
-    """사이트 첫 화면인가 — 경로가 비었거나 '/'. 도메인을 알면 그 사이트의 것이어야 한다."""
+    """사이트 첫 화면인가 — 경로가 비었거나 '/'. 도메인을 알면 그 호스트여야 한다(www 유무는
+    같은 곳 — host_of 가 뗀다). 하위 도메인(blog.)의 첫 화면은 사이트 주인의 홈이 아니다."""
     u = urlsplit(url or "")
     return (u.path or "/") == "/" and not u.query and bool(u.netloc) \
-        and (not domain or owns(host_of(url), domain))
+        and (not domain or host_of(url) == host_of(domain))
 
 
 def owner_types(audit: dict) -> list[tuple[str, str]]:
@@ -1247,16 +1323,21 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
     home = is_home(str(audit.get("url") or ""), domain)
     if home:
         owner = owner_types(audit)
-        if not owner:
-            if not audit.get("js_shell"):    # 껍데기면 정적 HTML 이 못 본 것일 수 있다
-                out.append({"tag": "엔티티", "level": "warn",
-                            "now": "홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다",
-                            "fix": "홈에 Organization(손님이 찾아오는 지점이 있으면 LocalBusiness 의 "
-                                   "맞는 하위 유형) 하나를 넣으세요 — name·url·logo·sameAs(공식 "
-                                   "계정·프로필 주소)를 채우고, 지점이 있으면 주소·전화·좌표·영업시간"
-                                   "까지. 검색엔진이 이 사이트를 다른 곳(지도·공식 계정)의 같은 "
-                                   "주인과 잇는 재료입니다."})
-        else:
+        # 껍데기면 정적 HTML 이 못 본 것일 수 있고, 모르는 유형이 있으면 그게 주인일 수 있다 —
+        # 둘 다 '없음'이 아니라 '모름'이라 말하지 않는다
+        if not owner and not audit.get("js_shell") and not schema_unknown(audit):
+            # 채울 속성 이름은 표(SCHEMA_RULES)에서 — 여기 산문으로 적으면 표가 바뀔 때 이 줄만 낡는다
+            org = schema_props("Organization", "recommended")
+            lb = [p for p in schema_props("LocalBusiness", "required")
+                  + schema_props("LocalBusiness", "recommended") if p not in org]
+            out.append({"tag": "엔티티", "level": "warn",
+                        "now": "홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다",
+                        "fix": "홈에 Organization(손님이 찾아오는 지점이 있으면 LocalBusiness 의 "
+                               f"맞는 하위 유형) 하나를 넣으세요 — {', '.join(map(_prop_name, org))} "
+                               "를 채우고(sameAs 는 공식 계정·프로필 주소), 지점이 있으면 "
+                               f"{', '.join(map(_prop_name, lb))} 까지. 검색엔진이 이 사이트를 다른 "
+                               "곳(지도·공식 계정)의 같은 주인과 잇는 재료입니다."})
+        elif owner:
             rule, written = owner[0]
             g = by.get(rule) or {}
             want = [p for p in g.get("want") or [] if p not in (g.get("need") or [])]
@@ -1271,11 +1352,18 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
                                    "이 없습니다",
                             "fix": " ".join(["사이트에 실제로 있는 값으로 채우세요."]
                                             + [h for p, h in hint.items() if p in want])})
+    # 저자는 저자마다 — 수집기가 문서 순서로 저자별 빈칸(each)을 남긴다. 저자가 여럿인데 한데
+    # 모으면 한 명이라도 url 이 있는 순간 다른 저자의 빈칸이 사라졌다. 이름은 안 남기므로(원문
+    # 미저장) 몇 번째 저자인지로 가리킨다.
     p = by.get("Person") or {}
-    pw = [x for x in p.get("want") or [] if x]
-    if pw:
+    each = p.get("each") or [p.get("want") or []]
+    for i, pw in enumerate(each):
+        pw = [x for x in pw or [] if x]
+        if not pw:
+            continue
+        who = f"저자 {len(each)}명 중 {i + 1}번째(문서 순서)의" if len(each) > 1 else "저자(Person)"
         out.append({"tag": "엔티티", "level": "warn",
-                    "now": f"저자(Person) 마크업에 {', '.join(map(_prop_name, pw))} 이 없습니다",
+                    "now": f"{who} 마크업에 {', '.join(map(_prop_name, pw))} 이 없습니다",
                     "fix": "저자 이름과 함께 그 사람을 소개하는 페이지(url)나 외부 프로필(sameAs)을 "
                            "적으세요. 이름만으로는 누가 쓴 글인지 다른 자리와 이어 볼 수 없습니다. "
                            "모르는 값은 지어내지 않고 비워 둡니다."})
@@ -1296,7 +1384,7 @@ def nap_state(audit: dict | None) -> dict | None:
     """홈 마크업에서 본 이름·주소·전화(NAP) — 지도 칸 요청문의 재료. 안 본 행이면 None.
 
     {"as": 쓴 @type 또는 None, "rule": "LocalBusiness"|"Organization"|None,
-     "missing": NAP_PROPS 중 마크업에 없는 것}"""
+     "missing": NAP_PROPS 중 마크업에 없는 것, "unknown": 판정 못 한 유형(주인일 수 있다)}"""
     if not audit or audit.get("error"):
         return None
     gaps = _schema_gaps(audit)
@@ -1304,11 +1392,13 @@ def nap_state(audit: dict | None) -> dict | None:
         return None
     owner = owner_types(audit)
     if not owner:
-        return {"as": None, "rule": None, "missing": list(NAP_PROPS)}
+        unknown = schema_unknown(audit)       # 모르는 유형이 있으면 '없음'이 아니다(entity_advice 와 같은 판정)
+        return {"as": None, "rule": None, "unknown": unknown,
+                "missing": [] if unknown else list(NAP_PROPS)}
     rule, written = owner[0]
     g = next((x for x in gaps if x.get("type") == rule), {})
     gone = set(g.get("need") or []) | set(g.get("want") or [])
-    return {"as": g.get("as") or written, "rule": rule,
+    return {"as": g.get("as") or written, "rule": rule, "unknown": [],
             "missing": [p for p in NAP_PROPS if p in gone] if rule == "LocalBusiness" else []}
 
 

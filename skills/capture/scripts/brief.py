@@ -1205,28 +1205,46 @@ def _serp_feature_lines(o: dict, ctx: dict) -> list[str]:
     return ["## 검색결과에 선 칸 — 그 자리를 가져가는 형식", *(f"- {h}" for h in hints),
             "- 이 형식이 우리 글에 없으면 '만들어 줄 것'의 본문 구간 카드에서 어느 구간이 그 "
             "형식을 맡을지 적습니다. 없는 형식을 억지로 만들지는 않습니다(영상이 없으면 [확인 필요]).",
-            "", *(_nap_lines(ctx) if "local_pack" in map(str, feats) else [])]
+            "", *(_nap_lines(ctx) if _local_pack(o, ctx) else [])]
 
 
-NAP_HEAD = "## 사람이 확인할 것 — 이름·주소·전화(NAP)가 세 자리에서 같은가"
+def _local_pack(o: dict, ctx: dict) -> bool:
+    """이 검색어의 검색결과에 지도 칸이 섰나 — NAP 절과 그 산출물(NAP_DELIVER)이 같이 선다."""
+    feats = ((ctx.get("rank_by_kw") or {}).get(str(o.get("target") or "")) or {}).get("features") or []
+    return "local_pack" in map(str, feats)
+
+
+NAP_HEAD = "## 이름·주소·전화(NAP) 대조 — 지도 칸이 선 검색어"
+# 지도 칸 검색어의 산출물. 예전엔 NAP 절이 "답에 대조표 하나를 둡니다"라고 따로 시켜서, 이 표가
+# '만들어 줄 것' 번호 목록과 '만들 것 N개'에 없었다 — 산출물 목록이 두 벌이 됐다. 이제 번호 목록에
+# 오르고(build), NAP 절은 이것을 가리키기만 한다.
+NAP_DELIVER = ("이름·주소·전화 대조표 — 자리 | 이름 | 주소 | 전화 세 줄(사이트 본문·마크업·구글 "
+               "비즈니스 프로필). 본문·마크업 줄은 페이지를 열어 그대로 옮겨 적고, 프로필 줄은 "
+               "[사람 확인]으로 비워 둡니다. 두 자리가 다르면 어느 쪽에 맞출지까지")
 
 
 def _nap_lines(ctx: dict) -> list[str]:
     """지도 칸이 선 검색어 — 사이트 본문·마크업·구글 비즈니스 프로필의 이름·주소·전화 대조.
 
-    프로필은 이 도구도 답하는 쪽도 못 연다. 그래서 산출물로 시키지 않고 **사람이 볼 항목**으로
-    싣되, 답이 열 수 있는 두 자리(본문·마크업)는 옮겨 적게 해서 사람이 프로필 하나만 대면 되게
-    한다. 홈 마크업에서 우리가 이미 아는 것(scoring.nap_state — 주소·전화 칸이 비었는지)은 같이
-    말한다. 판정은 scoring 한 곳이고 여기는 문장만 만든다."""
+    프로필은 이 도구도 답하는 쪽도 못 연다. 그래서 대조표(NAP_DELIVER, '만들어 줄 것'의 한 줄)의
+    프로필 줄은 **사람이 채울 칸**으로 비워 두고, 답이 열 수 있는 두 자리(본문·마크업)는 옮겨
+    적게 해서 사람이 프로필 하나만 대면 되게 한다. 홈 마크업에서 우리가 이미 아는 것
+    (scoring.nap_state — 주소·전화 칸이 비었는지)은 같이 말한다. 판정은 scoring 한 곳이고 여기는
+    문장만 만든다."""
     dom = str((ctx.get("project") or {}).get("domain") or "")
     audits = ctx.get("page_audits") or {}
-    home = next((a for u, a in audits.items() if scoring.is_home(str(u), dom)), None)
+    # 홈 행이 둘이면(옛 www·비www 행) 가장 최근에 본 것
+    homes = [a for u, a in audits.items() if scoring.is_home(str(u), dom)]
+    home = max(homes, key=lambda a: str(a.get("checked_date") or ""), default=None)
     st = scoring.nap_state(home)
     nap = "·".join(scoring.NAP_PROPS)            # 속성 이름의 정본은 scoring — 사본을 안 적는다
     if home is None:
         known = "- 홈을 아직 점검하지 않았습니다 — 마크업 칸은 홈을 열어 직접 읽습니다."
     elif st is None:
         known = "- 홈 점검이 마크업을 읽지 못했습니다(막혔거나 오래된 점검) — 마크업 칸은 직접 읽습니다."
+    elif not st["rule"] and st.get("unknown"):
+        known = (f"- 홈 마크업의 유형({', '.join(st['unknown'][:3])})은 이 도구가 판정하지 않는 "
+                 "유형입니다 — 사이트 주인을 밝히는 것일 수 있으니 마크업 칸은 홈을 열어 직접 읽습니다.")
     elif not st["rule"]:
         known = ("- 홈 마크업에 사이트 주인(Organization·LocalBusiness)이 없습니다 — 마크업 줄은 "
                  "'(없음)'으로 두고, 지역 업체면 LocalBusiness 를 넣어야 한다고 한 줄 적습니다.")
@@ -1243,10 +1261,9 @@ def _nap_lines(ctx: dict) -> list[str]:
             "- 이 검색어에는 지도 칸이 섭니다. 그 자리는 구글 비즈니스 프로필이 가져가고, 구글은 사이트 "
             "본문·마크업·프로필의 이름·주소·전화가 같은 곳을 말하는지 봅니다. 층·호 표기, 대표 번호와 "
             "지점 번호, 영문 상호처럼 한 글자만 달라도 다른 곳으로 읽힐 수 있습니다.",
-            "- 답에 대조표 하나를 둡니다: 자리 | 이름 | 주소 | 전화. 사이트 본문(꼬리말·연락처 페이지)과 "
-            f"마크업(LocalBusiness 의 {nap}) 두 줄은 열어서 그대로 옮겨 적고, 구글 "
-            "비즈니스 프로필 줄은 [사람 확인]으로 비워 둡니다 — 프로필은 사람이 열어 대조합니다. "
-            "두 자리가 다르면 어느 쪽에 맞출지 적습니다.",
+            "- 대조표는 '만들어 줄 것'의 이름·주소·전화 대조표입니다. 본문 줄은 꼬리말·연락처 "
+            f"페이지에서, 마크업 줄은 LocalBusiness 의 {nap} 에서 옮깁니다. 프로필 줄([사람 확인])은 "
+            "사람이 프로필을 열어 대조합니다.",
             known, ""]
 
 
@@ -3757,6 +3774,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         L[page_at:page_at] = ps + (["## 사이트 전체에서 본 이 주소", *sf, ""] if sf else [])
     if canon:
         want = [CANON_FIRST.format(url=url, canon=canon)] + list(want)
+    # 지도 칸 검색어 — NAP 대조표도 이 번호 목록에 오른다(산출물의 정본은 여기 한 곳이다).
+    # NAP 절(_nap_lines)은 _serp_feature_lines 와 같은 조건(상위와 견주는 꼴)에서만 선다.
+    if s["slot"] and _local_pack(o, ctx) and NAP_DELIVER not in want:
+        want = list(want) + [NAP_DELIVER]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     L += _aio_cited_missing_lines(o, ctx, want)
     if kind == "rank_decay" and shape == "fix_page":

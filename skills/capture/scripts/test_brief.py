@@ -3695,6 +3695,97 @@ def test_local_pack_brief_asks_a_person_to_check_nap():
     ctx3 = {**ctx, "rank_by_kw": {"검색어": {"features": ["people_also_ask"]}}}
     assert brief.NAP_HEAD not in brief.build(_opp("ctr_gap", "검색어"), ctx3, "ko-KR")["body"]
 
+
+def test_nap_table_is_a_deliverable_counted_in_the_summary():
+    """NAP 대조표는 답이 만드는 것이다 — 그런데 '## 만들어 줄 것' 번호 목록과 '만들 것 N개'에
+    없이 NAP 절이 따로 "답에 대조표 하나를 둡니다"라고 시켰다. 산출물의 정본은 그 번호 목록
+    하나다(그 밖의 것은 문안을 만들지 않는다고 같은 요청문이 말한다) — 목록이 두 벌이 됐다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()},
+           "project": {"domain": "me.example"},
+           "rank_by_kw": {"검색어": {"features": ["local_pack"]}}}
+    for o, c in ((_opp("ctr_gap", "검색어"), ctx),
+                 (_opp("content_gap", "검색어", gap_kind="missing"), {**ctx, "query_pages": {}})):
+        body = brief.build(o, c, "ko-KR")["body"]
+        deliver = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+        items = [x for x in deliver.splitlines() if re.match(r"\d+\. ", x)]
+        assert brief.NAP_DELIVER in deliver, (o["kind"], deliver)
+        n = int(re.search(r"- 만들 것 (\d+)개", body).group(1))
+        assert n == len(items), (o["kind"], n, items)
+        # NAP 절은 산출물을 새로 시키지 않고 번호 목록의 그 산출물을 가리킨다
+        nap = body.split(brief.NAP_HEAD)[1].split("\n## ")[0]
+        assert "답에 대조표 하나를 둡니다" not in nap and "만들어 줄 것" in nap, nap
+    # 지도 칸이 없으면 산출물도 없다
+    ctx3 = {**ctx, "rank_by_kw": {"검색어": {"features": ["people_also_ask"]}}}
+    assert brief.NAP_DELIVER not in brief.build(_opp("ctr_gap", "검색어"), ctx3, "ko-KR")["body"]
+
+
+def test_owner_subtypes_follow_schema_org_and_unknown_is_not_absent():
+    """표에 없는 하위 유형을 '사이트 주인이 없다'로 읽었다 — JewelryStore·Plumber·AutoDealer 를
+    다 갖춘 홈에 Organization 을 새로 넣으라고 시켰다. schema.org 의 Organization·LocalBusiness
+    계열은 그 상위 규칙으로 보고, 이 도구가 모르는 유형이면 판정하지 않는다(안 본 것 ≠ 없는 것)."""
+    for t in ("JewelryStore", "Plumber", "AutoDealer", "Florist", "Winery", "PostOffice",
+              "Electrician", "BankOrCreditUnion", "InsuranceAgency"):
+        assert scoring.schema_rule_of(t) == ("LocalBusiness", t), t
+    for t in ("Airline", "CollegeOrUniversity", "MusicGroup", "SportsTeam"):
+        assert scoring.schema_rule_of(t) == ("Organization", t), t
+    full = _audit(url=HOME_URL, schema_json='["JewelryStore", "WebSite"]', schema_gaps_json="[]")
+    assert not [x for x in full["advice"] if x["tag"] == "엔티티"], full["advice"]
+    # 이 도구가 모르는 유형 — 사이트 주인일 수도 있다. '없음'이라고 하지 않는다
+    odd = _audit(url=HOME_URL, schema_json='["WebSite", "VeterinaryClinicX"]', schema_gaps_json="[]")
+    assert not [x for x in odd["advice"] if x["tag"] == "엔티티"], odd["advice"]
+    # 아는 유형뿐인데 주인이 없으면 그때만 '없음'
+    bare = _audit(url=HOME_URL, schema_json='["WebSite", "SearchAction", "WebPage"]',
+                  schema_gaps_json="[]")
+    assert len([x for x in bare["advice"] if x["tag"] == "엔티티"]) == 1, bare["advice"]
+    # NAP 절도 같은 판정 — 모르는 유형이면 '(없음)'이 아니라 열어서 읽으라고 한다
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit(), HOME_URL: odd},
+           "project": {"domain": "me.example"},
+           "rank_by_kw": {"검색어": {"features": ["local_pack"]}}}
+    nap = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"].split(brief.NAP_HEAD)[1]
+    nap = nap.split("\n## ")[0]
+    assert "VeterinaryClinicX" in nap and "(없음)'으로 두고" not in nap, nap
+    st = scoring.nap_state(full)
+    assert st["rule"] == "LocalBusiness" and st["as"] == "JewelryStore", st
+
+
+def test_home_is_the_site_root_with_or_without_www():
+    """홈은 www 유무와 상관없이 그 사이트의 첫 화면 한 곳이다 — 하위 도메인 첫 화면은 아니다."""
+    assert scoring.is_home("https://www.me.example/", "me.example")
+    assert scoring.is_home("https://me.example/", "www.me.example")
+    assert not scoring.is_home("https://blog.me.example/", "me.example")
+
+
+def test_owner_fix_names_its_properties_from_the_schema_table():
+    """'주인 마크업 없음'의 고칠 말이 name·url·logo·sameAs·주소·전화·좌표·영업시간을 손으로
+    적어 SCHEMA_RULES 권장 목록의 사본을 산문으로 가졌다 — 표가 바뀌면 이 문구만 낡는다."""
+    rules = scoring.SCHEMA_RULES
+    saved = {k: dict(v) for k, v in rules.items()}
+    try:
+        rules["Organization"]["recommended"] = (*saved["Organization"]["recommended"], "zzOrgProp")
+        rules["LocalBusiness"]["recommended"] = (*saved["LocalBusiness"]["recommended"], "zzLbProp")
+        bare = _audit(url=HOME_URL, schema_json='["WebSite"]', schema_gaps_json="[]")
+    finally:
+        for k, v in saved.items():
+            rules[k] = v
+    fix = next(x["fix"] for x in bare["advice"] if x["tag"] == "엔티티")
+    assert "zzOrgProp" in fix and "zzLbProp" in fix, fix
+
+
+def test_each_author_is_judged_on_its_own():
+    """저자가 여럿이면 저자마다 본다 — 한 명이라도 url 이 있으면 다른 저자의 빈칸이 사라졌다."""
+    two = _audit(schema_json='["Article", "Person"]', schema_gaps_json=_gaps(
+        {"type": "Person", "as": "Person", "n": 2, "need": [], "want": ["url|sameAs"],
+         "each": [[], ["url|sameAs"]]}))
+    ent = [x["now"] for x in two["advice"] if x["tag"] == "엔티티"]
+    assert len(ent) == 1 and "2명 중 2번째" in ent[0] and "url 또는 sameAs" in ent[0], ent
+    three = _audit(schema_json='["Article", "Person"]', schema_gaps_json=_gaps(
+        {"type": "Person", "as": "Person", "n": 3, "need": [], "want": ["name", "url|sameAs"],
+         "each": [["name"], [], ["url|sameAs"]]}))
+    ent = [x["now"] for x in three["advice"] if x["tag"] == "엔티티"]
+    assert len(ent) == 2 and "3명 중 1번째" in ent[0] and "name" in ent[0] \
+        and "3명 중 3번째" in ent[1] and "name" not in ent[1], ent
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
