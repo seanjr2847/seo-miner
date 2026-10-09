@@ -1835,6 +1835,61 @@ def _serp_seen_lines(r: dict | None, ctx: dict) -> list[str]:
     return L
 
 
+CTR_CAUSE_HEAD = "클릭률이 낮은 까닭 — 세 갈래를 기계로 먼저 가른 것"
+
+
+def _ctr_cause_lines(o: dict, ctx: dict) -> list[str]:
+    """클릭률 미달의 까닭 셋 — 제목 불일치·의도 어긋남·스니펫 약함 — 을 페이지 점검값으로 가른다.
+
+    처방은 "순위가 아니라 제목·설명 문제"라고 단정하고 title 3안부터 시켰다. 그런데 검색어는
+    비교를 묻는데 페이지는 서비스 소개면(의도 어긋남) title 을 아무리 고쳐도 안 눌린다. 판정은
+    정적 HTML 과 낱말로 한 추정이라, 답이 검색결과를 열어 확인한다(산출물 1 '까닭 판정 표')."""
+    q = str(o.get("target") or "")
+    url = page_of(o, ctx)
+    if not url:
+        return []                   # 가를 페이지가 없다 — 근거 절을 이 줄만으로 세우지 않는다
+    a = (ctx.get("page_audits") or {}).get(url)
+    L = ["", f"{CTR_CAUSE_HEAD} (추정입니다 — 단정하지 않고, 검색결과를 직접 열어 확인합니다):"]
+    if not a or a.get("error"):
+        return L + ["- 이 페이지를 아직 점검하지 않아 가르지 못했습니다 — 페이지와 검색결과를 열어 "
+                    "title·설명을 보고 세 갈래를 가립니다."]
+    title = str(a.get("title") or "")
+    t_words = set(scoring._tokens(title))
+    q_words = [w for w in scoring._content_tokens(q) if len(w) >= 2]
+    miss = [w for w in q_words if w not in t_words and not any(w in t for t in t_words)]
+    if not title:
+        L.append("- 제목 불일치 — 걸림: title 이 비어 있습니다.")
+    elif q_words and len(miss) * 2 >= len(q_words):
+        L.append(f"- 제목 불일치 — 걸림: title 에 검색어의 낱말 "
+                 + ", ".join(f"'{w}'" for w in miss[:5]) + f" 이 없습니다 — 지금 title '{_ext(title, 80)}'")
+    else:
+        L.append(f"- 제목 불일치 — 안 걸림: title 이 검색어의 낱말 대부분을 담습니다('{_ext(title, 80)}').")
+    qi = query_intent(q, site_of(ctx))
+    if qi in scoring.ANSWER_INTENTS or scoring.answer_shaped(q):
+        words = next((ws for name, _ax, ws in INTENT_WORDS if name == qi), ())
+        low = title.lower()
+        shaped = "?" in title or any(scoring._word_hit(w, low, scoring._tokens(low), " ".join(
+            scoring._tokens(low))) for w in words)
+        L.append(f"- 의도 어긋남 — {'안 걸림' if shaped else '걸림'}: 검색어는 답을 원하는 "
+                 f"꼴({qi if qi in scoring.ANSWER_INTENTS else '질문'})인데 title 은 "
+                 + ("그 꼴을 말합니다." if shaped else
+                    "그 꼴이 아닙니다 — 페이지가 그 물음에 답하는 글인지(제품·서비스 소개인지) 열어 봅니다."))
+    else:
+        L.append(f"- 의도 어긋남 — 가를 단서 없음: 검색어 의도가 '{qi}' 라 title 만으로는 못 가릅니다. "
+                 "상위 결과가 설명 글인지 업체·가격인지 직접 봅니다.")
+    desc = str(a.get("meta_description") or "").strip()
+    tags = {x.get("tag") for x in a.get("advice") or []}
+    if not desc:
+        L.append("- 스니펫 약함 — 걸림: meta description 이 없습니다 — 구글이 본문에서 아무 줄이나 "
+                 "골라 보여 줍니다.")
+    elif "meta description" in tags:
+        L.append("- 스니펫 약함 — 걸림: 진단의 [meta description] 이 섰습니다(아래 진단 절).")
+    else:
+        L.append("- 스니펫 약함 — 안 걸림: meta description 이 있고 진단도 없습니다. 구글이 그걸 "
+                 "그대로 보여 주는지는 검색결과에서 봅니다.")
+    return L
+
+
 def _ev_ctr(o, ctx, pages):
     r = _find(ctx.get("ctr_gaps"), "query", o["target"])
     L = []
@@ -1848,7 +1903,7 @@ def _ev_ctr(o, ctx, pages):
     # 시키면서 대조할 값을 안 줘서, 답이 7일 요약 위젯의 6.6위를 가져와 8.7위와 섞었다.
     if rk and rk.get("pos") is not None:
         L += _rank_sources(rk, [], ctx)
-    return L + _pages_table(pages)
+    return L + _pages_table(pages) + _ctr_cause_lines(o, ctx)
 
 
 def _ev_cannibal(o, ctx, pages):

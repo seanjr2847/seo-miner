@@ -2363,9 +2363,10 @@ def test_ctr_brief_carries_what_the_rank_check_saw():
     assert "- 순위 조회: 8위" in body and "(검색어 하나, 모든 기기·지역)" in body, body
     assert "우리 페이지는 같은 조회에서 이 표 밖(8위)입니다" in body, body
     assert "단정하지 않습니다" in body and "순위가 아니라 제목·설명 문제입니다" not in body
-    # 요약이 없으면 예전 처방 그대로 — 곡선이 맞는 검색어다
+    # 요약이 없으면 곡선이 맞는 검색어다 — 그래도 "제목·설명 문제"라고 단정하지 않고 까닭(제목·
+    # 의도·스니펫)을 근거의 '까닭' 줄이 가른다(예전엔 단정해서 의도가 어긋난 검색어에도 title 만 시켰다)
     plain = _opp("ctr_gap", "검색어")
-    assert plain["play"]["what"].endswith("순위가 아니라 제목·설명 문제입니다.")
+    assert "까닭" in plain["play"]["what"] and "문제입니다" not in plain["play"]["what"]
     ctx["rank_by_kw"]["검색어"].update(aio=0, aio_cited=None, features=[])
     assert "구글 AI 요약 있음" not in brief.build(plain, ctx, "ko-KR")["body"]
     # 우리가 표 안이면 '표 밖' 줄은 안 선다
@@ -3457,6 +3458,43 @@ def test_content_gap_with_our_rank_but_no_ranked_rival_is_still_weak():
     # 우리 순위도 없으면 그대로 '없음'(새 글)
     none = {"kw_gap": [{**ctx["kw_gap"][0], "our_position": None}]}
     assert brief.build(o, none, "ko-KR")["shape"] == "new_content"
+
+
+def _ctr_case(title, desc, advice=(), query="milia vs syringoma"):
+    a = _audit(title=title, meta_description=desc)
+    a["advice"] = list(advice)
+    o = _opp("ctr_gap", query)
+    ctx = {"query_pages": {query: _pages(URL)}, "page_audits": {URL: a},
+           "ctr_gaps": [{"query": query, "position": 4.2, "impressions": 900, "clicks": 3,
+                         "actual_ctr": 0.3, "expected_ctr": 9.5, "lost_clicks": 80}]}
+    return brief.build(o, ctx, "ko-KR")["body"]
+
+
+def test_ctr_gap_brief_sorts_the_cause_before_asking_for_titles():
+    """클릭률 미달 처방은 "순위가 아니라 제목·설명 문제"라고 단정하고 title 3안부터 시켰다. 까닭은
+    셋이다 — 제목이 검색어를 안 말함 · 검색 의도가 어긋남 · 스니펫이 약함. 의도가 어긋났는데
+    title 만 바꾸면 클릭이 안 난다. 요청문이 기계로 먼저 가르고(추정), 답이 확인하게 한다."""
+    body = _ctr_case("Syringoma Treatment | Clinic", "", advice=[
+        {"tag": "meta description", "now": "없음", "fix": "직접 쓰세요"}])
+    head = body.split("## 근거")[1].split("\n## ")[0]
+    assert brief.CTR_CAUSE_HEAD in head, head
+    cause = head.split(brief.CTR_CAUSE_HEAD)[1]
+    assert "제목 불일치 — 걸림" in cause and "'milia'" in cause, cause
+    assert "의도 어긋남 — 걸림" in cause, cause          # 비교 꼴 검색어 ↔ 비교 꼴 아닌 title
+    assert "스니펫 약함 — 걸림" in cause, cause
+    assert "단정하지 않습니다" in head or "추정" in head, head
+    want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "까닭 판정 표" in want.splitlines()[1], want
+    # 세 갈래가 다 안 걸리면 그렇게 말한다
+    ok = _ctr_case("Milia vs Syringoma: How to Tell Them Apart", "Milia and syringoma look alike. "
+                   "Here is how a dermatologist tells them apart and treats each.")
+    cause = ok.split(brief.CTR_CAUSE_HEAD)[1].split("\n## ")[0]
+    assert "제목 불일치 — 안 걸림" in cause and "의도 어긋남 — 안 걸림" in cause \
+        and "스니펫 약함 — 안 걸림" in cause, cause
+    # 페이지를 점검하지 않았으면 가르지 못했다고 말한다(지어내지 않는다)
+    o = _opp("ctr_gap", "milia vs syringoma")
+    none = brief.build(o, {"query_pages": {"milia vs syringoma": _pages(URL)}}, "ko-KR")["body"]
+    assert "가르지 못했습니다" in none.split(brief.CTR_CAUSE_HEAD)[1].split("\n## ")[0], none
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

@@ -1910,6 +1910,33 @@ def _word_hit(w: str, low: str, toks: list[str], joined: str) -> bool:
     return w in toks if w.isascii() else w in low
 
 
+# 답변형 검색어 — 질문·비교·방법·원인. 답을 원하는 검색이라 답변형 페이지가 맞고, AI 검색(챗봇·
+# AI 요약)이 출처를 뽑는 것도 이런 검색이다. 그래서 score() 가 AI 가중의 일부(ANSWER_AI)를 준다 —
+# 측정한 AI 노출이 아니라 꼴로 본 후보라 절반이다. 의도 낱말(INTENT_WORDS)이 정본이고, 여기는 그
+# 표가 못 잡는 물음꼴(what·is·…?·나요)만 더한다.
+ANSWER_INTENTS = ("비교", "방법", "원인·문제")
+ANSWER_AI = 0.5
+_QUESTION_HEADS = ("what", "which", "who", "when", "where", "why", "how", "is", "are",
+                   "can", "does", "do", "should", "will")
+_QUESTION_KO = ("무엇", "뭐가", "뭔가", "어떻게", "어떤", "언제", "어디", "왜 ")
+_QUESTION_KO_ENDS = ("나요", "인가요", "까요", "을까", "는지", "건가요")
+
+
+def answer_shaped(q: str) -> bool:
+    """답을 원하는 꼴의 검색어인가 — 물음표·물음말로 시작·물음꼴 어미, 또는 답변형 의도."""
+    low = str(q or "").lower().strip()
+    if not low:
+        return False
+    if low.endswith("?"):
+        return True
+    toks = _tokens(low)
+    if toks and toks[0] in _QUESTION_HEADS:
+        return True
+    if any(w in low + " " for w in _QUESTION_KO) or low.endswith(_QUESTION_KO_ENDS):
+        return True
+    return query_intent(low) in ANSWER_INTENTS
+
+
 def query_intent(q: str, site: SiteWords | None = None) -> str:
     """검색어 하나 → 의도 라벨(INTENT_WORDS 의 첫째 칸 또는 INTENT_DEFAULT).
 
@@ -3968,6 +3995,10 @@ def score(kind: str, metrics: dict, project_type: str) -> float:
     # 엔진이 이미 우리 페이지를 찾아 출처로 쓸 줄 안다는 뜻이라 끌어올리기가 가장 싸다.
     # 대신 남은 몫(1 - 인용률)만큼만 AI 노출 신호를 준다 — 이미 걸리는 몫은 기회가 아니다.
     # 둘이 맞서서 1/6 과 0/6 이 비슷한 자리에 선다: 0/6 은 벌 게 크고, 1/6 은 싸다.
+    # 답변형 검색어(answer_shaped — load 가 검색어 종류에 싣는다)는 AI 검색이 인용하는 자리다.
+    # 측정이 아니라 꼴이라 절반만 — AI 종류는 이미 1.0 이라 그대로다.
+    if metrics.get("answer"):
+        ai = max(ai, ANSWER_AI)
     rate = metrics.get("cite_rate")
     if rate is not None:
         reach = 0.3 + 0.7 * min(1.0, float(rate) / AI_GAP_MAX_RATE)
@@ -4072,13 +4103,19 @@ _CTR_ACTS = [
     "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
     "사이트에서 더는 안 나옵니다.",
     "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."]
-_CTR_DELIVER = ["새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
+_CTR_DELIVER = ["까닭 판정 표: 갈래(제목 불일치 · 의도 어긋남 · 스니펫 약함) | 요청문의 기계 판정 | "
+                "검색결과를 직접 열어 본 것 | 맞나. 아래 산출물은 맞는 갈래만 고칩니다 — 의도가 "
+                "어긋났으면 title 만 바꿔서는 클릭이 안 나니 그렇게 적고 '따로 볼 것'에 무엇을 할지",
+                "새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
                 "meta description 2안. 길이 기준 안에서",
                 "지금 검색결과에 보이는 모습 점검: 구글이 보여 주는 title·설명이 페이지의 "
                 "것과 같은지, 날짜·이동 경로가 맞는지 | 고칠 것"]
 _CTR_PLAY = {
     "plain": dict(
-        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 제목·설명 문제입니다.",
+        # "순위가 아니라 제목·설명 문제입니다"라고 단정했다 — 까닭은 셋이고(제목·의도·스니펫),
+        # 의도가 어긋났으면 제목을 고쳐도 안 눌린다. 요청문이 기계로 먼저 가른다(brief CTR_CAUSE_HEAD).
+        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 검색결과에서 안 눌리는 "
+             "것입니다 — 까닭(제목 불일치·의도 어긋남·스니펫 약함)은 근거의 '까닭' 줄이 먼저 가릅니다.",
         acts=_CTR_ACTS, deliver=_CTR_DELIVER),
     "aio": dict(
         what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 다만 이 검색어는 결과 맨 위에 "
@@ -5179,8 +5216,12 @@ def load(project: str) -> None:
     rows = []
     for k in KINDS:
         for r in k.detect(ctx):
-            rows.append({"kind": k.name, "target": k.target(r, ctx),
-                         "score": score(k.name, k.metrics(r, ctx), ptype),
+            target = k.target(r, ctx)
+            m = k.metrics(r, ctx)
+            if k.name in KEYWORD_KINDS:
+                m = {**m, "answer": answer_shaped(target)}
+            rows.append({"kind": k.name, "target": target,
+                         "score": score(k.name, m, ptype),
                          "reasoning": k.reasoning(r, ctx)})
     rows = gate_rows(conn, pid, rows)       # 심사에서 뺀 검색어는 기회가 안 된다
     with db.run(conn, pid, "gaps") as r:
@@ -6551,6 +6592,21 @@ def _selfcheck() -> None:
     assert score("striking_distance", {"impressions": 100, "position": 5.0}, "없는타입") == \
         score("striking_distance", {"impressions": 100, "position": 5.0}, "saas")
 
+    # 답변형 검색어(질문·비교·방법·원인) — AI 검색이 인용하는 자리라 AI 가중의 절반을 준다.
+    # 측정한 AI 노출이 아니라 꼴로 본 후보라 절반이다(ANSWER_AI). AI 종류는 이미 1.0 이라 그대로.
+    for q in ("milia vs syringoma", "how to remove milia", "what is abnom", "is sofwave painful?",
+              "써마지 울쎄라 차이", "기미 없애는 방법", "구진성 흉터 왜 생기나요", "best melasma laser"):
+        assert answer_shaped(q), q
+    for q in ("sofwave", "강남 피부과", "thermage flx 600 shots", "theotherskin"):
+        assert not answer_shaped(q), q
+    plain = score("striking_distance", {"impressions": 500, "position": 8.0}, "local_business")
+    ans = score("striking_distance", {"impressions": 500, "position": 8.0, "answer": True},
+                "local_business")
+    assert round(ans - plain, 1) == round(WEIGHTS["local_business"]["w_ai"] * ANSWER_AI * 100, 1), \
+        (plain, ans)
+    ai_k = score("aio_exposure", {"impressions": 500, "position": 8.0}, "local_business")
+    assert score("aio_exposure", {"impressions": 500, "position": 8.0, "answer": True},
+                 "local_business") == ai_k, "AI 종류에 답변형 가중을 겹쳐 얹었다"
     print("scoring self-check ok")
     # ── AI 크롤러 차단 — 새 수집 없이 robots.txt 원문만 다시 읽는다 ──
     _bots_conn = sqlite3.connect(":memory:")
