@@ -2907,9 +2907,9 @@ def _img_item(url, wasted, total=None):
 def test_vitals_reads_image_audits_from_the_same_psi_call():
     """이미지 용량·포맷 — 같은 PageSpeed 응답의 performance 카테고리에 이미 있다(새 호출 0).
 
-    Lighthouse 12 까지는 감사 넷(uses-optimized-images·modern-image-formats·
-    uses-responsive-images·offscreen-images)이 따로 오고, 13 부터는 앞의 셋이
-    image-delivery-insight 하나로 합쳐졌다(offscreen-images 는 없어졌다). 구글이 PSI 의
+    Lighthouse 12 까지는 감사 다섯(uses-optimized-images·modern-image-formats·
+    uses-responsive-images·efficient-animated-content·offscreen-images)이 따로 오고, 13 부터는
+    앞의 넷이 image-delivery-insight 하나로 합쳐졌다(offscreen-images 는 없어졌다). 구글이 PSI 의
     Lighthouse 를 올리는 날 칸이 조용히 비지 않게 둘 다 받는다 — 둘이 함께 오면 합친 쪽
     하나만 적는다(같은 그림을 두 번 세면 줄일 양이 부푼다).
     """
@@ -2954,8 +2954,19 @@ def test_vitals_reads_image_audits_from_the_same_psi_call():
         ("image-delivery-insight", 195, 4)], got
     assert got["save"][0]["items"] == ["https://x.kr/1.jpg", "https://x.kr/2.jpg", "https://x.kr/3.jpg"]
 
-    # 둘 다 온 판 — 합친 쪽이 덮는 셋은 버리고, 덮지 않는 것(화면 밖 이미지)은 남긴다
-    both = {**legacy, **insight, "offscreen-images": {"score": 0, "scoreDisplayMode": "metricSavings",
+    # 움직이는 그림(GIF → 영상) — Lighthouse 13 의 합친 진단이 이것까지 덮는다(replacesAudits
+    # 넷). 옛 판에서 이걸 안 받으면 같은 페이지를 12 로 잴 때와 13 으로 잴 때 잡는 범위가 다르다.
+    gif = {"efficient-animated-content": {"score": 0, "scoreDisplayMode": "metricSavings", "details": {
+        "type": "opportunity", "overallSavingsBytes": 716800,
+        "items": [_img_item("https://x.kr/loop.gif", 716800)]}}}
+    got = json.loads(collect_vitals.parse_images({"audits": {**legacy, **gif}}))
+    assert got["save"][0]["id"] == "efficient-animated-content" and got["save"][0]["kb"] == 700, got
+    assert set(collect_vitals.IMAGE_INSIGHT_COVERS) == {
+        "uses-optimized-images", "modern-image-formats", "uses-responsive-images",
+        "efficient-animated-content"}, collect_vitals.IMAGE_INSIGHT_COVERS
+
+    # 둘 다 온 판 — 합친 쪽이 덮는 넷은 버리고, 덮지 않는 것(화면 밖 이미지)은 남긴다
+    both = {**legacy, **gif, **insight, "offscreen-images": {"score": 0, "scoreDisplayMode": "metricSavings",
             "details": {"type": "opportunity", "overallSavingsBytes": 409600,
                         "items": [_img_item("https://x.kr/below.jpg", 409600)]}}}
     got = json.loads(collect_vitals.parse_images({"audits": both}))

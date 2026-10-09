@@ -1783,7 +1783,7 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         for a in (dict(r) for r in db.latest_page_audits(conn, pid)):
             qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
             a["queries"] = qs
-            # 속도 행(_axis_vitals 의 {url: {기기: 행}})도 넘긴다 — [이미지] 용량·포맷은 감사가
+            # 속도 행(_axis_vitals 의 {url: {기기: 행}})도 넘긴다 — [이미지 용량]은 감사가
             # 아니라 같은 PageSpeed 응답에서 온다. 안 넘기면 그 갈래는 화면에도 요청문에도 안 선다.
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "",
                                               vitals=(vitals or {}).get(a["url"]))
@@ -1952,7 +1952,7 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     comp = _axis_competitors(conn, pid)
     opps_d = _axis_opps(conn, pid, at, gsc["striking"], comp["kw_gap"],
                         ai["ai_by_prompt"] + ai["ai_gap_rows"], ranks=ranks_all, gated=gated)
-    vitals = _axis_vitals(conn, pid)          # 페이지 진단([이미지] 용량·포맷)이 읽는다 — 먼저 센다
+    vitals = _axis_vitals(conn, pid)          # 페이지 진단([이미지 용량])이 읽는다 — 먼저 센다
     qp = _axis_query_pages(conn, pid, p, at, opps=opps_d["opps"], striking=gsc["striking"],
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"],
                            vitals=vitals["vitals"])

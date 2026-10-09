@@ -106,24 +106,30 @@ def parse_seo(lh: dict) -> tuple:
 # "LCP 가 늦다"까지만 말해서, 늦게 뜨는 그 큰 것이 어느 이미지이고 몇 KB 를 덜 수 있는지는
 # 요청문이 짐작해야 했다. {Lighthouse audit id: (이름표, 고칠 것)} — 이름표·고칠 것의 정본은
 # 여기 한 벌이다(진단 scoring.image_weight_advice 가 이것을 읽는다). Lighthouse 13 이
-# 앞의 셋을 image-delivery-insight 하나로 합쳤고 offscreen-images 는 없앴다 — 구글이 PSI 의
-# Lighthouse 를 올리는 날 칸이 조용히 비지 않게 옛 id 와 새 id 를 다 받는다.
+# 압축·포맷·크기 맞춤·움직이는 그림 넷을 image-delivery-insight 하나로 합쳤고(그 진단의
+# replacesAudits) offscreen-images 는 없앴다 — 구글이 PSI 의 Lighthouse 를 올리는 날 칸이
+# 조용히 비지 않게, 그리고 12 로 잰 페이지와 13 으로 잰 페이지가 같은 범위를 보게 옛 id 와
+# 새 id 를 다 받는다.
 IMAGE_AUDITS = {
     "image-delivery-insight": ("이미지 전달", "이미지를 압축하고, WebP·AVIF 로 바꾸고, 화면에 "
-                               "그려지는 크기에 맞춰 내보내세요(srcset·sizes)."),
+                               "그려지는 크기에 맞춰 내보내세요(srcset·sizes). 큰 GIF 는 "
+                               "영상(MP4·WebM)으로 바꿉니다."),
     "uses-optimized-images":  ("이미지 압축", "같은 화질로 더 작게 다시 저장하세요(JPEG 품질 "
                                "80 안팎 · 메타데이터 제거)."),
     "modern-image-formats":   ("차세대 포맷", "JPEG·PNG 를 WebP·AVIF 로 바꾸세요. 옛 브라우저용 "
                                "원본은 <picture> 안에 남겨 둡니다."),
     "uses-responsive-images": ("크기 맞춤", "화면에 그려지는 크기보다 큰 원본을 받고 있습니다. "
                                "srcset·sizes 로 기기 폭에 맞는 크기를 내보내세요."),
+    "efficient-animated-content": ("움직이는 GIF", "큰 GIF 는 영상(MP4·WebM)으로 바꿔 "
+                                   "<video autoplay muted loop playsinline> 로 내보내세요."),
     "offscreen-images":       ("화면 밖 이미지", "첫 화면 밖 이미지는 loading=\"lazy\" 로 미루세요 "
                                "— 첫 화면의 큰 이미지에는 걸지 않습니다."),
 }
 # 새 판이 합친 진단과 그것이 덮는 옛 진단. 둘이 한 응답에 같이 오면(전환기의 판) 합친 쪽만
-# 적는다 — 같은 그림을 압축·포맷·크기로 세 번 세면 줄일 양이 부푼다.
+# 적는다 — 같은 그림을 압축·포맷·크기로 여러 번 세면 줄일 양이 부푼다.
 IMAGE_INSIGHT = "image-delivery-insight"
-IMAGE_INSIGHT_COVERS = ("uses-optimized-images", "modern-image-formats", "uses-responsive-images")
+IMAGE_INSIGHT_COVERS = ("uses-optimized-images", "modern-image-formats", "uses-responsive-images",
+                        "efficient-animated-content")
 _IMG_SKIP_MODES = ("notApplicable", "manual", "error")
 
 

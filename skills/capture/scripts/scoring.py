@@ -58,12 +58,23 @@ CTR_GAP_MIN_IMP = 100    # 이보다 적은 노출은 CTR 자체가 통계로 �
 # page_advice 의 구조 신호 — 그림 위주(이미지 N개 이상, 이미지당 본문 단어가 이보다 적음),
 # 링크 과다(내보내는 내부 링크 N개 이상, 링크당 본문 단어가 이보다 적음).
 IMAGE_HEAVY_MIN, IMAGE_HEAVY_WORDS = 8, 80
-# [이미지] 용량·포맷 — 진단 하나(압축·포맷·크기 맞춤·화면 밖)가 줄일 수 있다는 양이 이만큼
+# [이미지 용량] — 진단 하나(압축·포맷·크기 맞춤·움직이는 GIF·화면 밖)가 줄일 수 있다는 양이 이만큼
 # (KB)은 돼야 세운다. Lighthouse 는 몇 KB 짜리도 목록에 올리는데, 그걸 다 진단으로 세우면
 # 이미지를 다시 뽑아 올리는 일이 남는 것 없이 요청문마다 붙는다. 100KB 는 모바일 회선에서
 # 체감되는 크기의 하한으로 잡은 값이다(진단별로 본다 — 같은 그림이 여러 진단에 겹쳐 세지므로
 # 합치지 않는다).
 IMAGE_SAVINGS_MIN_KB = 100
+# 그 진단의 태그 — alt 없음·그림 위주([이미지])와 가른다. 이미지 바이트는 글이 아니라 속도
+# (LCP) 쪽 일이라 요청문은 이것을 [속도] 와 같은 기술 태그로 다룬다(brief.TECH_TAGS). 요청문·
+# 화면 폴백은 태그로만 가르므로, 같은 [이미지] 를 쓰면 클릭률·순위 요청문마다 이미지
+# 재인코딩이 필수 산출물로 붙고 바로 위에서는 [속도] 를 '이번 일은 아닙니다'로 뺐다.
+IMAGE_WEIGHT_TAG = "이미지 용량"
+# 옛 판(Lighthouse 12)의 진단들은 같은 그림을 압축·포맷·크기로 겹쳐 센다 — 나란히 적으면
+# 읽는 사람이 더한다. 진단이 둘 이상 설 때 줄 끝에 단다.
+IMAGE_OVERLAP_NOTE = "진단끼리 같은 그림을 겹쳐 센 값이라 더하지 않습니다"
+# 실험실 값의 출처 표기 — [속도](vitals_advice)와 [이미지 용량](image_weight_advice)이 같은
+# 요청문에 나란히 선다. 두 벌로 쓰면 한 측정이 두 출처처럼 읽힌다.
+LAB_ONCE = "실험실 1회 측정"
 LINKS_HEAVY_MIN, LINKS_HEAVY_WORDS = 30, 20
 CTR_GAP_FACTOR = 0.5     # 실제 CTR < 기대 × 이 값일 때만 기회로 본다
 
@@ -819,7 +830,7 @@ def vitals_advice(rows) -> list[dict]:
             continue
         dev = "모바일" if r.get("strategy") == "mobile" else "데스크톱"
         field = r.get("field_lcp_ms") is not None or r.get("field_inp_ms") is not None             or r.get("field_cls") is not None
-        src = ("실제 사용자 28일치" if field else "실험실 1회 측정")
+        src = ("실제 사용자 28일치" if field else LAB_ONCE)
         if field and r.get("origin_fallback"):
             src = "사이트 전체(이 페이지만의 실제 사용자 값은 표본이 모자랍니다)"
         lcp = r.get("field_lcp_ms") if field else r.get("lab_lcp_ms")
@@ -848,10 +859,10 @@ def vitals_advice(rows) -> list[dict]:
 
 
 def image_weight_advice(rows) -> list[dict]:
-    """한 페이지의 속도 행들(기기별, page_vitals.img_json) → [이미지] 용량·포맷 진단 한 줄.
+    """한 페이지의 속도 행들(기기별, page_vitals.img_json) → [이미지 용량] 진단 한 줄.
 
-    page_advice 의 [이미지] 셋째 갈래다(alt 없음·그림 위주 다음). 같은 태그라 요청문은
-    틀(DELIVER_BY_TAG 의 alt 문안)을 대지 않고 이 진단 문장을 산출물로 부른다.
+    page_advice 가 [이미지](alt 없음·그림 위주) 다음에 세우되 태그는 IMAGE_WEIGHT_TAG 로
+    가른다 — 글의 요청문에서는 [속도] 와 함께 '이번 일은 아닙니다'로 빠진다(brief.TECH_TAGS).
     모바일 행을 먼저 본다 — 검색은 모바일로 읽는다. 이름표·고칠 것은 collect_vitals.
     IMAGE_AUDITS 한 벌이고, 진단별 줄일 양이 IMAGE_SAVINGS_MIN_KB 미만이면 안 세운다.
     rows 는 {strategy: 행} 이나 행 목록. 못 잰 행·안 본 행(img_json NULL)은 말하지 않는다.
@@ -874,12 +885,20 @@ def image_weight_advice(rows) -> list[dict]:
     if not big:
         return []
     dev = "모바일" if r.get("strategy") == "mobile" else "데스크톱"
-    urls = list(dict.fromkeys(u for x in big for u in x.get("items") or [] if u))[:3]
+    # 큰 것은 파일 이름만 — 전체 주소 셋(각 160자까지)을 실었더니 화면 진단표의 '지금 값' 칸이
+    # 570px 높이로 늘었다. 이 페이지를 열면 이름으로 찾는다. 전체 주소는 img_json 에 남는다.
+    # 인라인 그림(data:)은 이름이 없다 — 주소 글자 대신 그렇다고 적는다.
+    def _name(u: str) -> str:
+        if not u.startswith(("http://", "https://")):
+            return "인라인 그림(data:)" if u.startswith("data:") else ""
+        n = urlsplit(u).path.rstrip("/").rsplit("/", 1)[-1] or urlsplit(u).netloc
+        return n if len(n) <= 60 else "…" + n[-59:]
+    urls = list(dict.fromkeys(n for x in big for u in x.get("items") or [] if (n := _name(str(u)))))[:3]
     now = (f"이미지 용량·포맷 — 줄일 수 있는 양 "
            + " · ".join(f"{L[x['id']][0]} {round(x['kb']):,}KB" for x in big)
-           + f" ({dev}, 구글 실험실 1회 측정)"
+           + f" ({dev}, {LAB_ONCE}" + (f" · {IMAGE_OVERLAP_NOTE})" if len(big) > 1 else ")")
            + (f" · 큰 것: {', '.join(urls)}" if urls else ""))
-    return [{"tag": "이미지", "level": "warn", "now": now,
+    return [{"tag": IMAGE_WEIGHT_TAG, "level": "warn", "now": now,
              "fix": " ".join(dict.fromkeys(L[x["id"]][1] for x in big))}]
 
 
@@ -1253,8 +1272,8 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     반환: [{"tag": 손댈 자리, "level": "bad"|"warn", "now": 지금 상태, "fix": 할 일}]
     빈 리스트면 "규칙으로 잡히는 문제 없음"이지 "완벽함"이 아니다.
 
-    vitals 는 이 주소의 속도 행({strategy: page_vitals 행}) — [이미지] 용량·포맷 갈래
-    (image_weight_advice)가 읽는다. 감사(정적 HTML)는 이미지 바이트를 모른다.
+    vitals 는 이 주소의 속도 행({strategy: page_vitals 행}) — [이미지 용량]
+    (image_weight_advice)이 읽는다. 감사(정적 HTML)는 이미지 바이트를 모른다.
 
     queries 는 이 URL 이 실제로 걸린 검색어들(노출 많은 순). title·H1 판정은 첫
     검색어의 **내용어**로 하고(글자 그대로가 아니다 — _content_tokens), 비교 의도는
@@ -1463,7 +1482,8 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
         add("이미지", "warn", f"이미지 {images}개에 본문 {words_n}단어 — 그림 위주입니다",
             "그림 속 글자는 검색이 못 읽습니다. 핵심 설명·가격·과정이 그림이 아니라 본문 "
             "텍스트에 있는지 확인하고, 그림에만 있으면 본문으로 옮기세요.")
-    # 셋째 갈래 — 용량·포맷. 감사가 아니라 속도 단계(같은 PageSpeed 응답)에서 온다.
+    # 용량·포맷 — 감사가 아니라 속도 단계(같은 PageSpeed 응답)에서 온다. 태그는 가른다
+    # (IMAGE_WEIGHT_TAG — 글이 아니라 속도 쪽 일이다).
     out += image_weight_advice(vitals)
 
     internal = audit.get("internal_links")

@@ -1585,45 +1585,68 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "를 담은 것이 하나도 없습니다" not in brief.build(o2, ctx2, "ko-KR")["body"]
 
 
-def test_image_weight_diag_calls_its_own_sentence_not_the_alt_template():
-    """[이미지] 용량·포맷 — alt 도 그림 위주도 아닌 페이지에 이것만 섰을 때.
+def test_image_weight_rides_with_speed_not_the_content_deliverables():
+    """이미지 용량·포맷은 속도(LCP)와 같은 갈래다 — 글을 고치는 요청문의 산출물이 아니다.
 
-    [이미지] 는 한 태그에 갈래가 셋이라(alt 없음·그림 위주·용량·포맷) 틀(DELIVER_BY_TAG
-    의 'alt 문안')을 대면 용량 진단에 alt 문안을 시킨다. 고치기 요청문은 진단 문장을
-    산출물로 부르고(FIX_TAG_DELIVER 밖), 어느 종류의 요청문도 alt 가 멀쩡한 페이지에
-    alt 문안을 시키지 않는다.
+    같은 [이미지] 태그였을 때(1차) 100KB 넘게 줄일 수 있는 페이지면 클릭률·순위·AI 요청문
+    마다 '진단 [이미지] 의 고칠 값'(이미지 재인코딩)이 필수 산출물로 붙었고, 바로 위에서는
+    그 원인인 [속도] LCP 를 '이번 일은 아닙니다 — 설정·속도 쪽'으로 뺐다. 한 요청문이 같은
+    일을 하라고도 말라고도 했다. 이제 [이미지 용량](scoring.IMAGE_WEIGHT_TAG)은 TECH_TAGS 라
+    글의 요청문에서는 [속도] 옆 '이번 일은 아닙니다'에 서고, 기술 요청문(모바일 격차)에서는
+    진단으로 서서 그 산출물(이미지 크기·지연 로드)이 덮는다.
     """
     import json as _json
+    T = scoring.IMAGE_WEIGHT_TAG
     floor = scoring.IMAGE_SAVINGS_MIN_KB
-    vit = {"mobile": {"strategy": "mobile", "error": None, "lab_score": 41, "img_json": _json.dumps(
-        {"save": [{"id": "modern-image-formats", "kb": floor + 500, "n": 4,
+    vit = {"mobile": {"strategy": "mobile", "error": None, "lab_score": 41,
+                      "lab_lcp_ms": scoring.LCP_GOOD_MS + 3700, "img_json": _json.dumps(
+        {"save": [{"id": "modern-image-formats", "kb": floor + 540, "n": 4,
+                   "items": ["https://me.example/img/hero.png"]},
+                  {"id": "uses-optimized-images", "kb": floor + 600, "n": 3,
                    "items": ["https://me.example/img/hero.png"]}]})}}
-    a = _audit(images=3, images_no_alt=0, internal_links=6, words=900)
+    # alt 도 멀쩡하고 그림 위주도 아닌 페이지 — 진단은 이미지 용량(과 속도)뿐이다
+    a = _audit(images=3, images_no_alt=0, internal_links=6, words=900, schema_json='["Article"]',
+               title="검색어 고르는 법 — 비용과 기간까지 한눈에",
+               h1_json='["검색어 고르는 법 — 비용과 기간까지 한눈에"]', meta_description="검색어를 처음 찾는 사람에게 무엇을 "
+               "어떻게 고르는지 차례로 알려 드립니다. 비용과 기간도 함께 정리했습니다.")
     a["advice"] = scoring.page_advice(a, ["검색어"], domain="me.example", vitals=vit)
-    assert [x["tag"] for x in a["advice"]].count("이미지") == 1, a["advice"]
+    assert [x["tag"] for x in a["advice"]] == [T], a["advice"]
     ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: a},
            "vitals": {URL: vit}, "vitals_date": "2026-10-01",
            "striking": [{"query": "검색어", "pos": 6.1, "imp": 300, "clk": 2, "gap": 0.0,
                          "band": "page1"}], "gsc_date": "2026-10-01", "gsc_period": 28}
-    o = {**_opp("striking_distance", "검색어", band="page1"), "band": "page1"}
-    b = brief.build(o, ctx, "ko-KR")
-    assert b["shape"] == "fix_page", b["shape"]
-    diag = _sec(b["body"], "## 진단")
-    assert "[이미지] 지금: 이미지 용량·포맷" in diag and "hero.png" in diag, diag
-    want = _sec(b["body"], "## 만들어 줄 것")
-    assert "진단 [이미지] 의 고칠 값" in want, want
-    assert brief.DELIVER_BY_TAG["이미지"] not in want, want
-    # 어느 종류로 열어도 alt 가 멀쩡한 페이지에 alt 문안을 안 시킨다(폴백 _deliver_from 포함)
+    seen = set()
     for k in scoring.ALL_KINDS:
-        body = brief.build({**_opp(k, "검색어"), "band": "page1"}, ctx, "ko-KR")["body"]
-        if "## 만들어 줄 것" in body:
-            w = _sec(body, "## 만들어 줄 것")
-            assert "alt" not in w or "용량" in w or "진단 [이미지]" in w, (k, w)
-    # 틀을 대는 자리(기회로 안 올라온 행의 화면 폴백 askBlock 이 by_tag 로 받는다·_deliver_from)
-    # 에서도 [이미지] 틀이 alt 만 말하면 용량 진단에 alt 문안을 시킨다 — 갈래 셋을 다 말한다.
-    t = brief.DELIVER_BY_TAG["이미지"]
-    assert "alt" in t and "본문" in t and "용량" in t, t
-    assert t in brief._deliver_from(a), brief._deliver_from(a)
+        b = brief.build({**_opp(k, "검색어"), "band": "page1"}, ctx, "ko-KR")
+        body = b["body"]
+        if b["page"] != URL or "## 만들어 줄 것" not in body:
+            continue
+        seen.add(b["shape"])
+        want = _sec(body, "## 만들어 줄 것")
+        if b["shape"] == "technical":
+            # 기술 요청문은 가르지 않는다 — 진단에 선다. 모바일 격차는 처방 산출물(이미지
+            # 크기·지연 로드)이 덮어 '이번 아님'이 아니고, robots 같은 다른 기술 일에서는
+            # 덮지 않은 진단이 다 그렇듯 '이번 아님'이다.
+            assert f"[{T}] 지금: 이미지 용량·포맷" in _diag(body), (k, body)
+            if k == "device_gap":
+                assert f"[{T}]" not in want, (k, want)
+            continue
+        # 글의 요청문 — [속도] 와 나란히 '이번 일은 아닙니다', 산출물에는 없다. 페이지 안을
+        # 안 고치는 꼴(주소 정리·템플릿 설계)은 진단 절 자체가 없다 — 산출물만 본다.
+        if brief._shows_page(b["shape"]) and b["shape"] != "consolidate":
+            aside = _sec(body, "## 이 페이지에서 같이 눈에 띈 것")
+            assert f"- [{T}] 이미지 용량·포맷" in aside and "- [속도]" in aside, (k, aside)
+        assert f"[{T}]" not in _diag(body) and "용량·포맷" not in _diag(body), (k, _diag(body))
+        assert f"[{T}]" not in want and brief.DELIVER_BY_TAG[T] not in want, (k, want)
+        assert "WebP" not in want and "재인코딩" not in want, (k, want)
+        # 'HTML 을 기계로 센 값' 은 진단 목록이 설 때의 말이다 — 남은 진단이 측정값뿐이면 안 선다
+        assert "기계로 센 값" not in body, (k, body)
+    assert {"fix_page", "technical"} <= seen, seen
+    # 폴백(기회로 안 올라온 행 — 화면 askBlock 이 by_tag 로, 서버는 _deliver_from)은 태그별
+    # 틀을 댄다. [이미지] 틀(alt·본문으로 옮길 글)이 아니라 [이미지 용량] 의 틀이 선다.
+    got = brief._deliver_from(a)
+    assert got == [brief.DELIVER_BY_TAG[T]], got
+    assert "용량" not in brief.DELIVER_BY_TAG["이미지"], brief.DELIVER_BY_TAG["이미지"]
 
 
 def test_striking_above_top3_says_the_job_is_clicks():

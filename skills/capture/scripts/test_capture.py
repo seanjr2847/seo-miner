@@ -2111,15 +2111,19 @@ def _img_vit(strategy="mobile", save=(), error=None):
             "img_json": None if save is None else json.dumps({"save": list(save)})}
 
 
-def test_image_weight_is_an_image_branch_with_a_floor():
-    """[이미지] 의 셋째 갈래 — 용량·포맷. alt 없음·그림 위주와 같은 태그를 쓴다.
+def test_image_weight_is_a_tech_tag_with_a_floor():
+    """이미지 용량·포맷 — alt 없음·그림 위주([이미지])와 태그를 가른다(IMAGE_WEIGHT_TAG).
 
-    같은 태그라서 요청문은 틀(alt 문안)을 대지 않고 진단 문장을 산출물로 부른다
-    (brief.FIX_TAG_DELIVER 밖). 이름표·고칠 것은 collect_vitals.IMAGE_AUDITS 한 벌이고,
-    작은 절약(문턱 아래)은 세우지 않는다 — 몇 KB 로 이미지를 다시 뽑으라 하면 일만 는다.
+    글의 일이 아니라 속도(LCP) 쪽이다 — 같은 태그였을 때는 클릭률·순위 요청문마다 이미지
+    재인코딩이 필수 산출물로 붙고, 바로 위에서는 [속도] 를 '이번 일은 아닙니다'로 뺐다.
+    요청문은 태그로만 가른다(brief.TECH_TAGS·_uncovered_tags·화면 폴백 by_tag) — 그래서
+    태그를 나눈다. 이름표·고칠 것은 collect_vitals.IMAGE_AUDITS 한 벌이고, 작은 절약(문턱
+    아래)은 세우지 않는다 — 몇 KB 로 이미지를 다시 뽑으라 하면 일만 는다.
     """
     import collect_vitals
     L = collect_vitals.IMAGE_AUDITS
+    T = scoring.IMAGE_WEIGHT_TAG
+    assert T != "이미지", "용량·포맷이 alt·그림 위주와 같은 태그다 — 요청문이 갈래를 못 가른다"
     floor = scoring.IMAGE_SAVINGS_MIN_KB
     big = {"id": "modern-image-formats", "kb": floor + 320, "n": 5,
            "items": ["https://e.com/hero.png", "https://e.com/b.png", "https://e.com/c.png"]}
@@ -2128,12 +2132,32 @@ def test_image_weight_is_an_image_branch_with_a_floor():
     tiny = {"id": "uses-responsive-images", "kb": 8, "n": 1, "items": ["https://e.com/icon.png"]}
     adv = scoring.image_weight_advice({"mobile": _img_vit(save=[big, small, tiny])})
     assert "icon.png" not in adv[0]["now"] and L["uses-responsive-images"][0] not in adv[0]["now"], adv
-    assert [(x["tag"], x["level"]) for x in adv] == [("이미지", "warn")], adv
+    assert [(x["tag"], x["level"]) for x in adv] == [(T, "warn")], adv
     now, fix = adv[0]["now"], adv[0]["fix"]
     assert "용량·포맷" in now and f"{floor + 320}KB" in now and L["modern-image-formats"][0] in now, now
-    assert "https://e.com/hero.png" in now and "모바일" in now, now
+    assert "hero.png" in now and "모바일" in now, now
+    # 큰 것은 파일 이름으로 — 전체 주소 셋(각 160자까지)을 실었더니 화면 진단표의 '지금 값' 칸이
+    # 한 줄에 570px 높이로 늘어났다(브라우저로 열어 봤다). 전체 주소는 img_json 에 남아 있다.
+    assert "https://" not in now, now
+    cdn = {"id": "modern-image-formats", "kb": floor + 1, "n": 2, "items": [
+        "https://cdn.e.com/wp-content/uploads/2026/09/" + "x" * 90 + "-hero.png?ver=1&w=1920",
+        "data:image/png;base64,iVBORw0KGgo"]}
+    cn = scoring.image_weight_advice({"mobile": _img_vit(save=[cdn])})[0]["now"]
+    assert "-hero.png" in cn and "?ver" not in cn and "uploads" not in cn and "base64" not in cn, cn
+    assert len(cn) < 260, (len(cn), cn)
     assert L["offscreen-images"][0] not in now and "low.jpg" not in now, "문턱 아래를 같이 말한다"
     assert L["modern-image-formats"][1] in fix and L["offscreen-images"][1] not in fix, fix
+    # 출처 표기는 [속도](vitals_advice)와 한 벌 — 한 요청문에서 두 줄이 다른 표기를 달지 않는다
+    assert f"(모바일, {scoring.LAB_ONCE})" in now, now
+    lab = scoring.vitals_advice([{"strategy": "mobile", "lab_lcp_ms": scoring.LCP_GOOD_MS + 900}])
+    assert lab and lab[0]["now"].endswith(scoring.LAB_ONCE), lab
+    # 진단 하나뿐이면 겹침을 말할 것이 없다
+    assert scoring.IMAGE_OVERLAP_NOTE not in now, now
+    # 옛 판(Lighthouse 12)의 진단들은 같은 그림을 겹쳐 센다 — 나란히 적으면 더해 읽힌다
+    two_big = [big, {"id": "uses-optimized-images", "kb": floor + 540, "n": 3,
+                     "items": ["https://e.com/hero.png"]}]
+    both = scoring.image_weight_advice({"mobile": _img_vit(save=two_big)})[0]["now"]
+    assert scoring.IMAGE_OVERLAP_NOTE in both and f"{floor * 2 + 860:,}KB" not in both, both
 
     # 문턱 아래뿐 · 안 봤음(None) · 못 잰 행 — 세우지 않는다
     assert scoring.image_weight_advice({"mobile": _img_vit(save=[small])}) == []
@@ -2147,23 +2171,24 @@ def test_image_weight_is_an_image_branch_with_a_floor():
     desk = scoring.image_weight_advice({"desktop": _img_vit("desktop", save=[big])})
     assert "데스크톱" in desk[0]["now"], desk
 
-    # 진단의 정본(page_advice)에 다른 [이미지] 갈래와 나란히 선다
+    # 진단의 정본(page_advice)에 [이미지](alt 없음)와 나란히, 다른 태그로 선다
     a = {"url": "https://e.com/a", "title": "Milia Removal Guide", "words": 900,
          "meta_description": "설명 문장을 직접 쓴 것입니다. 무엇에 답하는지 적었습니다.",
          "js_shell": 0, "status": 200, "images": 3, "images_no_alt": 2, "internal_links": 5}
     vit = {"mobile": _img_vit(save=[big])}
-    imgs = [x["now"] for x in scoring.page_advice(a, [], domain="e.com", vitals=vit)
-            if x["tag"] == "이미지"]
-    assert len(imgs) == 2 and "alt 없는" in imgs[0] and "용량·포맷" in imgs[1], imgs
-    assert not any("용량·포맷" in x["now"] for x in scoring.page_advice(a, [], domain="e.com"))
+    got = [(x["tag"], x["now"]) for x in scoring.page_advice(a, [], domain="e.com", vitals=vit)
+           if x["tag"] in ("이미지", T)]
+    assert [t for t, _ in got] == ["이미지", T], got
+    assert "alt 없는" in got[0][1] and "용량·포맷" in got[1][1], got
+    assert not any(x["tag"] == T for x in scoring.page_advice(a, [], domain="e.com"))
     # 우리 요청을 막는 사이트(gucci) — 감사는 실패해도 PageSpeed 는 구글이 열어 본 것이다
     err = scoring.page_advice({"url": "https://e.com/a", "error": "HTTP 403"}, [],
                               domain="e.com", vitals=vit)
-    assert [x["tag"] for x in err] == ["가져오기", "이미지"], err
+    assert [x["tag"] for x in err] == ["가져오기", T], err
     # 없는 페이지에는 줄일 이미지도 없다
     gone = scoring.page_advice({"url": "https://e.com/a", "status": 404}, [], domain="e.com",
                                vitals=vit)
-    assert "이미지" not in [x["tag"] for x in gone], gone
+    assert T not in [x["tag"] for x in gone], gone
 
 
 def test_serp_outlines_are_stored_per_url_and_reused():

@@ -3762,6 +3762,60 @@ def test_seam_shared_drawer_is_one_box_in_the_shell():
     assert "ov-drawer" in (views / "overview.html").read_text("utf-8"), "개요 서랍이 없다"
 
 
+def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
+    """125) 이미지 용량·포맷 — 속도 단계가 남긴 것(page_vitals.img_json)이 페이지 진단
+    (page_audits[url].advice)에 서고, 그것을 말하는 쪽이 모두 그 태그를 안다.
+
+    만드는 쪽과 받는 쪽이 다른 단계다: 감사(page_audits)만 보면 이 갈래는 영영 안 선다
+    (gather 가 속도 행을 page_advice 에 넘겨야 한다). 말하는 쪽은 셋이다 — 화면 진단표(셸
+    pageFix 가 advice 의 tag 를 그대로 그린다), 화면 폴백 요청문(셸 fallbackBrief 가
+    by_tag[tag]), 서버 요청문(brief.TECH_TAGS 로 글의 요청문에서 가른다). by_tag 에 없으면
+    폴백의 '만들어 줄 것'에서 조용히 빠지고, TECH_TAGS 에 없으면 클릭률·순위 요청문마다
+    이미지 재인코딩이 필수 산출물로 붙는다(1차 구현이 그랬다 — 같은 요청문이 [속도] 는 뺐다).
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import collect_vitals
+    import dashboard
+    import scoring
+    T = scoring.IMAGE_WEIGHT_TAG
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam125','saas','x.com')")
+    url, day = "https://x.com/a", "2026-10-01"
+    db.write_page_audits(c, 1, day, [{"url": url, "status": 200, "title": "Image Weight Guide",
+                                      "words": 900, "images": 2, "images_no_alt": 0,
+                                      "internal_links": 5, "js_shell": 0}])
+    kb = scoring.IMAGE_SAVINGS_MIN_KB + 250
+    db.write_page_vitals(c, 1, day, [{"url": url, "strategy": "mobile", "lab_score": 40,
+                                      "img_json": json.dumps({"save": [
+                                          {"id": "uses-optimized-images", "kb": kb, "n": 2,
+                                           "items": ["https://x.com/big.jpg"]}]})}])
+    null = _io.StringIO()
+    with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        d = dashboard.gather(c, db.get_project(c, "_seam125"))
+    c.close()
+    adv = [x for x in d["page_audits"][url]["advice"] if x["tag"] == T]
+    assert len(adv) == 1 and f"{kb}KB" in adv[0]["now"], \
+        f"속도 행의 이미지 진단이 페이지 진단에 안 선다: {d['page_audits'][url]['advice']}"
+    assert collect_vitals.IMAGE_AUDITS["uses-optimized-images"][1] in adv[0]["fix"], adv
+    # 말하는 쪽 — 화면이 받는 by_tag(폴백)와 서버 요청문의 가르기
+    assert T in brief.shapes_payload("ko-KR")["by_tag"], f"화면 폴백 by_tag 에 [{T}] 틀이 없다"
+    assert T in brief.TECH_TAGS, f"[{T}] 가 TECH_TAGS 밖이다 — 글의 요청문에 필수 산출물로 붙는다"
+    ctx = _load()
+    if ctx is None:
+        return
+    shell = ctx["shell"]
+    assert "esc(x.tag)" in shell.split("const pageFix", 1)[1].split("\n};", 1)[0], \
+        "셸 진단표(pageFix)가 advice 의 tag 를 그리지 않는다 — 태그 이름이 화면에 안 선다"
+    assert "B.by_tag[t]" in shell.split("function fallbackBrief", 1)[1].split("\n}\n", 1)[0], \
+        "셸 폴백 요청문이 by_tag 를 tag 로 찾지 않는다"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

@@ -488,10 +488,14 @@ DELIVER_BY_TAG = {
     "구조화 데이터": "이 페이지에 맞는 구조화 데이터(JSON-LD) 한 벌",
     "robots": "고칠 meta robots 값과 그 태그가 들어갈 위치",
     "canonical": "canonical 을 어느 URL 로 바꿀지와 그 근거",
-    # [이미지] 는 갈래가 셋이다(alt 없음·그림 위주·용량·포맷). 틀이 alt 만 말하면 용량 진단만
-    # 선 페이지의 폴백(화면 askBlock·_deliver_from)이 멀쩡한 alt 의 문안을 시킨다.
+    # [이미지] 는 갈래가 둘이다(alt 없음·그림 위주). 틀이 alt 만 말하면 그림 위주만 선 페이지의
+    # 폴백(화면 askBlock·_deliver_from)이 멀쩡한 alt 의 문안을 시킨다. 용량·포맷은 태그가
+    # 다르다(아래 scoring.IMAGE_WEIGHT_TAG — 속도 쪽 일이라 TECH_TAGS).
     "이미지": "진단 [이미지] 가 짚은 갈래마다 고칠 값 — alt 가 빠졌으면 넣을 문안, 그림에만 있는 "
-              "글은 본문으로 옮길 문장, 용량·포맷이면 바꿀 파일과 형식·크기",
+              "글은 본문으로 옮길 문장",
+    scoring.IMAGE_WEIGHT_TAG: "줄일 이미지마다 바꿀 값 — 주소 | 지금 형식·크기 | 바꿀 형식·내보낼 "
+                              "폭·압축 | 줄어드는 양. 첫 화면의 큰 이미지(LCP)에는 지연 로드를 "
+                              "걸지 않습니다",
     "내부 링크": "어느 글에서 이 페이지로 링크를 걸지 — 앵커 텍스트까지",
     "가져오기": "이 URL 이 안 열리는 원인 후보와 확인 순서 — 콘텐츠는 손대지 않습니다",
     "모바일": "head 에 넣을 viewport 태그 한 줄과, 그 뒤 모바일에서 확인할 것",
@@ -1690,7 +1694,10 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
 # 이 페이지의 문제이긴 하지만 "있는 페이지 고치기" 의 일이 아닌 것 — 색인·모바일·
 # 속도·언어는 기술 점검이 맡는다. 한 번호 목록에 섞으면 열세 개를 늘어놓고 세 개만
 # 시키는 글이 된다(실제로 그렇게 나갔다). 기술 점검 요청문에서는 안 가른다.
-TECH_TAGS = ("모바일", "언어", "hreflang", "속도", "robots", "canonical", "가져오기")
+# 이미지 용량·포맷은 속도(LCP)의 원인이라 [속도] 와 같은 쪽이다 — 글의 요청문에 남기면
+# 같은 요청문이 [속도] 는 '이번 일은 아닙니다'로 빼고 그 원인인 이미지 재인코딩은 시켰다.
+TECH_TAGS = ("모바일", "언어", "hreflang", "속도", scoring.IMAGE_WEIGHT_TAG, "robots", "canonical",
+             "가져오기")
 
 
 # 고칠 페이지의 canonical 이 다른 주소일 때 산출물 맨 앞 — 나머지 산출물이 어느 주소의
@@ -3712,7 +3719,9 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 진단은 정적 HTML 을 센 값이라 헛짚는다(장식 아이콘의 빈 alt, 메뉴·푸터까지 센 링크 수,
     # 글자 없는 그림까지 센 '그림 위주'). 사람이 표를 읽고 가려내던 일을 답이 페이지를 열어
     # 먼저 가리게 한다 — 헛짚은 것에 문안을 만들면 필요 없는 수정이 원장 검수까지 간다.
-    if shape == "fix_page" and (adv_audit or {}).get("advice"):
+    # 진단 목록(ADVICE_HEAD)이 설 때만 — 기술 태그만 남은 페이지(속도·이미지 용량은 PageSpeed
+    # 측정값이다)에 'HTML 을 센 값'이라고 하면 없는 목록과 다른 출처를 말한다.
+    if shape == "fix_page" and ADVICE_HEAD in adv:
         L.append("- 진단은 페이지 HTML 을 기계로 센 값이라 헛짚을 수 있습니다. 산출물을 만들기 "
                  "전에 페이지를 열어 진단마다 **진짜 문제인지** 먼저 확인합니다. 문제가 아니면"
                  "(예: 글자 옆 장식 아이콘의 빈 alt, 메뉴·푸터 링크까지 센 내부 링크 수, 옮길 "
@@ -3814,7 +3823,9 @@ def _empty_cluster_brief(o: dict, shape: str, url: str | None) -> dict:
 # 진단 tag 가 산출물 문장에 어떤 말로 나오나 — tag 이름 그대로가 아닌 것만.
 _TAG_WORDS = {"본문": ("본문", "h2"), "구조화 데이터": ("구조화 데이터", "json-ld"),
               "갱신": ("갱신", "수정일"), "저자": ("저자",), "읽기 구조": ("구조",),
-              "추출성": ("직답", "블록"), "외부 링크": ("외부 링크", "출처 1~3개")}
+              "추출성": ("직답", "블록"), "외부 링크": ("외부 링크", "출처 1~3개"),
+              # 모바일 격차(기술 요청문)의 처방 산출물이 '이미지 크기·지연 로드'로 이미 덮는다
+              scoring.IMAGE_WEIGHT_TAG: (scoring.IMAGE_WEIGHT_TAG, "이미지 크기")}
 
 
 def _uncovered_tags(audit: dict | None, want: list[str], *, split: bool) -> list[str]:
