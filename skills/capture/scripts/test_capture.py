@@ -2145,6 +2145,13 @@ def test_image_weight_is_a_tech_tag_with_a_floor():
     cn = scoring.image_weight_advice({"mobile": _img_vit(save=[cdn])})[0]["now"]
     assert "-hero.png" in cn and "?ver" not in cn and "uploads" not in cn and "base64" not in cn, cn
     assert len(cn) < 260, (len(cn), cn)
+    # 한글 파일 이름은 퍼센트 인코딩을 풀고 자른다 — 인코딩된 채 60자로 잘랐더니
+    # '…0%EB%84%88…png' 처럼 %XX 한가운데가 잘려 이름으로 못 찾았다
+    ko = {"id": "modern-image-formats", "kb": floor + 1, "n": 1, "items": [
+        "https://x.example/upload/%EB%A9%94%EC%9D%B8%EB%B0%B0%EB%84%88%EC%9D%B4%EB%AF%B8%EC%A7%80"
+        "%EC%B5%9C%EC%A2%85.png"]}
+    kn = scoring.image_weight_advice({"mobile": _img_vit(save=[ko])})[0]["now"]
+    assert "메인배너이미지최종.png" in kn and "%EB" not in kn, kn
     assert L["offscreen-images"][0] not in now and "low.jpg" not in now, "문턱 아래를 같이 말한다"
     assert L["modern-image-formats"][1] in fix and L["offscreen-images"][1] not in fix, fix
     # 출처 표기는 [속도](vitals_advice)와 한 벌 — 한 요청문에서 두 줄이 다른 표기를 달지 않는다
@@ -2158,6 +2165,8 @@ def test_image_weight_is_a_tech_tag_with_a_floor():
                      "items": ["https://e.com/hero.png"]}]
     both = scoring.image_weight_advice({"mobile": _img_vit(save=two_big)})[0]["now"]
     assert scoring.IMAGE_OVERLAP_NOTE in both and f"{floor * 2 + 860:,}KB" not in both, both
+    # 늘 겹치는 건 아니다(움직이는 GIF + 압축은 다른 그림) — 단정하지 않는다
+    assert "겹칠 수 있어" in scoring.IMAGE_OVERLAP_NOTE, scoring.IMAGE_OVERLAP_NOTE
 
     # 문턱 아래뿐 · 안 봤음(None) · 못 잰 행 — 세우지 않는다
     assert scoring.image_weight_advice({"mobile": _img_vit(save=[small])}) == []

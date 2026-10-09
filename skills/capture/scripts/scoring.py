@@ -19,7 +19,7 @@ import sys
 from collections import namedtuple
 from collections.abc import Callable
 from urllib import robotparser
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
 PAGE1 = 10
@@ -70,8 +70,9 @@ IMAGE_SAVINGS_MIN_KB = 100
 # 재인코딩이 필수 산출물로 붙고 바로 위에서는 [속도] 를 '이번 일은 아닙니다'로 뺐다.
 IMAGE_WEIGHT_TAG = "이미지 용량"
 # 옛 판(Lighthouse 12)의 진단들은 같은 그림을 압축·포맷·크기로 겹쳐 센다 — 나란히 적으면
-# 읽는 사람이 더한다. 진단이 둘 이상 설 때 줄 끝에 단다.
-IMAGE_OVERLAP_NOTE = "진단끼리 같은 그림을 겹쳐 센 값이라 더하지 않습니다"
+# 읽는 사람이 더한다. 진단이 둘 이상 설 때 줄 끝에 단다. 늘 겹치는 건 아니라(움직이는 GIF +
+# 압축은 다른 그림) "겹쳐 센 값"이라고 단정했던 것을 '겹칠 수 있어'로 고쳤다.
+IMAGE_OVERLAP_NOTE = "진단끼리 같은 그림을 겹칠 수 있어 더하지 않습니다"
 # 실험실 값의 출처 표기 — [속도](vitals_advice)와 [이미지 용량](image_weight_advice)이 같은
 # 요청문에 나란히 선다. 두 벌로 쓰면 한 측정이 두 출처처럼 읽힌다.
 LAB_ONCE = "실험실 1회 측정"
@@ -891,7 +892,8 @@ def image_weight_advice(rows) -> list[dict]:
     def _name(u: str) -> str:
         if not u.startswith(("http://", "https://")):
             return "인라인 그림(data:)" if u.startswith("data:") else ""
-        n = urlsplit(u).path.rstrip("/").rsplit("/", 1)[-1] or urlsplit(u).netloc
+        # 퍼센트 인코딩을 풀고 자른다 — 인코딩된 채 잘랐더니 한글 이름이 '…0%EB%84%88…png' 로 남았다
+        n = unquote(urlsplit(u).path.rstrip("/").rsplit("/", 1)[-1]) or urlsplit(u).netloc
         return n if len(n) <= 60 else "…" + n[-59:]
     urls = list(dict.fromkeys(n for x in big for u in x.get("items") or [] if (n := _name(str(u)))))[:3]
     now = (f"이미지 용량·포맷 — 줄일 수 있는 양 "
