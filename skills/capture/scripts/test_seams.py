@@ -887,8 +887,11 @@ def test_seam_19_brief_context_keys_come_from_gather():
     # decay_pages·crawl_lost_inlinks: 순위를 잃은 페이지(떨어지기 전 스냅샷)와 끊긴 링크(크롤
     # 회차 비교) — 수집본(옛 스냅샷·옛 회차)에 있었는데 페이로드가 최신 한 벌만 실어, 요청문이
     # "페이지: 아직 모릅니다"·근거 없는 "끊긴 링크를 다시 걸라"를 내보냈다(theotherskin #128·#703).
+    # pseo_groups: 템플릿 패턴의 틀·바뀌는 값 — 검출기(scoring.pseo_groups)가 묶은 그대로다. 요청문이
+    # query_pages 의 낱말 겹침으로 다시 묶던 동안 '틀'을 말하지 못했다.
     for key in ("serp_top", "crawl_inlinks", "site_probe", "vitals",
-                "serp_fanout", "aio_gap_ranks", "decay_pages", "crawl_lost_inlinks"):
+                "serp_fanout", "aio_gap_ranks", "decay_pages", "crawl_lost_inlinks",
+                "pseo_groups"):
         assert key in served, f"gather() 가 {key} 를 안 싣는다"
         assert key in src, f"요청문이 {key} 를 안 읽는다 — 수집만 하고 안 쓰는 표가 된다"
 

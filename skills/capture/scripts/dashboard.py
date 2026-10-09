@@ -1814,6 +1814,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     # 그대로 실어 양쪽이 같은 숫자를 말하게 한다.
     intent_splits = scoring.intent_split(conn, pid, at=at) if any(
         o["kind"] == "intent_split" for o in opps) else []
+    # 템플릿 패턴의 무리(틀·바뀌는 값) — 같은 이유로 검출기가 묶은 그대로 싣는다. 요청문이
+    # query_pages 의 낱말 겹침으로 다시 묶었더니 '틀'을 말하지 못하고 축을 받는 쪽이 짐작했다.
+    pseo_groups = scoring.pseo_groups(conn, pid, scoring.snapshot_pair(conn, pid, at)[0]) if any(
+        o["kind"] == "pseo_pattern" for o in opps) else []
     # 펼침 패널이 대상 하나를 두고 말하는 수 — 지금 노출·클릭·CTR·순위와 그 추이.
     # query_pages 와 **같은 at** 으로 부른다(test_seams 47): 기준 수집일을 과거로
     # 고정했는데 여기만 최신을 보면, 한 패널 안에서 표와 차트가 다른 날을 말한다.
@@ -1835,7 +1839,8 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
 
     return {"query_pages": query_pages, "page_audits": page_audits,
             "page_audit_date": audit_date, "topic_pages": topic_pages,
-            "intent_splits": intent_splits, "target_trend": target_trend,
+            "intent_splits": intent_splits, "pseo_groups": pseo_groups,
+            "target_trend": target_trend,
             "page_queries": page_queries, "page_first_queries": page_first,
             "decay_pages": decay_pages}
 

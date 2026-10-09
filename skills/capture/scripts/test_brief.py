@@ -293,11 +293,75 @@ def test_coverage_and_pseo_bring_sibling_keywords():
     t = brief.text(_opp("coverage", "cluster:가격"), ctx, "ko-KR")
     assert "주제 (추적 키워드 묶음): 가격" in t
     assert "| 도구 가격 | 320 |" in t and "| 도구 요금제 | — |" in t
-    qp = {"서울 세무사 추천": _pages(URL), "부산 세무사 추천": _pages(URL2),
-          "전혀 다른 것": _pages(URL2)}
-    t2 = brief.text(_opp("pseo_pattern", "서울 세무사 추천"), {"query_pages": qp}, "ko-KR")
+    t2 = brief.text(_opp("pseo_pattern", "서울 세무사 추천"),
+                    {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()]},
+                    "ko-KR")
     assert t2.startswith(brief.INTRO_BY_KIND["pseo_pattern"])
-    assert "| 부산 세무사 추천 |" in t2 and "전혀 다른 것" not in t2
+    assert "| 부산 | 부산 세무사 추천 |" in t2, t2
+
+
+def _pseo_group(seed_page=URL):
+    """scoring.pseo_groups 한 무리의 꼴 그대로 — 요청문은 이것을 읽기만 한다."""
+    vals = [{"value": "서울", "query": "서울 세무사 추천", "variants": ["세무사 추천 서울"],
+             "imp": 110, "clk": 0, "pos": 14.1, "page": seed_page},
+            {"value": "부산", "query": "부산 세무사 추천", "variants": [], "imp": 80, "clk": 1,
+             "pos": 18.0, "page": None},
+            {"value": "대구", "query": "대구 세무사 추천", "variants": [], "imp": 40, "clk": 0,
+             "pos": 22.0, "page": URL2}]
+    return {"seed": "서울 세무사 추천", "frame": "{X} 세무사 추천", "values": vals,
+            "queries": ["서울 세무사 추천", "세무사 추천 서울", "부산 세무사 추천", "대구 세무사 추천"],
+            "imp": 230, "clk": 1, "ctr_pct": 0.43, "pos": 16.6, "date": "2026-10-01"}
+
+
+def test_pseo_brief_speaks_frame_and_values():
+    """템플릿 패턴 요청문의 대상·근거는 '틀과 바뀌는 값 목록'이다. 예전엔 씨앗 검색어 하나와
+    '낱말 2개 이상 겹침' 표였다 — 무엇이 축인지는 받는 쪽이 짐작했다."""
+    ctx = {"query_pages": {"서울 세무사 추천": _pages(URL), "아무 검색어 추천": _pages(URL2)},
+           "pseo_groups": [_pseo_group()]}
+    body = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")["body"]
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    assert "틀 '{X} 세무사 추천' — 바뀌는 값 3개" in tgt, tgt
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    assert "| 바뀌는 값 | 검색어 |" in ev, ev
+    assert "| 서울 | 서울 세무사 추천 (+ 세무사 추천 서울) | 110 | 0 | 14.1위 | " + URL + " |" in ev, ev
+    assert "| 부산 | 부산 세무사 추천 | 80 | 1 | 18.0위 | — |" in ev, ev
+    assert "낱말 2개 이상 겹침" not in body and "아무 검색어 추천" not in body, body
+    # 이 요청문이 다루는 검색어가 이 무리의 검색어가 아니면(옛 줄) 무리를 지어내지 않는다
+    lost = brief.build(_opp("pseo_pattern", "전혀 다른 것"), ctx, "ko-KR")["body"]
+    assert brief.PSEO_LOST in lost and "{X}" not in lost, lost
+
+
+def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
+    """무리의 씨앗에 이미 순위에 걸린 전용 페이지가 있으면 그 페이지가 허브다. theotherskin 의
+    템플릿 패턴 9건은 전부 그런 페이지가 있었는데 목표는 '새 글이 색인되고 …'였고, 그 페이지가
+    관찰 중이라 '그 산출물의 답은 안 바꿈 — 관찰 중' 문단과 맨 위 주의까지 붙어 설계도를
+    만들라는 일과 부딪혔다."""
+    ctx = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],
+           "page_works": {URL: [{"day": "2026-09-28", "label": "클릭률 미달", "kind": "ctr_gap",
+                                 "target": "서울 세무사 추천", "opp_id": 9}]},
+           "holds": [{"page": URL, "until": "2026-10-26", "since": "2026-09-28"}]}
+    b = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")
+    body = b["body"]
+    assert "새 글이 색인되고" not in body, body
+    goal = body.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
+    assert "허브" in goal and URL in goal, goal
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    hub = next(x for x in tgt.splitlines() if x.startswith("- 허브로 쓸 페이지: "))
+    assert URL in hub, hub
+    # 관찰 중은 허브에 링크를 거는 때만 정한다 — 설계도까지 막지 않는다
+    assert "2026-10-26" in tgt and brief.HOLD_MARK in tgt, tgt
+    assert "그 산출물의 답" not in body and "주의: 이 페이지는" not in body, body
+    want = body.split("## 만들어 줄 것")[1]
+    assert "허브로 쓸 기존 페이지" in want and "허브 페이지 구성" not in want, want
+    # 처방의 '허브 페이지를 만들어'(종류 한 벌)가 허브 줄과 부딪히지 않게 못 박는다
+    acts = body.split("## 이 상황에서 할 일")[1].split("\n## ")[0]
+    assert "'허브 페이지를 만들어'는 이 요청문에서는 새로 짓지 않습니다" in acts, acts
+    # 걸린 페이지가 없으면 허브를 새로 짓는다 — 그래도 목표는 '새 글 한 장'이 아니라 틀로 찍은 페이지들이다
+    nb = brief.build(_opp("pseo_pattern", "서울 세무사 추천"),
+                     {"pseo_groups": [_pseo_group(seed_page=None)]}, "ko-KR")["body"]
+    g2 = nb.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
+    assert "새 글이 색인되고" not in g2 and "바뀌는 값의 검색어 3개" in g2, g2
+    assert "허브 페이지 구성" in nb.split("## 만들어 줄 것")[1], nb
 
 
 def test_backlink_and_crawl_rows_become_tables():

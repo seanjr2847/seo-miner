@@ -25,7 +25,7 @@
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
-| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (후보 추출은 `scoring.pseo_candidates()`, `load`가 상위 10개를 개별 후보로 선적재) |
+| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (묶기는 `scoring.pseo_groups()` — 고정 틀 + 바뀌는 칸, 값 3개 이상. `load`가 문턱을 넘은 무리를 10개까지 세운다) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
 | device_gap | 같은 쿼리인데 모바일 순위가 데스크톱보다 유의미하게 아래 → 모바일 쪽 문제 | `scoring.device_gap()` — `gsc_breakdown` 의 최신 snapshot_date, dim='device'. 같은 query 에서 `dpos`(모바일 pos − 데스크톱 pos) ≥ `DEVICE_GAP_POS`(=2.0)이고 모바일 노출 ≥ `DEVICE_MIN_IMP`(=50). 모바일 노출 내림차순. **`/capture gsc` 가 device 축을 분해해 뒀어야 한다** — `gsc_breakdown: ""` 로 껐거나 아직 안 돌렸으면 빈 결과가 정상(결함 아님, 데이터 부재) |
 | crawl_issue | 전수 크롤에서 심각(bad)으로 걸린 주소 (방어) | `scoring.crawl_gaps()` — 최신 크롤 회차의 `crawl_issues` 중 severity='bad' 만. warn·info 는 [사이트 점검] 화면의 표에 그대로 있다. 갈래 이름표의 정본은 `collect_crawl.ISSUE_KIND` |
@@ -80,23 +80,29 @@
 "수요는 확인됐는데(노출) 공급이 비어 있고(저CTR), 변수 하나만 바뀌는 패턴이라
 템플릿+데이터로 대량 커버 가능한" 쿼리 군집을 찾는다.
 
-**1단계 — 후보 추출 (코드):** `scoring.pseo_candidates(conn, pid, snap)`.
-`(query, imp, clk, ctr_pct, pos)` 를 노출 내림차순으로 돌려준다.
-임계값은 `scoring.PSEO_MIN_IMP`(=50)·`scoring.PSEO_MAX_CTR`(=1.5)이고,
-사이트 규모에 맞춰 인자로 올릴 수 있다 — 노출이 큰 사이트면 올린다.
-`scoring.py load`(5절)가 이 후보 상위 10개를 개별 `pseo_pattern` 기회로
-선적재한다 — 군집으로 묶는 것은 여전히 아래 2~3단계(Claude)다.
+**1~2단계 — 묶기까지 코드:** `scoring.pseo_groups(conn, pid, snap)` 가 그 날 구글 실적의
+검색어를 **고정 틀 + 바뀌는 칸**으로 묶는다. 어순·복수형·띄어쓰기만 다른 검색어는 한
+검색어로 접고(`pseo_fold_keys`·`word_stem`), 낱말 하나(또는 사이에 고정 낱말을 둔 낱말 둘 —
+`{A} vs {B}`)를 칸으로 비운 나머지가 같은 검색어끼리 한 틀이다. 칸의 서로 다른 값이
+`PSEO_MIN_VALUES`(=3)개 이상이어야 무리다. 잇는 말(vs·or·and…)은 칸의 값이 아니고, 값 하나의
+노출 하한은 `PSEO_VALUE_MIN_IMP`. 검색 연산자(`site:` 등)와 우리 브랜드 검색은 뺀다.
+`scoring.py load`(5절)는 그중 무리 합계 노출 ≥ `PSEO_MIN_IMP`(=50) · 합계 CTR <
+`PSEO_MAX_CTR`(=1.5)인 무리를 합계 노출 순으로 10개까지 `pseo_pattern` 기회로 세운다 —
+target 은 씨앗(노출이 가장 큰 값의 검색어), reasoning 은 `틀 '…' — 바뀌는 값 N개: …` 로
+시작한다(`pseo_reasoning`). 요청문은 페이로드의 `pseo_groups` 로 틀·값 표를 싣는다.
 
-**2단계 — 패턴 클러스터링 (코드 아님, Claude 판단):**
-후보들을 "변수 슬롯 하나만 다른 템플릿"으로 묶는다.
-예: `20도 옷차림 / 15도 옷차림 / 기온별 옷차림` → 템플릿 `{기온}도 옷차림`.
-전형적 슬롯: {지역} {기온} {서비스} {장르} {경쟁제품} {카테고리} {날짜·시즌}.
-같은 템플릿에 **3개 이상** 쿼리가 모이면 군집 성립. GSC는 저노출 롱테일을
-익명화하므로 보이는 군집은 빙산의 일각 — 슬롯의 전체 값 공간(기온 전 구간,
-전 지역 등)이 실제 캠페인 크기다.
+예전엔 '노출은 있는데 클릭률 낮은 검색어 상위 10개'를 낱낱이 세우고 묶기는 Claude 몫이었는데
+자동 런엔 그 단계가 없어, 같은 검색어의 어순·복수형 변형과 `site:` 검색이 각각 무리로
+섰다(theotherskin 9건). 그 옛 줄은 `resolve_stale` 이 새 기준으로 다시 판정해 닫는다
+(`_pseo_rejudge` — 사람이 손댄 acked 는 그대로).
 
-**3단계 — 기회 적재 (코드 아님, Claude 판단):**
-- target = 템플릿 문자열 (`{기온}도 옷차림`), kind = `pseo_pattern`
+GSC는 저노출 롱테일을 익명화하므로 보이는 군집은 빙산의 일각 — 슬롯의 전체 값
+공간(기온 전 구간, 전 지역 등)이 실제 캠페인 크기다.
+
+**3단계 — Claude 가 직접 올릴 때만:** 코드가 못 묶는 틀(숫자 범위 `{기온}도`, 낱말 셋 이상이
+바뀌는 칸)을 사람이 찾았으면
+- target = 템플릿 문자열 (`{기온}도 옷차림`), kind = `pseo_pattern` — 대상에 `{` 가 든
+  줄은 자동 재판정이 건드리지 않는다
 - score ~ 군집 합산 노출(log 정규화) + 슬롯 값 공간 크기 + 달성가능성
 - reasoning 필수 요소: 군집 크기, 합산 노출, 예시 쿼리 2~3개, 평균 순위.
   예: "3개 쿼리 군집(합산 노출 3,150·평균 CTR 0.4%) — 예: 20도/15도/기온별 옷차림.
@@ -286,7 +292,7 @@ python scripts/scoring.py load <project>
 ```
 
 projects.type을 읽어 WEIGHTS를 적용하고, striking / ctr_gaps / cannibalization /
-rank_decay / pseo_candidates(상위 10) / coverage(클러스터별 1건) / device_gap /
+rank_decay / pseo_groups(문턱 넘은 무리 10) / coverage(클러스터별 1건) / device_gap /
 index_issues를 전부 돌려 `score()` 점수 + 수치 포함 템플릿 reasoning으로 적재한다.
 적재 kind: `striking_distance | ctr_gap | cannibalization | rank_decay |
 pseo_pattern | coverage | device_gap | index_blocked`.

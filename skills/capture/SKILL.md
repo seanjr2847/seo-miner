@@ -419,9 +419,9 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
   후보가 하나도 안 생긴다 — 그때는 `/capture competitors {P}` 로 먼저 적재한다(`--domain` 으로
   도메인을 직접 줄 수도 있다).
 
-`pseo_pattern` 은 기계가 후보만 올린다 — 고노출·저CTR 쿼리를 변수 슬롯
-({지역}·{기온}·{서비스} 등) 하나만 다른 템플릿으로 묶는 판단과 가드레일은
-`references/scoring.md` 1b절.
+`pseo_pattern` 은 기계가 묶기까지 한다 — 검색어를 고정 틀 + 바뀌는 칸으로 묶어 값이
+3개 이상인 무리만 세운다(`scoring.pseo_groups`). 코드가 못 묶는 틀을 직접 올리는 법과
+가드레일은 `references/scoring.md` 1b절.
 
 ### /capture run {P} — 풀런
 수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계는 **묶음**으로 돈다 — 묶음(메뉴의
@@ -484,8 +484,8 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
    경우에만 직접 실행한다.
 2. 적재된 기회를 sql로 검토하고 상위 10개의 reasoning을 보강한다 — 원인 가설·
    fit 판단·맥락 (`references/scoring.md` 2~3절).
-3. pseo_pattern 군집 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로 추가
-   적재 → Next Actions 3~5개를 JSON 파일로 저장.
+3. 코드가 못 묶는 pseo_pattern 틀 등 Claude 판단이 필요한 kind는 scoring.md 1b·5절대로
+   추가 적재 → Next Actions 3~5개를 JSON 파일로 저장.
 
 ### /capture plays {P} — 이번 달 할 일 (페이지별 수정안, OpenRouter 키 필요)
 **풀런(`/capture run`)의 꼬리에 포함된다** — `gaps` 뒤다(순서의 정본은 `run_all.STAGES`·
