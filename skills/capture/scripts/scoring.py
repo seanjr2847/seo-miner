@@ -6456,7 +6456,12 @@ def _merge_kinds(lines: list[dict], shown: dict[int, dict]) -> list[dict]:
     lead·kind·score 는 그 줄 것 그대로(하위 호환), kinds·labels 는 점수 순 종류 목록과
     같은 순서의 라벨(_axis_opps 가 입힌 o["label"], 없으면 kind_label). ids·variants 는 전부.
     묶음 이유(via)는 앞선 줄에서 처음 있는 것, 끝내 없으면 alone(화면은 via 로 문장을 고른다).
+
+    요청문 꼴이 '템플릿 설계'(brief.KIND_SHAPE)인 줄은 같은 검색어여도 따로 둔다 — 일의 단위가
+    페이지가 아니라 틀이다. 줄의 요청문은 대표 것 하나라, 붙으면 템플릿 요청문이 화면 어디에도
+    안 섰다(씨앗 '서울 세무사 추천'의 클릭률 미달 카드에 '템플릿 패턴' 배지만 붙었다).
     """
+    import brief      # 꼴의 정본 — 여기 사본을 두지 않는다(브리프가 scoring 을 import 하므로 안에서)
     out: list[dict] = []
     by_key: dict[str, dict] = {}
     for ln in sorted(lines, key=lambda x: (-(x["score"] or 0), -x["lead"])):
@@ -6464,6 +6469,8 @@ def _merge_kinds(lines: list[dict], shown: dict[int, dict]) -> list[dict]:
         ln["kinds"] = [ln["kind"]]
         ln["labels"] = [lead.get("label") or kind_label(ln["kind"])]
         k = norm(str(lead.get("target") or ""))
+        if k and brief.KIND_SHAPE.get(ln["kind"]) == "template":
+            k = "template:" + k
         if ln["status"] not in OPEN_STATUSES or not k:
             out.append(ln)
             continue

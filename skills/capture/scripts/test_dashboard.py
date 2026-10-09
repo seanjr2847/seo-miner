@@ -978,6 +978,27 @@ def test_opp_groups_fold_same_surface_into_one_line():
     conn.close()
 
 
+def test_opp_groups_keep_template_work_on_its_own_line():
+    """같은 검색어라도 요청문 꼴이 '템플릿 설계'(brief.KIND_SHAPE)인 기회는 페이지 고치기 줄에 안
+    붙는다 — 줄의 요청문은 대표 것 하나라, 붙으면 템플릿 요청문이 화면 어디에도 안 선다. 씨앗
+    '서울 세무사 추천'의 클릭률 미달(페이지 고치기)과 템플릿 패턴이 한 카드가 되어, 카드에는
+    '템플릿 패턴' 배지만 있고 요청문은 '있는 페이지 고치기'였다(브라우저로 열어 봤다)."""
+    import brief
+    conn, pid, ids = _surface_fixture("grp_tpl")
+    t = conn.execute("SELECT target FROM opportunities WHERE id=?", (ids["S"],)).fetchone()[0]
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,created_at)"
+                 " VALUES(?,?,?,?,?,?,?)", (pid, "pseo_pattern", t, 40, "r", "new", "2026-09-01"))
+    tid = conn.execute("SELECT id FROM opportunities WHERE kind='pseo_pattern' AND project_id=?",
+                       (pid,)).fetchone()[0]
+    conn.commit()
+    assert brief.KIND_SHAPE["pseo_pattern"] == "template"
+    lines = dashboard._axis_opps(conn, pid, None, [], [])["opp_groups"]
+    of = {i: ln for ln in lines for i in ln["ids"]}
+    assert of[tid]["ids"] == [tid] and of[tid]["lead"] == tid, of[tid]
+    assert tid not in of[ids["S"]]["ids"] and "pseo_pattern" not in of[ids["S"]]["kinds"], of[ids["S"]]
+    conn.close()
+
+
 def test_opp_groups_keep_closed_out_of_open_lines():
     """열린 줄에는 done·resolved 가 없다 — 같은 페이지여도 안 묶이고, 기록으로 한 줄씩 남는다.
     거르는 쪽이 "done 이 아니면"이었다면 resolved(저절로 풀린 기회)가 새어 들어온다."""
