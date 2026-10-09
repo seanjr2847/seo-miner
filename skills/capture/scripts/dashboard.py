@@ -1816,7 +1816,9 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         o["kind"] == "intent_split" for o in opps) else []
     # 템플릿 패턴의 무리(틀·바뀌는 값) — 같은 이유로 검출기가 묶은 그대로 싣는다. 요청문이
     # query_pages 의 낱말 겹침으로 다시 묶었더니 '틀'을 말하지 못하고 축을 받는 쪽이 짐작했다.
-    pseo_groups = scoring.pseo_groups(conn, pid, scoring.snapshot_pair(conn, pid, at)[0]) if any(
+    # 전용 페이지를 말로 보는 감사는 위에서 읽은 page_audits 를 넘긴다 — 요청문의 허브도 같은 판정을 읽는다.
+    pseo_groups = scoring.pseo_groups(conn, pid, scoring.snapshot_pair(conn, pid, at)[0],
+                                      audits=page_audits) if any(
         o["kind"] == "pseo_pattern" for o in opps) else []
     # 펼침 패널이 대상 하나를 두고 말하는 수 — 지금 노출·클릭·CTR·순위와 그 추이.
     # query_pages 와 **같은 at** 으로 부른다(test_seams 47): 기준 수집일을 과거로

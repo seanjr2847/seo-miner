@@ -302,7 +302,8 @@ def test_coverage_and_pseo_bring_sibling_keywords():
 
 def _pseo_group(seed_page=URL):
     """scoring.pseo_groups 한 무리의 꼴 그대로 — 요청문은 이것을 읽기만 한다. own 은 그 값의
-    전용 페이지(홈도, 값 셋 이상이 함께 걸린 안내 페이지도 아닌 페이지)가 걸렸는지다."""
+    전용 페이지가 걸렸는지다. 까닭(why)이 없는 이 꼴이나 감사(page_audits)를 실은 페이로드면 요청문이
+    같은 판정 함수(scoring.pseo_mark_own)로 다시 단다."""
     vals = [{"value": "서울", "query": "서울 세무사 추천", "variants": ["세무사 추천 서울"],
              "imp": 110, "clk": 0, "pos": 14.1, "page": seed_page,
              "own": bool(seed_page) and not scoring._is_home(seed_page)},
@@ -447,11 +448,71 @@ def test_pseo_hub_must_be_the_seeds_own_page():
     ob = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), other, "ko-KR")["body"]
     _no_hub(ob)
     assert "씨앗 검색어를 다루는 전용 페이지가 아니라" in ob, ob
+    assert "이미 전용 페이지가 있는 값" not in ob, ob        # 같은 주소를 '전용'이라고도 하지 않는다
+    # 값 셋이 함께 걸린 안내 페이지는 허브로 쓴다 — 단 같은 말 검사(title·H1 에 씨앗 값)를 거친다
+    guide = _pseo_group()
+    for v in guide["values"]:
+        v["page"] = URL
+    for title, hub in (("서울·부산·대구 세무사 추천 모음", True), ("연말정산 환급 팁", False)):
+        gb = brief.build(_opp("pseo_pattern", "서울 세무사 추천"),
+                         {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [guide],
+                          "page_audits": {URL: _audit(title=title, h1_json='["모음"]')}}, "ko-KR")["body"]
+        assert ("- 허브로 쓸 페이지: " + URL in gb) is hub, (title, gb)
+        assert "- 찍을 값 3개(전용 페이지 없음)" in gb, gb
     lost = brief.build(_opp("pseo_pattern", "전혀 다른 것"),
                        {"query_pages": {"전혀 다른 것": _pages(URL)}, "pseo_groups": [_pseo_group()]},
                        "ko-KR")["body"]
     assert brief.PSEO_LOST in lost, lost
     _no_hub(lost)
+
+
+def _one_verdict(body: str) -> None:
+    """한 요청문 안에서 한 주소는 판정 하나다 — '이미 전용 페이지가 있는 값'에 든 주소가 허브 줄에서
+    '전용 페이지가 아니라'로 나오지 않고, 근거 표의 '(전용)'이 그 목록과 같다."""
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    have = next((x for x in tgt.splitlines() if x.startswith("- 이미 전용 페이지가 있는 값")), "")
+    owned = set(re.findall(r"\((https?://[^)\s]+)\)", have))
+    for line in body.splitlines():
+        if "전용 페이지가 아니라" in line:
+            assert not any(u in line for u in owned), (owned, line)
+    ev = body.split("## 근거")[1].split("\n## ")[0]
+    marked = set(re.findall(r"(https?://\S+) \(전용\)", ev))
+    assert marked == owned, (marked, owned, ev)
+
+
+def test_pseo_one_address_one_verdict():
+    """'전용 페이지'의 정의는 scoring 한 벌이다(scoring.pseo_mark_own — 감사가 있으면 값의 내용어가
+    title·H1 에 있어야 전용). 예전엔 scoring 이 구조로, 요청문의 허브가 title·H1 으로 따로 판정해 씨앗
+    '서울 세무사 추천'이 걸린 '부가세 신고 기한 총정리' 글이 한 요청문 안에서 "이미 전용 페이지가 있는
+    값 1개: '서울' (…) — 새로 찍지 않습니다"이자 "허브: … 전용 페이지가 아니라"였다."""
+    off = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],
+           "page_audits": {URL: _audit(title="부가세 신고 기한 총정리", h1_json='["부가세 신고 기한"]')}}
+    body = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), off, "ko-KR")["body"]
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    assert "이미 전용 페이지가 있는 값" not in tgt and "- 찍을 값 3개(전용 페이지 없음)" in tgt, tgt
+    assert "전용 페이지가 아니라" in tgt and "'서울'" in tgt, tgt
+    _one_verdict(body)
+    # 값 둘이 한 페이지를 나눠 쓰면 더 높이 걸린 값의 것이다 — 씨앗(부산)의 페이지가 서울의 전용
+    # 페이지면 허브는 새로 짓고, 그 까닭도 '서울의 전용 페이지'라고 같은 판정으로 말한다
+    g = _pseo_group()
+    g["seed"] = "부산 세무사 추천"
+    g["values"][1].update(page=URL, own=True, page_pos=20.0)
+    g["values"][0].update(page_pos=9.0)
+    both = {"query_pages": {"부산 세무사 추천": _pages(URL)}, "pseo_groups": [g],
+            "page_audits": {URL: _audit(title="서울·부산 세무사 추천", h1_json='["서울·부산 세무사"]')}}
+    body = brief.build(_opp("pseo_pattern", "부산 세무사 추천"), both, "ko-KR")["body"]
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    assert f"- 이미 전용 페이지가 있는 값 1개: '서울' ({URL})" in tgt, tgt
+    assert "'부산'" in tgt.split("- 찍을 값")[1].splitlines()[0], tgt
+    hub = next(x for x in tgt.splitlines() if x.startswith("- 허브: "))
+    assert "'서울'의 전용 페이지" in hub and "새로 짓습니다" in hub, hub
+    _one_verdict(body)
+    # 씨앗의 전용 페이지면 허브로 쓴다 — 그 주소는 '이미 있는 값' 목록과 허브 줄에 같은 판정으로 선다
+    ok = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],
+          "page_audits": {URL: _audit(title="서울 세무사 추천 — 비용", h1_json='["서울 세무사"]')}}
+    body = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ok, "ko-KR")["body"]
+    assert "- 허브로 쓸 페이지: " + URL in body, body
+    _one_verdict(body)
 
 
 def test_backlink_and_crawl_rows_become_tables():

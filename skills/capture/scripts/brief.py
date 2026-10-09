@@ -2181,13 +2181,31 @@ PSEO_SHOW_VALUES = 12
 
 def _pseo_group(o: dict, ctx: dict) -> dict | None:
     """이 기회의 무리(scoring.pseo_groups 한 벌) — 대상이 그 무리의 어느 검색어와 어순·복수형·
-    띄어쓰기까지 같으면 그 무리다. 템플릿 패턴이 아니면 None."""
+    띄어쓰기까지 같으면 그 무리다. 템플릿 패턴이 아니면 None.
+
+    페이로드에 감사(page_audits)가 실렸으면 값마다의 전용 판정(own)을 그 감사로 다시 단다 — 판정
+    함수는 scoring.pseo_mark_own 한 벌이고 대시보드도 같은 감사를 넘기므로 결과는 같다. 예전엔 무리의
+    own(구조)과 허브(title·H1)를 따로 판정해, 한 요청문 안에서 같은 주소가 '이미 전용 페이지가 있는
+    값'이자 '허브: 전용 페이지가 아니라'였다."""
     if o.get("kind") != "pseo_pattern":
         return None
     keys = {k for k in scoring.pseo_fold_keys(str(o.get("target") or "")) if k}
-    return next((g for g in ctx.get("pseo_groups") or []
-                 if keys & {k for q in g.get("queries") or [] for k in scoring.pseo_fold_keys(q)}),
-                None)
+    g = next((g for g in ctx.get("pseo_groups") or []
+              if keys & {k for q in g.get("queries") or [] for k in scoring.pseo_fold_keys(q)}),
+             None)
+    # 까닭(why)이 없는 무리(그 전 페이로드)도 같은 함수로 단다 — 감사가 없으면 구조로만 본다
+    if g and ("page_audits" in ctx or any("why" not in v for v in g.get("values") or [])):
+        g = {**g, "values": [dict(v) for v in g.get("values") or []]}
+        scoring.pseo_mark_own(g["values"], g["seed"], ctx.get("page_audits"))
+    return g
+
+
+def _pseo_seed_value(g: dict) -> dict | None:
+    """무리에서 씨앗의 값 — 어순·복수형·띄어쓰기만 다르면 같은 검색어다."""
+    keys = {k for k in scoring.pseo_fold_keys(g["seed"]) if k}
+    return next((v for v in g.get("values") or []
+                 if keys & {k for q in (v["query"], *(v.get("variants") or []))
+                            for k in scoring.pseo_fold_keys(q) if k}), None)
 
 
 # 템플릿 패턴의 일 이름 — 꼴(template)의 이름이 정본이다. '한눈에'가 "새 글 설계 — 검색어 '…'"라고
@@ -2209,30 +2227,39 @@ def _is_pseo_seed(o: dict, g: dict) -> bool:
 
 
 def _pseo_hub(o: dict, ctx: dict) -> tuple[str | None, str | None]:
-    """템플릿 패턴의 허브로 쓸 기존 페이지 — (주소, 못 쓰는 까닭 한 줄). 씨앗 검색어로 걸린 페이지가
-    씨앗의 전용 페이지일 때만 허브다: 홈이나 다른 주제의 페이지에 스친 것이면 허브를 새로 짓는다.
-    씨앗으로 걸린 페이지가 아예 없어도 새로 짓는다. 무리를 못 찾은 요청문(PSEO_LOST — 확인하고
-    멈춘다)은 허브 이야기를 하지 않는다."""
+    """템플릿 패턴의 허브로 쓸 기존 페이지 — (주소, 못 쓰는 까닭 한 줄). 씨앗의 값에 걸린 페이지를
+    무리의 전용 판정(scoring.pseo_mark_own — 찍을 값·이미 있는 값과 같은 한 벌)으로 본다: 홈이거나,
+    다른 값의 전용 페이지이거나, 다른 주제의 페이지(title·H1 에 씨앗 값의 내용어가 없다)면 허브를 새로
+    짓는다. 씨앗으로 걸린 페이지가 아예 없어도 새로 짓는다. 무리의 값 여럿이 함께 걸린 안내 페이지는
+    허브로 쓴다 — 틀 자체를 다루는 페이지다. 무리를 못 찾은 요청문(PSEO_LOST — 확인하고 멈춘다)은 허브
+    이야기를 하지 않는다.
+
+    예전엔 여기서 씨앗 검색어의 내용어를 title·H1 에 따로 대조했다 — 무리의 own(구조)과 판정이 두
+    벌이라 같은 주소가 '이미 전용 페이지가 있는 값'이자 '전용 페이지가 아니라'였다."""
     g = _pseo_group(o, ctx) if o.get("kind") == "pseo_pattern" else None
     if not g:
         return None, None
-    seed = _pseo_seed_opp(o, g)
-    url = page_of(seed, ctx)
+    sv = _pseo_seed_value(g) or {}
+    url = sv.get("page")
     if not url:
         return None, ("- 허브: 씨앗 검색어로 순위에 걸린 내 페이지가 없습니다 — 허브는 새로 짓습니다. "
                       "사이트에 이 무리를 묶는 지면이 이미 있으면 그것을 허브로 쓰자고 말합니다.")
     lead = f"- 허브: 씨앗 검색어로 걸린 내 페이지 {url} 는 "
     tail = " 허브로 쓰지 않습니다 — 허브는 새로 짓습니다."
-    if scoring._is_home(url):
+    why = sv.get("why")
+    if why == "home":
         return None, lead + "홈이라" + tail
-    a = (ctx.get("page_audits") or {}).get(url) or {}
-    text = " ".join([str(a.get("title") or ""), *(str(h) for h in scoring._as_list(a.get("h1_json")))])
-    # 제목·H1 을 읽었으면 씨앗의 내용어가 다 있어야 전용 페이지다. 한글은 조사가 붙어 낱말 대신
-    # 글자로 찾는다. 못 읽었으면 걸린 페이지 그대로 둔다(모르는 것을 '다른 주제'라 하지 않는다).
-    miss = [t for t in scoring._missing_tokens(g["seed"], text)
-            if t.isascii() or t not in text.lower()] if text.strip() else []
+    if why == "shared":
+        return None, lead + f"'{_ext(sv.get('owner') or '', 40)}'의 전용 페이지라" + tail
+    # 안내 페이지도 같은 말 검사(scoring.pseo_page_misses)를 거친다 — 값 여럿이 스친 다른 주제의 글은
+    # 허브가 아니다
+    miss = sv.get("miss") if why == "topic" else \
+        scoring.pseo_page_misses(sv["value"], url, ctx.get("page_audits")) if why == "guide" else None
     if miss:
-        return None, (lead + f"씨앗 검색어를 다루는 전용 페이지가 아니라(title·H1 '{_ext(text.strip(), 80)}' 에 "
+        a = (ctx.get("page_audits") or {}).get(url) or {}
+        text = " ".join([str(a.get("title") or ""),
+                         *(str(h) for h in scoring._as_list(a.get("h1_json")))]).strip()
+        return None, (lead + f"씨앗 검색어를 다루는 전용 페이지가 아니라(title·H1 '{_ext(text, 80)}' 에 "
                       + ", ".join(f"'{t}'" for t in miss) + " 가 없습니다)" + tail)
     return url, None
 
@@ -2254,12 +2281,13 @@ def _ev_pseo(o, ctx, pages):
     if len(vals) > PSEO_SHOW_VALUES:
         L.append(f"- 외 {len(vals) - PSEO_SHOW_VALUES}개 값")
     L.append(f"- 무리 합계: 노출 {_n(g.get('imp'))} · 클릭 {_n(g.get('clk'))} · CTR {g.get('ctr_pct')}%")
-    # 전용인지는 수집이 구조로 가른다(scoring.pseo_groups) — 예전엔 이 줄이 "전용 페이지면 … 다른
+    # 전용인지는 scoring.pseo_mark_own 한 벌이 가른다 — 예전엔 이 줄이 "전용 페이지면 … 다른
     # 주제면 …"이라고 판정을 받는 쪽에 넘겼고, 값마다 전용 페이지가 있던 noti #41 이 찍을 자리로 나갔다.
-    L.append("- (전용): 그 값의 검색어에 걸린 내 페이지가 홈도 아니고 무리의 값 "
-             f"{scoring.PSEO_MIN_VALUES}개 이상이 함께 걸린 안내 페이지도 아니라 그 값의 전용 페이지로 본 "
-             "것입니다 — 이미 찍혀 있는 값입니다. 서치콘솔은 노출이 적은 검색어를 감추므로 같은 틀의 값은 "
-             "이 표보다 많습니다.")
+    L.append("- (전용): 그 값의 검색어에 걸린 내 페이지가 홈도, 무리의 값 "
+             f"{scoring.PSEO_MIN_VALUES}개 이상이 함께 걸린 안내 페이지도 아니고, 점검한 title·H1 에 그 값이 "
+             "있어(점검 전이면 구조로만) 그 값의 전용 페이지로 본 것입니다 — 이미 찍혀 있는 값입니다. 값 둘이 "
+             "한 페이지를 나눠 쓰면 그 페이지에서 더 높이 걸린 값의 것입니다. 서치콘솔은 노출이 적은 검색어를 "
+             "감추므로 같은 틀의 값은 이 표보다 많습니다.")
     return L
 
 
@@ -2900,7 +2928,7 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
                  + ", ".join(f"'{_ext(v, 40)}'" for v in vals[:8])
                  + (f" 외 {len(vals) - 8}개" if len(vals) > 8 else "")
                  + f"). {who} — 이 요청문의 일은 그 검색어 한 장이 아니라 이 틀입니다.")
-        # 찍을 값과 이미 전용 페이지가 있는 값 — 판정은 scoring.pseo_groups(own) 한 곳이다
+        # 찍을 값과 이미 전용 페이지가 있는 값 — 판정은 scoring.pseo_mark_own 한 곳이다(허브도 같은 판정)
         todo = scoring.pseo_todo(g)
         have = [v for v in g.get("values") or [] if v.get("own")]
         L.append(f"- 찍을 값 {len(todo)}개(전용 페이지 없음): "

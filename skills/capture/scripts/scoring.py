@@ -764,7 +764,8 @@ def striking(conn: sqlite3.Connection, project_id: int, snapshot_date: str | Non
 #
 # 남겨 둔 것: theotherskin 'abnom {X}'(skin·pigmentation·dermatology — 질환 하나의 변주, 씨앗 몫 48%)는
 # 구조로는 여전히 무리다. 값이 업종어라 수식어 목록(INTENT_WORDS 는 업종 중립)에 못 넣고, 지금은 무리
-# 노출 29 가 PSEO_MIN_IMP 밑이라서**만** 기회로 서지 않는다. 고친 것이 아니다.
+# 노출 29 가 PSEO_MIN_IMP 밑이라서**만** 기회로 서지 않는다. 고친 것이 아니다. 'papular {X} scars' 도
+# 씨앗 몫(PSEO_SEED_SHARE) 하나로만 막힌다 — 9/29 acne 71% 와 상한 70% 의 여유가 1%p 다(scoring.md 1b).
 PSEO_MIN_VALUES = 3
 # 값 하나(접은 검색어 하나)의 노출 하한 — 노출 한두 번짜리 롱테일까지 세면 아무 낱말이나 틀이 된다.
 PSEO_VALUE_MIN_IMP = 5
@@ -838,13 +839,14 @@ def _pseo_units(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -
         q = str(r["query"] or "").strip()
         if not q or is_search_operator(q) or any(b in norm(q) for b in ours):
             continue
-        d = by_q.setdefault(q, {"imp": 0, "clk": 0, "pw": 0.0, "pages": {}})
+        d = by_q.setdefault(q, {"imp": 0, "clk": 0, "pw": 0.0, "pages": {}, "ppw": {}})
         imp = int(r["imp"] or 0)
         d["imp"] += imp
         d["clk"] += int(r["clk"] or 0)
         d["pw"] += float(r["pw"] or 0)
         if r["page"]:
             d["pages"][r["page"]] = d["pages"].get(r["page"], 0) + imp
+            d["ppw"][r["page"]] = d["ppw"].get(r["page"], 0.0) + float(r["pw"] or 0)
     # 접기 — 두 열쇠 중 하나라도 같으면 한 검색어다(union-find)
     parent = {q: q for q in by_q}
 
@@ -872,13 +874,18 @@ def _pseo_units(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -
         if imp < PSEO_VALUE_MIN_IMP:
             continue
         pages: dict[str, int] = {}
+        ppw: dict[str, float] = {}
         for q in qs:
             for p, n in by_q[q]["pages"].items():
                 pages[p] = pages.get(p, 0) + n
+                ppw[p] = ppw.get(p, 0.0) + by_q[q]["ppw"][p]
+        page = max(sorted(pages), key=lambda p: pages[p]) if pages else None
         units.append({"query": qs[0], "variants": qs[1:], "imp": imp,
                       "clk": sum(by_q[q]["clk"] for q in qs),
                       "pw": sum(by_q[q]["pw"] for q in qs),
-                      "page": max(sorted(pages), key=lambda p: pages[p]) if pages else None,
+                      "page": page,
+                      # 그 페이지에서의 순위 — 값 둘이 한 페이지를 나눠 쓸 때 주인을 가른다(pseo_mark_own)
+                      "page_pos": round(ppw[page] / pages[page], 1) if page and pages[page] else None,
                       "toks": _tokens(qs[0])})
     return units
 
@@ -886,20 +893,27 @@ def _pseo_units(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -
 def _pseo_slots(toks: list[str]):
     """검색어 하나가 설 수 있는 틀들 — (틀 열쇠, 값 열쇠, 칸 자리). 칸은 낱말 하나, 또는 사이에
     고정 낱말을 둔 낱말 둘('{A} vs {B} pricing')이다. 붙은 낱말 둘을 한 칸으로 비우면 '{A} {B} 치료'
-    처럼 아무 세 낱말 검색어나 한 틀이 된다. 잇는 말(PSEO_GLUE)은 칸의 값이 아니다."""
+    처럼 아무 세 낱말 검색어나 한 틀이 된다. 잇는 말(PSEO_GLUE)과 물음말(_QUESTION_HEADS)은 칸의
+    값이 아니다."""
     st = [word_stem(t) for t in toks]
     glue = [t in PSEO_GLUE or s in PSEO_GLUE for t, s in zip(toks, st)]
-    pair = [g or t in _PSEO_COMPARE or s in _PSEO_COMPARE for g, t, s in zip(glue, toks, st)]
+    ask = [t in _QUESTION_HEADS for t in toks]
+    pair = [g or q or t in _PSEO_COMPARE or s in _PSEO_COMPARE
+            for g, q, t, s in zip(glue, ask, toks, st)]
     n = len(st)
     picks = [(i,) for i in range(n)] if n >= 2 else []
     picks += [(i, j) for i in range(n) for j in range(i + 2, n)]
     for pos in picks:
-        if any(glue[i] for i in pos):
+        # 물음말은 고정 낱말로만 선다 — 예전엔 물음말을 잇는 말에서 빼면서('what is {X}' 를 살리려고)
+        # 칸의 값도 될 수 있게 됐다: 'what/why/how is milia' 가 물음말이 값인 무리가 됐다(한 주제의
+        # 물음 변주다).
+        if any(glue[i] or ask[i] for i in pos):
             continue
         # 잇는 말 아닌 고정 낱말이 있어야 틀이다 — '{X} the' 는 틀이 아니다. 칸 둘짜리는 비교 의도어
-        # (vs·차이·비교…)도 잇는 말처럼 본다: '{A} vs {B}'·'{A} vs {B} 비교'는 둘을 견주는 검색이지
-        # 템플릿이 아니다 — 서로 무관한 비교(syringoma/milia · olidia/sculptra)를 한 무리로 묶었다.
-        # 칸 하나짜리는 그대로 선다('{X} 비교'는 비교 허브다).
+        # (vs·차이·비교…)와 물음말(is·are·what…)도 잇는 말처럼 본다: '{A} vs {B}'·'{A} vs {B} 비교'는
+        # 둘을 견주는 검색이지 템플릿이 아니다 — 서로 무관한 비교(syringoma/milia · olidia/sculptra)를
+        # 한 무리로 묶었다. 물음말을 빼 두었더니 'botox is safe'·'filler is permanent' 가 '{A} is {B}'
+        # 로 묶였다. 칸 하나짜리는 그대로 선다('{X} 비교'는 비교 허브, 'what is {X}'는 용어집이다).
         if all((pair if len(pos) == 2 else glue)[i] for i in range(n) if i not in pos):
             continue
         yield (tuple(sorted(st[i] for i in range(n) if i not in pos)), len(pos)), \
@@ -913,7 +927,7 @@ def _pseo_frame(toks: list[str], pos: tuple) -> str:
 
 
 def pseo_groups(conn: sqlite3.Connection, project_id: int,
-                snapshot_date: str | None) -> list[dict]:
+                snapshot_date: str | None, audits: dict | None = None) -> list[dict]:
     """그 날 구글 실적에서 '고정 틀 + 바뀌는 칸'으로 묶이는 검색어 무리 전부 — 노출·클릭률
     문턱은 안 건다(구조만). 문턱은 검출기(_pseo_rows)가, 구조는 옛 줄을 다시 판정하는
     resolve_stale 과 요청문이 같이 본다.
@@ -922,9 +936,13 @@ def pseo_groups(conn: sqlite3.Connection, project_id: int,
     큰 틀부터 고르고 이미 고른 무리의 검색어는 다음 틀에서 뺀다. 고정 낱말 하나를 더 붙인 틀이
     같은 축이면 먼저 한 틀로 합친다(_pseo_merge_axes). 값이 대부분 수식어인 틀, 값 하나가 무리
     노출의 PSEO_SEED_SHARE 이상인 틀은 무리가 아니다. 씨앗은 _pseo_seed 가 정한다 — 기회의
-    대상(target)이 이것이다. 값마다 own(전용 페이지가 걸렸나)을 단다 — 찍을 값은 pseo_todo."""
+    대상(target)이 이것이다. 값마다 own(전용 페이지가 걸렸나 — pseo_mark_own)을 단다 — 찍을 값은
+    pseo_todo. audits 는 주소 → 감사 한 줄(title·h1_json)이다. 안 주면 db.latest_page_audits 로 읽는다
+    (대시보드는 이미 실은 page_audits 를 넘긴다)."""
     if not snapshot_date:
         return []
+    if audits is None:
+        audits = pseo_audits(conn, project_id)
     units = _pseo_units(conn, project_id, snapshot_date)
     # 틀 열쇠 → 값 열쇠 → {단위: 칸 자리}. 합친 틀은 한 값에 단위가 여럿이다('월요일' ← '다음주
     # 월요일'·'다음주 월요일 날짜').
@@ -964,23 +982,14 @@ def pseo_groups(conn: sqlite3.Connection, project_id: int,
         # 값들의 고른 수요 — 씨앗 하나가 무리 노출의 PSEO_SEED_SHARE 이상이면 그 검색어 하나의 수요다
         if values[0]["imp"] >= PSEO_SEED_SHARE * imp:
             continue
-        # 값의 전용 페이지 — 그 값의 검색어에 걸린 페이지가 홈이 아니고 틀 자체를 다루는 페이지가
-        # 아니면 그 값의 것이다. 언어(제목·H1 의 낱말)로 보지 않고 구조로 본다 — '江南市 肝斑' 의
-        # /ja/ 페이지도, 'next-monday' 도 같은 규칙으로 갈린다. 틀 자체를 다루는 페이지는 무리의 값
-        # PSEO_MIN_VALUES 개 이상이 함께 걸린 페이지다(무리가 서는 개수와 같다 — 그 값들의 안내 페이지).
-        # 값 둘이 한 페이지를 나눠 쓰는 것은 한 주제의 두 이름이다: theotherskin '江南市 赤ら顔'·'江南市
-        # 酒さ'는 둘 다 /ja/…/rosacea-flushing/ 에 걸렸다. '다른 값과 같은 페이지면 전용 아님'으로
-        # 두었더니 그 둘이 찍을 값이 되어, 값 4개가 다 전용 페이지인 #724 가 계속 섰다.
-        shared = [v["page"] for v in values]
-        for v in values:
-            v["own"] = (bool(v["page"]) and not _is_home(v["page"])
-                        and shared.count(v["page"]) < PSEO_MIN_VALUES)
+        seed = _pseo_seed(values, pins)
+        pseo_mark_own(values, seed, audits)
         side = [ui for ui in extra.get(fkey, ()) if ui not in used]
         used |= {ui for ms in cand for ui, _ in ms} | set(side)
         clk = sum(v["clk"] for v in values)
         pw = sum(units[ui]["pw"] for ms in cand for ui, _ in ms)
         queries = [q for v in values for q in (v["query"], *v["variants"])]
-        out.append({"seed": _pseo_seed(values, pins), "frame": names[fkey],
+        out.append({"seed": seed, "frame": names[fkey],
                     "frames": [names[fkey], *(names[f] for f in also.get(fkey, ()))],
                     "values": [{k: x for k, x in v.items() if k != "pw"} for v in values],
                     "queries": queries + [q for ui in side
@@ -1001,7 +1010,8 @@ def _pseo_value(units: list[dict], ms: list[tuple]) -> dict:
     return {"value": " / ".join(head["toks"][i] for i in pos), "query": head["query"],
             "variants": [*head["variants"], *(q for u in rest for q in (u["query"], *u["variants"]))],
             "imp": imp, "clk": sum(units[ui]["clk"] for ui, _ in ms),
-            "pos": round(pw / imp, 1) if imp else None, "page": head["page"], "pw": pw}
+            "pos": round(pw / imp, 1) if imp else None, "page": head["page"],
+            "page_pos": head["page_pos"], "pw": pw}
 
 
 def _pseo_merge_axes(frames: dict) -> tuple[dict, dict]:
@@ -1071,11 +1081,11 @@ def _pseo_seed(values: list[dict], pins: dict) -> str:
 
 def _pseo_rows(conn: sqlite3.Connection, project_id: int, snapshot_date: str | None, *,
                limit: int = 10, min_imp: int = PSEO_MIN_IMP,
-               max_ctr: float = PSEO_MAX_CTR) -> list[dict]:
+               max_ctr: float = PSEO_MAX_CTR, audits: dict | None = None) -> list[dict]:
     """기회로 세울 무리 — 수요는 있는데(무리 합계 노출) 클릭이 비어 있고(무리 합계 클릭률) 찍을 값이
     PSEO_MIN_TODO 개 이상인 것, 합계 노출 큰 순으로 limit 개 (scoring.md 1b). 문턱이 무리 단위인
     것이 예전과 다르다: 씨앗 하나의 수로 무리를 세우거나 닫지 않는다."""
-    gs = [g for g in pseo_groups(conn, project_id, snapshot_date)
+    gs = [g for g in pseo_groups(conn, project_id, snapshot_date, audits=audits)
           if g["imp"] >= min_imp and g["ctr_pct"] < max_ctr and len(pseo_todo(g)) >= PSEO_MIN_TODO]
     return sorted(gs, key=lambda g: (-g["imp"], g["seed"]))[:limit]
 
@@ -1084,6 +1094,76 @@ def pseo_todo(g: dict) -> list[dict]:
     """무리에서 찍을 값 — 전용 페이지가 없는 값(pseo_groups 의 own). 검출기·자동 해소·요청문이 이
     한 벌로 가른다."""
     return [v for v in g.get("values") or [] if not v.get("own")]
+
+
+def pseo_audits(conn: sqlite3.Connection, project_id: int) -> dict:
+    """주소 → 가장 최근 감사 한 줄(db.latest_page_audits 한 벌) — 전용 페이지를 말로 보는 재료."""
+    import db
+    return {r["url"]: dict(r) for r in db.latest_page_audits(conn, project_id)}
+
+
+def pseo_page_misses(value: str, url: str | None, audits: dict | None) -> list[str] | None:
+    """값의 내용어 가운데 그 페이지의 title·H1 에 없는 것 — '그 값의 전용 페이지인가'를 말로 보는 한 벌
+    (pseo_mark_own 이 부르고, 요청문의 허브도 그 판정을 읽는다). 감사가 없거나 title·H1 을 못 읽었으면
+    None 이다 — 모르는 것을 '다른 주제'라 하지 않고 구조로만 본다. 한글·일본어는 조사가 붙거나 띄어
+    쓰지 않아 낱말 대신 글자로 찾는다."""
+    a = ((audits or {}).get(url) if url else None) or {}
+    text = " ".join([str(a.get("title") or ""), *(str(h) for h in _as_list(a.get("h1_json")))]).strip()
+    if not text:
+        return None
+    low = text.lower()
+    return [t for t in _missing_tokens(value, text) if t.isascii() or t not in low]
+
+
+def pseo_mark_own(values: list[dict], seed: str, audits: dict | None) -> None:
+    """값마다 전용 페이지가 걸렸나(own)와, 아니면 그 까닭(why) — 검출기·자동 해소·요청문(찍을 값·이미
+    있는 값·허브)이 이 한 벌로 가른다. 까닭은 넷이다: 'none'(걸린 페이지 없음)·'home'·'guide'(무리의
+    값 PSEO_MIN_VALUES 개 이상이 함께 걸린 안내 페이지 — 틀 자체를 다루는 페이지)·'topic'(감사의
+    title·H1 에 값의 내용어가 없다 — miss, pseo_page_misses)·'shared'(값 둘이 나눠 쓰는 페이지에서 더
+    낮게 걸렸다 — owner 가 그 페이지의 주인 값).
+
+    예전엔 전용을 구조로만 봤고 요청문의 허브는 title·H1 으로 따로 봤다 — 씨앗이 걸린 '부가세 신고 기한
+    총정리' 글이 한 요청문 안에서 '이미 전용 페이지가 있는 값'이자 '허브: 전용 페이지가 아니라'였다.
+    값 둘이 나눠 쓰는 페이지는 둘 다 전용으로 쳤다 — 그래서 씨앗의 페이지에 다른 값 하나가 스친 흔한
+    경우에 '부산 (/seoul) — 새로 찍지 않습니다'가 나갔다. 이제 그 페이지에서 더 높이 걸린 값(같으면
+    씨앗, 그다음 노출 큰 값) 하나의 것이다. theotherskin '江南市 赤ら顔'·'江南市 酒さ'(같은
+    rosacea-flushing)는 하나가 찍을 값이 되지만 찍을 값 하나로는 무리가 서지 않는다(PSEO_MIN_TODO)."""
+    seed_keys = {k for k in pseo_fold_keys(seed) if k}
+
+    def is_seed(v):
+        return bool(seed_keys & {k for q in (v["query"], *(v.get("variants") or []))
+                                 for k in pseo_fold_keys(q) if k})
+    by_page: dict[str, list[dict]] = {}
+    for v in values:
+        for k in ("why", "owner", "miss"):
+            v.pop(k, None)
+        if v.get("page"):
+            by_page.setdefault(v["page"], []).append(v)
+    for v in values:
+        p = v.get("page")
+        if not p:
+            v["why"] = "none"
+        elif _is_home(p):
+            v["why"] = "home"
+        elif len(by_page[p]) >= PSEO_MIN_VALUES:
+            v["why"] = "guide"
+        else:
+            miss = pseo_page_misses(v["value"], p, audits)
+            v["why"] = "topic" if miss else None
+            if miss:
+                v["miss"] = miss
+    for vs in by_page.values():
+        ok = [v for v in vs if v["why"] is None]
+        if len(ok) < 2:
+            continue
+        top = min(ok, key=lambda v: (v["page_pos"] if v.get("page_pos") is not None
+                                     else v.get("pos") if v.get("pos") is not None else 1e9,
+                                     not is_seed(v), -(v.get("imp") or 0), v["query"]))
+        for v in ok:
+            if v is not top:
+                v["why"], v["owner"] = "shared", top["value"]
+    for v in values:
+        v["own"] = v["why"] is None
 
 
 def pseo_frame_label(g: dict) -> str:
@@ -5106,7 +5186,8 @@ _KIND_SPECS = {
         label="템플릿 패턴", defensive=False,
         # 한 행이 무리 하나다 — 대상은 씨앗(이미 선 줄의 값, 없으면 노출이 가장 큰 값 — _pseo_seed),
         # 수는 무리 합계
-        detect=lambda ctx: _pseo_rows(ctx["conn"], ctx["pid"], ctx["cur"]),
+        detect=lambda ctx: _pseo_rows(ctx["conn"], ctx["pid"], ctx["cur"],
+                                      audits=_pseo_ctx_audits(ctx["conn"], ctx["pid"], ctx)),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["seed"])},
         target=lambda r, ctx: r["seed"],
@@ -5777,12 +5858,21 @@ def _pseo_ctx(conn, pid: int, ctx: dict) -> str | None:
     검색어로 찾는다. 한 번 읽어 ctx 에 둔다."""
     cur = ctx.setdefault("_pseo_cur", snapshot_pair(conn, pid)[0])
     if cur and "_pseo_glist" not in ctx:
-        ctx["_pseo_glist"] = pseo_groups(conn, pid, cur)
+        ctx["_pseo_glist"] = pseo_groups(conn, pid, cur, audits=_pseo_ctx_audits(conn, pid, ctx))
         ctx["_pseo_groups"] = {k: g for g in ctx["_pseo_glist"]
                                for q in g["queries"] for k in pseo_fold_keys(q) if k}
         ctx["_pseo_units"] = {k: u for u in _pseo_units(conn, pid, cur)
                               for q in (u["query"], *u["variants"]) for k in pseo_fold_keys(q) if k}
     return cur
+
+
+def _pseo_ctx_audits(conn, pid: int, ctx: dict) -> dict:
+    """전용 페이지를 말로 보는 감사 — ctx 에 이미 실렸으면(page_audits) 그것, 아니면 한 번 읽어 둔다.
+    검출(_pseo_rows)과 자동 해소(_pseo_ctx)가 같은 한 벌을 본다."""
+    if "_pseo_audits" not in ctx:
+        ctx["_pseo_audits"] = (ctx["page_audits"] if isinstance(ctx.get("page_audits"), dict)
+                               else pseo_audits(conn, pid))
+    return ctx["_pseo_audits"]
 
 
 def _pseo_frame_key(frame: str) -> tuple:
@@ -5878,8 +5968,8 @@ RESOLVE_WHEN = {
     # 무리 단위다 — 씨앗 하나의 클릭률은 템플릿을 찍었다는 증거가 아니다(_resolve_pseo). 씨앗이 값에서
     # 빠져 새 씨앗 줄로 합치는 것은 목표를 이룬 게 아니라 줄을 옮긴 것이라 여기 적지 않는다.
     "pseo_pattern": f"다음 구글 실적에서 이 무리의 값마다 전용 페이지(홈도, 값 {PSEO_MIN_VALUES}개 "
-                    f"이상이 함께 걸린 안내 페이지도 아닌 내 페이지)가 순위에 걸려, 전용 페이지 없는 값이 "
-                    f"{PSEO_MIN_TODO}개 아래로 줄면",
+                    f"이상이 함께 걸린 안내 페이지도 아니고, 점검한 title·H1 에 그 값이 있는 내 페이지)가 "
+                    f"순위에 걸려, 전용 페이지 없는 값이 {PSEO_MIN_TODO}개 아래로 줄면",
     "striking_distance": f"다음 구글 실적에서 이 검색어가 노출 {STRIKING_MIN_IMP} 이상으로 평균 "
                          f"{STRIKING_LO}위 안(상단 3위권)에 들거나, {STRIKING_HI}위 밖·노출 "
                          f"{STRIKING_MIN_IMP} 미만으로 조건을 벗어나면",

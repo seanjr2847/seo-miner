@@ -281,13 +281,14 @@ def _pseo_site(conn, name: str, domain: str, rows) -> int:
 
     경로를 안 주면 모든 검색어가 한 안내 페이지(/guide)에 걸린다 — 값마다 전용 페이지가 없는,
     템플릿으로 찍을 자리다. 값마다 전용 페이지가 이미 있으면 템플릿은 이미 있는 것이라
-    기회가 아니다(scoring.pseo_todo)."""
+    기회가 아니다(scoring.pseo_todo). 경로가 None 이면 걸린 페이지가 없다."""
     pid = conn.execute("INSERT INTO projects(name, domain) VALUES(?, ?) RETURNING id",
                        (name, domain)).fetchone()[0]
+    path = (lambda r: r[4] if len(r) > 4 else "/guide")
     conn.executemany(
         "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks,"
         " impressions, ctr, position) VALUES(?, '2026-10-01', 28, ?, ?, ?, ?, 0.0, ?)",
-        [(pid, r[0], f"https://{domain}{r[4] if len(r) > 4 else '/guide'}", r[2], r[1], r[3])
+        [(pid, r[0], None if path(r) is None else f"https://{domain}{path(r)}", r[2], r[1], r[3])
          for r in rows])
     conn.commit()
     return pid
@@ -452,6 +453,31 @@ def test_pseo_glue_leaves_question_and_compare_frames():
     conn.close()
 
 
+def test_pseo_question_words_are_never_slot_values():
+    """물음말(scoring._QUESTION_HEADS — is·are·what·how…)은 칸의 값이 될 수 없고, 칸 둘짜리 틀의 고정
+    낱말이 물음말뿐이어도 틀이 아니다. 물음말을 잇는 말에서 빼서 'what is {X}' 를 살렸더니(3차),
+    'botox is safe'·'filler is permanent' 가 '{A} is {B}' — 서로 무관한 쌍 — 로 묶여 기회로 섰고,
+    'what/why/how is milia' 는 물음말이 값인 무리가 됐다(한 주제의 물음 변주다). 칸 하나짜리
+    'what is {X}' 는 그대로 선다."""
+    conn = db.connect()
+    cases = {
+        "q-is": [("botox is safe", 60, 0, 9.0), ("filler is permanent", 40, 0, 9.0),
+                 ("laser is painful", 30, 0, 9.0), ("milia is contagious", 25, 0, 9.0)],
+        "q-are": [("what are milia", 60, 0, 9.0), ("how are syringoma", 40, 0, 9.0),
+                  ("why are pores", 30, 0, 9.0)],
+        # why 는 의도어라 수식어로도 걸러진다 — 물음말 자체가 값이 못 되는 것은 what·how·when 이 본다
+        "q-head": [("what is milia", 60, 0, 9.0), ("why is milia", 40, 0, 9.0),
+                   ("how is milia", 30, 0, 9.0), ("when is milia", 25, 0, 9.0)]}
+    for name, rows in cases.items():
+        pid = _pseo_site(conn, f"pseo-{name}", f"{name}.example", rows)
+        assert _frames(conn, pid) == {}, (name, _frames(conn, pid))
+    ok = _pseo_site(conn, "pseo-q-ok", "qok.example",
+                    [("what is crm", 40, 0, 7.0), ("what is erp", 30, 0, 8.0),
+                     ("what is seo", 25, 0, 9.0), ("what is saas", 20, 0, 9.0)])
+    assert _frames(conn, ok) == {"what is {X}": ["crm", "erp", "seo", "saas"]}, _frames(conn, ok)
+    conn.close()
+
+
 def test_pseo_modifier_is_a_whole_word():
     """수식어는 값의 낱말 하나가 의도어·꾸밈말과 **같을** 때다. 검색어 전체의 의도를 가르는
     query_intent 를 빌려 쓰던 때는 한글을 부분 문자열로 찾아, '이사업체'가 '업체'에, '치과병원'이
@@ -472,18 +498,19 @@ def test_pseo_frames_whose_values_have_pages_are_not_opportunities():
     """값마다 이미 전용 페이지가 순위에 걸린 무리는 템플릿 기회가 아니다 — 템플릿은 이미 있고 남은
     일은 값마다의 클릭률·순위다. noti '다음주 {X}'(#41)는 값 6개가 모두 /discover/expression/
     next-{요일} 전용 페이지에 걸려 있었는데 '틀로 찍은 페이지들이 색인되고'를 목표로 섰다.
-    전용은 언어와 무관하게 구조로 본다: 그 값의 검색어에 걸린 페이지가 홈이 아니고 무리의 값 셋
-    이상이 함께 걸린 안내 페이지도 아니면 그 값의 전용 페이지다. 값 둘이 한 페이지를 나눠 쓰는 것은
-    한 주제의 두 이름이다(theotherskin #724 '江南市 赤ら顔'·'江南市 酒さ' → 같은 rosacea-flushing).
-    찍을 값(전용 페이지 없는 값)이 2개 미만이면 서지 않고, 이미 선 열린 줄은 사유와 함께 닫는다
-    (acked 도 — 끝난 일이다)."""
+    감사가 없으면 전용은 구조로 본다: 그 값의 검색어에 걸린 페이지가 홈이 아니고 무리의 값 셋
+    이상이 함께 걸린 안내 페이지도 아니면 그 값의 전용 페이지다. 값 둘이 한 페이지를 나눠 쓰면 그
+    페이지에서 더 높이 걸린 값 하나의 것이다(theotherskin #724 '江南市 赤ら顔'·'江南市 酒さ' → 같은
+    rosacea-flushing — 하나는 찍을 값이 되지만 찍을 값 하나로는 서지 않는다). 찍을 값(전용 페이지
+    없는 값)이 2개 미만이면 서지 않고, 이미 선 열린 줄은 사유와 함께 닫는다(acked 도 — 끝난 일이다)."""
     conn = db.connect()
     pid = _pseo_site(conn, "pseo-own", "own.example", [
         # 서울만 전용 페이지 — 부산·대구·광주는 한 안내 페이지를 나눠 쓰고 인천은 홈에 스쳤다
         ("서울 세무사 가격", 100, 0, 9.0, "/seoul-tax"), ("부산 세무사 가격", 80, 0, 12.0, "/guide"),
         ("대구 세무사 가격", 40, 0, 14.0, "/guide"), ("광주 세무사 가격", 35, 0, 18.0, "/guide"),
         ("인천 세무사 가격", 30, 0, 20.0, "/"),
-        # 값마다 전용 페이지 — 기회가 아니다. 화·목은 한 주제의 두 이름처럼 한 페이지를 나눠 쓴다
+        # 값마다 전용 페이지 — 기회가 아니다. 화·목은 한 페이지를 나눠 쓴다(같은 순위면 노출 큰 화요일의
+        # 것 — 목요일은 찍을 값이지만 하나뿐이다)
         ("다음주 월요일", 100, 0, 5.0, "/next-monday"), ("다음주 수요일", 60, 0, 5.0, "/next-wednesday"),
         ("다음주 화요일", 50, 0, 6.0, "/next-tue-thu"), ("다음주 목요일", 40, 0, 6.0, "/next-tue-thu"),
         # 찍을 값이 하나뿐이다(그린은 홈) — 기회가 아니다
@@ -497,7 +524,7 @@ def test_pseo_frames_whose_values_have_pages_are_not_opportunities():
     assert [(v["value"], v["own"]) for v in tax["values"]] == \
         [("서울", True), ("부산", False), ("대구", False), ("광주", False), ("인천", False)], tax["values"]
     assert [v["value"] for v in scoring.pseo_todo(tax)] == ["부산", "대구", "광주", "인천"]
-    assert scoring.pseo_todo(gs["다음주 {X}"]) == [], gs["다음주 {X}"]["values"]
+    assert [v["value"] for v in scoring.pseo_todo(gs["다음주 {X}"])] == ["목요일"], gs["다음주 {X}"]["values"]
     assert [v["value"] for v in scoring.pseo_todo(gs["{X} 우산"])] == ["그린"]
     spec = next(k for k in scoring.KINDS if k.name == "pseo_pattern")
     got = spec.detect({"conn": conn, "pid": pid, "cur": "2026-10-01", "brands": set()})
@@ -525,6 +552,106 @@ def test_pseo_frames_whose_values_have_pages_are_not_opportunities():
     assert s == "resolved" and "전용 페이지" in why, (s, why)
     assert st["노랑 장화"] == ("new", ""), "사람이 다시 연 줄을 그 전 데이터로 닫았다"
     assert st["서울 세무사 가격"][0] == "new", st
+
+
+def test_pseo_shared_page_belongs_to_the_higher_value():
+    """값 둘이 한 페이지를 나눠 쓰면 그 페이지에서 더 높이 걸린 값(같으면 씨앗, 그다음 노출 큰 값)
+    하나에게만 전용이다. 둘 다 전용으로 치던 때는 씨앗의 페이지에 다른 값 하나가 스친 흔한 경우에
+    "이미 전용 페이지가 있는 값: '서울' (/seoul), '부산' (/seoul) — 새로 찍지 않습니다"가 나갔고(부산의
+    페이지는 없다), 대구가 홈이면 찍을 값 1개로 열린 줄이 '값마다 이미 전용 페이지'라며 닫혔다."""
+    conn = db.connect()
+    a = _pseo_site(conn, "pseo-shareA", "sharea.example", [
+        ("서울 세무사 추천", 120, 0, 9.0, "/seoul"), ("부산 세무사 추천", 80, 0, 25.0, "/seoul"),
+        ("대구 세무사 추천", 50, 0, 30.0, None), ("광주 세무사 추천", 40, 0, 30.0, None),
+        # 같은 순위면 씨앗(노란 장화 — 노출 1등)의 것이다
+        ("노랑 장화", 40, 0, 5.0, "/boots"), ("검정 장화", 30, 0, 5.0, "/boots"),
+        ("하양 장화", 20, 0, 5.0, "/white")])
+    gs = {g["frame"]: g for g in scoring.pseo_groups(conn, a, "2026-10-01")}
+    tax = gs["{X} 세무사 추천"]
+    assert [(v["value"], v["own"]) for v in tax["values"]] == \
+        [("서울", True), ("부산", False), ("대구", False), ("광주", False)], tax["values"]
+    assert [(v["value"], v["own"]) for v in gs["{X} 장화"]["values"]] == \
+        [("노랑", True), ("검정", False), ("하양", True)], gs["{X} 장화"]["values"]
+    # 더 높이 걸린 쪽은 노출이 작아도 그 페이지의 주인이다
+    b = _pseo_site(conn, "pseo-shareB", "shareb.example", [
+        ("서울 세무사 추천", 120, 0, 25.0, "/busan"), ("부산 세무사 추천", 80, 0, 6.0, "/busan"),
+        ("대구 세무사 추천", 50, 0, 30.0, "/daegu")])
+    tb = scoring.pseo_groups(conn, b, "2026-10-01")[0]
+    assert [(v["value"], v["own"]) for v in tb["values"]] == \
+        [("서울", False), ("부산", True), ("대구", True)], tb["values"]
+    # '더 높이'는 그 페이지에서의 순위다 — 서울의 평균 순위(다른 페이지 1위가 끌어올린 20.3위)가 아니다
+    d = _pseo_site(conn, "pseo-shareD", "shared.example", [
+        ("서울 세무사 추천", 100, 0, 30.0, "/busan"), ("서울 세무사 추천", 50, 0, 1.0, "/other"),
+        ("부산 세무사 추천", 80, 0, 25.0, "/busan"), ("대구 세무사 추천", 50, 0, 30.0, "/daegu")])
+    td = scoring.pseo_groups(conn, d, "2026-10-01")[0]
+    assert [(v["value"], v["own"]) for v in td["values"]] == \
+        [("서울", False), ("부산", True), ("대구", True)], td["values"]
+    # 이미 열린 새 기준 줄 — 서울 /seoul · 부산 /seoul · 대구 홈이면 찍을 값이 부산·대구 둘이라 열린 채다
+    c = _pseo_site(conn, "pseo-shareC", "sharec.example", [
+        ("서울 세무사 추천", 120, 0, 9.0, "/seoul"), ("부산 세무사 추천", 80, 0, 25.0, "/seoul"),
+        ("대구 세무사 추천", 50, 0, 30.0, "/")])
+    conn.execute("INSERT INTO opportunities(project_id, kind, target, status, reasoning)"
+                 " VALUES(?, 'pseo_pattern', '서울 세무사 추천', 'new', ?)",
+                 (c, scoring.PSEO_REASON_HEAD + "'{X} 세무사 추천' — 바뀌는 값 3개: 서울 · 부산 · 대구."))
+    conn.commit()
+    conn.close()
+    scoring.load("pseo-shareC")
+    conn = db.connect()
+    st = [tuple(r) for r in conn.execute(
+        "SELECT target, status, status_reason FROM opportunities WHERE project_id=? AND "
+        "kind='pseo_pattern'", (c,))]
+    conn.close()
+    assert st == [("서울 세무사 추천", "new", None)], st
+
+
+def _pseo_audit(conn, pid: int, domain: str, path: str, title: str, h1: str) -> None:
+    conn.execute("INSERT INTO page_audits(project_id, checked_date, url, status, title, h1_json)"
+                 " VALUES(?, '2026-10-01', ?, 200, ?, ?)",
+                 (pid, f"https://{domain}{path}", title, json.dumps([h1], ensure_ascii=False)))
+    conn.commit()
+
+
+def test_pseo_own_page_must_speak_the_value():
+    """감사(title·H1)가 있으면 그 값의 내용어가 title·H1 에 있어야 그 값의 전용 페이지다 — 다른
+    주제의 글에 스친 값은 찍을 값이다. 예전엔 전용을 구조로만 봐서(요청문의 허브는 title·H1 으로 봤다)
+    씨앗 '서울 세무사 추천'이 걸린 '부가세 신고 기한 총정리' 글이 한 요청문 안에서 "이미 전용 페이지가
+    있는 값 '서울'"이자 "허브: 전용 페이지가 아니라"였고, 값 셋이 저마다 다른 블로그 글에 스친 무리는
+    찍을 값 0 으로 사라졌다. 감사가 없는 페이지는 구조로만 본다(모르는 것을 '다른 주제'라 하지 않는다).
+    일본어처럼 띄어 쓰지 않는 값은 글자로 찾는다."""
+    conn = db.connect()
+    dom = "audit.example"
+    pid = _pseo_site(conn, "pseo-audit", dom, [
+        ("서울 세무사 추천", 120, 0, 9.0, "/blog/vat-deadline"), ("부산 세무사 추천", 80, 0, 12.0, "/busan"),
+        ("대구 세무사 추천", 50, 0, 14.0, "/blog/year-end"), ("광주 세무사 추천", 40, 0, 15.0, "/gwangju"),
+        ("江南市 肝斑", 40, 0, 9.0, "/ja/melasma/"), ("江南市 赤ら顔", 30, 0, 9.0, "/ja/rosacea/"),
+        ("江南市 酒さ", 25, 0, 9.0, "/ja/sake/")])
+    _pseo_audit(conn, pid, dom, "/blog/vat-deadline", "부가세 신고 기한 총정리", "부가세 신고 기한")
+    _pseo_audit(conn, pid, dom, "/busan", "부산 세무사 고르는 법", "부산 세무사")
+    _pseo_audit(conn, pid, dom, "/blog/year-end", "연말정산 환급 팁", "연말정산")
+    _pseo_audit(conn, pid, dom, "/ja/melasma/", "肝斑治療｜江南", "肝斑の治療")
+    _pseo_audit(conn, pid, dom, "/ja/rosacea/", "赤ら顔の治療", "赤ら顔")
+    _pseo_audit(conn, pid, dom, "/ja/sake/", "毛穴の治療", "毛穴")
+    gs = {g["frame"]: g for g in scoring.pseo_groups(conn, pid, "2026-10-01")}
+    tax = gs["{X} 세무사 추천"]
+    assert [(v["value"], v["own"]) for v in tax["values"]] == \
+        [("서울", False), ("부산", True), ("대구", False), ("광주", True)], tax["values"]
+    assert [(v["value"], v["own"]) for v in gs["江南市 {X}"]["values"]] == \
+        [("肝斑", True), ("赤ら顔", True), ("酒さ", False)], gs["江南市 {X}"]["values"]
+    spec = next(k for k in scoring.KINDS if k.name == "pseo_pattern")
+    got = spec.detect({"conn": conn, "pid": pid, "cur": "2026-10-01", "brands": set()})
+    assert [spec.target(r, {}) for r in got] == ["서울 세무사 추천"], got
+    # 감사를 직접 넘기면(대시보드 페이로드) 그것을 쓴다 — 감사가 없으면 구조로만 본다
+    bare = scoring.pseo_groups(conn, pid, "2026-10-01", audits={})
+    assert all(v["own"] for g in bare for v in g["values"]), bare
+    conn.close()
+    # 대시보드 페이로드(요청문이 읽는 무리)도 같은 감사로 판정한다 — 검출기와 요청문이 다른 말을 하지 않게
+    scoring.load("pseo-audit")
+    conn = db.connect()
+    d = dashboard.gather(conn, db.get_project(conn, "pseo-audit"), gated=False)   # 심사 전 기회까지
+    conn.close()
+    dg = next(g for g in d["pseo_groups"] if g["frame"] == "{X} 세무사 추천")
+    assert [(v["value"], v["own"]) for v in dg["values"]] == \
+        [("서울", False), ("부산", True), ("대구", False), ("광주", True)], dg["values"]
 
 
 def test_pseo_dropped_seed_row_merges_into_the_new_seed():
