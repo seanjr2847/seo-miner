@@ -25,7 +25,7 @@
 | rank_decay | 직전 스냅샷 대비 순위·클릭 하락 (방어) | `scoring.rank_decay()` — 비교 짝은 `snapshot_pair()`(같은 period_days끼리만), `dpos <= DECAY_POS`(= -1.5, 음수=하락), 하락 큰 순. 비교 짝이 없으면 빈 결과 |
 | content_gap | 경쟁사는 잡는데 나는 부재 | 완전판 구현 — `scripts/collect_gap.py`(DataForSEO Labs 키 필요), 후보는 keywords 로 적재되고 기회 판정·클러스터링은 큐레이션 후 Claude. 부분 가능(무료): rank 수확 경쟁사가 내 추적 키워드 상위에 있고 나는 부재인 경우 |
 | coverage | 활성 키워드가 GSC·순위 체크 어디에도 안 잡힘 (directory 최우선) | `scoring.coverage()` — '커버됨' = 최신 GSC 스냅샷에 같은 문자열(norm 비교) 쿼리가 노출>0으로 존재하거나 rank_snapshots 최신 체크에 position 존재. **부분 일치·의미 유사는 안 본다** — 그건 Claude 몫. load는 클러스터별 1건(target=`cluster:{이름}`)으로 적재 |
-| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (묶기는 `scoring.pseo_groups()` — 고정 틀 + 바뀌는 칸, 값 3개 이상. `load`가 문턱을 넘은 무리를 10개까지 세운다) |
+| pseo_pattern | 노출은 있는데 클릭이 없는 쿼리들이 템플릿 패턴을 이룸 → pSEO 캠페인 후보 | 아래 1b절 절차 (묶기는 `scoring.pseo_groups()` — 고정 틀 + 바뀌는 칸, 값 3개 이상. `load`가 문턱을 넘고 전용 페이지 없는 값이 2개 이상인 무리를 10개까지 세운다) |
 | aio_exposure | AI 오버뷰가 뜨는 내 키워드에서 인용 미확보 | rank_snapshots: aio_present=1 AND aio_cited=0 (DataForSEO 제공 시). 도메인 추출은 `serp_adapter._domains_in()`이 인용 구조(`references`·`citations`·`sources`·`links`) 안의 `url`·`domain`·`link`·`source_url`만 채택 — `images[].url`(CDN)이나 본문 안 무연결 URL은 빠진다. 자기 도메인 판정은 `scoring.owns()`/`host_of()` |
 | device_gap | 같은 쿼리인데 모바일 순위가 데스크톱보다 유의미하게 아래 → 모바일 쪽 문제 | `scoring.device_gap()` — `gsc_breakdown` 의 최신 snapshot_date, dim='device'. 같은 query 에서 `dpos`(모바일 pos − 데스크톱 pos) ≥ `DEVICE_GAP_POS`(=2.0)이고 모바일 노출 ≥ `DEVICE_MIN_IMP`(=50). 모바일 노출 내림차순. **`/capture gsc` 가 device 축을 분해해 뒀어야 한다** — `gsc_breakdown: ""` 로 껐거나 아직 안 돌렸으면 빈 결과가 정상(결함 아님, 데이터 부재) |
 | crawl_issue | 전수 크롤에서 심각(bad)으로 걸린 주소 (방어) | `scoring.crawl_gaps()` — 최신 크롤 회차의 `crawl_issues` 중 severity='bad' 만. warn·info 는 [사이트 점검] 화면의 표에 그대로 있다. 갈래 이름표의 정본은 `collect_crawl.ISSUE_KIND` |
@@ -84,19 +84,42 @@
 검색어를 **고정 틀 + 바뀌는 칸**으로 묶는다. 어순·복수형·띄어쓰기만 다른 검색어는 한
 검색어로 접고(`pseo_fold_keys`·`word_stem`), 낱말 하나(또는 사이에 고정 낱말을 둔 낱말 둘 —
 `{A} vs {B} pricing`)를 칸으로 비운 나머지가 같은 검색어끼리 한 틀이다. 칸의 서로 다른 값이
-`PSEO_MIN_VALUES`(=3)개 이상이어야 무리다. 잇는 말(`QUERY_STOPWORDS` 한 벌)은 칸의 값이 아니고,
-고정 낱말이 잇는 말뿐인 틀(`{A} vs {B}`)은 틀이 아니다. 값 하나의 노출 하한은
+`PSEO_MIN_VALUES`(=3)개 이상이어야 무리다. 잇는 말(`PSEO_GLUE` — `QUERY_STOPWORDS` 에서 물음말
+`_QUESTION_HEADS` 와 `INTENT_WORDS` 낱말을 뺀 것: or·and·the·과…)은 칸의 값이 아니고, 고정 낱말이
+잇는 말뿐인 틀은 틀이 아니다. 칸 둘짜리 틀은 비교 의도어(`INTENT_WORDS` 첫 칸: vs·차이·비교…)도
+잇는 말처럼 본다 — `{A} vs {B}`·`{A} vs {B} 비교`는 둘을 견주는 검색이지 템플릿이 아니다. 칸
+하나짜리 `what is {X}`(용어집)·`{X} 비교`(비교 허브)는 선다. 값 하나의 노출 하한은
 `PSEO_VALUE_MIN_IMP`. 검색 연산자(`site:` 등)와 우리 브랜드 검색은 뺀다. 틀이 서도 템플릿이
-아닌 것 둘 — 칸의 값이 대부분 수식어(`INTENT_WORDS`·`BRAND_MODIFIERS`: treatment·causes·가격…)면
-한 주제의 변주이고(`{X} 가격`처럼 고정 쪽이 수식어이고 칸이 개체여야 템플릿), 값 하나가 무리
-노출의 `PSEO_SEED_SHARE`(=0.5) 이상이면 그 검색어 하나의 수요다. 고정 낱말 하나를 더 붙인 틀이
-같은 축이면(`다음주 {X}`·`다음주 {X} 날짜`) 한 무리로 합친다.
+아닌 것 둘 — 칸의 값이 대부분 수식어(값의 낱말이 `INTENT_WORDS`·`BRAND_MODIFIERS` 의 낱말과
+**같은** 것: treatment·causes·가격… — '이사업체'는 '업체'가 아니다)면 한 주제의 변주이고(`{X} 가격`
+처럼 고정 쪽이 수식어이고 칸이 개체여야 템플릿), 값 하나가 무리 노출의 `PSEO_SEED_SHARE`(=0.7)
+이상이면 그 검색어 하나의 수요다(0.7 은 값이 셋인 머리 큰 분포 — 60·30·20, 씨앗 54.5% — 를
+살리고 `papular {X} scars` 의 acne 71% 를 거른다). 고정 낱말 하나를 더 붙인 틀이 같은 축이면
+(`다음주 {X}`·`다음주 {X} 날짜`) 한 무리로 합친다.
+
+값마다 **전용 페이지**를 가른다(`own`): 그 값의 검색어에 걸린 내 페이지가 홈이 아니고, 무리의 값
+`PSEO_MIN_VALUES`개 이상이 함께 걸린 페이지(틀 자체를 다루는 안내 페이지)도 아니면 그 값의 것이다 —
+언어와 무관하게 구조로 본다. 값 둘이 한 페이지를 나눠 쓰는 것은 한 주제의 두 이름이라 둘 다 전용이다
+(theotherskin `江南市 赤ら顔`·`江南市 酒さ` → 같은 rosacea-flushing 페이지). 찍을 값(`pseo_todo` — 전용
+페이지 없는 값)이 `PSEO_MIN_TODO`(=2)개 미만이면 템플릿은 이미 있는 것이라 기회가 아니다(남은 일은
+값마다의 클릭률·순위이고 그 검색어의 기회가 맡는다 — noti `다음주 {X}`, theotherskin `江南市 {X}`).
 `scoring.py load`(5절)는 그중 무리 합계 노출 ≥ `PSEO_MIN_IMP`(=50) · 합계 CTR <
-`PSEO_MAX_CTR`(=1.5)인 무리를 합계 노출 순으로 10개까지 `pseo_pattern` 기회로 세운다 —
-target 은 씨앗(그 무리의 값에 이미 선 줄이 있으면 그 줄의 대상 — 노출 순위가 바뀌어도 줄이
-닫혔다 열리지 않게. 없으면 노출이 가장 큰 값의 검색어), reasoning 은 `틀 '…' — 바뀌는 값 N개: …`
-로 시작한다(`pseo_reasoning`). 요청문은 페이로드의 `pseo_groups` 로 틀·값 표를 싣고, 씨앗의
-전용 페이지(홈·다른 주제의 페이지가 아닌 것)가 순위에 걸려 있으면 그것을 허브로 쓴다.
+`PSEO_MAX_CTR`(=1.5) · 찍을 값 ≥ `PSEO_MIN_TODO` 인 무리를 합계 노출 순으로 10개까지
+`pseo_pattern` 기회로 세운다 — target 은 씨앗(그 무리의 값에 이미 선 줄이 있으면 그 줄의 대상 —
+열린 줄 먼저, 닫힌 줄은 열린 줄이 없을 때만. 노출 순위가 바뀌어도 줄이 닫혔다 열리지 않게. 없으면
+노출이 가장 큰 값의 검색어), reasoning 은 `틀 '…' — 바뀌는 값 N개: …` 로 시작한다(`pseo_reasoning`).
+요청문(꼴 `template`)은 페이로드의 `pseo_groups` 로 틀·값 표와 찍을 값/이미 있는 값을 싣고, 씨앗의
+전용 페이지(홈·다른 주제의 페이지가 아닌 것)가 순위에 걸려 있으면 그것을 허브로 쓴다 — 씨앗이 아닌
+줄의 요청문도 허브는 씨앗의 것이다.
+
+**저절로 닫힘**(`_resolve_pseo`, 무리 단위 — 씨앗 하나의 클릭률로는 닫지 않는다): 값마다 전용
+페이지가 걸려 찍을 값이 `PSEO_MIN_TODO` 아래로 줄면 닫는다(`RESOLVE_WHEN`). 붙잡은 씨앗이 무리의 값에서
+빠져(노출 하한 밑·다른 틀) 같은 틀에 새 씨앗 줄이 서면 옛 씨앗 줄은 그 줄로 합친다(근거 문장의 틀로
+찾는다). 둘 다 acked 도 닫고, 사람이 [다시 열기]한 줄은 그 뒤 실적으로만 본다.
+
+**남겨 둔 것:** theotherskin `abnom {X}`(skin·pigmentation·dermatology — 질환 하나의 변주, 씨앗 몫
+48%)는 구조로는 여전히 무리다. 값이 업종어라 수식어 목록(업종 중립)에 못 넣고, 지금은 무리 노출
+29 가 `PSEO_MIN_IMP` 밑이라서**만** 기회로 서지 않는다.
 
 예전엔 '노출은 있는데 클릭률 낮은 검색어 상위 10개'를 낱낱이 세우고 묶기는 Claude 몫이었는데
 자동 런엔 그 단계가 없어, 같은 검색어의 어순·복수형 변형과 `site:` 검색이 각각 무리로

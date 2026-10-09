@@ -47,7 +47,7 @@ import serp_adapter
 # ── 일의 꼴 ──────────────────────────────────────────────────────────────────
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
 # test_seams 가 대조한다.
-SHAPE_NAMES = ("fix_page", "split_page", "new_content", "consolidate", "technical",
+SHAPE_NAMES = ("fix_page", "split_page", "new_content", "template", "consolidate", "technical",
                "outreach", "presence")
 
 # 숫자만 보고 제안하는 것을 막는 규칙 — 상수로 두는 이유는 검사가 어느 꼴에 실렸는지
@@ -225,6 +225,44 @@ SHAPES: dict[str, dict] = {
                RULE_READ_TOP],
         slot="이 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, "
              "다뤄야 할 구간을 짐작이 아니라 비교로 정합니다.",
+        limits=True),
+    # 템플릿 패턴(pseo_pattern)의 꼴. 예전엔 새 글(new_content) 꼴을 빌려 머리말·'한눈에'·목표만 종류별로
+    # 갈아 끼웠는데, 꼬리(답의 형식·규칙)는 꼴 한 벌이라 글 한 장의 산출물이 그대로 나갔다 — 파일명
+    # seo-new_content, 제목 3안 표, H1 하나 아래 목차, '한 글이 한 검색 의도에 답합니다', 발행 뒤 내부 링크
+    # 표(noti #41). 꼬리는 기회마다 싣지 않는 한 벌이라(tails) 꼬리 안에 "템플릿이면 …" 조건을 걸면
+    # 새 글 요청문마다 남의 조건이 실린다 — 그래서 꼴을 따로 둔다. 카드는 처방의 산출물(축과 값 목록·
+    # 골격·허브 — scoring 의 _PSEO_DELIVER 와 그 뒤 항목) 세 가지를 가리키기만 하고 새로 늘리지 않는다.
+    "template": dict(
+        label="템플릿 설계",
+        intro="아래 검색어 무리를 한 장씩 쓰지 않고 템플릿으로 찍을 설계도를 만들어 주세요. 축(무엇이 "
+              "바뀌며 여러 장이 되나)·틀 한 벌·허브 구성까지입니다 — 페이지 본문은 그 뒤에 데이터로 "
+              "채웁니다.",
+        form=["위 '만들어 줄 것'에 든 산출물만 만듭니다. 그중 축과 값 목록은 표: 값 | 대표 검색어 | "
+              "노출 | 찍을 값인지 이미 전용 페이지가 있는 값인지(위 '대상'이 가른 그대로) | 그 값의 "
+              "페이지를 채울 데이터와 그 출처(모르면 [확인 필요]). 그 값만의 데이터가 없으면 그 칸에 "
+              "'찍지 않음'과 이유 한 줄.",
+              "틀 한 벌의 골격은: 주소 꼴(값이 들어갈 자리) · title·H1 틀(값 자리는 {X}) · H2 목록 — "
+              "H2 마다 모든 페이지에 같은 고정 구간인지 값마다 바뀌는 구간인지와 그 구간이 답할 질문 "
+              "한 줄. 찍을 값 하나로 채운 title·H1 견본 한 줄을 곁들여, 틀이 실제 값에서 말이 되는지 "
+              "보입니다.",
+              "허브는 위 '만들어 줄 것'의 허브 항목 그대로(새로 지을 허브의 구성이든, 기존 허브에 더할 "
+              "링크 목록이든): 값 페이지로 가는 링크를 둘 구간과 앵커 꼴(값 자리는 {X})."],
+        graph="틀은 Mermaid `flowchart TD` 하나로 그립니다 — 허브 아래 값 페이지들, 값 페이지 "
+              "상자 안에 고정 구간과 값마다 바뀌는 구간.",
+        rules=["값마다 그 값만의 데이터(값마다 다른 사실·수치·목록)가 있어야 찍습니다. 값 이름만 "
+               "바꾼 페이지는 만들지 않습니다 — 얇은 페이지가 쌓이면 사이트 전체가 저품질로 "
+               "읽힙니다.",
+               "이미 전용 페이지가 있는 값(위 '대상')은 새로 찍지 않습니다 — 같은 값으로 두 장이 서면 "
+               "한 검색어를 나눠 갖습니다.",
+               "경쟁 페이지의 문장·구성을 그대로 옮기지 않습니다. 같은 질문에 답하되 순서와 관점은 "
+               "우리 것으로.",
+               "수치·후기·사례는 지어내지 않습니다. 근거가 필요한 자리는 [확인 필요]로 비워 둡니다.",
+               "이 답에서는 값 페이지의 본문을 쓰지 않습니다 — 틀과 견본까지 쓰고 멈춥니다. 절대경로 "
+               "앞에 고를 자리(배지를 단 안)를 번호로 묻고, 사용자가 고르고 승인하면 같은 대화에서 그 "
+               "틀로 값 페이지를 찍습니다.",
+               RULE_READ_TOP],
+        slot="씨앗 검색어로 상위에 있는 페이지 2~3개의 제목과 H2 목록을 여기에 붙이면, 틀의 고정 "
+             "구간을 짐작이 아니라 비교로 정합니다.",
         limits=True),
     "consolidate": dict(
         label="주소 정리",
@@ -423,7 +461,7 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
     "cannibalization": "consolidate",
     "intent_split": "split_page",
     "rank_decay": "fix_page",
-    "pseo_pattern": "new_content",
+    "pseo_pattern": "template",
     "device_gap": "technical",
     "index_blocked": "technical",
     # 순위에 걸린 페이지는 정의상 없다 — 갈리는 건 사이트에 이 주제의 지면(제목·H1)이 있느냐다.
@@ -443,11 +481,9 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
 }
 assert set(KIND_SHAPE) == set(scoring.ALL_KINDS)
 
-# 꼴이 같아도 머리말이 틀리는 종류 — 템플릿 패턴은 "글 한 장"이 아니라 "찍는 틀"이다.
+# 꼴이 같아도 머리말이 틀리는 종류. 템플릿 패턴은 여기 있다가 제 꼴(template)로 갔다 — 머리말만
+# 바꾸면 꼬리(답의 형식·규칙)가 글 한 장의 것으로 남았다.
 INTRO_BY_KIND = {
-    "pseo_pattern": "아래 검색어 무리를 한 장씩 쓰지 않고 템플릿으로 찍을 설계도를 만들어 "
-                    "주세요. 축(무엇이 바뀌며 여러 장이 되나)·틀 한 벌·허브 구성까지입니다 "
-                    "— 페이지 본문은 그 뒤에 데이터로 채웁니다.",
     "device_gap": "아래 페이지가 모바일에서만 밀리는 원인을 잡아 주세요. 글의 내용은 손대지 "
                   "않습니다 — 화면·속도·자원 크기처럼 모바일에서 다르게 보이는 것을 고치는 "
                   "일입니다.",
@@ -689,7 +725,7 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
     latin =bool(kws) and all(re.search(r"[A-Za-z]", k) and not db._script_lang(k) for k in kws)
     if not latin or site not in non_latin:
         return []
-    whose = ("이 검색어의 검색결과 상위 글이 쓰는 언어" if shape == "new_content"
+    whose = ("이 검색어의 검색결과 상위 글이 쓰는 언어" if shape in ("new_content", "template")
              else "고칠 페이지의 언어(주소의 언어 경로 /en/ 같은 것, 없으면 html lang)")
     limits = (f"길이 기준도 그 언어의 것을 씁니다({lang_label(locale)}이면 "
               f"{_limits_line(locale)}, 영어면 {_limits_line('en')}, 일본어·중국어면 "
@@ -698,11 +734,12 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
             f"않습니다. {limits}정하지 못하면 [확인 필요]."]
 
 
-PRODUCT_NOUN = {"outreach": "연락문", "presence": "게시·답변 문안"}
+PRODUCT_NOUN = {"outreach": "연락문", "presence": "게시·답변 문안", "template": "틀의 title·H1"}
 # 그 꼴이 실제로 내놓는 산출물의 **예** — 꼬리가 없는 산출물 이름을 부르지 않게.
 # 문안을 만드는 꼴만 title·meta 를 갖는다(SHAPES[...]['limits'] 와 같은 갈래다).
 PRODUCT_EXAMPLES = {"outreach": "연락문 제목·본문",
                     "presence": "게시·답변 문안",
+                    "template": "title·H1 틀과 견본·주소 꼴",
                     "technical": "코드·설정 값",
                     "consolidate": "리다이렉트·canonical 설정 값"}
 PRODUCT_EXAMPLES_DEFAULT = "title·H1·meta description·본문 문안"
@@ -1107,12 +1144,12 @@ def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
     shown = [(r, x) for r, x in got if x and x.get("h2")]
     if shown:
         # 새 글 꼴엔 '지금 이 페이지 상태' 절이 없다 — 견줄 상대를 꼴마다 말한다(theotherskin 울쎄라).
-        # 템플릿 패턴은 꼴이 새 글이어도 일이 틀 한 벌이다 — '새 글이 다룰 구간'이라 하면 대상 절의
-        # "그 검색어 한 장이 아니라 이 틀"과 부딪힌다(#79).
+        # 템플릿은 일이 틀 한 벌이다 — '새 글이 다룰 구간'이라 하면 대상 절의 "그 검색어 한 장이
+        # 아니라 이 틀"과 부딪힌다(#79).
         L.append(SERP_OUTLINE_HEAD + (
             " — 우리가 열어 본 것입니다. 씨앗 검색어의 상위라, 틀 한 벌(값마다 찍을 페이지)이 공통으로 "
             "다룰 구간을 정하는 재료입니다 — 값마다 바뀌는 자리와 고정 구간을 가르는 데 씁니다:"
-            if o.get("kind") == "pseo_pattern" else
+            if shape == "template" else
             " — 우리가 열어 본 것입니다. 새 글이 다룰 구간을 정하는 재료입니다 — 상위가 공통으로 "
             "다루는 질문은 빠뜨리지 않되 순서와 관점은 우리 것으로:" if shape == "new_content" else
             " — 우리가 열어 본 것입니다. '빠진 구간'은 여기와 '지금 이 페이지 상태'의 H2 를 "
@@ -1188,16 +1225,16 @@ def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]],
         a = (ctx.get("page_audits") or {}).get(url) if url else None
         rows = [[f"{r['position']}위", *(_n(x.get(k)) for k, _ in _FORMAT_COLS)]
                 for r, x in counted[:3]]
-        mine = bool(a and not a.get("error")) and shape != "new_content"
+        mine = bool(a and not a.get("error")) and shape not in ("new_content", "template")
         if mine:
             rows.append(["우리 페이지", *(_n(a.get(k)) for k, _ in _FORMAT_COLS)])
         L += ["", ("상위 글과 우리 페이지의 형식" if mine else "상위 글의 형식")
               + " (본문 틀 밖만 셉니다 — 메뉴·푸터 제외):",
               *_table(["자리", *(h for _, h in _FORMAT_COLS)], rows),
               ("- 상위가 모두 가진 형식을 우리만 안 가졌으면 그것이 '빠진 형식'입니다." if mine else
-               # 템플릿 패턴은 글 한 장이 아니라 틀 한 벌이다(_serp_top 의 같은 갈림)
+               # 템플릿은 글 한 장이 아니라 틀 한 벌이다(_serp_top 의 같은 갈림)
                "- 상위가 모두 가진 형식은 틀로 찍을 페이지도 갖출 형식입니다."
-               if o.get("kind") == "pseo_pattern" else
+               if shape == "template" else
                "- 상위가 모두 가진 형식은 새 글도 갖출 형식입니다.")
               + " 분량은 맞출 목표가 아니라 다루는 깊이의 단서입니다 — 단어 수를 늘리려고 늘리지 않습니다."]
     return L
@@ -2153,21 +2190,37 @@ def _pseo_group(o: dict, ctx: dict) -> dict | None:
                 None)
 
 
-# 템플릿 패턴의 일 이름 — 꼴은 새 글(new_content)이지만 일은 글 한 장이 아니라 틀 한 벌이다.
-# '한눈에'가 "새 글 설계 — 검색어 '…'"라고 하면 바로 아래 '대상'의 "이 요청문의 일은 그 검색어
-# 한 장이 아니라 이 틀입니다"와 부딪혔다(theotherskin #79).
-PSEO_WORK = "템플릿 설계"
+# 템플릿 패턴의 일 이름 — 꼴(template)의 이름이 정본이다. '한눈에'가 "새 글 설계 — 검색어 '…'"라고
+# 하면 바로 아래 '대상'의 "이 요청문의 일은 그 검색어 한 장이 아니라 이 틀입니다"와 부딪혔다(#79).
+PSEO_WORK = SHAPES["template"]["label"]
+
+
+def _pseo_seed_opp(o: dict, g: dict) -> dict:
+    """무리의 씨앗을 대상으로 한 기회 — 허브는 무리 한 벌의 것이라 씨앗에서 고른다. 같은 무리에 열린
+    줄이 둘 이상이면(새 기준 줄은 합치지 않는다) 씨앗이 아닌 줄이 제 검색어의 페이지를 허브로 골라,
+    같은 틀에 허브가 다른 요청문 두 장이 나갔다."""
+    return {**o, "target": g["seed"]}
+
+
+def _is_pseo_seed(o: dict, g: dict) -> bool:
+    """이 기회의 대상이 무리의 씨앗인가 — 어순·복수형·띄어쓰기만 다르면 같은 검색어다."""
+    keys = {k for k in scoring.pseo_fold_keys(str(o.get("target") or "")) if k}
+    return bool(keys & {k for k in scoring.pseo_fold_keys(g["seed"]) if k})
 
 
 def _pseo_hub(o: dict, ctx: dict) -> tuple[str | None, str | None]:
     """템플릿 패턴의 허브로 쓸 기존 페이지 — (주소, 못 쓰는 까닭 한 줄). 씨앗 검색어로 걸린 페이지가
     씨앗의 전용 페이지일 때만 허브다: 홈이나 다른 주제의 페이지에 스친 것이면 허브를 새로 짓는다.
-    무리를 못 찾은 요청문(PSEO_LOST — 확인하고 멈춘다)은 허브 이야기를 하지 않는다."""
-    if o.get("kind") != "pseo_pattern" or not _pseo_group(o, ctx):
+    씨앗으로 걸린 페이지가 아예 없어도 새로 짓는다. 무리를 못 찾은 요청문(PSEO_LOST — 확인하고
+    멈춘다)은 허브 이야기를 하지 않는다."""
+    g = _pseo_group(o, ctx) if o.get("kind") == "pseo_pattern" else None
+    if not g:
         return None, None
-    url = page_of(o, ctx)
+    seed = _pseo_seed_opp(o, g)
+    url = page_of(seed, ctx)
     if not url:
-        return None, None
+        return None, ("- 허브: 씨앗 검색어로 순위에 걸린 내 페이지가 없습니다 — 허브는 새로 짓습니다. "
+                      "사이트에 이 무리를 묶는 지면이 이미 있으면 그것을 허브로 쓰자고 말합니다.")
     lead = f"- 허브: 씨앗 검색어로 걸린 내 페이지 {url} 는 "
     tail = " 허브로 쓰지 않습니다 — 허브는 새로 짓습니다."
     if scoring._is_home(url):
@@ -2176,7 +2229,7 @@ def _pseo_hub(o: dict, ctx: dict) -> tuple[str | None, str | None]:
     text = " ".join([str(a.get("title") or ""), *(str(h) for h in scoring._as_list(a.get("h1_json")))])
     # 제목·H1 을 읽었으면 씨앗의 내용어가 다 있어야 전용 페이지다. 한글은 조사가 붙어 낱말 대신
     # 글자로 찾는다. 못 읽었으면 걸린 페이지 그대로 둔다(모르는 것을 '다른 주제'라 하지 않는다).
-    miss = [t for t in scoring._missing_tokens(str(o.get("target") or ""), text)
+    miss = [t for t in scoring._missing_tokens(g["seed"], text)
             if t.isascii() or t not in text.lower()] if text.strip() else []
     if miss:
         return None, (lead + f"씨앗 검색어를 다루는 전용 페이지가 아니라(title·H1 '{_ext(text.strip(), 80)}' 에 "
@@ -2195,15 +2248,18 @@ def _ev_pseo(o, ctx, pages):
                 [[v["value"], v["query"] + (f" (+ {', '.join(v['variants'][:3])})"
                                             if v.get("variants") else ""),
                   _n(v.get("imp")), _n(v.get("clk")),
-                  f"{v['pos']}위" if v.get("pos") is not None else "—", v.get("page") or "—"]
+                  f"{v['pos']}위" if v.get("pos") is not None else "—",
+                  (v.get("page") or "—") + (" (전용)" if v.get("own") else "")]
                  for v in vals[:PSEO_SHOW_VALUES]])
     if len(vals) > PSEO_SHOW_VALUES:
         L.append(f"- 외 {len(vals) - PSEO_SHOW_VALUES}개 값")
     L.append(f"- 무리 합계: 노출 {_n(g.get('imp'))} · 클릭 {_n(g.get('clk'))} · CTR {g.get('ctr_pct')}%")
-    L.append("- 페이지 칸에 주소가 있는 값은 그 검색어로 이미 걸린 내 페이지가 있습니다 — 그 값의 전용 "
-             "페이지면 새로 찍지 않고 틀에 맞춰 고칠 자리이고, 다른 주제의 페이지(홈 등)에 스친 것이면 "
-             "찍을 자리입니다. 서치콘솔은 노출이 적은 검색어를 감추므로 같은 틀의 값은 이 표보다 "
-             "많습니다.")
+    # 전용인지는 수집이 구조로 가른다(scoring.pseo_groups) — 예전엔 이 줄이 "전용 페이지면 … 다른
+    # 주제면 …"이라고 판정을 받는 쪽에 넘겼고, 값마다 전용 페이지가 있던 noti #41 이 찍을 자리로 나갔다.
+    L.append("- (전용): 그 값의 검색어에 걸린 내 페이지가 홈도 아니고 무리의 값 "
+             f"{scoring.PSEO_MIN_VALUES}개 이상이 함께 걸린 안내 페이지도 아니라 그 값의 전용 페이지로 본 "
+             "것입니다 — 이미 찍혀 있는 값입니다. 서치콘솔은 노출이 적은 검색어를 감추므로 같은 틀의 값은 "
+             "이 표보다 많습니다.")
     return L
 
 
@@ -2831,38 +2887,56 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
     L = ["## 대상", f"- {_TARGET_NOUN.get(kind, '검색어')}: {_ext(t)}"]
     if kind == "coverage" and shape == "new_content":
         L += _lead_lines(o, ctx or {})
-    if kind == "pseo_pattern":
-        g = _pseo_group(o, ctx or {})
-        if g:
-            vals = [v["value"] for v in g.get("values") or []]
-            # 씨앗은 노출 1등이 아닐 수 있다 — 이미 선 줄에 붙잡아 둔다(scoring._pseo_seed)
-            L.append(f"- 무리: 틀 {_ext(scoring.pseo_frame_label(g), 160)} — 바뀌는 값 {len(vals)}개("
-                     + ", ".join(f"'{_ext(v, 40)}'" for v in vals[:8])
-                     + (f" 외 {len(vals) - 8}개" if len(vals) > 8 else "")
-                     + "). 위 검색어는 이 무리의 씨앗(이 기회를 세운 값)입니다 — 이 요청문의 일은 그 "
-                       "검색어 한 장이 아니라 이 틀입니다.")
-        elif "pseo_groups" in (ctx or {}):      # 무리를 실은 페이로드인데 이 검색어의 무리가 없다
-            L.append(PSEO_LOST)
+    g = _pseo_group(o, ctx or {}) if kind == "pseo_pattern" else None
+    if g:
+        vals = [v["value"] for v in g.get("values") or []]
+        # 씨앗은 노출 1등이 아닐 수 있다 — 이미 선 줄에 붙잡아 둔다(scoring._pseo_seed). 같은 무리에
+        # 열린 줄이 둘 이상이면 씨앗이 아닌 줄이 스스로를 씨앗이라 했다 — 씨앗은 무리 한 벌의 것이다.
+        who = ("위 검색어는 이 무리의 씨앗(이 기회를 세운 값)입니다" if _is_pseo_seed(o, g) else
+               f"위 검색어는 이 무리의 값 하나이고, 무리의 씨앗은 '{_ext(g['seed'], 80)}'입니다 — 같은 "
+               "틀을 그 씨앗의 줄도 맡고 있어 두 줄은 같은 일입니다. 그 줄의 요청문으로 이미 설계도를 "
+               "만들었으면 이 줄은 [제외]로 닫자고 말하고 멈춥니다")
+        L.append(f"- 무리: 틀 {_ext(scoring.pseo_frame_label(g), 160)} — 바뀌는 값 {len(vals)}개("
+                 + ", ".join(f"'{_ext(v, 40)}'" for v in vals[:8])
+                 + (f" 외 {len(vals) - 8}개" if len(vals) > 8 else "")
+                 + f"). {who} — 이 요청문의 일은 그 검색어 한 장이 아니라 이 틀입니다.")
+        # 찍을 값과 이미 전용 페이지가 있는 값 — 판정은 scoring.pseo_groups(own) 한 곳이다
+        todo = scoring.pseo_todo(g)
+        have = [v for v in g.get("values") or [] if v.get("own")]
+        L.append(f"- 찍을 값 {len(todo)}개(전용 페이지 없음): "
+                 + ", ".join(f"'{_ext(v['value'], 40)}'" for v in todo[:12])
+                 + (f" 외 {len(todo) - 12}개" if len(todo) > 12 else ""))
+        if have:
+            L.append(f"- 이미 전용 페이지가 있는 값 {len(have)}개: "
+                     + ", ".join(f"'{_ext(v['value'], 40)}' ({v['page']})" for v in have[:8])
+                     + (f" 외 {len(have) - 8}개" if len(have) > 8 else "")
+                     + " — 새로 찍지 않습니다. 그 값의 클릭률·순위는 그 검색어의 기회가 맡습니다.")
+    elif kind == "pseo_pattern" and "pseo_groups" in (ctx or {}):
+        L.append(PSEO_LOST)               # 무리를 실은 페이로드인데 이 검색어의 무리가 없다
     ranked =bool(((ctx or {}).get("query_pages") or {}).get(str(o["target"])))
     topic = _topic_of(o, ctx or {})
     mine = next((p for p in topic if p["page"] == url), None) if url and not ranked else None
     dk = _decay_of(o, ctx or {})
     hub, not_hub = _pseo_hub(o, ctx or {}) if kind == "pseo_pattern" else (None, None)
-    if kind == "pseo_pattern" and url and not hub:
-        # 홈·다른 주제의 페이지에 스쳤다 — 허브는 새로 짓는다고 밝힌다. 무리를 못 찾았으면(PSEO_LOST)
-        # 확인하고 멈추는 요청문이라 허브 이야기가 없다.
+    if kind == "pseo_pattern" and not hub:
+        # 홈·다른 주제의 페이지에 스쳤거나 씨앗으로 걸린 페이지가 없다 — 허브는 새로 짓는다고 밝힌다.
+        # 무리를 못 찾았으면(PSEO_LOST) 확인하고 멈추는 요청문이라 허브 이야기가 없다.
         L += [not_hub] if not_hub else []
     elif hub:
         # 씨앗에 이미 전용 페이지가 있다 — 허브를 새로 짓지 않고 그 페이지를 허브로 쓴다. theotherskin
         # 의 템플릿 패턴 9건이 전부 그랬는데 '새 글이 색인되고'와 그 페이지의 관찰 중 문단('그 산출물의
         # 답은 안 바꿈')이 붙어, 설계도를 만들라는 일과 부딪혔다. 관찰 중은 허브에 링크를 거는 때만 정한다.
-        how = ("씨앗 검색어로 이미 순위에 걸린 내 페이지입니다" if ranked
-               else f"제목·H1 이 씨앗 검색어로 시작하는 내 지면입니다 ({_head(mine)})" if mine
+        # 허브는 씨앗의 것이다 — 이 줄의 대상이 씨앗이 아니어도 씨앗의 페이지를 본다(_pseo_seed_opp).
+        so = _pseo_seed_opp(o, g)
+        s_ranked = bool(((ctx or {}).get("query_pages") or {}).get(g["seed"]))
+        s_mine = next((p for p in _topic_of(so, ctx or {}) if p["page"] == hub), None)
+        how = ("씨앗 검색어로 이미 순위에 걸린 내 페이지입니다" if s_ranked
+               else f"제목·H1 이 씨앗 검색어로 시작하는 내 지면입니다 ({_head(s_mine)})" if s_mine
                else "씨앗 검색어를 맡은 내 페이지입니다")
-        L.append(f"- 허브로 쓸 페이지: {url} — {how}. 허브를 새로 짓지 않고 이 페이지를 무리의 "
+        L.append(f"- 허브로 쓸 페이지: {hub} — {how}. 허브를 새로 짓지 않고 이 페이지를 무리의 "
                  "허브로 씁니다: 틀로 찍은 페이지들로 가는 링크를 여기에 둡니다. 이 페이지의 title·H1·"
                  "주제는 바꾸지 않습니다.")
-        hold = _hold_of(url, ctx or {})
+        hold = _hold_of(hub, ctx or {})
         if hold:
             L.append(f"  이 페이지는 {HOLD_MARK}입니다({hold['until']}까지) — 앞 작업의 효과를 재는 "
                      "중이라 허브에 링크를 거는 일은 그 뒤로 미룹니다. 설계도(틀·값·허브에 더할 것)는 "
@@ -3274,8 +3348,10 @@ def _page_siblings(o: dict, ctx: dict, url: str) -> list[dict]:
             continue
         if page_of(x, ctx) != url:
             continue
+        # 템플릿(template)은 템플릿 패턴이 새 글 꼴을 빌리던 때 여기 들던 것 그대로 둔다 — 꼴을 갈랐다고
+        # 같은 페이지의 다른 기회 목록에서 빠지면 그 페이지의 고치기 요청문이 그 기회를 모른다
         if shape_of(x["kind"], gap_kind=x.get("gap_kind"), has_page=True) not in (
-                "fix_page", "new_content"):
+                "fix_page", "new_content", "template"):
             continue
         out.append(x)
     return out
@@ -3569,10 +3645,11 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
     if kind == "pseo_pattern":
         # 일은 글 한 장이 아니라 틀이다 — '새 글이 색인되고 이 검색어로'는 씨앗 한 장의 목표였고,
         # 씨앗에 이미 걸린 페이지가 있으면(theotherskin 9건 전부) 그 말 자체가 틀렸다.
+        # 이미 전용 페이지가 있는 값은 찍지 않는다 — 목표는 찍을 값(scoring.pseo_todo)의 것이다
         g = _pseo_group(o, ctx)
-        n = f" {len(g.get('values') or [])}개" if g else ""
+        what = f"찍을 값 {len(scoring.pseo_todo(g))}개의 검색어마다" if g else "바뀌는 값의 검색어마다"
         hub = _pseo_hub(o, ctx)[0]           # 씨앗의 전용 페이지일 때만(홈·다른 주제·무리 없음은 아니다)
-        return (f"틀로 찍은 페이지들이 색인되고 바뀌는 값의 검색어{n}마다 노출이 잡히는 것 — 그다음 "
+        return (f"틀로 찍은 페이지들이 색인되고 {what} 노출이 잡히는 것 — 그다음 "
                 f"목표는 그 검색어들의 1페이지({scoring.PAGE1}위 안)입니다."
                 + (f" 허브는 이미 걸린 {hub} 입니다 — 그 페이지는 지금 자리를 지킵니다." if hub else ""))
     if kind == "coverage" and shape == "fix_page":

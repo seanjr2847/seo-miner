@@ -350,7 +350,7 @@ flowchart TD
     L1865-1900  _open_terminal · _system_terminal(Orca → 시스템 물러남)
     L1902-2018  run_tool — 실행 순서 전부, 실패 시 상태 미변경, 창이 뜬 뒤 acked
   skills/capture/scripts/brief.py
-    L50-52      SHAPE_NAMES(꼴 7종)
+    L50-52      SHAPE_NAMES(꼴 이름·개수의 정본 — 여기 세지 않는다)
     L68-258     SHAPES — 꼴별 label·intro·form·rules·slot
     L277-296    HTML_FORM — 자립형 HTML 한 장, 파일 이름·임시 폴더·저장소에 안 남김
     L485-546    tails() — 답의 형식·규칙·배지·'따로 볼 것'·'먼저 할 것'·언어 기준

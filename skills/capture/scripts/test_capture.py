@@ -193,10 +193,11 @@ def test_load_covers_every_kind():
          (pid, "2026-08-14", 28, "1페이지키워드", None, 9, 300, 3.0),
          (pid, "2026-08-14", 28, "하락키워드", None, 1, 100, 9.0),
          # 템플릿 패턴은 '고정 틀 + 바뀌는 칸'의 값이 3개 이상이어야 선다(scoring.pseo_groups)
-         # 값들의 수요가 고르다 — 값 하나가 무리 노출의 절반 이상이면 무리가 아니다
-         (pid, "2026-08-14", 28, "서울 세무사 추천", None, 0, 50, 6.0),
-         (pid, "2026-08-14", 28, "부산 세무사 추천", None, 0, 40, 9.0),
-         (pid, "2026-08-14", 28, "대구 세무사 추천", None, 0, 30, 12.0),
+         # 머리 큰 분포(1 : 1/2 : 1/3 — 씨앗 54.5%)도 무리다(PSEO_SEED_SHARE). 0.5 이던 때는 이
+         # 픽스처가 안 서서 50/40/30 으로 바꿔야 통과했다
+         (pid, "2026-08-14", 28, "서울 세무사 추천", None, 0, 60, 6.0),
+         (pid, "2026-08-14", 28, "부산 세무사 추천", None, 0, 30, 9.0),
+         (pid, "2026-08-14", 28, "대구 세무사 추천", None, 0, 20, 12.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/a", 3, 60, 4.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0),
          # 의도 갈린 페이지 — 비교 200 · 구매 35(검색어 2)
@@ -276,16 +277,26 @@ def test_load_covers_every_kind():
 
 
 def _pseo_site(conn, name: str, domain: str, rows) -> int:
-    """사이트 하나 + 그 최신 구글 실적. rows = (검색어, 노출, 클릭, 순위)."""
+    """사이트 하나 + 그 최신 구글 실적. rows = (검색어, 노출, 클릭, 순위[, 경로]).
+
+    경로를 안 주면 모든 검색어가 한 안내 페이지(/guide)에 걸린다 — 값마다 전용 페이지가 없는,
+    템플릿으로 찍을 자리다. 값마다 전용 페이지가 이미 있으면 템플릿은 이미 있는 것이라
+    기회가 아니다(scoring.pseo_todo)."""
     pid = conn.execute("INSERT INTO projects(name, domain) VALUES(?, ?) RETURNING id",
                        (name, domain)).fetchone()[0]
     conn.executemany(
         "INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page, clicks,"
         " impressions, ctr, position) VALUES(?, '2026-10-01', 28, ?, ?, ?, ?, 0.0, ?)",
-        [(pid, q, f"https://{domain}/{i}", clk, imp, pos)
-         for i, (q, imp, clk, pos) in enumerate(rows)])
+        [(pid, r[0], f"https://{domain}{r[4] if len(r) > 4 else '/guide'}", r[2], r[1], r[3])
+         for r in rows])
     conn.commit()
     return pid
+
+
+def _frames(conn, pid) -> dict:
+    """틀 → 값 목록 — 단언이 틀린 무리를 그대로 보여 주게."""
+    return {g["frame"]: [v["value"] for v in g["values"]]
+            for g in scoring.pseo_groups(conn, pid, "2026-10-01")}
 
 
 # theotherskin 에서 '템플릿으로 찍을 무리'로 선 것들 — 같은 검색어의 어순·복수형 변형과 검색
@@ -331,7 +342,7 @@ def test_pseo_groups_are_a_fixed_frame_with_three_values():
     assert [v["value"] for v in tax["values"]] == ["서울", "부산", "대구"], tax["values"]
     seoul = tax["values"][0]
     assert seoul["imp"] == 110 and "세무사 가격 서울" in seoul["variants"], seoul
-    assert seoul["page"] == "https://tax.example/0", seoul
+    assert seoul["page"] == "https://tax.example/guide" and seoul["own"] is False, seoul
     assert tax["imp"] == 230 and tax["clk"] == 1, tax
     assert "광주 세무사 가격" not in tax["queries"], tax["queries"]
     assert {"서울 세무사 가격", "세무사 가격 서울", "부산 세무사 가격"} <= set(tax["queries"])
@@ -393,6 +404,175 @@ def test_pseo_groups_reject_variations_and_merge_one_axis():
     # '다음주 날짜'는 요일 축의 값이 아니라 덧붙인 낱말뿐인 검색어다 — 무리엔 들되 값은 아니다
     assert "다음주 날짜" in g["queries"], g["queries"]
     assert g["imp"] == 273, g
+    conn.close()
+
+
+def test_pseo_seed_share_keeps_head_heavy_frames():
+    """값 하나의 몫 상한(PSEO_SEED_SHARE)은 쏠린 수요만 거른다. 0.5 이던 때는 값이 셋인 자연스러운
+    머리 큰 분포(1 : 1/2 : 1/3 — 씨앗 54.5%)가 언제나 떨어졌다: '{X} 세무사 추천' 60·30·20, noti 의
+    '{X} 후'(90일 36 · 100일 25 · 60일 7 — 날짜 계산 제품의 전형적인 템플릿 축)."""
+    conn = db.connect()
+    head = _pseo_site(conn, "pseo-head", "head.example",
+                      [("서울 세무사 추천", 60, 0, 9.0), ("부산 세무사 추천", 30, 0, 11.0),
+                       ("대구 세무사 추천", 20, 0, 14.0),
+                       ("90일 후", 36, 0, 5.0), ("100일 후", 25, 0, 5.0), ("60일 후", 7, 0, 6.0)])
+    got = _frames(conn, head)
+    assert got == {"{X} 세무사 추천": ["서울", "부산", "대구"], "{X} 후": ["90일", "100일", "60일"]}, got
+    # 1차 사례는 여전히 안 선다 — 'papular {X} scars' 는 acne 가 71%(theotherskin 9/29)에서 91%였다
+    skew = _pseo_site(conn, "pseo-skew", "skew.example",
+                      [("papular acne scars", 111, 0, 8.0), ("papular nose scars", 26, 0, 9.0),
+                       ("papular chin scars", 20, 0, 9.0),
+                       ("rolling acne scars", 300, 0, 8.0), ("rolling nose scars", 15, 0, 9.0),
+                       ("rolling chin scars", 14, 0, 9.0)])
+    assert _frames(conn, skew) == {}, _frames(conn, skew)
+    conn.close()
+
+
+def test_pseo_glue_leaves_question_and_compare_frames():
+    """잇는 말은 제목 대조용 불용어(QUERY_STOPWORDS)에서 물음말·의도어를 뺀 것이다. 그 목록을 통째로
+    잇는 말로 쓰던 때는 'what is {X}'(용어집)와 '{X} 비교'(비교 허브) — pSEO 의 대표 틀 — 가 고정
+    낱말이 잇는 말뿐이라 서지 않았다. 대신 칸 둘짜리 틀은 고정 낱말이 잇는 말·비교 의도어뿐이면
+    서지 않는다('{A} vs {B} 비교' — 둘을 견주는 검색이지 템플릿이 아니다)."""
+    conn = db.connect()
+    yes = _pseo_site(conn, "pseo-glue", "glue.example",
+                     [("what is crm", 40, 0, 7.0), ("what is erp", 30, 0, 8.0),
+                      ("what is seo", 25, 0, 9.0), ("what is saas", 20, 0, 9.0),
+                      ("보험 비교", 40, 0, 7.0), ("카드 비교", 30, 0, 8.0), ("대출 비교", 25, 0, 9.0),
+                      ("통신사 비교", 20, 0, 9.0)])
+    got = _frames(conn, yes)
+    assert got == {"what is {X}": ["crm", "erp", "seo", "saas"],
+                   "{X} 비교": ["보험", "카드", "대출", "통신사"]}, got
+    pair = _pseo_site(conn, "pseo-pair", "pair.example",
+                      [("노션 vs 옵시디언 비교", 30, 0, 9.0), ("노션 vs 에버노트 비교", 20, 0, 9.0),
+                       ("옵시디언 vs 로그식 비교", 15, 0, 9.0),
+                       ("notion and obsidian difference", 30, 0, 9.0),
+                       ("notion and evernote difference", 20, 0, 9.0),
+                       ("obsidian and logseq difference", 15, 0, 9.0)])
+    assert _frames(conn, pair) == {}, _frames(conn, pair)
+    conn.close()
+
+
+def test_pseo_modifier_is_a_whole_word():
+    """수식어는 값의 낱말 하나가 의도어·꾸밈말과 **같을** 때다. 검색어 전체의 의도를 가르는
+    query_intent 를 빌려 쓰던 때는 한글을 부분 문자열로 찾아, '이사업체'가 '업체'에, '치과병원'이
+    '병원'에 걸려 개체 값이 수식어가 됐고 '{X} 견적'·'{X} 가격'이 서지 않았다."""
+    conn = db.connect()
+    pid = _pseo_site(conn, "pseo-word", "word.example",
+                     [("이사업체 견적", 40, 0, 7.0), ("청소업체 견적", 30, 0, 8.0),
+                      ("인테리어업체 견적", 25, 0, 9.0),
+                      ("치과병원 가격", 40, 0, 7.0), ("한의원 가격", 30, 0, 8.0),
+                      ("피부과병원 가격", 25, 0, 9.0)])
+    got = _frames(conn, pid)
+    assert got == {"{X} 견적": ["이사업체", "청소업체", "인테리어업체"],
+                   "{X} 가격": ["치과병원", "한의원", "피부과병원"]}, got
+    conn.close()
+
+
+def test_pseo_frames_whose_values_have_pages_are_not_opportunities():
+    """값마다 이미 전용 페이지가 순위에 걸린 무리는 템플릿 기회가 아니다 — 템플릿은 이미 있고 남은
+    일은 값마다의 클릭률·순위다. noti '다음주 {X}'(#41)는 값 6개가 모두 /discover/expression/
+    next-{요일} 전용 페이지에 걸려 있었는데 '틀로 찍은 페이지들이 색인되고'를 목표로 섰다.
+    전용은 언어와 무관하게 구조로 본다: 그 값의 검색어에 걸린 페이지가 홈이 아니고 무리의 값 셋
+    이상이 함께 걸린 안내 페이지도 아니면 그 값의 전용 페이지다. 값 둘이 한 페이지를 나눠 쓰는 것은
+    한 주제의 두 이름이다(theotherskin #724 '江南市 赤ら顔'·'江南市 酒さ' → 같은 rosacea-flushing).
+    찍을 값(전용 페이지 없는 값)이 2개 미만이면 서지 않고, 이미 선 열린 줄은 사유와 함께 닫는다
+    (acked 도 — 끝난 일이다)."""
+    conn = db.connect()
+    pid = _pseo_site(conn, "pseo-own", "own.example", [
+        # 서울만 전용 페이지 — 부산·대구·광주는 한 안내 페이지를 나눠 쓰고 인천은 홈에 스쳤다
+        ("서울 세무사 가격", 100, 0, 9.0, "/seoul-tax"), ("부산 세무사 가격", 80, 0, 12.0, "/guide"),
+        ("대구 세무사 가격", 40, 0, 14.0, "/guide"), ("광주 세무사 가격", 35, 0, 18.0, "/guide"),
+        ("인천 세무사 가격", 30, 0, 20.0, "/"),
+        # 값마다 전용 페이지 — 기회가 아니다. 화·목은 한 주제의 두 이름처럼 한 페이지를 나눠 쓴다
+        ("다음주 월요일", 100, 0, 5.0, "/next-monday"), ("다음주 수요일", 60, 0, 5.0, "/next-wednesday"),
+        ("다음주 화요일", 50, 0, 6.0, "/next-tue-thu"), ("다음주 목요일", 40, 0, 6.0, "/next-tue-thu"),
+        # 찍을 값이 하나뿐이다(그린은 홈) — 기회가 아니다
+        ("레드 우산", 40, 0, 5.0, "/red"), ("블루 우산", 30, 0, 5.0, "/blue"), ("그린 우산", 20, 0, 5.0, "/"),
+        # 값마다 전용 페이지인데 사람이 [다시 열기]를 눌렀다 — 그 전 데이터로는 다시 닫지 않는다
+        ("노랑 장화", 40, 0, 5.0, "/yellow"), ("검정 장화", 30, 0, 5.0, "/black"),
+        ("하양 장화", 20, 0, 5.0, "/white")])
+    gs = {g["frame"]: g for g in scoring.pseo_groups(conn, pid, "2026-10-01")}
+    assert set(gs) == {"{X} 세무사 가격", "다음주 {X}", "{X} 우산", "{X} 장화"}, list(gs)
+    tax = gs["{X} 세무사 가격"]
+    assert [(v["value"], v["own"]) for v in tax["values"]] == \
+        [("서울", True), ("부산", False), ("대구", False), ("광주", False), ("인천", False)], tax["values"]
+    assert [v["value"] for v in scoring.pseo_todo(tax)] == ["부산", "대구", "광주", "인천"]
+    assert scoring.pseo_todo(gs["다음주 {X}"]) == [], gs["다음주 {X}"]["values"]
+    assert [v["value"] for v in scoring.pseo_todo(gs["{X} 우산"])] == ["그린"]
+    spec = next(k for k in scoring.KINDS if k.name == "pseo_pattern")
+    got = spec.detect({"conn": conn, "pid": pid, "cur": "2026-10-01", "brands": set()})
+    assert [spec.target(r, {}) for r in got] == ["서울 세무사 가격"], got
+    # 이미 선 줄 — 옛 판정(전용 페이지를 안 보던 때)으로 선 새 기준 줄. 같은 실적으로 다시 판정해 닫는다
+    head = scoring.PSEO_REASON_HEAD
+    conn.executemany(
+        "INSERT INTO opportunities(project_id, kind, target, status, status_at, reasoning)"
+        " VALUES(?, 'pseo_pattern', ?, ?, ?, ?)",
+        [(pid, "다음주 월요일", "new", None, head + "'다음주 {X}' — 바뀌는 값 4개: 월요일 · 수요일 · 화요일 · 목요일."),
+         (pid, "레드 우산", "acked", None, head + "'{X} 우산' — 바뀌는 값 3개: 레드 · 블루 · 그린."),
+         (pid, "노랑 장화", "new", "2026-10-05 09:00:00",
+          head + "'{X} 장화' — 바뀌는 값 3개: 노랑 · 검정 · 하양.")])
+    conn.commit()
+    conn.close()
+    scoring.load("pseo-own")
+    conn = db.connect()
+    st = {r["target"]: (r["status"], r["status_reason"] or "") for r in conn.execute(
+        "SELECT target, status, status_reason FROM opportunities WHERE project_id=? AND "
+        "kind='pseo_pattern'", (pid,))}
+    conn.close()
+    s, why = st["다음주 월요일"]
+    assert s == "resolved" and "전용 페이지" in why and "/next-monday" in why, (s, why)
+    s, why = st["레드 우산"]
+    assert s == "resolved" and "전용 페이지" in why, (s, why)
+    assert st["노랑 장화"] == ("new", ""), "사람이 다시 연 줄을 그 전 데이터로 닫았다"
+    assert st["서울 세무사 가격"][0] == "new", st
+
+
+def test_pseo_dropped_seed_row_merges_into_the_new_seed():
+    """붙잡은 씨앗이 무리의 값에서 빠지면(노출이 값 하한 밑으로 내려가거나 다른 틀이 가져가면) 새
+    씨앗 줄이 서고, 옛 씨앗 줄은 그 줄로 합친다. 예전엔 둘 다 열린 채 남았다 — 같은 틀에 열린 줄이
+    둘이고, 옛 줄의 요청문은 무리를 못 찾았다(PSEO_LOST). 사람이 본(acked) 줄도 같다."""
+    conn = db.connect()
+    rows = [("서울 세무사 가격", 100, 0, 9.0), ("부산 세무사 가격", 60, 0, 12.0),
+            ("대구 세무사 가격", 50, 0, 14.0), ("광주 세무사 가격", 40, 0, 20.0)]
+    pids = {"pseo-drop": _pseo_site(conn, "pseo-drop", "drop.example", rows),
+            "pseo-drop2": _pseo_site(conn, "pseo-drop2", "drop2.example", rows)}
+    conn.close()
+    for name, pid in pids.items():
+        scoring.load(name)
+        c = db.connect()
+        if name == "pseo-drop2":
+            c.execute("UPDATE opportunities SET status='acked' WHERE project_id=?", (pid,))
+        c.execute("UPDATE gsc_snapshots SET impressions=3 WHERE project_id=? AND query='서울 세무사 가격'",
+                  (pid,))
+        c.commit()
+        c.close()
+        scoring.load(name)
+        c = db.connect()
+        st = {r["target"]: (r["status"], r["status_reason"] or "") for r in c.execute(
+            "SELECT target, status, status_reason FROM opportunities WHERE project_id=? AND "
+            "kind='pseo_pattern'", (pid,))}
+        c.close()
+        assert st["부산 세무사 가격"] == ("new", ""), (name, st)
+        s, why = st["서울 세무사 가격"]
+        assert s == "resolved" and "'부산 세무사 가격'" in why and "빠져" in why, (name, s, why)
+
+
+def test_pseo_pins_prefer_open_rows():
+    """씨앗을 붙잡는 순서 — 열린 줄이 닫힌 줄보다 먼저다. 닫힌 줄(done·dismissed)은 열린 줄이 없을
+    때만 붙잡는다: 사람이 닫은 무리가 다른 값을 씨앗으로 새로 서지 않게. 이 순서를 뒤집어도 다른
+    검사가 다 통과했다(2차 검토)."""
+    conn = db.connect()
+    pid = _pseo_site(conn, "pseo-pins", "pins.example",
+                     [("서울 세무사 가격", 100, 0, 9.0), ("부산 세무사 가격", 80, 0, 12.0),
+                      ("대구 세무사 가격", 40, 0, 14.0)])
+    head = scoring.PSEO_REASON_HEAD + "'{X} 세무사 가격' — 바뀌는 값 3개: 서울 · 부산 · 대구."
+    conn.executemany("INSERT INTO opportunities(project_id, kind, target, status, reasoning)"
+                     " VALUES(?, 'pseo_pattern', ?, ?, ?)",
+                     [(pid, "서울 세무사 가격", "dismissed", head),
+                      (pid, "부산 세무사 가격", "new", "노출 80 · CTR 0.0% · 12.0위. 같은 꼴로")])
+    conn.commit()
+    seed = scoring.pseo_groups(conn, pid, "2026-10-01")[0]["seed"]
+    assert seed == "부산 세무사 가격", f"닫힌 줄을 열린 줄보다 먼저 붙잡았다: {seed}"
     conn.close()
 
 
@@ -464,8 +644,8 @@ def test_pseo_seed_stays_with_the_open_row():
 
 
 def test_pseo_old_rows_are_rejudged_by_the_new_rule():
-    """이미 선 잘못된 템플릿 패턴 기회를 새 기준으로 다시 판정해 닫는다. 단 _NO_RESOLVE 가
-    막던 것 — 씨앗 하나(또는 무리)의 클릭률이 올랐다고 닫기 — 은 그대로 막는다: 새 기준으로도
+    """이미 선 잘못된 템플릿 패턴 기회를 새 기준으로 다시 판정해 닫는다. 단 씨앗 하나(또는
+    무리)의 클릭률이 올랐다고 닫지는 않는다(_resolve_pseo 는 무리의 전용 페이지만 본다): 새 기준으로도
     틀이 서는 줄은 문턱 밖으로 나가도 열린 채다. 사람이 손댄 줄(acked)과 사람·Claude 가 틀
     문자열로 직접 올린 줄도 그대로다."""
     conn = db.connect()

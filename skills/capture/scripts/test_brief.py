@@ -296,18 +296,20 @@ def test_coverage_and_pseo_bring_sibling_keywords():
     t2 = brief.text(_opp("pseo_pattern", "서울 세무사 추천"),
                     {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()]},
                     "ko-KR")
-    assert t2.startswith(brief.INTRO_BY_KIND["pseo_pattern"])
+    assert t2.startswith(brief.SHAPES["template"]["intro"])
     assert "| 부산 | 부산 세무사 추천 |" in t2, t2
 
 
 def _pseo_group(seed_page=URL):
-    """scoring.pseo_groups 한 무리의 꼴 그대로 — 요청문은 이것을 읽기만 한다."""
+    """scoring.pseo_groups 한 무리의 꼴 그대로 — 요청문은 이것을 읽기만 한다. own 은 그 값의
+    전용 페이지(홈도, 값 셋 이상이 함께 걸린 안내 페이지도 아닌 페이지)가 걸렸는지다."""
     vals = [{"value": "서울", "query": "서울 세무사 추천", "variants": ["세무사 추천 서울"],
-             "imp": 110, "clk": 0, "pos": 14.1, "page": seed_page},
+             "imp": 110, "clk": 0, "pos": 14.1, "page": seed_page,
+             "own": bool(seed_page) and not scoring._is_home(seed_page)},
             {"value": "부산", "query": "부산 세무사 추천", "variants": [], "imp": 80, "clk": 1,
-             "pos": 18.0, "page": None},
+             "pos": 18.0, "page": None, "own": False},
             {"value": "대구", "query": "대구 세무사 추천", "variants": [], "imp": 40, "clk": 0,
-             "pos": 22.0, "page": URL2}]
+             "pos": 22.0, "page": None, "own": False}]
     return {"seed": "서울 세무사 추천", "frame": "{X} 세무사 추천", "values": vals,
             "queries": ["서울 세무사 추천", "세무사 추천 서울", "부산 세무사 추천", "대구 세무사 추천"],
             "imp": 230, "clk": 1, "ctr_pct": 0.43, "pos": 16.6, "date": "2026-10-01"}
@@ -323,9 +325,13 @@ def test_pseo_brief_speaks_frame_and_values():
     assert "틀 '{X} 세무사 추천' — 바뀌는 값 3개" in tgt, tgt
     ev = body.split("## 근거")[1].split("\n## ")[0]
     assert "| 바뀌는 값 | 검색어 |" in ev, ev
-    assert "| 서울 | 서울 세무사 추천 (+ 세무사 추천 서울) | 110 | 0 | 14.1위 | " + URL + " |" in ev, ev
+    assert "| 서울 | 서울 세무사 추천 (+ 세무사 추천 서울) | 110 | 0 | 14.1위 | " + URL + " (전용) |" in ev, ev
     assert "| 부산 | 부산 세무사 추천 | 80 | 1 | 18.0위 | — |" in ev, ev
     assert "낱말 2개 이상 겹침" not in body and "아무 검색어 추천" not in body, body
+    # 찍을 값과 이미 전용 페이지가 있는 값을 나눠 적는다 — 값마다 페이지가 있는 무리를 '찍을
+    # 자리'로 세우던 때는 받는 쪽이 표의 페이지 칸을 읽고 짐작했다(noti #41)
+    assert "- 찍을 값 2개(전용 페이지 없음): '부산', '대구'" in tgt, tgt
+    assert f"- 이미 전용 페이지가 있는 값 1개: '서울' ({URL})" in tgt, tgt
     # 이 요청문이 다루는 검색어가 이 무리의 검색어가 아니면(옛 줄) 무리를 지어내지 않는다
     lost = brief.build(_opp("pseo_pattern", "전혀 다른 것"), ctx, "ko-KR")["body"]
     assert brief.PSEO_LOST in lost and "{X}" not in lost, lost
@@ -373,8 +379,50 @@ def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
     nb = brief.build(_opp("pseo_pattern", "서울 세무사 추천"),
                      {"pseo_groups": [_pseo_group(seed_page=None)]}, "ko-KR")["body"]
     g2 = nb.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
-    assert "새 글이 색인되고" not in g2 and "바뀌는 값의 검색어 3개" in g2, g2
+    assert "새 글이 색인되고" not in g2 and "찍을 값 3개의 검색어마다" in g2, g2
+    assert "찍을 값 2개의 검색어마다" in goal, goal       # 전용 페이지가 있는 서울은 찍지 않는다
     assert "허브 페이지 구성" in nb.split("## 만들어 줄 것")[1], nb
+    # 씨앗으로 걸린 페이지가 없으면 허브는 새로 짓는다고 밝힌다 — '새 글' 꼴의 '수집본에 없음 — 그
+    # 지면을 고치자고 말하고 멈춥니다'는 글 한 장의 말이라 틀 설계와 부딪혔다
+    nt = nb.split("## 대상")[1].split("\n## ")[0]
+    assert "- 허브: " in nt and "새로 짓습니다" in nt and brief.NO_PAGE["new_content"] not in nb, nt
+
+
+def test_pseo_brief_answers_as_a_template_not_an_article():
+    """템플릿 패턴의 '답의 형식'·규칙은 틀 한 벌의 것이다. 꼴이 새 글(new_content)이던 때는 위에서
+    '이 요청문의 일은 그 검색어 한 장이 아니라 이 틀입니다'라고 하고, 꼬리가 글 한 장의 산출물을
+    시켰다 — 파일명 seo-new_content, 제목 3안 표, H1 하나 아래 목차, '한 글이 한 검색 의도에
+    답합니다', 발행 뒤 내부 링크 표(noti #41). 형식은 '만들어 줄 것'에 든 카드만 시킨다."""
+    ctx = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()]}
+    b = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")
+    assert b["shape"] == "template", b["shape"]
+    t = brief.text(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")
+    assert "seo-template-" in t and "seo-new_content" not in t, t
+    for stale in ("제목 3안", "H1 하나 아래", "한 글이 한 검색 의도", "발행 뒤 내부 링크 표", "새 글"):
+        assert stale not in t, stale
+    form = t.split("## 답의 형식")[1].split("## 규칙")[0]
+    assert "위 '만들어 줄 것'에 든 산출물만" in form, form
+    # 카드는 '만들어 줄 것'의 항목(축과 값 목록 · 골격 · 허브)을 가리키기만 한다 — 새 산출물을 늘리지 않는다
+    want = t.split("## 만들어 줄 것")[1].split("\n## ")[0]
+    assert "축과 값 목록" in want and "골격" in want, want
+    cards = [x for x in form.splitlines() if re.match(r"\d+\. ", x)]
+    assert len(cards) <= 3, cards
+
+
+def test_pseo_brief_of_a_non_seed_row_points_to_the_seed():
+    """같은 무리에 열린 줄이 둘 이상이면(새 기준 줄은 합치지 않는다) 씨앗이 아닌 줄의 요청문이 스스로를
+    '이 무리의 씨앗(이 기회를 세운 값)'이라 하고 허브도 제 검색어의 페이지로 골랐다 — 같은 틀에 허브가
+    다른 요청문 두 장이 나갔다. 씨앗과 허브는 무리 한 벌의 것이다."""
+    g = _pseo_group()
+    g["values"][2]["page"] = URL2          # 대구에도 걸린 페이지가 있다 — 허브는 그래도 씨앗의 것이다
+    ctx = {"query_pages": {"서울 세무사 추천": _pages(URL), "대구 세무사 추천": _pages(URL2)},
+           "pseo_groups": [g]}
+    body = brief.build(_opp("pseo_pattern", "대구 세무사 추천"), ctx, "ko-KR")["body"]
+    tgt = body.split("## 대상")[1].split("\n## ")[0]
+    assert "씨앗(이 기회를 세운 값)" not in tgt, tgt
+    assert "무리의 씨앗은 '서울 세무사 추천'" in tgt, tgt
+    hub = next(x for x in tgt.splitlines() if x.startswith("- 허브로 쓸 페이지: "))
+    assert URL in hub and URL2 not in hub, hub
 
 
 def _no_hub(body: str) -> None:
@@ -2003,7 +2051,9 @@ def test_tail_never_names_an_artifact_the_shape_does_not_produce():
     tails = brief.tails("ko-KR")
     for name, s in brief.SHAPES.items():
         t = tails[name]
-        if s["limits"]:                      # 문안을 만드는 꼴 — title·meta 가 진짜 산출물
+        if name in brief.PRODUCT_EXAMPLES:   # 제 산출물 예를 가진 꼴 — 템플릿은 문안을 만들어도 meta 가 없다
+            assert brief.PRODUCT_EXAMPLES[name] in t and brief.PRODUCT_EXAMPLES_DEFAULT not in t, name
+        elif s["limits"]:                    # 문안을 만드는 꼴 — title·meta 가 진짜 산출물
             assert brief.PRODUCT_EXAMPLES_DEFAULT in t, name
         else:
             assert "title·H1·meta description" not in t, \
