@@ -752,18 +752,31 @@ def striking(conn: sqlite3.Connection, project_id: int, snapshot_date: str | Non
 # 'site:theotherskin.com' 이 각각 '템플릿으로 찍을 무리'로 섰다(9건, 전부 이미 순위에 걸린
 # 전용 페이지가 있었다). 이제 묶기까지 코드가 한다: 어순·복수형·띄어쓰기만 다른 검색어는 한
 # 검색어로 접고, 낱말 하나(또는 떨어진 낱말 둘 — '{A} vs {B}')를 칸으로 비운 나머지가 같은
-# 검색어끼리 한 틀이다. 칸의 서로 다른 값이 PSEO_MIN_VALUES 개 이상일 때만 무리다.
+# 검색어끼리 한 틀이다. 칸의 서로 다른 값이 PSEO_MIN_VALUES 개 이상이고 그 값들의 수요가 고를
+# 때만 무리다.
+#
+# 틀이 선다고 다 템플릿은 아니었다(9/29 실데이터에 새 검출기를 돌린 검토): 'syringoma vs milia'
+# 가 '{A} vs {B}'(syringoma/milia · olidia/sculptra · abnom/melasma — 서로 무관한 비교 셋)로
+# 다시 섰고, 'milia {X}'(treatment·removal·causes)처럼 한 주제에 꾸밈말이 붙은 묶음도 틀이 됐다.
+# 그래서 셋을 더 본다 — 고정 낱말이 잇는 말뿐인 틀은 틀이 아니고(칸 둘짜리도), 바뀌는 칸의 값이
+# 대부분 수식어면 한 주제의 변주이고('{X} 가격'처럼 고정 쪽이 수식어이고 칸이 개체여야 템플릿),
+# 값 하나가 무리 노출의 PSEO_SEED_SHARE 이상이면 씨앗 하나의 수요다.
 PSEO_MIN_VALUES = 3
 # 값 하나(접은 검색어 하나)의 노출 하한 — 노출 한두 번짜리 롱테일까지 세면 아무 낱말이나 틀이 된다.
 PSEO_VALUE_MIN_IMP = 5
+# 값 하나가 무리 노출에서 가져도 되는 몫의 상한(미만) — 무리의 문턱은 합계가 아니라 값들의 고른
+# 수요다. 'syringoma vs milia' 는 '{A} vs {B}' 노출 1,356 중 1,239(91%)였다.
+PSEO_SEED_SHARE = 0.5
 # 기회의 근거 문장 머리 — 이 꼴로 시작하면 새 기준(틀+값)으로 선 줄이다. 옛 줄(씨앗 하나의
 # 노출·클릭률)과 가르는 표식이라 resolve_stale 이 옛 줄만 새 기준으로 다시 판정한다.
 PSEO_REASON_HEAD = "틀 "
 PSEO_RECHECK = "판정 기준이 바뀌어 닫았습니다"
-# 칸의 값이 될 수 없는 잇는 말 — 'syringoma vs milia'·'syringoma or milia'·'milia and syringoma'
-# 는 가운데 칸의 값 셋(vs·or·and)으로 틀이 서지만 같은 비교를 다르게 친 것뿐이다.
-_PSEO_GLUE = frozenset({"vs", "v", "versus", "or", "and", "the", "a", "an", "of", "for", "to",
-                        "in", "on", "with", "및", "또는", "와", "과", "랑"})
+# 처방의 산출물 가운데 허브가 새 페이지든 기존 페이지든 같은 앞 항목 — deliver·deliver_page 가 이
+# 한 벌을 쓴다(_KIND_SPECS['pseo_pattern'].play).
+_PSEO_DELIVER = ("이 패턴의 축과 값 목록(도구·지역·비교 대상)",
+                 "템플릿 한 벌의 골격: 어느 자리에 데이터가 들어가는지")
+# 잇는 말(vs·or·and·과…)은 QUERY_STOPWORDS 한 벌이다 — 칸의 값이 될 수 없고('syringoma {X} milia'
+# 의 vs·or·and 는 같은 비교를 다르게 친 것뿐이다), 고정 낱말이 잇는 말뿐인 틀은 틀이 아니다.
 # 검색 연산자 — 사람이 자기 사이트를 들여다본 흔적이지 수요가 아니다.
 _SEARCH_OPERATOR = re.compile(
     r"(?:^|\s)-?(?:site|inurl|intitle|intext|allinurl|allintitle|allintext|filetype|ext|"
@@ -781,9 +794,21 @@ def is_search_operator(query: str) -> bool:
 
 
 def pseo_fold_keys(query: str) -> tuple[tuple[str, ...], str]:
-    """같은 검색어로 접는 열쇠 둘 — 어순을 무시한 낱말 묶음, 띄어쓰기를 무시한 이어 쓴 글자."""
-    st = [word_stem(t) for t in tokens(query)]
+    """같은 검색어로 접는 열쇠 둘 — 어순을 무시한 낱말 묶음, 띄어쓰기를 무시한 이어 쓴 글자.
+
+    낱말은 글자면 어느 문자든 남긴다(_tokens). tokens() 는 한글·라틴 밖의 글자를 버려
+    'olidia是什麼'가 'olidia'와 한 검색어로 접혔다 — 브랜드 판정(norm)은 그 글자를 보는데."""
+    st = [word_stem(t) for t in _tokens(query)]
     return tuple(sorted(st)), "".join(st)
+
+
+def _pseo_modifier(words: list[str]) -> bool:
+    """바뀌는 칸의 값이 수식어인가 — 의도 낱말(INTENT_WORDS: treatment·removal·causes·가격·후기…)과
+    꾸밈말(BRAND_MODIFIERS: 무료·app…)이 정본이다(여기 낱말을 새로 적지 않는다). 칸 둘짜리 값은
+    두 낱말이 다 수식어일 때만."""
+    return bool(words) and all(
+        any(w in BRAND_MODIFIERS or query_intent(w) != INTENT_DEFAULT for w in (t, word_stem(t)))
+        for t in words)
 
 
 def _pseo_units(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -> list[dict]:
@@ -840,26 +865,28 @@ def _pseo_units(conn: sqlite3.Connection, project_id: int, snapshot_date: str) -
                       "clk": sum(by_q[q]["clk"] for q in qs),
                       "pw": sum(by_q[q]["pw"] for q in qs),
                       "page": max(sorted(pages), key=lambda p: pages[p]) if pages else None,
-                      "toks": tokens(qs[0])})
+                      "toks": _tokens(qs[0])})
     return units
 
 
 def _pseo_slots(toks: list[str]):
     """검색어 하나가 설 수 있는 틀들 — (틀 열쇠, 값 열쇠, 칸 자리). 칸은 낱말 하나, 또는 사이에
-    고정 낱말을 둔 낱말 둘('{A} vs {B}')이다. 붙은 낱말 둘을 한 칸으로 비우면 '{A} {B} 치료'처럼
-    아무 세 낱말 검색어나 한 틀이 된다. 잇는 말은 칸의 값이 아니다(_PSEO_GLUE)."""
+    고정 낱말을 둔 낱말 둘('{A} vs {B} pricing')이다. 붙은 낱말 둘을 한 칸으로 비우면 '{A} {B} 치료'
+    처럼 아무 세 낱말 검색어나 한 틀이 된다. 잇는 말(QUERY_STOPWORDS)은 칸의 값이 아니다."""
     st = [word_stem(t) for t in toks]
+    glue = [t in QUERY_STOPWORDS or s in QUERY_STOPWORDS for t, s in zip(toks, st)]
     n = len(st)
     picks = [(i,) for i in range(n)] if n >= 2 else []
     picks += [(i, j) for i in range(n) for j in range(i + 2, n)]
     for pos in picks:
-        if any(st[i] in _PSEO_GLUE for i in pos):
+        if any(glue[i] for i in pos):
             continue
-        fixed = [st[i] for i in range(n) if i not in pos]
-        # 칸 하나짜리 틀은 잇는 말 아닌 고정 낱말이 있어야 한다('{X} the' 는 틀이 아니다)
-        if len(pos) == 1 and not any(t not in _PSEO_GLUE for t in fixed):
+        # 칸이 하나든 둘이든 잇는 말 아닌 고정 낱말이 있어야 틀이다 — '{X} the' 도, '{A} vs {B}' 도
+        # 틀이 아니다. 후자는 서로 무관한 비교(syringoma/milia · olidia/sculptra)를 한 무리로 묶었다.
+        if all(glue[i] for i in range(n) if i not in pos):
             continue
-        yield (tuple(sorted(fixed)), len(pos)), tuple(sorted(st[i] for i in pos)), pos
+        yield (tuple(sorted(st[i] for i in range(n) if i not in pos)), len(pos)), \
+            tuple(sorted(st[i] for i in pos)), pos
 
 
 def _pseo_frame(toks: list[str], pos: tuple) -> str:
@@ -875,46 +902,142 @@ def pseo_groups(conn: sqlite3.Connection, project_id: int,
     resolve_stale 과 요청문이 같이 본다.
 
     한 검색어가 여러 틀에 들 수 있어 칸 하나짜리 틀부터(더 좁은 틀), 값이 많은 틀부터, 노출이
-    큰 틀부터 고르고 이미 고른 무리의 검색어는 다음 틀에서 뺀다. 씨앗은 노출이 가장 큰 값의
-    대표 검색어다 — 기회의 대상(target)이 이것이다."""
+    큰 틀부터 고르고 이미 고른 무리의 검색어는 다음 틀에서 뺀다. 고정 낱말 하나를 더 붙인 틀이
+    같은 축이면 먼저 한 틀로 합친다(_pseo_merge_axes). 값이 대부분 수식어인 틀, 값 하나가 무리
+    노출의 PSEO_SEED_SHARE 이상인 틀은 무리가 아니다. 씨앗은 _pseo_seed 가 정한다 — 기회의
+    대상(target)이 이것이다."""
     if not snapshot_date:
         return []
     units = _pseo_units(conn, project_id, snapshot_date)
-    frames: dict[tuple, dict] = {}
+    # 틀 열쇠 → 값 열쇠 → {단위: 칸 자리}. 합친 틀은 한 값에 단위가 여럿이다('월요일' ← '다음주
+    # 월요일'·'다음주 월요일 날짜').
+    frames: dict[tuple, dict[tuple, dict[int, tuple]]] = {}
     for ui, u in enumerate(units):
         for fkey, vkey, pos in _pseo_slots(u["toks"]):
-            frames.setdefault(fkey, {}).setdefault(vkey, (ui, pos))
+            frames.setdefault(fkey, {}).setdefault(vkey, {}).setdefault(ui, pos)
+    names = {}
+    for fkey, vals in frames.items():          # 틀 이름은 그 틀에서 노출이 가장 큰 검색어의 어순으로
+        ui, pos = min(((ui, pos) for ms in vals.values() for ui, pos in ms.items()),
+                      key=lambda m: (-units[m[0]]["imp"], units[m[0]]["query"]))
+        names[fkey] = _pseo_frame(units[ui]["toks"], pos)
+    also, extra = _pseo_merge_axes(frames)
     ranked = sorted(
         (f for f in frames.items() if len(f[1]) >= PSEO_MIN_VALUES),
-        key=lambda f: (f[0][1], -len(f[1]), -sum(units[ui]["imp"] for ui, _ in f[1].values()),
-                       f[0][0]))
+        key=lambda f: (f[0][1], -len(f[1]),
+                       -sum(units[ui]["imp"] for ms in f[1].values() for ui in ms), f[0][0]))
+    pins = _pseo_pins(conn, project_id)
     used: set[int] = set()
     out = []
     for fkey, vals in ranked:
-        members = [(ui, pos) for ui, pos in vals.values() if ui not in used]
-        if len(members) < PSEO_MIN_VALUES:
+        cand = [ms for ms in ([(ui, pos) for ui, pos in m.items() if ui not in used]
+                              for m in vals.values()) if ms]
+        if len(cand) < PSEO_MIN_VALUES:
             continue
-        members.sort(key=lambda m: (-units[m[0]]["imp"], units[m[0]]["query"]))
-        used |= {ui for ui, _ in members}
-        seed_ui, seed_pos = members[0]
-        values = []
-        for ui, pos in members:
-            u = units[ui]
-            values.append({"value": " / ".join(u["toks"][i] for i in pos), "query": u["query"],
-                           "variants": u["variants"], "imp": u["imp"], "clk": u["clk"],
-                           "pos": round(u["pw"] / u["imp"], 1) if u["imp"] else None,
-                           "page": u["page"]})
+        # 값이 대부분 수식어면 한 주제의 변주다('milia {X}' — treatment·removal·causes). 수식어
+        # 값은 축의 값도 아니다 — 남은 개체 값으로 센다.
+        mod = [_pseo_modifier([units[ms[0][0]]["toks"][i] for i in ms[0][1]]) for ms in cand]
+        if 2 * sum(mod) >= len(cand):
+            continue
+        cand = [ms for ms, m in zip(cand, mod) if not m]
+        if len(cand) < PSEO_MIN_VALUES:
+            continue
+        values = [_pseo_value(units, ms) for ms in cand]
+        values.sort(key=lambda v: (-v["imp"], v["query"]))
         imp = sum(v["imp"] for v in values)
+        # 값들의 고른 수요 — 씨앗 하나가 무리 노출의 절반 이상이면 그 검색어 하나의 수요다
+        if values[0]["imp"] >= PSEO_SEED_SHARE * imp:
+            continue
+        side = [ui for ui in extra.get(fkey, ()) if ui not in used]
+        used |= {ui for ms in cand for ui, _ in ms} | set(side)
         clk = sum(v["clk"] for v in values)
-        pw = sum(units[ui]["pw"] for ui, _ in members)
-        out.append({"seed": units[seed_ui]["query"],
-                    "frame": _pseo_frame(units[seed_ui]["toks"], seed_pos),
-                    "values": values,
-                    "queries": [q for v in values for q in (v["query"], *v["variants"])],
+        pw = sum(units[ui]["pw"] for ms in cand for ui, _ in ms)
+        queries = [q for v in values for q in (v["query"], *v["variants"])]
+        out.append({"seed": _pseo_seed(values, pins), "frame": names[fkey],
+                    "frames": [names[fkey], *(names[f] for f in also.get(fkey, ()))],
+                    "values": [{k: x for k, x in v.items() if k != "pw"} for v in values],
+                    "queries": queries + [q for ui in side
+                                          for q in (units[ui]["query"], *units[ui]["variants"])],
                     "imp": imp, "clk": clk,
                     "ctr_pct": round(clk * 100.0 / imp, 2) if imp else 0.0,
                     "pos": round(pw / imp, 1) if imp else None, "date": snapshot_date})
     return out
+
+
+def _pseo_value(units: list[dict], ms: list[tuple]) -> dict:
+    """값 하나 — 그 값의 단위들(합친 틀이면 여럿)을 하나로. 대표는 노출이 가장 큰 단위다."""
+    ms = sorted(ms, key=lambda m: (-units[m[0]]["imp"], units[m[0]]["query"]))
+    head, pos = units[ms[0][0]], ms[0][1]
+    rest = [units[ui] for ui, _ in ms[1:]]
+    imp = sum(units[ui]["imp"] for ui, _ in ms)
+    pw = sum(units[ui]["pw"] for ui, _ in ms)
+    return {"value": " / ".join(head["toks"][i] for i in pos), "query": head["query"],
+            "variants": [*head["variants"], *(q for u in rest for q in (u["query"], *u["variants"]))],
+            "imp": imp, "clk": sum(units[ui]["clk"] for ui, _ in ms),
+            "pos": round(pw / imp, 1) if imp else None, "page": head["page"], "pw": pw}
+
+
+def _pseo_merge_axes(frames: dict) -> tuple[dict, dict]:
+    """고정 낱말 하나를 더 붙인 틀이 같은 축이면 짧은 틀로 합친다(frames 를 고친다). noti 에서
+    '다음주 {X}'(월요일·수요일…)와 '다음주 {X} 날짜'(월요일·수요일…)가 따로 기회로 섰고, 앞 틀의 값에
+    '날짜'('다음주 날짜' — 덧붙인 낱말뿐인 검색어)가 요일과 섞였다. 같은 축은 값이 둘 이상, 작은
+    쪽 값의 절반 이상 겹치는 것이다. 돌려주는 것: 틀 → 합친 틀들, 틀 → 덧붙인 낱말뿐인 단위들."""
+    also: dict[tuple, list] = {}
+    extra: dict[tuple, dict] = {}
+    for fk2 in sorted(frames, key=lambda f: (-len(f[0]), f)):      # 긴 틀부터 — 사슬도 한 번에
+        fixed2, ns = fk2
+        best = None
+        for w in sorted(set(fixed2)):
+            if w in QUERY_STOPWORDS:
+                continue
+            rest = list(fixed2)
+            rest.remove(w)
+            fk1 = (tuple(rest), ns)
+            if fk1 not in frames:
+                continue
+            shared = len((set(frames[fk1]) - {(w,)}) & set(frames[fk2]))
+            if shared >= 2 and 2 * shared >= min(len(frames[fk1]), len(frames[fk2])) \
+                    and (best is None or shared > best[0]):
+                best = (shared, fk1, w)
+        if not best:
+            continue
+        _, fk1, w = best
+        for vk, ms in frames.pop(fk2).items():
+            frames[fk1].setdefault(vk, {}).update(ms)
+        if ns == 1 and (w,) in frames[fk1]:
+            extra.setdefault(fk1, {}).update(frames[fk1].pop((w,)))
+        extra.setdefault(fk1, {}).update(extra.pop(fk2, {}))
+        also[fk1] = [*also.get(fk1, []), fk2, *also.pop(fk2, [])]
+    return also, extra
+
+
+def _pseo_pins(conn: sqlite3.Connection, project_id: int) -> dict:
+    """이미 선 템플릿 패턴 줄 — 접는 열쇠 → (고르는 순서, 대상). 씨앗을 붙잡아 두는 데 쓴다."""
+    pins: dict = {}
+    for r in conn.execute(
+            "SELECT target, status, reasoning FROM opportunities WHERE project_id=? AND "
+            "kind='pseo_pattern' AND status IN ('new','acked','done','dismissed')", (project_id,)):
+        t = str(r["target"] or "")
+        if not t or "{" in t:                 # 틀 문자열로 직접 올린 줄(scoring.md 1b)은 씨앗이 아니다
+            continue
+        # 열린 줄 먼저, 그중 새 기준 줄·사람이 본(acked) 줄 먼저. 닫힌 줄(done·dismissed)은 열린
+        # 줄이 없을 때만 — 사람이 닫은 무리가 다른 값을 씨앗으로 새로 서지 않게.
+        rank = (r["status"] not in ("new", "acked"),
+                not str(r["reasoning"] or "").startswith(PSEO_REASON_HEAD), r["status"] != "acked")
+        for k in pseo_fold_keys(t):
+            if k and (k not in pins or rank < pins[k][0]):
+                pins[k] = (rank, t)
+    return pins
+
+
+def _pseo_seed(values: list[dict], pins: dict) -> str:
+    """무리의 씨앗 — 그 값 가운데 이미 선 템플릿 패턴 줄이 있으면 그 줄의 대상, 없으면 노출이 가장
+    큰 값의 검색어. 노출이 가장 큰 값만 쓰던 때는 서울 100·부산 90 에서 부산이 120 이 되면 '서울'
+    줄이 '부산 줄로 합쳤습니다'로 닫히고 '부산' 줄이 새로 섰다 — 값 하나의 노출 순위로 줄이
+    닫혔다 열렸다 했다(_NO_RESOLVE 가 막으려던 '씨앗 하나의 수로 닫기'와 같다)."""
+    hit = min(((pins[k][0], -v["imp"], pins[k][1]) for v in values
+               for q in (v["query"], *v["variants"]) for k in pseo_fold_keys(q) if k in pins),
+              default=None)
+    return hit[2] if hit else values[0]["query"]
 
 
 def _pseo_rows(conn: sqlite3.Connection, project_id: int, snapshot_date: str | None, *,
@@ -928,12 +1051,20 @@ def _pseo_rows(conn: sqlite3.Connection, project_id: int, snapshot_date: str | N
     return sorted(gs, key=lambda g: (-g["imp"], g["seed"]))[:limit]
 
 
+def pseo_frame_label(g: dict) -> str:
+    """무리의 틀 이름 — 합친 틀(고정 낱말 하나 더)이 있으면 같은 축이라고 붙인다. 근거 문장과
+    요청문이 같은 말을 쓴다."""
+    more = [f for f in g.get("frames") or [] if f != g["frame"]]
+    return f"'{g['frame']}'" + (" (같은 축: " + ", ".join(f"'{f}'" for f in more) + ")"
+                                if more else "")
+
+
 def pseo_reasoning(g: dict) -> str:
     """기회의 근거 문장 — 틀과 바뀌는 값 목록이 먼저다(PSEO_REASON_HEAD 로 시작)."""
     vals = [v["value"] for v in g["values"]]
     shown = " · ".join(vals[:8]) + (f" 외 {len(vals) - 8}개" if len(vals) > 8 else "")
     pos = f" · 평균 {g['pos']}위" if g.get("pos") is not None else ""
-    return (f"{PSEO_REASON_HEAD}'{g['frame']}' — 바뀌는 값 {len(vals)}개: {shown}. 무리 합계 "
+    return (f"{PSEO_REASON_HEAD}{pseo_frame_label(g)} — 바뀌는 값 {len(vals)}개: {shown}. 무리 합계 "
             f"노출 {g['imp']:,} · 클릭 {g['clk']:,} · CTR {g['ctr_pct']}%{pos}. 한 장씩 쓰지 않고 "
             f"같은 틀로 찍을 자리입니다 (구글 실적 {g['date']} 기준)")
 
@@ -1604,9 +1735,10 @@ def _hreflang_advice(audit: dict) -> list[dict]:
 # 'syringoma vs milia' 는 title 'Syringoma & Milia' 에 **있다**. 부분 문자열로 보면
 # 없다고 나와서 "앞부분에 그대로 넣으세요"라고 시켰다 — 구글은 'vs'·'&'·어순을
 # 안 본다. 그래서 내용어(조사·접속사·의문사를 뺀 것)가 들어 있는지로 본다.
+# 템플릿 패턴의 '잇는 말'(칸의 값이 못 되는 말 — _pseo_slots)도 이 한 벌이다.
 QUERY_STOPWORDS = frozenset(
-    "vs versus or and the a an of in for to with on is are what how "
-    "차이 비교 과 와 및".split())
+    "vs v versus or and the a an of in for to with on is are what how "
+    "차이 비교 과 와 및 또는 랑".split())
 # 비교 의도 — 이 말이 검색어에 있으면 "둘을 나란히 놓고 골라 달라"는 뜻이다.
 COMPARE_WORDS = frozenset(("vs", "versus", "difference", "or", "차이", "비교"))
 # 판정에 보는 검색어 수 — 한 페이지에 걸린 검색어는 보통 같은 의도의 변주라 상위
@@ -4926,7 +5058,8 @@ _KIND_SPECS = {
                      "끊긴 내부 링크를 어디서 다시 걸지"])),
     "pseo_pattern": dict(
         label="템플릿 패턴", defensive=False,
-        # 한 행이 무리 하나다 — 대상은 씨앗(노출이 가장 큰 값의 검색어), 수는 무리 합계
+        # 한 행이 무리 하나다 — 대상은 씨앗(이미 선 줄의 값, 없으면 노출이 가장 큰 값 — _pseo_seed),
+        # 수는 무리 합계
         detect=lambda ctx: _pseo_rows(ctx["conn"], ctx["pid"], ctx["cur"]),
         metrics=lambda r, ctx: {"impressions": r["imp"], "position": r["pos"],
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["seed"])},
@@ -4937,18 +5070,17 @@ _KIND_SPECS = {
             acts=["같은 패턴의 검색어를 모읍니다(도구별·지역별·비교 축).",
                   "템플릿 한 벌과 실제 데이터로 페이지를 찍습니다. 빈 껍데기는 색인에서 걸러집니다.",
                   "허브 페이지를 만들어 전부 링크합니다."],
-            deliver=["이 패턴의 축과 값 목록(도구·지역·비교 대상)",
-                     "템플릿 한 벌의 골격: 어느 자리에 데이터가 들어가는지",
-                     "허브 페이지 구성"],
-            # 씨앗 검색어로 이미 순위에 걸린 전용 페이지가 있을 때 — 허브를 새로 짓지 않고 그
-            # 페이지를 허브로 쓴다. theotherskin 의 템플릿 패턴 9건은 전부 그런 페이지가 있었는데
-            # '허브 페이지 구성'과 '새 글이 색인되고'가 나가 같은 주제의 지면을 하나 더 지으라는
-            # 말로 읽혔다. 요청문(brief)이 손댈 페이지가 있으면 이 목록을 쓴다.
-            deliver_page=["이 패턴의 축과 값 목록(도구·지역·비교 대상)",
-                          "템플릿 한 벌의 골격: 어느 자리에 데이터가 들어가는지",
-                          "허브로 쓸 기존 페이지(위 '대상')에 더할 것 — 무리의 각 페이지로 가는 "
-                          "링크 목록과 그 링크를 둘 구간. 이 페이지의 title·H1·주제는 바꾸지 "
-                          "않습니다"])),
+            deliver=[*_PSEO_DELIVER, "허브 페이지 구성"],
+            # 씨앗의 전용 페이지가 이미 순위에 걸려 있을 때 — 허브를 새로 짓지 않고 그 페이지를
+            # 허브로 쓴다. theotherskin 의 템플릿 패턴 9건은 전부 그런 페이지가 있었는데 '허브 페이지
+            # 구성'과 '새 글이 색인되고'가 나가 같은 주제의 지면을 하나 더 지으라는 말로 읽혔다.
+            # 요청문(brief._pseo_hub)이 허브로 쓸 페이지를 찾으면 이 목록을 쓴다. 앞 항목은 deliver 와
+            # 한 벌이다(_PSEO_DELIVER). 첫 마디가 '한눈에'의 요약이 된다 — '허브로 쓸 기존 페이지'
+            # 까지로 잘려 기존 페이지를 만들라는 말로 읽혔다.
+            deliver_page=[*_PSEO_DELIVER,
+                          "허브 페이지에 더할 링크 목록과 그 구간 — 허브는 위 '대상'의 기존 페이지이고, "
+                          "무리의 각 페이지로 가는 링크를 어느 구간에 둘지까지입니다. 이 페이지의 "
+                          "title·H1·주제는 바꾸지 않습니다"])),
     # 분해 수집은 gsc_snapshots 와 수집일이 어긋날 수 있다(분해 수집을 끄면 뒤처진다)
     # — 출처 표기에 cur 을 쓰면 없던 날짜를 말하게 되므로 ctx['bd']로 따로 읽는다.
     "device_gap": dict(
@@ -5670,7 +5802,8 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
     사유를 준다. 목표를 이뤘다는 판정이 아니다(_NO_RESOLVE['pseo_pattern']).
 
       · 검색 연산자·우리 브랜드 검색 — 지금 기준은 세우지 않는 대상이다
-      · 같은 무리의 다른 값(또는 그 변형) — 이번 적재에 그 무리의 씨앗 줄이 섰다(긍정 확인)
+      · 옛 기준 줄인데 같은 무리의 다른 값(또는 씨앗의 변형) — 이번 적재에 그 무리의 열린 씨앗
+        줄이 섰다(긍정 확인)
       · 옛 기준(씨앗 하나의 노출·클릭률)으로 선 줄인데 지금 구글 실적에서 틀이 안 선다
     새 기준으로 선 줄(PSEO_REASON_HEAD)이 이번에 안 나온 것은 닫지 않는다 — 문턱(노출·클릭률)
     밖으로 나갔을 뿐 무리는 그대로일 수 있다. 사람이 손댄 줄(acked·[다시 열기] 뒤 그 전 데이터)과
@@ -5681,8 +5814,9 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
     cur = ctx.setdefault("_pseo_cur", snapshot_pair(conn, pid)[0])
     if not cur or (o["status_at"] and not _after_day(cur, o["status_at"])):
         return None
-    head = f"{PSEO_RECHECK} — 템플릿 패턴은 이제 '고정 틀 + 바뀌는 칸'으로 묶어 바뀌는 값이 " \
-           f"{PSEO_MIN_VALUES}개 이상일 때만 섭니다. "
+    head = (f"{PSEO_RECHECK} — 템플릿 패턴은 이제 '고정 틀 + 바뀌는 칸'으로 묶어, 칸의 값이 수식어가 "
+            f"아닌 개체로 {PSEO_MIN_VALUES}개 이상이고 값들의 수요가 고를 때(값 하나가 무리 노출의 "
+            f"{PSEO_SEED_SHARE:.0%} 미만)만 섭니다. ")
     if is_search_operator(t):
         return head + "이 검색어는 검색 연산자(site: 등) 검색이라 찍을 검색어 무리가 아닙니다"
     if _names_us(conn, pid, norm(t)):
@@ -5696,18 +5830,27 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
                               for q in (u["query"], *u["variants"]) for k in pseo_fold_keys(q) if k}
     keys = [k for k in pseo_fold_keys(t) if k]
     g = next((ctx["_pseo_groups"][k] for k in keys if k in ctx["_pseo_groups"]), None)
-    if g and g["seed"] in run_seeds and g["seed"] != t:
-        return (f"같은 틀('{g['frame']}')의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다 — 할 일은 "
-                f"그 줄 하나입니다 (구글 실적 {cur} 기준)")
-    if g or str(o["reasoning"] or "").startswith(PSEO_REASON_HEAD):
+    old = not str(o["reasoning"] or "").startswith(PSEO_REASON_HEAD)
+    # 합치기는 옛 기준 줄에만 — 새 기준 줄은 씨앗이 붙잡혀 있어(_pseo_seed) 같은 무리에 둘이 서는
+    # 것은 무리가 합쳐졌을 때뿐이고, 그건 사람이 고를 일이다. 씨앗 줄은 열린 줄이어야 한다(run_seeds).
+    if g and old and g["seed"] in run_seeds and g["seed"] != t:
+        def fold(qs):
+            return {k for q in qs for k in pseo_fold_keys(q) if k}
+        same = next((v for v in g["values"] if set(keys) & fold((v["query"], *v["variants"]))), None)
+        # 씨앗과 같은 값(접은 한 검색어)이면 다른 값이 아니라 같은 검색어다 — 사유가 틀을 말하지 않는다
+        if same and fold([g["seed"]]) & fold((same["query"], *same["variants"])):
+            return (f"어순·복수형·띄어쓰기만 다른 같은 검색어인 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+                    f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+        return (f"같은 틀({pseo_frame_label(g)})의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+                f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+    if g or not old:
         return None
     u = next((ctx["_pseo_units"][k] for k in keys if k in ctx["_pseo_units"]), None)
     if u and u["variants"]:
         same = ", ".join(f"'{q}'" for q in [u["query"], *u["variants"]][:4])
-        return (head + f"이 검색어는 어순·복수형·띄어쓰기만 다른 같은 검색어({same})뿐이고 같은 틀의 "
-                f"다른 값이 {PSEO_MIN_VALUES}개에 못 미칩니다 (구글 실적 {cur} 기준)")
-    return head + (f"이 검색어와 같은 틀의 다른 값이 {PSEO_MIN_VALUES}개에 못 미칩니다 "
-                   f"(구글 실적 {cur} 기준)")
+        return (head + f"이 검색어는 어순·복수형·띄어쓰기만 다른 같은 검색어({same})이고, 지금 구글 "
+                f"실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)")
+    return head + f"지금 구글 실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)"
 
 
 def resolve_when(kind: str) -> str | None:
@@ -5736,9 +5879,12 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
                      AND kind IN ({','.join('?' * len(NORM_FOLD_KINDS))})""",
                 (int(project_id), run_id, *NORM_FOLD_KINDS)):
             folded[(r["kind"], norm(r["target"]))] = r["target"]
-    # 이번 적재가 세운 템플릿 패턴의 씨앗 — 같은 무리의 다른 값으로 선 옛 줄을 이 줄로 합친다
+    # 이번 적재가 세운 템플릿 패턴의 씨앗 — 같은 무리의 다른 값으로 선 옛 줄을 이 줄로 합친다.
+    # 열린 줄만: upsert 는 상태와 무관하게 run_id 를 갈아 끼워서, 사람이 [제외]·[완료]한 씨앗 줄도
+    # 이번 적재 줄로 읽혔다 — 이미 제외한 줄로 합치면 '할 일은 그 줄 하나입니다'가 거짓이 된다.
     run_seeds = {r[0] for r in conn.execute(
-        "SELECT target FROM opportunities WHERE project_id=? AND run_id=? AND kind='pseo_pattern'",
+        "SELECT target FROM opportunities WHERE project_id=? AND run_id=? AND kind='pseo_pattern'"
+        " AND status IN ('new','acked')",
         (int(project_id), run_id))} if run_id is not None else set()
     for o in conn.execute(
             """SELECT id, kind, target, created_at, status, status_at, run_id, reasoning

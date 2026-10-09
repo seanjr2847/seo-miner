@@ -193,9 +193,10 @@ def test_load_covers_every_kind():
          (pid, "2026-08-14", 28, "1페이지키워드", None, 9, 300, 3.0),
          (pid, "2026-08-14", 28, "하락키워드", None, 1, 100, 9.0),
          # 템플릿 패턴은 '고정 틀 + 바뀌는 칸'의 값이 3개 이상이어야 선다(scoring.pseo_groups)
-         (pid, "2026-08-14", 28, "서울 세무사 추천", None, 0, 60, 6.0),
-         (pid, "2026-08-14", 28, "부산 세무사 추천", None, 0, 30, 9.0),
-         (pid, "2026-08-14", 28, "대구 세무사 추천", None, 0, 20, 12.0),
+         # 값들의 수요가 고르다 — 값 하나가 무리 노출의 절반 이상이면 무리가 아니다
+         (pid, "2026-08-14", 28, "서울 세무사 추천", None, 0, 50, 6.0),
+         (pid, "2026-08-14", 28, "부산 세무사 추천", None, 0, 40, 9.0),
+         (pid, "2026-08-14", 28, "대구 세무사 추천", None, 0, 30, 12.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/a", 3, 60, 4.0),
          (pid, "2026-08-14", 28, "겹치는키워드", "https://e.com/b", 1, 40, 7.0),
          # 의도 갈린 페이지 — 비교 200 · 구매 35(검색어 2)
@@ -303,8 +304,10 @@ _PSEO_YES = [("서울 세무사 가격", 100, 0, 14.0),
              ("세무사 가격 서울", 10, 0, 15.0),          # 어순 변형 — '서울' 값으로 접힌다
              ("부산 세무사 가격", 80, 1, 18.0), ("대구 세무사 가격", 40, 0, 22.0),
              ("광주 세무사 가격", 2, 0, 30.0),           # 노출 하한 밑 — 값으로 안 센다
-             ("notion vs obsidian", 30, 0, 9.0), ("notion vs evernote", 20, 0, 11.0),
-             ("obsidian vs logseq", 15, 0, 14.0), ("evernote vs onenote", 10, 0, 19.0),
+             ("할인 세무사 가격", 30, 0, 20.0),          # 수식어 값 — 지역 축의 값이 아니다
+             # 칸 둘짜리도 잇는 말 아닌 고정 낱말(pricing)이 있어야 선다 — 'vs' 뿐이면 비교 모음이다
+             ("notion vs obsidian pricing", 30, 0, 9.0), ("notion vs evernote pricing", 20, 0, 11.0),
+             ("obsidian vs logseq pricing", 15, 0, 14.0), ("evernote vs onenote pricing", 10, 0, 19.0),
              # 틀은 서는데 클릭이 이미 잘 난다 — 기회는 아니다(문턱 PSEO_MAX_CTR)
              ("레드 우산", 40, 3, 5.0), ("블루 우산", 30, 3, 5.0), ("그린 우산", 20, 3, 5.0)]
 
@@ -322,7 +325,7 @@ def test_pseo_groups_are_a_fixed_frame_with_three_values():
         scoring.pseo_groups(conn, no, "2026-10-01")
     gs = scoring.pseo_groups(conn, yes, "2026-10-01")
     by = {g["frame"]: g for g in gs}
-    assert set(by) == {"{X} 세무사 가격", "{A} vs {B}", "{X} 우산"}, list(by)
+    assert set(by) == {"{X} 세무사 가격", "{A} vs {B} pricing", "{X} 우산"}, list(by)
     tax = by["{X} 세무사 가격"]
     assert tax["seed"] == "서울 세무사 가격", tax
     assert [v["value"] for v in tax["values"]] == ["서울", "부산", "대구"], tax["values"]
@@ -332,18 +335,132 @@ def test_pseo_groups_are_a_fixed_frame_with_three_values():
     assert tax["imp"] == 230 and tax["clk"] == 1, tax
     assert "광주 세무사 가격" not in tax["queries"], tax["queries"]
     assert {"서울 세무사 가격", "세무사 가격 서울", "부산 세무사 가격"} <= set(tax["queries"])
-    vs = by["{A} vs {B}"]
-    assert vs["seed"] == "notion vs obsidian" and len(vs["values"]) == 4, vs
+    vs = by["{A} vs {B} pricing"]
+    assert vs["seed"] == "notion vs obsidian pricing" and len(vs["values"]) == 4, vs
     # 검출기는 문턱(노출 PSEO_MIN_IMP 이상 · 클릭률 PSEO_MAX_CTR 미만)을 넘은 무리만 세운다
     spec = next(k for k in scoring.KINDS if k.name == "pseo_pattern")
     ctx = {"conn": conn, "pid": yes, "cur": "2026-10-01", "brands": set()}
     got = spec.detect(ctx)
-    assert [spec.target(r, ctx) for r in got] == ["서울 세무사 가격", "notion vs obsidian"], got
+    assert [spec.target(r, ctx) for r in got] == ["서울 세무사 가격", "notion vs obsidian pricing"], got
     why = spec.reasoning(got[0], ctx)
     assert why.startswith(scoring.PSEO_REASON_HEAD + "'{X} 세무사 가격'"), why
     assert "바뀌는 값 3개: 서울 · 부산 · 대구" in why and "노출 230" in why, why
     assert spec.detect({**ctx, "pid": no}) == []
     conn.close()
+
+
+# 틀은 서지만 템플릿이 아닌 것 — 한 주제의 변주. theotherskin 9/29 실데이터에서 'syringoma vs
+# milia'(#79)가 '{A} vs {B}'(syringoma/milia · olidia/sculptra · abnom/melasma — 서로 무관한
+# 비교 셋, 노출 1,356 중 1,239 가 씨앗 하나)로 다시 섰고, 'papular {X} scars'·'milia {X}' 도 틀이 됐다.
+_PSEO_VARIATION = [
+    # 고정 낱말이 잇는 말(vs)뿐인 칸 둘짜리 — 고른 수요여도 비교 모음이지 틀이 아니다
+    ("notion vs obsidian", 30, 0, 9.0), ("notion vs evernote", 20, 0, 11.0),
+    ("obsidian vs logseq", 15, 0, 14.0),
+    ("노션 또는 옵시디언", 30, 0, 9.0), ("노션 또는 에버노트", 20, 0, 9.0), ("옵시디언 또는 로그식", 15, 0, 9.0),
+    # 씨앗 하나가 무리 노출의 절반 이상 — 씨앗 하나의 수요다(acne 111 / 157)
+    ("papular acne scars", 111, 0, 8.0), ("papular nose scars", 26, 0, 9.0),
+    ("papular chin scars", 20, 0, 9.0),
+    # 바뀌는 칸의 값이 대부분 수식어(scoring.INTENT_WORDS) — 한 주제의 변주다. 개체 값(eyes·nose·baby)이
+    # 셋 있어도 수식어가 절반 이상이면 틀이 아니다
+    ("milia treatment", 30, 0, 9.0), ("milia removal", 25, 0, 9.0), ("milia causes", 20, 0, 9.0),
+    ("milia eyes", 20, 0, 9.0), ("milia nose", 15, 0, 9.0), ("milia baby", 12, 0, 9.0)]
+# 고정 낱말 하나를 더 붙인 틀이 같은 축 — noti 에서 '다음주 {X}'·'다음주 {X} 날짜'가 따로 섰고
+# 앞의 값에 '날짜'('다음주 날짜')가 요일과 섞였다
+_PSEO_AXIS = [("다음주 월요일", 100, 0, 5.0), ("다음주 수요일", 60, 0, 5.0),
+              ("다음주 화요일", 50, 0, 6.0), ("다음주 날짜", 11, 0, 7.0),
+              ("다음주 월요일 날짜", 30, 0, 6.0), ("다음주 수요일 날짜", 25, 0, 6.0),
+              ("다음주 목요일 날짜", 8, 0, 7.0)]
+
+
+def test_pseo_groups_reject_variations_and_merge_one_axis():
+    """무리의 문턱은 합계가 아니라 값들의 고른 수요이고, 바뀌는 칸은 개체(지역·상품·요일)다 —
+    씨앗 하나가 무리 노출의 절반 이상이거나, 값이 대부분 수식어(treatment·removal·causes)거나,
+    고정 낱말이 잇는 말뿐이면 무리가 아니다. 고정 낱말 하나를 더 붙인 틀이 같은 축이면 한 무리다."""
+    conn = db.connect()
+    var = _pseo_site(conn, "pseo-var", "skin.example", _PSEO_VARIATION)
+    assert scoring.pseo_groups(conn, var, "2026-10-01") == [], \
+        [(g["frame"], [v["value"] for v in g["values"]]) for g in scoring.pseo_groups(conn, var, "2026-10-01")]
+    # 중국어·일본어가 붙은 검색어는 라틴 부분만으로 접지 않는다 — 브랜드 판정(norm)과 같은 글자를 본다
+    assert scoring.pseo_fold_keys("olidia是什麼") != scoring.pseo_fold_keys("olidia")
+    axis = _pseo_site(conn, "pseo-axis", "cal.example", _PSEO_AXIS)
+    gs = scoring.pseo_groups(conn, axis, "2026-10-01")
+    assert len(gs) == 1, [(g["frame"], [v["value"] for v in g["values"]]) for g in gs]
+    g = gs[0]
+    assert g["frame"] == "다음주 {X}" and g["frames"] == ["다음주 {X}", "다음주 {X} 날짜"], g
+    assert [v["value"] for v in g["values"]] == ["월요일", "수요일", "화요일", "목요일"], g["values"]
+    mon = g["values"][0]
+    assert mon["imp"] == 130 and "다음주 월요일 날짜" in mon["variants"], mon
+    # '다음주 날짜'는 요일 축의 값이 아니라 덧붙인 낱말뿐인 검색어다 — 무리엔 들되 값은 아니다
+    assert "다음주 날짜" in g["queries"], g["queries"]
+    assert g["imp"] == 273, g
+    conn.close()
+
+
+def test_pseo_seed_stays_with_the_open_row():
+    """씨앗은 붙잡아 둔다 — 값 하나의 노출 순위가 바뀌었다고 줄이 닫혔다 열리지 않는다. 예전엔
+    서울 100·부산 90 에서 부산이 120 이 되면 '서울' 줄이 '씨앗 부산 줄로 합쳤습니다'로 닫히고 '부산'
+    줄이 새로 섰다. 사람이 닫은(dismissed) 씨앗 줄로 다른 값 줄을 합치지도 않는다."""
+    conn = db.connect()
+    pid = _pseo_site(conn, "pseo-pin", "tax2.example",
+                     [("서울 세무사 가격", 100, 0, 14.0), ("부산 세무사 가격", 90, 0, 18.0),
+                      ("대구 세무사 가격", 40, 0, 22.0)])
+    conn.close()
+
+    def rows():
+        c = db.connect()
+        try:
+            return {r["target"]: (r["status"], r["status_reason"] or "") for r in c.execute(
+                "SELECT target, status, status_reason FROM opportunities WHERE project_id=? "
+                "AND kind='pseo_pattern'", (pid,))}
+        finally:
+            c.close()
+
+    def imp(q, n):
+        c = db.connect()
+        c.execute("UPDATE gsc_snapshots SET impressions=? WHERE project_id=? AND query=?", (n, pid, q))
+        c.commit()
+        c.close()
+
+    scoring.load("pseo-pin")
+    assert set(rows()) == {"서울 세무사 가격"}, rows()
+    imp("부산 세무사 가격", 120)
+    scoring.load("pseo-pin")
+    assert rows() == {"서울 세무사 가격": ("new", "")}, rows()
+    c = db.connect()
+    c.execute("UPDATE opportunities SET status='acked' WHERE project_id=?", (pid,))
+    c.commit()
+    c.close()
+    imp("부산 세무사 가격", 130)          # 130 / 270 — 아직 고른 무리다
+    scoring.load("pseo-pin")
+    assert rows() == {"서울 세무사 가격": ("acked", "")}, "씨앗이 바뀌어 같은 틀의 줄이 하나 더 섰다"
+    # 사람이 닫은 씨앗 — 옛 기준 줄을 거기로 합치지 않는다('할 일은 그 줄 하나입니다'가 거짓이 된다)
+    c = db.connect()
+    c.execute("UPDATE opportunities SET status='dismissed' WHERE project_id=?", (pid,))
+    c.execute("INSERT INTO opportunities(project_id, kind, target, status, reasoning) VALUES(?, "
+              "'pseo_pattern', '대구 세무사 가격', 'new', '노출 40 · CTR 0.0% · 22.0위. 같은 꼴로')",
+              (pid,))
+    c.commit()
+    c.close()
+    scoring.load("pseo-pin")
+    got = rows()
+    assert got["서울 세무사 가격"][0] == "dismissed" and got["대구 세무사 가격"][0] == "new", got
+    assert "부산 세무사 가격" not in got, got
+    # 씨앗이 닫힌 줄뿐인 무리 — 그 무리에 든 옛 줄('다음주 날짜'는 값이 아니라 씨앗으로 못 붙는다)을
+    # 이미 [제외]한 씨앗 줄로 합치지 않는다
+    c = db.connect()
+    ax = _pseo_site(c, "pseo-pin2", "cal2.example", _PSEO_AXIS)
+    c.executemany("INSERT INTO opportunities(project_id, kind, target, status, reasoning) VALUES(?, "
+                  "'pseo_pattern', ?, ?, ?)",
+                  [(ax, "다음주 월요일", "dismissed", "노출 100 · 같은 꼴로"),
+                   (ax, "다음주 날짜", "new", "노출 11 · CTR 0.0% · 7.0위. 같은 꼴로")])
+    c.commit()
+    c.close()
+    scoring.load("pseo-pin2")
+    c = db.connect()
+    st = {r[0]: r[1] for r in c.execute(
+        "SELECT target, status FROM opportunities WHERE project_id=? AND kind='pseo_pattern'", (ax,))}
+    c.close()
+    assert st == {"다음주 월요일": "dismissed", "다음주 날짜": "new"}, st
 
 
 def test_pseo_old_rows_are_rejudged_by_the_new_rule():
@@ -352,14 +469,22 @@ def test_pseo_old_rows_are_rejudged_by_the_new_rule():
     틀이 서는 줄은 문턱 밖으로 나가도 열린 채다. 사람이 손댄 줄(acked)과 사람·Claude 가 틀
     문자열로 직접 올린 줄도 그대로다."""
     conn = db.connect()
-    no = _pseo_site(conn, "pseo-no2", "theotherskin.com", _PSEO_NOT)
+    # 'syringoma vs milia' 와 무관한 비교 둘 — 잇는 말뿐인 틀이 서던 때는 셋이 '{A} vs {B}' 로 묶였다
+    no = _pseo_site(conn, "pseo-no2", "theotherskin.com",
+                    _PSEO_NOT + [("olidia vs sculptra", 96, 0, 6.7), ("abnom vs melasma", 21, 0, 9.0)])
     yes = _pseo_site(conn, "pseo-yes2", "tax.example", _PSEO_YES)
     old = "노출 118 · CTR 0.0% · 12.1위. 같은 꼴로 여러 장 찍을 후보입니다 (구글 실적 2026-09-01 기준)"
     new = scoring.PSEO_REASON_HEAD + "'{X} 우산' — 바뀌는 값 3개: 레드 · 블루 · 그린."
+    tax = scoring.PSEO_REASON_HEAD + "'{X} 세무사 가격' — 바뀌는 값 3개: 서울 · 부산 · 대구."
     rows = {no: [("syringoma vs milia", "new", old), ("milia vs syringoma", "new", old),
                  ("syringomas vs milia", "acked", old), ("site:theotherskin.com", "new", old),
+                 ("olidia vs sculptra", "new", old),
                  ("{기온}도 옷차림", "new", "Claude 가 묶어 올린 군집")],
-            yes: [("부산 세무사 가격", "new", old),        # 같은 무리의 다른 값 — 씨앗 줄로 합친다
+            yes: [("서울 세무사 가격", "new", tax),        # 이미 선 씨앗 줄 — 씨앗은 이 줄에 붙는다
+                  ("대구 세무사 가격", "new", old),        # 같은 무리의 다른 값 — 씨앗 줄로 합친다
+                  ("세무사 가격 서울", "new", old),        # 씨앗의 어순 변형 — 같은 검색어라 합친다
+                  # 같은 무리의 새 기준 줄 — 합치기는 옛 기준 줄에만 쓴다
+                  ("부산 세무사 가격", "new", tax),
                   ("레드 우산", "new", new),              # 새 기준 줄 — 문턱 밖이어도 열린 채
                   # 새 기준 줄인데 이번 실적에 무리가 안 보인다 — '없다'는 부재라 닫지 않는다
                   ("노랑 장화", "new", new),
@@ -376,16 +501,22 @@ def test_pseo_old_rows_are_rejudged_by_the_new_rule():
         "SELECT project_id, target, status, status_reason FROM opportunities WHERE kind='pseo_pattern'"
         " AND project_id IN (?, ?)", (no, yes))}
     conn.close()
-    for t in ("syringoma vs milia", "milia vs syringoma", "site:theotherskin.com"):
+    for t in ("syringoma vs milia", "milia vs syringoma", "site:theotherskin.com", "olidia vs sculptra"):
         s, why = st[(no, t)]
         assert s == "resolved" and why.startswith(scoring.PSEO_RECHECK), (t, s, why)
     assert "어순·복수형" in st[(no, "milia vs syringoma")][1], st[(no, "milia vs syringoma")]
     assert "검색 연산자" in st[(no, "site:theotherskin.com")][1], st[(no, "site:theotherskin.com")]
     assert st[(no, "syringomas vs milia")][0] == "acked", "사람이 손댄 줄을 닫았다"
     assert st[(no, "{기온}도 옷차림")][0] == "new", "틀 문자열로 직접 올린 줄을 닫았다"
-    s, why = st[(yes, "부산 세무사 가격")]
-    assert s == "resolved" and "'서울 세무사 가격'" in why, (s, why)
-    assert st[(yes, "서울 세무사 가격")][0] == "new" and st[(yes, "notion vs obsidian")][0] == "new", st
+    s, why = st[(yes, "대구 세무사 가격")]
+    assert s == "resolved" and "같은 틀" in why and "'서울 세무사 가격'" in why, (s, why)
+    # 어순 변형은 다른 값이 아니라 같은 검색어다 — 사유가 틀을 말하지 않는다
+    s, why = st[(yes, "세무사 가격 서울")]
+    assert s == "resolved" and "어순·복수형" in why and "'서울 세무사 가격'" in why, (s, why)
+    assert "같은 틀" not in why, why
+    assert st[(yes, "부산 세무사 가격")][0] == "new", "새 기준 줄을 씨앗 줄로 합쳤다"
+    assert st[(yes, "서울 세무사 가격")][0] == "new", st
+    assert st[(yes, "notion vs obsidian pricing")][0] == "new", st
     assert st[(yes, "레드 우산")][0] == "new", "문턱 밖으로 나갔다고 새 기준 줄을 닫았다"
     assert st[(yes, "노랑 장화")][0] == "new", "새 기준 줄을 무리의 부재로 닫았다"
     assert st[(yes, "블루 우산")][0] == "new", "새 기준으로도 틀이 서는 옛 줄을 닫았다"

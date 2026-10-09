@@ -419,9 +419,9 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
   후보가 하나도 안 생긴다 — 그때는 `/capture competitors {P}` 로 먼저 적재한다(`--domain` 으로
   도메인을 직접 줄 수도 있다).
 
-`pseo_pattern` 은 기계가 묶기까지 한다 — 검색어를 고정 틀 + 바뀌는 칸으로 묶어 값이
-3개 이상인 무리만 세운다(`scoring.pseo_groups`). 코드가 못 묶는 틀을 직접 올리는 법과
-가드레일은 `references/scoring.md` 1b절.
+`pseo_pattern` 은 기계가 묶기까지 한다 — 검색어를 고정 틀 + 바뀌는 칸으로 묶어 무리를
+세운다(`scoring.pseo_groups`). 무리의 기준(값 개수·고른 수요·수식어 아닌 값), 코드가 못 묶는
+틀을 직접 올리는 법과 가드레일은 `references/scoring.md` 1b절.
 
 ### /capture run {P} — 풀런
 수집부터 리포트까지를 스크립트 한 번에 끝낸다. 단계는 **묶음**으로 돈다 — 묶음(메뉴의

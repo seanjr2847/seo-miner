@@ -337,12 +337,22 @@ def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
     관찰 중이라 '그 산출물의 답은 안 바꿈 — 관찰 중' 문단과 맨 위 주의까지 붙어 설계도를
     만들라는 일과 부딪혔다."""
     ctx = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],
+           "page_audits": {URL: _audit(title="서울 세무사 추천 — 비용과 고르는 법",
+                                       h1_json='["서울 세무사 추천"]')},
            "page_works": {URL: [{"day": "2026-09-28", "label": "클릭률 미달", "kind": "ctr_gap",
                                  "target": "서울 세무사 추천", "opp_id": 9}]},
-           "holds": [{"page": URL, "until": "2026-10-26", "since": "2026-09-28"}]}
+           "holds": [{"page": URL, "until": "2026-10-26", "since": "2026-09-28"}],
+           "serp_top": {"서울 세무사 추천": [{"position": 1, "title": "남의 글", "url": "https://r.example/1"}]},
+           "serp_outlines": {"https://r.example/1": {"h2": ["비용", "고르는 법"], "words": 900,
+                                                     "tables": 1, "lists": 2, "images": 3, "videos": 0}}}
     b = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")
     body = b["body"]
     assert "새 글이 색인되고" not in body, body
+    # 맨 위 세 줄과 상위 글 H2 절도 '새 글'을 말하지 않는다 — 일은 틀 한 벌이다
+    summ = body.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
+    assert "- 일: 템플릿 설계 — 틀 '{X} 세무사 추천'" in summ and "새 글" not in summ, summ
+    assert "허브 페이지에 더할 링크 목록" in summ, summ        # 잘려서 '기존 페이지를 만들라'로 안 읽힌다
+    assert "새 글" not in body and brief.SERP_OUTLINE_HEAD in body and "상위 글의 형식" in body, body
     goal = body.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
     assert "허브" in goal and URL in goal, goal
     tgt = body.split("## 대상")[1].split("\n## ")[0]
@@ -351,8 +361,11 @@ def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
     # 관찰 중은 허브에 링크를 거는 때만 정한다 — 설계도까지 막지 않는다
     assert "2026-10-26" in tgt and brief.HOLD_MARK in tgt, tgt
     assert "그 산출물의 답" not in body and "주의: 이 페이지는" not in body, body
+    # 허브 페이지의 작업 이력은 그대로 싣는다 — 빼라는 것은 관찰 중 문단('그 산출물의 답')뿐이다
+    work = body.split(brief.WORK_HEAD)[1].split("\n## ")[0]
+    assert "2026-09-28 · [클릭률 미달] 서울 세무사 추천 (기회 #9)" in work, work
     want = body.split("## 만들어 줄 것")[1]
-    assert "허브로 쓸 기존 페이지" in want and "허브 페이지 구성" not in want, want
+    assert "허브 페이지에 더할 링크 목록" in want and "허브 페이지 구성" not in want, want
     # 처방의 '허브 페이지를 만들어'(종류 한 벌)가 허브 줄과 부딪히지 않게 못 박는다
     acts = body.split("## 이 상황에서 할 일")[1].split("\n## ")[0]
     assert "'허브 페이지를 만들어'는 이 요청문에서는 새로 짓지 않습니다" in acts, acts
@@ -362,6 +375,35 @@ def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
     g2 = nb.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
     assert "새 글이 색인되고" not in g2 and "바뀌는 값의 검색어 3개" in g2, g2
     assert "허브 페이지 구성" in nb.split("## 만들어 줄 것")[1], nb
+
+
+def _no_hub(body: str) -> None:
+    """허브 줄·허브 목표·허브 산출물이 하나도 안 섰다 — 허브는 새로 짓는다(처방 그대로)."""
+    assert "- 허브로 쓸 페이지: " not in body and "허브는 이미" not in body, body
+    assert "새로 짓지 않습니다" not in body, body
+    want = body.split("## 만들어 줄 것")[1]
+    assert "허브 페이지 구성" in want and "허브 페이지에 더할" not in want, want
+
+
+def test_pseo_hub_must_be_the_seeds_own_page():
+    """허브로 쓰는 것은 씨앗의 전용 페이지뿐이다 — 홈이나 다른 주제의 페이지에 스친 것이면 허브를
+    새로 짓는다. 무리를 못 찾은 요청문(PSEO_LOST — 확인하고 멈춘다)에는 허브 이야기가 없다."""
+    home = "https://me.example/"
+    hb = brief.build(_opp("pseo_pattern", "서울 세무사 추천"),
+                     {"query_pages": {"서울 세무사 추천": _pages(home)},
+                      "pseo_groups": [_pseo_group(seed_page=home)]}, "ko-KR")["body"]
+    _no_hub(hb)
+    assert f"{home} 는 홈이라 허브로 쓰지 않습니다" in hb.split("## 대상")[1].split("\n## ")[0], hb
+    other = {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()],
+             "page_audits": {URL: _audit(title="강남 맛집 모음", h1_json='["강남 맛집"]')}}
+    ob = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), other, "ko-KR")["body"]
+    _no_hub(ob)
+    assert "씨앗 검색어를 다루는 전용 페이지가 아니라" in ob, ob
+    lost = brief.build(_opp("pseo_pattern", "전혀 다른 것"),
+                       {"query_pages": {"전혀 다른 것": _pages(URL)}, "pseo_groups": [_pseo_group()]},
+                       "ko-KR")["body"]
+    assert brief.PSEO_LOST in lost, lost
+    _no_hub(lost)
 
 
 def test_backlink_and_crawl_rows_become_tables():
