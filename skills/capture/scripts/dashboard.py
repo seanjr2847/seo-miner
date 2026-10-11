@@ -1109,9 +1109,15 @@ def _axis_backlinks(conn, pid: int) -> dict:
                          (pid, bl_date))
         bl_trend = q(conn, "SELECT checked_date d, referring_domains rd, backlinks bl"
                            " FROM backlink_summary WHERE project_id=? ORDER BY 1", (pid,))
+    # 우리 이름을 말한 남의 페이지 — 이미 링크한 곳(linked=1)도 싣는다: 화면은 "언급 n곳 중
+    # 링크 없는 곳 m곳"을 말하고, 요청문은 linked=0 만 근거로 쓴다.
+    bl_mentions = q(conn, "SELECT * FROM brand_mentions WHERE project_id=? AND checked_date=("
+                          "SELECT MAX(checked_date) FROM brand_mentions WHERE project_id=?)"
+                          " ORDER BY linked IS NULL, linked, rank IS NULL, rank DESC, url LIMIT 200",
+                    (pid, pid))
     return {"bl_date": bl_date, "bl_summary": bl_summary, "bl_domains": bl_domains,
             "bl_links": bl_links, "bl_anchors": bl_anchors, "bl_intersect": bl_intersect,
-            "bl_trend": bl_trend}
+            "bl_trend": bl_trend, "bl_mentions": bl_mentions}
 
 
 def _axis_competitors(conn, pid: int) -> dict:

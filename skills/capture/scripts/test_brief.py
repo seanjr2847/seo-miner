@@ -82,6 +82,30 @@ def test_outreach_has_no_page_state():
     assert "길이 기준" not in t                     # title 길이는 연락문과 무관하다
 
 
+def test_mention_asks_for_the_link_and_quotes_where_we_were_named():
+    """링크 없는 언급은 연락(outreach) 꼴이 아니다 — 그 꼬리는 "링크 부탁드립니다류를 쓰지
+    않는다"인데, 우리 이름을 이미 쓴 곳에 할 말이 바로 그 이름에 링크 하나다. 머리말과 규칙이
+    한 갈래로 읽혀야 하고, 근거는 이름이 나온 문장과 그 페이지를 준다(이미 링크한 줄은 뺀다)."""
+    ctx = {"bl_mentions": [
+        {"domain": "www.news.example", "url": "https://www.news.example/a", "alias": "디아더 피부과",
+         "title": "포럼 성료", "snippet": "왼쪽부터 디아더 피부과 이승주 대표원장", "rank": 752,
+         "published": "2026-04-02", "lang": "ko", "linked": 0},
+        {"domain": "www.news.example", "url": "https://www.news.example/old", "alias": "x",
+         "title": "이미 링크한 기사", "snippet": "", "rank": 752, "linked": 1}]}
+    t = brief.text(_opp("backlink_mention", "www.news.example"), ctx, "ko-KR")
+    assert brief.shape_of("backlink_mention") == "mention"
+    assert t.startswith(brief.SHAPES["mention"]["intro"]), t[:200]
+    assert "연락할 도메인 (우리 이름을 쓴 곳): www.news.example" in t
+    assert "https://www.news.example/a — 포럼 성료 (2026-04-02 · ko)" in t
+    assert "찾은 이름 '디아더 피부과': \"왼쪽부터 디아더 피부과 이승주 대표원장\"" in t
+    assert "이미 링크한 기사" not in t
+    # 연락 꼴의 '링크를 달라고 하지 말라'가 실리면 머리말과 규칙이 부딪친다
+    assert "'링크 부탁드립니다'류 문장을 쓰지 않습니다" not in t
+    assert "링크 하나" in t and "80단어" in t
+    assert "지금 이 페이지 상태" not in t and "길이 기준" not in t
+    assert "연락할 사이트의 언어" in t
+
+
 def test_consolidate_lists_every_page_and_skips_advice():
     audits = {URL: _audit(), URL2: _audit(url=URL2, title="다른 제목", h1_json='["다른"]')}
     ctx = {"query_pages": {"검색어": _pages(URL, URL2)}, "page_audits": audits}

@@ -48,7 +48,7 @@ import serp_adapter
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
 # test_seams 가 대조한다.
 SHAPE_NAMES = ("fix_page", "split_page", "new_content", "template", "consolidate", "technical",
-               "outreach", "presence")
+               "outreach", "mention", "presence")
 
 # 숫자만 보고 제안하는 것을 막는 규칙 — 상수로 두는 이유는 검사가 어느 꼴에 실렸는지
 # 대조하기 때문이다. 요청문의 표는 출발점이지 페이지를 읽은 것이 아니다.
@@ -328,6 +328,29 @@ SHAPES: dict[str, dict] = {
                "한 통에 부탁 하나. 여러 페이지를 한꺼번에 밀지 않습니다."],
         graph="",
         slot="", limits=False),
+    # 연락(outreach)의 머리말·규칙은 "링크를 달라고 하지 말고 빠진 것을 채워 준다고 하라"다 —
+    # 우리를 모르는 곳에는 맞다. 이미 우리 이름을 쓴 곳에는 틀린다: 할 말이 바로 "그 이름에
+    # 링크 하나"이고, 그걸 금지한 꼬리로는 연락문이 빙빙 돈다. 그래서 꼴을 따로 둔다.
+    "mention": dict(
+        label="언급에 링크 걸기",
+        intro="아래 사이트는 이미 우리 이름을 글에 썼는데 링크는 걸지 않았습니다. 그 이름에 "
+              "우리 페이지 링크를 하나 걸어 달라는 짧은 연락문을 만들어 주세요.",
+        form=["우리 이름이 나온 문장: 아래 근거의 발췌를 그대로 옮기고, 페이지를 열어 앞뒤 "
+              "맥락을 한 줄로. 열 수 없으면 [글 확인] 이라 씁니다.",
+              "그 이름에 걸 우리 페이지 하나와 고른 이유 한 줄. 사람 이름이면 소개 페이지, "
+              "서비스·제품 이름이면 그 페이지, 상호뿐이면 홈입니다.",
+              "연락할 곳: 기사면 기자·편집부, 블로그면 글쓴이. 찾는 방법까지 적고, 못 찾으면 "
+              "[연락처 확인].",
+              "연락문: 제목 한 줄 + 본문 80단어 이내. 대상 언어로 씁니다. 보내는 사람은 "
+              "[이름], 우리 페이지는 [URL] 자리로 둡니다."],
+        rules=["고마움 한 줄 + 링크 부탁 하나로 끝냅니다. 다른 페이지·다른 부탁을 붙이지 "
+               "않습니다.",
+               "그쪽 글의 내용을 고쳐 달라고 하지 않습니다. 사실이 틀렸을 때만 그것을 먼저 "
+               "짚고, 그때도 고칠 문장 하나만.",
+               "링크를 걸어야 할 의무가 있는 것처럼 쓰지 않습니다. 거절해도 되는 부탁입니다.",
+               "우리 페이지에 없는 것을 있다고 하지 않습니다."],
+        graph="",
+        slot="", limits=False),
     # 챗봇이 내 사이트 대신 제3자 플랫폼(커뮤니티·위키·영상·리뷰)을 인용할 때. 그때
     # "내 페이지를 고쳐라"는 틀린 처방이다 — 인용되는 자리가 내 사이트 밖에 있다.
     # 연락(outreach)과도 다르다: 남에게 링크를 부탁하는 게 아니라 우리가 그 자리에
@@ -360,6 +383,8 @@ SHAPES: dict[str, dict] = {
         slot="", limits=False),
 }
 assert tuple(SHAPES) == SHAPE_NAMES
+# 남의 사이트에 보내는 연락문 꼴 — 고칠 우리 페이지가 없어 페이지 언어·길이 줄을 세우지 않는다.
+OFFSITE_SHAPES = ("outreach", "mention")
 
 # ── 답의 형식: 자립형 HTML 리포트 한 장 ──────────────────────────────────────
 # 꼴(SHAPE_NAMES)이 여기서 전부 같은 글을 쓴다 — 그래서 한 벌만 둔다. tails() 가 꼴마다 세
@@ -478,6 +503,7 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
     "backlink_broken": "consolidate",
     "backlink_prospect": "outreach",
     "ai_bot_blocked": "technical",
+    "backlink_mention": "mention",
 }
 assert set(KIND_SHAPE) == set(scoring.ALL_KINDS)
 
@@ -690,7 +716,7 @@ def site_lang_line(shape: str, locale: str, titles: bool = False) -> str:
     30자 꼬리가 한 요청문에 나란히 섰다. 이제 언어·길이는 늘 '대상'의 줄 하나가 말하고
     꼬리는 그 줄을 가리키기만 한다. 화면의 폴백 요청문도 이 문장을 받는다(BRIEF.lang_line)."""
     lang = lang_label(locale)
-    if shape == "outreach":
+    if shape in OFFSITE_SHAPES:
         return f"- 산출물 언어: 연락할 사이트의 언어(모르면 사이트 기본 {lang}, {locale})."
     return (f"- 산출물 언어: {lang} ({locale}, 사이트 기본)"
             + (f". 길이 기준은 {_limits_line(locale)}." if SHAPES[shape]["limits"] or titles
@@ -734,10 +760,12 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
             f"않습니다. {limits}정하지 못하면 [확인 필요]."]
 
 
-PRODUCT_NOUN = {"outreach": "연락문", "presence": "게시·답변 문안", "template": "틀의 title·H1"}
+PRODUCT_NOUN = {"outreach": "연락문", "mention": "연락문", "presence": "게시·답변 문안",
+                "template": "틀의 title·H1"}
 # 그 꼴이 실제로 내놓는 산출물의 **예** — 꼬리가 없는 산출물 이름을 부르지 않게.
 # 문안을 만드는 꼴만 title·meta 를 갖는다(SHAPES[...]['limits'] 와 같은 갈래다).
 PRODUCT_EXAMPLES = {"outreach": "연락문 제목·본문",
+                    "mention": "연락문 제목·본문",
                     "presence": "게시·답변 문안",
                     "template": "title·H1 틀과 견본·주소 꼴",
                     "technical": "코드·설정 값",
@@ -2716,6 +2744,25 @@ def _ev_bl_prospect(o, ctx, pages):
     return L
 
 
+def _ev_bl_mention(o, ctx, pages):
+    rows = [r for r in (ctx.get("bl_mentions") or [])
+            if str(r.get("domain") or "").lower() == str(o["target"]).lower()
+            and r.get("linked") == 0]
+    if not rows:
+        return []
+    L = [f"- 도메인 지수 {_n(rows[0].get('rank'))} · 우리 이름을 말한 페이지 {len(rows)}곳 · "
+         "우리에게 링크한 적 없음(백링크 수집으로 확인)"]
+    for r in rows[:5]:
+        meta = " · ".join(x for x in (str(r.get("published") or ""), str(r.get("lang") or "")) if x)
+        L.append(f"- {r['url']}" + (f" — {_ext(r.get('title'), 80)}" if r.get("title") else "")
+                 + (f" ({meta})" if meta else ""))
+        if r.get("snippet"):
+            L.append(f"  - 찾은 이름 '{r.get('alias')}': \"{_ext(r['snippet'], 220)}\"")
+    if len(rows) > 5:
+        L.append(f"- 그 밖에 {len(rows) - 5}곳 — 한 통에는 대표 페이지 하나만 짚습니다.")
+    return L
+
+
 def _llms_lines(ctx) -> list[str]:
     """/llms.txt 한 줄 — 모르면(None) 아무 말도 안 한다. 없다고 짐작하지 않는다.
 
@@ -2857,7 +2904,7 @@ EVIDENCE: dict[str, Callable] = {
     "index_blocked": _ev_index, "coverage": _ev_coverage, "ai_citation_gap": _ev_ai,
     "aio_exposure": _ev_aio, "content_gap": _ev_content_gap, "crawl_issue": _ev_crawl,
     "backlink_broken": _ev_bl_broken, "backlink_prospect": _ev_bl_prospect,
-    "ai_bot_blocked": _ev_ai_bot,
+    "ai_bot_blocked": _ev_ai_bot, "backlink_mention": _ev_bl_mention,
 }
 assert set(EVIDENCE) == set(scoring.ALL_KINDS)
 
@@ -2866,7 +2913,8 @@ assert set(EVIDENCE) == set(scoring.ALL_KINDS)
 _TARGET_NOUN = {
     "ai_citation_gap": "질문 (챗봇에 실제로 물은 문장)",
     "index_blocked": "주소", "crawl_issue": "주소", "intent_split": "페이지 (두 의도를 떠안은 곳)", "backlink_broken": "깨진 주소 (링크가 향하는 곳)",
-    "backlink_prospect": "연락할 도메인", "coverage": "주제 (추적 키워드 묶음)",
+    "backlink_prospect": "연락할 도메인", "backlink_mention": "연락할 도메인 (우리 이름을 쓴 곳)",
+    "coverage": "주제 (추적 키워드 묶음)",
     "ai_bot_blocked": "막힌 AI 크롤러 (robots.txt 의 User-agent)",
 }
 
@@ -3670,6 +3718,9 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
         return "이 주소로 들어오던 링크가 301 을 거쳐 살아 있는 페이지에 닿는 것(직접 열어 확인)."
     if kind == "backlink_prospect":
         return "이 도메인에서 우리 페이지로 링크 하나. 연락문을 보내는 것까지가 이번 일입니다."
+    if kind == "backlink_mention":
+        return ("우리 이름이 나온 그 자리에 우리 페이지 링크 하나. 연락문을 보내는 것까지가 이번 "
+                "일입니다.")
     if kind == "pseo_pattern":
         # 일은 글 한 장이 아니라 틀이다 — '새 글이 색인되고 이 검색어로'는 씨앗 한 장의 목표였고,
         # 씨앗에 이미 걸린 페이지가 있으면(theotherskin 9건 전부) 그 말 자체가 틀렸다.
@@ -3722,7 +3773,7 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
         if o["kind"] in ("index_blocked", "crawl_issue", "ai_bot_blocked", "backlink_broken"):
             L.append("- 언제 볼지: 적용한 날 직접 확인(주소를 열어·robots.txt 를 열어·URL 검사로), "
                      "그다음 크롤·색인 확인에서 한 번 더.")
-        elif o["kind"] == "backlink_prospect":
+        elif o["kind"] in ("backlink_prospect", "backlink_mention"):
             L.append(f"- 언제 볼지: 연락 뒤 {first}주 — 답이 없으면 한 번만 다시 묻고 접습니다.")
         else:
             L.append(f"- 언제 볼지: 적용 뒤 구글이 다시 읽어 가고 실적(기간 평균)이 따라와야 "
@@ -3868,9 +3919,10 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
              or INTRO_BY_KIND.get(kind) or s["intro"])
     L = [intro, ""]
     titles = any("title" in str(d) for d in play.get("deliver") or [])
-    lang_line = _page_lang_lines(audit, url, locale, shape, titles) if shape != "outreach" else []
+    lang_line = (_page_lang_lines(audit, url, locale, shape, titles)
+                 if shape not in OFFSITE_SHAPES else [])
     # 페이지에서 못 읽었으면 검색어를 조회한 지역에서 읽는다 — 새 글 꼴에는 페이지가 없다.
-    if not lang_line and not url and shape != "outreach":
+    if not lang_line and not url and shape not in OFFSITE_SHAPES:
         lang_line = _target_lang_lines(o, ctx, locale, shape)
     if not lang_line and locale is not None:     # 사이트와 같은 언어 — 그래도 한 줄은 선다
         lang_line = [site_lang_line(shape, locale, titles)]
@@ -4195,6 +4247,7 @@ def _selfcheck() -> None:
     assert shape_of("ai_citation_gap", gap_kind="sites", has_page=True) == "fix_page"
     assert shape_of("ai_citation_gap", gap_kind="press", has_page=True) == "presence"
     assert shape_of("backlink_prospect") == "outreach"
+    assert shape_of("backlink_mention") == "mention"
     # AI 요약은 band 를 한 번 더 본다 — 1페이지 안인데 주소를 모르는 것은 "지면이 없다"가
     # 아니다. 새 글로 보내면 이미 순위가 있는 우리 지면과 검색어를 나눠 갖는다.
     assert shape_of("aio_exposure", has_page=True, band="page1") == "fix_page"

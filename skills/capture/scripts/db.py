@@ -493,6 +493,22 @@ CREATE TABLE IF NOT EXISTS link_intersect (   -- 경쟁사는 링크를 받는�
   we_have INTEGER DEFAULT 0,                  -- 우리도 받고 있으면 1 (제안에서 뺀다)
   UNIQUE(project_id, checked_date, domain)
 );
+CREATE TABLE IF NOT EXISTS brand_mentions (   -- 우리 이름을 말한 남의 페이지 (collect_backlinks)
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  url TEXT NOT NULL,
+  domain TEXT,
+  alias TEXT,                                 -- 어느 별칭으로 찾았나
+  title TEXT,
+  snippet TEXT,                               -- 별칭 앞뒤 발췌
+  rank INTEGER,                               -- 그 도메인의 지수 (0~1000)
+  published TEXT,
+  lang TEXT,
+  linked INTEGER,                             -- 1 이미 링크함 · 0 안 함 · NULL 확인 못 함
+  UNIQUE(project_id, checked_date, url)
+);
+CREATE INDEX IF NOT EXISTS idx_mentions ON brand_mentions(project_id, checked_date);
 
 -- ── 경쟁 분석 (collect_gap.py) ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS competitor_metrics (  -- 도메인별 유기 규모 = 트래픽 몫의 재료

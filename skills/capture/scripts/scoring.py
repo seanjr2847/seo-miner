@@ -174,7 +174,7 @@ ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "intent_split",
              "rank_decay", "pseo_pattern", "device_gap", "index_blocked", "coverage",
              "ai_citation_gap", "aio_exposure", "content_gap",
              "crawl_issue", "backlink_broken", "backlink_prospect",
-             "ai_bot_blocked")
+             "ai_bot_blocked", "backlink_mention")
 # 심사(검색어 판정)를 거치는 종류 — 대상이 검색어·질문문인 것. 나머지(coverage 의
 # cluster:, index_blocked·crawl_issue 의 URL, backlink_* 의 도메인)는 판정 없이
 # 기회 목록에 바로 선다. 조회(db)·화면·검사가 이 한 벌을 가리킨다.
@@ -4161,6 +4161,7 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
 _LATEST_KG = "SELECT MAX(checked_date) FROM keyword_gap WHERE project_id=?"
 _LATEST_BL = "SELECT MAX(checked_date) FROM backlinks WHERE project_id=?"
 _LATEST_LI = "SELECT MAX(checked_date) FROM link_intersect WHERE project_id=?"
+_LATEST_MN = "SELECT MAX(checked_date) FROM brand_mentions WHERE project_id=?"
 
 
 # ── AI 질문의 측정 상태 ─────────────────────────────────────────────────────
@@ -4752,6 +4753,29 @@ def backlink_gaps(conn: sqlite3.Connection, project_id: int, *,
     return broken, prospects
 
 
+def brand_mention_gaps(conn: sqlite3.Connection, project_id: int, *,
+                       limit: int = 15) -> list[dict]:
+    """우리 이름을 말했는데 링크는 없는 도메인 — 도메인당 한 줄, 지수 높은 곳부터.
+
+    linked 가 NULL(확인 못 함)인 줄은 올리지 않는다 — 이미 링크한 곳에 링크를 달라는
+    연락이 나간다. 한 도메인이 여러 페이지에서 말했으면 지수가 가장 높은 페이지가 대표고
+    나머지는 pages 로 센다(요청문 근거가 전부 보여 준다).
+    """
+    d = _latest(conn, _LATEST_MN, (project_id,))
+    if not d:
+        return []
+    out: dict[str, dict] = {}
+    for r in conn.execute(
+            """SELECT domain, url, alias, title, snippet, rank, published, lang
+                 FROM brand_mentions WHERE project_id=? AND checked_date=? AND linked=0
+             ORDER BY rank IS NULL, rank DESC, url""", (project_id, d)):
+        if r["domain"] in out:
+            out[r["domain"]]["pages"] += 1
+        else:
+            out[r["domain"]] = {**dict(r), "pages": 1}
+    return list(out.values())[:limit]
+
+
 def value_mult(metrics: dict) -> float:
     """GA4 전환 신호로 raw 점수를 보정하는 승수 — score() 가 raw *= 로 곱한다.
 
@@ -4888,6 +4912,15 @@ def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
     s = f"경쟁사 {r['hits']}곳이 여기서 링크를 받는데 나는 못 받았습니다"
     if tg:
         s += f". 링크가 걸린 곳: {', '.join(tg)}"
+    if r["rank"]:
+        s += f" (도메인 지수 {r['rank']})"
+    return s
+
+
+def _reason_backlink_mention(r: dict, ctx: dict) -> str:
+    s = f"이 사이트가 우리 이름('{r['alias']}')을 말했는데 우리에게 링크하지 않습니다"
+    if r["pages"] > 1:
+        s += f" — 그런 페이지가 {r['pages']}곳"
     if r["rank"]:
         s += f" (도메인 지수 {r['rank']})"
     return s
@@ -5485,6 +5518,29 @@ _KIND_SPECS = {
                   "받을 만한 페이지가 우리에게 없으면 먼저 그것부터 만듭니다."],
             deliver=["이 도메인에 보낼 연락문 한 벌. 경쟁사가 링크된 그 글을 짚어서",
                      "그쪽이 링크할 만한 우리 페이지. 없다면 무엇을 먼저 만들지"])),
+    # 경쟁사만 받는 링크(backlink_prospect)보다 문이 더 열려 있다 — 그쪽은 이미 우리를 안다.
+    # 그래서 '빠진 것을 채워 준다'는 제안이 아니라 '말한 그 이름에 링크 하나'를 부탁하는 일이고,
+    # 요청문 꼴도 따로다(brief 의 mention). fit 은 0.8 — 우리 이름을 말한 페이지라 관련성은
+    # 이미 확인됐다(_fit_of 는 도메인 이름을 검색어에 맞대 거의 늘 0.5 를 준다).
+    "backlink_mention": dict(
+        see=("backlinks", "bl-mentions"),
+        label="링크 없는 언급", defensive=False,
+        detect=lambda ctx: brand_mention_gaps(ctx["conn"], ctx["pid"]),
+        metrics=lambda r, ctx: {"impressions": 0, "position": None, "fit": 0.8},
+        target=lambda r, ctx: r["domain"],
+        reasoning=_reason_backlink_mention,
+        play=dict(
+            what="이 사이트는 우리 이름을 글에 썼는데 링크는 걸지 않았습니다. 이미 우리를 아는 "
+                 "곳이라, 새로 링크를 얻는 일 중 가장 잘 됩니다.",
+            acts=["그 페이지를 열어 우리 이름이 나온 문장을 찾습니다. 사실이 틀렸으면 그것부터 "
+                  "바로잡아 달라고 합니다(링크보다 먼저).",
+                  "그 문장에 걸 우리 페이지를 하나 고릅니다. 사람 이름이면 소개 페이지, 서비스·"
+                  "제품 이름이면 그 페이지, 상호뿐이면 홈입니다.",
+                  "글쓴이·편집부 연락처를 찾습니다. 기사면 기자 이메일, 블로그면 소개란·댓글입니다.",
+                  "짧게 고맙다고 하고, 그 이름에 링크 하나를 걸어 줄 수 있는지 묻습니다. "
+                  "한 통에 부탁 하나입니다."],
+            deliver=["보낼 연락문 한 벌(제목·본문) — 우리 이름이 나온 문장을 짚어서",
+                     "그 이름에 걸 우리 페이지 주소와 고른 이유 한 줄"])),
 }
 
 # ALL_KINDS 의 순서·이름 그대로 명부를 만든다 — 이름은 위 한 곳(ALL_KINDS)에만 적혀
@@ -5777,6 +5833,24 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
     return None
 
 
+def _resolve_mention(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
+    """링크 없는 언급 → 그 도메인이 이제 우리에게 링크한다. 언급 수집이 linked=1 로 적었거나,
+    그 뒤 참조 도메인 표에 그 도메인이 섰으면(언급 페이지가 검색에서 빠져도 링크는 남는다)."""
+    r = conn.execute(
+        """SELECT checked_date FROM brand_mentions
+            WHERE project_id=? AND domain=? AND linked=1 ORDER BY checked_date DESC LIMIT 1""",
+        (pid, target)).fetchone()
+    if not (r and _after_day(r["checked_date"], since)):
+        bare = target.removeprefix("www.")
+        r = conn.execute(
+            """SELECT checked_date FROM referring_domains
+                WHERE project_id=? AND domain IN (?, ?) ORDER BY checked_date DESC LIMIT 1""",
+            (pid, bare, "www." + bare)).fetchone()
+        if not (r and _after_day(r["checked_date"], since)):
+            return None
+    return f"이제 {target} 이 우리에게 링크합니다 (백링크 {r['checked_date']} 기준)"
+
+
 def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """콘텐츠 공백 → 근거였던 도메인이 **이제 경쟁사가 아니다**(판정이 판매 채널·포털·자료로
     뺐거나, 논문·공공 자료 사이트이거나, 표에서 지웠다). 이번 적재에 다시 안 나온 기회만 여기
@@ -5961,6 +6035,7 @@ _RESOLVERS = {
     "aio_exposure": _resolve_aio,
     "rank_decay": _resolve_decay,
     "backlink_prospect": _resolve_prospect,
+    "backlink_mention": _resolve_mention,
     "ai_bot_blocked": _resolve_ai_bot,
     "content_gap": _resolve_content_gap,
     "backlink_broken": _resolve_backlink_broken,
@@ -6004,6 +6079,7 @@ RESOLVE_WHEN = {
     "rank_decay": f"다음 구글 실적에서 이 검색어의 평균 순위가 떨어지기 전 순위와 "
                   f"{abs(DECAY_POS):g}칸 안으로 돌아오면",
     "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
+    "backlink_mention": "다음 백링크 수집에서 이 도메인이 우리에게 링크를 걸었다고 나오면",
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
     # 조건절('…면')만 둔다 — 요청문이 뒤에 "이 기회는 저절로 닫힙니다"를 잇는다. "직접 [완료]"까지
     # 여기 넣었더니 "…누릅니다 이 기회는 저절로 닫힙니다."가 나갔다. 그 말은 RESOLVE_ALSO 에.

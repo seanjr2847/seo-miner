@@ -258,6 +258,9 @@ def test_load_covers_every_kind():
     conn.execute(
         "INSERT INTO link_intersect(project_id, checked_date, domain, rank, hits, targets, "
         "we_have) VALUES(?, '2026-08-18', 'authority.com', 55, 2, 'r1.com,r2.com', 0)", (pid,))
+    conn.execute(
+        "INSERT INTO brand_mentions(project_id, checked_date, url, domain, alias, rank, linked)"
+        " VALUES(?, '2026-08-18', 'https://news.com/a', 'news.com', 'Kinds', 60, 0)", (pid,))
     conn.commit()
     conn.close()
 
@@ -2264,6 +2267,45 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert again["인용된 질문"] == ("acked", None), again["인용된 질문"]     # 진행 중이던 것은 진행 중으로
     assert again["올라간 검색어"][0] == "done", "사람 쪽 완료(done)를 되열었다"
     assert again["/fixed"][0] == db.OPP_RESOLVED
+
+
+def test_brand_mention_opens_per_domain_and_closes_when_linked():
+    """링크 없는 언급 — 최신 수집의 linked=0 만, 도메인당 한 줄로 선다. 확인 못 한 것(NULL)·
+    이미 링크한 것은 안 선다(이미 링크한 곳에 링크를 달라는 연락이 나간다). 그 뒤 수집이
+    링크를 보면(언급 표의 linked=1 이든, 참조 도메인 표의 www 변형이든) 닫힌다."""
+    conn = db.connect()
+    pid = _project(conn, "mention")["id"]
+    ins = ("INSERT INTO brand_mentions(project_id, checked_date, url, domain, alias, snippet, rank,"
+           " linked) VALUES(?,?,?,?,?,?,?,?)")
+    conn.executemany(ins, [
+        (pid, "2026-08-20", "https://news.com/a", "news.com", "Mention Co", "… Mention Co 대표 …", 700, 0),
+        (pid, "2026-08-20", "https://news.com/b", "news.com", "Mention Co", "", 700, 0),
+        (pid, "2026-08-20", "https://linked.com/p", "linked.com", "Mention Co", "", 650, 1),
+        (pid, "2026-08-20", "https://unknown.com/p", "unknown.com", "Mention Co", "", 640, None),
+        (pid, "2026-08-20", "https://came.com/p", "came.com", "Mention Co", "", 300, 1),
+        (pid, "2026-08-01", "https://stale.com/p", "stale.com", "Mention Co", "", 900, 0),
+    ])
+    conn.execute("INSERT INTO referring_domains(project_id, checked_date, domain, rank)"
+                 " VALUES(?, '2026-08-20', 'www.via-rd.com', 100)", (pid,))
+    conn.commit()
+    k = lambda t: {"kind": "backlink_mention", "target": t, "score": 10}
+    _opps_at_base(conn, pid, [k("came.com"), k("via-rd.com"), k("quiet.com")])
+    conn.close()
+
+    scoring.load("mention")
+
+    conn = db.connect()
+    st = {t: r for (kind, t), r in _states(conn, pid).items() if kind == "backlink_mention"}
+    for t, why in conn.execute("SELECT target, reasoning FROM opportunities WHERE project_id=?"
+                               " AND kind='backlink_mention'", (pid,)):
+        st[t]["reasoning"] = why
+    conn.close()
+    open_now = {t for t, r in st.items() if r["status"] not in (db.OPP_RESOLVED, "done", "dismissed")}
+    assert open_now == {"news.com", "quiet.com"}, st     # quiet.com: 링크했다는 증거가 없다 — 그대로
+    assert "페이지가 2곳" in st["news.com"]["reasoning"] and "Mention Co" in st["news.com"]["reasoning"], \
+        st["news.com"]["reasoning"]
+    for t in ("came.com", "via-rd.com"):
+        assert st[t]["status"] == db.OPP_RESOLVED and "링크합니다" in st[t]["status_reason"], st[t]
 
 
 def test_aio_exposure_needs_our_rank_and_unranked_ones_close():

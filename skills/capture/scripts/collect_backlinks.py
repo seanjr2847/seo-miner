@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""백링크 — 요약·참조 도메인·개별 링크·앵커·Link Intersect (DataForSEO).
+"""백링크 — 요약·참조 도메인·개별 링크·앵커·Link Intersect·링크 없는 언급 (DataForSEO).
 
 백링크는 코드가 아니라 인프라다(자체 크롤러로 링크 그래프를 만드는 일). 사서 쓴다.
 여태 server/backlinks.py 가 요약과 참조 도메인만 호스팅에서 받아 왔다 — 로컬에는
 백링크 축이 아예 없었다. 단계로 내려서 두 배포가 같은 경로를 쓴다.
 
-요약만으로는 "무엇을 할지"가 안 나온다. 그래서 다섯 축을 함께 캔다:
+요약만으로는 "무엇을 할지"가 안 나온다. 그래서 여섯 축을 함께 캔다:
 
   1. /backlinks/summary/live            → backlink_summary   (프로필 한 줄)
   2. /backlinks/referring_domains/live  → referring_domains  (누가 링크를 주나)
   3. /backlinks/backlinks/live          → backlinks          (어느 페이지가 어떤 앵커로)
   4. /backlinks/anchors/live            → backlink_anchors   (앵커 분포)
   5. /backlinks/domain_intersection/live→ link_intersect     (경쟁사는 받는데 우리는 못 받는 곳)
+  6. /content_analysis/search/live      → brand_mentions     (우리 이름을 말했는데 링크는 없는 곳)
+     별칭마다 한 번 + 언급한 도메인이 이미 링크했는지 referring_domains 로 한 번 더.
 
 설계 메모:
   · 인증·타임아웃·task 오류 판정은 serp_adapter.post_dataforseo 한 곳이다.
@@ -34,7 +36,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -49,6 +53,17 @@ REQUEST_COST = 0.024        # 요청 1건 (dry-run 고지용 추정)
 ROW_COST = 0.000036         # 행 1개
 INTERSECT_MIN_RIVALS = 2    # 교집합은 둘 이상이어야 '교집합'이다
 INTERSECT_MAX_RIVALS = 5    # 그 이상은 교집합이 좁아지기만 하고 요청만 무거워진다
+
+# 링크 없는 언급 — 우리 이름을 말했는데 우리에게 링크하지 않은 남의 페이지.
+# Content Analysis 는 같은 DataForSEO 키로 사고 값도 같다(요청 $0.024 + 행 $0.000036).
+# 별칭마다 한 번, 도메인당 한 페이지. 2026-10-11 theotherskin 시험: '디아더피부과'·'디아더 피부과'·
+# '피친남'은 서울신문·supple.kr 같은 진짜 언급만 1~2건씩 왔고, '이승주'(1,141곳 — 동명이인 가수·
+# 의원·기자)·'디아더'(귀걸이 상표)·noti 의 'noti'(34만 곳)는 전부 남의 이야기였다. 그래서 둘을 거른다:
+# 더 긴 별칭의 조각인 별칭은 묻지 않고, 웹 전체 언급이 이보다 많은 별칭은 우리만의 이름이 아니다.
+MENTION_PATH = "/content_analysis/search/live"
+MENTION_LIMIT = 100
+MENTION_GENERIC_MAX = 200
+MENTION_CHECK_CHUNK = 50    # 링크 확인(referring_domains 의 domain in […]) 한 번에 넣을 도메인 수
 
 
 def intersect_rivals(conn, pid: int, target: str) -> tuple[list[str], list[str]]:
@@ -241,6 +256,114 @@ def _intersect_rows(res, pos: dict[str, str]) -> list[tuple]:
     return out
 
 
+def _fold(s) -> str:
+    """대소문자·전각·띄어쓰기를 접는다 — '디아더 피부과'와 '디아더피부과'는 같은 이름이다."""
+    return "".join(unicodedata.normalize("NFKC", str(s or "")).lower().split())
+
+
+def mention_aliases(cfg: dict) -> tuple[list[str], list[str]]:
+    """언급을 찾을 별칭 → (물을 것, 뺀 조각).
+
+    설정의 brand_aliases 만 쓴다 — 사이트 이름(projects.name)은 사람이 붙인 줄임말이라
+    ('theotherskin') 남의 글에 안 나온다. 더 긴 별칭 안에 통째로 든 별칭('디아더' ⊂
+    '디아더 피부과')은 묻지 않는다: 긴 쪽이 같은 언급을 더 정확히 찾고, 짧은 쪽은 남의
+    상표까지 끌고 온다. 접어서 같은 표기('디아더피부과'·'디아더 피부과')는 둘 다 묻는다 —
+    색인이 띄어쓰기를 따로 매겨 서로 다른 페이지를 준다.
+    """
+    raw = cfg.get("brand_aliases") or []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    seen, names = set(), []
+    for a in (str(x).strip() for x in raw):
+        if len(_fold(a)) >= 2 and a.lower() not in seen:
+            seen.add(a.lower())
+            names.append(a)
+    folded = {_fold(a) for a in names}
+    keep = [a for a in names if not any(_fold(a) in f and _fold(a) != f for f in folded)]
+    return keep, [a for a in names if a not in keep]
+
+
+def _excerpt(text: str, alias: str, width: int = 80) -> str:
+    """별칭 앞뒤 width 자 — 띄어쓰기가 달라도 찾는다. 못 찾으면 앞부분."""
+    t = " ".join(str(text or "").split())
+    pat = r"\s*".join(re.escape(c) for c in _fold(alias))
+    m = re.search(pat, unicodedata.normalize("NFKC", t), re.I)
+    if not m:
+        return t[:width * 2]
+    a, b = max(0, m.start() - width), min(len(t), m.end() + width)
+    return ("…" if a else "") + t[a:b] + ("…" if b < len(t) else "")
+
+
+def _mention_rows(res, alias: str, own: str) -> tuple[int, list[dict]]:
+    """content_analysis/search 응답 → (웹 전체 건수, 별칭이 글자 그대로 든 남의 페이지).
+
+    검색은 낱말 단위로 맞춘다 — 'the other dermatology clinic'이 낱말 넷을 따로 가진
+    페이지 3만 곳을 줬다. 제목·발췌에 별칭이 (접어서) 통째로 든 것만 남긴다.
+    """
+    r0 = (res[0] if res else {}) or {}
+    total = _int(_g(r0, "total_count")) or 0
+    own = own.lower().removeprefix("www.")
+    out = []
+    for it in _items(res):
+        ci = _g(it, "content_info", default={}) or {}
+        url = _g(it, "url")
+        dom = (_g(it, "domain") or _host(url) or "").lower()
+        if not url or not dom or dom == own or dom.endswith("." + own):
+            continue
+        text = " ".join(str(_g(ci, k) or "") for k in ("title", "main_title", "snippet"))
+        if _fold(alias) not in _fold(text):
+            continue
+        out.append({"url": url, "domain": dom,
+                    "main": str(_g(it, "main_domain") or dom).lower(),
+                    "alias": alias, "title": _g(ci, "title", "main_title"),
+                    "snippet": _excerpt(_g(ci, "snippet") or "", alias),
+                    "rank": _int(_g(it, "domain_rank")),
+                    "published": str(_g(ci, "date_published") or "")[:10] or None,
+                    "lang": _g(it, "language") or _g(ci, "language")})
+    return total, out
+
+
+def _linked_hosts(post, target: str, rows: list[dict]) -> tuple[set[str] | None, float, int]:
+    """언급한 도메인 중 이미 우리에게 링크하는 것 → (호스트들, 비용, 호출 수).
+
+    참조 도메인 표는 지수 순 limit 개만 담는다(theotherskin 439곳 중 200) — 거기 없다고
+    링크가 없는 게 아니다. 그래서 그 도메인들만 콕 집어 다시 묻는다. 실패하면 None —
+    '링크 없음'으로 적으면 이미 링크한 곳에 링크를 달라는 연락이 나간다.
+    """
+    names = sorted({v for r in rows for v in (r["domain"], r["main"], "www." + r["main"])})
+    got, cost, calls = set(), 0.0, 0
+    for i in range(0, len(names), MENTION_CHECK_CHUNK):
+        part = names[i:i + MENTION_CHECK_CHUNK]
+        try:
+            res, c = post("/backlinks/referring_domains/live",
+                          [{"target": target, "limit": len(part),
+                            "filters": [["domain", "in", part]]}])
+        except Exception as e:  # noqa: BLE001 — 링크 확인만 못 한 것이다. 언급은 남긴다
+            print(f"[backlinks] 언급 링크 확인 실패: {type(e).__name__}: {e}")
+            return None, cost, calls + 1
+        calls += 1
+        cost += float(c or 0)
+        got |= {str(_g(it, "domain") or "").lower() for it in _items(res)}
+    return got - {""}, cost, calls
+
+
+def _put_mentions(conn, pid: int, today: str, rows: list[dict], linked: set[str] | None) -> int:
+    def is_linked(r):
+        if linked is None:
+            return None
+        return int(bool({r["domain"], r["main"], "www." + r["main"]} & linked))
+    conn.executemany(
+        "INSERT INTO brand_mentions(project_id, checked_date, url, domain, alias, title,"
+        " snippet, rank, published, lang, linked) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(project_id, checked_date, url) DO UPDATE SET"
+        " domain=excluded.domain, alias=excluded.alias, title=excluded.title,"
+        " snippet=excluded.snippet, rank=excluded.rank, published=excluded.published,"
+        " lang=excluded.lang, linked=excluded.linked",
+        [(pid, today, r["url"], r["domain"], r["alias"], r["title"], r["snippet"],
+          r["rank"], r["published"], r["lang"], is_linked(r)) for r in rows])
+    return len(rows)
+
+
 def _put_intersect(conn, pid: int, today: str, res, pos: dict[str, str]) -> int:
     have = {r["domain"] for r in conn.execute(
         "SELECT domain FROM referring_domains WHERE project_id=? AND checked_date=?",
@@ -265,7 +388,7 @@ def collect(project: str, *,
             conn=None,
             post=None,
             **opts) -> collector.StageResult:
-    """백링크 다섯 축을 Brain 에 적재한다.
+    """백링크 여섯 축을 Brain 에 적재한다.
 
     Args:
         project: 사이트 이름
@@ -349,7 +472,28 @@ def collect(project: str, *,
                          f"(교집합은 {INTERSECT_MIN_RIVALS}개부터). "
                          "`/capture rank` 를 한 바퀴 돌리면 상위 도메인이 자동 적재됩니다.")
 
-        est = len(tasks) * REQUEST_COST + limit * (3 + (1 if len(tasks) == 5 else 0)) * ROW_COST
+        # 링크 없는 언급 — 별칭마다 한 번 산다. 적재는 받은 것을 모아 둘 뿐이고, 거르기·링크
+        # 확인·기록은 다 받은 뒤 한 번에 한다(웹 전체 건수를 봐야 별칭을 버릴지 정한다).
+        found: dict[str, tuple[int, list[dict]]] = {}
+        aliases, fragments = mention_aliases(st.cfg or {}) if limit > 0 else ([], [])
+
+        def _stash(alias):
+            def put(conn, pid, today, res):
+                found[alias] = _mention_rows(res, alias, target)
+                return 0
+            return put
+        tasks += [("mentions", MENTION_PATH,
+                   [{"keyword": a, "search_mode": "one_per_domain", "limit": MENTION_LIMIT}],
+                   _stash(a)) for a in aliases]
+        if limit > 0 and not aliases:
+            notes.append("링크 없는 언급 생략 — 설정에 브랜드 별칭이 없습니다(설정 → 브랜드 별칭)")
+        if fragments:
+            notes.append(f"언급 찾기에서 뺀 별칭 {', '.join(fragments)} — 더 긴 별칭의 조각입니다")
+
+        n_ix = sum(1 for t in tasks if t[0] == "intersect")
+        est = (len(tasks) * REQUEST_COST
+               + limit * (3 + n_ix) * ROW_COST + len(aliases) * MENTION_LIMIT * ROW_COST
+               + (REQUEST_COST if aliases else 0))
         print(f"[backlinks] project={p['name']} target={target} limit={limit} "
               f"calls={len(tasks)} rivals={len(rivals)} est_cost≈${est:.3f}")
         for n in notes:
@@ -367,6 +511,24 @@ def collect(project: str, *,
                 st, tasks, lambda t: post(t[1], t[2]),
                 lambda t, got: _bump(t[0], t[3](conn, pid, today, got[0]), got[1]),
                 workers=fanout.LIMITS["dataforseo"], label=lambda t: t[0])
+            if found:
+                generic = [a for a, (total, _) in found.items() if total > MENTION_GENERIC_MAX]
+                if generic:
+                    notes.append("언급 찾기에서 뺀 별칭 " + ", ".join(
+                        f"{a}({found[a][0]:,}곳)" for a in generic)
+                        + f" — 웹에 {MENTION_GENERIC_MAX}곳 넘게 나와 우리만 가리키는 이름이 "
+                          "아닙니다. 더 구체적인 표기를 별칭에 넣으면 그걸로 찾습니다")
+                best: dict[str, dict] = {}
+                for a, (_, got) in found.items():
+                    if a not in generic:
+                        for m in got:
+                            best.setdefault(m["url"], m)
+                ms = list(best.values())
+                linked, c, n = _linked_hosts(post, target, ms) if ms else (set(), 0.0, 0)
+                r.api_calls = (r.api_calls or 0) + n
+                if linked is None:
+                    notes.append("언급한 곳이 이미 링크했는지 확인하지 못했습니다 — 다음 수집에서 다시 봅니다")
+                _bump("mentions", _put_mentions(conn, pid, today, ms, linked), c)
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
                        + f" {st.err_note}"
@@ -433,6 +595,35 @@ def _fake_post(calls: list):
                      "referring_main_domains": 51, "broken_backlinks": 3,
                      "info": {"referring_links_attributes": {"dofollow": 300,
                                                              "nofollow": 40}}}], 0.024
+        if path.endswith("/referring_domains/live") and body[0].get("filters"):
+            # 링크 확인 — 물은 도메인 중 우리에게 링크하는 것만 돌려준다
+            ask = body[0]["filters"][0][2]
+            return [{"items": [{"domain": d} for d in ask if d in ("linked.com",)]}], 0.024
+        if path.endswith("/content_analysis/search/live"):
+            kw = body[0]["keyword"]
+            ci = lambda title, snip: {"title": title, "snippet": snip,
+                                      "date_published": "2026-04-02 05:01:15 +00:00"}
+            if kw == "이승주":        # 동명이인이 천 곳 — 별칭째 버린다
+                return [{"total_count": 1141, "items": [
+                    {"url": "https://singer.com/a", "domain": "singer.com",
+                     "content_info": ci("이승주 신곡", "가수 이승주가")}]}], 0.0276
+            if kw == "디아더 피부과":
+                return [{"total_count": 4, "items": [
+                    {"url": "https://www.news.com/a", "domain": "www.news.com",
+                     "main_domain": "news.com", "domain_rank": 752, "language": "ko",
+                     "content_info": ci("포럼 성료", "왼쪽부터 디아더 피부과 이승주 대표원장, 아벤느")},
+                    {"url": "https://linked.com/p", "domain": "linked.com",
+                     "content_info": ci("디아더피부과 후기", "후기")},
+                    {"url": "https://bt.com/blog", "domain": "bt.com",     # 우리 사이트 — 뺀다
+                     "content_info": ci("디아더 피부과", "")},
+                    {"url": "https://words.com/x", "domain": "words.com",  # 낱말만 따로 — 뺀다
+                     "content_info": ci("디아더 컬러 귀걸이", "피부과 추천")},
+                ]}], 0.0241
+            if kw == "디아더피부과":
+                return [{"total_count": 1, "items": [
+                    {"url": "https://www.news.com/a", "domain": "www.news.com",
+                     "content_info": ci("포럼", "디아더피부과")}]}], 0.024
+            raise AssertionError(f"묻지 말아야 할 별칭을 물었다: {kw}")
         if path.endswith("/referring_domains/live"):
             return [{"items": [
                 {"domain": "Shared.com", "rank": 90, "backlinks": 5, "dofollow": 4,
@@ -660,6 +851,43 @@ def _selfcheck() -> None:
     assert li["shared.com"]["we_have"] == 1, "교집합이 참조 도메인보다 먼저 적혔다"
     assert 1 < live["peak"] <= fanout.LIMITS["dataforseo"], f"동시 상한: peak={live['peak']}"
     assert threading.get_ident() not in on, "post 가 메인 스레드에서 돌았다"
+
+    # 9. 링크 없는 언급 — 조각 별칭은 안 묻고, 흔한 이름은 버리고, 글자 그대로 든 남의
+    #    페이지만 남기고, 이미 링크한 곳은 linked=1 로 적는다.
+    assert mention_aliases({"brand_aliases": "디아더, 디아더 피부과,디아더피부과, x"}) == (
+        ["디아더 피부과", "디아더피부과"], ["디아더"]), "조각·한 글자 별칭 거르기"
+    db.set_project_settings(conn, pid, {"brand_aliases": [
+        "디아더", "디아더 피부과", "디아더피부과", "이승주"]})
+    conn.commit()
+    calls = []
+    res = collect("bt", conn=conn, post=_fake_post(calls), max_age=0)
+    assert res.ok and not res.partial, res
+    asked = sorted(b["keyword"] for p, b in calls if p.endswith("/content_analysis/search/live"))
+    assert asked == ["디아더 피부과", "디아더피부과", "이승주"], asked
+    check = [b for p, b in calls if b.get("filters")]
+    assert len(check) == 1 and "www.news.com" in check[0]["filters"][0][2], check
+    ms = {r["domain"]: r for r in rows("brand_mentions")}
+    assert set(ms) == {"www.news.com", "linked.com"}, ms
+    assert ms["www.news.com"]["linked"] == 0 and ms["linked.com"]["linked"] == 1, ms
+    assert ms["www.news.com"]["rank"] == 752 and ms["www.news.com"]["published"] == "2026-04-02"
+    assert "디아더 피부과 이승주" in ms["www.news.com"]["snippet"], ms
+    note = conn.execute("SELECT notes, api_calls FROM runs WHERE kind='backlinks'"
+                        " ORDER BY id DESC LIMIT 1").fetchone()
+    assert "이승주(1,141곳)" in note["notes"] and "디아더 — 더 긴 별칭의 조각" in note["notes"], note[0]
+    assert "mentions=2" in note["notes"] and note["api_calls"] == len(calls), dict(note)
+
+    # 링크 확인이 실패하면 '안 함'이 아니라 '모름'(NULL)이다 — 안 그러면 이미 링크한 곳에
+    # 링크를 달라는 연락이 나간다.
+    conn.execute("DELETE FROM brand_mentions")
+    conn.commit()
+    base = _fake_post([])
+
+    def no_check(path, body):
+        if body[0].get("filters"):
+            raise RuntimeError("500")
+        return base(path, body)
+    collect("bt", conn=conn, post=no_check, max_age=0)
+    assert {r["linked"] for r in rows("brand_mentions")} == {None}, rows("brand_mentions")
     conn.close()
     print("collect_backlinks self-check ok")
 

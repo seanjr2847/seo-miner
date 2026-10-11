@@ -7,7 +7,7 @@
      여기 한 벌이면 로컬·호스팅·박제본이 전부 같은 것을 본다. -->
 <script type="application/json" class="view-def">
 {"id": "backlinks", "group": "compete", "title": "백링크",
- "sections": ["bl-profile", "bl-broken", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"],
+ "sections": ["bl-profile", "bl-broken", "bl-mentions", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"],
  "head": ["backlinks"]}
 </script>
 
@@ -16,7 +16,7 @@
    이 화면의 결론은 총수가 아니라 **참조 도메인 수와 그 기울기**다. 한 사이트에서
    100개보다 100개 사이트에서 1개씩이 낫고, 절대값보다 늘고 있나가 먼저다.
 
-   화면 = 12열 카드 격자다. 섹션 넷(bl-profile·bl-broken·bl-intersect·bl-links)은 SM 이
+   화면 = 12열 카드 격자다. 섹션 다섯(bl-profile·bl-broken·bl-mentions·bl-intersect·bl-links)은 SM 이
    화면 상자 안으로 옮겨 놓는 단위라 그대로 두고, 상자(#view-backlinks)를 격자로 만든 뒤
    bl-profile·bl-links 는 display:contents 로 풀어 그 안의 카드가 격자 칸을 직접 받게 한다.
    [hidden] 은 UA 의 display:none 이라 id 규칙(display)이 이긴다 — 그래서 :not([hidden]). */
@@ -31,12 +31,14 @@
 #blk-empty { grid-column:1 / -1; }
 #blk-hero { grid-column:span 8; }
 #blk-health { grid-column:span 4; }
-#view-backlinks > #bl-broken, #view-backlinks > #bl-intersect { grid-column:span 6; }
+/* 이미 번 링크(되찾을 링크)와 이미 우리를 아는 곳(링크 없는 언급)이 한 줄 — 둘 다 가장 잘 되는
+   일이다. 교집합은 그 아래 한 줄을 다 쓴다. */
+#view-backlinks > #bl-broken, #view-backlinks > #bl-mentions { grid-column:span 6; }
 #blk-domcard { grid-column:1 / -1; }
 #blk-anchors { grid-column:1 / -1; }
 #blk-links { grid-column:1 / -1; }
 @media (max-width:1099px) {
-  #blk-hero, #blk-health, #view-backlinks > #bl-broken, #view-backlinks > #bl-intersect,
+  #blk-hero, #blk-health, #view-backlinks > #bl-broken, #view-backlinks > #bl-mentions,
   #blk-anchors, #blk-links { grid-column:1 / -1; }
 }
 
@@ -165,6 +167,9 @@
 #blk-links .blk-url { max-width:34ch; overflow-wrap:anywhere; word-break:normal; }
 .blk-url a { overflow-wrap:anywhere; }
 .blk-anchor { font-size:var(--fs-1); word-break:break-word; max-width:44ch; }
+/* 언급 발췌 — 우리 이름이 나온 문장. 두 줄로 접고 전문은 title 로. */
+.blk-quote { display:block; margin-top:4px; font-size:var(--fs-1); color:var(--sub);
+  overflow-wrap:anywhere; }
 /* 스팸 앵커는 150자씩 줄마다 되풀이돼 진짜 봐야 할 링크를 밀어낸다 — 두 줄로 접고
    전문은 title 로 둔다. */
 .blk-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
@@ -211,6 +216,15 @@
   <div id="blk-recover" class="bscroll"><span class="skel"></span><span class="skel line2"></span></div>
 </section>
 
+<!-- 우리 이름을 말했는데 링크는 없는 곳 — 교집합보다 앞이다. 그쪽은 이미 우리를 안다. -->
+<section id="bl-mentions" class="card bx">
+  <div class="bh">
+    <div class="bt"><h2>링크 없는 언급</h2><p class="bs" id="blk-mn-sub"></p></div>
+    <div class="btools" id="blk-mn-bar"></div>
+  </div>
+  <div id="blk-mentions" class="bscroll"><span class="skel"></span><span class="skel line2"></span></div>
+</section>
+
 <section id="bl-intersect" class="card bx">
   <div class="bh">
     <div class="bt"><h2>경쟁사만 받은 링크처</h2><p class="bs" id="blk-ix-sub"></p></div>
@@ -239,7 +253,7 @@ let BLK_TOP = "";                 // 가장 많이 겹치는 링크처 — 띠�
 let BLK_DOMF = "all", BLK_LKF = "all";
 // 기회 상태 거르개 — [되찾을 링크]와 [교집합] 두 목록이 각자 하나씩 갖는다.
 // 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고, 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
-let BLK_BR_ST = "", BLK_IX_ST = "";
+let BLK_BR_ST = "", BLK_IX_ST = "", BLK_MN_ST = "";
 const BLK_stOk = (t, st) => window.oppStMatch(oppOf(t), st);
 // 박제본에서는 셸이 빈 문자열을 준다 — 그때 빈 도구 상자를 남기지 않는다.
 const BLK_stBar = (rows, key, cur, fn) =>
@@ -252,12 +266,32 @@ const BLK_ixBar = d => {
   const all = d.bl_intersect || [];
   return all.length ? BLK_stBar(all, r => r.domain, BLK_IX_ST, "BLK_ixSt") : "";
 };
+// 링크 없는 언급 — 도메인당 한 줄(지수가 가장 높은 페이지가 대표). 서버가 linked·지수 순으로 준다.
+const BLK_mnRows = d => {
+  const seen = new Map();
+  for (const r of d.bl_mentions || []) {
+    if (r.linked !== 0) continue;
+    const g = seen.get(r.domain);
+    if (g) g.pages += 1; else seen.set(r.domain, {...r, pages: 1});
+  }
+  return [...seen.values()];
+};
+const BLK_mnBar = d => {
+  const all = BLK_mnRows(d);
+  return all.length ? BLK_stBar(all, r => r.domain, BLK_MN_ST, "BLK_mnSt") : "";
+};
 // 거르개는 자기 목록만 다시 그린다 — VIEW 를 다시 돌리면 화면 전체가 깜빡인다.
 function BLK_brSt(v) {
   BLK_BR_ST = v;
   if (!BLK_D) return;
   $("blk-recover-bar").innerHTML = BLK_brBar(BLK_D);
   $("blk-recover").innerHTML = BLK_broken(BLK_D);
+}
+function BLK_mnSt(v) {
+  BLK_MN_ST = v;
+  if (!BLK_D) return;
+  $("blk-mn-bar").innerHTML = BLK_mnBar(BLK_D);
+  $("blk-mentions").innerHTML = BLK_mentions(BLK_D);
 }
 function BLK_ixSt(v) {
   BLK_IX_ST = v;
@@ -624,6 +658,36 @@ function BLK_broken(d) {
         "받아 온 링크는 전부 살아 있습니다. 백링크는 주 단위로 움직입니다."));
 }
 
+// 링크 없는 언급 — 줄마다 우리 이름이 나온 문장을 보여 준다. 연락문은 그 문장을 짚는 데서 시작한다.
+function BLK_mentions(d) {
+  const all = BLK_mnRows(d);
+  const rows = all.filter(r => BLK_stOk(r.domain, BLK_MN_ST))
+    .sort((a, b) => BLK_sc(b.domain) - BLK_sc(a.domain) || (b.rank || 0) - (a.rank || 0))
+    .map(r => BLK_row(r.domain,
+      `<span class="blk-id">${BLK_av(r.domain)}<span class="blk-dom">${esc(r.domain)}</span></span>`,
+      `‘${esc(r.alias || "")}’ 언급 · 지수 ${r.rank == null ? "—" : r.rank}` +
+      (r.pages > 1 ? ` · 페이지 ${num(r.pages)}곳` : "") +
+      (r.published ? ` · <span class="blk-day">${esc(r.published)}</span>` : "") +
+      (r.snippet ? `<span class="blk-quote blk-clamp" title="${esc(r.snippet)}">${esc(r.snippet)}</span>` : ""),
+      "기회 목록에는 지수가 높은 곳부터 일부만 올립니다. 이 도메인은 그 아래라 " +
+      "점수와 행동 기록이 없습니다. 할 일은 같습니다 — 우리 이름이 나온 그 자리에 링크 하나를 부탁합니다.",
+      r.domain,
+      `<div class="acts"><a class="go sm sec" target="_blank" rel="noopener"
+         href="${esc(r.url)}">언급한 페이지 열기</a></div>`));
+  if (all.length && !rows.length)
+    return window.oppLeftDone(BLK_MN_ST, all, r => oppOf(r.domain))
+      ? window.oppLeftEmpty("언급", all.length, "BLK_mnSt('all')")
+      : BLK_empty("거른 상태에 맞는 곳이 없습니다",
+          `거르개를 「전체」로 바꾸면 ${all.length}곳이 있습니다.`);
+  const n = (d.bl_mentions || []).length;
+  return BLK_cards(rows, n
+    ? BLK_ok("언급한 곳이 전부 링크했습니다",
+        "우리 이름을 말한 곳은 모두 우리에게 링크하고 있습니다. 지킬 자리입니다.")
+    : BLK_empty("우리 이름을 말한 곳을 아직 못 찾았습니다",
+        "설정의 브랜드 별칭으로 웹을 찾습니다. 별칭이 없거나 너무 흔한 이름(동명이인·일반 낱말)이면 " +
+        "건너뜁니다 — 상호처럼 우리만 쓰는 표기를 별칭에 넣으면 그걸로 찾습니다."));
+}
+
 // 교집합은 "남은 것이 곧 할 일 목록"이라고 말해 놓고 도메인 이름만 줬다 —
 // 그 할 일을 행마다 붙인다(펼치면 무엇을 어떻게 할지가 나온다).
 function BLK_intersect(d, rivals) {
@@ -826,6 +890,14 @@ function BLK_nextStep(d) {
   const lost = (d.bl_domains || []).filter(r => r.lost_date).length;
   const ixs = (d.bl_intersect || []).slice().sort((a, b) => (b.hits || 0) - (a.hits || 0));
   const rivals = BLK_rivals(d);
+  // 우리 이름을 말한 곳이 교집합보다 먼저다 — 그쪽은 이미 우리를 안다.
+  const mns = BLK_mnRows(d);
+  if (mns.length)
+    return put(`우리 이름을 말했지만 링크하지 않은 곳이 ${num(mns.length)}곳입니다. 지수가 가장
+      높은 곳은 <b>${esc(mns[0].domain)}</b>입니다. 그 이름에 링크 하나를 부탁하는 일이라 새 링크 중
+      가장 잘 됩니다.`,
+      BLK_seeBtn("bl-mentions", "언급한 곳 보기") +
+      (broken ? BLK_seeBtn("bl-broken", `되찾을 링크 ${num(broken)}개`, false) : ""));
   if (ixs.length) {
     BLK_TOP = ixs[0].domain;
     return put(`경쟁사만 받은 링크처가 ${num(ixs.length)}곳입니다. 가장 많이 겹치는 곳은
@@ -875,6 +947,7 @@ VIEW("backlinks", function (d) {
   // 되찾을 링크·교집합·표들은 위 카드가 이미 예고했다 — 수집 전에는 section 째로 숨긴다.
   // 실패도 다시 돌리기 전까지는 "아직 없음"과 같다.
   $("bl-broken").hidden = !has;
+  $("bl-mentions").hidden = !has;
   $("bl-intersect").hidden = !has;
   $("bl-links").hidden = !has;
   if (!has) return;
@@ -900,6 +973,19 @@ VIEW("backlinks", function (d) {
     : `끊긴 링크도 링크를 뗀 도메인도 없습니다.${capped}`;
   $("blk-recover-bar").innerHTML = BLK_brBar(d);
   $("blk-recover").innerHTML = BLK_broken(d);
+
+  // 링크 없는 언급 — 찾은 곳 전부를 세고, 그중 링크 없는 곳을 할 일로 말한다.
+  const mnAll = new Set((d.bl_mentions || []).map(r => r.domain)).size;
+  const mnOpen = BLK_mnRows(d).length;
+  const mnUnknown = new Set((d.bl_mentions || []).filter(r => r.linked == null).map(r => r.domain)).size;
+  $("blk-mn-sub").innerHTML = (mnAll
+    ? `우리 이름을 말한 곳 <b>${num(mnAll)}곳</b> 중 <b>${num(mnOpen)}곳</b>이 링크하지 않았습니다.` +
+      BLK_tip("이미 우리를 아는 곳이라 새 링크 중 가장 잘 됩니다. 그 이름이 나온 자리에 우리 " +
+              "페이지 링크 하나를 부탁합니다.")
+    : "브랜드 별칭으로 웹에서 우리 이름을 찾습니다.") +
+    (mnUnknown ? ` 링크 여부를 확인 못 한 ${num(mnUnknown)}곳은 다음 수집에서 다시 봅니다.` : "");
+  $("blk-mn-bar").innerHTML = BLK_mnBar(d);
+  $("blk-mentions").innerHTML = BLK_mentions(d);
 
   // 교집합은 경쟁사가 둘 이상이어야 성립한다 — 비어 있는 이유가 그것일 수 있다.
   const rivals = BLK_rivals(d);
