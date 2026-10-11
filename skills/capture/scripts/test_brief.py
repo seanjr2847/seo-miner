@@ -4098,6 +4098,55 @@ def test_nap_picks_the_same_home_row_whatever_the_order():
     assert nap(read, unread) == nap(unread, read) and "Dentist" in nap(unread, read), nap(unread, read)
 
 
+def test_first_page_keeps_room_for_new_articles():
+    """[개요] 첫 화면 끝 몇 줄은 새 글 몫이다 — 점수는 그대로, 자리만 낸다.
+
+    새 글은 아직 순위·노출이 없어 점수가 늘 고치기 아래다. theotherskin(10/11)은 열린 새 글
+    24줄이 전부 첫 화면(10줄) 밖이라 "새 글 제안을 안 한다"로 읽혔다."""
+    fix = [{"lead": i, "status": "new", "score": 90 - i} for i in range(12)]
+    new = [{"lead": 100 + i, "status": "new", "score": 30 - i} for i in range(4)]
+    acked_new = {"lead": 200, "status": "acked", "score": 99}
+    lines = fix + new + [acked_new]
+    d = {"opps": [{**_opp("striking_distance", f"고칠 {g['lead']}"), "id": g["lead"]} for g in fix]
+         + [{**_opp("content_gap", f"새 글 {g['lead']}", gap_kind="missing"), "id": g["lead"]}
+            for g in new + [acked_new]],
+         "opp_groups": [dict(g) for g in lines]}
+    brief.attach(d, "ko-KR")
+    got = [g["lead"] for g in d["opp_groups"]]
+    page = got[:brief.FIRST_PAGE]
+    # 첫 화면 끝 세 줄이 새 글 상위 셋(점수 순), 앞 일곱 줄은 고치기 점수 순 그대로
+    assert page == [0, 1, 2, 3, 4, 5, 6, 100, 101, 102], got
+    # 밀려난 고치기·남은 새 글·진행 중은 순서대로 뒤에 — 줄은 하나도 안 잃는다
+    assert got[brief.FIRST_PAGE:] == [7, 8, 9, 10, 11, 103, 200], got
+    # 진행 중(acked) 새 글은 끌어올리지 않는다 — 새 것 먼저인 순서를 안 깬다
+    assert 200 not in page
+
+    is_new = lambda g: g["lead"] >= 100
+    # 한 화면에 다 들어가면 그대로다
+    few = fix[:5] + new[:2]
+    assert brief.surface_new(few, is_new) == few
+    # 이미 첫 화면에 새 글이 몫만큼 있으면 그대로다
+    mixed = fix[:3] + new[:3] + fix[3:]
+    assert brief.surface_new(mixed, is_new) == mixed
+    # 새 글이 하나도 없으면 그대로다
+    assert brief.surface_new(fix, is_new) == fix
+    # 관찰 중(hold)인 줄은 목록 기본값에서 빠진다 — 보이는 줄로 센다. 고치기 다섯이 숨으면
+    # 새 글 셋이 이미 보이는 첫 화면이라 옮길 게 없다(theotherskin 은 관찰 중 17줄이었다)
+    held = {0, 1, 2, 3, 4}
+    shown = lambda g: g["lead"] not in held
+    assert brief.surface_new(fix + new, is_new, shown=shown) == fix + new
+    # 둘만 보이면 하나를 끌어올린다 — 이미 보이던 새 글 뒤, 점수 순 그대로
+    held = {0, 1, 2, 3}
+    seen = [g for g in brief.surface_new(fix + new, is_new, shown=shown) if shown(g)][:brief.FIRST_PAGE]
+    assert [g["lead"] for g in seen] == [4, 5, 6, 7, 8, 9, 10, 100, 101, 102], seen
+    # 숨은 줄이 있어도 끌어올린 줄은 **보이는** 첫 화면 끝에 서고, 숨은 줄은 제자리다
+    held = {0, 1}
+    got = brief.surface_new(fix + new, is_new, shown=shown)
+    assert [g["lead"] for g in got[:2]] == [0, 1], got
+    seen = [g for g in got if shown(g)][:brief.FIRST_PAGE]
+    assert [g["lead"] for g in seen] == [2, 3, 4, 5, 6, 7, 8, 100, 101, 102], seen
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

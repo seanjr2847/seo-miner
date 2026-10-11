@@ -4661,8 +4661,12 @@ def gap_rival_set(conn: sqlite3.Connection, project_id: int) -> set[str]:
 
 
 def content_gaps(conn: sqlite3.Connection, project_id: int, *,
-                 limit: int = 25) -> list[dict]:
-    """경쟁사는 잡는데 나는 없거나(missing) 밀리는(weak) 검색어 — keyword_gap 정본."""
+                 limit: int = 25, brands: set[str] | None = None) -> list[dict]:
+    """경쟁사는 잡는데 나는 없거나(missing) 밀리는(weak) 검색어 — keyword_gap 정본.
+
+    brands(foreign_brands)에 걸리는 남의 이름 검색어는 뺀다(striking 과 같은 거름망).
+    경쟁사만 잡은 검색어(missing)를 검색량 순으로 자르면 맨 앞이 그 경쟁사 자기 이름이다 —
+    부재 축이 거꾸로 물어 missing 이 한 건도 안 나오던 동안엔 드러나지 않았다."""
     d = _latest(conn, _LATEST_KG, (project_id,))
     if not d:
         return []
@@ -4672,7 +4676,8 @@ def content_gaps(conn: sqlite3.Connection, project_id: int, *,
              FROM keyword_gap
             WHERE project_id=? AND checked_date=? AND kind IN ('missing','weak')
          ORDER BY volume IS NULL, volume DESC, keyword""",
-        (project_id, d)) if host_of(r["domain"] or "") in keep).values())[:limit]
+        (project_id, d)) if host_of(r["domain"] or "") in keep
+        and not is_foreign_brand(r["keyword"], brands or set())).values())[:limit]
 
 
 def cg_lead(rows) -> dict[str, dict]:
@@ -5430,7 +5435,7 @@ _KIND_SPECS = {
     "content_gap": dict(
         see=("competitors", "cp-gap"),
         label="콘텐츠 공백", defensive=False,
-        detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"]),
+        detect=lambda ctx: content_gaps(ctx["conn"], ctx["pid"], brands=ctx["brands"]),
         # missing 은 our_position 이 NULL — score() 가 보수적 0.3 으로 본다(맞다: 아직 없다)
         metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,
                                  "position": r["our_position"],
@@ -6774,6 +6779,12 @@ def _selfcheck() -> None:
                      [("쇼핑몰 검색어", "mall.com", 900), ("진짜 격차", "hand.com", 500)])
     assert [r["keyword"] for r in content_gaps(conn, 1)] == ["진짜 격차"], \
         f"판매 채널로 판정된 곳의 격차가 콘텐츠 공백이 됐다: {content_gaps(conn, 1)}"
+    # 경쟁사만 잡은 검색어의 맨 앞은 그 경쟁사 이름이다 — 남의 이름은 빼고 비교 의도는 남긴다
+    conn.executemany("INSERT INTO keyword_gap(project_id, checked_date, keyword, domain, position,"
+                     " our_position, volume, kind) VALUES(1,'2026-09-29',?,'hand.com',1,NULL,?,'missing')",
+                     [("ecrett 후기", 9000), ("ecrett alternative", 800)])
+    assert [r["keyword"] for r in content_gaps(conn, 1, brands=brands)] == [
+        "ecrett alternative", "진짜 격차"], content_gaps(conn, 1, brands=brands)
     conn.execute("DELETE FROM keyword_gap")
     conn.execute("DELETE FROM competitors WHERE domain != 'ecrett.com'")
     rows = striking(conn, 1, "2026-08-14", brands=brands)

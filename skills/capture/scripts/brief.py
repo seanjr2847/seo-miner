@@ -4233,6 +4233,51 @@ def attach(d: dict, locale: str) -> None:
             o["play"] = scoring.kind_play("coverage", gap_kind=o["gap_kind"])
         o["brief"] = build(o, d, locale)
     d["brief"] = shapes_payload(locale)
+    if d.get("opp_groups"):
+        by_id = {o["id"]: o for o in d.get("opps") or [] if o.get("id") is not None}
+        d["opp_groups"] = surface_new(
+            d["opp_groups"],
+            lambda g: (by_id.get(g["lead"]) or {}).get("brief", {}).get("shape") == "new_content",
+            shown=lambda g: not (by_id.get(g["lead"]) or {}).get("hold"))
+
+
+# [개요] 목록 첫 화면에 새 글 줄이 설 자리. 점수는 "먼저 손댈 것"이라 노출·순위가 이미 있는
+# 고치기 줄이 늘 위다 — 아직 순위가 없는 새 글은 닿는 거리(reach)가 보수적 0.3 이다. 그래서
+# theotherskin(10/11)의 열린 새 글 24줄(35~56점)이 고치기(60~75점) 밑으로 밀려 첫 화면에
+# 한 줄도 없었고, "새 글 제안을 안 한다"로 읽혔다. 점수는 그대로 두고 자리만 낸다 — 첫 화면
+# 끝 NEW_SLOTS 줄. FIRST_PAGE 는 overview.html 의 OV_PAGE 와 같은 수다(test_seams 128 이 대조).
+FIRST_PAGE = 10
+NEW_SLOTS = 3
+
+
+def surface_new(lines: list[dict], is_new, *, shown=lambda g: True, page: int = FIRST_PAGE,
+                slots: int = NEW_SLOTS) -> list[dict]:
+    """점수순 줄(scoring.group_opportunities)에서, 아직 안 한(new) 줄의 첫 화면에 새 글 줄이
+    slots 개보다 적으면 그 밑의 새 글 줄을 점수 순으로 끌어올려 첫 화면 끝에 둔다.
+
+    첫 화면은 **화면이 실제로 보여 주는** 줄로 센다(shown) — 목록 기본값은 관찰 중인 줄을
+    뺀다(oppStMatch). 숨을 줄까지 세면 theotherskin(관찰 중 17줄)처럼 이미 새 글이 보이는데도
+    고치기 줄을 밀어낸다. new 줄끼리만 옮긴다 — 진행 중(acked)이 뒤에 서는 순서(새 것
+    먼저)는 그대로다. new 줄이 한 화면에 다 들어가면 손대지 않는다. 나머지 순서도 그대로다."""
+    fresh = [g for g in lines if g.get("status") == "new" and shown(g)]
+    if len(fresh) <= page:
+        return lines
+    need = slots - sum(1 for g in fresh[:page] if is_new(g))
+    pull = [g for g in fresh[page:] if is_new(g)][:max(0, need)]
+    if not pull:
+        return lines
+    # 첫 화면의 마지막 고치기 줄 len(pull)개가 한 칸씩 밀려 끌어올린 줄 뒤에 선다. 첫 화면에
+    # 이미 있던 새 글 줄은 제자리다. 보이는 new 줄이 있던 자리만 이 순서로 다시 채운다 —
+    # 숨은 줄·진행 중 줄은 제자리다.
+    head = fresh[:page]
+    out_ids = {id(g) for g in [g for g in head if not is_new(g)][-len(pull):]}
+    pull_ids = {id(g) for g in pull}
+    order = ([g for g in head if id(g) not in out_ids] + pull
+             + [g for g in head if id(g) in out_ids]
+             + [g for g in fresh[page:] if id(g) not in pull_ids])
+    slots_at = {id(g) for g in fresh}
+    it = iter(order)
+    return [next(it) if id(g) in slots_at else g for g in lines]
 
 
 def _selfcheck() -> None:

@@ -237,10 +237,16 @@ def _fetch_self_metrics(post, target: str, locale: str) -> tuple[dict | None, fl
 
 def _fetch_intersection(post, ours: str, rival: str, locale: str, limit: int,
                         intersections: bool) -> tuple[list[dict], float]:
-    """두 도메인의 키워드 교집합. intersections=False 면 '경쟁사만 잡은 것'."""
+    """두 도메인의 키워드 교집합. intersections=False 면 '경쟁사만 잡은 것'.
+
+    false 는 "target1 은 순위에 있고 target2 는 없는 검색어"다(DataForSEO 문서) — 그래서
+    부재 축은 경쟁사를 target1 에 둔다. 예전엔 늘 우리를 target1 에 둬서 '우리만 잡은
+    검색어'를 받았고, 우리 순위만 있으니 전부 unknown 이 됐다. missing 은 한 번도 안
+    나왔고(theotherskin 10/5: unknown 214 · missing 0), 그게 새 글 제안의 주 공급원이었다."""
     loc, lang, _ = serp_adapter.location(locale)
+    t1, t2 = (ours, rival) if intersections else (rival, ours)
     result, cost = post(LABS_INTERSECT, [{
-        "target1": ours, "target2": rival, "location_name": loc, "language_code": lang,
+        "target1": t1, "target2": t2, "location_name": loc, "language_code": lang,
         "limit": limit, "intersections": intersections}])
     out = []
     for r0 in result or []:
@@ -250,8 +256,12 @@ def _fetch_intersection(post, ours: str, rival: str, locale: str, limit: int,
             kw, sv = _kw_of(it)
             if not kw:
                 continue        # 키워드를 못 읽은 항목만 버린다
+            if intersections:
+                ours_at, rival_at = _pos_of(it, 1), _pos_of(it, 2)
+            else:               # 경쟁사가 target1 이고, 우리는 정의상 순위에 없다
+                ours_at, rival_at = None, _pos_of(it, 1)
             out.append({"keyword": kw, "volume": sv,
-                        "our_position": _pos_of(it, 1), "position": _pos_of(it, 2)})
+                        "our_position": ours_at, "position": rival_at})
     return out, cost
 
 
@@ -1034,7 +1044,8 @@ def _selfcheck() -> None:
                 {"no_domain_field": 1},          # 못 읽는 항목은 건너뛰고 나머지는 산다
             ]}], 0.002
         if path == LABS_INTERSECT:
-            rival, inter = body[0]["target2"], body[0]["intersections"]
+            t1, t2, inter = body[0]["target1"], body[0]["target2"], body[0]["intersections"]
+            rival = t2 if t1 == "gt.com" else t1
             if inter:
                 return [{"items": [
                     {"keyword_data": {"keyword": f"{rival} weak",
@@ -1047,10 +1058,16 @@ def _selfcheck() -> None:
                      "second_domain_serp_element": {"rank_group": 7}},
                     {"keyword_data": {"keyword": ""}},      # 키워드 못 읽음 — 이 항목만 버린다
                 ]}], 0.001
-            # intersections:false = 경쟁사만 잡은 것. 필드 모양을 일부러 다르게 준다.
+            # intersections:false = **target1 은 있고 target2 는 없는** 검색어(문서). 실제 API 처럼
+            # 누가 target1 이냐로 답을 가른다 — 예전 가짜는 "경쟁사만 잡은 것"을 무조건 돌려줘서,
+            # 우리를 target1 에 둔 요청(= 우리만 잡은 것)이 검사를 통과했다. 운영에서는 missing 이
+            # 한 건도 안 나오고 '우리는 있고 경쟁사는 없는' 행이 unknown 으로 쌓였다
+            # (theotherskin 10/5: missing 0 · unknown 214, noti 10/11: 0 · 42).
+            # 순위 필드 모양은 일부러 다르게 준다(rank_absolute) — 파서가 여러 모양을 받는다.
             return [{"items": [
-                {"keyword": f"{rival} missing", "search_volume": "30",
-                 "target2_serp_element": {"rank_absolute": 4}},
+                {"keyword_data": {"keyword": f"{t1} only", "keyword_info": {"search_volume": 30}},
+                 "first_domain_serp_element": {"rank_absolute": 4},
+                 "second_domain_serp_element": None},
             ]}], 0.001
         raise AssertionError(f"예상 밖 엔드포인트: {path}")
 
@@ -1093,13 +1110,13 @@ def _selfcheck() -> None:
     gaps = {r0["keyword"]: dict(r0) for r0 in conn.execute(
         "SELECT keyword, domain, position, our_position, volume, kind FROM keyword_gap "
         "WHERE project_id=?", (pid,)).fetchall()}
-    assert set(gaps) == {"rival.com weak", "rival.com shared", "rival.com missing"}, gaps
+    assert set(gaps) == {"rival.com weak", "rival.com shared", "rival.com only"},         f"부재 축이 '우리만 잡은 것'(gt.com only)을 물었다: {gaps}"
     assert gaps["rival.com weak"]["kind"] == "weak", gaps          # 우리 9위 < 경쟁사 2위
     assert gaps["rival.com shared"]["kind"] == "shared", gaps      # 우리 3위 > 경쟁사 7위
-    assert gaps["rival.com missing"]["kind"] == "missing", gaps    # 우리 위치 없음
-    assert (gaps["rival.com missing"]["position"],
-            gaps["rival.com missing"]["our_position"],
-            gaps["rival.com missing"]["volume"]) == (4, None, 30), gaps
+    assert gaps["rival.com only"]["kind"] == "missing", gaps    # 우리 위치 없음
+    assert (gaps["rival.com only"]["position"],
+            gaps["rival.com only"]["our_position"],
+            gaps["rival.com only"]["volume"]) == (4, None, 30), gaps
     assert gaps["rival.com weak"]["domain"] == "rival.com", gaps
     assert _kind(None, 3) == "missing" and _kind(5, 5) == "shared" and _kind(5, 2) == "weak"
     assert _kind(5, None) == "unknown"          # 경쟁사 순위를 모르면 누가 위인지 모른다
@@ -1113,7 +1130,10 @@ def _selfcheck() -> None:
     assert (b0["target"], b0["limit"], b0["order_by"]) == ("gt.com", 3, ["intersections,desc"]), b0
     assert (b0["location_name"], b0["language_code"]) == ("South Korea", "ko"), b0
     assert {q[1]["intersections"] for q in posts if q[0] == LABS_INTERSECT} == {True, False}, posts
-    assert {q[1]["target1"] for q in posts if q[0] == LABS_INTERSECT} == {"gt.com"}, posts
+    # 교집합은 우리가 target1, 부재는 경쟁사가 target1 — false 는 "target1 만 있는" 검색어다
+    assert {(q[1]["intersections"], q[1]["target1"], q[1]["target2"]) for q in posts
+            if q[0] == LABS_INTERSECT} == {(True, "gt.com", "rival.com"),
+                                           (False, "rival.com", "gt.com")}, posts
     calls = conn.execute("SELECT api_calls FROM runs ORDER BY id DESC LIMIT 1").fetchone()[0]
     assert calls == 7, f"역키워드 4 + 자동탐지 1 + 교집합 2 = 7: {calls}"
 

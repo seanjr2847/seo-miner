@@ -357,6 +357,8 @@ DataForSEO 가격표 링크)이고 적재량에 따라 비용이 빠르게 늘�
 - **Content Gap** (`domain_intersection/live`, `--intersect` = `limits.gap_rivals`) —
   두 도메인의 위치를 같이 받아 `missing`(우리는 순위 없음)·`weak`(둘 다 있는데 우리가
   아래)·`shared` 로 갈라 `keyword_gap` 에 적재한다. 경쟁사당 2콜이라 상한이 따로 있다.
+  `missing` 콜은 경쟁사를 `target1` 에 둔다 — `intersections:false` 는 "target1 은 있고
+  target2 는 없는" 검색어라서다. 기회로 올릴 때 남의 이름 검색어(`foreign_brands`)는 뺀다.
 
 결과는 `keywords` 후보(`source='competitor_gap'`, `is_active=0`)로 적재된다 —
 즉 **`/capture keywords` 의 큐레이션 단계(승인분만 활성화)** 를 그대로 탄다.

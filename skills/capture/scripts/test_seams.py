@@ -3819,6 +3819,20 @@ def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
         "셸 폴백 요청문이 by_tag 를 tag 로 찾지 않는다"
 
 
+def test_seam_128_first_page_of_opportunities_is_one_number():
+    """128) [개요] 목록의 첫 화면 줄 수는 한 벌이다 — 서버(brief.FIRST_PAGE)가 그 안에 새 글 몫을
+    내고(brief.surface_new), 화면(overview.html 의 OV_PAGE)이 그만큼 보여 준다.
+
+    둘이 어긋나면 각 파일은 멀쩡한데 새 글 줄이 첫 화면 바로 밖(11~13번째)에 서서, 고치기 전과
+    똑같이 "새 글 제안이 없다"로 보인다.
+    """
+    import brief
+    m = re.search(r"const OV_PAGE = (\d+);", _view_script("overview.html"))
+    assert m, "overview.html 에서 OV_PAGE 를 못 찾았다"
+    assert int(m.group(1)) == brief.FIRST_PAGE, (m.group(1), brief.FIRST_PAGE)
+    assert 0 < brief.NEW_SLOTS < brief.FIRST_PAGE
+
+
 def test_seam_126_schema_rules_are_one_table_from_collector_to_brief():
     """126) 구조화 데이터 속성 표는 한 벌(scoring.SCHEMA_RULES)이고, 수집기가 남긴 '빠진 것'이
     칸 → 페이로드 → 진단 → 산출물까지 끊기지 않는다.

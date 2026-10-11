@@ -226,7 +226,7 @@ flowchart TD
     gap_rivals=3, 경쟁사 부재 시 noop 사유 문구
   skills/capture/scripts/scoring.py — rivals()(manual 먼저·제3자 플랫폼 제외),
     serp_rivals() / SERP_RIVAL_MIN_SHARE=0.10 · MIN_HITS=3 · MAX=10,
-    content_gaps(limit=25, kind IN ('missing','weak'))
+    content_gaps(limit=25, kind IN ('missing','weak'), 남의 이름 검색어 제외)
   skills/capture/scripts/collect_serp.py — db.add_competitors(..., "auto_rank") 자동 수확 자리
   skills/capture/templates/views/settings.html — 「경쟁사 도메인」 입력 칸과 그 설명
 -->
