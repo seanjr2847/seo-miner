@@ -219,22 +219,23 @@ def _put_anchors(conn, pid: int, today: str, res) -> int:
 def _intersect_rows(res, pos: dict[str, str]) -> list[tuple]:
     """domain_intersection 응답 → (domain, rank, hits, targets).
 
-    응답 모양이 둘 있다: 항목이 도메인을 직접 들고 오는 것, 그리고 targets 번호를
-    키로 한 dict 를 들고 오는 것("1": {...}, "2": {...}). 둘 다 받는다.
+    항목은 targets 번호를 키로 한 domain_intersection 을 들고 온다:
+    {"domain_intersection": {"1": {"target": <링크를 주는 도메인>, "rank": …}, …},
+     "summary": {"intersections_count": n}}. 번호마다 rank 가 다르다(그 경쟁사로
+    가는 링크 기준) — 가장 큰 것을 쓴다.
     """
     out = []
     for it in _items(res):
-        hit_keys = [k for k, v in it.items() if k in pos and v]
-        nested = [it[k] for k in hit_keys if isinstance(it[k], dict)]
-        dom = _g(it, "domain", "target", "referring_domain")
-        rank = _int(_g(it, "rank", "domain_rank"))
-        for n in nested:
-            dom = dom or _g(n, "domain", "domain_from", "target")
-            if rank is None:
-                rank = _int(_g(n, "rank", "domain_from_rank"))
+        per = _g(it, "domain_intersection", default={}) or {}
+        hit_keys = [k for k in pos if isinstance(per.get(k), dict)]
+        nested = [per[k] for k in hit_keys]
+        dom = next((d for d in (_g(n, "target", "domain") for n in nested) if d), None)
         if not dom:
             continue
-        hits = _int(_g(it, "hits", "intersections")) or len(hit_keys) or len(pos)
+        ranks = [r for r in (_int(_g(n, "rank")) for n in nested) if r is not None]
+        rank = max(ranks) if ranks else None
+        hits = (_int(_g(_g(it, "summary", default={}), "intersections_count"))
+                or len(hit_keys) or len(pos))
         out.append((str(dom).lower(), rank, hits,
                     ",".join(pos[k] for k in hit_keys) or ",".join(pos.values())))
     return out
@@ -459,9 +460,21 @@ def _fake_post(calls: list):
                 {"anchor": "  "},                            # 빈 앵커 — 건너뛴다
             ]}], 0.05
         if path.endswith("/domain_intersection/live"):
+            # 문서의 응답 모양 그대로다(docs.dataforseo.com/v3/backlinks/domain_intersection/live).
+            # 예전 가짜는 "1"·"2" 를 항목 바로 밑에 두었다 — 진짜는 domain_intersection
+            # 밑에 있고 도메인 이름은 그 안의 target 이다. 가짜에 맞춘 파서가 진짜 응답을
+            # 전부 버려 theotherskin 이 경쟁사 4곳을 넣고도 intersect=0 이었다(10/5).
             return [{"items": [
-                {"1": {"domain": "shared.com", "rank": 70}, "2": {"domain": "shared.com"}},
-                {"domain": "only-rivals.com", "rank": 61, "hits": 2},
+                {"domain_intersection": {
+                    "1": {"type": "backlinks_domain_intersection", "target": "Shared.com",
+                          "rank": 70, "backlinks": 12},
+                    "2": {"type": "backlinks_domain_intersection", "target": "shared.com",
+                          "rank": 0, "backlinks": 3}},
+                 "summary": {"intersections_count": 2}},
+                {"domain_intersection": {
+                    "1": {"target": "only-rivals.com", "rank": 61},
+                    "2": {"target": "only-rivals.com", "rank": 40}},
+                 "summary": {"intersections_count": 2}},
             ]}], 0.06
         raise AssertionError(f"모르는 엔드포인트: {path}")
     return post
