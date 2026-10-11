@@ -131,7 +131,7 @@ def demo() -> None:
         assert isinstance(dashboard.assemble("hosted"), str), "assemble() 이 str 이 아니다"
 
         # 대시보드 경로도 전부 로그인 뒤에 있어야 한다 — 남의 Brain 이 열리면 안 된다.
-        for path in ("/api/projects", "/api/data?project=x", "/api/doctor?project=x",
+        for path in ("/api/projects", "/api/domains", "/api/data?project=x", "/api/doctor?project=x",
                      "/api/perf?project=x",
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
                      "/api/report?project=x",

@@ -199,6 +199,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 .site:has(#proj[hidden]) { display:none; }
 .site .av { display:none; flex:none; width:32px; height:32px; border-radius:10px;
   background:var(--accent-wash); color:var(--accent); place-items:center; font-weight:700; }
+.site .av img, .projmenu .pm-o .av img { width:68%; height:68%; border-radius:4px; object-fit:contain; }
 .site-b { position:relative; flex:1; min-width:0; height:100%; }
 .site-b small { position:absolute; top:9px; left:0; font:var(--micro); color:var(--mute);
   pointer-events:none; line-height:1.3; }
@@ -3746,10 +3747,23 @@ function copyCmd(el) {
 const AXES = [["순위", "rank_date"], ["색인", "index_date"],
               ["기기", "device_date"], ["AI 인용", "ai_date"]];
 
-// 접힌 레일의 사이트 카드는 이름 대신 첫 글자 하나다 — 정본은 #proj 의 값이다.
+// 사이트 아이콘 — 도메인을 알면 그 사이트의 파비콘, 모르거나 못 받으면 앞글자 하나.
+// 이름 → 도메인은 /api/domains 가 정본이다(loadProjects 가 SITE_DOM 에 채운다).
+let SITE_DOM = {};
+const FAVICON = "https://www.google.com/s2/favicons";   // 박제본엔 도메인 표가 없어 안 불린다
+const siteFirst = n => String(n || "").trim().charAt(0).toUpperCase();
+function siteIcon(name) {
+  const ch = siteFirst(name), dom = SITE_DOM[name];
+  if (!dom) return esc(ch);
+  return `<img src="${FAVICON}?domain=${encodeURIComponent(dom)}&sz=64" ` +
+    `alt="${esc(ch)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" ` +
+    `onerror="this.replaceWith(this.alt)">`;
+}
+
+// 접힌 레일의 사이트 카드는 이름 대신 아이콘 하나다 — 정본은 #proj 의 값이다.
 function siteAv() {
   const a = $("siteav"), p = $("proj");
-  if (a) a.textContent = ((p && p.value) || "").trim().charAt(0).toUpperCase();
+  if (a) a.innerHTML = siteIcon(((p && p.value) || "").trim());
   projSync();
 }
 
@@ -3809,7 +3823,7 @@ function projPaint() {
   m.querySelector(".pm-ls").innerHTML = (k
     ? PM.names.map((n, i) => `<div class="pm-o" role="option" id="pm-o${i}" data-i="${i}" ` +
         `data-v="${esc(n)}" aria-selected="${n === p.value}"><span class="av" aria-hidden="true">` +
-        `${esc(n.trim().charAt(0).toUpperCase())}</span><span class="nm">${esc(n)}</span>${PM_CHECK}</div>`).join("")
+        `${siteIcon(n.trim())}</span><span class="nm">${esc(n)}</span>${PM_CHECK}</div>`).join("")
     : '<div class="pm-none">맞는 사이트가 없습니다.</div>') +
     `<div class="pm-o pm-add" role="option" id="pm-o${k}" data-i="${k}" data-v="${PM_ADD}" ` +
     `aria-selected="false"><span class="av" aria-hidden="true">${PM_PLUS}</span>` +
@@ -4248,6 +4262,9 @@ async function loadProjects() {
   }
   $("proj").innerHTML = names.map(n =>
     `<option${n === want ? " selected" : ""}>${esc(n)}</option>`).join("");
+  // 도메인 표는 꾸밈이다 — 못 받아도 앞글자로 그리고 넘어간다
+  try { const r = await fetch("/api/domains"); SITE_DOM = r.ok ? await r.json() : {}; }
+  catch (e) { SITE_DOM = {}; }
   $("proj").hidden = !names.length;      // 사이트가 없으면 빈 칸을 띄우지 않는다
   if ($("projlab")) $("projlab").hidden = !names.length;
   siteAv();

@@ -2069,6 +2069,19 @@ def list_projects() -> list[str]:
     return sorted(names)
 
 
+def list_domains() -> dict[str, str]:
+    """사이트 이름 → 도메인. 메뉴가 사이트마다 파비콘을 그리려고 부른다.
+
+    list_projects 와 같은 Brain 을 본다 — 호스팅에서 받아 온(pull) 사이트도 거기 있다.
+    아직 안 받은 호스팅 사이트는 빠진다(화면이 앞글자로 대신한다).
+    """
+    conn = db.connect()
+    try:
+        return {r[0]: r[1] for r in conn.execute("SELECT name, domain FROM projects") if r[1]}
+    finally:
+        conn.close()
+
+
 def set_opp_status(body: dict) -> dict:
     """POST /api/opp 본체 — 로컬·호스팅이 이 함수 하나를 부른다.
     상태값 검증은 db.set_opportunity_status 가 한다(잘못되면 ValueError)."""
@@ -2501,6 +2514,8 @@ ROUTES = {
         lambda project, query, body: set_opp_status(body),
     ("GET", "/api/projects"):
         lambda project, query, body: list_projects(),
+    ("GET", "/api/domains"):
+        lambda project, query, body: list_domains(),
     # 검색어 심사 — 화면 [심사]가 부른다. 본체는 위 두 함수 하나씩.
     ("GET", "/api/triage"):
         lambda project, query, body: triage_payload(project),
@@ -2595,7 +2610,7 @@ LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
 # 호스팅 사이트라도 이 PC 가 답하는 경로. /api/doctor 는 [설정] 화면이 보는 진단 —
 # "이 PC 에 무엇이 깔려 있나"를 묻는 것이라 서버에 물으면 남의 컴퓨터를 진단한다.
 # /api/projects 는 애초에 사이트 이름을 안 받는다(list_projects 가 둘을 합친다).
-NEVER_PROXY = {"/api/doctor", "/api/projects"}
+NEVER_PROXY = {"/api/doctor", "/api/projects", "/api/domains"}
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -1405,6 +1405,12 @@ def api_projects(uid: int = Depends(_require_uid), conn=Depends(CONN)):
     return [r["project"] for r in store.sites(conn, uid)]
 
 
+@app.get("/api/domains")
+def api_domains(uid: int = Depends(_require_uid), conn=Depends(CONN)):
+    """사이트 이름 → 도메인(dashboard.list_domains 의 호스팅 몸 — 소유는 store.sites)."""
+    return {r["project"]: r["domain"] for r in store.sites(conn, uid) if r["domain"]}
+
+
 @app.get("/api/doctor")
 def api_doctor(project: str, full: bool = False, t=Depends(TENANT_Q_PAID)):
     """화면은 평평한 요약(setup_state)을, 원격 CLI 는 진단 전문(diagnose)을 받는다.
@@ -1503,7 +1509,7 @@ def api_creation_merged(b: dict = Depends(_body), project: str = Depends(_projec
 # 손으로 남긴 것 — 호스팅 동작이 실제로 다른 둘뿐이다:
 #   /api/projects — 소유를 store.sites 로 판정한다(표의 call 은 Brain 을 본다)
 #   /api/doctor   — ?full= 갈래와 유료 키 env(TENANT_Q_PAID)
-_HAND_ROUTES = {("GET", "/api/projects"), ("GET", "/api/doctor"),
+_HAND_ROUTES = {("GET", "/api/projects"), ("GET", "/api/domains"), ("GET", "/api/doctor"),
                 ("POST", "/api/run"), ("GET", "/api/run/status")}   # 묶음 런·대기열은 호스팅 몫
 
 # 값 검증 실패(ValueError → 400)의 문구. 엔진 문구(`status must be one of ...`)는
