@@ -2247,16 +2247,61 @@ def _with_conn(fn):
         conn.close()
 
 
-def settings_profile_route(body: dict) -> dict:
-    """POST /api/settings 의 로컬 본체 — 사이트 프로필만 받는다(db.profile_save 한 벌).
+def scope_input(raw, domain: str) -> str:
+    """사람이 적은 분석 범위 경로 한 칸을 검사한다(틀리면 ValueError → 400) — 정규화는
+    scoring.scope_of 가 한다. 로컬·호스팅의 시장 저장이 같은 규칙을 쓴다."""
+    raw = str(raw or "").strip()
+    if len(raw) > 200 or re.search(r"[\s<>\"']", raw):
+        raise ValueError("경로를 알아볼 수 없습니다. 예: /kr/ko/ (비우면 사이트 전체)")
+    if re.match(r"^[a-z]+://", raw, re.I) and not scoring.owns(raw, domain):
+        raise ValueError(f"{domain} 의 주소가 아닙니다. 경로만 적어도 됩니다. 예: /kr/ko/")
+    return raw
 
-    호스팅 서버의 같은 경로는 주기·GA4·언어-지역도 받지만, 그 칸들은 호스팅 몫이다
+
+def markets_read(conn, pr) -> dict:
+    """GET /api/settings 중 언어-지역(시장) 칸의 재료 — 로컬·호스팅이 같은 함수를 부른다.
+    값과 고를 수 있는 목록(정본 serp_adapter.LOCALES)을 같이 준다. pr 이 None 이면(등록
+    직후 Brain 이 아직 없다) 값은 비고 목록만 간다. 첫 시장 = 기본(= locale·scope_path)."""
+    return {"locale": db.project_locale(pr) if pr else "",
+            "locales": [{"code": code, "label": t} for code, t in serp_adapter.LOCALES],
+            "domain": (pr["domain"] or "") if pr else "",
+            "scope_path": scoring.scope_of(pr["scope_path"]) if pr else "",
+            "markets": ([{"locale": loc, "scope": sc} for loc, sc in db.site_markets(conn, pr["id"])]
+                        if pr else []),
+            "max_markets": db.MAX_MARKETS}
+
+
+def markets_save(conn, project: str, raw) -> dict:
+    """POST /api/settings {markets} 의 본체 — 시장 목록 통째로 [{locale, scope}], 첫 것이
+    기본. 틀리면 ValueError(→ 400). 로컬·호스팅이 같은 함수를 부른다."""
+    pr = db.get_project(conn, project)
+    if not isinstance(raw, list) or not all(isinstance(m, dict) for m in raw):
+        raise ValueError("언어-지역 목록을 알아볼 수 없습니다.")
+    items = [{"locale": str(m.get("locale") or ""),
+              "scope": scope_input(m.get("scope"), pr["domain"])} for m in raw]
+    got = db.set_markets(conn, pr["id"], items)
+    return {"ok": True, "markets": [{"locale": loc, "scope": sc} for loc, sc in got]}
+
+
+def settings_read_route(project: str) -> dict:
+    """GET /api/settings 의 로컬 본체 — 프로필(db.profile_read 한 벌) + 언어-지역(시장)."""
+    def read(c):
+        return {**db.profile_read(c, project), **markets_read(c, db.get_project(c, project))}
+    return _with_conn(read)
+
+
+def settings_profile_route(body: dict) -> dict:
+    """POST /api/settings 의 로컬 본체 — 사이트 프로필과 언어-지역(시장)을 받는다.
+
+    호스팅 서버의 같은 경로는 주기·GA4·종류도 받지만, 그 칸들은 호스팅 몫이다
     (자동 재기·GA4 속성 고르기가 서버에 있다). 여기 그 값이 오면 조용히 버리지 않고
     거절한다 — 저장했다는 말이 거짓이 되지 않게."""
+    project = str(body.get("project") or "")
+    if "markets" in body:
+        return _with_conn(lambda c: markets_save(c, project, body.get("markets")))
     if "profile" not in body:
-        raise ValueError("이 PC 의 대시보드에서는 브랜드·경쟁사·도구·씨앗만 고칠 수 있습니다.")
-    return _with_conn(lambda c: db.profile_save(c, str(body.get("project") or ""),
-                                                body.get("profile")))
+        raise ValueError("이 PC 의 대시보드에서는 브랜드·경쟁사·도구·씨앗·언어-지역만 고칠 수 있습니다.")
+    return _with_conn(lambda c: db.profile_save(c, project, body.get("profile")))
 
 
 # ── 로컬 재기: POST /api/run · GET /api/run/status ────────────────────────
@@ -2472,7 +2517,7 @@ ROUTES = {
     # 사이트면 여기서 같은 한 벌(db.profile_read/save)로 답한다. 주기·GA4·언어 같은
     # 나머지 설정 칸은 호스팅 몫이라 여기서는 profile 만 받는다.
     ("GET", "/api/settings"):
-        lambda project, query, body: _with_conn(lambda c: db.profile_read(c, project)),
+        lambda project, query, body: settings_read_route(project),
     ("POST", "/api/settings"):
         lambda project, query, body: settings_profile_route(body),
     ("POST", "/api/run"):

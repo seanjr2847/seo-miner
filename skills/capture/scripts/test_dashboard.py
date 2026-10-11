@@ -1806,6 +1806,22 @@ def test_local_profile_settings_read_and_write_through_handler():
         # 토큰 없으면 403, 호스팅 몫(주기)만 오면 400 — 조용히 버리지 않는다
         assert post({"project": "pf_http", "profile": {"tools": "x"}}, token="x")[0] == 403
         assert post({"project": "pf_http", "run_every_hours": 24})[0] == 400
+        # 언어-지역(시장) — 목록이 GET 에 실리고, 고른 시장은 Brain 에 저장되고, 틀린 것은 400
+        assert first["locale"] == "ko-KR" and first["locales"][0]["code"] == "ko-KR", first
+        assert first["markets"][0]["locale"] == "ko-KR" and first["max_markets"] >= 2, first
+        assert post({"project": "pf_http", "markets": [{"locale": "xx-XX", "scope": ""}]})[0] == 400, \
+            "목록 밖 언어가 저장된다"
+        assert post({"project": "pf_http", "markets": "ko-KR"})[0] == 400, "목록이 아닌 모양이 저장된다"
+        assert post({"project": "pf_http", "markets": [{"locale": "ko-KR", "scope": "a b"}]})[0] == 400, \
+            "공백 든 경로가 저장된다"
+        assert get()["locale"] == "ko-KR", "거절했는데 값이 바뀌었다"
+        code, saved = post({"project": "pf_http", "markets": [
+            {"locale": "ja-JP", "scope": "/ja/"}, {"locale": "ko-KR", "scope": ""}]})
+        assert code == 200 and saved["markets"][0]["locale"] == "ja-JP", saved
+        after = get()
+        assert after["locale"] == "ja-JP" and after["scope_path"] == "/ja/" and \
+            [m["locale"] for m in after["markets"]] == ["ja-JP", "ko-KR"], after
+        assert post({"project": "pf_http", "markets": [{"locale": "ko-KR", "scope": ""}]}, token="x")[0] == 403
     finally:
         srv.shutdown()
         srv.server_close()

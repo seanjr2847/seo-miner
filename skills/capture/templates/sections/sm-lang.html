@@ -1,0 +1,204 @@
+<script type="application/json" class="section-def">
+{"id": "sm-lang", "view": "settings", "after": "setup"}
+</script>
+<!-- 언어-지역(시장) — **두 배포 공통**. 예전엔 호스팅 전용 섹션(sm-set) 안에만 있어서, 로컬
+     대시보드에서는 등록할 때 고른 언어를 바꿀 곳이 없었다(sm-profile 과 같은 사연).
+     시장 하나 = 언어-지역 + 분석 범위 경로. 여럿 고를 수 있고 첫 것이 기본이다. 하나면 모든
+     키워드를 그 나라 검색에서 재고, 여럿이면 키워드마다 그중 맞는 나라에서 잰다(db.snap_locale).
+     읽기는 GET /api/settings(dashboard.markets_read — 목록 정본 serp_adapter.LOCALES), 쓰기는
+     POST /api/settings {markets}(dashboard.markets_save). 원격 사이트는 로컬 서버가 호스팅으로
+     넘긴다(Handler._proxy). 줄을 고치는 동안은 초안에만 담고 [저장]을 눌러야 서버로 간다.
+     자리: 호스팅에는 sm-set(측정 방식)도 "setup" 뒤에 붙는다. 같은 자리면 파일 이름 순서로
+     끼워져 sm-lang 이 sm-set 아래에 선다 — 이름을 바꾸면 순서도 바뀐다. -->
+<style>
+#sm-lang .sm-ch { margin:0 0 var(--sp-4); }
+#sm-lang .sm-ch h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-lang .sm-ch .sub { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:2px 0 0; max-width:74ch; }
+#sm-lang .opts { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+#sm-lang .msg { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin-left:6px; }
+#sm-lang .msg.warn { color:var(--warn); }
+#sm-lang .none { font:400 var(--fs-2)/1.5 var(--sans); color:var(--sub); margin:0; }
+/* 시장 — 줄마다 상자 하나. 위 줄: 언어-지역 선택·기본 배지·빼기, 아래 줄: 도메인(고정) 뒤에
+   경로 입력. 도메인·경로는 URL 조각이라 등폭이다. */
+#sm-lang .mks { display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+#sm-lang .mk { display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--line);
+  border-radius:var(--r-in); }
+#sm-lang .mk-top { display:flex; align-items:center; gap:6px; min-width:0; }
+#sm-lang .mk-top select { flex:1; min-width:0; max-width:none; }
+#sm-lang .mk-x { flex:none; display:grid; place-items:center; width:32px; height:32px; padding:0; border:0;
+  border-radius:var(--r-in); background:none; color:var(--sub); cursor:pointer; }
+#sm-lang .mk-x:hover { background:var(--sunk); color:var(--ink); }
+#sm-lang .mk-x svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; }
+#sm-lang .mk-act .msg { flex-basis:100%; margin-left:0; }
+#sm-lang .scope-in { display:flex; flex:none; align-items:center; min-width:0; border:1px solid var(--rule);
+  border-radius:var(--r-in); background:var(--sunk); overflow:hidden; }
+#sm-lang .scope-in .dom { font:400 var(--fs-2)/1.4 var(--mono); color:var(--sub); padding:8px 0 8px 10px;
+  white-space:nowrap; }
+#sm-lang .scope-in input { font:400 var(--fs-2)/1.4 var(--mono); padding:8px 10px 8px 1px; border:0;
+  background:transparent; color:var(--ink); min-width:0; flex:1; outline:0; }
+#sm-lang .scope-in:focus-within { border-color:var(--accent); }
+</style>
+<section id="sm-lang">
+  <div class="card">
+    <div class="sm-ch">
+      <h2>언어-지역<span class="hint" tabindex="0"
+        data-tip="어느 나라 검색 결과에서 잴지입니다. 하나만 고르면 영어 키워드도 그 나라 검색에서 잽니다. 여럿 고르면 키워드마다 맞는 나라에서 잽니다. 나라마다 경로가 다른 사이트(/kr/ko/ · /us/en/)는 경로도 적으면 그 아래 페이지만 우리 것으로 셉니다."
+        aria-label="어느 나라 검색 결과에서 잴지입니다. 하나만 고르면 영어 키워드도 그 나라 검색에서 잽니다. 여럿 고르면 키워드마다 맞는 나라에서 잽니다. 나라마다 경로가 다른 사이트(/kr/ko/ · /us/en/)는 경로도 적으면 그 아래 페이지만 우리 것으로 셉니다."
+        >i</span></h2>
+      <p class="sub">여럿 고를 수 있습니다. 경로는 선택이고, 저장하면 다음 측정부터 적용됩니다.</p>
+    </div>
+    <div class="body" id="lg-body"></div>
+  </div>
+</section>
+<script>
+"use strict";
+// 언어-지역(시장) 칸의 불러오기·초안·저장 — 로컬·호스팅 공통. 읽기는 GET /api/settings, 쓰기는
+// 셸의 post()(로컬은 X-Token 을 붙여야 받는다 — 호스팅은 무시한다).
+(function () {
+  var DONE = "";           // 사이트당 한 번만 받는다 — 못 받았으면 비워서 다음 sm:site 가 다시 시도한다
+  var S = null;            // 서버가 준 값: {locale, locales, domain, markets, max_markets}
+  var MK = null;           // 초안 [{locale, scope}]
+
+  function proj() {
+    var p = document.getElementById("proj");
+    return p ? p.value : "";
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  function body() { return document.getElementById("lg-body"); }
+
+  function mkDraft() {
+    if (!MK) MK = (S.markets && S.markets.length ? S.markets
+      : [{locale: S.locale, scope: S.scope_path || ""}]).map(function (m) {
+        return {locale: m.locale, scope: m.scope || ""};
+      });
+    return MK;
+  }
+
+  function lgRender(msg, kind) {
+    var b = body();
+    if (!b || !S) return;
+    var list = S.locales || [];
+    if (!S.locale || !list.length) {   // 등록 직후 Brain 이 아직 없다
+      b.innerHTML = '<p class="none">첫 측정이 끝나면 여기서 바꿀 수 있습니다.</p>';
+      return;
+    }
+    var mk = mkDraft(), max = S.max_markets || 5, many = mk.length > 1;
+    var used = mk.map(function (m) { return m.locale; });
+    b.innerHTML = '<div class="mks">' + mk.map(function (m, i) {
+      var opts = list.map(function (l) {
+        // 다른 줄이 이미 고른 언어-지역은 고를 수 없다(같은 시장 두 벌)
+        var taken = l.code !== m.locale && used.indexOf(l.code) >= 0;
+        return '<option value="' + esc(l.code) + '"' + (l.code === m.locale ? " selected" : "") +
+          (taken ? " disabled" : "") + ">" + esc(l.label) + "</option>";
+      }).join("");
+      return '<div class="mk" data-i="' + i + '"><div class="mk-top">' +
+        '<select data-lang aria-label="언어-지역 ' + (i + 1) + '">' + opts + "</select>" +
+        (i === 0 && many ? '<span class="badge muted">기본</span>' : "") +
+        (many ? '<button type="button" class="mk-x" data-mk-del aria-label="이 언어-지역 빼기" ' +
+          'title="빼기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' : "") +
+        '</div><label class="scope-in"><span class="dom">' + esc(S.domain || "") +
+        '</span><input data-scope type="text" inputmode="url" spellcheck="false" autocomplete="off" ' +
+        'placeholder="/kr/ko/" aria-label="분석 범위 경로 ' + (i + 1) + '" value="' +
+        esc(m.scope || "") + '"></label></div>';
+    }).join("") + "</div>" +
+      '<div class="opts mk-act">' +
+      (mk.length < max ? '<button type="button" class="go sm sec" data-mk-add>+ 언어-지역 추가</button>' : "") +
+      '<button type="button" class="go sm" data-mk-save>저장</button>' +
+      '<span class="msg' + (kind === "bad" ? " warn" : "") + '" role="status">' + esc(msg || (many
+        ? "키워드마다 맞는 언어-지역에서 잽니다."
+        : "모든 키워드를 이 언어-지역 검색에서 잽니다.")) + "</span></div>";
+  }
+
+  // 화면에서 바뀐 값을 초안에 옮긴다 — 다시 그리기 전에 부른다(적던 글자를 잃지 않게)
+  function mkRead() {
+    var mk = mkDraft(), b = body();
+    if (!b) return mk;
+    b.querySelectorAll(".mk").forEach(function (row) {
+      var i = Number(row.dataset.i), s = row.querySelector("select"), inp = row.querySelector("input");
+      if (!mk[i]) return;
+      if (s) mk[i].locale = s.value;
+      if (inp) mk[i].scope = inp.value;
+    });
+    return mk;
+  }
+
+  function mkAdd() {
+    var mk = mkRead(), used = mk.map(function (m) { return m.locale; });
+    var next = (S.locales || []).filter(function (l) { return used.indexOf(l.code) < 0; })[0];
+    if (!next) return;
+    mk.push({locale: next.code, scope: ""});
+    lgRender("고른 뒤 [저장]을 누르면 적용됩니다.");
+    var rows = body().querySelectorAll(".mk select");
+    if (rows.length) rows[rows.length - 1].focus();
+  }
+
+  function mkDel(i) {
+    var mk = mkRead();
+    if (mk.length < 2) return;
+    mk.splice(i, 1);
+    lgRender("[저장]을 누르면 적용됩니다.");
+  }
+
+  async function mkSave() {
+    var pj = proj(), mk = mkRead();
+    if (!pj) return;
+    try {
+      var res = await post("/api/settings", {project: pj, markets: mk});
+      var d = res[1] || {};
+      if (!res[0]) throw new Error(d.detail || d.error || "");
+      S.markets = d.markets;
+      S.locale = d.markets[0].locale;
+      S.scope_path = d.markets[0].scope;
+      MK = null;
+      lgRender("저장했습니다. 다음 측정부터 적용됩니다.");
+    } catch (e) {
+      lgRender("저장하지 못했습니다. " + (e && e.message ? e.message : ""), "bad");
+    }
+  }
+
+  async function lgLoad() {
+    var pj = proj();
+    if (!pj || DONE === pj || !body()) return;
+    DONE = pj;
+    try {
+      S = await (await fetch("/api/settings?project=" + encodeURIComponent(pj))).json();
+    } catch (e) {
+      DONE = "";
+      return;
+    }
+    MK = null;         // 서버 값이 새로 왔다 — 초안을 버린다
+    lgRender();
+  }
+
+  var sec = document.getElementById("sm-lang");
+  if (sec) {
+    sec.addEventListener("click", function (ev) {
+      var t = ev.target.closest ? ev.target : null;
+      if (!t) return;
+      if (t.closest("[data-mk-save]")) return mkSave();
+      if (t.closest("[data-mk-add]")) return mkAdd();
+      var del = t.closest("[data-mk-del]");
+      if (del) return mkDel(Number(del.closest(".mk").dataset.i));
+    });
+    sec.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && ev.target.matches && ev.target.matches("[data-scope]")) {
+        ev.preventDefault();
+        mkSave();
+      }
+    });
+    sec.addEventListener("change", function (ev) {
+      // 언어-지역을 바꾸면 다른 줄의 고를 수 있는 목록도 바뀐다 — 초안에 담고 다시 그린다
+      if (ev.target.matches && ev.target.matches("[data-lang]")) {
+        mkRead();
+        lgRender("[저장]을 누르면 적용됩니다.");
+      }
+    });
+  }
+  document.addEventListener("sm:site", lgLoad);
+  lgLoad();   // 이미 사이트가 골라진 채로 이 스크립트가 늦게 실행됐을 때 대비
+})();
+</script>

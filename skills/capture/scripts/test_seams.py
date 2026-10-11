@@ -626,17 +626,16 @@ def test_seam_14_locale_list_single_source():
     app_src = ctx["app_f"].read_text("utf-8")
     assert "__LOCALES__=serp_adapter.LOCALES" in app_src, \
         "app.py 가 온보딩에 언어-지역 목록을 안 싣는다"
-    assert "serp_adapter.LOCALES" in app_src.split("def api_settings(")[1].split("@app.")[0], \
-        "/api/settings 가 언어-지역 목록을 안 준다 — dash.html 의 선택지가 빈다"
-    assert "SET_H.locales" in ctx["dash"] and "[data-lang]" in ctx["dash"], \
-        "dash.html 이 /api/settings 의 locales 로 선택지를 안 그린다"
-    # 칸은 자기 이름으로 집는다 — ".ga4 select" / "[data-lang]". 예전에 저장소 칸이
+    assert "dashboard.markets_read(" in app_src.split("def api_settings(")[1].split("@app.")[0], \
+        "/api/settings 가 언어-지역 목록을 안 준다 — 언어 칸(sm-lang)의 선택지가 빈다"
+    # 언어-지역 칸은 두 배포 공통(sm-lang)이다 — 호스팅 애드온이 사본을 갖지 않는다(seam 127)
+    # 칸은 자기 이름으로 집는다 — ".ga4 select". 예전에 저장소 칸이
     # ".repo select" 로 **첫 번째** .repo 를 집어서, 언어 칸이 그 앞에 서면 저장소
     # 저장이 언어 select 를 읽었다(실제로 그렇게 됐다). 저장소 칸은 없어졌고, 그
     # 함정을 다시 파지 않도록 자리로 고르는 셀렉터가 없는 것을 못 박는다.
     sm = (SCRIPTS.parent / "templates" / "sections" / "sm-set.html").read_text("utf-8")
-    assert 'class="repo lang' in sm and 'class="repo ga4' in sm, \
-        "sm-set.html 의 언어·GA4 칸 이름이 바뀌었다 — dash.html 이 그 이름으로 집는다"
+    assert 'class="repo ga4' in sm, \
+        "sm-set.html 의 GA4 칸 이름이 바뀌었다 — dash.html 이 그 이름으로 집는다"
     assert '".repo select"' not in ctx["dash"] and "'.repo select'" not in ctx["dash"], \
         "dash.html 이 칸을 자리(.repo 의 첫째)로 고른다 — 칸 순서가 바뀌면 남의 값을 읽는다"
 
@@ -3640,8 +3639,9 @@ def test_seam_122_scope_path_is_one_rule_at_every_api():
     app_src = (ROOT / "server" / "app.py").read_text("utf-8")
     dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
     start = (ROOT / "server" / "start.html").read_text("utf-8")
-    assert "markets: mk" in dash and '"markets" in body' in app_src,         "설정 화면이 보내는 시장 목록(markets)을 서버가 안 읽는다"
-    assert "SET_H.markets" in dash and '"markets": markets' in app_src,         "서버가 주는 시장 목록을 설정 화면이 안 읽는다"
+    lang = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-lang.html").read_text("utf-8")
+    assert "markets: mk" in lang and '"markets" in body' in app_src,         "설정 화면이 보내는 시장 목록(markets)을 서버가 안 읽는다"
+    assert "S.markets" in lang and "dashboard.markets_read(" in app_src,         "서버가 주는 시장 목록을 설정 화면이 안 읽는다"
     assert "scope: S.scope" in start and 'body["scope"]' in app_src,         "온보딩이 보내는 scope 를 서버가 안 읽는다"
     assert '"scope": scope' in app_src and "d.scope" in start, "peek 이 돌려준 범위를 온보딩이 안 받는다"
 
@@ -3872,6 +3872,35 @@ def test_seam_126_schema_rules_are_one_table_from_collector_to_brief():
         assert not bad, f"{f.name} 이 속성 표의 사본을 갖는다({bad}) — 정본은 scoring.SCHEMA_RULES"
     assert "SCHEMA_RULES = " not in (SCRIPTS / "collect_page.py").read_text("utf-8"), \
         "수집기가 속성 표를 따로 갖는다 — scoring.SCHEMA_RULES 를 읽는다"
+
+
+def test_seam_127_locale_card_is_one_set_for_both_deployments():
+    """127) 언어-지역(시장)을 바꾸는 칸은 두 배포 공통(sections/sm-lang.html)이고 읽기·검증·쓰기는
+    dashboard.markets_read / markets_save / scope_input 한 벌이다.
+
+    예전엔 칸이 호스팅 전용 섹션(sm-set)과 그 애드온(dash.html) 안에만 있어서, 로컬
+    대시보드에서는 등록할 때 고른 언어를 바꿀 곳이 없었고 로컬 POST /api/settings 는
+    {markets} 를 거절했다. 한쪽에 다시 사본을 만들면 그쪽 화면만 옛 규칙으로 돈다.
+    """
+    import dashboard
+    secs = {s["id"]: s for s in dashboard.section_defs()}
+    assert "sm-lang" in secs and secs["sm-lang"].get("only") is None, \
+        "언어-지역 칸(sm-lang)이 두 배포 공통이 아니다"
+    assert "data-lang" not in secs["sm-set"]["html"] and 'class="repo lang' not in secs["sm-set"]["html"], \
+        "호스팅 전용 섹션(sm-set)에 언어 칸이 또 있다 — 두 벌이다"
+    dash = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
+    for gone in ("langRender", "mkSave", "mkRead", "data-mk-", "data-lang", "scope-in"):
+        assert gone not in dash, f"dash.html 이 언어 칸을 또 그린다({gone}) — sm-lang.html 한 벌이어야 한다"
+    app_src = (ROOT / "server" / "app.py").read_text("utf-8")
+    assert "dashboard.markets_save(" in app_src and "dashboard.scope_input(" in app_src, \
+        "호스팅 POST /api/settings 가 시장 검증·저장을 dashboard 의 한 벌로 안 한다 — 사본이다"
+    assert "markets_save(" in inspect_src(dashboard.settings_profile_route), \
+        "로컬 POST /api/settings 가 {markets} 를 markets_save 로 안 받는다"
+    assert "markets_read(" in inspect_src(dashboard.settings_read_route), \
+        "로컬 GET /api/settings 가 언어 목록·시장을 안 싣는다 — 칸의 선택지가 빈다"
+    for variant in ("local", "hosted"):
+        html = dashboard.assemble(variant)
+        assert 'id="sm-lang"' in html and 'id="lg-body"' in html, f"{variant} 조립본에 언어 칸이 없다"
 
 
 def inspect_src(fn) -> str:

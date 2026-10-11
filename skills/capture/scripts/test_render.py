@@ -228,6 +228,10 @@ MUSTS = [
     # 있던 동안 로컬 [설정]에는 이 칸이 아예 없었다.
     (r'<section id="sm-profile"(?:(?!</section>).)*id="pf-alias"(?:(?!</section>).)*id="pf-seeds"',
      "[설정]에 브랜드·경쟁사 칸(sm-profile)이 없다 — 두 배포 공통이어야 한다"),
+    # 언어-지역(시장) 칸도 두 배포 공통이다(sections/sm-lang.html) — 자리만이 아니라 **고르개가
+    # 실제로 섰는지**(GET /api/settings 가 locales·markets 를 실어 왔는지)까지 본다.
+    (r'<section id="sm-lang"(?:(?!</section>).)*<select data-lang(?:(?!</section>).)*<option[^>]*selected',
+     "[설정]에 언어-지역 고르개(sm-lang)가 안 섰다 — /api/settings 에 locales 가 없거나 칸이 호스팅 전용이다"),
     # 차트는 캔버스다(Chart.js) — 자리(<canvas data-ch>)만 서고 차트가 안 서면 화면은 빈
     # 칸인데 JS 오류도 안 날 수 있다. 셸의 chMake 가 세우면 data-ch-ok 를 단다.
     (r'<canvas data-ch="ch\d+"[^>]*data-ch-ok="1"', "차트가 하나도 안 섰다 — 캔버스 자리만 남았다"),
