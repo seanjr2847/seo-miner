@@ -601,9 +601,11 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   .hax .k, .hax .ax { display:none; }
 }
 
-/* 본문 — 좌측 정렬, 최대 1120px. 캔버스 위에 면 카드가 앉는다. */
-main { width:100%; padding:0 24px 80px; min-width:0; }
-main > * { max-width:1120px; }
+/* 본문 — 창 폭을 따라 늘어난다. 1120px 로 못 박아 두었더니 1500px 창에서 오른쪽 4분의 1이
+   빈 캔버스였다. 넘치게 넓은 모니터(2K·울트라와이드)에서만 1680px 에서 멈추고 가운데에 앉는다.
+   산문은 아래 74ch 규칙이 따로 재운다 — 넓어지는 것은 카드·표·차트다. */
+main { width:100%; padding:0 clamp(16px,2.4vw,40px) 80px; min-width:0; }
+main > * { max-width:1680px; margin-left:auto; margin-right:auto; }
 @media (max-width:999px) { main { padding:0 16px 60px; } }
 
 /* ── 인쇄 ─────────────────────────────────────────────────────
