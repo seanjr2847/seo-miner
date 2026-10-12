@@ -25,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "capture" / "scripts"))
@@ -57,12 +58,12 @@ def _warn_branch(branch: str | None) -> None:
 
 
 def _record_remote(project: str, opp_id: int | None, path: str,
-                   branch: str | None, note: str | None) -> None:
+                   branch: str | None, note: str | None) -> dict:
     """호스팅 기록 창구 — 로컬 _mark_done 과 같은 일을 서버가 한다
     (dashboard.record_creation_route 가 양쪽의 본체다)."""
-    remote.api("POST", "/api/creation",
-               json={"project": project, "opportunity_id": opp_id, "path": path,
-                     "branch": branch, "note": note})
+    return remote.api("POST", "/api/creation",
+                      json={"project": project, "opportunity_id": opp_id, "path": path,
+                            "branch": branch, "note": note}) or {}
 
 
 def connect():
@@ -103,7 +104,7 @@ def claim(project: str, ids: list[int]) -> None:
 
 
 def _mark_done(conn, pid: int, opp_id: int | None, path: str,
-               branch: str | None, note: str | None) -> None:
+               branch: str | None, note: str | None) -> int:
     _warn_branch(branch)
     kind = None
     if opp_id:
@@ -112,12 +113,12 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
         # 기록은 남기되 상태는 진행 중(acked)이다 — 글 하나로 묶음 기회가 닫히면 안 되고,
         # 완료는 대시보드의 완료 후 관찰을 보고 사람이 누른다(호스팅 /api/creation 도 같다).
         db.set_opportunity_status(conn, opp_id, "acked", project_id=pid)
-    db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
-                       branch=branch, note=note)
+    return db.record_creation(conn, pid, path, opportunity_id=opp_id, kind=kind,
+                              branch=branch, note=note)
 
 
 def done(project: str, opp_id: int | None, path: str,
-         branch: str | None, note: str | None) -> None:
+         branch: str | None, note: str | None, repo: str | None = None) -> None:
     # 요청문 답 보고서(%TEMP%\seo-fix_page-….html)는 작업 기록이 아니다 — 저장소가 안 바뀌었다.
     # 요청문 꼬리가 "제안서까지만 냈으면 기록하지 않는다"고 하는데도 그 경로로 기록이 남아,
     # 아무것도 안 고친 페이지가 '관찰 중'으로 묶이고 기회가 '작업 후 완료'로 닫힐 뻔했다.
@@ -128,12 +129,60 @@ def done(project: str, opp_id: int | None, path: str,
         _warn_branch(branch)
         _record_remote(project, opp_id, path, branch, note)
         print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
-        return
-    conn = connect()
-    pid = db.get_project(conn, project)["id"]
-    _mark_done(conn, pid, opp_id, path, branch, note)
-    print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
-    conn.close()
+    else:
+        conn = connect()
+        pid = db.get_project(conn, project)["id"]
+        _mark_done(conn, pid, opp_id, path, branch, note)
+        print(f"recorded: opp#{opp_id} -> {path} ({branch or 'no-branch'})")
+        conn.close()
+    # 기록하는 김에 앞서 남긴 기록의 머지를 반영한다. sync 를 plan 첫머리에 돌리라고만 했더니
+    # 아무도 안 돌려 theotherskin 의 34건이 한 달 넘게 전부 '병합 전'이었다(2026-10-12) —
+    # 기록하는 자리는 매번 지나간다. 리포를 모르면(--repo 없음) 물을 데가 없어 건너뛴다.
+    if repo:
+        sync_merged(project, repo)
+
+
+def _git(repo: str, *args: str) -> str | None:
+    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                       encoding="utf-8", errors="replace")
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def _default_ref(repo: str) -> str | None:
+    """사이트 리포의 기본 브랜치 — 배포되는 가지. origin/HEAD 가 있으면 그것, 없으면 흔한 이름."""
+    ref = _git(repo, "rev-parse", "--abbrev-ref", "origin/HEAD")
+    if ref and ref != "origin/HEAD":
+        return ref
+    for cand in ("origin/main", "origin/master", "main", "master"):
+        if _git(repo, "rev-parse", "-q", "--verify", f"{cand}^{{commit}}"):
+            return cand
+    return None
+
+
+def _landed_at(repo: str, sha: str, ref: str | None) -> str | None:
+    """커밋이 기본 브랜치에 들어가 있으면 그 커밋 시각(UTC, ISO), 아니면 None.
+
+    PR 없이 기본 브랜치에 바로 들어간 손 수정은 물어볼 PR 이 없다 — 기록이 영영 '병합 전'에
+    머물러 완료 후 관찰에 안 잡혔다(theotherskin 16건, 2026-10-12). 커밋이 그 가지에 있으면
+    그게 머지다. 시각은 커밋 시각 — 머지 커밋 시각보다 이를 수 있지만 '전'을 고친 뒤로 미는
+    쪽보다 안전하다."""
+    if not ref:
+        return None
+    p = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", sha, ref],
+                       capture_output=True)
+    if p.returncode != 0:
+        return None
+    ts = _git(repo, "show", "-s", "--format=%ct", sha)
+    if not ts:
+        return None
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _merge_remote(project: str, cid: int, at: str | None, reason: str) -> int:
+    """호스팅 기록을 merged 로 켜고 그 기회를 at 기준으로 닫는다(서버 db.merge_creation)."""
+    r = remote.api("POST", "/api/creation/merged",
+                   json={"project": project, "id": int(cid), "merged_at": at, "reason": reason})
+    return int((r or {}).get("closed") or 0)
 
 
 def sync(project: str, repo: str) -> None:
@@ -149,39 +198,65 @@ def sync(project: str, repo: str) -> None:
         sys.exit(f"git log 실행 실패 ({repo}): {err}")
 
     # 커밋에서 뽑은 (기회 번호, sha) — 여기까지는 로컬·호스팅이 같다(git 은 이 PC 에 있다).
-    hits = []
+    hits, seen = [], set()
     for line in p.stdout.splitlines():
         line = line.strip()
         if not line:
             continue
         sha, _, _ = line.partition("\t")
         for x in re.findall(r"\[opp #(\d+)\]", line):
-            hits.append((int(x), sha))
+            if (int(x), sha) not in seen:
+                seen.add((int(x), sha))
+                hits.append((int(x), sha))
 
-    closed = 0
-    untouched = 0
-    if _remote(project):
+    ref = _default_ref(repo)
+    remote_site = _remote(project)
+    recorded = landed = untouched = 0
+    # 이미 남긴 기록(노트에 그 커밋 앞 8자리)은 다시 남기지 않는다 — 예전엔 진행 중(acked)인
+    # 기회의 커밋을 sync 마다 또 기록했다. 기록이 '병합 전'이고 커밋이 기본 브랜치에 들어갔으면
+    # 그 기록을 머지로 닫는다.
+    if remote_site:
+        d = _payload(project)
         status = {int(o["id"]): o.get("status")
-                  for o in (_payload(project).get("opps") or []) if o.get("id") is not None}
-        for opp_id, sha in hits:
-            if status.get(opp_id) in ("new", "acked"):
-                _record_remote(project, opp_id, "", None, f"이미 적용된 수정(커밋 {sha[:8]})")
-                closed += 1
-            else:
-                untouched += 1
+                  for o in (d.get("opps") or []) if o.get("id") is not None}
+        prior = [(c.get("id"), c.get("opportunity_id"), c.get("note") or "", c.get("merged"))
+                 for c in (d.get("creations") or [])]
+        conn = pid = None
     else:
         conn = connect()
         pid = db.get_project(conn, project)["id"]
+        status = {r["id"]: r["status"] for r in conn.execute(
+            "SELECT id, status FROM opportunities WHERE project_id=?", (pid,))}
+        prior = [(r["id"], r["opportunity_id"], r["note"] or "", r["merged"]) for r in conn.execute(
+            "SELECT id, opportunity_id, note, merged FROM creations WHERE project_id=?", (pid,))]
+    try:
         for opp_id, sha in hits:
-            row = db.get_opportunity(conn, opp_id, project_id=pid)
-            if row and row["status"] in ("new", "acked"):
-                _mark_done(conn, pid, opp_id, "", branch=None,
-                           note=f"이미 적용된 수정(커밋 {sha[:8]})")
-                closed += 1
-            else:
+            mark = f"커밋 {sha[:8]}"
+            old = next((c for c in prior if c[1] == opp_id and mark in c[2]), None)
+            at = _landed_at(repo, sha, ref)
+            reason = f"커밋 {sha[:8]} 이 기본 브랜치에 있음"
+            if old:
+                if at and not old[3] and old[0] is not None:
+                    landed += (_merge_remote(project, old[0], at, reason) if remote_site
+                               else db.merge_creation(conn, pid, old[0], at, reason))
+                continue
+            if status.get(opp_id) not in ("new", "acked"):
                 untouched += 1
-        conn.close()
-    print(f"sync 완료: {closed}건 기록(진행 중), {untouched}건 건드리지 않음")
+                continue
+            note = f"이미 적용된 수정({mark})"
+            if remote_site:
+                cid = _record_remote(project, opp_id, "", None, note).get("creation_id")
+            else:
+                cid = _mark_done(conn, pid, opp_id, "", branch=None, note=note)
+            recorded += 1
+            if at and cid is not None:
+                landed += (_merge_remote(project, cid, at, reason) if remote_site
+                           else db.merge_creation(conn, pid, cid, at, reason))
+    finally:
+        if conn is not None:
+            conn.close()
+    print(f"sync 완료: {recorded}건 기록, 기본 브랜치에 들어간 것 {landed}건 완료, "
+          f"{untouched}건 건드리지 않음")
     sync_merged(project, repo)
 
 
@@ -223,8 +298,8 @@ def sync_merged(project: str, repo: str | None) -> dict:
     그 기회를 done 으로 닫는다(status_at = 머지 시각). gh 가 없거나 로그인이 안
     됐으면 한 줄 알리고 건너뛴다 — 실패로 치지 않는다(sync 의 나머지는 이미 끝났다).
 
-    호스팅 사이트는 기록이 서버에 있다 — 기회 상태는 /api/opp 로, 기록의 merged 는
-    /api/creation/merged 로 닫는다(로컬이 db.mark_creation_merged 를 부르는 자리다).
+    호스팅 사이트는 기록이 서버에 있다 — /api/creation/merged 한 번으로 기록과 기회를 같이
+    닫는다(서버가 로컬과 같은 db.merge_creation 을 부른다, 완료 시각 = 머지 시각).
     기록을 닫아야 다음 sync 의 목록(merged=0 인 것)에서 빠진다 — 안 그러면 같은 PR 을
     gh 에 영영 다시 묻고, 화면의 「고친 것」은 계속 '병합 전'으로 남는다.
     """
@@ -233,8 +308,6 @@ def sync_merged(project: str, repo: str | None) -> dict:
     remote_site = _remote(project)
     if remote_site:
         d = _payload(project)
-        status = {int(o["id"]): o.get("status")
-                  for o in (d.get("opps") or []) if o.get("id") is not None}
         todo = [(c.get("id"), c.get("opportunity_id"), c.get("branch"))
                 for c in (d.get("creations") or [])
                 if not c.get("merged") and (c.get("branch") or "").strip()]
@@ -244,7 +317,6 @@ def sync_merged(project: str, repo: str | None) -> dict:
         pid = db.get_project(conn, project)["id"]
         todo = [(r["id"], r["opportunity_id"], r["branch"])
                 for r in db.unmerged_creations(conn, pid)]
-    unknown = 0
     try:
         for cid, oid, branch in todo:
             out["checked"] += 1
@@ -254,23 +326,12 @@ def sync_merged(project: str, repo: str | None) -> dict:
             out["merged"] += 1
             reason = f"PR #{pr.get('number')} 머지됨 ({branch.strip()})"
             if remote_site:
-                if cid is not None:   # 번호가 있어야 닫는다 — 없으면 기회만 닫고 넘어간다
-                    remote.api("POST", "/api/creation/merged",
-                               json={"project": project, "id": int(cid)})
-                if not oid:
-                    continue
-                if status.get(int(oid)) in ("new", "acked", db.OPP_RESOLVED):
-                    remote.api("POST", "/api/opp",
-                               json={"project": project, "id": int(oid), "status": "done"})
-                    status[int(oid)] = "done"
-                    out["closed"] += 1
-                elif int(oid) not in status:
-                    unknown += 1     # 화면 목록에 없는 기회 — 상태를 모르면 덮지 않는다
+                # 기록과 기회를 한 번에 닫는다(서버 db.merge_creation, 완료 시각 = 머지 시각).
+                # 예전엔 기회를 /api/opp 로 따로 닫아 완료 시각이 이 동기화 때가 됐다.
+                if cid is not None:
+                    out["closed"] += _merge_remote(project, cid, pr.get("mergedAt"), reason)
             else:
-                db.mark_creation_merged(conn, cid)
-                if oid:
-                    out["closed"] += db.close_opportunity_by_work(
-                        conn, oid, pid, pr.get("mergedAt"), reason)
+                out["closed"] += db.merge_creation(conn, pid, cid, pr.get("mergedAt"), reason)
     except _GhUnavailable as e:
         out["skipped"] = str(e)
         print(f"머지 확인 건너뜀: {e} — `gh auth login` 뒤 다시 sync 하면 반영됩니다")
@@ -278,9 +339,8 @@ def sync_merged(project: str, repo: str | None) -> dict:
     finally:
         if conn is not None:
             conn.close()
-    tail = f", 상태를 몰라 건너뜀 {unknown}건" if unknown else ""
     print(f"머지 확인: {out['checked']}건 중 {out['merged']}건 머지됨 → "
-          f"기회 {out['closed']}건 완료{tail}")
+          f"기회 {out['closed']}건 완료")
     return out
 
 
@@ -317,6 +377,7 @@ if __name__ == "__main__":
     p3.add_argument("id", type=int, nargs="?", default=None)
     p3.add_argument("--path", required=True); p3.add_argument("--branch")
     p3.add_argument("--note")
+    p3.add_argument("--repo", help="사이트 리포 — 주면 기록 뒤 앞선 기록들의 머지를 반영한다")
     p4 = sub.add_parser("list"); p4.add_argument("project")
     p5 = sub.add_parser("merged"); p5.add_argument("creation_id", type=int)
     p5.add_argument("--project")
@@ -329,7 +390,7 @@ if __name__ == "__main__":
         elif a.cmd == "claim":
             claim(a.project, a.ids)
         elif a.cmd == "done":
-            done(a.project, a.id, a.path, a.branch, a.note)
+            done(a.project, a.id, a.path, a.branch, a.note, a.repo)
         elif a.cmd == "list":
             list_creations(a.project)
         elif a.cmd == "merged":

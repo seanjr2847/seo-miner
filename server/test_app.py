@@ -641,8 +641,31 @@ def demo() -> None:
                 bc.close()
 
         r = c.post("/api/creation/merged", json={"project": "p1", "id": cid_mine})
-        assert r.status_code == 200 and r.json() == {"creation_id": cid_mine, "merged": True}, r.text
+        assert r.status_code == 200 and r.json() == {"creation_id": cid_mine, "merged": True,
+                                                     "closed": 0}, r.text
         assert merged_of(cid_mine) == 1, "창구가 200 을 줬는데 기록은 '병합 전'이다"
+        # 머지 시각이 오면 그 기록의 기회를 그 시각으로 닫는다 — 예전엔 부르는 쪽이 /api/opp 로
+        # 따로 닫아 완료 시각이 '동기화한 때'(theotherskin: 9/16 머지 → 10/12 완료)가 됐다.
+        # 브랜치 없는 기록(sync 가 커밋에서 남긴 것)도 켤 수 있다.
+        bc = db.connect(home=store.home(u2))
+        try:
+            oid_m = bc.execute("INSERT INTO opportunities(project_id, kind, target, score, status)"
+                               " VALUES(?, 'ctr_gap', 'merged-q', 1, 'acked') RETURNING id",
+                               (pid_p1,)).fetchone()[0]
+            bc.commit()
+            cid_nb = db.record_creation(bc, pid_p1, "", opportunity_id=oid_m, branch=None)
+        finally:
+            bc.close()
+        r = c.post("/api/creation/merged", json={"project": "p1", "id": cid_nb,
+                                                 "merged_at": "2026-09-16T05:39:30Z"})
+        assert r.status_code == 200 and r.json()["closed"] == 1, r.text
+        bc = db.connect(home=store.home(u2))
+        try:
+            st = tuple(bc.execute("SELECT status, status_at FROM opportunities WHERE id=?",
+                                  (oid_m,)).fetchone())
+        finally:
+            bc.close()
+        assert st == ("done", "2026-09-16 05:39:30"), st
         # 남의 사이트 기록 — 번호를 알아도 못 켠다
         r = c.post("/api/creation/merged", json={"project": "p1", "id": cid_other})
         assert r.status_code == 404, "다른 사이트의 기록이 번호 하나로 켜진다"

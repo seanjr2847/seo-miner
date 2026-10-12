@@ -2032,6 +2032,93 @@ def test_status_at_and_watch_rows():
     conn.close()
 
 
+def test_watch_rows_fall_back_to_rank_snapshots():
+    """서치콘솔에 그 검색어 행이 없으면 순위 확인(rank_snapshots)으로 전·후를 잰다.
+
+    예전엔 서치콘솔 검색어 행만 봤다 — AI 요약 노출(aio_exposure) 기회의 대상은 추적
+    검색어라 서치콘솔에 같은 글자의 행이 거의 없어서, theotherskin 의 완료 22건이 전부
+    '측정 전 → 측정 전 · 비교 전'으로 섰다("olidia vs sculptra vs juvederm", 2026-10-12).
+    그 일의 목표인 AI 요약 인용 여부(aio_cited)도 어디서도 안 쟀다."""
+    conn = db.connect()
+    pid = _project(conn, "wt_rank")["id"]
+    conn.execute("INSERT INTO keywords(project_id, keyword) VALUES(?, 'olidia vs sculptra')", (pid,))
+    kw = conn.execute("SELECT id FROM keywords WHERE project_id=?", (pid,)).fetchone()[0]
+    db.upsert_opportunities(conn, pid, None, [
+        {"kind": "aio_exposure", "target": "Olidia vs Sculptra", "score": 30},
+        {"kind": "striking_distance", "target": "q-gsc", "score": 30}])
+    ids = {r["target"]: r["id"] for r in conn.execute(
+        "SELECT id, target FROM opportunities WHERE project_id=?", (pid,))}
+    for oid in ids.values():
+        db.set_opportunity_status(conn, oid, "done")
+    conn.execute("UPDATE opportunities SET status_at='2026-01-02 00:00:00' WHERE project_id=?", (pid,))
+    db.write_rank_snapshot(conn, kw, 9, "https://e.com/o", aio_present=1, aio_cited=0,
+                           checked_at="2026-01-01 05:00:00")
+    db.write_rank_snapshot(conn, kw, None, None, aio_present=1, aio_cited=0,
+                           checked_at="2026-01-02 00:00:00")        # 완료 당일 = 아직 '그때'
+    db.write_rank_snapshot(conn, kw, 6, "https://e.com/o", aio_present=1, aio_cited=1,
+                           checked_at="2026-01-12 05:00:00")
+    _snap(conn, pid, "2026-01-01", 28, "q-gsc", 12.0, 3)              # 서치콘솔이 있는 쪽은 그대로
+    _snap(conn, pid, "2026-01-10", 28, "q-gsc", 10.0, 3)
+    conn.commit()
+    w = {x["target"]: x for x in db.watch_rows(conn, pid)}
+    r = w["Olidia vs Sculptra"]
+    assert r["source"] == "rank", r
+    assert r["before"] == {"date": "2026-01-02", "position": None, "aio_present": 1, "aio_cited": 0}, r
+    assert r["after"] == {"date": "2026-01-12", "position": 6, "aio_present": 1, "aio_cited": 1}, r
+    assert r["runs_since"] == 1 and r["stalled"] is False, r
+    g = w["q-gsc"]
+    assert g["source"] == "gsc" and g["before"]["position"] == 12.0 and g["after"]["position"] == 10.0, g
+    # 관찰 기간이 지나도록 두 번 넘게 쟀는데 순위도 인용도 그대로면 [다시 열기] — 순위만으로 가르지
+    # 않는다: AI 요약 노출 일의 성과는 인용이다
+    for day in ("2026-02-03", "2026-02-10"):
+        db.write_rank_snapshot(conn, kw, None, None, aio_present=1, aio_cited=0,
+                               checked_at=f"{day} 05:00:00")
+    _snap(conn, pid, "2026-02-10", 28, "q-gsc", 10.0, 3)
+    conn.commit()
+    r = {x["target"]: x for x in db.watch_rows(conn, pid)}["Olidia vs Sculptra"]
+    assert r["runs_since"] == 3 and r["until"] is None and r["stalled"] is True, r
+    db.write_rank_snapshot(conn, kw, None, None, aio_present=1, aio_cited=1,
+                           checked_at="2026-02-10 05:00:00")
+    conn.commit()
+    r = {x["target"]: x for x in db.watch_rows(conn, pid)}["Olidia vs Sculptra"]
+    assert r["stalled"] is False, "순위 밖이어도 AI 요약에 인용됐으면 안 멈춘 것이다"
+    conn.close()
+
+
+def test_watch_baseline_is_first_work_not_late_close():
+    """완료 후 관찰의 기준일은 완료 시각과 첫 작업 기록 중 이른 쪽이다.
+
+    theotherskin 은 9/16 에 머지한 일이 10/12 에야 동기화돼 완료로 닫혔다 — 완료 시각만
+    보면 '그때'가 이미 고친 뒤의 실적이다. 요청문 답 보고서만 가리키는 기록은 작업이 아니라
+    기준일을 당기지 않는다. 기록을 merged 로 켜는 한 벌(merge_creation)은 기회를 머지
+    시각으로 닫는다."""
+    conn = db.connect()
+    pid = _project(conn, "wt_base")["id"]
+    db.upsert_opportunities(conn, pid, None, [{"kind": "striking_distance", "target": "q-base", "score": 30},
+                                              {"kind": "striking_distance", "target": "q-rep", "score": 30}])
+    ids = {r["target"]: r["id"] for r in conn.execute(
+        "SELECT id, target FROM opportunities WHERE project_id=?", (pid,))}
+    cid = db.record_creation(conn, pid, "a.html", opportunity_id=ids["q-base"], branch="seo/x")
+    rep = db.record_creation(conn, pid, r"C:\Temp\seo-fix_page-1.html", opportunity_id=ids["q-rep"])
+    conn.execute("UPDATE creations SET created_at='2026-01-05 03:00:00' WHERE id IN (?,?)", (cid, rep))
+    assert db.merge_creation(conn, pid, cid, "2026-01-06T01:02:03Z", "PR #1 머지됨") == 1
+    assert conn.execute("SELECT status, status_at, merged FROM opportunities o JOIN creations c"
+                        " ON c.opportunity_id=o.id WHERE c.id=?", (cid,)).fetchone()[:]         == ("done", "2026-01-06 01:02:03", 1)
+    assert db.merge_creation(conn, pid + 999, cid, None, "x") == 0, "남의 사이트 번호로 닫혔다"
+    for oid in ids.values():          # 늦게 동기화된 완료 — 둘 다 1/25 에 닫혔다
+        conn.execute("UPDATE opportunities SET status='done', status_at='2026-01-25 00:00:00' WHERE id=?", (oid,))
+    for d, pos in (("2026-01-01", 12.0), ("2026-01-20", 7.0), ("2026-02-10", 6.0)):
+        for t in ids:
+            _snap(conn, pid, d, 28, t, pos, 3)
+    conn.commit()
+    w = {x["target"]: x for x in db.watch_rows(conn, pid)}
+    assert w["q-base"]["before"]["date"] == "2026-01-01", w["q-base"]       # 첫 작업(1/5) 기준
+    assert w["q-base"]["since"] == "2026-01-05", "화면이 '고친 날'로 보일 기준일이 안 실렸다"
+    assert w["q-base"]["until"] is None and w["q-base"]["runs_since"] == 2, w["q-base"]
+    assert w["q-rep"]["before"]["date"] == "2026-01-20", "보고서만 남긴 기록이 기준일을 당겼다"
+    conn.close()
+
+
 # ── 기회 수명주기 (scoring.resolve_stale · db.resolve_opportunities) ─────────────
 # 기준 시각: 기회는 전부 8/10 에 만들어진 것으로 둔다. 그 뒤(8/20~)의 데이터만 "새" 데이터다.
 _BASE = "2026-08-10 00:00:00"

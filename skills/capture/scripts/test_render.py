@@ -164,6 +164,7 @@ AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321
 # [순위 추적]에서 [AI 인용]으로 옮겼다 — 옮긴 자리(#ai-aio)에 서는지를 본다.
 AIO_KW = "요약검색어Z9"
 AIO_DOM = "aioZ9.example"
+WATCH_AIO_KW = "요약관찰Q7"   # 서치콘솔 행 없이 순위 확인으로만 잰 완료 기회
 # AI 에서 온 방문의 빈 상태 둘 — 로컬 대상에서만 사이트를 바꿔 한 번씩 더 연다(ZERO_SITE 는
 # 로컬 Brain 에만 있다). 문구는 <b> 제목만 본다: 소스(<script>)는 check() 가 떼고 보므로
 # 렌더러가 그 분기를 실제로 탔을 때만 걸린다.
@@ -339,6 +340,13 @@ MUSTS = [
     # 리디자인으로 표(<td>)가 행 카드(.ovw-r)가 됐다 — 한 행 카드 안에 그때·지금 칸이 같이 선다.
     (r'id="watch"[^>]*>(?:(?!</section>).)*class="ovw-r"(?:(?!class="ovw-r").)*그때 <span class="nw">14위 · 클릭'
      r'(?:(?!class="ovw-r").)*지금 <span class="nw">9위 · 클릭', "완료 후 관찰이 전·후를 안 그렸다"),
+    # 서치콘솔 행이 없는 완료 기회는 순위 확인으로 잰다 — 클릭 칸 대신 순위(밖)와 AI 요약 인용.
+    # 예전엔 '측정 전 · 비교 전'으로만 섰다(theotherskin AI 요약 노출 22건, 2026-10-12).
+    (r'class="ovw-r"(?:(?!class="ovw-r").)*' + WATCH_AIO_KW
+     + r'(?:(?!class="ovw-r").)*그때 <span class="nw">순위 밖 · AI 요약 인용 안 됨'
+     r'(?:(?!class="ovw-r").)*지금 <span class="nw">7위 · AI 요약 인용됨'
+     r'(?:(?!class="ovw-r").)*class="chip up"[^>]*>AI 요약 인용</span>',
+     "순위 확인으로 잰 완료 기회가 그때·지금·변화를 안 그렸다"),
     # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
      + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
@@ -769,6 +777,16 @@ def _axes(conn, pid: int) -> None:
     db.write_rank_snapshot(conn, kid, 14, f"https://{SITES[1]}.example/a",
                            aio_present=1, aio_cited=0, checked_at=f"{d}T00:00:00Z",
                            aio_domains=[AIO_DOM])
+    # 완료 후 관찰의 순위 확인 갈래 — 서치콘솔에 이 검색어 행이 없다. 그때 순위 밖·인용 안 됨 →
+    # 지금 7위·인용됨(db.watch_rows 가 rank_snapshots 로 잰다).
+    wk = conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?,?,1)",
+                      (pid, WATCH_AIO_KW)).lastrowid
+    db.write_rank_snapshot(conn, wk, None, None, aio_present=1, aio_cited=0,
+                           checked_at=f"{prev}T00:00:00Z")
+    db.write_rank_snapshot(conn, wk, 7, f"https://{SITES[1]}.example/a", aio_present=1,
+                           aio_cited=1, checked_at=f"{d}T00:00:00Z")
+    conn.execute("INSERT INTO opportunities(project_id,kind,target,score,status,status_at)"
+                 " VALUES(?,'aio_exposure',?,40,'done','2026-05-15 00:00:00')", (pid, WATCH_AIO_KW))
     _plays(conn, pid)
     # AI 에서 온 방문(GA4 부가 조회) — 두 출처가 같은 페이지로 들어왔다.
     db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],

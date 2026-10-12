@@ -1494,11 +1494,26 @@ function OV_watchDraw() {
   if (!rows.length)
     return $("watch").innerHTML = `<div class="empty"><b>완료한 검색어가 아직 없습니다</b>
       <p>기회를 완료로 옮기면 여기서 그때와 지금을 나란히 봅니다.</p></div>`;
-  const pos = m => m && Number.isFinite(Number(m.position)) ? Number(m.position) : null;
+  const pos = m => m && m.position != null && Number.isFinite(Number(m.position)) ? Number(m.position) : null;
   const f = v => String(Math.round(v * 10) / 10);
-  const cell = m => m ? `${m.position}위 · 클릭 ${num(m.clicks)}` : "측정 전";
+  // 서치콘솔에 그 검색어 행이 없으면 서버가 순위 확인으로 잰다(source "rank", db.watch_rows) —
+  // 클릭이 없고, 잰 깊이 밖이면 순위가 비고, AI 요약 인용 여부가 있다.
+  const aioTxt = m => m.aio_present == 1 && m.aio_cited != null
+    ? (m.aio_cited == 1 ? " · AI 요약 인용됨" : " · AI 요약 인용 안 됨") : "";
+  const cell = (m, w) => !m ? "측정 전" : w.source === "rank"
+    ? `${pos(m) == null ? "순위 밖" : `${m.position}위`}${aioTxt(m)}`
+    : `${m.position}위 · 클릭 ${num(m.clicks)}`;
   const move = w => {
     const b = pos(w.before), a = pos(w.after);
+    if (w.source === "rank" && w.after) {
+      if (w.after.aio_cited == 1 && (!w.before || w.before.aio_cited != 1))
+        return `<span class="chip up" title="고친 뒤 구글 AI 요약에 우리 링크가 실렸습니다">AI 요약 인용</span>`;
+      if (w.before && b == null && a != null)
+        return `<span class="chip up" title="잰 깊이 밖이던 검색어에 ${a}위로 들어왔습니다">순위 진입</span>`;
+      if (w.before && b != null && a == null)
+        return `<span class="chip dn" title="${b}위이던 검색어가 잰 깊이 밖으로 나갔습니다">순위 밖으로</span>`;
+      if (w.before && b == null && a == null) return `<span class="chip ne">변동 없음</span>`;
+    }
     if (b == null || a == null) return `<span class="chip ne">비교 전</span>`;
     if (a < b) return `<span class="chip up" title="순위가 ${f(b - a)}계단 올랐습니다">↑ ${f(b - a)}위</span>`;
     if (a > b) return `<span class="chip dn" title="순위가 ${f(a - b)}계단 내려갔습니다">↓ ${f(a - b)}위</span>`;
@@ -1508,10 +1523,11 @@ function OV_watchDraw() {
       <div class="ov-av" aria-hidden="true">${esc([...String(w.target || "?")][0])}</div>
       <div>
         <div class="ovw-n">${esc(w.target)}</div>
-        <div class="ovw-m">그때 <span class="nw">${cell(w.before)}</span></div>
-        <div class="ovw-m">지금 <span class="nw">${cell(w.after)}</span></div>
-        <div class="ovw-m">완료 <span class="nw" title="${esc((w.done_at || "").slice(0, 10))}">${
-          esc((w.done_at || "").slice(5, 10))}</span> · 그 뒤 ${w.runs_since}회 측정</div>
+        <div class="ovw-m">그때 <span class="nw">${cell(w.before, w)}</span></div>
+        <div class="ovw-m">지금 <span class="nw">${cell(w.after, w)}</span></div>
+        <div class="ovw-m">고친 날 <span class="nw" title="${esc(`기준일 ${w.since || ""} · 완료 ${(w.done_at || "").slice(0, 10)}`)}">${
+          esc((w.since || w.done_at || "").slice(5, 10))}</span> · 그 뒤 ${w.runs_since}회 ${w.source === "rank"
+          ? `<span title="서치콘솔에 이 검색어 행이 없어 순위 확인으로 잽니다">순위 확인</span>` : "측정"}</div>
         <div class="ovw-st">${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
         : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`)
         // 관찰 기간 안 — '지금' 칸의 실적 창에 아직 고치기 전 날이 섞여 있다(db.watch_rows).

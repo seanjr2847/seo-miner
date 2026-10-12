@@ -1469,18 +1469,25 @@ def api_creation_merged(b: dict = Depends(_body), project: str = Depends(_projec
     그래서 켤 수 있는 것의 정본을 db.unmerged_creations(project_id) — 머지 확인의
     대상 목록 그 자체 — 로 두고, 그 안에 없는 번호는 404 다. 이미 켜진 기록도 여기
     안 들어오므로 404 이고, 그게 맞다: 부르는 쪽은 페이로드에서 merged=0 인 것만
-    보내므로 정상 경로에서는 두 번 오지 않는다.
+    보내므로 정상 경로에서는 두 번 오지 않는다. 브랜치 없는 기록(sync 가 커밋에서 남긴 것)도
+    켤 수 있다 — 그 커밋이 기본 브랜치에 들어간 것을 sync 가 git 으로 확인하고 보낸다.
+
+    merged_at(머지 시각)이 오면 그 기록의 기회를 그 시각으로 done 으로 닫는다
+    (db.merge_creation — 로컬 sync 와 한 벌). 예전엔 부르는 쪽이 기회를 /api/opp 로 따로
+    닫아 완료 시각이 '동기화한 때'가 됐고, 완료 후 관찰의 '전'이 이미 고친 뒤였다.
     """
     try:
         cid = int(b.get("id") or 0)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
     pid = db.get_project(c, project)["id"]
-    if cid not in {r["id"] for r in db.unmerged_creations(c, pid)}:
+    if cid not in {r["id"] for r in db.unmerged_creations(c, pid, with_branch=False)}:
         raise HTTPException(status_code=404,
                             detail="이 사이트의 병합 전 작업 기록이 아닙니다.")
-    db.mark_creation_merged(c, cid)
-    return {"creation_id": cid, "merged": True}
+    at = b.get("merged_at") or None
+    closed = db.merge_creation(c, pid, cid, str(at) if at else None,
+                               str(b.get("reason") or "작업이 사이트에 들어감"))
+    return {"creation_id": cid, "merged": True, "closed": closed}
 
 
 # --- 공유 라우트 -----------------------------------------------------------------

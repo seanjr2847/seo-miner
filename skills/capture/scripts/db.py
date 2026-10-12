@@ -2930,13 +2930,32 @@ def mark_creation_merged(conn: sqlite3.Connection, creation_id: int) -> int:
     return cur.rowcount
 
 
-def unmerged_creations(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
-    """머지를 아직 확인 못 한 작업 기록 중 브랜치가 있는 것 — 머지 동기화의 대상.
-    브랜치가 없으면(손으로 고친 커밋을 sync 가 기록한 것) 물어볼 PR 이 없다."""
+def unmerged_creations(conn: sqlite3.Connection, project_id: int, *,
+                       with_branch: bool = True) -> list[sqlite3.Row]:
+    """머지를 아직 확인 못 한 작업 기록 — 기본은 브랜치가 있는 것(머지 동기화가 gh 에 물을 대상).
+    브랜치가 없으면(손으로 고친 커밋을 sync 가 기록한 것) 물어볼 PR 이 없다 — 그런 기록은
+    sync 가 커밋이 기본 브랜치에 있는지로 직접 닫는다(with_branch=False 로 그것까지 센다)."""
+    cond = " AND branch IS NOT NULL AND TRIM(branch)!=''" if with_branch else ""
     return conn.execute(
-        """SELECT id, opportunity_id, branch FROM creations
-            WHERE project_id=? AND merged=0 AND branch IS NOT NULL AND TRIM(branch)!=''
-            ORDER BY id""", (int(project_id),)).fetchall()
+        f"""SELECT id, opportunity_id, branch FROM creations
+             WHERE project_id=? AND merged=0{cond} ORDER BY id""", (int(project_id),)).fetchall()
+
+
+def merge_creation(conn: sqlite3.Connection, project_id: int, creation_id: int,
+                   at: str | None, reason: str) -> int:
+    """작업 기록 하나가 사이트에 들어갔다 — 기록을 merged 로, 그 기회를 at(머지 시각) 기준
+    done 으로 닫는다(close_opportunity_by_work). 로컬 sync 와 호스팅 /api/creation/merged 가
+    이 한 벌을 부른다. 예전 호스팅 경로는 기회를 /api/opp 로 닫아 완료 시각이 '동기화한
+    때'가 됐다 — 9/16 에 머지한 일이 10/12 완료로 서서 완료 후 관찰의 '전'이 고친 뒤였다.
+    반환: 닫은 기회 수(0/1)."""
+    row = conn.execute("SELECT opportunity_id FROM creations WHERE id=? AND project_id=?",
+                       (int(creation_id), int(project_id))).fetchone()
+    if row is None:
+        return 0
+    mark_creation_merged(conn, creation_id)
+    if not row["opportunity_id"]:
+        return 0
+    return close_opportunity_by_work(conn, row["opportunity_id"], project_id, at, reason)
 
 
 # ── 이번 달 할 일(plays) ─────────────────────────────────────────────────────
@@ -3135,6 +3154,39 @@ def before_after(conn: sqlite3.Connection, project_id: int, day: str, *,
     return out
 
 
+def rank_before_after(conn: sqlite3.Connection, project_id: int, day: str,
+                      keyword: str) -> dict:
+    """고친 날(day) 전·후의 순위 확인 — 서치콘솔에 그 검색어 행이 없을 때의 전·후다.
+
+    before 는 day 까지(그날 포함)의 마지막 확인, after 는 day 뒤 최신 확인. 각각
+    {date, position, aio_present, aio_cited} — position None 은 잰 깊이 안에 없었다(순위 밖),
+    aio_* None 은 안 쟀다. runs 는 day 뒤 서로 다른 확인일 수, last 는 최신 확인일.
+    검색어는 대소문자·앞뒤 공백을 접어 맞춘다(기회 대상과 추적 검색어의 표기가 갈린다)."""
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM keywords WHERE project_id=? AND lower(trim(keyword))=lower(trim(?))",
+        (int(project_id), keyword or ""))]
+    out = {"before": None, "after": None, "runs": 0, "last": None}
+    if not ids:
+        return out
+    ph = ",".join("?" * len(ids))
+
+    def pick(cond: str, order: str):
+        r = conn.execute(
+            f"""SELECT date(checked_at) d, position, aio_present, aio_cited FROM rank_snapshots
+                 WHERE keyword_id IN ({ph}) AND {cond} ORDER BY checked_at {order}, id {order} LIMIT 1""",
+            (*ids, day[:10])).fetchone()
+        return None if not r else {"date": str(r["d"]), "position": r["position"],
+                                   "aio_present": r["aio_present"], "aio_cited": r["aio_cited"]}
+
+    out["before"] = pick("date(checked_at) <= ?", "DESC")
+    out["after"] = pick("date(checked_at) > ?", "DESC")
+    r = conn.execute(f"""SELECT COUNT(DISTINCT date(checked_at)) n, MAX(date(checked_at)) last
+                           FROM rank_snapshots WHERE keyword_id IN ({ph}) AND date(checked_at) > ?""",
+                     (*ids, day[:10])).fetchone()
+    out["runs"], out["last"] = int(r["n"] or 0), r["last"]
+    return out
+
+
 def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     """완료된 검색어 기회의 전·후 — 상태를 늘리지 않고 조회로 관찰을 만든다.
 
@@ -3149,7 +3201,14 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
 
     이 목록은 "우리 효과"다 — done 만 본다. 사람이 누른 완료, 머지 동기화
     (createdb.sync_merged), 작업 기록이 있는 기회의 조건 해소(resolve_opportunities)가
-    여기 들어오고, 저절로 풀림(OPP_RESOLVED)은 **일부러** 빠진다."""
+    여기 들어오고, 저절로 풀림(OPP_RESOLVED)은 **일부러** 빠진다.
+
+    서치콘솔에 그 검색어 행이 전·후 어느 쪽에도 없으면 순위 확인(rank_before_after)으로
+    잰다(source="rank"). 예전엔 서치콘솔만 봐서 AI 요약 노출 기회 — 대상이 추적 검색어라
+    서치콘솔에 같은 글자의 행이 거의 없다 — 가 전부 '측정 전'으로 섰다(theotherskin 22건,
+    2026-10-12). 순위 확인은 그날의 한 점이라 28일 창이 섞이는 문제는 없지만, 구글이 고친
+    페이지를 다시 읽을 시간은 같아서 관찰 기간(until)은 같게 둔다. 멈춤 판정은 순위가
+    올랐거나 AI 요약에 인용됐으면 아니다 — AI 요약 노출 일의 성과는 인용이다."""
     import scoring
     ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
     opps = conn.execute(
@@ -3165,21 +3224,42 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     per = latest["period_days"] if latest else None
     last_day = str(latest["snapshot_date"])[:10] if latest else None
 
+    # 기준일은 완료 시각과 그 기회의 첫 작업 기록 중 이른 쪽이다. 완료를 늦게 누르거나 머지를
+    # 늦게 동기화하면 완료 시각이 고친 뒤로 밀려 '전'이 이미 고친 페이지가 된다 — theotherskin
+    # 은 9/16 머지분이 10/12 동기화로 닫혔다. 요청문 답 보고서만 가리키는 기록은 작업이 아니다.
+    first = {}
+    for r in conn.execute("SELECT opportunity_id, created_at, file_path FROM creations"
+                          " WHERE project_id=? AND opportunity_id IS NOT NULL", (int(project_id),)):
+        if r["created_at"] and not is_report_only(r["file_path"]):
+            k = r["opportunity_id"]
+            first[k] = min(first.get(k) or r["created_at"], r["created_at"])
     out = []
     for o in opps:
-        day = o["status_at"][:10]
+        day = min(o["status_at"], first.get(o["id"]) or o["status_at"])[:10]
         ba = before_after(conn, project_id, day, query=o["target"], period=per)
         before, after = ba["before"], ba["after"]
         runs = conn.execute(
             "SELECT COUNT(DISTINCT snapshot_date) FROM gsc_snapshots WHERE project_id=?"
             " AND period_days=? AND snapshot_date>?", (int(project_id), per, day)).fetchone()[0] if per else 0
         until = (datetime.fromisoformat(day) + timedelta(days=scoring.OBSERVE_DAYS)).date().isoformat()
-        watching = not last_day or last_day < until
-        stalled = not watching and runs >= 2 and (after is None or before is None
-                                                  or after["position"] >= before["position"])
+        source = "gsc"
+        if before is None and after is None:
+            rk = rank_before_after(conn, project_id, day, o["target"])
+            if rk["before"] or rk["after"]:
+                source, before, after, runs = "rank", rk["before"], rk["after"], rk["runs"]
+        if source == "rank":
+            watching = not rk["last"] or rk["last"] < until
+            better = bool(after) and (after.get("aio_cited") == 1 or (
+                after["position"] is not None and (before is None or before["position"] is None
+                                                   or after["position"] < before["position"])))
+            stalled = not watching and runs >= 2 and not better
+        else:
+            watching = not last_day or last_day < until
+            stalled = not watching and runs >= 2 and (after is None or before is None
+                                                      or after["position"] >= before["position"])
         out.append({"id": o["id"], "kind": o["kind"], "target": o["target"],
-                    "done_at": o["status_at"], "before": before, "after": after,
-                    "runs_since": int(runs), "stalled": bool(stalled),
+                    "done_at": o["status_at"], "since": day, "before": before, "after": after,
+                    "source": source, "runs_since": int(runs), "stalled": bool(stalled),
                     "until": until if watching else None})
     return out
 

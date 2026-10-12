@@ -103,23 +103,62 @@ conn.execute(
     (pid, "striking_distance", "새 기회", 90.0, "테스트 기회"))
 conn.commit()
 oid2 = conn.execute("SELECT id FROM opportunities WHERE target='새 기회'").fetchone()[0]
+oid3 = conn.execute(
+    """INSERT INTO opportunities(project_id, kind, target, score, reasoning, status)
+       VALUES(?,?,?,?,?,'new') RETURNING id""",
+    (pid, "striking_distance", "가지 위 기회", 80.0, "테스트 기회")).fetchone()[0]
+conn.commit()
 conn.close()
 
-subprocess.run(["git", "init", str(repo_dir)], check=True, capture_output=True)
-subprocess.run(
-    ["git", "-C", str(repo_dir), "-c", "user.email=t@t", "-c", "user.name=t",
-     "commit", "--allow-empty", "-m", f"capture(fix): x [opp #{oid2}]"],
-    check=True, capture_output=True)
+
+def git(*a):
+    return subprocess.run(["git", "-C", str(repo_dir), "-c", "user.email=t@t", "-c", "user.name=t",
+                           *a], check=True, capture_output=True, encoding="utf-8").stdout.strip()
+
+
+# 기본 브랜치(master)에 바로 들어간 손 수정 하나, 아직 가지에만 있는 수정 하나.
+# 예전엔 둘 다 '진행 중' 기록이 됐고, 기본 브랜치에 있는 것도 물어볼 PR 이 없어 영영 '병합 전'
+# 이었다(theotherskin 16건, 2026-10-12). 커밋 시각을 정해 두어 완료 시각을 본다.
+subprocess.run(["git", "init", "-b", "master", str(repo_dir)], check=True, capture_output=True)
+os.environ.update(GIT_COMMITTER_DATE="2026-09-16T05:39:30+0000",
+                  GIT_AUTHOR_DATE="2026-09-16T05:39:30+0000")
+git("commit", "--allow-empty", "-m", f"capture(fix): x [opp #{oid2}]")
+git("checkout", "-b", "seo/feat")
+git("commit", "--allow-empty", "-m", f"seo: y [opp #{oid3}] [opp #{oid3}]")
+for k in ("GIT_COMMITTER_DATE", "GIT_AUTHOR_DATE"):
+    os.environ.pop(k)
 
 out = run("sync", "t", "--repo", str(repo_dir))
-assert "1건 기록" in out, out
+assert "2건 기록" in out and "1건 완료" in out, out
 
 conn = createdb.connect()
+st2 = tuple(conn.execute("SELECT status, status_at FROM opportunities WHERE id=?", (oid2,)).fetchone())
+assert st2 == ("done", "2026-09-16 05:39:30"), f"기본 브랜치에 들어간 커밋이 커밋 시각으로 안 닫혔다: {st2}"
 assert conn.execute("SELECT status FROM opportunities WHERE id=?",
-                    (oid2,)).fetchone()[0] == "acked", "sync 가 기회를 진행 중으로 안 옮겼다"
-c2 = conn.execute("SELECT opportunity_id, note FROM creations WHERE opportunity_id=?",
+                    (oid3,)).fetchone()[0] == "acked", "가지에만 있는 커밋을 완료로 닫았다"
+c2 = conn.execute("SELECT opportunity_id, note, merged FROM creations WHERE opportunity_id=?",
                   (oid2,)).fetchone()
 assert c2 is not None and re.fullmatch(r"이미 적용된 수정\(커밋 [0-9a-f]{8}\)", c2["note"] or ""), c2
+assert c2["merged"] == 1, "기본 브랜치에 들어간 기록이 '병합 전'이다"
+conn.close()
+
+# 다시 돌려도 같은 커밋을 또 기록하지 않는다 — 예전엔 진행 중인 기회의 커밋을 sync 마다 다시 남겼다
+out = run("sync", "t", "--repo", str(repo_dir))
+assert "0건 기록" in out, out
+conn = createdb.connect()
+assert conn.execute("SELECT COUNT(*) FROM creations WHERE opportunity_id=?",
+                    (oid3,)).fetchone()[0] == 1, "같은 커밋이 두 번 기록됐다"
+conn.close()
+
+# 가지가 기본 브랜치에 들어가면 다음 sync 가 그 기록을 닫는다(새 기록 없이)
+git("checkout", "master")
+git("merge", "--ff-only", "seo/feat")
+out = run("sync", "t", "--repo", str(repo_dir))
+assert "0건 기록" in out and "1건 완료" in out, out
+conn = createdb.connect()
+assert conn.execute("SELECT status FROM opportunities WHERE id=?", (oid3,)).fetchone()[0] == "done"
+assert [tuple(r) for r in conn.execute("SELECT merged FROM creations WHERE opportunity_id=?",
+                                       (oid3,))] == [(1,)]
 conn.close()
 
 # ── 머지 반영: gh 가 머지를 말하면 기록은 merged, 기회는 done(완료 시각 = 머지 시각) ──
@@ -249,6 +288,11 @@ try:
     assert calls[-1][1] == "/api/creation", calls[-1]
     assert calls[-1][2]["json"]["opportunity_id"] == 7, calls[-1]
     assert calls[-1][2]["json"]["path"] == "a.md", calls[-1]
+    # --repo 를 주면 기록 뒤 앞선 기록들의 머지까지 본다 — plan 첫머리 sync 는 아무도 안 돌려
+    # theotherskin 34건이 한 달 넘게 '병합 전'이었다. 기록하는 자리는 매번 지나간다.
+    n = len(calls)
+    _out(createdb.done, "web", 7, "a.md", "capture/ctr_gap-k", None, "repo-dir")
+    assert [c[1] for c in calls[n:]] == ["/api/creation", "/api/data"], calls[n:]
 
     o = _out(createdb.list_creations, "web")
     assert '"file_path": "a.md"' in o, o
@@ -266,20 +310,22 @@ try:
         {"opps": [{"id": 7, "kind": "ctr_gap", "target": "k", "status": "acked"}],
          "creations": [{"id": 3, "branch": "capture/ctr_gap-k", "merged": 0, "opportunity_id": 7},
                        {"id": 4, "branch": "capture/ctr_gap-z", "merged": 0, "opportunity_id": 99},
-                       {"id": 5, "branch": "", "merged": 0, "opportunity_id": 7}]})
+                       {"id": 5, "branch": "", "merged": 0, "opportunity_id": 7}],
+         "closed": 1})
     createdb._gh = lambda args, cwd: subprocess.CompletedProcess(
         ["gh"], 0, json.dumps([{"number": 5, "mergedAt": "2026-09-05T00:00:00Z"}]), "")
     calls.clear()
     res, _ = _quiet(createdb.sync_merged, "web", None)
     posts = [c for c in calls if c[0] == "POST"]
-    assert res["checked"] == 2 and res["closed"] == 1, res
-    # 기록의 merged 도 서버에서 켠다(/api/creation/merged) — 안 켜면 그 기록이 다음
-    # sync 의 목록에 그대로 남아 같은 PR 을 gh 에 영영 다시 묻고, 화면의 「고친 것」은
-    # '병합 전'에 굳는다. 기회(/api/opp)까지 둘 다 부르는지 순서대로 본다.
+    assert res["checked"] == 2 and res["closed"] == 2, res
+    # 기록의 merged 와 그 기회를 서버 창구 한 번으로 닫는다 — 머지 시각을 같이 보내 서버가
+    # 그 시각으로 완료를 찍는다(db.merge_creation). 예전엔 기회를 /api/opp 로 따로 닫아
+    # 완료 시각이 '동기화한 때'가 됐다(theotherskin: 9/16 머지 → 10/12 완료).
     assert [(p[1], p[2]["json"]) for p in posts] == [
-        ("/api/creation/merged", {"project": "web", "id": 3}),
-        ("/api/opp", {"project": "web", "id": 7, "status": "done"}),
-        ("/api/creation/merged", {"project": "web", "id": 4}),
+        ("/api/creation/merged", {"project": "web", "id": 3, "merged_at": "2026-09-05T00:00:00Z",
+                                  "reason": "PR #5 머지됨 (capture/ctr_gap-k)"}),
+        ("/api/creation/merged", {"project": "web", "id": 4, "merged_at": "2026-09-05T00:00:00Z",
+                                  "reason": "PR #5 머지됨 (capture/ctr_gap-z)"}),
     ], posts
 finally:
     remote.owns, remote.api = _orig_owns, _orig_api
