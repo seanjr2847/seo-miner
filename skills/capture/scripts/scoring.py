@@ -4205,12 +4205,14 @@ def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
     """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용] 화면이 같이 쓴다.
 
     반환:
-      rows      [{id, prompt, category, gen_version, aim, run_id, measured_at, state}]
+      rows      [{id, prompt, category, gen_version, aim, locale, run_id, measured_at, state}]
+                locale: 묻는 시장 — 비었으면 사이트 기본 시장
                 state: measured | stale(AI_STALE_DAYS 넘음) | unmeasured(끝난 회차에 행 없음)
       active·measured·stale·unmeasured·outdated   개수. outdated 는 gen_prompts.outdated
       last_run  가장 최근 ai 런 {id, state(done|aborted|open), at, errors, note} | None
     now 는 검사용 기준 시각(없으면 지금).
     """
+    import db
     import gen_prompts            # 판 판정의 정본 — 여기 사본을 두지 않는다
     rows = [dict(r) for r in conn.execute(
         f"""WITH last AS (
@@ -4219,13 +4221,15 @@ def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
                WHERE r.project_id=? AND {ai_run_done("r")}
             GROUP BY c.prompt_id)
             SELECT p.id, p.prompt, p.category, p.gen_version, p.aim,
+                   COALESCE(p.locale, pr.locale, ?) locale,
                    l.run_id, r.finished_at measured_at,
                    julianday(COALESCE(?, 'now')) - julianday(r.finished_at) age
               FROM ai_prompts p
+              JOIN projects pr ON pr.id=p.project_id
               LEFT JOIN last l ON l.prompt_id=p.id
               LEFT JOIN runs r ON r.id=l.run_id
              WHERE p.project_id=? AND p.is_active=1
-          ORDER BY p.id""", (project_id, now, project_id))]
+          ORDER BY p.id""", (project_id, db.DEFAULT_LOCALE, now, project_id))]
     for r in rows:
         age = r.pop("age")
         r["state"] = ("unmeasured" if not r["run_id"]
@@ -4258,6 +4262,7 @@ def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
 
     질문 문장은 앞 몇 개만 싣는다(화면이 "예:"로 보여 줄 만큼). 개수는 전부 센다.
     """
+    import db
     import gen_prompts
     st = ai_prompt_state(conn, project_id)
     pick = lambda pred: [r["prompt"] for r in st["rows"] if pred(r)][:5]   # noqa: E731
@@ -4267,7 +4272,10 @@ def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
             "last_run": st["last_run"],
             "unmeasured_eg": pick(lambda r: r["state"] == "unmeasured"),
             "stale_eg": pick(lambda r: r["state"] == "stale"),
-            "outdated_eg": pick(lambda r: gen_prompts.outdated(r["gen_version"]))}
+            "outdated_eg": pick(lambda r: gen_prompts.outdated(r["gen_version"])),
+            # 시장마다 켠 질문 수(db.ai_prompt_markets) — 0 인 시장은 AI 에서 한 번도 안 잰다.
+            # 화면이 "이 시장은 질문이 없습니다 [질문 만들기]"로 말한다.
+            "markets": db.ai_prompt_markets(conn, project_id)}
 
 
 # 제3자 플랫폼 — 브랜드는 자기 사이트보다 커뮤니티·위키·영상·리뷰 사이트로 훨씬 자주
@@ -4504,6 +4512,7 @@ def ai_gaps(conn: sqlite3.Connection, project_id: int, *,
         if not t or not ai_is_gap(t["cited"], t["checks"]):
             continue
         rows.append({**t, "id": p["id"], "prompt": p["prompt"], "category": p["category"],
+                     "locale": p["locale"],
                      "engines": len(t["engines"]), "engine_names": t["engines"],
                      "cite_rate": round(t["cited"] / t["checks"], 3),
                      "thin": t["checks"] < AI_MIN_SAMPLES,

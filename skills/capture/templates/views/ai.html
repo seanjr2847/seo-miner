@@ -16,7 +16,7 @@
 #view-ai > .next, #view-ai > .vban { margin-top:0; }
 #view-ai section { margin:0; }
 #view-ai .card + .card { margin-top:0; }
-#ai-empty:empty, #ai-health:empty { display:none; }
+#ai-empty:empty, #ai-health:empty, #ai-markets:empty { display:none; }
 #ai-visits:not([hidden]) { display:contents; }
 #view-ai .as8 { grid-column:span 8; }
 #view-ai .as7 { grid-column:span 7; }
@@ -319,6 +319,9 @@ td .ailogo { margin-right:6px; }
 </section>
 
 <div id="ai-health"></div>
+
+<!-- 시장마다 — 시장이 둘 이상인 사이트만 선다(AI_markets). -->
+<section id="ai-markets" class="card aic"></section>
 
 <section id="ai-sec" class="card aic as7" hidden>
   <div class="ach">
@@ -732,6 +735,7 @@ function AI_filtered() {
   return AI_ROWS.filter(r =>
     (!AI_ENG || (r.by_engine || {})[AI_ENG]) &&
     (!AI_CAT || r.category === AI_CAT) &&
+    (!AI_MK || r.locale === AI_MK) &&
     (!AI_ST || AI_stIs(r, AI_ST)) &&
     window.oppStMatch(oppOf(r.prompt), AI_OST) &&
     (!q || `${r.prompt} ${AI_exTxt(r)}`.toLowerCase().includes(q)))
@@ -746,7 +750,11 @@ function AI_status(el) {
   AI_ST = AI_ST === el.dataset.s ? "" : el.dataset.s;
   AI_render();
 }
-function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = ""; AI_render(); }
+function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = ""; AI_MK = ""; AI_render(); }
+// 시장으로 거르기 — 질문마다 묻는 시장(r.locale)이 있다. 이름표는 d.ai_markets 가 준다.
+let AI_MK = "", AI_MK_LABEL = {};
+function AI_market(v) { AI_MK = v; AI_list(); }
+const AI_mkName = l => AI_MK_LABEL[l] || l || "";
 /* 질문·검색어를 누르면 오른쪽 서랍(SM.drawer)에 상세가 선다 — 개요와 같은 경험.
    줄은 늘어나지 않는다. 어느 줄인지는 data-k(질문·검색어 종류)와 data-i/data-p 로 찾는다. */
 let AI_VS_ROWS = [];
@@ -916,7 +924,8 @@ function AI_row(r) {
   return `<tr${o ? ` class="opp"` : ""}>
     <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">—</span>'}</td>
     <td>${q}</td>
-    <td class="kwcell">${esc(AI_catName(r.category))}</td>
+    <td class="kwcell">${esc(AI_catName(r.category))}${Object.keys(AI_MK_LABEL).length > 1 && r.locale
+      ? `<br><span class="muted">${esc(AI_mkName(r.locale))}</span>` : ""}</td>
     <td><span class="aiengst">${strip || '<span class="muted">—</span>'}</span></td>
     <td class="num ${c.cited ? "up" : "muted"}">${c.cited}</td>
     <td class="num ${c.mentioned ? "" : "muted"}">${c.mentioned}</td>
@@ -1004,6 +1013,7 @@ function AI_nextStep(d, has, missN, canFilter) {
 
 function AI_render() {
   const cats = [...new Set(AI_ROWS.map(r => r.category).filter(Boolean))].sort();
+  const mks = [...new Set(AI_ROWS.map(r => r.locale).filter(Boolean))];
   const engs = AI_engines();
   const stn = s => AI_ROWS.filter(r => !s || AI_stIs(r, s)).length;
   const chips = AI_ST_OPT.slice(1).filter(([v]) => v !== "gap" || AI_GAPS)
@@ -1016,6 +1026,10 @@ function AI_render() {
       ${cats.length > 1 ? `<select onchange="AI_cat(this.value)" aria-label="카테고리로 거르기">
         <option value="">카테고리 전체</option>${cats.map(c =>
           `<option value="${esc(c)}"${c === AI_CAT ? " selected" : ""}>${esc(AI_catName(c))}</option>`
+        ).join("")}</select>` : ""}
+      ${mks.length > 1 ? `<select onchange="AI_market(this.value)" aria-label="시장으로 거르기">
+        <option value="">시장 전체</option>${mks.map(l =>
+          `<option value="${esc(l)}"${l === AI_MK ? " selected" : ""}>${esc(AI_mkName(l))}</option>`
         ).join("")}</select>` : ""}
       ${engs.length > 1 ? `<select onchange="AI_engine(this.value)" aria-label="엔진으로 거르기">
         <option value="">엔진 전체</option>${engs.map(e =>
@@ -1314,6 +1328,41 @@ function AI_health(h, has) {
     acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}</div>`;
 }
 
+/* ── 시장마다. 질문에 시장이 붙기 전에는 시장 5개 사이트(theotherskin)도 한국어 질문
+      20개로만 물었고, 숫자가 한 줄이라 "영어로 물으면 우리가 나오나"를 볼 데가 없었다.
+      숫자는 서버가 센 것 그대로다(d.ai_markets — 최신 확인의 질문별 결과를 시장으로 접은 것).
+      질문이 없는 시장은 "안 잰다"고 말하고 그 시장 질문을 만드는 손잡이를 둔다.
+      시장이 하나면 위 숫자가 곧 그 시장이라 그리지 않는다. ── */
+function AI_markets(d) {
+  const ms = d.ai_markets || [];
+  if (ms.length < 2) return "";
+  const make = m => READONLY ? "" : W(window.act ? window.act("add", "질문 만들기", false) : "",
+    `<button class="go sm sec" data-sm-act="make-prompts" data-sm-locale="${esc(m.locale)}">질문 만들기</button>`);
+  const none = ms.filter(m => !m.active);
+  const rows = ms.map(m => {
+    const lab = `<td class="kwcell">${esc(m.label)}</td>`;
+    if (!m.active)
+      return `<tr>${lab}<td class="num muted">0</td><td colspan="3" class="muted">질문이 없어 AI 답변을 한 번도 안 봤습니다</td>
+        <td>${make(m)}</td></tr>`;
+    if (!m.checks)
+      return `<tr>${lab}<td class="num">${num(m.active)}</td><td colspan="3" class="muted">다음 확인에서 처음 물어봅니다</td><td></td></tr>`;
+    return `<tr>${lab}<td class="num">${num(m.active)}</td>
+      <td class="num ${m.cited ? "up" : "muted"}">${AI_PCT(AI_RATE(m.cited, m.checks))}</td>
+      <td class="num ${m.mentioned ? "" : "muted"}">${AI_PCT(AI_RATE(m.mentioned, m.checks))}</td>
+      <td class="num muted">${num(m.checks)}</td><td></td></tr>`;
+  });
+  const sub = none.length
+    ? `${none.map(m => esc(m.label)).join(", ")}에는 질문이 없어 그 나라 사람이 AI에 물을 때 우리가 나오는지 모릅니다.`
+    : "시장마다 그 나라 말로 묻고, 그 나라 사용자에게 맞는 출처를 달라고 합니다.";
+  return `<div class="ach"><div><h2>시장별</h2><p class="sub">${sub}</p></div></div>
+    <div class="aitb">${table(
+      ["시장", ">질문?이 시장 말로 지어 켜 둔 질문 수",
+       ">인용률?최신 확인에서 답변의 인용 링크에 우리 도메인이 들어간 비율",
+       ">언급률?최신 확인에서 답변 본문에 우리 브랜드 이름이 나온 비율",
+       ">응답?최신 확인에서 이 시장 질문으로 받은 답변 수", ""],
+      rows, undefined, "cards")}</div>`;
+}
+
 /* ── 비어 있는 화면: 이 화면이 비는 진짜 이유는 늘 ai_checks == 0 — 아직 안 물어봤다는
       것이다. 키를 넣는다고 지난 데이터가 생기지는 않는다.
       경로마다 다른 건 "키가 누구 몫인가" 하나뿐이다. 로컬은 사용자가 발급해 넣고,
@@ -1443,6 +1492,7 @@ VIEW("ai", function (d) {
   const has = m.length > 0;
   AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
   AI_INTENT = d.ai_intent_labels || {};
+  AI_MK_LABEL = Object.fromEntries((d.ai_markets || []).map(m => [m.locale, m.label]));
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec",
                     "ai-vs-search", "ai-outranked"])
     $(id).hidden = true;
@@ -1454,6 +1504,7 @@ VIEW("ai", function (d) {
   $("ai-trend").innerHTML = "";
   $("ai-kpi").innerHTML = "";
   $("ai-health").innerHTML = AI_health(d.ai_health, has);
+  $("ai-markets").innerHTML = AI_markets(d);
   // 구글 AI 요약 — 재료가 순위 조회라 챗봇 확인이 없어도 그린다(아래 조기 반환보다 먼저).
   const [aioSub, aioBody] = AI_aio(d);
   $("ai-aio-sub").textContent = aioSub;

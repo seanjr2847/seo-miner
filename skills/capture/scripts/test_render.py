@@ -155,6 +155,7 @@ GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — R
 #   (같은 값을 두 자리에 쓰면 한쪽을 꺼도 다른 쪽 때문에 검사가 통과한다)
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
+AI_PROMPT_EN = "Which clinic AIqZ9?"  # AI 인용: 영어 시장 질문 — 시장별 카드·시장 거르개를 세운다
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
 TRIAGE_EN = "english triage termz9"   # 심사: 다른 언어(영어) 미판정 — 처음엔 사이트 언어만 보인다
 GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
@@ -264,6 +265,13 @@ MUSTS = [
     (r"이 페이지의 실제 사용자", "속도 표가 현장·실험실 출처를 안 밝혔다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
     (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
+    # 시장별 — 질문이 사이트에 한 벌(기본 시장 말)이라 시장 5개 사이트도 한국어로만 물었고
+    # 화면은 그걸 말할 자리가 없었다(theotherskin, 2026-10-14).
+    (r'id="ai-markets"[^>]*>(?:(?!</section>).)*영어 · 미국(?:(?!</section>).)*일본어 · 일본'
+     r'(?:(?!</section>).)*질문이 없어 AI 답변을 한 번도 안 봤습니다',
+     "AI 인용 화면에 시장별 카드가 안 섰거나 질문 없는 시장을 말하지 않는다"),
+    (r'<select[^>]*aria-label="시장으로 거르기"(?:(?!</select>).)*<option value="en-US"[^>]*>영어 · 미국<',
+     "AI 질문 목록에 시장 거르개가 안 섰다"),
     # 엔진 이름 옆의 로고와, 엔진×카테고리 줄에서 질문 목록으로 내려가는 손잡이.
     # "chatgpt 브랜드 4 3 10 40%" 를 눌러도 아무 일도 안 나던 자리다.
     (r'<svg class="ailogo', "AI 인용 화면이 엔진 로고를 안 그렸다"),
@@ -602,6 +610,12 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     # 하나라도 남아 있으면 표식(SM_HOSTED)이 첫 렌더보다 늦게 선 것이다 — 응답이
     # 빠를수록 잘 지는 경합이라, 눈으로 보면 멀쩡한데 실서비스에서만 틀린다.
     (r"!data-web=", "호스팅인데 대체 문구가 안 입혀졌다 — SM_HOSTED 가 첫 렌더보다 늦게 섰다"),
+    # 질문 없는 시장 줄의 [질문 만들기]는 그 시장만 짓는다(서버가 locale 로 받는다)
+    (r'id="ai-markets"(?:(?!</section>).)*data-sm-act="make-prompts" data-sm-locale="ja-JP"',
+     "시장별 카드의 [질문 만들기]가 그 시장을 안 싣는다"),
+    # 키워드 화면 — 한도를 어느 시장이 먹는지. 추적 중 한 줄로는 0 인 시장을 볼 데가 없었다.
+    (r'id="sm-kw"(?:(?!</section>).)*class="mk"> · 한국어 \d+(?:(?!</section>).)*<b class="warn">일본어 0</b>',
+     "키워드 화면이 시장마다 추적 중인 수를 안 말한다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
     # 애드온이 서버 응답을 못 받았을 때 하는 단 한 가지 말(dash.html 의 OFFLINE).
     # stdlib 로 띄우던 시절엔 호스팅 전용 라우트가 없어 폴링이 세 번 404 를 먹고 이
@@ -755,6 +769,12 @@ def _axes(conn, pid: int) -> None:
     import db
     conn.executemany("INSERT INTO ai_prompts(project_id,prompt,category) VALUES(?,?,?)",
                      [(pid, AI_PROMPT, "브랜드"), (pid, f"{AI_PROMPT} 추천", "추천")])
+    # 시장 셋(한·영·일) — 영어 시장 질문 하나를 같이 재고, 일본어 시장은 질문이 없다. 시장별
+    # 카드가 시장마다 서고 질문 없는 시장을 말하는지 본다. 키워드 언어는 다시 판정하지 않는다
+    # (set_markets 대신 _write_markets) — 다른 화면 검사의 키워드가 흔들리지 않게.
+    db._write_markets(conn, pid, [("ko-KR", ""), ("en-US", ""), ("ja-JP", "")])
+    conn.execute("INSERT INTO ai_prompts(project_id,prompt,category,locale) VALUES(?,?,'추천','en-US')",
+                 (pid, AI_PROMPT_EN))
     pids = [r[0] for r in conn.execute("SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id",
                                        (pid,))]
     with db.run(conn, pid, "ai") as r:

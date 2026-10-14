@@ -3110,6 +3110,103 @@ def test_ai_excerpt_strips_markdown_once_on_the_server():
     assert got == "제목 굵게 본문 링크 그리고 각주 항목 별 밑 끝 잘림", got
 
 
+
+def test_ai_prompts_are_asked_per_market():
+    """AI 질문은 시장마다 그 시장 말로 짓고, 그 시장으로 묻고, 시장마다 따로 센다.
+
+    질문에 시장이 없던 동안 시장 5개(한·영·일·아랍·스페인)인 theotherskin 도 질문은 한국어
+    20개 한 벌이었다 — 재료는 6개 언어를 섞어 싣고 "한국어로 써라"라고 해서 'syringoma와
+    milia의 차이는…' 같은 문장이 나왔고, 묻을 때도 늘 "한국 사용자에게 맞는 출처"를
+    달라고 했다(2026-10-14). 미국 사람이 영어로 물을 때 우리가 나오는지는 한 번도 안 쟀다.
+    """
+    import brief as brief_mod
+    import collect_ai
+    import gen_prompts
+    conn = db.connect()
+    pid = _project(conn, "mk_ai")["id"]
+    db.set_markets(conn, pid, [("ko-KR", ""), ("en-US", ""), ("ja-JP", "")])
+    conn.executemany(
+        "INSERT INTO keywords(project_id, keyword, locale, is_active, cluster, volume)"
+        " VALUES(?,?,?,1,?,?)",
+        [(pid, "기미 치료", "ko-KR", "기미", 900), (pid, "melasma treatment", "en-US", "melasma", 800),
+         (pid, "肝斑 治療", "ja-JP", "肝斑", 300)])
+    for q, page in (("기미 치료", "https://e.com/blog/melasma-guide/"),
+                    ("melasma treatment", "https://e.com/en/visit-korea/"),
+                    ("肝斑 治療", "https://e.com/ja/melasma/")):
+        conn.execute("""INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,
+                          clicks,impressions,ctr,position) VALUES(?,'2026-10-10',28,?,?,1,100,0.01,5)""",
+                     (pid, q, page))
+    conn.commit()
+
+    # 재료 — 그 시장에서 재는 검색어와 그 언어 지면만
+    en = gen_prompts.brief(conn, "mk_ai", locale="en-US")
+    assert en["locale"] == "en-US" and en["tracked"] == ["melasma treatment"], en
+    assert en["queries"] == ["melasma treatment"] and en["clusters"] == ["melasma"], en
+    assert en["offers"] == ["/visit-korea"], f"영어 질문 재료에 다른 언어 지면이 섞였다: {en['offers']}"
+    assert "write in English" in gen_prompts.user_msg(en, 10), gen_prompts.user_msg(en, 10)
+    ko = gen_prompts.brief(conn, "mk_ai")
+    assert ko["locale"] == "ko-KR" and ko["tracked"] == ["기미 치료"], ko
+    assert "/visit-korea" not in ko["offers"] and "/blog/melasma-guide" in ko["offers"], ko["offers"]
+
+    # 짓기 — 시장마다 그 시장으로 부르고, 행에 시장이 실려 저장된다
+    os.environ["OPENROUTER_API_KEY"] = "fake"
+    asked = []
+
+    def fake_ask(model, prompt, key, locale):
+        asked.append(locale)
+        lang = serp_adapter.lang_of(locale)
+        return {"content": json.dumps([{"prompt": f"{lang} 질문 하나 무엇?", "category": "추천"},
+                                       {"prompt": f"{lang} 질문 둘 무엇?", "category": "비교"}])}
+    assert gen_prompts.plan_markets(conn, "mk_ai", missing_only=True) == ["ko-KR", "en-US", "ja-JP"]
+    rows = gen_prompts.suggest_markets("mk_ai", ["ko-KR", "en-US"], conn=conn, ask=fake_ask)
+    assert asked == ["ko-KR", "en-US"], asked
+    assert {r["locale"] for r in rows} == {"ko-KR", "en-US"}, rows
+    gen_prompts.save(conn, "mk_ai", rows)
+    # 시장이 붙기 전의 옛 질문(NULL)은 사이트 기본 시장이다
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, '옛 한국어 질문 무엇?')", (pid,))
+    conn.commit()
+    mk = {m["locale"]: m["active"] for m in db.ai_prompt_markets(conn, pid)}
+    assert mk == {"ko-KR": 3, "en-US": 2, "ja-JP": 0}, mk
+    assert gen_prompts.plan_markets(conn, "mk_ai", missing_only=True) == ["ja-JP"]
+    try:
+        gen_prompts.plan_markets(conn, "mk_ai", locale="de-DE")
+        raise AssertionError("사이트 시장이 아닌 곳의 질문을 짓는다")
+    except ValueError:
+        pass
+
+    # 묻기 — 상한은 시장마다고, 질문마다 그 시장으로 묻는다
+    seen, real_ask = [], collect_ai.ask
+    collect_ai.ask = lambda model, prompt, key, locale: seen.append((prompt, locale)) or {
+        "content": "답", "citation_urls": [], "usage": {}}
+    try:
+        collect_ai.collect("mk_ai", engines="chatgpt", samples=1, max_prompts=1, throttle=0,
+                           conn=conn)
+    finally:
+        collect_ai.ask = real_ask
+    locs = sorted(loc for _, loc in seen)
+    assert locs == ["en-US", "ko-KR"], f"상한이 시장마다가 아니거나 시장으로 안 묻는다: {seen}"
+    assert all(serp_adapter.lang_of(loc) == "ko" or not q.startswith("ko") for q, loc in seen), seen
+
+    # 화면 — 시장마다 센다(질문 없는 일본어도 줄이 선다)
+    ax = dashboard._axis_ai(conn, pid)
+    got = {m["locale"]: (m["active"], m["checks"]) for m in ax["ai_markets"]}
+    assert got == {"ko-KR": (3, 1), "en-US": (2, 1), "ja-JP": (0, 0)}, got
+    assert {r["locale"] for r in ax["ai_by_prompt"]} == {"ko-KR", "en-US"}, ax["ai_by_prompt"]
+    assert [m["locale"] for m in scoring.ai_health(conn, pid)["markets"]] == ["ko-KR", "en-US", "ja-JP"]
+
+    # 요청문 — 챗봇 질문의 언어는 그 질문의 시장이 증거다(라틴 글자라도)
+    o = {"kind": "ai_citation_gap", "target": "Where to treat melasma in Seoul?"}
+    ctx = {"project": {"locale": "ko-KR"},
+           "ai_gap_rows": [{"prompt": o["target"], "locale": "en-US"}]}
+    assert brief_mod._kw_lang(o, ctx) == "en", "영어 시장 질문의 산출물 언어를 모른다"
+    assert brief_mod._kw_lang(o, {"project": {"locale": "ko-KR"}}) is None
+
+    # 키워드 화면 — 시장마다 추적 중인 수
+    assert [(m["locale"], m["active"]) for m in db.active_by_market(conn, pid)] == \
+        [("ko-KR", 1), ("en-US", 1), ("ja-JP", 1)]
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    conn.close()
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

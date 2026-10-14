@@ -519,29 +519,6 @@ def demo() -> None:
         r = c.post("/api/ai/prompts", json={"project": "p1"})
         assert r.status_code == 503 and "OPENROUTER_API_KEY" in r.json()["detail"], r.text
         assert c.post("/api/ai/prompts", json={"project": "없는사이트"}).status_code == 404,             "남의 사이트에 질문을 심을 수 있다"
-        made, real_suggest, real_save = [], gen_prompts.suggest, gen_prompts.save
-        gen_prompts.suggest = lambda project, **kw: [
-            {"prompt": f"{project} 어디가 잘해?", "category": "추천"}]
-        gen_prompts.save = lambda conn, project, rows: made.extend(rows) or len(rows)
-        retired, real_retire = [], gen_prompts.retire_outdated
-        gen_prompts.retire_outdated = lambda conn, project: retired.append(project) or 7
-        try:
-            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
-            assert r.status_code == 200 and r.json()["added"] == 1, r.text
-            assert made and made[0]["prompt"].startswith("p1"), made
-            # 그냥 만들기는 옛 질문을 안 끈다 — [질문 다시 만들기](replace)만 끈다
-            assert not retired and r.json()["retired"] == 0, r.text
-            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
-            assert r.status_code == 200 and r.json()["retired"] == 7 and retired == ["p1"], r.text
-            # 새 질문이 하나도 안 들어갔으면(전부 겹침) 옛 것도 그대로 둔다
-            gen_prompts.save = lambda conn, project, rows: 0
-            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
-            assert r.status_code == 200 and r.json()["retired"] == 0 and retired == ["p1"], r.text
-        finally:
-            gen_prompts.suggest, gen_prompts.save = real_suggest, real_save
-            gen_prompts.retire_outdated = real_retire
-            if saved_key:
-                os.environ["OPENROUTER_API_KEY"] = saved_key
 
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
         assert c.get("/api/data?project=p1").status_code == 404
@@ -694,6 +671,66 @@ def demo() -> None:
             bc.commit()
         finally:
             bc.close()
+
+        # 질문 만들기 — p1 의 Brain 이 선 뒤라야 시장을 고를 수 있다(gen_prompts.plan_markets).
+        made, real_suggest, real_save = [], gen_prompts.suggest, gen_prompts.save
+        asked_for = []
+        gen_prompts.suggest = lambda project, **kw: asked_for.append(kw.get("locale")) or [
+            {"prompt": f"{project} 어디가 잘해?", "category": "추천", "locale": kw.get("locale")}]
+        gen_prompts.save = lambda conn, project, rows: made.extend(rows) or len(rows)
+        retired, real_retire = [], gen_prompts.retire_outdated
+        gen_prompts.retire_outdated = lambda conn, project: retired.append(project) or 7
+        # 키 확인은 시장을 고르기 전에 창구가 한다 — 가짜 suggest 라도 키는 있어야 지나간다
+        os.environ["SEOMINER_OPENROUTER_API_KEY"] = "fake-test-key"
+        try:
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
+            assert r.status_code == 200 and r.json()["added"] == 1, r.text
+            assert made and made[0]["prompt"].startswith("p1"), made
+            # 그냥 만들기는 옛 질문을 안 끈다 — [질문 다시 만들기](replace)만 끈다
+            assert not retired and r.json()["retired"] == 0, r.text
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
+            assert r.status_code == 200 and r.json()["retired"] == 7 and retired == ["p1"], r.text
+            # 새 질문이 하나도 안 들어갔으면(전부 겹침) 옛 것도 그대로 둔다
+            gen_prompts.save = lambda conn, project, rows: 0
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1, "replace": True})
+            assert r.status_code == 200 and r.json()["retired"] == 0 and retired == ["p1"], r.text
+
+            # 시장마다 그 시장 말로 짓는다 — 질문이 사이트에 한 벌이라 시장 5개인 사이트도
+            # 한국어로만 물었다(theotherskin, 2026-10-14). 진짜 save 로 시장 칸까지 본다.
+            gen_prompts.save = real_save
+            assert c.post("/api/settings", json={"project": "p1", "markets": [
+                {"locale": "ko-KR", "scope": ""}, {"locale": "en-US", "scope": ""},
+                {"locale": "ja-JP", "scope": ""}]}).status_code == 200
+            asked_for.clear()
+            r = c.post("/api/ai/prompts", json={"project": "p1", "locale": "en-US", "limit": 1})
+            assert r.status_code == 200 and asked_for == ["en-US"], (r.text, asked_for)
+            mk = {m["locale"]: m for m in c.get("/api/ai/prompts?project=p1").json()["markets"]}
+            assert list(mk) == ["ko-KR", "en-US", "ja-JP"], mk
+            assert mk["en-US"]["active"] == 1 and mk["ja-JP"]["active"] == 0, mk
+            # 시장을 안 주면 켜진 질문이 없는 시장만 — 이미 있는 영어는 다시 안 짓는다
+            asked_for.clear()
+            r = c.post("/api/ai/prompts", json={"project": "p1"})
+            assert r.status_code == 200 and asked_for == ["ko-KR", "ja-JP"], (r.text, asked_for)
+            assert r.json()["locales"] == ["ko-KR", "ja-JP"], r.text
+            # 사이트 시장이 아닌 곳은 짓지 않는다(돈 드는 호출 전에 막는다)
+            asked_for.clear()
+            r = c.post("/api/ai/prompts", json={"project": "p1", "locale": "de-DE"})
+            assert r.status_code == 422 and not asked_for, r.text
+            assert c.post("/api/settings", json={"project": "p1", "markets": [
+                {"locale": "ko-KR", "scope": ""}]}).status_code == 200
+        finally:
+            gen_prompts.suggest, gen_prompts.save = real_suggest, real_save
+            gen_prompts.retire_outdated = real_retire
+            os.environ.pop("SEOMINER_OPENROUTER_API_KEY", None)
+            if saved_key:
+                os.environ["OPENROUTER_API_KEY"] = saved_key
+            bc = db.connect(home=store.home(u2))
+            try:      # 진짜 save 로 넣은 시장별 질문 — 뒤 검사는 빈 목록에서 시작한다
+                bc.execute("DELETE FROM ai_prompts WHERE project_id="
+                           "(SELECT id FROM projects WHERE name='p1')")
+                bc.commit()
+            finally:
+                bc.close()
 
         r = c.get("/api/ai/prompts?project=p1")
         assert r.status_code == 200 and r.json()["prompts"] == [], r.text

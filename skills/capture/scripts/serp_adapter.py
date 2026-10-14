@@ -485,6 +485,11 @@ LANG_NAME = {"ko": "Korean", "en": "English", "ja": "Japanese", "de": "German", 
              "id": "Indonesian", "ar": "Arabic", "hi": "Hindi", "zh": "Chinese"}
 
 
+def locale_label(locale: str) -> str:
+    """'ja-JP' -> '일본어 · 일본'. 목록(LOCALES)에 없으면 코드 그대로 — 지어내지 않는다."""
+    return dict(LOCALES).get(locale or "", locale or "")
+
+
 def lang_of(locale: str) -> str:
     """'ja-JP' -> 'ja'. 언어 접두 하나를 세 함수와 expand_keywords 가 같은 규칙으로 뽑는다."""
     return (locale or "").split("-")[0].lower()

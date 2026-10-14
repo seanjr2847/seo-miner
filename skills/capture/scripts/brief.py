@@ -3253,6 +3253,13 @@ def _kw_lang(o: dict, ctx: dict, locale: str | None = None) -> str | None:
     kws = _kws(o, ctx)
     site = serp_adapter.lang_of(str(locale or (ctx.get("project") or {}).get("locale") or ""))
     locs = ctx.get("kw_locales") or {}
+    if o.get("kind") == "ai_citation_gap":
+        # 대상이 검색어가 아니라 챗봇에 물은 문장이다 — 그 질문을 묻은 시장이 증거다
+        # (ai_prompts.locale). 영어 시장 질문의 산출물이 사이트 기본(한국어)으로 떨어지지 않게.
+        r = (_find(ctx.get("ai_gap_rows"), "prompt", o.get("target"))
+             or _find(ctx.get("ai_by_prompt"), "prompt", o.get("target")))
+        if r and r.get("locale"):
+            locs = {**locs, str(o.get("target") or ""): r["locale"]}
     langs = set()
     for k in kws:
         mk = serp_adapter.lang_of(str(locs.get(k) or ""))

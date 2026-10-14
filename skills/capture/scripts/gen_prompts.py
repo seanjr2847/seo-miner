@@ -68,6 +68,13 @@ GEN_VERSION = 3
 # 겨냥(ai_prompts.aim)의 꼴. 모델이 준 겨냥은 재료 목록에 **글자 그대로** 있어야만
 # 받는다(parse) — 없는 페이지를 겨냥했다고 적지 않는다.
 AIM_KINDS = ("page", "keyword", "cluster", "brand")
+# 시장 하나에 지을 질문 수. 시장이 하나면 예전 그대로 20개, 여럿이면 시장마다 10개 —
+# 한 번 확인에 질문 × 엔진 × 표본만큼 돈이 나가므로 시장 수만큼 그대로 곱하지 않는다.
+PER_MARKET_SOLO, PER_MARKET_MULTI = 20, 10
+
+
+def per_market(n_markets: int) -> int:
+    return PER_MARKET_SOLO if n_markets <= 1 else PER_MARKET_MULTI
 
 
 def outdated(gen_version) -> bool:
@@ -110,6 +117,20 @@ SYSTEM = (
 _LOCALE_SEG = re.compile(r"^(?:/(?:[a-z]{2}(?:-[a-z]{2,4})?)(?=/)){1,2}", re.I)
 # 목록·공지처럼 무엇을 파는지 안 말하는 자리는 재료가 못 된다.
 _NOISE = re.compile(r"^/(?:category|notice|page|tag|author|search|wp-)", re.I)
+
+
+def _url_lang(url) -> str | None:
+    """주소의 언어 경로(/en/·/zh-hans/·gucci 의 /kr/ko/) → 'en'·'zh'·'ko'. 없으면 None.
+
+    앞 두 칸까지 본다. 언어 이름을 아는 코드(serp_adapter.LANG_NAME)만 언어로 친다 —
+    gucci 의 /ca/ 처럼 나라 칸일 수 있는 두 글자는 언어가 아니다."""
+    path = re.sub(r"^https?://[^/]+", "", str(url or "")).split("?")[0]
+    for seg in [x for x in path.split("/") if x][:2]:
+        if re.fullmatch(r"[a-z]{2}(?:-[a-z]{2,4})?", seg, re.I):
+            lang = serp_adapter.lang_of(seg)
+            if lang in serp_adapter.LANG_NAME:
+                return lang
+    return None
 
 
 def _path_of(url) -> str:
@@ -172,7 +193,8 @@ def _spread(items: list, key, weight) -> list:
     return out
 
 
-def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
+def offers(conn, project_id: int, *, limit: int = 24, lang: str | None = None,
+           home: bool = True) -> list[str]:
     """사이트가 **무엇을 하는 곳인지** — 질문을 지을 때 이게 없으면 업종 일반형만 나온다.
 
     이 함수가 없던 시절의 결과가 그 증거다: 어느 사이트에 물어도 "무료 영상 편집
@@ -183,6 +205,10 @@ def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
     제목이 있으면 제목을 쓴다(사람 말이다). 없으면 URL 경로가 대신 말해 준다 —
     /signature/scene-bgm/ 은 경로 자체가 그 사이트만의 기능 이름을 담는다.
     셋 다 없으면 빈 목록이다: 없는 것을 지어내지 않는다.
+
+    lang 을 주면 그 언어 지면만 싣는다(시장별 질문). 언어 경로가 없는 지면은 사이트 기본
+    말이라 home=True(기본 시장)일 때만 낀다. 그 언어 지면이 하나도 없으면 전부 싣는다 —
+    번역본이 없어도 그 시장 사람은 같은 시술을 묻는다(질문의 말은 user_msg 가 정한다).
 
     **무엇을 먼저 싣나**가 질문의 쏠림을 정한다. 예전엔 페이지 감사를 주소 가나다순으로
     받아 앞 24개를 잘랐다 — gucci 는 /beauty 가 /handbags·/women 보다 앞이라 질문 7개 중
@@ -208,14 +234,26 @@ def offers(conn, project_id: int, *, limit: int = 24) -> list[str]:
             WHERE project_id=? AND page IS NOT NULL
          GROUP BY page ORDER BY imp DESC""", (project_id,))]
 
-    pages: dict[str, str] = {}
+    # 경로 → {언어 경로(없으면 None): 제목}. 번역본은 경로가 같아(/en/x 와 /x) 한 줄로 접히는데,
+    # 제목은 언어마다 다르다 — 먼저 온 제목 하나만 남기면 영어 질문 재료에 한국어 제목이 실렸다
+    # (theotherskin '/the-other/our-family — 의료진 소개').
+    titles: dict[str, dict] = {}
     for url, title in rows:
         path = _path_of(url)
         if path == "/" or _NOISE.match(path):
             continue
+        by = titles.setdefault(path, {})
+        lg = _url_lang(url)
         t = " ".join(str(title or "").split())
-        if path not in pages or (t and not pages[path]):
-            pages[path] = t
+        if lg not in by or (t and not by[lg]):
+            by[lg] = t
+    want = [lang] + ([None] if home else []) if lang else []
+    mine = bool(want) and any(lg in by for by in titles.values() for lg in want)
+    if mine:
+        titles = {p: by for p, by in titles.items() if any(lg in by for lg in want)}
+    # 그 언어 지면을 골랐으면 그 언어 제목만 — 없으면 경로만 싣는다(다른 말 제목을 섞지 않는다).
+    pages = {p: next((by[lg] for lg in want if by.get(lg)), None)
+             or ("" if mine else next((t for t in by.values() if t), "")) for p, by in titles.items()}
     demand = _page_demand(conn, project_id)
     picked = _spread(list(pages), _section, lambda p: demand.get(p, 0))[:limit]
     return [f"{p} — {pages[p]}" if pages[p] else p for p in picked]
@@ -234,30 +272,48 @@ def _ranked(conn, project_id: int, n: int) -> list[str]:
         return []
 
 
-def _tracked(conn, project_id: int, n: int) -> list[str]:
-    """추적 중인 검색어 — 주제(cluster)마다 돌아가며, 주제 안은 검색량 큰 순."""
+def _tracked(conn, project_id: int, n: int, locale: str | None = None,
+             site: str | None = None) -> list[str]:
+    """추적 중인 검색어 — 주제(cluster)마다 돌아가며, 주제 안은 검색량 큰 순.
+    locale 을 주면 그 시장에서 재는 검색어만(keywords.locale, 비었으면 site)."""
     rows = [dict(r) for r in conn.execute(
         """SELECT keyword, COALESCE(cluster,'') cluster, COALESCE(volume,0) volume
-             FROM keywords WHERE project_id=? AND is_active=1""", (project_id,))]
+             FROM keywords WHERE project_id=? AND is_active=1
+              AND (? IS NULL OR COALESCE(locale, ?)=?)""",
+        (project_id, locale, site, locale))]
     return [r["keyword"] for r in _spread(rows, lambda r: r["cluster"],
                                           lambda r: r["volume"])[:n]]
 
 
-def brief(conn, project: str, top_n: int = 15) -> dict:
-    """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다."""
+def brief(conn, project: str, top_n: int = 15, locale: str | None = None) -> dict:
+    """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다.
+
+    locale 은 질문을 묻을 시장이다(없으면 사이트 기본 시장). 시장이 여럿이면 재료도 그
+    시장 것만 싣는다 — 서치콘솔 검색어·추적 검색어·주제는 그 시장에서 재는 검색어
+    (keywords.locale)로, 지면은 그 언어 경로로. 예전엔 6개 언어 사이트의 재료를 섞어 실어
+    놓고 "한국어로 써라"라고 해서 'syringoma와 milia의 차이는…' 같은 질문이 나왔다.
+    """
     p = db.get_project(conn, project)
     cfg = db.project_cfg(conn, p)
     import scoring
+    site = db.site_locales(conn, p["id"])
+    locale = locale or site[0]
+    # 시장이 하나면 거르지 않는다(예전과 같다) — 시장 칸이 비어 있는 검색어도 그 시장이다.
+    mk = locale if len(site) > 1 else None
+    lang = serp_adapter.lang_of(locale)
     cur, _, period, _ = scoring.snapshot_pair(conn, p["id"])
     queries = []
     if cur:
         queries = [r["query"] for r in conn.execute(
-            """SELECT query, SUM(impressions) imp FROM gsc_snapshots
-                WHERE project_id=? AND snapshot_date=? AND period_days=?
-                GROUP BY query ORDER BY imp DESC LIMIT ?""",
-            (p["id"], cur, period, top_n))]
+            """SELECT g.query, SUM(g.impressions) imp FROM gsc_snapshots g
+                WHERE g.project_id=? AND g.snapshot_date=? AND g.period_days=?
+                  AND (? IS NULL OR EXISTS (
+                        SELECT 1 FROM keywords k WHERE k.project_id=g.project_id
+                           AND k.keyword=g.query AND COALESCE(k.locale, ?)=?))
+                GROUP BY g.query ORDER BY imp DESC LIMIT ?""",
+            (p["id"], cur, period, mk, site[0], mk, top_n))]
     return {"name": p["name"], "domain": p["domain"], "type": p["type"],
-            "locale": db.project_locale(p),
+            "locale": locale,
             "aliases": cfg.get("brand_aliases") or [],
             "queries": queries,
             # 서치콘솔이 없을 때만 — 있으면 실측이 이긴다(추정을 같이 실으면 같은 수요를
@@ -265,18 +321,22 @@ def brief(conn, project: str, top_n: int = 15) -> dict:
             "ranked": [] if queries else _ranked(conn, p["id"], top_n),
             # 이 둘이 "이 사이트가 무엇을 하는 곳인가"를 말한다. 없으면 모델은 업종만
             # 알고 짓게 되고, 그러면 어느 사이트에 물어도 같은 질문이 나온다.
-            "offers": offers(conn, p["id"]),
-            "seeds": (cfg.get("seed_keywords") or [])[:20],
-            "tracked": _tracked(conn, p["id"], top_n),
+            "offers": (offers(conn, p["id"], lang=lang,
+                              home=serp_adapter.lang_of(site[0]) == lang)
+                       if mk else offers(conn, p["id"])),
+            # 시드는 사이트 기본 말로 적힌 목록이라 다른 시장에는 싣지 않는다.
+            "seeds": (cfg.get("seed_keywords") or [])[:20] if locale == site[0] else [],
+            "tracked": _tracked(conn, p["id"], top_n, mk, site[0]),
             # 추적 중인 주제 묶음 — 질문이 무엇을 겨냥했는지(aim) 적을 세 번째 재료다.
             # 이름순이 아니라 추적 검색량 순이다(이름순 15개는 가나다 앞 주제만 실었다).
             "clusters": [r[0] for r in conn.execute(
                 """SELECT cluster FROM keywords
                     WHERE project_id=? AND is_active=1 AND cluster IS NOT NULL
                       AND TRIM(cluster)<>''
+                      AND (? IS NULL OR COALESCE(locale, ?)=?)
                     GROUP BY cluster
                     ORDER BY SUM(COALESCE(volume,0)) DESC, COUNT(*) DESC, cluster
-                    LIMIT 15""", (p["id"],))]}
+                    LIMIT 15""", (p["id"], mk, site[0], mk))]}
 
 
 def targets(b: dict) -> dict[str, str]:
@@ -374,13 +434,25 @@ def parse(text: str, allowed: dict[str, str] | None = None) -> list[dict]:
     return out
 
 
+def require_key() -> str:
+    """OpenRouter 키 — 없으면 RuntimeError(사유 그대로 화면에 간다). 시장을 고르기 전에
+    부른다: 키가 없으면 어느 시장도 못 짓는다."""
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY 가 없어 질문을 만들 수 없습니다 — "
+            "발급: https://openrouter.ai/keys")
+    return key
+
+
 def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
-            ask=None) -> list[dict]:
+            ask=None, locale: str | None = None) -> list[dict]:
     """질문 n개를 지어 돌려준다. 저장은 하지 않는다(save 가 한다).
 
     Args:
         project: 사이트 이름
         n: 만들 질문 수 (1~40)
+        locale: 묻을 시장(사이트 시장 중 하나). 없으면 사이트 기본 시장. 행마다 실린다
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         model: OpenRouter 모델 슬러그
         ask: fn(model, prompt, api_key, locale) -> {"content": ...}
@@ -390,25 +462,50 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
         RuntimeError: OPENROUTER_API_KEY 가 없을 때
     """
     n = max(1, min(40, int(n)))
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY 가 없어 질문을 만들 수 없습니다 — "
-            "발급: https://openrouter.ai/keys")
+    key = require_key()
     if ask is None:
         import collect_ai
         ask = collect_ai.ask
     own = conn is None
     conn = conn or db.connect()
     try:
-        b = brief(conn, project)
+        b = brief(conn, project, locale=locale)
     finally:
         if own:
             conn.close()
     # SYSTEM 을 프롬프트 앞에 붙여 보낸다 — collect_ai.ask 의 system 자리는 "실제
     # 사용자처럼 답하라"라서 그대로 쓰면 질문이 아니라 답이 온다.
     res = ask(model, SYSTEM + "\n\n" + user_msg(b, n), key, b["locale"])
-    return parse(res.get("content", ""), targets(b))[:n]
+    return [{**r, "locale": b["locale"]}
+            for r in parse(res.get("content", ""), targets(b))[:n]]
+
+
+def plan_markets(conn, project: str, *, locale: str | None = None,
+                 missing_only: bool = False) -> list[str]:
+    """질문을 지을 시장 목록. locale 을 주면 그 하나(사이트 시장이 아니면 ValueError).
+
+    missing_only 면 켜진 질문이 하나도 없는 시장만 — [질문 만들기]와 런 앞의 자동 채움이
+    이걸 쓴다. 시장을 하나 늘린 사이트는 다음 런에 그 시장 질문이 생긴다."""
+    pid = db.get_project(conn, project)["id"]
+    mk = db.ai_prompt_markets(conn, pid)
+    if locale:
+        if locale not in {m["locale"] for m in mk}:
+            raise ValueError(f"이 사이트의 시장이 아닙니다: {locale}")
+        return [locale]
+    return [m["locale"] for m in mk if not (missing_only and m["active"])]
+
+
+def suggest_markets(project: str, locales: list[str], *, conn, n: int | None = None,
+                    ask=None) -> list[dict]:
+    """시장마다 suggest — 행마다 그 시장 locale 이 실린다. n 이 없으면 per_market.
+
+    한 시장이 실패해도(빈 응답) 나머지는 간다. 키가 없으면(RuntimeError) 전부 못 하므로 올린다."""
+    pid = db.get_project(conn, project)["id"]
+    n = n or per_market(len(db.site_locales(conn, pid)))
+    out: list[dict] = []
+    for loc in locales:
+        out += suggest(project, n=n, conn=conn, ask=ask, locale=loc)
+    return out
 
 
 def save(conn, project: str, rows: list[dict]) -> int:
@@ -419,7 +516,8 @@ def save(conn, project: str, rows: list[dict]) -> int:
     """
     pid = db.get_project(conn, project)["id"]
     return db.add_ai_prompts(conn, pid, [
-        {**r, "gen_version": GEN_VERSION, "aim": r.get("aim")} for r in rows])
+        {**r, "gen_version": GEN_VERSION, "aim": r.get("aim"), "locale": r.get("locale")}
+        for r in rows])
 
 
 def retire_outdated(conn, project: str) -> int:
@@ -446,16 +544,23 @@ def main() -> None:
         return
     ap = argparse.ArgumentParser(description="AI에 물어볼 질문 만들기")
     ap.add_argument("--project", required=True)
-    ap.add_argument("--limit", type=int, default=20, help="만들 질문 수 (기본 20)")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="시장 하나에 만들 질문 수 (기본: 시장이 하나면 20, 여럿이면 10)")
+    ap.add_argument("--locale", help="이 시장 질문만 만든다(예: en-US). 없으면 사이트 시장 전부")
     ap.add_argument("--dry-run", action="store_true", help="저장하지 않고 보여만 준다")
     ap.add_argument("--replace", action="store_true",
                     help="새 질문이 들어가면 옛 판 질문을 끈다(지우지 않는다 — 인용 이력은 남는다)")
     a = ap.parse_args()
-    rows = suggest(a.project, n=a.limit)
+    conn = db.connect()
+    try:
+        rows = suggest_markets(a.project, plan_markets(conn, a.project, locale=a.locale),
+                               conn=conn, n=a.limit)
+    finally:
+        conn.close()
     if not rows:
         sys.exit("질문을 만들지 못했습니다 — 모델 응답이 비었거나 형식이 달랐습니다.")
     for r in rows:
-        print(f"  [{r['category']}] {r['prompt']}"
+        print(f"  {r['locale']} [{r['category']}] {r['prompt']}"
               + (f"   ← {r['aim']}" if r.get("aim") else ""))
     if a.dry_run:
         print(f"\n{len(rows)}개 (dry-run — 저장하지 않았습니다)")

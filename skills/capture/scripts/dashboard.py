@@ -908,10 +908,11 @@ def _axis_ai(conn, pid: int) -> dict:
         # 표본 하나를 사실상 무작위로 골랐고, 기회(ai_gaps)는 전 표본을 셌다 — 요청문은
         # 이쪽을 읽었으니 틀린 쪽을 읽은 셈이었다.
         ai_by_prompt = q(conn,
-            """SELECT p2.id, p2.prompt, p2.category
+            """SELECT p2.id, p2.prompt, p2.category, COALESCE(p2.locale, ?) locale
                  FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
                 WHERE c.run_id=? GROUP BY p2.id
-                ORDER BY SUM(c.cited) DESC, SUM(c.mentioned) DESC""", (ai_run["id"],))
+                ORDER BY SUM(c.cited) DESC, SUM(c.mentioned) DESC""",
+            (db.site_locales(conn, pid)[0], ai_run["id"]))
         tally = scoring.ai_tally(conn, ai_run["id"])
         for r in ai_by_prompt:
             t = tally.get(r["id"]) or {}
@@ -950,10 +951,20 @@ def _axis_ai(conn, pid: int) -> dict:
     ai_gap_rows = [{**g, "engines": ",".join(g.get("engine_names") or [])}
                    for g in scoring.ai_gaps(conn, pid)]
 
+    # 시장마다 — 켠 질문 수와 최신 회차의 인용·이름·추천. 질문에 시장이 붙기 전에는 시장 5개
+    # 사이트도 한 줄 숫자뿐이라 "영어로 물으면 어떤가"를 화면 어디서도 못 봤다. 질문이 0 인
+    # 시장도 싣는다 — 화면이 "이 시장은 아직 안 잽니다"라고 말할 자리다.
+    ai_markets = []
+    for m in db.ai_prompt_markets(conn, pid):
+        rows = [r for r in ai_by_prompt if r.get("locale") == m["locale"]]
+        ai_markets.append({**m, "prompts": len(rows),
+                           **{k: sum(int(r.get(k) or 0) for r in rows)
+                              for k in ("checks", "cited", "mentioned", "recommended")}})
+
     return {
         "ai_date": ai_date, "matrix": matrix, "gap_domains": gap_domains,
         "cite_share": cite_share, "ai_by_prompt": ai_by_prompt,
-        "ai_gap_rows": ai_gap_rows,
+        "ai_gap_rows": ai_gap_rows, "ai_markets": ai_markets,
         # 질문 갈래 id → 사람 말 — 정본은 gen_prompts.INTENT_LABELS(화면에 사본을 안 둔다)
         "ai_intent_labels": gen_prompts.INTENT_LABELS,
         "missed": missed, "ai_trend": ai_trend,

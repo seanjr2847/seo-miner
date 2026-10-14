@@ -760,8 +760,23 @@ def api_ai_prompts(body: dict = Depends(_body), project: str = Depends(_project_
     """
     # BRAIN_B_PAID 가 수집 런과 같은 env 를 두르고(유료 키는 서버가 댄다, paid_keys)
     # 그 유저의 brain 을 열었다 닫는다.
+    # 시장마다 그 시장 말로 짓는다. locale 을 주면 그 시장 하나, 안 주면 켜진 질문이 없는
+    # 시장 전부 — 그런 시장이 없으면(다 채워져 있으면) 시장 전부에 더 짓는다. 다시 만들기
+    # (replace)는 시장 전부다: 옛 판을 끄면 모든 시장의 옛 질문이 꺼지기 때문이다.
     try:
-        rows = gen_prompts.suggest(project, n=int(body.get("limit") or 20), conn=c)
+        gen_prompts.require_key()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    try:
+        loc = str(body.get("locale") or "").strip() or None
+        locs = gen_prompts.plan_markets(c, project, locale=loc,
+                                        missing_only=not (loc or body.get("replace")))
+        locs = locs or gen_prompts.plan_markets(c, project)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    try:
+        rows = gen_prompts.suggest_markets(project, locs, conn=c,
+                                           n=int(body["limit"]) if body.get("limit") else None)
         if not rows:
             raise HTTPException(
                 status_code=502,
@@ -773,7 +788,7 @@ def api_ai_prompts(body: dict = Depends(_body), project: str = Depends(_project_
     except RuntimeError as e:                 # 키 부재 등 — 사유를 그대로 화면에 보낸다
         raise HTTPException(status_code=503, detail=str(e))
     return {"ok": True, "added": added, "total": len(rows), "retired": retired,
-            "prompts": [r["prompt"] for r in rows[:5]]}
+            "locales": locs, "prompts": [r["prompt"] for r in rows[:5]]}
 
 
 def _ai_prompts_view(c, project: str) -> dict:
@@ -790,7 +805,9 @@ def _ai_prompts_view(c, project: str) -> dict:
         limit = 30
     return {"prompts": [dict(r) for r in db.list_ai_prompts(c, p["id"])],
             "active_total": db.count_active_ai_prompts(c, p["id"]),
+            # 상한은 시장마다다(collect_ai) — 화면은 시장마다 켠 수를 이 수와 견준다.
             "limit": limit,
+            "markets": db.ai_prompt_markets(c, p["id"]),
             # 갈래 id → 화면 이름(정본 gen_prompts.INTENT_LABELS) — "general" 을 그대로 그리지 않게
             "intent_labels": gen_prompts.INTENT_LABELS}
 
@@ -1065,6 +1082,8 @@ def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
     return {"keywords": [dict(r) for r in db.list_keywords(c, pid,
                                                            active=status == "active")],
             "active_total": db.count_active_keywords(c, pid),
+            # 시장마다 추적 중인 수 — 한도를 어느 시장이 먹는지 화면이 말한다
+            "markets": db.active_by_market(c, pid),
             "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
 
 

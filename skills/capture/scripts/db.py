@@ -380,6 +380,7 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   gen_version INTEGER,                        -- 지은 생성기 판. 값의 뜻은 gen_prompts.GEN_VERSION 주석이 정본
   aim TEXT,                                   -- 겨냥해 지은 것 (꼴은 gen_prompts.AIM_KINDS, 모르면 NULL)
+  locale TEXT,                                -- 이 질문을 묻는 시장(site_markets 의 로케일). NULL = 사이트 기본 시장
   UNIQUE(project_id, prompt)
 );
 CREATE TABLE IF NOT EXISTS ai_checks (
@@ -889,7 +890,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 옛 행은 NULL 로 둔다 — 모르는 판을 지어내지 않는다(NULL 이 곧 "구버전"이다,
     # gen_prompts.outdated). 지우거나 끄지 않는다: 인용 이력이 붙어 있다.
     aip_cols = {r["name"] for r in conn.execute("PRAGMA table_info(ai_prompts)")}
-    for col, decl in (("gen_version", "INTEGER"), ("aim", "TEXT")):
+    # locale — 질문을 묻는 시장. 질문이 사이트에 한 벌(기본 시장 말)뿐이라 6개 언어 사이트도
+    # 한국어로만 물었다(theotherskin, 2026-10-14: 20개 전부 한국어, 영어 주제도 한국어 문장).
+    # 옛 행은 NULL = 사이트 기본 시장 — 실제로 그 시장 말로 지어졌다(gen_prompts.user_msg).
+    for col, decl in (("gen_version", "INTEGER"), ("aim", "TEXT"), ("locale", "TEXT")):
         if col not in aip_cols:
             conn.execute(f"ALTER TABLE ai_prompts ADD COLUMN {col} {decl}")
             conn.commit()
@@ -2198,10 +2202,11 @@ def add_ai_prompts(conn: sqlite3.Connection, project_id: int, rows) -> int:
     before = conn.execute("SELECT COUNT(*) FROM ai_prompts WHERE project_id=?",
                           (project_id,)).fetchone()[0]
     conn.executemany(
-        "INSERT INTO ai_prompts(project_id, prompt, category, is_active, gen_version, aim) "
-        "VALUES(?,?,?,1,?,?) ON CONFLICT(project_id, prompt) DO NOTHING",
+        "INSERT INTO ai_prompts(project_id, prompt, category, is_active, gen_version, aim, locale) "
+        "VALUES(?,?,?,1,?,?,?) ON CONFLICT(project_id, prompt) DO NOTHING",
         [(project_id, r["prompt"].strip(), r.get("category") or "general",
-          int(r.get("gen_version") or 0), r.get("aim") or None) for r in rows])
+          int(r.get("gen_version") or 0), r.get("aim") or None, r.get("locale") or None)
+         for r in rows])
     conn.commit()
     after = conn.execute("SELECT COUNT(*) FROM ai_prompts WHERE project_id=?",
                          (project_id,)).fetchone()[0]
@@ -2218,12 +2223,31 @@ def list_ai_prompts(conn: sqlite3.Connection, project_id: int,
     """
     return conn.execute(
         """SELECT p.id, p.prompt, p.category, p.is_active, p.gen_version, p.aim,
+                  COALESCE(p.locale, pr.locale, ?) locale,
                   COUNT(c.id) checks, COALESCE(SUM(c.cited), 0) cited
              FROM ai_prompts p
+             JOIN projects pr ON pr.id = p.project_id
              LEFT JOIN ai_checks c ON c.prompt_id = p.id
             WHERE p.project_id=?
             GROUP BY p.id ORDER BY p.is_active DESC, p.id LIMIT ?""",
-        (int(project_id), int(limit))).fetchall()
+        (DEFAULT_LOCALE, int(project_id), int(limit))).fetchall()
+
+
+def ai_prompt_markets(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """시장마다 질문 수 — [{locale, label, active, total}], site_markets 순서(첫 것이 기본).
+
+    질문에 시장이 없던 동안 시장을 5개 켠 사이트도 기본 시장 말로만 물었고, 화면은 그걸
+    말할 자리가 없었다. 시장 목록 밖 로케일의 질문(시장을 뺀 뒤 남은 것)은 따로 세지 않는다 —
+    묻기(collect_ai)도 그 질문을 시장 목록 기준으로 고른다."""
+    import serp_adapter
+    site = site_locales(conn, project_id)
+    got = {r["loc"]: (r["active"], r["total"]) for r in conn.execute(
+        """SELECT COALESCE(p.locale, ?) loc, SUM(p.is_active) active, COUNT(*) total
+             FROM ai_prompts p WHERE p.project_id=? GROUP BY 1""",
+        (site[0], int(project_id)))}
+    return [{"locale": loc, "label": serp_adapter.locale_label(loc),
+             "active": int((got.get(loc) or (0, 0))[0] or 0),
+             "total": int((got.get(loc) or (0, 0))[1] or 0)} for loc in site]
 
 
 def count_active_ai_prompts(conn: sqlite3.Connection, project_id: int) -> int:
@@ -3339,14 +3363,33 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
     return conn.execute(
         """SELECT k.id, k.keyword, k.source, k.cluster,
                   k.volume, k.difficulty, k.cpc,
+                  COALESCE(k.locale, pr.locale, ?) locale,
                   COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk
              FROM keywords k
+             JOIN projects pr ON pr.id=k.project_id
              LEFT JOIN gsc_snapshots g
                ON g.project_id=k.project_id AND g.query=k.keyword
             WHERE k.project_id=? AND k.is_active=?
             GROUP BY k.id
             ORDER BY imp DESC, k.volume DESC, k.keyword LIMIT ?""",
-        (int(project_id), 1 if active else 0, int(limit))).fetchall()
+        (DEFAULT_LOCALE, int(project_id), 1 if active else 0, int(limit))).fetchall()
+
+
+def active_by_market(conn: sqlite3.Connection, project_id: int) -> list[dict]:
+    """시장마다 추적 중인 키워드 수 — [{locale, label, active}], site_markets 순서.
+
+    키워드 화면은 "추적 중 500 / 500" 한 줄뿐이라, 한도를 한국어·영어가 다 먹고 일본어 29·
+    아랍어 4·스페인어 0 인 것(theotherskin, 2026-10-14)을 사용자가 볼 데가 없었다.
+    시장 목록 밖 로케일(시장을 뺀 뒤 남은 키워드)도 개수가 있으면 뒤에 붙인다 — 숨기면
+    한도를 무엇이 먹는지 모른다."""
+    import serp_adapter
+    site = site_locales(conn, project_id)
+    got = {r[0]: r[1] for r in conn.execute(
+        """SELECT COALESCE(locale, ?), COUNT(*) FROM keywords
+            WHERE project_id=? AND is_active=1 GROUP BY 1""", (site[0], int(project_id)))}
+    order = site + sorted(k for k in got if k not in site)
+    return [{"locale": loc, "label": serp_adapter.locale_label(loc),
+             "active": int(got.get(loc) or 0), "market": loc in site} for loc in order]
 
 
 ACTIVE_SRCS = ("manual", "auto")

@@ -63,20 +63,20 @@ def estimate_usd(project: str | None) -> float:
     gcfg = collector.config()
     engines = len(gcfg.get("default_ai_engines") or DEFAULT_ENGINES)
     samples = int((gcfg.get("defaults") or {}).get("ai_samples") or 2)
-    cap = 30                              # _parser 의 --max-prompts 기본값과 같다
+    cap = 30                              # _parser 의 --max-prompts 기본값과 같다(시장마다)
     n = cap
     if project:
         try:
             conn = db.connect()
             try:
                 p = db.get_project(conn, project)
-                n = conn.execute("SELECT COUNT(*) c FROM ai_prompts WHERE project_id=? "
-                                 "AND is_active=1", (p["id"],)).fetchone()["c"]
+                # 상한은 시장마다다(collect) — 시장마다 켠 질문 수를 상한으로 자른 합.
+                n = sum(min(m["active"], cap) for m in db.ai_prompt_markets(conn, p["id"]))
             finally:
                 conn.close()
         except Exception:
             n = cap
-    return round(min(n, cap) * engines * samples * AI_CALL_USD, 2)
+    return round(n * engines * samples * AI_CALL_USD, 2)
 
 
 def _openrouter_state(key: str) -> tuple[bool, str, float | None]:
@@ -223,26 +223,36 @@ def collect(project: str, *,
         # AI_STALE_DAYS 를 넘은 것 ③ 나머지는 id 순. 매번 가장 오래된 것부터 돌리면
         # 회차마다 묻는 묶음이 바뀌어 회차 사이 인용률 추세를 못 견준다 — 그래서 ③ 은
         # 고정 순서다. "잰 것"은 측정과 같은 판정(scoring.ai_run_done)을 쓴다.
+        #
+        # 상한은 **시장마다**다. 질문에 시장이 붙기 전에는 사이트에 한 벌이었는데, 시장마다
+        # 질문을 지으면 앞 시장(대개 기본 시장, 작은 id)이 상한을 다 먹어 뒤 시장은 영영 안
+        # 재진다. 같은 순서로 줄 세운 뒤 시장마다 앞에서 limit 개씩 고른다. 시장 목록 밖
+        # 로케일의 질문(시장을 뺀 뒤 남은 것)은 묻지 않는다 — 그 시장은 이제 안 잰다.
+        markets = db.site_locales(conn, p["id"])
         pick = ("WITH last AS (SELECT c.prompt_id, MAX(r.finished_at) at FROM ai_checks c "
                 "JOIN runs r ON r.id=c.run_id WHERE " + scoring.ai_run_done("r") +
                 " GROUP BY c.prompt_id) "
-                "SELECT p.id, p.prompt, p.category FROM ai_prompts p "
+                "SELECT p.id, p.prompt, p.category, COALESCE(p.locale, ?) locale "
+                "FROM ai_prompts p "
                 "LEFT JOIN last l ON l.prompt_id=p.id "
                 "WHERE p.project_id=? AND p.is_active=1 {cat}"
                 "ORDER BY l.at IS NOT NULL, "
-                "COALESCE(julianday('now') - julianday(l.at) <= ?, 1), p.id LIMIT ?")
+                "COALESCE(julianday('now') - julianday(l.at) <= ?, 1), p.id")
         if ids:
             ids_list = [int(x) for x in ids.split(",") if x.strip()]
             prompts = conn.execute(
-                f"""SELECT id, prompt, category FROM ai_prompts
+                f"""SELECT id, prompt, category, COALESCE(locale, ?) locale FROM ai_prompts
                      WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
-                (p["id"], *ids_list)).fetchall()
-        elif category:
-            prompts = conn.execute(pick.format(cat="AND p.category=? "),
-                                   (p["id"], category, scoring.AI_STALE_DAYS, limit)).fetchall()
+                (markets[0], p["id"], *ids_list)).fetchall()
         else:
-            prompts = conn.execute(pick.format(cat=""),
-                                   (p["id"], scoring.AI_STALE_DAYS, limit)).fetchall()
+            cat_sql, cat_arg = ("AND p.category=? ", (category,)) if category else ("", ())
+            seen: dict[str, int] = {}
+            prompts = []
+            for row in conn.execute(pick.format(cat=cat_sql),
+                                    (markets[0], p["id"], *cat_arg, scoring.AI_STALE_DAYS)):
+                if row["locale"] in markets and seen.get(row["locale"], 0) < limit:
+                    seen[row["locale"]] = seen.get(row["locale"], 0) + 1
+                    prompts.append(row)
         if not prompts:
             return st.skip(f"AI에 물어볼 질문이 아직 없습니다 ({p['name']}). 채팅에 "
                            f"`/capture add {p['name']}` 이라고 하시면 프로젝트에 맞는 질문 10~30개를 "
@@ -304,7 +314,9 @@ def collect(project: str, *,
 
             def ask_one(item) -> dict:
                 row, engine, _ = item
-                return ask(engines_d[engine], row["prompt"], api_key, p["locale"])
+                # 그 질문의 시장으로 묻는다 — 예전엔 늘 사이트 기본(p.locale)이라 영어 질문도
+                # "한국 사용자에게 맞는 출처"를 달라고 했다.
+                return ask(engines_d[engine], row["prompt"], api_key, row["locale"])
 
             def write_one(item, res) -> None:
                 """질문 하나 × 엔진 × 샘플 — 실패는 러너가 세고 다음으로 넘어간다."""

@@ -338,21 +338,23 @@ def activate_keywords(project: str, limit: int | None = None, *, post=None, ask=
             conn.close()
 
 
-def ensure_ai_prompts(project: str, n: int = 20) -> int:
-    """물어볼 질문이 하나도 없으면 만들어 둔다. 반환: 새로 넣은 개수.
+def ensure_ai_prompts(project: str, n: int | None = None) -> int:
+    """질문이 하나도 없는 시장이 있으면 그 시장 질문을 만들어 둔다. 반환: 새로 넣은 개수.
 
     웹에는 `/capture add` 를 칠 채팅이 없다 — 온보딩으로 만든 사이트는 질문이 빈 채로
     첫 런을 돌아 AI 인용 단계가 통째로 건너뛰었다(gucci). [AI 인용] 화면의 [질문 만들기]
-    와 같은 한 벌(gen_prompts.suggest/save)을 부른다. 이미 질문이 있으면(사람이 만들었거나
-    지웠거나) 손대지 않는다 — 0개일 때만.
+    와 같은 한 벌(gen_prompts.suggest_markets/save)을 부른다. 시장마다 본다 — 그 시장에
+    질문이 하나라도 있으면(사람이 만들었거나 껐거나) 손대지 않는다. 시장을 늘린 사이트는
+    다음 런에 그 시장 질문이 생긴다(theotherskin 은 시장 5개인데 질문이 한국어 한 벌이었다).
     """
     import gen_prompts
     conn = db.connect()
     try:
         pid = db.get_project(conn, project)["id"]
-        if conn.execute("SELECT 1 FROM ai_prompts WHERE project_id=? LIMIT 1", (pid,)).fetchone():
+        locs = [m["locale"] for m in db.ai_prompt_markets(conn, pid) if not m["total"]]
+        if not locs:
             return 0
-        rows = gen_prompts.suggest(project, n=n, conn=conn)
+        rows = gen_prompts.suggest_markets(project, locs, conn=conn, n=n)
         added = gen_prompts.save(conn, project, rows) if rows else 0
         if added:
             print(f"[{project}] AI 에 물어볼 질문 {added}개를 만들었습니다 — 이번 런부터 인용을 확인합니다")
