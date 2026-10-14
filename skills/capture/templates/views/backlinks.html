@@ -77,6 +77,14 @@
   margin-left:4px; }
 #view-backlinks .hero-c { min-width:0; }
 #view-backlinks .hero-c .blk-note { margin:0; }
+/* 차트가 아직 못 서는 자리(측정이 한 번뿐) — 카드 한가운데에 글자 한 줄이 떠 있으면 빈 카드로
+   읽힌다. 차트가 설 자리를 옅은 면으로 잡아 "여기에 그려진다"를 보여 준다. */
+#view-backlinks .hero-c > .blk-note:only-child { padding:var(--sp-5); border-radius:var(--r-in);
+  background:var(--sunk); font-size:var(--fs-2); }
+/* 스크롤 목록 카드의 빈·완료 상태 — 목록은 카드 안쪽 여백을 음수 마진으로 뚫고 행을 가장자리까지
+   펴지만, 한 덩어리 안내문은 그 뚫은 폭을 되돌려 카드 본문 선에 맞춘다. (안 그러면 글자가
+   카드 가장자리에 붙고, 완료 띠는 카드 끝까지 닿는다.) */
+#view-backlinks .bscroll > .empty { margin-left:var(--sp-5); margin-right:var(--sp-5); }
 #view-backlinks .bx-alt { margin-top:var(--sp-4); }
 #view-backlinks .bx-alt > summary { cursor:pointer; font:500 var(--fs-1)/1.4 var(--sans);
   color:var(--sub); display:inline-flex; align-items:center; min-height:var(--btn-h-sm); }
