@@ -639,6 +639,13 @@ def test_list_keywords_still_puts_impressions_first():
     rows = db.list_keywords(conn, pid, active=False)
     assert [r["keyword"] for r in rows] == ["노출 있음", "검색량만"], \
         [r["keyword"] for r in rows]
+    # 노출은 최신 회차 하나의 값이다 — 쌓인 28일 스냅샷을 회차마다 더하면 브랜드 검색어가
+    # 노출 80,653 으로 나왔다(theotherskin, 2026-10-14)
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
+                 "page,clicks,impressions,ctr,position)"
+                 " VALUES(?,'1999-01-01',28,'노출 있음','p',1,500,0.1,5)", (pid,))
+    conn.commit()
+    assert db.list_keywords(conn, pid, active=False)[0]["imp"] == 700, "옛 회차까지 더했다"
     conn.close()
 
 

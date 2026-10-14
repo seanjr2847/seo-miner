@@ -3359,7 +3359,15 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
     사람이 고를 때 "구글이 이미 보여주고 있는 것"이 먼저 오고, 아직 안 뜨는 것들
     사이에서는 **수요가 큰 것**이 위로 와야 한다. 검색량은 collect_metrics 가 채운다
     (NULL = 아직 안 샀다는 뜻이지 0 이 아니다).
+
+    노출·클릭은 **최신 스냅샷 한 회차**(그날의 가장 짧은 기간)의 것이다. 예전엔 쌓인 28일
+    스냅샷을 회차마다 전부 더해 브랜드 검색어가 노출 80,653 · 클릭 7,948 로 나왔다(실제 28일
+    클릭은 680 안팎, theotherskin 2026-10-14) — 옆에 나라별 노출을 붙이자 수가 안 맞아 드러났다.
     """
+    d = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
+                     (int(project_id),)).fetchone()[0]
+    per = conn.execute("SELECT MIN(period_days) FROM gsc_snapshots WHERE project_id=?"
+                       " AND snapshot_date=?", (int(project_id), d)).fetchone()[0] if d else None
     return conn.execute(
         """SELECT k.id, k.keyword, k.source, k.cluster,
                   k.volume, k.difficulty, k.cpc,
@@ -3369,10 +3377,11 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
              JOIN projects pr ON pr.id=k.project_id
              LEFT JOIN gsc_snapshots g
                ON g.project_id=k.project_id AND g.query=k.keyword
+              AND g.snapshot_date=? AND g.period_days=?
             WHERE k.project_id=? AND k.is_active=?
             GROUP BY k.id
             ORDER BY imp DESC, k.volume DESC, k.keyword LIMIT ?""",
-        (DEFAULT_LOCALE, int(project_id), 1 if active else 0, int(limit))).fetchall()
+        (DEFAULT_LOCALE, d, per, int(project_id), 1 if active else 0, int(limit))).fetchall()
 
 
 def market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> dict[str, int]:
