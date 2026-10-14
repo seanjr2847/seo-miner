@@ -1382,8 +1382,13 @@
     // 오른쪽 한 줄이 "이걸 왜 켜야 하나"에 답해야 한다. 노출이 있으면 실측이 먼저고,
     // 없으면 월 검색량(collect_metrics)이 유일한 수요 신호다 — 그것도 없으면 출처만.
     // 난이도는 켤지 말지를 가르는 값이라 검색량 옆에 붙인다.
+    // 노출이 어느 나라에서 났나 — 서버가 준 상위 두 나라(scoring.kw_countries)
+    var kwWhere = function (k) {
+      var cs = k.countries || [];
+      return cs.length ? " · " + cs.map(function (x) { return esc(x.name) + " " + nf(x.imp); }).join(", ") : "";
+    };
     var kwWhy = function (k) {
-      if (k.imp) return "노출 " + nf(k.imp);
+      if (k.imp) return "노출 " + nf(k.imp) + kwWhere(k);
       if (k.volume != null) {
         return "검색량 " + nf(k.volume) +
                (k.difficulty == null ? "" : " · 난이도 " + Math.round(k.difficulty));

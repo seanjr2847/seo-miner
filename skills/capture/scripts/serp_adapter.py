@@ -485,6 +485,42 @@ LANG_NAME = {"ko": "Korean", "en": "English", "ja": "Japanese", "de": "German", 
              "id": "Indonesian", "ar": "Arabic", "hi": "Hindi", "zh": "Chinese"}
 
 
+# 서치콘솔 나라 코드(ISO 3166-1 alpha-3, 소문자) → 화면 이름, 그리고 로케일 지역(alpha-2)과의 짝.
+# 나라별 노출(gsc_breakdown dim='country')을 사람이 읽게 하고, "이 검색어를 재는 시장의 나라"를
+# 찾는 데 쓴다. 목록에 없는 나라는 코드 대문자 그대로 보인다 — 이름을 지어내지 않는다.
+COUNTRIES = [
+    ("KR", "kor", "한국"), ("US", "usa", "미국"), ("JP", "jpn", "일본"), ("CN", "chn", "중국"),
+    ("TW", "twn", "대만"), ("HK", "hkg", "홍콩"), ("SG", "sgp", "싱가포르"), ("MY", "mys", "말레이시아"),
+    ("PH", "phl", "필리핀"), ("ID", "idn", "인도네시아"), ("TH", "tha", "태국"), ("VN", "vnm", "베트남"),
+    ("IN", "ind", "인도"), ("AE", "are", "아랍에미리트"), ("SA", "sau", "사우디아라비아"),
+    ("QA", "qat", "카타르"), ("KW", "kwt", "쿠웨이트"), ("EG", "egy", "이집트"), ("DZ", "dza", "알제리"),
+    ("MA", "mar", "모로코"), ("GB", "gbr", "영국"), ("IE", "irl", "아일랜드"), ("CA", "can", "캐나다"),
+    ("AU", "aus", "호주"), ("NZ", "nzl", "뉴질랜드"), ("DE", "deu", "독일"), ("AT", "aut", "오스트리아"),
+    ("CH", "che", "스위스"), ("FR", "fra", "프랑스"), ("BE", "bel", "벨기에"), ("NL", "nld", "네덜란드"),
+    ("ES", "esp", "스페인"), ("PT", "prt", "포르투갈"), ("IT", "ita", "이탈리아"), ("PL", "pol", "폴란드"),
+    ("SE", "swe", "스웨덴"), ("NO", "nor", "노르웨이"), ("DK", "dnk", "덴마크"), ("FI", "fin", "핀란드"),
+    ("RU", "rus", "러시아"), ("TR", "tur", "튀르키예"), ("IL", "isr", "이스라엘"), ("MX", "mex", "멕시코"),
+    ("BR", "bra", "브라질"), ("AR", "arg", "아르헨티나"), ("CO", "col", "콜롬비아"), ("CL", "chl", "칠레"),
+    ("PE", "per", "페루"), ("MN", "mng", "몽골"), ("KZ", "kaz", "카자흐스탄"), ("UZ", "uzb", "우즈베키스탄"),
+    ("PK", "pak", "파키스탄"), ("BD", "bgd", "방글라데시"), ("ZA", "zaf", "남아프리카공화국"),
+    ("NG", "nga", "나이지리아"),
+]
+_CC_NAME = {a3: name for _, a3, name in COUNTRIES}
+_A2_A3 = {a2: a3 for a2, a3, _ in COUNTRIES}
+
+
+def country_label(code: str) -> str:
+    """'phl' -> '필리핀'. 모르는 코드는 대문자 그대로."""
+    c = (code or "").lower()
+    return _CC_NAME.get(c, c.upper())
+
+
+def locale_country(locale: str) -> str | None:
+    """'en-US' -> 'usa' — 그 시장의 나라(서치콘솔 코드). 지역 없는 로케일·모르는 지역은 None."""
+    _, _, region = (locale or "").partition("-")
+    return _A2_A3.get(region.upper()) if region else None
+
+
 def locale_label(locale: str) -> str:
     """'ja-JP' -> '일본어 · 일본'. 목록(LOCALES)에 없으면 코드 그대로 — 지어내지 않는다."""
     return dict(LOCALES).get(locale or "", locale or "")

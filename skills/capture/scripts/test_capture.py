@@ -3247,6 +3247,41 @@ def test_keyword_caps_are_per_market():
     assert m == {"ko-KR": (2, 2), "en-US": (0, 2), "ja-JP": (0, 2)}, m
     conn.close()
 
+
+def test_keyword_countries_and_deep_recheck_of_missed():
+    """검색어마다 나라별 노출(서치콘솔 나라 분해)을 펼치고, 지난 조회가 1쪽에서 못 찾았는데 실적은
+    가깝다는 검색어는 깊게 다시 본다.
+
+    theotherskin 영어 검색어는 평균 4~10위인데 미국 조회 143개 중 138개가 "1쪽 밖"이었다 —
+    평균은 필리핀·미국·싱가포르를 섞은 값이었고(분해는 늘 받아 왔는데 화면에 없었다), 깊이 10
+    이라 11위인지 50위인지도 못 갈랐다(2026-10-14).
+    """
+    import collect_serp
+    conn = db.connect()
+    pid = _project(conn, "cc_kw")["id"]
+    db.write_gsc_breakdown(conn, pid, "2026-10-13", 28, "country", [
+        ("phl", "syringoma vs milia", 0, 112, 0.0, 6.5), ("usa", "syringoma vs milia", 0, 83, 0.0, 8.2),
+        ("sgp", "syringoma vs milia", 0, 39, 0.0, 11.4), ("ind", "syringoma vs milia", 0, 30, 0.0, 7.3),
+        ("egy", "syringoma vs milia", 0, 16, 0.0, 9.1), ("zzz", "다른 검색어", 1, 5, 0.2, 2.0)])
+    got = scoring.kw_countries(conn, pid)
+    assert [(x["name"], x["imp"], x["pos"]) for x in got["syringoma vs milia"]] == [
+        ("필리핀", 112, 6.5), ("미국", 83, 8.2), ("싱가포르", 39, 11.4), ("인도", 30, 7.3)], got
+    assert got["다른 검색어"][0]["name"] == "ZZZ", "모르는 나라 코드에 이름을 지어냈다"
+    assert serp_adapter.locale_country("en-US") == "usa" and serp_adapter.locale_country("ko") is None
+    # 깊이 — 지난 조회가 못 찾았고 실적이 30위 안이면 깊게. 실적이 1쪽 안이어도(나라를 섞은 평균)
+    kid = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                       " VALUES(?, 'syringoma vs milia', 'en-US', 1, 'gsc')", (pid,)).lastrowid
+    db.write_rank_snapshot(conn, kid, None, None, checked_at="2026-10-12T00:00:00Z", locale="en-US")
+    conn.commit()
+    missed = collect_serp.missed_last(conn, pid)
+    assert missed == {scoring.norm("syringoma vs milia")}, missed
+    hints = {scoring.norm("syringoma vs milia"): 7.0}
+    assert collect_serp.depth_for("syringoma vs milia", 10, hints, missed) == collect_serp.DEEP_DEPTH
+    assert collect_serp.depth_for("syringoma vs milia", 10, hints) == 10, "못 찾은 적 없는데 깊게 본다"
+    assert collect_serp.depth_for("syringoma vs milia", 10, {}, missed) == 10, \
+        "실적에 흔적도 없는 검색어까지 깊게 본다(돈만 3배)"
+    conn.close()
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

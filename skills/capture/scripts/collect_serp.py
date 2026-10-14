@@ -118,10 +118,28 @@ def rank_hints(conn, project_id: int) -> dict[str, float]:
     return out
 
 
-def depth_for(keyword: str, depth: int, hints: dict) -> int:
-    """이 검색어를 얼마나 깊이 볼까 — 힌트가 기본 깊이 밖·DEEP_DEPTH 안이면 DEEP_DEPTH."""
+def missed_last(conn, project_id: int) -> set[str]:
+    """{norm(검색어)} — 지금 로케일로 잰 마지막 순위 조회가 우리를 못 찾은(position NULL) 추적 검색어."""
+    site = db.project_locale(conn.execute("SELECT * FROM projects WHERE id=?",
+                                          (project_id,)).fetchone())
+    return {scoring.norm(r[0]) for r in conn.execute(
+        """SELECT k.keyword FROM keywords k JOIN rank_snapshots r ON r.keyword_id=k.id
+            WHERE k.project_id=? AND k.is_active=1
+              AND (r.locale IS NULL OR r.locale = COALESCE(k.locale, ?))
+              AND r.checked_at = (SELECT MAX(checked_at) FROM rank_snapshots WHERE keyword_id=k.id)
+              AND r.position IS NULL""", (project_id, site))}
+
+
+def depth_for(keyword: str, depth: int, hints: dict, missed: set | None = None) -> int:
+    """이 검색어를 얼마나 깊이 볼까 — 힌트가 기본 깊이 밖·DEEP_DEPTH 안이면 DEEP_DEPTH.
+
+    지난 조회가 1쪽에서 못 찾았는데 구글 실적은 DEEP_DEPTH 안이라고 하는 것도 깊게 본다 —
+    실적은 나라를 섞은 평균이라 1쪽으로 나와도(theotherskin 영어 검색어: 평균 4~10위) 재는 시장
+    (미국)에서는 1쪽 밖이었다. 깊이 10 이면 "밖"이라고만 남아 11위인지 50위인지 못 가른다
+    (2026-10-14 미국 조회 143개 중 138개가 "밖")."""
     h = hints.get(scoring.norm(keyword))
-    if depth < DEEP_DEPTH and h is not None and depth < h <= DEEP_DEPTH:
+    if depth < DEEP_DEPTH and h is not None and h <= DEEP_DEPTH and (
+            depth < h or scoring.norm(keyword) in (missed or ())):
         return DEEP_DEPTH
     return depth
 
@@ -217,7 +235,8 @@ def collect(project: str, *,
         locales = Counter((k["locale"] or default_locale) for k in (kws if kws else target_kws))
         # 검색어마다 깊이 — 구글 실적이 1쪽 밖·DEEP_DEPTH 안이라고 하는 것만 깊게(depth_for).
         hints = rank_hints(conn, p["id"])
-        depth_of = {k["id"]: depth_for(k["keyword"], depth, hints) for k in kws}
+        missed = missed_last(conn, p["id"])
+        depth_of = {k["id"]: depth_for(k["keyword"], depth, hints, missed) for k in kws}
         deep = sum(1 for k in kws if depth_of[k["id"]] > depth)
         # 대기열은 앞 런이 맡겨 둔 과제를 먼저 받는다 — 그 몫은 이번에 돈이 안 든다.
         reuse = _reusable(conn, p["name"], kws, default_locale, depth_of, device) if queued else {}

@@ -2727,6 +2727,13 @@ def test_ctr_brief_says_when_the_rank_check_did_not_see_us():
         {"position": 4.5, "impressions": 143, "actual_ctr": 0.7, "expected_ctr": 7.0,
          "lost_clicks": 9}, {"cur": "2026-10-13"})
     assert why.startswith("평균 4.5위 · 노출 143"), why
+    # 나라별 — 평균이 어느 나라들을 섞은 값인지, 재는 시장의 나라는 따로(서치콘솔 나라 분해)
+    ctx["kw_countries"] = {"검색어": [
+        {"c": "col", "name": "콜롬비아", "imp": 10, "clk": 0, "pos": 5.6},
+        {"c": "usa", "name": "미국", "imp": 27, "clk": 1, "pos": 3.6}]}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "- 나라별 (" in body and "콜롬비아 5.6위(노출 10) · 미국 3.6위(노출 27)" in body, body
+    assert "재는 시장(영어 · 미국)의 나라 미국만 보면 평균 3.6위 · 노출 27입니다" in body, body
     # 조회도 1페이지 안이면(8위) 갈림 줄은 안 선다 — 같은 말을 두 번 하지 않는다
     ctx["rank_by_kw"]["검색어"].update(pos=8, url=URL)
     body = brief.build(o, ctx, "ko-KR")["body"]

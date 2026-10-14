@@ -3388,6 +3388,17 @@ window.targetStat = t => {
     : ""}</div>`;
 };
 
+// 이 검색어가 어느 나라 구글에서 보였나 — 서버가 센 d.kw_countries(서치콘솔 나라 분해) 그대로.
+// 평균 순위는 나라를 섞은 값이라, 필리핀 6.5위·미국 8.2위가 한 숫자 7위로 보였다(2026-10-14).
+window.relCountries = q => {
+  const rows = (window.KW_COUNTRIES || {})[q];
+  if (!rows || !rows.length) return "";
+  return `<div class="detw"><b>나라별 노출</b>
+   <span class="detn">이 검색어가 어느 나라 구글에서 보였는지입니다. 순위는 나라마다의 서치콘솔 평균입니다.</span>
+   <ul class="detl">${rows.map(x => `<li>${esc(x.name)} <span class="num">${num(x.imp)}</span> 노출
+     · ${x.pos == null ? "순위 모름" : `평균 <span class="num">${x.pos}</span>위`}</li>`).join("")}</ul></div>`;
+};
+
 // 이 검색어로 걸린 내 지면 — 다섯 열 표는 390px 에서 넘쳐 상자 밖으로 샜다.
 // 순위는 서치콘솔의 기간 평균이다(나라·기기·날짜를 섞은 노출 가중 평균). "4.5위"로만 적으니
 // 직접 검색해 본 사람이 "실제로는 4.5위가 아닌데"라고 읽었다(theotherskin 'olidia vs
@@ -3486,7 +3497,8 @@ window.oppParts = o => {
   // 수(지금 몇 위고 어디로 가고 있나)가 맨 위다 — 처방과 페이지보다 먼저 온다.
   // 연관 페이지·연관 키워드는 맨 아래다: 이 기회를 끝낸 다음에 가 볼 곳이다.
   return {ask, url, note, works,
-    stat: window.targetStat(o.target), group: oppGroup(o), play: playList(p.what, p.acts, sdTail),
+    stat: window.targetStat(o.target) + window.relCountries(o.target), group: oppGroup(o),
+    play: playList(p.what, p.acts, sdTail),
     page: url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(audit, url)}` : "",
     rel: window.relPages(pages, url) + window.relQueries(url)};
@@ -4078,6 +4090,7 @@ function render(d) {
   window.SD_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   window.QUERY_PAGES = d.query_pages || {};
   window.TARGET_TREND = d.target_trend || {};  // 대상별 회차 추이 (펼침 패널의 숫자·차트)
+  window.KW_COUNTRIES = d.kw_countries || {};  // 검색어 → 나라별 노출 상위 (펼침 패널의 나라별)
   window.PAGE_QUERIES = d.page_queries || {};  // 페이지별 들어오는 검색어 (연관 키워드)
   window.BRIEF = d.brief || null;            // 요청문 꼬리·머리말 한 벌 (brief.py)
   window.PAGE_AUDITS = d.page_audits || {};

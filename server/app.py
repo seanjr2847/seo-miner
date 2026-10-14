@@ -1089,8 +1089,10 @@ def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
     노출된 것만 켠다. 나머지는 사람이 보고 골라야 해서 이 목록이 필요하다.
     """
     pid = db.get_project(c, project)["id"]
-    return {"keywords": [dict(r) for r in db.list_keywords(c, pid,
-                                                           active=status == "active")],
+    # 줄마다 노출 많은 나라 둘 — 검색어가 어느 나라에서 보이는지(서치콘솔 나라 분해)
+    kc = scoring.kw_countries(c, pid, top=2)
+    return {"keywords": [{**dict(r), "countries": kc.get(r["keyword"], [])}
+                         for r in db.list_keywords(c, pid, active=status == "active")],
             "active_total": db.count_active_keywords(c, pid),
             # 시장마다 추적 중인 수와 그 시장 상한(총량을 시장 수로 나눈 것, db.market_caps)
             "markets": db.active_by_market(c, pid, settings.count("SEOMINER_MAX_KEYWORDS")),

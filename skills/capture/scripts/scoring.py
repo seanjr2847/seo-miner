@@ -5799,6 +5799,31 @@ def _resolve_ctr(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     return None
 
 
+def kw_countries(conn: sqlite3.Connection, project_id: int, *, top: int = 4) -> dict:
+    """검색어 → 나라별 노출 상위 [{c, name, imp, clk, pos}] — 서치콘솔 나라 분해(최신 회차).
+
+    평균 순위는 모든 나라를 섞은 값이다. theotherskin 'olidia vs sculptra' 는 평균 4.5위인데
+    미국 직접 조회는 1쪽 밖이었고, 'syringoma vs milia' 노출은 필리핀 112 · 미국 83 · 싱가포르 39
+    로 갈렸다(2026-10-14) — 어느 나라에서 몇 위인지 보여야 그 평균을 읽을 수 있다. 분해는
+    수집기가 늘 받아 왔는데(collect_gsc --breakdown country) 화면 어디에도 안 나왔다."""
+    import serp_adapter
+    d = _latest(conn, _LATEST_BD, (project_id, "country"))
+    if not d:
+        return {}
+    out: dict[str, list] = {}
+    for r in conn.execute(
+            f"""SELECT query, lower(dim_value) c, SUM(impressions) imp, SUM(clicks) clk, {POS_SQL} pos
+                  FROM gsc_breakdown WHERE project_id=? AND snapshot_date=? AND dim='country'
+                 GROUP BY query, lower(dim_value) HAVING SUM(impressions) > 0
+                 ORDER BY query, SUM(impressions) DESC""", (project_id, d)):
+        rows = out.setdefault(r["query"], [])
+        if len(rows) < top:
+            rows.append({"c": r["c"], "name": serp_adapter.country_label(r["c"]),
+                         "imp": int(r["imp"] or 0), "clk": int(r["clk"] or 0),
+                         "pos": round(r["pos"], 1) if r["pos"] is not None else None})
+    return out
+
+
 def _resolve_device(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """모바일 격차 → 새 기기별 분해에서 모바일·데스크톱이 둘 다 잡히고 모바일 노출이
     하한 이상인데 격차가 DEVICE_GAP_POS 아래. 한쪽만 잡히면 비교가 안 되니 말하지 않는다."""

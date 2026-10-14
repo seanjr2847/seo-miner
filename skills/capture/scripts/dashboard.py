@@ -864,6 +864,9 @@ def _axis_rank(conn, pid: int) -> dict:
         "kw_locales": {r["keyword"]: r["locale"] for r in q(
             conn, "SELECT keyword, locale FROM keywords WHERE project_id=? AND locale IS NOT NULL",
             (pid,))},
+        # 검색어 → 나라별 노출 상위(서치콘솔 나라 분해) — 평균 순위가 어느 나라들을 섞은 값인지.
+        # 요청문 근거(brief._country_lines)와 펼침 패널(relCountries)이 같은 한 벌을 읽는다.
+        "kw_countries": scoring.kw_countries(conn, pid),
         # 기회로 아직 안 올라온 행의 폴백 처방이 쓴다(rank.html) — 문구는 기회와 같은 한 벌.
         "aio_play": {b: scoring.kind_play("aio_exposure", band=b) for b in scoring.AIO_BANDS},
         "kw_active": db.count_active_keywords(conn, pid),

@@ -1930,6 +1930,7 @@ def _ev_striking(o, ctx, pages):
                     f" · 상단 3위권까지 {round(max(0.0, r['pos'] - 3), 1)}칸"))
         L.append("- 이 순위는 기간 평균 게재순위입니다. 노출된 순간들의 평균이라 지금 직접 "
                  "검색하면 안 보일 수 있습니다.")
+        L += _country_lines(o, ctx)
     if not r:
         # 서치콘솔 없는 사이트 — DataForSEO 추정 순위. 노출·클릭이 없다고 말하고 걸린 페이지를 댄다.
         lr = _find(ctx.get("striking_labs"), "query", o["target"])
@@ -2058,9 +2059,10 @@ def _ev_ctr(o, ctx, pages):
     r = _find(ctx.get("ctr_gaps"), "query", o["target"])
     L = []
     if r:
-        L.append(f"- {_gsc_src(ctx)} (검색어 하나, 모든 기기·지역): {r['position']}위 · 노출 "
+        L.append(f"- {_gsc_src(ctx)} (검색어 하나, 모든 기기·지역): 평균 {r['position']}위 · 노출 "
                  f"{_n(r['impressions'])} · 클릭 {_n(r['clicks'])} · CTR {r['actual_ctr']}% (이 "
                  f"순위의 기대치 {r['expected_ctr']}%) · 놓친 클릭 약 {_n(r['lost_clicks'])}")
+        L += _country_lines(o, ctx)
     rk = _rank_row(o, ctx)
     L += _serp_seen_lines(rk, ctx)
     # 순위 조회 값이 있으면 두 측정을 나란히 — 조회값이 없던 요청문은 "직접 검색해 정하라"고
@@ -2074,6 +2076,30 @@ def _ev_ctr(o, ctx, pages):
         L.append(_rank_unseen_line(o, ctx))
     L += _ctr_rank_split(rk, r["position"] if r else None)
     return L + _pages_table(pages) + _ctr_cause_lines(o, ctx)
+
+
+def _country_lines(o: dict, ctx: dict) -> list[str]:
+    """이 검색어가 어느 나라 구글에서 몇 위로 보였나 — 서치콘솔 나라 분해(d.kw_countries).
+
+    평균 순위는 나라를 섞은 값이다. 'syringoma vs milia' 평균 7위의 노출은 필리핀 112 · 미국 83 ·
+    싱가포르 39 였고 나라마다 순위가 달랐다(theotherskin, 2026-10-14) — 섞인 평균 하나로 "1페이지"
+    라고 읽지 않게 나라를 펼친다. 이 검색어를 재는 시장의 나라가 있으면 그 값을 따로 짚는다."""
+    t = str(o.get("target") or "")
+    rows = (ctx.get("kw_countries") or {}).get(t)
+    if not rows:
+        return []
+    loc = (ctx.get("kw_locales") or {}).get(t) or (ctx.get("project") or {}).get("locale")
+    home = serp_adapter.locale_country(str(loc or ""))
+    parts = [f"{x['name']} " + (f"{x['pos']:g}위" if x.get("pos") is not None else "순위 모름")
+             + f"(노출 {_n(x['imp'])})" for x in rows]
+    L = [f"- 나라별 ({_gsc_src(ctx)}, 노출 많은 나라 {len(rows)}곳): " + " · ".join(parts)
+         + " — 위 평균은 이 나라들을 섞은 값입니다."]
+    mine = next((x for x in rows if x["c"] == home), None) if home else None
+    if mine and len(rows) > 1:
+        L.append(f"- 이 검색어를 재는 시장({_LOCALE_LABEL.get(str(loc), loc)})의 나라 {mine['name']}만 보면 "
+                 + (f"평균 {mine['pos']:g}위" if mine.get("pos") is not None else "순위 모름")
+                 + f" · 노출 {_n(mine['imp'])}입니다.")
+    return L
 
 
 def _rank_unseen_line(o: dict, ctx: dict) -> str:

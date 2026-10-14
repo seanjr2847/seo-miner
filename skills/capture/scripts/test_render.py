@@ -342,6 +342,10 @@ MUSTS = [
      "연관 페이지의 순위가 서치콘솔 평균이라고 안 적혔다"),
     (r'<b>연관 키워드 2</b>(?:(?!</div>).)*곁 검색어',
      "연관 키워드가 그 지면으로 들어오는 검색어 전부를 안 셌다"),
+    # 나라별 노출 — 평균 순위가 어느 나라들을 섞은 값인지(d.kw_countries, 2026-10-14)
+    (r'<b>나라별 노출</b>(?:(?!</div>).)*필리핀 <span class="num">70</span> 노출\s*· 평균 '
+     r'<span class="num">8</span>위(?:(?!</div>).)*미국',
+     "펼침 패널이 검색어의 나라별 노출을 안 그렸다"),
     # coverage 기회의 대상은 내부 꼴('cluster:이름')이 아니라 사람이 읽는 이름으로
     # 그려져야 한다 — 카드 제목이 'cluster:(미분류)' 그대로 보이던 것이 실제 발견이었다.
     # 미분류는 이제 기회가 아니다(scoring._coverage_rows) — 이름 있는 묶음으로 본다.
@@ -891,6 +895,10 @@ def fixture(home: Path) -> None:
                          query,page,clicks,impressions,ctr,position)
                        VALUES(?,?,28,?,?,8,40,0.2,3.0)""",
                     (pid, d, f"{name} 곁 검색어", f"https://{name}.example/a"))
+            # 나라별 노출 — 같은 검색어가 두 나라에서 보였다(서치콘솔 나라 분해). 펼침 패널이
+            # 평균을 나라로 펼치는지 본다(필리핀 6.5위·미국 8.2위가 한 숫자 7위로 보였다).
+            db.write_gsc_breakdown(conn, pid, "2026-06-01", 28, "country", [
+                ("phl", f"{name} 검색어", 1, 70, 0.01, 8.0), ("usa", f"{name} 검색어", 0, 50, 0.0, 10.5)])
             if name == SITES[1]:            # 테스트가 여는 사이트
                 _axes(conn, pid)
         conn.commit()
