@@ -1164,6 +1164,10 @@ def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
     if not any(r.get("is_own") for r in rows) and rk and rk.get("pos") is not None:
         L.append(f"- 우리 페이지는 같은 조회에서 이 표 밖({rk['pos']:g}위)입니다 — 검색결과에 없는 "
                  "것이 아닙니다.")
+    elif not any(r.get("is_own") for r in rows) and rk:
+        # 조회가 우리를 못 찾았으면 그렇게 말한다 — 말이 없으면 표를 보고 자리를 짐작한다
+        L.append(f"- 우리 페이지는 같은 조회에서 1쪽({scoring.PAGE1}위) 안에 없었습니다 — 이 표에도 "
+                 "없습니다.")
     L.append("")
     # 그 글들의 H2 목록 — 수집이 열어 둔 것이 있으면 여기 싣는다. 여태 이걸 안 모아서
     # 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 수집본에 있었는데도).
@@ -2063,7 +2067,49 @@ def _ev_ctr(o, ctx, pages):
     # 시키면서 대조할 값을 안 줘서, 답이 7일 요약 위젯의 6.6위를 가져와 8.7위와 섞었다.
     if rk and rk.get("pos") is not None:
         L += _rank_sources(rk, [], ctx)
+    elif rk:
+        # 조회가 우리를 **못 본** 것도 측정이다(pos 없음 = 잰 범위 밖). 이 줄을 버리던 동안
+        # theotherskin #725 'olidia vs sculptra' 는 같은 조회의 AI 요약은 실으면서 순위는 빼서,
+        # 평균 4.5위만 보고 "1페이지인데 클릭률이 낮다"로 읽혔다(2026-10-14).
+        L.append(_rank_unseen_line(o, ctx))
+    L += _ctr_rank_split(rk, r["position"] if r else None)
     return L + _pages_table(pages) + _ctr_cause_lines(o, ctx)
+
+
+def _rank_unseen_line(o: dict, ctx: dict) -> str:
+    """순위 조회가 우리 페이지를 못 찾았다는 한 줄 — 어느 시장 구글에서 언제 본 것인지까지."""
+    d = ctx.get("rank_date")
+    loc = (ctx.get("kw_locales") or {}).get(str(o.get("target") or "")) \
+        or (ctx.get("project") or {}).get("locale")
+    where = _LOCALE_LABEL.get(str(loc or ""))
+    # 조회 깊이는 늘 구글 1쪽 이상이다(skill_config serp_depth 10, 깊은 조회는 더 깊다) — 그래서
+    # "1쪽 안에 없었다"까지는 말할 수 있다. 몇 위인지는 모른다(지어내지 않는다).
+    return ("- 순위 조회: " + (f"{d} " if d else "") + (f"{where} " if where else "")
+            + f"구글에서 이 검색어 하나를 직접 본 결과, 우리 페이지는 1쪽({scoring.PAGE1}위) 안에 "
+              "없었습니다 — 몇 위인지는 조회 범위 밖이라 모릅니다.")
+
+
+def _ctr_rank_split(rk: dict | None, gsc_pos) -> list[str]:
+    """클릭률 기회는 서치콘솔 **평균**이 1페이지라서 선다. 직접 조회는 1페이지 밖이면 둘이
+    갈린 것이다 — 평균은 모든 나라·기기를 섞은 노출 가중 값이라, 노출이 주로 난 곳에서는
+    1페이지이고 이 검색어를 재는 시장에서는 밖일 수 있다. 그때 title·설명부터 손보면 순위가
+    막힌 시장에서는 눌릴 자리가 없다 — 어느 쪽이 지금 자리인지 먼저 정하게 한다."""
+    if not rk or not isinstance(gsc_pos, (int, float)) or gsc_pos > scoring.PAGE1:
+        return []
+    pos = rk.get("pos")
+    if isinstance(pos, (int, float)) and pos <= scoring.PAGE1:
+        return []
+    seen = (f"1쪽 밖({pos:g}위)" if isinstance(pos, (int, float))
+            else f"1쪽({scoring.PAGE1}위) 안에 없었습니다")
+    # 갈래를 바꾸지 않는다. 클릭률 손질의 대상은 평균이 말하는 노출 — 실제로 1페이지 근처에서
+    # 보이고도 안 눌린 것 — 이라 그대로 유효하다. 처음엔 "1쪽 밖이면 손질안 대신 순위 진단"이라고
+    # 썼더니 목표·만들 것·진단(meta)은 클릭률 갈래 그대로라 두 갈래가 부딪혔다(검토, 2026-10-14).
+    return [f"{RANK_SPLIT_HEAD}: 구글 실적 평균은 {gsc_pos:g}위(1페이지)인데 위 순위 조회에서는 "
+            f"{seen}. 평균은 모든 나라·기기를 섞은 값이라, 노출이 주로 난 곳에서는 1페이지이고 "
+            "조회한 시장에서는 밖일 수 있습니다. 이 요청문의 클릭률 손질은 그대로 합니다 — 평균이 "
+            "말하는 노출(1페이지 근처에서 보이고도 안 눌린 것)에 대한 일이기 때문입니다. 조회한 "
+            "시장에서 1쪽 밖인 것은 순위의 일이라 여기서 고치지 않고 '따로 볼 것'에 한 줄로 "
+            "적습니다(직접 검색해 본 자리가 다르면 그것도 함께 — 검색하는 곳에 따라 다릅니다)."]
 
 
 def _ev_cannibal(o, ctx, pages):
@@ -2955,7 +3001,7 @@ def _head(p: dict) -> str:
 
 
 def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
-                  *, has_evidence: bool = True) -> list[str]:
+                  *, has_evidence: bool = True, split: bool = False) -> list[str]:
     kind = o["kind"]
     t = str(o["target"])
     if kind == "coverage":
@@ -3086,7 +3132,13 @@ def _target_lines(o: dict, url: str | None, shape: str, ctx: dict | None = None,
         # 없는 절을 가리키는 요청문이 25건 나갔다. 절이 설 때만 가리킨다.
         # 뒷말은 두 조건이 만나야 뜻이 있다: 견줄 '근거' 절이 서고, 견줄 숫자가 있을 것.
         num = bool(re.search(r"\d", why))
-        if has_evidence:
+        if has_evidence and split:
+            # 근거가 순위를 두 가지로 나란히 놓고(RANK_SPLIT_HEAD) "둘 다 맞다"고 했는데 여기서
+            # "갈리면 어느 쪽인지 정하라"고 하면 두 줄이 부딪힌다(#725 검토, 2026-10-14) — 그
+            # 줄을 가리킨다. 조회가 하루 더 오래일 수도 있어 "근거 쪽이 새것"이라고도 안 한다.
+            tail = (" 아래 '근거'에 순위가 두 가지로 섰습니다 — 둘 다 맞는 값이니 하나를 고르지 "
+                    "말고 그 줄이 정한 대로 합니다.")
+        elif has_evidence:
             tail = (" 아래 '근거'의 최신 값과 다르면 근거 쪽이 새것입니다"
                     + (" — 두 숫자가 갈리면 직접 검색해 어느 쪽이 지금 자리인지 먼저 "
                        "정합니다." if num else "."))
@@ -3660,10 +3712,10 @@ def _goal_target(o: dict, ctx: dict, pages: list[dict], shape: str) -> str:
             ctr = (f"클릭률 {act}% → 최소 {floor}%(이 순위 기대치 {e}%의 절반), 기대치면 {per}에 "
                    f"클릭 {_n(clk)} → 약 {_n(round(imp * e / 100))}(추정)")
             if kind == "ctr_gap":
-                return f"순위({pos:g}위)는 그대로 두고 클릭을 늘리는 것 — {ctr}." + thin
+                return f"평균 순위({pos:g}위)는 그대로 두고 클릭을 늘리는 것 — {ctr}." + thin
             # 밀면 오를 검색어(1페이지 안)는 닫히는 선이 상단 3위권이다 — 목표가 클릭만 말하면
             # 바로 아래 '끝나는 조건'과 딴말을 한다. 순서로 말한다: 클릭이 먼저, 그다음 자리.
-            return (f"먼저 지금 자리({pos:g}위)에서 클릭 — {ctr}. 그다음 상단 3위권(평균 "
+            return (f"먼저 지금 자리(평균 {pos:g}위)에서 클릭 — {ctr}. 그다음 상단 3위권(평균 "
                     f"{scoring.STRIKING_LO}위 안)." + thin)
         e10 = scoring.EXPECTED_CTR[scoring.PAGE1]
         return (f"평균 {pos:g}위 → 1페이지({scoring.PAGE1}위 안). 노출이 지금 그대로면 {per}에 "
@@ -3937,7 +3989,8 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
     # 걸렸나'와 같은 그때의 짝이다. 그것만 서는데 "근거 쪽이 새것"이라고 하면 거짓이다(#128).
     fresh = bool(ev) and not (kind == "rank_decay" and not pages
                               and not _find(ctx.get("downs"), "query", o.get("target")))
-    L += (_target_lines(o, url, shape, ctx, has_evidence=fresh)[:-1]
+    L += (_target_lines(o, url, shape, ctx, has_evidence=fresh,
+                        split=any(RANK_SPLIT_HEAD in x for x in ev or []))[:-1]
           + lang_line + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
           + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다

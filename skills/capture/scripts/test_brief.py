@@ -2688,6 +2688,53 @@ def test_ctr_brief_carries_what_the_rank_check_saw():
     assert "이 표 밖" not in brief.build(plain, ctx, "ko-KR")["body"]
 
 
+def test_ctr_brief_says_when_the_rank_check_did_not_see_us():
+    """순위 조회가 우리를 **못 본** 것도 싣는다 — 서치콘솔 평균과 갈리면 단정하지 않는다.
+
+    theotherskin #725 'olidia vs sculptra'(2026-10-14): 서치콘솔 28일 평균 4.5위로 "1페이지인데
+    클릭률이 기대치의 절반도 안 됩니다"라고 단정했는데, 이 검색어를 재는 시장(영어 · 미국)의
+    직접 조회(10-12)는 우리를 1쪽에서 못 찾았다. 요청문은 같은 조회의 AI 요약은 실으면서
+    순위만 버렸고(pos 가 없으면 안 싣는 조건), 사용자는 "실제로는 4.5위가 아닌데"라고 물었다.
+    평균은 모든 나라·기기를 섞은 값이다 — 두 값을 나란히 놓고 어느 쪽이 지금 자리인지부터 정하게 한다.
+    """
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "rank_date": "2026-10-12",
+           "project": {"locale": "ko-KR"}, "kw_locales": {"검색어": "en-US"},
+           "ctr_gaps": [{"query": "검색어", "position": 4.5, "impressions": 143, "clicks": 1,
+                         "actual_ctr": 0.7, "expected_ctr": 7.0, "lost_clicks": 9}],
+           "serp_top": {"검색어": [{"position": i, "title": f"상위{i}", "url": f"https://r.example/{i}"}
+                                  for i in range(1, 6)]},
+           "rank_by_kw": {"검색어": {"pos": None, "url": None, "aio": 1, "aio_cited": 0,
+                                   "features": ["ai_overview"]}}}
+    o = _opp("ctr_gap", "검색어", band="aio")
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert "- 순위 조회: 2026-10-12 영어 · 미국 구글에서 이 검색어 하나를 직접 본 결과, 우리 페이지는 " \
+           "1쪽(10위) 안에 없었습니다" in body, body
+    assert brief.RANK_SPLIT_HEAD in body and "구글 실적 평균은 4.5위" in body, \
+        "평균(1페이지)과 조회(밖)가 갈리는데 단정했다"
+    # 갈래는 바꾸지 않는다 — 클릭률 손질은 그대로, 조회 시장의 순위는 '따로 볼 것'으로. 처음 고친
+    # 판은 "손질안 대신 순위 진단"이라 해서 목표·만들 것과 부딪혔다(검토가 잡았다)
+    assert "클릭률 손질은 그대로 합니다" in body and "손질안 대신" not in body, body
+    # 대상 절의 뒷말도 그 줄을 가리킨다 — "갈리면 하나를 정하라"가 남아 부딪혔다(2차 검토)
+    assert "둘 다 맞는 값이니 하나를 고르지 말고" in body and "어느 쪽이 지금 자리인지 먼저" not in body, body
+    assert "우리 페이지는 같은 조회에서 1쪽(10위) 안에 없었습니다" in body, "상위 표가 우리 자리를 안 말한다"
+    # 평균 순위를 평균이라고 적는다 — 처방·목표·끝나는 조건·판정 문장
+    assert "평균 순위(4.5위)는 그대로 두고" in body, body
+    for band in (None, "aio"):
+        what = scoring.kind_play("ctr_gap", band=band)["what"]
+        assert what.startswith("구글 실적 평균으로는 1페이지인데"), what
+    assert "평균 순위가 1페이지" in scoring.RESOLVE_WHEN["ctr_gap"], scoring.RESOLVE_WHEN["ctr_gap"]
+    why = scoring._KIND_SPECS["ctr_gap"]["reasoning"](
+        {"position": 4.5, "impressions": 143, "actual_ctr": 0.7, "expected_ctr": 7.0,
+         "lost_clicks": 9}, {"cur": "2026-10-13"})
+    assert why.startswith("평균 4.5위 · 노출 143"), why
+    # 조회도 1페이지 안이면(8위) 갈림 줄은 안 선다 — 같은 말을 두 번 하지 않는다
+    ctx["rank_by_kw"]["검색어"].update(pos=8, url=URL)
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert brief.RANK_SPLIT_HEAD not in body and "- 순위 조회: 8위" in body, body
+    # 조회는 1쪽 밖 숫자(23위)인데 평균은 1페이지면 갈린다
+    ctx["rank_by_kw"]["검색어"].update(pos=23)
+    assert brief.RANK_SPLIT_HEAD in brief.build(o, ctx, "ko-KR")["body"]
+
 def test_brief_names_past_work_on_the_page_and_the_mixed_window():
     """이 페이지에 이미 한 작업을 싣고, 관찰 중이면 맨 위와 제 절에서 말한다. 실적 창에
     수정 전 날이 며칠 섞였는지도 — 그 요청문의 28일 중 절반이 수정 전이었는데 말이 없었다."""

@@ -4965,11 +4965,13 @@ _CTR_PLAY = {
     "plain": dict(
         # "순위가 아니라 제목·설명 문제입니다"라고 단정했다 — 까닭은 셋이고(제목·의도·스니펫),
         # 의도가 어긋났으면 제목을 고쳐도 안 눌린다. 요청문이 기계로 먼저 가른다(brief CTR_CAUSE_HEAD).
-        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 검색결과에서 안 눌리는 "
+        # "1페이지인데"는 서치콘솔 평균 순위의 말이다 — 직접 조회는 1쪽 밖일 수 있다(#725
+        # 'olidia vs sculptra': 평균 4.5위, 미국 조회 1쪽 밖). 갈리면 요청문 근거가 갈림 줄을 단다.
+        what="구글 실적 평균으로는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 검색결과에서 안 눌리는 "
              "것입니다 — 까닭(제목 불일치·의도 어긋남·스니펫 약함)은 근거의 '까닭' 줄이 먼저 가릅니다.",
         acts=_CTR_ACTS, deliver=_CTR_DELIVER),
     "aio": dict(
-        what="1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 다만 이 검색어는 결과 맨 위에 "
+        what="구글 실적 평균으로는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 다만 이 검색어는 결과 맨 위에 "
              "구글 AI 요약이 섭니다 — 기대치는 요약이 없는 결과의 클릭 곡선이라, 모자란 클릭의 "
              "일부는 제목·설명이 아니라 요약이 가져간 것입니다. 제목·설명 문제라고 단정하지 "
              "않습니다.",
@@ -5154,8 +5156,9 @@ _KIND_SPECS = {
                                  "fit": _fit_of(ctx["conn"], ctx["pid"], r["query"]),
                                  **_ga4_metrics(ctx, query=r["query"])},
         target=lambda r, ctx: r["query"],
+        # 순위는 서치콘솔 기간 평균이다 — striking 과 같은 까닭으로 앞에서 못 박는다(실측으로 읽혔다)
         reasoning=lambda r, ctx: (
-            f"{r['position']}위 · 노출 {r['impressions']:,} · CTR "
+            f"평균 {r['position']}위 · 노출 {r['impressions']:,} · CTR "
             f"{r['actual_ctr']}% (이 순위의 기대치 {r['expected_ctr']}%). "
             f"이 기간에 약 {r['lost_clicks']:,}클릭을 놓쳤습니다 "
             f"(구글 실적 {ctx['cur']} 기준)"),
@@ -6080,7 +6083,7 @@ RESOLVE_WHEN = {
     "striking_distance": f"다음 구글 실적에서 이 검색어가 노출 {STRIKING_MIN_IMP} 이상으로 평균 "
                          f"{STRIKING_LO}위 안(상단 3위권)에 들거나, {STRIKING_HI}위 밖·노출 "
                          f"{STRIKING_MIN_IMP} 미만으로 조건을 벗어나면",
-    "ctr_gap": f"다음 구글 실적에서 1페이지(노출 {CTR_GAP_MIN_IMP} 이상)를 지키며 클릭률이 그 "
+    "ctr_gap": f"다음 구글 실적에서 평균 순위가 1페이지(노출 {CTR_GAP_MIN_IMP} 이상)를 지키며 클릭률이 그 "
                f"순위 기대치의 {round(CTR_GAP_FACTOR * 100)}%를 넘으면",
     "device_gap": f"다음 기기별 분해에서 모바일 노출 {DEVICE_MIN_IMP} 이상으로 모바일·데스크톱 "
                   f"순위 차가 {DEVICE_GAP_POS:g}칸 아래로 줄면",
