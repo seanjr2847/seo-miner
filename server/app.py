@@ -296,12 +296,6 @@ CARRY_FIELDS = ("locale", "brand_aliases", "seed_keywords",
                 "competitors_manual", "tools")
 
 
-def _capped(ids: list[int], limit: int, active: int) -> list[int]:
-    """상한 안에서만 켠다 — SERP·AI 인용은 켜진 항목 수만큼 과금이라 상한 너머로
-    켜면 그만큼 비용이 샌다. AI 질문·키워드 두 자리가 같은 규칙을 썼다."""
-    return ids[:max(0, limit - active)]
-
-
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -867,12 +861,28 @@ def api_ai_prompts_edit(b: dict = Depends(_body), project: str = Depends(_projec
         on = bool(b.get("active"))
         if on:
             # 켜진 질문 × 엔진 수 × 샘플 수만큼 돈이 나간다. 상한 너머로
-            # 켜 봐야 collect_ai 가 LIMIT 으로 자르므로, 여기서 막고 말한다.
-            ids = _capped(ids, view["limit"], view["active_total"])
+            # 켜 봐야 collect_ai 가 잘라내므로, 여기서 막고 말한다. 상한은 시장마다다 —
+            # collect_ai 가 시장마다 limit 개씩 묻는다(사이트 총량으로 막으면 시장 5개 사이트는
+            # 질문을 만들자마자 아무것도 못 켠다).
+            loc_of = {q["id"]: q["locale"] for q in view["prompts"]}
+            was_on = {q["id"] for q in view["prompts"] if q["is_active"]}
+            used: dict = {}
+            for q in view["prompts"]:
+                if q["is_active"]:
+                    used[q["locale"]] = used.get(q["locale"], 0) + 1
+            keep = []
+            for i in ids:
+                loc = loc_of.get(i)
+                if i in was_on:
+                    keep.append(i)
+                elif i in loc_of and used.get(loc, 0) < view["limit"]:
+                    used[loc] = used.get(loc, 0) + 1
+                    keep.append(i)
+            ids = keep
             if not ids:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"켤 수 있는 질문은 {view['limit']}개까지입니다. 다른 질문을 먼저 끄세요.")
+                    detail=f"켤 수 있는 질문은 시장마다 {view['limit']}개까지입니다. 그 시장의 다른 질문을 먼저 끄세요.")
         db.set_ai_prompts_active(c, pid, ids, on)
     else:
         db.delete_ai_prompts(c, pid, ids)
@@ -1082,8 +1092,8 @@ def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
     return {"keywords": [dict(r) for r in db.list_keywords(c, pid,
                                                            active=status == "active")],
             "active_total": db.count_active_keywords(c, pid),
-            # 시장마다 추적 중인 수 — 한도를 어느 시장이 먹는지 화면이 말한다
-            "markets": db.active_by_market(c, pid),
+            # 시장마다 추적 중인 수와 그 시장 상한(총량을 시장 수로 나눈 것, db.market_caps)
+            "markets": db.active_by_market(c, pid, settings.count("SEOMINER_MAX_KEYWORDS")),
             "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
 
 
@@ -1098,12 +1108,18 @@ def api_keywords_set(b: dict = Depends(_body), project: str = Depends(_project_b
         raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 먼저 고르세요.")
     pid = db.get_project(c, project)["id"]
     if on:
+        # 상한은 시장마다다(db.market_caps — 총량을 시장 수로 나눈다). 총량 하나로 막으면 한
+        # 시장이 다 먹은 뒤 다른 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).
         limit = settings.count("SEOMINER_MAX_KEYWORDS")
-        ids = _capped(ids, limit, db.count_active_keywords(c, pid))
+        ids = db.fit_market_caps(c, pid, ids, limit)
         if not ids:
+            each = min(db.market_caps(c, pid, limit).values())
+            full = [m["label"] for m in db.active_by_market(c, pid, limit)
+                    if m["market"] and m["active"] >= m["limit"]]
             raise HTTPException(
                 status_code=409,
-                detail=f"추적 키워드가 한도 {limit}개를 채웠습니다. [추적 중] 탭에서 몇 개를 해제한 뒤 다시 추가하세요.")
+                detail=f"{', '.join(full) or '고른 키워드의 시장'} 추적 키워드가 시장 한도 {each}개를 "
+                       "채웠습니다. [추적 중] 탭에서 그 시장 키워드를 몇 개 해제한 뒤 다시 추가하세요.")
     changed = db.set_keywords_active(c, pid, ids, on)
     return {"ok": True, "changed": changed,
             "active_total": db.count_active_keywords(c, pid)}

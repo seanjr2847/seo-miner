@@ -1357,16 +1357,17 @@
       return;
     }
     var ks = d.keywords || [];
-    // 시장마다 몇 개인지 — "추적 중 500 / 500" 한 줄로는 한도를 한국어·영어가 다 먹고
-    // 스페인어가 0 인 것을 볼 데가 없었다(theotherskin, 2026-10-14). 0 인 시장은 경고색.
-    // 진행 막대(keywords.html)는 앞의 "N / M" 을 읽는다 — 시장 줄에는 "/" 를 쓰지 않는다.
+    // 시장마다 몇 개인지와 그 시장 한도(총량을 시장 수로 나눈 것, db.market_caps) — "추적 중
+    // 500 / 500" 한 줄로는 한도를 한국어·영어가 다 먹고 스페인어가 0 인 것을 볼 데가 없었다
+    // (theotherskin, 2026-10-14). 0 이거나 한도에 닿은 시장은 경고색. 진행 막대(keywords.html)는
+    // 첫 "N / M"(총량)을 읽는다 — 시장 줄은 그 뒤에 서고 "/" 를 붙여 쓴다(공백 없이).
     var mks = (d.markets || []).filter(function (m) { return m.market || m.active; });
     var mkName = mkNames(mks);
     box.querySelector(".cnt").innerHTML = "추적 중 " + d.active_total + " / " + d.limit +
       "개" + (d.active_total >= d.limit ? ' <b class="warn">· 한도에 닿았습니다</b>' : "") +
       (mks.length > 1 ? '<span class="mk"> · ' + mks.map(function (m) {
-        var t = esc(mkName[m.locale]) + " " + m.active;
-        return m.active ? t : '<b class="warn">' + t + "</b>";
+        var t = esc(mkName[m.locale]) + " " + m.active + (m.limit != null ? "/" + m.limit : "");
+        return m.active && !(m.limit != null && m.active >= m.limit) ? t : '<b class="warn">' + t + "</b>";
       }).join(" · ") + "</span>" : "");
     if (!ks.length) {
       list.innerHTML = kwMode === "candidate"

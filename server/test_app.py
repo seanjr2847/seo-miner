@@ -966,6 +966,44 @@ def demo() -> None:
         assert c.post("/api/keywords", json={"project": "p1", "ids": []}).status_code == 400
         assert c.post("/api/keywords", json={"project": "없는사이트", "ids": [1], "active": True}
                       ).status_code == 404, "남의 사이트 키워드를 건드릴 수 있다"
+        # 상한은 시장마다다(총량 ÷ 시장 수) — 총량 하나로 막으면 한국어·영어가 다 먹은 뒤
+        # 스페인어는 하나도 못 켰다(theotherskin, 2026-10-14).
+        saved_cap = os.environ.get("SEOMINER_MAX_KEYWORDS")
+        os.environ["SEOMINER_MAX_KEYWORDS"] = "2"
+        assert c.post("/api/settings", json={"project": "p1", "markets": [
+            {"locale": "ko-KR", "scope": ""}, {"locale": "en-US", "scope": ""}]}).status_code == 200
+        bc = db.connect(home=store.home(u2))
+        try:
+            pid_p1 = bc.execute("SELECT id FROM projects WHERE name='p1'").fetchone()[0]
+            kid = {}
+            for kw, loc, on in (("한 켜짐", "ko-KR", 1), ("한 꺼짐", "ko-KR", 0), ("en off", "en-US", 0)):
+                kid[kw] = bc.execute(
+                    "INSERT INTO keywords(project_id, keyword, locale, locale_src, is_active, source)"
+                    " VALUES(?,?,?,'manual',?,'gsc')", (pid_p1, kw, loc, on)).lastrowid
+            bc.commit()
+        finally:
+            bc.close()
+        try:
+            r = c.post("/api/keywords", json={"project": "p1", "active": True,
+                                              "ids": [kid["한 꺼짐"], kid["en off"]]})
+            assert r.status_code == 200 and r.json()["changed"] == 1, r.text
+            mk = {m["locale"]: (m["active"], m["limit"])
+                  for m in c.get("/api/keywords?project=p1").json()["markets"]}
+            assert mk == {"ko-KR": (1, 1), "en-US": (1, 1)}, f"시장마다 상한으로 안 잘렸다: {mk}"
+            r = c.post("/api/keywords", json={"project": "p1", "active": True, "ids": [kid["한 꺼짐"]]})
+            assert r.status_code == 409 and "한국어 · 한국" in r.json()["detail"], r.text
+        finally:
+            if saved_cap is None:
+                os.environ.pop("SEOMINER_MAX_KEYWORDS", None)
+            else:
+                os.environ["SEOMINER_MAX_KEYWORDS"] = saved_cap
+            c.post("/api/settings", json={"project": "p1", "markets": [{"locale": "ko-KR", "scope": ""}]})
+            bc = db.connect(home=store.home(u2))
+            try:
+                bc.execute("DELETE FROM keywords WHERE id IN (?,?,?)", tuple(kid.values()))
+                bc.commit()
+            finally:
+                bc.close()
 
         assert c.get("/api/report?project=없는사이트").status_code == 404
         r = c.get("/api/report?project=p1")

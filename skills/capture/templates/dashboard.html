@@ -3377,7 +3377,7 @@ window.targetStat = t => {
   const nums = `<p class="detk"><span class="num">${num(r.imp)}</span> 노출 ·
     <span class="num">${num(r.clk)}</span> 클릭 ·
     <span class="num">${ctr.toFixed(1)}%</span> CTR`
-    + (r.pos == null ? "" : ` · <span class="num">${r.pos}</span>위`) + `</p>`;
+    + (r.pos == null ? "" : ` · 평균 <span class="num">${r.pos}</span>위`) + `</p>`;
   // 순위는 작을수록 좋다 — 축을 뒤집지 않으면 9위로 올라간 선이 아래로 꺾여
   // "떨어졌다"로 읽힌다. 회차가 하나뿐이면 chLine 이 빈 문자열을 준다(점 하나를
   // 선이라고 부르지 않는다) — 그때는 숫자 석 장만 남는다.
@@ -3389,12 +3389,15 @@ window.targetStat = t => {
 };
 
 // 이 검색어로 걸린 내 지면 — 다섯 열 표는 390px 에서 넘쳐 상자 밖으로 샜다.
+// 순위는 서치콘솔의 기간 평균이다(나라·기기·날짜를 섞은 노출 가중 평균). "4.5위"로만 적으니
+// 직접 검색해 본 사람이 "실제로는 4.5위가 아닌데"라고 읽었다(theotherskin 'olidia vs
+// sculptra' — 미국 구글 직접 확인은 1쪽 밖, 2026-10-14). 평균이라고 적는다.
 window.relPages = (pages, cur) => !pages || !pages.length ? "" :
   `<div class="detw"><b>연관 페이지 ${pages.length}</b>
-   <span class="detn">이 검색어로 순위에 걸린 내 지면입니다.</span>
+   <span class="detn">이 검색어로 순위에 걸린 내 지면입니다. 순위는 서치콘솔 평균이라 나라·기기마다 섞인 값이고, 직접 검색한 순위와 다를 수 있습니다.</span>
    <ul class="detl">${pages.map(r => `<li><a href="${esc(r.page)}" target="_blank"
      rel="noopener">${esc(r.page)}</a> <span class="num">${num(r.impressions)}</span> 노출
-     · <span class="num">${r.position ?? "—"}</span>위${r.page === cur
+     · 평균 <span class="num">${r.position ?? "—"}</span>위${r.page === cur
        ? ` <span class="micro lat">·</span> 고칠 페이지` : ""}</li>`).join("")}</ul></div>`;
 
 // 이 페이지로 들어오는 검색어 — 정본은 서버가 센 d.page_queries 다. query_pages 를
@@ -3407,7 +3410,7 @@ window.relQueries = url => {
     <span class="detn">이 페이지로 들어오는 검색어입니다.</span>
     <ul class="detl">${g.top.map(x => `<li>${esc(x.q)}
       <span class="num">${num(x.imp)}</span> 노출
-      · <span class="num">${x.pos ?? "—"}</span>위</li>`).join("")}</ul>${more > 0
+      · 평균 <span class="num">${x.pos ?? "—"}</span>위</li>`).join("")}</ul>${more > 0
     ? `<p class="detn">외 ${num(more)}개</p>` : ""}</div>`;
 };
 

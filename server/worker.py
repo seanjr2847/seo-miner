@@ -69,7 +69,10 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
             "SELECT id FROM keywords WHERE project_id=? AND is_active=0"
             " AND COALESCE(verdict_off,0)=0 AND volume>0"
             " AND COALESCE(active_src,'')<>'demoted'"
-            " ORDER BY volume DESC, id LIMIT ?", (p["id"], room)).fetchall()]
+            " ORDER BY volume DESC, id", (p["id"],)).fetchall()]
+        # 시장마다 상한(db.market_caps) 안에서 — 한 시장 검색량이 커도 다른 시장 자리를 안 먹는다
+        ids = db.fit_market_caps(conn, p["id"], ids,
+                                 settings.count("SEOMINER_MAX_KEYWORDS"))[:room]
         if not ids:
             return 0        # 검색량이 아직 없다 — 표식을 안 찍고 다음 런에 다시 본다
         n = db.set_keywords_active(conn, p["id"], ids, True, by="auto")
@@ -327,6 +330,7 @@ def activate_keywords(project: str, limit: int | None = None, *, post=None, ask=
             new = [i for i in want if i not in cur]
         else:
             new = [i for i in want if i not in cur][:max(0, cap - len(cur))]
+        new = db.fit_market_caps(conn, p["id"], new, settings.count("SEOMINER_MAX_KEYWORDS"))
         n = db.set_keywords_active(conn, p["id"], new, True, by="auto") if new else 0
         db.set_project_settings(conn, p["id"], {"auto_keywords": f"{AUTO_VERSION}:{time.strftime('%Y-%m-%d')}"})
         print(f"[rank] 추적 키워드를 골랐습니다 — 새로 {n}개"
@@ -375,12 +379,12 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
     conn = db.connect()
     try:
         pid = db.get_project(conn, project)["id"]
-        # 이미 켜 둔 것까지 세어 남은 자리만 채운다. 매번 limit 개씩 더 켜면
-        # 추적 세트가 런마다 불어나고, SERP 는 키워드당 과금이라 비용이 샌다.
-        active = db.count_active_keywords(conn, pid)
-        room = max(0, limit - active)
-        if room == 0:
-            return 0
+        # 상한은 시장마다다(db.market_caps). 먼저 넘친 시장에서 워커가 켠 것을 노출 적은 순으로
+        # 끄고, 남은 자리를 시장마다 노출 순으로 채운다. 이미 켜 둔 것까지 세어 남은 자리만
+        # 채운다 — 매번 더 켜면 추적 세트가 런마다 불어나고, SERP 는 키워드당 과금이다.
+        off = db.trim_market_caps(conn, pid, limit)
+        if off:
+            print(f"[{project}] 시장 한도를 넘은 자동 추적 키워드 {len(off)}개를 껐습니다")
         # "노출 순으로 골라 room 개" 는 db.py 에 없다 (GSC 조인이 필요한 선택 로직이라
         # db.count_active_keywords/set_keywords_active 와는 층이 다르다) — 여기 남긴다.
         # TODO(db.py): 이 선택 로직이 다른 곳에서도 필요해지면 db.py 로 옮긴다.
@@ -388,9 +392,9 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
             "SELECT k.id FROM keywords k"
             "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
             " WHERE k.project_id=? AND k.is_active=0 AND COALESCE(k.active_src,'')<>'demoted'"
-            " GROUP BY k.id ORDER BY SUM(g.impressions) DESC LIMIT ?",
-            (pid, room)).fetchall()]
-        return db.set_keywords_active(conn, pid, ids, True, by="auto")
+            " GROUP BY k.id ORDER BY SUM(g.impressions) DESC", (pid,)).fetchall()]
+        ids = db.fit_market_caps(conn, pid, ids, limit)
+        return db.set_keywords_active(conn, pid, ids, True, by="auto") if ids else 0
     finally:
         conn.close()
 

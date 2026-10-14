@@ -3207,6 +3207,46 @@ def test_ai_prompts_are_asked_per_market():
     os.environ.pop("OPENROUTER_API_KEY", None)
     conn.close()
 
+
+def test_keyword_caps_are_per_market():
+    """추적 키워드 상한은 시장마다다 — 사이트 총량을 시장 수로 나눈다.
+
+    총량 하나만 있던 동안 theotherskin 은 한국어 239·영어 228 이 500 을 다 먹어 일본어 29·
+    아랍어 4·스페인어 0 에서 멈췄고, 빈자리가 없어 그 시장 키워드는 켤 수도 없었다(2026-10-14).
+    시장이 하나면 총량 그대로다(aitierlist 500 이 100 으로 잘리면 안 된다).
+    """
+    conn = db.connect()
+    pid = _project(conn, "mk_cap")["id"]
+    assert db.market_caps(conn, pid, 500) == {"ko-KR": 500}, "시장 하나인 사이트의 총량이 줄었다"
+    db.set_markets(conn, pid, [("ko-KR", ""), ("en-US", ""), ("ja-JP", "")])
+    assert db.market_caps(conn, pid, 6) == {"ko-KR": 2, "en-US": 2, "ja-JP": 2}
+    rows = [("한1", "ko-KR", 1, "auto", 50), ("한2", "ko-KR", 1, "auto", 5), ("한3", "ko-KR", 1, "auto", 1),
+            ("한4", "ko-KR", 1, None, 0),                       # 누가 켰는지 모름 — 안 끈다
+            ("en1", "en-US", 0, None, 0), ("ja1", "ja-JP", 0, None, 0), ("ja2", "ja-JP", 0, None, 0),
+            ("ja3", "ja-JP", 0, None, 0)]
+    for kw, loc, on, src, imp in rows:
+        conn.execute("INSERT INTO keywords(project_id, keyword, locale, locale_src, is_active, active_src,"
+                     " source) VALUES(?,?,?,'manual',?,?,'gsc')", (pid, kw, loc, on, src))
+        if imp:
+            _snap(conn, pid, "2026-10-10", 28, kw, 5, 0)
+            conn.execute("UPDATE gsc_snapshots SET impressions=? WHERE project_id=? AND query=?",
+                         (imp, pid, kw))
+    conn.commit()
+    ids = {r["keyword"]: r["id"] for r in conn.execute(
+        "SELECT id, keyword FROM keywords WHERE project_id=?", (pid,))}
+    # 한국어가 상한(2)을 넘어도 일본어·영어는 제 몫만큼 켤 수 있다
+    got = db.fit_market_caps(conn, pid, [ids["ja1"], ids["ja2"], ids["ja3"], ids["en1"]], 6)
+    assert got == [ids["ja1"], ids["ja2"], ids["en1"]], got
+    # 넘친 시장에서 워커가 켠 것만 노출 적은 순으로 끈다 — 모름(NULL)은 그대로
+    off = db.trim_market_caps(conn, pid, 6)
+    assert off == ["한3", "한2"], off
+    on = {r[0] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))}
+    assert on == {"한1", "한4"}, on
+    m = {x["locale"]: (x["active"], x["limit"]) for x in db.active_by_market(conn, pid, 6)}
+    assert m == {"ko-KR": (2, 2), "en-US": (0, 2), "ja-JP": (0, 2)}, m
+    conn.close()
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
