@@ -964,6 +964,18 @@ function AI_showMissed() {
   if (t) AI_ev(t);
 }
 
+/* 질문 짓는 명령 칩 — `/capture add {사이트} [시장]`. 등록된 사이트에서는 질문만 짓는다
+   (capture SKILL.md 의 /capture add 절, 원격 사이트는 gen_prompts 가 서버에 맡긴다).
+   로컬은 이 칩 하나, 웹은 [질문 만들기] 버튼 옆에 같은 칩을 둔다 — 웹 화면을 보며
+   플러그인 채팅에서 치는 사람이 칠 명령을 몰랐다(2026-10-15 "웹도 명령어 해주는걸로").
+   window.act("add") 를 안 쓰는 까닭: 웹에서는 그게 서버 단계 버튼(data-run)이 된다. */
+function AI_makeCmd(loc, primary) {
+  const p = $("proj"), nm = (p && p.value) || AI_NM;
+  return `<button class="cmd${primary ? "" : " sec"}" onclick="copyCmd(this)"
+    title="복사해서 Claude Code 채팅에 붙여 넣으면 ${loc ? "이 시장 " : ""}질문을 짓습니다"
+    >/capture add ${esc(nm)}${loc ? " " + esc(loc) : ""}</button>`;
+}
+
 /* ── 다음 한 걸음: 화면 머리 아래 띠 한 줄. 이 화면의 상태는 다섯이다 —
       질문이 없다 / 안 물어봤다 / 안 잡힌 질문이 있다 / 확인이 1회뿐이다 /
       전부 인용된다. 띠와 버튼은 셸이 갖는다(nextStep·act). 아직 안 선 배포에서는
@@ -984,8 +996,8 @@ function AI_nextStep(d, has, missN, canFilter) {
     // 초안 20개만 심고 인용 확인(엔진 호출)은 하지 않는다(dash.html makePrompts).
     return put("<b>물어볼 질문이 아직 없습니다.</b>" + live(
         "눌러서 이 사이트에 맞는 질문 초안 20개를 만듭니다. AI에 묻는 인용 확인은 따로 누를 때만 합니다."),
-      W(window.act("add", "질문 만들기"),
-        `<button class="go" data-sm-act="make-prompts">질문 만들기</button>`));
+      W(AI_makeCmd("", true),
+        `<button class="go" data-sm-act="make-prompts">질문 만들기</button>${AI_makeCmd("", false)}`));
   if (!has)
     return put(`질문 <b>${num(pr.ai_prompts)}개</b>가 준비됐습니다.`
       + live("한 번 확인하면 어느 질문에서 지고 있는지 보입니다."),
@@ -1336,8 +1348,9 @@ function AI_health(h, has) {
 function AI_markets(d) {
   const ms = d.ai_markets || [];
   if (ms.length < 2) return "";
-  const make = m => READONLY ? "" : W(window.act ? window.act("add", "질문 만들기", false) : "",
-    `<button class="go sm sec" data-sm-act="make-prompts" data-sm-locale="${esc(m.locale)}">질문 만들기</button>`);
+  const make = m => READONLY ? "" : W(AI_makeCmd(m.locale, false),
+    `<button class="go sm sec" data-sm-act="make-prompts" data-sm-locale="${esc(m.locale)}">질문 만들기</button>`
+    + AI_makeCmd(m.locale, false));
   const none = ms.filter(m => !m.active);
   const rows = ms.map(m => {
     const lab = `<td class="kwcell">${esc(m.label)}</td>`;

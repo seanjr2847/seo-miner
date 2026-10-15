@@ -1091,9 +1091,15 @@ def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
     pid = db.get_project(c, project)["id"]
     # 줄마다 노출 많은 나라 둘 — 검색어가 어느 나라에서 보이는지(서치콘솔 나라 분해)
     kc = scoring.kw_countries(c, pid, top=2)
-    return {"keywords": [{**dict(r), "countries": kc.get(r["keyword"], [])}
-                         for r in db.list_keywords(c, pid, active=status == "active")],
+    # 후보는 시장마다 상위 200개 — 사이트 전체 상위 500개면 큰 시장이 자리를 다 먹어 작은
+    # 시장 탭이 비었다(db.list_keywords per_market). 추적 중은 한도 안이라 전부 준다.
+    active = status == "active"
+    per_market = None if active else 200
+    rows = db.list_keywords(c, pid, active=active, limit=5000, per_market=per_market)
+    return {"keywords": [{**{k: r[k] for k in r.keys() if k != "rn"},
+                          "countries": kc.get(r["keyword"], [])} for r in rows],
             "active_total": db.count_active_keywords(c, pid),
+            "per_market": per_market,      # 후보는 시장마다 이만큼까지만 싣는다 — 화면이 「200+」로 말한다
             # 시장마다 추적 중인 수와 그 시장 상한(총량을 시장 수로 나눈 것, db.market_caps)
             "markets": db.active_by_market(c, pid, settings.count("SEOMINER_MAX_KEYWORDS")),
             "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
@@ -1104,11 +1110,24 @@ def api_keywords_set(b: dict = Depends(_body), project: str = Depends(_project_b
                      c=Depends(BRAIN_B)):
     """고른 키워드를 추적 세트에 넣거나 뺀다. 상한(limit)을 넘겨 켜지 않는다 —
     SERP 는 키워드당 과금이라 여기서 새면 비용이 샌다."""
-    ids = [int(x) for x in (b.get("ids") or [])][:500]
+    try:      # 화면이 보내는 값이다 — 숫자가 아닌 게 오면 500 이 아니라 400 이다
+        ids = [int(x) for x in (b.get("ids") or [])][:500]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
     on = bool(b.get("active"))
     if not ids:
         raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 먼저 고르세요.")
     pid = db.get_project(c, project)["id"]
+    if b.get("locale"):
+        # 시장 옮기기 — 판정이 틀린 검색어를 사람이 바로잡는다(db.move_keywords_market).
+        try:
+            moved = db.move_keywords_market(c, pid, ids, str(b["locale"]),
+                                            settings.count("SEOMINER_MAX_KEYWORDS"))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        c.commit()
+        return {"ok": True, "moved": moved,
+                "active_total": db.count_active_keywords(c, pid)}
     if on:
         # 상한은 시장마다다(db.market_caps — 총량을 시장 수로 나눈다). 총량 하나로 막으면 한
         # 시장이 다 먹은 뒤 다른 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).

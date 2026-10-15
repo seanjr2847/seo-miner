@@ -19,18 +19,16 @@
 
 ## 빠른 시작
 
-Claude Code 채팅에 세 줄이면 됩니다.
+Claude Code 채팅에 네 줄이면 됩니다.
 
 ```
 /plugin marketplace add seanjr2847/seo-miner
 /plugin install seo-miner@seo-miner
-```
-
-Claude Code 를 **한 번 껐다 켜고**:
-
-```
+/reload-plugins
 /setup
 ```
+
+`/reload-plugins` 는 방금 깐 플러그인을 지금 세션에 바로 붙입니다(Claude Code 를 껐다 켜도 같습니다).
 
 나머지는 `/setup` 이 하나씩 묻고 대신 해 줍니다 — 파이썬 부품 설치, 쓰는 방식 고르기,
 사이트 등록, 구글 로그인, (원하면) 유료 키. 끝나면:
@@ -69,7 +67,7 @@ Claude Code 를 **한 번 껐다 켜고**:
 
 ## 설치
 
-**사용자가 직접 하는 것은 [빠른 시작](#빠른-시작)의 세 줄과 재시작뿐**입니다. 아래는 그 세 줄의
+**사용자가 직접 하는 것은 [빠른 시작](#빠른-시작)의 명령 몇 줄뿐**입니다. 아래는 그 세 줄의
 갈래(터미널에서 · 범위 고르기 · 내려받은 폴더로)와, `/setup` 이 대신 해 주는 일을 손으로
 하고 싶을 때의 명령입니다.
 
@@ -147,7 +145,7 @@ claude plugin update seo-miner@seo-miner                     # user 범위
 claude plugin update seo-miner@seo-miner --scope project     # project 범위 — 그 리포 폴더에서
 ```
 
-끝나면 Claude Code 를 재시작합니다. 여러 리포에 project 범위로 깔았으면 **리포마다** 그
+끝나면 Claude Code 에서 `/reload-plugins` 로 지금 세션에 바로 붙입니다(껐다 켜도 됩니다). 여러 리포에 project 범위로 깔았으면 **리포마다** 그
 폴더에서 한 번씩 칩니다. 자료(`~/.capture/`)는 업데이트해도 그대로입니다.
 
 ### 지우기
@@ -163,7 +161,7 @@ claude plugin marketplace remove seo-miner                   # 마켓플레이�
 
 | 증상 | 할 것 |
 |---|---|
-| `/capture` 가 안 보인다 | Claude Code 재시작 → `claude plugin list` 로 설치됐는지·범위가 맞는지 확인. project 범위면 그 리포 폴더에서 열었는지 |
+| `/capture` 가 안 보인다 | `/reload-plugins` → 그래도 없으면 `claude plugin list` 로 설치됐는지·범위가 맞는지 확인. project 범위면 그 리포 폴더에서 열었는지 |
 | 명령이 `/seo-miner:capture` 로만 된다 | 다른 플러그인과 이름이 겹친 것입니다. 앞에 플러그인 이름을 붙여 치면 됩니다 |
 | `ModuleNotFoundError` | 부품이 다른 파이썬에 깔렸습니다 — `/setup` 이나 [설정]의 [수집 부품 설치] 버튼으로 다시 |
 | 구글 실적이 안 온다 | `/setup` 이 **연결됨 / 로그인 대기 / 인증 없음** 중 무엇인지 말해 줍니다. 로그인 대기면 [구글 로그인] |
@@ -215,7 +213,7 @@ flowchart LR
 | `/setup` | 환경 진단 — 뭐가 되고 뭐가 빠졌는지, 다음 한 걸음 하나. 기본은 [설정] 화면을 띄우고 채팅에는 한 줄 요약만 |
 | `/setup web` | 같은 일을 화면으로 — 부품 설치·사이트 등록·구글 연결·키 저장을 폼에서 |
 | `/setup doctor` | 진단 결과의 CLI 전문을 채팅으로 — 화면 대신 글로 봐야 할 때 |
-| `/capture add` | 사이트 온보딩 — 4문항(타입·도메인·언어-지역·시드 키워드) + AI 질문 초안. 서치콘솔 속성은 로그인해 두면 목록에서 고릅니다 |
+| `/capture add` | 사이트 온보딩 — 4문항(타입·도메인·언어-지역·시드 키워드) + AI 질문 초안. 서치콘솔 속성은 로그인해 두면 목록에서 고릅니다. 이미 등록한 사이트면 AI 질문만 짓고, `/capture add <사이트> <시장>`(예: `ja-JP`)은 그 시장 질문만 짓습니다 — 웹 사이트면 서버에 짓습니다 |
 | `/capture run` | **한 번에 끝까지** — 단계 `gsc → ga4 → index → keywords → metrics → rank → crawl → ai → competitors → backlinks → gaps → plays → pages → vitals → report` 를 묶음(정본 `run_all.py` 의 `GROUPS`)으로 나눠 동시에 돌리고(순서가 필요한 단계만 기다립니다 — `AFTER`) 꼬리(`TAIL`)로 마무리한 뒤 리포트 파일을 알려 줍니다. `--groups` 로 묶음 몇 개만 돌립니다. 돈이 나가는 축(정본은 `run_all.py` `STAGES` 의 `is_paid`)은 키가 없으면 알아서 빠집니다 |
 | `/capture gsc` | Search Console 실적 자동 수집 — 합계·날짜별 추이·디바이스 분해 (구글 계정 연결 — 필수) |
 | `/capture index` | 색인 상태 검사 (구글 URL Inspection, 무료 · URL당 1콜) — 막힌 URL을 기회로 |
@@ -264,10 +262,10 @@ flowchart LR
 사이트에만 해당합니다. 출처: https://github.com/coreyhaines31/marketingskills.
 
 `/setup`의 doctor가 아래 표 전부의 설치 여부를 봅니다. 빠진 게 있으면 **[선택]**
-("더 켜고 싶으면") 통에 올립니다 — 측정·수집에는 필요가 없어서 첫 세션을 재시작으로
-끊지 않습니다. 첫 리포트가 나온 뒤에 Claude가 "제가 대신 설치할까요?" 라고 묻습니다.
-**승낙해 주시면 그대로 깔아 드립니다 (무료)** — 끝나면 Claude Code를 한 번
-재시작하시면 그 스킬이 다음 세션부터 화면에 뜹니다. 거절하시거나 넘어가셔도
+("더 켜고 싶으면") 통에 올립니다 — 측정·수집에는 필요가 없어서 첫 세션 중에는 꺼내지
+않습니다. 첫 리포트가 나온 뒤에 Claude가 "제가 대신 설치할까요?" 라고 묻습니다.
+**승낙해 주시면 그대로 깔아 드립니다 (무료)** — 끝나면 `/reload-plugins` 한 번이면
+지금 세션에서 바로 쓰입니다. 거절하시거나 넘어가셔도
 작업은 계속되고, 내장 규칙으로 채웁니다 — 그 결과물에는 "이 부분은 내장 규칙으로
 처리했습니다"를 한 줄 남깁니다.
 같은 세션에서 두 번 부탁드리지 않습니다.

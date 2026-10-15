@@ -3625,10 +3625,16 @@ const table = (heads, rows, empty, cls) => {
     const tb = document.createElement("template");
     tb.innerHTML = `<table><tbody>${body}</tbody></table>`;
     const tbody = tb.content.querySelector("tbody");
-    [...tbody.rows].filter(tr => !tr.classList.contains("exp")).forEach(tr =>
-      [...tr.cells].forEach((td, i) => {
+    // 열 번호는 칸 수가 아니라 colspan 을 더해 센다 — 칸을 합친 줄([AI 인용] 시장별의
+    // "질문이 없어…" 줄)에서 뒤 칸이 한 열씩 당겨져 [질문 만들기] 칸이 "언급률"로 붙었다.
+    [...tbody.rows].filter(tr => !tr.classList.contains("exp")).forEach(tr => {
+      let col = 0;
+      [...tr.cells].forEach(td => {
+        const i = col;
+        col += td.colSpan || 1;
         if (i && names[i] && !td.hasAttribute("colspan")) td.dataset.label = names[i];
-      }));
+      });
+    });
     body = tbody.innerHTML;
   }
   const t = `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;

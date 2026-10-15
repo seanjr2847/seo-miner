@@ -388,11 +388,18 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         # "노출 순으로 골라 room 개" 는 db.py 에 없다 (GSC 조인이 필요한 선택 로직이라
         # db.count_active_keywords/set_keywords_active 와는 층이 다르다) — 여기 남긴다.
         # TODO(db.py): 이 선택 로직이 다른 곳에서도 필요해지면 db.py 로 옮긴다.
+        # 연산자 검색(`site:…`)은 켜지 않고, 예전에 자동으로 켠 것은 끈다(db.is_operator_query)
+        ops = [r[0] for r in conn.execute(
+            "SELECT id, keyword FROM keywords WHERE project_id=? AND is_active=1"
+            " AND active_src='auto'", (pid,)).fetchall() if db.is_operator_query(r[1])]
+        if ops:
+            db.set_keywords_active(conn, pid, ops, False, by="auto")
         ids = [r[0] for r in conn.execute(
-            "SELECT k.id FROM keywords k"
+            "SELECT k.id, k.keyword FROM keywords k"
             "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
             " WHERE k.project_id=? AND k.is_active=0 AND COALESCE(k.active_src,'')<>'demoted'"
-            " GROUP BY k.id ORDER BY SUM(g.impressions) DESC", (pid,)).fetchall()]
+            " GROUP BY k.id ORDER BY SUM(g.impressions) DESC", (pid,)).fetchall()
+            if not db.is_operator_query(r[1])]
         ids = db.fit_market_caps(conn, pid, ids, limit)
         return db.set_keywords_active(conn, pid, ids, True, by="auto") if ids else 0
     finally:

@@ -538,6 +538,35 @@ def retire_outdated(conn, project: str) -> int:
     return db.set_ai_prompts_active(conn, pid, ids, False)
 
 
+def _remote(a) -> bool:
+    """원격(웹) 사이트면 서버에 짓게 하고 참 — 웹 화면의 [질문 만들기]와 같은 라우트다.
+
+    [AI 인용]이 웹에서도 `/capture add {P} {시장}` 칩을 내면서(2026-10-15) 이 채팅에서 웹
+    사이트 이름으로 치는 길이 생겼다. 그대로 로컬에서 지으면 질문이 이 PC 사본에만 들어가
+    서버의 인용 확인은 끝내 안 묻는다."""
+    try:
+        import remote
+    except ImportError:
+        return False
+    if not remote.owns(a.project):
+        return False
+    if a.dry_run:
+        # 조용히 로컬로 흘리면 사용자는 "초안만 봤다"고 믿는다(remote.dispatch 와 같은 이유)
+        sys.exit("웹 사이트는 서버가 짓고 바로 심습니다 — dry-run 이 없습니다. "
+                 "지은 뒤 [AI 인용] 화면에서 고치거나 끄세요.")
+    body = {"project": a.project, "locale": a.locale or "", "replace": bool(a.replace)}
+    if a.limit:
+        body["limit"] = a.limit
+    r = remote.api("POST", "/api/ai/prompts", json=body) or {}
+    for p in r.get("prompts") or []:
+        print(f"  {p}")
+    if r.get("retired"):
+        print(f"옛 판 질문 {r['retired']}개를 껐습니다 (지우지 않았습니다 — 인용 이력은 그대로).")
+    print(f"\n질문 {r.get('added', 0)}개를 웹에 심었습니다({', '.join(r.get('locales') or [])}). "
+          f"인용 확인은 웹 [AI 인용]의 실행 버튼이나 `/capture ai {a.project}` 로 합니다.")
+    return True
+
+
 def main() -> None:
     if len(sys.argv) == 1:
         _selfcheck()
@@ -551,6 +580,8 @@ def main() -> None:
     ap.add_argument("--replace", action="store_true",
                     help="새 질문이 들어가면 옛 판 질문을 끈다(지우지 않는다 — 인용 이력은 남는다)")
     a = ap.parse_args()
+    if _remote(a):
+        return
     conn = db.connect()
     try:
         rows = suggest_markets(a.project, plan_markets(conn, a.project, locale=a.locale),

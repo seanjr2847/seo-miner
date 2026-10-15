@@ -3282,6 +3282,117 @@ def test_keyword_countries_and_deep_recheck_of_missed():
         "실적에 흔적도 없는 검색어까지 깊게 본다(돈만 3배)"
     conn.close()
 
+
+def test_tracked_keyword_markets_operators_rank_and_move():
+    """추적할 검색어(2026-10-15 다시 짬) — 서버 쪽 네 가지.
+
+    ① 글자 언어의 시장이 없으면 검색한 나라의 시장: 한자만 쓴 일본 검색어(`江南市 肝斑`, 노출
+       전부 일본)가 중국어로 판정되고 중국어 시장이 없어 기본(한국어)으로 떨어졌다.
+    ② 연산자 검색(`site:…`)은 후보에서 빠진다 — 서치콘솔 노출 1,069회로 후보 1위였다.
+    ③ 목록이 그 시장으로 잰 마지막 순위를 싣는다 — 켜 둔 검색어의 결과를 볼 데가 없었다.
+    ④ 사람이 시장을 옮긴다(manual — 다시 판정이 안 덮는다). 켜진 것은 그 시장 한도 안에서만.
+    """
+    conn = db.connect()
+    pid = _project(conn, "kw_mk")["id"]
+    db._write_markets(conn, pid, [("ko-KR", ""), ("en-US", ""), ("ja-JP", "")])
+    allowed = db.site_locales(conn, pid)
+    # ① 글자는 중국어, 나라는 일본 → 일본어 시장. 나라가 없으면 예전처럼 기본 시장.
+    assert db.keyword_locale_src("江南市 肝斑", "ko-KR", countries={"jpn": 31}, allowed=allowed) \
+        == ("ja-JP", "gsc_country")
+    assert db.keyword_locale_src("江南市 肝斑", "ko-KR", allowed=allowed) == ("ko-KR", "site")
+    # 같은 언어 시장이 있으면 나라보다 언어가 먼저다(일본에서 친 영어 검색어는 영어 시장)
+    assert db.keyword_locale_src("milia", "ko-KR", countries={"jpn": 9}, allowed=allowed)[0] == "en-US"
+    # 예전에 기본 시장으로 접힌 행('site')도 나라 데이터가 들어오면 다시 판정한다
+    kj = conn.execute("INSERT INTO keywords(project_id, keyword, locale, locale_src, source)"
+                      " VALUES(?, '老人性色素斑', 'ko-KR', 'site', 'gsc')", (pid,)).lastrowid
+    conn.commit()
+    db.write_gsc_breakdown(conn, pid, "2026-10-14", 28, "country",
+                           [("jpn", "老人性色素斑", 0, 25, 0.0, 9.0)])
+    assert conn.execute("SELECT locale, locale_src FROM keywords WHERE id=?", (kj,)).fetchone()[:] \
+        == ("ja-JP", "gsc_country"), "기본 시장으로 접힌 일본 검색어가 나라 데이터로 안 옮겨졌다"
+    # ② 연산자 검색
+    assert db.is_operator_query("site:theotherskin.com") and db.is_operator_query("foo inurl:bar")
+    assert not db.is_operator_query("사이트 추천") and not db.is_operator_query("website builder")
+    for kw in ("site:theotherskin.com", "써마지flx"):
+        conn.execute("INSERT INTO keywords(project_id, keyword, locale, source) VALUES(?,?,'ko-KR','gsc')",
+                     (pid, kw))
+    conn.commit()
+    cands = [r["keyword"] for r in db.list_keywords(conn, pid, active=False)]
+    assert "써마지flx" in cands and "site:theotherskin.com" not in cands, cands
+    # ③ 지금 순위 — 그 시장으로 잰 것만. 예전 시장(ko-KR)으로 잰 행은 안 싣는다.
+    ka = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                      " VALUES(?, 'milia syringoma', 'en-US', 1, 'gsc')", (pid,)).lastrowid
+    db.write_rank_snapshot(conn, ka, 3, None, checked_at="2026-10-01T00:00:00Z", locale="ko-KR")
+    db.write_rank_snapshot(conn, ka, 12, None, checked_at="2026-10-12T00:00:00Z", locale="en-US")
+    conn.commit()
+    row = next(r for r in db.list_keywords(conn, pid, active=True) if r["id"] == ka)
+    assert (row["rank"], row["rank_at"][:10]) == (12, "2026-10-12"), dict(row)
+    # ④ 옮기기 — 켜진 것은 그 시장 한도 안에서만(총량 3 ÷ 시장 3 = 시장마다 1)
+    kb = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                      " VALUES(?, '江南 シミ', 'ko-KR', 1, 'gsc')", (pid,)).lastrowid
+    kc = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                      " VALUES(?, '東京 肝斑', 'ko-KR', 1, 'gsc')", (pid,)).lastrowid
+    conn.commit()
+    assert db.move_keywords_market(conn, pid, [kb], "ja-JP", total=3) == 1
+    conn.commit()
+    assert conn.execute("SELECT locale, locale_src FROM keywords WHERE id=?", (kb,)).fetchone()[:] \
+        == ("ja-JP", "manual")
+    try:
+        db.move_keywords_market(conn, pid, [kc], "ja-JP", total=3)
+        raise AssertionError("시장 한도를 넘겨 켜진 검색어를 옮겼다")
+    except ValueError as e:
+        assert "일본어 · 일본" in str(e) and "1/1" in str(e), e
+    # 꺼진 것은 꽉 찬 시장으로도 옮긴다 — 자리를 안 먹는다(한도를 넘긴 시장에서 막혔다)
+    kd = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                      " VALUES(?, '大阪 シミ', 'ko-KR', 0, 'gsc')", (pid,)).lastrowid
+    conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
+                 " VALUES(?, '名古屋 シミ', 'ja-JP', 1, 'gsc')", (pid,))
+    conn.commit()
+    assert db.move_keywords_market(conn, pid, [kd], "ja-JP", total=3) == 1, "꺼진 것을 못 옮겼다"
+    try:
+        db.move_keywords_market(conn, pid, [kc], "zh-CN")
+        raise AssertionError("사이트 시장이 아닌 곳으로 옮겼다")
+    except ValueError:
+        pass
+    # 사람이 정한 시장은 다시 판정이 안 덮는다
+    db.rejudge_markets(conn, pid)
+    assert conn.execute("SELECT locale FROM keywords WHERE id=?", (kb,)).fetchone()[0] == "ja-JP"
+    conn.close()
+
+
+def test_make_prompts_command_goes_to_the_server_for_web_sites():
+    """`/capture add {P} {시장}` 이 웹 사이트면 질문을 서버에 짓게 한다(웹 [질문 만들기]와 같은 라우트).
+
+    [AI 인용]이 웹에서도 이 명령 칩을 내면서(2026-10-15) 웹 사이트 이름으로 치는 길이 생겼다.
+    로컬에서 지으면 질문이 이 PC 사본에만 들어가 서버의 인용 확인은 끝내 안 묻는다.
+    """
+    import gen_prompts
+    import remote
+    calls = []
+    orig = remote.owns, remote.api, sys.argv
+    remote.owns = lambda p: p == "webonly"
+    remote.api = lambda method, path, **kw: calls.append((method, path, kw)) or {
+        "added": 10, "locales": ["ja-JP"], "prompts": ["東京で肌治療どこ?"], "retired": 0}
+    try:
+        sys.argv = ["gen_prompts.py", "--project", "webonly", "--locale", "ja-JP"]
+        gen_prompts.main()
+        assert calls == [("POST", "/api/ai/prompts",
+                          {"json": {"project": "webonly", "locale": "ja-JP", "replace": False}})], calls
+        # 초안만 보겠다는 말을 조용히 로컬로 흘리지 않는다
+        sys.argv = ["gen_prompts.py", "--project", "webonly", "--dry-run"]
+        try:
+            gen_prompts.main()
+            raise AssertionError("웹 사이트의 dry-run 이 멈추지 않았다")
+        except SystemExit as e:
+            assert "dry-run 이 없습니다" in str(e), e
+        assert len(calls) == 1, "dry-run 인데 서버에 짓게 했다"
+        # 로컬 사이트는 그대로 로컬에서 짓는다 — 원격 길을 타지 않는다
+        assert gen_prompts._remote(type("A", (), {"project": "localsite", "dry_run": False,
+                                                 "locale": None, "replace": False,
+                                                 "limit": None})()) is False
+    finally:
+        remote.owns, remote.api, sys.argv = orig
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -1,23 +1,69 @@
 <script type="application/json" class="section-def">
 {"id": "sm-kw", "view": "keywords", "after": "movers", "only": "hosted"}
 </script>
-<!-- 목록·개수(.list/.cnt)는 dash.html 의 kwLoad() 가 채운다. 여기 있는 것은 껍데기와
-     탭·버튼 배선 대상뿐이다. 탭은 목록을 거르는 도구라 카드 머리(.kwch .tabs)에 선다.
-     진행 막대(.kwprog)는 keywords.html 의 KW_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다. -->
+<!-- 시장 탭(.kwmk)·목록(.list)·고른 수(.sel)·옮길 시장(.kwmove)·개수(.cnt)는 dash.html 의
+     kwLoad()/kwPaint() 가 채운다. 여기 있는 것은 껍데기와 배선 대상뿐이다.
+     진행 막대(.kwprog)는 keywords.html 의 KW_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다.
+
+     2026-10-15 다시 짰다 — 예전 모양은 체크박스 목록 하나에 시장 이름이 언어(「영어」)로만
+     붙어, 그 검색어를 어느 나라 구글에서 재는지 화면 어디에도 없었다. 시장별 개수는 맨 아래
+     한 줄(「한국어 100/20 · 영어 144/20 …」)뿐이었고, 켜 둔 검색어의 지금 순위도 없었다.
+     이제 시장마다 탭(그 나라 구글 + 추적 수/한도), 줄마다 재는 곳·지금 순위·노출 나라다. -->
 <style>
-/* 이 화면의 카드 문법(제목 + 보조 설명 + 오른쪽 도구)을 그대로 쓴다. 목록 상자는 dash.html 이
-   면 카드로 세워 두므로, 카드 속 카드가 되지 않게 이 화면 안에서만 벗긴다. */
 #view-keywords #sm-kw .kwch { display:flex; align-items:flex-start; justify-content:space-between;
-  gap:8px 16px; flex-wrap:wrap; margin:0 0 14px; }
+  gap:8px 16px; flex-wrap:wrap; margin:0 0 12px; }
 #view-keywords #sm-kw .kwch h2 { margin:0; }
 #view-keywords #sm-kw .kwch .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 0; }
-#view-keywords #sm-kw .tabs { margin:0; }
+
+/* 시장 탭 — 탭 하나가 「그 나라 구글」이다. 숫자는 지금 상태(추적 중이면 추적 수/한도). */
+#view-keywords #sm-kw .kwmk { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+#view-keywords #sm-kw .kwmk button { display:flex; flex-direction:column; align-items:flex-start;
+  gap:2px; min-width:120px; padding:8px 12px; border:1px solid var(--line); border-radius:var(--r-in);
+  background:var(--card); color:var(--ink); font:inherit; text-align:left; cursor:pointer; }
+#view-keywords #sm-kw .kwmk button:hover { border-color:var(--accent); }
+#view-keywords #sm-kw .kwmk button.on { border-color:var(--accent); background:var(--accent-wash); }
+#view-keywords #sm-kw .kwmk .g { font-weight:600; font-size:var(--fs-1); }
+#view-keywords #sm-kw .kwmk .l { color:var(--mute); font:var(--micro); }
+#view-keywords #sm-kw .kwmk .c { font:600 var(--fs-1)/1.2 var(--mono); }
+#view-keywords #sm-kw .kwmk .c.warn { color:var(--warn); }
+
+#view-keywords #sm-kw .kwtools { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+  margin:0 0 8px; }
+#view-keywords #sm-kw .kwtools .tabs { margin:0; }
+#view-keywords #sm-kw .kwtools input[type=search] { flex:1 1 200px; max-width:320px; }
+
 #view-keywords #sm-kw .list { background:transparent; box-shadow:none; border-radius:0;
   margin:0 -8px; padding:0; }
-#view-keywords #sm-kw label { border-bottom:0; border-radius:var(--r-in); padding:10px 8px; }
-#view-keywords #sm-kw .bar2 { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap;
+/* 줄 — 고르기 · 검색어(+출처) · 재는 곳 · 지금 순위 · 서치콘솔 노출. 폰 폭에서는 둘째 줄로 접힌다. */
+#view-keywords #sm-kw .kwr { display:grid; align-items:center; gap:4px 12px;
+  grid-template-columns:20px minmax(0,1fr) 96px 72px minmax(0,220px);
+  border-bottom:0; border-radius:var(--r-in); padding:9px 8px; }
+#view-keywords #sm-kw .kwr.hd { color:var(--mute); font:var(--micro); padding-top:4px; padding-bottom:4px; }
+#view-keywords #sm-kw .kwr .kw { min-width:0; overflow-wrap:anywhere; white-space:normal; }
+#view-keywords #sm-kw .kwr .src { display:block; color:var(--mute); font:var(--micro); }
+#view-keywords #sm-kw .kwr .mkt { font-size:var(--fs-1); }
+#view-keywords #sm-kw .kwr .rk { font:600 var(--fs-1)/1.2 var(--mono); text-align:right; }
+#view-keywords #sm-kw .kwr .rk.out, #view-keywords #sm-kw .kwr .rk.none { font-family:var(--sans);
+  font-weight:400; color:var(--mute); }
+#view-keywords #sm-kw .kwr .rk small { display:block; font:400 13px/1.2 var(--mono); color:var(--mute); }
+#view-keywords #sm-kw .kwr .n { color:var(--mute); font-size:var(--fs-1); text-align:right; }
+@media (max-width:640px) {
+  #view-keywords #sm-kw .kwr { grid-template-columns:20px minmax(0,1fr) auto; }
+  #view-keywords #sm-kw .kwr.hd { display:none; }
+  /* 시장 탭은 한 줄로 두고 옆으로 민다 — 시장 다섯이면 세 줄을 먹어 목록이 화면 밖으로 밀렸다 */
+  #view-keywords #sm-kw .kwmk { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; }
+  #view-keywords #sm-kw .kwmk button { flex:none; min-width:112px; }
+  #view-keywords #sm-kw .kwr .mkt { grid-column:2; grid-row:2; color:var(--mute); }
+  #view-keywords #sm-kw .kwr .rk { grid-column:3; grid-row:1; }
+  #view-keywords #sm-kw .kwr .n { grid-column:2 / 4; grid-row:3; text-align:left; }
+}
+
+#view-keywords #sm-kw .bar2 { display:flex; align-items:center; gap:10px 12px; flex-wrap:wrap;
   margin-top:var(--sp-4); }
-#view-keywords #sm-kw .kwprog { flex:1 1 180px; max-width:360px; height:8px; margin:0;
+#view-keywords #sm-kw .bar2 .sel { font-size:var(--fs-1); color:var(--mute); }
+#view-keywords #sm-kw .bar2 .sel b { color:var(--ink); }
+#view-keywords #sm-kw .bar2 .kwmove { width:auto; flex:none; max-width:240px; margin:0; }
+#view-keywords #sm-kw .kwprog { flex:1 1 160px; max-width:280px; height:8px; margin:0;
   border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
 #view-keywords #sm-kw .kwprog[hidden] { display:none; }
 #view-keywords #sm-kw .kwprog i { display:block; height:100%; width:0; border-radius:var(--r-pill);
@@ -28,15 +74,24 @@
   <div class="kwch">
     <div>
       <h2>추적할 검색어</h2>
-      <p class="sub">추적을 켠 검색어만 순위를 잽니다.<span class="hint" tabindex="0"
-        data-tip="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
-        aria-label="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성에서 캔 후보는 관련 있는 것만 직접 켭니다. 켠 개수만큼 순위 추적 비용이 듭니다."
+      <p class="sub">검색어마다 그 시장 나라의 구글에서 순위를 잽니다. 켠 개수만큼 비용이 듭니다.<span class="hint" tabindex="0"
+        data-tip="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성 등에서 캔 후보는 관련 있는 것만 직접 켭니다. 시장마다 켤 수 있는 수(한도)는 사이트 총량을 시장 수로 나눈 값입니다. 시장이 잘못 붙은 검색어는 골라서 [시장 옮기기]로 바로잡습니다."
+        aria-label="서치콘솔에 이미 노출된 검색어는 자동으로 켭니다. 자동완성 등에서 캔 후보는 관련 있는 것만 직접 켭니다. 시장마다 켤 수 있는 수(한도)는 사이트 총량을 시장 수로 나눈 값입니다. 시장이 잘못 붙은 검색어는 골라서 [시장 옮기기]로 바로잡습니다."
         >i</span></p>
     </div>
-    <div class="tools tabs"><button data-m="candidate" class="on">후보</button>
-    <button data-m="active">추적 중</button></div>
+  </div>
+  <div class="kwmk" role="group" aria-label="시장으로 거르기"></div>
+  <div class="kwtools">
+    <div class="tabs"><button data-m="active" class="on">추적 중</button>
+    <button data-m="candidate">후보</button></div>
+    <input type="search" class="kwq" placeholder="검색어로 찾기" aria-label="검색어로 찾기">
   </div>
   <div class="list"></div>
-  <div class="bar2"><button class="go sm sec">추적에 넣기</button>
-  <span class="cnt"></span><div class="kwprog" role="img" hidden><i></i></div></div>
+  <div class="bar2">
+    <span class="sel"></span>
+    <button class="go sm" data-kw-act="toggle" disabled>추적에서 빼기</button>
+    <select class="kwmove" aria-label="고른 검색어를 다른 시장으로 옮기기" disabled>
+      <option value="">시장 옮기기…</option></select>
+    <span class="cnt"></span><div class="kwprog" role="img" hidden><i></i></div>
+  </div>
 </section>

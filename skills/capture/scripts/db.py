@@ -1147,13 +1147,18 @@ def fix_keyword_locales(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def rejudge_script_locales(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
-    """GSC 나라 데이터가 새로 들어온 뒤 — 글자로 정했던(locale_src='script') 키워드만
-    나라로 다시 판정한다. 나라가 결정하지 못하면(데이터 없음·동률·LOCALES 밖) 그대로다.
-    manual·gsc_country·옛 행(NULL)은 안 건드린다. 커밋은 호출자가 한다."""
+    """GSC 나라 데이터가 새로 들어온 뒤 — 글자로 정했거나(locale_src='script') 맞는 시장이
+    없어 기본 시장으로 접혔던('site') 키워드만 나라로 다시 판정한다. 나라가 결정하지
+    못하면(데이터 없음·동률·LOCALES 밖) 그대로다. manual·gsc_country·옛 행(NULL)은 안
+    건드린다. 커밋은 호출자가 한다.
+
+    'site' 를 같이 보는 까닭: 한자만 쓴 일본 검색어가 기본 시장(한국어)으로 접힌 채 남았다
+    (snap_locale 의 나라 갈래가 생기기 전에 들어온 행 — theotherskin `江南市 肝斑`)."""
     n = dict.fromkeys(("changed", "rank", "serp", "questions"), 0)
     judge = keyword_judge(conn, project_id)
     for k in conn.execute(
-            "SELECT id, keyword, locale FROM keywords WHERE project_id=? AND locale_src='script'",
+            "SELECT id, keyword, locale FROM keywords WHERE project_id=?"
+            " AND locale_src IN ('script', 'site')",
             (project_id,)).fetchall():
         new, src = judge(k["keyword"])
         if src != "gsc_country":
@@ -1397,11 +1402,17 @@ def _script_lang(text: str) -> str | None:
                  if any(lo <= c <= hi for c in (text or ""))), None)
 
 
-def snap_locale(loc: str, src: str, allowed) -> tuple[str, str]:
+def snap_locale(loc: str, src: str, allowed, countries: dict[str, int] | None = None
+                ) -> tuple[str, str]:
     """판정값을 사이트가 고른 시장(언어-지역 목록) 안으로. 목록이 하나면 키워드는 전부
     그 시장에서 잰다 — 한국어 사이트의 영어 검색어도 한국 구글이다(한국 사람이 친 말).
-    여럿이면 판정값이 목록에 있으면 그대로, 없으면 같은 언어의 시장, 그것도 없으면 첫
-    시장(기본). 출처 'site' 는 "시장 목록이 정했다"는 뜻이다."""
+    여럿이면 판정값이 목록에 있으면 그대로, 없으면 같은 언어의 시장, 그것도 없으면 **검색한
+    사람의 나라**(countries 의 최다 노출 나라)의 시장, 그것도 없으면 첫 시장(기본).
+    출처 'site' 는 "시장 목록이 정했다"는 뜻이다.
+
+    나라 갈래가 없던 동안 한자만 쓴 일본 검색어(`江南市 肝斑` — 노출 31회 전부 일본)는 글자로
+    중국어가 되고, 중국어 시장이 없어 기본 시장(한국어)으로 떨어졌다(theotherskin, 2026-10-15).
+    일본어 시장이 있는데도 한국 구글에서 쟀다."""
     allowed = [a for a in (allowed or []) if a]
     if not allowed or loc in allowed and len(allowed) > 1:
         return loc, src
@@ -1409,7 +1420,21 @@ def snap_locale(loc: str, src: str, allowed) -> tuple[str, str]:
         return allowed[0], ("site" if loc != allowed[0] else src)
     import serp_adapter
     same = [a for a in allowed if serp_adapter.lang_of(a) == serp_adapter.lang_of(loc)]
-    return (same[0], src) if same else (allowed[0], "site")
+    if same:
+        return same[0], src
+    top = _top_country(countries)
+    home = [a for a in allowed if top and _ALPHA3.get(_region(a)) == top]
+    return (home[0], "gsc_country") if home else (allowed[0], "site")
+
+
+def _top_country(countries: dict[str, int] | None) -> str | None:
+    """최다 노출 나라(alpha-3) — 동률·노출 0 이면 None(나라로 못 정한다)."""
+    if not countries:
+        return None
+    imps = sorted(countries.values(), reverse=True)
+    if imps[0] <= 0 or (len(imps) > 1 and imps[1] >= imps[0]):
+        return None
+    return max(countries, key=countries.get)
 
 
 def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
@@ -1417,7 +1442,8 @@ def keyword_locale_src(text: str, site_locale: str, english: str = _ENGLISH_FALL
                        allowed=None) -> tuple[str, str]:
     """allowed: 사이트가 고른 시장의 로케일 목록(site_locales). 주면 결과를 그 안으로
     접는다(snap_locale). 아래 규칙은 시장이 여럿일 때 어느 시장인지 고르는 규칙이다."""
-    return snap_locale(*_keyword_locale_raw(text, site_locale, english, countries), allowed)
+    return snap_locale(*_keyword_locale_raw(text, site_locale, english, countries), allowed,
+                       countries)
 
 
 def _keyword_locale_raw(text: str, site_locale: str, english: str = _ENGLISH_FALLBACK,
@@ -3344,6 +3370,41 @@ def list_creations(conn: sqlite3.Connection, project_id: int,
         (int(project_id), int(limit))).fetchall()
 
 
+def move_keywords_market(conn: sqlite3.Connection, project_id: int, ids, locale: str,
+                         total: int | None = None) -> int:
+    """고른 키워드를 다른 시장으로 옮긴다(사람이 정함 — locale_src='manual', 다시 판정이 안
+    덮는다). 예전 시장으로 잰 순위는 옮겨 둔다(set_keyword_locale). 반환: 실제로 옮긴 수.
+
+    시장 판정이 틀린 검색어(한자만 쓴 일본 검색어가 한국어 시장에 붙은 것)를 사람이 바로잡을
+    자리가 없었다(2026-10-15). total(사이트 총량)을 주면 켜진 키워드를 옮겨 그 시장 한도를
+    넘기지 않는다 — 넘치면 ValueError(무엇이 넘치는지 사람 말로). 커밋은 호출자가 한다."""
+    if locale not in site_locales(conn, project_id):
+        raise ValueError("이 사이트의 시장이 아닙니다 — [설정]에서 시장을 먼저 더하세요.")
+    ids = [int(i) for i in ids]
+    rows = conn.execute(
+        f"SELECT id, is_active, COALESCE(locale, ?) loc FROM keywords WHERE project_id=?"
+        f" AND id IN ({','.join('?' * len(ids))})",
+        (site_locales(conn, project_id)[0], int(project_id), *ids)).fetchall() if ids else []
+    moving = [r for r in rows if r["loc"] != locale]
+    if total:
+        cap = market_caps(conn, project_id, total).get(locale, 0)
+        used = conn.execute(
+            "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1"
+            " AND COALESCE(locale, ?)=?", (int(project_id), site_locales(conn, project_id)[0],
+                                          locale)).fetchone()[0]
+        add = sum(1 for r in moving if r["is_active"])
+        if add and used + add > cap:          # 꺼진 것만 옮기면 자리를 안 먹는다
+            import serp_adapter
+            raise ValueError(
+                f"{serp_adapter.locale_label(locale)} 시장은 추적 {used}/{cap}개라 켜진 검색어 "
+                f"{add}개를 더 옮길 자리가 없습니다 — 그 시장에서 몇 개를 끄거나, 꺼진 것만 옮기세요.")
+    n = 0
+    for r in moving:
+        if set_keyword_locale(conn, r["id"], locale, "manual"):
+            n += 1
+    return n
+
+
 def count_active_keywords(conn: sqlite3.Connection, project_id: int) -> int:
     """추적 중(is_active=1) 키워드 수. 상한 판정과 화면 표시가 같은 값을 본다."""
     return conn.execute(
@@ -3352,7 +3413,8 @@ def count_active_keywords(conn: sqlite3.Connection, project_id: int) -> int:
 
 
 def list_keywords(conn: sqlite3.Connection, project_id: int, *,
-                  active: bool, limit: int = 500) -> list[sqlite3.Row]:
+                  active: bool, limit: int = 500,
+                  per_market: int | None = None) -> list[sqlite3.Row]:
     """추적 중(active=True) 또는 후보(False) 키워드 + 서치콘솔 누적 노출·클릭·검색량.
 
     노출 많은 순이되, 노출이 같으면(대개 0이다) 검색량 큰 순이다 — 후보 목록에서
@@ -3368,20 +3430,56 @@ def list_keywords(conn: sqlite3.Connection, project_id: int, *,
                      (int(project_id),)).fetchone()[0]
     per = conn.execute("SELECT MIN(period_days) FROM gsc_snapshots WHERE project_id=?"
                        " AND snapshot_date=?", (int(project_id), d)).fetchone()[0] if d else None
-    return conn.execute(
-        """SELECT k.id, k.keyword, k.source, k.cluster,
-                  k.volume, k.difficulty, k.cpc,
-                  COALESCE(k.locale, pr.locale, ?) locale,
-                  COALESCE(SUM(g.impressions),0) imp, COALESCE(SUM(g.clicks),0) clk
-             FROM keywords k
-             JOIN projects pr ON pr.id=k.project_id
-             LEFT JOIN gsc_snapshots g
-               ON g.project_id=k.project_id AND g.query=k.keyword
-              AND g.snapshot_date=? AND g.period_days=?
-            WHERE k.project_id=? AND k.is_active=?
-            GROUP BY k.id
-            ORDER BY imp DESC, k.volume DESC, k.keyword LIMIT ?""",
-        (DEFAULT_LOCALE, d, per, int(project_id), 1 if active else 0, int(limit))).fetchall()
+    # 마지막 직접 조회(rank_snapshots) — 그 키워드를 지금 재는 시장으로 잰 것만. 추적 목록에
+    # 순위가 없어 켜 둔 검색어의 결과를 보려면 [순위 추적]으로 가야 했다(2026-10-15).
+    # position NULL = 잰 깊이 안에 없음, rank_at NULL = 아직 한 번도 안 잼.
+    # 후보에서는 연산자 검색(site: 등)을 뺀다 — 재 봐야 뜻이 없다. 이미 켜 둔 것은 보여야 끈다.
+    # 시장마다 자르기 전에 빼야 자른 수(per_market)가 맞다.
+    conn.create_function("is_operator_query", 1, lambda t: int(is_operator_query(t)),
+                         deterministic=True)
+    # per_market — 시장마다 상위 N개. 후보가 1만 개 넘는 사이트(theotherskin)에서 사이트 전체
+    # 상위 500개만 주면 한국어·영어가 그 자리를 다 먹어 [일본 구글] 탭의 후보가 0 으로 보였다.
+    rows = conn.execute(
+        """SELECT b.*,
+                  (SELECT r.position FROM rank_snapshots r WHERE r.keyword_id=b.id
+                      AND (r.locale IS NULL OR r.locale=b.locale)
+                    ORDER BY r.checked_at DESC LIMIT 1) rank,
+                  (SELECT r.checked_at FROM rank_snapshots r WHERE r.keyword_id=b.id
+                      AND (r.locale IS NULL OR r.locale=b.locale)
+                    ORDER BY r.checked_at DESC LIMIT 1) rank_at
+             FROM (SELECT a.*, ROW_NUMBER() OVER (PARTITION BY a.locale
+                            ORDER BY a.imp DESC, a.volume DESC, a.keyword) rn
+                     FROM (SELECT k.id, k.keyword, k.source, k.cluster, k.locale_src,
+                                  k.volume, k.difficulty, k.cpc,
+                                  COALESCE(k.locale, pr.locale, ?) locale,
+                                  COALESCE(SUM(g.impressions),0) imp,
+                                  COALESCE(SUM(g.clicks),0) clk
+                             FROM keywords k
+                             JOIN projects pr ON pr.id=k.project_id
+                             LEFT JOIN gsc_snapshots g
+                               ON g.project_id=k.project_id AND g.query=k.keyword
+                              AND g.snapshot_date=? AND g.period_days=?
+                            WHERE k.project_id=? AND k.is_active=?
+                              AND (k.is_active=1 OR NOT is_operator_query(k.keyword))
+                            GROUP BY k.id) a) b
+            WHERE b.rn <= ?
+            ORDER BY b.imp DESC, b.volume DESC, b.keyword LIMIT ?""",
+        (DEFAULT_LOCALE, d, per, int(project_id), 1 if active else 0,
+         int(per_market) if per_market else 1 << 30, int(limit))).fetchall()
+    return rows
+
+
+# 구글 검색 연산자 — `site:theotherskin.com` 같은 검색어는 사이트 주인이 색인을 보려고 친
+# 것이라 순위를 재 봐야 뜻이 없다. 서치콘솔에는 노출이 크게 잡혀(theotherskin 1,069회)
+# 후보 목록 1위에 올랐다(2026-10-15).
+_OPERATOR_RE = re.compile(
+    r"(?:^|\s)-?(?:site|inurl|allinurl|intitle|allintitle|intext|allintext|related|cache|"
+    r"filetype|ext|info|define|link|before|after):", re.I)
+
+
+def is_operator_query(text: str) -> bool:
+    """검색 연산자를 쓴 검색어인가 — 추적 후보·자동 추적에서 뺀다."""
+    return bool(_OPERATOR_RE.search(text or ""))
 
 
 def market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> dict[str, int]:

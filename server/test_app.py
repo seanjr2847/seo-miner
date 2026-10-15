@@ -992,6 +992,18 @@ def demo() -> None:
             assert mk == {"ko-KR": (1, 1), "en-US": (1, 1)}, f"시장마다 상한으로 안 잘렸다: {mk}"
             r = c.post("/api/keywords", json={"project": "p1", "active": True, "ids": [kid["한 꺼짐"]]})
             assert r.status_code == 409 and "한국어 · 한국" in r.json()["detail"], r.text
+            # 시장 옮기기(2026-10-15) — 꺼진 것은 그냥 옮기고, 켜진 것은 그 시장 한도 안에서만
+            r = c.post("/api/keywords", json={"project": "p1", "ids": [kid["한 꺼짐"]], "locale": "en-US"})
+            assert r.status_code == 200 and r.json()["moved"] == 1, r.text
+            r = c.post("/api/keywords", json={"project": "p1", "ids": [kid["en off"]], "locale": "ko-KR"})
+            assert r.status_code == 409 and "1/1" in r.json()["detail"], r.text
+            r = c.post("/api/keywords", json={"project": "p1", "ids": [kid["en off"]], "locale": "zh-CN"})
+            assert r.status_code == 409 and "시장이 아닙니다" in r.json()["detail"], r.text
+            assert c.post("/api/keywords", json={"project": "p1", "ids": ["x"], "active": True}
+                          ).status_code == 400, "숫자가 아닌 id 가 500 으로 터진다"
+            got = {k["keyword"]: k["locale"] for k in
+                   c.get("/api/keywords?project=p1&status=candidate").json()["keywords"]}
+            assert got.get("한 꺼짐") == "en-US", got
         finally:
             if saved_cap is None:
                 os.environ.pop("SEOMINER_MAX_KEYWORDS", None)
