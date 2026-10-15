@@ -2022,8 +2022,11 @@ def test_seam_43_readme_lists_every_command_the_skills_have():
 
     # 그림도 실제 명령만 가리킨다 — 그림이 틀린 명령을 치게 만들면 표보다 나쁘다.
     # 첫 블록만 보면 나머지 그림이 마음대로 틀릴 수 있다(실제로 그렇게 헛돌았다).
-    blocks = re.findall(r"```mermaid\n(.*?)```", readme, re.S)
-    assert len(blocks) >= 3, f"README 의 시작하기 그림이 {len(blocks)}개뿐이다"
+    # 그림은 README(한 바퀴)와 사용 안내(docs/guide.md — 2026-10-15 README 개편 때 그림
+    # 다섯을 옮겼다) 두 곳에 있다. 한쪽만 보면 옮긴 그림이 검사 밖으로 빠진다.
+    guide = (ROOT / "docs" / "guide.md").read_text("utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", readme + "\n" + guide, re.S)
+    assert len(blocks) >= 3, f"README·사용 안내의 그림이 {len(blocks)}개뿐이다"
     import run_all
     stages = {s.name if hasattr(s, "name") else str(s) for s in run_all.STAGES}
     seen = set()
