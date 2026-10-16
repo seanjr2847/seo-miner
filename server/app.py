@@ -1100,9 +1100,10 @@ def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
                           "countries": kc.get(r["keyword"], [])} for r in rows],
             "active_total": db.count_active_keywords(c, pid),
             "per_market": per_market,      # 후보는 시장마다 이만큼까지만 싣는다 — 화면이 「200+」로 말한다
-            # 시장마다 추적 중인 수와 그 시장 상한(총량을 시장 수로 나눈 것, db.market_caps)
+            # 시장마다 추적 중인 수와 그 시장 상한(시장 하나에 SEOMINER_MAX_KEYWORDS 개, db.market_caps)
             "markets": db.active_by_market(c, pid, settings.count("SEOMINER_MAX_KEYWORDS")),
-            "limit": settings.count("SEOMINER_MAX_KEYWORDS")}
+            # 사이트 전체 상한 = 시장 수 × 시장 하나의 상한(db.site_keyword_cap)
+            "limit": db.site_keyword_cap(c, pid, settings.count("SEOMINER_MAX_KEYWORDS"))}
 
 
 @app.post("/api/keywords")
@@ -1129,13 +1130,12 @@ def api_keywords_set(b: dict = Depends(_body), project: str = Depends(_project_b
         return {"ok": True, "moved": moved,
                 "active_total": db.count_active_keywords(c, pid)}
     if on:
-        # 상한은 시장마다다(db.market_caps — 총량을 시장 수로 나눈다). 총량 하나로 막으면 한
-        # 시장이 다 먹은 뒤 다른 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).
-        limit = settings.count("SEOMINER_MAX_KEYWORDS")
-        ids = db.fit_market_caps(c, pid, ids, limit)
+        # 상한은 시장마다다(db.market_caps — 시장 하나에 SEOMINER_MAX_KEYWORDS 개). 총량 하나로
+        # 막으면 한 시장이 다 먹은 뒤 다른 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).
+        each = settings.count("SEOMINER_MAX_KEYWORDS")
+        ids = db.fit_market_caps(c, pid, ids, each)
         if not ids:
-            each = min(db.market_caps(c, pid, limit).values())
-            full = [m["label"] for m in db.active_by_market(c, pid, limit)
+            full = [m["label"] for m in db.active_by_market(c, pid, each)
                     if m["market"] and m["active"] >= m["limit"]]
             raise HTTPException(
                 status_code=409,

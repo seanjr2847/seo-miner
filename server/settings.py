@@ -72,7 +72,8 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in (
             desc="재측정 주기(시간) 기본값. 0 이면 자동 수집을 끈다. "
                  "사이트가 설정 화면에서 자기 주기를 정하면 그 값이 이긴다 — 여기는 폴백이다"),
     Setting("SEOMINER_MAX_KEYWORDS", default="100",
-            desc="사이트당 추적 키워드 상한 — SERP 는 키워드당 과금이다"),
+            desc="시장(나라 구글) 하나의 추적 키워드 상한 — 사이트 상한은 시장 수 × 이 값. "
+                 "SERP 는 키워드당 과금이다"),
     Setting("SEOMINER_BACKLINKS_EVERY_DAYS", default="30",
             desc="백링크 재측정 주기(일). 0 이면 끈다"),
     Setting("SEOMINER_MAIL_FROM", default="seo-miner <onboarding@resend.dev>",

@@ -3371,12 +3371,12 @@ def list_creations(conn: sqlite3.Connection, project_id: int,
 
 
 def move_keywords_market(conn: sqlite3.Connection, project_id: int, ids, locale: str,
-                         total: int | None = None) -> int:
+                         each: int | None = None) -> int:
     """고른 키워드를 다른 시장으로 옮긴다(사람이 정함 — locale_src='manual', 다시 판정이 안
     덮는다). 예전 시장으로 잰 순위는 옮겨 둔다(set_keyword_locale). 반환: 실제로 옮긴 수.
 
     시장 판정이 틀린 검색어(한자만 쓴 일본 검색어가 한국어 시장에 붙은 것)를 사람이 바로잡을
-    자리가 없었다(2026-10-15). total(사이트 총량)을 주면 켜진 키워드를 옮겨 그 시장 한도를
+    자리가 없었다(2026-10-15). each(시장 하나의 상한)를 주면 켜진 키워드를 옮겨 그 시장 한도를
     넘기지 않는다 — 넘치면 ValueError(무엇이 넘치는지 사람 말로). 커밋은 호출자가 한다."""
     if locale not in site_locales(conn, project_id):
         raise ValueError("이 사이트의 시장이 아닙니다 — [설정]에서 시장을 먼저 더하세요.")
@@ -3386,8 +3386,8 @@ def move_keywords_market(conn: sqlite3.Connection, project_id: int, ids, locale:
         f" AND id IN ({','.join('?' * len(ids))})",
         (site_locales(conn, project_id)[0], int(project_id), *ids)).fetchall() if ids else []
     moving = [r for r in rows if r["loc"] != locale]
-    if total:
-        cap = market_caps(conn, project_id, total).get(locale, 0)
+    if each:
+        cap = market_caps(conn, project_id, each).get(locale, 0)
         used = conn.execute(
             "SELECT COUNT(*) FROM keywords WHERE project_id=? AND is_active=1"
             " AND COALESCE(locale, ?)=?", (int(project_id), site_locales(conn, project_id)[0],
@@ -3482,15 +3482,21 @@ def is_operator_query(text: str) -> bool:
     return bool(_OPERATOR_RE.search(text or ""))
 
 
-def market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> dict[str, int]:
-    """시장마다 추적 키워드 상한 — 사이트 총량(total)을 시장 수로 고르게 나눈다.
+def market_caps(conn: sqlite3.Connection, project_id: int, each: int) -> dict[str, int]:
+    """시장마다 추적 키워드 상한 — 시장마다 each 개(서버 SEOMINER_MAX_KEYWORDS 가 시장 하나의 몫).
 
     총량 하나만 있던 동안 시장 5개인 theotherskin 은 한국어 239·영어 228 이 500 을 다 먹어
-    일본어 29·아랍어 4·스페인어 0 에서 멈췄다(2026-10-14) — 빈자리가 없어 켤 수도 없었다.
-    시장이 하나면 총량 그대로라 예전과 같다. 시장 목록 밖 로케일은 여기 없다(상한 0)."""
-    site = site_locales(conn, project_id)
-    each = max(1, int(total) // len(site))
-    return {loc: each for loc in site}
+    일본어 29·아랍어 4·스페인어 0 에서 멈췄다(2026-10-14). 그래서 총량을 시장 수로 나눴더니
+    시장마다 20개라 나라 하나를 보기에 너무 적었다 — 2026-10-15 사용자: "나라별로 100개는
+    해야하지않을까?". 이제 시장이 늘면 사이트 총량이 는다(시장 수 × each). 시장 목록 밖
+    로케일은 여기 없다(상한 0)."""
+    each = max(1, int(each))
+    return {loc: each for loc in site_locales(conn, project_id)}
+
+
+def site_keyword_cap(conn: sqlite3.Connection, project_id: int, each: int) -> int:
+    """사이트 전체 추적 상한 — 시장 상한의 합(시장 수 × each)."""
+    return sum(market_caps(conn, project_id, each).values())
 
 
 def _kw_market(conn: sqlite3.Connection, project_id: int) -> dict[int, str]:
@@ -3501,10 +3507,10 @@ def _kw_market(conn: sqlite3.Connection, project_id: int) -> dict[int, str]:
         (site, int(project_id)))}
 
 
-def fit_market_caps(conn: sqlite3.Connection, project_id: int, ids, total: int) -> list[int]:
+def fit_market_caps(conn: sqlite3.Connection, project_id: int, ids, each: int) -> list[int]:
     """켤 후보 ids(고른 순서)를 시장마다 남은 자리만큼만 남긴다. 이미 켜진 id 는 그대로 둔다
     (자리를 먹지 않는다). 시장 목록 밖 로케일의 키워드는 켜지 않는다."""
-    caps = market_caps(conn, project_id, total)
+    caps = market_caps(conn, project_id, each)
     where = _kw_market(conn, project_id)
     on = {r[0] for r in conn.execute(
         "SELECT id FROM keywords WHERE project_id=? AND is_active=1", (int(project_id),))}
@@ -3523,7 +3529,7 @@ def fit_market_caps(conn: sqlite3.Connection, project_id: int, ids, total: int) 
     return out
 
 
-def trim_market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> list[str]:
+def trim_market_caps(conn: sqlite3.Connection, project_id: int, each: int) -> list[str]:
     """시장 상한을 넘는 시장에서 워커가 켠 것(active_src='auto')을 노출 적은 순으로 끈다.
 
     사람이 켠 것(manual)·이 칸 이전에 켜진 것(NULL)·씨앗·열린 기회의 대상은 안 끈다
@@ -3531,7 +3537,7 @@ def trim_market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> l
     시장마다 "N/상한"으로 말한다. 끈 줄은 auto 로 남아 자리가 나면 노출 순으로 다시 켜진다.
     반환: 끈 검색어."""
     import scoring
-    caps = market_caps(conn, project_id, total)
+    caps = market_caps(conn, project_id, each)
     site = site_locales(conn, project_id)[0]
     open_st = tuple(scoring.OPEN_STATUSES)
     out = []
@@ -3558,9 +3564,9 @@ def trim_market_caps(conn: sqlite3.Connection, project_id: int, total: int) -> l
 
 
 def active_by_market(conn: sqlite3.Connection, project_id: int,
-                     total: int | None = None) -> list[dict]:
+                     each: int | None = None) -> list[dict]:
     """시장마다 추적 중인 키워드 수 — [{locale, label, active, market, limit}], site_markets 순서.
-    total(사이트 총량)을 주면 시장마다 상한(market_caps)도 싣는다.
+    each(시장 하나의 상한)를 주면 시장마다 상한(market_caps)도 싣는다.
 
     키워드 화면은 "추적 중 500 / 500" 한 줄뿐이라, 한도를 한국어·영어가 다 먹고 일본어 29·
     아랍어 4·스페인어 0 인 것(theotherskin, 2026-10-14)을 사용자가 볼 데가 없었다.
@@ -3572,10 +3578,10 @@ def active_by_market(conn: sqlite3.Connection, project_id: int,
         """SELECT COALESCE(locale, ?), COUNT(*) FROM keywords
             WHERE project_id=? AND is_active=1 GROUP BY 1""", (site[0], int(project_id)))}
     order = site + sorted(k for k in got if k not in site)
-    caps = market_caps(conn, project_id, total) if total else {}
+    caps = market_caps(conn, project_id, each) if each else {}
     return [{"locale": loc, "label": serp_adapter.locale_label(loc),
              "active": int(got.get(loc) or 0), "market": loc in site,
-             **({"limit": caps.get(loc, 0)} if total else {})} for loc in order]
+             **({"limit": caps.get(loc, 0)} if each else {})} for loc in order]
 
 
 ACTIVE_SRCS = ("manual", "auto")

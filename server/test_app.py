@@ -969,7 +969,7 @@ def demo() -> None:
         # 상한은 시장마다다(총량 ÷ 시장 수) — 총량 하나로 막으면 한국어·영어가 다 먹은 뒤
         # 스페인어는 하나도 못 켰다(theotherskin, 2026-10-14).
         saved_cap = os.environ.get("SEOMINER_MAX_KEYWORDS")
-        os.environ["SEOMINER_MAX_KEYWORDS"] = "2"
+        os.environ["SEOMINER_MAX_KEYWORDS"] = "1"   # 시장 하나에 1개
         assert c.post("/api/settings", json={"project": "p1", "markets": [
             {"locale": "ko-KR", "scope": ""}, {"locale": "en-US", "scope": ""}]}).status_code == 200
         bc = db.connect(home=store.home(u2))

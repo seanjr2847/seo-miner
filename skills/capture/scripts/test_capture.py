@@ -3209,17 +3209,20 @@ def test_ai_prompts_are_asked_per_market():
 
 
 def test_keyword_caps_are_per_market():
-    """추적 키워드 상한은 시장마다다 — 사이트 총량을 시장 수로 나눈다.
+    """추적 키워드 상한은 시장마다다 — 시장 하나에 each 개(사이트 상한 = 시장 수 × each).
 
     총량 하나만 있던 동안 theotherskin 은 한국어 239·영어 228 이 500 을 다 먹어 일본어 29·
     아랍어 4·스페인어 0 에서 멈췄고, 빈자리가 없어 그 시장 키워드는 켤 수도 없었다(2026-10-14).
     시장이 하나면 총량 그대로다(aitierlist 500 이 100 으로 잘리면 안 된다).
+    총량을 시장 수로 나누던 동안은 시장 다섯이면 나라마다 20개뿐이었다 — 2026-10-15 사용자:
+    "나라별로 100개는 해야하지않을까?" → 시장마다 each 개다.
     """
     conn = db.connect()
     pid = _project(conn, "mk_cap")["id"]
     assert db.market_caps(conn, pid, 500) == {"ko-KR": 500}, "시장 하나인 사이트의 총량이 줄었다"
     db.set_markets(conn, pid, [("ko-KR", ""), ("en-US", ""), ("ja-JP", "")])
-    assert db.market_caps(conn, pid, 6) == {"ko-KR": 2, "en-US": 2, "ja-JP": 2}
+    assert db.market_caps(conn, pid, 2) == {"ko-KR": 2, "en-US": 2, "ja-JP": 2}, "시장마다 each 개가 아니다"
+    assert db.site_keyword_cap(conn, pid, 100) == 300, "사이트 상한이 시장 수 × each 가 아니다"
     rows = [("한1", "ko-KR", 1, "auto", 50), ("한2", "ko-KR", 1, "auto", 5), ("한3", "ko-KR", 1, "auto", 1),
             ("한4", "ko-KR", 1, None, 0),                       # 누가 켰는지 모름 — 안 끈다
             ("en1", "en-US", 0, None, 0), ("ja1", "ja-JP", 0, None, 0), ("ja2", "ja-JP", 0, None, 0),
@@ -3235,15 +3238,15 @@ def test_keyword_caps_are_per_market():
     ids = {r["keyword"]: r["id"] for r in conn.execute(
         "SELECT id, keyword FROM keywords WHERE project_id=?", (pid,))}
     # 한국어가 상한(2)을 넘어도 일본어·영어는 제 몫만큼 켤 수 있다
-    got = db.fit_market_caps(conn, pid, [ids["ja1"], ids["ja2"], ids["ja3"], ids["en1"]], 6)
+    got = db.fit_market_caps(conn, pid, [ids["ja1"], ids["ja2"], ids["ja3"], ids["en1"]], 2)
     assert got == [ids["ja1"], ids["ja2"], ids["en1"]], got
     # 넘친 시장에서 워커가 켠 것만 노출 적은 순으로 끈다 — 모름(NULL)은 그대로
-    off = db.trim_market_caps(conn, pid, 6)
+    off = db.trim_market_caps(conn, pid, 2)
     assert off == ["한3", "한2"], off
     on = {r[0] for r in conn.execute(
         "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))}
     assert on == {"한1", "한4"}, on
-    m = {x["locale"]: (x["active"], x["limit"]) for x in db.active_by_market(conn, pid, 6)}
+    m = {x["locale"]: (x["active"], x["limit"]) for x in db.active_by_market(conn, pid, 2)}
     assert m == {"ko-KR": (2, 2), "en-US": (0, 2), "ja-JP": (0, 2)}, m
     conn.close()
 
@@ -3327,18 +3330,18 @@ def test_tracked_keyword_markets_operators_rank_and_move():
     conn.commit()
     row = next(r for r in db.list_keywords(conn, pid, active=True) if r["id"] == ka)
     assert (row["rank"], row["rank_at"][:10]) == (12, "2026-10-12"), dict(row)
-    # ④ 옮기기 — 켜진 것은 그 시장 한도 안에서만(총량 3 ÷ 시장 3 = 시장마다 1)
+    # ④ 옮기기 — 켜진 것은 그 시장 한도 안에서만(시장마다 1)
     kb = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
                       " VALUES(?, '江南 シミ', 'ko-KR', 1, 'gsc')", (pid,)).lastrowid
     kc = conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
                       " VALUES(?, '東京 肝斑', 'ko-KR', 1, 'gsc')", (pid,)).lastrowid
     conn.commit()
-    assert db.move_keywords_market(conn, pid, [kb], "ja-JP", total=3) == 1
+    assert db.move_keywords_market(conn, pid, [kb], "ja-JP", each=1) == 1
     conn.commit()
     assert conn.execute("SELECT locale, locale_src FROM keywords WHERE id=?", (kb,)).fetchone()[:] \
         == ("ja-JP", "manual")
     try:
-        db.move_keywords_market(conn, pid, [kc], "ja-JP", total=3)
+        db.move_keywords_market(conn, pid, [kc], "ja-JP", each=1)
         raise AssertionError("시장 한도를 넘겨 켜진 검색어를 옮겼다")
     except ValueError as e:
         assert "일본어 · 일본" in str(e) and "1/1" in str(e), e
@@ -3348,7 +3351,7 @@ def test_tracked_keyword_markets_operators_rank_and_move():
     conn.execute("INSERT INTO keywords(project_id, keyword, locale, is_active, source)"
                  " VALUES(?, '名古屋 シミ', 'ja-JP', 1, 'gsc')", (pid,))
     conn.commit()
-    assert db.move_keywords_market(conn, pid, [kd], "ja-JP", total=3) == 1, "꺼진 것을 못 옮겼다"
+    assert db.move_keywords_market(conn, pid, [kd], "ja-JP", each=1) == 1, "꺼진 것을 못 옮겼다"
     try:
         db.move_keywords_market(conn, pid, [kc], "zh-CN")
         raise AssertionError("사이트 시장이 아닌 곳으로 옮겼다")
