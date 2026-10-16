@@ -1612,7 +1612,7 @@ def test_seam_34_run_tool_writes_whole_brief_and_acks_the_group():
     assert 'body.get("ids")' in src, "run_tool 이 ids 를 안 읽는다 — 화면이 보내도 버려진다"
 
     # (가) 파일 = 본문 + 꼬리. 소스로 먼저: 꼬리(tails)를 안 읽으면 그것부터 틀렸다
-    assert '"tails"' in src, "run_tool 이 d.brief.tails 를 안 읽는다 — 파일에 답의 형식·규칙이 없다"
+    assert "brief.join(" in src, "run_tool 이 brief.join 으로 안 잇는다 — 파일에 진행 순서·답의 형식·규칙이 없다"
 
     # 실물 — 페이로드 하나에 기회 한 건을 세우고 dry_run 으로 쓴 파일을 읽는다
     d = _gather("_seam29")
@@ -2344,7 +2344,7 @@ def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
     src = Path(brief.__file__).read_text("utf-8")
     bands = {"aio_exposure": tuple(scoring._AIO_PLAY),
              "striking_distance": tuple(scoring._SD_PLAY)}
-    tails = brief.tails("ko-KR")
+    payload = brief.shapes_payload("ko-KR")
     seen, bad = set(), []
     for kind in scoring.ALL_KINDS:
         for gk in (None, "missing", "weak", "own", "sites", "third_party"):
@@ -2362,7 +2362,7 @@ def test_seam_51_brief_never_points_at_a_section_it_does_not_have():
                     ctx = {"query_pages": {"검색어": [
                         {"page": "https://me.example/a", "impressions": 9, "clicks": 1,
                          "ctr": 1.0, "position": 8.0}]}} if has_page else {}
-                    full = brief.build(o, ctx, "ko-KR")["body"] + "\n" + tails[shape]
+                    full = brief.join(brief.build(o, ctx, "ko-KR"), payload)
                     heads = " ".join(re.findall(r"^#+ (.+)$", full, re.M))
                     labels = " ".join(re.findall(r"^-\s*([^:]{2,30}):", full, re.M))
                     for m in ref.finditer(full):
@@ -3918,6 +3918,27 @@ def test_seam_127_locale_card_is_one_set_for_both_deployments():
     for variant in ("local", "hosted"):
         html = dashboard.assemble(variant)
         assert 'id="sm-lang"' in html and 'id="lg-body"' in html, f"{variant} 조립본에 언어 칸이 없다"
+
+
+def test_seam_129_brief_is_joined_one_way_in_python_and_js():
+    """129) 요청문 전문 = 머리말 → 진행 순서(heads) → 본문 나머지 → 꼬리(tails). 잇는 곳은
+    brief.join(파이썬: brief.text·run_tool)과 화면의 briefText(JS) 둘이다. 한쪽만 머리를 끼우면
+    웹 [요청문 복사]와 이 PC [열기]가 다른 순서의 글을 받는다 — 진행 순서가 데이터 뒤로 가면
+    받는 쪽이 사이트를 안 보고 산출물로 간다(그래서 머리로 올렸다)."""
+    import inspect
+
+    import brief
+    import dashboard
+    B = brief.shapes_payload("ko-KR")
+    assert set(B["heads"]) == set(B["tails"]) == set(brief.SHAPE_NAMES)
+    b = {"shape": "fix_page", "body": "머리말\n번호\n\n## 한눈에\n- x"}
+    t = brief.join(b, B)
+    assert t.index("머리말") < t.index(brief.STEPS_HEAD) < t.index("## 한눈에") < t.index("## 답의 형식"), t
+    assert "brief.join(" in inspect.getsource(dashboard.run_tool)
+    src = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+    js = src.split("const briefText = b =>")[1].split("\n};")[0]
+    for need in ("B.heads", "B.tails", 'indexOf("\\n\\n")'):
+        assert need in js, f"briefText 가 brief.join 과 다르게 잇는다 — {need} 가 없다"
 
 
 def inspect_src(fn) -> str:

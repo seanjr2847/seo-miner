@@ -2966,13 +2966,13 @@ def run_tool(body: dict) -> dict:
     known = {str(o.get("id")) for o in opps}
     ids = [opp_id] + [i for i in dict.fromkeys(extra) if i != opp_id and str(i) in known]
 
-    # 요청문 전문 = 본문 + 꼴 꼬리(답의 형식·규칙). 화면의 복사 버튼(briefText)과
-    # brief.text() 가 같은 글을 만든다 — 꼬리는 사이트마다 한 벌(data.brief.tails)이라
-    # 기회 안(o.brief)에는 없다. 본문만 쓰면 도구가 형식·규칙 없이 시작한다(그랬다).
+    # 요청문 전문 = 본문 + 꼴의 머리(진행 순서)·꼬리(답의 형식·규칙). 화면의 복사 버튼
+    # (briefText)과 brief.text() 가 같은 글을 만든다 — 머리·꼬리는 사이트마다 한 벌
+    # (data.brief.heads·tails)이라 기회 안(o.brief)에는 없다. 본문만 쓰면 도구가 형식·규칙
+    # 없이 시작한다(그랬다).
     b = opp.get("brief") or {}
     if b.get("body"):
-        tails = (data.get("brief") or {}).get("tails") or {}
-        text = b["body"] + "\n" + (tails.get(b.get("shape")) or "")
+        text = brief.join(b, data.get("brief") or {})
     else:
         text = opp.get("reasoning") or ""
     text = text.strip()

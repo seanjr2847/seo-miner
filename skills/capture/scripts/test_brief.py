@@ -1156,7 +1156,13 @@ def test_coverage_with_existing_topic_page_fixes_it_instead_of_new_article():
     b = brief.build(o, ctx)
     assert b["shape"] == "fix_page" and b["page"] == main
     assert "있는 페이지 고치기" in b["body"] and "키워드 분류 표" in b["body"]
-    assert "대표 글 한 장" not in b["body"] and "이 요청문은 그 갈래가 아닙니다" in b["body"]
+    # 처방이 직접 "새 글을 만들지 않습니다"라고 한다 — '그 갈래가 아닙니다' 문단은 처방에 "없으면 …"
+    # 갈래가 있을 때만 붙는다(그 문단을 늘 붙이던 때는 같은 말이 두 번 섰다)
+    assert "대표 글 한 장" not in b["body"] and "새 글을 만들지 않습니다" in b["body"]
+    assert "이 요청문은 그 갈래가 아닙니다" not in b["body"]
+    sd = brief.build(_opp("aio_exposure", "검색어", band="beyond"),
+                     {"query_pages": {"검색어": _pages(URL)}})["body"]
+    assert ("없으면" in sd.split("## 이 상황에서 할 일")[1]) == ("이 요청문은 그 갈래가 아닙니다" in sd), sd
     # 화면의 처방(o.play)도 같은 갈래다 — attach 가 gather 의 "없음" 처방을 바꿔 끼운다
     d = {"opps": [{**o}], **ctx}
     brief.attach(d, "ko-KR")
@@ -1569,11 +1575,16 @@ def test_tail_rules_make_reading_the_page_a_rule():
     title 을 바꾼다. 검색어 여럿이 걸린 페이지에서 한 벌만 고친다는 것도 규칙이다."""
     t = brief.tails("en-US")
     rules = {name: t[name].split("## 규칙")[1] for name in brief.SHAPE_NAMES}
-    assert brief.RULE_READ_PAGE in rules["fix_page"] and brief.RULE_ONE_SET in rules["fix_page"]
-    assert brief.RULE_READ_TOP in rules["new_content"]
+    # 읽기 규칙은 이제 '진행 순서' 1단계(사이트 분석)에 실린다 — 규칙 목록에 또 있으면 두 벌이다
+    steps = brief.heads()
+    assert brief.RULE_READ_PAGE in steps["fix_page"] and brief.RULE_ONE_SET in rules["fix_page"]
+    assert brief.RULE_READ_TOP in steps["new_content"]
+    for name in brief.SHAPE_NAMES:
+        for r in (brief.RULE_READ_PAGE, brief.RULE_READ_TOP):
+            assert r not in t[name] and steps[name].count(r) <= 1, (name, r)
     for name in ("consolidate", "technical", "outreach", "presence"):
         for r in (brief.RULE_READ_PAGE, brief.RULE_ONE_SET, brief.RULE_READ_TOP):
-            assert r not in rules[name], (name, r)
+            assert r not in t[name] + steps[name], (name, r)
     assert brief.RULE_ONE_SET not in rules["new_content"]        # 새 글에는 걸린 검색어가 없다
     # 산출물 표도 검색어 하나에 맞추라고 하지 않는다
     for tag in ("title", "H1"):
@@ -1649,7 +1660,7 @@ def test_reading_the_page_counts_as_evidence():
     # 남의 글: 지시는 안 따르되 구조 비교에는 쓴다(상위 H2 비교를 시키니까)
     assert "구조 비교" in brief.UNTRUSTED_RULE and "근거로만 씁니다" not in brief.UNTRUSTED_RULE
     # 구조 손질의 경계가 있다
-    assert "순서 바꾸기" in rules and "URL 변경은 하지 않고" in rules, rules
+    assert "순서 바꾸기" in rules and re.search(r"URL 변경[^.]*손대지 않고", rules), rules
     # 담을 것은 '만들어 줄 것'을 따른다 — title·meta 를 못 박지 않는다
     assert brief.SHAPES["fix_page"]["form"][0].startswith("위 '만들어 줄 것'에 든 산출물만")
 
@@ -1804,13 +1815,13 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert brief.DELIVER_BY_TAG["이미지"] not in want and brief.DELIVER_BY_TAG["내부 링크"] not in want, want
     assert "문안을 만들지 않습니다" not in want and "이번 아님" not in want, want
     # 헛짚은 진단은 답이 페이지를 열어 가린다 — 사람이 표를 읽고 가려내던 일이다
-    assert "**진짜 문제인지** 먼저 확인합니다" in want and "'안 고침'" in want, want
+    assert "**진짜 문제인지** 가려" in want and "'안 고침'" in want, want
     # 글을 풍성하게 하는 일 — 상위 글·함께 묻는 질문과 견줘 빠진 내용을 찾고, 붙여 넣을
     # 본문까지 이 답에서 쓴다. 예전엔 재료만 싣고 그걸로 본문을 채우라는 산출물이 없었다.
     assert brief.CONTENT_FILL in want and want.count("내용 보강") == 1, want
     assert "**붙여 넣을 본문**" in brief.CONTENT_FILL
     rules = " ".join(brief.SHAPES["fix_page"]["rules"])
-    assert "이 답은 제안까지입니다" not in rules and "이 답에서 **붙여 넣을 수 있게**" in rules, rules
+    assert "이 답은 제안까지입니다" not in rules and "계획서에서 **붙여 넣을 수 있게**" in rules, rules
     form = brief.SHAPES["fix_page"]["form"][-1]
     assert "'안 고침'" in form and "뒤로 미루는 '이번 아님'은 쓰지 않습니다" in form, form
     # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
@@ -2479,7 +2490,25 @@ def test_new_article_serp_notes_do_not_point_at_our_page():
     assert b["shape"] == "new_content"
     assert "지금 이 페이지 상태" not in b["body"] and "우리 페이지의 형식" not in b["body"], b["body"]
     # 개요의 제목은 위 표와 같은 검색결과 제목 — 열어 본 페이지의 <title> 은 깨져 있을 수 있다
-    assert "1위 SERP 제목 (https://r.example/1)" in b["body"], b["body"]
+    # 주소는 위 표에 한 번만 — 개요 줄은 자리·제목으로 짝짓는다
+    assert "- 1위 SERP 제목\n" in b["body"] and b["body"].count("https://r.example/1") == 1, b["body"]
+
+
+def test_serp_outline_drops_site_chrome_and_tracking_query():
+    """theotherskin #725 — 1위 글 H2 아홉 개 중 다섯이 메뉴·꼬리말(Pages·SHOP·NOS PARTENAIRES)이었고,
+    주소마다 ?srsltid=… 60자가 붙어 있었다. 견줄 거리가 아닌 것을 요청문에서 뺀다."""
+    url = "https://r.example/a?srsltid=AU7gw4VOHP1C&id=3"
+    rows = [{"position": 1, "title": "T", "url": url}]
+    ctx = {"serp_top": {"검색어": rows},
+           "serp_outlines": {url: {"h2": ["What is X?", "Pages", "SHOP", "NOS PARTENAIRES", "Take a look"]}}}
+    body = brief.build(_opp("striking_distance", "검색어"), ctx, "ko-KR")["body"]
+    assert "srsltid" not in body and "https://r.example/a?id=3" in body, body
+    sec = body.split(brief.SERP_OUTLINE_HEAD)[1]
+    assert "What is X?" in sec and not re.search(r"  - (Pages|SHOP|NOS PARTENAIRES|Take a look)\n", sec), sec
+    # 틀 제목뿐인 글은 '열지 못한 글'로 센다 — 견줄 H2 가 없다
+    ctx["serp_outlines"][url]["h2"] = ["Pages", "SHOP"]
+    body = brief.build(_opp("striking_distance", "검색어"), ctx, "ko-KR")["body"]
+    assert brief.SERP_OUTLINE_HEAD not in body and "1곳은 열지 못했습니다" in body, body
 
 
 def test_latin_query_without_a_page_does_not_pin_the_site_language():
@@ -3035,7 +3064,7 @@ def test_page_siblings_cover_only_same_deliverables():
         assert "그 전부를 덮습니다" not in sib, sib
     # #609 — 같은 검색어의 다른 종류는 덮지 않는다고 말한다
     assert (f"같은 검색어로 선 다른 종류의 기회: {lab['striking_distance']}, {lab['pseo_pattern']} — "
-            "만들 것과 끝나는 조건이 이 기회와 달라 이 요청문을 끝내도 닫히지 않습니다") in s609, s609
+            "만들 것·끝나는 조건이 달라 이 요청문을 끝내도 닫히지 않습니다") in s609, s609
     # 같은 종류([클릭률 미달] syringoma vs milia)만 덮고, 다른 종류는 '(따로)'
     ln = _sib_line(s609, "syringoma vs milia")
     assert ln.startswith(f"- [{lab['ctr_gap']}], ") and f"[{lab['ctr_gap']}](따로)" not in ln, ln
@@ -3063,7 +3092,8 @@ def test_page_siblings_cover_only_same_deliverables():
 def _fix_card(name: str) -> str:
     """fix_page 꼬리의 '고칠 것' 카드 — 꼬리에서 번호 줄 하나만 떼어 본다."""
     tail = brief.tails("ko-KR")[name]
-    return next(x for x in tail.splitlines() if "'고칠 것' 표" in x)
+    # 번호 줄만 — 맨 앞 '분석·대조' 카드도 '고칠 것' 표를 이름으로 부른다(거기 맡긴다고)
+    return next(x for x in tail.splitlines() if "'고칠 것' 표" in x and re.match(r"\d+\. ", x))
 
 
 def test_fix_page_tail_allows_the_hold_answer_the_body_asks_for():
@@ -4199,6 +4229,39 @@ def test_first_page_keeps_room_for_new_articles():
     assert [g["lead"] for g in got[:2]] == [0, 1], got
     seen = [g for g in got if shown(g)][:brief.FIRST_PAGE]
     assert [g["lead"] for g in seen] == [2, 3, 4, 5, 6, 7, 8, 100, 101, 102], seen
+
+
+def test_every_brief_walks_the_site_before_the_deliverables():
+    """요청문은 스킬처럼 읽힌다 — 사이트 분석 → 판정 대조 → 계획서(멈춤) → 적용 → 기록.
+
+    예전엔 데이터 150줄 뒤에 곧장 '만들어 줄 것'이 오고 "페이지를 먼저 연다"는 끝의 규칙
+    가운데 한 줄이었다. 받는 쪽은 요청문의 판정을 사실로 믿고 사이트(이 주소를 만드는 파일,
+    title 을 정하는 다국어 사전)를 안 본 채 고쳤다(2026-10-16).
+    """
+    t, h = brief.tails("ko-KR"), brief.heads()
+    for name in brief.SHAPE_NAMES:
+        x, steps = t[name], h[name]
+        assert steps.startswith(brief.STEPS_HEAD + "\n"), f"{name}: 머리가 진행 순서로 시작하지 않는다"
+        assert brief.STEPS_HEAD not in x, f"{name}: 꼬리에 진행 순서가 또 있다"
+        nums = re.findall(r"^(\d)\. \*\*([^*]+)\*\*", steps, re.M)
+        assert [n for n, _ in nums] == ["1", "2", "3", "4", "5"], (name, nums)
+        assert [w for _, w in nums][:3] == ["사이트 분석", "판정 대조", "계획서"], (name, nums)
+        assert brief.STEP_SITE[name] in steps, name
+        assert "추정" in steps and "멈춥니다" in steps, f"{name}: 판정이 추정이라는 말·계획서 멈춤이 없다"
+        assert ("보내기" in nums[3][1]) == (name in brief.SEND_SHAPES), (name, nums[3])
+        assert "[opp #번호]" in steps, f"{name}: 5단계가 커밋 표시를 안 말한다"
+        # 계획서는 저장소 밖 — 그러나 '저장소에 아무것도 안 남긴다'는 4단계(적용)와 부딪친다
+        assert "저장소 안에는 아무것도 남기지 않습니다" not in x, name
+        # 맨 앞 카드는 분석·대조 — 번호 카드(산출물)보다 앞
+        form = x.split("### 담을 것")[1]
+        assert form.index("'분석·대조'") < form.index("\n1. "), name
+        assert ("'고칠 것' 표가 가리므로" in form) == (name == "fix_page"), name
+    # 진행 순서는 머리말 바로 뒤, 데이터(한눈에)보다 앞 — 번호 줄은 머리말에
+    o = {**_opp("striking_distance", "검색어"), "id": 725}
+    full = brief.text(o, {"query_pages": {"검색어": _pages(URL)}}, "ko-KR")
+    assert full.split("\n")[1] == "이 일의 번호: `[opp #725]`", full[:300]
+    assert full.index(brief.STEPS_HEAD) < full.index(brief.SUMMARY_HEAD) < full.index("## 답의 형식")
+    assert "[opp #" not in brief.build(_opp("striking_distance", "검색어"), {}, "ko-KR")["body"]
 
 
 if __name__ == "__main__":
