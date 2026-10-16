@@ -1544,7 +1544,8 @@
     kwLoad();
   }
 
-  // 마크업은 이미 서 있다(templates/sections/sm-kw.html) — 여기서는 이벤트만 건다.
+  // 마크업은 이미 서 있다(templates/sections/sm-kw.html — [키워드 관리] 화면) — 여기서는
+  // 이벤트만 건다. 진행 막대는 그 화면의 KM_wireTrack(views/kwmanage.html)이 .cnt 를 읽어 그린다.
   function keywords() {
     var sec = document.getElementById("sm-kw");
     if (!sec || sec.dataset.smWired) return;

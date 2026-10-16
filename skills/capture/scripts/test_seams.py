@@ -3967,6 +3967,74 @@ def test_seam_129_brief_is_joined_one_way_in_python_and_js():
         assert need in js, f"briefText 가 brief.join 과 다르게 잇는다 — {need} 가 없다"
 
 
+def test_seam_130_screen_jumps_point_at_declared_screens():
+    """130) 화면을 옮기는 손잡이가 부르는 화면 id 는 view-def 에 있는 id 다.
+
+    화면 id 는 글자로 흩어져 있다 — SM.show('x')·SM.at("x")·go("x")·SM.land·SM.drop 이
+    셸·뷰·섹션·애드온 곳곳에서 부른다. 화면을 쪼개거나 이름을 바꾸면(2026-10-16 [키워드]에서
+    [키워드 관리]를 떼었다) 옛 id 를 부르는 손잡이가 남는데, 셸은 없는 화면이면 조용히
+    물러서거나(go 는 글자로, RK_goKw 는 빈 문자열로) 토스트만 띄운다 — 화면은 멀쩡해 보인다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    ids = set(_view_defs(ctx["views"]))
+    secs = ROOT / "skills" / "capture" / "templates" / "sections"
+    srcs = [("dashboard.html", ctx["shell"]), ("dash.html", ctx["dash"])]
+    srcs += [(f.name, f.read_text("utf-8")) for f in sorted(ctx["views"].glob("*.html"))]
+    srcs += [(f.name, f.read_text("utf-8")) for f in sorted(secs.glob("*.html"))]
+    pat = re.compile(r"(?:\bSM\.(?:show|at|land|drop)|\bgo)\(\s*['\"]([a-z][a-z0-9]*)['\"]")
+    seen = 0
+    for name, src in srcs:
+        for vid in pat.findall(src):
+            seen += 1
+            assert vid in ids, (f"{name} 이 없는 화면 {vid!r} 로 보낸다 — view-def 에 있는 id: "
+                                f"{sorted(ids)}")
+    assert seen >= 20, f"화면 이동 손잡이를 {seen}개밖에 못 찾았다 — 부르는 꼴이 바뀌었다"
+
+
+def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
+    """131) 추적 편집기(sections/sm-kw.html)·그 진행 막대 배선·그 스타일이 한 화면에 있다.
+
+    편집기는 호스팅 전용 섹션이고 어느 화면에 붙을지는 section-def 의 view 가 말한다
+    (2026-10-16 [키워드] 맨 아래 → [키워드 관리]). 그런데 그 섹션에 딸린 것이 두 파일에 더
+    있다: 진행 막대는 화면 쪽 스크립트(KM_wireTrack)가 애드온(dash.html 의 kwLoad)이 .cnt 에
+    쓴 「N / M」을 읽어 그리고, 스타일은 #view-<화면> 아래에 걸린다. section-def 만 옮기면
+    편집기는 새 화면에 서는데 막대는 빈 채로, 스타일은 안 먹은 채로 선다 — JS 오류도 없다.
+
+    편집기가 호스팅 전용이라 그 화면은 로컬에서 따로 할 말이 있어야 한다(빈 화면이 되지
+    않게) — 원본 섹션이 하나 이상 있어야 한다. 그 섹션이 실제로 그려지는지는 test_render 의
+    KWM_LOCAL_MUSTS 가 본다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import dashboard
+    defs = _view_defs(ctx["views"])
+    sec = next((s for s in dashboard.section_defs() if s["id"] == "sm-kw"), None)
+    assert sec, "sections/sm-kw.html 의 section-def 를 못 읽었다"
+    vid = sec["view"]
+    assert sec.get("only") == "hosted", "추적 편집기가 호스팅 전용이 아니게 됐다 — 이 검사의 전제가 바뀌었다"
+    assert defs[vid]["sections"], f"[{vid}] 에 원본 섹션이 없다 — 로컬에서 빈 화면이다"
+
+    touch = re.compile(r"(?:\$|getElementById)\(\s*['\"]sm-kw['\"]\s*\)")
+    owners = [f.stem for f in sorted(ctx["views"].glob("*.html"))
+              if touch.search(f.read_text("utf-8"))]
+    assert owners == [vid], (f"편집기(sm-kw)를 만지는 화면 스크립트가 {owners} 다 — 붙는 화면은 "
+                             f"[{vid}] 하나다(section-def). 옛 화면에 배선이 남았거나 안 옮겼다")
+    view = (ctx["views"] / f"{vid}.html").read_text("utf-8")
+    assert ".kwprog" in view and "MutationObserver" in view and '".cnt"' in view, \
+        f"[{vid}] 화면이 진행 막대(.kwprog)를 .cnt 에서 읽어 그리지 않는다"
+    assert r"/(\d+)\s*\/\s*(\d+)/" in view, f"[{vid}] 의 막대가 「N / M」 꼴을 안 읽는다"
+    assert re.search(r'querySelector\("\.cnt"\)\.textContent\s*=[^;]*" / "', ctx["dash"]), \
+        "dash.html 의 kwLoad 가 .cnt 에 「N / M」 꼴로 안 쓴다 — 화면의 막대가 그 글자를 읽는다"
+
+    css = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-kw.html").read_text("utf-8")
+    scopes = set(re.findall(r"#view-([a-z0-9]+)", css))
+    assert scopes == {vid}, (f"sm-kw.html 의 스타일이 {sorted(scopes)} 화면 아래에 걸렸다 — "
+                             f"붙는 화면은 [{vid}] 다")
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

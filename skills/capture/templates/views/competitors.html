@@ -785,12 +785,13 @@ function CP_nextStep(d) {
   const top = lostRows.slice()
     .sort((a, b) => CP_rank(b) - CP_rank(a) || (b.volume || 0) - (a.volume || 0))[0];
   CP_TOP = top ? top.keyword : "";
-  /* 이 버튼은 키워드 화면으로 **옮기기만** 한다 — 후보를 켜는 것은 그 화면의 일이다.
+  /* 이 버튼은 [키워드 관리] 화면으로 **옮기기만** 한다 — 후보를 켜는 것은 그 화면의 일이다.
      여태 라벨이 「추적에 넣기」라 누르면 추적에 들어간 줄 알았고, 실제로는 아무것도
-     안 들어갔다. 라벨을 하는 일에 맞춘다. */
-  const jump = SM.at("keywords") >= 0
+     안 들어갔다. 라벨을 하는 일에 맞춘다. 2026-10-16 후보 편집기가 [키워드]에서
+     [키워드 관리]로 옮겨 가는 곳도 따라 옮겼다. */
+  const jump = SM.at("kwmanage") >= 0
     ? `<button type="button" class="go sec"
-         onclick="SM.touched=true;SM.show('keywords')">키워드 열기</button>` : "";
+         onclick="SM.touched=true;SM.show('kwmanage')">키워드 관리 열기</button>` : "";
   // 0개인 절은 말하지 않는다 — 「그중 0개는」은 없는 것을 세어 보이는 문장이다.
   return put(`경쟁사가 앞선 검색어가 ${num(lose)}개${none
       ? `이고 그중 ${num(none)}개는 우리 순위가 아예 없습니다` : "입니다"}.

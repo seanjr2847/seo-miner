@@ -1,74 +1,84 @@
 <script type="application/json" class="section-def">
-{"id": "sm-kw", "view": "keywords", "after": "movers", "only": "hosted"}
+{"id": "sm-kw", "view": "kwmanage", "after": "kwm-here", "only": "hosted"}
 </script>
 <!-- 시장 탭(.kwmk)·목록(.list)·고른 수(.sel)·옮길 시장(.kwmove)·개수(.cnt)는 dash.html 의
      kwLoad()/kwPaint() 가 채운다. 여기 있는 것은 껍데기와 배선 대상뿐이다.
-     진행 막대(.kwprog)는 keywords.html 의 KW_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다.
+     진행 막대(.kwprog)는 kwmanage.html 의 KM_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다.
+
+     2026-10-16 [키워드] 화면 맨 아래(movers 뒤)에서 [키워드 관리] 화면으로 옮겼다 — 편집기가
+     순위 변동 표 밑에 묻혀 있었다. 그 화면의 원본 섹션(#kwm-here)은 로컬 안내이고, 이
+     섹션이 붙으면 렌더러가 그것을 숨긴다(kwmanage.html).
 
      2026-10-15 다시 짰다 — 예전 모양은 체크박스 목록 하나에 시장 이름이 언어(「영어」)로만
      붙어, 그 검색어를 어느 나라 구글에서 재는지 화면 어디에도 없었다. 시장별 개수는 맨 아래
      한 줄(「한국어 100/20 · 영어 144/20 …」)뿐이었고, 켜 둔 검색어의 지금 순위도 없었다.
      이제 시장마다 탭(그 나라 구글 + 추적 수/한도), 줄마다 재는 곳·지금 순위·노출 나라다. -->
 <style>
-#view-keywords #sm-kw .kwch { display:flex; align-items:flex-start; justify-content:space-between;
+#view-kwmanage #sm-kw .kwch { display:flex; align-items:flex-start; justify-content:space-between;
   gap:8px 16px; flex-wrap:wrap; margin:0 0 12px; }
-#view-keywords #sm-kw .kwch h2 { margin:0; }
-#view-keywords #sm-kw .kwch .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 0; }
+#view-kwmanage #sm-kw .kwch h2 { margin:0; }
+#view-kwmanage #sm-kw .kwch .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 0; }
 
 /* 시장 탭 — 탭 하나가 「그 나라 구글」이다. 숫자는 지금 상태(추적 중이면 추적 수/한도). */
-#view-keywords #sm-kw .kwmk { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
-#view-keywords #sm-kw .kwmk button { display:flex; flex-direction:column; align-items:flex-start;
+#view-kwmanage #sm-kw .kwmk { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+#view-kwmanage #sm-kw .kwmk button { display:flex; flex-direction:column; align-items:flex-start;
   gap:2px; min-width:120px; padding:8px 12px; border:1px solid var(--line); border-radius:var(--r-in);
   background:var(--card); color:var(--ink); font:inherit; text-align:left; cursor:pointer; }
-#view-keywords #sm-kw .kwmk button:hover { border-color:var(--accent); }
-#view-keywords #sm-kw .kwmk button.on { border-color:var(--accent); background:var(--accent-wash); }
-#view-keywords #sm-kw .kwmk .g { font-weight:600; font-size:var(--fs-1); }
-#view-keywords #sm-kw .kwmk .l { color:var(--mute); font:var(--micro); }
-#view-keywords #sm-kw .kwmk .c { font:600 var(--fs-1)/1.2 var(--mono); }
-#view-keywords #sm-kw .kwmk .c.warn { color:var(--warn); }
+#view-kwmanage #sm-kw .kwmk button:hover { border-color:var(--accent); }
+#view-kwmanage #sm-kw .kwmk button.on { border-color:var(--accent); background:var(--accent-wash); }
+#view-kwmanage #sm-kw .kwmk .g { font-weight:600; font-size:var(--fs-1); }
+#view-kwmanage #sm-kw .kwmk .l { color:var(--mute); font:var(--micro); }
+#view-kwmanage #sm-kw .kwmk .c { font:600 var(--fs-1)/1.2 var(--mono); }
+#view-kwmanage #sm-kw .kwmk .c.warn { color:var(--warn); }
 
-#view-keywords #sm-kw .kwtools { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+#view-kwmanage #sm-kw .kwtools { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
   margin:0 0 8px; }
-#view-keywords #sm-kw .kwtools .tabs { margin:0; }
-#view-keywords #sm-kw .kwtools input[type=search] { flex:1 1 200px; max-width:320px; }
+#view-kwmanage #sm-kw .kwtools .tabs { margin:0; }
+#view-kwmanage #sm-kw .kwtools input[type=search] { flex:1 1 200px; max-width:320px; }
 
-#view-keywords #sm-kw .list { background:transparent; box-shadow:none; border-radius:0;
+#view-kwmanage #sm-kw .list { background:transparent; box-shadow:none; border-radius:0;
   margin:0 -8px; padding:0; }
 /* 줄 — 고르기 · 검색어(+출처) · 재는 곳 · 지금 순위 · 서치콘솔 노출. 폰 폭에서는 둘째 줄로 접힌다. */
-#view-keywords #sm-kw .kwr { display:grid; align-items:center; gap:4px 12px;
+#view-kwmanage #sm-kw .kwr { display:grid; align-items:center; gap:4px 12px;
   grid-template-columns:20px minmax(0,1fr) 96px 72px minmax(0,220px);
   border-bottom:0; border-radius:var(--r-in); padding:9px 8px; }
-#view-keywords #sm-kw .kwr.hd { color:var(--mute); font:var(--micro); padding-top:4px; padding-bottom:4px; }
-#view-keywords #sm-kw .kwr .kw { min-width:0; overflow-wrap:anywhere; white-space:normal; }
-#view-keywords #sm-kw .kwr .src { display:block; color:var(--mute); font:var(--micro); }
-#view-keywords #sm-kw .kwr .mkt { font-size:var(--fs-1); }
-#view-keywords #sm-kw .kwr .rk { font:600 var(--fs-1)/1.2 var(--mono); text-align:right; }
-#view-keywords #sm-kw .kwr .rk.out, #view-keywords #sm-kw .kwr .rk.none { font-family:var(--sans);
+#view-kwmanage #sm-kw .kwr.hd { color:var(--mute); font:var(--micro); padding-top:4px; padding-bottom:4px; }
+#view-kwmanage #sm-kw .kwr .kw { min-width:0; overflow-wrap:anywhere; white-space:normal; }
+#view-kwmanage #sm-kw .kwr .src { display:block; color:var(--mute); font:var(--micro); }
+#view-kwmanage #sm-kw .kwr .mkt { font-size:var(--fs-1); }
+#view-kwmanage #sm-kw .kwr .rk { font:600 var(--fs-1)/1.2 var(--mono); text-align:right; }
+#view-kwmanage #sm-kw .kwr .rk.out, #view-kwmanage #sm-kw .kwr .rk.none { font-family:var(--sans);
   font-weight:400; color:var(--mute); }
-#view-keywords #sm-kw .kwr .rk small { display:block; font:400 13px/1.2 var(--mono); color:var(--mute); }
-#view-keywords #sm-kw .kwr .n { color:var(--mute); font-size:var(--fs-1); text-align:right; }
+#view-kwmanage #sm-kw .kwr .rk small { display:block; font:400 13px/1.2 var(--mono); color:var(--mute); }
+#view-kwmanage #sm-kw .kwr .n { color:var(--mute); font-size:var(--fs-1); text-align:right; }
 @media (max-width:640px) {
-  #view-keywords #sm-kw .kwr { grid-template-columns:20px minmax(0,1fr) auto; }
-  #view-keywords #sm-kw .kwr.hd { display:none; }
+  #view-kwmanage #sm-kw .kwr { grid-template-columns:20px minmax(0,1fr) auto; }
+  #view-kwmanage #sm-kw .kwr.hd { display:none; }
   /* 시장 탭은 한 줄로 두고 옆으로 민다 — 시장 다섯이면 세 줄을 먹어 목록이 화면 밖으로 밀렸다 */
-  #view-keywords #sm-kw .kwmk { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; }
-  #view-keywords #sm-kw .kwmk button { flex:none; min-width:112px; }
-  #view-keywords #sm-kw .kwr .mkt { grid-column:2; grid-row:2; color:var(--mute); }
-  #view-keywords #sm-kw .kwr .rk { grid-column:3; grid-row:1; }
-  #view-keywords #sm-kw .kwr .n { grid-column:2 / 4; grid-row:3; text-align:left; }
+  #view-kwmanage #sm-kw .kwmk { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; }
+  #view-kwmanage #sm-kw .kwmk button { flex:none; min-width:112px; }
+  #view-kwmanage #sm-kw .kwr .mkt { grid-column:2; grid-row:2; color:var(--mute); }
+  #view-kwmanage #sm-kw .kwr .rk { grid-column:3; grid-row:1; }
+  #view-kwmanage #sm-kw .kwr .n { grid-column:2 / 4; grid-row:3; text-align:left; }
 }
 
-#view-keywords #sm-kw .bar2 { display:flex; align-items:center; gap:10px 12px; flex-wrap:wrap;
+#view-kwmanage #sm-kw .bar2 { display:flex; align-items:center; gap:10px 12px; flex-wrap:wrap;
   margin-top:var(--sp-4); }
-#view-keywords #sm-kw .bar2 .sel { font-size:var(--fs-1); color:var(--mute); }
-#view-keywords #sm-kw .bar2 .sel b { color:var(--ink); }
-#view-keywords #sm-kw .bar2 .kwmove { width:auto; flex:none; max-width:240px; margin:0; }
-#view-keywords #sm-kw .kwprog { flex:1 1 160px; max-width:280px; height:8px; margin:0;
+#view-kwmanage #sm-kw .bar2 .sel { font-size:var(--fs-1); color:var(--mute); }
+#view-kwmanage #sm-kw .bar2 .sel b { color:var(--ink); }
+#view-kwmanage #sm-kw .bar2 .kwmove { width:auto; flex:none; max-width:240px; margin:0; }
+#view-kwmanage #sm-kw .kwprog { flex:1 1 160px; max-width:280px; height:8px; margin:0;
   border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
-#view-keywords #sm-kw .kwprog[hidden] { display:none; }
-#view-keywords #sm-kw .kwprog i { display:block; height:100%; width:0; border-radius:var(--r-pill);
+#view-kwmanage #sm-kw .kwprog[hidden] { display:none; }
+#view-kwmanage #sm-kw .kwprog i { display:block; height:100%; width:0; border-radius:var(--r-pill);
   background:var(--accent); }
-#view-keywords #sm-kw .kwprog.full i { background:var(--warn); }
+#view-kwmanage #sm-kw .kwprog.full i { background:var(--warn); }
+/* 화면 하나를 통째로 쓰게 됐으니 목록 상자를 키운다 — 애드온(dash.html)의 340px 는 다른 표
+   밑에 끼어 있던 때의 높이다. 넓은 화면만: 좁은 화면은 애드온이 안쪽 스크롤을 풀고 스무
+   줄씩 편다([N개 더 보기]). 아래 손잡이 줄(.bar2)이 한 화면 안에 남을 만큼만 키운다. */
+@media (min-width:1000px) {
+  #view-kwmanage #sm-kw .list { max-height:min(640px, 62vh); }
+}
 </style>
 <section id="sm-kw" class="card kwtrack">
   <div class="kwch">

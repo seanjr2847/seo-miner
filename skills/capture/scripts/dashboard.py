@@ -54,7 +54,9 @@ TPL = Path(__file__).parent.parent / "templates"
 # 순서는 묶음(run_all.GROUPS) 순서를 따른다 — 할 일 · 검색 성과 · AI 노출 · 사이트 건강 ·
 # 경쟁·링크 · 관리. 메뉴가 묶음 이름을 화면이 바뀌는 자리에만 세우므로, 한 묶음의
 # 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
-VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "rank", "ai", "site",
+# [키워드 관리](kwmanage)는 [키워드] 바로 뒤다 — 2026-10-16 그 화면 맨 아래의 추적 편집기를
+# 떼어 세웠다(views/kwmanage.html 머리말). 같은 묶음(검색 성과) 안이라 메뉴가 안 흩어진다.
+VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "ai", "site",
               "competitors", "backlinks", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)

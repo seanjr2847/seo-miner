@@ -39,7 +39,7 @@
 | 그 페이지를 지금 손댄다 | 펼친 카드의 「<도구> 로 열기」(로컬 — [설정]에서 고른 개발 도구로 사이트 폴더를 연다) / 「이 PC 에서 열기」(호스팅 — 로컬 대시보드를 띄우는 명령을 준다) | 로컬은 도구가 그 자리에서 열리고, 그 기회가 「진행 중」으로 넘어간다. 도구를 아직 안 골랐으면 「도구 없음」과 「설정에서 고르기」가 대신 선다 |
 | 목록을 파일로 뺀다 | 섹션 머리 오른쪽 「CSV 내려받기」 | 지금 걸러 놓은 줄만 CSV 로 내려온다 (바로 왼쪽의 개수 배지가 그 줄 수다) |
 | 맞댈 상대를 직접 정한다 | 빈 상자의 「경쟁사 등록」 → [설정]의 「경쟁사 도메인」 칸(쉼표로 여러 개) | 다음 「경쟁사 찾기」가 자동으로 주운 도메인보다 **직접 적은 것을 먼저** 맞댄다 |
-| 잡힌 후보를 추적에 켠다 | 띠의 「키워드 열기」 | [키워드] 화면으로 **옮기기만** 한다 — 켜는 것은 그 화면 후보 탭의 일이다 |
+| 잡힌 후보를 추적에 켠다 | 띠의 「키워드 관리 열기」 | [키워드 관리] 화면으로 **옮기기만** 한다 — 켜는 것은 그 화면 후보 탭의 일이다 |
 
 ## 여기서 얻는 것
 
@@ -203,7 +203,7 @@ flowchart TD
   skills/capture/templates/views/competitors.html — view-def(id/title/sections/stages/head),
     CP_KINDS(갈래 세 벌과 뜻), CP_shares(몫 카드의 줄 구성), CP_card/CP_noOpp(갭 줄·점수 없는 줄),
     CP_chips/CP_pick(칩), CP_tools/CP_csv(개수 배지·CSV 열 이름과 필터 반영),
-    CP_nextStep(띠의 네 상태·「검색어 열기」·「키워드 열기」), CP_toSettings(「경쟁사 등록」),
+    CP_nextStep(띠의 네 상태·「검색어 열기」·「키워드 관리 열기」), CP_toSettings(「경쟁사 등록」),
     CP_open, CP_standing, VIEW() 본문의 빈 상태 문구 전부
   skills/capture/templates/dashboard.html — window.act / SM.host.viewChip(`/capture <단계이름>` 을
     그대로 명령으로 쓰는 자리), csv()(파일명 꼴 seo-miner-<name>-<오늘>.csv, BOM),

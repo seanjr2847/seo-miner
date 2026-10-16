@@ -1,0 +1,85 @@
+<!-- [키워드 관리] — 어떤 검색어의 순위를 잴지(추적)를 정하는 화면.
+
+     2026-10-16 [키워드]에서 떼어 냈다. 그 화면 맨 아래에 [추적할 검색어](sections/sm-kw.html)가
+     붙어 있었는데, [키워드]는 "1페이지까지 얼마나 남았나·무엇부터 밀까"를 읽는 화면이고
+     추적 목록은 시장 탭·후보 고르기·시장 옮기기를 하는 **편집기**다 — 둘이 한 화면에 있으니
+     편집기가 순위 변동 표 밑으로 밀려 스크롤 끝에서만 보였다.
+
+     편집기(#sm-kw)는 웹(호스팅) 조립에만 낀다(section-def 의 only:"hosted") — 켜고 끄는
+     /api/keywords 가 호스팅 서버에만 있다. 로컬 대시보드에서 이 화면이 빈 상자로 서지
+     않게, 원본 섹션(#kwm-here)이 "여기서는 무엇을 할 수 있나"를 말한다: 지금 추적 수와,
+     채팅에서 고르는 명령(/capture keywords). 메뉴에서 숨기지 않은 이유 — 로컬 사용자도
+     추적 목록을 바꾼다(채팅 큐레이션). 메뉴에서 빼면 [순위 추적]·[경쟁 분석]의 "추적할
+     검색어 고르기" 손잡이가 로컬에서 갈 곳이 없어진다. 박제본에서는 뺀다(dashboard.html 의
+     SM.drop) — 바꿀 수 없는 기록에 관리 화면을 남기지 않는다([설정]·[심사]와 같은 이유). -->
+<script type="application/json" class="view-def">
+{"id": "kwmanage", "group": "search", "title": "키워드 관리",
+ "sub": "어떤 검색어의 순위를 잴지 정합니다.",
+ "sections": ["kwm-here"], "stages": ["keywords"]}
+</script>
+
+<style>
+#view-kwmanage > section { margin-top:var(--gap); }
+#view-kwmanage #kwm-here h2 { margin:0; }
+#view-kwmanage #kwm-here .sub { font-size:var(--fs-1); line-height:1.5; margin:3px 0 12px; }
+#view-kwmanage #kwm-here p { margin:0 0 10px; font-size:var(--fs-2); line-height:1.6; }
+#view-kwmanage #kwm-here .acts { margin:4px 0 12px; }
+</style>
+
+<!-- 로컬(이 PC)의 자리. 웹에서는 편집기(#sm-kw)가 이 뒤에 붙고 이 상자는 숨는다 —
+     렌더러가 #sm-kw 가 조립에 꼈는지로 가른다(배포 표식이 아니라 실제로 붙은 것을 본다). -->
+<section id="kwm-here" class="card">
+  <h2>추적할 검색어</h2>
+  <p class="sub" id="kwm-sub"></p>
+  <div id="kwm-body"></div>
+</section>
+
+<script>
+"use strict";
+/* 이 파일의 전역은 전부 KM_ — 조립하면 형제 화면들과 한 문서가 된다. */
+
+// 명령 칩의 정본은 셸의 window.act 한 벌이다(사이트 이름을 싣는다).
+const KM_act = (stage, label, primary) => window.act ? window.act(stage, label, primary) : "";
+
+// 「추적 중 N / 100」은 호스팅 애드온(dash.html 의 kwLoad)이 .cnt 에 글자로 쓴다 — 그 글자에서
+// 숫자를 읽어 진행 막대만 그린다. 글자를 여기서 다시 짓지 않는다(숫자의 정본은 서버 응답 한 벌).
+// [키워드] 화면(keywords.html 의 KW_wireTrack)에서 이 화면으로 옮겨 왔다 — 막대는 편집기의 일부다.
+function KM_wireTrack(box) {
+  if (!box || box.dataset.kwProg) return;
+  const cnt = box.querySelector(".cnt"), bar = box.querySelector(".kwprog");
+  if (!cnt || !bar) return;
+  box.dataset.kwProg = "1";
+  const paint = () => {
+    const m = /(\d+)\s*\/\s*(\d+)/.exec(cnt.textContent);
+    const p = m && +m[2] ? Math.min(100, +m[1] / +m[2] * 100) : 0;
+    bar.hidden = !m;
+    bar.firstElementChild.style.width = p + "%";
+    bar.classList.toggle("full", p >= 100);
+    bar.setAttribute("aria-label", m ? `추적 ${m[1]}개, 한도 ${m[2]}개` : "");
+  };
+  new MutationObserver(paint).observe(cnt, {childList: true, characterData: true, subtree: true});
+  paint();
+}
+
+VIEW("kwmanage", function (d) {
+  // 편집기는 웹 조립에만 있다 — 있으면 그쪽이 이 화면의 전부고, 로컬 안내는 물러난다.
+  // 박제본은 이 화면을 뺀다(SM.drop) — 상자째 사라졌으면 그릴 것이 없다.
+  const here = $("kwm-here"), panel = $("sm-kw");
+  if (!here) return;
+  here.hidden = !!panel;
+  if (panel) { KM_wireTrack(panel); return; }
+  const n = d.kw_active || 0;
+  $("kwm-sub").textContent = n
+    ? `지금 ${num(n)}개를 추적합니다. 켠 검색어만 순위를 잽니다.`
+    : "아직 추적 중인 검색어가 없습니다. 켠 검색어만 순위를 잽니다.";
+  // 이 PC 의 대시보드 서버에는 추적을 켜고 끄는 라우트가 없다(/api/keywords 는 호스팅 몫).
+  // 로컬의 길은 채팅 큐레이션이다(SKILL.md 의 /capture keywords 2번 — 후보를 보여 주고
+  // 승인분만 켠다). 없는 버튼을 그리지 않고 그 길을 그대로 말한다.
+  $("kwm-body").innerHTML =
+    `<p>이 PC 의 대시보드에서는 목록을 바로 고치지 않습니다. 채팅에서 아래 명령을 치면
+      Claude 가 후보를 보여 주고, 고른 것만 추적에 넣습니다.</p>
+    <div class="acts">${KM_act("keywords")}</div>
+    <p>웹 대시보드에서는 이 화면에서 시장(나라 구글)마다 바로 켜고 끕니다.
+      켠 검색어의 지금 순위는 ${window.go ? window.go("rank") : "[순위 추적]"}에서 봅니다.</p>`;
+});
+</script>

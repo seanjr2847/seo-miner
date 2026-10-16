@@ -392,6 +392,18 @@ MUSTS = [
     (r'id="view-ai"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
      r'(?:(?!</div>).)*<em>\d{4}-\d{2}-\d{2}</em>(?:(?!</div>).)*<em>아직</em>',
      "[AI 인용] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
+    # [키워드 관리] — 추적 편집기를 [키워드]에서 떼어 세운 화면(2026-10-16). 메뉴에 서야 하고,
+    # [키워드]에는 그리로 가는 이음 한 줄만 남는다. 이음은 hash 링크(<a href="#…">)가 아니라
+    # 셸의 go() 버튼이다 — hash 는 사이트 이름의 자리라(이음매 5) 화면 id 를 실으면
+    # 「등록되지 않은 사이트」가 된다.
+    (r'id="nav"(?:(?!</nav>).)*<button[^>]*data-v="kwmanage"',
+     "메뉴에 [키워드 관리]가 없다 — view-def 를 조립이 못 읽었거나 묶음 views 에 안 넣었다"),
+    (r'id="view-keywords"(?:(?!id="view-).)*id="kw-mlink"[^>]*><span class="live">[^<]*'
+     r"<button type=\"button\" class=\"gov\" onclick=\"SM\.touched=true;SM\.show\('kwmanage'\)\">"
+     r'\[키워드 관리\]</button>',
+     "[키워드]에 [키워드 관리]로 가는 이음이 없다 — 추적 편집기를 어디서 찾는지 모른다"),
+    (r'!id="view-keywords"(?:(?!id="view-).)*id="sm-kw"',
+     "추적 편집기(sm-kw)가 아직 [키워드] 화면에 붙는다 — [키워드 관리]로 옮겼다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -497,7 +509,8 @@ PLAY_REPORT_MUSTS = [
 ]
 
 
-REPORT_DROPPED = ("settings", "guide", "triage")   # 심사는 서버가 있어야 저장된다
+# 심사는 서버가 있어야 저장되고, 키워드 관리는 추적을 켜고 끄는 화면이라 종이에서는 못 바꾼다.
+REPORT_DROPPED = ("settings", "guide", "triage", "kwmanage")
 
 
 def view_defs_ids() -> list[str]:
@@ -526,6 +539,9 @@ REPORT_MUSTS = [
     (r"여기서는 바꿀 수 없습니다", "박제본이 트리아지가 되는 것처럼 말한다"),
     (r"!id=\"view-settings\"", "박제본에 [설정] 화면이 남았다 — 남한테 보내는 파일이다"),
     (r"!id=\"view-guide\"", "박제본에 [안내] 화면이 남았다"),
+    (r"!id=\"view-kwmanage\"", "박제본에 [키워드 관리] 화면이 남았다 — 바꿀 수 없는 기록이다"),
+    # 그 화면으로 가는 이음도 같이 빠진다(.live) — 남으면 없는 화면을 가리키는 문장이다.
+    (r"!키워드 관리\]에서", "박제본 [키워드]가 없는 [키워드 관리] 화면을 가리킨다"),
     # 묶음 머리줄의 날짜는 기록이라 남고, 다시 재기 버튼은 누를 서버가 없어 빠진다.
     (r'class="vgrp"(?:(?!</div>).)*마지막으로 잰 날', "박제본에 묶음별 마지막으로 잰 날이 없다"),
     (r"!data-grp=", "박제본에 [이 묶음 다시 재기]가 남았다 — 누를 서버가 없다"),
@@ -578,6 +594,31 @@ LOCAL_MUSTS = [
 ]
 RUN_MUSTS = LOCAL_MUSTS[3:]
 
+# [키워드 관리]의 로컬 갈래 — 편집기(sm-kw)는 호스팅 조립에만 낀다(/api/keywords 가 호스팅
+# 몫이다). 로컬에서 이 화면이 빈 상자로 서면 메뉴를 눌러도 아무것도 없다. 원본 섹션(#kwm-here)이
+# 지금 추적 수와 채팅에서 고르는 명령을 말해야 한다. 픽스처(beta-site)는 추적 검색어가 있다.
+KWM_LOCAL_MUSTS = [
+    (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="kwm-here"(?![^>]*hidden)',
+     "로컬 [키워드 관리]의 안내 상자가 숨었다 — 빈 화면이 된다"),
+    (r'id="kwm-sub"[^>]*>지금 \d+개를 추적합니다',
+     "로컬 [키워드 관리]가 지금 추적 수를 안 말한다"),
+    (r'id="kwm-body"(?:(?!</section>).)*class="cmd[^"]*"[^>]*>/capture keywords '
+     + re.escape(SITES[1]) + "</button>",
+     "로컬 [키워드 관리]에 추적을 고르는 명령(/capture keywords 사이트)이 없다"),
+    (r'!id="sm-kw"', "호스팅 전용 편집기(sm-kw)가 로컬 조립에 샜다"),
+]
+# 호스팅 갈래 — 편집기가 [키워드 관리] 안에 붙고, 로컬 안내는 물러나고, 두 파일에 걸친 진행
+# 막대 배선(kwmanage.html 의 KM_wireTrack ↔ dash.html 의 kwLoad 가 쓰는 .cnt)이 돈다.
+KWM_HOSTED_MUSTS = [
+    (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"',
+     "추적 편집기(sm-kw)가 [키워드 관리] 화면에 안 붙었다"),
+    (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="kwm-here"[^>]*hidden',
+     "호스팅 [키워드 관리]에 로컬 안내(채팅 명령)가 편집기와 같이 섰다"),
+    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="img"(?![^>]*hidden)[^>]*'
+     r'aria-label="추적 \d+개, 한도 \d+개"><i style="width: [\d.]+%',
+     "추적 진행 막대가 안 그려졌다 — KM_wireTrack 이 .cnt 를 못 읽었거나 안 불렸다"),
+]
+
 # 셸 table() 의 행 카드 옵트인(.tw.cards) — 좁은 화면에서 칸 앞에 서는 라벨(data-label)은
 # 머리글 글자에서 온다. 뷰가 아직 안 붙였을 수 있어 화면 대신 셸의 table() 을 **그대로**
 # 불러 본다(사본 없음). 펼침 줄(tr.exp)의 통짜 칸은 라벨을 달면 안 된다.
@@ -626,18 +667,21 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     # 질문 없는 시장 줄의 [질문 만들기]는 그 시장만 짓는다(서버가 locale 로 받는다)
     (r'id="ai-markets"(?:(?!</section>).)*data-sm-act="make-prompts" data-sm-locale="ja-JP"',
      "시장별 카드의 [질문 만들기]가 그 시장을 안 싣는다"),
-    # 키워드 화면 — 시장마다 탭이 서고 탭이 「그 나라 구글」과 추적 수/한도를 말한다. 시장
-    # 이름이 언어(「영어」)뿐이라 어느 나라에서 재는지 몰랐고, 0 인 시장은 맨 아래 한 줄에
-    # 묻혀 있었다(2026-10-15 다시 짬).
-    (r'id="sm-kw"(?:(?!</section>).)*class="kwmk"(?:(?!</section>).)*<span class="g">한국 구글</span>'
+    # [키워드 관리] 화면(추적 편집기) — 시장마다 탭이 서고 탭이 「그 나라 구글」과 추적 수/한도를
+    # 말한다. 시장 이름이 언어(「영어」)뿐이라 어느 나라에서 재는지 몰랐고, 0 인 시장은 맨 아래
+    # 한 줄에 묻혀 있었다(2026-10-15 다시 짬). 2026-10-16 [키워드]에서 이 화면으로 옮겼다 —
+    # 자리를 화면 상자(view-kwmanage)부터 잡는다.
+    (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*class="kwmk"'
+     r'(?:(?!</section>).)*<span class="g">한국 구글</span>'
      r'(?:(?!</button>).)*<span class="c">\d+/\d+</span>',
-     "키워드 화면의 시장 탭이 나라(한국 구글)와 추적 수/한도를 안 말한다"),
-    (r'id="sm-kw"(?:(?!</section>).)*<span class="g">일본 구글</span>(?:(?!</button>).)*<span class="c warn">0/\d+</span>',
-     "키워드 화면이 추적 0 인 시장(일본)을 경고로 안 세운다"),
+     "[키워드 관리]의 시장 탭이 나라(한국 구글)와 추적 수/한도를 안 말한다"),
+    (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*'
+     r'<span class="g">일본 구글</span>(?:(?!</button>).)*<span class="c warn">0/\d+</span>',
+     "[키워드 관리]가 추적 0 인 시장(일본)을 경고로 안 세운다"),
     # 줄마다 재는 곳과 지금 순위 — 켜 둔 검색어의 결과를 보려면 다른 화면으로 가야 했다
-    (r'id="sm-kw"(?:(?!</section>).)*<label class="kwr">(?:(?!</label>).)*class="mkt"[^>]*>한국 구글</span>'
-     r'<span class="rk"[^>]*>\d+위<small>',
-     "추적 중 줄에 재는 곳(한국 구글)·지금 순위가 안 선다"),
+    (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*<label class="kwr">'
+     r'(?:(?!</label>).)*class="mkt"[^>]*>한국 구글</span><span class="rk"[^>]*>\d+위<small>',
+     "[키워드 관리]의 추적 중 줄에 재는 곳(한국 구글)·지금 순위가 안 선다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
     # 애드온이 서버 응답을 못 받았을 때 하는 단 한 가지 말(dash.html 의 OFFLINE).
     # stdlib 로 띄우던 시절엔 호스팅 전용 라우트가 없어 폴링이 세 번 404 를 먹고 이
@@ -1271,14 +1315,15 @@ def run() -> None:
         local = shell.replace(b"</body>", (CARDS_PROBE + PLAY_PROBE).encode("utf-8") + b"</body>", 1)
         targets = [("로컬 대시보드", lambda: _stdlib(local),
                     MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS
-                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS)]
+                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS + KWM_LOCAL_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
         # + 애드온). 사본을 만들어 먹이면 운영과 조립이 갈라져도 검사가 모른다.
         if (ROOT / "server" / "assets" / "dash.html").exists():
             targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
-                            HOSTED_MUSTS + ASK_HOSTED_MUSTS + PLAY_MUSTS + PLAY_HOSTED_MUSTS))
+                            HOSTED_MUSTS + ASK_HOSTED_MUSTS + PLAY_MUSTS + PLAY_HOSTED_MUSTS
+                            + KWM_HOSTED_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(

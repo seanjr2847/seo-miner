@@ -217,7 +217,7 @@ GROUPS = (
      "views": ("triage", "overview", "hold")},
     {"id": "search", "name": "검색 성과",
      "stages": ("gsc", "ga4", "keywords", "metrics", "rank"), "every_hours": WEEKLY_HOURS,
-     "views": ("analysis", "keywords", "rank")},
+     "views": ("analysis", "keywords", "kwmanage", "rank")},
     {"id": "ai", "name": "AI 노출", "stages": ("ai", "rank"), "every_hours": WEEKLY_HOURS,
      "views": ("ai",)},
     {"id": "site", "name": "사이트 건강", "stages": ("index", "crawl", "vitals"),

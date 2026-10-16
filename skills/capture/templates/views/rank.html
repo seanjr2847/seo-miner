@@ -251,9 +251,11 @@ const RK_setup = (primary = true) => RK_hasSetup()
 // 안 보였다. 그 화면이 없는 배포(박제본)에서는 아무것도 안 낸다. 추적 검색어가
 // 0개면 이 버튼이 이 화면의 주요 행동이다(primary) — 조회할 대상이 없는데
 // [순위 확인]을 초록으로 세우면 눌러도 되는 게 없다.
-const RK_goKw = (primary = false) => window.SM && SM.at("keywords") >= 0
-  ? `<button class="go sm${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('keywords')"
-      >키워드 열기</button>` : "";
+// 가는 곳은 [키워드 관리]다 — 추적을 켜고 끄는 편집기가 2026-10-16 [키워드]에서 그리로
+// 옮겼다. [키워드]로 보내면 거기엔 이음 한 줄만 남아 한 번 더 눌러야 했다.
+const RK_goKw = (primary = false) => window.SM && SM.at("kwmanage") >= 0
+  ? `<button class="go sm${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('kwmanage')"
+      >키워드 관리 열기</button>` : "";
 // 단계 이름·재실행 라벨의 정본은 조립이 실어 보낸 window.__STAGES__ 다.
 const RK_run = id => window.stageRun ? stageRun(id)
   : ((window.__STAGES__ || {})[id] || {}).run || id;
