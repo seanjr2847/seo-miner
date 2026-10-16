@@ -58,6 +58,20 @@
 
 판정 기준값(모바일 노출 하한과 순위차, LCP·INP·CLS 기준, 내부 링크 하한과 노출 상위 범위, 전환 표본의 클릭·세션 하한)은 전부 서버가 내려보내 화면의 부제와 (i) 말풍선에 그대로 찍힙니다 — 문서에 옮겨 적으면 두 벌이 되므로 화면에서 읽습니다.
 
+**크롤이 얼마나 도나** — 사이트맵이 있으면 **사이트맵의 주소는 전부** 가져옵니다. 설정한 상한(`crawl_urls`)보다 사이트맵 주소가 많으면 그 회차의 상한을 사이트맵 수까지 올립니다. 사이트맵이 없어 홈에서 링크를 따라갈 때만 설정한 상한에서 멈춥니다.
+
+**다국어 사이트에서만 서는 크롤 갈래** — 크롤한 페이지의 hreflang 이 두 언어 이상을 말하거나 사이트 시장이 두 언어 이상이고, 실제로 크롤한 페이지가 두 언어 이상일 때만 [사이트 크롤] 표에 섭니다. 한 언어 사이트에는 안 섭니다. 따로 수집하지 않고 크롤이 받은 HTML 로 판정합니다. 페이지의 언어는 hreflang 의 자기 주소 코드 → `<html lang>` → 주소 첫 경로(`/en/`) 순서로 정하고, 사이트의 기본 언어는 첫 시장의 언어입니다. 칩·표에 찍히는 이름은 다른 갈래처럼 `collect_crawl.ISSUE_KIND` 에서 오고, 무엇을 보는지는 아래와 같습니다.
+
+| 무엇을 보나 | 한 줄이 무엇인가 | 실제로 잡힌 예 (theotherskin, 2026-10) |
+| --- | --- | --- |
+| 외국어 판의 제목·설명·본문·이미지 alt 에 남은 기본 언어 글자. 괄호 속 풀이("기미 (gimi)")와 언어 선택 단추의 한 낱말("한국어")은 안 셉니다. 기본 언어가 라틴 문자면 건너뜁니다(브랜드명과 못 가름) | 페이지 하나 — 발췌 몇 개 | 영어·일본어·중국어 판 보도자료의 한국어 사진 설명, 외국어 판 홈의 alt 「더채움」 |
+| 언어 X 페이지가 언어 Y 페이지로 거는 링크. 언어 전환용(그 페이지의 hreflang 대체 주소, 각 언어의 홈)과 `/_next`·`/wp-content` 같은 파일은 뺍니다 | 링크를 건 페이지 하나 — 같은 언어 판이 있으면 그 주소까지 | 외국어 판 상담 버튼이 한국어 `/medical-consultation/` 로 감 |
+| hreflang 묶음에서 빠진 언어 판 | 묶음 하나(주소는 기본 언어 판) — 언어별 페이지 수를 같이 | 블로그·공지의 아랍어·스페인어 판 없음 (한국어 76 · 스페인어 56) |
+| hreflang 으로 다른 언어 판을 알렸는데 그리로 가는 `<a href>` 가 0개 | 언어 하나(틀의 문제라 페이지마다 세우지 않음) | 여섯 언어 모두, 전환이 버튼뿐 |
+| x-default 가 영어가 아닌 기본 언어 판을 가리키는데 영어 판이 있음 | 사이트 하나 | x-default 가 한국어 판 |
+| meta description 맨 앞에서 같은 구절이 연달아 두 번(뒤쪽의 되풀이는 표라서 안 봄) | 페이지 하나 | "Cicatriz papular Cicatriz papular …" (스페인어·아랍어 판 48장) |
+| 외국어 판 구조화 데이터의 업체 이름·주소(Organization 갈래의 name·address)가 기본 언어. alternateName 은 안 봅니다 | 언어 하나 | 모든 외국어 판의 MedicalClinic name 「디아더피부과」 |
+
 **밖으로 나가는 것 — CSV 일곱 개**
 
 파일 이름은 모두 `seo-miner-<이름>-<내려받은 날짜>.csv` 꼴이고, 엑셀에서 한글이 안 깨지도록 BOM 이 붙습니다. 내용은 **지금 걸러 놓은 목록 그대로**입니다.
@@ -157,6 +171,7 @@ flowchart TD
     page_performance·dead_pages·starved_pages·zero_conversion_pages,
     LCP_GOOD_MS/INP_GOOD_MS/CLS_GOOD, DEVICE_GAP_POS/DEVICE_MIN_IMP,
     STARVED_TOP_N/STARVED_LINKS_IN, GA4_NOCONV_MIN_CLICKS/GA4_NOCONV_MIN_SESSIONS
-  skills/capture/scripts/collect_crawl.py — ISSUE_KIND(갈래 이름표)와 심각도 표
+  skills/capture/scripts/collect_crawl.py — ISSUE_KIND(갈래 이름표)와 심각도 표,
+    collect(사이트맵이 상한보다 많으면 사이트맵 수까지), intl_issues(다국어 갈래 INTL_KINDS 의 판정)
   skills/capture/scripts/stage.py — STAGE_LABELS(색인 검사·사이트 크롤·검색 실적 수집·속도 측정·내 페이지 점검·기회 분석)
 -->

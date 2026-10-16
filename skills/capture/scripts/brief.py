@@ -1175,6 +1175,16 @@ SITE_ONLY_ISSUES = ("dup_title", "dup_description", "orphan", "redirect_chain",
                     "broken_internal", "canonical_mismatch")
 
 
+def _site_only(kind) -> bool:
+    """SITE_ONLY_ISSUES + 다국어 갈래 전부(collect_crawl.INTL_KINDS 가 정본 — 여기 옮겨 적지 않는다).
+
+    다국어 갈래는 전부 여러 장을 맞대야 나온다(어느 언어가 기본인지, 같은 언어 판이 있는지) —
+    page_advice 는 한 장씩이라 같은 말을 못 한다. 지연 import: collect_crawl 이 scoring 을,
+    scoring 이 brief 를 부른다."""
+    import collect_crawl
+    return kind in SITE_ONLY_ISSUES or kind in collect_crawl.INTL_KINDS
+
+
 def _ms(v) -> str:
     return f"{v / 1000:.1f}초" if isinstance(v, (int, float)) else "—"
 
@@ -1904,7 +1914,7 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
         return []
     L = []
     rows = [r for r in ((ctx.get("crawl") or {}).get("issues") or [])
-            if r.get("url") == url and r.get("kind") in SITE_ONLY_ISSUES]
+            if r.get("url") == url and _site_only(r.get("kind"))]
     if rows:
         # 갈래 이름표는 페이로드에서 온다(정본: collect_crawl.ISSUE_KIND) — 여기서
         # 한국어 사본을 만들면 화면과 두 벌이 된다.

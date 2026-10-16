@@ -2934,6 +2934,32 @@ const stIxStop = () => null, stBlocked = () => 0;
         f"심각한 갈래가 있는데 띠가 그것을 말하지 않는다 — 많은 쪽을 골랐다: {p['msg']}")
 
 
+def test_seam_crawl_intl_kinds_one_table():
+    """다국어 갈래(collect_crawl.INTL_KINDS)도 이름표·심각도 한 벌을 화면과 요청문이 같이 본다.
+
+    만드는 쪽은 collect_crawl.intl_issues, 말하는 쪽은 둘이다 — 화면(site.html 의 CR_KIND =
+    d.crawl_kinds)과 요청문(brief._site_facts 가 고르는 SITE_ONLY 갈래). 갈래를 하나 더해도
+    양쪽이 새 갈래를 자동으로 덮어야 한다: 화면에 이름표 사본이 생기거나 요청문이 갈래 이름을
+    손으로 옮겨 적으면, 다음 갈래는 영어 kind 로 새거나 요청문에서 조용히 빠진다.
+    """
+    import brief
+    import collect_crawl
+    K = collect_crawl.INTL_KINDS
+    assert K and all(k in collect_crawl.ISSUE_KIND and k in collect_crawl.SEVERITY for k in K), K
+    site = (ROOT / "skills" / "capture" / "templates" / "views" / "site.html").read_text("utf-8")
+    src = (SCRIPTS / "brief.py").read_text("utf-8")
+    for k in K:
+        lab = collect_crawl.ISSUE_KIND[k][0]
+        assert lab not in site, f"site.html 에 다국어 갈래 이름표 사본이 있다: {lab}"
+        assert k not in src and lab not in src, f"brief.py 가 다국어 갈래 {k} 를 손으로 옮겨 적었다"
+        # 요청문이 실제로 그 주소의 다국어 문제를 싣는다 — 이름표는 페이로드(crawl_kinds)에서
+        ctx = {"crawl": {"issues": [{"kind": k, "url": "https://m.kr/en/x",
+                                     "severity": collect_crawl.SEVERITY[k], "detail": "세부"}]},
+               "crawl_kinds": collect_crawl.ISSUE_KIND}
+        got = "\n".join(brief._site_facts(ctx, "https://m.kr/en/x"))
+        assert lab in got and k not in got, f"요청문이 {k} 를 안 싣거나 영어 kind 로 낸다:\n{got}"
+
+
 def test_seam_competitors_counts_rivals_from_gap_rows_too():
     """경쟁 분석 띠의 경쟁사 수는 몫(comp_metrics)과 격차(kw_gap)의 도메인을 합쳐 센다.
 
