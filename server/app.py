@@ -819,7 +819,7 @@ def api_ai_prompts_edit(b: dict = Depends(_body), project: str = Depends(_projec
     """질문 고치기·켜기·끄기·지우기·직접 추가.
 
     모델이 지은 질문은 초안이다 — 우리 업종과 상관없는 게 섞이고, 정작 물어야 할
-    질문이 빠진다. 그걸 사람이 손볼 데가 없으면 [AI 인용] 화면의 수치는 엉뚱한
+    질문이 빠진다. 그걸 사람이 손볼 데가 없으면 [AI 인용·요약] 화면의 수치는 엉뚱한
     질문의 성적표가 된다. 어느 op 든 돌려주는 건 목록 한 벌이다(화면은 다시 그린다).
     """
     op = str(b.get("op") or "")
@@ -1081,69 +1081,10 @@ def api_perf(project: str, t=Depends(TENANT_Q)):
     return exports.perf(project)
 
 
-@app.get("/api/keywords")
-def api_keywords(project: str, status: str = "candidate", c=Depends(BRAIN_Q)):
-    """추적 중(active)이거나 후보(candidate)인 키워드.
-
-    후보는 자동완성에서 캔 것이라 관련성이 확인되지 않았다 — 자동 활성화는 서치콘솔에
-    노출된 것만 켠다. 나머지는 사람이 보고 골라야 해서 이 목록이 필요하다.
-    """
-    pid = db.get_project(c, project)["id"]
-    # 줄마다 노출 많은 나라 둘 — 검색어가 어느 나라에서 보이는지(서치콘솔 나라 분해)
-    kc = scoring.kw_countries(c, pid, top=2)
-    # 후보는 시장마다 상위 200개 — 사이트 전체 상위 500개면 큰 시장이 자리를 다 먹어 작은
-    # 시장 탭이 비었다(db.list_keywords per_market). 추적 중은 한도 안이라 전부 준다.
-    active = status == "active"
-    per_market = None if active else 200
-    rows = db.list_keywords(c, pid, active=active, limit=5000, per_market=per_market)
-    return {"keywords": [{**{k: r[k] for k in r.keys() if k != "rn"},
-                          "countries": kc.get(r["keyword"], [])} for r in rows],
-            "active_total": db.count_active_keywords(c, pid),
-            "per_market": per_market,      # 후보는 시장마다 이만큼까지만 싣는다 — 화면이 「200+」로 말한다
-            # 시장마다 추적 중인 수와 그 시장 상한(시장 하나에 SEOMINER_MAX_KEYWORDS 개, db.market_caps)
-            "markets": db.active_by_market(c, pid, settings.count("SEOMINER_MAX_KEYWORDS")),
-            # 사이트 전체 상한 = 시장 수 × 시장 하나의 상한(db.site_keyword_cap)
-            "limit": db.site_keyword_cap(c, pid, settings.count("SEOMINER_MAX_KEYWORDS"))}
-
-
-@app.post("/api/keywords")
-def api_keywords_set(b: dict = Depends(_body), project: str = Depends(_project_b),
-                     c=Depends(BRAIN_B)):
-    """고른 키워드를 추적 세트에 넣거나 뺀다. 상한(limit)을 넘겨 켜지 않는다 —
-    SERP 는 키워드당 과금이라 여기서 새면 비용이 샌다."""
-    try:      # 화면이 보내는 값이다 — 숫자가 아닌 게 오면 500 이 아니라 400 이다
-        ids = [int(x) for x in (b.get("ids") or [])][:500]
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
-    on = bool(b.get("active"))
-    if not ids:
-        raise HTTPException(status_code=400, detail="추가하거나 해제할 키워드를 먼저 고르세요.")
-    pid = db.get_project(c, project)["id"]
-    if b.get("locale"):
-        # 시장 옮기기 — 판정이 틀린 검색어를 사람이 바로잡는다(db.move_keywords_market).
-        try:
-            moved = db.move_keywords_market(c, pid, ids, str(b["locale"]),
-                                            settings.count("SEOMINER_MAX_KEYWORDS"))
-        except ValueError as e:
-            raise HTTPException(status_code=409, detail=str(e))
-        c.commit()
-        return {"ok": True, "moved": moved,
-                "active_total": db.count_active_keywords(c, pid)}
-    if on:
-        # 상한은 시장마다다(db.market_caps — 시장 하나에 SEOMINER_MAX_KEYWORDS 개). 총량 하나로
-        # 막으면 한 시장이 다 먹은 뒤 다른 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).
-        each = settings.count("SEOMINER_MAX_KEYWORDS")
-        ids = db.fit_market_caps(c, pid, ids, each)
-        if not ids:
-            full = [m["label"] for m in db.active_by_market(c, pid, each)
-                    if m["market"] and m["active"] >= m["limit"]]
-            raise HTTPException(
-                status_code=409,
-                detail=f"{', '.join(full) or '고른 키워드의 시장'} 추적 키워드가 시장 한도 {each}개를 "
-                       "채웠습니다. [추적 중] 탭에서 그 시장 키워드를 몇 개 해제한 뒤 다시 추가하세요.")
-    changed = db.set_keywords_active(c, pid, ids, on)
-    return {"ok": True, "changed": changed,
-            "active_total": db.count_active_keywords(c, pid)}
+# /api/keywords(추적할 검색어)는 두 배포 공통 표(dashboard.ROUTES)로 아래 _shared_route 가 세운다
+# — 본체는 dashboard.keywords_read_route/keywords_write_route 한 벌이고, 시장 상한은
+# db.keywords_per_market()(SEOMINER_MAX_KEYWORDS)이다. 예전엔 여기 손으로 짠 판이 있어 로컬
+# 대시보드에는 이 경로가 없었다(편집기가 웹 전용이었다, 2026-10-16 A안에서 합침).
 
 
 @app.get("/api/run/status")
@@ -1614,6 +1555,8 @@ def _shared_route(method: str, path: str) -> None:
                 return dashboard.ROUTES[key](project, {}, body)
             except LookupError as e:
                 raise HTTPException(status_code=404, detail=str(e))
+            except dashboard.Conflict as e:     # 시장 한도가 찼다 등 — 로컬 Handler 와 같은 409
+                raise HTTPException(status_code=409, detail=str(e))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=_BAD_VALUE.get(path, str(e)))
     else:   # 로컬 Handler 는 do_GET/do_POST 뿐이다 — 다른 메서드는 표에 있을 수 없다

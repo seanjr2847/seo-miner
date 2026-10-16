@@ -1644,7 +1644,7 @@ def test_group_status_line_is_not_failure_colour():
 
 
 def test_aio_detail_reads_when_cited_domains_are_missing():
-    """[AI 인용]의 구글 AI 요약 줄을 펼쳤을 때 — 인용 도메인이 비면(요약은 떴는데 못 읽었다,
+    """[AI 인용·요약]의 구글 AI 요약 줄을 펼쳤을 때 — 인용 도메인이 비면(요약은 떴는데 못 읽었다,
     db.write_rank_snapshot 의 불변식) "요약이 대신 인용한 곳 인용 도메인을 못 읽었습니다"처럼
     제목에 문장이 이어 붙으면 안 된다. 함수를 node 로 그대로 돌려 본다."""
     import shutil

@@ -3366,7 +3366,7 @@ def test_tracked_keyword_markets_operators_rank_and_move():
 def test_make_prompts_command_goes_to_the_server_for_web_sites():
     """`/capture add {P} {시장}` 이 웹 사이트면 질문을 서버에 짓게 한다(웹 [질문 만들기]와 같은 라우트).
 
-    [AI 인용]이 웹에서도 이 명령 칩을 내면서(2026-10-15) 웹 사이트 이름으로 치는 길이 생겼다.
+    [AI 인용·요약]이 웹에서도 이 명령 칩을 내면서(2026-10-15) 웹 사이트 이름으로 치는 길이 생겼다.
     로컬에서 지으면 질문이 이 PC 사본에만 들어가 서버의 인용 확인은 끝내 안 묻는다.
     """
     import gen_prompts

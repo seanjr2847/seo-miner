@@ -219,7 +219,7 @@
 <script>
 "use strict";
 /* 이 화면이 쓰는 건 d.ranks / d.rank_date / d.rank_prev 뿐이다. 순위만 본다 — 같은 조회가
-   걷어 오는 구글 AI 요약(aio·aio_gap·aio_play)은 [AI 인용] 화면(ai.html 의 #ai-aio)이
+   걷어 오는 구글 AI 요약(aio·aio_gap·aio_play)은 [AI 인용·요약] 화면(ai.html 의 #ai-aio)이
    그린다: 메뉴의 묶음이 [AI 노출]이고, 사용자가 AI 요약을 찾는 자리가 거기다.
    직전 순위는 지어낸 값이 아니라 역산이다 — 서버(scoring.rank_delta)가 보낸
    Δ가 "이전 − 지금"이라 이전 = 지금 + Δ 로 정확히 되돌아온다.
@@ -247,12 +247,12 @@ const RK_setup = (primary = true) => RK_hasSetup()
   ? `<button class="go${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('settings')"
       >순위 제공자 연결</button>`
   : "";
-// 다른 화면으로 보내는 버튼 — 대괄호 링크(`[키워드]`)는 눌러도 되는 것처럼
+// 다른 화면으로 보내는 버튼 — 대괄호 링크(`[순위 상승 기회]`)는 눌러도 되는 것처럼
 // 안 보였다. 그 화면이 없는 배포(박제본)에서는 아무것도 안 낸다. 추적 검색어가
 // 0개면 이 버튼이 이 화면의 주요 행동이다(primary) — 조회할 대상이 없는데
 // [순위 확인]을 초록으로 세우면 눌러도 되는 게 없다.
-// 가는 곳은 [키워드 관리]다 — 추적을 켜고 끄는 편집기가 2026-10-16 [키워드]에서 그리로
-// 옮겼다. [키워드]로 보내면 거기엔 이음 한 줄만 남아 한 번 더 눌러야 했다.
+// 가는 곳은 [키워드 관리]다 — 추적을 켜고 끄는 편집기가 2026-10-16 [순위 상승 기회]에서 그리로
+// 옮겼다. [순위 상승 기회]로 보내면 거기엔 이음 한 줄만 남아 한 번 더 눌러야 했다.
 const RK_goKw = (primary = false) => window.SM && SM.at("kwmanage") >= 0
   ? `<button class="go sm${primary ? "" : " sec"}" onclick="SM.touched=true;SM.show('kwmanage')"
       >키워드 관리 열기</button>` : "";
@@ -497,7 +497,7 @@ function RK_cover(d, c, capped) {
     <div class="rk-avg"><b>${c.avg != null ? c.avg : "—"}</b><span>${c.avg != null ? "위" : ""}</span></div>
     <div class="rk-avgd">${pill}</div>
     <div class="rk-ring">${ring}<p>확인한 <b>${RK_ROWS.length}</b>개 / 추적 <b>${num(tracked)}</b>개${
-      capped ? `<br>나머지 ${num(tracked - RK_ROWS.length)}개는 키워드 화면에 있습니다.` : ""}</p></div>
+      capped ? `<br>나머지 ${num(tracked - RK_ROWS.length)}개는 [키워드 관리] 화면에 있습니다.` : ""}</p></div>
   </div>`;
 }
 
@@ -817,7 +817,7 @@ VIEW("rank", function (d) {
     if (!d.kw_active) {
       RK_next("");   // 카드가 같은 말과 같은 버튼을 든다 — 띠를 따로 세우지 않는다
       $("ranks").innerHTML += emptyCard(`<b>추적 중인 키워드가 없습니다</b>
-        <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다. 순위 확인은
+        <p>서치콘솔이 준 평균 순위는 [순위 상승 기회] 화면에 이미 있습니다. 순위 확인은
           추적할 검색어를 정한 뒤의 일입니다.</p>
         <div class="acts">${RK_goKw(true)}</div>`);
       return;
@@ -834,7 +834,7 @@ VIEW("rank", function (d) {
     const nextBtn = run ? RK_act("rank", RK_run("rank")) : (RK_setup() || RK_act("rank", "순위 확인"));
     $("ranks").innerHTML += emptyCard(`
       <b>${run ? "이번 조회에서 잡힌 순위가 없습니다" : "순위를 아직 확인하지 않았습니다"}</b>
-      <p>서치콘솔이 준 평균 순위는 키워드 화면에 이미 있습니다.
+      <p>서치콘솔이 준 평균 순위는 [순위 상승 기회] 화면에 이미 있습니다.
         ${live(costLine)}</p>
       <div class="acts">${nextBtn}${RK_goKw()}</div>`);
     return;

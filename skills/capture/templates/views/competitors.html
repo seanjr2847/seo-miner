@@ -9,7 +9,7 @@
      무엇부터 따라잡을까? 그래서 12열 카드 격자다 — 위는 등수(몫 순위표)와 뺏긴 검색어의
      종류(도넛), 그 아래가 이 화면의 힘 카드인 점수순 격차 큐, 맨 아래가 보조 두 장. -->
 <script type="application/json" class="view-def">
-{"id": "competitors", "group": "compete", "title": "경쟁 분석",
+{"id": "competitors", "group": "compete", "title": "경쟁 검색어",
  "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"], "head": ["competitors"]}
 </script>
 
@@ -787,7 +787,7 @@ function CP_nextStep(d) {
   CP_TOP = top ? top.keyword : "";
   /* 이 버튼은 [키워드 관리] 화면으로 **옮기기만** 한다 — 후보를 켜는 것은 그 화면의 일이다.
      여태 라벨이 「추적에 넣기」라 누르면 추적에 들어간 줄 알았고, 실제로는 아무것도
-     안 들어갔다. 라벨을 하는 일에 맞춘다. 2026-10-16 후보 편집기가 [키워드]에서
+     안 들어갔다. 라벨을 하는 일에 맞춘다. 2026-10-16 후보 편집기가 [순위 상승 기회]에서
      [키워드 관리]로 옮겨 가는 곳도 따라 옮겼다. */
   const jump = SM.at("kwmanage") >= 0
     ? `<button type="button" class="go sec"
@@ -877,7 +877,7 @@ VIEW("competitors", function (d) {
     : "점수가 높은 것부터 놓았습니다." +
       CP_tip("점수 순은 검색량 순서와 다릅니다. 경쟁사가 잡은 검색어는 같은 수집에서 " +
              "후보로 이미 들어가 있고(이미 추적 중이거나 구글 실적에 잡힌 것은 빠집니다), " +
-             "켜는 자리는 키워드 화면의 후보 탭입니다.");
+             "켜는 자리는 [키워드 관리] 화면의 후보 탭입니다.");
   $("cp-gap-h").textContent = CP_title();
   $("cp-chips").innerHTML = d.gap_date ? CP_chips(d) : "";
   $("cp-gaps").innerHTML = d.gap_date ? CP_gapRows(d)

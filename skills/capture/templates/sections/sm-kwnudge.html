@@ -1,0 +1,22 @@
+<script type="application/json" class="section-def">
+{"id": "sm-kwnudge", "view": "overview", "after": "band"}
+</script>
+<!-- 키워드 관리 화면에서 손볼 것이 있을 때만 [개요]에 서는 한 줄. 채우는 것은 sm-kw.html 의 kwNudge
+     (kwLoad 가 이미 받아 온 시장별 추적 수·한도로 — 요청을 더 하지 않는다).
+
+     2026-10-16 [키워드 관리]를 [순위 상승 기회]에서 떼어 검색 성과 묶음 끝에 두었다 — 그 화면의
+     [이 묶음 다시 재기]가 곧 "바꾼 목록으로 다시 재기"라서다. 그런데 거기 두면 시장이 비었거나
+     (스페인 구글 0/100) 한도를 넘은 것(미국 구글 144/100)을 할 일로 보지 못한다. 화면은 재는
+     묶음 곁에 두고, 손댈 것이 생겼을 때만 할 일 쪽에서 끌어온다. 없으면 숨는다. -->
+<style>
+#view-overview #sm-kwnudge { display:flex; align-items:center; gap:8px 16px; flex-wrap:wrap;
+  margin:var(--sp-4) 0 0; padding:12px 16px; }
+#view-overview #sm-kwnudge[hidden] { display:none; }
+#view-overview #sm-kwnudge p { flex:1 1 280px; margin:0; font-size:var(--fs-1); line-height:1.5; }
+#view-overview #sm-kwnudge p b { color:var(--ink); }
+#view-overview #sm-kwnudge .warn { color:var(--warn); }
+</style>
+<section id="sm-kwnudge" class="card" hidden>
+  <p></p>
+  <button type="button" class="go sm sec" onclick="SM.touched=true;SM.show('kwmanage')">키워드 관리 열기</button>
+</section>

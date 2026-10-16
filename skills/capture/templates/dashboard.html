@@ -508,7 +508,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 .next .acts .cmd:not(.sec).copied::after { color:var(--accent-ink); }
 /* 화면에서는 띠가 본문 사이에 서지 않고 **우하단 알림 카드**로 뜬다 — 진행 배너와 지표 사이에
    한 줄을 더 끼우면 화면 머리가 띠 세 겹으로 읽혔다. 닫으면(✕) 같은 문장인 동안 그 사이트·
-   화면에선 다시 안 뜬다(nextStep 의 nxGone). [안내]는 띠가 화면 본문(현재 단계 카드)이라
+   화면에선 다시 안 뜬다(nextStep 의 nxGone). [진행 안내]는 띠가 화면 본문(현재 단계 카드)이라
    제자리에 둔다. 종이(print)는 위 인쇄 규칙대로 문장만 제자리에 남는다. */
 @media screen {
   .view:not(#view-guide) > .next { position:fixed; right:var(--sp-4); bottom:var(--sp-4); z-index:55;
@@ -1658,7 +1658,7 @@ const SM = {
 
   at(id) { return this.views.findIndex(v => v.id === id); },
 
-  // 이 배포에 없는 화면을 뺀다 — 호스팅의 [설정], 박제본의 [설정]·[안내].
+  // 이 배포에 없는 화면을 뺀다 — 호스팅의 [설정], 박제본의 [설정]·[진행 안내].
   drop(id) {
     const i = this.at(id);
     if (i < 0) return;
@@ -1681,7 +1681,7 @@ const SM = {
 
   show(id) {
     // 이 배포에 없는 화면으로 보내면 여태 조용히 아무 일도 안 일어났다 — 누른
-    // 사람에게는 버튼이 고장 난 것으로 읽힌다. 박제본에서 [설정]·[안내] 로 가는
+    // 사람에게는 버튼이 고장 난 것으로 읽힌다. 박제본에서 [설정]·[진행 안내] 로 가는
     // 링크가 정확히 그랬다. 왜 안 가는지 말한다. 첫 적재(cur 가 아직 빈 때)는
     // 사용자가 누른 것이 아니므로 말하지 않는다.
     if (id !== this.cur && this.drawer) this.drawer.close();   // 화면을 옮기면 공용 서랍은 닫힌다
@@ -2315,7 +2315,7 @@ window.stageName = id => {
 /* ── 이 단계의 마지막 런이 실패했나 ────────────────────────────────────────
    유료 단계는 키·잔액 때문에 통째로 실패하고도 화면에는 "아직 안 했음"으로만
    보였다 — 자동 런 3회가 `errors=100` 만 남기고 죽었는데 화면이 아무 말도 안 한
-   사고가 그것이다(docs/adr/0002). 그 뒤로 [기록]이 판정을 갖고, [백링크]·[경쟁 분석]
+   사고가 그것이다(docs/adr/0002). 그 뒤로 [기록]이 판정을 갖고, [백링크]·[경쟁 검색어]
    이 그중 "실패했나" 한 줄씩을 축약 복사해 들고 있었다 — 사본 셋이다.
 
    여기서 새 사실을 만들지 않는다. Brain 이 남긴 흔적만 읽는다: 중단은 db.run
@@ -2374,7 +2374,7 @@ function dimHead(only) {
     // 한 단계를 띠가 주요로도 보조로도 들고 있으면 주요가 이긴다 — 뺀 것을 다시
     // 흐리게 칠할 일이 없게 faded 에서 taken 을 덜어 낸다.
     const taken = at(false), faded = at(true);
-    // [안내]의 단계 목록(.stp)은 6단계 전부를 보여주는 표다 — 항목을 지우면 "그
+    // [진행 안내]의 단계 목록(.stp)은 6단계 전부를 보여주는 표다 — 항목을 지우면 "그
     // 단계가 없어졌다"로 읽힌다(목록에서 빼지 않는다는 약속). 그래서 거기는
     // 예전 그대로 흐리게만 한다: 주요 중복은 뺀다, 보조 중복은 흐린다.
     box.querySelectorAll(".stp [data-run]").forEach(b => {
@@ -2385,7 +2385,7 @@ function dimHead(only) {
     // 화면 제목 옆 칩(.vh-cmd, 호스팅의 .sm-refresh 도 이 클래스를 함께 단다)은
     // 그 화면에 하나뿐이고, 바로 아래 띠가 이미 같은 단계를 들고 있으면(주요든
     // 보조든) 손 닿는 자리가 코앞에 있으니 머리에 또 세우지 않는다 — 흐리게 두면
-    // "머리에도 있고 띠에도 있다"로 읽힌다(블랙박스: [키워드] 화면에서 "기회 다시
+    // "머리에도 있고 띠에도 있다"로 읽힌다(블랙박스: [순위 상승 기회] 화면에서 "기회 다시
     // 분석"이 머리와 띠에 같이 떴다). 표식은 같다: data-run 이 "이 버튼을 누르면
     // 이 단계가 돈다"는 뜻이고, 안내 칩에는 서버가 runnable 이라고 한 줄에만 붙는다
     // (질문 0건이면 ai 단계의 명령이 /capture add 다).
@@ -2434,7 +2434,7 @@ const pageTable = rows => !rows || !rows.length ? "" :
    </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
-// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용]의 추출성, audit.extract_advice).
+// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용·요약]의 추출성, audit.extract_advice).
 // 여기서 고르지 않는다: 셸은 어느 화면에서 불렸는지 모른다.
 const pageFix = (audit, url, extra) => {
   if (!audit)
@@ -2718,7 +2718,7 @@ function oppIndex(opps) {
   }
   // 대표(oppOf)는 열린 기회가 먼저다, 그다음 점수. 점수만 보면 끝난 기회가 같은 검색어의 열린
   // 기회를 가렸다: 'syringomas vs milia' 줄이 완료된 #201(66점)을 들고 서서, 같은 검색어의 관찰
-  // 중인 열린 기회 둘(65.5점)이 거르개에 안 걸렸다 — 이미 고친 검색어가 [키워드]의 할 일
+  // 중인 열린 기회 둘(65.5점)이 거르개에 안 걸렸다 — 이미 고친 검색어가 [순위 상승 기회]의 할 일
   // 목록에 「완료」로 계속 섰다. 열린 것이 없으면 예전처럼 점수 1등(닫힌 것)이 대표다.
   const open = o => window.OPP_ST_GROUP.open.includes(o.status);
   for (const k in OPP_INDEX)
@@ -2999,7 +2999,7 @@ document.addEventListener("sm:site", () => {
 
 // 글자로만 "[개요]에서" 라고 말하던 자리를 실제로 눌리게 한다. 화면 이름은
 // SM.views(=view-def)의 정본에서 읽는다 — 라벨을 두 벌로 만들지 않는다.
-// 그 배포에 없는 화면(호스팅의 [설정], 박제본의 [안내])이면 글자로 물러선다.
+// 그 배포에 없는 화면(호스팅의 [설정], 박제본의 [진행 안내])이면 글자로 물러선다.
 window.go = (id, label) => {
   // 이름은 매니페스트(window.__VIEWS__)에서 읽는다 — SM.views 는 이 배포에서 뺀
   // 화면이 이미 빠져 있어서, 거기서 찾으면 없는 화면이 영문 id 로 찍힌다.
@@ -3632,7 +3632,7 @@ const table = (heads, rows, empty, cls) => {
     const tb = document.createElement("template");
     tb.innerHTML = `<table><tbody>${body}</tbody></table>`;
     const tbody = tb.content.querySelector("tbody");
-    // 열 번호는 칸 수가 아니라 colspan 을 더해 센다 — 칸을 합친 줄([AI 인용] 시장별의
+    // 열 번호는 칸 수가 아니라 colspan 을 더해 센다 — 칸을 합친 줄([AI 인용·요약] 시장별의
     // "질문이 없어…" 줄)에서 뒤 칸이 한 열씩 당겨져 [질문 만들기] 칸이 "언급률"로 붙었다.
     [...tbody.rows].filter(tr => !tr.classList.contains("exp")).forEach(tr => {
       let col = 0;
@@ -3750,7 +3750,7 @@ function renderGuide(d) {
           ? ` <code>${esc(steps[here].cmd)}</code>` : "");
     banSync();          // 이제 배너에 할 말이 생겼다
   }
-  // 아직 한 바퀴도 안 돈 프로젝트면 [안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
+  // 아직 한 바퀴도 안 돈 프로젝트면 [진행 안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
   // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
   if (here !== -1 && !(d.progress || {}).gsc_days) SM.land("guide", 2);
   // 이 함수가 방금 새로 그린 자리에도 대체 문구를 입힌다. render() 끝에서도 한 번
@@ -4133,7 +4133,7 @@ SM.repaint = () => { if (LAST_D) render(LAST_D); };
 /* ── 묶음 머리줄 · 이 묶음 다시 재기 ─────────────────────────────────────
    묶음(run_all.GROUPS)은 메뉴의 제목이자 다시 재는 단위다. 잴 단계가 있는 묶음의
    화면마다 제목 아래 한 줄을 세운다: 단계별 마지막으로 잰 날(d.groups[].last — 서버가
-   runs 에서 성공한 런만 골라 준다) + [이 묶음 다시 재기]. 전체 재기는 [안내] 화면
+   runs 에서 성공한 런만 골라 준다) + [이 묶음 다시 재기]. 전체 재기는 [진행 안내] 화면
    한 곳에만 선다(묶음 다섯을 한 번에 부른다 — 본문에 groups 를 안 싣는다).
 
    누르는 것은 두 배포에서 같은 요청이다: POST /api/run {project, groups}. 로컬은 이
@@ -4361,7 +4361,7 @@ function banSync() {
   const nx = $("nx");
   // 이 배너가 얹힌 화면에 행동 띠가 있으면 "지금 할 것" 줄을 뺀다. 띠는 이 화면에서
   // 무엇을 누르라고 말하고, 이 줄은 파이프라인 전체가 어디쯤인지를 말한다 — 나란히
-  // 세우면 한 화면에 다음 행동이 둘이 된다. 그 안내를 통째로 갖는 화면은 [안내]다.
+  // 세우면 한 화면에 다음 행동이 둘이 된다. 그 안내를 통째로 갖는 화면은 [진행 안내]다.
   const host = b.closest(".view");
   if (nx) nx.hidden = !!(host && host.querySelector(":scope > .next"));
   // 막는 항목이 있을 때만 상자로 선다. 준비물이 다 됐는데 상자가 첫 화면을 먹으면
@@ -4459,7 +4459,7 @@ async function loadDoctor() {
       h += `<details><summary>더 켤 수 있는 기능 ${d.extra.length}개 보기</summary>
         <ul>${d.extra.map(s => `<li>${esc(s)}</li>`).join("")}</ul></details>`;
     // 사이트가 없으면 render() 가 아예 안 돈다(부를 /api/data 가 없다) — 그래서
-    // 여태 [안내] 화면이 **첫 사용자에게만** 통째로 비어 있었다. 제목만 있고 6단계가
+    // 여태 [진행 안내] 화면이 **첫 사용자에게만** 통째로 비어 있었다. 제목만 있고 6단계가
     // 없는 화면이 정확히 이 경우였다. doctor 도 같은 guide 를 실어 보내므로 여기서
     // 그린다. docban 을 쓰기 **전에** 부른다 — #nx 가 아직 없어 배너를 안 건드린다
     // (배너는 이 상태에서 [설정]의 사이트 등록 칸을 가리키는 쪽이 더 구체적이다).
@@ -4978,6 +4978,7 @@ if (window.__SNAPSHOT__) {
   SM.drop("guide");
   SM.drop("triage");                     // 판정은 서버가 저장한다 — 종이에서는 누를 수 없다
   SM.drop("kwmanage");                   // 추적을 켜고 끄는 화면이다 — 종이에서는 바꿀 수 없다
+  if ($("sm-kwnudge")) $("sm-kwnudge").remove();   // [개요]의 그 화면으로 가는 알림도 같이 뺀다
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
   if (s.actions.length) {
     $("acts").hidden = false;

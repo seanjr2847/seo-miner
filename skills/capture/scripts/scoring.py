@@ -4202,7 +4202,7 @@ def _ai_run_state(row) -> str:
 
 def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
                     now: str | None = None) -> dict:
-    """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용] 화면이 같이 쓴다.
+    """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용·요약] 화면이 같이 쓴다.
 
     반환:
       rows      [{id, prompt, category, gen_version, aim, locale, run_id, measured_at, state}]
@@ -4258,7 +4258,7 @@ def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
 
 
 def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
-    """[AI 인용] 화면의 "측정 안 됨·오래됨·구버전" 한 벌 — 페이로드용으로 접은 꼴.
+    """[AI 인용·요약] 화면의 "측정 안 됨·오래됨·구버전" 한 벌 — 페이로드용으로 접은 꼴.
 
     질문 문장은 앞 몇 개만 싣는다(화면이 "예:"로 보여 줄 만큼). 개수는 전부 센다.
     """
@@ -4664,7 +4664,7 @@ def gap_rival_set(conn: sqlite3.Connection, project_id: int) -> set[str]:
 
     keyword_gap 은 **그때의** 경쟁사로 캔 것이다. 판정이 나중에 판매 채널이라고 한 곳
     (gucci 의 lfmall)이나 표에서 지운 곳의 행이 최신 회차로 남아, 콘텐츠 공백 25건이 전부
-    "경쟁 도메인 lfmall.co.kr" 이었다. 읽는 쪽(기회·[경쟁 분석] 표)이 이걸로 거른다."""
+    "경쟁 도메인 lfmall.co.kr" 이었다. 읽는 쪽(기회·[경쟁 검색어] 표)이 이걸로 거른다."""
     row = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
     return {host_of(d) for d in rivals(conn, project_id, row[0] if row else "")[0]}
 
@@ -5363,7 +5363,7 @@ _KIND_SPECS = {
                          "별도 글 제안 — 표에 한 줄로만 남깁니다. 이 답에서 설계하지 않습니다"]))),
     # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
-    #    [AI 인용]·[경쟁 분석]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
+    #    [AI 인용·요약]·[경쟁 검색어]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
         see=("ai", "ai-miss-sec"),
         # "인용 없음"이었다 — 판정이 비율(ai_is_gap)이 된 뒤로 1/6 질문도 여기 선다.

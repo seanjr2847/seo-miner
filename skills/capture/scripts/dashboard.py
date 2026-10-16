@@ -47,14 +47,14 @@ import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼�
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
 
 TPL = Path(__file__).parent.parent / "templates"
-# 화면 순서 = 메뉴 순서. [안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
+# 화면 순서 = 메뉴 순서. [진행 안내]·[설정]은 여태 헤더 토글이 본문 위에 얹던 패널이었다
 # — 화면으로 세우면 열렸나 닫혔나 하는 상태가 없어지고, 설정이 데이터 위에 오지 않는다.
 # [심사]가 맨 앞이다 — 측정이 물어온 검색어를 가리는 일이 기회를 보는 일보다 앞선다
 # (docs/superpowers/specs/2026-09-08-keyword-triage-design.md).
 # 순서는 묶음(run_all.GROUPS) 순서를 따른다 — 할 일 · 검색 성과 · AI 노출 · 사이트 건강 ·
 # 경쟁·링크 · 관리. 메뉴가 묶음 이름을 화면이 바뀌는 자리에만 세우므로, 한 묶음의
 # 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
-# [키워드 관리](kwmanage)는 [키워드] 바로 뒤다 — 2026-10-16 그 화면 맨 아래의 추적 편집기를
+# [키워드 관리](kwmanage)는 [순위 상승 기회] 바로 뒤다 — 2026-10-16 그 화면 맨 아래의 추적 편집기를
 # 떼어 세웠다(views/kwmanage.html 머리말). 같은 묶음(검색 성과) 안이라 메뉴가 안 흩어진다.
 VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "ai", "site",
               "competitors", "backlinks", "history", "guide", "settings"]
@@ -163,8 +163,9 @@ def _assemble(variant: str = "local") -> bytes:
         i0 = len(pending)
         for s in list(pending):
             v = by_id[s["view"]]
-            if s["after"] in v["sections"]:
-                i = v["sections"].index(s["after"])
+            # after:"" 는 화면 맨 앞 — 원본 섹션이 없는 화면([키워드 관리])의 첫 섹션 자리다
+            if s["after"] == "" or s["after"] in v["sections"]:
+                i = v["sections"].index(s["after"]) if s["after"] else -1
                 v["sections"].insert(i + 1, s["id"])
                 pending.remove(s)
         if len(pending) == i0:
@@ -1264,18 +1265,29 @@ def _axis_crawl(conn, pid: int) -> dict:
     crawl = {}
     cr = conn.execute("SELECT * FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL"
                       " ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    intl = tuple(collect_crawl.INTL_KINDS)
+    marks = ",".join("?" * len(intl))
     if cr:
+        order = (" ORDER BY CASE severity WHEN 'bad' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, kind")
+        # 다국어 갈래는 줄 수를 따로 센다 — 한 표의 상한(500) 안에 섞으면 큰 다국어 사이트에서
+        # 번역 안 된 글자·새는 링크 줄이 기존 권고 갈래(설명 없음·H1 없음…)를 표 밖으로 밀어냈다
+        # (검토 2026-10-16). 화면은 둘을 다른 카드로 그린다([사이트 점검]의 크롤·다국어).
         crawl = {"run": dict(cr),
-                 "issues": q(conn, "SELECT * FROM crawl_issues WHERE run_id=?"
-                                   " ORDER BY CASE severity WHEN 'bad' THEN 0 WHEN 'warn' THEN 1"
-                                   " ELSE 2 END, kind LIMIT 500", (cr["id"],)),
+                 "issues": q(conn, f"SELECT * FROM crawl_issues WHERE run_id=? AND kind NOT IN ({marks})"
+                                   + order + " LIMIT 500", (cr["id"], *intl))
+                           + q(conn, f"SELECT * FROM crawl_issues WHERE run_id=? AND kind IN ({marks})"
+                                     + order + " LIMIT 300", (cr["id"], *intl)),
                  "counts": {r["kind"]: r["n"] for r in q(
                      conn, "SELECT kind, COUNT(*) n FROM crawl_issues WHERE run_id=? GROUP BY 1",
                      (cr["id"],))},
                  "compare": crawl_compare(conn, pid, cr["id"])}
     # 갈래 이름표는 만드는 쪽(collect_crawl)이 갖는다 — 화면 JS 안에 사본을 두면
     # 요청문은 그걸 못 읽어서 같은 갈래를 영어 kind 로 내보내게 된다.
-    return {"crawl": crawl, "crawl_kinds": collect_crawl.ISSUE_KIND}
+    # crawl_intl: 다국어 갈래 목록(정본 collect_crawl.INTL_KINDS)과 이 사이트가 다국어인지(시장의
+    # 언어가 둘 이상) — [사이트 점검]이 다국어 카드를 세울지·「이상 없음」이라고 말할지를 가른다.
+    langs = {serp_adapter.lang_of(loc) for loc in db.site_locales(conn, pid)}
+    return {"crawl": crawl, "crawl_kinds": collect_crawl.ISSUE_KIND,
+            "crawl_intl": {"kinds": list(intl), "multi": len(langs) >= 2}}
 
 
 def _crawl_inlinks(conn, crawl: dict, urls) -> dict:
@@ -1810,7 +1822,7 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "",
                                               vitals=(vitals or {}).get(a["url"]))
             # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
-            # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
+            # 진단표가 부푼다. 따로 싣고 [AI 인용·요약] 화면만 진단표에 넘긴다. 챗봇 기준이다:
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.
             a["extract_advice"] = scoring.extract_advice(a, "ai_citation_gap")
             page_audits[a["url"]] = a
@@ -2319,6 +2331,82 @@ def settings_read_route(project: str) -> dict:
     return _with_conn(read)
 
 
+class Conflict(ValueError):
+    """요청은 알아봤는데 지금 상태와 부딪친다(시장 한도가 찼다·사이트 시장이 아니다) — 409.
+    ValueError 를 잇는 것은 이것을 모르는 쪽이 적어도 400 으로는 옮기게 하려는 것이다."""
+
+
+# ── 추적할 검색어: GET·POST /api/keywords ─────────────────────────────────
+# 편집기(sections/sm-kw.html — [키워드 관리])가 두 배포에서 부른다. 예전엔 호스팅 서버에만
+# 이 경로가 있어 편집기가 웹 전용이었고, 로컬 사용자는 추적 목록을 채팅으로만 바꿨다
+# (2026-10-16 메뉴 A안: 로컬에서도 고친다). 시장 하나의 상한은 db.keywords_per_market() —
+# 호스팅은 SEOMINER_MAX_KEYWORDS 로 덮는다.
+def keywords_read_route(project: str, status: str = "candidate") -> dict:
+    """추적 중(active)이거나 후보(candidate)인 키워드 + 시장마다 추적 수·상한.
+
+    후보는 자동완성에서 캔 것이라 관련성이 확인되지 않았다 — 자동 활성화는 서치콘솔에
+    노출된 것만 켠다. 나머지는 사람이 보고 골라야 해서 이 목록이 필요하다."""
+    each = db.keywords_per_market()
+
+    def read(c):
+        pid = db.get_project(c, project)["id"]
+        # 줄마다 노출 많은 나라 둘 — 검색어가 어느 나라에서 보이는지(서치콘솔 나라 분해)
+        kc = scoring.kw_countries(c, pid, top=2)
+        # 후보는 시장마다 상위 200개 — 사이트 전체 상위 500개면 큰 시장이 자리를 다 먹어 작은
+        # 시장 탭이 비었다(db.list_keywords per_market). 추적 중은 한도 안이라 전부 준다.
+        active = status == "active"
+        per_market = None if active else 200
+        rows = db.list_keywords(c, pid, active=active, limit=5000, per_market=per_market)
+        return {"keywords": [{**{k: r[k] for k in r.keys() if k != "rn"},
+                              "countries": kc.get(r["keyword"], [])} for r in rows],
+                "active_total": db.count_active_keywords(c, pid),
+                "per_market": per_market,      # 후보는 시장마다 이만큼까지만 — 화면이 「200+」로 말한다
+                # 시장마다 추적 중인 수와 그 시장 상한(db.market_caps)
+                "markets": db.active_by_market(c, pid, each),
+                # 사이트 전체 상한 = 시장 수 × 시장 하나의 상한(db.site_keyword_cap)
+                "limit": db.site_keyword_cap(c, pid, each)}
+    return _with_conn(read)
+
+
+def keywords_write_route(body: dict) -> dict:
+    """고른 키워드를 추적 세트에 넣거나 빼고({active}), 시장을 옮긴다({locale}).
+    상한을 넘겨 켜지 않는다 — SERP 는 키워드당 과금이라 여기서 새면 비용이 샌다."""
+    project = str(body.get("project") or "")
+    try:      # 화면이 보내는 값이다 — 숫자가 아닌 게 오면 500 이 아니라 400 이다
+        ids = [int(x) for x in (body.get("ids") or [])][:500]
+    except (TypeError, ValueError):
+        raise ValueError("화면이 보낸 값을 알아볼 수 없습니다. 새로고침한 뒤 다시 시도하세요.")
+    if not ids:
+        raise ValueError("추가하거나 해제할 키워드를 먼저 고르세요.")
+    each = db.keywords_per_market()
+
+    def write(c):
+        pid = db.get_project(c, project)["id"]
+        if body.get("locale"):
+            # 시장 옮기기 — 판정이 틀린 검색어를 사람이 바로잡는다(db.move_keywords_market).
+            try:
+                moved = db.move_keywords_market(c, pid, ids, str(body["locale"]), each)
+            except ValueError as e:
+                raise Conflict(str(e))
+            c.commit()
+            return {"ok": True, "moved": moved, "active_total": db.count_active_keywords(c, pid)}
+        on = bool(body.get("active"))
+        sel = ids
+        if on:
+            # 상한은 시장마다다(db.market_caps). 총량 하나로 막으면 한 시장이 다 먹은 뒤 다른
+            # 시장은 한 개도 못 켰다(theotherskin 스페인어 0, 2026-10-14).
+            sel = db.fit_market_caps(c, pid, ids, each)
+            if not sel:
+                full = [m["label"] for m in db.active_by_market(c, pid, each)
+                        if m["market"] and m["active"] >= m["limit"]]
+                raise Conflict(f"{', '.join(full) or '고른 키워드의 시장'} 추적 키워드가 시장 한도 "
+                               f"{each}개를 채웠습니다. [추적 중] 탭에서 그 시장 키워드를 몇 개 해제한 "
+                               "뒤 다시 추가하세요.")
+        changed = db.set_keywords_active(c, pid, sel, on)
+        return {"ok": True, "changed": changed, "active_total": db.count_active_keywords(c, pid)}
+    return _with_conn(write)
+
+
 def settings_profile_route(body: dict) -> dict:
     """POST /api/settings 의 로컬 본체 — 사이트 프로필과 언어-지역(시장)을 받는다.
 
@@ -2547,6 +2635,11 @@ ROUTES = {
     # 부른다. 원격 사이트면 Handler 가 서버로 넘기고(서버에도 같은 경로가 있다), 이 PC 의
     # 사이트면 여기서 같은 한 벌(db.profile_read/save)로 답한다. 주기·GA4·언어 같은
     # 나머지 설정 칸은 호스팅 몫이라 여기서는 profile 만 받는다.
+    # 추적할 검색어 — [키워드 관리]의 편집기(sections/sm-kw.html)가 두 배포에서 부른다.
+    ("GET", "/api/keywords"):
+        lambda project, query, body: keywords_read_route(project, query.get("status") or "candidate"),
+    ("POST", "/api/keywords"):
+        lambda project, query, body: keywords_write_route(body),
     ("GET", "/api/settings"):
         lambda project, query, body: settings_read_route(project),
     ("POST", "/api/settings"):
@@ -2698,6 +2791,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 404)
         except LookupError as e:   # record_creation_route: 그 사이트 기회가 아니다
             return self._json({"error": str(e)}, 404)
+        except Conflict as e:      # 시장 한도가 찼다 등 — 호스팅과 같은 409
+            return self._json({"error": str(e)}, 409)
         except ValueError as e:
             return self._json({"error": str(e)}, 400)
 
@@ -2717,7 +2812,7 @@ def _selfcheck() -> None:
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
         # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 셸이 직접 그리는 화면
-        # ([안내]·[설정] — renderGuide/renderSetup)은 자기 선언에 그렇다고 적는다.
+        # ([진행 안내]·[설정] — renderGuide/renderSetup)은 자기 선언에 그렇다고 적는다.
         # 목록을 여기 또 두지 않으려고 뷰가 말하게 한다.
         if d.get("render") != "shell":
             assert f'VIEW("{d["id"]}"' in html, f'{d["id"]} 가 VIEW() 로 등록되지 않았다'
@@ -2754,7 +2849,8 @@ def _selfcheck() -> None:
     for s in secs:
         assert s.get("view") in base_sections, f"{s['id']} 가 없는 화면을 가리킨다: {s.get('view')}"
         assert s["id"] not in base_sections[s["view"]],             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
-        assert s.get("after") in base_sections[s["view"]] or s.get("after") in sec_ids,             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
+        assert (s.get("after") == "" or s.get("after") in base_sections[s["view"]]
+                or s.get("after") in sec_ids), f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
         if s.get("only") in (None, "hosted"):
             assert f'id="{s["id"]}"' in hosted_html, f"{s['id']} 가 hosted 조립에 안 낀다"
         if s.get("only") not in (None,):

@@ -3036,7 +3036,7 @@ assert set(_AI_VISIT_KINDS) <= set(scoring.ALL_KINDS)
 # 요청문이 "어디를 보라"고 가리키는 화면·섹션 이름. 정본은 뷰 쪽이다(view-def 의 title,
 # ai.html #ai-visits 의 h2) — 여기는 가리키기만 하고, test_seams 가 둘을 대조한다.
 # 화면 이름을 바꾸고 이쪽을 안 고치면 요청문이 없는 화면을 보라고 한다.
-SCREEN_TITLES = {"ai": "AI 인용", "rank": "순위 추적"}
+SCREEN_TITLES = {"ai": "AI 인용·요약", "rank": "순위 추적"}
 AI_VISITS_SECTION = ("ai-visits", "AI에서 온 방문")
 
 

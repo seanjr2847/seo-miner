@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI에 물어볼 질문 만들기 — [AI 인용] 화면이 비어 있던 진짜 이유.
+"""AI에 물어볼 질문 만들기 — [AI 인용·요약] 화면이 비어 있던 진짜 이유.
 
 `ai` 단계는 ai_prompts 를 재료로 돈다. 그런데 그 표를 채우는 코드가 이 리포에
 없었다 — 질문은 채팅(`/capture add`)에서 Claude 가 직접 INSERT 해 왔고, 대시보드
@@ -541,7 +541,7 @@ def retire_outdated(conn, project: str) -> int:
 def _remote(a) -> bool:
     """원격(웹) 사이트면 서버에 짓게 하고 참 — 웹 화면의 [질문 만들기]와 같은 라우트다.
 
-    [AI 인용]이 웹에서도 `/capture add {P} {시장}` 칩을 내면서(2026-10-15) 이 채팅에서 웹
+    [AI 인용·요약]이 웹에서도 `/capture add {P} {시장}` 칩을 내면서(2026-10-15) 이 채팅에서 웹
     사이트 이름으로 치는 길이 생겼다. 그대로 로컬에서 지으면 질문이 이 PC 사본에만 들어가
     서버의 인용 확인은 끝내 안 묻는다."""
     try:
@@ -553,7 +553,7 @@ def _remote(a) -> bool:
     if a.dry_run:
         # 조용히 로컬로 흘리면 사용자는 "초안만 봤다"고 믿는다(remote.dispatch 와 같은 이유)
         sys.exit("웹 사이트는 서버가 짓고 바로 심습니다 — dry-run 이 없습니다. "
-                 "지은 뒤 [AI 인용] 화면에서 고치거나 끄세요.")
+                 "지은 뒤 [AI 인용·요약] 화면에서 고치거나 끄세요.")
     body = {"project": a.project, "locale": a.locale or "", "replace": bool(a.replace)}
     if a.limit:
         body["limit"] = a.limit
@@ -563,7 +563,7 @@ def _remote(a) -> bool:
     if r.get("retired"):
         print(f"옛 판 질문 {r['retired']}개를 껐습니다 (지우지 않았습니다 — 인용 이력은 그대로).")
     print(f"\n질문 {r.get('added', 0)}개를 웹에 심었습니다({', '.join(r.get('locales') or [])}). "
-          f"인용 확인은 웹 [AI 인용]의 실행 버튼이나 `/capture ai {a.project}` 로 합니다.")
+          f"인용 확인은 웹 [AI 인용·요약]의 실행 버튼이나 `/capture ai {a.project}` 로 합니다.")
     return True
 
 

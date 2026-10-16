@@ -109,7 +109,7 @@ CONFIG: dict = {
         "serp_device": "desktop",
         # 콤마 구분 문자열이다 — 리스트가 아니다. collector.add_setting 의 type_fn 이
         # 스칼라만 다루기 때문. ""(빈 문자열)이면 분해 수집을 아예 하지 않는다.
-        "gsc_breakdown": "device,country",   # device|country — 둘 다 [분석] 화면이 쓴다
+        "gsc_breakdown": "device,country",   # device|country — 둘 다 [클릭 변화] 화면이 쓴다
         # /capture pages 가 한 번에 감사할 내 URL 수 (0이면 끔). 무료 HTTP 요청이라 기회에 걸린
         # 페이지 수(수십 곳)를 한 회차에 덮을 만큼 둔다 — 20 이면 고칠 페이지 절반이 빠졌다.
         "page_urls": 40,

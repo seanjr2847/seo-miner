@@ -4,7 +4,7 @@
 <script type="application/json" class="view-def">
 {"id": "site", "group": "site", "title": "사이트 점검",
  "sections": ["st-sum", "ix-donut", "kp-crawl", "kp-dev", "kp-vit", "kp-gseo",
-              "index", "crawl", "devgap", "vitals", "gseo",
+              "index", "crawl", "intl", "devgap", "vitals", "gseo",
               "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
  "stages": ["index", "crawl", "gsc", "vitals"]}
 </script>
@@ -330,6 +330,13 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
 .cr-diff > span + span.up { color:var(--warn); background:var(--warn-wash); }
 .cr-diff > span + span.ok { color:var(--accent); background:var(--accent-wash); }
 .cr-url { min-width:20ch; max-width:48ch; }
+/* 다국어 — 갈래마다 한 묶음(이름·심각도·건수 / 왜 / 걸린 자리 몇 줄). 묶음 사이는 옅은 선. */
+#view-site .in-k { padding:12px 0; border-top:1px solid var(--line); }
+#view-site .in-k:first-child { border-top:0; padding-top:0; }
+#view-site .in-h { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 4px; }
+#view-site .in-h .n { color:var(--sub); font-size:var(--fs-1); }
+#view-site .in-k .deta { margin:6px 0 0; }
+#view-site .in-k .cr-url { display:inline; overflow-wrap:anywhere; }
 .cr-new { display:inline-flex; align-items:center; height:24px; padding:0 8px;
   margin-left:var(--sp-2); border-radius:var(--r-pill); vertical-align:middle;
   font:600 var(--fs-1)/1 var(--sans); color:var(--warn); background:var(--warn-wash);
@@ -422,6 +429,18 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
     <p>사이트를 따라 돌며 링크와 페이지 상태를 전수로 본 결과입니다.
       <b>깨진 내부 링크·리다이렉트 사슬·고아 페이지는 한 장만 봐서는 안 나옵니다.</b>
       내 사이트만 두드리므로 비용이 없고, 고친 뒤 다시 크롤하면 해결된 것에 쌓입니다.</p></details>
+</section>
+
+<!-- 다국어 — 같은 크롤이 받은 HTML 로 언어 이음매를 본 결과(collect_crawl.intl_issues, 갈래 정본
+     INTL_KINDS). 크롤 표에 섞어 두면 「설명 없음」 옆에 남은 원문 글자 줄이 페이지마다 끼어 무엇이
+     언어 문제인지 안 갈렸다. 갈래마다 한 묶음 — 왜 문제인지 한 줄과 걸린 자리. 시장의 언어가
+     하나뿐인 사이트에는 이 카드가 없다(2026-10-16 메뉴 A안). -->
+<section id="intl-sec" class="card" hidden>
+  <div class="sh">
+    <h2>다국어</h2>
+    <p class="sub" id="intl-sub"></p>
+  </div>
+  <div id="intl"></div>
 </section>
 
 <section id="dev-sec" class="card">
@@ -625,7 +644,7 @@ function stSec(secId, n, of) {
    차례는 화면에 선 순서 그대로다 — 누르면 그 자리로 가므로 순서가 곧 스크롤 순서다. */
 // 라벨은 그 섹션이 세는 **문제**의 이름이다 — 섹션 제목을 옮겨 적으면 「페이지 실적
 // 0」처럼 실적이 0 이라는 말로 읽힌다(속도도 마찬가지라 「느림」으로 센다).
-const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["dev-sec", "모바일"],
+const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["intl-sec", "다국어"], ["dev-sec", "모바일"],
   ["vit-sec", "느림"], ["gseo-sec", "구글 SEO"], ["pgp-sec", "클릭 감소"], ["pgd-sec", "무노출"],
   ["pgs-sec", "링크 부족"], ["pgc-sec", "무전환"]];
 
@@ -688,9 +707,12 @@ let ST_LEAD = "";
 /* 크롤에서 가장 무거운 갈래 — 심각도 먼저, 같으면 많은 것. 개수는 counts(전수)에서,
    심각도는 줄(서버가 심각도 순으로 500줄까지 준다)에서 읽는다 — 잘려 나간 갈래는
    가장 가벼운 쪽이라 「참고」로 둔다. 이름표 정본은 d.crawl_kinds(collect_crawl.ISSUE_KIND). */
+// 다국어 갈래는 [다국어] 카드 몫이다 — 받은 d 만으로 가린다(이 둘은 떼어 내 따로 돌려 본다).
 function stCrawlTop(d) {
-  const c = d.crawl || {}, cnt = c.counts || {}, sev = {};
-  for (const r of c.issues || []) sev[r.kind] = sev[r.kind] || r.severity;
+  const intl = new Set(((d.crawl_intl || {}).kinds) || []);
+  const c = d.crawl || {}, sev = {};
+  const cnt = Object.fromEntries(Object.entries(c.counts || {}).filter(([k]) => !intl.has(k)));
+  for (const r of (c.issues || []).filter(x => !intl.has(x.kind))) sev[r.kind] = sev[r.kind] || r.severity;
   const rk = k => ({bad: 0, warn: 1}[sev[k]] ?? 2);
   const ks = Object.keys(cnt).sort((a, b) => rk(a) - rk(b) || cnt[b] - cnt[a]);
   const k = ks[0];
@@ -700,7 +722,8 @@ function stCrawlTop(d) {
 }
 function stPlan(d) {
   const crawled = !!((d.crawl || {}).run);
-  const crawlN = (((d.crawl || {}).issues) || []).length;
+  const intl = new Set(((d.crawl_intl || {}).kinds) || []);
+  const crawlN = (((d.crawl || {}).issues) || []).filter(r => !intl.has(r.kind)).length;
   const ix = d.index_issues || [];
   const blocked = stBlocked(d);
   const dev = (d.device_gap || []).length;
@@ -1609,7 +1632,13 @@ function CR_label(k) { return (CR_KIND[k] || [k])[0]; }
 // 이슈의 정체성은 (kind, url) 이다 — dashboard.crawl_compare 가 그렇게 짝을 짓는다.
 // 같은 URL 에 갈래가 여럿이라 URL 만으로는 눌린 행을 되찾지 못한다.
 const CR_key = r => r.kind + " " + (r.url || "");
-const CR_all = () => (((CR_D || {}).crawl || {}).issues) || [];
+// 다국어 갈래(d.crawl_intl.kinds — 정본 collect_crawl.INTL_KINDS)는 아래 [다국어] 카드가 그린다 —
+// 크롤 카드(표·칩·건수·상태판 줄)는 나머지만 센다. 두 카드가 같은 줄을 두 번 세지 않게.
+let CR_INTL = new Set();
+const CR_every = () => (((CR_D || {}).crawl || {}).issues) || [];
+const CR_all = () => CR_every().filter(r => !CR_INTL.has(r.kind));
+const CR_counts = d => Object.fromEntries(Object.entries(((d.crawl || {}).counts) || {})
+  .filter(([k]) => !CR_INTL.has(k)));
 const CR_picked = () => {
   const a = CR_all();
   return a.filter(r => (!CR_PICK || r.kind === CR_PICK) && stStOk(r.url || "", CR_ST));
@@ -1673,7 +1702,7 @@ function CR_detail(k) {
 }
 
 function CR_chips(d) {
-  const c = (d.crawl || {}).counts || {};
+  const c = CR_counts(d);
   const total = Object.values(c).reduce((a, b) => a + b, 0);
   if (!total) return "";
   const chip = (k, label, why, n) =>
@@ -1712,7 +1741,8 @@ function CR_diff(d) {
   if (!cmp.prev_run_id)
     return "<span class=\"muted\">첫 크롤입니다. 다음 크롤부터 " +
            "<b>지난번 대비 새로 깨진 것</b>을 여기에 적습니다.</span>";
-  const n = (cmp.new || []).length, f = cmp.fixed || [];
+  const own = a => (a || []).filter(x => !CR_INTL.has(x.kind));
+  const n = own(cmp.new).length, f = own(cmp.fixed);
   return `<span class="muted">직전 크롤 대비</span>` +
          `<span class="${n ? "up" : "muted"}">새로 생긴 것 <b>${n}</b>건</span>` +
          `<span class="${f.length ? "ok" : "muted"}">해결된 것 <b>${f.length}</b>건</span>` +
@@ -1725,14 +1755,15 @@ function stKpCrawl(d) {
   if (!c.run)
     return stKp(J, T, `<p class="kp-empty">아직 크롤하지 않았습니다. 사이트를 한 바퀴 돌면
       깨진 내부 링크와 고아 페이지가 나옵니다.</p>`);
-  const crn = CR_all().length, cmp = c.compare || {}, cnt = c.counts || {};
-  const nw = (cmp.new || []).length, fx = (cmp.fixed || []).length;
+  const crn = CR_all().length, cmp = c.compare || {}, cnt = CR_counts(d);
+  const nw = (cmp.new || []).filter(x => !CR_INTL.has(x.kind)).length,
+    fx = (cmp.fixed || []).filter(x => !CR_INTL.has(x.kind)).length;
   const pills = !crn ? `<span class="badge ok">걸린 것 없음</span>` : cmp.prev_run_id
     ? `<span class="badge ${nw ? "warn" : "muted"}">새로 생긴 ${num(nw)}건</span>`
       + `<span class="badge ${fx ? "ok" : "muted"}">해결 ${num(fx)}건</span>`
     : `<span class="badge muted">첫 크롤</span>`;
   const sev = {}, sc = {bad: 0, warn: 0, info: 0};
-  for (const r of c.issues || []) { sev[r.kind] = sev[r.kind] || r.severity; sc[r.severity] = (sc[r.severity] || 0) + 1; }
+  for (const r of CR_all()) { sev[r.kind] = sev[r.kind] || r.severity; sc[r.severity] = (sc[r.severity] || 0) + 1; }
   const top = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 3);
   const seg = ["bad", "warn", "info"].filter(k => sc[k]);
   const bars = seg.length ? `<div class="kpseg" role="img" aria-label="${esc(seg.map(k =>
@@ -1775,6 +1806,44 @@ function renderCrawl(d) {
     : `<div class="empty"><b>아직 크롤하지 않았습니다</b>
         <p>내 사이트만 두드리므로 비용이 없습니다.${live(" 한 바퀴 돌면 깨진 내부 링크와 고아 페이지가 나오고, 아래 [노출 없는 페이지]·[내부 링크 부족]도 함께 채워집니다.")}</p>
         ${stAct("crawl", stageName("crawl"))}</div>`;
+}
+
+/* ── 다국어 ──────────────────────────────────────────────
+   같은 크롤이 받은 HTML 로 언어 판 사이의 이음매를 본 것(갈래 정본 collect_crawl.INTL_KINDS,
+   이름표·이유는 d.crawl_kinds — 여기 이름을 적으면 사본이다, test_seams). 갈래마다 한 묶음으로
+   접는다 — 줄 단위 표로 펴면 같은 틀 문제가 페이지 수만큼 서서(theotherskin 한 갈래가 48줄)
+   무엇이 몇 갈래인지가 안 보였다. 시장의 언어가 하나뿐이고
+   걸린 것도 없으면 카드를 세우지 않는다(한 언어 사이트에 「다국어 이상 없음」은 군말이다). */
+const IN_SHOW = 3;     // 갈래마다 펴기 전에 보이는 자리 수
+function renderIntl(d) {
+  const sec = $("intl-sec");
+  if (!sec) return;
+  const c = d.crawl || {}, info = d.crawl_intl || {};
+  const rows = CR_every().filter(r => CR_INTL.has(r.kind));
+  const cnt = Object.fromEntries(Object.entries(c.counts || {}).filter(([k]) => CR_INTL.has(k)));
+  const total = Object.values(cnt).reduce((a, b) => a + b, 0);
+  sec.hidden = !c.run || (!info.multi && !total);
+  if (sec.hidden) return stSec("intl-sec", null);
+  stSec("intl-sec", total);
+  $("intl-sub").innerHTML = !total
+    ? `언어 판 사이의 이음매(번역·링크·hreflang)를 크롤로 봤고 걸린 것이 없습니다.`
+    : `언어 판 사이의 이음매를 크롤로 봤습니다 — <b>${num(Object.keys(cnt).length)}갈래 ${num(total)}건</b>.`
+      + hint("갈래마다 왜 문제인지와 걸린 자리를 적었습니다. 위치 페이지의 주소처럼 일부러 남긴 원문이면 그대로 둬도 됩니다.");
+  if (!total) { $("intl").innerHTML = stOk("크롤한 언어 판 전부"); return; }
+  const rank = k => ({bad: 0, warn: 1}[(rows.find(r => r.kind === k) || {}).severity] ?? 2);
+  $("intl").innerHTML = Object.keys(cnt).sort((a, b) => rank(a) - rank(b) || cnt[b] - cnt[a]).map(k => {
+    const mine = rows.filter(r => r.kind === k);
+    const sev = (mine[0] || {}).severity;
+    const line = r => `<li><span class="cr-url">${esc(r.url || "")}</span>${
+      r.detail ? ` — ${esc(r.detail)}` : ""}</li>`;
+    const head = mine.slice(0, IN_SHOW).map(line).join("");
+    const rest = mine.slice(IN_SHOW);
+    return `<div class="in-k"><p class="in-h"><b>${esc(CR_label(k))}</b> ${CR_sev(sev)}
+        <span class="n">${num(cnt[k])}건</span></p>
+      <p class="detn">${esc((CR_KIND[k] || [, ""])[1])}</p>
+      <ul class="deta">${head}</ul>${rest.length ? `<details><summary>나머지 ${num(rest.length)}건 보기</summary>
+        <ul class="deta">${rest.map(line).join("")}</ul></details>` : ""}</div>`;
+  }).join("");
 }
 
 /* ── 페이지 축 ────────────────────────────────────────────
@@ -2101,12 +2170,14 @@ VIEW("site", function (d) {
   ST_QPAGES = d.query_pages || {};
   if (window.viewSub) viewSub("site", "구글이 이 사이트를 어떻게 보고 있는지 봅니다.");
   // 띠가 무엇을 들지부터 정한다 — 섹션이 그걸 보고 같은 명령을 비켜 세운다.
+  CR_INTL = new Set(((d.crawl_intl || {}).kinds) || []);   // stPlan 의 크롤 건수도 다국어를 뺀다
   const plan = stPlan(d);
   ST_LEAD = plan.primary ? plan.stage : "";
   ST_TAKEN = new Set();
   renderDevice(d);
   renderIndex(d);
   renderCrawl(d);
+  renderIntl(d);
   renderVitals(d);
   renderGoogleSeo(d);
   renderPageAxis(d);

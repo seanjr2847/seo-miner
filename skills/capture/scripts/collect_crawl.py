@@ -267,14 +267,37 @@ _PHRASE = {name: (re.compile(rf"(?:\d+\s*)?[{rng}]+(?:[\s\d.,·:/\-]+[{rng}]+)*"
            for name, rng, _ in _SCRIPTS}
 INTL_EXCERPTS = 3          # 체계·자리마다 남기는 발췌 수
 INTL_EXCERPT_LEN = 40
+# 언어 선택 메뉴에 그 언어 글자로 적히는 언어 이름(원어 이름). 라틴 문자 이름은 필요 없다 —
+# '번역 안 된 글자'는 라틴 밖 체계만 센다. 다른 정본은 없다(brief.lang_label·serp_adapter.LOCALES
+# 는 한국어로 부르는 이름이다). 국기 아이콘 전환의 alt="한국어" 와 나란히 놓인
+# "简体中文 繁體中文" 이 외국어 판마다 '번역 안 된 글자'로 섰다(검토 2026-10-16).
+LANG_ENDONYMS = (
+    "한국어", "한국말", "조선어",
+    "日本語", "にほんご",
+    "中文", "简体中文", "繁體中文", "繁体中文", "简体", "繁體", "繁体", "汉语", "漢語",
+    "华语", "華語", "普通话", "國語", "粵語", "粤语",
+    "ไทย", "ภาษาไทย",
+    "العربية", "عربي", "فارسی", "اردو",
+    "русский", "українська", "български", "српски", "қазақша", "монгол", "беларуская",
+    "עברית", "हिन्दी", "हिंदी", "मराठी", "नेपाली", "ελληνικά",
+)
+_ENDONYMS_LONGEST = sorted({n.casefold() for n in LANG_ENDONYMS}, key=len, reverse=True)
+
+
+def _only_lang_names(phrase: str, rng: str) -> bool:
+    """덩어리의 그 체계 글자가 전부 언어 이름인가 — "한국어", "简体中文 繁體中文"."""
+    rest = phrase.casefold()
+    for name in _ENDONYMS_LONGEST:
+        rest = rest.replace(name, " ")
+    return not re.search(f"[{rng}]", rest)
 
 
 def _script_bits(text: str, *, long: bool = False) -> dict:
     """라틴 밖 글자 체계별 {"n": 글자 수, "ex": [발췌]}. 있는 체계만 담는다.
 
     long=True(본문)는 덩어리가 커야 발췌로 친다 — 음절 문자 6자 또는 두 낱말 이상.
-    언어 선택 단추의 "한국어"·"العربية" 한 낱말은 번역을 안 한 것이 아니다. 제목·설명·alt 는
-    짧아서 두 글자(자모 문자는 세 글자)만 넘으면 친다.
+    제목·설명·alt 는 짧아서 두 글자(자모 문자는 세 글자)만 넘으면 친다. 언어 이름뿐인
+    덩어리(LANG_ENDONYMS — 언어 선택 단추·국기 alt)는 자리를 가리지 않고 뺀다.
     """
     out: dict = {}
     if not text:
@@ -294,7 +317,7 @@ def _script_bits(text: str, *, long: bool = False) -> dict:
             else:
                 hit = size >= (2 if syllabic else 3)
             got = " ".join(m.group().split())[:INTL_EXCERPT_LEN]
-            if hit and got not in ex:
+            if hit and got not in ex and not _only_lang_names(m.group(), rng):
                 ex.append(got)
                 if len(ex) >= INTL_EXCERPTS:
                     break
@@ -777,6 +800,23 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
     if len(by_lang) < 2:
         return []                                 # 크롤한 페이지가 한 언어뿐 — 견줄 판이 없다
 
+    # 홈 — 다국어 사이트는 '/' 가 '/ko/' 로 넘어가는 일이 흔하다. 그 '/' 행은 리다이렉트 홉이라
+    # 본문·hreflang 이 없다. 그대로 두면 언어 홈이 '/' 하나뿐이 되어, 모든 페이지의 언어 메뉴
+    # (/ko/·/en/)가 '새는 링크'로, 전환 링크가 있는 페이지가 '전환 링크 없음'으로 섰다
+    # (검토 2026-10-16 재현). 그래서 redirect_to 사슬을 끝까지 따라간 주소를 홈으로 본다.
+    site_home = normalize(home) if home else None
+    nxt = {p["url"]: p["redirect_to"] for p in pages if p.get("redirect_to")}
+    h, hops = site_home, 0
+    while h in nxt and hops < 10:
+        h, hops = normalize(nxt[h]) or nxt[h], hops + 1
+
+    def lang_root(u: str) -> str | None:
+        """'/en/'·'/en' 처럼 언어 경로 하나뿐인 주소면 그 언어 — 그 언어의 홈이다.
+        홈이 hreflang 을 안 달았어도 언어 메뉴가 가는 곳을 언어 홈으로 알아보게 한다."""
+        sp = urlsplit(u)
+        segs = [s for s in sp.path.split("/") if s]
+        return path_lang(u) if len(segs) == 1 and not sp.query else None
+
     def pick_default() -> str:
         for loc in loc_langs[:1]:
             if loc in by_lang:
@@ -784,7 +824,6 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
             same = [l for l in by_lang if _prim(l) == _prim(loc)]
             if same:
                 return max(same, key=lambda l: len(by_lang[l]))
-        h = normalize(home) if home else None
         if h in lang:
             return lang[h]
         return max(by_lang, key=lambda l: (len(by_lang[l]), l))
@@ -826,7 +865,6 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
 
     # 2) 다른 언어로 새는 내부 링크 — 언어 전환(그 페이지의 hreflang 대체 주소, 각 언어의
     #    홈)과 자산(/_next·/wp-content·파일)은 뺀다. 같은 언어 판이 있으면 그 주소를 같이 준다.
-    h = normalize(home) if home else None
     homes = set((alts.get(h) or {}).values()) | ({h} if h else set())
     went: dict[str, dict[str, str]] = defaultdict(dict)
     for x in links:
@@ -837,7 +875,8 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
         lb = lang.get(b) or (path_lang(b) if b not in by_url else None)
         if not la or not lb or la == lb or b == a:
             continue
-        if b in alts.get(a, {}).values() or b in homes or _ASSET.search(urlsplit(b).path):
+        if (b in alts.get(a, {}).values() or b in homes or lang_root(b)
+                or _ASSET.search(urlsplit(b).path)):
             continue
         went[a].setdefault(b, (x.get("anchor") or "").strip())
     for a in sorted(went):
@@ -883,8 +922,17 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
     for u in lang:
         groups[find(u)].append(u)
     every = set(by_lang)
+    # hreflang 으로 알린 판은 있는 판으로 친다 — 이번 크롤이 안 받았을 뿐일 수 있다(상한·깊이,
+    # 사이트맵 밖). 크롤한 판끼리만 맞대면 선언도 번역도 멀쩡한데 '빠진 번역'이 섰다(검토
+    # 2026-10-16 재현). 받아 보니 4xx·5xx·응답 없음이었던 판만 없는 판이다.
+    status = {p["url"]: p.get("status") for p in pages}
+
+    def declared(u: str) -> set[str]:
+        return {k for k, to in alts[u].items() if k in every
+                and not (to in status and not (isinstance(status[to], int) and status[to] < 400))}
+
     for members in groups.values():
-        have = {lang[u] for u in members}
+        have = {lang[u] for u in members}.union(*(declared(u) for u in members))
         miss = every - have
         if not miss:
             continue
@@ -905,7 +953,8 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
         away = {x for x in homes if lang.get(x) != l}
         has_alt = [u for u in by_lang[l] if any(to != u for to in alts[u].values())]
         bad = [u for u in has_alt
-               if not (linked[u] & ({to for to in alts[u].values() if to != u} | away))]
+               if not (linked[u] & ({to for to in alts[u].values() if to != u} | away))
+               and not any((r := lang_root(t)) and r != l for t in linked[u])]
         if bad:
             ex = ", ".join(_path(u) for u in sorted(bad, key=lambda u: (len(_path(u)), u))[:3])
             out.append(("intl_no_switch_link", rep(bad),
@@ -918,7 +967,7 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
         if hit:
             # 예는 다른 언어 판에서 고른다 — "/ → /" 는 아무것도 안 보여 준다
             u, to = min(hit, key=lambda t: (lang.get(t[0]) == D, len(_path(t[0])), t))
-            out.append(("intl_xdefault", h or rep(by_url),
+            out.append(("intl_xdefault", site_home or rep(by_url),
                         f"x-default 가 {nm(D)} 판을 가리키는 페이지 {len(hit)}장 "
                         f"(예: {_path(u)} → {_path(to)}). 영어 판이 있습니다"))
 
@@ -993,8 +1042,8 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
     Args:
         project: 사이트 이름
         dry_run: True 면 어디서 시드를 얻고 몇 개를 돌 예정인지만 찍는다 (fetch 0건)
-        limit: 가져올 URL 상한 (설정 키 crawl_urls). 시드가 사이트맵이고 그 주소가 더
-            많으면 사이트맵 수까지 올린다 — 사이트맵의 주소는 전부 가져온다. 0이면 끔
+        limit: 가져올 URL 상한 (설정 키 crawl_urls). 시드가 사이트맵이면 사이트맵의 주소는
+            전부 가져오고 이만큼을 더 본다(상한 = 사이트맵 수 + 설정값). 0이면 끔
         max_depth: 홈에서 몇 단계까지 따라갈지 (설정 키 crawl_depth)
         throttle: 요청 간격(초) — 내 서버를 두드리는 속도
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
@@ -1013,13 +1062,13 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
         if not home:
             return st.skip("사이트 주소(domain)가 없습니다 — 프로젝트 yaml 의 domain 을 채우세요.")
 
-        print(f"[crawl] {home} · 최대 {limit}개(사이트맵이 더 많으면 사이트맵 전부) · "
+        print(f"[crawl] {home} · 사이트맵 전부 + 링크로 {limit}개까지 · "
               f"깊이 {depth} · 비용 없음 (간격 {st.throttle}초)")
         if st.dry_run:
             print("  시드: robots.txt 의 Sitemap: 줄 → 사이트맵 URL, "
                   "없으면 홈에서 내부 링크 BFS")
             print(f"  같은 호스트만 따라갑니다 (외부 링크는 기록만) · 최대 {limit}회 조회 예정"
-                  " — 사이트맵 주소가 더 많으면 그 수만큼")
+                  " — 사이트맵이 있으면 사이트맵 수만큼 더")
             return st.noop(rows=0)
 
         seeds, seed, rp, robots_txt = discover_seeds(home)
@@ -1033,12 +1082,15 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
         print(f"  시드 {len(seeds)}개 ({seed})")
         # 사이트맵은 사이트가 스스로 내놓은 "색인해 달라는 주소" 전부다 — 거기서 잘라 내면
         # 전수 크롤이 아니다. theotherskin 은 사이트맵 414개인데 기본 상한 300개에서 잘려 ar·es
-        # 판과 공지 일부가 회차마다 통째로 빠졌다. 상한을 사이트맵 수까지 올린다(사이트맵을
-        # 읽어 들이는 상한 MAX_SITEMAP_URLS 안에서 — seeds 가 이미 그 안이다).
-        if seed == "sitemap" and len(seeds) > limit:
-            print(f"  사이트맵 주소 {len(seeds)}개가 상한 {limit}개보다 많아 "
-                  f"사이트맵 전부를 가져옵니다 (이번 상한 {len(seeds)}개)")
-            limit = len(seeds)
+        # 판과 공지 일부가 회차마다 통째로 빠졌다. 사이트맵 주소는 전부 가져오고, 설정한 상한만큼
+        # 여유를 더 준다(사이트맵 수 + 설정값). 상한을 사이트맵 수에 딱 맞추면 예산이 사이트맵
+        # 주소에서 다 써져, 사이트맵에 없고 링크로만 걸린 주소(깨진 링크의 대상·hreflang 으로만
+        # 알린 언어 판)를 하나도 못 가져왔다(검토 2026-10-16 — 사용자가 여유를 두기로 정함).
+        # 사이트맵을 읽어 들이는 상한 MAX_SITEMAP_URLS 는 seeds 가 이미 지켰다.
+        if seed == "sitemap":
+            print(f"  사이트맵 주소 {len(seeds)}개는 전부 가져오고, 링크로만 걸린 주소를 {limit}개까지 "
+                  f"더 봅니다 (이번 상한 {len(seeds) + limit}개)")
+            limit = len(seeds) + limit
 
         run_id = conn.execute(
             "INSERT INTO crawl_runs(project_id, seed, started_at, robots_txt) VALUES(?,?,?,?)",
@@ -1085,8 +1137,8 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     collector.add_common(ap)
     collector.add_setting(ap, "--limit", key="crawl_urls", fallback=300, type=int,
-                          help="가져올 URL 상한. 사이트맵 주소가 더 많으면 사이트맵 전부를 "
-                               "가져온다. 0이면 끔")
+                          help="가져올 URL 상한. 사이트맵이 있으면 사이트맵 전부에 이만큼을 "
+                               "더 본다(링크로만 걸린 주소). 0이면 끔")
     collector.add_setting(ap, "--max-depth", key="crawl_depth", fallback=5, type=int,
                           help="홈에서 몇 단계까지 따라갈지")
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
@@ -1334,15 +1386,16 @@ def _selfcheck() -> None:
         assert conn.execute("SELECT COUNT(*) c FROM crawl_issues").fetchone()["c"] == before, \
             "막힌 사이트의 홈을 크롤 이슈로 적었다"
 
-        # 사이트맵 > 설정값이면 사이트맵 전부를 가져온다 — theotherskin 은 사이트맵 414개인데
-        # 상한 300개에서 잘렸다. 사이트맵 4개 · 상한 2개 → 사이트맵 4개를 다 가져온다(시드가
-        # 먼저 큐에 서므로, 늘어난 상한은 사이트맵 밖 링크(/dead)로 새지 않는다).
+        # 사이트맵이 시드면 사이트맵 전부 + 설정값만큼 더 — theotherskin 은 사이트맵 414개인데
+        # 상한 300개에서 잘렸고, 상한을 사이트맵 수에 딱 맞추자 사이트맵 밖에서 링크로만 걸린
+        # 주소(깨진 링크의 대상)를 하나도 못 봤다. 사이트맵 4개 · 상한 2개 → 사이트맵 4개를 다
+        # 가져오고(시드가 먼저 큐에 선다), 남은 여유로 링크로만 걸린 /dead 까지 본다.
         r, log = run(limit=2)
         sm = {"https://site.kr/", "https://site.kr/a", "https://site.kr/b", "https://site.kr/orphan"}
+        pages = [u for u in log if not u.endswith((".txt", ".xml"))]
         assert sm <= set(log), f"사이트맵을 상한에서 잘랐다: 빠짐 {sm - set(log)}"
-        assert "https://site.kr/dead" not in log, log
-        got = conn.execute("SELECT pages FROM crawl_runs ORDER BY id DESC LIMIT 1").fetchone()
-        assert got["pages"] == len(sm), dict(got)
+        assert "https://site.kr/dead" in log, f"사이트맵 밖 링크 대상을 여유 안에서 안 봤다: {log}"
+        assert len(pages) <= len(sm) + 2, f"사이트맵 수 + 설정값을 넘겨 가져왔다: {pages}"
         # 사이트맵이 없으면(홈 BFS) 상한은 설정값 그대로다
         r, log = run(site=_site(sitemap=False), limit=2)
         assert len([u for u in log if not u.endswith((".txt", ".xml"))]) == 2, log
@@ -1417,11 +1470,12 @@ def _ml_site() -> dict:
     pages = {
         "/": _ml("ko", "홈", desc="강남 피부과", hl=_hl("/", "/en/", "/es/"), body="본문 " * 220,
                  tail='<a href="/svc">시술</a><a href="/consult">상담</a><a href="/en/">English</a>'),
-        # 언어 선택 단추의 "한국어"(한 낱말)는 번역을 안 한 것이 아니다. alt 의 한국어는 남은 것이다
+        # 언어 선택 단추의 "한국어"(글자·국기 alt)는 번역을 안 한 것이 아니다. 로고 alt 의 한국어는
+        # 남은 것이다
         "/en/": _ml("en", "Home", desc="Clinic in Seoul", hl=_hl("/", "/en/", "/es/"),
                     body="word " * 220 + " 한국어",
                     tail='<img src="l.png" alt="더채움 로고"><a href="/en/svc">Service</a>'
-                         '<a href="/">한국어</a>'),
+                         '<a href="/"><img src="kr.png" alt="한국어">한국어</a>'),
         "/es/": _ml("es", "Inicio", desc="Marcas de acné Marcas de acné en Seúl",
                     hl=_hl("/", "/en/", "/es/"), body="palabra " * 220,
                     tail='<a href="/en/">English</a>'),
@@ -1451,10 +1505,15 @@ def _ml_site() -> dict:
 
 
 def _intl_of(site: dict, locales=("ko-KR",), home="https://m.kr/") -> list:
-    """가상 사이트 → intl_issues. 네트워크·DB 없이 parse_page 만 거친다."""
+    """가상 사이트 → intl_issues. 네트워크·DB 없이 parse_page 만 거친다.
+    3xx 는 (상태, 넘어갈 주소, _), 4xx·5xx 는 본문 없이 행만 — 크롤(_visit)이 남기는 모양 그대로."""
     pages, links = [], []
     for url, (status, html, _) in site.items():
-        if not url.endswith((".txt", ".xml")):
+        if 300 <= status < 400:
+            pages.append({"url": url, "status": status, "redirect_to": html})
+        elif status != 200:
+            pages.append({"url": url, "status": status})
+        elif not url.endswith((".txt", ".xml")):
             got = parse_page(url, html)
             for to, anchor, _nf, _ch in got.pop("links"):
                 links.append({"url_from": url, "url_to": to, "anchor": anchor,
@@ -1533,6 +1592,38 @@ def _intl_selfcheck(conn, orig_fetch) -> None:
                                  hl=[("en", "/"), ("es", "/es/")], body="The Other Clinic " * 80,
                                  tail='<a href="/">EN</a>'), "text/html")}
     assert _intl_of(lat, locales=("en-US",)) == [], _intl_of(lat, locales=("en-US",))
+
+    # '/' 가 '/ko/' 로 넘어가고, 모든 페이지에 전역 언어 메뉴(/ko/·/en/, 국기 alt 「한국어」)가 있다.
+    # 홈을 '/' 로만 보면 메뉴가 '새는 링크'로, 메뉴가 있는 페이지가 '전환 링크 없음'으로 선다.
+    # 홈이 hreflang 을 안 단 경우(언어 경로만으로 언어 홈을 알아봐야 한다)도 같이 본다.
+    # /ko/b 의 영어 판은 선언만 됐고 크롤하지 않았다 — 빠진 번역이 아니다. /ko/c 의 영어 판은
+    # 받아 보니 404 — 그건 빠진 번역이다.
+    def rd_site(home_hl: bool) -> dict:
+        menu = '<a href="/ko/"><img src="kr.png" alt="한국어">한국어</a><a href="/en/">English</a>'
+
+        def pg(lang, path, pair):
+            hl = [("ko", f"/ko/{pair}"), ("en", f"/en/{pair}")] if (pair or home_hl) else []
+            return (200, _ml(lang, "시술" if lang == "ko" else "Service", desc=f"{lang} {path}",
+                             hl=hl, body=("본문 " if lang == "ko" else "word ") * 220, tail=menu),
+                    "text/html")
+        return {f"{H}/": (301, f"{H}/ko/", ""),
+                f"{H}/ko/": pg("ko", "/ko/", ""), f"{H}/en/": pg("en", "/en/", ""),
+                f"{H}/ko/a": pg("ko", "/ko/a", "a"), f"{H}/en/a": pg("en", "/en/a", "a"),
+                f"{H}/ko/b": pg("ko", "/ko/b", "b"),
+                f"{H}/ko/c": pg("ko", "/ko/c", "c"), f"{H}/en/c": (404, "", "text/html")}
+    for home_hl in (True, False):
+        got = {(k, u) for k, u, _ in _intl_of(rd_site(home_hl))}
+        assert got == {("intl_missing_translation", f"{H}/ko/c")}, (home_hl, sorted(got))
+    # 중국어(간체) 기본 사이트의 영어 판 — 나란히 놓인 언어 이름 「简体中文 繁體中文」은 메뉴다.
+    # 제목에 남은 중국어는 그대로 선다(빼는 것은 언어 이름뿐이다)
+    zh_hl = [("zh-Hans", "/"), ("en", "/en/")]
+    zh = {f"{H}/": (200, _ml("zh-Hans", "首页", desc="首尔皮肤科", hl=zh_hl, body="正文 " * 220,
+                             tail='<a href="/en/">English</a>'), "text/html"),
+          f"{H}/en/": (200, _ml("en", "Home 服务介绍", desc="Clinic", hl=zh_hl, body="word " * 220,
+                                tail='<ul><li>简体中文</li><li>繁體中文</li></ul>'
+                                     '<a href="/">中文</a>'), "text/html")}
+    zr = [(k, u, d) for k, u, d in _intl_of(zh, locales=("zh-CN",)) if k == "intl_untranslated"]
+    assert len(zr) == 1 and "服务介绍" in zr[0][2] and "简体中文" not in zr[0][2], zr
 
 
 def _concurrency_check(orig_fetch) -> None:

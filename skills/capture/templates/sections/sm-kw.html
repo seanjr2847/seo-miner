@@ -1,13 +1,17 @@
 <script type="application/json" class="section-def">
-{"id": "sm-kw", "view": "kwmanage", "after": "kwm-here", "only": "hosted"}
+{"id": "sm-kw", "view": "kwmanage", "after": ""}
 </script>
-<!-- 시장 탭(.kwmk)·목록(.list)·고른 수(.sel)·옮길 시장(.kwmove)·개수(.cnt)는 dash.html 의
-     kwLoad()/kwPaint() 가 채운다. 여기 있는 것은 껍데기와 배선 대상뿐이다.
+<!-- 추적할 검색어 편집기 — **두 배포 공통**. 시장 탭(.kwmk)·목록(.list)·고른 수(.sel)·옮길
+     시장(.kwmove)·개수(.cnt)는 아래 스크립트의 kwLoad()/kwPaint() 가 채운다(GET·POST
+     /api/keywords — dashboard.ROUTES 한 벌, 원격 사이트면 로컬 서버가 호스팅으로 넘긴다).
      진행 막대(.kwprog)는 kwmanage.html 의 KM_wireTrack 이 .cnt 의 「N / M」을 읽어 채운다.
+     [개요]의 「정리할 시장」 한 줄(sections/sm-kwnudge.html)도 여기서 같은 자료로 그린다.
 
-     2026-10-16 [키워드] 화면 맨 아래(movers 뒤)에서 [키워드 관리] 화면으로 옮겼다 — 편집기가
-     순위 변동 표 밑에 묻혀 있었다. 그 화면의 원본 섹션(#kwm-here)은 로컬 안내이고, 이
-     섹션이 붙으면 렌더러가 그것을 숨긴다(kwmanage.html).
+     2026-10-16 메뉴 A안: 웹 전용(호스팅 애드온 dash.html 의 kwLoad…)이던 것을 여기로 옮겨 로컬
+     대시보드에서도 고친다. 그 전엔 로컬 사용자가 추적 목록을 채팅(/capture keywords)으로만 바꿨다.
+
+     2026-10-16 [순위 상승 기회] 화면 맨 아래(movers 뒤)에서 [키워드 관리] 화면으로 옮겼다 — 편집기가
+     순위 변동 표 밑에 묻혀 있었다.
 
      2026-10-15 다시 짰다 — 예전 모양은 체크박스 목록 하나에 시장 이름이 언어(「영어」)로만
      붙어, 그 검색어를 어느 나라 구글에서 재는지 화면 어디에도 없었다. 시장별 개수는 맨 아래
@@ -73,12 +77,46 @@
 #view-kwmanage #sm-kw .kwprog i { display:block; height:100%; width:0; border-radius:var(--r-pill);
   background:var(--accent); }
 #view-kwmanage #sm-kw .kwprog.full i { background:var(--warn); }
-/* 화면 하나를 통째로 쓰게 됐으니 목록 상자를 키운다 — 애드온(dash.html)의 340px 는 다른 표
-   밑에 끼어 있던 때의 높이다. 넓은 화면만: 좁은 화면은 애드온이 안쪽 스크롤을 풀고 스무
-   줄씩 편다([N개 더 보기]). 아래 손잡이 줄(.bar2)이 한 화면 안에 남을 만큼만 키운다. */
+/* 화면 하나를 통째로 쓰게 됐으니 목록 상자를 키운다 — 다른 표 밑에 끼어 있던 때는 340px 였다.
+   넓은 화면만: 좁은 화면은 안쪽 스크롤을 풀고 스무 줄씩 편다([N개 더 보기]). 아래 손잡이
+   줄(.bar2)이 한 화면 안에 남을 만큼만 키운다. */
 @media (min-width:1000px) {
   #view-kwmanage #sm-kw .list { max-height:min(640px, 62vh); }
 }
+
+/* ── 아래는 호스팅 애드온(dash.html)에 있던 편집기 몸 — 두 배포 공통이 되며 옮겨 왔다 ── */
+/* 목록은 폼이다 — 셸의 .card 와 같은 몸(면·반경·그림자, 테두리 없음). 행 사이는 옅은 선.
+   안내가 통째로 들어설 때만 .bare 가 그 몸을 벗긴다(상자 안 상자가 되지 않게). */
+#sm-kw .list { overflow:auto; overflow-x:hidden; border:0; }
+#sm-kw .list.bare { background:none; box-shadow:none; }
+#sm-kw .sm-note { margin:var(--sp-3); }
+#sm-kw .list.bare > .sm-note { margin:0; }
+#sm-kw .sm-note > .skel { margin:10px 0; }
+#sm-kw .tabs { display:flex; gap:6px; }
+#sm-kw .tabs .chip { margin:0; }
+#sm-kw label { cursor:pointer; margin:0; border-bottom:1px solid var(--line);
+  font:400 var(--fs-2)/1.5 var(--sans); color:var(--ink); }
+#sm-kw label:last-child { border-bottom:0; }
+#sm-kw label:hover { background:var(--sunk); }
+#sm-kw label input { accent-color:var(--accent); flex:none; margin:0; }
+/* 검색어는 사용자가 실제로 친 문자열이라 그대로 보여야 한다(상속된 text-transform 금지). */
+#sm-kw .kw { color:var(--ink); text-transform:none; }
+/* "노출 1,234" 는 한글과 숫자가 한 요소에 섞인다 — 숫자 정렬만 얻는다. */
+#sm-kw .n { font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 목록을 못 읽는 동안 — 그 목록에 거는 손잡이는 같이 물러난다. */
+#sm-kw.dead .tabs, #sm-kw.dead .bar2, #sm-kw.dead .kwmk, #sm-kw.dead .kwtools { display:none; }
+#sm-kw .cnt { font-size:var(--fs-1); color:var(--sub); }
+#sm-kw .warn { color:var(--warn); }
+/* 좁은 화면에서는 안쪽 스크롤 상자를 풀고 스무 줄까지만 그린다 — 손가락이 늘 상자 위에 있어
+   페이지가 안 내려가고, 수백 줄 목록은 스와이프 쉰 번이 걸렸다. 나머지는 [N개 더 보기]. */
+#sm-kw .sm-more { display:none; }
+@media (max-width:999px) {
+  #sm-kw .list { max-height:none; }
+  #sm-kw .list:not(.all) > label:nth-child(n+22) { display:none; }
+  #sm-kw .sm-more { display:inline-flex; margin-top:10px; }
+  #sm-kw label { min-height:44px; }
+}
+@media (min-width:1000px) { #sm-kw .list { max-height:340px; } }
 </style>
 <section id="sm-kw" class="card kwtrack">
   <div class="kwch">
@@ -105,3 +143,303 @@
     <span class="cnt"></span><div class="kwprog" role="img" hidden><i></i></div>
   </div>
 </section>
+<script>
+"use strict";
+// 추적할 검색어 편집기 — 두 배포 공통(2026-10-16 호스팅 애드온 dash.html 에서 옮겨 옴).
+// 셸의 부품만 쓴다: esc·num(글자), act(단계 버튼 — 호스팅은 실행, 로컬은 명령 칩),
+// post(로컬 X-Token 을 붙인다), toast. 읽기는 GET /api/keywords 두 번(추적 중·후보).
+//
+// 자동 활성화는 '구글이 이미 노출시킨' 검색어만 켠다. 자동완성 등에서 캔 후보는 관련성이
+// 확인되지 않아 그대로 잠들어 있다 — 여기서 사람이 고른다. 시장은 「그 나라 구글」로 말한다
+// (2026-10-15 — 시장 이름이 「영어」뿐이라 어느 나라에서 재는지 몰랐다).
+(function () {
+  var KW = {mode: "active", mk: "", q: "", rows: {active: [], candidate: []},
+            markets: [], limit: 0, total: 0, pick: {}, capC: 0};
+  var KW_SRC = {gsc: "서치콘솔", autocomplete: "자동완성", seed: "씨앗", serp: "검색결과 연관",
+                competitor_gap: "경쟁사 검색어", labs_ranked: "순위 검색어", claude: "Claude 제안",
+                manual: "직접"};
+  var PAGE = 20;                        // 좁은 화면에서 한 번에 펴는 줄 수(CSS 의 nth-child 와 짝)
+  var SKEL = '<div class="sm-note"><span class="skel"></span>' +
+    '<span class="skel line2"></span><span class="skel line3"></span></div>';
+  var nf = function (n) { return num(n || 0); };
+  var proj = function () { var p = document.getElementById("proj"); return p ? p.value : ""; };
+  var tell = function (msg, kind) { if (typeof window.toast === "function") window.toast(msg, kind); };
+  function note(cls, title, why, acts) {
+    return '<div class="' + cls + ' sm-note"><b>' + esc(title) + "</b><p>" + esc(why) +
+      "</p>" + (acts ? '<div class="acts">' + acts + "</div>" : "") + "</div>";
+  }
+  function bare(list, on) { list.classList.toggle("bare", !!on); }
+  function more(list, n) {
+    var b = list.nextElementSibling;
+    if (b && b.classList.contains("sm-more")) b.remove();
+    if (list.classList.contains("all") || n <= PAGE) return;
+    list.insertAdjacentHTML("afterend", '<button type="button" class="go sm sec sm-more">' +
+      nf(n - PAGE) + "건 더 보기</button>");
+    list.nextElementSibling.onclick = function () { list.classList.add("all"); this.remove(); };
+  }
+
+  // 「영어 · 미국」 → 「미국 구글」. 같은 나라 시장이 둘이면(한국어·영어 한국) 언어를 붙인다.
+  function kwWhere(markets) {
+    var out = {};
+    var country = function (m) {
+      var p = String(m.label || m.locale).split(" · ");
+      return p[1] || p[0];
+    };
+    markets.forEach(function (m) {
+      var c = country(m), lang = String(m.label || m.locale).split(" · ")[0];
+      var dup = markets.filter(function (x) { return country(x) === c; }).length > 1;
+      out[m.locale] = {g: c + " 구글" + (dup ? "(" + lang + ")" : ""), l: lang};
+    });
+    return out;
+  }
+
+  async function kwLoad() {
+    var box = document.getElementById("sm-kw");
+    if (!box || !proj()) return;          // 사이트를 고르기 전이면 404 다 — 고르면 다시 불린다
+    var list = box.querySelector(".list");
+    box.classList.remove("dead");
+    list.classList.remove("all");
+    more(list, 0);
+    bare(list, true);
+    list.innerHTML = SKEL;                 // 글자 대신 채워질 자리의 모양을 보여 준다
+    var got;
+    try {
+      got = await Promise.all(["active", "candidate"].map(async function (st) {
+        var r = await fetch("/api/keywords?status=" + st + "&project=" + encodeURIComponent(proj()));
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }));
+    } catch (e) {
+      // 목록이 없으면 손잡이도 누를 수 없다 — 살려 두면 눌러도 아무 일이 없는 손잡이가 남는다.
+      box.classList.add("dead");
+      list.innerHTML = note("empty err", "검색어 목록을 못 읽었습니다",
+        "서버가 응답하지 않았습니다. 다시 시도하면 목록을 받아 옵니다.",
+        '<button class="go sm sec" data-kw-retry>다시 시도</button>');
+      var nudge = document.getElementById("sm-kwnudge");
+      if (nudge) nudge.hidden = true;        // 앞 사이트의 알림이 남지 않게
+      return;
+    }
+    KW.rows = {active: got[0].keywords || [], candidate: got[1].keywords || []};
+    // 시장 목록 밖 로케일(시장을 뺀 뒤 남은 키워드)도 숫자가 있으면 탭으로 세운다 — 숨기면
+    // 한도를 무엇이 먹는지 모른다(db.active_by_market).
+    var seen = {};
+    KW.rows.candidate.concat(KW.rows.active).forEach(function (k) { seen[k.locale] = 1; });
+    KW.markets = (got[0].markets || []).filter(function (m) { return m.market || m.active || seen[m.locale]; });
+    KW.limit = got[0].limit;
+    KW.capC = got[1].per_market || 0;      // 후보는 시장마다 이만큼까지만 온다(서버 per_market)
+    KW.total = got[0].active_total;
+    KW.pick = {};
+    if (KW.mk && !KW.markets.some(function (m) { return m.locale === KW.mk; })) KW.mk = "";
+    // 옮길 곳은 사이트 시장만 — 목록 밖 시장으로는 옮길 수 없다(서버도 거절한다)
+    var where = kwWhere(KW.markets);
+    box.querySelector(".kwmove").innerHTML = '<option value="">시장 옮기기…</option>' +
+      KW.markets.filter(function (m) { return m.market; }).map(function (m) {
+        return '<option value="' + esc(m.locale) + '">' + esc(where[m.locale].g) + "로</option>";
+      }).join("");
+    box.querySelector(".cnt").textContent = "추적 중 " + KW.total + " / " + KW.limit + "개";
+    kwPaint();
+    kwNudge();
+  }
+
+  // [개요]의 한 줄(sections/sm-kwnudge.html) — [키워드 관리]에서 손볼 시장이 있을 때만 선다.
+  // 손볼 것은 둘이다: 사이트 시장인데 추적이 0(그 나라 구글 순위를 하나도 안 잰다)과 시장
+  // 한도를 넘은 것(넘는 자동 켜짐은 다음 수집이 끄지만, 사람이 켠 것은 남는다 — db.trim_market_caps).
+  // 탭 숫자와 같은 자료(KW.markets)·같은 이름(kwWhere)을 쓴다 — 두 화면이 다른 수를 말하지 않게.
+  function kwNudge() {
+    var sec = document.getElementById("sm-kwnudge");
+    if (!sec) return;
+    var where = kwWhere(KW.markets);
+    var bad = KW.markets.filter(function (m) { return m.market; }).map(function (m) {
+      var why = !m.active ? "비어 있음" : m.limit && m.active > m.limit ? "한도 넘음" : "";
+      return why && '<span class="nw">' + esc(where[m.locale].g) + ' <span class="warn">' +
+        m.active + "/" + (m.limit || "—") + "</span> (" + why + ")</span>";
+    }).filter(Boolean);
+    sec.hidden = !bad.length;
+    sec.querySelector("p").innerHTML = bad.length
+      ? "<b>키워드 관리에서 정리할 시장 " + bad.length + "곳</b> — " + bad.join(" · ") : "";
+  }
+
+  // 받아 둔 두 목록에서 지금 탭·시장·찾기로 거른 것을 그린다 — 거르기만 바뀌면 다시 받지 않는다.
+  function kwPaint() {
+    var box = document.getElementById("sm-kw");
+    if (!box) return;
+    var list = box.querySelector(".list");
+    var where = kwWhere(KW.markets);
+    var multi = KW.markets.length > 1;
+    var cnt = function (st, loc) {
+      return KW.rows[st].filter(function (k) { return !loc || k.locale === loc; }).length;
+    };
+    // 시장 탭 — 시장이 하나면 탭 대신 「어디서 재는지」 한 줄만 둔다(고를 것이 없다).
+    var mkBox = box.querySelector(".kwmk");
+    mkBox.innerHTML = (multi ? [{locale: "", all: true}].concat(KW.markets) : KW.markets).map(function (m) {
+      var w = m.all ? {g: "전체", l: "시장 " + KW.markets.length + "개"} : where[m.locale];
+      var n, warn = false;
+      if (KW.mode === "active") {
+        n = m.all ? KW.total + "/" + KW.limit : m.active + (m.limit != null ? "/" + m.limit : "");
+        warn = m.all ? KW.total > KW.limit
+             : !m.market || !m.active || (m.limit != null && m.active > m.limit);
+      } else {
+        var c = cnt("candidate", m.locale);
+        // 시장마다 상위 KW.capC 개까지만 받는다 — 그만큼 왔으면 더 있다는 뜻이다
+        n = "후보 " + nf(c) + (KW.capC && !m.all && c >= KW.capC ? "+" : "");
+      }
+      var tip = m.all ? "모든 시장" : (m.market ? where[m.locale].g + "에서 " + w.l + " 검색 결과로 순위를 잽니다"
+                                     : "사이트 시장에서 빠진 곳입니다 — 이 검색어들은 다른 시장으로 옮기거나 끄세요");
+      return '<button type="button" data-mk="' + esc(m.locale) + '"' +
+        (multi ? ' aria-pressed="' + (KW.mk === m.locale) + '"' : "") +
+        ' class="' + (multi && KW.mk === m.locale ? "on" : "") + '" title="' + esc(tip) + '">' +
+        '<span class="g">' + esc(w.g) + '</span><span class="l">' + esc(m.all ? w.l : w.l + (m.market ? "" : " · 시장 밖")) +
+        '</span><span class="c' + (warn ? " warn" : "") + '">' + esc(String(n)) + "</span></button>";
+    }).join("");
+    // 상태 탭 숫자 — 지금 고른 시장 안에서
+    box.querySelectorAll(".tabs button").forEach(function (b) {
+      var st = b.getAttribute("data-m");
+      var plus = st === "candidate" && KW.capC && (KW.mk ? [KW.mk] : KW.markets.map(function (m) {
+        return m.locale; })).some(function (l) { return cnt("candidate", l) >= KW.capC; });
+      b.textContent = (st === "active" ? "추적 중 " : "후보 ") + nf(cnt(st, KW.mk)) + (plus ? "+" : "");
+      b.classList.toggle("on", st === KW.mode);
+    });
+    var q = KW.q.trim().toLowerCase();
+    var ks = KW.rows[KW.mode].filter(function (k) {
+      return (!KW.mk || k.locale === KW.mk) && (!q || String(k.keyword).toLowerCase().indexOf(q) >= 0);
+    });
+    kwBar();
+    list.classList.remove("all");
+    if (!ks.length) {
+      more(list, 0);
+      bare(list, true);
+      var mkName = KW.mk && where[KW.mk] ? where[KW.mk].g + "의 " : "";
+      // 후보 찾기 버튼은 셸의 act 한 벌 — 호스팅은 그 단계를 돌리고, 로컬은 명령 칩이다.
+      var find = window.act ? window.act("keywords", "키워드 찾기", false) : "";
+      list.innerHTML = q
+        ? note("empty", "맞는 검색어가 없습니다", "‘" + KW.q.trim() + "’ 이 들어간 " + mkName +
+               (KW.mode === "active" ? "추적 중" : "후보") + " 검색어가 없습니다.")
+        : KW.mode === "candidate"
+        ? note("empty", mkName + "후보가 없습니다",
+               "찾아 두면 검색창 자동완성과 서치콘솔에서 모은 검색어 중에서 고를 수 있습니다.", find)
+        : note("empty", mkName + "추적 중인 검색어가 없습니다",
+               "추적을 켜면 그 나라 구글에서 순위를 재고 1페이지까지 얼마나 남았는지 봅니다.",
+               '<button class="go sm sec" data-m="candidate">후보에서 고르기</button>');
+      return;
+    }
+    bare(list, false);
+    // 오른쪽 칸이 "이걸 왜 켜야 하나"에 답한다. 노출이 있으면 실측과 그 나라가 먼저고,
+    // 없으면 월 검색량(collect_metrics)이 유일한 수요 신호다 — 그것도 없으면 비운다.
+    var why = function (k) {
+      var cs = (k.countries || []).map(function (x) { return esc(x.name) + " " + nf(x.imp); }).join(", ");
+      if (k.imp) return "노출 " + nf(k.imp) + (cs ? " · " + cs : "");
+      if (k.volume != null) {
+        return "검색량 " + nf(k.volume) + (k.difficulty == null ? "" : " · 난이도 " + Math.round(k.difficulty));
+      }
+      return "";
+    };
+    // 지금 순위 — 그 시장으로 잰 마지막 직접 조회(db.list_keywords 의 rank·rank_at).
+    var rank = function (k) {
+      if (!k.rank_at) return '<span class="rk none" title="아직 한 번도 순위를 재지 않았습니다">안 잼</span>';
+      var day = String(k.rank_at).slice(5, 10).replace("-", "/");
+      if (k.rank == null) {
+        return '<span class="rk out" title="' + esc(k.rank_at.slice(0, 10)) +
+          ' 조회에서 잰 범위 안에 없었습니다">순위 밖<small>' + esc(day) + "</small></span>";
+      }
+      return '<span class="rk" title="' + esc(k.rank_at.slice(0, 10)) + ' 직접 조회">' +
+        nf(k.rank) + "위<small>" + esc(day) + "</small></span>";
+    };
+    var head = '<div class="kwr hd" aria-hidden="true"><span></span><span>검색어</span>' +
+      "<span>재는 곳</span><span style=\"text-align:right\">지금 순위</span>" +
+      '<span style="text-align:right">서치콘솔 노출</span></div>';
+    list.innerHTML = head + ks.map(function (k) {
+      var w = where[k.locale] || {g: k.locale};
+      var src = KW_SRC[k.source] || k.source || "";
+      return '<label class="kwr"><input type="checkbox" value="' + k.id + '"' +
+             (KW.pick[k.id] ? " checked" : "") + ">" +
+             '<span class="kw">' + esc(k.keyword) +
+             (src ? '<span class="src">' + esc(src) + (k.locale_src === "manual" ? " · 시장 직접 정함" : "") + "</span>" : "") +
+             "</span>" +
+             '<span class="mkt" title="' + esc(w.l ? w.g + "에서 " + w.l + " 검색 결과로 잽니다" : "") + '">' + esc(w.g) + "</span>" +
+             rank(k) + '<span class="n">' + why(k) + "</span></label>";
+    }).join("");
+    more(list, ks.length);
+  }
+
+  // 아래 막대 — 고른 수, 켜기/끄기, 시장 옮기기. 고른 것이 없으면 손잡이는 잠근다.
+  function kwBar() {
+    var box = document.getElementById("sm-kw");
+    var n = Object.keys(KW.pick).length;
+    var btn = box.querySelector("[data-kw-act=toggle]");
+    btn.textContent = KW.mode === "candidate" ? "추적에 넣기" : "추적에서 빼기";
+    btn.disabled = !n;
+    box.querySelector(".kwmove").disabled = !n;
+    box.querySelector(".sel").innerHTML = n ? "<b>" + n + "개</b> 고름" : "검색어를 고르면 켜거나 옮길 수 있습니다";
+  }
+
+  // 검색어 목록 옆 한 줄 경고 — 원인 + 복구 행동.
+  function kwSay(box, msg) {
+    box.querySelector(".sel").innerHTML =
+      '<b class="warn">' + esc(msg + " 다시 누르면 재시도합니다.") + "</b>";
+  }
+
+  // body: {active} 켜기/끄기 · {locale} 시장 옮기기 — 같은 라우트(POST /api/keywords)다.
+  // 셸의 post 는 로컬의 X-Token 을 붙인다. 거절 문구는 호스팅이 detail, 로컬이 error 에 싣는다.
+  async function kwPost(body, okMsg) {
+    var box = document.getElementById("sm-kw");
+    var ids = Object.keys(KW.pick).map(Number);
+    if (!ids.length) return;
+    var ctl = box.querySelectorAll("[data-kw-act], .kwmove");
+    ctl.forEach(function (x) { x.disabled = true; });
+    try {
+      var res = await post("/api/keywords", Object.assign({project: proj(), ids: ids}, body));
+      if (!res[0]) {
+        var d = res[1] || {};
+        kwBar(); kwSay(box, d.detail || d.error || "바꾸지 못했습니다.");
+        tell("바꾸지 못했습니다", "bad"); return;
+      }
+    } catch (e) {
+      kwBar();
+      kwSay(box, "서버가 응답하지 않았습니다.");
+      tell("바꾸지 못했습니다", "bad");
+      return;
+    }
+    tell(okMsg, "ok");
+    kwLoad();
+  }
+
+  function wire() {
+    var sec = document.getElementById("sm-kw");
+    if (!sec || sec.dataset.smWired) return;
+    sec.dataset.smWired = "1";
+    // 상태 탭은 셸의 필터 칩(.chip)이다 — 켜짐(.on)을 여기서 갈아 끼우므로 몸도 여기서 단다.
+    sec.querySelectorAll(".tabs button").forEach(function (x) { x.classList.add("chip"); });
+    // 섹션 전체에서 받는다 — 빈 상태의 [후보에서 고르기]도 같은 탭 전환이다.
+    sec.addEventListener("click", function (ev) {
+      var t = ev.target.closest ? ev.target : null;
+      if (!t) return;
+      if (t.closest("[data-kw-retry]")) { kwLoad(); return; }
+      var m = t.closest("[data-m]"), mk = t.closest("[data-mk]");
+      if (m) { KW.mode = m.getAttribute("data-m"); KW.pick = {}; kwPaint(); return; }
+      if (mk) { KW.mk = KW.mk === mk.getAttribute("data-mk") ? "" : mk.getAttribute("data-mk");
+                KW.pick = {}; kwPaint(); return; }
+      if (t.closest("[data-kw-act=toggle]")) {
+        var on = KW.mode === "candidate";
+        kwPost({active: on}, on ? "추적에 넣었습니다" : "추적에서 뺐습니다");
+      }
+    });
+    sec.addEventListener("change", function (ev) {
+      var t = ev.target;
+      if (t.matches(".list input[type=checkbox]")) {
+        if (t.checked) KW.pick[t.value] = 1; else delete KW.pick[t.value];
+        kwBar();
+      } else if (t.matches(".kwmove") && t.value) {
+        var loc = t.value, where = kwWhere(KW.markets);
+        t.value = "";
+        kwPost({locale: loc}, (where[loc] ? where[loc].g : loc) + "로 옮겼습니다");
+      }
+    });
+    sec.querySelector(".kwq").addEventListener("input", function () { KW.q = this.value; kwPaint(); });
+  }
+
+  // 갱신 계기는 셸이 사이트를 그린 뒤 쏘는 "sm:site" 하나다(호스팅 애드온과 같은 계기).
+  wire();
+  document.addEventListener("sm:site", kwLoad);
+  kwLoad();   // 이미 사이트가 골라진 채로 이 스크립트가 늦게 실행됐을 때 대비
+})();
+</script>

@@ -1,0 +1,19 @@
+<script type="application/json" class="section-def">
+{"id": "sm-seeds", "view": "kwmanage", "after": "sm-kw"}
+</script>
+<!-- 씨앗 키워드 — **두 배포 공통**. 2026-10-16 메뉴 A안으로 [설정]의 사이트 프로필(sm-profile)에서
+     [키워드 관리]로 옮겼다: 검색어를 넣는 곳이 [설정](씨앗)·[키워드](추적) 두 화면에 흩어져
+     있었다. 칸만 여기 있고 불러오기·저장은 sm-profile.html 의 스크립트 한 벌이 id(pf-seeds)로
+     한다(같은 GET·POST /api/settings 의 profile.seed_keywords) — 저장 코드를 두 벌 두지 않는다. -->
+<style>
+#sm-seeds h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-seeds .lh { display:block; font:var(--micro); color:var(--sub); margin:3px 0 10px; max-width:64ch; }
+#sm-seeds textarea { width:100%; min-height:88px; }
+#sm-seeds .msg { display:block; min-height:1.6em; margin-top:2px; }
+</style>
+<section id="sm-seeds" class="card">
+  <h2><label for="pf-seeds">씨앗 키워드</label></h2>
+  <span class="lh" id="pf-seeds-lh">자동완성으로 후보를 넓히는 출발점입니다. 3~10개, 쉼표나 줄바꿈으로.</span>
+  <textarea id="pf-seeds" placeholder="예) 무선 이어폰 추천&#10;노트북 가성비 비교"></textarea>
+  <span class="msg" role="status" id="pf-seeds-m"></span>
+</section>

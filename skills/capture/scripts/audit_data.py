@@ -405,7 +405,7 @@ def r_rivals(d, ctx, out):
     if d.get("comp_date") and not rivals and not manual:
         _find(out, "mid", "경쟁사", "no_rivals",
               "진짜 경쟁사가 한 곳도 없습니다(직접 적은 것도, 판정된 것도) — "
-              "[설정]에서 경쟁사를 적거나 [경쟁 분석]에서 찾기를 돌립니다", 0)
+              "[설정]에서 경쟁사를 적거나 [경쟁 검색어]에서 찾기를 돌립니다", 0)
     if not roles and (d.get("kw_gap") or d.get("gap_rivals")):
         _find(out, "low", "경쟁사", "roles_missing",
               "경쟁 후보의 역할 판정 기록이 없습니다 — 판정 전 코드로 모은 후보가 그대로 쓰입니다", 0)

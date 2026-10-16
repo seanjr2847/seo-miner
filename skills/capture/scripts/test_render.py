@@ -162,7 +162,7 @@ GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 �
 AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
 AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321" 로 서야 한다
 # 구글 AI 요약 — 요약이 떴는데 내 링크가 빠진 검색어와 대신 인용된 도메인. 이 칸은
-# [순위 추적]에서 [AI 인용]으로 옮겼다 — 옮긴 자리(#ai-aio)에 서는지를 본다.
+# [순위 추적]에서 [AI 인용·요약]으로 옮겼다 — 옮긴 자리(#ai-aio)에 서는지를 본다.
 AIO_KW = "요약검색어Z9"
 AIO_DOM = "aioZ9.example"
 WATCH_AIO_KW = "요약관찰Q7"   # 서치콘솔 행 없이 순위 확인으로만 잰 완료 기회
@@ -172,7 +172,7 @@ WATCH_AIO_KW = "요약관찰Q7"   # 서치콘솔 행 없이 순위 확인으로�
 ZERO_SITE = "gamma-site"             # GA4 연결됨 + 쟀고 0
 AI_VISITS_NOGA4 = "GA4를 연결하면 여기서 잽니다"
 AI_VISITS_ZERO = "AI에서 온 방문이 아직 없습니다"
-# ZERO_SITE 는 GSC 도 두 번 쟀고 두 번 다 클릭 0 이다 — [분석]이 맞댈 시점 유무를 클릭
+# ZERO_SITE 는 GSC 도 두 번 쟀고 두 번 다 클릭 0 이다 — [클릭 변화]이 맞댈 시점 유무를 클릭
 # 합으로 판정하면 "한 번뿐"이라고 거짓말한다.
 AN_NO_CLICKS = "두 기간 모두 클릭이 없습니다"
 AN_ONE_RUN = "수집이 한 번뿐이라 맞댈 시점이 없습니다"
@@ -191,8 +191,8 @@ EMPTY_LOADS = [
                 ("!" + re.escape(AI_VISITS_ZERO), "GA4 미연결인데 '쟀고 0' 이라고 말한다")]),
     (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
                  ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다"),
-                 (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [분석]이 그렇다고 안 말한다"),
-                 ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [분석]이 '수집이 한 번뿐'이라고 말한다"),
+                 (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [클릭 변화]이 그렇다고 안 말한다"),
+                 ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [클릭 변화]이 '수집이 한 번뿐'이라고 말한다"),
                  # 개요 목록은 비었는데 심사에 쌓였다 — "다 처리했다"가 아니라 [심사하기]
                  (r'id="opps"[^>]*>(?:(?!class="card).)*심사할 검색어가 1건 남았습니다'
                   r'(?:(?!class="card).)*점수 70점 이상이 1건(?:(?!class="card).)*'
@@ -228,8 +228,16 @@ MUSTS = [
     (r"!>(?:이 기회만 빼기|완료 표시)</button>", "옛 버튼 이름(이 기회만 빼기·완료 표시)이 남아 있다"),
     # 브랜드·경쟁사 칸은 두 배포 공통이다(sections/sm-profile.html). 호스팅 전용 섹션 안에만
     # 있던 동안 로컬 [설정]에는 이 칸이 아예 없었다.
-    (r'<section id="sm-profile"(?:(?!</section>).)*id="pf-alias"(?:(?!</section>).)*id="pf-seeds"',
+    (r'<section id="sm-profile"(?:(?!</section>).)*id="pf-alias"',
      "[설정]에 브랜드·경쟁사 칸(sm-profile)이 없다 — 두 배포 공통이어야 한다"),
+    # 씨앗 키워드는 [키워드 관리]로 옮겼다(2026-10-16 메뉴 A안) — 검색어를 넣는 곳을 한 화면에.
+    # 칸은 옮겼고 불러오기·저장은 sm-profile 의 한 벌이 id 로 한다(textarea 의 .value 는 덤프에
+    # 안 보여 값까지는 여기서 못 본다 — 같은 스크립트가 [설정]의 칸을 채우는 것과 같은 길이다).
+    (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="sm-seeds"(?:(?!</section>).)*'
+     r'<textarea id="pf-seeds"',
+     "[키워드 관리]에 씨앗 키워드 칸이 없다"),
+    (r'!<section id="sm-profile"(?:(?!</section>).)*id="pf-seeds"',
+     "[설정]의 프로필에 씨앗 칸이 남았다 — [키워드 관리]와 두 벌이다"),
     # 언어-지역(시장) 칸도 두 배포 공통이다(sections/sm-lang.html) — 자리만이 아니라 **고르개가
     # 실제로 섰는지**(GET /api/settings 가 locales·markets 를 실어 왔는지)까지 본다.
     (r'<section id="sm-lang"(?:(?!</section>).)*<select data-lang(?:(?!</section>).)*<option[^>]*selected',
@@ -372,14 +380,14 @@ MUSTS = [
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
      + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
      "AI 인용 화면이 'AI 에서 온 방문' 을 안 그렸다"),
-    # 구글 AI 요약은 [AI 인용] 화면의 몫이다 — 빠진 검색어 줄에 대신 인용된 도메인이 선다.
+    # 구글 AI 요약은 [AI 인용·요약] 화면의 몫이다 — 빠진 검색어 줄에 대신 인용된 도메인이 선다.
     # 순위 화면에는 AI 요약 칸이 없어야 한다(옮겼다 — 두 자리에 있으면 두 벌이다).
     (r'id="ai-aio"(?:(?!</section>).)*' + re.escape(AIO_KW)
      + r'(?:(?!</tr>).)*' + re.escape(AIO_DOM),
      "AI 인용 화면이 구글 AI 요약에 빠진 검색어를 안 그렸다"),
     # 표 머리글로 본다 — 기회 줄의 종류 이름표("구글 AI 요약 빠짐")는 순위 화면에 서도 된다.
     (r'!id="view-rank"(?:(?!id="view-).)*<th[^>]*>(?:<[^>]+>)*AI 요약',
-     "순위 화면에 AI 요약 칸이 남아 있다 — [AI 인용]으로 옮긴 것이 두 벌이 됐다"),
+     "순위 화면에 AI 요약 칸이 남아 있다 — [AI 인용·요약]으로 옮긴 것이 두 벌이 됐다"),
     # 메뉴 = 묶음. 이름은 페이로드(d.groups ← run_all.GROUPS)에서 온다. 주기 점은 배포마다
     # 출처가 같은 한 벌(셸의 grpDue — 상태가 이긴다)이라 로컬·호스팅 검사가 따로 있다
     # (LOCAL_MUSTS · HOSTED_MUSTS). 다시 잴 단계가 없는 [할 일]에는 점이 안 선다.
@@ -391,9 +399,9 @@ MUSTS = [
     # 조회는 "아직"이 선다(둘 다 한 줄 안).
     (r'id="view-ai"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
      r'(?:(?!</div>).)*<em>\d{4}-\d{2}-\d{2}</em>(?:(?!</div>).)*<em>아직</em>',
-     "[AI 인용] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
-    # [키워드 관리] — 추적 편집기를 [키워드]에서 떼어 세운 화면(2026-10-16). 메뉴에 서야 하고,
-    # [키워드]에는 그리로 가는 이음 한 줄만 남는다. 이음은 hash 링크(<a href="#…">)가 아니라
+     "[AI 인용·요약] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
+    # [키워드 관리] — 추적 편집기를 [순위 상승 기회]에서 떼어 세운 화면(2026-10-16). 메뉴에 서야 하고,
+    # [순위 상승 기회]에는 그리로 가는 이음 한 줄만 남는다. 이음은 hash 링크(<a href="#…">)가 아니라
     # 셸의 go() 버튼이다 — hash 는 사이트 이름의 자리라(이음매 5) 화면 id 를 실으면
     # 「등록되지 않은 사이트」가 된다.
     (r'id="nav"(?:(?!</nav>).)*<button[^>]*data-v="kwmanage"',
@@ -401,9 +409,9 @@ MUSTS = [
     (r'id="view-keywords"(?:(?!id="view-).)*id="kw-mlink"[^>]*><span class="live">[^<]*'
      r"<button type=\"button\" class=\"gov\" onclick=\"SM\.touched=true;SM\.show\('kwmanage'\)\">"
      r'\[키워드 관리\]</button>',
-     "[키워드]에 [키워드 관리]로 가는 이음이 없다 — 추적 편집기를 어디서 찾는지 모른다"),
+     "[순위 상승 기회]에 [키워드 관리]로 가는 이음이 없다 — 추적 편집기를 어디서 찾는지 모른다"),
     (r'!id="view-keywords"(?:(?!id="view-).)*id="sm-kw"',
-     "추적 편집기(sm-kw)가 아직 [키워드] 화면에 붙는다 — [키워드 관리]로 옮겼다"),
+     "추적 편집기(sm-kw)가 아직 [순위 상승 기회] 화면에 붙는다 — [키워드 관리]로 옮겼다"),
 ] + view_sections()
 # 박제본(--export)은 배포되는 산출물이다 — 메일로 나가고 저장돼서 열린다. 라이브
 # 화면과 조건이 다르다: 서버가 없고, 손댈 수 없고, 인쇄된다. 그래서 따로 본다.
@@ -538,10 +546,10 @@ REPORT_MUSTS = [
     (r"!filterKind\(", "박제본에 기회 갈래 필터가 남아 있다"),
     (r"여기서는 바꿀 수 없습니다", "박제본이 트리아지가 되는 것처럼 말한다"),
     (r"!id=\"view-settings\"", "박제본에 [설정] 화면이 남았다 — 남한테 보내는 파일이다"),
-    (r"!id=\"view-guide\"", "박제본에 [안내] 화면이 남았다"),
+    (r"!id=\"view-guide\"", "박제본에 [진행 안내] 화면이 남았다"),
     (r"!id=\"view-kwmanage\"", "박제본에 [키워드 관리] 화면이 남았다 — 바꿀 수 없는 기록이다"),
     # 그 화면으로 가는 이음도 같이 빠진다(.live) — 남으면 없는 화면을 가리키는 문장이다.
-    (r"!키워드 관리\]에서", "박제본 [키워드]가 없는 [키워드 관리] 화면을 가리킨다"),
+    (r"!키워드 관리\]에서", "박제본 [순위 상승 기회]가 없는 [키워드 관리] 화면을 가리킨다"),
     # 묶음 머리줄의 날짜는 기록이라 남고, 다시 재기 버튼은 누를 서버가 없어 빠진다.
     (r'class="vgrp"(?:(?!</div>).)*마지막으로 잰 날', "박제본에 묶음별 마지막으로 잰 날이 없다"),
     (r"!data-grp=", "박제본에 [이 묶음 다시 재기]가 남았다 — 누를 서버가 없다"),
@@ -564,11 +572,11 @@ LOCAL_MUSTS = [
     (r'class="rl navgrp">AI 노출</span>', "방금 잰 묶음([AI 노출])에 점이 섰거나 묶음 이름이 없다"),
 ] + [
     # 두 배포 공통이지만 박제본에는 없는 것 — 재기 버튼. 묶음 버튼은 잴 단계가 있는 묶음
-    # 화면에, 전체 재기는 [안내] 한 곳에만 선다(레일 바닥의 [전체 분석 실행]은 없앴다).
+    # 화면에, 전체 재기는 [진행 안내] 한 곳에만 선다(레일 바닥의 [전체 분석 실행]은 없앴다).
     (r'id="view-rank"(?:(?!id="view-).)*<button[^>]*data-grp="search"',
      "[순위 추적]에 [이 묶음 다시 재기](검색 성과)가 없다"),
     (r'id="view-guide"(?:(?!id="view-).)*<button[^>]*data-grp=""',
-     "[안내]에 전체 다시 재기가 없다"),
+     "[진행 안내]에 전체 다시 재기가 없다"),
     # 묶음 이름은 머리줄 맨 앞에 선다 — 레일의 묶음 제목은 좁은 화면에서 안 그려져,
     # 모바일에서 "이 묶음"이 무엇인지 말하는 자리가 여기뿐이다. 버튼 이름표는 다시 재는
     # 범위(g.stages 의 단계 이름)까지 말한다. 이름은 정본(run_all·stage)에서 읽는다.
@@ -588,35 +596,37 @@ LOCAL_MUSTS = [
     # 그 버튼 바로 밑 산문이 "비용이 드는 단계는 돌리기 전에 물어봅니다"라고만 하면 거짓말이다 —
     # 버튼은 두 배포 다 묻지 않고 바로 돈다. 버튼 쪽 사실을 말해야 한다.
     (r'id="view-guide"(?:(?!id="view-).)*다시 재기는 누르면 바로 실행됩니다',
-     "[안내]가 다시 재기 버튼이 비용을 묻지 않고 바로 돈다는 것을 안 말한다"),
+     "[진행 안내]가 다시 재기 버튼이 비용을 묻지 않고 바로 돈다는 것을 안 말한다"),
     (r'!id="view-overview"(?:(?!id="view-).)*data-grp=',
      "버튼이 없어야 할 [할 일] 묶음 화면에 다시 재기가 섰다"),
 ]
 RUN_MUSTS = LOCAL_MUSTS[3:]
 
-# [키워드 관리]의 로컬 갈래 — 편집기(sm-kw)는 호스팅 조립에만 낀다(/api/keywords 가 호스팅
-# 몫이다). 로컬에서 이 화면이 빈 상자로 서면 메뉴를 눌러도 아무것도 없다. 원본 섹션(#kwm-here)이
-# 지금 추적 수와 채팅에서 고르는 명령을 말해야 한다. 픽스처(beta-site)는 추적 검색어가 있다.
+# [키워드 관리]의 로컬 갈래 — 2026-10-16 메뉴 A안부터 편집기(sm-kw)가 두 배포 공통이다(/api/keywords
+# 가 dashboard.ROUTES 에 있다). 예전엔 웹 전용이라 로컬은 "채팅에서 /capture keywords" 안내뿐이었다.
+# 로컬에서도 목록을 실제로 받아 그려야 한다 — 막대·줄이 서면 GET /api/keywords 가 로컬 서버에서 돈 것이다.
 KWM_LOCAL_MUSTS = [
-    (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="kwm-here"(?![^>]*hidden)',
-     "로컬 [키워드 관리]의 안내 상자가 숨었다 — 빈 화면이 된다"),
-    (r'id="kwm-sub"[^>]*>지금 \d+개를 추적합니다',
-     "로컬 [키워드 관리]가 지금 추적 수를 안 말한다"),
-    (r'id="kwm-body"(?:(?!</section>).)*class="cmd[^"]*"[^>]*>/capture keywords '
-     + re.escape(SITES[1]) + "</button>",
-     "로컬 [키워드 관리]에 추적을 고르는 명령(/capture keywords 사이트)이 없다"),
-    (r'!id="sm-kw"', "호스팅 전용 편집기(sm-kw)가 로컬 조립에 샜다"),
+    (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*<label class="kwr">',
+     "로컬 [키워드 관리]에 추적 편집기 줄이 안 섰다 — 로컬 서버의 /api/keywords 를 못 읽었다"),
+    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="img"(?![^>]*hidden)',
+     "로컬 [키워드 관리]의 추적 진행 막대가 안 그려졌다"),
+    (r'!id="kwm-here"', "옛 로컬 안내 상자(kwm-here)가 남았다 — 편집기와 두 벌이다"),
 ]
-# 호스팅 갈래 — 편집기가 [키워드 관리] 안에 붙고, 로컬 안내는 물러나고, 두 파일에 걸친 진행
-# 막대 배선(kwmanage.html 의 KM_wireTrack ↔ dash.html 의 kwLoad 가 쓰는 .cnt)이 돈다.
+# 호스팅 갈래 — 편집기가 [키워드 관리] 안에 붙고, 두 파일에 걸친 진행 막대 배선
+# (kwmanage.html 의 KM_wireTrack ↔ sm-kw.html 의 kwLoad 가 쓰는 .cnt)이 돈다.
 KWM_HOSTED_MUSTS = [
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"',
      "추적 편집기(sm-kw)가 [키워드 관리] 화면에 안 붙었다"),
-    (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="kwm-here"[^>]*hidden',
-     "호스팅 [키워드 관리]에 로컬 안내(채팅 명령)가 편집기와 같이 섰다"),
     (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="img"(?![^>]*hidden)[^>]*'
      r'aria-label="추적 \d+개, 한도 \d+개"><i style="width: [\d.]+%',
      "추적 진행 막대가 안 그려졌다 — KM_wireTrack 이 .cnt 를 못 읽었거나 안 불렸다"),
+    # [개요]의 할 일 쪽 알림 — 추적 0 인 시장(일본)이 있으면 선다. 화면은 검색 성과 묶음에 두고
+    # 손볼 것이 생겼을 때만 할 일에서 끌어온다(2026-10-16). 같은 자료(시장 탭)와 같은 이름을 쓴다.
+    (r'id="view-overview"(?:(?!id="view-).)*<section id="sm-kwnudge" class="card"(?![^>]*hidden)>'
+     r'(?:(?!</section>).)*정리할 시장 \d+곳(?:(?!</p>).)*일본 구글 <span class="warn">0/\d+</span> \(비어 있음\)',
+     "[개요]에 추적 0 인 시장(일본 구글)을 [키워드 관리]로 끌어오는 알림이 안 섰다"),
+    (r"id=\"sm-kwnudge\"(?:(?!</section>).)*SM\.show\('kwmanage'\)",
+     "[개요] 알림의 버튼이 [키워드 관리]로 안 간다"),
 ]
 
 # 셸 table() 의 행 카드 옵트인(.tw.cards) — 좁은 화면에서 칸 앞에 서는 라벨(data-label)은
@@ -669,7 +679,7 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
      "시장별 카드의 [질문 만들기]가 그 시장을 안 싣는다"),
     # [키워드 관리] 화면(추적 편집기) — 시장마다 탭이 서고 탭이 「그 나라 구글」과 추적 수/한도를
     # 말한다. 시장 이름이 언어(「영어」)뿐이라 어느 나라에서 재는지 몰랐고, 0 인 시장은 맨 아래
-    # 한 줄에 묻혀 있었다(2026-10-15 다시 짬). 2026-10-16 [키워드]에서 이 화면으로 옮겼다 —
+    # 한 줄에 묻혀 있었다(2026-10-15 다시 짬). 2026-10-16 [순위 상승 기회]에서 이 화면으로 옮겼다 —
     # 자리를 화면 상자(view-kwmanage)부터 잡는다.
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*class="kwmk"'
      r'(?:(?!</section>).)*<span class="g">한국 구글</span>'
@@ -701,8 +711,8 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     # 호스팅은 서버가 키를 댄다. 안내가 요청마다 오는 guide.steps[].gain(로컬 갈래)을
     # 그리면 "OpenRouter 키를 넣으면 켜집니다"가 샌다 — 조립 시점 표(gainOf)를 써야 한다.
     (r"!키를 넣으면", "호스팅 안내가 유료 키를 넣으라고 한다 — 조립 시점 용어표를 안 읽었다"),
-    # 전체 재기는 [안내] 화면의 묶음 머리줄로 옮겼다 — 레일 바닥에 다시 붙으면 두 벌이다.
-    (r'!id="sm-run"', "레일 바닥에 [전체 분석 실행]이 다시 붙었다 — 전체 재기는 [안내] 한 곳이다"),
+    # 전체 재기는 [진행 안내] 화면의 묶음 머리줄로 옮겼다 — 레일 바닥에 다시 붙으면 두 벌이다.
+    (r'!id="sm-run"', "레일 바닥에 [전체 분석 실행]이 다시 붙었다 — 전체 재기는 [진행 안내] 한 곳이다"),
     # 안내의 실행 칩은 SM.host 를 렌더 시점에 부른다(dashboard.html 의 renderGuide) —
     # 호스팅판은 그 훅을 실행 버튼으로 갈아 낀다(dash.html 의 SM.host.stepChip).
     # 이 픽스처(beta-site)는 GSC 는 읽었지만 키워드를 아직 안 캤으므로 "지금 할 것"이
@@ -979,7 +989,7 @@ def zero_site(home: Path) -> None:
                      (ZERO_SITE, f"{ZERO_SITE}.example", f"sc-domain:{ZERO_SITE}.example"))
         pid = conn.execute("SELECT id FROM projects WHERE name=?", (ZERO_SITE,)).fetchone()[0]
         db.write_ga4_ai_referrals(conn, pid, "2026-06-01", 28, ["chatgpt.com"], [])
-        # 두 번 쟀는데 두 번 다 클릭 0 — [분석]이 "수집이 한 번뿐"이라고 거짓말하던 판.
+        # 두 번 쟀는데 두 번 다 클릭 0 — [클릭 변화]이 "수집이 한 번뿐"이라고 거짓말하던 판.
         for d in ("2026-05-01", "2026-06-01"):
             conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,"
                          "query,page,clicks,impressions,ctr,position) VALUES(?,?,28,?,?,0,50,0,30.0)",

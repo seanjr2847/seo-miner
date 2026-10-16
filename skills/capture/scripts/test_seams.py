@@ -209,7 +209,9 @@ def test_seam_02_view_list_single_source():
     for s in secs:
         assert s.get("view") in defs, f"section-def {s['id']} 가 없는 화면을 가리킨다: {s.get('view')}"
         # after 는 원본 뷰의 섹션이거나 같은 화면의 다른 섹션 id 여도 된다(sm-dim ← sm-perf).
-        assert s.get("after") in defs[s["view"]]["sections"] or s.get("after") in sec_ids, \
+        # "" 는 화면 맨 앞이다 — 원본 섹션이 없는 [키워드 관리]의 첫 섹션(sm-kw) 자리.
+        assert (s.get("after") == "" or s.get("after") in defs[s["view"]]["sections"]
+                or s.get("after") in sec_ids), \
             f"{s['id']} 를 붙일 자리가 {s['view']} 에 없다: {s.get('after')}"
         assert s["id"] not in have, \
             f"{s['id']} 가 원본 뷰에 이미 있다 — 매니페스트가 소유할 것이다"
@@ -369,7 +371,7 @@ def test_seam_08_opportunity_kind_labels_match():
 def test_seam_09_view_commands_match_declared_stages():
     """9) 화면이 말하는 명령과 그 화면이 선언한 단계는 같은 것을 가리켜야 한다.
     view-def 의 stages 는 "이 단계들이 이 화면을 채운다"는 선언이고, 호스팅은
-    그걸 읽어 화면 머리에 실행 버튼을 단다. [키워드] 는 "키워드 발굴·경쟁사
+    그걸 읽어 화면 머리에 실행 버튼을 단다. [순위 상승 기회] 는 "키워드 발굴·경쟁사
     수집"이라 선언해 놓고 실제로는 GSC 스냅샷만 읽었다 — 버튼은 떴는데 눌러도
     화면이 안 채워졌다. 화면 자신이 빈 상태에서 부르는 명령이 정답을 알고 있다.
     (add·run 은 단계가 아니다: 질문 추가와 전 단계 일괄 실행.)
@@ -409,7 +411,7 @@ def test_seam_09a_section_buttons_match_declared_stages():
     """9a) 호스팅 전용 섹션이 자기 마크업에 다는 실행 버튼도 같은 계약을 탄다.
 
     9번은 views/*.html 만 훑는다. 호스팅 섹션은 그 바깥이라 그쪽 끝이 비어
-    있었다 — [키워드] 사고("키워드 발굴이라 선언해 놓고 GSC 만 읽었다")가
+    있었다 — [순위 상승 기회] 사고("키워드 발굴이라 선언해 놓고 GSC 만 읽었다")가
     호스팅 섹션에서 다시 나도 안 잡혔다. 귀속을 추측할 필요는 없다: 그 파일의
     section-def 가 이미 어느 화면 것인지 말한다.
     """
@@ -1149,7 +1151,7 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
 
 
 def test_seam_24_ai_health_fields_come_from_scoring():
-    """24) [AI 인용] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
+    """24) [AI 인용·요약] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
 
     화면(views/ai.html 의 AI_health)은 d.ai_health 의 하위 칸(h.unmeasured,
     lr.state …)을 읽는다. 최상위 키는 10번이 보지만 그 안의 칸은 아무도 안 본다 —
@@ -1235,7 +1237,7 @@ def test_seam_25_chart_library_single_source():
 def test_seam_26_aio_fields_and_play_come_from_server():
     """26) 구글 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다 — 그리고 한 화면에만 있다.
 
-    AI 요약은 [AI 인용] 화면(views/ai.html 의 #ai-aio)이 그린다(메뉴의 [AI 노출] 묶음 —
+    AI 요약은 [AI 인용·요약] 화면(views/ai.html 의 #ai-aio)이 그린다(메뉴의 [AI 노출] 묶음 —
     run_all.GROUPS). 화면은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
     읽고, 처방 문구는 d.aio_play[갈래] 로 찾는다. 10번은 최상위 키(d.*)만 본다 — 행 칸
     이름이 어긋나거나 갈래 이름이 d.aio_play 의 열쇠와 다르면 화면은 undefined 를 받아
@@ -1391,7 +1393,7 @@ def test_seam_28_ai_visits_fields_and_names():
     이음매가 둘이다. (가) 화면(views/ai.html 의 AI_visits)은 d.ai_referrals 의 하위 칸
     (r.source·p.sources·m.hosts …)을 읽는다. 최상위 키는 10번이 보지만 안의 칸은 아무도
     안 본다 — dashboard._ai_referrals 가 칸 이름을 바꾸면 화면은 undefined 를 0 으로
-    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용] 화면의 'AI 에서 온 방문'" 처럼 화면·
+    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용·요약] 화면의 'AI 에서 온 방문'" 처럼 화면·
     섹션 이름을 적는다. 정본은 뷰 쪽(view-def title, 섹션 h2)이라 대조한다.
     """
     ctx = _load()
@@ -1436,7 +1438,7 @@ def test_seam_28_ai_visits_fields_and_names():
 
 
 def test_seam_29_ai_screen_gap_count_is_server_judgement():
-    """29) [AI 인용] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
+    """29) [AI 인용·요약] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
     scoring.ai_is_gap) 한 벌이다.
 
     두 벌이었다: 기회는 인용률로 섰는데(6번 중 1번도 공백), 화면 머리 띠는 "인용도
@@ -2063,7 +2065,7 @@ def test_seam_44_chip_stages_have_skill_commands():
     (`/capture ${st}` — dashboard.html 의 viewChip·act). 그래서 화면 쪽만 보면
     늘 멀쩡하다. 어긋난 건 스킬과의 사이였다:
 
-    [경쟁 분석]의 「경쟁사 찾기」 칩은 `/capture competitors` 를 복사해 줬는데
+    [경쟁 검색어]의 「경쟁사 찾기」 칩은 `/capture competitors` 를 복사해 줬는데
     SKILL.md 가 정의한 명령은 `/capture gap`(단수)뿐이었다. 붙여 넣으면 안 먹고,
     "오타인가" 하고 `s` 를 붙이면 `/capture gaps` 가 돈다 — 그건 기회를 세우는
     **다른 단계**라 경쟁사 수집은 하나도 안 됐는데 성공한 것처럼 보였다. 조용히
@@ -2769,7 +2771,7 @@ def test_seam_61_server_and_local_accept_the_same_groups():
 
 
 def test_seam_62_google_ai_overview_lives_on_the_ai_screen():
-    """62) 구글 AI 요약은 [AI 노출] 묶음의 [AI 인용] 화면에 산다 — 순위 화면에는 없다.
+    """62) 구글 AI 요약은 [AI 노출] 묶음의 [AI 인용·요약] 화면에 산다 — 순위 화면에는 없다.
 
     재료는 순위 조회(rank)라서, 옮겨 간 뒤로도 세 끝이 맞아야 한다: AI 노출 묶음을 다시
     재면 rank 가 돈다(안 돌면 버튼을 눌러도 요약 칸이 안 바뀐다), '구글 AI 요약 빠짐'
@@ -3214,7 +3216,7 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
         "[관찰 중] 묶음이 열린 상태와 다르다"
     m = re.search(r"window\.oppStMatch = \(o, st\) => \{(.*?)\n\};", shell, re.S)
     assert m and "o.hold" in m.group(1), "oppStMatch 가 관찰 판정(o.hold)을 안 본다"
-    # 거르개를 안 건 기본값(전체)도 관찰 중을 뺀다 — [분석]·[키워드]·[순위 추적]은 기본이 "전체"라
+    # 거르개를 안 건 기본값(전체)도 관찰 중을 뺀다 — [클릭 변화]·[순위 상승 기회]·[순위 추적]은 기본이 "전체"라
     # 여기서 새면 이미 고친 페이지의 일이 할 일처럼 계속 선다
     assert '["", "남은 것"]' in shell and '["all", "전체"]' in shell, \
         "거르개의 기본값(남은 것)·전부(전체) 선택지가 없다 — 동작은 test_seam_99 가 실제로 돌려 본다"
@@ -3382,7 +3384,7 @@ def test_seam_103_opp_row_opens_the_drawer():
 
 
 def test_seam_104_gap_readers_use_current_rivals():
-    """104) 격차(keyword_gap)를 읽는 두 곳 — 기회(content_gaps)와 [경쟁 분석] 표 — 이 같은
+    """104) 격차(keyword_gap)를 읽는 두 곳 — 기회(content_gaps)와 [경쟁 검색어] 표 — 이 같은
     거르개(scoring.gap_rival_set = 지금의 경쟁사 판정)로 읽는다.
 
     격차 행은 그때의 경쟁사로 캔 것이라, 판매 채널로 빠진 곳(gucci 의 lfmall)의 옛 행이 남는다.
@@ -3398,8 +3400,8 @@ def test_seam_104_gap_readers_use_current_rivals():
     assert reads, "대시보드가 keyword_gap 을 읽는 자리를 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
     for at in reads:
         tail = dash[at:at + 200]
-        assert "dom_in" in tail, f"[경쟁 분석]이 거르지 않은 격차를 읽는다: {tail[:120]!r}"
-    assert "scoring.gap_rival_set(conn, pid)" in dash, "[경쟁 분석]의 거르개가 기회와 다른 목록이다"
+        assert "dom_in" in tail, f"[경쟁 검색어]이 거르지 않은 격차를 읽는다: {tail[:120]!r}"
+    assert "scoring.gap_rival_set(conn, pid)" in dash, "[경쟁 검색어]의 거르개가 기회와 다른 목록이다"
 
 
 def test_seam_105_plays_card_and_drawer_read_what_the_payload_carries():
@@ -3971,7 +3973,7 @@ def test_seam_130_screen_jumps_point_at_declared_screens():
     """130) 화면을 옮기는 손잡이가 부르는 화면 id 는 view-def 에 있는 id 다.
 
     화면 id 는 글자로 흩어져 있다 — SM.show('x')·SM.at("x")·go("x")·SM.land·SM.drop 이
-    셸·뷰·섹션·애드온 곳곳에서 부른다. 화면을 쪼개거나 이름을 바꾸면(2026-10-16 [키워드]에서
+    셸·뷰·섹션·애드온 곳곳에서 부른다. 화면을 쪼개거나 이름을 바꾸면(2026-10-16 [순위 상승 기회]에서
     [키워드 관리]를 떼었다) 옛 id 를 부르는 손잡이가 남는데, 셸은 없는 화면이면 조용히
     물러서거나(go 는 글자로, RK_goKw 는 빈 문자열로) 토스트만 띄운다 — 화면은 멀쩡해 보인다.
     """
@@ -3994,17 +3996,17 @@ def test_seam_130_screen_jumps_point_at_declared_screens():
 
 
 def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
-    """131) 추적 편집기(sections/sm-kw.html)·그 진행 막대 배선·그 스타일이 한 화면에 있다.
+    """131) 추적 편집기(sections/sm-kw.html)·그 진행 막대 배선·그 스타일이 한 화면에 있고,
+    그 편집기가 부르는 /api/keywords 가 두 배포에 다 있다.
 
-    편집기는 호스팅 전용 섹션이고 어느 화면에 붙을지는 section-def 의 view 가 말한다
-    (2026-10-16 [키워드] 맨 아래 → [키워드 관리]). 그런데 그 섹션에 딸린 것이 두 파일에 더
-    있다: 진행 막대는 화면 쪽 스크립트(KM_wireTrack)가 애드온(dash.html 의 kwLoad)이 .cnt 에
-    쓴 「N / M」을 읽어 그리고, 스타일은 #view-<화면> 아래에 걸린다. section-def 만 옮기면
-    편집기는 새 화면에 서는데 막대는 빈 채로, 스타일은 안 먹은 채로 선다 — JS 오류도 없다.
+    어느 화면에 붙을지는 section-def 의 view 가 말한다(2026-10-16 [순위 상승 기회] 맨 아래 →
+    [키워드 관리]). 그 섹션에 딸린 것이 한 파일에 더 있다: 진행 막대는 화면 쪽 스크립트
+    (KM_wireTrack)가 편집기(kwLoad)가 .cnt 에 쓴 「N / M」을 읽어 그리고, 스타일은
+    #view-<화면> 아래에 걸린다. section-def 만 옮기면 편집기는 새 화면에 서는데 막대는 빈 채로,
+    스타일은 안 먹은 채로 선다 — JS 오류도 없다.
 
-    편집기가 호스팅 전용이라 그 화면은 로컬에서 따로 할 말이 있어야 한다(빈 화면이 되지
-    않게) — 원본 섹션이 하나 이상 있어야 한다. 그 섹션이 실제로 그려지는지는 test_render 의
-    KWM_LOCAL_MUSTS 가 본다.
+    같은 날 메뉴 A안으로 편집기를 두 배포 공통으로 돌렸다 — 예전엔 호스팅 애드온(dash.html)이
+    편집기 코드를 갖고 /api/keywords 도 호스팅에만 있어서 로컬 [키워드 관리]는 안내 문장뿐이었다.
     """
     ctx = _load()
     if ctx is None:
@@ -4014,8 +4016,19 @@ def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
     sec = next((s for s in dashboard.section_defs() if s["id"] == "sm-kw"), None)
     assert sec, "sections/sm-kw.html 의 section-def 를 못 읽었다"
     vid = sec["view"]
-    assert sec.get("only") == "hosted", "추적 편집기가 호스팅 전용이 아니게 됐다 — 이 검사의 전제가 바뀌었다"
-    assert defs[vid]["sections"], f"[{vid}] 에 원본 섹션이 없다 — 로컬에서 빈 화면이다"
+    assert sec.get("only") is None, "추적 편집기가 한 배포 전용이 됐다 — 로컬에서 추적 목록을 못 고친다"
+    assert {("GET", "/api/keywords"), ("POST", "/api/keywords")} <= set(dashboard.ROUTES), \
+        "편집기가 부르는 /api/keywords 가 두 배포 공통 표(dashboard.ROUTES)에 없다"
+    kw_src = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-kw.html").read_text("utf-8")
+    assert "function kwLoad" not in ctx["dash"] and "function kwPaint" not in ctx["dash"], \
+        "호스팅 애드온(dash.html)에 편집기 코드가 또 있다 — sm-kw.html 과 두 벌이다"
+    # 시장 하나의 상한 — 공통 코드의 기본값(db.KEYWORDS_PER_MARKET)과 호스팅 설정의 기본값이 같아야
+    # 한다. 다르면 같은 사이트가 로컬 화면과 웹 화면에서 다른 한도(100/100 ↔ 50/50)를 말한다.
+    import db
+    st = (ROOT / "server" / "settings.py").read_text("utf-8")
+    m = re.search(r'Setting\("SEOMINER_MAX_KEYWORDS",\s*default="(\d+)"', st)
+    assert m and int(m.group(1)) == db.KEYWORDS_PER_MARKET, \
+        f"시장 상한 기본값이 두 벌로 갈렸다: server/settings {m and m.group(1)} ↔ db {db.KEYWORDS_PER_MARKET}"
 
     touch = re.compile(r"(?:\$|getElementById)\(\s*['\"]sm-kw['\"]\s*\)")
     owners = [f.stem for f in sorted(ctx["views"].glob("*.html"))
@@ -4026,13 +4039,34 @@ def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
     assert ".kwprog" in view and "MutationObserver" in view and '".cnt"' in view, \
         f"[{vid}] 화면이 진행 막대(.kwprog)를 .cnt 에서 읽어 그리지 않는다"
     assert r"/(\d+)\s*\/\s*(\d+)/" in view, f"[{vid}] 의 막대가 「N / M」 꼴을 안 읽는다"
-    assert re.search(r'querySelector\("\.cnt"\)\.textContent\s*=[^;]*" / "', ctx["dash"]), \
-        "dash.html 의 kwLoad 가 .cnt 에 「N / M」 꼴로 안 쓴다 — 화면의 막대가 그 글자를 읽는다"
+    assert re.search(r'querySelector\("\.cnt"\)\.textContent\s*=[^;]*" / "', kw_src), \
+        "sm-kw.html 의 kwLoad 가 .cnt 에 「N / M」 꼴로 안 쓴다 — 화면의 막대가 그 글자를 읽는다"
 
     css = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-kw.html").read_text("utf-8")
     scopes = set(re.findall(r"#view-([a-z0-9]+)", css))
     assert scopes == {vid}, (f"sm-kw.html 의 스타일이 {sorted(scopes)} 화면 아래에 걸렸다 — "
                              f"붙는 화면은 [{vid}] 다")
+
+    # '추적을 켜러 가라'고 보내는 손잡이도 편집기가 붙은 화면으로 간다. 옮긴 날 [클릭 변화]의 미분류
+    # 경고·빈 상태 버튼 둘만 [순위 상승 기회]에 남아, 누르면 편집기 없는 화면 맨 위에 떨어졌다(검토).
+    for name, mark in (("analysis", "const AN_goKw"), ("rank", "const RK_goKw")):
+        src = (ctx["views"] / f"{name}.html").read_text("utf-8")
+        assert mark in src, f"[{name}] 의 추적 손잡이({mark})가 없다"
+        piece = src.split(mark, 1)[1].split(': "";', 1)[0]
+        assert f'"{vid}"' in piece and '"keywords"' not in piece, \
+            f"[{name}] 의 추적 손잡이가 [{vid}] 가 아닌 곳으로 보낸다: {piece[:120]}"
+    # [개요]의 '정리할 시장' 알림(sections/sm-kwnudge.html)도 편집기가 붙은 화면으로 보낸다
+    nudge = next((s for s in dashboard.section_defs() if s["id"] == "sm-kwnudge"), None)
+    assert nudge and nudge["view"] == "overview" and nudge.get("only") is None, nudge
+    nhtml = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-kwnudge.html").read_text("utf-8")
+    assert f"SM.show('{vid}')" in nhtml, f"[개요] 알림의 버튼이 [{vid}] 로 안 간다"
+    assert "function kwNudge()" in kw_src and "kwNudge();" in kw_src, \
+        "편집기(sm-kw.html)가 kwLoad 뒤에 [개요] 알림(kwNudge)을 안 그린다"
+    an = (ctx["views"] / "analysis.html").read_text("utf-8")
+    for fn in ("anUnmatched", "anIntent"):
+        body = an.split(f"function {fn}(", 1)[1].split("\n}\n", 1)[0]
+        assert "AN_goKw(" in body and 'go("keywords"' not in body, \
+            f"[클릭 변화] {fn} 의 '추적 켜기' 버튼이 [{vid}] 로 안 보낸다"
 
 
 def inspect_src(fn) -> str:

@@ -3482,6 +3482,21 @@ def is_operator_query(text: str) -> bool:
     return bool(_OPERATOR_RE.search(text or ""))
 
 
+# 시장 하나의 추적 키워드 상한 기본값. 호스팅은 SEOMINER_MAX_KEYWORDS 로 덮는다(server/settings 의
+# 기본값도 이 값이다 — test_seams 가 둘이 같은지 본다). 로컬 대시보드도 같은 상한으로 켠다 —
+# 로컬 사용자의 순위 조회도 키워드당 과금이다.
+KEYWORDS_PER_MARKET = 100
+
+
+def keywords_per_market() -> int:
+    """지금 적용할 시장 하나의 상한 — 환경 변수(호스팅 설정)가 있으면 그것, 없으면 기본값."""
+    import os
+    try:
+        return max(1, int(os.environ.get("SEOMINER_MAX_KEYWORDS") or KEYWORDS_PER_MARKET))
+    except ValueError:
+        return KEYWORDS_PER_MARKET
+
+
 def market_caps(conn: sqlite3.Connection, project_id: int, each: int) -> dict[str, int]:
     """시장마다 추적 키워드 상한 — 시장마다 each 개(서버 SEOMINER_MAX_KEYWORDS 가 시장 하나의 몫).
 

@@ -19,8 +19,8 @@
   <div class="card">
   <div class="sm-ch">
     <h2>브랜드·경쟁사<span class="hint" tabindex="0"
-      data-tip="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
-      aria-label="비워 둬도 측정은 그대로 됩니다 — 검색어·분석 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
+      data-tip="비워 둬도 측정은 그대로 됩니다 — 검색어·[클릭 변화] 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
+      aria-label="비워 둬도 측정은 그대로 됩니다 — 검색어·[클릭 변화] 화면이 남의 브랜드 검색을 걸러내는 데만 씁니다."
       >i</span></h2>
     <p class="sub">벗어나면(포커스를 잃으면) 그 자리에서 저장되고 다음 실행부터 적용됩니다.</p>
   </div>
@@ -37,10 +37,6 @@
     <span class="lh">남의 브랜드 검색을 걸러냅니다. 쉼표로 여러 개.</span>
     <input id="pf-tools" placeholder="ecrett, paperpal, future tools">
     <span class="msg" role="status" id="pf-tools-m"></span>
-    <label for="pf-seeds">씨앗 키워드</label>
-    <span class="lh" id="pf-seeds-lh">자동완성으로 후보를 넓히는 출발점입니다. 3~10개, 쉼표나 줄바꿈으로.</span>
-    <textarea id="pf-seeds" placeholder="예) 무선 이어폰 추천&#10;노트북 가성비 비교"></textarea>
-    <span class="msg" role="status" id="pf-seeds-m"></span>
   </div>
   </div>
 </section>
@@ -51,6 +47,8 @@
 // 배포마다 다르지만 본체는 한 벌이다: db.profile_read/profile_save. 로컬 대시보드의
 // 원격 사이트는 로컬 서버가 호스팅으로 넘긴다(Handler._proxy).
 (function () {
+  // 씨앗(seeds) 칸은 [키워드 관리]의 sections/sm-seeds.html 에 있다(2026-10-16 메뉴 A안) — 칸을
+  // id 로 찾으므로 어느 화면에 있든 이 한 벌이 불러오고 저장한다. 칸이 없는 조립이면 건너뛴다.
   var FIELDS = ["alias", "comp", "tools", "seeds"];
   var KEY = {alias: "brand_aliases", comp: "competitors_manual",
              tools: "tools", seeds: "seed_keywords"};
@@ -74,7 +72,7 @@
       DONE = "";     // 못 받았으면 다음 sm:site 에서 다시 시도한다
       return;
     }
-    FIELDS.forEach(function (k) { field(k).value = d[KEY[k]] || ""; });
+    FIELDS.forEach(function (k) { if (field(k)) field(k).value = d[KEY[k]] || ""; });
     // 브랜드 표기가 비어 있을 때만 도메인 초안을 얹는다 — placeholder 는 저장되지
     // 않는 글자다: 검색어 화면이 켜는 "비었습니다" 경고를 여기서 조용히 지우지
     // 않는다. 사람이 실제로 적어야(또는 이 값을 그대로 옮겨 적어야) 저장된다.
@@ -97,10 +95,10 @@
       if (el) el.innerHTML = BASE[k];
     });
     var comp = document.getElementById("pf-comp-lh");
-    // 판정 전 후보(검색 결과가 겹친 곳)만 있고 확인된 경쟁사가 0곳 — [경쟁 분석]도 같은 말을 한다.
+    // 판정 전 후보(검색 결과가 겹친 곳)만 있고 확인된 경쟁사가 0곳 — [경쟁 검색어]도 같은 말을 한다.
     if (comp && !d.competitors_manual && d.rivals_confirmed === 0)
       comp.innerHTML = "경쟁사로 확인된 곳이 아직 없습니다. 아는 곳을 적거나 " +
-        (window.go ? window.go("competitors") : "[경쟁 분석]") +
+        (window.go ? window.go("competitors") : "[경쟁 검색어]") +
         "에서 찾으세요. 쉼표로 여러 개.";
     var seeds = document.getElementById("pf-seeds-lh");
     // 서치콘솔이 붙은 사이트는 씨앗이 없어도 후보를 캔다(구글 실적의 검색어) — 비워 둬도 된다.

@@ -1,7 +1,7 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지.
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
-{"id": "ai", "group": "ai", "title": "AI 인용",
+{"id": "ai", "group": "ai", "title": "AI 인용·요약",
  "sub": "AI 답변에 우리 링크가 붙는지, 안 붙으면 누가 그 자리를 가져갔는지 확인합니다.",
  "sections": ["ai", "ai-aio", "ai-outranked", "ai-vs-search", "ai-visits"], "stages": ["ai", "gaps", "gsc"]}
 </script>
@@ -384,7 +384,7 @@ td .ailogo { margin-right:6px; }
   <div id="ai-aio-body"></div>
 </section>
 
-<!-- 두 축이 서로를 보는 자리. 위 카드들은 AI 한 축만 보고, [순위]·[분석] 화면은
+<!-- 두 축이 서로를 보는 자리. 위 카드들은 AI 한 축만 보고, [순위]·[클릭 변화] 화면은
      검색 한 축만 본다 — 아래 둘만 두 축을 한 줄에 놓는다. -->
 <section id="ai-outranked" class="card aic as5" hidden>
   <div class="ach">
@@ -1155,7 +1155,7 @@ function AI_vsSearch(x, gscDate) {
   if (!x.top_queries) return [lead,
     `<div class="empty"><b>1페이지 안에 든 검색어가 없습니다</b>
       <p>1페이지 문턱에 걸린 검색어부터 올리면 이 표에 견줄 왼쪽 축이 생깁니다.</p>
-      <div class="acts">${window.go("keywords", "키워드 열기")}</div></div>`];
+      <div class="acts">${window.go("keywords", "순위 상승 기회 열기")}</div></div>`];
   if (!rows.length) return [lead,
     `<div class="empty"><b>겹치는 질문이 없습니다</b>
       <p>상위 검색어 ${x.top_queries}개를 그대로 질문으로 만들면 채워집니다.</p>
@@ -1183,18 +1183,18 @@ function AI_outranked(o) {
   if (!o.competitors) return [sub,
     `<div class="empty"><b>경쟁사가 아직 없습니다</b>
       <p>등록하면 AI가 인용하는 도메인 중 우리가 이미 이기는 상대를 가려냅니다.</p>
-      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
+      <div class="acts">${window.go("competitors", "경쟁 검색어 열기")}</div></div>`];
   if (!o.gap_date) return [sub,
     `<div class="empty"><b>경쟁 검색어를 아직 수집하지 않았습니다</b>
       <p>경쟁사 ${o.competitors}곳과 검색에서 누가 위인지 견줄 자료가 그것입니다.</p>
-      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
+      <div class="acts">${window.go("competitors", "경쟁 검색어 열기")}</div></div>`];
   // 등록한 경쟁사가 AI 답변에 하나도 안 나온 것은 "재 봤더니 문제 없음"이다 —
   // 자료가 없는 것도, 실패한 것도 아니라 .empty.ok 다.
   if (!o.cited) return [sub,
     `<div class="empty ok"><b>인용된 경쟁사가 없습니다</b>
       <p>등록된 ${o.competitors}곳 대신 위 「우리 대신 인용되는 곳」의 도메인이 그 자리를
         가져갔습니다.</p>
-      <div class="acts">${window.go("competitors", "경쟁 분석 열기")}</div></div>`];
+      <div class="acts">${window.go("competitors", "경쟁 검색어 열기")}</div></div>`];
   if (!rows.length) return [sub,
     `<div class="empty"><b>검색에서도 앞선 곳이 없습니다</b>
       <p>AI가 인용하는 경쟁사 ${o.cited}곳에 검색 순위부터 밀리고 있습니다.</p>
