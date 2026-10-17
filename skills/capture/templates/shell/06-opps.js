@@ -19,19 +19,19 @@
 // 빼기', 상태는 '완료'인데 버튼은 '완료 표시'라 같은 것을 두 이름으로 불렀다.
 // resolved 의 이름은 "누가 닫았나"다 — 예전 이름 '저절로 풀림'은 좋아졌다고 읽혔는데,
 // theotherskin 252건 중 해결된 것은 20건이고 179건은 판정 규칙을 고친 뒤 옛 규칙 줄을 정리한 것이었다.
-window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:"제외",
+SM.api.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:"제외",
                     resolved:"자동 종료"};
 // 도구가 왜 닫았나 — 갈래의 정본은 db.RESOLVED_TAGS(test_seams 가 대조), 정하는 곳은
 // scoring.Why. 배지가 이 말을 단다. 갈래가 없는 옛 줄은 OPP_LABEL.resolved 그대로다.
-window.OPP_TAG_LABEL = {better:"해결됨", merged:"중복 합침",
+SM.api.OPP_TAG_LABEL = {better:"해결됨", merged:"중복 합침",
                         misjudged:"기준 바뀌어 정리", out:"판단 중단"};
-window.OPP_TAG_TIP = {
+SM.api.OPP_TAG_TIP = {
   better: "새 데이터가 목표를 이뤘다고 확인했습니다. 다시 나빠지면 저절로 다시 열립니다.",
   merged: "같은 일을 다른 기회 줄이 맡습니다. 할 일은 그 줄 하나입니다.",
   misjudged: "판정 규칙을 고쳤거나 나중에 들어온 데이터로 판단이 바뀌어, 지금 기준으로는 이 기회가 서지 않습니다. 좋아진 것이 아닙니다.",
   out: "판단할 조건 밖으로 나가 더 볼 수 없습니다(추적을 껐거나, 노출이 적거나, 순위·범위 밖으로 밀림). 좋아진 것이 아닙니다 — 나빠진 것일 수도 있습니다."};
 // 기회 한 건의 상태 배지 — 도구가 닫은 것이면 갈래까지 말하고, 마우스를 올리면 뜻을 푼다.
-window.oppStBadge = (o, el = "span") => {
+SM.api.oppStBadge = (o, el = "span") => {
   const t = o.status === "resolved" && window.OPP_TAG_LABEL[o.status_tag] ? o.status_tag : "";
   const tip = t ? window.OPP_TAG_TIP[t] : "이 기회의 지금 상태입니다.";
   return `<${el} class="st st-${esc(o.status)}${t ? " st-tag-" + t : ""}" title="${esc(tip)}"
@@ -48,12 +48,12 @@ window.oppStBadge = (o, el = "span") => {
 // scoring.OBSERVE_DAYS 가 안 된 페이지에 걸린 열린 기회. 저장된 상태를 바꾸지 않고 할 일
 // 묶음에서만 뺀다 — 앞 수정의 효과를 재기도 전에 같은 자리를 다시 고치라고 권하지 않게.
 // 기간이 끝나면 서버가 hold 를 안 얹으니 저절로 돌아온다.
-window.OPP_ST_GROUP = {
+SM.api.OPP_ST_GROUP = {
   all: ["new", "acked", "done", "dismissed", "resolved"],
   open: ["new", "acked"], new: ["new"], acked: ["acked"],
   closed: ["done", "dismissed"], resolved: ["resolved"], hold: ["new", "acked"]
 };
-window.OPP_ST_OPT = [["", "남은 것"], ["all", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
+SM.api.OPP_ST_OPT = [["", "남은 것"], ["all", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
                      ["acked", "진행 중"], ["hold", "관찰 중"], ["closed", "완료·제외"],
                      ["resolved", "자동 종료"]];
 // 기회 하나가 고른 묶음에 드나. 기본값("")은 **남은 것**이다: 기회가 안 붙은 줄 + 아직 안 한
@@ -64,7 +64,7 @@ window.OPP_ST_OPT = [["", "남은 것"], ["all", "전체"], ["open", "아직 안
 // 붙은 줄은 측정이라 기본값에 그대로 선다(o 가 null 이면 통과). 전부 보는 길은 「전체」(all)다.
 // 박제본(READONLY)은 거르개가 없어 기본값이 곧 전부다 — 그때의 기록 자체가 볼거리다.
 // 관찰 중인 기회는 [관찰 중] 묶음과 「전체」에서만 보인다.
-window.oppStMatch = (o, st) => {
+SM.api.oppStMatch = (o, st) => {
   if (!st && READONLY) st = "all";
   if (st === "all") return true;
   if (!st) return !o || (window.OPP_ST_GROUP.open.includes(o.status) && !o.hold);
@@ -73,18 +73,18 @@ window.oppStMatch = (o, st) => {
 // 기본값(남은 것)으로 걸러 목록이 비었는데 줄은 있을 때 — 전부 끝냈거나 관찰 중이다. 화면마다
 // [조건 지우기]는 기본값으로 되돌리므로 여기서 누르면 헛바퀴가 된다. 「전체」로 보내는 손잡이와
 // 함께 "다 처리했다"는 좋은 소식으로 그린다. rows 는 거르기 전 줄, opp 는 줄 → 기회.
-window.oppLeftDone = (st, rows, opp) => !st && !READONLY && rows.length > 0
+SM.api.oppLeftDone = (st, rows, opp) => !st && !READONLY && rows.length > 0
   && rows.every(r => !window.oppStMatch(opp(r), ""));
 // what 은 줄의 이름(검색어·질문·링크…) — 조사가 안 붙는 자리에만 쓴다. onclick 은 화면이 주는
 // 식이다: 거르개를 「전체」로 바꾸고 **거르개 자신도 다시 그려야** 선택지가 따라온다.
-window.oppLeftEmpty = (what, n, onclick) => `<div class="empty ok"><b>남은 것이 없습니다</b>
+SM.api.oppLeftEmpty = (what, n, onclick) => `<div class="empty ok"><b>남은 것이 없습니다</b>
   <p>끝냈거나 관찰 중인 ${esc(what)} ${num(n)}개는 거르개의 「전체」에 있습니다.</p>
   <div class="acts"><button class="go sec sm" onclick="${onclick}">전체 보기</button></div></div>`;
 // 거르개 한 벌 — 화면은 이걸 부르고 자기 상태 변수만 갖는다.
 // 박제본에는 안 세운다 — 손댈 수 없는 기록이라 그때 그 사람이 쓰던 손잡이는 뜻이
 // 없고, 종이로 나가면 <select> 가 글자 하나로 굳는다. 화면마다 READONLY 를 묻지
 // 않고 여기 한 곳에서 막는다(test_render 의 박제본 규칙).
-window.oppStSelect = (cur, fn, count) => READONLY ? "" : `<select onchange="${fn}(this.value)"
+SM.api.oppStSelect = (cur, fn, count) => READONLY ? "" : `<select onchange="${fn}(this.value)"
     aria-label="상태로 거르기">${window.OPP_ST_OPT.map(([v, l]) =>
     `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}`
     + (count ? ` (${count(v)})` : "") + `</option>`).join("")}</select>`;
@@ -117,19 +117,19 @@ function oppIndex(opps) {
   for (const k in OPP_INDEX)
     OPP_INDEX[k].sort((a, b) => (open(b) - open(a)) || ((b.score ?? 0) - (a.score ?? 0)));
 }
-window.oppsOf = t => OPP_INDEX[oppKey(t)] || [];
-window.oppOf = t => (OPP_INDEX[oppKey(t)] || [])[0] || null;
+SM.api.oppsOf = t => OPP_INDEX[oppKey(t)] || [];
+SM.api.oppOf = t => (OPP_INDEX[oppKey(t)] || [])[0] || null;
 
 // 점수가 없는 줄(기회가 안 붙은 대상)에서는 단위도 설명도 안 붙인다 — 좁은 칸에서
 // "—" 와 "점" 이 두 줄로 갈라져 고장난 것처럼 읽히고, 뜯어보면 "— 점 / 100점"이라는
 // 말이 안 되는 안내가 붙어 있었다. 자리(width)는 그대로 잡아 둔다: 빼 버리면
 // 옆 열이 줄마다 다른 자리에서 시작한다.
-window.oppScore = o => Number.isFinite(o && o.score)
+SM.api.oppScore = o => Number.isFinite(o && o.score)
   ? `<div class="score" title="${o.score}점 / 100점. 높을수록 먼저 손댑니다.">`
     + `${Math.round(o.score)}<span class="u">점</span></div>`
   : `<div class="score none" title="이 줄에는 아직 붙은 기회가 없습니다.">—</div>`;
 
-window.oppMeter = o => Number.isFinite(o && o.score)
+SM.api.oppMeter = o => Number.isFinite(o && o.score)
   ? `<div class="meter${isDefensive(o) ? " def" : ""}" title="${o.score}점 / 100점">
        <i style="width:${Math.min(100, Math.max(0, o.score))}%"></i></div>` : "";
 
@@ -139,7 +139,7 @@ const isDefensive = o => o && (o.is_defensive
 // GA4 매출 잠재력 배지 — dashboard.py gather() 가 승수가 1.0이 아닐 때만 ga4_mult 를
 // 얹어 보낸다(scoring.value_mult). 값이 없으면 아무것도 안 그린다 — GA4 미연결
 // 프로젝트는 지금까지와 똑같다.
-window.gaBadge = o => o && o.ga4_mult != null
+SM.api.gaBadge = o => o && o.ga4_mult != null
   ? `<span class="gm lat ${o.ga4_mult > 1 ? "gm-up" : "gm-down"}"
        title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "—"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
        >GA4 ${o.ga4_mult > 1 ? "▲" : "▼"} ×${o.ga4_mult}</span>` : "";
@@ -150,12 +150,12 @@ window.gaBadge = o => o && o.ga4_mult != null
 // 누른다 — 완료 후 관찰의 기준 시각이 '실제로 끝난 그때' 여야 하기 때문이다.
 // 세는 범위는 묶인 id 전부 — 상태 버튼(setOpps)·열기(run_tool)와 같아야 한 줄이
 // 새로고침 뒤 둘로 갈라지지 않는다.
-window.madeFor = o => {
+SM.api.madeFor = o => {
   if (!o) return [];
   const ids = new Set((o.group ? o.group.ids : [o.id]).map(String));
   return (window.CREATIONS || []).filter(c => ids.has(String(c.opportunity_id)));
 };
-window.madeBadge = o => {
+SM.api.madeBadge = o => {
   const made = window.madeFor(o);
   if (!made.length) return "";
   const merged = made.filter(c => c.merged).length;
@@ -169,15 +169,15 @@ window.madeBadge = o => {
 
 // 관찰 중 배지 — 이 기회가 할 일 목록에서 빠져 있는 이유를 줄 위에서 말한다. 판정은
 // 서버(o.hold)가 했다. 끝나는 날을 같이 적는다: "언제 돌아오나"가 없으면 사라진 줄로 읽힌다.
-window.holdBadge = o => o && o.hold
+SM.api.holdBadge = o => o && o.hold
   ? `<span class="badge adv" title="이 페이지(${esc(o.hold.page)})를 고친 지 얼마 안 돼 효과를 지켜보는 중입니다. ${
       esc(o.hold.until)}에 할 일 목록으로 돌아옵니다.">관찰 중 · ${esc(String(o.hold.until).slice(5))}까지</span>` : "";
 
 // 칩에 손을 얹으면 여태 `striking_distance` 같은 **내부 id** 가 떴다 — 사용자가
 // 본 적 없는 말이고, 라벨이 이미 한글인데 그 옆에 영문 id 를 들이미는 셈이었다.
 // 통칭표(kind_labels, 정본은 scoring.KINDS)의 한글 말로 답한다.
-window.kindTip = o => (window.KIND_LABELS || {})[o.kind] || o.label || "";
-window.oppWhy = o => !o ? "" : `<div class="oh">
+SM.api.kindTip = o => (window.KIND_LABELS || {})[o.kind] || o.label || "";
+SM.api.oppWhy = o => !o ? "" : `<div class="oh">
     <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(window.kindTip(o))}"
       >${esc(o.label || o.kind)}</span>
     ${window.oppStBadge(o)}
@@ -189,7 +189,7 @@ window.oppWhy = o => !o ? "" : `<div class="oh">
 // 붙는다(db 의 status_reason, scoring.resolve_stale·close_opportunity_by_work 가 쓴다).
 // 표에는 내내 있었는데 읽는 화면이 없어서, "판정이 틀려서 닫혔나"를 볼 길이 없었다.
 // 사람이 누른 상태에는 사유가 없다 — 그때는 이 줄이 안 뜬다.
-window.oppClosedWhy = o => o && o.status_reason
+SM.api.oppClosedWhy = o => o && o.status_reason
   ? `<div class="why closed-why">닫힌 이유: ${esc(o.status_reason)}</div>` : "";
 
 /* 상태 바꾸기. 라벨은 누른 뒤에 무엇이 보이는지로 짓는다 — "확인"은 무엇이
@@ -220,7 +220,7 @@ const oppBtn = (o, st) => o.group && o.group.ids.length > 1
 
 // 박제본에는 서버가 없다 — 누르면 저장된다는 말이 거짓이 되므로 버튼을 안 낸다.
 // 콘텐츠 작성 버튼은 호스팅에만 있다(SM.host.oppBtn) — 플러그인은 Claude 채팅으로 간다.
-window.oppActs = o => {
+SM.api.oppActs = o => {
   if (!o || READONLY || o.id == null) return "";
   // 접힌 줄에는 상태를 바꾸는 다음 하나 + 콘텐츠 작성(호스팅 전용)뿐이다.
   // 작성은 상태 바꾸기와 다른 축이라 여기 남는다 — 이 기회로 실제로 할 일이다.
@@ -253,7 +253,7 @@ const oppRest = o => {
 
 // extra 는 이 화면만 아는 손잡이(oppActs·다른 화면으로 가기)를 패널 맨 위 행동 줄에
 // 함께 세우는 자리다. 안 넘기면 요청문 + 나머지 상태 버튼만 선다.
-window.oppPanel = (o, extra) => o ? oppDetail(o, extra) : "";
+SM.api.oppPanel = (o, extra) => o ? oppDetail(o, extra) : "";
 
 /* 기회 하나를 이 PC 의 개발 도구로 연다. 여기서 하는 일은 누른 것을 서버에 넘기고
    무엇으로 열렸는지 말하는 것뿐이다 — 어느 도구·어느 터미널·어느 폴더인지는 전부
@@ -391,7 +391,7 @@ document.addEventListener("sm:site", () => {
 // 글자로만 "[개요]에서" 라고 말하던 자리를 실제로 눌리게 한다. 화면 이름은
 // SM.views(=view-def)의 정본에서 읽는다 — 라벨을 두 벌로 만들지 않는다.
 // 그 배포에 없는 화면(호스팅의 [설정], 박제본의 [진행 안내])이면 글자로 물러선다.
-window.go = (id, label) => {
+SM.api.go = (id, label) => {
   // 이름은 매니페스트(window.__VIEWS__)에서 읽는다 — SM.views 는 이 배포에서 뺀
   // 화면이 이미 빠져 있어서, 거기서 찾으면 없는 화면이 영문 id 로 찍힌다.
   const def = (window.__VIEWS__ || []).find(v => v.id === id);

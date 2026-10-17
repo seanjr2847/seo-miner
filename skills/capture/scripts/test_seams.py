@@ -732,7 +732,7 @@ def test_seam_16_brief_shapes_single_source():
     # 화면이 query_pages 로 따로 고르면 순위 밖 지면을 요청문은 "고쳐라", 화면은
     # "걸린 페이지 없음"이라고 한다(써마지에서 실제로 그랬다).
     # 고르는 몸통은 oppParts 다 — 제자리 펼침(oppDetail)과 [개요]의 서랍이 같은 조각을 쓴다.
-    m = re.search(r"window\.oppParts = o => \{(.*?)\n\};", shell, re.S)
+    m = re.search(r"SM\.api\.oppParts = o => \{(.*?)\n\};", shell, re.S)
     assert m, "셸의 oppParts(펼침 조각)를 못 찾았다"
     code = re.sub(r"//[^\n]*", "", m.group(1))     # 주석 속 낱말로 통과하지 않게
     assert "o.brief.page" in code, "oppDetail 이 고칠 페이지를 o.brief.page 에서 안 받는다"
@@ -785,7 +785,7 @@ def test_seam_17_verdict_and_status_single_source():
     # 도구가 닫은 갈래도 한 벌이다 — db.RESOLVED_TAGS 와 셸의 배지 말·풀이 키가 양방향으로 같다.
     # 셸에 없는 갈래는 배지가 '자동 종료'으로만 서서, 잘못 짚은 것과 좋아진 것이 다시 한 이름이 된다.
     for name in ("OPP_TAG_LABEL", "OPP_TAG_TIP"):
-        mm = re.search(r"window\." + name + r" = \{(.*?)\};", shell, re.S)
+        mm = re.search(r"SM\.api\." + name + r" = \{(.*?)\};", shell, re.S)
         assert mm, f"셸의 {name} 을 못 찾았다"
         keys = set(re.findall(r"(\w+):", mm.group(1)))
         assert keys == set(db.RESOLVED_TAGS), f"{name} 의 키가 어긋났다: {sorted(keys ^ set(db.RESOLVED_TAGS))}"
@@ -1093,14 +1093,14 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
     import scoring
     shell, views = ctx["shell"], ctx["views"]
 
-    m = re.search(r"window\.OPP_ST_GROUP = \{(.*?)\n\};", shell, re.S)
+    m = re.search(r"SM\.api\.OPP_ST_GROUP = \{(.*?)\n\};", shell, re.S)
     assert m, "셸에 OPP_ST_GROUP 이 없다 — 거르개 정본이 화면마다 흩어져 있다"
     grouped = set(re.findall(r'"(\w+)"', m.group(1)))
     every = set(db.OPP_STATUSES) | {db.OPP_RESOLVED}
     assert every <= grouped, \
         f"거르개가 못 보여 주는 상태가 있다: {sorted(every - grouped)}"
 
-    o = re.search(r"window\.OPP_ST_OPT = \[(.*?)\];", shell, re.S)
+    o = re.search(r"SM\.api\.OPP_ST_OPT = \[(.*?)\];", shell, re.S)
     assert o, "셸에 OPP_ST_OPT 이 없다"
     keys = set(re.findall(r'\["(\w*)"', o.group(1)))
     assert keys <= set(re.findall(r"(\w+):\s*\[", m.group(1))) | {""}, \
@@ -1941,9 +1941,9 @@ def test_seam_41_applied_work_shows_on_the_collapsed_row():
     if ctx is None:
         return
     shell, ov = ctx["shell"], (ctx["views"] / "overview.html").read_text("utf-8")
-    assert "window.madeBadge" in shell, "셸에 madeBadge 가 없다 — 뷰마다 사본을 만들게 된다"
-    assert "window.madeFor" in shell, "기록을 세는 규칙(madeFor)이 셸에 없다"
-    body = shell[shell.index("window.madeFor"):shell.index("window.kindTip")]
+    assert "SM.api.madeBadge" in shell, "셸에 madeBadge 가 없다 — 뷰마다 사본을 만들게 된다"
+    assert "SM.api.madeFor" in shell, "기록을 세는 규칙(madeFor)이 셸에 없다"
+    body = shell[shell.index("SM.api.madeFor"):shell.index("SM.api.kindTip")]
     assert "window.CREATIONS" in body, "배지가 기록을 페이로드에서 안 받는다"
     assert "group" in body, "배지가 묶인 줄의 id 를 안 센다 — 대표 하나의 기록만 보인다"
     assert "merged" in body, "배지가 머지된 것과 PR 만 열린 것을 안 가른다"
@@ -2318,7 +2318,7 @@ def test_seam_48_copy_button_stands_before_the_panel_opens():
     # 펴기 전에 보이려면 details **밖**, 바로 뒤여야 한다(copyPrompt 가 앞 형제를 집는다)
     assert re.search(r"</details><button[^>]*onclick=\"copyPrompt\(this\)\"", body), \
         "복사 버튼이 요청문 상자(details) 바로 뒤에 없다 — 펴야 보이거나 다른 상자를 집는다"
-    fn = re.search(r"window\.copyPrompt = function \(btn\) \{(.*?)\n\};", shell, re.S)
+    fn = re.search(r"SM\.api\.copyPrompt = function \(btn\) \{(.*?)\n\};", shell, re.S)
     assert fn, "copyPrompt 를 못 찾았다"
     assert "previousElementSibling" in fn.group(1) and "closest(" not in fn.group(1), \
         "copyPrompt 가 버튼의 앞 형제(details.ask)가 아니라 조상을 거슬러 찾는다 — 버튼은 상자 밖이다"
@@ -2913,7 +2913,7 @@ def _node_views(js: str):
     import subprocess
     if not shutil.which("node"):
         return None
-    # 공용 부품(SM.ui)은 손으로 쓴 사본이 아니라 셸 원본을 떼어 끼운다(_VIEW_STUBS 의 자리표).
+    # 공용 부품(SM.ui)은 손으로 쓴 사본이 아니라 셸 원본을 떼어 끼운다(_view_stubs 의 자리표).
     if "//__SM_UI__" in js:
         shell = _shell_src()
         js = js.replace("//__SM_UI__", _shell_ui_src(shell))
@@ -3019,21 +3019,42 @@ def test_seam_competitors_counts_rivals_from_gap_rows_too():
     assert got == {"share": 0, "all": 2}, f"격차 표의 도메인을 경쟁사로 안 센다: {got}"
 
 
-# 화면 스크립트를 통째로 node 에 올릴 때 셸 몫만 갈아 끼운다(사본이 아니라 빈 손잡이).
-_VIEW_STUBS = """
+# 셸 계약(SM.api)에서 뷰 스텁을 만든다 — 손으로 쓴 셸 사본이 아니다. 셸이 `SM.api.이름 = …` 로
+# 새 이름을 내놓으면 스텁도 저절로 그 이름을 갖는다(모르는 이름을 뷰가 불러 터지는 일이 없다).
+# 함수는 빈 글자를 돌려주는 빈 손잡이, 표는 빈 객체·배열이다. 뜻이 있는 중립값만 아래에 적는다.
+_API_NEUTRAL = {"oppOf": "() => null", "oppsOf": "() => []", "oppStMatch": "() => true"}
+_API_DEF = re.compile(r"^ *SM\.api\.([A-Za-z_$][\w$]*) = ?(.{0,24})", re.M)
+_API_FN = re.compile(r"^(?:\(|async\b|function\b|[A-Za-z_$][\w$]*\s*=>)")
+
+
+def _api_names(shell: str) -> dict:
+    """셸이 내놓는 계약 {이름: "fn"|"obj"|"arr"|"val"} — 정의 줄머리의 꼴로 가른다."""
+    out = {}
+    for m in _API_DEF.finditer(shell):
+        rhs = m.group(2).lstrip()
+        out[m.group(1)] = ("fn" if _API_FN.match(rhs) else "obj" if rhs.startswith("{")
+                           else "arr" if rhs.startswith("[") else "val")
+    return out
+
+
+def _view_stubs() -> str:
+    api = _api_names(_shell_src())
+    assert len(api) >= 40, f"셸 계약(SM.api)을 거의 못 읽었다 — 검사가 헛돈다: {sorted(api)}"
+    lines = []
+    for name, kind in sorted(api.items()):
+        v = _API_NEUTRAL.get(name) or {"fn": '() => ""', "obj": "{}", "arr": "[]", "val": '""'}[kind]
+        lines.append(f"window.{name} = {v};")
+    return """
 const window = globalThis;
 const esc = s => String(s ?? ""), num = n => String(n);
 const READONLY = false, VIEW = () => {}, $ = () => ({}), W = a => a;
 const document = {addEventListener: () => {}, getElementById: () => ({addEventListener: () => {}})};
 let LAST_D = null;
-const oppOf = () => null, oppsOf = () => [], oppScore = () => "", oppMeter = () => "";
-const oppWhy = () => "", oppActs = () => "", oppPanel = () => "";
 const askBlock = () => "", playList = () => "", pageTable = () => "", pageFix = () => "";
 const table = (h, rows, empty) => rows.length ? rows.join("") : (empty || "");
 const SM = {at: () => -1};
 //__SM_UI__
-window.oppStMatch = () => true; window.oppStSelect = () => "";
-"""
+""" + "\n".join(lines) + "\n"
 
 
 def _view_script(name: str) -> str:
@@ -3062,7 +3083,7 @@ def test_seam_90_competitors_one_card_per_keyword_and_every_gap_kind():
             {"keyword": "오후 3시", "domain": "c.com", "kind": "weak", "position": 1, "our_position": 3},
             {"keyword": "새 글", "domain": "a.com", "kind": "missing", "position": 2, "our_position": None}]
     lose = [dict(rows[2]), dict(rows[2], domain="d.com")]
-    js = _VIEW_STUBS + src + f"""
+    js = _view_stubs() + src + f"""
 let band = "";
 window.nextStep = (id, h) => {{ band = h; }};
 window.act = () => "<act>"; window.runFailed = () => null;
@@ -3096,7 +3117,7 @@ def test_seam_91_backlinks_counts_rivals_like_competitors():
     「등록된 경쟁사가 둘 미만」이라고 했다.
     """
     d = {"comp_metrics": [], "gap_rivals": ["a.com", "b.com", "c.com"], "bl_intersect": []}
-    js = (_VIEW_STUBS + _view_script("competitors.html") + _view_script("backlinks.html")
+    js = (_view_stubs() + _view_script("competitors.html") + _view_script("backlinks.html")
           + f"\nconst d = {json.dumps(d)};"
             "\nconsole.log(JSON.stringify({n: BLK_rivals(d), box: BLK_intersect(d, BLK_rivals(d))}));")
     got = _node_views(js)
@@ -3118,7 +3139,7 @@ def test_seam_92_ai_rows_badge_every_gap_and_show_cited_answer_first():
              "excerpts": {"chatgpt": "빠진 답"}},
             {"prompt": "인용된 질문", "category": "general", "cited": 5, "mentioned": 5, "checks": 6,
              "excerpts": {"chatgpt": "빠진 답"}, "cited_excerpts": {"chatgpt": "우리 답"}}]
-    js = _VIEW_STUBS + _view_script("aicite.html") + f"""
+    js = _view_stubs() + _view_script("aicite.html") + f"""
 window.KIND_LABELS = {{ai_citation_gap: "챗봇 인용 드묾"}};
 AI_GAPS = new Set(["드문 질문"]);
 AI_INTENT = {{general: "일반"}};
@@ -3148,7 +3169,7 @@ def test_seam_93_site_crawl_more_button_says_what_it_opens():
     """
     issues = [{"kind": "img_no_alt", "url": f"https://a.com/{i}", "severity": "info"}
               for i in range(457)]
-    js = _VIEW_STUBS + _view_script("site.html") + f"""
+    js = _view_stubs() + _view_script("site.html") + f"""
 CR_D = {{crawl: {{issues: {json.dumps(issues)}}}}};
 console.log(JSON.stringify(CR_rows(CR_D)));
 """
@@ -3194,7 +3215,7 @@ def test_seam_95_opportunity_buttons_are_named_after_their_state():
     """
     import brief
     shell = _shell_src()
-    m = re.search(r"window\.OPP_LABEL = \{(.*?)\};", shell, re.S)
+    m = re.search(r"SM\.api\.OPP_LABEL = \{(.*?)\};", shell, re.S)
     labels = dict(re.findall(r'(\w+):"([^"]+)"', m.group(1)))
     m = re.search(r"const OPP_SET = \{(.*?)\};", shell, re.S)
     sets = dict(re.findall(r'(\w+): "([^"]+)"', m.group(1)))
@@ -3251,7 +3272,7 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
     assert mm, "셸의 OPP_ST_GROUP.hold 가 없다"
     assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
         "[관찰 중] 묶음이 열린 상태와 다르다"
-    m = re.search(r"window\.oppStMatch = \(o, st\) => \{(.*?)\n\};", shell, re.S)
+    m = re.search(r"SM\.api\.oppStMatch = \(o, st\) => \{(.*?)\n\};", shell, re.S)
     assert m and "o.hold" in m.group(1), "oppStMatch 가 관찰 판정(o.hold)을 안 본다"
     # 거르개를 안 건 기본값(전체)도 관찰 중을 뺀다 — [클릭 변화]·[순위 상승 기회]·[순위 추적]은 기본이 "전체"라
     # 여기서 새면 이미 고친 페이지의 일이 할 일처럼 계속 선다
@@ -3312,11 +3333,11 @@ def test_seam_101_default_filter_is_what_is_left():
     if ctx is None or not shutil.which("node"):
         return
     shell, views = ctx["shell"], ctx["views"]
-    grp = re.search(r"window\.OPP_ST_GROUP = \{.*?\n\};", shell, re.S)
-    fn = re.search(r"window\.oppStMatch = \(o, st\) => \{.*?\n\};", shell, re.S)
+    grp = re.search(r"SM\.api\.OPP_ST_GROUP = \{.*?\n\};", shell, re.S)
+    fn = re.search(r"SM\.api\.oppStMatch = \(o, st\) => \{.*?\n\};", shell, re.S)
     assert grp and fn, "셸의 OPP_ST_GROUP·oppStMatch 를 못 찾았다 — 꼴이 바뀌었으면 이 검사도 고친다"
     js = "\n".join([
-        "const window = {};", "let READONLY = false;", grp.group(0), fn.group(0),
+        "const window = {}, SM = {api: window};", "let READONLY = false;", grp.group(0), fn.group(0),
         "const m = window.oppStMatch, o = (status, hold) => ({status, hold: hold ? {} : undefined});",
         "const out = {none: m(null, ''), newo: m(o('new'), ''), acked: m(o('acked'), ''),",
         "  done: m(o('done'), ''), dism: m(o('dismissed'), ''), res: m(o('resolved'), ''),",
@@ -4679,6 +4700,49 @@ def test_seam_190_shared_parts_have_one_home_in_the_shell():
     assert got["deniedFallsBack"] is True, "권한 거부(API 실패)인데 폴백으로 물러서지 않는다"
     assert got["api"] is True and got["wrote"] == "직접", "API 가 되는 환경에서 API 로 쓰지 않는다"
 
+
+
+# 셸이 바뀌어 다시 쓰이는 **상태**로 window.* 에 두는 이름 — 계약(SM.api)이 아니다(load()·render() 가 갈아 끼운다).
+# 여기 없는 이름을 셸이 window.X = 로 내놓으면 FAIL: 새 내보내기는 SM.api 로 간다.
+_SHELL_WINDOW_STATE = {"SM", "BRIEF", "SD_PERIOD", "PLAY_PR", "SETUP", "QUERY_PAGES", "TARGET_TREND",
+                       "KW_COUNTRIES", "PAGE_QUERIES", "PAGE_AUDITS", "CREATIONS", "KIND_LABELS", "KIND_VIEWS"}
+
+
+def test_seam_192_shell_exports_go_through_sm_api():
+    """192) 셸이 뷰에 내놓는 함수·표는 `SM.api.이름 = …` 한 interface 로만 나간다.
+
+    뷰·섹션·애드온은 맨이름(act(·oppOf()·window.go 와 인라인 onclick 으로 셸을 불렀다 — 계약이 문서도
+    목록도 없는 암묵적 전역이었고, 테스트는 그 사본(_VIEW_STUBS)을 손으로 들고 있었다. 이제 정의가
+    목록이다: SM.api 에 정하면 같은 이름이 window 에 호환 별칭으로 걸리고(인라인 핸들러가 그대로 닿는다),
+    뷰 스텁은 이 정의에서 만들어진다.
+    · 셸에 `window.X = ` 로 새 내보내기가 생기면 FAIL (상태 목록 _SHELL_WINDOW_STATE 만 예외).
+    · SM.api 는 두 번 정하면 던지고, 정한 이름을 window 에도 건다 (node 로 돌려 본다).
+    · 뷰 스텁이 계약의 모든 이름을 갖는다 (정의 → 스텁 한 방향이 끊기면 FAIL).
+    """
+    shell = _shell_src()
+    api = _api_names(shell)
+    assert len(api) >= 40, f"셸 계약을 거의 못 읽었다 — 검사가 헛돈다: {sorted(api)}"
+    stray = sorted(set(re.findall(r"\bwindow\.([A-Za-z_$][\w$]*) =(?!=)", shell)) - _SHELL_WINDOW_STATE)
+    assert not stray, (f"셸이 window.X = 로 직접 내놓는다: {stray} — `SM.api.X = ` 로 정한다"
+                       "(바뀌어 다시 쓰이는 상태면 _SHELL_WINDOW_STATE 에 올린다)")
+    assert not (set(api) & _SHELL_WINDOW_STATE), "상태 목록과 계약이 겹친다"
+    # 뷰 스텁은 계약 전부를 갖는다
+    stubs = _view_stubs()
+    missing = [n for n in api if f"window.{n} = " not in stubs]
+    assert not missing, f"뷰 스텁이 계약을 못 따른다: {missing}"
+    # 장치 자체: 정하면 window 에 걸리고, 두 번 정하면 던진다
+    m = re.search(r"^SM\.api = new Proxy\(\{\}, \{.*?^\}\);", shell, re.M | re.S)
+    assert m, "셸에 SM.api 장치가 없다"
+    got = _node_views("const window = globalThis, SM = {};\n" + m.group(0) + """
+SM.api.hello = () => "hi";
+let dup = false;
+try { SM.api.hello = () => "again"; } catch (e) { dup = true; }
+console.log(JSON.stringify({alias: window.hello === SM.api.hello, dup}));""")
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got["alias"], "SM.api 로 정한 이름이 window 호환 별칭으로 안 걸린다 — 인라인 onclick 이 끊긴다"
+    assert got["dup"], "SM.api 가 같은 이름을 두 번 정해도 던지지 않는다 — 조용히 덮어쓴다"
 
 
 def test_seam_191_guide_and_settings_draw_themselves():

@@ -141,7 +141,7 @@ if (window.Chart) {
 // 극성은 색 하나에 싣지 않는다 — 방향(0 의 좌우)과 부호(+/−)로 겹친다. 녹청은 채도가
 // 낮아 회색처럼 읽힐 수 있어서다(dataviz 검증기). 값은 오른쪽 한 열에 — 음수 막대 옆에
 // 두면 이름 칸과 부딪힌다. 가장 크게 움직인 값만 먹색 굵게.
-window.chDiverge = (rows, opt = {}) => {
+SM.api.chDiverge = (rows, opt = {}) => {
   if (!rows || !rows.length) return "";
   const fmt = opt.fmt || (v => SM.ui.sign(v) + num(Math.abs(v)));
   const vals = rows.map(r => r.value || 0);
@@ -171,7 +171,7 @@ window.chDiverge = (rows, opt = {}) => {
 
 // 한 줄 100% 스택 — 값이 전부 0 이면(총합 0) 회색 트랙만 그린다(안 깨진다).
 // 조각 사이는 2px 표면색 틈, 바깥 두 끝만 둥글다. 범례는 캔버스 밖 HTML(이름·값).
-window.chStackRow = (rows, opt = {}) => {
+SM.api.chStackRow = (rows, opt = {}) => {
   if (!rows || !rows.length) return "";
   const unit = opt.unit || "";
   const total = rows.reduce((s, r) => s + Math.max(0, r.value || 0), 0);
@@ -203,7 +203,7 @@ window.chStackRow = (rows, opt = {}) => {
 
 // 가로 막대 목록 — right 가 있으면 값 대신 그 글자를 오른쪽 열에 낸다(순위·배지 등).
 // flag 는 방어형/경고 항목 표시(산화동), 아니면 기본(녹청).
-window.chBarList = (rows, opt = {}) => {
+SM.api.chBarList = (rows, opt = {}) => {
   if (!rows || !rows.length) return "";
   const unit = opt.unit || "";
   const aria = `${rows.length}개 항목 — ` + rows.map(r => `${r.label} ${chVal(r.value, unit)}`).join(", ");
@@ -224,7 +224,7 @@ window.chBarList = (rows, opt = {}) => {
 
 // 도넛 — on 조각만 강조(녹청), 나머지는 회색 명암만 다르다(새 색 안 만든다).
 // 조각 사이 2px 표면색 틈. 한 조각뿐이거나 총합이 0 이어도(빈 도넛) 안 깨진다.
-window.chDonut = (rows, opt = {}) => {
+SM.api.chDonut = (rows, opt = {}) => {
   if (!rows || !rows.length) return "";
   const S = opt.width || 120, unit = opt.unit || "";
   const total = rows.reduce((s, r) => s + Math.max(0, r.value || 0), 0);
@@ -249,7 +249,7 @@ window.chDonut = (rows, opt = {}) => {
 // 단계별 감소 — 막대는 전부 같은 hue(녹청)의 명암만 달라진다(단계는 순서형이다).
 // 값은 막대 바로 옆, 직전 대비 감소는 오른쪽 열 — 색 위에 글자를 얹지 않는다.
 // 감소 글자도 먹색 토큰이다(계열 색을 글자에 안 쓴다).
-window.chFunnel = (steps, opt = {}) => {
+SM.api.chFunnel = (steps, opt = {}) => {
   if (!steps || !steps.length) return "";
   const unit = opt.unit || "", n = steps.length;
   const mx = Math.max(1, ...steps.map(s => s.value || 0));
@@ -282,7 +282,7 @@ window.chFunnel = (steps, opt = {}) => {
 // 갖는다. 그래서 공용 눈금을 안 그린다(그리면 거짓말이 된다) — 트랙만 긋고 점을 그
 // 그룹의 0~1 에 놓는다. 값은 툴팁이 원래 단위로 말한다. items[0] 가 주인공(녹청),
 // 나머지는 중립(회색), 점은 2px 표면색 링. items 가 비어도 안 깨진다.
-window.chDumbbell = (groups, opt = {}) => {
+SM.api.chDumbbell = (groups, opt = {}) => {
   if (!groups || !groups.length) return "";
   const unit = opt.unit || "";
   const G = groups.map(g => {
@@ -316,7 +316,7 @@ window.chDumbbell = (groups, opt = {}) => {
 
 // 시계열 · 면적 + 선(2px). mark 가 있는 점만 산화동으로 찍는다(문자열이면 툴팁에 얹는다).
 // 선은 십자선 + 툴팁 — 날짜 어디에 올려도 그날 값이 나온다.
-window.chLine = (series, opt = {}) => {
+SM.api.chLine = (series, opt = {}) => {
   if (!series || series.length < 2) return "";
   const H = opt.height || 180, unit = opt.unit || "";
   const ys = series.map(p => p.y || 0);

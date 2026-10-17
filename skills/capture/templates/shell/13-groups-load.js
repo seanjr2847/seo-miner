@@ -123,7 +123,7 @@ async function groupRun(btn) {
 
 // 상태 한 벌을 받는다 — 로컬은 grpPoll, 호스팅은 애드온의 폴링이 부른다.
 // 돌던 것이 다 끝났으면 화면을 다시 읽는다(호스팅은 애드온이 이미 load() 한다).
-window.grpStatus = st => {
+SM.api.grpStatus = st => {
   const p = $("proj") && $("proj").value;
   const was = Object.values(GRP_ST).some(s => s.running);
   GRP_ST = ((st && st[p]) || {}).groups || {};

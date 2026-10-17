@@ -2,7 +2,7 @@
    "몇 위인가"와 "올라가는 중인가"는 다른 질문인데, 패널은 오래 첫째에만
    답했다. 둘 다 서버가 같은 스냅샷에서 센 것(d.target_trend)을 그린다 —
    화면이 표를 다시 더하면 표와 차트가 다른 수를 말한다. */
-window.targetStat = t => {
+SM.api.targetStat = t => {
   const rows = (window.TARGET_TREND || {})[t] || [];
   if (!rows.length) return "";
   const r = rows[rows.length - 1];                    // 마지막 = 기준 수집일
@@ -23,7 +23,7 @@ window.targetStat = t => {
 
 // 이 검색어가 어느 나라 구글에서 보였나 — 서버가 센 d.kw_countries(서치콘솔 나라 분해) 그대로.
 // 평균 순위는 나라를 섞은 값이라, 필리핀 6.5위·미국 8.2위가 한 숫자 7위로 보였다(2026-10-14).
-window.relCountries = q => {
+SM.api.relCountries = q => {
   const rows = (window.KW_COUNTRIES || {})[q];
   if (!rows || !rows.length) return "";
   return `<div class="detw"><b>나라별 노출</b>
@@ -36,7 +36,7 @@ window.relCountries = q => {
 // 순위는 서치콘솔의 기간 평균이다(나라·기기·날짜를 섞은 노출 가중 평균). "4.5위"로만 적으니
 // 직접 검색해 본 사람이 "실제로는 4.5위가 아닌데"라고 읽었다(theotherskin 'olidia vs
 // sculptra' — 미국 구글 직접 확인은 1쪽 밖, 2026-10-14). 평균이라고 적는다.
-window.relPages = (pages, cur) => !pages || !pages.length ? "" :
+SM.api.relPages = (pages, cur) => !pages || !pages.length ? "" :
   `<div class="detw"><b>연관 페이지 ${pages.length}</b>
    <span class="detn">이 검색어로 순위에 걸린 내 지면입니다. 순위는 서치콘솔 평균이라 나라·기기마다 섞인 값이고, 직접 검색한 순위와 다를 수 있습니다.</span>
    <ul class="detl">${pages.map(r => `<li><a href="${esc(r.page)}" target="_blank"
@@ -46,7 +46,7 @@ window.relPages = (pages, cur) => !pages || !pages.length ? "" :
 
 // 이 페이지로 들어오는 검색어 — 정본은 서버가 센 d.page_queries 다. query_pages 를
 // 뒤집어 세면 기회에 걸린 것만 세고 "연관 검색어 3개"라고 자신 있게 말한다.
-window.relQueries = url => {
+SM.api.relQueries = url => {
   const g = url ? (window.PAGE_QUERIES || {})[url] : null;
   if (!g || !g.total) return "";
   const more = g.total - g.top.length;
@@ -58,7 +58,7 @@ window.relQueries = url => {
     ? `<p class="detn">외 ${num(more)}개</p>` : ""}</div>`;
 };
 
-window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다.`
+SM.api.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD || "기간"} 평균 게재순위입니다.`
   + ` 노출된 순간들의 평균이라 지금 직접 검색하면 안 보일 수 있습니다.`
   + ` 실제로 검색해서 잰 순위는 ${window.go("rank")} 화면에 있습니다.`;
 /* ── 펼침 패널: 무엇이 걸렸고, 어느 페이지 얘기고, 그래서 뭘 하면 되나 ──
@@ -67,7 +67,7 @@ window.sdAvgNote = () => `이 순위는 구글이 보고한 ${window.SD_PERIOD |
       할 일은 o.play 가 댄다. ── */
 // 펼침 패널의 조각들 — 제자리 펼침(oppDetail)과 [개요]의 오른쪽 서랍(OV_drawer)이 같은
 // 조각을 다른 순서·자리에 놓는다. 조각을 두 벌 만들면 두 자리가 다른 말을 한다.
-window.oppParts = o => {
+SM.api.oppParts = o => {
   const pages = (window.QUERY_PAGES || {})[o.target] || [];
   const p = o.play || {};
   // striking_distance 의 "무엇을" 뒤에는 평균 게재순위 안내 + [순위] 화면 버튼이

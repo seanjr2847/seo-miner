@@ -240,7 +240,7 @@ const askBlock = c => {
 // 박제 보고서는 file:// 로도 열린다 — 거기서는 clipboard API 가 막히므로
 // SM.ui.copyText 가 임시 입력칸으로 물러선다(둘 다 실패하면 사용자가 직접 고르게 안내한다).
 // 버튼은 요청문 상자(details.ask) 바로 뒤에 선다 — askBlock 이 둘을 붙여 낸다.
-window.copyPrompt = function (btn) {
+SM.api.copyPrompt = function (btn) {
   const ta = btn.previousElementSibling.querySelector("textarea");
   const done = ok => {
     btn.textContent = ok ? "복사함" : "직접 선택";

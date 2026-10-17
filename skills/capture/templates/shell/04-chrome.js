@@ -105,7 +105,7 @@ function deadSweep(root) {
     if (prev && prev.nodeType === 3) prev.textContent = prev.textContent.replace(/\s+$/, " ");
   });
 }
-window.deadSweep = deadSweep;
+SM.api.deadSweep = deadSweep;
 
 /* 툴팁 자리잡기 — CSS 는 말풍선을 그릴 수 있어도 "화면 밖으로 나가면 안으로 밀어라"를
    못 한다. (i) 위 가운데를 기본으로 잡고, 양 끝에서만 뷰포트 안으로 물린다.
@@ -145,7 +145,7 @@ function tableFade(root) {
     }
   });
 }
-window.tableFade = tableFade;
+SM.api.tableFade = tableFade;
 addEventListener("resize", () => tableFade());
 // 그리는 순간 감춰진 화면의 표는 폭이 0 이라 "안 넘친다"로 판정된다 — 모바일 개요 표가
 // 옆으로 넘치는데도 페이드·붙박이 첫 열이 꺼져 있었다. 화면이 보일 때 다시 잰다.
@@ -161,14 +161,14 @@ function viewSub(viewId, text) {
   el.textContent = text || "";
   el.hidden = !text;
 }
-window.viewSub = viewSub;
+SM.api.viewSub = viewSub;
 
 /* 배너 자리 — 화면 머리(.vh) 다음, 다음 행동 띠(.next) 앞. 폭은 .view 상자가 주므로
    본문 폭 그대로다. 뒤에 얹히는 층(호스팅 애드온)이 실행 실패·진행 배너를 여기
    넣는다 — 자리를 각자 정하면 화면 머리 위 y=0 에 폭 595px 짜리 상자가 뜨는 식으로
    제각각이 된다. 채우면 보이고 비우면(:empty) 사라진다.
    SM.slot() 은 **지금 보고 있는 화면**의 자리, viewBanner(id) 는 지정한 화면의 자리다. */
-window.viewBanner = viewId => {
+SM.api.viewBanner = viewId => {
   const box = $("view-" + viewId);
   if (!box) return null;
   let s = box.querySelector(":scope > .vban");
@@ -206,7 +206,7 @@ document.addEventListener("click", ev => {
   window.nextStep(id, el._html);
 });
 
-window.nextStep = (viewId, html) => {
+SM.api.nextStep = (viewId, html) => {
   const box = $("view-" + viewId);
   if (!box) return;
   let el = box.querySelector(":scope > .next");
@@ -237,7 +237,7 @@ window.nextStep = (viewId, html) => {
 /* 띠를 "도는 중"으로 세운다 — 문장은 그대로 두고 상태만 바꾼다. 실행을 거는 층
    (호스팅 애드온)이 켜고 끈다. 문장까지 여기서 갈아 끼우지 않는 이유는, 무엇이
    도는 중인지는 그 층이 알고 이 함수는 모르기 때문이다. */
-window.nextRunning = (viewId, on) => {
+SM.api.nextRunning = (viewId, on) => {
   const el = $("view-" + viewId) &&
              $("view-" + viewId).querySelector(":scope > .next");
   if (el) el.classList.toggle("run", !!on);
@@ -248,7 +248,7 @@ window.nextRunning = (viewId, on) => {
    3초 띄운다. 여러 개면 쌓인다. role="status" 라 화면 낭독기도 같이 읽는다 —
    색만으로 성공과 실패를 가르지 않는다(글자가 정본이다).
    kind: "ok" | "bad" | 없음(중립). */
-window.toast = (msg, kind) => {
+SM.api.toast = (msg, kind) => {
   if (!msg) return;
   let box = $("toasts");
   if (!box) {
@@ -275,7 +275,7 @@ window.toast = (msg, kind) => {
 // 라벨을 비우면 단계 용어표(stage.STAGE_LABELS)의 run 이 들어온다 — 뷰가 단계 이름을
 // 글자로 옮겨 적지 않고도 버튼을 낼 수 있는 자리다. 여태 빈 라벨은 호스팅에서
 // **글자 없는 버튼**으로 나갔다(로컬은 명령을 찍으니 티가 안 났다).
-window.act = (stage, label, primary = true) => {
+SM.api.act = (stage, label, primary = true) => {
   const t = label || window.stageRun(stage);
   return window.SM_HOSTED
     ? `<button class="go${primary ? "" : " sec"}" data-run="${esc(stage)}">${esc(t)}</button>`
@@ -298,7 +298,7 @@ const siteArg = () => { const p = $("proj"); return p && p.value ? ` ${esc(p.val
    말했다(블랙박스 8회차) — 하지도 않은 걸 "다시" 하라고 시킨 것이다.
    runs 는 gather() 가 담는 최근 40건뿐이지만(runVerdict·runFailed 와 같은
    한계) "한 번도 안 했는데 다시 하라"는 확실한 거짓말은 없어진다. */
-window.stageRun = id => {
+SM.api.stageRun = id => {
   const s = (window.__STAGES__ || {})[id] || {};
   const everRan = ((LAST_D || {}).runs || []).some(r => r.kind === id);
   return (everRan && s.run) || s.t || id;
@@ -306,7 +306,7 @@ window.stageRun = id => {
 // 짝: 단계 **이름**. stageRun 이 "돌리는 버튼에 쓸 말"이라면 이쪽은 그 단계를
 // 문장 안에서 부르는 이름이다("색인 다시 확인" ↔ "내 페이지 색인"). run 으로
 // 물러서지 않는다 — 물러서면 문장 안에 버튼 문구가 들어앉는다.
-window.stageName = id => {
+SM.api.stageName = id => {
   const s = (window.__STAGES__ || {})[id] || {};
   return s.t || id;
 };
@@ -328,7 +328,7 @@ window.stageName = id => {
 // 낱말 경계를 둔다 — 없으면 `ai_errors=0` 같은 다른 키의 꼬리를 errors 로 읽는다.
 const RE_ERRORS = /\berrors=(\d+)/;
 const RE_SKIPPED = /\bskipped=(\d+)/;
-window.runVerdict = r => {
+SM.api.runVerdict = r => {
   if (!r) return null;
   const n = String(r.notes || "");
   if (n.includes("중단:"))
@@ -347,7 +347,7 @@ window.runVerdict = r => {
    건너뜀은 실패가 아니다(한도·키 없음은 사용자가 고를 수 있는 상태다).
    d 를 안 주면 마지막으로 그린 페이로드를 본다. 화면이 자기 render 안에서 부를
    때는 그게 곧 자기가 받은 d 다(render 첫 줄이 LAST_D 를 세운다). */
-window.runFailed = (stage, d) => {
+SM.api.runFailed = (stage, d) => {
   const runs = ((d || LAST_D || {}).runs) || [];
   const r = runs.find(x => x.kind === stage);
   const v = window.runVerdict(r);

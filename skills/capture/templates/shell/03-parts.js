@@ -2,6 +2,20 @@
 // 보이지만 window 의 속성은 아니다. 뒤에 얹히는 층이 "셸이 있나"를 물을 자리를 준다.
 window.SM = SM;
 
+/* ── 셸이 뷰에 내놓는 계약 (SM.api) ─────────────────────────────────────────
+   뷰·섹션·애드온·인라인 onclick 이 부르는 셸 함수와 표는 전부 `SM.api.이름 = …` 로 정한다.
+   정하는 순간 같은 이름이 window 에도 걸린다(호환 별칭) — 인라인 핸들러(onclick="go(")와 뷰의
+   맨이름 호출(act(·oppOf()이 그대로 닿게. 이름을 두 번 정하면 던진다: 조용히 덮이지 않는다.
+   계약의 목록은 이 파일들의 `SM.api.` 정의가 정본이다 — test_seams 의 뷰 스텁도 거기서 만든다.
+   바뀌어 다시 쓰이는 **상태**(BRIEF·SD_PERIOD·PLAY_PR·SETUP·KIND_LABELS 따위)는 계약이 아니라
+   window.* 로 둔다(load() 가 갈아 끼운다). */
+SM.api = new Proxy({}, {
+  set(t, k, v) {
+    if (k in t) throw new Error("SM.api." + String(k) + " 가 두 번 정해졌다");
+    t[k] = v; window[k] = v; return true;
+  },
+});
+
 /* ── 공용 부품 (SM.ui) ──────────────────────────────────────────────────────
    화면마다 따로 짓던 작은 부품의 한 벌이다. 뷰는 이 interface 만 부르고, 같은 부품을
    자기 이름(AI_av·BLK_tip·CP_empty·…)으로 다시 짓지 않는다 — 한 곳을 고쳐도 나머지가

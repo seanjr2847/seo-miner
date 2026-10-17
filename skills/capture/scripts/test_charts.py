@@ -38,7 +38,7 @@ const T = {patina: "#22705F", copper: "#A9491F", ink: "#121714", slate: "#576259
 def diverge_src() -> str:
     """셸에서 chDiverge 한 덩어리만 떼 온다 (사본을 만들면 두 벌이 된다)."""
     src = dashboard.shell_source()
-    m = re.search(r"^window\.chDiverge = .*?^\};", src, re.M | re.S)
+    m = re.search(r"^SM\.api\.chDiverge = .*?^\};", src, re.M | re.S)
     assert m, "dashboard.html 에서 chDiverge 를 못 찾았다"
     return m.group(0)
 
@@ -48,7 +48,7 @@ def ui_src() -> str:
     src = dashboard.shell_source()
     m = re.search(r"^SM\.ui = \(\(\) => \{.*?^\}\)\(\);", src, re.M | re.S)
     assert m, "dashboard.html 에서 SM.ui 를 못 찾았다"
-    return "const SM = {};\n" + m.group(0) + "\n"
+    return "const SM = {api: window};\n" + m.group(0) + "\n"
 
 
 def bars(rows: list[dict]) -> dict[str, float]:

@@ -33,7 +33,7 @@ SM.queue = (() => {
   })();
 
   // 큐를 부르는 손잡이 — 인라인 핸들러는 요소 하나만 넘긴다. 큐 카드·서랍·종류 칸이 자기 화면 id 를 달고 있다.
-  window.QU = x => {
+  SM.api.QU = x => {
     if (typeof x === "string") return REG[x];
     const n = x && x.closest ? x.closest("[data-queue-host],[data-queue-of]") : null;
     return n ? REG[n.dataset.queueHost || n.dataset.queueOf] : null;
