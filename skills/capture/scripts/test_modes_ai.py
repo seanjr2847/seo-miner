@@ -35,6 +35,12 @@ DOCS = ROOT / "docs" / "screens"
 VIEWS = ("aicite", "aisum")
 
 
+def _shell_src() -> str:
+    """조립 전 셸 원본(dashboard.html + templates/shell/*.js 조각)."""
+    import dashboard
+    return dashboard.shell_source()
+
+
 def _src(vid: str) -> str:
     return (TPL / "views" / f"{vid}.html").read_text("utf-8")
 
@@ -181,7 +187,7 @@ def test_no_important_and_no_tracking_on_korean_in_the_new_rules():
 def test_default_tab_follows_open_queue_count():
     """열린 기회가 없을 때 [관리]를 앞에 세우는 일은 셸(SM.modeDefaults)이 한 벌로 한다 — 뷰가 제 사본을
     들면 화면마다 규칙이 갈린다. 배지(count)가 0 이면 그 탭은 첫 탭이 아니다."""
-    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    shell = _shell_src()
     assert "modeDefaults" in shell, "셸에 첫 탭 규칙(modeDefaults)이 없다"
     for vid in VIEWS:
         t = _src(vid)
@@ -192,7 +198,7 @@ def test_default_tab_follows_open_queue_count():
 def test_go_see_opens_the_tab_of_its_target():
     """개요 줄의 [화면에서 자세히 보기](goSee)는 대상 섹션이 접힌 탭에 있으면 그 탭을 먼저 연다 —
     숨은 섹션은 스크롤할 수 없어 화면 맨 위(마지막 탭)에 서 버린다."""
-    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    shell = _shell_src()
     i = shell.index("goSee(view, sec)")
     body = shell[i:i + 900]
     assert "SM.modeOf(el)" in body and "SM.setMode(view, mode)" in body, "goSee 가 대상 섹션의 탭을 열지 않는다"

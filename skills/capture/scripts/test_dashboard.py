@@ -1693,8 +1693,7 @@ def test_local_run_merges_presses_and_queues_while_running():
 def test_group_status_line_is_not_failure_colour():
     """묶음 머리의 "재는 중입니다"·"지금 도는 재기가 끝나면 잽니다"는 실패가 아니다 —
     copper 는 본문에서 실패·빠짐의 색이라, 누르자마자 정상 진행이 오류처럼 읽힌다."""
-    src = (Path(dashboard.__file__).parent.parent / "templates" / "dashboard.html"
-           ).read_text("utf-8")
+    src = dashboard.shell_source()
     rule = re.search(r"\.vgrp \.gst \{([^}]*)\}", src)
     assert rule, "묶음 머리의 상태 줄(.vgrp .gst) 규칙을 못 찾았다 — 이 검사가 아무것도 안 본다"
     assert "--copper" not in rule.group(1), f"진행 상태가 실패색이다: {rule.group(0)}"
@@ -1919,7 +1918,7 @@ def test_dashboard_page_carries_token_without_query():
         srv.shutdown()
         srv.server_close()
     # 화면은 실어 준 토큰을 먼저 본다 — ?t= 만 보면 다시 같은 증상이다
-    shell = (Path(dashboard.__file__).parent.parent / "templates" / "dashboard.html").read_text("utf-8")
+    shell = dashboard.shell_source()
     assert re.search(r"(?:const|let) TOKEN = window\.__SM_TOKEN__ \|\|", shell), "셸이 실어 준 토큰을 안 읽는다"
 
 

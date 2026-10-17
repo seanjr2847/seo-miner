@@ -50,7 +50,8 @@ def _def() -> dict:
 
 
 def _shell() -> str:
-    return _read("dashboard.html")
+    import dashboard
+    return dashboard.shell_source()
 
 
 # ───────────────────────── 1. 선언 ─────────────────────────

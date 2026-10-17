@@ -34,6 +34,12 @@ import db     # noqa: E402
 import stage  # noqa: E402
 
 
+def _shell_src() -> str:
+    """조립 전 셸 원본 — dashboard.html 에 templates/shell/*.js 조각을 끼운 것."""
+    import dashboard
+    return dashboard.shell_source()
+
+
 def _server():
     """호스팅 서버 모듈(server/app.py) 자체 — 라우트 표도 carry 형식도 여기 산다.
 
@@ -77,7 +83,7 @@ def _load():
     if not (dash_f.exists() and views.is_dir() and shell_f.exists()):
         return None
     dash = dash_f.read_text("utf-8")
-    shell = shell_f.read_text("utf-8")
+    shell = _shell_src()
     tpl = shell + "".join(p.read_text("utf-8") for p in sorted(views.glob("*.html")))
     return dict(
         dash=dash, shell=shell, tpl=tpl, views=views,
@@ -1498,7 +1504,8 @@ def test_seam_30_form_controls_have_names():
     """
     import glob as _glob
     tdir = ROOT / "skills" / "capture" / "templates"
-    files = [tdir / "dashboard.html", *sorted((tdir / "views").glob("*.html")),
+    files = [tdir / "dashboard.html", *sorted((tdir / "shell").glob("*.js")),
+             *sorted((tdir / "views").glob("*.html")),
              *sorted((tdir / "sections").glob("*.html"))]
     addon = ROOT / "server" / "assets" / "dash.html"
     if addon.exists():
@@ -2491,8 +2498,7 @@ def test_seam_52_hosted_addon_keeps_the_mono_fallback_tail():
     addon_f = ROOT / "server" / "assets" / "dash.html"
     if not addon_f.exists():
         return                      # 플러그인 설치본에는 server/ 가 없다
-    orig = _mono_stack((ROOT / "skills" / "capture" / "templates"
-                        / "dashboard.html").read_text("utf-8"))
+    orig = _mono_stack(_shell_src())
     addon = _mono_stack(addon_f.read_text("utf-8"))
     assert len(orig) >= 2, f"원본의 --mono 를 못 읽었다: {orig}"
     if not addon:
@@ -2909,7 +2915,7 @@ def _node_views(js: str):
         return None
     # 공용 부품(SM.ui)은 손으로 쓴 사본이 아니라 셸 원본을 떼어 끼운다(_VIEW_STUBS 의 자리표).
     if "//__SM_UI__" in js:
-        shell = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+        shell = _shell_src()
         js = js.replace("//__SM_UI__", _shell_ui_src(shell))
     # 스크립트는 stdin 으로 넘긴다 — 화면 스크립트 통째는 윈도의 명령줄 길이를 넘는다.
     r = subprocess.run(["node", "-"], input=js, capture_output=True, text=True,
@@ -3187,7 +3193,7 @@ def test_seam_95_opportunity_buttons_are_named_after_their_state():
     같은 표에서 와야 한다 — 표가 바뀌고 요청문이 옛 이름을 말하면 없는 버튼을 찾게 된다.
     """
     import brief
-    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    shell = _shell_src()
     m = re.search(r"window\.OPP_LABEL = \{(.*?)\};", shell, re.S)
     labels = dict(re.findall(r'(\w+):"([^"]+)"', m.group(1)))
     m = re.search(r"const OPP_SET = \{(.*?)\};", shell, re.S)
@@ -3666,7 +3672,7 @@ def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
     assert m, "심사 화면의 색점 문턱(TR_tier)을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
     assert int(m.group(1)) == dashboard.TRIAGE_HOT, \
         f"개요의 '점수 {dashboard.TRIAGE_HOT}점 이상'과 심사 색점 문턱({m.group(1)})이 다르다"
-    q = _queue_block((S / "templates" / "dashboard.html").read_text("utf-8"))
+    q = _queue_block(_shell_src())
     assert "this.D.triage_pending" in q, "큐의 빈 상태가 서버의 심사 대기 수를 안 읽는다"
     assert "SM.show('triage')" in q, "큐의 빈 상태가 심사 화면으로 안 보낸다"
 
@@ -4009,7 +4015,7 @@ def test_seam_129_brief_is_joined_one_way_in_python_and_js():
     t = brief.join(b, B)
     assert t.index("머리말") < t.index(brief.STEPS_HEAD) < t.index("## 한눈에") < t.index("## 답의 형식"), t
     assert "brief.join(" in inspect.getsource(dashboard.run_tool)
-    src = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+    src = _shell_src()
     js = src.split("const briefText = b =>")[1].split("\n};")[0]
     for need in ("B.heads", "B.tails", 'indexOf("\\n\\n")'):
         assert need in js, f"briefText 가 brief.join 과 다르게 잇는다 — {need} 가 없다"
@@ -4115,7 +4121,7 @@ def test_seam_132_shell_post_recovers_a_stale_token_from_the_local_token_route()
     못하게 막는 한 겹이기도 하다(사용자 지정 머리글 → 사전 요청 → 서버가 OPTIONS 에 안 답함).
     - 호스팅은 이 경로가 없다 — 있으면 호스팅 화면이 로컬 토큰 모델을 따라 하는 것이다.
     """
-    shell = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+    shell = _shell_src()
     dash = (ROOT / "skills" / "capture" / "scripts" / "dashboard.py").read_text("utf-8")
     i = shell.index("async function post(")
     body = shell[i:shell.index("\n}", i)]
@@ -4713,6 +4719,36 @@ def test_seam_191_guide_and_settings_draw_themselves():
     assert ":has(#sm-set)" not in settings, "설정 뷰가 호스팅 애드온과의 CSS 짝을 다시 들였다"
     assert 'if (window.SM_HOSTED && $("setup")) $("setup").hidden = true;' in settings, \
         "호스팅에서 #setup 을 감추는 한 줄이 설정 뷰에 없다"
+
+def test_seam_shell_js_is_assembled_from_fragments():
+    """셸 JS 는 templates/shell/*.js 조각이고, 조립이 이름 순서로 <!--SHELL_JS--> 자리에 잇는다.
+
+    양쪽 끝: (1) dashboard.html 은 자리표시자만 갖고 인라인 셸 JS 를 다시 안 들인다 —
+    들이면 조각과 두 벌이다. (2) 조각은 줄 끝으로 끝나 이음이 안 밀리고, 조립본에 이름 순서
+    그대로 들어간다(순서가 곧 선언 순서라 const 가 쓰이기 전에 서야 한다). (3) 세 갈래
+    (local·hosted·frozen) 모두 자리표시자가 남지 않는다.
+    """
+    import dashboard
+    tdir = ROOT / "skills" / "capture" / "templates"
+    base = (tdir / "dashboard.html").read_text("utf-8")
+    assert base.count("<!--SHELL_JS-->") == 1, "dashboard.html 에 <!--SHELL_JS--> 가 정확히 하나여야 한다"
+    assert 'use strict' not in base.split("<!--SHELL_JS-->", 1)[1], (
+        "dashboard.html 에 셸 JS 가 인라인으로 돌아왔다 — templates/shell/*.js 조각에 둔다")
+    frags = sorted((tdir / "shell").glob("*.js"))
+    assert len(frags) >= 2, "templates/shell/*.js 조각이 없다"
+    joined = ""
+    for f in frags:
+        t = f.read_text("utf-8")
+        assert t.endswith("\n") and t.strip(), f"{f.name}: 비었거나 줄 끝으로 안 끝난다"
+        assert "</script" not in t.lower(), f"{f.name}: </script> 가 있으면 셸 스크립트가 거기서 끊긴다"
+        joined += t
+    assert frags[0].read_text("utf-8").lstrip().startswith('"use strict"'), (
+        f"{frags[0].name}: 첫 조각이 use strict 로 열지 않는다")
+    for variant in ("local", "hosted", "frozen"):
+        html = dashboard.assemble(variant)
+        assert "<!--SHELL_JS-->" not in html, f"{variant}: 자리표시자가 안 채워졌다"
+        assert joined + "</script>" in html, f"{variant}: 조립본에 조각이 이름 순서로 이어져 있지 않다"
+
 
 def inspect_src(fn) -> str:
     import inspect

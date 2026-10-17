@@ -17,7 +17,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-SHELL = Path(__file__).resolve().parents[1] / "templates" / "dashboard.html"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dashboard  # noqa: E402
+
+# 셸 JS 는 templates/shell/*.js 조각이다 — 조립 전 원본은 dashboard.shell_source() 가 잇는다
 
 # 헬퍼가 기대는 것만 세운다 — 셸 전체를 node 에 올리면 DOM 이 없어 죽는다.
 # chMount 는 캔버스 대신 설정을 짓는 함수(build)를 돌려준다.
@@ -34,7 +37,7 @@ const T = {patina: "#22705F", copper: "#A9491F", ink: "#121714", slate: "#576259
 
 def diverge_src() -> str:
     """셸에서 chDiverge 한 덩어리만 떼 온다 (사본을 만들면 두 벌이 된다)."""
-    src = SHELL.read_text(encoding="utf-8")
+    src = dashboard.shell_source()
     m = re.search(r"^window\.chDiverge = .*?^\};", src, re.M | re.S)
     assert m, "dashboard.html 에서 chDiverge 를 못 찾았다"
     return m.group(0)
@@ -42,7 +45,7 @@ def diverge_src() -> str:
 
 def ui_src() -> str:
     """셸의 공용 부품(SM.ui) 원본 — 헬퍼가 부호를 거기서 빌린다(사본이 아니라 떼 온 것)."""
-    src = SHELL.read_text(encoding="utf-8")
+    src = dashboard.shell_source()
     m = re.search(r"^SM\.ui = \(\(\) => \{.*?^\}\)\(\);", src, re.M | re.S)
     assert m, "dashboard.html 에서 SM.ui 를 못 찾았다"
     return "const SM = {};\n" + m.group(0) + "\n"

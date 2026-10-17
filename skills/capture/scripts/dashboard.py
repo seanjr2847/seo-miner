@@ -63,6 +63,21 @@ _VIEW_DEF = re.compile(
 _SECTION_DEF = re.compile(
     r'<script type="application/json" class="section-def">\s*(\{.*?\})\s*</script>\s*(.*)', re.S)
 SECTIONS = TPL / "sections"
+SHELL = TPL / "shell"   # 셸 JS 조각 — 파일 이름 순서대로 <!--SHELL_JS--> 자리에 이어 붙인다
+
+
+def shell_js() -> str:
+    """셸 JS 조각(templates/shell/*.js)을 이름 순서로 이은 것 — 한 <script> 의 본문이다.
+
+    조각은 같은 global lexical 환경의 한 스크립트로 돌므로 경계는 읽는 이를 위한 것이지
+    모듈 경계가 아니다. 조각이 줄 끝(
+)으로 끝나야 이음이 안 밀린다."""
+    return "".join(p.read_text("utf-8") for p in sorted(SHELL.glob("*.js")))
+
+
+def shell_source() -> str:
+    """조립 전 셸 원본 — dashboard.html 에 조각을 끼운 것. 소스를 읽어 검사하는 쪽이 쓴다."""
+    return (TPL / "dashboard.html").read_text("utf-8").replace("<!--SHELL_JS-->", shell_js(), 1)
 
 
 def view_defs() -> list[dict]:
@@ -195,6 +210,7 @@ def _assemble(variant: str = "local") -> bytes:
     return (base
             .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VENDOR-->", _vendor_script(), 1)
+            .replace("<!--SHELL_JS-->", shell_js(), 1)
             .replace("<!--VIEWS-->", parts.replace("<!--LOCALE_OPTIONS-->", locale_opts, 1)
                                           .replace("<!--TYPE_OPTIONS-->", type_opts, 1))
             .replace("<!--SECTIONS-->", "".join(s["html"] for s in secs), 1)
@@ -2936,7 +2952,7 @@ def _selfcheck() -> None:
     assert [d["id"] for d in defs] == VIEW_ORDER, "선언 순서가 조립 순서와 다르다"
     assert "window.__VIEWS__=" in html, "매니페스트가 안 실렸다"
     assert "window.__STAGES__=" in html, "단계 용어표가 안 실렸다"
-    for left in ("<!--MANIFEST-->", "<!--VENDOR-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
+    for left in ("<!--MANIFEST-->", "<!--VENDOR-->", "<!--SHELL_JS-->", "<!--VIEWS-->", "<!--SECTIONS-->"):
         assert left not in html, f"자리표가 안 채워졌다: {left}"
     for d in defs:
         # 마크업만 있고 그리는 코드가 없는 뷰를 막는 검사다. 예외는 없다 — [진행 안내]·[설정]도
