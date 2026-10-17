@@ -2030,6 +2030,8 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
          # 화면 id → 그 화면의 [처리] 큐가 맡는 종류 — 위 see 의 뒤집기(scoring.queue_kinds_by_view).
          # 큐를 단 화면은 view-def 에 `queue` 만 적고 종류 목록은 여기서 받는다.
          "queue_kinds_by_view": scoring.queue_kinds_by_view(),
+         # 화면 id → [처리] 큐의 열린 기회 수 — modes 탭 배지가 "queue_open_by_view.<화면 id>" 로 읽는다.
+         "queue_open_by_view": _queue_open_by_view(conn, pid),
          # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
          "watch": db.watch_rows(conn, pid),
          "keyword_kinds": list(scoring.KEYWORD_KINDS),
@@ -2162,6 +2164,19 @@ def _brand_keys(conn, p) -> set[str]:
     cfg = db.project_cfg(conn, p)
     names = scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
     return {k for k in (scoring.norm(a) for a in names) if k}
+
+
+def _queue_open_by_view(conn, pid: int) -> dict[str, int]:
+    """화면 id → 그 화면 [처리] 큐에 선 열린 기회 수 — 탭 배지(view-def modes[].count)의 값.
+    큐와 같은 문(심사 통과 + 열린 상태)으로 센다. 화면이 따로 세면 배지와 목록이 어긋난다."""
+    out = {}
+    for view, kinds in scoring.queue_kinds_by_view().items():
+        ph = ",".join("?" * len(kinds))
+        out[view] = conn.execute(
+            "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status IN ('new','acked')"
+            f" AND kind IN ({ph}) AND " + db.gate_sql(conn),
+            (pid, *kinds, *scoring.TRIAGE_KINDS)).fetchone()[0]
+    return out
 
 
 def triage_payload(project: str) -> dict:

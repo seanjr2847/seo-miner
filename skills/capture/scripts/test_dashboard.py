@@ -683,6 +683,10 @@ def test_triage_payload_groups_variants_and_counts():
     conn = db.connect()
     d = dashboard.gather(conn, db.get_project(conn, "tri"))
     assert "watch" in d and d["keyword_kinds"] == list(scoring.KEYWORD_KINDS)
+    # 탭 배지 값 — 큐가 맡는 화면과 같은 화면 id 로 정수가 실린다(화면 modes[].count 가 읽는다)
+    assert set(d["queue_open_by_view"]) == set(d["queue_kinds_by_view"]) and \
+        all(isinstance(n, int) and n >= 0 for n in d["queue_open_by_view"].values()), \
+        d["queue_open_by_view"]
     assert d["triage_kinds"] == list(scoring.TRIAGE_KINDS)
     conn.close()
 
