@@ -1441,7 +1441,7 @@ def test_seam_28_ai_visits_fields_and_names():
             f"요청문은 [{title}] 라는데 화면 제목은 {defs[vid]['title']!r}"
     sid, stitle = brief.AI_VISITS_SECTION
     assert sid in defs["aicite"]["sections"], f"요청문이 가리키는 섹션 {sid} 가 aicite view-def 에 없다"
-    h2 = re.search(rf'<section id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)
+    h2 = re.search(rf'<(?:section|div) id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)   # [관리] 래퍼 안이라 div
     assert h2 and h2.group(1).strip() == stitle, \
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 

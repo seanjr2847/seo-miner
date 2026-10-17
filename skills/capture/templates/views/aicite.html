@@ -3,7 +3,9 @@
 <script type="application/json" class="view-def">
 {"id": "aicite", "group": "ai", "title": "AI 인용", "aliases": ["ai"],
  "sub": "ChatGPT·Perplexity·Gemini 답변에 우리 링크가 붙는지, 안 붙으면 누가 그 자리를 가져갔는지 확인합니다.",
- "sections": ["aicite", "ai-outranked", "ai-vs-search", "ai-visits"], "stages": ["ai", "gaps", "gsc"]}
+ "sections": ["aicite", "ai-outranked", "ai-vs-search", "ai-visits"], "stages": ["ai", "gaps", "gsc"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.aicite"}, {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
@@ -14,7 +16,11 @@
 :is(#view-aicite,#view-aisum):not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
   gap:var(--gap); align-items:stretch; }
 :is(#view-aicite,#view-aisum) > *, #aicite > *, #aisum > * { grid-column:1 / -1; min-width:0; }
-#aicite, #aisum { display:contents; }
+/* 두 자리표는 [관리] 탭의 접는 단위이기도 하다 — 셸이 거는 hidden 을 id 규칙(display)이 이기면 접힌 탭이 안 접힌다.
+   그래서 :not([hidden]) 로만 펼친다(접히면 셸의 `.view > [data-mode][hidden]` 이 그린다). */
+#aicite:not([hidden]), #aisum:not([hidden]) { display:contents; }
+/* 종이에는 누를 탭이 없다 — 접힌 [관리]도 나온다([처리] 큐 카드는 그대로 선다). */
+@media print { #aicite[hidden] { display:contents; } }
 :is(#view-aicite,#view-aisum) > .next, :is(#view-aicite,#view-aisum) > .vban { margin-top:0; }
 :is(#view-aicite,#view-aisum) section { margin:0; }
 :is(#view-aicite,#view-aisum) .card + .card { margin-top:0; }
@@ -287,7 +293,7 @@ td .ailogo { margin-right:6px; }
        ④ 검색과 견준 자리,  ⑤ 질문별 근거(고칠 목록),  ⑥ 클릭으로 이어졌나(GA4).
      구글 검색 맨 위의 AI 요약은 재료(순위 조회)도 질문도 달라 [AI 요약](views/aisum.html) 화면이 갖는다
      — 2026-10-17 [AI 인용·요약] 한 화면을 둘로 갈랐다. 옛 id "ai" 는 view-def 의 aliases 로 이 화면에 닿는다. -->
-<div id="aicite">
+<section id="aicite" data-mode="manage">
 <div id="ai-empty"></div>
 
 <div id="ai-health"></div>
@@ -338,19 +344,19 @@ td .ailogo { margin-right:6px; }
 
 <!-- 두 축이 서로를 보는 자리. 위 카드들은 AI 한 축만 보고, [순위]·[클릭 변화] 화면은
      검색 한 축만 본다 — 아래 둘만 두 축을 한 줄에 놓는다. -->
-<section id="ai-outranked" class="card aic as12" hidden>
+<div id="ai-outranked" class="card aic as12" hidden>
   <div class="ach">
     <div><h2>AI만 인용하는 곳</h2><p class="sub" id="ai-or-sub"></p></div>
   </div>
   <div id="ai-or-body"></div>
-</section>
+</div>
 
-<section id="ai-vs-search" class="card aic as12" hidden>
+<div id="ai-vs-search" class="card aic as12" hidden>
   <div class="ach">
     <div><h2>검색만 이기는 질문</h2><p class="sub" id="ai-vs-sub"></p></div>
   </div>
   <div id="ai-vs-body"></div>
-</section>
+</div>
 
 <section id="ai-prompt-sec" class="card aic as12" hidden>
   <div class="ach">
@@ -383,7 +389,7 @@ td .ailogo { margin-right:6px; }
 <!-- 위 카드들은 AI 답변 **안**에서 끝나는 숫자다. 이 섹션만 그 링크를 눌러 사이트로
      들어온 방문을 본다 — 인용을 고친 뒤 루프가 닫히는 자리. 재료는 GA4(collect_ga4).
      섹션 자체는 상자가 아니라(display:contents) 두 카드가 격자에 곧바로 선다. -->
-<section id="ai-visits">
+<div id="ai-visits">
   <div class="card aic as5" id="ai-visits-card">
     <div class="ach">
       <div><h2>AI에서 온 방문</h2><p class="sub" id="ai-visits-sub"></p></div>
@@ -397,8 +403,8 @@ td .ailogo { margin-right:6px; }
     </div>
     <div id="ai-visits-pages"></div>
   </div>
-</section>
 </div>
+</section>
 
 <script>
 "use strict";
@@ -937,6 +943,8 @@ function AI_handoff() {
    거르기만 하면 약속을 반만 지킨다: 띠가 "그 질문을 열면 무엇을 고칠지 나옵니다"
    라고 말하므로 **첫 줄까지 펴 준다**. 다른 화면의 [기회 열기]와 같은 동작이다. */
 function AI_showMissed() {
+  // 줄의 근거(엔진별 답변 발췌)는 [관리]의 질문별 표에 있다 — [처리]에 서 있었으면 그 탭으로 옮긴다.
+  if (window.SM) SM.setMode("aicite", "manage");
   AI_ENG = ""; AI_CAT = ""; AI_Q = ""; AI_ST = AI_GAPS ? "gap" : "none";
   AI_render();
   const t = $("ai-plist").querySelector("tbody tr .aiq-t");
@@ -1391,6 +1399,23 @@ function AI_emptyState(d) {
 }
 
 
+/* 첫 탭. 셸의 modes 는 「선언 첫째 + 사람이 마지막에 고른 탭」만 안다 — 열린 기회가 없는데 빈 [처리]가
+   먼저 서면 첫 화면이 비어 보인다. 그래서 사이트가 바뀔 때 한 번, 사람이 고른 탭(sessionStorage)이 없을 때만
+   열린 기회 수(d.queue_open_by_view — [처리] 탭 배지와 같은 값)로 고른다. 재적재마다 부르지 않는다:
+   마지막 기회를 끝내고 나서 화면이 [관리]로 달아나면 안 된다. */
+let AI_MODE_SITE = null;
+function AI_pickMode(d) {
+  if (!window.SM) return;
+  const site = (d.project || {}).name || "";
+  if (AI_MODE_SITE !== site) {
+    AI_MODE_SITE = site;
+    let kept = "";
+    try { kept = sessionStorage.getItem("sm:mode:aicite") || ""; } catch (e) {}
+    if (!kept) SM.mode.aicite = ((d.queue_open_by_view || {}).aicite || 0) > 0 ? "work" : "manage";
+  }
+  SM.modeApply("aicite");     // 큐 카드는 render 중에 서므로 한 번 더 접고 편다(여러 번 불려도 공짜)
+}
+
 // 짝 카드 둘 중 하나만 서면 그 카드가 한 줄을 다 쓴다 — 옆 칸이 빈 채로 남지 않게.
 const AI_solo = (a, b) => {
   const A = $(a), B = $(b);
@@ -1403,6 +1428,7 @@ VIEW("aicite", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
   AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
+  AI_pickMode(d);
   AI_INTENT = d.ai_intent_labels || {};
   AI_MK_LABEL = Object.fromEntries((d.ai_markets || []).map(m => [m.locale, m.label]));
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec",

@@ -12,10 +12,15 @@
 <script type="application/json" class="view-def">
 {"id": "aisum", "group": "ai", "title": "AI 요약",
  "sub": "구글 검색 맨 위의 AI 요약에 우리 링크가 실리는지, 빠졌다면 누가 그 자리를 가져갔는지 확인합니다.",
- "sections": ["aisum"], "stages": ["rank"]}
+ "sections": ["aisum"], "stages": ["rank"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.aisum"}, {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
+/* 종이에는 누를 탭이 없다 — 접힌 [관리]도 나온다. 평소 접기·펴기(#aisum 의 display:contents)는 aicite.html 의
+   공유 덩어리가 :not([hidden]) 로만 건다. */
+@media print { #aisum[hidden] { display:contents; } }
 /* 격자·카드 머리(.ach)·.ainote 는 [AI 인용](aicite.html 의 :is 덩어리)과 같은 것을 쓴다. 여기는 이 화면 몫만. */
 #view-aisum .assum { display:grid; gap:16px; }
 #view-aisum .askpi .l { font:var(--micro); color:var(--sub); }
@@ -72,8 +77,10 @@
 #aisum-empty:empty { display:none; }
 </style>
 
-<!-- 이 화면 전체의 자리표 — 안의 카드가 화면 상자의 12열 격자에 곧바로 선다(display:contents). -->
-<div id="aisum">
+<!-- 이 화면 [관리] 탭 전체 — 안의 카드가 화면 상자의 12열 격자에 곧바로 선다(display:contents).
+     셸은 data-mode 가 달린 화면 상자 직계만 접고 편다. 카드마다 달면 카드가 스스로 쓰는 hidden(빈 카드 숨김)을
+     [처리]→[관리]에서 셸이 펴 버리므로, 접는 단위는 이 래퍼 하나다. -->
+<section id="aisum" data-mode="manage">
 <div id="aisum-empty"></div>
 
 <section id="aisum-sum" class="card aic as5" hidden>
@@ -104,7 +111,7 @@
   </div>
   <div id="aisum-won-body"></div>
 </section>
-</div>
+</section>
 
 <script>
 "use strict";
@@ -169,13 +176,29 @@ function AS_nextStep(s) {
     + live("순위가 떨어지면 요약에서도 빠지기 쉬워 다음 확인 때 다시 봅니다."), AS_act("rank"));
 }
 
-/* 띠의 [빠진 검색어 보기] — 표로 내려가 첫 줄을 펴 준다(다른 화면의 [기회 열기]와 같은 동작). */
+/* 띠의 [빠진 검색어 보기] — 빠진 검색어는 aio_exposure 기회라 [처리] 큐가 맡는다. 그 탭으로 데려가
+   큐의 맨 위 줄을 펴 준다(다른 화면의 [기회 열기]와 같은 동작). 표(아래 [관리])는 근거로 남는다. */
 function AS_showGap() {
-  const sec = $("aisum-gap");
-  if (!sec || sec.hidden) return;
-  sec.scrollIntoView({behavior: "smooth", block: "start"});
-  const tr = sec.querySelector("tbody tr[role=button]");
-  if (tr) AS_toggle(tr);
+  if (window.SM) SM.setMode("aisum", "work");
+  const q = window.QU && QU("aisum");
+  if (q && q.root) { q.root.scrollIntoView({behavior: "smooth", block: "start"}); q.openTop(); }
+}
+
+/* 첫 탭. 셸의 modes 는 「선언 첫째 + 사람이 마지막에 고른 탭」만 안다 — 열린 기회가 없는데 빈 [처리]가
+   먼저 서면 첫 화면이 비어 보인다. 그래서 사이트가 바뀔 때 한 번, 사람이 고른 탭(sessionStorage)이 없을 때만
+   열린 기회 수(d.queue_open_by_view — [처리] 탭 배지와 같은 값)로 고른다. 재적재마다 부르지 않는다:
+   마지막 기회를 끝내고 나서 화면이 [관리]로 달아나면 안 된다. */
+let AS_MODE_SITE = null;
+function AS_pickMode(d) {
+  if (!window.SM) return;
+  const site = (d.project || {}).name || "";
+  if (AS_MODE_SITE !== site) {
+    AS_MODE_SITE = site;
+    let kept = "";
+    try { kept = sessionStorage.getItem("sm:mode:aisum") || ""; } catch (e) {}
+    if (!kept) SM.mode.aisum = ((d.queue_open_by_view || {}).aisum || 0) > 0 ? "work" : "manage";
+  }
+  SM.modeApply("aisum");      // 큐 카드는 render 중에 서므로 한 번 더 접고 편다(여러 번 불려도 공짜)
 }
 
 function AS_tile(l, v, unit, b, cls) {
@@ -227,6 +250,7 @@ function AS_paintGap() {
 }
 
 VIEW("aisum", function (d) {
+  AS_pickMode(d);
   AS_PLAY = d.aio_play || {};
   const all = d.rank_by_kw ? Object.values(d.rank_by_kw) : (d.ranks || []);
   const known = all.filter(r => r.aio != null), on = known.filter(r => r.aio === 1);

@@ -5,7 +5,10 @@
  "sections": ["an-top", "an-shift", "an-daily", "an-movers", "an-ctr",
               "an-bands", "an-brand", "an-intent", "an-cluster", "an-country",
               "an-newret-body", "an-funnel-body", "an-channels-body", "an-empty-fill"],
- "stages": ["gsc", "gaps"]}
+ "stages": ["gsc", "gaps"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.analysis"},
+           {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
@@ -30,6 +33,11 @@
   #view-analysis.an-nodata > #an-shift, #view-analysis.an-nodata > #an-bands,
   #view-analysis.an-noshift > #an-daily { grid-column:1 / -1; }
 }
+
+/* 뷰가 스스로 접는 카드(수집 전·GA4 없음·중복) — `hidden` 이 아니라 data-an-off 다. 셸이 [처리]·[관리]
+   탭으로 접을 때 hidden 을 쓰므로(SM.modeApply), 같은 속성을 뷰가 함께 쓰면 탭을 오갈 때 서로 덮는다.
+   특이도가 `#an-daily:not([hidden])` 의 flex 보다 높아 이긴다. */
+#view-analysis > section[data-an-off] { display:none; }
 
 /* 안내 알럿 — 화면 맨 아래. 카드가 아니라 옅은 정보색 면이고 오른쪽 X 로 닫는다. */
 #an-empty-fill-body > .analert { display:flex; align-items:flex-start; gap:var(--sp-3);
@@ -219,9 +227,15 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   .ang { padding:18px 16px; }
   .anring { right:16px; top:16px; }
 }
+/* 인쇄 — [처리]·[관리] 탭으로 접힌 섹션도 종이에는 다 나간다(셸의 .view > [data-mode][hidden] 을 이긴다).
+   뷰가 접은 카드(data-an-off)는 탭과 무관하게 계속 빠진다. */
+@media print {
+  #view-analysis > [data-mode][hidden]:not([data-an-off]) { display:block; }
+  #view-analysis > #an-daily[data-mode][hidden]:not([data-an-off]) { display:flex; }
+}
 </style>
 
-<section id="an-top">
+<section id="an-top" data-mode="manage">
   <div class="sh ansr">
     <h2>클릭 변화 요약</h2>
     <p class="sub">두 시점을 맞대 클릭이 얼마나 움직였는지 봅니다.</p>
@@ -230,7 +244,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
     <span class="skel box"></span></div>
 </section>
 
-<section id="an-shift" class="card ang">
+<section id="an-shift" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>클릭 변화의 원인</h2>
     <p class="sub">클릭 = 노출 × 클릭률. 가장 긴 막대가 이번에 손댈 자리입니다.<span
@@ -243,7 +257,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
       덜 눌려서 잃은 것은 제목·설명이 손댈 자리이고, 아래 안 눌리는 검색어 표가 그 목록입니다.</p></details>
 </section>
 
-<section id="an-daily" class="card ang">
+<section id="an-daily" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>하루 단위 클릭</h2>
     <p class="sub">어느 날부터 달라졌는지 보입니다.<span class="hint"
@@ -254,7 +268,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-daily-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-movers" class="card ang">
+<section id="an-movers" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>움직인 검색어</h2>
     <p class="sub">잃은 쪽 맨 위부터 봅니다. 줄을 누르면 어느 페이지를 고칠지 나옵니다.</p>
@@ -265,7 +279,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-movers-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-ctr" class="card ang">
+<section id="an-ctr" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>안 눌리는 검색어</h2>
     <p class="sub">1페이지인데 그 순위면 보통 나오는 클릭률의 절반도 못 받는 검색어입니다.<span
@@ -276,7 +290,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-ctr-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-bands" class="card ang">
+<section id="an-bands" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>순위 구간 이동</h2>
     <p class="sub">1페이지에서 몇 개가 빠지고 늘었는지 봅니다.<span class="hint"
@@ -287,7 +301,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-bands-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-brand" class="card ang">
+<section id="an-brand" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>브랜드·논브랜드</h2>
     <p class="sub">새 수요는 논브랜드 쪽에서만 옵니다.<span class="hint"
@@ -298,7 +312,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-brand-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-intent" class="card ang">
+<section id="an-intent" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>검색 의도 구성</h2>
     <!-- ⓘ가 하던 말("사람은 오는데 살 사람이 없어…")은 이 부제가 이미 하는 말과
@@ -308,7 +322,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-intent-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-cluster" class="card ang">
+<section id="an-cluster" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>주제별 성적</h2>
     <!-- ⓘ가 "글을 더 쓸 곳이 아니라…"라고 되풀이했다 — 부제의 "고칠 곳입니다"가
@@ -318,7 +332,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-cluster-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-country" class="card ang">
+<section id="an-country" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>국가별 클릭</h2>
     <p class="sub" id="an-country-sub">타깃 밖 나라가 노출을 먹고 있는지 봅니다.</p>
@@ -326,7 +340,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-country-body"><span class="skel box"></span></div>
 </section>
 
-<section id="an-newret-sec" class="card ang">
+<section id="an-newret-sec" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>신규·재방문</h2>
     <p class="sub">재방문은 이미 나를 아는 사람이 돌아온 몫입니다.</p>
@@ -335,7 +349,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-newret-body"></div>
 </section>
 
-<section id="an-funnel-sec" class="card ang">
+<section id="an-funnel-sec" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>단계별 이탈</h2>
     <p class="sub">노출에서 전환까지 단계마다 얼마가 남는지 봅니다.</p>
@@ -344,7 +358,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
   <div id="an-funnel-body"></div>
 </section>
 
-<section id="an-channels-sec" class="card ang">
+<section id="an-channels-sec" class="card ang" data-mode="manage">
   <div class="sh">
     <h2>채널별 세션 구성</h2>
     <p class="sub">검색이 흔들릴 때 대신할 채널이 있는지 봅니다.</p>
@@ -360,7 +374,7 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
      알럿 하나로 말한다. anEmptyFill() 이 그 여섯 절을 숨기고 이 알럿을 켠다 —
      수집한 뒤에는 각 절이 원래대로 선다(절마다 결론·조건이 다르다).
      알럿이라 화면 맨 아래에 서고, X 로 닫으면 이 사이트에서는 다시 안 뜬다. -->
-<section id="an-empty-fill" hidden>
+<section id="an-empty-fill" data-an-off data-mode="manage">
   <div id="an-empty-fill-body"></div>
 </section>
 
@@ -419,6 +433,8 @@ function anTopMover() {
   return best;
 }
 function anOpenTop() {
+  // 표는 [관리] 탭에 산다 — [처리]에 서 있으면 접힌 표에 열려 아무 일도 안 일어난 것처럼 보인다.
+  if (window.SM) SM.setMode("analysis", "manage");
   const i = anTopMover();
   const tr = i < 0 ? null
     : document.querySelector(`#an-movers-body tr[data-ansrc="mv"][data-i="${i}"]`);
@@ -1324,6 +1340,11 @@ const AN_FILLABLE = [
 /* 알럿을 닫은 기억 — 사이트(#hash)와 알럿 종류(서치콘솔 없음 / 수집 전)마다 따로다. 닫은 종류가
    아닌 다른 상태가 되면(예: 서치콘솔을 붙인 뒤 다시 수집 전) 새 안내이므로 다시 뜬다.
    저장이 막힌 환경(사생활 보호 창 등)에서는 이번 화면이 열려 있는 동안만 닫혀 있다. */
+// 뷰가 카드(섹션)를 접고 편다 — 정본 CSS 는 위 `#view-analysis > section[data-an-off]`. 셸 탭의 hidden 과 안 겹친다.
+function anOff(el, off) {
+  el = typeof el === "string" ? $(el) : el;
+  if (el) el.toggleAttribute("data-an-off", !!off);
+}
 const AN_ALERT_KEY = "sm:an-alert-x:";
 const AN_ALERT_GONE = {};
 const anAlertKind = noGsc => (location.hash || "") + ":" + (noGsc ? "nogsc" : "prefill");
@@ -1334,18 +1355,17 @@ function anAlertClosed(k) {
 function anAlertClose(k) {
   AN_ALERT_GONE[k] = true;
   try { localStorage.setItem(AN_ALERT_KEY + k, "1"); } catch (e) {}
-  const wrap = $("an-empty-fill");
-  if (wrap) wrap.hidden = true;
+  anOff("an-empty-fill", true);
 }
 const anAlertX = k => `<button type="button" class="anx" data-k="${esc(k)}"
   aria-label="안내 닫기" title="닫기" onclick="anAlertClose(this.dataset.k)"><svg viewBox="0 0 16 16"
   aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>`;
 
 function anEmptyFill(hide, noGsc) {
-  AN_FILLABLE.forEach(([id]) => { const el = $(id); if (el) el.hidden = hide; });
+  AN_FILLABLE.forEach(([id]) => anOff(id, hide));
   const wrap = $("an-empty-fill");
   const k = anAlertKind(noGsc);
-  if (wrap) wrap.hidden = !hide || anAlertClosed(k);
+  if (wrap) anOff(wrap, !hide || anAlertClosed(k));
   if (!hide) return;
   // 서치콘솔 없이 시작한 사이트(호스팅 온보딩) — [실적 수집]을 내밀면 눌러도 건너뛰기만
   // 한다. 무엇이 없고 왜 없는지, 대신 어디를 보면 되는지를 말한다.
@@ -1404,7 +1424,7 @@ VIEW("analysis", function (d) {
   anEmptyFill(noData, !(d.project && d.project.gsc_property));
   // 맨 위 카드가 이미 "맞댈 수집이 없다"고 말했으면 원인 카드가 같은 말을 되풀이하지 않는다.
   const dupe = !anTopVerdict(d) && !anTopKpis(d);
-  $("an-shift").hidden = dupe;
+  anOff("an-shift", dupe);
   if (box) box.classList.toggle("an-noshift", dupe);
   if (!noData) {
     $("an-daily-body").innerHTML = anDaily(d.daily);
@@ -1421,11 +1441,11 @@ VIEW("analysis", function (d) {
   // 다섯 GA4 키(ga4_funnel/channels/by_device/by_country/by_newret)는 GA4 미연결이면
   // 통째로 없다 — d.ga4_funnel 하나로 이 화면의 GA4 절 셋을 함께 접는다/편다.
   const hasGa4 = !!d.ga4_funnel;
-  $("an-newret-sec").hidden = !hasGa4;
+  anOff("an-newret-sec", !hasGa4);
   if (hasGa4) $("an-newret-body").innerHTML = anNewret(d.ga4_by_newret);
-  $("an-funnel-sec").hidden = !hasGa4;
+  anOff("an-funnel-sec", !hasGa4);
   if (hasGa4) $("an-funnel-body").innerHTML = anFunnel(d.ga4_funnel);
-  $("an-channels-sec").hidden = !hasGa4;
+  anOff("an-channels-sec", !hasGa4);
   if (hasGa4) $("an-channels-body").innerHTML = anChannels(d.ga4_channels);
   anNext(d);
 });

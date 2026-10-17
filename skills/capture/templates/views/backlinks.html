@@ -8,7 +8,9 @@
 <script type="application/json" class="view-def">
 {"id": "backlinks", "group": "compete", "title": "백링크",
  "sections": ["bl-profile", "bl-broken", "bl-mentions", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"],
- "head": ["backlinks"]}
+ "head": ["backlinks"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.backlinks"}, {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
@@ -26,6 +28,19 @@
 #view-backlinks > .vh { padding-bottom:0; }
 #view-backlinks > .next, #view-backlinks > .vban { margin:0; }
 #bl-profile, #bl-links:not([hidden]) { display:contents; }
+/* [처리]·[관리] 탭 — 다섯 섹션은 전부 [관리]다. 접는 것은 셸의 hidden 이므로 이 뷰는 섹션의 hidden 을
+   만지지 않는다(만지면 [처리]에 [관리]가 비어져 나온다). 자료가 없어 감추는 것은 bl-none 이다.
+   display:contents 인 섹션은 id 특이도가 [hidden] 을 이기므로 접힌 것에 display:none 을 따로 준다. */
+#bl-profile[hidden] { display:none; }
+#view-backlinks > section.bx.bl-none, #view-backlinks > section#bl-links.bl-none { display:none; }
+#view-backlinks > .qhost { grid-column:1 / -1; }
+/* 인쇄에는 누를 탭이 없다 — 접힌 섹션도 편다. */
+@media print {
+  #bl-profile[hidden] { display:contents; }
+  #view-backlinks > [data-mode][hidden] { display:block; }
+  #view-backlinks > #bl-links[hidden] { display:contents; }
+  #view-backlinks > .bx[hidden] { display:flex; }
+}
 #view-backlinks .bx { margin:0; min-width:0; }
 #view-backlinks .bx:not([hidden]) { display:flex; flex-direction:column; }
 #blk-empty { grid-column:1 / -1; }
@@ -207,7 +222,7 @@
 }
 </style>
 
-<section id="bl-profile">
+<section id="bl-profile" data-mode="manage">
   <!-- 수집 전·실패일 때만 서는 한 장. 나머지 카드는 그때 숨는다. -->
   <div class="card bx" id="blk-empty" hidden></div>
   <!-- 첫 그림은 빈 상자가 아니라 채워질 자리의 모양이다 — VIEW() 가 덮는다. -->
@@ -216,7 +231,7 @@
 </section>
 
 <!-- 되찾을 링크가 교집합보다 앞이다 — 이미 번 링크라 늘 더 싸고 확실하다. -->
-<section id="bl-broken" class="card bx">
+<section id="bl-broken" class="card bx" data-mode="manage">
   <div class="bh">
     <div class="bt"><h2>되찾을 링크</h2><p class="bs" id="blk-recover-sub"></p></div>
     <div class="btools" id="blk-recover-bar"></div>
@@ -225,7 +240,7 @@
 </section>
 
 <!-- 우리 이름을 말했는데 링크는 없는 곳 — 교집합보다 앞이다. 그쪽은 이미 우리를 안다. -->
-<section id="bl-mentions" class="card bx">
+<section id="bl-mentions" class="card bx" data-mode="manage">
   <div class="bh">
     <div class="bt"><h2>링크 없는 언급</h2><p class="bs" id="blk-mn-sub"></p></div>
     <div class="btools" id="blk-mn-bar"></div>
@@ -233,7 +248,7 @@
   <div id="blk-mentions" class="bscroll"><span class="skel"></span><span class="skel line2"></span></div>
 </section>
 
-<section id="bl-intersect" class="card bx">
+<section id="bl-intersect" class="card bx" data-mode="manage">
   <div class="bh">
     <div class="bt"><h2>경쟁사만 받은 링크처</h2><p class="bs" id="blk-ix-sub"></p></div>
     <div class="btools" id="blk-ix-bar"></div>
@@ -241,7 +256,7 @@
   <div id="blk-intersect" class="bscroll"><span class="skel"></span><span class="skel line2"></span></div>
 </section>
 
-<section id="bl-links">
+<section id="bl-links" data-mode="manage">
   <div class="card bx" id="blk-domcard">
     <span class="skel"></span><span class="skel line2"></span>
   </div>
@@ -844,9 +859,12 @@ const BLK_empty = (title, why, acts, tip) =>
 const BLK_ok = (title, why) =>
   `<div class="empty ok"><b>${title}</b><p>${why}</p></div>`;
 
+// 아래 목록·표는 전부 [관리] 탭에 있다 — 거기로 가는 손잡이는 숨은 탭에 스크롤하지 말고 탭부터 연다.
+const BLK_manage = () => { if (SM.modeNow("backlinks") !== "manage") SM.setMode("backlinks", "manage"); };
 // 띠의 주요 버튼이 가리키는 자리로 내린다 — 백링크 화면은 길어서 "아래에 있다"는
 // 말만으로는 못 찾는다.
 function BLK_jump(id) {
+  BLK_manage();
   const el = $(id);
   if (el) el.scrollIntoView({behavior: "smooth", block: "start"});
 }
@@ -868,6 +886,7 @@ const BLK_seeBtn = (id, label, primary = true) =>
    줄이 열려야 한다. 도메인 글자를 onclick 에 싣지 않고 dataset 으로 맞춘다.
    목록이 스크롤 상자라 그 줄이 상자 맨 위에 오도록 상자도 같이 민다. */
 function BLK_open() {
+  BLK_manage();
   const box = $("blk-intersect");
   if (!box) return;
   const det = [...box.querySelectorAll("details[data-key]")]
@@ -954,10 +973,8 @@ VIEW("backlinks", function (d) {
 
   // 되찾을 링크·교집합·표들은 위 카드가 이미 예고했다 — 수집 전에는 section 째로 숨긴다.
   // 실패도 다시 돌리기 전까지는 "아직 없음"과 같다.
-  $("bl-broken").hidden = !has;
-  $("bl-mentions").hidden = !has;
-  $("bl-intersect").hidden = !has;
-  $("bl-links").hidden = !has;
+  for (const id of ["bl-broken", "bl-mentions", "bl-intersect", "bl-links"])
+    $(id).classList.toggle("bl-none", !has);
   if (!has) return;
 
   $("blk-hero").innerHTML = BLK_hero(d);

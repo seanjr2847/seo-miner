@@ -10,7 +10,9 @@
      종류(도넛), 그 아래가 이 화면의 힘 카드인 점수순 격차 큐, 맨 아래가 보조 두 장. -->
 <script type="application/json" class="view-def">
 {"id": "competitors", "group": "compete", "title": "경쟁 검색어",
- "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"], "head": ["competitors"]}
+ "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"], "head": ["competitors"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.competitors"}, {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
@@ -25,6 +27,15 @@
 #view-competitors > :not(section) { grid-column:1 / -1; }
 #view-competitors > .vh { padding-bottom:var(--sp-2); }
 #cp-share, #cp-gap, #cp-shares, #cp-riv { display:contents; }
+/* [처리]·[관리] 탭 — 두 섹션은 [관리]다. 접는 것은 셸의 hidden 인데 위 display:contents 가 id 특이도로
+   그걸 이기므로 접힌 섹션은 따로 display:none 을 준다. 셸이 세우는 처리 큐 카드(.qhost)는 한 줄을 다 쓴다. */
+#cp-share[hidden], #cp-gap[hidden] { display:none; }
+#view-competitors > .qhost { grid-column:1 / -1; }
+/* 인쇄에는 누를 탭이 없다 — 접힌 섹션도 편다. */
+@media print {
+  #cp-share[hidden], #cp-gap[hidden] { display:contents; }
+  #view-competitors > [data-mode][hidden] { display:block; }
+}
 #view-competitors .card { margin:0; padding:20px 24px 22px; }
 #view-competitors .cp-w4 { grid-column:span 4; }
 #view-competitors .cp-w6 { grid-column:span 6; }
@@ -213,12 +224,12 @@
 #view-competitors .card .empty .go { margin-top:0; }
 </style>
 
-<section id="cp-share">
+<section id="cp-share" data-mode="manage">
   <!-- 첫 그림은 빈 상자가 아니라 채워질 자리의 모양이다 — VIEW() 가 덮는다. -->
   <div id="cp-shares"><div class="card cp-w12 cp-o1"><span class="skel"></span><span class="skel line2"></span></div></div>
 </section>
 
-<section id="cp-gap">
+<section id="cp-gap" data-mode="manage">
   <div class="card cp-w12 cp-o3" id="cp-gap-card">
     <div class="cpc-h">
       <div class="cpc-t">
@@ -707,11 +718,15 @@ const CP_acts = (...parts) => {
 const CP_empty = (title, why, acts, tip) =>
   `<div class="empty"><b>${title}${tip ? CP_tip(tip) : ""}</b><p>${why}</p>${acts || ""}</div>`;
 
+/* 격차 목록·몫 표는 [관리] 탭에 있다 — 거기로 가는 손잡이는 숨은 탭에 스크롤하지 말고 탭부터 연다. */
+const CP_manage = () => { if (SM.modeNow("competitors") !== "manage") SM.setMode("competitors", "manage"); };
+
 /* 격차가 가장 큰 검색어를 오른쪽 서랍에 연다 — 띠가 이름을 말했으니 누르면 그 검색어가
    열려야 한다. 칩으로 걸러 둔 상태라 줄이 안 보이면 조건부터 푼다. */
 function CP_open() {
   const box = $("cp-gaps");
   if (!box) return;
+  CP_manage();
   const find = () => [...box.querySelectorAll(".opp[data-key]")]
     .find(x => x.dataset.key === CP_TOP);
   // 기본 갈래(밀리는 중)로 걸린 채면 그 검색어가 이미 보인다 — 안 보일 때만 조건을 푼다.

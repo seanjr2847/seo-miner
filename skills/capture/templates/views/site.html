@@ -6,7 +6,10 @@
  "sections": ["st-sum", "ix-donut", "kp-crawl", "kp-dev", "kp-vit", "kp-gseo",
               "index", "crawl", "intl", "devgap", "vitals", "gseo",
               "pg-perf", "pg-dead", "pg-starved", "pg-noconv"],
- "stages": ["index", "crawl", "gsc", "vitals"]}
+ "stages": ["index", "crawl", "gsc", "vitals"],
+ "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.site"},
+           {"id": "manage", "label": "관리"}],
+ "queue": {"mode": "work"}}
 </script>
 
 <style>
@@ -32,13 +35,15 @@
 #view-site > :not(section) { grid-column:1 / -1; margin:0; }
 #view-site > .next { margin-top:var(--sp-2); }
 #view-site > section { grid-column:1 / -1; margin:0; }
+/* 자료가 없어 이 화면이 접은 섹션 — 셸의 탭 접기([hidden])와 속성이 다르다(stHide). 탭을 옮겨도 안 펴진다. */
+#view-site > section[data-st-hide] { display:none; }
 #view-site > #st-board { grid-column:span 8; }
 #view-site > #ixd-sec { grid-column:span 4; }
-#view-site > #st-board:has(+ #ixd-sec[hidden]) { grid-column:1 / -1; }
+#view-site > #st-board:has(+ #ixd-sec[data-st-hide]) { grid-column:1 / -1; }
 #view-site > .kp { grid-column:span 3; }
 #view-site > #pgs-sec, #view-site > #pgc-sec { grid-column:span 6; }
 /* 짝이 없으면 혼자 전폭 — GA4 가 없거나 크롤 전이면 반쪽이 비지 않게. */
-#view-site > #pgs-sec:has(+ #pgc-sec[hidden]), #view-site > #pgs-sec[hidden] + #pgc-sec { grid-column:1 / -1; }
+#view-site > #pgs-sec:has(+ #pgc-sec[data-st-hide]), #view-site > #pgs-sec[data-st-hide] + #pgc-sec { grid-column:1 / -1; }
 /* 노트북 폭 — 본문이 900px 안팎이라 네 칸 요약은 2×2 로, 나란한 표는 한 줄씩. */
 @media (max-width:1199px) {
   #view-site > .kp { grid-column:span 6; }
@@ -55,10 +60,19 @@
 /* 전부 미검사 — 요약 타일은 감추고, 개별 카드는 제목 + 버튼 한 줄로 줄인다(설명·중복 문장은 접는다). */
 #view-site.st-allquiet > .kp { display:none; }
 #view-site.st-allquiet .stl small { display:none; }
-#view-site.st-allquiet > section.card:not(#st-board) { padding:var(--sp-4) var(--sp-5); }
-#view-site.st-allquiet > section.card:not(#st-board) .sh { margin-bottom:var(--sp-2); }
-#view-site.st-allquiet > section.card:not(#st-board) .sh > .sub { display:none; }
-#view-site.st-allquiet > section.card:not(#st-board) .empty > p { display:none; }
+#view-site.st-allquiet > section.card:not(#st-board):not(.qhost) { padding:var(--sp-4) var(--sp-5); }
+#view-site.st-allquiet > section.card:not(#st-board):not(.qhost) .sh { margin-bottom:var(--sp-2); }
+#view-site.st-allquiet > section.card:not(#st-board):not(.qhost) .sh > .sub { display:none; }
+#view-site.st-allquiet > section.card:not(#st-board):not(.qhost) .empty > p { display:none; }
+
+/* 종이에는 탭이 없다 — 셸이 [처리]·[관리] 탭으로 접은 섹션([hidden])을 인쇄에서는 편다. 셸의
+   `.view > [data-mode][hidden]{display:none}` 이 화면에서는 맞지만 인쇄에서 [관리]를 통째로 지운다.
+   자료 없어 접은 것(data-st-hide)과 전부 미검사일 때 감춘 요약 타일은 종이에서도 접어 둔다. */
+@media print {
+  #view-site > [data-mode][hidden]:not([data-st-hide]) { display:block; }
+  #view-site > #ixd-sec[data-mode][hidden]:not([data-st-hide]) { display:flex; }
+  #view-site.st-allquiet > .kp[data-mode][hidden] { display:none; }
+}
 
 /* 날짜·기간은 중간에서 꺾이지 않는다 — `20 / 26-08-21` 로 반토막 나던 것. */
 #view-site .nw, #view-site #cr-eyebrow, #view-site #pgp-eyebrow { white-space:nowrap; }
@@ -141,7 +155,7 @@ section.sec-quiet details.why { display:none; }
 /* ── 색인 도넛 ──────────────────────────────────────────────
    검사한 URL 전부를 한 바퀴에. 가운데 숫자 하나(정상 %)가 이 카드가 말하는 전부고,
    범례는 갈래 이름·건수를 글자로도 말한다(캔버스는 낭독기가 못 읽는다). */
-#view-site #ixd-sec:not([hidden]) { display:flex; flex-direction:column; }
+#view-site #ixd-sec:not([hidden]):not([data-st-hide]) { display:flex; flex-direction:column; }
 #view-site #ixd-sec .stdn { flex:1; align-content:center; }
 #view-site .stdn { display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
   gap:var(--sp-4) var(--sp-5); }
@@ -178,7 +192,7 @@ section.sec-quiet details.why { display:none; }
 /* ── 요약 카드 넷 ───────────────────────────────────────────
    각자 다른 그림을 든다: 크롤=알약+갈래 막대, 모바일=덤벨, 속도=기준선 막대, SEO=링.
    같은 숫자+알약 꼴을 넷 반복하면 격자가 아니라 복사가 된다. */
-#view-site .kp { display:flex; flex-direction:column; gap:var(--sp-2); padding:18px 20px; }
+#view-site .kp:not([hidden]) { display:flex; flex-direction:column; gap:var(--sp-2); padding:18px 20px; }
 #view-site .kp > div { display:flex; flex-direction:column; gap:var(--sp-2); flex:1; }
 #view-site .kp-go { align-self:flex-start; display:inline-flex; align-items:center; gap:6px;
   min-height:28px; margin:0 0 0 -8px; padding:0 8px; border:0; border-radius:var(--r-pill);
@@ -373,7 +387,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
 </style>
 
 <!-- 첫 줄: 점검 상태판(8) + 색인 도넛(4). 어디가 아픈지가 스크롤 전에 답한다. -->
-<section id="st-board" class="card" hidden>
+<section id="st-board" class="card" data-mode="manage" data-st-hide>
   <div class="sh">
     <h2>점검 상태판</h2>
     <p class="sub" id="st-sub">갈래를 누르면 그 카드로 갑니다.</p>
@@ -381,7 +395,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   <div class="stboard" id="st-sum"></div>
 </section>
 
-<section id="ixd-sec" class="card" hidden>
+<section id="ixd-sec" class="card" data-mode="manage" data-st-hide>
   <div class="sh">
     <h2>색인 비율</h2>
     <p class="sub" id="ixd-sub"></p>
@@ -390,20 +404,20 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
 </section>
 
 <!-- 요약 넷: 갈래마다 다른 그림. 채우는 쪽은 각 render 함수다. -->
-<section id="kp-crawl-sec" class="card kp" aria-label="사이트 크롤 요약">
+<section id="kp-crawl-sec" class="card kp" aria-label="사이트 크롤 요약" data-mode="manage">
   <div id="kp-crawl"><div class="skel box"></div></div>
 </section>
-<section id="kp-dev-sec" class="card kp" aria-label="모바일 격차 요약">
+<section id="kp-dev-sec" class="card kp" aria-label="모바일 격차 요약" data-mode="manage">
   <div id="kp-dev"><div class="skel box"></div></div>
 </section>
-<section id="kp-vit-sec" class="card kp" aria-label="속도 요약">
+<section id="kp-vit-sec" class="card kp" aria-label="속도 요약" data-mode="manage">
   <div id="kp-vit"><div class="skel box"></div></div>
 </section>
-<section id="kp-gseo-sec" class="card kp" aria-label="구글 SEO 요약">
+<section id="kp-gseo-sec" class="card kp" aria-label="구글 SEO 요약" data-mode="manage">
   <div id="kp-gseo"><div class="skel box"></div></div>
 </section>
 
-<section id="ix-sec" class="card">
+<section id="ix-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>색인 상태</h2>
     <p class="sub" id="ix-sub"></p>
@@ -416,7 +430,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       검사는 노출 상위 페이지부터 하고, 하루 할당은 2,000회입니다.</p></details>
 </section>
 
-<section id="crawl-sec" class="card">
+<section id="crawl-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>사이트 크롤 <span class="stdate" id="cr-eyebrow" hidden></span></h2>
     <p class="sub" id="cr-sub"></p>
@@ -435,7 +449,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
      INTL_KINDS). 크롤 표에 섞어 두면 「설명 없음」 옆에 남은 원문 글자 줄이 페이지마다 끼어 무엇이
      언어 문제인지 안 갈렸다. 갈래마다 한 묶음 — 왜 문제인지 한 줄과 걸린 자리. 시장의 언어가
      하나뿐인 사이트에는 이 카드가 없다(2026-10-16 메뉴 A안). -->
-<section id="intl-sec" class="card" hidden>
+<section id="intl-sec" class="card" data-mode="manage" data-st-hide>
   <div class="sh">
     <h2>다국어</h2>
     <p class="sub" id="intl-sub"></p>
@@ -443,7 +457,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   <div id="intl"></div>
 </section>
 
-<section id="dev-sec" class="card">
+<section id="dev-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>모바일 격차</h2>
     <p class="sub" id="dev-sub"></p>
@@ -456,7 +470,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       전환율을 옆에 나란히 놓아 페이지 자체를 의심할 자리인지까지 봅니다.</p></details>
 </section>
 
-<section id="vit-sec" class="card">
+<section id="vit-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>속도</h2>
     <p class="sub" id="vit-sub"></p>
@@ -470,7 +484,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       움직이는 유일한 숫자입니다. 현장 값은 28일이 지나야 따라옵니다.</p></details>
 </section>
 
-<section id="gseo-sec" class="card">
+<section id="gseo-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>구글이 본 SEO <span class="stdate"><span class="lat">PAGESPEED</span></span></h2>
     <p class="sub" id="gseo-sub"></p>
@@ -484,7 +498,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       구글이 고쳐 쓴 것일 수 있습니다. 본문 길이·H2·구조화 데이터는 여기서 못 봅니다.</p></details>
 </section>
 
-<section id="pgp-sec" class="card">
+<section id="pgp-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>페이지별 실적 <span class="stdate" id="pgp-eyebrow" hidden></span></h2>
     <p class="sub" id="pgp-sub"></p>
@@ -498,7 +512,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       것은 없고, 이미 수집한 실적을 페이지로 다시 합친 것입니다.</p></details>
 </section>
 
-<section id="pgd-sec" class="card">
+<section id="pgd-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>노출 없는 페이지 <span class="stdate">크롤 × 실적</span></h2>
     <p class="sub" id="pgd-sub"></p>
@@ -512,7 +526,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       없거나</b>입니다. 맨 위(얕고 링크 많은 페이지)부터 봅니다.</p></details>
 </section>
 
-<section id="pgs-sec" class="card">
+<section id="pgs-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>내부 링크 부족 <span class="stdate">크롤 × 실적</span></h2>
     <p class="sub" id="pgs-sub"></p>
@@ -526,7 +540,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
       앵커에는 그 페이지가 걸린 검색어를 그대로 씁니다.</p></details>
 </section>
 
-<section id="pgc-sec" class="card">
+<section id="pgc-sec" class="card" data-mode="manage">
   <div class="sh">
     <h2>전환 없는 페이지 <span class="stdate"><span class="lat">GA4</span> 교차</span></h2>
     <p class="sub" id="pgc-sub"></p>
@@ -617,6 +631,13 @@ function stEyebrow(id, text) {
 // 날짜·기간은 중간에서 꺾이지 않게 한 덩어리로 묶는다(.nw).
 const stNw = s => `<span class="nw">${s}</span>`;
 
+/* 이 화면이 스스로 접는 섹션(자료 없음) — `hidden` 이 아니라 data-st-hide 로 접는다. `hidden` 은 셸이
+   [처리]↔[관리] 탭으로 섹션을 접고 펴는 속성이라(SM.modeApply) 같이 쓰면 두 뜻이 섞인다: [처리]에서
+   그려지는 동안 숨은 섹션을 「자료 없음」으로 읽고, [관리]로 옮길 때 셸이 자료 없는 섹션까지 편다.
+   접힘은 CSS 가 한다(#view-site > section[data-st-hide]). 접었으면 true 를 돌려준다. */
+const stHide = (el, off) => { if (el) el.toggleAttribute("data-st-hide", !!off); return !!off; };
+const stIsOff = el => !!el && el.hasAttribute("data-st-hide");
+
 // 섹션마다 센 문제 수와 그 모수 — 점검 상태판이 이 두 표를 읽는다.
 // 모수(of)는 {n: 분모, t: 줄 밑 글, k: 분자(없으면 문제 수)} 이고, 모르면 막대를 안 그린다.
 const ST_N = {}, ST_OF = {};
@@ -650,7 +671,7 @@ const ST_SUM = [["ix-sec", "색인"], ["crawl-sec", "크롤"], ["intl-sec", "다
 
 function stJump(secId) {
   const e = $(secId);
-  if (e && !e.hidden) e.scrollIntoView({behavior: "smooth", block: "start"});
+  if (e && !stIsOff(e)) e.scrollIntoView({behavior: "smooth", block: "start"});
 }
 
 // 막힌 것(구글이 아예 못 들어감)만 한 단 세게 — 나머지 문제는 전부 같은 무게다.
@@ -660,7 +681,7 @@ function stSummary(blocked) {
   let hit = 0, quiet = 0;
   // 「아직 안 쟀다」와 「재 봤더니 0」은 다른 뜻이다 — 기호(—/0)로 가르면 그 차이를
   // 화면이 설명하지 않는다. 안 잰 것은 글자로 말하고, 잰 것만 숫자를 낸다.
-  const out = ST_SUM.filter(([id]) => $(id) && !$(id).hidden).map(([id, label]) => {
+  const out = ST_SUM.filter(([id]) => $(id) && !stIsOff($(id))).map(([id, label]) => {
     const n = ST_N[id], of = ST_OF[id];
     // 크롤은 가장 무거운 갈래의 심각도 색을 쓴다 — 전부 「참고」인데 경고색이면 급해 보인다.
     const kind = n == null ? "muted" : !n ? "ok"
@@ -683,7 +704,7 @@ function stSummary(blocked) {
       <span class="badge ${kind}">${esc(val)}</span>${ST_CHEV}</button>`;
   });
   box.innerHTML = out.join("");
-  if (hero) hero.hidden = !out.length;
+  stHide(hero, !out.length);
   // 아무것도 안 잰 사이트 — 같은 「아직 안 했다」가 상태판 → 요약 타일 → 개별 카드로 세 번 서서
   // 정보는 배너 한 줄인데 화면만 길었다. 상태판 하나만 말하고 나머지는 접는다.
   const box2 = $("view-site");
@@ -913,8 +934,8 @@ function stIxDonut(date, total) {
   if (ok > 0) segs.push({label: "정상", v: ok, cls: "b-ok"});
   for (const b of ST_IX_ORDER)
     if (counts[b]) segs.push({label: ST_IX[b].label, v: counts[b], cls: `b-s${ST_IX[b].sev}`});
-  if (!segs.length || typeof chMount !== "function") { sec.hidden = true; return; }
-  sec.hidden = false;
+  if (!segs.length || typeof chMount !== "function") { stHide(sec, true); return; }
+  stHide(sec, false);
   const sum = segs.reduce((a, s) => a + s.v, 0);
   // 갈래 순서가 곧 심각도 순이다 — 문제가 걸린 첫 갈래가 가장 먼저 풀 자리.
   const fb = ST_IX_ORDER.find(b => counts[b]);
@@ -1100,9 +1121,9 @@ function stIxDetail(url) {
 }
 
 function renderIndex(d) {
-  if (!d.index_issues) { $("ixd-sec").hidden = true; return $("ix-sec").hidden = true; }
-  $("ix-sec").hidden = false;
-  $("ixd-sec").hidden = true;      // 도넛은 검사한 날이 있을 때만 선다
+  if (!d.index_issues) { stHide($("ixd-sec"), true); return stHide($("ix-sec"), true); }
+  stHide($("ix-sec"), false);
+  stHide($("ixd-sec"), true);      // 도넛은 검사한 날이 있을 때만 선다
   ST_IX_ROWS = d.index_issues;
   ST_IX_B = ""; ST_IX_Q = "";
   ST_IX_TOTAL = d.index_date ? stIxChecked(d) : null;
@@ -1370,10 +1391,10 @@ function renderDevice(d) {
   if (!d.device_gap) {
     ST_DEV_ROWS = [];
     stDevDrSync();
-    kp.hidden = true; return $("dev-sec").hidden = true;
+    stHide(kp, true); return stHide($("dev-sec"), true);
   }
-  $("dev-sec").hidden = false;
-  kp.hidden = false;
+  stHide($("dev-sec"), false);
+  stHide(kp, false);
   ST_DEV_ROWS = d.device_gap;
   ST_DEV_Q = "";
   stDevDrSync();
@@ -1822,8 +1843,7 @@ function renderIntl(d) {
   const rows = CR_every().filter(r => CR_INTL.has(r.kind));
   const cnt = Object.fromEntries(Object.entries(c.counts || {}).filter(([k]) => CR_INTL.has(k)));
   const total = Object.values(cnt).reduce((a, b) => a + b, 0);
-  sec.hidden = !c.run || (!info.multi && !total);
-  if (sec.hidden) return stSec("intl-sec", null);
+  if (stHide(sec, !c.run || (!info.multi && !total))) return stSec("intl-sec", null);
   stSec("intl-sec", total);
   $("intl-sub").innerHTML = !total
     ? `언어 판 사이의 이음매(번역·링크·hreflang)를 크롤로 봤고 걸린 것이 없습니다.`
@@ -1897,7 +1917,7 @@ function pgPerfVerdict(extra) {
 }
 
 function renderPagePerf(d) {
-  $("pgp-sec").hidden = false;
+  stHide($("pgp-sec"), false);
   PG_PERF = d.page_perf || [];
   PG_GA4 = !!d.ga4_date;
   if (!d.gsc_date) {
@@ -1956,7 +1976,7 @@ function renderPageDead(d) {
   // 크롤 전에는 섹션째로 접는다 — 머리글·"왜"만 남고 본문에 PG_WAIT_CRAWL 만
   // 있는 상자가 셋(이 섹션·아래 링크 부족)이나 서 있었다. 위 크롤 섹션의 빈
   // 상태가 이미 이 둘을 함께 채운다고 말하므로, 그 문장을 여기서 되풀이하지 않는다.
-  $("pgd-sec").hidden = !crawled;
+  stHide($("pgd-sec"), !crawled);
   if (!crawled) return;
   if (!(d.page_perf || []).length) {
     stSec("pgd-sec", null);
@@ -2008,7 +2028,7 @@ function renderPageStarved(d) {
   const crawled = !!((d.crawl || {}).run);
   // 위 renderPageDead 와 같은 이유로 섹션째 접는다 — PG_WAIT_CRAWL 문구는
   // 이제 크롤 섹션의 빈 상태 한 곳만 말한다.
-  $("pgs-sec").hidden = !crawled;
+  stHide($("pgs-sec"), !crawled);
   if (!crawled) return;
   if (!(d.page_perf || []).length) {
     stSec("pgs-sec", null);
@@ -2123,8 +2143,8 @@ function pgNoConvDetail(page) {
 }
 
 function renderPageNoConv(d) {
-  if (!d.ga4_date) { $("pgc-sec").hidden = true; return; }
-  $("pgc-sec").hidden = false;
+  if (!d.ga4_date) { stHide($("pgc-sec"), true); return; }
+  stHide($("pgc-sec"), false);
   PG_NOCONV = d.zero_conv_pages || [];
   const rules = d.page_rules || {};
   stSec("pgc-sec", PG_NOCONV.length, PG_NOCONV.length ? {note: "클릭은 버는데 전환이 0"} : null);
@@ -2155,7 +2175,7 @@ function renderPageNoConv(d) {
 function renderPageAxis(d) {
   // 키 자체가 없으면 페이지 축 이전의 박제본이다 — 섹션 셋을 통째로 감춘다.
   if (!d.page_perf) {
-    for (const s of ["pgp-sec", "pgd-sec", "pgs-sec", "pgc-sec"]) $(s).hidden = true;
+    for (const s of ["pgp-sec", "pgd-sec", "pgs-sec", "pgc-sec"]) stHide($(s), true);
     return;
   }
   PG_RULES = d.page_rules || {};
