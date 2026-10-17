@@ -1,14 +1,14 @@
 <!-- 이 화면이 무엇인지는 화면 자신이 말한다 — 담는 요소·채우는 단계까지. -->
 <script type="application/json" class="view-def">
 {"id": "analysis", "group": "search", "title": "클릭 변화",
- "sub": "클릭이 왜 늘고 줄었는지 원인별로 가릅니다.",
+ "sub": "클릭 변화를 원인별로 가르고, 클릭률·의도·주제·패턴 기회를 처리합니다.",
  "sections": ["an-top", "an-shift", "an-daily", "an-movers", "an-ctr",
               "an-bands", "an-brand", "an-intent", "an-cluster", "an-country",
               "an-newret-body", "an-funnel-body", "an-channels-body", "an-empty-fill"],
  "stages": ["gsc", "gaps"],
  "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.analysis"},
            {"id": "manage", "label": "관리"}],
- "queue": {"mode": "work"}}
+ "queue": {"mode": "work", "title": "클릭률·의도·주제·패턴 기회"}}
 </script>
 
 <style>
@@ -38,6 +38,22 @@
    탭으로 접을 때 hidden 을 쓰므로(SM.modeApply), 같은 속성을 뷰가 함께 쓰면 탭을 오갈 때 서로 덮는다.
    특이도가 `#an-daily:not([hidden])` 의 flex 보다 높아 이긴다. */
 #view-analysis > section[data-an-off] { display:none; }
+
+/* 반복 패턴 소카드(주제별 성적 카드 안) — 기회 pseo_pattern 이 가리키는 근거. 무리가 없으면 data-an-off 로 접는다. */
+#an-pseo { margin:0 0 var(--sp-4); padding:var(--sp-3) var(--sp-4); border-radius:var(--r-md); background:var(--sunk); }
+#an-pseo[data-an-off] { display:none; }
+.anph { margin:0 0 var(--sp-2); font:650 var(--fs-2)/1.5 var(--sans); color:var(--ink); }
+.anph span { margin-left:6px; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
+.anpg { padding:var(--sp-2) 0; border-top:1px solid var(--line); }
+.anpg:first-of-type { border-top:0; }
+.anpf { margin:0; font:600 var(--fs-2)/1.5 var(--sans); color:var(--ink); overflow-wrap:anywhere; }
+.anpvs { display:flex; flex-wrap:wrap; gap:6px; margin:var(--sp-2) 0; }
+.anpv { display:inline-flex; align-items:center; height:24px; padding:0 10px; border-radius:var(--r-pill);
+  background:var(--card); border:1px solid var(--line); font:500 var(--fs-1)/1 var(--sans); color:var(--ink); }
+.anpv.todo { border-color:var(--accent); color:var(--accent); }
+.anpm { margin:0; font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub); font-variant-numeric:tabular-nums; }
+.anpm b { color:var(--ink); font-weight:600; }
+.anpu { font-family:var(--mono); font-size:var(--fs-1); overflow-wrap:anywhere; }
 
 /* 안내 알럿 — 화면 맨 아래. 카드가 아니라 옅은 정보색 면이고 오른쪽 X 로 닫는다. */
 #an-empty-fill-body > .analert { display:flex; align-items:flex-start; gap:var(--sp-3);
@@ -328,6 +344,10 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
     <!-- ⓘ가 "글을 더 쓸 곳이 아니라…"라고 되풀이했다 — 부제의 "고칠 곳입니다"가
          이미 같은 결론이다(QA 8회차). -->
     <p class="sub">노출은 많은데 안 눌리는 묶음은 고칠 곳입니다.</p>
+  </div>
+  <div id="an-pseo" data-an-off>
+    <p class="anph">반복 패턴<span>같은 틀에 칸만 바뀌는 검색어 무리 — 한 장씩 쓰지 않고 같은 틀로 찍을 자리입니다.</span></p>
+    <div id="an-pseo-body"></div>
   </div>
   <div id="an-cluster-body"><span class="skel box"></span></div>
 </section>
@@ -1074,7 +1094,7 @@ function anMix(rows, name, empty, srcKey) {
       <td class="num">${r.ctr}%${D(r.d_ctr, "%p")}</td>
       <td class="num">${r.position == null ? "—" : r.position}${D(r.d_position)}</td>
     </tr>`;
-  }), empty);
+  }), empty, "cards");
 }
 
 /* 갈래 이름을 화면 말로. 값 자체(info·kor)는 페이로드에서 오고, 여기는 그걸
@@ -1260,6 +1280,41 @@ function anCluster(rows) {
     + anUnmatched(rows, "주제 묶음");
 }
 
+// 반복 패턴 — 기회 pseo_pattern 의 근거. 무리는 서버가 묶은 그대로(scoring.pseo_groups → d.pseo_groups)이고
+// 여기서는 그리기만 한다: 틀(frame)·바뀌는 칸(values)·묶인 검색어(queries)·노출/클릭 합·걸린 페이지.
+// 무리가 없으면 빈 문자열 — anPseoApply 가 소카드를 접는다(빈 카드 금지).
+const AN_PSEO_SHOW = 3;     // 한 번에 보이는 무리 수
+const AN_PSEO_VALS = 6;     // 무리마다 보이는 바뀌는 칸 예시 수
+const anPath = u => { try { const x = new URL(u); return (x.pathname + x.search) || "/"; } catch (e) { return String(u); } };
+function anPseo(groups) {
+  const gs = (groups || []).filter(g => g && g.frame && g.values && g.values.length);
+  if (!gs.length) return "";
+  const card = g => {
+    const todo = g.values.filter(v => !v.own).length;
+    const chips = g.values.slice(0, AN_PSEO_VALS).map(v =>
+      `<span class="anpv${v.own ? "" : " todo"}" title="${esc(v.query)} · 노출 ${num(v.imp)}">${esc(v.value)}</span>`).join("");
+    const more = g.values.length > AN_PSEO_VALS ? `<span class="anpm">외 ${num(g.values.length - AN_PSEO_VALS)}개</span>` : "";
+    const pages = [...new Set(g.values.map(v => v.page).filter(Boolean))];
+    const links = pages.slice(0, 2).map(u =>
+      `<a class="anpu" href="${esc(u)}" target="_blank" rel="noopener">${esc(anPath(u))}</a>`).join(" · ");
+    const pos = g.pos != null ? ` · 평균 <b>${g.pos}위</b>` : "";
+    return `<div class="anpg"><p class="anpf">틀 ${esc(g.frame)}</p>
+      <div class="anpvs">${chips}${more}</div>
+      <p class="anpm">묶인 검색어 <b>${num((g.queries || []).length)}개</b> · 노출 합 <b>${num(g.imp)}</b>
+        · 클릭 <b>${num(g.clk)}</b> · CTR <b>${g.ctr_pct}%</b>${pos}
+        ${todo ? ` · 전용 페이지가 없는 칸 <b>${num(todo)}개</b>(테두리 칩)` : ""}</p>
+      <p class="anpm">걸린 페이지 ${pages.length ? links + (pages.length > 2 ? ` 외 ${num(pages.length - 2)}곳` : "") : "없음"}</p></div>`;
+  };
+  return gs.slice(0, AN_PSEO_SHOW).map(card).join("")
+    + (gs.length > AN_PSEO_SHOW ? `<p class="anpm">패턴 ${num(gs.length - AN_PSEO_SHOW)}개는 기회 목록에서 봅니다.</p>` : "");
+}
+function anPseoApply(groups) {
+  const html = anPseo(groups);
+  const b = $("an-pseo-body");
+  if (b) b.innerHTML = html;
+  anOff("an-pseo", !html);
+}
+
 // 클릭 비중 막대 + 오른쪽에 GA4 국가별 전환(있을 때만). GSC·GA4 둘 다 국가를
 // 같은 ISO 코드(kor/usa/…)로 낸다 — 그래서 label 로 그대로 조인된다.
 function anCountryChart(rows, gaRows) {
@@ -1432,6 +1487,7 @@ VIEW("analysis", function (d) {
     $("an-brand-body").innerHTML = anBrand(d.brand_split, !!d.gsc_date);
     $("an-intent-body").innerHTML = anIntent(d.by_intent, d.ga4_intent);
     $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
+    anPseoApply(d.pseo_groups);
     // 이 축만 분해 수집일을 따로 쓴다 — 언제 기준인지는 부제가 말한다.
     $("an-country-sub").textContent = "타깃 밖 나라가 노출을 먹고 있는지 봅니다."
       + (d.country_date ? ` ${d.country_date} 수집 기준입니다.` : "");

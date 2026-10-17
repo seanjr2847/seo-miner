@@ -61,7 +61,7 @@ def test_declarations():
         assert d.get("modes") == [
             {"id": "work", "label": "처리", "count": f"queue_open_by_view.{vid}"},
             {"id": "manage", "label": "관리"}], f"{vid}: modes 가 [처리](건수 경로)·[관리] 순이 아니다: {d.get('modes')}"
-        assert d.get("queue") == {"mode": "work"}, f"{vid}: queue 는 {{\"mode\": \"work\"}} — [처리] 탭에 선다: {d.get('queue')}"
+        assert {k: v for k, v in (d.get("queue") or {}).items() if k != "title"} == {"mode": "work"}, f"{vid}: queue 는 {{\"mode\": \"work\"}}(+선택 title) — [처리] 탭에 선다: {d.get('queue')}"
 
 
 def test_every_section_lives_in_manage():
@@ -134,7 +134,7 @@ setTimeout(function () {
       sel: tabs.map(function (t) { return t.getAttribute("aria-selected"); }),
       now: SM.modeNow(V),
       q: q ? {mode: q.dataset.mode, display: getComputedStyle(q).display, rows: q.querySelectorAll("[data-q=list] > *").length} : null,
-      manage: secs.map(function (s) { return {id: s.id || "", off: s.hasAttribute("data-an-off"),
+      manage: secs.map(function (s) { return {id: s.id || "", off: s.hasAttribute("data-an-off") || s.hasAttribute("data-kw-off"),
         display: getComputedStyle(s).display, h: s.offsetHeight}; })
     };
   }

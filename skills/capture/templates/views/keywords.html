@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "keywords", "group": "search", "title": "순위 상승 기회",
- "sections": ["log", "movers"], "stages": ["gsc", "keywords", "gaps"],
+ "sections": ["log", "kw-cannibal", "movers"], "stages": ["gsc", "keywords", "gaps"],
  "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.keywords"},
            {"id": "manage", "label": "관리"}],
  "queue": {"mode": "work"}}
@@ -198,9 +198,29 @@ tr[data-kwq]:focus-visible > td:last-child { border-radius:0 var(--r-in) var(--r
   .kwtable td.num .score .u, #mv-list td.num .score .u { display:inline; margin-left:1px; }
   #view-keywords .kwrk { min-width:0; }
 }
+/* ── 내부 경쟁(카니벌라이제이션) 소카드 ─────────────────────────────
+   기회로 선 검색어마다 그 검색어를 나눠 가진 내 페이지들을 보인다. 검색어별 표(#log)는 상위 15개만 싣지만
+   이 카드는 기회(d.opps)에서 오므로 어느 검색어든 선다. 비면 뷰가 data-kw-off 로 접는다(hidden 은 셸 탭이 쓴다). */
+#view-keywords > section[data-kw-off] { display:none; }
+#view-keywords .kwc-list { display:flex; flex-direction:column; gap:var(--gap); }
+#view-keywords .kwc-q { border:1px solid var(--line); border-radius:var(--r-card); padding:14px 16px; min-width:0; }
+#view-keywords .kwc-q.closed { opacity:.72; }
+#view-keywords .kwc-h { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; margin:0 0 6px; }
+#view-keywords .kwc-h b { font:650 var(--fs-3)/1.4 var(--sans); overflow-wrap:anywhere; }
+#view-keywords .kwc-h .sp { flex:1 1 auto; }
+#view-keywords .kwc-why { font-size:var(--fs-1); line-height:1.55; color:var(--sub); margin:0 0 8px; }
+#view-keywords .kwc-q .tw { max-height:none; }
+#view-keywords .kwc-q .dett td a { max-width:38ch; }
+#view-keywords .kwc-cand { display:inline-flex; align-items:center; height:20px; padding:0 8px; margin-left:6px;
+  border-radius:var(--r-pill); background:var(--accent-soft, var(--sunk)); color:var(--accent);
+  font:600 var(--fs-1)/1 var(--sans); white-space:nowrap; vertical-align:middle; }
+#view-keywords .kwc-share { display:inline-block; vertical-align:middle; width:56px; height:6px; margin-right:6px;
+  border-radius:3px; background:var(--sunk); overflow:hidden; }
+#view-keywords .kwc-share i { display:block; height:100%; background:var(--accent); }
+#view-keywords .kwc-note { font-size:var(--fs-1); line-height:1.55; color:var(--sub); margin:8px 0 0; }
 /* 인쇄 — [처리]·[관리] 탭으로 접힌 섹션도 종이에는 다 나간다(셸의 .view > [data-mode][hidden] 을 이긴다). */
 @media print {
-  #view-keywords > [data-mode][hidden] { display:block; }
+  #view-keywords > [data-mode][hidden]:not([data-kw-off]) { display:block; }
 }
 </style>
 
@@ -235,6 +255,19 @@ tr[data-kwq]:focus-visible > td:last-child { border-radius:0 var(--r-in) var(--r
       <div class="tools kwtools" id="log-tools"></div>
       <div id="log" class="kwtable"></div>
     </div>
+  </div>
+</section>
+
+<!-- 근거 보기가 항상 서는 자리 — 내부 경쟁 기회의 [자세히 보기]가 여기로 온다(scoring.KINDS 의 see). -->
+<section id="kw-cannibal" data-mode="manage" data-kw-off>
+  <div class="card">
+    <div class="kwch">
+      <div>
+        <h2>내부 경쟁(카니벌라이제이션)</h2>
+        <p class="sub" id="kwc-sub"></p>
+      </div>
+    </div>
+    <div id="kw-cannibal-body"></div>
   </div>
 </section>
 
@@ -809,6 +842,74 @@ const KW_run = id => window.stageRun ? stageRun(id)
 const KW_noOpp = () => `<p class="detn">이 검색어는 아직 기회 목록에 없습니다.
   ${esc(KW_stage("gaps"))} 단계를 한 번 돌리면 점수가 붙습니다.</p>`;
 
+/* ── 내부 경쟁(카니벌라이제이션) 소카드 ─────────────────────────────────────
+   기회(d.opps)와 그 검색어에 걸린 페이지(d.query_pages = KW_PAGES)를 셸에서 받아 그리기만 한다 — 새 판정이 없다.
+   정본 후보의 기준은 처방(scoring 의 cannibalization play) 한 곳이다: 클릭이 많은 쪽, 클릭이 같으면 노출이 많은 쪽,
+   그래도 같으면 숫자로는 갈리지 않으니 후보를 세우지 않는다(요청문 brief._ev_cannibal 도 같은 순서를 말한다). */
+let KW_CAN = [], KW_GROUPS = [];
+const KW_KIND_CAN = "cannibalization";           // 종류 이름의 정본은 scoring.KINDS — 비교에만 쓴다(목록이 아니다)
+function KW_canon(pages) {
+  const top = (rows, key) => { const m = Math.max(...rows.map(p => p[key] || 0)); return rows.filter(p => (p[key] || 0) === m); };
+  if (!pages || pages.length < 2) return null;
+  const byClk = top(pages, "clicks");
+  if (byClk.length === 1) return byClk[0].page;
+  const byImp = top(byClk, "impressions");
+  return byImp.length === 1 ? byImp[0].page : null;
+}
+function KW_canTable(pages) {
+  const total = pages.reduce((a, p) => a + (p.impressions || 0), 0);
+  const canon = KW_canon(pages);
+  return `<div class="tw"><table class="dett"><thead><tr><th>내 페이지</th><th class="n">노출</th>
+      <th class="n">점유율</th><th class="n">클릭</th><th class="n">평균순위</th></tr></thead><tbody>${
+    pages.map(p => {
+      const share = total ? Math.round((p.impressions || 0) * 100 / total) : 0;
+      return `<tr data-kwc-page="${esc(p.page)}"><td><a href="${esc(p.page)}" target="_blank" rel="noopener"
+          title="${esc(p.page)}">${esc(urlPath(p.page))}</a>${p.page === canon
+          ? `<span class="kwc-cand" title="클릭이 많은 쪽, 클릭이 같으면 노출이 많은 쪽입니다. 합치기 전에 두 페이지의 검색 의도가 같은지 먼저 봅니다.">정본 후보</span>` : ""}</td>
+        <td class="n">${num(p.impressions)}</td>
+        <td class="n"><span class="kwc-share"><i style="width:${share}%"></i></span>${share}%</td>
+        <td class="n">${num(p.clicks)}</td><td class="n">${p.position ?? "—"}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+function KW_canRow(o) {
+  const pages = KW_PAGES[o.target] || [];
+  const canon = KW_canon(pages);
+  const closed = !window.oppStMatch(o, "open");
+  const note = !pages.length
+    ? `<p class="kwc-note">이 검색어로 어느 페이지가 노출됐는지는 아직 모릅니다. 실적을 한 번 더 수집하면 페이지별로 채워집니다.</p>`
+    : canon ? ""
+    : `<p class="kwc-note">클릭·노출 모두 같아 숫자로는 정본이 갈리지 않습니다 — 두 페이지의 검색 의도를 보고 정합니다.</p>`;
+  return `<div class="kwc-q${closed ? " closed" : ""}" data-kwc="${esc(o.target)}" data-kwc-id="${o.id}">
+    <div class="kwc-h"><b>${esc(o.target)}</b>${window.oppStBadge(o)}${window.oppScore(o)}<span class="sp"></span>${
+      (typeof READONLY !== "undefined" && READONLY) ? "" : `<button type="button" class="go sm sec" data-kwc-open onclick="KW_canOpen(this)"
+        title="[처리] 큐의 서랍을 엽니다 — 같은 기회 한 건이라 거기서 바꾼 상태가 여기도 따라옵니다">상태 바꾸기</button>`}</div>
+    ${o.reasoning ? `<p class="kwc-why">${esc(o.reasoning)}</p>` : ""}
+    ${pages.length ? KW_canTable(pages) : ""}${note}</div>`;
+}
+// 상태 서랍은 [처리] 큐의 것을 그대로 쓴다. 같은 지면 묶음이면 줄의 대표 기회(group.lead)가 서랍의 열쇠다.
+function KW_canOpen(btn) {
+  const id = +btn.closest("[data-kwc]").dataset.kwcId;
+  const g = KW_GROUPS.find(x => (x.ids || []).includes(id));
+  const q = window.QU && QU("keywords");
+  if (q) q.drawerOpen(g ? g.lead : id, btn);
+}
+function KW_canDraw() {
+  const sec = $("kw-cannibal");
+  if (!sec) return;
+  const rows = [...KW_CAN].sort((a, b) =>
+    (window.oppStMatch(b, "open") - window.oppStMatch(a, "open")) || ((b.score ?? 0) - (a.score ?? 0)));
+  if (!rows.length) {                       // 기회가 없으면 빈 카드를 세우지 않는다
+    sec.setAttribute("data-kw-off", "");
+    $("kw-cannibal-body").innerHTML = "";
+    return;
+  }
+  sec.removeAttribute("data-kw-off");
+  const open = rows.filter(o => window.oppStMatch(o, "open")).length;
+  $("kwc-sub").textContent = `같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다. 기회로 선 ${rows.length}개를 `
+    + `페이지별로 보입니다${open < rows.length ? ` (남은 것 ${open}개)` : ""}.`;
+  $("kw-cannibal-body").innerHTML = `<div class="kwc-list">${rows.map(KW_canRow).join("")}</div>`;
+}
+
 /* 서랍 — 줄을 누르면 오른쪽 공용 서랍(SM.drawer)에 그 검색어의 패널이 선다. 두 표가 같은
    본문을 쓴다(검색어가 같으면 같은 패널). 어느 줄이 떠 있는지는 KW_SEL 한 곳이 들고,
    데이터가 다시 그려지면(상태를 바꾸면 load() 가 화면을 새로 그린다) KW_sync 가 새 값으로 칠한다. */
@@ -903,6 +1004,9 @@ VIEW("keywords", function (d) {
   KW_ROWS = d.striking || [];
   KW_PAGES = d.query_pages || {};
   KW_AUDITS = d.page_audits || {};
+  KW_GROUPS = d.opp_groups || [];
+  KW_CAN = (d.opps || []).filter(o => o.kind === KW_KIND_CAN);
+  KW_canDraw();
   KW_PERIOD = d.gsc_period ? `${d.gsc_period}일` : "";
   KW_BRAND_EMPTY = !!d.brand_catalog_empty;
   // 기본은 "먼저 할 순" — 다만 아직 아무것도 안 캤으면 전부 무점수라 그 이름이

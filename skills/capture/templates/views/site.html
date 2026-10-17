@@ -198,6 +198,8 @@ section.sec-quiet details.why { display:none; }
   min-height:28px; margin:0 0 0 -8px; padding:0 8px; border:0; border-radius:var(--r-pill);
   background:transparent; color:var(--sub); font:600 var(--fs-1)/1 var(--sans); cursor:pointer; }
 #view-site .kp-go:hover { background:var(--sunk); color:var(--ink); }
+/* 터치: 눌러야 하는 이동 버튼이 28px 높이였다 — 셸의 --btn-h-sm(터치 44px)을 따른다. */
+@media (hover:none), (max-width:999px) { #view-site .kp-go { min-height:var(--btn-h-sm); } }
 #view-site .kp-go svg { width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:2;
   stroke-linecap:round; stroke-linejoin:round; }
 #view-site .kp-v { font:650 var(--fs-5)/1.15 var(--sans); letter-spacing:-.02em;

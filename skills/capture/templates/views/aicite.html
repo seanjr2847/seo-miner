@@ -213,6 +213,8 @@ td .ailogo { margin-right:6px; }
 .aiq-t .chev { flex:none; width:14px; height:14px; margin-top:4px; color:var(--mute);
   transition:color .14s ease; }
 .aiq-t:hover, .aiq-t:hover .chev { color:var(--accent); }
+/* 터치: 질문 줄 버튼이 글자 높이(21px)뿐이었다 — 위아래 여백으로 눌리는 면을 넓힌다(줄 간격만 조금 는다). */
+@media (hover:none), (max-width:999px) { .aiq-t { padding:10px 0; } }
 .aiq-p { font:400 var(--fs-2)/1.5 var(--sans); max-width:54ch; }
 .aiev { margin:8px 0 4px; padding:14px 16px; border-radius:var(--r-in);
   background:var(--sunk); max-width:74ch; }

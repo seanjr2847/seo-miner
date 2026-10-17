@@ -5208,8 +5208,9 @@ _KIND_SPECS = {
             f"(구글 실적 {ctx['cur']} 기준)"),
         play=_CTR_PLAY),
     "cannibalization": dict(
-        # 같은 검색어에 내 페이지가 둘 — 근거는 검색어별 '걸린 페이지 표'가 있는 [순위 상승 기회] 표다.
-        see=("keywords", "log"),
+        # 같은 검색어에 내 페이지가 둘 — 근거는 [순위 상승 기회]의 「내부 경쟁」 소카드다. 검색어별 표(log)는
+        # 4~20위 상위 15개만 싣고 기회의 검색어는 거기 없을 수 있어서, 기회에서 오는 소카드가 근거 자리다.
+        see=("keywords", "kw-cannibal"),
         label="내부 경쟁", defensive=True,
         detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"],

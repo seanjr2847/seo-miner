@@ -170,6 +170,10 @@
 #triage .trkm { flex-wrap:wrap; gap:4px; margin-top:6px; }
 @media (max-width:560px) {
   #triage .trtable th:nth-child(n+3):nth-child(-n+5), #triage .trtable td:nth-child(n+3):nth-child(-n+5) { display:none; }
+  /* 390px: 셋을 접으면 남는 두 열(체크 44 + 검색어 200 이상)이 표 폭(min-width:100%)보다 좁아, 남는 폭이
+     체크 열까지 나눠 먹어 체크가 검색어에서 110px 떨어져 섰다. 검색어 열이 남는 폭을 다 가진다. */
+  #triage .trtable th:nth-child(2), #triage .trtable td:nth-child(2) { width:auto; min-width:0; max-width:none; }
+  #triage .trtable td:nth-child(2) { border-radius:0 var(--r-in) var(--r-in) 0; }
   #triage .trkm { display:flex; }
   #triage .trperf { display:block; }
   #triage .trdock { display:flex; align-items:center; gap:10px; position:fixed; left:0; right:0;

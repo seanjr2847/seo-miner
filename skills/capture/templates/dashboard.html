@@ -762,6 +762,8 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   border:0; border-radius:var(--r-in); background:none; color:var(--sub); cursor:pointer;
   font:400 16px/1 var(--sans); }
 .nx-x:hover { background:color-mix(in srgb, var(--ink) 8%, transparent); color:var(--ink); }
+/* 터치: 보이는 크기는 그대로(28px), 눌리는 면만 44px 로 — 모든 화면의 [다음 걸음] 카드가 쓴다. */
+@media (hover:none), (max-width:999px) { .nx-x::after { content:""; position:absolute; inset:-8px; } }
 @media print { .nx-x { display:none; } }
 
 /* 띠가 주요 버튼으로 든 단계는 머리줄에서 **뺀다**. 흐리게만 두면 그 화면의 주
@@ -1308,6 +1310,13 @@ th[data-s].desc::after { content:"↓"; opacity:1; color:var(--accent); }
 .dett.fix tr.lv-bad td:first-child { color:var(--warn); }
 .dett.fix tr.lv-warn td:first-child { color:var(--sub); }
 .dett.fix td:nth-child(2) { color:var(--sub); }
+/* 좁은 화면: 세 칸이 모두 산문이라 한 줄로 두면 상자(390px 에서 310px)보다 넓다(394px) — 옆으로
+   밀면 "바꿀 값"이 화면 밖에 남는다. 이름 칸의 줄바꿈 금지를 풀고 긴 값은 칸 안에서 접는다.
+   머리글은 그대로 보이므로 정보가 줄지 않는다(카드로 쌓는 table(...,"cards") 와 달리 열 이름이 남는다). */
+@media (max-width:560px) {
+  .dett.fix td:first-child { white-space:normal; }
+  .dett.fix td { overflow-wrap:anywhere; padding-left:6px; padding-right:6px; }
+}
 /* 행 펼침 — 표 안에서 쓰는 자리(순위·색인·모바일). 카드형은 .det 를 그대로 쓴다. */
 tr.exp > td { background:var(--sunk); padding:12px 8px 16px; }
 tr.exp .det { padding-left:0; }

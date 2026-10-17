@@ -1847,14 +1847,14 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
     # 검색어만 싣기 때문에 그 페이지에 걸린 검색어 전부를 갖지 못한다: 요청문이 그걸로
     # 다시 세면 판정("해결 30")과 표(검색어 한 줄)가 어긋난다. 검출기가 낸 행을
     # 그대로 실어 양쪽이 같은 숫자를 말하게 한다.
-    intent_splits = scoring.intent_split(conn, pid, at=at) if any(
-        o["kind"] == "intent_split" for o in opps) else []
+    intent_splits = scoring.intent_split(conn, pid, at=at) if _ever_had_kind(
+        conn, pid, "intent_split") else []
     # 템플릿 패턴의 무리(틀·바뀌는 값) — 같은 이유로 검출기가 묶은 그대로 싣는다. 요청문이
     # query_pages 의 낱말 겹침으로 다시 묶었더니 '틀'을 말하지 못하고 축을 받는 쪽이 짐작했다.
     # 전용 페이지를 말로 보는 감사는 위에서 읽은 page_audits 를 넘긴다 — 요청문의 허브도 같은 판정을 읽는다.
     pseo_groups = scoring.pseo_groups(conn, pid, scoring.snapshot_pair(conn, pid, at)[0],
-                                      audits=page_audits) if any(
-        o["kind"] == "pseo_pattern" for o in opps) else []
+                                      audits=page_audits) if _ever_had_kind(
+        conn, pid, "pseo_pattern") else []
     # 펼침 패널이 대상 하나를 두고 말하는 수 — 지금 노출·클릭·CTR·순위와 그 추이.
     # query_pages 와 **같은 at** 으로 부른다(test_seams 47): 기준 수집일을 과거로
     # 고정했는데 여기만 최신을 보면, 한 패널 안에서 표와 차트가 다른 날을 말한다.
@@ -2164,6 +2164,15 @@ def _brand_keys(conn, p) -> set[str]:
     cfg = db.project_cfg(conn, p)
     names = scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
     return {k for k in (scoring.norm(a) for a in names) if k}
+
+
+def _ever_had_kind(conn, pid: int, kind: str) -> bool:
+    """이 사이트에 그 종류의 기회가 **한 번이라도** 있었나(상태 무관). 근거 소카드의 재료(intent_splits·
+    pseo_groups)는 무겁다 — 기회가 없는 사이트는 싣지 않는다. 그런데 열린 기회(opps 는 점수 상위 N건)만 보면
+    기회를 끝내거나 제외한 순간, 또는 상위 N건 밖으로 밀린 순간 근거 소카드가 접혀 「자세히 보기」가 빈 곳으로
+    온다. 닫힌 기회의 근거도 화면에 남아야 하므로 기회 표 전체를 본다."""
+    return conn.execute("SELECT 1 FROM opportunities WHERE project_id=? AND kind=? LIMIT 1",
+                        (pid, kind)).fetchone() is not None
 
 
 def _queue_open_by_view(conn, pid: int) -> dict[str, int]:

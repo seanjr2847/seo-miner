@@ -754,7 +754,7 @@ function HS_runList() {
      ">소요(초)?시작과 끝의 차이입니다. 1분이 넘으면 칸에 손을 얹어 분·초로 봅니다",
      ">호출?그 실행이 부른 외부 API 횟수",
      ">비용?수집기가 적어 둔 추정치입니다 — 청구서가 아닙니다",
-     "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows)}` + (rest > 0
+     "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows, "", "cards")}` + (rest > 0
     ? `<div class="acts">
          <button class="go sec sm" onclick="HS_runMore(${HS_RN + 20})">${Math.min(20, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
     : "");

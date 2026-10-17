@@ -6,11 +6,13 @@
 
 이 화면을 채우는 단계는 **검색 실적 수집**과 **기회 분석** 둘입니다.
 
-화면 머리 아래에 **[처리]·[관리]** 두 탭이 있습니다. **[처리]**(처음 열리는 탭, 건수 배지가 붙습니다)는
-이 화면 몫으로 정해진 종류(안 눌리는 검색어 등)의 열린 기회를 한자리에서 처리하는 큐입니다 — 개요의 큐와 같은
-부품이고 종류↔화면의 정본은 `scoring.KINDS` 의 `see` 입니다. 클릭률 말고도 **한 페이지에 두 의도**
-(의도 갈래는 [검색 의도 구성]과 같은 한 벌)·**템플릿 패턴**·**안 다룬 주제**(둘 다 검색어 묶음 쪽 업무라
-[주제별 성적]이 근거)의 기회가 여기서 처리됩니다. 개요 줄의 [자세히 보기]는 [관리]의 그 섹션으로 옵니다. **[관리]**는 아래 표 전부 — 클릭 변화의 원인을
+화면 머리 아래에 **[처리]·[관리]** 두 탭이 있습니다. 화면 부제는 둘을 아울러 말하고(원인별로 가르기 + 이 화면 몫의
+기회 처리), 큐 제목은 이 화면 몫을 업무 이름(클릭률·의도·주제·패턴 기회)으로 부릅니다 — 종류 이름을 뷰에 적지
+않습니다. **[처리]**(처음 열리는 탭, 건수 배지가 붙습니다)는
+이 화면 몫으로 정해진 종류의 열린 기회를 한자리에서 처리하는 큐입니다 — 개요의 큐와 같은
+부품이고 종류↔화면의 정본은 `scoring.KINDS` 의 `see` 입니다. 클릭률 미달 말고도 「한 페이지에 두 의도」·「템플릿 패턴」·
+「안 다룬 주제」의 기회가 여기서 처리되고, 개요 줄의 [자세히 보기]는 [관리]의 그 섹션으로 옵니다. 의도는 [검색 의도 구성]이,
+주제와 패턴은 [주제별 성적] 카드(와 그 안의 [반복 패턴])가 근거입니다. **[관리]**는 아래 표 전부 — 클릭 변화의 원인을
 가르고 갈래별로 다시 보는 지금까지의 화면 — 입니다. 수집 전·GA4 미연결 때 카드가 접히는 것은 탭과 별개로
 그대로이고, 인쇄에는 접힌 탭의 표도 다 나갑니다. 띠의 **[검색어 열기]** 는 표가 [관리]에 있으므로 그 탭을 먼저 엽니다.
 
@@ -57,6 +59,7 @@
 | **신규·재방문** (수요 구성 · GA4) | 방문자 쪽에서 본 같은 질문 — 유기 세션의 몇 %가 신규인가 |
 | **검색 의도 구성** (의도별) | 정보성만 잡고 **거래성이 0** 아닌가 |
 | **주제별 성적** (주제 묶음별) | 어느 주제가 클릭을 끌고, 어느 주제가 노출만 먹고 안 눌리나 |
+| **반복 패턴** (주제별 성적 카드 맨 위 소카드) | 「{X} 세무사 추천」처럼 같은 틀에 칸만 바뀌는 검색어 무리가 어디 있나 — 템플릿 패턴 기회의 근거 |
 | **단계별 이탈** (방문 이후 · GA4) | 노출 → 클릭 → 유기 세션 → 참여 세션 → 전환에서 어디가 새는가 |
 | **채널별 세션 구성** (방문 이후 · GA4) | 검색이 흔들릴 때 대신할 채널이 있나 |
 | **국가별 클릭** (국가별) | 타깃 밖 나라가 노출을 먹어 클릭률·평균 순위를 깎고 있나 |
@@ -76,6 +79,10 @@
   `의도 · 페이지 · 세션 · 전환 · 겹친 페이지`. 이건 **근사치**입니다: 검색어와 세션은 직접
   안 이어지고 페이지로만 이어지므로, 한 페이지가 여러 의도에 걸리면 그 전환이 갈래마다
   중복으로 잡힙니다(「겹친 페이지」가 그 수).
+- **반복 패턴** 소카드는 무리마다 틀 · 바뀌는 칸 예시(전용 페이지가 없는 칸은 테두리 칩) · 묶인 검색어 수 ·
+  노출 합·클릭·CTR·평균 순위 · 걸린 페이지를 적습니다. 무리는 서버가 묶은 것을 그대로 싣는 `pseo_groups`
+  (`scoring.pseo_groups`)이고, 템플릿 패턴 기회가 열려 있을 때만 페이로드에 실립니다 — 그 기회가 없으면
+  소카드는 접힙니다(빈 카드를 두지 않습니다). 한 번에 최대 세 무리를 보이고 나머지는 기회 목록에서 봅니다.
 - **주제별 성적**에는 전환 근사가 없습니다 — 만들면 지어낸 값이 되므로 클릭 비중만 냅니다.
 
 ### 줄을 펼치면 나오는 것
@@ -280,14 +287,14 @@ N%가 미분류라 아래 비교는 나머지 얘기입니다」가 먼저 붙�
   skills/capture/templates/views/analysis.html — view-def(title·sub·sections·stages),
     절 제목·눈금표·부제·ⓘ 문구, AN_CAUSE / AN_EFFECT / AN_INTENT / AN_NEWRET 라벨,
     AN_HEAD · AN_MIX_HEAD 열 이름, anCsv() 의 CSV 열, anToggle / anKey 펼침,
-    anEmptyFill / AN_FILLABLE 빈 상태 접기, anNext() 띠 문장·버튼, anQueryPanel 펼침 내용,
+    anPseo / anPseoApply 반복 패턴 소카드(d.pseo_groups), anEmptyFill / AN_FILLABLE 빈 상태 접기, anNext() 띠 문장·버튼, anQueryPanel 펼침 내용,
     anNoGa4 · anBrand · anIntent · anCluster · anCountry · anUnmatched 빈 상태 문구
   skills/capture/templates/dashboard.html — csv()(파일명 꼴 seo-miner-NAME-날짜.csv, BOM),
     act()(로컬은 /capture 명령 복사 칩, 호스팅은 실행 버튼), window.go(), nextStep(),
     pageTable() / pageFix() / askBlock() / oppPanel() / oppActs() / OPP_LABEL,
     viewCmds()(화면 머리 단계 칩), renderDates()(기준 수집일 선택·축별 날짜),
     deadSweep()(박제본에서 .acts / .cmd / .live 제거), 표 정렬 위임
-  skills/capture/scripts/dashboard.py — _axis_gsc(): shift · rank_bands · ctr_gaps ·
+  skills/capture/scripts/dashboard.py — _axis_query_pages(): pseo_groups(기회 pseo_pattern 이 있을 때만), _axis_gsc(): shift · rank_bands · ctr_gaps ·
     brand_split · by_intent · by_cluster · by_country · country_date · daily,
     _axis_ga4(): ga4_funnel · ga4_channels · ga4_intent · ga4_by_newret
   skills/capture/scripts/scoring.py — click_shift()(중간점 분해, 네 항의 합 = Δ클릭, limit=8),
