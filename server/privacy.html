@@ -1,25 +1,16 @@
 <!-- 개인정보처리방침 — 랜딩 푸터가 부른다(/privacy). 여기 적은 사실은 코드가 정본이다:
      받는 권한은 identity.SCOPES, 저장하는 것은 store.SCHEMA, 밖으로 나가는 곳은
      settings.PAID_KEYS·mailer. 그쪽이 바뀌면 이 문서도 같이 고친다. -->
-<!-- 서체는 랜딩(landing.html)과 같은 두 벌을 같은 방식(막지 않게)으로 받는다 —
-     안 부르면 로고가 폴백 등폭으로 벌어져 다른 사이트처럼 보인다. -->
-<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
-      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-<noscript>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-  <link rel="stylesheet"
-    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-</noscript>
+<!--FONTS_PLEX-->
+<!--FONTS-->
 <style>
-/* 토큰은 대시보드 :root 가 정본이다 — 이 문서가 쓰는 것만 같은 이름·값으로 적는다. */
+/* 색은 이 문서의 팔레트다(랜딩 토큰과 값이 다르다 — 디자인 결정이라 합치지 않았다).
+   서체 스택만 사본이 아니라 슬롯이다 — 원본은 skills/capture/templates/head/(docs/adr/0004). */
 :root{
   --stone:#E6E9E4; --card:#F7F8F5; --ink:#121714; --slate:#576259; --patina:#22705F;
   --rule-soft:rgba(18,23,20,.07); --rail:#121714; --on-ink:#E6E9E4;
-  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
-         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:@@SANS@@;
+  --mono:@@MONO_PLEX@@;
 }
 @media (prefers-color-scheme:dark){
   :root{ --stone:#101513; --card:#19201D; --ink:#E4EBE7; --slate:#8B9791; --patina:#57B49C;
@@ -47,7 +38,7 @@ a{color:var(--patina)}
 </style>
 
 <header><div class="hbar">
-  <a class="mark" href="/">seo<b>·</b>miner</a>
+  <a class="mark" href="/"><!--LOGO--></a>
   <span class="sp"></span>
   <a class="back" href="/">처음으로</a>
 </div></header>

@@ -1,23 +1,4 @@
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<!-- Pretendard — 한글 자소가 고르고 숫자가 라틴과 같은 리듬으로 선다. dynamic-subset 은
-     unicode-range 로 쪼개져 있어 실제로 쓴 글자 묶음만 내려온다.
-     못 받으면(오프라인·사내망) --sans 의 뒤쪽 스택으로 조용히 떨어진다 — 화면은 그대로 선다.
-
-     **막지 않게 받는다.** 평범한 stylesheet 링크는 파서를 막아, 뒤에 오는 모든
-     스크립트가 이 파일을 받을 때까지 실행되지 않는다. CDN 이 안 열리는
-     환경(오프라인·사내망·검사 샌드박스)에서는 그게 곧 이 화면이 죽는 것이다:
-     사이트 목록도 진행 상황도 아래 페이지 스크립트가 /api 를 불러 채우는데 그것이
-     시작을 못 한다. (이 주석에 여는 스크립트 태그를 글자로 적으면 안 된다 —
-     pages.data 가 "문서의 첫 script 태그 앞"에 값을 싣는데, 주석 안의 글자가 그
-     자리로 잡히면 window.__SITES__ 가 통째로 주석 속에 묻힌다. 실제로 묻혔다.)
-     media=print 로 받으면 이 파일은 처음부터 이 화면의 스타일이
-     아니라서 아무것도 막지 않고, 다 받은 뒤 onload 가 media 를 열어 그때 글꼴이
-     적용된다. 서체는 읽는 데 필요한 게 아니라 좋아지는 것이므로 늦게 와도 된다.
-     (정본은 dashboard.html 의 같은 자리다.) -->
-<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
-      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-<noscript><link rel="stylesheet"
-  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
+<!--FONTS-->
 <style>
 /* 이 화면이 대시보드의 입구다 — 입구 두 화면(app.html 사이트 목록 · start.html 온보딩)이
    같이 쓰는 머리이고, 서버가 <!-- ENTRY_HEAD --> 자리에 끼운다. 토큰은 dashboard.html 의
@@ -26,48 +7,7 @@
    상자를 또 두르지 않고 면의 색조(--sunk · --accent-wash · --warn-wash)로 가른다.
    두 화면에 각자 적으면 사본이 셋이 된다 — 여기 하나만 둔다. */
 
-/* tokens:begin */
-:root {
-  --canvas:#EEF1EF; --card:#FFFFFF; --sunk:#F5F7F6;
-  --ink:#101613; --sub:#5A655F; --mute:#66716A;
-  --line:rgba(16,22,19,.07); --rule:rgba(16,22,19,.14);
-  --accent:#1D6455; --accent-ink:#FFFFFF; --accent-wash:#E1F0EB;
-  --warn:#9A3F17; --warn-wash:#F8E9E1;
-  --info:#3A4F73; --info-wash:#E7ECF4;
-  /* 증감은 투명도로 줄이지 않고 전용 색으로 말한다 */
-  --up:#1D6455; --up-wash:#E1F0EB; --dn:#9A3F17; --dn-wash:#F8E9E1;
-  --r-card:20px; --r-in:12px; --r-pill:999px;
-  --shadow:0 1px 2px rgba(16,22,19,.04), 0 10px 28px -12px rgba(16,22,19,.10);
-  --fs-1:13px; --fs-2:14px; --fs-3:16px; --fs-4:22px; --fs-5:32px;
-  --gap:16px;
-  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
-         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
-  --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
-         "Malgun Gothic",monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --canvas:#0C110F; --card:#161D1A; --sunk:#1C2521;
-    --ink:#E8EEEA; --sub:#A2AEA7; --mute:#8A978F;
-    --line:rgba(232,238,234,.08); --rule:rgba(232,238,234,.16);
-    --accent:#57B49C; --accent-ink:#06120E; --accent-wash:#1B2E28;
-    --warn:#DE8351; --warn-wash:#33221A;
-    --info:#9DB2D6; --info-wash:#1E2632;
-    --up:#57B49C; --up-wash:#1B2E28; --dn:#DE8351; --dn-wash:#33221A;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px -12px rgba(0,0,0,.5);
-  }
-}
-:root[data-theme="dark"] {
-  --canvas:#0C110F; --card:#161D1A; --sunk:#1C2521;
-  --ink:#E8EEEA; --sub:#A2AEA7; --mute:#8A978F;
-  --line:rgba(232,238,234,.08); --rule:rgba(232,238,234,.16);
-  --accent:#57B49C; --accent-ink:#06120E; --accent-wash:#1B2E28;
-  --warn:#DE8351; --warn-wash:#33221A;
-  --info:#9DB2D6; --info-wash:#1E2632;
-  --up:#57B49C; --up-wash:#1B2E28; --dn:#DE8351; --dn-wash:#33221A;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px -12px rgba(0,0,0,.5);
-}
-/* tokens:end */
+@@TOKENS@@
 
 /* 이 화면 전용 — 토큰 블록 밖 */
 :root {

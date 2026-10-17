@@ -2477,8 +2477,9 @@ def test_seam_52_hosted_addon_keeps_the_mono_fallback_tail():
     addon_f = ROOT / "server" / "assets" / "dash.html"
     if not addon_f.exists():
         return                      # 플러그인 설치본에는 server/ 가 없다
-    orig = _mono_stack((ROOT / "skills" / "capture" / "templates"
-                        / "dashboard.html").read_text("utf-8"))
+    # 원본 --mono 는 토큰 원본(templates/head/tokens.css)에 산다 — dashboard.html 은 슬롯만 둔다
+    orig = _mono_stack((ROOT / "skills" / "capture" / "templates" / "head"
+                        / "tokens.css").read_text("utf-8"))
     addon = _mono_stack(addon_f.read_text("utf-8"))
     assert len(orig) >= 2, f"원본의 --mono 를 못 읽었다: {orig}"
     if not addon:
@@ -2820,9 +2821,10 @@ def test_seam_80_landing_login_label_and_privacy_fonts_are_one_set():
     labels = {re.sub(r"<[^>]+>|\s+", "", m) for m in
               re.findall(r'<a[^>]*href="/auth/login"[^>]*>([\s\S]*?)</a>', landing)}
     assert len(labels) == 1, f"랜딩의 로그인 링크 이름이 여럿이다: {sorted(labels)}"
-    fonts = set(re.findall(r'<link rel="stylesheet"[^>]*href="([^"]+)"', landing))
+    from server import pages
+    fonts = set(re.findall(r'<link rel="stylesheet"[^>]*href="([^"]+)"', pages.chrome(landing)))
     assert fonts, "랜딩 서체 링크를 못 찾았다 — 검사가 헛돈다"
-    missing = fonts - set(re.findall(r'href="([^"]+)"', privacy))
+    missing = fonts - set(re.findall(r'href="([^"]+)"', pages.chrome(privacy)))
     assert not missing, f"/privacy 가 랜딩 서체를 안 받는다: {sorted(missing)}"
 
 
@@ -3319,34 +3321,79 @@ def test_seam_101_default_filter_is_what_is_left():
     assert seen >= 7, f"측정 화면을 {seen} 개밖에 못 찾았다 — 이 검사가 헛돈다"
 
 
-def test_seam_102_design_tokens_are_one_block_in_three_files():
-    """102) 디자인 토큰 블록(`/* tokens:begin */`~`/* tokens:end */`)은 세 화면에 글자 하나 안 다르게 같다.
+def test_seam_102_head_parts_have_one_source_and_screens_only_name_slots():
+    """102) 토큰·서체·로고의 원본은 `templates/head/`(headparts.py) 하나이고, 화면은 슬롯만 적는다.
 
-    셸(dashboard.html)·랜딩(landing.html)·앱 셸(app.html)은 각자 단독 파일이라 토큰을
-    import 할 수 없어 같은 블록을 심어 둔다. 한 벌이 낡으면 화면마다 색·반경이 갈린다.
-    마커가 없거나 블록이 다르면 FAIL — 첫 차이 줄을 보인다. 정본은 dashboard.html.
+    예전에는 토큰 블록 사본 세 벌(대시보드·랜딩·입구)을 글자 하나 안 다르게 맞추는 걸 검사했다.
+    맞추는 일 자체가 사본이 있다는 뜻이었다. 이제 화면(landing·entry·dashboard)은 `@@TOKENS@@`
+    한 줄만 두고, 서체 링크는 `<!--FONTS-->`·`<!--FONTS_PLEX-->`, 로고는 `<!--LOGO-->`,
+    서체 스택은 `@@SANS@@`·`@@MONO_PLEX@@` 로 적는다. 서버는 pages.chrome(), 로컬 조립은
+    dashboard._assemble 이 채운다(docs/adr/0004). 어느 화면이든 토큰 값·서체 URL·로고 글자를
+    직접 적으면 사본이 다시 생긴 것이므로 FAIL. 조립 결과에는 원본이 정확히 한 번 실린다.
     """
-    files = [ROOT / "skills" / "capture" / "templates" / "dashboard.html",
-             ROOT / "server" / "landing.html", ROOT / "server" / "assets" / "entry.html"]
-    if not all(f.exists() for f in files[1:]):
+    head = ROOT / "skills" / "capture" / "templates" / "head"
+    tpl = ROOT / "skills" / "capture" / "templates"
+    srv = ROOT / "server"
+    if not (srv / "landing.html").exists():
         return   # 리포 밖(플러그인 설치본)에는 server/ 가 없다
+    import headparts
+    from server import pages
 
-    def block(f):
-        t = f.read_text("utf-8").replace("\r\n", "\n")
-        b, e = t.count("/* tokens:begin */"), t.count("/* tokens:end */")
-        assert b == 1 and e == 1, f"{f.name}: 토큰 마커가 begin {b}개·end {e}개다 — 각각 정확히 하나여야 한다"
-        i, j = t.index("/* tokens:begin */"), t.index("/* tokens:end */")
-        assert i < j, f"{f.name}: tokens:end 가 tokens:begin 앞에 있다"
-        return t[i:j + len("/* tokens:end */")].split("\n")
+    # 원본 — 토큰 블록은 마커 한 쌍이고 서체 스택(--sans)이 들어 있다
+    tk = headparts.tokens()
+    assert tk.count("/* tokens:begin */") == 1 and tk.count("/* tokens:end */") == 1         and tk.index("/* tokens:begin */") < tk.index("/* tokens:end */"),         "head/tokens.css 의 토큰 마커가 begin·end 한 쌍이 아니다"
+    assert "--sans:" in tk and "--accent:" in tk, "head/tokens.css 에 토큰이 안 읽힌다 — 검사가 헛돈다"
+    pretendard = re.search(r'href="(https://cdn\.jsdelivr\.net/[^"]*pretendard[^"]*)"',
+                           (head / "fonts.html").read_text("utf-8"))
+    assert pretendard, "head/fonts.html 에서 Pretendard 주소를 못 읽었다 — 검사가 헛돈다"
 
-    ref = block(files[0])
-    for f in files[1:]:
-        got = block(f)
-        for n in range(max(len(ref), len(got))):
-            a = ref[n] if n < len(ref) else "(없음)"
-            b = got[n] if n < len(got) else "(없음)"
-            assert a == b, (f"{f.name} 의 토큰 블록이 {files[0].name} 와 다르다 — 블록 {n + 1}째 줄:"
-                            f" 정본 {a!r} / 여기 {b!r}")
+    # 화면 — 토큰 블록 자리는 슬롯 하나, 사본 흔적(마커·값 정의·서체 URL·로고 글자)은 없다
+    for f in (tpl / "dashboard.html", srv / "landing.html", srv / "assets" / "entry.html"):
+        t = f.read_text("utf-8")
+        assert t.count("@@TOKENS@@") == 1, f"{f.name}: 토큰 자리가 @@TOKENS@@ 하나가 아니다({t.count('@@TOKENS@@')}개)"
+    pages_html = [*sorted(srv.glob("*.html")), *sorted((srv / "assets").glob("entry.html"))]
+    for f in [tpl / "dashboard.html", *pages_html]:
+        t = f.read_text("utf-8")
+        assert "tokens:begin" not in t and "tokens:end" not in t,             f"{f.name} 에 토큰 블록 사본의 마커가 남았다 — 원본은 head/tokens.css 하나다"
+        # 방침·404 는 랜딩과 값이 다른 자기 팔레트를 쓴다(디자인 결정) — 토큰 이름 검사에서 뺀다.
+        # 대시보드 셸의 인쇄용 덮어쓰기(:root{--canvas:#fff…})도 토큰 정의가 아니다.
+        if f.name not in ("privacy.html", "notfound.html", "dashboard.html"):
+            assert not re.search(r"--(?:canvas|accent|ink|sunk)\s*:\s*#", t),                 f"{f.name} 이 토큰 색을 직접 적었다 — @@TOKENS@@ 슬롯으로 받는다"
+        for m in re.finditer(r"--sans\s*:\s*([^;]*);", t):
+            assert m.group(1).strip() == "@@SANS@@",                 f"{f.name} 이 본문 서체 스택을 직접 적었다 — @@SANS@@ 슬롯으로 받는다"
+    for f in pages_html + [srv / "app.py"]:
+        t = f.read_text("utf-8")
+        assert "pretendard@" not in t and "IBM+Plex+Mono" not in t,             f"{f.name} 이 서체 링크를 직접 적었다 — <!--FONTS--> · <!--FONTS_PLEX--> 슬롯으로 받는다"
+        assert headparts.LOGO not in t, f"{f.name} 이 로고 글자를 직접 적었다 — <!--LOGO--> 슬롯으로 받는다"
+        assert not re.search(r'--mono\s*:\s*"IBM Plex Mono"', t),             f"{f.name} 이 Plex 등폭 스택을 직접 적었다 — @@MONO_PLEX@@ 슬롯으로 받는다"
+    # 대시보드 셸의 Pretendard 링크는 이 트랙 밖의 자리(셸 파일)에 남아 있다 — 적어도 주소는
+    # 원본과 같아야 한다(서체 버전이 두 곳에서 갈리면 화면마다 글자가 다르다).
+    assert pretendard.group(1) in (tpl / "dashboard.html").read_text("utf-8"),         "대시보드 셸의 Pretendard 주소가 head/fonts.html 과 다르다"
+
+    # 조립 결과 — 슬롯이 하나도 안 남고, 원본이 정확히 한 번 실린다
+    rendered = {
+        "landing": pages.chrome(pages.page("landing.html")),
+        "privacy": pages.chrome(pages.page("privacy.html")),
+        "notfound": pages.chrome(pages.page("notfound.html")),
+        "app": pages.entry_page("app.html"),
+        "start": pages.entry_page("start.html"),
+    }
+    import dashboard
+    dash = dashboard.assemble("local")
+    for name, doc in {**rendered, "dashboard": dash}.items():
+        left = re.findall(r"@@(?:TOKENS|SANS|MONO_PLEX)@@|<!--(?:FONTS|FONTS_PLEX|LOGO)-->", doc)
+        assert not left, f"{name}: 머리 슬롯이 안 채워졌다: {left}"
+    for name in ("landing", "app", "start"):
+        assert rendered[name].count(tk) == 1, f"{name}: 토큰 블록이 한 번 실리지 않았다"
+    assert dash.count(tk) == 1, "대시보드 조립본에 토큰 블록이 한 번 실리지 않았다"
+    for name in ("landing", "privacy", "notfound", "app", "start"):
+        assert headparts.LOGO in rendered[name], f"{name}: 로고가 안 실렸다"
+    for name in ("landing", "privacy", "notfound"):
+        assert "IBM+Plex+Mono" in rendered[name], f"{name}: Plex 서체 링크가 안 실렸다"
+    for name in ("landing", "privacy", "notfound", "app", "start"):
+        assert pretendard.group(1) in rendered[name], f"{name}: Pretendard 링크가 안 실렸다"
+    assert headparts.sans() in rendered["notfound"] and headparts.sans() in rendered["privacy"],         "방침·404 의 본문 서체가 토큰의 --sans 와 다르다"
+
 
 def test_seam_99_onboarding_calls_exist_on_hosted():
     """99) 온보딩(start.html)이 부르는 /api/* 와 /auth/* 가 호스팅 서버에 그 메서드로 있다.
