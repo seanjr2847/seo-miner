@@ -219,7 +219,7 @@ GROUPS = (
      "stages": ("gsc", "ga4", "keywords", "metrics", "rank"), "every_hours": WEEKLY_HOURS,
      "views": ("analysis", "keywords", "kwmanage", "rank")},
     {"id": "ai", "name": "AI 노출", "stages": ("ai", "rank"), "every_hours": WEEKLY_HOURS,
-     "views": ("ai",)},
+     "views": ("aicite", "aisum")},
     {"id": "site", "name": "사이트 건강", "stages": ("index", "crawl", "vitals"),
      "every_hours": WEEKLY_HOURS, "views": ("site",)},
     {"id": "compete", "name": "경쟁·링크", "stages": ("competitors", "backlinks"),
@@ -514,7 +514,7 @@ def note_blocked(project: str, kind: str, reason: str) -> None:
     """카나리아가 막은 유료 단계를 runs 한 줄로 남긴다 — 건너뜀은 여태 로그에만 있고 기록이
     없어서, [AI 노출] 이 두 사이트(aitierlist·noti)에서 한 번도 안 돈 이유가 어디에도 안
     남았다. notes 에 scoring.AI_RUN_ABORTED("중단:") 표식을 단다: 이 줄은 **잰 날이 아니다**
-    (dashboard._run_ok·scoring.ai_run_done 이 그 표식으로 뺀다), 그리고 [AI 인용·요약] 화면은
+    (dashboard._run_ok·scoring.ai_run_done 이 그 표식으로 뺀다), 그리고 [AI 인용] 화면은
     ai_health.last_run 의 사유로 이 문장을 그대로 말한다. 기록이 실패해도 수집은 간다."""
     try:
         conn = db.connect()

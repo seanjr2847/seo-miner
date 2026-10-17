@@ -31,40 +31,53 @@
 #sm-set { display:contents; }
 #view-settings [hidden] { display:none; }
 
-/* 카드 자리 — 좁으면 전부 한 열, 넓으면 폭으로 위계를 만든다(8+4 / 7+5 / 8+4). */
-#view-settings :where(#st-hero, #st-gsc, #usage, #sm-profile, #st-parts, #st-keys, #st-carry,
-    #st-project, #set-cycle, #sm-set .ga4, #sm-set .cli, #set-account, #sm-set .del, #setup-log,
-    .sm-setfail) {
+/* 카드 자리 — 설정은 탭 넷(측정·연결·이 PC·계정)으로 나뉜다. 카드는 자기 탭을
+   data-tab 으로 말하고(마크업), 고른 탭이 아니면 접힌다(#view-settings[data-st-tab]).
+   탭이 아직 안 정해졌으면(스크립트 전) 전부 보인다. 넓으면 한 탭이 한 화면 안에 들어오게
+   카드를 2~3열로 세운다. */
+#view-settings :where(#st-hero, #st-gsc, #usage, #st-dirs, #sm-profile .pf-card, #st-parts, #st-keys,
+    #st-carry, #st-project, #set-cycle, #set-type, #sm-set .ga4, #sm-set .cli, #set-account,
+    #sm-set .del, #setup-log, #sm-lang, .sm-setfail) {
   grid-column:1 / -1; margin:0; }
-#st-hero { order:1; } #st-gsc { order:2; }
-#usage { order:3; } #sm-profile { order:4; } #st-parts { order:5; }
-/* 호스팅 순서: 준비 상태 → GA4 → 명령어 → 측정 방식 → 프로필 */
-#sm-set .ga4 { order:2; } #sm-set .cli { order:3; } #set-cycle { order:4; }
-#view-settings:where(:has(#sm-set)) #sm-profile { order:5; }
-#st-keys { order:6; } #st-carry { order:7; } #st-project { order:8; }
-#setup-log { order:9; } .sm-setfail { order:0; }
-/* 계정(호스팅) — 로그아웃 폼 하나. 되돌릴 수 없는 사이트 삭제 바로 앞, 한 줄 전체 */
-#set-account { order:9; }
-/* 사이트 삭제(호스팅) — 되돌릴 수 없는 행동이라 다른 카드와 떨어진 맨 끝, 한 줄 전체 */
-#sm-set .del { order:10; }
+#view-settings[data-st-tab="measure"] [data-tab]:not([data-tab="measure"]),
+#view-settings[data-st-tab="link"] [data-tab]:not([data-tab="link"]),
+#view-settings[data-st-tab="pc"] [data-tab]:not([data-tab="pc"]),
+#view-settings[data-st-tab="acct"] [data-tab]:not([data-tab="acct"]) { display:none; }
+#st-hero { order:0; } .sm-setfail { order:1; }
+/* 셸이 상자로 옮기는 단위(섹션)는 풀어 그 안 카드가 격자 칸을 직접 받는다 */
+#sm-profile { display:contents; }
+#view-settings #sm-profile .pf-card { order:2; }
+#sm-lang { order:3; display:block; }
+#set-cycle, #set-type { order:4; }
+#usage { order:2; } #st-dirs { order:3; } #st-parts { order:4; } #st-carry { order:5; } #st-project { order:6; }
+#st-gsc { order:2; } #st-keys { order:3; } #sm-set .ga4 { order:2; } #sm-set .cli { order:3; }
+#setup-log { order:9; }
+#set-account { order:2; } #sm-set .del { order:3; }
 @media (min-width:1000px) {
-  #view-settings #st-hero { grid-column:span 8; }
-  #view-settings #st-gsc, #view-settings #set-cycle { grid-column:span 4; }
-  #view-settings #sm-profile { grid-column:span 7; }
-  #view-settings #st-parts { grid-column:span 5; }
-  #view-settings #st-keys { grid-column:span 8; }
-  #view-settings #st-carry { grid-column:span 4; }
-  /* 호스팅: 첫 카드가 두 줄을 차지하고 그 옆에 연결 카드 둘이 쌓인다. 그 밑은 측정 방식 4 + 프로필 8 */
-  #view-settings:where(:has(#sm-set)) #st-hero { grid-row:span 2; }
-  #view-settings:where(:has(#sm-set)) #sm-set .ga4,
-  #view-settings:where(:has(#sm-set)) #sm-set .cli { grid-column:span 4; }
-  #view-settings:where(:has(#sm-set)) #sm-profile { grid-column:span 8; }
-  /* 로컬에서 쓰는 방식이 호스팅이면 구글·키 카드가 접힌다 — 남은 카드가 빈자리를 채운다 */
-  #view-settings:where(:not(:has(#sm-set))):where(:has(#st-gsc[hidden])) #st-hero { grid-column:1 / -1; }
-  #view-settings:where(:not(:has(#sm-set))):where(:has(#st-keys[hidden])) #st-carry { grid-column:span 6; }
+  #view-settings #sm-profile .pf-card { grid-column:span 4; }
+  #view-settings #set-cycle, #view-settings #set-type { grid-column:span 6; }
+  #view-settings #st-gsc, #view-settings #st-keys,
+  #view-settings #sm-set .ga4, #view-settings #sm-set .cli,
+  #view-settings #st-parts, #view-settings #st-carry,
+  #view-settings #set-account, #view-settings #sm-set .del { grid-column:span 6; }
 }
 /* 없는 자리가 남기는 구멍 — 설정을 못 읽으면 세 칸이 접히고 오류 상자 하나가 선다 */
 #view-settings > .vh #st-primary { margin:0; }
+/* 호스팅은 #setup 을 감춘다(dash.html) — 그 안 카드는 data-tab 으로도 안 보인다 */
+
+/* ── 탭 줄 ── 준비 상태 카드 맨 밑. 누르면 그 묶음 카드만 서고 나머지는 접힌다 ── */
+#st-tabs { flex:1 1 100%; display:flex; gap:4px; margin:var(--sp-2) 0 0; padding:4px;
+  background:var(--sunk); border-radius:var(--r-in); overflow-x:auto; }
+#st-tabs button { flex:1 1 0; min-width:max-content; min-height:var(--btn-h); padding:0 var(--sp-4);
+  border:0; border-radius:var(--r-in); background:transparent; color:var(--sub); cursor:pointer;
+  font:500 var(--fs-2)/1.3 var(--sans); display:flex; align-items:center; justify-content:center;
+  gap:var(--sp-2); }
+#st-tabs button:hover { color:var(--ink); }
+#st-tabs button[aria-selected="true"] { background:var(--card); color:var(--accent);
+  font-weight:650; box-shadow:var(--shadow); }
+#st-tabs button[hidden] { display:none; }
+#st-tabs .tdot { width:8px; height:8px; border-radius:50%; background:var(--warn); }
+#st-tabs .tdot[hidden] { display:none; }
 
 /* ── 카드 머리: 제목(16px 650) + 보조 설명(12px) + 우측 도구 한 벌 ── */
 #view-settings .card { padding:22px 24px; }
@@ -108,25 +121,26 @@
 #setup .delkey { color:var(--warn); margin-top:var(--sp-2); }
 
 /* ── 준비 상태(히어로) ── 링 하나 + 상태 행. 링은 인라인 SVG(라이브러리가 필요 없다) ── */
-#st-hero { display:flex; flex-wrap:wrap; align-items:flex-start; gap:var(--sp-5) var(--sp-6);
-  padding:26px 28px; }
-#st-hero .hz { flex:0 0 190px; display:flex; flex-direction:column; gap:var(--sp-3); }
-#st-ring { position:relative; width:104px; height:104px; }
-#st-ring svg { display:block; width:104px; height:104px; transform:rotate(-90deg); }
-#st-ring circle { fill:none; stroke-width:10; }
+#st-hero { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-3) var(--sp-6);
+  padding:18px 22px; }
+#st-hero .hz { flex:0 0 auto; max-width:330px; display:flex; flex-direction:row; align-items:center;
+  gap:var(--sp-4); }
+#st-ring { position:relative; width:64px; height:64px; flex:none; }
+#st-ring svg { display:block; width:64px; height:64px; transform:rotate(-90deg); }
+#st-ring circle { fill:none; stroke-width:12; }
 #st-ring .trk { stroke:var(--sunk); }
 #st-ring .val { stroke:var(--accent); stroke-linecap:round;
   transition:stroke-dashoffset .7s cubic-bezier(.2,.7,.2,1); }
 #st-ring .rn { position:absolute; inset:0; display:flex; flex-direction:column;
   align-items:center; justify-content:center; }
-#st-ring .rn b { font:700 var(--fs-4)/1 var(--sans); font-variant-numeric:tabular-nums; color:var(--ink); }
-#st-ring .rn span { font:var(--micro); color:var(--sub); margin-top:5px; }
-#st-hero h2 { margin:0; text-wrap:balance; }
+#st-ring .rn b { font:700 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; color:var(--ink); }
+#st-ring .rn span { display:none; }
+#st-hero h2 { margin:0; text-wrap:balance; font-size:var(--fs-3); }
 #st-hero .hs { margin:4px 0 0; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
-#st-rows { flex:1 1 320px; min-width:0; list-style:none; margin:0; padding:0;
-  display:grid; gap:4px; }
+#st-rows { flex:1 1 420px; min-width:0; list-style:none; margin:0; padding:0;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:2px var(--sp-3); }
 .st-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto 14px; align-items:center;
-  gap:0 var(--sp-3); width:100%; min-height:58px; padding:8px 14px; border:0;
+  gap:0 var(--sp-2); width:100%; min-height:44px; padding:4px 10px; border:0;
   border-radius:var(--r-in); background:transparent; color:var(--ink); text-align:left;
   font:inherit; }
 .st-row.first { background:var(--sunk); }
@@ -137,8 +151,7 @@ button.st-row:hover { background:var(--accent-wash); }
 .st-row .dot.todo { background:var(--warn); }
 .st-row .dot.wait { background:var(--rule); }
 .st-row .rt b { display:block; font:650 var(--fs-2)/1.4 var(--sans); }
-.st-row .rt small { display:block; font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub);
-  overflow-wrap:anywhere; }
+.st-row .rt small { display:none; }
 .st-row .chev { width:14px; height:14px; background:var(--mute);
   -webkit-mask:var(--chev) center/9px 9px no-repeat; mask:var(--chev) center/9px 9px no-repeat; }
 button.st-row:hover .chev { background:var(--accent); }
@@ -152,7 +165,7 @@ button.st-row:hover .chev { background:var(--accent); }
 }
 @media (max-width:640px) {
   #st-hero { padding:22px 20px; }
-  #st-hero .hz { flex:1 1 100%; flex-direction:row; align-items:center; gap:var(--sp-4); }
+  #st-hero .hz { flex:1 1 100%; max-width:none; }
   .st-row { grid-template-columns:10px minmax(0,1fr) auto; }
   .st-row .chev { display:none; }
 }
@@ -161,7 +174,7 @@ button.st-row:hover .chev { background:var(--accent); }
 #usage .ugrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
   gap:var(--sp-5) var(--sp-6); }
 #usage .ug { min-width:0; }
-#usage .udirs label, #usage #u-remote label { font-weight:650; font-size:var(--fs-2); }
+#usage #u-remote label { font-weight:650; font-size:var(--fs-2); }
 #usage .ug label { margin-top:0; font-weight:650; font-size:var(--fs-2); color:var(--ink); }
 /* 라디오 한 줄이 손잡이 전체다(글자만 눌러도 골라진다). 선택지 이름은 서버가 실어 보낸
    표에서 오므로 여기엔 모양만 있다. 골라지면 --accent-wash 로 물든다(테두리 없음). */
@@ -175,9 +188,8 @@ button.st-row:hover .chev { background:var(--accent); }
   font-weight:650; }
 #usage .opt input { width:auto; margin:0; }
 #usage .opt .badge { margin-left:auto; }
-#usage #m-usage, #usage #m-dirs { display:block; margin-top:var(--sp-3); }
-#usage #m-usage:empty, #usage #m-dirs:empty { display:none; }
-#usage .udirs { margin-top:var(--sp-5); padding-top:var(--sp-2); }
+#usage #m-usage, #st-dirs #m-dirs { display:block; margin-top:var(--sp-3); }
+#usage #m-usage:empty, #st-dirs #m-dirs:empty { display:none; }
 #usage #u-remote { margin-top:var(--sp-5); }
 #usage #u-remote .row { margin-top:var(--sp-2); }
 #usage #u-line { flex:1 1 260px; width:auto; max-width:560px; font-family:var(--mono);
@@ -224,49 +236,16 @@ button.st-row:hover .chev { background:var(--accent); }
 #st-project[open] > summary { margin-bottom:var(--sp-4); }
 #st-project > summary .tools { margin:0; }
 
-/* ── 사이트 프로필(sm-profile, 소유 밖) — 섹션이 곧 카드다 ── */
-#view-settings #sm-profile { background:var(--card); border-radius:var(--r-card);
-  box-shadow:var(--shadow); padding:22px 24px; }
-#view-settings #sm-profile .sh h2 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
-#view-settings #sm-profile > .card { padding:0; margin:0; background:transparent;
-  box-shadow:none; border-radius:0; }
-#view-settings #sm-profile .profile label { font-weight:650; font-size:var(--fs-2);
-  color:var(--ink); margin:var(--sp-4) 0 2px; }
-#view-settings #sm-profile .profile { display:grid; grid-template-columns:minmax(0,1fr); }
-#view-settings #sm-profile .profile > :nth-child(1) { margin-top:0; }
-#view-settings #sm-profile .profile .msg { margin-top:2px; min-height:1.6em; }
-@media (min-width:1240px), (min-width:640px) and (max-width:999px) {
-  #view-settings #sm-profile .profile { grid-template-columns:repeat(2,minmax(0,1fr));
-    column-gap:var(--sp-5); grid-auto-flow:row; }
-  #view-settings #sm-profile .profile > :nth-child(-n+4) { grid-column:1; }
-  #view-settings #sm-profile .profile > :nth-child(n+5):nth-child(-n+8) { grid-column:2; }
-  #view-settings #sm-profile .profile > :nth-child(n+9):nth-child(-n+12) { grid-column:1; }
-  #view-settings #sm-profile .profile > :nth-child(n+13) { grid-column:2; }
-  #view-settings #sm-profile .profile > :nth-child(1) { grid-row:1; }
-  #view-settings #sm-profile .profile > :nth-child(2) { grid-row:2; }
-  #view-settings #sm-profile .profile > :nth-child(3) { grid-row:3; }
-  #view-settings #sm-profile .profile > :nth-child(4) { grid-row:4; }
-  #view-settings #sm-profile .profile > :nth-child(5) { grid-row:1; margin-top:0; }
-  #view-settings #sm-profile .profile > :nth-child(6) { grid-row:2; }
-  #view-settings #sm-profile .profile > :nth-child(7) { grid-row:3; }
-  #view-settings #sm-profile .profile > :nth-child(8) { grid-row:4; }
-  #view-settings #sm-profile .profile > :nth-child(9) { grid-row:5; }
-  #view-settings #sm-profile .profile > :nth-child(10) { grid-row:6; }
-  #view-settings #sm-profile .profile > :nth-child(11) { grid-row:7; }
-  #view-settings #sm-profile .profile > :nth-child(12) { grid-row:8; }
-  #view-settings #sm-profile .profile > :nth-child(13) { grid-row:5; }
-  #view-settings #sm-profile .profile > :nth-child(14) { grid-row:6; }
-  #view-settings #sm-profile .profile > :nth-child(15) { grid-row:7 / span 2; }
-  #view-settings #sm-profile .profile > :nth-child(16) { grid-row:9; }
-  #view-settings #sm-profile .profile > :nth-child(15) { height:100%; min-height:88px; }
-}
+/* ── 사이트 프로필(sm-profile) — 섹션은 풀려 있고 그 안 .pf-card 셋이 격자 칸이다 ── */
+#view-settings #sm-profile .pf-card { padding:20px 22px; min-width:0; }
+/* 호스팅 애드온(dash.html)의 .sm-ch 는 제목 오른쪽에 부제를 붙이는 flex 다 — 설정은 제목 밑에 둔다 */
+#view-settings .sm-ch { display:block; }
 
 /* ── 호스팅: 측정 방식 카드(주기·언어·종류)와 연결 카드(GA4·명령어) ── */
 #view-settings #sm-set .grp { margin:0; }
 #view-settings #sm-set .grp h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
 #view-settings #sm-set .grp h3 { font:650 var(--fs-2)/1.4 var(--sans); color:var(--ink); margin:0; }
 #view-settings #sm-set .grp .sub { font-size:var(--fs-1); line-height:1.5; margin:2px 0 var(--sp-3); }
-#view-settings #set-cycle .grp + .grp { margin-top:var(--sp-5); }
 #view-settings #sm-set .repo select { width:100%; max-width:none; }
 #view-settings #sm-set .grp .gh { display:flex; align-items:flex-start;
   justify-content:space-between; gap:var(--sp-3); }
@@ -292,13 +271,20 @@ button.st-row:hover .chev { background:var(--accent); }
     </div>
   </div>
   <ul id="st-rows"></ul>
+  <!-- 설정은 탭 넷이다. 카드마다 data-tab 으로 자기 탭을 말한다(마크업) — 이름표·순서는 여기 한 벌 -->
+  <div id="st-tabs" role="tablist" aria-label="설정 묶음">
+    <button type="button" role="tab" data-st-tab="measure">측정 설정<i class="tdot" hidden></i></button>
+    <button type="button" role="tab" data-st-tab="link">연결<i class="tdot" hidden></i></button>
+    <button type="button" role="tab" data-st-tab="pc">이 PC<i class="tdot" hidden></i></button>
+    <button type="button" role="tab" data-st-tab="acct">계정<i class="tdot" hidden></i></button>
+  </div>
 </section>
 
 <section id="setup">
   <!-- 쓰는 방식은 "이 사람이 무엇으로 일하는가"다. 선택지(쓰는 방식·도구·터미널)와 그
        라벨은 전부 서버 payload 에서 온다 — doctor 의 표가 정본이라 여기 이름을
        박으면 표가 늘어난 날 화면만 낡는다. 그리는 것은 셸의 renderUsage 다. -->
-  <div class="step card" id="usage">
+  <div class="step card" id="usage" data-tab="pc">
     <div class="sh">
       <h2>쓰는 방식</h2>
       <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다. 고르면 그 자리에서 저장됩니다.</p>
@@ -333,16 +319,20 @@ button.st-row:hover .chev { background:var(--accent); }
         <span class="msg" role="status" id="m-remote"></span></div>
     </div>
 
-    <div class="udirs">
-      <label id="l-dirs">사이트별 로컬 폴더</label>
-      <span class="lh">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
-        도구를 띄웁니다. 비운 채 저장하면 지워집니다.</span>
-      <div id="dirs" role="group" aria-labelledby="l-dirs"></div>
-      <span class="msg" role="status" id="m-dirs"></span>
-    </div>
   </div>
 
-  <div class="step card" id="st-parts">
+  <!-- 쓰는 방식(누가 재고 무엇으로 여나)과 폴더 표는 성격이 달라 카드를 나눴다(2026-10-17). -->
+  <div class="step card" id="st-dirs" data-tab="pc">
+    <div class="sh">
+      <h2 id="l-dirs">사이트별 로컬 폴더</h2>
+      <p class="sub">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
+        도구를 띄웁니다. 비운 채 저장하면 지워집니다.</p>
+    </div>
+    <div id="dirs" role="group" aria-labelledby="l-dirs"></div>
+    <span class="msg" role="status" id="m-dirs"></span>
+  </div>
+
+  <div class="step card" id="st-parts" data-tab="pc">
     <div class="sh">
       <h2>기본 부품·스킬</h2>
       <p class="sub">수집과 보고서에 쓰는 부품, 글의 각도와 진단을 맡는 스킬입니다.</p>
@@ -367,7 +357,7 @@ button.st-row:hover .chev { background:var(--accent); }
     </div>
   </div>
 
-  <div class="step card" id="st-gsc">
+  <div class="step card" id="st-gsc" data-tab="link">
     <div class="sh">
       <h2>서치콘솔 연결</h2>
       <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
@@ -399,7 +389,7 @@ button.st-row:hover .chev { background:var(--accent); }
     </details>
   </div>
 
-  <div class="step card" id="st-keys">
+  <div class="step card" id="st-keys" data-tab="link">
     <div class="sh">
       <h2>API 키</h2>
       <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>
@@ -435,7 +425,7 @@ button.st-row:hover .chev { background:var(--accent); }
       <span class="msg" role="status" id="m-keys"></span></div>
   </div>
 
-  <div class="step card" id="st-carry">
+  <div class="step card" id="st-carry" data-tab="pc">
     <div class="sh">
       <h2>웹에서 이어 하기</h2>
       <p class="sub">여기 적어 둔 설정 그대로 웹에 등록합니다.</p>
@@ -458,7 +448,7 @@ button.st-row:hover .chev { background:var(--accent); }
        아래 폼은 **새로 등록할 값**이다(이 폴더의 저장소를 읽어 미리 채운다).
        둘이 다른 것을 가리키는 바람에 "완료인데 도메인 칸이 비었다"로 읽혔다.
        등록한 사이트가 없으면 스크립트가 이 카드를 펼친다 — 있으면 제목 줄만 선다. -->
-  <details class="step card" id="st-project">
+  <details class="step card" id="st-project" data-tab="pc">
     <summary>
       <span class="stt">새 사이트 등록
         <small>이 칸에 적은 값이 그 사이트 수집의 기준이 됩니다.<span
@@ -540,6 +530,7 @@ const ST_GATE = {register: {ids: ["btn-proj"], t: "사이트 등록"},
 function ST_jump(...ids) {
   const b = ids.map(i => $(i)).find(x => x && !x.hidden);
   if (!b) return;
+  ST_tab(ST_tabOf(b));                                 // 접힌 탭 안의 칸이면 그 탭부터 편다
   for (let dt = b.closest("details"); dt; dt = dt.parentElement && dt.parentElement.closest("details"))
     dt.open = true;
   const card = b.closest(".step, .card");
@@ -557,6 +548,70 @@ function ST_jump(...ids) {
     : b.querySelector("input,button,select,textarea");
   if (f) f.focus({preventScroll: true});
 }
+
+/* ── 탭 ── 카드는 마크업의 data-tab 으로 자기 탭을 말한다. 여기는 고르는 일만 한다.
+   호스팅은 #setup(로컬 전용 카드 묶음)을 통째로 감추므로 그 안 카드는 탭을 채우지 못한다 —
+   살아 있는 카드가 하나도 없는 탭은 버튼째 접는다. */
+function ST_tabOf(el) {
+  const c = el && el.closest && el.closest("[data-tab]");
+  return c ? c.dataset.tab : null;
+}
+function ST_tabLive(t) {
+  const hosted = !!document.getElementById("sm-set");
+  return [...document.querySelectorAll('#view-settings [data-tab="' + t + '"]')]
+    .some(c => !c.hidden && !(hosted && c.closest("#setup")));
+}
+function ST_tab(t) {
+  const box = $("view-settings");
+  if (!box || !t || box.dataset.stTab === t) return;
+  box.dataset.stTab = t;
+  if (!ST_tab.auto) delete box.dataset.stAuto;     // 사람이 골랐다 — 자동 이동은 끝
+  document.querySelectorAll("#st-tabs [data-st-tab]").forEach(b =>
+    b.setAttribute("aria-selected", b.dataset.stTab === t ? "true" : "false"));
+}
+function ST_tabs() {
+  const box = $("view-settings"), bar = $("st-tabs");
+  if (!box || !bar) return;
+  const live = {};
+  bar.querySelectorAll("[data-st-tab]").forEach(b => {
+    live[b.dataset.stTab] = ST_tabLive(b.dataset.stTab);
+    b.hidden = !live[b.dataset.stTab];
+  });
+  // 할 일이 남은 탭에는 점을 찍는다 — 다른 탭에 가려 못 보고 지나치지 않게
+  const todo = new Set(), m = ST_paint.model, sec = document.getElementById("sm-set");
+  const where = j => j && (j.ids ? j.ids.map(i => $(i)).find(x => x) : sec && sec.querySelector("." + j.jump));
+  if (m && !m.dead) for (const r of m.rows) {
+    if (!r.req || r.st !== "todo" || !r.jump) continue;
+    const t = ST_tabOf(where(r.jump));
+    if (t) todo.add(t);
+  }
+  bar.querySelectorAll("[data-st-tab]").forEach(b =>
+    b.querySelector(".tdot").hidden = !todo.has(b.dataset.stTab));
+  let cur = box.dataset.stTab;
+  // 처음 열 때는 할 일이 남은 첫 칸의 탭이다. 준비 상태가 읽히기 전에는 임시로 [측정 설정]을 세우고,
+  // 읽히면 (사람이 탭을 누르기 전이라면) 한 번만 그 탭으로 옮긴다.
+  const ready = m && !m.dead && !m.rows.some(r => r.st === "wait");
+  if (!cur || (box.dataset.stAuto && ready)) {
+    cur = ST_tabOf(where(ST_paint.first && ST_paint.first.jump)) || "measure";
+    if (ready) delete box.dataset.stAuto; else box.dataset.stAuto = "1";
+  }
+  if (!live[cur]) cur = Object.keys(live).find(k => live[k]) || cur;
+  box.dataset.stTab = "";          // 같은 값이면 ST_tab 이 건너뛰므로 한 번 비운다
+  ST_tab.auto = true;
+  ST_tab(cur);
+  ST_tab.auto = false;
+}
+// 탭 버튼과, 호스팅 애드온의 위임 손잡이(data-sm-jump = GA4 칸·주기 칸)가 가는 탭
+document.addEventListener("click", e => {
+  const t = e.target.closest && e.target.closest("#st-tabs [data-st-tab]");
+  if (t) return void ST_tab(t.dataset.stTab);
+  const j = e.target.closest && e.target.closest("[data-sm-jump]");
+  const sec = document.getElementById("sm-set");
+  if (j && sec && j.dataset.smJump !== "overview") {
+    const dst = sec.querySelector("." + j.dataset.smJump);
+    if (dst) ST_tab(ST_tabOf(dst));
+  }
+}, true);
 
 /* 넘길 사이트 고르개는 셸의 renderCarry 가 옵션을 다시 그릴 때마다 첫 사이트로
    돌아간다 — 보고 있는 사이트가 beta-site 인데 alpha-site 가 골라져 있었다.
@@ -654,6 +709,7 @@ function ST_paint() {
   const sig = JSON.stringify([m.rows.map(r => [r.name, r.desc, r.st, r.pill.text, !!r.jump]), m.dead, need.length]);
   if (sig === ST_paint.sig) return;
   ST_paint.sig = sig;
+  ST_paint.model = m;
   ST_paint.first = first && !m.dead ? first : null;
   const total = need.length, C = 276.46;
   let title, sub;
@@ -675,10 +731,11 @@ function ST_paint() {
       `<span class="badge ${r.pill.cls}">${esc(r.pill.text)}</span>` +
       (r.jump ? `<i class="chev" aria-hidden="true"></i>` : `<i></i>`);
     const cls = "st-row" + (r === first ? " first" : "");
-    if (!r.jump) return `<li><div class="${cls}">${inner}</div></li>`;
+    // 줄은 접힌 한 줄이라 설명은 마우스를 올리면 title 로 뜬다
+    if (!r.jump) return `<li><div class="${cls}" title="${esc(r.desc)}">${inner}</div></li>`;
     return r.jump.ids
-      ? `<li><button type="button" class="${cls}" data-st-go="${esc(r.jump.ids.join(" "))}">${inner}</button></li>`
-      : `<li><button type="button" class="${cls}" data-sm-jump="${esc(r.jump.jump)}">${inner}</button></li>`;
+      ? `<li><button type="button" class="${cls}" title="${esc(r.desc)}" data-st-go="${esc(r.jump.ids.join(" "))}">${inner}</button></li>`
+      : `<li><button type="button" class="${cls}" title="${esc(r.desc)}" data-sm-jump="${esc(r.jump.jump)}">${inner}</button></li>`;
   }).join("");
   ST_pills(m);
 }
@@ -743,7 +800,7 @@ function ST_head() {
 let ST_SOON = 0;
 function ST_soon() {
   if (ST_SOON) return;
-  ST_SOON = setTimeout(() => { ST_SOON = 0; ST_paint(); ST_head(); ST_autoOpen(); }, 30);
+  ST_SOON = setTimeout(() => { ST_SOON = 0; ST_paint(); ST_head(); ST_autoOpen(); ST_tabs(); }, 30);
 }
 // 등록한 사이트가 없으면 등록 카드를 한 번 펴 준다 — 있으면 제목 줄만 선다
 function ST_autoOpen() {

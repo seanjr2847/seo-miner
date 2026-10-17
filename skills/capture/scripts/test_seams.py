@@ -304,7 +304,8 @@ def test_seam_05_api_calls_exist_on_servers():
                 if where == "로컬":
                     assert call in dashboard.LOCAL_PATHS, \
                         f"{who} 가 부르는데 로컬 서버에 없다: {call}"
-                elif app_routes is not None and call not in dashboard.LOCAL_ONLY_PATHS:
+                elif app_routes is not None and call not in (
+                        dashboard.LOCAL_ONLY_PATHS | dashboard.HANDLER_PATHS):
                     assert call in app_routes, \
                         f"{who} 가 부르는데 호스팅 서버에 없다: {call}"   # 로컬 전용은 면제
 
@@ -1151,9 +1152,9 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
 
 
 def test_seam_24_ai_health_fields_come_from_scoring():
-    """24) [AI 인용·요약] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
+    """24) [AI 인용] 화면의 "측정 안 됨·오래됨·구버전·끊긴 확인"은 서버가 센 것 그대로다.
 
-    화면(views/ai.html 의 AI_health)은 d.ai_health 의 하위 칸(h.unmeasured,
+    화면(views/aicite.html 의 AI_health)은 d.ai_health 의 하위 칸(h.unmeasured,
     lr.state …)을 읽는다. 최상위 키는 10번이 보지만 그 안의 칸은 아무도 안 본다 —
     scoring.ai_health 가 칸 이름을 바꾸면 화면은 undefined 를 "0개"로 읽어 아무 줄도
     안 그리고, 끊긴 확인이 다시 조용해진다. 그래서 칸 이름과 상태 값을 실물과 대조한다.
@@ -1165,8 +1166,8 @@ def test_seam_24_ai_health_fields_come_from_scoring():
 
     import collector
     import scoring
-    src = (ctx["views"] / "ai.html").read_text("utf-8")
-    assert "function AI_health(" in src, "ai.html 에 AI_health 가 없다 — 이 검사가 헛돈다"
+    src = (ctx["views"] / "aicite.html").read_text("utf-8")
+    assert "function AI_health(" in src, "aicite.html 에 AI_health 가 없다 — 이 검사가 헛돈다"
     body = src[src.index("function AI_health("):]
     body = body[:body.index("\n}\n")]
     read_h = set(re.findall(r"\bh\.([a-zA-Z_]\w*)", body))
@@ -1237,7 +1238,7 @@ def test_seam_25_chart_library_single_source():
 def test_seam_26_aio_fields_and_play_come_from_server():
     """26) 구글 AI 요약 칸·폴백 처방은 서버가 행에 실은 것 그대로다 — 그리고 한 화면에만 있다.
 
-    AI 요약은 [AI 인용·요약] 화면(views/ai.html 의 #ai-aio)이 그린다(메뉴의 [AI 노출] 묶음 —
+    AI 요약은 [AI 요약] 화면(views/aisum.html 의 #aisum-gap)이 그린다(메뉴의 [AI 노출] 묶음 —
     run_all.GROUPS). 화면은 행의 r.aio_domains(대신 인용된 곳)·r.aio_band(처방 갈래)를
     읽고, 처방 문구는 d.aio_play[갈래] 로 찾는다. 10번은 최상위 키(d.*)만 본다 — 행 칸
     이름이 어긋나거나 갈래 이름이 d.aio_play 의 열쇠와 다르면 화면은 undefined 를 받아
@@ -1254,23 +1255,24 @@ def test_seam_26_aio_fields_and_play_come_from_server():
 
     import dashboard
     import scoring
-    src = (ctx["views"] / "ai.html").read_text("utf-8")
+    src = (ctx["views"] / "aisum.html").read_text("utf-8")
     read_r = set(re.findall(r"\br\.(aio_\w+)", src))
     assert {"aio_domains", "aio_band"} <= read_r, \
-        f"ai.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
-    assert "AI_AIO_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
-        "ai.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
-    assert "d.aio_gap" in src, "ai.html 이 서버의 빠진 검색어 목록(d.aio_gap)을 안 읽는다"
+        f"aisum.html 이 AI 요약 칸을 안 읽는다 — 이 검사가 헛돈다: {sorted(read_r)}"
+    assert "AS_PLAY[r.aio_band]" in src and "d.aio_play" in src, \
+        "aisum.html 이 서버 처방(d.aio_play)을 갈래로 찾지 않는다"
+    assert "d.aio_gap" in src, "aisum.html 이 서버의 빠진 검색어 목록(d.aio_gap)을 안 읽는다"
     defs = _view_defs(ctx["views"])
-    assert "ai-aio" in defs["ai"]["sections"], "ai view-def sections 에 ai-aio 가 없다"
+    assert "aisum" in defs["aisum"]["sections"], "aisum view-def sections 에 aisum 이 없다"
+    assert 'id="aisum-gap"' in src, "aisum.html 에 빠진 검색어 칸(#aisum-gap)이 없다"
 
     # 반대쪽 — 순위 화면의 코드(주석 제외)가 AI 요약 칸을 읽으면 두 벌이다
     rank = (ctx["views"] / "rank.html").read_text("utf-8")
     code = re.sub(r"/\*.*?\*/|<!--.*?-->", "", rank, flags=re.S)
     code = re.sub(r"(^|[^:])//[^\n]*", r"\1", code)
     left = sorted(set(re.findall(r"\b(?:r|d)\.(aio\w*)", code)))
-    assert not left, f"rank.html 이 아직 AI 요약을 그린다(두 벌 — 자리는 ai.html #ai-aio): {left}"
-    assert "ai-aio" not in (defs["rank"].get("sections") or ()), "rank view-def 에 ai-aio 가 남았다"
+    assert not left, f"rank.html 이 아직 AI 요약을 그린다(두 벌 — 자리는 aisum.html #aisum-gap): {left}"
+    assert "aisum-gap" not in (defs["rank"].get("sections") or ()), "rank view-def 에 aisum-gap 이 남았다"
 
     # 실물 — AI 요약에 빠진 검색어 둘(1페이지 안·순위 없음)을 둔 Brain
     c = _sq.connect(":memory:")
@@ -1295,11 +1297,11 @@ def test_seam_26_aio_fields_and_play_come_from_server():
         f"행의 갈래가 d.aio_play 의 열쇠에 없다: {sorted(bands - set(rk['aio_play']))}"
 
     # 화면의 AI 요약 폴백 가지는 서버 문구를 붙이기만 한다 — 자기 문구(한국어 글자)가 없다
-    body = src[src.index("function AI_aioDetail("):]
-    body = body[body.index("const ap = AI_AIO_PLAY"):body.index("function AI_aioToggle(")]
+    body = src[src.index("function AS_detail("):]
+    body = body[body.index("const ap = AS_PLAY"):body.index("function AS_toggle(")]
     lits = [s for s in re.findall(r'"([^"]*)"|`([^`]*)`', body) for s in s
             if re.search(r"[가-힣]", s)]
-    assert not lits, f"ai.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
+    assert not lits, f"aisum.html 이 AI 요약 처방을 따로 적는다(두 벌): {lits}"
 
 
 def test_seam_27_ai_rivals_single_count():
@@ -1371,7 +1373,7 @@ def test_seam_27_ai_rivals_single_count():
         "요청문이 대신 인용된 곳을 다시 센다 — 정본은 scoring.ai_tally 다"
 
     # ── 그리는 쪽: 질문 표가 읽는 칸이 행에 있고, 옛 칸을 안 읽는다 ──
-    view = (ctx["views"] / "ai.html").read_text("utf-8")
+    view = (ctx["views"] / "aicite.html").read_text("utf-8")
     i = view.index("let AI_ROWS")
     j = view.index("/* ── 검색 × AI 교차", i)
     part = view[i:j]
@@ -1390,10 +1392,10 @@ def test_seam_27_ai_rivals_single_count():
 def test_seam_28_ai_visits_fields_and_names():
     """28) "AI 에서 온 방문" — 서버가 접은 칸을 화면이 읽고, 요청문이 그 자리를 이름으로 부른다.
 
-    이음매가 둘이다. (가) 화면(views/ai.html 의 AI_visits)은 d.ai_referrals 의 하위 칸
+    이음매가 둘이다. (가) 화면(views/aicite.html 의 AI_visits)은 d.ai_referrals 의 하위 칸
     (r.source·p.sources·m.hosts …)을 읽는다. 최상위 키는 10번이 보지만 안의 칸은 아무도
     안 본다 — dashboard._ai_referrals 가 칸 이름을 바꾸면 화면은 undefined 를 0 으로
-    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용·요약] 화면의 'AI 에서 온 방문'" 처럼 화면·
+    그린다. (나) 요청문(brief._ai_visits)은 "[AI 인용] 화면의 'AI 에서 온 방문'" 처럼 화면·
     섹션 이름을 적는다. 정본은 뷰 쪽(view-def title, 섹션 h2)이라 대조한다.
     """
     ctx = _load()
@@ -1402,8 +1404,8 @@ def test_seam_28_ai_visits_fields_and_names():
     import brief
     import dashboard
 
-    src = (ctx["views"] / "ai.html").read_text("utf-8")
-    assert "function AI_visits(" in src, "ai.html 에 AI_visits 가 없다 — 이 검사가 헛돈다"
+    src = (ctx["views"] / "aicite.html").read_text("utf-8")
+    assert "function AI_visits(" in src, "aicite.html 에 AI_visits 가 없다 — 이 검사가 헛돈다"
     body = src[src.index("function AI_visits("):]
     body = body[:body.index("\n}\n")]
     read = {v: set(re.findall(rf"\b{v}\.([a-zA-Z_]\w*)", body)) for v in ("r", "p", "m")}
@@ -1431,14 +1433,14 @@ def test_seam_28_ai_visits_fields_and_names():
         assert defs[vid]["title"] == title, \
             f"요청문은 [{title}] 라는데 화면 제목은 {defs[vid]['title']!r}"
     sid, stitle = brief.AI_VISITS_SECTION
-    assert sid in defs["ai"]["sections"], f"요청문이 가리키는 섹션 {sid} 가 ai view-def 에 없다"
+    assert sid in defs["aicite"]["sections"], f"요청문이 가리키는 섹션 {sid} 가 aicite view-def 에 없다"
     h2 = re.search(rf'<section id="{sid}">.*?<h2>(.*?)</h2>', src, re.S)
     assert h2 and h2.group(1).strip() == stitle, \
         f"요청문은 '{stitle}' 라는데 섹션 제목은 {h2 and h2.group(1)!r}"
 
 
 def test_seam_29_ai_screen_gap_count_is_server_judgement():
-    """29) [AI 인용·요약] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
+    """29) [AI 인용] 화면이 "인용이 드문 질문"을 세는 기준은 서버 판정(d.ai_gap_rows —
     scoring.ai_is_gap) 한 벌이다.
 
     두 벌이었다: 기회는 인용률로 섰는데(6번 중 1번도 공백), 화면 머리 띠는 "인용도
@@ -1449,8 +1451,8 @@ def test_seam_29_ai_screen_gap_count_is_server_judgement():
     ctx = _load()
     if ctx is None:
         return
-    src = (ctx["views"] / "ai.html").read_text("utf-8")
-    assert "d.ai_gap_rows" in src, "ai.html 이 서버의 공백 판정을 안 읽는다"
+    src = (ctx["views"] / "aicite.html").read_text("utf-8")
+    assert "d.ai_gap_rows" in src, "aicite.html 이 서버의 공백 판정을 안 읽는다"
     # 띠의 수 = 서버 판정으로 거른 수. 화면이 인용 수로 다시 세지 않는다.
     import re as _re
     m = _re.search(r"const missN = byPrompt\.length\s*\?(.*?);", src, _re.S)
@@ -1706,12 +1708,12 @@ def test_seam_36_trend_charts_share_one_threshold():
         return
     views = ctx["views"]
     rank = (views / "rank.html").read_text("utf-8")
-    ai = (views / "ai.html").read_text("utf-8")
+    ai = (views / "aicite.html").read_text("utf-8")
     assert "확인일이 3회 쌓이면" in rank, "rank.html 이 문턱을 더는 말하지 않는다"
-    assert "확인일이 3회 쌓이면" in ai, "ai.html 이 rank 와 다른 문턱을 말한다"
+    assert "확인일이 3회 쌓이면" in ai, "aicite.html 이 rank 와 다른 문턱을 말한다"
     m = re.search(r"if \(at\.length >= (\d+)\) \$\(\"ai-trend\"\)", ai)
-    assert m, "ai.html 의 추이 문턱 분기를 못 찾았다"
-    assert m.group(1) == "3", f"ai.html 이 {m.group(1)}회부터 그린다 — rank 는 3회다"
+    assert m, "aicite.html 의 추이 문턱 분기를 못 찾았다"
+    assert m.group(1) == "3", f"aicite.html 이 {m.group(1)}회부터 그린다 — rank 는 3회다"
 
 
 
@@ -2771,11 +2773,11 @@ def test_seam_61_server_and_local_accept_the_same_groups():
 
 
 def test_seam_62_google_ai_overview_lives_on_the_ai_screen():
-    """62) 구글 AI 요약은 [AI 노출] 묶음의 [AI 인용·요약] 화면에 산다 — 순위 화면에는 없다.
+    """62) 구글 AI 요약은 [AI 노출] 묶음의 [AI 요약] 화면(aisum)에 산다 — 챗봇 인용([AI 인용], aicite)과 별개 화면이다 — 순위 화면에는 없다.
 
     재료는 순위 조회(rank)라서, 옮겨 간 뒤로도 세 끝이 맞아야 한다: AI 노출 묶음을 다시
     재면 rank 가 돈다(안 돌면 버튼을 눌러도 요약 칸이 안 바뀐다), '구글 AI 요약 빠짐'
-    기회의 [자세히 보는 화면]이 ai 화면의 #ai-aio 를 가리킨다(순위 화면을 가리키면 없는
+    기회의 [자세히 보는 화면]이 aisum 화면의 #aisum-gap 을 가리킨다(순위 화면을 가리키면 없는
     칸으로 떨어진다), 그리고 순위 화면에는 AI 요약 문구가 남지 않는다(두 벌). 칸·처방이
     서버 것 그대로인지는 26번이 본다.
     """
@@ -2785,16 +2787,16 @@ def test_seam_62_google_ai_overview_lives_on_the_ai_screen():
     import run_all
     import scoring
     defs = _view_defs(ctx["views"])
-    assert defs["ai"]["group"] == "ai" and "ai-aio" in defs["ai"]["sections"], defs["ai"]
-    assert "rank" in run_all.group_stages(defs["ai"]["group"]), \
+    assert defs["aisum"]["group"] == "ai" and defs["aicite"]["group"] == "ai", (defs["aisum"], defs["aicite"])
+    assert "rank" in run_all.group_stages(defs["aisum"]["group"]), \
         "AI 노출 묶음이 rank 를 안 돌린다 — AI 요약 칸의 재료다"
     k = next(k for k in scoring.KINDS if k.name == "aio_exposure")
-    assert tuple(k.see) == ("ai", "ai-aio"), f"aio_exposure 의 see 가 {k.see} — ai 화면 #ai-aio 여야 한다"
+    assert tuple(k.see) == ("aisum", "aisum-gap"), f"aio_exposure 의 see 가 {k.see} — aisum 화면 #aisum-gap 이어야 한다"
     rank = (ctx["views"] / "rank.html").read_text("utf-8")
     code = re.sub(r"/\*.*?\*/|<!--.*?-->", "", rank, flags=re.S)
     code = re.sub(r"(^|[^:])//[^\n]*", r"\1", code)
-    assert "AI 요약" not in code, "rank.html 코드에 'AI 요약' 문구가 남았다 — 자리는 ai.html #ai-aio"
-    assert 'id="rk-aio' not in code and "ai-aio" not in code, "rank.html 에 AI 요약 섹션이 남았다"
+    assert "AI 요약" not in code, "rank.html 코드에 'AI 요약' 문구가 남았다 — 자리는 aisum.html #aisum-gap"
+    assert 'id="rk-aio' not in code and "aisum-gap" not in code, "rank.html 에 AI 요약 섹션이 남았다"
 
 
 def test_seam_80_landing_login_label_and_privacy_fonts_are_one_set():
@@ -3081,7 +3083,7 @@ def test_seam_92_ai_rows_badge_every_gap_and_show_cited_answer_first():
              "excerpts": {"chatgpt": "빠진 답"}},
             {"prompt": "인용된 질문", "category": "general", "cited": 5, "mentioned": 5, "checks": 6,
              "excerpts": {"chatgpt": "빠진 답"}, "cited_excerpts": {"chatgpt": "우리 답"}}]
-    js = _VIEW_STUBS + _view_script("ai.html") + f"""
+    js = _VIEW_STUBS + _view_script("aicite.html") + f"""
 window.KIND_LABELS = {{ai_citation_gap: "챗봇 인용 드묾"}};
 AI_GAPS = new Set(["드문 질문"]);
 AI_INTENT = {{general: "일반"}};
@@ -3790,7 +3792,7 @@ def test_seam_shared_drawer_is_one_box_in_the_shell():
             assert name in made, f"{f.name} 이 셸에 없는 서랍 API 를 부른다: SM.drawer.{name}"
         if "SM.drawer.open(" in t:
             opened.add(f.name)
-    want = {"ai.html", "analysis.html", "competitors.html", "hold.html", "keywords.html",
+    want = {"aicite.html", "aisum.html", "analysis.html", "competitors.html", "hold.html", "keywords.html",
             "rank.html", "site.html", "triage.html"}
     assert want <= opened, f"서랍을 안 여는 화면이 있다: {sorted(want - opened)}"
     assert "ov-drawer" in (views / "overview.html").read_text("utf-8"), "개요 서랍이 없다"
@@ -3995,6 +3997,102 @@ def test_seam_130_screen_jumps_point_at_declared_screens():
     assert seen >= 20, f"화면 이동 손잡이를 {seen}개밖에 못 찾았다 — 부르는 꼴이 바뀌었다"
 
 
+def test_seam_140_ai_citation_and_ai_summary_are_two_screens():
+    """140) [AI 인용]과 [AI 요약]은 두 화면이다 — 재료가 다르고 옛 한 화면(id ai)은 남지 않는다.
+
+    [AI 인용](aicite)은 챗봇에 물어 받은 답변(ai 단계), [AI 요약](aisum)은 검색어를 구글에 조회한
+    결과(rank 단계)가 재료다. 한 화면(ai)에 섞여 있을 때는 [AI 인용 다시 확인]을 눌러도 요약 칸이
+    안 바뀌는 어긋남이 있었다. 갈린 뒤에 어긋날 수 있는 곳: (1) 두 화면이 같은 [AI 노출] 묶음에 서고
+    GROUPS 의 views 순서가 곧 메뉴 순서다, (2) 각 화면의 stages 가 자기 재료를 돌리는 단계다, (3) 한
+    화면이 다른 화면의 재료 키를 읽으면 두 벌이다, (4) 옛 id "ai" 는 aliases 로만 살고 화면을 부르는
+    곳(기회의 see·nextStep·VIEW·섹션 view)에는 안 남는다, (5) 옛 id 로 온 복원 값은 셸이 새 화면으로
+    푼다(SM.canon).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import run_all
+    import scoring
+    defs = _view_defs(ctx["views"])
+    assert "ai" not in defs, "옛 화면 id ai 의 view-def 가 남았다 — aicite·aisum 으로 갈렸다"
+    assert {"aicite", "aisum"} <= set(defs), sorted(defs)
+    assert "ai" in defs["aicite"].get("aliases", []), "aicite 가 옛 id ai 를 aliases 로 받지 않는다 — 북마크가 끊긴다"
+    # (1) 묶음 — 이름·단계·주기는 run_all.GROUPS 가 갖고 화면은 id 만 적는다
+    g = run_all.GROUP_BY_ID[defs["aicite"]["group"]]
+    assert defs["aisum"]["group"] == g["id"], "두 화면이 다른 묶음에 섰다"
+    assert list(g["views"]) == ["aicite", "aisum"], f"묶음의 화면 순서가 메뉴 순서가 아니다: {g['views']}"
+    # (2) 단계 — 인용은 ai 단계, 요약은 rank 단계(둘 다 묶음이 돌리는 단계 안)
+    assert "ai" in defs["aicite"]["stages"] and "rank" not in defs["aicite"]["stages"], defs["aicite"]["stages"]
+    assert defs["aisum"]["stages"] == ["rank"], defs["aisum"]["stages"]
+    assert {"ai", "rank"} <= set(run_all.group_stages(g["id"])), "묶음이 ai·rank 를 같이 안 돌린다"
+    # (3) 재료 키 — 서로의 것을 읽지 않는다(주석은 뺀다)
+    cite = (ctx["views"] / "aicite.html").read_text("utf-8")
+    summ = (ctx["views"] / "aisum.html").read_text("utf-8")
+
+    def code(t):
+        t = re.sub(r"/\*.*?\*/|<!--.*?-->", "", t, flags=re.S)
+        return re.sub(r"(^|[^:\"'])//[^\n]*", r"\1", t)
+    cc, sc = code(cite), code(summ)
+    assert not re.findall(r"\b[dr]\.(aio\w*)", cc), "aicite 가 구글 AI 요약 키(aio*)를 읽는다 — 자리는 aisum"
+    chat = re.findall(r"\bd\.(ai_by_prompt|ai_trend|cite_share|ai_gap_rows|matrix|gap_domains)\b", sc)
+    assert not chat, f"aisum 이 챗봇 인용 키를 읽는다 — 자리는 aicite: {chat}"
+    assert "aisum" in defs["aisum"]["sections"] and 'id="aisum-gap"' in summ
+    both = set(defs["aicite"]["sections"]) & set(defs["aisum"]["sections"])
+    assert not both, f"두 화면이 같은 섹션을 가진다: {both}"
+    # (4) 옛 id 로 화면을 부르는 곳
+    for k in scoring.KINDS:
+        if getattr(k, "see", None):
+            assert k.see[0] in defs, f"{k.name} 의 see 가 없는 화면 {k.see[0]!r} 를 가리킨다"
+    secs = ROOT / "skills" / "capture" / "templates" / "sections"
+    for f in sorted(secs.glob("*.html")):
+        m = re.search(r'class="section-def">\s*(\{.*?\})\s*</script>', f.read_text("utf-8"), re.S)
+        assert m and json.loads(m.group(1)).get("view") in defs, f"{f.name} 의 section-def view 가 옛 id 다"
+    pat = re.compile(r"\b(?:nextStep|VIEW|viewSub)\(\s*['\"]([a-z][a-z0-9]*)['\"]")
+    srcs = [("dashboard.html", ctx["shell"]), ("dash.html", ctx["dash"])]
+    srcs += [(f.name, f.read_text("utf-8")) for f in sorted(ctx["views"].glob("*.html"))]
+    srcs += [(f.name, f.read_text("utf-8")) for f in sorted(secs.glob("*.html"))]
+    for name, src in srcs:
+        for vid in pat.findall(src):
+            assert vid in defs, f"{name} 이 옛/없는 화면 {vid!r} 로 띠·렌더를 건다"
+    # (5) 셸이 옛 id 를 푼다
+    shell = ctx["shell"]
+    assert "aliases: (v.aliases || [])" in shell and "canon(id)" in shell, "셸이 view-def aliases 를 안 읽는다"
+    assert "this.cur = this.canon(back)" in shell, "새로고침 복원이 옛 id 를 새 화면으로 안 푼다"
+    assert re.search(r"show\(id\) \{\s*id = this\.canon\(id\);", shell), "SM.show 가 옛 id 를 안 푼다"
+
+
+def test_seam_132_shell_post_recovers_a_stale_token_from_the_local_token_route():
+    """132) 셸의 post() 가 403 을 만나면 부르는 GET /api/token 을 로컬 Handler 가 실제로 받고,
+    둘이 같은 사용자 지정 머리글을 말한다.
+
+    이음매는 둘이다. 화면(dashboard.html 의 post/refreshToken)만 보면 멀쩡하고 서버(dashboard.py
+    의 Handler._token)만 봐도 멀쩡하다 — 머리글 값이 어긋나면 서버가 403 을 주고, 화면은 복구를
+    못 해 "이 창은 만료됐습니다"가 그대로 남는다. 그 머리글은 다른 웹사이트가 이 토큰을 읽지
+    못하게 막는 한 겹이기도 하다(사용자 지정 머리글 → 사전 요청 → 서버가 OPTIONS 에 안 답함).
+    - 호스팅은 이 경로가 없다 — 있으면 호스팅 화면이 로컬 토큰 모델을 따라 하는 것이다.
+    """
+    shell = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+    dash = (ROOT / "skills" / "capture" / "scripts" / "dashboard.py").read_text("utf-8")
+    i = shell.index("async function post(")
+    body = shell[i:shell.index("\n}", i)]
+    assert "status === 403" in body and "refreshToken()" in body, \
+        "post() 가 403 에서 토큰을 다시 받아 재시도하지 않는다"
+    j = shell.index("async function refreshToken(")
+    rt = shell[j:shell.index("\n}", j)]
+    assert '"/api/token"' in rt, "refreshToken 이 /api/token 을 부르지 않는다"
+    hdr = re.search(r'"X-Requested-With":\s*"([^"]+)"', rt)
+    assert hdr, "refreshToken 이 사용자 지정 머리글을 안 단다"
+    assert f'self.headers.get("X-Requested-With") == "{hdr.group(1)}"' in dash, \
+        "서버가 화면이 다는 X-Requested-With 값과 다른 값을 요구한다"
+    assert 'u.path == "/api/token"' in dash, "로컬 Handler 에 GET /api/token 이 없다"
+    assert "do_OPTIONS" not in dash and "Access-Control-Allow" not in dash, \
+        "로컬 서버가 CORS 를 열었다 — 다른 웹사이트가 토큰을 읽을 수 있다"
+    app = ROOT / "server" / "app.py"
+    if app.exists():
+        assert "/api/token" not in app.read_text("utf-8"), \
+            "호스팅에 /api/token 이 생겼다 — 로컬 토큰 모델이 호스팅으로 샌다"
+
+
 def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
     """131) 추적 편집기(sections/sm-kw.html)·그 진행 막대 배선·그 스타일이 한 화면에 있고,
     그 편집기가 부르는 /api/keywords 가 두 배포에 다 있다.
@@ -4067,6 +4165,42 @@ def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
         body = an.split(f"function {fn}(", 1)[1].split("\n}\n", 1)[0]
         assert "AN_goKw(" in body and 'go("keywords"' not in body, \
             f"[클릭 변화] {fn} 의 '추적 켜기' 버튼이 [{vid}] 로 안 보낸다"
+
+
+def test_seam_160_settings_chip_inputs_send_the_string_the_server_splits():
+    """160) [설정]의 칩(태그) 입력은 서버가 받는 꼴 그대로 보낸다 — 양쪽 끝: 화면의 칩 입력기
+    (sections/sm-profile.html 의 스크립트, [키워드 관리]의 sm-seeds.html 도 같은 한 벌)와 서버의
+    db.profile_save/PROFILE_FIELDS.
+
+    서버는 `str(profile[필드])` 를 쉼표·줄바꿈으로 가른다. 칩 배열을 그대로(JSON 리스트로) 보내면
+    str(list) 가 되어 ["a","b"] 글자가 칩이 된다 — 화면이 멀쩡하고 서버가 멀쩡해도 값이 망가진다.
+    그래서 (1) 입력기의 칸 이름표(KEY)가 PROFILE_FIELDS 안에 있고, (2) 칸마다 입력·상태 자리
+    (id=pf-<칸>, pf-<칸>-m)가 마크업에 있고, (3) 보낼 때 `.join(", ")` 로 잇는다.
+    설정의 탭 이름표(data-tab)는 탭 줄(#st-tabs)이 선언한 것만 쓴다 — 없는 탭의 카드는 영영 안 보인다.
+    """
+    import db
+    sec_dir = ROOT / "skills" / "capture" / "templates" / "sections"
+    prof = (sec_dir / "sm-profile.html").read_text("utf-8")
+    key = dict(re.findall(r'(\w+): "(\w+)"', prof.split("var KEY = {", 1)[1].split("};", 1)[0]))
+    assert key, "sm-profile.html 에서 칩 입력기의 KEY 표를 못 읽었다"
+    for k, field in key.items():
+        assert field in db.PROFILE_FIELDS, f"칩 입력기 칸 {k} 의 서버 필드 {field} 가 db.PROFILE_FIELDS 에 없다"
+    assert '.join(", ")' in prof and "body.profile[KEY[k]] = (M[k] || []).join" in prof,         "칩 입력기가 칩 배열을 쉼표 문자열로 안 잇고 보낸다 — 서버가 str(list) 로 읽는다"
+    used = set()
+    for f in sec_dir.glob("*.html"):
+        html_ = f.read_text("utf-8")
+        for m in re.finditer(r'class="tgbox" data-tg="(\w+)"', html_):
+            k = m.group(1)
+            used.add(k)
+            assert k in key, f"{f.name} 의 칩 칸 {k} 가 입력기 KEY 표에 없다 — 저장이 안 간다"
+            assert f'id="pf-{k}"' in html_ and f'id="pf-{k}-m"' in html_,                 f"{f.name} 의 칩 칸 {k} 에 입력(pf-{k}) 또는 상태(pf-{k}-m) 자리가 없다"
+    assert {"alias", "comp", "tools", "seeds"} <= used, f"칩 입력으로 안 바뀐 프로필 칸이 있다: {used}"
+    view = (ROOT / "skills" / "capture" / "templates" / "views" / "settings.html").read_text("utf-8")
+    tabs = set(re.findall(r'<button[^>]*data-st-tab="(\w+)"', view))
+    assert tabs == {"measure", "link", "pc", "acct"}, f"설정 탭 줄이 바뀌었다: {tabs}"
+    for f in list(sec_dir.glob("*.html")) + [ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"]:
+        for t in re.findall(r'data-tab="(\w+)"', f.read_text("utf-8")):
+            assert t in tabs, f"{f.name} 의 카드가 없는 탭({t})을 가리킨다 — 그 카드는 영영 안 보인다"
 
 
 def inspect_src(fn) -> str:

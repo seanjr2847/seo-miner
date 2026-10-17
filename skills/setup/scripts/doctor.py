@@ -614,7 +614,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         who = ", ".join(brain["no_prompts"])
         later.append(f"AI 인용 확인에 쓸 질문이 없는 사이트: {who}. 질문이 없으면 그 "
                      "단계가 바로 멈춥니다. 다른 기능은 지금도 다 됩니다. "
-                     + ("[AI 인용·요약] 화면에서 질문을 추가하면 켜집니다." if hosted else
+                     + ("[AI 인용] 화면에서 질문을 추가하면 켜집니다." if hosted else
                         "Claude 에게 질문 만들기를 부탁하시면 사이트에 맞는 질문 "
                         "10~30개를 만들어 드립니다. 1분, 무료입니다. 명령은 [진행 안내] "
                         "화면의 AI 단계에 있습니다."))

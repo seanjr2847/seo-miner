@@ -56,7 +56,7 @@ TPL = Path(__file__).parent.parent / "templates"
 # 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
 # [키워드 관리](kwmanage)는 [순위 상승 기회] 바로 뒤다 — 2026-10-16 그 화면 맨 아래의 추적 편집기를
 # 떼어 세웠다(views/kwmanage.html 머리말). 같은 묶음(검색 성과) 안이라 메뉴가 안 흩어진다.
-VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "ai", "site",
+VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "aicite", "aisum", "site",
               "competitors", "backlinks", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
@@ -1822,7 +1822,7 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "",
                                               vitals=(vitals or {}).get(a["url"]))
             # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
-            # 진단표가 부푼다. 따로 싣고 [AI 인용·요약] 화면만 진단표에 넘긴다. 챗봇 기준이다:
+            # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.
             a["extract_advice"] = scoring.extract_advice(a, "ai_citation_gap")
             page_audits[a["url"]] = a
@@ -2714,7 +2714,9 @@ LOCAL_ONLY_GET = {path for method, path in LOCAL_ROUTES if method == "GET"}
 LOCAL_ONLY_POST = {path for method, path in LOCAL_ROUTES if method == "POST"}
 LOCAL_ONLY_PATHS = LOCAL_ONLY_GET | LOCAL_ONLY_POST
 # 로컬 Handler 가 받는 API 경로 전부(공통 표 + 로컬 전용 표).
-LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS
+# 표에 없고 Handler.do_GET 이 직접 답하는 로컬 전용 경로 — 화면이 부르므로 이름은 올린다.
+HANDLER_PATHS = {"/api/token"}
+LOCAL_PATHS = {path for _, path in ROUTES} | LOCAL_ONLY_PATHS | HANDLER_PATHS
 
 # 호스팅 사이트라도 이 PC 가 답하는 경로. /api/doctor 는 [설정] 화면이 보는 진단 —
 # "이 PC 에 무엇이 깔려 있나"를 묻는 것이라 서버에 물으면 남의 컴퓨터를 진단한다.
@@ -2746,10 +2748,39 @@ class Handler(BaseHTTPRequestHandler):
         except (Exception, SystemExit) as e:   # remote 는 거절을 SystemExit 로 낸다
             return self._json({"error": str(e)}, 502)
 
+    def _token(self) -> None:
+        """GET /api/token — 토큰을 못 얻은 창(옛 ?t=·?t= 없는 주소)이 스스로 복구하는 길.
+
+        다른 웹사이트에는 주지 않는다. 겹겹이: (1) Host 가 이 서버의 loopback 주소여야 한다 —
+        DNS rebinding(evil.com 이 127.0.0.1 로 풀리는 경우)은 Host 가 evil.com 이라 걸린다.
+        (2) Origin 이 있으면 Host 와 같아야 하고, Sec-Fetch-Site 가 있으면 same-origin/none 이어야
+        한다. (3) 사용자 지정 머리글(X-Requested-With)을 요구한다 — 다른 출처가 그걸 달면
+        브라우저가 사전 요청(OPTIONS)을 먼저 보내는데 이 서버는 OPTIONS 에 답하지 않고
+        CORS 머리글도 안 준다. 응답도 CORS 허용이 없어 다른 출처 스크립트는 못 읽는다."""
+        port = self.server.server_address[1]
+        host = (self.headers.get("Host") or "").lower()
+        origin = self.headers.get("Origin")
+        site = self.headers.get("Sec-Fetch-Site")
+        ok = (host in (f"127.0.0.1:{port}", f"localhost:{port}")
+              and (origin is None or origin.lower() == f"http://{host}")
+              and (site is None or site in ("same-origin", "none"))
+              and self.headers.get("X-Requested-With") == "seo-miner")
+        if not ok:
+            return self._json({"error": "forbidden"}, 403)
+        body = json.dumps({"token": TOKEN}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802 (http.server 규약)
         u = urlparse(self.path)
         if u.path == "/":
             return self._send(200, HTML, "text/html; charset=utf-8")
+        if u.path == "/api/token":
+            return self._token()
         query = {k: v[0] for k, v in parse_qs(u.query).items()}
         project = query.get("project", "")
         local = LOCAL_ROUTES.get(("GET", u.path))

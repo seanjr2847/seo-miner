@@ -1644,7 +1644,7 @@ def test_group_status_line_is_not_failure_colour():
 
 
 def test_aio_detail_reads_when_cited_domains_are_missing():
-    """[AI 인용·요약]의 구글 AI 요약 줄을 펼쳤을 때 — 인용 도메인이 비면(요약은 떴는데 못 읽었다,
+    """[AI 요약]의 빠진 검색어 줄을 펼쳤을 때 — 인용 도메인이 비면(요약은 떴는데 못 읽었다,
     db.write_rank_snapshot 의 불변식) "요약이 대신 인용한 곳 인용 도메인을 못 읽었습니다"처럼
     제목에 문장이 이어 붙으면 안 된다. 함수를 node 로 그대로 돌려 본다."""
     import shutil
@@ -1653,16 +1653,16 @@ def test_aio_detail_reads_when_cited_domains_are_missing():
     if not node:
         print("  (node 가 없어 건너뜀)")
         return
-    src = (Path(dashboard.__file__).parent.parent / "templates" / "views" / "ai.html"
+    src = (Path(dashboard.__file__).parent.parent / "templates" / "views" / "aisum.html"
            ).read_text("utf-8")
-    m = re.search(r"^function AI_aioDetail\(r\) \{.*?^\}", src, re.S | re.M)
-    assert m, "AI_aioDetail 을 못 찾았다 — 이 검사가 아무것도 안 본다"
-    js = ("const esc = s => String(s); const AI_aioOpp = () => null; let AI_AIO_PLAY = {};"
+    m = re.search(r"^function AS_detail\(r\) \{.*?^\}", src, re.S | re.M)
+    assert m, "AS_detail 을 못 찾았다 — 이 검사가 아무것도 안 본다"
+    js = ("const esc = s => String(s); const AS_opp = () => null; let AS_PLAY = {};"
           "const playList = () => ''; const oppPanel = () => ''; const oppActs = () => '';\n"
           + m.group(0) + "\nconsole.log(JSON.stringify(["
-          "AI_aioDetail({pos: 12, aio_domains: []}),"
-          "AI_aioDetail({pos: null, aio_domains: null}),"
-          "AI_aioDetail({pos: 3, aio_domains: ['a.com', 'b.com']})]));")
+          "AS_detail({pos: 12, aio_domains: []}),"
+          "AS_detail({pos: null, aio_domains: null}),"
+          "AS_detail({pos: 3, aio_domains: ['a.com', 'b.com']})]));")
     out = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     empty, none, two = json.loads(out.stdout)
@@ -1852,6 +1852,46 @@ def test_dashboard_token_survives_restart():
     first, second = run(), run()
     assert first and first == second, f"다시 띄웠더니 토큰이 바뀌었다: {first!r} → {second!r}"
     assert (_P(home) / "dashboard.token").read_text("utf-8").strip() == first
+
+
+def test_stale_tab_can_fetch_a_fresh_token_but_other_sites_cannot():
+    """토큰을 못 얻은 창(옛 ?t= 탭 복원·?t= 없는 북마크·다른 CAPTURE_HOME 의 대시보드가 쓰던
+    같은 포트)이 403 "이 창은 만료됐습니다"에서 영영 못 빠져나왔다 — 토큰이 주소의 ?t= 한
+    군데로만 들어왔기 때문이다. 같은 출처의 GET /api/token 이 현재 토큰을 주고, 다른
+    웹사이트(다른 Origin·Sec-Fetch-Site·DNS rebinding 의 낯선 Host·사전 요청 없는 단순 요청)에는
+    주지 않는다. 쓰기 자체는 여전히 토큰이 있어야 받는다."""
+    import http.client
+    import json as _json
+    srv = _serve()
+    port = srv.server_address[1]
+    own = f"127.0.0.1:{port}"
+
+    def get(headers):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        c.putrequest("GET", "/api/token", skip_host=True)
+        for k, v in headers.items():
+            c.putheader(k, v)
+        c.endheaders()
+        r = c.getresponse()
+        body = r.read()
+        return r.status, r.getheader("Cache-Control"), body
+    try:
+        ok = {"Host": own, "X-Requested-With": "seo-miner"}
+        code, cache, body = get(ok)
+        assert code == 200 and _json.loads(body) == {"token": dashboard.TOKEN}, (code, body)
+        assert cache and "no-store" in cache, "토큰 응답이 캐시된다"
+        assert get({**ok, "Origin": f"http://{own}", "Sec-Fetch-Site": "same-origin"})[0] == 200
+        assert get({**ok, "Host": f"localhost:{port}"})[0] == 200
+        for bad in ({**ok, "Host": f"evil.example:{port}"},                    # DNS rebinding
+                    {**ok, "Origin": "https://evil.example"},                   # 다른 출처
+                    {**ok, "Sec-Fetch-Site": "cross-site"},
+                    {**ok, "Sec-Fetch-Site": "same-site"},
+                    {"Host": own}):                                             # 사전 요청이 필요한 머리글 없음
+            code, _, body = get(bad)
+            assert code == 403 and dashboard.TOKEN not in body.decode(), (bad, code, body)
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def test_rank_axis_reads_only_tracked_keywords_in_their_locale():

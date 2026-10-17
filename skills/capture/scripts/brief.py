@@ -3034,9 +3034,9 @@ def _ev_ai_bot(o, ctx, pages):
 _AI_VISIT_KINDS = ("ai_citation_gap", "aio_exposure")
 assert set(_AI_VISIT_KINDS) <= set(scoring.ALL_KINDS)
 # 요청문이 "어디를 보라"고 가리키는 화면·섹션 이름. 정본은 뷰 쪽이다(view-def 의 title,
-# ai.html #ai-visits 의 h2) — 여기는 가리키기만 하고, test_seams 가 둘을 대조한다.
+# aicite.html #ai-visits 의 h2) — 여기는 가리키기만 하고, test_seams 가 둘을 대조한다.
 # 화면 이름을 바꾸고 이쪽을 안 고치면 요청문이 없는 화면을 보라고 한다.
-SCREEN_TITLES = {"ai": "AI 인용·요약", "rank": "순위 추적"}
+SCREEN_TITLES = {"aicite": "AI 인용", "rank": "순위 추적"}
 AI_VISITS_SECTION = ("ai-visits", "AI에서 온 방문")
 
 
@@ -3099,7 +3099,7 @@ def _ai_visits(o: dict, ctx: dict, url: str | None) -> tuple[list[str], list[str
                  "코멘트나 우리 링크가 붙는지 봅니다. 플랫폼을 거쳐 온 방문은 GA4 에서 그 플랫폼 유입으로 잡혀 "
                  f"'{AI_VISITS_SECTION[1]}'에는 안 늘 수 있습니다."]
     elif meta:
-        after = [f"다음 GA4 수집에서 [{SCREEN_TITLES['ai']}] 화면의 '{AI_VISITS_SECTION[1]}'에 "
+        after = [f"다음 GA4 수집에서 [{SCREEN_TITLES['aicite']}] 화면의 '{AI_VISITS_SECTION[1]}'에 "
                  f"{where}의 세션이 느는지 봅니다. 인용이 붙어도 이 수가 그대로면 답변이 "
                  "링크를 누를 이유를 주지 못한 것입니다."]
     else:

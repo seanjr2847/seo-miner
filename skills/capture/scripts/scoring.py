@@ -4202,7 +4202,7 @@ def _ai_run_state(row) -> str:
 
 def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
                     now: str | None = None) -> dict:
-    """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용·요약] 화면이 같이 쓴다.
+    """켜 둔 질문마다 **끝난 회차의 가장 최근 측정** — ai_gaps 와 [AI 인용] 화면이 같이 쓴다.
 
     반환:
       rows      [{id, prompt, category, gen_version, aim, locale, run_id, measured_at, state}]
@@ -4258,7 +4258,7 @@ def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
 
 
 def ai_health(conn: sqlite3.Connection, project_id: int) -> dict:
-    """[AI 인용·요약] 화면의 "측정 안 됨·오래됨·구버전" 한 벌 — 페이로드용으로 접은 꼴.
+    """[AI 인용] 화면의 "측정 안 됨·오래됨·구버전" 한 벌 — 페이로드용으로 접은 꼴.
 
     질문 문장은 앞 몇 개만 싣는다(화면이 "예:"로 보여 줄 만큼). 개수는 전부 센다.
     """
@@ -5363,9 +5363,9 @@ _KIND_SPECS = {
                          "별도 글 제안 — 표에 한 줄로만 남깁니다. 이 답에서 설계하지 않습니다"]))),
     # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
-    #    [AI 인용·요약]·[경쟁 검색어]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
+    #    [AI 인용]·[경쟁 검색어]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
     "ai_citation_gap": dict(
-        see=("ai", "ai-miss-sec"),
+        see=("aicite", "ai-miss-sec"),
         # "인용 없음"이었다 — 판정이 비율(ai_is_gap)이 된 뒤로 1/6 질문도 여기 선다.
         label="챗봇 인용 드묾", defensive=False,
         detect=lambda ctx: ai_gaps(ctx["conn"], ctx["pid"]),
@@ -5430,7 +5430,7 @@ _KIND_SPECS = {
                          "기사가 링크할 만한 우리 근거 페이지(없으면 먼저 만들 것)",
                          "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
-        see=("ai", "ai-aio"),
+        see=("aisum", "aisum-gap"),
         label="구글 AI 요약 빠짐", defensive=False,
         detect=lambda ctx: aio_gaps(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": 0, "volume": r["volume"] or 0,

@@ -65,7 +65,7 @@
   .sm-note{margin:var(--sp-3)}
   #sm-aiq .list.bare{background:none;box-shadow:none}
   .list.bare > .sm-note{margin:0}
-  #view-ai:has(.next [data-sm-act="make-prompts"]) #sm-aiq .gen{display:none}
+  #view-aicite:has(.next [data-sm-act="make-prompts"]) #sm-aiq .gen{display:none}
   /* 불러오는 동안 세우는 스켈레톤 — 셸의 .skel 을 그대로 쓴다. */
   .sm-note > .skel{margin:10px 0}
 
@@ -1209,7 +1209,7 @@
       return;
     }
     // 명령 한 줄이 곧 복사 대상이다 — 셸의 copyCmd 가 textContent 를 그대로 집는다.
-    // button 대신 role="button" div 를 쓴다 — 뷰들과 같은 관례다(ai.html 의
+    // button 대신 role="button" div 를 쓴다 — 뷰들과 같은 관례다(aicite.html 의
     // role="button" 복사칩). 이 칩은 안내의 SM.host.stepChip 이 그리는 게 아니라
     // 이 파일이 직접 심으므로 button.cmd 와 섞일 이유가 원래 없다.
     // 자리표까지 라틴이다 — 명령 칩은 통째로 등폭이라 한글을 넣으면 그 낱자만
@@ -1486,7 +1486,7 @@
     step("성과", perfLoad);
     step("AI 질문", aiqLoad);
     // render() 가 방금 새로 그린 자리에 이벤트를 잇는다 — [질문 만들기]는 렌더
-    // 함수(ai.html)가 직접 심는 정적 마크업이라 SM.host 훅이 없다.
+    // 함수(aicite.html)가 직접 심는 정적 마크업이라 SM.host 훅이 없다.
     step("빈 상태 버튼", wireActs);
   });
 
@@ -1887,7 +1887,7 @@
   // 뒤에 이 파일이 DOM 을 되짚어 고치지 않는다. 그래서 여기 있던 wire()·wireSteps()·
   // MutationObserver 는 전부 없앴다: 값이 바뀌면(설정 저장 등) repaint() 가 같은
   // 페이로드로 render() 를 다시 부르고, 그 안에서 이 훅들이 다시 불린다.
-  // [질문 만들기](data-sm-act)만 예외다 — ai.html 이 직접 심는 정적 마크업이라
+  // [질문 만들기](data-sm-act)만 예외다 — aicite.html 이 직접 심는 정적 마크업이라
   // "sm:site" 핸들러에서 렌더 뒤에 한 번씩 잇는다(위).
   //
   // 설정 화면의 다음 행동 띠만 렌더 뒤에 한 번 더 손댄다 — 그 문장은 페이로드가

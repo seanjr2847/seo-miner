@@ -1605,7 +1605,8 @@ const NAV_ICON = {
   keywords: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/></svg>`,
   kwmanage: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h3M8.5 4h5M2.5 8h7M12.5 8h1M2.5 12h1.5M7 12h6.5"/><circle cx="7" cy="4" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>`,
   rank: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5 6 7l3 3 5-5.5"/><path d="M10.5 4.5H14V8"/></svg>`,
-  ai: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 2.2 8.3 5.4 11.5 6.7 8.3 8 7 11.2 5.7 8 2.5 6.7 5.7 5.4z"/><path d="M12 10l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>`,
+  aicite: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 2.2 8.3 5.4 11.5 6.7 8.3 8 7 11.2 5.7 8 2.5 6.7 5.7 5.4z"/><path d="M12 10l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>`,
+  aisum: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M4.8 6h6.4M4.8 8.5h6.4M4.8 11h3.4"/></svg>`,
   site: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 6.5V13a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 13V3A1.5 1.5 0 0 1 5 1.5h4z"/><path d="M9 1.5v4a1 1 0 0 0 1 1h2.5"/><path d="M6 10.2 7.4 11.6 10 9"/></svg>`,
   backlinks: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.4 6.6a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1"/></svg>`,
   competitors: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h8"/><path d="M8 2.5 10.5 5 8 7.5"/><path d="M13.5 11h-8"/><path d="M8 8.5 5.5 11 8 13.5"/></svg>`,
@@ -1636,6 +1637,9 @@ function lastView() { try { return sessionStorage.getItem("sm:lastView") || ""; 
 const SM = {
   views: (window.__VIEWS__ || []).map(v => ({
     id: v.id, title: v.title, sub: v.sub || "", group: v.group || "",
+    // aliases: 화면을 쪼개거나 이름을 바꾸기 전의 옛 id. 저장된 sessionStorage 값이나 옛 링크가 이 이름으로
+    // 와도 새 화면으로 닿는다(at() 이 풀어 준다) — 화면 id 를 바꿀 때 북마크·복원이 끊기지 않게.
+    aliases: (v.aliases || []).slice(),
     sections: (v.sections || []).slice(), stages: (v.stages || []).slice(),
     // head: 화면 제목 옆에 세울 칩. 안 쓰면 stages 그대로(예전 그대로 전부 세운다) —
     // stages 는 seam #9(이 화면에서 부를 수 있는 /capture)의 정본이라 그대로 두고,
@@ -1656,7 +1660,9 @@ const SM = {
     this.navDraw();
   },
 
-  at(id) { return this.views.findIndex(v => v.id === id); },
+  at(id) { return this.views.findIndex(v => v.id === id || v.aliases.includes(id)); },
+  // 옛 id 를 새 id 로. 없는 화면이면 받은 그대로 돌려준다(없다는 말은 show 가 한다).
+  canon(id) { const i = this.at(id); return i < 0 ? id : this.views[i].id; },
 
   // 이 배포에 없는 화면을 뺀다 — 호스팅의 [설정], 박제본의 [설정]·[진행 안내].
   drop(id) {
@@ -1680,6 +1686,7 @@ const SM = {
   },
 
   show(id) {
+    id = this.canon(id);
     // 이 배포에 없는 화면으로 보내면 여태 조용히 아무 일도 안 일어났다 — 누른
     // 사람에게는 버튼이 고장 난 것으로 읽힌다. 박제본에서 [설정]·[진행 안내] 로 가는
     // 링크가 정확히 그랬다. 왜 안 가는지 말한다. 첫 적재(cur 가 아직 빈 때)는
@@ -1822,7 +1829,7 @@ const SM = {
     // 보내는 것은 land("triage",1) 이 데이터가 온 뒤에 한다(checkTriageLand).
     if (!this.cur && this.views.length) {
       const back = lastView();
-      if (this.at(back) >= 0) { this.cur = back; this.restored = true; }
+      if (this.at(back) >= 0) { this.cur = this.canon(back); this.restored = true; }
       else this.cur = this.at("overview") >= 0 ? "overview" : this.views[0].id;
     }
     for (const v of this.views) {
@@ -2434,7 +2441,7 @@ const pageTable = rows => !rows || !rows.length ? "" :
    </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
-// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용·요약]의 추출성, audit.extract_advice).
+// extra — 부르는 화면만 아는 맥락의 판정(예: [AI 인용]의 추출성, audit.extract_advice).
 // 여기서 고르지 않는다: 셸은 어느 화면에서 불렸는지 모른다.
 const pageFix = (audit, url, extra) => {
   if (!audit)
@@ -3632,7 +3639,7 @@ const table = (heads, rows, empty, cls) => {
     const tb = document.createElement("template");
     tb.innerHTML = `<table><tbody>${body}</tbody></table>`;
     const tbody = tb.content.querySelector("tbody");
-    // 열 번호는 칸 수가 아니라 colspan 을 더해 센다 — 칸을 합친 줄([AI 인용·요약] 시장별의
+    // 열 번호는 칸 수가 아니라 colspan 을 더해 센다 — 칸을 합친 줄([AI 인용] 시장별의
     // "질문이 없어…" 줄)에서 뒤 칸이 한 열씩 당겨져 [질문 만들기] 칸이 "언급률"로 붙었다.
     [...tbody.rows].filter(tr => !tr.classList.contains("exp")).forEach(tr => {
       let col = 0;
@@ -3693,11 +3700,26 @@ document.addEventListener("click", e => {
 });
 
 // 브라우저는 아무 사이트에서나 127.0.0.1로 POST를 보낼 수 있어서 서버가 1회용 토큰을
-// 요구한다 — 대시보드를 띄울 때 받은 주소(?t=…)에 들어 있다.
-const TOKEN = new URLSearchParams(location.search).get("t") || "";
+// 요구한다 — 대시보드를 띄울 때 받은 주소(?t=…)에 들어 있다. 그 주소가 낡았거나(탭 복원·
+// 북마크·?t= 없는 주소) 서버가 다른 토큰을 쓰면 403 이 오는데, 그때 같은 출처의
+// GET /api/token 으로 현재 토큰을 받아 한 번만 다시 보낸다(서버가 Host·Origin 을 가려 준다).
+// 호스팅에는 그 경로가 없고(404) 토큰도 안 보므로 재시도하지 않는다.
+let TOKEN = new URLSearchParams(location.search).get("t") || "";
+async function refreshToken() {
+  try {
+    const r = await fetch("/api/token", {headers: {"X-Requested-With": "seo-miner"}});
+    if (!r.ok) return false;
+    const t = (await r.json()).token || "";
+    if (!t || t === TOKEN) return false;
+    TOKEN = t;
+    return true;
+  } catch (e) { return false; }
+}
 async function post(path, body) {
-  const res = await fetch(path, {method:"POST", body: JSON.stringify(body),
+  const send = () => fetch(path, {method:"POST", body: JSON.stringify(body),
     headers:{"Content-Type":"application/json", "X-Token": TOKEN}});
+  let res = await send();
+  if (res.status === 403 && await refreshToken()) res = await send();
   return [res.ok, await res.json()];
 }
 

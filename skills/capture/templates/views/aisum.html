@@ -1,0 +1,304 @@
+<!-- [AI 요약] — 구글 검색 결과 맨 위에 뜨는 AI 요약(AI Overview)에 우리 링크가 실리는가.
+
+     2026-10-17 [AI 인용·요약] 한 화면을 둘로 갈랐다. 이 화면이 답하는 질문은 하나다:
+     "요약이 맨 위를 차지한 검색어에서 우리 링크는 실렸나, 빠졌다면 누가 그 자리를 가져갔나."
+     [AI 인용](aicite.html)은 챗봇(ChatGPT·Perplexity·Gemini)에 문장으로 물어 받은 답변이 재료(AI 인용 확인
+     단계)이고, 이 화면은 검색어 하나를 구글에 조회한 결과가 재료다(순위 확인 단계가 같이 걷어 옴). 재료도
+     돌리는 단계도 다르니 한 화면에 섞으면 "AI 인용 다시 확인"을 눌러도 이 칸이 안 바뀌는 어긋남이 생겼다.
+     두 화면은 메뉴의 [AI 노출] 묶음(run_all.GROUPS)에 나란히 선다 — 묶음을 다시 재면 ai·rank 가 같이 돈다.
+
+     위에서 아래로: 띠(셸) = 한 줄 결론 + 행동 → 실린 비율과 숫자 → 누가 가져갔나 → 빠진 검색어 표(할 일) → 실린 검색어(근거).
+     "빠짐"은 서버가 고른 한 벌(d.aio_gap)이다 — 화면이 다시 판정하지 않는다. -->
+<script type="application/json" class="view-def">
+{"id": "aisum", "group": "ai", "title": "AI 요약",
+ "sub": "구글 검색 맨 위의 AI 요약에 우리 링크가 실리는지, 빠졌다면 누가 그 자리를 가져갔는지 확인합니다.",
+ "sections": ["aisum"], "stages": ["rank"]}
+</script>
+
+<style>
+/* 격자·카드 머리(.ach)·.ainote 는 [AI 인용](aicite.html 의 :is 덩어리)과 같은 것을 쓴다. 여기는 이 화면 몫만. */
+#view-aisum .assum { display:grid; gap:16px; }
+#view-aisum .askpi .l { font:var(--micro); color:var(--sub); }
+#view-aisum .askpi .v { display:flex; align-items:baseline; gap:4px 10px; flex-wrap:wrap; margin-top:4px;
+  font:650 var(--fs-5)/1.15 var(--sans); letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+#view-aisum .askpi .b { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin-top:2px;
+  font-variant-numeric:tabular-nums; }
+#view-aisum .astiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+@media (max-width:560px) { #view-aisum .astiles { grid-template-columns:1fr; } }
+#view-aisum .astile { background:var(--sunk); border-radius:var(--r-in); padding:12px 14px; min-width:0; }
+#view-aisum .astile .l { font:var(--micro); color:var(--sub); }
+#view-aisum .astile .v { font:650 var(--fs-4)/1.2 var(--sans); font-variant-numeric:tabular-nums; margin-top:4px; }
+#view-aisum .astile .v small { font:500 var(--fs-2)/1 var(--sans); color:var(--sub); margin-left:4px; }
+#view-aisum .astile.warn .v { color:var(--warn); }
+#view-aisum .astile .b { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); margin-top:2px; }
+#view-aisum .aimeter { display:flex; align-items:center; gap:12px; margin:0; }
+#view-aisum .aimeter .tr { flex:1; height:8px; border-radius:var(--r-pill); background:var(--sunk); overflow:hidden; }
+#view-aisum .aimeter .tr i { display:block; height:100%; background:var(--accent); border-radius:var(--r-pill); }
+#view-aisum .aimeter b { font:650 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 누가 가져갔나 — 도메인 · 막대 · 건수. 우리가 빠진 검색어에서 요약이 출처로 실은 곳이라 막대는 warn. */
+#view-aisum .aswho .r { display:grid; grid-template-columns:minmax(120px,1.5fr) minmax(48px,1fr) 56px; gap:0 12px;
+  align-items:center; padding:8px 12px; border-radius:var(--r-in); }
+#view-aisum .aswho .r:hover { background:var(--sunk); }
+#view-aisum .aswho .dm { font:400 var(--fs-1)/1.4 var(--mono); color:var(--ink); overflow-wrap:anywhere; min-width:0; }
+#view-aisum .aswho .bar { height:8px; background:var(--sunk); border-radius:var(--r-pill); overflow:hidden; }
+#view-aisum .aswho .r:hover .bar { background:var(--card); }
+#view-aisum .aswho .bar i { display:block; height:100%; border-radius:var(--r-pill); background:var(--warn); }
+#view-aisum .aswho .n { font:600 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; text-align:right; color:var(--sub); }
+@media (max-width:560px) {
+  #view-aisum .aswho .r { grid-template-columns:1fr 56px; row-gap:6px; padding:10px 8px; }
+  #view-aisum .aswho .bar { grid-column:1 / 2; grid-row:2; }
+  #view-aisum .aswho .n { grid-column:2; grid-row:1 / 3; }
+}
+/* 빠진 검색어 표 */
+#aisum-gap tbody tr[role="button"] { cursor:pointer; }
+#aisum-gap tbody tr[role="button"]:hover { background:var(--sunk); }
+#aisum-gap tbody tr[role="button"]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+#view-aisum .kwq { white-space:nowrap; }
+#aisum-gap tbody tr .kwq::before { content:"▸ "; color:var(--mute); }
+#aisum-gap tbody tr:hover .kwq::before { color:var(--accent); }
+#view-aisum .dmi { white-space:nowrap; }
+#view-aisum .dmi:not(:last-child)::after { content:","; }
+#view-aisum td .dm { font:400 var(--fs-1)/1.5 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
+@media (max-width:560px) { #view-aisum .kwq { white-space:normal; } }
+#view-aisum td.num .muted { font-family:var(--sans); }
+#aisum-gap .ainote { margin:0 0 12px; }
+#aisum-gap .tools { margin-bottom:12px; }
+/* 실린 검색어 — 근거라 접어 둔다. 할 일은 위 표다. */
+#view-aisum .asdet { margin:0; padding:0 20px; border-radius:var(--r-in); background:var(--sunk); }
+#view-aisum .asdet summary { display:flex; align-items:center; min-height:44px; font:500 var(--fs-2)/1.5 var(--sans);
+  color:var(--sub); cursor:pointer; }
+#view-aisum .asdet summary:hover { color:var(--accent); }
+#view-aisum .asdet .aitb { padding-bottom:16px; }
+#aisum-empty:empty { display:none; }
+</style>
+
+<!-- 이 화면 전체의 자리표 — 안의 카드가 화면 상자의 12열 격자에 곧바로 선다(display:contents). -->
+<div id="aisum">
+<div id="aisum-empty"></div>
+
+<section id="aisum-sum" class="card aic as5" hidden>
+  <div class="ach">
+    <div><h2>요약에 실린 비율</h2><p class="sub" id="aisum-sum-sub"></p></div>
+  </div>
+  <div class="assum" id="aisum-sum-body"></div>
+</section>
+
+<section id="aisum-who" class="card aic as7" hidden>
+  <div class="ach">
+    <div><h2>우리 대신 요약에 실린 곳</h2><p class="sub" id="aisum-who-sub"></p></div>
+  </div>
+  <div id="aisum-who-body"></div>
+</section>
+
+<!-- 요약이 떴는데 내 링크만 빠진 검색어가 aio_exposure 기회다(scoring). 재료는 순위 조회(rank)다. -->
+<section id="aisum-gap" class="card aic as12" hidden>
+  <div class="ach">
+    <div><h2>AI 요약에 빠진 검색어</h2><p class="sub" id="aisum-gap-sub"></p></div>
+  </div>
+  <div id="aisum-gap-body"></div>
+</section>
+
+<section id="aisum-won" class="card aic as12" hidden>
+  <div class="ach">
+    <div><h2>AI 요약에 실린 검색어</h2><p class="sub" id="aisum-won-sub"></p></div>
+  </div>
+  <div id="aisum-won-body"></div>
+</section>
+</div>
+
+<script>
+"use strict";
+/* ── 이 화면이 답하는 것: "구글 AI 요약에 우리 링크가 실리나, 빠졌다면 누가 가져갔나".
+      숫자는 순위 조회 행 전부(d.rank_by_kw — 화면용 d.ranks 는 30개로 잘려 있다)에서 센다.
+      빠진 검색어 목록은 서버가 고른 한 벌(d.aio_gap)이고 행은 d.aio_gap_ranks 다 — 여기서 "빠짐"을
+      다시 판정하지 않는다. 펼침은 그 검색어의 기회가 있으면 셸의 oppPanel(기회 한 벌), 없으면 서버
+      처방(d.aio_play — scoring 의 aio_exposure 처방)을 그린다. 옛 박제본(rank_by_kw 가 없던 때)은
+      d.ranks 로 물러선다. ── */
+const AS_RATE = (n, t) => t ? Math.round(n / t * 1000) / 10 : 0;
+const AS_act = (stage, primary = true) =>
+  window.act(stage, window.stageRun ? window.stageRun(stage) : "", primary);
+let AS_ROWS = [], AS_PLAY = {};
+const AS_opp = k => (window.oppsOf ? oppsOf(k) : []).find(o => o.kind === "aio_exposure")
+  || (window.oppOf ? oppOf(k) : null);
+function AS_detail(r) {
+  // 인용 도메인이 비었으면(요약은 떴는데 인용을 못 읽었다) 제목 없이 그 사실만 한 마디로
+  // 선다 — "요약이 대신 인용한 곳 인용 도메인을 못 읽었습니다"처럼 제목에 문장을 잇지 않는다.
+  const cites = r.aio_domains && r.aio_domains.length
+    ? `요약이 대신 인용한 곳 <span class="dm">${r.aio_domains.map(esc).join(", ")}</span>`
+    : "요약이 인용한 곳은 못 읽었습니다";
+  const line = `<p class="detn">${r.pos != null ? `직접 확인한 순위 <b>${r.pos}위</b>`
+    : "이번 조회에서 순위에 <b>안 잡혔습니다</b>"} · ${cites}</p>`;
+  const o = AS_opp(r.keyword);
+  const ap = AS_PLAY[r.aio_band] || {};
+  return `<div class="det">${line}</div>` + (o ? oppPanel(o, oppActs(o))
+    : `<div class="det">${playList(ap.what || "", ap.acts || [])}</div>`);
+}
+function AS_toggle(tr) {
+  const r = AS_ROWS[+tr.dataset.i];
+  if (!r) return;
+  SM.drawer.open({title: r.keyword, sub: "구글 AI 요약", bodyHtml: AS_detail(r), from: tr});
+}
+function AS_key(e, tr) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  AS_toggle(tr);
+}
+const AS_dom = x => String(x || "").toLowerCase().replace(/^www\./, "");
+
+/* 한 줄 결론 + 행동 — 띠와 버튼은 셸이 갖는다(nextStep·act). 상태는 다섯이다: 순위를 안 쟀다 / 제공자가
+   요약을 안 준다 / 요약이 뜬 검색어가 없다 / 빠진 검색어가 있다 / 전부 실렸다. */
+function AS_nextStep(s) {
+  if (!window.nextStep || !window.act) return;
+  const put = (t, acts) => window.nextStep("aisum", `<p>${t}</p><div class="acts">${acts}</div>`);
+  const live = t => `<span class="live"> ${t}</span>`;
+  if (s.state === "none")
+    return put("<b>구글 AI 요약은 아직 모릅니다.</b>"
+      + live("순위를 한 번 확인하면 검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지가 여기 섭니다."),
+      AS_act("rank"));
+  if (s.state === "blind")
+    return put("<b>이번 순위 조회는 AI 요약을 재지 않았습니다.</b>"
+      + live("AI 요약을 주는 제공자로 다시 확인하면 채워집니다."), AS_act("rank"));
+  if (s.state === "quiet")
+    return put(`확인한 검색어 ${num(s.known)}개 어디에도 <b>AI 요약이 뜨지 않았습니다.</b>`
+      + live("순위가 바뀌면 요약도 달라질 수 있어 주기적으로 다시 봅니다."), AS_act("rank"));
+  if (s.gap)
+    return put(`AI 요약이 뜬 ${num(s.on)}개 중 <b>${num(s.gap)}개</b>에서 우리 링크가 빠졌습니다.`
+      + live("그 검색어를 열면 무엇을 고칠지 나옵니다."),
+      `<button class="go" onclick="AS_showGap()">빠진 검색어 보기</button>`);
+  return put(`AI 요약이 뜬 ${num(s.on)}개 <b>전부에 우리 링크가 실렸습니다.</b>`
+    + live("순위가 떨어지면 요약에서도 빠지기 쉬워 다음 확인 때 다시 봅니다."), AS_act("rank"));
+}
+
+/* 띠의 [빠진 검색어 보기] — 표로 내려가 첫 줄을 펴 준다(다른 화면의 [기회 열기]와 같은 동작). */
+function AS_showGap() {
+  const sec = $("aisum-gap");
+  if (!sec || sec.hidden) return;
+  sec.scrollIntoView({behavior: "smooth", block: "start"});
+  const tr = sec.querySelector("tbody tr[role=button]");
+  if (tr) AS_toggle(tr);
+}
+
+function AS_tile(l, v, unit, b, cls) {
+  return `<div class="astile${cls ? " " + cls : ""}"><div class="l">${esc(l)}</div>
+    <div class="v">${v}${unit ? `<small>${unit}</small>` : ""}</div><div class="b">${b}</div></div>`;
+}
+
+function AS_whoRows(rows) {
+  const tally = new Map();
+  for (const r of rows) for (const dm of new Set((r.aio_domains || []).map(AS_dom).filter(Boolean)))
+    tally.set(dm, (tally.get(dm) || 0) + 1);
+  return [...tally].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8);
+}
+
+/* 빠진 검색어 표 + 상태 거르개. 목록(AS_ROWS)은 서버가 고른 한 벌이고 거르개는 기회의 상태(셸의
+   oppStMatch)만 본다 — 기본값은 「남은 것」이라 [완료]·[제외]한 검색어는 「전체」에서만 보인다. 줄의 번호(data-i)는
+   거르기 전 목록(AS_ROWS)의 자리라 서랍이 거른 뒤에도 같은 줄을 연다. */
+let AS_OST = "";
+function AS_oppSt(v) { AS_OST = v; AS_paintGap(); }
+function AS_paintGap() {
+  const box = $("aisum-gap-body");
+  if (!box) return;
+  const shown = AS_ROWS.map((r, i) => [r, i]).filter(([r]) => window.oppStMatch(AS_opp(r.keyword), AS_OST));
+  const tools = `<div class="tools">${window.oppStSelect(AS_OST, "AS_oppSt",
+      v => AS_ROWS.filter(r => window.oppStMatch(AS_opp(r.keyword), v)).length)}
+    <span class="n">${num(shown.length)} / ${num(AS_ROWS.length)}개</span></div>`;
+  if (!shown.length) {
+    box.innerHTML = tools + (window.oppLeftDone(AS_OST, AS_ROWS, r => AS_opp(r.keyword))
+      ? window.oppLeftEmpty("검색어", AS_ROWS.length, "AS_oppSt('all')")
+      : `<div class="empty"><b>이 상태의 검색어가 없습니다</b></div>`);
+    return;
+  }
+  box.innerHTML = tools + `<p class="ainote">줄을 누르면 오른쪽에 할 일이 열립니다.</p>
+    <div class="aitb">${table(
+    ["검색어", ">순위(직접 확인)?같은 검색 결과 조회에서 우리 페이지가 있던 자리입니다. 구글 실적의 평균 순위와는 다른 숫자입니다",
+     "대신 인용된 곳?요약이 출처로 실은 도메인입니다",
+     ">점수?기회 점수입니다. 높을수록 먼저 손댈 자리입니다"],
+    shown.map(([r, i]) => {
+      const o = AS_opp(r.keyword);
+      return `<tr class="opp" tabindex="0" role="button" aria-haspopup="dialog" data-i="${i}"
+        onclick="AS_toggle(this)" onkeydown="AS_key(event,this)"
+        title="누르면 오른쪽에 이 검색어의 할 일이 열립니다">
+        <td class="kwcell"><span class="kwq">${esc(r.keyword)}</span>${oppWhy(o)}</td>
+        <td class="num">${r.pos != null ? r.pos
+          : `<span class="muted" title="직접 확인한 검색 결과에서 우리 페이지를 못 찾았습니다">순위 없음</span>`}</td>
+        <td><span class="dm">${(r.aio_domains || []).slice(0, 3).map(x => `<span class="dmi">${esc(x)}</span>`).join(" ") || "—"}</span></td>
+        <td class="num">${o ? oppScore(o) : `<span class="muted">—</span>`}</td></tr>`;
+    }), undefined, "cards")}</div>`;
+}
+
+VIEW("aisum", function (d) {
+  AS_PLAY = d.aio_play || {};
+  const all = d.rank_by_kw ? Object.values(d.rank_by_kw) : (d.ranks || []);
+  const known = all.filter(r => r.aio != null), on = known.filter(r => r.aio === 1);
+  const cited = on.filter(r => r.aio_cited).length;
+  // 요약은 떴는데 출처를 못 받은 줄(aio_cited NULL) — '안 실림'으로 세지 않는다(모른다).
+  const unk = on.filter(r => r.aio_cited == null).length;
+  const gapRanks = d.aio_gap_ranks || {};
+  AS_ROWS = (d.aio_gap || []).map(k => gapRanks[k] || {keyword: k});
+  for (const id of ["aisum-sum", "aisum-who", "aisum-gap", "aisum-won"]) $(id).hidden = true;
+
+  const state = !all.length ? "none" : !known.length ? "blind" : !on.length ? "quiet" : "on";
+  AS_nextStep({state, known: known.length, on: on.length, gap: AS_ROWS.length});
+  $("aisum-empty").innerHTML = state === "none"
+    ? `<div class="empty"><b>구글 AI 요약은 아직 모릅니다</b>
+        <p>AI 요약은 순위 확인이 같이 걷어 옵니다. <span class="live">순위를 한 번 확인하면
+        검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지가 여기 섭니다.</span></p></div>`
+    : state === "blind"
+    ? `<div class="empty"><b>이번 순위 조회는 AI 요약을 재지 않았습니다</b>
+        <p>지금 쓰는 순위 제공자가 이 값을 주지 않거나, 요약을 재기 전의 옛 조회입니다.
+        AI 요약을 주는 제공자로 조회하면 채워집니다.</p></div>`
+    : state === "quiet"
+    ? `<div class="empty ok"><b>AI 요약에 자리를 뺏긴 검색어가 없습니다</b>
+        <p>확인한 ${num(known.length)}개 어디에도 요약이 뜨지 않았습니다.</p></div>`
+    : "";
+  if (state !== "on") return;
+
+  // ── 결론 숫자: 요약이 뜬 검색어 중 우리 링크가 실린 비율
+  const rate = AS_RATE(cited, on.length);
+  const unkNote = unk ? ` ${num(unk)}개는 출처를 못 받아 실렸는지 모릅니다.` : "";
+  $("aisum-sum").hidden = false;
+  $("aisum-sum-sub").textContent = `AI 요약이 뜬 ${num(on.length)}개 중 ${num(cited)}개에 내 페이지가 출처로 실렸습니다.${unkNote}`;
+  $("aisum-sum-body").innerHTML = `<div class="askpi"><div class="l">우리 링크가 실린 검색어</div>
+      <div class="v">${rate}%</div>
+      <div class="b">요약이 뜬 검색어 ${num(on.length)}개 중 ${num(cited)}개</div></div>
+    <div class="aimeter"><span class="tr"><i style="width:${rate}%"></i></span>
+      <b title="AI 요약이 뜬 검색어 중 내 페이지가 출처로 실린 수">${num(cited)} / ${num(on.length)}개 실림</b></div>
+    <div class="astiles">${
+      AS_tile("확인한 검색어", num(known.length), "개", `요약이 뜬 곳 ${num(on.length)}개 · 안 뜬 곳 ${num(known.length - on.length)}개`)
+    }${AS_tile("요약에서 빠진 곳", num(AS_ROWS.length), "개", AS_ROWS.length ? "먼저 손댈 검색어입니다" : "빠진 곳이 없습니다",
+        AS_ROWS.length ? "warn" : "")}</div>`;
+
+  // ── 누가 가져갔나: 빠진 검색어 줄에서 요약이 출처로 실은 도메인(서버가 고른 빠진 목록 그대로 센다)
+  const who = AS_whoRows(AS_ROWS);
+  if (who.length) {
+    $("aisum-who").hidden = false;
+    $("aisum-who-sub").textContent = `우리가 빠진 ${num(AS_ROWS.length)}개 검색어에서 요약이 출처로 실은 도메인입니다.`;
+    const top = who[0][1];
+    $("aisum-who-body").innerHTML = `<div class="aswho">${who.map(([dm, n]) =>
+      `<div class="r"><span class="dm">${esc(dm)}</span>
+        <span class="bar"><i style="width:${Math.max(6, Math.round(n / top * 100))}%"></i></span>
+        <span class="n" title="${esc(dm)} 이(가) 출처로 실린 검색어 수">${num(n)}개</span></div>`).join("")}</div>`;
+  }
+
+  // ── 빠진 검색어 표(할 일)
+  if (AS_ROWS.length) {
+    $("aisum-gap").hidden = false;
+    $("aisum-gap-sub").textContent = "요약이 맨 위 자리를 차지하는데 거기 내 링크가 없습니다. 순위가 그대로여도 클릭이 줄어듭니다.";
+    AS_OST = "";                // 사이트를 바꾸면 거르개도 새로
+    AS_paintGap();
+  }
+
+  // ── 실린 검색어(근거) — 접어 둔다. 비어 있으면 섹션째 숨긴다.
+  const won = on.filter(r => r.aio_cited).sort((a, b) =>
+    (a.pos == null) - (b.pos == null) || (a.pos || 0) - (b.pos || 0) || a.keyword.localeCompare(b.keyword));
+  if (won.length) {
+    $("aisum-won").hidden = false;
+    $("aisum-won-sub").textContent = "요약이 떴고 거기 내 페이지가 출처로 실린 검색어입니다. 순위가 떨어지면 먼저 빠집니다.";
+    $("aisum-won-body").innerHTML = `<details class="asdet"><summary>${num(won.length)}개 펼쳐 보기</summary>
+      <div class="aitb">${table(["검색어", ">순위(직접 확인)"],
+        won.map(r => `<tr><td class="kwcell">${esc(r.keyword)}</td><td class="num">${
+          r.pos != null ? r.pos : `<span class="muted">순위 없음</span>`}</td></tr>`),
+        undefined, "cards")}</div></details>`;
+  }
+});
+</script>

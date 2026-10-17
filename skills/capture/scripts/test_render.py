@@ -125,6 +125,17 @@ if (!sessionStorage.getItem("__reload_touch__")) {
 </script>"""
 
 
+# 옛 화면 id(ai)로 저장된 복원 값 — [AI 인용·요약]을 둘로 가르기 전에 연 탭이 새로고침해도(또는 옛 링크가
+# SM.show("ai") 를 불러도) 새 화면([AI 인용])에 닿아야 한다. view-def 의 aliases 가 그 길이다.
+ALIAS_TOUCH = """<script>
+if (!sessionStorage.getItem("__alias_touch__")) {
+  sessionStorage.setItem("__alias_touch__", "1");
+  sessionStorage.setItem("sm:lastView", "ai");
+  location.reload();
+}
+</script>"""
+
+
 def view_sections() -> list[tuple[str, str]]:
     """각 뷰가 자기 view-def 에 선언한 섹션 id — 그게 DOM 에 실제로 있어야 한다.
 
@@ -162,7 +173,7 @@ GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 �
 AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
 AI_VISIT_N = 4321                    # 그 페이지의 세션 — 표에 "4,321" 로 서야 한다
 # 구글 AI 요약 — 요약이 떴는데 내 링크가 빠진 검색어와 대신 인용된 도메인. 이 칸은
-# [순위 추적]에서 [AI 인용·요약]으로 옮겼다 — 옮긴 자리(#ai-aio)에 서는지를 본다.
+# [순위 추적]에서 [AI 요약] 화면으로 옮겼다 — 옮긴 자리(#aisum-gap)에 서는지를 본다.
 AIO_KW = "요약검색어Z9"
 AIO_DOM = "aioZ9.example"
 WATCH_AIO_KW = "요약관찰Q7"   # 서치콘솔 행 없이 순위 확인으로만 잰 완료 기회
@@ -234,7 +245,7 @@ MUSTS = [
     # 칸은 옮겼고 불러오기·저장은 sm-profile 의 한 벌이 id 로 한다(textarea 의 .value 는 덤프에
     # 안 보여 값까지는 여기서 못 본다 — 같은 스크립트가 [설정]의 칸을 채우는 것과 같은 길이다).
     (r'id="view-kwmanage"(?:(?!id="view-).)*<section id="sm-seeds"(?:(?!</section>).)*'
-     r'<textarea id="pf-seeds"',
+     r'id="pf-seeds"',
      "[키워드 관리]에 씨앗 키워드 칸이 없다"),
     (r'!<section id="sm-profile"(?:(?!</section>).)*id="pf-seeds"',
      "[설정]의 프로필에 씨앗 칸이 남았다 — [키워드 관리]와 두 벌이다"),
@@ -380,14 +391,24 @@ MUSTS = [
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
      + r'(?:(?!</tr>).)*>' + f"{AI_VISIT_N:,}" + "<",
      "AI 인용 화면이 'AI 에서 온 방문' 을 안 그렸다"),
-    # 구글 AI 요약은 [AI 인용·요약] 화면의 몫이다 — 빠진 검색어 줄에 대신 인용된 도메인이 선다.
+    # 구글 AI 요약은 [AI 요약] 화면의 몫이다 — 빠진 검색어 줄에 대신 인용된 도메인이 선다.
     # 순위 화면에는 AI 요약 칸이 없어야 한다(옮겼다 — 두 자리에 있으면 두 벌이다).
-    (r'id="ai-aio"(?:(?!</section>).)*' + re.escape(AIO_KW)
+    (r'id="aisum-gap"(?:(?!</section>).)*' + re.escape(AIO_KW)
      + r'(?:(?!</tr>).)*' + re.escape(AIO_DOM),
-     "AI 인용 화면이 구글 AI 요약에 빠진 검색어를 안 그렸다"),
+     "AI 요약 화면이 구글 AI 요약에 빠진 검색어를 안 그렸다"),
+    # [AI 요약]의 위쪽 — 실린 비율 카드와, 빠진 검색어에서 요약이 출처로 실은 도메인 막대.
+    (r'id="aisum-sum"(?![^>]*hidden)(?:(?!</section>).)*우리 링크가 실린 검색어',
+     "AI 요약 화면이 '요약에 실린 비율'을 안 그렸다"),
+    (r'id="aisum-who"(?![^>]*hidden)(?:(?!</section>).)*class="dm">' + re.escape(AIO_DOM.lower()),
+     "AI 요약 화면이 '우리 대신 요약에 실린 곳'을 안 그렸다"),
+    # 두 화면이 메뉴에 따로 선다 — 옛 한 화면([AI 인용·요약], id ai)은 남아 있으면 안 된다.
+    (r'id="nav"(?:(?!</nav>).)*<button[^>]*data-v="aicite"(?:(?!</nav>).)*<button[^>]*data-v="aisum"',
+     "메뉴에 [AI 인용]·[AI 요약]이 이 순서로 따로 서지 않았다"),
+    (r'!id="nav"(?:(?!</nav>).)*<button[^>]*data-v="ai"',
+     "메뉴에 옛 [AI 인용·요약](id ai)이 남아 있다"),
     # 표 머리글로 본다 — 기회 줄의 종류 이름표("구글 AI 요약 빠짐")는 순위 화면에 서도 된다.
     (r'!id="view-rank"(?:(?!id="view-).)*<th[^>]*>(?:<[^>]+>)*AI 요약',
-     "순위 화면에 AI 요약 칸이 남아 있다 — [AI 인용·요약]으로 옮긴 것이 두 벌이 됐다"),
+     "순위 화면에 AI 요약 칸이 남아 있다 — [AI 요약]으로 옮긴 것이 두 벌이 됐다"),
     # 메뉴 = 묶음. 이름은 페이로드(d.groups ← run_all.GROUPS)에서 온다. 주기 점은 배포마다
     # 출처가 같은 한 벌(셸의 grpDue — 상태가 이긴다)이라 로컬·호스팅 검사가 따로 있다
     # (LOCAL_MUSTS · HOSTED_MUSTS). 다시 잴 단계가 없는 [할 일]에는 점이 안 선다.
@@ -397,9 +418,12 @@ MUSTS = [
      "[심사] 머리줄이 매일 런의 마지막으로 잰 날을 안 그렸다"),
     # 묶음 화면 머리줄 — 단계별 마지막으로 잰 날. 방금 잰 AI 인용은 날짜가, 안 잰 순위
     # 조회는 "아직"이 선다(둘 다 한 줄 안).
-    (r'id="view-ai"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
+    (r'id="view-aicite"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
      r'(?:(?!</div>).)*<em>\d{4}-\d{2}-\d{2}</em>(?:(?!</div>).)*<em>아직</em>',
-     "[AI 인용·요약] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
+     "[AI 인용] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
+    (r'id="view-aisum"(?:(?!id="view-).)*class="vgrp"(?:(?!</div>).)*마지막으로 잰 날'
+     r'(?:(?!</div>).)*<em>\d{4}-\d{2}-\d{2}</em>(?:(?!</div>).)*<em>아직</em>',
+     "[AI 요약] 머리줄이 단계별 마지막으로 잰 날을 안 그렸다"),
     # [키워드 관리] — 추적 편집기를 [순위 상승 기회]에서 떼어 세운 화면(2026-10-16). 메뉴에 서야 하고,
     # [순위 상승 기회]에는 그리로 가는 이음 한 줄만 남는다. 이음은 hash 링크(<a href="#…">)가 아니라
     # 셸의 go() 버튼이다 — hash 는 사이트 이름의 자리라(이음매 5) 화면 id 를 실으면
@@ -1156,6 +1180,9 @@ def _hosted_app(data: Path):
                     if b"reload_probe=1" in scope.get("query_string", b""):
                         body = body.replace(b"</body>", RELOAD_TOUCH.encode("utf-8")
                                             + b"</body>", 1)
+                    if b"alias_probe=1" in scope.get("query_string", b""):
+                        body = body.replace(b"</body>", ALIAS_TOUCH.encode("utf-8")
+                                            + b"</body>", 1)
                     state["probed"] = 200
                 elif head["status"] == 200:
                     state["probed"] = "200 인데 </head> 가 없다"
@@ -1395,6 +1422,14 @@ def run() -> None:
                             "새로고침 후 사용자가 연 [순위] 화면이 안 남았다 — 첫 화면으로 돌아갔다"),
                            (r'id="view-triage"[^>]*hidden',
                             "새로고침 후 기본 화면([심사])이 되돌아온 화면을 덮었다")],
+                          site.failures())
+                    al = dom(browser, f"{site.base}/d?alias_probe=1#{SITES[1]}",
+                            home / "chrome-profile")
+                    check(f"{label} 옛 화면 id(ai) 복원", al,
+                          [(r'id="view-aicite"(?![^>]*hidden)',
+                            "옛 id(ai)로 저장된 화면이 새 [AI 인용]으로 안 열렸다 — view-def aliases"),
+                           (r'id="view-triage"[^>]*hidden',
+                            "옛 id 복원이 실패해 기본 화면([심사])으로 돌아갔다")],
                           site.failures())
                 if label == "박제본":
                     # 화면 상자는 런타임에 생긴다 — 소스에서 세면 0 이라 단언이 늘 참이다.
