@@ -1534,7 +1534,8 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     (순위 축의 행, 화면용 30개로 자르기 전)가 낸 원본 행을 대상 문자열로 한 번만
     짝지어 라벨·처방·방어여부·GA4 보정을 입힌다. 화면은 그리기만 한다.
     """
-    opps = scoring.opportunities(conn, pid, limit=200, with_id=True, gated=gated)
+    opps = scoring.opportunities(conn, pid, limit=scoring.OPP_SCREEN_LIMIT, with_id=True, gated=gated,
+                                 kind_floor=scoring.KIND_FLOOR)
 
     # GA4 매출 잠재력 보정 배지 — scoring.load() 가 저장할 때 이미 score() 로 승수를
     # 반영해 놨다. 여기서는 화면이 "왜 이게 위로 왔는지" 말할 수 있게 같은 승수를
@@ -2026,6 +2027,9 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
          # kind → [화면 id, 섹션 id] — [개요] 기회 줄의 "자세히 보는 화면" 링크.
          # 따로 볼 화면이 없는 종류는 안 싣는다.
          "kind_views": {k.name: list(k.see) for k in scoring.KINDS if k.see},
+         # 화면 id → 그 화면의 [처리] 큐가 맡는 종류 — 위 see 의 뒤집기(scoring.queue_kinds_by_view).
+         # 큐를 단 화면은 view-def 에 `queue` 만 적고 종류 목록은 여기서 받는다.
+         "queue_kinds_by_view": scoring.queue_kinds_by_view(),
          # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
          "watch": db.watch_rows(conn, pid),
          "keyword_kinds": list(scoring.KEYWORD_KINDS),

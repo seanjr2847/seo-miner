@@ -150,8 +150,8 @@ def test_seam_01_view_ids_from_payload():
     if ctx is None:
         return
     views, shell, dash = ctx["views"], ctx["shell"], ctx["dash"]
-    assert 'data-opp="${o.id}"' in (views / "overview.html").read_text("utf-8"), \
-        "oppRow() 가 기회 id 를 data-opp 로 안 내보낸다"
+    assert 'data-opp="${o.id}"' in _queue_block(shell), \
+        "큐의 row() 가 기회 id 를 data-opp 로 안 내보낸다"
     for what, pat in (("단계 칸", r'class="stp \$\{cls\}"[^>]*data-stage='),
                       ("실행 칩", r'<button class="cmd"[^>]*data-stage='),
                       ("배너 이름", r"<b data-stage=")):
@@ -1052,7 +1052,7 @@ def test_seam_23_opportunity_groups_single_source():
     assert tuple(re.findall(r'"(\w+)"', mm.group(1))) == scoring.OPEN_STATUSES, \
         "거르개의 [아직 안 함] 이 scoring.OPEN_STATUSES 와 다르다"
     assert not {"done", "dismissed", "resolved"} & set(scoring.OPEN_STATUSES)
-    assert "d.opp_groups" in ov, "개요가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
+    assert "d.opp_groups" in _queue_block(shell), "처리 큐가 서버가 접은 줄(d.opp_groups)을 안 읽는다"
 
 
 def test_seam_50_status_filter_is_one_set_and_covers_every_status():
@@ -1793,9 +1793,10 @@ def test_seam_38_overview_kind_links_point_at_real_sections():
     assert d["kind_views"] == {k.name: list(k.see) for k in scoring.KINDS if k.see}, \
         "페이로드 kind_views 가 scoring.KINDS 의 see 와 다르다"
     ov = (ctx["views"] / "overview.html").read_text("utf-8")
-    assert "window.KIND_VIEWS" in ov, "개요가 서버의 kind_views 표를 안 읽는다"
-    # 개요가 화면 id 를 글자로 옮겨 적으면 두 벌이다 — SM.show 는 표에서 온 값으로만 부른다.
-    assert not re.search(r"OV_goSee\('[a-z]", ov), "개요가 링크 화면 id 를 손으로 적었다"
+    q = _queue_block(ctx["shell"])
+    assert "window.KIND_VIEWS" in q, "처리 큐가 서버의 kind_views 표를 안 읽는다"
+    # 큐·개요가 화면 id 를 글자로 옮겨 적으면 두 벌이다 — SM.show 는 표에서 온 값으로만 부른다.
+    assert not re.search(r"goSee\('[a-z]", q + ov), "큐가 링크 화면 id 를 손으로 적었다"
 
 
 def test_seam_39_intent_split_groups_the_page_the_same_way_the_brief_does():
@@ -1925,9 +1926,10 @@ def test_seam_41_applied_work_shows_on_the_collapsed_row():
     assert "window.CREATIONS" in body, "배지가 기록을 페이로드에서 안 받는다"
     assert "group" in body, "배지가 묶인 줄의 id 를 안 센다 — 대표 하나의 기록만 보인다"
     assert "merged" in body, "배지가 머지된 것과 PR 만 열린 것을 안 가른다"
-    assert "window.madeBadge(o)" in ov, "개요의 접힌 줄이 배지를 안 그린다"
+    q = _queue_block(shell)
+    assert "window.madeBadge(o)" in q, "큐의 접힌 줄이 배지를 안 그린다"
     # 뷰가 제 손으로 세면 두 벌이다
-    assert "CREATIONS" not in ov, "개요가 기록을 직접 센다 — 셸의 배지와 두 벌이 된다"
+    assert "CREATIONS" not in ov and "CREATIONS" not in q, "큐·개요가 기록을 직접 센다 — 셸의 배지와 두 벌이 된다"
     # 페이로드가 실제로 그 키를 싣는다(이름만 맞고 비어 있으면 배지가 영영 안 뜬다)
     assert "creations" in _gather("seam41"), "gather() 가 creations 를 안 싣는다"
 
@@ -2661,7 +2663,8 @@ def test_seam_58_groups_have_one_source():
         bare = re.sub(r"(^|[^:])//[^\n]*", r"\1", bare)
         # 기회 상태 라벨 '할 일'(OPP_LABEL·OPP_ST_OPT)은 묶음 이름과 글자만 같은 다른 말이다
         bare = "\n".join(ln for ln in bare.splitlines()
-                         if "OPP_LABEL" not in ln and "OPP_ST_OPT" not in ln)
+                         if "OPP_LABEL" not in ln and "OPP_ST_OPT" not in ln
+                         and '["do", "할 일"]' not in ln)    # 서랍 탭 이름도 글자만 같은 다른 말
         for g in run_all.GROUPS:
             assert not re.search(r"[\"'`]" + re.escape(g["name"]) + r"[\"'`]", bare), \
                 f"{name} 이 묶음 이름 {g['name']!r} 를 글자로 적는다 — 정본은 run_all.GROUPS(d.groups)"
@@ -3247,8 +3250,8 @@ def test_seam_97_hold_is_judged_by_server_and_read_by_every_filter():
     assert {"before", "after", "pre_days", "position", "clicks"} <= ba_used, \
         f"[관찰 중] 화면이 고치기 전·지금을 안 그린다 — 이 검사가 헛돈다: {ba_used}"
     assert ba_used <= ba_made, f"[관찰 중] 화면이 before_after 가 안 내는 칸을 읽는다: {ba_used - ba_made}"
-    assert "d.holds" in hold and "oppStMatch(o, \"hold\")" in (views / "overview.html").read_text("utf-8"), \
-        "[개요]가 관찰 중이라 뺀 기회를 말하지 않는다"
+    assert "d.holds" in hold and "oppStMatch(o, \"hold\")" in _queue_block(ctx["shell"]), \
+        "처리 큐가 관찰 중이라 뺀 기회를 말하지 않는다"
 
 
 def test_seam_98_report_file_name_is_one_pattern():
@@ -3366,30 +3369,34 @@ def test_seam_99_onboarding_calls_exist_on_hosted():
 
 
 def test_seam_103_opp_row_opens_the_drawer():
-    """103) [개요]의 기회 줄을 여는 길은 전부 오른쪽 서랍으로 간다 — 줄 마크업과 서랍이 한 짝이다.
+    """103) 큐의 기회 줄을 여는 길은 전부 오른쪽 서랍으로 간다 — 줄 마크업과 서랍이 한 짝이다.
 
     여는 쪽(누르기·[기회 열기]·보드 [자세히]·[기록]의 되돌아가기)은 줄을 row.open = true 로
-    열기만 하고, 서랍이 그 toggle 을 받아 줄을 접고 서랍을 연다. 줄 마크업(oppRow 의
+    열기만 하고, 서랍이 그 toggle 을 받아 줄을 접고 서랍을 연다. 줄 마크업(큐 row() 의
     details.opp · data-opp)이나 서랍이 듣는 선택자 중 한쪽만 바뀌면 어느 파일도 틀려 보이지
     않는데 서랍이 조용히 안 열리고 옛 제자리 펼침으로 돌아간다. 인쇄 중에는 서랍이 끼어들면
-    안 된다(펼친 줄이 종이에 나가야 한다).
+    안 된다(펼친 줄이 종이에 나가야 한다). 줄은 큐 카드마다 .qlist 안에 서고, 이벤트는 문서에서
+    한 번만 듣는다 — 어느 큐의 줄인지는 줄이 속한 host 로 찾는다(QU).
     """
-    ov = _view_script("overview.html")
-    assert re.search(r'<details class="opp" data-opp="\$\{o\.id\}"', ov), \
-        "oppRow 가 details.opp[data-opp] 로 줄을 안 그린다 — 서랍이 줄을 못 알아본다"
-    assert re.search(r'\$\("opplist"\)\.innerHTML = [^;]*\.map\(oppRow\)', ov), \
-        "줄이 #opplist 안에 안 그려진다 — 서랍의 선택자(#opplist details.opp)가 빗나간다"
-    listen = re.search(r'document\.addEventListener\("toggle", e => \{(.*?)\n\}, true\);', ov, re.S)
+    ctx = _load()
+    if ctx is None:
+        return
+    q = _queue_block(ctx["shell"])
+    assert re.search(r'<details class="opp" data-opp="\$\{o\.id\}"', q), \
+        "큐 row() 가 details.opp[data-opp] 로 줄을 안 그린다 — 서랍이 줄을 못 알아본다"
+    assert 'class="qlist" data-q="list"' in q and re.search(r'map\(o => this\.row\(o\)\)', q), \
+        "줄이 .qlist 안에 안 그려진다 — 서랍의 선택자(.qlist details.opp)가 빗나간다"
+    listen = re.search(r'document\.addEventListener\("toggle", e => \{(.*?)\n  \}, true\);', q, re.S)
     assert listen, "줄의 toggle 을 서랍으로 받는 자리가 없다 — [기회 열기]·[기록]이 제자리 펼침으로 연다"
     body = listen.group(1)
-    assert '"#opplist details.opp"' in body and "dataset.opp" in body and "OV_drawer(" in body, \
-        "toggle 을 받는 쪽이 줄 마크업(#opplist details.opp · data-opp)과 짝이 안 맞는다"
-    assert "OV_PRINTING" in body and re.search(r'addEventListener\("beforeprint", \(\) => \{ OV_PRINTING = true', ov), \
+    assert '".qlist details.opp"' in body and "dataset.opp" in body and "drawerOpen(" in body, \
+        "toggle 을 받는 쪽이 줄 마크업(.qlist details.opp · data-opp)과 짝이 안 맞는다"
+    assert "printing" in body and re.search(r'addEventListener\("beforeprint", \(\) => \{ printing = true', q), \
         "인쇄 중에도 서랍이 줄을 접는다 — 종이에 펼친 줄이 안 나간다"
-    click = re.search(r'document\.addEventListener\("click", e => \{(.*?)\n\}\);', ov, re.S)
-    assert click and '"#opplist details.opp > summary"' in click.group(1), \
+    click = re.search(r'document\.addEventListener\("click", e => \{(.*?)\n  \}\);', q, re.S)
+    assert click and '".qlist details.opp > summary"' in click.group(1), \
         "줄 머리를 누르면 서랍 대신 제자리 펼침이 먼저 번쩍인다"
-    assert "window.oppParts(o)" in ov, "서랍이 셸의 펼침 조각(oppParts)을 안 쓴다 — 조각이 두 벌이 된다"
+    assert "window.oppParts(o)" in q, "서랍이 셸의 펼침 조각(oppParts)을 안 쓴다 — 조각이 두 벌이 된다"
 
 
 def test_seam_104_gap_readers_use_current_rivals():
@@ -3433,7 +3440,7 @@ def test_seam_105_plays_card_and_drawer_read_what_the_payload_carries():
     import dashboard
     import test_render
     ov = _view_script("overview.html")
-    m = re.search(r"/\* ── 이번 달 할 일\(plays\) ─+\n(.*?)\n/\* ── 스포트라이트", ov, re.S)
+    m = re.search(r"/\* ── 이번 달 할 일\(plays\) ─+\n(.*?)\n/\* 고친 뒤 달라졌나", ov, re.S)
     assert m, "overview.html 에서 [이번 달 할 일] 블록을 못 찾았다 — 머리 주석이 바뀌었으면 이 검사도 옮긴다"
     blk = m.group(1)
 
@@ -3468,10 +3475,11 @@ def test_seam_105_plays_card_and_drawer_read_what_the_payload_carries():
     assert ba and {"title", "meta", "h1"} <= have["r"], "지금 → 새로 비교가 result 의 title·meta·h1 을 안 읽는다"
 
     play = re.search(r"function OV_play\(id, from\) \{(.*?)\n\}", blk, re.S)
-    paint = re.search(r"function OV_playPaint\(p\) \{\n  const dr = \$\(\"ov-drawer\"\);", blk)
-    assert play and "OV_drawerEls()" in play.group(1) and paint, \
-        "할 일 서랍이 기회 서랍 상자(#ov-drawer · OV_drawerEls)를 안 쓴다 — 서랍이 두 벌이 된다"
-    assert ov.count('role="dialog"') == 1, "[개요]에 dialog 상자가 둘이다 — 서랍은 하나를 같이 쓴다"
+    paint = re.search(r"function OV_playPaint\(p\) \{\n  const dr = OV_Q\(\)\.drawerEls\(\);", blk)
+    assert play and "q.drawerExt(" in play.group(1) and paint, \
+        "할 일 서랍이 기회 서랍 상자(큐의 drawerEls · drawerExt)를 안 쓴다 — 서랍이 두 벌이 된다"
+    assert ov.count('role="dialog"') == 0 and _queue_block(_load()["shell"]).count('role="dialog"') == 1, \
+        "서랍 dialog 상자가 큐 밖에 또 있거나 큐에 하나가 아니다 — 서랍은 하나를 같이 쓴다"
     assert re.search(r'data-play="\$\{Number\(p\.id\)\}"', blk) and "p.id === id" in blk, \
         "할 일 줄의 id 가 페이로드(p.id)에서 안 온다"
     assert 'SM.host.playBtn ? SM.host.playBtn(p) : ""' in blk, \
@@ -3639,8 +3647,9 @@ def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
     assert m, "심사 화면의 색점 문턱(TR_tier)을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
     assert int(m.group(1)) == dashboard.TRIAGE_HOT, \
         f"개요의 '점수 {dashboard.TRIAGE_HOT}점 이상'과 심사 색점 문턱({m.group(1)})이 다르다"
-    assert "(OV_D || {}).triage_pending" in js, "개요 빈 상태가 서버의 심사 대기 수를 안 읽는다"
-    assert "SM.show('triage')" in js, "개요 빈 상태가 심사 화면으로 안 보낸다"
+    q = _queue_block((S / "templates" / "dashboard.html").read_text("utf-8"))
+    assert "this.D.triage_pending" in q, "큐의 빈 상태가 서버의 심사 대기 수를 안 읽는다"
+    assert "SM.show('triage')" in q, "큐의 빈 상태가 심사 화면으로 안 보낸다"
 
 
 def test_seam_122_scope_path_is_one_rule_at_every_api():
@@ -3771,8 +3780,9 @@ def test_seam_shared_drawer_is_one_box_in_the_shell():
     양쪽 끝: 셸이 서랍 상자(#sdr)·CSS(.sdr)·API 를 한 벌 갖고, 화면은 그 API 이름만 부른다.
     - 서랍 상자는 셸 한 곳에서만 만든다 — 화면이 자기 서랍(id="sdr")을 또 지으면
       오른쪽에서 열리는 상자가 둘이 되어 Esc·바깥·✕ 가 한쪽만 닫는다.
-    - 개요는 자기 서랍(#ov-drawer, .odr)을 따로 갖는다 — 그 밖의 화면이 .odr 를 빌리거나
-      #ov-drawer 를 만지면 서랍이 둘이다(개요 서랍과 공용 서랍의 이중 존재).
+    - 처리 큐는 자기 서랍(셸 SM.queue 의 qdr-<화면>, .odr)을 따로 갖는다 — 큐 밖의 화면이 .odr 를
+      빌리거나 큐 서랍을 만지면 서랍이 둘이다(큐 서랍과 공용 서랍의 이중 존재). 개요는 큐 서랍에
+      [이번 달 할 일]을 칠할 뿐이다(큐의 drawerExt).
     - 화면이 부르는 SM.drawer.<이름> 은 셸이 내는 것(open·paint·close·isOpen·body)뿐이다.
     - 화면을 옮기면 서랍이 닫힌다(SM.show) — 안 닫으면 다른 화면 위에 이전 화면의 서랍이 선다.
     - 호스팅 애드온(dash.html)은 서랍을 짓지 않는다 — 셸이 한 벌이다.
@@ -3806,7 +3816,8 @@ def test_seam_shared_drawer_is_one_box_in_the_shell():
     want = {"aicite.html", "aisum.html", "analysis.html", "competitors.html", "hold.html", "keywords.html",
             "rank.html", "site.html", "triage.html"}
     assert want <= opened, f"서랍을 안 여는 화면이 있다: {sorted(want - opened)}"
-    assert "ov-drawer" in (views / "overview.html").read_text("utf-8"), "개요 서랍이 없다"
+    assert 'class="odr"' in _queue_block(shell) and "drawerExt(" in (views / "overview.html").read_text("utf-8"), \
+        "처리 큐 서랍이 없거나 개요가 그 서랍에 할 일을 안 칠한다"
 
 
 def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
@@ -3865,14 +3876,17 @@ def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
 
 def test_seam_128_first_page_of_opportunities_is_one_number():
     """128) [개요] 목록의 첫 화면 줄 수는 한 벌이다 — 서버(brief.FIRST_PAGE)가 그 안에 새 글 몫을
-    내고(brief.surface_new), 화면(overview.html 의 OV_PAGE)이 그만큼 보여 준다.
+    내고(brief.surface_new), 화면(셸 처리 큐의 QUEUE_PAGE)이 그만큼 보여 준다.
 
     둘이 어긋나면 각 파일은 멀쩡한데 새 글 줄이 첫 화면 바로 밖(11~13번째)에 서서, 고치기 전과
     똑같이 "새 글 제안이 없다"로 보인다.
     """
     import brief
-    m = re.search(r"const OV_PAGE = (\d+);", _view_script("overview.html"))
-    assert m, "overview.html 에서 OV_PAGE 를 못 찾았다"
+    ctx = _load()
+    if ctx is None:
+        return
+    m = re.search(r"const QUEUE_PAGE = (\d+);", _queue_block(ctx["shell"]))
+    assert m, "셸 처리 큐에서 QUEUE_PAGE 를 못 찾았다"
     assert int(m.group(1)) == brief.FIRST_PAGE, (m.group(1), brief.FIRST_PAGE)
     assert 0 < brief.NEW_SLOTS < brief.FIRST_PAGE
 
@@ -4241,8 +4255,8 @@ def test_seam_161_triage_units_are_one_set_from_scoring_to_screen():
         keys = set(re.findall(r"^  (\w+): \{", m.group(1), re.M))
         assert keys == units, f"{name} 의 묶음이 정본(scoring.TRIAGE_UNITS)과 어긋났다: {sorted(keys ^ units)}"
     assert "t.units" in tr, "화면이 서버가 준 묶음(units)을 안 읽는다"
-    assert "t.units" in (ctx["views"] / "overview.html").read_text("utf-8"), \
-        "개요의 심사 대기 문구가 묶음별 수(triage_pending.units)를 안 읽는다"
+    assert "t.units" in _queue_block(ctx["shell"]), \
+        "큐의 심사 대기 문구가 묶음별 수(triage_pending.units)를 안 읽는다"
 
     c = _sq.connect(":memory:")
     c.row_factory = _sq.Row
@@ -4322,6 +4336,10 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
             assert mode in modes_of.get(vid, []), \
                 f"{f.name} 의 data-mode={mode!r} 가 화면 {vid} 의 modes 선언에 없다 — 그 섹션은 영영 안 보인다"
             seen.setdefault(vid, set()).add(mode)
+    for vid, d in defs.items():        # 처리 큐가 선언한 mode 는 셸이 data-mode 를 달아 세운다(180)
+        qm = (d.get("queue") or {}).get("mode")
+        if qm:
+            seen.setdefault(vid, set()).add(qm)
     for vid, ids in modes_of.items():
         assert set(ids) <= seen.get(vid, set()), \
             f"{vid} 가 선언한 탭에 섹션이 없다: {sorted(set(ids) - seen.get(vid, set()))}"
@@ -4335,6 +4353,171 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
     st = (ctx["views"] / "settings.html").read_text("utf-8")
     assert "modes" not in json.dumps(defs["settings"]) and "data-mode" not in st, \
         "설정은 자기 탭(data-tab)을 쓴다 — 화면 안 두 탭 틀과 섞지 않는다"
+
+
+def _queue_block(shell: str) -> str:
+    """셸 안 처리 큐 모듈(SM.queue = (() => { … })();) 본문."""
+    assert "SM.queue = (() => {" in shell, "셸에 처리 큐(SM.queue)가 없다"
+    return shell.split("SM.queue = (() => {", 1)[1].split("\n})();", 1)[0]
+
+
+def test_seam_180_queue_is_declared_in_view_def_and_kinds_come_from_the_server():
+    """180) 처리 큐는 view-def 의 `queue` 한 곳에서 선언하고, 종류 집합은 서버가 준다.
+    양쪽 끝: 선언(views/*.html view-def "queue") ↔ 서버 페이로드(queue_kinds_by_view) ↔ 셸이 읽는 곳.
+
+    · queue 의 모양: {kinds?: "*" | "see", mode?: 그 화면 modes 의 탭 id, title?: 글}. 종류 **목록**을
+      뷰가 적으면 종류→화면 사본이 생긴다(정본은 scoring.KINDS 의 see) — "*"(모든 종류) 아니면 "see"
+      (이 화면이 see 로 가리키는 종류)만 허용한다.
+    · [개요]는 모든 종류를 받는다(kinds "*"). 다른 화면은 이번 단계에서 안 붙는다(다음 단계).
+    · 페이로드 queue_kinds_by_view 는 scoring.KINDS 의 see 를 뒤집은 것과 정확히 같고(양방향),
+      키는 실제 화면 id 이며, see 가 없는 종류는 어느 화면 큐에도 안 든다([개요] 큐에만 선다).
+    · 셸은 view-def 의 queue 를 SM.views 에 실어 나르고(modes 와 같은 길) 페이로드의 이 표를 읽는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import scoring
+    defs = _view_defs(ctx["views"])
+    for vid, d in defs.items():
+        q = d.get("queue")
+        if q is None:
+            continue
+        assert isinstance(q, dict), f"{vid} 의 queue 는 객체여야 한다"
+        assert set(q) <= {"kinds", "mode", "title"}, f"{vid} queue 에 모르는 필드: {sorted(set(q) - {'kinds', 'mode', 'title'})}"
+        assert q.get("kinds", "see") in ("*", "see"), \
+            f"{vid} queue.kinds 는 \"*\" 나 \"see\" 뿐이다 — 종류 목록을 뷰에 적으면 화면→종류 사본이 된다: {q.get('kinds')!r}"
+        if "mode" in q:
+            assert q["mode"] in [m["id"] for m in d.get("modes", [])], \
+                f"{vid} queue.mode={q['mode']!r} 가 그 화면 modes 선언에 없다"
+        if "title" in q:
+            assert isinstance(q["title"], str) and q["title"].strip(), f"{vid} queue.title 이 비었다"
+    assert defs["overview"].get("queue") == {"kinds": "*"}, "[개요]는 모든 종류를 받는 큐를 선언해야 한다"
+    inv = scoring.queue_kinds_by_view()
+    for k in scoring.KINDS:
+        homes = [v for v, ks in inv.items() if k.name in ks]
+        assert homes == ([k.see[0]] if k.see else []), \
+            f"{k.name}: 큐 소속이 see={k.see} 의 뒤집기와 다르다: {homes}"
+    assert set(inv) <= set(defs), f"queue_kinds_by_view 에 없는 화면: {sorted(set(inv) - set(defs))}"
+    d = _gather("seam180")
+    assert d["queue_kinds_by_view"] == inv, "페이로드 queue_kinds_by_view 가 scoring 의 뒤집기와 다르다"
+    shell = ctx["shell"]
+    assert re.search(r"queue:\s*v\.queue", shell), "SM.views 가 view-def 의 queue 를 안 싣는다"
+    assert "queue_kinds_by_view" in _queue_block(shell), "처리 큐가 서버의 queue_kinds_by_view 를 안 읽는다"
+    assert "SM.queue.feed(d)" in shell, "render() 가 뷰보다 먼저 큐에 페이로드를 넣지 않는다"
+
+
+def test_seam_181_queue_has_one_implementation_in_the_shell():
+    """181) 줄·서랍·거르개·보드는 셸 한 곳(SM.queue)에만 있다 — 화면은 선언만 하고, 호스팅 애드온은 짓지 않는다.
+    · 기회 줄 마크업(details.opp[data-opp])·서랍 상자(qdr-)·보드 칸(kcol)을 짓는 곳은 셸뿐이다
+      ([관찰 중]은 자기 표의 줄이라 별개).
+    · 개요에는 옛 구현(oppRow·renderOpps·oppList·OV_drawer·OV_board …)이 남지 않는다.
+    · 큐 안쪽을 읽는 곳([기록] 등)은 큐의 이름 있는 API(QU/SM.queue.of)로만 부른다 —
+      #opplist 같은 안쪽 id 를 되짚지 않는다.
+    · 호스팅 애드온(dash.html)에는 큐 구현이 없다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, dash, views = ctx["shell"], ctx["dash"], ctx["views"]
+    blk = _queue_block(shell)
+    for needle, why in (('<details class="opp" data-opp="${o.id}"', "줄 마크업"), ('class="kboard"', "보드"),
+                        ('class="odr"', "서랍 상자"), ("class Queue", "큐 클래스")):
+        assert needle in blk, f"셸의 큐에 {why} 가 없다: {needle}"
+    for f in sorted(views.glob("*.html")):
+        t = f.read_text("utf-8")
+        assert 'class="kboard"' not in t and 'class="odr"' not in t and "class Queue" not in t, \
+            f"{f.name} 이 큐 구현(보드·서랍·클래스)을 또 짓는다 — 셸 한 벌이다"
+        assert '<details class="opp" data-opp=' not in t, f"{f.name} 이 큐의 기회 줄(details.opp)을 따로 짓는다"
+    ov = (views / "overview.html").read_text("utf-8")
+    for old in ("function oppRow", "function renderOpps", "function oppList", "function OV_drawer(",
+                "function OV_board", "function oppChips", "function OV_triageBox", "function oppFiltered",
+                "function OV_see", "function OV_goSee"):
+        assert old not in ov, f"개요에 옛 큐 구현이 남았다: {old}"
+    for pat in ('getElementById("opplist")', '$("opplist")', '"#opplist', "#opps input", "oppReset(", "oppFind(",
+                '$("ov-drawer")', "OV_drawerEls("):
+        for f in sorted(views.glob("*.html")):
+            assert pat not in f.read_text("utf-8"), f"{f.name} 이 큐의 안쪽({pat})을 되짚는다 — QU(…)/SM.queue.of(…) API 로 부른다"
+    for pat in ("class Queue", "SM.queue =", "data-queue-host", "qdr-", "kboard"):
+        assert pat not in dash, f"호스팅 애드온(dash.html)이 큐를 {pat!r} 로 따로 짓는다 — 셸 한 벌이다"
+
+
+def test_seam_182_queue_handlers_and_slots_match_what_the_markup_calls():
+    """182) 큐 마크업의 인라인 핸들러(QU(this).x(…))는 Queue 의 실제 메서드를 부르고, this.el("x") 가 찾는
+    자리(data-q="x")는 마크업에 있다. 한쪽만 바뀌면 어느 파일도 틀려 보이지 않는데 버튼이 조용히 죽는다.
+    · 큐 밖(개요 뷰)에서 QU('overview').x( 를 부르는 곳도 같은 메서드 집합을 본다.
+    · data-q-slot("kinds")은 큐가 채운다 — 뷰는 빈 칸만 둔다(구현을 뷰가 갖지 않는다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, views = ctx["shell"], ctx["views"]
+    blk = _queue_block(shell)
+    cls = blk.split("class Queue {", 1)[1].split("\n  }\n", 1)[0]
+    methods = set(re.findall(r"^    (?:async )?(\w+)\(", cls, re.M)) - {"constructor"}
+    assert len(methods) >= 25, f"Queue 메서드를 {len(methods)}개밖에 못 읽었다 — 검사가 헛돈다"
+    called = set(re.findall(r"QU\(this\)\.(\w+)", blk))
+    called |= set(re.findall(r"QU\([^)]*\)\.(\w+)", "".join(p.read_text("utf-8") for p in views.glob("*.html"))))
+    called -= {"closest"}
+    assert called, "QU 핸들러를 하나도 못 읽었다"
+    assert called <= methods, f"마크업이 부르는데 Queue 에 없는 메서드: {sorted(called - methods)}"
+    asked = set(re.findall(r'this\.el\("(\w+)"\)', blk))
+    made = set(re.findall(r'data-q="(\w+)"', blk))
+    assert asked and asked <= made, f"this.el 이 찾는데 마크업에 없는 data-q: {sorted(asked - made)}"
+    ov = (views / "overview.html").read_text("utf-8")
+    slot = re.search(r'<div[^>]*data-q-slot="kinds"[^>]*>(.*?)</div>', ov, re.S)
+    assert slot and not slot.group(1).strip(), "개요의 종류 칸(data-q-slot=kinds)은 빈 칸이어야 한다 — 큐가 채운다"
+    assert 'data-queue-host="overview"' in ov, "개요가 큐 자리(data-queue-host)를 안 정했다"
+
+
+def test_seam_183_every_kind_can_be_handled_from_the_queue():
+    """183) 큐에 서는 모든 종류의 기회는 **처리**가 된다 — 라벨·처방·요청문(꼴 포함)이 있고, 상태 바꾸기가
+    받는다. 처리 수단이 없는 종류가 생기면(새 종류를 ALL_KINDS 에 넣고 화면 쪽을 빼먹음) 큐에서 막힌다.
+    또 점수가 낮은 종류(색인 막힘 등 심사 밖 '바로 고칠 것')가 점수 높은 기회에 밀려 페이로드에서 통째로
+    사라지면 큐에 서지도 못한다 — 종류마다 최소한은 실린다(scoring.KIND_FLOOR)."""
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import dashboard
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    db._register_norm(c)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam183','saas','x.com')")
+    low = "index_blocked"                       # 점수가 가장 낮게 나오는 심사 밖 종류(13.5)
+    for i, kind in enumerate(scoring.ALL_KINDS):
+        tg = {"coverage": "cluster:주제183", "backlink_prospect": "d183.com",
+              "backlink_mention": "www.d183.com"}.get(kind, f"대상183 {i}")
+        c.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+                  " VALUES(1,?,?,?,'r','new')", (kind, tg, 13.5 if kind == low else 50))
+    for i in range(scoring.OPP_SCREEN_LIMIT + 5):   # 높은 점수 기회가 화면 한도를 가득 채운다
+        c.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+                  " VALUES(1,'striking_distance',?,80,'r','new')", (f"채움183 {i:04d}",))
+    c.commit()
+    pr = db.get_project(c, "_seam183")
+    t = dashboard._triage(c, pr)
+    db.set_verdicts(c, 1, [r["key"] for r in t["rows"]], "work")
+    with contextlib.redirect_stderr(_io.StringIO()):
+        d = dashboard.gather(c, pr)
+    by_kind = {}
+    for o in d["opps"]:
+        by_kind.setdefault(o["kind"], []).append(o)
+    missing = set(scoring.ALL_KINDS) - set(by_kind)
+    assert not missing, f"화면 한도에 밀려 페이로드에 안 실린 종류가 있다(큐에서 막힌다): {sorted(missing)}"
+    for kind in scoring.ALL_KINDS:
+        o = by_kind[kind][0]
+        assert o.get("label"), f"{kind}: 라벨이 없다"
+        p = o.get("play") or {}
+        assert p.get("what") and p.get("acts"), f"{kind}: 처방(할 일)이 없다 — 큐 서랍의 [할 일] 탭이 빈다"
+        b = o.get("brief") or {}
+        assert b.get("body") and b.get("shape") in brief.SHAPE_NAMES, \
+            f"{kind}: 요청문(꼴 포함)이 없다 — [요청문 복사]·[도구로 열기]가 보낼 것이 없다: {b.get('shape')!r}"
+        assert any(o["id"] in g["ids"] for g in d["opp_groups"]), f"{kind}: 줄(opp_groups)에 안 든다 — 큐 줄이 안 선다"
+        assert kind in d["kind_labels"], f"{kind}: kind_labels 에 없다 — 종류 칩 이름이 영문으로 뜬다"
+    # 상태 바꾸기 창구(/api/opp)가 받는 상태가 큐 버튼이 보내는 상태를 전부 덮는다
+    assert {"new", "acked", "done", "dismissed"} <= set(db.OPP_STATUSES), db.OPP_STATUSES
 
 
 def inspect_src(fn) -> str:

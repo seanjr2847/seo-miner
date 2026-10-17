@@ -4472,7 +4472,7 @@ def attach(d: dict, locale: str) -> None:
 # 고치기 줄이 늘 위다 — 아직 순위가 없는 새 글은 닿는 거리(reach)가 보수적 0.3 이다. 그래서
 # theotherskin(10/11)의 열린 새 글 24줄(35~56점)이 고치기(60~75점) 밑으로 밀려 첫 화면에
 # 한 줄도 없었고, "새 글 제안을 안 한다"로 읽혔다. 점수는 그대로 두고 자리만 낸다 — 첫 화면
-# 끝 NEW_SLOTS 줄. FIRST_PAGE 는 overview.html 의 OV_PAGE 와 같은 수다(test_seams 128 이 대조).
+# 끝 NEW_SLOTS 줄. FIRST_PAGE 는 셸 처리 큐의 QUEUE_PAGE 와 같은 수다(test_seams 128 이 대조).
 FIRST_PAGE = 10
 NEW_SLOTS = 3
 

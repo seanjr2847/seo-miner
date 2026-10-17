@@ -482,12 +482,12 @@ PLAY_PROBE = """<script>addEventListener("load", function () {
     var rows = document.querySelectorAll('#plays button.ovp');
     if (rows.length < 2) { if (++n > 80) clearInterval(t); return; }
     clearInterval(t);
-    var dr = function () { return document.getElementById("ov-drawer"); };
+    var dr = function () { return document.getElementById("qdr-overview"); };
     var out = document.createElement("div"); out.id = "__plays__"; out.hidden = true;
     document.body.appendChild(out);
     rows[1].click();
     out.insertAdjacentHTML("beforeend", '<div id="__play_err__">' + dr().innerHTML + '</div>');
-    var s = document.querySelector('#opplist details.opp > summary');
+    var s = document.querySelector('.qlist details.opp > summary');
     if (s) s.click();
     out.insertAdjacentHTML("beforeend", '<p id="__play_opp__">marks=' +
       document.querySelectorAll('#plays .ovp.odr-on').length + ' drawers=' +
@@ -506,21 +506,21 @@ PLAY_MUSTS = [
     (r'id="plays"(?:(?!</li>).)*<span class="ovp-k"[^>]*>외 1</span>',
      "[이번 달 할 일] 줄의 검색어 칩이 셋에서 안 접혔다(외 N)"),
     # ③ 수정안이 선 할 일을 연 서랍 — 탭 셋, 초안, 증거의 우리 줄, 문서, 발판의 복사.
-    (r'<aside class="odr" id="ov-drawer"(?![^>]*\shidden)[^>]*>(?:(?!</aside>).)*id="odr-t">'
+    (r'<aside class="odr" id="qdr-overview"(?![^>]*\shidden)[^>]*>(?:(?!</aside>).)*id="odr-t">'
      + re.escape(PLAY_TITLE),
      "할 일 줄을 눌렀는데 오른쪽 서랍이 그 할 일로 안 열렸다"),
-    (r'id="ov-drawer"(?:(?!</aside>).)*data-t="fix"[^>]*>수정안</button>'
+    (r'id="qdr-overview"(?:(?!</aside>).)*data-t="fix"[^>]*>수정안</button>'
      r'(?:(?!</aside>).)*data-t="ev"[^>]*>증거</button>(?:(?!</aside>).)*data-t="doc"[^>]*>문서</button>',
      "할 일 서랍에 수정안·증거·문서 탭이 없다"),
-    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="fix"(?:(?!</aside>).)*' + re.escape(PLAY_DRAFT),
+    (r'id="qdr-overview"(?:(?!</aside>).)*data-panel="fix"(?:(?!</aside>).)*' + re.escape(PLAY_DRAFT),
      "할 일 서랍의 수정안 탭이 소제목 초안을 안 그렸다"),
-    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="ev"(?:(?!</aside>).)*<li class="own">'
+    (r'id="qdr-overview"(?:(?!</aside>).)*data-panel="ev"(?:(?!</aside>).)*<li class="own">'
      r'(?:(?!</aside>).)*' + re.escape(PLAY_GAP),
      "할 일 서랍의 증거 탭이 상위 결과(우리 줄)나 빠진 주제를 안 그렸다"),
-    (r'id="ov-drawer"(?:(?!</aside>).)*data-panel="doc"(?:(?!</aside>).)*<textarea readonly[^>]*>'
+    (r'id="qdr-overview"(?:(?!</aside>).)*data-panel="doc"(?:(?!</aside>).)*<textarea readonly[^>]*>'
      r'(?:(?!</aside>).)*\.md 내려받기',
      "할 일 서랍의 문서 탭에 문서 전문·내려받기가 없다"),
-    (r'id="ov-drawer"(?:(?!</aside>).)*<div class="odr-f">(?:(?!</aside>).)*>문서 복사</button>',
+    (r'id="qdr-overview"(?:(?!</aside>).)*<div class="odr-f">(?:(?!</aside>).)*>문서 복사</button>',
      "할 일 서랍 발판에 [문서 복사]가 없다"),
     # ① 수정안을 못 만든 할 일 — 수정안 탭 없이 이유를 말하고 증거를 보인다.
     (r'id="__play_err__">(?:(?!id="__play_opp__").)*id="odr-t">' + re.escape(PLAY_ERR)

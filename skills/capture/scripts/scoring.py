@@ -5609,6 +5609,18 @@ _KIND_BY_NAME = {k.name: k for k in KINDS}
 DEFENSIVE_KINDS = frozenset(k.name for k in KINDS if k.defensive)
 
 
+def queue_kinds_by_view() -> dict[str, list[str]]:
+    """화면 id → 그 화면의 [처리] 큐가 맡는 종류. 종류→화면의 정본은 KINDS 의 see 한 벌이고,
+    이것은 그 뒤집기일 뿐이다(사본 표를 두지 않는다 — see 를 고치면 큐가 따라간다).
+    종류 순서는 ALL_KINDS 순서. see 가 없는 종류(따로 볼 화면이 없는 것)는 어느 화면에도 안
+    든다 — 그 종류는 모든 종류를 받는 [개요] 큐에만 선다."""
+    out: dict[str, list[str]] = {}
+    for k in KINDS:
+        if k.see:
+            out.setdefault(k.see[0], []).append(k.name)
+    return out
+
+
 # striking_distance 밴드별 라벨. "1페이지 상단"은 상태로 읽히면 이미 거기 있다는
 # 뜻이 된다 — 가능성으로 적는다: 지금 위치가 아니라 밀면 닿을 자리.
 SD_LABEL = {"page1": "1페이지 상단 가능", "page2": "1페이지 진입 가능"}
@@ -6405,7 +6417,8 @@ def load(project: str) -> None:
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,
-                  limit: int, with_id: bool = False, gated: bool = True) -> list[dict]:
+                  limit: int, with_id: bool = False, gated: bool = True,
+                  kind_floor: int = 0) -> list[dict]:
     """기회 목록 — 화면과 박제본이 같은 정렬을 본다.
 
     gated=False 는 심사(verdicts)를 거치지 않은 기회까지 낸다 — 이번 달 할 일(plays.py)이
@@ -6424,6 +6437,16 @@ def opportunities(conn: sqlite3.Connection, project_id: int, *,
         conn, project_id, limit=limit, order="screen", with_id=with_id, gated=gated)]
     key = (lambda r: r["id"]) if with_id else (lambda r: (r["kind"], r["target"]))
     have = {key(r) for r in rows}
+    # kind_floor 를 주면 종류마다 열린 기회를 최소 그만큼은 싣는다(화면이 KIND_FLOOR 를 준다). 점수순으로
+    # limit 건만 자르면 점수가 낮게 나오는 종류(색인 막힘은 13.5점 안팎 — 순위가 없어 reach 가 바닥이다)가
+    # 높은 점수 기회에 밀려 통째로 사라지고, 그 종류는 큐에 서지도 못한다. 앞쪽 limit 개의 정렬은 그대로
+    # 두고 꼬리에만 더한다(화면의 첫 줄이 바뀌면 안 된다).
+    for kind in ALL_KINDS if kind_floor else ():
+        more = [d for d in (dict(r) for r in db.list_opportunities(
+            conn, project_id, kinds=[kind], statuses=["new"], limit=kind_floor,
+            order="screen", with_id=with_id, gated=gated)) if key(d) not in have]
+        rows += more
+        have |= {key(d) for d in more}
     # 진행 중(acked)도 같은 꼬리로 붙인다 — '새 것 먼저'라 할 일이 limit 을 넘는 사이트에서는
     # [요청문 복사]로 진행 중이 된 기회가 목록에서 통째로 사라졌다(theotherskin: 할 일 228건 ·
     # 복사하자마자 그 줄과 열어 둔 상세 서랍이 함께 없어졌다).
@@ -6457,6 +6480,10 @@ OPEN_STATUSES = ("new", "acked")
 # 목록 꼬리에 붙이는 닫힌 기회 수의 상한. 기록이라 전부 실을 이유는 없고, 한 회차에
 # 사람이 닫는 수 + 저절로 풀리는 수보다 넉넉하다.
 CLOSED_LIMIT = 300
+# 화면(대시보드·박제본)이 싣는 열린 기회 수 — 점수 상위 이만큼. 정본은 여기고 dashboard 가 이걸 읽는다.
+OPP_SCREEN_LIMIT = 200
+# 종류마다 최소로 싣는 열린 기회 수 — 위 한도를 점수 높은 종류가 다 채워도 낮은 점수 종류가 큐에서 안 사라지게.
+KIND_FLOOR = 15
 
 
 def closed_statuses() -> tuple[str, ...]:
