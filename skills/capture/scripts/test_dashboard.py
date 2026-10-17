@@ -683,7 +683,58 @@ def test_triage_payload_groups_variants_and_counts():
     conn = db.connect()
     d = dashboard.gather(conn, db.get_project(conn, "tri"))
     assert "watch" in d and d["keyword_kinds"] == list(scoring.KEYWORD_KINDS)
+    assert d["triage_kinds"] == list(scoring.TRIAGE_KINDS)
     conn.close()
+
+
+def test_triage_payload_carries_topic_and_domain_units():
+    """심사는 세 묶음(검색어·주제·링크 도메인)을 한 화면에 싣는다 — 행마다 unit 을 싣고, 묶음마다
+    의미 있는 칸이 다르다(주제: 묶인 키워드 수·검색량 / 도메인: 지수·걸린 경쟁사·말한 페이지).
+    판정(작업)을 누르면 그 주제·도메인 기회가 개요 목록에 선다. 같은 도메인의 두 종류
+    (경쟁사만 받는 링크·링크 없는 언급)는 한 줄이고, 무조건 고칠 종류는 심사에 안 온다."""
+    conn, pid = _brain("tri3")
+    db.upsert_opportunities(conn, pid, None, [
+        {"kind": "striking_distance", "target": "일반 검색어", "score": 40.0},
+        {"kind": "coverage", "target": "cluster:피부 관리", "score": 50.0},
+        {"kind": "backlink_prospect", "target": "good.com", "score": 45.0},
+        {"kind": "backlink_mention", "target": "www.good.com", "score": 35.0},
+        {"kind": "backlink_broken", "target": "https://tri3.example/old", "score": 99.0},
+        {"kind": "crawl_issue", "target": "https://tri3.example/x", "score": 99.0}])
+    for kw, vol in (("피부 관리 가격", 200), ("피부 관리 후기", 100)):
+        conn.execute("INSERT INTO keywords(project_id,keyword,cluster,volume,is_active)"
+                     " VALUES(?,?,'피부 관리',?,1)", (pid, kw, vol))
+    conn.execute("INSERT INTO link_intersect(project_id,checked_date,domain,rank,hits,we_have)"
+                 " VALUES(?,?,'good.com',420,3,0)", (pid, D))
+    conn.execute("INSERT INTO brand_mentions(project_id,checked_date,url,domain,alias,rank,linked)"
+                 " VALUES(?,?,'https://good.com/a','good.com','tri3',420,0)", (pid, D))
+    conn.commit()
+    conn.close()
+    t = dashboard.triage_payload("tri3")
+    assert [u["id"] for u in t["units"]] == list(scoring.TRIAGE_UNITS), t["units"]
+    assert [u["label"] for u in t["units"]] == list(scoring.TRIAGE_UNITS.values())
+    by = {r["unit"]: r for r in t["rows"]}
+    assert set(by) == {"keyword", "topic", "domain"} and len(t["rows"]) == 3, t["rows"]
+    top, dom = by["topic"], by["domain"]
+    assert top["label"] == "피부 관리" and top["kw_n"] == 2 and top["volume"] == 300, top
+    assert top["key"] == scoring.verdict_key("coverage", "cluster:피부 관리")
+    assert dom["label"] == "good.com" and set(dom["kinds"]) == {"backlink_prospect", "backlink_mention"}, dom
+    assert dom["rank"] == 420 and dom["hits"] == 3 and dom["pages"] == 1, dom
+    assert dom["key"] == scoring.verdict_key("backlink_prospect", "good.com")
+    assert by["keyword"]["lang"] and not by["keyword"].get("kw_n")
+    assert t["counts"]["none"] == 3 and all(u["counts"]["none"] == 1 for u in t["units"]), t["units"]
+    assert dashboard.triage_payload("tri3")["rows"][0]["unit"] in scoring.TRIAGE_UNITS
+    conn = db.connect()
+    p = db.get_project(conn, "tri3")
+    assert dashboard._triage_pending(dashboard._triage(conn, p)["rows"])["n"] == 3
+    before = {r["target"] for r in db.open_opportunities(conn, pid, limit=50)}
+    assert before == {"https://tri3.example/old", "https://tri3.example/x"}, before   # 심사 밖 종류만 선다
+    conn.close()
+    assert dashboard.set_verdict({"project": "tri3", "keys": [dom["key"], top["key"]],
+                                  "verdict": "work"}) == {"updated": 2}
+    conn = db.connect()
+    after = {r["target"] for r in db.open_opportunities(conn, pid, limit=50)}
+    conn.close()
+    assert {"cluster:피부 관리", "good.com", "www.good.com"} <= after and "일반 검색어" not in after, after
 
 
 def test_triage_rows_carry_language_and_other_brand_hint():
@@ -767,7 +818,9 @@ def test_gather_carries_triage_pending_and_health():
     conn.commit()
     d = dashboard.gather(conn, db.get_project(conn, "hp"))
     conn.close()
-    assert d["triage_pending"] == {"n": 2, "hot": 1, "hot_min": dashboard.TRIAGE_HOT}, d["triage_pending"]
+    tp = d["triage_pending"]
+    assert {k: tp[k] for k in ("n", "hot", "hot_min")} == {"n": 2, "hot": 1, "hot_min": dashboard.TRIAGE_HOT}, tp
+    assert [(u["id"], u["n"]) for u in tp["units"]] == [("keyword", 2), ("topic", 0), ("domain", 0)], tp
     assert isinstance(d["health"], list) and d["health_sev"] == audit_data.SEV_LABEL
     for f in d["health"]:
         assert set(f) == {"sev", "area", "code", "msg", "count"}, f

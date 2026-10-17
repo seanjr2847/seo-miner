@@ -175,12 +175,35 @@ ALL_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "intent_split",
              "ai_citation_gap", "aio_exposure", "content_gap",
              "crawl_issue", "backlink_broken", "backlink_prospect",
              "ai_bot_blocked", "backlink_mention")
-# 심사(검색어 판정)를 거치는 종류 — 대상이 검색어·질문문인 것. 나머지(coverage 의
-# cluster:, index_blocked·crawl_issue 의 URL, backlink_* 의 도메인)는 판정 없이
-# 기회 목록에 바로 선다. 조회(db)·화면·검사가 이 한 벌을 가리킨다.
+# 대상이 검색어·질문문인 종류 — 검색어가 필요한 곳(answer_shaped·GSC 실적 조인·
+# 키워드 추적 끄기)이 가리킨다. '심사를 거치는 종류'는 이것이 아니라 TRIAGE_KINDS 다
+# (검색어에 주제·링크 도메인이 더해졌다).
 KEYWORD_KINDS = ("striking_distance", "ctr_gap", "cannibalization", "rank_decay",
                  "pseo_pattern", "device_gap", "ai_citation_gap", "aio_exposure",
                  "content_gap")
+# 심사(작업·보류·무관 판정)를 거치는 '재료' 종류의 정본 — 판정 단위(묶음)별로 한 벌씩이고
+# TRIAGE_KINDS 가 그 합이다. 조회(db.gate_sql)·적재(gate_rows)·심사 화면·검사가 이 한 벌만
+# 가리킨다. 심사 밖(index_blocked·crawl_issue·ai_bot_blocked·backlink_broken — 무조건 고칠
+# 것)은 목록으로 두지 않고 ALL_KINDS - TRIAGE_KINDS 로 파생한다: 사본을 두면 새 종류가
+# 생길 때 한쪽만 낡는다. 심사 밖 종류는 판정 없이 기회 목록에 바로 선다.
+TOPIC_KINDS = ("coverage",)                                   # 대상: 주제(클러스터) 'cluster:이름'
+DOMAIN_KINDS = ("backlink_prospect", "backlink_mention")      # 대상: 링크 도메인
+# 묶음 id → 화면 이름. 순서가 화면의 묶음 탭 순서다. 판정 키·SQL·화면이 이 id 를 쓴다.
+TRIAGE_UNITS = {"keyword": "검색어", "topic": "주제", "domain": "링크 도메인"}
+TRIAGE_KINDS = KEYWORD_KINDS + TOPIC_KINDS + DOMAIN_KINDS
+
+
+def triage_unit(kind: str) -> str | None:
+    """종류가 속한 심사 묶음 id(TRIAGE_UNITS 의 키). 심사 밖 종류는 None."""
+    if kind in KEYWORD_KINDS:
+        return "keyword"
+    if kind in TOPIC_KINDS:
+        return "topic"
+    if kind in DOMAIN_KINDS:
+        return "domain"
+    return None
+
+
 # 검출기가 띄어쓰기·대소문자만 다른 검색어(norm 이 같은 것)를 한 줄로 접는 종류 — 접힌
 # 옛 변형 줄은 resolve_stale 이 "그 줄로 합쳤다"로 닫는다. 검출기를 접게 고쳤으면 여기
 # 넣는다(안 넣으면 옛 변형 줄이 열린 채 남는다).
@@ -194,6 +217,25 @@ def norm(s: str) -> str:
     통째로 빈 키가 되어 심사(verdicts)에서 한 행으로 뭉치고 판정도 안 걸렸다 —
     글자면 어느 문자든 남긴다(정규식 문자 클래스 w 에서 밑줄만 뺀다)."""
     return re.sub(r"[\W_]+", "", (s or "").lower())
+
+
+def verdict_key(kind: str, target: str) -> str:
+    """판정(verdicts.key)이 붙는 자리 — 기회 하나가 어느 판정 한 줄에 묶이는가.
+
+    검색어는 예전 그대로 norm(대상)이다(기존 판정이 깨지지 않는다). 주제와 도메인은 묶음
+    접두('topic:'·'domain:')를 달아 검색어와 갈린다 — norm 은 ':' 를 지우므로 접두가 붙은
+    키는 어떤 검색어의 norm 과도 같을 수 없다. 검색어 'example.com' 과 도메인 example.com 이
+    한 키였다면 한쪽 판정이 다른 쪽을 가리고, 무관이 같은 글자의 키워드 추적까지 껐다.
+    같은 도메인의 두 종류(경쟁사만 받는 링크·링크 없는 언급)는 한 키 — 사람은 그 사이트를
+    한 번 판단한다. 심사 밖 종류는 norm(대상)을 돌려주지만 아무 데도 안 쓰인다.
+    SQL 에서는 db._register_norm 이 같은 함수를 vkey(kind, target) 로 건다."""
+    unit = triage_unit(kind)
+    t = str(target or "")
+    if unit == "topic":
+        return "topic:" + norm(t.split(":", 1)[1] if t.startswith("cluster:") else t)
+    if unit == "domain":
+        return "domain:" + norm(re.sub(r"^www\.", "", t.strip().lower()))
+    return norm(t)
 
 
 def tokens(s: str) -> list[str]:
@@ -5616,13 +5658,13 @@ def kind_play(kind: str, *, band: str | None = None, gap_kind: str | None = None
 
 
 def gate_rows(conn: sqlite3.Connection, project_id: int, rows: list[dict]) -> list[dict]:
-    """심사에서 무관·보류로 판정된 검색어의 기회는 적재하지 않는다. 검색어가 아닌
-    종류(KEYWORD_KINDS 밖)는 그대로 통과한다. 미판정은 적재한다 — 심사 화면이
+    """심사에서 무관·보류로 판정된 재료(검색어·주제·링크 도메인)의 기회는 적재하지 않는다.
+    심사 밖 종류(TRIAGE_KINDS 밖)는 그대로 통과한다. 미판정은 적재한다 — 심사 화면이
     그 행을 보고 판정한다."""
     import db
     vm = db.verdict_map(conn, project_id)
-    return [r for r in rows if r["kind"] not in KEYWORD_KINDS
-            or vm.get(norm(str(r["target"]))) not in ("irrelevant", "hold")]
+    return [r for r in rows if r["kind"] not in TRIAGE_KINDS
+            or vm.get(verdict_key(r["kind"], str(r["target"]))) not in ("irrelevant", "hold")]
 
 
 # ── 기회 수명주기: 저절로 풀림 ─────────────────────────────────────────────────

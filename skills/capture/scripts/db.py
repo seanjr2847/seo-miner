@@ -625,12 +625,13 @@ CREATE TABLE IF NOT EXISTS project_settings ( -- 사이트별 설정. 정본은 
   value      TEXT NOT NULL,                   -- JSON. 목록도 수도 참도 한 가지 꼴로 담는다
   UNIQUE(project_id, key)
 );
-CREATE TABLE IF NOT EXISTS verdicts (        -- 검색어 심사 (docs/superpowers/specs/2026-09-08-keyword-triage-design.md)
+CREATE TABLE IF NOT EXISTS verdicts (        -- 재료 심사 (docs/superpowers/specs/2026-09-08-keyword-triage-design.md)
   id INTEGER PRIMARY KEY,                     -- remote.merge 가 표마다 id 로 사이트 소속을 옮긴다 — 판정도 pull/push 를 탄다
   project_id INTEGER NOT NULL REFERENCES projects(id),
-  key        TEXT NOT NULL,                   -- scoring.norm(대상). 띄어쓰기·대소문자 변형은 여기서 같은 값이 된다
+  key        TEXT NOT NULL,                   -- scoring.verdict_key(종류, 대상). 검색어는 norm(대상), 주제·도메인은 접두가 붙는다
   verdict    TEXT NOT NULL,                   -- irrelevant | hold | work  (정본은 db.VERDICTS)
   decided_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  origin     TEXT,                            -- 'seed' = 마이그레이션이 심은 판정(사람이 누른 것이 아니다). 사람이 누르면 NULL
   UNIQUE(project_id, key)
 );
 -- 이번 달 할 일(plays.py) — 우리 페이지 하나를 어떻게 고치면 검색어 여럿이 같이 움직이나.
@@ -792,6 +793,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
             INSERT INTO verdicts(project_id,key,verdict,decided_at)
               SELECT project_id,key,verdict,decided_at FROM _verdicts_old;
             DROP TABLE _verdicts_old;""")
+        conn.commit()
+
+    # 심사 범위가 검색어 밖(주제·링크 도메인)으로 넓어졌다. 그 전에 개요에 서 있던 해당 종류의
+    # 기회 중 사람이 이미 손댄 것(acked)은 계속 보여야 한다 — 심사 문(gate_sql)은 '작업' 판정이
+    # 있어야 열린 기회를 통과시키므로, 손댄 것에만 '작업'을 한 번 심는다(origin='seed').
+    # 손 안 댄 것(new)은 일부러 심사로 내려간다: 이 변경의 뜻이 그 재료를 사람이 가리는 것이다.
+    # origin 칸이 없던 Brain 에서만 한 번 돈다 — 칸이 곧 "이미 했나"의 표식이라, 사람이 그
+    # 판정을 되돌린 뒤 다시 연결해도 되심지 않는다.
+    v_cols = {r["name"] for r in conn.execute("PRAGMA table_info(verdicts)")}
+    if "origin" not in v_cols:
+        import scoring
+        conn.execute("ALTER TABLE verdicts ADD COLUMN origin TEXT")
+        touched = [s for s in scoring.OPEN_STATUSES if s != "new"]
+        kinds = scoring.TOPIC_KINDS + scoring.DOMAIN_KINDS
+        rows = conn.execute(
+            f"SELECT DISTINCT project_id, kind, target FROM opportunities"
+            f" WHERE status IN ({','.join('?' * len(touched))}) AND kind IN ({','.join('?' * len(kinds))})",
+            (*touched, *kinds)).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT OR IGNORE INTO verdicts(project_id, key, verdict, origin) VALUES(?,?,'work','seed')",
+                (r["project_id"], scoring.verdict_key(r["kind"], r["target"])))
         conn.commit()
 
     if "locale" not in cols:
@@ -1322,6 +1345,7 @@ def _register_norm(conn: sqlite3.Connection) -> None:
     scoring 은 db 를 함수 안에서만 부르므로 늦게 import 해도 순환이 없다."""
     import scoring
     conn.create_function("norm", 1, scoring.norm, deterministic=True)
+    conn.create_function("vkey", 2, scoring.verdict_key, deterministic=True)
 
 
 def init_db() -> None:
@@ -2824,10 +2848,11 @@ def resolve_opportunities(conn: sqlite3.Connection, project_id: int, decisions) 
 
 def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
                  verdict: str | None) -> int:
-    """검색어 심사 저장. keys 는 이미 scoring.norm 을 거친 것(서버가 만든 key 를 화면이
-    그대로 돌려보낸다). None 이면 미판정으로 되돌린다(행 삭제).
+    """재료 심사 저장. keys 는 서버가 만든 판정 키(scoring.verdict_key) 그대로다 — 화면이
+    돌려보낸다. None 이면 미판정으로 되돌린다(행 삭제).
     irrelevant 는 같은 키의 키워드 추적(is_active)을 끈다 — hold 는 우리 검색어라
-    측정을 계속한다. 갱신한 행 수를 돌려준다.
+    측정을 계속한다. 주제·도메인 키는 접두(':')가 붙어 어떤 keyword 의 norm 과도 안 만나므로
+    그 판정은 키워드 추적을 건드리지 않는다. 갱신한 행 수를 돌려준다.
 
     **끈 것은 되돌릴 수 있어야 한다.** 무관을 거두면(되돌리기·다른 판정으로 갈아타기)
     무관이 껐던 추적은 되살아난다. 되살릴 줄은 `keywords.verdict_off` 로 가린다 —
@@ -2849,7 +2874,7 @@ def set_verdicts(conn: sqlite3.Connection, project_id: int, keys: list[str],
         conn.execute(
             """INSERT INTO verdicts(project_id, key, verdict) VALUES(?,?,?)
                ON CONFLICT(project_id, key) DO UPDATE SET
-                 verdict=excluded.verdict, decided_at=CURRENT_TIMESTAMP""",
+                 verdict=excluded.verdict, decided_at=CURRENT_TIMESTAMP, origin=NULL""",
             (int(project_id), k, verdict))
         n += 1
         if verdict == "irrelevant":
@@ -3150,7 +3175,7 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
                        gated: bool = False) -> list[sqlite3.Row]:
     """기회 목록 조회.
 
-    gated=True 면 심사를 거친 것만 낸다: 검색어 종류(scoring.KEYWORD_KINDS)는
+    gated=True 면 심사를 거친 것만 낸다: 심사 종류(scoring.TRIAGE_KINDS)는
     verdicts 에 '작업' 판정이 있어야 하고, 그 밖의 종류는 그대로 통과한다. 미판정은
     안 보인다 — 심사 화면이 그 행을 본다. 열린 기회(open_opportunities)와 화면
     (scoring.opportunities)이 이걸 켠다.
@@ -3190,7 +3215,7 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
     if gated:
         q += " AND " + gate_sql(conn)
         import scoring
-        args += list(scoring.KEYWORD_KINDS)
+        args += list(scoring.TRIAGE_KINDS)
 
     q += f" {order_clause} LIMIT ?"
     args.append(int(limit))
@@ -3355,9 +3380,10 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
 
 
 def gate_sql(conn: sqlite3.Connection, table: str = "opportunities") -> str:
-    """심사 통과 조건 한 벌 — 검색어 종류는 verdicts 에 '작업'이 있어야 하고 나머지는
-    통과. 자리표(?)는 scoring.KEYWORD_KINDS 순서로 채운다. norm() 을 쓰므로 검사가
-    만드는 맨 sqlite3 연결에도 함수를 다시 걸어 둔다(create_function 은 멱등).
+    """심사 통과 조건 한 벌 — 심사 종류(scoring.TRIAGE_KINDS: 검색어·주제·링크 도메인)는
+    verdicts 에 '작업'이 있어야 하고 나머지는 통과. 자리표(?)는 scoring.TRIAGE_KINDS 순서로
+    채운다. vkey() 를 쓰므로 검사가 만드는 맨 sqlite3 연결에도 함수를 다시 걸어 둔다
+    (create_function 은 멱등).
 
     **닫힌 기회에는 이 문을 안 건다.** 심사는 "이걸 할 일로 세울까"를 묻는 문이고,
     이미 닫힌 행(완료·뺀 것·저절로 풀림)은 할 일이 아니라 기록이다. 문을 똑같이
@@ -3365,13 +3391,13 @@ def gate_sql(conn: sqlite3.Connection, table: str = "opportunities") -> str:
     '작업' 판정을 안 남기기 때문이다. 열린 기회(OPEN_STATUSES)에만 건다."""
     import scoring
     _register_norm(conn)
-    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
+    ph = ",".join("?" * len(scoring.TRIAGE_KINDS))
     # 상태 이름은 정본(scoring.OPEN_STATUSES)에서 그대로 굳힌다 — 값이 우리 것이라
-    # 자리표를 쓰면 KEYWORD_KINDS 자리표 순서 약속이 깨진다.
+    # 자리표를 쓰면 TRIAGE_KINDS 자리표 순서 약속이 깨진다.
     open_st = ",".join("'" + s + "'" for s in scoring.OPEN_STATUSES)
     return (f"({table}.status NOT IN ({open_st})"
             f" OR {table}.kind NOT IN ({ph}) OR EXISTS (SELECT 1 FROM verdicts v"
-            f" WHERE v.project_id={table}.project_id AND v.key=norm({table}.target)"
+            f" WHERE v.project_id={table}.project_id AND v.key=vkey({table}.kind, {table}.target)"
             " AND v.verdict='work'))")
 
 

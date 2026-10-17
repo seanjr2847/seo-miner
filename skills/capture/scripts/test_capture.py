@@ -2003,6 +2003,111 @@ def test_verdict_gates_load_and_open_list():
     conn.close()
 
 
+def test_triage_kinds_are_one_set_with_units():
+    """심사 대상 종류의 정본은 scoring.TRIAGE_KINDS 한 벌이다(intent_split 은 대상이 페이지라 처음부터 심사 밖) — 검색어(KEYWORD_KINDS)·주제·링크
+    도메인 세 묶음의 합이고, 심사에서 빠지는(무조건 고칠 것) 종류는 ALL_KINDS - TRIAGE_KINDS
+    에서 파생된다. 사본 목록을 두면 새 종류가 생길 때 한쪽만 낡는다."""
+    assert scoring.TRIAGE_KINDS == scoring.KEYWORD_KINDS + scoring.TOPIC_KINDS + scoring.DOMAIN_KINDS
+    assert set(scoring.TRIAGE_KINDS) < set(scoring.ALL_KINDS)
+    assert len(set(scoring.TRIAGE_KINDS)) == len(scoring.TRIAGE_KINDS), "묶음끼리 겹친다"
+    assert set(scoring.ALL_KINDS) - set(scoring.TRIAGE_KINDS) ==         {"index_blocked", "crawl_issue", "ai_bot_blocked", "backlink_broken", "intent_split"}
+    assert [scoring.triage_unit(k) for k in ("striking_distance", "coverage", "backlink_mention",
+                                             "backlink_prospect", "crawl_issue")] ==         ["keyword", "topic", "domain", "domain", None]
+    assert list(scoring.TRIAGE_UNITS) == ["keyword", "topic", "domain"]
+    assert all(scoring.TRIAGE_UNITS[u] for u in scoring.TRIAGE_UNITS), "묶음 이름표가 비었다"
+
+
+def test_verdict_key_keeps_units_apart():
+    """판정 키는 묶음을 가른다. norm 만 쓰면 검색어 'example.com' 과 도메인 example.com 이 같은
+    키라 한쪽 판정이 다른 쪽을 가리고(또는 무관이 키워드 추적을 끄고) 만다. 검색어 키는 옛
+    그대로(norm)라 기존 verdicts 가 깨지지 않는다."""
+    assert scoring.verdict_key("striking_distance", "example.com") == scoring.norm("example.com")
+    dom = scoring.verdict_key("backlink_prospect", "example.com")
+    assert dom != scoring.norm("example.com")
+    assert scoring.verdict_key("backlink_mention", "WWW.Example.com") == dom, "www·대소문자로 갈린다"
+    top = scoring.verdict_key("coverage", "cluster:피부 관리")
+    assert top != scoring.verdict_key("striking_distance", "피부 관리")
+    assert top == scoring.verdict_key("coverage", "cluster:피부관리")
+    assert len({dom, top, scoring.norm("example.com")}) == 3
+    # SQL 안에서도 같은 함수다 — 조인이 파이썬 사본 없이 같은 키를 만든다
+    conn = db.connect()
+    assert conn.execute("SELECT vkey('backlink_mention','www.Example.com')").fetchone()[0] == dom
+    assert conn.execute("SELECT vkey('coverage','cluster:피부 관리')").fetchone()[0] == top
+    conn.close()
+
+
+def test_verdict_gates_topic_and_domain_kinds():
+    """주제(coverage)·링크 도메인(backlink_prospect·mention)도 심사 문을 거친다 — 무관·보류는
+    적재가 안 하고, 열린 기회는 '작업'만 낸다. 무조건 고칠 것(backlink_broken 등)은 그대로
+    통과한다. 검색어와 글자가 같은 도메인은 서로의 판정을 안 받는다."""
+    conn = db.connect()
+    pid = _project(conn, "vg3")["id"]
+    rows = [{"kind": "coverage", "target": "cluster:피부 관리", "score": 30},
+            {"kind": "coverage", "target": "cluster:두피", "score": 29},
+            {"kind": "backlink_prospect", "target": "good.com", "score": 28},
+            {"kind": "backlink_mention", "target": "www.good.com", "score": 27},
+            {"kind": "backlink_prospect", "target": "bad.com", "score": 26},
+            {"kind": "backlink_broken", "target": "https://e.com/old", "score": 25},
+            {"kind": "striking_distance", "target": "good.com", "score": 24}]
+    vk = scoring.verdict_key
+    db.set_verdicts(conn, pid, [vk("coverage", "cluster:피부 관리")], "hold")
+    db.set_verdicts(conn, pid, [vk("coverage", "cluster:두피")], "work")
+    db.set_verdicts(conn, pid, [vk("backlink_prospect", "good.com")], "work")
+    db.set_verdicts(conn, pid, [vk("backlink_prospect", "bad.com")], "irrelevant")
+    kept = {(r["kind"], r["target"]) for r in scoring.gate_rows(conn, pid, rows)}
+    assert ("coverage", "cluster:피부 관리") not in kept and ("backlink_prospect", "bad.com") not in kept
+    assert ("coverage", "cluster:두피") in kept and ("backlink_mention", "www.good.com") in kept
+    assert ("backlink_broken", "https://e.com/old") in kept, "무조건 고칠 것은 심사 없이 통과한다"
+    assert ("striking_distance", "good.com") in kept, "도메인 판정이 같은 글자의 검색어를 가렸다"
+    db.upsert_opportunities(conn, pid, None, rows)
+    got = {(r["kind"], r["target"]) for r in db.open_opportunities(conn, pid, limit=50)}
+    assert got == {("coverage", "cluster:두피"), ("backlink_prospect", "good.com"),
+                   ("backlink_mention", "www.good.com"), ("backlink_broken", "https://e.com/old")}, got
+    # 무관이 같은 글자의 키워드 추적을 끄지 않는다(도메인 키에는 ':' 가 있어 norm(keyword) 와 안 만난다)
+    conn.execute("INSERT INTO keywords(project_id,keyword,is_active) VALUES(?, 'bad.com', 1)", (pid,))
+    conn.commit()
+    db.set_verdicts(conn, pid, [vk("backlink_prospect", "bad.com")], "irrelevant")
+    assert conn.execute("SELECT is_active FROM keywords WHERE project_id=? AND keyword='bad.com'",
+                        (pid,)).fetchone()[0] == 1, "도메인 무관이 같은 글자 키워드의 추적을 껐다"
+    conn.close()
+
+
+def test_migration_seeds_work_for_in_progress_opps_of_new_triage_kinds_once():
+    """심사 범위가 넓어지기 전에 개요에 서 있던 주제·도메인 기회 중 사람이 이미 손댄 것(acked)은
+    '작업' 판정을 한 번 심어 계속 보이게 한다. 손 안 댄 것(new)은 심사로 내려간다. 한 번만
+    돈다 — 사람이 그 판정을 되돌린 뒤 다시 연결해도 되심지 않는다. 검색어 종류는 안 건드린다."""
+    conn = db.connect()
+    pid = _project(conn, "seedv")["id"]
+    ins = lambda kind, tg, st: conn.execute(  # noqa: E731
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+        " VALUES(?,?,?,9,'r',?)", (pid, kind, tg, st))
+    ins("coverage", "cluster:진행 중", "acked")
+    ins("coverage", "cluster:손 안 댐", "new")
+    ins("backlink_prospect", "mine.com", "acked")
+    ins("backlink_mention", "www.mine.com", "acked")          # 같은 도메인 — 판정은 한 줄
+    ins("backlink_broken", "https://e.com/old", "acked")      # 심사 밖 종류
+    ins("striking_distance", "옛 검색어", "acked")             # 검색어는 옛 규칙 그대로
+    conn.execute("ALTER TABLE verdicts DROP COLUMN origin")   # 옛 Brain 흉내 — 표식 칸이 없다
+    conn.commit()
+    conn.close()
+    conn = db.connect()                                       # _migrate 가 한 번 심는다
+    vm = db.verdict_map(conn, pid)
+    vk = scoring.verdict_key
+    assert vm == {vk("coverage", "cluster:진행 중"): "work", vk("backlink_prospect", "mine.com"): "work"}, vm
+    assert {r["target"] for r in db.open_opportunities(conn, pid, limit=50)} >=         {"cluster:진행 중", "mine.com", "www.mine.com", "https://e.com/old"}
+    assert "cluster:손 안 댐" not in {r["target"] for r in db.open_opportunities(conn, pid, limit=50)}
+    assert conn.execute("SELECT DISTINCT origin FROM verdicts WHERE project_id=?", (pid,)).fetchall()[0][0] == "seed"
+    db.set_verdicts(conn, pid, [vk("coverage", "cluster:진행 중")], None)    # 사람이 되돌렸다
+    conn.close()
+    conn = db.connect()
+    assert vk("coverage", "cluster:진행 중") not in db.verdict_map(conn, pid), "다시 연결했더니 판정이 되살아났다"
+    # 사람이 새로 누른 판정은 seed 표식이 없다
+    db.set_verdicts(conn, pid, [vk("backlink_prospect", "mine.com")], "hold")
+    assert conn.execute("SELECT origin FROM verdicts WHERE key=?", (vk("backlink_prospect", "mine.com"),)
+                        ).fetchone()[0] is None
+    conn.close()
+
+
 def test_status_at_and_watch_rows():
     """완료 후 관찰 — 상태를 늘리지 않고 status_at 과 스냅샷 전·후로 만든다."""
     conn = db.connect()
