@@ -46,6 +46,11 @@ LOG = collector.LOG.getChild("worker")
 NO_GSC_KEYWORDS = 20
 
 
+# 사람이 [추적에서 빼기]로 끈 줄(active_src='manual', is_active=0)은 자동 켜기가 건드리지 않는다.
+# 순위 밖으로 내린 줄(demoted)만 빼던 때는 노출이 큰 줄을 빼도 다음 런이 빈자리를 채우며 도로 켰다.
+NOT_MANUAL_OFF = "NOT (is_active=0 AND COALESCE(active_src,'')='manual')"
+
+
 def activate_by_volume(project: str, limit: int | None = None) -> int:
     """서치콘솔 없는 사이트 — 후보 키워드를 **검색량 순으로** 켠다. 반환: 새로 켠 개수.
 
@@ -69,6 +74,7 @@ def activate_by_volume(project: str, limit: int | None = None) -> int:
             "SELECT id FROM keywords WHERE project_id=? AND is_active=0"
             " AND COALESCE(verdict_off,0)=0 AND volume>0"
             " AND COALESCE(active_src,'')<>'demoted'"
+            f" AND {NOT_MANUAL_OFF}"
             " ORDER BY volume DESC, id", (p["id"],)).fetchall()]
         # 시장마다 상한(db.market_caps) 안에서 — 한 시장 검색량이 커도 다른 시장 자리를 안 먹는다
         ids = db.fit_market_caps(conn, p["id"], ids,
@@ -231,13 +237,15 @@ def _select_keywords(conn, pid: int, cap: int, terms: set) -> list[int]:
         "SELECT id, keyword, volume, source FROM keywords WHERE project_id=?"
         " AND COALESCE(verdict_off,0)=0 AND COALESCE(volume,0)>0"
         " AND COALESCE(active_src,'')<>'demoted'"      # 순위 밖이 이어져 내린 것(db.demote_unranked)
+        f" AND {NOT_MANUAL_OFF}"                       # 사람이 추적에서 뺀 것
         f" AND (locale IS NULL OR locale IN ({','.join('?' * len(locs))})) ORDER BY id",
         (pid, *locs))]
     for k in kws:
         k["vol"] = lvol.get(scoring.norm(k["keyword"])) or k["volume"] or 0
     kws.sort(key=lambda k: (-k["vol"], k["id"]))
     seeds = [r[0] for r in conn.execute(
-        "SELECT id FROM keywords WHERE project_id=? AND source='seed'", (pid,))]
+        f"SELECT id FROM keywords WHERE project_id=? AND source='seed' AND {NOT_MANUAL_OFF}",
+        (pid,))]
     at = lambda k: pos.get(scoring.norm(k))
     rise = [k["id"] for k in kws if not brand(k["keyword"]) and 4 <= (at(k["keyword"]) or 0) <= 30]
     reclaim = [k["id"] for k in kws if brand(k["keyword"]) and (at(k["keyword"]) or 999) > 10]
@@ -397,7 +405,8 @@ def activate_from_gsc(project: str, limit: int | None = None) -> int:
         ids = [r[0] for r in conn.execute(
             "SELECT k.id, k.keyword FROM keywords k"
             "  JOIN gsc_snapshots g ON g.project_id=k.project_id AND g.query=k.keyword"
-            " WHERE k.project_id=? AND k.is_active=0 AND COALESCE(k.active_src,'')<>'demoted'"
+            " WHERE k.project_id=? AND k.is_active=0 AND COALESCE(k.active_src,'')"
+            " NOT IN ('demoted','manual')"
             " GROUP BY k.id ORDER BY SUM(g.impressions) DESC", (pid,)).fetchall()
             if not db.is_operator_query(r[1])]
         ids = db.fit_market_caps(conn, pid, ids, limit)
@@ -968,6 +977,19 @@ def demo() -> None:
                              (pid,)).fetchone()[0]
             c.close()
             assert back == 0, "순위 밖이라 내린 키워드를 빈자리 채우기가 되켰다"
+            # 사람이 [추적에서 빼기]로 뺀 것(manual)도 빈자리 채우기가 되켜면 안 된다 —
+            # 노출이 가장 큰 kw1 을 빼도 다음 런이 도로 켜서 "뺐는데 돌아온다"가 됐다.
+            c = db.connect()
+            kw1 = c.execute("SELECT id FROM keywords WHERE project_id=? AND keyword='kw1'",
+                            (pid,)).fetchone()[0]
+            db.set_keywords_active(c, pid, [kw1], False)
+            c.close()
+            assert activate_from_gsc("demo-proj", limit=5) == 1, "빈자리를 안 채웠다(2)"
+            c = db.connect()
+            back = c.execute("SELECT is_active FROM keywords WHERE project_id=? AND keyword='kw1'",
+                             (pid,)).fetchone()[0]
+            c.close()
+            assert back == 0, "사람이 추적에서 뺀 키워드를 빈자리 채우기가 되켰다"
 
             # 서치콘솔 없는 사이트 — 검색량 순으로, 사이트당 한 번만(사람이 끈 것을 되켜지 않게).
             c = db.connect()
