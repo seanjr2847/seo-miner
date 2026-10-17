@@ -1,6 +1,6 @@
 <script type="application/json" class="view-def">
 {"id": "settings", "group": "admin", "title": "설정",
- "render": "shell", "sections": ["st-hero", "usage", "setup"], "stages": [],
+ "sections": ["st-hero", "usage", "setup"], "stages": [],
  "modes": [{"id": "measure", "label": "측정 설정"},
            {"id": "link", "label": "연결", "hide_empty": true},
            {"id": "pc", "label": "이 PC", "hide_empty": true},
@@ -9,7 +9,7 @@
 <!-- 설정은 "지금 이 사이트를 잴 준비가 됐나"에 먼저 답한다. 옛 화면은 0~6단계를 세로로
      늘어놓아서, 다 끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 지금은 첫 카드(#st-hero)가
      그 답이고(링 + 상태 행), 나머지는 그 답을 받치는 카드다.
-     호스팅은 #setup 을 통째로 감춘다(서버가 키를 댄다) — server/assets/dash.html 이 CSS 로
+     호스팅은 #setup 을 통째로 감춘다(서버가 키를 댄다) — 이 파일의 스크립트가 hidden 으로
      숨긴다. 메뉴에는 [설정]이 남는다: 브랜드·경쟁사(sm-profile)와 측정 주기·GA4·명령어
      (sm-set)는 호스팅에서도 쓴다. 그래서 #setup 안의 마크업은 **로컬 전용**이다.
      카드 격자는 화면 상자(#view-settings)에 12열로 건다. 섹션 셋(#st-hero, #setup,
@@ -32,10 +32,10 @@
    띠 요소는 셸·호스팅 애드온이 계속 쓴다(문장을 갈아 끼우는 쪽이 있다) — 지우지 않고
    눈에서만 뺀다. 띠 마크업 자체를 없애는 일은 셸 몫이다. */
 #view-settings > .next { display:none; }
-/* 로컬만 #setup 을 푼다. 호스팅은 dash.html 이 #setup 을 display:none 으로 감추는데
-   여기서 무조건 풀면 그 규칙(같은 특이도)과 부딪힌다 — 호스팅 전용 섹션(#sm-set)이 있는
-   조립본에서는 건드리지 않는다. */
-#view-settings:not(:has(#sm-set)) #setup { display:contents; }
+/* #setup 은 로컬 전용이다. 풀어 두기만 하고, 호스팅에서 감추는 일은 아래 스크립트가
+   hidden 으로 한다 — 예전에는 호스팅 애드온(dash.html)이 같은 특이도의 display:none 을 따로
+   들고 있어서, 이쪽이 호스팅 전용 섹션을 보고 물러나는 짝이 둘 사이에 있었다. */
+#setup { display:contents; }
 #sm-set { display:contents; }
 #view-settings [hidden] { display:none; }
 
@@ -843,4 +843,467 @@ VIEW("settings", function (d) {
          onclick="SM.touched=true;SM.show('overview')">개요 열기</button></div>`);
   ST_soon();
 });
+</script>
+
+<script>
+/* ── 준비 상태 · 폴더 · 구글 · 키 · 사이트 등록 ─────────────────────────────
+   예전에는 셸(dashboard.html)이 이 칸들을 그렸다. 칸의 마크업은 이 파일에 있고 그리는 코드만
+   셸에 있어서, 이 화면을 고치려면 두 파일을 같이 열어야 했다. 이제 칸도 그리는 코드도 여기다.
+   진단(/api/doctor)을 받는 자리는 DOCTOR 로 등록한다(셸의 loadDoctor 가 띠를 쓴 뒤 부른다).
+   이 스크립트는 문서 가운데에서 먼저 돌므로, 최상위에서는 이 파일의 칸(`$` 로 찾는다)과 esc 만 쓰고
+   셸의 것(post·toast·loadDoctor·loadProjects·SM)은 클릭·렌더 때에만 부른다. */
+// ── 설정 화면 ──────────────────────────────────────────────
+// 준비 상태는 배지다 — 버튼처럼 생긴 상태 칸이 이 화면의 원래 문제였다.
+// ok=됐다 / warn=해야 한다 / muted=안 해도 된다.
+const mark = (id, done, todo) => $(id).outerHTML =
+  `<span id="${id}" class="badge ${done ? "ok" : "warn"}">${done ? "완료" : todo}</span>`;
+
+/* 근거 칸 한 벌 — 한 문장으로 지금 상태를 말하고, 나머지는 접는다. 여태 이 칸이
+   네댓 문장짜리 산문이라 설정 화면이 읽을 것 반 페이지로 시작했다.
+   자리(settings.html)는 <p class="why"> 로 서 있지만 <details> 는 <p> 안에 못 든다 —
+   #s-* 와 같은 방식으로 상자째 갈아 끼운다. 여러 번 불려도 공짜다. */
+const why = (id, lead, moreLabel, more) => $(id).outerHTML =
+  `<div class="why" id="${id}"><p>${lead}</p>` +
+  (more ? `<details><summary>${moreLabel}</summary><p>${more}</p></details>` : "") +
+  `</div>`;
+
+function renderGsc(d) {
+  const st = d.gsc_state || (d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none"), sa = d.gsc_mode === "service_account";
+  $("s-gsc").outerHTML = `<span id="s-gsc" class="badge ${st === "connected" ? "ok" : "warn"}">` +
+    (st === "connected" ? "연결됨" : st === "pending" ? "로그인 대기" : "인증 없음") + `</span>`;
+  // 배지가 이미 "연결됨"이라고 말한다 — 부제가 그 말을 되풀이하지 않는다.
+  if (st === "connected" && sa)
+    why("why-gsc", "서비스 계정으로 사람 없이 수집합니다.", "읽는 범위와 확인 방법",
+      `서치콘솔 [설정 → 사용자 및 권한]에 그 계정 이메일을 추가한 속성만 읽습니다.
+       확인은 <code>connect_gsc.py --status</code> 입니다.`);
+  else if (st === "connected")
+    why("why-gsc", "구글 로그인이 끝났고 다시 하실 일은 없습니다.", "이 토큰을 무엇이 쓰나",
+      `벌크 수집(<code>/capture gsc</code>)과 Claude 즉석 조회가 토큰 한 벌을 같이 씁니다.
+       내 계정이 소유한 속성에는 따로 권한을 주지 않아도 됩니다.`);
+  else if (st === "pending")
+    why("why-gsc", "남은 것은 구글 로그인 한 번뿐입니다.", "로그인하면 무슨 일이 일어나나",
+      `무료이고 30초 걸립니다. 아래 <b>[구글 로그인 열기]</b>를 누르면 브라우저 창이 한 번
+       열립니다. 채팅에 <code>GSC 로그인해줘</code> 라고 해도 같습니다. 끝나면 이 칸이
+       저절로 <b>[연결됨]</b>으로 바뀝니다. 구글 클라우드 콘솔에 가실 일은 없습니다.`
+      + (d.gsc_bundled
+        ? ` 이때 <b>"확인되지 않은 앱"</b> 경고가 한 번 뜹니다. <b>[고급]</b> 다음
+           <b>[이동]</b>을 누르면 됩니다. 플러그인이 동봉한 클라이언트라 정상입니다.
+           경고 없이 쓰려면 아래 [내 OAuth 클라이언트 쓰기]를 펴면 됩니다.`
+        : ""));
+  else
+    why("why-gsc", "연결 없이는 측정이 시작되지 않습니다.", "인증 수단을 넣는 두 가지 길",
+      `아래 <b>[내 OAuth 클라이언트 쓰기]</b>에 두 문자열을 넣습니다. 또는 콘솔에서 받은
+       JSON 을 다운로드 폴더에 두고 [받은 인증 파일 가져오기]를 누르면 됩니다.`);
+  $("btn-gsclogin").hidden = st !== "pending";
+  // 인증이 아예 없으면 여기가 유일한 출구라 펴 준다. **닫지는 않는다** —
+  // 저장 직후 loadDoctor가 다시 그리면서 방금 편 칸을 접으면 결과 문구까지 같이 숨는다.
+  if (st === "none") $("own-client").open = true;
+}
+
+/* ── 설정 0단계: 쓰는 방식 ────────────────────────────────
+   선택지도 라벨도 서버가 실어 보낸 표(d.modes/d.tools/d.terminals)로만 그린다 —
+   화면이 이름 사본을 가지면 doctor 의 표가 늘어난 날 여기만 낡는다.
+   저장은 고르는 즉시 한다: [저장] 버튼을 따로 두면 고르고 나간 사람이 안 고른
+   것이 된다(이 화면의 다른 칸들과 달리 되돌릴 것이 없는 한 글자짜리 값이다). */
+function usageOpts(box, group, list, cur, key) {
+  const el = $(box);
+  if (!el) return;
+  el.innerHTML = list.map(o =>
+    `<label class="opt"><input type="radio" name="${group}" value="${esc(o.id)}"` +
+    `${o.id === cur ? " checked" : ""}><span>${esc(o.label)}</span>` +
+    (o.installed === undefined ? "" :
+      `<span class="badge ${o.installed ? "ok" : "warn"}">` +
+      `${o.installed ? "설치됨" : "없음"}</span>`) + `</label>`).join("");
+  for (const r of el.querySelectorAll("input"))
+    r.addEventListener("change", async () => {
+      if (!key) return;
+      const [ok, res] = await post("/api/setup/keys", {[key]: r.value});
+      if (!ok) return say("m-usage", res.error, false);
+      $("m-usage").textContent = "";
+      toast("저장했습니다.", "ok");
+      loadDoctor();
+    });
+}
+
+function renderUsage(d) {
+  if (!$("u-mode")) return;              // 박제본에는 이 화면 자체가 없다
+  const k = d.usage_keys || {};
+  usageOpts("u-mode", "u-mode-r", d.modes || [], d.mode, k.mode);
+  usageOpts("u-tool", "u-tool-r", d.tools || [], d.tool, k.tool);
+  usageOpts("u-terminal", "u-terminal-r", d.terminals || [], d.terminal, k.terminal);
+  // 아직 안 고른 사람에게 "완료"라고 하지 않는다 — 셋이 다 서야 열기가 돈다.
+  const picked = [d.mode, d.tool].filter(Boolean).length;
+  $("s-usage").outerHTML = picked === 2
+    ? `<span id="s-usage" class="badge ok">완료</span>`
+    : `<span id="s-usage" class="badge warn">고르기 전</span>`;
+  // 고른 도구가 안 깔려 있으면 열기 버튼이 그때 가서 실패한다 — 여기서 말한다.
+  const t = (d.tools || []).find(x => x.id === d.tool);
+  if (t && !t.installed)
+    say("m-usage", `${t.label} 을(를) 못 찾았습니다. 설치하시거나 다른 도구를 ` +
+                   `고르시면 됩니다.`, false);
+  else
+    $("m-usage").textContent = "";
+  // 호스팅이면 등록·구글·키는 웹이 맡는다 — 할 수 없는 일을 할 일로 남기지 않는다.
+  // 아직 안 골랐으면 전부 보인다(고르기 전에 화면을 접으면 무엇이 있었는지 모른다).
+  const hosted = d.mode === "hosted";
+  for (const id of ["st-project", "st-gsc", "st-keys"])
+    if ($(id)) $(id).hidden = hosted;
+  $("u-remote").hidden = !hosted;
+  renderDirs();
+}
+
+/* 사이트별 로컬 폴더 표 — 사이트 목록의 정본은 레일의 고르개($("proj"))다(로컬 +
+   원격). 적을 때 손이 덜 가라고 Orca 가 아는 작업 폴더를 후보로 단다.
+   loadDoctor 는 자주 도는데 그때마다 표를 다시 그리면 적던 글자가 사라진다 —
+   사이트 목록이 그대로면 손대지 않는다. */
+let DIRS_AT = null;
+async function renderDirs(force) {
+  if (window.SM_HOSTED) return;          // /api/setup/dirs 는 로컬 전용 — 호스팅엔 그 폴더가 없다
+  const box = $("dirs");
+  if (!box) return;
+  const names = [...($("proj") ? $("proj").options : [])].map(o => o.value);
+  const at = names.join("\u0000");
+  if (!force && at === DIRS_AT) return;
+  DIRS_AT = at;
+  if (!names.length) {
+    box.innerHTML = `<p class="lh">사이트를 등록하면 여기서 폴더를 정합니다.</p>`;
+    return;
+  }
+  let r;
+  try { r = await (await fetch("/api/setup/dirs")).json(); }
+  catch (e) { DIRS_AT = null; return; }   // 다음 렌더에서 다시 해 본다
+  const saved = r.dirs || {};
+  box.innerHTML =
+    `<datalist id="dir-cands">${(r.worktrees || []).map(w =>
+      `<option value="${esc(w)}">`).join("")}</datalist>` +
+    table(["사이트", "폴더?그 사이트의 코드가 있는 자리입니다. 비우고 저장하면 지워집니다.", ""],
+      names.map(n => `<tr><td>${esc(n)}</td>` +
+        `<td><input list="dir-cands" value="${esc(saved[n] || "")}" spellcheck="false" aria-label="${esc(n)} 로컬 폴더"></td>` +
+        `<td><button class="go sec">저장</button></td></tr>`), "");
+  for (const tr of box.querySelectorAll("tbody tr"))
+    tr.querySelector("button").addEventListener("click", async () => {
+      const name = tr.cells[0].textContent, v = tr.querySelector("input").value;
+      const [ok, res] = await post("/api/setup/dir", {project: name, path: v});
+      if (!ok) return say("m-dirs", res.error, false);
+      say("m-dirs", v ? `${name} 폴더를 적어 두었습니다.` : `${name} 폴더를 지웠습니다.`, true);
+    });
+}
+
+// 웹에 연결 — 붙여 넣은 한 줄에서 주소와 토큰만 읽는다(서버가 뽑는다).
+$("btn-remote").addEventListener("click", async () => {
+  const line = $("u-line").value;
+  if (!line.trim()) return say("m-remote", "붙여 넣은 줄이 비어 있습니다.", false);
+  busy("btn-remote", "m-remote", true);
+  const [ok, r] = await post("/api/setup/remote", {line});
+  busy("btn-remote", "m-remote", false);
+  if (!ok) return say("m-remote", r.error, false);
+  $("u-line").value = "";
+  say("m-remote", `연결됐습니다: ${r.url} · 사이트 ${r.projects.length}개`, true);
+  loadDoctor();
+  loadProjects().then(n => { renderDirs(true); if (n) load(); });
+});
+
+function renderSetup(d) {
+  renderUsage(d);
+  mark("s-deps", d.core_ok, "설치 필요");
+  // 「완료」는 이 칸에서 뜻이 얕다 — 사이트는 하나 등록하고 끝나는 것이 아니라
+  // 늘어나는 것이다. 몇 개인지가 그 자리에서 알고 싶은 값이다.
+  const np = (d.projects || []).length;
+  $("s-proj").outerHTML = d.no_project
+    ? `<span id="s-proj" class="badge warn">아직 없음</span>`
+    : `<span id="s-proj" class="badge ok">${np ? `${np}개 등록` : "완료"}</span>`;
+  renderGsc(d);
+  // 안 해도 되는 것은 경고색으로 찍지 않는다 — 찍으면 할 일이 된다.
+  $("s-keys").outerHTML = d.nkeys
+    ? `<span id="s-keys" class="badge ok">${d.nkeys}개 저장됨</span>`
+    : `<span id="s-keys" class="badge muted">없어도 됨</span>`;
+  // 저장된 키가 있을 때만 [저장된 키 지우기]를 낸다 — 키를 한 번도 안 넣은 사람
+  // 화면에 지울 것 없는 조작 네 개를 세우지 않는다.
+  for (const [id] of KEYF) {
+    const del = keyDel(id);
+    if (del) del.parentNode.hidden = !d.nkeys;
+  }
+  // 마케팅 스킬 칸 — doctor가 빠진 게 있으면 보일 버튼만 켠다. show_setup 과 따로
+  // 놀기 때문에 패널이 접혀 있어도 doctor 진단 결과로 표시가 결정된다.
+  $("s-skills").outerHTML = d.show_skills_btn
+    ? `<span id="s-skills" class="badge warn">일부 누락</span>`
+    : `<span id="s-skills" class="badge ok">모두 설치됨</span>`;
+  $("btn-skills").hidden = !d.show_skills_btn;
+  if (d.show_skills_btn)
+    why("why-skills", "빠진 마케팅 스킬을 대신 깔아 드립니다.", "무엇이 달라지나",
+      `글의 각도와 진단을 맡는 무료 스킬 묶음입니다. 끝나면 <b>Claude Code 를 한 번
+       재시작</b>해야 그 스킬이 화면에 뜹니다. 없어도 측정과 수집은 그대로 돌고,
+       글 품질과 진단 깊이만 얕아집니다.`);
+  else
+    why("why-skills", "글의 각도와 진단을 맡는 스킬이 모두 깔려 있습니다.", "나중에 더 깔려면",
+      `새로 추가한 스킬은 <b>Claude Code 를 한 번 재시작</b>해야 화면에 뜹니다.`);
+  $("btn-depsgsc").hidden = !d.show_deps_gsc_btn;
+  $("btn-deps").textContent = d.core_ok ? "다시 설치" : "설치";
+  setupPrimary(d);
+  // 준비물이 덜 됐으면 거기서부터 — 측정 자체가 안 도는 상태다.
+  // 호스팅에서는 이 단계들이 유저 몫이 아니다(서버가 키를 댄다) — 거기로 보내면
+  // 할 수 있는 게 없는 화면에 떨어진다.
+  if (d.show_setup && !window.SM_HOSTED) SM.land("settings", 3);
+  prefillProject();
+  renderCarry(d);
+}
+
+/* 설정 화면에도 채운 버튼은 하나다 — 안 끝난 **첫** 단계의 것.
+   여섯 개가 다 채워져 있으면 어디서부터 시작하는지가 화면에 안 남는다: 순서가 있는
+   단계인데 여섯 곳이 똑같이 "여기를 누르세요"라고 말하는 셈이다.
+   순서는 이 화면의 단계 순서다(부품 → 사이트 → 구글). 키·스킬은 없어도 측정이
+   도는 선택 단계라 주요가 되지 않는다 — 안 해도 되는 일을 할 일로 만들지 않는다. */
+const SETUP_BTNS = ["btn-deps", "btn-proj", "btn-gsclogin", "btn-gsc",
+                    "btn-depsgsc", "btn-keys", "btn-skills"];
+function setupPrimary(d) {
+  const st = d.gsc_state || (d.gsc_ok ? "connected" : d.gsc_mode ? "pending" : "none");
+  const first = !d.core_ok ? "btn-deps"
+    : d.no_project ? "btn-proj"
+    : st === "pending" ? "btn-gsclogin"
+    : st !== "connected" ? "btn-gsc"
+    : "";
+  for (const id of SETUP_BTNS) {
+    const b = $(id);
+    if (b) b.className = id === first ? "go" : "go sec";
+  }
+}
+
+// 웹에서 이어 하기 — 로컬에 적어 둔 사이트 설정을 호스팅 등록 폼으로 실어 보낸다.
+// 링크를 만드는 것은 서버다(프로젝트 yaml 을 읽어야 한다) — 화면은 고르고 연다.
+function renderCarry(d) {
+  const sel = $("c-proj");
+  if (!sel) return;
+  const names = d.projects || [];
+  sel.innerHTML = names.map(p => `<option>${esc(p)}</option>`).join("");
+  // 기본값은 **지금 보고 있는 사이트**다. 여태 목록 첫 줄이 잡혀서, alpha-site 를
+  // 보다가 6단계로 내려오면 beta-site 를 실어 보내겠다고 서 있었다.
+  const cur = ($("proj") || {}).value;
+  sel.value = names.includes(cur) ? cur : (names[0] || "");
+  sel.hidden = $("btn-carry").hidden = !names.length;
+  if (!names.length) say("m-carry", "실어 보낼 사이트가 없습니다. 위 2번에서 사이트를 먼저 등록합니다.", false);
+}
+
+$("btn-carry").addEventListener("click", async () => {
+  const a = $("c-url");
+  a.hidden = true;
+  const r = await (await fetch("/api/setup/carry?project=" +
+    encodeURIComponent($("c-proj").value))).json();
+  if (!r.ok) return say("m-carry", r.error, false);
+  a.href = r.url;
+  a.textContent = "웹에서 등록";
+  a.hidden = false;
+  if (await SM.ui.copyText(r.url))
+    say("m-carry", "링크를 복사했습니다. 다른 기기에 붙여 넣어도 열립니다.", true);
+  else
+    say("m-carry", "복사 권한이 없는 브라우저입니다. 아래 링크를 눌러 바로 열 수 있습니다.", true);
+});
+
+// 대시보드를 띄운 폴더(레포)에서 폼 초기값을 채운다 — 이름·도메인은 코드 추론,
+// 씨앗 키워드·브랜드·도구는 setup 스킬(Claude)이 레포를 읽고 써 둔 판단 프리필.
+// 빈 칸만 채운다 — 사용자가 적던 값을 덮지 않는다.
+let PREFILLED = false;
+async function prefillProject() {
+  if (window.SM_HOSTED) return;          // /api/setup/prefill 은 로컬 전용 — 호스팅은 이 PC 의 레포를 못 읽는다
+  if (PREFILLED || !$("p-name")) return;
+  PREFILLED = true;
+  try {
+    const p = await (await fetch("/api/setup/prefill")).json();
+    const join = v => Array.isArray(v) ? v.join(", ") : v;
+    let used = false;
+    for (const [id, key] of [["p-name","name"], ["p-domain","domain"], ["p-gsc","gsc_property"],
+                             ["p-locale","locale"], ["p-seeds","seed_keywords"],
+                             ["p-alias","brand_aliases"], ["p-tools","tools"],
+                             ["p-comp","competitors_manual"]])
+      if (p[key] && (!$(id).value || $(id).value === "ko-KR" && key === "locale"))
+        { $(id).value = join(p[key]); used = true; }
+    if (p.type && $("p-type")) $("p-type").value = p.type;
+    if (used) say("m-proj", "이 폴더의 저장소를 읽어 미리 채웠습니다. 고칠 곳만 고치면 됩니다.", true);
+  } catch (e) { /* 추론 실패는 빈 폼과 같다 */ }
+}
+
+function busy(btn, msg, on) {
+  $(btn).disabled = on;
+  if (on) { $(msg).className = "msg"; $(msg).textContent = "실행 중입니다. 최대 몇 분 걸립니다."; }
+}
+function say(msg, text, ok) {
+  $(msg).className = "msg " + (ok ? "good" : "bad");
+  $(msg).textContent = text;
+}
+function showLog(log) {
+  $("setup-log").hidden = !log;
+  $("setup-log").textContent = log || "";
+}
+
+async function runAction(action, btn, msg, okText) {
+  busy(btn, msg, true);
+  const [, r] = await post("/api/setup/run", {action});
+  busy(btn, msg, false);
+  say(msg, r.ok ? okText : "끝내지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
+  showLog(r.log);
+  loadDoctor();
+}
+
+$("btn-deps").addEventListener("click", () =>
+  runAction("deps", "btn-deps", "m-deps", "설치했습니다."));
+// 마케팅 스킬 설치 — 끝나면 Claude Code 재시작이 필요하므로 그 점을 메시지에 박는다
+// (applySkill은 다음 세션이 한다 — 현재 세션은 그 스킬을 모를 수 있다).
+$("btn-skills").addEventListener("click", () =>
+  runAction("skills", "btn-skills", "m-skills",
+    "설치했습니다 — Claude Code를 재시작하시면 화면에 그 스킬이 뜹니다."));
+$("btn-depsgsc").addEventListener("click", () =>
+  runAction("deps_gsc", "btn-depsgsc", "m-gsc", "설치했습니다."));
+// 인증 파일 회수 전에 구글 수집용 부품을 자동으로 깐다 — 이미 있으면 pip이 금방 끝난다.
+// 사용자가 "부품 먼저"를 알 필요가 없게 버튼 하나로 잇는다.
+$("btn-gsc").addEventListener("click", async () => {
+  busy("btn-gsc", "m-gsc", true);
+  const [, dep] = await post("/api/setup/run", {action: "deps_gsc"});
+  if (!dep.ok) {
+    busy("btn-gsc", "m-gsc", false);
+    say("m-gsc", "구글 수집용 부품을 설치하지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", false);
+    showLog(dep.log);
+    return;
+  }
+  const [, r] = await post("/api/setup/run", {action: "gsc"});
+  busy("btn-gsc", "m-gsc", false);
+  say("m-gsc", r.ok ? "인증 파일을 넣었습니다. 처음 조회할 때 브라우저 로그인 창이 한 번 열립니다. "
+                    + "서비스 계정 키를 넣으셨다면 아래 로그에 남은 일이 적혀 있습니다."
+                    : "인증 파일을 가져오지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
+  showLog(r.log);
+  loadDoctor();
+});
+
+// 로그인 창을 여는 건 google-auth-oauthlib 이다 — 부품이 없으면 그 자리에서
+// 막히므로 여기서도 먼저 깐다(이미 있으면 pip이 금방 끝난다). 버튼 하나로 잇는 이유는
+// [파일 가져오기]와 같다: 사용자가 "부품 먼저"를 알 필요가 없어야 한다.
+$("btn-gsclogin").addEventListener("click", async () => {
+  busy("btn-gsclogin", "m-gsc", true);
+  const [, dep] = await post("/api/setup/run", {action: "deps_gsc"});
+  if (!dep.ok) {
+    busy("btn-gsclogin", "m-gsc", false);
+    say("m-gsc", "구글 수집용 부품을 설치하지 못했습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", false);
+    return showLog(dep.log);
+  }
+  say("m-gsc", "브라우저 창이 열립니다. 구글 계정으로 로그인하면 끝납니다. " +
+               "\"확인되지 않은 앱\" 경고가 뜨면 [고급] 다음 [이동] 입니다.", true);
+  const [, r] = await post("/api/setup/run", {action: "gsc_login"});
+  busy("btn-gsclogin", "m-gsc", false);
+  say("m-gsc", r.ok ? "연결됐습니다. 이제 구글 실적을 읽을 수 있습니다."
+                    : "로그인이 끝나지 않았습니다. 아래 로그에 멈춘 자리가 남아 있습니다.", r.ok);
+  showLog(r.log);
+  loadDoctor();
+});
+
+// 자기 클라이언트 조립 — 시크릿은 보내고 나면 즉시 칸을 비운다(API 키 칸과 같은 규칙).
+// 서버도 되돌려주지 않으므로 화면에 다시 뿌릴 값 자체가 없다.
+$("btn-ocsave").addEventListener("click", async () => {
+  busy("btn-ocsave", "m-oc", true);
+  const [ok, r] = await post("/api/setup/gsc-client",
+    {client_id: $("oc-id").value, client_secret: $("oc-secret").value});
+  busy("btn-ocsave", "m-oc", false);
+  if (!ok) return say("m-oc", r.error, false);
+  $("oc-id").value = $("oc-secret").value = "";
+  // 저장됐다는 사실은 토스트가 말하고, 칸에는 **아직 남은 일**만 남긴다 — 3초 뒤
+  // 사라지는 자리에 다음 걸음을 적으면 그 걸음이 같이 사라진다.
+  toast("저장했습니다.", "ok");
+  say("m-oc", `클라이언트가 바뀌었습니다. 위 [구글 로그인 열기]로 한 번 더 로그인합니다.`, true);
+  loadDoctor();
+});
+
+/* API 키 — 저장과 지우기가 한 버튼이지만 손짓은 둘이다.
+   서버(dashboard.save_keys)는 빈 값을 "그 키를 지워라"로 읽는다. 그런데 이 네 칸은
+   **늘 비어서** 뜬다: 저장된 값을 서버가 되돌려주지 않기 때문이다. 그래서 빈 칸을
+   그냥 같이 보내면 안 만진 칸과 비운 칸이 화면에서 구별되지 않아, 한 칸만 채우고
+   저장한 사람이 나머지 셋을 잃는다. 지움은 칸마다 [저장된 키 지우기]를 찍어야만
+   생기고, 보내기 직전에 무엇이 지워지는지 이름을 대고 한 번 더 묻는다. */
+const KEYF = [["k-or","OPENROUTER_API_KEY"], ["k-serper","SERPER_API_KEY"],
+              ["k-dfsl","DATAFORSEO_LOGIN"], ["k-dfsp","DATAFORSEO_PASSWORD"]];
+// 칸 이름의 정본은 뷰의 <label> 이다 — 여기 한국어 이름을 적으면 두 벌이 된다.
+const keyName = id =>
+  (((document.querySelector(`label[for="${id}"]`) || {}).textContent) || id).trim();
+const keyDel = id => $(id + "-del");
+
+// [저장된 키 지우기]는 셸이 단다. 뷰에는 지울 것이 있는지(키가 저장돼 있는지) 알
+// 자료가 없다 — 그건 doctor 가 실어 보내는 nkeys 이고 그 값을 읽는 쪽이 셸이다.
+for (const [id] of KEYF) {
+  const inp = $(id);
+  if (!inp) continue;
+  const lab = document.createElement("label");
+  lab.className = "delkey";
+  lab.hidden = true;             // 저장된 키가 하나도 없으면 지울 것도 없다
+  lab.innerHTML = `<input type="checkbox" id="${esc(id)}-del"
+    aria-label="${esc(keyName(id))} 저장된 키 지우기">저장된 키 지우기`;
+  inp.insertAdjacentElement("afterend", lab);
+  // 찍은 칸에는 값을 적을 수 없게 막는다 — 한 칸이 "이 값으로 바꿔라"와 "지워라"를
+  // 동시에 뜻하면 무엇이 저장될지 화면만 보고는 모른다.
+  lab.querySelector("input").addEventListener("change", e => {
+    inp.disabled = e.target.checked;
+    if (e.target.checked) inp.value = "";
+  });
+}
+
+$("btn-keys").addEventListener("click", async () => {
+  const vals = {}, drop = [];
+  let nset = 0;
+  for (const [id, key] of KEYF) {
+    const del = keyDel(id);
+    if (del && del.checked) { vals[key] = ""; drop.push(keyName(id)); }
+    else if ($(id).value !== "") { vals[key] = $(id).value; nset++; }
+  }
+  if (!Object.keys(vals).length)
+    return say("m-keys", "입력한 칸도, 지우기로 찍은 칸도 없습니다.", false);
+  // 지우기는 되돌릴 수 없다 — 값은 화면에도 서버에도 안 남아 발급처에서 다시 받아야
+  // 한다. 무엇이 지워지는지 이름을 대고 묻는다.
+  if (drop.length && !window.confirm(
+      `${drop.join(" · ")} 키를 지웁니다.\n` +
+      `지운 값은 되돌릴 수 없고, 다시 쓰려면 발급처에서 받아 다시 넣어야 합니다.`))
+    return;
+  busy("btn-keys", "m-keys", true);
+  // 결과를 봐야 한다 — 안 보면 403·오류에도 "저장했습니다"가 뜬다(실제로 그랬다).
+  // 키는 화면에 다시 안 뜨므로 사용자가 저장됐는지 확인할 길이 토스트뿐이다.
+  const [ok, res] = await post("/api/setup/keys", vals);
+  busy("btn-keys", "m-keys", false);
+  if (!ok) return say("m-keys", (res && res.error) || "저장하지 못했습니다.", false);
+  for (const [id] of KEYF) {
+    $(id).value = "";
+    $(id).disabled = false;
+    const del = keyDel(id);
+    if (del) del.checked = false;
+  }
+  // 남은 일이 없다 — 칸을 비우고 토스트만 낸다(배지가 몇 개 저장됐는지 다시 말한다).
+  $("m-keys").textContent = "";
+  toast(!nset ? `키 ${drop.length}개를 지웠습니다.`
+        : drop.length ? `저장하고 키 ${drop.length}개를 지웠습니다.` : "저장했습니다.", "ok");
+  loadDoctor();
+});
+
+$("btn-proj").addEventListener("click", async () => {
+  busy("btn-proj", "m-proj", true);
+  const [ok, r] = await post("/api/setup/project", {
+    name: $("p-name").value, type: $("p-type").value, domain: $("p-domain").value,
+    locale: $("p-locale").value, gsc_property: $("p-gsc").value,
+    brand_aliases: $("p-alias").value, seed_keywords: $("p-seeds").value,
+    competitors_manual: $("p-comp").value, tools: $("p-tools").value});
+  busy("btn-proj", "m-proj", false);
+  if (!ok) return say("m-proj", r.error, false);
+  // 이 화면은 900ms 뒤 [개요]로 넘어간다 — 칸에 적은 말은 그때 같이 사라진다.
+  // 화면을 넘어가서도 남는 자리는 토스트뿐이다. 다음 걸음은 [개요]의 배너가 말한다.
+  // busy() 가 써 둔 "실행 중입니다"는 손으로 지운다 — say() 를 안 부르면 안 지워진다.
+  $("m-proj").textContent = "";
+  toast(`${r.name} 사이트를 등록했습니다.`, "ok");
+  // 폴더 칸을 채웠으면 등록과 같은 손짓으로 저장한다 — 0단계 표로 다시 내려가서
+  // 같은 값을 한 번 더 적게 만들지 않는다. 실패해도 등록은 이미 끝났다.
+  if ($("p-dir") && $("p-dir").value.trim())
+    await post("/api/setup/dir", {project: r.name, path: $("p-dir").value.trim()});
+  $("p-dir").value = "";
+  loadDoctor();
+  loadProjects().then(n => { renderDirs(true); if (n) load(); });
+  // 등록이 끝나면 방금 만든 사이트의 개요로 간다.
+  setTimeout(() => SM.show("overview"), 900);
+});
+
+// 호스팅은 #setup 을 감춘다 — 로컬 설정(부품 설치·API 키·구글 클라이언트)은 호스팅에서 유저 몫이
+// 아니다. 지우지 않고 감춘다: 위에서 이벤트를 이미 걸었다. hidden 이라 셸의 탭 접기(panelLive)도
+// 그 안 카드를 "없는 카드"로 읽는다. 첫 modeApply(SM.sync)보다 먼저 서도록 최상위에서 한다.
+if (window.SM_HOSTED && $("setup")) $("setup").hidden = true;
+DOCTOR("settings", {after: renderSetup});
 </script>

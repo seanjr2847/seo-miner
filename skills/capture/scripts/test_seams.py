@@ -152,10 +152,12 @@ def test_seam_01_view_ids_from_payload():
     views, shell, dash = ctx["views"], ctx["shell"], ctx["dash"]
     assert 'data-opp="${o.id}"' in _queue_block(shell), \
         "큐의 row() 가 기회 id 를 data-opp 로 안 내보낸다"
-    for what, pat in (("단계 칸", r'class="stp \$\{cls\}"[^>]*data-stage='),
-                      ("실행 칩", r'<button class="cmd"[^>]*data-stage='),
-                      ("배너 이름", r"<b data-stage=")):
-        assert re.search(pat, shell), f"renderGuide() 의 {what}에 data-stage 가 없다"
+    # renderGuide 는 안내 뷰(guide.html)가 갖는다 — 실행 칩은 셸의 SM.host.stepChip 이 그린다.
+    guide = (views / "guide.html").read_text("utf-8")
+    for what, pat, src in (("단계 칸", r'class="stp \$\{cls\}"[^>]*data-stage=', guide),
+                           ("실행 칩", r'<button class="cmd"[^>]*data-stage=', shell),
+                           ("배너 이름", r"<b data-stage=", guide)):
+        assert re.search(pat, src), f"renderGuide() 의 {what}에 data-stage 가 없다"
     for gone in ("setOpp(", r"\/capture\s+"):
         assert gone not in dash, f"dash.html 에 정규식 고고학이 남아 있다: {gone}"
 
@@ -387,7 +389,10 @@ def test_seam_09_view_commands_match_declared_stages():
     CROSS = {("competitors", "keywords"),     # 갭 검색어는 승인 대기 후보로 들어간다
              # [주제별] 축은 keywords 단계가 아니라 그 단계의 **큐레이션**(Claude 가
              # cluster 를 붙이는 일)이 채운다 — 화면에는 그걸 붙일 자리가 없다.
-             ("analysis", "keywords")}
+             ("analysis", "keywords"),
+             # 설정의 구글 연결 문구가 "벌크 수집(/capture gsc)이 토큰을 같이 쓴다"고 설명한다 —
+             # 누르라는 칩이 아니라 토큰을 누가 쓰는지 말하는 글이다(예전엔 셸이 그려서 이 검사 밖이었다).
+             ("settings", "gsc")}
     for p in sorted(views.glob("*.html")):
         vid = p.stem
         if vid not in defs:
@@ -504,12 +509,21 @@ def test_seam_10_gather_payload_keys_match():
         return
     views = ctx["views"]
     served = set(_gather("_seam", ga4=True))
+    # 진단(/api/doctor)을 받는 스크립트(DOCTOR(...) 로 등록하는 블록 — [설정]·[진행 안내])는
+    # 다른 페이로드(stage.setup_payload)도 읽는다. 그 블록만 두 벌 중 아무거나 허용한다.
+    import stage
+    doctor_keys = set(stage.setup_payload({"brain": {"projects": []}}))
     read = set()
+    doctor_read = set()
     for p in sorted(views.glob("*.html")):
-        read |= {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)",
-                                                p.read_text("utf-8"))}
+        for blk in re.split(r"(?=<script)", p.read_text("utf-8")):
+            keys = {m.group(1) for m in re.finditer(r"\bd\.([a-zA-Z_]\w*)", blk)}
+            (doctor_read if "DOCTOR(" in blk else read).update(keys)
     assert read <= served, (
         f"화면이 읽는데 gather() 가 안 싣는 페이로드 키: {sorted(read - served)}")
+    assert doctor_read <= served | doctor_keys, (
+        "DOCTOR 블록이 읽는데 gather()·setup_payload() 어디도 안 싣는 키: "
+        f"{sorted(doctor_read - served - doctor_keys)}")
 
 
 def test_seam_11_carry_fields_match():
@@ -4659,6 +4673,46 @@ def test_seam_190_shared_parts_have_one_home_in_the_shell():
     assert got["deniedFallsBack"] is True, "권한 거부(API 실패)인데 폴백으로 물러서지 않는다"
     assert got["api"] is True and got["wrote"] == "직접", "API 가 되는 환경에서 API 로 쓰지 않는다"
 
+
+
+def test_seam_191_guide_and_settings_draw_themselves():
+    """191) [진행 안내]·[설정]은 자기 파일에서 그린다 — 셸이 대신 그리지 않는다.
+
+    예전에는 두 view-def 가 "render":"shell" 이라고 적고 그리는 코드(renderGuide·renderSetup
+    와 그 부품 마흔 개)는 dashboard.html 에 있었다. 칸은 뷰에, 그리는 코드는 셸에 있어서 한
+    화면을 고치려면 두 파일을 열었고, 호스팅 애드온은 #setup 을 감추는 CSS 를 따로 들고 있었다
+    (settings.html 의 :has(#sm-set) 가 그 짝에서 물러나는 쪽이었다).
+
+    - 두 뷰가 VIEW() 로 등록하고 "render" 예외를 안 적는다.
+    - 진단(/api/doctor)을 받는 칸은 DOCTOR() 로 등록하고, 셸은 이름을 모른 채 부르기만 한다.
+    - 셸에 그리는 코드가 돌아오지 않는다.
+    - #setup 을 감추는 일은 설정 뷰 한 곳이다(dash.html 이 따로 감추지 않는다).
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    views, shell, dash = ctx["views"], ctx["shell"], ctx["dash"]
+    guide = (views / "guide.html").read_text("utf-8")
+    settings = (views / "settings.html").read_text("utf-8")
+    for who, src in (("guide.html", guide), ("settings.html", settings)):
+        assert '"render"' not in src.split("</script>", 1)[0], \
+            f'{who} 의 view-def 에 "render" 가 남았다 — 뷰는 VIEW() 로 스스로 그린다'
+    assert 'VIEW("guide", renderGuide)' in guide and 'DOCTOR("guide"' in guide, \
+        "안내 뷰가 VIEW/DOCTOR 로 등록하지 않는다"
+    assert 'VIEW("settings"' in settings and 'DOCTOR("settings"' in settings, \
+        "설정 뷰가 VIEW/DOCTOR 로 등록하지 않는다"
+    for name in ("renderGuide", "renderSetup", "renderUsage", "renderGsc", "renderDirs",
+                 "renderCarry", "usageOpts", "setupPrimary", "prefillProject", "runAction"):
+        decl = r"\bfunction\s+" + name + r"\b"
+        assert not re.search(decl, shell), \
+            f"셸에 {name}() 가 돌아왔다 — 그 화면의 파일(guide.html·settings.html)에 둔다"
+        assert re.search(decl, guide + settings), f"{name}() 이 안내·설정 뷰 어디에도 없다"
+    assert "for (const h of DOCTOR_RENDER)" in shell, "loadDoctor 가 등록된 칸을 부르지 않는다"
+    assert not re.search(r"#setup\s*\{[^}]*display\s*:", dash), \
+        "dash.html 이 #setup 을 따로 감춘다 — 설정 뷰의 hidden 한 곳이 정본이다"
+    assert ":has(#sm-set)" not in settings, "설정 뷰가 호스팅 애드온과의 CSS 짝을 다시 들였다"
+    assert 'if (window.SM_HOSTED && $("setup")) $("setup").hidden = true;' in settings, \
+        "호스팅에서 #setup 을 감추는 한 줄이 설정 뷰에 없다"
 
 def inspect_src(fn) -> str:
     import inspect

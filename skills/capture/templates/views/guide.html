@@ -1,7 +1,7 @@
 <script type="application/json" class="view-def">
 {"id": "guide", "group": "admin", "title": "진행 안내",
  "sub": "한 바퀴를 도는 순서와 지금 어디까지 왔는지를 봅니다.",
- "render": "shell", "sections": ["guide"], "stages": []}
+ "sections": ["guide"], "stages": []}
 </script>
 <!-- 여태 헤더의 [진행 안내] 토글이 본문 위에 얹던 패널이었다. 화면 하나로 세운다 —
      토글은 상태를 하나 더 만들고(열렸나 닫혔나), 그 상태는 아무 데도 안 남았다. -->
@@ -374,4 +374,65 @@ VIEW("guide", function (d) {
     <span class="live">이어서 돌리면 다음 단계가 볼 재료가 생깁니다.</span></p>`
     + (btn ? `<div class="acts">${btn}</div>` : ""));
 });
+</script>
+
+<script>
+/* ── 안내: 이 도구를 쓰는 순서 ────────────────────────────────
+   순서가 정보다 — 앞 단계가 없으면 뒤 단계는 재료가 없어 돌지 않는다.
+   판정(done·지금 할 것·명령·runnable)은 서버가 한다(stage.from_progress) — 여기서
+   다시 판정하면 화면과 doctor·CLI가 서로 다른 다음 할 일을 말하게 된다. 이 화면은
+   그 칩을 SM.host.stepChip 에 넘겨 그리기만 한다. */
+function renderGuide(d) {
+  if (READONLY || !d.guide) return;      // 박제본에는 "지금 할 것"이 없다
+  const steps = d.guide.steps, here = d.guide.here;
+  // data-stage 는 stage.py 가 실어 보낸 단계 id 다. 이름을 다른 말로 쓰는 계층
+  // (호스팅판)이 렌더된 한국어를 정규식으로 되짚지 않고 id 로 갈아끼우게 하는 자리다.
+  // 제목은 .t 로 감싼다 — 텍스트 노드를 헤집지 않고 통째로 바꿀 수 있어야 한다.
+  $("shaft").innerHTML = steps.map((s, i) => {
+    const cls = s.done ? "done" : i === here ? "here" : "later";
+    return `<div class="stp ${cls}" data-stage="${esc(s.id)}">
+      <div class="rail"><div class="dot">${i + 1}</div></div>
+      <div class="body">
+        <div class="txt">
+          <h3><span class="t">${esc(s.t)}</span>${s.done ? '<span class="ok">✓</span>' : ""}
+            <span class="state">${esc(s.state)}</span>
+            ${i === here ? '<span class="now">지금 할 것</span>' : ""}</h3>
+          <p class="gain">${esc(s.gain)}</p>
+        </div>
+        <div>${s.done ? "" : SM.host.stepChip(s)}</div>
+      </div></div>`;
+  }).join("");
+  // 되돌아갈 자리는 2번 단계다 — 이름을 여기 박아 두면 stage.py 와 어긋난다.
+  const back = steps[1]
+    ? `2. <b data-stage="${esc(steps[1].id)}">${esc(steps[1].t)}</b>` : "<b>2번 단계</b>";
+  // 배너의 "지금 할 것" 채우기. 이름표와 단계 이름을 줄표로 잇지 않는다 —
+  // 이름표는 .nxk 로 세우고 단계 이름이 문장의 주어가 된다.
+  const nx = $("nx");
+  if (nx) {
+    // 이름표는 한 벌이다 — 두 배포가 할 수 있는 일이 다른 게 아니라 낱말만 달랐다.
+    nx.innerHTML = here === -1
+      ? `<span class="nxk">한 바퀴 완주</span>` +
+        `<span>${back}부터 다시 재면 그동안 고친 것이 숫자로 보입니다.</span>`
+      : `<span class="nxk">지금 할 것</span>` +
+        `<span><b data-stage="${esc(steps[here].id)}">${esc(steps[here].t)}</b></span>` +
+        // 명령은 칠 곳이 있는 배포에서만 낸다 — 웹에는 채팅이 없다. 애드온이
+        // CSS 로 감추고 있었지만, 감춘 글자는 여전히 화면 글자다(복사·읽어주기).
+        (!window.SM_HOSTED && steps[here].cmd
+          ? ` <code>${esc(steps[here].cmd)}</code>` : "");
+    banSync();          // 이제 배너에 할 말이 생겼다
+  }
+  // 아직 한 바퀴도 안 돈 프로젝트면 [진행 안내]부터 보여준다 — 개요에 그릴 숫자가 없다.
+  // progress 는 /api/data 페이로드에만 있다 — 사이트가 없을 때는 doctor 가 부른다.
+  if (here !== -1 && !(d.progress || {}).gsc_days) SM.land("guide", 2);
+  // 이 함수가 방금 새로 그린 자리에도 대체 문구를 입힌다. render() 끝에서도 한 번
+  // 돌지만 순서에 기대지 않는다 — applyWording 은 속성을 지우므로 두 번 돌아도 공짜다.
+  applyWording($("guide"));
+}
+
+// 데이터 페이로드(/api/data)로 한 번, 진단(/api/doctor)이 사이트 없음을 알릴 때 한 번 그린다.
+// 사이트가 없으면 render() 가 아예 안 돌아(부를 /api/data 가 없다) 이 화면이 첫 사용자에게만
+// 비어 있었다 — 진단도 같은 guide 를 실어 보내므로 띠(#docban)를 쓰기 전에 여기서 그린다.
+// (#nx 가 아직 없어 배너를 안 건드린다 — 배너는 이 상태에서 [설정]의 사이트 등록 칸을 가리킨다.)
+VIEW("guide", renderGuide);
+DOCTOR("guide", {before: d => { if (d.no_project) renderGuide(d); }});
 </script>
