@@ -4201,7 +4201,7 @@ def test_seam_160_settings_chip_inputs_send_the_string_the_server_splits():
     str(list) 가 되어 ["a","b"] 글자가 칩이 된다 — 화면이 멀쩡하고 서버가 멀쩡해도 값이 망가진다.
     그래서 (1) 입력기의 칸 이름표(KEY)가 PROFILE_FIELDS 안에 있고, (2) 칸마다 입력·상태 자리
     (id=pf-<칸>, pf-<칸>-m)가 마크업에 있고, (3) 보낼 때 `.join(", ")` 로 잇는다.
-    설정의 탭 이름표(data-tab)는 탭 줄(#st-tabs)이 선언한 것만 쓴다 — 없는 탭의 카드는 영영 안 보인다.
+    설정의 탭 소속(data-mode)은 설정 view-def 의 modes 가 선언한 것만 쓴다 — 없는 탭의 카드는 영영 안 보인다.
     """
     import db
     sec_dir = ROOT / "skills" / "capture" / "templates" / "sections"
@@ -4221,10 +4221,12 @@ def test_seam_160_settings_chip_inputs_send_the_string_the_server_splits():
             assert f'id="pf-{k}"' in html_ and f'id="pf-{k}-m"' in html_,                 f"{f.name} 의 칩 칸 {k} 에 입력(pf-{k}) 또는 상태(pf-{k}-m) 자리가 없다"
     assert {"alias", "comp", "tools", "seeds"} <= used, f"칩 입력으로 안 바뀐 프로필 칸이 있다: {used}"
     view = (ROOT / "skills" / "capture" / "templates" / "views" / "settings.html").read_text("utf-8")
-    tabs = set(re.findall(r'<button[^>]*data-st-tab="(\w+)"', view))
-    assert tabs == {"measure", "link", "pc", "acct"}, f"설정 탭 줄이 바뀌었다: {tabs}"
-    for f in list(sec_dir.glob("*.html")) + [ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"]:
-        for t in re.findall(r'data-tab="(\w+)"', f.read_text("utf-8")):
+    tabs = {m["id"] for m in json.loads(re.search(r'class="view-def">\s*(\{.*?\})\s*</script>', view, re.S).group(1))["modes"]}
+    assert tabs == {"measure", "link", "pc", "acct"}, f"설정 탭 선언이 바뀌었다: {tabs}"
+    mine = [f for f in sec_dir.glob("*.html")      # 설정에 붙는 섹션(section-def 의 view)만 — 남의 화면 섹션은 남의 탭이다
+            if '"view": "settings"' in f.read_text("utf-8").split("</script>", 1)[0]]
+    for f in mine + [ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"]:
+        for t in re.findall(r'data-mode="(\w+)"', f.read_text("utf-8")):
             assert t in tabs, f"{f.name} 의 카드가 없는 탭({t})을 가리킨다 — 그 카드는 영영 안 보인다"
 
 
@@ -4296,7 +4298,7 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
     · modes 를 선언한 화면은 탭마다 data-mode 요소가 하나 이상 있다(빈 탭 금지).
     · 셸이 SM.views 에 modes 를 실어 나르고 tablist/tab/tabpanel·방향키·기억(sessionStorage)을 갖는다.
       호스팅 애드온(dash.html)은 탭 줄을 따로 짓지 않는다(셸은 한 벌).
-    · 설정의 탭(data-tab / #st-tabs)은 화면 안 카드 묶음이라 이 틀과 이름이 겹치지 않는다.
+    · 설정도 이 틀의 화면이다(자기 탭 줄·data-tab 은 없다) — 섹션 안 카드(.card)의 data-mode 도 패널이다.
     """
     ctx = _load()
     if ctx is None:
@@ -4314,7 +4316,7 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
         assert len(set(ids)) == len(ids), f"{vid} modes id 가 겹친다: {ids}"
         for m in ms:
             assert isinstance(m.get("label"), str) and m["label"].strip(), f"{vid} modes {m.get('id')} 에 label 이 없다"
-            assert set(m) <= {"id", "label", "count"}, f"{vid} modes 에 모르는 필드: {sorted(set(m) - {'id', 'label', 'count'})}"
+            assert set(m) <= {"id", "label", "count", "hide_empty"}, f"{vid} modes 에 모르는 필드: {sorted(set(m) - {'id', 'label', 'count', 'hide_empty'})}"
             if "count" in m:
                 assert re.fullmatch(r"\w+(\.\w+)*", str(m["count"])), f"{vid} modes count 는 페이로드 점 경로: {m['count']!r}"
         modes_of[vid] = ids
@@ -4328,10 +4330,10 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
             owner[f] = json.loads(m.group(1)).get("view")
     seen = {}
     for f, vid in owner.items():
-        # 섹션(셸이 상자로 옮기는 단위 — <section> 또는 .band)의 data-mode 만 이 틀의 것이다.
-        # 안쪽 요소의 data-mode(예: [관찰 중]의 정렬 칩)는 남의 이름이다.
+        # 섹션(셸이 상자로 옮기는 단위 — <section> 또는 .band)과 그 안의 카드(.card)의 data-mode 만 이 틀의
+        # 것이다(셸의 SM.isPanel 과 같은 판정). 안쪽 버튼·칩의 data-mode(예: [관찰 중]의 정렬 칩)는 남의 이름이다.
         for tag, attrs, mode in re.findall(r'<(\w+)\b([^>]*?)\bdata-mode="(\w+)"', f.read_text("utf-8")):
-            if tag != "section" and "band" not in attrs:
+            if tag != "section" and "band" not in attrs and not re.search(r'class="[^"]*\bcard\b', attrs):
                 continue
             assert mode in modes_of.get(vid, []), \
                 f"{f.name} 의 data-mode={mode!r} 가 화면 {vid} 의 modes 선언에 없다 — 그 섹션은 영영 안 보인다"
@@ -4351,8 +4353,8 @@ def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
     for pat in ("vtabs", "tablist", "data-mode"):
         assert pat not in ctx["dash"], f"호스팅 애드온(dash.html)이 {pat!r} 로 탭 줄을 따로 짓는다 — 셸은 한 벌"
     st = (ctx["views"] / "settings.html").read_text("utf-8")
-    assert "modes" not in json.dumps(defs["settings"]) and "data-mode" not in st, \
-        "설정은 자기 탭(data-tab)을 쓴다 — 화면 안 두 탭 틀과 섞지 않는다"
+    assert defs["settings"].get("modes") and "st-tabs" not in st and "data-tab=" not in st, \
+        "설정은 자기 탭 줄을 짓지 않는다 — view-def modes 하나로 이 틀을 쓴다(자세한 검사는 test_modes_settings)"
 
 
 def _queue_block(shell: str) -> str:

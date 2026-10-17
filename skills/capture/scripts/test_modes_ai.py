@@ -195,7 +195,7 @@ def test_go_see_opens_the_tab_of_its_target():
     shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
     i = shell.index("goSee(view, sec)")
     body = shell[i:i + 900]
-    assert "SM.setMode(view, top.dataset.mode)" in body, "goSee 가 대상 섹션의 탭을 열지 않는다"
+    assert "SM.modeOf(el)" in body and "SM.setMode(view, mode)" in body, "goSee 가 대상 섹션의 탭을 열지 않는다"
 
 
 # ───────────────────────── 5. 문서 ─────────────────────────

@@ -1,6 +1,10 @@
 <script type="application/json" class="view-def">
 {"id": "settings", "group": "admin", "title": "설정",
- "render": "shell", "sections": ["st-hero", "usage", "setup"], "stages": []}
+ "render": "shell", "sections": ["st-hero", "usage", "setup"], "stages": [],
+ "modes": [{"id": "measure", "label": "측정 설정"},
+           {"id": "link", "label": "연결", "hide_empty": true},
+           {"id": "pc", "label": "이 PC", "hide_empty": true},
+           {"id": "acct", "label": "계정", "hide_empty": true}]}
 </script>
 <!-- 설정은 "지금 이 사이트를 잴 준비가 됐나"에 먼저 답한다. 옛 화면은 0~6단계를 세로로
      늘어놓아서, 다 끝낸 사람에게도 5단계 마법사가 첫 화면이었다. 지금은 첫 카드(#st-hero)가
@@ -10,7 +14,11 @@
      (sm-set)는 호스팅에서도 쓴다. 그래서 #setup 안의 마크업은 **로컬 전용**이다.
      카드 격자는 화면 상자(#view-settings)에 12열로 건다. 섹션 셋(#st-hero, #setup,
      #sm-profile, #sm-set)은 셸이 상자로 옮기는 단위라 그대로 두고, #setup·#sm-set 은
-     display:contents 로 풀어 그 안 카드가 격자 칸을 직접 받는다. -->
+     display:contents 로 풀어 그 안 카드가 격자 칸을 직접 받는다.
+     탭 넷(측정 설정·연결·이 PC·계정)은 위 view-def 의 modes 다 — 셸이 탭 줄을 머리 바로 아래에 세우고
+     접는다. 카드는 마크업의 data-mode 로 자기 탭을 말한다(섹션 안 카드도 된다). 로컬 전용(#setup)·호스팅
+     전용(#sm-set) 카드만 있는 탭은 hide_empty 라 그 배포에서는 탭째 접힌다. 탭 점(할 일 남음)은 아래
+     스크립트가 SM.setModeDot 으로 민다. 이 파일은 탭 줄·접기·기억을 짓지 않는다. -->
 <style>
 /* ── 격자 ── 모든 선택자는 이 화면의 id 아래로 가둔다(조립하면 다른 화면과 한 문서다). */
 #view-settings:not([hidden]) { display:grid; grid-template-columns:repeat(12,minmax(0,1fr));
@@ -31,23 +39,19 @@
 #sm-set { display:contents; }
 #view-settings [hidden] { display:none; }
 
-/* 카드 자리 — 설정은 탭 넷(측정·연결·이 PC·계정)으로 나뉜다. 카드는 자기 탭을
-   data-tab 으로 말하고(마크업), 고른 탭이 아니면 접힌다(#view-settings[data-st-tab]).
-   탭이 아직 안 정해졌으면(스크립트 전) 전부 보인다. 넓으면 한 탭이 한 화면 안에 들어오게
-   카드를 2~3열로 세운다. */
+/* 카드 자리 — 설정은 탭 넷으로 나뉜다. 카드는 자기 탭을 data-mode 로 말하고(마크업), 고른 탭이
+   아니면 셸이 접는다. 넓으면 한 탭이 한 화면 안에 들어오게 카드를 2~3열로 세운다.
+   패널(data-mode 가 달린 요소)에는 display 를 걸지 않는다 — id 규칙의 display 는 셸의 접기를 이긴다. */
+#view-settings > .vtabs { margin:0; }
 #view-settings :where(#st-hero, #st-gsc, #usage, #st-dirs, #sm-profile .pf-card, #st-parts, #st-keys,
     #st-carry, #st-project, #set-cycle, #set-type, #sm-set .ga4, #sm-set .cli, #set-account,
     #sm-set .del, #setup-log, #sm-lang, .sm-setfail) {
   grid-column:1 / -1; margin:0; }
-#view-settings[data-st-tab="measure"] [data-tab]:not([data-tab="measure"]),
-#view-settings[data-st-tab="link"] [data-tab]:not([data-tab="link"]),
-#view-settings[data-st-tab="pc"] [data-tab]:not([data-tab="pc"]),
-#view-settings[data-st-tab="acct"] [data-tab]:not([data-tab="acct"]) { display:none; }
 #st-hero { order:0; } .sm-setfail { order:1; }
 /* 셸이 상자로 옮기는 단위(섹션)는 풀어 그 안 카드가 격자 칸을 직접 받는다 */
 #sm-profile { display:contents; }
 #view-settings #sm-profile .pf-card { order:2; }
-#sm-lang { order:3; display:block; }
+#sm-lang { order:3; }
 #set-cycle, #set-type { order:4; }
 #usage { order:2; } #st-dirs { order:3; } #st-parts { order:4; } #st-carry { order:5; } #st-project { order:6; }
 #st-gsc { order:2; } #st-keys { order:3; } #sm-set .ga4 { order:2; } #sm-set .cli { order:3; }
@@ -63,21 +67,7 @@
 }
 /* 없는 자리가 남기는 구멍 — 설정을 못 읽으면 세 칸이 접히고 오류 상자 하나가 선다 */
 #view-settings > .vh #st-primary { margin:0; }
-/* 호스팅은 #setup 을 감춘다(dash.html) — 그 안 카드는 data-tab 으로도 안 보인다 */
-
-/* ── 탭 줄 ── 준비 상태 카드 맨 밑. 누르면 그 묶음 카드만 서고 나머지는 접힌다 ── */
-#st-tabs { flex:1 1 100%; display:flex; gap:4px; margin:var(--sp-2) 0 0; padding:4px;
-  background:var(--sunk); border-radius:var(--r-in); overflow-x:auto; }
-#st-tabs button { flex:1 1 0; min-width:max-content; min-height:var(--btn-h); padding:0 var(--sp-4);
-  border:0; border-radius:var(--r-in); background:transparent; color:var(--sub); cursor:pointer;
-  font:500 var(--fs-2)/1.3 var(--sans); display:flex; align-items:center; justify-content:center;
-  gap:var(--sp-2); }
-#st-tabs button:hover { color:var(--ink); }
-#st-tabs button[aria-selected="true"] { background:var(--card); color:var(--accent);
-  font-weight:650; box-shadow:var(--shadow); }
-#st-tabs button[hidden] { display:none; }
-#st-tabs .tdot { width:8px; height:8px; border-radius:50%; background:var(--warn); }
-#st-tabs .tdot[hidden] { display:none; }
+/* 호스팅은 #setup 을 감춘다(dash.html) — 그 안 카드만 있는 [이 PC] 탭은 셸이 탭째 접는다(hide_empty) */
 
 /* ── 카드 머리: 제목(16px 650) + 보조 설명(12px) + 우측 도구 한 벌 ── */
 #view-settings .card { padding:22px 24px; }
@@ -271,20 +261,13 @@ button.st-row:hover .chev { background:var(--accent); }
     </div>
   </div>
   <ul id="st-rows"></ul>
-  <!-- 설정은 탭 넷이다. 카드마다 data-tab 으로 자기 탭을 말한다(마크업) — 이름표·순서는 여기 한 벌 -->
-  <div id="st-tabs" role="tablist" aria-label="설정 묶음">
-    <button type="button" role="tab" data-st-tab="measure">측정 설정<i class="tdot" hidden></i></button>
-    <button type="button" role="tab" data-st-tab="link">연결<i class="tdot" hidden></i></button>
-    <button type="button" role="tab" data-st-tab="pc">이 PC<i class="tdot" hidden></i></button>
-    <button type="button" role="tab" data-st-tab="acct">계정<i class="tdot" hidden></i></button>
-  </div>
 </section>
 
 <section id="setup">
   <!-- 쓰는 방식은 "이 사람이 무엇으로 일하는가"다. 선택지(쓰는 방식·도구·터미널)와 그
        라벨은 전부 서버 payload 에서 온다 — doctor 의 표가 정본이라 여기 이름을
        박으면 표가 늘어난 날 화면만 낡는다. 그리는 것은 셸의 renderUsage 다. -->
-  <div class="step card" id="usage" data-tab="pc">
+  <div class="step card" id="usage" data-mode="pc">
     <div class="sh">
       <h2>쓰는 방식</h2>
       <p class="sub">누가 측정을 맡고, 기회를 무엇으로 열지 정합니다. 고르면 그 자리에서 저장됩니다.</p>
@@ -322,7 +305,7 @@ button.st-row:hover .chev { background:var(--accent); }
   </div>
 
   <!-- 쓰는 방식(누가 재고 무엇으로 여나)과 폴더 표는 성격이 달라 카드를 나눴다(2026-10-17). -->
-  <div class="step card" id="st-dirs" data-tab="pc">
+  <div class="step card" id="st-dirs" data-mode="pc">
     <div class="sh">
       <h2 id="l-dirs">사이트별 로컬 폴더</h2>
       <p class="sub">그 사이트의 코드가 있는 자리입니다. 열기 버튼이 이 폴더에서
@@ -332,7 +315,7 @@ button.st-row:hover .chev { background:var(--accent); }
     <span class="msg" role="status" id="m-dirs"></span>
   </div>
 
-  <div class="step card" id="st-parts" data-tab="pc">
+  <div class="step card" id="st-parts" data-mode="pc">
     <div class="sh">
       <h2>기본 부품·스킬</h2>
       <p class="sub">수집과 보고서에 쓰는 부품, 글의 각도와 진단을 맡는 스킬입니다.</p>
@@ -357,7 +340,7 @@ button.st-row:hover .chev { background:var(--accent); }
     </div>
   </div>
 
-  <div class="step card" id="st-gsc" data-tab="link">
+  <div class="step card" id="st-gsc" data-mode="link">
     <div class="sh">
       <h2>서치콘솔 연결</h2>
       <p class="sub">클릭과 노출을 읽어 오는 구글 연결입니다.</p>
@@ -389,7 +372,7 @@ button.st-row:hover .chev { background:var(--accent); }
     </details>
   </div>
 
-  <div class="step card" id="st-keys" data-tab="link">
+  <div class="step card" id="st-keys" data-mode="link">
     <div class="sh">
       <h2>API 키</h2>
       <p class="sub">키가 없어도 기회 목록까지는 그대로 갑니다.</p>
@@ -425,7 +408,7 @@ button.st-row:hover .chev { background:var(--accent); }
       <span class="msg" role="status" id="m-keys"></span></div>
   </div>
 
-  <div class="step card" id="st-carry" data-tab="pc">
+  <div class="step card" id="st-carry" data-mode="pc">
     <div class="sh">
       <h2>웹에서 이어 하기</h2>
       <p class="sub">여기 적어 둔 설정 그대로 웹에 등록합니다.</p>
@@ -448,7 +431,7 @@ button.st-row:hover .chev { background:var(--accent); }
        아래 폼은 **새로 등록할 값**이다(이 폴더의 저장소를 읽어 미리 채운다).
        둘이 다른 것을 가리키는 바람에 "완료인데 도메인 칸이 비었다"로 읽혔다.
        등록한 사이트가 없으면 스크립트가 이 카드를 펼친다 — 있으면 제목 줄만 선다. -->
-  <details class="step card" id="st-project" data-tab="pc">
+  <details class="step card" id="st-project" data-mode="pc">
     <summary>
       <span class="stt">새 사이트 등록
         <small>이 칸에 적은 값이 그 사이트 수집의 기준이 됩니다.<span
@@ -530,7 +513,7 @@ const ST_GATE = {register: {ids: ["btn-proj"], t: "사이트 등록"},
 function ST_jump(...ids) {
   const b = ids.map(i => $(i)).find(x => x && !x.hidden);
   if (!b) return;
-  ST_tab(ST_tabOf(b));                                 // 접힌 탭 안의 칸이면 그 탭부터 편다
+  ST_open(b);                                          // 접힌 탭 안의 칸이면 그 탭부터 편다
   for (let dt = b.closest("details"); dt; dt = dt.parentElement && dt.parentElement.closest("details"))
     dt.open = true;
   const card = b.closest(".step, .card");
@@ -549,67 +532,53 @@ function ST_jump(...ids) {
   if (f) f.focus({preventScroll: true});
 }
 
-/* ── 탭 ── 카드는 마크업의 data-tab 으로 자기 탭을 말한다. 여기는 고르는 일만 한다.
-   호스팅은 #setup(로컬 전용 카드 묶음)을 통째로 감추므로 그 안 카드는 탭을 채우지 못한다 —
-   살아 있는 카드가 하나도 없는 탭은 버튼째 접는다. */
-function ST_tabOf(el) {
-  const c = el && el.closest && el.closest("[data-tab]");
-  return c ? c.dataset.tab : null;
+/* ── 탭 ── 탭 줄·접기·방향키·기억은 셸의 화면 안 탭 틀(view-def modes)이 한 벌로 한다. 카드는 마크업의
+   data-mode 로 자기 탭을 말한다. 여기에는 설정에만 있는 세 가지만 남는다: 탭 점(할 일 남음),
+   처음 열 때 할 일이 있는 탭 자동 선택, 칸으로 가기 전에 그 칸의 탭부터 열기. */
+function ST_open(el) {
+  const t = window.SM && SM.at("settings") >= 0 && SM.modeOf(el);
+  if (t) SM.setMode("settings", t);
 }
-function ST_tabLive(t) {
-  const hosted = !!document.getElementById("sm-set");
-  return [...document.querySelectorAll('#view-settings [data-tab="' + t + '"]')]
-    .some(c => !c.hidden && !(hosted && c.closest("#setup")));
-}
-function ST_tab(t) {
-  const box = $("view-settings");
-  if (!box || !t || box.dataset.stTab === t) return;
-  box.dataset.stTab = t;
-  if (!ST_tab.auto) delete box.dataset.stAuto;     // 사람이 골랐다 — 자동 이동은 끝
-  document.querySelectorAll("#st-tabs [data-st-tab]").forEach(b =>
-    b.setAttribute("aria-selected", b.dataset.stTab === t ? "true" : "false"));
+/* 처음 열 때 어느 탭에 서나 — 셸의 첫 탭 규칙(배지 0 이면 다음 탭)은 건수 배지가 있는 화면 몫이라 설정에는
+   건너뛸 배지가 없다. 설정은 준비 상태 카드가 이미 첫 할 일 칸을 안다 — 그 칸이 속한 탭이다. 준비 상태가
+   읽히기 전에는 선언 첫째([측정 설정])에 서 있다가, 읽히면 한 번만 옮긴다. 사람이 탭을 누르면(셸의
+   sm:mode, auto 가 아닌 것) 또는 이전에 고른 탭이 기억에 있으면 그 뒤로는 안 옮긴다. */
+let ST_AUTO = "";        // "" 시작 전 · "wait" 준비 상태를 기다리는 중 · "off" 끝
+document.addEventListener("sm:mode", e => {
+  if (e.detail && e.detail.view === "settings" && !e.detail.auto) ST_AUTO = "off";
+});
+function ST_where(j) {
+  const sec = document.getElementById("sm-set");
+  return j && (j.ids ? j.ids.map(i => $(i)).find(x => x) : sec && sec.querySelector("." + j.jump));
 }
 function ST_tabs() {
-  const box = $("view-settings"), bar = $("st-tabs");
-  if (!box || !bar) return;
-  const live = {};
-  bar.querySelectorAll("[data-st-tab]").forEach(b => {
-    live[b.dataset.stTab] = ST_tabLive(b.dataset.stTab);
-    b.hidden = !live[b.dataset.stTab];
-  });
+  if (!window.SM || SM.at("settings") < 0) return;       // 박제본은 설정 화면을 뺀다
+  SM.modeApply("settings");                              // 칸이 감춰지거나 늦게 섰다 — 비는 탭을 다시 정한다
+  const m = ST_paint.model, modes = SM.views[SM.at("settings")].modes;
   // 할 일이 남은 탭에는 점을 찍는다 — 다른 탭에 가려 못 보고 지나치지 않게
-  const todo = new Set(), m = ST_paint.model, sec = document.getElementById("sm-set");
-  const where = j => j && (j.ids ? j.ids.map(i => $(i)).find(x => x) : sec && sec.querySelector("." + j.jump));
+  const todo = new Set();
   if (m && !m.dead) for (const r of m.rows) {
     if (!r.req || r.st !== "todo" || !r.jump) continue;
-    const t = ST_tabOf(where(r.jump));
+    const el = ST_where(r.jump), t = el && SM.modeOf(el);
     if (t) todo.add(t);
   }
-  bar.querySelectorAll("[data-st-tab]").forEach(b =>
-    b.querySelector(".tdot").hidden = !todo.has(b.dataset.stTab));
-  let cur = box.dataset.stTab;
-  // 처음 열 때는 할 일이 남은 첫 칸의 탭이다. 준비 상태가 읽히기 전에는 임시로 [측정 설정]을 세우고,
-  // 읽히면 (사람이 탭을 누르기 전이라면) 한 번만 그 탭으로 옮긴다.
-  const ready = m && !m.dead && !m.rows.some(r => r.st === "wait");
-  if (!cur || (box.dataset.stAuto && ready)) {
-    cur = ST_tabOf(where(ST_paint.first && ST_paint.first.jump)) || "measure";
-    if (ready) delete box.dataset.stAuto; else box.dataset.stAuto = "1";
+  for (const x of modes) SM.setModeDot("settings", x.id, todo.has(x.id));
+  if (ST_AUTO === "off") return;
+  if (SM.modePicked("settings")) { ST_AUTO = "off"; return; }
+  const ready = !!m && !m.dead && !m.rows.some(r => r.st === "wait");
+  if (ST_AUTO === "" || ready) {
+    const el = ST_where(ST_paint.first && ST_paint.first.jump);
+    SM.setMode("settings", (el && SM.modeOf(el)) || modes[0].id, false, true);
+    ST_AUTO = ready ? "off" : "wait";
   }
-  if (!live[cur]) cur = Object.keys(live).find(k => live[k]) || cur;
-  box.dataset.stTab = "";          // 같은 값이면 ST_tab 이 건너뛰므로 한 번 비운다
-  ST_tab.auto = true;
-  ST_tab(cur);
-  ST_tab.auto = false;
 }
-// 탭 버튼과, 호스팅 애드온의 위임 손잡이(data-sm-jump = GA4 칸·주기 칸)가 가는 탭
+// 호스팅 애드온의 위임 손잡이(data-sm-jump = GA4 칸·주기 칸)가 가는 칸의 탭 — 애드온이 스크롤하기 전에 연다
 document.addEventListener("click", e => {
-  const t = e.target.closest && e.target.closest("#st-tabs [data-st-tab]");
-  if (t) return void ST_tab(t.dataset.stTab);
   const j = e.target.closest && e.target.closest("[data-sm-jump]");
   const sec = document.getElementById("sm-set");
   if (j && sec && j.dataset.smJump !== "overview") {
     const dst = sec.querySelector("." + j.dataset.smJump);
-    if (dst) ST_tab(ST_tabOf(dst));
+    if (dst) ST_open(dst);
   }
 }, true);
 

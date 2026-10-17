@@ -1455,6 +1455,8 @@ def ai_bot_status(robots_txt: str, home: str = "") -> list[dict]:
         return []
     url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
     return [{"bot": b["ua"], "vendor": b["vendor"], "purpose": b["purpose"],
+             "purpose_label": AI_BOT_PURPOSE.get(b["purpose"], "모름"),
+             "citing": b["purpose"] in AI_BOT_CITING,
              "engine": b["engine"], "rule": robots_blocks(txt, url, agent=b["ua"])}
             for b in ai_bots()]
 
@@ -5206,6 +5208,8 @@ _KIND_SPECS = {
             f"(구글 실적 {ctx['cur']} 기준)"),
         play=_CTR_PLAY),
     "cannibalization": dict(
+        # 같은 검색어에 내 페이지가 둘 — 근거는 검색어별 '걸린 페이지 표'가 있는 [순위 상승 기회] 표다.
+        see=("keywords", "log"),
         label="내부 경쟁", defensive=True,
         detect=lambda ctx: cannibalization(ctx["conn"], ctx["pid"]),
         metrics=lambda r, ctx: {"impressions": r["impressions"],
@@ -5240,6 +5244,8 @@ _KIND_SPECS = {
     # "합쳐라"는 말할 수 있고 "갈라라"는 못 했다 — 요청문의 fix_page 는 검색어가 몇
     # 개든 title 한 벌이 전부를 맡으라고만 시킨다. 의도가 갈린 페이지에서 그 말은 틀렸다.
     "intent_split": dict(
+        # 판정이 쓰는 의도 갈래(classify_intent)가 [클릭 변화]의 '검색 의도 구성'과 같은 한 벌이다.
+        see=("analysis", "an-intent"),
         label="한 페이지에 두 의도", defensive=False,
         detect=lambda ctx: intent_split(ctx["conn"], ctx["pid"], at=ctx["cur"]),
         # 되찾을 몫은 2위 의도의 노출이다 — 페이지 전체 노출을 쓰면 이미 잘 걸리는
@@ -5293,6 +5299,8 @@ _KIND_SPECS = {
                      "목차를 견줘서",
                      "끊긴 내부 링크를 어디서 다시 걸지"])),
     "pseo_pattern": dict(
+        # 검색어 무리(틀 + 바뀌는 칸)를 찾는 일이라 무리를 묶어 보는 '주제별 성적'이 가장 가깝다.
+        see=("analysis", "an-cluster"),
         label="템플릿 패턴", defensive=False,
         # 한 행이 무리 하나다 — 대상은 씨앗(이미 선 줄의 값, 없으면 노출이 가장 큰 값 — _pseo_seed),
         # 수는 무리 합계
@@ -5360,6 +5368,8 @@ _KIND_SPECS = {
                      "색인 요청·확인 절차 순서",
                      "(글은 손대지 않습니다. 색인 전에는 고쳐도 소용이 없습니다)"])),
     "coverage": dict(
+        # 대상이 키워드 묶음(cluster) 이름 — 같은 묶음 축을 성적으로 보는 '주제별 성적'.
+        see=("analysis", "an-cluster"),
         label="안 다룬 주제", defensive=False,
         detect=_coverage_rows,
         # 이 kind 는 정의상 노출이 0이다("아직 아무 데도 안 뜬다"). 검색량이 없으면
@@ -5542,6 +5552,8 @@ _KIND_SPECS = {
     # 없다. AI 인용 판정보다 먼저 봐야 하는 관문이라 종류로 세운다.
     # 검색·인용용(search·user) 봇만 선다 — 학습 봇 차단은 기회가 아니다(ai_bot_blocks).
     "ai_bot_blocked": dict(
+        # 크롤이 남긴 robots.txt 로 AI 봇 허용·차단을 보여 주는 카드 — 인용을 판정하기 전의 관문이다.
+        see=("aicite", "ai-bots-sec"),
         label="AI 크롤러 차단", defensive=False,
         detect=lambda ctx: ai_bot_blocks(ctx["conn"], ctx["pid"], home=ctx.get("domain") or ""),
         metrics=lambda r, ctx: {"impressions": 0, "position": None, "ai": 1.0},

@@ -339,6 +339,16 @@ td .ailogo { margin-right:6px; }
   <div id="ai-matrix"></div>
 </section>
 
+<!-- AI 크롤러 — robots.txt 가 검색·인용용 봇을 막는지. 인용을 고치기 전에 먼저 볼 관문이라 카드로 따로 둔다.
+     [처리] 큐의 「AI 크롤러 차단」 기회가 '자세히 보기'로 오는 자리(scoring.KINDS ai_bot_blocked 의 see).
+     재료는 크롤이 남긴 robots.txt 라 인용 확인이 없어도 그린다. -->
+<section id="ai-bots-sec" class="card aic as12" hidden>
+  <div class="ach">
+    <div><h2>AI 크롤러 허용·차단</h2><p class="sub" id="ai-bots-sub"></p></div>
+  </div>
+  <div id="ai-bots-body"></div>
+</section>
+
 <!-- 시장마다 — 시장이 둘 이상인 사이트만 선다(AI_markets). -->
 <section id="ai-markets" class="card aic"></section>
 
@@ -1407,6 +1417,31 @@ const AI_solo = (a, b) => {
 };
 const AI_pairs = () => { AI_solo("ai-mix-sec", "ai-sec"); AI_solo("ai-share-sec", "ai-eng-sec"); };
 
+/* ── AI 크롤러 허용·차단. 서버(scoring.ai_bot_status)가 봇마다 규칙·용도를 이미 정했다 —
+      화면은 용도 이름도 "인용을 끊는 용도"인지도 다시 정하지 않고 purpose_label·citing 을 그대로 쓴다.
+      막힌 것이 위, 그중 검색·인용용이 맨 위다. 옛 박제본·robots.txt 를 못 읽은 크롤은 행이 없다 → 카드째 접는다
+      (못 읽은 것을 "전부 열림"으로 읽지 않는다). ── */
+function AI_bots(rows) {
+  const sorted = rows.slice().sort((a, b) =>
+    (!!b.rule - !!a.rule) || (!!b.citing - !!a.citing));
+  const cut = sorted.filter(r => r.rule && r.citing).length;
+  const sub = cut
+    ? `검색·인용용 크롤러 <b>${num(cut)}개</b>가 robots.txt 에 막혀 있습니다. 막힌 채로는 그 엔진이 답을 만들 때 우리 글을 읽지 못합니다.`
+    : (sorted.some(r => r.rule)
+      ? "검색·인용용 크롤러는 열려 있습니다. 막힌 것은 학습용이라 인용과 무관합니다."
+      : "robots.txt 가 AI 크롤러를 막지 않습니다.");
+  const body = AI_card(table(
+    ["크롤러", "엔진", "용도?학습용 봇을 막는 것은 인용과 무관합니다. 검색·인용용과 사용자 요청 페치 봇이 막히면 그 엔진 답변의 출처로 실리기 어렵습니다",
+     "robots.txt"],
+    sorted.map(r => `<tr><td>${esc(r.bot)}</td><td>${esc(r.engine || r.vendor || "—")}</td>
+      <td>${esc(r.purpose_label || "모름")}</td>
+      <td>${r.rule
+        ? `<span class="badge ${r.citing ? "warn" : ""}">막힘</span> <span class="muted">${esc(r.rule)}</span>`
+        : `<span class="badge ok">열림</span>`}</td></tr>`),
+    ""));
+  return {sub, body};
+}
+
 VIEW("aicite", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
@@ -1425,6 +1460,14 @@ VIEW("aicite", function (d) {
   $("ai-kpi").innerHTML = "";
   $("ai-health").innerHTML = AI_health(d.ai_health, has);
   $("ai-markets").innerHTML = AI_markets(d);
+  // AI 크롤러 — robots.txt 가 재료라 인용 확인이 없어도 그린다.
+  const bots = Array.isArray(d.ai_bots) ? d.ai_bots : [];
+  $("ai-bots-sec").hidden = !bots.length;
+  if (bots.length) {
+    const b = AI_bots(bots);
+    $("ai-bots-sub").innerHTML = b.sub;
+    $("ai-bots-body").innerHTML = b.body;
+  }
   // AI 에서 온 방문 — GA4 축이라 인용 확인이 없어도 그린다(아래 조기 반환보다 먼저).
   // 옛 박제본에는 세 키가 아예 없다(undefined) — 그때는 섹션째 접는다.
   $("ai-visits").hidden = d.ai_referral_meta === undefined;
