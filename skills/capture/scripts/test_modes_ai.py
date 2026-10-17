@@ -179,12 +179,23 @@ def test_no_important_and_no_tracking_on_korean_in_the_new_rules():
 # ───────────────────────── 4. 첫 탭 ─────────────────────────
 
 def test_default_tab_follows_open_queue_count():
-    """셸의 modes 는 '선언 첫째 + 고른 탭 기억'뿐이다 — 열린 기회가 없을 때 [관리]를 앞에 세우는 일은
-    뷰가 한다(사람이 고른 탭이 저장돼 있으면 따른다). 호출이 사라지면 빈 [처리]가 먼저 보인다."""
+    """열린 기회가 없을 때 [관리]를 앞에 세우는 일은 셸(SM.modeDefaults)이 한 벌로 한다 — 뷰가 제 사본을
+    들면 화면마다 규칙이 갈린다. 배지(count)가 0 이면 그 탭은 첫 탭이 아니다."""
+    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    assert "modeDefaults" in shell, "셸에 첫 탭 규칙(modeDefaults)이 없다"
     for vid in VIEWS:
         t = _src(vid)
-        assert re.search(r'queue_open_by_view', t) and "SM.modeApply" in t and "sm:mode:" in t, \
-            f"{vid}: 열린 기회 수에 따라 첫 탭을 고르는 코드가 없다"
+        assert "sm:mode:" not in t and "SM.mode." not in t, \
+            f"{vid}: 첫 탭 규칙의 사본을 뷰가 들고 있다 — 셸 한 벌(SM.modeDefaults)로"
+
+
+def test_go_see_opens_the_tab_of_its_target():
+    """개요 줄의 [화면에서 자세히 보기](goSee)는 대상 섹션이 접힌 탭에 있으면 그 탭을 먼저 연다 —
+    숨은 섹션은 스크롤할 수 없어 화면 맨 위(마지막 탭)에 서 버린다."""
+    shell = (SCRIPTS.parent / "templates" / "dashboard.html").read_text("utf-8")
+    i = shell.index("goSee(view, sec)")
+    body = shell[i:i + 900]
+    assert "SM.setMode(view, top.dataset.mode)" in body, "goSee 가 대상 섹션의 탭을 열지 않는다"
 
 
 # ───────────────────────── 5. 문서 ─────────────────────────

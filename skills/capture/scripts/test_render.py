@@ -1359,6 +1359,9 @@ setTimeout(function () {
       return e && (e.closest("section") || e); }).filter(Boolean);
     secs.forEach(function (s, i) { s.setAttribute("data-mode", i === 0 ? "work" : "manage"); });
     try { sessionStorage.removeItem("sm:mode:" + V); } catch (e) {}
+    // 첫 탭 규칙: 선언 첫째가 기본이되 그 탭 배지가 0 이면 다음 탭이 먼저 선다(사이트가 바뀔 때 한 번).
+    SM.mode = {}; SM.modeSite = {};
+    SM.modeCountsFrom({zz_modes: {n: 3}, project: {name: "a"}});
     SM.sync(); SM.show(V);
     var box = document.getElementById("view-" + V);
     var vis = function (s) { return s.dataset.vmOff !== "1"; };   // 셸이 접었나 — 섹션이 스스로 hidden 인 것(박제본)과 가른다
@@ -1371,6 +1374,10 @@ setTimeout(function () {
     out.panel = secs[0].getAttribute("role");
     out.labelled = !!secs[0].getAttribute("aria-labelledby") &&
       !!document.getElementById(secs[0].getAttribute("aria-labelledby"));
+    SM.mode = {}; SM.modeSite = {};
+    SM.modeCountsFrom({zz_modes: {n: 0}, project: {name: "b"}});     // 할 일 0 → [관리]가 먼저
+    SM.modeApply(V);
+    out.selZero = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
     SM.modeCountsFrom({zz_modes: {n: 7}});
     out.badge = (tabs[0].querySelector(".cnt") || {}).textContent || "";
     SM.modeCountsFrom({zz_modes: {n: 0}});
@@ -1423,6 +1430,7 @@ def modes_frame(browser: str, shell: bytes, home: Path) -> None:
     assert o["bar"] and o["role"] == "tablist", f"modes 를 선언했는데 탭 줄(tablist)이 안 섰다: {o}"
     assert o["tabs"][:2] and o["tabs"][0].startswith("처리") and o["tabs"][1].startswith("관리"), o["tabs"]
     assert o["sel0"] == ["true", "false"], f"처음 탭은 선언 첫째여야 한다: {o['sel0']}"
+    assert o["selZero"] == ["false", "true"], f"배지가 0 인데도 빈 [처리]가 먼저 선다: {o['selZero']}"
     assert o["v0"] == [True, False], f"처음에는 [처리] 섹션만 서야 한다: {o['v0']}"
     assert o['hid'] is True, '접힌 섹션에 hidden 이 안 섰다'
     assert o["panel"] == "tabpanel" and o["labelled"], "섹션이 tabpanel + aria-labelledby 가 아니다"

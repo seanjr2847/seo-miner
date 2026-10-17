@@ -1399,23 +1399,6 @@ function AI_emptyState(d) {
 }
 
 
-/* 첫 탭. 셸의 modes 는 「선언 첫째 + 사람이 마지막에 고른 탭」만 안다 — 열린 기회가 없는데 빈 [처리]가
-   먼저 서면 첫 화면이 비어 보인다. 그래서 사이트가 바뀔 때 한 번, 사람이 고른 탭(sessionStorage)이 없을 때만
-   열린 기회 수(d.queue_open_by_view — [처리] 탭 배지와 같은 값)로 고른다. 재적재마다 부르지 않는다:
-   마지막 기회를 끝내고 나서 화면이 [관리]로 달아나면 안 된다. */
-let AI_MODE_SITE = null;
-function AI_pickMode(d) {
-  if (!window.SM) return;
-  const site = (d.project || {}).name || "";
-  if (AI_MODE_SITE !== site) {
-    AI_MODE_SITE = site;
-    let kept = "";
-    try { kept = sessionStorage.getItem("sm:mode:aicite") || ""; } catch (e) {}
-    if (!kept) SM.mode.aicite = ((d.queue_open_by_view || {}).aicite || 0) > 0 ? "work" : "manage";
-  }
-  SM.modeApply("aicite");     // 큐 카드는 render 중에 서므로 한 번 더 접고 편다(여러 번 불려도 공짜)
-}
-
 // 짝 카드 둘 중 하나만 서면 그 카드가 한 줄을 다 쓴다 — 옆 칸이 빈 채로 남지 않게.
 const AI_solo = (a, b) => {
   const A = $(a), B = $(b);
@@ -1428,7 +1411,6 @@ VIEW("aicite", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
   AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
-  AI_pickMode(d);
   AI_INTENT = d.ai_intent_labels || {};
   AI_MK_LABEL = Object.fromEntries((d.ai_markets || []).map(m => [m.locale, m.label]));
   for (const id of ["ai-share-sec", "ai-eng-sec", "ai-prompt-sec", "ai-miss-sec",
