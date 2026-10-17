@@ -736,7 +736,7 @@ def test_seam_17_verdict_and_status_single_source():
       그것과, OPP_LABEL·OPP_NEXT(그리는 것) 키는 거기에 db.OPP_RESOLVED 를 더한 것과
       양방향으로 같다. resolved 는 서버가 닫는 값이라 누르는 표엔 없고, 그리는 표에
       없으면 화면에 영문 "resolved" 가 날것으로 뜬다.
-    - 심사 대상 종류는 scoring.KEYWORD_KINDS ⊂ ALL_KINDS.
+    - 심사 대상 종류는 scoring.KEYWORD_KINDS ⊂ TRIAGE_KINDS ⊂ ALL_KINDS(묶음 이음매는 161).
     """
     ctx = _load()
     if ctx is None:
@@ -769,7 +769,7 @@ def test_seam_17_verdict_and_status_single_source():
         assert mm, f"셸의 {name} 을 못 찾았다"
         keys = set(re.findall(r"(\w+):", mm.group(1)))
         assert keys == set(db.RESOLVED_TAGS), f"{name} 의 키가 어긋났다: {sorted(keys ^ set(db.RESOLVED_TAGS))}"
-    assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
+    assert set(scoring.KEYWORD_KINDS) < set(scoring.TRIAGE_KINDS) < set(scoring.ALL_KINDS)
 
 
 def test_seam_18_run_tool_and_creation_single_source():
@@ -1127,7 +1127,7 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
     c.execute(
         "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status,status_reason)"
         " VALUES(1,?,'/a',9,'r',?,'검사용 사유')",
-        (sorted(set(scoring.ALL_KINDS) - set(scoring.KEYWORD_KINDS))[0], db.OPP_RESOLVED))
+        (sorted(set(scoring.ALL_KINDS) - set(scoring.TRIAGE_KINDS))[0], db.OPP_RESOLVED))
     c.commit()
     got = scoring.opportunities(c, 1, limit=5, with_id=True)
     assert got, "검사 붙박이가 기회를 하나도 못 냈다 — 이 검사가 헛돈다"
@@ -1144,7 +1144,7 @@ def test_seam_50_status_filter_is_one_set_and_covers_every_status():
     # 닫힌 기회가 목록 꼬리에서 잘리지 않는다 — 정렬이 '새 것 먼저'라, 새 기회가
     # limit 을 다 채우면 완료·뺀 것·저절로 풀림이 한 건도 안 실린다. 그러면 거르개가
     # "저절로 풀림 (0)" 이라고 말하는데 표에는 18건이 있다(실제로 그랬다).
-    other = sorted(set(scoring.ALL_KINDS) - set(scoring.KEYWORD_KINDS))[0]
+    other = sorted(set(scoring.ALL_KINDS) - set(scoring.TRIAGE_KINDS))[0]
     for i in range(20):
         c.execute(
             "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
@@ -3749,6 +3749,10 @@ def test_seam_124_coverage_looks_for_the_topic_page_before_asking_for_a_new_arti
               "VALUES(?,'https://x.com/en/laser/sofwave/',200,1,'sofwave | Clinic','Sofwave')", (run,))
     c.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning) "
               "VALUES(1,'coverage','cluster:sofwave',50,'근거')")
+    # 주제도 심사 대상이다 — '작업'으로 보낸 것만 개요 목록(d.opps)에 선다
+    import scoring
+    c.execute("INSERT INTO verdicts(project_id,key,verdict) VALUES(1,?,'work')",
+              (scoring.verdict_key("coverage", "cluster:sofwave"),))
     with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(_io.StringIO()):
         d = dashboard.gather(c, db.get_project(c, "_seam123"))
     c.close()
@@ -4208,6 +4212,129 @@ def test_seam_160_settings_chip_inputs_send_the_string_the_server_splits():
     for f in list(sec_dir.glob("*.html")) + [ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"]:
         for t in re.findall(r'data-tab="(\w+)"', f.read_text("utf-8")):
             assert t in tabs, f"{f.name} 의 카드가 없는 탭({t})을 가리킨다 — 그 카드는 영영 안 보인다"
+
+
+def test_seam_161_triage_units_are_one_set_from_scoring_to_screen():
+    """161) [심사]는 재료 세 묶음(검색어·주제·링크 도메인)을 한 화면에 싣는다 — 정본은
+    scoring.TRIAGE_UNITS/TRIAGE_KINDS 한 벌이고, 양쪽 끝이 그걸 따라간다.
+    - 화면(triage.html)의 묶음별 표(TR_COLS)·버튼 설명(TR_HELP)은 키가 정본 묶음 id 와 양방향으로 같다
+      (묶음이 늘었는데 화면이 모르면 그 묶음의 열이 검색어 것으로 그려진다).
+    - 판정 키는 서버가 만든 행의 key 를 화면이 그대로 돌려보낸다: 심사 대상 종류마다 [심사]가 낸
+      key 로 '작업'을 누르면 db.gate_sql 이 그 기회를 개요에 세운다(파이썬 verdict_key 와 SQL
+      vkey 가 갈리면 판정이 어느 기회에도 안 붙는다). 판정 전에는 안 선다.
+    - 심사 밖 종류(ALL_KINDS - TRIAGE_KINDS)는 판정 없이도 선다.
+    - 개요의 빈 상태 문구는 묶음별 대기 수(triage_pending.units)를 읽는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import sqlite3 as _sq
+
+    import dashboard
+    import scoring
+    tr = (ctx["views"] / "triage.html").read_text("utf-8")
+    units = set(scoring.TRIAGE_UNITS)
+    for name in ("TR_COLS", "TR_HELP"):
+        m = re.search(r"const " + name + r" = \{(.*?)\n\};?\n", tr, re.S) or \
+            re.search(r"const " + name + r" = \{(.*?)\}\};", tr, re.S)
+        assert m, f"triage.html 의 {name} 을 못 찾았다"
+        keys = set(re.findall(r"^  (\w+): \{", m.group(1), re.M))
+        assert keys == units, f"{name} 의 묶음이 정본(scoring.TRIAGE_UNITS)과 어긋났다: {sorted(keys ^ units)}"
+    assert "t.units" in tr, "화면이 서버가 준 묶음(units)을 안 읽는다"
+    assert "t.units" in (ctx["views"] / "overview.html").read_text("utf-8"), \
+        "개요의 심사 대기 문구가 묶음별 수(triage_pending.units)를 안 읽는다"
+
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    db._register_norm(c)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam161','saas','x.com')")
+    for i, kind in enumerate(scoring.ALL_KINDS):
+        tg = {"coverage": "cluster:주제161", "backlink_prospect": "d161.com",
+              "backlink_mention": "www.d161.com"}.get(kind, f"대상161 {i}")
+        c.execute("INSERT INTO opportunities(project_id,kind,target,score,reasoning,status)"
+                  " VALUES(1,?,?,50,'r','new')", (kind, tg))
+    c.commit()
+    pr = db.get_project(c, "_seam161")
+    shown = lambda: {r["kind"] for r in db.open_opportunities(c, 1, limit=100)}   # noqa: E731
+    outside = set(scoring.ALL_KINDS) - set(scoring.TRIAGE_KINDS)
+    assert shown() == outside, f"판정 전에 심사 대상이 개요에 선다 / 심사 밖이 안 선다: {sorted(shown() ^ outside)}"
+    t = dashboard._triage(c, pr)
+    assert [u["id"] for u in t["units"]] == list(scoring.TRIAGE_UNITS), t["units"]
+    assert {r["unit"] for r in t["rows"]} == units
+    kinds_seen = {k for r in t["rows"] for k in r["kinds"]}
+    assert kinds_seen == set(scoring.TRIAGE_KINDS), \
+        f"[심사]가 싣는 종류가 정본과 다르다: {sorted(kinds_seen ^ set(scoring.TRIAGE_KINDS))}"
+    db.set_verdicts(c, 1, [r["key"] for r in t["rows"]], "work")      # 화면이 key 를 그대로 돌려보낸다
+    assert shown() == set(scoring.ALL_KINDS), \
+        f"'작업'을 눌렀는데 개요에 안 서는 종류: {sorted(set(scoring.ALL_KINDS) - shown())}"
+    for r in t["rows"]:
+        assert r["unit"] == scoring.triage_unit(r["kinds"][0]), r
+
+
+def test_seam_170_screen_modes_are_declared_once_and_drawn_by_the_shell():
+    """170) 화면 안 두 탭([처리]·[관리])은 view-def 의 `modes` 가 정본이고, 탭 줄은 셸(SM)만 그린다.
+    양쪽 끝: 선언(views/*.html 의 view-def "modes") ↔ 마크업(뷰·섹션의 data-mode) ↔ 셸의 그리기.
+
+    · modes 의 모양: [{id, label, count?}] — id 는 화면 안에서 유일, label 은 글, count 는 페이로드 점 경로.
+    · 마크업의 data-mode 는 그 화면이 선언한 id 안에 있다(없는 탭에 매이면 그 섹션은 영영 안 보인다).
+      섹션 파일이면 section-def 의 "view" 가 가리키는 화면의 선언을 본다.
+    · modes 를 선언한 화면은 탭마다 data-mode 요소가 하나 이상 있다(빈 탭 금지).
+    · 셸이 SM.views 에 modes 를 실어 나르고 tablist/tab/tabpanel·방향키·기억(sessionStorage)을 갖는다.
+      호스팅 애드온(dash.html)은 탭 줄을 따로 짓지 않는다(셸은 한 벌).
+    · 설정의 탭(data-tab / #st-tabs)은 화면 안 카드 묶음이라 이 틀과 이름이 겹치지 않는다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    base = ROOT / "skills" / "capture" / "templates"
+    defs = _view_defs(ctx["views"])
+    modes_of = {}
+    for vid, d in defs.items():
+        ms = d.get("modes")
+        if ms is None:
+            continue
+        assert isinstance(ms, list) and ms, f"{vid} 의 modes 는 비지 않은 목록이어야 한다"
+        ids = [m.get("id") for m in ms]
+        assert all(isinstance(i, str) and re.fullmatch(r"[a-z][a-z0-9_]*", i) for i in ids), f"{vid} modes id: {ids}"
+        assert len(set(ids)) == len(ids), f"{vid} modes id 가 겹친다: {ids}"
+        for m in ms:
+            assert isinstance(m.get("label"), str) and m["label"].strip(), f"{vid} modes {m.get('id')} 에 label 이 없다"
+            assert set(m) <= {"id", "label", "count"}, f"{vid} modes 에 모르는 필드: {sorted(set(m) - {'id', 'label', 'count'})}"
+            if "count" in m:
+                assert re.fullmatch(r"\w+(\.\w+)*", str(m["count"])), f"{vid} modes count 는 페이로드 점 경로: {m['count']!r}"
+        modes_of[vid] = ids
+    owner = {}                        # 파일 → 그 마크업이 속한 화면 id
+    for f in sorted((base / "views").glob("*.html")):
+        owner[f] = f.stem
+    sd = re.compile(r'<script type="application/json" class="section-def">\s*(\{.*?\})\s*</script>', re.S)
+    for f in sorted((base / "sections").glob("*.html")):
+        m = sd.search(f.read_text("utf-8"))
+        if m:
+            owner[f] = json.loads(m.group(1)).get("view")
+    seen = {}
+    for f, vid in owner.items():
+        # 섹션(셸이 상자로 옮기는 단위 — <section> 또는 .band)의 data-mode 만 이 틀의 것이다.
+        # 안쪽 요소의 data-mode(예: [관찰 중]의 정렬 칩)는 남의 이름이다.
+        for tag, attrs, mode in re.findall(r'<(\w+)\b([^>]*?)\bdata-mode="(\w+)"', f.read_text("utf-8")):
+            if tag != "section" and "band" not in attrs:
+                continue
+            assert mode in modes_of.get(vid, []), \
+                f"{f.name} 의 data-mode={mode!r} 가 화면 {vid} 의 modes 선언에 없다 — 그 섹션은 영영 안 보인다"
+            seen.setdefault(vid, set()).add(mode)
+    for vid, ids in modes_of.items():
+        assert set(ids) <= seen.get(vid, set()), \
+            f"{vid} 가 선언한 탭에 섹션이 없다: {sorted(set(ids) - seen.get(vid, set()))}"
+    shell = ctx["shell"]
+    assert re.search(r"modes:\s*\(v\.modes", shell), "SM.views 가 view-def 의 modes 를 안 싣는다"
+    for needle, why in (('"tablist"', "tablist"), ('role", "tab"', "tab"), ('"tabpanel"', "tabpanel"),
+                        ("ArrowRight", "방향키"), ('"sm:mode:"', "고른 탭 기억(sessionStorage)")):
+        assert needle in shell, f"셸 탭 틀에 {why} 가 없다"
+    for pat in ("vtabs", "tablist", "data-mode"):
+        assert pat not in ctx["dash"], f"호스팅 애드온(dash.html)이 {pat!r} 로 탭 줄을 따로 짓는다 — 셸은 한 벌"
+    st = (ctx["views"] / "settings.html").read_text("utf-8")
+    assert "modes" not in json.dumps(defs["settings"]) and "data-mode" not in st, \
+        "설정은 자기 탭(data-tab)을 쓴다 — 화면 안 두 탭 틀과 섞지 않는다"
 
 
 def inspect_src(fn) -> str:

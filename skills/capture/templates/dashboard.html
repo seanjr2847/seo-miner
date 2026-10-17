@@ -427,6 +427,21 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 .vban { display:flex; flex-direction:column; gap:var(--sp-3); margin:var(--sp-4) 0 0; }
 .vban:empty { display:none; }
 .vban > * { margin:0; }
+/* 화면 안 두 탭([처리]·[관리]) — view-def 의 modes 를 선언한 화면에만 선다(SM.modeDraw).
+   섹션은 마크업의 data-mode 로 자기 탭을 말하고, 고른 탭이 아닌 것은 hidden 이 된다.
+   설정의 카드 묶음 탭(#st-tabs)과 다른 물건이다 — 저쪽은 준비 상태 카드 안에 선다. */
+.vtabs { display:flex; gap:4px; width:fit-content; max-width:100%; margin:var(--sp-4) 0 0; padding:4px;
+  background:var(--sunk); border-radius:var(--r-in); overflow-x:auto; }
+.vtabs button { min-height:var(--btn-h); padding:0 var(--sp-4); border:0; border-radius:var(--r-in);
+  background:transparent; color:var(--sub); cursor:pointer; white-space:nowrap;
+  font:500 var(--fs-2)/1.3 var(--sans); display:flex; align-items:center; gap:var(--sp-2); }
+.vtabs button:hover { color:var(--ink); }
+.vtabs button[aria-selected="true"] { background:var(--card); color:var(--accent); font-weight:650;
+  box-shadow:var(--shadow); }
+.vtabs .cnt { min-width:20px; padding:0 8px; border-radius:var(--r-pill); background:var(--warn-wash);
+  color:var(--warn); font:600 var(--fs-1)/20px var(--sans); text-align:center; }
+.view > [data-mode][hidden] { display:none; }
+.view > .vtabs ~ section:first-of-type { margin-top:var(--sp-4); }
 /* 화면을 채우는 단계의 명령 칩 — .cmd 의 위 여백은 문단용이라 머리줄에서는 없앤다. */
 .vh .vh-cmd { margin:0; }
 /* 390 에서 머리 칩 둘은 제목과 부제 사이를 갈라 놓고 다음 행동 띠를 화면 밖으로
@@ -1647,7 +1662,10 @@ const SM = {
     // head: 화면 제목 옆에 세울 칩. 안 쓰면 stages 그대로(예전 그대로 전부 세운다) —
     // stages 는 seam #9(이 화면에서 부를 수 있는 /capture)의 정본이라 그대로 두고,
     // head 는 그중 "이 화면의 주 단계"만 추린 부분집합이다(view-def 에 없으면 폴백).
-    head: (v.head || v.stages || []).slice()})),
+    head: (v.head || v.stages || []).slice(),
+    // modes: 화면 안 탭 선언 [{id,label,count?}] — 없으면 탭 줄이 없다(예전 그대로). 섹션은
+    // 마크업의 data-mode 로 자기 탭을 말한다. count 는 탭 배지가 읽을 페이로드 점 경로.
+    modes: (v.modes || []).map(m => ({id: m.id, label: m.label, count: m.count || ""}))})),
   cur: "",
   // 페이로드의 묶음(d.groups) — render() 가 setGroups 로 넣는다. 첫 페이로드 전에는
   // 비어 있어 메뉴에 묶음 이름이 안 선다(이름을 여기 적어 두지 않는다 — 위 주석).
@@ -1708,6 +1726,7 @@ const SM = {
       const box = $("view-" + v.id);
       if (box) box.hidden = v.id !== id;
     }
+    this.modeApply(id);            // 마지막으로 본 탭을 되살린다(modes 없는 화면은 그대로)
     document.querySelectorAll("#nav button, #navfoot button").forEach(b => {
       const on = b.dataset.v === id;
       b.classList.toggle("on", on);
@@ -1822,6 +1841,107 @@ const SM = {
     b.setAttribute("aria-label", name);
   },
 
+  // ── 화면 안 두 탭 ───────────────────────────────────────────
+  // 선언은 view-def 의 modes 한 곳, 소속은 섹션 마크업의 data-mode 한 곳이다. 탭 줄·기억·
+  // 키보드·접기는 전부 여기 한 벌 — 뷰는 자기 탭 줄을 짓지 않는다. 고른 탭은 탭 하나가 쓰는
+  // sessionStorage("sm:mode:<화면>")에 적고, SM.show 로 들어올 때 되살린다(저장소가 막혀도
+  // 메모리에 남아 전환은 된다). 접는 것은 hidden 이며, 셸이 접은 것(data-vm-off)만 셸이 편다 —
+  // 섹션이 스스로 hidden 을 쓰는 자리를 덮지 않는다.
+  mode: {},
+  modeNow(id) {
+    const v = this.views[this.at(id)];
+    if (!v || !v.modes.length) return "";
+    let m = this.mode[v.id];
+    if (!m) { try { m = sessionStorage.getItem("sm:mode:" + v.id) || ""; } catch (e) { m = ""; } }
+    return v.modes.some(x => x.id === m) ? m : v.modes[0].id;
+  },
+  setMode(id, m, focus) {
+    const v = this.views[this.at(id)];
+    if (!v || !v.modes.some(x => x.id === m)) return;
+    this.mode[v.id] = m;
+    try { sessionStorage.setItem("sm:mode:" + v.id, m); } catch (e) {}
+    this.modeApply(v.id, focus);
+  },
+  // 탭 줄 — 상자를 처음 세울 때 한 번(sync). 화면 머리(.vh) 바로 아래.
+  modeDraw(box, v) {
+    if (!v.modes.length || box.querySelector(":scope > .vtabs")) return;
+    const bar = document.createElement("div");
+    bar.className = "vtabs";
+    bar.setAttribute("role", "tablist");
+    bar.setAttribute("aria-label", v.title);
+    for (const m of v.modes) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.id = "vtab-" + v.id + "-" + m.id;
+      b.dataset.mode = m.id;
+      b.setAttribute("role", "tab");
+      b.appendChild(document.createTextNode(m.label));
+      b.onclick = () => SM.setMode(v.id, m.id);
+      bar.appendChild(b);
+    }
+    bar.addEventListener("keydown", e => {
+      const ids = v.modes.map(m => m.id), i = ids.indexOf(SM.modeNow(v.id));
+      const to = e.key === "ArrowRight" ? ids[(i + 1) % ids.length]
+               : e.key === "ArrowLeft" ? ids[(i + ids.length - 1) % ids.length]
+               : e.key === "Home" ? ids[0] : e.key === "End" ? ids[ids.length - 1] : "";
+      if (!to) return;
+      e.preventDefault();
+      SM.setMode(v.id, to, true);
+    });
+    const vh = box.querySelector(":scope > .vh");
+    if (vh) vh.after(bar); else box.prepend(bar);
+    this.modeCountsPaint(v.id);
+  },
+  // 고른 탭에 맞춰 섹션을 접고 편다. 여러 번 불려도 공짜다(sync·show 가 부른다).
+  modeApply(id, focus) {
+    const v = this.views[this.at(id)], box = v && $("view-" + v.id);
+    if (!v || !box || !v.modes.length) return;
+    const now = this.modeNow(v.id);
+    box.querySelectorAll(":scope > .vtabs [role=tab]").forEach(b => {
+      const on = b.dataset.mode === now;
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+      if (on && focus) b.focus();
+    });
+    box.querySelectorAll(":scope > [data-mode]").forEach(el => {   // 화면 상자의 직계(섹션)만 — 안쪽 data-mode 는 남의 것
+      const off = el.dataset.mode !== now;
+      el.setAttribute("role", "tabpanel");
+      el.setAttribute("aria-labelledby", "vtab-" + v.id + "-" + el.dataset.mode);
+      if (off) { el.hidden = true; el.dataset.vmOff = "1"; }
+      else if (el.dataset.vmOff) { el.hidden = false; delete el.dataset.vmOff; }
+    });
+  },
+  // 탭 배지 — 그 탭에서 사람이 할 일이 몇 건인가. 값은 페이로드의 점 경로(modes[].count)에서
+  // 읽는다(render 가 modeCountsFrom 을 부른다). 선언한 경로가 없으면 배지 자리만 비어 있다.
+  modeCount: {},
+  setModeCount(id, m, n) {
+    n = n > 0 ? n : 0;
+    const k = id + ":" + m;
+    if ((this.modeCount[k] || 0) === n) return;
+    this.modeCount[k] = n;
+    this.modeCountsPaint(id);
+  },
+  modeCountsFrom(d) {
+    for (const v of this.views) for (const m of v.modes) {
+      if (!m.count) continue;
+      const n = m.count.split(".").reduce((o, k) => (o == null ? o : o[k]), d);
+      this.setModeCount(v.id, m.id, Number(n) || 0);
+    }
+  },
+  modeCountsPaint(id) {
+    const v = this.views[this.at(id)], box = v && $("view-" + v.id);
+    if (!v || !box) return;
+    for (const m of v.modes) {
+      const b = box.querySelector(`:scope > .vtabs [role=tab][data-mode="${m.id}"]`);
+      if (!b) continue;
+      const n = this.modeCount[v.id + ":" + m.id] || 0;
+      let c = b.querySelector(".cnt");
+      if (n && !c) { c = document.createElement("span"); c.className = "cnt"; b.appendChild(c); }
+      if (c) { if (n) c.textContent = n > 99 ? "99+" : String(n); else c.remove(); }
+      b.setAttribute("aria-label", m.label + (n ? ` ${n}건` : ""));
+    }
+  },
+
   // 상자를 만들고 섹션을 제자리로 옮긴다. 여러 번 불려도 공짜다 — 애드온이
   // 만드는 섹션은 늦게 생기므로 실제로 여러 번 불린다.
   sync() {
@@ -1859,6 +1979,7 @@ const SM = {
         const sec = el.closest("section") || el;   // band 는 section 이 아니다
         if (sec.parentNode !== box) box.appendChild(sec);
       }
+      if (v.modes.length) { this.modeDraw(box, v); this.modeApply(v.id); }
     }
     this.navDraw();
     this.show(this.at(this.cur) >= 0 ? this.cur
@@ -4136,6 +4257,7 @@ function render(d) {
   renderDates(d);
   // 묶음 — 메뉴의 제목·점과 각 화면 머리줄. 정본은 run_all.GROUPS(서버가 싣는다).
   SM.setGroups(grpDue(d.groups));
+  SM.modeCountsFrom(d);    // 화면 안 탭 배지 — view-def modes[].count 경로
   groupHead(d);
   applyWording();          // 정적 문구는 여기서 한 번 (동적 문구는 각자 W() 로 고른다)
 

@@ -684,8 +684,10 @@ function OV_triageBox() {
   const t = (OV_D || {}).triage_pending;
   if (!t || !t.n) return "";
   const hot = t.hot ? `그중 점수 ${num(t.hot_min)}점 이상이 ${num(t.hot)}건입니다. ` : "";
-  return `<div class="empty"><b>심사할 검색어가 ${num(t.n)}건 남았습니다</b>
-    <p>${hot}심사에서 [작업]으로 보낸 검색어가 여기 개선 기회로 섭니다.</p>
+  // 어느 재료가 쌓였는지는 서버가 센다(t.units — 이름표 정본 scoring.TRIAGE_UNITS)
+  const parts = (t.units || []).filter(u => u.n).map(u => `${esc(u.label)} ${num(u.n)}`).join(" · ");
+  return `<div class="empty"><b>심사할 재료가 ${num(t.n)}건 남았습니다</b>
+    <p>${parts ? `${parts}. ` : ""}${hot}심사에서 [작업]으로 보낸 것이 여기 개선 기회로 섭니다.</p>
     ${READONLY ? "" : `<div class="acts"><button class="go" onclick="SM.touched=true;SM.show('triage')">심사하기</button></div>`}</div>`;
 }
 // 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「자동 종료」인

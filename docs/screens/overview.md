@@ -137,8 +137,9 @@ flowchart TD
 수집한 숫자에서 손댈 곳을 점수 순으로 찾습니다.」가 뜹니다. 이때는 찾기 칸·거르개·칩이
 아예 서지 않습니다.
 
-**기회 분석을 돌렸는데도 목록이 비었다면** — 검색어 종류의 기회는 **[심사]** 에서 「작업」으로
-보낸 검색어만 이 목록에 오릅니다. [심사] 화면에서 미판정으로 쌓여 있지 않은지 봅니다.
+**기회 분석을 돌렸는데도 목록이 비었다면** — 심사를 거치는 종류(`scoring.TRIAGE_KINDS`)의 기회는
+**[심사]** 에서 「작업」으로 보낸 것만 이 목록에 오릅니다. [심사] 화면에서 미판정으로 쌓여 있지
+않은지 봅니다(빈 상태 문구가 묶음별 대기 수를 말합니다).
 
 **「남은 기회가 없습니다」가 떴다면** — 거른 탓이 아니라 다 처리했다는 뜻입니다.
 **[완료·제외 보기]** 로 처리한 것을 확인하거나, 띠의 **[실적 다시 수집]** 으로 다시 재면
@@ -194,7 +195,7 @@ flowchart TD
     1369-1443 (gather — watch/kind_labels/kind_views/creations/brief.attach)
   skills/capture/scripts/db.py:2117-2168 (watch_rows — before/after/runs_since/stalled),
     2170-2180 (gate_sql — 검색어 종류는 verdicts 'work' 필요)
-  skills/capture/scripts/scoring.py:153-155 (KEYWORD_KINDS), 3163 (see 주석),
+  skills/capture/scripts/scoring.py:153-155 (TRIAGE_KINDS), 3163 (see 주석),
     3331/3349/3422/3462/3483/3523/3569/3584/3599/3618/3659 (see 대상 화면),
     4057-4065 (opportunities gated=True), 4080-4085 (GROUP_KINDS/OPEN_STATUSES)
   skills/capture/scripts/stage.py:105-137 (gsc/gaps 라벨)

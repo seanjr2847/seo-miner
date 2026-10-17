@@ -168,6 +168,8 @@ BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 AI_PROMPT_EN = "Which clinic AIqZ9?"  # AI 인용: 영어 시장 질문 — 시장별 카드·시장 거르개를 세운다
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
+TRIAGE_TOPIC = "심사주제Z9"            # 심사: 미판정 주제 — [주제] 묶음에 서야 한다
+TRIAGE_DOMAIN = "triage-domain-z9.example"   # 심사: 미판정 링크 도메인 — 두 종류가 한 줄이다
 TRIAGE_EN = "english triage termz9"   # 심사: 다른 언어(영어) 미판정 — 처음엔 사이트 언어만 보인다
 GROUP_KW = "묶음검색어Z9"            # 기회 묶음: 같은 페이지로 들어오는 AI 요약 기회 셋 — 개요에서 한 줄
 AI_VISIT_PAGE = "/aivisitZ9"         # AI 에서 온 방문: GA4 AI 유입 표에만 나오는 경로
@@ -205,7 +207,7 @@ EMPTY_LOADS = [
                  (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [클릭 변화]이 그렇다고 안 말한다"),
                  ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [클릭 변화]이 '수집이 한 번뿐'이라고 말한다"),
                  # 개요 목록은 비었는데 심사에 쌓였다 — "다 처리했다"가 아니라 [심사하기]
-                 (r'id="opps"[^>]*>(?:(?!class="card).)*심사할 검색어가 1건 남았습니다'
+                 (r'id="opps"[^>]*>(?:(?!class="card).)*심사할 재료가 1건 남았습니다(?:(?!class="card).)*검색어 1'
                   r'(?:(?!class="card).)*점수 70점 이상이 1건(?:(?!class="card).)*'
                   r"SM\.show\('triage'\)[^>]*>심사하기</button>",
                   "개요 목록이 빈 채 심사에 쌓였는데 빈 상태가 [심사하기]로 안 보낸다"),
@@ -306,6 +308,12 @@ MUSTS = [
     (r'<tr class="trrow[^"]*"[^>]*data-key="[^"]+"[^>]*>(?:(?!</tr>).)*' + re.escape(TRIAGE_KW)
      + r'(?:(?!</tr>).)*\(\+1\)',
      "심사 화면이 검색어를 한 줄로 묶어 안 그렸다(변형 +1)"),
+    # 묶음 탭 — 검색어·주제·링크 도메인 셋이 서고, 처음엔 미판정이 남은 첫 묶음(검색어)이 눌려 있다.
+    (r'id="tr-units"[^>]*>(?:(?!</div>).)*aria-pressed="true"[^>]*>검색어<span class="n left">미판정 2(?:(?!</div>).)*'
+     r'aria-pressed="false"[^>]*>주제<span class="n left">미판정 1(?:(?!</div>).)*>링크 도메인<span class="n left">미판정 1',
+     "심사 화면의 묶음 탭(검색어·주제·링크 도메인)이 안 섰다"),
+    ("!" + re.escape(TRIAGE_TOPIC), "주제 묶음의 줄이 검색어 묶음 표에 섞여 그려졌다"),
+    ("!" + re.escape(TRIAGE_DOMAIN), "링크 도메인 묶음의 줄이 검색어 묶음 표에 섞여 그려졌다"),
     # 카운트는 거르기와 무관한 전체다(요약이 거짓말하면 안 된다) — 영어 줄까지 2.
     (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>2</b>', "심사 화면 상단 카운트가 안 나왔다"),
     # 다국어 — 섞여 있으면 처음엔 사이트 언어(한국어)만 보이고, 언어 거르개가 영어 줄 수를
@@ -781,11 +789,17 @@ def _axes(conn, pid: int) -> None:
          (pid, "ctr_gap", f"{SITES[1]} 두 번째", 58.0, "노출 120에 클릭 0. 제목과 설명이 눌리지 않습니다"),
          # coverage 기회는 target 이 scoring 이 적재한 내부 꼴('cluster:{이름}')이다 —
          # 화면은 그걸 사람이 읽을 이름으로 바꿔 그려야 한다.
-         # 검색어 종류가 아니라 심사(verdict) 없이도 그대로 나온다.
+         # 주제·링크 도메인도 심사 대상이다(scoring.TRIAGE_KINDS) — 작업으로 보낸 것만 선다.
          (pid, "coverage", "cluster:피부 관리", 65.0, "이 주제를 다루는 페이지가 아직 없습니다")])
-    # 기회 목록은 심사(작업 판정)를 통과한 검색어만 낸다 — 둘 다 작업으로 둔다
+    # 기회 목록은 심사(작업 판정)를 통과한 재료만 낸다 — 셋 다 작업으로 둔다
     import db, scoring
-    db.set_verdicts(conn, pid, [scoring.norm(f"{SITES[1]} 검색어"), scoring.norm(f"{SITES[1]} 두 번째")], "work")
+    db.set_verdicts(conn, pid, [scoring.norm(f"{SITES[1]} 검색어"), scoring.norm(f"{SITES[1]} 두 번째"),
+                                scoring.verdict_key("coverage", "cluster:피부 관리")], "work")
+    # 심사에 남는 주제·링크 도메인 — 묶음 탭이 서고, 같은 도메인의 두 종류는 한 줄이다
+    conn.executemany(
+        "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status) VALUES(?,?,?,?,'r','new')",
+        [(pid, "coverage", "cluster:" + TRIAGE_TOPIC, 61), (pid, "backlink_prospect", TRIAGE_DOMAIN, 55),
+         (pid, "backlink_mention", "www." + TRIAGE_DOMAIN, 33)])
     # 심사에 남는 미판정 검색어 — 띄어쓰기 변형 둘이 한 줄이어야 한다
     conn.executemany(
         "INSERT INTO opportunities(project_id,kind,target,score,status) VALUES(?,?,?,?,'new')",
@@ -1325,6 +1339,104 @@ def print_all(browser: str, url: str, home: Path, views: int) -> None:
         f"인쇄하면 {pages_n}쪽뿐이다 — 화면이 {views}개인데 숨은 것이 안 펴졌다")
 
 
+# 화면 안 두 탭([처리]·[관리]) 틀 — 본 화면에는 아직 안 쓰이므로 **가짜 view-def** 로 증명한다.
+# 조립된 페이지의 매니페스트(window.__VIEWS__)에 modes 를 얹고(첫 두 섹션 이상인 화면), 섹션에
+# data-mode 를 달고, 눌러 보고, 결과를 DOM(#__modes__)에 옮겨 적는다.
+MODES_PATCH = """<script>
+(function () {
+  var v = (window.__VIEWS__ || []).filter(function (x) { return (x.sections || []).length >= 2; })[0];
+  window.__MODES_VIEW__ = v ? v.id : "";
+  if (v) v.modes = [{id: "work", label: "처리", count: "zz_modes.n"}, {id: "manage", label: "관리"}];
+})();
+</script>"""
+MODES_RUN = """<script>
+setTimeout(function () {
+  var out = {}, V = window.__MODES_VIEW__;
+  try {
+    var def = SM.views[SM.at(V)];
+    var plain = SM.views.filter(function (x) { return !(x.modes && x.modes.length); })[0];
+    var secs = def.sections.map(function (id) { var e = document.getElementById(id);
+      return e && (e.closest("section") || e); }).filter(Boolean);
+    secs.forEach(function (s, i) { s.setAttribute("data-mode", i === 0 ? "work" : "manage"); });
+    try { sessionStorage.removeItem("sm:mode:" + V); } catch (e) {}
+    SM.sync(); SM.show(V);
+    var box = document.getElementById("view-" + V);
+    var vis = function (s) { return s.dataset.vmOff !== "1"; };   // 셸이 접었나 — 섹션이 스스로 hidden 인 것(박제본)과 가른다
+    var bar = box.querySelector(".vtabs");
+    var tabs = bar ? [].slice.call(bar.querySelectorAll('[role="tab"]')) : [];
+    out.bar = !!bar; out.role = bar && bar.getAttribute("role");
+    out.tabs = tabs.map(function (t) { return t.textContent.replace(/\\s+/g, " ").trim(); });
+    out.sel0 = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
+    out.v0 = [vis(secs[0]), vis(secs[1])]; out.hid = secs[1].hidden;
+    out.panel = secs[0].getAttribute("role");
+    out.labelled = !!secs[0].getAttribute("aria-labelledby") &&
+      !!document.getElementById(secs[0].getAttribute("aria-labelledby"));
+    SM.modeCountsFrom({zz_modes: {n: 7}});
+    out.badge = (tabs[0].querySelector(".cnt") || {}).textContent || "";
+    SM.modeCountsFrom({zz_modes: {n: 0}});
+    out.badge0 = !!tabs[0].querySelector(".cnt");
+    tabs[1].click();
+    out.v1 = [vis(secs[0]), vis(secs[1])];
+    out.sel1 = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
+    try { out.stored = sessionStorage.getItem("sm:mode:" + V); } catch (e) { out.stored = "?"; }
+    tabs[1].dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowLeft", bubbles: true}));
+    out.v2 = [vis(secs[0]), vis(secs[1])];
+    tabs[0].dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowRight", bubbles: true}));
+    out.v3 = [vis(secs[0]), vis(secs[1])];
+    out.focus = document.activeElement === tabs[1]; out.actDbg = document.activeElement && (document.activeElement.id || document.activeElement.tagName);
+    var other = SM.views.filter(function (x) { return x.id !== V; })[0].id;
+    // 새로고침을 흉내 낸다: 화면은 [처리]에 서 있고, 메모리 상태는 비었고, 저장소만 [관리]를 기억한다.
+    tabs[0].click();
+    try { sessionStorage.setItem("sm:mode:" + V, "manage"); } catch (e) {}
+    SM.mode = {};
+    SM.show(other); SM.show(V);
+    out.restored = [vis(secs[0]), vis(secs[1])];
+    out.selR = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
+    out.plainBar = plain ? !!document.getElementById("view-" + plain.id).querySelector(".vtabs") : null;
+    // 저장소가 막혀도 동작한다
+    var orig = Storage.prototype.setItem;
+    Storage.prototype.setItem = function () { throw new Error("blocked"); };
+    tabs[0].click();
+    Storage.prototype.setItem = orig;
+    out.blocked = [vis(secs[0]), vis(secs[1])];
+  } catch (e) { out.err = String(e && e.stack || e); }
+  var d = document.createElement("div"); d.id = "__modes__";
+  d.textContent = JSON.stringify(out); document.body.appendChild(d);
+}, 2500);
+</script>"""
+
+
+def modes_frame(browser: str, shell: bytes, home: Path) -> None:
+    i = shell.find(b"window.__VIEWS__=")
+    assert i >= 0, "매니페스트(window.__VIEWS__)를 못 찾았다"
+    j = shell.find(b"</script>", i) + len(b"</script>")
+    page = shell[:j] + MODES_PATCH.encode("utf-8") + shell[j:]
+    page = page.replace(b"</body>", MODES_RUN.encode("utf-8") + b"</body>", 1)
+    with _stdlib(page) as site:
+        html = dom(browser, f"{site.base}/d#{SITES[1]}", home / "chrome-profile")
+    p = probe(html)
+    assert not p["err"], "화면 안 탭 틀에서 JS 가 터졌다:\n  " + "\n  ".join(p["err"][:6])
+    m = re.search(r'id="__modes__"[^>]*>(.*?)</div>', html, re.S)
+    assert m, "탭 검사 스크립트가 결과를 못 남겼다"
+    o = json.loads(htmlmod.unescape(m.group(1)))
+    assert not o.get("err"), f"탭 검사 스크립트가 터졌다: {o.get('err')}"
+    assert o["bar"] and o["role"] == "tablist", f"modes 를 선언했는데 탭 줄(tablist)이 안 섰다: {o}"
+    assert o["tabs"][:2] and o["tabs"][0].startswith("처리") and o["tabs"][1].startswith("관리"), o["tabs"]
+    assert o["sel0"] == ["true", "false"], f"처음 탭은 선언 첫째여야 한다: {o['sel0']}"
+    assert o["v0"] == [True, False], f"처음에는 [처리] 섹션만 서야 한다: {o['v0']}"
+    assert o['hid'] is True, '접힌 섹션에 hidden 이 안 섰다'
+    assert o["panel"] == "tabpanel" and o["labelled"], "섹션이 tabpanel + aria-labelledby 가 아니다"
+    assert o["badge"] == "7" and o["badge0"] is False, f"건수 배지(count 경로)가 안 따라온다: {o['badge']!r}/{o['badge0']}"
+    assert o["v1"] == [False, True] and o["sel1"] == ["false", "true"], f"[관리]를 눌렀는데 안 바뀐다: {o['v1']}"
+    assert o["stored"] == "manage", f"고른 탭을 sessionStorage 에 못 적었다: {o['stored']!r}"
+    assert o["v2"] == [True, False], f"← 키가 앞 탭으로 안 간다: {o['v2']}"
+    assert o["v3"] == [False, True] and o["focus"], f"→ 키가 다음 탭으로(초점 포함) 안 간다: {o['v3']} {o['focus']} {o.get('actDbg')}"
+    assert o["restored"] == [False, True] and o["selR"] == ["false", "true"], \
+        f"다른 화면에 다녀온 뒤 마지막 탭이 복원되지 않았다: {o['restored']}"
+    assert o["plainBar"] in (False, None), "modes 없는 화면에 탭 줄이 섰다 — 회귀"
+    assert o["blocked"] == [True, False], f"저장소가 막히면 탭 전환이 죽는다: {o['blocked']}"
+
+
 def run() -> None:
     browser = find_browser()
     if not browser:
@@ -1437,6 +1549,9 @@ def run() -> None:
                     print_all(browser, url, home,
                               len(view_defs_ids()) - len(REPORT_DROPPED))
                 print(f"  {label}: ok")
+        modes_frame(browser, local, home)
+        modes_frame(browser, report, home)       # 박제본에서도 탭은 눌린다(읽기 전용은 버튼만 접는다)
+        print("  화면 안 탭 틀(로컬·박제본): ok")
     finally:
         gc.collect()
         shutil.rmtree(home, ignore_errors=True)

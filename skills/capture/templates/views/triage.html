@@ -1,10 +1,11 @@
-<!-- 검색어 심사 — 기회를 보기 전에 검색어를 거른다. 행 하나가 정규화한 검색어 하나이고,
-     판정(무관·보류·작업)은 verdicts 에 남아 다음 측정에서 다시 안 올라온다.
+<!-- 재료 심사 — 기회를 보기 전에 기회의 원천(검색어·주제·링크 도메인 — 정본 scoring.TRIAGE_UNITS)을
+     거른다. 행 하나가 판정 단위 하나이고(키는 서버가 준다), 판정(무관·보류·작업)은 verdicts 에
+     남아 다음 측정에서 다시 안 올라온다. 묶음마다 의미 있는 열이 다르다(TR_COLS).
      정본: docs/superpowers/specs/2026-09-08-keyword-triage-design.md
      이 화면이 무엇인지는 화면 자신이 말한다 — dashboard.py 가 이 선언을 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "triage", "group": "todo", "title": "심사",
- "sub": "측정이 물어온 검색어가 우리 것인지 먼저 가립니다. 작업으로 보낸 것만 개요의 기회가 됩니다.",
+ "sub": "측정이 찾아낸 재료가 우리 일감인지 먼저 가립니다. 작업으로 보낸 것만 개요의 기회가 됩니다.",
  "sections": ["triage"], "stages": ["gaps"]}
 </script>
 
@@ -39,6 +40,18 @@
 #triage-sec .trsub b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
 #triage-sec .trh .tools { margin:0; flex:0 1 auto; }
 #tr-counts b { color:var(--ink); font-weight:600; }
+
+/* 묶음 탭 — 검색어 / 주제 / 링크 도메인. 묶음이 둘 이상일 때만 선다. 누르면 그 묶음의
+   현황·표만 본다(판정 네 칸은 그 묶음의 숫자다). */
+#triage-sec .trunits { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin:0 0 var(--sp-4); }
+#triage-sec .trunits:empty { display:none; }
+#triage-sec .trunit { display:inline-flex; align-items:center; gap:8px; min-height:var(--btn-h);
+  padding:0 16px; border:0; border-radius:var(--r-pill); background:var(--sunk); color:var(--ink);
+  font:600 var(--fs-2)/1.3 var(--sans); cursor:pointer; transition:background .12s, color .12s; }
+#triage-sec .trunit:hover { background:var(--accent-wash); }
+#triage-sec .trunit .n { color:var(--sub); font-weight:500; font-variant-numeric:tabular-nums; }
+#triage-sec .trunit .n.left { color:var(--warn); font-weight:650; }
+#triage-sec .trunit[aria-pressed="true"] { background:var(--accent-wash); color:var(--accent); }
 
 /* 현황 — 링 하나(가린 비율)와 판정 네 칸. 네 칸은 숫자이자 거르개다. */
 #triage-sec .trstatbody { display:flex; align-items:center; gap:var(--sp-5) 32px; flex-wrap:wrap; }
@@ -198,11 +211,12 @@
         <div><h2>심사 현황</h2><p class="trsub" id="tr-counts"></p></div>
         <div id="tr-start"></div>
       </div>
+      <div class="trunits" id="tr-units" role="group" aria-label="심사 묶음"></div>
       <div class="trstatbody" id="tr-statbody"></div>
     </div>
     <div class="card trq" id="tr-q">
       <div class="trh">
-        <div><h2>검색어 심사</h2><p class="trsub" id="tr-qsub"></p></div>
+        <div><h2 id="tr-qh">심사</h2><p class="trsub" id="tr-qsub"></p></div>
         <div class="tools" id="tr-tools"></div>
       </div>
       <div id="triage"></div>
@@ -220,6 +234,12 @@
    종류 거르개, 찾는 말, 고른 키, 키보드 커서. 정규화는 서버가 한다 — 여기는 서버가 준
    key 를 그대로 돌려보낸다(사본을 두지 않는다). */
 let TR_ROWS = [], TR_FILTER = "", TR_KIND = "", TR_Q = "", TR_SEL = new Set(), TR_CUR = 0, TR_PROJECT = "";
+/* 묶음 — 서버가 준 units(정본 scoring.TRIAGE_UNITS: id·이름표·판정별 수)와 지금 보는 묶음.
+   옛 서버(units 없음)는 검색어 한 묶음으로 읽는다. 행의 묶음은 r.unit 이다. */
+let TR_UNITS = [], TR_UNIT = "keyword", TR_UNIT_FOR = "";
+const TR_ru = r => r.unit || "keyword";
+const TR_unitDef = () => TR_UNITS.find(u => u.id === TR_UNIT) || {id: TR_UNIT, label: "", counts: {}};
+const TR_label = () => TR_unitDef().label;
 /* 언어 거르개 — 다국어 사이트는 한국어 검색어 사이에 영어·중국어가 섞여 한 줄로 심사됐다
    (theotherskin 150건). 언어는 서버가 가른다(r.lang, 규칙의 정본은 db.keyword_locale).
    섞여 있으면 처음엔 사이트 언어만 보여 주고, 거르개가 나머지 언어의 줄 수를 말한다.
@@ -233,6 +253,27 @@ const TR_DONE = {irrelevant: "무관으로 뺐습니다. 다음 측정부터 안
                  hold: "보류했습니다. 측정은 계속하고 기회에는 안 올립니다.",
                  work: "작업으로 보냈습니다. [개요]의 기회에 있습니다.",
                  "": "미판정으로 되돌렸습니다."};
+/* 묶음별 열과 판정 버튼 설명. 열 구성은 묶음이 다를 뿐 위치는 같다(체크·이름·종류·점수·근거) —
+   좁은 화면이 3~5번째 열을 접는 규칙(CSS)이 그대로 맞는다. 키는 묶음 id 라 정본
+   scoring.TRIAGE_UNITS 의 키와 같아야 한다(test_seams 가 대조한다). */
+const TR_COLS = {
+  keyword: {name: "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", kinds: "종류?이 검색어에 걸린 진단",
+            evid: ">클릭 / 노출?최근 수집분의 서치콘솔 실적"},
+  topic: {name: "주제?사이트가 아직 다루지 않는 키워드 묶음(클러스터)", kinds: "종류?이 주제에 걸린 진단",
+          evid: ">안 뜨는 키워드 / 월 검색량?이 주제로 추적 중인데 노출도 순위도 없는 키워드 수와 그 검색량 합"},
+  domain: {name: "링크 도메인?링크를 받을 수 있는 사이트", kinds: "종류?이 사이트에 걸린 진단",
+           evid: ">지수 / 근거?도메인 지수(0~1000)와 경쟁사가 링크를 받는 곳 수 또는 우리 이름을 링크 없이 말한 페이지 수"}};
+const TR_HELP = {
+  keyword: {irrelevant: "자동완성이 물어온 남의 검색어. 다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다",
+            hold: "우리 검색어지만 지금은 안 함(브랜드 등). 측정은 계속하고 기회에는 안 올립니다",
+            work: "개요의 기회 목록으로 보냅니다"},
+  topic: {irrelevant: "우리가 다룰 주제가 아닙니다. 다음 분석부터 이 주제의 기회가 안 올라옵니다",
+          hold: "맞는 주제지만 지금은 안 씁니다. 기회에는 안 올립니다",
+          work: "개요의 기회 목록으로 보냅니다"},
+  domain: {irrelevant: "링크를 받을 곳이 아닙니다. 다음 분석부터 이 사이트의 기회가 안 올라옵니다",
+           hold: "좋은 곳이지만 지금은 연락하지 않습니다. 기회에는 안 올립니다",
+           work: "개요의 기회 목록으로 보냅니다"}};
+const TR_help = v => (TR_HELP[TR_UNIT] || TR_HELP.keyword)[v];
 const TR_FILTER_LABEL = v => (TR_FILTER_OPT.find(o => o[0] === v) || ["", ""])[1];
 
 VIEW("triage", function (d) {
@@ -255,13 +296,20 @@ async function TR_fetch() {
   }
   const t = await res.json();
   TR_ROWS = t.rows || [];
+  TR_UNITS = t.units || [{id: "keyword", label: "검색어", counts: t.counts || {}}];   // 옛 서버 폴백
   TR_SITE_LANG = t.site_lang || ""; TR_LANG_LABELS = t.lang_labels || {};
+  if (TR_UNIT_FOR !== TR_PROJECT) {
+    TR_UNIT_FOR = TR_PROJECT;
+    // 처음엔 미판정이 남은 첫 묶음을 연다 — 없으면 행이 있는 첫 묶음, 그것도 없으면 첫 묶음.
+    TR_UNIT = (TR_UNITS.find(u => (u.counts.none || 0) > 0) || TR_UNITS.find(u => TR_ROWS.some(r => TR_ru(r) === u.id)) || TR_UNITS[0] || {id: "keyword"}).id;
+  }
+  if (!TR_UNITS.some(u => u.id === TR_UNIT)) TR_UNIT = (TR_UNITS[0] || {id: "keyword"}).id;
   if (TR_LANG_FOR !== TR_PROJECT) {
     TR_LANG_FOR = TR_PROJECT;
     // 기본 거르개는 **지금 보는 판정 묶음**(처음엔 미판정)에 사이트 언어 줄이 있을 때만 건다 —
     // 전체 행으로 정하면 미판정이 전부 다른 언어인 사이트(theotherskin: 미판정 3줄이 영어·중국어)가
-    // "한국어만 봅니다"로 빈 목록을 봤다.
-    const cur = TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER);
+    // "한국어만 봅니다"로 빈 목록을 봤다. 언어는 검색어 묶음의 거르개다.
+    const cur = TR_ROWS.filter(r => TR_ru(r) === "keyword" && (r.verdict || "") === TR_FILTER);
     const langs = new Set(cur.map(r => r.lang).filter(Boolean));
     TR_LANG = langs.size > 1 && langs.has(TR_SITE_LANG) ? TR_SITE_LANG : "";
   }
@@ -270,10 +318,29 @@ async function TR_fetch() {
   $("tr-grid").hidden = false; $("tr-grid").classList.toggle("solo", none);
   $("tr-stat").hidden = none;
   document.querySelector("#tr-grid > .trside").hidden = none;
-  TR_counts(t.counts || {});
+  TR_unitsBar();
+  TR_counts(TR_unitDef().counts || {});
   TR_tools();
   TR_draw();
   TR_nextStep();
+}
+
+// 묶음 탭 — 행이 있는 묶음만, 둘 이상일 때만 세운다(하나뿐이면 예전 화면 그대로). 숫자는 미판정 수.
+function TR_unitsBar() {
+  const shown = TR_UNITS.filter(u => u.id === TR_UNIT || TR_ROWS.some(r => TR_ru(r) === u.id));
+  $("tr-units").innerHTML = shown.length < 2 ? "" : shown.map(u => {
+    const n = (u.counts || {}).none || 0;
+    return `<button type="button" class="trunit" data-u="${esc(u.id)}" aria-pressed="${u.id === TR_UNIT}"
+      onclick="TR_setUnit(this.dataset.u)">${esc(u.label)}<span class="n${n ? " left" : ""}">미판정 ${num(n)}</span></button>`;
+  }).join("");
+}
+function TR_setUnit(u) {
+  if (u === TR_UNIT) return;
+  TR_UNIT = u; TR_KIND = ""; TR_Q = ""; TR_SEL = new Set(); TR_CUR = 0;
+  TR_unitsBar();
+  TR_counts(TR_unitDef().counts || {});
+  TR_tools();
+  TR_draw();
 }
 
 // 셸의 [다음 행동] 띠는 이 화면에서 걷는다 — 남은 건수·다음 걸음은 현황 카드가 말하고
@@ -288,7 +355,7 @@ function TR_renderCounts() {
   const c = TR_COUNTS;
   const narrowed = TR_Q.trim() || TR_KIND || TR_LANG;
   // 「작업 178」은 [개요]의 기회 수(묶은 줄)와 다른 단위다 — 무엇을 셌는지 말한다.
-  $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 검색어 <b>${c.work || 0}</b>` +
+  $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 ${esc(TR_label())} <b>${c.work || 0}</b>` +
     ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
     (narrowed ? ` · 보이는 줄 <b>${TR_filtered().length}</b>` : "");
 }
@@ -307,7 +374,7 @@ function TR_stat() {
   $("tr-statbody").innerHTML = `
     <div class="trring">${ring}
       <p><b>${none ? `${num(none)}건 남음` : "다 가렸습니다"}</b>전체 ${num(total)}건 중 ${num(done)}건(${pct(done)})을<br>가렸습니다</p></div>
-    <div class="trtabs" role="group" aria-label="판정별 검색어 수 — 누르면 그 판정만 봅니다">${TR_FILTER_OPT.map(([v, l]) => {
+    <div class="trtabs" role="group" aria-label="판정별 ${esc(TR_label())} 수 — 누르면 그 판정만 봅니다">${TR_FILTER_OPT.map(([v, l]) => {
       const n = v === "" ? none : (c[v] || 0);
       return `<button type="button" class="trtab" data-v="${v}" aria-pressed="${v === TR_FILTER}" onclick="TR_setFilter('${v}')">
         <span class="l">${l}</span><span class="v${v === "" && n ? " left" : ""}">${num(n)}</span>
@@ -323,8 +390,9 @@ function TR_tabs() {
 }
 
 // 판정·언어로 거른 줄 — 종류 분해·종류 거르개가 세는 바탕이다(보이는 줄과 같은 모집단).
-const TR_base = () => TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER)
-  .filter(r => !TR_LANG || r.lang === TR_LANG);
+const TR_inUnit = () => TR_ROWS.filter(r => TR_ru(r) === TR_UNIT);
+const TR_base = () => TR_inUnit().filter(r => (r.verdict || "") === TR_FILTER)
+  .filter(r => TR_UNIT !== "keyword" || !TR_LANG || r.lang === TR_LANG);
 const TR_langName = lg => TR_LANG_LABELS[lg] || lg;
 function TR_filtered() {
   const q = TR_Q.trim().toLowerCase();
@@ -343,22 +411,23 @@ function TR_kindCounts() {
 const TR_kindLabel = k => (window.KIND_LABELS || {})[k] || k;
 function TR_tools() {
   const kinds = TR_kindCounts();
-  // 언어 거르개는 언어가 둘 이상일 때만 — 줄 수는 지금 보는 판정 기준이다.
+  // 언어 거르개는 검색어 묶음에서 언어가 둘 이상일 때만 — 줄 수는 지금 보는 판정 기준이다.
   const lc = {};
-  for (const r of TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER))
-    if (r.lang) lc[r.lang] = (lc[r.lang] || 0) + 1;
+  if (TR_UNIT === "keyword")
+    for (const r of TR_inUnit().filter(r => (r.verdict || "") === TR_FILTER))
+      if (r.lang) lc[r.lang] = (lc[r.lang] || 0) + 1;
   // 고른 언어가 지금 판정 묶음에 0줄이어도 선택지로 남긴다 — 빠지면 셀렉트가 첫 줄("모든 언어")을
   // 보이면서 실제로는 그 언어로 거르고 있어, 눈에 보이는 것과 거르는 것이 달랐다.
   if (TR_LANG && !lc[TR_LANG]) lc[TR_LANG] = 0;
   const langs = Object.keys(lc).sort((a, b) => (b === TR_SITE_LANG) - (a === TR_SITE_LANG) || lc[b] - lc[a]);
   const all = Object.values(lc).reduce((a, b) => a + b, 0);
-  const langSel = new Set(TR_ROWS.map(r => r.lang).filter(Boolean)).size > 1
+  const langSel = TR_UNIT === "keyword" && new Set(TR_inUnit().map(r => r.lang).filter(Boolean)).size > 1
     ? `<select onchange="TR_setLang(this.value)" aria-label="언어로 거르기"><option value="">모든 언어 (${all})</option>${langs.map(lg =>
         `<option value="${esc(lg)}"${lg === TR_LANG ? " selected" : ""}>${esc(TR_langName(lg))} (${lc[lg]})</option>`).join("")}</select>` : "";
   $("tr-tools").innerHTML = langSel +
     `<select onchange="TR_setKind(this.value)" aria-label="종류로 거르기"><option value="">모든 종류</option>${Object.keys(kinds).map(k =>
         `<option value="${esc(k)}"${k === TR_KIND ? " selected" : ""}>${esc(TR_kindLabel(k))} (${kinds[k]})</option>`).join("")}</select>
-     <input type="search" value="${esc(TR_Q)}" oninput="TR_find(this.value)" placeholder="검색어로 찾기" aria-label="검색어로 찾기">`;
+     <input type="search" value="${esc(TR_Q)}" oninput="TR_find(this.value)" placeholder="${esc(TR_label())} 찾기" aria-label="${esc(TR_label())} 찾기">`;
   TR_kinds(kinds);
 }
 // 종류 분해 카드 — 같은 개수를 select 도 갖는다(좁은 화면·키보드 폴백).
@@ -368,13 +437,13 @@ function TR_kinds(kinds) {
   const mx = Math.max(1, ...keys.map(k => kinds[k]));
   const rows = TR_base().length;
   $("tr-kinds").innerHTML = `<div class="trh"><div><h2>어떤 진단에 걸렸나</h2>
-      <p class="trsub">${TR_FILTER_LABEL(TR_FILTER)}${TR_LANG ? ` ${esc(TR_langName(TR_LANG))}` : ""} ${num(rows)}줄 기준. 누르면 그 종류만 봅니다.</p></div></div>` +
+      <p class="trsub">${TR_FILTER_LABEL(TR_FILTER)}${TR_UNIT === "keyword" && TR_LANG ? ` ${esc(TR_langName(TR_LANG))}` : ""} ${num(rows)}줄 기준. 누르면 그 종류만 봅니다.</p></div></div>` +
     (keys.length
       ? `<div class="trklist" role="group" aria-label="종류별 줄 수">${keys.map(k => `
         <button type="button" class="trk" data-k="${esc(k)}" aria-pressed="${k === TR_KIND}" onclick="TR_setKind(TR_KIND === this.dataset.k ? '' : this.dataset.k)">
           <span class="kl">${esc(TR_kindLabel(k))}</span><span class="kn">${num(kinds[k])}줄</span>
           <span class="kb"><i style="width:${Math.max(4, Math.round(kinds[k] / mx * 100))}%"></i></span></button>`).join("")}</div>`
-      : `<div class="empty"><b>걸린 종류가 없습니다</b><p>이 판정에 해당하는 검색어가 없습니다.</p></div>`);
+      : `<div class="empty"><b>걸린 종류가 없습니다</b><p>이 판정에 해당하는 ${esc(TR_label())} 항목이 없습니다.</p></div>`);
 }
 function TR_setFilter(v) { TR_FILTER = v; TR_KIND = ""; TR_SEL = new Set(); TR_CUR = 0; TR_tabs(); TR_tools(); TR_draw(); }
 function TR_setKind(v) {
@@ -396,9 +465,23 @@ function TR_start() {
 const TR_UNDO = () => TR_FILTER && !READONLY;
 // 점수 색점 — 70 이상 진함, 40 이상 중간, 그 아래 옅음(점수는 100점 만점이다).
 const TR_tier = s => s == null ? "" : s >= 70 ? "t1" : s >= 40 ? "t2" : "t3";
+/* 묶음마다 다른 칸 — 근거 열(넓은 화면)과 좁은 화면의 한 줄 요약(.trperf)이 같은 값을 쓴다. */
+function TR_evid(r) {
+  if (TR_ru(r) === "topic")
+    return {cell: `${num(r.kw_n || 0)} /&nbsp;${r.volume ? num(r.volume) : "—"}`,
+            line: `안 뜨는 키워드 <span class="v">${num(r.kw_n || 0)}</span> · 월 검색량 <span class="v">${r.volume ? num(r.volume) : "—"}</span>`};
+  if (TR_ru(r) === "domain") {
+    const why = [r.hits ? `경쟁사 ${num(r.hits)}곳` : "", r.pages ? `언급 ${num(r.pages)}쪽` : ""].filter(Boolean).join(" · ") || "—";
+    return {cell: `${r.rank == null ? "—" : num(r.rank)} /&nbsp;${why}`,
+            line: `지수 <span class="v">${r.rank == null ? "—" : num(r.rank)}</span> · ${why}`};
+  }
+  return {cell: `${num(r.clicks)} /&nbsp;${num(r.impressions)}`,
+          line: `클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span>`};
+}
 function TR_row(r, i) {
   const on = TR_SEL.has(r.key);
   const k = esc(r.key);
+  const ev = TR_evid(r);
   return `<tr class="trrow${i === TR_CUR ? " cur" : ""}" data-key="${k}" data-i="${i}">
     <td><label class="trchk"><input type="checkbox"${on ? " checked" : ""} onchange="TR_toggle(this.closest('tr').dataset.key, this.checked)"
       aria-label="${esc(r.label)} 고르기"></label></td>
@@ -408,12 +491,12 @@ function TR_row(r, i) {
       ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : ""}${r.other_brand
       ? `<span class="st trother" title="다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.">남의 이름?</span>` : ""}${r.lang && r.lang !== TR_SITE_LANG && !TR_LANG
       ? `<span class="st trlang">${esc(TR_langName(r.lang))}</span>` : ""}
-      <div class="trperf">${r.score == null ? "" : `점수 <span class="v">${Math.round(r.score)}</span> · `}클릭 <span class="v">${num(r.clicks)}</span> · 노출 <span class="v">${num(r.impressions)}</span></div>
+      <div class="trperf">${r.score == null ? "" : `점수 <span class="v">${Math.round(r.score)}</span> · `}${ev.line}</div>
       <div class="trkm">${r.kinds.map((kd, j) => `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td><div class="trkinds">${r.kinds.map((kd, j) =>
       `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("")}</div></td>
     <td class="num">${r.score == null ? "—" : `<span class="trdot ${TR_tier(r.score)}" aria-hidden="true"></span>${Math.round(r.score)}`}</td>
-    <td class="num">${num(r.clicks)} /&nbsp;${num(r.impressions)}</td>
+    <td class="num">${ev.cell}</td>
     ${TR_UNDO() ? `<td><button class="go sm sec" onclick="TR_set([this.closest('tr').dataset.key], '')">미판정으로 되돌리기</button></td>` : ""}
   </tr>`;
 }
@@ -444,19 +527,22 @@ function TR_draw() {
   const list = TR_filtered();
   // 언어로 거르고 있으면 가린 줄 수를 같이 말한다 — 처음부터 사이트 언어만 보여 주므로
   // 안 말하면 나머지 언어가 없는 줄로 읽힌다.
-  const hid = TR_LANG ? TR_ROWS.filter(r => (r.verdict || "") === TR_FILTER && r.lang !== TR_LANG).length : 0;
-  $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} 검색어 <b>${num(list.length)}</b>줄을 보고 있습니다.` +
-    (TR_LANG ? ` ${esc(TR_langName(TR_LANG))}만 봅니다${hid ? `(다른 언어 ${num(hid)}줄은 위 언어 거르개에서)` : ""}.` : "");
+  const kw = TR_UNIT === "keyword" && TR_LANG;
+  const hid = kw ? TR_inUnit().filter(r => (r.verdict || "") === TR_FILTER && r.lang !== TR_LANG).length : 0;
+  const lb = esc(TR_label());
+  $("tr-qh").textContent = `${TR_label()} 심사`;
+  $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} ${lb} <b>${num(list.length)}</b>줄을 보고 있습니다.` +
+    (kw ? ` ${esc(TR_langName(TR_LANG))}만 봅니다${hid ? `(다른 언어 ${num(hid)}줄은 위 언어 거르개에서)` : ""}.` : "");
   TR_fix();
   if (!TR_ROWS.length)
-    return $("triage").innerHTML = `<div class="empty"><b>심사할 검색어가 없습니다</b>
-      <p>기회 분석을 돌리면 측정이 물어온 검색어가 여기로 옵니다.</p></div>`;
+    return $("triage").innerHTML = `<div class="empty"><b>심사할 항목이 없습니다</b>
+      <p>기회 분석을 돌리면 측정이 찾아낸 재료가 여기로 옵니다.</p></div>`;
   if (!list.length)
-    return $("triage").innerHTML = (TR_FILTER || TR_KIND || TR_LANG || TR_Q.trim())
-      ? `<div class="empty"><b>거른 조건에 맞는 검색어가 없습니다</b>
-         <p>판정·언어·종류·찾는 말을 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
+    return $("triage").innerHTML = (TR_FILTER || TR_KIND || kw || TR_Q.trim())
+      ? `<div class="empty"><b>거른 조건에 맞는 ${lb} 항목이 없습니다</b>
+         <p>판정${TR_UNIT === "keyword" ? "·언어" : ""}·종류·찾는 말을 좁혀 놓았습니다. 조건을 풀면 전체가 다시 보입니다.</p>
          <div class="acts"><button class="go sec" onclick="TR_reset()">조건 지우기</button></div></div>`
-      : `<div class="empty ok"><b>미판정 검색어가 없습니다</b>
+      : `<div class="empty ok"><b>미판정 ${lb} 항목이 없습니다</b>
          <p>전부 가렸습니다. 작업으로 보낸 것은 ${window.go ? go("overview") : "[개요]"}의 기회에 있습니다.</p></div>`;
   if (TR_CUR >= list.length) TR_CUR = list.length - 1;
   const n = TR_SEL.size;
@@ -467,10 +553,11 @@ function TR_draw() {
         : `<span class="trkey">줄을 고르거나 <kbd>j</kbd><kbd>k</kbd>로 옮겨 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>으로 판정</span><span class="trtouch">줄을 고르면 판정 버튼이 켜집니다</span>`}</span>
       ${TR_btns(n)}
     </div>` + (n ? `<div class="trdock"><span class="n">선택 ${n}건</span>${TR_btns(n)}</div>` : "");
+  const col = TR_COLS[TR_UNIT] || TR_COLS.keyword;
   $("triage").innerHTML = bar + table(
-    ["", "검색어?띄어쓰기만 다른 변형은 한 줄로 묶습니다", "종류?이 검색어에 걸린 진단",
+    ["", col.name, col.kinds,
      ">점수?걸린 기회 중 가장 높은 점수(100점 만점). 색점은 70 이상 진함, 40 이상 중간, 그 아래 옅음",
-     ">클릭 / 노출?최근 수집분의 서치콘솔 실적"]
+     col.evid]
       .concat(TR_UNDO() ? [""] : []),   // 되돌리기 칸은 판정을 거를 때만 — 빈 칸도 폭을 먹는다
     list.map(TR_row), "")
     // 표가 길면(모바일에서 20줄 넘게 스크롤하면) 필터·판정 바로 돌아갈 길이 없었다
@@ -484,14 +571,21 @@ function TR_draw() {
 
 /* 검색어 상세 — 개요처럼 오른쪽 서랍(SM.drawer)으로 연다. 행은 이미 가진 필드만 쓴다. */
 let TR_DR = null;   // 서랍이 보여 주는 줄의 key
+function TR_drTiles(r) {
+  const tile = (l, v) => `<div class="trdr-tile"><span class="l">${l}</span><span class="v">${v}</span></div>`;
+  const sc = tile("점수", r.score == null ? "—" : Math.round(r.score));
+  if (TR_ru(r) === "topic")
+    return sc + tile("안 뜨는 키워드", num(r.kw_n || 0)) + tile("월 검색량", r.volume ? num(r.volume) : "—");
+  if (TR_ru(r) === "domain")
+    return sc + tile("도메인 지수", r.rank == null ? "—" : num(r.rank)) +
+      tile(r.hits ? "링크 받는 경쟁사" : "언급한 페이지", r.hits ? `${num(r.hits)}곳` : (r.pages ? `${num(r.pages)}쪽` : "—"));
+  return sc + tile("클릭", num(r.clicks)) + tile("노출", num(r.impressions));
+}
 function TR_drBody(r) {
   const badges = (r.brand ? `<span class="st trbrand" title="사이트 이름·브랜드 표기가 들어 있는 검색어입니다. 보통 보류합니다.">브랜드</span>` : "") +
     (r.other_brand ? `<span class="st trother" title="다른 병원·가게·서비스 이름으로 보입니다. 우리 것이 아니면 무관으로 뺍니다.">남의 이름?</span>` : "") +
     (r.lang ? `<span class="st trlang">${esc(TR_langName(r.lang))}</span>` : "");
-  return `<div class="trdr-tiles">
-      <div class="trdr-tile"><span class="l">점수</span><span class="v">${r.score == null ? "—" : Math.round(r.score)}</span></div>
-      <div class="trdr-tile"><span class="l">클릭</span><span class="v">${num(r.clicks)}</span></div>
-      <div class="trdr-tile"><span class="l">노출</span><span class="v">${num(r.impressions)}</span></div></div>
+  return `<div class="trdr-tiles">${TR_drTiles(r)}</div>
     <div class="trdr-sec"><h3>걸린 진단</h3>
       <div class="trdr-kinds">${r.kinds.map((kd, j) => `<span class="kind">${esc(r.labels[j] || kd)}</span>`).join("") || "<p>걸린 진단이 없습니다.</p>"}</div></div>` +
     (badges ? `<div class="trdr-sec"><h3>이 검색어는</h3><div class="trdr-badges">${badges}</div>
@@ -503,9 +597,9 @@ function TR_drBody(r) {
 }
 function TR_drFoot(r) {
   if (READONLY) return "";
-  return `<button class="go sm sec" onclick="TR_drSet('irrelevant')" title="다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관</button>
-    <button class="go sm sec" onclick="TR_drSet('hold')" title="측정은 계속하고 기회에는 안 올립니다">보류</button>
-    <button class="go sm" onclick="TR_drSet('work')" title="개요의 기회 목록으로 보냅니다">작업</button>` +
+  return `<button class="go sm sec" onclick="TR_drSet('irrelevant')" title="${esc(TR_help("irrelevant"))}">무관</button>
+    <button class="go sm sec" onclick="TR_drSet('hold')" title="${esc(TR_help("hold"))}">보류</button>
+    <button class="go sm" onclick="TR_drSet('work')" title="${esc(TR_help("work"))}">작업</button>` +
     (r.verdict ? `<button class="go sm sec" onclick="TR_drSet('')">미판정으로 되돌리기</button>` : "");
 }
 function TR_open(key, el) {
@@ -514,7 +608,7 @@ function TR_open(key, el) {
   TR_DR = key;
   const i = TR_filtered().findIndex(x => x.key === key);
   if (i >= 0) TR_CUR = i;
-  SM.drawer.open({title: r.label, sub: `${TR_VERDICT[r.verdict] || "미판정"} 검색어`,
+  SM.drawer.open({title: r.label, sub: `${TR_VERDICT[r.verdict] || "미판정"} ${TR_label()}`,
     bodyHtml: TR_drBody(r), footHtml: TR_drFoot(r), from: el,
     onClose: () => { TR_DR = null; }});
 }
@@ -528,11 +622,11 @@ async function TR_drSet(v) {
 // 판정 버튼 셋 — 위 판정 바와 좁은 화면의 아래 막대가 같은 것을 쓴다.
 const TR_btns = n => `
   <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
-    title="자동완성이 물어온 남의 검색어. 다음 측정부터 안 올라오고 키워드 추적에서도 빠집니다">무관<kbd>1</kbd></button>
+    title="${esc(TR_help("irrelevant"))}">무관<kbd>1</kbd></button>
   <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('hold')"
-    title="우리 검색어지만 지금은 안 함(브랜드 등). 측정은 계속하고 기회에는 안 올립니다">보류<kbd>2</kbd></button>
+    title="${esc(TR_help("hold"))}">보류<kbd>2</kbd></button>
   <button class="go sm"${n ? "" : " disabled"} onclick="TR_setSel('work')"
-    title="개요의 기회 목록으로 보냅니다">작업<kbd>3</kbd></button>`;
+    title="${esc(TR_help("work"))}">작업<kbd>3</kbd></button>`;
 
 // 검색창으로만 스크롤한다(포커스는 안 준다) — 포커스까지 주면 모바일에서 자판이 뜬다.
 function TR_toTop() {

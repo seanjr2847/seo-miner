@@ -1559,7 +1559,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
     # 말하면 안 된다.
     opps_total = conn.execute(
         "SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status='new' AND "
-        + db.gate_sql(conn), (pid, *scoring.KEYWORD_KINDS)).fetchone()[0]
+        + db.gate_sql(conn), (pid, *scoring.TRIAGE_KINDS)).fetchone()[0]
 
     # 라벨·처방·방어여부는 여기서 한 번 풀어 opps 에 싣는다 — 화면은 그리기만 한다.
     # striking_distance·content_gap 은 밴드/갈래로 처방이 갈리는데, 그 판정은 이미
@@ -2029,6 +2029,7 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
          # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
          "watch": db.watch_rows(conn, pid),
          "keyword_kinds": list(scoring.KEYWORD_KINDS),
+         "triage_kinds": list(scoring.TRIAGE_KINDS),
          "progress": stage.progress(conn, pid),
          "guide": stage.state(conn, p, p["domain"] or ""),
          "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"]),
@@ -2160,9 +2161,10 @@ def _brand_keys(conn, p) -> set[str]:
 
 
 def triage_payload(project: str) -> dict:
-    """GET /api/triage — 열린 기회를 정규화한 검색어(scoring.norm)로 묶는다. 행 하나가
-    판정 단위다: 변형 수·걸린 종류·최고 점수·최근 GSC 클릭/노출·브랜드 힌트·판정.
-    검색어가 아닌 종류(KEYWORD_KINDS 밖)는 심사에 안 오른다."""
+    """GET /api/triage — 열린 재료(검색어·주제·링크 도메인)를 판정 키(scoring.verdict_key)로
+    묶는다. 행 하나가 판정 단위다: 묶음(unit)·변형 수·걸린 종류·최고 점수·판정, 그리고 묶음마다
+    다른 칸(검색어: GSC 클릭/노출·브랜드 힌트·언어 / 주제: 안 뜨는 키워드 수·검색량 /
+    도메인: 지수·걸린 경쟁사·말한 페이지). 심사 밖 종류(TRIAGE_KINDS 밖)는 안 오른다."""
     conn = db.connect()
     try:
         return _triage(conn, db.get_project(conn, project))
@@ -2190,21 +2192,46 @@ def _triage_pending(rows: list[dict]) -> dict:
 
     개요 목록은 심사에서 '작업'으로 고른 것만 싣는다(db.gate_sql). 그래서 목록이 비었는데
     심사에 113건이 쌓인 사이트(aitierlist)가 "남은 기회가 없습니다 · 쌓인 것을 전부
-    처리했습니다"를 봤다 — 한 건도 처리한 적이 없는데."""
+    처리했습니다"를 봤다 — 한 건도 처리한 적이 없는데. units 는 묶음별 대기 수 — 문구가
+    "검색어 N · 주제 M"처럼 어느 재료가 쌓였는지 말한다(이름표는 scoring.TRIAGE_UNITS)."""
     pend = [r for r in rows if not r.get("verdict")]
     return {"n": len(pend), "hot_min": TRIAGE_HOT,
-            "hot": sum(1 for r in pend if (r.get("score") or 0) >= TRIAGE_HOT)}
+            "hot": sum(1 for r in pend if (r.get("score") or 0) >= TRIAGE_HOT),
+            "units": [{"id": u, "label": lb, "n": sum(1 for r in pend if r["unit"] == u)}
+                      for u, lb in scoring.TRIAGE_UNITS.items()]}
+
+
+def _domain_facts(conn, pid: int) -> tuple[dict, dict]:
+    """링크 도메인 행의 칸 — 호스트(www 뺀 것) → 최신 회차의 경쟁사 교집합 {rank, hits}와
+    우리 이름을 링크 없이 말한 {rank, pages}. 기회를 만든 검출기(backlink_gaps·brand_mention_gaps)
+    가 읽는 같은 표·같은 최신 회차다."""
+    host = lambda d: re.sub(r"^www\.", "", str(d or "").strip().lower())   # noqa: E731
+    li, mn = {}, {}
+    di = scoring._latest(conn, scoring._LATEST_LI, (pid,))
+    if di:
+        for r in conn.execute("SELECT domain, rank, hits FROM link_intersect"
+                              " WHERE project_id=? AND checked_date=? AND we_have=0", (pid, di)):
+            li[host(r["domain"])] = {"rank": r["rank"], "hits": r["hits"]}
+    dm = scoring._latest(conn, scoring._LATEST_MN, (pid,))
+    if dm:
+        for r in conn.execute("SELECT domain, rank FROM brand_mentions"
+                              " WHERE project_id=? AND checked_date=? AND linked=0"
+                              " ORDER BY rank IS NULL, rank DESC", (pid, dm)):
+            m = mn.setdefault(host(r["domain"]), {"rank": r["rank"], "pages": 0})
+            m["pages"] += 1
+    return li, mn
 
 
 def _triage(conn, p) -> dict:
     """심사 목록 한 벌 — /api/triage 와 gather(개요의 심사 대기 수·데이터 점검)가 같이 쓴다."""
     pid = p["id"]
     vm = db.verdict_map(conn, pid)
-    ph = ",".join("?" * len(scoring.KEYWORD_KINDS))
-    rows = conn.execute(
-        f"""SELECT norm(target) key, target, kind, score FROM opportunities
+    ph = ",".join("?" * len(scoring.TRIAGE_KINDS))
+    rows = [{**dict(r), "key": scoring.verdict_key(r["kind"], r["target"]),
+             "unit": scoring.triage_unit(r["kind"])} for r in conn.execute(
+        f"""SELECT target, kind, score FROM opportunities
              WHERE project_id=? AND status IN ('new','acked') AND kind IN ({ph})
-             ORDER BY score DESC, id""", (pid, *scoring.KEYWORD_KINDS)).fetchall()
+             ORDER BY score DESC, id""", (pid, *scoring.TRIAGE_KINDS))]
     latest = conn.execute("SELECT MAX(snapshot_date) FROM gsc_snapshots WHERE project_id=?",
                           (pid,)).fetchone()[0]
     perf: dict[str, tuple[int, int]] = {}
@@ -2235,15 +2262,38 @@ def _triage(conn, p) -> dict:
     storefront = scoring.storefront_words(
         [p["name"], *(cfg.get("brand_aliases") or [])], known_kw)
     foreign = scoring.foreign_brands(conn, pid, {**cfg, "name": p["name"]})
+    # 주제·링크 도메인 묶음의 칸 — 그 종류의 기회가 있을 때만 읽는다.
+    topic_n = topic_vol = dom_li = dom_mn = None
+    if any(r["unit"] == "topic" for r in rows):
+        cov = scoring.coverage(conn, pid)
+        topic_n, topic_vol = cov["by_cluster"], cov["volume_by_cluster"]
+    if any(r["unit"] == "domain" for r in rows):
+        dom_li, dom_mn = _domain_facts(conn, pid)
     groups: dict[str, dict] = {}
     for r in rows:
         g = groups.get(r["key"])
-        if g is None:
+        if g is None and r["unit"] == "topic":
+            label = r["target"].split(":", 1)[-1].strip()
+            g = groups[r["key"]] = {
+                "key": r["key"], "unit": "topic", "label": label, "variants": set(),
+                "kinds": [], "score": r["score"], "clicks": 0, "impressions": 0,
+                "brand": False, "other_brand": False, "lang": "", "verdict": vm.get(r["key"]),
+                "kw_n": topic_n.get(label, 0), "volume": topic_vol.get(label, 0)}
+        elif g is None and r["unit"] == "domain":
+            host = re.sub(r"^www\.", "", r["target"].strip().lower())
+            li, mn = dom_li.get(host) or {}, dom_mn.get(host) or {}
+            g = groups[r["key"]] = {
+                "key": r["key"], "unit": "domain", "label": host, "variants": set(),
+                "kinds": [], "score": r["score"], "clicks": 0, "impressions": 0,
+                "brand": False, "other_brand": False, "lang": "", "verdict": vm.get(r["key"]),
+                "rank": li.get("rank") or mn.get("rank"), "hits": li.get("hits"),
+                "pages": mn.get("pages")}
+        elif g is None:
             c, i = perf.get(r["key"], (0, 0))
             label = r["target"].strip()
             loc = kw_loc.get(r["key"]) or judge(label)[0]
             g = groups[r["key"]] = {
-                "key": r["key"], "label": label, "variants": set(),
+                "key": r["key"], "unit": "keyword", "label": label, "variants": set(),
                 "kinds": [], "score": r["score"], "clicks": c, "impressions": i,
                 "brand": any(b in r["key"] for b in brands), "verdict": vm.get(r["key"]),
                 "lang": serp_adapter.lang_of(loc),
@@ -2261,10 +2311,14 @@ def _triage(conn, p) -> dict:
         out.append(g)
     out.sort(key=lambda g: -(g["score"] or 0))
     counts = {"none": 0, "irrelevant": 0, "hold": 0, "work": 0}
+    units = [{"id": u, "label": lb, "counts": dict.fromkeys(counts, 0)}
+             for u, lb in scoring.TRIAGE_UNITS.items()]
     for g in out:
         counts[g["verdict"] or "none"] += 1
-    return {"rows": out, "counts": counts, "site_lang": serp_adapter.lang_of(site_locale),
-            "lang_labels": _lang_labels({g["lang"] for g in out})}
+        units[list(scoring.TRIAGE_UNITS).index(g["unit"])]["counts"][g["verdict"] or "none"] += 1
+    return {"rows": out, "counts": counts, "units": units,
+            "site_lang": serp_adapter.lang_of(site_locale),
+            "lang_labels": _lang_labels({g["lang"] for g in out if g["lang"]})}
 
 
 def set_verdict(body: dict) -> dict:
