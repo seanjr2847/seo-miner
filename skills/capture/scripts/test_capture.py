@@ -2138,7 +2138,7 @@ def _opps_at_base(conn, pid, rows, status="new"):
 def _states(conn, pid):
     """(kind, target) → 행. 같은 검색어가 다른 종류로 새로 잡혀도 섞이지 않게."""
     return {(r["kind"], r["target"]): dict(r) for r in conn.execute(
-        "SELECT kind, target, status, status_reason, status_prev, status_at, run_id"
+        "SELECT kind, target, status, status_reason, status_tag, status_prev, status_at, run_id"
         " FROM opportunities WHERE project_id=?", (pid,))}
 
 
@@ -2330,6 +2330,14 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert "학습 전용" in st["GPTBot"]["status_reason"], st["GPTBot"]
     assert "인용" in st["aio인용"]["status_reason"], st["aio인용"]
     assert st["인용된 질문"]["status_prev"] == "acked" and st["aio인용"]["status_prev"] == "new", st
+    # 왜 닫았나의 갈래 — 예전엔 전부 '저절로 풀림' 한 이름이라, 좋아진 것과 잘못 짚은 것·
+    # 안 재게 된 것이 같은 배지로 섰다(theotherskin 252건 중 215건이 '순위 밖이라 요약 문제 아님')
+    tags = {t: st[t]["status_tag"] for t in resolved}
+    assert tags == {
+        "aio인용": "better", "인용된 질문": "better", "클릭 회복": "better", "모바일 회복": "better",
+        "/fixed": "better", "got.com": "better", "OAI-SearchBot": "better",
+        "GPTBot": "misjudged", "/moved": "misjudged", "채널 격차": "misjudged", "https://me.kr/": "misjudged",
+        "밀려난 검색어": "out", "노출 준 검색어": "out", "스냅샷에 없는 검색어": "out", "뺀 검색어": "out"}, tags
     done = st["올라간 검색어"]
     assert done["status"] == "done" and done["status_at"] == work_at, done   # 완료 시각 = 작업 시각
     # 완료 후 관찰은 우리 효과만 — done 은 잡고 resolved 는 뺀다
@@ -2354,6 +2362,39 @@ def test_resolve_stale_closes_on_positive_confirmation():
     assert again["인용된 질문"] == ("acked", None), again["인용된 질문"]     # 진행 중이던 것은 진행 중으로
     assert again["올라간 검색어"][0] == "done", "사람 쪽 완료(done)를 되열었다"
     assert again["/fixed"][0] == db.OPP_RESOLVED
+    conn = db.connect()
+    left = conn.execute("SELECT COUNT(*) FROM opportunities WHERE project_id=? AND status_tag IS NOT NULL"
+                        " AND status<>?", (pid, db.OPP_RESOLVED)).fetchone()[0]
+    conn.close()
+    assert left == 0, "되열린 기회에 닫힌 갈래가 남았다 — 배지가 열린 줄을 '해결됨'이라 말한다"
+
+
+def test_resolved_tag_backfills_legacy_rows():
+    """갈래 칸(status_tag)이 생기기 전에 닫힌 줄은 사유 문장의 머리로 한 번 채운다 —
+    안 채우면 theotherskin 의 옛 252건이 배지 없이 '자동 종료'으로만 남는다(바로 그게
+    고치려던 것이다). 못 가른 사유는 지어내지 않고 NULL 로 둔다."""
+    conn = db.connect()
+    pid = _project(conn, "lc-legacy")["id"]
+    rows = [("aio_exposure", "q1", "순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 (2026-09-24 순위 확인) — …", "misjudged"),
+            ("pseo_pattern", "q2", "판정 기준이 바뀌어 닫았습니다 — 템플릿 패턴은 …", "misjudged"),
+            ("aio_exposure", "q3", "구글 AI 요약이 우리 링크를 인용합니다 (2026-10-12 순위 확인, 순위 3위)", "better"),
+            ("ctr_gap", "q4", "6.6위에서 클릭률 1.63% — 이 순위 기대치 3.0%의 절반을 넘었습니다 (…)", "better"),
+            ("aio_exposure", "q5", "추적 키워드에서 뺀 검색어라 더 재지 않습니다 — …", "out"),
+            ("rank_decay", "q6", "노출이 25회로 적어(하한 30) 평균 순위의 오르내림이 통계가 아닙니다 (…)", "out"),
+            ("striking_distance", "q7", "띄어쓰기·대소문자만 다른 'x' 줄로 합쳤습니다 — …", "merged"),
+            ("striking_distance", "q8", "누구도 모르는 사유", None)]
+    for kind, t, why, _ in rows:
+        conn.execute("INSERT INTO opportunities(project_id, kind, target, status, status_reason)"
+                     " VALUES(?,?,?,?,?)", (pid, kind, t, db.OPP_RESOLVED, why))
+    conn.commit()
+    conn.execute("ALTER TABLE opportunities DROP COLUMN status_tag")    # 칸이 생기기 전의 Brain
+    conn.commit()
+    conn.close()
+    conn = db.connect()
+    got = {r[0]: r[1] for r in conn.execute(
+        "SELECT target, status_tag FROM opportunities WHERE project_id=?", (pid,))}
+    conn.close()
+    assert got == {t: tag for _, t, _, tag in rows}, got
 
 
 def test_brand_mention_opens_per_domain_and_closes_when_linked():
@@ -2431,6 +2472,12 @@ def test_aio_exposure_needs_our_rank_and_unranked_ones_close():
     for t in ("순위 밖", "순위 밖 늦게 선"):
         r = st[("aio_exposure", t)]
         assert r["status"] == db.OPP_RESOLVED and "순위 문제" in r["status_reason"], (t, r)
+    # 갈래는 언제 잰 '없음'인가로 갈린다 — 선 뒤에 잰 '없음'은 순위 밖으로 밀린 것(판단 중단:
+    # 나빠졌을 수 있다), 선 시점 전의 '없음'은 옛 규칙이 순위 밖 검색어에 세운 줄(기준 바뀌어 정리).
+    # 둘 다 '잘못 짚음'이던 동안 순위 하락이 오진으로 읽혔다.
+    assert st[("aio_exposure", "순위 밖")]["status_tag"] == "out", st[("aio_exposure", "순위 밖")]
+    assert "밀렸습니다" in st[("aio_exposure", "순위 밖")]["status_reason"]
+    assert st[("aio_exposure", "순위 밖 늦게 선")]["status_tag"] == "misjudged", st[("aio_exposure", "순위 밖 늦게 선")]
     for t in ("순위 밖 다시 연", "순위 밖 작업함"):
         assert st[("aio_exposure", t)]["status"] == "new", (t, st[("aio_exposure", t)])
 

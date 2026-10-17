@@ -1151,6 +1151,9 @@ tr.exp > td.expcell { padding:0; }
    완료(녹청)와 같은 계열이다. 완료는 아직 사람이 누른다. */
 .badge.made { color:var(--accent); background:var(--accent-wash); }
 .st-dismissed { color:var(--sub); text-decoration:line-through; }
+/* 자동 종료 — 해결된 것만 완료 계열(녹청)이다. 나머지(중복 합침·기준 바뀌어 정리·판단 중단)는
+   좋아진 게 아니라 회색 그대로 둔다 — 같은 색이면 다시 "많이 풀렸다"로 읽힌다. */
+.st-tag-better { color:var(--accent); background:var(--accent-wash); }
 /* 도는 중 — 점 하나가 깜빡인다. 글자("수집 중")가 정본이고 점은 거들 뿐이라
    움직임을 끄면 점은 그대로 켜져 있다. */
 .badge.run { color:var(--info); background:var(--info-wash); }
@@ -2642,14 +2645,32 @@ window.copyPrompt = function (btn) {
 // 풀린 것을 우리 효과로 센다. 그래서 라벨·다음 버튼 표에만 있고 OPP_SET 에는 없다.
 // 버튼 이름 = 상태 이름이다(아래 OPP_SET). 예전엔 상태는 '이 기회만 뺌'인데 버튼은 '이 기회만
 // 빼기', 상태는 '완료'인데 버튼은 '완료 표시'라 같은 것을 두 이름으로 불렀다.
+// resolved 의 이름은 "누가 닫았나"다 — 예전 이름 '저절로 풀림'은 좋아졌다고 읽혔는데,
+// theotherskin 252건 중 해결된 것은 20건이고 179건은 판정 규칙을 고친 뒤 옛 규칙 줄을 정리한 것이었다.
 window.OPP_LABEL = {new:"할 일", acked:"진행 중", done:"완료", dismissed:"제외",
-                    resolved:"저절로 풀림"};
+                    resolved:"자동 종료"};
+// 도구가 왜 닫았나 — 갈래의 정본은 db.RESOLVED_TAGS(test_seams 가 대조), 정하는 곳은
+// scoring.Why. 배지가 이 말을 단다. 갈래가 없는 옛 줄은 OPP_LABEL.resolved 그대로다.
+window.OPP_TAG_LABEL = {better:"해결됨", merged:"중복 합침",
+                        misjudged:"기준 바뀌어 정리", out:"판단 중단"};
+window.OPP_TAG_TIP = {
+  better: "새 데이터가 목표를 이뤘다고 확인했습니다. 다시 나빠지면 저절로 다시 열립니다.",
+  merged: "같은 일을 다른 기회 줄이 맡습니다. 할 일은 그 줄 하나입니다.",
+  misjudged: "판정 규칙을 고쳤거나 나중에 들어온 데이터로 판단이 바뀌어, 지금 기준으로는 이 기회가 서지 않습니다. 좋아진 것이 아닙니다.",
+  out: "판단할 조건 밖으로 나가 더 볼 수 없습니다(추적을 껐거나, 노출이 적거나, 순위·범위 밖으로 밀림). 좋아진 것이 아닙니다 — 나빠진 것일 수도 있습니다."};
+// 기회 한 건의 상태 배지 — 도구가 닫은 것이면 갈래까지 말하고, 마우스를 올리면 뜻을 푼다.
+window.oppStBadge = (o, el = "span") => {
+  const t = o.status === "resolved" && window.OPP_TAG_LABEL[o.status_tag] ? o.status_tag : "";
+  const tip = t ? window.OPP_TAG_TIP[t] : "이 기회의 지금 상태입니다.";
+  return `<${el} class="st st-${esc(o.status)}${t ? " st-tag-" + t : ""}" title="${esc(tip)}"
+    >${t ? window.OPP_TAG_LABEL[t] : (window.OPP_LABEL[o.status] || esc(o.status))}</${el}>`;
+};
 
 // 상태 거르개의 정본 — 여덟 화면이 이것을 갖다 쓴다. 화면마다 목록을 베끼면 새 상태가
-// 생길 때 몇 벌만 늙는다(개요에만 있던 시절, 그 한 벌에 `저절로 풀림` 이 빠져 있어
+// 생길 때 몇 벌만 늙는다(개요에만 있던 시절, 그 한 벌에 `자동 종료` 이 빠져 있어
 // 도구가 혼자 닫은 기회를 어느 화면에서도 모아 볼 수 없었다).
 // 묶음 이름은 사람의 말이다: '아직 안 함' = 손 안 댄 것 + 하는 중, '끝낸 것' = 우리가
-// 끝낸 것 + 제외한 것. `저절로 풀림` 은 따로 둔다 — 우리가 한 일이 아니라서 섞으면
+// 끝낸 것 + 제외한 것. `자동 종료` 는 따로 둔다 — 우리가 한 일이 아니라서 섞으면
 // "고쳤다" 로 읽힌다.
 // `관찰 중` 은 상태가 아니라 서버가 얹는 판정이다(o.hold — dashboard._axis_hold): 고친 지
 // scoring.OBSERVE_DAYS 가 안 된 페이지에 걸린 열린 기회. 저장된 상태를 바꾸지 않고 할 일
@@ -2662,9 +2683,9 @@ window.OPP_ST_GROUP = {
 };
 window.OPP_ST_OPT = [["", "남은 것"], ["all", "전체"], ["open", "아직 안 함"], ["new", "할 일"],
                      ["acked", "진행 중"], ["hold", "관찰 중"], ["closed", "완료·제외"],
-                     ["resolved", "저절로 풀림"]];
+                     ["resolved", "자동 종료"]];
 // 기회 하나가 고른 묶음에 드나. 기본값("")은 **남은 것**이다: 기회가 안 붙은 줄 + 아직 안 한
-// 기회(할 일·진행 중)가 붙은 줄. 끝낸 것(완료·제외), 저절로 풀린 것, 관찰 중인 것은 빠진다.
+// 기회(할 일·진행 중)가 붙은 줄. 끝낸 것(완료·제외), 도구가 닫은 것, 관찰 중인 것은 빠진다.
 // 개요 말고 다른 화면(분석·키워드·순위 추적·AI 인용·사이트 점검·경쟁 분석·백링크)은 목록이
 // 기회 목록이 아니라 검색어·주소 측정 목록이라 기본값이 "전체"였다 — 그래서 [제외]한 검색어와
 // 이미 고친 검색어가 할 일 목록처럼 계속 섰고, 띠의 "1순위"만 그 줄을 따로 걸렀다. 기회가 안
@@ -2787,12 +2808,12 @@ window.kindTip = o => (window.KIND_LABELS || {})[o.kind] || o.label || "";
 window.oppWhy = o => !o ? "" : `<div class="oh">
     <span class="kind${isDefensive(o) ? " k-def" : ""}" title="${esc(window.kindTip(o))}"
       >${esc(o.label || o.kind)}</span>
-    <span class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</span>
+    ${window.oppStBadge(o)}
     ${window.holdBadge(o)}
     ${window.gaBadge(o)}
   </div>${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}${window.oppClosedWhy(o)}`;
 
-// 왜 닫혔나 — 도구가 혼자 닫은 것(저절로 풀림)과 작업 기록을 보고 닫은 것에만 사유가
+// 왜 닫혔나 — 도구가 혼자 닫은 것(자동 종료)과 작업 기록을 보고 닫은 것에만 사유가
 // 붙는다(db 의 status_reason, scoring.resolve_stale·close_opportunity_by_work 가 쓴다).
 // 표에는 내내 있었는데 읽는 화면이 없어서, "판정이 틀려서 닫혔나"를 볼 길이 없었다.
 // 사람이 누른 상태에는 사유가 없다 — 그때는 이 줄이 안 뜬다.
@@ -2847,9 +2868,7 @@ window.oppActs = o => {
 
    READONLY·박제본에서도 낸다 — 거기선 버튼이 아예 없어서 이게 유일한 상태 표시다.
    말은 OPP_LABEL 한 벌에서 온다(정본은 db.OPP_STATUSES). */
-const oppNow = o => !o || !o.status ? "" :
-  `<span class="st st-${esc(o.status)}" title="이 기회의 지금 상태입니다. 옆 버튼으로 바꿉니다."
-    >${window.OPP_LABEL[o.status] || esc(o.status)}</span>`;
+const oppNow = o => !o || !o.status ? "" : window.oppStBadge(o);
 
 // 펼침 패널이 갖는 나머지 상태 — 지금 상태와 접힌 줄이 이미 낸 것은 뺀다.
 const oppRest = o => {
@@ -3694,7 +3713,9 @@ document.addEventListener("click", e => {
 
 // 브라우저는 아무 사이트에서나 127.0.0.1로 POST를 보낼 수 있어서 서버가 1회용 토큰을
 // 요구한다 — 대시보드를 띄울 때 받은 주소(?t=…)에 들어 있다.
-const TOKEN = new URLSearchParams(location.search).get("t") || "";
+// 서버가 페이지에 실어 준 것(__SM_TOKEN__)이 먼저다 — ?t= 없이 연 탭(자동완성·즐겨찾기)도
+// 저장된다. ?t= 는 그 전 판 서버가 띄운 탭을 위한 물림이다.
+const TOKEN = window.__SM_TOKEN__ || new URLSearchParams(location.search).get("t") || "";
 async function post(path, body) {
   const res = await fetch(path, {method:"POST", body: JSON.stringify(body),
     headers:{"Content-Type":"application/json", "X-Token": TOKEN}});

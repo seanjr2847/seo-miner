@@ -761,6 +761,13 @@ def test_seam_17_verdict_and_status_single_source():
         assert mm, f"셸의 {name} 을 못 찾았다"
         keys = set(re.findall(r"(\w+):", mm.group(1)))
         assert keys == want, f"{name} 의 키가 어긋났다: {sorted(keys ^ want)}"
+    # 도구가 닫은 갈래도 한 벌이다 — db.RESOLVED_TAGS 와 셸의 배지 말·풀이 키가 양방향으로 같다.
+    # 셸에 없는 갈래는 배지가 '자동 종료'으로만 서서, 잘못 짚은 것과 좋아진 것이 다시 한 이름이 된다.
+    for name in ("OPP_TAG_LABEL", "OPP_TAG_TIP"):
+        mm = re.search(r"window\." + name + r" = \{(.*?)\};", shell, re.S)
+        assert mm, f"셸의 {name} 을 못 찾았다"
+        keys = set(re.findall(r"(\w+):", mm.group(1)))
+        assert keys == set(db.RESOLVED_TAGS), f"{name} 의 키가 어긋났다: {sorted(keys ^ set(db.RESOLVED_TAGS))}"
     assert set(scoring.KEYWORD_KINDS) < set(scoring.ALL_KINDS)
 
 

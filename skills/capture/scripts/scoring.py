@@ -5640,6 +5640,44 @@ def gate_rows(conn: sqlite3.Connection, project_id: int, rows: list[dict]) -> li
 #
 # 종류마다 "무엇이 긍정 확인인가"를 아래 _RESOLVERS 가 갖는다. 없는 종류는 자동으로
 # 닫지 않는다(이유는 _NO_RESOLVE). 판정만 여기서 하고 쓰기는 db.resolve_opportunities.
+#
+# 사유에는 **갈래**(db.RESOLVED_TAGS)가 붙는다. 예전엔 도구가 닫은 것이 전부 '저절로
+# 풀림' 한 이름이었는데, theotherskin 의 252건 중 215건은 풀린 게 아니라 "순위 조회 깊이
+# 밖이라 AI 요약 문제가 아니다"(진단이 틀렸다)였다 — 좋아진 것과 잘못 짚은 것이 같은
+# 배지라 화면이 "많이 풀렸다"로 읽혔다. 사유 문장은 그대로 str 로 쓰이고(요청문·기록),
+# 갈래만 .tag 로 따라간다.
+
+
+class Why(str):
+    """닫는 사유 문장 + 갈래(.tag — db.RESOLVED_TAGS 중 하나)."""
+    tag: str
+
+    def __new__(cls, tag: str, text: str):
+        import db
+        assert tag in db.RESOLVED_TAGS, tag
+        s = super().__new__(cls, text)
+        s.tag = tag
+        return s
+
+
+def _better(text: str) -> Why:
+    """조건이 풀렸다 — 목표(RESOLVE_WHEN)를 이뤘다."""
+    return Why("better", text)
+
+
+def _merged(text: str) -> Why:
+    """같은 일을 다른 줄이 맡는다 — 그 줄로 합쳤다."""
+    return Why("merged", text)
+
+
+def _misjudged(text: str) -> Why:
+    """애초에 이 종류의 기회가 아니었다 — 진단이 틀렸거나 판정 기준이 바뀌었다."""
+    return Why("misjudged", text)
+
+
+def _out(text: str) -> Why:
+    """판단할 조건 밖으로 나갔다 — 안 재거나, 노출이 적거나, 범위를 벗어났다. 좋아졌다는 뜻이 아니다."""
+    return Why("out", text)
 
 
 def _after_day(day, since: str) -> bool:
@@ -5667,7 +5705,7 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     # 채웠다(gucci: 한때 미국 검색어로 잰 sneakers·bamboo 가 추적에서 빠진 뒤에도 할 일로 남았다).
     # "추적을 그만뒀다"는 긍정된 사실이다 — 다시 켜면 다음 순위 확인에서 다시 선다(aio_gaps).
     if not kw[1]:
-        return "추적 키워드에서 뺀 검색어라 더 재지 않습니다 — 다시 추적하면 다음 순위 확인에서 다시 판단합니다"
+        return _out("추적 키워드에서 뺀 검색어라 더 재지 않습니다 — 다시 추적하면 다음 순위 확인에서 다시 판단합니다")
     r = conn.execute(
         """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
             WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
@@ -5686,14 +5724,21 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
                 "SELECT 1 FROM creations WHERE opportunity_id=? LIMIT 1",
                 (int(opp["id"]),)).fetchone():
             return None
-        return (f"순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 ({str(r['checked_at'])[:10]} "
-                f"순위 확인) — 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
-                f"문제입니다. 순위에 들면 다음 순위 확인에서 다시 판단합니다")
+        # 갈래는 언제 잰 '없음'인가로 가른다. 9/30 부터 세우는 쪽은 순위 안일 때만 세우므로,
+        # 기회가 선 뒤에 잰 '없음'은 순위 밖으로 **밀린 것**이다 — 오진이 아니라 나빠진 것일 수
+        # 있어 판단 중단(out)이다. 선 시점 이전의 '없음'은 옛 규칙이 순위 밖 검색어에 세운 줄이다.
+        if _after_ts(r["checked_at"], since):
+            return _out(f"순위 조회 깊이 밖으로 밀렸습니다 ({str(r['checked_at'])[:10]} 순위 확인) — 구글 AI "
+                        f"요약은 상위 페이지에서 출처를 뽑으니 지금은 요약이 아니라 순위 문제입니다. 순위에 "
+                        f"들면 다음 순위 확인에서 다시 판단합니다")
+        return _misjudged(f"순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 ({str(r['checked_at'])[:10]} "
+                          f"순위 확인) — 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
+                          f"문제입니다. 순위에 들면 다음 순위 확인에서 다시 판단합니다")
     if not r or not _after_ts(r["checked_at"], since):
         return None
     if r["aio_present"] == 1 and r["aio_cited"] == 1:
         pos = f", 순위 {r['position']}위" if r["position"] else ""
-        return f"구글 AI 요약이 우리 링크를 인용합니다 ({str(r['checked_at'])[:10]} 순위 확인{pos})"
+        return _better(f"구글 AI 요약이 우리 링크를 인용합니다 ({str(r['checked_at'])[:10]} 순위 확인{pos})")
     return None
 
 
@@ -5709,15 +5754,15 @@ def _resolve_decay(conn, pid: int, target: str, since: str, ctx: dict) -> str | 
         agg = ctx.setdefault("_decay_agg", _snap_agg(conn, pid, cur, period))
         row = agg.get(target)
         if row and (row["imp"] or 0) < DECAY_MIN_IMP and _after_day(cur, since):
-            return (f"노출이 {row['imp'] or 0}회로 적어(하한 {DECAY_MIN_IMP}) 평균 순위의 오르내림이 "
-                    f"통계가 아닙니다 (구글 실적 {cur} 기준)")
+            return _out(f"노출이 {row['imp'] or 0}회로 적어(하한 {DECAY_MIN_IMP}) 평균 순위의 오르내림이 "
+                        f"통계가 아닙니다 (구글 실적 {cur} 기준)")
     st = decay_state(conn, pid, (ctx.get("opp") or {}).get("run_id"), target,
                      cache=ctx.setdefault("_decay", {}))
     if not st or not _after_day(st["cur"], since) or st["cur"] <= st["at"]:
         return None
     if decay_recovered(st):
-        return (f"떨어지기 전 순위로 돌아왔습니다: {st['pre']}위 → {st['drop']}위 → 지금 "
-                f"{st['now']}위 (구글 실적 {st['cur']} 기준)")
+        return _better(f"떨어지기 전 순위로 돌아왔습니다: {st['pre']}위 → {st['drop']}위 → 지금 "
+                       f"{st['now']}위 (구글 실적 {st['cur']} 기준)")
     return None
 
 
@@ -5744,7 +5789,7 @@ def _resolve_ai_citation(conn, pid: int, target: str, since: str, ctx: dict) -> 
     if not a["n"] or not _after_ts(a["first"], since):
         return None
     if not ai_is_gap(a["cited"], a["n"]):
-        return f"AI 답변 {a['n']}건 중 {a['cited']}건이 우리를 인용합니다 (AI 회차 #{last[0]})"
+        return _better(f"AI 답변 {a['n']}건 중 {a['cited']}건이 우리를 인용합니다 (AI 회차 #{last[0]})")
     return None
 
 
@@ -5771,14 +5816,14 @@ def _resolve_striking(conn, pid: int, target: str, since: str, ctx: dict) -> str
     r, cur = _gsc_now(conn, pid, target, since, ctx)
     if not r:
         if cur and _after_day(cur, since):
-            return f"이번 구글 실적에 이 검색어의 노출이 없어 조건을 벗어났습니다 (구글 실적 {cur} 기준)"
+            return _out(f"이번 구글 실적에 이 검색어의 노출이 없어 조건을 벗어났습니다 (구글 실적 {cur} 기준)")
         return None
     pos = round(r["pos"], 1)
     if r["imp"] >= STRIKING_MIN_IMP and pos < STRIKING_LO:
-        return f"평균 {pos}위 · 노출 {r['imp']:,}로 상단 3위권에 들었습니다 (구글 실적 {cur} 기준)"
+        return _better(f"평균 {pos}위 · 노출 {r['imp']:,}로 상단 3위권에 들었습니다 (구글 실적 {cur} 기준)")
     if pos > STRIKING_HI or r["imp"] < STRIKING_MIN_IMP:
-        return (f"평균 {pos}위 · 노출 {r['imp']:,}로 밀면 오를 검색어 조건({STRIKING_LO}~"
-                f"{STRIKING_HI}위 · 노출 {STRIKING_MIN_IMP} 이상)을 벗어났습니다 (구글 실적 {cur} 기준)")
+        return _out(f"평균 {pos}위 · 노출 {r['imp']:,}로 밀면 오를 검색어 조건({STRIKING_LO}~"
+                    f"{STRIKING_HI}위 · 노출 {STRIKING_MIN_IMP} 이상)을 벗어났습니다 (구글 실적 {cur} 기준)")
     return None
 
 
@@ -5794,8 +5839,8 @@ def _resolve_ctr(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     expected = EXPECTED_CTR[min(max(round(pos), 1), STRIKING_HI)]
     actual = (r["clk"] or 0) * 100.0 / r["imp"]
     if actual >= expected * CTR_GAP_FACTOR:
-        return (f"{pos}위에서 클릭률 {round(actual, 2)}% — 이 순위 기대치 {expected}%의 "
-                f"절반을 넘었습니다 (구글 실적 {cur} 기준)")
+        return _better(f"{pos}위에서 클릭률 {round(actual, 2)}% — 이 순위 기대치 {expected}%의 "
+                       f"절반을 넘었습니다 (구글 실적 {cur} 기준)")
     return None
 
 
@@ -5841,8 +5886,8 @@ def _resolve_device(conn, pid: int, target: str, since: str, ctx: dict) -> str |
         return None
     dpos = round(m["pos"] - k["pos"], 1)
     if dpos < DEVICE_GAP_POS:
-        return (f"모바일 {round(m['pos'], 1)}위 · 데스크톱 {round(k['pos'], 1)}위로 격차가 "
-                f"{dpos}칸입니다 (구글 실적 {bd} 기준)")
+        return _better(f"모바일 {round(m['pos'], 1)}위 · 데스크톱 {round(k['pos'], 1)}위로 격차가 "
+                       f"{dpos}칸입니다 (구글 실적 {bd} 기준)")
     return None
 
 
@@ -5854,12 +5899,12 @@ def _resolve_index(conn, pid: int, target: str, since: str, ctx: dict) -> str | 
             WHERE project_id=? AND url=? ORDER BY checked_date DESC LIMIT 1""",
         (pid, target)).fetchone()
     if r and _redirected(r["coverage_state"]):
-        return (f"색인 막힘이 아닙니다 — 정상 리다이렉트·대체 페이지입니다: {r['coverage_state']} "
-                f"(색인 확인 {r['checked_date']})")
+        return _misjudged(f"색인 막힘이 아닙니다 — 정상 리다이렉트·대체 페이지입니다: {r['coverage_state']} "
+                          f"(색인 확인 {r['checked_date']})")
     if not r or not _after_day(r["checked_date"], since):
         return None
     if (r["verdict"] or "").upper() == "PASS" and _indexed(r["coverage_state"]):
-        return f"색인됐습니다: {r['coverage_state']} (색인 확인 {r['checked_date']})"
+        return _better(f"색인됐습니다: {r['coverage_state']} (색인 확인 {r['checked_date']})")
     return None
 
 
@@ -5871,7 +5916,7 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
             WHERE project_id=? AND domain=? ORDER BY checked_date DESC LIMIT 1""",
         (pid, target)).fetchone()
     if r and _after_day(r["checked_date"], since) and r["we_have"] == 1:
-        return f"이제 {target} 에서 우리도 링크를 받습니다 (백링크 {r['checked_date']} 기준)"
+        return _better(f"이제 {target} 에서 우리도 링크를 받습니다 (백링크 {r['checked_date']} 기준)")
     return None
 
 
@@ -5890,7 +5935,7 @@ def _resolve_mention(conn, pid: int, target: str, since: str, ctx: dict) -> str 
             (pid, bare, "www." + bare)).fetchone()
         if not (r and _after_day(r["checked_date"], since)):
             return None
-    return f"이제 {target} 이 우리에게 링크합니다 (백링크 {r['checked_date']} 기준)"
+    return _better(f"이제 {target} 이 우리에게 링크합니다 (백링크 {r['checked_date']} 기준)")
 
 
 def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
@@ -5912,9 +5957,9 @@ def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> 
     # 판정 전 자료 사이트(pmc)는 표에 그대로 있다 — "목록에 없다"고 하면 틀린 사유다
     what = (ROLES["ref"] if is_reference(dom)
             else ROLES.get(role[0]) if role and role[0] else None)
-    return (f"근거였던 {dom} 은(는) " + (f"{what}(으)로 판정돼 경쟁사가 아닙니다" if what
-                                     else "더는 경쟁사 목록에 없습니다")
-            + " — 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
+    return _misjudged(f"근거였던 {dom} 은(는) " + (f"{what}(으)로 판정돼 경쟁사가 아닙니다" if what
+                                                else "더는 경쟁사 목록에 없습니다")
+                      + " — 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
 
 
 def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
@@ -5926,8 +5971,8 @@ def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict)
     학습 전용 봇(_resolve_ai_bot)처럼 '애초에 이 종류가 아니었다'는 판정이라 새 데이터를 안 기다린다."""
     why = _backlink_codes_say(conn, pid, target, since)
     if why is None and _is_home(target):
-        return ("사이트 홈은 깨진 백링크로 되찾을 주소가 아닙니다 — 홈의 가장 가까운 페이지는 홈 "
-                "자신이라 301 할 곳이 없고, 홈이 정말 안 열리면 사이트의 문제입니다")
+        return _misjudged("사이트 홈은 깨진 백링크로 되찾을 주소가 아닙니다 — 홈의 가장 가까운 페이지는 홈 "
+                          "자신이라 301 할 곳이 없고, 홈이 정말 안 열리면 사이트의 문제입니다")
     return why
 
 
@@ -5943,9 +5988,9 @@ def _backlink_codes_say(conn, pid: int, target: str, since: str) -> str | None:
                                                        for c in codes):
         return None
     if codes <= set(collect_page.BLOCK_STATUS):
-        return (f"이 주소는 크롤러를 막았을 뿐입니다(응답 {', '.join(map(str, sorted(codes)))}) — "
-                f"깨진 링크가 아닙니다 (백링크 {d} 기준)")
-    return f"이 주소가 응답합니다(응답 {', '.join(map(str, sorted(codes)))}) (백링크 {d} 기준)"
+        return _misjudged(f"이 주소는 크롤러를 막았을 뿐입니다(응답 {', '.join(map(str, sorted(codes)))}) — "
+                          f"깨진 링크가 아닙니다 (백링크 {d} 기준)")
+    return _better(f"이 주소가 응답합니다(응답 {', '.join(map(str, sorted(codes)))}) (백링크 {d} 기준)")
 
 
 def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
@@ -5963,8 +6008,8 @@ def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str |
     if not cr or not _after_ts(cr["started_at"], since):
         return None
     if ai_bot_purpose(target) == "training":
-        return (f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다 — 기회가 아닙니다 "
-                f"(크롤 #{cr['id']})")
+        return _misjudged(f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다 — 기회가 아닙니다 "
+                          f"(크롤 #{cr['id']})")
     txt = cr["robots_txt"] or ""
     if not re.search(r"(?im)^\s*user-agent\s*:", txt):
         return None
@@ -5973,16 +6018,16 @@ def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str |
     if target == AI_BOT_WILDCARD:
         # 묶음 기회 — 와일드카드 묶음이 더는 홈을 안 막으면 닫는다
         if robots_blocks(txt, url, agent=_WILDCARD_PROBE) is None:
-            return f"robots.txt 의 User-agent: * 묶음이 더는 막지 않습니다 (크롤 #{cr['id']})"
+            return _better(f"robots.txt 의 User-agent: * 묶음이 더는 막지 않습니다 (크롤 #{cr['id']})")
         return None
     if robots_blocks(txt, url, agent=target) is None:
-        return f"robots.txt 가 더는 {target} 를 막지 않습니다 (크롤 #{cr['id']})"
+        return _better(f"robots.txt 가 더는 {target} 를 막지 않습니다 (크롤 #{cr['id']})")
     # 봇마다 세우던 옛 기회: 이제 User-agent: * 묶음 한 줄로 선다. 여전히 막혀 있다고
     # 분명히 적는다 — "고쳐졌다"로 읽히면 안 된다.
     if (ai_bot_purpose(target) in AI_BOT_CITING and not _named_in_robots(txt, target)
             and robots_blocks(txt, url, agent=_WILDCARD_PROBE) is not None):
-        return (f"{target} 는 여전히 막혀 있지만, 원인이 User-agent: * 한 줄이라 "
-                f"그 묶음 기회로 합쳤습니다 (크롤 #{cr['id']})")
+        return _merged(f"{target} 는 여전히 막혀 있지만, 원인이 User-agent: * 한 줄이라 "
+                       f"그 묶음 기회로 합쳤습니다 (크롤 #{cr['id']})")
     return None
 
 
@@ -6050,9 +6095,9 @@ def _resolve_pseo(conn, pid: int, target: str, since: str, ctx: dict) -> str | N
         g = next((x for x in ctx["_pseo_glist"]
                   if frames & {_pseo_frame_key(f) for f in x.get("frames") or [x["frame"]]}), None)
         if g and g["seed"] in ctx.get("_pseo_run_seeds", ()) and g["seed"] != t:
-            return (f"씨앗이던 이 검색어가 이번 구글 실적에서 무리의 값에서 빠져(노출 {PSEO_VALUE_MIN_IMP} "
-                    f"미만이거나 다른 틀이 가져갔습니다) 같은 틀({pseo_frame_label(g)})의 새 씨앗 "
-                    f"'{g['seed']}' 줄로 합쳤습니다 — 할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+            return _merged(f"씨앗이던 이 검색어가 이번 구글 실적에서 무리의 값에서 빠져(노출 {PSEO_VALUE_MIN_IMP} "
+                           f"미만이거나 다른 틀이 가져갔습니다) 같은 틀({pseo_frame_label(g)})의 새 씨앗 "
+                           f"'{g['seed']}' 줄로 합쳤습니다 — 할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
     if not g or len(pseo_todo(g)) >= PSEO_MIN_TODO:
         return None
     have = [v for v in g["values"] if v.get("own")]
@@ -6061,9 +6106,9 @@ def _resolve_pseo(conn, pid: int, target: str, since: str, ctx: dict) -> str | N
     left = pseo_todo(g)
     rest = (" · 전용 페이지 없는 값은 " + ", ".join(f"'{v['value']}'" for v in left)
             + " 하나뿐입니다") if left else ""
-    return (f"이 무리({pseo_frame_label(g)})는 값마다 이미 전용 페이지가 순위에 걸려 있습니다({shown}"
-            f"{rest}) — 템플릿은 이미 있고, 남은 일은 값마다의 클릭률·순위라 그 검색어의 클릭률·순위 "
-            f"기회가 맡습니다 (구글 실적 {cur} 기준)")
+    return _better(f"이 무리({pseo_frame_label(g)})는 값마다 이미 전용 페이지가 순위에 걸려 있습니다({shown}"
+                   f"{rest}) — 템플릿은 이미 있고, 남은 일은 값마다의 클릭률·순위라 그 검색어의 클릭률·순위 "
+                   f"기회가 맡습니다 (구글 실적 {cur} 기준)")
 
 
 # 종류 → 긍정 확인 규칙. 여기 없는 종류는 저절로 닫히지 않는다.
@@ -6163,9 +6208,9 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
             f"아닌 개체로 {PSEO_MIN_VALUES}개 이상이고 값들의 수요가 고를 때(값 하나가 무리 노출의 "
             f"{PSEO_SEED_SHARE:.0%} 미만)만 섭니다. ")
     if is_search_operator(t):
-        return head + "이 검색어는 검색 연산자(site: 등) 검색이라 찍을 검색어 무리가 아닙니다"
+        return _misjudged(head + "이 검색어는 검색 연산자(site: 등) 검색이라 찍을 검색어 무리가 아닙니다")
     if _names_us(conn, pid, norm(t)):
-        return head + "이 검색어는 우리 브랜드 검색이라 템플릿으로 찍을 자리가 아닙니다"
+        return _misjudged(head + "이 검색어는 우리 브랜드 검색이라 템플릿으로 찍을 자리가 아닙니다")
     keys = [k for k in pseo_fold_keys(t) if k]
     g = next((ctx["_pseo_groups"][k] for k in keys if k in ctx["_pseo_groups"]), None)
     old = not str(o["reasoning"] or "").startswith(PSEO_REASON_HEAD)
@@ -6177,18 +6222,18 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
         same = next((v for v in g["values"] if set(keys) & fold((v["query"], *v["variants"]))), None)
         # 씨앗과 같은 값(접은 한 검색어)이면 다른 값이 아니라 같은 검색어다 — 사유가 틀을 말하지 않는다
         if same and fold([g["seed"]]) & fold((same["query"], *same["variants"])):
-            return (f"어순·복수형·띄어쓰기만 다른 같은 검색어인 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
-                    f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
-        return (f"같은 틀({pseo_frame_label(g)})의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
-                f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+            return _merged(f"어순·복수형·띄어쓰기만 다른 같은 검색어인 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+                           f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+        return _merged(f"같은 틀({pseo_frame_label(g)})의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+                       f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
     if g or not old:
         return None
     u = next((ctx["_pseo_units"][k] for k in keys if k in ctx["_pseo_units"]), None)
     if u and u["variants"]:
         same = ", ".join(f"'{q}'" for q in [u["query"], *u["variants"]][:4])
-        return (head + f"이 검색어는 어순·복수형·띄어쓰기만 다른 같은 검색어({same})이고, 지금 구글 "
-                f"실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)")
-    return head + f"지금 구글 실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)"
+        return _misjudged(head + f"이 검색어는 어순·복수형·띄어쓰기만 다른 같은 검색어({same})이고, 지금 구글 "
+                          f"실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)")
+    return _misjudged(head + f"지금 구글 실적에서 이 검색어가 든 틀이 서지 않습니다 (구글 실적 {cur} 기준)")
 
 
 def resolve_when(kind: str) -> str | None:
@@ -6235,10 +6280,10 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
         ctx["opp"] = {"id": o["id"], "run_id": o["run_id"], "status_at": o["status_at"],
                       "reasoning": o["reasoning"]}
         if o["kind"] == "coverage" and o["target"] == f"cluster:{UNCLASSIFIED_CLUSTER}":
-            decisions.append((o["id"], UNCLASSIFIED_REASON))   # 이제 안 세는 대상 (_coverage_rows)
+            decisions.append((o["id"], _misjudged(UNCLASSIFIED_REASON)))   # 이제 안 세는 대상 (_coverage_rows)
             continue
         if o["kind"] == "coverage" and not_topic(o["target"].split(":", 1)[-1]):
-            decisions.append((o["id"], NOT_TOPIC_REASON))      # 같은 이유 — 주제가 아닌 묶음
+            decisions.append((o["id"], _misjudged(NOT_TOPIC_REASON)))      # 같은 이유 — 주제가 아닌 묶음
             continue
         if o["kind"] == "pseo_pattern":
             # '애초에 무리가 아니었다'(기준이 바뀐 옛 줄)를 먼저 — 아니면 아래 규칙(_resolve_pseo)으로
@@ -6248,8 +6293,8 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
                 continue
         twin = folded.get((o["kind"], norm(o["target"])))
         if twin and twin != o["target"]:
-            decisions.append((o["id"], f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다 — "
-                                       f"같은 검색어라 할 일은 그 줄 하나입니다"))
+            decisions.append((o["id"], _merged(f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다 — "
+                                               f"같은 검색어라 할 일은 그 줄 하나입니다")))
             continue
         rule = _RESOLVERS.get(o["kind"])
         marks = [t for t in (db.sql_ts(o["created_at"]), db.sql_ts(o["status_at"])) if t]
@@ -6313,8 +6358,8 @@ def load(project: str) -> None:
         r.notes = (f"scoring load: opps={n}, intents_filled={n_intent}, "
                    f"resolved={closed['resolved']}, done={closed['done']}")
     print(f"loaded {len(rows)} opportunities for '{project}' (type={ptype}, gsc {cur}; "
-          f"intents_filled={n_intent}; 저절로 풀림 {closed['resolved']} · "
-          f"작업 후 풀림(완료) {closed['done']})")
+          f"intents_filled={n_intent}; 자동 종료 {closed['resolved']} · "
+          f"작업 기록으로 완료 {closed['done']})")
 
 
 def opportunities(conn: sqlite3.Connection, project_id: int, *,

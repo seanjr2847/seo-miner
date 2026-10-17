@@ -61,6 +61,23 @@ FATAL_STATUS = {401: "인증 실패", 402: "잔액 없음", 403: "접근 거부"
 # 이걸 FATAL_STATUS 에 같이 넣었더니 AI 단계가 429 한 번에 통째로 멈췄다.
 RATE_LIMIT = 429
 _STATUS_NAME = {**FATAL_STATUS, RATE_LIMIT: "분당 호출 한도 초과"}
+# 계정 단위라 다음 항목도 똑같이 막히는 task status_code → 이름 붙일 HTTP 코드
+# (https://docs.dataforseo.com/v3/appendix/errors). 여기 없는 4xxxx 는 항목 오류다.
+# 예전엔 `code // 100 in _STATUS_NAME` 으로 갈랐다 — 그런데 401xx 는 인증 계열이
+# 아니다: 40101 은 "Internal SE Server Error"(구글 쪽 오류 한 건), 40102 는 검색결과
+# 없음이다. 2026-10-16 aitierlist 순위 단계가 40101 한 건에 "인증 실패(401)"로
+# 통째로 멈췄다(잔액·키는 멀쩡했다).
+_TASK_FATAL = {
+    40100: 401,  # not authorized
+    40104: 401,  # 계정 인증(verify) 전
+    40200: 402,  # payment required
+    40201: 403,  # 이상 활동으로 접근 일시 중지
+    40202: 402,  # 분당 한도 — fatal() 이 본문을 보고 한도로 이름 붙인다
+    40203: 402,  # 비용 한도
+    40204: 403,  # 구독 없음
+    40207: 403,  # IP 화이트리스트
+    40210: 402,  # 잔액 부족
+}
 # 사람이 지금 할 수 있는 일. 오류 문장은 코드가 아니라 이 한 줄로 끝나야 한다.
 FATAL_FIX = {
     "DataForSEO": "https://app.dataforseo.com 에서 잔액·키 확인",
@@ -71,7 +88,7 @@ FATAL_FIX = {
 RATE_LIMIT_FIX = (f"계정 전체의 분당 한도에 걸렸습니다(지금 분당 {{rpm:g}}회로 부름) — "
                   "잠시 뒤 다시 돌리거나 SEOMINER_DFS_RPM 로 간격을 조절하세요")
 # 상태 코드가 402 여도 본문이 한도라고 말하면 한도다 — fatal() 이 이걸 먼저 본다.
-_RATE_LIMIT_SAYS = re.compile(r"rates?\s*limit|too\s*many\s*requests", re.I)
+_RATE_LIMIT_SAYS = re.compile(r"rates?[\s-]*limit|too\s*many\s*requests", re.I)
 
 
 def fatal(who: str, status: int, detail: str = "") -> Fatal:
@@ -380,11 +397,11 @@ def _check_dataforseo_task(data: dict) -> dict:
     code = task.get("status_code", 0)
     if code >= 40000:
         msg = task.get("status_message")
-        # DataForSEO 의 task status_code 는 HTTP 코드 x100 꼴이다 (40501 = 405.01).
         # 결제·인증 계열이면 HTTP 200 으로 와도 Fatal 이다 — 엔드포인트에 따라
-        # 잔액 부족이 본문으로 오기 때문. 이 짐작이 틀려도 손해는 없다(예전 동작).
-        if code // 100 in _STATUS_NAME:
-            raise fatal("DataForSEO", code // 100, str(msg))
+        # 잔액 부족이 본문으로 오기 때문. 어느 코드가 그 계열인지는 _TASK_FATAL 이 정한다.
+        status = _TASK_FATAL.get(code)
+        if status:
+            raise fatal("DataForSEO", status, str(msg))
         raise RuntimeError(_task_error_text(msg))
     return task
 
@@ -743,8 +760,8 @@ def post_serp_tasks(jobs: list[dict]) -> tuple[list[dict], float]:
         for n, j in enumerate(chunk):
             t = by_tag.get(str(j["tag"])) or (tasks[n] if n < len(tasks) else {})
             code = int(t.get("status_code") or 0)
-            if code >= 40000 and code // 100 in _STATUS_NAME:
-                raise fatal("DataForSEO", code // 100, str(t.get("status_message") or ""))
+            if code in _TASK_FATAL:
+                raise fatal("DataForSEO", _TASK_FATAL[code], str(t.get("status_message") or ""))
             if code == 20100 and t.get("id"):
                 cost += float(t.get("cost") or 0)
                 out.append({"tag": j["tag"], "id": t["id"], "error": None})
@@ -1462,6 +1479,26 @@ def _selfcheck() -> None:
             raise AssertionError("40501 은 Fatal 이 아니다")
         except RuntimeError:
             pass
+        # 401xx 가 다 인증은 아니다 — 40101(구글 쪽 오류)·40102(결과 없음)는 항목 오류.
+        # 2026-10-16 40101 한 건이 "인증 실패(401)"로 순위 단계를 통째로 멈췄다.
+        for code, msg in ((40101, "Internal SE Server Error."), (40102, "No Search Results.")):
+            fake_post.reply = {"tasks": [{"status_code": code, "status_message": msg}]}
+            try:
+                post_dataforseo("/x/live", [{}])
+                raise AssertionError(f"{code} 를 그냥 지나쳤다")
+            except collector.Fatal:
+                raise AssertionError(f"{code} 는 Fatal 이 아니다 — 항목 오류다")
+            except RuntimeError:
+                pass
+        # 진짜 인증 실패는 여전히 Fatal(401), 본문의 분당 한도는 한도로 이름 붙는다
+        for code, msg, says in ((40100, "You are not authorized", "401"),
+                                (40202, "The rate-limit per minute has been exceeded.", "한도")):
+            fake_post.reply = {"tasks": [{"status_code": code, "status_message": msg}]}
+            try:
+                post_dataforseo("/x/live", [{}])
+                raise AssertionError(f"task {code} 을 Fatal 로 안 올렸다")
+            except collector.Fatal as e:
+                assert says in str(e), e
 
         # 잔액 카나리아 — 무료 GET 한 번, money.balance 를 그대로 돌려준다
         got = {}

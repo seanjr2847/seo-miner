@@ -420,10 +420,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
   target TEXT NOT NULL,                       -- keyword / prompt / page
   score REAL,
   reasoning TEXT,                             -- Claude-written, grounded in Brain data
-  status TEXT DEFAULT 'new',                  -- 사람이 누르는 값은 db.OPP_STATUSES, 저절로 풀림은 db.OPP_RESOLVED
+  status TEXT DEFAULT 'new',                  -- 사람이 누르는 값은 db.OPP_STATUSES, 도구가 닫은 것은 db.OPP_RESOLVED
   status_at TEXT,                             -- 상태가 마지막으로 바뀐 시각 — 완료 후 관찰(watch_rows)의 기준
-  status_reason TEXT,                         -- 저절로 닫힌 사유 (resolve_opportunities 가 쓴다)
-  status_prev TEXT,                           -- 저절로 닫히기 전 상태 — 조건이 돌아오면 이리로 연다
+  status_reason TEXT,                         -- 도구가 닫은 사유 (resolve_opportunities 가 쓴다)
+  status_tag TEXT,                            -- 도구가 닫은 갈래 (db.RESOLVED_TAGS)
+  status_prev TEXT,                           -- 도구가 닫기 전 상태 — 조건이 돌아오면 이리로 연다
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS runs (
@@ -879,10 +880,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 사유가 없으면 사람이 그 판정을 검증할 수 없고, 이전 상태가 없으면 조건이 돌아왔을
     # 때 '진행 중'이던 것을 '할 일'로 떨어뜨린다(resolve_opportunities·upsert_opportunities).
     opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
-    for col in ("status_reason", "status_prev"):
+    for col in ("status_reason", "status_prev", "status_tag"):
         if col not in opp_cols:
             conn.execute(f"ALTER TABLE opportunities ADD COLUMN {col} TEXT")
             conn.commit()
+    # 갈래 칸(status_tag)이 생기기 전에 닫힌 줄 — 사유 문장의 머리로 한 번만 채운다. 이제 갈래는
+    # 판정(scoring.Why)이 정하고, 이 표는 옛 줄을 위한 것이라 새 사유 문장에 맞춰 늘리지 않는다.
+    # 못 가른 줄은 NULL 로 둔다(화면은 갈래 배지 없이 사유만 보인다) — 모르는 갈래를 지어내지 않는다.
+    if "status_tag" not in opp_cols:
+        for pat, tag in _LEGACY_TAG_BY_REASON:
+            conn.execute("UPDATE opportunities SET status_tag=? WHERE status=? AND status_tag IS NULL"
+                         " AND status_reason LIKE ?", (tag, OPP_RESOLVED, pat))
+        conn.commit()
 
     # ── 갈래 2: AI 질문 버전·겨냥 ──
     # 질문에 "어느 생성기가 무엇을 겨냥해 지었나"가 없어서, 사이트를 모르고 지은 옛
@@ -1054,7 +1063,7 @@ def retire_auto_serp(conn: sqlite3.Connection) -> dict[str, int]:
                    AND NOT EXISTS (SELECT 1 FROM keyword_gap g WHERE g.project_id=o.project_id
                                   AND g.keyword=o.target AND g.domain NOT IN ({marks}))""",
             (pid, *doms, *doms)).fetchall()
-        got = resolve_opportunities(conn, pid, [(r[0], RETIRED_REASON) for r in opps])
+        got = resolve_opportunities(conn, pid, [(r[0], RETIRED_REASON, "misjudged") for r in opps])
         out["opportunities"] += got["resolved"] + got["done"]
     if conn.in_transaction:
         conn.commit()
@@ -2004,6 +2013,30 @@ OPP_STATUSES = ("new", "acked", "done", "dismissed")
 # done(우리가 작업해서 끝남)과 갈라 두는 이유: 완료 후 관찰(watch_rows)은 "우리 효과"를
 # 재는 자리라 저절로 풀린 것이 섞이면 효과가 부풀려진다.
 OPP_RESOLVED = "resolved"
+# 도구가 닫은 갈래 — 왜 닫았나. 사유 문장(status_reason)은 그대로 두고 이 칸이 배지가 된다.
+# 화면 말(OPP_TAG_LABEL)은 셸이 갖고 test_seams 가 이 한 벌과 대조한다. 정하는 곳은
+# scoring.Why 하나(판정 함수가 _better·_merged·_misjudged·_out 으로 사유를 감싼다).
+#   better    조건이 풀렸다 — 목표를 이뤘다
+#   merged    같은 일을 다른 줄이 맡는다
+#   misjudged 애초에 이 종류가 아니었다 — 진단이 틀렸거나 판정 기준이 바뀌었다
+#   out       판단할 조건 밖 — 안 재거나 노출이 적거나 범위를 벗어났다(좋아진 게 아니다)
+RESOLVED_TAGS = ("better", "merged", "misjudged", "out")
+# 갈래 칸이 생기기 전에 닫힌 줄을 채우는 표(위 마이그레이션 한 번만). 순서대로 먼저 맞는 것.
+_LEGACY_TAG_BY_REASON = (
+    ("%줄로 합쳤습니다%", "merged"), ("%묶음 기회로 합쳤습니다%", "merged"),
+    ("판정 기준이 바뀌어%", "misjudged"), ("순위 조회 깊이 안에 우리 페이지가 없는%", "misjudged"),
+    ("색인 막힘이 아닙니다%", "misjudged"), ("%학습 전용 크롤러%", "misjudged"),
+    ("이 주소는 크롤러를 막았을 뿐%", "misjudged"), ("사이트 홈은 깨진 백링크%", "misjudged"),
+    ("근거였던 %", "misjudged"), ("주제가 정해지지 않은 키워드 묶음%", "misjudged"),
+    ("묶음 이름이 주제가 아니라%", "misjudged"), ("자동으로 넣었던 경쟁사가%", "misjudged"),
+    ("추적 키워드에서 뺀%", "out"), ("노출이 %적어%", "out"), ("%조건을 벗어났습니다%", "out"),
+    ("%조건(%을 벗어났습니다%", "out"),
+    ("구글 AI 요약이 우리 링크를 인용%", "better"), ("떨어지기 전 순위로 돌아왔습니다%", "better"),
+    ("AI 답변 %인용합니다%", "better"), ("%상단 3위권에 들었습니다%", "better"),
+    ("%절반을 넘었습니다%", "better"), ("모바일 %격차가%", "better"), ("색인됐습니다%", "better"),
+    ("이제 %링크%", "better"), ("이 주소가 응답합니다%", "better"), ("robots.txt %더는%", "better"),
+    ("이 무리(%이미 전용 페이지%", "better"),
+)
 # 검색어 심사의 판정 — 무관(자동완성 쓰레기) · 보류(우리 것이지만 지금 안 함) · 작업.
 # 화면(triage.html 의 TR_VERDICT)과 test_seams 17 이 이 한 벌을 대조한다.
 VERDICTS = ("irrelevant", "hold", "work")
@@ -2711,7 +2744,7 @@ def set_opportunity_status(conn: sqlite3.Connection, opp_id: int, status: str,
     if status not in OPP_STATUSES:
         raise ValueError(f"status must be one of {OPP_STATUSES}, got {status!r}")
     sql = ("UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP,"
-           " status_reason=NULL, status_prev=NULL WHERE id=?")
+           " status_reason=NULL, status_tag=NULL, status_prev=NULL WHERE id=?")
     if project_id is not None:
         cur = conn.execute(sql + " AND project_id=?", (status, int(opp_id), int(project_id)))
     else:
@@ -2742,7 +2775,8 @@ def close_opportunity_by_work(conn: sqlite3.Connection, opp_id: int, project_id:
     '전·후'가 머지를 기준으로 갈려야 한다. 갱신된 rowcount 반환."""
     cur = conn.execute(
         """UPDATE opportunities SET status='done',
-                  status_at=COALESCE(?, CURRENT_TIMESTAMP), status_reason=?, status_prev=NULL
+                  status_at=COALESCE(?, CURRENT_TIMESTAMP), status_reason=?, status_tag=NULL,
+                  status_prev=NULL
             WHERE id=? AND project_id=? AND status IN ('new','acked',?)""",
         (sql_ts(at), reason, int(opp_id), int(project_id), OPP_RESOLVED))
     conn.commit()
@@ -2750,7 +2784,8 @@ def close_opportunity_by_work(conn: sqlite3.Connection, opp_id: int, project_id:
 
 
 def resolve_opportunities(conn: sqlite3.Connection, project_id: int, decisions) -> dict:
-    """열린 기회(new|acked)를 조건 해소로 닫는다. decisions: [(opp_id, 사유), ...].
+    """열린 기회(new|acked)를 조건 해소로 닫는다. decisions: [(opp_id, 사유[, 갈래]), ...].
+    갈래(RESOLVED_TAGS)는 셋째 값이거나, 사유가 scoring.Why 면 그 .tag 다.
 
     판정(무엇이 풀렸나)은 scoring.resolve_stale 이 한다 — 여기는 쓰기만 한다.
       · 그 기회에 작업 기록(creations)이 있으면 done — 우리가 작업해서 끝났다. status_at
@@ -2762,7 +2797,11 @@ def resolve_opportunities(conn: sqlite3.Connection, project_id: int, decisions) 
     상태를 덮지 않는다. 반환: {"resolved": n, "done": n}.
     """
     out = {"resolved": 0, "done": 0}
-    for oid, reason in decisions:
+    for oid, reason, *rest in decisions:
+        tag = rest[0] if rest else getattr(reason, "tag", None)
+        if tag is not None and tag not in RESOLVED_TAGS:
+            raise ValueError(f"status_tag must be one of {RESOLVED_TAGS}, got {tag!r}")
+        reason = str(reason)
         work = conn.execute("SELECT MAX(created_at) FROM creations WHERE opportunity_id=?",
                             (int(oid),)).fetchone()[0]
         if work:
@@ -2775,9 +2814,9 @@ def resolve_opportunities(conn: sqlite3.Connection, project_id: int, decisions) 
         else:
             n = conn.execute(
                 """UPDATE opportunities SET status=?, status_at=CURRENT_TIMESTAMP,
-                          status_reason=?, status_prev=status
+                          status_reason=?, status_tag=?, status_prev=status
                     WHERE id=? AND project_id=? AND status IN ('new','acked')""",
-                (OPP_RESOLVED, reason, int(oid), int(project_id))).rowcount
+                (OPP_RESOLVED, reason, tag, int(oid), int(project_id))).rowcount
             out["resolved"] += n
     conn.commit()
     return out
@@ -2868,6 +2907,7 @@ def upsert_opportunities(conn: sqlite3.Connection, project_id: int,
                  status=CASE WHEN status=:r THEN COALESCE(status_prev,'new') ELSE status END,
                  status_at=CASE WHEN status=:r THEN CURRENT_TIMESTAMP ELSE status_at END,
                  status_reason=CASE WHEN status=:r THEN NULL ELSE status_reason END,
+                 status_tag=CASE WHEN status=:r THEN NULL ELSE status_tag END,
                  status_prev=CASE WHEN status=:r THEN NULL ELSE status_prev END""",
             {"pid": project_id, "run": run_id, "kind": k, "target": str(t).strip(),
              "score": float(s) if s is not None else None,
@@ -3128,7 +3168,7 @@ def list_opportunities(conn: sqlite3.Connection, project_id: int, *,
 
     # status_reason 도 같이 낸다 — 도구가 혼자 닫은 기회는 "왜 닫혔나"가 없으면
     # 화면에서 판정 오류와 구분이 안 된다(표에만 있고 아무도 안 읽던 칸이었다).
-    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, status_reason, "
+    cols = ("id, kind, target, ROUND(score,1) score, reasoning, status, status_reason, status_tag, "
             "substr(created_at,1,10) created") if with_id else \
            "kind, target, ROUND(score,1) score, reasoning, status"
 

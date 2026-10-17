@@ -2746,10 +2746,26 @@ class Handler(BaseHTTPRequestHandler):
         except (Exception, SystemExit) as e:   # remote 는 거절을 SystemExit 로 낸다
             return self._json({"error": str(e)}, 502)
 
+    def _loopback(self) -> bool:
+        """주소창의 호스트가 이 PC(127.0.0.1·localhost·::1)인가. 서버는 127.0.0.1 에만
+        묶이므로 다른 이름으로 왔다면 DNS 를 바꿔치기한 남의 페이지다(DNS rebinding)."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        host = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.split(":")[0]
+        return host in ("127.0.0.1", "localhost", "::1")
+
     def do_GET(self) -> None:  # noqa: N802 (http.server 규약)
         u = urlparse(self.path)
         if u.path == "/":
-            return self._send(200, HTML, "text/html; charset=utf-8")
+            # 토큰을 페이지에 실어 보낸다 — 화면은 주소의 ?t= 를 먼저 안 본다. 예전엔 ?t= 로만
+            # 받아서, 주소창 자동완성·즐겨찾기로 ?t= 없이 연 탭은 저장마다 "이 창은 만료됐습니다"
+            # 가 떴다(2026-10-17 사용자: "맨날 이런 메시지 계속 떠"). 다른 웹사이트는 이 응답을
+            # 못 읽으니(같은 출처 정책) 막으려던 쓰기는 그대로 막힌다. 주소 바꿔치기로 같은
+            # 출처가 된 페이지만 읽을 수 있어서, 호스트가 이 PC 일 때만 싣는다.
+            body = HTML
+            if self._loopback():
+                body = HTML.replace(b"</head>", b"<script>window.__SM_TOKEN__="
+                                    + json.dumps(TOKEN).encode() + b"</script></head>", 1)
+            return self._send(200, body, "text/html; charset=utf-8")
         query = {k: v[0] for k, v in parse_qs(u.query).items()}
         project = query.get("project", "")
         local = LOCAL_ROUTES.get(("GET", u.path))
