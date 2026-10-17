@@ -40,9 +40,17 @@ def diverge_src() -> str:
     return m.group(0)
 
 
+def ui_src() -> str:
+    """셸의 공용 부품(SM.ui) 원본 — 헬퍼가 부호를 거기서 빌린다(사본이 아니라 떼 온 것)."""
+    src = SHELL.read_text(encoding="utf-8")
+    m = re.search(r"^SM\.ui = \(\(\) => \{.*?^\}\)\(\);", src, re.M | re.S)
+    assert m, "dashboard.html 에서 SM.ui 를 못 찾았다"
+    return "const SM = {};\n" + m.group(0) + "\n"
+
+
 def bars(rows: list[dict]) -> dict[str, float]:
     """이름 → 막대 길이(x 축 폭에 대한 비율, 0~1)."""
-    js = (STUBS + diverge_src()
+    js = (STUBS + ui_src() + diverge_src()
           + f"\nconst rows = {json.dumps(rows, ensure_ascii=False)};\n"
           + """
 const cfg = window.chDiverge(rows).build(T);

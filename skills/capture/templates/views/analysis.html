@@ -420,7 +420,7 @@ const AN_EFFECT = {imp: "노출 효과", ctr: "클릭률 효과", new: "새 검�
 const anNote = (summary, body) =>
   `<details class="anmore"><summary>${summary}</summary><p>${body}</p></details>`;
 
-const anNum = v => (v > 0 ? "+" : v < 0 ? "−" : "") +
+const anNum = v => SM.ui.sign(v) +
   Math.abs(Math.round(v * 10) / 10).toLocaleString("ko-KR");
 
 /* 네 항 중 가장 큰 것이 곧 "다음에 볼 자리"다. 화면이 그걸 문장으로 말한다 —
@@ -534,8 +534,7 @@ function anVerdict(s) {
   // 검색어"와 한 화면에 서므로 범위를 문장에 싣는다.
   const tip = [msg, AN_SPLIT_TIP].filter(Boolean).join(" ");
   return `<p class="anverdict">전체 클릭 변화의 가장 큰 몫은
-    <b>${AN_EFFECT[top[0]]}</b>입니다(${anNum(top[1])} 클릭).<span class="hint" tabindex="0"
-      data-tip="${esc(tip)}" title="${esc(tip)}" aria-label="${esc(tip)}">i</span></p>`;
+    <b>${AN_EFFECT[top[0]]}</b>입니다(${anNum(top[1])} 클릭).${SM.ui.hint(tip)}</p>`;
 }
 // scoring.click_shift 는 두 수집에 모두 있는 검색어만 노출·클릭률로 나누고, 한쪽에만
 // 있는 것은 새 검색어·빠진 검색어로 따로 센다.
@@ -591,7 +590,7 @@ function anTopKpis(d) {
   if (s && (s.prev_clicks || s.clicks)) {
     const pc = s.prev_clicks ? Math.round(s.d_clicks / s.prev_clicks * 1000) / 10 : null;
     const pill = pc == null ? "" : `<span class="d ${pc > 0 ? "up" : pc < 0 ? "down" : "muted"}">${
-      pc > 0 ? "+" : pc < 0 ? "−" : ""}${Math.abs(pc)}%</span>`;
+      SM.ui.sign(pc)}${Math.abs(pc)}%</span>`;
     out.push(anKpi("클릭 변화", anNum(s.d_clicks) + pill, `${num(s.prev_clicks)} → ${num(s.clicks)}`,
       s.d_clicks > 0 ? "up" : s.d_clicks < 0 ? "down" : "muted", anSpark(d.daily, s.d_clicks < 0)));
   }
@@ -657,9 +656,7 @@ function anTopVerdict(d) {
    호스팅에서는 연결하는 화면을 가리킨다(웹에는 설정 파일이 없다). */
 const AN_GA4_TIP = "GSC 는 검색결과 안(노출·클릭)까지만 봅니다. "
   + "방문 이후의 세션·전환은 GA4 축이라 따로 연결해야 들어옵니다.";
-const anNoGa4 = () => `<p class="anthin">방문 이후의 세션·전환은 GA4 를 연결해야 보입니다.<span
-  class="hint" tabindex="0" data-tip="${esc(AN_GA4_TIP)}" title="${esc(AN_GA4_TIP)}"
-  aria-label="${esc(AN_GA4_TIP)}">i</span> ` + W(
+const anNoGa4 = () => `<p class="anthin">방문 이후의 세션·전환은 GA4 를 연결해야 보입니다.${SM.ui.hint(AN_GA4_TIP)} ` + W(
   "프로젝트 설정에 GA4 속성 ID 를 넣으면 다음 수집부터 붙습니다.",
   window.go("settings", "GA4 연결"))
   + `</p>`;
@@ -1457,8 +1454,7 @@ VIEW("analysis", function (d) {
   $("an-shift-eye").hidden = !cmp;
   if (d.gsc_period) {
     const t = `두 수집 다 ${d.gsc_period}일치입니다. 기간이 다르면 짝을 안 짓습니다.`;
-    $("an-shift-tip").outerHTML = `<span class="hint" id="an-shift-tip" tabindex="0"
-      data-tip="${esc(t)}" title="${esc(t)}" aria-label="${esc(t)}">i</span>`;
+    $("an-shift-tip").outerHTML = SM.ui.hint(t, {id: "an-shift-tip"});
   }
   AN_SHIFT = d.shift || null;
   AN_MM = mismatch;

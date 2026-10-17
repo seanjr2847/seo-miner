@@ -2893,6 +2893,10 @@ def _node_views(js: str):
     import subprocess
     if not shutil.which("node"):
         return None
+    # 공용 부품(SM.ui)은 손으로 쓴 사본이 아니라 셸 원본을 떼어 끼운다(_VIEW_STUBS 의 자리표).
+    if "//__SM_UI__" in js:
+        shell = (ROOT / "skills" / "capture" / "templates" / "dashboard.html").read_text("utf-8")
+        js = js.replace("//__SM_UI__", _shell_ui_src(shell))
     # 스크립트는 stdin 으로 넘긴다 — 화면 스크립트 통째는 윈도의 명령줄 길이를 넘는다.
     r = subprocess.run(["node", "-"], input=js, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
@@ -3007,6 +3011,7 @@ const oppWhy = () => "", oppActs = () => "", oppPanel = () => "";
 const askBlock = () => "", playList = () => "", pageTable = () => "", pageFix = () => "";
 const table = (h, rows, empty) => rows.length ? rows.join("") : (empty || "");
 const SM = {at: () => -1};
+//__SM_UI__
 window.oppStMatch = () => true; window.oppStSelect = () => "";
 """
 
@@ -4520,6 +4525,139 @@ def test_seam_183_every_kind_can_be_handled_from_the_queue():
         assert kind in d["kind_labels"], f"{kind}: kind_labels 에 없다 — 종류 칩 이름이 영문으로 뜬다"
     # 상태 바꾸기 창구(/api/opp)가 받는 상태가 큐 버튼이 보내는 상태를 전부 덮는다
     assert {"new", "acked", "done", "dismissed"} <= set(db.OPP_STATUSES), db.OPP_STATUSES
+
+
+def _shell_ui_src(shell: str) -> str:
+    """셸에서 공용 부품(SM.ui) 블록 하나를 떼 온다 — 사본을 만들지 않는다."""
+    m = re.search(r"^SM\.ui = \(\(\) => \{.*?^\}\)\(\);", shell, re.M | re.S)
+    assert m, "dashboard.html 에 SM.ui 블록이 없다 — 공용 부품의 집이 사라졌다"
+    return m.group(0)
+
+
+def test_seam_190_shared_parts_have_one_home_in_the_shell():
+    """190) 아바타·툴팁 hint·빈 상태·클립보드·증감 부호·단계 손잡이는 셸의 SM.ui 한 곳에만 있다.
+
+    예전엔 뷰마다 자기 이름으로 복사본을 지었다(AI_av·BLK_av·CP_av·HS_av·HD_av·KW_av·RK_av 일곱 벌과
+    CSS 일곱 벌, BLK_tip=CP_tip, BLK_empty=CP_empty, 클립보드 다섯 벌 — 폴백 있는 것 둘·없는 것 둘·
+    try/catch 만 하나, *_act 래퍼 다섯). 한 곳을 고쳐도 나머지가 낡았고 같은 일이 곳곳에서 다르게
+    실패했다. 어느 파일도 혼자서는 틀려 보이지 않는다 — 새 복사본이 생기는 순간이 이음매다.
+    · 복사본 검출: 부품을 손으로 짓는 문자열·함수·CSS 가 SM.ui 블록 밖에 있으면 FAIL.
+    · 부품 자체: node 로 SM.ui 를 직접 돌려 이스케이프·부호·클립보드 폴백을 본다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    shell, views, dash = ctx["shell"], ctx["views"], ctx["dash"]
+    ui = _shell_ui_src(shell)
+    for name in ("avatar", "hint", "empty", "copyText", "sign", "act"):
+        assert re.search(rf"\b{name}\b", ui.split("return {")[-1]), f"SM.ui 가 {name} 을 내놓지 않는다"
+
+    outside = {"dashboard.html": shell.replace(ui, "")}
+    for p in sorted(views.glob("*.html")):
+        outside[f"views/{p.name}"] = p.read_text("utf-8")
+    for p in sorted((views.parent / "sections").glob("*.html")):
+        outside[f"sections/{p.name}"] = p.read_text("utf-8")
+    outside["server/assets/dash.html"] = dash
+
+    # 1) 클립보드: API 도 execCommand 도 SM.ui.copyText 만 부른다(폴백 동작이 하나여야 한다).
+    #    ClipboardEvent 의 clipboardData(붙여넣기 읽기)는 쓰기가 아니라 대상이 아니다.
+    for f, src in outside.items():
+        assert "navigator.clipboard" not in src and "execCommand" not in src, \
+            f"{f}: 클립보드를 직접 부른다 — SM.ui.copyText 한 벌만 쓴다(폴백이 파일마다 달라진다)"
+    # 2) 증감 부호: 「v > 0 ? "+" : …」 를 손으로 쓰지 않는다 — SM.ui.sign.
+    sign_copy = re.compile(r"""[>≥]=?\s*0\s*\?\s*["']\+["']\s*:""")
+    for f, src in outside.items():
+        assert not sign_copy.search(src), f"{f}: 증감 부호를 손으로 가른다 — SM.ui.sign(v)"
+    # 3) 풍선 (i): 글자 속 보간으로 지은 hint 마크업은 SM.ui.hint 만 만든다(정적 마크업은 섹션 본문이라 제외).
+    for f, src in outside.items():
+        assert not re.search(r"""data-tip=["']\$\{""", src), \
+            f"{f}: hint 마크업을 문자열로 짓는다 — SM.ui.hint(글)"
+        assert not re.search(r"\b[A-Z]{2,3}_tip\s*=", src), f"{f}: 뷰마다 hint 래퍼를 둔다 — SM.ui.hint"
+    # 4) 빈 상태 상자
+    for f, src in outside.items():
+        assert not re.search(r"""class=["']empty["']><b>\$\{""", src), \
+            f"{f}: 빈 상태 상자를 문자열로 짓는다 — SM.ui.empty(제목, 이유, 행동, 풍선)"
+        assert not re.search(r"\b[A-Z]{2,3}_empty\s*=", src), f"{f}: 뷰마다 empty 래퍼를 둔다 — SM.ui.empty"
+    # 5) 아바타: 이름이 *_av 인 함수는 SM.ui.avatar 로 짓고, *av 클래스에 모서리·글꼴을 다시 쓰지 않는다.
+    #    단계 손잡이: *_act 래퍼를 두지 않는다(SM.ui.act).
+    for f, src in outside.items():
+        # 정의는 다음 줄머리 선언(`}`·const·function·let·주석)에서 끝난다 — 안쪽 줄은 들여쓰기가 있다.
+        for m in re.finditer(r"(?:const|function)\s+([A-Z]{2,3}_av)\b(.*?)(?=\n(?:\}|const |function |let |/\*|//)|\Z)",
+                             src, re.S):
+            assert "SM.ui.avatar(" in m.group(2), f"{f}: {m.group(1)} 가 SM.ui.avatar 를 안 쓰고 직접 짓는다"
+        # (셸 자신의 CSS 는 .ui-av 의 집이라 제외 — 화면 파일·애드온만 본다)
+        for m in ([] if f == "dashboard.html" else
+                  re.finditer(r"([^{}]*)\{([^{}]*)\}", src)):
+            # 아바타 복사본 = 크기·모서리·가운데 정렬·글꼴을 한 규칙에 다시 쓰는 것(이름이 뭐든)
+            body = m.group(2)
+            copy = (re.search(r"\.[\w-]*(?<!n)av\b", m.group(1))   # 이름이 …av 인 클래스(.anic 아이콘·.anav 화살표는 아니다)
+                    and re.search(r"border-radius\s*:", body) and re.search(r"\bwidth\s*:\s*\d+px", body)
+                    and re.search(r"\bheight\s*:\s*\d+px", body) and re.search(r"\bfont\s*:", body)
+                    and re.search(r"place-items\s*:\s*center|justify-content\s*:\s*center", body))
+            assert not copy, \
+                f"{f}: 크기·모서리·정렬·글꼴을 한 규칙에 다시 쓴다(아바타 복사본?) — 모양은 셸의 .ui-av 한 벌: {m.group(1).strip()[:60]}"
+        assert not re.search(r"(?:const|function)\s+[A-Z]{2,3}_act\b", src), \
+            f"{f}: *_act 래퍼가 있다 — SM.ui.act(단계, 라벨, 주요)를 바로 부른다"
+
+    # 6) 부품 자체 — node 로 직접 돌린다.
+    js = ("const window = globalThis;\n"
+          "const esc = s => String(s ?? '').replace(/[&<>\"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;',"
+          " '\"': '&quot;', \"'\": '&#39;'}[c]));\n"
+          "const SM = {};\n" + ui + "\n"
+          "const out = {};\n"
+          "out.av = SM.ui.avatar('<', {size: 24, tone: 'w', cls: 'x-av'});\n"
+          "out.hue = SM.ui.avatar('A', {hue: 120});\n"
+          "out.dflt = SM.ui.avatar('A');\n"
+          "out.sign = [SM.ui.sign(3), SM.ui.sign(-3), SM.ui.sign(0), SM.ui.sign(0, '+')];\n"
+          "out.hint = SM.ui.hint('a\"b');\n"
+          "out.hint2 = SM.ui.hint('x', {title: false, id: 'h1'});\n"
+          "out.empty = SM.ui.empty('제목', '이유', '<acts>', '풍선');\n"
+          "out.empty2 = SM.ui.empty('제목', '이유');\n"
+          "window.act = (s, l, p) => `${s}|${l}|${p}`;\n"
+          "out.act = [SM.ui.act('rank'), SM.ui.act('rank', '라벨', false)];\n"
+          # 클립보드: API 가 없으면(file://·비보안) 임시 입력칸 + execCommand, 결과는 bool
+          "(async () => {\n"
+          "  const made = [];\n"
+          "  const mk = () => ({style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; },\n"
+          "    select() {}, setSelectionRange() {}, remove() { made.push('removed'); }});\n"
+          # node 24 의 navigator 는 읽기 전용 접근자라 대입이 조용히 무시된다 — 정의로 갈아 끼운다
+          "  const setNav = v => Object.defineProperty(globalThis, 'navigator',"
+          " {value: v, configurable: true, writable: true});\n"
+          "  setNav({});\n"
+          "  globalThis.document = {activeElement: null, body: {appendChild: t => made.push(t.value)},\n"
+          "    createElement: () => mk(), execCommand: c => (made.push(c), globalThis.OK)};\n"
+          "  globalThis.OK = true; out.fallbackOk = await SM.ui.copyText('명령');\n"
+          "  globalThis.OK = false; out.fallbackNo = await SM.ui.copyText('명령');\n"
+          "  out.made = made.slice();\n"
+          "  setNav({clipboard: {writeText: async () => { throw new Error('denied'); }}});\n"
+          "  globalThis.isSecureContext = true; globalThis.OK = true;\n"
+          "  out.deniedFallsBack = await SM.ui.copyText('x');\n"
+          "  let wrote = null;\n"
+          "  setNav({clipboard: {writeText: async t => { wrote = t; }}});\n"
+          "  out.api = await SM.ui.copyText('직접'); out.wrote = wrote;\n"
+          "  console.log(JSON.stringify(out));\n"
+          "})();\n")
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert 'data-ch="&lt;"' in got["av"] and "s24" in got["av"] and "t-w" in got["av"] \
+        and "x-av" in got["av"] and 'aria-hidden="true"' in got["av"], f"아바타 마크업이 어긋났다: {got['av']}"
+    assert 'style="--h:120"' in got["hue"] and "t-h" in got["hue"], f"색상환 아바타: {got['hue']}"
+    assert "t-n" in got["dflt"] and "s2" not in got["dflt"] and "s3" not in got["dflt"], got["dflt"]
+    assert got["sign"] == ["+", "−", "", "+"], f"부호(음수는 U+2212): {got['sign']}"
+    assert 'data-tip="a&quot;b"' in got["hint"] and 'title="a&quot;b"' in got["hint"] \
+        and 'tabindex="0"' in got["hint"] and 'aria-label="a&quot;b"' in got["hint"], got["hint"]
+    assert "title=" not in got["hint2"] and 'id="h1"' in got["hint2"], f"hint 옵션(title:false·id): {got['hint2']}"
+    assert got["empty"].startswith('<div class="empty"><b>제목') and "풍선" in got["empty"] \
+        and got["empty"].endswith("<acts></div>"), got["empty"]
+    assert "hint" not in got["empty2"] and got["empty2"].endswith("</p></div>"), got["empty2"]
+    assert got["act"] == ["rank|undefined|true", "rank|라벨|false"], got["act"]
+    assert got["fallbackOk"] is True and got["fallbackNo"] is False, "폴백 결과가 execCommand 결과와 다르다"
+    assert got["made"].count("copy") == 2 and got["made"].count("removed") == 2, \
+        f"폴백이 임시 입력칸을 만들고 치우지 않는다: {got['made']}"
+    assert got["deniedFallsBack"] is True, "권한 거부(API 실패)인데 폴백으로 물러서지 않는다"
+    assert got["api"] is True and got["wrote"] == "직접", "API 가 되는 환경에서 API 로 쓰지 않는다"
 
 
 def inspect_src(fn) -> str:

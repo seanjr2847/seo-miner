@@ -41,8 +41,7 @@
 .ovw-r { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:0 var(--sp-3);
   align-items:center; padding:var(--sp-3) var(--sp-2); border-radius:var(--r-in); }
 .ovw-r:hover { background:var(--sunk); }
-.ov-av { display:grid; place-items:center; width:32px; height:32px; border-radius:10px;
-  background:var(--accent-wash); color:var(--accent); font:700 var(--fs-2)/1 var(--sans); }
+.ov-av.ui-av { font-weight:700; }
 .ovw-n { font:600 var(--fs-2)/1.4 var(--sans); overflow-wrap:anywhere; }
 .ovw-m { margin-top:2px; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub);
   font-variant-numeric:tabular-nums; }
@@ -123,8 +122,6 @@ button.ovp:hover .ovp-k { background:var(--card); }
 .odr-note { margin:0 0 16px; }
 .odr-doc textarea { min-height:360px; }
 .odr-doc .acts { margin-top:12px; }
-/* 복사 폴백용 임시 입력칸 — 보이지 않게 두되 select() 가 먹도록 display 는 안 끈다. */
-.ovp-clip { position:fixed; top:0; left:0; width:1px; height:1px; opacity:0; }
 </style>
 
 <div class="band" id="band"></div>
@@ -196,12 +193,8 @@ button.ovp:hover .ovp-k { background:var(--card); }
 
 <script>
 "use strict";
-/* 단계 하나를 돌리는 손잡이는 셸이 배포에 맞춰 고른다(로컬은 명령 칩, 호스팅은 실행
-   버튼). 셸 스크립트가 뷰보다 뒤에 있어도 렌더 시점에는 서 있지만, 조립이 반쯤
-   나간 상태에서도 화면이 서게 없으면 빈 문자열로 물러난다. */
-const OV_act = (stage, label, primary) =>
-  (READONLY || !window.act) ? "" : act(stage, label, primary);
-// 박제본에는 누를 서버가 없다 — 손잡이가 없으면 상자도 만들지 않는다.
+/* 단계 하나를 돌리는 손잡이는 셸의 SM.ui.act 가 배포에 맞춰 고른다(로컬은 명령 칩, 호스팅은
+   실행 버튼). 박제본에는 누를 서버가 없다 — 손잡이가 없으면 상자도 만들지 않는다. */
 const OV_acts = html => html ? `<div class="acts">${html}</div>` : "";
 
 /* ── 일별 추이: gsc_daily 의 date 는 성과일(수집일이 아니다)이라 하루가 점 하나다.
@@ -284,9 +277,7 @@ function dailyChart(rows, stats) {
   return `${chart}
   <div class="ovd-leg"><b>클릭</b> <span class="nw">${esc(span)}</span> 사이트 전체 합계 ${num(sumC)}
     (하루 최고 ${num(topC)}) · <b>노출</b> 합계 ${num(sumI)}
-    (하루 최고 ${num(topI)})<span class="hint" tabindex="0"
-      data-tip="${esc(LEG_TIP)}" title="${esc(LEG_TIP)}" aria-label="${esc(LEG_TIP)}"
-      >i</span></div>${alt}`;
+    (하루 최고 ${num(topI)})${SM.ui.hint(LEG_TIP)}</div>${alt}`;
 }
 
 /* ── KPI 마이크로 추이: 스냅샷 3개부터, 변동이 있을 때만. 축·라벨 없이 흐름만 —
@@ -355,14 +346,14 @@ function OV_plays(d) {
       : "도구가 우리 페이지와 상위 결과를 직접 읽고 만든 수정안입니다. 페이지 하나를 고치면 검색어 여러 개가 같이 움직입니다.")
     + (at && OV_PLAYS.length ? ` <span class="nw">${esc(at)}</span> 기준.` : "");
   // 다시 만드는 손잡이는 머리 오른쪽 하나 — 비었을 때는 빈 상태가 주요 행동으로 든다.
-  $("plays-tools").innerHTML = OV_PLAYS.length ? OV_act("plays", null, false) : "";
+  $("plays-tools").innerHTML = OV_PLAYS.length && !READONLY ? SM.ui.act("plays", null, false) : "";
   if (!OV_PLAYS.length) {
     $("plays").innerHTML = READONLY
       ? `<div class="empty"><b>이 기록에는 이번 달 할 일이 없습니다</b>
           <p>기록을 남길 때 도구가 만든 수정안이 없었습니다.</p></div>`
       : `<div class="empty"><b>이번 달 할 일이 아직 없습니다</b>
           <p>도구가 기회를 페이지별로 묶고, 그 페이지와 상위 결과를 직접 읽어 고칠 곳 3~5개를 수정안까지 만들어 둡니다.</p>
-          ${OV_acts(OV_act("plays"))}</div>`;
+          ${OV_acts(READONLY ? "" : SM.ui.act("plays"))}</div>`;
   } else {
     const row = (p, i) => {
       const inner = `<span class="ovp-n" aria-hidden="true">${i + 1}</span>
@@ -503,26 +494,13 @@ function OV_playPaint(p) {
   applyWording(dr);
 }
 
-// [복사] — 박제본·비보안 출처(file://)에서는 clipboard API 가 막혀 임시 입력칸으로 물러선다.
+// [복사] — 막힌 환경의 폴백은 SM.ui.copyText 가 한 벌로 가진다.
 async function OV_playCopy(btn) {
   const p = OV_playOf(OV_PL);
   if (!p || !p.markdown) return;
   const was = btn.textContent;
-  let ok = false;
-  try {
-    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(p.markdown); ok = true; }
-  } catch (e) { ok = false; }
-  if (!ok) {
-    const ta = document.createElement("textarea");
-    ta.value = p.markdown;
-    ta.setAttribute("readonly", "");
-    ta.className = "ovp-clip";
-    btn.after(ta);
-    ta.select();
-    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
-    ta.remove();
-    btn.focus({preventScroll: true});
-  }
+  const ok = await SM.ui.copyText(p.markdown);
+  btn.focus({preventScroll: true});
   btn.textContent = ok ? "복사함" : "직접 선택";
   setTimeout(() => { btn.textContent = was; }, 2000);
   if (!ok && window.toast) window.toast("복사하지 못했습니다. 문서 탭의 글을 직접 선택해 복사하세요.", "bad");
@@ -576,7 +554,7 @@ function OV_watchDraw() {
     return `<span class="chip ne">변동 없음</span>`;
   };
   $("watch").innerHTML = `<div class="ovw">${rows.slice(0, OV_WATCH_N).map(w => `<div class="ovw-r">
-      <div class="ov-av" aria-hidden="true">${esc([...String(w.target || "?")][0])}</div>
+      ${SM.ui.avatar([...String(w.target || "?")][0], {size: 32, tone: "a", cls: "ov-av"})}
       <div>
         <div class="ovw-n">${esc(w.target)}</div>
         <div class="ovw-m">그때 <span class="nw">${cell(w.before, w)}</span></div>
@@ -633,7 +611,7 @@ function OV_next(d) {
   let html;
   if (!d.gsc_date)
     html = `<p>실적을 아직 수집하지 않았습니다. 이 화면의 숫자가 전부 그 위에서 나옵니다.</p>
-      <div class="acts">${OV_act("gsc")}</div>`;
+      <div class="acts">${READONLY ? "" : SM.ui.act("gsc")}</div>`;
   // 목록이 빈 채 심사에 쌓여 있으면 다음 걸음은 [심사하기] 하나다 — 그 손잡이는 목록 카드의
   // 빈 상태(큐의 triageBox)가 든다. 띠가 [기회 분석]이나 "다 처리했다"를 또 말하지 않게 걷는다.
   else if (!top && !filtered && Q.triageBox())
@@ -641,7 +619,7 @@ function OV_next(d) {
   else if (!Q.opps.length)
     html = `<p>실적은 수집했습니다.
       <span class="live">이제 그 숫자에서 손댈 곳을 뽑을 차례입니다.</span></p>
-      <div class="acts">${OV_act("gaps")}</div>`;
+      <div class="acts">${READONLY ? "" : SM.ui.act("gaps")}</div>`;
   // 다시 뽑는 손잡이는 머리줄이 이미 들고 있다 — 띠에 보조로 또 달면 같은 행동이
   // 한 화면에 둘이다. 띠의 주요 행동은 [기회 열기] 하나다.
   // 찬 화면의 "가장 큰 기회는 …" 문장은 스포트라이트(큐의 spot)가 대신 말한다 — 같은 말이

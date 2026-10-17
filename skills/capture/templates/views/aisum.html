@@ -122,8 +122,6 @@
       처방(d.aio_play — scoring 의 aio_exposure 처방)을 그린다. 옛 박제본(rank_by_kw 가 없던 때)은
       d.ranks 로 물러선다. ── */
 const AS_RATE = (n, t) => t ? Math.round(n / t * 1000) / 10 : 0;
-const AS_act = (stage, primary = true) =>
-  window.act(stage, window.stageRun ? window.stageRun(stage) : "", primary);
 let AS_ROWS = [], AS_PLAY = {};
 const AS_opp = k => (window.oppsOf ? oppsOf(k) : []).find(o => o.kind === "aio_exposure")
   || (window.oppOf ? oppOf(k) : null);
@@ -161,19 +159,19 @@ function AS_nextStep(s) {
   if (s.state === "none")
     return put("<b>구글 AI 요약은 아직 모릅니다.</b>"
       + live("순위를 한 번 확인하면 검색어마다 요약이 떴는지, 거기 내 링크가 실렸는지가 여기 섭니다."),
-      AS_act("rank"));
+      SM.ui.act("rank"));
   if (s.state === "blind")
     return put("<b>이번 순위 조회는 AI 요약을 재지 않았습니다.</b>"
-      + live("AI 요약을 주는 제공자로 다시 확인하면 채워집니다."), AS_act("rank"));
+      + live("AI 요약을 주는 제공자로 다시 확인하면 채워집니다."), SM.ui.act("rank"));
   if (s.state === "quiet")
     return put(`확인한 검색어 ${num(s.known)}개 어디에도 <b>AI 요약이 뜨지 않았습니다.</b>`
-      + live("순위가 바뀌면 요약도 달라질 수 있어 주기적으로 다시 봅니다."), AS_act("rank"));
+      + live("순위가 바뀌면 요약도 달라질 수 있어 주기적으로 다시 봅니다."), SM.ui.act("rank"));
   if (s.gap)
     return put(`AI 요약이 뜬 ${num(s.on)}개 중 <b>${num(s.gap)}개</b>에서 우리 링크가 빠졌습니다.`
       + live("그 검색어를 열면 무엇을 고칠지 나옵니다."),
       `<button class="go" onclick="AS_showGap()">빠진 검색어 보기</button>`);
   return put(`AI 요약이 뜬 ${num(s.on)}개 <b>전부에 우리 링크가 실렸습니다.</b>`
-    + live("순위가 떨어지면 요약에서도 빠지기 쉬워 다음 확인 때 다시 봅니다."), AS_act("rank"));
+    + live("순위가 떨어지면 요약에서도 빠지기 쉬워 다음 확인 때 다시 봅니다."), SM.ui.act("rank"));
 }
 
 /* 띠의 [빠진 검색어 보기] — 빠진 검색어는 aio_exposure 기회라 [처리] 큐가 맡는다. 그 탭으로 데려가

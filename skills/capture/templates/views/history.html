@@ -56,12 +56,6 @@
 #view-history .hs-pill:empty { display:none; }
 
 /* ── 이니셜 아바타 — 종류를 한눈에 구분하는 자리 ── */
-.hs-av { flex:none; display:inline-flex; align-items:center; justify-content:center;
-  width:28px; height:28px; border-radius:50%; font:650 var(--fs-1)/1 var(--sans);
-  color:var(--accent); background:var(--accent-wash); }
-.hs-av.a1 { color:var(--info); background:var(--info-wash); }
-.hs-av.a2 { color:var(--sub); background:var(--sunk); }
-.hs-av.w { color:var(--warn); background:var(--warn-wash); }
 
 /* ── 신선도 보드(히어로): 막대 길이 = 마지막 실행 뒤 경과일, 세로 눈금 = 14일 ── */
 #lastby .lb { display:grid; gap:var(--sp-4); --rr:0px; }
@@ -517,8 +511,7 @@ function HS_lastBy() {
 const HS_av = (k, warn) => {
   const n = HS_kind(k);
   const h = Array.from(String(k)).reduce((a, c) => a + c.charCodeAt(0), 0) % 3;
-  return `<span class="hs-av ${warn ? "w" : "a" + h}" aria-hidden="true">${
-    esc(Array.from(n)[0] || "?")}</span>`;
+  return SM.ui.avatar(Array.from(n)[0] || "?", {tone: warn ? "w" : ["a", "i", "n"][h], cls: "hs-av"});
 };
 
 // 하루 단위 집계 — KPI 스파크의 재료. 새 페이로드는 없다: d.runs 를 날짜로 묶을 뿐이다.
@@ -815,7 +808,7 @@ function HS_effLine(c) {
     title="고친 날 앞 ${e.nb}일과 뒤 ${e.nf}일의 하루 평균 클릭입니다 — 같은 기간에 다른 것도
 바뀌므로 이 수정만의 몫이라는 뜻은 아닙니다."
     >고친 뒤 하루 평균 클릭 <b>${one(e.b)}</b> → <b>${one(e.f)}</b>
-    (${e.d >= 0 ? "+" : "−"}${one(Math.abs(e.d))})</div>`;
+    (${SM.ui.sign(e.d, "+")}${one(Math.abs(e.d))})</div>`;
 }
 
 /* 루프의 반대쪽 끝 — 이 수정을 낳은 기회 카드로 데려간다. 기회 id 는 페이로드에 이미
@@ -1021,8 +1014,7 @@ function HS_todo(d) {
   if (lv && lv.cls === "bad")
     out.push({say: `지난 <b>${esc(HS_kind(last.kind))}</b> 실행이 실패했습니다.` +
         `<span class="live"> 다시 돌리면 이어서 채워집니다.</span>` +
-        `<span class="hint" tabindex="0" data-tip="${esc(lv.why)}" title="${esc(lv.why)}"
-          aria-label="${esc(lv.why)}">i</span>`,
+        SM.ui.hint(lv.why),
       act: p => HS_rerun(last.kind, p), dot: "bad"});
   const g = d.guide || {}, steps = g.steps || [];
   const next = g.here >= 0 ? steps[g.here] : null;
@@ -1032,9 +1024,7 @@ function HS_todo(d) {
     // "다음은 X"(전역 우선순위)는 [개요] 한 곳이 말한다 — 이 화면은 실행 기록이라
     // 아직 안 끝난 단계라는 사실만 적는다.
     out.push({dot: "warn", say: `아직 끝나지 않은 단계가 있습니다: <b>${esc(next.t)}</b>.${next.state
-        ? `<span class="hint" tabindex="0" data-tip="지금 상태: ${esc(next.state)}"
-             title="지금 상태: ${esc(next.state)}"
-             aria-label="지금 상태: ${esc(next.state)}">i</span>` : ""}`,
+        ? SM.ui.hint("지금 상태: " + next.state) : ""}`,
       // 그 단계가 그대로 돌 수 있으면 두 배포가 같은 일을 한다 — act() 한 벌로 낸다
       // (로컬은 그 단계의 명령 칩, 호스팅은 그 단계의 실행 버튼). 못 도는 단계
       // (사이트 등록·콘텐츠 작성)만 갈린다: 로컬은 안내가 든 명령, 호스팅은 일괄 실행.

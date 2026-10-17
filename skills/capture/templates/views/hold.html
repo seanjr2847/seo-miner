@@ -42,11 +42,6 @@
 #hold-sec .hd-day { white-space:nowrap; }
 #hold-sec .chip { margin:0; white-space:nowrap; }
 /* 아바타 — 경로의 첫 글자. 색은 세 가지 옅은 면을 돌려 쓴다(색이 뜻을 갖지 않는 구별용). */
-#hold-sec .hd-av { flex:0 0 auto; display:inline-grid; place-items:center; width:36px; height:36px;
-  border-radius:12px; font:700 var(--fs-2)/1 var(--sans); color:var(--accent); background:var(--accent-wash); }
-#hold-sec .hd-av.a1 { color:var(--info); background:var(--info-wash); }
-#hold-sec .hd-av.a2 { color:var(--warn); background:var(--warn-wash); }
-#hold-sec .hd-av.sm { width:24px; height:24px; border-radius:8px; font-size:var(--fs-1); }
 
 /* ── ① KPI 넷 ───────────────────────────────────────────── */
 @media (max-width:560px) { #hold-sec .hd-kv b { font-size:var(--fs-4); } #hold-sec .hd-k .hd-kh { flex-wrap:wrap; } }
@@ -265,7 +260,7 @@ function HD_posPill(b, a, thin) {
 function HD_numPill(b, a, unit) {
   const d = a - b;
   if (!d) return HD_pill("ne", "그대로");
-  return HD_pill(d > 0 ? "up" : "dn", `<span class="v">${d > 0 ? "+" : "−"}${num(Math.abs(d))}</span>${unit || ""}`);
+  return HD_pill(d > 0 ? "up" : "dn", `<span class="v">${SM.ui.sign(d)}${num(Math.abs(d))}</span>${unit || ""}`);
 }
 // 접힌 줄의 한 줄 — 순위·클릭만.
 function HD_baLine(x) {
@@ -300,7 +295,7 @@ function HD_scale(pb, pa, thin) {
 function HD_cmp(x, what) {
   if (!x || (!x.before && !x.after)) return `<p class="none">${esc(what)}의 실적이 수집분에 없습니다.</p>`;
   const b = x.before, a = x.after;
-  const tip = (t, why) => `${esc(t)}<span class="hint" tabindex="0" data-tip="${esc(why)}" aria-label="${esc(why)}">i</span>`;
+  const tip = (t, why) => `${esc(t)}${SM.ui.hint(why, {title: false})}`;
   const head = `<div class="hd-cr hd-hd" role="row"><span role="columnheader">항목</span>
     <div class="lg"><span class="k" role="columnheader">${tip(`고치기 전 (${b ? HD_md(b.date) : "없음"})`, "고친 날까지의 마지막 수집분")}</span>
     <span class="k" role="columnheader">${tip(`지금 (${a ? HD_md(a.date) : "없음"})`, "고친 뒤 최신 수집분")}</span></div>
@@ -329,7 +324,7 @@ function HD_cmp(x, what) {
     + pair("클릭률", rate, n => n.toFixed(1) + "%", () => {
         const d = Math.round(((rate(a) || 0) - (rate(b) || 0)) * 10) / 10;
         return !d ? HD_pill("ne", "그대로")
-          : HD_pill(d > 0 ? "up" : "dn", `<span class="v">${d > 0 ? "+" : "−"}${Math.abs(d)}</span>%p`);
+          : HD_pill(d > 0 ? "up" : "dn", `<span class="v">${SM.ui.sign(d)}${Math.abs(d)}</span>%p`);
       });
   return `<div class="hd-cmp" role="table" aria-label="${esc(what)} 고치기 전과 지금">${head}${rows}</div>
     <p class="hd-nt">${HD_note(x)}</p>`;
@@ -383,7 +378,7 @@ function HD_drSync() {
 }
 const HD_av = (page, i, sm) => {
   const t = urlPath(page).replace(/^\/+/, "").match(/[^\W_]/u);
-  return `<span class="hd-av a${i % 3}${sm ? " sm" : ""}" aria-hidden="true">${esc(t ? t[0].toUpperCase() : "/")}</span>`;
+  return SM.ui.avatar(t ? t[0].toUpperCase() : "/", {size: sm ? 24 : 36, tone: ["a", "i", "w"][i % 3], cls: "hd-av"});
 };
 const HD_days = (s, u) => Math.round((Date.parse(u) - Date.parse(s)) / 864e5);
 const HD_left = h => Number.isFinite(h.days_left) ? h.days_left : null;

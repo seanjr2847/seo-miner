@@ -77,9 +77,7 @@
 .cp-dom { font-family:var(--mono); font-size:var(--fs-1); word-break:break-all; }
 
 /* 이니셜 아바타 — 외부 파비콘을 부르지 않는다(오프라인에서도 같은 모양). 우리만 녹청. */
-.cp-av { flex:none; display:grid; place-items:center; width:32px; height:32px; border-radius:10px;
-  background:var(--sunk); color:var(--sub); font:650 var(--fs-2)/1 var(--sans); }
-.cp-me-row .cp-av { background:var(--accent); color:var(--accent-ink); }
+.cp-me-row .cp-av.ui-av { background:var(--accent); color:var(--accent-ink); }
 
 /* ── 몫 순위표 ─ 몫은 숫자보다 길이로 읽힌다 ───────────────── */
 .cp-tb { --cols:22px 32px minmax(0,1.7fr) minmax(0,1fr) 48px 72px; }
@@ -317,9 +315,6 @@ const CP_name = s => ((window.__STAGES__ || {})[s] || {}).t || "";
 const CP_gain = s => ((window.__STAGES__ || {})[s] || {}).gain || "";
 
 /* 부제는 한 문장이다 — 두 문장째부터는 이 (i) 안으로 접는다. */
-const CP_tip = t =>
-  `<span class="hint" tabindex="0" data-tip="${esc(t)}" title="${esc(t)}"
-     aria-label="${esc(t)}">i</span>`;
 
 /* 카드 머리 한 벌 — 제목 · 보조 설명(id 가 있으면 그 자리) · 오른쪽 도구. */
 const CP_head = (title, sub, right, sid) =>
@@ -329,8 +324,8 @@ const CP_head = (title, sub, right, sid) =>
 const CP_date = (id, v) => `<span class="cp-date"${id ? ` id="${id}"` : ""}>${
   v ? esc(String(v).slice(0, 10)) + " 기준" : ""}</span>`;
 // 도메인 이니셜 아바타.
-const CP_av = d => `<span class="cp-av" aria-hidden="true">${
-  esc((String(d || "").replace(/^www\./, "")[0] || "?").toUpperCase())}</span>`;
+const CP_av = d => SM.ui.avatar(
+  (String(d || "").replace(/^www\./, "")[0] || "?").toUpperCase(), {size: 32, cls: "cp-av"});
 
 /* 몫 순위표 — 우리 줄만 녹청 면, 나머지는 회색. 크기는 막대 길이가 말하고 숫자는 옆에 둔다.
    막대는 추정 트래픽 기준이다(몫과 같은 분모). */
@@ -369,7 +364,7 @@ function CP_standing(d) {
   const me = rows.find(r => r.is_self), top = rows.find(r => !r.is_self);
   const pc = r => (r && r.share != null) ? Math.round(r.share * 100) + "%" : null;
   const mine = pc(me), best = pc(top);
-  const tip = CP_tip("몫은 추정 트래픽 기준이라 실측이 아니라 추정입니다. 순위를 가진 " +
+  const tip = SM.ui.hint("몫은 추정 트래픽 기준이라 실측이 아니라 추정입니다. 순위를 가진 " +
                      "검색어 수와 같이 읽습니다. 우리 줄이 녹청입니다.");
   return (mine && best
     ? `우리 몫은 <b>${mine}</b>, 가장 큰 곳은 ${esc(top.domain)} <b>${best}</b>입니다.`
@@ -391,7 +386,7 @@ function CP_roles(d, cls) {
     + `${esc(r.domain)}</span>`).join("");
   return `<div class="card cp-roles ${cls}">` + CP_head("경쟁사에서 뺀 곳",
       "검색결과가 겹쳐도 경쟁사가 아니라서 뺀 곳" +
-      CP_tip("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
+      SM.ui.hint("그 도메인이 무슨 검색어로 트래픽을 받는지 보고 가릅니다. 여러 브랜드를 파는 쇼핑몰은 "
              + "남의 브랜드 이름으로, 경쟁 사업체는 자기 이름과 자기 제품으로 받습니다. 틀렸으면 "
              + "[설정]의 경쟁사 칸에 적으세요. 적은 것은 판정과 무관하게 경쟁사로 씁니다."))
     // 갈래 순서·목록은 이름표(scoring.ROLES)를 그대로 따른다 — 사본(channel·media·other)이면
@@ -715,8 +710,6 @@ const CP_acts = (...parts) => {
 
 /* 빈 상태 한 벌 — 무엇이 없나(<b>) · 채우면 무엇을 얻고 무엇이 드나(<p>, 정본은
    STAGE_LABELS 의 gain) · 무엇을 누르나(.acts). */
-const CP_empty = (title, why, acts, tip) =>
-  `<div class="empty"><b>${title}${tip ? CP_tip(tip) : ""}</b><p>${why}</p>${acts || ""}</div>`;
 
 /* 격차 목록·몫 표는 [관리] 탭에 있다 — 거기로 가는 손잡이는 숨은 탭에 스크롤하지 말고 탭부터 연다. */
 const CP_manage = () => { if (SM.modeNow("competitors") !== "manage") SM.setMode("competitors", "manage"); };
@@ -829,7 +822,7 @@ function CP_shareCard(d, rv, cls) {
       CP_date("cp-share-eyebrow", d.comp_date), "cp-share-sub") + CP_shareRows(d) + `</div>`;
   }
   const empty = d.comp_date
-    ? CP_empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다" : "겹치는 경쟁 도메인이 없습니다",
+    ? SM.ui.empty(rv.all ? "자동 탐지로 찾은 경쟁 도메인이 없습니다" : "겹치는 경쟁 도메인이 없습니다",
         "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
         "적어 두면 그것부터 맞댑니다.",
         // 띠가 이미 같은 행동(재실행)을 들고 있다 — 여기 또 두지 않는다.
@@ -840,13 +833,13 @@ function CP_shareCard(d, rv, cls) {
           <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
             이어서 채워집니다.</p>${CP_do("competitors", "", false)}</div>`
       : CP_ran(d)
-      ? CP_empty(`${esc(CP_name("competitors"))}는 돌았지만 몫을 잰 도메인이 없습니다`,
+      ? SM.ui.empty(`${esc(CP_name("competitors"))}는 돌았지만 몫을 잰 도메인이 없습니다`,
           "주제가 좁거나 순위를 가진 검색어가 적을 때 이렇게 나옵니다. 경쟁 도메인을 직접 " +
           "적어 두면 그것부터 맞댑니다.",
           CP_acts(READONLY || window.nextStep ? "" : window.act("competitors", "", false),
                   CP_toSettings()))
       // 제목은 띠(「경쟁사를 아직 찾지 않았습니다」)를 되풀이하지 않고 이 섹션이 무엇이 비었는지를 말한다.
-      : CP_empty("유기 검색 몫이 아직 비었습니다", CP_gain("competitors"),
+      : SM.ui.empty("유기 검색 몫이 아직 비었습니다", CP_gain("competitors"),
           // 띠가 이미 [경쟁사 찾기]를 주요 행동으로 든다(CP_nextStep) — 같은 버튼을
           // 250px 안에 두 번 두지 않는다. 띠가 없는 배포에서만 여기로 물러선다.
           CP_acts(READONLY || window.nextStep ? ""
@@ -890,7 +883,7 @@ VIEW("competitors", function (d) {
     // 배지 이름을 산문에 박으면 배지 문구를 바꿀 때마다 두 벌이 된다 — 갈래가
     // 무슨 뜻인지는 배지 자신이 CP_KINDS 툴팁으로 말한다.
     : "점수가 높은 것부터 놓았습니다." +
-      CP_tip("점수 순은 검색량 순서와 다릅니다. 경쟁사가 잡은 검색어는 같은 수집에서 " +
+      SM.ui.hint("점수 순은 검색량 순서와 다릅니다. 경쟁사가 잡은 검색어는 같은 수집에서 " +
              "후보로 이미 들어가 있고(이미 추적 중이거나 구글 실적에 잡힌 것은 빠집니다), " +
              "켜는 자리는 [키워드 관리] 화면의 후보 탭입니다.");
   $("cp-gap-h").textContent = CP_title();
@@ -900,7 +893,7 @@ VIEW("competitors", function (d) {
       ? `<div class="empty err"><b>${esc(CP_name("gaps"))}에서 멈췄습니다</b>
           <p>지난 실행이 도중에 멈췄습니다. 다시 분석하면 이어서 채워집니다.</p>
           ${CP_do("gaps", "", false)}</div>`
-      : CP_empty("키워드 격차를 아직 재지 않았습니다",
+      : SM.ui.empty("키워드 격차를 아직 재지 않았습니다",
           "경쟁사가 잡은 검색어를 우리 순위와 맞대어 새로 쓸 것과 고칠 것을 가릅니다. " +
           "이미 모은 숫자만 쓰므로 조회 비용이 들지 않습니다.",
           CP_do("gaps", CP_name("gaps"), false));

@@ -40,12 +40,6 @@
   color:var(--sub); padding-top:4px; }
 #ranks .rk-lg span { display:inline-flex; align-items:center; gap:6px; }
 /* 이름 첫 글자 아바타 — 검색어·도메인 옆의 스캔 손잡이. 색은 글자 코드로 네 갈래. */
-#ranks .rk-av { flex:none; display:inline-flex; align-items:center; justify-content:center;
-  width:28px; height:28px; border-radius:50%; font:650 var(--fs-1)/1 var(--sans);
-  font-style:normal; background:var(--accent-wash); color:var(--accent); }
-#ranks .rk-av.t1 { background:var(--info-wash); color:var(--info); }
-#ranks .rk-av.t2 { background:var(--warn-wash); color:var(--warn); }
-#ranks .rk-av.t3 { background:var(--sunk); color:var(--sub); }
 /* 구간 색점 — 순위 옆에서 어느 지층인지 색으로 잇는다(숫자가 뜻을 말하고 색은 거든다). */
 #ranks .rk-dot { display:inline-block; flex:none; width:10px; height:10px; border-radius:50%;
   background:var(--accent); }
@@ -234,11 +228,9 @@ let RK_ST = "";
    행동 버튼도 셸이 배포에 맞게 고른다(window.act): 로컬은 명령 칩, 호스팅은 버튼. */
 const RK_next = (msg, acts) => window.nextStep &&
   nextStep("rank", msg ? `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : "") : "");
-// 명령 칩의 정본은 셸의 window.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg).
+// 명령 칩의 정본은 셸의 SM.ui.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg).
 // 예전에 여기 있던 폴백은 이름 없는 `/capture rank` 를 찍었고, 박제본을 받은 사람이
 // 그걸 복사하면 doctor 가 어느 사이트냐고 되묻는 명령이 됐다.
-const RK_act = (stage, label, primary) =>
-  window.act ? window.act(stage, label, primary) : "";
 /* 연결로 보내는 버튼 — **로컬에서만** 낸다. 호스팅은 키를 서버가 대고 설정 화면
    자체가 없어서, 이 버튼이 설정으로 보내 봐야 그 항목이 없는 막다른 길이었다.
    호스팅에서는 조회 버튼이 그 자리를 그대로 대신한다. */
@@ -345,7 +337,7 @@ function RK_chips(bs, total) {
    짓는다 — 새 필드를 요구하지 않는다. */
 function RK_av(k) {
   const ch = [...String(k).trim()][0] || "?";
-  return `<i class="rk-av t${ch.codePointAt(0) % 4}" aria-hidden="true">${esc(ch.toUpperCase())}</i>`;
+  return SM.ui.avatar(ch.toUpperCase(), {tone: ["a", "i", "w", "n"][ch.codePointAt(0) % 4], cls: "rk-av"});
 }
 const RK_bandOf = r => (RK_bands().find(b => b.hit(r)) || {k: "none"}).k;
 
@@ -412,7 +404,7 @@ function RK_moves(d, c) {
       <p>확인일이 1회뿐이라 아직 변화가 없습니다.</p></div></div>
       <div class="empty"><b>견줄 직전 확인이 없습니다</b>
       <p>한 번 더 확인하면 어떤 검색어가 오르고 내렸는지 여기에 나옵니다.</p>
-      <div class="acts">${RK_act("rank", RK_run("rank"), false)}</div></div></div>`;
+      <div class="acts">${SM.ui.act("rank", RK_run("rank"), false)}</div></div></div>`;
   const mv = RK_ROWS.filter(r => RK_d(r) != null && !RK_flat(r) && r.pos != null && RK_prevPos(r) != null)
     .sort((a, b) => Math.abs(RK_d(b)) - Math.abs(RK_d(a)));
   let shown = mv.slice(0, 6);
@@ -461,7 +453,7 @@ function RK_kpis(c) {
   const pct = n => `<span class="gm">전체의 ${Math.round(n / N * 100)}%</span>`;
   const mv = (n, kind) => RK_HAS_PREV ? card(kind, kind === "k-up" ? "오른 것" : "내린 것", n,
     `${esc(c.prevDate)} 대비 ±${(RULES.rank_noise || 3) - 1}칸 밖으로 움직인 검색어`,
-    n ? `<span class="gm ${kind === "k-up" ? "gm-up" : "gm-down"}">${kind === "k-up" ? "+" : "−"}${n}</span>` : `<span class="gm">변화 없음</span>`)
+    n ? `<span class="gm ${kind === "k-up" ? "gm-up" : "gm-down"}">${SM.ui.sign(kind === "k-up" ? 1 : -1)}${n}</span>` : `<span class="gm">변화 없음</span>`)
     : card(kind, kind === "k-up" ? "오른 것" : "내린 것", null, "견줄 직전 확인 없음");
   return `<div class="rk-kpis">
     ${card("", "1페이지 안", c.onP1, `${c.p1}위 안. 확인한 ${RK_ROWS.length}개 기준`, pct(c.onP1), bar(c.onP1, `확인한 ${RK_ROWS.length}개 중 ${c.onP1}개가 1페이지 안`))}
@@ -801,7 +793,7 @@ VIEW("rank", function (d) {
   const errBox = errN
     ? `<div class="empty err"><b>지난 조회에서 ${errN}건이 실패했습니다</b>
         <p>${live("다시 확인하면 실패한 검색어부터 이어서 채워집니다.")}</p>
-        <div class="acts">${RK_act("rank", RK_run("rank"), false)}</div></div>`
+        <div class="acts">${SM.ui.act("rank", RK_run("rank"), false)}</div></div>`
     : "";
   // 카드 안 빈 상태 — 원인 한 줄과 다음 걸음 하나.
   const emptyCard = html => `<div class="rkg">${errBox}<div class="card">
@@ -831,7 +823,7 @@ VIEW("rank", function (d) {
     const costLine = `추적 중인 검색어 ${num(d.kw_active)}개만큼 제공자 조회 비용이 붙습니다.`;
     RK_next("");
     // 이 카드 안에도 같은 다음 걸음이 선다 — 띠가 걷혀도 빈 화면이 막다른 길이 되지 않게.
-    const nextBtn = run ? RK_act("rank", RK_run("rank")) : (RK_setup() || RK_act("rank", "순위 확인"));
+    const nextBtn = run ? SM.ui.act("rank", RK_run("rank")) : (RK_setup() || SM.ui.act("rank", "순위 확인"));
     $("ranks").innerHTML += emptyCard(`
       <b>${run ? "이번 조회에서 잡힌 순위가 없습니다" : "순위를 아직 확인하지 않았습니다"}</b>
       <p>서치콘솔이 준 평균 순위는 [순위 상승 기회] 화면에 이미 있습니다.
@@ -864,7 +856,7 @@ VIEW("rank", function (d) {
   $("ranks").innerHTML = `
     <div class="rkhead"><p class="rk-cond" id="rk-sub"><span class="rk-nb">검색어 ${
       RK_ROWS.length}개</span>${cond}</p>
-      ${errN ? "" : `<div class="acts">${RK_act("rank", RK_run("rank"), true)}</div>`}</div>
+      ${errN ? "" : `<div class="acts">${SM.ui.act("rank", RK_run("rank"), true)}</div>`}</div>
     <div class="rkg">${errBox}
       ${RK_kpis(c)}
       ${RK_hero(c)}
@@ -891,8 +883,7 @@ VIEW("rank", function (d) {
   $("rk-cap").innerHTML = esc(capped
     ? `추적 검색어 ${num(d.kw_active)}개 중 ${RK_ROWS.length}개까지 이 화면에 옵니다.`
     : `기회 점수가 높은 것부터 봅니다.`)
-    + (d.page_audit_date ? (tip => `<span class="hint" tabindex="0" data-tip="${tip}"
-        title="${tip}" aria-label="${tip}">i</span>`)(
-        `펼친 줄의 페이지 점검은 ${esc(d.page_audit_date)} 기준입니다.`) : "");
+    + (d.page_audit_date ? SM.ui.hint(
+        `펼친 줄의 페이지 점검은 ${d.page_audit_date} 기준입니다.`) : "");
 });
 </script>

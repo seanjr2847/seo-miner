@@ -144,10 +144,6 @@
   #sm-dim .sm-ch .tools{margin-bottom:0}
   #sm-dim .sm-cell{display:flex;align-items:center;gap:12px;min-width:0}
   #sm-dim .sm-cell > div{min-width:0;flex:1}
-  /* 이니셜 아바타 — 검색어·페이지를 훑을 때 첫 글자가 닻이 된다. 색은 한 톤(면 색조). */
-  #sm-dim .sm-av{flex:none;width:28px;height:28px;border-radius:50%;display:grid;
-    place-items:center;background:var(--accent-wash);color:var(--accent);
-    font:650 var(--fs-1)/1 var(--sans);text-transform:uppercase}
   #sm-dim .tw{max-height:none}
   #sm-dim td.num,#sm-dim th.num{white-space:nowrap}
   /* 좁은 화면 — 다섯 열이 390px 에 안 들어가 숫자가 두 줄로 쪼개지고 오른쪽 열이 잘렸다.
@@ -1504,11 +1500,12 @@
       var cmd = b.getAttribute("data-cc") + proj();
       // 복사됐다는 표시는 셸의 .cmd.copied 가 갖는다 — 글자를 갈아치우면 그 자리에
       // 있던 명령이 사라져, 무엇을 복사했는지가 화면에서 없어진다.
-      navigator.clipboard.writeText(cmd).then(function () {
+      SM.ui.copyText(cmd).then(function (ok) {
+        if (!ok) return say("복사하지 못했습니다", "bad");
         b.classList.add("copied");
         say("명령을 복사했습니다", "ok");
         setTimeout(function () { b.classList.remove("copied"); }, 1400);
-      }, function () { say("복사하지 못했습니다", "bad"); });
+      });
     });
   }
   step("고급 분석 패널", handoff);
@@ -1530,7 +1527,7 @@
     var d = now - was;
     if (Math.abs(d) < 1e-9) return ' <span class="d muted">—</span>';
     var good = lowerIsBetter ? d < 0 : d > 0;
-    var body = (d > 0 ? "+" : "−") + fmt(Math.abs(d));
+    var body = SM.ui.sign(d) + fmt(Math.abs(d));
     return ' <span class="d ' + (good ? "up" : "down") + '">' + body + "</span>";
   }
 
@@ -1749,9 +1746,10 @@
         var k = r.key;
         if (dimMode === "pages") k = k.replace(/^https?:\/\/[^/]+/, "") || "/";
         if (dimMode === "devices") k = DEVICE[k] || k;
-        var ini = esc(String(k).replace(/^[\/\s]+/, "").charAt(0) || "/");
-        return '<tr><td title="' + esc(r.key) + '"><div class="sm-cell"><span class="sm-av" ' +
-          'aria-hidden="true">' + ini + '</span><div><span class="sm-k">' + esc(k) +
+        var ini = String(k).replace(/^[\/\s]+/, "").charAt(0) || "/";
+        // 이니셜 아바타는 셸의 공용 부품이다(색은 한 톤 — 검색어·페이지를 훑을 때 첫 글자가 닻이 된다).
+        return '<tr><td title="' + esc(r.key) + '"><div class="sm-cell">' +
+          SM.ui.avatar(ini.toUpperCase(), {tone: "a"}) + '<div><span class="sm-k">' + esc(k) +
           '</span><span class="sm-share"><i style="width:' +
           ((r.impressions || 0) / mxI * 100).toFixed(1) + '%"></i></span></div></div>' +
           '</td><td class="num" data-label="클릭">' + nf(r.clicks) + '</td><td class="num" data-label="노출">' +

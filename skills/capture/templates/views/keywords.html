@@ -119,11 +119,6 @@
 #view-keywords .kwdn i.g { background:var(--mute); opacity:.55; }
 
 /* 이니셜 아바타 — 도메인·검색어 옆에서 스캔을 돕는다. 색은 구간이다(문턱=산화동, 1페이지 안=녹청). */
-#view-keywords .kwav { display:inline-flex; flex:none; align-items:center; justify-content:center;
-  width:28px; height:28px; border-radius:50%; font:650 var(--fs-1)/1 var(--sans);
-  background:var(--info-wash); color:var(--info); }
-#view-keywords .kwav.w { background:var(--warn-wash); color:var(--warn); }
-#view-keywords .kwav.a { background:var(--accent-wash); color:var(--accent); }
 #view-keywords .kwtop .kwav { width:32px; height:32px; }
 #view-keywords .kwl { display:flex; align-items:flex-start; gap:10px; }
 #view-keywords .kwm { min-width:0; flex:1; }
@@ -309,11 +304,8 @@ const KW_score = q => { const o = oppOf(q); return Number.isFinite(o && o.score)
    행동 버튼도 셸이 배포에 맞게 고른다(window.act): 로컬은 명령 칩, 호스팅은 버튼. */
 const KW_next = (msg, acts) => window.nextStep &&
   nextStep("keywords", `<p>${msg}</p>` + (acts ? `<div class="acts">${acts}</div>` : ""));
-// 명령 칩의 정본은 셸의 window.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg).
-// 예전에 여기 있던 폴백은 이름 없는 `/capture gsc` 를 찍어서, 박제본을 받은 사람이
-// 복사하면 doctor 가 어느 사이트냐고 되묻는 명령이 됐다. 셸이 없으면 아무것도 안 낸다.
-const KW_act = (stage, label, primary) =>
-  window.act ? window.act(stage, label, primary) : "";
+// 명령 칩의 정본은 셸의 SM.ui.act 한 벌이다 — 그것만 사이트 이름을 싣는다(siteArg). 이름 없는
+// `/capture gsc` 를 여기서 찍으면 복사한 사람에게 doctor 가 어느 사이트냐고 되묻는 명령이 된다.
 // 띠의 주요 행동 — 띠가 이름을 부른 검색어를 그 자리에서 펼친다. 목록을 훑는 대신
 // "제일 먼저 할 것"이 바로 열린다. 검색어를 선택자로 쓰지 않는다(따옴표에서 어긋난다).
 let KW_TOP = "";
@@ -332,9 +324,9 @@ const KW_band = r => r.band || (Number.isFinite(r.pos) && r.pos <= (RULES.page1 
 const KW_gap = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
 // 이니셜 아바타 — 색은 구간이다(문턱=산화동 w, 1페이지 안=녹청 a, 이 목록에 없는 검색어=정보색).
 const KW_tone = q => { const r = KW_ROWS.find(x => x.query === q);
-  return r ? (KW_band(r) === "page2" ? "w" : "a") : ""; };
-const KW_av = (q, tone) => `<span class="kwav ${tone === undefined ? KW_tone(q) : tone}"
-  aria-hidden="true">${esc(String(q).trim().charAt(0).toUpperCase() || "·")}</span>`;
+  return r ? (KW_band(r) === "page2" ? "w" : "a") : "i"; };
+const KW_av = (q, tone) => SM.ui.avatar(String(q).trim().charAt(0).toUpperCase() || "·", {
+  tone: tone === undefined ? KW_tone(q) : tone, cls: "kwav"});
 // 눌린 칩 표시 — 칩을 다시 그리지 않고 켜짐만 옮긴다(키보드 초점이 안 사라진다).
 function KW_pressed(sel, v) {
   document.querySelectorAll(sel).forEach(b => {
@@ -660,7 +652,7 @@ function KW_mvDiv() {
   const ups = KW_MV.filter(m => m.dir === "up").sort((a, b) => val(b) - val(a)).slice(0, 3);
   const dns = KW_MV.filter(m => m.dir === "down").sort((a, b) => val(a) - val(b)).slice(0, 3);
   const rows = [...ups, ...dns].map(m => ({label: cut(m.query), value: +val(m).toFixed(1)}));
-  const fmt = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1);
+  const fmt = v => SM.ui.sign(v) + Math.abs(v).toFixed(1);
   box.innerHTML = `<div class="kwch"><div><h2>가장 크게 움직인 검색어</h2>
     <p class="sub">직전 기록 대비 순위가 움직인 칸 수입니다. 오른쪽이 올라온 것입니다.</p></div></div>
     ${window.chDiverge ? window.chDiverge(rows, {fmt})
@@ -971,7 +963,7 @@ document.addEventListener("keydown", e => {
 // 빈 상태의 행동 — 배포에 맞는 것을 셸이 고른다(로컬은 명령 칩, 호스팅은 버튼).
 // 바로 위 띠가 같은 단계를 주요 버튼으로 들고 있으므로 여기서는 보조 톤으로 물러난다
 // (화면에 주요 버튼은 하나다).
-const KW_cmd = (stage, label) => `<div class="acts">${KW_act(stage, label, false)}</div>`;
+const KW_cmd = (stage, label) => `<div class="acts">${SM.ui.act(stage, label, false)}</div>`;
 
 // ── 내보내기: 지금 걸러 놓은 목록 그대로. 파일로 만드는 일은 뼈대의 csv() 몫이다.
 function KW_csvLog() {
@@ -1093,7 +1085,7 @@ VIEW("keywords", function (d) {
         live("검색어를 더 캐면 여기부터 채워집니다.")
       : "실적을 아직 수집하지 않았습니다. " +
         live("수집하면 1페이지 문턱에 걸린 검색어부터 나옵니다."),
-      KW_act(d.gsc_date ? "keywords" : "gsc"));
+      SM.ui.act(d.gsc_date ? "keywords" : "gsc"));
   } else if (!top) {
     KW_next("이 목록의 검색어는 모두 처리했습니다. " +
       live("다음 수집에서 새로 걸린 검색어가 여기 섭니다."));

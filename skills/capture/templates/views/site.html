@@ -267,10 +267,6 @@ section.sec-quiet details.why { display:none; }
    URL·검색어는 이니셜 아바타 + 경로(본문) + 호스트(보조)로 선다 — 스캔하는 눈이 첫 글자와
    경로 끝을 먼저 잡는다. 등폭은 URL 에만 쓴다(검색어는 한글이라 본문 서체). */
 .stu { display:flex; align-items:center; gap:10px; min-width:0; }
-.stav { flex:none; width:28px; height:28px; border-radius:50%; display:grid; place-items:center;
-  font:650 var(--fs-1)/1 var(--sans); font-style:normal; background:var(--accent-wash); color:var(--accent); }
-.stav.t1 { background:var(--info-wash); color:var(--info); }
-.stav.t2 { background:var(--sunk); color:var(--sub); }
 .stt { display:flex; flex-direction:column; min-width:0; }
 .stp { font:500 var(--fs-1)/1.45 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
 .stp a { color:inherit; }
@@ -591,18 +587,18 @@ function stUrl(u, opt) {
   } catch (e) { /* URL 이 아닌 문자열은 그대로 보인다 */ }
   const seg = path.split("/").filter(Boolean).pop() || host || "/";
   const ch = (seg.replace(/[^0-9A-Za-z\uAC00-\uD7A3]/g, "")[0] || "/").toUpperCase();
-  const tone = (s.length + ch.charCodeAt(0)) % 3;
+  const tone = ["a", "i", "n"][(s.length + ch.charCodeAt(0)) % 3];
   const p = o.link
     ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(path)}</a>` : esc(path);
-  return `<span class="stu" title="${esc(s)}"><i class="stav t${tone}" aria-hidden="true">${esc(ch)}</i>`
+  return `<span class="stu" title="${esc(s)}">${SM.ui.avatar(ch, {tone, cls: "stav"})}`
     + `<span class="stt"><span class="stp">${p}</span>`
     + (host ? `<span class="sth">${esc(host)}</span>` : "") + `</span>${o.after || ""}</span>`;
 }
 // 검색어 칸: 이니셜 아바타 + 검색어(본문 서체 — 한글이라 등폭이 아니다).
 function stQ(q) {
   const s = String(q || ""), ch = (s.trim()[0] || "?").toUpperCase();
-  return `<span class="stu"><i class="stav t${(s.length + ch.charCodeAt(0)) % 3}"`
-    + ` aria-hidden="true">${esc(ch)}</i><span class="stq">${esc(s)}</span></span>`;
+  return `<span class="stu">${SM.ui.avatar(ch, {tone: ["a", "i", "n"][(s.length + ch.charCodeAt(0)) % 3], cls: "stav"})}`
+    + `<span class="stq">${esc(s)}</span></span>`;
 }
 const ST_CHEV = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>`;
 // 요약 카드 한 장의 틀 — 제목은 그 카드로 가는 버튼이고, 본문은 갈래마다 다른 그림이다.
@@ -610,8 +606,7 @@ const stKp = (jump, title, body) =>
   `<button type="button" class="kp-go" onclick="stJump('${jump}')"
      title="${esc(title)} 카드로 이동" aria-label="${esc(title)} 카드로 이동">${esc(title)}${ST_CHEV}</button>${body}`;
 // 부제 세 번째 문장 자리 — 산문으로 늘리는 대신 (i) 뒤로 접는다. 키보드로도 닿는다.
-const hint = tip => ` <span class="hint" tabindex="0" data-tip="${esc(tip)}"` +
-  ` title="${esc(tip)}" aria-label="${esc(tip)}">i</span>`;
+const hint = tip => " " + SM.ui.hint(tip);
 /* 누를 수 있어야 참인 절. 박제본에는 누를 것이 없으므로 셸이 이 요소를 뗀다 —
    감싸고 남은 문장만으로 "지금 상태"가 읽혀야 한다. */
 const live = html => `<span class="live">${html}</span>`;
