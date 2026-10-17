@@ -4005,7 +4005,7 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
     return L + [""]
 
 
-CLOSED_NOTE = {"resolved": "저절로 닫혔습니다", "done": "[완료]로 닫혔습니다",
+CLOSED_NOTE = {"resolved": "새 데이터를 본 도구 판정으로 닫혔습니다", "done": "[완료]로 닫혔습니다",
                "dismissed": "[제외]로 닫혔습니다"}
 
 

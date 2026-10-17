@@ -1834,6 +1834,38 @@ def test_local_profile_settings_read_and_write_through_handler():
         srv.server_close()
 
 
+def test_dashboard_page_carries_token_without_query():
+    """?t= 없이 연 탭도 저장된다 — 서버가 페이지에 토큰을 실어 준다.
+
+    예전엔 화면이 주소의 ?t= 로만 토큰을 받아서, 주소창 자동완성·즐겨찾기로
+    http://127.0.0.1:8765/#site 를 열면 저장마다 "이 창은 만료됐습니다"가 떴다(2026-10-17
+    사용자: "맨날 이런 메시지 계속 떠"). 토큰은 이 PC 의 주소로 온 요청에만 싣는다 — 주소를
+    바꿔치기한 남의 페이지(DNS rebinding)가 같은 출처로 읽어 가지 못하게."""
+    import http.client
+    srv = _serve()
+    port = srv.server_address[1]
+    try:
+        def page(host):
+            c = http.client.HTTPConnection("127.0.0.1", port)
+            c.request("GET", "/", headers={"Host": host})
+            body = c.getresponse().read()
+            c.close()
+            return body
+        mark = b"window.__SM_TOKEN__=" + json.dumps(dashboard.TOKEN).encode()
+        for host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"):
+            body = page(host)
+            # 머리(head)에 있어야 본문 스크립트의 const TOKEN 보다 먼저 선다
+            assert mark in body and body.index(mark) < body.index(b"</head>"), host
+        for host in (f"evil.example:{port}", "attacker.test", f"127.0.0.1.evil.example:{port}"):
+            assert dashboard.TOKEN.encode() not in page(host), f"{host} 에 토큰을 실어 보냈다"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    # 화면은 실어 준 토큰을 먼저 본다 — ?t= 만 보면 다시 같은 증상이다
+    shell = (Path(dashboard.__file__).parent.parent / "templates" / "dashboard.html").read_text("utf-8")
+    assert re.search(r"(?:const|let) TOKEN = window\.__SM_TOKEN__ \|\|", shell), "셸이 실어 준 토큰을 안 읽는다"
+
+
 def test_dashboard_token_survives_restart():
     """대시보드를 다시 띄워도 토큰이 같다 — 이미 열린 탭(?t=)이 계속 쓴다.
 

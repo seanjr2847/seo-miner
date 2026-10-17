@@ -581,7 +581,7 @@ function oppRow(o) {
         ${o.reasoning ? `<div class="why">${esc(o.reasoning)}</div>` : ""}
         ${window.oppClosedWhy(o)}
       </div>
-      ${o.status === "new" ? "" : `<div class="st st-${o.status}">${window.OPP_LABEL[o.status] || esc(o.status)}</div>`}
+      ${o.status === "new" ? "" : window.oppStBadge(o, "div")}
     </summary>
     ${oppPanel(o, oppActs(o) + (OV_see(o) ? `<div class="acts">${OV_see(o)}</div>` : ""))}${OV_more(o)}
   </details>`;
@@ -635,7 +635,7 @@ const OV_PAGE = 10;
 let OPPS = [], KIND_FILTER = null, OPP_Q = "", OPP_ST = null, OPP_N = OV_PAGE;
 // 상태 묶음의 정본은 셸의 OPP_ST_GROUP·OPP_ST_OPT 한 벌이다 — 기회를 보여 주는 화면이
 // 여덟이라 여기 베껴 두면 새 상태가 생길 때 몇 벌만 늙는다(test_seams 44).
-// open 은 "이 둘이면"이다("done 이 아니면"이 아니다) — 저절로 풀린 기회처럼 새 상태가
+// open 은 "이 둘이면"이다("done 이 아니면"이 아니다) — 도구가 닫은 기회처럼 새 상태가
 // 생겨도 [아직 안 함]으로 새지 않는다(test_seams 23).
 
 // 상태로 먼저 가른다 — 칩 개수도 이 묶음을 세야 "CTR 미달 12" 를 눌렀는데 8건이
@@ -688,7 +688,7 @@ function OV_triageBox() {
     <p>${hot}심사에서 [작업]으로 보낸 검색어가 여기 개선 기회로 섭니다.</p>
     ${READONLY ? "" : `<div class="acts"><button class="go" onclick="SM.touched=true;SM.show('triage')">심사하기</button></div>`}</div>`;
 }
-// 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「저절로 풀림」인
+// 다 처리한 뒤의 빈 상자 — 끝난 것이 실제로 있는 상태 묶음으로 보낸다. 전부 「자동 종료」인
 // 사이트에서 [완료·제외]으로 보내면 거기서 또 빈 목록을 만났다. 이름은 거르개와 같은 말(OPP_ST_OPT).
 function OV_doneBox() {
   const tri = OV_triageBox();
@@ -826,6 +826,22 @@ function oppChips() {
   dn.querySelector(".ovk-c b").textContent = num(oppFiltered().length);
 }
 
+/* [자동 종료]를 고르면 왜 닫혔나를 갈래별로 먼저 센다 — 줄마다 배지가 말해도 252줄을
+   내려가며 세어 볼 사람은 없다. 예전 이름 '저절로 풀림' 252건은 "많이 좋아졌다"로 읽혔는데
+   실제로 해결된 것은 20건이었다(theotherskin, 2026-10-17). 갈래 말은 셸의 OPP_TAG_LABEL 한 벌. */
+function OV_tagLine(list) {
+  if (OPP_ST !== "resolved") return "";
+  const c = {};
+  for (const o of list) if (window.OPP_TAG_LABEL[o.status_tag]) c[o.status_tag] = (c[o.status_tag] || 0) + 1;
+  const parts = Object.keys(window.OPP_TAG_LABEL).filter(t => c[t])
+    .map(t => `<span title="${esc(window.OPP_TAG_TIP[t])}">${esc(window.OPP_TAG_LABEL[t])} <b>${num(c[t])}</b></span>`);
+  if (!parts.length) return "";
+  // .opp-held 는 flex 라 글자·span 이 따로 줄을 탄다 — 한 문단으로 흐르게 span 하나로 감싼다.
+  return `<p class="opp-held"><span>도구가 새 데이터를 보고 닫은 ${num(list.length)}줄 — ${parts.join(" · ")}.
+    좋아진 것은 「${esc(window.OPP_TAG_LABEL.better)}」뿐입니다. 나머지는 다른 줄과 겹쳤거나, 판정 기준이 바뀌었거나,
+    더 판단할 수 없게 된 것입니다.</span></p>`;
+}
+
 function oppList() {
   OV_drawerSync();
   oppChips();
@@ -849,7 +865,7 @@ function oppList() {
         <div class="acts"><button class="go sec" onclick="oppReset()">조건 지우기</button></div></div>`
       : OV_doneBox();
   const rest = list.length - OPP_N;
-  $("opplist").innerHTML = `<div class="ovrows">${list.slice(0, OPP_N).map(oppRow).join("")}</div>` + (rest > 0
+  $("opplist").innerHTML = OV_tagLine(list) + `<div class="ovrows">${list.slice(0, OPP_N).map(oppRow).join("")}</div>` + (rest > 0
     ? `<div class="acts opp-more">
          <button onclick="oppMore(${OPP_N + 12})">${Math.min(12, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
     : "");
@@ -863,7 +879,7 @@ function oppList() {
       상태 버튼·열기·복사와 같은 범위라야 새로고침 뒤 한 줄이 둘로 갈라지지 않는다.
       [(도구)로 열기]·[요청문 복사]는 목록과 같은 함수라, 누르면 진행 중으로 옮기고
       load() 가 다시 그리면서 카드가 진행 중 칸으로 간다.
-      제외·저절로 풀림은 칸을 안 만든다 — 할 일 흐름 밖이라 목록에서 본다. 관찰 중인
+      제외·도구가 닫은 것은 칸을 안 만든다 — 할 일 흐름 밖이라 목록에서 본다. 관찰 중인
       기회도 칸에 안 오른다(목록 기본값과 같다) — 보드 밑 한 줄(OV_holdLine)이 말한다. */
 const OV_COLS = ["new", "acked", "done"];
 const OV_BOARD_PAGE = 12;
@@ -1017,7 +1033,8 @@ function OV_boardOpen(id) {
 function oppCsv() {
   csv("기회", [["점수", "종류", "상태", "대상", "함께 묶인 검색어", "근거", "생성일"]].concat(
     oppFiltered().map(o => [o.score ?? "", OV_kinds(o).map(([, l]) => l).join(" · "),
-      window.OPP_LABEL[o.status] || o.status, o.target,
+      (o.status === "resolved" && window.OPP_TAG_LABEL[o.status_tag]) || window.OPP_LABEL[o.status] || o.status,
+      o.target,
       OV_targets(o).filter(t => t !== o.target).join(" · "),
       (o.reasoning || "").replace(/\s+/g, " "), o.created || ""])));
 }
@@ -1178,7 +1195,7 @@ function OV_drawerPaint(o) {
   const see = OV_see(o);
   const tabs = [["ev", "근거"], ["do", "할 일"]].concat(ask ? [["ask", "요청문"]] : []);
   if (!tabs.some(([t]) => t === OV_DR_TAB)) OV_DR_TAB = "ev";
-  const seg = (o.status === "resolved" ? `<span class="st st-resolved">${window.OPP_LABEL.resolved}</span>` : "")
+  const seg = (o.status === "resolved" ? window.oppStBadge(o) : "")
     + `<div class="odr-seg" role="group" aria-label="상태">${["new", "acked", "done", "dismissed"].map(st =>
       `<button type="button" aria-pressed="${o.status === st}" onclick="OV_drawerSet('${st}')"${
         o.group && o.group.ids.length > 1 ? ` title="이 줄에 묶인 기회 ${o.group.ids.length}개에 모두 적용합니다"` : ""
