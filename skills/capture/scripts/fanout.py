@@ -35,7 +35,47 @@ import collector  # noqa: E402
 #   dataforseo : Labs·Backlinks. 문서상 동시 30·분당 2000 이지만 계정 하나를 여러
 #                사이트·워커가 같이 쓴다 — 한 단계가 5 를 넘기지 않는다.
 #                (Google Ads 검색량은 분당 12 제한이라 여기 없다 — serp_adapter 가 간격을 둔다)
-LIMITS = {"openrouter": 6, "own_site": 4, "dataforseo": 5}
+#   rival_pages: 순위 단계가 경쟁 글(남의 사이트 최대 40장)의 제목·H2 를 열 때. 전체로 4 개,
+#                그리고 **한 호스트에는 한 번에 하나**(per_host) — 한 경쟁사가 여러 검색어에서
+#                상위면 그 사이트에 같은 시각 요청이 몰린다. 호스트가 다른 글끼리만 겹친다.
+#   pagespeed  : PageSpeed Insights(속도 단계). 키 없이는 여러 사용자와 나눠 쓰는 하루 한도라
+#                한 번에 둘만 — 429 가 나면 이미 떠난 호출(최대 workers-1 개)만 더 나간다.
+LIMITS = {"openrouter": 6, "own_site": 4, "dataforseo": 5,
+          "rival_pages": 4, "pagespeed": 2, "per_host": 1}
+
+
+class HostGates:
+    """호스트마다 동시 `LIMITS["per_host"]` 개 — 남의 사이트에 같은 시각 요청이 몰리지 않게.
+
+    일꾼 안에서 `with gates(url): fetch(url)` 로 쓴다. 다른 호스트는 서로 안 막는다.
+    """
+
+    def __init__(self, per_host: int | None = None):
+        self._n = per_host or LIMITS["per_host"]
+        self._lock = threading.Lock()
+        self._gate: dict[str, threading.Semaphore] = {}
+
+    def __call__(self, url: str):
+        from urllib.parse import urlsplit
+        host = (urlsplit(url).hostname or "").lower()
+        with self._lock:
+            return self._gate.setdefault(host, threading.Semaphore(self._n))
+
+
+class Direct:
+    """Stage 없이 each 를 쓰는 자리용 — 항목 예외를 세지 않고 그대로 올리고, commit·간격도 없다.
+
+    순차 루프를 옮길 때 "오류 처리는 그대로"를 지키려는 것이다(Stage.each 로 바꾸면 예전에
+    단계를 죽이던 예외가 항목 실패 한 건으로 바뀐다).
+    """
+    throttle = 0.0
+
+    def each(self, items, fn, *, label=None) -> int:
+        n = 0
+        for it in items:
+            fn(it)
+            n += 1
+        return n
 
 
 class _Stopped(Exception):

@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -528,13 +529,22 @@ def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -
     검색어마다 가져오면 같은 글을 그 수만큼 다시 연다. 실패도 남긴다: 안 남기면 다음
     런이 같은 주소를 또 두드린다.
     """
-    import time
-
     import collect_page
     todo = db.serp_outlines_stale(conn, urls)[:OUTLINE_MAX_PER_RUN]
     ok = bad = 0
-    for i, u in enumerate(todo):
-        a = collect_page.fetch(u)
+    gates = fanout.HostGates()
+
+    def get(u):
+        # 일꾼 스레드 — 네트워크만. 한 호스트는 한 번에 하나, 쉬는 것(throttle)도 그 자리 안에서
+        # 해야 같은 호스트의 다음 요청이 간격을 두고 나간다. 마지막 주소 뒤에는 안 쉰다.
+        with gates(u):
+            a = collect_page.fetch(u)
+            if throttle and u != todo[-1]:
+                time.sleep(throttle)
+            return a
+
+    def put(u, a):
+        nonlocal ok, bad
         if a.get("error"):
             db.write_serp_outline(conn, u, status=a.get("status"), title=None, h2=[], words=None)
             bad += 1
@@ -548,8 +558,10 @@ def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -
                                   lists=a.get("lists"), images=a.get("images"),
                                   videos=a.get("videos"))
             ok += 1
-        if throttle and i + 1 < len(todo):
-            time.sleep(throttle)
+
+    # 가져오기는 동시에, 적기는 todo 순서로 메인에서 — Stage.each 가 아니라 Direct 를 쓴다:
+    # 여기서 난 예외는 항목 실패로 세지 않고 예전처럼 그대로 올라간다(오류 처리를 안 바꾼다).
+    fanout.each(fanout.Direct(), todo, get, put, workers=fanout.LIMITS["rival_pages"])
     return ok, bad
 
 

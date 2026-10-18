@@ -3010,6 +3010,159 @@ def test_page_vitals_image_column_migrates_as_null():
     assert conn.execute("SELECT img_json FROM page_vitals").fetchone()[0] is None
 
 
+def _timed_fake(delay, peak, lock):
+    """지연을 주입한 가짜 가져오기 — 동시에 떠 있는 수(전체·호스트별)의 최댓값을 잰다."""
+    import threading
+    import time
+    live = {"all": 0, "host": {}}
+
+    def run(host, work):
+        with lock:
+            live["all"] += 1
+            peak["all"] = max(peak["all"], live["all"])
+            live["host"][host] = live["host"].get(host, 0) + 1
+            peak["host"] = max(peak["host"], live["host"][host])
+            peak["threads"].add(threading.get_ident())
+        try:
+            time.sleep(delay)
+            return work()
+        finally:
+            with lock:
+                live["all"] -= 1
+                live["host"][host] -= 1
+    return run
+
+
+def test_serp_outlines_fetch_concurrently_but_write_in_order():
+    """상위 글 제목·H2 — 경쟁 글을 동시에 열되(전체 상한 fanout.LIMITS["rival_pages"], 한 호스트는
+    한 번에 하나) 적는 쪽은 메인 스레드·입력 순서·결과 그대로다. 지연을 주입한 가짜 fetch 로 잰다."""
+    import threading
+    import time
+    from urllib.parse import urlsplit
+
+    import collect_page
+    import fanout
+
+    conn = db.connect()
+    urls = ([f"https://r{i}.example/p" for i in range(10)]
+            + [f"https://same.example/{i}" for i in range(4)] + ["https://bad.example/x"])
+    lock, peak = threading.Lock(), {"all": 0, "host": 0, "threads": set()}
+    run = _timed_fake(0.1, peak, lock)
+
+    def fake_fetch(u):
+        def work():
+            if "bad.example" in u:
+                return {"url": u, "status": 403, "error": "HTTP 403"}
+            return {"url": u, "status": 200, "title": f"T {u[-3:]}", "h2_json": json.dumps(["가", "나"]),
+                    "words": 700, "tables": 1, "lists": 2, "images": 3, "videos": 0}
+        return run(urlsplit(u).netloc, work)
+
+    orig = collect_page.fetch
+    collect_page.fetch = fake_fetch
+    try:
+        t0 = time.monotonic()
+        ok, bad = collect_serp._collect_outlines(fanout.MainThreadOnly(conn), urls, throttle=0.05)
+        took = time.monotonic() - t0
+    finally:
+        collect_page.fetch = orig
+    print(f"  [measure] outlines {len(urls)}장 x 0.1s + throttle 0.05: {took:.2f}s "
+          f"(peak {peak['all']}, 호스트당 {peak['host']})")
+    assert (ok, bad) == (14, 1), (ok, bad)
+    rows = conn.execute("SELECT url, status, title, words FROM serp_outlines WHERE url IN (%s) "
+                        "ORDER BY rowid" % ",".join("?" * len(urls)), urls).fetchall()
+    assert [r["url"] for r in rows] == urls, "적는 순서가 입력 순서가 아니다"
+    assert rows[-1]["status"] == 403 and rows[-1]["title"] is None, dict(rows[-1])
+    assert rows[0]["status"] == 200 and rows[0]["words"] == 700, dict(rows[0])
+    assert 1 < peak["all"] <= fanout.LIMITS["rival_pages"], peak
+    assert peak["host"] == 1, f"한 호스트에 동시에 걸었다: {peak}"
+    assert threading.get_ident() not in peak["threads"], "fetch 가 메인에서 돌았다"
+    # 순차면 15 x (0.1 + 0.05) = 2.2초. 4 동시 + 같은 호스트 직렬이어도 1.2초 안쪽이다.
+    assert took < 1.4, f"동시에 안 돌았다: {took:.2f}s"
+    conn.close()
+
+
+def test_vitals_fetch_concurrently_and_quota_still_stops():
+    """속도 수집 — URL x 기기를 fanout.LIMITS["pagespeed"] 개씩 동시에 재되, 429 는 여전히
+    '실패가 아니라 건너뜀'이고 그 앞에서 잰 행만 남는다(뒤에 떠 있던 호출의 행은 버린다)."""
+    import contextlib
+    import io
+    import threading
+    import time
+
+    import collect_page
+    import collect_vitals as cv
+    import fanout
+
+    conn = db.connect()
+    _project(conn, "vt_par", domain="vt.kr")
+    conn.close()
+    urls = [f"https://vt.kr/{i}" for i in range(5)]
+    sample = {"lighthouseResult": {"categories": {"performance": {"score": 0.5}},
+                                   "audits": {"largest-contentful-paint": {"numericValue": 2500}}}}
+
+    class Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body = status, body
+
+        def json(self):
+            return self._body
+
+    lock, peak, sent = threading.Lock(), {"all": 0, "host": 0, "threads": set()}, []
+    run = _timed_fake(0.2, peak, lock)
+    quota_at = {"n": None}      # 이 번호째(0부터) 호출부터 429
+
+    def fake_get(url, params=None, timeout=None):
+        with lock:
+            n = len(sent)
+            sent.append(dict(params)["url"])
+
+        def work():
+            if quota_at["n"] is not None and n >= quota_at["n"]:
+                return Resp(429, {"error": {"code": 429, "message": "Quota exceeded"}})
+            return Resp(200, sample)
+        return run("psi", work)
+
+    def go():
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return cv.collect("vt_par", throttle=0.05)
+
+    orig_get, orig_t = requests.get, collect_page.target_urls
+    requests.get = fake_get
+    collect_page.target_urls = lambda c, pid, limit: urls
+    os.environ.pop("PAGESPEED_API_KEY", None)
+    try:
+        t0 = time.monotonic()
+        res = go()
+        took = time.monotonic() - t0
+        print(f"  [measure] vitals 5URL x 2기기, 0.2s + throttle 0.05: {took:.2f}s (peak {peak['all']})")
+        assert res.ok and not res.skipped and res.rows == 10, res
+        conn = db.connect()
+        got = [(r["url"], r["strategy"]) for r in conn.execute(
+            "SELECT url, strategy FROM page_vitals WHERE project_id=(SELECT id FROM projects "
+            "WHERE name='vt_par') ORDER BY id")]
+        assert sorted(got) == sorted((u, d) for u in urls for d in ("mobile", "desktop")), got
+        assert 1 < peak["all"] <= fanout.LIMITS["pagespeed"], peak
+        assert threading.get_ident() not in peak["threads"]
+        # 순차면 10 x 0.25 = 2.5초. 2 동시면 1.4초 안쪽이다.
+        assert took < 1.7, f"동시에 안 돌았다: {took:.2f}s"
+
+        # 429 — 4번째 호출부터 한도. 앞 3행(작업 순서 기준)만 남고, 건너뜀이 아니라 완료.
+        conn.execute("DELETE FROM page_vitals")
+        conn.commit()
+        sent.clear()
+        quota_at["n"] = 3
+        res = go()
+        n_rows = conn.execute("SELECT COUNT(*) FROM page_vitals").fetchone()[0]
+        notes = conn.execute("SELECT notes FROM runs WHERE kind='vitals' ORDER BY id DESC"
+                             ).fetchone()["notes"]
+        assert (res.ok, res.skipped, res.failed, res.rows) == (True, False, False, 3), res
+        assert n_rows == 3 and "quota=429" in notes, (n_rows, notes)
+        assert len(sent) <= 4 + fanout.LIMITS["pagespeed"] - 1, f"한도 뒤로도 계속 불렀다: {len(sent)}회"
+        conn.close()
+    finally:
+        requests.get, collect_page.target_urls = orig_get, orig_t
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

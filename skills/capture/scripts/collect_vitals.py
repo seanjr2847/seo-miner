@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collect_page  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
+import fanout  # noqa: E402
 import serp_adapter  # noqa: E402
 
 API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
@@ -360,12 +361,19 @@ def collect(project: str, *,
         rows: list[dict] = []
         unmeas: list[str] = []
 
-        def one(job) -> None:
+        def measure(job) -> dict:
+            # 일꾼 스레드 — 네트워크만. 한도(429)는 여기서 Fatal 로 올려 fanout 이 아직 안 보낸
+            # 호출을 멈추게 한다(이미 떠난 최대 workers-1 개만 더 나간다).
             url, dev = job
             row = fetch(url, dev)
             if row.get("status") == QUOTA_STATUS:
                 # 이 행은 안 남긴다 — "이 페이지를 못 쟀다" 가 아니라 "오늘은 더 못 잰다" 다
                 raise _QuotaHit(row["error"])
+            return row
+
+        def one(job, row) -> None:
+            # 메인 스레드, 작업 순서대로 — 행이 쌓이는 순서·출력·실패 집계는 순차일 때와 같다.
+            url, dev = job
             # 행은 남긴다 — page_vitals.error 는 "못 쟀다"를 적는 진짜 칸이다.
             # 그리고 실패는 예외로 올린다: 여기서 return 하면 실패가 데이터로만 남아
             # 전부 못 재고도 runs.notes 에 errors=0 이 적힌다(collect_page 와 같은 규칙).
@@ -385,7 +393,8 @@ def collect(project: str, *,
         quota = ""
         with st.record("vitals") as r:
             try:
-                done = st.each(jobs, one, label=lambda j: f"[{j[1]}] {j[0]}")
+                done = fanout.each(st, jobs, measure, one, workers=fanout.LIMITS["pagespeed"],
+                                   label=lambda j: f"[{j[1]}] {j[0]}")
             except _QuotaHit as e:
                 quota = str(e)
                 done = sum(1 for x in rows if not x.get("error"))
@@ -570,7 +579,8 @@ def _quota_and_key_check(sample: dict) -> None:
         res = run()
         assert (res.ok, res.skipped, res.failed) == (True, True, False), res
         assert res.reason == QUOTA_REASON, res.reason
-        assert len(sent) == 1, f"한도에 걸린 뒤로도 계속 불렀다: {len(sent)}회"
+        # 동시에 떠 있던 호출(최대 workers 개)은 이미 나간 뒤라 1회로 못 박을 수 없다
+        assert len(sent) <= fanout.LIMITS["pagespeed"], f"한도에 걸린 뒤로도 계속 불렀다: {len(sent)}회"
         conn = db.connect()
         assert conn.execute("SELECT COUNT(*) c FROM page_vitals").fetchone()["c"] == 0, \
             "한도를 '이 페이지를 못 쟀다' 행으로 남겼다"
