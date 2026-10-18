@@ -3246,7 +3246,7 @@ window.KIND_LABELS = {{ai_citation_gap: "챗봇 인용 드묾"}};
 AI_GAPS = new Set(["드문 질문"]);
 AI_INTENT = {{general: "일반"}};
 const rows = {json.dumps(rows, ensure_ascii=False)};
-console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_rowBody(rows[1]),
+console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_rowBody(rows[1]), stat: AI_aStatic(rows[1]),
   plain: [AI_plain("[출처] (https://a.com/x) 끝"), AI_plain("보세요 [링크](https://a.com/very-lo…"),
           AI_plain("답입니다[source] 끝"), AI_plain("잘린 (https://a.com/b…")]}}));
 """
@@ -3258,8 +3258,13 @@ console.log(JSON.stringify({{gap: AI_row(rows[0]), cited: AI_rowBody(rows[1]),
     assert "챗봇 인용 드묾" not in got["cited"], "인용되는 질문에 공백 배지가 붙었다"
     assert "일반" in got["gap"] and "general" not in got["gap"].split("kwcell")[1][:40], (
         "질문 갈래가 id 로 찍힌다")
+    # 서랍 본문은 이제 답변 전문 자리(.aia — 열린 뒤 /api/ai/answers 로 채운다)를 세우고 280자 발췌(.aiev)는 없다.
+    # 서버가 없는 저장된 보고서(READONLY)만 페이로드의 발췌를 그리고, 거기서 인용된 답변이 먼저다.
     c = got["cited"]
-    assert "우리가 인용된 답변" in c and c.index("우리 답") < c.index("빠진 답"), (
+    assert 'class="aia"' in c and 'data-p="인용된 질문"' in c and 'aiev' not in c, (
+        "서랍 본문이 답변 전문 자리(.aia)를 안 세웠거나 옛 발췌 블록(.aiev)이 남았다")
+    s = got["stat"]
+    assert "우리가 인용된 답변" in s and s.index("우리 답") < s.index("빠진 답"), (
         "인용된 질문에서 우리가 인용된 답변이 먼저 오지 않는다")
     assert got["plain"] == ["출처 끝", "보세요 링크", "답입니다 끝", "잘린"], got["plain"]
 
@@ -5211,7 +5216,9 @@ def test_seam_195_ai_answers_route_on_both_servers_and_citations_are_stored():
     · 경로는 dashboard.ROUTES 의 공유 항목이다(ADR 0003 — 한쪽 전용이 아니다). 로컬 Handler 와
       호스팅(server/app.py 의 _shared_route)이 같은 call 을 부른다. 호스팅 사이트를 로컬 화면이 열 때는
       NEVER_PROXY 에 없어서 Handler._proxy 가 서버로 넘긴다 — 있으면 이 PC 의 빈 Brain 이 답한다.
-      (화면은 아직 안 부른다. test_seam_05 가 화면이 부르기 시작하면 그때부터 양쪽 존재를 또 본다.)
+      화면([AI 인용]의 서랍 — aicite.html 의 AI_aFetch)이 이 경로를 부른다. test_seam_05 가 화면이 부르는
+      /api/* 의 양쪽 존재를 이미 보므로(이 경로 포함), 아래에서 화면이 정말 부르는지만 못 박는다 —
+      안 부르면 05 가 이 경로를 한 번도 안 보고 초록이다.
     · citations_json 은 db.SCHEMA 에 있고, 옛 Brain 은 _migrate 가 칸을 더하며(옛 행 NULL = URL 모름),
       record_ai_check 가 쓴다. collect_ai 가 그 인자를 넘긴다 — 안 넘기면 칸만 있고 늘 NULL 이다.
     · 답변 전문과 화면 줄(_axis_ai)은 같은 런을 읽는다(scoring.latest_ai_run 한 곳).
@@ -5252,6 +5259,119 @@ def test_seam_195_ai_answers_route_on_both_servers_and_citations_are_stored():
     assert "latest_ai_run(" in inspect_src(dashboard._axis_ai) and \
         "latest_ai_run(" in inspect_src(scoring.ai_answers), \
         "화면 줄과 답변 전문이 다른 런을 읽을 수 있다 — 런 고르기는 scoring.latest_ai_run 한 곳"
+    view = (ROOT / "skills" / "capture" / "templates" / "views" / "aicite.html").read_text("utf-8")
+    assert '"/api/ai/answers?project="' in view, \
+        "[AI 인용] 서랍이 /api/ai/answers 를 안 부른다 — 서버에만 있고 화면에서 죽은 경로다"
+
+
+_AI_MD_JS = r"""
+const cases = {};
+const md = (s, o) => AI_md(s, o);
+cases.script = md("앞 <script>window.__x=1</script> 뒤");
+cases.img = md('<img src=x onerror="window.__x=2"> 끝');
+cases.jslink = [md("[눌러](javascript:alert(1))"), md("[눌러](JaVaScRiPt:alert(1))"),
+                md("[눌러](data:text/html,<b>x</b>)"), md("[눌러](vbscript:x)")];
+cases.link = md("[문서](https://a.example/p?q=1&r=2) 와 [위험](https://a.example/\"onmouseover=\"alert(1))");
+cases.double = md("a &amp; b & c &lt;b&gt;");
+cases.cut = [md("**잘린 굵게"), md("앞 **굵게** 뒤 **잘림"), md("**")];
+cases.fn = [md("가[1] 나[2][3] 다[9]", {cites: 3}), md("가[1] 나[5]", {cites: 2}), md("가[1]", {cites: 0}),
+            md("가[^2]", {cites: 2}), md("[1](https://a.example/x)", {cites: 2})];
+cases.own = {
+  text: md("example.com 은 Example 이고 examples 는 아니다", {own: "example.com"}),
+  link: md("[글](https://example.com/p) 참고", {own: "example.com"}),
+  amp: md("a & b amp", {own: "amp.com"}),
+  www: md("EXAMPLE.COM", {own: "www.Example.com"}),
+  none: md("example.com", {}),
+  odd: md("a.b+c.com x", {own: "a.b+c.com"}),
+  odd2: md("aXb+c.com x", {own: "a.b+c.com"}),
+};
+cases.blocks = md("# 제목\n본문 **굵게** 와 `코드 <b>`\n\n- 가\n- 나\n  - 안긴\n\n1. 하나\n\n2. 둘\n\n| 열A | 열B |\n|---|:-:|\n| 1 | 2 |\n\n> 인용\n\n---\n\n```\n<b>x</b> **y**\n```");
+cases.table_plain = md("|a|b|\n|c|d|");
+cases.bare = md("보기 https://a.example/x?y=1&z=2). 끝");
+cases.forge = md("`x` \uE0000\uE001 \uE001\uE000", {});
+cases.empty = [md(""), md(null), md(undefined), md("\n\n  \n")];
+cases.crlf = md("가\r\n나");
+console.log(JSON.stringify(cases));
+"""
+
+
+def test_seam_196_ai_answer_markdown_is_escaped_first_and_renders_only_a_small_set():
+    """196) [AI 인용] 서랍의 답변 전문은 AI_md 한 곳에서만 HTML 이 되고, 먼저 이스케이프한 뒤 제한된 서식만 켠다.
+
+    답변은 외부 모델이 쓴 글이라 `<script>`·`<img onerror>`·`javascript:` 링크가 그대로 올 수 있다.
+    · 태그는 글자로 남는다(`<script` 가 출력에 없다), 이중 이스케이프도 없다(`&amp;` → `&amp;amp;` 한 번만).
+    · 링크는 http(s) 만, 새 탭 + noopener noreferrer. 속성에 따옴표를 심어도 속성이 안 깨진다.
+    · 잘린 `**` 는 굵게가 되지 않고 글자로 남는다. 각주 [n] 은 1..cites 안에서만 칩이 된다(범위 밖·옛 기록은 글자).
+    · 우리 도메인/첫 마디는 표시하되 태그 속·엔티티(&amp;)·더 긴 낱말(examples) 안은 건드리지 않는다.
+    · 자리표 문자(\\uE000)를 입력에 심어도 위조되지 않는다.
+    화면이 답변 글을 다른 길로 innerHTML 에 넣지 못하게, 뷰에서 `.answer` 를 읽는 자리도 센다.
+    """
+    ctx = _load()
+    if ctx is None or not __import__("shutil").which("node"):
+        print("  (node 가 없어 건너뜀)")
+        return
+    view = _view_block("aicite.html", "function AI_md(")
+    c = _node_views(view + "\n" + _AI_MD_JS)
+
+    assert "<script" not in c["script"] and "&lt;script&gt;" in c["script"], c["script"]
+    assert "<img" not in c["img"] and "&lt;img" in c["img"], c["img"]
+    for h in c["jslink"]:
+        assert "<a " not in h and "href" not in h, f"http(s) 아닌 링크가 살아 있다: {h}"
+    assert "javascript:alert(1)" in c["jslink"][0], "링크로 못 만든 글은 글자로 남아야 한다"
+    ok = '<a href="https://a.example/p?q=1&amp;r=2" target="_blank" rel="noopener noreferrer">문서</a>'
+    assert ok in c["link"], c["link"]
+    a_tags = re.findall(r"<a [^>]*>", c["link"])
+    for tag in a_tags:
+        assert tag.count('"') == 6, f"따옴표가 속성을 깼다: {tag}"
+        assert not re.search(r'"\s*onmouseover', tag), tag
+    assert c["double"] == "<p>a &amp;amp; b &amp; c &amp;lt;b&amp;gt;</p>", c["double"]
+    assert "<strong>" not in c["cut"][0] and "**잘린 굵게" in c["cut"][0], c["cut"][0]
+    assert c["cut"][1].count("<strong>") == 1 and "**잘림" in c["cut"][1], c["cut"][1]
+    assert "<strong>" not in c["cut"][2], c["cut"][2]
+
+    fn = c["fn"]
+    ns = lambda h: re.findall(r'class="aia-fn" data-n="(\d+)"', h)
+    assert ns(fn[0]) == ["1", "2", "3"] and "[9]" in fn[0], fn[0]       # 범위 밖(9)은 글자
+    assert ns(fn[1]) == ["1"] and "[5]" in fn[1], fn[1]
+    assert ns(fn[2]) == [] and "[1]" in fn[2], fn[2]                      # cites=0(옛 기록)이면 이어 붙이지 않는다
+    assert ns(fn[3]) == ["2"], fn[3]
+    assert ns(fn[4]) == [] and '<a href="https://a.example/x"' in fn[4], fn[4]   # 링크 글자 [1] 은 각주가 아니다
+    assert 'onclick="AI_aCite(this)"' in fn[0] and 'aria-label="출처 1번 보기"' in fn[0], fn[0]
+
+    own = c["own"]
+    assert own["text"].count('<mark class="aia-own">') == 2, own["text"]       # example.com, Example
+    assert "<mark class=\"aia-own\">examples" not in own["text"], own["text"]
+    assert 'href="https://example.com/p"' in own["link"] and re.search(
+        r'<a [^>]*href="https://example\.com/p"[^>]*>글</a>', own["link"]), own["link"]
+    assert not re.search(r"<[^>]*<mark", own["link"]), "태그 속에 표시가 들어갔다"
+    # 엔티티 &amp; 속의 amp 는 표시하지 않고, 낱말로 선 amp 만 표시한다
+    assert own["amp"] == '<p>a &amp; b <mark class="aia-own">amp</mark></p>', own["amp"]
+    assert own["www"].count("<mark") == 1, own["www"]
+    assert "<mark" not in own["none"], own["none"]
+    assert own["odd"].count("<mark") == 1 and own["odd2"].count("<mark") == 0, \
+        (own["odd"], own["odd2"])      # 도메인의 . + 는 글자 그대로다(정규식 기호가 아니다)
+
+    b = c["blocks"]
+    for need in ("<h3>제목</h3>", "<strong>굵게</strong>", "<code>코드 &lt;b&gt;</code>",
+                 "<ul><li>가</li><li>나<ul><li>안긴</li></ul></li></ul>", "<ol><li>하나</li>",
+                 '<ol start="2">', "<table", "<th>열A</th>", "<td>2</td>", "<blockquote>인용</blockquote>",
+                 "<hr>", '<pre class="aia-pre"><code>&lt;b&gt;x&lt;/b&gt; **y**</code></pre>'):
+        # 번호 목록이 빈 줄로 갈려도 한 목록으로 이어진다
+        if need in ("<ol><li>하나</li>", '<ol start="2">'):
+            continue
+        assert need in b, f"{need!r} 이(가) 없다:\n{b}"
+    assert "<ol><li>하나</li><li>둘</li></ol>" in b, f"빈 줄 사이의 번호 목록이 이어지지 않는다:\n{b}"
+    assert "<thead>" not in c["table_plain"] and c["table_plain"].count("<tr>") == 2, c["table_plain"]
+    assert 'href="https://a.example/x?y=1&amp;z=2"' in c["bare"] and "</a>)." in c["bare"], c["bare"]
+    assert c["forge"].count("<code>x</code>") == 1 and "\uE000" not in c["forge"], c["forge"]
+    assert c["empty"] == ["", "", "", ""], c["empty"]
+    assert "<br>" in c["crlf"] and "\r" not in c["crlf"], c["crlf"]
+
+    # 답변 글은 AI_md 를 거쳐서만 화면에 간다 — 뷰에서 .answer 를 읽는 곳은 AI_aHtml(전문)과 AI_aCopy(복사)뿐이다.
+    src = (ROOT / "skills" / "capture" / "templates" / "views" / "aicite.html").read_text("utf-8")
+    users = {m.group(1) for m in re.finditer(r"^(?:async )?function (\w+)\([^)]*\) \{(?:(?!^\}).)*?\.answer\b", src, re.M | re.S)}
+    assert users <= {"AI_aHtml", "AI_aCopy"}, f"답변 글을 AI_md 밖에서 읽는 함수가 있다: {sorted(users)}"
+    assert re.search(r"AI_md\(text,", src), "AI_aHtml 이 AI_md 를 거치지 않는다"
 
 
 def inspect_src(fn) -> str:

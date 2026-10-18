@@ -211,12 +211,118 @@ td .ailogo { margin-right:6px; }
 /* 터치: 질문 줄 버튼이 글자 높이(21px)뿐이었다 — 위아래 여백으로 눌리는 면을 넓힌다(줄 간격만 조금 는다). */
 @media (hover:none), (max-width:999px) { .aiq-t { padding:10px 0; } }
 .aiq-p { font:400 var(--fs-2)/1.5 var(--sans); max-width:54ch; }
-.aiev { margin:8px 0 4px; padding:14px 16px; border-radius:var(--r-in);
-  background:var(--sunk); max-width:74ch; }
-.aiev .lb { font:var(--micro); color:var(--mute); display:block; margin-bottom:8px; }
-.aiev .lb.n2 { margin-top:12px; }
-.aiev .q { font-size:var(--fs-2); line-height:1.7; color:var(--ink); white-space:pre-wrap; margin:0; }
-.aiev .ft { font:400 var(--fs-1)/1.5 var(--sans); color:var(--mute); margin-top:12px; }
+/* ── 서랍의 답변 전문·인용 출처. 서랍(SM.drawer)은 body 맨 위에 서서 #view-aicite 밖이다 —
+      그래서 여기는 전부 .aia- 접두의 전역 규칙이다(#view-aicite 아래 규칙은 서랍에 안 닿는다).
+      뜻은 색 하나에만 맡기지 않는다: 점 옆에 늘 「인용됨」「언급만」「안 나옴」이 글자로 붙는다.
+      인용=accent(찬 점), 언급=mute(빈 고리), 안 나옴=warn. 라틴 마이크로 라벨이 없어 .lat 도 없다. ── */
+.aia { display:flex; flex-direction:column; gap:18px; margin:0 0 24px; padding:0 0 24px;
+  border-bottom:1px solid var(--line); }
+.aia > *, .aia-sec > * { min-width:0; max-width:100%; }
+.aia-sec { min-width:0; }
+.aia-note { margin:0; font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub); max-width:62ch; }
+.aia-dot { flex:none; display:inline-block; width:8px; height:8px; border-radius:50%; }
+.aia-dot.cited { background:var(--accent); }
+.aia-dot.mention { background:transparent; box-shadow:inset 0 0 0 2px var(--mute); }
+.aia-dot.none { background:var(--warn); }
+.aia-tabs { display:flex; gap:2px; overflow:auto hidden; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+.aia-tab { flex:none; display:flex; flex-direction:column; align-items:flex-start; gap:5px;
+  min-height:var(--btn-h); padding:8px 14px 10px; margin:0 0 -1px; background:transparent; border:0;
+  border-bottom:2px solid transparent; color:var(--sub); font:500 var(--fs-2)/1.2 var(--sans);
+  cursor:pointer; text-align:left; }
+.aia-tab:hover { color:var(--ink); }
+.aia-tab:focus-visible { outline-offset:-3px; }
+.aia-tab[aria-selected="true"] { color:var(--ink); border-bottom-color:var(--accent); }
+.aia-tn { display:inline-flex; align-items:center; gap:6px; font-weight:650; }
+.aia-tv { display:inline-flex; align-items:center; gap:5px; font:var(--micro); color:var(--mute); }
+.aia-tc { margin-left:3px; font-variant-numeric:tabular-nums; }
+.aia-tv.cited, .aia-vd.cited { color:var(--accent); }
+.aia-tv.none, .aia-vd.none { color:var(--warn); }
+.aia-pills { display:flex; flex-wrap:wrap; gap:6px; }
+.aia-pill { display:inline-flex; align-items:center; gap:7px; min-height:32px; padding:0 12px;
+  background:transparent; border:1px solid var(--rule); border-radius:var(--r-pill); color:var(--sub);
+  font:500 var(--fs-1)/1 var(--sans); cursor:pointer; }
+.aia-pill:hover { color:var(--ink); }
+.aia-pill[aria-pressed="true"] { background:var(--accent-wash); border-color:transparent;
+  color:var(--accent); font-weight:650; }
+@media (hover:none), (max-width:999px) { .aia-pill { min-height:44px; } }
+.aia-meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 14px; }
+.aia-vd { display:inline-flex; align-items:center; gap:8px; font:700 var(--fs-3)/1.3 var(--sans); }
+.aia-mm { font:400 var(--fs-1)/1.5 var(--sans); color:var(--mute); }
+.aia-sec { display:flex; flex-direction:column; gap:10px; }
+.aia-sh { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0;
+  font:var(--micro); color:var(--mute); }
+.aia-sh b { color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
+.aia-sh .lnk { font:var(--micro); }
+/* 답변 본문 — 읽는 면이다. 왼쪽 줄이 이 표본의 판정을 한 번 더 말한다(인용=accent, 안 나옴=warn). */
+.aia-ans { padding:16px 18px; border-radius:var(--r-in); background:var(--sunk);
+  border-left:3px solid var(--rule); font:400 var(--fs-2)/1.8 var(--sans); color:var(--ink);
+  overflow-wrap:anywhere; }
+.aia-ans.cited { border-left-color:var(--accent); }
+.aia-ans.none { border-left-color:var(--warn); }
+.aia-ans.clipped { max-height:30em; overflow:hidden;
+  -webkit-mask-image:linear-gradient(#000 76%, transparent); mask-image:linear-gradient(#000 76%, transparent); }
+.aia-ans > :first-child { margin-top:0; }
+.aia-ans > :last-child { margin-bottom:0; }
+.aia-ans p { margin:0 0 .85em; }
+.aia-ans h3, .aia-ans h4 { margin:1.2em 0 .45em; font:700 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
+.aia-ans h4 { font-size:var(--fs-2); }
+.aia-ans ul, .aia-ans ol { margin:0 0 .85em; padding-left:1.45em; }
+.aia-ans li { margin:.25em 0; }
+.aia-ans li > ul, .aia-ans li > ol { margin:.25em 0 0; }
+.aia-ans blockquote { margin:0 0 .85em; padding:2px 0 2px 14px; border-left:3px solid var(--rule); color:var(--sub); }
+.aia-ans hr { border:0; border-top:1px solid var(--rule); margin:1.1em 0; }
+.aia-ans code { font:400 var(--fs-1)/1.5 var(--mono); padding:1px 6px; border-radius:6px; background:var(--card); }
+.aia-ans a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+.aia-ans a:hover { color:var(--ink); }
+.aia-pre { margin:0 0 .85em; padding:12px 14px; border-radius:var(--r-in); background:var(--card);
+  overflow-x:auto; font:400 var(--fs-1)/1.6 var(--mono); }
+.aia-pre code { padding:0; background:transparent; }
+.aia-tw { margin:0 0 .85em; overflow-x:auto; }
+.aia-t { width:auto; min-width:100%; border-collapse:collapse; font-size:var(--fs-1); }
+.aia-t th, .aia-t td { padding:7px 11px; border:1px solid var(--line); text-align:left; vertical-align:top;
+  font:400 var(--fs-1)/1.55 var(--sans); color:var(--ink); }
+.aia-t th { background:var(--card); font-weight:650; color:var(--ink); }
+.aia-t tbody tr:hover { background:transparent; }
+/* 답변 속 우리 브랜드·도메인 */
+.aia-own { padding:0 3px; border-radius:4px; background:var(--accent-wash); color:var(--accent);
+  font-weight:650; box-shadow:inset 0 -2px 0 var(--accent); }
+/* 각주 [n] → 인용 목록의 n번째 줄로 잇는 위첨자 칩 */
+.aia-fnw { position:relative; top:-.3em; line-height:1; }
+.aia-fn { display:inline-block; min-width:18px; height:18px; margin:0 1px; padding:0 5px; border:0;
+  border-radius:var(--r-pill); background:var(--accent-wash); color:var(--accent);
+  font:650 var(--fs-1)/18px var(--sans); font-variant-numeric:tabular-nums; cursor:pointer;
+  vertical-align:middle; }
+.aia-fn:hover { background:var(--accent); color:var(--accent-ink); }
+@media (hover:none), (max-width:999px) { .aia-fn { min-width:26px; height:26px; line-height:26px; } }
+.aia-more { align-self:flex-start; }
+/* 인용 출처 목록 */
+.aia-cl { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:var(--r-in);
+  overflow:hidden; }
+.aia-ci { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 12px; padding:12px 14px;
+  border-top:1px solid var(--line); }
+.aia-ci:first-child { border-top:0; }
+.aia-ci.own { background:var(--accent-wash); box-shadow:inset 3px 0 0 var(--accent); }
+.aia-ci.hit { outline:2px solid var(--accent); outline-offset:-2px; }
+.aia-cn { width:24px; height:24px; border-radius:50%; background:var(--sunk); color:var(--sub);
+  font:600 var(--fs-1)/24px var(--mono); text-align:center; font-variant-numeric:tabular-nums; }
+.aia-ci.own .aia-cn { background:var(--card); }
+.aia-cb { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.aia-c1 { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.aia-cd { font:700 var(--fs-2)/1.4 var(--sans); color:var(--ink); overflow-wrap:anywhere; }
+.aia-b { display:inline-flex; align-items:center; min-height:20px; padding:0 8px; border-radius:var(--r-pill);
+  font:650 var(--fs-1)/1 var(--sans); }
+.aia-b.own { background:var(--accent); color:var(--accent-ink); }
+.aia-b.tp { background:var(--info-wash); color:var(--info); }
+.aia-ct { font:400 var(--fs-2)/1.5 var(--sans); color:var(--sub); overflow-wrap:anywhere; }
+.aia-cu { font:400 var(--fs-1)/1.5 var(--mono); color:var(--accent); overflow-wrap:anywhere;
+  text-decoration:underline; text-underline-offset:2px; }
+.aia-cu:hover { color:var(--ink); }
+.aia-sk .skel { background:linear-gradient(90deg, var(--sunk) 25%, var(--line) 37%, var(--sunk) 63%);
+  background-size:200% 100%; }
+.aia-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.aia-sk .skel.tab { height:44px; width:60%; border-radius:var(--r-in); }
+.aia-sk .skel.box { height:150px; border-radius:var(--r-in); }
+.aia .empty { margin:0; }
 .aidoms .chip { font-size:var(--fs-1); min-height:24px; padding:0 10px; margin:0 4px 4px 0; }
 .aidoms .chip b { font:600 var(--fs-1)/1 var(--sans); font-variant-numeric:tabular-nums;
   color:var(--mute); margin-left:2px; }
@@ -755,6 +861,7 @@ function AI_ev(btn) {
   const sub = k === "v" ? AI_vsSub(r) : AI_catName(r.category);
   SM.drawer.open({title: r.prompt, sub,
     bodyHtml: k === "v" ? AI_vsBody(r) : AI_rowBody(r), from: btn});
+  if (k !== "v" && !READONLY) AI_aStart(r);     //답변 전문은 열린 뒤에 받아 서랍 위쪽에 채운다
 }
 /* 대신 인용된 곳·발췌는 서버(scoring.ai_tally)가 전 표본으로 센 것 그대로다 — 화면이
    다시 세지 않는다. 예전에는 서버가 표본 하나(사전순 최대 JSON)를 골라 보냈고 화면은
@@ -864,29 +971,22 @@ function AI_detail(r, riv) {
     : ""}${ask}</div>`;
 }
 
-// 서랍 본문 — 질문 한 줄의 펼침. 기회가 있으면 셸의 oppPanel, 없으면 AI_detail.
+// 서랍 본문 — 질문 한 줄의 펼침. 위는 답변 전문·인용 출처(.aia — 열린 뒤 AI_aStart 가 채운다),
+// 그 아래는 처리 안내: 기회가 있으면 셸의 oppPanel, 없으면 AI_detail.
 function AI_rowBody(r) {
   const o = oppOf(r.prompt);
   const riv = AI_riv(r);
-  // 엔진을 골랐으면 그 엔진의 발췌만 — 표의 숫자가 그 엔진 몫이라 글도 맞춘다
+  return `<div class="aiq-d">${READONLY ? AI_aStatic(r) : `<div class="aia" data-p="${esc(r.prompt)}"
+    aria-live="polite" aria-busy="true">${AI_aSkel()}</div>`}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+}
+// 저장된 보고서(박제본)에는 서버가 없어 전문을 못 받는다 — 페이로드가 실어 온 엔진별 발췌 한 토막만 보인다.
+function AI_aStatic(r) {
   const pick = xs => Object.entries(xs || {}).filter(([k]) => !AI_ENG || k === AI_ENG);
-  const ex = pick(r.excerpts);
-  // 인용된 질문이면 우리가 인용된 답변이 먼저다(scoring.ai_tally 의 cited_excerpts) — 빠진
-  // 답변만 보이면 「인용됨」 줄을 펴도 우리가 없는 글만 나왔다.
-  const cx = pick(r.cited_excerpts);
-  // 발췌가 없어도 펼칠 게 있다 — 상태마다 다른 할 일이 늘 붙는다. 손잡이는 항상 만든다.
-  const ev = cx.length || ex.length || riv.list.length;
-  return `<div class="aiq-d">
-    ${ev ? `<div class="aiev">
-      ${cx.map(([k, v], i) => `<span class="lb${i ? " n2" : ""}">${esc(AI_engName(k))} · 우리가 인용된 답변</span>
-        <p class="q">${esc(AI_plain(v))}</p>`).join("")}
-      ${riv.list.length ? `<span class="lb${cx.length ? " n2" : ""}">우리 대신 인용된 곳 · 빠진 답변 ${riv.misses}건 기준</span>
-        <div class="aidoms">${riv.list.map(x => AI_rivChip(x, riv.misses)).join("")}</div>` : ""}
-      ${ex.map(([k, v]) => `<span class="lb n2">${esc(AI_engName(k))} · 우리가 빠진 답변</span>
-        <p class="q">${esc(AI_plain(v))}</p>`).join("")}
-      <div class="ft">발췌는 엔진마다 ${cx.length ? "우리가 인용된 답변과 빠진 답변에서 각각" : "우리가 인용되지 않은 답변 중"}
-        먼저 받은 한 건입니다. 답변은 매번 달라지므로 한 건은 사실이 아니라 표본입니다.</div>
-    </div>` : ""}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+  const one = (xs, what) => pick(xs).map(([k, v]) => `<h3 class="aia-sh"><span>${esc(AI_engName(k))} · ${what}</span></h3>
+    <div class="aia-ans">${esc(AI_plain(v))}</div>`).join("");
+  const body = one(r.cited_excerpts, "우리가 인용된 답변") + one(r.excerpts, "우리가 빠진 답변");
+  return `<div class="aia">${body}<p class="aia-note">저장된 보고서에는 답변 발췌 한 토막만 들어 있습니다. 전문과
+    인용 URL 은 대시보드에서 이 질문을 열면 보입니다. 답변은 매번 달라지므로 한 건은 표본입니다.</p></div>`;
 }
 
 function AI_row(r) {
@@ -1433,9 +1533,351 @@ function AI_bots(rows) {
   return {sub, body};
 }
 
+/* ── 답변 전문 렌더러 — 이 화면의 마크다운은 여기 한 곳(AI_md)에서만 HTML 이 된다. ────────────
+   AI_md(글, {cites, own}) → HTML 문자열.
+     cites  인용 목록의 길이. [n] 이 1..cites 이면 인용 n번째 줄로 잇는 위첨자 칩, 밖이면 글자 그대로.
+            옛 기록(URL 모름)은 순서가 답변 번호와 무관하므로 0 을 넘긴다.
+     own    우리 도메인. 글 속 도메인 전체와 첫 마디(example.com → example)를 눈에 띄게 표시한다.
+            별칭은 페이로드에 오지 않아 새로 만들지 않는다.
+   순서가 안전의 전부다: **먼저 글 전체를 이스케이프**하고, 그 위에서 제한된 서식(제목·굵게·목록·표·코드·
+   링크·각주)만 태그로 바꾼다. 링크는 http(s) 만 — 그 밖의 [글](javascript:…)은 글자로 남는다.
+   서식이 만든 조각은 자리표(\uE000n\uE001)로 빼 두었다 되돌려 서로의 글자를 다시 건드리지 않는다
+   (입력에 같은 문자가 있으면 먼저 지운다 — 자리표를 위조할 수 없다). 시험: test_seams 의 AI_md 시험. */
+function AI_md(src, o) {
+  o = o || {};
+  const nCites = Math.max(0, +o.cites || 0);
+  const E = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const stash = [];
+  const keep = h => "\uE000" + (stash.push(h) - 1) + "\uE001";
+  const inline = raw => {
+    let h = E(String(raw).replace(/[\uE000\uE001]/g, ""));
+    h = h.replace(/`([^`\n]+)`/g, (m, c) => keep("<code>" + c + "</code>"));
+    h = h.replace(/\[([^\]\n]+)\]\(\s*(https?:\/\/[^\s)]+)(?:\s+&quot;[^)]*&quot;)?\s*\)/gi, (m, t, u) =>
+      keep('<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t.replace(/\*\*/g, "") + "</a>"));
+    h = h.replace(/(^|[\s(])(https?:\/\/[^\s<>()]+)/gi, (m, pre, u) => {
+      let tail = "", mm;
+      while ((mm = /(?:&(?:quot|#39|gt|lt|amp);|[.,:!?])$/.exec(u)) && mm.index > 8) {
+        tail = mm[0] + tail; u = u.slice(0, mm.index);
+      }
+      return pre + keep('<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + "</a>") + tail;
+    });
+    h = h.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/\[\^?(\d{1,3})\]/g, (m, n) => +n >= 1 && +n <= nCites
+      ? keep('<sup class="aia-fnw"><button type="button" class="aia-fn" data-n="' + n +
+          '" aria-label="출처 ' + n + '번 보기" onclick="AI_aCite(this)">' + n + "</button></sup>") : m);
+    for (let k = 0; k < 4 && h.indexOf("\uE000") >= 0; k++)
+      h = h.replace(/\uE000(\d+)\uE001/g, (m, i) => stash[+i]);
+    return h;
+  };
+  const ownRe = (() => {
+    const dom = String(o.own || "").toLowerCase().replace(/^www\./, "").trim();
+    if (!dom) return null;
+    const first = dom.split(".")[0];
+    const names = first.length >= 3 && first !== dom ? [dom, first] : [dom];
+    return new RegExp("(?<![a-z0-9])(?:" + names.map(n => n.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")).join("|")
+      + ")(?![a-z0-9])", "gi");
+  })();
+  // 태그 조각과 엔티티(&amp; 등)는 건드리지 않고 글자 조각에서만 표시한다.
+  const mark = h => !ownRe ? h : h.split(/(<[^>]*>)/).map((seg, k) => k % 2 ? seg
+    : seg.split(/(&(?:amp|lt|gt|quot|#39);)/).map((p, j) => j % 2 ? p
+      : p.replace(ownRe, '<mark class="aia-own">$&</mark>')).join("")).join("");
+  const cells = line => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+  const table = rows => {
+    const head = rows.length > 1 && cells(rows[1]).every(c => /^:?-+:?$/.test(c)) ? cells(rows[0]) : null;
+    const body = rows.slice(head ? 2 : 0).filter(line => !cells(line).every(c => /^:?-+:?$/.test(c)));
+    return '<div class="aia-tw"><table class="aia-t">' +
+      (head ? "<thead><tr>" + head.map(c => "<th>" + inline(c) + "</th>").join("") + "</tr></thead>" : "") +
+      "<tbody>" + body.map(line => "<tr>" + cells(line).map(c => "<td>" + inline(c) + "</td>").join("") + "</tr>").join("") +
+      "</tbody></table></div>";
+  };
+  const LI = /^(\s*)(?:([-*+•])|(\d{1,3})[.)])\s+(.*)$/;
+  const lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = [], i = 0;
+  const flush = () => { if (para.length) out.push("<p>" + para.map(inline).join("<br>") + "</p>"); para = []; };
+  while (i < lines.length) {
+    const ln = lines[i], t = ln.trim();
+    let m;
+    if (!t) { flush(); i++; continue; }
+    if (/^(```|~~~)/.test(t)) {                      // 코드 블록 — 안은 서식 없이 이스케이프만
+      flush();
+      const code = [];
+      for (i++; i < lines.length && !/^(```|~~~)/.test(lines[i].trim()); i++) code.push(lines[i]);
+      i++;
+      out.push('<pre class="aia-pre"><code>' + E(code.join("\n")) + "</code></pre>");
+      continue;
+    }
+    if ((m = /^(#{1,6})\s+(.+?)(?:\s+#+)?$/.exec(t))) {
+      flush();
+      const lv = m[1].length <= 2 ? 3 : 4;
+      out.push("<h" + lv + ">" + inline(m[2]) + "</h" + lv + ">");
+      i++; continue;
+    }
+    if (/^([-*_])(?:\s*\1){2,}$/.test(t)) { flush(); out.push("<hr>"); i++; continue; }
+    if (t[0] === ">") {
+      flush();
+      const q = [];
+      for (; i < lines.length && lines[i].trim()[0] === ">"; i++) q.push(lines[i].trim().replace(/^>\s?/, ""));
+      out.push("<blockquote>" + q.map(inline).join("<br>") + "</blockquote>");
+      continue;
+    }
+    if (t[0] === "|") {                              // 표 — 줄을 보존하고 머리 줄이 있으면 머리로
+      flush();
+      const rows = [];
+      for (; i < lines.length && lines[i].trim()[0] === "|"; i++) rows.push(lines[i].trim());
+      out.push(table(rows));
+      continue;
+    }
+    if ((m = LI.exec(ln))) {                         // 목록 — 한 단계 들여쓰기만 안긴 목록으로
+      flush();
+      const ordered = !!m[3], start = ordered ? +m[3] : 1, items = [];
+      while (i < lines.length) {
+        const l = lines[i];
+        if (!l.trim()) {                             // 빈 줄 뒤에도 같은 목록이 이어지면 건넌다
+          let j = i;
+          while (j < lines.length && !lines[j].trim()) j++;
+          const nx = j < lines.length && LI.exec(lines[j]);
+          if (nx && (nx[1].length >= 2 || !!nx[3] === ordered)) { i = j; continue; }
+          break;
+        }
+        const x = LI.exec(l);
+        if (x && (x[1].length < 2 || !items.length)) {
+          if (!!x[3] !== ordered) break;
+          items.push({t: x[4], sub: []}); i++; continue;
+        }
+        if (x) { items[items.length - 1].sub.push({o: !!x[3], n: +x[3] || 1, t: x[4]}); i++; continue; }
+        if (/^\s{2,}\S/.test(l)) { items[items.length - 1].t += "\n" + l.trim(); i++; continue; }
+        break;
+      }
+      const sub = ss => {
+        let h = "", k = 0;
+        while (k < ss.length) {
+          let e = k;
+          while (e < ss.length && ss[e].o === ss[k].o) e++;
+          const tag = ss[k].o ? "ol" : "ul";
+          h += "<" + tag + (ss[k].o && ss[k].n !== 1 ? ' start="' + ss[k].n + '"' : "") + ">" +
+            ss.slice(k, e).map(x => "<li>" + inline(x.t) + "</li>").join("") + "</" + tag + ">";
+          k = e;
+        }
+        return h;
+      };
+      out.push((ordered ? "<ol" + (start !== 1 ? ' start="' + start + '"' : "") + ">" : "<ul>") +
+        items.map(it => "<li>" + it.t.split("\n").map(inline).join("<br>") + sub(it.sub) + "</li>").join("") +
+        (ordered ? "</ol>" : "</ul>"));
+      continue;
+    }
+    para.push(t); i++;
+  }
+  flush();
+  return mark(out.join(""));
+}
+
+/* ── 서랍의 답변 전문·인용 출처 ─────────────────────────────────────────────────────────────
+   질문 줄의 서랍(AI_rowBody)이 열리면 GET /api/ai/answers 로 그 질문의 가장 최근 런 답변 전문과
+   인용 목록을 받아 엔진 탭 → 표본 알약 → 답변 전문 → 인용 출처 순으로 그린다. 목록 줄이 가진
+   280자 발췌는 이걸 대신하지 못한다(검색·CSV 용으로만 남는다).
+   판정(인용됨·언급만·안 나옴)은 서버가 체크마다 센 cited·mentioned 그대로다. */
+const AI_V_TXT = {cited: "인용됨", mention: "언급만", none: "안 나옴"};
+const AI_V_LONG = {cited: "우리가 인용됨", mention: "이름만 언급됨 · 링크는 없음", none: "우리가 안 나옴"};
+const AI_V_RANK = {cited: 2, mention: 1, none: 0};
+const AI_vOf = c => c.cited ? "cited" : c.mentioned ? "mention" : "none";
+const AI_FOLD = 1800;     // 이만큼 넘는 답변은 접어서 보이되 전문은 [전문 펼치기]로 읽는다
+let AI_ANS = new Map(), AI_ANS_SIG = "";   // 질문별 응답 캐시 — 새 확인(런)이 들어오면 VIEW 가 비운다
+let AI_A = null;                            // 열려 있는 서랍의 상태
+const AI_httpUrl = u => /^https?:\/\//i.test(String(u || "")) ? String(u) : "";
+// 길면 가운데를 줄인다 — 앞(도메인·첫 경로)과 끝(글 이름)이 둘 다 남아야 어디인지 읽힌다.
+function AI_midCut(u, max) {
+  const bare = String(u).replace(/^https?:\/\/(www\.)?/i, "");
+  if (bare.length <= max) return bare;
+  const head = Math.ceil((max - 1) * 0.6);
+  return bare.slice(0, head) + "…" + bare.slice(bare.length - (max - 1 - head));
+}
+const AI_dom = d => String(d || "").replace(/^www\./i, "").toLowerCase();
+// 제3자 플랫폼 표시는 질문 줄 페이로드(rivals[].third_party — 서버 판정)에서 온 것만 쓴다. 우리가
+// 빠진 답변에서 대신 인용된 곳만 실려 있어, 없는 도메인은 배지를 달지 않는다(새 판정을 만들지 않는다).
+function AI_tpSet(r) {
+  const out = new Set();
+  const add = xs => (xs || []).forEach(x => { if (x && x.third_party) out.add(AI_dom(x.domain)); });
+  add(r.rivals);
+  Object.values(r.by_engine || {}).forEach(e => add(e && e.rivals));
+  return out;
+}
+const AI_aSkel = () => `<div class="aia-sk" aria-hidden="true"><i class="skel tab"></i>
+  <i class="skel box"></i><i class="skel line2"></i><i class="skel line3"></i></div>
+  <span class="aia-sr">답변 전문을 불러오는 중입니다</span>`;
+// 엔진별 묶음 — 서버 순서(엔진→표본)를 지키되, 엔진 거르개를 골랐으면 그 엔진이 맨 앞이다.
+function AI_aGroups(checks) {
+  const by = new Map();
+  checks.forEach(c => { if (!by.has(c.engine)) by.set(c.engine, []); by.get(c.engine).push(c); });
+  const gs = [...by].map(([k, cs]) => ({k, cs}));
+  const at = gs.findIndex(g => g.k === AI_ENG);
+  if (at > 0) gs.unshift(gs.splice(at, 1)[0]);
+  return gs;
+}
+const AI_aBest = cs => cs.map(AI_vOf).sort((a, b) => AI_V_RANK[b] - AI_V_RANK[a])[0];
+const AI_aFirstCited = cs => Math.max(0, cs.findIndex(c => c.cited));
+// 처음 보이는 것 — 거르개의 엔진, 없으면 우리가 인용된 첫 엔진, 없으면 첫 체크. 표본은 인용된 것이 먼저.
+function AI_aDefault(checks) {
+  const gs = AI_aGroups(checks);
+  const g = gs.find(x => x.k === AI_ENG) || gs.find(x => x.cs.some(c => c.cited)) || gs[0];
+  return {eng: g.k, i: AI_aFirstCited(g.cs)};
+}
+function AI_aCiteRow(x, n, tp) {
+  const dom = AI_dom(x.domain), url = AI_httpUrl(x.url);
+  return `<li class="aia-ci${x.own ? " own" : ""}" id="aia-c-${n}" tabindex="-1">
+    <span class="aia-cn">${n}</span><div class="aia-cb">
+    <div class="aia-c1"><b class="aia-cd">${esc(x.domain || "")}</b>${x.own
+      ? `<span class="aia-b own" title="우리 도메인">우리</span>` : ""}${tp.has(dom)
+      ? `<span class="aia-b tp" title="커뮤니티·위키·영상·리뷰 같은 제3자 플랫폼">제3자 플랫폼</span>` : ""}</div>
+    ${x.title ? `<div class="aia-ct">${esc(x.title)}</div>` : ""}${url
+      ? `<a class="aia-cu" href="${esc(url)}" target="_blank" rel="noopener noreferrer"
+          title="${esc(url)}">${esc(AI_midCut(url, 56))}</a>` : ""}</div></li>`;
+}
+function AI_aEmpty() {
+  return SM.ui.empty("이 질문의 답변이 저장돼 있지 않습니다",
+    "가장 최근 인용 확인에서 이 질문을 묻지 않았거나, 아직 확인을 돌리지 않았습니다. 질문을 켜 둔 채 " +
+    "인용 확인을 다시 돌리면 답변과 출처가 여기에 쌓입니다.");
+}
+function AI_aErr(msg) {
+  return `<div class="empty err"><b>답변을 불러오지 못했습니다</b><p>${esc(msg || "")}</p>
+    <div class="acts"><button type="button" class="go sec" onclick="AI_aRetry()">다시 시도</button></div></div>`;
+}
+function AI_aHtml() {
+  const a = AI_A, ans = a.data, all = ans.checks;   // ans: /api/ai/answers 응답 (d 는 gather 페이로드 몫이다)
+  if (!all.length) return AI_aEmpty();
+  const gs = AI_aGroups(all);
+  const gi = Math.max(0, gs.findIndex(g => g.k === a.eng)), g = gs[gi];
+  const i = Math.min(a.i, g.cs.length - 1), c = g.cs[i], v = AI_vOf(c);
+  const cites = c.citations || [];
+  const text = String(c.answer || "");
+  const fold = text.length > AI_FOLD && !a.open;
+  const tabs = gs.map((x, n) => {
+    const best = AI_aBest(x.cs), nc = x.cs.filter(q => q.cited).length;
+    const sel = n === gi;
+    return `<button type="button" role="tab" id="aia-tab-${n}" class="aia-tab" aria-selected="${sel}"
+      aria-controls="aia-panel" tabindex="${sel ? 0 : -1}" data-e="${esc(x.k)}"
+      title="${esc(`${AI_engName(x.k)} · 표본 ${x.cs.length}건 중 ${nc}건에서 우리가 인용됨`)}"
+      onclick="AI_aTab(this)"><span class="aia-tn">${AI_logo(x.k)}${esc(AI_engName(x.k))}</span>
+      <span class="aia-tv ${best}"><i class="aia-dot ${best}" aria-hidden="true"></i>${AI_V_TXT[best]}${
+        x.cs.length > 1 ? `<span class="aia-tc">· 인용 ${nc}/${x.cs.length}</span>` : ""}</span></button>`;
+  }).join("");
+  const pills = g.cs.length > 1 ? `<div class="aia-pills" role="group" aria-label="${esc(AI_engName(g.k))} 표본">${
+    g.cs.map((q, j) => { const qv = AI_vOf(q);
+      return `<button type="button" class="aia-pill" aria-pressed="${j === i}" data-i="${j}"
+        onclick="AI_aSamp(this)"><i class="aia-dot ${qv}" aria-hidden="true"></i>#${j + 1}
+        <span>${AI_V_TXT[qv]}</span></button>`; }).join("")}</div>` : "";
+  const when = String(c.checked_at || "").slice(0, 10);
+  const meta = `<div class="aia-meta"><span class="aia-vd ${v}"><i class="aia-dot ${v}" aria-hidden="true"></i>${
+    AI_V_LONG[v]}</span><span class="aia-mm">${esc(AI_engName(g.k))}${g.cs.length > 1
+      ? ` · 표본 ${i + 1}/${g.cs.length}` : ""}${when ? ` · ${esc(when)} 확인` : ""}${
+    c.recommended ? " · 추천 목록에 들었음" : ""}</span></div>`;
+  const body = text.trim()
+    ? `<div class="aia-ans ${v}${fold ? " clipped" : ""}" id="aia-ans">${AI_md(text, {
+        cites: c.citations_known ? cites.length : 0, own: ans.own_domain})}</div>${
+      text.length > AI_FOLD ? `<button type="button" class="lnk aia-more" aria-expanded="${!fold}"
+        aria-controls="aia-ans" onclick="AI_aFold()">${fold ? `전문 펼치기 (${num(text.length)}자)` : "접기"}</button>` : ""}`
+    : `<p class="aia-note">이 표본은 답변 본문이 저장돼 있지 않습니다.</p>`;
+  const citeBody = cites.length
+    ? `${c.citations_known ? "" : `<p class="aia-note">이 기록은 URL 을 저장하기 전 것이라 도메인만 보입니다.
+        AI 인용을 다시 재면 URL 까지 쌓입니다.</p>`}<ol class="aia-cl">${
+      cites.map((x, n) => AI_aCiteRow(x, n + 1, a.tp)).join("")}</ol>`
+    : `<p class="aia-note">이 답변은 출처를 달지 않았습니다.</p>`;
+  return `<div class="aia-tabs" role="tablist" aria-label="엔진별 답변" onkeydown="AI_aKey(event)">${tabs}</div>
+    <div role="tabpanel" id="aia-panel" aria-labelledby="aia-tab-${gi}" class="aia-sec">
+    ${pills}${meta}
+    <h3 class="aia-sh"><span>답변 전문${text.trim() ? ` · <b>${num(text.length)}자</b>` : ""}</span>${text.trim()
+      ? `<button type="button" class="lnk" onclick="AI_aCopy()">답변 복사</button>` : ""}</h3>
+    ${body}
+    <h3 class="aia-sh"><span>이 답변이 인용한 곳 <b>${cites.length}</b></span></h3>${citeBody}</div>
+    <p class="aia-note">답변은 매번 달라집니다 — 이 질문은 표본 ${all.length}건(엔진 ${gs.length}곳)을 받았습니다.
+      탭과 표본을 넘겨 가며 읽습니다.</p>`;
+}
+function AI_aBox() {
+  const b = SM.drawer.body(), box = b && b.querySelector(".aia");
+  return box && AI_A && box.dataset.p === AI_A.prompt ? box : null;
+}
+function AI_aPaint(focus) {
+  const box = AI_aBox();
+  if (!box) return;
+  box.innerHTML = AI_aHtml();
+  box.setAttribute("aria-busy", "false");
+  const f = focus && box.querySelector(focus);
+  if (f) f.focus({preventScroll: true});
+}
+async function AI_aFetch(prompt) {
+  const key = AI_NM + "\n" + prompt;
+  if (AI_ANS.has(key)) return AI_ANS.get(key);
+  const res = await fetch("/api/ai/answers?project=" + encodeURIComponent(AI_NM) +
+                          "&prompt=" + encodeURIComponent(prompt));
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* 아래에서 상태 코드로 말한다 */ }
+  if (!res.ok || !body || !Array.isArray(body.checks))
+    throw new Error((body && body.error) || `서버가 ${res.status} 로 답했습니다.`);
+  AI_ANS.set(key, body);
+  return body;
+}
+async function AI_aStart(r) {
+  const a = AI_A = {prompt: r.prompt, data: null, eng: "", i: 0, open: false, tp: AI_tpSet(r), row: r};
+  const box = AI_aBox();
+  if (box) { box.innerHTML = AI_aSkel(); box.setAttribute("aria-busy", "true"); }
+  try {
+    const data = await AI_aFetch(r.prompt);
+    if (AI_A !== a) return;                       // 그 사이 다른 서랍이 열렸다
+    a.data = data;
+    if (data.checks.length) Object.assign(a, AI_aDefault(data.checks));
+    AI_aPaint();
+  } catch (e) {
+    if (AI_A !== a || !AI_aBox()) return;
+    AI_aBox().innerHTML = AI_aErr(e && e.message);
+    AI_aBox().setAttribute("aria-busy", "false");
+  }
+}
+const AI_aRetry = () => { if (AI_A) AI_aStart(AI_A.row); };
+function AI_aTab(btn) {
+  const gs = AI_aGroups(AI_A.data.checks), g = gs.find(x => x.k === btn.dataset.e);
+  if (!g) return;
+  AI_A.eng = g.k; AI_A.i = AI_aFirstCited(g.cs); AI_A.open = false;
+  AI_aPaint('.aia-tab[aria-selected="true"]');
+}
+function AI_aSamp(btn) {
+  AI_A.i = +btn.dataset.i; AI_A.open = false;
+  AI_aPaint('.aia-pill[aria-pressed="true"]');
+}
+function AI_aFold() { AI_A.open = !AI_A.open; AI_aPaint(".aia-more"); }
+// 탭 키보드 — 좌우로 옮기면 바로 그 엔진이 열린다(자동 활성), Home·End 는 처음·끝.
+function AI_aKey(e) {
+  const keys = {ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last"};
+  if (!(e.key in keys) || !e.target.closest(".aia-tab")) return;
+  const tabs = [...e.currentTarget.querySelectorAll(".aia-tab")];
+  const at = tabs.indexOf(e.target.closest(".aia-tab")), k = keys[e.key];
+  const to = k === "first" ? 0 : k === "last" ? tabs.length - 1 : (at + k + tabs.length) % tabs.length;
+  e.preventDefault();
+  AI_aTab(tabs[to]);
+}
+// 각주 칩 → 인용 목록의 그 줄을 강조하고 보이는 자리로 가져온다
+function AI_aCite(btn) {
+  const box = AI_aBox(), row = box && box.querySelector("#aia-c-" + btn.dataset.n);
+  if (!row) return;
+  box.querySelectorAll(".aia-ci.hit").forEach(x => x.classList.remove("hit"));
+  row.classList.add("hit");
+  row.scrollIntoView({block: "nearest", behavior: AI_motion() ? "smooth" : "auto"});
+  row.focus({preventScroll: true});
+}
+async function AI_aCopy() {
+  const a = AI_A, g = a && AI_aGroups(a.data.checks).find(x => x.k === a.eng), c = g && g.cs[Math.min(a.i, g.cs.length - 1)];
+  if (!c) return;
+  const ok = await SM.ui.copyText(String(c.answer || ""));
+  if (window.toast) toast(ok ? "답변을 복사했습니다." : "복사하지 못했습니다. 글을 직접 선택해 복사해 주세요.", ok ? "" : "bad");
+}
+
 VIEW("aicite", function (d) {
   const m = d.matrix || [], at = d.ai_trend || [];
   const has = m.length > 0;
+  // 서랍이 받아 둔 답변 전문은 이 확인(런)의 것이다 — 사이트가 바뀌거나 새 확인이 들어오면(마지막 확인 시각·
+  // 받은 답변 수가 바뀐다) 비운다. 같은 질문을 다시 열면 캐시를 쓰고 서버를 다시 부르지 않는다.
+  const sig = [d.project.name, (at[at.length - 1] || {}).t || "", m.reduce((s, r) => s + (r.total || 0), 0)].join("|");
+  if (sig !== AI_ANS_SIG) { AI_ANS_SIG = sig; AI_ANS = new Map(); }
   AI_NM = d.project.name || "mysite";   // 빈 화면과 도구줄의 명령 칩이 같이 쓴다
   AI_INTENT = d.ai_intent_labels || {};
   AI_MK_LABEL = Object.fromEntries((d.ai_markets || []).map(m => [m.locale, m.label]));

@@ -167,6 +167,12 @@ GAP_RIVAL = "gapZ9.example"         # 격차 표에만 나오는 도메인 — R
 BL_TOTAL = 20241                  # 총 백링크. 계기판에만 나오는 수 — 문구와 안 겹친다(참조 도메인보다 커야 화면이 말이 된다)
 AI_PROMPT = "AI질문Z9"               # AI 인용: 질문별 목록에만 나오는 문장
 AI_PROMPT_EN = "Which clinic AIqZ9?"  # AI 인용: 영어 시장 질문 — 시장별 카드·시장 거르개를 세운다
+AI_ANS_PROMPT = "AI답변전문Z9"        # AI 인용 서랍: 엔진 둘 × 표본 둘 — 새 행·옛 행·악성 문자열 행을 한 질문에 모았다
+AI_ANS_BOLD = "굵게강조Z9"            # 새 행 답변의 **굵게** — 마크다운이 서식으로 그려졌나
+AI_ANS_TITLE = "경쟁가이드제목Z9"      # 새 행 인용의 제목 — 옛 행에는 없다(도메인만)
+AI_ANS_OLD = "옛답변본문Z9"            # 옛 행(citations_json NULL) 답변 — URL 없이 도메인만 보여야 한다
+AI_ANS_OLD_DOM = "oldrivalz9.example"  # 옛 행의 인용 도메인
+AI_ANS_EVIL = "악성조각Z9"             # 악성 행 답변에 섞은 표식 — 글자로 보여야지 태그가 되면 안 된다
 TRIAGE_KW = "심사검색어Z9"           # 심사: 미판정 검색어 — 변형 둘이 한 줄로 묶여야 한다
 TRIAGE_TOPIC = "심사주제Z9"            # 심사: 미판정 주제 — [주제] 묶음에 서야 한다
 TRIAGE_DOMAIN = "triage-domain-z9.example"   # 심사: 미판정 링크 도메인 — 두 종류가 한 줄이다
@@ -549,6 +555,125 @@ PLAY_REPORT_MUSTS = [
 ]
 
 
+# [AI 인용] 질문 서랍의 답변 전문·인용 출처 — 서랍은 누를 때 생기고 답변은 /api/ai/answers 로 받아 온 뒤에
+# 그려진다. 그래서 줄을 실제로 눌러 본다(사람이 누르는 길과 같은 onclick): ① 질문 줄을 눌러 엔진 탭·표본
+# 알약·전문·인용 목록을 뜬다(chatgpt #1 — 새 행) ② 각주 칩 [2] 를 눌러 목록 2번 줄을 강조한다 ③ 표본 #2(옛 행)
+# ④ 탭 키보드 → 다음 엔진(악성 문자열 행) ⑤ 표본 #2(출처 없음) ⑥ 서랍을 닫고 같은 질문을 다시 열면 서버를 다시
+# 안 부른다. 스냅샷은 서랍 안의 .aia 를 DOM 에 옮겨 적은 것이다.
+ANS_PROBE = """<script>addEventListener("load", function () {
+  var calls = 0, f0 = window.fetch;
+  window.fetch = function (i) {
+    var u = typeof i === "string" ? i : ((i && i.url) || String(i));
+    if (u.indexOf("/api/ai/answers") >= 0) calls++;
+    return f0.apply(this, arguments);
+  };
+  var out = document.createElement("div"); out.id = "__aians__"; out.hidden = true;
+  document.body.appendChild(out);
+  var dr = function () { return document.getElementById("sdr"); };
+  var btn = function () {
+    return [].filter.call(document.querySelectorAll("#ai-prompt-sec .aiq-t"),
+      function (b) { return b.textContent.indexOf("%(prompt)s") >= 0; })[0];
+  };
+  var ready = function () { return dr() && dr().querySelector('.aia[aria-busy="false"] .aia-tab'); };
+  var wait = function (cond, then) {
+    var k = 0, t = setInterval(function () {
+      if (cond()) { clearInterval(t); then(); } else if (++k > 90) clearInterval(t);
+    }, 100);
+  };
+  var snap = function (id) {
+    out.insertAdjacentHTML("beforeend", '<div id="' + id + '">' + dr().querySelector(".aia").innerHTML + "</div>");
+  };
+  wait(btn, function () {
+    btn().click();
+    wait(ready, function () {
+      snap("__aians_1__");
+      var fn = dr().querySelector('.aia-fn[data-n="2"]'); if (fn) fn.click();
+      var hit = dr().querySelectorAll(".aia-ci.hit").length + ":" + (dr().querySelector("#aia-c-2.hit") ? "2" : "-");
+      dr().querySelector('.aia-pill[data-i="1"]').click();
+      snap("__aians_3__");
+      dr().querySelector('.aia-tab[aria-selected="true"]').dispatchEvent(
+        new KeyboardEvent("keydown", {key: "ArrowRight", bubbles: true}));
+      var foc = document.activeElement && document.activeElement.dataset.e;
+      var bad = dr().querySelectorAll(".aia script, .aia img, .aia iframe, .aia a[href^='javascript']").length;
+      snap("__aians_2__");
+      dr().querySelector('.aia-pill[data-i="1"]').click();
+      snap("__aians_4__");
+      SM.drawer.close();
+      btn().click();
+      wait(ready, function () {
+        out.insertAdjacentHTML("beforeend", '<p id="__aians_s__">hit=' + hit + " focus=" + foc +
+          " xss=" + window.__XSS__ + " bad=" + bad + " calls=" + calls +
+          " reopen=" + !!dr().querySelector(".aia-tab") + "</p>");
+      });
+    });
+  });
+});</script>""" % {"prompt": AI_ANS_PROMPT}
+
+
+def _ans(i, pat: str) -> str:
+    """서랍 스냅샷 #i 안에서만 찾는 패턴 — 스냅샷끼리 글자가 섞이지 않는다."""
+    return rf'id="__aians_{i}__">(?:(?!id="__aians_).)*{pat}'
+
+
+ANS_MUSTS = [
+    # ① chatgpt #1(새 행) — 엔진 탭 둘, 우리가 인용된 chatgpt 가 먼저 골라진다, 알약 #1·#2, 판정이 글자로
+    (_ans(1, r'role="tablist"(?:(?!id="__aians_).)*aria-selected="true"[^>]*data-e="chatgpt"'),
+     "서랍의 엔진 탭이 안 섰거나 우리가 인용된 엔진(chatgpt)이 먼저 골라지지 않았다"),
+    (_ans(1, r'data-e="perplexity"(?:(?!id="__aians_).)*class="aia-tv mention"'),
+     "서랍의 perplexity 탭에 판정(언급만)이 안 붙었다"),
+    (_ans(1, r'class="aia-tv cited"><i class="aia-dot cited"[^>]*></i>인용됨<span class="aia-tc">· 인용 1/2</span>'),
+     "서랍의 chatgpt 탭에 판정 글자(인용됨 · 인용 1/2)가 없다 — 색 점에만 기댄다"),
+    (_ans(1, r'class="aia-pill" aria-pressed="true" data-i="0"(?:(?!id="__aians_).)*data-i="1"'),
+     "서랍에 표본 알약(#1·#2)이 없다"),
+    (_ans(1, r'class="aia-vd cited"><i class="aia-dot cited"[^>]*></i>우리가 인용됨'),
+     "서랍의 판정 줄이 「우리가 인용됨」을 글자로 말하지 않는다"),
+    # 전문 — 마크다운이 서식으로, 우리 도메인이 표시로, 각주가 칩으로, 링크는 새 탭 noopener
+    (_ans(1, r'<h3>결론Z9</h3>'), "답변 전문의 제목(#)이 제목으로 안 그려졌다"),
+    (_ans(1, r'<strong>' + AI_ANS_BOLD + r'</strong>'), "답변 전문의 **굵게** 가 서식으로 안 그려졌다"),
+    (_ans(1, r'<mark class="aia-own">' + re.escape(SITES[1]) + r'\.example</mark>'),
+     "답변 속 우리 도메인이 눈에 띄게 표시되지 않았다"),
+    (_ans(1, r'class="aia-fn" data-n="1"(?:(?!id="__aians_).)*class="aia-fn" data-n="3"'),
+     "답변 속 각주 [1][2][3] 이 인용 목록과 이어지는 칩으로 안 그려졌다"),
+    (_ans(1, r'<table class="aia-t">'), "답변 속 표가 표로 안 그려졌다"),
+    (_ans(1, r'<a href="https://rivalz9\.example/guide" target="_blank" rel="noopener noreferrer">가이드</a>'),
+     "답변 속 링크가 새 탭·noopener noreferrer 로 안 열린다"),
+    (_ans(1, r'답변 전문 · <b>\d[\d,]*자</b>'), "전문 머리에 글자 수가 없다"),
+    # 인용 목록 — 3건, 우리 줄은 own 배지, 제목·URL(링크, & 이스케이프)
+    (_ans(1, r'이 답변이 인용한 곳 <b>3</b>'), "인용 목록 머리가 인용 수(3)를 말하지 않는다"),
+    (_ans(1, r'id="aia-c-1"(?:(?!id="__aians_).)*aia-cd">rivalz9\.example</b>(?:(?!id="__aians_).)*'
+             + AI_ANS_TITLE + r'(?:(?!id="__aians_).)*class="aia-cu" href="https://rivalz9\.example/guide\?a=1&amp;b=2"'),
+     "인용 목록 1번 줄에 도메인·제목·URL 링크가 없다"),
+    (_ans(1, r'class="aia-ci own" id="aia-c-2"(?:(?!id="__aians_).)*<span class="aia-b own"[^>]*>우리</span>'),
+     "인용 목록에서 우리 도메인 줄에 own 배지가 없다"),
+    (_ans(1, r'답변은 매번 달라집니다 — 이 질문은 표본 4건\(엔진 2곳\)'),
+     "표본 N건 문구(답변은 매번 달라진다)가 없다"),
+    ("!" + _ans(1, r'class="aiev"'), "280자 발췌 블록(.aiev)이 서랍에 남았다 — 새 구성요소가 대신한다"),
+    # ③ 옛 행 — 도메인만, URL 없음, 안내 한 줄
+    (_ans(3, AI_ANS_OLD), "표본 #2(옛 행)의 답변 전문이 안 보인다"),
+    (_ans(3, r'이 기록은 URL 을 저장하기 전 것이라 도메인만 보입니다'),
+     "옛 기록(URL 모름)인데 도메인만 보인다는 안내가 없다"),
+    (_ans(3, r'aia-cd">' + re.escape(AI_ANS_OLD_DOM)), "옛 기록의 인용 도메인이 목록에 없다"),
+    ("!" + _ans(3, r'class="aia-cu"'), "옛 기록(URL 모름)에 URL 링크가 섰다"),
+    ("!" + _ans(3, r'class="aia-fn"'), "옛 기록은 인용 순서를 모르는데 각주가 목록에 이어졌다"),
+    # ④ 악성 행 — 전부 글자. 태그·onerror·javascript: 는 DOM 에 없고, 잘린 ** 는 그대로 보인다
+    (_ans(2, r'aria-selected="true"[^>]*data-e="perplexity"'), "방향키가 다음 엔진 탭을 열지 않았다"),
+    (_ans(2, r'&lt;script&gt;window\.__XSS__=1&lt;/script&gt;'), "답변 속 <script> 가 글자로 안 보인다"),
+    (_ans(2, r'&lt;img src=x onerror="window\.__XSS__=2"&gt;'), "답변 속 <img onerror> 가 글자로 안 보인다"),
+    (_ans(2, r'\*\*' + AI_ANS_EVIL), "잘린 ** 가 서식이 되거나 사라졌다"),
+    (_ans(2, r'\[7\]'), "인용 범위 밖 각주 [7] 이 글자로 남지 않았다"),
+    (_ans(2, r'&lt;b&gt;제목태그Z9&lt;/b&gt;'), "인용 제목 속 태그가 글자로 안 보인다"),
+    ("!" + _ans(2, r'href="javascript'), "javascript: 링크가 살아 있다"),
+    (_ans(2, r'class="aia-vd none"><i class="aia-dot none"[^>]*></i>우리가 안 나옴'),
+     "인용도 언급도 없는 표본의 판정이 글자로 안 나온다"),
+    # ⑤ 언급만 + 출처 없음
+    (_ans(4, r'class="aia-vd mention"(?:(?!id="__aians_).)*이름만 언급됨'), "언급만 표본의 판정 글자가 없다"),
+    (_ans(4, r'이 답변은 출처를 달지 않았습니다'), "출처가 0건인데 빈 칸이다 — 출처를 달지 않았다고 말해야 한다"),
+    # 상태 줄 — 각주→목록 강조, 방향키 초점, 악성 조각이 실행·삽입 안 됨, 다시 열 때 서버를 안 부름
+    (r'id="__aians_s__">hit=1:2 focus=perplexity xss=undefined bad=0 calls=1 reopen=true<',
+     "서랍 동작이 어긋났다(hit=각주 칩→목록 강조, focus=방향키 초점, xss/bad=악성 조각, calls=같은 질문 재열기는 캐시)"),
+]
+
+
 # 심사는 서버가 있어야 저장되고, 키워드 관리는 추적을 켜고 끄는 화면이라 종이에서는 못 바꾼다.
 REPORT_DROPPED = ("settings", "guide", "triage", "kwmanage")
 
@@ -776,6 +901,36 @@ def find_browser() -> str | None:
 
 
 
+def _ai_answers(conn, pid: int, run_id: int) -> None:
+    """서랍의 답변 전문·인용 목록을 보는 질문 하나 — 엔진 둘(chatgpt·perplexity) × 표본 둘.
+
+    · chatgpt #1: 새 행(citations_json 있음). 우리 도메인 인용이 둘째 줄, 답변은 마크다운·각주·우리 도메인 언급.
+    · chatgpt #2: 옛 행(citations_json NULL) — 도메인만, URL·제목 없음.
+    · perplexity #1: 악성 문자열 — 태그·onerror·javascript: 링크·잘린 ** 가 글자로만 보여야 한다.
+    · perplexity #2: 언급만, 출처 없음.
+    record_ai_check 로 심는다(수집기가 쓰는 길) — INSERT 를 손으로 쓰면 칸이 바뀌어도 검사가 모른다.
+    """
+    import db
+    dom = conn.execute("SELECT domain FROM projects WHERE id=?", (pid,)).fetchone()[0]
+    qid = conn.execute("INSERT INTO ai_prompts(project_id,prompt,category) VALUES(?,?,'추천')",
+                       (pid, AI_ANS_PROMPT)).lastrowid
+    new_answer = (f"## 결론Z9\n{dom} 은 **{AI_ANS_BOLD}** 후보로 먼저 꼽힙니다[1][2]. "
+                  "비교는 [가이드](https://rivalz9.example/guide) 를 보세요.\n\n"
+                  "- 첫째 항목[3]\n- 둘째 항목\n\n| 곳 | 점수 |\n|---|---|\n| A | 1 |")
+    db.record_ai_check(conn, qid, run_id, "chatgpt", 0, 1, 1, ["rivalz9.example"], new_answer, 1, [
+        {"url": "https://rivalz9.example/guide?a=1&b=2", "title": AI_ANS_TITLE},
+        {"url": f"https://{dom}/a", "title": "우리글제목Z9"},
+        {"url": "https://reddit.com/r/z9", "title": None}])
+    db.record_ai_check(conn, qid, run_id, "chatgpt", 1, 0, 0, [AI_ANS_OLD_DOM],
+                       f"{AI_ANS_OLD} 둘째 표본", None, None)
+    evil = ("<script>window.__XSS__=1</script><img src=x onerror=\"window.__XSS__=2\"> "
+            f"[나쁜](javascript:window.__XSS__=3) **{AI_ANS_EVIL} 잘림 [7]")
+    db.record_ai_check(conn, qid, run_id, "perplexity", 0, 0, 0, ["evilz9.example"], evil, 0, [
+        {"url": "javascript:window.__XSS__=4", "title": "<b>제목태그Z9</b>"},
+        {"url": "https://evilz9.example/x", "title": None}])
+    db.record_ai_check(conn, qid, run_id, "perplexity", 1, 1, 0, [], "이름만 나온 답변Z9", 0, [])
+
+
 def _axes(conn, pid: int) -> None:
     """백링크·경쟁·크롤 — 화면이 이걸 그리는지 보려고 최소한만 심는다."""
     d, prev = "2026-06-01", "2026-05-01"
@@ -898,6 +1053,7 @@ def _axes(conn, pid: int) -> None:
                 conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned,"
                              "cited_domains_json,answer_excerpt) VALUES(?,?,?,?,?,?,?)",
                              (qid, r.id, eng, cited, cited, '["rival.example"]', "답변"))
+        _ai_answers(conn, pid, r.id)
     # 내 페이지 감사 — 진단이 여러 줄 나와야 패널의 '손댈 곳 N군데 / 자세히'가 선다.
     # (설명 없음·H1 없음·본문 짧음처럼 규칙에 걸리는 값을 일부러 넣는다.)
     db.write_page_audits(conn, pid, d, [
@@ -1189,6 +1345,8 @@ def _hosted_app(data: Path):
                     body = body.replace(b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
                     # 할 일 서랍 — 줄을 실제로 눌러 본다(PLAY_PROBE). 할 일이 없는 사이트면 그냥 물러난다.
                     body = body.replace(b"</body>", PLAY_PROBE.encode("utf-8") + b"</body>", 1)
+                    # [AI 인용] 질문 서랍 — 답변 전문·인용 목록(ANS_PROBE). 호스팅은 진짜 FastAPI 의 /api/ai/answers 를 탄다.
+                    body = body.replace(b"</body>", ANS_PROBE.encode("utf-8") + b"</body>", 1)
                     # 새로고침 복원 검사 하나만 켠다(쿼리 표식) — 모든 /d 응답에 걸면
                     # 이 자리의 다른 검사(기본 화면이 무엇인가)가 클릭·새로고침에 덮인다.
                     if b"reload_probe=1" in scope.get("query_string", b""):
@@ -1469,10 +1627,10 @@ def run() -> None:
 
         # 대상마다 (이름, 서버를 세우는 것, 있어야 할 것). 서버는 대상을 볼 때만 선다 —
         # 호스팅 대상은 env 를 갈아 끼우므로 다른 대상과 겹치면 안 된다.
-        local = shell.replace(b"</body>", (CARDS_PROBE + PLAY_PROBE).encode("utf-8") + b"</body>", 1)
+        local = shell.replace(b"</body>", (CARDS_PROBE + PLAY_PROBE + ANS_PROBE).encode("utf-8") + b"</body>", 1)
         targets = [("로컬 대시보드", lambda: _stdlib(local),
                     MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS
-                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS + KWM_LOCAL_MUSTS)]
+                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS + KWM_LOCAL_MUSTS + ANS_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
@@ -1480,7 +1638,7 @@ def run() -> None:
         if (ROOT / "server" / "assets" / "dash.html").exists():
             targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
                             HOSTED_MUSTS + ASK_HOSTED_MUSTS + PLAY_MUSTS + PLAY_HOSTED_MUSTS
-                            + KWM_HOSTED_MUSTS))
+                            + KWM_HOSTED_MUSTS + ANS_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(
