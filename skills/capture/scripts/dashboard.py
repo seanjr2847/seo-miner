@@ -1979,8 +1979,72 @@ def _axis_plays(conn, pid: int) -> dict:
             "plays_at": max((x["created_at"] for x in plays if x["created_at"]), default=None)}
 
 
+class PayloadKeyClash(ValueError):
+    """페이로드 키 하나를 둘 이상의 축이 낸다 — `**` 병합이면 뒤 값이 조용히 앞 값을 덮었을 자리."""
+
+
+class _Ledger:
+    """gather() 가 페이로드를 쌓는 장부 — 키마다 **누가 냈는지**(made_by)를 같이 적는다.
+
+    왜: 축 dict 를 `**` 로 이어 붙이면 같은 키를 낸 두 축 중 뒤 것이 앞 것을 소리 없이
+    덮는다(축은 각자 파일 한 곳에서 자기 키를 짓는데, 새 축이 남의 키 이름을 쓰면 양쪽
+    다 멀쩡해 보인다). 여기서는 겹치면 그 자리에서 PayloadKeyClash 로 선다.
+
+    덮는 게 **의도**인 자리는 replaces 에 키 이름을 적는다 — 적은 키는 반드시 이미 있어야
+    한다(낡은 허용이 남아 아무것도 안 지키는 걸 막는다). 키 순서는 `**` 병합과 같다:
+    처음 나온 자리를 지키고 덮은 값만 바뀐다.
+
+    made_by 가 "키 → 만든 축" 정본이다(gather_traced 가 돌려준다). 읽는 쪽(뷰의 d.*·
+    요청문의 ctx.get)은 소스에 있어서 test_seams 10·19 가 이 장부와 대조한다.
+    """
+
+    def __init__(self) -> None:
+        self.d: dict = {}
+        self.made_by: dict[str, str] = {}
+
+    def put(self, who: str, part: dict, *, replaces: tuple[str, ...] = ()) -> None:
+        stale = [k for k in replaces if k not in self.d]
+        if stale:
+            raise PayloadKeyClash(f"[{who}] 가 덮겠다고 한 {stale} 가 아직 페이로드에 없다")
+        for k in part:
+            if k in self.d and k not in replaces:
+                raise PayloadKeyClash(
+                    f"페이로드 키 {k!r} 를 [{self.made_by[k]}] 와 [{who}] 가 둘 다 낸다 — "
+                    "축마다 키 이름이 달라야 한다(덮는 게 의도면 replaces 에 적는다)")
+            self.made_by[k] = who
+        self.d.update(part)
+
+    def set(self, who: str, key: str, value) -> None:
+        self.put(who, {key: value})
+
+    def mutate(self, who: str, fn, *args, replaces: tuple[str, ...] = ()) -> None:
+        """페이로드를 제자리에서 고치는 단계(brief.attach) — 새로 생긴 키는 who 가 낸 것이고,
+        이미 있던 키의 **값이 통째로 바뀌었으면** replaces 에 적혀 있어야 한다.
+        (그 값 안쪽 — 기회 o 의 필드 — 을 고치는 건 여기서 못 본다.)"""
+        before = dict(self.d)
+        fn(self.d, *args)
+        for k in self.d:
+            if k not in before:
+                self.made_by[k] = who
+            elif self.d[k] is not before[k] and k not in replaces:
+                raise PayloadKeyClash(
+                    f"[{who}] 가 이미 [{self.made_by[k]}] 가 낸 페이로드 키 {k!r} 의 값을 "
+                    "몰래 바꿨다 — 의도면 replaces 에 적는다")
+        gone = [k for k in before if k not in self.d]
+        if gone:
+            raise PayloadKeyClash(f"[{who}] 가 페이로드 키 {gone} 를 지웠다")
+
+
 def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
-    """화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
+    """화면 하나가 쓰는 데이터 전부 — gather_traced 의 페이로드 쪽만 돌려준다."""
+    return gather_traced(conn, p, at, gated=gated)[0]
+
+
+def gather_traced(conn, p, at: str | None = None, *, gated: bool = True
+                  ) -> tuple[dict, dict[str, str]]:
+    """(페이로드, 키 → 만든 축). 조립 한 벌 — gather() 와 키 장부를 보는 시험이 같이 쓴다.
+
+    화면 하나가 쓰는 데이터 전부 — 라이브 대시보드와 박제 리포트가 같이 쓴다.
 
     각 축(_axis_*)이 자기 키 묶음을 내고, 여기서는 그 합집합만 한다 — 축끼리
     공유하는 중간값(스냅샷 짝 cur/prev/period 등)은 인자로 안 넘긴다. 필요한 축이
@@ -2013,7 +2077,7 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
                            ranks_all=ranks_all, ups=gsc["ups"], downs=gsc["downs"],
                            vitals=vitals["vitals"])
     # 관찰 중 — 기회 줄에 hold 를 얹고 "새 기회 N건"을 그만큼 뺀다(opps_d 를 덮어쓴다).
-    opps_d.update(_axis_hold(conn, pid, at, opps_d, qp))
+    hold = _axis_hold(conn, pid, at, opps_d, qp)
     page_perf = _axis_page_perf(conn, pid)
     ga4 = _axis_ga4(conn, pid, at)
     bl = _axis_backlinks(conn, pid)
@@ -2032,58 +2096,72 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
             WHERE c.project_id=? ORDER BY c.id DESC LIMIT 50""", (pid,))
 
     # 박제본 호환 분기는 이 번호 하나로 한다 — 필드 유무를 검사하지 않는다
-    d = {"schema": 1, "project": dict(p),
-         **gsc, **rank, **ai, **opps_d, **qp, **page_perf, **ga4, **bl, **comp, **crawl,
-         **vitals, **ai_bots, **_axis_groups(conn, pid),
-         "runs": runs, "creations": creations,
-         # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
-         # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
-         "kind_labels": {k.name: k.label for k in scoring.KINDS},
-         # kind → [화면 id, 섹션 id] — [개요] 기회 줄의 "자세히 보는 화면" 링크.
-         # 따로 볼 화면이 없는 종류는 안 싣는다.
-         "kind_views": {k.name: list(k.see) for k in scoring.KINDS if k.see},
-         # 화면 id → 그 화면의 [처리] 큐가 맡는 종류 — 위 see 의 뒤집기(scoring.queue_kinds_by_view).
-         # 큐를 단 화면은 view-def 에 `queue` 만 적고 종류 목록은 여기서 받는다.
-         "queue_kinds_by_view": scoring.queue_kinds_by_view(),
-         # 화면 id → [처리] 큐의 열린 기회 수 — modes 탭 배지가 "queue_open_by_view.<화면 id>" 로 읽는다.
-         "queue_open_by_view": _queue_open_by_view(conn, pid),
-         # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
-         "watch": db.watch_rows(conn, pid),
-         "keyword_kinds": list(scoring.KEYWORD_KINDS),
-         "triage_kinds": list(scoring.TRIAGE_KINDS),
-         "progress": stage.progress(conn, pid),
-         "guide": stage.state(conn, p, p["domain"] or ""),
-         "cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"]),
-         **_axis_plays(conn, pid)}
+    led = _Ledger()
+    led.put("base", {"schema": 1, "project": dict(p)})
+    for who, part, replaces in (
+            ("gsc", gsc, ()), ("rank", rank, ()), ("ai", ai, ()), ("opps", opps_d, ()),
+            # 관찰 중 — 기회 줄의 "새 기회 N건"(opps_total)을 그만큼 뺀 값으로 **덮는다**(의도).
+            ("hold", hold, ("opps_total",)),
+            ("query_pages", qp, ()), ("page_perf", page_perf, ()), ("ga4", ga4, ()),
+            ("backlinks", bl, ()), ("competitors", comp, ()), ("crawl", crawl, ()),
+            ("vitals", vitals, ()), ("ai_bots", ai_bots, ()),
+            ("groups", _axis_groups(conn, pid), ())):
+        led.put(who, part, replaces=replaces)
+    led.put("runs", {"runs": runs, "creations": creations})
+    # kind → 한국어 라벨(밴드 없는 통칭) — [기록]처럼 kind 단위로만 아는
+    # 자리, [개요] 필터 칩처럼 대상 없이 kind 만 아는 자리가 쓴다.
+    led.put("kinds", {
+        "kind_labels": {k.name: k.label for k in scoring.KINDS},
+        # kind → [화면 id, 섹션 id] — [개요] 기회 줄의 "자세히 보는 화면" 링크.
+        # 따로 볼 화면이 없는 종류는 안 싣는다.
+        "kind_views": {k.name: list(k.see) for k in scoring.KINDS if k.see},
+        # 화면 id → 그 화면의 [처리] 큐가 맡는 종류 — 위 see 의 뒤집기(scoring.queue_kinds_by_view).
+        # 큐를 단 화면은 view-def 에 `queue` 만 적고 종류 목록은 여기서 받는다.
+        "queue_kinds_by_view": scoring.queue_kinds_by_view(),
+        # 화면 id → [처리] 큐의 열린 기회 수 — modes 탭 배지가 "queue_open_by_view.<화면 id>" 로 읽는다.
+        "queue_open_by_view": _queue_open_by_view(conn, pid),
+        # 완료 후 관찰(db.watch_rows)과 심사 대상 종류 — [개요]가 그린다.
+        "watch": db.watch_rows(conn, pid),
+        "keyword_kinds": list(scoring.KEYWORD_KINDS),
+        "triage_kinds": list(scoring.TRIAGE_KINDS)})
+    led.put("stage", {"progress": stage.progress(conn, pid),
+                      "guide": stage.state(conn, p, p["domain"] or "")})
+    led.put("cluster_keywords", {"cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])})
+    led.put("plays", _axis_plays(conn, pid))
+    d = led.d                       # 아래는 이 페이로드를 읽으며 쌓는다(같은 dict)
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
     # 들어오는 내부 링크만 여기서 한 번 더 읽는다: 어느 페이지가 필요한지는 기회와
     # query_pages 가 정해져야 알 수 있고(brief.page_of 가 정본), 사이트 전체를 실으면
     # 페이로드가 링크 수만 명으로 부푼다.
     _pages_in_play = {brief.page_of(o, d) for o in (d.get("opps") or [])}
-    d["crawl_inlinks"] = _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play)
-    d["crawl_outlinks"] = _crawl_outlinks(conn, d.get("crawl") or {}, _pages_in_play)
+    led.set("crawl_links", "crawl_inlinks",
+            _crawl_inlinks(conn, d.get("crawl") or {}, _pages_in_play))
+    led.set("crawl_links", "crawl_outlinks",
+            _crawl_outlinks(conn, d.get("crawl") or {}, _pages_in_play))
     # 끊긴 링크는 순위 하락 요청문만 시킨다 — 그 페이지들만 회차를 견준다
-    d["crawl_lost_inlinks"] = _crawl_lost_inlinks(
+    led.set("crawl_links", "crawl_lost_inlinks", _crawl_lost_inlinks(
         conn, pid, d.get("crawl") or {},
-        {brief.page_of(o, d) for o in (d.get("opps") or []) if o.get("kind") == "rank_decay"})
-    d["site_probe"] = _site_probe(conn, d.get("crawl") or {}, _pages_in_play)
-    d["ai_referrals_in_play"] = _ai_referrals_in_play(conn, pid, _pages_in_play)
-    brief.attach(d, db.project_locale(p))
+        {brief.page_of(o, d) for o in (d.get("opps") or []) if o.get("kind") == "rank_decay"}))
+    led.set("site_probe", "site_probe", _site_probe(conn, d.get("crawl") or {}, _pages_in_play))
+    led.set("ai_referrals", "ai_referrals_in_play",
+            _ai_referrals_in_play(conn, pid, _pages_in_play))
+    # attach 는 opp_groups 를 새 목록으로 바꿔 끼운다(surface_new) — 의도, 이것 하나뿐이어야 한다.
+    led.mutate("brief", brief.attach, db.project_locale(p), replaces=("opp_groups",))
     # 심사 대기 — [개요] 기회 카드가 비었을 때 "심사에서 고르면 여기 선다"를 말하는 재료.
     tri = _triage(conn, p)["rows"]
-    d["triage_pending"] = _triage_pending(tri)
+    led.set("triage", "triage_pending", _triage_pending(tri))
     # 데이터 점검은 맨 마지막이다 — 다 조립된 페이로드(요청문 꼴·고칠 페이지까지)를 그대로
     # 읽는다. 페이로드에 없는 사실(추적 중 키워드·씨앗·직접 적은 경쟁사·심사 목록)만 ctx 로.
-    d["health"] = audit_data.audit(d, {
+    led.set("health", "health", audit_data.audit(d, {
         "active": {r[0] for r in conn.execute(
             "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))},
         "seeds": len(db.seed_keywords(conn, pid)),
         "manual_rivals": len(db.manual_competitors(conn, pid)),
         "triage": tri,
-        "foreign_brands": scoring.foreign_brands(conn, pid, cfg)})
-    d["health_sev"] = dict(audit_data.SEV_LABEL)   # 등급 이름 — 화면이 사본을 안 갖는다
-    return d
+        "foreign_brands": scoring.foreign_brands(conn, pid, cfg)}))
+    led.set("health", "health_sev", dict(audit_data.SEV_LABEL))  # 등급 이름 — 화면이 사본을 안 갖는다
+    return d, led.made_by
 
 
 def payload(project: str, at: str | None = None) -> dict:

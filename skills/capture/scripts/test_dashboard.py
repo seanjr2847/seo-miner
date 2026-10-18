@@ -2117,9 +2117,86 @@ def test_crawl_inlinks_reach_target_the_crawl_did_not_fetch():
     conn.close()
 
 
+def _raises_clash(fn, *needles) -> str:
+    try:
+        fn()
+    except dashboard.PayloadKeyClash as e:
+        msg = str(e)
+        for n in needles:
+            assert n in msg, (n, msg)
+        return msg
+    raise AssertionError("PayloadKeyClash 가 안 났다 — 조용히 덮었다")
+
+
+def test_ledger_refuses_silent_overwrite_between_axes():
+    """축 둘이 같은 키를 내면 `**` 는 뒤 값이 앞 값을 조용히 덮었다 — 장부는 그 자리에서 선다."""
+    led = dashboard._Ledger()
+    led.put("gsc", {"a": 1, "b": 2})
+    msg = _raises_clash(lambda: led.put("rank", {"b": 3}), "'b'", "gsc", "rank")
+    assert "replaces" in msg
+    assert led.d == {"a": 1, "b": 2}, "겹친 put 이 일부라도 들어갔다"
+    # 덮는 게 의도면 명시한 키만 허용되고, 덮은 쪽이 만든 축으로 적힌다
+    led.put("hold", {"b": 9, "c": 4}, replaces=("b",))
+    assert led.d == {"a": 1, "b": 9, "c": 4} and list(led.d) == ["a", "b", "c"]
+    assert led.made_by == {"a": "gsc", "b": "hold", "c": "hold"}
+    # 허용 목록에 적은 키가 이미 없으면(낡은 허용) 그것도 실패다
+    _raises_clash(lambda: led.put("x", {"z": 1}, replaces=("nope",)), "nope")
+    # 허용했어도 허용 밖 키가 겹치면 실패다
+    _raises_clash(lambda: led.put("x", {"a": 0, "c": 0}, replaces=("a",)), "'c'")
+
+
+def test_ledger_mutate_credits_new_keys_and_flags_silent_rewrites():
+    """brief.attach 처럼 페이로드를 제자리에서 고치는 단계: 새 키는 그 단계의 것,
+    남의 키 값을 통째로 바꾸면 선언돼 있어야 하고, 지우면 안 된다."""
+    led = dashboard._Ledger()
+    led.put("opps", {"opps": [1], "groups": [2]})
+
+    def add(d):
+        d["brief"] = {"x": 1}
+    led.mutate("brief", add)
+    assert led.made_by["brief"] == "brief"
+
+    def rewrite(d):
+        d["groups"] = [3]
+    _raises_clash(lambda: led.mutate("brief", rewrite), "'groups'", "opps")
+    led.mutate("brief", rewrite, replaces=("groups",))
+    assert led.d["groups"] == [3] and led.made_by["groups"] == "opps"   # 만든 축은 안 바뀐다
+
+    def drop(d):
+        del d["opps"]
+    _raises_clash(lambda: led.mutate("brief", drop), "opps")
+
+
+def test_gather_manifest_names_every_key_once_and_axes_do_not_collide():
+    """gather_traced 의 made_by 가 페이로드 키와 정확히 같은 집합이다(장부 밖으로 새는 키가 없다).
+    그리고 지금 축끼리 겹치는 키는 단 하나 — 관찰 중(hold)이 opps_total 을 덮는 의도뿐이다."""
+    conn, pid = _brain("ledger_ok")
+    d, made_by = dashboard.gather_traced(conn, db.get_project(conn, "ledger_ok"))
+    assert set(made_by) == set(d), (set(made_by) ^ set(d))
+    assert made_by["opps_total"] == "hold" and made_by["opps"] == "opps"
+    assert made_by["brief"] == "brief" and made_by["health"] == "health"
+    # gather() 는 같은 페이로드다
+    assert list(dashboard.gather(conn, db.get_project(conn, "ledger_ok"))) == list(d)
+    conn.close()
+
+
+def test_gather_fails_when_an_axis_starts_writing_anothers_key():
+    """일부러 깨 본다: 축 하나가 남의 키 이름을 쓰면 gather 가 조용히 지나가지 않고 선다."""
+    conn, pid = _brain("ledger_clash")
+    p = db.get_project(conn, "ledger_clash")
+    orig = dashboard._axis_plays
+    try:
+        dashboard._axis_plays = lambda c, i: {**orig(c, i), "ranks": ["덮어쓴다"]}   # rank 축의 키
+        _raises_clash(lambda: dashboard.gather(conn, p), "'ranks'", "rank", "plays")
+    finally:
+        dashboard._axis_plays = orig
+    dashboard.gather(conn, p)          # 되돌리면 멀쩡하다
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    tests =[v for k, v in sorted(globals().items()) if k.startswith("test_")]
     try:
         for t in tests:
             t()

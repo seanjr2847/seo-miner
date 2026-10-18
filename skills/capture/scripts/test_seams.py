@@ -120,12 +120,15 @@ def _chip_stage_ids(defs):
     return {s for v in defs.values() for s in (list(v["stages"]) + list(v.get("head") or []))}
 
 
-def _gather(name, *, ga4=False):
+def _gather(name, *, ga4=False, rich=False, traced=False):
     """빈 Brain 하나로 gather() 를 한 번 돌려 페이로드를 받는다 — 화면·요청문이
     실제로 받는 것과 같은 자료다. 소스를 긁는 대신 이걸 본다.
 
     ga4=True 면 GA4 스냅샷도 심는다: gather() 의 GA4 다섯 키(ga4_funnel 등)는 연결된
     사이트에만 조건부로 실려서, 안 심으면 그 키를 읽는 화면이 전부 여기서만 걸린다.
+    rich=True 면 화면 검사 픽스처의 축(기회·백링크·경쟁·크롤·AI)까지 심는다 — 기회가 있어야
+    요청문(brief)이 ctx 를 실제로 읽는다. name 은 무시되고 픽스처의 둘째 사이트 이름을 쓴다.
+    traced=True 면 (페이로드, 키 → 만든 축) 을 돌려준다(dashboard.gather_traced).
     """
     import contextlib
     import io as _io
@@ -135,7 +138,19 @@ def _gather(name, *, ga4=False):
     c = _sq.connect(":memory:")
     c.row_factory = _sq.Row
     c.executescript(db.SCHEMA)
+    if rich:
+        import test_render
+        name = test_render.SITES[1]
     c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,?,'saas','x.com')", (name,))
+    if rich:
+        # test_render.fixture 의 GSC 두 회차(비교 짝) — 그 위에 _axes 가 나머지 축을 심는다
+        for dt, pos, clk in (("2026-05-01", 14.0, 4), ("2026-06-01", 9.0, 8)):
+            c.executemany(
+                "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                "clicks,impressions,ctr,position) VALUES(1,?,28,?,?,?,?,?,?)",
+                [(dt, f"{name} 검색어", f"https://{name}.example/a", clk, 120, 0.1, pos),
+                 (dt, f"{name} 곁 검색어", f"https://{name}.example/a", 8, 40, 0.2, 3.0)])
+        test_render._axes(c, 1)
     if ga4:
         c.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,"
                   "clicks,impressions,ctr,position) VALUES(1,'2026-01-01',28,?,1,1,1.0,1.0)",
@@ -145,9 +160,22 @@ def _gather(name, *, ga4=False):
                   " VALUES(1,'2026-01-01',28,'/',1,1,0)")
     null = _io.StringIO()   # yaml 없는 프로젝트라 경고가 뜬다 — 검사 출력에 섞지 않는다
     with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
-        out = dashboard.gather(c, db.get_project(c, name))
+        out = dashboard.gather_traced(c, db.get_project(c, name))
     c.close()
-    return out
+    return out if traced else out[0]
+
+
+def _served_keys() -> set[str]:
+    """gather() 가 **어떤 상태에서든** 실을 수 있는 페이로드 키 — 빈 사이트·GA4 연결·기회 있는
+    사이트 세 판의 합집합(조건부 키까지). 읽는 쪽 대조(10·19)가 쓰는 집합이다."""
+    return (set(_gather("_seam", ga4=True, traced=True)[1])
+            | set(_gather("_seam_rich", rich=True, traced=True)[1]))
+
+
+# 축이 상태에 따라 **키 자체를** 안 실을 수 있는 곳 — 읽는 쪽이 d.x 가 없을 수 있다고 가드해야 한다.
+# GA4 는 연결된 사이트에만 다섯 칸(ga4_funnel·ga4_channels 등)을 싣는다. 다른 축이 이 목록에 없이
+# 조건부 키를 만들면 test_seam_10b 가 선다 — 의도면 여기에 이유와 함께 적는다.
+CONDITIONAL_AXES = {"ga4"}
 
 
 def test_seam_01_view_ids_from_payload():
@@ -514,7 +542,7 @@ def test_seam_10_gather_payload_keys_match():
     if ctx is None:
         return
     views = ctx["views"]
-    served = set(_gather("_seam", ga4=True))
+    served = _served_keys()         # 장부(gather_traced) — 소스 글자가 아니라 조립된 키 집합
     # 진단(/api/doctor)을 받는 스크립트(DOCTOR(...) 로 등록하는 블록 — [설정]·[진행 안내])는
     # 다른 페이로드(stage.setup_payload)도 읽는다. 그 블록만 두 벌 중 아무거나 허용한다.
     import stage
@@ -530,6 +558,76 @@ def test_seam_10_gather_payload_keys_match():
     assert doctor_read <= served | doctor_keys, (
         "DOCTOR 블록이 읽는데 gather()·setup_payload() 어디도 안 싣는 키: "
         f"{sorted(doctor_read - served - doctor_keys)}")
+
+
+def test_seam_10b_payload_manifest_is_one_ledger():
+    """10b) 페이로드 키 장부(dashboard.gather_traced 의 키 → 만든 축)는 조립이 낸 키와 정확히
+    같고, 상태에 따라 키가 사라지는 축은 CONDITIONAL_AXES 에 적힌 것뿐이다.
+
+    10 은 "읽는 키 ⊆ 싣는 키" 만 본다. 키가 어느 축에서 나오는지, 축이 상태에 따라 키를 빼는지는
+    아무도 안 봤다 — 빼는 축의 키를 `d.x.y` 로 곧장 읽는 화면은 그 상태에서만 터진다.
+    """
+    plain, mp = _gather("_s10b_plain", traced=True)
+    ga4, mg = _gather("_s10b_ga4", ga4=True, traced=True)
+    rich, mr = _gather("_s10b_rich", rich=True, traced=True)
+    for d, m in ((plain, mp), (ga4, mg), (rich, mr)):
+        assert set(d) == set(m), f"장부 밖으로 샌 키: {sorted(set(d) ^ set(m))}"
+    allm = {**mp, **mg, **mr}
+    varying = {k for k in allm if not (k in mp and k in mg and k in mr)}
+    owners = {allm[k] for k in varying}
+    assert owners <= CONDITIONAL_AXES, (
+        f"상태에 따라 키가 사라지는 축이 목록 밖에 있다: {sorted(owners - CONDITIONAL_AXES)} "
+        f"(키 {sorted(k for k in varying if allm[k] not in CONDITIONAL_AXES)}) — 읽는 쪽이 없을 수 "
+        "있다고 가드하는지 보고 CONDITIONAL_AXES 에 적는다")
+    assert owners == CONDITIONAL_AXES, (
+        f"CONDITIONAL_AXES {sorted(CONDITIONAL_AXES - owners)} 는 이제 조건부 키를 안 낸다 — 목록에서 뺀다")
+
+
+def test_seam_19b_brief_reads_only_served_keys_at_runtime():
+    """19b) 요청문(brief.attach)이 **실제로 돌면서** ctx 에서 읽은 키는 전부 페이로드에 있다.
+
+    19 는 brief.py 소스에서 `ctx.get("…")` 를 긁는다 — 글자로 안 적은 읽기(변수로 만든 키)와 실제로
+    닿는 갈래는 못 본다. 여기서는 기회가 있는 사이트의 페이로드를 기록하는 dict 로 감싸 attach 를
+    다시 돌리고, 읽은 키가 없는 키인지(조용히 None 이 돼 근거 블록이 사라질 자리) 본다.
+    """
+    import copy
+
+    import brief
+    import dashboard
+    d = _gather("_s19b", rich=True)
+    assert d["opps"], "픽스처에 기회가 없다 — 이 검사가 아무것도 안 읽는다"
+
+    class Rec(dict):
+        reads: set
+
+        def get(self, k, default=None):
+            self.reads.add(k)
+            return super().get(k, default)
+
+        def __getitem__(self, k):
+            self.reads.add(k)
+            return super().__getitem__(k)
+
+        def __contains__(self, k):
+            self.reads.add(k)
+            return super().__contains__(k)
+
+    rec = Rec(copy.deepcopy(d))
+    rec.reads = set()
+    brief.attach(rec, "ko-KR")
+    rec.reads.discard("brief")           # attach 가 자기가 심는 키
+    assert len(rec.reads) > 10, f"기록이 너무 적다 — 기록 dict 가 우회됐다: {sorted(rec.reads)}"
+    missing = rec.reads - set(d)
+    assert not missing, f"요청문이 돌면서 읽었는데 페이로드에 없는 키: {sorted(missing)}"
+    # 읽은 키마다 만든 축이 있다 — 이름표로 대조한다(장부 밖 키를 읽을 수는 없다)
+    made_by = _gather("_s19b", rich=True, traced=True)[1]
+    assert all(k in made_by for k in rec.reads)
+    # 일부러 깬 판: 있는 키를 하나 지우면 같은 검사가 그 키를 짚어야 한다
+    broken = Rec(copy.deepcopy(d))
+    broken.reads = set()
+    del broken["page_audits"]
+    brief.attach(broken, "ko-KR")
+    assert "page_audits" in broken.reads and "page_audits" not in set(broken),         "기록이 page_audits 읽기를 못 잡았다 — 이 검사가 아무것도 안 보는 검사다"
 
 
 def test_seam_11_carry_fields_match():
@@ -894,7 +992,7 @@ def test_seam_19_brief_context_keys_come_from_gather():
     read -= {"brief"}
     assert read, "brief.py 에서 ctx 조회를 하나도 못 찾았다 — 정규식이 틀렸다"
 
-    served = set(_gather("_seam19"))
+    served = _served_keys()
     assert read <= served, (
         f"요청문이 읽는데 gather() 가 안 싣는 키: {sorted(read - served)}")
 
@@ -3718,9 +3816,13 @@ def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
     import test_remote
     S = ROOT / "skills" / "capture"
     dash = (S / "scripts" / "dashboard.py").read_text("utf-8")
-    g = re.search(r"\ndef gather\(.*?\n(?=def )", dash, re.S).group(0)
-    assert "audit_data.audit(d" in g and 'd["health"]' in g, "gather 가 d.health 를 audit_data 로 안 짓는다"
-    assert 'd["health_sev"] = dict(audit_data.SEV_LABEL)' in g
+    g = re.search(r"\ndef gather_traced\(.*?\n(?=def )", dash, re.S).group(0)
+    assert "audit_data.audit(d" in g and '"health", "health"' in g, \
+        "gather 가 d.health 를 audit_data 로 안 짓는다"
+    assert '"health_sev", dict(audit_data.SEV_LABEL)' in g
+    # 키가 정말 그 축에서 나온다 — 장부로 본다(소스 글자만 믿지 않는다)
+    owner = _gather("_s121", traced=True)[1]
+    assert owner["health"] == owner["health_sev"] == "health", owner["health"]
     assert not re.search(r"errors=\(\\d\+\)", dash), "dashboard 가 런 실패 표식을 따로 갖는다"
     assert "run_verdict.judge(" in inspect_src(test_remote.why_bad), "출시 문이 런 판정을 따로 한다"
     assert "audit_data.audit(" in inspect_src(test_remote.health_alerts)
