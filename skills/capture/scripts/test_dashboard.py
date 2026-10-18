@@ -2194,6 +2194,37 @@ def test_gather_fails_when_an_axis_starts_writing_anothers_key():
     conn.close()
 
 
+def test_ga4_metrics_looks_up_the_snapshot_pair_once_per_scan_not_once_per_query():
+    """기회 탐지는 검색어마다 _ga4_metrics(query=…) 를 부른다. 그때마다 같은 (pid, 기준일) 의
+    snapshot_pair 를 다시 물었다(실제 사이트에서 한 조립에 66번, 조립 시간의 약 15%).
+    ctx 가 한 번만 고르고 나눠 쓴다 — 결과는 pages_by_query 를 직접 부른 것과 같다."""
+    conn, pid = _brain("ga4pair")
+    qs = [f"q{i}" for i in range(25)]
+    conn.executemany(
+        "INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,clicks,"
+        "impressions,ctr,position) VALUES(?,?,28,?,?,5,100,0.05,4.0)",
+        [(pid, D, q, f"https://ga4pair.example/p{i % 3}") for i, q in enumerate(qs)]
+        + [(pid, PREV, q, f"https://ga4pair.example/p{i % 3}") for i, q in enumerate(qs)])
+    conn.commit()
+    ctx = {"conn": conn, "pid": pid, "cur": D,
+           "ga4": {f"/p{i}": {"sessions": 10 + i, "key_events": i} for i in range(3)},
+           "page_agg": {}}
+    calls = []
+    orig = scoring.snapshot_pair
+    scoring.snapshot_pair = lambda c, i, at=None: (calls.append((i, at)), orig(c, i, at))[1]
+    try:
+        got = [scoring._ga4_metrics(ctx, query=q) for q in qs]
+    finally:
+        scoring.snapshot_pair = orig
+    assert len(calls) == 1, f"검색어 {len(qs)}개에 snapshot_pair {len(calls)}번 — 한 번이어야 한다"
+    assert got[0] == {"ga4_clicks": None, "ga4_sessions": 10, "ga4_key_events": 0}, got[0]
+    assert got[4]["ga4_sessions"] == 11 and got[5]["ga4_sessions"] == 12   # 검색어마다 제 1등 페이지
+    for i, q in enumerate(qs):          # 직접 부른 것과 같은 답이다
+        direct = scoring.pages_by_query(conn, pid, [q], top=1, at=D)[q][0]["page"]
+        assert ctx["ga4"][scoring.urlsplit(direct).path]["sessions"] == got[i]["ga4_sessions"]
+    conn.close()
+
+
 if __name__ == "__main__":
     import shutil
     tests =[v for k, v in sorted(globals().items()) if k.startswith("test_")]

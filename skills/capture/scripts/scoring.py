@@ -2420,7 +2420,8 @@ def labs_page(conn: sqlite3.Connection, project_id: int, query: str) -> str | No
 
 
 def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
-                   *, top: int = 5, at: str | None = None) -> dict[str, list[dict]]:
+                   *, top: int = 5, at: str | None = None,
+                   pair: tuple | None = None) -> dict[str, list[dict]]:
     """검색어 → 그 검색어로 노출된 내 페이지들 (노출 많은 순).
 
     기회를 펼쳤을 때 "그래서 어느 페이지 얘기냐"에 답하는 자리다. 근거 문장은
@@ -2431,9 +2432,11 @@ def pages_by_query(conn: sqlite3.Connection, project_id: int, queries,
     page 가 NULL 인 구버전 스냅샷에서는 빈 dict — 데이터 부재이지 결함이 아니다.
     at 은 화면이 고정한 기준 수집일이다 — 화면이 과거를 보고 있으면 근거 페이지도
     그때 것이어야 한다. 안 넘기면 여기만 최신을 봐서 표와 근거가 어긋난다.
+    pair: 호출부가 같은 (project_id, at) 으로 이미 고른 snapshot_pair 결과 — 검색어를 하나씩
+    반복해 부르는 호출부(_ga4_metrics)가 매번 다시 고르지 않게 한다. 안 주면 여기서 고른다.
     """
-    cur, _, period, _ = snapshot_pair(conn, project_id, at)
-    qs = [q for q in dict.fromkeys(queries) if q]
+    cur, _, period, _ = pair if pair is not None else snapshot_pair(conn, project_id, at)
+    qs =[q for q in dict.fromkeys(queries) if q]
     if not cur or not qs:
         return {}
     out: dict[str, list[dict]] = {}
@@ -4936,7 +4939,12 @@ def _ga4_metrics(ctx: dict, *, query: str | None = None, page: str | None = None
     if page is None:
         if not query:
             return {}
-        rows = pages_by_query(ctx["conn"], ctx["pid"], [query], top=1, at=ctx["cur"]).get(query)
+        # 탐지가 검색어마다 이 길을 탄다 — 같은 (pid, 기준일) 짝을 ctx 가 한 번만 고른다
+        held = ctx.get("_pbq_pair")
+        if held is None or held[0] != ctx["cur"]:
+            held = ctx["_pbq_pair"] = (ctx["cur"], snapshot_pair(ctx["conn"], ctx["pid"], ctx["cur"]))
+        rows = pages_by_query(ctx["conn"], ctx["pid"], [query], top=1, at=ctx["cur"],
+                              pair=held[1]).get(query)
         if not rows:
             return {}
         page = rows[0]["page"]
