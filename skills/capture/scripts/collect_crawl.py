@@ -36,6 +36,7 @@ import collect_page  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
+import http_adapter  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -374,20 +375,18 @@ def _ld_org(blocks) -> list[list[str]]:
 def fetch(url: str) -> dict:
     """URL 한 장. 리다이렉트는 따라가되 홉을 그대로 돌려준다.
 
-    self-check 는 이 함수를 통째로 갈아끼워 가상 사이트를 만든다 — 그래서
-    반환 모양(키 이름)이 계약이다.
+    받기는 http_adapter 한 곳(연결 재사용·한 런 안의 원문 공유)이고, 여기서는 그 응답에서
+    크롤의 모양(원문+홉)만 만든다. self-check 는 이 함수를 통째로 갈아끼워 가상 사이트를
+    만든다 — 그래서 반환 모양(키 이름)이 계약이다.
     """
-    import requests
     try:
-        r = requests.get(url, headers=UA, timeout=serp_adapter.TIMEOUTS["page"],
-                         allow_redirects=True)
+        r = http_adapter.get(url, headers=UA, timeout=serp_adapter.TIMEOUTS["page"])
     except Exception as e:
         return {"final_url": url, "status": None, "chain": [], "text": "",
                 "bytes": 0, "content_type": "", "error": f"{type(e).__name__}: {e}"[:200]}
-    return {"final_url": r.url, "status": r.status_code,
-            "chain": [(h.url, h.status_code) for h in r.history],
-            "text": collect_page.html_text(r), "bytes": len(r.content),
-            "content_type": (r.headers.get("content-type") or ""), "error": None}
+    return {"final_url": r.final_url, "status": r.status, "chain": list(r.chain),
+            "text": r.text, "bytes": r.bytes,
+            "content_type": r.content_type, "error": None}
 
 
 def _sitemap_urls(url: str, *, follow: bool = True) -> list[str]:

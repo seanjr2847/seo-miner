@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
+import http_adapter  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -805,41 +806,22 @@ def blocked_note(host: str, n: int) -> str:
             "우리 쪽에서 고칠 수 있는 문제가 아닙니다.")
 
 
-_META_CHARSET = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_\-]+)""", re.I)
-
-
-def html_text(r) -> str:
-    """응답 본문을 글자로 — 헤더에 charset 이 없으면 본문의 <meta charset>, 그것도 없으면 내용 판정.
-
-    requests 의 r.text 는 'text/html' 에 charset 이 없으면 ISO-8859-1 로 읽는다(RFC 2616 기본값).
-    그래서 상위 글 개요가 'ë¥í° ì¹¼ë¼' 로 저장돼 요청문에 나갔다(cnpskin — 본문은 utf-8).
-    우리 페이지 감사(fetch)와 크롤(collect_crawl.fetch)이 같은 길이라 둘 다 이걸 쓴다."""
-    if "charset" in (r.headers.get("content-type") or "").lower():
-        return r.text
-    m = _META_CHARSET.search(r.content[:4096])
-    for enc in ((m.group(1).decode("ascii", "ignore") if m else None),
-                r.apparent_encoding, "utf-8"):
-        if not enc:
-            continue
-        try:
-            return r.content.decode(enc)
-        except (LookupError, UnicodeDecodeError):
-            continue
-    return r.content.decode("utf-8", errors="replace")
+# 응답 → 글자 판정은 http_adapter 가 갖는다(받기와 같은 자리). 옛 이름은 그대로 건다.
+html_text = http_adapter.html_text
 
 
 def fetch(url: str, timeout: int | None = None) -> dict:
-    """URL 한 장. 실패도 한 줄로 남긴다 — "못 가져왔다"는 것 자체가 진단이다."""
-    import requests
+    """URL 한 장. 실패도 한 줄로 남긴다 — "못 가져왔다"는 것 자체가 진단이다.
+
+    받기는 http_adapter 한 곳이다(크롤과 같은 연결·같은 원문). 여기서는 그 응답에서 감사 행만 만든다."""
     try:
-        r = requests.get(url, headers=UA, timeout=timeout or serp_adapter.TIMEOUTS["page"],
-                         allow_redirects=True)
+        r = http_adapter.get(url, headers=UA, timeout=timeout or serp_adapter.TIMEOUTS["page"])
     except Exception as e:
         return {"url": url, "status": None, "error": f"{type(e).__name__}: {e}"[:200]}
-    if r.status_code >= 400 or "html" not in (r.headers.get("content-type") or "").lower():
-        return {"url": url, "status": r.status_code,
-                "error": f"HTTP {r.status_code} · {r.headers.get('content-type', '?')}"}
-    return audit_html(url, html_text(r), r.status_code)
+    if r.status >= 400 or "html" not in r.content_type.lower():
+        return {"url": url, "status": r.status,
+                "error": f"HTTP {r.status} · {r.content_type or '?'}"}
+    return audit_html(url, r.text, r.status)
 
 
 # ── 막힌 페이지 대신 읽기 — DataForSEO On-Page content_parsing ────────────────
