@@ -31,6 +31,13 @@ def every_hours() -> float:
     return settings.num("SEOMINER_RUN_EVERY_HOURS")
 
 
+def sweep_concurrency() -> int:
+    """스윕이 동시에 띄우는 사이트 워커 수 상한. 기본 1 = 직렬(예전 동작 그대로).
+    망가진 값·0·음수는 1 로 — 오타 하나가 병렬로 번지면 유료 호출이 겹친다.
+    호출 시점에 읽는다."""
+    return max(1, settings.count("SEOMINER_SWEEP_CONCURRENCY"))
+
+
 def due() -> int:
     """지금 잴 사이트 수. 주기 판정은 사이트별로 DB 가 한다 — 전역 스탬프 파일을 쓰면
     먼저 등록한 사이트가 도장을 찍어서 방금 가입한 사람의 첫 측정이 통째로 밀렸다."""
@@ -56,7 +63,12 @@ def kick(*, spawn=subprocess.Popen) -> None:
 
 
 def sweep(*, run=subprocess.run) -> None:
-    """워커가 끝날 때까지 기다린다 — 안 기다리면 다음 틱이 두 벌째를 띄운다."""
+    """워커가 끝날 때까지 기다린다 — 안 기다리면 다음 틱이 두 벌째를 띄운다.
+
+    동시 수(sweep_concurrency)가 1 보다 크면 이 워커는 사이트마다 자식 워커를 띄우고 전부
+    기다린다 — 그래서 스윕 한 번의 길이는 늘지 않는다(직렬보다 짧거나 같다). 타임아웃은
+    부모 워커만 죽인다: 자식은 제 사이트를 제가 잡고 있어(claim_site) 끝까지 돌고 제
+    finally 에서 푼다. 그동안 다음 스윕은 그 사이트를 못 잡아 건너뛴다(이중 실행 없음)."""
     run([sys.executable, WORKER, "--all"], cwd=str(ROOT), timeout=SWEEP_TIMEOUT)
 
 

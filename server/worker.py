@@ -6,7 +6,7 @@ process-global os.environ 을 잠깐 갈아끼우는 것으로 끝난다.
 
 CLI:
   python server/worker.py                              # demo — API 호출 없음
-  python server/worker.py --all [--idle-days 30] ...   # 스케줄 대상 직렬 실행
+  python server/worker.py --all [--idle-days 30] ...   # 스케줄 대상 실행 (동시 수 SEOMINER_SWEEP_CONCURRENCY, 기본 1=직렬)
   python server/worker.py --user <id> --project <p> .. # 단일 사이트 (--groups / --only / --queue)
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ import argparse
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -747,11 +748,43 @@ def run_site(conn, site, *, dry_run: bool = False, skip: str | None = None,
             _hand_off(conn, site)
 
 
+def _claim_and_plan(conn, site, *, dry_run: bool, every_hours: float):
+    """스윕이 사이트 하나를 잡고 이번에 잴 묶음을 정한다 — 반환: (groups, borrow) 또는 None
+    (남이 도는 중이거나 잴 것이 없다). 직렬·병렬 스윕이 같은 판정을 쓰도록 한 곳에 둔다.
+    잡았는데 잴 것이 없으면 잡은 것을 푼다."""
+    fresh = site
+    if not dry_run:
+        fresh = store.claim_site(conn, site["id"])
+        if fresh is None:
+            print(f"[{site['user_id']}/{site['project']}] 건너뜀 — 다른 워커가 도는 중")
+            return None
+    due = set(store.due_groups(conn, fresh, every_hours))
+    pressed = set() if dry_run else set(store.claim_queue(conn, site["id"]))
+    want = due | pressed
+    groups = [g for g in run_all.RUNNABLE_GROUPS if g in want]
+    # 사람이 누른 묶음이 섞이면 빌리지 않는다 — 누른 사람은 새로 재기를 바란다.
+    borrow = set() if pressed else run_all.borrowed(
+        groups, [g for g in run_all.RUNNABLE_GROUPS if g not in want])
+    if not groups:
+        if not dry_run:                       # 잡았는데 잴 것이 없다 — 잡은 것을 푼다
+            store.mark_done(conn, site["id"])
+            _hand_off(conn, site)
+        return None
+    return groups, borrow
+
+
 def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
-                dry_run: bool = False, skip: str | None = None) -> list[dict]:
-    """store.due_sites() 를 직렬로 돌린다 — tenant() 가 process-global env 를
-    갈아끼우므로 사이트끼리 병렬은 안전하지 않다(스레드/프로세스 모두). 한 사이트
-    **안의** 묶음은 run_chain 이 동시에 돌린다(env 는 그 사이트 것 하나다).
+                dry_run: bool = False, skip: str | None = None,
+                concurrency: int | None = None, spawn=subprocess.Popen,
+                sleep=time.sleep) -> list[dict]:
+    """store.due_sites() 를 돈다. 기본은 **직렬**이다 — tenant() 가 process-global env 를
+    갈아끼우므로 한 프로세스 안에서 사이트끼리 병렬은 안전하지 않다. 한 사이트 **안의**
+    묶음은 run_chain 이 동시에 돌린다(env 는 그 사이트 것 하나다).
+
+    concurrency(기본 scheduler.sweep_concurrency() = SEOMINER_SWEEP_CONCURRENCY, 기본 1)가
+    1 보다 크면 사이트마다 **자식 워커 프로세스**(--user/--project/--groups)를 띄우고 동시에
+    그 수까지만 돈다 — env 가 프로세스 경계로 갈려서 안전하다. 1 이면 아래 직렬 경로 그대로
+    제자리에서 돈다(자식 없음). dry_run 은 늘 직렬이다(잡는 것도 쓰는 것도 없다).
 
     사이트마다 주기를 넘긴 묶음(store.due_groups)과 대기열에 걸린 묶음을 한 런으로 돈다.
 
@@ -760,30 +793,82 @@ def run_all_due(conn, *, idle_days: int = 30, every_hours: float = 168.0,
     잡는다**(store.claim_site). 못 잡으면 남이 도는 중이다 — 건너뛴다. 판정도 잡은 뒤
     새로 읽은 행으로 한다.
     """
+    n = scheduler.sweep_concurrency() if concurrency is None else max(1, int(concurrency))
+    sites = store.due_sites(conn, idle_days=idle_days, every_hours=every_hours)
+    if n > 1 and not dry_run:
+        return _sweep_parallel(conn, sites, n, every_hours=every_hours, skip=skip,
+                               spawn=spawn, sleep=sleep)
     results: list[dict] = []
-    for site in store.due_sites(conn, idle_days=idle_days, every_hours=every_hours):
-        fresh = site
-        if not dry_run:
-            fresh = store.claim_site(conn, site["id"])
-            if fresh is None:
-                print(f"[{site['user_id']}/{site['project']}] 건너뜀 — 다른 워커가 도는 중")
-                continue
-        due = set(store.due_groups(conn, fresh, every_hours))
-        pressed = set() if dry_run else set(store.claim_queue(conn, site["id"]))
-        want = due | pressed
-        groups = [g for g in run_all.RUNNABLE_GROUPS if g in want]
-        # 사람이 누른 묶음이 섞이면 빌리지 않는다 — 누른 사람은 새로 재기를 바란다.
-        borrow = set() if pressed else run_all.borrowed(
-            groups, [g for g in run_all.RUNNABLE_GROUPS if g not in want])
-        if not groups:
-            if not dry_run:                   # 잡았는데 잴 것이 없다 — 잡은 것을 푼다
-                store.mark_done(conn, site["id"])
-                _hand_off(conn, site)
+    for site in sites:
+        planned = _claim_and_plan(conn, site, dry_run=dry_run, every_hours=every_hours)
+        if planned is None:
             continue
+        groups, borrow = planned
         print(f"[{site['user_id']}/{site['project']}] 시작 — {','.join(groups)}")
         r = run_site(conn, site, dry_run=dry_run, skip=skip, groups=groups, fresh=borrow)
         results.append(r)
         print(f"[{site['user_id']}/{site['project']}] {'ok' if r.get('ok') else '실패'}")
+    return results
+
+
+def _sweep_parallel(conn, sites, limit: int, *, every_hours: float, skip: str | None,
+                    spawn, sleep, poll_seconds: float = 1.0) -> list[dict]:
+    """사이트마다 자식 워커를 띄우고 동시에 limit 개까지만 돈다. 부모는 전부 끝날 때까지
+    기다린다(스윕 한 번의 길이 의미 = 직렬과 같다).
+
+    - 사이트는 **자리가 났을 때** 잡는다(claim_site). 미리 다 잡으면 순서를 기다리는 사이트가
+      도는 것처럼 보이고, 부모가 죽으면 잡힌 채 3시간 갇힌다.
+    - 잡은 표시는 자식이 이어받는다: 자식의 run_site 가 mark_groups 로 running_since 를
+      새로 찍고 제 finally 의 mark_done 으로 푼다. 부모의 DB 연결은 부모 스레드만 쓴다.
+    - 자식 하나가 실패하거나 못 떠도 나머지는 계속 돈다. 못 뜬 자식의 잡은 표시는 부모가
+      바로 푼다(시계는 자식이 찍으므로 아직 안 찍혔다 — 다음 틱이 다시 잡는다).
+    - 자식이 SIGKILL 로 죽어 finally 가 못 돌면 그 사이트는 DEAD_AFTER_HOURS 뒤에 다음 스윕이
+      넘겨받거나 서버 재시작의 reclaim_dead_runs 가 푼다 — 직렬 워커가 죽었을 때와 같다.
+    """
+    results: list[dict] = []
+    running: list[tuple[dict, object]] = []
+
+    def reap() -> None:
+        for item in running[:]:
+            site, proc = item
+            rc = proc.poll()
+            if rc is None:
+                continue
+            running.remove(item)
+            ok = rc == 0
+            results.append({"user_id": site["user_id"], "project": site["project"],
+                            "ok": ok, "rc": rc})
+            print(f"[{site['user_id']}/{site['project']}] {'ok' if ok else '실패'}")
+
+    for site in sites:
+        while len(running) >= limit:
+            reap()
+            if len(running) >= limit:
+                sleep(poll_seconds)
+        planned = _claim_and_plan(conn, site, dry_run=False, every_hours=every_hours)
+        if planned is None:
+            continue
+        groups, borrow = planned
+        args = ["--user", str(site["user_id"]), "--project", site["project"],
+                "--groups", ",".join(groups)]
+        if borrow:
+            args += ["--fresh", ",".join(sorted(borrow))]
+        if skip:
+            args += ["--skip", skip]
+        print(f"[{site['user_id']}/{site['project']}] 시작 — {','.join(groups)}")
+        try:
+            proc = spawn([sys.executable, scheduler.WORKER, *args], cwd=str(ROOT))
+        except Exception as e:
+            store.mark_done(conn, site["id"])
+            print(f"[{site['user_id']}/{site['project']}] 워커를 못 띄웠다: {e}")
+            results.append({"user_id": site["user_id"], "project": site["project"],
+                            "ok": False, "error": f"워커 실행 실패: {e}"})
+            continue
+        running.append((site, proc))
+    while running:
+        reap()
+        if running:
+            sleep(poll_seconds)
     return results
 
 
@@ -801,6 +886,8 @@ def main() -> int:
     ap.add_argument("--skip", help="건너뛸 단계 (쉼표 구분, 예: rank,ai)")
     ap.add_argument("--only", help="이 단계만 (쉼표 구분, 예: gsc)")
     ap.add_argument("--groups", help="이 묶음만 (쉼표 구분, 없으면 전체) — run_all.GROUPS 의 id")
+    ap.add_argument("--fresh", help="다시 안 살 유료 단계 (쉼표 구분) — 스윕이 사이트마다 띄운 "
+                    "자식에게 넘긴다(run_all.borrowed). --groups 와 함께 쓴다")
     ap.add_argument("--queue", action="store_true",
                     help="--user/--project 와 함께 — 화면이 누른 대기열을 가져가 돈다")
     # 형식·타입 추정의 정본은 run_all.parse_opts 다 — 여기서 다시 파싱하지 않는다.
@@ -812,6 +899,8 @@ def main() -> int:
         ap.error("--user 는 --project 와 함께 써야 합니다")
     if args.only and args.groups:
         ap.error("--only 와 --groups 는 같이 쓸 수 없습니다")
+    if args.fresh and not args.groups:
+        ap.error("--fresh 는 --groups 와 함께 써야 합니다")
     if args.opt and args.all:
         # 조용히 무시하면 옵션을 줬다고 믿는 쪽이 틀린 결과를 맞는 결과로 읽는다.
         ap.error("--opt 는 --user/--project 단일 실행에만 쓸 수 있습니다")
@@ -831,7 +920,8 @@ def main() -> int:
             groups = run_all.group_names(args.groups) if args.groups else None
             results = [run_site(conn, site, dry_run=args.dry_run, skip=args.skip,
                                 only=args.only, opts=run_all.parse_opts(args.opt),
-                                groups=groups, queue=args.queue)]
+                                groups=groups, queue=args.queue,
+                                fresh={x for x in (args.fresh or "").split(",") if x})]
     finally:
         conn.close()
 
@@ -1209,7 +1299,251 @@ def demo() -> None:
         assert len(called) == before, "run_chain 이 추가로 호출됨"
 
         conn.close()                            # 윈도우: 열린 파일이 있으면 임시 디렉토리 삭제 실패
+        _sweep_concurrency_demo()
         print("worker: ok")
+
+
+class _FakeChild:
+    """스윕이 띄운 자식 워커의 대역 — poll() 이 ticks 번 None 을 돌려준 뒤 rc 를 낸다.
+    끝나는 순간 진짜 자식의 finally 처럼 제 사이트를 푼다(store.mark_done)."""
+
+    alive: set = set()
+
+    def __init__(self, cmd, ticks, rc, sid):
+        self.cmd, self.ticks, self.rc, self.sid = cmd, ticks, rc, sid
+        self.done = False
+        _FakeChild.alive.add(self)
+
+    def poll(self):
+        if self.done:
+            return self.rc
+        if self.ticks > 0:
+            self.ticks -= 1
+            return None
+        self.done = True
+        _FakeChild.alive.discard(self)
+        c = store.connect()
+        try:
+            store.mark_done(c, self.sid, ok=self.rc == 0, error="" if self.rc == 0 else "boom")
+        finally:
+            c.close()
+        return self.rc
+
+
+def _sweep_concurrency_demo() -> None:
+    """스윕 동시 수 상한 — 기본 1 은 예전 직렬 그대로, N 이면 사이트마다 자식 워커를 띄우되
+    N 을 넘기지 않는다. 같은 사이트 이중 실행·실패 격리·죽은 런 회수와의 맞물림도 못 박는다."""
+    import tempfile
+    from cryptography.fernet import Fernet
+
+    saved = {k: os.environ.get(k) for k in ("SEOMINER_DATA", "SEOMINER_SECRET_KEY",
+                                            "SEOMINER_SWEEP_CONCURRENCY")}
+    prev_chain = run_all.run_chain
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["SEOMINER_DATA"] = d
+            os.environ["SEOMINER_SECRET_KEY"] = Fernet.generate_key().decode()
+            os.environ.pop("SEOMINER_SWEEP_CONCURRENCY", None)
+            conn = store.connect()
+            uid = store.upsert_user(conn, "sweep@example.com")
+            names = [f"s{i}" for i in range(5)]
+            sid_of = {n: store.add_site(conn, uid, n, f"sc-domain:{n}.com", f"{n}.com")
+                      for n in names}
+
+            # 1. 상한 값 읽기 — 기본 1, 망가진 값·0·음수도 1 (오타가 병렬로 번지면 안 된다)
+            assert scheduler.sweep_concurrency() == 1, "기본이 직렬이 아니다"
+            for bad in ("0", "-3", "abc", ""):
+                os.environ["SEOMINER_SWEEP_CONCURRENCY"] = bad
+                assert scheduler.sweep_concurrency() == 1, f"{bad!r} 가 1 로 안 떨어진다"
+            os.environ["SEOMINER_SWEEP_CONCURRENCY"] = "4"
+            assert scheduler.sweep_concurrency() == 4
+            os.environ.pop("SEOMINER_SWEEP_CONCURRENCY", None)
+
+            # 2. 기본(1): 자식을 안 띄우고 제자리에서 직렬로 돈다 — 예전 경로 그대로
+            def no_spawn(*a, **kw):
+                raise AssertionError("동시 수 1 인데 자식 워커를 띄웠다")
+
+            ran_inline: list[str] = []
+
+            def inline_chain(project, **kw):
+                ran_inline.append(project)
+                return []
+
+            run_all.run_chain = inline_chain
+            res = run_all_due(conn, spawn=no_spawn, sleep=lambda s: None)
+            assert sorted(ran_inline) == sorted(names) and len(res) == 5, (ran_inline, res)
+            # 명시적으로 1 을 줘도 같다
+            for n in names:
+                store.mark_done(conn, sid_of[n])
+                conn.execute("UPDATE sites SET last_run_at=NULL WHERE id=?", (sid_of[n],))
+                conn.execute("DELETE FROM site_groups WHERE site_id=?", (sid_of[n],))
+            conn.commit()
+            ran_inline.clear()
+            run_all_due(conn, concurrency=1, spawn=no_spawn, sleep=lambda s: None)
+            assert sorted(ran_inline) == sorted(names)
+            run_all.run_chain = prev_chain
+
+            def reset():
+                for n in names:
+                    conn.execute("UPDATE sites SET running_since=NULL, run_groups=NULL, "
+                                 "last_run_at=NULL WHERE id=?", (sid_of[n],))
+                conn.execute("DELETE FROM site_groups")
+                conn.commit()
+
+            def make_spawner(plan, log):
+                """plan: 프로젝트 -> (ticks, rc) 또는 'spawn-fail'. log 에 (cmd, 띄운 순간 상태)."""
+                def spawn(cmd, **kw):
+                    args = cmd[2:]
+                    proj = args[args.index("--project") + 1]
+                    sid = sid_of[proj]
+                    row = conn.execute("SELECT running_since FROM sites WHERE id=?",
+                                       (sid,)).fetchone()
+                    log.append({"project": proj, "args": args, "claimed": bool(row[0]),
+                                "alive_before": len(_FakeChild.alive)})
+                    p = plan.get(proj, (1, 0))
+                    if p == "spawn-fail":
+                        raise OSError("fork 실패")
+                    return _FakeChild(cmd, p[0], p[1], sid)
+                return spawn
+
+            # 3. 동시 수 3 — 다섯 사이트를 전부 돌되 한꺼번에 셋을 넘지 않는다
+            reset()
+            _FakeChild.alive.clear()
+            log: list[dict] = []
+            peak = [0]
+
+            def sleep_track(s):
+                peak[0] = max(peak[0], len(_FakeChild.alive))
+
+            res = run_all_due(conn, concurrency=3, spawn=make_spawner({}, log), sleep=sleep_track)
+            assert sorted(r["project"] for r in res) == sorted(names) and all(r["ok"] for r in res), res
+            assert len(log) == 5, f"다섯 사이트가 다 안 떴다: {len(log)}"
+            assert max(l["alive_before"] for l in log) + 1 <= 3, \
+                f"동시 수 상한 3 을 넘겼다: {[l['alive_before'] for l in log]}"
+            assert max(l["alive_before"] for l in log) + 1 == 3, "병렬이 안 됐다(상한까지 안 찼다)"
+            assert all(l["claimed"] for l in log), "띄우기 전에 사이트를 잡지(claim_site) 않았다"
+            a = log[0]["args"]
+            assert a[:a.index("--project")][-2:] == ["--user", str(uid)] and "--groups" in a, a
+            assert "--queue" not in a and "--all" not in a, "자식이 대기열/전체 스윕이 되면 안 된다"
+            assert not any(store.run_phase(store.sites(conn, uid)[i]) == "running"
+                           for i in range(5)), "다 끝났는데 도는 사이트가 남았다"
+
+            # 4. 이중 실행 방지 — 남이 도는 사이트는 자식을 안 띄운다(claim_site)
+            reset()
+            _FakeChild.alive.clear()
+            listed = store.due_sites(conn)
+            store.mark_busy(conn, sid_of["s2"])            # 그 사이 사람이 누른 런
+            real_due = store.due_sites
+            store.due_sites = lambda *a, **kw: listed
+            log = []
+            try:
+                res = run_all_due(conn, concurrency=3, spawn=make_spawner({}, log),
+                                  sleep=lambda s: None)
+            finally:
+                store.due_sites = real_due
+            assert "s2" not in [l["project"] for l in log], "남이 도는 사이트에 자식을 또 띄웠다"
+            assert len(log) == 4 and len(res) == 4, (len(log), len(res))
+            assert store.run_phase(store.sites(conn, uid)[2]) == "running", \
+                "남이 도는 런의 표시를 스윕이 껐다"
+            store.mark_done(conn, sid_of["s2"])
+
+            # 5. 실패 격리 — 자식 하나가 실패(rc=1)·못 뜸(OSError)이어도 나머지는 돈다
+            reset()
+            _FakeChild.alive.clear()
+            log = []
+            plan = {"s0": (1, 1), "s1": "spawn-fail"}
+            res = run_all_due(conn, concurrency=2, spawn=make_spawner(plan, log),
+                              sleep=lambda s: None)
+            by = {r["project"]: r for r in res}
+            assert sorted(by) == sorted(names), by
+            assert by["s0"]["ok"] is False and by["s1"]["ok"] is False
+            assert all(by[n]["ok"] for n in ("s2", "s3", "s4")), \
+                "한 사이트의 실패가 다른 사이트를 막았다"
+            assert conn.execute("SELECT running_since FROM sites WHERE id=?",
+                                (sid_of["s1"],)).fetchone()[0] is None, \
+                "못 뜬 자식의 잡은 표시가 남았다 — 3시간 동안 그 사이트가 갇힌다"
+            assert store.due_sites(conn) and "s1" in [r["project"] for r in store.due_sites(conn)], \
+                "못 뜬 사이트는 다음 틱이 다시 잡아야 한다(시계를 찍으면 안 된다)"
+
+            # 6. 잴 것이 없는 사이트 — 잡은 것을 풀고 자식을 안 띄운다
+            reset()
+            log = []
+            real_dg = store.due_groups
+            store.due_groups = lambda *a, **kw: []
+            try:
+                res = run_all_due(conn, concurrency=3, spawn=make_spawner({}, log),
+                                  sleep=lambda s: None)
+            finally:
+                store.due_groups = real_dg
+            assert not log and res == [], "잴 게 없는데 자식을 띄웠다"
+            assert all(conn.execute("SELECT running_since FROM sites WHERE id=?",
+                                    (sid_of[n],)).fetchone()[0] is None for n in names), \
+                "잴 게 없는데 잡은 표시를 안 풀었다"
+
+            # 7. 빌린 단계(fresh)와 --skip 이 자식 인자로 간다
+            reset()
+            log = []
+            real_b = run_all.borrowed
+            run_all.borrowed = lambda groups, fresh_groups: {"rank"}
+            try:
+                run_all_due(conn, concurrency=2, skip="ai", spawn=make_spawner({}, log),
+                            sleep=lambda s: None)
+            finally:
+                run_all.borrowed = real_b
+            a = log[0]["args"]
+            assert a[a.index("--fresh") + 1] == "rank" and a[a.index("--skip") + 1] == "ai", a
+
+            # 8. 죽은 런 회수 — 자식이 도는 중 서버가 재시작하면(컨테이너째 죽음) 회수가 그 사이트들을
+            #    풀고, 다음 스윕이 다시 잡을 수 있다. 자식이 도는 동안 두 번째 스윕은 건너뛴다.
+            reset()
+            _FakeChild.alive.clear()
+            log = []
+            stuck = {n: (10 ** 6, 0) for n in names}        # 안 끝나는 자식
+            spawner = make_spawner(stuck, log)
+            polls = [0]
+
+            def stop_after(s):
+                polls[0] += 1
+                if polls[0] > 3:
+                    raise KeyboardInterrupt            # 부모가 중간에 죽었다(타임아웃과 같은 꼴)
+
+            try:
+                run_all_due(conn, concurrency=2, spawn=spawner, sleep=stop_after)
+            except KeyboardInterrupt:
+                pass
+            assert len(log) == 2, f"상한 2 인데 {len(log)}개를 띄웠다"
+            log2: list[dict] = []
+            res = run_all_due(conn, concurrency=2, spawn=make_spawner({}, log2),
+                              sleep=lambda s: None)
+            assert sorted(l["project"] for l in log2) == sorted(
+                n for n in names if n not in [l["project"] for l in log]), \
+                "부모가 죽은 뒤 첫 스윕이 아직 도는 자식의 사이트를 또 띄웠다"
+            for ch in list(_FakeChild.alive):
+                ch.ticks = 0
+            lost = store.reclaim_dead_runs(conn)
+            assert {r["project"] for r in lost} == {l["project"] for l in log}, \
+                "재시작 회수가 도는 자식 사이트를 못 풀었다"
+            assert all(conn.execute("SELECT running_since FROM sites WHERE id=?",
+                                    (sid_of[n],)).fetchone()[0] is None for n in names)
+
+            # 9. 자식 CLI — --fresh 는 파싱돼 run_site 로 간다(스윕이 넘긴 빌린 단계)
+            seen: dict = {}
+            real_rs = globals()["run_site"]
+            globals()["run_site"] = lambda c, s, **kw: seen.update(kw) or {"ok": True}
+            saved_argv = sys.argv
+            try:
+                sys.argv = ["worker.py", "--user", str(uid), "--project", "s0",
+                            "--groups", "search", "--fresh", "rank"]
+                assert main() == 0
+            finally:
+                globals()["run_site"] = real_rs
+                sys.argv = saved_argv
+            assert seen.get("fresh") == {"rank"} and seen.get("groups") == ["search"], seen
+            conn.close()
+    finally:
+        run_all.run_chain = prev_chain
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 def _group_demo(conn, uid, called) -> None:

@@ -71,6 +71,9 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in (
     Setting("SEOMINER_RUN_EVERY_HOURS", default="168",
             desc="재측정 주기(시간) 기본값. 0 이면 자동 수집을 끈다. "
                  "사이트가 설정 화면에서 자기 주기를 정하면 그 값이 이긴다 — 여기는 폴백이다"),
+    Setting("SEOMINER_SWEEP_CONCURRENCY", default="1",
+            desc="자동 수집 스윕이 동시에 띄우는 사이트 워커 수 상한. 1 이면 직렬(기본). "
+                 "스윕 프로세스마다 따로 센다 — 사람이 누른 런·등록 직후 수집은 이 수에 안 든다"),
     Setting("SEOMINER_MAX_KEYWORDS", default="100",
             desc="시장(나라 구글) 하나의 추적 키워드 상한 — 사이트 상한은 시장 수 × 이 값. "
                  "SERP 는 키워드당 과금이다"),
