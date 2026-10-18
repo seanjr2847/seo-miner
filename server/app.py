@@ -310,7 +310,7 @@ def home(request: Request):
         request.session["carry"] = request.query_params["carry"][:8000]
     uid = _uid(request)
     if uid is None:
-        return _html(pages.page("landing.html"), "seo-miner — 검색·AI 답변 가시성 추적")
+        return _html(pages.chrome(pages.page("landing.html")), "seo-miner — 검색·AI 답변 가시성 추적")
     with store.session(uid) as conn:
         rows = store.sites(conn, uid)
     # 처음 온 사람의 "/" 는 온보딩이다 — 빈 사이트 목록을 보여 주고 거기서 등록을
@@ -357,7 +357,7 @@ def home(request: Request):
             block += ('<p class="wait-note">키워드 · 순위 · 사이트 점검 순으로 몇 분에 걸쳐 '
                       '수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
         block += "</section>"
-    doc = pages.fill(pages.page("app.html"), ENTRY_HEAD=pages.asset("entry.html"),
+    doc = pages.fill(pages.entry_page("app.html"),
                      USER=_user_bar(request), SITES=block)
     doc = pages.data(doc,
                      # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
@@ -384,7 +384,7 @@ def start(request: Request, uid: int = Depends(_require_uid)):
     with store.session(uid) as conn:
         rows = store.sites(conn, uid)
         connected = identity.covers_gsc(store.load_token(conn, uid) or "")
-    doc = pages.fill(pages.page("start.html"), ENTRY_HEAD=pages.asset("entry.html"),
+    doc = pages.fill(pages.entry_page("start.html"),
                      USER=_user_bar(request))
     doc = pages.data(doc,
                      # 로컬 플러그인이 링크로 실어 보낸 사이트 설정(?carry=) — 칸을 미리 채운다
@@ -471,7 +471,7 @@ def logout(request: Request):
 
 @app.get("/privacy")
 def privacy():
-    return _html(pages.page("privacy.html"), "개인정보처리방침 — seo-miner")
+    return _html(pages.chrome(pages.page("privacy.html")), "개인정보처리방침 — seo-miner")
 
 
 def _require_google() -> None:
@@ -1348,42 +1348,16 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
     return await http_exception_handler(request, e)
 
 
-# 본문 서체는 랜딩(server/landing.html :root --sans)과 같은 스택이다 — 따로 적은
-# -apple-system 스택이라 404 만 다른 사이트처럼 보였다(9회차).
-_LANDING_SANS = re.search(r"--sans:([^;]+);", pages.page("landing.html")).group(1)
-
-# 머리 줄은 랜딩 헤더(.hbar·.mark)와 같은 판·같은 서체다 — 서체를 안 불러 로고가
-# 폴백 등폭으로 벌어지고 머리가 없어 다른 사이트처럼 보였다(8회차).
+# 404 화면은 server/notfound.html 이다 — 서체 스택·로고·서체 링크는 pages.chrome() 이
+# 원본(skills/capture/scripts/headparts.py)에서 끼운다. 예전에는 랜딩 html 에서 --sans 를
+# 정규식으로 긁고 색을 인라인으로 적었다(docs/adr/0004).
 # 오른쪽 버튼은 로그인 상태를 본다 — 세션에 uid 가 있는 사람에게 "Google로
 # 시작"을 또 보여 주면 이미 로그인했다는 걸 의심하게 만든다(9회차). 로그인
 # 이면 "/" 의 "내 사이트" 목록으로 보낸다 — 다시 로그인을 거치지 않는다.
 def _not_found(logged_in: bool) -> str:
-    action = ('<a href="/" style="font:500 13px/1 var(--sans);color:#F7F8F5;background:#22705F;'
-              'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
-              'text-decoration:none">내 사이트</a>') if logged_in else (
-              '<a href="/auth/login" style="font:500 13px/1 var(--sans);color:#F7F8F5;background:#22705F;'
-              'border-radius:3px;padding:0 15px;min-height:40px;display:inline-flex;align-items:center;'
-              'text-decoration:none">Google로 시작</a>')
-    return (
-    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@600&display=swap">'
-    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">'
-    f'<style>:root{{--sans:{_LANDING_SANS}}}</style>'
-    '<body style="margin:0;background:#E6E9E4">'
-    '<header style="background:#121714"><div style="max-width:1120px;margin:0 auto;padding:12px 24px;'
-    'display:flex;align-items:center;gap:16px">'
-    '<a href="/" style="font:600 15px/1 \'IBM Plex Mono\',ui-monospace,monospace;letter-spacing:.06em;'
-    'color:#E6E9E4;text-decoration:none">seo<b style="color:#57B49C;font-weight:600">·</b>miner</a>'
-    '<span style="flex:1"></span>'
-    + action + '</div></header>'
-    '<main style="font:15px/1.7 var(--sans);'
-    'color:#121714;max-width:36rem;margin:0 auto;padding:12vh 24px 0;word-break:keep-all">'
-    '<h1 style="font-size:23px;margin:0 0 8px">페이지를 찾을 수 없습니다</h1>'
-    "<p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner는 서치콘솔 숫자로 다음에 고칠 "
-    "검색어를 고르는 도구입니다.</p>"
-    '<p style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:20px">'
-    '<a href="/" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;'
-    'border-radius:4px;background:#22705F;color:#fff;text-decoration:none;font-weight:600">처음으로</a>'
-    '</p></main>')
+    action = ('<a class="nf-act" href="/">내 사이트</a>' if logged_in
+              else '<a class="nf-act" href="/auth/login">Google로 시작</a>')
+    return pages.fill(pages.chrome(pages.page("notfound.html")), ACTION=action)
 
 
 @app.get("/d")

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # 같은 함수를 써야 하기 때문이다. uvicorn 으로 뜰 때는 app.py 가 이미 이 경로를
 # 얹지만, `python server/pages.py` 로 혼자 돌 때는 여기서 얹어야 한다.
 sys.path.insert(0, str(ROOT / "skills" / "capture" / "scripts"))
+import headparts  # noqa: E402  (머리 조각의 원본 — chrome() 이 부른다)
 from htmlsafe import js  # noqa: E402  (data() 가 쓰고, 밖에서도 pages.js 로 부른다)
 
 # 두 마커 문법을 한 정규식으로 — 이름은 대문자·밑줄만 쓴다.
@@ -58,6 +59,26 @@ def fill(doc: str, **slots: str) -> str:
     if unused:
         raise KeyError(f"문서에 없는 슬롯: {unused}")
     return out
+
+
+def chrome(doc: str) -> str:
+    """문서가 적어 둔 공용 머리 슬롯(토큰·서체·로고)만 골라 채운다.
+
+    `<!--FONTS-->` `<!--FONTS_PLEX-->` `<!--LOGO-->` `@@TOKENS@@` `@@SANS@@` `@@MONO_PLEX@@` —
+    원본은 skills/capture/scripts/headparts.py 하나다(docs/adr/0004). 화면은 슬롯만 적고
+    값을 사본으로 들지 않는다. 사용자 값(USER·SITES)을 채우기 **전에** 부른다: 채운 뒤에
+    부르면 사용자가 쓴 글자 속 `@@LOGO@@` 까지 갈아치운다.
+    """
+    want = {m.group(1) or m.group(2) for m in SLOT.finditer(doc)}
+    return fill(doc, **{k: v for k, v in headparts.slots().items() if k in want})
+
+
+def entry_page(name: str) -> str:
+    """입구 화면(app.html·start.html) — 입구 머리(entry.html)를 끼우고 공용 머리를 채운다.
+
+    USER·SITES 같은 사용자 슬롯은 안 채운 채 돌려준다 — 부르는 쪽이 fill() 로 채운다.
+    """
+    return chrome(fill(page(name), ENTRY_HEAD=asset("entry.html")))
 
 
 def data(doc: str, **values) -> str:

@@ -40,48 +40,7 @@
    강조색은 브랜드 녹청(--accent), 경고·하락은 산화동(--warn). 숫자는 표 자리를 맞추되
    (tabular-nums) 등폭 서체는 명령·URL·날짜·식별자에만 쓴다. */
 
-/* tokens:begin */
-:root {
-  --canvas:#EEF1EF; --card:#FFFFFF; --sunk:#F5F7F6;
-  --ink:#101613; --sub:#5A655F; --mute:#66716A;
-  --line:rgba(16,22,19,.07); --rule:rgba(16,22,19,.14);
-  --accent:#1D6455; --accent-ink:#FFFFFF; --accent-wash:#E1F0EB;
-  --warn:#9A3F17; --warn-wash:#F8E9E1;
-  --info:#3A4F73; --info-wash:#E7ECF4;
-  /* 증감은 투명도로 줄이지 않고 전용 색으로 말한다 */
-  --up:#1D6455; --up-wash:#E1F0EB; --dn:#9A3F17; --dn-wash:#F8E9E1;
-  --r-card:20px; --r-in:12px; --r-pill:999px;
-  --shadow:0 1px 2px rgba(16,22,19,.04), 0 10px 28px -12px rgba(16,22,19,.10);
-  --fs-1:13px; --fs-2:14px; --fs-3:16px; --fs-4:22px; --fs-5:32px;
-  --gap:16px;
-  --sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,
-         system-ui,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
-  --mono:"Cascadia Mono","Consolas",ui-monospace,SFMono-Regular,Menlo,
-         "Malgun Gothic",monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --canvas:#0C110F; --card:#161D1A; --sunk:#1C2521;
-    --ink:#E8EEEA; --sub:#A2AEA7; --mute:#8A978F;
-    --line:rgba(232,238,234,.08); --rule:rgba(232,238,234,.16);
-    --accent:#57B49C; --accent-ink:#06120E; --accent-wash:#1B2E28;
-    --warn:#DE8351; --warn-wash:#33221A;
-    --info:#9DB2D6; --info-wash:#1E2632;
-    --up:#57B49C; --up-wash:#1B2E28; --dn:#DE8351; --dn-wash:#33221A;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px -12px rgba(0,0,0,.5);
-  }
-}
-:root[data-theme="dark"] {
-  --canvas:#0C110F; --card:#161D1A; --sunk:#1C2521;
-  --ink:#E8EEEA; --sub:#A2AEA7; --mute:#8A978F;
-  --line:rgba(232,238,234,.08); --rule:rgba(232,238,234,.16);
-  --accent:#57B49C; --accent-ink:#06120E; --accent-wash:#1B2E28;
-  --warn:#DE8351; --warn-wash:#33221A;
-  --info:#9DB2D6; --info-wash:#1E2632;
-  --up:#57B49C; --up-wash:#1B2E28; --dn:#DE8351; --dn-wash:#33221A;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px -12px rgba(0,0,0,.5);
-}
-/* tokens:end */
+@@TOKENS@@
 
 /* 옛 이름 — 뷰 파일들(views/*.html·sections/*.html·호스팅 애드온)이 아직 이 이름으로
    칠한다. 이름은 유지하고 값만 새 팔레트를 가리킨다(var 참조라 다크에서도 따라간다).

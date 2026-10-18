@@ -38,6 +38,7 @@ import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같
 import db         # noqa: E402
 import doctor     # noqa: E402  (setup 스킬의 진단 — 대시보드 상단 배너용)
 import gen_prompts  # noqa: E402  (AI 질문 갈래 정본 — 매니페스트가 이걸 실어 보낸다)
+import headparts  # noqa: E402  (토큰 블록의 원본 — 조립이 @@TOKENS@@ 를 채운다, ADR 0004)
 import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 — 한 벌)
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import play_pr    # noqa: E402  (이번 달 할 일 → PR — 로컬 대시보드의 [PR 만들기])
@@ -208,6 +209,7 @@ def _assemble(variant: str = "local") -> bytes:
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
                 f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
     return (base
+            .replace("@@TOKENS@@", headparts.tokens(), 1)
             .replace("<!--MANIFEST-->", manifest, 1)
             .replace("<!--VENDOR-->", _vendor_script(), 1)
             .replace("<!--SHELL_JS-->", shell_js(), 1)
