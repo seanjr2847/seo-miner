@@ -4264,8 +4264,50 @@ def test_every_brief_walks_the_site_before_the_deliverables():
     assert "[opp #" not in brief.build(_opp("striking_distance", "검색어"), {}, "ko-KR")["body"]
 
 
+def test_kind_table_gaps_name_every_table_a_new_kind_must_fill():
+    """새 종류를 ALL_KINDS 에 넣고 어느 표를 빼먹든, 단일 지점(brief.kind_table_gaps)이 **종류별로
+    무엇을 채워야 하는지** 말한다. 여러 모듈의 표가 import 시점 assert 로만 이어져 있어, 빠뜨리면
+    집합 차이만 나오고 어느 표를 고칠지는 코드를 뒤져야 했다."""
+    assert brief.kind_table_gaps() == {}, brief.kind_table_gaps()
+    tables = {
+        "scoring._KIND_SPECS": scoring._KIND_SPECS,
+        "brief.KIND_SHAPE": brief.KIND_SHAPE,
+        "brief.EVIDENCE": brief.EVIDENCE,
+    }
+    for name, tbl in tables.items():
+        saved = tbl.pop("ctr_gap")
+        try:
+            gaps = brief.kind_table_gaps()
+        finally:
+            tbl["ctr_gap"] = saved
+        assert list(gaps) == ["ctr_gap"], (name, gaps)
+        assert any(name in g for g in gaps["ctr_gap"]), (name, gaps)
+    # 닫는 판정: 규칙+목표 한 쌍이거나, 안 닫는 이유 — 둘 다 없거나 짝이 깨지면 말한다.
+    for tbl_name, tbl in (("_RESOLVERS", scoring._RESOLVERS), ("RESOLVE_WHEN", scoring.RESOLVE_WHEN)):
+        saved = tbl.pop("ctr_gap")
+        try:
+            gaps = brief.kind_table_gaps()
+        finally:
+            tbl["ctr_gap"] = saved
+        assert list(gaps) == ["ctr_gap"] and any(tbl_name in g for g in gaps["ctr_gap"]), gaps
+    scoring._NO_RESOLVE["ctr_gap"] = "x"                    # 규칙도 있는데 '안 닫는다'도 적었다
+    try:
+        assert list(brief.kind_table_gaps()) == ["ctr_gap"]
+    finally:
+        del scoring._NO_RESOLVE["ctr_gap"]
+    # ALL_KINDS 에 없는 이름이 표에 남아도(종류를 지우고 표를 안 지움) 말한다.
+    brief.EVIDENCE["ghost_kind"] = lambda *a: None
+    try:
+        assert "ghost_kind" in brief.kind_table_gaps()
+    finally:
+        del brief.EVIDENCE["ghost_kind"]
+    assert brief.kind_table_gaps() == {}
+    msg = brief.kind_gap_message({"ctr_gap": ["brief.EVIDENCE: 근거 함수 필요"]})
+    assert "ctr_gap" in msg and "brief.EVIDENCE" in msg
+
+
 if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    tests =[v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
         t()
         print(f"  ok  {t.__name__}")

@@ -577,8 +577,7 @@ KIND_SHAPE: dict[str, str | _Shaper] = {
     "backlink_prospect": "outreach",
     "ai_bot_blocked": "technical",
     "backlink_mention": "mention",
-}
-assert set(KIND_SHAPE) == set(scoring.ALL_KINDS)
+}# (KIND_SHAPE 가 ALL_KINDS 와 맞는지는 EVIDENCE 아래 kind_table_gaps() 가 다른 표와 함께 본다)
 
 # 꼴이 같아도 머리말이 틀리는 종류. 템플릿 패턴은 여기 있다가 제 꼴(template)로 갔다 — 머리말만
 # 바꾸면 꼬리(답의 형식·규칙)가 글 한 장의 것으로 남았다.
@@ -3117,7 +3116,40 @@ EVIDENCE: dict[str, Callable] = {
     "backlink_broken": _ev_bl_broken, "backlink_prospect": _ev_bl_prospect,
     "ai_bot_blocked": _ev_ai_bot, "backlink_mention": _ev_bl_mention,
 }
-assert set(EVIDENCE) == set(scoring.ALL_KINDS)
+
+
+kind_gap_message = scoring.kind_gap_message
+
+
+def kind_table_gaps() -> dict[str, list[str]]:
+    """종류(ALL_KINDS)마다 딸린 표를 **전부** 대조하는 단일 지점 — {종류: [채울 것]}. 맞으면 {}.
+
+    새 종류를 만들 때 채울 곳(필수):
+      scoring.ALL_KINDS · scoring._KIND_SPECS · 닫는 판정(scoring._RESOLVERS+RESOLVE_WHEN 또는
+      _NO_RESOLVE) · brief.KIND_SHAPE · brief.EVIDENCE.
+    선택(없으면 기본값): brief.INTRO_BY_KIND·_TARGET_NOUN, scoring.KEYWORD/TOPIC/DOMAIN_KINDS(심사
+    묶음 — 없으면 심사 밖), plays.PLAY_KINDS(고치기 할 일 후보 — 정책 부분집합), dashboard 의 band·
+    gap_kind 보강(종류별 갈래가 있을 때만). 화면의 라벨·처방은 KINDS 명부에서 실려 가므로 셸은 안 고친다.
+    표들이 순환 import 때문에 모듈마다 나뉘어 있어서(brief 가 scoring 을 import) 모두 보는 곳은
+    가장 위인 이 모듈이다 — 표를 한 곳으로 합치지 않고, 빠뜨린 것을 이름으로 말한다."""
+    gaps = {k: list(v) for k, v in scoring.kind_table_gaps().items()}
+
+    def add(kind, msg):
+        gaps.setdefault(kind, []).append(msg)
+
+    known = set(scoring.ALL_KINDS)
+    for name, tbl, hint in (
+            ("KIND_SHAPE", KIND_SHAPE, "산출물 꼴(SHAPE_NAMES 중 하나, 또는 갈래를 가르는 함수)"),
+            ("EVIDENCE", EVIDENCE, "근거를 그리는 함수 _ev_*")):
+        for k in scoring.ALL_KINDS:
+            if k not in tbl:
+                add(k, f"brief.{name} 에 줄이 없다 — {hint}")
+        for k in sorted(set(tbl) - known):
+            add(k, f"brief.{name} 에 ALL_KINDS 에 없는 이름이 남았다 — 지운 종류의 줄을 같이 지운다")
+    return gaps
+
+
+assert not kind_table_gaps(), scoring.kind_gap_message(kind_table_gaps())
 
 # 대상 줄의 이름 — 검색어·질문·주소·도메인·주제는 다른 것이다. 한 낱말("페이지")로
 # 부르면 연락문 요청문이 남의 도메인을 "고칠 페이지"라고 부른다(실제로 그랬다).

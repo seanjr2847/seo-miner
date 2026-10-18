@@ -4862,6 +4862,24 @@ def test_seam_shell_js_is_assembled_from_fragments():
         assert joined + "</script>" in html, f"{variant}: 조립본에 조각이 이름 순서로 이어져 있지 않다"
 
 
+def test_seam_08b_every_kind_fills_every_kind_table():
+    """08b) 종류(ALL_KINDS)마다 딸린 표가 전부 채워졌다 — 정본은 brief.kind_table_gaps() 다.
+
+    표가 순환 import 때문에 scoring(_KIND_SPECS·닫는 판정)·brief(KIND_SHAPE·EVIDENCE)로 나뉘어 있어,
+    새 종류를 넣고 한 곳을 빼먹으면 import 시점 assert 가 **무엇을 채울지** 말한다. 여기서는 그
+    결과가 비었음과, 일부러 한 칸을 비우면 종류 이름과 표 이름을 대며 잡는다는 것을 못 박는다."""
+    import brief
+    import scoring
+    assert brief.kind_table_gaps() == {}, brief.kind_gap_message(brief.kind_table_gaps())
+    for kind in scoring.ALL_KINDS:
+        saved = brief.EVIDENCE.pop(kind)
+        try:
+            gaps = brief.kind_table_gaps()
+        finally:
+            brief.EVIDENCE[kind] = saved
+        assert set(gaps) == {kind} and "brief.EVIDENCE" in gaps[kind][0], (kind, gaps)
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

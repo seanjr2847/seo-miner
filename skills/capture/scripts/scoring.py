@@ -5617,6 +5617,10 @@ _KIND_SPECS = {
 
 # ALL_KINDS 의 순서·이름 그대로 명부를 만든다 — 이름은 위 한 곳(ALL_KINDS)에만 적혀
 # 있고, 여기서 빠진 이름이 있으면 KeyError 로 즉시 죽는다(조용히 빠지지 않는다).
+assert set(_KIND_SPECS) >= set(ALL_KINDS), (
+    f"scoring._KIND_SPECS 에 명부 줄이 없는 종류: {sorted(set(ALL_KINDS) - set(_KIND_SPECS))} "
+    "(새 종류가 채울 표 전부: _KIND_SPECS · 닫는 판정[_RESOLVERS+RESOLVE_WHEN 또는 _NO_RESOLVE] · "
+    "brief.KIND_SHAPE · brief.EVIDENCE — 이 줄을 채운 뒤 import 하면 brief.kind_table_gaps() 가 남은 것을 말한다)")
 KINDS: tuple[_Kind, ...] = tuple(_Kind(name, **_KIND_SPECS[name]) for name in ALL_KINDS)
 _KIND_BY_NAME = {k.name: k for k in KINDS}
 DEFENSIVE_KINDS = frozenset(k.name for k in KINDS if k.defensive)
@@ -6242,9 +6246,47 @@ RESOLVE_WHEN = {
     "backlink_broken": "다음 백링크 수집이 이 주소의 응답 코드를 2xx·3xx(살아 있음) 또는 403·429"
                        "(크롤러 차단 — 깨진 링크가 아니었다)로 적으면",
 }
-assert set(RESOLVE_WHEN) == set(_RESOLVERS), set(RESOLVE_WHEN) ^ set(_RESOLVERS)
-assert not set(_RESOLVERS) & set(_NO_RESOLVE)
-assert set(_RESOLVERS) | set(_NO_RESOLVE) == set(ALL_KINDS)
+
+
+def kind_table_gaps() -> dict[str, list[str]]:
+    """scoring 쪽 종류별 표가 ALL_KINDS 와 어긋난 곳 — {종류: [채울 것·이유]}. 맞으면 {}.
+
+    새 종류를 ALL_KINDS 에 넣을 때 이 모듈에서 채울 곳: `_KIND_SPECS`(명부), 그리고 닫는 판정 —
+    저절로 닫히면 `_RESOLVERS`(규칙)+`RESOLVE_WHEN`(요청문의 끝나는 조건) 한 쌍, 못 닫으면
+    `_NO_RESOLVE`(이유). brief 쪽 표(KIND_SHAPE·EVIDENCE)까지 한 번에 보는 단일 지점은
+    `brief.kind_table_gaps()` 다(brief 가 scoring 을 import 하므로 위는 이쪽이 못 본다)."""
+    gaps: dict[str, list[str]] = {}
+
+    def add(kind, msg):
+        gaps.setdefault(kind, []).append(msg)
+
+    known = set(ALL_KINDS)
+    for name, tbl in (("_KIND_SPECS", _KIND_SPECS), ("_RESOLVERS", _RESOLVERS),
+                      ("RESOLVE_WHEN", RESOLVE_WHEN), ("_NO_RESOLVE", _NO_RESOLVE)):
+        for k in sorted(set(tbl) - known):
+            add(k, f"scoring.{name} 에 ALL_KINDS 에 없는 이름이 남았다 — 지운 종류의 줄을 같이 지운다")
+    for k in ALL_KINDS:
+        if k not in _KIND_SPECS:
+            add(k, "scoring._KIND_SPECS 에 명부 줄이 없다 (see·label·defensive·detect·metrics·target·reasoning·play)")
+        in_r, in_w, in_n = k in _RESOLVERS, k in RESOLVE_WHEN, k in _NO_RESOLVE
+        if in_r and in_n:
+            add(k, "scoring._RESOLVERS 와 _NO_RESOLVE 둘 다에 있다 — 닫는 규칙이 있으면 _NO_RESOLVE 에서 뺀다")
+        if in_r and not in_w:
+            add(k, "scoring.RESOLVE_WHEN 에 요청문이 말할 '끝나는 조건'이 없다 (_RESOLVERS 에는 규칙이 있다)")
+        if in_w and not in_r:
+            add(k, "scoring._RESOLVERS 에 닫는 규칙이 없다 (RESOLVE_WHEN 에는 조건이 있다)")
+        if not (in_r or in_n):
+            add(k, "scoring._RESOLVERS+RESOLVE_WHEN(저절로 닫는 규칙과 조건) 또는 _NO_RESOLVE(못 닫는 이유) 중 하나를 채운다")
+    return gaps
+
+
+def kind_gap_message(gaps: dict[str, list[str]]) -> str:
+    """kind_table_gaps 결과를 assert 메시지로 — 종류마다 채울 곳을 줄로 적는다."""
+    return "종류별 표가 ALL_KINDS 와 어긋났다:\n" + "\n".join(
+        f"  {k}: " + "; ".join(msgs) for k, msgs in gaps.items())
+
+
+assert not kind_table_gaps(), kind_gap_message(kind_table_gaps())
 
 
 # 조건이 안 풀리는 흔한 경우 — 저절로 닫히는 종류인데도 사람이 닫아야 하는 갈래가 있으면.
