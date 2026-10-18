@@ -268,9 +268,10 @@ section.sec-quiet details.why { display:none; }
    경로 끝을 먼저 잡는다. 등폭은 URL 에만 쓴다(검색어는 한글이라 본문 서체). */
 .stu { display:flex; align-items:center; gap:10px; min-width:0; }
 .stt { display:flex; flex-direction:column; min-width:0; }
-.stp { font:500 var(--fs-1)/1.45 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
-.stp a { color:inherit; }
-.stp a:hover { color:var(--accent); }
+/* 셸의 .stp(안내 화면 단계 칸, display:contents)와 이름이 같다 — 아바타 옆 경로는 .stt 안에서만 쓴다. */
+.stt > .stp { display:block; font:500 var(--fs-1)/1.45 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.stt > .stp a { color:inherit; }
+.stt > .stp a:hover { color:var(--accent); }
 .stq { font:500 var(--fs-2)/1.45 var(--sans); color:var(--ink); }
 .sth { font:400 var(--fs-1)/1.45 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
 
