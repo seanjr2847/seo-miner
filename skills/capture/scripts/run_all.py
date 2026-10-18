@@ -261,6 +261,46 @@ AFTER = {
 }
 
 
+# ── 사이트의 런 상태 — GET /api/run/status 의 사이트 한 칸 ──────────────────
+# 로컬 대시보드와 호스팅 서버는 서버가 둘이지만(ADR 0003) 이 응답의 **모양**은 한 벌이다. 예전엔
+# 호스팅이 {running,last_run_at,stage,stages,pct,last_ok,last_error,groups}, 로컬이
+# {running,groups} 를 손으로 적어 읽는 쪽(셸·원격 클라이언트)이 어느 서버냐에 따라 다른 키를 봤다.
+# 키를 늘릴 때는 여기만 고친다 — run_state 가 모르는 키를 거절하고, 두 서버가 이 함수로 짓는다.
+# 없는 값(로컬은 단계·진행률·성패를 모른다)은 null·빈값이다 — 키를 빼지 않는다.
+RUN_STATE_KEYS = ("running", "last_run_at", "stage", "stages", "pct", "last_ok", "last_error",
+                  "groups")
+
+
+def run_state(**kw) -> dict:
+    """사이트 런 상태 한 칸 — RUN_STATE_KEYS 전부를 가진 dict(안 준 값은 null·빈값)."""
+    bad = set(kw) - set(RUN_STATE_KEYS)
+    if bad:
+        raise TypeError(f"런 상태에 없는 키: {sorted(bad)} — RUN_STATE_KEYS 에 먼저 적는다")
+    out = {"running": False, "last_run_at": None, "stage": None, "stages": [], "pct": None,
+           "last_ok": None, "last_error": None, "groups": {}}
+    out.update(kw)
+    out["running"] = bool(out["running"])
+    return out
+
+
+def is_due(seen, period_hours, now) -> bool:
+    """"주기를 넘겼나" — 이 리포에서 이 판정은 여기 한 곳이다.
+
+    seen: 이 묶음을 마지막으로 잰 시각들(없는 단계는 뺀다. now 와 같은 종류의 datetime).
+    period_hours: 자동 주기(시간). None(시계 없는 묶음)·0(자동 끔)이면 늘 False.
+    한 번도 못 쟀으면 True. 하나라도 주기만큼 묵었으면 True.
+
+    **재료**는 배포마다 다르다 — 로컬은 끝난 성공 런의 날과 묶음 표의 고정 주기
+    (dashboard._axis_groups), 호스팅은 묶음 시계와 사이트별 주기(server/store.due_groups).
+    판정만 같다. 나이(시간)로 비교한다 — now - timedelta(hours=주기) 는 주기가 아주 크면 넘친다.
+    """
+    if not period_hours:
+        return False
+    if not seen:
+        return True
+    return any((now - t).total_seconds() / 3600 >= period_hours for t in seen)
+
+
 def group_stages(gid: str) -> tuple:
     """이 묶음을 재면 도는 단계(꼬리 제외). todo 는 매일 런이다 — 위 주석."""
     return DAILY if gid == "todo" else GROUP_BY_ID[gid]["stages"]

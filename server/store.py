@@ -300,15 +300,28 @@ def due_groups(conn: sqlite3.Connection, site_row, every_hours: float = 168.0) -
     if all(v is None for v in clocks.values()):
         return list(clocks)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    out = []
-    for g, last in clocks.items():
-        per = group_period(site_row, g, every_hours)
-        if not per:
-            continue
-        # 나이(시간)로 비교한다 — now - timedelta(hours=per) 는 주기가 아주 크면(1e9) 넘친다.
-        if last is None or (now - _utc(last)).total_seconds() / 3600 >= per:
-            out.append(g)
-    return out
+    ra = _groups()
+    return [g for g, last in clocks.items()
+            if ra.is_due([_utc(last)] if last else [], group_period(site_row, g, every_hours), now)]
+
+
+def overlay_group_due(conn: sqlite3.Connection, uid: int, project: str, payload,
+                      every_hours: float) -> dict:
+    """/api/data 페이로드의 groups[].due 를 스케줄러가 쓰는 판정(due_groups)으로 갈아 끼운다.
+
+    페이로드는 원래 runs 의 날과 묶음 표의 고정 주기로 따로 셌다 — 자동을 끈 사이트에는 영영 안
+    꺼지는 점이, 6시간 주기 사이트에는 일주일을 기다리는 점이 섰다. 시계가 있는 묶음만 고친다
+    (관리처럼 시계 없는 묶음은 그대로). 사이트가 없거나 페이로드가 dict 가 아니면 그대로 돌려준다.
+    """
+    row = site(conn, uid, project)
+    if row is None or not isinstance(payload, dict):
+        return payload
+    clocks = group_clocks(conn, row)
+    due = set(due_groups(conn, row, every_hours))
+    for g in payload.get("groups") or []:
+        if g.get("id") in clocks:
+            g["due"] = g["id"] in due
+    return payload
 
 
 def due_sites(conn: sqlite3.Connection, idle_days: int = 30,
@@ -646,37 +659,27 @@ def close_orphan_runs(conn: sqlite3.Connection) -> list[dict]:
     한 번에 정리된다 — 둘 다 "안 도는 사이트의 끝나지 않은 행"이다. 재실행에
     안전하다(이미 닫힌 행은 다시 안 걸린다).
 
-    brain 을 새로 만들지 않는다 — 파일이 없거나 표가 없으면 그 사이트는 건너뛴다.
+    brain 을 새로 만들지 않는다 — 파일이 없으면 그 사이트는 건너뛴다. 행을 닫는 SQL 은
+    brain 의 스키마를 아는 db.close_unfinished_runs 한 곳이다(여기서 runs 를 직접 고치지 않는다).
     """
-    import paths    # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 세워 뒀다
-    from datetime import datetime, timezone
-    note = orphan_run_note()
-    # db.now() 와 같은 꼴(UTC, 초 단위). 비교는 julianday 로 한다 — 옛 행이
-    # CURRENT_TIMESTAMP 꼴('YYYY-MM-DD HH:MM:SS')이어도 문자열 비교처럼 틀리지 않는다.
-    cutoff = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    import db       # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 세워 뒀다
+    import paths
+    # db.now() 와 같은 꼴(UTC, 초 단위).
+    cutoff = db.now()
     idle = conn.execute("SELECT user_id, project FROM sites "
                         "WHERE running_since IS NULL ORDER BY id").fetchall()
     out: list[dict] = []
     for s in idle:
-        f = paths.db_file(home(s["user_id"]))
-        if not f.exists():
+        h = home(s["user_id"])
+        if not paths.db_file(h).exists():
             continue
-        b = sqlite3.connect(f)
+        b = db.connect(home=h)
         try:
-            cur = b.execute(
-                "UPDATE runs SET finished_at=?, notes=CASE WHEN COALESCE(notes,'')='' THEN ? "
-                "  ELSE notes || ' | ' || ? END "
-                "WHERE finished_at IS NULL AND julianday(started_at) < julianday(?) "
-                "  AND project_id IN (SELECT id FROM projects WHERE name=?)",
-                (cutoff, note, note, cutoff, s["project"]))
-            b.commit()
-            if cur.rowcount > 0:
-                out.append({"user_id": s["user_id"], "project": s["project"],
-                            "closed": cur.rowcount})
-        except sqlite3.OperationalError:       # runs/projects 표가 아직 없는 brain
-            pass
+            n = db.close_unfinished_runs(b, s["project"], cutoff, ORPHAN_REASON)
         finally:
             b.close()
+        if n > 0:
+            out.append({"user_id": s["user_id"], "project": s["project"], "closed": n})
     return out
 
 
@@ -1201,28 +1204,33 @@ def demo() -> None:
         # brain 은 유저 하나에 사이트 여럿이다(projects.name 으로 가른다).
         busy = add_site(conn, uid, "busy", "sc-domain:busy.com", "busy.com")
         mark_run(conn, busy)                     # 지금 도는 사이트
-        bf = home(uid) / "brain.db"
-        bc = sqlite3.connect(bf)
+        # brain 은 **진짜 스키마**(db.connect)로 연다 — projects/runs 표를 손으로 다시 만들면
+        # 스키마의 세 번째 사본이다(칸이 늘면 이 시험만 낡은 표로 통과한다).
+        import db
+        bc = db.connect(home=home(uid))
         bc.executescript("""
-            CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
-            CREATE TABLE runs (id INTEGER PRIMARY KEY, project_id INTEGER, kind TEXT,
-              started_at TEXT, finished_at TEXT, notes TEXT);
-            INSERT INTO projects VALUES (1,'myproj'),(2,'busy');
+            INSERT INTO projects(id,name,domain) VALUES (1,'myproj','myproj.com'),(2,'busy','busy.com');
             -- #49: 오래전에 워커가 죽어 남은 고아 (사이트는 이미 안 돈다)
-            INSERT INTO runs VALUES (49,1,'rank','2026-09-02T03:00:00Z',NULL,'');
+            INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes)
+              VALUES (49,1,'rank','2026-09-02T03:00:00Z',NULL,'');
             -- 옛 CURRENT_TIMESTAMP 꼴의 고아도 같은 규칙으로
-            INSERT INTO runs VALUES (50,1,'gsc','2026-09-01 03:00:00',NULL,'n=3');
+            INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes)
+              VALUES (50,1,'gsc','2026-09-01 03:00:00',NULL,'n=3');
             -- 도는 사이트의 런: 서버가 running 이라 말한다 → 절대 안 닫힌다
-            INSERT INTO runs VALUES (60,2,'rank','2026-09-02T03:00:00Z',NULL,'');
+            INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes)
+              VALUES (60,2,'rank','2026-09-02T03:00:00Z',NULL,'');
             -- 목록을 읽은 뒤 막 시작한 런(cutoff 이후) → 안 닫힌다
-            INSERT INTO runs VALUES (70,1,'gsc','2999-01-01T00:00:00Z',NULL,'');
+            INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes)
+              VALUES (70,1,'gsc','2999-01-01T00:00:00Z',NULL,'');
             -- 이미 끝난 런 → 손대지 않는다
-            INSERT INTO runs VALUES (80,1,'gsc','2026-09-02T03:00:00Z','2026-09-02T03:05:00Z','ok');
+            INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes)
+              VALUES (80,1,'gsc','2026-09-02T03:00:00Z','2026-09-02T03:05:00Z','ok');
         """)
         bc.commit()
 
         def run_row(rid):
-            return bc.execute("SELECT finished_at, notes FROM runs WHERE id=?", (rid,)).fetchone()
+            return tuple(bc.execute("SELECT finished_at, notes FROM runs WHERE id=?",
+                                    (rid,)).fetchone())
 
         got = close_orphan_runs(conn)
         assert run_row(60)[0] is None, "도는 사이트의 런을 닫았다 — 살아 있는 워커의 이력을 끊었다"
@@ -1242,7 +1250,8 @@ def demo() -> None:
         save_run_log(conn, sid, "[1/13] gsc\n")
         import time
         from datetime import datetime, timezone
-        bc.execute("INSERT INTO runs VALUES (90,1,'rank',?,NULL,'')",
+        bc.execute("INSERT INTO runs(id,project_id,kind,started_at,finished_at,notes) "
+                   "VALUES (90,1,'rank',?,NULL,'')",
                    (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),))
         bc.commit()
         time.sleep(1.1)                        # cutoff 는 초 단위다 — 같은 초면 '막 시작한 런'이다

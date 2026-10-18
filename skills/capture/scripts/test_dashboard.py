@@ -1812,6 +1812,10 @@ def test_local_run_routes_through_handler():
         assert post({"project": "lr_http", "groups": "nope"})[0] == 400
         with urllib.request.urlopen(base + "/api/run/status?project=lr_http") as r:
             st = _json.loads(r.read())
+        import run_all
+        assert set(st["lr_http"]) == set(run_all.RUN_STATE_KEYS), \
+            f"로컬 상태의 키가 호스팅과 같은 한 모양이 아니다: {sorted(st['lr_http'])}"
+        assert st["lr_http"]["stages"] == [] and st["lr_http"]["last_ok"] is None, st["lr_http"]
         g = st["lr_http"]["groups"]["compete"]
         assert g["running"] is True and g["queued"] is False and "due" in g and "last_run_at" in g, g
         assert ("POST", "/api/run") in dashboard.ROUTES and ("GET", "/api/run/status") in dashboard.ROUTES

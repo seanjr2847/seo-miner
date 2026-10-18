@@ -1959,8 +1959,7 @@ def _axis_groups(conn, pid, now=None) -> dict:
         seen = [_ts(last_ts[s]) for s in clock if s in last_ts]
         seen = [t for t in seen if t]
         every = g.get("every_hours")
-        due = bool(every and clock) and (
-            not seen or any((now - t).total_seconds() > every * 3600 for t in seen))
+        due = bool(clock) and run_all.is_due(seen, every, now)
         out.append({"id": g["id"], "name": g["name"], "stages": stages,
                     "every_hours": every, "views": list(g.get("views") or ()),
                     "last": {s: (str(last_ts[s])[:10] if s in last_ts else None)
@@ -2671,7 +2670,8 @@ class _LocalRuns:
             last = [v for v in g["last"].values() if v]
             groups[g["id"]] = {"running": g["id"] in cur, "queued": g["id"] in queue,
                                "last_run_at": max(last) if last else None, "due": g["due"]}
-        return {project: {"running": bool(cur), "groups": groups}}
+        # 모양은 run_all.run_state 한 벌(호스팅과 같은 키) — 로컬이 모르는 값은 null·빈값이다.
+        return {project: _run_all().run_state(running=bool(cur), groups=groups)}
 
 
 LOCAL_RUNS = _LocalRuns()

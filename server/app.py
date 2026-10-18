@@ -1100,14 +1100,12 @@ def api_run_status(uid: int = Depends(_require_uid), conn=Depends(CONN)):
     out = {}
     for r in store.sites(conn, uid):
         running = [x for x in (r["stage"] or "").split(",") if x]
-        out[r["project"]] = {"running": bool(r["running_since"]),
-                             "last_run_at": r["last_run_at"],
-                             "stage": running[0] if running else None,
-                             "stages": running,
-                             "pct": r["stage_pct"],
-                             "last_ok": r["last_ok"],
-                             "last_error": r["last_error"],
-                             "groups": store.group_status(conn, r, every)}
+        # 모양은 run_all.run_state 한 벌 — 로컬 대시보드도 같은 키로 답한다
+        out[r["project"]] = run_all.run_state(
+            running=bool(r["running_since"]), last_run_at=r["last_run_at"],
+            stage=running[0] if running else None, stages=running, pct=r["stage_pct"],
+            last_ok=r["last_ok"], last_error=r["last_error"],
+            groups=store.group_status(conn, r, every))
     return out
 
 
@@ -1521,7 +1519,12 @@ def _shared_route(method: str, path: str) -> None:
             q = request.query_params
             query = {k: vs[0] for k in q if k != "project"
                      if (vs := [v for v in q.getlist(k) if v])}
-            return dashboard.ROUTES[key](project, query, None)
+            got = dashboard.ROUTES[key](project, query, None)
+            if path == "/api/data":
+                # 메뉴의 점(groups[].due)은 스케줄러가 실제로 쓰는 판정으로 — 페이로드의 고정 주기가
+                # 아니라. 로컬에는 스케줄러가 없으니 이 덧입힘은 호스팅 몫이다(셸은 그냥 읽는다).
+                got = store.overlay_group_due(t.conn, t.uid, project, got, scheduler.every_hours())
+            return got
     elif method == "POST":
         def endpoint(body: dict = Depends(_body), project: str = Depends(_project_b),
                      t=Depends(TENANT_B)):

@@ -1070,6 +1070,7 @@ def demo() -> None:
             app.dependency_overrides.pop(_dispatch_dep, None)
 
         _groups_demo(c, u2)
+        _due_demo(c, u2)
 
         # /api/sql — 가드는 db.run_sql 것을 그대로 쓴다. 여기서 재구현하지 않는다.
         r = c.post("/api/sql", json={"project": "p1", "sql": "DELETE FROM keywords"})
@@ -1119,6 +1120,69 @@ def demo() -> None:
         print("app: ok")
 
 
+def _due_demo(c, uid: int) -> None:
+    """주기 지남(due)은 한 규칙이다 — 메뉴의 점이 읽는 페이로드(/api/data 의 groups[].due)와
+    상태(/api/run/status 의 groups[].due)가 같은 답을 한다.
+
+    페이로드는 원래 runs 의 날과 묶음 표의 고정 주기로 따로 셌다. 그러면 자동을 끈 사이트에는
+    영영 안 꺼지는 점이, 6시간 주기 사이트에는 일주일을 기다리는 점이 섰다(셸이 상태 값으로
+    덮어써 때우던 증상). 이제 호스팅 /api/data 는 스케줄러가 쓰는 판정(store.due_groups)을
+    그대로 싣는다 — 두 곳이 어긋나면 여기서 걸린다.
+    """
+    import run_all
+    cs = store.connect()
+    bc = db.connect(home=store.home(uid))
+    try:
+        sid = store.site(cs, uid, "new1")["id"]
+        pid = db.get_project(bc, "new1")["id"]
+        search = list(run_all.group_stages("search"))
+
+        def runs_aged(hours: float) -> None:
+            """search 묶음의 단계마다 hours 시간 전에 성공으로 끝난 런을 둔다(이전 것은 치운다)."""
+            bc.execute("DELETE FROM runs WHERE project_id=?", (pid,))
+            for k in search:
+                bc.execute("INSERT INTO runs(project_id,kind,started_at,finished_at,notes) "
+                           "VALUES(?,?,datetime('now',?),datetime('now',?),'errors=0')",
+                           (pid, k, f"-{hours} hours", f"-{hours} hours"))
+            bc.commit()
+
+        def clock(hours: float) -> None:
+            store.mark_run(cs, sid)
+            store.mark_done(cs, sid, ok=True)
+            cs.execute("UPDATE site_groups SET last_run_at=datetime('now', ?) "
+                       "WHERE site_id=? AND grp='search'", (f"-{hours} hours", sid))
+            cs.commit()
+
+        def both() -> tuple[bool, bool]:
+            st = c.get("/api/run/status").json()["new1"]["groups"]["search"]["due"]
+            pay = c.get("/api/data?project=new1").json()["groups"]
+            return st, next(g for g in pay if g["id"] == "search")["due"]
+
+        # 자동을 끈 사이트: 런이 일주일을 넘게 묵었어도(고정 주기로 세면 밀림) 점이 꺼져 있다
+        cs.execute("UPDATE sites SET run_every_hours=0 WHERE id=?", (sid,))
+        cs.commit()
+        runs_aged(1000)
+        clock(1000)
+        assert both() == (False, False), f"자동을 끈 사이트의 점: (상태, 페이로드)={both()}"
+        # 6시간 주기 사이트: 스케줄러는 이미 잴 때다(7시간 묵음) — 런이 1시간 전이라
+        # 고정 주기(168h)로 세면 점이 안 켜진다
+        cs.execute("UPDATE sites SET run_every_hours=6 WHERE id=?", (sid,))
+        cs.commit()
+        runs_aged(1)
+        clock(7)
+        assert both() == (True, True), f"6시간 주기 사이트의 점: (상태, 페이로드)={both()}"
+        # 방금 쟀으면 둘 다 꺼진다
+        clock(0)
+        assert both() == (False, False), f"방금 쟀는데 점이 선다: {both()}"
+    finally:
+        bc.execute("DELETE FROM runs WHERE project_id=(SELECT id FROM projects WHERE name='new1')")
+        bc.commit()
+        bc.close()
+        cs.execute("UPDATE sites SET run_every_hours=NULL WHERE user_id=? AND project='new1'", (uid,))
+        cs.commit()
+        cs.close()
+
+
 def _groups_demo(c, uid: int) -> None:
     """묶음 다시 재기 — POST /api/run 의 groups, 대기열·합치기, /api/run/status 의 groups.
 
@@ -1151,6 +1215,8 @@ def _groups_demo(c, uid: int) -> None:
         st = c.get("/api/run/status").json()["new1"]
         assert st["running"] is True, st
         assert set(st["groups"]) == set(ALL), st["groups"]
+        assert set(st) == set(run_all.RUN_STATE_KEYS), \
+            f"/api/run/status 의 키가 사이트 런 상태 한 모양(run_all.RUN_STATE_KEYS)이 아니다: {sorted(st)}"
         for v in st["groups"].values():
             assert set(v) == {"running", "queued", "last_run_at", "due"}, v
         # 대기 중(워커가 합치는 몇 초)에 올라 있는 묶음은 '도는 중'이다 — 앞에 도는 런이 없다.

@@ -2000,6 +2000,29 @@ def finish_run(conn, run_id: int, api_calls: int = 0, cost: float = 0.0, notes: 
     conn.commit()
 
 
+def close_unfinished_runs(conn: sqlite3.Connection, project: str, before: str, reason: str) -> int:
+    """이 사이트의 끝나지 않은 런 중 `before`(db.now 꼴 UTC) **이전에 시작한** 것을 중단으로 닫는다.
+
+    반환: 닫은 행 수. 워커가 죽어 finished_at 이 NULL 로 남은 행을 서버가 회수할 때 쓴다 — 서버가
+    brain.runs 를 SQL 로 직접 고치지 않고 스키마를 아는 이 곳을 부른다. 표식은 db.run 이 예외로
+    닫을 때와 같은 run_verdict.abort_note 라 화면·점검이 같은 판정(중단)으로 읽는다.
+
+    `before` 보다 늦게 시작한 행은 건드리지 않는다 — 부르는 쪽이 사이트 목록을 읽기 **전에** 찍은
+    시각을 넘기면, 그 뒤에 막 뜬 워커의 런을 닫을 수 없다. 비교는 julianday 다: 옛 행이
+    CURRENT_TIMESTAMP 꼴('YYYY-MM-DD HH:MM:SS')이어도 문자열 비교처럼 틀리지 않는다.
+    재실행에 안전하다(이미 닫힌 행은 안 걸린다).
+    """
+    note = run_verdict.abort_note(reason)
+    cur = conn.execute(
+        "UPDATE runs SET finished_at=?, notes=CASE WHEN COALESCE(notes,'')='' THEN ? "
+        "  ELSE notes || ' | ' || ? END "
+        "WHERE finished_at IS NULL AND julianday(started_at) < julianday(?) "
+        "  AND project_id IN (SELECT id FROM projects WHERE name=?)",
+        (before, note, note, before, project))
+    conn.commit()
+    return cur.rowcount
+
+
 class Run:
     """실행 한 건. 수집기가 도중에 값을 채우고, 컨텍스트가 끝날 때 기록된다."""
 

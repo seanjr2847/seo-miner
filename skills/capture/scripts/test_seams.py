@@ -2801,7 +2801,7 @@ def test_seam_61_server_and_local_accept_the_same_groups():
     import server.store as store
     assert "_groups().RUNNABLE_GROUPS" in inspect.getsource(store.group_clocks), \
         "호스팅 상태 칸(groups)이 run_all.RUNNABLE_GROUPS 를 안 싣는다"
-    assert '"groups": store.group_status(' in inspect.getsource(srv.api_run_status), \
+    assert "groups=store.group_status(" in inspect.getsource(srv.api_run_status), \
         "호스팅 /api/run/status 가 사이트별 groups 칸을 안 싣는다 — 셸 grpStatus 가 읽는다"
 
 
@@ -5033,6 +5033,73 @@ def test_seam_193_run_outcome_is_judged_once_and_read_not_reparsed():
     row = c.execute("SELECT * FROM runs").fetchone()
     assert len(row["notes"]) <= 500 and J(row)["aborted"] and "402" in J(row)["reason"], row["notes"]
     c.close()
+
+
+def test_seam_194_site_run_state_has_one_shape_and_due_has_one_rule():
+    """194) 사이트의 런 상태(/api/run/status 의 사이트 한 칸)는 한 모양이고, "주기 지남(due)"은 한 규칙이다.
+
+    · 모양의 정본은 run_all.RUN_STATE_KEYS / run_state(). 로컬(dashboard._LocalRuns.status)과
+      호스팅(server/app.py api_run_status)이 둘 다 그 함수로 짓는다 — 로컬은 모르는 값을 null·빈값으로
+      채우고 키는 안 뺀다(셸·원격 클라이언트가 어느 서버에서 오든 같은 키를 읽는다). 서버를 합치는 게
+      아니라 응답 데이터의 모양만 합친다(ADR 0003) — 그래서 이 상태 라우트는 dashboard.ROUTES 의 공유
+      항목이고 한쪽 전용 라우트가 아니다.
+    · due 의 규칙은 run_all.is_due 한 곳이다. 로컬(_axis_groups: 런 이력 + 묶음 표의 고정 주기)과
+      호스팅(store.due_groups: 묶음 시계 + 사이트 주기)은 **재료**만 다르고 판정은 같은 함수다.
+      호스팅 /api/data 의 groups[].due 는 스케줄러가 쓰는 판정(store.overlay_group_due)을 싣는다 —
+      셸이 상태 값으로 페이로드를 덮어써 때우지 않아도 되게(자동을 끈 사이트·6시간 주기 사이트).
+    · 서버는 brain.runs 를 SQL 로 직접 고치지 않는다 — db.close_unfinished_runs 가 닫는다.
+    """
+    import dashboard
+    import db as _db
+    import run_all
+    # 1) 모양
+    assert set(run_all.RUN_STATE_KEYS) >= {"running", "last_run_at", "stage", "stages", "pct",
+                                           "last_ok", "last_error", "groups"}, run_all.RUN_STATE_KEYS
+    blank = run_all.run_state()
+    assert set(blank) == set(run_all.RUN_STATE_KEYS) and blank["running"] is False, blank
+    assert blank["stages"] == [] and blank["groups"] == {} and blank["last_ok"] is None, blank
+    assert run_all.run_state(running=True, groups={"a": {}})["groups"] == {"a": {}}
+    try:
+        run_all.run_state(bogus=1)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("run_state 가 모르는 키를 받았다 — 한쪽만 키를 늘릴 수 있다")
+    assert "run_state(" in inspect_src(dashboard._LocalRuns.status), \
+        "로컬 /api/run/status 가 run_all.run_state 로 짓지 않는다 — 두 모양이다"
+    assert ("GET", "/api/run/status") in dashboard.ROUTES
+    srv = _server()
+    if srv is not None:
+        src = inspect_src(srv.api_run_status)
+        assert "run_state(" in src, "호스팅 /api/run/status 가 run_all.run_state 로 짓지 않는다 — 두 모양이다"
+        assert '"last_ok":' not in src and '"stages":' not in src, \
+            "호스팅 /api/run/status 가 키를 손으로 적는다 — 모양은 run_all.RUN_STATE_KEYS 한 벌"
+        assert "overlay_group_due" in inspect_src(srv._shared_route), \
+            "호스팅 /api/data 가 스케줄러의 due 를 안 싣는다 — 페이로드 점이 상태와 따로 센다"
+
+    # 2) due — 판정 표
+    from datetime import datetime, timedelta
+    now = datetime(2026, 10, 18, 12, 0, 0)
+    ago = lambda h: now - timedelta(hours=h)           # noqa: E731
+    for seen, per, want in [
+        ([], 168, True),                  # 한 번도 못 쟀다
+        ([ago(1)], 168, False),
+        ([ago(169)], 168, True),
+        ([ago(1), ago(200)], 168, True),  # 한 단계라도 묵었으면
+        ([ago(7)], 6, True),              # 6시간 주기
+        ([ago(1000)], 0, False),          # 0 = 자동 끔
+        ([], 0, False),
+        ([ago(1000)], None, False),       # 시계 없는 묶음
+    ]:
+        assert run_all.is_due(seen, per, now) is want, (seen, per, want)
+    assert "is_due(" in inspect_src(dashboard._axis_groups), "로컬 due 가 run_all.is_due 를 안 부른다"
+    if srv is not None:
+        import server.store as store
+        assert "is_due(" in inspect_src(store.due_groups), "호스팅 due 가 run_all.is_due 를 안 부른다"
+        assert "UPDATE runs" not in inspect_src(store), \
+            "서버가 brain.runs 를 SQL 로 직접 고친다 — db.close_unfinished_runs 를 쓴다"
+        assert "close_unfinished_runs(" in inspect_src(store.close_orphan_runs)
+    assert callable(_db.close_unfinished_runs)
 
 
 def inspect_src(fn) -> str:
