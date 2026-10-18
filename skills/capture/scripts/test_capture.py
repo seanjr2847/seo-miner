@@ -3549,6 +3549,158 @@ def test_make_prompts_command_goes_to_the_server_for_web_sites():
     finally:
         remote.owns, remote.api, sys.argv = orig
 
+def _schema_dump(conn) -> dict:
+    """표마다 (칸 이름·형·NOT NULL·기본값·PK) 집합 + 색인 이름·UNIQUE 집합.
+    칸 순서는 안 본다 — ALTER ADD 는 끝에 붙고 새 Brain 은 CREATE 순서라 달라도 같은 스키마다."""
+    out = {}
+    for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                             " AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall():
+        cols = {(r[1], r[2], r[3], r[4], r[5]) for r in conn.execute(f'PRAGMA table_info("{t}")')}
+        idx = {(r[1], r[2]) for r in conn.execute(f'PRAGMA index_list("{t}")')
+               if not r[1].startswith("sqlite_autoindex")}
+        out[t] = (cols, idx)
+    return out
+
+
+def test_connect_on_current_brain_does_not_write_or_wait_for_a_writer():
+    """최신 스키마의 Brain 을 여는 일은 **쓰기가 아니다** — 묶음 런의 단계들이 한 Brain 을 동시에
+    여는데, 여는 것만으로 쓰기 잠금을 다투면 'database is locked' 가 난다(그래서 timeout=60 이 붙었다).
+
+    _migrate 의 데이터 고치기는 전부 "걸리는 행이 있을 때만" 쓴다 — 누가 그 조건을 빼먹고 무조건
+    UPDATE 를 넣으면 여기서 잡힌다. 실측(2026-10-18, 100MB Brain): 열기 4ms, 쓰기 0건."""
+    import sqlite3
+    import threading
+    import time
+    home = HOME / "current-brain"
+    db.connect(home).close()                         # 한 번 열어 최신으로 맞춘다
+    watcher = sqlite3.connect(db.db_path(home))
+    before = watcher.execute("PRAGMA data_version").fetchone()[0]
+    db.connect(home).close()
+    after = watcher.execute("PRAGMA data_version").fetchone()[0]
+    assert after == before, "최신 Brain 을 여는데 다른 연결이 보는 쓰기가 일어났다 — _migrate 에 무조건 쓰기가 있다"
+    watcher.close()
+    # 다른 단계가 쓰기 잠금을 쥔 채여도 여는 쪽은 기다리지 않는다
+    w = sqlite3.connect(db.db_path(home), isolation_level=None)
+    w.execute("BEGIN IMMEDIATE")
+    res = {}
+
+    def opener():
+        t0 = time.perf_counter()
+        try:
+            db.connect(home).close()
+            res["sec"] = time.perf_counter() - t0
+        except Exception as e:      # noqa: BLE001
+            res["err"] = repr(e)
+    th = threading.Thread(target=opener)
+    th.start()
+    th.join(10)
+    w.execute("ROLLBACK")
+    w.close()
+    th.join()
+    assert "err" not in res and res.get("sec", 99) < 5, \
+        f"쓰기 잠금이 잡힌 동안 최신 Brain 을 여는 데 막혔다: {res}"
+
+
+def test_legacy_brain_migrates_to_the_same_schema_as_a_fresh_one():
+    """옛 Brain(나중에 붙은 칸·색인이 없다)도 열면 새 Brain 과 **같은 스키마**가 된다 — 두 번 열어도 같다.
+    마이그레이션 구조를 바꾸는 사람(버전 표지를 달든 단계를 쪼개든)이 지켜야 할 바닥이다."""
+    import sqlite3
+    fresh = db.connect(HOME / "fresh-brain")
+    want = _schema_dump(fresh)
+    fresh.close()
+    # 새 Brain 에서 마이그레이션이 덧붙이는 것들을 떼어 낸 옛 Brain — 칸 추가·색인·표 재구성 세 갈래
+    p = db.db_path(HOME / "old-brain")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(p)
+    c.executescript(db.SCHEMA)
+    dropped = 0
+    for t, col in (("projects", "ga4_property"), ("projects", "scope_path"), ("keywords", "verdict_off"),
+                   ("keywords", "active_src"), ("keywords", "locale_src"), ("keywords", "locale"),
+                   ("opportunities", "status_at"), ("opportunities", "status_reason"),
+                   ("opportunities", "status_prev"), ("opportunities", "status_tag"),
+                   ("rank_snapshots", "aio_domains_json"), ("rank_snapshots", "locale"),
+                   ("backlinks", "to_status"), ("crawl_links", "in_chrome"),
+                   ("page_audits", "viewport"), ("page_audits", "author"),
+                   ("competitors", "role"), ("ai_prompts", "gen_version"), ("verdicts", "origin")):
+        try:
+            c.execute(f"ALTER TABLE {t} DROP COLUMN {col}")
+            dropped += 1
+        except sqlite3.OperationalError:
+            pass                # 처음부터 SCHEMA 에 없던 칸 — 이미 옛 꼴이다
+    for ix in ("idx_opp_target", "idx_rank_kw_day"):
+        c.execute(f"DROP INDEX IF EXISTS {ix}")
+    c.execute("DROP TABLE IF EXISTS offlocale_snapshots")
+    c.commit()
+    c.close()
+    assert dropped >= 8, f"옛 Brain 흉내가 너무 얕다({dropped}칸) — 시험이 아무것도 안 본다"
+    legacy = _schema_dump(sqlite3.connect(p))
+    assert legacy != want, "옛 Brain 이 새 Brain 과 이미 같다 — 떼어 낸 게 없다"
+    for _ in range(2):                                   # 두 번 열어도 같다(멱등)
+        conn = db.connect(HOME / "old-brain")
+        got = _schema_dump(conn)
+        conn.close()
+        assert got == want, {t: (got.get(t), want.get(t)) for t in set(got) | set(want)
+                             if got.get(t) != want.get(t)}
+
+
+def test_undeclared_parent_columns_are_pinned():
+    """FK 를 선언하지 않았는데 부모를 가리키는 `*_id` 칸은 remote.merge 가 이름으로 **추측**한다
+    (`<단수>_id` → `<복수>` 표, remote._parents). 추측이 맞으면 id 를 갈아 끼우고, 틀리면 서버 id 가
+    로컬 brain 에 그대로 실려 엉뚱한 행을 가리킨다. 그래서 이 목록이 정본이다:
+
+    - NAME_RULE: 선언 없이 이름 규칙으로 부모를 잡는 칸. 새 칸은 **FK 를 선언**해 이 목록을 안 늘린다.
+    - NOT_A_PARENT: `_id` 로 끝나지만 우리 표의 행을 가리키지 않는 칸(바깥 서비스의 id).
+    둘 다 아닌 `_id` 칸이 생기면(이름 규칙을 어긴 부모 참조일 수 있다) 여기서 멈춘다."""
+    import remote
+    NAME_RULE = {("creations", "opportunity_id"): "opportunities"}
+    NOT_A_PARENT = {("serp_tasks", "task_id")}              # DataForSEO 쪽 작업 id
+    conn = db.connect(HOME / "fk-names")
+    tabs = remote._tables(conn, "main")
+    seen_rule, loose = {}, []
+    for t in sorted(tabs):
+        declared = {r["from"] for r in conn.execute(f'PRAGMA foreign_key_list("{t}")')}
+        guessed = remote._parents(conn, t, tabs)
+        for col in remote._cols(conn, "main", t):
+            if not col.endswith("_id") or col in declared:
+                continue
+            if col in guessed:
+                seen_rule[(t, col)] = guessed[col]
+            elif (t, col) not in NOT_A_PARENT:
+                loose.append((t, col))
+    conn.close()
+    assert seen_rule == NAME_RULE, \
+        f"이름 규칙으로 부모를 잡는 칸이 바뀌었다: {seen_rule} — FK 를 선언하거나 NAME_RULE 에 올려라"
+    assert not loose, f"FK 도 없고 이름 규칙도 못 맞는 `_id` 칸: {loose} — 부모 참조면 FK 를 선언하라"
+
+
+def test_merge_reports_columns_the_local_brain_cannot_carry():
+    """서버 스키마가 앞서면 merge 는 양쪽 교집합 칸만 옮긴다 — 로컬에 없는 칸의 값은 조용히 사라졌다.
+    동작(무엇이 들어오나)은 그대로 두고, 버린 칸을 **알린다**(lost 에 표→칸 목록)."""
+    import sqlite3
+    import remote
+    rem = HOME / "lost-rem.db"
+    r = sqlite3.connect(rem)
+    r.executescript(db.SCHEMA)
+    r.executescript("""
+        ALTER TABLE keywords ADD COLUMN future_col TEXT;
+        CREATE TABLE future_table (id INTEGER PRIMARY KEY, project_id INTEGER REFERENCES projects(id));
+        INSERT INTO projects(id, name, domain) VALUES(1, 'lostsite', 'l.com');
+        INSERT INTO keywords(id, project_id, keyword, future_col) VALUES(1, 1, 'kw', '앞선칸');""")
+    r.commit()
+    r.close()
+    os.environ["CAPTURE_HOME"] = str(HOME / "lost-local")
+    db.connect().close()
+    lost: dict = {}
+    counts = remote.merge(rem, "lostsite", lost=lost)
+    assert counts["keywords"] == 1, counts
+    assert lost == {"keywords": ["future_col"], "future_table": ["(표 통째)"]}, lost
+    line = remote._lost_line(lost)
+    assert "keywords.future_col" in line and "future_table" in line, line
+    # 아무것도 안 버렸으면 알릴 것도 없다
+    assert remote._lost_line({}) == ""            # 아무것도 안 버렸으면 알릴 것도 없다
+    os.environ["CAPTURE_HOME"] = str(HOME)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

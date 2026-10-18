@@ -307,12 +307,42 @@ def _pred(parents: dict[str, str], src: str, col: str) -> str:
             + " AND ".join(f'("{c}" IS NULL OR {e})' for c, e in hit.items()) + ")")
 
 
-def merge(remote_file, project: str) -> dict[str, int]:
+def _unshared(con, tables) -> dict[str, list[str]]:
+    """서버(rem)에는 있는데 로컬(main)에는 없어 merge 가 못 옮기는 것. 표→칸 목록.
+    표가 통째로 없으면 ["(표 통째)"]. 동작을 바꾸지 않는다 — 알리기 위한 읽기뿐이다."""
+    out: dict[str, list[str]] = {}
+    local = _tables(con, "main")
+    for t in sorted(_tables(con, "rem") - local):
+        out[t] = [LOST_TABLE]
+    for t in tables:
+        mine = set(_cols(con, "main", t))
+        gone = [c for c in _cols(con, "rem", t) if c != "id" and c not in mine]
+        if gone:
+            out[t] = gone
+    return out
+
+
+LOST_TABLE = "(표 통째)"
+
+
+def _lost_line(lost: dict[str, list[str]]) -> str:
+    """merge 가 못 옮긴 칸을 한 줄로 — 없으면 빈 문자열."""
+    if not lost:
+        return ""
+    parts = [t if cols == [LOST_TABLE] else ", ".join(f"{t}.{c}" for c in cols)
+             for t, cols in lost.items()]
+    return ("[주의] 서버 스키마가 로컬보다 앞서 이 칸은 로컬 사본에 못 옮겼습니다: "
+            + " · ".join(parts) + " — 플러그인을 갱신하세요")
+
+
+def merge(remote_file, project: str, lost: dict | None = None) -> dict[str, int]:
     """원격 brain 에서 **이 사이트 행만** 로컬 brain.db 로 옮긴다. 표→옮긴 행수.
 
     id 는 로컬이 새로 매기고 FK 는 idmap 으로 갈아 끼운다 — 서버 id 를 그대로
     실으면 이미 다른 사이트가 쓰고 있는 번호와 겹쳐, 순위 스냅샷이 남의 키워드에
     붙는다. 컬럼은 양쪽 table_info 의 **교집합**만 쓴다(서버 스키마가 앞설 수 있다).
+    교집합 밖이라 버려진 칸은 `lost` 에 (표→칸 목록)으로 채워 알린다 — 주지 않으면 조용히
+    버린다(예전 그대로). 무엇이 들어오는지는 `lost` 와 상관없이 같다.
 
     전부 한 트랜잭션이다. 중간에 실패하면 롤백 — 반쯤 병합된 brain 을 남기지 않는다.
     """
@@ -330,6 +360,8 @@ def merge(remote_file, project: str) -> dict[str, int]:
         order, par = _plan(con)
         order = [t for t in order if t in _tables(con, "rem")]
         assert order[:1] == ["projects"], "원격에 projects 표가 없다"
+        if lost is not None:
+            lost.update(_unshared(con, order))
         con.execute("CREATE TEMP TABLE _map(tbl TEXT, rid INT, lid INT)")
         con.execute("CREATE TEMP TABLE _old(tbl TEXT, id INT)")
         con.execute("BEGIN")
@@ -559,12 +591,15 @@ def pull(project: str, src: Path | None = None) -> dict[str, int]:
     own = src is None
     if own:
         src = _download()
+    lost: dict = {}
     try:
-        counts = merge(src, project)
+        counts = merge(src, project, lost=lost)
     finally:
         if own:
             src.unlink(missing_ok=True)
     print(_pull_line(project, counts))
+    if lost:
+        print(_lost_line(lost), file=sys.stderr)
     return counts
 
 
