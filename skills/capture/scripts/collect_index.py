@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
+import run_verdict  # noqa: E402
 import scoring  # noqa: E402
 from collect_gsc import get_service  # noqa: E402
 
@@ -172,7 +173,7 @@ def collect(project: str, *,
             checked = str(date.today())
             db.write_index_status(conn, p["id"], checked, rows)
             r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} {st.err_note}"
-                       + (f" 중단: {stop}" if stop else ""))
+                       + (f" {run_verdict.abort_note(stop)}" if stop else ""))
 
         if stop:
             print(f"\n[중단] {stop} — 여기까지 {len(rows)}개는 저장했습니다.", file=sys.stderr)

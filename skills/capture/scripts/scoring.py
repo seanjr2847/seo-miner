@@ -22,6 +22,7 @@ from collections.abc import Callable
 from urllib import robotparser
 from urllib.parse import unquote, urlsplit
 
+import run_verdict
 import schema_vocab
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
@@ -4219,10 +4220,10 @@ _LATEST_MN = "SELECT MAX(checked_date) FROM brand_mentions WHERE project_id=?"
 #                     질문은 행이 아예 없다
 #   · 프로세스째 죽음 finished_at NULL — 재배포 SIGKILL. store.reclaim_dead_runs 는 sites
 #     · 도는 중       표만 고치고 이 행은 그대로 둔다. 도는 중인 것과 겉으로 같다
-# 끝난 회차 = finished_at 있음 AND notes 에 AI_RUN_ABORTED 없음. 이것만 측정으로 쓴다.
+# 끝난 회차 = finished_at 있음 AND 중단 표식(run_verdict.ABORT_MARK) 없음. 이것만 측정으로 쓴다.
 # 예전엔 "ai_checks 가 가진 가장 큰 run_id"를 최신 회차로 골라, 끊긴 #56 이 최신이 되고
 # 거기서 안 닿은 질문 17개가 기회 목록에서 조용히 빠졌다.
-AI_RUN_ABORTED = "중단:"   # db.run 이 예외로 닫은 런의 notes 표식 — test_capture 가 실물 db.run 으로 대조
+# 표식과 그것을 읽는 규칙은 run_verdict 한 곳이다 — 여기서는 SQL 조각만 빌려 쓴다.
 AI_STALE_DAYS = 30         # 질문의 마지막 측정이 이보다 오래되면 "오래됨". 자동 런은 며칠
                            # 간격이라, 한 달 동안 한 번도 안 잰 질문은 상한(max_ai_prompts)
                            # 밖으로 밀렸거나 확인이 계속 끊긴 것이다 — 그 인용 0 은 옛 사실이다
@@ -4234,14 +4235,13 @@ def ai_run_done(r: str = "r") -> str:
     물은 질문을 재수집이 "이미 확인"으로 건너뛰는데 측정은 그걸 안 쳐서 "측정 안 됨"
     이 다시 눌러도 안 풀린다."""
     return (f"{r}.kind='ai' AND {r}.finished_at IS NOT NULL "
-            f"AND instr(COALESCE({r}.notes,''), '{AI_RUN_ABORTED}')=0")
+            f"AND {run_verdict.sql_not_aborted(r + '.notes')}")
 
 
 def _ai_run_state(row) -> str:
     """runs 한 줄 → done | aborted | open (open 은 도는 중이거나 프로세스째 죽은 것)."""
-    if not row["finished_at"]:
-        return "open"
-    return "aborted" if AI_RUN_ABORTED in (row["notes"] or "") else "done"
+    v = run_verdict.judge(row)
+    return "open" if v["unfinished"] else "aborted" if v["aborted"] else "done"
 
 
 def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
@@ -4283,16 +4283,12 @@ def ai_prompt_state(conn: sqlite3.Connection, project_id: int, *,
         " WHERE project_id=? AND kind='ai' ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
     last_run = None
     if last:
-        m = re.search(r"errors=(\d+)", last["notes"] or "")
-        note = (last["notes"] or "")
-        cut = note.find(AI_RUN_ABORTED)
+        v = run_verdict.judge(last)
         last_run = {"id": last["id"], "state": _ai_run_state(last),
                     "at": last["finished_at"] or last["started_at"],
-                    "errors": int(m.group(1)) if m else 0,
+                    "errors": v["errors"],
                     # 끊긴 이유만 — 앞의 engines=… 와 예외 이름(Fatal:)은 사람이 읽을 말이 아니다
-                    "note": re.sub(r"^\w+:\s*", "",
-                                   note[cut + len(AI_RUN_ABORTED):].strip())[:200]
-                            if cut >= 0 else ""}
+                    "note": re.sub(r"^\w+:\s*", "", v["reason"])[:200]}
     count = lambda s: sum(1 for r in rows if r["state"] == s)   # noqa: E731
     return {"rows": rows, "active": len(rows),
             "measured": count("measured"), "stale": count("stale"),

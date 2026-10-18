@@ -1192,6 +1192,7 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     import sqlite3 as _sq
 
     import collector
+    import run_verdict
     import scoring
     src = (ctx["views"] / "aicite.html").read_text("utf-8")
     assert "function AI_health(" in src, "aicite.html 에 AI_health 가 없다 — 이 검사가 헛돈다"
@@ -1221,7 +1222,7 @@ def test_seam_24_ai_health_fields_come_from_scoring():
     # 상태 값도 한 벌 — 화면이 견주는 글자는 scoring 이 실제로 내는 값이어야 한다
     made = {scoring._ai_run_state(r) for r in (
         {"finished_at": None, "notes": None},
-        {"finished_at": "t", "notes": f"x {scoring.AI_RUN_ABORTED} y"},
+        {"finished_at": "t", "notes": f"x {run_verdict.ABORT_MARK} y"},
         {"finished_at": "t", "notes": "errors=0"})}
     said = set(re.findall(r'lr\.state\s*[!=]==\s*"(\w+)"', body))
     assert said and said <= made, f"화면이 모르는 런 상태를 견준다: {sorted(said - made)}"
@@ -3702,7 +3703,7 @@ def test_seam_110_play_pr_is_local_only():
 
 def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
     """121) 데이터 점검은 audit_data 한 벌이다 — 페이로드(d.health)·gaps 단계 로그 한 줄·출시 문
-    (test_remote)이 같은 판정을 읽는다. 런 실패 표식(errors=N · 중단:)도 그 모듈 한 벌이다.
+    (test_remote)이 같은 판정을 읽는다. 런 실패 표식(errors=N · 중단:)은 run_verdict 한 벌이다(193번).
 
     · 실패 표식이 세 벌이었다(dashboard._RE_RUN_ERRORS · test_remote.ERRORS · 점검 초안). 그중
       test_remote 것만 경계(\\b)가 없어 rank 런의 outline_errors=4 를 실패로 읽을 수 있었다.
@@ -3721,7 +3722,7 @@ def test_seam_121_health_audit_is_one_judge_read_by_screen_log_and_gate():
     assert "audit_data.audit(d" in g and 'd["health"]' in g, "gather 가 d.health 를 audit_data 로 안 짓는다"
     assert 'd["health_sev"] = dict(audit_data.SEV_LABEL)' in g
     assert not re.search(r"errors=\(\\d\+\)", dash), "dashboard 가 런 실패 표식을 따로 갖는다"
-    assert test_remote.ERRORS is audit_data.RUN_ERRORS, "출시 문의 실패 표식이 사본이다"
+    assert "run_verdict.judge(" in inspect_src(test_remote.why_bad), "출시 문이 런 판정을 따로 한다"
     assert "audit_data.audit(" in inspect_src(test_remote.health_alerts)
     assert "audit_data.log_line(" in inspect_src(run_all.health_line)
     assert "health_line(project)" in inspect_src(run_all.load_opportunities), \
@@ -4878,6 +4879,160 @@ def test_seam_08b_every_kind_fills_every_kind_table():
         finally:
             brief.EVIDENCE[kind] = saved
         assert set(gaps) == {kind} and "brief.EVIDENCE" in gaps[kind][0], (kind, gaps)
+
+
+def test_seam_193_run_outcome_is_judged_once_and_read_not_reparsed():
+    """193) 런 한 건의 결과(성공 · 항목 오류 · 건너뜀 · 중단 · 미완)는 run_verdict.judge 한 곳이
+    가른다 — 점검(audit_data)·묶음 머리(dashboard)·출시 문(test_remote)·AI 회차(scoring)·셸은 그
+    판정을 읽을 뿐 runs.notes 를 다시 정규식으로 되짚지 않는다.
+
+    · 페이로드의 모든 runs 행이 `verdict` 를 싣는다(gather) — 셸의 runVerdict 는 그걸 돌려줄 뿐이다.
+    · 호스팅이 아직 옛 판(verdict 없음)일 때 로컬이 프록시로 받은 /api/data 에도 같은 판정이 붙는다.
+    · 쓰는 쪽(db.run 의 중단 · run_all 의 막힘 · collector.err_note · 서버의 회수 표식)이 쓴 글자를 judge 가
+      같은 뜻으로 읽는다 — 글자 모양은 쓰는 쪽에, 읽는 규칙은 judge 에 한 벌씩이다.
+    · 옛 행(새 칸 없음, notes 만 있음)에서도 같은 판정이 나온다 — 스키마를 안 바꿨기 때문이다.
+    """
+    import sqlite3 as _sq
+
+    import audit_data
+    import collector
+    import dashboard
+    import run_all
+    import run_verdict
+    import scoring
+
+    # 1) 판정 표 — 부분 일치 사고(outline_errors=4)와 옛 행(finished_at 칸 없음)까지
+    J = run_verdict.judge
+    for notes, fin, state, errors, skipped in [
+        ("errors=0 outlines=36 outline_errors=4", "t", "ok", 0, 0),
+        ("ai_errors=3 errors=0", "t", "ok", 0, 0),
+        ("urls=5 errors=9 first_error=HTTP 400", "t", "errors", 9, 0),
+        ("errors=0 skipped=2", "t", "skipped", 0, 2),
+        ("gone_skipped=4 errors=0", "t", "ok", 0, 0),
+        ("errors=2 skipped=2", "t", "errors", 2, 2),
+        ("errors=1 | 중단: Fatal: 402", "t", "aborted", 1, 0),
+        ("errors=0", None, "unfinished", 0, 0),
+        ("", "t", "ok", 0, 0),
+        (None, "t", "ok", 0, 0),
+    ]:
+        v = J({"notes": notes, "finished_at": fin})
+        assert (v["state"], v["errors"], v["skipped"]) == (state, errors, skipped), (notes, v)
+        assert v["cls"] == {"ok": "ok", "skipped": "skip"}.get(state, "bad"), (notes, v)
+    assert J({"notes": "errors=3"})["state"] == "errors", "finished_at 칸이 없는 옛 행을 못 읽는다"
+    assert J({"notes": "x", "finished_at": None})["failed"] is False, \
+        "미완은 notes 만 보는 failed 가 아니다 — 점검의 '안 끝남' 갈래가 따로 잡는다"
+    assert set(J({"notes": ""})) >= {"state", "cls", "label", "why", "errors", "skipped",
+                                     "aborted", "unfinished", "failed", "reason"}
+    c = _sq.connect(":memory:")                       # sqlite3.Row 도 같은 판정
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+
+    # 2) 쓰는 쪽이 쓴 글자를 읽는다
+    try:
+        with db.run(c, 1, "ai") as r:
+            r.notes = "errors=3 first_error=402 Payment Required"     # collector.err_note 가 쓰는 꼴
+            raise collector.Fatal("402 잔액")
+    except collector.Fatal:
+        pass
+    row = c.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    v = J(row)
+    assert v["aborted"] and v["cls"] == "bad" and "402 잔액" in v["reason"], v
+    assert scoring.ai_run_done("r") == (
+        "r.kind='ai' AND r.finished_at IS NOT NULL AND " + run_verdict.sql_not_aborted("r.notes")), \
+        "AI 회차 SQL 이 judge 와 같은 표식을 안 쓴다"
+    assert J({"notes": "errors=0", "finished_at": "t"})["state"] == "ok"
+    rid = c.execute("INSERT INTO runs(project_id,kind) VALUES(1,'ai')").lastrowid
+    db.finish_run(c, rid, notes=f"{run_verdict.BLOCKED_NOTE} | {run_verdict.abort_note('잔액 $0.14')}")
+    blocked = J(c.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone())
+    assert blocked["aborted"] and blocked["blocked"] and "$0.14" in blocked["reason"], blocked
+    assert not hasattr(run_all, "BLOCKED_NOTE"), "막힘 표식 사본이 run_all 에 남았다"
+    srv = _server()
+    if srv is not None:
+        import server.store as store
+        assert J({"notes": store.orphan_run_note(), "finished_at": "t"})["aborted"], \
+            "서버가 회수한 런의 표식을 judge 가 중단으로 못 읽는다"
+    c.close()
+
+    # 3) 읽는 쪽은 사본을 안 든다
+    assert not hasattr(audit_data, "RUN_ERRORS") and not hasattr(audit_data, "run_failed"), \
+        "점검이 런 실패 표식을 따로 갖는다 — run_verdict.judge 를 읽는다"
+    assert not hasattr(dashboard, "_run_ok"), "대시보드가 런 판정을 따로 든다"
+    assert not hasattr(scoring, "AI_RUN_ABORTED"), "scoring 이 중단 표식 사본을 든다"
+    import test_remote
+    assert not hasattr(test_remote, "ERRORS"), "출시 문이 실패 표식 정규식을 따로 든다"
+    for who, src in (("audit_data", inspect_src(audit_data)), ("dashboard", inspect_src(dashboard)),
+                     ("test_remote", inspect_src(test_remote)), ("scoring", inspect_src(scoring))):
+        assert not re.search(r"errors=\(\\d", src.replace("\\\\", "\\")), f"{who} 가 errors=N 정규식을 든다"
+        assert '"중단:"' not in src and "'중단:'" not in src, f"{who} 가 중단 표식을 글자로 든다"
+
+    # 3b) 쓰는 쪽도 표식을 글자로 짓지 않는다 — run_verdict.abort_note 한 곳(검사용 test_*.py 는 예외)
+    import ast
+    srcs = [p for p in sorted(SCRIPTS.glob("*.py")) + sorted((ROOT / "server").glob("*.py"))
+            if not p.name.startswith("test_") and p.name != "run_verdict.py"]
+    assert len(srcs) > 30, "쓰는 쪽을 못 훑었다 — 검사가 헛돈다"
+    for p in srcs:
+        tree = ast.parse(p.read_text("utf-8"))
+        docs = {id(n.body[0].value) for n in ast.walk(tree)
+                if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.body and isinstance(n.body[0], ast.Expr)
+                and isinstance(n.body[0].value, ast.Constant)}
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+                    and run_verdict.ABORT_MARK in n.value):
+                raise AssertionError(f"{p.name}:{n.lineno} 가 중단 표식을 글자로 짓는다 — "
+                                     "run_verdict.abort_note 를 쓴다")
+
+    # 4) 화면: 셸은 notes 를 안 읽는다. 판정은 r.verdict
+    ctx = _load()
+    if ctx is not None:
+        shell = ctx["shell"]
+        m = re.search(r"SM\.api\.runVerdict = [^\n]*\n", shell)
+        assert m, "셸에 SM.api.runVerdict 가 없다"
+        assert "notes" not in m.group(0) and "RE_ERRORS" not in shell and "RE_SKIPPED" not in shell, \
+            "셸이 runs.notes 를 다시 읽는다 — r.verdict 를 돌려주기만 한다"
+        for p in sorted(ctx["views"].glob("*.html")):
+            body = p.read_text("utf-8")
+            if p.name == "history.html":      # 기록 화면의 HS_notes 는 notes 를 사람 말로 옮겨 적는 자리다
+                continue
+            assert "중단:" not in body and not re.search(r"errors\b[^\n]*match|grab\(\"errors\"\)", body), \
+                f"{p.name} 이 runs.notes 에서 결과를 되짚는다 — r.verdict 를 읽는다"
+
+    # 5) 페이로드와 프록시
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    for k, n, fin in (("gsc", "errors=2 first_error=x", "t"), ("rank", "errors=0 skipped=1", "t"),
+                      ("ai", "errors=0", None)):
+        c.execute("INSERT INTO runs(project_id,kind,finished_at,notes) VALUES(1,?,?,?)", (k, fin, n))
+    d = dashboard.gather(c, dict(c.execute("SELECT * FROM projects").fetchone()))
+    got = {r["kind"]: r["verdict"]["state"] for r in d["runs"]}
+    assert got == {"gsc": "errors", "rank": "skipped", "ai": "unfinished"}, got
+    c.close()
+    old = {"runs": [{"kind": "gsc", "notes": "errors=4", "finished_at": "t"}]}
+    run_verdict.attach(old["runs"])
+    assert old["runs"][0]["verdict"]["errors"] == 4, "옛 호스팅 페이로드에 판정이 안 붙는다"
+    new = {"runs": [{"kind": "gsc", "notes": "errors=4", "finished_at": "t", "verdict": {"state": "keep"}}]}
+    run_verdict.attach(new["runs"])
+    assert new["runs"][0]["verdict"] == {"state": "keep"}, "서버가 준 판정을 덮어쓴다"
+    assert "run_verdict.attach" in inspect_src(dashboard.Handler._proxy), \
+        "프록시가 옛 호스팅의 /api/data 에 판정을 안 붙인다"
+
+    # 6) 중단 표식은 notes 가 길어도 500자 절단에서 살아남는다
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_seam','saas','x.com')")
+    try:
+        with db.run(c, 1, "rank") as r:
+            r.notes = "errors=0 " + "x=1 " * 200
+            raise collector.Fatal("402 잔액")
+    except collector.Fatal:
+        pass
+    row = c.execute("SELECT * FROM runs").fetchone()
+    assert len(row["notes"]) <= 500 and J(row)["aborted"] and "402" in J(row)["reason"], row["notes"]
+    c.close()
 
 
 def inspect_src(fn) -> str:

@@ -899,8 +899,7 @@ function stIxChecked(d) {
 function stIxStop(d) {
   const r = window.runFailed ? window.runFailed("index", d) : null;
   if (!r) return null;
-  const m = /중단:\s*(.+)$/.exec(r.notes || "");
-  return {why: m ? m[1].trim() : ""};
+  return {why: r.verdict.reason || ""};      // 중단 사유는 서버가 가른 판정(run_verdict)의 reason
 }
 
 /* 도넛 색은 CSS 토큰이다 — Chart.js 는 var(--x)·color-mix() 를 못 읽으므로 화면 상자에서

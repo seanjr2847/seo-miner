@@ -2474,10 +2474,11 @@ def test_rank_queue_timeout_writes_nothing_and_next_run_reuses_ids():
     assert snaps == [(before, 7)], f"상한에 걸렸는데 적었다(또는 이전 측정을 지웠다): {snaps}"
     assert kept == posted, f"맡긴 id 를 안 남겼다: {kept} != {posted}"
     assert "timeout=1" in notes, notes
-    # 판정 규칙 한 벌(dashboard._run_ok = 셸 runVerdict)이 이 런을 실패로 읽어야 한다 —
+    # 판정 규칙 한 벌(run_verdict.judge = 화면의 r.verdict)이 이 런을 실패로 읽어야 한다 —
     # 성공으로 읽으면 묶음 머리가 "순위 오늘 잼"이라 말하고 다시 재기를 안 권한다.
-    import dashboard
-    assert not dashboard._run_ok(notes), f"상한에 걸린 순위 런이 성공으로 읽힌다: {notes}"
+    import run_verdict
+    assert not run_verdict.ok({"notes": notes, "finished_at": "t"}), \
+        f"상한에 걸린 순위 런이 성공으로 읽힌다: {notes}"
 
     # 다음 런 — 이제 다 됐다. 새로 맡기지 않고 남긴 id 로 받아 온다.
     for v in fake.tasks.values():

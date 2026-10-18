@@ -922,7 +922,7 @@ def demo() -> None:
                                        (dead_rid,)).fetchone()
         finally:
             bconn.close()
-        assert fin and store.ORPHAN_RUN_NOTE in (notes or ""), \
+        assert fin and store.orphan_run_note() in (notes or ""), \
             f"회수했는데 brain 의 런이 끝나지 않은 채 남았다: {(fin, notes)}"
         assert resume_dead_runs(dispatch=lambda *a: spawned.append(a)) == [], "도는 런이 없는데 또 띄운다"
         # 죽은 부분 실행(/capture gsc) — 무엇을 돌던지 안 남는다. 인자 없이 띄우면 워커가

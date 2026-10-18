@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector          # noqa: E402
 import dashboard          # noqa: E402
 import db                 # noqa: E402
+import run_verdict        # noqa: E402
 import scoring            # noqa: E402
 import serp_adapter       # noqa: E402
 
@@ -1194,7 +1195,7 @@ def test_ai_gaps_skips_unfinished_runs_and_counts_unmeasured():
     assert scoring.ai_prompt_state(conn, pid)["last_run"]["state"] == "aborted"
     # 끊긴 회차의 표식은 실물 db.run 이 쓴 그대로여야 한다 — 문자열 사본이 갈라지면 여기서 샌다
     note = conn.execute("SELECT notes FROM runs WHERE id=?", (r2.id,)).fetchone()[0]
-    assert scoring.AI_RUN_ABORTED in note, note
+    assert run_verdict.judge({"notes": note, "finished_at": "t"})["aborted"], note
     h = scoring.ai_health(conn, pid)
     assert h["unmeasured"] == 1 and h["unmeasured_eg"] == ["새로 넣은 질문 다"], h
     assert h["last_run"]["note"] == "서버 재시작", h["last_run"]

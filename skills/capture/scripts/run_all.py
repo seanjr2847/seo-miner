@@ -45,6 +45,7 @@ StageResult 를 그대로 호출자에게 넘긴다.
     행 수·비용·산출물 경로가 정수 exit code 로 접혀 버려지던 자리가 이것이다.
 """
 import argparse
+import functools
 import inspect
 import sys
 import threading
@@ -71,8 +72,10 @@ import collector           # noqa: E402
 import dashboard           # noqa: E402
 import db                  # noqa: E402
 import expand_keywords     # noqa: E402
+import http_adapter        # noqa: E402
 import plays               # noqa: E402
 import remote              # noqa: E402
+import run_verdict         # noqa: E402
 import scoring             # noqa: E402
 import serp_adapter        # noqa: E402
 
@@ -507,21 +510,18 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
 _PREFLIGHT = preflight
 
 
-BLOCKED_NOTE = "돈 쓰기 전에 건너뜀"
-
-
 def note_blocked(project: str, kind: str, reason: str) -> None:
     """카나리아가 막은 유료 단계를 runs 한 줄로 남긴다 — 건너뜀은 여태 로그에만 있고 기록이
     없어서, [AI 노출] 이 두 사이트(aitierlist·noti)에서 한 번도 안 돈 이유가 어디에도 안
-    남았다. notes 에 scoring.AI_RUN_ABORTED("중단:") 표식을 단다: 이 줄은 **잰 날이 아니다**
-    (dashboard._run_ok·scoring.ai_run_done 이 그 표식으로 뺀다), 그리고 [AI 인용] 화면은
+    남았다. notes 에 중단 표식(run_verdict.abort_note)을 단다: 이 줄은 **잰 날이 아니다**
+    (run_verdict.judge·scoring.ai_run_done 이 그 표식으로 뺀다), 그리고 [AI 인용] 화면은
     ai_health.last_run 의 사유로 이 문장을 그대로 말한다. 기록이 실패해도 수집은 간다."""
     try:
         conn = db.connect()
         try:
             pid = db.get_project(conn, project)["id"]
             rid = db.start_run(conn, pid, kind)
-            db.finish_run(conn, rid, notes=f"{BLOCKED_NOTE} | {scoring.AI_RUN_ABORTED} {reason}"[:500])
+            db.finish_run(conn, rid, notes=f"{run_verdict.BLOCKED_NOTE} | {run_verdict.abort_note(reason)}"[:500])
         finally:
             conn.close()
     except Exception as e:
@@ -733,6 +733,19 @@ def _run_groups(project: str, table: tuple, *, dry_run: bool, skip_set: set, opt
     return [(n, done[n]) for n in names]
 
 
+def _in_run_scope(fn):
+    """런 한 건(체인)을 http_adapter.run_scope() 로 감싼다 — 크롤이 받은 내 사이트 페이지 원문을
+    페이지 감사가 서버에 다시 요청하지 않는다. 체인이 끝나면(예외·중단 포함) 캐시가 비고, 다음 런은
+    늘 새로 받는다(사이트를 고치고 바로 다시 재도 옛 응답이 나오면 안 된다). 묶음 런의 스레드들도
+    같은 범위 안이다(범위는 프로세스 전역이다). inspect.signature 는 __wrapped__ 를 따라간다."""
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        with http_adapter.run_scope():
+            return fn(*args, **kwargs)
+    return inner
+
+
+@_in_run_scope
 def run_chain(
     project: str,
     *,
@@ -1036,7 +1049,8 @@ def _check_preflight() -> None:
         assert r.skipped and "$0.14" in r.reason, r
         rows = c.execute("SELECT notes, finished_at FROM runs WHERE kind='ai'").fetchall()
         assert len(rows) == 1, f"막힌 단계 기록이 없거나(또는 dry-run 까지) 남았다: {len(rows)}"
-        assert scoring.AI_RUN_ABORTED in rows[0]["notes"] and "$0.14" in rows[0]["notes"], rows[0]["notes"]
+        v = run_verdict.judge({"notes": rows[0]["notes"], "finished_at": rows[0]["finished_at"]})
+        assert v["aborted"] and v["blocked"] and "$0.14" in v["reason"], (v, rows[0]["notes"])
         st = scoring.ai_prompt_state(c, c.execute("SELECT id FROM projects WHERE name='pf'"
                                                   ).fetchone()["id"])
         assert st["last_run"]["state"] == "aborted" and "$0.14" in st["last_run"]["note"], st["last_run"]

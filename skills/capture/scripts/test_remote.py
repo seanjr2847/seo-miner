@@ -30,7 +30,6 @@ self-check: 가짜 응답 네 가지(도는 중·errors=100·정상·미설정)�
 import contextlib
 import io
 import os
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -38,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import audit_data  # noqa: E402
 import remote  # noqa: E402
+import run_verdict  # noqa: E402
 
 # 마지막 체인 = 가장 최근 gsc 런 이후의 runs 행들. gsc 가 체인의 첫 단계라 그것이
 # 경계다. project_id 로 거른다 — 한 brain 에 사이트가 여러 개 산다(서버는 테넌트
@@ -52,10 +52,7 @@ ORDER BY r.started_at"""
 
 # 건너뛴 것은 실패가 아니다: 키가 없어 안 돈 단계는 runs 행이 아예 안 생기고,
 # "오늘 이미 확인" 은 notes 에 skipped=N 으로 남는다(collector.Stage.skip_note).
-SKIP_MARK = re.compile(r"건너뜀|skipped=[1-9]")
-# 실패 표식의 정본은 audit_data 다 — 경계(\b)가 없던 사본은 rank 런의 outline_errors=4 를
-# 실패로 읽을 수 있었다(그 앞에 errors=0 이 먼저 와서 우연히 비껴갔을 뿐이다).
-ERRORS = audit_data.RUN_ERRORS
+# 결과 판정(오류 수 · 미완 · 건너뜀 표식)은 run_verdict.judge 한 곳이다 — 여기서 notes 를 읽지 않는다.
 
 
 def paid_stages() -> set[str]:
@@ -71,13 +68,12 @@ def _q(name: str) -> str:
 
 def why_bad(row: dict, paid: set[str]) -> str | None:
     """이 runs 행이 실패인가 — 실패면 사유 한 줄, 아니면 None."""
-    notes = row.get("notes") or ""
+    v = run_verdict.judge(row)
     if not row.get("finished_at"):
         return "안 끝났다 (finished_at 이 비었다)"
-    m = ERRORS.search(notes)
-    if m and int(m.group(1)) > 0:
-        return f"errors={m.group(1)}"
-    if row.get("kind") in paid and not row.get("api_calls") and not SKIP_MARK.search(notes):
+    if v["errors"] > 0:
+        return f"errors={v['errors']}"
+    if row.get("kind") in paid and not row.get("api_calls") and not v["skip_marked"]:
         return "유료 단계인데 api_calls=0 (건너뜀 표식도 없다)"
     return None
 
@@ -278,6 +274,10 @@ def _selfcheck() -> None:
         # outline_errors= 는 실패가 아니다 — errors=0 이 뒤에 와도(부분 일치를 안 센다)
         assert why_bad({"kind": "rank", "finished_at": "x", "api_calls": 3,
                         "notes": "outlines=36 outline_errors=4 errors=0"}, paid_stages()) is None
+        # 카나리아가 막은 유료 단계(run_all.note_blocked)는 건너뜀이다 — api_calls=0 이어도 FAIL 이 아니다
+        assert why_bad({"kind": "rank", "finished_at": "x", "api_calls": 0,
+                        "notes": f"{run_verdict.BLOCKED_NOTE} | {run_verdict.abort_note('잔액 $0.14')}"},
+                       paid_stages()) is None
 
         # 네트워크 오류·401 은 FAIL 이 아니라 '확인 불가'
         remote._request = lambda *a, **kw: remote._Resp(401, {"detail": "로그인이 필요합니다"})

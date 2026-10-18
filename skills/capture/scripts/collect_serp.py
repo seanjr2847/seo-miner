@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
+import run_verdict  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -402,10 +403,11 @@ def collect(project: str, *,
                        + ("timeout=1 " if timed_out else "")
                        + f"harvest_kw={new_kw} harvest_comp={new_comp} "
                        f"outlines={out_ok} outline_errors={out_bad}"
-                       # 실패 표식은 판정 규칙 한 벌("중단:" · errors=N — dashboard._run_ok,
-                       # 셸 runVerdict)이 읽는 꼴로 남긴다. timeout=1 만 두면 그 규칙이 이
-                       # 런을 성공으로 읽어 "순위 오늘 잼"이라 말하고 다시 재기도 안 권한다.
-                       + (f" | 중단: 순위 대기열 {WAIT_LIMIT_S // 60}분 상한" if timed_out else ""))
+                       # 실패 표식은 판정 규칙 한 벌(run_verdict.judge — 중단 표식 · errors=N)이
+                       # 읽는 꼴로 남긴다. timeout=1 만 두면 그 규칙이 이 런을 성공으로 읽어
+                       # "순위 오늘 잼"이라 말하고 다시 재기도 안 권한다.
+                       + (" | " + run_verdict.abort_note(f"순위 대기열 {WAIT_LIMIT_S // 60}분 상한")
+                          if timed_out else ""))
 
         if timed_out:
             print(f"\n[실패] {timed_out}\nrun_id={r.id}", file=sys.stderr)

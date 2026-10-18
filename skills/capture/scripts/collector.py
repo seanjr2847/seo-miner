@@ -713,12 +713,15 @@ def _runner_check() -> None:
         r_all = st.verdict(0, rows=0)
         r_part = st.verdict(7, rows=7)
         assert st.err_note == "errors=3 first_error=402 Payment Required", st.err_note
+        import run_verdict       # 쓰는 쪽(err_note)과 읽는 쪽(judge)이 같은 뜻이다
+        assert run_verdict.judge({"notes": st.err_note, "finished_at": "t"})["errors"] == 3
         # 실패는 구조를 유지한다 — 첫 건만 남기고 버리지 않는다.
         assert [e.item for e in st.failures] == ["kw=a", "kw=b", "kw=c"], st.failures
         assert st.failures[2].status == 402 and st.failures[2].kind == "Fatal", st.failures[2]
         st.failures.clear()
         r_ok = st.verdict(7, rows=7)
         assert st.err_note == "errors=0", st.err_note
+        assert run_verdict.judge({"notes": st.err_note, "finished_at": "t"})["state"] == "ok"
     assert (r_all.ok, r_all.failed, r_all.reason) == (False, True, "402 Payment Required"), r_all
     assert len(r_all.errors) == 3, r_all
     assert (r_part.ok, r_part.partial) == (True, True) and "3건 실패" in r_part.reason, r_part

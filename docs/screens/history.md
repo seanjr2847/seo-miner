@@ -176,7 +176,7 @@ flowchart TD
     - [다음 행동]/[남은 일] 순서와 READONLY 분기: 641~735행, 렌더 진입 VIEW(): 737~757행
   셸 공용 부품: skills/capture/templates/dashboard.html
     - W(로컬/호스팅 가름) 1192행, act()·siteArg() 1645~1658행, stageRun() 1673행
-    - runVerdict(중단/미완/오류/건너뜀/완료) 1703~1717행, runFailed 1723~1728행
+    - runVerdict(중단/미완/오류/건너뜀/완료)는 판정하지 않는다 — 서버가 run_verdict.judge 로 가려 runs[].verdict 로 싣고 셸(shell/04-chrome.js)은 돌려줄 뿐이다. runFailed 도 같은 파일
     - table(8줄 이상이면 정렬) 2620~2643행, csv(BOM·파일명 seo-miner-{이름}-{YYYY-MM-DD}.csv) 2648~2659행
     - num() 1168행, nextStep() 1588행, viewSub() 1555행
     - READONLY=true 는 박제본(window.__SNAPSHOT__)에서만: 2695행·3526~3539행(박제본의 #acts 는 셸이 채운다)

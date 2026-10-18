@@ -43,6 +43,7 @@ import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import play_pr    # noqa: E402  (이번 달 할 일 → PR — 로컬 대시보드의 [PR 만들기])
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
+import run_verdict  # noqa: E402  (런 한 건의 결과 판정 — runs[].verdict 를 페이로드에 싣는다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
 import stage      # noqa: E402  (진행 상태 및 6단계 판정 정본)
@@ -1906,13 +1907,9 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
 # run_all 은 **부를 때** 들인다: run_all 이 맨 위에서 이 모듈을 먼저 들이므로(report
 # 단계 = export), 여기서 맨 위에 들이면 반쯤 선 run_all 을 보고 GROUPS 가 없다.
 #
-# 한 런이 "성공"인지는 셸의 runVerdict 와 같은 규칙으로 가른다 — 끝났고, 중단 표식이
-# 없고, 항목 오류(errors=N)가 0 이다. 건너뜀은 실패가 아니다. 판정의 원본은 수집기가
-# runs.notes 에 남긴 글자다(collector.err_note / db.run 의 "중단:") — 구조화된 칸이
-# 생기면 여기와 셸의 두 줄이 같이 지워질 자리다. 표식의 정본은 audit_data.run_failed —
-# 데이터 점검·출시 문(test_remote)이 같은 규칙을 본다(outline_errors= 같은 부분 일치는 안 센다).
-def _run_ok(notes: str | None) -> bool:
-    return not audit_data.run_failed(notes)
+# 한 런이 "성공"인지는 run_verdict.ok 한 곳이 가른다 — 끝났고, 중단 표식이 없고, 항목
+# 오류(errors=N)가 0 이다. 건너뜀은 실패가 아니다. 화면은 같은 판정을 페이로드(runs[].verdict)로
+# 받고, 점검·출시 문(test_remote)도 같은 judge 를 부른다.
 
 
 def _ts(s: str) -> "datetime | None":
@@ -1951,7 +1948,7 @@ def _axis_groups(conn, pid, now=None) -> dict:
         # "quota=" 를 남기고 건너뛴다)은 실패는 아니지만 **잰 날**도 아니다. 이걸 날로 치면
         # 머리줄이 "오늘 잼"이라 말하고 주기 점이 꺼진다.
         unmeasured = "quota=" in (r["notes"] or "") and not r["api_calls"]
-        if k in kinds and k not in last_ts and _run_ok(r["notes"]) and not unmeasured:
+        if k in kinds and k not in last_ts and run_verdict.ok(r) and not unmeasured:
             last_ts[k] = r["finished_at"]
             if len(last_ts) == len(kinds):
                 break
@@ -2027,6 +2024,7 @@ def gather(conn, p, at: str | None = None, *, gated: bool = True) -> dict:
     runs = q(conn,
         """SELECT id, kind, started_at, finished_at, api_calls, cost_estimate_usd, notes
              FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 40""", (pid,))
+    run_verdict.attach(runs)        # 화면·점검이 notes 를 다시 읽지 않고 이 판정을 받는다
     # /create 가 실제로 고친 것 — 측정→기회→수정→재측정 루프가 닫혔음을 보여주는 자리.
     creations = q(conn,
         """SELECT c.id, c.kind, c.file_path, c.branch, c.note, c.merged,
@@ -2637,7 +2635,7 @@ class _LocalRuns:
         런에서 rank 가 402·대기열 상한으로 실패했는데 그 사이 누른 [AI 노출]이 --skip rank
         로 떠서, AI 요약이 낡은 채로 '방금 잰 묶음'이 된다. 호스팅 워커는 잘 돈 단계만
         뺀다(worker.run_site 의 r.ok and not r.skipped) — 같은 버튼이 두 배포에서 다르게
-        돌면 안 된다. 성공 판정은 _run_ok 한 벌(= 셸 runVerdict)이다. 끝나지 않은 행
+        돌면 안 된다. 성공 판정은 run_verdict.ok 한 벌(화면의 r.verdict 와 같다)이다. 끝나지 않은 행
         (프로세스가 죽었다)은 성공이 아니다 — 아무것도 안 뺀다.
         """
         if not since or not stages:
@@ -2649,7 +2647,7 @@ class _LocalRuns:
             for r in conn.execute(
                     "SELECT kind, finished_at, notes FROM runs WHERE project_id=? "
                     "AND julianday(started_at) >= julianday(?) ORDER BY id", (pid, since)):
-                last[r["kind"]] = bool(r["finished_at"]) and _run_ok(r["notes"])
+                last[r["kind"]] = run_verdict.ok(r)       # 미완(finished_at 없음)은 성공이 아니다
         except Exception:                       # 못 읽으면 안 뺀다 — 두 번 사는 쪽이 낫다
             return set()
         finally:
@@ -2844,7 +2842,11 @@ class Handler(BaseHTTPRequestHandler):
         [설정]·실행 버튼이 사라진다 — 화면은 로컬 한 벌로 두고 데이터만 넘긴다.
         """
         try:
-            return self._json(remote.api(method, path, **kw))
+            got = remote.api(method, path, **kw)
+            if path == "/api/data" and isinstance(got, dict):
+                # 호스팅이 아직 옛 판이면 runs 행에 verdict 가 없다 — 같은 규칙으로 여기서 단다
+                run_verdict.attach(got.get("runs"))
+            return self._json(got)
         except (Exception, SystemExit) as e:   # remote 는 거절을 SystemExit 로 낸다
             return self._json({"error": str(e)}, 502)
 

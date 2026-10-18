@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import paths
+import run_verdict
 
 # ── paths.py 로 넘긴 것들 — 예전 이름 그대로 계속 노출한다 ─────────────
 # 호출자 19개(collect_*·doctor·connect_gsc·createdb·dashboard·server)가 이 이름들을
@@ -2007,6 +2008,17 @@ class Run:
         self.api_calls, self.cost, self.notes = 0, 0.0, ""
 
 
+def _abort_notes(notes: str, exc: BaseException) -> str:
+    """수집기가 남긴 notes 뒤에 중단 사유를 붙인다 — 500자 안에서 **표식이 살아남게**.
+
+    예전엔 합친 글을 통째로 500자로 잘라, 앞 notes 가 길면 중단 표식이 잘려 나가 judge 가 이 런을
+    '끝까지 돈 런'으로 읽을 수 있었다. 사유(200자까지)가 자리를 먼저 잡고 앞 notes 가 줄어든다.
+    """
+    tail = run_verdict.abort_note(f"{type(exc).__name__}: {exc}")[:200]
+    head = (notes or "")[:500 - len(tail) - 3].rstrip(" |")
+    return f"{head} | {tail}" if head else tail
+
+
 @contextmanager
 def run(conn: sqlite3.Connection, project_id: int, kind: str):
     """실행 기록을 예외에도 닫는다.
@@ -2019,7 +2031,7 @@ def run(conn: sqlite3.Connection, project_id: int, kind: str):
         yield r
     except BaseException as e:
         finish_run(conn, r.id, api_calls=r.api_calls, cost=r.cost,
-                   notes=(r.notes + f" | 중단: {type(e).__name__}: {e}").strip(" |")[:500])
+                   notes=_abort_notes(r.notes, e))
         raise
     else:
         finish_run(conn, r.id, api_calls=r.api_calls, cost=r.cost, notes=r.notes)

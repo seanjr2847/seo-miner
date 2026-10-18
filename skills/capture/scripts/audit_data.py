@@ -40,18 +40,14 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brief    # noqa: E402
+import run_verdict  # noqa: E402
 import scoring  # noqa: E402
 import stage    # noqa: E402
 
 SEV_ORDER = ("high", "mid", "low")
 SEV_LABEL = {"high": "높음", "mid": "중간", "low": "낮음"}
 
-# 런 notes 의 실패 표식 — 정본이다(dashboard._run_ok·test_remote 가 이것을 쓴다).
-# \b 가 있어야 한다: rank 런은 "outline_errors=4" 를 남기는데, 앞에 경계가 없으면 그것을
-# 실패로 읽는다. crawl 의 "issues=401" 도 HTTP 401 이 아니다 — 숫자로 실패를 짐작하지
-# 않고 이 두 표식만 본다.
-RUN_ERRORS = re.compile(r"\berrors=(\d+)")
-RUN_ABORT = "중단:"
+# 런이 실패인가는 run_verdict.judge 가 가른다 — 여기서 notes 를 다시 읽지 않는다.
 # 끝나지 않은 런을 '멈춘 런'으로 읽기까지의 시간 — 그 안이면 지금 도는 중일 수 있다.
 RUN_HUNG_HOURS = 6
 
@@ -123,17 +119,6 @@ def _eg(items, n: int = 3) -> str:
     return (" — 예: " + ", ".join(items[:n])) if items else ""
 
 
-def run_error_count(notes) -> int:
-    """notes 의 errors=N — 없으면 0. 부분 일치(outline_errors=)는 안 센다."""
-    m = RUN_ERRORS.search(notes or "")
-    return int(m.group(1)) if m else 0
-
-
-def run_failed(notes) -> bool:
-    """이 런이 실패인가 — notes 만 보고(끝났는지는 부르는 쪽이 따로 본다)."""
-    return RUN_ABORT in (notes or "") or run_error_count(notes) > 0
-
-
 def site_lang(locale: str | None) -> str:
     return (locale or "ko-KR").split("-")[0].lower()
 
@@ -188,8 +173,11 @@ def r_runs(d, ctx, out):
     bad = []
     for k, r in last.items():
         notes = r.get("notes") or ""
-        if run_failed(notes):
-            n = run_error_count(notes)
+        v = r.get("verdict")                 # 페이로드가 실어 온 판정이 정본 —
+        if not (isinstance(v, dict) and "failed" in v):      # 없으면(옛 페이로드·검사용 행) 같은 규칙으로
+            v = run_verdict.judge(r)
+        if v["failed"]:
+            n = v["errors"]
             m = re.search(r"first_error=(.{0,70})", notes)
             why = f"오류 {n}건" if n else "중단"
             bad.append(f"{_stage_t(k)}({why}{' · ' + m.group(1).strip() if m else ''})")
@@ -562,14 +550,14 @@ def _selfcheck() -> None:
     run = lambda n, fin="x", st="2026-09-30T01:00:00Z": {
         "kind": "rank", "notes": n, "finished_at": fin, "started_at": st}
     hit("run_failed", {"runs": [run("urls=5 errors=9 first_error=HTTP 400 NO_FCP")]})
-    hit("run_failed", {"runs": [run("중단: 키 없음")]})
+    hit("run_failed", {"runs": [run(run_verdict.abort_note("키 없음"))]})
     miss("run_failed", {"runs": [run("errors=0 outlines=36 outline_errors=4")]})
     miss("run_failed", {"runs": [{**run("seed=sitemap pages=300 issues=401"), "kind": "crawl"}]})
     # 최근 것만 본다 — 뒤에 성공했으면 앞 실패는 지나간 일
     miss("run_failed", {"runs": [run("errors=0"), run("errors=3")]})
     hit("run_failed", {"runs": [run("", None, "2026-09-29T01:00:00Z")]})      # 하루 넘게 안 끝남
     miss("run_failed", {"runs": [run("", None, "2026-09-30T10:00:00Z")]})     # 지금 도는 중
-    assert "outline_errors=4" and run_error_count("x=1 outline_errors=4") == 0
+    assert run_verdict.judge({"notes": "x=1 outline_errors=4"})["errors"] == 0
 
     # AI 질문 — 한 번도 안 잼 / 잼 / 전부 옛 판
     grp = {"groups": [{"id": "ai", "name": "AI 노출", "stages": ["ai"], "last": {}}]}

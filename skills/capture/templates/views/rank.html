@@ -781,7 +781,7 @@ VIEW("rank", function (d) {
   const nt = (run && run.notes) || "";
   const grab = k => (nt.match(new RegExp(k + "=([\\w.-]+)")) || [])[1] || "";
   const DEV = {desktop: "데스크톱", mobile: "모바일"};
-  const errN = +grab("errors") || 0;
+  const errN = (window.runVerdict(run) || {}).errors || 0;     // 항목 오류 수는 서버가 가른 판정이다
   const condItems = [d.rank_date && `${d.rank_date} 조회`,
     DEV[grab("device")] || grab("device")].filter(Boolean);
   const cond = condItems.map(t => `<span class="rk-nb">${esc(t)}</span>`).join("");

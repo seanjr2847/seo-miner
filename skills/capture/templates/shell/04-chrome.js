@@ -317,32 +317,17 @@ SM.api.stageName = id => {
    사고가 그것이다(docs/adr/0002). 그 뒤로 [기록]이 판정을 갖고, [백링크]·[경쟁 검색어]
    이 그중 "실패했나" 한 줄씩을 축약 복사해 들고 있었다 — 사본 셋이다.
 
-   여기서 새 사실을 만들지 않는다. Brain 이 남긴 흔적만 읽는다: 중단은 db.run
-   컨텍스트가 예외를 만나면 notes 끝에 "중단: …" 로 붙여 둔 것이고, finished_at 이
-   없다는 건 그 컨텍스트조차 못 닫혔다는 뜻이다.
+   여기서 새 사실을 만들지 않는다 — **판정도 하지 않는다.** 런 한 건의 결과(완료·오류 N·
+   건너뜀 N·중단·미완)는 서버가 run_verdict.judge 로 가려 페이로드의 runs[].verdict 에 싣는다
+   ({cls: ok|skip|bad, label, why, errors, skipped, reason}). 셸은 그걸 돌려줄 뿐 runs.notes
+   를 다시 읽지 않는다 — 예전엔 여기와 파이썬이 같은 정규식을 따로 들고 있었다.
+   notes 는 사람에게 보여 주는 설명으로만 남았다(기록 화면이 옮겨 적는다).
 
-   notes 를 정규식으로 되짚는 건 이 리포가 싫어하는 방식이다(사실은 페이로드에서
-   온다). 여기서만 타협하는 이유: notes 는 애초에 자유 문자열이고 수집기가 남긴
-   **원본**이지 렌더된 글자가 아니다. 되짚을 구조화된 칸이 runs 에 없다. 읽는 키는
-   errors/skipped 둘뿐이고, 그 칸이 생기면 이 두 줄이 먼저 지워질 자리다. ── */
-// 낱말 경계를 둔다 — 없으면 `ai_errors=0` 같은 다른 키의 꼬리를 errors 로 읽는다.
-const RE_ERRORS = /\berrors=(\d+)/;
-const RE_SKIPPED = /\bskipped=(\d+)/;
-SM.api.runVerdict = r => {
-  if (!r) return null;
-  const n = String(r.notes || "");
-  if (n.includes("중단:"))
-    return {cls: "bad", label: "중단", why: "도중에 예외로 멈췄습니다."};
-  if (r.finished_at === null)
-    return {cls: "bad", label: "미완",
-            why: "끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."};
-  const e = +((n.match(RE_ERRORS) || [])[1] || 0);
-  const k = +((n.match(RE_SKIPPED) || [])[1] || 0);
-  if (e) return {cls: "bad", label: `오류 ${e}`, why: `${e}건이 실패했습니다.`};
-  if (k) return {cls: "skip", label: `건너뜀 ${k}`,
-                 why: `${k}건을 건너뛰었습니다 — 보통 한도·키 없음입니다.`};
-  return {cls: "ok", label: "완료", why: "끝까지 돌았고 오류가 없습니다."};
-};
+   verdict 가 없는 행은 서버(또는 로컬 프록시)가 판정을 안 실은 것이다 — 성공으로 읽지 않고
+   "판정 없음"(건너뜀 색)으로 드러낸다. 실패로도 읽지 않는다: 모르는 것을 단정하지 않는다. ── */
+const NO_VERDICT = {cls: "skip", label: "판정 없음", errors: 0, skipped: 0, reason: "",
+                    why: "서버가 이 런의 결과 판정을 보내지 않았습니다."};
+SM.api.runVerdict = r => r ? (r.verdict || NO_VERDICT) : null;
 /* 실패한 런 한 건을 돌려준다(없으면 null). 실패는 runVerdict 의 bad 하나다 —
    건너뜀은 실패가 아니다(한도·키 없음은 사용자가 고를 수 있는 상태다).
    d 를 안 주면 마지막으로 그린 페이로드를 본다. 화면이 자기 render 안에서 부를

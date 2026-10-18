@@ -266,6 +266,61 @@ def test_fake_transport_replaces_network():
     assert http_adapter._transport is http_adapter._real, "use() 가 예외에도 원래 전송을 되돌려야 한다"
 
 
+def test_run_chain_shares_one_scope_across_stages_and_clears_after():
+    """run_all.run_chain 한 번 = 범위 하나: 크롤(crawl)과 페이지 감사(pages)가 같은 URL 을 서버에
+    한 번만 보내고, 체인이 끝나면 캐시가 비며, 다음 체인은 다시 받는다(런 사이 공유 금지).
+    순차 체인과 묶음 런(스레드) 둘 다 같은 범위 안이다."""
+    import contextlib
+    import io
+
+    import collector
+    import run_all
+    seen = []
+
+    def fake(url, headers, timeout):
+        seen.append(url)
+        return http_adapter.Fetched(url, url, 200, (), "text/html",
+                                    text="<html><head><title>가짜</title></head><body>본문</body></html>")
+
+    def table():
+        def fetches(fn):
+            def stage_fn(project, *, dry_run=False, **opts):
+                fn("https://fake.kr/shared")
+                return collector.succeeded(rows=1)
+            return stage_fn
+        want = {"crawl": collect_crawl.fetch, "pages": collect_page.fetch}
+        return tuple(s._replace(fn=fetches(want[s.name]), is_paid=False)
+                     for s in run_all.STAGES if s.name in want)
+
+    def chain(**kw):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return run_all.run_chain("__chain_scope__", stages=table(),
+                                     preflight=lambda s: {}, **kw)
+
+    with http_adapter.use(fake):
+        chain()
+        assert seen == ["https://fake.kr/shared"], f"한 체인 안에서 같은 URL 을 {len(seen)}번 보냈다: {seen}"
+        assert http_adapter.cache_bytes() == 0 and not http_adapter._cache, "체인이 끝났는데 캐시가 남았다"
+        chain()
+        assert len(seen) == 2, "다음 체인이 이전 체인의 응답을 재사용했다 — 런 사이 공유 금지"
+        seen.clear()
+        chain(groups=["site"])          # 묶음 런(스레드 풀) — crawl 은 site 묶음이다
+        assert seen == ["https://fake.kr/shared"], seen
+        assert http_adapter._depth == 0 and not http_adapter._cache
+
+    with http_adapter.use(fake):        # 체인이 예외로 끝나도 범위가 닫힌다
+        def boom(project, *, dry_run=False, **opts):
+            http_adapter.get("https://fake.kr/x", headers={}, timeout=1)
+            raise KeyboardInterrupt
+        t = tuple(s._replace(fn=boom, is_paid=False) for s in run_all.STAGES if s.name == "crawl")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                run_all.run_chain("__chain_scope__", stages=t, preflight=lambda s: {})
+        except KeyboardInterrupt:
+            pass
+        assert http_adapter._depth == 0 and not http_adapter._cache, "중단된 체인이 범위를 열어 둔 채 남았다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

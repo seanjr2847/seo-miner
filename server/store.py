@@ -617,8 +617,15 @@ def reclaim_dead_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 # 워커가 죽어 끝나지 않은 채 남은 brain runs 행에 붙이는 표식. db.run() 이 예외로
-# 끝난 런에 붙이는 "중단: …" 과 같은 꼴이다 — 화면과 검사가 같은 말로 읽는다.
-ORPHAN_RUN_NOTE = "중단: 워커가 죽었다(서버가 회수)"
+# 끝난 런에 붙이는 중단 표식과 같은 꼴이다 — 표식을 짓는 곳은 run_verdict.abort_note 한 곳이고,
+# 화면과 검사는 run_verdict.judge 로 같이 읽는다. 사유만 여기 둔다(모듈은 늦게 들인다:
+# 이 파일은 capture 스크립트 경로가 서기 전에도 import 된다).
+ORPHAN_REASON = "워커가 죽었다(서버가 회수)"
+
+
+def orphan_run_note() -> str:
+    import run_verdict
+    return run_verdict.abort_note(ORPHAN_REASON)
 
 
 def close_orphan_runs(conn: sqlite3.Connection) -> list[dict]:
@@ -643,6 +650,7 @@ def close_orphan_runs(conn: sqlite3.Connection) -> list[dict]:
     """
     import paths    # 지연 import — capture 스크립트 경로는 호출자(app.py/worker.py)가 세워 뒀다
     from datetime import datetime, timezone
+    note = orphan_run_note()
     # db.now() 와 같은 꼴(UTC, 초 단위). 비교는 julianday 로 한다 — 옛 행이
     # CURRENT_TIMESTAMP 꼴('YYYY-MM-DD HH:MM:SS')이어도 문자열 비교처럼 틀리지 않는다.
     cutoff = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -660,7 +668,7 @@ def close_orphan_runs(conn: sqlite3.Connection) -> list[dict]:
                 "  ELSE notes || ' | ' || ? END "
                 "WHERE finished_at IS NULL AND julianday(started_at) < julianday(?) "
                 "  AND project_id IN (SELECT id FROM projects WHERE name=?)",
-                (cutoff, ORPHAN_RUN_NOTE, ORPHAN_RUN_NOTE, cutoff, s["project"]))
+                (cutoff, note, note, cutoff, s["project"]))
             b.commit()
             if cur.rowcount > 0:
                 out.append({"user_id": s["user_id"], "project": s["project"],
@@ -1220,8 +1228,8 @@ def demo() -> None:
         assert run_row(60)[0] is None, "도는 사이트의 런을 닫았다 — 살아 있는 워커의 이력을 끊었다"
         assert run_row(70)[0] is None, "목록을 읽은 뒤 시작한 런까지 닫았다(cutoff 가 안 듣는다)"
         assert got == [{"user_id": uid, "project": "myproj", "closed": 2}], got
-        assert run_row(49)[0] and ORPHAN_RUN_NOTE in run_row(49)[1], run_row(49)
-        assert run_row(50)[0] and run_row(50)[1] == f"n=3 | {ORPHAN_RUN_NOTE}", run_row(50)
+        assert run_row(49)[0] and orphan_run_note() in run_row(49)[1], run_row(49)
+        assert run_row(50)[0] and run_row(50)[1] == f"n=3 | {orphan_run_note()}", run_row(50)
         assert run_row(80) == ("2026-09-02T03:05:00Z", "ok"), "이미 끝난 런을 고쳤다"
         assert close_orphan_runs(conn) == [], "이미 닫은 고아를 또 닫는다"
         mark_done(conn, busy, ok=True)           # 이제 안 돈다 → 그 런은 고아다
@@ -1239,7 +1247,7 @@ def demo() -> None:
         bc.commit()
         time.sleep(1.1)                        # cutoff 는 초 단위다 — 같은 초면 '막 시작한 런'이다
         got = reclaim_dead_runs(conn)
-        assert run_row(90)[0] and ORPHAN_RUN_NOTE in run_row(90)[1], \
+        assert run_row(90)[0] and orphan_run_note() in run_row(90)[1], \
             f"회수했는데 brain 의 런이 끝나지 않은 채 남았다: {run_row(90)}"
         assert run_row(70)[0] is None, "회수가 cutoff 이후의 런까지 닫았다"
         bc.close()

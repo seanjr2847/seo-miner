@@ -372,8 +372,9 @@ const HS_mmss = s => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초
 const HS_usd = v => v > 0 && v < 0.01 ? "<$0.01" : `$${(v || 0).toFixed(2)}`;
 
 /* ── 결과 판정 ─────────────────────────────────────────────
-      판정은 셸의 window.runVerdict 한 벌이다 — 이 화면이 정본이었는데 [개요]·애드온이
-      같은 정규식을 각자 갖게 되면서 셸로 올라갔다. 여기서 사본을 들면 두 벌이 된다. ── */
+      판정은 서버가 가려 runs[].verdict 로 싣고(run_verdict.judge), 셸의 window.runVerdict 가
+      돌려준다. 여기서 notes 를 읽어 판정하면 두 벌이 된다 — HS_notes 는 notes 를 사람 말로
+      옮겨 적을 뿐이다. ── */
 const HS_verdict = r => window.runVerdict(r);
 // 상태는 배지 한 벌(셸의 .badge)로 말한다: 완료=녹청, 문제=채운 산화동, 건너뜀=회색.
 const HS_BADGE = {ok:"ok", bad:"bad", skip:"muted"};
@@ -427,9 +428,10 @@ function HS_stopMsg(stop) {
   const body = m ? m[1] : stop, said = HS_errMsg(body);
   return said !== body ? said : m ? "수집 도중 오류로 멈췄습니다" : stop;
 }
-function HS_cause(n) {
-  const s = HS_legacy(n), i = s.indexOf("중단:");
-  if (i >= 0) return HS_stopMsg(s.slice(i + 3).trim());
+function HS_cause(r) {
+  // 중단 사유는 서버가 가른 판정(verdict.reason)이다. first_error 는 notes 가 사람에게 하는 말이다.
+  const v = HS_verdict(r), s = HS_legacy(r.notes);
+  if (v.reason) return HS_stopMsg(HS_legacy(v.reason));
   const m = /first_error=(.*?)(?=\s+[A-Za-z_]+=|$)/.exec(s);
   return m && m[1].trim() ? HS_errMsg(m[1].trim()) : "";
 }
@@ -729,7 +731,7 @@ function HS_runList() {
       <td class="when" title="${esc(r.started_at || "")}">${
         esc((r.started_at || "").replace("T", " ").slice(0, 16))}
         <span class="muted">${HS_ago(r.started_at)}</span>${v.cls === "bad"
-          ? `<div class="why why-m">${esc(HS_cause(r.notes) || v.why)}</div>` : ""}</td>
+          ? `<div class="why why-m">${esc(HS_cause(r) || v.why)}</div>` : ""}</td>
       <td class="kwcell"><span class="kn">${HS_av(r.kind, false)}${esc(HS_kind(r.kind))}</span></td>
       <td>${HS_badge(v)}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
