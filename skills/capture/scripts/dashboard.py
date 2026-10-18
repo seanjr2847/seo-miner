@@ -897,9 +897,7 @@ def _axis_rank(conn, pid: int) -> dict:
 
 def _axis_ai(conn, pid: int) -> dict:
     """AI 인용 축 (collect_ai) — 엔진×카테고리 인용률, 빠진 질문, 검색×AI 교차."""
-    ai_run = conn.execute(
-        "SELECT id, started_at FROM runs WHERE project_id=? AND kind='ai' "
-        "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    ai_run = scoring.latest_ai_run(conn, pid)   # 답변 전문(ai_answers)도 같은 런을 읽는다
     ai_date = (ai_run["started_at"] or "")[:10] if ai_run else None
     matrix, gap_domains, missed = [], [], []
     cite_share, ai_by_prompt = [], []
@@ -2766,6 +2764,14 @@ def run_route(body: dict) -> dict:
     return LOCAL_RUNS.request(project, str(body.get("groups") or ""))
 
 
+def ai_answers_route(project: str, prompt: str) -> dict:
+    """GET /api/ai/answers 본체 — 질문 하나의 가장 최근 런 답변 전문 + 인용 목록.
+    [AI 인용] 목록 줄은 280자 발췌(ai_tally)만 싣고, 서랍이 이 경로로 전문을 받는다."""
+    def read(c):
+        return scoring.ai_answers(c, db.get_project(c, project)["id"], prompt)
+    return _with_conn(read)
+
+
 def run_status(project: str) -> dict:
     """GET /api/run/status 본체(로컬) — 물은 사이트 하나만 답한다(호스팅은 유저의 전부)."""
     return LOCAL_RUNS.status(project) if project else {}
@@ -2816,6 +2822,9 @@ ROUTES = {
         lambda project, query, body: keywords_read_route(project, query.get("status") or "candidate"),
     ("POST", "/api/keywords"):
         lambda project, query, body: keywords_write_route(body),
+    # 질문 하나의 답변 전문 + 인용 URL — [AI 인용] 서랍이 부른다(목록 줄은 280자 발췌만).
+    ("GET", "/api/ai/answers"):
+        lambda project, query, body: ai_answers_route(project, query.get("prompt") or ""),
     ("GET", "/api/settings"):
         lambda project, query, body: settings_read_route(project),
     ("POST", "/api/settings"):

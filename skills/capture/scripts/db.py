@@ -395,6 +395,9 @@ CREATE TABLE IF NOT EXISTS ai_checks (
   cited INTEGER DEFAULT 0,                    -- own domain appears in citations
   cited_domains_json TEXT,                    -- who got cited instead/alongside
   answer_excerpt TEXT,                        -- 답변 전문 (상한 8000자, record_ai_check)
+  citations_json TEXT,                        -- 인용된 출처 [{url, title}] — 응답에 나온 순서, URL 중복 없음.
+                                              -- NULL = 이 칸 이전의 옛 행 (URL 을 모른다, 도메인만 안다).
+                                              -- '[]' = 쟀는데 인용이 없었다
   recommended INTEGER                         -- 목록 줄 안에 브랜드가 있나 (scoring.recommended_in
                                               -- 휴리스틱). NULL = 이 칸 이전의 답 — 안 봤다
 );
@@ -937,6 +940,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 판정하지 않는다(그 답을 받은 때의 별칭 설정을 모른다). NULL 은 "안 봤다"다.
     if "recommended" not in {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}:
         conn.execute("ALTER TABLE ai_checks ADD COLUMN recommended INTEGER")
+        conn.commit()
+
+    # citations_json — 인용된 URL·제목. 예전엔 도메인(cited_domains_json)으로 줄여 저장해
+    # 무엇이 인용됐는지 되짚을 수 없었다. 옛 행은 NULL 로 둔다: 그때 받은 URL 은 이미 버려져
+    # 다시 만들 수 없다(NULL = URL 모름). 도메인은 cited_domains_json 에 그대로 있다.
+    if "citations_json" not in {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}:
+        conn.execute("ALTER TABLE ai_checks ADD COLUMN citations_json TEXT")
         conn.commit()
 
     # ── 갈래 5: 키워드 언어 ──
@@ -3029,17 +3039,21 @@ def add_competitors(conn: sqlite3.Connection, project_id: int, domains, source: 
 def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None,
                     engine: str, sample_idx: int, mentioned: int, cited: int,
                     cited_domains: list, excerpt: str,
-                    recommended: int | None = None) -> int:
-    """AI 인용 체크 1건 (collect_ai). recommended 를 안 넘기면 NULL(안 봤다) — 0 이 아니다."""
+                    recommended: int | None = None,
+                    citations: list | None = None) -> int:
+    """AI 인용 체크 1건 (collect_ai). recommended 를 안 넘기면 NULL(안 봤다) — 0 이 아니다.
+    citations 는 [{url, title}] — 안 넘기면 NULL(URL 모름), 빈 목록이면 '[]'(인용 없음)."""
     cur = conn.execute(
         """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
-             mentioned, cited, cited_domains_json, answer_excerpt, recommended)
-           VALUES(?,?,?,?,?,?,?,?,?)""",
+             mentioned, cited, cited_domains_json, answer_excerpt, recommended,
+             citations_json)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
         (prompt_id, run_id, engine, sample_idx, int(mentioned), int(cited),
          # 전문 저장 — 280자 절단 시절엔 답변 맥락(왜 인용됐/안 됐는지)을 검증할 수
          # 없었다. 8000자 상한은 비정상 폭주(무한 스트림 캡처 등) 방지 안전핀일 뿐.
          json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:8000],
-         None if recommended is None else int(recommended)))
+         None if recommended is None else int(recommended),
+         None if citations is None else json.dumps(citations, ensure_ascii=False)))
     conn.commit()
     return cur.lastrowid
 

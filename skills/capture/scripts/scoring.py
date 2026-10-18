@@ -615,6 +615,24 @@ def judge(content: str, citation_urls: list[str] | None, aliases: list[str],
     return mentioned, cited, others, recommended_in(content, aliases)
 
 
+def citations_of(citations: list[dict] | None, content: str) -> list[dict]:
+    """저장할 인용 목록 [{url, title}] — judge 가 도메인을 뽑은 것과 **같은 URL** 에서 만든다.
+
+    annotation 의 url_citation 이 있으면 그것(응답 순서, 같은 URL 한 번). 없으면 judge 와
+    같은 규칙으로 본문의 맨 URL 을 줍는다(제목 없음) — 둘이 갈라지면 화면의 출처 목록과
+    "대신 인용된 곳"이 다른 말을 한다.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    items = citations or [{"url": u, "title": None} for u in URL_RE.findall(content or "")]
+    for c in items:
+        u = (c.get("url") or "").strip()
+        if u and u not in seen:
+            seen.add(u)
+            out.append({"url": u, "title": c.get("title") or None})
+    return out
+
+
 def gap_to_page1(pos) -> float:
     """1페이지 경계까지 되밀어야 할 거리. 1페이지 안이면 0."""
     if pos is None:
@@ -4522,6 +4540,63 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
                              "press" if pshare > AI_PRESENCE_SHARE else "sites"),
                     "excerpts": a["excerpts"], "cited_excerpts": a["cited_excerpts"],
                     "by_engine": by}
+    return out
+
+
+def latest_ai_run(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:
+    """이 사이트의 가장 최근 ai 런 — [AI 인용] 화면의 질문별 줄(dashboard._axis_ai)이 읽는 런.
+    화면 줄과 그 답변 전문(ai_answers)이 같은 런을 읽도록 이 한 곳에서 고른다."""
+    return conn.execute(
+        "SELECT id, started_at, finished_at FROM runs WHERE project_id=? AND kind='ai' "
+        "ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+
+
+def ai_answers(conn: sqlite3.Connection, project_id: int, prompt: str) -> dict:
+    """한 질문의 가장 최근 런이 받은 답변 전문 + 인용 목록 (GET /api/ai/answers 의 본체).
+
+    ai_tally 가 280자로 줄인 발췌와 달리 저장된 원문 그대로(마크다운 포함)를 준다.
+    인용은 citations_json 이 있으면 그것(URL·제목), NULL(옛 행)이면 cited_domains_json 의
+    도메인만 — citations_known=False. 옛 행의 cited_domains 는 **우리 도메인을 뺀** 것
+    (judge 의 others)이라, cited=1 이면 우리 도메인 항목을 own 으로 앞에 보탠다.
+    질문이 없거나 그 런에 체크가 없으면 checks=[] (오류가 아니다).
+    """
+    own_domain = conn.execute("SELECT domain FROM projects WHERE id=?",
+                              (project_id,)).fetchone()["domain"]
+    out = {"prompt": prompt, "run_at": None, "own_domain": own_domain, "checks": []}
+    q = conn.execute("SELECT id FROM ai_prompts WHERE project_id=? AND prompt=?",
+                     (project_id, prompt)).fetchone()
+    run = latest_ai_run(conn, project_id)
+    if not q or not run:
+        return out
+    out["run_at"] = run["finished_at"] or run["started_at"]
+    for c in conn.execute(
+            "SELECT id, engine, sample_idx, checked_at, mentioned, cited, recommended,"
+            " cited_domains_json, citations_json, answer_excerpt FROM ai_checks"
+            " WHERE run_id=? AND prompt_id=? ORDER BY engine, sample_idx, id",
+            (run["id"], q["id"])):
+        known = c["citations_json"] is not None
+        try:
+            if known:
+                items = json.loads(c["citations_json"])
+            else:
+                items = [{"url": None, "title": None, "domain": d}
+                         for d in json.loads(c["cited_domains_json"] or "[]")]
+                if c["cited"]:
+                    items.insert(0, {"url": None, "title": None, "domain": own_domain})
+        except (TypeError, ValueError):
+            items = []
+        cites = []
+        for it in items:
+            dom = it.get("domain") or host_of(it.get("url") or "")
+            cites.append({"url": it.get("url"), "title": it.get("title"), "domain": dom,
+                          "own": owns(dom, own_domain)})
+        out["checks"].append({
+            "id": c["id"], "engine": c["engine"], "sample": c["sample_idx"] or 0,
+            "checked_at": c["checked_at"],
+            "mentioned": bool(c["mentioned"]), "cited": bool(c["cited"]),
+            "recommended": None if c["recommended"] is None else bool(c["recommended"]),
+            "answer": c["answer_excerpt"] or "",
+            "citations": cites, "citations_known": known})
     return out
 
 

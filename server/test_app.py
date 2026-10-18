@@ -136,6 +136,7 @@ def demo() -> None:
                      "/api/settings?project=x", "/api/ai/prompts?project=x",
                      "/api/report?project=x",
                      "/api/keywords?project=x", "/api/run/status", "/api/brain",
+                     "/api/ai/answers?project=x&prompt=q",
                      "/api/ga4/properties?project=x"):
             assert c.get(path).status_code == 401, f"{path} 가 로그인 없이 열렸다"
 
@@ -573,6 +574,35 @@ def demo() -> None:
             dashboard.ROUTES[("GET", "/api/triage")] = real_triage
         # project 는 빼서 따로, 빈 값은 버리고 첫 값(로컬 parse_qs 와 같다), body 는 None
         assert seen == [("p1", {"date": "d1"}, None)], seen
+
+        # 답변 전문 + 인용 목록 — 로그인·사이트 소유를 지키고, 질문이 없으면 404 가 아니라 빈 목록.
+        # 이 사이트의 Brain 에 잠깐 한 건을 넣어 본문이 그대로(280자 넘게) 나오는지 본다.
+        assert c.get("/api/ai/answers?project=없는사이트&prompt=q").status_code == 404, \
+            "/api/ai/answers 로 남의 사이트가 열린다"
+        r = c.get("/api/ai/answers?project=p1&prompt=없는질문")
+        assert r.status_code == 200 and r.json()["checks"] == [] and r.json()["own_domain"] == "p1.com", r.text
+        bc = db.connect(home=store.home(u2))
+        try:
+            ppid = bc.execute("SELECT id FROM projects WHERE name='p1'").fetchone()[0]
+            bc.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(?, '답변 전문 질문')", (ppid,))
+            qid = bc.execute("SELECT id FROM ai_prompts WHERE prompt='답변 전문 질문'").fetchone()[0]
+            with db.run(bc, ppid, "ai") as ai_r:
+                db.record_ai_check(bc, qid, ai_r.id, "chatgpt", 0, 1, 1, ["rival.com"],
+                                   "## 답\n" + "가" * 500, recommended=0,
+                                   citations=[{"url": "https://www.p1.com/a", "title": "우리"},
+                                              {"url": "https://rival.com/x", "title": None}])
+            r = c.get("/api/ai/answers", params={"project": "p1", "prompt": "답변 전문 질문"})
+            assert r.status_code == 200, r.text
+            ck = r.json()["checks"]
+            assert len(ck) == 1 and ck[0]["answer"].startswith("## 답\n") and len(ck[0]["answer"]) > 280, ck
+            assert [(x["domain"], x["own"]) for x in ck[0]["citations"]] == \
+                [("p1.com", True), ("rival.com", False)] and ck[0]["citations_known"], ck
+        finally:
+            bc.execute("DELETE FROM ai_checks WHERE prompt_id IN (SELECT id FROM ai_prompts WHERE prompt='답변 전문 질문')")
+            bc.execute("DELETE FROM ai_prompts WHERE prompt='답변 전문 질문'")
+            bc.execute("DELETE FROM runs WHERE kind='ai' AND project_id=?", (ppid,))
+            bc.commit()
+            bc.close()
 
         r = c.post("/api/verdict", json={"project": "p1", "keys": ["a"], "verdict": "엉뚱"})
         assert r.status_code == 400 and "판정값" in r.json()["detail"], r.text

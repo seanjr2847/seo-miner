@@ -5204,6 +5204,56 @@ def test_seam_194_site_run_state_has_one_shape_and_due_has_one_rule():
     assert callable(_db.close_unfinished_runs)
 
 
+def test_seam_195_ai_answers_route_on_both_servers_and_citations_are_stored():
+    """195) AI 답변 전문·인용 목록(GET /api/ai/answers)은 두 서버가 함께 서빙하고, 그 재료(인용 URL·제목)는
+    저장 단계에서 도메인으로 줄지 않는다.
+
+    · 경로는 dashboard.ROUTES 의 공유 항목이다(ADR 0003 — 한쪽 전용이 아니다). 로컬 Handler 와
+      호스팅(server/app.py 의 _shared_route)이 같은 call 을 부른다. 호스팅 사이트를 로컬 화면이 열 때는
+      NEVER_PROXY 에 없어서 Handler._proxy 가 서버로 넘긴다 — 있으면 이 PC 의 빈 Brain 이 답한다.
+      (화면은 아직 안 부른다. test_seam_05 가 화면이 부르기 시작하면 그때부터 양쪽 존재를 또 본다.)
+    · citations_json 은 db.SCHEMA 에 있고, 옛 Brain 은 _migrate 가 칸을 더하며(옛 행 NULL = URL 모름),
+      record_ai_check 가 쓴다. collect_ai 가 그 인자를 넘긴다 — 안 넘기면 칸만 있고 늘 NULL 이다.
+    · 답변 전문과 화면 줄(_axis_ai)은 같은 런을 읽는다(scoring.latest_ai_run 한 곳).
+    """
+    import sqlite3
+    import collect_ai
+    import dashboard
+    import scoring
+    path = "/api/ai/answers"
+    assert ("GET", path) in dashboard.ROUTES, "로컬 서버(dashboard.ROUTES)에 답변 전문 경로가 없다"
+    assert path in dashboard.LOCAL_PATHS
+    assert path not in dashboard.NEVER_PROXY, \
+        "호스팅 사이트의 답변 전문을 이 PC 의 Brain 이 답하게 된다 — 프록시해야 한다"
+    app_routes = _server_paths()
+    if app_routes is not None:
+        assert path in app_routes, "호스팅 서버에 답변 전문 경로가 없다"
+    # 칸: 새 Brain 의 SCHEMA 와 옛 Brain 의 _migrate 둘 다
+    ddl = re.search(r"CREATE TABLE IF NOT EXISTS ai_checks \((.*?)\n\);", db.SCHEMA, re.S).group(1)
+    assert "citations_json" in ddl, "db.SCHEMA 의 ai_checks 에 citations_json 이 없다"
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(db.SCHEMA)
+    con.executescript("DROP TABLE ai_checks; CREATE TABLE ai_checks (id INTEGER PRIMARY KEY,"
+                      " prompt_id INTEGER, run_id INTEGER, engine TEXT, sample_idx INTEGER,"
+                      " mentioned INTEGER, cited INTEGER, cited_domains_json TEXT,"
+                      " answer_excerpt TEXT, recommended INTEGER);")
+    db._migrate(con)
+    assert "citations_json" in {r["name"] for r in con.execute("PRAGMA table_info(ai_checks)")}, \
+        "db._migrate 가 옛 Brain 에 citations_json 칸을 안 더한다"
+    con.execute("INSERT INTO projects(id, name, domain) VALUES(1, 's', 'e.com')")
+    con.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(1, 'q')")
+    db.record_ai_check(con, 1, None, "chatgpt", 0, 0, 0, [], "a", citations=[{"url": "u", "title": "t"}])
+    assert con.execute("SELECT citations_json FROM ai_checks").fetchone()[0] == '[{"url": "u", "title": "t"}]', \
+        "record_ai_check 가 citations 를 citations_json 에 쓰지 않는다"
+    con.close()
+    assert re.search(r"(?<!\w)citations=", inspect_src(collect_ai.collect)), \
+        "collect_ai 가 인용 URL·제목을 record_ai_check 에 넘기지 않는다 — 도메인으로 줄어 버려진다"
+    assert "latest_ai_run(" in inspect_src(dashboard._axis_ai) and \
+        "latest_ai_run(" in inspect_src(scoring.ai_answers), \
+        "화면 줄과 답변 전문이 다른 런을 읽을 수 있다 — 런 고르기는 scoring.latest_ai_run 한 곳"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

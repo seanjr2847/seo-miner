@@ -110,7 +110,15 @@ def test_collect_ai_cycle_and_failure_summary():
                         "content": "ecrett 서비스는 매우 훌륭합니다. 자세한 내용은 공식 사이트 참고.",
                         "annotations": [{
                             "type": "url_citation",
-                            "url_citation": {"url": "https://e.com/review-page"}
+                            "url_citation": {"url": "https://e.com/review-page",
+                                             "title": "ecrett 리뷰"}
+                        }, {   # 같은 URL 이 또 나온다 — 한 번만 남고, 제목은 먼저 나온 것
+                            "type": "url_citation",
+                            "url_citation": {"url": "https://e.com/review-page",
+                                             "title": "다른 제목"}
+                        }, {   # 제목이 없는 인용, 다른 사이트
+                            "type": "url_citation",
+                            "url_citation": {"url": "https://rival.com/x"}
                         }]
                     }
                 }],
@@ -144,6 +152,11 @@ def test_collect_ai_cycle_and_failure_summary():
     assert check_row["engine"] == "chatgpt"
     assert check_row["cited"] == 1, f"cited가 1이어야 함 (e.com 인용): {dict(check_row)}"
     assert "ecrett 서비스는 매우 훌륭합니다" in check_row["answer_excerpt"]
+    # 인용 URL·제목이 도메인으로 줄지 않고 그대로 남는다 — 순서 유지, 같은 URL 한 번
+    cites = json.loads(conn.execute("SELECT citations_json FROM ai_checks WHERE prompt_id=?",
+                                    (p_succ_id,)).fetchone()[0])
+    assert cites == [{"url": "https://e.com/review-page", "title": "ecrett 리뷰"},
+                     {"url": "https://rival.com/x", "title": None}], cites
 
     # 2. 실패 프롬프트는 ai_checks에 기록되지 않음
     fail_check = conn.execute(

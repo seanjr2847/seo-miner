@@ -2793,6 +2793,112 @@ def test_ai_recommended_column_migrates_as_null():
     conn.close()
 
 
+def test_ai_citations_column_migrates_as_null():
+    """옛 Brain 의 ai_checks 에 citations_json 칸이 생기고, 옛 행은 NULL(URL 모름)이다.
+    _migrate 를 두 번 돌려도 깨지지 않는다(이미 있으면 건너뜀)."""
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    conn.executescript("""DROP TABLE ai_checks;
+        CREATE TABLE ai_checks (id INTEGER PRIMARY KEY, prompt_id INTEGER, run_id INTEGER,
+          engine TEXT, sample_idx INTEGER, mentioned INTEGER DEFAULT 0,
+          cited INTEGER DEFAULT 0, cited_domains_json TEXT, answer_excerpt TEXT,
+          recommended INTEGER);""")
+    conn.execute("INSERT INTO projects(id, name, domain) VALUES(1, 'cit_mig', 'e.com')")
+    conn.execute("INSERT INTO ai_prompts(project_id, prompt) VALUES(1, 'q')")
+    conn.execute("INSERT INTO ai_checks(prompt_id, engine, cited_domains_json) VALUES(1, 'chatgpt', '[\"a.com\"]')")
+    conn.commit()
+    db._migrate(conn)
+    db._migrate(conn)
+    assert "citations_json" in {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}
+    assert conn.execute("SELECT citations_json FROM ai_checks").fetchone()[0] is None
+    db.record_ai_check(conn, 1, None, "chatgpt", 1, 0, 1, [], "답",
+                       citations=[{"url": "https://e.com/a", "title": "A"}])
+    db.record_ai_check(conn, 1, None, "chatgpt", 2, 0, 0, [], "답", citations=[])
+    db.record_ai_check(conn, 1, None, "chatgpt", 3, 0, 0, [], "답")            # 안 넘기면 NULL
+    got = [r[0] for r in conn.execute("SELECT citations_json FROM ai_checks ORDER BY id")]
+    assert got == [None, '[{"url": "https://e.com/a", "title": "A"}]', "[]", None], got
+    conn.close()
+
+
+def _put_check(conn, qid, run_id, engine, sample, cited, doms, answer, cites=None,
+               mentioned=0, rec=None):
+    db.record_ai_check(conn, qid, run_id, engine, sample, mentioned, cited, doms, answer,
+                       recommended=rec, citations=cites)
+
+
+def test_citations_of_dedups_by_url_and_falls_back_to_bare_urls_like_judge():
+    c = scoring.citations_of([{"url": "https://a.com/x", "title": None},
+                              {"url": "https://b.com", "title": "B"},
+                              {"url": "https://a.com/x", "title": "A"}], "본문")
+    assert [x["url"] for x in c] == ["https://a.com/x", "https://b.com"], c
+    # annotation 이 없으면 judge 가 도메인을 뽑는 것과 같은 본문 맨 URL 을 줍는다(제목 없음)
+    c = scoring.citations_of([], "참고 https://c.com/p 와 https://c.com/p 그리고 (https://d.com)")
+    assert c == [{"url": "https://c.com/p", "title": None}, {"url": "https://d.com", "title": None}], c
+    assert scoring.citations_of(None, "링크 없음") == []
+
+
+def test_ai_answers_full_text_citations_and_old_rows():
+    """GET /api/ai/answers 본체 — 가장 최근 런의 답변 전문과 인용 목록.
+
+    · 답은 마크다운 포함 원문 그대로(280자 발췌가 아니다)
+    · 정렬 engine → sample. 이전 런의 체크는 안 섞인다
+    · citations_json 이 있으면 URL·제목, www 유무·하위 도메인도 own. 우리 도메인 항목도 들어 있다
+    · NULL(옛 행)이면 도메인만, citations_known=False — cited=1 이면 우리 도메인이 own 으로 앞에
+    · 질문이 없거나 런에 체크가 없으면 checks=[]
+    """
+    conn = db.connect()
+    pid = _project(conn, "ai_answers")["id"]
+    conn.execute("UPDATE projects SET domain='www.e.com' WHERE id=?", (pid,))     # www 차이는 무시
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt) VALUES(?,?)",
+                     [(pid, "추천 질문"), (pid, "다른 질문")])
+    qa, qb = [r[0] for r in conn.execute(
+        "SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id", (pid,))]
+    with db.run(conn, pid, "ai") as r0:
+        _put_check(conn, qa, r0.id, "chatgpt", 0, 0, ["old.com"], "옛 런 답")
+    long = "## 제목\n- **굵게** [링크](https://e.com/a)\n" + "가" * 1000
+    with db.run(conn, pid, "ai") as r:
+        _put_check(conn, qa, r.id, "perplexity", 1, 0, ["rival.com"], "p1",
+                   cites=[{"url": "https://rival.com/x", "title": "R"}])
+        _put_check(conn, qa, r.id, "chatgpt", 1, 1, ["rival.com"], long, mentioned=1, rec=1,
+                   cites=[{"url": "https://e.com/a", "title": "우리"},
+                          {"url": "https://shop.e.com/b", "title": None},
+                          {"url": "https://rival.com/x", "title": "R"}])
+        _put_check(conn, qa, r.id, "chatgpt", 0, 1, ["rival.com"], "옛 형식", cites=None)   # URL 모름
+        _put_check(conn, qa, r.id, "perplexity", 0, 0, [], "p0", cites=[])
+    conn.commit()
+
+    got = scoring.ai_answers(conn, pid, "추천 질문")
+    assert got["prompt"] == "추천 질문" and got["own_domain"] == "www.e.com", got
+    assert got["run_at"], got
+    checks = got["checks"]
+    assert [(c["engine"], c["sample"]) for c in checks] == \
+        [("chatgpt", 0), ("chatgpt", 1), ("perplexity", 0), ("perplexity", 1)], checks
+    assert all(c["answer"] != "옛 런 답" for c in checks)
+    old, full, none, p1 = checks
+    # 옛 행 — 도메인만, 우리 도메인이 own 으로 앞에
+    assert old["citations_known"] is False and old["cited"] is True, old
+    assert old["citations"] == [
+        {"url": None, "title": None, "domain": "www.e.com", "own": True},
+        {"url": None, "title": None, "domain": "rival.com", "own": False}], old["citations"]
+    # 새 행 — 전문 그대로, URL·제목, www 없는 e.com 과 하위 도메인이 own
+    assert full["answer"] == long and len(full["answer"]) > scoring.AI_EXCERPT_CHARS, full["answer"][:40]
+    assert full["citations_known"] is True and full["recommended"] is True, full
+    assert [(c["url"], c["title"], c["domain"], c["own"]) for c in full["citations"]] == [
+        ("https://e.com/a", "우리", "e.com", True),
+        ("https://shop.e.com/b", None, "shop.e.com", True),
+        ("https://rival.com/x", "R", "rival.com", False)], full["citations"]
+    assert none["citations_known"] is True and none["citations"] == [] and none["recommended"] is None
+    assert p1["citations"][0]["own"] is False
+    # 질문 없음·체크 없음 — 오류가 아니라 빈 목록
+    assert scoring.ai_answers(conn, pid, "없는 질문")["checks"] == []
+    assert scoring.ai_answers(conn, pid, "다른 질문")["checks"] == []
+    # 화면 줄이 읽는 런과 같은 런이다
+    assert scoring.latest_ai_run(conn, pid)["id"] == r.id
+    conn.close()
+
+
 def test_retire_auto_serp_cleans_only_what_it_made():
     """옛 'auto_serp' 경쟁사를 한 번 걷는다 — 그 경쟁사에서 나온 것만, 사람 손이 닿은 것은 남긴다.
 

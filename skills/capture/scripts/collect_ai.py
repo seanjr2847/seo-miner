@@ -159,13 +159,22 @@ def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
     msg = data.get("choices", [{}])[0].get("message", {}) or {}
     content = msg.get("content") or ""
     urls = []
+    cites = []                  # [{url, title}] — 같은 URL 은 한 번(제목은 먼저 나온 비지 않은 것)
+    seen: dict[str, dict] = {}
     for ann in (msg.get("annotations") or []):
         if ann.get("type") == "url_citation":
-            u = (ann.get("url_citation") or {}).get("url", "")
+            uc = ann.get("url_citation") or {}
+            u = uc.get("url", "")
             if u:
                 urls.append(u)
-    # 인용 메타데이터가 없을 때의 맨 URL fallback은 scoring.judge 가 한다.
-    return {"content": content, "citation_urls": urls,
+                title = (uc.get("title") or "").strip() or None
+                if u not in seen:
+                    seen[u] = {"url": u, "title": title}
+                    cites.append(seen[u])
+                elif seen[u]["title"] is None:
+                    seen[u]["title"] = title
+    # 인용 메타데이터가 없을 때의 맨 URL fallback은 scoring.judge·scoring.citations_of 가 한다.
+    return {"content": content, "citation_urls": urls, "citations": cites,
             "usage": data.get("usage", {})}
 
 
@@ -325,7 +334,9 @@ def collect(project: str, *,
                     res["content"], res["citation_urls"], aliases, own_domain)
                 db.record_ai_check(conn, row["id"], run_id, engine, sample,
                                    mentioned, cited, others, res["content"],
-                                   recommended=recommended)
+                                   recommended=recommended,
+                                   citations=scoring.citations_of(
+                                       res.get("citations"), res["content"]))
                 # 도중에 Fatal 로 끊겨도 그때까지 부른 횟수가 runs 에 남게 여기서 센다
                 r.api_calls += 1
                 if last_of.get(row["id"]) == item:
