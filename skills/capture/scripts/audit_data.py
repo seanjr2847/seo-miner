@@ -418,7 +418,10 @@ def r_backlinks(d, ctx, out):
 
 def r_pages(d, ctx, out):
     """페이지 점검 — 404 가 점검 대상에 남았나(P9) · 점검이 대부분 실패했나(P11)."""
-    pa = d.get("page_audits") or {}
+    # 행으로 센다 - 홈은 www·비www 두 열쇠가 한 행을 가리킨다(gather). 열쇠로 셌더니 홈 한 장이
+    # '점검 N장'에 두 번 들었다.
+    pa = {(a.get("url") or u): a for u, a in (d.get("page_audits") or {}).items()
+          if isinstance(a, dict)}
     if not pa:
         return
     dead = [u for u, a in pa.items() if a.get("status") == 404]
@@ -674,6 +677,12 @@ def _selfcheck() -> None:
     hit("page_404", {"page_audits": {"a": pa(404, "HTTP 404"), "b": pa(200)}})
     miss("page_404", {"page_audits": {"b": pa(200)}})
     miss("page_audit_failed", {"page_audits": {"a": pa(404, "HTTP 404"), "b": pa(200)}})
+    # 홈은 www·비www 두 열쇠가 한 행을 가리킨다(gather) - 장수는 행으로 센다
+    home = {**pa(404, "HTTP 404"), "url": "https://c.kr/"}
+    said = [f["msg"] for f in audit({**base, "page_audits": {
+        "https://c.kr/": home, "https://www.c.kr/": home, "https://c.kr/a": pa(200)}}, {"now": now})
+        if f["code"] == "page_404"]
+    assert len(said) == 1 and "점검 2장 중 1장" in said[0], said
     blocked = {f"u{i}": pa(403, "HTTP 403") for i in range(4)}
     assert [f["sev"] for f in audit({**base, "page_audits": blocked}, {"now": now})
             if f["code"] == "page_audit_failed"] == ["high"]

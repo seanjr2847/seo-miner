@@ -1440,16 +1440,9 @@ def _nap_lines(ctx: dict) -> list[str]:
     (scoring.nap_state — 주소·전화 칸이 비었는지)은 같이 말한다. 판정은 scoring 한 곳이고 여기는
     문장만 만든다."""
     dom = str((ctx.get("project") or {}).get("domain") or "")
-    audits = ctx.get("page_audits") or {}
-    # 홈 행이 둘이면(www·비www 행) 가장 최근에 본 것. 같은 날짜면 마크업을 읽은 행 → 주인을 찾은
-    # 행 → 주소 글자 순으로 하나를 정한다 — 예전엔 dict 순서로 아무거나 골라 같은 사이트의 요청문이
-    # 뽑을 때마다 다른 홈을 말할 수 있었다(theotherskin 은 9/02부터 매일 두 꼴을 다 봤다).
-    def rank(a: dict) -> tuple:
-        s = scoring.nap_state(a)
-        return (str(a.get("checked_date") or ""), s is not None, bool(s and s["rule"]),
-                str(a.get("url") or ""))
-    homes = [a for u, a in audits.items() if scoring.is_home(str(u), dom)]
-    home = max(homes, key=rank, default=None)
+    # 홈 행이 둘이면(www·비www 행) 하나로 - 고르는 규칙은 scoring.home_audit 한 벌이다(gather 가
+    # 두 꼴을 맞출 때도 그것을 쓴다)
+    home = scoring.home_audit((ctx.get("page_audits") or {}).values(), dom)
     st = scoring.nap_state(home)
     nap = "·".join(scoring.NAP_PROPS)            # 속성 이름의 정본은 scoring — 사본을 안 적는다
     if home is None:
@@ -1838,9 +1831,11 @@ def _site_name_words(ctx: dict) -> frozenset[str]:
     부제일 수 있어서 안 본다."""
     site = site_of(ctx)
     tails: dict[str, int] = {}
-    for a in (ctx.get("page_audits") or {}).values():
-        if not isinstance(a, dict):
-            continue
+    # 행으로 센다 - 홈은 www·비www 두 열쇠가 한 행을 가리킨다(gather). 열쇠로 세면 홈 title 의
+    # 꼬리 하나가 '두 페이지'가 되어 홈에만 있는 부제가 사이트 이름으로 지워진다.
+    rows = {(a.get("url") or u): a for u, a in (ctx.get("page_audits") or {}).items()
+            if isinstance(a, dict)}
+    for a in rows.values():
         segs = _TITLE_TAIL_SEP.split(str(a.get("title") or ""))
         if len(segs) > 1:
             tail = segs[-1].strip().lower()

@@ -5562,6 +5562,47 @@ def test_seam_200_hosted_safe_strips_what_fatal_makes():
         assert "서비스 쪽 문제" in out, f"사람 말로 바뀌지 않았다: {out!r}"
 
 
+def test_seam_201_home_is_opened_in_one_form_and_found_in_both():
+    """201) 홈은 www·비www 가 한 홈이다 - 여는 쪽(collect_page.target_urls)은 home_of 가 고른 한 꼴만
+    열고, 찾는 쪽(dashboard.gather 의 page_audits - 요청문·드로어가 주소 글자로 찾는 표)은 두 꼴을 그
+    한 행으로 맞춘다.
+
+    한쪽만 보면 둘 다 멀쩡하다. 여는 쪽이 기회가 집은 꼴을 글자 그대로 열면 찾는 쪽은 맞출 필요가
+    없었지만, 두 꼴을 가리키는 기회가 있으면 날마다 꼴을 바꿔 열었다(theotherskin, 검토 재현
+    10/10 www -> 10/11 비www -> ...). 여는 쪽만 한 꼴로 고치고 찾는 쪽을 안 맞추면 다른 꼴을 집은 기회는
+    '아직 점검하지 않았습니다'가 된다. 날마다 열고 연 주소를 적은 뒤 화면 페이로드로 본다."""
+    import sqlite3 as _sq
+    from datetime import date, timedelta
+
+    import collect_page
+    import dashboard
+    import scoring
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    db._migrate(c)
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'h','saas','c.kr')")
+    c.executemany("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                  "clicks,impressions,ctr,position) VALUES(1,'2026-09-01',28,?,?,0,?,0.0,3.0)",
+                  [("브랜드", "https://c.kr/", 50), ("브랜드 후기", "https://www.c.kr/", 5)])
+    c.executemany("INSERT INTO opportunities(project_id,kind,target,score,status) "
+                  "VALUES(1,'crawl_issue',?,?,'new')", [("https://www.c.kr/", 99), ("https://c.kr/", 98)])
+    c.commit()
+    for back in (2, 1, 0):
+        day = (date.today() - timedelta(days=back)).isoformat()
+        db.write_page_audits(c, 1, day, [{"url": u, "status": 200, "title": f"{u} {day}"}
+                                          for u in collect_page.target_urls(c, 1, 40)])
+    opened = {r[0] for r in c.execute("SELECT DISTINCT url FROM page_audits")
+              if scoring.is_home(r[0], "c.kr")}
+    assert opened == {"https://c.kr/"}, f"홈을 두 꼴로 연다: {opened}"
+    pa = dashboard.gather(c, db.get_project(c, "h"), gated=False)["page_audits"]
+    today = date.today().isoformat()
+    for form in ("https://www.c.kr/", "https://c.kr/"):
+        assert (pa.get(form) or {}).get("checked_date") == today, \
+            f"기회가 집은 홈 꼴 {form} 로 오늘 본 홈 행을 못 찾는다: {pa.get(form)}"
+    c.close()
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

@@ -20,7 +20,7 @@ import unicodedata
 from collections import namedtuple
 from collections.abc import Callable
 from urllib import robotparser
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import run_verdict
 import schema_vocab
@@ -1752,6 +1752,26 @@ def is_home(url: str, domain: str = "") -> bool:
         and (not domain or host_of(url) == host_of(domain))
 
 
+def home_audit(audits, domain: str = "") -> dict | None:
+    """감사 행들 중 홈 한 행 - www·비www 는 한 홈이다. 가장 최근에 본 행, 같은 날짜면 마크업을 읽은
+    행 -> 주인을 찾은 행 -> 주소 글자 순. 예전엔 dict 순서로 아무거나 골라 같은 사이트의 요청문이 뽑을
+    때마다 다른 홈을 말할 수 있었다(theotherskin 은 9/02부터 매일 두 꼴을 다 봤다).
+    고르는 쪽(요청문의 지도 칸 NAP 절)과 맞추는 쪽(dashboard.gather 가 두 꼴을 이 행으로)이 한 벌이다."""
+    def rank(a: dict) -> tuple:
+        s = nap_state(a)
+        return (str(a.get("checked_date") or ""), s is not None, bool(s and s["rule"]),
+                str(a.get("url") or ""))
+    homes = [a for a in audits if isinstance(a, dict) and is_home(str(a.get("url") or ""), domain)]
+    return max(homes, key=rank, default=None)
+
+
+def home_forms(url: str) -> list[str]:
+    """홈 주소의 www·비www 두 꼴 - 스킴·경로는 그대로. 'https://c.kr/' -> [그대로, 'https://www.c.kr/']."""
+    u = urlsplit(url or "")
+    host = u.netloc[4:] if u.netloc.lower().startswith("www.") else "www." + u.netloc
+    return [url, urlunsplit((u.scheme, host, u.path or "/", u.query, ""))] if u.netloc else [url]
+
+
 def owner_types(audit: dict) -> list[tuple[str, str]]:
     """이 감사 행의 ld+json 에 있는 사이트 주인 유형 [(규칙, 쓴 @type)] — 좁은 쪽이 앞."""
     hits = [h for t in _as_list(audit.get("schema_json")) if (h := schema_rule_of(t))
@@ -1828,14 +1848,19 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
     # (each)을 남긴다. 저자가 여럿인데 한데 모으면 한 명이라도 url 이 있는 순간 다른 저자의 빈칸이
     # 사라졌다. 이름은 안 남기므로(원문 미저장) 몇 번째 저자인지로 가리킨다 — 그래서 순번은 읽는
     # 사람이 마크업에서 보는 author 순서여야 한다(@graph 에 놓인 순서로 셌더니 엉뚱한 사람을 가리켰다).
+    # 글이 여럿인 페이지(목록·카테고리)에서는 그 순서가 어느 글의 author 칸 순서도 아니고 사람이 처음
+    # 나온 순서다 - 예전엔 거기서도 '(author 에 적힌 순서)'라고 해서 [Kim] [Kim] [Lee] 목록의 '2번째'를
+    # 마크업의 2번째 author 칸(Kim)으로 읽게 했다. posts 가 없는 행은 그 칸이 생기기 전의 것(글 하나로 읽는다).
     p = by.get("Person") or {}
     each = p.get("each") or [p.get("want") or []]
+    posts = int(p.get("posts") or 1)
     for i, pw in enumerate(each):
         pw = [x for x in pw or [] if x]
         if not pw:
             continue
-        who = f"저자 {len(each)}명 중 {i + 1}번째(author 에 적힌 순서)의" if len(each) > 1 \
-            else "저자(Person)"
+        who = "저자(Person)" if len(each) < 2 else \
+            f"글 {posts}개의 저자 {len(each)}명 중 {i + 1}번째로 나오는 사람(같은 사람은 한 번 셉니다)의" \
+            if posts > 1 else f"저자 {len(each)}명 중 {i + 1}번째(author 에 적힌 순서)의"
         out.append({"tag": "엔티티", "level": "warn",
                     "now": f"{who} 마크업에 {', '.join(map(_prop_name, pw))} 이 없습니다",
                     "fix": "저자 이름과 함께 그 사람을 소개하는 페이지(url)나 외부 프로필(sameAs)을 "

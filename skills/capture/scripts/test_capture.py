@@ -3362,6 +3362,33 @@ def test_content_gap_reason_names_one_competitor_deterministically():
     assert len(why) == 1 and "a-top.com 순위 2위" in why[0][0], [w[0] for w in why]
 
 
+def test_home_audit_is_found_whichever_www_form_names_it():
+    """홈은 www·비www 가 한 홈이다 - 감사 대상(collect_page.target_urls)은 home_of 가 고른 한 꼴만
+    연다. 그 짝으로 조회 쪽(gather 의 page_audits)이 두 꼴을 같은 최신 홈 행으로 맞춘다. 예전엔
+    기회가 콕 집은 꼴을 그 글자 그대로 열어야만 요청문·드로어가 감사 행을 찾았고, 그래서 두 꼴을
+    가리키는 기회가 있으면 날마다 꼴을 바꿔 열었다(theotherskin). 맞추지 않으면 다른 꼴을 집은
+    기회는 '아직 점검하지 않았습니다'가 되거나, 옛날에 본 그 꼴의 묵은 행을 말한다."""
+    conn = db.connect()
+    p = _project(conn, "homeform")
+    pid = p["id"]
+    conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,query,page,"
+                 "clicks,impressions,ctr,position) VALUES(?,'2026-09-01',28,'브랜드',"
+                 "'https://www.e.com/',2,500,0.4,4.0)", (pid,))
+    # www 는 예전에 한 번 본 묵은 행, 비www 는 최근에 본 행(지금 여는 꼴)
+    conn.executemany("INSERT INTO page_audits(project_id,checked_date,url,status,title) "
+                     "VALUES(?,?,?,200,?)", [(pid, "2026-08-01", "https://www.e.com/", "묵은 홈"),
+                                             (pid, "2026-09-02", "https://e.com/", "최근 홈")])
+    conn.execute("INSERT INTO page_audits(project_id,checked_date,url,status,title) "
+                 "VALUES(?,'2026-09-02','https://e.com/blog',200,'블로그')", (pid,))
+    conn.commit()
+    d = dashboard.gather(conn, p, gated=False)
+    conn.close()
+    pa = d["page_audits"]
+    assert pa["https://www.e.com/"]["title"] == "최근 홈", pa.get("https://www.e.com/")
+    assert pa["https://e.com/"]["title"] == "최근 홈", pa.get("https://e.com/")
+    assert pa["https://e.com/blog"]["title"] == "블로그"
+
+
 def test_ai_excerpt_strips_markdown_once_on_the_server():
     """발췌의 마크다운 기호는 서버가 한 번 걷는다 — 화면이 따로 걷으면 두 벌이다."""
     got = scoring._excerpt("## 제목\n**굵게** 본문 [링크](https://a.com/x_(y)) 그리고 [1] 각주"

@@ -1844,6 +1844,18 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.
             a["extract_advice"] = scoring.extract_advice(a, "ai_citation_gap")
             page_audits[a["url"]] = a
+    # 홈은 www·비www 가 한 홈이다 - 두 꼴(과 이미 있는 홈 열쇠)을 최신 홈 한 행(scoring.home_audit)으로
+    # 맞춘다. 감사(collect_page.target_urls)는 home_of 가 고른 한 꼴만 연다. 예전엔 기회가 콕 집은 꼴을
+    # 그 글자 그대로 열어야 요청문·드로어가 행을 찾아서, 두 꼴을 가리키는 기회가 있으면 날마다 꼴을
+    # 바꿔 열었다(theotherskin). 맞추지 않으면 다른 꼴을 집은 기회는 '아직 점검하지 않았습니다'가
+    # 되거나, 예전에 본 그 꼴의 묵은 행을 말한다. 한 행이 두 열쇠에 실리니 행을 세는 쪽(audit_data·
+    # brief._site_name_words)은 행의 url 로 센다.
+    dom = p["domain"] or ""
+    home = scoring.home_audit(page_audits.values(), dom) if dom else None
+    if home:
+        for u in [*(k for k in page_audits if scoring.is_home(k, dom)),
+                  *scoring.home_forms(home["url"])]:
+            page_audits[u] = home
 
     # 순위에 걸린 페이지가 없는 기회만 — 제목·H1 에 그 검색어가 있는 내 지면을 찾는다.
     # 이게 없으면 10위 밖 지면이 "페이지 없음 → 새 글"로 떨어진다(brief.page_of 가 읽는다).

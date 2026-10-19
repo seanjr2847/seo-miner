@@ -3344,6 +3344,10 @@ def test_link_overlap_ignores_stopwords_and_the_site_name():
     # title 꼬리가 한 페이지에만 있으면 사이트 이름이 아니다 — 주제 낱말을 지우지 않는다
     one = {"page_audits": {_SM: {"title": "Syringoma | Milia Guide"}}}
     assert not {"milia", "guide"} & brief._site_name_words(one), brief._site_name_words(one)
+    # 홈은 www·비www 두 열쇠가 한 행을 가리킨다(gather) - 그 한 행을 '두 페이지'로 세지 않는다
+    home = {"url": "https://me.example/", "title": "Syringoma | Milia Guide"}
+    two = {"page_audits": {"https://me.example/": home, "https://www.me.example/": home}}
+    assert not {"milia", "guide"} & brief._site_name_words(two), brief._site_name_words(two)
 
 
 def test_striking_scope_says_one_query_not_all_queries():
@@ -4118,6 +4122,23 @@ def test_each_author_is_judged_on_its_own():
     ent = [x["now"] for x in three["advice"] if x["tag"] == "엔티티"]
     assert len(ent) == 2 and "3명 중 1번째" in ent[0] and "name" in ent[0] \
         and "3명 중 3번째" in ent[1] and "name" not in ent[1], ent
+
+
+def test_author_order_on_a_listing_is_the_order_people_first_appear():
+    """글이 여럿인 페이지(목록·카테고리)의 저자 순번은 'author 에 적힌 순서'가 아니다 - 수집기가 같은
+    사람을 접은 뒤 사람이 처음 나온 순서로 센다. [Kim(url)] [Kim(url)] [Lee] 목록에서 url 이 없는
+    사람은 2번째로 나오는 Lee 인데, 예전 문구 '(author 에 적힌 순서)'는 마크업의 2번째 author 칸(Kim)을
+    보게 했다. 글이 하나면 그 글의 author 순서 그대로라 예전 문구가 맞다."""
+    def said(**extra):
+        a = _audit(schema_json='["CollectionPage", "BlogPosting", "Person"]', schema_gaps_json=_gaps(
+            {"type": "Person", "as": "Person", "n": 2, "need": [], "want": ["url|sameAs"],
+             "each": [[], ["url|sameAs"]], **extra}))
+        return [x["now"] for x in a["advice"] if x["tag"] == "엔티티"]
+    ent = said(posts=3)
+    assert len(ent) == 1 and "2번째로 나오는 사람" in ent[0] and "author 에 적힌" not in ent[0] \
+        and "글 3개" in ent[0], ent
+    for one in (said(posts=1), said()):          # 글 하나 · posts 를 적기 전의 행
+        assert len(one) == 1 and "2명 중 2번째(author 에 적힌 순서)" in one[0], one
 
 
 def test_owner_absent_is_said_when_the_home_types_are_known_non_owners():
